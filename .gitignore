@@ -1,0 +1,30 @@
+# VibeSOP
+.vibe/
+.skills/
+.pi/
+
+# Dependencies
+node_modules/
+
+# Build outputs
+chrome-extension/build/
+chrome-extension/.plasmo/
+companion/dist/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Environment
+.env
+.env.local
+.envrc

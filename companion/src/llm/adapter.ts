@@ -1,0 +1,353 @@
+// LLM adapter — OpenAI-compatible chat completions with tool calling
+
+import OpenAI from "openai"
+import type { ThreadManager } from "../threads/thread-manager"
+import type { SkillEngine } from "../skills/skill-engine"
+import type { HistoryStore } from "../history/store"
+import { getToolDefinitions } from "../bridge/tool-definitions"
+import { classifyError } from "../security"
+
+interface ChatCreateParams {
+  threadId: string
+  message: string
+  skillIds: string[]
+  config: {
+    base_url: string
+    api_key: string
+    model_name: string
+    temperature: number
+    context_window: number
+  }
+  threadManager: ThreadManager
+  skillEngine: SkillEngine
+  historyStore: HistoryStore
+  sendToExtension: (data: any) => void
+  executeTool: (toolCallId: string, toolName: string, params: any) => Promise<{ success: boolean; data?: any; error?: string }>
+}
+
+const MAX_TOOL_CALL_ROUNDS = 20
+const CONTINUOUS_FAILURE_LIMIT = 5
+
+export async function chatCreate(params: ChatCreateParams) {
+  const { threadId, message, skillIds, config, threadManager, skillEngine, historyStore, sendToExtension, executeTool } = params
+
+  // Create user message
+  threadManager.addMessage(threadId, { thread_id: threadId, role: "user", content: message })
+
+  // Activate requested skills
+  for (const skillId of skillIds) {
+    try {
+      skillEngine.activate(threadId, skillId)
+    } catch { /* skill may not exist */ }
+  }
+
+  // Build system prompt
+  const basePrompt = `You are a browser automation agent. You control a real Chrome browser.
+
+CRITICAL RULES:
+1. ALWAYS call list_tabs first to get real tab IDs. Chrome tab IDs are large numbers like 83161113 — NEVER use 1, 2, 3.
+2. When operating on a page, use the actual tabId from list_tabs results.
+3. For create_tab, always pass the full URL parameter.
+4. Use navigate(tabId, url) to change a tab's URL — check list_tabs for existing tabs first.
+5. Before calling screenshot or page tools, ensure the tab is on a real website (not chrome:// or about:blank).
+6. Wait for pages to load before extracting content.`
+  const skillPrompt = skillEngine.buildSystemPrompt(threadId)
+  const systemPrompt = [basePrompt, skillPrompt].filter(Boolean).join("\n\n")
+
+  // Build messages array
+  const history = threadManager.getMessages(threadId)
+  const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = []
+
+  if (systemPrompt) {
+    messages.push({ role: "system", content: systemPrompt })
+  }
+
+  for (let i = 0; i < history.length; i++) {
+    const msg = history[i]
+    if (msg.role === "user") {
+      messages.push({ role: "user", content: msg.content })
+    } else if (msg.role === "assistant") {
+      const tcList = msg.tool_calls || []
+      // Validate: if assistant has tool_calls, verify the next N messages are tool results
+      // If not, strip the tool_calls to avoid structural errors
+      let validToolCalls = true
+      if (tcList.length > 0) {
+        for (let j = 0; j < tcList.length; j++) {
+          const nextMsg = history[i + 1 + j]
+          if (!nextMsg || nextMsg.role !== "tool") {
+            validToolCalls = false
+            break
+          }
+        }
+      }
+      if (validToolCalls && tcList.length > 0) {
+        messages.push({
+          role: "assistant",
+          content: msg.content || null,
+          tool_calls: tcList.map((tc: any) => ({
+            id: tc.id,
+            type: "function",
+            function: { name: tc.function?.name || tc.name, arguments: tc.function?.arguments || tc.arguments || "{}" },
+          })),
+        } as any)
+      } else {
+        // Strip broken tool_calls — treat as text-only assistant message
+        messages.push({ role: "assistant", content: msg.content || "(tool call failed)" } as any)
+      }
+    } else if (msg.role === "tool" && msg.tool_calls) {
+      for (const tc of msg.tool_calls) {
+        messages.push({
+          role: "tool",
+          tool_call_id: tc.id,
+          content: JSON.stringify(tc.result || {}),
+        } as any)
+      }
+    }
+  }
+
+  // Ensure we don't exceed context window (rough estimate)
+  while (JSON.stringify(messages).length > params.config.context_window * 3 && messages.length > 2) {
+    // Remove oldest non-system message
+    const idx = messages.findIndex(m => m.role !== "system")
+    if (idx >= 0) messages.splice(idx, 1)
+    else break
+  }
+
+  // Create OpenAI client
+  const client = new OpenAI({
+    baseURL: config.base_url,
+    apiKey: config.api_key || "sk-placeholder",
+  })
+
+  const tools = getToolDefinitions()
+
+  // Tool calling loop
+  let round = 0
+  let continuousFailures = 0
+
+  while (round < MAX_TOOL_CALL_ROUNDS) {
+    round++
+
+    try {
+      const stream = await client.chat.completions.create({
+        model: config.model_name,
+        messages,
+        temperature: config.temperature,
+        tools,
+        tool_choice: "auto",
+        stream: true,
+      })
+
+      let assistantContent = ""
+      let reasoningContent = ""
+      let toolCalls: any[] = []
+
+      for await (const chunk of stream) {
+        const delta = chunk.choices[0]?.delta as any
+
+        if (delta?.content) {
+          assistantContent += delta.content
+          sendToExtension({ type: "chat.token", thread_id: threadId, content: assistantContent })
+        }
+
+        // DeepSeek thinking mode: capture reasoning_content
+        if (delta?.reasoning_content) {
+          reasoningContent += delta.reasoning_content
+        }
+
+        if (delta?.tool_calls) {
+          for (const tc of delta.tool_calls) {
+            if (tc.index !== undefined) {
+              if (!toolCalls[tc.index]) {
+                toolCalls[tc.index] = { id: tc.id || "", type: "function", function: { name: "", arguments: "" } }
+              }
+              if (tc.id) toolCalls[tc.index].id = tc.id
+              if (tc.function?.name) toolCalls[tc.index].function.name += tc.function.name
+              if (tc.function?.arguments) toolCalls[tc.index].function.arguments += tc.function.arguments
+            }
+          }
+        }
+      }
+
+      // Save assistant message
+      const assistantMsg = toolCalls.filter(Boolean)
+      const savedMsg = {
+        thread_id: threadId,
+        role: "assistant" as const,
+        content: assistantContent,
+        tool_calls: assistantMsg,
+      }
+      threadManager.addMessage(threadId, savedMsg)
+
+      // Push assistant message with tool_calls and reasoning_content to messages array
+      const assistantPushMsg: any = {
+        role: "assistant",
+        content: assistantContent || null,
+      }
+      if (reasoningContent) {
+        assistantPushMsg.reasoning_content = reasoningContent
+      }
+      if (assistantMsg.length > 0) {
+        assistantPushMsg.tool_calls = assistantMsg.map(tc => ({
+          id: tc.id,
+          type: "function" as const,
+          function: {
+            name: tc.function.name,
+            arguments: tc.function.arguments,
+          },
+        }))
+      }
+      messages.push(assistantPushMsg)
+
+      // If no tool calls, we're done
+      if (assistantMsg.length === 0) {
+        sendToExtension({ type: "chat.done", thread_id: threadId })
+        return
+      }
+
+      // Execute tool calls via extension (async — wait for results)
+      const toolResults: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = []
+      let shouldStop = false
+
+      for (const tc of assistantMsg) {
+        const toolName = tc.function.name
+        let params: any = {}
+        try {
+          params = JSON.parse(tc.function.arguments || "{}")
+        } catch { /* ignore parse errors */ }
+
+        const startTime = Date.now()
+
+        try {
+          const result = await executeTool(tc.id, toolName, {
+            ...params,
+            tabId: params.tabId || threadManager.get(params.threadId)?.pinned_tabs?.[0],
+          })
+
+          const durationMs = Date.now() - startTime
+
+          // Record to history
+          historyStore.record({
+            thread_id: threadId,
+            tool_name: toolName,
+            params: JSON.stringify(params),
+            result_summary: result.success
+              ? JSON.stringify(result.data || {}).substring(0, 500)
+              : "",
+            error: result.error || null,
+            success: result.success ? 1 : 0,
+            duration_ms: durationMs,
+            created_at: new Date().toISOString(),
+          })
+
+          // Send tool result to extension for UI display
+          sendToExtension({
+            type: "tool.result",
+            tool_call_id: tc.id,
+            tool_name: toolName,
+            result,
+          })
+
+          if (!result.success) {
+            const errorLevel = classifyError(result.error || "", { toolName })
+            if (errorLevel === "security") {
+              shouldStop = true
+              sendToExtension({
+                type: "chat.error",
+                thread_id: threadId,
+                error: `安全阻断: ${result.error}`,
+              })
+              break
+            }
+            if (errorLevel === "non_recoverable") {
+              shouldStop = true
+              sendToExtension({
+                type: "chat.error",
+                thread_id: threadId,
+                error: `不可恢复错误: ${result.error}`,
+              })
+              break
+            }
+            // Recoverable errors — feed back to LLM for retry
+          }
+
+          toolResults.push({
+            role: "tool" as const,
+            tool_call_id: tc.id,
+            content: JSON.stringify(result),
+          })
+        } catch (e: any) {
+          sendToExtension({
+            type: "chat.error",
+            thread_id: threadId,
+            error: `Tool execution exception: ${e.message}`,
+          })
+          shouldStop = true
+          break
+        }
+      }
+
+      if (shouldStop) {
+        // Remove the assistant message we pushed (no tool results to pair with it)
+        messages.pop()
+        // Add error as text-only assistant message instead
+        sendToExtension({ type: "chat.done", thread_id: threadId })
+        return
+      }
+
+      // Add tool results to messages for next LLM round
+      messages.push(...toolResults)
+
+    } catch (e: any) {
+      const errorMsg = e.message || String(e)
+      const isAuthError = errorMsg.includes("401") || errorMsg.includes("403") || errorMsg.includes("Incorrect API key")
+      const isStructuralError = errorMsg.includes("400") && errorMsg.includes("tool")
+
+      sendToExtension({
+        type: "chat.error",
+        thread_id: threadId,
+        error: errorMsg,
+      })
+
+      // Auth errors and structural errors are fatal — stop immediately
+      if (isAuthError) {
+        sendToExtension({
+          type: "chat.error",
+          thread_id: threadId,
+          error: "API Key 无效，请在设置中配置正确的 API Key。",
+        })
+        return
+      }
+      if (isStructuralError) {
+        sendToExtension({
+          type: "chat.error",
+          thread_id: threadId,
+          error: "消息结构错误，已停止。请重试。",
+        })
+        return
+      }
+
+      continuousFailures++
+      if (continuousFailures >= CONTINUOUS_FAILURE_LIMIT) {
+        sendToExtension({
+          type: "chat.error",
+          thread_id: threadId,
+          error: `连续 ${CONTINUOUS_FAILURE_LIMIT} 次失败，已暂停。请检查配置或手动介入。`,
+        })
+        return
+      }
+
+      // Retry with error context
+      messages.push({
+        role: "user",
+        content: `Error occurred: ${errorMsg}. Please try a different approach.`,
+      } as any)
+    }
+  }
+
+  sendToExtension({
+    type: "chat.error",
+    thread_id: threadId,
+    error: `达到最大工具调用轮次 (${MAX_TOOL_CALL_ROUNDS})，已暂停。`,
+  })
+}

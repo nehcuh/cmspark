@@ -1,0 +1,27 @@
+{
+  "name": "cmspark-agent",
+  "version": "0.1.0",
+  "description": "Local companion for CMspark Browser Agent — manages LLM calls, skills, threads, and operation history",
+  "bin": {
+    "cmspark-agent": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js start",
+    "dev": "tsx src/index.ts start"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.0.0",
+    "gray-matter": "^4.0.3",
+    "openai": "^4.52.0",
+    "ws": "^8.17.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.10",
+    "@types/node": "^20.14.0",
+    "@types/ws": "^8.5.10",
+    "tsx": "^4.11.0",
+    "typescript": "^5.4.5"
+  }
+}
