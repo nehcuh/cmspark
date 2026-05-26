@@ -5,7 +5,7 @@ import { fileURLToPath } from "url"
 import { deflateSync } from "zlib"
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const genAssetsDir = join(__dirname, "..", ".plasmo", "gen-assets")
+const genAssetsDir = join(__dirname, "..", "assets")
 
 function makePNG(size) {
   const scanlines = []
@@ -71,7 +71,7 @@ if (!existsSync(genAssetsDir)) {
 
 for (const size of [16, 32, 48, 64, 128]) {
   const png = makePNG(size)
-  const outputPath = join(genAssetsDir, `icon${size}.plasmo.png`)
+  const outputPath = join(genAssetsDir, `icon${size}.png`)
   writeFileSync(outputPath, png)
   console.log(`Generated icon${size}.plasmo.png (${png.length} bytes)`)
 }

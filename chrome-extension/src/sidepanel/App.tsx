@@ -1,6 +1,6 @@
 // CMspark Browser Agent — Root App Component
 
-import { useState } from "react"
+import { Component, useState } from "react"
 import { useWebSocket } from "./hooks/useWebSocket"
 import { ChatView } from "./components/ChatView"
 import { ThreadList } from "./components/ThreadList"
@@ -9,11 +9,70 @@ import { SettingsSlideout } from "./components/SettingsSlideout"
 import { AgentStoreProvider, useAgentStore } from "./store/agentStore"
 import type { ConnectionState } from "./types"
 
+// Error Boundary — catches rendering errors to prevent white screen
+class ErrorBoundary extends Component<{ children: React.ReactNode }, { error: Error | null }> {
+  constructor(props: any) {
+    super(props)
+    this.state = { error: null }
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { error }
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <div style={{
+          padding: 20,
+          fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+          fontSize: 13,
+          color: "#333",
+        }}>
+          <h3 style={{ color: "#F44336", marginBottom: 12 }}>界面渲染错误</h3>
+          <pre style={{
+            background: "#f5f5f5",
+            padding: 12,
+            borderRadius: 6,
+            fontSize: 11,
+            overflow: "auto",
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+            maxHeight: 300,
+          }}>
+            {this.state.error.message}
+            {"\n\n"}
+            {this.state.error.stack}
+          </pre>
+          <button
+            style={{
+              marginTop: 12,
+              padding: "6px 16px",
+              border: "1px solid #4A90D9",
+              borderRadius: 6,
+              background: "#fff",
+              color: "#4A90D9",
+              cursor: "pointer",
+              fontSize: 12,
+            }}
+            onClick={() => this.setState({ error: null })}
+          >
+            重试
+          </button>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
+
 export function App() {
   return (
-    <AgentStoreProvider>
-      <AppContent />
-    </AgentStoreProvider>
+    <ErrorBoundary>
+      <AgentStoreProvider>
+        <AppContent />
+      </AgentStoreProvider>
+    </ErrorBoundary>
   )
 }
 
@@ -54,7 +113,8 @@ function InputArea() {
   const { state, dispatch } = useAgentStore()
   const [text, setText] = useState("")
 
-  const canSend = text.trim().length > 0 && !!state.activeThreadId && state.connectionState === "connected"
+  const isStreaming = !!state.streamingContent
+  const canSend = !isStreaming && text.trim().length > 0 && !!state.activeThreadId && state.connectionState === "connected"
   const needsThread = !state.activeThreadId
   const needsConnection = state.connectionState !== "connected"
 
@@ -87,6 +147,14 @@ function InputArea() {
     setText("")
   }
 
+  const handleStop = () => {
+    chrome.runtime.sendMessage({
+      type: "chat.abort",
+      threadId: state.activeThreadId,
+    })
+    dispatch({ type: "SET_STREAMING", content: "" })
+  }
+
   return (
     <div style={styles.inputArea}>
       <textarea
@@ -106,18 +174,28 @@ function InputArea() {
           }
         }}
       />
-      <button
-        style={{
-          ...styles.sendBtn,
-          opacity: canSend ? 1 : 0.4,
-          cursor: canSend ? "pointer" : "not-allowed",
-        }}
-        onClick={handleSend}
-        disabled={!canSend}
-        title={needsThread ? "请先创建线程" : needsConnection ? "Companion 未连接" : "发送"}
-      >
-        ▶
-      </button>
+      {isStreaming ? (
+        <button
+          style={styles.stopBtn}
+          onClick={handleStop}
+          title="停止生成"
+        >
+          ■
+        </button>
+      ) : (
+        <button
+          style={{
+            ...styles.sendBtn,
+            opacity: canSend ? 1 : 0.4,
+            cursor: canSend ? "pointer" : "not-allowed",
+          }}
+          onClick={handleSend}
+          disabled={!canSend}
+          title={needsThread ? "请先创建线程" : needsConnection ? "Companion 未连接" : "发送"}
+        >
+          ▶
+        </button>
+      )}
       <button style={styles.settingsBtn} onClick={() => dispatch({ type: "TOGGLE_SETTINGS" })}>⚙</button>
     </div>
   )
@@ -205,6 +283,20 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: "pointer",
     fontSize: 14,
     flexShrink: 0,
+  },
+  stopBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 6,
+    border: "none",
+    background: "#F44336",
+    color: "#fff",
+    cursor: "pointer",
+    fontSize: 12,
+    flexShrink: 0,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
   },
   settingsBtn: {
     width: 28,

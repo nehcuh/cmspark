@@ -76,7 +76,8 @@ function TabsPanel() {
 
 function HistoryPanel() {
   const { state } = useAgentStore()
-  const groups = groupBy(state.operations, "thread_id")
+  const operations = state.operations || []
+  const groups = groupBy(operations, "thread_id")
 
   return (
     <div style={styles.panelContent}>
@@ -111,15 +112,19 @@ function SkillsPanel() {
   const [showUrlImport, setShowUrlImport] = useState(false)
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const zipInputRef = useRef<HTMLInputElement>(null)
 
   const handleExport = (skillName: string) => {
     chrome.runtime.sendMessage({ type: "skill.export", skill_name: skillName }, (response) => {
       if (response?.content) {
-        const blob = new Blob([response.content], { type: "text/markdown" })
+        const format = response.format || "markdown"
+        const mimeType = format === "zip" ? "application/zip" : "text/markdown"
+        const ext = format === "zip" ? ".zip" : ".md"
+        const blob = base64ToBlob(response.content, mimeType)
         const url = URL.createObjectURL(blob)
         const a = document.createElement("a")
         a.href = url
-        a.download = `${skillName}.md`
+        a.download = `${skillName}${ext}`
         a.click()
         URL.revokeObjectURL(url)
       }
@@ -143,10 +148,26 @@ function SkillsPanel() {
     reader.readAsText(file)
   }
 
+  const handleImportZip = (file: File) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const dataUrl = reader.result as string
+      // Strip "data:application/zip;base64," prefix
+      const base64 = dataUrl.split(",")[1]
+      if (base64) {
+        chrome.runtime.sendMessage({ type: "skill.import-folder", zip_data: base64 })
+      }
+    }
+    reader.readAsDataURL(file)
+  }
+
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault()
     const file = e.dataTransfer.files[0]
-    if (file?.name.endsWith(".md")) {
+    if (!file) return
+    if (file.name.endsWith(".zip")) {
+      handleImportZip(file)
+    } else if (file.name.endsWith(".md") || file.name.endsWith(".markdown")) {
       handleImportFile(file)
     }
   }
@@ -170,6 +191,9 @@ function SkillsPanel() {
         <button style={styles.skillToolbarBtn} onClick={handleFilePick} title="从文件导入 .md">
           📁 导入
         </button>
+        <button style={styles.skillToolbarBtn} onClick={() => zipInputRef.current?.click()} title="从 ZIP 导入文件夹技能">
+          📦 导入文件夹
+        </button>
         <button style={styles.skillToolbarBtn} onClick={() => setShowUrlImport(!showUrlImport)} title="从 URL 导入">
           🔗 URL
         </button>
@@ -181,6 +205,16 @@ function SkillsPanel() {
           onChange={(e) => {
             const file = e.target.files?.[0]
             if (file) handleImportFile(file)
+          }}
+        />
+        <input
+          ref={zipInputRef}
+          type="file"
+          accept=".zip"
+          style={{ display: "none" }}
+          onChange={(e) => {
+            const file = e.target.files?.[0]
+            if (file) handleImportZip(file)
           }}
         />
       </div>
@@ -253,6 +287,15 @@ function SkillsPanel() {
 }
 
 // --- Helpers ---
+
+function base64ToBlob(base64: string, mimeType: string): Blob {
+  const raw = atob(base64)
+  const bytes = new Uint8Array(raw.length)
+  for (let i = 0; i < raw.length; i++) {
+    bytes[i] = raw.charCodeAt(i)
+  }
+  return new Blob([bytes], { type: mimeType })
+}
 
 function groupBy<T>(arr: T[], key: keyof T): Record<string, T[]> {
   return arr.reduce((acc, item) => {

@@ -93,12 +93,13 @@ export class BrowserBridge {
 
     // Verify tab exists and is accessible
     try {
-      // Retry up to 5 times with delay - tab URL may be stale during navigation
+      // Retry up to 10 times with delay — tab URL may be blank during creation/navigation
       let tab: chrome.tabs.Tab | undefined
-      for (let attempt = 0; attempt < 5; attempt++) {
+      for (let attempt = 0; attempt < 10; attempt++) {
         tab = await chrome.tabs.get(tabId)
-        if (tab.url && !tab.url.startsWith("chrome-extension://") && !tab.url.startsWith("chrome://")) break
-        if (attempt < 4) await new Promise(r => setTimeout(r, 500))
+        const url = tab.url || ""
+        if (url && !url.startsWith("chrome-extension://") && !url.startsWith("chrome://") && url !== "about:blank") break
+        if (attempt < 9) await new Promise(r => setTimeout(r, 500))
       }
       if (!tab) throw new Error(`Tab ${tabId} not found`)
       if (tab.url?.startsWith("chrome-extension://")) {
@@ -130,22 +131,61 @@ export class BrowserBridge {
     return chrome.debugger.sendCommand({ tabId }, method, params)
   }
 
-  // Fallback: execute JS via chrome.scripting (doesn't need debugger)
-  // Uses ISOLATED world to avoid page CSP restrictions on eval/Function
+  // Execute JS via chrome.scripting. ISOLATED world first (CSP-safe),
+  // then MAIN world if ISOLATED had injection errors (some SPAs block ISOLATED).
   private async scriptingExecute(tabId: number, code: string): Promise<any> {
-    const results = await chrome.scripting.executeScript({
-      target: { tabId },
-      injectImmediately: true,
-      func: (expr: string) => {
-        // ISOLATED world (default): runs in extension context, bypasses page CSP
-        return new Function(`return (${expr})`)()
-      },
-      args: [code],
-    })
-    // Check for injection errors (CSP violations, dead tabs, etc.)
-    const err = results[0]?.error
-    if (err) throw new Error(`Script injection failed: ${err.message || err}`)
-    return results[0]?.result
+    // Detect simple read-only expressions — use direct DOM funcs, no new Function()
+    const bodyTextExpr = code === "document.body?.innerText || ''"
+    const bodyHtmlExpr = code.startsWith("document.querySelector('html')")
+
+    // Strategy 1: ISOLATED world
+    try {
+      let results: chrome.scripting.InjectionResult<any>[] | undefined
+      if (bodyTextExpr) {
+        results = await chrome.scripting.executeScript({
+          target: { tabId }, injectImmediately: true,
+          func: () => document.body?.innerText || "",
+        })
+      } else if (bodyHtmlExpr) {
+        results = await chrome.scripting.executeScript({
+          target: { tabId }, injectImmediately: true,
+          func: () => document.querySelector("html")?.outerHTML?.substring(0, 500000) || "",
+        })
+      } else {
+        results = await chrome.scripting.executeScript({
+          target: { tabId }, injectImmediately: true,
+          func: (expr: string) => { return new Function(`return (${expr})`)() },
+          args: [code],
+        })
+      }
+      // Only fall through if there was an actual injection error (not just empty result)
+      if (!results?.[0]?.error) return results?.[0]?.result
+    } catch { /* fall through to MAIN world */ }
+
+    // Strategy 2: MAIN world (subject to page CSP)
+    try {
+      let results: chrome.scripting.InjectionResult<any>[] | undefined
+      if (bodyTextExpr) {
+        results = await chrome.scripting.executeScript({
+          target: { tabId }, injectImmediately: true, world: "MAIN",
+          func: () => document.body?.innerText || "",
+        })
+      } else if (bodyHtmlExpr) {
+        results = await chrome.scripting.executeScript({
+          target: { tabId }, injectImmediately: true, world: "MAIN",
+          func: () => document.querySelector("html")?.outerHTML?.substring(0, 500000) || "",
+        })
+      } else {
+        results = await chrome.scripting.executeScript({
+          target: { tabId }, injectImmediately: true, world: "MAIN",
+          func: (expr: string) => eval(expr),
+          args: [code],
+        })
+      }
+      if (!results?.[0]?.error) return results?.[0]?.result
+    } catch { /* fall through */ }
+
+    throw new Error("Script injection failed in both ISOLATED and MAIN worlds")
   }
 
   private getTabId(params: Record<string, any>): number {
@@ -323,13 +363,21 @@ export class BrowserBridge {
 
   private async click(params: Record<string, any>, clickCount = 1): Promise<ToolResult> {
     const tabId = this.getTabId(params)
-    const coords = await this.getElementCenter(tabId, params.selector)
-    await this.sendCdp(tabId, "Input.dispatchMouseEvent", {
-      type: "mousePressed", x: coords.x, y: coords.y, button: "left", clickCount,
-    })
-    await this.sendCdp(tabId, "Input.dispatchMouseEvent", {
-      type: "mouseReleased", x: coords.x, y: coords.y, button: "left", clickCount,
-    })
+    try {
+      const coords = await this.getElementCenter(tabId, params.selector)
+      await this.sendCdp(tabId, "Input.dispatchMouseEvent", {
+        type: "mousePressed", x: coords.x, y: coords.y, button: "left", clickCount,
+      })
+      await this.sendCdp(tabId, "Input.dispatchMouseEvent", {
+        type: "mouseReleased", x: coords.x, y: coords.y, button: "left", clickCount,
+      })
+    } catch {
+      // Fallback: direct DOM click when CDP debugger not available
+      if (params.selector) {
+        await this.scriptingExecute(tabId,
+          `(()=>{const el=document.querySelector('${params.selector.replace(/'/g, "\\'")}');if(el){el.focus();el.click();for(let i=1;i<${clickCount};i++)el.click();return true}return false})()`)
+      }
+    }
     return { success: true }
   }
 
@@ -342,8 +390,19 @@ export class BrowserBridge {
       await new Promise(r => setTimeout(r, 100))
     }
 
-    // Fast path: insertText
-    await this.sendCdp(tabId, "Input.insertText", { text: params.value })
+    try {
+      await this.sendCdp(tabId, "Input.insertText", { text: params.value })
+    } catch {
+      // Fallback: set value via DOM scripting
+      const escaped = params.value.replace(/'/g, "\\'")
+      if (params.selector) {
+        await this.scriptingExecute(tabId,
+          `(()=>{const el=document.querySelector('${params.selector.replace(/'/g, "\\'")}');if(el){el.value='${escaped}';el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));return true}return false})()`)
+      } else {
+        await this.scriptingExecute(tabId,
+          `(()=>{const el=document.activeElement;if(el&&(el.tagName==='INPUT'||el.tagName==='TEXTAREA')){el.value='${escaped}';el.dispatchEvent(new Event('input',{bubbles:true}));return true}return false})()`)
+      }
+    }
     return { success: true }
   }
 
@@ -368,9 +427,13 @@ export class BrowserBridge {
     const tabId = this.getTabId(params)
     const deltaX = params.deltaX || 0
     const deltaY = params.deltaY || params.amount || 300
-    await this.sendCdp(tabId, "Input.dispatchMouseEvent", {
-      type: "mouseWheel", x: params.x || 300, y: params.y || 300, deltaX, deltaY,
-    })
+    try {
+      await this.sendCdp(tabId, "Input.dispatchMouseEvent", {
+        type: "mouseWheel", x: params.x || 300, y: params.y || 300, deltaX, deltaY,
+      })
+    } catch {
+      await this.scriptingExecute(tabId, `window.scrollBy(${deltaX}, ${deltaY})`)
+    }
     return { success: true }
   }
 
@@ -391,8 +454,16 @@ export class BrowserBridge {
 
   private async hover(params: Record<string, any>): Promise<ToolResult> {
     const tabId = this.getTabId(params)
-    const coords = await this.getElementCenter(tabId, params.selector)
-    await this.sendCdp(tabId, "Input.dispatchMouseEvent", { type: "mouseMoved", x: coords.x, y: coords.y })
+    try {
+      const coords = await this.getElementCenter(tabId, params.selector)
+      await this.sendCdp(tabId, "Input.dispatchMouseEvent", { type: "mouseMoved", x: coords.x, y: coords.y })
+    } catch {
+      // Fallback: dispatch mouseenter via scripting
+      if (params.selector) {
+        await this.scriptingExecute(tabId,
+          `(()=>{const el=document.querySelector('${params.selector.replace(/'/g, "\\'")}');if(el){el.dispatchEvent(new MouseEvent('mouseenter',{bubbles:true}));el.dispatchEvent(new MouseEvent('mouseover',{bubbles:true}));return true}return false})()`)
+      }
+    }
     return { success: true }
   }
 
@@ -558,18 +629,17 @@ export class BrowserBridge {
 
   private async getElementCenter(tabId: number, selector?: string): Promise<{ x: number; y: number }> {
     if (!selector) return { x: 300, y: 300 }
-    const result = await this.sendCdp(tabId, "Runtime.evaluate", {
-      expression: `
-        (() => {
-          const el = document.querySelector('${selector}');
-          if (!el) return null;
-          const rect = el.getBoundingClientRect();
-          return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
-        })()
-      `,
-      returnByValue: true,
-    })
-    if (!result.result?.value) throw new Error(`Element not found: ${selector}`)
-    return result.result.value
+    const expression = `(()=>{const el=document.querySelector('${selector.replace(/'/g, "\\'")}');if(!el)return null;const r=el.getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()`
+
+    // Try CDP first
+    try {
+      const result = await this.sendCdp(tabId, "Runtime.evaluate", { expression, returnByValue: true })
+      if (result.result?.value) return result.result.value
+    } catch { /* fall through to scripting */ }
+
+    // Fallback: chrome.scripting (works without debugger attach)
+    const value = await this.scriptingExecute(tabId, expression)
+    if (!value) throw new Error(`Element not found: ${selector}`)
+    return value
   }
 }

@@ -6,7 +6,6 @@ import { useAgentStore } from "../store/agentStore"
 export function SettingsSlideout() {
   const { state, dispatch } = useAgentStore()
   const [showKey, setShowKey] = useState(false)
-  const [testResult, setTestResult] = useState<string | null>(null)
 
   if (!state.settingsOpen) return null
 
@@ -19,10 +18,8 @@ export function SettingsSlideout() {
   }
 
   const handleTest = () => {
-    setTestResult("测试中...")
-    // Send test ping through background to companion to LLM
+    dispatch({ type: "SET_TEST_RESULT", result: "测试中..." })
     chrome.runtime.sendMessage({ type: "config.test" })
-    setTimeout(() => setTestResult("连接成功 ✓"), 1500)
   }
 
   return (
@@ -83,7 +80,7 @@ export function SettingsSlideout() {
           </div>
 
           <div style={styles.field}>
-            <label style={styles.label}>Temperature: {config.temperature.toFixed(1)}</label>
+            <label style={styles.label}>Temperature: {(config.temperature ?? 0.7).toFixed(1)}</label>
             <input
               style={{ width: "100%" }}
               type="range"
@@ -110,10 +107,10 @@ export function SettingsSlideout() {
         </div>
 
         <div style={styles.footer}>
-          {testResult && <span style={{
+          {state.testResult && <span style={{
             fontSize: 12,
-            color: testResult.includes("成功") ? "#4CAF50" : "#666",
-          }}>{testResult}</span>}
+            color: state.testResult.includes("成功") ? "#4CAF50" : "#F44336",
+          }}>{state.testResult}</span>}
           <button style={styles.testBtn} onClick={handleTest}>测试连接</button>
           <button style={styles.saveBtn} onClick={handleSave}>保存</button>
         </div>

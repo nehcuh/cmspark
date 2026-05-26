@@ -363,11 +363,11 @@ export function getToolDefinitions(): any[] {
       type: "function",
       function: {
         name: "osascript_eval",
-        description: "(macOS only) Execute JavaScript in a Chrome tab via AppleScript automation. Bypasses ALL CSP and debugger restrictions. Use when get_page_text/evaluate return empty on restricted pages like X.com.",
+        description: "(macOS ONLY — does NOT work on Windows/Linux) Execute JavaScript in a Chrome tab via AppleScript. Only use this as a LAST RESORT when both get_page_text and evaluate fail on restricted pages (e.g. X.com with strict CSP). Prefer get_page_text for reading page content.",
         parameters: {
           type: "object",
           properties: {
-            url: { type: "string", description: "URL prefix to match the Chrome tab" },
+            url: { type: "string", description: "URL fragment to match the Chrome tab (e.g. 'zhihu.com' matches 'https://www.zhihu.com/hot')" },
             expression: { type: "string", description: "JavaScript expression to execute in the page context" },
           },
           required: ["url", "expression"],

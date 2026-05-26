@@ -16,6 +16,7 @@ interface AgentState {
   tabList: chrome.tabs.Tab[]
   pinnedTabIds: number[]
   streamingContent: string
+  testResult: string | null
 }
 
 type AgentAction =
@@ -35,7 +36,9 @@ type AgentAction =
   | { type: "SET_TAB_LIST"; tabs: chrome.tabs.Tab[] }
   | { type: "TOGGLE_PIN_TAB"; tabId: number }
   | { type: "ADD_THREAD"; thread: Thread }
+  | { type: "UPSERT_THREAD"; thread: Thread }
   | { type: "SET_STREAMING"; content: string }
+  | { type: "SET_TEST_RESULT"; result: string | null }
 
 const initialState: AgentState = {
   connectionState: "disconnected",
@@ -56,14 +59,22 @@ const initialState: AgentState = {
   tabList: [],
   pinnedTabIds: [],
   streamingContent: "",
+  testResult: null,
 }
 
 function agentReducer(state: AgentState, action: AgentAction): AgentState {
   switch (action.type) {
     case "SET_CONNECTION":
       return { ...state, connectionState: action.state }
-    case "SET_THREADS":
-      return { ...state, threads: action.threads }
+    case "SET_THREADS": {
+      // Auto-select first thread if no active or active thread no longer exists
+      const activeExists = action.threads.some(t => t.id === state.activeThreadId)
+      return {
+        ...state,
+        threads: action.threads,
+        activeThreadId: activeExists ? state.activeThreadId : (action.threads[0]?.id || null),
+      }
+    }
     case "SET_ACTIVE_THREAD":
       return { ...state, activeThreadId: action.threadId, messages: [], streamingContent: "" }
     case "ADD_MESSAGE":
@@ -109,8 +120,23 @@ function agentReducer(state: AgentState, action: AgentAction): AgentState {
         messages: [],
         streamingContent: "",
       }
+    case "UPSERT_THREAD": {
+      const exists = state.threads.find(t => t.id === action.thread.id)
+      if (exists) {
+        return {
+          ...state,
+          threads: state.threads.map(t => t.id === action.thread.id ? { ...t, ...action.thread } : t),
+        }
+      }
+      return {
+        ...state,
+        threads: [action.thread, ...state.threads],
+      }
+    }
     case "SET_STREAMING":
       return { ...state, streamingContent: action.content }
+    case "SET_TEST_RESULT":
+      return { ...state, testResult: action.result }
     default:
       return state
   }

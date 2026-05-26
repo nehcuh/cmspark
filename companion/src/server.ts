@@ -109,7 +109,7 @@ async function executeCompanionTool(toolName: string, params: any): Promise<any>
         tell application "Google Chrome"
           repeat with w in windows
             repeat with t in tabs of w
-              if URL of t starts with "${pageUrl}" then
+              if URL of t contains "${pageUrl}" then
                 set resultText to execute t javascript "${escapedJs}"
                 return resultText
               end if

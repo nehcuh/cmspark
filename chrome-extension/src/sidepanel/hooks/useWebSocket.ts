@@ -47,6 +47,11 @@ export function useWebSocket() {
           break
         }
 
+        case "chat.aborted":
+          streamingRef.current = ""
+          dispatch({ type: "SET_STREAMING", content: "" })
+          break
+
         case "chat.error":
           dispatch({
             type: "ADD_MESSAGE",
@@ -80,16 +85,27 @@ export function useWebSocket() {
           })
           break
 
+        case "config.testResult":
+          dispatch({ type: "SET_TEST_RESULT", result: msg.ok ? "连接成功 ✓" : `连接失败: ${msg.error || "未知错误"}` })
+          break
+
         case "config.updated":
           dispatch({ type: "SET_CONFIG", config: msg.config })
           break
 
-        case "thread.created":
-          dispatch({ type: "ADD_THREAD", thread: msg.thread })
+        case "thread.created": {
+          // Upsert: don't duplicate if already added locally
+          dispatch({ type: "UPSERT_THREAD", thread: msg.thread })
           break
+        }
 
         case "thread.list":
           dispatch({ type: "SET_THREADS", threads: msg.threads })
+          // Auto-create thread if none exist
+          if (!msg.threads || msg.threads.length === 0) {
+            const id = generateShortId()
+            chrome.runtime.sendMessage({ type: "thread.create", alias: "", id })
+          }
           break
 
         case "thread.messages":
@@ -99,6 +115,23 @@ export function useWebSocket() {
         case "skill.list":
           dispatch({ type: "SET_SKILLS", skills: msg.skills })
           break
+
+        case "skill.exported": {
+          const { content, format, skill_name } = msg
+          if (content) {
+            const mimeType = format === "zip" ? "application/zip" : "text/markdown"
+            const ext = format === "zip" ? ".zip" : ".md"
+            const bytes = Uint8Array.from(atob(content), c => c.charCodeAt(0))
+            const blob = new Blob([bytes], { type: mimeType })
+            const url = URL.createObjectURL(blob)
+            const a = document.createElement("a")
+            a.href = url
+            a.download = `${skill_name}${ext}`
+            a.click()
+            URL.revokeObjectURL(url)
+          }
+          break
+        }
 
         case "skill.imported":
         case "skill.deleted":
@@ -119,14 +152,6 @@ export function useWebSocket() {
           }
           break
         }
-        case "thread.list":
-          dispatch({ type: "SET_THREADS", threads: msg.threads })
-          // Auto-create thread if none exist
-          if (!msg.threads || msg.threads.length === 0) {
-            const id = generateShortId()
-            chrome.runtime.sendMessage({ type: "thread.create", alias: "", id })
-          }
-          break
       }
     }
     chrome.runtime.onMessage.addListener(messageListener)

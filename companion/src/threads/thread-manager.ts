@@ -68,10 +68,10 @@ export class ThreadManager {
     return id
   }
 
-  create(alias: string): Thread {
+  create(alias: string, id?: string): Thread {
     const now = new Date().toISOString()
     const thread: Thread = {
-      id: this.generateId(),
+      id: id || this.generateId(),
       alias: alias || "",
       created_at: now,
       updated_at: now,

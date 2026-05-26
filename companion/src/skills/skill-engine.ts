@@ -3,6 +3,7 @@
 import * as fs from "fs"
 import * as path from "path"
 import matter from "gray-matter"
+import AdmZip from "adm-zip"
 import { getConfigDir } from "../config"
 
 interface SkillMeta {
@@ -11,6 +12,8 @@ interface SkillMeta {
   type: "prompt_template" | "tool_chain" | "sub_agent"
   builtin: boolean
   source_file: string
+  dir?: string
+  resources: string[]
 }
 
 interface Skill extends SkillMeta {
@@ -39,26 +42,63 @@ export class SkillEngine {
 
   private loadFromDir(dir: string, builtin: boolean): void {
     try {
-      for (const file of fs.readdirSync(dir)) {
-        if (!file.endsWith(".md")) continue
-        const filePath = path.join(dir, file)
-        try {
-          const raw = fs.readFileSync(filePath, "utf-8")
-          const parsed = matter(raw)
-          const name = parsed.data.name || file.replace(".md", "")
-          const description = parsed.data.description || ""
-          const type = parsed.data.type || "prompt_template"
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const entryPath = path.join(dir, entry.name)
 
-          this.skillsCache.push({
-            name,
-            description,
-            type,
-            builtin,
-            source_file: filePath,
-            content: parsed.content,
-          })
-        } catch {
-          // skip malformed skills
+        if (entry.isDirectory()) {
+          // Folder-based skill: look for SKILL.md inside
+          const skillMdPath = path.join(entryPath, "SKILL.md")
+          if (fs.existsSync(skillMdPath)) {
+            try {
+              const raw = fs.readFileSync(skillMdPath, "utf-8")
+              const parsed = matter(raw)
+              const name = parsed.data.name || entry.name
+              const description = parsed.data.description || ""
+              const type = parsed.data.type || "prompt_template"
+
+              // Collect resource files (all non-SKILL.md files in directory)
+              const resources = fs.readdirSync(entryPath)
+                .filter(f => f !== "SKILL.md")
+                .filter(f => {
+                  const stat = fs.statSync(path.join(entryPath, f))
+                  return stat.isFile()
+                })
+
+              this.skillsCache.push({
+                name,
+                description,
+                type,
+                builtin,
+                source_file: skillMdPath,
+                dir: entryPath,
+                content: parsed.content,
+                resources,
+              })
+            } catch {
+              // skip malformed folder skills
+            }
+          }
+        } else if (entry.isFile() && entry.name.endsWith(".md")) {
+          // Flat .md skill file (backward compat)
+          try {
+            const raw = fs.readFileSync(entryPath, "utf-8")
+            const parsed = matter(raw)
+            const name = parsed.data.name || entry.name.replace(".md", "")
+            const description = parsed.data.description || ""
+            const type = parsed.data.type || "prompt_template"
+
+            this.skillsCache.push({
+              name,
+              description,
+              type,
+              builtin,
+              source_file: entryPath,
+              content: parsed.content,
+              resources: [],
+            })
+          } catch {
+            // skip malformed skills
+          }
         }
       }
     } catch {
@@ -73,6 +113,8 @@ export class SkillEngine {
       type: s.type,
       builtin: s.builtin,
       source_file: s.source_file,
+      dir: s.dir,
+      resources: s.resources,
     }))
   }
 
@@ -109,10 +151,28 @@ export class SkillEngine {
     return `You have access to the following skills. Use them to guide your approach:\n\n${skillContents}`
   }
 
-  exportSkill(name: string): string {
+  exportSkill(name: string): { content: string; format: "markdown" | "zip"; skill_name: string } {
     const skill = this.get(name)
     if (!skill) throw new Error(`Skill not found: ${name}`)
 
+    if (skill.dir) {
+      // Folder-based skill: zip the entire directory
+      const zip = new AdmZip()
+      const dirName = path.basename(skill.dir)
+      for (const f of fs.readdirSync(skill.dir)) {
+        const filePath = path.join(skill.dir, f)
+        if (fs.statSync(filePath).isFile()) {
+          zip.addLocalFile(filePath, dirName)
+        }
+      }
+      return {
+        content: zip.toBuffer().toString("base64"),
+        format: "zip",
+        skill_name: name,
+      }
+    }
+
+    // Flat .md skill: export as markdown text (backward compat)
     const frontmatter = [
       "---",
       `name: ${skill.name}`,
@@ -121,7 +181,11 @@ export class SkillEngine {
       "---",
     ].join("\n")
 
-    return `${frontmatter}\n\n${skill.content}`
+    return {
+      content: `${frontmatter}\n\n${skill.content}`,
+      format: "markdown",
+      skill_name: name,
+    }
   }
 
   importSkill(content: string): void {
@@ -137,12 +201,69 @@ export class SkillEngine {
     this.refresh()
   }
 
+  importSkillFolder(zipBase64: string): void {
+    const buffer = Buffer.from(zipBase64, "base64")
+    const zip = new AdmZip(buffer)
+
+    // Validate: must contain a SKILL.md at some level
+    const entries = zip.getEntries()
+    const skillMdEntry = entries.find(e => e.entryName.endsWith("SKILL.md") || e.entryName.endsWith("SKILL.md/"))
+    if (!skillMdEntry) {
+      throw new Error("Zip must contain a SKILL.md file")
+    }
+
+    // Determine the skill folder name from the SKILL.md path
+    const skillDirName = skillMdEntry.entryName.replace(/\/?SKILL\.md\/?$/, "")
+    const folderName = path.basename(skillDirName) || skillMdEntry.entryName.replace(".md", "")
+
+    // Extract name from SKILL.md frontmatter for the directory name
+    const raw = zip.readAsText(skillMdEntry.name)
+    const parsed = matter(raw)
+    const skillName = parsed.data.name || folderName
+    const safeName = skillName.replace(/[^a-zA-Z0-9-]/g, "-").toLowerCase()
+
+    const destDir = path.join(this.skillsDir, safeName)
+
+    // Remove existing if present
+    if (fs.existsSync(destDir)) {
+      fs.rmSync(destDir, { recursive: true })
+    }
+
+    fs.mkdirSync(destDir, { recursive: true })
+
+    // Extract all entries
+    for (const entry of entries) {
+      if (entry.isDirectory) continue
+
+      // Compute the relative path within the zip
+      let relativePath = entry.entryName
+      // Strip leading skill directory name if present
+      if (skillDirName && relativePath.startsWith(skillDirName + "/")) {
+        relativePath = relativePath.slice(skillDirName.length + 1)
+      }
+      // Ensure we don't create nested directories
+      if (relativePath.includes("/")) {
+        const subDir = path.dirname(relativePath)
+        fs.mkdirSync(path.join(destDir, subDir), { recursive: true })
+      }
+
+      const outPath = path.join(destDir, relativePath)
+      fs.writeFileSync(outPath, entry.getData())
+    }
+
+    this.refresh()
+  }
+
   deleteSkill(name: string): void {
     const skill = this.get(name)
     if (!skill) throw new Error(`Skill not found: ${name}`)
     if (skill.builtin) throw new Error(`Cannot delete builtin skill: ${name}`)
 
-    fs.unlinkSync(skill.source_file)
+    if (skill.dir) {
+      fs.rmSync(skill.dir, { recursive: true })
+    } else {
+      fs.unlinkSync(skill.source_file)
+    }
     this.refresh()
   }
 }

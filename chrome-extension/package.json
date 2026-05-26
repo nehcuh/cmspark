@@ -6,7 +6,9 @@
   "author": "cmspark",
   "scripts": {
     "dev": "plasmo dev",
-    "build": "plasmo build || (node scripts/generate-icons.mjs && plasmo build)",
+    "postinstall": "node scripts/patch-vfile.mjs",
+    "prebuild": "node scripts/generate-icons.mjs",
+    "build": "plasmo build",
     "package": "plasmo package"
   },
   "dependencies": {

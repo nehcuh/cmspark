@@ -96,6 +96,11 @@ function setupMessageHandlers() {
         sendResponse({ ok: true })
         return true
 
+      case "config.test":
+        wsClient.send({ type: "config.test" })
+        sendResponse({ ok: true })
+        return true
+
       case "config.get":
         wsClient.send({ type: "config.get" })
         // Response will come async through onMessage
@@ -103,14 +108,28 @@ function setupMessageHandlers() {
         return true
 
       case "thread.select":
-      case "thread.create":
+        wsClient.send({ type: "thread.select", thread_id: message.threadId })
+        sendResponse({ ok: true })
+        return true
+
       case "thread.delete":
+        wsClient.send({ type: "thread.delete", thread_id: message.threadId })
+        sendResponse({ ok: true })
+        return true
+
+      case "thread.create":
+        wsClient.send({ type: "thread.create", alias: message.alias || "", id: message.id })
+        sendResponse({ ok: true })
+        return true
+
       case "thread.list":
       case "skill.list":
       case "skill.activate":
       case "skill.deactivate":
       case "skill.export":
       case "skill.import":
+      case "skill.import-folder":
+      case "skill.delete":
       case "history.query":
       case "history.export":
         // Forward to companion

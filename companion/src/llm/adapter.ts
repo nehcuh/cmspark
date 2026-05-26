@@ -23,13 +23,14 @@ interface ChatCreateParams {
   historyStore: HistoryStore
   sendToExtension: (data: any) => void
   executeTool: (toolCallId: string, toolName: string, params: any) => Promise<{ success: boolean; data?: any; error?: string }>
+  signal?: AbortSignal
 }
 
-const MAX_TOOL_CALL_ROUNDS = 20
+const MAX_TOOL_CALL_ROUNDS = 40
 const CONTINUOUS_FAILURE_LIMIT = 5
 
 export async function chatCreate(params: ChatCreateParams) {
-  const { threadId, message, skillIds, config, threadManager, skillEngine, historyStore, sendToExtension, executeTool } = params
+  const { threadId, message, skillIds, config, threadManager, skillEngine, historyStore, sendToExtension, executeTool, signal } = params
 
   // Create user message
   threadManager.addMessage(threadId, { thread_id: threadId, role: "user", content: message })
@@ -50,7 +51,8 @@ CRITICAL RULES:
 3. For create_tab, always pass the full URL parameter.
 4. Use navigate(tabId, url) to change a tab's URL — check list_tabs for existing tabs first.
 5. Before calling screenshot or page tools, ensure the tab is on a real website (not chrome:// or about:blank).
-6. Wait for pages to load before extracting content.`
+6. Wait for pages to load before extracting content.
+7. For reading page content: use get_page_text (preferred, cross-platform) or evaluate. osascript_eval is macOS-only — use ONLY when both get_page_text AND evaluate fail on restricted pages.`
   const skillPrompt = skillEngine.buildSystemPrompt(threadId)
   const systemPrompt = [basePrompt, skillPrompt].filter(Boolean).join("\n\n")
 
@@ -136,7 +138,7 @@ CRITICAL RULES:
         tools,
         tool_choice: "auto",
         stream: true,
-      })
+      }, { signal })
 
       let assistantContent = ""
       let reasoningContent = ""
@@ -299,6 +301,8 @@ CRITICAL RULES:
       messages.push(...toolResults)
 
     } catch (e: any) {
+      if (e.name === "AbortError" || signal?.aborted) throw e
+
       const errorMsg = e.message || String(e)
       const isAuthError = errorMsg.includes("401") || errorMsg.includes("403") || errorMsg.includes("Incorrect API key")
       const isStructuralError = errorMsg.includes("400") && errorMsg.includes("tool")

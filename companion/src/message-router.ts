@@ -2,11 +2,15 @@
 
 import { execSync } from "child_process"
 import os from "os"
+import OpenAI from "openai"
 import type { ThreadManager } from "./threads/thread-manager"
 import type { SkillEngine } from "./skills/skill-engine"
 import type { HistoryStore } from "./history/store"
 import { getConfig, saveConfig } from "./config"
 import { chatCreate } from "./llm/adapter"
+
+// Per-thread abort controllers for cancelling in-flight LLM requests
+const abortControllers = new Map<string, AbortController>()
 
 interface Services {
   threadManager: ThreadManager
@@ -55,35 +59,76 @@ export async function handleMessage(
     }
 
     case "config.test": {
-      // Test LLM connection
-      return { type: "config.testResult", ok: true }
+      const config = getConfig()
+      if (!config.llm.api_key || config.llm.api_key === "sk-placeholder") {
+        return { type: "config.testResult", ok: false, error: "API Key 未配置" }
+      }
+      try {
+        const client = new OpenAI({
+          baseURL: config.llm.base_url,
+          apiKey: config.llm.api_key,
+          timeout: 10000,
+          maxRetries: 0,
+        })
+        await client.models.list()
+        return { type: "config.testResult", ok: true }
+      } catch (e: any) {
+        return { type: "config.testResult", ok: false, error: e.message || String(e) }
+      }
     }
 
     // --- Chat ---
     case "chat.create": {
       if (!session) return { type: "error", error: "No session" }
       const config = getConfig()
-      await chatCreate({
-        threadId: rest.thread_id,
-        message: rest.message,
-        skillIds: rest.skill_ids || [],
-        config: config.llm,
-        threadManager: services.threadManager,
-        skillEngine: services.skillEngine,
-        historyStore: services.historyStore,
-        sendToExtension: session.sendToExtension,
-        executeTool: session.executeTool,
-      })
+
+      // Cancel any existing request for this thread
+      const existing = abortControllers.get(rest.thread_id)
+      if (existing) {
+        existing.abort()
+        abortControllers.delete(rest.thread_id)
+      }
+
+      const controller = new AbortController()
+      abortControllers.set(rest.thread_id, controller)
+
+      try {
+        await chatCreate({
+          threadId: rest.thread_id,
+          message: rest.message,
+          skillIds: rest.skill_ids || [],
+          config: config.llm,
+          threadManager: services.threadManager,
+          skillEngine: services.skillEngine,
+          historyStore: services.historyStore,
+          sendToExtension: session.sendToExtension,
+          executeTool: session.executeTool,
+          signal: controller.signal,
+        })
+      } catch (e: any) {
+        if (e.name === "AbortError" || controller.signal.aborted) {
+          session.sendToExtension({ type: "chat.aborted", thread_id: rest.thread_id })
+        } else {
+          session.sendToExtension({ type: "chat.error", thread_id: rest.thread_id, error: e.message })
+        }
+      } finally {
+        abortControllers.delete(rest.thread_id)
+      }
       return null // chatCreate handles streaming internally
     }
 
-    case "chat.abort":
-      // TODO: abort ongoing LLM requests for thread
+    case "chat.abort": {
+      const controller = abortControllers.get(rest.thread_id)
+      if (controller) {
+        controller.abort()
+        abortControllers.delete(rest.thread_id)
+      }
       return { type: "chat.aborted", thread_id: rest.thread_id }
+    }
 
     // --- Threads ---
     case "thread.create":
-      return { type: "thread.created", thread: threadManager.create(rest.alias) }
+      return { type: "thread.created", thread: threadManager.create(rest.alias, rest.id) }
     case "thread.delete":
       threadManager.delete(rest.thread_id)
       return { type: "thread.deleted", thread_id: rest.thread_id }
@@ -103,7 +148,7 @@ export async function handleMessage(
       skillEngine.deactivate(rest.thread_id, rest.skill_name)
       return { type: "skill.deactivated", skill_name: rest.skill_name }
     case "skill.export":
-      return { type: "skill.exported", content: skillEngine.exportSkill(rest.skill_name) }
+      return { type: "skill.exported", ...skillEngine.exportSkill(rest.skill_name) }
     case "skill.import":
       if (rest.url) {
         // Import from URL — fetch content first
@@ -117,6 +162,11 @@ export async function handleMessage(
         throw new Error("skill.import requires 'content' or 'url'")
       }
       // Refresh and return updated list
+      skillEngine.refresh()
+      return { type: "skill.list", skills: skillEngine.list() }
+    case "skill.import-folder":
+      if (!rest.zip_data) throw new Error("skill.import-folder requires 'zip_data'")
+      skillEngine.importSkillFolder(rest.zip_data)
       skillEngine.refresh()
       return { type: "skill.list", skills: skillEngine.list() }
     case "skill.delete":
@@ -141,13 +191,11 @@ export async function handleMessage(
     case "osascript_eval": {
       const { url: pageUrl, expression: jsExpr } = rest as { url: string; expression: string }
       if (!pageUrl || !jsExpr) {
-        sendMessage({ type: "tool.result", id: message.id, success: false, error: "url and expression required" })
-        break
+        return { type: "tool.result", id: msg.id, success: false, error: "url and expression required" }
       }
       try {
         if (os.platform() !== "darwin") {
-          sendMessage({ type: "tool.result", id: message.id, success: false, error: "osascript_eval is macOS-only. Use get_page_text via tabId instead (cross-platform)." })
-          break
+          return { type: "tool.result", id: msg.id, success: false, error: "osascript_eval is macOS-only. Use get_page_text via tabId instead (cross-platform)." }
         }
         // Escape JS for AppleScript string: backslash + double-quote
         const escapedJs = jsExpr
@@ -158,7 +206,7 @@ export async function handleMessage(
           tell application "Google Chrome"
             repeat with w in windows
               repeat with t in tabs of w
-                if URL of t starts with "${pageUrl}" then
+                if URL of t contains "${pageUrl}" then
                   set resultText to execute t javascript "${escapedJs}"
                   return resultText
                 end if
@@ -172,14 +220,13 @@ export async function handleMessage(
           timeout: 10000,
         }).trim()
         if (output === "TAB_NOT_FOUND") {
-          sendMessage({ type: "tool.result", id: message.id, success: false, error: `Tab with URL "${pageUrl}" not found in Chrome` })
+          return { type: "tool.result", id: msg.id, success: false, error: `Tab with URL "${pageUrl}" not found in Chrome` }
         } else {
-          sendMessage({ type: "tool.result", id: message.id, success: true, data: { result: output } })
+          return { type: "tool.result", id: msg.id, success: true, data: { result: output } }
         }
       } catch (err: any) {
-        sendMessage({ type: "tool.result", id: message.id, success: false, error: `osascript_eval error: ${err.message}` })
+        return { type: "tool.result", id: msg.id, success: false, error: `osascript_eval error: ${err.message}` }
       }
-      break
     }
 
     // --- Original System ---

@@ -1,8 +1,8 @@
 // Chat message list with streaming support
 
+import { Component } from "react"
 import { useAgentStore } from "../store/agentStore"
 import ReactMarkdown from "react-markdown"
-import remarkGfm from "remark-gfm"
 
 export function ChatView() {
   const { state } = useAgentStore()
@@ -27,9 +27,8 @@ export function ChatView() {
                   <span style={styles.toolName}>{tc.tool_name}</span>
                 </div>
                 {tc.result && (
-                  <pre style={styles.toolResult}>
-                    <pre style={{...markdownStyles.codeBlock, maxHeight: 120, overflow: "auto"}}>
-                      <code>{JSON.stringify(tc.result, null, 2).substring(0, 1000)}{JSON.stringify(tc.result).length > 1000 ? " ..." : ""}</code>
+                  <pre style={{...styles.toolResult, ...markdownStyles.codeBlock, maxHeight: 120, overflow: "auto"}}>
+                    <code>{JSON.stringify(tc.result, null, 2).substring(0, 1000)}{JSON.stringify(tc.result).length > 1000 ? " ..." : ""}</code>
                   </pre>
                 )}
               </div>
@@ -57,36 +56,57 @@ function Cursor() {
   }} />
 }
 
-// Markdown renderer component
-function MarkdownRenderer({ content }: { content: string }) {
-  return (
-    <div className="markdown-body">
-      <style>{markdownCSS}</style>
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        components={{
-          code({ className, children, ...props }: any) {
-            const isBlock = className || String(children).includes("\n")
-            if (isBlock) {
-              return (
-                <pre style={markdownStyles.codeBlock}>
-                  <code className={className} {...props}>
-                    {children}
-                  </code>
-                </pre>
-              )
-            }
-            return <code style={markdownStyles.inlineCode} {...props}>{children}</code>
-          },
-          img({ src, alt }: any) {
-            return <span style={markdownStyles.image}>[Image: {alt || src}]</span>
-          },
-        }}
-      >
-        {content}
-      </ReactMarkdown>
-    </div>
-  )
+// Markdown renderer with internal error fallback — catches parser crashes
+class MarkdownRenderer extends Component<{ content: string }> {
+  state = { error: false }
+
+  static getDerivedStateFromError() {
+    return { error: true }
+  }
+
+  render() {
+    if (this.state.error) {
+      return <div style={{ whiteSpace: "pre-wrap", lineHeight: 1.5 }}>{this.props.content}</div>
+    }
+    if (!this.props.content) return null
+
+    return (
+      <div className="markdown-body">
+        <style>{markdownCSS}</style>
+        <ReactMarkdown
+          components={{
+            code({ className, children, ...props }: any) {
+              const isBlock = className || String(children).includes("\n")
+              if (isBlock) {
+                return (
+                  <pre style={markdownStyles.codeBlock}>
+                    <code className={className} {...props}>
+                      {children}
+                    </code>
+                  </pre>
+                )
+              }
+              return <code style={markdownStyles.inlineCode} {...props}>{children}</code>
+            },
+            img({ src, alt }: any) {
+              return <span style={markdownStyles.image}>[Image: {alt || src}]</span>
+            },
+            table({ children }: any) {
+              return <table style={markdownStyles.table}>{children}</table>
+            },
+            th({ children }: any) {
+              return <th style={{ border: "1px solid #ddd", padding: "4px 8px", textAlign: "left", background: "#f5f5f5", fontWeight: 600, fontSize: 12 }}>{children}</th>
+            },
+            td({ children }: any) {
+              return <td style={{ border: "1px solid #ddd", padding: "4px 8px", fontSize: 12 }}>{children}</td>
+            },
+          }}
+        >
+          {this.props.content}
+        </ReactMarkdown>
+      </div>
+    )
+  }
 }
 
 const markdownCSS = `
@@ -148,6 +168,12 @@ const markdownStyles: Record<string, React.CSSProperties> = {
   image: {
     color: "#999",
     fontStyle: "italic",
+  },
+  table: {
+    borderCollapse: "collapse" as const,
+    width: "100%",
+    margin: "6px 0",
+    fontSize: 12,
   },
 }
 
