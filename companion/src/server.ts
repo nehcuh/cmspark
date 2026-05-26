@@ -11,6 +11,7 @@ import { SkillEngine } from "./skills/skill-engine"
 import { HistoryStore } from "./history/store"
 import { checkHighRiskExecution, highRiskExecutionDeniedError, isTrustedDomain } from "./security"
 import { SecurityConfirmationManager } from "./security-confirmation"
+import { logger, type LogLevel } from "./logger"
 
 const PORT = 23401
 const TOOL_EXECUTION_TIMEOUT_MS = 15000
@@ -40,6 +41,53 @@ const pendingToolCalls = new Map<string, {
 }>()
 
 const securityConfirmations = new SecurityConfirmationManager()
+const LOG_LEVELS = new Set<LogLevel>(["debug", "info", "warn", "error"])
+
+function safeLogLevel(level: unknown): LogLevel {
+  return typeof level === "string" && LOG_LEVELS.has(level as LogLevel) ? level as LogLevel : "info"
+}
+
+function summarizeMessage(msg: any): Record<string, unknown> {
+  const summary: Record<string, unknown> = { type: msg?.type || "unknown" }
+  if (msg?.thread_id !== undefined) summary.thread_id = msg.thread_id
+  if (msg?.threadId !== undefined) summary.thread_id = msg.threadId
+  if (msg?.tool_name !== undefined) summary.tool_name = msg.tool_name
+  if (msg?.tool_call_id !== undefined) summary.tool_call_id = msg.tool_call_id
+  if (Array.isArray(msg?.skill_ids)) summary.skill_count = msg.skill_ids.length
+  return summary
+}
+
+function summarizeToolParams(params: any): Record<string, unknown> {
+  const safeParams = params || {}
+  const summary: Record<string, unknown> = {
+    keys: Object.keys(safeParams),
+  }
+  for (const key of ["tabId", "url", "domain", "selector", "threadId", "thread_id"]) {
+    if (safeParams[key] !== undefined) summary[key] = safeParams[key]
+  }
+  if (safeParams.code !== undefined) summary.code_length = String(safeParams.code).length
+  if (safeParams.expression !== undefined) summary.expression_length = String(safeParams.expression).length
+  return summary
+}
+
+function summarizeToolResult(result: any): Record<string, unknown> {
+  const data = result?.data
+  return {
+    success: result?.success === true,
+    error: result?.error,
+    data_keys: data && typeof data === "object" && !Array.isArray(data) ? Object.keys(data).slice(0, 20) : undefined,
+  }
+}
+
+function logToolFinish(toolCallId: string, toolName: string, startedAt: number, result: any) {
+  const level = result?.success === true ? "info" : "warn"
+  logger.log(level, "tool.finish", {
+    tool_call_id: toolCallId,
+    tool_name: toolName,
+    duration_ms: Date.now() - startedAt,
+    ...summarizeToolResult(result),
+  })
+}
 
 function initServices() {
   threadManager = new ThreadManager()
@@ -50,6 +98,12 @@ function initServices() {
 function createToolExecutor(ws: WebSocket) {
   return async (toolCallId: string, toolName: string, params: any): Promise<{ success: boolean; data?: any; error?: string }> => {
     let finalParams = params || {}
+    const startedAt = Date.now()
+    logger.info("tool.start", {
+      tool_call_id: toolCallId,
+      tool_name: toolName,
+      params: summarizeToolParams(finalParams),
+    })
 
     // Security Pre-flight Checks (P0 - Cookie Trust Domains Gate)
     const COOKIE_TOOLS = ["get_cookies", "set_cookie", "delete_cookie", "list_all_cookies"]
@@ -79,10 +133,13 @@ function createToolExecutor(ws: WebSocket) {
       }
 
       if (!isSafe) {
-        return {
+        const result = {
           success: false,
           error: `Security Block: Access to cookie for domain "${targetDomain || "unknown"}" is blocked. This domain is not in the trusted_domains list. Please configure trusted domains in settings.`,
         }
+        logger.warn("security.cookie_blocked", { tool_call_id: toolCallId, tool_name: toolName, target_domain: targetDomain || "unknown" })
+        logToolFinish(toolCallId, toolName, startedAt, result)
+        return result
       }
     }
 
@@ -91,12 +148,19 @@ function createToolExecutor(ws: WebSocket) {
       const safety = checkHighRiskExecution(toolName, code)
       if (safety.blocked) {
         if (ws.readyState !== WebSocket.OPEN) {
-          return {
+          const result = {
             success: false,
             error: highRiskExecutionDeniedError(toolName, safety.dangerousApis, "unavailable"),
             data: { dangerous_apis_found: safety.dangerousApis },
           }
+          logToolFinish(toolCallId, toolName, startedAt, result)
+          return result
         }
+        logger.warn("security.confirmation.requested", {
+          tool_call_id: toolCallId,
+          tool_name: toolName,
+          dangerous_apis: safety.dangerousApis,
+        })
         const decision = await securityConfirmations.request(
           (data) => {
             if (ws.readyState === WebSocket.OPEN) {
@@ -107,12 +171,21 @@ function createToolExecutor(ws: WebSocket) {
         )
         if (!decision.approved) {
           const reason = decision.reason === "approved" ? "unavailable" : decision.reason
-          return {
+          const result = {
             success: false,
             error: highRiskExecutionDeniedError(toolName, safety.dangerousApis, reason),
             data: { dangerous_apis_found: safety.dangerousApis },
           }
+          logger.warn("security.confirmation.denied", {
+            tool_call_id: toolCallId,
+            tool_name: toolName,
+            reason,
+            dangerous_apis: safety.dangerousApis,
+          })
+          logToolFinish(toolCallId, toolName, startedAt, result)
+          return result
         }
+        logger.info("security.confirmation.approved", { tool_call_id: toolCallId, tool_name: toolName })
         finalParams = { ...finalParams, security_confirmed: true }
       }
     }
@@ -121,32 +194,53 @@ function createToolExecutor(ws: WebSocket) {
     const COMPANION_TOOLS = ["osascript_eval"]
     if (COMPANION_TOOLS.includes(toolName)) {
       try {
-        return await executeCompanionTool(toolName, finalParams)
+        const result = await executeCompanionTool(toolName, finalParams)
+        logToolFinish(toolCallId, toolName, startedAt, result)
+        return result
       } catch (err: any) {
-        return { success: false, error: err.message }
+        const result = { success: false, error: err.message }
+        logger.error("tool.exception", { tool_call_id: toolCallId, tool_name: toolName, error: err.message || String(err) })
+        logToolFinish(toolCallId, toolName, startedAt, result)
+        return result
       }
     }
 
     // Send tool execution command to extension
     return new Promise((resolve, reject) => {
+      const finishAndResolve = (result: any) => {
+        logToolFinish(toolCallId, toolName, startedAt, result)
+        resolve(result)
+      }
       const timer = setTimeout(() => {
         pendingToolCalls.delete(toolCallId)
-        resolve({ success: false, error: `Tool execution timeout (${TOOL_EXECUTION_TIMEOUT_MS}ms): ${toolName}` })
+        const result = { success: false, error: `Tool execution timeout (${TOOL_EXECUTION_TIMEOUT_MS}ms): ${toolName}` }
+        logger.warn("tool.timeout", { tool_call_id: toolCallId, tool_name: toolName, timeout_ms: TOOL_EXECUTION_TIMEOUT_MS })
+        finishAndResolve(result)
       }, TOOL_EXECUTION_TIMEOUT_MS)
 
-      pendingToolCalls.set(toolCallId, { resolve, reject, timer })
+      pendingToolCalls.set(toolCallId, { resolve: finishAndResolve, reject, timer })
 
       if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({
-          type: "tool.execute",
-          tool_call_id: toolCallId,
-          tool_name: toolName,
-          params: finalParams,
-        }))
+        try {
+          ws.send(JSON.stringify({
+            type: "tool.execute",
+            tool_call_id: toolCallId,
+            tool_name: toolName,
+            params: finalParams,
+          }))
+        } catch (err: any) {
+          clearTimeout(timer)
+          pendingToolCalls.delete(toolCallId)
+          const result = { success: false, error: `WebSocket send failed: ${err.message || String(err)}` }
+          logger.error("tool.dispatch_failed", { tool_call_id: toolCallId, tool_name: toolName, error: err.message || String(err) })
+          finishAndResolve(result)
+        }
       } else {
         clearTimeout(timer)
         pendingToolCalls.delete(toolCallId)
-        resolve({ success: false, error: "WebSocket not connected" })
+        const result = { success: false, error: "WebSocket not connected" }
+        logger.warn("tool.dispatch_failed", { tool_call_id: toolCallId, tool_name: toolName, error: result.error })
+        finishAndResolve(result)
       }
     })
   }
@@ -220,12 +314,18 @@ async function executeCompanionTool(toolName: string, params: any): Promise<any>
 export async function startServer() {
   const config = getConfig()
   const port = config.port || PORT
+  logger.info("server.start", {
+    port,
+    model_name: config.llm.model_name,
+    base_url: config.llm.base_url,
+  })
 
   // Warn if no API key configured
   if (!config.llm.api_key || config.llm.api_key === "sk-placeholder") {
     console.warn("[cmspark-agent] ⚠️  No API key configured!")
     console.warn("[cmspark-agent]    Set DEEPSEEK_API_KEY environment variable or configure in the extension settings.")
     console.warn("[cmspark-agent]    Example: DEEPSEEK_API_KEY=sk-xxx npm start")
+    logger.warn("config.api_key_missing")
   } else {
     const masked = config.llm.api_key.slice(0, 5) + "***" + config.llm.api_key.slice(-4)
     console.log(`[cmspark-agent] Using API key: ${masked}`)
@@ -236,6 +336,7 @@ export async function startServer() {
 
   wss.on("listening", () => {
     console.log(`[cmspark-agent] Companion started on ws://127.0.0.1:${port}`)
+    logger.info("server.listening", { port })
   })
 
   wss.on("connection", (ws) => {
@@ -244,6 +345,7 @@ export async function startServer() {
     }
     clients.add(ws)
     console.log(`[cmspark-agent] Client connected (${clients.size} total)`)
+    logger.info("ws.client_connected", { clients: clients.size })
 
     const executeTool = createToolExecutor(ws)
 
@@ -257,6 +359,9 @@ export async function startServer() {
     ws.on("message", async (raw) => {
       try {
         const msg = JSON.parse(raw.toString())
+        if (msg.type !== "system.ping") {
+          logger.debug("ws.message.received", summarizeMessage(msg))
+        }
 
         // Intercept tool.result — these resolve pending promises
         if (msg.type === "tool.result") {
@@ -266,6 +371,13 @@ export async function startServer() {
 
         if (msg.type === "security.confirmation.response") {
           securityConfirmations.respond(String(msg.confirmation_id || ""), msg.approved === true)
+          return
+        }
+
+        if (msg.type === "log.event") {
+          const eventName = typeof msg.event === "string" && msg.event ? msg.event : "extension.event"
+          const source = typeof msg.source === "string" && msg.source ? msg.source : "extension"
+          logger.log(safeLogLevel(msg.level), eventName, msg.data && typeof msg.data === "object" ? msg.data : {}, source)
           return
         }
 
@@ -286,6 +398,7 @@ export async function startServer() {
           ws.send(JSON.stringify(response))
         }
       } catch (e: any) {
+        logger.error("ws.message_error", { error: e.message || String(e) })
         if (ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: "error", error: e.message }))
         }
@@ -298,11 +411,13 @@ export async function startServer() {
       // Clean up pending tool calls for this connection
       for (const [id, pending] of pendingToolCalls) {
         clearTimeout(pending.timer)
+        logger.warn("tool.connection_closed", { tool_call_id: id })
         pending.resolve({ success: false, error: "WebSocket disconnected" })
       }
       pendingToolCalls.clear()
       securityConfirmations.rejectAll("disconnect")
       console.log(`[cmspark-agent] Client disconnected (${clients.size} remaining)`)
+      logger.info("ws.client_disconnected", { clients: clients.size })
     })
 
     ws.on("pong", () => {
@@ -315,15 +430,18 @@ export async function startServer() {
 
   wss.on("error", (err) => {
     console.error("[cmspark-agent] Server error:", err)
+    logger.error("server.error", { error: err })
   })
 
   // Graceful shutdown
   process.on("SIGINT", () => {
     console.log("\n[cmspark-agent] Shutting down...")
+    logger.info("server.shutdown", { signal: "SIGINT" })
     wss.close()
     process.exit(0)
   })
   process.on("SIGTERM", () => {
+    logger.info("server.shutdown", { signal: "SIGTERM" })
     wss.close()
     process.exit(0)
   })

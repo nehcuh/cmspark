@@ -1,7 +1,7 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import { agentReducer, initialState, type AgentState } from "../src/sidepanel/store/agentStore"
-import { normalizeConfig } from "../src/sidepanel/hooks/useWebSocket"
+import { normalizeConfig, requestInitialSidePanelData } from "../src/sidepanel/hooks/useWebSocket"
 
 function stateWithThreads(): AgentState {
   return {
@@ -83,4 +83,16 @@ test("security confirmation requests are queued and removable", () => {
 
   const removed = agentReducer(queued, { type: "REMOVE_SECURITY_CONFIRMATION", confirmationId: "confirm-1" })
   assert.equal(removed.pendingSecurityConfirmations.length, 0)
+})
+
+test("initial side panel sync requests threads and skills exactly once per connection", () => {
+  const sent: object[] = []
+  const initializedRef = { current: false }
+
+  assert.equal(requestInitialSidePanelData((message) => sent.push(message), initializedRef), true)
+  assert.deepEqual(sent, [{ type: "thread.list" }, { type: "skill.list" }])
+  assert.equal(initializedRef.current, true)
+
+  assert.equal(requestInitialSidePanelData((message) => sent.push(message), initializedRef), false)
+  assert.deepEqual(sent, [{ type: "thread.list" }, { type: "skill.list" }])
 })

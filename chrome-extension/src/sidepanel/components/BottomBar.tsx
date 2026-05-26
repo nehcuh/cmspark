@@ -37,6 +37,9 @@ export function BottomBar() {
             if (tab.id === "history") {
               chrome.runtime.sendMessage({ type: "history.query", limit: 50, thread_id: state.activeThreadId })
             }
+            if (tab.id === "skills") {
+              chrome.runtime.sendMessage({ type: "skill.list" })
+            }
           }}
           >
             {tab.icon} {tab.label}

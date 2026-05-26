@@ -11,6 +11,17 @@ function generateShortId(): string {
   return id
 }
 
+export function requestInitialSidePanelData(
+  sendMessage: (message: object) => void,
+  initializedRef: { current: boolean },
+): boolean {
+  if (initializedRef.current) return false
+  initializedRef.current = true
+  sendMessage({ type: "thread.list" })
+  sendMessage({ type: "skill.list" })
+  return true
+}
+
 export function normalizeConfig(config: any): Partial<LLMConfig> {
   if (!config) return {}
   const llm = config.llm || config
@@ -39,6 +50,9 @@ export function useWebSocket() {
   activeThreadRef.current = state.activeThreadId
 
   useEffect(() => {
+    const requestInitialData = () => requestInitialSidePanelData((message) => {
+      chrome.runtime.sendMessage(message)
+    }, initializedRef)
     // Restore send shortcut preference
     chrome.storage.local.get("sendShortcut", (result) => {
       if (result.sendShortcut) {
@@ -194,12 +208,7 @@ export function useWebSocket() {
 
         case "connected": {
           dispatch({ type: "SET_CONNECTION", state: "connected" })
-          // Request initial data if first connect
-          if (!initializedRef.current) {
-            initializedRef.current = true
-            chrome.runtime.sendMessage({ type: "thread.list" })
-            chrome.runtime.sendMessage({ type: "skill.list" })
-          }
+          requestInitialData()
           break
         }
       }
@@ -212,6 +221,11 @@ export function useWebSocket() {
         if (chrome.runtime.lastError) return
         if (response) {
           dispatch({ type: "SET_CONNECTION", state: response.connectionState })
+          if (response.connectionState === "connected") {
+            requestInitialData()
+          } else {
+            initializedRef.current = false
+          }
         }
       })
     }

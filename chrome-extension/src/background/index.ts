@@ -8,6 +8,17 @@ import { KeepAlive } from "./keep-alive"
 let wsClient: WSClient
 let browserBridge: BrowserBridge
 let keepAlive: KeepAlive
+type LogLevel = "debug" | "info" | "warn" | "error"
+
+function logToCompanion(level: LogLevel, event: string, data: Record<string, unknown> = {}) {
+  try {
+    if (wsClient?.getState() === "connected") {
+      wsClient.send({ type: "log.event", source: "extension", level, event, data })
+    }
+  } catch {
+    // Logging must never affect extension behavior.
+  }
+}
 
 function init() {
   browserBridge = new BrowserBridge()
@@ -35,31 +46,48 @@ function updateBadge(state: "connected" | "connecting" | "disconnected") {
   const c = config[state]
   chrome.action.setBadgeText({ text: c.text })
   chrome.action.setBadgeBackgroundColor({ color: c.color })
+  logToCompanion(state === "disconnected" ? "warn" : "info", "extension.ws_state_changed", { state })
 }
 
 // --- Companion message routing ---
 
 async function handleCompanionMessage(msg: any) {
   if (msg.type === "tool.execute") {
+    const toolMeta = {
+      tool_call_id: msg.tool_call_id,
+      tool_name: msg.tool_name,
+    }
+    logToCompanion("info", "extension.tool.start", toolMeta)
     try {
       const result = await browserBridge.execute(msg.tool_name, msg.params)
+      logToCompanion(result?.success === true ? "info" : "warn", "extension.tool.finish", {
+        ...toolMeta,
+        success: result?.success === true,
+        error: result?.error,
+      })
       wsClient.send({
         type: "tool.result",
         tool_call_id: msg.tool_call_id,
         result,
       })
     } catch (e: any) {
+      const error = e.message || String(e)
+      logToCompanion("error", "extension.tool.exception", { ...toolMeta, error })
       wsClient.send({
         type: "tool.result",
         tool_call_id: msg.tool_call_id,
-        error: { message: e.message || String(e) },
+        error: { message: error },
       })
     }
     return
   }
 
   // Forward streaming tokens and other messages to side panel
-  chrome.runtime.sendMessage(msg).catch(() => {
+  chrome.runtime.sendMessage(msg).catch((e: any) => {
+    logToCompanion("debug", "extension.sidepanel_forward_failed", {
+      message_type: msg?.type || "unknown",
+      error: e?.message || String(e),
+    })
     // side panel may not be open — that's fine
   })
 }

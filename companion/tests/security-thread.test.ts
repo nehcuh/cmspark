@@ -17,6 +17,9 @@ let classifyError: typeof import("../src/security").classifyError
 let handleMessage: typeof import("../src/message-router").handleMessage
 let createToolResultMessage: typeof import("../src/llm/adapter").createToolResultMessage
 let SecurityConfirmationManager: typeof import("../src/security-confirmation").SecurityConfirmationManager
+let redactLogData: typeof import("../src/logger").redactLogData
+let logEvent: typeof import("../src/logger").logEvent
+let getLogFilePath: typeof import("../src/logger").getLogFilePath
 
 before(async () => {
   process.env.HOME = tempHome
@@ -28,6 +31,7 @@ before(async () => {
   const messageRouter = await import("../src/message-router")
   const adapter = await import("../src/llm/adapter")
   const securityConfirmation = await import("../src/security-confirmation")
+  const logger = await import("../src/logger")
 
   initDataDir = config.initDataDir
   getConfig = config.getConfig
@@ -40,6 +44,9 @@ before(async () => {
   handleMessage = messageRouter.handleMessage
   createToolResultMessage = adapter.createToolResultMessage
   SecurityConfirmationManager = securityConfirmation.SecurityConfirmationManager
+  redactLogData = logger.redactLogData
+  logEvent = logger.logEvent
+  getLogFilePath = logger.getLogFilePath
 
   await initDataDir()
 })
@@ -171,6 +178,49 @@ test("security block errors are classified as security stops", () => {
 test("script injection failures are recoverable so the agent can try fallback tools", () => {
   assert.equal(classifyError("Script injection failed in both ISOLATED and MAIN worlds", { toolName: "get_page_html" }), "recoverable")
   assert.equal(classifyError("Script injection failed in both ISOLATED and MAIN worlds; DOM fallback failed: Debugger attach failed", { toolName: "get_page_html" }), "recoverable")
+})
+
+test("logger redacts sensitive keys recursively", () => {
+  const redacted = redactLogData({
+    api_key: "sk-secret",
+    headers: {
+      authorization: "Bearer token",
+      cookie: "sid=123",
+      safe: "value",
+    },
+    nested: [
+      {
+        password: "pw",
+        access_token: "token",
+        ok: true,
+      },
+    ],
+  }) as any
+
+  assert.equal(redacted.api_key, "[REDACTED]")
+  assert.equal(redacted.headers.authorization, "[REDACTED]")
+  assert.equal(redacted.headers.cookie, "[REDACTED]")
+  assert.equal(redacted.headers.safe, "value")
+  assert.equal(redacted.nested[0].password, "[REDACTED]")
+  assert.equal(redacted.nested[0].access_token, "[REDACTED]")
+  assert.equal(redacted.nested[0].ok, true)
+})
+
+test("logger writes redacted JSONL entries under logs directory", () => {
+  const now = new Date("2026-01-02T03:04:05.000Z")
+  const filePath = getLogFilePath(now)
+  fs.rmSync(path.dirname(filePath), { recursive: true, force: true })
+
+  logEvent("info", "test.event", { api_key: "sk-secret", count: 1 }, "test", now)
+
+  const [line] = fs.readFileSync(filePath, "utf-8").trim().split("\n")
+  const entry = JSON.parse(line)
+  assert.equal(entry.ts, "2026-01-02T03:04:05.000Z")
+  assert.equal(entry.level, "info")
+  assert.equal(entry.source, "test")
+  assert.equal(entry.event, "test.event")
+  assert.equal(entry.data.api_key, "[REDACTED]")
+  assert.equal(entry.data.count, 1)
 })
 
 test("security confirmation manager resolves approval and denial responses", async () => {
