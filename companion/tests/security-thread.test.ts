@@ -168,6 +168,11 @@ test("security block errors are classified as security stops", () => {
   assert.equal(classifyError("Security Block: evaluate contains high-risk APIs (fetch(). User denied execution."), "security")
 })
 
+test("script injection failures are recoverable so the agent can try fallback tools", () => {
+  assert.equal(classifyError("Script injection failed in both ISOLATED and MAIN worlds", { toolName: "get_page_html" }), "recoverable")
+  assert.equal(classifyError("Script injection failed in both ISOLATED and MAIN worlds; DOM fallback failed: Debugger attach failed", { toolName: "get_page_html" }), "recoverable")
+})
+
 test("security confirmation manager resolves approval and denial responses", async () => {
   const sent: any[] = []
   const manager = new SecurityConfirmationManager(1000)

@@ -157,6 +157,32 @@ export class BrowserBridge {
     return chrome.debugger.sendCommand({ tabId }, method, params)
   }
 
+  private async getOuterHTMLViaDom(tabId: number, selector?: string): Promise<string> {
+    await this.ensureAttached(tabId)
+    try {
+      await chrome.debugger.sendCommand({ tabId }, "DOM.enable")
+    } catch { /* ignore */ }
+
+    const { root } = await chrome.debugger.sendCommand({ tabId }, "DOM.getDocument", {
+      depth: -1,
+      pierce: true,
+    })
+    if (!root?.nodeId) throw new Error("Could not retrieve DOM root")
+
+    let nodeId = root.nodeId
+    if (selector) {
+      const result = await chrome.debugger.sendCommand({ tabId }, "DOM.querySelector", {
+        nodeId: root.nodeId,
+        selector,
+      })
+      if (!result.nodeId) throw new Error(`Element not found: ${selector}`)
+      nodeId = result.nodeId
+    }
+
+    const { outerHTML } = await chrome.debugger.sendCommand({ tabId }, "DOM.getOuterHTML", { nodeId })
+    return String(outerHTML || "").substring(0, 500000)
+  }
+
   // Execute JS via chrome.scripting. ISOLATED world first (CSP-safe),
   // then MAIN world if ISOLATED had injection errors (some SPAs block ISOLATED).
   private async scriptingExecute(tabId: number, code: string): Promise<any> {
@@ -358,10 +384,21 @@ export class BrowserBridge {
     const tabId = this.getTabId(params)
     const selector = params.selector ? `.querySelector('${params.selector}')` : ""
     const expression = `document.querySelector('html')${selector}?.outerHTML?.substring(0, 500000) || ''`
-    const result = await this.safeEvaluate(tabId, expression)
-    const html = result.result?.value || ""
+    let html = ""
+    let source: "runtime" | "dom" = "runtime"
+    try {
+      const result = await this.safeEvaluate(tabId, expression)
+      html = result.result?.value || ""
+    } catch (err: any) {
+      try {
+        html = await this.getOuterHTMLViaDom(tabId, params.selector)
+        source = "dom"
+      } catch (domErr: any) {
+        throw new Error(`${err.message || String(err)}; DOM fallback failed: ${domErr.message || String(domErr)}`)
+      }
+    }
     const truncated = html.length >= 500000
-    return { success: true, data: { html, truncated, length: html.length } }
+    return { success: true, data: { html, truncated, length: html.length, source } }
   }
 
   private async getElementInfo(params: Record<string, any>): Promise<ToolResult> {
