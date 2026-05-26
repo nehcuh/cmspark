@@ -1,8 +1,9 @@
 // Chat message list with streaming support
 
-import { Component } from "react"
+import { Component, useState } from "react"
 import { useAgentStore } from "../store/agentStore"
 import ReactMarkdown from "react-markdown"
+import remarkGfm from "remark-gfm"
 
 export function ChatView() {
   const { state } = useAgentStore()
@@ -13,33 +14,52 @@ export function ChatView() {
       {messages.length === 0 && !streamingContent && (
         <div style={styles.empty}>输入指令开始与 CMspark Agent 对话</div>
       )}
-      {messages.map(msg => (
-        <div key={msg.id} style={msg.role === "user" ? styles.userMsg : styles.agentMsg}>
-          <div style={msg.role === "user" ? styles.userBubble : styles.agentBubble}>
-            <MarkdownRenderer content={msg.content} />
-            {msg.tool_calls?.map(tc => (
-              <div key={tc.id} style={{
-                ...styles.toolCard,
-                borderColor: tc.status === "error" ? "#F44336" : tc.status === "success" ? "#4CAF50" : "#ddd",
-              }}>
-                <div style={styles.toolHeader}>
-                  <span>{tc.status === "running" ? "⏳" : tc.status === "success" ? "✅" : tc.status === "error" ? "❌" : "⏸"}</span>
-                  <span style={styles.toolName}>{tc.tool_name}</span>
-                </div>
-                {tc.result && (
-                  <pre style={{...styles.toolResult, ...markdownStyles.codeBlock, maxHeight: 120, overflow: "auto"}}>
-                    <code>{JSON.stringify(tc.result, null, 2).substring(0, 1000)}{JSON.stringify(tc.result).length > 1000 ? " ..." : ""}</code>
-                  </pre>
-                )}
-              </div>
-            ))}
+      {messages.map(msg => {
+        const isTool = msg.role === "tool"
+        return (
+          <div key={msg.id} style={msg.role === "user" ? styles.userMsg : styles.agentMsg}>
+            <div style={msg.role === "user" ? styles.userBubble : styles.agentBubble}>
+              {/* Tool messages: skip raw JSON content, only show tool card */}
+              {!isTool && <MarkdownRenderer content={msg.content} />}
+              {msg.tool_calls?.map(tc => (
+                <ToolCallCard key={tc.id} tc={tc} />
+              ))}
+            </div>
           </div>
-        </div>
-      ))}
+        )
+      })}
       {streamingContent && (
         <div style={styles.agentMsg}>
           <div style={styles.agentBubble}>{streamingContent}<Cursor /></div>
         </div>
+      )}
+    </div>
+  )
+}
+
+function ToolCallCard({ tc }: { tc: any }) {
+  const [expanded, setExpanded] = useState(false)
+  const hasResult = tc.result && !tc.error
+  const resultStr = hasResult ? JSON.stringify(tc.result, null, 2) : ""
+  const previewLen = 200
+
+  return (
+    <div style={{
+      ...styles.toolCard,
+      borderColor: tc.status === "error" ? "#F44336" : tc.status === "success" ? "#4CAF50" : "#ddd",
+      cursor: hasResult && resultStr.length > previewLen ? "pointer" : "default",
+    }} onClick={() => { if (hasResult && resultStr.length > previewLen) setExpanded(!expanded) }}>
+      <div style={styles.toolHeader}>
+        <span>{tc.status === "running" ? "⏳" : tc.status === "success" ? "✅" : tc.status === "error" ? "❌" : "⏸"}</span>
+        <span style={styles.toolName}>{tc.tool_name}</span>
+        {hasResult && resultStr.length > previewLen && (
+          <span style={{ marginLeft: "auto", fontSize: 10, color: "#999" }}>{expanded ? "收起 ▲" : "展开 ▼"}</span>
+        )}
+      </div>
+      {hasResult && (
+        <pre style={{...styles.toolResult, ...markdownStyles.codeBlock, maxHeight: expanded ? 300 : 80, overflow: "auto"}}>
+          <code>{expanded ? resultStr : resultStr.substring(0, previewLen) + (resultStr.length > previewLen ? " ..." : "")}</code>
+        </pre>
       )}
     </div>
   )
@@ -58,10 +78,17 @@ function Cursor() {
 
 // Markdown renderer with internal error fallback — catches parser crashes
 class MarkdownRenderer extends Component<{ content: string }> {
-  state = { error: false }
+  state = { error: false, lastContent: "" }
 
   static getDerivedStateFromError() {
     return { error: true }
+  }
+
+  static getDerivedStateFromProps(props: { content: string }, state: { error: boolean; lastContent: string }) {
+    if (state.error && props.content !== state.lastContent) {
+      return { error: false, lastContent: props.content }
+    }
+    return { lastContent: props.content }
   }
 
   render() {
@@ -74,6 +101,7 @@ class MarkdownRenderer extends Component<{ content: string }> {
       <div className="markdown-body">
         <style>{markdownCSS}</style>
         <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
           components={{
             code({ className, children, ...props }: any) {
               const isBlock = className || String(children).includes("\n")
