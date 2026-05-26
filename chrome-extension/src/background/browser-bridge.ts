@@ -6,8 +6,34 @@ interface ToolResult {
   error?: string
 }
 
+const DANGEROUS_APIS = [
+  "fetch(",
+  "XMLHttpRequest",
+  "localStorage",
+  "sessionStorage",
+  "document.cookie",
+  "window.open",
+  "navigator.sendBeacon",
+  "WebSocket",
+  "EventSource",
+  "indexedDB",
+]
+
+function detectDangerousApis(code: string): string[] {
+  return DANGEROUS_APIS.filter(api => code.includes(api))
+}
+
 export class BrowserBridge {
   private attachedTabs: Set<number> = new Set()
+
+  constructor() {
+    chrome.debugger.onDetach.addListener((source) => {
+      if (source.tabId) {
+        this.attachedTabs.delete(source.tabId)
+        console.log(`[BrowserBridge] Tab ${source.tabId} detached externally from debugger.`)
+      }
+    })
+  }
 
   getConfig() {
     return {
@@ -365,17 +391,27 @@ export class BrowserBridge {
     const tabId = this.getTabId(params)
     try {
       const coords = await this.getElementCenter(tabId, params.selector)
+      // Hover/Move mouse first to trigger hover listeners (P2)
       await this.sendCdp(tabId, "Input.dispatchMouseEvent", {
-        type: "mousePressed", x: coords.x, y: coords.y, button: "left", clickCount,
+        type: "mouseMoved", x: coords.x, y: coords.y,
+      })
+      await new Promise(r => setTimeout(r, 50)) // Settle hover
+      await this.sendCdp(tabId, "Input.dispatchMouseEvent", {
+        type: "mousePressed", x: coords.x, y: coords.y, button: "left", buttons: 1, clickCount,
       })
       await this.sendCdp(tabId, "Input.dispatchMouseEvent", {
-        type: "mouseReleased", x: coords.x, y: coords.y, button: "left", clickCount,
+        type: "mouseReleased", x: coords.x, y: coords.y, button: "left", buttons: 0, clickCount,
       })
-    } catch {
+    } catch (err: any) {
       // Fallback: direct DOM click when CDP debugger not available
       if (params.selector) {
-        await this.scriptingExecute(tabId,
-          `(()=>{const el=document.querySelector('${params.selector.replace(/'/g, "\\'")}');if(el){el.focus();el.click();for(let i=1;i<${clickCount};i++)el.click();return true}return false})()`)
+        const found = await this.scriptingExecute(tabId,
+          `(()=>{const el=document.querySelector('${params.selector.replace(/'/g, "\\\\'")}');if(el){el.focus();el.click();for(let i=1;i<${clickCount};i++)el.click();return true}return false})()`)
+        if (!found) {
+          return { success: false, error: `Element not found for selector: ${params.selector}` }
+        }
+      } else {
+        return { success: false, error: `Click failed and no selector provided: ${err.message}` }
       }
     }
     return { success: true }
@@ -489,16 +525,16 @@ export class BrowserBridge {
     const from = await this.getElementCenter(tabId, params.from_selector)
     const to = await this.getElementCenter(tabId, params.to_selector)
 
-    await this.sendCdp(tabId, "Input.dispatchMouseEvent", { type: "mousePressed", x: from.x, y: from.y, button: "left", clickCount: 1 })
+    await this.sendCdp(tabId, "Input.dispatchMouseEvent", { type: "mousePressed", x: from.x, y: from.y, button: "left", buttons: 1, clickCount: 1 })
     // Move in steps for smooth drag
     const steps = 10
     for (let i = 1; i <= steps; i++) {
       const x = from.x + (to.x - from.x) * (i / steps)
       const y = from.y + (to.y - from.y) * (i / steps)
-      await this.sendCdp(tabId, "Input.dispatchMouseEvent", { type: "mouseMoved", x, y, button: "left" })
+      await this.sendCdp(tabId, "Input.dispatchMouseEvent", { type: "mouseMoved", x, y, button: "left", buttons: 1 })
       await new Promise(r => setTimeout(r, 30))
     }
-    await this.sendCdp(tabId, "Input.dispatchMouseEvent", { type: "mouseReleased", x: to.x, y: to.y, button: "left", clickCount: 1 })
+    await this.sendCdp(tabId, "Input.dispatchMouseEvent", { type: "mouseReleased", x: to.x, y: to.y, button: "left", buttons: 0, clickCount: 1 })
     return { success: true }
   }
 
@@ -545,12 +581,14 @@ export class BrowserBridge {
   private async evaluate(params: Record<string, any>): Promise<ToolResult> {
     const tabId = this.getTabId(params)
     if (!params.code) throw new Error("code is required")
-
-    const dangerousApis = [
-      "fetch(", "XMLHttpRequest", "localStorage", "sessionStorage",
-      "document.cookie", "window.open", "navigator.sendBeacon",
-    ]
-    const matches = dangerousApis.filter(api => params.code.includes(api))
+    const matches = detectDangerousApis(params.code)
+    if (matches.length > 0 && params.security_confirmed !== true) {
+      return {
+        success: false,
+        error: `Security Block: evaluate contains high-risk APIs (${matches.join(", ")}). Execution requires user confirmation.`,
+        data: { dangerous_apis_found: matches },
+      }
+    }
 
     const result = await this.safeEvaluate(tabId, params.code)
 
@@ -573,11 +611,25 @@ export class BrowserBridge {
     const tabId = this.getTabId(params)
     if (!params.selector || !params.filePath) throw new Error("selector and filePath are required")
     await this.ensureAttached(tabId)
-    await chrome.debugger.sendCommand({ tabId }, "DOM.setFileInputFiles", {
-      files: [params.filePath],
-      nodeId: 0, // Will need to resolve selector to nodeId in production
-    })
-    return { success: true }
+    try {
+      const { root } = await chrome.debugger.sendCommand({ tabId }, "DOM.getDocument", {})
+      if (!root?.nodeId) throw new Error("Could not retrieve DOM Document root")
+
+      const { nodeId } = await chrome.debugger.sendCommand({ tabId }, "DOM.querySelector", {
+        nodeId: root.nodeId,
+        selector: params.selector,
+      })
+
+      if (!nodeId) throw new Error(`Element not found for selector: ${params.selector}`)
+
+      await chrome.debugger.sendCommand({ tabId }, "DOM.setFileInputFiles", {
+        files: [params.filePath],
+        nodeId: nodeId,
+      })
+      return { success: true }
+    } catch (e: any) {
+      throw new Error(`Upload failed: ${e.message}`)
+    }
   }
 
   private async download(params: Record<string, any>): Promise<ToolResult> {

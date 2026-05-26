@@ -9,7 +9,10 @@ node_modules/
 # Build outputs
 chrome-extension/build/
 chrome-extension/.plasmo/
+chrome-extension/.test-dist/
 companion/dist/
+companion/.test-dist/
+*.tsbuildinfo
 
 # Python
 .venv/

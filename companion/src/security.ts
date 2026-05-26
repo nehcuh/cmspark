@@ -13,6 +13,7 @@ export function isTrustedDomain(domain: string): boolean {
   if (trusted.length === 0) return false
 
   return trusted.some(pattern => {
+    if (pattern === "*") return true
     if (pattern === domain) return true
     if (pattern.startsWith("*.")) {
       const suffix = pattern.slice(1) // ".company.com"
@@ -42,6 +43,33 @@ export function detectDangerousApis(code: string): string[] {
   return DANGEROUS_APIS.filter(api => code.includes(api))
 }
 
+export function checkHighRiskExecution(toolName: string, code: string): { blocked: boolean; dangerousApis: string[]; error?: string } {
+  const dangerousApis = detectDangerousApis(code || "")
+  if (dangerousApis.length === 0) {
+    return { blocked: false, dangerousApis }
+  }
+  return {
+    blocked: true,
+    dangerousApis,
+    error: `Security Block: ${toolName} contains high-risk APIs (${dangerousApis.join(", ")}). Execution requires user confirmation.`,
+  }
+}
+
+export function highRiskExecutionDeniedError(
+  toolName: string,
+  dangerousApis: string[],
+  reason: "denied" | "timeout" | "disconnect" | "unavailable",
+): string {
+  const suffix = reason === "denied"
+    ? "User denied execution."
+    : reason === "timeout"
+      ? "User confirmation timed out."
+      : reason === "disconnect"
+        ? "WebSocket disconnected before confirmation."
+        : "User confirmation is unavailable."
+  return `Security Block: ${toolName} contains high-risk APIs (${dangerousApis.join(", ")}). ${suffix}`
+}
+
 export type ErrorLevel = "recoverable" | "non_recoverable" | "security"
 
 /**
@@ -49,6 +77,10 @@ export type ErrorLevel = "recoverable" | "non_recoverable" | "security"
  */
 export function classifyError(errorMessage: string, context?: { toolName?: string; domain?: string }): ErrorLevel {
   const msg = errorMessage.toLowerCase()
+
+  if (msg.includes("security block")) {
+    return "security"
+  }
 
   // Security: untrusted domain access
   if (context?.domain && !isTrustedDomain(context.domain)) {
@@ -58,7 +90,7 @@ export function classifyError(errorMessage: string, context?: { toolName?: strin
   }
 
   // Security: blocked by user
-  if (msg.includes("blocked by user") || msg.includes("user rejected")) {
+  if (msg.includes("blocked by user") || msg.includes("user rejected") || msg.includes("user denied")) {
     return "security"
   }
 

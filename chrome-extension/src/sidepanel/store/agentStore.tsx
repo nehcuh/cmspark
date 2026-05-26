@@ -1,9 +1,9 @@
 // Global state store for the agent
 
 import { createContext, useContext, useReducer, type ReactNode, type Dispatch } from "react"
-import type { ConnectionState, Thread, Message, SkillMeta, OperationRecord, LLMConfig, SendShortcut } from "../types"
+import type { ConnectionState, Thread, Message, SkillMeta, OperationRecord, LLMConfig, SendShortcut, SecurityConfirmationRequest } from "../types"
 
-interface AgentState {
+export interface AgentState {
   connectionState: ConnectionState
   threads: Thread[]
   activeThreadId: string | null
@@ -18,9 +18,10 @@ interface AgentState {
   streamingContent: string
   testResult: string | null
   sendShortcut: SendShortcut
+  pendingSecurityConfirmations: SecurityConfirmationRequest[]
 }
 
-type AgentAction =
+export type AgentAction =
   | { type: "SET_CONNECTION"; state: ConnectionState }
   | { type: "SET_THREADS"; threads: Thread[] }
   | { type: "SET_ACTIVE_THREAD"; threadId: string }
@@ -36,13 +37,16 @@ type AgentAction =
   | { type: "TOGGLE_SETTINGS" }
   | { type: "SET_TAB_LIST"; tabs: chrome.tabs.Tab[] }
   | { type: "TOGGLE_PIN_TAB"; tabId: number }
+  | { type: "SET_PINNED_TABS"; tabIds: number[] }
   | { type: "ADD_THREAD"; thread: Thread }
   | { type: "UPSERT_THREAD"; thread: Thread }
   | { type: "SET_STREAMING"; content: string }
   | { type: "SET_TEST_RESULT"; result: string | null }
   | { type: "SET_SEND_SHORTCUT"; shortcut: SendShortcut }
+  | { type: "ADD_SECURITY_CONFIRMATION"; request: SecurityConfirmationRequest }
+  | { type: "REMOVE_SECURITY_CONFIRMATION"; confirmationId: string }
 
-const initialState: AgentState = {
+export const initialState: AgentState = {
   connectionState: "disconnected",
   threads: [],
   activeThreadId: null,
@@ -56,6 +60,7 @@ const initialState: AgentState = {
     model_name: "deepseek-v4-pro",
     temperature: 0.7,
     context_window: 128000,
+    trusted_domains: [],
   },
   settingsOpen: false,
   tabList: [],
@@ -63,23 +68,35 @@ const initialState: AgentState = {
   streamingContent: "",
   testResult: null,
   sendShortcut: "Enter",
+  pendingSecurityConfirmations: [],
 }
 
-function agentReducer(state: AgentState, action: AgentAction): AgentState {
+export function agentReducer(state: AgentState, action: AgentAction): AgentState {
   switch (action.type) {
     case "SET_CONNECTION":
       return { ...state, connectionState: action.state }
     case "SET_THREADS": {
       // Auto-select first thread if no active or active thread no longer exists
       const activeExists = action.threads.some(t => t.id === state.activeThreadId)
+      const nextActiveThreadId = activeExists ? state.activeThreadId : (action.threads[0]?.id || null)
+      const nextActiveThread = action.threads.find(t => t.id === nextActiveThreadId)
       return {
         ...state,
         threads: action.threads,
-        activeThreadId: activeExists ? state.activeThreadId : (action.threads[0]?.id || null),
+        activeThreadId: nextActiveThreadId,
+        pinnedTabIds: nextActiveThread?.pinned_tabs || [],
       }
     }
-    case "SET_ACTIVE_THREAD":
-      return { ...state, activeThreadId: action.threadId, messages: [], streamingContent: "" }
+    case "SET_ACTIVE_THREAD": {
+      const activeThread = state.threads.find(t => t.id === action.threadId)
+      return {
+        ...state,
+        activeThreadId: action.threadId,
+        messages: [],
+        streamingContent: "",
+        pinnedTabIds: activeThread?.pinned_tabs || [],
+      }
+    }
     case "ADD_MESSAGE":
       return { ...state, messages: [...state.messages, action.message] }
     case "UPDATE_MESSAGE":
@@ -115,6 +132,14 @@ function agentReducer(state: AgentState, action: AgentAction): AgentState {
           ? state.pinnedTabIds.filter(id => id !== action.tabId)
           : [...state.pinnedTabIds, action.tabId],
       }
+    case "SET_PINNED_TABS":
+      return {
+        ...state,
+        pinnedTabIds: action.tabIds,
+        threads: state.threads.map(t =>
+          t.id === state.activeThreadId ? { ...t, pinned_tabs: action.tabIds } : t
+        ),
+      }
     case "ADD_THREAD":
       return {
         ...state,
@@ -122,6 +147,7 @@ function agentReducer(state: AgentState, action: AgentAction): AgentState {
         activeThreadId: action.thread.id,
         messages: [],
         streamingContent: "",
+        pinnedTabIds: action.thread.pinned_tabs || [],
       }
     case "UPSERT_THREAD": {
       const exists = state.threads.find(t => t.id === action.thread.id)
@@ -129,6 +155,9 @@ function agentReducer(state: AgentState, action: AgentAction): AgentState {
         return {
           ...state,
           threads: state.threads.map(t => t.id === action.thread.id ? { ...t, ...action.thread } : t),
+          pinnedTabIds: action.thread.id === state.activeThreadId
+            ? action.thread.pinned_tabs || []
+            : state.pinnedTabIds,
         }
       }
       return {
@@ -143,6 +172,19 @@ function agentReducer(state: AgentState, action: AgentAction): AgentState {
     case "SET_SEND_SHORTCUT":
       chrome.storage.local.set({ sendShortcut: action.shortcut })
       return { ...state, sendShortcut: action.shortcut }
+    case "ADD_SECURITY_CONFIRMATION":
+      return {
+        ...state,
+        pendingSecurityConfirmations: [
+          ...state.pendingSecurityConfirmations.filter(r => r.confirmation_id !== action.request.confirmation_id),
+          action.request,
+        ],
+      }
+    case "REMOVE_SECURITY_CONFIRMATION":
+      return {
+        ...state,
+        pendingSecurityConfirmations: state.pendingSecurityConfirmations.filter(r => r.confirmation_id !== action.confirmationId),
+      }
     default:
       return state
   }

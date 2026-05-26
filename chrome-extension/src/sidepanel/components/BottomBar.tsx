@@ -29,6 +29,11 @@ export function BottomBar() {
             onClick={() => {
             if (activePanel === tab.id) { setActivePanel(null); return }
             setActivePanel(tab.id)
+            if (tab.id === "tabs") {
+              chrome.tabs.query({}, (tabs) => {
+                dispatch({ type: "SET_TAB_LIST", tabs })
+              })
+            }
             if (tab.id === "history") {
               chrome.runtime.sendMessage({ type: "history.query", limit: 50, thread_id: state.activeThreadId })
             }
@@ -53,6 +58,22 @@ export function BottomBar() {
 function TabsPanel() {
   const { state, dispatch } = useAgentStore()
 
+  const handleTogglePin = (tabId: number) => {
+    const pinnedTabIds = state.pinnedTabIds.includes(tabId)
+      ? state.pinnedTabIds.filter(id => id !== tabId)
+      : [...state.pinnedTabIds, tabId]
+
+    dispatch({ type: "SET_PINNED_TABS", tabIds: pinnedTabIds })
+
+    if (state.activeThreadId) {
+      chrome.runtime.sendMessage({
+        type: "thread.update",
+        threadId: state.activeThreadId,
+        updates: { pinned_tabs: pinnedTabIds },
+      })
+    }
+  }
+
   return (
     <div style={styles.panelContent}>
       {state.tabList.length === 0 && (
@@ -63,7 +84,7 @@ function TabsPanel() {
           <input
             type="checkbox"
             checked={state.pinnedTabIds.includes(tab.id!)}
-            onChange={() => dispatch({ type: "TOGGLE_PIN_TAB", tabId: tab.id! })}
+            onChange={() => handleTogglePin(tab.id!)}
             style={{ marginRight: 8 }}
           />
           <span style={styles.tabTitle}>{tab.title || tab.url}</span>

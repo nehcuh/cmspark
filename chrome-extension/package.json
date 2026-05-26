@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "plasmo dev",
     "postinstall": "node scripts/patch-vfile.mjs",
+    "test": "rm -rf .test-dist && tsc -p tsconfig.test.json && node --test .test-dist/tests/**/*.test.js",
     "prebuild": "node scripts/generate-icons.mjs",
     "build": "plasmo build",
     "package": "plasmo package"
@@ -22,6 +23,7 @@
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
     "plasmo": "^0.90.5",
+    "svgo": "^3.3.3",
     "typescript": "^5.4.5"
   },
   "manifest": {

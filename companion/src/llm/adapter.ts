@@ -29,6 +29,26 @@ interface ChatCreateParams {
 const MAX_TOOL_CALL_ROUNDS = 40
 const CONTINUOUS_FAILURE_LIMIT = 5
 
+interface ToolExecutionResult {
+  success: boolean
+  data?: any
+  error?: string
+}
+
+export function createToolResultMessage(threadId: string, toolCall: any, result: ToolExecutionResult, params: any = {}) {
+  return {
+    thread_id: threadId,
+    role: "tool" as const,
+    content: JSON.stringify(result),
+    tool_calls: [{
+      id: toolCall.id,
+      tool_name: toolCall.function?.name || toolCall.name,
+      params,
+      result,
+    }],
+  }
+}
+
 export async function chatCreate(params: ChatCreateParams) {
   const { threadId, message, skillIds, config, threadManager, skillEngine, historyStore, sendToExtension, executeTool, signal } = params
 
@@ -107,12 +127,27 @@ CRITICAL RULES:
     }
   }
 
-  // Ensure we don't exceed context window (rough estimate)
+  // Ensure we don't exceed context window (rough estimate) with turn-safe compaction (P1)
   while (JSON.stringify(messages).length > params.config.context_window * 3 && messages.length > 2) {
-    // Remove oldest non-system message
     const idx = messages.findIndex(m => m.role !== "system")
-    if (idx >= 0) messages.splice(idx, 1)
-    else break
+    if (idx >= 0) {
+      const oldest = messages[idx]
+      // Safe guard against orphaning tool calls/results in OpenAI API schema
+      if (oldest.role === "assistant" && oldest.tool_calls && oldest.tool_calls.length > 0) {
+        let countToDelete = 1
+        while (
+          idx + countToDelete < messages.length &&
+          messages[idx + countToDelete].role === "tool"
+        ) {
+          countToDelete++
+        }
+        messages.splice(idx, countToDelete)
+      } else {
+        messages.splice(idx, 1)
+      }
+    } else {
+      break
+    }
   }
 
   // Create OpenAI client
@@ -223,7 +258,7 @@ CRITICAL RULES:
         try {
           const result = await executeTool(tc.id, toolName, {
             ...params,
-            tabId: params.tabId || threadManager.get(params.threadId)?.pinned_tabs?.[0],
+            tabId: params.tabId ?? threadManager.get(threadId)?.pinned_tabs?.[0],
           })
 
           const durationMs = Date.now() - startTime
@@ -249,6 +284,8 @@ CRITICAL RULES:
             tool_name: toolName,
             result,
           })
+
+          threadManager.addMessage(threadId, createToolResultMessage(threadId, tc, result, params))
 
           if (!result.success) {
             const errorLevel = classifyError(result.error || "", { toolName })
@@ -279,10 +316,12 @@ CRITICAL RULES:
             content: JSON.stringify(result),
           })
         } catch (e: any) {
+          const result = { success: false, error: e.message || String(e) }
+          threadManager.addMessage(threadId, createToolResultMessage(threadId, tc, result, params))
           sendToExtension({
             type: "chat.error",
             thread_id: threadId,
-            error: `Tool execution exception: ${e.message}`,
+            error: `Tool execution exception: ${result.error}`,
           })
           shouldStop = true
           break

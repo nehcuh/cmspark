@@ -242,14 +242,20 @@ export class SkillEngine {
       if (skillDirName && relativePath.startsWith(skillDirName + "/")) {
         relativePath = relativePath.slice(skillDirName.length + 1)
       }
+
+      // Secure path traversal check (P0)
+      const resolvedPath = path.resolve(destDir, relativePath)
+      if (!resolvedPath.startsWith(destDir)) {
+        throw new Error(`Security Violation: Path traversal detected in zip entry: ${entry.entryName}`)
+      }
+
       // Ensure we don't create nested directories
       if (relativePath.includes("/")) {
         const subDir = path.dirname(relativePath)
         fs.mkdirSync(path.join(destDir, subDir), { recursive: true })
       }
 
-      const outPath = path.join(destDir, relativePath)
-      fs.writeFileSync(outPath, entry.getData())
+      fs.writeFileSync(resolvedPath, entry.getData())
     }
 
     this.refresh()
@@ -303,6 +309,12 @@ export class SkillEngine {
     fs.mkdirSync(destDir, { recursive: true })
 
     for (const file of files) {
+      // Secure path traversal check (P0)
+      const resolvedPath = path.resolve(destDir, file.path)
+      if (!resolvedPath.startsWith(destDir)) {
+        throw new Error(`Security Violation: Path traversal detected in skill file: ${file.path}`)
+      }
+
       // Normalize path: strip any leading folder name
       let relPath = file.path
       if (relPath.includes("/")) {
@@ -312,7 +324,7 @@ export class SkillEngine {
           fs.mkdirSync(path.join(destDir, subDir), { recursive: true })
         }
       }
-      fs.writeFileSync(path.join(destDir, relPath), file.content)
+      fs.writeFileSync(resolvedPath, file.content)
     }
 
     this.refresh()

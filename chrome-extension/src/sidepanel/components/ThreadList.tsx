@@ -30,6 +30,7 @@ export function ThreadList() {
         model_name: "deepseek-v4-pro",
         temperature: 0.7,
         context_window: 128000,
+        trusted_domains: [],
       },
       tool_whitelist: null as string[] | null,
       pinned_tabs: [] as number[],

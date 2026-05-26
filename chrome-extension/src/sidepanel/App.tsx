@@ -90,8 +90,47 @@ function AppContent() {
       <BottomBar />
       <InputArea />
       <SettingsSlideout />
+      <SecurityConfirmationDialog />
       {craftOpen && <SkillCraftPanel onClose={() => setCraftOpen(false)} />}
       <DisconnectedOverlay visible={connectionState === "disconnected"} />
+    </div>
+  )
+}
+
+function SecurityConfirmationDialog() {
+  const { state, dispatch } = useAgentStore()
+  const request = state.pendingSecurityConfirmations[0]
+
+  if (!request) return null
+
+  const decide = (approved: boolean) => {
+    chrome.runtime.sendMessage({
+      type: "security.confirmation.response",
+      confirmation_id: request.confirmation_id,
+      approved,
+    })
+    dispatch({ type: "REMOVE_SECURITY_CONFIRMATION", confirmationId: request.confirmation_id })
+  }
+
+  return (
+    <div style={styles.securityOverlay}>
+      <div style={styles.securityCard}>
+        <div style={styles.securityBadge}>高风险操作确认</div>
+        <h3 style={styles.securityTitle}>允许执行 `{request.tool_name}` 吗？</h3>
+        <p style={styles.securityText}>
+          检测到高风险 API：{request.dangerous_apis.join(", ") || "未知"}。请确认这段代码符合你的意图后再允许执行。
+        </p>
+        <pre style={styles.securityCode}>{request.code_preview || "(无代码预览)"}</pre>
+        {state.pendingSecurityConfirmations.length > 1 && (
+          <div style={styles.securityQueueHint}>
+            还有 {state.pendingSecurityConfirmations.length - 1} 个确认请求在等待。
+          </div>
+        )}
+        <div style={styles.securityActions}>
+          <button style={styles.denyBtn} onClick={() => decide(false)}>拒绝</button>
+          <button style={styles.allowBtn} onClick={() => decide(true)}>允许执行</button>
+        </div>
+      </div>
     </div>
   )
 }
@@ -494,5 +533,86 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: "pointer",
     fontSize: 12,
     fontWeight: 500,
+  },
+  securityOverlay: {
+    position: "absolute" as const,
+    inset: 0,
+    background: "rgba(0,0,0,0.32)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 16,
+    zIndex: 120,
+  },
+  securityCard: {
+    width: "100%",
+    maxWidth: 420,
+    background: "#fff",
+    borderRadius: 10,
+    boxShadow: "0 10px 36px rgba(0,0,0,0.22)",
+    padding: 16,
+  },
+  securityBadge: {
+    display: "inline-block",
+    padding: "3px 8px",
+    borderRadius: 999,
+    background: "#FFF4E5",
+    color: "#B26B00",
+    fontSize: 12,
+    fontWeight: 600,
+    marginBottom: 10,
+  },
+  securityTitle: {
+    margin: "0 0 8px",
+    fontSize: 16,
+    lineHeight: 1.35,
+  },
+  securityText: {
+    margin: "0 0 10px",
+    color: "#444",
+    lineHeight: 1.5,
+  },
+  securityCode: {
+    maxHeight: 180,
+    overflow: "auto",
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-word",
+    background: "#f6f8fa",
+    border: "1px solid #e5e7eb",
+    borderRadius: 6,
+    padding: 10,
+    fontSize: 11,
+    lineHeight: 1.45,
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+  },
+  securityQueueHint: {
+    marginTop: 8,
+    color: "#666",
+    fontSize: 12,
+  },
+  securityActions: {
+    display: "flex",
+    justifyContent: "flex-end",
+    gap: 8,
+    marginTop: 14,
+  },
+  denyBtn: {
+    padding: "7px 14px",
+    borderRadius: 6,
+    border: "1px solid #ddd",
+    background: "#fff",
+    color: "#333",
+    cursor: "pointer",
+    fontSize: 13,
+  },
+  allowBtn: {
+    padding: "7px 14px",
+    borderRadius: 6,
+    border: "none",
+    background: "#D97706",
+    color: "#fff",
+    cursor: "pointer",
+    fontSize: 13,
+    fontWeight: 600,
   },
 }

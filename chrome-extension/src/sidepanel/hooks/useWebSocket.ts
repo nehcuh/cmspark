@@ -2,12 +2,31 @@
 
 import { useEffect, useRef } from "react"
 import { useAgentStore } from "../store/agentStore"
+import type { LLMConfig } from "../types"
 
 function generateShortId(): string {
   const chars = "abcdefghijklmnopqrstuvwxyz0123456789"
   let id = ""
   for (let i = 0; i < 6; i++) id += chars[Math.floor(Math.random() * chars.length)]
   return id
+}
+
+export function normalizeConfig(config: any): Partial<LLMConfig> {
+  if (!config) return {}
+  const llm = config.llm || config
+  const normalized: Partial<LLMConfig> = {
+    base_url: llm.base_url,
+    api_key: llm.api_key === "***" ? "" : llm.api_key,
+    model_name: llm.model_name,
+    temperature: llm.temperature,
+    context_window: llm.context_window,
+  }
+  if (Array.isArray(config.trusted_domains)) {
+    normalized.trusted_domains = config.trusted_domains
+  }
+  return Object.fromEntries(
+    Object.entries(normalized).filter(([, value]) => value !== undefined)
+  ) as Partial<LLMConfig>
 }
 
 export function useWebSocket() {
@@ -97,11 +116,35 @@ export function useWebSocket() {
           break
 
         case "config.updated":
-          dispatch({ type: "SET_CONFIG", config: msg.config })
+          dispatch({ type: "SET_CONFIG", config: normalizeConfig(msg.config) })
+          break
+
+        case "security.confirmation.request":
+          dispatch({
+            type: "ADD_SECURITY_CONFIRMATION",
+            request: {
+              confirmation_id: msg.confirmation_id,
+              tool_name: msg.tool_name,
+              dangerous_apis: Array.isArray(msg.dangerous_apis) ? msg.dangerous_apis : [],
+              code_preview: msg.code_preview || "",
+              timeout_ms: msg.timeout_ms,
+              requested_at: msg.requested_at,
+            },
+          })
+          break
+
+        case "security.confirmation.resolved":
+        case "security.confirmation.expired":
+          dispatch({ type: "REMOVE_SECURITY_CONFIRMATION", confirmationId: msg.confirmation_id })
           break
 
         case "thread.created": {
           // Upsert: don't duplicate if already added locally
+          dispatch({ type: "UPSERT_THREAD", thread: msg.thread })
+          break
+        }
+
+        case "thread.updated": {
           dispatch({ type: "UPSERT_THREAD", thread: msg.thread })
           break
         }

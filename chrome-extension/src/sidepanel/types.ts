@@ -21,6 +21,7 @@ export interface LLMConfig {
   model_name: string
   temperature: number
   context_window: number
+  trusted_domains: string[]
 }
 
 export interface Message {
@@ -31,6 +32,15 @@ export interface Message {
   tool_calls?: ToolCall[]
   created_at: string
   streaming?: boolean
+}
+
+export interface SecurityConfirmationRequest {
+  confirmation_id: string
+  tool_name: string
+  dangerous_apis: string[]
+  code_preview: string
+  timeout_ms?: number
+  requested_at?: string
 }
 
 export interface ToolCall {

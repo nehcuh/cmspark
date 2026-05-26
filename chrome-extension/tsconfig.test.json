@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "commonjs",
+    "lib": ["ES2022", "DOM"],
+    "jsx": "react-jsx",
+    "rootDir": ".",
+    "outDir": ".test-dist",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "moduleResolution": "node",
+    "types": ["chrome", "react", "react-dom"]
+  },
+  "include": [
+    "src/sidepanel/types.ts",
+    "src/sidepanel/store/agentStore.tsx",
+    "src/sidepanel/hooks/useWebSocket.ts",
+    "tests/**/*.ts"
+  ],
+  "exclude": ["node_modules", "build", ".plasmo", ".test-dist"]
+}

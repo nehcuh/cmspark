@@ -9,6 +9,7 @@ import type { HistoryStore } from "./history/store"
 import { getConfig, saveConfig } from "./config"
 import { chatCreate } from "./llm/adapter"
 import { craftSkill } from "./skills/skill-craft"
+import { checkHighRiskExecution } from "./security"
 
 // Per-thread abort controllers for cancelling in-flight LLM requests
 const abortControllers = new Map<string, AbortController>()
@@ -43,20 +44,21 @@ export async function handleMessage(
       // Normalize: if caller sends flat LLM fields, nest them under llm
       const normalized: any = {}
       if (cfg.llm) {
-        normalized.llm = cfg.llm
+        normalized.llm = { ...cfg.llm }
+        if (normalized.llm.api_key === "***") delete normalized.llm.api_key
       } else if (cfg.base_url || cfg.model_name || cfg.temperature !== undefined || cfg.context_window !== undefined) {
         normalized.llm = {}
         if (cfg.base_url) normalized.llm.base_url = cfg.base_url
-        if (cfg.api_key) normalized.llm.api_key = cfg.api_key
+        if (cfg.api_key && cfg.api_key !== "***") normalized.llm.api_key = cfg.api_key
         if (cfg.model_name) normalized.llm.model_name = cfg.model_name
         if (cfg.temperature !== undefined) normalized.llm.temperature = cfg.temperature
         if (cfg.context_window !== undefined) normalized.llm.context_window = cfg.context_window
       }
       if (cfg.port) normalized.port = cfg.port
-      if (cfg.trusted_domains) normalized.trusted_domains = cfg.trusted_domains
+      if (Array.isArray(cfg.trusted_domains)) normalized.trusted_domains = cfg.trusted_domains
       if (cfg.history_retention_days) normalized.history_retention_days = cfg.history_retention_days
-      saveConfig(normalized)
-      return { type: "config.updated", config: normalized }
+      const updated = saveConfig(normalized)
+      return { type: "config.updated", config: { ...updated, llm: { ...updated.llm, api_key: "***" } } }
     }
 
     case "config.test": {
@@ -137,6 +139,19 @@ export async function handleMessage(
       return { type: "thread.list", threads: threadManager.list() }
     case "thread.select":
       return { type: "thread.messages", messages: threadManager.getMessages(rest.thread_id) }
+    case "thread.update": {
+      if (!rest.thread_id) return { type: "error", error: "thread_id required" }
+      const allowedUpdates: Record<string, any> = {}
+      const updates = rest.updates || {}
+      for (const key of ["alias", "config_override", "tool_whitelist", "pinned_tabs", "active_skill_ids"]) {
+        if (Object.prototype.hasOwnProperty.call(updates, key)) {
+          allowedUpdates[key] = updates[key]
+        }
+      }
+      const thread = threadManager.update(rest.thread_id, allowedUpdates)
+      if (!thread) return { type: "error", error: `Thread not found: ${rest.thread_id}` }
+      return { type: "thread.updated", thread }
+    }
 
     // --- Skills ---
     case "skill.list":
@@ -227,6 +242,20 @@ export async function handleMessage(
       const { url: pageUrl, expression: jsExpr } = rest as { url: string; expression: string }
       if (!pageUrl || !jsExpr) {
         return { type: "tool.result", id: msg.id, success: false, error: "url and expression required" }
+      }
+      if (session) {
+        const result = await session.executeTool(msg.id || `osascript_${Date.now()}`, "osascript_eval", { url: pageUrl, expression: jsExpr })
+        return { type: "tool.result", id: msg.id, ...result }
+      }
+      const safety = checkHighRiskExecution("osascript_eval", jsExpr)
+      if (safety.blocked) {
+        return {
+          type: "tool.result",
+          id: msg.id,
+          success: false,
+          error: safety.error,
+          data: { dangerous_apis_found: safety.dangerousApis },
+        }
       }
       try {
         if (os.platform() !== "darwin") {

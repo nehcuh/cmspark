@@ -17,6 +17,14 @@ export function SettingsSlideout() {
     })
   }
 
+  const handleTrustedDomainsChange = (value: string) => {
+    const trusted_domains = value
+      .split(/\n|,/)
+      .map(domain => domain.trim())
+      .filter(Boolean)
+    dispatch({ type: "SET_CONFIG", config: { trusted_domains } })
+  }
+
   const handleShortcutChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     dispatch({ type: "SET_SEND_SHORTCUT", shortcut: e.target.value as any })
   }
@@ -121,6 +129,19 @@ export function SettingsSlideout() {
               step={1024}
             />
           </div>
+
+          <div style={styles.field}>
+            <label style={styles.label}>Cookie 信任域</label>
+            <textarea
+              style={{ ...styles.input, minHeight: 72, resize: "vertical" }}
+              value={(config.trusted_domains || []).join("\n")}
+              onChange={e => handleTrustedDomainsChange(e.target.value)}
+              placeholder={"example.com\n*.company.com"}
+            />
+            <div style={styles.helpText}>
+              每行一个域名；支持 <code>*.company.com</code> 通配子域。仅调试环境建议使用 <code>*</code>。
+            </div>
+          </div>
         </div>
 
         <div style={styles.footer}>
@@ -213,6 +234,12 @@ const styles: Record<string, React.CSSProperties> = {
     outline: "none",
     boxSizing: "border-box" as const,
     background: "#fff",
+  },
+  helpText: {
+    marginTop: 6,
+    fontSize: 11,
+    color: "#777",
+    lineHeight: 1.4,
   },
   footer: {
     display: "flex",

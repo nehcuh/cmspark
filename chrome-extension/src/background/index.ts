@@ -107,8 +107,22 @@ function setupMessageHandlers() {
         sendResponse({ ok: true })
         return true
 
+      case "security.confirmation.response":
+        wsClient.send({
+          type: "security.confirmation.response",
+          confirmation_id: message.confirmation_id,
+          approved: message.approved === true,
+        })
+        sendResponse({ ok: true })
+        return true
+
       case "thread.select":
         wsClient.send({ type: "thread.select", thread_id: message.threadId })
+        sendResponse({ ok: true })
+        return true
+
+      case "thread.update":
+        wsClient.send({ type: "thread.update", thread_id: message.threadId || message.thread_id, updates: message.updates })
         sendResponse({ ok: true })
         return true
 
