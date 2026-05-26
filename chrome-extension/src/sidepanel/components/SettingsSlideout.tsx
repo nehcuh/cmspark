@@ -17,6 +17,10 @@ export function SettingsSlideout() {
     })
   }
 
+  const handleShortcutChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    dispatch({ type: "SET_SEND_SHORTCUT", shortcut: e.target.value as any })
+  }
+
   const handleTest = () => {
     dispatch({ type: "SET_TEST_RESULT", result: "测试中..." })
     chrome.runtime.sendMessage({ type: "config.test" })
@@ -90,6 +94,19 @@ export function SettingsSlideout() {
               value={config.temperature}
               onChange={e => dispatch({ type: "SET_CONFIG", config: { temperature: parseFloat(e.target.value) } })}
             />
+          </div>
+
+          <div style={styles.field}>
+            <label style={styles.label}>发送快捷键</label>
+            <select
+              style={styles.select}
+              value={state.sendShortcut || "Enter"}
+              onChange={handleShortcutChange}
+            >
+              <option value="Enter">Enter</option>
+              <option value="Cmd+Enter">Cmd+Enter</option>
+              <option value="Ctrl+Enter">Ctrl+Enter</option>
+            </select>
           </div>
 
           <div style={styles.field}>
@@ -185,6 +202,17 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 11,
     cursor: "pointer",
     whiteSpace: "nowrap" as const,
+  },
+  select: {
+    width: "100%",
+    padding: "6px 10px",
+    border: "1px solid #ddd",
+    borderRadius: 6,
+    fontSize: 13,
+    fontFamily: "monospace",
+    outline: "none",
+    boxSizing: "border-box" as const,
+    background: "#fff",
   },
   footer: {
     display: "flex",

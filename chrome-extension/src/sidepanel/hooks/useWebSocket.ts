@@ -20,6 +20,13 @@ export function useWebSocket() {
   activeThreadRef.current = state.activeThreadId
 
   useEffect(() => {
+    // Restore send shortcut preference
+    chrome.storage.local.get("sendShortcut", (result) => {
+      if (result.sendShortcut) {
+        dispatch({ type: "SET_SEND_SHORTCUT", shortcut: result.sendShortcut })
+      }
+    })
+
     // Listen for messages from background (broadcast via chrome.runtime.sendMessage)
     const messageListener = (msg: any) => {
       switch (msg.type) {

@@ -1,7 +1,7 @@
 // Global state store for the agent
 
 import { createContext, useContext, useReducer, type ReactNode, type Dispatch } from "react"
-import type { ConnectionState, Thread, Message, SkillMeta, OperationRecord, LLMConfig } from "../types"
+import type { ConnectionState, Thread, Message, SkillMeta, OperationRecord, LLMConfig, SendShortcut } from "../types"
 
 interface AgentState {
   connectionState: ConnectionState
@@ -17,6 +17,7 @@ interface AgentState {
   pinnedTabIds: number[]
   streamingContent: string
   testResult: string | null
+  sendShortcut: SendShortcut
 }
 
 type AgentAction =
@@ -39,6 +40,7 @@ type AgentAction =
   | { type: "UPSERT_THREAD"; thread: Thread }
   | { type: "SET_STREAMING"; content: string }
   | { type: "SET_TEST_RESULT"; result: string | null }
+  | { type: "SET_SEND_SHORTCUT"; shortcut: SendShortcut }
 
 const initialState: AgentState = {
   connectionState: "disconnected",
@@ -60,6 +62,7 @@ const initialState: AgentState = {
   pinnedTabIds: [],
   streamingContent: "",
   testResult: null,
+  sendShortcut: "Enter",
 }
 
 function agentReducer(state: AgentState, action: AgentAction): AgentState {
@@ -137,6 +140,9 @@ function agentReducer(state: AgentState, action: AgentAction): AgentState {
       return { ...state, streamingContent: action.content }
     case "SET_TEST_RESULT":
       return { ...state, testResult: action.result }
+    case "SET_SEND_SHORTCUT":
+      chrome.storage.local.set({ sendShortcut: action.shortcut })
+      return { ...state, sendShortcut: action.shortcut }
     default:
       return state
   }

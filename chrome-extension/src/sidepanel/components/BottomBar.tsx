@@ -110,9 +110,48 @@ function SkillsPanel() {
   const { state, dispatch } = useAgentStore()
   const [importUrl, setImportUrl] = useState("")
   const [showUrlImport, setShowUrlImport] = useState(false)
+  const [showPathImport, setShowPathImport] = useState(false)
+  const [pathInput, setPathInput] = useState("")
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const zipInputRef = useRef<HTMLInputElement>(null)
+
+  // Read all files from a dropped/picked folder
+  const handleFolderFiles = async (files: FileList | File[]) => {
+    const fileArr = Array.from(files)
+    if (fileArr.length === 0) return
+
+    // Find SKILL.md among the files
+    const hasSkillMd = fileArr.some(f => f.name === "SKILL.md" || f.webkitRelativePath.endsWith("/SKILL.md"))
+    if (!hasSkillMd) {
+      alert("文件夹中未找到 SKILL.md 文件")
+      return
+    }
+
+    const payload: { path: string; content: string }[] = []
+    for (const file of fileArr) {
+      const content = await file.text()
+      const filePath = file.webkitRelativePath || file.name
+      // Strip leading folder name from webkitRelativePath
+      const parts = filePath.split("/")
+      const relPath = parts.length > 1 ? parts.slice(1).join("/") : parts[0]
+      payload.push({ path: relPath, content })
+    }
+
+    chrome.runtime.sendMessage({ type: "skill.import-files", files: payload })
+  }
+
+  const handleFolderPick = () => {
+    setShowPathImport(!showPathImport)
+  }
+
+  const handlePathImport = () => {
+    if (pathInput.trim()) {
+      chrome.runtime.sendMessage({ type: "skill.import-path", dir_path: pathInput.trim() })
+      setPathInput("")
+      setShowPathImport(false)
+    }
+  }
 
   const handleExport = (skillName: string) => {
     chrome.runtime.sendMessage({ type: "skill.export", skill_name: skillName }, (response) => {
@@ -161,8 +200,23 @@ function SkillsPanel() {
     reader.readAsDataURL(file)
   }
 
-  const handleDrop = (e: React.DragEvent) => {
+  const handleDrop = async (e: React.DragEvent) => {
     e.preventDefault()
+
+    // Check for folder drop via webkitGetAsEntry
+    const items = e.dataTransfer.items
+    if (items && items.length > 0) {
+      const entry = items[0].webkitGetAsEntry()
+      if (entry && entry.isDirectory) {
+        const files = await readDirectoryEntry(entry as any)
+        if (files.length > 0) {
+          handleFolderFiles(files)
+        }
+        return
+      }
+    }
+
+    // Regular file drop
     const file = e.dataTransfer.files[0]
     if (!file) return
     if (file.name.endsWith(".zip")) {
@@ -192,7 +246,10 @@ function SkillsPanel() {
           📁 导入
         </button>
         <button style={styles.skillToolbarBtn} onClick={() => zipInputRef.current?.click()} title="从 ZIP 导入文件夹技能">
-          📦 导入文件夹
+          📦 导入 ZIP
+        </button>
+        <button style={styles.skillToolbarBtn} onClick={handleFolderPick} title="从文件夹导入">
+          📂 导入文件夹
         </button>
         <button style={styles.skillToolbarBtn} onClick={() => setShowUrlImport(!showUrlImport)} title="从 URL 导入">
           🔗 URL
@@ -231,6 +288,20 @@ function SkillsPanel() {
             onKeyDown={(e) => e.key === "Enter" && handleUrlImport()}
           />
           <button style={styles.skillToolbarBtn} onClick={handleUrlImport}>安装</button>
+        </div>
+      )}
+
+      {showPathImport && (
+        <div style={styles.urlImportRow}>
+          <input
+            style={styles.urlImportInput}
+            type="text"
+            placeholder="~/.config/skills/slash-evaluate"
+            value={pathInput}
+            onChange={(e) => setPathInput(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handlePathImport()}
+          />
+          <button style={styles.skillToolbarBtn} onClick={handlePathImport}>导入</button>
         </div>
       )}
 
@@ -287,6 +358,42 @@ function SkillsPanel() {
 }
 
 // --- Helpers ---
+
+// Recursively read files from a dropped directory entry
+// Sets webkitRelativePath with folder name as prefix, consistent with file picker behavior
+async function readDirectoryEntry(dirEntry: FileSystemDirectoryEntry): Promise<File[]> {
+  const files: File[] = []
+  const folderName = dirEntry.name
+
+  async function readDir(entry: FileSystemDirectoryEntry, prefix: string): Promise<void> {
+    const reader = entry.createReader()
+    const readBatch = (): Promise<FileSystemEntry[]> => {
+      return new Promise((resolve) => {
+        reader.readEntries((entries) => resolve(entries))
+      })
+    }
+
+    let batch = await readBatch()
+    while (batch.length > 0) {
+      for (const e of batch) {
+        if (e.isFile) {
+          const file = await new Promise<File>((resolve) => {
+            (e as FileSystemFileEntry).file(resolve)
+          })
+          // Use folderName as prefix to match file picker webkitRelativePath format
+          ;(file as any).webkitRelativePath = prefix + e.name
+          files.push(file)
+        } else if (e.isDirectory) {
+          await readDir(e as FileSystemDirectoryEntry, prefix + e.name + "/")
+        }
+      }
+      batch = await readBatch()
+    }
+  }
+
+  await readDir(dirEntry, folderName + "/")
+  return files
+}
 
 function base64ToBlob(base64: string, mimeType: string): Blob {
   const raw = atob(base64)

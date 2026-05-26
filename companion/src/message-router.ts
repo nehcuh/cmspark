@@ -8,6 +8,7 @@ import type { SkillEngine } from "./skills/skill-engine"
 import type { HistoryStore } from "./history/store"
 import { getConfig, saveConfig } from "./config"
 import { chatCreate } from "./llm/adapter"
+import { craftSkill } from "./skills/skill-craft"
 
 // Per-thread abort controllers for cancelling in-flight LLM requests
 const abortControllers = new Map<string, AbortController>()
@@ -169,9 +170,43 @@ export async function handleMessage(
       skillEngine.importSkillFolder(rest.zip_data)
       skillEngine.refresh()
       return { type: "skill.list", skills: skillEngine.list() }
+
+    case "skill.import-path": {
+      if (!rest.dir_path) throw new Error("skill.import-path requires 'dir_path'")
+      skillEngine.importSkillFromPath(rest.dir_path)
+      skillEngine.refresh()
+      return { type: "skill.list", skills: skillEngine.list() }
+    }
+    case "skill.import-files": {
+      if (!rest.files || !Array.isArray(rest.files)) throw new Error("skill.import-files requires 'files' array")
+      skillEngine.importSkillFiles(rest.files)
+      skillEngine.refresh()
+      return { type: "skill.list", skills: skillEngine.list() }
+    }
     case "skill.delete":
       skillEngine.deleteSkill(rest.skill_name)
       return { type: "skill.deleted", skill_name: rest.skill_name }
+
+    // --- Skill-craft ---
+    case "skill.craft": {
+      if (!rest.thread_id) return { type: "error", error: "thread_id required" }
+      const config = getConfig()
+      try {
+        const skill = await craftSkill({
+          threadId: rest.thread_id,
+          threadManager: services.threadManager,
+          messageIds: rest.message_ids,
+          messageCount: rest.message_count,
+          config: config.llm,
+        })
+        if (!skill) {
+          return { type: "skill.crafted", skill: null, reason: "未发现可提取的操作模式" }
+        }
+        return { type: "skill.crafted", skill }
+      } catch (e: any) {
+        return { type: "skill.crafted", skill: null, error: e.message || String(e) }
+      }
+    }
 
     // --- History ---
     case "history.query":

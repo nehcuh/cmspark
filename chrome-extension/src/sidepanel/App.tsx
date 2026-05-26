@@ -1,13 +1,15 @@
 // CMspark Browser Agent — Root App Component
 
-import { Component, useState } from "react"
+import { Component, useState, useRef, useCallback } from "react"
 import { useWebSocket } from "./hooks/useWebSocket"
 import { ChatView } from "./components/ChatView"
 import { ThreadList } from "./components/ThreadList"
 import { BottomBar } from "./components/BottomBar"
 import { SettingsSlideout } from "./components/SettingsSlideout"
+import { SlashCommandPopover } from "./components/SlashCommandPopover"
+import { SkillCraftPanel } from "./components/SkillCraftPanel"
 import { AgentStoreProvider, useAgentStore } from "./store/agentStore"
-import type { ConnectionState } from "./types"
+import type { ConnectionState, SkillMeta } from "./types"
 
 // Error Boundary — catches rendering errors to prevent white screen
 class ErrorBoundary extends Component<{ children: React.ReactNode }, { error: Error | null }> {
@@ -78,24 +80,42 @@ export function App() {
 
 function AppContent() {
   const { connectionState } = useWebSocket()
+  const [craftOpen, setCraftOpen] = useState(false)
 
   return (
     <div style={styles.container}>
-      <Header connectionState={connectionState} />
+      <style>{globalCSS}</style>
+      <Header connectionState={connectionState} onCraft={() => setCraftOpen(true)} />
       <ChatView />
       <BottomBar />
       <InputArea />
       <SettingsSlideout />
+      {craftOpen && <SkillCraftPanel onClose={() => setCraftOpen(false)} />}
       <DisconnectedOverlay visible={connectionState === "disconnected"} />
     </div>
   )
 }
 
-function Header({ connectionState }: { connectionState: ConnectionState }) {
+function Header({ connectionState, onCraft }: { connectionState: ConnectionState; onCraft: () => void }) {
+  const { state } = useAgentStore()
+  const hasMessages = state.messages.length > 0 && !!state.activeThreadId
+
   return (
     <div style={styles.header}>
       <ThreadList />
       <div style={styles.headerTitle}>CMspark Agent</div>
+      <button
+        style={{
+          ...styles.craftBtn,
+          opacity: hasMessages ? 1 : 0.4,
+          cursor: hasMessages ? "pointer" : "not-allowed",
+        }}
+        disabled={!hasMessages}
+        onClick={onCraft}
+        title={hasMessages ? "提取技能" : "当前线程没有消息"}
+      >
+        🔧
+      </button>
       <div
         style={{
           ...styles.statusDot,
@@ -112,6 +132,9 @@ function Header({ connectionState }: { connectionState: ConnectionState }) {
 function InputArea() {
   const { state, dispatch } = useAgentStore()
   const [text, setText] = useState("")
+  const [slashVisible, setSlashVisible] = useState(false)
+  const [slashQuery, setSlashQuery] = useState("")
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   const isStreaming = !!state.streamingContent
   const canSend = !isStreaming && text.trim().length > 0 && !!state.activeThreadId && state.connectionState === "connected"
@@ -121,18 +144,110 @@ function InputArea() {
   const getPlaceholder = () => {
     if (needsThread) return "请先创建或选择一个线程"
     if (needsConnection) return "等待 companion 连接..."
-    return "输入指令..."
+    return "输入指令... (输入 / 调用技能)"
+  }
+
+  // Detect slash command: check if cursor is after a "/" at start or after space
+  const detectSlash = useCallback((value: string, cursorPos: number) => {
+    // Find the last "/" before cursor
+    const beforeCursor = value.substring(0, cursorPos)
+    const slashIdx = beforeCursor.lastIndexOf("/")
+
+    if (slashIdx === -1) {
+      setSlashVisible(false)
+      return
+    }
+
+    // Check character before "/" — must be start of string or whitespace
+    const charBefore = slashIdx === 0 ? null : value[slashIdx - 1]
+    if (charBefore !== null && charBefore !== " " && charBefore !== "\n") {
+      setSlashVisible(false)
+      return
+    }
+
+    // Extract query: everything after "/" up to cursor position
+    const query = beforeCursor.substring(slashIdx + 1)
+    setSlashQuery(query)
+    setSlashVisible(true)
+  }, [])
+
+  const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const newValue = e.target.value
+    setText(newValue)
+    detectSlash(newValue, e.target.selectionStart || 0)
+  }
+
+  const handleSlashSelect = (skill: SkillMeta) => {
+    const textarea = textareaRef.current
+    if (!textarea) return
+
+    const cursorPos = textarea.selectionStart || 0
+    const beforeCursor = text.substring(0, cursorPos)
+
+    // Find the "/" that started this command
+    const slashIdx = beforeCursor.lastIndexOf("/")
+    if (slashIdx === -1) return
+
+    // Replace from "/" to cursor with "/skill-name "
+    const afterCursor = text.substring(cursorPos)
+    const newText = text.substring(0, slashIdx) + "/" + skill.name + " " + afterCursor
+    const newCursorPos = slashIdx + skill.name.length + 2 // after "/name "
+
+    setText(newText)
+    setSlashVisible(false)
+
+    // Set cursor position after the inserted text
+    setTimeout(() => {
+      textarea.focus()
+      textarea.setSelectionRange(newCursorPos, newCursorPos)
+    }, 0)
+  }
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // If popover is open and navigating/selecting, let the popover handle it
+    if (slashVisible && ["ArrowDown", "ArrowUp", "Escape", "Enter"].includes(e.key)) {
+      return
+    }
+
+    const shortcut = state.sendShortcut || "Enter"
+    let shouldSend = false
+
+    if (shortcut === "Enter") {
+      shouldSend = e.key === "Enter" && !e.shiftKey
+    } else if (shortcut === "Cmd+Enter") {
+      shouldSend = e.key === "Enter" && (e.metaKey || e.ctrlKey)
+    } else if (shortcut === "Ctrl+Enter") {
+      shouldSend = e.key === "Enter" && e.ctrlKey && !e.metaKey
+    }
+
+    if (shouldSend && canSend) {
+      e.preventDefault()
+      handleSend()
+    }
   }
 
   const handleSend = () => {
     if (!canSend) return
     const trimmed = text.trim()
 
+    // Parse slash command to auto-activate skill
+    const slashMatch = trimmed.match(/^\/(\S+)/)
+    let skillIds = state.activeSkillIds
+    if (slashMatch) {
+      const cmdName = slashMatch[1]
+      const matchedSkill = state.skills.find(
+        s => s.name.toLowerCase() === cmdName.toLowerCase()
+      )
+      if (matchedSkill && !skillIds.includes(matchedSkill.name)) {
+        skillIds = [...skillIds, matchedSkill.name]
+      }
+    }
+
     chrome.runtime.sendMessage({
       type: "chat.send",
       threadId: state.activeThreadId,
       message: trimmed,
-      skillIds: state.activeSkillIds,
+      skillIds,
     })
     dispatch({
       type: "ADD_MESSAGE",
@@ -145,6 +260,7 @@ function InputArea() {
       },
     })
     setText("")
+    setSlashVisible(false)
   }
 
   const handleStop = () => {
@@ -158,6 +274,7 @@ function InputArea() {
   return (
     <div style={styles.inputArea}>
       <textarea
+        ref={textareaRef}
         style={{
           ...styles.textarea,
           background: needsThread || needsConnection ? "#f9f9f9" : "#fff",
@@ -166,13 +283,16 @@ function InputArea() {
         rows={2}
         value={text}
         disabled={needsThread || needsConnection}
-        onChange={(e) => setText(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.shiftKey && canSend) {
-            e.preventDefault()
-            handleSend()
-          }
-        }}
+        onChange={handleChange}
+        onKeyDown={handleKeyDown}
+      />
+      <SlashCommandPopover
+        skills={state.skills}
+        searchText={slashQuery}
+        visible={slashVisible}
+        anchorEl={textareaRef.current}
+        onSelect={handleSlashSelect}
+        onDismiss={() => setSlashVisible(false)}
       />
       {isStreaming ? (
         <button
@@ -223,6 +343,13 @@ function DisconnectedOverlay({ visible }: { visible: boolean }) {
 
 // --- Styles ---
 
+const globalCSS = `
+  @keyframes cmspark-spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+`
+
 const styles: Record<string, React.CSSProperties> = {
   container: {
     display: "flex",
@@ -253,6 +380,20 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: "50%",
     flexShrink: 0,
   },
+  craftBtn: {
+    width: 26,
+    height: 26,
+    borderRadius: 6,
+    border: "1px solid #ddd",
+    background: "#fff",
+    cursor: "pointer",
+    fontSize: 13,
+    flexShrink: 0,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 0,
+  },
   inputArea: {
     display: "flex",
     alignItems: "flex-end",
@@ -260,6 +401,7 @@ const styles: Record<string, React.CSSProperties> = {
     padding: "8px 12px",
     borderTop: "1px solid #eee",
     flexShrink: 0,
+    position: "relative" as const,
   },
   textarea: {
     flex: 1,

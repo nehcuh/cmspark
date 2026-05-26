@@ -2,6 +2,7 @@
 
 import * as fs from "fs"
 import * as path from "path"
+import * as os from "os"
 import matter from "gray-matter"
 import AdmZip from "adm-zip"
 import { getConfigDir } from "../config"
@@ -249,6 +250,69 @@ export class SkillEngine {
 
       const outPath = path.join(destDir, relativePath)
       fs.writeFileSync(outPath, entry.getData())
+    }
+
+    this.refresh()
+  }
+
+  importSkillFromPath(dirPath: string): void {
+    const resolved = path.resolve(dirPath.replace(/^~/, os.homedir()))
+    const stat = fs.statSync(resolved, { throwIfNoEntry: false })
+    if (!stat || !stat.isDirectory()) {
+      throw new Error(`Directory not found: ${dirPath}`)
+    }
+
+    const skillMdPath = path.join(resolved, "SKILL.md")
+    if (!fs.existsSync(skillMdPath)) {
+      throw new Error(`No SKILL.md found in: ${dirPath}`)
+    }
+
+    const files = this.readDirectoryFiles(resolved)
+    this.importSkillFiles(files)
+  }
+
+  private readDirectoryFiles(dir: string, prefix = ""): { path: string; content: string }[] {
+    const results: { path: string; content: string }[] = []
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const fullPath = path.join(dir, entry.name)
+      const relPath = prefix ? `${prefix}/${entry.name}` : entry.name
+      if (entry.isDirectory()) {
+        results.push(...this.readDirectoryFiles(fullPath, relPath))
+      } else if (entry.isFile()) {
+        results.push({ path: relPath, content: fs.readFileSync(fullPath, "utf-8") })
+      }
+    }
+    return results
+  }
+
+  importSkillFiles(files: { path: string; content: string }[]): void {
+    // Find SKILL.md to determine skill name
+    const skillMd = files.find(f => f.path === "SKILL.md" || f.path.endsWith("/SKILL.md"))
+    if (!skillMd) throw new Error("Folder must contain a SKILL.md file")
+
+    const parsed = matter(skillMd.content)
+    const name = parsed.data.name
+    if (!name) throw new Error("SKILL.md must have a 'name' field in frontmatter")
+
+    const safeName = name.replace(/[^a-zA-Z0-9-]/g, "-").toLowerCase()
+    const destDir = path.join(this.skillsDir, safeName)
+
+    if (fs.existsSync(destDir)) {
+      fs.rmSync(destDir, { recursive: true })
+    }
+    fs.mkdirSync(destDir, { recursive: true })
+
+    for (const file of files) {
+      // Normalize path: strip any leading folder name
+      let relPath = file.path
+      if (relPath.includes("/")) {
+        // Ensure subdirectories exist
+        const subDir = path.dirname(relPath)
+        if (subDir !== ".") {
+          fs.mkdirSync(path.join(destDir, subDir), { recursive: true })
+        }
+      }
+      fs.writeFileSync(path.join(destDir, relPath), file.content)
     }
 
     this.refresh()

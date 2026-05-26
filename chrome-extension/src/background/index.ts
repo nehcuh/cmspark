@@ -124,11 +124,14 @@ function setupMessageHandlers() {
 
       case "thread.list":
       case "skill.list":
+      case "skill.craft":
       case "skill.activate":
       case "skill.deactivate":
       case "skill.export":
       case "skill.import":
       case "skill.import-folder":
+      case "skill.import-files":
+      case "skill.import-path":
       case "skill.delete":
       case "history.query":
       case "history.export":

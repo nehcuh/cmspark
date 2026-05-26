@@ -13,6 +13,8 @@ export interface Thread {
   active_skill_ids: string[]
 }
 
+export type SendShortcut = "Enter" | "Cmd+Enter" | "Ctrl+Enter"
+
 export interface LLMConfig {
   base_url: string
   api_key: string
