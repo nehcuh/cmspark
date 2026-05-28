@@ -102,7 +102,6 @@ function setupMessageHandlers() {
           connectionState: wsClient.getState(),
         })
         return true
-        return true
 
       case "chat.send":
         wsClient.send({

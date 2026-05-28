@@ -85,14 +85,14 @@ test("security confirmation requests are queued and removable", () => {
   assert.equal(removed.pendingSecurityConfirmations.length, 0)
 })
 
-test("initial side panel sync requests threads and skills exactly once per connection", () => {
+test("initial side panel sync requests threads, skills, and config exactly once per connection", () => {
   const sent: object[] = []
   const initializedRef = { current: false }
 
   assert.equal(requestInitialSidePanelData((message) => sent.push(message), initializedRef), true)
-  assert.deepEqual(sent, [{ type: "thread.list" }, { type: "skill.list" }])
+  assert.deepEqual(sent, [{ type: "thread.list" }, { type: "skill.list" }, { type: "config.get" }])
   assert.equal(initializedRef.current, true)
 
   assert.equal(requestInitialSidePanelData((message) => sent.push(message), initializedRef), false)
-  assert.deepEqual(sent, [{ type: "thread.list" }, { type: "skill.list" }])
+  assert.deepEqual(sent, [{ type: "thread.list" }, { type: "skill.list" }, { type: "config.get" }])
 })

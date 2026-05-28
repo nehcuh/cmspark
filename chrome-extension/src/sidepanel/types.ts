@@ -55,7 +55,7 @@ export interface ToolCall {
   id: string
   tool_name: string
   params: Record<string, any>
-  result?: ToolResult
+  result?: ToolResult | null
   status: "pending" | "running" | "success" | "error"
 }
 

@@ -396,6 +396,10 @@ export async function startServer() {
           const eventName = typeof msg.event === "string" && msg.event ? msg.event : "extension.event"
           const source = typeof msg.source === "string" && msg.source ? msg.source : "extension"
           logger.log(safeLogLevel(msg.level), eventName, msg.data && typeof msg.data === "object" ? msg.data : {}, source)
+          // Forward to sidepanel for live log display
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify(msg))
+          }
           return
         }
 

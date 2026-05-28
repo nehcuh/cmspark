@@ -178,20 +178,7 @@ function SkillsPanel() {
   }
 
   const handleExport = (skillName: string) => {
-    chrome.runtime.sendMessage({ type: "skill.export", skill_name: skillName }, (response) => {
-      if (response?.content) {
-        const format = response.format || "markdown"
-        const mimeType = format === "zip" ? "application/zip" : "text/markdown"
-        const ext = format === "zip" ? ".zip" : ".md"
-        const blob = base64ToBlob(response.content, mimeType)
-        const url = URL.createObjectURL(blob)
-        const a = document.createElement("a")
-        a.href = url
-        a.download = `${skillName}${ext}`
-        a.click()
-        URL.revokeObjectURL(url)
-      }
-    })
+    chrome.runtime.sendMessage({ type: "skill.export", skill_name: skillName })
     setMenuOpen(null)
   }
 
@@ -349,7 +336,19 @@ function SkillsPanel() {
           <input
             type="checkbox"
             checked={state.activeSkillIds.includes(skill.name)}
-            onChange={() => dispatch({ type: "TOGGLE_SKILL", skillId: skill.name })}
+            onChange={() => {
+              const activeSkillIds = state.activeSkillIds.includes(skill.name)
+                ? state.activeSkillIds.filter(id => id !== skill.name)
+                : [...state.activeSkillIds, skill.name]
+              dispatch({ type: "TOGGLE_SKILL", skillId: skill.name })
+              if (state.activeThreadId) {
+                chrome.runtime.sendMessage({
+                  type: "thread.update",
+                  threadId: state.activeThreadId,
+                  updates: { active_skill_ids: activeSkillIds },
+                })
+              }
+            }}
             style={{ marginRight: 8 }}
           />
           <div style={{ flex: 1 }}>

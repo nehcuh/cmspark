@@ -2,8 +2,7 @@
 
 import { Component, useState } from "react"
 import { useAgentStore } from "../store/agentStore"
-import ReactMarkdown from "react-markdown"
-import remarkGfm from "remark-gfm"
+import { marked } from "marked"
 
 export function ChatView() {
   const { state } = useAgentStore()
@@ -76,63 +75,40 @@ function Cursor() {
   }} />
 }
 
-// Markdown renderer with internal error fallback — catches parser crashes
+// Markdown renderer — uses marked (zero-deps, browser-safe) instead of react-markdown + remark-gfm
+// react-markdown/remark-gfm ecosystem is ESM-only with Node.js deps that crash in Chrome extension context
 class MarkdownRenderer extends Component<{ content: string }> {
-  state = { error: false, lastContent: "" }
+  state = { html: "", error: false }
 
-  static getDerivedStateFromError() {
-    return { error: true }
-  }
-
-  static getDerivedStateFromProps(props: { content: string }, state: { error: boolean; lastContent: string }) {
-    if (state.error && props.content !== state.lastContent) {
-      return { error: false, lastContent: props.content }
+  static getDerivedStateFromProps(props: { content: string }, state: { html: string; error: boolean }) {
+    if (!props.content) return { html: "", error: false }
+    try {
+      const html = marked.parse(props.content, { async: false }) as string
+      if (html !== state.html) {
+        return { html, error: false }
+      }
+      return null
+    } catch (e: any) {
+      console.error("[MarkdownRenderer] marked.parse error:", e)
+      return { error: true }
     }
-    return { lastContent: props.content }
   }
 
   render() {
     if (this.state.error) {
+      console.warn("[MarkdownRenderer] falling back to raw text")
       return <div style={{ whiteSpace: "pre-wrap", lineHeight: 1.5 }}>{this.props.content}</div>
     }
-    if (!this.props.content) return null
+    if (!this.state.html) return null
 
     return (
-      <div className="markdown-body">
+      <>
         <style>{markdownCSS}</style>
-        <ReactMarkdown
-          remarkPlugins={[remarkGfm]}
-          components={{
-            code({ className, children, ...props }: any) {
-              const isBlock = className || String(children).includes("\n")
-              if (isBlock) {
-                return (
-                  <pre style={markdownStyles.codeBlock}>
-                    <code className={className} {...props}>
-                      {children}
-                    </code>
-                  </pre>
-                )
-              }
-              return <code style={markdownStyles.inlineCode} {...props}>{children}</code>
-            },
-            img({ src, alt }: any) {
-              return <span style={markdownStyles.image}>[Image: {alt || src}]</span>
-            },
-            table({ children }: any) {
-              return <table style={markdownStyles.table}>{children}</table>
-            },
-            th({ children }: any) {
-              return <th style={{ border: "1px solid #ddd", padding: "4px 8px", textAlign: "left", background: "#f5f5f5", fontWeight: 600, fontSize: 12 }}>{children}</th>
-            },
-            td({ children }: any) {
-              return <td style={{ border: "1px solid #ddd", padding: "4px 8px", fontSize: 12 }}>{children}</td>
-            },
-          }}
-        >
-          {this.props.content}
-        </ReactMarkdown>
-      </div>
+        <div
+          className="markdown-body"
+          dangerouslySetInnerHTML={{ __html: this.state.html }}
+        />
+      </>
     )
   }
 }
@@ -171,39 +147,28 @@ const markdownCSS = `
   }
   .markdown-body th { background: #f5f5f5; font-weight: 600; }
   .markdown-body hr { border: none; border-top: 1px solid #e0e0e0; margin: 10px 0; }
+  .markdown-body code {
+    background: #f0f0f0;
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-size: 11px;
+    font-family: 'SF Mono', 'Menlo', 'Monaco', monospace;
+  }
+  .markdown-body pre {
+    background: #f5f5f5;
+    padding: 8px 10px;
+    border-radius: 6px;
+    overflow-x: auto;
+    margin: 6px 0;
+    font-size: 11px;
+  }
+  .markdown-body pre code {
+    background: none;
+    padding: 0;
+    font-size: inherit;
+  }
 `
 
-const markdownStyles: Record<string, React.CSSProperties> = {
-  codeBlock: {
-    background: "#f5f5f5",
-    border: "1px solid #e0e0e0",
-    borderRadius: 4,
-    padding: "8px 10px",
-    overflowX: "auto",
-    fontSize: 12,
-    fontFamily: "'SF Mono', SFMono-Regular, ui-monospace, monospace",
-    whiteSpace: "pre-wrap",
-    wordBreak: "break-word",
-    margin: "4px 0",
-  },
-  inlineCode: {
-    background: "#f0f0f0",
-    padding: "1px 4px",
-    borderRadius: 3,
-    fontSize: 12,
-    fontFamily: "'SF Mono', SFMono-Regular, ui-monospace, monospace",
-  },
-  image: {
-    color: "#999",
-    fontStyle: "italic",
-  },
-  table: {
-    borderCollapse: "collapse" as const,
-    width: "100%",
-    margin: "6px 0",
-    fontSize: 12,
-  },
-}
 
 const styles: Record<string, React.CSSProperties> = {
   container: {

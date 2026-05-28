@@ -534,7 +534,7 @@ export class BrowserBridge {
       // Fallback: dispatch mouseenter via scripting
       if (params.selector) {
         await this.scriptingExecute(tabId,
-          `(()=>{const el=document.querySelector('${params.selector.replace(/'/g, "\\'")}');if(el){el.dispatchEvent(new MouseEvent('mouseenter',{bubbles:true}));el.dispatchEvent(new MouseEvent('mouseover',{bubbles:true}));return true}return false})()`)
+          `(()=>{const el=document.querySelector(${JSON.stringify(params.selector)});if(el){el.dispatchEvent(new MouseEvent('mouseenter',{bubbles:true}));el.dispatchEvent(new MouseEvent('mouseover',{bubbles:true}));return true}return false})()`)
       }
     }
     return { success: true }

@@ -7,6 +7,7 @@ import { tokenize, tokensToVec, cosineSimilarity } from "./semantic-match"
 import matter from "gray-matter"
 import AdmZip from "adm-zip"
 import { getConfigDir } from "../config"
+import { ThreadManager } from "../threads/thread-manager"
 
 interface SkillMeta {
   name: string
@@ -141,7 +142,17 @@ export class SkillEngine {
   }
 
   getActiveForThread(threadId: string): Skill[] {
-    const active = this.threadSkillMap.get(threadId) || []
+    let active = this.threadSkillMap.get(threadId)
+    if (!active) {
+      try {
+        const tm = new ThreadManager()
+        const thread = tm.get(threadId)
+        active = thread?.active_skill_ids || ["browse"]
+        this.threadSkillMap.set(threadId, active)
+      } catch {
+        active = ["browse"]
+      }
+    }
     return active.map(name => this.get(name)).filter(Boolean) as Skill[]
   }
 
@@ -214,7 +225,7 @@ export class SkillEngine {
     ].join("\n")
 
     return {
-      content: `${frontmatter}\n\n${skill.content}`,
+      content: Buffer.from(`${frontmatter}\n\n${skill.content}`).toString("base64"),
       format: "markdown",
       skill_name: name,
     }

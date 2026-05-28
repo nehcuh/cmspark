@@ -167,12 +167,26 @@ export async function handleMessage(
     case "skill.list":
       skillEngine.refresh()
       return { type: "skill.list", skills: skillEngine.list() }
-    case "skill.activate":
+    case "skill.activate": {
       skillEngine.activate(rest.thread_id, rest.skill_name)
+      const thread = threadManager.get(rest.thread_id)
+      if (thread) {
+        const active = thread.active_skill_ids || []
+        if (!active.includes(rest.skill_name)) {
+          threadManager.update(rest.thread_id, { active_skill_ids: [...active, rest.skill_name] })
+        }
+      }
       return { type: "skill.activated", skill_name: rest.skill_name }
-    case "skill.deactivate":
+    }
+    case "skill.deactivate": {
       skillEngine.deactivate(rest.thread_id, rest.skill_name)
+      const thread = threadManager.get(rest.thread_id)
+      if (thread) {
+        const active = thread.active_skill_ids || []
+        threadManager.update(rest.thread_id, { active_skill_ids: active.filter(s => s !== rest.skill_name) })
+      }
       return { type: "skill.deactivated", skill_name: rest.skill_name }
+    }
     case "skill.export":
       return { type: "skill.exported", ...skillEngine.exportSkill(rest.skill_name) }
     case "skill.import":

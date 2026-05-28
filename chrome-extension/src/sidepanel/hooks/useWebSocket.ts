@@ -227,7 +227,11 @@ export function useWebSocket() {
           if (content) {
             const mimeType = format === "zip" ? "application/zip" : "text/markdown"
             const ext = format === "zip" ? ".zip" : ".md"
-            const bytes = Uint8Array.from(atob(content), c => c.charCodeAt(0))
+            // Decode: zip is base64, markdown is plain text
+            const isBase64 = format === "zip"
+            const bytes = isBase64
+              ? Uint8Array.from(atob(content), c => c.charCodeAt(0))
+              : new TextEncoder().encode(content)
             const blob = new Blob([bytes], { type: mimeType })
             const url = URL.createObjectURL(blob)
             const a = document.createElement("a")

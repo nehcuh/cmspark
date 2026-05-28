@@ -98,7 +98,9 @@ function AppContent() {
     <div style={styles.container}>
       <style>{globalCSS}</style>
       {toast && <div style={toastStyles.toast}>{toast}</div>}
+      <Header connectionState={connectionState} onCraft={() => setCraftOpen(true)} onToggleLogs={() => setShowLogs(!showLogs)} />
       <ChatView />
+      <BottomBar />
       <InputArea />
       {showLogs && <LogBar onClose={() => setShowLogs(false)} />}
       <SettingsSlideout />
@@ -147,7 +149,7 @@ function SecurityConfirmationDialog() {
   )
 }
 
-function Header({ connectionState, onCraft }: { connectionState: ConnectionState; onCraft: () => void }) {
+function Header({ connectionState, onCraft, onToggleLogs }: { connectionState: ConnectionState; onCraft: () => void; onToggleLogs: () => void }) {
   const { state } = useAgentStore()
   const hasMessages = state.messages.length > 0 && !!state.activeThreadId
 
@@ -167,6 +169,7 @@ function Header({ connectionState, onCraft }: { connectionState: ConnectionState
       >
         🔧
       </button>
+      <button onClick={onToggleLogs} style={styles.craftBtn} title="日志">📋</button>
       <div
         style={{
           ...styles.statusDot,

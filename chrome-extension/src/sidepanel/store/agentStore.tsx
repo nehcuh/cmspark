@@ -20,6 +20,7 @@ export interface AgentState {
   sendShortcut: SendShortcut
   pendingSecurityConfirmations: SecurityConfirmationRequest[]
   logs: LogEntry[]
+  autoSkillNames: string
 }
 
 export type AgentAction =
@@ -89,6 +90,7 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         threads: action.threads,
         activeThreadId: nextActiveThreadId,
         pinnedTabIds: nextActiveThread?.pinned_tabs || [],
+        activeSkillIds: nextActiveThread?.active_skill_ids || [],
       }
     }
     case "SET_ACTIVE_THREAD": {
@@ -99,6 +101,7 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         messages: [],
         streamingContent: "",
         pinnedTabIds: activeThread?.pinned_tabs || [],
+        activeSkillIds: activeThread?.active_skill_ids || [],
       }
     }
     case "ADD_MESSAGE":
