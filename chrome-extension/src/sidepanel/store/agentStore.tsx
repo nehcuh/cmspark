@@ -1,7 +1,7 @@
 // Global state store for the agent
 
 import { createContext, useContext, useReducer, type ReactNode, type Dispatch } from "react"
-import type { ConnectionState, Thread, Message, SkillMeta, OperationRecord, LLMConfig, SendShortcut, SecurityConfirmationRequest } from "../types"
+import type { ConnectionState, Thread, Message, SkillMeta, OperationRecord, LLMConfig, SendShortcut, SecurityConfirmationRequest, LogEntry } from "../types"
 
 export interface AgentState {
   connectionState: ConnectionState
@@ -19,6 +19,7 @@ export interface AgentState {
   testResult: string | null
   sendShortcut: SendShortcut
   pendingSecurityConfirmations: SecurityConfirmationRequest[]
+  logs: LogEntry[]
 }
 
 export type AgentAction =
@@ -45,7 +46,8 @@ export type AgentAction =
   | { type: "SET_SEND_SHORTCUT"; shortcut: SendShortcut }
   | { type: "ADD_SECURITY_CONFIRMATION"; request: SecurityConfirmationRequest }
   | { type: "REMOVE_SECURITY_CONFIRMATION"; confirmationId: string }
-
+  | { type: "ADD_LOG"; entry: LogEntry }
+  | { type: "SET_AUTO_SKILLS"; names: string }
 export const initialState: AgentState = {
   connectionState: "disconnected",
   threads: [],
@@ -69,6 +71,8 @@ export const initialState: AgentState = {
   testResult: null,
   sendShortcut: "Enter",
   pendingSecurityConfirmations: [],
+  logs: [],
+  autoSkillNames: ""
 }
 
 export function agentReducer(state: AgentState, action: AgentAction): AgentState {
@@ -105,6 +109,19 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         messages: state.messages.map(m =>
           m.id === action.id ? { ...m, content: action.content } : m
         ),
+      }
+    case "UPDATE_TOOL_CALL":
+      return {
+        ...state,
+        messages: state.messages.map(m => {
+          if (m.id !== action.messageId) return m
+          return {
+            ...m,
+            tool_calls: (m.tool_calls || []).map(tc =>
+              tc.id === action.toolCallId ? { ...tc, ...action.updates } : tc
+            ),
+          }
+        }),
       }
     case "SET_MESSAGES":
       return { ...state, messages: action.messages }
@@ -185,6 +202,10 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         ...state,
         pendingSecurityConfirmations: state.pendingSecurityConfirmations.filter(r => r.confirmation_id !== action.confirmationId),
       }
+    case "ADD_LOG":
+      return { ...state, logs: [...state.logs.slice(-99), action.entry] }
+    case "SET_AUTO_SKILLS":
+      return { ...state, autoSkillNames: action.names }
     default:
       return state
   }

@@ -154,6 +154,8 @@ CRITICAL RULES:
   const client = new OpenAI({
     baseURL: config.base_url,
     apiKey: config.api_key || "sk-placeholder",
+    timeout: 120000,
+    maxRetries: 0,
   })
 
   const tools = getToolDefinitions()
@@ -310,10 +312,18 @@ CRITICAL RULES:
             // Recoverable errors — feed back to LLM for retry
           }
 
+          // Truncate huge tool results to protect context window
+          const MAX_RESULT_CHARS = 8000
+          let resultContent = JSON.stringify(result)
+          const originalLen = resultContent.length
+          if (resultContent.length > MAX_RESULT_CHARS) {
+            resultContent = resultContent.substring(0, MAX_RESULT_CHARS)
+              + `...(truncated, original ${originalLen} chars)`
+          }
           toolResults.push({
             role: "tool" as const,
             tool_call_id: tc.id,
-            content: JSON.stringify(result),
+            content: resultContent,
           })
         } catch (e: any) {
           const result = { success: false, error: e.message || String(e) }

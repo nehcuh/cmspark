@@ -96,10 +96,20 @@ export async function handleMessage(
       abortControllers.set(rest.thread_id, controller)
 
       try {
+        // Semantic skill matching — auto-activate relevant skills
+        const matched = services.skillEngine.matchSkills(rest.message)
+        const autoSkillIds = matched.filter(m => m.confidence >= 15).map(m => m.name)
+        const allSkillIds = [...new Set([...autoSkillIds, ...rest.skill_ids])]
+        if (autoSkillIds.length > 0) {
+          session.sendToExtension({
+            type: "skill.auto_matched",
+            skills: matched.filter(m => autoSkillIds.includes(m.name)),
+          })
+        }
         await chatCreate({
           threadId: rest.thread_id,
           message: rest.message,
-          skillIds: rest.skill_ids || [],
+          skillIds: allSkillIds,
           config: config.llm,
           threadManager: services.threadManager,
           skillEngine: services.skillEngine,

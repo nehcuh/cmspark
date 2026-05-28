@@ -1,6 +1,6 @@
 // CMspark Browser Agent — Root App Component
 
-import { Component, useState, useRef, useCallback } from "react"
+import { Component, useState, useRef, useCallback, useEffect } from "react"
 import { useWebSocket } from "./hooks/useWebSocket"
 import { ChatView } from "./components/ChatView"
 import { ThreadList } from "./components/ThreadList"
@@ -81,14 +81,26 @@ export function App() {
 function AppContent() {
   const { connectionState } = useWebSocket()
   const [craftOpen, setCraftOpen] = useState(false)
+  const [showLogs, setShowLogs] = useState(false)
+  const { state: appState, dispatch } = useAgentStore()
+  const [toast, setToast] = useState("")
+
+  // Show auto-matched skill toast
+  useEffect(() => {
+    if (appState.autoSkillNames) {
+      setToast(`🤖 自动匹配: ${appState.autoSkillNames}`)
+      dispatch({ type: "SET_AUTO_SKILLS", names: "" })
+      setTimeout(() => setToast(""), 4000)
+    }
+  }, [appState.autoSkillNames])
 
   return (
     <div style={styles.container}>
       <style>{globalCSS}</style>
-      <Header connectionState={connectionState} onCraft={() => setCraftOpen(true)} />
+      {toast && <div style={toastStyles.toast}>{toast}</div>}
       <ChatView />
-      <BottomBar />
       <InputArea />
+      {showLogs && <LogBar onClose={() => setShowLogs(false)} />}
       <SettingsSlideout />
       <SecurityConfirmationDialog />
       {craftOpen && <SkillCraftPanel onClose={() => setCraftOpen(false)} />}
@@ -616,3 +628,39 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 600,
   },
 }
+
+function LogBar({ onClose }: { onClose: () => void }) {
+  const { state } = useAgentStore()
+  const logs = state.logs.slice(-5)
+  return (
+    <div style={logStyles.container}>
+      <button onClick={onClose} style={logStyles.closeBtn}>✕</button>
+      {logs.map((l, i) => (
+        <div key={i} style={logStyles.line}>
+          <span style={{...logStyles.level, color: l.level === "error" ? "#F44336" : l.level === "warn" ? "#FF9800" : "#999"}}>{l.level.toUpperCase().padEnd(5)}</span>
+          <span style={logStyles.source}>{l.source.padEnd(14)}</span>
+          <span style={logStyles.event}>{l.event}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+const logStyles: Record<string, React.CSSProperties> = {
+  container: { position: "relative" as const, borderTop: "1px solid #eee", padding: "4px 8px", maxHeight: 120, overflowY: "auto", background: "#fafafa", fontFamily: "monospace", fontSize: 10 },
+  line: { display: "flex", gap: 8, padding: "1px 0", whiteSpace: "nowrap" },
+  level: { width: 40, flexShrink: 0 },
+  source: { width: 120, color: "#666", flexShrink: 0, overflow: "hidden", textOverflow: "ellipsis" },
+  event: { flex: 1, overflow: "hidden", textOverflow: "ellipsis" },
+  closeBtn: { position: "absolute" as const, right: 4, top: 2, background: "none", border: "none", fontSize: 12, cursor: "pointer", color: "#999" },
+}
+
+const toastStyles: Record<string, React.CSSProperties> = {
+  toast: {
+    position: "fixed" as const, top: 48, left: 8, right: 8,
+    background: "#4A90D9", color: "#fff", padding: "6px 12px",
+    borderRadius: 6, fontSize: 12, zIndex: 300,
+  },
+}
+
+export default App

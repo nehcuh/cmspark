@@ -106,7 +106,7 @@ export function classifyError(errorMessage: string, context?: { toolName?: strin
     return "non_recoverable"
   }
 
-  // Recoverable (timeout, transient, element not found, permission, wrong page type)
+  // Recoverable (timeout, transient, element not found, permission, wrong page type, bad tab id)
   const recoverable = [
     "timeout",
     "timed out",
@@ -117,6 +117,8 @@ export function classifyError(errorMessage: string, context?: { toolName?: strin
     "element not found",
     "element not visible",
     "not found",
+    "no tab with id",
+    "no tab with given id",
     "network error",
     "connection refused",
     "cannot access",

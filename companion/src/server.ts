@@ -99,6 +99,13 @@ function createToolExecutor(ws: WebSocket) {
   return async (toolCallId: string, toolName: string, params: any): Promise<{ success: boolean; data?: any; error?: string }> => {
     let finalParams = params || {}
     const startedAt = Date.now()
+    // Notify extension: tool execution started (show in sidebar)
+    ws.send(JSON.stringify({
+      type: "tool.start",
+      tool_call_id: toolCallId,
+      tool_name: toolName,
+      params: summarizeToolParams(finalParams),
+    }))
     logger.info("tool.start", {
       tool_call_id: toolCallId,
       tool_name: toolName,
@@ -191,7 +198,7 @@ function createToolExecutor(ws: WebSocket) {
     }
 
     // Companion-side tools (executed locally, not forwarded to extension)
-    const COMPANION_TOOLS = ["osascript_eval"]
+    const COMPANION_TOOLS = ["osascript_eval", "use_skill"]
     if (COMPANION_TOOLS.includes(toolName)) {
       try {
         const result = await executeCompanionTool(toolName, finalParams)
@@ -264,6 +271,17 @@ function handleToolResult(msg: any) {
 
 async function executeCompanionTool(toolName: string, params: any): Promise<any> {
   switch (toolName) {
+    case "use_skill": {
+      const skillName = params.name
+      if (!skillName) {
+        return { success: false, error: "skill name required" }
+      }
+      const content = skillEngine.loadContent(skillName)
+      if (!content) {
+        return { success: false, error: `Skill not found or has no content: ${skillName}` }
+      }
+      return { success: true, data: { name: skillName, content } }
+    }
     case "osascript_eval": {
       const { url: pageUrl, expression: jsExpr } = params
       if (!pageUrl || !jsExpr) {

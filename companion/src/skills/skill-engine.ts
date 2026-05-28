@@ -3,6 +3,7 @@
 import * as fs from "fs"
 import * as path from "path"
 import * as os from "os"
+import { tokenize, tokensToVec, cosineSimilarity } from "./semantic-match"
 import matter from "gray-matter"
 import AdmZip from "adm-zip"
 import { getConfigDir } from "../config"
@@ -144,12 +145,42 @@ export class SkillEngine {
     return active.map(name => this.get(name)).filter(Boolean) as Skill[]
   }
 
+  /** Return full content of a skill by name. */
+  loadContent(name: string): string | null {
+    const skill = this.get(name)
+    return skill?.content || null
+  }
+
+  /** Match user message against all skill descriptions using TF-IDF + cosine similarity.
+   * Returns skills sorted by confidence, max 3. */
+  matchSkills(message: string): Array<{ name: string; confidence: number }> {
+    const queryTokens = tokenize(message)
+    const queryVec = tokensToVec(queryTokens)
+
+    const results: Array<{ name: string; confidence: number }> = []
+    for (const skill of this.skillsCache.values()) {
+      const skillText = `${skill.name} ${skill.description || ""}`
+      const skillTokens = tokenize(skillText)
+      const skillVec = tokensToVec(skillTokens)
+      const score = cosineSimilarity(queryVec, skillVec)
+      if (score > 0.1) {
+        results.push({ name: skill.name, confidence: Math.round(score * 100) })
+      }
+    }
+    results.sort((a, b) => b.confidence - a.confidence)
+    return results.slice(0, 3)
+  }
+  /** Build compact skill index for system prompt.
+   * LLM calls use_skill(name) to load full instructions on demand. */
   buildSystemPrompt(threadId: string): string {
     const skills = this.getActiveForThread(threadId)
     if (skills.length === 0) return ""
 
-    const skillContents = skills.map(s => s.content).join("\n\n---\n\n")
-    return `You have access to the following skills. Use them to guide your approach:\n\n${skillContents}`
+    const index = skills.map(s =>
+      `- \`${s.name}\`: ${s.description || "(no description)"}`
+    ).join("\n")
+
+    return `Available skills (call use_skill(name) to load full instructions when relevant):\n${index}`
   }
 
   exportSkill(name: string): { content: string; format: "markdown" | "zip"; skill_name: string } {
@@ -208,7 +239,7 @@ export class SkillEngine {
 
     // Validate: must contain a SKILL.md at some level
     const entries = zip.getEntries()
-    const skillMdEntry = entries.find(e => e.entryName.endsWith("SKILL.md") || e.entryName.endsWith("SKILL.md/"))
+    const skillMdEntry = entries.find((e: AdmZip.IZipEntry) => e.entryName.endsWith("SKILL.md") || e.entryName.endsWith("SKILL.md/"))
     if (!skillMdEntry) {
       throw new Error("Zip must contain a SKILL.md file")
     }

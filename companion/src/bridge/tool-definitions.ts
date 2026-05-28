@@ -362,6 +362,20 @@ export function getToolDefinitions(): any[] {
     {
       type: "function",
       function: {
+        name: "use_skill",
+        description: "Load the full instructions of a skill by name. Skills provide step-by-step workflows for specific tasks. Call this ONLY when a skill's name or description matches the user's task — do NOT pre-load all skills.",
+        parameters: {
+          type: "object",
+          properties: {
+            name: { type: "string", description: "Skill name to load" },
+          },
+          required: ["name"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
         name: "osascript_eval",
         description: "(macOS ONLY — does NOT work on Windows/Linux) Execute JavaScript in a Chrome tab via AppleScript. Only use this as a LAST RESORT when both get_page_text and evaluate fail on restricted pages (e.g. X.com with strict CSP). Prefer get_page_text for reading page content.",
         parameters: {

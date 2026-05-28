@@ -100,8 +100,8 @@ function setupMessageHandlers() {
       case "getStatus":
         sendResponse({
           connectionState: wsClient.getState(),
-          config: browserBridge.getConfig(),
         })
+        return true
         return true
 
       case "chat.send":

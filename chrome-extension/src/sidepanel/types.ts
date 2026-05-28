@@ -13,6 +13,14 @@ export interface Thread {
   active_skill_ids: string[]
 }
 
+export interface LogEntry {
+  ts: string
+  level: "info" | "warn" | "error" | "debug"
+  source: string
+  event: string
+  data: Record<string, any>
+}
+
 export type SendShortcut = "Enter" | "Cmd+Enter" | "Ctrl+Enter"
 
 export interface LLMConfig {

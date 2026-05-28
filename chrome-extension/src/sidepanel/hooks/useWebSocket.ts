@@ -19,6 +19,10 @@ export function requestInitialSidePanelData(
   initializedRef.current = true
   sendMessage({ type: "thread.list" })
   sendMessage({ type: "skill.list" })
+  sendMessage({ type: "config.get" })
+  return true
+  sendMessage({ type: "thread.list" })
+  sendMessage({ type: "skill.list" })
   return true
 }
 
@@ -92,6 +96,23 @@ export function useWebSocket() {
           dispatch({ type: "SET_STREAMING", content: "" })
           break
 
+        case "log.event": {
+          const log = msg.data
+          if (log && log.level !== "debug") {
+            dispatch({
+              type: "ADD_LOG",
+              entry: {
+                ts: msg.ts || log.ts || new Date().toISOString(),
+                level: log.level || "info",
+                source: log.source || "unknown",
+                event: log.event || "unknown",
+                data: log.data || {},
+              },
+            })
+          }
+          break
+        }
+
         case "chat.error":
           dispatch({
             type: "ADD_MESSAGE",
@@ -105,25 +126,36 @@ export function useWebSocket() {
           })
           break
 
-        case "tool.result":
+        case "tool.start":
           dispatch({
             type: "ADD_MESSAGE",
             message: {
-              id: `${msg.tool_call_id}_result`,
+              id: msg.tool_call_id,
               thread_id: activeThreadRef.current || "",
               role: "tool",
-              content: JSON.stringify(msg.result, null, 2),
+              content: "",
               tool_calls: [{
                 id: msg.tool_call_id,
                 tool_name: msg.tool_name,
-                params: {},
-                result: msg.result,
-                status: msg.result?.success ? "success" : "error",
+                params: msg.params || {},
+                result: null,
+                status: "running",
               }],
               created_at: new Date().toISOString(),
             },
           })
           break
+
+        case "tool.result":
+          dispatch({
+            type: "UPDATE_TOOL_CALL",
+            messageId: msg.tool_call_id,
+            toolCallId: msg.tool_call_id,
+            updates: {
+              result: msg.result,
+              status: msg.result?.success ? "success" : "error",
+            },
+          })
 
         case "config.testResult":
           dispatch({ type: "SET_TEST_RESULT", result: msg.ok ? "连接成功 ✓" : `连接失败: ${msg.error || "未知错误"}` })
@@ -174,6 +206,16 @@ export function useWebSocket() {
 
         case "thread.messages":
           dispatch({ type: "SET_MESSAGES", messages: msg.messages })
+          break
+
+        case "skill.auto_matched":
+          const autoSkills = (msg.skills || []).map((s: any) => s.name).join(", ")
+          if (autoSkills) {
+            dispatch({
+              type: "SET_AUTO_SKILLS",
+              names: autoSkills,
+            })
+          }
           break
 
         case "skill.list":
