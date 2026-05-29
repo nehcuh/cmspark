@@ -8,7 +8,7 @@ import type { SkillEngine } from "./skills/skill-engine"
 import type { HistoryStore } from "./history/store"
 import { getConfig, saveConfig } from "./config"
 import { chatCreate } from "./llm/adapter"
-import { craftSkill } from "./skills/skill-craft"
+import { craftSkill, craftSkillToMarkdown } from "./skills/skill-craft"
 import { checkHighRiskExecution } from "./security"
 
 // Per-thread abort controllers for cancelling in-flight LLM requests
@@ -96,14 +96,25 @@ export async function handleMessage(
       abortControllers.set(rest.thread_id, controller)
 
       try {
-        // Semantic skill matching — auto-activate relevant skills
+
+        // Semantic matching for domain_knowledge — auto-activate matches
         const matched = services.skillEngine.matchSkills(rest.message)
-        const autoSkillIds = matched.filter(m => m.confidence >= 15).map(m => m.name)
-        const allSkillIds = [...new Set([...autoSkillIds, ...rest.skill_ids])]
-        if (autoSkillIds.length > 0) {
+        const domainMatches = matched.filter(m => m.confidence >= 20)
+        for (const m of domainMatches) {
+          const skill = services.skillEngine.get(m.name)
+          if (skill?.type === "domain_knowledge") {
+            services.skillEngine.activate(rest.thread_id, m.name)
+          }
+        }
+
+        // Build combined skill list (auto-matched + user-selected)
+        const threadSkills = services.skillEngine.getActiveForThread(rest.thread_id).map(s => s.name)
+        const allSkillIds = [...new Set([...threadSkills, ...rest.skill_ids])]
+        
+        if (domainMatches.length > 0) {
           session.sendToExtension({
             type: "skill.auto_matched",
-            skills: matched.filter(m => autoSkillIds.includes(m.name)),
+            skills: domainMatches,
           })
         }
         await chatCreate({
@@ -235,15 +246,35 @@ export async function handleMessage(
           threadId: rest.thread_id,
           threadManager: services.threadManager,
           messageIds: rest.message_ids,
-          messageCount: rest.message_count,
+          messageCount: rest.message_count || 20,
           config: config.llm,
         })
         if (!skill) {
           return { type: "skill.crafted", skill: null, reason: "未发现可提取的操作模式" }
         }
-        return { type: "skill.crafted", skill }
+
+        // Auto-save and auto-activate the crafted skill
+        const markdown = craftSkillToMarkdown(skill)
+        services.skillEngine.importSkill(markdown)
+        services.skillEngine.activate(rest.thread_id, skill.name)
+
+        // Update thread's active_skill_ids
+        const thread = services.threadManager.get(rest.thread_id)
+        if (thread) {
+          const active = thread.active_skill_ids || []
+          if (!active.includes(skill.name)) {
+            services.threadManager.update(rest.thread_id, { active_skill_ids: [...active, skill.name] })
+          }
+        }
+
+        return {
+          type: "skill.crafted",
+          skill,
+          auto_saved: true,
+          auto_activated: true,
+        }
       } catch (e: any) {
-        return { type: "skill.crafted", skill: null, error: e.message || String(e) }
+        return { type: "error", error: `技能生成失败: ${e.message || String(e)}` }
       }
     }
 

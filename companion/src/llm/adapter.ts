@@ -26,7 +26,20 @@ interface ChatCreateParams {
   signal?: AbortSignal
 }
 
-const MAX_TOOL_CALL_ROUNDS = 40
+const MAX_TOOL_CALL_ROUNDS = 100
+
+/** Extract key terms (selectors, IDs, URLs) from a site_knowledge entry for matching. */
+function extractKeyTerms(content: string): string[] {
+  const terms: string[] = []
+  const selectorRe = /[#.]?[a-zA-Z][a-zA-Z0-9_-]*/g
+  const attrRe = /\[([^\]]+)\]/g
+  const urlRe = /[a-zA-Z0-9.-]+\.(com|cn|org|net|io|dev|localhost)(\/[^\s]*)?/g
+  let m
+  while ((m = selectorRe.exec(content)) !== null) terms.push(m[0])
+  while ((m = attrRe.exec(content)) !== null) terms.push(m[1])
+  while ((m = urlRe.exec(content)) !== null) terms.push(m[0])
+  return [...new Set(terms)]
+}
 const CONTINUOUS_FAILURE_LIMIT = 5
 
 interface ToolExecutionResult {
@@ -290,6 +303,22 @@ CRITICAL RULES:
           threadManager.addMessage(threadId, createToolResultMessage(threadId, tc, result, params))
 
           if (!result.success) {
+            // L1 Stale detection: match error against site_knowledge entries
+            try {
+              const activeSkills = skillEngine.getActiveForThread(threadId)
+              for (const skill of activeSkills) {
+                if (skill.type !== "site_knowledge" || !skill.entries) continue
+                for (const entry of skill.entries) {
+                  if (entry.stale) continue
+                  // Match: extract selectors/IDs from entry content and check if they appear in error
+                  const entryTerms = extractKeyTerms(entry.content)
+                  const match = entryTerms.some(t => t.length > 2 && result.error!.includes(t))
+                  if (match) {
+                    skillEngine.markEntryStale(skill.name, entry.id, result.error!.substring(0, 80))
+                  }
+                }
+              }
+            } catch { /* best-effort stale detection */ }
             const errorLevel = classifyError(result.error || "", { toolName })
             if (errorLevel === "security") {
               shouldStop = true

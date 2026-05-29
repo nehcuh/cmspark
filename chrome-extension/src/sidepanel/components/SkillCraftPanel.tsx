@@ -50,6 +50,12 @@ export function SkillCraftPanel({ onClose }: { onClose: () => void }) {
           setEditDesc(s.description)
           setEditType(s.type)
           setEditBody(s.body)
+          // If already auto-saved by companion, skip preview and go to "saved" state
+          if (msg.auto_saved) {
+            chrome.runtime.sendMessage({ type: "skill.list" })
+            onClose()
+            return
+          }
           setStep("preview")
         } else {
           setError(msg.reason || "未发现可提取的操作模式")

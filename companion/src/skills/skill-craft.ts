@@ -241,3 +241,27 @@ function salvageSkill(text: string): CraftedSkill | null {
     body: text,
   }
 }
+
+/**
+ * Convert a CraftedSkill back to markdown format for saving.
+ */
+export function craftSkillToMarkdown(skill: CraftedSkill): string {
+  const lines = ["---"]
+  lines.push(`name: ${skill.name}`)
+  if (skill.description) lines.push(`description: ${skill.description}`)
+  lines.push(`type: ${skill.type || "prompt_template"}`)
+  if (skill.parameters && skill.parameters.length > 0) {
+    lines.push("parameters:")
+    for (const p of skill.parameters) {
+      lines.push(`  ${p.name}:`)
+      lines.push(`    type: ${p.type}`)
+      lines.push(`    required: ${p.required}`)
+      if (p.default) lines.push(`    default: ${p.default}`)
+      lines.push(`    description: ${p.description}`)
+    }
+  }
+  lines.push("---")
+  lines.push("")
+  lines.push(skill.body || "")
+  return lines.join("\n")
+}

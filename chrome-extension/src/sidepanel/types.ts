@@ -68,9 +68,18 @@ export interface ToolResult {
 export interface SkillMeta {
   name: string
   description: string
-  type: "prompt_template" | "tool_chain" | "sub_agent"
+  type: "prompt_template" | "tool_chain" | "sub_agent" | "site_knowledge" | "domain_knowledge"
   builtin: boolean
-  source_file: string
+  site?: string
+  tags?: string[]
+  entries?: Array<{
+    id: string
+    category: "problem" | "success" | "tip" | "rule"
+    content: string
+    recorded_at: string
+    stale: boolean
+    stale_reason: string
+  }>
 }
 
 export interface OperationRecord {

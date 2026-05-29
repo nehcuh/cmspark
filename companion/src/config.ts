@@ -93,6 +93,10 @@ export function getConfig(): CompanionConfig {
 }
 
 export function saveConfig(config: Partial<CompanionConfig>): CompanionConfig {
+  // Warn when '*' is used as a trusted domain (global wildcard)
+  if (config.trusted_domains?.includes("*")) {
+    console.warn("[cmspark-agent] WARNING: '*' wildcard trusted domain — all cookie access is allowed. Use only for development.")
+  }
   const current = getConfig()
   const updated = deepMerge(current, config) as CompanionConfig
 

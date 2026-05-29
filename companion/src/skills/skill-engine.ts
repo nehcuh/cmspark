@@ -9,10 +9,25 @@ import AdmZip from "adm-zip"
 import { getConfigDir } from "../config"
 import { ThreadManager } from "../threads/thread-manager"
 
+interface ExperienceEntry {
+  id: string
+  category: "problem" | "success" | "tip" | "rule"
+  content: string
+  recorded_at: string
+  confirmed_at: string | null
+  stale: boolean
+  stale_reason: string
+  replaced_by: string
+}
+
 interface SkillMeta {
   name: string
   description: string
-  type: "prompt_template" | "tool_chain" | "sub_agent"
+  type: "prompt_template" | "tool_chain" | "sub_agent" | "site_knowledge" | "domain_knowledge"
+  site?: string
+  tags?: string[]
+  priority?: "high" | "normal" | "low"
+  entries?: ExperienceEntry[]
   builtin: boolean
   source_file: string
   dir?: string
@@ -58,6 +73,10 @@ export class SkillEngine {
               const name = parsed.data.name || entry.name
               const description = parsed.data.description || ""
               const type = parsed.data.type || "prompt_template"
+              const site = parsed.data.site
+              const tags = parsed.data.tags
+              const priority = parsed.data.priority
+              const entries = parsed.data.entries
 
               // Collect resource files (all non-SKILL.md files in directory)
               const resources = fs.readdirSync(entryPath)
@@ -76,6 +95,10 @@ export class SkillEngine {
                 dir: entryPath,
                 content: parsed.content,
                 resources,
+                site,
+                tags,
+                priority,
+                entries,
               })
             } catch {
               // skip malformed folder skills
@@ -89,6 +112,10 @@ export class SkillEngine {
             const name = parsed.data.name || entry.name.replace(".md", "")
             const description = parsed.data.description || ""
             const type = parsed.data.type || "prompt_template"
+            const site = parsed.data.site
+            const tags = parsed.data.tags
+            const priority = parsed.data.priority
+            const entries = parsed.data.entries
 
             this.skillsCache.push({
               name,
@@ -98,6 +125,10 @@ export class SkillEngine {
               source_file: entryPath,
               content: parsed.content,
               resources: [],
+              site,
+              tags,
+              priority,
+              entries,
             })
           } catch {
             // skip malformed skills
@@ -114,6 +145,9 @@ export class SkillEngine {
       name: s.name,
       description: s.description,
       type: s.type,
+      site: s.site,
+      tags: s.tags,
+      entries: s.entries,
       builtin: s.builtin,
       source_file: s.source_file,
       dir: s.dir,
@@ -123,6 +157,14 @@ export class SkillEngine {
 
   get(name: string): Skill | undefined {
     return this.skillsCache.find(s => s.name === name)
+  }
+
+  getBySite(hostname: string): Skill | undefined {
+    return this.skillsCache.find(s => s.type === "site_knowledge" && s.site === hostname)
+  }
+
+  getByType(type: string): Skill[] {
+    return this.skillsCache.filter(s => s.type === type)
   }
 
   activate(threadId: string, skillName: string): void {
@@ -170,7 +212,7 @@ export class SkillEngine {
 
     const results: Array<{ name: string; confidence: number }> = []
     for (const skill of this.skillsCache.values()) {
-      const skillText = `${skill.name} ${skill.description || ""}`
+      const skillText = `${skill.name} ${skill.description || ""} ${(skill.tags || []).join(" ")}`
       const skillTokens = tokenize(skillText)
       const skillVec = tokensToVec(skillTokens)
       const score = cosineSimilarity(queryVec, skillVec)
@@ -181,17 +223,133 @@ export class SkillEngine {
     results.sort((a, b) => b.confidence - a.confidence)
     return results.slice(0, 3)
   }
+
   /** Build compact skill index for system prompt.
-   * LLM calls use_skill(name) to load full instructions on demand. */
+   * LLM calls use_skill(name) to load full instructions on demand.
+   * For site_knowledge/domain_knowledge, inject entries summary directly. */
   buildSystemPrompt(threadId: string): string {
     const skills = this.getActiveForThread(threadId)
     if (skills.length === 0) return ""
 
-    const index = skills.map(s =>
-      `- \`${s.name}\`: ${s.description || "(no description)"}`
-    ).join("\n")
+    const parts: string[] = []
+    const promptSkills = skills.filter(s => s.type !== "site_knowledge" && s.type !== "domain_knowledge")
+    const experienceSkills = skills.filter(s => s.type === "site_knowledge" || s.type === "domain_knowledge")
 
-    return `Available skills (call use_skill(name) to load full instructions when relevant):\n${index}`
+    // Experience skills: inject entry summaries directly (no use_skill needed)
+    for (const s of experienceSkills) {
+      const summary = this.getEntriesSummary(s.name)
+      if (summary) {
+        const label = s.type === "site_knowledge" ? `Site: ${s.site}` : `Domain: ${s.name}`
+        parts.push(`## ${label}\n${summary}`)
+      }
+    }
+
+    // Regular skills: compact index, use_skill on demand
+    if (promptSkills.length > 0) {
+      const index = promptSkills.map(s =>
+        `- \`${s.name}\`: ${s.description || "(no description)"}`
+      ).join("\n")
+      parts.push(`Available skills (call use_skill(name) to load full instructions when relevant):\n${index}`)
+    }
+
+    return parts.join("\n\n")
+  }
+
+  // --- Experience entry management ---
+
+  /** Get formatted summary of entries for a skill. */
+  getEntriesSummary(skillName: string): string {
+    const skill = this.get(skillName)
+    if (!skill?.entries?.length) return ""
+    const active = skill.entries.filter(e => !e.stale)
+    const stale = skill.entries.filter(e => e.stale)
+    const parts: string[] = []
+    if (active.length) {
+      parts.push(`Active entries (${active.length}):`)
+      for (const e of active) {
+        parts.push(`  [${e.category}] ${e.content}`)
+      }
+    }
+    if (stale.length) {
+      parts.push(`Stale entries (${stale.length}, may be outdated):`)
+      for (const e of stale) {
+        parts.push(`  [${e.category}] ${e.content} — ${e.stale_reason}`)
+      }
+    }
+    return parts.join("\n")
+  }
+
+  /** Add an entry to a skill and persist to disk. */
+  addEntry(skillName: string, entry: ExperienceEntry): void {
+    const skill = this.get(skillName)
+    if (!skill) throw new Error(`Skill not found: ${skillName}`)
+    if (!skill.entries) skill.entries = []
+    const exists = skill.entries.some(e => e.id === entry.id || e.content === entry.content)
+    if (exists) return
+    skill.entries.push(entry)
+    this.saveSkillFile(skillName)
+  }
+
+  /** Mark an entry as stale with a reason. */
+  markEntryStale(skillName: string, entryId: string, reason: string): void {
+    const skill = this.get(skillName)
+    if (!skill?.entries) return
+    const entry = skill.entries.find(e => e.id === entryId)
+    if (entry) {
+      entry.stale = true
+      entry.stale_reason = reason
+      this.saveSkillFile(skillName)
+    }
+  }
+
+  /** Save a skill back to its source file, updating frontmatter from current metadata. */
+  private saveSkillFile(skillName: string): void {
+    const skill = this.get(skillName)
+    if (!skill || !skill.source_file) return
+    const body = this.buildEntriesMarkdown(skill)
+    const md = [
+      "---",
+      `name: ${skill.name}`,
+      `description: ${skill.description}`,
+      `type: ${skill.type}`,
+    ]
+    if (skill.site) md.push(`site: ${skill.site}`)
+    if (skill.tags?.length) md.push(`tags: [${skill.tags.join(", ")}]`)
+    if (skill.priority) md.push(`priority: ${skill.priority}`)
+    if (skill.entries?.length) {
+      md.push("entries:")
+      for (const e of skill.entries) {
+        md.push(`  - id: ${e.id}`)
+        md.push(`    category: ${e.category}`)
+        md.push(`    content: "${e.content}"`)
+        md.push(`    recorded_at: ${e.recorded_at}`)
+        md.push(`    stale: ${e.stale}`)
+        md.push(`    stale_reason: "${e.stale_reason || ""}"`)
+        if (e.confirmed_at) md.push(`    confirmed_at: ${e.confirmed_at}`)
+        if (e.replaced_by) md.push(`    replaced_by: ${e.replaced_by}`)
+      }
+    }
+    md.push("---")
+    md.push("")
+    md.push(body)
+    fs.writeFileSync(skill.source_file, md.join("\n"))
+  }
+
+  /** Build human-readable markdown from entries. */
+  private buildEntriesMarkdown(skill: Skill): string {
+    if (!skill.entries?.length) return skill.content || ""
+    const lines = ["# 记录列表", ""]
+    for (const e of skill.entries) {
+      const icon = e.stale ? "⚠️" : e.category === "problem" ? "🐛" : e.category === "success" ? "✅" : e.category === "tip" ? "💡" : "📋"
+      const staleTag = e.stale ? ` [已过期: ${e.stale_reason}]` : ""
+      lines.push(`- ${icon} ${e.content}${staleTag}`)
+    }
+    if (skill.content) {
+      lines.push("")
+      lines.push("# 说明")
+      lines.push(skill.content)
+    }
+    return lines.join("\n")
   }
 
   exportSkill(name: string): { content: string; format: "markdown" | "zip"; skill_name: string } {
@@ -216,11 +374,16 @@ export class SkillEngine {
     }
 
     // Flat .md skill: export as markdown text (backward compat)
+    const extra: string[] = []
+    if (skill.type === "site_knowledge" && skill.site) extra.push(`site: ${skill.site}`)
+    if (skill.type === "domain_knowledge" && skill.tags?.length) extra.push(`tags: [${skill.tags.join(", ")}]`)
+
     const frontmatter = [
       "---",
       `name: ${skill.name}`,
       `description: ${skill.description}`,
       `type: ${skill.type}`,
+      ...extra,
       "---",
     ].join("\n")
 
@@ -382,6 +545,57 @@ export class SkillEngine {
     } else {
       fs.unlinkSync(skill.source_file)
     }
+    this.refresh()
+  }
+
+  /** Create a new site_knowledge or domain_knowledge skill with initial entry. */
+  createExperienceSkill(
+    name: string,
+    type: "site_knowledge" | "domain_knowledge",
+    site?: string,
+    tags?: string[],
+    entry?: ExperienceEntry,
+  ): void {
+    const safeName = name.replace(/[^a-zA-Z0-9-]/g, "-").toLowerCase()
+    const filePath = path.join(this.skillsDir, `${safeName}.md`)
+    if (fs.existsSync(filePath)) {
+      // Skill already exists, just add entry
+      const existing = this.get(name)
+      if (existing && entry) {
+        if (!existing.entries) existing.entries = []
+        existing.entries.push(entry)
+        this.saveSkillFile(name)
+      }
+      return
+    }
+
+    const meta: string[] = [
+      "---",
+      `name: ${name}`,
+      `description: ${type === "site_knowledge" ? `Site experience for ${site}` : `Domain knowledge: ${name}`}`,
+      `type: ${type}`,
+    ]
+    if (site) meta.push(`site: ${site}`)
+    if (tags?.length) meta.push(`tags: [${tags.join(", ")}]`)
+    if (entry) {
+      meta.push("entries:")
+      meta.push(`  - id: ${entry.id}`)
+      meta.push(`    category: ${entry.category}`)
+      meta.push(`    content: "${entry.content}"`)
+      meta.push(`    recorded_at: ${entry.recorded_at}`)
+      meta.push(`    confirmed_at: ${entry.confirmed_at || "null"}`)
+      meta.push(`    stale: ${entry.stale}`)
+      meta.push(`    stale_reason: "${entry.stale_reason || ""}"`)
+      meta.push(`    replaced_by: ""`)
+    }
+    meta.push("---")
+    meta.push("")
+    if (entry) {
+      const icon = entry.category === "problem" ? "🐛" : entry.category === "success" ? "✅" : entry.category === "tip" ? "💡" : "📋"
+      meta.push(`# 记录列表\n\n- ${icon} ${entry.content}`)
+    }
+
+    fs.writeFileSync(filePath, meta.join("\n"))
     this.refresh()
   }
 }

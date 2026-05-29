@@ -96,3 +96,8 @@ test("initial side panel sync requests threads, skills, and config exactly once 
   assert.equal(requestInitialSidePanelData((message) => sent.push(message), initializedRef), false)
   assert.deepEqual(sent, [{ type: "thread.list" }, { type: "skill.list" }, { type: "config.get" }])
 })
+
+test("reducer handles unknown action type without crashing", () => {
+  const next = agentReducer(initialState, { type: "UNKNOWN_ACTION_XYZ" as any })
+  assert.equal(next, initialState)
+})

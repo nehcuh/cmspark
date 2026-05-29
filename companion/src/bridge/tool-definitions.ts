@@ -388,5 +388,23 @@ export function getToolDefinitions(): any[] {
         },
       },
     },
+    {
+      type: "function",
+      function: {
+        name: "record_experience",
+        description: "记录一条操作经验。当用户说'记住这个'或'记录下这条经验'时调用。将经验保存到站点知识库(site_knowledge)或业务域知识库(domain_knowledge)，下次操作该站点时会自动注入。",
+        parameters: {
+          type: "object",
+          properties: {
+            target: { type: "string", enum: ["site", "domain"], description: "site=保存到当前站点知识库，domain=保存到全局业务知识库" },
+            skill_name: { type: "string", description: "目标 knowledge skill 名称。site 类型时自动从当前 URL 生成（可通过 list_tabs 获取），domain 类型时需指定" },
+            category: { type: "string", enum: ["problem", "success", "tip", "rule"], description: "经验类别" },
+            content: { type: "string", description: "经验内容，简洁的一句话" },
+            tags: { type: "array", items: { type: "string" }, description: "仅 domain_knowledge 类型使用，用于语义匹配" },
+          },
+          required: ["target", "category", "content"],
+        },
+      },
+    },
   ]
 }

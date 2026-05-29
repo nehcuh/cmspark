@@ -89,10 +89,11 @@ function logToolFinish(toolCallId: string, toolName: string, startedAt: number, 
   })
 }
 
-function initServices() {
+async function initServices() {
   threadManager = new ThreadManager()
   skillEngine = new SkillEngine()
   historyStore = new HistoryStore()
+  await historyStore.waitReady()
 }
 
 function createToolExecutor(ws: WebSocket) {
@@ -198,7 +199,7 @@ function createToolExecutor(ws: WebSocket) {
     }
 
     // Companion-side tools (executed locally, not forwarded to extension)
-    const COMPANION_TOOLS = ["osascript_eval", "use_skill"]
+    const COMPANION_TOOLS = ["osascript_eval", "use_skill", "record_experience"]
     if (COMPANION_TOOLS.includes(toolName)) {
       try {
         const result = await executeCompanionTool(toolName, finalParams)
@@ -282,6 +283,37 @@ async function executeCompanionTool(toolName: string, params: any): Promise<any>
       }
       return { success: true, data: { name: skillName, content } }
     }
+    case "record_experience": {
+      const { target, skill_name, category, content, tags, domain } = params
+      const skillName = target === "site"
+        ? (domain || "unknown-site").replace(/\./g, "-")
+        : (skill_name || `exp-${Date.now()}`)
+      const entry = {
+        id: `exp-${Date.now()}`,
+        category: category || "tip",
+        content: String(content),
+        recorded_at: new Date().toISOString(),
+        confirmed_at: null,
+        stale: false,
+        stale_reason: "",
+        replaced_by: "",
+      }
+      try {
+        skillEngine.createExperienceSkill(
+          skillName,
+          target === "site" ? "site_knowledge" : "domain_knowledge",
+          target === "site" ? (domain || "") : undefined,
+          tags,
+          entry,
+        )
+        return {
+          success: true,
+          data: { skill_name: skillName, entry_id: entry.id, message: `Experience recorded to ${skillName}` },
+        }
+      } catch (err: any) {
+        return { success: false, error: `Failed to record experience: ${err.message}` }
+      }
+    }
     case "osascript_eval": {
       const { url: pageUrl, expression: jsExpr } = params
       if (!pageUrl || !jsExpr) {
@@ -350,6 +382,8 @@ export async function startServer() {
   }
   console.log(`[cmspark-agent] Model: ${config.llm.model_name} @ ${config.llm.base_url}`)
 
+  // Pre-initialize services (async: loads SQLite WASM)
+  await initServices()
   wss = new WebSocketServer({ port, host: "127.0.0.1" })
 
   wss.on("listening", () => {

@@ -56,7 +56,7 @@ function ToolCallCard({ tc }: { tc: any }) {
         )}
       </div>
       {hasResult && (
-        <pre style={{...styles.toolResult, ...markdownStyles.codeBlock, maxHeight: expanded ? 300 : 80, overflow: "auto"}}>
+        <pre style={{...styles.toolResult, background: "#f5f5f5", padding: "8px 12px", borderRadius: 4, fontSize: 11, fontFamily: "'SF Mono', 'Fira Code', monospace", maxHeight: expanded ? 300 : 80, overflow: "auto"}}>
           <code>{expanded ? resultStr : resultStr.substring(0, previewLen) + (resultStr.length > previewLen ? " ..." : "")}</code>
         </pre>
       )}

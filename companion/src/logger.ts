@@ -6,6 +6,18 @@ import { getConfigDir } from "./config"
 
 export type LogLevel = "debug" | "info" | "warn" | "error"
 
+let currentLevel: LogLevel = "info"
+
+export function setLogLevel(level: LogLevel): void {
+  currentLevel = level
+}
+
+export function getLogLevel(): LogLevel {
+  return currentLevel
+}
+
+const LEVEL_ORDER: Record<LogLevel, number> = { debug: 0, info: 1, warn: 2, error: 3 }
+
 const REDACTED = "[REDACTED]"
 const MAX_STRING_LENGTH = 2000
 const MAX_ARRAY_LENGTH = 50
@@ -64,6 +76,7 @@ export function logEvent(
   source = "companion",
   now = new Date(),
 ): void {
+    if (LEVEL_ORDER[level] < LEVEL_ORDER[currentLevel]) return
   try {
     const filePath = getLogFilePath(now)
     fs.mkdirSync(path.dirname(filePath), { recursive: true })

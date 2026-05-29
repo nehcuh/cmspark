@@ -26,21 +26,27 @@ export function isTrustedDomain(domain: string): boolean {
 /**
  * Detect dangerous APIs in JavaScript code.
  */
-export const DANGEROUS_APIS = [
-  "fetch(",
-  "XMLHttpRequest",
-  "localStorage",
-  "sessionStorage",
-  "document.cookie",
-  "window.open",
-  "navigator.sendBeacon",
-  "WebSocket",
-  "EventSource",
-  "indexedDB",
+/**
+ * Detect dangerous APIs in JavaScript code using regex with word boundaries.
+ * Avoids false positives like "prefetch" matching "fetch" or "window.openModal" matching "window.open".
+ */
+export const DANGEROUS_API_PATTERNS: Array<{ name: string; pattern: RegExp }> = [
+  { name: "fetch", pattern: /\bfetch\s*\(/ },
+  { name: "XMLHttpRequest", pattern: /\bXMLHttpRequest\b/ },
+  { name: "localStorage", pattern: /\blocalStorage\b/ },
+  { name: "sessionStorage", pattern: /\bsessionStorage\b/ },
+  { name: "document.cookie", pattern: /\bdocument\.cookie\b/ },
+  { name: "window.open", pattern: /\bwindow\.open\s*\(/ },
+  { name: "navigator.sendBeacon", pattern: /\bnavigator\.sendBeacon\s*\(/ },
+  { name: "WebSocket", pattern: /\bnew\s+WebSocket\s*\(/ },
+  { name: "EventSource", pattern: /\bnew\s+EventSource\s*\(/ },
+  { name: "indexedDB", pattern: /\bindexedDB\b/ },
 ]
 
 export function detectDangerousApis(code: string): string[] {
-  return DANGEROUS_APIS.filter(api => code.includes(api))
+  return DANGEROUS_API_PATTERNS
+    .filter(({ pattern }) => pattern.test(code))
+    .map(({ name }) => name)
 }
 
 export function checkHighRiskExecution(toolName: string, code: string): { blocked: boolean; dangerousApis: string[]; error?: string } {

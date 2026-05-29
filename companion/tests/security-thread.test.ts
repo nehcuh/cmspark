@@ -150,7 +150,7 @@ test("trusted domain matching supports exact, wildcard, and global patterns", ()
 test("dangerous JavaScript APIs are detected before evaluate-style execution", () => {
   assert.deepEqual(
     detectDangerousApis("fetch('/api'); document.cookie; localStorage.getItem('k')"),
-    ["fetch(", "localStorage", "document.cookie"],
+    ["fetch", "localStorage", "document.cookie"],
   )
   assert.deepEqual(detectDangerousApis("document.body?.innerText || ''"), [])
 })
@@ -158,7 +158,11 @@ test("dangerous JavaScript APIs are detected before evaluate-style execution", (
 test("high-risk execution is blocked before osascript_eval can run", async () => {
   const safety = checkHighRiskExecution("evaluate", "fetch('/api')")
   assert.equal(safety.blocked, true)
-  assert.deepEqual(safety.dangerousApis, ["fetch("])
+  assert.deepEqual(safety.dangerousApis, ["fetch"])
+
+  // Verify no false positives: "prefetch" should NOT match
+  const safeResult = checkHighRiskExecution("evaluate", "prefetch('/api')")
+  assert.equal(safeResult.blocked, false)
 
   const response = await handleMessage(
     { type: "osascript_eval", id: "tool_1", url: "example.com", expression: "document.cookie" },
@@ -180,6 +184,21 @@ test("script injection failures are recoverable so the agent can try fallback to
   assert.equal(classifyError("Script injection failed in both ISOLATED and MAIN worlds; DOM fallback failed: Debugger attach failed", { toolName: "get_page_html" }), "recoverable")
 })
 
+test("classifyError 'No tab with id 303' is recoverable", () => {
+  assert.equal(classifyError("No tab with id 303", { toolName: "get_page_text" }), "recoverable")
+})
+
+test("classifyError 'unknown error' defaults to non_recoverable", () => {
+  assert.equal(classifyError("completely unknown error message"), "non_recoverable")
+})
+
+test("classifyError 'permission denied: camera' is non_recoverable", () => {
+  assert.equal(classifyError("permission denied: camera access"), "non_recoverable")
+})
+
+test("classifyError 'timeout waiting for selector' is recoverable", () => {
+  assert.equal(classifyError("timeout waiting for selector '#btn'"), "recoverable")
+})
 test("logger redacts sensitive keys recursively", () => {
   const redacted = redactLogData({
     api_key: "sk-secret",
