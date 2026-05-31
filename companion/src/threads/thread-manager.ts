@@ -170,4 +170,21 @@ export class ThreadManager {
       fs.writeFileSync(filePath, JSON.stringify(data, null, 2))
     } catch { /* ignore */ }
   }
+
+  /** Delete messages from a given message onwards (inclusive). */
+  deleteMessagesFrom(threadId: string, messageId: string): boolean {
+    const filePath = this.threadFilePath(threadId)
+    try {
+      const raw = fs.readFileSync(filePath, "utf-8")
+      const data = JSON.parse(raw)
+      const messages: Message[] = data.messages || []
+      const idx = messages.findIndex(m => m.id === messageId)
+      if (idx < 0) return false
+      data.messages = messages.slice(0, idx)
+      fs.writeFileSync(filePath, JSON.stringify(data, null, 2))
+      return true
+    } catch {
+      return false
+    }
+  }
 }

@@ -1,6 +1,6 @@
 // Bottom context bar: Tabs, History, Skills panels
 
-import { useState, useRef } from "react"
+import { useState, useRef, useEffect } from "react"
 import { useAgentStore } from "../store/agentStore"
 
 type Panel = "tabs" | "history" | "skills"
@@ -137,8 +137,21 @@ function SkillsPanel() {
   const [showPathImport, setShowPathImport] = useState(false)
   const [pathInput, setPathInput] = useState("")
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const zipInputRef = useRef<HTMLInputElement>(null)
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    if (!menuOpen) return
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(null)
+      }
+    }
+    document.addEventListener("mousedown", handler)
+    return () => document.removeEventListener("mousedown", handler)
+  }, [menuOpen])
 
   // Read all files from a dropped/picked folder
   const handleFolderFiles = async (files: FileList | File[]) => {
@@ -359,17 +372,18 @@ function SkillsPanel() {
           </div>
           {skill.builtin && <span style={styles.badge}>内置</span>}
           {!skill.builtin && (
-            <div style={{ position: "relative" }}>
+            <div style={{ position: "relative" }} ref={menuOpen === skill.name ? menuRef : undefined}>
               <button
                 style={styles.menuBtn}
                 onClick={() => setMenuOpen(menuOpen === skill.name ? null : skill.name)}
+                title="更多操作"
               >
                 ···
               </button>
               {menuOpen === skill.name && (
                 <div style={styles.menuDropdown}>
-                  <button style={styles.menuItem} onClick={() => handleExport(skill.name)}>导出</button>
-                  <button style={{ ...styles.menuItem, color: "#F44336" }} onClick={() => handleDelete(skill.name)}>删除</button>
+                  <button style={styles.menuItem} onClick={() => handleExport(skill.name)}>📤 导出</button>
+                  <button style={{ ...styles.menuItem, color: "#F44336" }} onClick={() => handleDelete(skill.name)}>🗑️ 删除</button>
                 </div>
               )}
             </div>

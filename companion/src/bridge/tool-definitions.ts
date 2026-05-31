@@ -397,7 +397,8 @@ export function getToolDefinitions(): any[] {
           type: "object",
           properties: {
             target: { type: "string", enum: ["site", "domain"], description: "site=保存到当前站点知识库，domain=保存到全局业务知识库" },
-            skill_name: { type: "string", description: "目标 knowledge skill 名称。site 类型时自动从当前 URL 生成（可通过 list_tabs 获取），domain 类型时需指定" },
+            skill_name: { type: "string", description: "目标 knowledge skill 名称。domain 类型时必须指定；site 类型时如未传 domain，则使用该值作为技能名称" },
+            domain: { type: "string", description: "site 类型时的站点域名（如 twitter.com）。如未提供且 skill_name 也为空，则回退为 unknown-site" },
             category: { type: "string", enum: ["problem", "success", "tip", "rule"], description: "经验类别" },
             content: { type: "string", description: "经验内容，简洁的一句话" },
             tags: { type: "array", items: { type: "string" }, description: "仅 domain_knowledge 类型使用，用于语义匹配" },

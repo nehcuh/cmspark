@@ -35,20 +35,19 @@ clean:
 	rm -rf chrome-extension/build chrome-extension/.test-dist
 
 # 打包分发版本 (Windows 用户用)
-# 用法: make package  (需要先安装 bun: npm i -g bun)
+# 用法: make package  或双击 build-package.bat
 package: build
 	@echo "Building distribution package..."
 	@mkdir -p dist-package/cmspark
-	@cp -r chrome-extension/build/chrome-mv3-prod dist-package/cmspark/chrome-extension 2>/dev/null || true
-	@cp companion/install.bat dist-package/cmspark/ 2>/dev/null || true
-	@cp companion/uninstall.bat dist-package/cmspark/ 2>/dev/null || true
-	@cp companion/README.txt dist-package/cmspark/ 2>/dev/null || true
-	@echo "Companion executable: 需要 Windows 环境编译"
-	@echo "  方案1: bun build ./companion/dist/index.js --compile --outfile dist-package/cmspark/cmspark-agent.exe"
-	@echo "  方案2: npx pkg companion/dist/index.js --targets node20-win-x64 --output dist-package/cmspark/cmspark-agent.exe"
-	@echo "  方案3: ncc build companion/dist/index.js -o dist-package/cmspark/companion-bundle"
-	@echo ""
-	@echo "Manual steps:"
-	@echo "  1. Build companion executable on Windows (see above)"
-	@echo "  2. Copy cmspark-agent.exe to dist-package/cmspark/"
-	@echo "  3. Zip dist-package/cmspark/ → cmspark-v0.1.0.zip"
+	@cd companion && npx --yes esbuild dist/index.js --bundle --platform=node --target=node22 --outfile=dist/cmspark-agent.js
+	@cp companion/dist/cmspark-agent.js dist-package/cmspark/
+	@cp companion/node_modules/sql.js/dist/sql-wasm.wasm dist-package/cmspark/
+	@cp -r companion/builtin-skills dist-package/cmspark/
+	@cp -r chrome-extension/build/chrome-mv3-prod dist-package/cmspark/chrome-extension
+	@cp companion/install.bat dist-package/cmspark/
+	@cp companion/uninstall.bat dist-package/cmspark/
+	@cp companion/launch.bat dist-package/cmspark/
+	@cp companion/README.txt dist-package/cmspark/
+	@echo "Compressing to zip..."
+	@cd dist-package && C:/Windows/System32/tar.exe -caf cmspark-v0.1.0.zip cmspark
+	@echo "Done: dist-package/cmspark-v0.1.0.zip"

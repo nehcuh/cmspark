@@ -32,3 +32,8 @@ Thumbs.db
 .env.local
 .envrc
 dist-package/
+
+# Logs & bundles
+*.log
+companion/esbuild-bundle.js
+companion/sql-wasm.wasm

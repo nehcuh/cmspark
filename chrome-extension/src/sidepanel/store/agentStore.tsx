@@ -42,6 +42,7 @@ export type AgentAction =
   | { type: "SET_PINNED_TABS"; tabIds: number[] }
   | { type: "ADD_THREAD"; thread: Thread }
   | { type: "UPSERT_THREAD"; thread: Thread }
+  | { type: "REMOVE_THREAD"; threadId: string }
   | { type: "SET_STREAMING"; content: string }
   | { type: "SET_TEST_RESULT"; result: string | null }
   | { type: "SET_SEND_SHORTCUT"; shortcut: SendShortcut }
@@ -60,9 +61,9 @@ export const initialState: AgentState = {
   config: {
     base_url: "https://api.deepseek.com/v1",
     api_key: "",
-    model_name: "deepseek-v4-pro",
+    model_name: "deepseek-v4-flash",
     temperature: 0.7,
-    context_window: 128000,
+    context_window: 1000000,
     trusted_domains: [],
   },
   settingsOpen: false,
@@ -169,6 +170,22 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         streamingContent: "",
         pinnedTabIds: action.thread.pinned_tabs || [],
       }
+    case "REMOVE_THREAD": {
+      const filtered = state.threads.filter(t => t.id !== action.threadId)
+      const nextActive = state.activeThreadId === action.threadId
+        ? (filtered[0]?.id || null)
+        : state.activeThreadId
+      const nextThread = filtered.find(t => t.id === nextActive)
+      return {
+        ...state,
+        threads: filtered,
+        activeThreadId: nextActive,
+        messages: state.activeThreadId === action.threadId ? [] : state.messages,
+        streamingContent: state.activeThreadId === action.threadId ? "" : state.streamingContent,
+        pinnedTabIds: nextThread?.pinned_tabs || [],
+        activeSkillIds: nextThread?.active_skill_ids || [],
+      }
+    }
     case "UPSERT_THREAD": {
       const exists = state.threads.find(t => t.id === action.thread.id)
       if (exists) {

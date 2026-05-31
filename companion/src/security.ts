@@ -112,7 +112,7 @@ export function classifyError(errorMessage: string, context?: { toolName?: strin
     return "non_recoverable"
   }
 
-  // Recoverable (timeout, transient, element not found, permission, wrong page type, bad tab id)
+  // Recoverable (timeout, transient, element not found, permission, wrong page type, bad tab id, platform mismatch)
   const recoverable = [
     "timeout",
     "timed out",
@@ -135,6 +135,9 @@ export function classifyError(errorMessage: string, context?: { toolName?: strin
     "503",
     "502",
     "429",
+    "macos-only",
+    "platform not supported",
+    "not supported on",
   ]
   if (recoverable.some(p => msg.includes(p))) {
     return "recoverable"

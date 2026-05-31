@@ -27,9 +27,9 @@ export function ThreadList() {
       config_override: {
         base_url: "https://api.deepseek.com/v1",
         api_key: "",
-        model_name: "deepseek-v4-pro",
+        model_name: "deepseek-v4-flash",
         temperature: 0.7,
-        context_window: 128000,
+        context_window: 1000000,
         trusted_domains: [],
       },
       tool_whitelist: null as string[] | null,
@@ -45,6 +45,13 @@ export function ThreadList() {
   const handleSelect = (threadId: string) => {
     dispatch({ type: "SET_ACTIVE_THREAD", threadId })
     setOpen(false)
+  }
+
+  const handleDelete = (threadId: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (confirm(`确定删除线程 "${threadId}"？该线程的所有消息将被清除。`)) {
+      chrome.runtime.sendMessage({ type: "thread.delete", thread_id: threadId })
+    }
   }
 
   return (
@@ -74,8 +81,17 @@ export function ThreadList() {
                     chrome.runtime.sendMessage({ type: "thread.select", threadId: t.id })
                   }}
                 >
-                  <div style={styles.threadAlias}>{t.alias || t.id}</div>
-                  <div style={styles.threadId}>#{t.id}</div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={styles.threadAlias}>{t.alias || t.id}</div>
+                    <div style={styles.threadId}>#{t.id}</div>
+                  </div>
+                  <button
+                    style={styles.deleteBtn}
+                    onClick={(e) => handleDelete(t.id, e)}
+                    title="删除线程"
+                  >
+                    🗑️
+                  </button>
                 </div>
               ))}
               {threads.length === 0 && (
@@ -144,6 +160,18 @@ const styles: Record<string, React.CSSProperties> = {
     padding: "8px 12px",
     borderBottom: "1px solid #f5f5f5",
     cursor: "pointer",
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+  },
+  deleteBtn: {
+    background: "none",
+    border: "none",
+    fontSize: 12,
+    cursor: "pointer",
+    padding: "2px 4px",
+    opacity: 0.5,
+    flexShrink: 0,
   },
   threadAlias: {
     fontSize: 13,

@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "plasmo dev",
     "postinstall": "node scripts/patch-vfile.mjs",
-    "test": "rm -rf .test-dist && tsc -p tsconfig.test.json && node --test .test-dist/tests/**/*.test.js",
+    "test": "node -e \"require('fs').rmSync('.test-dist',{recursive:true,force:true})\" && tsc -p tsconfig.test.json && node --test .test-dist/tests/**/*.test.js",
     "prebuild": "node scripts/generate-icons.mjs",
     "build": "plasmo build",
     "package": "plasmo package"

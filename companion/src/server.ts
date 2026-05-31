@@ -286,7 +286,7 @@ async function executeCompanionTool(toolName: string, params: any): Promise<any>
     case "record_experience": {
       const { target, skill_name, category, content, tags, domain } = params
       const skillName = target === "site"
-        ? (domain || "unknown-site").replace(/\./g, "-")
+        ? (domain || skill_name || "unknown-site").replace(/\./g, "-")
         : (skill_name || `exp-${Date.now()}`)
       const entry = {
         id: `exp-${Date.now()}`,

@@ -6,23 +6,91 @@ import { marked } from "marked"
 
 export function ChatView() {
   const { state } = useAgentStore()
-  const { messages, streamingContent } = state
+  const { messages, streamingContent, activeThreadId } = state
+
+  // Infer AI processing state from message history (no extra state needed)
+  const processingLabel = (() => {
+    if (streamingContent) return null
+    const last = messages[messages.length - 1]
+    if (!last) return null
+    if (last.role === "user") return "🤔 思考中"
+    if (last.role === "assistant" && last.tool_calls) {
+      const running = last.tool_calls.filter((tc: any) => tc.status === "running")
+      if (running.length > 0) {
+        const names = running.map((tc: any) => tc.tool_name).join(", ")
+        return `⚙️ 执行中: ${names}`
+      }
+    }
+    return null
+  })()
+
+  const handleCopy = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text)
+    } catch {
+      const textarea = document.createElement("textarea")
+      textarea.value = text
+      textarea.style.position = "fixed"
+      textarea.style.opacity = "0"
+      document.body.appendChild(textarea)
+      textarea.select()
+      document.execCommand("copy")
+      document.body.removeChild(textarea)
+    }
+  }
+
+  const handleRegenerate = (messageId: string) => {
+    if (!activeThreadId) return
+    chrome.runtime.sendMessage({
+      type: "chat.regenerate",
+      thread_id: activeThreadId,
+      message_id: messageId,
+    })
+  }
+
+  const handleFork = (messageId: string) => {
+    if (!activeThreadId) return
+    chrome.runtime.sendMessage({
+      type: "thread.fork",
+      thread_id: activeThreadId,
+      message_id: messageId,
+    })
+  }
 
   return (
     <div style={styles.container}>
-      {messages.length === 0 && !streamingContent && (
+      {messages.length === 0 && !streamingContent && !processingLabel && (
         <div style={styles.empty}>输入指令开始与 CMspark Agent 对话</div>
       )}
       {messages.map(msg => {
         const isTool = msg.role === "tool"
+        const isUser = msg.role === "user"
+        if (isTool) return null // Skip raw tool messages (they are embedded in assistant cards)
         return (
-          <div key={msg.id} style={msg.role === "user" ? styles.userMsg : styles.agentMsg}>
-            <div style={msg.role === "user" ? styles.userBubble : styles.agentBubble}>
-              {/* Tool messages: skip raw JSON content, only show tool card */}
-              {!isTool && <MarkdownRenderer content={msg.content} />}
-              {msg.tool_calls?.map(tc => (
-                <ToolCallCard key={tc.id} tc={tc} />
-              ))}
+          <div key={msg.id} style={isUser ? styles.userMsg : styles.agentMsg}>
+            <div style={styles.messageCol}>
+              <div style={isUser ? styles.userBubble : styles.agentBubble}>
+                <MarkdownRenderer content={msg.content} />
+                {msg.tool_calls?.map(tc => (
+                  <ToolCallCard key={tc.id} tc={tc} />
+                ))}
+              </div>
+              <div style={{
+                ...styles.actionBar,
+                alignSelf: isUser ? "flex-end" : "flex-start",
+              }}>
+                <button style={styles.actionBtn} onClick={() => handleCopy(msg.content || "")} title="复制">
+                  📋
+                </button>
+                {!isUser && (
+                  <button style={styles.actionBtn} onClick={() => handleRegenerate(msg.id)} title="重新生成">
+                    🔄
+                  </button>
+                )}
+                <button style={styles.actionBtn} onClick={() => handleFork(msg.id)} title="创建分支">
+                  🔀
+                </button>
+              </div>
             </div>
           </div>
         )
@@ -30,6 +98,14 @@ export function ChatView() {
       {streamingContent && (
         <div style={styles.agentMsg}>
           <div style={styles.agentBubble}>{streamingContent}<Cursor /></div>
+        </div>
+      )}
+      {processingLabel && !streamingContent && (
+        <div style={styles.agentMsg}>
+          <div style={styles.statusBubble}>
+            {processingLabel}
+            <span style={styles.statusDots}>...</span>
+          </div>
         </div>
       )}
     </div>
@@ -192,12 +268,17 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: "flex-start",
     marginBottom: 10,
   },
+  messageCol: {
+    display: "flex",
+    flexDirection: "column",
+    maxWidth: "85%",
+    width: "fit-content" as const,
+  },
   userBubble: {
     background: "#4A90D9",
     color: "#fff",
     borderRadius: "12px 12px 4px 12px",
     padding: "8px 12px",
-    maxWidth: "85%",
     wordBreak: "break-word" as const,
     whiteSpace: "pre-wrap",
   },
@@ -205,8 +286,44 @@ const styles: Record<string, React.CSSProperties> = {
     background: "#f0f0f0",
     borderRadius: "12px 12px 12px 4px",
     padding: "8px 12px",
-    maxWidth: "85%",
     wordBreak: "break-word" as const,
+  },
+  statusBubble: {
+    background: "#e8f0fe",
+    borderRadius: "12px 12px 12px 4px",
+    padding: "8px 12px",
+    maxWidth: "85%",
+    fontSize: 12,
+    color: "#4A90D9",
+    fontStyle: "italic" as const,
+    display: "flex",
+    alignItems: "center",
+    gap: 4,
+  },
+  statusDots: {
+    display: "inline-block",
+    width: 20,
+    overflow: "hidden",
+    animation: "cmspark-dots 1.5s steps(4, end) infinite",
+  },
+  actionBar: {
+    display: "flex",
+    gap: 4,
+    marginTop: 4,
+    padding: "3px 6px",
+    background: "#f0f0f0",
+    borderRadius: 6,
+  },
+  actionBtn: {
+    background: "none",
+    border: "none",
+    fontSize: 12,
+    color: "#666",
+    cursor: "pointer",
+    padding: "2px 6px",
+    borderRadius: 4,
+    lineHeight: 1,
+    transition: "background 0.15s ease",
   },
   toolCard: {
     marginTop: 8,

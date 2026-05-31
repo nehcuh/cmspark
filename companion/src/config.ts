@@ -28,9 +28,9 @@ const defaultConfig: CompanionConfig = {
   llm: {
     base_url: "https://api.deepseek.com/v1",
     api_key: getEnvApiKey(),
-    model_name: "deepseek-v4-pro",
+    model_name: "deepseek-v4-flash",
     temperature: 0.7,
-    context_window: 128000,
+    context_window: 1000000,
   },
   trusted_domains: [],
   history_retention_days: 30,
@@ -57,7 +57,9 @@ export async function initDataDir(): Promise<void> {
   }
 
   // Copy builtin skills if they don't exist
-  const builtinSkillsSrc = path.join(__dirname, "..", "builtin-skills")
+  const builtinSkillsSrcDev = path.join(__dirname, "..", "builtin-skills")
+  const builtinSkillsSrcPkg = path.join(__dirname, "builtin-skills")
+  const builtinSkillsSrc = fs.existsSync(builtinSkillsSrcDev) ? builtinSkillsSrcDev : builtinSkillsSrcPkg
   const builtinSkillsDest = path.join(DATA_DIR, "builtin-skills")
   if (fs.existsSync(builtinSkillsSrc)) {
     for (const file of fs.readdirSync(builtinSkillsSrc)) {

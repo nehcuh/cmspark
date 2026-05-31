@@ -97,12 +97,12 @@ export async function handleMessage(
 
       try {
 
-        // Semantic matching for domain_knowledge — auto-activate matches
+        // Semantic matching — auto-activate matched skills for this thread
         const matched = services.skillEngine.matchSkills(rest.message)
         const domainMatches = matched.filter(m => m.confidence >= 20)
         for (const m of domainMatches) {
           const skill = services.skillEngine.get(m.name)
-          if (skill?.type === "domain_knowledge") {
+          if (skill) {
             services.skillEngine.activate(rest.thread_id, m.name)
           }
         }
@@ -150,6 +150,85 @@ export async function handleMessage(
       return { type: "chat.aborted", thread_id: rest.thread_id }
     }
 
+    case "chat.regenerate": {
+      if (!session) return { type: "error", error: "No session" }
+      const config = getConfig()
+      const { thread_id, message_id } = rest
+
+      const messages = threadManager.getMessages(thread_id)
+      const idx = messages.findIndex(m => m.id === message_id)
+      if (idx < 0) return { type: "error", error: "Message not found" }
+      if (messages[idx].role !== "assistant") {
+        return { type: "error", error: "Can only regenerate assistant messages" }
+      }
+
+      // Find preceding user message
+      let userMsg = null
+      for (let i = idx - 1; i >= 0; i--) {
+        if (messages[i].role === "user") {
+          userMsg = messages[i]
+          break
+        }
+      }
+      if (!userMsg) return { type: "error", error: "No user message found before this assistant message" }
+
+      // Delete this assistant message and everything after it
+      threadManager.deleteMessagesFrom(thread_id, message_id)
+
+      // Notify extension of updated message list
+      session.sendToExtension({
+        type: "thread.messages",
+        messages: threadManager.getMessages(thread_id),
+      })
+
+      // Cancel any existing request for this thread
+      const existing = abortControllers.get(thread_id)
+      if (existing) {
+        existing.abort()
+        abortControllers.delete(thread_id)
+      }
+      const controller = new AbortController()
+      abortControllers.set(thread_id, controller)
+
+      try {
+        const matched = services.skillEngine.matchSkills(userMsg.content)
+        const domainMatches = matched.filter(m => m.confidence >= 20)
+        for (const m of domainMatches) {
+          const skill = services.skillEngine.get(m.name)
+          if (skill) services.skillEngine.activate(thread_id, m.name)
+        }
+
+        const threadSkills = services.skillEngine.getActiveForThread(thread_id).map(s => s.name)
+        const allSkillIds = [...new Set([...threadSkills, ...(rest.skill_ids || [])])]
+
+        if (domainMatches.length > 0) {
+          session.sendToExtension({ type: "skill.auto_matched", skills: domainMatches })
+        }
+        await chatCreate({
+          threadId: thread_id,
+          message: userMsg.content,
+          skillIds: allSkillIds,
+          config: config.llm,
+          threadManager: services.threadManager,
+          skillEngine: services.skillEngine,
+          historyStore: services.historyStore,
+          sendToExtension: session.sendToExtension,
+          executeTool: session.executeTool,
+          signal: controller.signal,
+          skipUserMessage: true,
+        })
+      } catch (e: any) {
+        if (e.name === "AbortError" || controller.signal.aborted) {
+          session.sendToExtension({ type: "chat.aborted", thread_id })
+        } else {
+          session.sendToExtension({ type: "chat.error", thread_id, error: e.message })
+        }
+      } finally {
+        abortControllers.delete(thread_id)
+      }
+      return null
+    }
+
     // --- Threads ---
     case "thread.create":
       return { type: "thread.created", thread: threadManager.create(rest.alias, rest.id) }
@@ -160,6 +239,31 @@ export async function handleMessage(
       return { type: "thread.list", threads: threadManager.list() }
     case "thread.select":
       return { type: "thread.messages", messages: threadManager.getMessages(rest.thread_id) }
+    case "thread.fork": {
+      const sourceThread = threadManager.get(rest.thread_id)
+      if (!sourceThread) return { type: "error", error: "Thread not found" }
+
+      const newThread = threadManager.create(rest.alias || `分支-${sourceThread.id}`)
+      const messages = threadManager.getMessages(rest.thread_id)
+      const idx = messages.findIndex(m => m.id === rest.message_id)
+      const msgsToCopy = idx >= 0 ? messages.slice(0, idx + 1) : messages
+
+      for (const msg of msgsToCopy) {
+        threadManager.addMessage(newThread.id, {
+          thread_id: newThread.id,
+          role: msg.role,
+          content: msg.content,
+          tool_calls: msg.tool_calls,
+        })
+      }
+
+      threadManager.update(newThread.id, {
+        active_skill_ids: sourceThread.active_skill_ids,
+        pinned_tabs: sourceThread.pinned_tabs,
+      })
+
+      return { type: "thread.forked", thread: newThread, messages: threadManager.getMessages(newThread.id) }
+    }
     case "thread.update": {
       if (!rest.thread_id) return { type: "error", error: "thread_id required" }
       const allowedUpdates: Record<string, any> = {}

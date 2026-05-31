@@ -24,6 +24,7 @@ interface ChatCreateParams {
   sendToExtension: (data: any) => void
   executeTool: (toolCallId: string, toolName: string, params: any) => Promise<{ success: boolean; data?: any; error?: string }>
   signal?: AbortSignal
+  skipUserMessage?: boolean
 }
 
 const MAX_TOOL_CALL_ROUNDS = 100
@@ -63,10 +64,12 @@ export function createToolResultMessage(threadId: string, toolCall: any, result:
 }
 
 export async function chatCreate(params: ChatCreateParams) {
-  const { threadId, message, skillIds, config, threadManager, skillEngine, historyStore, sendToExtension, executeTool, signal } = params
+  const { threadId, message, skillIds, config, threadManager, skillEngine, historyStore, sendToExtension, executeTool, signal, skipUserMessage } = params
 
-  // Create user message
-  threadManager.addMessage(threadId, { thread_id: threadId, role: "user", content: message })
+  // Create user message (skip for regenerate)
+  if (!skipUserMessage) {
+    threadManager.addMessage(threadId, { thread_id: threadId, role: "user", content: message })
+  }
 
   // Activate requested skills
   for (const skillId of skillIds) {
@@ -85,7 +88,8 @@ CRITICAL RULES:
 4. Use navigate(tabId, url) to change a tab's URL — check list_tabs for existing tabs first.
 5. Before calling screenshot or page tools, ensure the tab is on a real website (not chrome:// or about:blank).
 6. Wait for pages to load before extracting content.
-7. For reading page content: use get_page_text (preferred, cross-platform) or evaluate. osascript_eval is macOS-only — use ONLY when both get_page_text AND evaluate fail on restricted pages.`
+7. For reading page content: use get_page_text (preferred, cross-platform) or evaluate.
+8. osascript_eval is macOS-ONLY and will FAIL on Windows/Linux. On non-macOS systems, NEVER call osascript_eval — always use get_page_text or evaluate instead.`
   const skillPrompt = skillEngine.buildSystemPrompt(threadId)
   const systemPrompt = [basePrompt, skillPrompt].filter(Boolean).join("\n\n")
 
@@ -254,6 +258,8 @@ CRITICAL RULES:
       // If no tool calls, we're done
       if (assistantMsg.length === 0) {
         sendToExtension({ type: "chat.done", thread_id: threadId })
+        // Best-effort auto-alias: generate a short title if thread has no alias yet
+        autoAliasThread({ threadId, threadManager, config, sendToExtension })
         return
       }
 
@@ -432,4 +438,61 @@ CRITICAL RULES:
     thread_id: threadId,
     error: `达到最大工具调用轮次 (${MAX_TOOL_CALL_ROUNDS})，已暂停。`,
   })
+}
+
+/** Best-effort auto-naming: when a thread has no alias, summarize the first exchange into a short title. */
+async function autoAliasThread(params: {
+  threadId: string
+  threadManager: ThreadManager
+  config: ChatCreateParams["config"]
+  sendToExtension: (data: any) => void
+}) {
+  const { threadId, threadManager, config, sendToExtension } = params
+  try {
+    const thread = threadManager.get(threadId)
+    if (!thread || thread.alias) return
+
+    const msgs = threadManager.getMessages(threadId)
+    const hasUser = msgs.some(m => m.role === "user")
+    const hasAssistant = msgs.some(m => m.role === "assistant")
+    if (!hasUser || !hasAssistant) return
+
+    // Take first few exchanges (up to 3 rounds) to keep the prompt short
+    const previewMsgs = msgs
+      .filter(m => m.role === "user" || m.role === "assistant")
+      .slice(0, 6)
+      .map(m => `${m.role === "user" ? "用户" : "AI"}: ${(m.content || "").substring(0, 180)}`)
+      .join("\n")
+
+    if (previewMsgs.length < 10) return
+
+    const client = new OpenAI({
+      baseURL: config.base_url,
+      apiKey: config.api_key || "sk-placeholder",
+      timeout: 8000,
+      maxRetries: 0,
+    })
+
+    const response = await client.chat.completions.create({
+      model: config.model_name,
+      temperature: 0.3,
+      messages: [
+        {
+          role: "system",
+          content: "根据以下对话内容，生成一个极其简短的标题（不超过10个字），直接输出标题文本，不要加任何解释、引号或前缀。",
+        },
+        { role: "user", content: previewMsgs },
+      ],
+    })
+
+    let alias = response.choices[0]?.message?.content?.trim().replace(/[\n"'"]/g, "") || ""
+    // Truncate and sanitize
+    alias = alias.slice(0, 16)
+    if (alias) {
+      threadManager.update(threadId, { alias })
+      sendToExtension({ type: "thread.updated", thread: threadManager.get(threadId) })
+    }
+  } catch {
+    // Silently fail — alias generation is best-effort
+  }
 }

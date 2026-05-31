@@ -94,6 +94,16 @@ export function useWebSocket() {
         case "chat.aborted":
           streamingRef.current = ""
           dispatch({ type: "SET_STREAMING", content: "" })
+          dispatch({
+            type: "ADD_MESSAGE",
+            message: {
+              id: `${activeThreadRef.current}_abort_${Date.now()}`,
+              thread_id: activeThreadRef.current || "",
+              role: "assistant",
+              content: "⏹ 已停止生成",
+              created_at: new Date().toISOString(),
+            },
+          })
           break
 
         case "log.event": {
@@ -192,6 +202,16 @@ export function useWebSocket() {
 
         case "thread.updated": {
           dispatch({ type: "UPSERT_THREAD", thread: msg.thread })
+          break
+        }
+        case "thread.deleted": {
+          dispatch({ type: "REMOVE_THREAD", threadId: msg.thread_id })
+          break
+        }
+        case "thread.forked": {
+          dispatch({ type: "UPSERT_THREAD", thread: msg.thread })
+          dispatch({ type: "SET_ACTIVE_THREAD", threadId: msg.thread.id })
+          dispatch({ type: "SET_MESSAGES", messages: msg.messages || [] })
           break
         }
 
