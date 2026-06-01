@@ -166,6 +166,7 @@ export function useWebSocket() {
               status: msg.result?.success ? "success" : "error",
             },
           })
+          break
 
         case "config.testResult":
           dispatch({ type: "SET_TEST_RESULT", result: msg.ok ? "连接成功 ✓" : `连接失败: ${msg.error || "未知错误"}` })
@@ -266,6 +267,19 @@ export function useWebSocket() {
         case "skill.imported":
         case "skill.deleted":
           chrome.runtime.sendMessage({ type: "skill.list" })
+          break
+
+        case "error":
+          dispatch({
+            type: "ADD_MESSAGE",
+            message: {
+              id: `error_${Date.now()}`,
+              thread_id: activeThreadRef.current || "",
+              role: "assistant",
+              content: `\u274c ${msg.error || "Unknown error"}`,
+              created_at: new Date().toISOString(),
+            },
+          })
           break
 
         case "history.result":

@@ -27,6 +27,19 @@ interface QueryParams {
   offset?: number
 }
 
+function findSqlWasmPath(): string | undefined {
+  const candidates = [
+    path.join(__dirname, "..", "..", "node_modules", "sql.js", "dist", "sql-wasm.wasm"),
+    path.join(__dirname, "..", "node_modules", "sql.js", "dist", "sql-wasm.wasm"),
+    path.join(__dirname, "sql-wasm.wasm"),
+    path.join(process.cwd(), "sql-wasm.wasm"),
+  ]
+  for (const p of candidates) {
+    if (fs.existsSync(p)) return p
+  }
+  return undefined
+}
+
 export class HistoryStore {
   private db: SqlJsDatabase | null = null
   private dbPath: string
@@ -38,8 +51,13 @@ export class HistoryStore {
   }
 
   private async init(): Promise<void> {
+    const sqlJsConfig = (() => {
+      const wasmPath = findSqlWasmPath()
+      return wasmPath ? { locateFile: () => wasmPath } : undefined
+    })()
+
     try {
-      const SQL = await initSqlJs()
+      const SQL = await initSqlJs(sqlJsConfig)
       if (fs.existsSync(this.dbPath)) {
         const buffer = fs.readFileSync(this.dbPath)
         this.db = new SQL.Database(buffer)
@@ -52,7 +70,7 @@ export class HistoryStore {
     } catch {
       // Fallback: init in-memory only
       try {
-        const SQL = await initSqlJs()
+        const SQL = await initSqlJs(sqlJsConfig)
         this.db = new SQL.Database()
         this.initSchema()
       } catch { /* degrade gracefully */ }

@@ -388,19 +388,27 @@ export class SkillEngine {
     ].join("\n")
 
     return {
-      content: Buffer.from(`${frontmatter}\n\n${skill.content}`).toString("base64"),
+      content: `${frontmatter}\n\n${skill.content}`,
       format: "markdown",
       skill_name: name,
     }
   }
 
   importSkill(content: string): void {
-    const parsed = matter(content)
+    let parsed: { data: { name?: string }; content: string }
+    try {
+      parsed = matter(content)
+    } catch (e: any) {
+      throw new Error(`Failed to parse skill frontmatter: ${e.message || String(e)}. Ensure the file starts with --- and valid YAML.`)
+    }
     const name = parsed.data.name
-    if (!name) throw new Error("Skill must have a 'name' field in frontmatter")
+    if (!name) throw new Error("Skill must have a 'name' field in frontmatter (e.g. ---\\nname: my-skill\\n---)")
 
     // Ensure unique filename
     const safeName = name.replace(/[^a-zA-Z0-9-]/g, "-").toLowerCase()
+    if (!safeName || safeName === "-") {
+      throw new Error(`Skill name '${name}' results in an invalid filename after sanitization. Use alphanumeric characters.`)
+    }
     const filePath = path.join(this.skillsDir, `${safeName}.md`)
 
     fs.writeFileSync(filePath, content)

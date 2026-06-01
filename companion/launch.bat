@@ -1,56 +1,67 @@
 @echo off
-chcp 65001 >nul
+setlocal enabledelayedexpansion
+
 cd /d "%~dp0"
 
-:: 检查 Node.js
-node --version >nul 2>&1
-if %errorlevel% neq 0 (
-    echo [错误] 未检测到 Node.js 运行时
-    echo 请先安装 Node.js：https://nodejs.org/
+echo [launch] Current dir: %CD%
+echo [launch] Checking node.exe...
+
+set "NODE_CMD="
+if exist "node.exe" (
+    echo [launch] node.exe found
+    set "NODE_CMD=node.exe"
+) else (
+    node --version >nul 2>nul
+    if !errorlevel! equ 0 (
+        echo [launch] system node found
+        set "NODE_CMD=node"
+    )
+)
+
+if "!NODE_CMD!"=="" (
+    echo [ERROR] Node.js not found
     pause
     exit /b 1
 )
 
-:: 检查端口 23401 是否已被占用（说明服务在运行）
-netstat -an | find "127.0.0.1:23401" | find "LISTENING" >nul 2>&1
-if %errorlevel% equ 0 (
-    echo CMspark 已在运行中（端口 23401）
+echo [launch] NODE_CMD=!NODE_CMD!
+
+:: Check if already running
+netstat -an 2>nul | find.exe "127.0.0.1:23401" 2>nul | find.exe "LISTENING" >nul 2>nul
+if !errorlevel! equ 0 (
+    echo [launch] Already running on port 23401
     goto :done
 )
 
-:: 启动服务
-if exist "%~dp0cmspark-agent.exe" (
-    echo 启动 CMspark (standalone)...
-    start /B "" "%~dp0cmspark-agent.exe" >nul 2>&1
-) else if exist "%~dp0cmspark-agent.js" (
-    echo 启动 CMspark (Node.js bundle)...
-    start /B "" node "%~dp0cmspark-agent.js" start >> "%~dp0cmspark-agent.log" 2>&1
-    timeout /t 2 >nul
-    if exist "%~dp0cmspark-agent.log" (
-        find /i "Companion started" "%~dp0cmspark-agent.log" >nul 2>&1
-        if %errorlevel% equ 0 (
-            echo 启动成功
-        ) else (
-            find /i "error" "%~dp0cmspark-agent.log" >nul 2>&1
-            if %errorlevel% equ 0 (
-                echo [错误] 启动失败，详情见 cmspark-agent.log
-            ) else (
-                echo [提示] 服务启动中，日志写入 cmspark-agent.log
-            )
-        )
-    )
-) else if exist "%~dp0companion-bundle\index.js" (
-    echo 启动 CMspark (Node.js)...
-    start /B "" node "%~dp0companion-bundle\index.js" start
+:: Build and show the command
+set "CMD_STR=!NODE_CMD! cmspark-agent.js start ^> cmspark-agent.log 2^>^&1"
+echo [launch] Will run: !CMD_STR!
+
+:: Try start /MIN first
+start /MIN cmd /c "!CMD_STR!"
+echo [launch] start /MIN issued, waiting...
+
+ping -n 5 127.0.0.1 >nul
+
+:: Check if log was created
+echo [launch] Checking for cmspark-agent.log...
+if exist "cmspark-agent.log" (
+    echo [launch] LOG FILE EXISTS
+    type "cmspark-agent.log" 2>nul
 ) else (
-    echo 错误: 未找到 CMspark 可执行文件
-    pause
-    exit /b 1
+    echo [launch] LOG FILE MISSING
+)
+
+:: Check port
+netstat -an 2>nul | find.exe "127.0.0.1:23401" 2>nul | find.exe "LISTENING" >nul 2>nul
+if !errorlevel! equ 0 (
+    echo [launch] Port 23401 is LISTENING
+) else (
+    echo [launch] Port 23401 NOT listening
 )
 
 :done
 echo.
-echo CMspark 已启动 (端口 23401)
-echo 打开 Chrome 侧边栏: 点击工具栏 CMspark 图标
-timeout /t 2 >nul
+echo CMspark started (port 23401)
+echo Open Chrome side panel: click CMspark icon on toolbar
 exit /b 0

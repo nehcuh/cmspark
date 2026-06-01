@@ -63,9 +63,7 @@ export function ChatView() {
         <div style={styles.empty}>输入指令开始与 CMspark Agent 对话</div>
       )}
       {messages.map(msg => {
-        const isTool = msg.role === "tool"
         const isUser = msg.role === "user"
-        if (isTool) return null // Skip raw tool messages (they are embedded in assistant cards)
         return (
           <div key={msg.id} style={isUser ? styles.userMsg : styles.agentMsg}>
             <div style={styles.messageCol}>

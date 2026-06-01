@@ -1,39 +1,48 @@
 @echo off
 chcp 65001 >nul
-title CMspark æ‰“åŒ…
+title CMspark ´ò°ü
 
 echo ============================================
-echo   CMspark Browser Agent -- æ„å»ºåˆ†å‘åŒ…
+echo   CMspark Browser Agent -- ¹¹½¨·Ö·¢°ü
 echo ============================================
 echo.
 
 cd /d "%~dp0"
 
-echo [1/4] å®‰è£…ä¾èµ–...
+echo [1/4] °²×°ÒÀÀµ...
 cd companion
 call npm install 2>nul
 cd ..\chrome-extension
 call npm install 2>nul
 cd ..
 
-echo [2/4] æ„å»º Companion...
+echo [2/4] ¹¹½¨ Companion...
 cd companion
 call npm run build
-echo   ^> esbuild æ‰“åŒ…...
-call npx --yes esbuild dist/index.js --bundle --platform=node --target=node22 --outfile=dist/cmspark-agent.js >nul 2>&1
+echo   ^> esbuild ´ò°ü...
+call npx --yes esbuild dist/index.js --bundle --platform=node --target=node20 --outfile=dist/cmspark-agent.js >nul 2>&1
 cd ..
 
-echo [3/4] æ„å»º Chrome æ‰©å±•...
+echo [3/4] ¹¹½¨ Chrome À©Õ¹...
 cd chrome-extension
 call npm run build >nul 2>&1
 cd ..
 
-echo [4/4] æ‰“åŒ…åˆ†å‘æ–‡ä»¶...
+echo [4/4] ´ò°ü·Ö·¢ÎÄ¼ş...
 if exist dist-package rmdir /s /q dist-package
 mkdir dist-package\cmspark
 
 copy companion\dist\cmspark-agent.js dist-package\cmspark\ >nul
 copy companion\node_modules\sql.js\dist\sql-wasm.wasm dist-package\cmspark\ >nul
+
+:: ¸´ÖÆ±ãĞ¯°æ Node.js ÔËĞĞÊ±£¨ÎŞĞèÓÃ»§°²×° Node.js£©
+for /f "delims=" %%i in ('where node') do set "NODE_EXE=%%i"
+if exist "%NODE_EXE%" (
+    copy "%NODE_EXE%" dist-package\cmspark\node.exe >nul
+    echo   ^> ÒÑ¸´ÖÆ Node.js ÔËĞĞÊ±
+) else (
+    echo   ^> [¾¯¸æ] Î´ÕÒµ½ Node.js£¬·Ö·¢°ü½«ĞèÒªÓÃ»§×ÔĞĞ°²×°
+)
 xcopy /e /i /y companion\builtin-skills dist-package\cmspark\builtin-skills >nul
 xcopy /e /i /y chrome-extension\build\chrome-mv3-prod dist-package\cmspark\chrome-extension >nul
 copy companion\install.bat dist-package\cmspark\ >nul
@@ -41,14 +50,14 @@ copy companion\uninstall.bat dist-package\cmspark\ >nul
 copy companion\launch.bat dist-package\cmspark\ >nul
 copy companion\README.txt dist-package\cmspark\ >nul
 
-echo   ^> å‹ç¼©ä¸º zip...
+echo   ^> Ñ¹ËõÎª zip...
 cd dist-package
 C:\Windows\System32\tar.exe -caf cmspark-v0.1.0.zip cmspark
 cd ..
 
 echo.
 echo ============================================
-echo   æ‰“åŒ…å®Œæˆï¼
-echo   æ–‡ä»¶: dist-package\cmspark-v0.1.0.zip
+echo   ´ò°üÍê³É£¡
+echo   ÎÄ¼ş: dist-package\cmspark-v0.1.0.zip
 echo ============================================
 pause

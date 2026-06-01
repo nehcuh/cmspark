@@ -72,20 +72,24 @@ export function SettingsSlideout() {
 
           <div style={styles.field}>
             <label style={styles.label}>Model</label>
-            <select
-              style={styles.select}
+            <input
+              style={styles.input}
+              list="model-options"
+              type="text"
               value={config.model_name}
               onChange={e => dispatch({ type: "SET_CONFIG", config: { model_name: e.target.value } })}
-            >
-              <option value="deepseek-v4-flash">deepseek-v4-flash</option>
-              <option value="deepseek-v4-pro">deepseek-v4-pro</option>
-              <option value="deepseek-chat">deepseek-chat</option>
-              <option value="deepseek-reasoner">deepseek-reasoner</option>
-              <option value="gpt-4o">gpt-4o</option>
-              <option value="gpt-4-turbo">gpt-4-turbo</option>
-              <option value="claude-sonnet-4-6">claude-sonnet-4-6</option>
-              <option value="claude-opus-4-7">claude-opus-4-7</option>
-            </select>
+              placeholder="输入模型名称或从列表选择"
+            />
+            <datalist id="model-options">
+              <option value="deepseek-v4-flash" />
+              <option value="deepseek-v4-pro" />
+              <option value="deepseek-chat" />
+              <option value="deepseek-reasoner" />
+              <option value="gpt-4o" />
+              <option value="gpt-4-turbo" />
+              <option value="claude-sonnet-4-6" />
+              <option value="claude-opus-4-7" />
+            </datalist>
           </div>
 
           <div style={styles.field}>

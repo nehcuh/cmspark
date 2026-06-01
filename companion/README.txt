@@ -5,9 +5,10 @@ CMspark Browser Agent v0.1.0
 
 ## 安装
 
-1. 双击 install.bat
-2. 在 Chrome 中加载扩展（按屏幕提示操作）
-3. 完成！
+1. 解压 cmspark-v0.1.0.zip 到任意文件夹
+2. 双击 install.bat
+3. 在 Chrome 中加载扩展（按屏幕提示操作）
+4. 完成！
 
 ## 使用
 
@@ -38,10 +39,14 @@ CMspark Browser Agent v0.1.0
 ## 常见问题
 
 Q: Side Panel 显示"未连接到 Companion"
-A: Companion 进程未启动。双击 cmspark-agent.exe 手动启动
+A: Companion 进程未启动。双击 launch.bat 手动启动
 
 Q: 端口 23401 被占用
-A: 打开任务管理器，结束 cmspark-agent.exe 进程后重试
+A: 打开任务管理器，结束 node.exe 或 cmspark-agent.exe 进程后重试
 
 Q: 如何更新？
 A: 下载新版本 zip，解压覆盖所有文件，重启 CMspark 即可
+
+Q: 需要安装 Node.js 吗？
+A: 不需要。本分发包已内置 Node.js 运行时，开箱即用。
+   （精简版用户如需使用系统 Node.js，请确保版本 v20+）
