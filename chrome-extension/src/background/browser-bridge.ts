@@ -1,26 +1,53 @@
 // Browser Bridge — executes tool calls via Chrome APIs and CDP
 
+import { validateSecurityToken } from "./security-token"
+
 interface ToolResult {
   success: boolean
   data?: any
   error?: string
 }
 
-const DANGEROUS_APIS = [
-  "fetch(",
-  "XMLHttpRequest",
-  "localStorage",
-  "sessionStorage",
-  "document.cookie",
-  "window.open",
-  "navigator.sendBeacon",
-  "WebSocket",
-  "EventSource",
-  "indexedDB",
+const DANGEROUS_API_PATTERNS: Array<{ name: string; pattern: RegExp }> = [
+  // Direct API calls
+  { name: "fetch", pattern: /\bfetch\s*\(/ },
+  { name: "XMLHttpRequest", pattern: /\bXMLHttpRequest\b/ },
+  { name: "localStorage", pattern: /\blocalStorage\b/ },
+  { name: "sessionStorage", pattern: /\bsessionStorage\b/ },
+  { name: "document.cookie", pattern: /\bdocument\.cookie\b/ },
+  { name: "window.open", pattern: /\bwindow\.open\s*\(/ },
+  { name: "navigator.sendBeacon", pattern: /\bnavigator\.sendBeacon\s*\(/ },
+  { name: "WebSocket", pattern: /\bnew\s+WebSocket\s*\(/ },
+  { name: "EventSource", pattern: /\bnew\s+EventSource\s*\(/ },
+  { name: "indexedDB", pattern: /\bindexedDB\b/ },
+  // Bracket notation bypasses
+  { name: "bracket-fetch", pattern: /\[\s*["']fetch["']\s*\]\s*\(/ },
+  { name: "bracket-open", pattern: /\[\s*["']open["']\s*\]\s*\(/ },
+  { name: "bracket-localStorage", pattern: /\[\s*["']localStorage["']\s*\]/ },
+  { name: "bracket-sessionStorage", pattern: /\[\s*["']sessionStorage["']\s*\]/ },
+  { name: "bracket-cookie", pattern: /\[\s*["']cookie["']\s*\]/ },
+  { name: "bracket-sendBeacon", pattern: /\[\s*["']sendBeacon["']\s*\]\s*\(/ },
+  { name: "bracket-indexedDB", pattern: /\[\s*["']indexedDB["']\s*\]/ },
+  { name: "bracket-XMLHttpRequest", pattern: /\[\s*["']XMLHttpRequest["']\s*\]/ },
+  // Method call / reflection bypasses
+  { name: "fetch.call", pattern: /\.call\s*\(.*fetch/ },
+  { name: "fetch.apply", pattern: /\.apply\s*\(.*fetch/ },
+  { name: "Reflect.apply", pattern: /\bReflect\.apply\s*\(/ },
+  { name: "Reflect.construct", pattern: /\bReflect\.construct\s*\(/ },
+  { name: "Proxy", pattern: /\bnew\s+Proxy\s*\(/ },
+  // Code generation
+  { name: "eval", pattern: /\beval\s*\(/ },
+  { name: "Function", pattern: /\bnew\s+Function\s*\(/ },
+  { name: "setTimeout-string", pattern: /setTimeout\s*\(\s*["']/ },
+  { name: "setInterval-string", pattern: /setInterval\s*\(\s*["']/ },
 ]
 
 function detectDangerousApis(code: string): string[] {
-  return DANGEROUS_APIS.filter(api => code.includes(api))
+  const found = new Set<string>()
+  for (const { name, pattern } of DANGEROUS_API_PATTERNS) {
+    if (pattern.test(code)) found.add(name)
+  }
+  return Array.from(found)
 }
 
 export class BrowserBridge {
@@ -619,11 +646,23 @@ export class BrowserBridge {
     const tabId = this.getTabId(params)
     if (!params.code) throw new Error("code is required")
     const matches = detectDangerousApis(params.code)
-    if (matches.length > 0 && params.security_confirmed !== true) {
-      return {
-        success: false,
-        error: `Security Block: evaluate contains high-risk APIs (${matches.join(", ")}). Execution requires user confirmation.`,
-        data: { dangerous_apis_found: matches },
+    if (matches.length > 0) {
+      // Validate HMAC security token instead of boolean flag (P0)
+      if (!params.security_token) {
+        return {
+          success: false,
+          error: `Security Block: evaluate contains high-risk APIs (${matches.join(", ")}). Execution requires user confirmation.`,
+          data: { dangerous_apis_found: matches },
+        }
+      }
+      // Validate the token cryptographically against the code being executed
+      const tokenValid = await validateSecurityToken(params.security_token, "evaluate", params.code)
+      if (!tokenValid) {
+        return {
+          success: false,
+          error: `Security Block: Invalid or expired security token for evaluate. Execution requires user confirmation.`,
+          data: { dangerous_apis_found: matches },
+        }
       }
     }
 

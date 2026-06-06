@@ -4,6 +4,7 @@
 import { WSClient } from "./ws-client"
 import { BrowserBridge } from "./browser-bridge"
 import { KeepAlive } from "./keep-alive"
+import { setSecuritySecret } from "./security-token"
 
 let wsClient: WSClient
 let browserBridge: BrowserBridge
@@ -52,6 +53,13 @@ function updateBadge(state: "connected" | "connecting" | "disconnected") {
 // --- Companion message routing ---
 
 async function handleCompanionMessage(msg: any) {
+  if (msg.type === "security.config") {
+    if (typeof msg.secret === "string" && msg.secret) {
+      setSecuritySecret(msg.secret)
+    }
+    return
+  }
+
   if (msg.type === "tool.execute") {
     const toolMeta = {
       tool_call_id: msg.tool_call_id,

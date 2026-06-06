@@ -1,0 +1,9 @@
+{
+  "dependencies": {
+    "@types/dompurify": "^3.0.5",
+    "@types/js-yaml": "^4.0.9",
+    "dompurify": "^3.4.8",
+    "js-yaml": "^4.2.0",
+    "typescript": "^6.0.3"
+  }
+}
