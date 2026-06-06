@@ -3,6 +3,7 @@
 import { Component, useState } from "react"
 import { useAgentStore } from "../store/agentStore"
 import { marked } from "marked"
+import DOMPurify from "dompurify"
 
 export function ChatView() {
   const { state } = useAgentStore()
@@ -149,15 +150,27 @@ function Cursor() {
   }} />
 }
 
-// Markdown renderer — uses marked (zero-deps, browser-safe) instead of react-markdown + remark-gfm
-// react-markdown/remark-gfm ecosystem is ESM-only with Node.js deps that crash in Chrome extension context
+// Markdown renderer — uses marked + DOMPurify to sanitize LLM output before rendering.
+// react-markdown/remark-gfm ecosystem is ESM-only with Node.js deps that crash in Chrome extension context.
+// DOMPurify strips dangerous HTML (scripts, event handlers, etc.) to prevent XSS (P0).
 class MarkdownRenderer extends Component<{ content: string }> {
   state = { html: "", error: false }
 
   static getDerivedStateFromProps(props: { content: string }, state: { html: string; error: boolean }) {
     if (!props.content) return { html: "", error: false }
     try {
-      const html = marked.parse(props.content, { async: false }) as string
+      const rawHtml = marked.parse(props.content, { async: false }) as string
+      const html = DOMPurify.sanitize(rawHtml, {
+        ALLOWED_TAGS: [
+          "p", "br", "strong", "em", "u", "s", "del", "ins",
+          "h1", "h2", "h3", "h4", "h5", "h6",
+          "ul", "ol", "li", "blockquote", "hr",
+          "a", "code", "pre", "table", "thead", "tbody", "tr", "th", "td",
+          "span", "div", "sup", "sub",
+        ],
+        ALLOWED_ATTR: ["href", "title", "class", "style"],
+        ALLOW_DATA_ATTR: false,
+      })
       if (html !== state.html) {
         return { html, error: false }
       }
