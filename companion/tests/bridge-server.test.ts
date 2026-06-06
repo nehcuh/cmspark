@@ -245,12 +245,14 @@ test("getToolDefinitions each item has function type and parameters", () => {
 test("getToolDefinitions navigate requires tabId and url", () => {
   const defs = getToolDefinitions()
   const navigate = defs.find((d: any) => d.function.name === "navigate")
+  assert.ok(navigate, "navigate tool should exist")
   assert.deepEqual(navigate.function.parameters.required, ["tabId", "url"])
 })
 
 test("getToolDefinitions evaluate requires tabId and code", () => {
   const defs = getToolDefinitions()
   const evaluate = defs.find((d: any) => d.function.name === "evaluate")
+  assert.ok(evaluate, "evaluate tool should exist")
   assert.deepEqual(evaluate.function.parameters.required, ["tabId", "code"])
 })
 

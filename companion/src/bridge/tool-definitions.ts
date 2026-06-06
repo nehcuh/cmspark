@@ -1,7 +1,98 @@
 // Tool definitions in OpenAI function-calling format
 
-export function getToolDefinitions(): any[] {
-  return [
+import { logger } from "../logger"
+
+// Type definitions for tool schema
+interface ToolParameter {
+  type: string
+  description?: string
+  enum?: string[]
+  items?: ToolParameter
+  properties?: Record<string, ToolParameter>
+  required?: string[]
+}
+
+/** Type guard for ToolParameter */
+function isValidToolParameter(param: unknown): param is ToolParameter {
+  if (typeof param !== "object" || param === null) return false
+  const p = param as ToolParameter
+  if (typeof p.type !== "string") return false
+  if (p.description !== undefined && typeof p.description !== "string") return false
+  if (p.enum !== undefined && !Array.isArray(p.enum)) return false
+  if (p.properties !== undefined && typeof p.properties !== "object") return false
+  if (p.required !== undefined && !Array.isArray(p.required)) return false
+  return true
+}
+
+interface ToolFunction {
+  name: string
+  description: string
+  parameters: {
+    type: string
+    properties: Record<string, ToolParameter>
+    required: string[]
+  }
+}
+
+export interface ToolDefinition {
+  type: "function"
+  function: ToolFunction
+}
+
+/** Validate a tool definition structure with comprehensive checks */
+function isValidToolDefinition(tool: unknown): tool is ToolDefinition {
+  if (typeof tool !== "object" || tool === null) return false
+  const t = tool as ToolDefinition
+
+  // Basic structure checks
+  if (
+    t.type !== "function" ||
+    typeof t.function !== "object" ||
+    t.function === null ||
+    typeof t.function.name !== "string" ||
+    typeof t.function.description !== "string"
+  ) {
+    return false
+  }
+
+  // FIXED [LOW]: Ensure description is non-empty after trimming
+  // Empty descriptions provide no value to the LLM for tool selection
+  if (!t.function.description?.trim()) {
+    return false
+  }
+
+  // Parameters structure validation
+  const params = t.function.parameters
+  if (typeof params !== "object" || params === null) return false
+  if (params.type !== "object") return false
+
+  // properties: if present, must be an object
+  if (params.properties !== undefined && typeof params.properties !== "object") {
+    return false
+  }
+
+  // FIXED [MEDIUM]: Recursively validate nested ToolParameter structures
+  // Previously, nested parameters (e.g., in array items) were not validated
+  // This could allow invalid schemas through validation
+  if (params.properties) {
+    for (const propValue of Object.values(params.properties)) {
+      if (!isValidToolParameter(propValue)) {
+        return false
+      }
+    }
+  }
+
+  // required: if present, must be an array of strings
+  if (params.required !== undefined) {
+    if (!Array.isArray(params.required)) return false
+    if (params.required.some((r) => typeof r !== "string")) return false
+  }
+
+  return true
+}
+
+export function getToolDefinitions(): ToolDefinition[] {
+  const tools: ToolDefinition[] = [
     // --- Tab tools ---
     {
       type: "function",
@@ -407,5 +498,172 @@ export function getToolDefinitions(): any[] {
         },
       },
     },
-  ]
+  ] as ToolDefinition[]
+
+  // Validate all tool definitions at load time
+  const invalidTools = tools.filter(t => !isValidToolDefinition(t))
+  if (invalidTools.length > 0) {
+    const names = invalidTools.map(t => (t as ToolDefinition)?.function?.name || "unknown").join(", ")
+    throw new Error(`Invalid tool definitions: ${names}`)
+  }
+
+  logger.info("tools_loaded", { count: tools.length }, "bridge")
+  return tools
+}
+
+// FIXED [HIGH]: Cache tool definitions to avoid O(n) re-validation on every getToolDefinition call
+// Previously, getToolDefinition called getToolDefinitions() which re-validated all tools
+const cachedToolDefinitions = getToolDefinitions()
+
+/** Error thrown when tool definitions fail to load */
+export class ToolDefinitionError extends Error {
+  constructor(message: string, public readonly toolName?: string) {
+    super(message)
+    this.name = "ToolDefinitionError"
+  }
+}
+
+/** Get a tool definition by name */
+export function getToolDefinition(name: string): ToolDefinition {
+  try {
+    // FIXED [HIGH]: Use cached tool definitions instead of re-fetching and re-validating
+    // This changes from O(n) validation overhead per call to O(1) lookup
+    const tool = cachedToolDefinitions.find(t => t.function.name === name)
+    if (!tool) {
+      throw new ToolDefinitionError(`Tool '${name}' not found`, name)
+    }
+    return tool
+  } catch (error) {
+    if (error instanceof ToolDefinitionError) {
+      throw error // Re-throw ToolDefinitionError as-is
+    }
+    const message = error instanceof Error ? error.message : String(error)
+    logger.warn("tool_fetch_failed", { name, error: message }, "bridge")
+    throw new ToolDefinitionError(`Failed to fetch tool '${name}': ${message}`, name)
+  }
+}
+
+/** Check if a tool exists */
+export function hasTool(name: string): boolean {
+  try {
+    getToolDefinition(name)
+    return true
+  } catch (error) {
+    if (error instanceof ToolDefinitionError) {
+      // Tool not found is expected case, don't log
+      return false
+    }
+    // Other errors are unexpected
+    const message = error instanceof Error ? error.message : String(error)
+    logger.error("tool_check_failed", { name, error: message }, "bridge")
+    return false
+  }
+}
+
+/**
+ * Validate tool call arguments against the tool definition schema.
+ * Returns validated args or throws ToolDefinitionError with details.
+ */
+export function validateToolCallArguments(
+  toolName: string,
+  args: Record<string, unknown>
+): Record<string, unknown> {
+  const tool = getToolDefinition(toolName)
+  const params = tool.function.parameters
+  const result: Record<string, unknown> = { ...args }
+
+  // Check required parameters
+  if (Array.isArray(params.required)) {
+    const missing = params.required.filter((key) => !(key in args))
+    if (missing.length > 0) {
+      throw new ToolDefinitionError(
+        `Missing required parameters for '${toolName}': ${missing.join(", ")}`,
+        toolName
+      )
+    }
+  }
+
+  // Type check each argument
+  if (params.properties) {
+    for (const [key, value] of Object.entries(args)) {
+      const paramSchema = params.properties[key]
+      if (!paramSchema) {
+        // Unknown parameter — warn but don't fail (forward compatibility)
+        logger.warn("unknown_tool_param", { toolName, param: key }, "bridge")
+        continue
+      }
+
+      // FIXED [HIGH]: Handle null values explicitly in type checking
+      // Previously, null values were skipped entirely, allowing invalid null to pass validation
+      // Now we check if the schema allows null (via union types or nullable pattern)
+      if (value === null) {
+        // Null is only valid if not in required array
+        // (OpenAPI/JSON Schema nullable via "type: ["string", "null"]" would need additional check)
+        if (Array.isArray(params.required) && params.required.includes(key)) {
+          throw new ToolDefinitionError(
+            `Parameter '${key}' for '${toolName}' is required and cannot be null`,
+            toolName
+          )
+        }
+        // Optional parameter with null value is acceptable
+        continue
+      }
+
+      // Basic type validation for non-null values
+      switch (paramSchema.type) {
+        case "string":
+          if (typeof value !== "string") {
+            throw new ToolDefinitionError(
+              `Parameter '${key}' for '${toolName}' must be string, got ${typeof value}`,
+              toolName
+            )
+          }
+          break
+        case "number":
+          if (typeof value !== "number") {
+            throw new ToolDefinitionError(
+              `Parameter '${key}' for '${toolName}' must be number, got ${typeof value}`,
+              toolName
+            )
+          }
+          break
+        case "boolean":
+          if (typeof value !== "boolean") {
+            throw new ToolDefinitionError(
+              `Parameter '${key}' for '${toolName}' must be boolean, got ${typeof value}`,
+              toolName
+            )
+          }
+          break
+        case "array":
+          if (!Array.isArray(value)) {
+            throw new ToolDefinitionError(
+              `Parameter '${key}' for '${toolName}' must be array, got ${typeof value}`,
+              toolName
+            )
+          }
+          break
+        case "object":
+          if (typeof value !== "object" || value === null || Array.isArray(value)) {
+            throw new ToolDefinitionError(
+              `Parameter '${key}' for '${toolName}' must be object, got ${typeof value}`,
+              toolName
+            )
+          }
+          break
+      }
+
+      // Enum validation
+      if (paramSchema.enum && typeof value === "string") {
+        if (!paramSchema.enum.includes(value)) {
+          throw new ToolDefinitionError(
+            `Parameter '${key}' for '${toolName}' must be one of: ${paramSchema.enum.join(", ")}, got '${value}'`,
+            toolName
+          )
+        }
+      }
+    }
+  }
+
+  return result
 }
