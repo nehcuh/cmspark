@@ -1,7 +1,7 @@
 // Message router — dispatches incoming WebSocket messages to handlers
 
-import { execSync } from "child_process"
 import os from "os"
+import { URL } from "url"
 import OpenAI from "openai"
 import type { ThreadManager } from "./threads/thread-manager"
 import type { SkillEngine } from "./skills/skill-engine"
@@ -10,6 +10,7 @@ import { getConfig, saveConfig } from "./config"
 import { chatCreate } from "./llm/adapter"
 import { craftSkill, craftSkillToMarkdown } from "./skills/skill-craft"
 import { checkHighRiskExecution } from "./security"
+import { securityPolicy } from "./security-policy"
 
 // Per-thread abort controllers for cancelling in-flight LLM requests
 const abortControllers = new Map<string, AbortController>()
@@ -41,10 +42,14 @@ export async function handleMessage(
     }
     case "config.set": {
       const cfg = rest.config
+      // Reject prototype pollution keys (P0)
+      if (hasPrototypePollutionKey(cfg)) {
+        return { type: "error", error: "Invalid config keys detected" }
+      }
       // Normalize: if caller sends flat LLM fields, nest them under llm
       const normalized: any = {}
       if (cfg.llm) {
-        normalized.llm = { ...cfg.llm }
+        normalized.llm = sanitizeConfig({ ...cfg.llm })
         if (normalized.llm.api_key === "***") delete normalized.llm.api_key
       } else if (cfg.base_url || cfg.model_name || cfg.temperature !== undefined || cfg.context_window !== undefined) {
         normalized.llm = {}
@@ -230,8 +235,13 @@ export async function handleMessage(
     }
 
     // --- Threads ---
-    case "thread.create":
-      return { type: "thread.created", thread: threadManager.create(rest.alias, rest.id) }
+    case "thread.create": {
+      try {
+        return { type: "thread.created", thread: threadManager.create(rest.alias, rest.id, rest.config_override) }
+      } catch (e: any) {
+        return { type: "error", error: e.message || String(e) }
+      }
+    }
     case "thread.delete":
       threadManager.delete(rest.thread_id)
       return { type: "thread.deleted", thread_id: rest.thread_id }
@@ -273,9 +283,13 @@ export async function handleMessage(
           allowedUpdates[key] = updates[key]
         }
       }
-      const thread = threadManager.update(rest.thread_id, allowedUpdates)
-      if (!thread) return { type: "error", error: `Thread not found: ${rest.thread_id}` }
-      return { type: "thread.updated", thread }
+      try {
+        const thread = threadManager.update(rest.thread_id, allowedUpdates)
+        if (!thread) return { type: "error", error: `Thread not found: ${rest.thread_id}` }
+        return { type: "thread.updated", thread }
+      } catch (e: any) {
+        return { type: "error", error: e.message || String(e) }
+      }
     }
 
     // --- Skills ---
@@ -304,13 +318,51 @@ export async function handleMessage(
     }
     case "skill.export":
       return { type: "skill.exported", ...skillEngine.exportSkill(rest.skill_name) }
-    case "skill.import":
+    case "skill.import": {
       if (rest.url) {
-        // Import from URL — fetch content first
-        const response = await fetch(rest.url)
+        // SSRF protection: protocol whitelist, block internal IPs (P0)
+        const urlStr = String(rest.url)
+        let parsed: URL
+        try {
+          parsed = new URL(urlStr)
+        } catch {
+          return { type: "error", error: "Invalid URL" }
+        }
+        const allowedProtocols = ["http:", "https:"]
+        if (!allowedProtocols.includes(parsed.protocol)) {
+          return { type: "error", error: `URL protocol not allowed: ${parsed.protocol}` }
+        }
+        const hostname = parsed.hostname
+        if (isInternalIp(hostname)) {
+          return { type: "error", error: "Internal IP addresses are not allowed" }
+        }
+        // Fetch with timeout, redirect limit, and size cap (P1)
+        const controller = new AbortController()
+        const fetchTimeout = setTimeout(() => controller.abort(), 30000)
+        let response: Response
+        try {
+          response = await fetch(urlStr, {
+            signal: controller.signal,
+            redirect: "manual",
+          })
+        } finally {
+          clearTimeout(fetchTimeout)
+        }
+        if (response.type === "opaqueredirect" || (response.status >= 300 && response.status < 400)) {
+          throw new Error("Redirects are not allowed for skill imports")
+        }
         if (!response.ok) throw new Error(`Failed to fetch skill: ${response.status}`)
-        const content = await response.text()
-        skillEngine.importSkill(content)
+        // Cap response body size (10MB max)
+        const contentLength = response.headers.get("content-length")
+        const maxSize = 10 * 1024 * 1024
+        if (contentLength && parseInt(contentLength, 10) > maxSize) {
+          throw new Error(`Skill file too large: ${contentLength} bytes (max ${maxSize})`)
+        }
+        const body = await response.text()
+        if (body.length > maxSize) {
+          throw new Error(`Skill file too large: ${body.length} bytes (max ${maxSize})`)
+        }
+        skillEngine.importSkill(body)
       } else if (rest.content) {
         skillEngine.importSkill(rest.content)
       } else {
@@ -319,6 +371,7 @@ export async function handleMessage(
       // Refresh and return updated list
       skillEngine.refresh()
       return { type: "skill.list", skills: skillEngine.list() }
+    }
     case "skill.import-folder":
       if (!rest.zip_data) throw new Error("skill.import-folder requires 'zip_data'")
       skillEngine.importSkillFolder(rest.zip_data)
@@ -397,59 +450,37 @@ export async function handleMessage(
     // --- System ---
 
     // osascript_eval: execute JS in Chrome tab via AppleScript (bypasses CSP + debugger)
+    // SECURITY: This route delegates to session.executeTool which routes to executeCompanionTool
+    // in server.ts. The AppleScript is built with static -e arguments and argv passing — no
+    // string replacement of user input into the script body.
     case "osascript_eval": {
       const { url: pageUrl, expression: jsExpr } = rest as { url: string; expression: string }
       if (!pageUrl || !jsExpr) {
         return { type: "tool.result", id: msg.id, success: false, error: "url and expression required" }
       }
-      if (session) {
-        const result = await session.executeTool(msg.id || `osascript_${Date.now()}`, "osascript_eval", { url: pageUrl, expression: jsExpr })
-        return { type: "tool.result", id: msg.id, ...result }
-      }
-      const safety = checkHighRiskExecution("osascript_eval", jsExpr)
-      if (safety.blocked) {
-        return {
-          type: "tool.result",
-          id: msg.id,
-          success: false,
-          error: safety.error,
-          data: { dangerous_apis_found: safety.dangerousApis },
+      // Security check runs regardless of session availability
+      if (rest.security_token) {
+        const valid = securityPolicy.validateToken(String(rest.security_token), "osascript_eval", jsExpr)
+        if (!valid) {
+          return { type: "tool.result", id: msg.id, success: false, error: "Invalid or expired security token" }
+        }
+      } else {
+        const safety = checkHighRiskExecution("osascript_eval", jsExpr)
+        if (safety.blocked) {
+          return {
+            type: "tool.result",
+            id: msg.id,
+            success: false,
+            error: safety.error,
+            data: { dangerous_apis_found: safety.dangerousApis },
+          }
         }
       }
-      try {
-        if (os.platform() !== "darwin") {
-          return { type: "tool.result", id: msg.id, success: false, error: "osascript_eval is macOS-only. Use get_page_text via tabId instead (cross-platform)." }
-        }
-        // Escape JS for AppleScript string: backslash + double-quote
-        const escapedJs = jsExpr
-          .replace(/\\/g, "\\\\")
-          .replace(/"/g, '\\"')
-          .replace(/\n/g, " ")
-        const script = `
-          tell application "Google Chrome"
-            repeat with w in windows
-              repeat with t in tabs of w
-                if URL of t contains "${pageUrl}" then
-                  set resultText to execute t javascript "${escapedJs}"
-                  return resultText
-                end if
-              end repeat
-            end repeat
-            return "TAB_NOT_FOUND"
-          end tell
-        `
-        const output = execSync(`osascript -e '${script.replace(/'/g, "'\\''")}'`, {
-          encoding: "utf-8",
-          timeout: 10000,
-        }).trim()
-        if (output === "TAB_NOT_FOUND") {
-          return { type: "tool.result", id: msg.id, success: false, error: `Tab with URL "${pageUrl}" not found in Chrome` }
-        } else {
-          return { type: "tool.result", id: msg.id, success: true, data: { result: output } }
-        }
-      } catch (err: any) {
-        return { type: "tool.result", id: msg.id, success: false, error: `osascript_eval error: ${err.message}` }
+      if (!session) {
+        return { type: "tool.result", id: msg.id, success: false, error: "No session available for osascript_eval" }
       }
+      const result = await session.executeTool(msg.id || `osascript_${Date.now()}`, "osascript_eval", { url: pageUrl, expression: jsExpr, security_token: rest.security_token })
+      return { type: "tool.result", id: msg.id, ...result }
     }
 
     // --- Original System ---
@@ -459,4 +490,82 @@ export async function handleMessage(
     default:
       return { type: "error", error: `Unknown message type: ${type}` }
   }
+}
+
+// --- Security helpers ---
+
+const PROTOTYPE_POLLUTION_KEYS = new Set(["__proto__", "constructor", "prototype"])
+
+function hasPrototypePollutionKey(obj: any): boolean {
+  if (!obj || typeof obj !== "object") return false
+  for (const key of Object.keys(obj)) {
+    if (PROTOTYPE_POLLUTION_KEYS.has(key)) return true
+    // Also check if any value is a pollution key string (e.g., {"foo": "__proto__"})
+    const val = obj[key]
+    if (typeof val === "string" && PROTOTYPE_POLLUTION_KEYS.has(val)) return true
+    if (typeof val === "object" && hasPrototypePollutionKey(val)) return true
+  }
+  return false
+}
+
+function sanitizeConfig(obj: Record<string, any>): Record<string, any> {
+  const result = Object.create(null)
+  for (const key of Object.keys(obj)) {
+    if (PROTOTYPE_POLLUTION_KEYS.has(key)) continue
+    const val = obj[key]
+    if (val !== null && typeof val === "object" && !Array.isArray(val)) {
+      result[key] = sanitizeConfig(val)
+    } else {
+      result[key] = val
+    }
+  }
+  return result
+}
+
+function isInternalIp(hostname: string): boolean {
+  const h = hostname.toLowerCase().trim()
+
+  // Block localhost variants
+  if (h === "localhost" || h === "127.0.0.1" || h === "::1" || h === "0.0.0.0") {
+    return true
+  }
+
+  // Block DNS rebinding patterns (domains that embed IP addresses or resolve to internal IPs)
+  // e.g., 127.0.0.1.nip.io, 127-0-0-1.local, 192.168.1.1.xip.io
+  if (/\b\d{1,3}[-.]\d{1,3}[-.]\d{1,3}[-.]\d{1,3}\b/.test(h)) return true
+  if (/\b127[-.]\d{1,3}[-.]\d{1,3}[-.]\d{1,3}\b/.test(h)) return true
+  if (/\b10[-.]\d{1,3}[-.]\d{1,3}[-.]\d{1,3}\b/.test(h)) return true
+  if (/\b192[-.]168[-.]\d{1,3}[-.]\d{1,3}\b/.test(h)) return true
+
+  // Block private IPv4 ranges
+  const parts = h.split(".").map(Number)
+  if (parts.length === 4 && parts.every(p => !isNaN(p) && p >= 0 && p <= 255)) {
+    // 10.0.0.0/8
+    if (parts[0] === 10) return true
+    // 172.16.0.0/12
+    if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true
+    // 192.168.0.0/16
+    if (parts[0] === 192 && parts[1] === 168) return true
+    // 127.0.0.0/8 (loopback)
+    if (parts[0] === 127) return true
+    // 169.254.0.0/16 (link-local)
+    if (parts[0] === 169 && parts[1] === 254) return true
+    // 0.0.0.0/8
+    if (parts[0] === 0) return true
+  }
+
+  // Block IPv6 loopback variants
+  // ::1, ::ffff:127.0.0.1, fe80::1, etc.
+  if (h.startsWith("::1") || h.startsWith("::ffff:127.") || h.startsWith("fe80::") || h.startsWith("fe80:")) {
+    return true
+  }
+  // Block IPv6 private addresses (fc00::/7, includes fd00::/8)
+  if (h.startsWith("fc") || h.startsWith("fd")) {
+    // Validate it's actually an IPv6 address starting with fc/fd
+    if (/^f[c-d][0-9a-f]:/i.test(h) || /^f[c-d][0-9a-f][0-9a-f]:/i.test(h)) return true
+  }
+  // Block IPv6 link-local (fe80::/10)
+  if (/^fe[8-9a-b][0-9a-f]:/i.test(h) || /^fe[8-9a-b][0-9a-f][0-9a-f]:/i.test(h)) return true
+
+  return false
 }

@@ -4,7 +4,7 @@ import * as fs from "fs"
 import * as path from "path"
 import * as os from "os"
 
-export const DATA_DIR = path.join(os.homedir(), ".cmspark-agent")
+export const DATA_DIR = process.env.CMSPARK_DATA_DIR || path.join(os.homedir(), ".cmspark-agent")
 
 export interface CompanionConfig {
   port: number

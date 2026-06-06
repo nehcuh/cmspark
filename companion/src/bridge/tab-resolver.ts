@@ -1,7 +1,7 @@
 // Tab resolver — finds the best matching tab for a user query
 // Priority: pinned tabs → active tab → semantic match (reverse open order)
 
-interface TabInfo {
+export interface TabInfo {
   id: number
   url: string
   title: string

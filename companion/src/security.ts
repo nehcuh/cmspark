@@ -31,6 +31,7 @@ export function isTrustedDomain(domain: string): boolean {
  * Avoids false positives like "prefetch" matching "fetch" or "window.openModal" matching "window.open".
  */
 export const DANGEROUS_API_PATTERNS: Array<{ name: string; pattern: RegExp }> = [
+  // Direct API calls
   { name: "fetch", pattern: /\bfetch\s*\(/ },
   { name: "XMLHttpRequest", pattern: /\bXMLHttpRequest\b/ },
   { name: "localStorage", pattern: /\blocalStorage\b/ },
@@ -41,6 +42,24 @@ export const DANGEROUS_API_PATTERNS: Array<{ name: string; pattern: RegExp }> = 
   { name: "WebSocket", pattern: /\bnew\s+WebSocket\s*\(/ },
   { name: "EventSource", pattern: /\bnew\s+EventSource\s*\(/ },
   { name: "indexedDB", pattern: /\bindexedDB\b/ },
+  // Obfuscation / bypass patterns (P1)
+  { name: "bracket-fetch", pattern: /\[\s*["']fetch["']\s*\]\s*\(/ },
+  { name: "bracket-open", pattern: /\[\s*["']open["']\s*\]\s*\(/ },
+  { name: "bracket-localStorage", pattern: /\[\s*["']localStorage["']\s*\]/ },
+  { name: "bracket-sessionStorage", pattern: /\[\s*["']sessionStorage["']\s*\]/ },
+  { name: "bracket-cookie", pattern: /\[\s*["']cookie["']\s*\]/ },
+  { name: "bracket-sendBeacon", pattern: /\[\s*["']sendBeacon["']\s*\]\s*\(/ },
+  { name: "bracket-indexedDB", pattern: /\[\s*["']indexedDB["']\s*\]/ },
+  { name: "bracket-XMLHttpRequest", pattern: /\[\s*["']XMLHttpRequest["']\s*\]/ },
+  { name: "fetch.call", pattern: /\.call\s*\(.*fetch/ },
+  { name: "fetch.apply", pattern: /\.apply\s*\(.*fetch/ },
+  { name: "Reflect.apply", pattern: /\bReflect\.apply\s*\(/ },
+  { name: "Reflect.construct", pattern: /\bReflect\.construct\s*\(/ },
+  { name: "Proxy", pattern: /\bnew\s+Proxy\s*\(/ },
+  { name: "eval", pattern: /\beval\s*\(/ },
+  { name: "Function", pattern: /\bnew\s+Function\s*\(/ },
+  { name: "setTimeout-string", pattern: /setTimeout\s*\(\s*["']/ },
+  { name: "setInterval-string", pattern: /setInterval\s*\(\s*["']/ },
 ]
 
 export function detectDangerousApis(code: string): string[] {
@@ -138,6 +157,7 @@ export function classifyError(errorMessage: string, context?: { toolName?: strin
     "macos-only",
     "platform not supported",
     "not supported on",
+    "unknown tool",
   ]
   if (recoverable.some(p => msg.includes(p))) {
     return "recoverable"

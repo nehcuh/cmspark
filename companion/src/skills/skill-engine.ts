@@ -6,6 +6,7 @@ import * as os from "os"
 import { tokenize, tokensToVec, cosineSimilarity } from "./semantic-match"
 import matter from "gray-matter"
 import AdmZip from "adm-zip"
+import * as yaml from "js-yaml"
 import { getConfigDir } from "../config"
 import { ThreadManager } from "../threads/thread-manager"
 
@@ -302,37 +303,35 @@ export class SkillEngine {
     }
   }
 
-  /** Save a skill back to its source file, updating frontmatter from current metadata. */
+  /** Save a skill back to its source file, updating frontmatter from current metadata.
+   * Uses js-yaml for safe serialization to prevent YAML injection (P0). */
   private saveSkillFile(skillName: string): void {
     const skill = this.get(skillName)
     if (!skill || !skill.source_file) return
     const body = this.buildEntriesMarkdown(skill)
-    const md = [
-      "---",
-      `name: ${skill.name}`,
-      `description: ${skill.description}`,
-      `type: ${skill.type}`,
-    ]
-    if (skill.site) md.push(`site: ${skill.site}`)
-    if (skill.tags?.length) md.push(`tags: [${skill.tags.join(", ")}]`)
-    if (skill.priority) md.push(`priority: ${skill.priority}`)
-    if (skill.entries?.length) {
-      md.push("entries:")
-      for (const e of skill.entries) {
-        md.push(`  - id: ${e.id}`)
-        md.push(`    category: ${e.category}`)
-        md.push(`    content: "${e.content}"`)
-        md.push(`    recorded_at: ${e.recorded_at}`)
-        md.push(`    stale: ${e.stale}`)
-        md.push(`    stale_reason: "${e.stale_reason || ""}"`)
-        if (e.confirmed_at) md.push(`    confirmed_at: ${e.confirmed_at}`)
-        if (e.replaced_by) md.push(`    replaced_by: ${e.replaced_by}`)
-      }
+    const frontmatter: Record<string, any> = {
+      name: skill.name,
+      description: skill.description,
+      type: skill.type,
     }
-    md.push("---")
-    md.push("")
-    md.push(body)
-    fs.writeFileSync(skill.source_file, md.join("\n"))
+    if (skill.site) frontmatter.site = skill.site
+    if (skill.tags?.length) frontmatter.tags = skill.tags
+    if (skill.priority) frontmatter.priority = skill.priority
+    if (skill.entries?.length) {
+      frontmatter.entries = skill.entries.map(e => ({
+        id: e.id,
+        category: e.category,
+        content: e.content,
+        recorded_at: e.recorded_at,
+        stale: e.stale,
+        stale_reason: e.stale_reason || "",
+        ...(e.confirmed_at ? { confirmed_at: e.confirmed_at } : {}),
+        ...(e.replaced_by ? { replaced_by: e.replaced_by } : {}),
+      }))
+    }
+    const yamlStr = yaml.dump(frontmatter, { lineWidth: -1, noRefs: true, quotingType: '"' })
+    const md = `---\n${yamlStr}---\n\n${body}`
+    fs.writeFileSync(skill.source_file, md)
   }
 
   /** Build human-readable markdown from entries. */
@@ -456,9 +455,16 @@ export class SkillEngine {
         relativePath = relativePath.slice(skillDirName.length + 1)
       }
 
-      // Secure path traversal check (P0)
+      // Normalize and validate: reject absolute paths, parent traversal, and null bytes
+      relativePath = path.normalize(relativePath).replace(/\\/g, "/")
+      if (path.isAbsolute(relativePath) || relativePath.startsWith("..") || relativePath.includes("\0")) {
+        throw new Error(`Security Violation: Invalid zip entry path: ${entry.entryName}`)
+      }
+
+      // Secure path traversal check (P0) — ensure resolved path stays under destDir
       const resolvedPath = path.resolve(destDir, relativePath)
-      if (!resolvedPath.startsWith(destDir)) {
+      const normalizedDest = path.resolve(destDir)
+      if (!resolvedPath.startsWith(normalizedDest + path.sep) && resolvedPath !== normalizedDest) {
         throw new Error(`Security Violation: Path traversal detected in zip entry: ${entry.entryName}`)
       }
 
@@ -475,7 +481,16 @@ export class SkillEngine {
   }
 
   importSkillFromPath(dirPath: string): void {
+    // Resolve and validate path stays within config directory (P0)
+    if (typeof dirPath !== "string" || dirPath.includes("\0")) {
+      throw new Error("Invalid directory path")
+    }
     const resolved = path.resolve(dirPath.replace(/^~/, os.homedir()))
+    const configDir = path.resolve(getConfigDir())
+    // Ensure resolved path is under config directory (prevent path traversal)
+    if (!resolved.startsWith(configDir + path.sep) && resolved !== configDir) {
+      throw new Error(`Path traversal not allowed: ${dirPath}`)
+    }
     const stat = fs.statSync(resolved, { throwIfNoEntry: false })
     if (!stat || !stat.isDirectory()) {
       throw new Error(`Directory not found: ${dirPath}`)
@@ -521,17 +536,21 @@ export class SkillEngine {
     }
     fs.mkdirSync(destDir, { recursive: true })
 
+    const normalizedDest = path.resolve(destDir)
     for (const file of files) {
       // Secure path traversal check (P0)
-      const resolvedPath = path.resolve(destDir, file.path)
-      if (!resolvedPath.startsWith(destDir)) {
+      // Normalize and reject absolute paths, parent traversal, and null bytes
+      let relPath = path.normalize(file.path).replace(/\\/g, "/")
+      if (path.isAbsolute(relPath) || relPath.startsWith("..") || relPath.includes("\0")) {
+        throw new Error(`Security Violation: Invalid skill file path: ${file.path}`)
+      }
+      const resolvedPath = path.resolve(destDir, relPath)
+      if (!resolvedPath.startsWith(normalizedDest + path.sep) && resolvedPath !== normalizedDest) {
         throw new Error(`Security Violation: Path traversal detected in skill file: ${file.path}`)
       }
 
-      // Normalize path: strip any leading folder name
-      let relPath = file.path
+      // Ensure subdirectories exist
       if (relPath.includes("/")) {
-        // Ensure subdirectories exist
         const subDir = path.dirname(relPath)
         if (subDir !== ".") {
           fs.mkdirSync(path.join(destDir, subDir), { recursive: true })
@@ -577,33 +596,33 @@ export class SkillEngine {
       return
     }
 
-    const meta: string[] = [
-      "---",
-      `name: ${name}`,
-      `description: ${type === "site_knowledge" ? `Site experience for ${site}` : `Domain knowledge: ${name}`}`,
-      `type: ${type}`,
-    ]
-    if (site) meta.push(`site: ${site}`)
-    if (tags?.length) meta.push(`tags: [${tags.join(", ")}]`)
-    if (entry) {
-      meta.push("entries:")
-      meta.push(`  - id: ${entry.id}`)
-      meta.push(`    category: ${entry.category}`)
-      meta.push(`    content: "${entry.content}"`)
-      meta.push(`    recorded_at: ${entry.recorded_at}`)
-      meta.push(`    confirmed_at: ${entry.confirmed_at || "null"}`)
-      meta.push(`    stale: ${entry.stale}`)
-      meta.push(`    stale_reason: "${entry.stale_reason || ""}"`)
-      meta.push(`    replaced_by: ""`)
+    const frontmatter: Record<string, any> = {
+      name,
+      description: type === "site_knowledge" ? `Site experience for ${site}` : `Domain knowledge: ${name}`,
+      type,
     }
-    meta.push("---")
-    meta.push("")
+    if (site) frontmatter.site = site
+    if (tags?.length) frontmatter.tags = tags
+    if (entry) {
+      frontmatter.entries = [{
+        id: entry.id,
+        category: entry.category,
+        content: entry.content,
+        recorded_at: entry.recorded_at,
+        confirmed_at: entry.confirmed_at,
+        stale: entry.stale,
+        stale_reason: entry.stale_reason || "",
+        replaced_by: "",
+      }]
+    }
+    const yamlStr = yaml.dump(frontmatter, { lineWidth: -1, noRefs: true, quotingType: '"' })
+    let md = `---\n${yamlStr}---\n`
     if (entry) {
       const icon = entry.category === "problem" ? "🐛" : entry.category === "success" ? "✅" : entry.category === "tip" ? "💡" : "📋"
-      meta.push(`# 记录列表\n\n- ${icon} ${entry.content}`)
+      md += `\n# 记录列表\n\n- ${icon} ${entry.content}`
     }
 
-    fs.writeFileSync(filePath, meta.join("\n"))
+    fs.writeFileSync(filePath, md)
     this.refresh()
   }
 }

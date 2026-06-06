@@ -6,6 +6,7 @@ import type { SkillEngine } from "../skills/skill-engine"
 import type { HistoryStore } from "../history/store"
 import { getToolDefinitions } from "../bridge/tool-definitions"
 import { classifyError } from "../security"
+import { logger } from "../logger"
 
 interface ChatCreateParams {
   threadId: string
@@ -42,6 +43,7 @@ function extractKeyTerms(content: string): string[] {
   return [...new Set(terms)]
 }
 const CONTINUOUS_FAILURE_LIMIT = 5
+const MAX_SAME_TOOL_RECOVERABLE_FAILURES = 3
 
 interface ToolExecutionResult {
   success: boolean
@@ -180,6 +182,7 @@ CRITICAL RULES:
   // Tool calling loop
   let round = 0
   let continuousFailures = 0
+  const recoverableFailureCounts = new Map<string, number>()
 
   while (round < MAX_TOOL_CALL_ROUNDS) {
     round++
@@ -272,12 +275,36 @@ CRITICAL RULES:
         let params: any = {}
         try {
           params = JSON.parse(tc.function.arguments || "{}")
-        } catch { /* ignore parse errors */ }
+        } catch (parseErr: any) {
+          logger.warn("llm.tool_parse_error", {
+            tool_call_id: tc.id,
+            tool_name: toolName,
+            arguments: tc.function.arguments,
+            error: parseErr.message,
+          })
+          const parseResult = {
+            success: false,
+            error: `Invalid JSON in tool arguments: ${parseErr.message}. Received: ${tc.function.arguments}`,
+          }
+          threadManager.addMessage(threadId, createToolResultMessage(threadId, tc, parseResult, {}))
+          sendToExtension({
+            type: "tool.result",
+            tool_call_id: tc.id,
+            tool_name: toolName,
+            result: parseResult,
+          })
+          toolResults.push({
+            role: "tool" as const,
+            tool_call_id: tc.id,
+            content: JSON.stringify(parseResult),
+          })
+          continue
+        }
 
         const startTime = Date.now()
 
         try {
-          const result = await executeTool(tc.id, toolName, {
+          let toolResult = await executeTool(tc.id, toolName, {
             ...params,
             tabId: params.tabId ?? threadManager.get(threadId)?.pinned_tabs?.[0],
           })
@@ -289,11 +316,11 @@ CRITICAL RULES:
             thread_id: threadId,
             tool_name: toolName,
             params: JSON.stringify(params),
-            result_summary: result.success
-              ? JSON.stringify(result.data || {}).substring(0, 500)
+            result_summary: toolResult.success
+              ? JSON.stringify(toolResult.data || {}).substring(0, 500)
               : "",
-            error: result.error || null,
-            success: result.success ? 1 : 0,
+            error: toolResult.error || null,
+            success: toolResult.success ? 1 : 0,
             duration_ms: durationMs,
             created_at: new Date().toISOString(),
           })
@@ -303,12 +330,61 @@ CRITICAL RULES:
             type: "tool.result",
             tool_call_id: tc.id,
             tool_name: toolName,
-            result,
+            result: toolResult,
           })
 
-          threadManager.addMessage(threadId, createToolResultMessage(threadId, tc, result, params))
+          threadManager.addMessage(threadId, createToolResultMessage(threadId, tc, toolResult, params))
 
-          if (!result.success) {
+          if (toolResult.success) {
+            // Reset failure counters on success
+            continuousFailures = 0
+            recoverableFailureCounts.delete(toolName)
+          } else {
+            logger.warn("llm.tool_failed", {
+              tool_call_id: tc.id,
+              tool_name: toolName,
+              error: toolResult.error,
+              params,
+            })
+
+            // Auto-recovery for tabId hallucination (P0): inject available tabs into error
+            const tabIdErrorPatterns = [
+              "No tab with given id",
+              "TAB_NOT_FOUND",
+              "No active tab found",
+              "tabId is required",
+            ]
+            const isTabIdError = tabIdErrorPatterns.some(p => toolResult.error?.includes(p))
+            if (isTabIdError) {
+              logger.info("llm.tabId_hallucination_detected", {
+                tool_call_id: tc.id,
+                tool_name: toolName,
+                error: toolResult.error,
+              })
+              try {
+                const tabsResult = await executeTool(`${tc.id}_recovery`, "list_tabs", {})
+                if (tabsResult.success && Array.isArray(tabsResult.data)) {
+                  const tabSummary = tabsResult.data.map((t: any) =>
+                    `- tabId=${t.id}: ${t.title || "untitled"} (${t.url || "no url"})`
+                  ).join("\n")
+                  toolResult = {
+                    success: false,
+                    error: `${toolResult.error}\n\nAvailable tabs:\n${tabSummary}\n\nCRITICAL: Always call list_tabs first to get real tab IDs. Never guess tab IDs like 1, 2, 3.`,
+                    data: { ...toolResult.data, recovery_tabs: tabsResult.data },
+                  }
+                  logger.info("llm.tabId_recovery_injected", {
+                    tool_call_id: tc.id,
+                    available_tabs: tabsResult.data.length,
+                  })
+                }
+              } catch (recoveryErr: any) {
+                logger.warn("llm.tabId_recovery_failed", {
+                  tool_call_id: tc.id,
+                  error: recoveryErr.message,
+                })
+              }
+            }
+
             // L1 Stale detection: match error against site_knowledge entries
             try {
               const activeSkills = skillEngine.getActiveForThread(threadId)
@@ -316,22 +392,29 @@ CRITICAL RULES:
                 if (skill.type !== "site_knowledge" || !skill.entries) continue
                 for (const entry of skill.entries) {
                   if (entry.stale) continue
-                  // Match: extract selectors/IDs from entry content and check if they appear in error
                   const entryTerms = extractKeyTerms(entry.content)
-                  const match = entryTerms.some(t => t.length > 2 && result.error!.includes(t))
+                  const match = entryTerms.some(t => t.length > 2 && toolResult.error!.includes(t))
                   if (match) {
-                    skillEngine.markEntryStale(skill.name, entry.id, result.error!.substring(0, 80))
+                    skillEngine.markEntryStale(skill.name, entry.id, toolResult.error!.substring(0, 80))
                   }
                 }
               }
             } catch { /* best-effort stale detection */ }
-            const errorLevel = classifyError(result.error || "", { toolName })
+
+            const errorLevel = classifyError(toolResult.error || "", { toolName })
+            logger.info("llm.error_classified", {
+              tool_call_id: tc.id,
+              tool_name: toolName,
+              error_level: errorLevel,
+              error: toolResult.error,
+            })
+
             if (errorLevel === "security") {
               shouldStop = true
               sendToExtension({
                 type: "chat.error",
                 thread_id: threadId,
-                error: `安全阻断: ${result.error}`,
+                error: `安全阻断: ${toolResult.error}`,
               })
               break
             }
@@ -340,16 +423,34 @@ CRITICAL RULES:
               sendToExtension({
                 type: "chat.error",
                 thread_id: threadId,
-                error: `不可恢复错误: ${result.error}`,
+                error: `不可恢复错误: ${toolResult.error}`,
               })
               break
             }
-            // Recoverable errors — feed back to LLM for retry
+
+            // Recoverable errors — feed back to LLM for retry, with infinite-loop guard
+            const failCount = (recoverableFailureCounts.get(toolName) || 0) + 1
+            recoverableFailureCounts.set(toolName, failCount)
+            if (failCount >= MAX_SAME_TOOL_RECOVERABLE_FAILURES) {
+              logger.error("llm.recoverable_loop_detected", {
+                tool_name: toolName,
+                fail_count: failCount,
+                threshold: MAX_SAME_TOOL_RECOVERABLE_FAILURES,
+                last_error: toolResult.error,
+              })
+              shouldStop = true
+              sendToExtension({
+                type: "chat.error",
+                thread_id: threadId,
+                error: `工具 ${toolName} 连续 ${failCount} 次执行失败，已停止以防止无限循环。最后错误: ${toolResult.error}`,
+              })
+              break
+            }
           }
 
           // Truncate huge tool results to protect context window
           const MAX_RESULT_CHARS = 8000
-          let resultContent = JSON.stringify(result)
+          let resultContent = JSON.stringify(toolResult)
           const originalLen = resultContent.length
           if (resultContent.length > MAX_RESULT_CHARS) {
             resultContent = resultContent.substring(0, MAX_RESULT_CHARS)
@@ -361,6 +462,12 @@ CRITICAL RULES:
             content: resultContent,
           })
         } catch (e: any) {
+          logger.error("llm.tool_execution_exception", {
+            tool_call_id: tc.id,
+            tool_name: toolName,
+            error: e.message || String(e),
+            stack: e.stack,
+          })
           const result = { success: false, error: e.message || String(e) }
           threadManager.addMessage(threadId, createToolResultMessage(threadId, tc, result, params))
           sendToExtension({
@@ -391,6 +498,14 @@ CRITICAL RULES:
       const isAuthError = errorMsg.includes("401") || errorMsg.includes("403") || errorMsg.includes("Incorrect API key")
       const isStructuralError = errorMsg.includes("400") && errorMsg.includes("tool")
 
+      logger.error("llm.api_error", {
+        error: errorMsg,
+        is_auth_error: isAuthError,
+        is_structural_error: isStructuralError,
+        round,
+        continuous_failures: continuousFailures,
+      })
+
       sendToExtension({
         type: "chat.error",
         thread_id: threadId,
@@ -399,6 +514,7 @@ CRITICAL RULES:
 
       // Auth errors and structural errors are fatal — stop immediately
       if (isAuthError) {
+        logger.error("llm.auth_error", { error: errorMsg })
         sendToExtension({
           type: "chat.error",
           thread_id: threadId,
@@ -407,6 +523,7 @@ CRITICAL RULES:
         return
       }
       if (isStructuralError) {
+        logger.error("llm.structural_error", { error: errorMsg })
         sendToExtension({
           type: "chat.error",
           thread_id: threadId,
@@ -416,7 +533,16 @@ CRITICAL RULES:
       }
 
       continuousFailures++
+      logger.warn("llm.recoverable_api_error", {
+        error: errorMsg,
+        continuous_failures: continuousFailures,
+        limit: CONTINUOUS_FAILURE_LIMIT,
+      })
       if (continuousFailures >= CONTINUOUS_FAILURE_LIMIT) {
+        logger.error("llm.failure_limit_reached", {
+          continuous_failures: continuousFailures,
+          limit: CONTINUOUS_FAILURE_LIMIT,
+        })
         sendToExtension({
           type: "chat.error",
           thread_id: threadId,

@@ -1,40 +1,59 @@
-import test, { after, before } from "node:test"
+// Server module tests — log-helpers.ts and tool-executor.ts
+import test, { before, after } from "node:test"
 import assert from "node:assert/strict"
-import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
-import { URL } from "url"
+import * as fs from "node:fs"
 
 const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-agent-test-server-"))
 
+let getDomainFromUrl: typeof import("../src/server/log-helpers").getDomainFromUrl
+let summarizeToolParams: typeof import("../src/server/log-helpers").summarizeToolParams
+let summarizeToolResult: typeof import("../src/server/log-helpers").summarizeToolResult
+let summarizeMessage: typeof import("../src/server/log-helpers").summarizeMessage
+let logToolFinish: typeof import("../src/server/log-helpers").logToolFinish
+let createToolExecutor: typeof import("../src/server/tool-executor").createToolExecutor
+let executeCompanionTool: typeof import("../src/server/tool-executor").executeCompanionTool
+let handleToolResult: typeof import("../src/server/tool-executor").handleToolResult
+let setRuntimeConfig: typeof import("../src/server/tool-executor").setRuntimeConfig
+let getRuntimeConfig: typeof import("../src/server/tool-executor").getRuntimeConfig
+let isTrustedDomain: typeof import("../src/security").isTrustedDomain
+let checkHighRiskExecution: typeof import("../src/security").checkHighRiskExecution
+let initDataDir: typeof import("../src/config").initDataDir
+let saveConfig: typeof import("../src/config").saveConfig
 let ThreadManager: typeof import("../src/threads/thread-manager").ThreadManager
 let SkillEngine: typeof import("../src/skills/skill-engine").SkillEngine
 let HistoryStore: typeof import("../src/history/store").HistoryStore
-let handleMessage: typeof import("../src/message-router").handleMessage
-let initDataDir: typeof import("../src/config").initDataDir
-let saveConfig: typeof import("../src/config").saveConfig
-let isTrustedDomain: typeof import("../src/security").isTrustedDomain
-let checkHighRiskExecution: typeof import("../src/security").checkHighRiskExecution
 
 before(async () => {
   process.env.HOME = tempHome
   delete process.env.DEEPSEEK_API_KEY
 
-  const threadManagerMod = await import("../src/threads/thread-manager")
-  const skillEngineMod = await import("../src/skills/skill-engine")
-  const historyMod = await import("../src/history/store")
-  const messageRouterMod = await import("../src/message-router")
-  const configMod = await import("../src/config")
-  const securityMod = await import("../src/security")
+  const logHelpers = await import("../src/server/log-helpers")
+  const toolExecutor = await import("../src/server/tool-executor")
+  const security = await import("../src/security")
+  const config = await import("../src/config")
+  const threadManager = await import("../src/threads/thread-manager")
+  const skillEngine = await import("../src/skills/skill-engine")
+  const historyStore = await import("../src/history/store")
 
-  ThreadManager = threadManagerMod.ThreadManager
-  SkillEngine = skillEngineMod.SkillEngine
-  HistoryStore = historyMod.HistoryStore
-  handleMessage = messageRouterMod.handleMessage
-  initDataDir = configMod.initDataDir
-  saveConfig = configMod.saveConfig
-  isTrustedDomain = securityMod.isTrustedDomain
-  checkHighRiskExecution = securityMod.checkHighRiskExecution
+  getDomainFromUrl = logHelpers.getDomainFromUrl
+  summarizeToolParams = logHelpers.summarizeToolParams
+  summarizeToolResult = logHelpers.summarizeToolResult
+  summarizeMessage = logHelpers.summarizeMessage
+  logToolFinish = logHelpers.logToolFinish
+  createToolExecutor = toolExecutor.createToolExecutor
+  executeCompanionTool = toolExecutor.executeCompanionTool
+  handleToolResult = toolExecutor.handleToolResult
+  setRuntimeConfig = toolExecutor.setRuntimeConfig
+  getRuntimeConfig = toolExecutor.getRuntimeConfig
+  isTrustedDomain = security.isTrustedDomain
+  checkHighRiskExecution = security.checkHighRiskExecution
+  initDataDir = config.initDataDir
+  saveConfig = config.saveConfig
+  ThreadManager = threadManager.ThreadManager
+  SkillEngine = skillEngine.SkillEngine
+  HistoryStore = historyStore.HistoryStore
 
   await initDataDir()
 })
@@ -43,402 +62,671 @@ after(() => {
   fs.rmSync(tempHome, { recursive: true, force: true })
 })
 
-// --- Cookie domain extraction (server.ts: getDomainFromUrl) ---
+// ============================================================================
+// log-helpers.ts tests
+// ============================================================================
 
-function getDomainFromUrl(urlString: string): string {
-  try {
-    const parsed = new URL(urlString)
-    return parsed.hostname
-  } catch {
-    return ""
-  }
-}
-
-test("getDomainFromUrl extracts hostname from valid URL", () => {
+test("getDomainFromUrl extracts hostname from valid URLs", () => {
   assert.equal(getDomainFromUrl("https://example.com/path"), "example.com")
   assert.equal(getDomainFromUrl("http://sub.domain.co.uk:8080/page?q=1"), "sub.domain.co.uk")
   assert.equal(getDomainFromUrl("https://127.0.0.1:23401"), "127.0.0.1")
+  assert.equal(getDomainFromUrl("ftp://files.example.org/download"), "files.example.org")
+  assert.equal(getDomainFromUrl("https://user:pass@example.com/path"), "example.com")
 })
 
-test("getDomainFromUrl returns empty string for invalid URL", () => {
+test("getDomainFromUrl returns empty string for invalid URLs", () => {
   assert.equal(getDomainFromUrl("not-a-url"), "")
   assert.equal(getDomainFromUrl(""), "")
+  assert.equal(getDomainFromUrl("javascript:alert(1)"), "")
+  assert.equal(getDomainFromUrl("data:text/plain,hello"), "")
 })
 
-// --- Summarize helpers (server.ts) ---
-
-function summarizeToolParams(params: any): Record<string, unknown> {
-  const safeParams = params || {}
-  const summary: Record<string, unknown> = { keys: Object.keys(safeParams) }
-  for (const key of ["tabId", "url", "domain", "selector", "threadId", "thread_id"]) {
-    if (safeParams[key] !== undefined) summary[key] = safeParams[key]
-  }
-  if (safeParams.code !== undefined) summary.code_length = String(safeParams.code).length
-  if (safeParams.expression !== undefined) summary.expression_length = String(safeParams.expression).length
-  return summary
-}
-
-test("summarizeToolParams extracts tabId and hides code/expression content", () => {
+test("summarizeToolParams extracts whitelisted keys and hides code/expression content", () => {
   const params = {
     tabId: 303,
     selector: "#btn",
     code: "fetch('/api')".repeat(50),
     expression: "document.cookie",
     other: "value",
+    url: "https://example.com",
+    domain: "example.com",
   }
   const summary = summarizeToolParams(params)
-  assert.deepEqual(summary.keys, ["tabId", "selector", "code", "expression", "other"])
+
+  assert.deepEqual(summary.keys, ["tabId", "selector", "code", "expression", "other", "url", "domain"])
   assert.equal(summary.tabId, 303)
   assert.equal(summary.selector, "#btn")
-  assert.equal(summary.code_length, 650)
+  assert.equal(summary.code_length, 650) // "fetch('/api')" * 50 = 13 * 50
   assert.equal(summary.expression_length, 15)
-  assert.equal(Object.prototype.hasOwnProperty.call(summary, "code"), false) // code content not exposed
-  assert.equal(Object.prototype.hasOwnProperty.call(summary, "expression"), false) // expression content not exposed
+  assert.equal(summary.other, undefined) // not whitelisted
+  assert.equal(summary.code, undefined) // code content not exposed
+  assert.equal(summary.expression, undefined) // expression content not exposed
 })
 
-test("summarizeToolParams handles empty params", () => {
-  const summary = summarizeToolParams(null)
-  assert.deepEqual(summary.keys, [])
+test("summarizeToolParams handles threadId and thread_id variants", () => {
+  const summary1 = summarizeToolParams({ threadId: "abc123" })
+  assert.equal(summary1.threadId, "abc123")
+
+  const summary2 = summarizeToolParams({ thread_id: "xyz789" })
+  assert.equal(summary2.thread_id, "xyz789")
 })
 
-// --- Companion tool execution via message router ---
-
-test("osascript_eval without session blocks dangerous JS", async () => {
-  saveConfig({ trusted_domains: [] })
-
-  const response = await handleMessage(
-    {
-      type: "osascript_eval",
-      id: "tool_os_1",
-      url: "example.com",
-      expression: "document.cookie",
-    },
-    { threadManager: new ThreadManager(), skillEngine: new SkillEngine(), historyStore: new HistoryStore() },
-  )
-
-  assert.equal(response.type, "tool.result")
-  assert.equal(response.success, false)
-  assert.match(response.error, /Security Block/)
-  assert.deepEqual(response.data.dangerous_apis_found, ["document.cookie"])
+test("summarizeToolParams handles empty and null params", () => {
+  assert.deepEqual(summarizeToolParams(null), { keys: [] })
+  assert.deepEqual(summarizeToolParams(undefined), { keys: [] })
+  assert.deepEqual(summarizeToolParams({}), { keys: [] })
 })
 
-test("osascript_eval without session allows safe JS", async () => {
-  // On non-macOS, it will fail with "macOS-only" but not a security block
-  const response = await handleMessage(
-    {
-      type: "osascript_eval",
-      id: "tool_os_2",
-      url: "example.com",
-      expression: "document.title",
-    },
-    { threadManager: new ThreadManager(), skillEngine: new SkillEngine(), historyStore: new HistoryStore() },
-  )
-
-  assert.equal(response.type, "tool.result")
-  // Should either be security-blocked or macOS-only error, but NOT crash
-  assert.ok(typeof response.success === "boolean")
+test("summarizeToolParams omits length fields when code/expression are undefined", () => {
+  const summary = summarizeToolParams({ tabId: 42 })
+  assert.equal(summary.code_length, undefined)
+  assert.equal(summary.expression_length, undefined)
 })
 
-test("osascript_eval without session requires url and expression", async () => {
-  const response = await handleMessage(
-    { type: "osascript_eval", id: "tool_os_3", url: "", expression: "" },
-    { threadManager: new ThreadManager(), skillEngine: new SkillEngine(), historyStore: new HistoryStore() },
-  )
+test("summarizeToolResult summarizes successful results", () => {
+  const result = {
+    success: true,
+    data: { title: "Example", text: "Hello" },
+  }
+  const summary = summarizeToolResult(result)
 
-  assert.equal(response.type, "tool.result")
-  assert.equal(response.success, false)
-  assert.match(response.error, /required/)
+  assert.equal(summary.success, true)
+  assert.equal(summary.has_data, true)
+  assert.equal(summary.data_type, "object")
+  assert.equal(summary.data_size, "N/A")
+  assert.equal(summary.has_error, false)
+  assert.equal(summary.error_preview, undefined)
 })
 
-// --- Thread lifecycle through message router ---
+test("summarizeToolResult summarizes failed results", () => {
+  const result = {
+    success: false,
+    error: "Element not found",
+    data: null,
+  }
+  const summary = summarizeToolResult(result)
 
-test("thread.create through message router", async () => {
-  const manager = new ThreadManager()
-  const response = await handleMessage(
-    { type: "thread.create", alias: "Server Thread", id: "svr01" },
-    { threadManager: manager, skillEngine: new SkillEngine(), historyStore: new HistoryStore() },
-  )
-
-  assert.equal(response.type, "thread.created")
-  assert.equal(response.thread.alias, "Server Thread")
-  assert.equal(response.thread.id, "svr01")
+  assert.equal(summary.success, false)
+  assert.equal(summary.has_data, false)
+  assert.equal(summary.data_type, "none")
+  assert.equal(summary.has_error, true)
+  assert.equal(summary.error_preview, "Element not found")
 })
 
-test("thread.list through message router", async () => {
-  const manager = new ThreadManager()
-  manager.create("List Thread", "lst01")
+test("summarizeToolResult handles string data and reports size", () => {
+  const result = { success: true, data: "x".repeat(100) }
+  const summary = summarizeToolResult(result)
 
-  const response = await handleMessage(
-    { type: "thread.list" },
-    { threadManager: manager, skillEngine: new SkillEngine(), historyStore: new HistoryStore() },
-  )
-
-  assert.equal(response.type, "thread.list")
-  assert.ok(Array.isArray(response.threads))
-  assert.ok(response.threads.length >= 1)
+  assert.equal(summary.data_type, "string")
+  assert.equal(summary.data_size, 100)
 })
 
-test("thread.delete through message router", async () => {
-  const manager = new ThreadManager()
-  manager.create("Delete Thread", "del01")
+test("summarizeToolResult truncates long error messages", () => {
+  const longError = "A".repeat(100)
+  const result = { success: false, error: longError }
+  const summary = summarizeToolResult(result)
 
-  const response = await handleMessage(
-    { type: "thread.delete", thread_id: "del01" },
-    { threadManager: manager, skillEngine: new SkillEngine(), historyStore: new HistoryStore() },
-  )
-
-  assert.equal(response.type, "thread.deleted")
-  assert.equal(response.thread_id, "del01")
-  assert.equal(manager.get("del01"), undefined)
+  assert.equal(summary.error_preview, "A".repeat(80))
 })
 
-test("thread.update with invalid id returns error", async () => {
-  const manager = new ThreadManager()
-
-  const response = await handleMessage(
-    { type: "thread.update", thread_id: "nonexistent", updates: { alias: "x" } },
-    { threadManager: manager, skillEngine: new SkillEngine(), historyStore: new HistoryStore() },
-  )
-
-  assert.equal(response.type, "error")
-  assert.match(response.error, /not found/)
+test("summarizeToolResult handles null/undefined result", () => {
+  assert.deepEqual(summarizeToolResult(null), { success: false })
+  assert.deepEqual(summarizeToolResult(undefined), { success: false })
 })
 
-// --- Skill lifecycle through message router ---
+test("summarizeMessage summarizes message with common fields", () => {
+  const msg = {
+    id: "msg-1",
+    type: "tool.execute",
+    thread_id: "th-123",
+    tool_call_id: "tc-456",
+    tool_name: "click",
+    params: { selector: "#btn" },
+    result: { success: true, data: "clicked" },
+  }
+  const summary = summarizeMessage(msg)
 
-test("skill.list through message router refreshes and returns skills", async () => {
-  const manager = new ThreadManager()
-  const engine = new SkillEngine()
-
-  const response = await handleMessage(
-    { type: "skill.list" },
-    { threadManager: manager, skillEngine: engine, historyStore: new HistoryStore() },
-  )
-
-  assert.equal(response.type, "skill.list")
-  assert.ok(Array.isArray(response.skills))
+  assert.equal(summary.type, "tool.execute")
+  assert.equal(summary.thread_id, "th-123")
+  assert.equal(summary.tool_call_id, "tc-456")
+  assert.equal(summary.tool_name, "click")
+  assert.ok(summary.params)
+  assert.ok(summary.result)
 })
 
-test("skill.activate updates thread metadata", async () => {
-  const manager = new ThreadManager()
-  const engine = new SkillEngine()
-  const thread = manager.create("Activate thread", "act01")
+test("summarizeMessage handles skill-related messages", () => {
+  const msg = {
+    type: "skill.list",
+    skill_ids: ["browse", "analyze"],
+    skill_name: "browse",
+  }
+  const summary = summarizeMessage(msg)
 
-  // First create a skill to activate
-  const skillsDir = path.join(os.homedir(), ".cmspark-agent", "skills")
-  fs.writeFileSync(path.join(skillsDir, "server-activate-test.md"), [
-    "---",
-    "name: server-activate-test",
-    "description: Server activation test",
-    "---",
-    "# Test",
-  ].join("\n"))
-  engine.refresh()
-
-  const response = await handleMessage(
-    { type: "skill.activate", thread_id: thread.id, skill_name: "server-activate-test" },
-    { threadManager: manager, skillEngine: engine, historyStore: new HistoryStore() },
-  )
-
-  assert.equal(response.type, "skill.activated")
-  assert.equal(response.skill_name, "server-activate-test")
-
-  const updated = manager.get(thread.id)
-  assert.ok(updated?.active_skill_ids.includes("server-activate-test"))
-
-  // Cleanup
-  fs.unlinkSync(path.join(skillsDir, "server-activate-test.md"))
+  assert.equal(summary.skill_ids, undefined)
+  assert.equal(summary.skill_count, 2)
+  assert.equal(summary.skill_name, "browse")
 })
 
-test("skill.deactivate updates thread metadata", async () => {
-  const manager = new ThreadManager()
-  const engine = new SkillEngine()
-  const thread = manager.create("Deactivate thread", "dea01")
+test("summarizeMessage handles messages with content field", () => {
+  const msg = { type: "chat.create", content: "hello world" }
+  const summary = summarizeMessage(msg)
 
-  const skillsDir = path.join(os.homedir(), ".cmspark-agent", "skills")
-  fs.writeFileSync(path.join(skillsDir, "server-deactivate-test.md"), [
-    "---",
-    "name: server-deactivate-test",
-    "description: Server deactivation test",
-    "---",
-    "# Test",
-  ].join("\n"))
-  engine.refresh()
-
-  // Activate first
-  await handleMessage(
-    { type: "skill.activate", thread_id: thread.id, skill_name: "server-deactivate-test" },
-    { threadManager: manager, skillEngine: engine, historyStore: new HistoryStore() },
-  )
-
-  // Then deactivate
-  await handleMessage(
-    { type: "skill.deactivate", thread_id: thread.id, skill_name: "server-deactivate-test" },
-    { threadManager: manager, skillEngine: engine, historyStore: new HistoryStore() },
-  )
-
-  const updated = manager.get(thread.id)
-  assert.ok(!updated?.active_skill_ids.includes("server-deactivate-test"))
-
-  fs.unlinkSync(path.join(skillsDir, "server-deactivate-test.md"))
+  assert.equal(summary.content_length, 11)
 })
 
-test("skill.import requires content or url", async () => {
-  const manager = new ThreadManager()
-  const engine = new SkillEngine()
-
-  await assert.rejects(
-    () => handleMessage(
-      { type: "skill.import" },
-      { threadManager: manager, skillEngine: engine, historyStore: new HistoryStore() },
-    ),
-    /requires/,
-  )
+test("summarizeMessage handles null message", () => {
+  assert.deepEqual(summarizeMessage(null), { type: "null" })
 })
 
-test("skill.import from content through message router", async () => {
-  const manager = new ThreadManager()
-  const engine = new SkillEngine()
+test("logToolFinish calls log function with summarized data", () => {
+  const calls: any[] = []
+  const mockLog = ((level: string, source: string, event: string, data: Record<string, unknown>) => {
+    calls.push({ level, source, event, data })
+  }) as any
 
-  const md = [
-    "---",
-    "name: router-imported",
-    "description: Imported via router",
-    "---",
-    "# Router Imported",
-  ].join("\n")
+  logToolFinish(mockLog, "tc-123", "click", 150, { success: true, data: "ok" })
 
-  const response = await handleMessage(
-    { type: "skill.import", content: md },
-    { threadManager: manager, skillEngine: engine, historyStore: new HistoryStore() },
-  )
-
-  assert.equal(response.type, "skill.list")
-  const imported = response.skills.find((s: any) => s.name === "router-imported")
-  assert.ok(imported)
-
-  // Cleanup
-  engine.deleteSkill("router-imported")
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].level, "info")
+  assert.equal(calls[0].source, "tool_executor")
+  assert.equal(calls[0].event, "tool.finish")
+  assert.equal(calls[0].data.tool_call_id, "tc-123")
+  assert.equal(calls[0].data.tool_name, "click")
+  assert.equal(calls[0].data.duration_ms, 150)
+  assert.equal(calls[0].data.success, true)
 })
 
-// --- Chat abort through message router ---
+test("logToolFinish includes error preview when provided", () => {
+  const calls: any[] = []
+  const mockLog = ((level: string, source: string, event: string, data: Record<string, unknown>) => {
+    calls.push({ level, source, event, data })
+  }) as any
 
-test("chat.abort through message router returns aborted", async () => {
-  const manager = new ThreadManager()
+  logToolFinish(mockLog, "tc-124", "evaluate", 50, null, "Timeout after 15s")
 
-  const response = await handleMessage(
-    { type: "chat.abort", thread_id: "abt01" },
-    { threadManager: manager, skillEngine: new SkillEngine(), historyStore: new HistoryStore() },
-  )
-
-  assert.equal(response.type, "chat.aborted")
-  assert.equal(response.thread_id, "abt01")
+  assert.equal(calls[0].data.error_preview, "Timeout after 15s")
 })
 
-// --- Config test through message router ---
+// ============================================================================
+// tool-executor.ts tests
+// ============================================================================
 
-test("config.test returns ok:false when no API key configured", async () => {
-  saveConfig({ llm: { api_key: "" } as any })
+// Mock WebSocket
+function createMockWebSocket() {
+  const messages: any[] = []
+  return {
+    send: (data: string) => messages.push(JSON.parse(data)),
+    readyState: 1, // WebSocket.OPEN
+    getMessages: () => messages,
+  }
+}
 
-  const response = await handleMessage(
-    { type: "config.test" },
-    { threadManager: new ThreadManager(), skillEngine: new SkillEngine(), historyStore: new HistoryStore() },
-  )
+test("createToolExecutor creates an executor function", () => {
+  const mockWs = createMockWebSocket()
+  const threadManager = new ThreadManager()
+  const skillEngine = new SkillEngine()
+  const historyStore = new HistoryStore()
 
-  assert.equal(response.type, "config.testResult")
-  assert.equal(response.ok, false)
-  assert.ok(response.error)
+  const executor = createToolExecutor(mockWs as any, threadManager, skillEngine, historyStore)
+  assert.equal(typeof executor, "function")
 })
 
-// --- System ping through message router ---
+test("createToolExecutor sends tool.execute message via WebSocket", async () => {
+  const mockWs = createMockWebSocket()
+  const threadManager = new ThreadManager()
+  const skillEngine = new SkillEngine()
+  const historyStore = new HistoryStore()
 
-test("system.ping through message router returns pong", async () => {
-  const response = await handleMessage(
-    { type: "system.ping" },
-    { threadManager: new ThreadManager(), skillEngine: new SkillEngine(), historyStore: new HistoryStore() },
-  )
+  const executor = createToolExecutor(mockWs as any, threadManager, skillEngine, historyStore)
 
-  assert.equal(response.type, "system.pong")
+  // Call executor but don't wait for result (it will timeout)
+  const promise = executor("tc-1", "click", { selector: "#btn" })
+
+  assert.equal(mockWs.getMessages().length, 1)
+  const sentMsg = mockWs.getMessages()[0]
+  assert.equal(sentMsg.type, "tool.execute")
+  assert.equal(sentMsg.tool_call_id, "tc-1")
+  assert.equal(sentMsg.tool_name, "click")
+  assert.deepEqual(sentMsg.params, { selector: "#btn" })
+
+  // Clean up pending promise to avoid test hanging
+  // Let it timeout naturally
+  await promise
 })
 
-// --- Unknown message type ---
+test("Cookie security: blocks get_cookies for untrusted domain", async () => {
+  saveConfig({ trusted_domains: ["example.com", "*.trusted.com"] })
+  const mockWs = createMockWebSocket()
+  const threadManager = new ThreadManager()
+  const skillEngine = new SkillEngine()
+  const historyStore = new HistoryStore()
 
-test("unknown message type returns error", async () => {
-  const response = await handleMessage(
-    { type: "nonexistent.message.type" },
-    { threadManager: new ThreadManager(), skillEngine: new SkillEngine(), historyStore: new HistoryStore() },
-  )
+  const executor = createToolExecutor(mockWs as any, threadManager, skillEngine, historyStore)
+  const result = await executor("tc-2", "get_cookies", { domain: "evil.com" })
 
-  assert.equal(response.type, "error")
-  assert.match(response.error, /Unknown message type/)
+  assert.equal(result.success, false)
+  assert.ok(result.error?.includes('domain "evil.com"'))
+  assert.ok(result.error?.includes("not in trusted list"))
 })
 
-// --- Cookie security: domain-based checks ---
+test("Cookie security: allows get_cookies for trusted domain", async () => {
+  saveConfig({ trusted_domains: ["example.com", "*.trusted.com"] })
+  const mockWs = createMockWebSocket()
+  const threadManager = new ThreadManager()
+  const skillEngine = new SkillEngine()
+  const historyStore = new HistoryStore()
 
-test("cookie security gate blocks untrusted domains and allows trusted", async () => {
-  saveConfig({ trusted_domains: ["example.com", "*.company.com"] })
+  const executor = createToolExecutor(mockWs as any, threadManager, skillEngine, historyStore)
 
-  assert.equal(isTrustedDomain("example.com"), true)
-  assert.equal(isTrustedDomain("hr.company.com"), true)
-  assert.equal(isTrustedDomain("evil.com"), false)
-  assert.equal(isTrustedDomain(""), false)
+  // Will timeout but should not be blocked by security
+  const promise = executor("tc-3", "get_cookies", { domain: "example.com" })
+
+  assert.equal(mockWs.getMessages().length, 1)
+  assert.equal(mockWs.getMessages()[0].tool_name, "get_cookies")
+
+  // Clean up
+  await promise
 })
 
-test("cookie security blocks global wildcard access without '*' trust", async () => {
+test("Cookie security: blocks get_cookies when domain extracted from untrusted URL", async () => {
+  saveConfig({ trusted_domains: ["example.com", "*.trusted.com"] })
+  const mockWs = createMockWebSocket()
+  const threadManager = new ThreadManager()
+  const skillEngine = new SkillEngine()
+  const historyStore = new HistoryStore()
+
+  const executor = createToolExecutor(mockWs as any, threadManager, skillEngine, historyStore)
+  const result = await executor("tc-4", "get_cookies", { url: "https://evil.com/page" })
+
+  assert.equal(result.success, false)
+  assert.ok(result.error?.includes('domain "evil.com"'))
+})
+
+test("Cookie security: allows wildcard subdomain matching", async () => {
+  saveConfig({ trusted_domains: ["example.com", "*.trusted.com"] })
+  const mockWs = createMockWebSocket()
+  const threadManager = new ThreadManager()
+  const skillEngine = new SkillEngine()
+  const historyStore = new HistoryStore()
+
+  const executor = createToolExecutor(mockWs as any, threadManager, skillEngine, historyStore)
+
+  // Will timeout but should not be blocked
+  const promise = executor("tc-5", "set_cookie", { domain: "sub.trusted.com" })
+
+  assert.equal(mockWs.getMessages().length, 1)
+
+  // Clean up
+  await promise
+})
+
+test("Cookie security: blocks list_all_cookies without wildcard trust", async () => {
   saveConfig({ trusted_domains: ["example.com"] })
+  const mockWs = createMockWebSocket()
+  const threadManager = new ThreadManager()
+  const skillEngine = new SkillEngine()
+  const historyStore = new HistoryStore()
 
-  // "*" is not in trusted list, so list_all_cookies would be blocked
-  assert.equal(isTrustedDomain("*"), false)
+  const executor = createToolExecutor(mockWs as any, threadManager, skillEngine, historyStore)
+  const result = await executor("tc-6", "list_all_cookies", {})
+
+  assert.equal(result.success, false)
+  assert.ok(result.error?.includes("list_all_cookies requires '*'"))
 })
 
-test("cookie security allows global access when '*' is trusted", async () => {
+test("Cookie security: allows list_all_cookies with wildcard trust", async () => {
   saveConfig({ trusted_domains: ["*"] })
+  const mockWs = createMockWebSocket()
+  const threadManager = new ThreadManager()
+  const skillEngine = new SkillEngine()
+  const historyStore = new HistoryStore()
 
-  assert.equal(isTrustedDomain("*"), true)
+  const executor = createToolExecutor(mockWs as any, threadManager, skillEngine, historyStore)
+
+  // Will timeout but should not be blocked
+  const promise = executor("tc-7", "list_all_cookies", {})
+
+  assert.equal(mockWs.getMessages().length, 1)
+
+  // Clean up
+  await promise
+})
+
+test("Cookie security: blocks set_cookie with untrusted domain from URL", async () => {
+  saveConfig({ trusted_domains: ["example.com"] })
+  const mockWs = createMockWebSocket()
+  const threadManager = new ThreadManager()
+  const skillEngine = new SkillEngine()
+  const historyStore = new HistoryStore()
+
+  const executor = createToolExecutor(mockWs as any, threadManager, skillEngine, historyStore)
+  const result = await executor("tc-8", "set_cookie", {
+    url: "https://malicious.com",
+    name: "session",
+    value: "abc",
+  })
+
+  assert.equal(result.success, false)
+  assert.ok(result.error?.includes('domain "malicious.com"'))
+})
+
+test("Cookie security: blocks delete_cookie with untrusted domain", async () => {
+  saveConfig({ trusted_domains: ["example.com"] })
+  const mockWs = createMockWebSocket()
+  const threadManager = new ThreadManager()
+  const skillEngine = new SkillEngine()
+  const historyStore = new HistoryStore()
+
+  const executor = createToolExecutor(mockWs as any, threadManager, skillEngine, historyStore)
+  const result = await executor("tc-9", "delete_cookie", { domain: "unknown.com" })
+
+  assert.equal(result.success, false)
+  assert.ok(result.error?.includes('domain "unknown.com"'))
+})
+
+test("Cookie security: handles empty domain gracefully", async () => {
+  saveConfig({ trusted_domains: ["example.com"] })
+  const mockWs = createMockWebSocket()
+  const threadManager = new ThreadManager()
+  const skillEngine = new SkillEngine()
+  const historyStore = new HistoryStore()
+
+  const executor = createToolExecutor(mockWs as any, threadManager, skillEngine, historyStore)
+  const result = await executor("tc-10", "get_cookies", { domain: "" })
+
+  assert.equal(result.success, false)
+  assert.ok(result.error?.includes('domain ""'))
+})
+
+test("High-risk API detection: blocks evaluate with fetch API", async () => {
+  const mockWs = createMockWebSocket()
+  const threadManager = new ThreadManager()
+  const skillEngine = new SkillEngine()
+  const historyStore = new HistoryStore()
+
+  const executor = createToolExecutor(mockWs as any, threadManager, skillEngine, historyStore)
+  const result = await executor("tc-11", "evaluate", {
+    code: "fetch('/api/data').then(r => r.json())",
+  })
+
+  assert.equal(result.success, false)
+  assert.ok(result.error?.includes("Security Block"))
+  assert.deepEqual(result.data?.dangerous_apis_found, ["fetch"])
+})
+
+test("High-risk API detection: blocks evaluate with document.cookie", async () => {
+  const mockWs = createMockWebSocket()
+  const threadManager = new ThreadManager()
+  const skillEngine = new SkillEngine()
+  const historyStore = new HistoryStore()
+
+  const executor = createToolExecutor(mockWs as any, threadManager, skillEngine, historyStore)
+  const result = await executor("tc-12", "evaluate", {
+    code: "console.log(document.cookie)",
+  })
+
+  assert.equal(result.success, false)
+  assert.deepEqual(result.data?.dangerous_apis_found, ["document.cookie"])
+})
+
+test("High-risk API detection: blocks osascript_eval with dangerous APIs", async () => {
+  const mockWs = createMockWebSocket()
+  const threadManager = new ThreadManager()
+  const skillEngine = new SkillEngine()
+  const historyStore = new HistoryStore()
+
+  const executor = createToolExecutor(mockWs as any, threadManager, skillEngine, historyStore)
+  const result = await executor("tc-13", "osascript_eval", {
+    expression: "localStorage.getItem('token')",
+  })
+
+  assert.equal(result.success, false)
+  assert.deepEqual(result.data?.dangerous_apis_found, ["localStorage"])
+})
+
+test("High-risk API detection: allows evaluate with safe code", async () => {
+  const mockWs = createMockWebSocket()
+  const threadManager = new ThreadManager()
+  const skillEngine = new SkillEngine()
+  const historyStore = new HistoryStore()
+
+  const executor = createToolExecutor(mockWs as any, threadManager, skillEngine, historyStore)
+
+  // Will timeout but should not be blocked
+  const promise = executor("tc-14", "evaluate", {
+    code: "document.querySelector('.btn').click()",
+  })
+
+  assert.equal(mockWs.getMessages().length, 1)
+
+  // Clean up
+  await promise
+})
+
+test("High-risk API detection: detects bracket notation obfuscation", async () => {
+  const mockWs = createMockWebSocket()
+  const threadManager = new ThreadManager()
+  const skillEngine = new SkillEngine()
+  const historyStore = new HistoryStore()
+
+  const executor = createToolExecutor(mockWs as any, threadManager, skillEngine, historyStore)
+  const result = await executor("tc-15", "evaluate", {
+    code: "window['fetch']('/api')",
+  })
+
+  assert.equal(result.success, false)
+  assert.ok(result.data?.dangerous_apis_found.includes("bracket-fetch"))
+})
+
+test("High-risk API detection: detects Reflect.apply usage", async () => {
+  const mockWs = createMockWebSocket()
+  const threadManager = new ThreadManager()
+  const skillEngine = new SkillEngine()
+  const historyStore = new HistoryStore()
+
+  const executor = createToolExecutor(mockWs as any, threadManager, skillEngine, historyStore)
+  const result = await executor("tc-16", "evaluate", {
+    code: "Reflect.apply(String.fromCharCode, null, [72, 105])",
+  })
+
+  assert.equal(result.success, false)
+  assert.deepEqual(result.data?.dangerous_apis_found, ["Reflect.apply"])
+})
+
+test("High-risk API detection: detects setTimeout with string argument", async () => {
+  const mockWs = createMockWebSocket()
+  const threadManager = new ThreadManager()
+  const skillEngine = new SkillEngine()
+  const historyStore = new HistoryStore()
+
+  const executor = createToolExecutor(mockWs as any, threadManager, skillEngine, historyStore)
+  const result = await executor("tc-17", "evaluate", {
+    code: "setTimeout('alert(1)', 1000)",
+  })
+
+  assert.equal(result.success, false)
+  assert.deepEqual(result.data?.dangerous_apis_found, ["setTimeout-string"])
+})
+
+test("High-risk API detection: allows setTimeout with function argument", async () => {
+  const mockWs = createMockWebSocket()
+  const threadManager = new ThreadManager()
+  const skillEngine = new SkillEngine()
+  const historyStore = new HistoryStore()
+
+  const executor = createToolExecutor(mockWs as any, threadManager, skillEngine, historyStore)
+
+  // Will timeout but should not be blocked
+  const promise = executor("tc-18", "evaluate", {
+    code: "setTimeout(() => console.log('ok'), 1000)",
+  })
+
+  assert.equal(mockWs.getMessages().length, 1)
+
+  // Clean up
+  await promise
+})
+
+test("executeCompanionTool returns skill content for use_skill", async () => {
+  const skillEngine = new SkillEngine()
+  // Mock loadContent
+  skillEngine.loadContent = (name: string) => {
+    if (name === "test-skill") return "## Skill Instructions\nDo this..."
+    return null
+  }
+
+  const result = await executeCompanionTool("use_skill", { skill_name: "test-skill" }, skillEngine)
+
+  assert.equal(result.success, true)
+  assert.equal(result.data?.skill_name, "test-skill")
+  assert.equal(result.data?.content, "## Skill Instructions\nDo this...")
+  assert.ok(result.data?.instruction?.includes("Use the following skill instructions"))
+})
+
+test("executeCompanionTool returns error for non-existent skill", async () => {
+  const skillEngine = new SkillEngine()
+  skillEngine.loadContent = () => null
+
+  const result = await executeCompanionTool("use_skill", { skill_name: "nonexistent" }, skillEngine)
+
+  assert.equal(result.success, false)
+  assert.ok(result.error?.includes("not found"))
+})
+
+test("executeCompanionTool blocks osascript_eval without session", async () => {
+  const skillEngine = new SkillEngine()
+
+  const result = await executeCompanionTool("osascript_eval", { code: "1+1" }, skillEngine)
+
+  assert.equal(result.success, false)
+  assert.ok(result.error?.includes("requires an active WebSocket session"))
+})
+
+test("executeCompanionTool returns error for unknown companion tool", async () => {
+  const skillEngine = new SkillEngine()
+
+  const result = await executeCompanionTool("unknown_tool" as any, {}, skillEngine)
+
+  assert.equal(result.success, false)
+  assert.ok(result.error?.includes("Unknown companion tool"))
+})
+
+test("handleToolResult resolves pending tool promise with result", () => {
+  const pendingTools = new Map<string, any>()
+  const mockResolve = (() => {}) as any
+  const mockTimer = setTimeout(() => {}, 10000)
+
+  let resolvedValue: any = null
+  pendingTools.set("tc-1", {
+    resolve: (v: any) => { resolvedValue = v },
+    timer: mockTimer,
+  })
+
+  const msg = {
+    tool_call_id: "tc-1",
+    success: true,
+    data: "result data",
+  }
+
+  const handled = handleToolResult(msg, pendingTools, new ThreadManager())
+
+  assert.equal(handled, true)
+  assert.deepEqual(resolvedValue, { success: true, data: "result data" })
+  assert.equal(pendingTools.has("tc-1"), false)
+})
+
+test("handleToolResult returns false for unknown tool_call_id", () => {
+  const pendingTools = new Map<string, any>()
+  const msg = { tool_call_id: "unknown", success: false }
+
+  const handled = handleToolResult(msg, pendingTools, new ThreadManager())
+
+  assert.equal(handled, false)
+})
+
+test("handleToolResult handles error result", () => {
+  const pendingTools = new Map<string, any>()
+  let resolvedValue: any = null
+  const mockTimer = setTimeout(() => {}, 10000)
+
+  pendingTools.set("tc-2", {
+    resolve: (v: any) => { resolvedValue = v },
+    timer: mockTimer,
+  })
+
+  const msg = {
+    tool_call_id: "tc-2",
+    error: "Something went wrong",
+  }
+
+  handleToolResult(msg, pendingTools, new ThreadManager())
+
+  assert.deepEqual(resolvedValue, { error: "Something went wrong" })
+})
+
+test("Runtime config helpers: sets and gets runtime config", () => {
+  const config = { trusted_domains: ["example.com"] }
+  setRuntimeConfig(config)
+  assert.deepEqual(getRuntimeConfig(), config)
+})
+
+test("Runtime config helpers: maintains config across calls", () => {
+  setRuntimeConfig({ trusted_domains: ["*"] })
+  const config1 = getRuntimeConfig()
+
+  setRuntimeConfig({ trusted_domains: ["specific.com"] })
+  const config2 = getRuntimeConfig()
+
+  assert.deepEqual(config1.trusted_domains, ["*"])
+  assert.deepEqual(config2.trusted_domains, ["specific.com"])
+})
+
+// ============================================================================
+// security.ts tests (used by tool-executor)
+// ============================================================================
+
+test("isTrustedDomain: blocks empty list", () => {
+  saveConfig({ trusted_domains: [] })
+  assert.equal(isTrustedDomain("example.com"), false)
+})
+
+test("isTrustedDomain: allows exact match", () => {
+  saveConfig({ trusted_domains: ["example.com"] })
+  assert.equal(isTrustedDomain("example.com"), true)
+  assert.equal(isTrustedDomain("other.com"), false)
+})
+
+test("isTrustedDomain: allows wildcard matching", () => {
+  saveConfig({ trusted_domains: ["*.company.com"] })
+  assert.equal(isTrustedDomain("hr.company.com"), true)
+  assert.equal(isTrustedDomain("finance.company.com"), true)
+  assert.equal(isTrustedDomain("company.com"), true)
+  assert.equal(isTrustedDomain("evil.com"), false)
+})
+
+test("isTrustedDomain: allows global wildcard", () => {
+  saveConfig({ trusted_domains: ["*"] })
   assert.equal(isTrustedDomain("anywhere.com"), true)
+  assert.equal(isTrustedDomain("*"), true)
 })
 
-// --- Thread.select through message router ---
-
-test("thread.select returns messages for a thread", async () => {
-  const manager = new ThreadManager()
-  const thread = manager.create("Select thread", "sel01")
-  manager.addMessage(thread.id, { thread_id: thread.id, role: "user", content: "hello from select" })
-
-  const response = await handleMessage(
-    { type: "thread.select", thread_id: thread.id },
-    { threadManager: manager, skillEngine: new SkillEngine(), historyStore: new HistoryStore() },
-  )
-
-  assert.equal(response.type, "thread.messages")
-  assert.ok(Array.isArray(response.messages))
-  assert.equal(response.messages.length, 1)
-  assert.equal(response.messages[0].content, "hello from select")
+test("checkHighRiskExecution: blocks fetch", () => {
+  const result = checkHighRiskExecution("evaluate", "fetch('/api')")
+  assert.equal(result.blocked, true)
+  assert.deepEqual(result.dangerousApis, ["fetch"])
+  assert.ok(result.error?.includes("Security Block"))
 })
 
-// --- history.query through message router ---
-
-test("history.query returns empty operations for no records", async () => {
-  const history = new HistoryStore()
-
-  const response = await handleMessage(
-    { type: "history.query", thread_id: "htest01", limit: 10 },
-    { threadManager: new ThreadManager(), skillEngine: new SkillEngine(), historyStore: history },
-  )
-
-  assert.equal(response.type, "history.result")
-  assert.ok(Array.isArray(response.operations))
+test("checkHighRiskExecution: allows safe code", () => {
+  const result = checkHighRiskExecution("evaluate", "document.querySelector('.btn')")
+  assert.equal(result.blocked, false)
+  assert.deepEqual(result.dangerousApis, [])
 })
 
-// --- error path: chat.create without session returns error ---
-
-test("chat.create without session returns error", async () => {
-  const response = await handleMessage(
-    { type: "chat.create", thread_id: "nosess01", message: "hello", skill_ids: [] },
-    { threadManager: new ThreadManager(), skillEngine: new SkillEngine(), historyStore: new HistoryStore() },
-    // No session callbacks provided
-  )
-
-  assert.equal(response.type, "error")
-  assert.match(response.error, /No session/)
+test("checkHighRiskExecution: detects multiple dangerous APIs", () => {
+  const result = checkHighRiskExecution("evaluate", "fetch() && localStorage.getItem()")
+  assert.equal(result.blocked, true)
+  assert.ok(result.dangerousApis.length >= 2)
+  assert.ok(result.dangerousApis.includes("fetch"))
+  assert.ok(result.dangerousApis.includes("localStorage"))
 })

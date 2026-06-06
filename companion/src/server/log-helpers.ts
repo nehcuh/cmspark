@@ -48,6 +48,10 @@ export function summarizeMessage(msg: any): Record<string, unknown> {
   if (msg.content) {
     summary.content_length = typeof msg.content === "string" ? msg.content.length : JSON.stringify(msg.content).length
   }
+  // Convert skill_ids array to skill_count for logging
+  if (msg.skill_ids && Array.isArray(msg.skill_ids)) {
+    summary.skill_count = msg.skill_ids.length
+  }
   return summary
 }
 

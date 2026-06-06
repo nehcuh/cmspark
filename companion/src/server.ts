@@ -1,7 +1,7 @@
 // Companion server — WebSocket server, message routing, tool execution bridge
 
 import { WebSocketServer, WebSocket } from "ws"
-import { execSync } from "child_process"
+import { execFile } from "child_process"
 import os from "os"
 import { URL } from "url"
 import { getConfig } from "./config"
@@ -11,7 +11,10 @@ import { SkillEngine } from "./skills/skill-engine"
 import { HistoryStore } from "./history/store"
 import { checkHighRiskExecution, highRiskExecutionDeniedError, isTrustedDomain } from "./security"
 import { SecurityConfirmationManager } from "./security-confirmation"
+import { securityPolicy, getTokenSecret } from "./security-policy"
 import { logger, type LogLevel } from "./logger"
+
+const MAX_WS_MESSAGE_SIZE = 10 * 1024 * 1024 // 10MB
 
 const PORT = 23401
 const TOOL_EXECUTION_TIMEOUT_MS = 15000
@@ -151,8 +154,14 @@ function createToolExecutor(ws: WebSocket) {
       }
     }
 
-    if ((toolName === "evaluate" || toolName === "osascript_eval") && !finalParams.security_confirmed) {
+    if ((toolName === "evaluate" || toolName === "osascript_eval") && !finalParams.security_token) {
       const code = String(finalParams.code || finalParams.expression || "")
+      const lengthCheck = securityPolicy.checkLength(toolName, code)
+      if (!lengthCheck.ok) {
+        const result = { success: false, error: lengthCheck.error }
+        logToolFinish(toolCallId, toolName, startedAt, result)
+        return result
+      }
       const safety = checkHighRiskExecution(toolName, code)
       if (safety.blocked) {
         if (ws.readyState !== WebSocket.OPEN) {
@@ -169,6 +178,7 @@ function createToolExecutor(ws: WebSocket) {
           tool_name: toolName,
           dangerous_apis: safety.dangerousApis,
         })
+        const token = securityPolicy.issueToken(toolName, code)
         const decision = await securityConfirmations.request(
           (data) => {
             if (ws.readyState === WebSocket.OPEN) {
@@ -194,7 +204,9 @@ function createToolExecutor(ws: WebSocket) {
           return result
         }
         logger.info("security.confirmation.approved", { tool_call_id: toolCallId, tool_name: toolName })
-        finalParams = { ...finalParams, security_confirmed: true }
+        // Issue a new token post-approval; the extension will validate it
+        const approvedToken = securityPolicy.issueToken(toolName, code)
+        finalParams = { ...finalParams, security_token: approvedToken.token }
       }
     }
 
@@ -319,46 +331,185 @@ async function executeCompanionTool(toolName: string, params: any): Promise<any>
       if (!pageUrl || !jsExpr) {
         return { success: false, error: "url and expression required" }
       }
-      const safety = checkHighRiskExecution("osascript_eval", jsExpr)
-      if (safety.blocked && !params.security_confirmed) {
-        return {
-          success: false,
-          error: safety.error,
-          data: { dangerous_apis_found: safety.dangerousApis },
+      // Validate security token instead of boolean flag
+      if (params.security_token) {
+        const valid = securityPolicy.validateToken(params.security_token, "osascript_eval", jsExpr)
+        if (!valid) {
+          return { success: false, error: "Invalid or expired security token" }
         }
+      } else {
+        const safety = checkHighRiskExecution("osascript_eval", jsExpr)
+        if (safety.blocked) {
+          return {
+            success: false,
+            error: safety.error,
+            data: { dangerous_apis_found: safety.dangerousApis },
+          }
+        }
+      }
+      const lengthCheck = securityPolicy.checkLength("osascript_eval", jsExpr)
+      if (!lengthCheck.ok) {
+        return { success: false, error: lengthCheck.error }
       }
       if (os.platform() !== "darwin") {
         return { success: false, error: "osascript_eval is macOS-only. Use get_page_text with tabId instead (cross-platform)." }
       }
-      const escapedJs = jsExpr
-        .replace(/\\/g, "\\\\")
-        .replace(/"/g, '\\"')
-        .replace(/\n/g, " ")
-      const script = `
-        tell application "Google Chrome"
-          repeat with w in windows
-            repeat with t in tabs of w
-              if URL of t contains "${pageUrl}" then
-                set resultText to execute t javascript "${escapedJs}"
-                return resultText
-              end if
-            end repeat
-          end repeat
-          return "TAB_NOT_FOUND"
-        end tell
-      `
-      const output = execSync(`osascript -e '${script.replace(/'/g, "'\\''")}'`, {
-        encoding: "utf-8",
-        timeout: 10000,
-      }).trim()
-      if (output === "TAB_NOT_FOUND") {
-        return { success: false, error: `Tab matching "${pageUrl}" not found in Chrome` }
+      // Use execFile with -e arguments and argv passing to avoid string injection (P0)
+      const { promisify } = await import("util")
+      const execFileAsync = promisify(execFile)
+      try {
+        const result = await execFileAsync("osascript", [
+          "-e", "on run argv",
+          "-e", "  set pageUrl to item 1 of argv",
+          "-e", "  set jsExpr to item 2 of argv",
+          "-e", "  tell application \"Google Chrome\"",
+          "-e", "    set foundTab to false",
+          "-e", "    set resultText to \"\"",
+          "-e", "    repeat with w in windows",
+          "-e", "      repeat with t in tabs of w",
+          "-e", "        if URL of t contains pageUrl then",
+          "-e", "          set resultText to execute t javascript jsExpr",
+          "-e", "          set foundTab to true",
+          "-e", "          exit repeat",
+          "-e", "        end if",
+          "-e", "      end repeat",
+          "-e", "      if foundTab then exit repeat",
+          "-e", "    end repeat",
+          "-e", "    if not foundTab then return \"TAB_NOT_FOUND\"",
+          "-e", "    return resultText",
+          "-e", "  end tell",
+          "-e", "end run",
+          "--", pageUrl, jsExpr,
+        ], {
+          encoding: "utf-8" as const,
+          timeout: 10000,
+        } as any)
+        const output = String(result.stdout).trim()
+        if (output === "TAB_NOT_FOUND") {
+          return { success: false, error: `Tab matching URL not found in Chrome` }
+        }
+        return { success: true, data: { result: output } }
+      } catch (err: any) {
+        return { success: false, error: `osascript_eval error: ${err.message || String(err)}` }
       }
-      return { success: true, data: { result: output } }
     }
     default:
       return { success: false, error: `Unknown companion tool: ${toolName}` }
   }
+}
+
+// --- WS message validation ---
+
+interface WsValidationResult {
+  valid: boolean
+  error?: string
+}
+
+function validateWsMessage(msg: any): WsValidationResult {
+  if (!msg || typeof msg !== "object" || Array.isArray(msg)) {
+    return { valid: false, error: "Message must be an object" }
+  }
+  if (typeof msg.type !== "string" || !msg.type) {
+    return { valid: false, error: "Message type must be a non-empty string" }
+  }
+
+  // Known message types with required field validation
+  const validators: Record<string, (m: any) => WsValidationResult> = {
+    "chat.create": (m) => {
+      if (typeof m.thread_id !== "string" || !m.thread_id) return { valid: false, error: "chat.create requires thread_id" }
+      if (typeof m.message !== "string") return { valid: false, error: "chat.create requires message string" }
+      if (m.skill_ids !== undefined && !Array.isArray(m.skill_ids)) return { valid: false, error: "skill_ids must be an array" }
+      return { valid: true }
+    },
+    "chat.abort": (m) => {
+      if (typeof m.thread_id !== "string" || !m.thread_id) return { valid: false, error: "chat.abort requires thread_id" }
+      return { valid: true }
+    },
+    "chat.regenerate": (m) => {
+      if (typeof m.thread_id !== "string" || !m.thread_id) return { valid: false, error: "chat.regenerate requires thread_id" }
+      if (typeof m.message_id !== "string" || !m.message_id) return { valid: false, error: "chat.regenerate requires message_id" }
+      return { valid: true }
+    },
+    "thread.create": (m) => {
+      if (m.alias !== undefined && typeof m.alias !== "string") return { valid: false, error: "alias must be a string" }
+      if (m.id !== undefined && typeof m.id !== "string") return { valid: false, error: "id must be a string" }
+      return { valid: true }
+    },
+    "thread.delete": (m) => {
+      if (typeof m.thread_id !== "string" || !m.thread_id) return { valid: false, error: "thread.delete requires thread_id" }
+      return { valid: true }
+    },
+    "thread.select": (m) => {
+      if (typeof m.thread_id !== "string" || !m.thread_id) return { valid: false, error: "thread.select requires thread_id" }
+      return { valid: true }
+    },
+    "thread.fork": (m) => {
+      if (typeof m.thread_id !== "string" || !m.thread_id) return { valid: false, error: "thread.fork requires thread_id" }
+      if (typeof m.message_id !== "string" || !m.message_id) return { valid: false, error: "thread.fork requires message_id" }
+      return { valid: true }
+    },
+    "thread.update": (m) => {
+      if (typeof m.thread_id !== "string" || !m.thread_id) return { valid: false, error: "thread.update requires thread_id" }
+      if (!m.updates || typeof m.updates !== "object") return { valid: false, error: "thread.update requires updates object" }
+      return { valid: true }
+    },
+    "skill.activate": (m) => {
+      if (typeof m.thread_id !== "string" || !m.thread_id) return { valid: false, error: "skill.activate requires thread_id" }
+      if (typeof m.skill_name !== "string" || !m.skill_name) return { valid: false, error: "skill.activate requires skill_name" }
+      return { valid: true }
+    },
+    "skill.deactivate": (m) => {
+      if (typeof m.thread_id !== "string" || !m.thread_id) return { valid: false, error: "skill.deactivate requires thread_id" }
+      if (typeof m.skill_name !== "string" || !m.skill_name) return { valid: false, error: "skill.deactivate requires skill_name" }
+      return { valid: true }
+    },
+    "skill.import": (m) => {
+      if (!m.url && !m.content) return { valid: false, error: "skill.import requires url or content" }
+      if (m.url !== undefined && typeof m.url !== "string") return { valid: false, error: "url must be a string" }
+      if (m.content !== undefined && typeof m.content !== "string") return { valid: false, error: "content must be a string" }
+      return { valid: true }
+    },
+    "skill.delete": (m) => {
+      if (typeof m.skill_name !== "string" || !m.skill_name) return { valid: false, error: "skill.delete requires skill_name" }
+      return { valid: true }
+    },
+    "skill.export": (m) => {
+      if (typeof m.skill_name !== "string" || !m.skill_name) return { valid: false, error: "skill.export requires skill_name" }
+      return { valid: true }
+    },
+    "skill.craft": (m) => {
+      if (typeof m.thread_id !== "string" || !m.thread_id) return { valid: false, error: "skill.craft requires thread_id" }
+      return { valid: true }
+    },
+    "config.set": (m) => {
+      if (!m.config || typeof m.config !== "object") return { valid: false, error: "config.set requires config object" }
+      return { valid: true }
+    },
+    "history.query": () => ({ valid: true }),
+    "history.export": () => ({ valid: true }),
+    "security.confirmation.response": (m) => {
+      if (typeof m.confirmation_id !== "string" || !m.confirmation_id) return { valid: false, error: "confirmation_id required" }
+      if (typeof m.approved !== "boolean") return { valid: false, error: "approved must be a boolean" }
+      return { valid: true }
+    },
+    "tool.result": (m) => {
+      if (typeof m.tool_call_id !== "string" || !m.tool_call_id) return { valid: false, error: "tool.result requires tool_call_id" }
+      return { valid: true }
+    },
+    "log.event": (m) => {
+      if (typeof m.event !== "string" || !m.event) return { valid: false, error: "log.event requires event string" }
+      return { valid: true }
+    },
+    "system.ping": () => ({ valid: true }),
+  }
+
+  const validator = validators[msg.type]
+  if (validator) {
+    return validator(msg)
+  }
+
+  // Unknown types are allowed through (handled by message-router default case)
+  return { valid: true }
 }
 
 export async function startServer() {
@@ -377,7 +528,13 @@ export async function startServer() {
     console.warn("[cmspark-agent]    Example: DEEPSEEK_API_KEY=sk-xxx npm start")
     logger.warn("config.api_key_missing")
   } else {
-    const masked = config.llm.api_key.slice(0, 5) + "***" + config.llm.api_key.slice(-4)
+    const key = config.llm.api_key
+    let masked: string
+    if (key.length <= 8) {
+      masked = "***"
+    } else {
+      masked = key.slice(0, 4) + "***" + key.slice(-4)
+    }
     console.log(`[cmspark-agent] Using API key: ${masked}`)
   }
   console.log(`[cmspark-agent] Model: ${config.llm.model_name} @ ${config.llm.base_url}`)
@@ -410,7 +567,25 @@ export async function startServer() {
 
     ws.on("message", async (raw) => {
       try {
+        // WebSocket message size limit (P0)
+        const rawLen = Buffer.isBuffer(raw) ? raw.length : Buffer.byteLength(raw.toString())
+        if (rawLen > MAX_WS_MESSAGE_SIZE) {
+          logger.warn("ws.message_too_large", { size: rawLen, max: MAX_WS_MESSAGE_SIZE })
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: "error", error: "Message too large" }))
+          }
+          return
+        }
         const msg = JSON.parse(raw.toString())
+        // Stricter message validation (P2)
+        const validation = validateWsMessage(msg)
+        if (!validation.valid) {
+          logger.warn("ws.invalid_message", { error: validation.error, msg_type: typeof msg })
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: "error", error: `Invalid message: ${validation.error}` }))
+          }
+          return
+        }
         if (msg.type !== "system.ping") {
           logger.debug("ws.message.received", summarizeMessage(msg))
         }
@@ -480,8 +655,9 @@ export async function startServer() {
       // Heartbeat acknowledged
     })
 
-    // Send initial state
+    // Send initial state + security secret for extension-side token validation
     ws.send(JSON.stringify({ type: "connected" }))
+    ws.send(JSON.stringify({ type: "security.config", secret: getTokenSecret() }))
   })
 
   wss.on("error", (err) => {

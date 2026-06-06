@@ -15,6 +15,58 @@ interface Thread {
   active_skill_ids: string[]
 }
 
+// Allowed config_override keys and their expected types
+const ALLOWED_CONFIG_OVERRIDE_KEYS: Record<string, string> = {
+  temperature: "number",
+  context_window: "number",
+  max_tokens: "number",
+  top_p: "number",
+  model_name: "string",
+  base_url: "string",
+  system_prompt: "string",
+}
+
+const MAX_CONFIG_STRING_LENGTH = 2000
+const MAX_CONFIG_NUMBER = 1000000
+
+function validateConfigOverride(config: any): { valid: boolean; error?: string; sanitized: Record<string, any> } {
+  if (!config || typeof config !== "object" || Array.isArray(config)) {
+    return { valid: true, sanitized: {} }
+  }
+  const sanitized: Record<string, any> = {}
+  for (const key of Object.keys(config)) {
+    if (key === "__proto__" || key === "constructor" || key === "prototype") {
+      return { valid: false, error: `Invalid config key: ${key}`, sanitized: {} }
+    }
+    const expectedType = ALLOWED_CONFIG_OVERRIDE_KEYS[key]
+    if (!expectedType) {
+      return { valid: false, error: `Unknown config_override key: ${key}`, sanitized: {} }
+    }
+    const val = config[key]
+    if (val === null || val === undefined) {
+      continue
+    }
+    if (expectedType === "number") {
+      if (typeof val !== "number" || isNaN(val)) {
+        return { valid: false, error: `Config key ${key} must be a number`, sanitized: {} }
+      }
+      if (val > MAX_CONFIG_NUMBER || val < -MAX_CONFIG_NUMBER) {
+        return { valid: false, error: `Config key ${key} out of range`, sanitized: {} }
+      }
+      sanitized[key] = val
+    } else if (expectedType === "string") {
+      if (typeof val !== "string") {
+        return { valid: false, error: `Config key ${key} must be a string`, sanitized: {} }
+      }
+      if (val.length > MAX_CONFIG_STRING_LENGTH) {
+        return { valid: false, error: `Config key ${key} exceeds max length`, sanitized: {} }
+      }
+      sanitized[key] = val
+    }
+  }
+  return { valid: true, sanitized }
+}
+
 interface ThreadIndex {
   threads: Thread[]
 }
@@ -68,14 +120,41 @@ export class ThreadManager {
     return id
   }
 
-  create(alias: string, id?: string): Thread {
+  private sanitizeAlias(alias: string): string {
+    if (typeof alias !== "string") return ""
+    // Strip control characters and limit length
+    return alias
+      .replace(/[\x00-\x1F\x7F]/g, "")
+      .slice(0, 200)
+  }
+
+  private sanitizeId(id: string): string {
+    if (typeof id !== "string") return this.generateId()
+    // Only allow alphanumeric, hyphen, underscore
+    const sanitized = id.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 64)
+    return sanitized || this.generateId()
+  }
+
+  create(alias: string, id?: string, configOverride?: Record<string, any>): Thread {
+    // Validate alias (P0)
+    const safeAlias = this.sanitizeAlias(alias)
+    const safeId = id ? this.sanitizeId(id) : this.generateId()
+    // Validate config_override if provided
+    let safeConfigOverride: Record<string, any> = {}
+    if (configOverride) {
+      const validation = validateConfigOverride(configOverride)
+      if (!validation.valid) {
+        throw new Error(`Invalid config_override: ${validation.error}`)
+      }
+      safeConfigOverride = validation.sanitized
+    }
     const now = new Date().toISOString()
     const thread: Thread = {
-      id: id || this.generateId(),
-      alias: alias || "",
+      id: safeId,
+      alias: safeAlias,
       created_at: now,
       updated_at: now,
-      config_override: {},
+      config_override: safeConfigOverride,
       tool_whitelist: null,
       pinned_tabs: [],
       active_skill_ids: ["browse"],
@@ -107,6 +186,14 @@ export class ThreadManager {
   update(threadId: string, updates: Partial<Thread>): Thread | undefined {
     const thread = this.index.threads.find(t => t.id === threadId)
     if (!thread) return undefined
+    // Validate config_override if being updated
+    if (updates.config_override !== undefined) {
+      const validation = validateConfigOverride(updates.config_override)
+      if (!validation.valid) {
+        throw new Error(`Invalid config_override: ${validation.error}`)
+      }
+      updates = { ...updates, config_override: validation.sanitized }
+    }
     Object.assign(thread, updates, { updated_at: new Date().toISOString() })
     this.saveIndex()
     return thread
