@@ -4,7 +4,7 @@ import OpenAI from "openai"
 import type { ThreadManager } from "../threads/thread-manager"
 import type { SkillEngine } from "../skills/skill-engine"
 import type { HistoryStore } from "../history/store"
-import { getToolDefinitions } from "../bridge/tool-definitions"
+import { getToolDefinitions, ToolDefinition } from "../bridge/tool-definitions"
 import { classifyError } from "../security"
 import { logger } from "../logger"
 
