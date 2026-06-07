@@ -9,7 +9,7 @@ import { SettingsSlideout } from "./components/SettingsSlideout"
 import { SlashCommandPopover } from "./components/SlashCommandPopover"
 import { SkillCraftPanel } from "./components/SkillCraftPanel"
 import { AgentStoreProvider, useAgentStore } from "./store/agentStore"
-import type { ConnectionState, SkillMeta } from "./types"
+import type { ConnectionState, SkillMeta, PrivilegeMode } from "./types"
 
 // Error Boundary — catches rendering errors to prevent white screen
 class ErrorBoundary extends Component<{ children: React.ReactNode }, { error: Error | null }> {
@@ -117,34 +117,110 @@ function SecurityConfirmationDialog() {
 
   if (!request) return null
 
-  const decide = (approved: boolean) => {
+  const riskLevel = request.risk_level || "high"
+  const riskColor = riskLevel === "low" ? "#FFC107" : riskLevel === "medium" ? "#FF9800" : "#F44336"
+  const riskLabel = riskLevel === "low" ? "低风险" : riskLevel === "medium" ? "中风险" : "高风险"
+
+  const decide = (approved: boolean, stopThread = false) => {
     chrome.runtime.sendMessage({
       type: "security.confirmation.response",
       confirmation_id: request.confirmation_id,
       approved,
+      stop_thread: stopThread,
     })
     dispatch({ type: "REMOVE_SECURITY_CONFIRMATION", confirmationId: request.confirmation_id })
+    if (stopThread) {
+      chrome.runtime.sendMessage({ type: "chat.abort", threadId: state.activeThreadId })
+      dispatch({ type: "SET_STREAMING", content: "" })
+    }
+    dispatch({
+      type: "ADD_SECURITY_AUDIT",
+      entry: {
+        id: request.confirmation_id,
+        ts: new Date().toISOString(),
+        level: approved ? "warn" : "block",
+        tool_name: request.tool_name,
+        action: approved ? "allowed" : "denied",
+        risk_level: riskLevel,
+        risk_score: request.risk_score || 0,
+        defense_layer: request.defense_layer,
+        message: `${approved ? "允许" : "拒绝"}执行 ${request.tool_name}`,
+      },
+    })
   }
 
   return (
     <div style={styles.securityOverlay}>
       <div style={styles.securityCard}>
-        <div style={styles.securityBadge}>高风险操作确认</div>
+        <div style={{ ...styles.securityBadge, background: riskColor + "22", color: riskColor }}>
+          {riskLabel}操作确认
+        </div>
         <h3 style={styles.securityTitle}>允许执行 `{request.tool_name}` 吗？</h3>
         <p style={styles.securityText}>
-          检测到高风险 API：{request.dangerous_apis.join(", ") || "未知"}。请确认这段代码符合你的意图后再允许执行。
+          检测到高风险 API：{" "}
+          <span style={{ color: "#F44336", fontWeight: 700 }}>
+            {request.dangerous_apis.join(", ") || "未知"}
+          </span>
+          。请确认这段代码符合你的意图后再允许执行。
         </p>
-        <pre style={styles.securityCode}>{request.code_preview || "(无代码预览)"}</pre>
+        {request.defense_layer !== undefined && (
+          <div style={styles.defenseLayerHint}>
+            防御层：Layer {request.defense_layer}
+          </div>
+        )}
+        <div style={styles.securityCode}>
+          <HighlightedCode code={request.code_preview || "(无代码预览)"} />
+        </div>
         {state.pendingSecurityConfirmations.length > 1 && (
           <div style={styles.securityQueueHint}>
             还有 {state.pendingSecurityConfirmations.length - 1} 个确认请求在等待。
           </div>
         )}
         <div style={styles.securityActions}>
+          <button style={styles.denyStopBtn} onClick={() => decide(false, true)}>
+            拒绝并停止对话
+          </button>
           <button style={styles.denyBtn} onClick={() => decide(false)}>拒绝</button>
-          <button style={styles.allowBtn} onClick={() => decide(true)}>允许执行</button>
+          <button style={{ ...styles.allowBtn, background: riskColor }} onClick={() => decide(true)}>
+            允许执行
+          </button>
         </div>
       </div>
+    </div>
+  )
+}
+
+function HighlightedCode({ code }: { code: string }) {
+  const keywords = ["function", "const", "let", "var", "return", "if", "else", "for", "while", "async", "await", "import", "export", "from", "class", "new", "try", "catch", "throw"]
+  const tokens = code.split(/(\b)/)
+  return (
+    <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "inherit", fontSize: "inherit", lineHeight: "inherit" }}>
+      {tokens.map((token, i) => {
+        if (keywords.includes(token)) {
+          return <span key={i} style={{ color: "#4A90D9", fontWeight: 600 }}>{token}</span>
+        }
+        if (/^["'`].*["'`]$/.test(token)) {
+          return <span key={i} style={{ color: "#2E7D32" }}>{token}</span>
+        }
+        if (/^\d+$/.test(token)) {
+          return <span key={i} style={{ color: "#E65100" }}>{token}</span>
+        }
+        if (/^[{}()\[\];,.]$/.test(token)) {
+          return <span key={i} style={{ color: "#999" }}>{token}</span>
+        }
+        return <span key={i}>{token}</span>
+      })}
+    </pre>
+  )
+}
+
+function PrivilegeModeIndicator({ mode }: { mode: PrivilegeMode }) {
+  const color = mode === "readonly" ? "#4CAF50" : mode === "standard" ? "#FFC107" : "#F44336"
+  const label = mode === "readonly" ? "只读" : mode === "standard" ? "标准" : "高级"
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "#666", cursor: "pointer" }} title={`特权模式: ${label}`}>
+      <div style={{ width: 8, height: 8, borderRadius: "50%", background: color, flexShrink: 0 }} />
+      <span>{label}</span>
     </div>
   )
 }
@@ -157,6 +233,7 @@ function Header({ connectionState, onCraft, onToggleLogs }: { connectionState: C
     <div style={styles.header}>
       <ThreadList />
       <div style={styles.headerTitle}>CMspark Agent</div>
+      <PrivilegeModeIndicator mode={state.privilegeMode} />
       <button
         style={{
           ...styles.craftBtn,
@@ -613,6 +690,12 @@ const styles: Record<string, React.CSSProperties> = {
     color: "#666",
     fontSize: 12,
   },
+  defenseLayerHint: {
+    marginTop: 6,
+    color: "#888",
+    fontSize: 11,
+    fontStyle: "italic",
+  },
   securityActions: {
     display: "flex",
     justifyContent: "flex-end",
@@ -627,6 +710,16 @@ const styles: Record<string, React.CSSProperties> = {
     color: "#333",
     cursor: "pointer",
     fontSize: 13,
+  },
+  denyStopBtn: {
+    padding: "7px 14px",
+    borderRadius: 6,
+    border: "1px solid #F44336",
+    background: "#fff",
+    color: "#F44336",
+    cursor: "pointer",
+    fontSize: 13,
+    fontWeight: 600,
   },
   allowBtn: {
     padding: "7px 14px",

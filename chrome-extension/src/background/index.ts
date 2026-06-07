@@ -5,6 +5,7 @@ import { WSClient } from "./ws-client"
 import { BrowserBridge } from "./browser-bridge"
 import { KeepAlive } from "./keep-alive"
 import { setSecuritySecret } from "./security-token"
+import { PageSanitizer, pageSanitizer } from "./page-sanitizer"
 
 let wsClient: WSClient
 let browserBridge: BrowserBridge
@@ -22,7 +23,7 @@ function logToCompanion(level: LogLevel, event: string, data: Record<string, unk
 }
 
 function init() {
-  browserBridge = new BrowserBridge()
+  browserBridge = new BrowserBridge(pageSanitizer)
   keepAlive = new KeepAlive()
 
   wsClient = new WSClient({
@@ -147,6 +148,15 @@ function setupMessageHandlers() {
           type: "security.confirmation.response",
           confirmation_id: message.confirmation_id,
           approved: message.approved === true,
+        })
+        sendResponse({ ok: true })
+        return true
+
+      case "security.setPrivilege":
+        wsClient.send({
+          type: "security.setPrivilege",
+          privilege: message.privilege,
+          enabled: message.enabled,
         })
         sendResponse({ ok: true })
         return true

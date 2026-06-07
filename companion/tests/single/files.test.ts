@@ -592,7 +592,7 @@ test("security: detectDangerousApis detects WebSocket and EventSource", () => {
 
 test("security: detectDangerousApis detects setTimeout/setInterval with strings", () => {
   const detected = detectDangerousApis("setTimeout('alert(1)', 1000); setInterval('xss()', 5000)")
-  assert.deepEqual(detected, ["setTimeout-string", "setInterval-string"])
+  assert.deepEqual(detected, ["setTimeout(string)", "setInterval(string)"])
 })
 
 test("security: detectDangerousApis avoids false positives", () => {

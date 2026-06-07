@@ -6,6 +6,13 @@ import * as os from "os"
 
 export const DATA_DIR = process.env.CMSPARK_DATA_DIR || path.join(os.homedir(), ".cmspark-agent")
 
+export interface SecurityConfig {
+  privilege_mode: 'readonly' | 'standard' | 'advanced'
+  safety_skills_enabled: string[]
+  auto_confirm_same_thread: boolean
+  confirmation_timeout_seconds: number
+}
+
 export interface CompanionConfig {
   port: number
   llm: {
@@ -17,6 +24,7 @@ export interface CompanionConfig {
   }
   trusted_domains: string[]
   history_retention_days: number
+  security: SecurityConfig
 }
 
 function getEnvApiKey(): string {
@@ -34,6 +42,12 @@ const defaultConfig: CompanionConfig = {
   },
   trusted_domains: [],
   history_retention_days: 30,
+  security: {
+    privilege_mode: "standard",
+    safety_skills_enabled: ["prompt-injection-defense", "jailbreak-detection", "instruction-hierarchy"],
+    auto_confirm_same_thread: false,
+    confirmation_timeout_seconds: 45,
+  },
 }
 
 let cachedConfig: CompanionConfig | null = null
@@ -48,6 +62,7 @@ export async function initDataDir(): Promise<void> {
     path.join(DATA_DIR, "cache"),
     path.join(DATA_DIR, "knowledge", "global"),
     path.join(DATA_DIR, "knowledge", "sites"),
+    path.join(DATA_DIR, "builtin-skills", "security"),
   ]
   for (const dir of dirs) {
     fs.mkdirSync(dir, { recursive: true })

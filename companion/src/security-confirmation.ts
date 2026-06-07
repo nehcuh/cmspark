@@ -2,13 +2,18 @@
 
 import { randomUUID } from "crypto"
 
-export const DEFAULT_SECURITY_CONFIRMATION_TIMEOUT_MS = 60000
+export const DEFAULT_SECURITY_CONFIRMATION_TIMEOUT_MS = 45000
 const CODE_PREVIEW_LIMIT = 1200
 
 export interface SecurityConfirmationDetails {
   toolName: string
   dangerousApis: string[]
   code: string
+  riskScore?: number
+  riskCategory?: string
+  riskLevel?: 'low' | 'medium' | 'high'
+  autoConfirmEligible?: boolean
+  defenseLayer?: number
 }
 
 export interface SecurityConfirmationDecision {
@@ -54,6 +59,11 @@ export class SecurityConfirmationManager {
         code_preview: codePreview(details.code),
         timeout_ms: this.timeoutMs,
         requested_at: new Date().toISOString(),
+        risk_score: details.riskScore,
+        risk_category: details.riskCategory,
+        risk_level: details.riskLevel,
+        auto_confirm_eligible: details.autoConfirmEligible,
+        defense_layer: details.defenseLayer,
       })
     })
   }

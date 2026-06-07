@@ -1,13 +1,13 @@
 // Unified SecurityPolicy — HMAC token generation/validation for evaluate confirmation
 // and centralized security checks for high-risk tool execution.
 
-import { createHmac, randomBytes } from "crypto"
+import { createHmac, randomBytes, createHash } from "crypto"
 
 const TOKEN_SECRET = process.env.CMSPARK_SECURITY_SECRET || randomBytes(32).toString("hex")
 export function getTokenSecret(): string {
   return TOKEN_SECRET
 }
-const TOKEN_TTL_MS = 5 * 60 * 1000 // 5 minutes
+const TOKEN_TTL_MS = 2 * 60 * 1000 // 2 minutes
 const MAX_CODE_LENGTH = 50000
 const MAX_EXPRESSION_LENGTH = 50000
 
@@ -16,6 +16,8 @@ interface TokenPayload {
   code: string
   ts: number
   nonce: string
+  codeHash: string
+  threadId: string
 }
 
 export interface SecurityToken {
@@ -26,11 +28,17 @@ export interface SecurityToken {
 export class SecurityPolicy {
   private issuedTokens = new Map<string, TokenPayload>()
 
+  /** Generate a hash for the given code. */
+  private _hashCode(code: string): string {
+    return createHash("sha256").update(code).digest("hex").slice(0, 16)
+  }
+
   /** Generate a one-time HMAC token for dangerous code execution. */
-  issueToken(toolName: string, code: string): SecurityToken {
+  issueToken(toolName: string, code: string, threadId = "default"): SecurityToken {
     const nonce = randomBytes(16).toString("hex")
     const ts = Date.now()
-    const payload: TokenPayload = { toolName, code, ts, nonce }
+    const codeHash = this._hashCode(code)
+    const payload: TokenPayload = { toolName, code, ts, nonce, codeHash, threadId }
     const token = this._sign(payload)
     this.issuedTokens.set(token, payload)
     // Auto-expire
@@ -38,11 +46,12 @@ export class SecurityPolicy {
     return { token, expiresAt: ts + TOKEN_TTL_MS }
   }
 
-  /** Validate that a token was issued by us and matches the tool/code. */
-  validateToken(token: string, toolName: string, code: string): boolean {
+  /** Validate that a token was issued by us and matches the tool/code/thread. */
+  validateToken(token: string, toolName: string, code: string, threadId = "default"): boolean {
     const payload = this.issuedTokens.get(token)
     if (!payload) return false
     if (payload.toolName !== toolName) return false
+    if (payload.threadId !== threadId) return false
     if (Date.now() > payload.ts + TOKEN_TTL_MS) {
       this.issuedTokens.delete(token)
       return false
@@ -53,7 +62,7 @@ export class SecurityPolicy {
     // Code must match (within length limits)
     if (code.length > MAX_CODE_LENGTH) return false
     if (payload.code !== code) return false
-    // One-time use
+    // One-time use — invalidate immediately after validation
     this.issuedTokens.delete(token)
     return true
   }
@@ -68,7 +77,7 @@ export class SecurityPolicy {
   }
 
   private _sign(payload: TokenPayload): string {
-    const data = `${payload.toolName}:${payload.code}:${payload.ts}:${payload.nonce}`
+    const data = `${payload.toolName}:${payload.code}:${payload.ts}:${payload.nonce}:${payload.codeHash}:${payload.threadId}`
     const sig = createHmac("sha256", TOKEN_SECRET).update(data).digest("hex")
     return `${sig}:${payload.nonce}:${payload.ts}`
   }

@@ -4,6 +4,8 @@ export type ConnectionState = "connected" | "connecting" | "disconnected"
 
 export type SkillSelectionMode = "auto" | "all" | "manual"
 
+export type PrivilegeMode = "readonly" | "standard" | "advanced"
+
 export interface Thread {
   id: string
   alias: string
@@ -34,6 +36,8 @@ export interface LLMConfig {
   temperature: number
   context_window: number
   trusted_domains: string[]
+  privilege_mode: PrivilegeMode
+  safety_skills_enabled: string[]
 }
 
 export interface Message {
@@ -53,6 +57,11 @@ export interface SecurityConfirmationRequest {
   code_preview: string
   timeout_ms?: number
   requested_at?: string
+  risk_score?: number
+  risk_category?: string
+  risk_level?: "low" | "medium" | "high"
+  auto_confirm_eligible?: boolean
+  defense_layer?: number
 }
 
 export interface ToolCall {
@@ -105,4 +114,16 @@ export interface OperationRecord {
   success: number
   duration_ms: number
   created_at: string
+}
+
+export interface SecurityAuditEntry {
+  id: string
+  ts: string
+  level: "info" | "warn" | "error" | "block"
+  tool_name: string
+  action: "allowed" | "denied" | "blocked"
+  risk_level: "low" | "medium" | "high"
+  risk_score: number
+  defense_layer?: number
+  message: string
 }

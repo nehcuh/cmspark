@@ -94,6 +94,10 @@ test("security confirmation requests are queued and removable", () => {
     tool_name: "evaluate",
     dangerous_apis: ["fetch("],
     code_preview: "fetch('/api')",
+    risk_score: 80,
+    risk_category: "eval",
+    risk_level: "high" as const,
+    auto_confirm_eligible: false,
   }
 
   const queued = agentReducer(initialState, { type: "ADD_SECURITY_CONFIRMATION", request })

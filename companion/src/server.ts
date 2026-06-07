@@ -656,9 +656,9 @@ export async function startServer() {
       // Heartbeat acknowledged
     })
 
-    // Send initial state + security secret for extension-side token validation
+    // Send initial state (security secret no longer transmitted over WS)
     ws.send(JSON.stringify({ type: "connected" }))
-    ws.send(JSON.stringify({ type: "security.config", secret: getTokenSecret() }))
+    // Note: Token validation is now done by sending token to Companion for verification
   })
 
   wss.on("error", (err) => {

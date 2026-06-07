@@ -1,6 +1,7 @@
 // Browser Bridge — executes tool calls via Chrome APIs and CDP
 
 import { validateSecurityToken } from "./security-token"
+import { PageSanitizer, pageSanitizer } from "./page-sanitizer"
 
 interface ToolResult {
   success: boolean
@@ -8,6 +9,7 @@ interface ToolResult {
   error?: string
 }
 
+// Dangerous API patterns — kept in sync with companion/src/security.ts
 const DANGEROUS_API_PATTERNS: Array<{ name: string; pattern: RegExp }> = [
   // Direct API calls
   { name: "fetch", pattern: /\bfetch\s*\(/ },
@@ -52,8 +54,10 @@ function detectDangerousApis(code: string): string[] {
 
 export class BrowserBridge {
   private attachedTabs: Set<number> = new Set()
+  private sanitizer: PageSanitizer
 
-  constructor() {
+  constructor(sanitizer?: PageSanitizer) {
+    this.sanitizer = sanitizer || pageSanitizer
     chrome.debugger.onDetach.addListener((source) => {
       if (source.tabId) {
         this.attachedTabs.delete(source.tabId)
@@ -404,7 +408,15 @@ export class BrowserBridge {
   private async getPageText(params: Record<string, any>): Promise<ToolResult> {
     const tabId = this.getTabId(params)
     const result = await this.safeEvaluate(tabId, "document.body?.innerText || ''")
-    return { success: true, data: { text: result.result?.value || "" } }
+    const rawText = result.result?.value || ""
+    const sanitized = this.sanitizer.sanitizeText(rawText)
+    return {
+      success: true,
+      data: {
+        text: sanitized.sanitized,
+        threats_removed: sanitized.threatsRemoved,
+      },
+    }
   }
 
   private async getPageHTML(params: Record<string, any>): Promise<ToolResult> {
@@ -424,8 +436,18 @@ export class BrowserBridge {
         throw new Error(`${err.message || String(err)}; DOM fallback failed: ${domErr.message || String(domErr)}`)
       }
     }
+    const sanitized = this.sanitizer.sanitize(html)
     const truncated = html.length >= 500000
-    return { success: true, data: { html, truncated, length: html.length, source } }
+    return {
+      success: true,
+      data: {
+        html: sanitized.sanitized,
+        truncated,
+        length: sanitized.sanitized.length,
+        source,
+        threats_removed: sanitized.threatsRemoved,
+      },
+    }
   }
 
   private async getElementInfo(params: Record<string, any>): Promise<ToolResult> {
@@ -645,7 +667,12 @@ export class BrowserBridge {
   private async evaluate(params: Record<string, any>): Promise<ToolResult> {
     const tabId = this.getTabId(params)
     if (!params.code) throw new Error("code is required")
-    const matches = detectDangerousApis(params.code)
+
+    // Sanitize code before dangerous API detection
+    const sanitizedCodeResult = this.sanitizer.sanitizeText(params.code)
+    const codeToExecute = sanitizedCodeResult.sanitized
+
+    const matches = detectDangerousApis(codeToExecute)
     if (matches.length > 0) {
       // Validate HMAC security token instead of boolean flag (P0)
       if (!params.security_token) {
@@ -656,7 +683,13 @@ export class BrowserBridge {
         }
       }
       // Validate the token cryptographically against the code being executed
-      const tokenValid = await validateSecurityToken(params.security_token, "evaluate", params.code)
+      // Include threadId binding for strict validation
+      const tokenValid = await validateSecurityToken(
+        params.security_token,
+        "evaluate",
+        codeToExecute,
+        params.thread_id,
+      )
       if (!tokenValid) {
         return {
           success: false,
@@ -666,7 +699,7 @@ export class BrowserBridge {
       }
     }
 
-    const result = await this.safeEvaluate(tabId, params.code)
+    const result = await this.safeEvaluate(tabId, codeToExecute)
 
     return {
       success: true,
@@ -675,6 +708,7 @@ export class BrowserBridge {
         type: result.result?.type,
         has_dangerous_apis: matches.length > 0,
         dangerous_apis_found: matches.length > 0 ? matches : undefined,
+        threats_removed: sanitizedCodeResult.threatsRemoved.length > 0 ? sanitizedCodeResult.threatsRemoved : undefined,
         exception: result.exceptionDetails ? {
           text: result.exceptionDetails.text,
           line: result.exceptionDetails.lineNumber,

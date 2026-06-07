@@ -17,10 +17,12 @@ interface TokenPayload {
   code: string
   ts: number
   nonce: string
+  threadId?: string
 }
 
 async function signPayload(payload: TokenPayload, secret: string): Promise<string> {
-  const data = `${payload.toolName}:${payload.code}:${payload.ts}:${payload.nonce}`
+  const threadPart = payload.threadId ? `:${payload.threadId}` : ""
+  const data = `${payload.toolName}:${payload.code}:${payload.ts}:${payload.nonce}${threadPart}`
   const encoder = new TextEncoder()
   const keyData = encoder.encode(secret)
   const messageData = encoder.encode(data)
@@ -50,11 +52,14 @@ function timingSafeEqual(a: string, b: string): boolean {
   return result === 0
 }
 
-/** Validate a security token was issued by the companion and matches the tool/code. */
+/** Validate a security token was issued by the companion and matches the tool/code.
+ *  When threadId is provided, the token must be bound to that thread.
+ */
 export async function validateSecurityToken(
   token: string,
   toolName: string,
   code: string,
+  threadId?: string,
 ): Promise<boolean> {
   if (!sharedSecret) {
     console.warn("[BrowserBridge] Security secret not received from companion yet")
@@ -75,7 +80,7 @@ export async function validateSecurityToken(
   // Check code length
   if (code.length > MAX_CODE_LENGTH) return false
 
-  const payload: TokenPayload = { toolName, code, ts, nonce }
+  const payload: TokenPayload = { toolName, code, ts, nonce, threadId }
   const expected = await signPayload(payload, sharedSecret)
 
   return timingSafeEqual(token, expected)

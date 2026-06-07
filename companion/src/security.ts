@@ -1,6 +1,7 @@
 // Security policy — trusted domains, evaluate safety, error classification
 
 import { getConfig } from "./config"
+import type { RiskScore } from "./security/risk-engine"
 
 /**
  * Check if a domain is in the trusted domain list.
@@ -23,15 +24,66 @@ export function isTrustedDomain(domain: string): boolean {
   })
 }
 
-/**
- * Detect dangerous APIs in JavaScript code.
- */
+/** Weight mapping for dangerous APIs (higher = more dangerous). */
+export const API_WEIGHTS: Record<string, number> = {
+  eval: 4,
+  "new Function": 4,
+  "setTimeout(string)": 4,
+  "setInterval(string)": 4,
+  Function: 3,
+  fetch: 3,
+  XMLHttpRequest: 3,
+  "Reflect.apply": 3,
+  "Reflect.construct": 3,
+  Proxy: 3,
+  "document.cookie": 2,
+  "localStorage.setItem": 2,
+  localStorage: 2,
+  sessionStorage: 2,
+  "window.open": 2,
+  "navigator.sendBeacon": 2,
+  WebSocket: 2,
+  EventSource: 2,
+  indexedDB: 2,
+  "bracket-fetch": 3,
+  "bracket-open": 2,
+  "bracket-localStorage": 2,
+  "bracket-sessionStorage": 2,
+  "bracket-cookie": 2,
+  "bracket-sendBeacon": 2,
+  "bracket-indexedDB": 2,
+  "bracket-XMLHttpRequest": 3,
+  "fetch.call": 3,
+  "fetch.apply": 3,
+  constructor: 3,
+  "__proto__": 3,
+  "prototype-pollution": 3,
+  "Object.assign": 2,
+  defineProperty: 2,
+  "navigator.clipboard": 2,
+  postMessage: 2,
+  openDatabase: 2,
+  requestFileSystem: 2,
+  webkitRequestFileSystem: 2,
+  RTCPeerConnection: 2,
+  Worker: 2,
+  SharedWorker: 2,
+  innerHTML: 3,
+  outerHTML: 3,
+  insertAdjacentHTML: 3,
+  "document.write": 3,
+  "document.writeln": 3,
+  "createElement-script": 3,
+  appendChild: 1,
+  removeChild: 1,
+}
+
 /**
  * Detect dangerous APIs in JavaScript code using regex with word boundaries.
  * Avoids false positives like "prefetch" matching "fetch" or "window.openModal" matching "window.open".
  */
 export const DANGEROUS_API_PATTERNS: Array<{ name: string; pattern: RegExp }> = [
-  // Direct API calls
+  // Direct API calls (1-16)
   { name: "fetch", pattern: /\bfetch\s*\(/ },
   { name: "XMLHttpRequest", pattern: /\bXMLHttpRequest\b/ },
   { name: "localStorage", pattern: /\blocalStorage\b/ },
@@ -42,7 +94,13 @@ export const DANGEROUS_API_PATTERNS: Array<{ name: string; pattern: RegExp }> = 
   { name: "WebSocket", pattern: /\bnew\s+WebSocket\s*\(/ },
   { name: "EventSource", pattern: /\bnew\s+EventSource\s*\(/ },
   { name: "indexedDB", pattern: /\bindexedDB\b/ },
-  // Obfuscation / bypass patterns (P1)
+  { name: "eval", pattern: /\beval\s*\(/ },
+  { name: "Function", pattern: /\bnew\s+Function\s*\(/ },
+  { name: "setTimeout(string)", pattern: /setTimeout\s*\(\s*["']/ },
+  { name: "setInterval(string)", pattern: /setInterval\s*\(\s*["']/ },
+  { name: "Reflect.apply", pattern: /\bReflect\.apply\s*\(/ },
+  { name: "Reflect.construct", pattern: /\bReflect\.construct\s*\(/ },
+  // Obfuscation / bypass patterns (17-32)
   { name: "bracket-fetch", pattern: /\[\s*["']fetch["']\s*\]\s*\(/ },
   { name: "bracket-open", pattern: /\[\s*["']open["']\s*\]\s*\(/ },
   { name: "bracket-localStorage", pattern: /\[\s*["']localStorage["']\s*\]/ },
@@ -53,13 +111,30 @@ export const DANGEROUS_API_PATTERNS: Array<{ name: string; pattern: RegExp }> = 
   { name: "bracket-XMLHttpRequest", pattern: /\[\s*["']XMLHttpRequest["']\s*\]/ },
   { name: "fetch.call", pattern: /\.call\s*\(.*fetch/ },
   { name: "fetch.apply", pattern: /\.apply\s*\(.*fetch/ },
-  { name: "Reflect.apply", pattern: /\bReflect\.apply\s*\(/ },
-  { name: "Reflect.construct", pattern: /\bReflect\.construct\s*\(/ },
   { name: "Proxy", pattern: /\bnew\s+Proxy\s*\(/ },
-  { name: "eval", pattern: /\beval\s*\(/ },
-  { name: "Function", pattern: /\bnew\s+Function\s*\(/ },
-  { name: "setTimeout-string", pattern: /setTimeout\s*\(\s*["']/ },
-  { name: "setInterval-string", pattern: /setInterval\s*\(\s*["']/ },
+  { name: "constructor", pattern: /\["constructor"\]\s*\(/ },
+  { name: "__proto__", pattern: /\b__proto__\b/ },
+  { name: "prototype-pollution", pattern: /prototype\s*\[\s*["'][^"']+["']\s*\]\s*=/ },
+  { name: "Object.assign", pattern: /\bObject\.assign\s*\(/ },
+  { name: "defineProperty", pattern: /\bObject\.defineProperty\s*\(/ },
+  // Network / data exfiltration (33-40)
+  { name: "navigator.clipboard", pattern: /\bnavigator\.clipboard\b/ },
+  { name: "postMessage", pattern: /\bpostMessage\s*\(/ },
+  { name: "openDatabase", pattern: /\bopenDatabase\s*\(/ },
+  { name: "requestFileSystem", pattern: /\brequestFileSystem\s*\(/ },
+  { name: "webkitRequestFileSystem", pattern: /\bwebkitRequestFileSystem\s*\(/ },
+  { name: "RTCPeerConnection", pattern: /\bnew\s+RTCPeerConnection\s*\(/ },
+  { name: "Worker", pattern: /\bnew\s+Worker\s*\(/ },
+  { name: "SharedWorker", pattern: /\bnew\s+SharedWorker\s*\(/ },
+  // DOM manipulation / injection (41-48)
+  { name: "innerHTML", pattern: /\.innerHTML\s*=/ },
+  { name: "outerHTML", pattern: /\.outerHTML\s*=/ },
+  { name: "insertAdjacentHTML", pattern: /\.insertAdjacentHTML\s*\(/ },
+  { name: "document.write", pattern: /\bdocument\.write\s*\(/ },
+  { name: "document.writeln", pattern: /\bdocument\.writeln\s*\(/ },
+  { name: "createElement-script", pattern: /createElement\s*\(\s*["']script["']\s*\)/ },
+  { name: "appendChild", pattern: /\.appendChild\s*\(/ },
+  { name: "removeChild", pattern: /\.removeChild\s*\(/ },
 ]
 
 export function detectDangerousApis(code: string): string[] {
@@ -68,16 +143,57 @@ export function detectDangerousApis(code: string): string[] {
     .map(({ name }) => name)
 }
 
-export function checkHighRiskExecution(toolName: string, code: string): { blocked: boolean; dangerousApis: string[]; error?: string } {
+/** Legacy check result for backward compatibility. */
+export interface HighRiskCheckResult {
+  blocked: boolean
+  dangerousApis: string[]
+  error?: string
+  riskScore?: RiskScore
+}
+
+/**
+ * Check if execution is high-risk and return detailed risk information.
+ *
+ * @param toolName - The tool being executed.
+ * @param code - The code/expression to evaluate.
+ * @returns Detailed check result including risk score.
+ */
+export function checkHighRiskExecution(toolName: string, code: string): HighRiskCheckResult {
   const dangerousApis = detectDangerousApis(code || "")
   if (dangerousApis.length === 0) {
     return { blocked: false, dangerousApis }
   }
+
+  // Build a simple risk score for backward compatibility
+  let apiRisk = 0
+  for (const pattern of dangerousApis) {
+    const weight = API_WEIGHTS[pattern] || 1
+    apiRisk = Math.max(apiRisk, weight)
+  }
+
+  const riskScore: RiskScore = {
+    total: Math.min(apiRisk, 10),
+    breakdown: {
+      apiRisk: Math.min(apiRisk, 4),
+      codeComplexity: 0,
+      domainTrust: 0,
+      historyPattern: 0,
+    },
+    matchedPatterns: dangerousApis,
+    reason: `${toolName}: detected ${dangerousApis.length} dangerous API(s): ${dangerousApis.join(", ")}`,
+  }
+
   return {
     blocked: true,
     dangerousApis,
     error: `Security Block: ${toolName} contains high-risk APIs (${dangerousApis.join(", ")}). Execution requires user confirmation.`,
+    riskScore,
   }
+}
+
+/** Backward-compatible isDangerous check. */
+export function isDangerous(code: string): boolean {
+  return detectDangerousApis(code).length > 0
 }
 
 export function highRiskExecutionDeniedError(

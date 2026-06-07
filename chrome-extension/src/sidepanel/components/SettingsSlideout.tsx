@@ -2,10 +2,26 @@
 
 import { useState } from "react"
 import { useAgentStore } from "../store/agentStore"
+import type { PrivilegeMode } from "../types"
+
+const PRIVILEGE_MODE_OPTIONS: { value: PrivilegeMode; label: string; desc: string }[] = [
+  { value: "readonly", label: "只读", desc: "仅允许查询和浏览操作，禁止任何修改" },
+  { value: "standard", label: "标准", desc: "允许常规操作，高风险操作需确认" },
+  { value: "advanced", label: "高级", desc: "允许所有操作，确认阈值降低" },
+]
+
+const SAFETY_SKILLS = [
+  { id: "cookie_guard", label: "Cookie 守卫" },
+  { id: "eval_guard", label: "代码执行守卫" },
+  { id: "nav_guard", label: "导航守卫" },
+  { id: "input_guard", label: "输入守卫" },
+]
 
 export function SettingsSlideout() {
   const { state, dispatch } = useAgentStore()
   const [showKey, setShowKey] = useState(false)
+  const [showAuditLog, setShowAuditLog] = useState(false)
+  const [trustedDomainsConfirm, setTrustedDomainsConfirm] = useState(false)
 
   if (!state.settingsOpen) return null
 
@@ -34,15 +50,137 @@ export function SettingsSlideout() {
     chrome.runtime.sendMessage({ type: "config.test" })
   }
 
+  const handlePrivilegeChange = (mode: PrivilegeMode) => {
+    dispatch({ type: "SET_PRIVILEGE_MODE", mode })
+    dispatch({ type: "SET_CONFIG", config: { privilege_mode: mode } })
+  }
+
+  const toggleSafetySkill = (skillId: string) => {
+    const current = config.safety_skills_enabled || []
+    const next = current.includes(skillId)
+      ? current.filter(id => id !== skillId)
+      : [...current, skillId]
+    dispatch({ type: "SET_CONFIG", config: { safety_skills_enabled: next } })
+  }
+
   return (
     <div style={styles.backdrop} onClick={() => dispatch({ type: "TOGGLE_SETTINGS" })}>
       <div style={styles.panel} onClick={e => e.stopPropagation()}>
         <div style={styles.header}>
-          <h3 style={{ margin: 0, fontSize: 15 }}>LLM 配置</h3>
+          <h3 style={{ margin: 0, fontSize: 15 }}>设置</h3>
           <button style={styles.closeBtn} onClick={() => dispatch({ type: "TOGGLE_SETTINGS" })}>✕</button>
         </div>
 
         <div style={styles.body}>
+          {/* --- Security Settings --- */}
+          <div style={styles.sectionTitle}>安全设置</div>
+
+          <div style={styles.field}>
+            <label style={styles.label}>特权模式</label>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {PRIVILEGE_MODE_OPTIONS.map(opt => (
+                <label key={opt.value} style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer" }}>
+                  <input
+                    type="radio"
+                    name="privilege_mode"
+                    value={opt.value}
+                    checked={(config.privilege_mode || "standard") === opt.value}
+                    onChange={() => handlePrivilegeChange(opt.value)}
+                    style={{ marginTop: 3 }}
+                  />
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 500 }}>{opt.label}</div>
+                    <div style={{ fontSize: 11, color: "#888" }}>{opt.desc}</div>
+                  </div>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          <div style={styles.field}>
+            <label style={styles.label}>安全技能</label>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {SAFETY_SKILLS.map(skill => (
+                <label key={skill.id} style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13 }}>
+                  <input
+                    type="checkbox"
+                    checked={(config.safety_skills_enabled || []).includes(skill.id)}
+                    onChange={() => toggleSafetySkill(skill.id)}
+                  />
+                  {skill.label}
+                </label>
+              ))}
+            </div>
+          </div>
+
+          <div style={styles.field}>
+            <label style={styles.label}>Cookie 信任域</label>
+            {trustedDomainsConfirm ? (
+              <>
+                <textarea
+                  style={{ ...styles.input, minHeight: 72, resize: "vertical" }}
+                  value={(config.trusted_domains || []).join("\n")}
+                  onChange={e => handleTrustedDomainsChange(e.target.value)}
+                  placeholder={"example.com\n*.company.com"}
+                />
+                <div style={styles.helpText}>
+                  每行一个域名；支持 <code>*.company.com</code> 通配子域。仅调试环境建议使用 <code>*</code>。
+                </div>
+              </>
+            ) : (
+              <div>
+                <button
+                  style={styles.secondaryBtn}
+                  onClick={() => setTrustedDomainsConfirm(true)}
+                >
+                  管理信任域（需二次确认）
+                </button>
+                <div style={styles.helpText}>
+                  当前已配置 {(config.trusted_domains || []).length} 个信任域
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div style={styles.field}>
+            <label style={styles.label}>安全审计日志</label>
+            {showAuditLog ? (
+              <div style={{ maxHeight: 200, overflowY: "auto", background: "#f9f9f9", borderRadius: 6, padding: 8, fontSize: 11 }}>
+                {state.securityAuditLog.length === 0 ? (
+                  <div style={{ color: "#999", padding: "8px 0" }}>暂无审计记录</div>
+                ) : (
+                  state.securityAuditLog.slice(-20).map(entry => (
+                    <div key={entry.id} style={{ marginBottom: 6, paddingBottom: 6, borderBottom: "1px solid #eee" }}>
+                      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                        <span style={{
+                          color: entry.action === "allowed" ? "#4CAF50" : entry.action === "denied" ? "#FF9800" : "#F44336",
+                          fontWeight: 600,
+                        }}>
+                          {entry.action === "allowed" ? "允许" : entry.action === "denied" ? "拒绝" : "阻断"}
+                        </span>
+                        <span style={{ color: "#666" }}>{entry.tool_name}</span>
+                        <span style={{ color: "#999", marginLeft: "auto" }}>{entry.ts.slice(11, 19)}</span>
+                      </div>
+                      <div style={{ color: "#888", marginTop: 2 }}>{entry.message}</div>
+                    </div>
+                  ))
+                )}
+                <button style={{ ...styles.secondaryBtn, marginTop: 8 }} onClick={() => setShowAuditLog(false)}>
+                  收起日志
+                </button>
+              </div>
+            ) : (
+              <button style={styles.secondaryBtn} onClick={() => setShowAuditLog(true)}>
+                查看审计日志（{state.securityAuditLog.length} 条）
+              </button>
+            )}
+          </div>
+
+          <div style={styles.divider} />
+
+          {/* --- LLM Settings --- */}
+          <div style={styles.sectionTitle}>LLM 配置</div>
+
           <div style={styles.field}>
             <label style={styles.label}>Base URL</label>
             <input
@@ -129,19 +267,6 @@ export function SettingsSlideout() {
               max={1000000}
               step={1024}
             />
-          </div>
-
-          <div style={styles.field}>
-            <label style={styles.label}>Cookie 信任域</label>
-            <textarea
-              style={{ ...styles.input, minHeight: 72, resize: "vertical" }}
-              value={(config.trusted_domains || []).join("\n")}
-              onChange={e => handleTrustedDomainsChange(e.target.value)}
-              placeholder={"example.com\n*.company.com"}
-            />
-            <div style={styles.helpText}>
-              每行一个域名；支持 <code>*.company.com</code> 通配子域。仅调试环境建议使用 <code>*</code>。
-            </div>
           </div>
         </div>
 
@@ -267,6 +392,29 @@ const styles: Record<string, React.CSSProperties> = {
     color: "#fff",
     fontSize: 13,
     fontWeight: 500,
+    cursor: "pointer",
+  },
+  sectionTitle: {
+    fontSize: 14,
+    fontWeight: 700,
+    color: "#333",
+    marginBottom: 12,
+    marginTop: 8,
+    paddingBottom: 6,
+    borderBottom: "1px solid #eee",
+  },
+  divider: {
+    height: 1,
+    background: "#eee",
+    margin: "16px 0",
+  },
+  secondaryBtn: {
+    padding: "6px 14px",
+    border: "1px solid #ddd",
+    borderRadius: 6,
+    background: "#fff",
+    color: "#555",
+    fontSize: 12,
     cursor: "pointer",
   },
 }

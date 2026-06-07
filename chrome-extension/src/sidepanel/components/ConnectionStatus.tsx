@@ -1,4 +1,4 @@
-import { useAgentStore } from "./store/agentStore"
+import { useAgentStore } from "../store/agentStore"
 import type { ConnectionState } from "../types"
 
 interface ConnectionStatusProps {

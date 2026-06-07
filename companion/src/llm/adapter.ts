@@ -8,6 +8,32 @@ import { getToolDefinitions, ToolDefinition } from "../bridge/tool-definitions"
 import { classifyError } from "../security"
 import { logger } from "../logger"
 
+// Jailbreak patterns to detect in LLM output
+const JAILBREAK_OUTPUT_PATTERNS = [
+  /ignore\s+(?:all\s+)?(?:previous\s+)?instructions?/i,
+  /system\s*prompt\s*override/i,
+  /new\s+role\s*:\s*you\s+are\s+now/i,
+  /you\s+are\s+now\s+(?:in\s+)?\w+\s+mode/i,
+  /DAN\s*mode/i,
+  /jailbreak/i,
+  /developer\s*:\s*new\s+instructions?/i,
+  /disregard\s+(?:all\s+)?(?:previous\s+)?instructions?/i,
+  /forget\s+(?:all\s+)?(?:previous\s+)?(?:instructions?|prompts?)/i,
+  /忽略\s+(?:以上|前面|之前)\s*(?:所有\s*)?指令/,
+  /系统\s*提示\s*覆盖/,
+  /新\s*角色\s*：\s*你现在是/,
+]
+
+function detectJailbreakInOutput(text: string): string[] {
+  const found: string[] = []
+  for (const pattern of JAILBREAK_OUTPUT_PATTERNS) {
+    if (pattern.test(text)) {
+      found.push(pattern.source)
+    }
+  }
+  return found
+}
+
 interface ChatCreateParams {
   threadId: string
   message: string
@@ -94,7 +120,13 @@ CRITICAL RULES:
 7. For reading page content: use get_page_text (preferred, cross-platform) or evaluate.
 8. osascript_eval is macOS-ONLY and will FAIL on Windows/Linux. On non-macOS systems, NEVER call osascript_eval — always use get_page_text or evaluate instead.`
   const skillPrompt = skillEngine.buildSystemPrompt(threadId, undefined, skillIds, knowledgeIds)
-  const systemPrompt = [basePrompt, skillPrompt].filter(Boolean).join("\n\n")
+
+  // Inject safety-guard skills at the END of system prompt (highest priority)
+  const safetyGuardContent = skillEngine.getSecuritySkills()
+    .map(s => `## Safety Guard: ${s.name}\n${s.content}`)
+    .join("\n\n")
+
+  const systemPrompt = [basePrompt, skillPrompt, safetyGuardContent].filter(Boolean).join("\n\n")
 
   // Build messages array
   const history = threadManager.getMessages(threadId)
@@ -207,6 +239,20 @@ CRITICAL RULES:
 
         if (delta?.content) {
           assistantContent += delta.content
+          // Real-time jailbreak detection during streaming
+          const jailbreakPatterns = detectJailbreakInOutput(assistantContent)
+          if (jailbreakPatterns.length > 0) {
+            logger.warn("llm.jailbreak_detected", {
+              thread_id: threadId,
+              patterns: jailbreakPatterns,
+            })
+            sendToExtension({
+              type: "chat.error",
+              thread_id: threadId,
+              error: "安全阻断: 检测到越狱模式输出。对话已终止。",
+            })
+            return
+          }
           sendToExtension({ type: "chat.token", thread_id: threadId, content: assistantContent })
         }
 

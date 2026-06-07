@@ -186,6 +186,11 @@ export function useWebSocket() {
               code_preview: msg.code_preview || "",
               timeout_ms: msg.timeout_ms,
               requested_at: msg.requested_at,
+              risk_score: msg.risk_score ?? 0,
+              risk_category: msg.risk_category ?? "unknown",
+              risk_level: msg.risk_level ?? "high",
+              auto_confirm_eligible: msg.auto_confirm_eligible ?? false,
+              defense_layer: msg.defense_layer,
             },
           })
           break

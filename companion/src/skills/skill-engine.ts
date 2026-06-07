@@ -59,10 +59,17 @@ export class SkillEngine {
     this.skillsCache = []
     // Load user skills
     this.loadFromDir(this.skillsDir, false)
-    // Load builtin skills
+    // Load builtin skills (including security/ subdirectory)
     this.loadFromDir(this.builtinDir, true)
     // Load knowledge docs (same format as skills, stored in knowledge/)
     this.loadFromDir(this.knowledgeDir, false)
+  }
+
+  /** Get all security skills from builtin-skills/security/ */
+  getSecuritySkills(): Skill[] {
+    return this.skillsCache.filter(
+      s => s.builtin && s.source_file.includes(path.sep + "security" + path.sep),
+    )
   }
 
   private loadFromDir(dir: string, builtin: boolean): void {
@@ -299,7 +306,8 @@ export class SkillEngine {
    * For site_knowledge/domain_knowledge, inject entries summary directly.
    * Also injects global knowledge and matching site knowledge summaries.
    * If skillIds is provided, only includes those skills.
-   * If knowledgeIds is provided, only includes those knowledge docs. */
+   * If knowledgeIds is provided, only includes those knowledge docs.
+   * Security skills are ALWAYS injected and cannot be disabled. */
   buildSystemPrompt(threadId: string, hostname?: string, skillIds?: string[], knowledgeIds?: string[]): string {
     const skills = skillIds
       ? skillIds.map(id => this.get(id)).filter(Boolean) as Skill[]
@@ -307,6 +315,14 @@ export class SkillEngine {
 
     const parts: string[] = []
     const injectedNames = new Set<string>()
+
+    // --- Safety Guard: ALWAYS inject security skills (immutable, builtin) ---
+    const securitySkills = this.getSecuritySkills()
+    for (const s of securitySkills) {
+      injectedNames.add(s.name)
+      parts.push(`## Safety Guard: ${s.name}\n${s.content}`)
+    }
+
     const promptSkills = skills.filter(s => s.type !== "site_knowledge" && s.type !== "domain_knowledge")
     const experienceSkills = skills.filter(s => s.type === "site_knowledge" || s.type === "domain_knowledge")
 
