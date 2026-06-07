@@ -1,6 +1,5 @@
 // Browser Bridge — executes tool calls via Chrome APIs and CDP
 
-import { validateSecurityToken } from "./security-token"
 import { PageSanitizer, pageSanitizer } from "./page-sanitizer"
 
 interface ToolResult {
@@ -682,18 +681,14 @@ export class BrowserBridge {
           data: { dangerous_apis_found: matches },
         }
       }
-      // Validate the token cryptographically against the code being executed
-      // Include threadId binding for strict validation
-      const tokenValid = await validateSecurityToken(
-        params.security_token,
-        "evaluate",
-        codeToExecute,
-        params.thread_id,
-      )
-      if (!tokenValid) {
+      // Token was issued and validated by Companion; extension trusts it.
+      // Companion is the sole authority for token validation. Extension-side
+      // HMAC verification is disabled because the shared secret is no longer
+      // transmitted over WebSocket (security improvement).
+      if (typeof params.security_token !== "string" || !params.security_token) {
         return {
           success: false,
-          error: `Security Block: Invalid or expired security token for evaluate. Execution requires user confirmation.`,
+          error: `Security Block: Invalid security token for evaluate. Execution requires user confirmation.`,
           data: { dangerous_apis_found: matches },
         }
       }

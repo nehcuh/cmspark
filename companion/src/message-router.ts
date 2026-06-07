@@ -108,7 +108,7 @@ export async function handleMessage(
 
         // Resolve skill IDs based on mode
         const currentHostname = rest.hostname || (rest.url ? new URL(rest.url).hostname : undefined)
-        const resolvedSkillIds = services.skillEngine.resolveSkillIdsForThread(
+        const resolvedSkillIds = await services.skillEngine.resolveSkillIdsForThread(
           rest.thread_id,
           skillMode,
           rest.message,
@@ -127,7 +127,7 @@ export async function handleMessage(
 
         // For auto mode, notify about auto-matched skills
         if (skillMode === "auto") {
-          const matched = services.skillEngine.matchSkills(rest.message)
+          const matched = await services.skillEngine.matchSkills(rest.message)
           const domainMatches = matched.filter(m => m.confidence >= 20)
           if (domainMatches.length > 0) {
             session.sendToExtension({
@@ -219,7 +219,7 @@ export async function handleMessage(
 
         // Resolve skill IDs based on mode
         const currentHostname = rest.hostname || (rest.url ? new URL(rest.url).hostname : undefined)
-        const resolvedSkillIds = services.skillEngine.resolveSkillIdsForThread(
+        const resolvedSkillIds = await services.skillEngine.resolveSkillIdsForThread(
           thread_id,
           skillMode,
           userMsg.content,
@@ -238,7 +238,7 @@ export async function handleMessage(
 
         // For auto mode, notify about auto-matched skills
         if (skillMode === "auto") {
-          const matched = services.skillEngine.matchSkills(userMsg.content)
+          const matched = await services.skillEngine.matchSkills(userMsg.content)
           const domainMatches = matched.filter(m => m.confidence >= 20)
           if (domainMatches.length > 0) {
             session.sendToExtension({ type: "skill.auto_matched", skills: domainMatches })

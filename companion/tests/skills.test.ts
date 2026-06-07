@@ -523,7 +523,7 @@ test("skill-engine: matchSkills returns relevant skills sorted", async () => {
 
   const { SkillEngine } = await import("../src/skills/skill-engine")
   const engine = new SkillEngine()
-  const matches = engine.matchSkills("how do I browse the web")
+  const matches = await engine.matchSkills("how do I browse the web")
   
   assert.ok(matches.length > 0, "should return at least one match")
   assert.ok(matches.length <= 3, "should return max 3 matches")
@@ -541,7 +541,7 @@ test("skill-engine: matchSkills returns empty for irrelevant query", async () =>
 
   const { SkillEngine } = await import("../src/skills/skill-engine")
   const engine = new SkillEngine()
-  const matches = engine.matchSkills("xyz abc 123 irrelevant")
+  const matches = await engine.matchSkills("xyz abc 123 irrelevant")
   
   assert.equal(matches.length, 0)
 })
@@ -1459,7 +1459,7 @@ test("skill-engine: matchSkills handles empty skills cache", async () => {
   const engine = new SkillEngine()
 
   // Explicitly test empty scenario
-  const matches = engine.matchSkills("any query here")
+  const matches = await engine.matchSkills("any query here")
 
   assert.equal(matches.length, 0)
   assert.ok(Array.isArray(matches))
@@ -1483,7 +1483,7 @@ test("skill-engine: matchSkills returns empty after cache refresh with no skills
   engine.refresh()
 
   // Now cache should be empty
-  const matches = engine.matchSkills("query")
+  const matches = await engine.matchSkills("query")
   assert.equal(matches.length, 0)
 })
 
@@ -1541,7 +1541,7 @@ test("skill-engine: resolveSkillIdsForThread manual mode returns only active ski
   const engine = new SkillEngine()
   engine.activate("thread-manual", "skill-a")
 
-  const result = engine.resolveSkillIdsForThread("thread-manual", "manual")
+  const result = await engine.resolveSkillIdsForThread("thread-manual", "manual")
   assert.deepEqual(result, ["skill-a"])
 })
 
@@ -1557,7 +1557,7 @@ test("skill-engine: resolveSkillIdsForThread all mode returns non-knowledge skil
   const { SkillEngine } = await import("../src/skills/skill-engine")
   const engine = new SkillEngine()
 
-  const result = engine.resolveSkillIdsForThread("thread-all", "all")
+  const result = await engine.resolveSkillIdsForThread("thread-all", "all")
   assert.ok(result.includes("skill-a"), "should include prompt_template skill")
   assert.ok(result.includes("skill-b"), "should include tool_chain skill")
   assert.ok(!result.includes("site-skill"), "should exclude site_knowledge")
@@ -1576,7 +1576,7 @@ test("skill-engine: resolveSkillIdsForThread auto mode merges active, matched, a
   const engine = new SkillEngine()
   engine.activate("thread-auto", "browse-skill")
 
-  const result = engine.resolveSkillIdsForThread("thread-auto", "auto", "how do I browse the web", "example.com")
+  const result = await engine.resolveSkillIdsForThread("thread-auto", "auto", "how do I browse the web", "example.com")
   assert.ok(result.includes("browse-skill"), "should include active skill")
   assert.ok(result.includes("site-skill"), "should include site-matched skill")
   // code-skill should not match "browse the web"
@@ -1593,7 +1593,7 @@ test("skill-engine: resolveSkillIdsForThread auto mode defaults when mode is und
   const engine = new SkillEngine()
   engine.activate("thread-default", "browse-skill")
 
-  const result = engine.resolveSkillIdsForThread("thread-default", undefined)
+  const result = await engine.resolveSkillIdsForThread("thread-default", undefined)
   assert.deepEqual(result, ["browse-skill"])
 })
 
@@ -1608,7 +1608,7 @@ test("skill-engine: resolveSkillIdsForThread auto mode deduplicates skills", asy
   engine.activate("thread-dedup", "browse-skill")
 
   // browse-skill is both active and will match "browse the web"
-  const result = engine.resolveSkillIdsForThread("thread-dedup", "auto", "how do I browse the web")
+  const result = await engine.resolveSkillIdsForThread("thread-dedup", "auto", "how do I browse the web")
   const occurrences = result.filter(name => name === "browse-skill").length
   assert.equal(occurrences, 1, "should not duplicate skills")
 })

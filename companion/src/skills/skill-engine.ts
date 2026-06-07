@@ -3,6 +3,7 @@
 import * as fs from "fs"
 import * as path from "path"
 import * as os from "os"
+import OpenAI from "openai"
 import { tokenize, tokensToVec, cosineSimilarity } from "./semantic-match"
 import matter from "gray-matter"
 import AdmZip from "adm-zip"
@@ -41,17 +42,26 @@ interface Skill extends SkillMeta {
   content: string  // markdown body (without frontmatter)
 }
 
+interface LlmConfig {
+  base_url: string
+  api_key: string
+  model_name: string
+  temperature: number
+}
+
 export class SkillEngine {
   private skillsDir: string
   private builtinDir: string
   private knowledgeDir: string
   private skillsCache: Skill[] = []
   private threadSkillMap: Map<string, string[]> = new Map() // threadId → skill names
+  private llmConfig?: LlmConfig
 
-  constructor() {
+  constructor(llmConfig?: LlmConfig) {
     this.skillsDir = path.join(getConfigDir(), "skills")
     this.builtinDir = path.join(getConfigDir(), "builtin-skills")
     this.knowledgeDir = path.join(getConfigDir(), "knowledge")
+    this.llmConfig = llmConfig
     this.refresh()
   }
 
@@ -218,9 +228,76 @@ export class SkillEngine {
     return skill?.content || null
   }
 
-  /** Match user message against all skill descriptions using TF-IDF + cosine similarity.
-   * Returns skills sorted by confidence, max 3. */
-  matchSkills(message: string): Array<{ name: string; confidence: number }> {
+  /** LLM semantic re-ranking for low-confidence TF-IDF matches.
+   * Sends top candidates to LLM for precise relevance scoring. */
+  private async llmRerank(
+    message: string,
+    candidates: Skill[],
+  ): Promise<Array<{ name: string; confidence: number }>> {
+    if (!this.llmConfig || candidates.length === 0) {
+      return candidates.map(s => ({ name: s.name, confidence: 50 }))
+    }
+
+    const skillList = candidates.map((s, i) =>
+      `${i + 1}. name: ${s.name}, description: ${s.description || "(no description)"}, tags: ${(s.tags || []).join(", ") || "none"}`,
+    ).join("\n")
+
+    const prompt = `You are a skill matching assistant. Given a user message and a list of skills, identify the top 3 most relevant skills.
+
+User message: "${message}"
+
+Available skills:
+${skillList}
+
+Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
+- name must match exactly from the skill list above
+- confidence is 0-100, where 100 means perfectly relevant
+- Only include skills that are truly relevant to the user message
+- Return at most 3 items, sorted by confidence descending`
+
+    try {
+      const client = new OpenAI({
+        baseURL: this.llmConfig.base_url,
+        apiKey: this.llmConfig.api_key || "sk-placeholder",
+        timeout: 15000,
+        maxRetries: 1,
+      })
+
+      const response = await client.chat.completions.create({
+        model: this.llmConfig.model_name,
+        messages: [
+          { role: "system", content: "You are a skill matching assistant. Respond only with valid JSON." },
+          { role: "user", content: prompt },
+        ],
+        temperature: 0.1,
+        max_tokens: 500,
+      })
+
+      const content = response.choices[0]?.message?.content || "[]"
+      const jsonMatch = content.match(/\[[\s\S]*\]/)
+      const parsed = JSON.parse(jsonMatch ? jsonMatch[0] : "[]")
+
+      if (!Array.isArray(parsed)) return []
+
+      const valid = parsed
+        .filter((p: any) => p && typeof p.name === "string" && typeof p.confidence === "number")
+        .map((p: any) => ({
+          name: p.name,
+          confidence: Math.max(0, Math.min(100, Math.round(p.confidence))),
+        }))
+        .sort((a: any, b: any) => b.confidence - a.confidence)
+
+      return valid.slice(0, 3)
+    } catch {
+      // LLM re-ranking failed: gracefully fall back to mid-confidence candidates
+      return candidates.slice(0, 3).map(s => ({ name: s.name, confidence: 50 }))
+    }
+  }
+
+  /** Match user message against all skill descriptions using dual-track strategy:
+   * - High confidence (>= 70%): TF-IDF fast path (millisecond-level)
+   * - Low confidence (< 70%): LLM semantic re-ranking (precise, one-shot) */
+  async matchSkills(message: string): Promise<Array<{ name: string; confidence: number }>> {
     const queryTokens = tokenize(message)
     const queryVec = tokensToVec(queryTokens)
 
@@ -235,19 +312,39 @@ export class SkillEngine {
       }
     }
     results.sort((a, b) => b.confidence - a.confidence)
-    return results.slice(0, 3)
+
+    const topScore = results[0]?.confidence || 0
+
+    // Dual-track: high confidence → TF-IDF fast path
+    if (topScore >= 70) {
+      return results.slice(0, 3)
+    }
+
+    // Low confidence → LLM semantic re-ranking (precise)
+    const candidates = this.skillsCache.filter(s => {
+      const skillText = `${s.name} ${s.description || ""} ${(s.tags || []).join(" ")}`
+      const skillTokens = tokenize(skillText)
+      const skillVec = tokensToVec(skillTokens)
+      const score = cosineSimilarity(queryVec, skillVec)
+      return score > 0.05
+    })
+
+    const llmResults = await this.llmRerank(message, candidates)
+
+    // If LLM returned results, use them; otherwise fall back to TF-IDF
+    return llmResults.length > 0 ? llmResults : results.slice(0, 3)
   }
 
   /** Resolve skill IDs for a thread based on the selection mode.
    * - auto: active ∪ matchSkills(message) ∪ getBySite(hostname)
    * - all: all non-site_knowledge/domain_knowledge skills
    * - manual: active only */
-  resolveSkillIdsForThread(
+  async resolveSkillIdsForThread(
     threadId: string,
     mode?: "auto" | "all" | "manual",
     message?: string,
     hostname?: string,
-  ): string[] {
+  ): Promise<string[]> {
     const resolvedMode = mode || "auto"
 
     if (resolvedMode === "manual") {
@@ -262,7 +359,7 @@ export class SkillEngine {
 
     // auto mode (default)
     const active = this.getActiveForThread(threadId).map(s => s.name)
-    const matched = message ? this.matchSkills(message).map(m => m.name) : []
+    const matched = message ? (await this.matchSkills(message)).map(m => m.name) : []
     const site = hostname ? this.getBySite(hostname).map(s => s.name) : []
     return [...new Set([...active, ...matched, ...site])]
   }

@@ -97,7 +97,7 @@ function logToolFinish(toolCallId: string, toolName: string, startedAt: number, 
 async function initServices() {
   await initDataDir()
   threadManager = new ThreadManager()
-  skillEngine = new SkillEngine()
+  skillEngine = new SkillEngine(getConfig().llm)
   historyStore = new HistoryStore()
   await historyStore.waitReady()
 }
