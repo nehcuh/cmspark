@@ -55,8 +55,9 @@
 ## P2 — 智能
 
 ### 7. Skills 语义匹配 ✅
-- TF-IDF + 余弦相似度（CJK 友好），无外部依赖
-- Ported from VibeSOP `core/matching/`
+- **TF-IDF 快路径**：CJK 友好的 tokenizer + 余弦相似度，毫秒级响应
+- **LLM 精排 Fallback**：当 TF-IDF top 置信度 < 70% 时，自动触发一次 LLM 调用对候选技能进行语义重排序（精确但耗时 ~1-2s）
+- 双轨策略：高置信度走 TF-IDF（快），低置信度走 LLM（准）
 - 用户输入自动匹配技能名+描述，confidence ≥ 15% 自动激活
 - 改动：`semantic-match.ts`(新) + `skill-engine.ts` + `message-router.ts`
 - 状态：[x]

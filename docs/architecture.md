@@ -89,7 +89,7 @@
 | WebSocket 库 | `ws` (Node.js) | 双向通信 |
 | LLM 适配 | OpenAI SDK 兼容 | base_url 可配置，支持任意兼容服务 |
 | 数据库 | better-sqlite3 | SQLite，操作历史存储 |
-| 文件格式 | Markdown + YAML frontmatter | skills 文件格式（兼容 VibeSOP） |
+| 文件格式 | Markdown + YAML frontmatter | skills 文件格式 |
 | 配置存储 | chrome.storage.local + JSON 文件 | extension侧/companion侧分别持久化 |
 
 ### 1.3 通信协议
@@ -127,7 +127,7 @@ User Input → companion → LLM streaming
 Side Panel (React) ──WS──▶ Companion (Core Engine)
                               │
                               ├─ Thread Manager: 加载消息历史，构建 LLM context
-                              ├─ Skill Engine: 匹配/inject 相关 skill prompt
+                              ├─ Skill Engine: 双轨技能匹配（TF-IDF 快路径 + LLM 语义精排）→ inject 相关 skill prompt
                               ├─ LLM Adapter: 构建请求，发送到 LLM API
                               │
                               ▼  LLM Response (streaming)
@@ -387,7 +387,7 @@ cmsspark/
 │   │   │   └── query.ts             # 历史查询
 │   │   ├── config.ts                # 配置管理
 │   │   └── security.ts              # 安全策略（信任域等）
-│   └── builtin-skills/              # 内置 VibeSOP skills
+│   └── builtin-skills/              # 内置 skills
 │       ├── writing-skills.md
 │       ├── grill-me.md
 │       └── browse.md

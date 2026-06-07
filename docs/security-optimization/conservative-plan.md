@@ -161,7 +161,7 @@
 | `companion/src/history/store.ts` | 新增 `security_audit` 表：`id, thread_id, timestamp, tool_name, code_hash, defense_layer, decision, user_ip, risk_level` |
 | `companion/src/skills/skill-engine.ts` | 1) `buildSystemPrompt` 强制注入 `safety-guard` 技能（不可通过配置关闭）；2) 安全技能标记 `immutable: true, builtin: true` |
 | `companion/src/skills/content-sanitizer.ts` | 1) 正则模式从 24 个扩充至 48 个；2) 新增 HTML-specific 注入模式检测（`<script>`, `onerror=`, `javascript:`）；3) 增加 `sanitizePageContent()` 函数 |
-| `chrome-extension/src/background/browser-bridge.ts` | 1) `evaluate` 方法：Extension 侧危险 API 检测与 Companion 侧保持一致（消除重复代码通过共享配置文件）；2) 执行前调用 `PageSanitizer.sanitize()`；3) 任何危险 API 都必须有 Token，无 Token 直接阻断 |
+| `chrome-extension/src/background/browser-bridge.ts` | 1) `evaluate` 方法：Extension 侧危险 API 检测与 Companion 侧保持一致；2) 执行前调用 `PageSanitizer.sanitize()`；3) 无 Token 直接阻断；4) **Token 由 Companion 签发并验证，Extension 信任 Companion 的 token（不再本地 HMAC 校验）** |
 | `chrome-extension/src/background/index.ts` | 1) 初始化 Page Sanitizer；2) 将安全审计事件转发到 Companion |
 | `chrome-extension/src/sidepanel/App.tsx` | 1) `SecurityConfirmationDialog` 全面升级：红色边框、危险 API 加粗红色、代码预览语法高亮、无"总是允许"选项、显示触发防御层信息；2) 集成 `AuditLogViewer`（只读） |
 | `chrome-extension/src/sidepanel/store/agentStore.tsx` | 新增 state: `securityAuditLog`（只读，从 Companion 拉取）、`currentDefenseLayer` |

@@ -108,7 +108,7 @@
 
 ### 2.1 CLAUDE.md 充实
 
-当前 CLAUDE.md 只有 VibeSOP 路由模板，需填入：
+当前 CLAUDE.md 路由部分需持续更新：
 
 ```markdown
 ## Project Overview

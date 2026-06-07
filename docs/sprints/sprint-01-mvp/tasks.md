@@ -621,7 +621,7 @@
 | **状态** | pending |
 
 **描述**:
-- 从 VibeSOP skills 目录精选 skill 文件复制到 companion `builtin-skills/`
+- 从 workflows/ 和现有 skill 模板中精选文件复制到 companion `builtin-skills/`
 - 初始精选：
   - `writing-skills.md` — Skill 创建方法论
   - `grill-me.md` — 设计审查对话

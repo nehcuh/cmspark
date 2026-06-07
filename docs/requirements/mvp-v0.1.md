@@ -194,11 +194,11 @@
 - Skill prompt 注入 system prompt
 - Skill 可按名称搜索、预览
 
-### R9.3 Builtin Skills（VibeSOP 精选）
+### R9.3 Builtin Skills（内置精选）
 - `writing-skills`: Skill 创建方法论（为"保存对话为 skill"提供能力基础）
 - `grill-me`: 设计审查对话
 - `browse`: 页面操作参考
-- 其他精选 VibeSOP skills
+- 其他内置 skills
 
 ### R9.4 Skill 导入导出
 - 单个 skill 导出为 .md 文件

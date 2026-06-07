@@ -181,7 +181,7 @@ LLM → tool_call → Risk Scorer (0-10分, <10ms)
 | `companion/src/threads/thread-manager.ts` | 启用 `tool_whitelist` 检查；新增 `privilege_mode_override` |
 | `companion/src/skills/skill-engine.ts` | `buildSystemPrompt` 强制注入 safety-guard (immutable) |
 | `companion/src/skills/content-sanitizer.ts` | 扩充至 48 个正则；新增 HTML 注入模式；增加 `sanitizePageContent()` |
-| `chrome-extension/src/background/browser-bridge.ts` | evaluate 前调用 Page Sanitizer；Token 严格验证 |
+| `chrome-extension/src/background/browser-bridge.ts` | evaluate 前调用 Page Sanitizer；危险 API 检测；信任 Companion 签发的 security_token（Extension 不再做 HMAC 二次验证） |
 | `chrome-extension/src/sidepanel/App.tsx` | 安全确认弹窗标红；代码语法高亮；无"总是允许"选项 |
 | `chrome-extension/src/sidepanel/store/agentStore.tsx` | 新增 `privilegeMode`, `securityAuditLog` |
 | `chrome-extension/src/sidepanel/components/SettingsSlideout.tsx` | 安全设置分组：特权模式、安全技能开关、审计日志入口 |

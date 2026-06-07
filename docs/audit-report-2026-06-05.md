@@ -194,48 +194,54 @@
 
 ## 三、companion/skills 模块审计
 
-**审计文件**: `skill-engine.ts` (610 行), `semantic-match.ts` (97 行), `skill-craft.ts` (267 行)
+**审计文件**: `skill-engine.ts` (~860 行), `semantic-match.ts` (97 行), `skill-craft.ts` (267 行)
+
+> **注**: skill-engine.ts 行数因新增 OpenAI 导入、LlmConfig 接口、双轨匹配逻辑（`llmRerank` + `async matchSkills`）而大幅增加。
 
 ### P0 问题（4个）
 
 #### 1. 同步 I/O 阻塞
 - **位置**: skill-engine.ts 全文件
+- **状态**: ❌ **未修复**
 - **描述**: `refresh()`、`loadFromDir()`、`saveSkillFile()`、`importSkill()` 等全部使用 `fs.*Sync` API。技能激活路径上（`activate`→`getActiveForThread`→`new ThreadManager()`）也会触发文件 I/O。
 - **影响**: 与 ThreadManager 相同的阻塞问题，在高频 chat 中加剧。
 - **建议**: 全模块迁移异步 I/O；缓存技能内容避免重复读取。
 
-#### 2. 路径遍历风险
-- **位置**: skill-engine.ts:477-478
-- **描述**: `importSkillFromPath(dirPath)` 未验证 `dirPath` 是否包含 `..`。
-- **影响**: 可能读取任意目录下的 SKILL.md。
-- **建议**: 对 `dirPath` 做 `path.resolve` 后验证是否在允许的基目录下。
+#### 2. 路径遍历风险 ✅ **已修复**
+- **位置**: skill-engine.ts:739-748 (`importSkillFromPath`)
+- **描述**: ~~`importSkillFromPath(dirPath)` 未验证 `dirPath` 是否包含 `..`。~~
+- **当前状态**: 已添加 `path.resolve` + `startsWith(configDir)` 双重验证，阻止目录遍历。
+- **影响**: ~~可能读取任意目录下的 SKILL.md。~~ 已缓解。
 
-#### 3. ZIP 路径遍历检查不完整
-- **位置**: skill-engine.ts:460-462
-- **描述**: `resolvedPath.startsWith(destDir)` 检查可能因缺少尾部斜杠被绕过。且 `relativePath.includes("/")` 允许创建任意子目录。
-- **影响**: ZIP 中的恶意条目可能写入 skills 目录外。
-- **建议**: 规范化路径后比较；限制 ZIP 中只包含一层子目录。
+#### 3. ZIP 路径遍历检查 ✅ **已修复**
+- **位置**: skill-engine.ts:716-724 (`importSkillFolder`)
+- **描述**: ~~`resolvedPath.startsWith(destDir)` 检查可能因缺少尾部斜杠被绕过。~~
+- **当前状态**: 已添加 `path.normalize` + `path.isAbsolute` + `".."` 检测 + `resolvedPath.startsWith(normalizedDest + path.sep)` 多重防护。
+- **影响**: ~~ZIP 中的恶意条目可能写入 skills 目录外。~~ 已缓解。
 
-#### 4. YAML 注入 / 格式破坏
-- **位置**: skill-engine.ts:306-336
-- **描述**: `saveSkillFile` 直接将 `skill.name`、`skill.description`、`entry.content` 拼接到 YAML 字符串。如果这些字段包含 `"`、`\n`、`: ` 等字符，会破坏 YAML 结构。
-- **影响**: 技能文件损坏，加载时解析失败。
-- **建议**: 使用 YAML 库（如 `js-yaml.dump`）序列化 frontmatter，而非字符串拼接。
+#### 4. YAML 注入 / 格式破坏 ✅ **已修复**
+- **位置**: skill-engine.ts:564-591 (`saveSkillFile`)
+- **描述**: ~~`saveSkillFile` 直接将字段拼接到 YAML 字符串。~~
+- **当前状态**: 已改用 `js-yaml.dump(frontmatter, { quotingType: '"' })` 安全序列化，完全避免字符串拼接导致的 YAML 注入。
+- **影响**: ~~技能文件损坏，加载时解析失败。~~ 已修复。
 
 ### P1 问题（5个）
 
 #### 5. getActiveForThread 每次创建 ThreadManager
-- **位置**: skill-engine.ts:186-199
+- **位置**: skill-engine.ts:210-226
+- **状态**: ❌ **未修复**
 - **描述**: 每次调用都 `new ThreadManager()`，触发文件 I/O 和索引加载。
 - **建议**: 通过构造函数注入 ThreadManager 实例。
 
 #### 6. threadSkillMap 内存泄漏
-- **位置**: skill-engine.ts:45
+- **位置**: skill-engine.ts:52-57
+- **状态**: ❌ **未修复**
 - **描述**: 线程删除时未清理对应的技能映射。
 - **建议**: 监听线程删除事件或提供 cleanup 方法。
 
 #### 7. safeName 冲突
-- **位置**: skill-engine.ts:408, 437, 516
+- **位置**: skill-engine.ts:663, 692, 746
+- **状态**: ❌ **未修复**
 - **描述**: 多个不同名称 sanitize 后可能相同（如 "skill-1" 和 "skill_1" 都变成 "skill-1"），导致覆盖。
 - **建议**: 添加数字后缀处理冲突。
 
@@ -248,6 +254,30 @@
 - **位置**: skill-craft.ts:129-136
 - **描述**: LLM 响应可能超长，消耗大量 token。
 - **建议**: 设置 `max_tokens` 限制。
+
+### 本次变更新增问题（3个）
+
+#### 10. SkillEngine 引入网络依赖（P1）
+- **位置**: skill-engine.ts:258-295 (`llmRerank`)
+- **状态**: ⚠️ **新增**
+- **描述**: `matchSkills()` 在 TF-IDF 低置信度时自动调用 OpenAI API。这引入了网络依赖到技能匹配关键路径，可能导致：
+  - 延迟：LLM 调用增加 1-3s 匹配时间
+  - 失败：网络/LLM 不可用时回退到 confidence=50 的粗糙结果
+  - 成本：每次低置信度匹配消耗额外 token
+- **建议**: 考虑添加本地 embedding fallback；或缓存常见查询的 LLM 重排结果。
+
+#### 11. matchSkills 异步化破坏同步调用链（P1）
+- **位置**: skill-engine.ts:300 (`async matchSkills`)
+- **状态**: ⚠️ **新增**
+- **描述**: `matchSkills()` 从同步改为 async，`resolveSkillIdsForThread()` 也随之 async 化。所有调用方必须加 `await`。
+- **风险**: 遗漏 await 会导致返回 Promise 而非结果数组，引发运行时类型错误。
+- **建议**: 已在 `message-router.ts` 和 `tests/skills.test.ts` 中同步修复。建议添加 ESLint `@typescript-eslint/no-floating-promises` 规则防止遗漏。
+
+#### 12. security-token.ts 废弃但未清理（P2）
+- **位置**: `chrome-extension/src/background/security-token.ts`
+- **状态**: ⚠️ **新增**
+- **描述**: Extension 端的 HMAC token 验证逻辑已失效（`sharedSecret` 永为 null），但文件仍存在。`browser-bridge.ts` 已移除对其调用。
+- **建议**: 删除 `security-token.ts` 及 `setSecuritySecret` 相关代码；或保留为向后兼容但标记 `@deprecated`。
 
 ### P2 问题（4个）
 
