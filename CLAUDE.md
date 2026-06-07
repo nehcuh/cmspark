@@ -2,17 +2,19 @@
 
 > **Project-level CLAUDE.md** — highest priority in Claude Code
 
-## VibeSOP Routing
+## Dynamic Workflow Routing
 
-All non-trivial tasks must be routed:
+All non-trivial tasks are routed through the `workflows/` directory:
 
-```bash
-vibe route "<user_request>"
-```
+1.  **Analyze** the user request to determine the task type
+2.  **Match** against available Workflow templates in `workflows/`
+3.  **Execute** the matched Workflow following its phases
 
-Then read `skills/<matched-skill>/SKILL.md` and follow its steps.
+Available Workflow categories:
+- `workflows/bridge-*.ts` — bridge/ module fixes and reviews
+- `workflows/dev-router.ts` — development task routing (bug-fix / feature / refactor / review)
 
-For override protocol: read `docs/routing-protocol.md` in global config.
+For custom workflows: create a new `.ts` file in `workflows/` following the `meta` + phase function pattern.
 
 ## Project-Specific Context
 
@@ -64,7 +66,7 @@ Chrome Extension (Plasmo + React)  ←→  WebSocket (ws://127.0.0.1:23401)  ←
 - **A2. 通信协议**：WebSocket + OpenAI-compatible streaming，异步 tool 回路 (Promise bridge)
 - **A3. 数据目录**：~/.cmspark-agent/ 统一管理配置、技能、线程、历史
 - **A4. 安全**：Cookie 信任域通配符 + evaluate/osascript 执行前阻断 + 错误三级分类
-- **A5. Skill 格式**：Markdown + YAML frontmatter（兼容 VibeSOP），支持内置技能
+- **A5. Skill 格式**：Markdown + YAML frontmatter，支持内置技能
 
 ## Common Issues
 
