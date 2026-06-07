@@ -106,7 +106,16 @@ function AppContent() {
       <SettingsSlideout />
       <SecurityConfirmationDialog />
       {craftOpen && <SkillCraftPanel onClose={() => setCraftOpen(false)} />}
-      <DisconnectedOverlay visible={connectionState === "disconnected"} />
+      <DisconnectedBanner visible={connectionState === "disconnected"} onRetry={() => {
+        chrome.runtime.sendMessage({ type: "getStatus" }, (response) => {
+          if (chrome.runtime.lastError) return
+          if (response?.connectionState === "disconnected") {
+            // Trigger a manual reconnect attempt by reloading the extension context
+            // or prompting the user to wait for auto-reconnect
+            alert("正在尝试重新连接...\n如果 Companion 已启动，连接将自动恢复。")
+          }
+        })
+      }} />
     </div>
   )
 }
@@ -452,21 +461,49 @@ function InputArea() {
   )
 }
 
-function DisconnectedOverlay({ visible }: { visible: boolean }) {
+function DisconnectedBanner({ visible, onRetry }: { visible: boolean; onRetry: () => void }) {
   if (!visible) return null
+
+  const handleOpenLogs = () => {
+    // Try to open logs directory via native messaging or show instructions
+    const logsPath = "~/.cmspark-agent/logs/"
+    if (typeof chrome !== "undefined" && chrome.runtime?.sendNativeMessage) {
+      // Attempt to open via a native host if available; otherwise fallback
+      try {
+        chrome.runtime.sendNativeMessage(
+          "com.cmspark.agent",
+          { action: "open_directory", path: logsPath },
+          (response) => {
+            if (chrome.runtime.lastError) {
+              // Native host not available — show fallback
+              alert(`请手动打开日志目录：\n${logsPath}`)
+            }
+          }
+        )
+      } catch {
+        alert(`请手动打开日志目录：\n${logsPath}`)
+      }
+    } else {
+      alert(`请手动打开日志目录：\n${logsPath}`)
+    }
+  }
+
   return (
-    <div style={styles.overlay}>
-      <div style={styles.overlayContent}>
-        <div style={styles.overlayIcon}>🔌</div>
-        <h3 style={styles.overlayTitle}>Companion 未连接</h3>
-        <p style={styles.overlayText}>请运行以下命令启动 companion：</p>
-        <code style={styles.overlayCode}>cmspark-agent start</code>
-        <button
-          style={styles.copyBtn}
-          onClick={() => navigator.clipboard.writeText("cmspark-agent start")}
-        >
-          复制命令
-        </button>
+    <div style={bannerStyles.container}>
+      <div style={bannerStyles.icon}>⚠️</div>
+      <div style={bannerStyles.content}>
+        <h3 style={bannerStyles.title}>Companion 未连接</h3>
+        <p style={bannerStyles.text}>
+          请通过菜单栏启动 Companion，或检查守护进程状态。
+        </p>
+        <div style={bannerStyles.actions}>
+          <button style={bannerStyles.primaryBtn} onClick={onRetry}>
+            重新连接
+          </button>
+          <button style={bannerStyles.secondaryBtn} onClick={handleOpenLogs}>
+            查看日志
+          </button>
+        </div>
       </div>
     </div>
   )
@@ -588,51 +625,6 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: "pointer",
     fontSize: 14,
     flexShrink: 0,
-  },
-  overlay: {
-    position: "absolute" as const,
-    inset: 0,
-    background: "rgba(255,255,255,0.95)",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    zIndex: 100,
-  },
-  overlayContent: {
-    textAlign: "center" as const,
-    padding: 24,
-  },
-  overlayIcon: {
-    fontSize: 36,
-    marginBottom: 12,
-  },
-  overlayTitle: {
-    fontSize: 16,
-    fontWeight: 600,
-    marginBottom: 8,
-  },
-  overlayText: {
-    color: "#666",
-    marginBottom: 8,
-  },
-  overlayCode: {
-    display: "block",
-    background: "#f5f5f5",
-    padding: "8px 14px",
-    borderRadius: 6,
-    fontSize: 12,
-    fontFamily: "monospace",
-    marginBottom: 12,
-  },
-  copyBtn: {
-    padding: "6px 16px",
-    borderRadius: 6,
-    border: "1px solid #4A90D9",
-    background: "#fff",
-    color: "#4A90D9",
-    cursor: "pointer",
-    fontSize: 12,
-    fontWeight: 500,
   },
   securityOverlay: {
     position: "absolute" as const,
@@ -764,6 +756,65 @@ const toastStyles: Record<string, React.CSSProperties> = {
     position: "fixed" as const, top: 48, left: 8, right: 8,
     background: "#4A90D9", color: "#fff", padding: "6px 12px",
     borderRadius: 6, fontSize: 12, zIndex: 300,
+  },
+}
+
+const bannerStyles: Record<string, React.CSSProperties> = {
+  container: {
+    display: "flex",
+    alignItems: "flex-start",
+    gap: 10,
+    padding: "12px 14px",
+    background: "#FFF8E1",
+    borderBottom: "1px solid #FFE082",
+    flexShrink: 0,
+    fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+  },
+  icon: {
+    fontSize: 20,
+    lineHeight: 1,
+    flexShrink: 0,
+    marginTop: 2,
+  },
+  content: {
+    flex: 1,
+    minWidth: 0,
+  },
+  title: {
+    margin: "0 0 4px",
+    fontSize: 13,
+    fontWeight: 600,
+    color: "#5D4037",
+  },
+  text: {
+    margin: "0 0 10px",
+    fontSize: 12,
+    color: "#795548",
+    lineHeight: 1.45,
+  },
+  actions: {
+    display: "flex",
+    gap: 8,
+  },
+  primaryBtn: {
+    padding: "5px 12px",
+    borderRadius: 5,
+    border: "none",
+    background: "#4A90D9",
+    color: "#fff",
+    cursor: "pointer",
+    fontSize: 12,
+    fontWeight: 500,
+  },
+  secondaryBtn: {
+    padding: "5px 12px",
+    borderRadius: 5,
+    border: "1px solid #ccc",
+    background: "#fff",
+    color: "#555",
+    cursor: "pointer",
+    fontSize: 12,
+    fontWeight: 500,
   },
 }
 

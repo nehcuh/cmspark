@@ -12,6 +12,11 @@ let browserBridge: BrowserBridge
 let keepAlive: KeepAlive
 type LogLevel = "debug" | "info" | "warn" | "error"
 
+const NOTIFICATION_ID = "cmspark-companion-disconnected"
+const DISCONNECT_DEBOUNCE_MS = 3000
+let disconnectNotificationTimer: ReturnType<typeof setTimeout> | null = null
+let lastNotifiedState: "connected" | "disconnected" | null = null
+
 function logToCompanion(level: LogLevel, event: string, data: Record<string, unknown> = {}) {
   try {
     if (wsClient?.getState() === "connected") {
@@ -22,6 +27,51 @@ function logToCompanion(level: LogLevel, event: string, data: Record<string, unk
   }
 }
 
+function showDisconnectedNotification() {
+  if (lastNotifiedState === "disconnected") return
+  lastNotifiedState = "disconnected"
+
+  try {
+    chrome.notifications.create(NOTIFICATION_ID, {
+      type: "basic",
+      iconUrl: chrome.runtime.getURL("icon128.png"),
+      title: "CMspark Agent 未运行",
+      message: "Companion 守护进程未启动，请点击菜单栏图标启动",
+      priority: 1,
+    })
+  } catch {
+    // Notifications may fail in some contexts; ignore gracefully.
+  }
+}
+
+function clearDisconnectedNotification() {
+  if (lastNotifiedState === "connected") return
+  lastNotifiedState = "connected"
+
+  try {
+    chrome.notifications.clear(NOTIFICATION_ID)
+  } catch {
+    // Ignore clear failures.
+  }
+}
+
+function scheduleDisconnectNotification() {
+  if (disconnectNotificationTimer) return
+  disconnectNotificationTimer = setTimeout(() => {
+    disconnectNotificationTimer = null
+    if (wsClient?.getState() === "disconnected") {
+      showDisconnectedNotification()
+    }
+  }, DISCONNECT_DEBOUNCE_MS)
+}
+
+function cancelDisconnectNotification() {
+  if (disconnectNotificationTimer) {
+    clearTimeout(disconnectNotificationTimer)
+    disconnectNotificationTimer = null
+  }
+}
+
 function init() {
   browserBridge = new BrowserBridge(pageSanitizer)
   keepAlive = new KeepAlive()
@@ -29,12 +79,23 @@ function init() {
   wsClient = new WSClient({
     url: "ws://127.0.0.1:23401",
     onMessage: handleCompanionMessage,
-    onStateChange: updateBadge,
+    onStateChange: handleStateChange,
   })
 
   wsClient.connect()
   keepAlive.start(() => wsClient.ping())
   setupMessageHandlers()
+}
+
+function handleStateChange(state: "connected" | "connecting" | "disconnected") {
+  updateBadge(state)
+
+  if (state === "disconnected") {
+    scheduleDisconnectNotification()
+  } else if (state === "connected") {
+    cancelDisconnectNotification()
+    clearDisconnectedNotification()
+  }
 }
 
 // --- Badge ---
