@@ -14,6 +14,7 @@ interface Thread {
   pinned_tabs: number[]
   active_skill_ids: string[]
   skill_selection_mode?: "auto" | "all" | "manual"
+  knowledge_selection_mode?: "auto" | "all" | "manual"
 }
 
 // Allowed config_override keys and their expected types
@@ -160,6 +161,7 @@ export class ThreadManager {
       pinned_tabs: [],
       active_skill_ids: ["browse"],
       skill_selection_mode: "auto",
+      knowledge_selection_mode: "auto",
     }
 
     this.index.threads.unshift(thread)
@@ -186,6 +188,9 @@ export class ThreadManager {
     if (thread && !thread.skill_selection_mode) {
       thread.skill_selection_mode = "auto"
     }
+    if (thread && !thread.knowledge_selection_mode) {
+      thread.knowledge_selection_mode = "auto"
+    }
     return thread
   }
 
@@ -205,6 +210,13 @@ export class ThreadManager {
       const validModes = ["auto", "all", "manual"]
       if (!validModes.includes(updates.skill_selection_mode)) {
         throw new Error(`Invalid skill_selection_mode: ${updates.skill_selection_mode}. Must be one of ${validModes.join(", ")}`)
+      }
+    }
+    // Validate knowledge_selection_mode if being updated
+    if (updates.knowledge_selection_mode !== undefined) {
+      const validModes = ["auto", "all", "manual"]
+      if (!validModes.includes(updates.knowledge_selection_mode)) {
+        throw new Error(`Invalid knowledge_selection_mode: ${updates.knowledge_selection_mode}. Must be one of ${validModes.join(", ")}`)
       }
     }
     Object.assign(thread, updates, { updated_at: new Date().toISOString() })

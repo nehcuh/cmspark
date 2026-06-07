@@ -23,6 +23,8 @@ export interface AgentState {
   autoSkillNames: string
   knowledgeDocs: KnowledgeMeta[]
   skillSelectionMode: SkillSelectionMode
+  knowledgeSelectionMode: "auto" | "all" | "manual"
+  activeKnowledgeIds: string[]
 }
 
 export type AgentAction =
@@ -54,6 +56,8 @@ export type AgentAction =
   | { type: "SET_AUTO_SKILLS"; names: string }
   | { type: "SET_KNOWLEDGE_DOCS"; docs: KnowledgeMeta[] }
   | { type: "SET_SKILL_SELECTION_MODE"; mode: SkillSelectionMode }
+  | { type: "SET_KNOWLEDGE_SELECTION_MODE"; mode: "auto" | "all" | "manual" }
+  | { type: "TOGGLE_KNOWLEDGE"; knowledgeId: string }
 export const initialState: AgentState = {
   connectionState: "disconnected",
   threads: [],
@@ -81,6 +85,8 @@ export const initialState: AgentState = {
   autoSkillNames: "",
   knowledgeDocs: [],
   skillSelectionMode: "auto",
+  knowledgeSelectionMode: "auto",
+  activeKnowledgeIds: [],
 }
 
 export function agentReducer(state: AgentState, action: AgentAction): AgentState {
@@ -99,6 +105,7 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         pinnedTabIds: nextActiveThread?.pinned_tabs || [],
         activeSkillIds: nextActiveThread?.active_skill_ids || [],
         skillSelectionMode: nextActiveThread?.skill_selection_mode || "auto",
+        knowledgeSelectionMode: nextActiveThread?.knowledge_selection_mode || "auto",
       }
     }
     case "SET_ACTIVE_THREAD": {
@@ -111,6 +118,7 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         pinnedTabIds: activeThread?.pinned_tabs || [],
         activeSkillIds: activeThread?.active_skill_ids || [],
         skillSelectionMode: activeThread?.skill_selection_mode || "auto",
+        knowledgeSelectionMode: activeThread?.knowledge_selection_mode || "auto",
       }
     }
     case "ADD_MESSAGE":
@@ -238,6 +246,15 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       return { ...state, knowledgeDocs: action.docs }
     case "SET_SKILL_SELECTION_MODE":
       return { ...state, skillSelectionMode: action.mode }
+    case "SET_KNOWLEDGE_SELECTION_MODE":
+      return { ...state, knowledgeSelectionMode: action.mode }
+    case "TOGGLE_KNOWLEDGE":
+      return {
+        ...state,
+        activeKnowledgeIds: state.activeKnowledgeIds.includes(action.knowledgeId)
+          ? state.activeKnowledgeIds.filter(id => id !== action.knowledgeId)
+          : [...state.activeKnowledgeIds, action.knowledgeId],
+      }
     default:
       return state
   }

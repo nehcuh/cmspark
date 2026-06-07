@@ -14,6 +14,7 @@ export interface Thread {
   pinned_tabs: number[]
   active_skill_ids: string[]
   skill_selection_mode?: SkillSelectionMode
+  knowledge_selection_mode?: "auto" | "all" | "manual"
 }
 
 export interface LogEntry {

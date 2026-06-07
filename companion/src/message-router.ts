@@ -101,16 +101,24 @@ export async function handleMessage(
       abortControllers.set(rest.thread_id, controller)
 
       try {
-        // Get thread to determine skill selection mode
+        // Get thread to determine skill and knowledge selection modes
         const thread = services.threadManager.get(rest.thread_id)
-        const mode = thread?.skill_selection_mode || "auto"
+        const skillMode = thread?.skill_selection_mode || "auto"
+        const knowledgeMode = thread?.knowledge_selection_mode || "auto"
 
         // Resolve skill IDs based on mode
         const currentHostname = rest.hostname || (rest.url ? new URL(rest.url).hostname : undefined)
         const resolvedSkillIds = services.skillEngine.resolveSkillIdsForThread(
           rest.thread_id,
-          mode,
+          skillMode,
           rest.message,
+          currentHostname,
+        )
+
+        // Resolve knowledge IDs based on mode
+        const resolvedKnowledgeIds = services.skillEngine.resolveKnowledgeIdsForThread(
+          rest.thread_id,
+          knowledgeMode,
           currentHostname,
         )
 
@@ -118,7 +126,7 @@ export async function handleMessage(
         const allSkillIds = [...new Set([...resolvedSkillIds, ...(rest.skill_ids || [])])]
 
         // For auto mode, notify about auto-matched skills
-        if (mode === "auto") {
+        if (skillMode === "auto") {
           const matched = services.skillEngine.matchSkills(rest.message)
           const domainMatches = matched.filter(m => m.confidence >= 20)
           if (domainMatches.length > 0) {
@@ -133,6 +141,7 @@ export async function handleMessage(
           threadId: rest.thread_id,
           message: rest.message,
           skillIds: allSkillIds,
+          knowledgeIds: resolvedKnowledgeIds,
           config: config.llm,
           threadManager: services.threadManager,
           skillEngine: services.skillEngine,
@@ -203,16 +212,24 @@ export async function handleMessage(
       abortControllers.set(thread_id, controller)
 
       try {
-        // Get thread to determine skill selection mode
+        // Get thread to determine skill and knowledge selection modes
         const thread = services.threadManager.get(thread_id)
-        const mode = thread?.skill_selection_mode || "auto"
+        const skillMode = thread?.skill_selection_mode || "auto"
+        const knowledgeMode = thread?.knowledge_selection_mode || "auto"
 
         // Resolve skill IDs based on mode
         const currentHostname = rest.hostname || (rest.url ? new URL(rest.url).hostname : undefined)
         const resolvedSkillIds = services.skillEngine.resolveSkillIdsForThread(
           thread_id,
-          mode,
+          skillMode,
           userMsg.content,
+          currentHostname,
+        )
+
+        // Resolve knowledge IDs based on mode
+        const resolvedKnowledgeIds = services.skillEngine.resolveKnowledgeIdsForThread(
+          thread_id,
+          knowledgeMode,
           currentHostname,
         )
 
@@ -220,7 +237,7 @@ export async function handleMessage(
         const allSkillIds = [...new Set([...resolvedSkillIds, ...(rest.skill_ids || [])])]
 
         // For auto mode, notify about auto-matched skills
-        if (mode === "auto") {
+        if (skillMode === "auto") {
           const matched = services.skillEngine.matchSkills(userMsg.content)
           const domainMatches = matched.filter(m => m.confidence >= 20)
           if (domainMatches.length > 0) {
@@ -232,6 +249,7 @@ export async function handleMessage(
           threadId: thread_id,
           message: userMsg.content,
           skillIds: allSkillIds,
+          knowledgeIds: resolvedKnowledgeIds,
           config: config.llm,
           threadManager: services.threadManager,
           skillEngine: services.skillEngine,
@@ -297,7 +315,7 @@ export async function handleMessage(
       if (!rest.thread_id) return { type: "error", error: "thread_id required" }
       const allowedUpdates: Record<string, any> = {}
       const updates = rest.updates || {}
-      for (const key of ["alias", "config_override", "tool_whitelist", "pinned_tabs", "active_skill_ids", "skill_selection_mode"]) {
+      for (const key of ["alias", "config_override", "tool_whitelist", "pinned_tabs", "active_skill_ids", "skill_selection_mode", "knowledge_selection_mode"]) {
         if (Object.prototype.hasOwnProperty.call(updates, key)) {
           allowedUpdates[key] = updates[key]
         }

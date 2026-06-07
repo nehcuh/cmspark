@@ -260,12 +260,47 @@ export class SkillEngine {
     return [...new Set([...active, ...matched, ...site])]
   }
 
+  /** Get active knowledge (site_knowledge/domain_knowledge) for a thread.
+   * Reads from thread's active_skill_ids that match knowledge types. */
+  getActiveKnowledgeForThread(threadId: string): Skill[] {
+    const active = this.getActiveForThread(threadId)
+    return active.filter(s => s.type === "site_knowledge" || s.type === "domain_knowledge")
+  }
+
+  /** Resolve knowledge IDs for a thread based on the selection mode.
+   * - auto: activeKnowledge ∪ getBySite(hostname)  (union, deduped)
+   * - all: all site_knowledge / domain_knowledge names
+   * - manual: activeKnowledge only (pure user selection) */
+  resolveKnowledgeIdsForThread(
+    threadId: string,
+    mode?: "auto" | "all" | "manual",
+    hostname?: string,
+  ): string[] {
+    const resolvedMode = mode || "auto"
+
+    if (resolvedMode === "manual") {
+      return this.getActiveKnowledgeForThread(threadId).map(s => s.name)
+    }
+
+    if (resolvedMode === "all") {
+      return this.skillsCache
+        .filter(s => s.type === "site_knowledge" || s.type === "domain_knowledge")
+        .map(s => s.name)
+    }
+
+    // auto mode (default)
+    const active = this.getActiveKnowledgeForThread(threadId).map(s => s.name)
+    const site = hostname ? this.getBySite(hostname).map(s => s.name) : []
+    return [...new Set([...active, ...site])]
+  }
+
   /** Build compact skill index for system prompt.
    * LLM calls use_skill(name) to load full instructions on demand.
    * For site_knowledge/domain_knowledge, inject entries summary directly.
    * Also injects global knowledge and matching site knowledge summaries.
-   * If skillIds is provided, only includes those skills. */
-  buildSystemPrompt(threadId: string, hostname?: string, skillIds?: string[]): string {
+   * If skillIds is provided, only includes those skills.
+   * If knowledgeIds is provided, only includes those knowledge docs. */
+  buildSystemPrompt(threadId: string, hostname?: string, skillIds?: string[], knowledgeIds?: string[]): string {
     const skills = skillIds
       ? skillIds.map(id => this.get(id)).filter(Boolean) as Skill[]
       : this.getActiveForThread(threadId)
@@ -285,26 +320,46 @@ export class SkillEngine {
       }
     }
 
-    // Global knowledge: always inject if present
-    const globalKnowledge = this.getGlobalKnowledge()
-    for (const k of globalKnowledge) {
-      if (injectedNames.has(k.name)) continue
-      const summary = this.getKnowledgeSummary(k)
-      if (summary) {
-        injectedNames.add(k.name)
-        parts.push(`## Global Knowledge: ${k.name}\n${summary}`)
-      }
-    }
+    // Knowledge IDs filtering: if knowledgeIds provided, only include matching knowledge
+    const knowledgeToInject = knowledgeIds
+      ? knowledgeIds.map(id => this.get(id)).filter(Boolean) as Skill[]
+      : undefined
 
-    // Site knowledge: inject if hostname is provided and matches
-    if (hostname) {
-      const siteKnowledge = this.getBySite(hostname)
-      for (const k of siteKnowledge) {
+    if (knowledgeToInject) {
+      // Inject only the specified knowledge docs
+      for (const k of knowledgeToInject) {
+        if (injectedNames.has(k.name)) continue
+        // Skip non-knowledge types
+        if (k.type !== "site_knowledge" && k.type !== "domain_knowledge") continue
+        const summary = this.getEntriesSummary(k.name) || this.getKnowledgeSummary(k)
+        if (summary) {
+          injectedNames.add(k.name)
+          const label = k.type === "site_knowledge" ? `Site: ${k.site || k.name}` : `Domain: ${k.name}`
+          parts.push(`## ${label}\n${summary}`)
+        }
+      }
+    } else {
+      // Global knowledge: always inject if present
+      const globalKnowledge = this.getGlobalKnowledge()
+      for (const k of globalKnowledge) {
         if (injectedNames.has(k.name)) continue
         const summary = this.getKnowledgeSummary(k)
         if (summary) {
           injectedNames.add(k.name)
-          parts.push(`## Site Knowledge: ${k.site}\n${summary}`)
+          parts.push(`## Global Knowledge: ${k.name}\n${summary}`)
+        }
+      }
+
+      // Site knowledge: inject if hostname is provided and matches
+      if (hostname) {
+        const siteKnowledge = this.getBySite(hostname)
+        for (const k of siteKnowledge) {
+          if (injectedNames.has(k.name)) continue
+          const summary = this.getKnowledgeSummary(k)
+          if (summary) {
+            injectedNames.add(k.name)
+            parts.push(`## Site Knowledge: ${k.site}\n${summary}`)
+          }
         }
       }
     }

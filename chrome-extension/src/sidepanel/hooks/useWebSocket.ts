@@ -207,6 +207,10 @@ export function useWebSocket() {
           if (msg.thread?.id === activeThreadRef.current && msg.thread?.skill_selection_mode) {
             dispatch({ type: "SET_SKILL_SELECTION_MODE", mode: msg.thread.skill_selection_mode })
           }
+          // Sync knowledge_selection_mode if this is the active thread
+          if (msg.thread?.id === activeThreadRef.current && msg.thread?.knowledge_selection_mode) {
+            dispatch({ type: "SET_KNOWLEDGE_SELECTION_MODE", mode: msg.thread.knowledge_selection_mode })
+          }
           break
         }
         case "thread.deleted": {

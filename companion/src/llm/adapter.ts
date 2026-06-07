@@ -12,6 +12,7 @@ interface ChatCreateParams {
   threadId: string
   message: string
   skillIds: string[]
+  knowledgeIds?: string[]
   config: {
     base_url: string
     api_key: string
@@ -66,7 +67,7 @@ export function createToolResultMessage(threadId: string, toolCall: any, result:
 }
 
 export async function chatCreate(params: ChatCreateParams) {
-  const { threadId, message, skillIds, config, threadManager, skillEngine, historyStore, sendToExtension, executeTool, signal, skipUserMessage } = params
+  const { threadId, message, skillIds, knowledgeIds, config, threadManager, skillEngine, historyStore, sendToExtension, executeTool, signal, skipUserMessage } = params
 
   // Create user message (skip for regenerate)
   if (!skipUserMessage) {
@@ -92,7 +93,7 @@ CRITICAL RULES:
 6. Wait for pages to load before extracting content.
 7. For reading page content: use get_page_text (preferred, cross-platform) or evaluate.
 8. osascript_eval is macOS-ONLY and will FAIL on Windows/Linux. On non-macOS systems, NEVER call osascript_eval — always use get_page_text or evaluate instead.`
-  const skillPrompt = skillEngine.buildSystemPrompt(threadId, undefined, skillIds)
+  const skillPrompt = skillEngine.buildSystemPrompt(threadId, undefined, skillIds, knowledgeIds)
   const systemPrompt = [basePrompt, skillPrompt].filter(Boolean).join("\n\n")
 
   // Build messages array
