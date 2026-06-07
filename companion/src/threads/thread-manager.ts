@@ -13,6 +13,7 @@ interface Thread {
   tool_whitelist: string[] | null
   pinned_tabs: number[]
   active_skill_ids: string[]
+  skill_selection_mode?: "auto" | "all" | "manual"
 }
 
 // Allowed config_override keys and their expected types
@@ -158,6 +159,7 @@ export class ThreadManager {
       tool_whitelist: null,
       pinned_tabs: [],
       active_skill_ids: ["browse"],
+      skill_selection_mode: "auto",
     }
 
     this.index.threads.unshift(thread)
@@ -180,7 +182,11 @@ export class ThreadManager {
   }
 
   get(threadId: string): Thread | undefined {
-    return this.index.threads.find(t => t.id === threadId)
+    const thread = this.index.threads.find(t => t.id === threadId)
+    if (thread && !thread.skill_selection_mode) {
+      thread.skill_selection_mode = "auto"
+    }
+    return thread
   }
 
   update(threadId: string, updates: Partial<Thread>): Thread | undefined {
@@ -193,6 +199,13 @@ export class ThreadManager {
         throw new Error(`Invalid config_override: ${validation.error}`)
       }
       updates = { ...updates, config_override: validation.sanitized }
+    }
+    // Validate skill_selection_mode if being updated
+    if (updates.skill_selection_mode !== undefined) {
+      const validModes = ["auto", "all", "manual"]
+      if (!validModes.includes(updates.skill_selection_mode)) {
+        throw new Error(`Invalid skill_selection_mode: ${updates.skill_selection_mode}. Must be one of ${validModes.join(", ")}`)
+      }
     }
     Object.assign(thread, updates, { updated_at: new Date().toISOString() })
     this.saveIndex()

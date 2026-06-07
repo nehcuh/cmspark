@@ -2,6 +2,8 @@
 
 export type ConnectionState = "connected" | "connecting" | "disconnected"
 
+export type SkillSelectionMode = "auto" | "all" | "manual"
+
 export interface Thread {
   id: string
   alias: string
@@ -11,6 +13,7 @@ export interface Thread {
   tool_whitelist: string[] | null
   pinned_tabs: number[]
   active_skill_ids: string[]
+  skill_selection_mode?: SkillSelectionMode
 }
 
 export interface LogEntry {

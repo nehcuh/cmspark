@@ -101,27 +101,34 @@ export async function handleMessage(
       abortControllers.set(rest.thread_id, controller)
 
       try {
+        // Get thread to determine skill selection mode
+        const thread = services.threadManager.get(rest.thread_id)
+        const mode = thread?.skill_selection_mode || "auto"
 
-        // Semantic matching — auto-activate matched skills for this thread
-        const matched = services.skillEngine.matchSkills(rest.message)
-        const domainMatches = matched.filter(m => m.confidence >= 20)
-        for (const m of domainMatches) {
-          const skill = services.skillEngine.get(m.name)
-          if (skill) {
-            services.skillEngine.activate(rest.thread_id, m.name)
+        // Resolve skill IDs based on mode
+        const currentHostname = rest.hostname || (rest.url ? new URL(rest.url).hostname : undefined)
+        const resolvedSkillIds = services.skillEngine.resolveSkillIdsForThread(
+          rest.thread_id,
+          mode,
+          rest.message,
+          currentHostname,
+        )
+
+        // Merge with any explicitly requested skill_ids from client
+        const allSkillIds = [...new Set([...resolvedSkillIds, ...(rest.skill_ids || [])])]
+
+        // For auto mode, notify about auto-matched skills
+        if (mode === "auto") {
+          const matched = services.skillEngine.matchSkills(rest.message)
+          const domainMatches = matched.filter(m => m.confidence >= 20)
+          if (domainMatches.length > 0) {
+            session.sendToExtension({
+              type: "skill.auto_matched",
+              skills: domainMatches,
+            })
           }
         }
 
-        // Build combined skill list (auto-matched + user-selected)
-        const threadSkills = services.skillEngine.getActiveForThread(rest.thread_id).map(s => s.name)
-        const allSkillIds = [...new Set([...threadSkills, ...rest.skill_ids])]
-        
-        if (domainMatches.length > 0) {
-          session.sendToExtension({
-            type: "skill.auto_matched",
-            skills: domainMatches,
-          })
-        }
         await chatCreate({
           threadId: rest.thread_id,
           message: rest.message,
@@ -196,19 +203,31 @@ export async function handleMessage(
       abortControllers.set(thread_id, controller)
 
       try {
-        const matched = services.skillEngine.matchSkills(userMsg.content)
-        const domainMatches = matched.filter(m => m.confidence >= 20)
-        for (const m of domainMatches) {
-          const skill = services.skillEngine.get(m.name)
-          if (skill) services.skillEngine.activate(thread_id, m.name)
+        // Get thread to determine skill selection mode
+        const thread = services.threadManager.get(thread_id)
+        const mode = thread?.skill_selection_mode || "auto"
+
+        // Resolve skill IDs based on mode
+        const currentHostname = rest.hostname || (rest.url ? new URL(rest.url).hostname : undefined)
+        const resolvedSkillIds = services.skillEngine.resolveSkillIdsForThread(
+          thread_id,
+          mode,
+          userMsg.content,
+          currentHostname,
+        )
+
+        // Merge with any explicitly requested skill_ids from client
+        const allSkillIds = [...new Set([...resolvedSkillIds, ...(rest.skill_ids || [])])]
+
+        // For auto mode, notify about auto-matched skills
+        if (mode === "auto") {
+          const matched = services.skillEngine.matchSkills(userMsg.content)
+          const domainMatches = matched.filter(m => m.confidence >= 20)
+          if (domainMatches.length > 0) {
+            session.sendToExtension({ type: "skill.auto_matched", skills: domainMatches })
+          }
         }
 
-        const threadSkills = services.skillEngine.getActiveForThread(thread_id).map(s => s.name)
-        const allSkillIds = [...new Set([...threadSkills, ...(rest.skill_ids || [])])]
-
-        if (domainMatches.length > 0) {
-          session.sendToExtension({ type: "skill.auto_matched", skills: domainMatches })
-        }
         await chatCreate({
           threadId: thread_id,
           message: userMsg.content,
@@ -278,7 +297,7 @@ export async function handleMessage(
       if (!rest.thread_id) return { type: "error", error: "thread_id required" }
       const allowedUpdates: Record<string, any> = {}
       const updates = rest.updates || {}
-      for (const key of ["alias", "config_override", "tool_whitelist", "pinned_tabs", "active_skill_ids"]) {
+      for (const key of ["alias", "config_override", "tool_whitelist", "pinned_tabs", "active_skill_ids", "skill_selection_mode"]) {
         if (Object.prototype.hasOwnProperty.call(updates, key)) {
           allowedUpdates[key] = updates[key]
         }

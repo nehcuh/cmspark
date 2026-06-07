@@ -143,9 +143,36 @@ function SkillsPanel() {
   const [showPathImport, setShowPathImport] = useState(false)
   const [pathInput, setPathInput] = useState("")
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
+  const [currentHostname, setCurrentHostname] = useState<string>("")
   const menuRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const zipInputRef = useRef<HTMLInputElement>(null)
+
+  // Get current tab hostname for site grouping
+  useEffect(() => {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      const url = tabs[0]?.url
+      if (url) {
+        try {
+          const hostname = new URL(url).hostname
+          setCurrentHostname(hostname)
+        } catch {
+          setCurrentHostname("")
+        }
+      }
+    })
+  }, [state.tabList])
+
+  const handleModeChange = (mode: "auto" | "all" | "manual") => {
+    dispatch({ type: "SET_SKILL_SELECTION_MODE", mode })
+    if (state.activeThreadId) {
+      chrome.runtime.sendMessage({
+        type: "thread.update",
+        threadId: state.activeThreadId,
+        updates: { skill_selection_mode: mode },
+      })
+    }
+  }
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -268,8 +295,32 @@ function SkillsPanel() {
     fileInputRef.current?.click()
   }
 
+  // Group skills by site, with current site first
+  const groupedSkills = groupSkillsBySite(state.skills, currentHostname)
+
+  const modeLabels: Record<string, string> = { auto: "自动", all: "全选", manual: "按需" }
+
   return (
     <div style={styles.panelContent}>
+      {/* Mode switcher */}
+      <div style={styles.modeSwitcher}>
+        {(["auto", "all", "manual"] as const).map((mode) => (
+          <button
+            key={mode}
+            style={{
+              ...styles.modeBtn,
+              background: state.skillSelectionMode === mode ? "#4A90D9" : "#fff",
+              color: state.skillSelectionMode === mode ? "#fff" : "#666",
+              borderColor: state.skillSelectionMode === mode ? "#4A90D9" : "#ddd",
+            }}
+            onClick={() => handleModeChange(mode)}
+            title={mode === "auto" ? "自动匹配当前站点和消息" : mode === "all" ? "注入所有技能索引" : "仅使用勾选技能"}
+          >
+            {modeLabels[mode]}
+          </button>
+        ))}
+      </div>
+
       {/* Import toolbar */}
       <div style={styles.skillToolbar}>
         <button style={styles.skillToolbarBtn} onClick={handleFilePick} title="从文件导入 .md">
@@ -346,54 +397,64 @@ function SkillsPanel() {
         )}
       </div>
 
-      {/* Skill list */}
-      {state.skills.map(skill => (
-        <div key={skill.name} style={{
-          ...styles.skillRow,
-          background: state.activeSkillIds.includes(skill.name) ? "#e8f0fe" : "transparent",
-        }}>
-          <input
-            type="checkbox"
-            checked={state.activeSkillIds.includes(skill.name)}
-            onChange={() => {
-              const activeSkillIds = state.activeSkillIds.includes(skill.name)
-                ? state.activeSkillIds.filter(id => id !== skill.name)
-                : [...state.activeSkillIds, skill.name]
-              dispatch({ type: "TOGGLE_SKILL", skillId: skill.name })
-              if (state.activeThreadId) {
-                chrome.runtime.sendMessage({
-                  type: "thread.update",
-                  threadId: state.activeThreadId,
-                  updates: { active_skill_ids: activeSkillIds },
-                })
-              }
-            }}
-            style={{ marginRight: 8 }}
-          />
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 12, fontWeight: 500 }}>{skill.name}</div>
-            <div style={{ fontSize: 11, color: "#666", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {skill.description}
-            </div>
-          </div>
-          {skill.builtin && <span style={styles.badge}>内置</span>}
-          {!skill.builtin && (
-            <div style={{ position: "relative" }} ref={menuOpen === skill.name ? menuRef : undefined}>
-              <button
-                style={styles.menuBtn}
-                onClick={() => setMenuOpen(menuOpen === skill.name ? null : skill.name)}
-                title="更多操作"
-              >
-                ···
-              </button>
-              {menuOpen === skill.name && (
-                <div style={styles.menuDropdown}>
-                  <button style={styles.menuItem} onClick={() => handleExport(skill.name)}>📤 导出</button>
-                  <button style={{ ...styles.menuItem, color: "#F44336" }} onClick={() => handleDelete(skill.name)}>🗑️ 删除</button>
+      {/* Grouped skill list */}
+      {groupedSkills.map(([groupName, skills]) => (
+        <div key={groupName}>
+          <div style={styles.groupHeader}>{groupName}</div>
+          {skills.map((skill) => (
+            <div key={skill.name} style={{
+              ...styles.skillRow,
+              background: state.activeSkillIds.includes(skill.name) ? "#e8f0fe" : "transparent",
+              opacity: state.skillSelectionMode === "all" ? 0.6 : 1,
+            }}>
+              <input
+                type="checkbox"
+                checked={state.activeSkillIds.includes(skill.name)}
+                disabled={state.skillSelectionMode === "all"}
+                onChange={() => {
+                  const activeSkillIds = state.activeSkillIds.includes(skill.name)
+                    ? state.activeSkillIds.filter((id) => id !== skill.name)
+                    : [...state.activeSkillIds, skill.name]
+                  dispatch({ type: "TOGGLE_SKILL", skillId: skill.name })
+                  if (state.activeThreadId) {
+                    chrome.runtime.sendMessage({
+                      type: "thread.update",
+                      threadId: state.activeThreadId,
+                      updates: { active_skill_ids: activeSkillIds },
+                    })
+                  }
+                }}
+                style={{ marginRight: 8 }}
+              />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 12, fontWeight: 500, display: "flex", alignItems: "center", gap: 4 }}>
+                  {skill.name}
+                  {skill.site && <span style={styles.siteBadge}>{skill.site}</span>}
+                </div>
+                <div style={{ fontSize: 11, color: "#666", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {skill.description}
+                </div>
+              </div>
+              {skill.builtin && <span style={styles.badge}>内置</span>}
+              {!skill.builtin && (
+                <div style={{ position: "relative" }} ref={menuOpen === skill.name ? menuRef : undefined}>
+                  <button
+                    style={styles.menuBtn}
+                    onClick={() => setMenuOpen(menuOpen === skill.name ? null : skill.name)}
+                    title="更多操作"
+                  >
+                    ···
+                  </button>
+                  {menuOpen === skill.name && (
+                    <div style={styles.menuDropdown}>
+                      <button style={styles.menuItem} onClick={() => handleExport(skill.name)}>📤 导出</button>
+                      <button style={{ ...styles.menuItem, color: "#F44336" }} onClick={() => handleDelete(skill.name)}>🗑️ 删除</button>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
-          )}
+          ))}
         </div>
       ))}
     </div>
@@ -454,6 +515,39 @@ function groupBy<T>(arr: T[], key: keyof T): Record<string, T[]> {
     acc[k].push(item)
     return acc
   }, {} as Record<string, T[]>)
+}
+
+function groupSkillsBySite(skills: any[], currentHostname: string): [string, any[]][] {
+  const globalSkills = skills.filter((s) => !s.site)
+  const siteGroups = new Map<string, any[]>()
+  for (const skill of skills.filter((s) => s.site)) {
+    const key = skill.site!
+    if (!siteGroups.has(key)) siteGroups.set(key, [])
+    siteGroups.get(key)!.push(skill)
+  }
+  const result: [string, any[]][] = []
+  if (globalSkills.length > 0) {
+    result.push(["全局", globalSkills])
+  }
+  // Sort: current hostname match first, then alphabetical
+  const sortedSites = Array.from(siteGroups.entries()).sort((a, b) => {
+    const aMatch = currentHostname && matchesSite(a[0], currentHostname) ? -1 : 0
+    const bMatch = currentHostname && matchesSite(b[0], currentHostname) ? -1 : 0
+    if (aMatch !== bMatch) return aMatch - bMatch
+    return a[0].localeCompare(b[0])
+  })
+  for (const [site, siteSkills] of sortedSites) {
+    result.push([site, siteSkills])
+  }
+  return result
+}
+
+function matchesSite(pattern: string, hostname: string): boolean {
+  if (pattern.startsWith("*.")) {
+    const suffix = pattern.slice(2)
+    return hostname === suffix || hostname.endsWith("." + suffix)
+  }
+  return hostname === pattern
 }
 
 // --- Styles ---
@@ -592,5 +686,30 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: "pointer",
     textAlign: "left" as const,
     whiteSpace: "nowrap" as const,
+  },
+  modeSwitcher: {
+    display: "flex",
+    gap: 0,
+    marginBottom: 8,
+    borderRadius: 4,
+    overflow: "hidden",
+    border: "1px solid #ddd",
+  },
+  modeBtn: {
+    flex: 1,
+    border: "none",
+    borderRight: "1px solid #ddd",
+    padding: "4px 0",
+    fontSize: 11,
+    cursor: "pointer",
+    background: "#fff",
+  },
+  siteBadge: {
+    fontSize: 9,
+    background: "#e3f2fd",
+    color: "#1976d2",
+    padding: "0px 4px",
+    borderRadius: 3,
+    fontWeight: 400,
   },
 }

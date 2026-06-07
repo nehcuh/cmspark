@@ -231,12 +231,44 @@ export class SkillEngine {
     return results.slice(0, 3)
   }
 
+  /** Resolve skill IDs for a thread based on the selection mode.
+   * - auto: active ∪ matchSkills(message) ∪ getBySite(hostname)
+   * - all: all non-site_knowledge/domain_knowledge skills
+   * - manual: active only */
+  resolveSkillIdsForThread(
+    threadId: string,
+    mode?: "auto" | "all" | "manual",
+    message?: string,
+    hostname?: string,
+  ): string[] {
+    const resolvedMode = mode || "auto"
+
+    if (resolvedMode === "manual") {
+      return this.getActiveForThread(threadId).map(s => s.name)
+    }
+
+    if (resolvedMode === "all") {
+      return this.skillsCache
+        .filter(s => s.type !== "site_knowledge" && s.type !== "domain_knowledge")
+        .map(s => s.name)
+    }
+
+    // auto mode (default)
+    const active = this.getActiveForThread(threadId).map(s => s.name)
+    const matched = message ? this.matchSkills(message).map(m => m.name) : []
+    const site = hostname ? this.getBySite(hostname).map(s => s.name) : []
+    return [...new Set([...active, ...matched, ...site])]
+  }
+
   /** Build compact skill index for system prompt.
    * LLM calls use_skill(name) to load full instructions on demand.
    * For site_knowledge/domain_knowledge, inject entries summary directly.
-   * Also injects global knowledge and matching site knowledge summaries. */
-  buildSystemPrompt(threadId: string, hostname?: string): string {
-    const skills = this.getActiveForThread(threadId)
+   * Also injects global knowledge and matching site knowledge summaries.
+   * If skillIds is provided, only includes those skills. */
+  buildSystemPrompt(threadId: string, hostname?: string, skillIds?: string[]): string {
+    const skills = skillIds
+      ? skillIds.map(id => this.get(id)).filter(Boolean) as Skill[]
+      : this.getActiveForThread(threadId)
 
     const parts: string[] = []
     const injectedNames = new Set<string>()

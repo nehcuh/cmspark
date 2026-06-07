@@ -1,7 +1,7 @@
 // Global state store for the agent
 
 import { createContext, useContext, useReducer, type ReactNode, type Dispatch } from "react"
-import type { ConnectionState, Thread, Message, SkillMeta, OperationRecord, LLMConfig, SendShortcut, SecurityConfirmationRequest, LogEntry, KnowledgeMeta } from "../types"
+import type { ConnectionState, Thread, Message, SkillMeta, OperationRecord, LLMConfig, SendShortcut, SecurityConfirmationRequest, LogEntry, KnowledgeMeta, SkillSelectionMode } from "../types"
 
 export interface AgentState {
   connectionState: ConnectionState
@@ -22,6 +22,7 @@ export interface AgentState {
   logs: LogEntry[]
   autoSkillNames: string
   knowledgeDocs: KnowledgeMeta[]
+  skillSelectionMode: SkillSelectionMode
 }
 
 export type AgentAction =
@@ -52,6 +53,7 @@ export type AgentAction =
   | { type: "ADD_LOG"; entry: LogEntry }
   | { type: "SET_AUTO_SKILLS"; names: string }
   | { type: "SET_KNOWLEDGE_DOCS"; docs: KnowledgeMeta[] }
+  | { type: "SET_SKILL_SELECTION_MODE"; mode: SkillSelectionMode }
 export const initialState: AgentState = {
   connectionState: "disconnected",
   threads: [],
@@ -78,6 +80,7 @@ export const initialState: AgentState = {
   logs: [],
   autoSkillNames: "",
   knowledgeDocs: [],
+  skillSelectionMode: "auto",
 }
 
 export function agentReducer(state: AgentState, action: AgentAction): AgentState {
@@ -95,6 +98,7 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         activeThreadId: nextActiveThreadId,
         pinnedTabIds: nextActiveThread?.pinned_tabs || [],
         activeSkillIds: nextActiveThread?.active_skill_ids || [],
+        skillSelectionMode: nextActiveThread?.skill_selection_mode || "auto",
       }
     }
     case "SET_ACTIVE_THREAD": {
@@ -106,6 +110,7 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         streamingContent: "",
         pinnedTabIds: activeThread?.pinned_tabs || [],
         activeSkillIds: activeThread?.active_skill_ids || [],
+        skillSelectionMode: activeThread?.skill_selection_mode || "auto",
       }
     }
     case "ADD_MESSAGE":
@@ -231,6 +236,8 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       return { ...state, autoSkillNames: action.names }
     case "SET_KNOWLEDGE_DOCS":
       return { ...state, knowledgeDocs: action.docs }
+    case "SET_SKILL_SELECTION_MODE":
+      return { ...state, skillSelectionMode: action.mode }
     default:
       return state
   }

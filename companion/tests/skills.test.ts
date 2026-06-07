@@ -1527,3 +1527,193 @@ test("skill-engine: saveSkillFile persists entry changes correctly", async () =>
   assert.ok(rawContent.includes("entries:"))
   assert.ok(rawContent.includes("Persisted tip"))
 })
+
+// --- Tests for resolveSkillIdsForThread ---
+
+test("skill-engine: resolveSkillIdsForThread manual mode returns only active skills", async () => {
+  resetMockDirs()
+  process.env.HOME = tempHome
+
+  writeSkillFile(skillsDir, "skill-a.md", { name: "skill-a", description: "Skill A", type: "prompt_template" }, "# A")
+  writeSkillFile(skillsDir, "skill-b.md", { name: "skill-b", description: "Skill B", type: "prompt_template" }, "# B")
+
+  const { SkillEngine } = await import("../src/skills/skill-engine")
+  const engine = new SkillEngine()
+  engine.activate("thread-manual", "skill-a")
+
+  const result = engine.resolveSkillIdsForThread("thread-manual", "manual")
+  assert.deepEqual(result, ["skill-a"])
+})
+
+test("skill-engine: resolveSkillIdsForThread all mode returns non-knowledge skills", async () => {
+  resetMockDirs()
+  process.env.HOME = tempHome
+
+  writeSkillFile(skillsDir, "skill-a.md", { name: "skill-a", description: "Skill A", type: "prompt_template" }, "# A")
+  writeSkillFile(skillsDir, "skill-b.md", { name: "skill-b", description: "Skill B", type: "tool_chain" }, "# B")
+  writeSkillFile(skillsDir, "site-skill.md", { name: "site-skill", description: "Site", type: "site_knowledge", site: "example.com" }, "# Site")
+  writeSkillFile(skillsDir, "domain-skill.md", { name: "domain-skill", description: "Domain", type: "domain_knowledge" }, "# Domain")
+
+  const { SkillEngine } = await import("../src/skills/skill-engine")
+  const engine = new SkillEngine()
+
+  const result = engine.resolveSkillIdsForThread("thread-all", "all")
+  assert.ok(result.includes("skill-a"), "should include prompt_template skill")
+  assert.ok(result.includes("skill-b"), "should include tool_chain skill")
+  assert.ok(!result.includes("site-skill"), "should exclude site_knowledge")
+  assert.ok(!result.includes("domain-skill"), "should exclude domain_knowledge")
+})
+
+test("skill-engine: resolveSkillIdsForThread auto mode merges active, matched, and site skills", async () => {
+  resetMockDirs()
+  process.env.HOME = tempHome
+
+  writeSkillFile(skillsDir, "browse-skill.md", { name: "browse-skill", description: "Browse websites", tags: ["web"] }, "# Browse")
+  writeSkillFile(skillsDir, "code-skill.md", { name: "code-skill", description: "Write code", tags: ["programming"] }, "# Code")
+  writeSkillFile(skillsDir, "site-skill.md", { name: "site-skill", description: "Site helper", type: "site_knowledge", site: "example.com" }, "# Site")
+
+  const { SkillEngine } = await import("../src/skills/skill-engine")
+  const engine = new SkillEngine()
+  engine.activate("thread-auto", "browse-skill")
+
+  const result = engine.resolveSkillIdsForThread("thread-auto", "auto", "how do I browse the web", "example.com")
+  assert.ok(result.includes("browse-skill"), "should include active skill")
+  assert.ok(result.includes("site-skill"), "should include site-matched skill")
+  // code-skill should not match "browse the web"
+  assert.ok(!result.includes("code-skill"), "should not include unrelated skill")
+})
+
+test("skill-engine: resolveSkillIdsForThread auto mode defaults when mode is undefined", async () => {
+  resetMockDirs()
+  process.env.HOME = tempHome
+
+  writeSkillFile(skillsDir, "browse-skill.md", { name: "browse-skill", description: "Browse websites" }, "# Browse")
+
+  const { SkillEngine } = await import("../src/skills/skill-engine")
+  const engine = new SkillEngine()
+  engine.activate("thread-default", "browse-skill")
+
+  const result = engine.resolveSkillIdsForThread("thread-default", undefined)
+  assert.deepEqual(result, ["browse-skill"])
+})
+
+test("skill-engine: resolveSkillIdsForThread auto mode deduplicates skills", async () => {
+  resetMockDirs()
+  process.env.HOME = tempHome
+
+  writeSkillFile(skillsDir, "browse-skill.md", { name: "browse-skill", description: "Browse websites", tags: ["web"] }, "# Browse")
+
+  const { SkillEngine } = await import("../src/skills/skill-engine")
+  const engine = new SkillEngine()
+  engine.activate("thread-dedup", "browse-skill")
+
+  // browse-skill is both active and will match "browse the web"
+  const result = engine.resolveSkillIdsForThread("thread-dedup", "auto", "how do I browse the web")
+  const occurrences = result.filter(name => name === "browse-skill").length
+  assert.equal(occurrences, 1, "should not duplicate skills")
+})
+
+test("skill-engine: buildSystemPrompt filters by provided skillIds", async () => {
+  resetMockDirs()
+  process.env.HOME = tempHome
+
+  writeSkillFile(skillsDir, "skill-a.md", { name: "skill-a", description: "Skill A" }, "# A")
+  writeSkillFile(skillsDir, "skill-b.md", { name: "skill-b", description: "Skill B" }, "# B")
+
+  const { SkillEngine } = await import("../src/skills/skill-engine")
+  const engine = new SkillEngine()
+  engine.activate("thread-filter", "skill-a")
+  engine.activate("thread-filter", "skill-b")
+
+  // With skillIds parameter, only skill-a should be included
+  const prompt = engine.buildSystemPrompt("thread-filter", undefined, ["skill-a"])
+  assert.ok(prompt.includes("skill-a"), "should include skill-a")
+  assert.ok(!prompt.includes("skill-b"), "should not include skill-b")
+})
+
+test("skill-engine: buildSystemPrompt uses active skills when skillIds not provided", async () => {
+  resetMockDirs()
+  process.env.HOME = tempHome
+
+  writeSkillFile(skillsDir, "skill-a.md", { name: "skill-a", description: "Skill A" }, "# A")
+  writeSkillFile(skillsDir, "skill-b.md", { name: "skill-b", description: "Skill B" }, "# B")
+
+  const { SkillEngine } = await import("../src/skills/skill-engine")
+  const engine = new SkillEngine()
+  engine.activate("thread-no-filter", "skill-a")
+  engine.activate("thread-no-filter", "skill-b")
+
+  // Without skillIds parameter, all active skills should be included
+  const prompt = engine.buildSystemPrompt("thread-no-filter")
+  assert.ok(prompt.includes("skill-a"), "should include skill-a")
+  assert.ok(prompt.includes("skill-b"), "should include skill-b")
+})
+
+// --- Tests for thread-manager skill_selection_mode ---
+
+test("thread-manager: create initializes skill_selection_mode to auto", async () => {
+  resetMockDirs()
+  process.env.HOME = tempHome
+
+  const { ThreadManager } = await import("../src/threads/thread-manager")
+  const tm = new ThreadManager()
+  const thread = tm.create("test-thread")
+
+  assert.equal(thread.skill_selection_mode, "auto")
+})
+
+test("thread-manager: get defaults skill_selection_mode to auto for old threads", async () => {
+  resetMockDirs()
+  process.env.HOME = tempHome
+
+  // Manually create an old-style thread without skill_selection_mode
+  const indexPath = path.join(mockConfigDir, "threads", "index.json")
+  fs.writeFileSync(indexPath, JSON.stringify({
+    threads: [{
+      id: "old-thread",
+      alias: "Old Thread",
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      config_override: {},
+      tool_whitelist: null,
+      pinned_tabs: [],
+      active_skill_ids: ["browse"],
+      // skill_selection_mode is missing
+    }]
+  }, null, 2))
+
+  const { ThreadManager } = await import("../src/threads/thread-manager")
+  const tm = new ThreadManager()
+  const thread = tm.get("old-thread")
+
+  assert.equal(thread?.skill_selection_mode, "auto")
+})
+
+test("thread-manager: update allows changing skill_selection_mode", async () => {
+  resetMockDirs()
+  process.env.HOME = tempHome
+
+  const { ThreadManager } = await import("../src/threads/thread-manager")
+  const tm = new ThreadManager()
+  const thread = tm.create("test-thread")
+
+  const updated = tm.update(thread.id, { skill_selection_mode: "manual" })
+  assert.equal(updated?.skill_selection_mode, "manual")
+
+  const updated2 = tm.update(thread.id, { skill_selection_mode: "all" })
+  assert.equal(updated2?.skill_selection_mode, "all")
+})
+
+test("thread-manager: update rejects invalid skill_selection_mode", async () => {
+  resetMockDirs()
+  process.env.HOME = tempHome
+
+  const { ThreadManager } = await import("../src/threads/thread-manager")
+  const tm = new ThreadManager()
+  const thread = tm.create("test-thread")
+
+  assert.throws(
+    () => tm.update(thread.id, { skill_selection_mode: "invalid" as any }),
+    /Invalid skill_selection_mode/,
+  )
+})

@@ -2,6 +2,7 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import { agentReducer, initialState, type AgentState } from "../src/sidepanel/store/agentStore"
 import { normalizeConfig, requestInitialSidePanelData } from "../src/sidepanel/hooks/useWebSocket"
+import type { SkillMeta } from "../src/sidepanel/types"
 
 function stateWithThreads(): AgentState {
   return {
@@ -17,6 +18,7 @@ function stateWithThreads(): AgentState {
         tool_whitelist: null,
         pinned_tabs: [101],
         active_skill_ids: ["browse"],
+        skill_selection_mode: "manual",
       },
       {
         id: "thread-b",
@@ -27,18 +29,30 @@ function stateWithThreads(): AgentState {
         tool_whitelist: null,
         pinned_tabs: [202, 303],
         active_skill_ids: ["browse"],
+        skill_selection_mode: "all",
       },
     ],
     pinnedTabIds: [101],
+    skillSelectionMode: "manual",
   }
 }
 
-test("SET_ACTIVE_THREAD restores pinned tabs from thread metadata", () => {
+test("SET_ACTIVE_THREAD restores pinned tabs and skillSelectionMode from thread metadata", () => {
   const next = agentReducer(stateWithThreads(), { type: "SET_ACTIVE_THREAD", threadId: "thread-b" })
 
   assert.equal(next.activeThreadId, "thread-b")
   assert.deepEqual(next.pinnedTabIds, [202, 303])
   assert.deepEqual(next.messages, [])
+  assert.equal(next.skillSelectionMode, "all")
+})
+
+test("SET_ACTIVE_THREAD defaults skillSelectionMode to auto when thread has no mode", () => {
+  const s = stateWithThreads()
+  const threadWithoutMode = { ...s.threads[1], skill_selection_mode: undefined }
+  const state = { ...s, threads: [s.threads[0], threadWithoutMode] }
+  const next = agentReducer(state, { type: "SET_ACTIVE_THREAD", threadId: "thread-b" })
+
+  assert.equal(next.skillSelectionMode, "auto")
 })
 
 test("SET_PINNED_TABS updates active thread metadata", () => {
@@ -95,6 +109,57 @@ test("initial side panel sync requests threads, skills, and config exactly once 
 
   assert.equal(requestInitialSidePanelData((message) => sent.push(message), initializedRef), false)
   assert.deepEqual(sent, [{ type: "thread.list" }, { type: "skill.list" }, { type: "config.get" }])
+})
+
+test("SET_THREADS auto-selects first thread and syncs pinned tabs and skillSelectionMode", () => {
+  const s = { ...initialState, threads: [], activeThreadId: null }
+  const next = agentReducer(s, {
+    type: "SET_THREADS",
+    threads: [
+      {
+        id: "t1",
+        alias: "T1",
+        created_at: "",
+        updated_at: "",
+        config_override: initialState.config,
+        tool_whitelist: null,
+        pinned_tabs: [1],
+        active_skill_ids: ["skill-a"],
+        skill_selection_mode: "all",
+      },
+    ],
+  })
+
+  assert.equal(next.activeThreadId, "t1")
+  assert.deepEqual(next.pinnedTabIds, [1])
+  assert.deepEqual(next.activeSkillIds, ["skill-a"])
+  assert.equal(next.skillSelectionMode, "all")
+})
+
+test("SET_THREADS defaults skillSelectionMode to auto when thread has no mode", () => {
+  const s = { ...initialState, threads: [], activeThreadId: null }
+  const next = agentReducer(s, {
+    type: "SET_THREADS",
+    threads: [
+      {
+        id: "t1",
+        alias: "T1",
+        created_at: "",
+        updated_at: "",
+        config_override: initialState.config,
+        tool_whitelist: null,
+        pinned_tabs: [],
+        active_skill_ids: [],
+      },
+    ],
+  })
+
+  assert.equal(next.skillSelectionMode, "auto")
+})
+
+test("SET_SKILL_SELECTION_MODE updates state", () => {
+  const next = agentReducer(initialState, { type: "SET_SKILL_SELECTION_MODE", mode: "manual" })
+  assert.equal(next.skillSelectionMode, "manual")
 })
 
 test("reducer handles unknown action type without crashing", () => {

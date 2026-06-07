@@ -92,7 +92,7 @@ CRITICAL RULES:
 6. Wait for pages to load before extracting content.
 7. For reading page content: use get_page_text (preferred, cross-platform) or evaluate.
 8. osascript_eval is macOS-ONLY and will FAIL on Windows/Linux. On non-macOS systems, NEVER call osascript_eval — always use get_page_text or evaluate instead.`
-  const skillPrompt = skillEngine.buildSystemPrompt(threadId)
+  const skillPrompt = skillEngine.buildSystemPrompt(threadId, undefined, skillIds)
   const systemPrompt = [basePrompt, skillPrompt].filter(Boolean).join("\n\n")
 
   // Build messages array
