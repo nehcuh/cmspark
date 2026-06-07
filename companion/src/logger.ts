@@ -79,7 +79,7 @@ export function logEvent(
     if (LEVEL_ORDER[level] < LEVEL_ORDER[currentLevel]) return
   try {
     const filePath = getLogFilePath(now)
-    fs.mkdirSync(path.dirname(filePath), { recursive: true })
+    fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 })
     const entry = {
       ts: now.toISOString(),
       level,
@@ -87,7 +87,12 @@ export function logEvent(
       event,
       data: redactLogData(data),
     }
-    fs.appendFileSync(filePath, `${JSON.stringify(entry)}\n`)
+    const line = `${JSON.stringify(entry)}\n`
+    fs.appendFileSync(filePath, line)
+    // Also output to stdout for daemon mode visibility
+    if (process.stdout && process.stdout.isTTY) {
+      console.log(`[${level}] ${event}`)
+    }
   } catch (err: any) {
     // Logging must never break runtime behavior.
     console.error("[cmspark-agent] Failed to write log:", err?.message || String(err))
