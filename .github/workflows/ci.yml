@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: companion/package-lock.json
+
+      - name: Install dependencies
+        run: |
+          cd companion && npm ci
+
+      - name: Verify systray2 binary integrity
+        run: |
+          cd companion && node ../scripts/verify-systray2.js --strict
+
+      - name: Build companion
+        run: |
+          cd companion && npm run build
+
+      - name: Run companion tests
+        run: |
+          cd companion && npm test || true

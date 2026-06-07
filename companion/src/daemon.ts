@@ -12,6 +12,7 @@ import * as path from "path"
 import * as os from "os"
 import { spawn } from "child_process"
 import { getConfigDir } from "./config"
+import { getLockPath, isWindows } from "./platform"
 
 // ---------------------------------------------------------------------------
 // Error classification (matches security.ts pattern)
@@ -36,7 +37,7 @@ export class DaemonError extends Error {
 // ---------------------------------------------------------------------------
 
 export function getDefaultLockPath(): string {
-  return path.join(getConfigDir(), "daemon.sock")
+  return getLockPath()
 }
 
 export function getDefaultPidPath(): string {
@@ -64,32 +65,40 @@ let lockServer: net.Server | null = null
  * @param lockPath — absolute path to the Unix Domain Socket file
  * @returns `true` if the lock was acquired, `false` if already held by another instance
  */
-export async function acquireLock(lockPath: string): Promise<boolean> {
-  // Defensive: ensure parent directory exists
-  const dir = path.dirname(lockPath)
-  try {
-    fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
-  } catch (err: any) {
-    throw new DaemonError(
-      `Failed to create lock directory: ${err.message}`,
-      "transient",
-      "LOCK_DIR_CREATE_FAILED",
-    )
-  }
+function isNamedPipe(lockPath: string): boolean {
+  return lockPath.startsWith("\\\\")
+}
 
-  // Clean up stale socket file: if the file exists but nothing is listening,
-  // a synchronous connect will fail immediately (ECONNREFUSED) or time out.
-  if (fs.existsSync(lockPath)) {
-    const stale = isSocketStale(lockPath)
-    if (stale) {
-      try {
-        fs.unlinkSync(lockPath)
-      } catch {
-        // Ignore unlink errors — bind() will tell us the truth
+export async function acquireLock(lockPath: string): Promise<boolean> {
+  const namedPipe = isNamedPipe(lockPath)
+
+  if (!namedPipe) {
+    // Unix: ensure parent directory exists
+    const dir = path.dirname(lockPath)
+    try {
+      fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
+    } catch (err: any) {
+      throw new DaemonError(
+        `Failed to create lock directory: ${err.message}`,
+        "transient",
+        "LOCK_DIR_CREATE_FAILED",
+      )
+    }
+
+    // Clean up stale socket file: if the file exists but nothing is listening,
+    // a synchronous connect will fail immediately (ECONNREFUSED) or time out.
+    if (fs.existsSync(lockPath)) {
+      const stale = isSocketStale(lockPath)
+      if (stale) {
+        try {
+          fs.unlinkSync(lockPath)
+        } catch {
+          // Ignore unlink errors — bind() will tell us the truth
+        }
+      } else {
+        // Someone is actively listening
+        return false
       }
-    } else {
-      // Someone is actively listening
-      return false
     }
   }
 
@@ -118,12 +127,14 @@ export async function acquireLock(lockPath: string): Promise<boolean> {
     )
   }
 
-  // Restrict permissions on the socket file (owner-only)
-  try {
-    fs.chmodSync(lockPath, 0o600)
-  } catch (err: any) {
-    // Non-fatal: log and continue
-    console.warn(`[daemon] Warning: could not chmod lock file: ${err.message}`)
+  if (!namedPipe) {
+    // Unix: restrict permissions on the socket file (owner-only)
+    try {
+      fs.chmodSync(lockPath, 0o600)
+    } catch (err: any) {
+      // Non-fatal: log and continue
+      console.warn(`[daemon] Warning: could not chmod lock file: ${err.message}`)
+    }
   }
 
   lockServer = server
@@ -194,14 +205,16 @@ export function releaseLock(lockPath: string): void {
     lockServer = null
   }
 
-  try {
-    if (fs.existsSync(lockPath)) {
-      fs.unlinkSync(lockPath)
-    }
-  } catch (err: any) {
-    // If unlink fails because the file is already gone, that's fine.
-    if (err.code !== "ENOENT") {
-      console.warn(`[daemon] Warning: could not remove lock file: ${err.message}`)
+  if (!isNamedPipe(lockPath)) {
+    try {
+      if (fs.existsSync(lockPath)) {
+        fs.unlinkSync(lockPath)
+      }
+    } catch (err: any) {
+      // If unlink fails because the file is already gone, that's fine.
+      if (err.code !== "ENOENT") {
+        console.warn(`[daemon] Warning: could not remove lock file: ${err.message}`)
+      }
     }
   }
 }

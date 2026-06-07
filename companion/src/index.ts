@@ -27,7 +27,8 @@ Usage:
   cmspark-agent daemon stop                 Stop daemon
   cmspark-agent daemon status               Show daemon status
   cmspark-agent daemon logs                 View daemon logs
-  cmspark-agent menu-bar                 Start menu bar agent`)
+  cmspark-agent tray                     Start system tray agent
+  cmspark-agent menu-bar                 Start menu bar agent (legacy)`)
 }
 
 async function handleDaemonStart(): Promise<void> {
@@ -218,6 +219,10 @@ async function main() {
       }
       break
     }
+
+    case "tray":
+      startMenuBarAgent()
+      break
 
     case "menu-bar":
       startMenuBarAgent()

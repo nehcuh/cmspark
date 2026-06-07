@@ -1,0 +1,25 @@
+[Unit]
+Description=CMspark Browser Agent Companion
+Documentation=https://github.com/cmspark/cmspark
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.cmspark-agent/bin/cmspark-agent daemon start
+ExecStop=%h/.cmspark-agent/bin/cmspark-agent daemon stop
+Restart=on-failure
+RestartSec=30
+StartLimitInterval=300
+StartLimitBurst=3
+
+# Environment
+Environment="NODE_ENV=production"
+Environment="CMSPARK_DATA_DIR=%h/.cmspark-agent"
+
+# Logging
+StandardOutput=append:%h/.cmspark-agent/logs/stdout.log
+StandardError=append:%h/.cmspark-agent/logs/stderr.log
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,24 @@
+{
+  "_comment": "Verified SHA256 hashes for systray2 precompiled binaries.",
+  "_warning": "DO NOT modify this file manually. See CONTRIBUTING.md for update procedure.",
+  "package": "systray2",
+  "version": "2.1.4",
+  "binaries": {
+    "tray_darwin_release": {
+      "sha256": "b406fe6d13d1ba66f901a07267ecfcf1b615e9c8b3410287be576706bd737791",
+      "platform": "darwin",
+      "arch": "x64",
+      "note": "macOS x86_64; Apple Silicon uses Rosetta 2"
+    },
+    "tray_linux_release": {
+      "sha256": "f61eee19036c0af93e2bb0e5b9fff0bd413469aff5ea1261b8fcfe9e2c027c04",
+      "platform": "linux",
+      "arch": "x64"
+    },
+    "tray_windows_release.exe": {
+      "sha256": "ae61c63ece1392fc64abbfbd40de782f5b2a7b7d83e93f8b640a20395ae6e8a0",
+      "platform": "win32",
+      "arch": "x64"
+    }
+  }
+}

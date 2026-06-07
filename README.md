@@ -233,6 +233,160 @@ sso.example.com      # 精确匹配单域名
 
 ---
 
+## 后台常驻服务（跨平台）
+
+CMspark 支持将 Companion 注册为系统后台服务，实现开机自启、崩溃恢复和菜单栏/托盘管理。
+
+| 平台 | 服务机制 | 菜单栏/托盘 | 安装命令 |
+|------|----------|-------------|----------|
+| **macOS** | `launchd` | node-notifier 通知 + readline 菜单 | `make install-macos` |
+| **Windows** | 任务计划程序 | 系统托盘（计划中） | `make install-windows` |
+| **Linux** | `systemd --user` | node-notifier + readline 菜单 | `make install-linux` |
+
+### 特性
+
+- **开机自启**：登录后自动启动 Companion 守护进程
+- **崩溃恢复**：平台原生机制自动重启异常退出的进程
+- **状态检测**：🟢/🔴 实时状态显示，一键启停 Companion
+- **通知提醒**：Companion 状态变化时推送桌面通知
+- **向后兼容**：仍可直接运行 `cmspark-agent start` 作为前台进程
+
+---
+
+### macOS
+
+#### 安装
+
+```bash
+make install-macos
+```
+
+安装内容：
+1. `launchd plist` → `~/Library/LaunchAgents/com.cmspark.companion.plist`
+2. "CMspark Agent.app" → `~/Applications/`（隐藏 Dock 图标）
+3. 数据目录 `~/.cmspark-agent/`（权限 `0700`）
+
+#### 启动菜单栏代理
+
+```bash
+make menu-bar
+# 或双击 ~/Applications/CMspark Agent.app
+```
+
+#### 常用命令
+
+```bash
+launchctl start com.cmspark.companion    # 启动服务
+launchctl stop com.cmspark.companion     # 停止服务
+launchctl list | grep cmspark            # 查看状态
+make daemon-status                       # 守护进程状态
+make uninstall-macos                     # 卸载
+```
+
+---
+
+### Windows
+
+#### 安装
+
+```powershell
+# 以普通用户身份在 PowerShell 中运行
+make install-windows
+```
+
+或使用 PowerShell 直接运行：
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/install-daemon.ps1
+```
+
+安装内容：
+1. 注册 Windows 任务计划程序（用户登录时启动）
+2. 开始菜单快捷方式 → `CMspark Agent`
+3. 数据目录 `%USERPROFILE%\.cmspark-agent\`
+
+#### 常用命令
+
+```powershell
+Start-ScheduledTask -TaskName cmspark-companion    # 启动服务
+Stop-ScheduledTask  -TaskName cmspark-companion    # 停止服务
+Get-ScheduledTask   -TaskName cmspark-companion    # 查看状态
+make uninstall-windows                             # 卸载
+```
+
+---
+
+### Linux
+
+#### 安装
+
+```bash
+make install-linux
+```
+
+安装内容：
+1. `systemd user unit` → `~/.config/systemd/user/cmspark-companion.service`
+2. 数据目录 `~/.cmspark-agent/`（权限 `0700`）
+
+#### 启动菜单栏代理
+
+```bash
+cd companion && npm run menu-bar
+```
+
+#### 常用命令
+
+```bash
+systemctl --user start   cmspark-companion    # 启动服务
+systemctl --user stop    cmspark-companion    # 停止服务
+systemctl --user status  cmspark-companion    # 查看状态
+journalctl --user -u     cmspark-companion    # 查看日志
+make uninstall-linux                          # 卸载
+```
+
+---
+
+### 跨平台通用命令
+
+```bash
+# 查看守护进程状态（全平台）
+make daemon-status
+
+# 查看 Companion 日志
+cd companion && npm run daemon:logs
+
+# 菜单栏代理
+cd companion && npm run menu-bar
+```
+
+### 安全说明
+
+- **数据目录权限**：`~/.cmspark-agent/` 权限强制为 `0700`，防止其他用户读取配置和日志
+- **进程锁**：
+  - macOS/Linux：Unix Domain Socket 锁替代 PID 文件，消除 TOCTOU 竞态条件
+  - Windows：命名管道（`\\?\pipe\cmspark-agent-lock`）
+- **WebSocket 绑定**：始终绑定 `127.0.0.1:23401`，禁止远程访问
+- **配置文件完整性**：安装时生成 SHA256 校验和
+- **权限最小化**：守护进程以当前用户身份运行，不请求 root / 管理员权限
+- **系统托盘二进制完整性（systray2）**：
+  - systray2 npm 包包含预编译的 Go 二进制文件（macOS/Linux/Windows）
+  - 项目通过 `scripts/verify-systray2.js` 对二进制进行 SHA256 校验
+  - CI 构建时自动校验（`.github/workflows/ci.yml`）
+  - `npm install` 后自动运行校验（`postinstall` 钩子）
+  - 已知哈希值记录在 `scripts/systray2-sha256.json` 中，受 Git 版本控制保护
+  - **升级 systray2 时**：必须更新 `scripts/systray2-sha256.json` 中的哈希值，详见 CONTRIBUTING.md
+
+### 故障排查
+
+| 问题 | 解决方案 |
+|------|---------|
+| 菜单栏代理显示 🔴 但 Companion 实际在运行 | 等待 3 秒轮询周期；检查 `make daemon-status` |
+| 通知不显示 | 检查系统通知权限；尝试前台运行 `make menu-bar` |
+| 开机自启未生效 | macOS: `launchctl list \| grep cmspark`；Windows: `Get-ScheduledTask`；Linux: `systemctl --user is-enabled` |
+| 守护进程反复崩溃 | 查看平台日志（macOS: `logs/stderr.log`；Linux: `journalctl`；Windows: Event Viewer） |
+| 端口 23401 被占用 | 执行 `pkill -f "dist/index.js"` 或对应平台的 stop 命令 |
+
+---
+
 ## 开发
 
 ### 开发命令

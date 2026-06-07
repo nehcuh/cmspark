@@ -1,4 +1,4 @@
-.PHONY: dev install test build clean load-extension
+.PHONY: dev install test build clean load-extension menu-bar install-macos uninstall-macos daemon-status install-linux uninstall-linux install-windows uninstall-windows
 
 # 一键启动开发环境（两个进程并行）
 dev: install
@@ -33,6 +33,48 @@ load-extension:
 clean:
 	rm -rf companion/dist companion/.test-dist
 	rm -rf chrome-extension/build chrome-extension/.test-dist
+
+# 系统托盘代理（全平台）
+tray:
+	cd companion && npm run tray
+
+# macOS 菜单栏代理（legacy readline）
+menu-bar:
+	cd companion && npm run menu-bar
+
+# macOS 安装后台守护进程 + 系统托盘启动器
+install-macos: build
+	@echo "Installing CMspark macOS daemon..."
+	@cd companion && ./scripts/install-daemon.sh
+
+# macOS 卸载后台守护进程
+uninstall-macos:
+	@echo "Uninstalling CMspark macOS daemon..."
+	@cd companion && ./scripts/uninstall-daemon.sh
+
+# 查看守护进程状态
+daemon-status:
+	@cd companion && npm run daemon:status
+
+# Linux 安装 systemd 用户服务 + 菜单栏启动器
+install-linux: build
+	@echo "Installing CMspark Linux daemon..."
+	@cd companion && ./scripts/install-daemon.sh
+
+# Linux 卸载 systemd 用户服务
+uninstall-linux:
+	@echo "Uninstalling CMspark Linux daemon..."
+	@cd companion && ./scripts/uninstall-daemon.sh
+
+# Windows 安装任务计划程序服务 + 开始菜单快捷方式
+install-windows: build
+	@echo "Installing CMspark Windows daemon..."
+	@powershell -ExecutionPolicy Bypass -File scripts/install-daemon.ps1
+
+# Windows 卸载任务计划程序服务
+uninstall-windows:
+	@echo "Uninstalling CMspark Windows daemon..."
+	@powershell -ExecutionPolicy Bypass -File scripts/uninstall-daemon.ps1
 
 # 打包分发版本 (Windows 用户用)
 # 用法: make package  或双击 build-package.bat

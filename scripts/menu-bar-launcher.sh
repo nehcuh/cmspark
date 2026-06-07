@@ -16,4 +16,4 @@ if ! command -v cmspark-agent >/dev/null 2>&1; then
 fi
 
 # Start the menu-bar agent
-exec cmspark-agent menu-bar
+exec cmspark-agent tray

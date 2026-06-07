@@ -1,7 +1,7 @@
 #!/bin/bash
-# CMspark macOS Daemon Installer
-# ================================
-# Installs the CMspark Companion as a user-level launchd service.
+# CMspark Daemon Installer (Cross-Platform: macOS + Linux)
+# =========================================================
+# Installs the CMspark Companion as a user-level background service.
 # Run as the target user (no sudo required).
 #
 # Usage: ./install-daemon.sh
@@ -9,24 +9,43 @@
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
+# Detect OS
+# ---------------------------------------------------------------------------
+OS="$(uname -s)"
+case "$OS" in
+    Darwin*) PLATFORM="macos" ;;
+    Linux*)  PLATFORM="linux" ;;
+    *)       echo "[ERROR] Unsupported OS: $OS"; exit 1 ;;
+esac
+
+# ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LABEL="com.cmspark.companion"
-PLIST_NAME="${LABEL}.plist"
-SOURCE_PLIST="$(cd "$(dirname "$0")" && pwd)/launchd/${PLIST_NAME}"
-TARGET_PLIST="${HOME}/Library/LaunchAgents/${PLIST_NAME}"
 DATA_DIR="${HOME}/.cmspark-agent"
 LOGS_DIR="${DATA_DIR}/logs"
-APP_NAME="CMspark Agent.app"
-# Prefer ~/Applications/ (user-local), fall back to /Applications/
-if [[ -d "${HOME}/Applications" ]]; then
-    APP_DIR="${HOME}/Applications/${APP_NAME}"
-elif [[ -d "/Applications" ]]; then
-    APP_DIR="/Applications/${APP_NAME}"
-else
-    APP_DIR="${HOME}/Applications/${APP_NAME}"
-fi
 CHECKSUM_FILE="${DATA_DIR}/.plist.sha256"
+
+if [[ "$PLATFORM" == "macos" ]]; then
+    PLIST_NAME="${LABEL}.plist"
+    SOURCE_PLIST="${SCRIPT_DIR}/launchd/${PLIST_NAME}"
+    TARGET_PLIST="${HOME}/Library/LaunchAgents/${PLIST_NAME}"
+    APP_NAME="CMspark Agent.app"
+    if [[ -d "${HOME}/Applications" ]]; then
+        APP_DIR="${HOME}/Applications/${APP_NAME}"
+    elif [[ -d "/Applications" ]]; then
+        APP_DIR="/Applications/${APP_NAME}"
+    else
+        APP_DIR="${HOME}/Applications/${APP_NAME}"
+    fi
+fi
+
+if [[ "$PLATFORM" == "linux" ]]; then
+    SERVICE_NAME="cmspark-companion.service"
+    SOURCE_SERVICE="${SCRIPT_DIR}/systemd/${SERVICE_NAME}"
+    TARGET_SERVICE="${HOME}/.config/systemd/user/${SERVICE_NAME}"
+fi
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -61,68 +80,54 @@ info "Creating logs directory: ${LOGS_DIR}"
 mkdir -p "${LOGS_DIR}"
 chmod 0700 "${LOGS_DIR}"
 
-# ---------------------------------------------------------------------------
-# 4. Copy plist and substitute {{HOME}} with real $HOME
-# ---------------------------------------------------------------------------
-info "Installing launchd plist: ${TARGET_PLIST}"
-if [[ ! -f "${SOURCE_PLIST}" ]]; then
-    error "Source plist not found: ${SOURCE_PLIST}"
-    exit 1
-fi
+# ===========================================================================
+# Platform-specific installation
+# ===========================================================================
 
-# Ensure LaunchAgents directory exists
-mkdir -p "${HOME}/Library/LaunchAgents"
+if [[ "$PLATFORM" == "macos" ]]; then
+    # -----------------------------------------------------------------------
+    # macOS: launchd
+    # -----------------------------------------------------------------------
+    info "Installing launchd plist: ${TARGET_PLIST}"
+    if [[ ! -f "${SOURCE_PLIST}" ]]; then
+        error "Source plist not found: ${SOURCE_PLIST}"
+        exit 1
+    fi
 
-# Copy and replace placeholder; also replace the hard-coded binary path
-# with the actual detected path so it works even when npm global bin
-# is outside the usual locations.
-sed -e "s|{{HOME}}|${HOME}|g" \
-    -e "s|${HOME}/.cmspark-agent/bin/cmspark-agent|${CMSPARK_AGENT_PATH}|g" \
-    "${SOURCE_PLIST}" > "${TARGET_PLIST}"
+    mkdir -p "${HOME}/Library/LaunchAgents"
 
-chmod 644 "${TARGET_PLIST}"
+    sed -e "s|{{HOME}}|${HOME}|g" \
+        -e "s|${HOME}/.cmspark-agent/bin/cmspark-agent|${CMSPARK_AGENT_PATH}|g" \
+        "${SOURCE_PLIST}" > "${TARGET_PLIST}"
 
-# ---------------------------------------------------------------------------
-# 5. Generate SHA256 checksum of the installed plist
-# ---------------------------------------------------------------------------
-info "Generating plist checksum..."
-shasum -a 256 "${TARGET_PLIST}" | awk '{print $1}' > "${CHECKSUM_FILE}"
-chmod 600 "${CHECKSUM_FILE}"
-info "Checksum written to: ${CHECKSUM_FILE}"
+    chmod 644 "${TARGET_PLIST}"
 
-# ---------------------------------------------------------------------------
-# 6. Unload any existing service (ignore errors if not loaded)
-# ---------------------------------------------------------------------------
-info "Unloading existing service (if any)..."
-launchctl unload "${TARGET_PLIST}" >/dev/null 2>&1 || true
+    # Generate SHA256 checksum
+    info "Generating plist checksum..."
+    shasum -a 256 "${TARGET_PLIST}" | awk '{print $1}' > "${CHECKSUM_FILE}"
+    chmod 600 "${CHECKSUM_FILE}"
 
-# ---------------------------------------------------------------------------
-# 7. Load the new service
-# ---------------------------------------------------------------------------
-info "Loading launchd service: ${LABEL}"
-launchctl load "${TARGET_PLIST}"
+    # Unload existing service
+    info "Unloading existing service (if any)..."
+    launchctl unload "${TARGET_PLIST}" >/dev/null 2>&1 || true
 
-# ---------------------------------------------------------------------------
-# 8. Verify service is loaded
-# ---------------------------------------------------------------------------
-info "Verifying service status..."
-if launchctl list | grep -q "^${LABEL}$"; then
-    info "Service ${LABEL} is loaded."
-else
-    warn "Service may not be loaded yet; this is normal on first install."
-fi
+    # Load new service
+    info "Loading launchd service: ${LABEL}"
+    launchctl load "${TARGET_PLIST}"
 
-# ---------------------------------------------------------------------------
-# 9. Create "CMspark Agent.app" menu-bar launcher
-# ---------------------------------------------------------------------------
-info "Creating menu-bar launcher: ${APP_DIR}"
+    # Verify
+    info "Verifying service status..."
+    if launchctl list | grep -q "^${LABEL}$"; then
+        info "Service ${LABEL} is loaded."
+    else
+        warn "Service may not be loaded yet; this is normal on first install."
+    fi
 
-# Remove old version if present
-rm -rf "${APP_DIR}"
+    # Create menu-bar launcher app
+    info "Creating menu-bar launcher: ${APP_DIR}"
+    rm -rf "${APP_DIR}"
 
-# Build a minimal AppleScript .app that calls cmspark-agent menu-bar
-# We use osacompile to generate the binary .app bundle.
-OSASCRIPT_SRC="
+    OSASCRIPT_SRC="
 on run
     do shell script \"${CMSPARK_AGENT_PATH} menu-bar\"
 end run
@@ -132,19 +137,17 @@ on open theFiles
 end open
 "
 
-# osacompile creates the .app bundle
-mkdir -p "$(dirname "${APP_DIR}")"
-echo "${OSASCRIPT_SRC}" | osacompile -o "${APP_DIR}" 2>&1 || {
-    warn "osacompile failed; falling back to shell-script wrapper."
-    # Fallback: create a minimal .app structure with a shell script
-    mkdir -p "${APP_DIR}/Contents/MacOS"
-    cat > "${APP_DIR}/Contents/MacOS/CMspark Agent" <<EOF
+    mkdir -p "$(dirname "${APP_DIR}")"
+    echo "${OSASCRIPT_SRC}" | osacompile -o "${APP_DIR}" 2>&1 || {
+        warn "osacompile failed; falling back to shell-script wrapper."
+        mkdir -p "${APP_DIR}/Contents/MacOS"
+        cat > "${APP_DIR}/Contents/MacOS/CMspark Agent" <<EOF
 #!/bin/bash
 exec "${CMSPARK_AGENT_PATH}" menu-bar
 EOF
-    chmod +x "${APP_DIR}/Contents/MacOS/CMspark Agent"
+        chmod +x "${APP_DIR}/Contents/MacOS/CMspark Agent"
 
-    cat > "${APP_DIR}/Contents/Info.plist" <<EOF
+        cat > "${APP_DIR}/Contents/Info.plist" <<'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -166,39 +169,95 @@ EOF
 </dict>
 </plist>
 EOF
-}
+    }
 
-# Hide from Dock (LSUIElement / LSBackgroundOnly)
-# osacompile already sets these, but ensure they are present.
-if [[ -f "${APP_DIR}/Contents/Info.plist" ]]; then
-    # If the plist does not already contain LSUIElement, inject it.
-    if ! grep -q "LSUIElement" "${APP_DIR}/Contents/Info.plist"; then
-        # Insert before the closing </dict></plist>
-        sed -i '' 's|</dict>|    <key>LSUIElement</key>\n    <true/>\n</dict>|' "${APP_DIR}/Contents/Info.plist" || true
+    if [[ -f "${APP_DIR}/Contents/Info.plist" ]]; then
+        if ! grep -q "LSUIElement" "${APP_DIR}/Contents/Info.plist"; then
+            sed -i '' 's|</dict>|    <key>LSUIElement</key>\n    <true/>\n</dict>|' "${APP_DIR}/Contents/Info.plist" || true
+        fi
+    fi
+
+    info "Menu-bar launcher created at: ${APP_DIR}"
+fi
+
+if [[ "$PLATFORM" == "linux" ]]; then
+    # -----------------------------------------------------------------------
+    # Linux: systemd user service
+    # -----------------------------------------------------------------------
+    info "Installing systemd user service: ${TARGET_SERVICE}"
+    if [[ ! -f "${SOURCE_SERVICE}" ]]; then
+        error "Source service file not found: ${SOURCE_SERVICE}"
+        exit 1
+    fi
+
+    mkdir -p "${HOME}/.config/systemd/user"
+
+    # Substitute paths in the service file
+    sed -e "s|%h|${HOME}|g" \
+        -e "s|${HOME}/.cmspark-agent/bin/cmspark-agent|${CMSPARK_AGENT_PATH}|g" \
+        "${SOURCE_SERVICE}" > "${TARGET_SERVICE}"
+
+    chmod 644 "${TARGET_SERVICE}"
+
+    # Generate checksum
+    info "Generating service file checksum..."
+    sha256sum "${TARGET_SERVICE}" | awk '{print $1}' > "${CHECKSUM_FILE}"
+    chmod 600 "${CHECKSUM_FILE}"
+
+    # Reload systemd daemon
+    info "Reloading systemd daemon..."
+    systemctl --user daemon-reload
+
+    # Enable and start service
+    info "Enabling systemd service: ${SERVICE_NAME}"
+    systemctl --user enable "${SERVICE_NAME}"
+
+    info "Starting systemd service: ${SERVICE_NAME}"
+    systemctl --user start "${SERVICE_NAME}" || {
+        warn "Service may not have started. Check logs with: journalctl --user -u ${SERVICE_NAME}"
+    }
+
+    # Verify
+    info "Verifying service status..."
+    if systemctl --user is-active --quiet "${SERVICE_NAME}"; then
+        info "Service ${SERVICE_NAME} is active."
+    else
+        warn "Service may not be active yet. Check with: systemctl --user status ${SERVICE_NAME}"
     fi
 fi
 
-info "Menu-bar launcher created at: ${APP_DIR}"
-
 # ---------------------------------------------------------------------------
-# 10. Summary
+# Summary
 # ---------------------------------------------------------------------------
 echo ""
 echo "========================================"
 echo "  CMspark Daemon Installation Complete"
 echo "========================================"
 echo ""
-echo "  Service label : ${LABEL}"
-echo "  Plist path    : ${TARGET_PLIST}"
+echo "  Platform      : ${PLATFORM}"
 echo "  Data directory: ${DATA_DIR}"
 echo "  Logs directory: ${LOGS_DIR}"
-echo "  Menu-bar app  : ${APP_DIR}"
-echo ""
-echo "  Commands:"
-echo "    launchctl start ${LABEL}"
-echo "    launchctl stop  ${LABEL}"
-echo "    launchctl list | grep ${LABEL}"
+if [[ "$PLATFORM" == "macos" ]]; then
+    echo "  Service label : ${LABEL}"
+    echo "  Plist path    : ${TARGET_PLIST}"
+    echo "  Menu-bar app  : ${APP_DIR}"
+    echo ""
+    echo "  Commands:"
+    echo "    launchctl start ${LABEL}"
+    echo "    launchctl stop  ${LABEL}"
+    echo "    launchctl list | grep ${LABEL}"
+fi
+if [[ "$PLATFORM" == "linux" ]]; then
+    echo "  Service name  : ${SERVICE_NAME}"
+    echo "  Service path  : ${TARGET_SERVICE}"
+    echo ""
+    echo "  Commands:"
+    echo "    systemctl --user start   ${SERVICE_NAME}"
+    echo "    systemctl --user stop    ${SERVICE_NAME}"
+    echo "    systemctl --user status  ${SERVICE_NAME}"
+    echo "    journalctl --user -u     ${SERVICE_NAME}"
+fi
 echo ""
 echo "  To uninstall, run:"
-echo "    $(cd "$(dirname "$0")" && pwd)/uninstall-daemon.sh"
+echo "    ${SCRIPT_DIR}/uninstall-daemon.sh"
 echo ""
