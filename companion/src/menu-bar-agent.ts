@@ -8,6 +8,7 @@
 //   - WebSocket polling every 3s
 //   - Status change notifications via node-notifier
 
+import * as readline from "readline"
 import * as child_process from "child_process"
 import * as path from "path"
 import * as fs from "fs"
@@ -28,6 +29,21 @@ const notifier = require("node-notifier") as {
 import { isProcessRunning, readPidFile } from "./daemon"
 import { getConfigDir, getPidFilePath } from "./config"
 import { getChromeOpener, openLogDirectory, getPlatform, isMacOS } from "./platform"
+
+/** Safe wrapper around node-notifier that swallows errors on Apple Silicon without Rosetta 2 */
+function safeNotify(options: {
+  title?: string
+  message?: string
+  sound?: boolean | string
+  timeout?: number
+}): void {
+  try {
+    safeNotify(options)
+  } catch {
+    // node-notifier depends on terminal-notifier which is x86_64-only on macOS.
+    // On Apple Silicon without Rosetta 2 it throws -86 (architecture mismatch).
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -184,10 +200,14 @@ function writeStatusFile(): void {
 }
 
 function notifyStatusChange(status: CompanionStatus): void {
-  if (status === "running") {
-    notifier.notify({ title: "CMspark Agent", message: "Companion 守护进程已启动", sound: false, timeout: 3 })
-  } else {
-    notifier.notify({ title: "CMspark Agent", message: "Companion 守护进程已停止", sound: false, timeout: 3 })
+  try {
+    if (status === "running") {
+      safeNotify({ title: "CMspark Agent", message: "Companion 守护进程已启动", sound: false, timeout: 3 })
+    } else {
+      safeNotify({ title: "CMspark Agent", message: "Companion 守护进程已停止", sound: false, timeout: 3 })
+    }
+  } catch {
+    // node-notifier may fail on Apple Silicon without Rosetta 2
   }
 }
 
@@ -277,7 +297,7 @@ async function toggleAutoStart(): Promise<void> {
         fs.unlinkSync(plist)
       } else {
         // Would need install script path; guide user
-        notifier.notify({ title: "CMspark Agent", message: "请运行 make install-macos 开启开机自启", timeout: 5 })
+        safeNotify({ title: "CMspark Agent", message: "请运行 make install-macos 开启开机自启", timeout: 5 })
       }
     } else if (platform === "linux") {
       if (currentlyEnabled) {
@@ -286,10 +306,10 @@ async function toggleAutoStart(): Promise<void> {
         child_process.execSync("systemctl --user enable cmspark-companion")
       }
     } else if (platform === "win32") {
-      notifier.notify({ title: "CMspark Agent", message: "请运行 make install-windows 开启开机自启", timeout: 5 })
+      safeNotify({ title: "CMspark Agent", message: "请运行 make install-windows 开启开机自启", timeout: 5 })
     }
   } catch (err: any) {
-    notifier.notify({ title: "CMspark Agent", message: `自启切换失败: ${err.message}`, timeout: 5 })
+    safeNotify({ title: "CMspark Agent", message: `自启切换失败: ${err.message}`, timeout: 5 })
   }
 
   await updateTrayState()
@@ -314,7 +334,7 @@ async function startCompanion(): Promise<void> {
     )
     proc.unref()
   } catch (err: any) {
-    notifier.notify({ title: "CMspark Agent", message: `启动失败: ${err.message}`, timeout: 5 })
+    safeNotify({ title: "CMspark Agent", message: `启动失败: ${err.message}`, timeout: 5 })
   }
 }
 
@@ -327,25 +347,30 @@ async function stopCompanion(): Promise<void> {
       { timeout: 15000 },
     )
   } catch (err: any) {
-    notifier.notify({ title: "CMspark Agent", message: `停止失败: ${err.message}`, timeout: 5 })
+    safeNotify({ title: "CMspark Agent", message: `停止失败: ${err.message}`, timeout: 5 })
   }
 }
 
 function showStatusNotification(): void {
-  const running = state.companionStatus === "running"
-  const lines = [
-    `Companion: ${running ? "运行中" : "已停止"}`,
-    `WS 连接: ${state.wsConnected ? "已连接" : "未连接"}`,
-    state.pid ? `PID: ${state.pid}` : "",
-    `WebSocket: ws://${WS_HOST}:${WS_PORT}`,
-    `数据目录: ${getConfigDir()}`,
-  ].filter(Boolean)
+  try {
+    const running = state.companionStatus === "running"
+    const lines = [
+      `Companion: ${running ? "运行中" : "已停止"}`,
+      `WS 连接: ${state.wsConnected ? "已连接" : "未连接"}`,
+      state.pid ? `PID: ${state.pid}` : "",
+      `WebSocket: ws://${WS_HOST}:${WS_PORT}`,
+      `数据目录: ${getConfigDir()}`,
+    ].filter(Boolean)
 
-  notifier.notify({
-    title: "CMspark Agent - 状态",
-    message: lines.join("\n"),
-    timeout: 5,
-  })
+    safeNotify({
+      title: "CMspark Agent - 状态",
+      message: lines.join("\n"),
+      timeout: 5,
+    })
+  } catch {
+    // node-notifier may fail on Apple Silicon without Rosetta 2
+    console.log(`Companion: ${state.companionStatus === "running" ? "运行中" : "已停止"}`)
+  }
 }
 
 function getLogDir(): string {
@@ -356,7 +381,7 @@ function openChromeSidePanel(): void {
   try {
     getChromeOpener().openSidePanel()
   } catch (err: any) {
-    notifier.notify({ title: "CMspark Agent", message: `打开 Chrome 失败: ${err.message}`, timeout: 5 })
+    safeNotify({ title: "CMspark Agent", message: `打开 Chrome 失败: ${err.message}`, timeout: 5 })
   }
 }
 
@@ -364,7 +389,7 @@ function openLogsDir(): void {
   try {
     openLogDirectory(getLogDir())
   } catch (err: any) {
-    notifier.notify({ title: "CMspark Agent", message: `打开日志目录失败: ${err.message}`, timeout: 5 })
+    safeNotify({ title: "CMspark Agent", message: `打开日志目录失败: ${err.message}`, timeout: 5 })
   }
 }
 
@@ -382,9 +407,11 @@ async function setupTray(): Promise<SysTray> {
     copyDir: true,
   })
 
-  systray.onReady(() => {
-    console.log("[tray] System tray ready")
-  })
+  // Wait for init() to complete (_rl and _process are created) before
+  // registering any listeners.  systray2's init() is async; _rl is null
+  // until the Go binary is spawned and the readline interface is set up.
+  await systray.ready()
+  console.log("[tray] System tray ready")
 
   systray.onClick(async (action) => {
     switch (action.seq_id) {
@@ -422,7 +449,6 @@ async function setupTray(): Promise<SysTray> {
     console.error("[tray] Error:", err)
   })
 
-  await systray.ready()
   return systray
 }
 
@@ -446,12 +472,103 @@ function cleanup(): void {
 }
 
 // ---------------------------------------------------------------------------
+// Fallback: readline CLI (when systray2 is unavailable, e.g. no Rosetta on Apple Silicon)
+// ---------------------------------------------------------------------------
+
+let rl: readline.Interface | null = null
+
+function printMenu() {
+  const icon = state.companionStatus === "running" ? "🟢" : "🔴"
+  const status = state.companionStatus === "running"
+    ? `运行中 (pid: ${state.pid}, WS: 已连接)`
+    : "已停止"
+
+  console.clear()
+  console.log("CMspark Agent Menu")
+  console.log("==================")
+  console.log("")
+  console.log(`${icon} Companion ${status}`)
+  console.log(`   最后检测: ${state.lastCheckedAt}`)
+  console.log("")
+  console.log("[1] 启动 Companion")
+  console.log("[2] 停止 Companion")
+  console.log("[3] 查看状态")
+  console.log("[4] 打开日志目录")
+  console.log("[5] 打开 Chrome Side Panel")
+  console.log("[6] 退出")
+  console.log("")
+  process.stdout.write("请选择操作: ")
+}
+
+function pauseAndContinue(): void {
+  console.log("")
+  process.stdout.write("按 Enter 继续...")
+  if (rl) {
+    rl.once("line", () => {
+      printMenu()
+    })
+  }
+}
+
+function startReadlineAgent(): void {
+  if (rl) {
+    console.log("菜单栏代理已在运行")
+    return
+  }
+
+  rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  })
+
+  printMenu()
+
+  rl.on("line", async (input) => {
+    const choice = input.trim()
+    switch (choice) {
+      case "1":
+        await startCompanion()
+        pauseAndContinue()
+        break
+      case "2":
+        await stopCompanion()
+        pauseAndContinue()
+        break
+      case "3":
+        showStatusNotification()
+        pauseAndContinue()
+        break
+      case "4":
+        openLogsDir()
+        pauseAndContinue()
+        break
+      case "5":
+        openChromeSidePanel()
+        pauseAndContinue()
+        break
+      case "6":
+      case "q":
+      case "quit":
+        stopMenuBarAgent()
+        break
+      default:
+        console.log("\n无效选择，请重新输入")
+        pauseAndContinue()
+    }
+  })
+
+  rl.on("close", () => {
+    stopMenuBarAgent()
+  })
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
 export async function startMenuBarAgent(): Promise<void> {
-  if (systrayInstance) {
-    console.log("系统托盘代理已在运行")
+  if (systrayInstance || rl) {
+    console.log("菜单栏代理已在运行")
     return
   }
 
@@ -459,8 +576,19 @@ export async function startMenuBarAgent(): Promise<void> {
   await pollCompanionStatus()
   lastNotifiedStatus = state.companionStatus
 
-  // Setup tray
-  systrayInstance = await setupTray()
+  // Try systray2 first; fall back to readline CLI on failure
+  try {
+    systrayInstance = await setupTray()
+    console.log("[tray] CMspark Agent system tray started")
+  } catch (err: any) {
+    console.warn(`[tray] System tray unavailable: ${err.message}`)
+    console.warn("[tray] Falling back to readline CLI menu.")
+    if (process.platform === "darwin" && process.arch === "arm64") {
+      console.warn("[tray] Tip: Install Rosetta 2 to enable native system tray:")
+      console.warn("       softwareupdate --install-rosetta --agree-to-license")
+    }
+    startReadlineAgent()
+  }
 
   // Start polling loop
   pollTimer = setInterval(() => {
@@ -470,8 +598,6 @@ export async function startMenuBarAgent(): Promise<void> {
       }
     })
   }, POLL_INTERVAL_MS)
-
-  console.log("[tray] CMspark Agent system tray started")
 }
 
 export function stopMenuBarAgent(): void {
@@ -479,6 +605,10 @@ export function stopMenuBarAgent(): void {
     systrayInstance.kill().catch(() => { /* ignore */ })
     systrayInstance = null
   }
+  if (rl) {
+    rl.close()
+    rl = null
+  }
   cleanup()
-  console.log("[tray] CMspark Agent system tray stopped")
+  console.log("[tray] CMspark Agent menu bar stopped")
 }
