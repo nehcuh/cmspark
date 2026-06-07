@@ -13,6 +13,8 @@ import { checkHighRiskExecution, highRiskExecutionDeniedError, isTrustedDomain }
 import { SecurityConfirmationManager } from "./security-confirmation"
 import { securityPolicy, getTokenSecret } from "./security-policy"
 import { logger, type LogLevel } from "./logger"
+import { acquireLock, releaseLock, isProcessRunning, readPidFile, cleanupPidFile } from "./daemon"
+import { getLockFilePath, getPidFilePath } from "./config"
 
 const MAX_WS_MESSAGE_SIZE = 10 * 1024 * 1024 // 10MB
 
@@ -516,6 +518,30 @@ function validateWsMessage(msg: any): WsValidationResult {
 export async function startServer() {
   const config = getConfig()
   const port = config.port || PORT
+
+  // --- UDS Lock: check for existing instance ---
+  const lockPath = getLockFilePath()
+  const lockAcquired = await acquireLock(lockPath)
+  if (!lockAcquired) {
+    // Lock exists — check if the owning process is still alive
+    const pid = readPidFile(getPidFilePath())
+    if (pid && isProcessRunning(pid)) {
+      console.error("[cmspark-agent] Another instance is already running (pid: " + pid + ")")
+      logger.error("server.start_failed", { reason: "already_running", pid })
+      process.exit(1)
+    }
+    // Stale lock — clean up and continue
+    console.log("[cmspark-agent] Cleaning up stale lock from dead process (pid: " + (pid || "unknown") + ")")
+    cleanupPidFile(getPidFilePath())
+    releaseLock(lockPath)
+    // Try again
+    const retryAcquired = await acquireLock(lockPath)
+    if (!retryAcquired) {
+      console.error("[cmspark-agent] Failed to acquire lock after cleanup")
+      process.exit(1)
+    }
+  }
+
   logger.info("server.start", {
     port,
     model_name: config.llm.model_name,
@@ -671,11 +697,13 @@ export async function startServer() {
     console.log("\n[cmspark-agent] Shutting down...")
     logger.info("server.shutdown", { signal: "SIGINT" })
     wss.close()
+    releaseLock(getLockFilePath())
     process.exit(0)
   })
   process.on("SIGTERM", () => {
     logger.info("server.shutdown", { signal: "SIGTERM" })
     wss.close()
+    releaseLock(getLockFilePath())
     process.exit(0)
   })
 }

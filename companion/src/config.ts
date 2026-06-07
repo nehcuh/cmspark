@@ -65,7 +65,14 @@ export async function initDataDir(): Promise<void> {
     path.join(DATA_DIR, "builtin-skills", "security"),
   ]
   for (const dir of dirs) {
-    fs.mkdirSync(dir, { recursive: true })
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
+  }
+
+  // Ensure data directory itself has restricted permissions
+  try {
+    fs.chmodSync(DATA_DIR, 0o700)
+  } catch {
+    // Ignore if we don't have permission to chmod
   }
 
   const configPath = path.join(DATA_DIR, "config.json")
@@ -149,4 +156,16 @@ function deepMerge(target: any, source: any): any {
 
 export function getConfigDir(): string {
   return DATA_DIR
+}
+
+export function getLogDir(): string {
+  return path.join(DATA_DIR, "logs")
+}
+
+export function getLockFilePath(): string {
+  return path.join(DATA_DIR, "daemon.sock")
+}
+
+export function getPidFilePath(): string {
+  return path.join(DATA_DIR, "daemon.pid")
 }
