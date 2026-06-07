@@ -4,7 +4,7 @@ import { WebSocketServer, WebSocket } from "ws"
 import { execFile } from "child_process"
 import os from "os"
 import { URL } from "url"
-import { getConfig } from "./config"
+import { getConfig, initDataDir } from "./config"
 import { handleMessage } from "./message-router"
 import { ThreadManager } from "./threads/thread-manager"
 import { SkillEngine } from "./skills/skill-engine"
@@ -93,6 +93,7 @@ function logToolFinish(toolCallId: string, toolName: string, startedAt: number, 
 }
 
 async function initServices() {
+  await initDataDir()
   threadManager = new ThreadManager()
   skillEngine = new SkillEngine()
   historyStore = new HistoryStore()

@@ -1,7 +1,7 @@
 // Global state store for the agent
 
 import { createContext, useContext, useReducer, type ReactNode, type Dispatch } from "react"
-import type { ConnectionState, Thread, Message, SkillMeta, OperationRecord, LLMConfig, SendShortcut, SecurityConfirmationRequest, LogEntry } from "../types"
+import type { ConnectionState, Thread, Message, SkillMeta, OperationRecord, LLMConfig, SendShortcut, SecurityConfirmationRequest, LogEntry, KnowledgeMeta } from "../types"
 
 export interface AgentState {
   connectionState: ConnectionState
@@ -21,6 +21,7 @@ export interface AgentState {
   pendingSecurityConfirmations: SecurityConfirmationRequest[]
   logs: LogEntry[]
   autoSkillNames: string
+  knowledgeDocs: KnowledgeMeta[]
 }
 
 export type AgentAction =
@@ -50,6 +51,7 @@ export type AgentAction =
   | { type: "REMOVE_SECURITY_CONFIRMATION"; confirmationId: string }
   | { type: "ADD_LOG"; entry: LogEntry }
   | { type: "SET_AUTO_SKILLS"; names: string }
+  | { type: "SET_KNOWLEDGE_DOCS"; docs: KnowledgeMeta[] }
 export const initialState: AgentState = {
   connectionState: "disconnected",
   threads: [],
@@ -74,7 +76,8 @@ export const initialState: AgentState = {
   sendShortcut: "Enter",
   pendingSecurityConfirmations: [],
   logs: [],
-  autoSkillNames: ""
+  autoSkillNames: "",
+  knowledgeDocs: [],
 }
 
 export function agentReducer(state: AgentState, action: AgentAction): AgentState {
@@ -226,6 +229,8 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       return { ...state, logs: [...state.logs.slice(-99), action.entry] }
     case "SET_AUTO_SKILLS":
       return { ...state, autoSkillNames: action.names }
+    case "SET_KNOWLEDGE_DOCS":
+      return { ...state, knowledgeDocs: action.docs }
     default:
       return state
   }

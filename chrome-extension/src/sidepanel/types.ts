@@ -82,6 +82,15 @@ export interface SkillMeta {
   }>
 }
 
+export interface KnowledgeMeta {
+  name: string
+  description: string
+  type: "site_knowledge" | "domain_knowledge"
+  site?: string
+  builtin: boolean
+  source_file?: string
+}
+
 export interface OperationRecord {
   id: number
   thread_id: string

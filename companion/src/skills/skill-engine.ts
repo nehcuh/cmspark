@@ -9,6 +9,8 @@ import AdmZip from "adm-zip"
 import * as yaml from "js-yaml"
 import { getConfigDir } from "../config"
 import { ThreadManager } from "../threads/thread-manager"
+import { matchSite } from "./site-matcher"
+import { sanitizeKnowledgeContent } from "./content-sanitizer"
 
 interface ExperienceEntry {
   id: string
@@ -42,12 +44,14 @@ interface Skill extends SkillMeta {
 export class SkillEngine {
   private skillsDir: string
   private builtinDir: string
+  private knowledgeDir: string
   private skillsCache: Skill[] = []
   private threadSkillMap: Map<string, string[]> = new Map() // threadId → skill names
 
   constructor() {
     this.skillsDir = path.join(getConfigDir(), "skills")
     this.builtinDir = path.join(getConfigDir(), "builtin-skills")
+    this.knowledgeDir = path.join(getConfigDir(), "knowledge")
     this.refresh()
   }
 
@@ -57,6 +61,8 @@ export class SkillEngine {
     this.loadFromDir(this.skillsDir, false)
     // Load builtin skills
     this.loadFromDir(this.builtinDir, true)
+    // Load knowledge docs (same format as skills, stored in knowledge/)
+    this.loadFromDir(this.knowledgeDir, false)
   }
 
   private loadFromDir(dir: string, builtin: boolean): void {
@@ -160,8 +166,8 @@ export class SkillEngine {
     return this.skillsCache.find(s => s.name === name)
   }
 
-  getBySite(hostname: string): Skill | undefined {
-    return this.skillsCache.find(s => s.type === "site_knowledge" && s.site === hostname)
+  getBySite(hostname: string): Skill[] {
+    return this.skillsCache.filter(s => s.type === "site_knowledge" && s.site && matchSite(s.site, hostname))
   }
 
   getByType(type: string): Skill[] {
@@ -227,12 +233,13 @@ export class SkillEngine {
 
   /** Build compact skill index for system prompt.
    * LLM calls use_skill(name) to load full instructions on demand.
-   * For site_knowledge/domain_knowledge, inject entries summary directly. */
-  buildSystemPrompt(threadId: string): string {
+   * For site_knowledge/domain_knowledge, inject entries summary directly.
+   * Also injects global knowledge and matching site knowledge summaries. */
+  buildSystemPrompt(threadId: string, hostname?: string): string {
     const skills = this.getActiveForThread(threadId)
-    if (skills.length === 0) return ""
 
     const parts: string[] = []
+    const injectedNames = new Set<string>()
     const promptSkills = skills.filter(s => s.type !== "site_knowledge" && s.type !== "domain_knowledge")
     const experienceSkills = skills.filter(s => s.type === "site_knowledge" || s.type === "domain_knowledge")
 
@@ -240,8 +247,33 @@ export class SkillEngine {
     for (const s of experienceSkills) {
       const summary = this.getEntriesSummary(s.name)
       if (summary) {
+        injectedNames.add(s.name)
         const label = s.type === "site_knowledge" ? `Site: ${s.site}` : `Domain: ${s.name}`
         parts.push(`## ${label}\n${summary}`)
+      }
+    }
+
+    // Global knowledge: always inject if present
+    const globalKnowledge = this.getGlobalKnowledge()
+    for (const k of globalKnowledge) {
+      if (injectedNames.has(k.name)) continue
+      const summary = this.getKnowledgeSummary(k)
+      if (summary) {
+        injectedNames.add(k.name)
+        parts.push(`## Global Knowledge: ${k.name}\n${summary}`)
+      }
+    }
+
+    // Site knowledge: inject if hostname is provided and matches
+    if (hostname) {
+      const siteKnowledge = this.getBySite(hostname)
+      for (const k of siteKnowledge) {
+        if (injectedNames.has(k.name)) continue
+        const summary = this.getKnowledgeSummary(k)
+        if (summary) {
+          injectedNames.add(k.name)
+          parts.push(`## Site Knowledge: ${k.site}\n${summary}`)
+        }
       }
     }
 
@@ -254,6 +286,30 @@ export class SkillEngine {
     }
 
     return parts.join("\n\n")
+  }
+
+  /** Get all global knowledge docs from knowledge/global/ directory. */
+  private getGlobalKnowledge(): Skill[] {
+    return this.skillsCache.filter(s => {
+      if (s.type !== "site_knowledge" && s.type !== "domain_knowledge") return false
+      // Global knowledge: no site field, or stored in knowledge/global/
+      if (!s.site) return true
+      return false
+    })
+  }
+
+  /** Build a sanitized knowledge summary, capped at ~500 tokens (rough estimate). */
+  private getKnowledgeSummary(skill: Skill): string {
+    let content = skill.content || ""
+    // Sanitize before injection
+    content = sanitizeKnowledgeContent(content)
+    // Rough token estimate: 1 token ≈ 4 chars for English, 1 token ≈ 1 char for CJK
+    // Use a conservative char-based limit (~2000 chars ≈ 500 tokens for mixed content)
+    const MAX_CHARS = 2000
+    if (content.length > MAX_CHARS) {
+      content = content.slice(0, MAX_CHARS) + "\n... (truncated)"
+    }
+    return content.trim()
   }
 
   // --- Experience entry management ---

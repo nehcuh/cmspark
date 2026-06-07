@@ -485,10 +485,10 @@ test("skill-engine: getBySite finds site_knowledge skill", async () => {
 
   const { SkillEngine } = await import("../src/skills/skill-engine")
   const engine = new SkillEngine()
-  const skill = engine.getBySite("example.com")
-  
-  assert.ok(skill)
-  assert.equal(skill?.name, "site-skill")
+  const skills = engine.getBySite("example.com")
+
+  assert.equal(skills.length, 1)
+  assert.equal(skills[0].name, "site-skill")
 })
 
 test("skill-engine: getByType filters by type", async () => {

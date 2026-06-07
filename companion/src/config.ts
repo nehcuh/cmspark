@@ -46,6 +46,8 @@ export async function initDataDir(): Promise<void> {
     path.join(DATA_DIR, "threads"),
     path.join(DATA_DIR, "logs"),
     path.join(DATA_DIR, "cache"),
+    path.join(DATA_DIR, "knowledge", "global"),
+    path.join(DATA_DIR, "knowledge", "sites"),
   ]
   for (const dir of dirs) {
     fs.mkdirSync(dir, { recursive: true })

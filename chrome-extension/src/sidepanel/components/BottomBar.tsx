@@ -2,8 +2,9 @@
 
 import { useState, useRef, useEffect } from "react"
 import { useAgentStore } from "../store/agentStore"
+import { KnowledgeSubPanel } from "./KnowledgeSubPanel"
 
-type Panel = "tabs" | "history" | "skills"
+type Panel = "tabs" | "history" | "skills" | "knowledge"
 
 export function BottomBar() {
   const [activePanel, setActivePanel] = useState<Panel | null>(null)
@@ -13,6 +14,7 @@ export function BottomBar() {
     { id: "tabs" as const, label: "Tabs", icon: "📎" },
     { id: "history" as const, label: "Hist", icon: "📋" },
     { id: "skills" as const, label: "Skills", icon: "🧩" },
+    { id: "knowledge" as const, label: "Know", icon: "📚" },
   ]
 
   return (
@@ -40,6 +42,9 @@ export function BottomBar() {
             if (tab.id === "skills") {
               chrome.runtime.sendMessage({ type: "skill.list" })
             }
+            if (tab.id === "knowledge") {
+              chrome.runtime.sendMessage({ type: "knowledge.list" })
+            }
           }}
           >
             {tab.icon} {tab.label}
@@ -52,6 +57,7 @@ export function BottomBar() {
           {activePanel === "tabs" && <TabsPanel />}
           {activePanel === "history" && <HistoryPanel />}
           {activePanel === "skills" && <SkillsPanel />}
+          {activePanel === "knowledge" && <KnowledgeSubPanel />}
         </div>
       )}
     </div>
