@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  CMspark Companion launchd plist
+  ================================
+  Installed to: ~/Library/LaunchAgents/com.cmspark.companion.plist
+  Purpose:      Keep the CMspark Companion daemon running (auto-start on boot,
+                auto-restart on crash).
+  Notes:
+    - Paths use {{HOME}} placeholder; replaced by install-daemon.sh.
+    - ThrottleInterval prevents restart storms.
+    - LaunchLimitInterval limits total restarts within a window.
+    - Logs are redirected to ~/.cmspark-agent/logs/.
+-->
+<plist version="1.0">
+<dict>
+    <!-- Service identifier -->
+    <key>Label</key>
+    <string>com.cmspark.companion</string>
+
+    <!-- Program arguments -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>{{HOME}}/.cmspark-agent/bin/cmspark-agent</string>
+        <string>daemon</string>
+        <string>start</string>
+        <string>--daemonize</string>
+    </array>
+
+    <!-- Start automatically at login / boot -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Restart automatically if the process exits -->
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- Minimum seconds between restarts (prevents restart storms) -->
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+
+    <!-- Maximum restarts within a time window (5 minutes) -->
+    <key>LaunchLimitInterval</key>
+    <integer>300</integer>
+
+    <!-- Standard output log path -->
+    <key>StandardOutPath</key>
+    <string>{{HOME}}/.cmspark-agent/logs/stdout.log</string>
+
+    <!-- Standard error log path -->
+    <key>StandardErrorPath</key>
+    <string>{{HOME}}/.cmspark-agent/logs/stderr.log</string>
+
+    <!-- Environment variables -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>NODE_ENV</key>
+        <string>production</string>
+    </dict>
+
+    <!-- Working directory for the daemon -->
+    <key>WorkingDirectory</key>
+    <string>{{HOME}}/.cmspark-agent/</string>
+</dict>
+</plist>
