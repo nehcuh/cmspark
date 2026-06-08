@@ -75,7 +75,8 @@ export class SysTray2Adapter implements UnifiedTray {
 
     const instance = new Tray({ menu, debug: !!process.env.CMSPARK_DEBUG, copyDir: true })
     await instance.ready()
-    console.log("[systray2] Ready")
+    console.log("[tray] Started with systray2 backend")
+    console.log("[tray] Platform:", process.platform, "Arch:", process.arch)
 
     instance.onClick((action: any) => {
       const mapped = this.seqMap[action.seq_id]
@@ -149,25 +150,25 @@ export class SysTray2Adapter implements UnifiedTray {
       this.seqMap.push(mapping)
     }
 
-    // Status header
-    const emoji = this.status === "running" ? "🟢" : this.status === "stopped" ? "🔴" : "🟡"
-    push(`${emoji} CMspark Agent`, { type: "status" }, { enabled: false })
+    // Status header (avoid emoji — Windows tray binary may not handle UTF-8 emoji)
+    const statusLabel = this.status === "running" ? "[ON] CMspark Agent" : this.status === "stopped" ? "[OFF] CMspark Agent" : "[...] CMspark Agent"
+    push(statusLabel, { type: "status" }, { enabled: false })
 
     items.push(SEP)
     this.seqMap.push({ type: "status" }) // placeholder for separator index
 
     // Start / Stop / Restart
-    push("▶ 启动 Companion", { type: "start" }, { enabled: !running })
-    push("⏹ 停止 Companion", { type: "stop" }, { enabled: running })
-    push("🔄 重启 Companion", { type: "restart" }, { enabled: running })
+    push("Start Companion", { type: "start" }, { enabled: !running })
+    push("Stop Companion", { type: "stop" }, { enabled: running })
+    push("Restart Companion", { type: "restart" }, { enabled: running })
 
     items.push(SEP)
     this.seqMap.push({ type: "status" })
 
-    // Status detail (notification popup since no submenu)
-    push("📊 状态详情", { type: "status" })
+    // Status detail
+    push("Status Details", { type: "status" })
 
-    // Quick Actions (flat, prefixed)
+    // Quick Actions
     if (this.quickActions.length > 0) {
       items.push(SEP)
       this.seqMap.push({ type: "status" })
@@ -176,31 +177,31 @@ export class SysTray2Adapter implements UnifiedTray {
       }
     }
 
-    // Recent Threads (flat, prefixed)
+    // Recent Threads
     if (this.recentThreads.length > 0) {
       items.push(SEP)
       this.seqMap.push({ type: "status" })
       for (const t of this.recentThreads) {
-        push("📌 " + t.title, { type: "recent-thread", payload: { id: t.id } })
+        push("> " + t.title, { type: "recent-thread", payload: { id: t.id } })
       }
     }
 
     items.push(SEP)
     this.seqMap.push({ type: "status" })
 
-    push("📂 打开日志目录", { type: "logs" })
-    push("🌐 打开 Chrome", { type: "chrome" })
-    push("⚙️ 设置", { type: "settings" })
+    push("Open Logs", { type: "logs" })
+    push("Open Chrome", { type: "chrome" })
+    push("Settings", { type: "settings" })
 
     items.push(SEP)
     this.seqMap.push({ type: "status" })
 
-    push("开机自启", { type: "autostart" }, { checked: this.autostartEnabled })
+    push("Auto-start on Login", { type: "autostart" }, { checked: this.autostartEnabled })
 
     items.push(SEP)
     this.seqMap.push({ type: "status" })
 
-    push("❌ 退出", { type: "quit" })
+    push("Quit", { type: "quit" })
 
     return {
       icon: getIcon(this.status),

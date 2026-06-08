@@ -83,7 +83,7 @@ function init() {
   })
 
   wsClient.connect()
-  keepAlive.start(() => wsClient.ping())
+  keepAlive.start(() => wsClient.checkAndReconnect())
   setupMessageHandlers()
 }
 

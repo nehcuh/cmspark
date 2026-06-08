@@ -585,12 +585,18 @@ export async function startServer() {
 
     const executeTool = createToolExecutor(ws)
 
-    // Ping/pong keepalive
+    // Ping/pong keepalive — terminate clients that don't respond within 30s
+    let pongReceived = true
     const pingInterval = setInterval(() => {
       if (ws.readyState === WebSocket.OPEN) {
+        if (!pongReceived) {
+          ws.terminate()
+          return
+        }
+        pongReceived = false
         ws.ping()
       }
-    }, 20000)
+    }, 30000)
 
     ws.on("message", async (raw) => {
       try {
@@ -679,7 +685,7 @@ export async function startServer() {
     })
 
     ws.on("pong", () => {
-      // Heartbeat acknowledged
+      pongReceived = true
     })
 
     // Send initial state (security secret no longer transmitted over WS)

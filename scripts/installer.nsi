@@ -63,22 +63,22 @@ Section "CMspark Agent" SecMain
   IntFmt $0 "0x%08X" $0
   WriteRegDWORD HKCU "${PRODUCT_UNINST_KEY}" "EstimatedSize" "$0"
 
-  ; Auto-start via Registry Run key (survives reboots, no Task Scheduler complexity)
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${PRODUCT_NAME}" '"$INSTDIR\node.exe" "$INSTDIR\cmspark-agent.js" tray'
+  ; Auto-start via Registry Run key — use cmd /c start /min to hide console window
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${PRODUCT_NAME}" 'cmd /c start "" /min "$INSTDIR\node.exe" "$INSTDIR\cmspark-agent.js" tray'
 
   ; --- Shortcuts ---
-  ; Desktop icon
-  CreateShortCut "$DESKTOP\CMspark Agent.lnk" "$INSTDIR\node.exe" "cmspark-agent.js tray" "$INSTDIR\node.exe" 0
+  ; Desktop icon — launch minimized via cmd wrapper
+  CreateShortCut "$DESKTOP\CMspark Agent.lnk" "cmd.exe" '/c start "" /min "$INSTDIR\node.exe" "$INSTDIR\cmspark-agent.js" tray' "" 0
 
   ; Start Menu
   !insertmacro MUI_STARTMENU_WRITE_BEGIN "StartMenu"
     CreateDirectory "$SMPROGRAMS\$START_MENU_FOLDER"
-    CreateShortCut "$SMPROGRAMS\$START_MENU_FOLDER\CMspark Agent.lnk" "$INSTDIR\node.exe" "cmspark-agent.js tray" "$INSTDIR\node.exe" 0
+    CreateShortCut "$SMPROGRAMS\$START_MENU_FOLDER\CMspark Agent.lnk" "cmd.exe" '/c start "" /min "$INSTDIR\node.exe" "$INSTDIR\cmspark-agent.js" tray' "" 0
     CreateShortCut "$SMPROGRAMS\$START_MENU_FOLDER\Uninstall CMspark.lnk" "$INSTDIR\uninstall.exe"
   !insertmacro MUI_STARTMENU_WRITE_END
 
   ; Startup folder (belt-and-suspenders with registry Run)
-  CreateShortCut "$SMSTARTUP\CMspark Agent.lnk" "$INSTDIR\node.exe" "cmspark-agent.js tray" "$INSTDIR\node.exe" 0
+  CreateShortCut "$SMSTARTUP\CMspark Agent.lnk" "cmd.exe" '/c start "" /min "$INSTDIR\node.exe" "$INSTDIR\cmspark-agent.js" tray' "" 0
 
   ; Create uninstaller
   WriteUninstaller "$INSTDIR\uninstall.exe"
@@ -111,6 +111,5 @@ SectionEnd
 
 ; --- Custom function: start tray agent ---
 Function StartAgent
-  ; Launch tray in background (minimized, detached)
-  Exec '"$INSTDIR\node.exe" "$INSTDIR\cmspark-agent.js" tray'
+  Exec 'cmd /c start "" /min "$INSTDIR\node.exe" "$INSTDIR\cmspark-agent.js" tray'
 FunctionEnd
