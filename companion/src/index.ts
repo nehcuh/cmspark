@@ -2,6 +2,7 @@
 
 import { startServer } from "./server"
 import { initDataDir, getLockFilePath, getPidFilePath } from "./config"
+import { getSwiftTrayPath, getTrayBuildScript, getTrayCwd } from "./paths"
 import {
   acquireLock,
   releaseLock,
@@ -13,39 +14,98 @@ import {
   setupGracefulShutdown,
 } from "./daemon"
 import { startMenuBarAgent } from "./menu-bar-agent"
+import { getPlatform } from "./platform"
 import * as fs from "fs"
 import * as path from "path"
+import * as child_process from "child_process"
 
 function printUsage(): void {
-  console.log(`cmspark-agent v0.1.0
+  console.log(`cmspark-agent v0.2.0
 
 Usage:
-  cmspark-agent start                    Start the companion server (foreground)
-  cmspark-agent stop                     Stop the companion server
-  cmspark-agent status                   Show server status
-  cmspark-agent daemon start [--daemonize]  Start daemon
-  cmspark-agent daemon stop                 Stop daemon
-  cmspark-agent daemon status               Show daemon status
-  cmspark-agent daemon logs                 View daemon logs
-  cmspark-agent tray                     Start system tray agent
-  cmspark-agent menu-bar                 Start menu bar agent (legacy)`)
+  cmspark-agent start                      启动 Companion 服务器（前台）
+  cmspark-agent stop                       停止 Companion 服务器
+  cmspark-agent status                     查看服务器状态
+
+  cmspark-agent daemon start [--daemonize]  启动守护进程
+  cmspark-agent daemon stop                停止守护进程
+  cmspark-agent daemon status              查看守护进程状态
+  cmspark-agent daemon logs                查看守护进程日志
+
+  cmspark-agent tray                       启动系统托盘（推荐）
+  cmspark-agent tray status                查看托盘后端信息
+  cmspark-agent tray rebuild               重新编译 Swift 托盘（macOS）
+
+  cmspark-agent menu-bar                   启动菜单栏（已弃用，请使用 tray）`)
 }
+
+// ---------------------------------------------------------------------------
+// Tray sub-commands
+// ---------------------------------------------------------------------------
+
+async function handleTrayStatus(): Promise<void> {
+  const { detectTrayBackend } = await import("./tray/tray-adapter")
+  const backend = detectTrayBackend()
+  const platform = getPlatform()
+
+  console.log("CMspark 托盘状态:")
+  console.log(`  平台: ${platform} (${process.arch})`)
+  console.log(`  托盘后端: ${backend}`)
+
+  const pid = readPidFile(getPidFilePath())
+  console.log(`  Companion: ${pid && isProcessRunning(pid) ? "运行中" : "已停止"}`)
+  console.log(`  WebSocket: ws://127.0.0.1:23401`)
+
+  if (platform === "darwin" && process.arch === "arm64") {
+    const swiftBin = getSwiftTrayPath()
+    console.log(`  Swift 托盘: ${fs.existsSync(swiftBin) ? "可用" : "未编译"}`)
+  }
+
+  process.exit(0)
+}
+
+async function handleTrayRebuild(): Promise<void> {
+  if (process.platform !== "darwin") {
+    console.error("[cmspark-agent] Swift 托盘仅支持 macOS")
+    process.exit(1)
+  }
+
+  const buildScript = getTrayBuildScript()
+  if (!fs.existsSync(buildScript)) {
+    console.error(`[cmspark-agent] 编译脚本不存在: ${buildScript}`)
+    process.exit(1)
+  }
+
+  console.log("[cmspark-agent] 重新编译 Swift 托盘...")
+  try {
+    child_process.execSync(`bash "${buildScript}"`, {
+      cwd: getTrayCwd(),
+      stdio: "inherit",
+    })
+    console.log("[cmspark-agent] Swift 托盘编译成功")
+    process.exit(0)
+  } catch {
+    console.error("[cmspark-agent] Swift 托盘编译失败")
+    process.exit(1)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Daemon commands
+// ---------------------------------------------------------------------------
 
 async function handleDaemonStart(): Promise<void> {
   const lockPath = getLockFilePath()
   const pidPath = getPidFilePath()
 
-  // Check if already running
   const existingPid = readPidFile(pidPath)
   if (existingPid && isProcessRunning(existingPid)) {
     console.log(`[cmspark-agent] Daemon already running (pid: ${existingPid})`)
     process.exit(0)
   }
 
-  // Try to acquire lock
   const lockAcquired = await acquireLock(lockPath)
   if (!lockAcquired) {
-    // Lock exists but no PID or dead PID — try cleanup
     const pidFromLock = readPidFile(pidPath)
     if (pidFromLock && !isProcessRunning(pidFromLock)) {
       console.log(`[cmspark-agent] Cleaning up stale lock from dead process (pid: ${pidFromLock})`)
@@ -87,7 +147,6 @@ async function handleDaemonStop(): Promise<void> {
 
   if (!pid) {
     console.log("[cmspark-agent] No PID file found — daemon not running")
-    // Clean up any stale lock
     releaseLock(lockPath)
     process.exit(0)
   }
@@ -107,7 +166,6 @@ async function handleDaemonStop(): Promise<void> {
     process.exit(1)
   }
 
-  // Wait up to 10 seconds for process to exit
   const start = Date.now()
   const timeout = 10000
   while (Date.now() - start < timeout) {
@@ -180,6 +238,10 @@ async function handleDaemonLogs(): Promise<void> {
   process.exit(0)
 }
 
+// ---------------------------------------------------------------------------
+// Main
+// ---------------------------------------------------------------------------
+
 async function main() {
   const command = process.argv[2]
   const subCommand = process.argv[3]
@@ -220,12 +282,23 @@ async function main() {
       break
     }
 
-    case "tray":
-      startMenuBarAgent()
+    case "tray": {
+      switch (subCommand) {
+        case "status":
+          await handleTrayStatus()
+          break
+        case "rebuild":
+          await handleTrayRebuild()
+          break
+        default:
+          await startMenuBarAgent()
+      }
       break
+    }
 
     case "menu-bar":
-      startMenuBarAgent()
+      console.warn("[cmspark-agent] 'menu-bar' 已弃用，请使用 'tray' 命令")
+      await startMenuBarAgent()
       break
 
     case "--help":

@@ -4,6 +4,7 @@ import * as fs from "fs"
 import * as path from "path"
 import * as os from "os"
 import { getLockPath } from "./platform"
+import { getBuiltinSkillsSrc } from "./paths"
 
 export const DATA_DIR = process.env.CMSPARK_DATA_DIR || path.join(os.homedir(), ".cmspark-agent")
 
@@ -82,9 +83,7 @@ export async function initDataDir(): Promise<void> {
   }
 
   // Copy builtin skills if they don't exist
-  const builtinSkillsSrcDev = path.join(__dirname, "..", "builtin-skills")
-  const builtinSkillsSrcPkg = path.join(__dirname, "builtin-skills")
-  const builtinSkillsSrc = fs.existsSync(builtinSkillsSrcDev) ? builtinSkillsSrcDev : builtinSkillsSrcPkg
+  const builtinSkillsSrc = getBuiltinSkillsSrc()
   const builtinSkillsDest = path.join(DATA_DIR, "builtin-skills")
   if (fs.existsSync(builtinSkillsSrc)) {
     for (const file of fs.readdirSync(builtinSkillsSrc)) {

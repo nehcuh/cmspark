@@ -28,16 +28,9 @@ interface QueryParams {
 }
 
 function findSqlWasmPath(): string | undefined {
-  const candidates = [
-    path.join(__dirname, "..", "..", "node_modules", "sql.js", "dist", "sql-wasm.wasm"),
-    path.join(__dirname, "..", "node_modules", "sql.js", "dist", "sql-wasm.wasm"),
-    path.join(__dirname, "sql-wasm.wasm"),
-    path.join(process.cwd(), "sql-wasm.wasm"),
-  ]
-  for (const p of candidates) {
-    if (fs.existsSync(p)) return p
-  }
-  return undefined
+  // Delegate to paths.ts for dev/packaged mode resolution
+  const { getSqlWasmPath: resolveWasm } = require("../paths")
+  return resolveWasm()
 }
 
 export class HistoryStore {

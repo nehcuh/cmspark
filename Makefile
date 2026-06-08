@@ -1,4 +1,10 @@
-.PHONY: dev install test build clean load-extension menu-bar install-macos uninstall-macos daemon-status install-linux uninstall-linux install-windows uninstall-windows
+.PHONY: dev install test build clean load-extension \
+       build-tray tray tray-status tray-rebuild menu-bar \
+       install-macos install-macos-daemon install-macos-menubar \
+       uninstall-macos daemon-status \
+       install-linux uninstall-linux \
+       install-windows uninstall-windows \
+       package package-macos package-windows package-linux
 
 # 一键启动开发环境（两个进程并行）
 dev: install
@@ -11,11 +17,6 @@ dev: install
 install:
 	cd companion && npm install
 	cd chrome-extension && npm install
-
-# 编译 Swift 托盘（macOS Apple Silicon）
-build-tray:
-	@echo "Building Swift tray for macOS ARM64..."
-	@cd companion && ./src/tray/build-tray.sh
 
 # 运行全部测试
 test:
@@ -39,62 +40,93 @@ clean:
 	rm -rf companion/dist companion/.test-dist
 	rm -rf chrome-extension/build chrome-extension/.test-dist
 
-# 系统托盘代理（全平台）
+# ── Swift 托盘 ──
+
+# 编译 Swift 托盘（macOS Apple Silicon）
+build-tray:
+	@echo "Building Swift tray for macOS ARM64..."
+	@cd companion && ./src/tray/build-tray.sh
+
+# ── 系统托盘 ──
+
+# 启动系统托盘（跨平台，推荐方式）
 tray:
-	cd companion && npm run tray
+	@cd companion && npm run tray
 
-# macOS 菜单栏代理（legacy readline）
+# 查看托盘后端信息
+tray-status:
+	@cd companion && npm run tray:status
+
+# 重新编译 Swift 托盘（macOS）
+tray-rebuild:
+	@cd companion && npm run tray:rebuild
+
+# 已弃用，请使用 tray
 menu-bar:
-	cd companion && npm run menu-bar
+	@echo "[WARN] 'make menu-bar' 已弃用，请使用 'make tray'"
+	@cd companion && npm run tray
 
-# macOS 安装后台守护进程 + 系统托盘启动器
-install-macos: build
+# ── macOS ──
+
+# macOS 一键安装（构建 + Swift 托盘 + 守护进程 + 菜单栏）
+install-macos: build build-tray
 	@echo "Installing CMspark macOS daemon..."
-	@cd companion && ./scripts/install-daemon.sh
+	@cd companion && ./scripts/install-daemon.sh daemon-only
+	@cd companion && ./scripts/install-daemon.sh menubar-only
+	@echo "CMspark macOS 安装完成"
 
-# macOS 卸载后台守护进程
+# macOS 安装后台守护进程
+install-macos-daemon:
+	@echo "Installing CMspark macOS daemon..."
+	@cd companion && ./scripts/install-daemon.sh daemon-only
+
+# macOS 安装菜单栏启动器
+install-macos-menubar:
+	@echo "Installing CMspark macOS menubar..."
+	@cd companion && ./scripts/install-daemon.sh menubar-only
+
 uninstall-macos:
-	@echo "Uninstalling CMspark macOS daemon..."
+	@echo "Uninstalling CMspark macOS..."
 	@cd companion && ./scripts/uninstall-daemon.sh
 
 # 查看守护进程状态
 daemon-status:
 	@cd companion && npm run daemon:status
 
-# Linux 安装 systemd 用户服务 + 菜单栏启动器
+# ── Linux ──
+
 install-linux: build
 	@echo "Installing CMspark Linux daemon..."
 	@cd companion && ./scripts/install-daemon.sh
 
-# Linux 卸载 systemd 用户服务
 uninstall-linux:
 	@echo "Uninstalling CMspark Linux daemon..."
 	@cd companion && ./scripts/uninstall-daemon.sh
 
-# Windows 安装任务计划程序服务 + 开始菜单快捷方式
+# ── Windows ──
+
 install-windows: build
 	@echo "Installing CMspark Windows daemon..."
 	@powershell -ExecutionPolicy Bypass -File scripts/install-daemon.ps1
 
-# Windows 卸载任务计划程序服务
 uninstall-windows:
 	@echo "Uninstalling CMspark Windows daemon..."
 	@powershell -ExecutionPolicy Bypass -File scripts/uninstall-daemon.ps1
 
-# 打包分发版本 (Windows 用户用)
-# 用法: make package  或双击 build-package.bat
+# ── 打包 ──
+
+# 打包当前平台
 package: build
-	@echo "Building distribution package..."
-	@mkdir -p dist-package/cmspark
-	@cd companion && npx --yes esbuild dist/index.js --bundle --platform=node --target=node22 --outfile=dist/cmspark-agent.js
-	@cp companion/dist/cmspark-agent.js dist-package/cmspark/
-	@cp companion/node_modules/sql.js/dist/sql-wasm.wasm dist-package/cmspark/
-	@cp -r companion/builtin-skills dist-package/cmspark/
-	@cp -r chrome-extension/build/chrome-mv3-prod dist-package/cmspark/chrome-extension
-	@cp companion/install.bat dist-package/cmspark/
-	@cp companion/uninstall.bat dist-package/cmspark/
-	@cp companion/launch.bat dist-package/cmspark/
-	@cp companion/README.txt dist-package/cmspark/
-	@echo "Compressing to zip..."
-	@cd dist-package && C:/Windows/System32/tar.exe -caf cmspark-v0.1.0.zip cmspark
-	@echo "Done: dist-package/cmspark-v0.1.0.zip"
+	@bash scripts/package.sh
+
+# 打包 macOS ARM64（含 Swift 托盘）
+package-macos: build build-tray
+	@bash scripts/package.sh macos-arm64
+
+# 打包 Windows x64
+package-windows: build
+	@bash scripts/package.sh windows-x64
+
+# 打包 Linux x64
+package-linux: build
+	@bash scripts/package.sh linux-x64
