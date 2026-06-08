@@ -126,13 +126,18 @@ async function handleDaemonStart(): Promise<void> {
 
   if (shouldDaemonize) {
     console.log("[cmspark-agent] Daemonizing...")
-    daemonize({ silent: true })
+    daemonize({
+      silent: true,
+      args: process.argv.slice(1).filter(a => a !== "--daemonize"),
+    })
   }
 
   writePidFile(pidPath, process.pid)
 
+  // Release daemon lock — startServer() will acquire its own
+  releaseLock(lockPath)
+
   setupGracefulShutdown(() => {
-    releaseLock(lockPath)
     cleanupPidFile(pidPath)
   })
 
