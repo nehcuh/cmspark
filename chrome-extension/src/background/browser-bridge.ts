@@ -372,22 +372,32 @@ export class BrowserBridge {
       tabId = activeTab.id
     }
 
-    const result = await this.sendCdp(tabId, "Page.captureScreenshot", {
-      format: "jpeg",
-      quality: 80,
-    })
-
     const tab = await chrome.tabs.get(tabId)
-    let width = 0, height = 0
-    try {
-      const metrics = await this.sendCdp(tabId, "Page.getLayoutMetrics")
-      width = metrics.cssVisualViewport?.clientWidth || 0
-      height = metrics.cssVisualViewport?.clientHeight || 0
-    } catch { /* ignore */ }
 
-    return {
-      success: true,
-      data: { image_base64: result.data, width, height, url: tab.url, title: tab.title },
+    // Try CDP screenshot first (full page, high quality)
+    try {
+      const result = await this.sendCdp(tabId, "Page.captureScreenshot", {
+        format: "jpeg",
+        quality: 80,
+      })
+      let width = 0, height = 0
+      try {
+        const metrics = await this.sendCdp(tabId, "Page.getLayoutMetrics")
+        width = metrics.cssVisualViewport?.clientWidth || 0
+        height = metrics.cssVisualViewport?.clientHeight || 0
+      } catch { /* ignore */ }
+      return {
+        success: true,
+        data: { image_base64: result.data, width, height, url: tab.url, title: tab.title },
+      }
+    } catch {
+      // Fallback: captureVisibleTab (no debugger needed, viewport-only)
+      const dataUrl = await chrome.tabs.captureVisibleTab(undefined, { format: "jpeg", quality: 80 })
+      const base64 = dataUrl.replace(/^data:image\/\w+;base64,/, "")
+      return {
+        success: true,
+        data: { image_base64: base64, width: tab.width || 0, height: tab.height || 0, url: tab.url, title: tab.title },
+      }
     }
   }
 
@@ -474,9 +484,14 @@ export class BrowserBridge {
 
   private async click(params: Record<string, any>, clickCount = 1): Promise<ToolResult> {
     const tabId = this.getTabId(params)
+    const selector = params.selector
     try {
-      const coords = await this.getElementCenter(tabId, params.selector)
-      // Hover/Move mouse first to trigger hover listeners (P2)
+      // Wait for element to appear (handles async SPA rendering)
+      if (selector) {
+        await this.waitForSelector(tabId, selector, 3000)
+      }
+      const coords = await this.getElementCenter(tabId, selector)
+      // Hover/Move mouse first to trigger hover listeners
       await this.sendCdp(tabId, "Input.dispatchMouseEvent", {
         type: "mouseMoved", x: coords.x, y: coords.y,
       })
@@ -488,12 +503,13 @@ export class BrowserBridge {
         type: "mouseReleased", x: coords.x, y: coords.y, button: "left", buttons: 0, clickCount,
       })
     } catch (err: any) {
-      // Fallback: direct DOM click when CDP debugger not available
-      if (params.selector) {
+      // Fallback: direct DOM click when CDP mouse events fail (e.g. debugger not attached)
+      if (selector) {
+        const escapedSelector = selector.replace(/'/g, "\\'")
         const found = await this.scriptingExecute(tabId,
-          `(()=>{const el=document.querySelector('${params.selector.replace(/'/g, "\\\\'")}');if(el){el.focus();el.click();for(let i=1;i<${clickCount};i++)el.click();return true}return false})()`)
+          `(()=>{const el=document.querySelector('${escapedSelector}');if(el){el.focus();el.click();for(let i=1;i<${clickCount};i++)el.click();return true}return false})()`)
         if (!found) {
-          return { success: false, error: `Element not found for selector: ${params.selector}` }
+          return { success: false, error: `Element not found for selector: ${selector}` }
         }
       } else {
         return { success: false, error: `Click failed and no selector provided: ${err.message}` }
@@ -784,9 +800,30 @@ export class BrowserBridge {
 
   // --- Geom helpers ---
 
-  private async getElementCenter(tabId: number, selector?: string): Promise<{ x: number; y: number }> {
+  private async waitForSelector(tabId: number, selector: string, timeoutMs: number): Promise<void> {
+    const escaped = selector.replace(/'/g, "\\'")
+    const expression = `!!document.querySelector('${escaped}')`
+    const start = Date.now()
+    while (Date.now() - start < timeoutMs) {
+      try {
+        const result = await this.sendCdp(tabId, "Runtime.evaluate", { expression, returnByValue: true })
+        if (result.result?.value) return
+      } catch {
+        const value = await this.scriptingExecute(tabId, expression)
+        if (value) return
+      }
+      await new Promise(r => setTimeout(r, 200))
+    }
+    // Timeout is not fatal — getElementCenter will give the canonical "not found" error
+  }
+
+  private async getElementCenter(tabId: number, selector?: string, scrollIntoView = true): Promise<{ x: number; y: number }> {
     if (!selector) return { x: 300, y: 300 }
-    const expression = `(()=>{const el=document.querySelector('${selector.replace(/'/g, "\\'")}');if(!el)return null;const r=el.getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()`
+    const escapedSelector = selector.replace(/'/g, "\\'")
+    const scrollExpr = scrollIntoView
+      ? `if(r.bottom<0||r.top>window.innerHeight||r.right<0||r.left>window.innerWidth){el.scrollIntoView({block:'center',inline:'center',behavior:'instant'});r=el.getBoundingClientRect();}`
+      : ""
+    const expression = `(()=>{const el=document.querySelector('${escapedSelector}');if(!el)return null;let r=el.getBoundingClientRect();${scrollExpr}return{x:r.x+r.width/2,y:r.y+r.height/2}})()`
 
     // Try CDP first
     try {

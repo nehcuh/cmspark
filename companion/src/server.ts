@@ -672,13 +672,18 @@ export async function startServer() {
     ws.on("close", () => {
       clearInterval(pingInterval)
       clients.delete(ws)
-      // Clean up pending tool calls for this connection
+      // Grace period: keep pending tool calls alive so reconnected client can deliver results.
+      // Replace the original timer with a shorter grace timer.
       for (const [id, pending] of pendingToolCalls) {
         clearTimeout(pending.timer)
         logger.warn("tool.connection_closed", { tool_call_id: id })
-        pending.resolve({ success: false, error: "WebSocket disconnected" })
+        pending.timer = setTimeout(() => {
+          if (pendingToolCalls.has(id)) {
+            pendingToolCalls.delete(id)
+            pending.resolve({ success: false, error: "WebSocket disconnected" })
+          }
+        }, 5000)
       }
-      pendingToolCalls.clear()
       securityConfirmations.rejectAll("disconnect")
       console.log(`[cmspark-agent] Client disconnected (${clients.size} remaining)`)
       logger.info("ws.client_disconnected", { clients: clients.size })
