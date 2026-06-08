@@ -408,6 +408,35 @@ make clean
 make package
 ```
 
+### 打包分发
+
+项目支持将 Companion、Chrome 扩展、Node.js 运行时和平台原生依赖打包为独立的可执行分发包，无需用户预先安装 Node.js。
+
+| 平台 | 命令 | 产物 | 说明 |
+|------|------|------|------|
+| **macOS (ARM64)** | `make package-macos` | `dist-package/CMspark-v*-macOS.dmg` | 含 Swift 托盘 + 嵌入 Node 运行时 |
+| **Windows (x64)** | `make package-windows` | `dist-package/CMspark-Setup-v*.exe` | NSIS 安装包 |
+| **Linux (x64)** | `make package-linux` | `dist-package/cmspark-v*-linux-x64.zip` | 嵌入 Node 运行时的压缩包 |
+| **当前平台** | `make package` | `dist-package/cmspark-v*-<platform>.zip` | 自动检测平台 |
+
+**macOS DMG 示例**：
+
+```bash
+make package-macos
+# 产出：
+#   dist-package/CMspark-v0.2.0-macOS.dmg   ← 安装包
+#   dist-package/cmspark-v0.2.0-macos-arm64.zip  ← 原始压缩包
+```
+
+打包流程：
+1. `esbuild` 将 Companion 源码 bundle 为单文件 `cmspark-agent.js`
+2. 下载对应平台的官方 Node.js 运行时二进制（约 45MB → 105MB）
+3. 复制 Chrome 扩展、内置技能、原生依赖（systray2 / node-notifier）
+4. 平台定制：剥离非目标二进制、添加启动脚本
+5. 压缩为 zip，macOS 额外生成 DMG 安装包
+
+**Windows EXE 前提**：需要安装 `makensis`（`brew install makensis` 或 [NSIS 官网](https://nsis.sourceforge.io/)）。
+
 ### 分别启动
 
 ```bash

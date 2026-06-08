@@ -21,7 +21,8 @@
     <!-- Program arguments -->
     <key>ProgramArguments</key>
     <array>
-        <string>{{HOME}}/.cmspark-agent/bin/cmspark-agent</string>
+        <string>{{NODE_PATH}}</string>
+        <string>{{CMSPARK_AGENT_PATH}}</string>
         <string>daemon</string>
         <string>start</string>
         <string>--daemonize</string>

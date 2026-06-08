@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 // cmspark-agent CLI entry point
 
 import { startServer } from "./server"

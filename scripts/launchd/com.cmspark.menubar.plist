@@ -19,6 +19,7 @@
     <!-- Program arguments -->
     <key>ProgramArguments</key>
     <array>
+        <string>{{NODE_PATH}}</string>
         <string>{{CMSPARK_AGENT_PATH}}</string>
         <string>tray</string>
     </array>

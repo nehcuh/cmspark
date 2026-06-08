@@ -71,23 +71,23 @@ menu-bar:
 # macOS 一键安装（构建 + Swift 托盘 + 守护进程 + 菜单栏）
 install-macos: build build-tray
 	@echo "Installing CMspark macOS daemon..."
-	@cd companion && ./scripts/install-daemon.sh daemon-only
-	@cd companion && ./scripts/install-daemon.sh menubar-only
+	@CMSPARK_AGENT_PATH="$(PWD)/companion/dist/index.js" ./scripts/install-daemon.sh daemon-only
+	@CMSPARK_AGENT_PATH="$(PWD)/companion/dist/index.js" ./scripts/install-daemon.sh menubar-only
 	@echo "CMspark macOS 安装完成"
 
 # macOS 安装后台守护进程
-install-macos-daemon:
+install-macos-daemon: build
 	@echo "Installing CMspark macOS daemon..."
-	@cd companion && ./scripts/install-daemon.sh daemon-only
+	@CMSPARK_AGENT_PATH="$(PWD)/companion/dist/index.js" ./scripts/install-daemon.sh daemon-only
 
 # macOS 安装菜单栏启动器
-install-macos-menubar:
+install-macos-menubar: build
 	@echo "Installing CMspark macOS menubar..."
-	@cd companion && ./scripts/install-daemon.sh menubar-only
+	@CMSPARK_AGENT_PATH="$(PWD)/companion/dist/index.js" ./scripts/install-daemon.sh menubar-only
 
 uninstall-macos:
 	@echo "Uninstalling CMspark macOS..."
-	@cd companion && ./scripts/uninstall-daemon.sh
+	@./scripts/uninstall-daemon.sh
 
 # 查看守护进程状态
 daemon-status:
@@ -97,11 +97,11 @@ daemon-status:
 
 install-linux: build
 	@echo "Installing CMspark Linux daemon..."
-	@cd companion && ./scripts/install-daemon.sh
+	@CMSPARK_AGENT_PATH="$(PWD)/companion/dist/index.js" ./scripts/install-daemon.sh
 
 uninstall-linux:
 	@echo "Uninstalling CMspark Linux daemon..."
-	@cd companion && ./scripts/uninstall-daemon.sh
+	@./scripts/uninstall-daemon.sh
 
 # ── Windows ──
 

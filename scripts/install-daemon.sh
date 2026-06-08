@@ -75,14 +75,25 @@ error() { printf '[ERROR] %s\n' "$*" >&2; }
 # ---------------------------------------------------------------------------
 # Common prerequisites
 # ---------------------------------------------------------------------------
-info "Checking for cmspark-agent in PATH..."
-if ! command -v cmspark-agent >/dev/null 2>&1; then
+if [[ -n "${CMSPARK_AGENT_PATH:-}" ]]; then
+    info "Using provided cmspark-agent path: ${CMSPARK_AGENT_PATH}"
+elif command -v cmspark-agent >/dev/null 2>&1; then
+    CMSPARK_AGENT_PATH="$(command -v cmspark-agent)"
+    info "Found cmspark-agent in PATH: ${CMSPARK_AGENT_PATH}"
+else
     error "cmspark-agent not found in PATH."
     error "Please install it first, e.g.: npm install -g cmspark-agent"
     exit 1
 fi
-CMSPARK_AGENT_PATH="$(command -v cmspark-agent)"
-info "Found: ${CMSPARK_AGENT_PATH}"
+
+# Detect Node.js path (needed for launchd / .app bundles without shell PATH)
+if command -v node >/dev/null 2>&1; then
+    NODE_PATH="$(command -v node)"
+    info "Found Node.js: ${NODE_PATH}"
+else
+    error "Node.js not found in PATH."
+    exit 1
+fi
 
 info "Creating data directory: ${DATA_DIR}"
 mkdir -p "${DATA_DIR}"
@@ -111,7 +122,8 @@ if [[ "$PLATFORM" == "macos" ]]; then
     mkdir -p "${HOME}/Library/LaunchAgents"
 
     sed -e "s|{{HOME}}|${HOME}|g" \
-        -e "s|${HOME}/.cmspark-agent/bin/cmspark-agent|${CMSPARK_AGENT_PATH}|g" \
+        -e "s|{{NODE_PATH}}|${NODE_PATH}|g" \
+        -e "s|{{CMSPARK_AGENT_PATH}}|${CMSPARK_AGENT_PATH}|g" \
         "${SOURCE_PLIST}" > "${TARGET_PLIST}"
 
     chmod 644 "${TARGET_PLIST}"
@@ -192,6 +204,7 @@ if [[ "$PLATFORM" == "macos" ]]; then
     if [[ -f "${SOURCE_MENUBAR_PLIST}" ]]; then
         info "Installing menubar plist: ${TARGET_MENUBAR_PLIST}"
         sed -e "s|{{HOME}}|${HOME}|g" \
+            -e "s|{{NODE_PATH}}|${NODE_PATH}|g" \
             -e "s|{{CMSPARK_AGENT_PATH}}|${CMSPARK_AGENT_PATH}|g" \
             "${SOURCE_MENUBAR_PLIST}" > "${TARGET_MENUBAR_PLIST}"
         chmod 644 "${TARGET_MENUBAR_PLIST}"
@@ -211,11 +224,11 @@ if [[ "$PLATFORM" == "macos" ]]; then
 
     OSASCRIPT_SRC="
 on run
-    do shell script \"${CMSPARK_AGENT_PATH} tray\"
+    do shell script \"${NODE_PATH} ${CMSPARK_AGENT_PATH} tray\"
 end run
 
 on open theFiles
-    do shell script \"${CMSPARK_AGENT_PATH} tray\"
+    do shell script \"${NODE_PATH} ${CMSPARK_AGENT_PATH} tray\"
 end open
 "
 
@@ -225,7 +238,7 @@ end open
         mkdir -p "${APP_DIR}/Contents/MacOS"
         cat > "${APP_DIR}/Contents/MacOS/CMspark Agent" <<EOF
 #!/bin/bash
-exec "${CMSPARK_AGENT_PATH}" tray
+exec "${NODE_PATH}" "${CMSPARK_AGENT_PATH}" tray
 EOF
         chmod +x "${APP_DIR}/Contents/MacOS/CMspark Agent"
 
