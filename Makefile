@@ -12,6 +12,11 @@ install:
 	cd companion && npm install
 	cd chrome-extension && npm install
 
+# 编译 Swift 托盘（macOS Apple Silicon）
+build-tray:
+	@echo "Building Swift tray for macOS ARM64..."
+	@cd companion && ./src/tray/build-tray.sh
+
 # 运行全部测试
 test:
 	npm --prefix companion test

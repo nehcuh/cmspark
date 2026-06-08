@@ -1,6 +1,9 @@
 // Menu Bar Agent — Native system tray for CMspark Companion (cross-platform)
 //
 // Uses systray2 for persistent tray icon with right-click menu.
+// On macOS Apple Silicon (darwin-arm64), falls back to a native Swift NSStatusBar
+// binary (cmspark-tray) compiled from Tray.swift, since systray2's precompiled
+// Go binary does not include a darwin-arm64 build.
 //
 // Features:
 //   - Persistent tray icon (🟢 running / 🔴 stopped / 🟡 connecting)
@@ -38,7 +41,7 @@ function safeNotify(options: {
   timeout?: number
 }): void {
   try {
-    safeNotify(options)
+    notifier.notify(options)
   } catch {
     // node-notifier depends on terminal-notifier which is x86_64-only on macOS.
     // On Apple Silicon without Rosetta 2 it throws -86 (architecture mismatch).
@@ -241,12 +244,18 @@ function buildMenu(status: CompanionStatus, autoStartEnabled: boolean) {
 }
 
 async function updateTrayState(): Promise<void> {
-  if (!systrayInstance) return
+  if (systrayInstance) {
+    const autoStart = await checkAutoStart()
+    const menu = buildMenu(state.companionStatus, autoStart)
 
-  const autoStart = await checkAutoStart()
-  const menu = buildMenu(state.companionStatus, autoStart)
+    await systrayInstance.sendAction({ type: "update-menu", menu })
+  }
 
-  await systrayInstance.sendAction({ type: "update-menu", menu })
+  if (swiftTrayProcess) {
+    sendSwiftTrayUpdate()
+    const autoStart = await checkAutoStart()
+    sendSwiftTrayAutoStart(autoStart)
+  }
 }
 
 async function updateMenuItemEnabled(index: number, enabled: boolean): Promise<void> {
@@ -453,6 +462,207 @@ async function setupTray(): Promise<SysTray> {
 }
 
 // ---------------------------------------------------------------------------
+// Swift Tray (macOS Apple Silicon native fallback)
+// ---------------------------------------------------------------------------
+
+/** Expected SHA256 of the Swift tray binary (update via build-tray.sh) */
+const SWIFT_TRAY_SHA256 = "a296e96758d604abc18e40d9251691f2f7de9beb2a5b000f9f8dfde59eddc5c5"
+
+/** Verify Swift tray binary integrity */
+function verifySwiftTrayIntegrity(binPath: string): boolean {
+  try {
+    const hash = require("crypto")
+      .createHash("sha256")
+      .update(fs.readFileSync(binPath))
+      .digest("hex")
+    return hash === SWIFT_TRAY_SHA256
+  } catch {
+    return false
+  }
+}
+
+/** Path to the compiled Swift tray binary */
+function getSwiftTrayPath(): string {
+  return path.join(__dirname, "..", "dist", "cmspark-tray")
+}
+
+/** Check if the Swift tray binary exists and passes integrity check */
+function isSwiftTrayAvailable(): boolean {
+  const binPath = getSwiftTrayPath()
+  if (!fs.existsSync(binPath)) return false
+  if (!verifySwiftTrayIntegrity(binPath)) {
+    console.warn("[tray] Swift tray binary hash mismatch — possible tampering")
+    return false
+  }
+  return true
+}
+
+/** Check if we should prefer Swift tray over systray2 */
+function shouldUseSwiftTray(): boolean {
+  return process.platform === "darwin" && process.arch === "arm64"
+}
+
+let swiftTrayProcess: child_process.ChildProcess | null = null
+let swiftTrayReader: readline.Interface | null = null
+
+interface SwiftTrayEvent {
+  type: "ready" | "click" | "exit"
+  action?: string
+  code?: number
+}
+
+async function setupSwiftTray(): Promise<void> {
+  const binPath = getSwiftTrayPath()
+
+  if (!fs.existsSync(binPath)) {
+    throw new Error(`Swift tray binary not found: ${binPath}. Run: ./src/tray/build-tray.sh`)
+  }
+
+  const proc = child_process.spawn(binPath, [], {
+    stdio: ["pipe", "pipe", "pipe"],
+  })
+
+  swiftTrayProcess = proc
+
+  return new Promise((resolve, reject) => {
+    let ready = false
+
+    swiftTrayReader = readline.createInterface({
+      input: proc.stdout!,
+      crlfDelay: Infinity,
+    })
+
+    swiftTrayReader.on("line", async (line) => {
+      let event: SwiftTrayEvent
+      try {
+        event = JSON.parse(line) as SwiftTrayEvent
+      } catch {
+        // Ignore non-JSON lines
+        return
+      }
+
+      if (event.type === "ready") {
+        if (!ready) {
+          ready = true
+          console.log("[tray] Swift tray ready")
+          resolve()
+        }
+        return
+      }
+
+      if (event.type === "click" && event.action) {
+        await handleSwiftTrayAction(event.action)
+      }
+
+      if (event.type === "exit") {
+        cleanup()
+        process.exit(0)
+      }
+    })
+
+    proc.stderr?.on("data", (data) => {
+      const msg = data.toString().trim()
+      if (msg) {
+        console.error("[tray] Swift stderr:", msg)
+      }
+    })
+
+    proc.on("error", (err) => {
+      if (!ready) {
+        reject(err)
+      } else {
+        console.error("[tray] Swift process error:", err)
+      }
+    })
+
+    proc.on("exit", (code) => {
+      if (!ready) {
+        reject(new Error(`Swift tray exited prematurely (code: ${code})`))
+      } else {
+        console.log(`[tray] Swift tray exited (code: ${code})`)
+        cleanup()
+        process.exit(0)
+      }
+    })
+
+    // Send initial state
+    sendSwiftTrayUpdate()
+  })
+}
+
+async function handleSwiftTrayAction(action: string): Promise<void> {
+  switch (action) {
+    case "start":
+      await startCompanion()
+      break
+    case "stop":
+      await stopCompanion()
+      break
+    case "status":
+      showStatusNotification()
+      break
+    case "logs":
+      openLogsDir()
+      break
+    case "chrome":
+      openChromeSidePanel()
+      break
+    case "autostart":
+      await toggleAutoStart()
+      break
+    case "quit":
+      stopMenuBarAgent()
+      break
+  }
+}
+
+function sendSwiftTrayUpdate(): void {
+  if (!swiftTrayProcess?.stdin?.writable) return
+
+  const cmd = JSON.stringify({ cmd: "update", status: state.companionStatus })
+  swiftTrayProcess.stdin.write(`${cmd}\n`)
+}
+
+function sendSwiftTrayAutoStart(enabled: boolean): void {
+  if (!swiftTrayProcess?.stdin?.writable) return
+
+  const cmd = JSON.stringify({ cmd: "update-autostart", enabled })
+  swiftTrayProcess.stdin.write(`${cmd}\n`)
+}
+
+function killSwiftTray(): void {
+  // Capture reference and null the global immediately to prevent double-cleanup
+  const proc = swiftTrayProcess
+  swiftTrayProcess = null
+
+  if (swiftTrayReader) {
+    swiftTrayReader.close()
+    swiftTrayReader = null
+  }
+
+  if (!proc) return
+
+  // Graceful shutdown via protocol
+  if (proc.stdin?.writable) {
+    try {
+      proc.stdin.write(`${JSON.stringify({ cmd: "quit" })}\n`)
+    } catch {
+      // ignore
+    }
+  }
+
+  if (!proc.killed) {
+    proc.kill("SIGTERM")
+    // Force kill after 2 seconds if still running
+    setTimeout(() => {
+      if (!proc.killed) {
+        proc.kill("SIGKILL")
+      }
+    }, 2000)
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Cleanup
 // ---------------------------------------------------------------------------
 
@@ -461,6 +671,8 @@ function cleanup(): void {
     clearInterval(pollTimer)
     pollTimer = null
   }
+
+  killSwiftTray()
 
   try {
     if (fs.existsSync(STATUS_FILE)) {
@@ -567,7 +779,7 @@ function startReadlineAgent(): void {
 // ---------------------------------------------------------------------------
 
 export async function startMenuBarAgent(): Promise<void> {
-  if (systrayInstance || rl) {
+  if (systrayInstance || swiftTrayProcess || rl) {
     console.log("菜单栏代理已在运行")
     return
   }
@@ -576,18 +788,39 @@ export async function startMenuBarAgent(): Promise<void> {
   await pollCompanionStatus()
   lastNotifiedStatus = state.companionStatus
 
-  // Try systray2 first; fall back to readline CLI on failure
-  try {
-    systrayInstance = await setupTray()
-    console.log("[tray] CMspark Agent system tray started")
-  } catch (err: any) {
-    console.warn(`[tray] System tray unavailable: ${err.message}`)
-    console.warn("[tray] Falling back to readline CLI menu.")
-    if (process.platform === "darwin" && process.arch === "arm64") {
-      console.warn("[tray] Tip: Install Rosetta 2 to enable native system tray:")
-      console.warn("       softwareupdate --install-rosetta --agree-to-license")
+  // Strategy:
+  // 1. On Apple Silicon macOS with Swift binary available → use native Swift tray
+  // 2. Otherwise try systray2
+  // 3. Fall back to readline CLI on failure
+  let trayStarted = false
+
+  if (shouldUseSwiftTray() && isSwiftTrayAvailable()) {
+    try {
+      await setupSwiftTray()
+      console.log("[tray] CMspark Agent Swift tray started")
+      trayStarted = true
+    } catch (err: any) {
+      console.warn(`[tray] Swift tray failed: ${err.message}`)
+      console.warn("[tray] Falling back to systray2...")
     }
-    startReadlineAgent()
+  }
+
+  if (!trayStarted) {
+    try {
+      systrayInstance = await setupTray()
+      console.log("[tray] CMspark Agent system tray started")
+      trayStarted = true
+    } catch (err: any) {
+      console.warn(`[tray] System tray unavailable: ${err.message}`)
+      console.warn("[tray] Falling back to readline CLI menu.")
+      if (process.platform === "darwin" && process.arch === "arm64") {
+        console.warn("[tray] Tip: Build the Swift tray binary:")
+        console.warn("       cd companion && ./src/tray/build-tray.sh")
+        console.warn("[tray] Or install Rosetta 2 to use systray2:")
+        console.warn("       softwareupdate --install-rosetta --agree-to-license")
+      }
+      startReadlineAgent()
+    }
   }
 
   // Start polling loop
@@ -604,6 +837,9 @@ export function stopMenuBarAgent(): void {
   if (systrayInstance) {
     systrayInstance.kill().catch(() => { /* ignore */ })
     systrayInstance = null
+  }
+  if (swiftTrayProcess) {
+    killSwiftTray()
   }
   if (rl) {
     rl.close()

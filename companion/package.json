@@ -15,7 +15,7 @@
     "daemon:status": "node dist/index.js daemon status",
     "menu-bar": "node dist/index.js menu-bar",
     "tray": "node dist/index.js tray",
-    "postinstall": "node ../scripts/verify-systray2.js"
+    "postinstall": "node ../scripts/verify-systray2.js && node ../scripts/build-swift-tray.js"
   },
   "dependencies": {
     "@types/dompurify": "^3.0.5",
