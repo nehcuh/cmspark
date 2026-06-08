@@ -90,21 +90,33 @@ DMG_OUTPUT="${ROOT_DIR}/dist-package/${DMG_NAME}"
 rm -f "${DMG_OUTPUT}"
 
 TMP_DMG="/tmp/cmspark-dmg-${VERSION}.dmg"
-rm -f "${TMP_DMG}"
+rm -f "${TMP_DMG}" "${TMP_DMG}.sparseimage"
 
-# Create writable DMG from staging
+# Eject any previously mounted CMspark volumes (from prior failed runs or opened DMG)
+for dev in $(hdiutil info | grep "/Volumes/CMspark" | awk '{print $1}' || true); do
+  [[ -n "${dev}" ]] && hdiutil detach "${dev}" -force 2>/dev/null || true
+done
+
+# Create writable sparse image from staging
 DMG_SIZE=$(( $(du -sm "${DMG_DIR}" | cut -f1) + 20 ))m
 
 hdiutil create -size "${DMG_SIZE}" \
   -volname "CMspark" \
-  -fs HFS+ \
-  -layout GPTSPUD \
+  -fs HFS+J \
+  -type SPARSE \
   "${TMP_DMG}"
 
-# Mount the writable DMG
-DEVICE=$(hdiutil attach "${TMP_DMG}" -readwrite -noverify -noautoopen | \
-  grep "/Volumes/CMspark" | head -1 | awk '{print $1}')
-VOLUME="/Volumes/CMspark"
+# Sparse image adds .sparseimage suffix
+TMP_DMG="${TMP_DMG}.sparseimage"
+
+# Mount the writable sparse image and capture the actual mount point
+ATTACH_OUTPUT=$(hdiutil attach "${TMP_DMG}" -noverify -noautoopen)
+echo "${ATTACH_OUTPUT}"
+
+# Extract device and actual volume path from the last matching line
+VOLUME_LINE=$(echo "${ATTACH_OUTPUT}" | grep "/Volumes/CMspark" | tail -1)
+DEVICE=$(echo "${VOLUME_LINE}" | awk '{print $1}')
+VOLUME=$(echo "${VOLUME_LINE}" | awk '{print $NF}')
 
 # Copy app bundle and create Applications symlink
 echo "  Copying files to DMG..."

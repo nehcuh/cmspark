@@ -119,6 +119,7 @@ case "${PLATFORM}" in
   macos-*)
     rm -f "${STAGING}/node_modules/systray2/traybin/tray_windows_release.exe"
     rm -f "${STAGING}/node_modules/systray2/traybin/tray_linux_release"
+    rm -f "${STAGING}/node_modules/systray2/traybin/tray_darwin_release"
     rm -rf "${STAGING}/node_modules/node-notifier/vendor/snoreToast" 2>/dev/null || true
     rm -rf "${STAGING}/node_modules/node-notifier/vendor/notifu" 2>/dev/null || true
     rm -rf "${STAGING}/node_modules/node-notifier/vendor/mac.noindex" 2>/dev/null || true
