@@ -121,6 +121,7 @@ case "${PLATFORM}" in
     rm -f "${STAGING}/node_modules/systray2/traybin/tray_linux_release"
     rm -rf "${STAGING}/node_modules/node-notifier/vendor/snoreToast" 2>/dev/null || true
     rm -rf "${STAGING}/node_modules/node-notifier/vendor/notifu" 2>/dev/null || true
+    rm -rf "${STAGING}/node_modules/node-notifier/vendor/mac.noindex" 2>/dev/null || true
     if [ -f companion/dist/cmspark-tray ]; then
       cp companion/dist/cmspark-tray "${STAGING}/"
     fi

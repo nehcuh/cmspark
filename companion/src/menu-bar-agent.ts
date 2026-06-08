@@ -29,7 +29,16 @@ const notifier = require("node-notifier") as {
 }
 
 function safeNotify(options: { title?: string; message?: string; sound?: boolean | string; timeout?: number }): void {
-  try { notifier.notify(options) } catch { /* Apple Silicon without Rosetta */ }
+  if (process.platform === "darwin") {
+    // Use native osascript to avoid x86_64 terminal-notifier requiring Rosetta
+    try {
+      const title = (options.title || "CMspark Agent").replace(/"/g, '\\"')
+      const msg = (options.message || "").replace(/"/g, '\\"')
+      child_process.execSync(`osascript -e 'display notification "${msg}" with title "${title}"'`, { stdio: "ignore" })
+    } catch { /* ignore */ }
+    return
+  }
+  try { notifier.notify(options) } catch { /* ignore */ }
 }
 
 // ---------------------------------------------------------------------------
