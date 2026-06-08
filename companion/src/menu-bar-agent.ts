@@ -16,7 +16,17 @@ import * as child_process from "child_process"
 import * as path from "path"
 import * as fs from "fs"
 import WebSocket from "ws"
-import SysTray from "systray2"
+
+// Lazy-loaded systray2 — only imported when actually needed (non-Apple-Silicon fallback)
+let SysTray: any = null
+const SYSTRAY_SEPARATOR = { title: "---" }
+
+async function loadSysTrayModule(): Promise<any> {
+  if (SysTray) return SysTray
+  const mod = await import("systray2")
+  SysTray = mod.default
+  return SysTray
+}
 
 // node-notifier does not ship TypeScript declarations; use require
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -114,7 +124,7 @@ let state: MenuBarState = {
 }
 
 let pollTimer: NodeJS.Timeout | null = null
-let systrayInstance: SysTray | null = null
+let systrayInstance: any = null
 let lastNotifiedStatus: CompanionStatus | null = null
 
 // Menu item indices (must match the order in buildMenu())
@@ -231,13 +241,13 @@ function buildMenu(status: CompanionStatus, autoStartEnabled: boolean) {
     items: [
       { title: "启动 Companion", tooltip: "启动 Companion 守护进程", checked: false, enabled: !running },
       { title: "停止 Companion", tooltip: "停止 Companion 守护进程", checked: false, enabled: running },
-      SysTray.separator,
+      SYSTRAY_SEPARATOR,
       { title: "查看状态", tooltip: "查看 Companion 详细状态", checked: false, enabled: true },
       { title: "打开日志目录", tooltip: "打开日志文件夹", checked: false, enabled: true },
       { title: "打开 Chrome Side Panel", tooltip: "打开 Chrome 扩展", checked: false, enabled: true },
-      SysTray.separator,
+      SYSTRAY_SEPARATOR,
       { title: `开机自启: ${autoStartEnabled ? "开" : "关"}`, tooltip: "切换开机自启", checked: autoStartEnabled, enabled: true },
-      SysTray.separator,
+      SYSTRAY_SEPARATOR,
       { title: "退出", tooltip: "退出托盘代理", checked: false, enabled: true },
     ],
   }
@@ -406,11 +416,16 @@ function openLogsDir(): void {
 // Tray setup
 // ---------------------------------------------------------------------------
 
-async function setupTray(): Promise<SysTray> {
+async function setupTray(): Promise<any> {
+  const Tray = await loadSysTrayModule()
+  if (!Tray) {
+    throw new Error("systray2 module not installed")
+  }
+
   const autoStart = await checkAutoStart()
   const menu = buildMenu(state.companionStatus, autoStart)
 
-  const systray = new SysTray({
+  const systray = new Tray({
     menu,
     debug: !!process.env.CMSPARK_DEBUG,
     copyDir: true,

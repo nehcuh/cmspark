@@ -3,6 +3,7 @@
 import * as fs from "fs"
 import * as path from "path"
 import * as os from "os"
+import { getLockPath } from "./platform"
 
 export const DATA_DIR = process.env.CMSPARK_DATA_DIR || path.join(os.homedir(), ".cmspark-agent")
 
@@ -163,7 +164,7 @@ export function getLogDir(): string {
 }
 
 export function getLockFilePath(): string {
-  return path.join(DATA_DIR, "daemon.sock")
+  return getLockPath()
 }
 
 export function getPidFilePath(): string {
