@@ -15,6 +15,7 @@ import {
   setupGracefulShutdown,
 } from "./daemon"
 import { startMenuBarAgent } from "./menu-bar-agent"
+import { runInteractiveSettings, runNonInteractiveSettings } from "./settings-cli"
 import { getPlatform } from "./platform"
 import * as fs from "fs"
 import * as path from "path"
@@ -32,6 +33,9 @@ Usage:
   cmspark-agent daemon stop                停止守护进程
   cmspark-agent daemon status              查看守护进程状态
   cmspark-agent daemon logs                查看守护进程日志
+
+  cmspark-agent settings                   交互式修改 LLM 配置
+  cmspark-agent settings --set key=value   非交互式修改配置
 
   cmspark-agent tray                       启动系统托盘（推荐）
   cmspark-agent tray status                查看托盘后端信息
@@ -300,6 +304,17 @@ async function main() {
           await startMenuBarAgent()
       }
       break
+    }
+
+    case "settings": {
+      const setFlags = process.argv.slice(3).filter((a) => a.startsWith("--set="))
+      if (setFlags.length > 0) {
+        const pairs = setFlags.map((f) => f.slice(6))
+        runNonInteractiveSettings(pairs)
+        process.exit(0)
+      }
+      await runInteractiveSettings()
+      process.exit(0)
     }
 
     case "menu-bar":

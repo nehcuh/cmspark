@@ -66,7 +66,8 @@ export async function handleMessage(
       return { type: "config.updated", config: { ...updated, llm: { ...updated.llm, api_key: "***" } } }
     }
 
-    case "config.test": {
+    case "config.test":
+    case "settings.test": {
       const config = getConfig()
       if (!config.llm.api_key || config.llm.api_key === "sk-placeholder") {
         return { type: "config.testResult", ok: false, error: "API Key 未配置" }
@@ -82,6 +83,66 @@ export async function handleMessage(
         return { type: "config.testResult", ok: true }
       } catch (e: any) {
         return { type: "config.testResult", ok: false, error: e.message || String(e) }
+      }
+    }
+
+    case "settings.get": {
+      const config = getConfig()
+      return {
+        type: "settings.result",
+        settings: {
+          api_key: config.llm.api_key ? "***" : "",
+          base_url: config.llm.base_url,
+          model_name: config.llm.model_name,
+          temperature: config.llm.temperature,
+          context_window: config.llm.context_window,
+        },
+      }
+    }
+    case "settings.set": {
+      const cfg = rest.settings || {}
+      // Reject prototype pollution keys (P0)
+      if (hasPrototypePollutionKey(cfg)) {
+        return { type: "error", error: "Invalid config keys detected" }
+      }
+      const normalized: any = { llm: {} }
+      if (cfg.api_key && cfg.api_key !== "***") normalized.llm.api_key = cfg.api_key
+      if (cfg.base_url) normalized.llm.base_url = cfg.base_url
+      if (cfg.model_name) normalized.llm.model_name = cfg.model_name
+      if (cfg.temperature !== undefined) normalized.llm.temperature = cfg.temperature
+      if (cfg.context_window !== undefined) normalized.llm.context_window = cfg.context_window
+
+      // Validate temperature
+      if (normalized.llm.temperature !== undefined) {
+        const t = parseFloat(normalized.llm.temperature)
+        if (isNaN(t) || t < 0 || t > 2) {
+          return { type: "error", error: "temperature 应为 0.0 - 2.0 之间的数字" }
+        }
+      }
+      // Validate context_window
+      if (normalized.llm.context_window !== undefined) {
+        const cw = parseInt(normalized.llm.context_window, 10)
+        if (isNaN(cw) || cw < 1000 || cw > 10000000) {
+          return { type: "error", error: "context_window 应为 1000 - 10000000 之间的整数" }
+        }
+      }
+      // Validate base_url
+      if (normalized.llm.base_url) {
+        try { new URL(normalized.llm.base_url) } catch {
+          return { type: "error", error: "无效的 base_url" }
+        }
+      }
+
+      const updated = saveConfig(normalized)
+      return {
+        type: "settings.saved",
+        settings: {
+          api_key: updated.llm.api_key ? "***" : "",
+          base_url: updated.llm.base_url,
+          model_name: updated.llm.model_name,
+          temperature: updated.llm.temperature,
+          context_window: updated.llm.context_window,
+        },
       }
     }
 
@@ -530,17 +591,49 @@ export async function handleMessage(
         return { type: "error", error: "No active browser session" }
       }
 
-      // Map quick action IDs to tool invocations on the current page
+      if (actionId === "new-chat") {
+        const thread = threadManager.create("")
+        return { type: "quickAction.result", id: actionId, success: true, thread_id: thread.id, message: `新线程已创建: ${thread.id}` }
+      }
+
+      // Map read / extract / screenshot to tool calls
       const TOOL_MAP: Record<string, { tool: string; params: Record<string, any> }> = {
         "read-page":    { tool: "get_page_text", params: {} },
         "screenshot":   { tool: "take_screenshot", params: {} },
         "extract-data": { tool: "get_page_text", params: { selector: "main, article, .content, #content" } },
-        "summarize":    { tool: "get_page_text", params: {} },
       }
 
-      if (actionId === "new-chat") {
-        const thread = threadManager.create("")
-        return { type: "quickAction.result", id: actionId, success: true, thread_id: thread.id }
+      // --- Summarize: get page text then call LLM for a brief summary ---
+      if (actionId === "summarize") {
+        try {
+          const pageResult = await session.executeTool(
+            `qa-summarize-${Date.now()}`,
+            "get_page_text",
+            {},
+          )
+          if (!pageResult.success || !pageResult.data?.text) {
+            return { type: "quickAction.result", id: actionId, success: false, error: "无法获取页面内容" }
+          }
+          const pageText: string = pageResult.data.text
+          const config = getConfig()
+          if (!config.llm.api_key || config.llm.api_key === "sk-placeholder") {
+            return { type: "quickAction.result", id: actionId, success: false, error: "LLM 未配置，无法生成总结" }
+          }
+          const client = new OpenAI({ baseURL: config.llm.base_url, apiKey: config.llm.api_key, timeout: 15000, maxRetries: 0 })
+          const resp = await client.chat.completions.create({
+            model: config.llm.model_name,
+            temperature: 0.3,
+            max_tokens: 256,
+            messages: [
+              { role: "system", content: "用一句话总结以下网页内容（不超过80字）。直接给出总结，不要添加前缀。" },
+              { role: "user", content: pageText.slice(0, 8000) },
+            ],
+          })
+          const summary = resp.choices[0]?.message?.content?.trim() || "（总结为空）"
+          return { type: "quickAction.result", id: actionId, success: true, message: summary }
+        } catch (err: any) {
+          return { type: "quickAction.result", id: actionId, success: false, error: `总结失败: ${err.message}` }
+        }
       }
 
       const mapped = TOOL_MAP[actionId]
@@ -554,6 +647,14 @@ export async function handleMessage(
           mapped.tool,
           mapped.params,
         )
+        if (actionId === "read-page" || actionId === "extract-data") {
+          const text = result.data?.text || ""
+          const preview = text.slice(0, 500).replace(/\s+/g, " ").trim()
+          return { type: "quickAction.result", id: actionId, success: true, message: preview || "页面内容为空", fullText: text }
+        }
+        if (actionId === "screenshot") {
+          return { type: "quickAction.result", id: actionId, success: true, imageData: result.data }
+        }
         return { type: "quickAction.result", id: actionId, ...result }
       } catch (err: any) {
         return { type: "error", error: `Quick action failed: ${err.message}` }

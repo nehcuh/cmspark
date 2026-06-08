@@ -73,9 +73,10 @@ echo "  App bundle: $(du -sh "${APP_BUNDLE}" | cut -f1)"
 
 # --- Launcher script: node runs cmspark-agent.js from Resources/ ---
 cat > "${APP_BUNDLE}/Contents/MacOS/CMspark" <<'LAUNCHER'
-#!/bin/bash
+#!/usr/bin/env arch -arm64 /bin/bash
 # CMspark Agent — macOS .app launcher
 # Runs node + cmspark-agent.js from the .app bundle's Resources/
+# Shebang forces arm64 to prevent Rosetta prompt (bash is universal binary).
 set -euo pipefail
 
 RESOURCES="$(cd "$(dirname "$0")/../Resources" && pwd)"

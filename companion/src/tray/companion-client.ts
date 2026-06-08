@@ -183,17 +183,19 @@ export class CompanionClient {
     return []
   }
 
-  async executeQuickAction(id: string): Promise<void> {
+  async executeQuickAction(id: string): Promise<any> {
     if (this._state !== "connected") {
       console.warn(`[companion-client] 未连接，无法执行快速操作: ${id}`)
-      return
+      return { success: false, error: "未连接" }
     }
 
     try {
       const result = await this.sendRequest("executeQuickAction", { id })
       this.debug(`Quick action '${id}' result: ${JSON.stringify(result)}`)
+      return result
     } catch (err: any) {
       console.error(`[companion-client] 快速操作 '${id}' 失败: ${err.message}`)
+      return { success: false, error: err.message }
     }
   }
 

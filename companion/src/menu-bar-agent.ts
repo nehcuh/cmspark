@@ -280,11 +280,105 @@ function openChromeSidePanel(): void {
   }
 }
 
+async function handleQuickAction(id: string): Promise<void> {
+  if (!companionClient) return
+
+  safeNotify({ title: "CMspark Agent", message: `正在执行: ${id}...`, timeout: 2 })
+
+  const result = await companionClient.executeQuickAction(id)
+
+  if (!result || result.error) {
+    safeNotify({ title: "CMspark Agent", message: `操作失败: ${result?.error || "未知错误"}`, timeout: 5 })
+    return
+  }
+
+  switch (id) {
+    case "screenshot": {
+      if (result.imageData) {
+        const tmpPath = await saveScreenshot(result.imageData)
+        if (tmpPath) {
+          safeNotify({ title: "CMspark Agent", message: `截图已保存`, timeout: 3 })
+          try {
+            child_process.execSync(`open "${tmpPath}"`, { stdio: "ignore" })
+          } catch { /* ignore */ }
+        } else {
+          safeNotify({ title: "CMspark Agent", message: "截图保存失败", timeout: 3 })
+        }
+      }
+      break
+    }
+    case "read-page":
+    case "extract-data": {
+      const preview = result.message || ""
+      const title = id === "read-page" ? "📖 页面内容" : "📝 提取数据"
+      safeNotify({ title, message: preview.slice(0, 200) + (preview.length > 200 ? "..." : ""), timeout: 8 })
+      break
+    }
+    case "summarize": {
+      const summary = result.message || ""
+      safeNotify({ title: "📋 页面总结", message: summary.slice(0, 300) + (summary.length > 300 ? "..." : ""), timeout: 10 })
+      break
+    }
+    case "new-chat": {
+      safeNotify({ title: "CMspark Agent", message: result.message || "新线程已创建", timeout: 3 })
+      break
+    }
+    default:
+      safeNotify({ title: "CMspark Agent", message: `操作完成: ${id}`, timeout: 3 })
+  }
+}
+
+async function saveScreenshot(imageData: any): Promise<string | null> {
+  try {
+    let base64: string | null = null
+    if (typeof imageData === "string") {
+      base64 = imageData
+    } else if (imageData?.base64) {
+      base64 = imageData.base64
+    } else if (imageData?.data) {
+      base64 = imageData.data
+    }
+    if (!base64) return null
+
+    // Strip data URI prefix if present
+    const raw = base64.replace(/^data:image\/\w+;base64,/, "")
+    const buf = Buffer.from(raw, "base64")
+    const tmpDir = path.join(getConfigDir(), "cache")
+    fs.mkdirSync(tmpDir, { recursive: true })
+    const tmpPath = path.join(tmpDir, `screenshot-${Date.now()}.png`)
+    fs.writeFileSync(tmpPath, buf, { mode: 0o600 })
+    return tmpPath
+  } catch (err: any) {
+    console.error("[menu-bar] Save screenshot failed:", err.message)
+    return null
+  }
+}
+
 function openLogsDir(): void {
   try {
     openLogDirectory(path.join(getConfigDir(), "logs"))
   } catch (err: any) {
     safeNotify({ title: "CMspark Agent", message: `打开日志目录失败: ${err.message}`, timeout: 5 })
+  }
+}
+
+async function openSettingsUI(): Promise<void> {
+  // Open Terminal.app and run the interactive settings CLI
+  const distDir = path.join(__dirname, "..")
+  const script = `tell application "Terminal"
+    do script "cd ${distDir} && node dist/index.js settings"
+    activate
+  end tell`
+  try {
+    child_process.execSync(`osascript -e '${script}'`, { stdio: "ignore" })
+  } catch (err: any) {
+    // Fallback: try running directly in foreground
+    try {
+      const { runInteractiveSettings } = await import("./settings-cli")
+      await runInteractiveSettings()
+    } catch {
+      safeNotify({ title: "CMspark Agent", message: `打开设置失败: ${err.message}`, timeout: 5 })
+    }
   }
 }
 
@@ -301,13 +395,14 @@ async function handleAction(action: TrayMenuAction): Promise<void> {
     case "logs": openLogsDir(); break
     case "chrome": openChromeSidePanel(); break
     case "settings":
-      // TODO: open settings UI when implemented
-      safeNotify({ title: "CMspark Agent", message: "设置功能开发中", timeout: 3 })
+      await openSettingsUI()
       break
     case "autostart": await toggleAutoStart(); break
     case "quick-action":
       if (companionClient) {
-        companionClient.executeQuickAction(action.payload?.id || "").catch(() => {})
+        handleQuickAction(action.payload?.id || "").catch((err) => {
+          console.error("[menu-bar] Quick action error:", err)
+        })
       }
       break
     case "recent-thread":
