@@ -5,7 +5,6 @@
 !define PRODUCT_NAME "CMspark"
 !define PRODUCT_VERSION "0.2.0"
 !define PRODUCT_PUBLISHER "CMspark"
-!define PRODUCT_EXE "cmspark-agent.exe"
 !define PRODUCT_UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCT_NAME}"
 
 ; Modern UI
@@ -28,13 +27,13 @@ Var /GLOBAL START_MENU_FOLDER
 !insertmacro MUI_PAGE_STARTMENU "StartMenu" $START_MENU_FOLDER
 !insertmacro MUI_PAGE_INSTFILES
 
-; Custom finish page with Chrome extension instructions
+; Custom finish page
 !define MUI_FINISHPAGE_TITLE "Installation Complete"
-!define MUI_FINISHPAGE_TEXT "CMspark Agent is now installed and will start automatically.$\r$\n$\r$\nTo use CMspark, you need to load the Chrome extension:$\r$\n$\r$\n  1. Open Chrome and go to chrome://extensions$\r$\n  2. Enable 'Developer mode' (top-right)$\r$\n  3. Click 'Load unpacked'$\r$\n  4. Select the folder: $INSTDIR\chrome-extension$\r$\n$\r$\nThen click the CMspark icon in Chrome toolbar to open Side Panel."
+!define MUI_FINISHPAGE_TEXT "CMspark Agent is now installed.$\r$\n$\r$\nTo use CMspark, you need to load the Chrome extension:$\r$\n$\r$\n  1. Open Chrome and go to chrome://extensions$\r$\n  2. Enable 'Developer mode' (top-right)$\r$\n  3. Click 'Load unpacked'$\r$\n  4. Select: $INSTDIR\chrome-extension$\r$\n$\r$\nThen click the CMspark icon in Chrome toolbar to open Side Panel."
 !define MUI_FINISHPAGE_LINK "Open chrome://extensions now"
 !define MUI_FINISHPAGE_LINK_LOCATION "chrome://extensions"
 !define MUI_FINISHPAGE_RUN
-!define MUI_FINISHPAGE_RUN_TEXT "Start CMspark Agent now"
+!define MUI_FINISHPAGE_RUN_TEXT "Start CMspark Agent now (tray icon)"
 !define MUI_FINISHPAGE_RUN_FUNCTION "StartAgent"
 !insertmacro MUI_PAGE_FINISH
 
@@ -50,14 +49,8 @@ Section "CMspark Agent" SecMain
 
   SetOutPath "$INSTDIR"
 
-  ; Write files from staging directory (relative to script location)
+  ; Write all files from staging directory
   File /r "..\dist-package\cmspark-windows-x64\*.*"
-
-  ; Rename node.exe (downloaded as node.exe, already correct)
-
-  ; Register auto-start via Task Scheduler
-  ; Use a helper PS1 to avoid NSIS variable conflicts with PowerShell $
-  nsExec::ExecToLog 'powershell -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\install-daemon.ps1"'
 
   ; Write registry for Add/Remove Programs
   WriteRegStr HKCU "${PRODUCT_UNINST_KEY}" "DisplayName" "${PRODUCT_NAME}"
@@ -70,13 +63,22 @@ Section "CMspark Agent" SecMain
   IntFmt $0 "0x%08X" $0
   WriteRegDWORD HKCU "${PRODUCT_UNINST_KEY}" "EstimatedSize" "$0"
 
-  ; Create shortcuts
+  ; Auto-start via Registry Run key (survives reboots, no Task Scheduler complexity)
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${PRODUCT_NAME}" '"$INSTDIR\node.exe" "$INSTDIR\cmspark-agent.js" tray'
+
+  ; --- Shortcuts ---
+  ; Desktop icon
+  CreateShortCut "$DESKTOP\CMspark Agent.lnk" "$INSTDIR\node.exe" "cmspark-agent.js tray" "$INSTDIR\node.exe" 0
+
+  ; Start Menu
   !insertmacro MUI_STARTMENU_WRITE_BEGIN "StartMenu"
     CreateDirectory "$SMPROGRAMS\$START_MENU_FOLDER"
     CreateShortCut "$SMPROGRAMS\$START_MENU_FOLDER\CMspark Agent.lnk" "$INSTDIR\node.exe" "cmspark-agent.js tray" "$INSTDIR\node.exe" 0
-    CreateShortCut "$SMPROGRAMS\$START_MENU_FOLDER\CMspark Tray (Background).lnk" "$INSTDIR\node.exe" "cmspark-agent.js daemon start" "$INSTDIR\node.exe" 0
     CreateShortCut "$SMPROGRAMS\$START_MENU_FOLDER\Uninstall CMspark.lnk" "$INSTDIR\uninstall.exe"
   !insertmacro MUI_STARTMENU_WRITE_END
+
+  ; Startup folder (belt-and-suspenders with registry Run)
+  CreateShortCut "$SMSTARTUP\CMspark Agent.lnk" "$INSTDIR\node.exe" "cmspark-agent.js tray" "$INSTDIR\node.exe" 0
 
   ; Create uninstaller
   WriteUninstaller "$INSTDIR\uninstall.exe"
@@ -84,36 +86,31 @@ SectionEnd
 
 ; --- Uninstall Section ---
 Section "Uninstall"
-  ; Stop and remove scheduled task
-  nsExec::ExecToLog 'powershell -NoProfile -Command "Stop-ScheduledTask -TaskName cmspark-companion -ErrorAction SilentlyContinue; Unregister-ScheduledTask -TaskName cmspark-companion -Confirm:0 -ErrorAction SilentlyContinue"'
+  ; Kill running agent process (read PID from data dir, then kill)
+  nsExec::ExecToLog '"$INSTDIR\node.exe" "$INSTDIR\cmspark-agent.js" daemon stop'
+  ; Fallback: kill any node.exe launched from our install dir
+  nsExec::ExecToLog 'wmic process where "ExecutablePath='$INSTDIR\node.exe'" call terminate 2>nul'
+
+  ; Remove auto-start
+  DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${PRODUCT_NAME}"
 
   ; Remove shortcuts
+  Delete "$DESKTOP\CMspark Agent.lnk"
+  Delete "$SMSTARTUP\CMspark Agent.lnk"
   !insertmacro MUI_STARTMENU_GETFOLDER "StartMenu" $0
   Delete "$SMPROGRAMS\$0\CMspark Agent.lnk"
-  Delete "$SMPROGRAMS\$0\CMspark Tray (Background).lnk"
   Delete "$SMPROGRAMS\$0\Uninstall CMspark.lnk"
   RMDir "$SMPROGRAMS\$0"
 
   ; Remove registry
   DeleteRegKey HKCU "${PRODUCT_UNINST_KEY}"
 
-  ; Remove files
-  RMDir /r "$INSTDIR\chrome-extension"
-  RMDir /r "$INSTDIR\node_modules"
-  RMDir /r "$INSTDIR\builtin-skills"
-  RMDir /r "$INSTDIR\assets"
-  Delete "$INSTDIR\node.exe"
-  Delete "$INSTDIR\cmspark-agent.js"
-  Delete "$INSTDIR\sql-wasm.wasm"
-  Delete "$INSTDIR\README.txt"
-  Delete "$INSTDIR\install.bat"
-  Delete "$INSTDIR\launch.bat"
-  Delete "$INSTDIR\uninstall.bat"
-  Delete "$INSTDIR\uninstall.exe"
-  RMDir "$INSTDIR"
+  ; Remove files and install directory
+  RMDir /r "$INSTDIR"
 SectionEnd
 
-; --- Custom function: start agent ---
+; --- Custom function: start tray agent ---
 Function StartAgent
-  nsExec::ExecToLog '"$INSTDIR\node.exe" "$INSTDIR\cmspark-agent.js" daemon start'
+  ; Launch tray in background (minimized, detached)
+  Exec '"$INSTDIR\node.exe" "$INSTDIR\cmspark-agent.js" tray'
 FunctionEnd
