@@ -198,6 +198,7 @@ if [[ "${PLATFORM}" == windows* ]]; then
   cp companion/install.bat "${STAGING}/" 2>/dev/null || true
   cp companion/launch.bat "${STAGING}/" 2>/dev/null || true
   cp companion/uninstall.bat "${STAGING}/" 2>/dev/null || true
+  cp scripts/install-daemon.ps1 "${STAGING}/" 2>/dev/null || true
 else
   cp scripts/launch-companion.sh "${STAGING}/launch-companion.sh"
   chmod +x "${STAGING}/launch-companion.sh"

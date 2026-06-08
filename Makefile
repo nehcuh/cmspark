@@ -123,9 +123,12 @@ package: build
 package-macos: build build-tray
 	@bash scripts/package.sh macos-arm64
 
-# 打包 Windows x64
+# 打包 Windows x64（产出 NSIS 安装包）
 package-windows: build
 	@bash scripts/package.sh windows-x64
+	@echo "Building NSIS installer..."
+	@makensis scripts/installer.nsi
+	@echo "Done: dist-package/CMspark-Setup-v*.exe"
 
 # 打包 Linux x64
 package-linux: build
