@@ -137,7 +137,7 @@ New-Item -ItemType Directory -Force -Path $StartMenuDir | Out-Null
 $WshShell = New-Object -ComObject WScript.Shell
 $Shortcut = $WshShell.CreateShortcut("$StartMenuDir\CMspark Agent.lnk")
 $Shortcut.TargetPath = $NodeCmd
-$Shortcut.Arguments = "$AgentScript menu-bar"
+$Shortcut.Arguments = "$AgentScript tray"
 $Shortcut.WorkingDirectory = "$RepoRoot\companion"
 $Shortcut.Description = "CMspark Browser Agent Menu Bar"
 $Shortcut.Save()

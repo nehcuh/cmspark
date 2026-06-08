@@ -223,14 +223,17 @@ export function getTrayLevel(): TrayLevel {
   const platform = getPlatform()
   switch (platform) {
     case "darwin":
-      // node-notifier notifications + readline menu (not true NSStatusBar)
-      return "notification-only"
+      // Swift NSStatusBar (ARM64) or systray2 (x86) — both are native tray
+      return "native"
     case "win32":
-      // Can use native system tray via systray npm package
+      if (process.arch === "arm64") {
+        // systray2 has no win32-arm64 binary
+        return "notification-only"
+      }
       return "native"
     case "linux":
-      // node-notifier with libnotify backend
-      return "notification-only"
+      // systray2 provides system tray (requires GTK)
+      return "native"
     default:
       return "none"
   }

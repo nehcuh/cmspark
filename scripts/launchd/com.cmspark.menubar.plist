@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  CMspark Menu Bar launchd plist
+  ================================
+  Installed to: ~/Library/LaunchAgents/com.cmspark.menubar.plist
+  Purpose:      Keep the CMspark system tray agent running (auto-start on login,
+                auto-restart on crash).
+  Notes:
+    - Separate from com.cmspark.companion (daemon) so menubar can restart independently.
+    - Paths use {{HOME}} and {{CMSPARK_AGENT_PATH}} placeholders; replaced by install script.
+-->
+<plist version="1.0">
+<dict>
+    <!-- Service identifier -->
+    <key>Label</key>
+    <string>com.cmspark.menubar</string>
+
+    <!-- Program arguments -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>{{CMSPARK_AGENT_PATH}}</string>
+        <string>tray</string>
+    </array>
+
+    <!-- Start automatically at login -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Restart automatically if the process exits -->
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- Minimum seconds between restarts (prevents restart storms) -->
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <!-- Environment variables -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>NODE_ENV</key>
+        <string>production</string>
+    </dict>
+
+    <!-- Standard output log path -->
+    <key>StandardOutPath</key>
+    <string>{{HOME}}/.cmspark-agent/logs/menubar-stdout.log</string>
+
+    <!-- Standard error log path -->
+    <key>StandardErrorPath</key>
+    <string>{{HOME}}/.cmspark-agent/logs/menubar-stderr.log</string>
+</dict>
+</plist>

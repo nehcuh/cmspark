@@ -22,8 +22,11 @@ esac
 # Configuration
 # ---------------------------------------------------------------------------
 LABEL="com.cmspark.companion"
+MENUBAR_LABEL="com.cmspark.menubar"
 PLIST_NAME="${LABEL}.plist"
 TARGET_PLIST="${HOME}/Library/LaunchAgents/${PLIST_NAME}"
+MENUBAR_PLIST_NAME="${MENUBAR_LABEL}.plist"
+TARGET_MENUBAR_PLIST="${HOME}/Library/LaunchAgents/${MENUBAR_PLIST_NAME}"
 DATA_DIR="${HOME}/.cmspark-agent"
 APP_NAME="CMspark Agent.app"
 SERVICE_NAME="cmspark-companion.service"
@@ -68,6 +71,16 @@ if [[ "$PLATFORM" == "macos" ]]; then
         rm -f "${TARGET_PLIST}"
     else
         warn "Plist not found: ${TARGET_PLIST}"
+    fi
+
+    # Unload and remove menubar service
+    info "Unloading menubar service: ${MENUBAR_LABEL}"
+    launchctl unload "${TARGET_MENUBAR_PLIST}" >/dev/null 2>&1 || true
+    launchctl remove "${MENUBAR_LABEL}" >/dev/null 2>&1 || true
+
+    if [[ -f "${TARGET_MENUBAR_PLIST}" ]]; then
+        info "Removing menubar plist: ${TARGET_MENUBAR_PLIST}"
+        rm -f "${TARGET_MENUBAR_PLIST}"
     fi
 fi
 

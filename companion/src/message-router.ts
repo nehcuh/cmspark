@@ -520,6 +520,46 @@ export async function handleMessage(
       return { type: "tool.result", id: msg.id, ...result }
     }
 
+    // --- Quick Actions (from menu bar tray) ---
+    case "executeQuickAction": {
+      const actionId = rest.id
+      if (!actionId || typeof actionId !== "string") {
+        return { type: "error", error: "id required" }
+      }
+      if (!session) {
+        return { type: "error", error: "No active browser session" }
+      }
+
+      // Map quick action IDs to tool invocations on the current page
+      const TOOL_MAP: Record<string, { tool: string; params: Record<string, any> }> = {
+        "read-page":    { tool: "get_page_text", params: {} },
+        "screenshot":   { tool: "take_screenshot", params: {} },
+        "extract-data": { tool: "get_page_text", params: { selector: "main, article, .content, #content" } },
+        "summarize":    { tool: "get_page_text", params: {} },
+      }
+
+      if (actionId === "new-chat") {
+        const thread = threadManager.create("")
+        return { type: "quickAction.result", id: actionId, success: true, thread_id: thread.id }
+      }
+
+      const mapped = TOOL_MAP[actionId]
+      if (!mapped) {
+        return { type: "error", error: `Unknown quick action: ${actionId}` }
+      }
+
+      try {
+        const result = await session.executeTool(
+          `qa-${actionId}-${Date.now()}`,
+          mapped.tool,
+          mapped.params,
+        )
+        return { type: "quickAction.result", id: actionId, ...result }
+      } catch (err: any) {
+        return { type: "error", error: `Quick action failed: ${err.message}` }
+      }
+    }
+
     // --- Original System ---
     case "system.ping":
       return { type: "system.pong" }

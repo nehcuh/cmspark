@@ -1,36 +1,24 @@
 // CMspark Swift Tray — Native NSStatusBar for macOS (Apple Silicon)
 //
-// Protocol (line-delimited JSON on stdin/stdout):
-//   → stdout: {"type":"click","action":"start|stop|status|logs|chrome|autostart|quit"}
-//   → stdout: {"type":"exit","code":0}
-//   ← stdin:  {"cmd":"update","status":"running|stopped|unknown"}
-//   ← stdin:  {"cmd":"update-autostart","enabled":true|false}
-//   ← stdin:  {"cmd":"quit"}
+// Hierarchical menu with submenus for status details, quick actions,
+// and recent threads. Communication via line-delimited JSON on stdin/stdout.
+//
+// Protocol (stdin ← Node.js):
+//   {"cmd":"update","status":"running|stopped|unknown","wsConnected":true,"pid":12345}
+//   {"cmd":"update-autostart","enabled":true}
+//   {"cmd":"update-quick-actions","actions":[{"id":"read-page","title":"📖 读取当前页面"},...]}
+//   {"cmd":"update-recent-threads","threads":[{"id":"abc","title":"数据分析报告..."},...]}
+//   {"cmd":"quit"}
+//
+// Protocol (stdout → Node.js):
+//   {"type":"ready","pid":12345}
+//   {"type":"click","action":"start|stop|restart|status|logs|chrome|settings|autostart|quit"}
+//   {"type":"click","action":"quick-action","id":"read-page"}
+//   {"type":"click","action":"recent-thread","id":"abc"}
+//   {"type":"exit","code":0}
 
 import AppKit
 import Foundation
-
-// ---------------------------------------------------------------------------
-// Configuration
-// ---------------------------------------------------------------------------
-
-let STATUS_FILE_NAME = ".menu-bar-status.json"
-let CONFIG_DIR = FileManager.default.homeDirectoryForCurrentUser
-  .appendingPathComponent(".cmspark-agent")
-  .path
-
-// ---------------------------------------------------------------------------
-// Status
-// ---------------------------------------------------------------------------
-
-enum CompanionStatus: String {
-  case running = "running"
-  case stopped = "stopped"
-  case unknown = "unknown"
-}
-
-var currentStatus: CompanionStatus = .unknown
-var autoStartEnabled: Bool = false
 
 // ---------------------------------------------------------------------------
 // JSON helpers
@@ -45,51 +33,93 @@ func jsonLine(_ dict: [String: Any]) {
 }
 
 // ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+
+enum CompanionStatus: String {
+  case running = "running"
+  case stopped = "stopped"
+  case unknown = "unknown"
+}
+
+struct QuickAction {
+  let id: String
+  let title: String
+}
+
+struct RecentThread {
+  let id: String
+  let title: String
+}
+
+var currentStatus: CompanionStatus = .unknown
+var wsConnected: Bool = false
+var currentPid: Int? = nil
+var autoStartEnabled: Bool = false
+var quickActions: [QuickAction] = []
+var recentThreads: [RecentThread] = []
+
+// ---------------------------------------------------------------------------
 // Icon generation (programmatic — no asset files needed)
 // ---------------------------------------------------------------------------
 
-func makeStatusIcon(_ status: CompanionStatus, size: NSSize = NSSize(width: 18, height: 18)) -> NSImage {
+func makeStatusIcon(_ status: CompanionStatus, ws: Bool, size: NSSize = NSSize(width: 18, height: 18)) -> NSImage {
   let image = NSImage(size: size)
   image.lockFocus()
 
-  let rect = NSRect(origin: .zero, size: size)
-  let path = NSBezierPath(ovalIn: rect.insetBy(dx: 2, dy: 2))
+  let fullRect = NSRect(origin: .zero, size: size)
+  let outer = NSBezierPath(ovalIn: fullRect.insetBy(dx: 2, dy: 2))
 
-  let color: NSColor
+  // Alpha-only fill — macOS tints for dark/light mode
+  let fillAlpha: CGFloat
   switch status {
-  case .running:
-    color = NSColor.systemGreen
-  case .stopped:
-    color = NSColor.systemRed
-  case .unknown:
-    color = NSColor.systemYellow
+  case .running:  fillAlpha = 0.85
+  case .stopped:  fillAlpha = 0.45
+  case .unknown:  fillAlpha = 0.6
   }
 
-  color.setFill()
-  path.fill()
+  NSColor.white.withAlphaComponent(fillAlpha).setFill()
+  outer.fill()
 
-  // White border for visibility in both dark/light mode
   NSColor.white.withAlphaComponent(0.3).setStroke()
-  path.lineWidth = 0.5
-  path.stroke()
+  outer.lineWidth = 0.5
+  outer.stroke()
+
+  // Inner dot when running + WS connected
+  if status == .running && ws {
+    let dotSize = NSSize(width: 6, height: 6)
+    let dotOrigin = NSPoint(
+      x: (size.width - dotSize.width) / 2,
+      y: (size.height - dotSize.height) / 2
+    )
+    let dot = NSBezierPath(ovalIn: NSRect(origin: dotOrigin, size: dotSize))
+    NSColor.white.withAlphaComponent(0.95).setFill()
+    dot.fill()
+  }
 
   image.unlockFocus()
-  image.isTemplate = false
+  image.isTemplate = true
   return image
 }
 
 // ---------------------------------------------------------------------------
-// Status file reading
+// Menu tag constants
 // ---------------------------------------------------------------------------
 
-func readStatusFile() -> CompanionStatus {
-  let path = (CONFIG_DIR as NSString).appendingPathComponent(STATUS_FILE_NAME)
-  guard let data = FileManager.default.contents(atPath: path),
-        let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-        let statusStr = json["companionStatus"] as? String else {
-    return .unknown
-  }
-  return CompanionStatus(rawValue: statusStr) ?? .unknown
+enum MenuTag: Int {
+  case header = -1
+  case start = 100
+  case stop = 101
+  case restart = 102
+  case statusRefresh = 199
+  case logs = 200
+  case chrome = 201
+  case settings = 202
+  case autostart = 300
+  case quit = 999
+  // Dynamic ranges
+  case quickActionBase = 5000
+  case recentThreadBase = 6000
 }
 
 // ---------------------------------------------------------------------------
@@ -98,63 +128,144 @@ func readStatusFile() -> CompanionStatus {
 
 func buildMenu(target: AnyObject?, action: Selector?) -> NSMenu {
   let menu = NSMenu()
-
   let running = currentStatus == .running
 
-  let startItem = NSMenuItem(title: "启动 Companion", action: action, keyEquivalent: "")
+  // -- Header (non-interactive status display) --
+  let statusEmoji: String
+  switch currentStatus {
+  case .running:  statusEmoji = "🟢"
+  case .stopped:  statusEmoji = "🔴"
+  case .unknown:  statusEmoji = "🟡"
+  }
+  let header = NSMenuItem(title: "\(statusEmoji) CMspark Agent", action: nil, keyEquivalent: "")
+  header.tag = MenuTag.header.rawValue
+  header.isEnabled = false
+  menu.addItem(header)
+
+  menu.addItem(NSMenuItem.separator())
+
+  // -- Start / Stop / Restart --
+  let startItem = NSMenuItem(title: "▶ 启动 Companion", action: action, keyEquivalent: "s")
   startItem.target = target
-  startItem.tag = 0
+  startItem.tag = MenuTag.start.rawValue
   startItem.isEnabled = !running
   menu.addItem(startItem)
 
-  let stopItem = NSMenuItem(title: "停止 Companion", action: action, keyEquivalent: "")
+  let stopItem = NSMenuItem(title: "⏹ 停止 Companion", action: action, keyEquivalent: "x")
   stopItem.target = target
-  stopItem.tag = 1
+  stopItem.tag = MenuTag.stop.rawValue
   stopItem.isEnabled = running
   menu.addItem(stopItem)
 
+  let restartItem = NSMenuItem(title: "🔄 重启 Companion", action: action, keyEquivalent: "r")
+  restartItem.target = target
+  restartItem.tag = MenuTag.restart.rawValue
+  restartItem.isEnabled = running
+  menu.addItem(restartItem)
+
   menu.addItem(NSMenuItem.separator())
 
-  let statusItem = NSMenuItem(title: "查看状态", action: action, keyEquivalent: "")
-  statusItem.target = target
-  statusItem.tag = 2
-  menu.addItem(statusItem)
+  // -- Status Details submenu --
+  let statusMenuItem = NSMenuItem(title: "📊 状态详情", action: nil, keyEquivalent: "")
+  let statusMenu = NSMenu()
 
-  let logsItem = NSMenuItem(title: "打开日志目录", action: action, keyEquivalent: "")
+  let compLabel = running ? "运行中" : "已停止"
+  statusMenu.addItem(makeInfoItem("Companion: \(compLabel)"))
+
+  let wsIcon = running ? (wsConnected ? "🟢" : "🟡") : "🔴"
+  let wsLabel = wsConnected ? "已连接" : "未连接"
+  statusMenu.addItem(makeInfoItem("WebSocket: \(wsIcon) \(wsLabel) :23401"))
+
+  let pidStr = currentPid.map(String.init) ?? "—"
+  statusMenu.addItem(makeInfoItem("PID: \(pidStr)"))
+
+  statusMenu.addItem(makeInfoItem("数据目录: ~/.cmspark-agent"))
+
+  let now = DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .medium)
+  statusMenu.addItem(makeInfoItem("最后检测: \(now)"))
+
+  statusMenu.addItem(NSMenuItem.separator())
+
+  let refreshItem = NSMenuItem(title: "🔄 刷新状态", action: action, keyEquivalent: "")
+  refreshItem.target = target
+  refreshItem.tag = MenuTag.statusRefresh.rawValue
+  statusMenu.addItem(refreshItem)
+
+  statusMenuItem.submenu = statusMenu
+  menu.addItem(statusMenuItem)
+
+  // -- Quick Actions submenu --
+  if !quickActions.isEmpty {
+    let qaMenuItem = NSMenuItem(title: "⚡ 快速操作", action: nil, keyEquivalent: "")
+    let qaMenu = NSMenu()
+    for (i, qa) in quickActions.enumerated() {
+      let item = NSMenuItem(title: qa.title, action: action, keyEquivalent: "")
+      item.target = target
+      item.tag = MenuTag.quickActionBase.rawValue + i
+      item.representedObject = qa.id
+      qaMenu.addItem(item)
+    }
+    qaMenuItem.submenu = qaMenu
+    menu.addItem(qaMenuItem)
+  }
+
+  // -- Recent Threads submenu --
+  if !recentThreads.isEmpty {
+    let rtMenuItem = NSMenuItem(title: "💬 最近对话", action: nil, keyEquivalent: "")
+    let rtMenu = NSMenu()
+    for (i, thread) in recentThreads.enumerated() {
+      let item = NSMenuItem(title: "📌 \(thread.title)", action: action, keyEquivalent: "")
+      item.target = target
+      item.tag = MenuTag.recentThreadBase.rawValue + i
+      item.representedObject = thread.id
+      rtMenu.addItem(item)
+    }
+    rtMenuItem.submenu = rtMenu
+    menu.addItem(rtMenuItem)
+  }
+
+  menu.addItem(NSMenuItem.separator())
+
+  // -- Utility items --
+  let logsItem = NSMenuItem(title: "📂 打开日志目录", action: action, keyEquivalent: "l")
   logsItem.target = target
-  logsItem.tag = 3
+  logsItem.tag = MenuTag.logs.rawValue
   menu.addItem(logsItem)
 
-  let chromeItem = NSMenuItem(title: "打开 Chrome Side Panel", action: action, keyEquivalent: "")
+  let chromeItem = NSMenuItem(title: "🌐 打开 Chrome", action: action, keyEquivalent: "c")
   chromeItem.target = target
-  chromeItem.tag = 4
+  chromeItem.tag = MenuTag.chrome.rawValue
   menu.addItem(chromeItem)
 
-  menu.addItem(NSMenuItem.separator())
-
-  let autoStartItem = NSMenuItem(
-    title: "开机自启: \(autoStartEnabled ? "开" : "关")",
-    action: action,
-    keyEquivalent: ""
-  )
-  autoStartItem.target = target
-  autoStartItem.tag = 5
-  menu.addItem(autoStartItem)
+  let settingsItem = NSMenuItem(title: "⚙️ 设置", action: action, keyEquivalent: ",")
+  settingsItem.target = target
+  settingsItem.tag = MenuTag.settings.rawValue
+  menu.addItem(settingsItem)
 
   menu.addItem(NSMenuItem.separator())
 
-  let quitItem = NSMenuItem(title: "退出", action: action, keyEquivalent: "q")
+  // -- Auto-start (checkbox) --
+  let autoItem = NSMenuItem(title: "开机自启", action: action, keyEquivalent: "a")
+  autoItem.target = target
+  autoItem.tag = MenuTag.autostart.rawValue
+  autoItem.state = autoStartEnabled ? .on : .off
+  menu.addItem(autoItem)
+
+  menu.addItem(NSMenuItem.separator())
+
+  // -- Quit --
+  let quitItem = NSMenuItem(title: "❌ 退出", action: action, keyEquivalent: "q")
   quitItem.target = target
-  quitItem.tag = 6
+  quitItem.tag = MenuTag.quit.rawValue
   menu.addItem(quitItem)
 
   return menu
 }
 
-func updateMenuItemEnabled(_ menu: NSMenu, tag: Int, enabled: Bool) {
-  if let item = menu.item(withTag: tag) {
-    item.isEnabled = enabled
-  }
+private func makeInfoItem(_ title: String) -> NSMenuItem {
+  let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+  item.isEnabled = false
+  return item
 }
 
 // ---------------------------------------------------------------------------
@@ -163,77 +274,74 @@ func updateMenuItemEnabled(_ menu: NSMenu, tag: Int, enabled: Bool) {
 
 class TrayDelegate: NSObject {
   var statusItem: NSStatusItem?
-  var timer: Timer?
 
   func setup() {
     let bar = NSStatusBar.system
     statusItem = bar.statusItem(withLength: NSStatusItem.squareLength)
 
     guard let button = statusItem?.button else { return }
-    button.image = makeStatusIcon(currentStatus)
-    button.toolTip = "CMspark Agent - 检测中..."
+    button.image = makeStatusIcon(currentStatus, ws: wsConnected)
+    button.toolTip = tooltipForStatus(currentStatus)
 
-    let menu = buildMenu(target: self, action: #selector(menuClicked(_:)))
-    statusItem?.menu = menu
-
-    // Poll status file every 2 seconds
-    timer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { _ in
-      let newStatus = readStatusFile()
-      if newStatus != currentStatus {
-        currentStatus = newStatus
-        DispatchQueue.main.async {
-          self.updateTrayAppearance()
-        }
-      }
-    }
-
-    updateTrayAppearance()
+    statusItem?.menu = buildMenu(target: self, action: #selector(menuAction(_:)))
   }
 
-  func updateTrayAppearance() {
+  func rebuildMenu() {
+    statusItem?.menu = buildMenu(target: self, action: #selector(menuAction(_:)))
+  }
+
+  func updateAppearance() {
     guard let button = statusItem?.button else { return }
-    button.image = makeStatusIcon(currentStatus)
-
-    let tooltip: String
-    switch currentStatus {
-    case .running:
-      tooltip = "CMspark Agent - 运行中"
-    case .stopped:
-      tooltip = "CMspark Agent - 已停止"
-    case .unknown:
-      tooltip = "CMspark Agent - 检测中..."
-    }
-    button.toolTip = tooltip
-
-    // Rebuild menu to reflect new state
-    if let menu = statusItem?.menu {
-      let running = currentStatus == .running
-      updateMenuItemEnabled(menu, tag: 0, enabled: !running)
-      updateMenuItemEnabled(menu, tag: 1, enabled: running)
-    }
+    button.image = makeStatusIcon(currentStatus, ws: wsConnected)
+    button.toolTip = tooltipForStatus(currentStatus)
+    rebuildMenu()
   }
 
-  func updateAutoStart(_ enabled: Bool) {
-    autoStartEnabled = enabled
-    DispatchQueue.main.async {
-      self.statusItem?.menu = buildMenu(target: self, action: #selector(self.menuClicked(_:)))
-    }
-  }
+  @objc func menuAction(_ sender: NSMenuItem) {
+    let tag = sender.tag
 
-  @objc func menuClicked(_ sender: NSMenuItem) {
-    let actions = ["start", "stop", "status", "logs", "chrome", "autostart", "quit"]
-    guard sender.tag >= 0 && sender.tag < actions.count else { return }
-    let action = actions[sender.tag]
-    jsonLine(["type": "click", "action": action])
-
-    if action == "quit" {
+    if tag == MenuTag.start.rawValue {
+      jsonLine(["type": "click", "action": "start"])
+    } else if tag == MenuTag.stop.rawValue {
+      jsonLine(["type": "click", "action": "stop"])
+    } else if tag == MenuTag.restart.rawValue {
+      jsonLine(["type": "click", "action": "restart"])
+    } else if tag == MenuTag.statusRefresh.rawValue {
+      jsonLine(["type": "click", "action": "status"])
+    } else if tag == MenuTag.logs.rawValue {
+      jsonLine(["type": "click", "action": "logs"])
+    } else if tag == MenuTag.chrome.rawValue {
+      jsonLine(["type": "click", "action": "chrome"])
+    } else if tag == MenuTag.settings.rawValue {
+      jsonLine(["type": "click", "action": "settings"])
+    } else if tag == MenuTag.autostart.rawValue {
+      jsonLine(["type": "click", "action": "autostart"])
+    } else if tag == MenuTag.quit.rawValue {
+      jsonLine(["type": "click", "action": "quit"])
+      shutdown()
       NSApplication.shared.terminate(nil)
+      return
+    } else if tag >= MenuTag.quickActionBase.rawValue && tag < MenuTag.recentThreadBase.rawValue {
+      if let id = sender.representedObject as? String {
+        jsonLine(["type": "click", "action": "quick-action", "id": id])
+      }
+    } else if tag >= MenuTag.recentThreadBase.rawValue {
+      if let id = sender.representedObject as? String {
+        jsonLine(["type": "click", "action": "recent-thread", "id": id])
+      }
     }
   }
 
   func shutdown() {
-    timer?.invalidate()
-    timer = nil
+    // no-op; kept for compatibility
+  }
+}
+
+private func tooltipForStatus(_ status: CompanionStatus) -> String {
+  switch status {
+  case .running:  return "CMspark Agent — 运行中"
+  case .stopped:  return "CMspark Agent — 已停止"
+  case .unknown:  return "CMspark Agent — 检测中..."
   }
 }
 
@@ -243,42 +351,82 @@ class TrayDelegate: NSObject {
 
 func startStdinReader(delegate: TrayDelegate) {
   let fh = FileHandle.standardInput
+  var buffer = Data()
+
   fh.readabilityHandler = { handle in
-    let data = handle.availableData
-    guard !data.isEmpty else {
-      // EOF reached — remove handler to prevent busy-loop
-      fh.readabilityHandler = nil
-      return
-    }
-    guard let line = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
-          !line.isEmpty,
-          let json = try? JSONSerialization.jsonObject(with: line.data(using: .utf8)!) as? [String: Any],
-          let cmd = json["cmd"] as? String else {
-      return
-    }
+    buffer.append(handle.availableData)
 
-    DispatchQueue.main.async {
-      switch cmd {
-      case "update":
-        if let statusStr = json["status"] as? String,
-           let status = CompanionStatus(rawValue: statusStr) {
-          currentStatus = status
-          delegate.updateTrayAppearance()
-        }
+    while let newlineRange = buffer.range(of: Data([0x0A])) {
+      let lineData = buffer.subdata(in: 0..<newlineRange.lowerBound)
+      buffer = buffer.subdata(in: newlineRange.upperBound..<buffer.endIndex)
 
-      case "update-autostart":
-        if let enabled = json["enabled"] as? Bool {
-          delegate.updateAutoStart(enabled)
-        }
+      guard let line = String(data: lineData, encoding: .utf8)?
+              .trimmingCharacters(in: .whitespacesAndNewlines),
+            !line.isEmpty,
+            let jsonData = line.data(using: .utf8),
+            let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+            let cmd = json["cmd"] as? String else {
+        continue
+      }
 
-      case "quit":
-        delegate.shutdown()
-        NSApplication.shared.terminate(nil)
-
-      default:
-        break
+      DispatchQueue.main.async {
+        handleCommand(cmd, json: json, delegate: delegate)
       }
     }
+
+    // Detect EOF
+    if buffer.isEmpty && handle.availableData.isEmpty {
+      fh.readabilityHandler = nil
+    }
+  }
+}
+
+func handleCommand(_ cmd: String, json: [String: Any], delegate: TrayDelegate) {
+  switch cmd {
+  case "update":
+    if let statusStr = json["status"] as? String,
+       let status = CompanionStatus(rawValue: statusStr) {
+      currentStatus = status
+    }
+    if let ws = json["wsConnected"] as? Bool {
+      wsConnected = ws
+    }
+    if let pid = json["pid"] as? Int {
+      currentPid = pid
+    }
+    delegate.updateAppearance()
+
+  case "update-autostart":
+    if let enabled = json["enabled"] as? Bool {
+      autoStartEnabled = enabled
+      delegate.rebuildMenu()
+    }
+
+  case "update-quick-actions":
+    if let actions = json["actions"] as? [[String: String]] {
+      quickActions = actions.compactMap { raw in
+        guard let id = raw["id"], let title = raw["title"] else { return nil }
+        return QuickAction(id: id, title: title)
+      }
+      delegate.rebuildMenu()
+    }
+
+  case "update-recent-threads":
+    if let threads = json["threads"] as? [[String: String]] {
+      recentThreads = threads.compactMap { raw in
+        guard let id = raw["id"], let title = raw["title"] else { return nil }
+        return RecentThread(id: id, title: title)
+      }
+      delegate.rebuildMenu()
+    }
+
+  case "quit":
+    delegate.shutdown()
+    jsonLine(["type": "exit", "code": 0])
+    NSApplication.shared.terminate(nil)
+
+  default:
+    break
   }
 }
 
@@ -293,16 +441,11 @@ let delegate = TrayDelegate()
 delegate.setup()
 startStdinReader(delegate: delegate)
 
-// Notify parent process that tray is ready
-jsonLine(["type": "ready"])
+// Notify parent that tray is ready
+jsonLine(["type": "ready", "pid": ProcessInfo.processInfo.processIdentifier])
 
-// Initial status read
- currentStatus = readStatusFile()
-delegate.updateTrayAppearance()
-
-// Run the app
 app.run()
 
-// Notify exit
+// Post-run cleanup (unreachable in normal flow, but defensive)
 delegate.shutdown()
 jsonLine(["type": "exit", "code": 0])

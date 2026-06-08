@@ -6,6 +6,7 @@
 
 const fs = require("fs");
 const path = require("path");
+const os = require("os");
 const { spawnSync } = require("child_process");
 
 const scriptDir = __dirname;
@@ -63,6 +64,20 @@ function main() {
   }
 
   info("Swift tray build completed successfully.");
+
+  // Save SHA256 for reference
+  const outputBin = path.join(projectRoot, "companion", "dist", "cmspark-tray");
+  const sha256Path = path.join(os.homedir(), ".cmspark-agent", ".swift-tray.sha256");
+  try {
+    const hashResult = spawnSync("shasum", ["-a", "256", outputBin], { encoding: "utf-8" });
+    if (hashResult.status === 0) {
+      const hash = hashResult.stdout.split(" ")[0];
+      fs.mkdirSync(path.dirname(sha256Path), { recursive: true });
+      fs.writeFileSync(sha256Path, hash);
+      info(`SHA256: ${hash} (saved to ${sha256Path})`);
+    }
+  } catch { /* non-critical */ }
+
   process.exit(0);
 }
 

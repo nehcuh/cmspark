@@ -1,7 +1,7 @@
 {
   "name": "cmspark-agent",
-  "version": "0.1.0",
-  "description": "Local companion for CMspark Browser Agent — manages LLM calls, skills, threads, and operation history",
+  "version": "0.2.0",
+  "description": "Local companion for CMspark Browser Agent — manages LLM calls, skills, threads, and operation history. Now with cross-platform system tray.",
   "bin": {
     "cmspark-agent": "./dist/index.js"
   },
@@ -13,8 +13,10 @@
     "daemon:start": "node dist/index.js daemon start --daemonize",
     "daemon:stop": "node dist/index.js daemon stop",
     "daemon:status": "node dist/index.js daemon status",
-    "menu-bar": "node dist/index.js menu-bar",
     "tray": "node dist/index.js tray",
+    "tray:status": "node dist/index.js tray status",
+    "tray:rebuild": "node dist/index.js tray rebuild",
+    "menu-bar": "node dist/index.js menu-bar",
     "postinstall": "node ../scripts/verify-systray2.js && node ../scripts/build-swift-tray.js"
   },
   "dependencies": {
