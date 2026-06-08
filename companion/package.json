@@ -6,6 +6,7 @@
     "cmspark-agent": "./dist/index.js"
   },
   "scripts": {
+    "prebuild": "node scripts/generate-tray-icons.mjs",
     "build": "tsc",
     "test": "node -e \"require('fs').rmSync('.test-dist',{recursive:true,force:true})\" && tsc -p tsconfig.test.json && node --test .test-dist/tests/**/*.test.js",
     "start": "node dist/index.js start",

@@ -119,9 +119,12 @@ uninstall-windows:
 package: build
 	@bash scripts/package.sh
 
-# 打包 macOS ARM64（含 Swift 托盘）
+# 打包 macOS ARM64（含 Swift 托盘 + DMG 安装包）
 package-macos: build build-tray
 	@bash scripts/package.sh macos-arm64
+	@echo "Building macOS DMG installer..."
+	@bash scripts/create-dmg.sh
+	@echo "Done: dist-package/CMspark-v*-macOS.dmg"
 
 # 打包 Windows x64（产出 NSIS 安装包）
 package-windows: build

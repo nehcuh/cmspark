@@ -162,17 +162,8 @@ if [ "${PLATFORM}" = "windows-x64" ]; then
   cd "${STAGING}" && unzip -jo "${CACHE_ZIP}" "*/node.exe" && cd "${ROOT_DIR}"
   echo "  node.exe: $(du -h "${STAGING}/node.exe" | cut -f1)"
 else
-  # For same-arch builds on macOS, use the local node binary as fallback
-  LOCAL_NODE="$(which node 2>/dev/null || true)"
+  # Download official Node.js binary for consistent universal/fat builds
   NEED_DOWNLOAD=true
-  if [ "${PLATFORM}" = "macos-arm64" ] && [ "$(uname -m)" = "arm64" ]; then
-    if [ -n "${LOCAL_NODE}" ]; then
-      cp "${LOCAL_NODE}" "${STAGING}/node"
-      chmod +x "${STAGING}/node"
-      NEED_DOWNLOAD=false
-      echo "  Using local node binary: ${LOCAL_NODE}"
-    fi
-  fi
   if [ "${NEED_DOWNLOAD}" = "true" ]; then
     if [ ! -f "${CACHE_TAR}" ]; then
       echo "  Downloading..."

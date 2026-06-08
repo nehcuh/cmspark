@@ -16,11 +16,17 @@ export function getAppRoot(): string {
 
   const bundleDir = __dirname
 
-  // Packaged: assets/ and builtin-skills/ sit next to the bundle
-  if (fs.existsSync(path.join(bundleDir, "assets")) &&
-      fs.existsSync(path.join(bundleDir, "builtin-skills"))) {
-    _appRoot = bundleDir
-    return _appRoot
+  // Search upward for the directory containing assets/ + builtin-skills/
+  const candidates = [
+    bundleDir,                // Flat layout (zip package): assets/ next to .js
+    path.resolve(bundleDir, ".."),  // .app bundle: .js in Resources/bin/, assets in Resources/
+  ]
+  for (const dir of candidates) {
+    if (fs.existsSync(path.join(dir, "assets")) &&
+        fs.existsSync(path.join(dir, "builtin-skills"))) {
+      _appRoot = dir
+      return _appRoot
+    }
   }
 
   // Dev mode (tsc): __dirname is dist/ → go up to companion root
