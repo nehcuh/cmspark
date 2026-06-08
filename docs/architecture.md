@@ -1,6 +1,6 @@
 # CMspark Browser Agent — 架构文档
 
-> 版本: 1.0.0 | 日期: 2026-05-24 | 状态: 已确认
+> 版本: 2.0.0 | 日期: 2026-06-08 | 状态: 已确认（同步代码库现状）
 
 ---
 
@@ -62,8 +62,12 @@
     │  │  │  │   (路由, 执行, 错误)  │  │  │ │
     │  │  │  └──────────────────────┘  │  │ │
     │  │  │  ┌──────────────────────┐  │  │ │
+    │  │  │  │   Security Engine    │  │  │ │
+    │  │  │  │   (风险引擎/特权/确认) │  │  │ │
+    │  │  │  └──────────────────────┘  │  │ │
+    │  │  │  ┌──────────────────────┐  │  │ │
     │  │  │  │   History Store      │  │  │ │
-    │  │  │  │   (SQLite)           │  │  │ │
+    │  │  │  │   (sql.js / SQLite)  │  │  │ │
     │  │  │  └──────────────────────┘  │  │ │
     │  │  └────────────────────────────┘  │ │
     │  │                                    │ │
@@ -71,8 +75,13 @@
     │  │  ├── config.json                  │ │
     │  │  ├── skills/          (用户技能)  │ │
     │  │  ├── builtin-skills/  (内置技能)  │ │
+    │  │  │   └── security/    (安全技能)  │ │
     │  │  ├── threads/         (线程数据)  │ │
+    │  │  ├── knowledge/       (知识库)    │ │
+    │  │  │   ├── global/      (全局知识)  │ │
+    │  │  │   └── sites/       (站点知识)  │ │
     │  │  ├── history.db       (操作历史)  │ │
+    │  │  ├── cache/           (缓存)      │ │
     │  │  └── logs/                        │ │
     │  └──────────────────────────────────┘ │
     └───────────────────────────────────────┘
@@ -88,7 +97,7 @@
 | Companion | Node.js + TypeScript | 本地常驻进程 |
 | WebSocket 库 | `ws` (Node.js) | 双向通信 |
 | LLM 适配 | OpenAI SDK 兼容 | base_url 可配置，支持任意兼容服务 |
-| 数据库 | better-sqlite3 | SQLite，操作历史存储 |
+| 数据库 | sql.js (WASM SQLite) | 纯 JS SQLite，无需 native 编译，操作历史存储 |
 | 文件格式 | Markdown + YAML frontmatter | skills 文件格式 |
 | 配置存储 | chrome.storage.local + JSON 文件 | extension侧/companion侧分别持久化 |
 
@@ -98,15 +107,21 @@
 
 ```
 消息类型:
-├── chat.create      → 创建新消息（streaming response）
-├── chat.abort       ← 中断当前 streaming
-├── tool.result      ← tool 执行结果（extension → companion）
-├── tool.execute     → tool 执行指令（companion → extension）
-├── config.get/set   → LLM 配置读写
-├── skill.list/import/export → skill 管理
-├── thread.list/create/delete → 线程管理
-├── history.query    → 操作历史查询
-└── system.ping/pong → 心跳保活
+├── chat.create          → 创建新消息（streaming response）
+├── chat.abort           ← 中断当前 streaming
+├── chat.regenerate      → 从指定消息重新生成
+├── tool.result          ← tool 执行结果（extension → companion）
+├── tool.execute         → tool 执行指令（companion → extension）
+├── config.get/set/test  → LLM 配置读写/测试连接
+├── skill.list/activate/deactivate → skill 加载与激活
+├── skill.import/export/delete     → skill 导入导出管理
+├── skill.craft          → 从对话历史自动提取 skill
+├── thread.list/create/delete      → 线程管理
+├── thread.select/fork             → 线程切换与分支
+├── thread.update                  → 线程元数据更新（pinned_tabs, alias 等）
+├── history.query/export  → 操作历史查询与导出
+├── security.confirmation.response → 安全确认响应
+└── system.ping/pong     → 心跳保活
 ```
 
 **Streaming 流程:**
@@ -333,23 +348,24 @@ cmsspark/
 │   │   │   ├── components/
 │   │   │   │   ├── ChatView.tsx     # 聊天视图
 │   │   │   │   ├── ThreadList.tsx   # 线程列表（可折叠）
-│   │   │   │   ├── MessageCard.tsx  # 消息卡片
-│   │   │   │   ├── ToolCallCard.tsx # Tool call 卡片
+│   │   │   │   ├── ConnectionStatus.tsx # 连接状态指示
+│   │   │   │   ├── InputArea.tsx    # 输入区域 + 发送按钮
 │   │   │   │   ├── BottomBar.tsx    # 底部上下文栏
-│   │   │   │   ├── TabPanel.tsx     # 标签页面板
-│   │   │   │   ├── HistoryPanel.tsx # 操作历史面板
-│   │   │   │   ├── SkillPanel.tsx   # 技能面板
-│   │   │   │   └── SettingsSlideout.tsx # 设置滑出面板
+│   │   │   │   ├── KnowledgeSubPanel.tsx # 知识库子面板
+│   │   │   │   ├── SkillCraftPanel.tsx   # Skill 创建面板
+│   │   │   │   ├── SlashCommandPopover.tsx # 斜杠命令弹出框
+│   │   │   │   └── SettingsSlideout.tsx  # 设置滑出面板
 │   │   │   ├── hooks/
-│   │   │   │   ├── useWebSocket.ts  # WS 连接管理
-│   │   │   │   ├── useThreads.ts    # 线程状态
-│   │   │   │   └── useStreaming.ts  # Streaming 渲染
-│   │   │   └── store/
-│   │   │       └── agentStore.ts    # 全局状态
+│   │   │   │   └── useWebSocket.ts  # WS 连接管理
+│   │   │   ├── store/
+│   │   │   │   └── agentStore.tsx   # 全局状态 (Zustand)
+│   │   │   └── types.ts            # 类型定义
 │   │   ├── background/
 │   │   │   ├── index.ts             # Service Worker 入口
 │   │   │   ├── ws-client.ts         # WebSocket 客户端
 │   │   │   ├── browser-bridge.ts    # CDP/tabs/cookies 操作
+│   │   │   ├── page-sanitizer.ts    # 页面内容清洗
+│   │   │   ├── security-token.ts    # 安全令牌管理
 │   │   │   └── keep-alive.ts        # Alarm keep-alive
 │   │   ├── popup/
 │   │   │   └── index.tsx            # Popup 页面（连接状态）
@@ -363,43 +379,63 @@ cmsspark/
 │   ├── package.json
 │   ├── tsconfig.json
 │   ├── src/
-│   │   ├── index.ts                 # CLI 入口 (start/stop/status)
+│   │   ├── index.ts                 # CLI 入口 (start/stop/status/daemon)
 │   │   ├── server.ts                # WebSocket 服务器
+│   │   ├── server/
+│   │   │   ├── log-helpers.ts       # 日志辅助
+│   │   │   └── tool-executor.ts     # Tool 执行逻辑
+│   │   ├── message-router.ts        # 消息路由（核心调度）
 │   │   ├── llm/
-│   │   │   ├── adapter.ts           # LLM 适配器（OpenAI SDK）
-│   │   │   ├── streaming.ts         # Streaming 处理
-│   │   │   └── tool-calling.ts      # Tool calling 循环
+│   │   │   └── adapter.ts           # LLM 适配器（OpenAI SDK + streaming + tool calling）
 │   │   ├── bridge/
-│   │   │   ├── tool-dispatcher.ts   # 工具路由与调度
-│   │   │   ├── tab-tools.ts         # 标签页工具定义
-│   │   │   ├── page-tools.ts        # 页面操作工具定义
-│   │   │   ├── cookie-tools.ts      # Cookie 工具定义
-│   │   │   └── evaluate.ts          # JS evaluate 安全处理
+│   │   │   ├── tool-definitions.ts  # 26 种工具 schema 定义
+│   │   │   └── tab-resolver.ts      # 标签页解析
 │   │   ├── skills/
-│   │   │   ├── skill-loader.ts      # Skill 文件加载/解析
-│   │   │   ├── skill-engine.ts      # Skill 匹配与注入
-│   │   │   └── skill-export.ts      # 导入/导出
+│   │   │   ├── skill-engine.ts      # Skill 加载/匹配/注入
+│   │   │   ├── skill-craft.ts       # 从对话提取 Skill
+│   │   │   ├── semantic-match.ts    # TF-IDF 语义匹配
+│   │   │   ├── site-matcher.ts      # 站点知识匹配
+│   │   │   └── content-sanitizer.ts # 内容清洗
 │   │   ├── threads/
-│   │   │   ├── thread-manager.ts    # 线程 CRUD
-│   │   │   └── context-builder.ts   # LLM context 构建
+│   │   │   └── thread-manager.ts    # 线程 CRUD + context 构建
 │   │   ├── history/
-│   │   │   ├── store.ts             # SQLite 操作
-│   │   │   └── query.ts             # 历史查询
+│   │   │   └── store.ts             # sql.js 操作历史
+│   │   ├── security.ts              # 基础危险 API 检测
+│   │   ├── security-policy.ts       # 令牌安全策略
+│   │   ├── security-confirmation.ts # 安全确认管理
+│   │   ├── security/
+│   │   │   ├── risk-engine.ts       # 风险评分引擎
+│   │   │   ├── privilege-manager.ts # 三级特权模式
+│   │   │   └── page-scanner.ts      # 页面安全扫描
+│   │   ├── tray/                    # 系统托盘
+│   │   │   ├── tray-adapter.ts      # 统一托盘接口
+│   │   │   ├── swift-tray-bridge.ts # macOS Swift NSStatusBar
+│   │   │   ├── systray2-bridge.ts   # systray2 跨平台桥接
+│   │   │   ├── readline-tray.ts     # CLI readline 降级方案
+│   │   │   ├── companion-client.ts  # 托盘 → Companion 通信
+│   │   │   ├── Tray.swift           # Swift 原生托盘
+│   │   │   └── build-tray.sh        # Swift 编译脚本
+│   │   ├── daemon.ts                # Daemon 模式管理
+│   │   ├── menu-bar-agent.ts        # 菜单栏 Agent 交互
+│   │   ├── platform.ts              # 平台检测
+│   │   ├── logger.ts                # 日志基础设施
 │   │   ├── config.ts                # 配置管理
-│   │   └── security.ts              # 安全策略（信任域等）
+│   │   └── types/
+│   │       └── sql.js.d.ts          # sql.js 类型定义
 │   └── builtin-skills/              # 内置 skills
 │       ├── writing-skills.md
 │       ├── grill-me.md
-│       └── browse.md
+│       ├── browse.md
+│       ├── dynamic-workflow.md
+│       └── security/                # 安全技能
+│           ├── prompt-injection-defense.md
+│           ├── jailbreak-detection.md
+│           └── instruction-hierarchy.md
 │
 └── docs/                             # 项目文档
     ├── architecture.md               # 本文档
-    ├── requirements/
-    │   ├── mvp-v0.1.md               # MVP 需求
-    │   └── v2.md                     # v2 需求
-    └── sprints/
-        ├── sprint-01-mvp/
-        │   └── tasks.md              # MVP 开发任务
-        └── sprint-02-extensions/
-            └── tasks.md              # v2 开发任务
+    ├── GOAL.md                       # 项目目标与阶段规划
+    ├── optimization-roadmap.md       # 优化路线图
+    ├── adr/                          # 架构决策记录
+    └── requirements/                 # 需求文档
 ```
