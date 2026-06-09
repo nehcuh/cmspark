@@ -52,6 +52,12 @@ export class CompanionClient {
   private requestId = 0
   private _state: ConnectionState = "disconnected"
 
+  // Heartbeat: detect dead connections where TCP is silently dropped
+  private lastActivityAt = 0
+  private heartbeatTimer: ReturnType<typeof setTimeout> | null = null
+  private readonly HEARTBEAT_INTERVAL_MS = 30000
+  private readonly HEARTBEAT_TIMEOUT_MS = 90000
+
   // Event callbacks
   private connectedCbs: Array<() => void> = []
   private disconnectedCbs: Array<() => void> = []
@@ -80,6 +86,8 @@ export class CompanionClient {
         settled = true
         this._state = "connected"
         this.reconnectAttempts = 0
+        this.lastActivityAt = Date.now()
+        this.startHeartbeat()
         this.connectedCbs.forEach(cb => cb())
         this.debug("connected")
 
@@ -89,7 +97,12 @@ export class CompanionClient {
       })
 
       ws.on("message", (raw: WebSocket.Data) => {
+        this.lastActivityAt = Date.now()
         this.handleMessage(raw.toString())
+      })
+
+      ws.on("ping", () => {
+        this.lastActivityAt = Date.now()
       })
 
       ws.on("close", () => {
@@ -113,6 +126,7 @@ export class CompanionClient {
   }
 
   disconnect(): void {
+    this.stopHeartbeat()
     this.clearReconnect()
     if (this.ws) {
       try { this.ws.terminate() } catch { /* ignore */ }
@@ -307,6 +321,7 @@ export class CompanionClient {
     if (this._state === "disconnected") return
     this._state = "disconnected"
     this.ws = null
+    this.stopHeartbeat()
 
     // Reset to defaults
     this.cachedQuickActions = DEFAULT_QUICK_ACTIONS
@@ -317,6 +332,26 @@ export class CompanionClient {
     this.dataChangedCbs.forEach(cb => cb())
 
     this.scheduleReconnect()
+  }
+
+  private startHeartbeat(): void {
+    this.stopHeartbeat()
+    this.heartbeatTimer = setInterval(() => {
+      if (this._state !== "connected") return
+      const idle = Date.now() - this.lastActivityAt
+      if (idle > this.HEARTBEAT_TIMEOUT_MS) {
+        console.warn(`[companion-client] Connection dead (no activity for ${idle}ms), forcing reconnect`)
+        this.disconnect()
+        this.scheduleReconnect()
+      }
+    }, this.HEARTBEAT_INTERVAL_MS)
+  }
+
+  private stopHeartbeat(): void {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer)
+      this.heartbeatTimer = null
+    }
   }
 
   private scheduleReconnect(): void {

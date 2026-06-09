@@ -206,6 +206,11 @@ export function useWebSocket() {
         case "thread.created": {
           // Upsert: don't duplicate if already added locally
           dispatch({ type: "UPSERT_THREAD", thread: msg.thread })
+          // Auto-select threads created by quick actions so the user sees them
+          if (msg.auto_select && activeThreadRef.current !== msg.thread.id) {
+            dispatch({ type: "SET_ACTIVE_THREAD", threadId: msg.thread.id })
+            dispatch({ type: "SET_MESSAGES", messages: [] })
+          }
           break
         }
 

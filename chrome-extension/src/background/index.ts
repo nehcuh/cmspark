@@ -119,8 +119,20 @@ function updateBadge(state: "connected" | "connecting" | "disconnected") {
 async function handleCompanionMessage(msg: any) {
   // Forward quick action trigger to side panel
   if (msg.type === "quickAction.start") {
-    chrome.runtime.sendMessage(msg).catch(() => {
-      logToCompanion("debug", "extension.quickaction_forward_failed", { actionId: msg.actionId })
+    chrome.runtime.sendMessage(msg).then(() => {
+      // Sidepanel received the message — it will handle chat creation
+    }).catch(() => {
+      // Sidepanel not open — start chat directly from background so the
+      // quick action still works even when the sidepanel is closed.
+      const { thread_id, prompt } = msg
+      if (thread_id && prompt) {
+        wsClient.send({
+          type: "chat.create",
+          thread_id,
+          message: prompt,
+        })
+      }
+      logToCompanion("debug", "extension.quickaction_fallback_to_background", { actionId: msg.actionId })
     })
     return
   }

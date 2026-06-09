@@ -630,7 +630,7 @@ export async function handleMessage(
 
       // Always broadcast thread creation so sidepanel can discover it
       if (session?.broadcast) {
-        session.broadcast({ type: "thread.created", thread })
+        session.broadcast({ type: "thread.created", thread, auto_select: true })
       }
 
       if (prompt && session?.broadcast) {

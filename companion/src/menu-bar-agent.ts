@@ -130,6 +130,12 @@ async function pollCompanionStatus(): Promise<void> {
     trayInstance.updateStatus(newStatus, wsReachable, pid)
   }
 
+  // Detect zombie connection: companion process is dead but client still thinks it's connected
+  if (newStatus === "stopped" && companionClient?.connectionState === "connected") {
+    console.warn("[menu-bar] Zombie connection detected — companion is dead but client thinks it's connected. Forcing reconnect.")
+    companionClient.disconnect()
+  }
+
   if (changed) {
     if (lastNotifiedStatus !== null) {
       notifyStatusChange(newStatus)
@@ -336,7 +342,17 @@ async function handleQuickAction(id: string): Promise<void> {
   // Open Chrome side panel first so the user sees the result
   openChromeSidePanel()
 
-  const result = await companionClient.executeQuickAction(id)
+  let result = await companionClient.executeQuickAction(id)
+
+  // If timeout due to zombie connection, force reconnect and retry once
+  if (result?.error?.includes("timeout")) {
+    console.warn("[menu-bar] Quick action timeout — forcing reconnect and retry")
+    companionClient.disconnect()
+    await new Promise(r => setTimeout(r, 500))
+    await companionClient.connect()
+    await new Promise(r => setTimeout(r, 500))
+    result = await companionClient.executeQuickAction(id)
+  }
 
   if (!result || result.error) {
     safeNotify({ title: "CMspark Agent", message: `操作失败: ${result?.error || "未知错误"}`, timeout: 5 })

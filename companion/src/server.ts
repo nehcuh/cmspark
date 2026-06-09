@@ -620,6 +620,7 @@ export async function startServer() {
     }, 30000)
 
     ws.on("message", async (raw) => {
+      let msg: any
       try {
         // WebSocket message size limit (P0)
         const rawLen = Buffer.isBuffer(raw) ? raw.length : Buffer.byteLength(raw.toString())
@@ -630,7 +631,7 @@ export async function startServer() {
           }
           return
         }
-        const msg = JSON.parse(raw.toString())
+        msg = JSON.parse(raw.toString())
         // Stricter message validation (P2)
         const validation = validateWsMessage(msg)
         if (!validation.valid) {
@@ -695,7 +696,7 @@ export async function startServer() {
       } catch (e: any) {
         logger.error("ws.message_error", { error: e.message || String(e) })
         if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: "error", error: e.message }))
+          ws.send(JSON.stringify({ type: "error", id: msg?.id, error: e.message }))
         }
       }
     })
