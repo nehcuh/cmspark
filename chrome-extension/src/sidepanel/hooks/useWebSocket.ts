@@ -243,7 +243,7 @@ export function useWebSocket() {
 
         case "quickAction.start": {
           const { thread_id, prompt, alias } = msg
-          if (!thread_id || !prompt) break
+          if (!thread_id) break
           // Create thread in UI
           dispatch({
             type: "UPSERT_THREAD",
@@ -260,23 +260,25 @@ export function useWebSocket() {
           })
           dispatch({ type: "SET_ACTIVE_THREAD", threadId: thread_id })
           dispatch({ type: "SET_MESSAGES", messages: [] })
-          // Add user message locally
-          dispatch({
-            type: "ADD_MESSAGE",
-            message: {
-              id: `${thread_id}_qa_${Date.now()}`,
-              thread_id,
-              role: "user",
-              content: prompt,
-              created_at: new Date().toISOString(),
-            },
-          })
-          // Send chat message through background to companion
-          chrome.runtime.sendMessage({
-            type: "chat.send",
-            threadId: thread_id,
-            message: prompt,
-          })
+          // Only auto-send message if prompt is non-empty
+          if (prompt) {
+            dispatch({
+              type: "ADD_MESSAGE",
+              message: {
+                id: `${thread_id}_qa_${Date.now()}`,
+                thread_id,
+                role: "user",
+                content: prompt,
+                created_at: new Date().toISOString(),
+              },
+            })
+            // Send chat message through background to companion
+            chrome.runtime.sendMessage({
+              type: "chat.send",
+              threadId: thread_id,
+              message: prompt,
+            })
+          }
           break
         }
 
@@ -368,9 +370,18 @@ export function useWebSocket() {
     pollStatus()
     const interval = setInterval(pollStatus, 3000)
 
+    // Refresh thread list when sidepanel becomes visible again
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        chrome.runtime.sendMessage({ type: "thread.list" })
+      }
+    }
+    document.addEventListener("visibilitychange", handleVisibilityChange)
+
     return () => {
       clearInterval(interval)
       chrome.runtime.onMessage.removeListener(messageListener)
+      document.removeEventListener("visibilitychange", handleVisibilityChange)
     }
   }, [dispatch])
 

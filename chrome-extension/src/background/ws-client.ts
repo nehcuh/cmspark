@@ -73,10 +73,12 @@ export class WSClient {
     }
   }
 
-  send(data: object) {
+  send(data: object): boolean {
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(data))
+      return true
     }
+    return false
   }
 
   ping() {

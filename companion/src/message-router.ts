@@ -621,11 +621,17 @@ export async function handleMessage(
         "screenshot": "请截图当前页面并分析截图中的内容",
         "extract-data": "请提取当前页面的主要数据内容",
         "summarize": "请总结当前页面的内容",
+        "new-chat": "",
       }
 
       const alias = ALIASES[actionId] || actionId
       const thread = threadManager.create(alias)
-      const prompt = PROMPTS[actionId]
+      const prompt = PROMPTS[actionId] ?? ""
+
+      // Always broadcast thread creation so sidepanel can discover it
+      if (session?.broadcast) {
+        session.broadcast({ type: "thread.created", thread })
+      }
 
       if (prompt && session?.broadcast) {
         session.broadcast({

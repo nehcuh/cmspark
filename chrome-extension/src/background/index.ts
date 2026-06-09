@@ -183,15 +183,16 @@ function setupMessageHandlers() {
         })
         return true
 
-      case "chat.send":
-        wsClient.send({
+      case "chat.send": {
+        const sent = wsClient.send({
           type: "chat.create",
           thread_id: message.threadId,
           message: message.message,
           skill_ids: message.skillIds,
         })
-        sendResponse({ ok: true })
+        sendResponse({ ok: sent })
         return true
+      }
 
       case "chat.abort":
         wsClient.send({ type: "chat.abort", thread_id: message.threadId })
