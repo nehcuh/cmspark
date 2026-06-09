@@ -333,86 +333,13 @@ async function handleQuickAction(id: string): Promise<void> {
     return
   }
 
-  safeNotify({ title: "CMspark Agent", message: `正在执行: ${id}...`, timeout: 2 })
+  // Open Chrome side panel first so the user sees the result
+  openChromeSidePanel()
 
   const result = await companionClient.executeQuickAction(id)
 
   if (!result || result.error) {
     safeNotify({ title: "CMspark Agent", message: `操作失败: ${result?.error || "未知错误"}`, timeout: 5 })
-    return
-  }
-
-  // Display result in browser via quick-action-result server
-  try {
-    const { startResultServer, storeResult } = require("./quick-action-result") as typeof import("./quick-action-result")
-    const port = await startResultServer()
-    const url = storeResult({
-      id: `${id}-${Date.now()}`,
-      actionId: id,
-      success: result.success !== false,
-      message: result.message,
-      fullText: result.fullText,
-      imageData: result.imageData,
-      error: result.error,
-      timestamp: Date.now(),
-    })
-    const platform = getPlatform()
-    if (platform === "darwin") {
-      child_process.execSync(`open "${url}"`, { stdio: "ignore" })
-    } else if (platform === "linux") {
-      child_process.execSync(`xdg-open "${url}"`, { stdio: "ignore" })
-    } else if (platform === "win32") {
-      child_process.execSync(`start "" "${url}"`, { stdio: "ignore" })
-    }
-  } catch {
-    // Fallback to notification if result server fails
-    switch (id) {
-      case "screenshot": {
-        if (result.imageData) {
-          const tmpPath = await saveScreenshot(result.imageData)
-          if (tmpPath) {
-            safeNotify({ title: "CMspark Agent", message: `截图已保存`, timeout: 3 })
-            try { child_process.execSync(`open "${tmpPath}"`, { stdio: "ignore" }) } catch { /* ignore */ }
-          }
-        }
-        break
-      }
-      case "read-page":
-      case "extract-data":
-        safeNotify({ title: id === "read-page" ? "Page Content" : "Extracted Data", message: (result.message || "").slice(0, 200), timeout: 8 })
-        break
-      case "summarize":
-        safeNotify({ title: "Summary", message: (result.message || "").slice(0, 300), timeout: 10 })
-        break
-      default:
-        safeNotify({ title: "CMspark Agent", message: result.message || `Done: ${id}`, timeout: 3 })
-    }
-  }
-}
-
-async function saveScreenshot(imageData: any): Promise<string | null> {
-  try {
-    let base64: string | null = null
-    if (typeof imageData === "string") {
-      base64 = imageData
-    } else if (imageData?.base64) {
-      base64 = imageData.base64
-    } else if (imageData?.data) {
-      base64 = imageData.data
-    }
-    if (!base64) return null
-
-    // Strip data URI prefix if present
-    const raw = base64.replace(/^data:image\/\w+;base64,/, "")
-    const buf = Buffer.from(raw, "base64")
-    const tmpDir = path.join(getConfigDir(), "cache")
-    fs.mkdirSync(tmpDir, { recursive: true })
-    const tmpPath = path.join(tmpDir, `screenshot-${Date.now()}.png`)
-    fs.writeFileSync(tmpPath, buf, { mode: 0o600 })
-    return tmpPath
-  } catch (err: any) {
-    console.error("[menu-bar] Save screenshot failed:", err.message)
-    return null
   }
 }
 

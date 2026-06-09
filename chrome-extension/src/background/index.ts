@@ -117,6 +117,14 @@ function updateBadge(state: "connected" | "connecting" | "disconnected") {
 // --- Companion message routing ---
 
 async function handleCompanionMessage(msg: any) {
+  // Forward quick action trigger to side panel
+  if (msg.type === "quickAction.start") {
+    chrome.runtime.sendMessage(msg).catch(() => {
+      logToCompanion("debug", "extension.quickaction_forward_failed", { actionId: msg.actionId })
+    })
+    return
+  }
+
   if (msg.type === "security.config") {
     if (typeof msg.secret === "string" && msg.secret) {
       setSecuritySecret(msg.secret)

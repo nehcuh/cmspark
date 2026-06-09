@@ -676,6 +676,16 @@ export async function startServer() {
               }
             },
             executeTool,
+            broadcast: (data: any) => {
+              const message = JSON.stringify(data)
+              for (const client of clients) {
+                try {
+                  if (client.readyState === WebSocket.OPEN) {
+                    client.send(message)
+                  }
+                } catch { /* ignore disconnected */ }
+              }
+            },
           },
         )
 

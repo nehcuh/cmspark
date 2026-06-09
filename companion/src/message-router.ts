@@ -24,6 +24,7 @@ interface Services {
 interface SessionCallbacks {
   sendToExtension: (data: any) => void
   executeTool: (toolCallId: string, toolName: string, params: any) => Promise<{ success: boolean; data?: any; error?: string }>
+  broadcast?: (data: any) => void
 }
 
 export async function handleMessage(
@@ -607,79 +608,36 @@ export async function handleMessage(
       if (!actionId || typeof actionId !== "string") {
         return { type: "error", error: "actionId required" }
       }
-      const requestId = msg.id
-      if (!session) {
-        return { type: "error", error: "No active browser session" }
+
+      const ALIASES: Record<string, string> = {
+        "read-page": "📖 读取当前页面",
+        "screenshot": "📸 截图并分析",
+        "extract-data": "📝 提取页面数据",
+        "summarize": "📋 总结页面",
+        "new-chat": "💬 新对话",
+      }
+      const PROMPTS: Record<string, string> = {
+        "read-page": "请读取当前页面的内容",
+        "screenshot": "请截图当前页面并分析截图中的内容",
+        "extract-data": "请提取当前页面的主要数据内容",
+        "summarize": "请总结当前页面的内容",
       }
 
-      if (actionId === "new-chat") {
-        const thread = threadManager.create("")
-        return { type: "quickAction.result", id: requestId, actionId, success: true, thread_id: thread.id, message: `新线程已创建: ${thread.id}` }
+      const alias = ALIASES[actionId] || actionId
+      const thread = threadManager.create(alias)
+      const prompt = PROMPTS[actionId]
+
+      if (prompt && session?.broadcast) {
+        session.broadcast({
+          type: "quickAction.start",
+          thread_id: thread.id,
+          actionId,
+          prompt,
+          alias,
+        })
       }
 
-      // Map read / extract / screenshot to tool calls
-      const TOOL_MAP: Record<string, { tool: string; params: Record<string, any> }> = {
-        "read-page":    { tool: "get_page_text", params: {} },
-        "screenshot":   { tool: "take_screenshot", params: {} },
-        "extract-data": { tool: "get_page_text", params: { selector: "main, article, .content, #content" } },
-      }
-
-      // --- Summarize: get page text then call LLM for a brief summary ---
-      if (actionId === "summarize") {
-        try {
-          const pageResult = await session.executeTool(
-            `qa-summarize-${Date.now()}`,
-            "get_page_text",
-            {},
-          )
-          if (!pageResult.success || !pageResult.data?.text) {
-            return { type: "quickAction.result", id: requestId, actionId, success: false, error: "无法获取页面内容" }
-          }
-          const pageText: string = pageResult.data.text
-          const config = getConfig()
-          if (!config.llm.api_key || config.llm.api_key === "sk-placeholder") {
-            return { type: "quickAction.result", id: requestId, actionId, success: false, error: "LLM 未配置，无法生成总结" }
-          }
-          const client = new OpenAI({ baseURL: config.llm.base_url, apiKey: config.llm.api_key, timeout: 15000, maxRetries: 0 })
-          const resp = await client.chat.completions.create({
-            model: config.llm.model_name,
-            temperature: 0.3,
-            max_tokens: 256,
-            messages: [
-              { role: "system", content: "用一句话总结以下网页内容（不超过80字）。直接给出总结，不要添加前缀。" },
-              { role: "user", content: pageText.slice(0, 8000) },
-            ],
-          })
-          const summary = resp.choices[0]?.message?.content?.trim() || "（总结为空）"
-          return { type: "quickAction.result", id: requestId, actionId, success: true, message: summary }
-        } catch (err: any) {
-          return { type: "quickAction.result", id: requestId, actionId, success: false, error: `总结失败: ${err.message}` }
-        }
-      }
-
-      const mapped = TOOL_MAP[actionId]
-      if (!mapped) {
-        return { type: "error", error: `Unknown quick action: ${actionId}` }
-      }
-
-      try {
-        const result = await session.executeTool(
-          `qa-${actionId}-${Date.now()}`,
-          mapped.tool,
-          mapped.params,
-        )
-        if (actionId === "read-page" || actionId === "extract-data") {
-          const text = result.data?.text || ""
-          const preview = text.slice(0, 500).replace(/\s+/g, " ").trim()
-          return { type: "quickAction.result", id: requestId, actionId, success: true, message: preview || "页面内容为空", fullText: text }
-        }
-        if (actionId === "screenshot") {
-          return { type: "quickAction.result", id: requestId, actionId, success: true, imageData: result.data }
-        }
-        return { type: "quickAction.result", id: requestId, actionId, ...result }
-      } catch (err: any) {
-        return { type: "error", error: `Quick action failed: ${err.message}` }
-      }
+      return { type: "quickAction.result", id: msg.id, actionId, success: true, thread_id: thread.id }
     }
 
     // --- Original System ---

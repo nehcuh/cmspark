@@ -241,6 +241,45 @@ export function useWebSocket() {
           }
           break
 
+        case "quickAction.start": {
+          const { thread_id, prompt, alias } = msg
+          if (!thread_id || !prompt) break
+          // Create thread in UI
+          dispatch({
+            type: "UPSERT_THREAD",
+            thread: {
+              id: thread_id,
+              alias: alias || "",
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+              config_override: {} as any,
+              tool_whitelist: null,
+              pinned_tabs: [],
+              active_skill_ids: [],
+            },
+          })
+          dispatch({ type: "SET_ACTIVE_THREAD", threadId: thread_id })
+          dispatch({ type: "SET_MESSAGES", messages: [] })
+          // Add user message locally
+          dispatch({
+            type: "ADD_MESSAGE",
+            message: {
+              id: `${thread_id}_qa_${Date.now()}`,
+              thread_id,
+              role: "user",
+              content: prompt,
+              created_at: new Date().toISOString(),
+            },
+          })
+          // Send chat message through background to companion
+          chrome.runtime.sendMessage({
+            type: "chat.send",
+            threadId: thread_id,
+            message: prompt,
+          })
+          break
+        }
+
         case "thread.messages":
           dispatch({ type: "SET_MESSAGES", messages: msg.messages })
           break
