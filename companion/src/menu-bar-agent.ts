@@ -363,7 +363,11 @@ async function openSettingsUI(): Promise<void> {
     } else if (platform === "linux") {
       child_process.execSync(`xdg-open "${url}"`, { stdio: "ignore" })
     } else if (platform === "win32") {
-      child_process.execSync(`start "" "${url}"`, { stdio: "ignore" })
+      try {
+        child_process.spawn("explorer", [url], { detached: true, stdio: "ignore" }).unref()
+      } catch {
+        child_process.execSync(`cmd /c start "" "${url}"`, { stdio: "ignore" })
+      }
     }
 
     safeNotify({ title: "CMspark Agent", message: `Settings page opened in browser`, timeout: 3 })

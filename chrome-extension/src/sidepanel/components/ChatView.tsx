@@ -1,13 +1,19 @@
 // Chat message list with streaming support
 
-import { Component, useState } from "react"
+import { Component, useEffect, useRef, useState } from "react"
 import { useAgentStore } from "../store/agentStore"
 import { marked } from "marked"
 import DOMPurify from "dompurify"
 
+const LONG_CONTENT_THRESHOLD = 3000
+const LONG_CONTENT_PREVIEW = 500
+const TOOL_RESULT_PREVIEW = 200
+
 export function ChatView() {
   const { state } = useAgentStore()
   const { messages, streamingContent, activeThreadId } = state
+  const containerRef = useRef<HTMLDivElement>(null)
+  const lastMessageCountRef = useRef(messages.length)
 
   // Infer AI processing state from message history (no extra state needed)
   const processingLabel = (() => {
@@ -24,6 +30,20 @@ export function ChatView() {
     }
     return null
   })()
+
+  // Auto-scroll to bottom when new messages arrive or streaming updates
+  useEffect(() => {
+    const container = containerRef.current
+    if (!container) return
+    // Scroll when message count changes or streaming content updates
+    if (messages.length !== lastMessageCountRef.current || streamingContent) {
+      lastMessageCountRef.current = messages.length
+      // Use requestAnimationFrame to ensure DOM has updated
+      requestAnimationFrame(() => {
+        container.scrollTop = container.scrollHeight
+      })
+    }
+  }, [messages.length, streamingContent])
 
   const handleCopy = async (text: string) => {
     try {
@@ -59,17 +79,22 @@ export function ChatView() {
   }
 
   return (
-    <div style={styles.container}>
+    <div style={styles.container} ref={containerRef}>
       {messages.length === 0 && !streamingContent && !processingLabel && (
         <div style={styles.empty}>输入指令开始与 CMspark Agent 对话</div>
       )}
       {messages.map(msg => {
         const isUser = msg.role === "user"
+        const hasLongContent = (msg.content?.length || 0) > LONG_CONTENT_THRESHOLD
         return (
           <div key={msg.id} style={isUser ? styles.userMsg : styles.agentMsg}>
             <div style={styles.messageCol}>
               <div style={isUser ? styles.userBubble : styles.agentBubble}>
-                <MarkdownRenderer content={msg.content} />
+                {hasLongContent ? (
+                  <CollapsibleMarkdown content={msg.content} maxPreview={LONG_CONTENT_PREVIEW} />
+                ) : (
+                  <MarkdownRenderer content={msg.content} />
+                )}
                 {msg.tool_calls?.map(tc => (
                   <ToolCallCard key={tc.id} tc={tc} />
                 ))}
@@ -111,28 +136,50 @@ export function ChatView() {
   )
 }
 
+function CollapsibleMarkdown({ content, maxPreview }: { content: string; maxPreview: number }) {
+  const [expanded, setExpanded] = useState(false)
+  const preview = content.substring(0, maxPreview)
+  const needsCollapse = content.length > maxPreview
+
+  return (
+    <div>
+      <MarkdownRenderer content={expanded ? content : preview + (needsCollapse ? "\n\n..." : "")} />
+      {needsCollapse && (
+        <button
+          onClick={() => setExpanded(!expanded)}
+          style={styles.expandBtn}
+          title={expanded ? "收起内容" : "展开完整内容"}
+        >
+          {expanded ? "收起 ▲" : "展开完整内容 ▼"}
+        </button>
+      )}
+    </div>
+  )
+}
+
 function ToolCallCard({ tc }: { tc: any }) {
   const [expanded, setExpanded] = useState(false)
   const hasResult = tc.result && !tc.error
+  // Avoid stringifying huge objects on every render; cap preview stringification
   const resultStr = hasResult ? JSON.stringify(tc.result, null, 2) : ""
-  const previewLen = 200
+  const isLongResult = resultStr.length > TOOL_RESULT_PREVIEW
 
   return (
     <div style={{
       ...styles.toolCard,
       borderColor: tc.status === "error" ? "#F44336" : tc.status === "success" ? "#4CAF50" : "#ddd",
-      cursor: hasResult && resultStr.length > previewLen ? "pointer" : "default",
-    }} onClick={() => { if (hasResult && resultStr.length > previewLen) setExpanded(!expanded) }}>
+      cursor: hasResult && isLongResult ? "pointer" : "default",
+    }} onClick={() => { if (hasResult && isLongResult) setExpanded(!expanded) }}>
       <div style={styles.toolHeader}>
         <span>{tc.status === "running" ? "⏳" : tc.status === "success" ? "✅" : tc.status === "error" ? "❌" : "⏸"}</span>
         <span style={styles.toolName}>{tc.tool_name}</span>
-        {hasResult && resultStr.length > previewLen && (
+        {hasResult && isLongResult && (
           <span style={{ marginLeft: "auto", fontSize: 10, color: "#999" }}>{expanded ? "收起 ▲" : "展开 ▼"}</span>
         )}
       </div>
       {hasResult && (
         <pre style={{...styles.toolResult, background: "#f5f5f5", padding: "8px 12px", borderRadius: 4, fontSize: 11, fontFamily: "'SF Mono', 'Fira Code', monospace", maxHeight: expanded ? 300 : 80, overflow: "auto"}}>
-          <code>{expanded ? resultStr : resultStr.substring(0, previewLen) + (resultStr.length > previewLen ? " ..." : "")}</code>
+          <code>{expanded ? resultStr : resultStr.substring(0, TOOL_RESULT_PREVIEW) + (isLongResult ? " ..." : "")}</code>
         </pre>
       )}
     </div>
@@ -335,6 +382,16 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 4,
     lineHeight: 1,
     transition: "background 0.15s ease",
+  },
+  expandBtn: {
+    background: "none",
+    border: "none",
+    color: "#4A90D9",
+    cursor: "pointer",
+    fontSize: 12,
+    padding: "4px 0",
+    marginTop: 4,
+    fontWeight: 500,
   },
   toolCard: {
     marginTop: 8,

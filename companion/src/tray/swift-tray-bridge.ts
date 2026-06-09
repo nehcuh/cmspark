@@ -207,12 +207,6 @@ export class SwiftTrayAdapter implements UnifiedTray {
     } else {
       this.actionCallback({ type: action as TrayActionType })
     }
-
-    if (action === "quit") {
-      this.shuttingDown = true
-      this.kill()
-      process.exit(0)
-    }
   }
 
   private handleCrash(): void {

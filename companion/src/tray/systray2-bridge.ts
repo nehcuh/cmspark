@@ -97,6 +97,9 @@ export class SysTray2Adapter implements UnifiedTray {
   // seq_id → action mapping (rebuilt each time menu is constructed)
   private seqMap: TrayMenuAction[] = []
 
+  // Debounce rebuild to avoid rapid kill/recreate cycles
+  private rebuildTimer: ReturnType<typeof setTimeout> | null = null
+
   // --- UnifiedTray ---
 
   async start(_config: TrayConfig): Promise<void> {
@@ -109,7 +112,12 @@ export class SysTray2Adapter implements UnifiedTray {
     console.log("[tray] Platform:", process.platform, "Arch:", process.arch)
 
     instance.onClick((action: any) => {
-      const mapped = this.seqMap[action.seq_id]
+      const seqId = action?.seq_id
+      if (typeof seqId !== "number" || seqId < 0 || seqId >= this.seqMap.length) {
+        console.error("[systray2] Invalid seq_id:", seqId, "seqMap length:", this.seqMap.length)
+        return
+      }
+      const mapped = this.seqMap[seqId]
       if (mapped && this.actionCallback) {
         this.actionCallback(mapped)
       }
@@ -180,30 +188,35 @@ export class SysTray2Adapter implements UnifiedTray {
       this.seqMap.push(mapping)
     }
 
-    // Status header (avoid emoji — Windows tray binary may not handle UTF-8 emoji)
-    const statusLabel = this.status === "running" ? "[ON] CMspark Agent" : this.status === "stopped" ? "[OFF] CMspark Agent" : "[...] CMspark Agent"
+    // Status header
+    const statusLabel = this.status === "running"
+      ? "[运行中] CMspark Agent"
+      : this.status === "stopped"
+        ? "[已停止] CMspark Agent"
+        : "[检测中] CMspark Agent"
     push(statusLabel, { type: "status" }, { enabled: false })
 
     items.push(SEP)
-    this.seqMap.push({ type: "status" }) // placeholder for separator index
+    this.seqMap.push({ type: "status" })
 
     // Start / Stop / Restart
-    push("Start Companion", { type: "start" }, { enabled: !running })
-    push("Stop Companion", { type: "stop" }, { enabled: running })
-    push("Restart Companion", { type: "restart" }, { enabled: running })
+    push("启动 Companion", { type: "start" }, { enabled: !running })
+    push("停止 Companion", { type: "stop" }, { enabled: running })
+    push("重启 Companion", { type: "restart" }, { enabled: running })
 
     items.push(SEP)
     this.seqMap.push({ type: "status" })
 
     // Status detail
-    push("Status Details", { type: "status" })
+    push("状态详情", { type: "status" })
 
     // Quick Actions
     if (this.quickActions.length > 0) {
       items.push(SEP)
       this.seqMap.push({ type: "status" })
+      push("快速操作", { type: "status" }, { enabled: false })
       for (const qa of this.quickActions) {
-        push(qa.title, { type: "quick-action", payload: { id: qa.id } })
+        push(`  ${qa.title}`, { type: "quick-action", payload: { id: qa.id } })
       }
     }
 
@@ -211,27 +224,28 @@ export class SysTray2Adapter implements UnifiedTray {
     if (this.recentThreads.length > 0) {
       items.push(SEP)
       this.seqMap.push({ type: "status" })
+      push("最近对话", { type: "status" }, { enabled: false })
       for (const t of this.recentThreads) {
-        push("> " + t.title, { type: "recent-thread", payload: { id: t.id } })
+        push(`  > ${t.title}`, { type: "recent-thread", payload: { id: t.id } })
       }
     }
 
     items.push(SEP)
     this.seqMap.push({ type: "status" })
 
-    push("Open Logs", { type: "logs" })
-    push("Open Chrome", { type: "chrome" })
-    push("Settings", { type: "settings" })
+    push("打开日志目录", { type: "logs" })
+    push("打开 Chrome", { type: "chrome" })
+    push("设置", { type: "settings" })
 
     items.push(SEP)
     this.seqMap.push({ type: "status" })
 
-    push("Auto-start on Login", { type: "autostart" }, { checked: this.autostartEnabled })
+    push("开机自启", { type: "autostart" }, { checked: this.autostartEnabled })
 
     items.push(SEP)
     this.seqMap.push({ type: "status" })
 
-    push("Quit", { type: "quit" })
+    push("退出", { type: "quit" })
 
     return {
       icon: getIcon(this.status),
@@ -244,12 +258,29 @@ export class SysTray2Adapter implements UnifiedTray {
 
   private async rebuild(): Promise<void> {
     if (!this.systray) return
-    try {
-      const menu = this.buildMenu()
-      await this.systray.sendAction({ type: "update-menu", menu })
-    } catch {
-      // systray2 may have exited
+    if (this.rebuildTimer) {
+      clearTimeout(this.rebuildTimer)
     }
+    this.rebuildTimer = setTimeout(async () => {
+      this.rebuildTimer = null
+      // systray2's update-menu does not refresh the internalIdMap, causing click
+      // events to map to stale items after the menu structure changes.
+      // Work around by killing and recreating the tray instance.
+      const wasShuttingDown = this.shuttingDown
+      this.shuttingDown = true
+      try {
+        await this.systray.kill()
+      } catch {
+        // ignore
+      }
+      this.systray = null
+      this.shuttingDown = wasShuttingDown
+      try {
+        await this.start({} as TrayConfig)
+      } catch (err: any) {
+        console.error("[systray2] Failed to recreate tray:", err.message)
+      }
+    }, 80)
   }
 
   private async loadModule(): Promise<any> {

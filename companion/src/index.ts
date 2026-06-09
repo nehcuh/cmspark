@@ -327,7 +327,11 @@ async function main() {
         } else if (platform === "linux") {
           child_process.execSync(`xdg-open "${url}"`, { stdio: "ignore" })
         } else if (platform === "win32") {
-          child_process.execSync(`start "" "${url}"`, { stdio: "ignore" })
+          try {
+            child_process.spawn("explorer", [url], { detached: true, stdio: "ignore" }).unref()
+          } catch {
+            child_process.execSync(`cmd /c start "" "${url}"`, { stdio: "ignore" })
+          }
         }
         console.log(`Settings page opened: ${url}`)
         console.log("Press Ctrl+C to stop the server")
@@ -352,7 +356,11 @@ async function main() {
       } else if (platform === "linux") {
         child_process.execSync(`xdg-open "${url}"`, { stdio: "ignore" })
       } else if (platform === "win32") {
-        child_process.execSync(`start "" "${url}"`, { stdio: "ignore" })
+        try {
+          child_process.spawn("explorer", [url], { detached: true, stdio: "ignore" }).unref()
+        } catch {
+          child_process.execSync(`cmd /c start "" "${url}"`, { stdio: "ignore" })
+        }
       }
       console.log(`Settings page: ${url}`)
       console.log("Press Ctrl+C to stop the server")

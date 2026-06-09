@@ -139,7 +139,10 @@ class MacOSChromeOpener implements ChromeOpener {
   }
 
   openSidePanel(): void {
-    // Best effort: activate Chrome and tell user to click the icon
+    // NOTE: Chrome Side Panel cannot be opened programmatically.
+    // The user must click the CMspark extension icon in the toolbar
+    // or use the keyboard shortcut (Cmd+Shift+I / Ctrl+Shift+I).
+    // This function only activates and focuses the Chrome window.
     runSilent("osascript", [
       "-e",
       'tell application "Google Chrome" to activate',

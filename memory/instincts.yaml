@@ -1,0 +1,10 @@
+# Instincts — auto-extracted reusable patterns
+# Confidence: 0-1 (higher = more validated)
+
+instincts:
+  - id: broadcast-delegation
+    pattern: "When server needs to trigger action in a different client, broadcast a start message to all clients and let the target client initiate its own request. This avoids modifying shared pipelines for cross-client routing."
+    confidence: 0.7
+    source_session: "2026-06-09 quick actions simplification"
+    tags: [architecture, websocket, cross-client]
+    applications: 1

@@ -186,11 +186,11 @@ function SecurityConfirmationDialog() {
           </div>
         )}
         <div style={styles.securityActions}>
-          <button style={styles.denyStopBtn} onClick={() => decide(false, true)}>
+          <button style={styles.denyStopBtn} onClick={() => decide(false, true)} title="拒绝本次操作并停止对话">
             拒绝并停止对话
           </button>
-          <button style={styles.denyBtn} onClick={() => decide(false)}>拒绝</button>
-          <button style={{ ...styles.allowBtn, background: riskColor }} onClick={() => decide(true)}>
+          <button style={styles.denyBtn} onClick={() => decide(false)} title="拒绝本次操作">拒绝</button>
+          <button style={{ ...styles.allowBtn, background: riskColor }} onClick={() => decide(true)} title="允许执行本次操作">
             允许执行
           </button>
         </div>
@@ -456,7 +456,7 @@ function InputArea() {
           ▶
         </button>
       )}
-      <button style={styles.settingsBtn} onClick={() => dispatch({ type: "TOGGLE_SETTINGS" })}>⚙</button>
+      <button style={styles.settingsBtn} onClick={() => dispatch({ type: "TOGGLE_SETTINGS" })} title="设置">⚙</button>
     </div>
   )
 }

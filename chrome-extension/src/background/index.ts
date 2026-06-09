@@ -243,7 +243,12 @@ function setupMessageHandlers() {
         return true
 
       case "thread.delete":
-        wsClient.send({ type: "thread.delete", thread_id: message.threadId })
+        wsClient.send({ type: "thread.delete", thread_id: message.thread_id || message.threadId })
+        sendResponse({ ok: true })
+        return true
+
+      case "thread.fork":
+        wsClient.send({ type: "thread.fork", thread_id: message.thread_id, message_id: message.message_id })
         sendResponse({ ok: true })
         return true
 

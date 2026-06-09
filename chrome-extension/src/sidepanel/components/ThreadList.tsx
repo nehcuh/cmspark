@@ -52,6 +52,7 @@ export function ThreadList() {
   const handleDelete = (threadId: string, e: React.MouseEvent) => {
     e.stopPropagation()
     if (confirm(`确定删除线程 "${threadId}"？该线程的所有消息将被清除。`)) {
+      dispatch({ type: "REMOVE_THREAD", threadId })
       chrome.runtime.sendMessage({ type: "thread.delete", thread_id: threadId })
     }
   }
@@ -68,7 +69,7 @@ export function ThreadList() {
           <div style={styles.panel}>
             <div style={styles.panelHeader}>
               <span style={{ fontWeight: 600, fontSize: 13 }}>线程</span>
-              <button style={styles.newBtn} onClick={handleNewThread}>+ 新建</button>
+              <button style={styles.newBtn} onClick={handleNewThread} title="新建线程">+ 新建</button>
             </div>
             <div style={styles.list}>
               {threads.map(t => (
