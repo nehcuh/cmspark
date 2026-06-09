@@ -603,17 +603,18 @@ export async function handleMessage(
 
     // --- Quick Actions (from menu bar tray) ---
     case "executeQuickAction": {
-      const actionId = rest.id
+      const actionId = rest.actionId || rest.id
       if (!actionId || typeof actionId !== "string") {
-        return { type: "error", error: "id required" }
+        return { type: "error", error: "actionId required" }
       }
+      const requestId = msg.id
       if (!session) {
         return { type: "error", error: "No active browser session" }
       }
 
       if (actionId === "new-chat") {
         const thread = threadManager.create("")
-        return { type: "quickAction.result", id: actionId, success: true, thread_id: thread.id, message: `新线程已创建: ${thread.id}` }
+        return { type: "quickAction.result", id: requestId, actionId, success: true, thread_id: thread.id, message: `新线程已创建: ${thread.id}` }
       }
 
       // Map read / extract / screenshot to tool calls
@@ -632,12 +633,12 @@ export async function handleMessage(
             {},
           )
           if (!pageResult.success || !pageResult.data?.text) {
-            return { type: "quickAction.result", id: actionId, success: false, error: "无法获取页面内容" }
+            return { type: "quickAction.result", id: requestId, actionId, success: false, error: "无法获取页面内容" }
           }
           const pageText: string = pageResult.data.text
           const config = getConfig()
           if (!config.llm.api_key || config.llm.api_key === "sk-placeholder") {
-            return { type: "quickAction.result", id: actionId, success: false, error: "LLM 未配置，无法生成总结" }
+            return { type: "quickAction.result", id: requestId, actionId, success: false, error: "LLM 未配置，无法生成总结" }
           }
           const client = new OpenAI({ baseURL: config.llm.base_url, apiKey: config.llm.api_key, timeout: 15000, maxRetries: 0 })
           const resp = await client.chat.completions.create({
@@ -650,9 +651,9 @@ export async function handleMessage(
             ],
           })
           const summary = resp.choices[0]?.message?.content?.trim() || "（总结为空）"
-          return { type: "quickAction.result", id: actionId, success: true, message: summary }
+          return { type: "quickAction.result", id: requestId, actionId, success: true, message: summary }
         } catch (err: any) {
-          return { type: "quickAction.result", id: actionId, success: false, error: `总结失败: ${err.message}` }
+          return { type: "quickAction.result", id: requestId, actionId, success: false, error: `总结失败: ${err.message}` }
         }
       }
 
@@ -670,12 +671,12 @@ export async function handleMessage(
         if (actionId === "read-page" || actionId === "extract-data") {
           const text = result.data?.text || ""
           const preview = text.slice(0, 500).replace(/\s+/g, " ").trim()
-          return { type: "quickAction.result", id: actionId, success: true, message: preview || "页面内容为空", fullText: text }
+          return { type: "quickAction.result", id: requestId, actionId, success: true, message: preview || "页面内容为空", fullText: text }
         }
         if (actionId === "screenshot") {
-          return { type: "quickAction.result", id: actionId, success: true, imageData: result.data }
+          return { type: "quickAction.result", id: requestId, actionId, success: true, imageData: result.data }
         }
-        return { type: "quickAction.result", id: actionId, ...result }
+        return { type: "quickAction.result", id: requestId, actionId, ...result }
       } catch (err: any) {
         return { type: "error", error: `Quick action failed: ${err.message}` }
       }

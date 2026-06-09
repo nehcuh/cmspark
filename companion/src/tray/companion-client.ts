@@ -190,7 +190,7 @@ export class CompanionClient {
     }
 
     try {
-      const result = await this.sendRequest("executeQuickAction", { id })
+      const result = await this.sendRequest("executeQuickAction", { actionId: id }, 30000)
       this.debug(`Quick action '${id}' result: ${JSON.stringify(result)}`)
       return result
     } catch (err: any) {
@@ -232,7 +232,7 @@ export class CompanionClient {
 
   // --- Internals ---
 
-  private sendRequest(type: string, params?: Record<string, any>): Promise<any> {
+  private sendRequest(type: string, params?: Record<string, any>, timeoutMs?: number): Promise<any> {
     return new Promise((resolve, reject) => {
       if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
         reject(new Error("Not connected"))
@@ -240,10 +240,11 @@ export class CompanionClient {
       }
 
       const id = `tray-${++this.requestId}`
+      const effectiveTimeout = timeoutMs ?? 5000
       const timer = setTimeout(() => {
         this.pendingRequests.delete(id)
         reject(new Error(`Request timeout: ${type}`))
-      }, 5000)
+      }, effectiveTimeout)
 
       this.pendingRequests.set(id, { resolve, reject, timer })
 

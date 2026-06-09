@@ -342,39 +342,51 @@ async function handleQuickAction(id: string): Promise<void> {
     return
   }
 
-  switch (id) {
-    case "screenshot": {
-      if (result.imageData) {
-        const tmpPath = await saveScreenshot(result.imageData)
-        if (tmpPath) {
-          safeNotify({ title: "CMspark Agent", message: `截图已保存`, timeout: 3 })
-          try {
-            child_process.execSync(`open "${tmpPath}"`, { stdio: "ignore" })
-          } catch { /* ignore */ }
-        } else {
-          safeNotify({ title: "CMspark Agent", message: "截图保存失败", timeout: 3 })
+  // Display result in browser via quick-action-result server
+  try {
+    const { startResultServer, storeResult } = require("./quick-action-result") as typeof import("./quick-action-result")
+    const port = await startResultServer()
+    const url = storeResult({
+      id: `${id}-${Date.now()}`,
+      actionId: id,
+      success: result.success !== false,
+      message: result.message,
+      fullText: result.fullText,
+      imageData: result.imageData,
+      error: result.error,
+      timestamp: Date.now(),
+    })
+    const platform = getPlatform()
+    if (platform === "darwin") {
+      child_process.execSync(`open "${url}"`, { stdio: "ignore" })
+    } else if (platform === "linux") {
+      child_process.execSync(`xdg-open "${url}"`, { stdio: "ignore" })
+    } else if (platform === "win32") {
+      child_process.execSync(`start "" "${url}"`, { stdio: "ignore" })
+    }
+  } catch {
+    // Fallback to notification if result server fails
+    switch (id) {
+      case "screenshot": {
+        if (result.imageData) {
+          const tmpPath = await saveScreenshot(result.imageData)
+          if (tmpPath) {
+            safeNotify({ title: "CMspark Agent", message: `截图已保存`, timeout: 3 })
+            try { child_process.execSync(`open "${tmpPath}"`, { stdio: "ignore" }) } catch { /* ignore */ }
+          }
         }
+        break
       }
-      break
+      case "read-page":
+      case "extract-data":
+        safeNotify({ title: id === "read-page" ? "Page Content" : "Extracted Data", message: (result.message || "").slice(0, 200), timeout: 8 })
+        break
+      case "summarize":
+        safeNotify({ title: "Summary", message: (result.message || "").slice(0, 300), timeout: 10 })
+        break
+      default:
+        safeNotify({ title: "CMspark Agent", message: result.message || `Done: ${id}`, timeout: 3 })
     }
-    case "read-page":
-    case "extract-data": {
-      const preview = result.message || ""
-      const title = id === "read-page" ? "📖 页面内容" : "📝 提取数据"
-      safeNotify({ title, message: preview.slice(0, 200) + (preview.length > 200 ? "..." : ""), timeout: 8 })
-      break
-    }
-    case "summarize": {
-      const summary = result.message || ""
-      safeNotify({ title: "📋 页面总结", message: summary.slice(0, 300) + (summary.length > 300 ? "..." : ""), timeout: 10 })
-      break
-    }
-    case "new-chat": {
-      safeNotify({ title: "CMspark Agent", message: result.message || "新线程已创建", timeout: 3 })
-      break
-    }
-    default:
-      safeNotify({ title: "CMspark Agent", message: `操作完成: ${id}`, timeout: 3 })
   }
 }
 

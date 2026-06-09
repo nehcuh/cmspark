@@ -3,16 +3,15 @@
 ## Session Handoff
 
 <!-- handoff:start -->
+### 2026-06-09 (12:00)
+- Fixed tray quick actions all timing out — root cause: Object.assign ID collision in companion-client.ts
+- companion-client.ts: renamed params.id → actionId, added timeoutMs param (30s for quick actions)
+- message-router.ts: propagate original msg.id in all quickAction.result responses
+- server.ts: added executeQuickAction validator
+- New quick-action-result.ts: HTTP server on :23403 with inline HTML for screenshot/text/summary display
+- menu-bar-agent.ts: handleQuickAction opens browser result page, falls back to notifications
+- 4 modified + 1 new file, tsc + build pass
+- Next: Runtime test with Companion + Extension running; package DMG for full integration test
 ### 2026-06-09 (10:00)
-- Settings panel optimization — 4 phases + final review
-- Phase 1: openSettingsUI() path fix (getSelfSpawnArgs)
-- Phase 2: config.ts EventEmitter + server.ts broadcast + message-router.ts thread config_override merge
-- Phase 3: background/index.ts auto config.get + agentStore companionConfig + SettingsSlideout fallback UI
-- Phase 4: settings-web.ts (HTTP server + dark-theme inline HTML) + menu-bar-agent browser open + CLI commands
-- Final review: 2 security fixes (writableEnded guard + masked value filter)
-- 8 modified + 1 new file, 232 insertions, tsc + build pass
-- Next: Package DMG → test right-click settings in browser; test config broadcast to extension
-### 2026-06-09 (22:30)
-- Windows 打包两个问题修复：cmd 窗口闪烁 + 托盘图标空白
-- 7 files modified + 5 new files
+- Settings panel optimization — web UI, config broadcast, thread config fallback (9 files)
 <!-- handoff:end -->

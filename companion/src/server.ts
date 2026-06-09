@@ -504,6 +504,11 @@ function validateWsMessage(msg: any): WsValidationResult {
       return { valid: true }
     },
     "system.ping": () => ({ valid: true }),
+    "executeQuickAction": (m) => {
+      const aid = m.actionId || m.id
+      if (typeof aid !== "string" || !aid) return { valid: false, error: "executeQuickAction requires actionId" }
+      return { valid: true }
+    },
   }
 
   const validator = validators[msg.type]
