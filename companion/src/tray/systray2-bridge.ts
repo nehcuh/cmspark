@@ -256,13 +256,22 @@ export class SysTray2Adapter implements UnifiedTray {
     }
   }
 
+  private isRebuilding = false
+  private needsRebuild = false
+
   private async rebuild(): Promise<void> {
     if (!this.systray) return
+    if (this.isRebuilding) {
+      // Coalesce concurrent rebuild requests while a rebuild is in flight
+      this.needsRebuild = true
+      return
+    }
     if (this.rebuildTimer) {
       clearTimeout(this.rebuildTimer)
     }
     this.rebuildTimer = setTimeout(async () => {
       this.rebuildTimer = null
+      this.isRebuilding = true
       // systray2's update-menu does not refresh the internalIdMap, causing click
       // events to map to stale items after the menu structure changes.
       // Work around by killing and recreating the tray instance.
@@ -279,12 +288,19 @@ export class SysTray2Adapter implements UnifiedTray {
         await this.start({} as TrayConfig)
       } catch (err: any) {
         console.error("[systray2] Failed to recreate tray:", err.message)
+      } finally {
+        this.isRebuilding = false
+        if (this.needsRebuild) {
+          this.needsRebuild = false
+          this.rebuild()
+        }
       }
     }, 80)
   }
 
   private async loadModule(): Promise<any> {
     const mod = await import("systray2")
-    return mod.default
+    // Support both ESM default and CJS-style exports for packaging resilience
+    return (mod as any).default || (mod as any).SysTray || mod
   }
 }
