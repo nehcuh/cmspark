@@ -16,19 +16,49 @@ import {
 } from "./tray-adapter"
 
 // ---------------------------------------------------------------------------
-// Icon loading (base64 PNG for systray2)
+// Icon loading (base64 for systray2) — ICO → PNG → inline fallback
 // ---------------------------------------------------------------------------
 
-function loadIconBase64(name: string): string {
-  const { getAssetsDir } = require("../paths")
-  const iconPath = path.join(getAssetsDir(), name)
-  return fs.readFileSync(iconPath).toString("base64")
+const FALLBACK_ICON = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+
+function tryLoadIcon(filename: string): string | null {
+  try {
+    const { getAssetsDir } = require("../paths")
+    const iconPath = path.join(getAssetsDir(), filename)
+    if (fs.existsSync(iconPath)) {
+      return fs.readFileSync(iconPath).toString("base64")
+    }
+  } catch { /* fall through */ }
+  return null
 }
 
-const ICON_GREEN = loadIconBase64("tray-icon-green.png")
-const ICON_RED = loadIconBase64("tray-icon-red.png")
-const ICON_YELLOW = loadIconBase64("tray-icon-yellow.png")
-const ICON_TEMPLATE = loadIconBase64("tray-icon-template.png")
+function loadIconBase64(name: string): string {
+  try {
+    const { getAssetsDir } = require("../paths")
+    const iconPath = path.join(getAssetsDir(), name)
+    return fs.readFileSync(iconPath).toString("base64")
+  } catch (err) {
+    console.error(`[systray2] Failed to load icon ${name}:`, err)
+    return FALLBACK_ICON
+  }
+}
+
+function loadPlatformIcon(baseName: string): string {
+  if (process.platform === "win32") {
+    const ico = tryLoadIcon(baseName + ".ico")
+    if (ico !== null) {
+      console.log(`[systray2] Loaded ICO icon: ${baseName}.ico (${ico.length} chars base64)`)
+      return ico
+    }
+    console.warn(`[systray2] ICO not found for ${baseName}, falling back to PNG`)
+  }
+  return loadIconBase64(baseName + ".png")
+}
+
+const ICON_GREEN = loadPlatformIcon("tray-icon-green")
+const ICON_RED = loadPlatformIcon("tray-icon-red")
+const ICON_YELLOW = loadPlatformIcon("tray-icon-yellow")
+const ICON_TEMPLATE = loadPlatformIcon("tray-icon-template")
 
 const SEP = { title: "---" }
 

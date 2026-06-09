@@ -226,7 +226,7 @@ async function startCompanion(): Promise<void> {
   try {
     const { getSelfSpawnArgs } = require("./paths")
     const { execPath, args } = getSelfSpawnArgs(["daemon", "start", "--daemonize"])
-    const proc = child_process.spawn(execPath, args, { detached: true, stdio: "ignore" })
+    const proc = child_process.spawn(execPath, args, { detached: true, stdio: "ignore", windowsHide: true })
     proc.unref()
   } catch (err: any) {
     safeNotify({ title: "CMspark Agent", message: `启动失败: ${err.message}`, timeout: 5 })

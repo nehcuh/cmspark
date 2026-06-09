@@ -33,13 +33,17 @@ if !errorlevel! equ 0 (
     goto :done
 )
 
-:: Build and show the command
-set "CMD_STR=!NODE_CMD! cmspark-agent.js start ^> cmspark-agent.log 2^>^&1"
-echo [launch] Will run: !CMD_STR!
-
-:: Try start /MIN first
-start /MIN cmd /c "!CMD_STR!"
-echo [launch] start /MIN issued, waiting...
+:: Launch via hidden VBS launcher (no console window)
+if exist "%~dp0launch-hidden.vbs" (
+    echo [launch] Launching via launch-hidden.vbs...
+    wscript.exe "%~dp0launch-hidden.vbs"
+) else (
+    :: Fallback for dev environments without VBS
+    set "CMD_STR=!NODE_CMD! cmspark-agent.js start"
+    echo [launch] VBS not found, fallback: !CMD_STR!
+    start /MIN cmd /c "!CMD_STR!"
+)
+echo [launch] Launcher issued, waiting...
 
 ping -n 5 127.0.0.1 >nul
 

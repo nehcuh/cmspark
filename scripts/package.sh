@@ -190,6 +190,7 @@ echo "[7/9] Adding launch scripts..."
 if [[ "${PLATFORM}" == windows* ]]; then
   cp companion/install.bat "${STAGING}/" 2>/dev/null || true
   cp companion/launch.bat "${STAGING}/" 2>/dev/null || true
+  cp companion/launch-hidden.vbs "${STAGING}/" 2>/dev/null || true
   cp companion/uninstall.bat "${STAGING}/" 2>/dev/null || true
   cp scripts/install-daemon.ps1 "${STAGING}/" 2>/dev/null || true
 else

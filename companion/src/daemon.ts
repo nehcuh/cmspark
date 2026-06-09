@@ -377,6 +377,7 @@ export function daemonize(options: DaemonizeOptions): void {
     stdio,
     cwd,
     env,
+    windowsHide: true,
   })
 
   child.unref()
