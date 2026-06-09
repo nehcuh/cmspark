@@ -189,24 +189,54 @@ async function toggleAutoStart(): Promise<void> {
 
   try {
     if (platform === "darwin") {
-      const plist = `${process.env.HOME}/Library/LaunchAgents/com.cmspark.companion.plist`
+      const plistPath = `${process.env.HOME}/Library/LaunchAgents/com.cmspark.companion.plist`
       if (currentlyEnabled) {
-        child_process.execSync(`launchctl unload "${plist}" 2>/dev/null || true`)
-        fs.unlinkSync(plist)
+        child_process.execSync(`launchctl unload "${plistPath}" 2>/dev/null || true`)
+        if (fs.existsSync(plistPath)) fs.unlinkSync(plistPath)
+        safeNotify({ title: "CMspark Agent", message: "开机自启已关闭 ⏹️", timeout: 3 })
       } else {
-        safeNotify({ title: "CMspark Agent", message: "请运行 make install-macos 开启开机自启", timeout: 5 })
+        const daemonPath = process.argv[1]
+        const configDir = getConfigDir()
+        const plistContent = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.cmspark.companion</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${daemonPath}</string>
+    <string>daemon</string>
+    <string>--daemonize</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <false/>
+  <key>StandardOutPath</key>
+  <string>${configDir}/logs/launchd-stdout.log</string>
+  <key>StandardErrorPath</key>
+  <string>${configDir}/logs/launchd-stderr.log</string>
+</dict>
+</plist>`
+        fs.mkdirSync(path.dirname(plistPath), { recursive: true })
+        fs.writeFileSync(plistPath, plistContent, { mode: 0o644 })
+        child_process.execSync(`launchctl load "${plistPath}"`)
+        safeNotify({ title: "CMspark Agent", message: "开机自启已开启 ✅", timeout: 3 })
       }
     } else if (platform === "linux") {
       if (currentlyEnabled) {
         child_process.execSync("systemctl --user disable cmspark-companion")
+        safeNotify({ title: "CMspark Agent", message: "开机自启已关闭 ⏹️", timeout: 3 })
       } else {
         child_process.execSync("systemctl --user enable cmspark-companion")
+        safeNotify({ title: "CMspark Agent", message: "开机自启已开启 ✅", timeout: 3 })
       }
     } else if (platform === "win32") {
       safeNotify({ title: "CMspark Agent", message: "请运行 make install-windows 开启开机自启", timeout: 5 })
     }
   } catch (err: any) {
-    safeNotify({ title: "CMspark Agent", message: `自启切换失败: ${err.message}`, timeout: 5 })
+    safeNotify({ title: "CMspark Agent", message: `自启切换失败 ❌: ${err.message}`, timeout: 5 })
   }
 
   const newEnabled = await checkAutoStart()
@@ -218,8 +248,12 @@ async function toggleAutoStart(): Promise<void> {
 // ---------------------------------------------------------------------------
 
 async function startCompanion(): Promise<void> {
-  if (state.companionStatus === "running") return
+  if (state.companionStatus === "running") {
+    safeNotify({ title: "CMspark Agent", message: "Companion 已在运行中 ✅", timeout: 3 })
+    return
+  }
 
+  safeNotify({ title: "CMspark Agent", message: "正在启动 Companion...", timeout: 3 })
   state.companionStatus = "unknown"
   if (trayInstance) trayInstance.updateStatus("unknown", false, state.pid)
 
@@ -228,45 +262,57 @@ async function startCompanion(): Promise<void> {
     const { execPath, args } = getSelfSpawnArgs(["daemon", "start", "--daemonize"])
     const proc = child_process.spawn(execPath, args, { detached: true, stdio: "ignore", windowsHide: true })
     proc.unref()
+    setTimeout(() => pollCompanionStatus(), 1500)
   } catch (err: any) {
-    safeNotify({ title: "CMspark Agent", message: `启动失败: ${err.message}`, timeout: 5 })
+    safeNotify({ title: "CMspark Agent", message: `启动失败 ❌: ${err.message}`, timeout: 5 })
   }
 }
 
 async function stopCompanion(): Promise<void> {
-  if (state.companionStatus !== "running") return
+  if (state.companionStatus !== "running") {
+    safeNotify({ title: "CMspark Agent", message: "Companion 未在运行", timeout: 3 })
+    return
+  }
+
+  safeNotify({ title: "CMspark Agent", message: "正在停止 Companion...", timeout: 3 })
 
   try {
     const { getSelfSpawnArgs } = require("./paths")
     const { execPath, args } = getSelfSpawnArgs(["daemon", "stop"])
     child_process.execFileSync(execPath, args, { timeout: 15000 })
+    safeNotify({ title: "CMspark Agent", message: "Companion 已停止 ⏹️", timeout: 3 })
+    setTimeout(() => pollCompanionStatus(), 1000)
   } catch (err: any) {
-    safeNotify({ title: "CMspark Agent", message: `停止失败: ${err.message}`, timeout: 5 })
+    safeNotify({ title: "CMspark Agent", message: `停止失败 ❌: ${err.message}`, timeout: 5 })
   }
 }
 
 async function restartCompanion(): Promise<void> {
   if (state.companionStatus !== "running") {
+    safeNotify({ title: "CMspark Agent", message: "Companion 未运行，正在启动...", timeout: 3 })
     await startCompanion()
     return
   }
+
+  safeNotify({ title: "CMspark Agent", message: "正在重启 Companion...", timeout: 3 })
   await stopCompanion()
-  // Small delay to let the daemon fully stop
-  setTimeout(() => startCompanion(), 2000)
+  setTimeout(() => {
+    safeNotify({ title: "CMspark Agent", message: "正在启动 Companion...", timeout: 3 })
+    startCompanion()
+  }, 2000)
 }
 
 function showStatusNotification(): void {
   try {
     const running = state.companionStatus === "running"
     const lines = [
-      `Companion: ${running ? "运行中" : "已停止"}`,
-      `WS 连接: ${state.wsConnected ? "已连接" : "未连接"}`,
-      state.pid ? `PID: ${state.pid}` : "",
-      `WebSocket: ws://${WS_HOST}:${WS_PORT}`,
-      `数据目录: ${getConfigDir()}`,
+      `${running ? "✅" : "⏹️"} Companion: ${running ? "运行中" : "已停止"}`,
+      `🔗 WS: ${state.wsConnected ? "已连接" : "未连接"} ws://${WS_HOST}:${WS_PORT}`,
+      state.pid ? `📌 PID: ${state.pid}` : "",
+      `📂 数据目录: ${getConfigDir()}`,
     ].filter(Boolean)
 
-    safeNotify({ title: "CMspark Agent - 状态", message: lines.join("\n"), timeout: 5 })
+    safeNotify({ title: "📊 CMspark 状态", message: lines.join("\n"), timeout: 5 })
   } catch {
     console.log(`Companion: ${state.companionStatus === "running" ? "运行中" : "已停止"}`)
   }
@@ -275,13 +321,17 @@ function showStatusNotification(): void {
 function openChromeSidePanel(): void {
   try {
     getChromeOpener().openSidePanel()
+    safeNotify({ title: "CMspark Agent", message: "Chrome 已激活，请在 Side Panel 中点击 CMspark 扩展图标 🧩", timeout: 5 })
   } catch (err: any) {
     safeNotify({ title: "CMspark Agent", message: `打开 Chrome 失败: ${err.message}`, timeout: 5 })
   }
 }
 
 async function handleQuickAction(id: string): Promise<void> {
-  if (!companionClient) return
+  if (!companionClient) {
+    safeNotify({ title: "CMspark Agent", message: "Companion 未运行，无法执行操作", timeout: 3 })
+    return
+  }
 
   safeNotify({ title: "CMspark Agent", message: `正在执行: ${id}...`, timeout: 2 })
 
@@ -363,21 +413,29 @@ function openLogsDir(): void {
 }
 
 async function openSettingsUI(): Promise<void> {
-  // Open Terminal.app and run the interactive settings CLI
-  const distDir = path.join(__dirname, "..")
-  const script = `tell application "Terminal"
-    do script "cd ${distDir} && node dist/index.js settings"
-    activate
-  end tell`
   try {
-    child_process.execSync(`osascript -e '${script}'`, { stdio: "ignore" })
+    const { startSettingsServer } = require("./settings-web") as typeof import("./settings-web")
+    const port = await startSettingsServer()
+    const url = `http://127.0.0.1:${port}/settings`
+    const platform = getPlatform()
+
+    if (platform === "darwin") {
+      child_process.execSync(`open "${url}"`, { stdio: "ignore" })
+    } else if (platform === "linux") {
+      child_process.execSync(`xdg-open "${url}"`, { stdio: "ignore" })
+    } else if (platform === "win32") {
+      child_process.execSync(`start "" "${url}"`, { stdio: "ignore" })
+    }
+
+    safeNotify({ title: "CMspark Agent", message: `Settings page opened in browser`, timeout: 3 })
   } catch (err: any) {
-    // Fallback: try running directly in foreground
+    // Fallback to CLI settings if web server fails
     try {
-      const { runInteractiveSettings } = await import("./settings-cli")
-      await runInteractiveSettings()
+      const { getSelfSpawnArgs } = require("./paths")
+      const { execPath, args } = getSelfSpawnArgs(["settings"])
+      child_process.execFileSync(execPath, args, { stdio: "inherit", timeout: 300000 })
     } catch {
-      safeNotify({ title: "CMspark Agent", message: `打开设置失败: ${err.message}`, timeout: 5 })
+      safeNotify({ title: "CMspark Agent", message: `Failed to open settings: ${err.message}`, timeout: 5 })
     }
   }
 }
@@ -399,15 +457,17 @@ async function handleAction(action: TrayMenuAction): Promise<void> {
       break
     case "autostart": await toggleAutoStart(); break
     case "quick-action":
-      if (companionClient) {
-        handleQuickAction(action.payload?.id || "").catch((err) => {
-          console.error("[menu-bar] Quick action error:", err)
-        })
-      }
+      handleQuickAction(action.payload?.id || "").catch((err) => {
+        console.error("[menu-bar] Quick action error:", err)
+      })
       break
     case "recent-thread":
-      if (companionClient && action.payload?.id) {
-        companionClient.openThread(action.payload.id).catch(() => {})
+      if (!companionClient) {
+        safeNotify({ title: "CMspark Agent", message: "Companion 未运行", timeout: 3 })
+      } else if (action.payload?.id) {
+        companionClient.openThread(action.payload.id)
+          .then(() => safeNotify({ title: "CMspark Agent", message: "已切换到对话 ✅", timeout: 3 }))
+          .catch((err: any) => safeNotify({ title: "CMspark Agent", message: `切换对话失败: ${err.message}`, timeout: 5 }))
       }
       break
     case "quit":

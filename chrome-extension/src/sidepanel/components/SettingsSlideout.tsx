@@ -206,6 +206,11 @@ export function SettingsSlideout() {
                 {showKey ? "隐藏" : "显示"}
               </button>
             </div>
+            {!config.api_key && state.companionConfig?.api_key && (
+              <div style={{ fontSize: 10, color: "#aaa", marginTop: 2 }}>
+                Using Companion global config
+              </div>
+            )}
           </div>
 
           <div style={styles.field}>
@@ -228,6 +233,11 @@ export function SettingsSlideout() {
               <option value="claude-sonnet-4-6" />
               <option value="claude-opus-4-7" />
             </datalist>
+            {!config.model_name && state.companionConfig?.model_name && (
+              <div style={{ fontSize: 10, color: "#aaa", marginTop: 2 }}>
+                Using Companion global config: {state.companionConfig.model_name}
+              </div>
+            )}
           </div>
 
           <div style={styles.field}>
@@ -278,6 +288,18 @@ export function SettingsSlideout() {
           <button style={styles.testBtn} onClick={handleTest}>测试连接</button>
           <button style={styles.saveBtn} onClick={handleSave}>保存</button>
         </div>
+
+        {state.companionConfig && (
+          <div style={{
+            fontSize: 11,
+            color: "#999",
+            padding: "8px 16px",
+            borderTop: "1px solid #eee",
+            textAlign: "center",
+          }}>
+            Companion 全局配置已同步{state.companionConfig.model_name ? ` (${state.companionConfig.model_name})` : ""}
+          </div>
+        )}
       </div>
     </div>
   )

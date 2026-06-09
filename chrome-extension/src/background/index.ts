@@ -95,6 +95,8 @@ function handleStateChange(state: "connected" | "connecting" | "disconnected") {
   } else if (state === "connected") {
     cancelDisconnectNotification()
     clearDisconnectedNotification()
+    // Fetch global config from companion on connect
+    wsClient.send({ type: "config.get" })
   }
 }
 

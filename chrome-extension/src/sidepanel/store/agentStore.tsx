@@ -27,6 +27,7 @@ export interface AgentState {
   activeKnowledgeIds: string[]
   privilegeMode: PrivilegeMode
   securityAuditLog: SecurityAuditEntry[]
+  companionConfig: LLMConfig | null
 }
 
 export type AgentAction =
@@ -62,6 +63,7 @@ export type AgentAction =
   | { type: "TOGGLE_KNOWLEDGE"; knowledgeId: string }
   | { type: "SET_PRIVILEGE_MODE"; mode: PrivilegeMode }
   | { type: "ADD_SECURITY_AUDIT"; entry: SecurityAuditEntry }
+  | { type: "SET_COMPANION_CONFIG"; config: LLMConfig }
 export const initialState: AgentState = {
   connectionState: "disconnected",
   threads: [],
@@ -95,6 +97,7 @@ export const initialState: AgentState = {
   activeKnowledgeIds: [],
   privilegeMode: "standard",
   securityAuditLog: [],
+  companionConfig: null,
 }
 
 export function agentReducer(state: AgentState, action: AgentAction): AgentState {
@@ -267,6 +270,8 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       return { ...state, privilegeMode: action.mode }
     case "ADD_SECURITY_AUDIT":
       return { ...state, securityAuditLog: [...state.securityAuditLog.slice(-199), action.entry] }
+    case "SET_COMPANION_CONFIG":
+      return { ...state, companionConfig: action.config }
     default:
       return state
   }

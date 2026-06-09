@@ -151,6 +151,16 @@ export async function handleMessage(
       if (!session) return { type: "error", error: "No session" }
       const config = getConfig()
 
+      // Merge thread-level config_override with global config
+      const threadForConfig = services.threadManager.get(rest.thread_id)
+      const threadLLMOverride = threadForConfig?.config_override || {}
+      const effectiveLLMConfig = { ...config.llm }
+      for (const [key, val] of Object.entries(threadLLMOverride)) {
+        if (key in effectiveLLMConfig && val !== undefined && val !== null) {
+          (effectiveLLMConfig as any)[key] = val
+        }
+      }
+
       // Cancel any existing request for this thread
       const existing = abortControllers.get(rest.thread_id)
       if (existing) {
@@ -203,7 +213,7 @@ export async function handleMessage(
           message: rest.message,
           skillIds: allSkillIds,
           knowledgeIds: resolvedKnowledgeIds,
-          config: config.llm,
+          config: effectiveLLMConfig,
           threadManager: services.threadManager,
           skillEngine: services.skillEngine,
           historyStore: services.historyStore,
@@ -236,6 +246,16 @@ export async function handleMessage(
       if (!session) return { type: "error", error: "No session" }
       const config = getConfig()
       const { thread_id, message_id } = rest
+
+      // Merge thread-level config_override with global config
+      const threadForRegenConfig = services.threadManager.get(thread_id)
+      const regenLLMOverride = threadForRegenConfig?.config_override || {}
+      const regenEffectiveLLMConfig = { ...config.llm }
+      for (const [key, val] of Object.entries(regenLLMOverride)) {
+        if (key in regenEffectiveLLMConfig && val !== undefined && val !== null) {
+          (regenEffectiveLLMConfig as any)[key] = val
+        }
+      }
 
       const messages = threadManager.getMessages(thread_id)
       const idx = messages.findIndex(m => m.id === message_id)
@@ -311,7 +331,7 @@ export async function handleMessage(
           message: userMsg.content,
           skillIds: allSkillIds,
           knowledgeIds: resolvedKnowledgeIds,
-          config: config.llm,
+          config: regenEffectiveLLMConfig,
           threadManager: services.threadManager,
           skillEngine: services.skillEngine,
           historyStore: services.historyStore,

@@ -34,8 +34,11 @@ Usage:
   cmspark-agent daemon status              查看守护进程状态
   cmspark-agent daemon logs                查看守护进程日志
 
-  cmspark-agent settings                   交互式修改 LLM 配置
+  cmspark-agent settings                   打开 Web 设置面板（浏览器）
   cmspark-agent settings --set key=value   非交互式修改配置
+
+  cmspark-agent settings-ui                打开 Web 设置面板
+  cmspark-agent settings-cli               打开终端交互式设置（旧版）
 
   cmspark-agent tray                       启动系统托盘（推荐）
   cmspark-agent tray status                查看托盘后端信息
@@ -313,6 +316,51 @@ async function main() {
         runNonInteractiveSettings(pairs)
         process.exit(0)
       }
+      // Interactive mode -> Web settings page
+      try {
+        const { startSettingsServer } = await import("./settings-web")
+        const port = await startSettingsServer()
+        const url = `http://127.0.0.1:${port}/settings`
+        const platform = getPlatform()
+        if (platform === "darwin") {
+          child_process.execSync(`open "${url}"`, { stdio: "ignore" })
+        } else if (platform === "linux") {
+          child_process.execSync(`xdg-open "${url}"`, { stdio: "ignore" })
+        } else if (platform === "win32") {
+          child_process.execSync(`start "" "${url}"`, { stdio: "ignore" })
+        }
+        console.log(`Settings page opened: ${url}`)
+        console.log("Press Ctrl+C to stop the server")
+        await new Promise(() => {})
+      } catch (err: any) {
+        console.error(`Failed to open web settings: ${err.message}`)
+        console.log("Falling back to CLI settings...")
+        await runInteractiveSettings()
+        process.exit(0)
+      }
+      break
+    }
+
+    case "settings-ui":
+    case "settings-web": {
+      const { startSettingsServer } = await import("./settings-web")
+      const port = await startSettingsServer()
+      const url = `http://127.0.0.1:${port}/settings`
+      const platform = getPlatform()
+      if (platform === "darwin") {
+        child_process.execSync(`open "${url}"`, { stdio: "ignore" })
+      } else if (platform === "linux") {
+        child_process.execSync(`xdg-open "${url}"`, { stdio: "ignore" })
+      } else if (platform === "win32") {
+        child_process.execSync(`start "" "${url}"`, { stdio: "ignore" })
+      }
+      console.log(`Settings page: ${url}`)
+      console.log("Press Ctrl+C to stop the server")
+      await new Promise(() => {})
+      break
+    }
+
+    case "settings-cli": {
       await runInteractiveSettings()
       process.exit(0)
     }

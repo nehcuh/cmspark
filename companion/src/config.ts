@@ -3,8 +3,12 @@
 import * as fs from "fs"
 import * as path from "path"
 import * as os from "os"
+import { EventEmitter } from "events"
 import { getLockPath } from "./platform"
 import { getBuiltinSkillsSrc } from "./paths"
+
+export const configEvents = new EventEmitter()
+export const CONFIG_CHANGE_EVENT = "config.change"
 
 export const DATA_DIR = process.env.CMSPARK_DATA_DIR || path.join(os.homedir(), ".cmspark-agent")
 
@@ -139,6 +143,7 @@ export function saveConfig(config: Partial<CompanionConfig>): CompanionConfig {
   }
   fs.writeFileSync(configPath, JSON.stringify(toSave, null, 2))
   cachedConfig = updated
+  configEvents.emit(CONFIG_CHANGE_EVENT, updated)
   return updated
 }
 

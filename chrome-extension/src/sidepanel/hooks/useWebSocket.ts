@@ -174,6 +174,9 @@ export function useWebSocket() {
 
         case "config.updated":
           dispatch({ type: "SET_CONFIG", config: normalizeConfig(msg.config) })
+          if (msg.source === "companion" && msg.config?.llm) {
+            dispatch({ type: "SET_COMPANION_CONFIG", config: normalizeConfig(msg.config) as any })
+          }
           break
 
         case "security.confirmation.request":

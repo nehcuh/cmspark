@@ -4,7 +4,7 @@ import { WebSocketServer, WebSocket } from "ws"
 import { execFile } from "child_process"
 import os from "os"
 import { URL } from "url"
-import { getConfig, initDataDir } from "./config"
+import { getConfig, initDataDir, configEvents, CONFIG_CHANGE_EVENT } from "./config"
 import { handleMessage } from "./message-router"
 import { ThreadManager } from "./threads/thread-manager"
 import { SkillEngine } from "./skills/skill-engine"
@@ -573,6 +573,22 @@ export async function startServer() {
   wss.on("listening", () => {
     console.log(`[cmspark-agent] Companion started on ws://127.0.0.1:${port}`)
     logger.info("server.listening", { port })
+  })
+
+  // Broadcast config changes to all connected WebSocket clients
+  configEvents.on(CONFIG_CHANGE_EVENT, (updatedConfig: any) => {
+    const message = JSON.stringify({
+      type: "config.updated",
+      config: { ...updatedConfig, llm: { ...updatedConfig.llm, api_key: "***" } },
+      source: "companion",
+    })
+    for (const client of clients) {
+      try {
+        if (client.readyState === WebSocket.OPEN) {
+          client.send(message)
+        }
+      } catch { /* ignore disconnected */ }
+    }
   })
 
   wss.on("connection", (ws) => {
