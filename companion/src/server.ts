@@ -509,6 +509,16 @@ function validateWsMessage(msg: any): WsValidationResult {
       if (typeof aid !== "string" || !aid) return { valid: false, error: "executeQuickAction requires actionId" }
       return { valid: true }
     },
+    "file.upload": (m) => {
+      if (typeof m.thread_id !== "string" || !m.thread_id) return { valid: false, error: "file.upload requires thread_id" }
+      if (!Array.isArray(m.files) || m.files.length === 0) return { valid: false, error: "files array required" }
+      for (const f of m.files) {
+        if (!f.name || !f.type || !f.content) return { valid: false, error: "每个文件需要 name, type, content 字段" }
+        if (typeof f.name !== "string" || typeof f.type !== "string" || typeof f.content !== "string") return { valid: false, error: "文件字段均为 string 类型" }
+      }
+      if (m.message !== undefined && typeof m.message !== "string") return { valid: false, error: "message 必须为字符串" }
+      return { valid: true }
+    },
   }
 
   const validator = validators[msg.type]

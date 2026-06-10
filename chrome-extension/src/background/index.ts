@@ -206,6 +206,18 @@ function setupMessageHandlers() {
         return true
       }
 
+      case "file.upload": {
+        const sent = wsClient.send({
+          type: "file.upload",
+          thread_id: message.threadId,
+          files: message.files,
+          message: message.message || "",
+          skill_ids: message.skillIds || [],
+        })
+        sendResponse({ ok: sent })
+        return true
+      }
+
       case "chat.abort":
         wsClient.send({ type: "chat.abort", thread_id: message.threadId })
         sendResponse({ ok: true })

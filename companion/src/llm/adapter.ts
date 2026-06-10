@@ -41,6 +41,7 @@ interface ChatCreateParams {
   message: string
   skillIds: string[]
   knowledgeIds?: string[]
+  fileContents?: Array<{ filename: string; content: string }>
   config: {
     base_url: string
     api_key: string
@@ -95,11 +96,18 @@ export function createToolResultMessage(threadId: string, toolCall: any, result:
 }
 
 export async function chatCreate(params: ChatCreateParams) {
-  const { threadId, message, skillIds, knowledgeIds, config, threadManager, skillEngine, historyStore, sendToExtension, executeTool, signal, skipUserMessage } = params
+  const { threadId, message, skillIds, knowledgeIds, fileContents, config, threadManager, skillEngine, historyStore, sendToExtension, executeTool, signal, skipUserMessage } = params
 
   // Create user message (skip for regenerate)
   if (!skipUserMessage) {
-    threadManager.addMessage(threadId, { thread_id: threadId, role: "user", content: message })
+    let userContent = message
+    if (fileContents?.length) {
+      const docTags = fileContents.map(f =>
+        `<document filename="${f.filename}">\n${f.content}\n</document>`
+      ).join("\n\n")
+      userContent = `${message}\n\n${docTags}`
+    }
+    threadManager.addMessage(threadId, { thread_id: threadId, role: "user", content: userContent })
   }
 
   // Activate requested skills

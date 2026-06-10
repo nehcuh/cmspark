@@ -31,6 +31,11 @@ export interface VisionConfig {
   cache_ttl_seconds: number
 }
 
+export interface FileUploadConfig {
+  max_file_size: number
+  allowed_types: string[]
+}
+
 export interface CompanionConfig {
   port: number
   llm: {
@@ -44,6 +49,7 @@ export interface CompanionConfig {
   trusted_domains: string[]
   history_retention_days: number
   security: SecurityConfig
+  file_upload?: FileUploadConfig
 }
 
 function getEnvApiKey(): string {
@@ -76,6 +82,21 @@ const defaultConfig: CompanionConfig = {
     safety_skills_enabled: ["prompt-injection-defense", "jailbreak-detection", "instruction-hierarchy"],
     auto_confirm_same_thread: false,
     confirmation_timeout_seconds: 45,
+  },
+  file_upload: {
+    max_file_size: 10 * 1024 * 1024,
+    allowed_types: [
+      "application/pdf",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "text/plain",
+      "text/markdown",
+      "text/csv",
+      "text/html",
+      "application/rtf",
+      "application/vnd.oasis.opendocument.text",
+    ],
   },
 }
 

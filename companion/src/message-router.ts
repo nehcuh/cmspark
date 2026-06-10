@@ -8,6 +8,7 @@ import type { SkillEngine } from "./skills/skill-engine"
 import type { HistoryStore } from "./history/store"
 import { getConfig, saveConfig } from "./config"
 import { chatCreate } from "./llm/adapter"
+import { parseFile } from "./file-parser"
 import { craftSkill, craftSkillToMarkdown } from "./skills/skill-craft"
 import { checkHighRiskExecution } from "./security"
 import { securityPolicy } from "./security-policy"
@@ -279,6 +280,94 @@ export async function handleMessage(
         abortControllers.delete(rest.thread_id)
       }
       return null // chatCreate handles streaming internally
+    }
+
+    case "file.upload": {
+      if (!session) return { type: "error", error: "No session" }
+
+      const { thread_id, files } = rest
+      const config = getConfig()
+      const fileConfig = config.file_upload || { max_file_size: 10 * 1024 * 1024, allowed_types: [] as string[] }
+
+      const parsedFiles: Array<{ filename: string; content: string }> = []
+
+      for (const file of files) {
+        const { name, type, content } = file
+
+        // Decode base64 and validate size
+        const decodedSize = Math.ceil(content.length * 0.75)
+        if (decodedSize > fileConfig.max_file_size) {
+          return {
+            type: "file.upload_error",
+            thread_id,
+            error: `文件 "${name}" 过大 (${Math.round(decodedSize / 1024 / 1024)}MB)，最大支持 ${Math.round(fileConfig.max_file_size / 1024 / 1024)}MB`,
+          }
+        }
+
+        // Validate file type
+        if (fileConfig.allowed_types.length > 0 && !fileConfig.allowed_types.includes(type)) {
+          return {
+            type: "file.upload_error",
+            thread_id,
+            error: `不支持的文件类型: ${type}`,
+          }
+        }
+
+        const buffer = Buffer.from(content, "base64")
+        const parseResult = await parseFile(buffer, name, type)
+
+        if (!parseResult.success) {
+          return { type: "file.upload_error", thread_id, error: parseResult.error }
+        }
+
+        parsedFiles.push({ filename: name, content: parseResult.text })
+      }
+
+      // Cancel any existing request for this thread
+      const existingUpload = abortControllers.get(thread_id)
+      if (existingUpload) {
+        existingUpload.abort()
+        abortControllers.delete(thread_id)
+      }
+      const uploadController = new AbortController()
+      abortControllers.set(thread_id, uploadController)
+
+      try {
+        const userMessage = rest.message || "请分析我上传的文件"
+        const threadForConfig = services.threadManager.get(thread_id)
+        const threadLLMOverride = threadForConfig?.config_override || {}
+        const effectiveLLMConfig = { ...config.llm }
+        for (const [key, val] of Object.entries(threadLLMOverride)) {
+          if (key in effectiveLLMConfig && val !== undefined && val !== null) {
+            (effectiveLLMConfig as any)[key] = val
+          }
+        }
+
+        await chatCreate({
+          threadId: thread_id,
+          message: userMessage,
+          fileContents: parsedFiles,
+          skillIds: rest.skill_ids || [],
+          knowledgeIds: [],
+          config: effectiveLLMConfig,
+          threadManager: services.threadManager,
+          skillEngine: services.skillEngine,
+          historyStore: services.historyStore,
+          sendToExtension: session.sendToExtension,
+          executeTool: session.executeTool,
+          signal: uploadController.signal,
+        })
+      } catch (e: any) {
+        if (e.name === "AbortError" || uploadController.signal.aborted) {
+          session.sendToExtension({ type: "chat.aborted", thread_id })
+        } else {
+          session.sendToExtension({ type: "chat.error", thread_id, error: e.message })
+        }
+      } finally {
+        abortControllers.delete(thread_id)
+      }
+
+      return { type: "file.uploaded", thread_id, files: parsedFiles.map(f => f.filename) }
     }
 
     case "chat.abort": {

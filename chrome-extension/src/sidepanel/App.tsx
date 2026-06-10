@@ -9,7 +9,7 @@ import { SettingsSlideout } from "./components/SettingsSlideout"
 import { SlashCommandPopover } from "./components/SlashCommandPopover"
 import { SkillCraftPanel } from "./components/SkillCraftPanel"
 import { AgentStoreProvider, useAgentStore } from "./store/agentStore"
-import type { ConnectionState, SkillMeta, PrivilegeMode } from "./types"
+import type { ConnectionState, SkillMeta, PrivilegeMode, FileAttachment } from "./types"
 
 // Error Boundary — catches rendering errors to prevent white screen
 class ErrorBoundary extends Component<{ children: React.ReactNode }, { error: Error | null }> {
@@ -274,10 +274,13 @@ function InputArea() {
   const [text, setText] = useState("")
   const [slashVisible, setSlashVisible] = useState(false)
   const [slashQuery, setSlashQuery] = useState("")
+  const [selectedFiles, setSelectedFiles] = useState<FileAttachment[]>([])
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const isStreaming = !!state.streamingContent
-  const canSend = !isStreaming && text.trim().length > 0 && !!state.activeThreadId && state.connectionState === "connected"
+  const hasContent = text.trim().length > 0 || selectedFiles.length > 0
+  const canSend = !isStreaming && hasContent && !!state.activeThreadId && state.connectionState === "connected"
   const needsThread = !state.activeThreadId
   const needsConnection = state.connectionState !== "connected"
 
@@ -383,24 +386,50 @@ function InputArea() {
       }
     }
 
-    chrome.runtime.sendMessage({
-      type: "chat.send",
-      threadId: state.activeThreadId,
-      message: trimmed,
-      skillIds,
-    })
-    dispatch({
-      type: "ADD_MESSAGE",
-      message: {
-        id: `${state.activeThreadId}_${Date.now()}`,
-        thread_id: state.activeThreadId!,
-        role: "user",
-        content: trimmed,
-        created_at: new Date().toISOString(),
-      },
-    })
+    // File upload path
+    if (selectedFiles.length > 0) {
+      const userMessage = trimmed || "请分析我上传的文件"
+      const fileSummary = selectedFiles.map(f => f.name).join(", ")
+
+      chrome.runtime.sendMessage({
+        type: "file.upload",
+        threadId: state.activeThreadId,
+        message: userMessage,
+        files: selectedFiles,
+        skillIds,
+      })
+      dispatch({
+        type: "ADD_MESSAGE",
+        message: {
+          id: `${state.activeThreadId}_${Date.now()}`,
+          thread_id: state.activeThreadId!,
+          role: "user",
+          content: `${userMessage}\n📎 ${fileSummary}`,
+          created_at: new Date().toISOString(),
+        },
+      })
+    } else {
+      chrome.runtime.sendMessage({
+        type: "chat.send",
+        threadId: state.activeThreadId,
+        message: trimmed,
+        skillIds,
+      })
+      dispatch({
+        type: "ADD_MESSAGE",
+        message: {
+          id: `${state.activeThreadId}_${Date.now()}`,
+          thread_id: state.activeThreadId!,
+          role: "user",
+          content: trimmed,
+          created_at: new Date().toISOString(),
+        },
+      })
+    }
+
     setText("")
     setSlashVisible(false)
+    setSelectedFiles([])
   }
 
   const handleStop = () => {
@@ -411,52 +440,152 @@ function InputArea() {
     dispatch({ type: "SET_STREAMING", content: "" })
   }
 
+  const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files
+    if (!files) return
+
+    const maxFileSize = 10 * 1024 * 1024
+    const newFiles: FileAttachment[] = []
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i]
+      if (file.size > maxFileSize) {
+        alert(`文件 "${file.name}" 超过 10MB 限制`)
+        continue
+      }
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => {
+          const result = reader.result as string
+          resolve(result.split(",")[1])
+        }
+        reader.onerror = () => reject(reader.error)
+        reader.readAsDataURL(file)
+      })
+      const ext = file.name.split(".").pop()?.toLowerCase()
+      const mimeMap: Record<string, string> = {
+        docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        pdf: "application/pdf",
+        odt: "application/vnd.oasis.opendocument.text",
+        rtf: "application/rtf",
+        csv: "text/csv",
+        md: "text/markdown",
+        txt: "text/plain",
+        html: "text/html",
+        htm: "text/html",
+      }
+      newFiles.push({
+        name: file.name,
+        type: file.type || mimeMap[ext || ""] || "application/octet-stream",
+        size: file.size,
+        content: base64,
+      })
+    }
+    setSelectedFiles(prev => [...prev, ...newFiles])
+    e.target.value = ""
+  }, [])
+
+  const removeFile = useCallback((idx: number) => {
+    setSelectedFiles(prev => prev.filter((_, i) => i !== idx))
+  }, [])
+
+  const formatFileSize = (bytes: number) => {
+    if (bytes < 1024) return `${bytes}B`
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`
+    return `${(bytes / (1024 * 1024)).toFixed(1)}MB`
+  }
+
   return (
-    <div style={styles.inputArea}>
-      <textarea
-        ref={textareaRef}
-        style={{
-          ...styles.textarea,
-          background: needsThread || needsConnection ? "#f9f9f9" : "#fff",
-        }}
-        placeholder={getPlaceholder()}
-        rows={2}
-        value={text}
-        disabled={needsThread || needsConnection}
-        onChange={handleChange}
-        onKeyDown={handleKeyDown}
+    <div style={{ borderTop: "1px solid #eee", flexShrink: 0, position: "relative" as const }}>
+      <input
+        ref={fileInputRef}
+        type="file"
+        hidden
+        multiple
+        accept=".docx,.pptx,.xlsx,.pdf,.odt,.rtf,.csv,.md,.txt,.html,.htm"
+        onChange={handleFileSelect}
       />
-      <SlashCommandPopover
-        skills={state.skills}
-        searchText={slashQuery}
-        visible={slashVisible}
-        anchorEl={textareaRef.current}
-        onSelect={handleSlashSelect}
-        onDismiss={() => setSlashVisible(false)}
-      />
-      {isStreaming ? (
-        <button
-          style={styles.stopBtn}
-          onClick={handleStop}
-          title="停止生成"
-        >
-          ■
-        </button>
-      ) : (
-        <button
-          style={{
-            ...styles.sendBtn,
-            opacity: canSend ? 1 : 0.4,
-            cursor: canSend ? "pointer" : "not-allowed",
-          }}
-          onClick={handleSend}
-          disabled={!canSend}
-          title={needsThread ? "请先创建线程" : needsConnection ? "Companion 未连接" : "发送"}
-        >
-          ▶
-        </button>
+      {selectedFiles.length > 0 && (
+        <div style={{
+          display: "flex", flexWrap: "wrap", gap: 4,
+          padding: "6px 12px 0",
+        }}>
+          {selectedFiles.map((file, idx) => (
+            <span key={idx} style={{
+              display: "inline-flex", alignItems: "center", gap: 4,
+              padding: "2px 8px", background: "#f0f4ff", borderRadius: 12,
+              fontSize: 11, color: "#4A90D9", maxWidth: 200,
+              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+            }}>
+              {file.name} ({formatFileSize(file.size)})
+              <span
+                role="button"
+                onClick={() => removeFile(idx)}
+                style={{ cursor: "pointer", marginLeft: 2, fontWeight: "bold" }}
+              >
+                {"×"}
+              </span>
+            </span>
+          ))}
+        </div>
       )}
-      <button style={styles.settingsBtn} onClick={() => dispatch({ type: "TOGGLE_SETTINGS" })} title="设置">⚙</button>
+      <div style={styles.inputArea}>
+        <textarea
+          ref={textareaRef}
+          style={{
+            ...styles.textarea,
+            background: needsThread || needsConnection ? "#f9f9f9" : "#fff",
+          }}
+          placeholder={getPlaceholder()}
+          rows={2}
+          value={text}
+          disabled={needsThread || needsConnection}
+          onChange={handleChange}
+          onKeyDown={handleKeyDown}
+        />
+        <SlashCommandPopover
+          skills={state.skills}
+          searchText={slashQuery}
+          visible={slashVisible}
+          anchorEl={textareaRef.current}
+          onSelect={handleSlashSelect}
+          onDismiss={() => setSlashVisible(false)}
+        />
+        {!isStreaming && (
+          <button
+            style={styles.attachBtn}
+            onClick={() => fileInputRef.current?.click()}
+            disabled={needsThread || needsConnection}
+            title="上传文件"
+          >
+            {"📎"}
+          </button>
+        )}
+        {isStreaming ? (
+          <button
+            style={styles.stopBtn}
+            onClick={handleStop}
+            title="停止生成"
+          >
+            ■
+          </button>
+        ) : (
+          <button
+            style={{
+              ...styles.sendBtn,
+              opacity: canSend ? 1 : 0.4,
+              cursor: canSend ? "pointer" : "not-allowed",
+            }}
+            onClick={handleSend}
+            disabled={!canSend}
+            title={needsThread ? "请先创建线程" : needsConnection ? "Companion 未连接" : "发送"}
+          >
+            ▶
+          </button>
+        )}
+        <button style={styles.settingsBtn} onClick={() => dispatch({ type: "TOGGLE_SETTINGS" })} title="设置">⚙</button>
+      </div>
     </div>
   )
 }
@@ -590,6 +719,20 @@ const styles: Record<string, React.CSSProperties> = {
     outline: "none",
     minHeight: 36,
     maxHeight: 100,
+  },
+  attachBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 6,
+    border: "1px solid #ddd",
+    background: "#fff",
+    cursor: "pointer",
+    fontSize: 14,
+    flexShrink: 0,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 0,
   },
   sendBtn: {
     width: 32,

@@ -87,6 +87,13 @@ export interface ToolResult {
   error?: string
 }
 
+export interface FileAttachment {
+  name: string
+  type: string       // MIME type
+  size: number
+  content: string    // base64 encoded
+}
+
 export interface SkillMeta {
   name: string
   description: string
