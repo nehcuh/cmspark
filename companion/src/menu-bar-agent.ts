@@ -4,9 +4,9 @@
 // Delegates: tray UI to UnifiedTray backend (Swift / systray2 / readline).
 
 import * as child_process from "child_process"
+import * as net from "net"
 import * as path from "path"
 import * as fs from "fs"
-import WebSocket from "ws"
 
 import { isProcessRunning, readPidFile } from "./daemon"
 import { getConfigDir, getPidFilePath } from "./config"
@@ -47,7 +47,7 @@ function safeNotify(options: { title?: string; message?: string; sound?: boolean
 
 const WS_PORT = 23401
 const WS_HOST = "127.0.0.1"
-const POLL_INTERVAL_MS = 3000
+const POLL_INTERVAL_MS = 10000
 const STATUS_FILE = path.join(getConfigDir(), ".menu-bar-status.json")
 
 // ---------------------------------------------------------------------------
@@ -89,29 +89,38 @@ function isCompanionProcessRunning(): boolean {
   return isProcessRunning(pid)
 }
 
-function checkWsConnectivity(): Promise<boolean> {
+/** Lightweight TCP port check — no WS handshake overhead */
+function checkPortReachable(): Promise<boolean> {
   return new Promise((resolve) => {
-    const ws = new WebSocket(`ws://${WS_HOST}:${WS_PORT}`, { handshakeTimeout: 2000 })
-    let settled = false
-
-    const settle = (result: boolean) => {
-      if (settled) return
-      settled = true
-      try { ws.terminate() } catch { /* ignore */ }
-      resolve(result)
-    }
-
-    ws.on("open", () => settle(true))
-    ws.on("error", () => settle(false))
-    ws.on("close", () => settle(false))
-    setTimeout(() => settle(false), 2500)
+    const socket = new net.Socket()
+    const timer = setTimeout(() => {
+      socket.destroy()
+      resolve(false)
+    }, 2000)
+    socket.connect(WS_PORT, WS_HOST, () => {
+      clearTimeout(timer)
+      socket.destroy()
+      resolve(true)
+    })
+    socket.on("error", () => {
+      clearTimeout(timer)
+      socket.destroy()
+      resolve(false)
+    })
   })
 }
 
 async function pollCompanionStatus(): Promise<void> {
   const pid = getCompanionPid()
   const processRunning = isCompanionProcessRunning()
-  const wsReachable = await checkWsConnectivity()
+
+  // Fast path: if our persistent client is connected, server is alive — skip port check
+  let wsReachable: boolean
+  if (companionClient?.connectionState === "connected") {
+    wsReachable = true
+  } else {
+    wsReachable = await checkPortReachable()
+  }
 
   const newStatus: CompanionStatus = processRunning && wsReachable ? "running" : "stopped"
   const changed = state.companionStatus !== newStatus
