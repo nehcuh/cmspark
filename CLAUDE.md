@@ -81,6 +81,7 @@ Chrome Extension (Plasmo + React)  ←→  WebSocket (ws://127.0.0.1:23401)  ←
 - Companion 端口占用: `npx cmspark-agent daemon stop` 或 `pkill -f "dist/index.js"` 后重启
 - Extension 加载失败: 确认 `chrome-extension/build/chrome-mv3-prod/` 存在（需先运行 `npm run build`）
 - Tray 不显示: 检查 Swift 编译产物（macOS）或 systray2 安装（Linux）
+- PDF 扫描件渲染不可用: `canvas` native 模块缺失时不影响文本 PDF 解析，扫描件会优雅降级输出提示。打包分发时需包含 `canvas` 二进制（macOS/Linux/Windows 均有预编译）
 
 ## Related Docs
 

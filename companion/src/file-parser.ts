@@ -130,6 +130,45 @@ function extractEmbeddedImages(buffer: Buffer, filename: string): EmbeddedImage[
   return images
 }
 
+function cleanHeaderFooter(text: string): string {
+  const lines = text.split("\n")
+  const lineFreq = new Map<string, number>()
+
+  for (const line of lines) {
+    const trimmed = line.trim()
+    if (!trimmed) continue
+    lineFreq.set(trimmed, (lineFreq.get(trimmed) || 0) + 1)
+  }
+
+  const highFreqLines = new Set<string>()
+  for (const [line, count] of lineFreq) {
+    if (count >= 3) highFreqLines.add(line)
+  }
+
+  const cleaned: string[] = []
+  for (const line of lines) {
+    const trimmed = line.trim()
+
+    if (!trimmed) { cleaned.push(line); continue }
+
+    // Page number only
+    if (/^\d+$/.test(trimmed)) continue
+
+    // 第 X 页 / 共 Y 页
+    if (/^第\s*\d+\s*页\s*[/／]\s*共\s*\d+\s*页/.test(trimmed)) continue
+
+    // Page X of Y
+    if (/^Page\s+\d+\s+of\s+\d+/i.test(trimmed)) continue
+
+    // Repeated header/footer
+    if (highFreqLines.has(trimmed)) continue
+
+    cleaned.push(line)
+  }
+
+  return cleaned.join("\n")
+}
+
 async function parseOfficeFile(buffer: Buffer, filename: string, mimeType: string): Promise<FileParseResponse> {
   const officeparser = await import("officeparser")
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-upload-"))
@@ -137,10 +176,12 @@ async function parseOfficeFile(buffer: Buffer, filename: string, mimeType: strin
   fs.writeFileSync(tmpPath, buffer)
 
   try {
-    const [text, embeddedImages] = await Promise.all([
+    const [rawText, embeddedImages] = await Promise.all([
       officeparser.parseOfficeAsync(tmpPath),
       Promise.resolve(extractEmbeddedImages(buffer, filename)),
     ])
+
+    const text = cleanHeaderFooter(rawText)
 
     const result: FileParseResult = {
       success: true,

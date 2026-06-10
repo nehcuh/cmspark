@@ -51,6 +51,8 @@ interface InputAreaProps {
 export function InputArea({ onSend, onAbort, isStreaming, sendShortcut, placeholder }: InputAreaProps) {
   const [input, setInput] = useState("")
   const [selectedFiles, setSelectedFiles] = useState<FileAttachment[]>([])
+  const [fileError, setFileError] = useState("")
+  const [isDragOver, setIsDragOver] = useState(false)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -79,19 +81,14 @@ export function InputArea({ onSend, onAbort, isStreaming, sendShortcut, placehol
     }
   }, [handleSend, sendShortcut])
 
-  const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files
-    if (!files) return
-
+  const processFiles = useCallback(async (fileList: FileList | File[]) => {
     const newFiles: FileAttachment[] = []
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i]
-
+    for (let i = 0; i < fileList.length; i++) {
+      const file = fileList[i]
       if (file.size > MAX_FILE_SIZE) {
-        alert(`文件 "${file.name}" 超过 10MB 限制`)
+        setFileError(`文件 "${file.name}" 超过 10MB 限制`)
         continue
       }
-
       const base64 = await fileToBase64(file)
       newFiles.push({
         name: file.name,
@@ -100,10 +97,36 @@ export function InputArea({ onSend, onAbort, isStreaming, sendShortcut, placehol
         content: base64,
       })
     }
-
     setSelectedFiles(prev => [...prev, ...newFiles])
-    e.target.value = ""
   }, [])
+
+  const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) {
+      await processFiles(e.target.files)
+    }
+    e.target.value = ""
+  }, [processFiles])
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragOver(true)
+  }, [])
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragOver(false)
+  }, [])
+
+  const handleDrop = useCallback(async (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragOver(false)
+    if (e.dataTransfer.files) {
+      await processFiles(e.dataTransfer.files)
+    }
+  }, [processFiles])
 
   const removeFile = useCallback((idx: number) => {
     setSelectedFiles(prev => prev.filter((_, i) => i !== idx))
@@ -112,10 +135,33 @@ export function InputArea({ onSend, onAbort, isStreaming, sendShortcut, placehol
   const hasContent = input.trim() || selectedFiles.length > 0
 
   return (
-    <div style={{
-      borderTop: "1px solid #e0e0e0",
-      background: "#fff",
-    }}>
+    <div
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+      style={{
+        borderTop: "1px solid #e0e0e0",
+        background: isDragOver ? "#f0f7ff" : "#fff",
+        transition: "background 0.15s ease",
+      }}
+    >
+      {isDragOver && (
+        <div style={{
+          padding: "12px", textAlign: "center", color: "#4A90D9",
+          fontSize: 12, fontWeight: 500,
+        }}>
+          释放文件以上传
+        </div>
+      )}
+      {fileError && (
+        <div style={{
+          padding: "4px 12px", background: "#FFF0F0", color: "#F44336",
+          fontSize: 11, display: "flex", alignItems: "center", gap: 6,
+        }}>
+          <span>{fileError}</span>
+          <span role="button" style={{ cursor: "pointer", fontWeight: "bold" }} onClick={() => setFileError("")}>×</span>
+        </div>
+      )}
       {selectedFiles.length > 0 && (
         <div style={{
           display: "flex", flexWrap: "wrap", gap: 4,
@@ -170,7 +216,7 @@ export function InputArea({ onSend, onAbort, isStreaming, sendShortcut, placehol
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder={placeholder || (isStreaming ? "Agent 正在处理..." : "输入任务... (Enter 发送)")}
+          placeholder={placeholder || (isStreaming ? "Agent 正在处理..." : "输入任务... (Enter 发送，可拖拽文件上传)")}
           disabled={isStreaming}
           rows={1}
           style={{
