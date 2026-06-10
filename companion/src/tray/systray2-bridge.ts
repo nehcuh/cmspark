@@ -128,21 +128,25 @@ export class SysTray2Adapter implements UnifiedTray {
   }
 
   updateStatus(status: "running" | "stopped" | "unknown", _wsConnected: boolean, _pid: number | null): void {
+    if (this.status === status) return
     this.status = status
     this.rebuild()
   }
 
   updateAutostart(enabled: boolean): void {
+    if (this.autostartEnabled === enabled) return
     this.autostartEnabled = enabled
     this.rebuild()
   }
 
   setQuickActions(actions: QuickActionItem[]): void {
+    if (JSON.stringify(this.quickActions) === JSON.stringify(actions)) return
     this.quickActions = actions
     this.rebuild()
   }
 
   setRecentThreads(threads: RecentThreadItem[]): void {
+    if (JSON.stringify(this.recentThreads) === JSON.stringify(threads)) return
     this.recentThreads = threads
     this.rebuild()
   }
