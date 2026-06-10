@@ -85,6 +85,15 @@ function init() {
   wsClient.connect()
   keepAlive.start(() => wsClient.checkAndReconnect())
   setupMessageHandlers()
+
+  // Long-lived port from sidepanel — keeps the service worker alive while sidepanel is open
+  chrome.runtime.onConnect.addListener((port) => {
+    if (port.name !== "cmspark-sidepanel") return
+    logToCompanion("info", "extension.sidepanel_port_connected", {})
+    port.onDisconnect.addListener(() => {
+      logToCompanion("info", "extension.sidepanel_port_disconnected", {})
+    })
+  })
 }
 
 function handleStateChange(state: "connected" | "connecting" | "disconnected") {
@@ -202,6 +211,9 @@ function setupMessageHandlers() {
           message: message.message,
           skill_ids: message.skillIds,
         })
+        if (!sent) {
+          chrome.runtime.sendMessage({ type: "error", error: "Companion 未连接，请检查 Companion 是否已启动" })
+        }
         sendResponse({ ok: sent })
         return true
       }
@@ -214,6 +226,9 @@ function setupMessageHandlers() {
           message: message.message || "",
           skill_ids: message.skillIds || [],
         })
+        if (!sent) {
+          chrome.runtime.sendMessage({ type: "error", error: "Companion 未连接，请检查 Companion 是否已启动" })
+        }
         sendResponse({ ok: sent })
         return true
       }
@@ -272,10 +287,14 @@ function setupMessageHandlers() {
         sendResponse({ ok: true })
         return true
 
-      case "thread.fork":
-        wsClient.send({ type: "thread.fork", thread_id: message.thread_id, message_id: message.message_id })
-        sendResponse({ ok: true })
+      case "thread.fork": {
+        const sent = wsClient.send({ type: "thread.fork", thread_id: message.thread_id, message_id: message.message_id })
+        if (!sent) {
+          chrome.runtime.sendMessage({ type: "error", error: "Companion 未连接，无法创建分支" })
+        }
+        sendResponse({ ok: sent })
         return true
+      }
 
       case "thread.create":
         wsClient.send({ type: "thread.create", alias: message.alias || "", id: message.id })

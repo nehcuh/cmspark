@@ -21,9 +21,6 @@ export function requestInitialSidePanelData(
   sendMessage({ type: "skill.list" })
   sendMessage({ type: "config.get" })
   return true
-  sendMessage({ type: "thread.list" })
-  sendMessage({ type: "skill.list" })
-  return true
 }
 
 export function normalizeConfig(config: any): Partial<LLMConfig> {
@@ -86,6 +83,7 @@ export function useWebSocket() {
           const content = streamingRef.current
           streamingRef.current = ""
           dispatch({ type: "SET_STREAMING", content: "" })
+          dispatch({ type: "SET_PROCESSING", isProcessing: false })
           if (activeThreadRef.current && content) {
             dispatch({
               type: "ADD_MESSAGE",
@@ -104,6 +102,7 @@ export function useWebSocket() {
         case "chat.aborted":
           streamingRef.current = ""
           dispatch({ type: "SET_STREAMING", content: "" })
+          dispatch({ type: "SET_PROCESSING", isProcessing: false })
           dispatch({
             type: "ADD_MESSAGE",
             message: {
@@ -134,6 +133,7 @@ export function useWebSocket() {
         }
 
         case "chat.error":
+          dispatch({ type: "SET_PROCESSING", isProcessing: false })
           dispatch({
             type: "ADD_MESSAGE",
             message: {
@@ -274,6 +274,7 @@ export function useWebSocket() {
           dispatch({ type: "UPSERT_THREAD", thread: msg.thread })
           dispatch({ type: "SET_ACTIVE_THREAD", threadId: msg.thread.id })
           dispatch({ type: "SET_MESSAGES", messages: msg.messages || [] })
+          dispatch({ type: "SET_PROCESSING", isProcessing: false })
           break
         }
 
@@ -307,6 +308,7 @@ export function useWebSocket() {
           dispatch({ type: "SET_MESSAGES", messages: [] })
           // Only auto-send message if prompt is non-empty
           if (prompt) {
+            dispatch({ type: "SET_PROCESSING", isProcessing: true })
             dispatch({
               type: "ADD_MESSAGE",
               message: {
@@ -423,10 +425,14 @@ export function useWebSocket() {
     }
     document.addEventListener("visibilitychange", handleVisibilityChange)
 
+    // Long-lived port connection to keep the service worker alive while sidepanel is open
+    const port = chrome.runtime.connect({ name: "cmspark-sidepanel" })
+
     return () => {
       clearInterval(interval)
       chrome.runtime.onMessage.removeListener(messageListener)
       document.removeEventListener("visibilitychange", handleVisibilityChange)
+      port.disconnect()
     }
   }, [dispatch])
 

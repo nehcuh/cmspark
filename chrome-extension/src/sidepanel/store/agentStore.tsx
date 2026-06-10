@@ -28,6 +28,7 @@ export interface AgentState {
   privilegeMode: PrivilegeMode
   securityAuditLog: SecurityAuditEntry[]
   companionConfig: LLMConfig | null
+  isProcessing: boolean
 }
 
 export type AgentAction =
@@ -64,6 +65,7 @@ export type AgentAction =
   | { type: "SET_PRIVILEGE_MODE"; mode: PrivilegeMode }
   | { type: "ADD_SECURITY_AUDIT"; entry: SecurityAuditEntry }
   | { type: "SET_COMPANION_CONFIG"; config: LLMConfig }
+  | { type: "SET_PROCESSING"; isProcessing: boolean }
 export const initialState: AgentState = {
   connectionState: "disconnected",
   threads: [],
@@ -98,6 +100,7 @@ export const initialState: AgentState = {
   privilegeMode: "standard",
   securityAuditLog: [],
   companionConfig: null,
+  isProcessing: false,
 }
 
 export function agentReducer(state: AgentState, action: AgentAction): AgentState {
@@ -126,6 +129,7 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         activeThreadId: action.threadId,
         messages: [],
         streamingContent: "",
+        isProcessing: false,
         pinnedTabIds: activeThread?.pinned_tabs || [],
         activeSkillIds: activeThread?.active_skill_ids || [],
         skillSelectionMode: activeThread?.skill_selection_mode || "auto",
@@ -195,6 +199,7 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         activeThreadId: action.thread.id,
         messages: [],
         streamingContent: "",
+        isProcessing: false,
         pinnedTabIds: action.thread.pinned_tabs || [],
       }
     case "REMOVE_THREAD": {
@@ -272,6 +277,8 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       return { ...state, securityAuditLog: [...state.securityAuditLog.slice(-199), action.entry] }
     case "SET_COMPANION_CONFIG":
       return { ...state, companionConfig: action.config }
+    case "SET_PROCESSING":
+      return { ...state, isProcessing: action.isProcessing }
     default:
       return state
   }

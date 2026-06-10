@@ -78,6 +78,13 @@ export class WSClient {
       this.ws.send(JSON.stringify(data))
       return true
     }
+    // Trigger reconnect if connection appears dead
+    if (this.ws && this.ws.readyState !== WebSocket.CONNECTING) {
+      this.ws.close()
+      this.ws = null
+      this.setState("disconnected")
+      this.connect()
+    }
     return false
   }
 

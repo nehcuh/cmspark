@@ -399,6 +399,7 @@ function InputArea() {
         files: selectedFiles,
         skillIds,
       })
+      dispatch({ type: "SET_PROCESSING", isProcessing: true })
       dispatch({
         type: "ADD_MESSAGE",
         message: {
@@ -416,6 +417,7 @@ function InputArea() {
         message: trimmed,
         skillIds,
       })
+      dispatch({ type: "SET_PROCESSING", isProcessing: true })
       dispatch({
         type: "ADD_MESSAGE",
         message: {
@@ -439,6 +441,7 @@ function InputArea() {
       threadId: state.activeThreadId,
     })
     dispatch({ type: "SET_STREAMING", content: "" })
+    dispatch({ type: "SET_PROCESSING", isProcessing: false })
   }
 
   const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {

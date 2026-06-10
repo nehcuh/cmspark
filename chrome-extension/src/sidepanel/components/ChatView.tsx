@@ -11,24 +11,23 @@ const TOOL_RESULT_PREVIEW = 200
 
 export function ChatView() {
   const { state } = useAgentStore()
-  const { messages, streamingContent, activeThreadId } = state
+  const { messages, streamingContent, activeThreadId, isProcessing } = state
   const containerRef = useRef<HTMLDivElement>(null)
   const lastMessageCountRef = useRef(messages.length)
 
-  // Infer AI processing state from message history (no extra state needed)
+  // Show processing label only when there is an active request
   const processingLabel = (() => {
     if (streamingContent) return null
+    if (!isProcessing) return null
     const last = messages[messages.length - 1]
-    if (!last) return null
-    if (last.role === "user") return "🤔 思考中"
-    if (last.role === "assistant" && last.tool_calls) {
+    if (last?.role === "assistant" && last.tool_calls) {
       const running = last.tool_calls.filter((tc: any) => tc.status === "running")
       if (running.length > 0) {
         const names = running.map((tc: any) => tc.tool_name).join(", ")
         return `⚙️ 执行中: ${names}`
       }
     }
-    return null
+    return "🤔 思考中"
   })()
 
   // Auto-scroll to bottom when new messages arrive or streaming updates

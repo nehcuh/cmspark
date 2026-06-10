@@ -3,17 +3,18 @@
 ## Session Handoff
 
 <!-- handoff:start -->
-### 2026-06-09 (18:00)
-- Chrome extension fixes (4 issues):
-  - Button hover tooltips added
-  - `thread.fork` handler added to background (create branch now works)
-  - Thread deletion field mismatch fixed (`thread_id` vs `threadId`) + optimistic UI removal
-  - Auto-scroll to bottom + collapsible long content (>3000 chars) in ChatView
-- Windows companion fixes (2 issues):
-  - systray2 `internalIdMap` stale after `update-menu` → fixed by kill+recreate on rebuild
-  - Tray menu fully localized to Chinese with section headers
-  - Settings open: `explorer` command instead of unreliable `start`
-- Next: Runtime test of thread fork + delete + Windows tray menu
+### 2026-06-10 (16:30)
+- Windows tray stability — fixed 3 root causes:
+  - systray2 icon: pass file path (not raw base64) because resolveIcon() checks fs.pathExists()
+  - tray rebuild dedup: updateStatus/updateAutostart/setQuickActions/setRecentThreads now skip rebuild when value unchanged (was killing tray every 3s poll)
+  - onExit recovery: tray process exit no longer kills Node — retries after 3s
+- Global crash logger: uncaughtException/unhandledRejection write to ~/.cmspark-agent/logs/crash.log
+- Cross-platform build: replaced `chmod` with Node.js one-liner in package.json
+- NSIS installer: shortcuts now use cmspark.ico (generated from app icon)
+- File attachment research: saved to project memory (officeparser/markitdown/Docling, phased plan)
+- **Unpushed**: `e05bce5` — git push failed (SSL error), needs manual push
+- Next: Push remaining commit → Windows rebuild → verify tray stays stable
+
 ### 2026-06-09 (session-end)
 - Simplified quick actions: replaced direct tool execution with delegation to Chrome extension via broadcast
 - server.ts: added `broadcast` fn to session context for cross-client messaging
