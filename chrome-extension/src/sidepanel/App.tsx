@@ -529,15 +529,20 @@ function InputArea() {
               display: "inline-flex", alignItems: "center", gap: 4,
               padding: "2px 8px", background: "#f0f4ff", borderRadius: 12,
               fontSize: 11, color: "#4A90D9", maxWidth: 200,
-              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
             }}>
-              {file.name} ({formatFileSize(file.size)})
+              {/* Text truncates; × is always visible with flexShrink:0 */}
+              <span style={{
+                overflow: "hidden", textOverflow: "ellipsis",
+                whiteSpace: "nowrap", minWidth: 0,
+              }}>
+                {file.name} ({formatFileSize(file.size)})
+              </span>
               <span
                 role="button"
                 onClick={() => removeFile(idx)}
-                style={{ cursor: "pointer", marginLeft: 2, fontWeight: "bold" }}
+                style={{ cursor: "pointer", marginLeft: 2, fontWeight: "bold", flexShrink: 0 }}
               >
-                {"×"}
+                {"\u00d7"}
               </span>
             </span>
           ))}
