@@ -544,7 +544,9 @@ input:focus{border-color:#4A90D9}
       if(d.ok){
         savedFlash.classList.add("show");
         setTimeout(function(){savedFlash.classList.remove("show")},1500);
-        if(d.llm&&d.llm.api_key)apiKeyEl.value=d.llm.api_key;
+        // Do NOT replace the api_key input with the masked value — that would
+        // overwrite the user's plaintext key with '****', making it look lost.
+        // The key is safely stored; the field retains what the user typed.
       }else{showResult(d.error||"Save failed",false)}
     }).catch(function(e){showResult("Save failed: "+e.message,false)});
   };

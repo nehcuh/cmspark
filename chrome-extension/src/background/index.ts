@@ -23,6 +23,10 @@ interface ExtensionLLMConfig {
   context_window?: number
 }
 let extensionLLMConfig: ExtensionLLMConfig | null = null
+// Timestamp of the last config.set sent BY the extension.
+// Used to avoid clearing extensionLLMConfig when we receive the companion's
+// config.updated echo of our own config.set (within a 3-second window).
+let extensionConfigSetAt = 0
 
 function loadExtensionLLMConfig() {
   chrome.storage.local.get("extensionLLMConfig", (result) => {
@@ -183,6 +187,18 @@ async function handleCompanionMessage(msg: any) {
     return
   }
 
+  // When the companion's config changes from an EXTERNAL source (tray/web settings),
+  // invalidate our cached key so the companion's updated config is used for chats.
+  // Guard: if the extension itself just sent config.set within 3s, skip the clear
+  // to avoid erasing the key we just saved (config.updated is broadcast to all clients).
+  if (msg.type === "config.updated") {
+    const msSinceOwnSave = Date.now() - extensionConfigSetAt
+    if (msSinceOwnSave > 3000) {
+      extensionLLMConfig = null
+      chrome.storage.local.remove("extensionLLMConfig")
+    }
+  }
+
   if (msg.type === "security.config") {
     if (typeof msg.secret === "string" && msg.secret) {
       setSecuritySecret(msg.secret)
@@ -282,6 +298,7 @@ function setupMessageHandlers() {
       case "config.set":
         // Persist the API key locally before forwarding to companion
         saveExtensionLLMConfig(message.config || {})
+        extensionConfigSetAt = Date.now()  // mark that WE initiated this change
         wsClient.send({ type: "config.set", config: message.config })
         sendResponse({ ok: true })
         return true
