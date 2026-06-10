@@ -12,6 +12,42 @@ let browserBridge: BrowserBridge
 let keepAlive: KeepAlive
 type LogLevel = "debug" | "info" | "warn" | "error"
 
+// Extension's own LLM config, stored separately from companion's config.
+// Takes priority over the companion/tray config when sending chat requests.
+// Persisted in chrome.storage.local so it survives service-worker restarts.
+interface ExtensionLLMConfig {
+  api_key:        string
+  base_url:       string
+  model_name:     string
+  temperature?:   number
+  context_window?: number
+}
+let extensionLLMConfig: ExtensionLLMConfig | null = null
+
+function loadExtensionLLMConfig() {
+  chrome.storage.local.get("extensionLLMConfig", (result) => {
+    if (result.extensionLLMConfig?.api_key) {
+      extensionLLMConfig = result.extensionLLMConfig as ExtensionLLMConfig
+    }
+  })
+}
+
+/** Persist extension LLM config when user saves settings. */
+function saveExtensionLLMConfig(cfg: Record<string, unknown>) {
+  // Support both flat (legacy settings.set) and nested (config.set) formats
+  const llm = (cfg.llm as Record<string, unknown> | undefined) ?? cfg
+  const apiKey = llm.api_key as string | undefined
+  if (!apiKey || apiKey === "***") return  // Don't save masked or empty keys
+  extensionLLMConfig = {
+    api_key:        apiKey,
+    base_url:       String(llm.base_url ?? extensionLLMConfig?.base_url ?? ""),
+    model_name:     String(llm.model_name ?? extensionLLMConfig?.model_name ?? ""),
+    temperature:    llm.temperature !== undefined ? Number(llm.temperature) : extensionLLMConfig?.temperature,
+    context_window: llm.context_window !== undefined ? Number(llm.context_window) : extensionLLMConfig?.context_window,
+  }
+  chrome.storage.local.set({ extensionLLMConfig })
+}
+
 const NOTIFICATION_ID = "cmspark-companion-disconnected"
 const DISCONNECT_DEBOUNCE_MS = 3000
 let disconnectNotificationTimer: ReturnType<typeof setTimeout> | null = null
@@ -73,6 +109,7 @@ function cancelDisconnectNotification() {
 }
 
 function init() {
+  loadExtensionLLMConfig()
   browserBridge = new BrowserBridge(pageSanitizer)
   keepAlive = new KeepAlive()
 
@@ -205,11 +242,15 @@ function setupMessageHandlers() {
         return true
 
       case "chat.send": {
+        // Include the extension's locally-stored LLM config so the companion
+        // can prefer it over its own (tray-configured) stored config.
+        const llmOverride = extensionLLMConfig?.api_key ? extensionLLMConfig : null
         const sent = wsClient.send({
           type: "chat.create",
           thread_id: message.threadId,
           message: message.message,
           skill_ids: message.skillIds,
+          llm_override: llmOverride,
         })
         if (!sent) {
           chrome.runtime.sendMessage({ type: "error", error: "Companion 未连接，请检查 Companion 是否已启动" })
@@ -239,14 +280,22 @@ function setupMessageHandlers() {
         return true
 
       case "config.set":
+        // Persist the API key locally before forwarding to companion
+        saveExtensionLLMConfig(message.config || {})
         wsClient.send({ type: "config.set", config: message.config })
         sendResponse({ ok: true })
         return true
 
-      case "config.test":
-        wsClient.send({ type: "config.test" })
+      case "config.test": {
+        // message.llmOverride: config from the extension's settings UI (before saving)
+        // Falls back to extensionLLMConfig (last saved), then to companion's stored config
+        const llmOverride = (message.llmOverride?.api_key && message.llmOverride.api_key !== "***")
+          ? message.llmOverride
+          : extensionLLMConfig?.api_key ? extensionLLMConfig : null
+        wsClient.send({ type: "config.test", llm_override: llmOverride })
         sendResponse({ ok: true })
         return true
+      }
 
       case "config.get":
         wsClient.send({ type: "config.get" })

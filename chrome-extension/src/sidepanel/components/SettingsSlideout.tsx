@@ -47,7 +47,13 @@ export function SettingsSlideout() {
 
   const handleTest = () => {
     dispatch({ type: "SET_TEST_RESULT", result: "测试中..." })
-    chrome.runtime.sendMessage({ type: "config.test" })
+    // Pass the API key currently shown in the UI so the test reflects what the
+    // user sees — even before they click Save. Falls back to the last saved key
+    // in the background if config.api_key is empty.
+    const llmOverride = (config.api_key && config.api_key !== "***")
+      ? { api_key: config.api_key, base_url: config.base_url, model_name: config.model_name }
+      : null
+    chrome.runtime.sendMessage({ type: "config.test", llmOverride })
   }
 
   const handlePrivilegeChange = (mode: PrivilegeMode) => {

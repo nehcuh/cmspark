@@ -102,13 +102,29 @@ export async function handleMessage(
     case "config.test":
     case "settings.test": {
       const config = getConfig()
-      if (!config.llm.api_key || config.llm.api_key === "sk-placeholder") {
+      // If the caller (extension UI) sends llm_override with a valid API key, test that
+      // config; otherwise fall back to the companion's stored config (set via tray).
+      const override = rest.llm_override as Record<string, unknown> | undefined
+      const hasOverrideKey = !!(override?.api_key && override.api_key !== "***")
+      const testConfig = hasOverrideKey
+        ? {
+            api_key:        String(override!.api_key),
+            base_url:       String(override!.base_url ?? config.llm.base_url),
+            model_name:     String(override!.model_name ?? config.llm.model_name),
+          }
+        : {
+            api_key:    config.llm.api_key,
+            base_url:   config.llm.base_url,
+            model_name: config.llm.model_name,
+          }
+
+      if (!testConfig.api_key || testConfig.api_key === "**************") {
         return { type: "config.testResult", ok: false, error: "API Key 未配置" }
       }
       try {
         const client = new OpenAI({
-          baseURL: config.llm.base_url,
-          apiKey: config.llm.api_key,
+          baseURL: testConfig.base_url,
+          apiKey:  testConfig.api_key,
           timeout: 10000,
           maxRetries: 0,
         })
@@ -203,13 +219,27 @@ export async function handleMessage(
       if (!session) return { type: "error", error: "No session" }
       const config = getConfig()
 
-      // Merge thread-level config_override with global config
+      // Merge priority: (1) llm_override from extension UI  > (2) thread config_override > (3) global config
+      // llm_override is sent by the Chrome extension with its locally-stored API key,
+      // allowing per-session credentials that take priority over the companion/tray config.
       const threadForConfig = services.threadManager.get(rest.thread_id)
       const threadLLMOverride = threadForConfig?.config_override || {}
       const effectiveLLMConfig = { ...config.llm }
+
+      // (2) apply thread-level override
       for (const [key, val] of Object.entries(threadLLMOverride)) {
         if (key in effectiveLLMConfig && val !== undefined && val !== null) {
           (effectiveLLMConfig as any)[key] = val
+        }
+      }
+
+      // (1) apply extension-level llm_override if it carries a valid API key
+      const msgOverride = rest.llm_override as Record<string, unknown> | undefined
+      if (msgOverride?.api_key && msgOverride.api_key !== "***") {
+        for (const k of ["api_key", "base_url", "model_name", "temperature", "context_window"] as const) {
+          if (msgOverride[k] !== undefined && msgOverride[k] !== null) {
+            (effectiveLLMConfig as any)[k] = msgOverride[k]
+          }
         }
       }
 
