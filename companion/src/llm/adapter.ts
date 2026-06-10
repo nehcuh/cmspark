@@ -102,9 +102,13 @@ export async function chatCreate(params: ChatCreateParams) {
   if (!skipUserMessage) {
     let userContent = message
     if (fileContents?.length) {
-      const docTags = fileContents.map(f =>
-        `<document filename="${f.filename}">\n${f.content}\n</document>`
-      ).join("\n\n")
+      const MAX_DOC_CHARS = 50000
+      const docTags = fileContents.map(f => {
+        const truncated = f.content.length > MAX_DOC_CHARS
+          ? f.content.substring(0, MAX_DOC_CHARS) + `\n...(truncated, original ${f.content.length} chars)`
+          : f.content
+        return `<document filename="${f.filename}">\n${truncated}\n</document>`
+      }).join("\n\n")
       userContent = `${message}\n\n${docTags}`
     }
     threadManager.addMessage(threadId, { thread_id: threadId, role: "user", content: userContent })

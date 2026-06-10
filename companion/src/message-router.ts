@@ -314,7 +314,12 @@ export async function handleMessage(
         }
 
         const buffer = Buffer.from(content, "base64")
-        const parseResult = await parseFile(buffer, name, type)
+        const parseResult = await Promise.race([
+          parseFile(buffer, name, type),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error(`文件 "${name}" 解析超时 (30s)`)), 30000)
+          ),
+        ])
 
         if (!parseResult.success) {
           return { type: "file.upload_error", thread_id, error: parseResult.error }

@@ -275,6 +275,7 @@ function InputArea() {
   const [slashVisible, setSlashVisible] = useState(false)
   const [slashQuery, setSlashQuery] = useState("")
   const [selectedFiles, setSelectedFiles] = useState<FileAttachment[]>([])
+  const [fileError, setFileError] = useState("")
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -449,7 +450,7 @@ function InputArea() {
     for (let i = 0; i < files.length; i++) {
       const file = files[i]
       if (file.size > maxFileSize) {
-        alert(`文件 "${file.name}" 超过 10MB 限制`)
+        setFileError(`文件 "${file.name}" 超过 10MB 限制`)
         continue
       }
       const base64 = await new Promise<string>((resolve, reject) => {
@@ -506,6 +507,15 @@ function InputArea() {
         accept=".docx,.pptx,.xlsx,.pdf,.odt,.rtf,.csv,.md,.txt,.html,.htm"
         onChange={handleFileSelect}
       />
+      {fileError && (
+        <div style={{
+          padding: "4px 12px", background: "#FFF3E0", color: "#E65100",
+          fontSize: 11, display: "flex", alignItems: "center", gap: 6,
+        }}>
+          <span>{fileError}</span>
+          <span role="button" style={{ cursor: "pointer", fontWeight: "bold" }} onClick={() => setFileError("")}>×</span>
+        </div>
+      )}
       {selectedFiles.length > 0 && (
         <div style={{
           display: "flex", flexWrap: "wrap", gap: 4,
