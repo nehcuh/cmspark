@@ -314,6 +314,12 @@ function setupMessageHandlers() {
         return true
       }
 
+      case "config.testVision":
+        // Forward to companion; result comes back as config.testVisionResult via WebSocket
+        wsClient.send({ type: "config.testVision" })
+        sendResponse({ ok: true })
+        return true
+
       case "config.get":
         wsClient.send({ type: "config.get" })
         // Response will come async through onMessage
