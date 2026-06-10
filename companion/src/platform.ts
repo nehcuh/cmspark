@@ -152,15 +152,23 @@ class MacOSChromeOpener implements ChromeOpener {
 
 class WindowsChromeOpener implements ChromeOpener {
   openChrome(): void {
-    runSilent("cmd", ["/c", "start", "chrome"])
+    try {
+      runSilent("cmd", ["/c", "start", "chrome"])
+    } catch {
+      console.warn("[platform] Failed to open Chrome. Is Chrome installed and in PATH?")
+    }
   }
 
   openExtensions(): void {
-    runSilent("cmd", ["/c", "start", "chrome", "chrome://extensions/"])
+    try {
+      runSilent("cmd", ["/c", "start", "chrome", "chrome://extensions/"])
+    } catch {
+      console.warn("[platform] Failed to open Chrome extensions page")
+    }
   }
 
   openSidePanel(): void {
-    runSilent("cmd", ["/c", "start", "chrome"])
+    this.openChrome()
   }
 }
 
@@ -229,10 +237,7 @@ export function getTrayLevel(): TrayLevel {
       // Swift NSStatusBar (ARM64) or systray2 (x86) — both are native tray
       return "native"
     case "win32":
-      if (process.arch === "arm64") {
-        // systray2 has no win32-arm64 binary
-        return "notification-only"
-      }
+      // systray2 ships x86-64 binary; ARM64 Windows runs it via x86-64 emulation
       return "native"
     case "linux":
       // systray2 provides system tray (requires GTK)

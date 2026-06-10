@@ -131,6 +131,10 @@ case "${PLATFORM}" in
     rm -f "${STAGING}/node_modules/systray2/traybin/tray_darwin_release"
     rm -f "${STAGING}/node_modules/systray2/traybin/tray_linux_release"
     rm -rf "${STAGING}/node_modules/node-notifier/vendor/mac.noindex" 2>/dev/null || true
+    # ARM64: systray2 has no win32-arm64 binary; tray-adapter will fallback to readline
+    if [ "${PLATFORM}" = "windows-arm64" ]; then
+      echo "  NOTE: Windows ARM64 has no systray2 binary — will use readline fallback"
+    fi
     ;;
   linux-*)
     rm -f "${STAGING}/node_modules/systray2/traybin/tray_darwin_release"

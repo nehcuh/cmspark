@@ -91,6 +91,9 @@ Section "Uninstall"
   ; Fallback: kill any node.exe launched from our install dir
   nsExec::ExecToLog 'wmic process where "ExecutablePath='$INSTDIR\node.exe'" call terminate 2>nul'
 
+  ; Remove Task Scheduler task (if created via tray toggle)
+  nsExec::ExecToLog 'schtasks /delete /tn "cmspark-companion" /f 2>nul'
+
   ; Remove auto-start
   DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${PRODUCT_NAME}"
 

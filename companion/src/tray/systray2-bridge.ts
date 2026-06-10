@@ -295,7 +295,7 @@ export class SysTray2Adapter implements UnifiedTray {
           this.rebuild()
         }
       }
-    }, 80)
+    }, 500)
   }
 
   private async loadModule(): Promise<any> {

@@ -239,7 +239,19 @@ async function toggleAutoStart(): Promise<void> {
         safeNotify({ title: "CMspark Agent", message: "开机自启已开启 ✅", timeout: 3 })
       }
     } else if (platform === "win32") {
-      safeNotify({ title: "CMspark Agent", message: "请运行 make install-windows 开启开机自启", timeout: 5 })
+      const nodePath = process.execPath
+      const scriptPath = process.argv[1]
+      if (currentlyEnabled) {
+        child_process.execSync('schtasks /delete /tn "cmspark-companion" /f', { shell: "cmd.exe" })
+        safeNotify({ title: "CMspark Agent", message: "开机自启已关闭", timeout: 3 })
+      } else {
+        const taskCmd = `"${nodePath}" "${scriptPath}" daemon start --daemonize`
+        child_process.execSync(
+          `schtasks /create /tn "cmspark-companion" /tr "${taskCmd}" /sc onlogon /rl limited /f`,
+          { shell: "cmd.exe" },
+        )
+        safeNotify({ title: "CMspark Agent", message: "开机自启已开启", timeout: 3 })
+      }
     }
   } catch (err: any) {
     safeNotify({ title: "CMspark Agent", message: `自启切换失败 ❌: ${err.message}`, timeout: 5 })

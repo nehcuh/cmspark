@@ -85,8 +85,8 @@ export function isSwiftTrayAvailable(): boolean {
  *
  * Priority:
  *  1. macOS ARM64 + Swift binary → 'swift'
- *  2. macOS x86 / Windows x86 / Linux → 'systray2'
- *  3. Windows ARM64 / fallback → 'readline'
+ *  2. macOS x86 / Windows (x64 + ARM64 via emulation) / Linux → 'systray2'
+ *  3. Fallback → 'readline'
  */
 export function detectTrayBackend(): TrayBackend {
   const platform = getPlatform()
@@ -95,11 +95,7 @@ export function detectTrayBackend(): TrayBackend {
     return "swift"
   }
 
-  if (platform === "win32" && process.arch === "arm64") {
-    return "readline"
-  }
-
-  // systray2 works on darwin-x86, win32-x64, linux-x64
+  // systray2 works on darwin-x86, win32 (x64 native + ARM64 via x86-64 emulation), linux-x64
   return "systray2"
 }
 
