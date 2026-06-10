@@ -68,12 +68,12 @@ Section "CMspark Agent" SecMain
 
   ; --- Shortcuts ---
   ; Desktop icon — hidden launch via wscript
-  CreateShortCut "$DESKTOP\CMspark Agent.lnk" "wscript.exe" '"$INSTDIR\launch-hidden.vbs"' "" 0
+  CreateShortCut "$DESKTOP\CMspark Agent.lnk" "wscript.exe" '"$INSTDIR\launch-hidden.vbs"' "$INSTDIR\assets\cmspark.ico" 0
 
   ; Start Menu
   !insertmacro MUI_STARTMENU_WRITE_BEGIN "StartMenu"
     CreateDirectory "$SMPROGRAMS\$START_MENU_FOLDER"
-    CreateShortCut "$SMPROGRAMS\$START_MENU_FOLDER\CMspark Agent.lnk" "wscript.exe" '"$INSTDIR\launch-hidden.vbs"' "" 0
+    CreateShortCut "$SMPROGRAMS\$START_MENU_FOLDER\CMspark Agent.lnk" "wscript.exe" '"$INSTDIR\launch-hidden.vbs"' "$INSTDIR\assets\cmspark.ico" 0
     CreateShortCut "$SMPROGRAMS\$START_MENU_FOLDER\Uninstall CMspark.lnk" "$INSTDIR\uninstall.exe"
   !insertmacro MUI_STARTMENU_WRITE_END
 

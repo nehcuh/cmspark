@@ -109,7 +109,18 @@ export class SysTray2Adapter implements UnifiedTray {
     })
 
     instance.onExit(() => {
-      if (!this.shuttingDown) process.exit(0)
+      this.systray = null
+      if (this.shuttingDown) return
+      console.warn("[systray2] Tray process exited unexpectedly, attempting restart in 3s...")
+      setTimeout(async () => {
+        if (this.shuttingDown) return
+        try {
+          await this.start({} as TrayConfig)
+          console.log("[systray2] Tray restarted successfully")
+        } catch (err: any) {
+          console.error("[systray2] Tray restart failed:", err.message)
+        }
+      }, 3000)
     })
 
     instance.onError((err: any) => console.error("[systray2] Error:", err))
