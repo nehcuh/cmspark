@@ -21,52 +21,33 @@ import {
 
 const FALLBACK_ICON = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
 
-function tryLoadIcon(filename: string): string | null {
-  try {
-    const { getAssetsDir } = require("../paths")
-    const iconPath = path.join(getAssetsDir(), filename)
-    if (fs.existsSync(iconPath)) {
-      return fs.readFileSync(iconPath).toString("base64")
-    }
-  } catch { /* fall through */ }
-  return null
-}
-
-function loadIconBase64(name: string): string {
+// systray2's resolveIcon() calls fs.pathExists() on the icon value —
+// if it's a file path it reads & base64-encodes it, otherwise it's skipped.
+// On Windows we MUST pass the file path; raw base64 is silently ignored.
+function resolveIconPath(name: string): string {
   try {
     const { getAssetsDir } = require("../paths")
     const iconPath = path.join(getAssetsDir(), name)
-    return fs.readFileSync(iconPath).toString("base64")
-  } catch (err) {
-    console.error(`[systray2] Failed to load icon ${name}:`, err)
-    return FALLBACK_ICON
-  }
+    if (fs.existsSync(iconPath)) return iconPath
+  } catch { /* fall through */ }
+  console.warn(`[systray2] Icon file not found: ${name}, using fallback`)
+  return FALLBACK_ICON
 }
 
-function loadPlatformIcon(baseName: string): string {
+function getPlatformIconFile(status: string): string {
   if (process.platform === "win32") {
-    const ico = tryLoadIcon(baseName + ".ico")
-    if (ico !== null) {
-      console.log(`[systray2] Loaded ICO icon: ${baseName}.ico (${ico.length} chars base64)`)
-      return ico
-    }
-    console.warn(`[systray2] ICO not found for ${baseName}, falling back to PNG`)
+    return resolveIconPath(`tray-icon-${status}.ico`)
   }
-  return loadIconBase64(baseName + ".png")
+  return resolveIconPath(`tray-icon-${status}.png`)
 }
-
-const ICON_GREEN = loadPlatformIcon("tray-icon-green")
-const ICON_RED = loadPlatformIcon("tray-icon-red")
-const ICON_YELLOW = loadPlatformIcon("tray-icon-yellow")
-const ICON_TEMPLATE = loadPlatformIcon("tray-icon-template")
 
 const SEP = { title: "---" }
 
 function getIcon(status: string): string {
   switch (status) {
-    case "running": return ICON_GREEN
-    case "stopped": return ICON_RED
-    default: return ICON_YELLOW
+    case "running": return getPlatformIconFile("green")
+    case "stopped": return getPlatformIconFile("red")
+    default: return getPlatformIconFile("yellow")
   }
 }
 
