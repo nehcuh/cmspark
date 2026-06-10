@@ -168,6 +168,24 @@ class WindowsChromeOpener implements ChromeOpener {
   }
 
   openSidePanel(): void {
+    // On Windows there is no way to programmatically focus an existing Chrome
+    // Side Panel without opening a new window.  If Chrome is already running,
+    // the quick-action result will appear automatically via the WebSocket
+    // connection — no need to open another window.
+    // Only launch Chrome when it is not running at all.
+    try {
+      const { execSync } = require("child_process") as typeof import("child_process")
+      const list = execSync('tasklist /FI "IMAGENAME eq chrome.exe" /NH', {
+        encoding: "utf-8",
+        timeout: 3000,
+        windowsHide: true,
+      })
+      if (list.includes("chrome.exe")) {
+        // Chrome is already running — the existing Side Panel will receive the
+        // result; don’t open a new window.
+        return
+      }
+    } catch { /* tasklist failed — fall through to open Chrome */ }
     this.openChrome()
   }
 }
