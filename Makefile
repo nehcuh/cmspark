@@ -126,12 +126,10 @@ package-macos: build build-tray
 	@bash scripts/create-dmg.sh
 	@echo "Done: dist-package/CMspark-v*-macOS.dmg"
 
-# 打包 Windows x64（产出 NSIS 安装包）
-package-windows: build
-	@bash scripts/package.sh windows-x64
-	@echo "Building NSIS installer..."
-	@makensis scripts/installer.nsi
-	@echo "Done: dist-package/CMspark-Setup-v*.exe"
+# 打包 Windows x64（Node.js SEA 独立 exe + zip；可选 NSIS 安装包）
+# 在 Windows 上直接双击 build-package.bat 也可完成相同任务
+package-windows:
+	@powershell -ExecutionPolicy Bypass -File scripts/build-windows-exe.ps1
 
 # 打包 Linux x64
 package-linux: build
