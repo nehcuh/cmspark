@@ -9,6 +9,8 @@ import type { HistoryStore } from "./history/store"
 import { getConfig, saveConfig } from "./config"
 import { chatCreate } from "./llm/adapter"
 import { parseFile } from "./file-parser"
+import type { FileParseResult } from "./file-parser"
+import { analyzeImage } from "./llm/vision-pipeline"
 import { craftSkill, craftSkillToMarkdown } from "./skills/skill-craft"
 import { checkHighRiskExecution } from "./security"
 import { securityPolicy } from "./security-policy"
@@ -287,14 +289,14 @@ export async function handleMessage(
 
       const { thread_id, files } = rest
       const config = getConfig()
-      const fileConfig = config.file_upload || { max_file_size: 10 * 1024 * 1024, allowed_types: [] as string[] }
+      const fileConfig = config.file_upload || { max_file_size: 10 * 1024 * 1024, allowed_types: [] as string[], max_embedded_images: 20, enable_vision_analysis: true, max_file_tokens: 50000 }
 
-      const parsedFiles: Array<{ filename: string; content: string }> = []
+      // Phase 1: Parse all files (text + embedded images)
+      const parseResults: FileParseResult[] = []
 
       for (const file of files) {
         const { name, type, content } = file
 
-        // Decode base64 and validate size
         const decodedSize = Math.ceil(content.length * 0.75)
         if (decodedSize > fileConfig.max_file_size) {
           return {
@@ -304,7 +306,6 @@ export async function handleMessage(
           }
         }
 
-        // Validate file type
         if (fileConfig.allowed_types.length > 0 && !fileConfig.allowed_types.includes(type)) {
           return {
             type: "file.upload_error",
@@ -325,7 +326,54 @@ export async function handleMessage(
           return { type: "file.upload_error", thread_id, error: parseResult.error }
         }
 
-        parsedFiles.push({ filename: name, content: parseResult.text })
+        parseResults.push(parseResult)
+      }
+
+      // Phase 2: Vision analysis for embedded images
+      const visionEnabled = config.vision?.enabled && fileConfig.enable_vision_analysis !== false
+      const finalFileContents: Array<{ filename: string; content: string }> = []
+
+      for (const parseResult of parseResults) {
+        let content = parseResult.text
+
+        if (visionEnabled && parseResult.embeddedImages?.length) {
+          const visionDescriptions: string[] = []
+          for (const img of parseResult.embeddedImages) {
+            if (img.format === "note") {
+              visionDescriptions.push(img.title)
+              continue
+            }
+            try {
+              const visionResult = await analyzeImage(
+                {
+                  base64: img.base64,
+                  width: img.width,
+                  height: img.height,
+                  url: "",
+                  title: img.title,
+                },
+                config.vision!,
+                `分析这张文档内嵌图片 "${img.title}" 的内容，提取所有可见文本和视觉信息。`,
+              )
+              visionDescriptions.push(`[图片: ${img.title}] ${visionResult.description}`)
+            } catch {
+              visionDescriptions.push(`[图片: ${img.title}] (视觉分析不可用)`)
+            }
+          }
+          if (visionDescriptions.length > 0) {
+            content += `\n\n<!-- 文档内嵌图片分析 -->\n${visionDescriptions.join("\n\n")}`
+          }
+        } else if (parseResult.embeddedImages?.length) {
+          const note = parseResult.embeddedImages
+            .filter(i => i.format !== "note")
+            .map(i => i.title)
+            .join(", ")
+          if (note) {
+            content += `\n\n[文档包含图片但视觉分析未启用: ${note}]`
+          }
+        }
+
+        finalFileContents.push({ filename: parseResult.filename, content })
       }
 
       // Cancel any existing request for this thread
@@ -351,7 +399,7 @@ export async function handleMessage(
         await chatCreate({
           threadId: thread_id,
           message: userMessage,
-          fileContents: parsedFiles,
+          fileContents: finalFileContents,
           skillIds: rest.skill_ids || [],
           knowledgeIds: [],
           config: effectiveLLMConfig,
@@ -372,7 +420,7 @@ export async function handleMessage(
         abortControllers.delete(thread_id)
       }
 
-      return { type: "file.uploaded", thread_id, files: parsedFiles.map(f => f.filename) }
+      return { type: "file.uploaded", thread_id, files: finalFileContents.map(f => f.filename) }
     }
 
     case "chat.abort": {

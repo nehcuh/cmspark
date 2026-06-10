@@ -102,14 +102,42 @@ export async function chatCreate(params: ChatCreateParams) {
   if (!skipUserMessage) {
     let userContent = message
     if (fileContents?.length) {
-      const MAX_DOC_CHARS = 50000
-      const docTags = fileContents.map(f => {
-        const truncated = f.content.length > MAX_DOC_CHARS
-          ? f.content.substring(0, MAX_DOC_CHARS) + `\n...(truncated, original ${f.content.length} chars)`
-          : f.content
-        return `<document filename="${f.filename}">\n${truncated}\n</document>`
-      }).join("\n\n")
-      userContent = `${message}\n\n${docTags}`
+      const estimateTokens = (text: string): number => {
+        const chineseChars = (text.match(/[一-鿿㐀-䶿]/g) || []).length
+        const otherChars = text.length - chineseChars
+        return Math.ceil(chineseChars * 1.5 + otherChars / 4)
+      }
+
+      const MAX_FILE_TOKENS = Math.min(
+        Math.floor(params.config.context_window * 0.4),
+        50000,
+      )
+
+      const docTags: string[] = []
+      let totalTokens = 0
+
+      for (const file of fileContents) {
+        const fileTokens = estimateTokens(file.content)
+
+        if (totalTokens + fileTokens > MAX_FILE_TOKENS) {
+          const remainingBudget = Math.max(0, MAX_FILE_TOKENS - totalTokens)
+          const ratio = remainingBudget / fileTokens
+          const truncateLen = Math.floor(file.content.length * ratio * 0.9)
+
+          docTags.push(
+            `<document filename="${file.filename}">\n${
+              file.content.substring(0, truncateLen)
+            }\n...(截断，原文约 ${fileTokens} tokens，取前 ${remainingBudget} tokens)\n</document>`
+          )
+          totalTokens += remainingBudget
+          break
+        }
+
+        docTags.push(`<document filename="${file.filename}">\n${file.content}\n</document>`)
+        totalTokens += fileTokens
+      }
+
+      userContent = `${message}\n\n${docTags.join("\n\n")}`
     }
     threadManager.addMessage(threadId, { thread_id: threadId, role: "user", content: userContent })
   }

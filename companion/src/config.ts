@@ -34,6 +34,9 @@ export interface VisionConfig {
 export interface FileUploadConfig {
   max_file_size: number
   allowed_types: string[]
+  max_embedded_images: number
+  enable_vision_analysis: boolean
+  max_file_tokens: number
 }
 
 export interface CompanionConfig {
@@ -97,6 +100,9 @@ const defaultConfig: CompanionConfig = {
       "application/rtf",
       "application/vnd.oasis.opendocument.text",
     ],
+    max_embedded_images: 20,
+    enable_vision_analysis: true,
+    max_file_tokens: 50000,
   },
 }
 
