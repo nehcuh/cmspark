@@ -396,6 +396,28 @@ async function executeCompanionTool(toolName: string, params: any): Promise<any>
         return { success: false, error: `osascript_eval error: ${err.message || String(err)}` }
       }
     }
+    case "mcp.call": {
+      const { server: serverName, method, params: mcpParams } = params
+      if (!serverName || !method) {
+        return { success: false, error: "server and method are required" }
+      }
+      const MCP_SERVERS: Record<string, { command: string; args: string[] }> = {
+        markitdown: {
+          command: "python3",
+          args: ["-m", "mcp_markitdown"],
+        },
+      }
+      const serverConfig = MCP_SERVERS[serverName]
+      if (!serverConfig) {
+        return { success: false, error: `MCP server "${serverName}" not registered. Available: ${Object.keys(MCP_SERVERS).join(", ")}` }
+      }
+      // Architecture placeholder — actual stdio JSON-RPC call to be implemented when deployed
+      return {
+        success: false,
+        error: `MCP server "${serverName}" is registered but not yet connected. Deploy the server first (e.g., pip install mcp-markitdown).`,
+        data: { server: serverName, method, availableServers: Object.keys(MCP_SERVERS) },
+      }
+    }
     default:
       return { success: false, error: `Unknown companion tool: ${toolName}` }
   }
@@ -518,6 +540,11 @@ function validateWsMessage(msg: any): WsValidationResult {
         if (typeof f.name !== "string" || typeof f.type !== "string" || typeof f.content !== "string") return { valid: false, error: "文件字段均为 string 类型" }
       }
       if (m.message !== undefined && typeof m.message !== "string") return { valid: false, error: "message 必须为字符串" }
+      return { valid: true }
+    },
+    "file.query_chunks": (m) => {
+      if (typeof m.thread_id !== "string" || !m.thread_id) return { valid: false, error: "file.query_chunks requires thread_id" }
+      if (typeof m.query !== "string" || !m.query) return { valid: false, error: "query required" }
       return { valid: true }
     },
   }

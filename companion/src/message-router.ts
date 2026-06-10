@@ -11,6 +11,7 @@ import { chatCreate } from "./llm/adapter"
 import { parseFile } from "./file-parser"
 import type { FileParseResult } from "./file-parser"
 import { analyzeImage } from "./llm/vision-pipeline"
+import { chunkFile, searchChunks } from "./file-chunker"
 import { craftSkill, craftSkillToMarkdown } from "./skills/skill-craft"
 import { checkHighRiskExecution } from "./security"
 import { securityPolicy } from "./security-policy"
@@ -421,6 +422,56 @@ export async function handleMessage(
       }
 
       return { type: "file.uploaded", thread_id, files: finalFileContents.map(f => f.filename) }
+    }
+
+    case "file.query_chunks": {
+      const { thread_id, query } = rest
+      if (!thread_id || !query) return { type: "error", error: "thread_id and query required" }
+
+      const config = getConfig()
+      const maxFileTokens = config.file_upload?.max_file_tokens || 50000
+      const messages = services.threadManager.getMessages(thread_id)
+
+      // Find the most recent user message containing <document> tags
+      let docContent = ""
+      let docFilename = ""
+      for (let i = messages.length - 1; i >= 0; i--) {
+        const msg = messages[i]
+        if (msg.role === "user" && msg.content.includes("<document")) {
+          // Extract content between <document> tags
+          const docRegex = /<document filename="([^"]+)">\n([\s\S]*?)\n<\/document>/g
+          let match
+          while ((match = docRegex.exec(msg.content)) !== null) {
+            docFilename = match[1]
+            docContent = match[2]
+          }
+          if (docContent) break
+        }
+      }
+
+      if (!docContent) {
+        return { type: "file.query_result", thread_id, chunks: [], message: "当前线程中没有上传的文件内容" }
+      }
+
+      const chunked = chunkFile(docFilename, docContent, maxFileTokens)
+      const matched = searchChunks(chunked.chunks, query, 3)
+
+      if (matched.length === 0) {
+        return { type: "file.query_result", thread_id, chunks: [], message: "未找到与查询相关的内容片段" }
+      }
+
+      const chunkTexts = matched.map(c =>
+        `--- 片段 ${c.index + 1}/${chunked.chunks.length} (约 ${c.tokenEstimate} tokens) ---\n${c.text}`
+      ).join("\n\n")
+
+      return {
+        type: "file.query_result",
+        thread_id,
+        chunks: matched.map(c => ({ index: c.index, keywords: c.keywords, tokenEstimate: c.tokenEstimate })),
+        content: chunkTexts,
+        filename: docFilename,
+        totalChunks: chunked.chunks.length,
+      }
     }
 
     case "chat.abort": {

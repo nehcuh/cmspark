@@ -31,6 +31,7 @@
     "officeparser": "^4.1.0",
     "openai": "^4.52.0",
     "pdf-parse": "^1.1.1",
+    "pdfjs-dist": "^4.0.0",
     "sql.js": "^1.14.1",
     "systray2": "^2.1.4",
     "ws": "^8.17.0",

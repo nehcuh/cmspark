@@ -166,26 +166,42 @@ async function parsePdf(buffer: Buffer, filename: string, mimeType: string): Pro
   const pdfParse = (await import("pdf-parse")).default
   const data = await pdfParse(buffer)
 
-  if (!data.text || data.text.trim().length === 0) {
-    return {
-      success: true,
-      text: `# ${filename}\n\n[此 PDF 为扫描件或图片 PDF，无法提取文本内容。页数: ${data.numpages}]`,
-      filename,
-      mimeType,
-      fileSize: buffer.length,
-      pageCount: data.numpages,
-      warning: "扫描件 PDF，无法提取文本",
-    }
-  }
-
-  return {
+  const result: FileParseResult = {
     success: true,
-    text: `# ${filename}\n\n${data.text}`,
+    text: data.text?.trim() ? `# ${filename}\n\n${data.text}` : "",
     filename,
     mimeType,
     fileSize: buffer.length,
     pageCount: data.numpages,
   }
+
+  // Scanned PDF — text too short to be useful, try page rendering
+  if (!data.text || data.text.trim().length < 50) {
+    try {
+      const { renderPdfPages } = await import("./pdf-renderer")
+      const renderedPages = await renderPdfPages(buffer)
+
+      if (renderedPages.length > 0) {
+        result.text = `# ${filename}\n\n[PDF 已渲染 ${renderedPages.length}/${data.numpages} 页为图片，等待视觉分析]\n`
+        result.embeddedImages = renderedPages.map(p => ({
+          base64: p.base64,
+          title: `第 ${p.pageNumber} 页`,
+          width: p.width,
+          height: p.height,
+          format: "png" as const,
+        }))
+        result.warning = `扫描件 PDF，已渲染 ${renderedPages.length} 页为图片`
+      } else {
+        result.text = `# ${filename}\n\n[此 PDF 为扫描件或图片 PDF，无法提取文本内容。页数: ${data.numpages}]`
+        result.warning = "扫描件 PDF，无法提取文本，页面渲染不可用"
+      }
+    } catch {
+      result.text = `# ${filename}\n\n[此 PDF 为扫描件或图片 PDF，无法提取文本内容。页数: ${data.numpages}]`
+      result.warning = "扫描件 PDF，无法提取文本"
+    }
+  }
+
+  return result
 }
 
 function parseText(buffer: Buffer, filename: string, mimeType: string): FileParseResponse {
