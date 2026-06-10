@@ -18,7 +18,9 @@
     "tray:status": "node dist/index.js tray status",
     "tray:rebuild": "node dist/index.js tray rebuild",
     "menu-bar": "node dist/index.js menu-bar",
-    "postinstall": "node ../scripts/verify-systray2.js && node ../scripts/build-swift-tray.js"
+    "postinstall": "node ../scripts/verify-systray2.js && node ../scripts/build-swift-tray.js",
+    "bundle:exe": "npx esbuild dist/index.js --bundle --platform=node --target=node22 --external:systray2 --external:canvas --external:pdfjs-dist --outfile=dist/cmspark-agent.js",
+    "build:exe": "npm run build && npm run bundle:exe"
   },
   "dependencies": {
     "@types/dompurify": "^3.0.5",

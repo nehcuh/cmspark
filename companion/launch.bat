@@ -4,8 +4,17 @@ setlocal enabledelayedexpansion
 cd /d "%~dp0"
 
 echo [launch] Current dir: %CD%
-echo [launch] Checking node.exe...
+echo [launch] Resolving launch method...
 
+:: Priority 1: SEA standalone exe
+if exist "cmspark-agent.exe" (
+    echo [launch] Found cmspark-agent.exe (SEA mode)
+    set "LAUNCH_EXE=cmspark-agent.exe"
+    set "LAUNCH_ARGS=tray"
+    goto :do_launch
+)
+
+:: Priority 2: bundled node.exe + cmspark-agent.js
 set "NODE_CMD="
 if exist "node.exe" (
     echo [launch] node.exe found
@@ -19,29 +28,32 @@ if exist "node.exe" (
 )
 
 if "!NODE_CMD!"=="" (
-    echo [ERROR] Node.js not found
+    echo [ERROR] Neither cmspark-agent.exe nor Node.js found
     pause
     exit /b 1
 )
 
+set "LAUNCH_EXE=!NODE_CMD!"
+set "LAUNCH_ARGS=cmspark-agent.js tray"
+
 echo [launch] NODE_CMD=!NODE_CMD!
 
+:do_launch
 :: Check if already running
-netstat -an 2>nul | find.exe "127.0.0.1:23401" 2>nul | find.exe "LISTENING" >nul 2>nul
+netstat -an 2>nul | find.exe "*********:23401" 2>nul | find.exe "LISTENING" >nul 2>nul
 if !errorlevel! equ 0 (
     echo [launch] Already running on port 23401
     goto :done
 )
 
-:: Launch via hidden VBS launcher (no console window)
+:: Launch via hidden VBS launcher (delegates to cmspark-agent.exe or node fallback)
 if exist "%~dp0launch-hidden.vbs" (
     echo [launch] Launching via launch-hidden.vbs...
     wscript.exe "%~dp0launch-hidden.vbs"
 ) else (
-    :: Fallback for dev environments without VBS
-    set "CMD_STR=!NODE_CMD! cmspark-agent.js start"
-    echo [launch] VBS not found, fallback: !CMD_STR!
-    start /MIN cmd /c "!CMD_STR!"
+    :: Fallback: launch directly without VBS (console window visible)
+    echo [launch] VBS not found, fallback: !LAUNCH_EXE! !LAUNCH_ARGS!
+    start /MIN cmd /c "!LAUNCH_EXE! !LAUNCH_ARGS!"
 )
 echo [launch] Launcher issued, waiting...
 

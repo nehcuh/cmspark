@@ -88,10 +88,23 @@ export function getTrayCwd(): string {
 
 /**
  * Returns the command tuple to re-spawn the companion process.
+ * In SEA mode: [cmspark-agent.exe, ...subcommand]
  * In packaged mode: [nodeBinary, cmspark-agent.js, ...subcommand]
  * In dev mode: [process.execPath, dist/index.js, ...subcommand]
  */
 export function getSelfSpawnArgs(subcommand: string[]): { execPath: string; args: string[] } {
+  // Detect Node.js SEA (Single Executable Application) mode — Node 21.7+
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const sea = require("node:sea") as { isSea?: () => boolean } | null
+    if (sea?.isSea?.()) {
+      // Running as SEA exe — spawn self directly, no script argument needed
+      return { execPath: process.execPath, args: subcommand }
+    }
+  } catch {
+    // node:sea not available (older Node or not in SEA mode)
+  }
+
   const root = getAppRoot()
   const bundle = path.join(root, "cmspark-agent.js")
   if (fs.existsSync(bundle)) {

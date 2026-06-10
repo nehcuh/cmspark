@@ -84,7 +84,7 @@ export class SysTray2Adapter implements UnifiedTray {
   // --- UnifiedTray ---
 
   async start(_config: TrayConfig): Promise<void> {
-    const Tray = await this.loadModule()
+    const Tray = this.loadModule()
     const menu = this.buildMenu()
 
     const instance = new Tray({ menu, debug: !!process.env.CMSPARK_DEBUG, copyDir: true })
@@ -104,7 +104,9 @@ export class SysTray2Adapter implements UnifiedTray {
       }
       if (mapped?.type === "quit") {
         this.shuttingDown = true
-        instance.kill().catch(() => {})
+        // kill(false): let handleAction('quit') call process.exit(0) explicitly,
+        // don't let systray2 do it — that would skip our cleanup.
+        instance.kill(false).catch(() => {})
       }
     })
 
@@ -162,7 +164,8 @@ export class SysTray2Adapter implements UnifiedTray {
   async stop(): Promise<void> {
     this.shuttingDown = true
     if (this.systray) {
-      await this.systray.kill().catch(() => {})
+      // kill(false): caller (stopMenuBarAgent/handleAction) handles process.exit(0)
+      await this.systray.kill(false).catch(() => {})
       this.systray = null
     }
   }
@@ -271,10 +274,13 @@ export class SysTray2Adapter implements UnifiedTray {
       // systray2's update-menu does not refresh the internalIdMap, causing click
       // events to map to stale items after the menu structure changes.
       // Work around by killing and recreating the tray instance.
+      // IMPORTANT: kill(false) — do NOT let systray2 call process.exit(0).
+      // The default kill() has exitNode=true which terminates the whole Node process,
+      // which would kill the app on every status change that triggers a rebuild.
       const wasShuttingDown = this.shuttingDown
       this.shuttingDown = true
       try {
-        await this.systray.kill()
+        await this.systray.kill(false)
       } catch {
         // ignore
       }
@@ -294,9 +300,15 @@ export class SysTray2Adapter implements UnifiedTray {
     }, 500)
   }
 
-  private async loadModule(): Promise<any> {
-    const mod = await import("systray2")
-    // Support both ESM default and CJS-style exports for packaging resilience
+  private loadModule(): any {
+    // In Node.js SEA mode, the standard require() cannot resolve npm packages
+    // from the filesystem — it only finds built-in modules.
+    // Module.createRequire(process.execPath) creates a resolver that searches
+    // node_modules/ relative to the exe, which is where we place systray2.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const Module = require("module") as typeof import("module")
+    const seaRequire = Module.createRequire(process.execPath)
+    const mod = seaRequire("systray2")
     return (mod as any).default || (mod as any).SysTray || mod
   }
 }

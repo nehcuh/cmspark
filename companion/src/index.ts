@@ -134,10 +134,20 @@ async function handleDaemonStart(): Promise<void> {
 
   if (shouldDaemonize) {
     console.log("[cmspark-agent] Daemonizing...")
-    daemonize({
-      silent: true,
-      args: process.argv.slice(1).filter(a => a !== "--daemonize"),
+    // In SEA mode process.argv[0] === process.argv[1] === exe path, so
+    // slice(1) would include the exe path as the first "arg", causing the
+    // spawned grandchild to see the exe path as the command ("Unknown command").
+    // getSelfSpawnArgs() handles both SEA and non-SEA correctly.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { getSelfSpawnArgs } = require("./paths") as typeof import("./paths")
+    const { execPath, args } = getSelfSpawnArgs(["daemon", "start"])
+    const grandchild = child_process.spawn(execPath, args, {
+      detached: true,
+      stdio: "ignore",
+      windowsHide: true,
     })
+    grandchild.unref()
+    process.exit(0)
   }
 
   writePidFile(pidPath, process.pid)
@@ -380,7 +390,20 @@ async function main() {
 
     case "--help":
     case "-h":
+      printUsage()
+      process.exit(0)
+
     case undefined:
+      // In SEA (packaged exe): double-click → start tray directly
+      // In dev mode: show CLI usage
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const sea = require("node:sea") as { isSea?: () => boolean } | null
+        if (sea?.isSea?.()) {
+          await startMenuBarAgent()
+          break
+        }
+      } catch { /* not in SEA mode */ }
       printUsage()
       process.exit(0)
 
