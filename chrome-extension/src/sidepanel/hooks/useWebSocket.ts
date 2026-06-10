@@ -246,8 +246,10 @@ export function useWebSocket() {
         case "thread.created": {
           // Upsert: don't duplicate if already added locally
           dispatch({ type: "UPSERT_THREAD", thread: msg.thread })
-          // Auto-select threads created by quick actions so the user sees them
-          if (msg.auto_select && activeThreadRef.current !== msg.thread.id) {
+          // Auto-select when:
+          //  - quick action explicitly requests it, OR
+          //  - no thread is currently active (fresh load: our new blank thread)
+          if ((msg.auto_select || !activeThreadRef.current) && activeThreadRef.current !== msg.thread.id) {
             dispatch({ type: "SET_ACTIVE_THREAD", threadId: msg.thread.id })
             dispatch({ type: "SET_MESSAGES", messages: [] })
           }
@@ -280,8 +282,10 @@ export function useWebSocket() {
 
         case "thread.list":
           dispatch({ type: "SET_THREADS", threads: msg.threads })
-          // Auto-create thread if none exist
-          if (!msg.threads || msg.threads.length === 0) {
+          // Always create a fresh blank thread on load so the user starts with a
+          // new conversation instead of automatically resuming the last one.
+          // Existing threads remain accessible via the thread list.
+          {
             const id = generateShortId()
             chrome.runtime.sendMessage({ type: "thread.create", alias: "", id })
           }

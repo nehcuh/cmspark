@@ -108,9 +108,10 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
     case "SET_CONNECTION":
       return { ...state, connectionState: action.state }
     case "SET_THREADS": {
-      // Auto-select first thread if no active or active thread no longer exists
+      // Keep active thread if it's still in the list; otherwise stay null so that
+      // the upcoming thread.created (fresh blank thread) can be auto-selected.
       const activeExists = action.threads.some(t => t.id === state.activeThreadId)
-      const nextActiveThreadId = activeExists ? state.activeThreadId : (action.threads[0]?.id || null)
+      const nextActiveThreadId = activeExists ? state.activeThreadId : null
       const nextActiveThread = action.threads.find(t => t.id === nextActiveThreadId)
       return {
         ...state,
