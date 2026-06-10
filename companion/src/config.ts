@@ -19,6 +19,18 @@ export interface SecurityConfig {
   confirmation_timeout_seconds: number
 }
 
+export interface VisionConfig {
+  enabled: boolean
+  base_url: string
+  api_key: string
+  model_name: string
+  timeout_ms: number
+  max_tokens: number
+  fallback: "metadata" | "passthrough" | "error"
+  prompt?: string
+  cache_ttl_seconds: number
+}
+
 export interface CompanionConfig {
   port: number
   llm: {
@@ -28,6 +40,7 @@ export interface CompanionConfig {
     temperature: number
     context_window: number
   }
+  vision?: VisionConfig
   trusted_domains: string[]
   history_retention_days: number
   security: SecurityConfig
@@ -45,6 +58,16 @@ const defaultConfig: CompanionConfig = {
     model_name: "deepseek-v4-flash",
     temperature: 0.7,
     context_window: 1000000,
+  },
+  vision: {
+    enabled: false,
+    base_url: "http://localhost:11434/v1",
+    api_key: "ollama",
+    model_name: "llava:7b",
+    timeout_ms: 30000,
+    max_tokens: 1024,
+    fallback: "metadata",
+    cache_ttl_seconds: 300,
   },
   trusted_domains: [],
   history_retention_days: 30,

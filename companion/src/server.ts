@@ -571,6 +571,24 @@ export async function startServer() {
   }
   console.log(`[cmspark-agent] Model: ${config.llm.model_name} @ ${config.llm.base_url}`)
 
+  // Vision model health check
+  if (config.vision?.enabled) {
+    try {
+      const OpenAI = (await import("openai")).default
+      const visionClient = new OpenAI({
+        baseURL: config.vision.base_url,
+        apiKey: config.vision.api_key || "ollama",
+        timeout: 5000,
+        maxRetries: 0,
+      })
+      await visionClient.models.list()
+      console.log(`[cmspark-agent] Vision model: ${config.vision.model_name} @ ${config.vision.base_url}`)
+    } catch (e: any) {
+      console.warn(`[cmspark-agent] Vision model unavailable: ${e.message}`)
+      console.warn(`[cmspark-agent] Screenshot analysis will use fallback: ${config.vision.fallback}`)
+    }
+  }
+
   // Pre-initialize services (async: loads SQLite WASM)
   await initServices()
   wss = new WebSocketServer({ port, host: "127.0.0.1" })

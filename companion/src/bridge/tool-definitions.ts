@@ -156,6 +156,22 @@ export function getToolDefinitions(): ToolDefinition[] {
         },
       },
     },
+    {
+      type: "function",
+      function: {
+        name: "analyze_image",
+        description: "分析页面中指定图片的内容。支持通过 CSS 选择器指定图片元素。需要本地视觉模型已启用。适用于分析产品图片、数据图表、验证码、地图等非文本内容。",
+        parameters: {
+          type: "object",
+          properties: {
+            tabId: { type: "number", description: "标签页 ID（可选，默认活跃标签页）" },
+            selector: { type: "string", description: "图片元素的 CSS 选择器，如 'img.hero-banner' 或 '#product-image'" },
+            prompt: { type: "string", description: "自定义分析提示，如 '描述这张图表的数据趋势'" },
+          },
+          required: [],
+        },
+      },
+    },
 
     // --- Page read tools ---
     {

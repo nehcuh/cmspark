@@ -39,6 +39,16 @@ export function normalizeConfig(config: any): Partial<LLMConfig> {
   if (Array.isArray(config.trusted_domains)) {
     normalized.trusted_domains = config.trusted_domains
   }
+  // Vision config fields (flattened from config.vision)
+  const vision = config.vision
+  if (vision) {
+    ;(normalized as any).vision_enabled = !!vision.enabled
+    ;(normalized as any).vision_api_key = vision.api_key === "***" ? "" : vision.api_key
+    ;(normalized as any).vision_base_url = vision.base_url
+    ;(normalized as any).vision_model_name = vision.model_name
+    ;(normalized as any).vision_timeout_ms = vision.timeout_ms
+    ;(normalized as any).vision_fallback = vision.fallback
+  }
   return Object.fromEntries(
     Object.entries(normalized).filter(([, value]) => value !== undefined)
   ) as Partial<LLMConfig>
@@ -165,6 +175,36 @@ export function useWebSocket() {
               result: msg.result,
               status: msg.result?.success ? "success" : "error",
             },
+          })
+          break
+
+        case "tool.vision_start":
+          dispatch({
+            type: "UPDATE_TOOL_CALL",
+            messageId: msg.tool_call_id,
+            toolCallId: msg.tool_call_id,
+            updates: { vision_status: "analyzing" },
+          })
+          break
+
+        case "tool.vision_done":
+          dispatch({
+            type: "UPDATE_TOOL_CALL",
+            messageId: msg.tool_call_id,
+            toolCallId: msg.tool_call_id,
+            updates: {
+              vision_status: msg.error ? "error" : (msg.cached ? "cached" : "done"),
+              vision_latency_ms: msg.latency_ms,
+            },
+          })
+          break
+
+        case "config.testVisionResult":
+          dispatch({
+            type: "SET_TEST_RESULT",
+            result: msg.ok
+              ? `视觉模型连接成功 ✓ (${msg.model || ""})`
+              : `视觉模型连接失败: ${msg.error || "未知错误"}`,
           })
           break
 

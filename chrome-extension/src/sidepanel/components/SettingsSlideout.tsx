@@ -278,6 +278,113 @@ export function SettingsSlideout() {
               step={1024}
             />
           </div>
+
+          <div style={styles.divider} />
+
+          {/* --- Vision Model Settings --- */}
+          <div style={styles.sectionTitle}>视觉模型</div>
+
+          <div style={styles.field}>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13 }}>
+              <input
+                type="checkbox"
+                checked={config.vision_enabled || false}
+                onChange={e => dispatch({ type: "SET_CONFIG", config: { vision_enabled: e.target.checked } })}
+              />
+              启用截图视觉分析
+            </label>
+            <div style={styles.helpText}>
+              通过本地视觉模型分析截图和图片内容，需要 Ollama 等本地推理服务
+            </div>
+          </div>
+
+          {config.vision_enabled && (
+            <>
+              <div style={styles.field}>
+                <label style={styles.label}>API Key</label>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <input
+                    style={{ ...styles.input, flex: 1 }}
+                    type={showKey ? "text" : "password"}
+                    value={config.vision_api_key || ""}
+                    onChange={e => dispatch({ type: "SET_CONFIG", config: { vision_api_key: e.target.value } })}
+                    placeholder="留空则使用 Ollama（无需 API Key）"
+                  />
+                </div>
+                <div style={styles.helpText}>
+                  本地模型（Ollama）可留空；使用云服务视觉 API 时需填写
+                </div>
+              </div>
+
+              <div style={styles.field}>
+                <label style={styles.label}>Base URL</label>
+                <input
+                  style={styles.input}
+                  type="text"
+                  value={config.vision_base_url || "http://localhost:11434/v1"}
+                  onChange={e => dispatch({ type: "SET_CONFIG", config: { vision_base_url: e.target.value } })}
+                  placeholder="http://localhost:11434/v1"
+                />
+              </div>
+
+              <div style={styles.field}>
+                <label style={styles.label}>Model</label>
+                <input
+                  style={styles.input}
+                  list="vision-model-options"
+                  type="text"
+                  value={config.vision_model_name || ""}
+                  onChange={e => dispatch({ type: "SET_CONFIG", config: { vision_model_name: e.target.value } })}
+                  placeholder="输入模型名称或从列表选择"
+                />
+                <datalist id="vision-model-options">
+                  <option value="llava:7b" />
+                  <option value="llava:13b" />
+                  <option value="minicpm-v" />
+                  <option value="qwen2.5vl:3b" />
+                  <option value="moondream2" />
+                </datalist>
+              </div>
+
+              <div style={styles.field}>
+                <label style={styles.label}>超时时间: {config.vision_timeout_ms || 30000} / 1000s</label>
+                <input
+                  style={{ width: "100%" }}
+                  type="range"
+                  min={10000}
+                  max={60000}
+                  step={5000}
+                  value={config.vision_timeout_ms || 30000}
+                  onChange={e => dispatch({ type: "SET_CONFIG", config: { vision_timeout_ms: parseInt(e.target.value) } })}
+                />
+              </div>
+
+              <div style={styles.field}>
+                <label style={styles.label}>降级策略</label>
+                <select
+                  style={styles.select}
+                  value={config.vision_fallback || "metadata"}
+                  onChange={e => dispatch({ type: "SET_CONFIG", config: { vision_fallback: e.target.value as "metadata" | "passthrough" | "error" } })}
+                >
+                  <option value="metadata">仅元数据（推荐）</option>
+                  <option value="passthrough">透传原始图片</option>
+                  <option value="error">报错</option>
+                </select>
+                <div style={styles.helpText}>
+                  视觉模型不可用时的处理方式：仅元数据 = 发送页面标题和尺寸信息
+                </div>
+              </div>
+
+              <div style={styles.field}>
+                <button style={styles.testBtn} onClick={() => {
+                  dispatch({ type: "SET_TEST_RESULT", result: "测试视觉模型连接中..." })
+                  chrome.runtime.sendMessage({ type: "config.testVision" })
+                }}>
+                  测试视觉模型连接
+                </button>
+              </div>
+            </>
+          )}
         </div>
 
         <div style={styles.footer}>

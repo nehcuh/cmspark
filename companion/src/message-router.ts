@@ -39,7 +39,14 @@ export async function handleMessage(
     // --- Config ---
     case "config.get": {
       const config = getConfig()
-      return { type: "config.updated", config: { ...config, llm: { ...config.llm, api_key: "***" } } }
+      return {
+        type: "config.updated",
+        config: {
+          ...config,
+          llm: { ...config.llm, api_key: "***" },
+          vision: config.vision ? { ...config.vision, api_key: config.vision.api_key ? "***" : "" } : undefined,
+        },
+      }
     }
     case "config.set": {
       const cfg = rest.config
@@ -63,8 +70,29 @@ export async function handleMessage(
       if (cfg.port) normalized.port = cfg.port
       if (Array.isArray(cfg.trusted_domains)) normalized.trusted_domains = cfg.trusted_domains
       if (cfg.history_retention_days) normalized.history_retention_days = cfg.history_retention_days
+      // Vision config: normalize flat vision_* fields into nested vision object
+      if (cfg.vision) {
+        normalized.vision = { ...cfg.vision }
+        if (normalized.vision.api_key === "***") delete normalized.vision.api_key
+      } else if (cfg.vision_enabled !== undefined || cfg.vision_base_url || cfg.vision_model_name) {
+        const current = getConfig()
+        normalized.vision = { ...(current.vision || {}) }
+        if (cfg.vision_enabled !== undefined) normalized.vision.enabled = !!cfg.vision_enabled
+        if (cfg.vision_api_key && cfg.vision_api_key !== "***") normalized.vision.api_key = cfg.vision_api_key
+        if (cfg.vision_base_url) normalized.vision.base_url = cfg.vision_base_url
+        if (cfg.vision_model_name) normalized.vision.model_name = cfg.vision_model_name
+        if (cfg.vision_timeout_ms !== undefined) normalized.vision.timeout_ms = cfg.vision_timeout_ms
+        if (cfg.vision_fallback) normalized.vision.fallback = cfg.vision_fallback
+      }
       const updated = saveConfig(normalized)
-      return { type: "config.updated", config: { ...updated, llm: { ...updated.llm, api_key: "***" } } }
+      return {
+        type: "config.updated",
+        config: {
+          ...updated,
+          llm: { ...updated.llm, api_key: "***" },
+          vision: updated.vision ? { ...updated.vision, api_key: updated.vision.api_key ? "***" : "" } : undefined,
+        },
+      }
     }
 
     case "config.test":
@@ -84,6 +112,25 @@ export async function handleMessage(
         return { type: "config.testResult", ok: true }
       } catch (e: any) {
         return { type: "config.testResult", ok: false, error: e.message || String(e) }
+      }
+    }
+
+    case "config.testVision": {
+      const config = getConfig()
+      if (!config.vision?.enabled) {
+        return { type: "config.testVisionResult", ok: false, error: "Vision not enabled" }
+      }
+      try {
+        const client = new OpenAI({
+          baseURL: config.vision.base_url,
+          apiKey: config.vision.api_key || "ollama",
+          timeout: 5000,
+          maxRetries: 0,
+        })
+        await client.models.list()
+        return { type: "config.testVisionResult", ok: true, model: config.vision.model_name }
+      } catch (e: any) {
+        return { type: "config.testVisionResult", ok: false, error: e.message || String(e) }
       }
     }
 

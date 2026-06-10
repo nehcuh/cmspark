@@ -7,6 +7,8 @@ import type { HistoryStore } from "../history/store"
 import { getToolDefinitions, ToolDefinition } from "../bridge/tool-definitions"
 import { classifyError } from "../security"
 import { logger } from "../logger"
+import { analyzeImage } from "./vision-pipeline"
+import { getConfig } from "../config"
 
 // Jailbreak patterns to detect in LLM output
 const JAILBREAK_OUTPUT_PATTERNS = [
@@ -118,7 +120,8 @@ CRITICAL RULES:
 5. Before calling screenshot or page tools, ensure the tab is on a real website (not chrome:// or about:blank).
 6. Wait for pages to load before extracting content.
 7. For reading page content: use get_page_text (preferred, cross-platform) or evaluate.
-8. osascript_eval is macOS-ONLY and will FAIL on Windows/Linux. On non-macOS systems, NEVER call osascript_eval — always use get_page_text or evaluate instead.`
+8. osascript_eval is macOS-ONLY and will FAIL on Windows/Linux. On non-macOS systems, NEVER call osascript_eval — always use get_page_text or evaluate instead.
+9. When a page contains important visual content (product images, data charts, diagrams, maps, infographics), use analyze_image with a CSS selector to understand the image content rather than relying solely on alt text.`
   const skillPrompt = skillEngine.buildSystemPrompt(threadId, undefined, skillIds, knowledgeIds)
 
   // Inject safety-guard skills at the END of system prompt (highest priority)
@@ -372,13 +375,92 @@ CRITICAL RULES:
             created_at: new Date().toISOString(),
           })
 
-          // Send tool result to extension for UI display
+          // Send tool result to extension for UI display (before vision analysis so UI shows raw result)
           sendToExtension({
             type: "tool.result",
             tool_call_id: tc.id,
             tool_name: toolName,
             result: toolResult,
           })
+
+          // Vision pipeline: intercept image-carrying tool results for local analysis
+          const VISION_TOOLS = ["screenshot", "analyze_image"]
+          if (VISION_TOOLS.includes(toolName) && toolResult.success && toolResult.data?.image_base64) {
+            const config = getConfig()
+            const visionEnabled = config.vision?.enabled
+              // Thread-level override: vision_enabled can disable per-thread
+              ?? (threadManager.get(threadId)?.config_override as any)?.vision_enabled
+
+            if (visionEnabled && config.vision) {
+              sendToExtension({ type: "tool.vision_start", tool_call_id: tc.id })
+
+              try {
+                const visionResult = await analyzeImage(
+                  {
+                    base64: toolResult.data.image_base64,
+                    width: toolResult.data.width,
+                    height: toolResult.data.height,
+                    url: toolResult.data.url,
+                    title: toolResult.data.title,
+                  },
+                  config.vision,
+                  params.prompt, // custom prompt from analyze_image tool
+                )
+
+                // Replace base64 image with text description
+                toolResult = {
+                  success: true,
+                  data: {
+                    vision_description: visionResult.description,
+                    vision_cached: visionResult.cached,
+                    vision_model: visionResult.model_used,
+                    vision_latency_ms: visionResult.latency_ms,
+                    url: toolResult.data.url,
+                    title: toolResult.data.title,
+                    width: toolResult.data.width,
+                    height: toolResult.data.height,
+                    alt_text: toolResult.data.alt_text,
+                    selector: toolResult.data.selector,
+                    image_available: true,
+                  },
+                }
+
+                sendToExtension({
+                  type: "tool.vision_done",
+                  tool_call_id: tc.id,
+                  cached: visionResult.cached,
+                  latency_ms: visionResult.latency_ms,
+                })
+              } catch (visionErr: any) {
+                logger.warn("llm.vision_failed", {
+                  tool_call_id: tc.id,
+                  error: visionErr.message,
+                  fallback: config.vision.fallback,
+                })
+                sendToExtension({
+                  type: "tool.vision_done",
+                  tool_call_id: tc.id,
+                  error: visionErr.message,
+                })
+
+                if (config.vision.fallback === "metadata") {
+                  toolResult = {
+                    success: true,
+                    data: {
+                      vision_description: `Screenshot of "${toolResult.data.title}" (${toolResult.data.url}), ${toolResult.data.width}x${toolResult.data.height}px. (Vision model unavailable: ${visionErr.message})`,
+                      url: toolResult.data.url,
+                      title: toolResult.data.title,
+                      width: toolResult.data.width,
+                      height: toolResult.data.height,
+                      image_available: true,
+                    },
+                  }
+                }
+                // "passthrough": keep original toolResult (base64 will be truncated at 8000 chars)
+                // "error": keep original toolResult (LLM sees truncated base64)
+              }
+            }
+          }
 
           threadManager.addMessage(threadId, createToolResultMessage(threadId, tc, toolResult, params))
 

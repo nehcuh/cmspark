@@ -27,6 +27,7 @@ const ALLOWED_CONFIG_OVERRIDE_KEYS: Record<string, string> = {
   model_name: "string",
   base_url: "string",
   system_prompt: "string",
+  vision_enabled: "boolean",
 }
 
 const MAX_CONFIG_STRING_LENGTH = 2000
@@ -63,6 +64,11 @@ function validateConfigOverride(config: any): { valid: boolean; error?: string; 
       }
       if (val.length > MAX_CONFIG_STRING_LENGTH) {
         return { valid: false, error: `Config key ${key} exceeds max length`, sanitized: {} }
+      }
+      sanitized[key] = val
+    } else if (expectedType === "boolean") {
+      if (typeof val !== "boolean") {
+        return { valid: false, error: `Config key ${key} must be a boolean`, sanitized: {} }
       }
       sanitized[key] = val
     }

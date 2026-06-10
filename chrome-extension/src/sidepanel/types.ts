@@ -38,6 +38,13 @@ export interface LLMConfig {
   trusted_domains: string[]
   privilege_mode: PrivilegeMode
   safety_skills_enabled: string[]
+  // Vision model fields (flattened for UI convenience)
+  vision_enabled?: boolean
+  vision_api_key?: string
+  vision_base_url?: string
+  vision_model_name?: string
+  vision_timeout_ms?: number
+  vision_fallback?: "metadata" | "passthrough" | "error"
 }
 
 export interface Message {
@@ -70,6 +77,8 @@ export interface ToolCall {
   params: Record<string, any>
   result?: ToolResult | null
   status: "pending" | "running" | "success" | "error"
+  vision_status?: "analyzing" | "done" | "cached" | "error"
+  vision_latency_ms?: number
 }
 
 export interface ToolResult {

@@ -141,8 +141,12 @@ function handleRequest(req: http.IncomingMessage, res: http.ServerResponse) {
 
     if (url === "/api/config" && req.method === "GET") {
       const config = getConfig()
+      const vision = config.vision
       jsonResponse(res, {
         llm: { ...config.llm, api_key: maskApiKey(config.llm.api_key) },
+        vision: vision
+          ? { ...vision, api_key: maskApiKey(vision.api_key) }
+          : { enabled: false, base_url: "http://localhost:11434/v1", api_key: "", model_name: "llava:7b", timeout_ms: 30000, max_tokens: 1024, fallback: "metadata", cache_ttl_seconds: 300 },
       })
       return
     }
@@ -152,16 +156,32 @@ function handleRequest(req: http.IncomingMessage, res: http.ServerResponse) {
         .then((body) => {
           if (res.writableEnded) return
           const data = JSON.parse(body)
-          const llm = { ...data.llm }
-          // Don't save masked API key
-          if (llm.api_key === "***" || llm.api_key === "") {
-            delete llm.api_key
+          const update: any = {}
+          // LLM config
+          if (data.llm) {
+            const llm = { ...data.llm }
+            if (llm.api_key === "***" || llm.api_key === "") {
+              delete llm.api_key
+            }
+            const current = getConfig()
+            update.llm = { ...current.llm, ...llm }
           }
-          const current = getConfig()
-          const updated = saveConfig({ llm: { ...current.llm, ...llm } })
+          // Vision config
+          if (data.vision) {
+            const vision = { ...data.vision }
+            if (vision.api_key === "***" || vision.api_key === "") {
+              delete vision.api_key
+            }
+            const current = getConfig()
+            update.vision = { ...(current.vision || {}), ...vision }
+          }
+          const updated = saveConfig(update)
           jsonResponse(res, {
             ok: true,
             llm: { ...updated.llm, api_key: maskApiKey(updated.llm.api_key) },
+            vision: updated.vision
+              ? { ...updated.vision, api_key: maskApiKey(updated.vision.api_key) }
+              : undefined,
           })
         })
         .catch((e: any) => {
@@ -175,13 +195,16 @@ function handleRequest(req: http.IncomingMessage, res: http.ServerResponse) {
         .then(async (body) => {
           if (res.writableEnded) return
           const { base_url, api_key, model_name } = JSON.parse(body)
-          if (!api_key) throw new Error("API Key is empty")
+          const config = getConfig()
+          // Use saved key if the provided one is masked or empty
+          const key = (!api_key || api_key.includes("*")) ? config.llm.api_key : api_key
+          if (!key) throw new Error("API Key is empty")
 
           const response = await fetch(`${base_url}/chat/completions`, {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
-              Authorization: `Bearer ${api_key}`,
+              Authorization: `Bearer ${key}`,
             },
             body: JSON.stringify({
               model: model_name || "deepseek-chat",
@@ -205,6 +228,41 @@ function handleRequest(req: http.IncomingMessage, res: http.ServerResponse) {
         })
         .catch((e: any) => {
           if (!res.writableEnded) jsonResponse(res, { ok: false, error: `Connection failed: ${e.message}` })
+        })
+      return
+    }
+
+    if (url === "/api/testVision" && req.method === "POST") {
+      readBody(req, 10 * 1024)
+        .then(async (body) => {
+          if (res.writableEnded) return
+          const { base_url, api_key, model_name } = JSON.parse(body)
+          const config = getConfig()
+          // Use saved key if the provided one is masked or empty
+          const key = (!api_key || api_key.includes("*")) ? (config.vision?.api_key || "") : api_key
+
+          // Test via OpenAI-compatible /models endpoint (works for Ollama, LM Studio, cloud APIs)
+          const modelsUrl = base_url.endsWith("/models")
+            ? base_url
+            : base_url.replace(/\/+$/, "") + "/models"
+
+          const response = await fetch(modelsUrl, {
+            method: "GET",
+            headers: key ? { Authorization: `Bearer ${key}` } : {},
+            signal: AbortSignal.timeout(10000),
+          })
+
+          if (response.ok) {
+            if (!res.writableEnded) jsonResponse(res, { ok: true, message: `Vision model connected (${model_name || "default"})` })
+          } else {
+            const err = await response.text()
+            if (!res.writableEnded) {
+              jsonResponse(res, { ok: false, error: `Vision server error (${response.status}): ${err.slice(0, 200)}` })
+            }
+          }
+        })
+        .catch((e: any) => {
+          if (!res.writableEnded) jsonResponse(res, { ok: false, error: `Vision server connection failed: ${e.message}` })
         })
       return
     }
@@ -330,6 +388,72 @@ input:focus{border-color:#4A90D9}
       <button class="btn btn-primary" id="saveBtn">Save</button>
     </div>
 
+    <div class="divider"></div>
+    <div class="section-title">Vision Model</div>
+
+    <div class="field">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+        <input type="checkbox" id="visionEnabled" style="width:auto">
+        Enable Vision Analysis
+      </label>
+      <div class="hint">Analyze screenshots and images via a local or remote vision model</div>
+    </div>
+
+    <div id="visionFields" style="opacity:0.4;pointer-events:none">
+      <div class="field">
+        <label>API Key</label>
+        <div class="input-row">
+          <input type="password" id="visionApiKey" placeholder="sk-... (leave empty for Ollama)">
+          <button class="btn-icon" id="toggleVisionKey" title="Show/Hide">&#128065;</button>
+        </div>
+        <div class="hint">Optional for local models (Ollama). Required for cloud vision APIs.</div>
+      </div>
+
+      <div class="field">
+        <label>Base URL</label>
+        <input type="text" id="visionBaseUrl" placeholder="http://localhost:11434/v1">
+        <div class="hint">OpenAI-compatible endpoint. Ollama default: http://localhost:11434/v1</div>
+      </div>
+
+      <div class="field">
+        <label>Model</label>
+        <input type="text" id="visionModel" list="visionModelList" placeholder="Type or select">
+        <datalist id="visionModelList">
+          <option value="llava:7b">
+          <option value="llava:13b">
+          <option value="minicpm-v">
+          <option value="qwen2.5vl:3b">
+          <option value="moondream2">
+          <option value="gpt-4o">
+          <option value="claude-sonnet-4-6">
+        </datalist>
+      </div>
+
+      <div class="field">
+        <label>Timeout</label>
+        <div class="range-row">
+          <input type="range" id="visionTimeout" min="10" max="60" step="5" value="30">
+          <span class="range-val" id="visionTimeoutVal">30s</span>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Fallback Strategy</label>
+        <select id="visionFallback" style="width:100%;padding:8px 12px;background:#0f3460;border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#e0e0e0;font-size:14px;font-family:inherit;outline:none">
+          <option value="metadata">Metadata only (recommended)</option>
+          <option value="passthrough">Pass image to main LLM</option>
+          <option value="error">Fail with error</option>
+        </select>
+        <div class="hint">What to do when vision model is unavailable</div>
+      </div>
+
+      <div class="actions">
+        <button class="btn btn-outline" id="testVisionBtn">Test Vision Model</button>
+      </div>
+    </div>
+
+    <div class="result" id="visionResult"></div>
+
     <div class="result" id="result"></div>
 
     <div class="env-banner" id="envBanner">
@@ -344,7 +468,20 @@ input:focus{border-color:#4A90D9}
   var $=function(id){return document.getElementById(id)};
   var apiKeyEl=$("apiKey"),baseUrlEl=$("baseUrl"),modelNameEl=$("modelName"),
       tempEl=$("temperature"),tempValEl=$("tempVal"),ctxWinEl=$("contextWindow"),
-      resultEl=$("result"),savedFlash=$("savedFlash"),statusDot=$("statusDot");
+      resultEl=$("result"),savedFlash=$("savedFlash"),statusDot=$("statusDot"),
+      visionEnabledEl=$("visionEnabled"),visionFields=$("visionFields"),
+      visionApiKeyEl=$("visionApiKey"),visionBaseUrlEl=$("visionBaseUrl"),
+      visionModelEl=$("visionModel"),visionTimeoutEl=$("visionTimeout"),
+      visionTimeoutValEl=$("visionTimeoutVal"),visionFallbackEl=$("visionFallback"),
+      visionResultEl=$("visionResult");
+
+  function toggleVisionFields(){
+    var on=visionEnabledEl.checked;
+    visionFields.style.opacity=on?"1":"0.4";
+    visionFields.style.pointerEvents=on?"auto":"none";
+  }
+
+  visionEnabledEl.onchange=toggleVisionFields;
 
   function load(){
     fetch("/api/config").then(function(r){return r.json()}).then(function(d){
@@ -355,6 +492,16 @@ input:focus{border-color:#4A90D9}
       tempEl.value=llm.temperature!=null?llm.temperature:0.7;
       tempValEl.textContent=tempEl.value;
       ctxWinEl.value=llm.context_window||1000000;
+      // Vision fields
+      var vision=d.vision||{};
+      visionEnabledEl.checked=!!vision.enabled;
+      visionApiKeyEl.value=vision.api_key||"";
+      visionBaseUrlEl.value=vision.base_url||"http://localhost:11434/v1";
+      visionModelEl.value=vision.model_name||"";
+      visionTimeoutEl.value=(vision.timeout_ms||30000)/1000;
+      visionTimeoutValEl.textContent=visionTimeoutEl.value+"s";
+      visionFallbackEl.value=vision.fallback||"metadata";
+      toggleVisionFields();
       statusDot.classList.remove("offline");
     }).catch(function(){
       statusDot.classList.add("offline");
@@ -363,13 +510,26 @@ input:focus{border-color:#4A90D9}
   }
 
   function collect(){
-    return {llm:{
+    var data={llm:{
       api_key:apiKeyEl.value,
       base_url:baseUrlEl.value,
       model_name:modelNameEl.value,
       temperature:parseFloat(tempEl.value),
       context_window:parseInt(ctxWinEl.value,10)
-    }}
+    }};
+    if(visionEnabledEl.checked){
+      data.vision={
+        enabled:true,
+        api_key:visionApiKeyEl.value,
+        base_url:visionBaseUrlEl.value||"http://localhost:11434/v1",
+        model_name:visionModelEl.value||"llava:7b",
+        timeout_ms:parseInt(visionTimeoutEl.value,10)*1000,
+        fallback:visionFallbackEl.value||"metadata",
+      }
+    } else {
+      data.vision={enabled:false}
+    }
+    return data
   }
 
   function showResult(msg,ok){
@@ -412,11 +572,38 @@ input:focus{border-color:#4A90D9}
     apiKeyEl.type=apiKeyEl.type==="password"?"text":"password";
   };
 
+  $("toggleVisionKey").onclick=function(){
+    visionApiKeyEl.type=visionApiKeyEl.type==="password"?"text":"password";
+  };
+
   $("copyKey").onclick=function(){
     if(apiKeyEl.value){navigator.clipboard.writeText(apiKeyEl.value).catch(function(){})}
   };
 
   tempEl.oninput=function(){tempValEl.textContent=tempEl.value};
+
+  visionTimeoutEl.oninput=function(){visionTimeoutValEl.textContent=visionTimeoutEl.value+"s"};
+
+  $("testVisionBtn").onclick=function(){
+    visionResultEl.className="result";
+    $("testVisionBtn").textContent="Testing...";
+    $("testVisionBtn").disabled=true;
+    fetch("/api/testVision",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({base_url:visionBaseUrlEl.value,api_key:visionApiKeyEl.value,model_name:visionModelEl.value})
+    }).then(function(r){return r.json()}).then(function(d){
+      visionResultEl.textContent=d.ok?d.message:d.error;
+      visionResultEl.className="result "+(d.ok?"success":"error");
+      $("testVisionBtn").textContent="Test Vision Model";
+      $("testVisionBtn").disabled=false;
+    }).catch(function(e){
+      visionResultEl.textContent="Test failed: "+e.message;
+      visionResultEl.className="result error";
+      $("testVisionBtn").textContent="Test Vision Model";
+      $("testVisionBtn").disabled=false;
+    });
+  };
 
   var presets=document.querySelectorAll(".preset");
   for(var i=0;i<presets.length;i++){

@@ -159,10 +159,15 @@ function CollapsibleMarkdown({ content, maxPreview }: { content: string; maxPrev
 
 function ToolCallCard({ tc }: { tc: any }) {
   const [expanded, setExpanded] = useState(false)
+  const [visionExpanded, setVisionExpanded] = useState(false)
   const hasResult = tc.result && !tc.error
   // Avoid stringifying huge objects on every render; cap preview stringification
   const resultStr = hasResult ? JSON.stringify(tc.result, null, 2) : ""
   const isLongResult = resultStr.length > TOOL_RESULT_PREVIEW
+
+  const isVisionTool = tc.tool_name === "screenshot" || tc.tool_name === "analyze_image"
+  const visionDescription = tc.result?.data?.vision_description
+  const hasVisionDescription = isVisionTool && visionDescription
 
   return (
     <div style={{
@@ -173,10 +178,54 @@ function ToolCallCard({ tc }: { tc: any }) {
       <div style={styles.toolHeader}>
         <span>{tc.status === "running" ? "⏳" : tc.status === "success" ? "✅" : tc.status === "error" ? "❌" : "⏸"}</span>
         <span style={styles.toolName}>{tc.tool_name}</span>
+        {/* Vision status badge */}
+        {isVisionTool && tc.vision_status === "analyzing" && (
+          <span style={{ fontSize: 10, color: "#4A90D9", marginLeft: 8 }}>Analyzing...</span>
+        )}
+        {isVisionTool && tc.vision_status === "done" && (
+          <span style={{ fontSize: 10, color: "#4CAF50", marginLeft: 8 }}>
+            Vision {tc.vision_latency_ms ? `${(tc.vision_latency_ms / 1000).toFixed(1)}s` : ""}
+          </span>
+        )}
+        {isVisionTool && tc.vision_status === "cached" && (
+          <span style={{ fontSize: 10, color: "#9E9E9E", marginLeft: 8 }}>Vision cached</span>
+        )}
+        {isVisionTool && tc.vision_status === "error" && (
+          <span style={{ fontSize: 10, color: "#FF9800", marginLeft: 8 }}>Vision failed</span>
+        )}
         {hasResult && isLongResult && (
           <span style={{ marginLeft: "auto", fontSize: 10, color: "#999" }}>{expanded ? "收起 ▲" : "展开 ▼"}</span>
         )}
       </div>
+      {/* Expandable vision description */}
+      {hasVisionDescription && (
+        <div style={{
+          marginTop: 6,
+          padding: "6px 10px",
+          background: "#f0f7ff",
+          borderRadius: 4,
+          borderLeft: "3px solid #4A90D9",
+        }}>
+          <div style={{
+            fontSize: 11,
+            color: "#333",
+            lineHeight: 1.4,
+            maxHeight: visionExpanded ? "none" : "3em",
+            overflow: "hidden",
+            whiteSpace: "pre-wrap",
+          }}>
+            {visionDescription}
+          </div>
+          {visionDescription.length > 100 && (
+            <button
+              onClick={(e) => { e.stopPropagation(); setVisionExpanded(!visionExpanded) }}
+              style={{ fontSize: 10, color: "#4A90D9", background: "none", border: "none", cursor: "pointer", padding: "2px 0", marginTop: 2 }}
+            >
+              {visionExpanded ? "收起 ▲" : "展开全部 ▼"}
+            </button>
+          )}
+        </div>
+      )}
       {hasResult && (
         <pre style={{...styles.toolResult, background: "#f5f5f5", padding: "8px 12px", borderRadius: 4, fontSize: 11, fontFamily: "'SF Mono', 'Fira Code', monospace", maxHeight: expanded ? 300 : 80, overflow: "auto"}}>
           <code>{expanded ? resultStr : resultStr.substring(0, TOOL_RESULT_PREVIEW) + (isLongResult ? " ..." : "")}</code>

@@ -85,6 +85,8 @@ export class BrowserBridge {
           return await this.navigate(params)
         case "screenshot":
           return await this.screenshot(params)
+        case "analyze_image":
+          return await this.analyzeImage(params)
 
         // Page read tools
         case "get_page_text":
@@ -398,6 +400,135 @@ export class BrowserBridge {
         success: true,
         data: { image_base64: base64, width: tab.width || 0, height: tab.height || 0, url: tab.url, title: tab.title },
       }
+    }
+  }
+
+  private async analyzeImage(params: Record<string, any>): Promise<ToolResult> {
+    let tabId = params.tabId
+    const selector = params.selector
+
+    if (!selector) {
+      return { success: false, error: "selector is required for analyze_image" }
+    }
+
+    if (!tabId) {
+      const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true })
+      if (!activeTab?.id) throw new Error("No active tab found")
+      tabId = activeTab.id
+    }
+
+    const tab = await chrome.tabs.get(tabId)
+
+    // Extract image data from the element via CDP
+    // Uses Canvas to handle both same-origin and cross-origin images
+    const extractResult = await this.sendCdp(tabId, "Runtime.evaluate", {
+      expression: `
+        (function() {
+          const el = document.querySelector(${JSON.stringify(selector)});
+          if (!el) return { error: "Element not found: " + ${JSON.stringify(selector)} };
+
+          // For <img> elements
+          if (el.tagName === "IMG") {
+            try {
+              const canvas = document.createElement("canvas");
+              canvas.width = el.naturalWidth || el.width;
+              canvas.height = el.naturalHeight || el.height;
+              const ctx = canvas.getContext("2d");
+              ctx.drawImage(el, 0, 0);
+              const dataUrl = canvas.toDataURL("image/jpeg", 0.8);
+              return {
+                base64: dataUrl.replace(/^data:image\\/\\w+;base64,/, ""),
+                width: canvas.width,
+                height: canvas.height,
+                src: el.src || "",
+                alt: el.alt || ""
+              };
+            } catch (e) {
+              return { error: "Cannot extract image (CORS): " + e.message, src: el.src || "" };
+            }
+          }
+
+          // For <canvas> elements
+          if (el.tagName === "CANVAS") {
+            const dataUrl = el.toDataURL("image/jpeg", 0.8);
+            return {
+              base64: dataUrl.replace(/^data:image\\/\\w+;base64,/, ""),
+              width: el.width,
+              height: el.height,
+              src: "",
+              alt: ""
+            };
+          }
+
+          // For <video> elements — capture current frame
+          if (el.tagName === "VIDEO") {
+            const canvas = document.createElement("canvas");
+            canvas.width = el.videoWidth || el.width;
+            canvas.height = el.videoHeight || el.height;
+            const ctx = canvas.getContext("2d");
+            ctx.drawImage(el, 0, 0);
+            const dataUrl = canvas.toDataURL("image/jpeg", 0.8);
+            return {
+              base64: dataUrl.replace(/^data:image\\/\\w+;base64,/, ""),
+              width: canvas.width,
+              height: canvas.height,
+              src: el.src || "",
+              alt: ""
+            };
+          }
+
+          // For SVG or other elements — render to Canvas via foreignObject
+          try {
+            const rect = el.getBoundingClientRect();
+            const canvas = document.createElement("canvas");
+            canvas.width = rect.width;
+            canvas.height = rect.height;
+            const ctx = canvas.getContext("2d");
+            const svg = new XMLSerializer().serializeToString(el);
+            const img = new Image();
+            const blob = new Blob([svg], { type: "image/svg+xml" });
+            const url = URL.createObjectURL(blob);
+            return new Promise((resolve) => {
+              img.onload = () => {
+                ctx.drawImage(img, 0, 0);
+                URL.revokeObjectURL(url);
+                const dataUrl = canvas.toDataURL("image/jpeg", 0.8);
+                resolve({
+                  base64: dataUrl.replace(/^data:image\\/\\w+;base64,/, ""),
+                  width: canvas.width,
+                  height: canvas.height,
+                  src: "",
+                  alt: el.getAttribute("aria-label") || ""
+                });
+              };
+              img.onerror = () => resolve({ error: "Failed to render element" });
+              img.src = url;
+            });
+          } catch (e) {
+            return { error: "Cannot render element: " + e.message };
+          }
+        })()
+      `,
+      returnByValue: true,
+      awaitPromise: true,
+    })
+
+    const data = extractResult?.result?.value
+    if (!data || data.error) {
+      return { success: false, error: data?.error || "Failed to extract image data" }
+    }
+
+    return {
+      success: true,
+      data: {
+        image_base64: data.base64,
+        width: data.width,
+        height: data.height,
+        url: data.src || tab.url,
+        title: tab.title,
+        alt_text: data.alt || "",
+        selector,
+      },
     }
   }
 
