@@ -37,10 +37,8 @@ If Not objFSO.FileExists(strHere & "\" & strScript) Then
 End If
 
 ' Launch hidden — windowStyle=0 (hidden), waitOnReturn=False (async)
-' Redirect stderr to log for crash diagnostics
-Dim strCmd
-strCmd = """" & strNode & """ """ & strScript & """ tray 2>>""" & strLogFile & """"
-intRet = objShell.Run("cmd /c " & strCmd, 0, False)
+' Crash logging is handled by Node.js (uncaught exception → crash.log)
+intRet = objShell.Run("""" & strNode & """ """ & strScript & """ tray", 0, False)
 
 If intRet <> 0 Then
     Set ts = objFSO.OpenTextFile(strLogFile, 8, True)

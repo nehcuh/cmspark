@@ -391,6 +391,29 @@ async function main() {
   }
 }
 
+// Global crash logger — write to file before exiting so hidden Windows processes
+// leave diagnostics even without a console window
+function writeCrashLog(label: string, err: unknown): void {
+  try {
+    const logDir = path.join(process.env.USERPROFILE || process.env.HOME || ".", ".cmspark-agent", "logs")
+    fs.mkdirSync(logDir, { recursive: true })
+    const logFile = path.join(logDir, "crash.log")
+    const ts = new Date().toISOString()
+    const msg = err instanceof Error ? `${err.message}\n${err.stack}` : String(err)
+    fs.appendFileSync(logFile, `[${ts}] ${label}: ${msg}\n`)
+  } catch { /* nothing we can do */ }
+  console.error(`[${label}]`, err)
+}
+
+process.on("uncaughtException", (err) => {
+  writeCrashLog("uncaughtException", err)
+  process.exit(1)
+})
+
+process.on("unhandledRejection", (reason) => {
+  writeCrashLog("unhandledRejection", reason)
+})
+
 main().catch((e) => {
   console.error("Fatal error:", e)
   process.exit(1)
