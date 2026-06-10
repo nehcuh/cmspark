@@ -182,25 +182,119 @@ Side Panel 支持多条对话线程并行：
 - 独立的 LLM 配置（可分别使用不同模型）
 - 独立的标签页绑定
 
-### 技能系统
+### 技能系统（Skills）
 
-Skill 是可复用的操作流程模板，格式为 Markdown + YAML frontmatter。
+Skill 是**可复用的操作流程模板**，告诉 AI「如何完成某类任务」。格式为 Markdown + YAML frontmatter。
 
-**使用内置 Skill**：
+**内置技能（用 `/` 触发）**：
+
 ```
-输入: "/browse https://example.com"
-→ 自动加载 browse skill，执行页面读取和摘要
+/browse https://example.com   → 读取页面并摘要
+/screenshot                   → 截图并视觉分析
+/extract                      → 提取页面结构化数据
 ```
+
+**Skill 文件格式**：
+
+```markdown
+---
+name: login-company-sso
+description: 公司 SSO 系统登录流程
+type: prompt_template
+---
+# 登录步骤
+1. 导航到登录页
+2. 找到「企业登录」入口，点击
+3. 在 SSO 弹窗中输入工号和密码
+4. 等待跳转完成后确认已进入主页
+```
+
+**Skill 类型**：
+- `prompt_template`：操作步骤描述，LLM 按步骤执行（最常用）
+- `tool_chain`：预定义工具调用序列
+- `sub_agent`：嵌套 Agent 子任务
+
+**注入机制**：
+- 自动模式：根据用户输入语义匹配相关 Skill，低于 20 分相似度不触发
+- 手动模式：在 Side Panel 的 Skills 面板手动勾选
+- 直接调用：输入 `/skill名` 强制加载
+
+Skill 只在被加载时才消耗 token（LLM 先看索引，决定是否调用 `use_skill(name)`）。
 
 **创建自定义 Skill**：
 1. 让 Agent 执行一次完整操作
-2. 说"把刚才的操作保存为 skill"
-3. Agent 会自动分析操作序列，提取参数，生成 skill 文件
+2. 说「把刚才的操作保存为 skill」
+3. Agent 自动分析操作序列、提取参数、生成 skill 文件
 4. 在 Skills 面板中预览、编辑后保存
 
 **导入/导出 Skill**：
 - 导出：Skills 面板 → 选择 skill → 导出为 `.md` 文件
 - 导入：Skills 面板 → 输入本地路径 → 导入文件夹或单个文件
+
+Skill 文件存储于 `~/.cmspark-agent/skills/`。
+
+---
+
+### 知识库（Knowledge）
+
+Knowledge 是**背景资料注入机制**，告诉 AI「需要了解什么」。内容在每次对话时直接插入 System Prompt，无需 LLM 主动调用。
+
+**与 Skills 的核心区别**：
+
+| | Skills | Knowledge |
+|---|---|---|
+| 本质 | 告诉 AI **怎么做** | 告诉 AI **知道什么** |
+| 触发 | 按需调用 / 语义匹配 | 每次对话自动注入 |
+| token 成本 | 低（只有索引） | 固定（每篇上限 ~500 tokens） |
+| 适合内容 | 操作流程、步骤模板 | API 文档、背景说明、规范 |
+
+**两种知识类型**：
+- `domain_knowledge`：全局知识，不绑定网站（如 API 文档、编码规范）
+- `site_knowledge`：绑定特定域名，访问该网站时自动激活
+
+**知识文档格式**：
+
+```markdown
+---
+name: internal-api-docs
+description: 内部系统 REST API 参考
+type: domain_knowledge
+---
+# 认证
+所有接口使用 Bearer Token（请求头 Authorization: Bearer <token>）。
+
+# 常用接口
+- GET /api/users        获取用户列表
+- POST /api/tasks       创建任务（需 title, assignee 字段）
+```
+
+```markdown
+---
+name: jira-guide
+description: 公司 Jira 使用规范
+type: site_knowledge
+site: jira.company.com
+---
+所有 Bug 任务需标 Priority: P1/P2。
+Sprint 周期两周，每周一开始。
+提交前需关联 Confluence 文档链接。
+```
+
+**三种注入模式**（在 Knowledge 面板顶部切换）：
+- **自动**：勾选的知识 ∪ 当前 URL 匹配的站点知识（推荐）
+- **全选**：所有知识文档全部注入（上下文大，适合文档研读场景）
+- **按需**：只用手动勾选（✓）的文档
+
+**导入方式**（Knowledge 面板）：
+- 「导入文件」→ 选择本地 `.md` 文件
+- 「导入 URL」→ 输入 Markdown 文件的网络地址（如 GitHub raw 链接）
+
+知识文档存储于 `~/.cmspark-agent/knowledge/`，每篇内容超过 ~2000 字符会被截断，建议只保留关键信息。
+
+**典型使用场景**：
+1. **内部系统操作**：把系统的 URL 结构、登录方式写成 `site_knowledge`，绑定到该系统域名
+2. **研发助手**：把团队编码规范、架构说明导入为 `domain_knowledge`
+3. **产品调研**：把竞品资料导入，让 AI 在浏览竞品时自动了解对比维度
 
 ---
 
@@ -215,6 +309,7 @@ Companion 的数据存储在用户主目录下的 `~/.cmspark-agent/`：
 ├── config.json          # LLM 全局配置
 ├── skills/              # 用户自定义技能
 ├── builtin-skills/      # 内置技能
+├── knowledge/           # 知识文档（自动注入 System Prompt）
 ├── threads/             # 线程数据（消息历史）
 ├── history.db           # 操作历史（SQLite）
 └── logs/                # 运行日志
