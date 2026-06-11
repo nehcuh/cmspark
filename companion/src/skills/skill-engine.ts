@@ -185,18 +185,20 @@ export class SkillEngine {
   }
 
   list(): SkillMeta[] {
-    return this.skillsCache.map(s => ({
-      name: s.name,
-      description: s.description,
-      type: s.type,
-      site: s.site,
-      tags: s.tags,
-      entries: s.entries,
-      builtin: s.builtin,
-      source_file: s.source_file,
-      dir: s.dir,
-      resources: s.resources,
-    }))
+    return this.skillsCache
+      .filter(s => s.type !== "site_knowledge" && s.type !== "domain_knowledge")
+      .map(s => ({
+        name: s.name,
+        description: s.description,
+        type: s.type,
+        site: s.site,
+        tags: s.tags,
+        entries: s.entries,
+        builtin: s.builtin,
+        source_file: s.source_file,
+        dir: s.dir,
+        resources: s.resources,
+      }))
   }
 
   get(name: string): Skill | undefined {
