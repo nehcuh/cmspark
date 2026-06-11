@@ -640,7 +640,13 @@ export async function startServer() {
   configEvents.on(CONFIG_CHANGE_EVENT, (updatedConfig: any) => {
     const message = JSON.stringify({
       type: "config.updated",
-      config: { ...updatedConfig, llm: { ...updatedConfig.llm, api_key: "***" } },
+      config: {
+        ...updatedConfig,
+        llm: { ...updatedConfig.llm, api_key: "***" },
+        vision: updatedConfig.vision
+          ? { ...updatedConfig.vision, api_key: updatedConfig.vision.api_key ? "***" : "" }
+          : undefined,
+      },
       source: "companion",
     })
     for (const client of clients) {

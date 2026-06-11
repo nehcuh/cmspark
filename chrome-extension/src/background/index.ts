@@ -12,44 +12,109 @@ let browserBridge: BrowserBridge
 let keepAlive: KeepAlive
 type LogLevel = "debug" | "info" | "warn" | "error"
 
-// Extension's own LLM config, stored separately from companion's config.
-// Takes priority over the companion/tray config when sending chat requests.
-// Persisted in chrome.storage.local so it survives service-worker restarts.
-interface ExtensionLLMConfig {
-  api_key:        string
-  base_url:       string
-  model_name:     string
-  temperature?:   number
+// Extension's cached copy of the companion global config.
+// Kept in sync via config.set (extension-initiated) and config.updated (companion broadcast).
+// Persisted in chrome.storage.local so settings survive service-worker restarts.
+interface ExtensionConfig {
+  api_key: string
+  base_url: string
+  model_name: string
+  temperature?: number
   context_window?: number
+  vision_enabled?: boolean
+  vision_api_key?: string
+  vision_base_url?: string
+  vision_model_name?: string
+  vision_timeout_ms?: number
+  vision_fallback?: string
 }
-let extensionLLMConfig: ExtensionLLMConfig | null = null
-// Timestamp of the last config.set sent BY the extension.
-// Used to avoid clearing extensionLLMConfig when we receive the companion's
-// config.updated echo of our own config.set (within a 3-second window).
-let extensionConfigSetAt = 0
+let extensionConfig: ExtensionConfig | null = null
 
-function loadExtensionLLMConfig() {
-  chrome.storage.local.get("extensionLLMConfig", (result) => {
-    if (result.extensionLLMConfig?.api_key) {
-      extensionLLMConfig = result.extensionLLMConfig as ExtensionLLMConfig
+function loadExtensionConfig() {
+  chrome.storage.local.get(["extensionConfig", "extensionLLMConfig"], (result) => {
+    if (result.extensionConfig) {
+      extensionConfig = result.extensionConfig as ExtensionConfig
+    } else if (result.extensionLLMConfig) {
+      // Migrate legacy extensionLLMConfig to the new full extensionConfig
+      const legacy = result.extensionLLMConfig as any
+      extensionConfig = {
+        api_key: legacy.api_key || "",
+        base_url: legacy.base_url || "",
+        model_name: legacy.model_name || "",
+        temperature: legacy.temperature,
+        context_window: legacy.context_window,
+      }
+      chrome.storage.local.set({ extensionConfig })
+      chrome.storage.local.remove("extensionLLMConfig")
     }
   })
 }
 
-/** Persist extension LLM config when user saves settings. */
-function saveExtensionLLMConfig(cfg: Record<string, unknown>) {
+/** Persist the full config locally so it survives SW restarts. */
+function saveExtensionConfig(cfg: Record<string, unknown>) {
   // Support both flat (legacy settings.set) and nested (config.set) formats
   const llm = (cfg.llm as Record<string, unknown> | undefined) ?? cfg
-  const apiKey = llm.api_key as string | undefined
-  if (!apiKey || apiKey === "***") return  // Don't save masked or empty keys
-  extensionLLMConfig = {
-    api_key:        apiKey,
-    base_url:       String(llm.base_url ?? extensionLLMConfig?.base_url ?? ""),
-    model_name:     String(llm.model_name ?? extensionLLMConfig?.model_name ?? ""),
-    temperature:    llm.temperature !== undefined ? Number(llm.temperature) : extensionLLMConfig?.temperature,
-    context_window: llm.context_window !== undefined ? Number(llm.context_window) : extensionLLMConfig?.context_window,
+  const vision = cfg.vision as Record<string, unknown> | undefined
+
+  const next: ExtensionConfig = {
+    api_key: (llm.api_key as string) || extensionConfig?.api_key || "",
+    base_url: String(llm.base_url ?? extensionConfig?.base_url ?? ""),
+    model_name: String(llm.model_name ?? extensionConfig?.model_name ?? ""),
+    temperature: llm.temperature !== undefined ? Number(llm.temperature) : extensionConfig?.temperature,
+    context_window: llm.context_window !== undefined ? Number(llm.context_window) : extensionConfig?.context_window,
   }
-  chrome.storage.local.set({ extensionLLMConfig })
+
+  // Vision: support both flat fields (from extension UI) and nested vision object (from companion)
+  if (cfg.vision_enabled !== undefined) {
+    next.vision_enabled = !!cfg.vision_enabled
+  } else if (vision?.enabled !== undefined) {
+    next.vision_enabled = !!vision.enabled
+  } else if (extensionConfig?.vision_enabled !== undefined) {
+    next.vision_enabled = extensionConfig.vision_enabled
+  }
+
+  if (cfg.vision_api_key !== undefined) {
+    next.vision_api_key = cfg.vision_api_key as string
+  } else if (vision?.api_key !== undefined) {
+    next.vision_api_key = vision.api_key as string
+  } else if (extensionConfig?.vision_api_key !== undefined) {
+    next.vision_api_key = extensionConfig.vision_api_key
+  }
+
+  if (cfg.vision_base_url !== undefined) {
+    next.vision_base_url = cfg.vision_base_url as string
+  } else if (vision?.base_url !== undefined) {
+    next.vision_base_url = vision.base_url as string
+  } else if (extensionConfig?.vision_base_url !== undefined) {
+    next.vision_base_url = extensionConfig.vision_base_url
+  }
+
+  if (cfg.vision_model_name !== undefined) {
+    next.vision_model_name = cfg.vision_model_name as string
+  } else if (vision?.model_name !== undefined) {
+    next.vision_model_name = vision.model_name as string
+  } else if (extensionConfig?.vision_model_name !== undefined) {
+    next.vision_model_name = extensionConfig.vision_model_name
+  }
+
+  if (cfg.vision_timeout_ms !== undefined) {
+    next.vision_timeout_ms = Number(cfg.vision_timeout_ms)
+  } else if (vision?.timeout_ms !== undefined) {
+    next.vision_timeout_ms = Number(vision.timeout_ms)
+  } else if (extensionConfig?.vision_timeout_ms !== undefined) {
+    next.vision_timeout_ms = extensionConfig.vision_timeout_ms
+  }
+
+  if (cfg.vision_fallback !== undefined) {
+    next.vision_fallback = cfg.vision_fallback as string
+  } else if (vision?.fallback !== undefined) {
+    next.vision_fallback = vision.fallback as string
+  } else if (extensionConfig?.vision_fallback !== undefined) {
+    next.vision_fallback = extensionConfig.vision_fallback
+  }
+
+  extensionConfig = next
+  chrome.storage.local.set({ extensionConfig })
 }
 
 const NOTIFICATION_ID = "cmspark-companion-disconnected"
@@ -113,7 +178,7 @@ function cancelDisconnectNotification() {
 }
 
 function init() {
-  loadExtensionLLMConfig()
+  loadExtensionConfig()
   browserBridge = new BrowserBridge(pageSanitizer)
   keepAlive = new KeepAlive()
 
@@ -187,16 +252,11 @@ async function handleCompanionMessage(msg: any) {
     return
   }
 
-  // When the companion's config changes from an EXTERNAL source (tray/web settings),
-  // invalidate our cached key so the companion's updated config is used for chats.
-  // Guard: if the extension itself just sent config.set within 3s, skip the clear
-  // to avoid erasing the key we just saved (config.updated is broadcast to all clients).
+  // Keep our local cache in sync with the companion's global config.
+  // The companion is the single source of truth; both tray settings and
+  // extension settings feed into the same config.json.
   if (msg.type === "config.updated") {
-    const msSinceOwnSave = Date.now() - extensionConfigSetAt
-    if (msSinceOwnSave > 3000) {
-      extensionLLMConfig = null
-      chrome.storage.local.remove("extensionLLMConfig")
-    }
+    saveExtensionConfig(msg.config || {})
   }
 
   if (msg.type === "security.config") {
@@ -258,15 +318,13 @@ function setupMessageHandlers() {
         return true
 
       case "chat.send": {
-        // Include the extension's locally-stored LLM config so the companion
-        // can prefer it over its own (tray-configured) stored config.
-        const llmOverride = extensionLLMConfig?.api_key ? extensionLLMConfig : null
+        // Config is kept in sync with companion via config.set / config.updated.
+        // The companion uses its global config; no per-request override is needed.
         const sent = wsClient.send({
           type: "chat.create",
           thread_id: message.threadId,
           message: message.message,
           skill_ids: message.skillIds,
-          llm_override: llmOverride,
         })
         if (!sent) {
           chrome.runtime.sendMessage({ type: "error", error: "Companion 未连接，请检查 Companion 是否已启动" })
@@ -296,19 +354,19 @@ function setupMessageHandlers() {
         return true
 
       case "config.set":
-        // Persist the API key locally before forwarding to companion
-        saveExtensionLLMConfig(message.config || {})
-        extensionConfigSetAt = Date.now()  // mark that WE initiated this change
+        // Persist locally so settings survive SW restarts, then forward to companion
+        // so it becomes the global source of truth.
+        saveExtensionConfig(message.config || {})
         wsClient.send({ type: "config.set", config: message.config })
         sendResponse({ ok: true })
         return true
 
       case "config.test": {
-        // message.llmOverride: config from the extension's settings UI (before saving)
-        // Falls back to extensionLLMConfig (last saved), then to companion's stored config
+        // message.llmOverride: config from the extension's settings UI (before saving).
+        // Used only for connection testing; actual chat uses the synced global config.
         const llmOverride = (message.llmOverride?.api_key && message.llmOverride.api_key !== "***")
           ? message.llmOverride
-          : extensionLLMConfig?.api_key ? extensionLLMConfig : null
+          : null
         wsClient.send({ type: "config.test", llm_override: llmOverride })
         sendResponse({ ok: true })
         return true

@@ -85,6 +85,7 @@ test("normalizeConfig flattens companion config and keeps masked API keys out of
     temperature: 0.2,
     context_window: 4096,
     trusted_domains: ["example.com", "*.company.com"],
+    vision_enabled: false,
   })
 })
 
@@ -113,15 +114,15 @@ test("initial side panel sync requests threads, skills, and config exactly once 
   const initializedRef = { current: false }
 
   assert.equal(requestInitialSidePanelData((message) => sent.push(message), initializedRef), true)
-  assert.deepEqual(sent, [{ type: "thread.list" }, { type: "skill.list" }, { type: "config.get" }])
+  assert.deepEqual(sent, [{ type: "thread.list" }, { type: "skill.list" }, { type: "knowledge.list" }, { type: "config.get" }])
   assert.equal(initializedRef.current, true)
 
   assert.equal(requestInitialSidePanelData((message) => sent.push(message), initializedRef), false)
-  assert.deepEqual(sent, [{ type: "thread.list" }, { type: "skill.list" }, { type: "config.get" }])
+  assert.deepEqual(sent, [{ type: "thread.list" }, { type: "skill.list" }, { type: "knowledge.list" }, { type: "config.get" }])
 })
 
-test("SET_THREADS auto-selects first thread and syncs pinned tabs and skillSelectionMode", () => {
-  const s = { ...initialState, threads: [], activeThreadId: null }
+test("SET_THREADS keeps active thread when it exists in the new list and syncs metadata", () => {
+  const s = { ...initialState, threads: [], activeThreadId: "t1" }
   const next = agentReducer(s, {
     type: "SET_THREADS",
     threads: [
@@ -145,6 +146,29 @@ test("SET_THREADS auto-selects first thread and syncs pinned tabs and skillSelec
   assert.deepEqual(next.activeSkillIds, ["skill-a"])
   assert.equal(next.skillSelectionMode, "all")
   assert.equal(next.knowledgeSelectionMode, "manual")
+})
+
+test("SET_THREADS clears active thread when it is not in the new list", () => {
+  const s = { ...initialState, threads: [], activeThreadId: null }
+  const next = agentReducer(s, {
+    type: "SET_THREADS",
+    threads: [
+      {
+        id: "t1",
+        alias: "T1",
+        created_at: "",
+        updated_at: "",
+        config_override: initialState.config,
+        tool_whitelist: null,
+        pinned_tabs: [1],
+        active_skill_ids: ["skill-a"],
+        skill_selection_mode: "all",
+        knowledge_selection_mode: "manual",
+      },
+    ],
+  })
+
+  assert.equal(next.activeThreadId, null)
 })
 
 test("SET_THREADS defaults skillSelectionMode to auto when thread has no mode", () => {

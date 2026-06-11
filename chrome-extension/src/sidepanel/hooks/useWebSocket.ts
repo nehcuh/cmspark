@@ -40,12 +40,15 @@ export function normalizeConfig(config: any): Partial<LLMConfig> {
   // Vision config fields (flattened from config.vision)
   const vision = config.vision
   if (vision) {
-    ;(normalized as any).vision_enabled = !!vision.enabled
-    ;(normalized as any).vision_api_key = vision.api_key === "***" ? "" : vision.api_key
-    ;(normalized as any).vision_base_url = vision.base_url
-    ;(normalized as any).vision_model_name = vision.model_name
-    ;(normalized as any).vision_timeout_ms = vision.timeout_ms
-    ;(normalized as any).vision_fallback = vision.fallback
+    normalized.vision_enabled = !!vision.enabled
+    normalized.vision_api_key = vision.api_key === "***" ? "" : vision.api_key
+    normalized.vision_base_url = vision.base_url
+    normalized.vision_model_name = vision.model_name
+    normalized.vision_timeout_ms = vision.timeout_ms
+    normalized.vision_fallback = vision.fallback
+  } else {
+    // Explicitly disable vision when companion sends no vision block
+    normalized.vision_enabled = false
   }
   return Object.fromEntries(
     Object.entries(normalized).filter(([, value]) => value !== undefined)
