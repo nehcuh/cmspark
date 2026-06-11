@@ -384,6 +384,9 @@ function setupMessageHandlers() {
       case "skill.import-files":
       case "skill.import-path":
       case "skill.delete":
+      case "knowledge.list":
+      case "knowledge.import":
+      case "knowledge.delete":
       case "history.query":
       case "history.export":
         // Forward to companion

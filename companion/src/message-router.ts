@@ -1,6 +1,7 @@
 // Message router — dispatches incoming WebSocket messages to handlers
 
 import os from "os"
+import path from "path"
 import { URL } from "url"
 import OpenAI from "openai"
 import type { ThreadManager } from "./threads/thread-manager"
@@ -782,6 +783,78 @@ export async function handleMessage(
     case "skill.delete":
       skillEngine.deleteSkill(rest.skill_name)
       return { type: "skill.deleted", skill_name: rest.skill_name }
+
+    // --- Knowledge ---
+    case "knowledge.list":
+      skillEngine.refresh()
+      return { type: "knowledge.list", docs: skillEngine.listKnowledge() }
+    case "knowledge.import": {
+      if (rest.file) {
+        // Import from binary file (docx/pdf/xlsx/etc.) — parse to markdown first
+        const { name, content } = rest.file
+        if (!name || !content) throw new Error("knowledge.import file requires 'name' and 'content'")
+        const buffer = Buffer.from(String(content), "base64")
+        const parsed = await parseFile(buffer, String(name), "application/octet-stream")
+        if (!parsed.success) {
+          return { type: "error", error: parsed.error }
+        }
+        const baseName = String(name).replace(/\.[^.]+$/, "")
+        // Pass parsed text + fallback name; importKnowledge auto-generates frontmatter
+        skillEngine.importKnowledge(parsed.text, baseName)
+      } else if (rest.url) {
+        // SSRF protection: reuse skill.import URL validation
+        const urlStr = String(rest.url)
+        let parsed: URL
+        try {
+          parsed = new URL(urlStr)
+        } catch {
+          return { type: "error", error: "Invalid URL" }
+        }
+        const allowedProtocols = ["http:", "https:"]
+        if (!allowedProtocols.includes(parsed.protocol)) {
+          return { type: "error", error: `URL protocol not allowed: ${parsed.protocol}` }
+        }
+        const hostname = parsed.hostname
+        if (isInternalIp(hostname)) {
+          return { type: "error", error: "Internal IP addresses are not allowed" }
+        }
+        const controller = new AbortController()
+        const fetchTimeout = setTimeout(() => controller.abort(), 30000)
+        let response: Response
+        try {
+          response = await fetch(urlStr, {
+            signal: controller.signal,
+            redirect: "manual",
+          })
+        } finally {
+          clearTimeout(fetchTimeout)
+        }
+        if (response.type === "opaqueredirect" || (response.status >= 300 && response.status < 400)) {
+          throw new Error("Redirects are not allowed for knowledge imports")
+        }
+        if (!response.ok) throw new Error(`Failed to fetch knowledge: ${response.status}`)
+        const contentLength = response.headers.get("content-length")
+        const maxSize = 10 * 1024 * 1024
+        if (contentLength && parseInt(contentLength, 10) > maxSize) {
+          throw new Error(`Knowledge file too large: ${contentLength} bytes (max ${maxSize})`)
+        }
+        const body = await response.text()
+        if (body.length > maxSize) {
+          throw new Error(`Knowledge file too large: ${body.length} bytes (max ${maxSize})`)
+        }
+        const urlFallback = path.basename(parsed.pathname || "url-import").replace(/\.[^.]+$/, "") || "url-import"
+        skillEngine.importKnowledge(body, urlFallback)
+      } else if (rest.content) {
+        skillEngine.importKnowledge(rest.content)
+      } else {
+        throw new Error("knowledge.import requires 'content', 'url', or 'file'")
+      }
+      skillEngine.refresh()
+      return { type: "knowledge.list", docs: skillEngine.listKnowledge() }
+    }
+    case "knowledge.delete":
+      skillEngine.deleteKnowledge(rest.name)
+      return { type: "knowledge.deleted", name: rest.name }
 
     // --- Skill-craft ---
     case "skill.craft": {

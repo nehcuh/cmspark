@@ -12,6 +12,7 @@ import { getConfigDir } from "../config"
 import { ThreadManager } from "../threads/thread-manager"
 import { matchSite } from "./site-matcher"
 import { sanitizeKnowledgeContent } from "./content-sanitizer"
+import { chunkFile, searchChunks, type FileChunk } from "../file-chunker"
 
 interface ExperienceEntry {
   id: string
@@ -49,6 +50,9 @@ interface LlmConfig {
   temperature: number
 }
 
+const KNOWLEDGE_SEARCH_THRESHOLD_TOKENS = 1000
+const KNOWLEDGE_SEARCH_TOPK = 3
+
 export class SkillEngine {
   private skillsDir: string
   private builtinDir: string
@@ -56,6 +60,7 @@ export class SkillEngine {
   private skillsCache: Skill[] = []
   private threadSkillMap: Map<string, string[]> = new Map() // threadId → skill names
   private llmConfig?: LlmConfig
+  private knowledgeChunks: Map<string, FileChunk[]> = new Map()
 
   constructor(llmConfig?: LlmConfig) {
     this.skillsDir = path.join(getConfigDir(), "skills")
@@ -71,8 +76,23 @@ export class SkillEngine {
     this.loadFromDir(this.skillsDir, false)
     // Load builtin skills (including security/ subdirectory)
     this.loadFromDir(this.builtinDir, true)
-    // Load knowledge docs (same format as skills, stored in knowledge/)
-    this.loadFromDir(this.knowledgeDir, false)
+    // Load knowledge docs from knowledge/global/ and knowledge/sites/
+    this.loadFromDir(path.join(this.knowledgeDir, "global"), false)
+    this.loadFromDir(path.join(this.knowledgeDir, "sites"), false)
+    // Pre-chunk large knowledge docs for RAG
+    this.rebuildKnowledgeChunks()
+  }
+
+  private rebuildKnowledgeChunks(): void {
+    this.knowledgeChunks.clear()
+    for (const skill of this.skillsCache) {
+      if (skill.type !== "site_knowledge" && skill.type !== "domain_knowledge") continue
+      const chunked = chunkFile(skill.name, skill.content, KNOWLEDGE_SEARCH_THRESHOLD_TOKENS)
+      // Only store chunks if the doc is actually large enough to need splitting
+      if (chunked.chunks.length > 1 || chunked.totalTokens > KNOWLEDGE_SEARCH_THRESHOLD_TOKENS) {
+        this.knowledgeChunks.set(skill.name, chunked.chunks)
+      }
+    }
   }
 
   /** Get all security skills from builtin-skills/security/ */
@@ -405,7 +425,13 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
    * If skillIds is provided, only includes those skills.
    * If knowledgeIds is provided, only includes those knowledge docs.
    * Security skills are ALWAYS injected and cannot be disabled. */
-  buildSystemPrompt(threadId: string, hostname?: string, skillIds?: string[], knowledgeIds?: string[]): string {
+  buildSystemPrompt(
+    threadId: string,
+    hostname?: string,
+    skillIds?: string[],
+    knowledgeIds?: string[],
+    query?: string,
+  ): string {
     const skills = skillIds
       ? skillIds.map(id => this.get(id)).filter(Boolean) as Skill[]
       : this.getActiveForThread(threadId)
@@ -444,7 +470,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
         if (injectedNames.has(k.name)) continue
         // Skip non-knowledge types
         if (k.type !== "site_knowledge" && k.type !== "domain_knowledge") continue
-        const summary = this.getEntriesSummary(k.name) || this.getKnowledgeSummary(k)
+        const summary = this.getEntriesSummary(k.name) || this.getKnowledgeSummary(k, query)
         if (summary) {
           injectedNames.add(k.name)
           const label = k.type === "site_knowledge" ? `Site: ${k.site || k.name}` : `Domain: ${k.name}`
@@ -456,7 +482,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
       const globalKnowledge = this.getGlobalKnowledge()
       for (const k of globalKnowledge) {
         if (injectedNames.has(k.name)) continue
-        const summary = this.getKnowledgeSummary(k)
+        const summary = this.getKnowledgeSummary(k, query)
         if (summary) {
           injectedNames.add(k.name)
           parts.push(`## Global Knowledge: ${k.name}\n${summary}`)
@@ -468,7 +494,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
         const siteKnowledge = this.getBySite(hostname)
         for (const k of siteKnowledge) {
           if (injectedNames.has(k.name)) continue
-          const summary = this.getKnowledgeSummary(k)
+          const summary = this.getKnowledgeSummary(k, query)
           if (summary) {
             injectedNames.add(k.name)
             parts.push(`## Site Knowledge: ${k.site}\n${summary}`)
@@ -498,8 +524,22 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
     })
   }
 
-  /** Build a sanitized knowledge summary, capped at ~500 tokens (rough estimate). */
-  private getKnowledgeSummary(skill: Skill): string {
+  /** Build a sanitized knowledge summary.
+   * - Small docs: return full content (capped at 2000 chars)
+   * - Large docs with query: search relevant chunks via RAG
+   * - Large docs without query: return truncated summary */
+  private getKnowledgeSummary(skill: Skill, query?: string): string {
+    const chunks = this.knowledgeChunks.get(skill.name)
+
+    // Large doc + query → RAG chunk retrieval
+    if (chunks && chunks.length > 0 && query && query.trim()) {
+      const matched = searchChunks(chunks, query.trim(), KNOWLEDGE_SEARCH_TOPK)
+      if (matched.length) {
+        return matched.map(c => c.text).join("\n\n---\n\n").trim()
+      }
+      // If no chunks matched the query, fall through to truncated summary
+    }
+
     let content = skill.content || ""
     // Sanitize before injection
     content = sanitizeKnowledgeContent(content)
@@ -829,6 +869,151 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
       fs.unlinkSync(skill.source_file)
     }
     this.refresh()
+  }
+
+  // --- Knowledge management (operates on knowledge/ directory) ---
+
+  listKnowledge(): SkillMeta[] {
+    return this.skillsCache
+      .filter(s => s.type === "site_knowledge" || s.type === "domain_knowledge")
+      .map(s => ({
+        name: s.name,
+        description: s.description,
+        type: s.type,
+        site: s.site,
+        tags: s.tags,
+        entries: s.entries,
+        builtin: s.builtin,
+        source_file: s.source_file,
+        dir: s.dir,
+        resources: s.resources,
+      }))
+  }
+
+  importKnowledge(content: string, fallbackName?: string): void {
+    content = this.ensureKnowledgeFrontmatter(content, fallbackName)
+
+    let parsed: { data: { name?: string; site?: string; type?: string }; content: string }
+    try {
+      parsed = matter(content)
+    } catch (e: any) {
+      throw new Error(`Failed to parse knowledge frontmatter: ${e.message || String(e)}`)
+    }
+    const name = parsed.data.name
+    if (!name) throw new Error("Knowledge doc must have a 'name' field")
+
+    const safeName = name.replace(/[^a-zA-Z0-9-]/g, "-").toLowerCase()
+    if (!safeName || safeName === "-") {
+      throw new Error(`Knowledge name '${name}' results in an invalid filename after sanitization. Use alphanumeric characters.`)
+    }
+
+    // Determine subdirectory: site_knowledge with site field → sites/, otherwise global/
+    const isSiteKnowledge = parsed.data.type === "site_knowledge" || parsed.data.site
+    const subDir = isSiteKnowledge ? "sites" : "global"
+    const targetDir = path.join(this.knowledgeDir, subDir)
+    fs.mkdirSync(targetDir, { recursive: true })
+    const filePath = path.join(targetDir, `${safeName}.md`)
+
+    fs.writeFileSync(filePath, content)
+    this.refresh()
+  }
+
+  /** Auto-generate frontmatter for knowledge docs that lack it.
+   * - name: frontmatter > first # heading > fallbackName > "未命名知识库"
+   * - description: frontmatter > first 150 chars of body (cleaned)
+   * - type: frontmatter > "domain_knowledge"
+   * Preserves existing frontmatter fields. */
+  private ensureKnowledgeFrontmatter(content: string, fallbackName?: string): string {
+    let parsed: { data: Record<string, any>; content: string }
+    try {
+      parsed = matter(content)
+    } catch {
+      // If matter fails entirely, treat whole content as body
+      parsed = { data: {}, content: content.trimStart() }
+    }
+
+    // If already has a valid name, assume frontmatter is complete
+    if (parsed.data.name && typeof parsed.data.name === "string") {
+      return content
+    }
+
+    // --- Infer name ---
+    let inferredName = ""
+    const firstHeading = parsed.content.match(/^#\s+(.+)$/m)?.[1]?.trim()
+    if (firstHeading) {
+      inferredName = firstHeading
+    } else if (fallbackName) {
+      inferredName = fallbackName
+    } else {
+      inferredName = "未命名知识库"
+    }
+
+    // --- Infer description ---
+    let inferredDescription = ""
+    if (parsed.data.description && typeof parsed.data.description === "string") {
+      inferredDescription = parsed.data.description
+    } else {
+      // Clean body: remove markdown headings, bold, lists, code blocks
+      const cleaned = parsed.content
+        .replace(/```[\s\S]*?```/g, "")
+        .replace(/`([^`]+)`/g, "$1")
+        .replace(/^#{1,6}\s+/gm, "")
+        .replace(/\*\*|__/g, "")
+        .replace(/^\s*[-*+]\s+/gm, "")
+        .replace(/\n+/g, " ")
+        .trim()
+      inferredDescription = cleaned.slice(0, 150) + (cleaned.length > 150 ? "..." : "")
+    }
+
+    // --- Infer type ---
+    const inferredType = parsed.data.type || "domain_knowledge"
+
+    const frontmatter: Record<string, any> = {
+      name: inferredName,
+      description: inferredDescription,
+      type: inferredType,
+    }
+    if (parsed.data.site) frontmatter.site = parsed.data.site
+    if (parsed.data.tags) frontmatter.tags = parsed.data.tags
+
+    const yamlStr = yaml.dump(frontmatter, { lineWidth: -1, noRefs: true, quotingType: '"' })
+    return `---\n${yamlStr}---\n\n${parsed.content.trimStart()}`
+  }
+
+  deleteKnowledge(name: string): void {
+    const skill = this.get(name)
+    if (!skill) throw new Error(`Knowledge not found: ${name}`)
+    if (skill.builtin) throw new Error(`Cannot delete builtin knowledge: ${name}`)
+    if (skill.type !== "site_knowledge" && skill.type !== "domain_knowledge") {
+      throw new Error(`'${name}' is not a knowledge doc`)
+    }
+
+    if (skill.dir) {
+      fs.rmSync(skill.dir, { recursive: true })
+    } else {
+      fs.unlinkSync(skill.source_file)
+    }
+    this.refresh()
+  }
+
+  /** Search relevant chunks from given knowledge docs based on query.
+   *  Returns concatenated text of top matching chunks. */
+  searchKnowledge(knowledgeNames: string[], query: string, topK = KNOWLEDGE_SEARCH_TOPK): string {
+    if (!query || !knowledgeNames.length) return ""
+
+    const allChunks: FileChunk[] = []
+    for (const name of knowledgeNames) {
+      const chunks = this.knowledgeChunks.get(name)
+      if (chunks) {
+        allChunks.push(...chunks)
+      }
+    }
+    if (!allChunks.length) return ""
+
+    const matched = searchChunks(allChunks, query, topK)
+    if (!matched.length) return ""
+
+    return matched.map(c => c.text).join("\n\n---\n\n")
   }
 
   /** Create a new site_knowledge or domain_knowledge skill with initial entry. */

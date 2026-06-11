@@ -19,6 +19,7 @@ export function requestInitialSidePanelData(
   initializedRef.current = true
   sendMessage({ type: "thread.list" })
   sendMessage({ type: "skill.list" })
+  sendMessage({ type: "knowledge.list" })
   sendMessage({ type: "config.get" })
   return true
 }
@@ -351,6 +352,10 @@ export function useWebSocket() {
           dispatch({ type: "SET_SKILLS", skills: msg.skills })
           break
 
+        case "knowledge.list":
+          dispatch({ type: "SET_KNOWLEDGE_DOCS", docs: msg.docs || [] })
+          break
+
         case "skill.exported": {
           const { content, format, skill_name } = msg
           if (content) {
@@ -375,6 +380,11 @@ export function useWebSocket() {
         case "skill.imported":
         case "skill.deleted":
           chrome.runtime.sendMessage({ type: "skill.list" })
+          break
+
+        case "knowledge.imported":
+        case "knowledge.deleted":
+          chrome.runtime.sendMessage({ type: "knowledge.list" })
           break
 
         case "error":

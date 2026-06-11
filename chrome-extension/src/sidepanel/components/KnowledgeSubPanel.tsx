@@ -9,8 +9,15 @@ export function KnowledgeSubPanel() {
   const [showUrlImport, setShowUrlImport] = useState(false)
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
   const [currentHostname, setCurrentHostname] = useState<string>("")
+  const [status, setStatus] = useState<string>("")
   const menuRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const folderInputRef = useRef<HTMLInputElement>(null)
+
+  const showStatus = (msg: string) => {
+    setStatus(msg)
+    setTimeout(() => setStatus(""), 3000)
+  }
 
   // Get current tab hostname for site grouping
   useEffect(() => {
@@ -52,22 +59,48 @@ export function KnowledgeSubPanel() {
 
   const handleDelete = (name: string) => {
     if (confirm(`确定删除知识文档 "${name}"？`)) {
+      showStatus(`正在删除 "${name}"...`)
       chrome.runtime.sendMessage({ type: "knowledge.delete", name })
     }
     setMenuOpen(null)
   }
 
-  const handleImportFile = (file: File) => {
-    const reader = new FileReader()
-    reader.onload = () => {
-      const content = reader.result as string
-      chrome.runtime.sendMessage({ type: "knowledge.import", content })
+  const handleImportFiles = (files: FileList | null) => {
+    if (!files) return
+    const allowedExts = new Set([
+      "md", "markdown", "docx", "pdf", "xlsx", "pptx", "odt", "rtf", "txt", "csv", "html", "htm",
+    ])
+    const list = Array.from(files).filter(f => {
+      const ext = f.name.split(".").pop()?.toLowerCase() || ""
+      return allowedExts.has(ext) && !f.name.startsWith(".")
+    })
+    if (!list.length) {
+      showStatus("没有可导入的文件")
+      return
     }
-    reader.readAsText(file)
+    showStatus(`正在导入 ${list.length} 个文件...`)
+    for (const file of list) {
+      const reader = new FileReader()
+      reader.onload = () => {
+        const arrayBuffer = reader.result as ArrayBuffer
+        const bytes = new Uint8Array(arrayBuffer)
+        let binary = ""
+        for (let i = 0; i < bytes.byteLength; i++) {
+          binary += String.fromCharCode(bytes[i])
+        }
+        const base64 = btoa(binary)
+        chrome.runtime.sendMessage({
+          type: "knowledge.import",
+          file: { name: file.name, content: base64 },
+        })
+      }
+      reader.readAsArrayBuffer(file)
+    }
   }
 
   const handleUrlImport = () => {
     if (importUrl.trim()) {
+      showStatus("正在从 URL 导入...")
       chrome.runtime.sendMessage({ type: "knowledge.import", url: importUrl.trim() })
       setImportUrl("")
       setShowUrlImport(false)
@@ -76,6 +109,10 @@ export function KnowledgeSubPanel() {
 
   const handleFilePick = () => {
     fileInputRef.current?.click()
+  }
+
+  const handleFolderPick = () => {
+    folderInputRef.current?.click()
   }
 
   // Group knowledge docs by site, with current site first
@@ -106,8 +143,11 @@ export function KnowledgeSubPanel() {
 
       {/* Import toolbar */}
       <div style={styles.toolbar}>
-        <button style={styles.toolbarBtn} onClick={handleFilePick} title="从文件导入 .md">
+        <button style={styles.toolbarBtn} onClick={handleFilePick} title="导入单个或多个文件">
           导入文件
+        </button>
+        <button style={styles.toolbarBtn} onClick={handleFolderPick} title="导入整个文件夹">
+          导入文件夹
         </button>
         <button style={styles.toolbarBtn} onClick={() => setShowUrlImport(!showUrlImport)} title="从 URL 导入">
           导入 URL
@@ -115,11 +155,23 @@ export function KnowledgeSubPanel() {
         <input
           ref={fileInputRef}
           type="file"
-          accept=".md,.markdown"
+          multiple
+          accept=".md,.markdown,.docx,.pdf,.xlsx,.pptx,.odt,.rtf,.txt,.csv,.html"
           style={{ display: "none" }}
           onChange={(e) => {
-            const file = e.target.files?.[0]
-            if (file) handleImportFile(file)
+            handleImportFiles(e.target.files)
+            e.currentTarget.value = ""
+          }}
+        />
+        <input
+          ref={folderInputRef}
+          type="file"
+          // @ts-ignore — webkitdirectory is non-standard but widely supported
+          webkitdirectory=""
+          style={{ display: "none" }}
+          onChange={(e) => {
+            handleImportFiles(e.target.files)
+            e.currentTarget.value = ""
           }}
         />
       </div>
@@ -136,6 +188,13 @@ export function KnowledgeSubPanel() {
             onKeyDown={(e) => e.key === "Enter" && handleUrlImport()}
           />
           <button style={styles.toolbarBtn} onClick={handleUrlImport}>安装</button>
+        </div>
+      )}
+
+      {/* Status feedback */}
+      {status && (
+        <div style={{ fontSize: 11, color: "#4A90D9", marginBottom: 8, padding: "2px 4px" }}>
+          {status}
         </div>
       )}
 

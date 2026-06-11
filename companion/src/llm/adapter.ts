@@ -162,7 +162,7 @@ CRITICAL RULES:
 7. For reading page content: use get_page_text (preferred, cross-platform) or evaluate.
 8. osascript_eval is macOS-ONLY and will FAIL on Windows/Linux. On non-macOS systems, NEVER call osascript_eval — always use get_page_text or evaluate instead.
 9. When a page contains important visual content (product images, data charts, diagrams, maps, infographics), use analyze_image with a CSS selector to understand the image content rather than relying solely on alt text.`
-  const skillPrompt = skillEngine.buildSystemPrompt(threadId, undefined, skillIds, knowledgeIds)
+  const skillPrompt = skillEngine.buildSystemPrompt(threadId, undefined, skillIds, knowledgeIds, message)
 
   // Inject safety-guard skills at the END of system prompt (highest priority)
   const safetyGuardContent = skillEngine.getSecuritySkills()
