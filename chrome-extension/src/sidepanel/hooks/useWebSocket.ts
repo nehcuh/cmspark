@@ -60,6 +60,7 @@ export function useWebSocket() {
   const streamingRef = useRef("")
   const initializedRef = useRef(false)
   const activeThreadRef = useRef<string | null>(null)
+  const blankThreadCreatedRef = useRef(false)
 
   // Keep refs in sync
   activeThreadRef.current = state.activeThreadId
@@ -286,10 +287,12 @@ export function useWebSocket() {
 
         case "thread.list":
           dispatch({ type: "SET_THREADS", threads: msg.threads })
-          // Always create a fresh blank thread on load so the user starts with a
-          // new conversation instead of automatically resuming the last one.
-          // Existing threads remain accessible via the thread list.
-          {
+          // Only create a fresh blank thread on first load when there are no
+          // existing threads. Creating one on every thread.list refresh (for
+          // example when the side panel is reopened or becomes visible again)
+          // causes empty threads to pile up in the conversation history.
+          if (msg.threads.length === 0 && !blankThreadCreatedRef.current) {
+            blankThreadCreatedRef.current = true
             const id = generateShortId()
             chrome.runtime.sendMessage({ type: "thread.create", alias: "", id })
           }
