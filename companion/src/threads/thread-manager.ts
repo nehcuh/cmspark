@@ -187,6 +187,16 @@ export class ThreadManager {
     try { fs.unlinkSync(this.threadFilePath(threadId)) } catch { /* ignore */ }
   }
 
+  cleanupEmpty(): string[] {
+    const emptyThreads = this.index.threads.filter(t => this.getMessages(t.id).length === 0)
+    const deletedIds: string[] = []
+    for (const thread of emptyThreads) {
+      this.delete(thread.id)
+      deletedIds.push(thread.id)
+    }
+    return deletedIds
+  }
+
   list(): Thread[] {
     return this.index.threads
   }

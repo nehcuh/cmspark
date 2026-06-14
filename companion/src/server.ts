@@ -464,6 +464,7 @@ function validateWsMessage(msg: any): WsValidationResult {
       if (typeof m.thread_id !== "string" || !m.thread_id) return { valid: false, error: "thread.delete requires thread_id" }
       return { valid: true }
     },
+    "thread.cleanup_empty": () => ({ valid: true }),
     "thread.select": (m) => {
       if (typeof m.thread_id !== "string" || !m.thread_id) return { valid: false, error: "thread.select requires thread_id" }
       return { valid: true }

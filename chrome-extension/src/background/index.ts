@@ -417,6 +417,11 @@ function setupMessageHandlers() {
         sendResponse({ ok: true })
         return true
 
+      case "thread.cleanup_empty":
+        wsClient.send({ type: "thread.cleanup_empty" })
+        sendResponse({ ok: true })
+        return true
+
       case "thread.fork": {
         const sent = wsClient.send({ type: "thread.fork", thread_id: message.thread_id, message_id: message.message_id })
         if (!sent) {

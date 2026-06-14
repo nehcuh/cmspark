@@ -112,6 +112,23 @@ describe("ThreadManager - Normal Paths", () => {
     assert.ok(!fs.existsSync(threadFile), "thread file should be deleted")
   })
 
+  test("cleanupEmpty removes only threads without messages", () => {
+    const tm = new ThreadManager()
+    const emptyA = tm.create("Empty A")
+    const emptyB = tm.create("Empty B")
+    const withMessage = tm.create("Has Message")
+    tm.addMessage(withMessage.id, { thread_id: withMessage.id, role: "user", content: "hello" })
+
+    const deletedIds = tm.cleanupEmpty()
+
+    assert.ok(deletedIds.includes(emptyA.id), "should delete empty thread A")
+    assert.ok(deletedIds.includes(emptyB.id), "should delete empty thread B")
+    assert.ok(!deletedIds.includes(withMessage.id), "should not delete thread with messages")
+    assert.equal(tm.get(emptyA.id), undefined)
+    assert.equal(tm.get(emptyB.id), undefined)
+    assert.ok(tm.get(withMessage.id), "thread with messages should be kept")
+  })
+
   test("addMessage stores message and returns it with id and created_at", () => {
     const tm = new ThreadManager()
     const thread = tm.create("Message Test")

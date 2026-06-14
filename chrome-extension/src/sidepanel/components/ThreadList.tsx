@@ -44,6 +44,12 @@ export function ThreadList() {
     setOpen(false)
   }
 
+  const handleCleanupEmpty = () => {
+    if (!confirm("确定清理所有空白线程？\n没有消息的线程将被永久删除，此操作不可恢复。")) return
+    chrome.runtime.sendMessage({ type: "thread.cleanup_empty" })
+    setOpen(false)
+  }
+
   const handleSelect = (threadId: string) => {
     dispatch({ type: "SET_ACTIVE_THREAD", threadId })
     setOpen(false)
@@ -69,7 +75,10 @@ export function ThreadList() {
           <div style={styles.panel}>
             <div style={styles.panelHeader}>
               <span style={{ fontWeight: 600, fontSize: 13 }}>线程</span>
-              <button style={styles.newBtn} onClick={handleNewThread} title="新建线程">+ 新建</button>
+              <div style={{ display: "flex", gap: 6 }}>
+                <button style={styles.cleanupBtn} onClick={handleCleanupEmpty} title="清理没有消息的空白线程">🧹 清理空白</button>
+                <button style={styles.newBtn} onClick={handleNewThread} title="新建线程">+ 新建</button>
+              </div>
             </div>
             <div style={styles.list}>
               {threads.map(t => (
@@ -150,6 +159,15 @@ const styles: Record<string, React.CSSProperties> = {
     background: "#4A90D9",
     color: "#fff",
     border: "none",
+    borderRadius: 4,
+    padding: "3px 10px",
+    fontSize: 11,
+    cursor: "pointer",
+  },
+  cleanupBtn: {
+    background: "#fff",
+    color: "#666",
+    border: "1px solid #ddd",
     borderRadius: 4,
     padding: "3px 10px",
     fontSize: 11,

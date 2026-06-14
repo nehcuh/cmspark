@@ -635,6 +635,16 @@ export async function handleMessage(
     case "thread.delete":
       threadManager.delete(rest.thread_id)
       return { type: "thread.deleted", thread_id: rest.thread_id }
+    case "thread.cleanup_empty": {
+      const deletedIds = threadManager.cleanupEmpty()
+      // Notify all connected side panels so their thread lists stay in sync.
+      if (session?.broadcast) {
+        for (const threadId of deletedIds) {
+          session.broadcast({ type: "thread.deleted", thread_id: threadId })
+        }
+      }
+      return { type: "thread.cleanup_empty.completed", deleted_count: deletedIds.length, deleted_ids: deletedIds }
+    }
     case "thread.list":
       return { type: "thread.list", threads: threadManager.list() }
     case "thread.select":

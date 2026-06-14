@@ -277,6 +277,22 @@ export function useWebSocket() {
           dispatch({ type: "REMOVE_THREAD", threadId: msg.thread_id })
           break
         }
+        case "thread.cleanup_empty.completed": {
+          const count = msg.deleted_count || 0
+          dispatch({
+            type: "ADD_LOG",
+            entry: {
+              ts: new Date().toISOString(),
+              level: "info",
+              source: "extension",
+              event: "cleanup_empty_threads",
+              data: { deleted_count: count, deleted_ids: msg.deleted_ids || [] },
+            },
+          })
+          // Refresh thread list to stay in sync after bulk deletion.
+          chrome.runtime.sendMessage({ type: "thread.list" })
+          break
+        }
         case "thread.forked": {
           dispatch({ type: "UPSERT_THREAD", thread: msg.thread })
           dispatch({ type: "SET_ACTIVE_THREAD", threadId: msg.thread.id })
