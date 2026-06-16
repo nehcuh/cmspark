@@ -694,6 +694,14 @@ export async function handleMessage(
 
     // --- Skills ---
     case "skill.list":
+      // Read from in-memory cache. Mutating handlers (skill.import / skill.delete /
+      // skill.craft / etc.) already call skillEngine.refresh() after mutation, so the
+      // cache is always fresh w.r.t. API changes. Removing the refresh here avoids a
+      // synchronous 4-directory filesystem re-scan on every Skills-tab click and every
+      // sidepanel reconnect (audit item 10). For external file edits, use skill.refresh.
+      return { type: "skill.list", skills: skillEngine.list() }
+
+    case "skill.refresh":
       skillEngine.refresh()
       return { type: "skill.list", skills: skillEngine.list() }
     case "skill.activate": {
