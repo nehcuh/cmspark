@@ -1,6 +1,6 @@
 // Chat message list with streaming support
 
-import { Component, useEffect, useRef, useState } from "react"
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useAgentStore } from "../store/agentStore"
 import { marked } from "marked"
 import DOMPurify from "dompurify"
@@ -34,90 +34,48 @@ export function ChatView() {
   useEffect(() => {
     const container = containerRef.current
     if (!container) return
-    // Scroll when message count changes or streaming content updates
     if (messages.length !== lastMessageCountRef.current || streamingContent) {
       lastMessageCountRef.current = messages.length
-      // Use requestAnimationFrame to ensure DOM has updated
       requestAnimationFrame(() => {
         container.scrollTop = container.scrollHeight
       })
     }
   }, [messages.length, streamingContent])
 
-  const handleCopy = async (text: string) => {
-    try {
-      await navigator.clipboard.writeText(text)
-    } catch {
-      const textarea = document.createElement("textarea")
-      textarea.value = text
-      textarea.style.position = "fixed"
-      textarea.style.opacity = "0"
-      document.body.appendChild(textarea)
-      textarea.select()
-      document.execCommand("copy")
-      document.body.removeChild(textarea)
-    }
-  }
-
-  const handleRegenerate = (messageId: string) => {
+  // Stable callbacks so MessageRow memoization is effective (audit item 11).
+  // Without useCallback, every ChatView render creates new function identities,
+  // busting React.memo on every row.
+  const handleRegenerate = useCallback((messageId: string) => {
     if (!activeThreadId) return
     chrome.runtime.sendMessage({
       type: "chat.regenerate",
       thread_id: activeThreadId,
       message_id: messageId,
     })
-  }
+  }, [activeThreadId])
 
-  const handleFork = (messageId: string) => {
+  const handleFork = useCallback((messageId: string) => {
     if (!activeThreadId) return
     chrome.runtime.sendMessage({
       type: "thread.fork",
       thread_id: activeThreadId,
       message_id: messageId,
     })
-  }
+  }, [activeThreadId])
 
   return (
     <div style={styles.container} ref={containerRef}>
       {messages.length === 0 && !streamingContent && !processingLabel && (
         <div style={styles.empty}>输入指令开始与 CMspark Agent 对话</div>
       )}
-      {messages.map(msg => {
-        const isUser = msg.role === "user"
-        const hasLongContent = (msg.content?.length || 0) > LONG_CONTENT_THRESHOLD
-        return (
-          <div key={msg.id} style={isUser ? styles.userMsg : styles.agentMsg}>
-            <div style={styles.messageCol}>
-              <div style={isUser ? styles.userBubble : styles.agentBubble}>
-                {hasLongContent ? (
-                  <CollapsibleMarkdown content={msg.content} maxPreview={LONG_CONTENT_PREVIEW} />
-                ) : (
-                  <MarkdownRenderer content={msg.content} />
-                )}
-                {msg.tool_calls?.map(tc => (
-                  <ToolCallCard key={tc.id} tc={tc} />
-                ))}
-              </div>
-              <div style={{
-                ...styles.actionBar,
-                alignSelf: isUser ? "flex-end" : "flex-start",
-              }}>
-                <button style={styles.actionBtn} onClick={() => handleCopy(msg.content || "")} title="复制">
-                  📋
-                </button>
-                {!isUser && (
-                  <button style={styles.actionBtn} onClick={() => handleRegenerate(msg.id)} title="重新生成">
-                    🔄
-                  </button>
-                )}
-                <button style={styles.actionBtn} onClick={() => handleFork(msg.id)} title="创建分支">
-                  🔀
-                </button>
-              </div>
-            </div>
-          </div>
-        )
-      })}
+      {messages.map(msg => (
+        <MessageRow
+          key={msg.id}
+          msg={msg}
+          onRegenerate={handleRegenerate}
+          onFork={handleFork}
+        />
+      ))}
       {streamingContent && (
         <div style={styles.agentMsg}>
           <div style={styles.agentBubble}>{streamingContent}<Cursor /></div>
@@ -134,6 +92,81 @@ export function ChatView() {
     </div>
   )
 }
+
+/**
+ * Memoized historical message row. Subscribes only to its own msg prop;
+ * token-stream updates to `streamingContent` in the parent do NOT re-render this.
+ * (audit item 11)
+ */
+const MessageRow = memo(function MessageRow({
+  msg,
+  onRegenerate,
+  onFork,
+}: {
+  msg: any
+  onRegenerate: (messageId: string) => void
+  onFork: (messageId: string) => void
+}) {
+  const isUser = msg.role === "user"
+  const hasLongContent = (msg.content?.length || 0) > LONG_CONTENT_THRESHOLD
+
+  const handleCopy = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text)
+    } catch {
+      const textarea = document.createElement("textarea")
+      textarea.value = text
+      textarea.style.position = "fixed"
+      textarea.style.opacity = "0"
+      document.body.appendChild(textarea)
+      textarea.select()
+      document.execCommand("copy")
+      document.body.removeChild(textarea)
+    }
+  }
+
+  return (
+    <div style={isUser ? styles.userMsg : styles.agentMsg}>
+      <div style={styles.messageCol}>
+        <div style={isUser ? styles.userBubble : styles.agentBubble}>
+          {hasLongContent ? (
+            <CollapsibleMarkdown content={msg.content} maxPreview={LONG_CONTENT_PREVIEW} />
+          ) : (
+            <MarkdownRenderer content={msg.content} />
+          )}
+          {msg.tool_calls?.map((tc: any) => (
+            <ToolCallCard key={tc.id} tc={tc} />
+          ))}
+        </div>
+        <div style={{
+          ...styles.actionBar,
+          alignSelf: isUser ? "flex-end" : "flex-start",
+        }}>
+          <button style={styles.actionBtn} onClick={() => handleCopy(msg.content || "")} title="复制">
+            📋
+          </button>
+          {!isUser && (
+            <button style={styles.actionBtn} onClick={() => onRegenerate(msg.id)} title="重新生成">
+              🔄
+            </button>
+          )}
+          <button style={styles.actionBtn} onClick={() => onFork(msg.id)} title="创建分支">
+            🔀
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}, (prev, next) => {
+  // Re-render only when this row's data actually changed. Reference-equality on
+  // tool_calls is intentional — agentStore keeps the array referentially stable
+  // across unrelated state changes (e.g. streamingContent updates).
+  return (
+    prev.msg.id === next.msg.id &&
+    prev.msg.content === next.msg.content &&
+    prev.msg.tool_calls === next.msg.tool_calls
+  )
+})
 
 function CollapsibleMarkdown({ content, maxPreview }: { content: string; maxPreview: number }) {
   const [expanded, setExpanded] = useState(false)
@@ -248,14 +281,18 @@ function Cursor() {
 // Markdown renderer — uses marked + DOMPurify to sanitize LLM output before rendering.
 // react-markdown/remark-gfm ecosystem is ESM-only with Node.js deps that crash in Chrome extension context.
 // DOMPurify strips dangerous HTML (scripts, event handlers, etc.) to prevent XSS (P0).
-class MarkdownRenderer extends Component<{ content: string }> {
-  state = { html: "", error: false }
-
-  static getDerivedStateFromProps(props: { content: string }, state: { html: string; error: boolean }) {
-    if (!props.content) return { html: "", error: false }
+//
+// useMemo: parse + sanitize only when content actually changes (audit item 11).
+// The previous class-based getDerivedStateFromProps ran the full marked.parse +
+// DOMPurify.sanitize unconditionally on every render — including when a parent
+// re-rendered due to unrelated state (e.g. streaming token arriving) — costing
+// O(N messages × tokens/sec) of parse work per token.
+function MarkdownRenderer({ content }: { content: string }) {
+  const { html, error } = useMemo(() => {
+    if (!content) return { html: "", error: false }
     try {
-      const rawHtml = marked.parse(props.content, { async: false }) as string
-      const html = DOMPurify.sanitize(rawHtml, {
+      const rawHtml = marked.parse(content, { async: false }) as string
+      const sanitized = DOMPurify.sanitize(rawHtml, {
         ALLOWED_TAGS: [
           "p", "br", "strong", "em", "u", "s", "del", "ins",
           "h1", "h2", "h3", "h4", "h5", "h6",
@@ -266,33 +303,28 @@ class MarkdownRenderer extends Component<{ content: string }> {
         ALLOWED_ATTR: ["href", "title", "class", "style"],
         ALLOW_DATA_ATTR: false,
       })
-      if (html !== state.html) {
-        return { html, error: false }
-      }
-      return null
+      return { html: sanitized, error: false }
     } catch (e: any) {
       console.error("[MarkdownRenderer] marked.parse error:", e)
-      return { error: true }
+      return { html: "", error: true }
     }
-  }
+  }, [content])
 
-  render() {
-    if (this.state.error) {
-      console.warn("[MarkdownRenderer] falling back to raw text")
-      return <div style={{ whiteSpace: "pre-wrap", lineHeight: 1.5 }}>{this.props.content}</div>
-    }
-    if (!this.state.html) return null
-
-    return (
-      <>
-        <style>{markdownCSS}</style>
-        <div
-          className="markdown-body"
-          dangerouslySetInnerHTML={{ __html: this.state.html }}
-        />
-      </>
-    )
+  if (error) {
+    console.warn("[MarkdownRenderer] falling back to raw text")
+    return <div style={{ whiteSpace: "pre-wrap", lineHeight: 1.5 }}>{content}</div>
   }
+  if (!html) return null
+
+  return (
+    <>
+      <style>{markdownCSS}</style>
+      <div
+        className="markdown-body"
+        dangerouslySetInnerHTML={{ __html: html }}
+      />
+    </>
+  )
 }
 
 const markdownCSS = `
