@@ -4,6 +4,7 @@ import initSqlJs, { type Database as SqlJsDatabase } from "sql.js"
 import * as fs from "fs"
 import * as path from "path"
 import { getConfigDir } from "../config"
+import { logger } from "../logger.js"
 
 interface OperationRecord {
   id?: number
@@ -60,13 +61,22 @@ export class HistoryStore {
       this.initSchema()
       this.purgeOldRecords()
       this.save()
-    } catch {
-      // Fallback: init in-memory only
+    } catch (outerErr: any) {
+      // Fallback: init in-memory only (file load or first init failed)
+      logger.warn("history.init_fallback", { error: outerErr?.message || String(outerErr) })
       try {
         const SQL = await initSqlJs(sqlJsConfig)
         this.db = new SQL.Database()
         this.initSchema()
-      } catch { /* degrade gracefully */ }
+      } catch (innerErr: any) {
+        // Total init failure: history is non-critical (observability only), but
+        // surface the error so it isn't silently swallowed. All record/query
+        // calls will no-op via the `if (!this.db)` guards.
+        logger.error("history.init_failed", {
+          error: innerErr?.message || String(innerErr),
+          hint: "history record/query will silently no-op until process restart",
+        })
+      }
     }
   }
 
