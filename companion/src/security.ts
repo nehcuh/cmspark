@@ -1,7 +1,6 @@
 // Security policy — trusted domains, evaluate safety, error classification
 
 import { getConfig } from "./config"
-import type { RiskScore } from "./security/risk-engine"
 
 /**
  * Check if a domain is in the trusted domain list.
@@ -148,7 +147,6 @@ export interface HighRiskCheckResult {
   blocked: boolean
   dangerousApis: string[]
   error?: string
-  riskScore?: RiskScore
 }
 
 /**
@@ -156,7 +154,7 @@ export interface HighRiskCheckResult {
  *
  * @param toolName - The tool being executed.
  * @param code - The code/expression to evaluate.
- * @returns Detailed check result including risk score.
+ * @returns Detailed check result.
  */
 export function checkHighRiskExecution(toolName: string, code: string): HighRiskCheckResult {
   const dangerousApis = detectDangerousApis(code || "")
@@ -164,30 +162,10 @@ export function checkHighRiskExecution(toolName: string, code: string): HighRisk
     return { blocked: false, dangerousApis }
   }
 
-  // Build a simple risk score for backward compatibility
-  let apiRisk = 0
-  for (const pattern of dangerousApis) {
-    const weight = API_WEIGHTS[pattern] || 1
-    apiRisk = Math.max(apiRisk, weight)
-  }
-
-  const riskScore: RiskScore = {
-    total: Math.min(apiRisk, 10),
-    breakdown: {
-      apiRisk: Math.min(apiRisk, 4),
-      codeComplexity: 0,
-      domainTrust: 0,
-      historyPattern: 0,
-    },
-    matchedPatterns: dangerousApis,
-    reason: `${toolName}: detected ${dangerousApis.length} dangerous API(s): ${dangerousApis.join(", ")}`,
-  }
-
   return {
     blocked: true,
     dangerousApis,
     error: `Security Block: ${toolName} contains high-risk APIs (${dangerousApis.join(", ")}). Execution requires user confirmation.`,
-    riskScore,
   }
 }
 

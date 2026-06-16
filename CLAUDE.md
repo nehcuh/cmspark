@@ -56,7 +56,7 @@ Chrome Extension (Plasmo + React)  ←→  WebSocket (ws://127.0.0.1:23401)  ←
 │  ├─ browser-bridge.ts (CDP/tabs/cookies)                                   ├─ threads/thread-manager.ts (多线程消息隔离)
 │  ├─ page-sanitizer.ts, security-token.ts                                   ├─ history/store.ts (sql.js 操作记录)
 │  └─ ws-client.ts, keep-alive.ts                                            ├─ security.ts + security-policy.ts + security-confirmation.ts
-└─ popup/ (连接状态)                                                          ├─ security/ (risk-engine, privilege-manager, page-scanner)
+└─ popup/ (连接状态)                                                          ├─ security/ (input-validation — see audit 2026-06-16 roadmap item 19)
                                                                               ├─ tray/ (Swift NSStatusBar / systray2 / readline 适配)
                                                                               ├─ daemon.ts (后台运行 + launchd/systemd)
                                                                               └─ config.ts, logger.ts, platform.ts
@@ -71,7 +71,7 @@ Chrome Extension (Plasmo + React)  ←→  WebSocket (ws://127.0.0.1:23401)  ←
 - **A1. 双层拓扑**：Extension 只做浏览器操作，LLM 推理和状态管理在 Companion
 - **A2. 通信协议**：WebSocket + OpenAI-compatible streaming，异步 tool 回路 (Promise bridge)
 - **A3. 数据目录**：~/.cmspark-agent/ 统一管理配置、技能、线程、历史
-- **A4. 安全**：多层安全架构 — 信任域通配符 + 风险引擎 + 三级特权模式 (readonly/standard/advanced) + 安全确认队列 + evaluate/osascript 执行前阻断 + 越狱检测 + 错误三级分类
+- **A4. 安全**：双层安全架构（实际生效）— ① 信任域通配符门控 cookie 工具 (get_cookies/set_cookie/list_all_cookies 要求 domain 在 trusted_domains)；② `evaluate`/`osascript_eval` 通过 `checkHighRiskExecution` 正则黑名单 + `SecurityConfirmationManager` 交互确认队列阻断。配合 `security-policy.ts`（token 颁发 + HMAC 服务端校验，constant-time）、`security-confirmation.ts`（45s 超时的 Promise-based 确认队列）、`page-sanitizer`（extension 端 ~11 模式 prompt-injection 过滤）、错误三级分类、越狱检测。注：原设计的 risk-engine / privilege-manager / page-scanner 三层在 2026-06-16 审计后删除（dead code，runtime 零调用）；M2 roadmap 计划把 evaluate 改为 default-deny（item 2）+ 新增 navigate 信任门（item 12），届时 A4 会再次更新。
 - **A5. Skill 格式**：Markdown + YAML frontmatter，支持内置技能、Skill Crafting、TF-IDF + 语义匹配
 
 ## Common Issues

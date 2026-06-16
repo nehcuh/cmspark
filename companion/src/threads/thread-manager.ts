@@ -11,7 +11,6 @@ interface Thread {
   updated_at: string
   config_override: Record<string, any>
   tool_whitelist: string[] | null
-  privilege_mode_override: 'readonly' | 'standard' | 'advanced' | null
   pinned_tabs: number[]
   active_skill_ids: string[]
   skill_selection_mode?: "auto" | "all" | "manual"
@@ -165,7 +164,6 @@ export class ThreadManager {
       updated_at: now,
       config_override: safeConfigOverride,
       tool_whitelist: null,
-      privilege_mode_override: null,
       pinned_tabs: [],
       active_skill_ids: ["browse"],
       skill_selection_mode: "auto",
@@ -235,13 +233,6 @@ export class ThreadManager {
       const validModes = ["auto", "all", "manual"]
       if (!validModes.includes(updates.knowledge_selection_mode)) {
         throw new Error(`Invalid knowledge_selection_mode: ${updates.knowledge_selection_mode}. Must be one of ${validModes.join(", ")}`)
-      }
-    }
-    // Validate privilege_mode_override if being updated
-    if (updates.privilege_mode_override !== undefined && updates.privilege_mode_override !== null) {
-      const validModes = ["readonly", "standard", "advanced"]
-      if (!validModes.includes(updates.privilege_mode_override)) {
-        throw new Error(`Invalid privilege_mode_override: ${updates.privilege_mode_override}. Must be one of ${validModes.join(", ")}`)
       }
     }
     Object.assign(thread, updates, { updated_at: new Date().toISOString() })
