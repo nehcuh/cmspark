@@ -134,6 +134,19 @@ export const DANGEROUS_API_PATTERNS: Array<{ name: string; pattern: RegExp }> = 
   { name: "createElement-script", pattern: /createElement\s*\(\s*["']script["']\s*\)/ },
   { name: "appendChild", pattern: /\.appendChild\s*\(/ },
   { name: "removeChild", pattern: /\.removeChild\s*\(/ },
+  // Exfiltration / sandbox-escape bypass patterns (49+) — added in audit item 2.
+  // These cover common ways a hostile page can sneak data out or escape the
+  // regex blocklist above. Detection here escalates the risk preview shown to
+  // the user during the (now-always-required) confirmation prompt for evaluate.
+  { name: "location-assign", pattern: /\blocation\.(assign|replace)\s*\(/ },
+  { name: "location-href-set", pattern: /location\.href\s*=/ },
+  { name: "location-bare", pattern: /\blocation\s*=/ },
+  { name: "dynamic-import", pattern: /\bimport\s*\(/ },
+  { name: "globalThis-index", pattern: /(?:globalThis|window|self|top)\s*\[\s*["']/ },
+  { name: "comma-eval", pattern: /\(\s*0\s*,\s*(?:eval|Function)/ },
+  { name: "reflect-get", pattern: /\bReflect\.get\s*\(/ },
+  { name: "image-src-exfil", pattern: /new\s+Image\s*\(\s*\)\s*[\s\S]{0,40}\.src\s*=/ },
+  { name: "atob-function", pattern: /\batob\s*\([\s\S]{0,200}Function/ },
 ]
 
 export function detectDangerousApis(code: string): string[] {

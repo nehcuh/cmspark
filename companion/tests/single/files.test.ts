@@ -576,8 +576,10 @@ test("security: detectDangerousApis detects multiple dangerous APIs", () => {
 })
 
 test("security: detectDangerousApis detects bracket notation obfuscation", () => {
+  // Item 2 added globalThis-index pattern, so window['open'] now flags both
+  // bracket-open (legacy) AND globalThis-index (new — same code, two views).
   const detected = detectDangerousApis("['fetch']('/api'); window['open']()")
-  assert.deepEqual(detected, ["bracket-fetch", "bracket-open"])
+  assert.deepEqual(detected, ["bracket-fetch", "bracket-open", "globalThis-index"])
 })
 
 test("security: detectDangerousApis detects eval and Function", () => {
