@@ -19,7 +19,8 @@ import { getLockFilePath, getPidFilePath } from "./config"
 const MAX_WS_MESSAGE_SIZE = 10 * 1024 * 1024 // 10MB
 
 const PORT = 23401
-const TOOL_EXECUTION_TIMEOUT_MS = 15000
+// Exported for integration tests (audit item 6). Production reads the const directly.
+export const TOOL_EXECUTION_TIMEOUT_MS = 15000
 
 function getDomainFromUrl(urlString: string): string {
   try {
@@ -39,7 +40,9 @@ let skillEngine: SkillEngine
 let historyStore: HistoryStore
 
 // Pending tool execution promises: toolCallId → { resolve, reject, timer }
-const pendingToolCalls = new Map<string, {
+// Exported for integration tests (audit item 6) so tests can inspect timer cleanup
+// and double-resolution behavior. Production code uses the Map directly.
+export const pendingToolCalls = new Map<string, {
   resolve: (value: any) => void
   reject: (reason: any) => void
   timer: NodeJS.Timeout
@@ -102,7 +105,8 @@ async function initServices() {
   await historyStore.waitReady()
 }
 
-function createToolExecutor(ws: WebSocket) {
+// Exported for integration tests (audit item 6).
+export function createToolExecutor(ws: WebSocket) {
   return async (toolCallId: string, toolName: string, params: any): Promise<{ success: boolean; data?: any; error?: string }> => {
     let finalParams = params || {}
     const startedAt = Date.now()
@@ -269,7 +273,8 @@ function createToolExecutor(ws: WebSocket) {
   }
 }
 
-function handleToolResult(msg: any) {
+// Exported for integration tests (audit item 6).
+export function handleToolResult(msg: any) {
   const { tool_call_id, result, error } = msg
   const pending = pendingToolCalls.get(tool_call_id)
   if (pending) {
@@ -280,6 +285,29 @@ function handleToolResult(msg: any) {
     } else {
       pending.resolve(result)
     }
+  }
+}
+
+/**
+ * Grace-period cleanup applied when a WebSocket connection drops mid-tool-call.
+ * Replaces each pending tool's normal timeout timer with a shorter (5s) grace
+ * timer that rejects with "WebSocket disconnected" — giving a reconnecting
+ * extension a brief window to deliver a late tool.result.
+ *
+ * Extracted from ws.on("close") in startServer() so integration tests can
+ * exercise the cleanup path (audit item 6) without spinning up the full server.
+ */
+const WS_DISCONNECT_GRACE_MS = 5000
+export function applyConnectionCloseGracePeriod(): void {
+  for (const [id, pending] of pendingToolCalls) {
+    clearTimeout(pending.timer)
+    logger.warn("tool.connection_closed", { tool_call_id: id })
+    pending.timer = setTimeout(() => {
+      if (pendingToolCalls.has(id)) {
+        pendingToolCalls.delete(id)
+        pending.resolve({ success: false, error: "WebSocket disconnected" })
+      }
+    }, WS_DISCONNECT_GRACE_MS)
   }
 }
 
@@ -771,18 +799,7 @@ export async function startServer() {
     ws.on("close", () => {
       clearInterval(pingInterval)
       clients.delete(ws)
-      // Grace period: keep pending tool calls alive so reconnected client can deliver results.
-      // Replace the original timer with a shorter grace timer.
-      for (const [id, pending] of pendingToolCalls) {
-        clearTimeout(pending.timer)
-        logger.warn("tool.connection_closed", { tool_call_id: id })
-        pending.timer = setTimeout(() => {
-          if (pendingToolCalls.has(id)) {
-            pendingToolCalls.delete(id)
-            pending.resolve({ success: false, error: "WebSocket disconnected" })
-          }
-        }, 5000)
-      }
+      applyConnectionCloseGracePeriod()
       securityConfirmations.rejectAll("disconnect")
       console.log(`[cmspark-agent] Client disconnected (${clients.size} remaining)`)
       logger.info("ws.client_disconnected", { clients: clients.size })
