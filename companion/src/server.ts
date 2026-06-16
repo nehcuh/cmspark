@@ -833,6 +833,49 @@ export async function startServer() {
           return
         }
 
+        // Audit item 3 (gate): bulk history export requires explicit user
+        // confirmation. Without this, any local process that connects to the
+        // loopback WS could drain history.db (operation metadata: URLs visited,
+        // tools called, timing) with no audit trail. The redaction in
+        // HistoryStore.record (item 3 part 1) already removed cookie values +
+        // evaluate code from the DB, but the metadata is still sensitive enough
+        // to warrant an explicit approval.
+        if (msg.type === "history.export") {
+          if (ws.readyState !== WebSocket.OPEN) {
+            ws.send(JSON.stringify({
+              type: "history.exported",
+              data: [],
+              error: "WebSocket not connected; cannot request export confirmation.",
+            }))
+            return
+          }
+          logger.warn("history.export.confirmation.requested", {
+            thread_id: msg.thread_id,
+            from: msg.from,
+            to: msg.to,
+          })
+          const decision = await securityConfirmations.request(
+            (data) => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(data)) },
+            {
+              toolName: "history.export",
+              dangerousApis: [],
+              code: `export(${JSON.stringify({ thread_id: msg.thread_id, from: msg.from, to: msg.to })})`,
+            },
+          )
+          if (!decision.approved) {
+            const reason = decision.reason === "approved" ? "unavailable" : decision.reason
+            logger.warn("history.export.confirmation.denied", { reason })
+            ws.send(JSON.stringify({
+              type: "history.exported",
+              data: [],
+              error: `History export was ${reason === "denied" ? "denied by user" : reason}.`,
+            }))
+            return
+          }
+          logger.info("history.export.confirmation.approved", {})
+          // Fall through to handleMessage — the actual export runs.
+        }
+
         if (msg.type === "log.event") {
           const eventName = typeof msg.event === "string" && msg.event ? msg.event : "extension.event"
           const source = typeof msg.source === "string" && msg.source ? msg.source : "extension"
