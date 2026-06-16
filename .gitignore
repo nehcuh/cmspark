@@ -37,3 +37,6 @@ dist-package/
 *.log
 companion/esbuild-bundle.js
 companion/sql-wasm.wasm
+
+# Claude Code local state
+.claude/
