@@ -660,9 +660,13 @@ export async function startServer() {
   })
 
   wss.on("connection", (ws) => {
-    if (clients.size === 0) {
-      initServices()
-    }
+    // Note: services (threadManager / skillEngine / historyStore) are initialized
+    // exactly once via `await initServices()` at boot (line ~632) before the WS
+    // server starts listening. A previous version re-ran initServices() here on
+    // first connection — that was a no-op duplicate at best, and a real race at
+    // worst (replacing the module-level historyStore with a fresh instance whose
+    // this.db was still null, silently dropping records during the init window).
+    // Removed in audit item 14.
     clients.add(ws)
     console.log(`[cmspark-agent] Client connected (${clients.size} total)`)
     logger.info("ws.client_connected", { clients: clients.size })
