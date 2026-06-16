@@ -1,6 +1,7 @@
 // Chat message list with streaming support
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
+import type { CSSProperties } from "react"
 import { useAgentStore } from "../store/agentStore"
 import { marked } from "marked"
 import DOMPurify from "dompurify"
@@ -10,7 +11,7 @@ const LONG_CONTENT_PREVIEW = 500
 const TOOL_RESULT_PREVIEW = 200
 
 export function ChatView() {
-  const { state } = useAgentStore()
+  const { state, dispatch } = useAgentStore()
   const { messages, streamingContent, activeThreadId, isProcessing } = state
   const containerRef = useRef<HTMLDivElement>(null)
   const lastMessageCountRef = useRef(messages.length)
@@ -34,8 +35,10 @@ export function ChatView() {
   useEffect(() => {
     const container = containerRef.current
     if (!container) return
+    // Scroll when message count changes or streaming content updates
     if (messages.length !== lastMessageCountRef.current || streamingContent) {
       lastMessageCountRef.current = messages.length
+      // Use requestAnimationFrame to ensure DOM has updated
       requestAnimationFrame(() => {
         container.scrollTop = container.scrollHeight
       })
@@ -45,14 +48,16 @@ export function ChatView() {
   // Stable callbacks so MessageRow memoization is effective (audit item 11).
   // Without useCallback, every ChatView render creates new function identities,
   // busting React.memo on every row.
-  const handleRegenerate = useCallback((messageId: string) => {
+  const handleRegenerate = useCallback((messageId: string, editedMessage?: string) => {
     if (!activeThreadId) return
     chrome.runtime.sendMessage({
       type: "chat.regenerate",
       thread_id: activeThreadId,
       message_id: messageId,
+      message: editedMessage,
     })
-  }, [activeThreadId])
+    dispatch({ type: "SET_PROCESSING", isProcessing: true })
+  }, [activeThreadId, dispatch])
 
   const handleFork = useCallback((messageId: string) => {
     if (!activeThreadId) return
@@ -72,8 +77,10 @@ export function ChatView() {
         <MessageRow
           key={msg.id}
           msg={msg}
+          activeThreadId={activeThreadId}
           onRegenerate={handleRegenerate}
           onFork={handleFork}
+          dispatch={dispatch}
         />
       ))}
       {streamingContent && (
@@ -96,19 +103,25 @@ export function ChatView() {
 /**
  * Memoized historical message row. Subscribes only to its own msg prop;
  * token-stream updates to `streamingContent` in the parent do NOT re-render this.
- * (audit item 11)
+ * Edit state is local per-row (only one row can be interacted with at a time anyway).
  */
 const MessageRow = memo(function MessageRow({
   msg,
+  activeThreadId,
   onRegenerate,
   onFork,
+  dispatch,
 }: {
   msg: any
-  onRegenerate: (messageId: string) => void
+  activeThreadId: string | null
+  onRegenerate: (messageId: string, editedMessage?: string) => void
   onFork: (messageId: string) => void
+  dispatch: any
 }) {
   const isUser = msg.role === "user"
   const hasLongContent = (msg.content?.length || 0) > LONG_CONTENT_THRESHOLD
+  const [isEditing, setIsEditing] = useState(false)
+  const [editingText, setEditingText] = useState("")
 
   const handleCopy = async (text: string) => {
     try {
@@ -128,32 +141,81 @@ const MessageRow = memo(function MessageRow({
   return (
     <div style={isUser ? styles.userMsg : styles.agentMsg}>
       <div style={styles.messageCol}>
-        <div style={isUser ? styles.userBubble : styles.agentBubble}>
-          {hasLongContent ? (
-            <CollapsibleMarkdown content={msg.content} maxPreview={LONG_CONTENT_PREVIEW} />
-          ) : (
-            <MarkdownRenderer content={msg.content} />
-          )}
-          {msg.tool_calls?.map((tc: any) => (
-            <ToolCallCard key={tc.id} tc={tc} />
-          ))}
-        </div>
-        <div style={{
-          ...styles.actionBar,
-          alignSelf: isUser ? "flex-end" : "flex-start",
-        }}>
-          <button style={styles.actionBtn} onClick={() => handleCopy(msg.content || "")} title="复制">
-            📋
-          </button>
-          {!isUser && (
-            <button style={styles.actionBtn} onClick={() => onRegenerate(msg.id)} title="重新生成">
-              🔄
-            </button>
-          )}
-          <button style={styles.actionBtn} onClick={() => onFork(msg.id)} title="创建分支">
-            🔀
-          </button>
-        </div>
+        {isEditing ? (
+          <div style={styles.editWrap}>
+            <textarea
+              value={editingText}
+              onChange={(e) => setEditingText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                  e.preventDefault()
+                  onRegenerate(msg.id, editingText)
+                  setIsEditing(false)
+                  setEditingText("")
+                } else if (e.key === "Escape") {
+                  e.preventDefault()
+                  setIsEditing(false)
+                  setEditingText("")
+                }
+              }}
+              style={styles.editTextarea}
+              rows={3}
+              autoFocus
+            />
+            <div style={styles.editActions}>
+              <button
+                style={{ ...styles.editBtn, background: "#fff", color: "#666", border: "1px solid #ddd" }}
+                onClick={() => { setIsEditing(false); setEditingText("") }}
+              >
+                取消
+              </button>
+              <button
+                style={{ ...styles.editBtn, background: "#4A90D9", color: "#fff", border: "none" }}
+                onClick={() => { onRegenerate(msg.id, editingText); setIsEditing(false); setEditingText("") }}
+              >
+                重新生成
+              </button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <div style={isUser ? styles.userBubble : styles.agentBubble}>
+              {hasLongContent ? (
+                <CollapsibleMarkdown content={msg.content} maxPreview={LONG_CONTENT_PREVIEW} />
+              ) : (
+                <MarkdownRenderer content={msg.content} />
+              )}
+              {msg.tool_calls?.map((tc: any) => (
+                <ToolCallCard key={tc.id} tc={tc} />
+              ))}
+            </div>
+            <div style={{
+              ...styles.actionBar,
+              alignSelf: isUser ? "flex-end" : "flex-start",
+            }}>
+              <button style={styles.actionBtn} onClick={() => handleCopy(msg.content || "")} title="复制">
+                📋
+              </button>
+              {isUser && (
+                <button
+                  style={styles.actionBtn}
+                  onClick={() => { setIsEditing(true); setEditingText(msg.content || "") }}
+                  title="编辑并重新生成"
+                >
+                  ✏️
+                </button>
+              )}
+              {!isUser && (
+                <button style={styles.actionBtn} onClick={() => onRegenerate(msg.id)} title="重新生成">
+                  🔄
+                </button>
+              )}
+              <button style={styles.actionBtn} onClick={() => onFork(msg.id)} title="创建分支">
+                🔀
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   )
@@ -164,7 +226,8 @@ const MessageRow = memo(function MessageRow({
   return (
     prev.msg.id === next.msg.id &&
     prev.msg.content === next.msg.content &&
-    prev.msg.tool_calls === next.msg.tool_calls
+    prev.msg.tool_calls === next.msg.tool_calls &&
+    prev.activeThreadId === next.activeThreadId
   )
 })
 
@@ -451,6 +514,35 @@ const styles: Record<string, React.CSSProperties> = {
     padding: "3px 6px",
     background: "#f0f0f0",
     borderRadius: 6,
+  },
+  editWrap: {
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: 8,
+    width: "100%",
+  },
+  editTextarea: {
+    width: "100%",
+    border: "1px solid #4A90D9",
+    borderRadius: 8,
+    padding: "8px 12px",
+    fontSize: 13,
+    fontFamily: "inherit",
+    resize: "none" as const,
+    outline: "none",
+    minHeight: 60,
+    boxSizing: "border-box" as const,
+  },
+  editActions: {
+    display: "flex",
+    justifyContent: "flex-end",
+    gap: 8,
+  },
+  editBtn: {
+    padding: "6px 12px",
+    borderRadius: 6,
+    fontSize: 12,
+    cursor: "pointer",
   },
   actionBtn: {
     background: "none",

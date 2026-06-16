@@ -1,7 +1,7 @@
 // Global state store for the agent
 
 import { createContext, useContext, useReducer, type ReactNode, type Dispatch } from "react"
-import type { ConnectionState, Thread, Message, SkillMeta, OperationRecord, LLMConfig, SendShortcut, SecurityConfirmationRequest, LogEntry, KnowledgeMeta, SkillSelectionMode, PrivilegeMode, SecurityAuditEntry } from "../types"
+import type { ConnectionState, Thread, Message, SkillMeta, OperationRecord, LLMConfig, SendShortcut, SecurityConfirmationRequest, LogEntry, KnowledgeMeta, SkillSelectionMode, PrivilegeMode, SecurityAuditEntry, McpServerMeta, McpSelectionMode } from "../types"
 
 export interface AgentState {
   connectionState: ConnectionState
@@ -29,6 +29,11 @@ export interface AgentState {
   securityAuditLog: SecurityAuditEntry[]
   companionConfig: LLMConfig | null
   isProcessing: boolean
+  mcpServers: McpServerMeta[]
+  mcpSelectionMode: McpSelectionMode
+  activeMcpServerIds: string[]
+  mcpServerFormOpen: boolean
+  mcpServerFormEditing: string | null
 }
 
 export type AgentAction =
@@ -66,6 +71,12 @@ export type AgentAction =
   | { type: "ADD_SECURITY_AUDIT"; entry: SecurityAuditEntry }
   | { type: "SET_COMPANION_CONFIG"; config: LLMConfig }
   | { type: "SET_PROCESSING"; isProcessing: boolean }
+  | { type: "SET_MCP_SERVERS"; servers: McpServerMeta[] }
+  | { type: "UPDATE_MCP_SERVER_STATUS"; server: McpServerMeta }
+  | { type: "TOGGLE_MCP_SERVER"; serverName: string }
+  | { type: "SET_MCP_SELECTION_MODE"; mode: McpSelectionMode }
+  | { type: "OPEN_MCP_SERVER_FORM"; editing: string | null }
+  | { type: "CLOSE_MCP_SERVER_FORM" }
 export const initialState: AgentState = {
   connectionState: "disconnected",
   threads: [],
@@ -107,6 +118,11 @@ export const initialState: AgentState = {
   securityAuditLog: [],
   companionConfig: null,
   isProcessing: false,
+  mcpServers: [],
+  mcpSelectionMode: "auto",
+  activeMcpServerIds: [],
+  mcpServerFormOpen: false,
+  mcpServerFormEditing: null,
 }
 
 export function agentReducer(state: AgentState, action: AgentAction): AgentState {
@@ -127,6 +143,8 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         activeSkillIds: nextActiveThread?.active_skill_ids || [],
         skillSelectionMode: nextActiveThread?.skill_selection_mode || "auto",
         knowledgeSelectionMode: nextActiveThread?.knowledge_selection_mode || "auto",
+        mcpSelectionMode: nextActiveThread?.mcp_selection_mode || "auto",
+        activeMcpServerIds: nextActiveThread?.active_mcp_server_ids || [],
       }
     }
     case "SET_ACTIVE_THREAD": {
@@ -141,6 +159,8 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         activeSkillIds: activeThread?.active_skill_ids || [],
         skillSelectionMode: activeThread?.skill_selection_mode || "auto",
         knowledgeSelectionMode: activeThread?.knowledge_selection_mode || "auto",
+        mcpSelectionMode: activeThread?.mcp_selection_mode || "auto",
+        activeMcpServerIds: activeThread?.active_mcp_server_ids || [],
       }
     }
     case "ADD_MESSAGE":
@@ -286,6 +306,28 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       return { ...state, companionConfig: action.config }
     case "SET_PROCESSING":
       return { ...state, isProcessing: action.isProcessing }
+    case "SET_MCP_SERVERS":
+      return { ...state, mcpServers: action.servers }
+    case "UPDATE_MCP_SERVER_STATUS": {
+      const exists = state.mcpServers.some(s => s.name === action.server.name)
+      const servers = exists
+        ? state.mcpServers.map(s => s.name === action.server.name ? action.server : s)
+        : [...state.mcpServers, action.server]
+      return { ...state, mcpServers: servers }
+    }
+    case "TOGGLE_MCP_SERVER":
+      return {
+        ...state,
+        activeMcpServerIds: state.activeMcpServerIds.includes(action.serverName)
+          ? state.activeMcpServerIds.filter(id => id !== action.serverName)
+          : [...state.activeMcpServerIds, action.serverName],
+      }
+    case "SET_MCP_SELECTION_MODE":
+      return { ...state, mcpSelectionMode: action.mode }
+    case "OPEN_MCP_SERVER_FORM":
+      return { ...state, mcpServerFormOpen: true, mcpServerFormEditing: action.editing }
+    case "CLOSE_MCP_SERVER_FORM":
+      return { ...state, mcpServerFormOpen: false, mcpServerFormEditing: null }
     default:
       return state
   }

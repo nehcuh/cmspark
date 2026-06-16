@@ -4,6 +4,14 @@ export type ConnectionState = "connected" | "connecting" | "disconnected"
 
 export type SkillSelectionMode = "auto" | "all" | "manual"
 
+export type McpSelectionMode = "auto" | "all" | "manual"
+
+export type McpTrustLevel = "manual" | "first-use" | "trusted"
+
+export type McpTransportKind = "stdio" | "http"
+
+export type McpConnectionStatus = "disconnected" | "connecting" | "connected" | "error" | "dead"
+
 export type PrivilegeMode = "readonly" | "standard" | "advanced"
 
 export interface Thread {
@@ -17,7 +25,75 @@ export interface Thread {
   active_skill_ids: string[]
   skill_selection_mode?: SkillSelectionMode
   knowledge_selection_mode?: "auto" | "all" | "manual"
+  mcp_selection_mode?: McpSelectionMode
+  active_mcp_server_ids?: string[]
 }
+
+export interface McpToolMeta {
+  name: string
+  namespacedName: string
+  description: string
+  inputSchema: Record<string, any>
+}
+
+export interface McpResourceMeta {
+  uri: string
+  name: string
+  description?: string
+  mimeType?: string
+}
+
+export interface McpPromptMeta {
+  name: string
+  description?: string
+  arguments?: Array<{ name: string; description?: string; required?: boolean }>
+}
+
+export interface McpConnectionState {
+  status: McpConnectionStatus
+  last_error?: string
+  restart_count: number
+  last_connected_at?: string
+  pid?: number
+}
+
+export interface McpServerMeta {
+  name: string
+  transport: McpTransportKind
+  enabled: boolean
+  trust_level: McpTrustLevel
+  connection: McpConnectionState
+  capabilities: { tools: boolean; resources: boolean; prompts: boolean }
+  server_info?: { name?: string; version?: string }
+  tools: McpToolMeta[]
+  resources: McpResourceMeta[]
+  prompts: McpPromptMeta[]
+  config: McpServerConfig
+}
+
+export interface McpStdioServerConfig {
+  transport: "stdio"
+  command: string
+  args?: string[]
+  env?: Record<string, string>
+  cwd?: string
+  enabled: boolean
+  trust_level: McpTrustLevel
+  startup_timeout_ms?: number
+  call_timeout_ms?: number
+}
+
+export interface McpHttpServerConfig {
+  transport: "http"
+  url: string
+  headers?: Record<string, string>
+  enabled: boolean
+  trust_level: McpTrustLevel
+  startup_timeout_ms?: number
+  call_timeout_ms?: number
+}
+
+export type McpServerConfig = McpStdioServerConfig | McpHttpServerConfig
 
 export interface LogEntry {
   ts: string

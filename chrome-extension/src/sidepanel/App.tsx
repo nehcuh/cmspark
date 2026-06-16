@@ -6,6 +6,7 @@ import { ChatView } from "./components/ChatView"
 import { ThreadList } from "./components/ThreadList"
 import { BottomBar } from "./components/BottomBar"
 import { SettingsSlideout } from "./components/SettingsSlideout"
+import { McpServerForm } from "./components/McpServerForm"
 import { SlashCommandPopover } from "./components/SlashCommandPopover"
 import { SkillCraftPanel } from "./components/SkillCraftPanel"
 import { AgentStoreProvider, useAgentStore } from "./store/agentStore"
@@ -105,6 +106,7 @@ function AppContent() {
       {showLogs && <LogBar onClose={() => setShowLogs(false)} />}
       <SettingsSlideout />
       <SecurityConfirmationDialog />
+      <McpServerForm />
       {craftOpen && <SkillCraftPanel onClose={() => setCraftOpen(false)} />}
       <DisconnectedBanner visible={connectionState === "disconnected"} onRetry={() => {
         chrome.runtime.sendMessage({ type: "getStatus" }, (response) => {

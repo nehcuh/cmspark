@@ -353,6 +353,20 @@ function setupMessageHandlers() {
         sendResponse({ ok: true })
         return true
 
+      case "chat.regenerate": {
+        const sent = wsClient.send({
+          type: "chat.regenerate",
+          thread_id: message.thread_id,
+          message_id: message.message_id,
+          message: message.message,
+        })
+        if (!sent) {
+          chrome.runtime.sendMessage({ type: "error", error: "Companion 未连接，无法重新生成" })
+        }
+        sendResponse({ ok: sent })
+        return true
+      }
+
       case "config.set":
         // Persist locally so settings survive SW restarts, then forward to companion
         // so it becomes the global source of truth.
@@ -452,6 +466,13 @@ function setupMessageHandlers() {
       case "knowledge.delete":
       case "history.query":
       case "history.export":
+      case "mcp.list":
+      case "mcp.toggle_enabled":
+      case "mcp.add":
+      case "mcp.update":
+      case "mcp.delete":
+      case "mcp.toggle_server":
+      case "mcp.set_selection":
         // Forward to companion
         wsClient.send(message)
         sendResponse({ ok: true })

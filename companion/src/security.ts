@@ -266,6 +266,7 @@ export function classifyError(errorMessage: string, context?: { toolName?: strin
     "not supported on",
     "unknown tool",
     "disconnected",
+    "does not advertise the resources capability",
   ]
   if (recoverable.some(p => msg.includes(p))) {
     return "recoverable"

@@ -192,6 +192,13 @@ test("classifyError 'unknown error' defaults to non_recoverable", () => {
   assert.equal(classifyError("completely unknown error message"), "non_recoverable")
 })
 
+test("MCP capability mismatch is recoverable so the LLM can switch to the namespaced tool", () => {
+  assert.equal(
+    classifyError("MCP server filesystem does not advertise the resources capability, so mcp_list_resources cannot be used here. Use namespaced tools instead: mcp__filesystem__list_directory."),
+    "recoverable",
+  )
+})
+
 test("classifyError 'permission denied: camera' is non_recoverable", () => {
   assert.equal(classifyError("permission denied: camera access"), "non_recoverable")
 })

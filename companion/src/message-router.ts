@@ -7,7 +7,7 @@ import OpenAI from "openai"
 import type { ThreadManager } from "./threads/thread-manager"
 import type { SkillEngine } from "./skills/skill-engine"
 import type { HistoryStore } from "./history/store"
-import { getConfig, saveConfig } from "./config"
+import { getConfig, saveConfig, replaceMcpServers, setMcpEnabled } from "./config"
 import { chatCreate } from "./llm/adapter"
 import { parseFile } from "./file-parser"
 import type { FileParseResult } from "./file-parser"
@@ -16,6 +16,11 @@ import { chunkFile, searchChunks } from "./file-chunker"
 import { craftSkill, craftSkillToMarkdown } from "./skills/skill-craft"
 import { checkHighRiskExecution } from "./security"
 import { securityPolicy } from "./security-policy"
+import { getMcpManager } from "./mcp"
+import type {
+  McpServerConfig,
+  McpServerMeta,
+} from "./mcp/types"
 
 // Per-thread abort controllers for cancelling in-flight LLM requests
 const abortControllers = new Map<string, AbortController>()
@@ -517,7 +522,7 @@ export async function handleMessage(
     case "chat.regenerate": {
       if (!session) return { type: "error", error: "No session" }
       const config = getConfig()
-      const { thread_id, message_id } = rest
+      const { thread_id, message_id, message: editedMessage } = rest
 
       // Merge thread-level config_override with global config
       const threadForRegenConfig = services.threadManager.get(thread_id)
@@ -532,22 +537,41 @@ export async function handleMessage(
       const messages = threadManager.getMessages(thread_id)
       const idx = messages.findIndex(m => m.id === message_id)
       if (idx < 0) return { type: "error", error: "Message not found" }
-      if (messages[idx].role !== "assistant") {
-        return { type: "error", error: "Can only regenerate assistant messages" }
-      }
 
-      // Find preceding user message
-      let userMsg = null
-      for (let i = idx - 1; i >= 0; i--) {
-        if (messages[i].role === "user") {
-          userMsg = messages[i]
-          break
+      let userMsg: typeof messages[0] | null = null
+      let deleteFromId = message_id
+
+      if (messages[idx].role === "user") {
+        // Editing a user message: update its content and regenerate the reply.
+        userMsg = messages[idx]
+        if (editedMessage !== undefined && editedMessage !== userMsg.content) {
+          threadManager.updateMessage(thread_id, message_id, { content: editedMessage })
+          userMsg = { ...userMsg, content: editedMessage }
         }
+        // Delete everything after this user message.
+        const nextAssistantIdx = messages.findIndex((m, i) => i > idx && m.role === "assistant")
+        if (nextAssistantIdx >= 0) {
+          deleteFromId = messages[nextAssistantIdx].id
+        } else {
+          // No assistant reply yet; just notify and regenerate.
+          deleteFromId = ""
+        }
+      } else if (messages[idx].role === "assistant") {
+        // Regenerating an assistant message: find preceding user message.
+        for (let i = idx - 1; i >= 0; i--) {
+          if (messages[i].role === "user") {
+            userMsg = messages[i]
+            break
+          }
+        }
+        if (!userMsg) return { type: "error", error: "No user message found before this assistant message" }
+      } else {
+        return { type: "error", error: "Can only regenerate user or assistant messages" }
       }
-      if (!userMsg) return { type: "error", error: "No user message found before this assistant message" }
 
-      // Delete this assistant message and everything after it
-      threadManager.deleteMessagesFrom(thread_id, message_id)
+      if (deleteFromId) {
+        threadManager.deleteMessagesFrom(thread_id, deleteFromId)
+      }
 
       // Notify extension of updated message list
       session.sendToExtension({
@@ -704,6 +728,80 @@ export async function handleMessage(
     case "skill.refresh":
       skillEngine.refresh()
       return { type: "skill.list", skills: skillEngine.list() }
+
+    // --- MCP servers ---
+    case "mcp.list": {
+      return { type: "mcp.list", servers: getMcpManager().listServers() }
+    }
+    case "mcp.toggle_enabled": {
+      const enabled = !!rest.enabled
+      setMcpEnabled(enabled)
+      // applyConfig is fired via configEvents listener in server.ts
+      return { type: "mcp.list", servers: getMcpManager().listServers() }
+    }
+    case "mcp.add": {
+      const name = String(rest.name || "").trim()
+      const serverCfg = rest.server as McpServerConfig
+      const validation = validateMcpServerConfig(name, serverCfg)
+      if (validation) return { type: "error", error: validation }
+      const config = getConfig()
+      if (config.mcp?.servers?.[name]) {
+        return { type: "error", error: `MCP server "${name}" already exists. Use mcp.update to modify.` }
+      }
+      const newServers = { ...(config.mcp?.servers || {}), [name]: serverCfg }
+      replaceMcpServers(newServers)
+      return { type: "mcp.servers.updated", servers: getMcpManager().listServers() }
+    }
+    case "mcp.update": {
+      const name = String(rest.name || "").trim()
+      const patch = rest.patch as Partial<McpServerConfig>
+      const config = getConfig()
+      const existing = config.mcp?.servers?.[name]
+      if (!existing) return { type: "error", error: `MCP server "${name}" not found` }
+      if (hasPrototypePollutionKey(patch)) {
+        return { type: "error", error: "Invalid config keys detected" }
+      }
+      const merged = { ...existing, ...patch } as McpServerConfig
+      // Re-validate after merge
+      const validation = validateMcpServerConfig(name, merged)
+      if (validation) return { type: "error", error: validation }
+      const newServers = { ...(config.mcp?.servers || {}), [name]: merged }
+      replaceMcpServers(newServers)
+      return { type: "mcp.servers.updated", servers: getMcpManager().listServers() }
+    }
+    case "mcp.delete": {
+      const name = String(rest.name || "").trim()
+      const config = getConfig()
+      if (!config.mcp?.servers?.[name]) {
+        return { type: "error", error: `MCP server "${name}" not found` }
+      }
+      const newServers = { ...config.mcp.servers }
+      delete newServers[name]
+      replaceMcpServers(newServers)
+      return { type: "mcp.servers.updated", servers: getMcpManager().listServers() }
+    }
+    case "mcp.toggle_server": {
+      const name = String(rest.name || "").trim()
+      const enabled = !!rest.enabled
+      const config = getConfig()
+      const existing = config.mcp?.servers?.[name]
+      if (!existing) return { type: "error", error: `MCP server "${name}" not found` }
+      const newServers = { ...(config.mcp?.servers || {}), [name]: { ...existing, enabled } }
+      replaceMcpServers(newServers)
+      return { type: "mcp.servers.updated", servers: getMcpManager().listServers() }
+    }
+    case "mcp.set_selection": {
+      // Per-thread MCP tool selection mode + active server ids (mirrors skill activation).
+      // Persisted via thread.update — handled here as a convenience pass-through.
+      const thread = threadManager.get(rest.thread_id)
+      if (thread) {
+        const patch: any = {}
+        if (rest.mcp_selection_mode) patch.mcp_selection_mode = rest.mcp_selection_mode
+        if (Array.isArray(rest.active_mcp_server_ids)) patch.active_mcp_server_ids = rest.active_mcp_server_ids
+        threadManager.update(rest.thread_id, patch)
+      }
+      return { type: "mcp.selection_updated", thread_id: rest.thread_id }
+    }
     case "skill.activate": {
       skillEngine.activate(rest.thread_id, rest.skill_name)
       const thread = threadManager.get(rest.thread_id)
@@ -1030,6 +1128,65 @@ function hasPrototypePollutionKey(obj: any): boolean {
     if (typeof val === "object" && hasPrototypePollutionKey(val)) return true
   }
   return false
+}
+
+// --- MCP helpers ---
+
+const MCP_VALID_TRUST_LEVELS = new Set(["manual", "first-use", "trusted"])
+const MCP_VALID_TRANSPORTS = new Set(["stdio", "http"])
+const MCP_NAME_PATTERN = /^[a-zA-Z0-9_-]+$/
+
+/** Returns an error string if invalid, or null if OK. */
+function validateMcpServerConfig(name: string, cfg: McpServerConfig | undefined): string | null {
+  if (!name) return "MCP server name is required"
+  if (!MCP_NAME_PATTERN.test(name)) {
+    return `Invalid MCP server name "${name}": only letters, digits, underscore, and hyphen allowed`
+  }
+  if (!cfg) return "MCP server config is required"
+  if (hasPrototypePollutionKey(cfg)) return "Invalid MCP server config keys"
+  if (!MCP_VALID_TRANSPORTS.has(cfg.transport)) {
+    return `Invalid MCP transport "${cfg.transport}" (must be stdio or http)`
+  }
+  if (cfg.transport === "stdio") {
+    if (!cfg.command || typeof cfg.command !== "string") {
+      return `MCP stdio server "${name}" requires a command`
+    }
+    if (cfg.args !== undefined && !Array.isArray(cfg.args)) return `args must be an array`
+    if (cfg.env !== undefined && (typeof cfg.env !== "object" || Array.isArray(cfg.env))) {
+      return `env must be an object`
+    }
+    if (cfg.cwd !== undefined && typeof cfg.cwd !== "string") return `cwd must be a string`
+  } else {
+    if (!cfg.url || typeof cfg.url !== "string") {
+      return `MCP http server "${name}" requires a url`
+    }
+    try {
+      new URL(cfg.url)
+    } catch {
+      return `MCP http server "${name}" has invalid url: ${cfg.url}`
+    }
+    if (cfg.headers !== undefined && (typeof cfg.headers !== "object" || Array.isArray(cfg.headers))) {
+      return `headers must be an object`
+    }
+  }
+  if (!MCP_VALID_TRUST_LEVELS.has(cfg.trust_level)) {
+    return `Invalid trust_level "${cfg.trust_level}" (must be manual, first-use, or trusted)`
+  }
+  if (cfg.roots !== undefined) {
+    if (!Array.isArray(cfg.roots)) return `roots must be an array`
+    for (const root of cfg.roots) {
+      if (!root || typeof root !== "object" || Array.isArray(root)) {
+        return `each root must be an object with a uri string`
+      }
+      if (typeof root.uri !== "string" || !root.uri) {
+        return `each root must have a non-empty uri string`
+      }
+      if (root.name !== undefined && typeof root.name !== "string") {
+        return `root name must be a string`
+      }
+    }
+  }
+  return null
 }
 
 function sanitizeConfig(obj: Record<string, any>): Record<string, any> {

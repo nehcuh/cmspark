@@ -6,6 +6,7 @@ import * as os from "os"
 import { EventEmitter } from "events"
 import { getLockPath } from "./platform"
 import { getBuiltinSkillsSrc } from "./paths"
+import type { McpConfig } from "./mcp/types"
 
 export const configEvents = new EventEmitter()
 export const CONFIG_CHANGE_EVENT = "config.change"
@@ -52,6 +53,7 @@ export interface CompanionConfig {
   history_retention_days: number
   security: SecurityConfig
   file_upload?: FileUploadConfig
+  mcp?: McpConfig
 }
 
 function getEnvApiKey(): string {
@@ -102,6 +104,10 @@ const defaultConfig: CompanionConfig = {
     enable_vision_analysis: true,
     max_file_tokens: 50000,
   },
+  mcp: {
+    enabled: false,
+    servers: {},
+  },
 }
 
 let cachedConfig: CompanionConfig | null = null
@@ -117,6 +123,8 @@ export async function initDataDir(): Promise<void> {
     path.join(DATA_DIR, "knowledge", "global"),
     path.join(DATA_DIR, "knowledge", "sites"),
     path.join(DATA_DIR, "builtin-skills", "security"),
+    path.join(DATA_DIR, "mcp"),
+    path.join(DATA_DIR, "mcp", "logs"),
   ]
   for (const dir of dirs) {
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
@@ -167,7 +175,37 @@ export function getConfig(): CompanionConfig {
   if (getEnvApiKey()) {
     cachedConfig.llm.api_key = getEnvApiKey()
   }
+  // Ensure mcp config exists with sane defaults (older config.json may not have it)
+  if (!cachedConfig.mcp) {
+    cachedConfig.mcp = { enabled: false, servers: {} }
+  }
   return cachedConfig
+}
+
+/**
+ * Replace the entire `mcp.servers` map. Unlike saveConfig's deepMerge (which would
+ * preserve stale server entries), this performs a wholesale swap so removed servers
+ * actually disappear from the persisted config. Triggers CONFIG_CHANGE_EVENT.
+ */
+export function replaceMcpServers(servers: McpConfig["servers"]): CompanionConfig {
+  const current = getConfig()
+  const mcp: McpConfig = {
+    enabled: current.mcp?.enabled ?? false,
+    servers: { ...servers },
+  }
+  return saveConfig({ mcp })
+}
+
+/**
+ * Set the MCP-enabled flag without touching the servers map.
+ */
+export function setMcpEnabled(enabled: boolean): CompanionConfig {
+  const current = getConfig()
+  const mcp: McpConfig = {
+    enabled,
+    servers: current.mcp?.servers ?? {},
+  }
+  return saveConfig({ mcp })
 }
 
 export function saveConfig(config: Partial<CompanionConfig>): CompanionConfig {

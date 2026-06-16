@@ -21,6 +21,7 @@ export function requestInitialSidePanelData(
   sendMessage({ type: "skill.list" })
   sendMessage({ type: "knowledge.list" })
   sendMessage({ type: "config.get" })
+  sendMessage({ type: "mcp.list" })
   return true
 }
 
@@ -372,6 +373,27 @@ export function useWebSocket() {
 
         case "skill.list":
           dispatch({ type: "SET_SKILLS", skills: msg.skills })
+          break
+
+        case "mcp.list":
+        case "mcp.servers.updated":
+          if (Array.isArray(msg.servers)) {
+            dispatch({ type: "SET_MCP_SERVERS", servers: msg.servers })
+          }
+          break
+
+        case "mcp.server.status_changed": {
+          const server = msg.server
+          if (server && server.name) {
+            dispatch({ type: "UPDATE_MCP_SERVER_STATUS", server })
+          }
+          break
+        }
+
+        case "mcp.tool_call_started":
+        case "mcp.tool_call_finished":
+          // Best-effort UI hint — no store change required; could log to console.
+          // Future enhancement: surface as a transient toast.
           break
 
         case "knowledge.list":

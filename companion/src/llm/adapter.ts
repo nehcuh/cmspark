@@ -9,6 +9,7 @@ import { classifyError } from "../security"
 import { logger } from "../logger"
 import { analyzeImage } from "./vision-pipeline"
 import { getConfig } from "../config"
+import { getMcpManager } from "../mcp"
 
 // Jailbreak patterns to detect in LLM output
 const JAILBREAK_OUTPUT_PATTERNS = [
@@ -161,7 +162,8 @@ CRITICAL RULES:
 6. Wait for pages to load before extracting content.
 7. For reading page content: use get_page_text (preferred, cross-platform) or evaluate.
 8. osascript_eval is macOS-ONLY and will FAIL on Windows/Linux. On non-macOS systems, NEVER call osascript_eval — always use get_page_text or evaluate instead.
-9. When a page contains important visual content (product images, data charts, diagrams, maps, infographics), use analyze_image with a CSS selector to understand the image content rather than relying solely on alt text.`
+9. When a page contains important visual content (product images, data charts, diagrams, maps, infographics), use analyze_image with a CSS selector to understand the image content rather than relying solely on alt text.
+10. MCP servers may expose local filesystem tools with names like mcp__filesystem__list_directory or mcp__filesystem__read_text_file. For local file or directory operations, use these namespaced MCP tools directly. mcp_list_resources and mcp_read_resource only work for servers that explicitly advertise the resources capability; if they fail, switch to the corresponding namespaced tool.`
   const skillPrompt = skillEngine.buildSystemPrompt(threadId, undefined, skillIds, knowledgeIds, message)
 
   // Inject safety-guard skills at the END of system prompt (highest priority)
@@ -253,7 +255,9 @@ CRITICAL RULES:
     maxRetries: 0,
   })
 
-  const tools = getToolDefinitions()
+  // Native tools + dynamically aggregated MCP tools (mcp__<server>__<tool>)
+  const mcpTools = getMcpManager().getAggregatedTools()
+  const tools = [...getToolDefinitions(), ...mcpTools]
 
   // Tool calling loop
   let round = 0

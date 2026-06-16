@@ -1,0 +1,130 @@
+// Transport factory — wraps the MCP SDK's built-in StdioClientTransport and
+// StreamableHTTPClientTransport with a unified config-driven constructor.
+//
+// We do NOT reimplement the wire protocol; the SDK handles JSON-RPC framing,
+// initialize handshake, and resumption tokens. This module just selects the
+// right transport based on McpServerConfig and configures stderr capture so
+// the manager can surface subprocess diagnostics.
+
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
+import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js"
+import path from "node:path"
+import os from "node:os"
+import fs from "node:fs"
+import type { McpServerConfig } from "./types.js"
+
+export interface TransportExtras {
+  onStderr?: (chunk: string) => void
+}
+
+/**
+ * Build a PATH that lets stdio MCP servers find `npx` / `node` even when the
+ * companion process was launched with a stripped env (launchd, GUI apps, etc.).
+ *
+ * Node's child_process.spawn looks up binaries via `process.env.PATH`, not the
+ * directory of `process.execPath`. So if companion is running under
+ * `~/.nvm/versions/node/v24/bin/node` but PATH doesn't include that dir,
+ * `spawn("npx", ...)` fails with ENOENT. We fix this by prepending:
+ *   1. The directory of the currently-running node binary (covers nvm/fnm/volta)
+ *   2. Well-known macOS/Linux locations (homebrew, /usr/local, nvm default)
+ */
+export function buildSpawnPath(): string {
+  const existing = process.env.PATH ?? ""
+  const segments = new Set<string>()
+  existing.split(path.delimiter).forEach((p) => {
+    if (p) segments.add(p)
+  })
+
+  const candidates: string[] = []
+  // 1. Sibling binaries of the running node (npx/npm live alongside node).
+  try {
+    candidates.push(path.dirname(process.execPath))
+  } catch {
+    // ignore
+  }
+  // 2. macOS homebrew (apple silicon + intel)
+  candidates.push("/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin", "/usr/local/sbin")
+  // 3. Linux common
+  candidates.push("/usr/bin", "/bin")
+  // 4. nvm default if NVM_DIR is set
+  const nvmDir = process.env.NVM_DIR ?? path.join(os.homedir(), ".nvm")
+  const nvmDefault = path.join(nvmDir, "versions", "node")
+  try {
+    if (fs.existsSync(nvmDefault)) {
+      const versions = fs
+        .readdirSync(nvmDefault)
+        .map((v) => path.join(nvmDefault, v, "bin"))
+        .filter((p) => {
+          try {
+            return fs.statSync(p).isDirectory()
+          } catch {
+            return false
+          }
+        })
+      candidates.push(...versions)
+    }
+  } catch {
+    // ignore — nvm scan is best-effort
+  }
+
+  for (const c of candidates) {
+    if (c && !segments.has(c)) {
+      segments.add(c)
+    }
+  }
+
+  // Re-order: node-sibling dir + homebrew first, then the user's existing PATH.
+  const head: string[] = []
+  for (const c of candidates) {
+    if (c && segments.has(c)) {
+      head.push(c)
+      segments.delete(c)
+    }
+  }
+  return [...new Set([...head, ...Array.from(segments)])].join(path.delimiter)
+}
+
+export function createTransport(config: McpServerConfig, extras?: TransportExtras): Transport {
+  if (config.transport === "stdio") {
+    // Always enrich PATH — spawn() uses process.env.PATH, which may be missing
+    // the nvm/homebrew dirs when companion is launched as a daemon or GUI app.
+    const env: Record<string, string> = { ...process.env } as Record<string, string>
+    env.PATH = buildSpawnPath()
+    if (config.env) {
+      Object.assign(env, config.env)
+      // If the user overrode PATH in config.env, respect their value verbatim.
+      if (config.env.PATH) env.PATH = config.env.PATH
+    }
+    const transport = new StdioClientTransport({
+      command: config.command,
+      args: config.args,
+      env,
+      cwd: config.cwd,
+      stderr: "pipe",
+    })
+    if (extras?.onStderr && transport.stderr) {
+      transport.stderr.on("data", (buf: Buffer) => {
+        try {
+          extras.onStderr!(buf.toString("utf8"))
+        } catch {
+          // swallow — stderr is best-effort diagnostics
+        }
+      })
+    }
+    return transport
+  }
+
+  const url = new URL(config.url)
+  const headers = config.headers ?? {}
+  const transport = new StreamableHTTPClientTransport(url, {
+    requestInit: { headers: headers as Record<string, string> },
+  })
+  return transport
+}
+
+export function extractPid(transport: Transport): number | undefined {
+  const anyT = transport as any
+  if (anyT && typeof anyT.pid === "number") return anyT.pid
+  return undefined
+}

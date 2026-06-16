@@ -2,6 +2,7 @@
 
 import { WebSocketServer, WebSocket } from "ws"
 import { execFile } from "child_process"
+import { randomUUID } from "crypto"
 import os from "os"
 import { URL } from "url"
 import { getConfig, initDataDir, configEvents, CONFIG_CHANGE_EVENT } from "./config"
@@ -15,6 +16,7 @@ import { securityPolicy, getTokenSecret } from "./security-policy"
 import { logger, type LogLevel } from "./logger"
 import { acquireLock, releaseLock, isProcessRunning, readPidFile, cleanupPidFile } from "./daemon"
 import { getLockFilePath, getPidFilePath } from "./config"
+import { getMcpManager, getMcpConfirmCache, isMcpNamespaced } from "./mcp"
 
 const MAX_WS_MESSAGE_SIZE = 10 * 1024 * 1024 // 10MB
 
@@ -109,6 +111,9 @@ async function initServices() {
 
 // Exported for integration tests (audit item 6).
 export function createToolExecutor(ws: WebSocket) {
+  // Per-connection session id — used as the key for MCP first-use confirmation cache
+  // so approvals don't bleed across browser sessions.
+  const sessionId = randomUUID()
   return async (toolCallId: string, toolName: string, params: any): Promise<{ success: boolean; data?: any; error?: string }> => {
     let finalParams = params || {}
     const startedAt = Date.now()
@@ -222,7 +227,7 @@ export function createToolExecutor(ws: WebSocket) {
       // Issue a new token post-approval; the extension will validate it
       const approvedToken = securityPolicy.issueToken(toolName, code)
       finalParams = { ...finalParams, security_token: approvedToken.token }
-      void token // pre-approval token reserved for future use; current flow re-issues post-approval
+      void token
     }
 
     // Audit item 12: navigate / create_tab trust-domain gate. Agents can otherwise
@@ -240,8 +245,6 @@ export function createToolExecutor(ws: WebSocket) {
         logToolFinish(toolCallId, toolName, startedAt, result)
         return result
       }
-      // Block non-http(s) schemes outright. chrome://, file://, data:, javascript:
-      // are off-limits regardless of trust.
       if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
         const result = {
           success: false,
@@ -251,8 +254,6 @@ export function createToolExecutor(ws: WebSocket) {
         logToolFinish(toolCallId, toolName, startedAt, result)
         return result
       }
-      // If host is in trusted_domains, allow without confirmation (same trust tier
-      // as cookie tools).
       if (!isTrustedDomain(parsedUrl.hostname)) {
         if (ws.readyState !== WebSocket.OPEN) {
           const result = {
@@ -308,6 +309,34 @@ export function createToolExecutor(ws: WebSocket) {
         return result
       } catch (err: any) {
         const result = { success: false, error: err.message }
+        logger.error("tool.exception", { tool_call_id: toolCallId, tool_name: toolName, error: err.message || String(err) })
+        logToolFinish(toolCallId, toolName, startedAt, result)
+        return result
+      }
+    }
+
+    // MCP meta tools — Resources/Prompts access (executed locally via McpManager)
+    if (toolName === "mcp_list_resources" || toolName === "mcp_read_resource" || toolName === "mcp_get_prompt") {
+      try {
+        const result = await executeMcpMetaTool(toolName, finalParams, sessionId, ws)
+        logToolFinish(toolCallId, toolName, startedAt, result)
+        return result
+      } catch (err: any) {
+        const result = { success: false, error: err.message || String(err) }
+        logger.error("tool.exception", { tool_call_id: toolCallId, tool_name: toolName, error: err.message || String(err) })
+        logToolFinish(toolCallId, toolName, startedAt, result)
+        return result
+      }
+    }
+
+    // MCP namespaced tools — mcp__<server>__<tool>
+    if (isMcpNamespaced(toolName)) {
+      try {
+        const result = await executeMcpTool(toolName, finalParams, sessionId, ws, startedAt)
+        logToolFinish(toolCallId, toolName, startedAt, result)
+        return result
+      } catch (err: any) {
+        const result = { success: false, error: err.message || String(err) }
         logger.error("tool.exception", { tool_call_id: toolCallId, tool_name: toolName, error: err.message || String(err) })
         logToolFinish(toolCallId, toolName, startedAt, result)
         return result
@@ -506,30 +535,171 @@ async function executeCompanionTool(toolName: string, params: any): Promise<any>
         return { success: false, error: `osascript_eval error: ${err.message || String(err)}` }
       }
     }
-    case "mcp.call": {
-      const { server: serverName, method, params: mcpParams } = params
-      if (!serverName || !method) {
-        return { success: false, error: "server and method are required" }
-      }
-      const MCP_SERVERS: Record<string, { command: string; args: string[] }> = {
-        markitdown: {
-          command: "python3",
-          args: ["-m", "mcp_markitdown"],
-        },
-      }
-      const serverConfig = MCP_SERVERS[serverName]
-      if (!serverConfig) {
-        return { success: false, error: `MCP server "${serverName}" not registered. Available: ${Object.keys(MCP_SERVERS).join(", ")}` }
-      }
-      // Architecture placeholder — actual stdio JSON-RPC call to be implemented when deployed
-      return {
-        success: false,
-        error: `MCP server "${serverName}" is registered but not yet connected. Deploy the server first (e.g., pip install mcp-markitdown).`,
-        data: { server: serverName, method, availableServers: Object.keys(MCP_SERVERS) },
-      }
-    }
     default:
       return { success: false, error: `Unknown companion tool: ${toolName}` }
+  }
+}
+
+// --- MCP tool executors ---
+
+/**
+ * Execute an MCP namespaced tool (mcp__<server>__<tool>). Enforces the per-server
+ * trust_level policy: manual = always prompt, first-use = prompt once per session,
+ * trusted = never prompt. Approval cache is session-scoped to avoid cross-session bleed.
+ */
+async function executeMcpTool(
+  toolName: string,
+  params: any,
+  sessionId: string,
+  ws: WebSocket,
+  startedAt: number,
+): Promise<{ success: boolean; data?: any; error?: string }> {
+  const manager = getMcpManager()
+  const route = manager.resolveToolName(toolName)
+  if (!route) {
+    return { success: false, error: `MCP tool ${toolName} not found (server may be disconnected)` }
+  }
+
+  const trustLevel = manager.getTrustLevel(route.serverName) ?? "first-use"
+  const cache = getMcpConfirmCache()
+  const cacheKey = { sessionId, serverName: route.serverName, toolName: route.toolName }
+
+  const needsConfirm =
+    trustLevel === "manual" ||
+    (trustLevel === "first-use" && !cache.isApproved(cacheKey))
+
+  if (needsConfirm) {
+    if (ws.readyState !== WebSocket.OPEN) {
+      return {
+        success: false,
+        error: `Security Block: MCP tool ${route.serverName}/${route.toolName} cannot be confirmed (extension disconnected)`,
+      }
+    }
+    logger.info("mcp.confirm.requested", {
+      server: route.serverName,
+      tool: route.toolName,
+      trust_level: trustLevel,
+      session: sessionId,
+    })
+    const decision = await securityConfirmations.request(
+      (data) => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify(data))
+        }
+      },
+      {
+        toolName,
+        dangerousApis: [],
+        code: safeJsonStringify(params, 1200),
+        riskLevel: "medium",
+      },
+    )
+    if (!decision.approved) {
+      const reason = decision.reason === "approved" ? "unavailable" : decision.reason
+      return {
+        success: false,
+        error: `Security Block: MCP tool ${route.serverName}/${route.toolName} ${reason} by user`,
+      }
+    }
+    // Only cache approvals for first-use (manual re-prompts every time)
+    if (trustLevel === "first-use") {
+      cache.approve(cacheKey)
+    }
+    logger.info("mcp.confirm.approved", { server: route.serverName, tool: route.toolName })
+  }
+
+  const callStartedAt = Date.now()
+  try {
+    const result = await manager.callTool(route, params || {})
+    const durationMs = Date.now() - callStartedAt
+    broadcastToClients({
+      type: "mcp.tool_call_finished",
+      serverName: route.serverName,
+      toolName: route.toolName,
+      namespacedName: toolName,
+      durationMs,
+      success: !result?.isError,
+    })
+    if (result?.isError) {
+      const errMsg = extractMcpError(result)
+      return { success: false, error: `MCP ${route.serverName}/${route.toolName} returned error: ${errMsg}` }
+    }
+    return { success: true, data: result?.content ?? result }
+  } catch (err: any) {
+    return { success: false, error: `MCP call failed: ${err.message || String(err)}` }
+  }
+}
+
+/** Execute mcp_list_resources / mcp_read_resource / mcp_get_prompt. */
+async function executeMcpMetaTool(
+  toolName: string,
+  params: any,
+  _sessionId: string,
+  _ws: WebSocket,
+): Promise<{ success: boolean; data?: any; error?: string }> {
+  const manager = getMcpManager()
+  const args = params || {}
+  const serverName = String(args.server || "").trim()
+  if (!serverName) return { success: false, error: "MCP server name is required" }
+
+  try {
+    switch (toolName) {
+      case "mcp_list_resources": {
+        const resources = await manager.listResources(serverName)
+        return { success: true, data: { server: serverName, resources } }
+      }
+      case "mcp_read_resource": {
+        const uri = String(args.uri || "").trim()
+        if (!uri) return { success: false, error: "Resource uri is required" }
+        const result = await manager.readResource(serverName, uri)
+        return { success: true, data: result }
+      }
+      case "mcp_get_prompt": {
+        const name = String(args.name || "").trim()
+        if (!name) return { success: false, error: "Prompt name is required" }
+        const result = await manager.getPrompt(serverName, name, args.arguments)
+        return { success: true, data: result }
+      }
+      default:
+        return { success: false, error: `Unknown MCP meta tool: ${toolName}` }
+    }
+  } catch (err: any) {
+    return { success: false, error: err.message || String(err) }
+  }
+}
+
+function safeJsonStringify(value: any, limit: number): string {
+  try {
+    const s = JSON.stringify(value ?? {})
+    return s.length > limit ? s.slice(0, limit) + "…" : s
+  } catch {
+    return String(value)
+  }
+}
+
+function extractMcpError(result: any): string {
+  if (!result) return "unknown error"
+  if (Array.isArray(result.content)) {
+    for (const item of result.content) {
+      if (item?.text) return String(item.text)
+      if (typeof item === "string") return item
+    }
+  }
+  return JSON.stringify(result).slice(0, 500)
+}
+
+/** Broadcast a message to all connected WebSocket clients (used for MCP status updates). */
+function broadcastToClients(data: any): void {
+  if (!wss) return
+  const message = JSON.stringify(data)
+  for (const client of wss.clients) {
+    if (client.readyState === WebSocket.OPEN) {
+      try {
+        client.send(message)
+      } catch {
+        // ignore send failures (client disconnect)
+      }
+    }
   }
 }
 
@@ -563,6 +733,7 @@ function validateWsMessage(msg: any): WsValidationResult {
     "chat.regenerate": (m) => {
       if (typeof m.thread_id !== "string" || !m.thread_id) return { valid: false, error: "chat.regenerate requires thread_id" }
       if (typeof m.message_id !== "string" || !m.message_id) return { valid: false, error: "chat.regenerate requires message_id" }
+      if (m.message !== undefined && typeof m.message !== "string") return { valid: false, error: "chat.regenerate message must be a string" }
       return { valid: true }
     },
     "thread.create": (m) => {
@@ -658,6 +829,34 @@ function validateWsMessage(msg: any): WsValidationResult {
       if (typeof m.query !== "string" || !m.query) return { valid: false, error: "query required" }
       return { valid: true }
     },
+    "mcp.list": () => ({ valid: true }),
+    "mcp.toggle_enabled": (m) => {
+      if (typeof m.enabled !== "boolean") return { valid: false, error: "mcp.toggle_enabled requires boolean enabled" }
+      return { valid: true }
+    },
+    "mcp.add": (m) => {
+      if (typeof m.name !== "string" || !m.name) return { valid: false, error: "mcp.add requires name" }
+      if (!m.server || typeof m.server !== "object") return { valid: false, error: "mcp.add requires server config object" }
+      return { valid: true }
+    },
+    "mcp.update": (m) => {
+      if (typeof m.name !== "string" || !m.name) return { valid: false, error: "mcp.update requires name" }
+      if (!m.patch || typeof m.patch !== "object") return { valid: false, error: "mcp.update requires patch object" }
+      return { valid: true }
+    },
+    "mcp.delete": (m) => {
+      if (typeof m.name !== "string" || !m.name) return { valid: false, error: "mcp.delete requires name" }
+      return { valid: true }
+    },
+    "mcp.toggle_server": (m) => {
+      if (typeof m.name !== "string" || !m.name) return { valid: false, error: "mcp.toggle_server requires name" }
+      if (typeof m.enabled !== "boolean") return { valid: false, error: "mcp.toggle_server requires boolean enabled" }
+      return { valid: true }
+    },
+    "mcp.set_selection": (m) => {
+      if (typeof m.thread_id !== "string" || !m.thread_id) return { valid: false, error: "mcp.set_selection requires thread_id" }
+      return { valid: true }
+    },
   }
 
   const validator = validators[msg.type]
@@ -740,6 +939,27 @@ export async function startServer() {
 
   // Pre-initialize services (async: loads SQLite WASM)
   await initServices()
+
+  // Start MCP manager (loads configured MCP servers in the background).
+  // IMPORTANT: register event listeners BEFORE calling start() — start() awaits
+  // all client connections and emits "servers_updated" / "status_changed" during
+  // that window; registering listeners afterwards means we miss the first wave.
+  const mcpManager = getMcpManager()
+  mcpManager.on("servers_updated", (metas) => {
+    broadcastToClients({ type: "mcp.servers.updated", servers: metas })
+  })
+  mcpManager.on("status_changed", (meta) => {
+    broadcastToClients({ type: "mcp.server.status_changed", server: meta })
+  })
+  mcpManager.on("tools_changed", () => {
+    broadcastToClients({ type: "mcp.servers.updated", servers: mcpManager.listServers() })
+  })
+  try {
+    await mcpManager.start(config.mcp)
+  } catch (err: any) {
+    logger.warn("mcp.manager.start_failed", { error: err?.message || String(err) })
+  }
+
   wss = new WebSocketServer({ port, host: "127.0.0.1" })
 
   wss.on("listening", () => {
@@ -747,8 +967,8 @@ export async function startServer() {
     logger.info("server.listening", { port })
   })
 
-  // Broadcast config changes to all connected WebSocket clients
-  configEvents.on(CONFIG_CHANGE_EVENT, (updatedConfig: any) => {
+  // Broadcast config changes to all connected WebSocket clients + apply MCP diff
+  configEvents.on(CONFIG_CHANGE_EVENT, async (updatedConfig: any) => {
     const message = JSON.stringify({
       type: "config.updated",
       config: {
@@ -767,11 +987,18 @@ export async function startServer() {
         }
       } catch { /* ignore disconnected */ }
     }
+
+    // Apply MCP diff (start/stop/restart servers based on what changed)
+    try {
+      await mcpManager.applyConfig(updatedConfig.mcp)
+    } catch (err: any) {
+      logger.warn("mcp.apply_config_failed", { error: err?.message || String(err) })
+    }
   })
 
   wss.on("connection", (ws) => {
     // Note: services (threadManager / skillEngine / historyStore) are initialized
-    // exactly once via `await initServices()` at boot (line ~632) before the WS
+    // exactly once via `await initServices()` at boot (line ~835) before the WS
     // server starts listening. A previous version re-ran initServices() here on
     // first connection — that was a no-op duplicate at best, and a real race at
     // worst (replacing the module-level historyStore with a fresh instance whose
@@ -945,17 +1172,18 @@ export async function startServer() {
   })
 
   // Graceful shutdown
-  process.on("SIGINT", () => {
-    console.log("\n[cmspark-agent] Shutting down...")
-    logger.info("server.shutdown", { signal: "SIGINT" })
-    wss.close()
-    releaseLock(getLockFilePath())
-    process.exit(0)
-  })
-  process.on("SIGTERM", () => {
-    logger.info("server.shutdown", { signal: "SIGTERM" })
-    wss.close()
-    releaseLock(getLockFilePath())
-    process.exit(0)
-  })
+  const shutdown = (signal: string) => {
+    console.log(`\n[cmspark-agent] Shutting down (${signal})...`)
+    logger.info("server.shutdown", { signal })
+    // Stop MCP servers first (terminates child processes) before closing WS
+    mcpManager.shutdown().catch((err) => {
+      logger.warn("mcp.shutdown_failed", { error: err?.message || String(err) })
+    }).finally(() => {
+      wss.close()
+      releaseLock(getLockFilePath())
+      process.exit(0)
+    })
+  }
+  process.on("SIGINT", () => shutdown("SIGINT"))
+  process.on("SIGTERM", () => shutdown("SIGTERM"))
 }
