@@ -3,8 +3,111 @@
 import initSqlJs, { type Database as SqlJsDatabase } from "sql.js"
 import * as fs from "fs"
 import * as path from "path"
+import * as crypto from "crypto"
 import { getConfigDir } from "../config"
 import { logger } from "../logger.js"
+
+/**
+ * Sensitive tool redaction (audit item 3).
+ *
+ * Tools whose params or results contain secrets / dangerous code have those
+ * fields reduced to a non-recoverable summary (name + domain + value hash, or
+ * code hash + length) BEFORE the record is written to history.db. This prevents
+ * the 30-day-retained SQLite file from becoming a session-hijack / code-leak
+ * trove.
+ *
+ * The hash is SHA-256 truncated to 12 hex chars — enough to correlate repeated
+ * identical values without recovering them.
+ */
+const SENSITIVE_COOKIE_TOOLS = new Set(["get_cookies", "list_all_cookies", "set_cookie", "delete_cookie"])
+const SENSITIVE_CODE_TOOLS = new Set(["evaluate", "osascript_eval"])
+
+function shortHash(input: string): string {
+  return crypto.createHash("sha256").update(input).digest("hex").slice(0, 12)
+}
+
+function redactForStorage(
+  toolName: string,
+  rawParams: string | undefined,
+  rawSummary: string | undefined,
+): { params: string; result_summary: string } {
+  // Default: pass through unchanged. Only tools in the sensitive sets get redacted.
+  let params = rawParams || "{}"
+  let result_summary = rawSummary || ""
+
+  if (SENSITIVE_COOKIE_TOOLS.has(toolName)) {
+    params = redactCookieParams(params)
+    result_summary = redactCookieSummary(result_summary)
+  } else if (SENSITIVE_CODE_TOOLS.has(toolName)) {
+    params = redactCodeParams(params)
+    // result_summary for evaluate/osascript typically contains the tool result
+    // (e.g. return value of the eval) which is less sensitive than the code
+    // itself; keep it but cap length to limit blast radius.
+    if (result_summary.length > 200) result_summary = result_summary.slice(0, 200) + "…"
+  }
+
+  return { params, result_summary }
+}
+
+function redactCookieParams(raw: string): string {
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>
+    const redacted: Record<string, unknown> = { ...parsed }
+    // Cookie params typically have `domain`, `url`, sometimes `name`. None of
+    // these are secret — the cookie VALUE comes back in the result, not the params.
+    // If a value somehow leaks into params (e.g. set_cookie), redact it.
+    if ("value" in redacted && typeof redacted.value === "string") {
+      redacted.value = `<redacted:hash=${shortHash(redacted.value)}>`
+    }
+    return JSON.stringify(redacted)
+  } catch {
+    // Malformed params JSON — can't safely introspect, blank it.
+    return "{}"
+  }
+}
+
+function redactCookieSummary(raw: string): string {
+  try {
+    // result_summary is JSON.stringify(toolResult.data || {}).slice(0, 500) per
+    // adapter.ts. For cookie tools, data is an array of cookie objects.
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed)) return raw // unexpected shape — leave alone
+    const safe = parsed.map((cookie: any) => {
+      if (!cookie || typeof cookie !== "object") return cookie
+      const { name, domain, path, hostOnly, secure, httpOnly, ...rest } = cookie
+      // Keep the non-sensitive metadata; replace value with a hash so repeated
+      // identical values can still be correlated without recovery.
+      const valueStr = typeof rest.value === "string" ? rest.value : ""
+      return {
+        name, domain, path, hostOnly, secure, httpOnly,
+        ...(valueStr ? { value_hash: shortHash(valueStr), value_length: valueStr.length } : {}),
+      }
+    })
+    return JSON.stringify(safe)
+  } catch {
+    // Malformed summary — blank it rather than risk leaking.
+    return ""
+  }
+}
+
+function redactCodeParams(raw: string): string {
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>
+    const redacted: Record<string, unknown> = { ...parsed }
+    // evaluate/osascript_eval params include `code` or `expression` with the
+    // actual JS/AppleScript body. Replace with hash + length so the historical
+    // record shows "this code ran" without persisting the code itself.
+    for (const key of ["code", "expression"]) {
+      if (key in redacted && typeof redacted[key] === "string") {
+        const code = redacted[key] as string
+        redacted[key] = `<redacted:hash=${shortHash(code)},len=${code.length}>`
+      }
+    }
+    return JSON.stringify(redacted)
+  } catch {
+    return "{}"
+  }
+}
 
 interface OperationRecord {
   id?: number
@@ -117,12 +220,19 @@ export class HistoryStore {
 
   record(op: OperationRecord): number {
     if (!this.db) return 0
+    // Audit item 3: redact sensitive tool params/results BEFORE persistence.
+    // Without this, get_cookies writes every cookie value (including httpOnly
+    // session tokens) verbatim into ~/.cmspark-agent/history.db, retained for
+    // 30 days. Anyone with read access to that file gets full session-hijack
+    // material for every trusted site. evaluate/osascript_eval similarly leak
+    // the exact code body that was confirmed.
+    const { params: safeParams, result_summary: safeSummary } = redactForStorage(op.tool_name, op.params, op.result_summary)
     this.db.run(
       `INSERT INTO operations (thread_id, tool_name, params, result_summary, error, success, duration_ms, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        op.thread_id, op.tool_name, op.params || "{}",
-        op.result_summary || "", op.error || null,
+        op.thread_id, op.tool_name, safeParams,
+        safeSummary, op.error || null,
         op.success ? 1 : 0, op.duration_ms || 0,
         op.created_at || new Date().toISOString(),
       ],
