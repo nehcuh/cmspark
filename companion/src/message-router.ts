@@ -33,7 +33,7 @@ interface Services {
 
 interface SessionCallbacks {
   sendToExtension: (data: any) => void
-  executeTool: (toolCallId: string, toolName: string, params: any) => Promise<{ success: boolean; data?: any; error?: string }>
+  executeTool: (toolCallId: string, toolName: string, params: any, signal?: AbortSignal) => Promise<{ success: boolean; data?: any; error?: string }>
   broadcast?: (data: any) => void
 }
 

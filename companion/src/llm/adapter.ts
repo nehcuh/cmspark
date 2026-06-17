@@ -54,7 +54,7 @@ interface ChatCreateParams {
   skillEngine: SkillEngine
   historyStore: HistoryStore
   sendToExtension: (data: any) => void
-  executeTool: (toolCallId: string, toolName: string, params: any) => Promise<{ success: boolean; data?: any; error?: string }>
+  executeTool: (toolCallId: string, toolName: string, params: any, signal?: AbortSignal) => Promise<{ success: boolean; data?: any; error?: string }>
   signal?: AbortSignal
   skipUserMessage?: boolean
 }
@@ -401,7 +401,7 @@ CRITICAL RULES:
           let toolResult = await executeTool(tc.id, toolName, {
             ...params,
             tabId: params.tabId ?? threadManager.get(threadId)?.pinned_tabs?.[0],
-          })
+          }, signal)
 
           const durationMs = Date.now() - startTime
 

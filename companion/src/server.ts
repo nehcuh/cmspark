@@ -114,7 +114,7 @@ export function createToolExecutor(ws: WebSocket) {
   // Per-connection session id — used as the key for MCP first-use confirmation cache
   // so approvals don't bleed across browser sessions.
   const sessionId = randomUUID()
-  return async (toolCallId: string, toolName: string, params: any): Promise<{ success: boolean; data?: any; error?: string }> => {
+  return async (toolCallId: string, toolName: string, params: any, signal?: AbortSignal): Promise<{ success: boolean; data?: any; error?: string }> => {
     let finalParams = params || {}
     const startedAt = Date.now()
     // Notify extension: tool execution started (show in sidebar)
@@ -332,7 +332,7 @@ export function createToolExecutor(ws: WebSocket) {
     // MCP namespaced tools — mcp__<server>__<tool>
     if (isMcpNamespaced(toolName)) {
       try {
-        const result = await executeMcpTool(toolName, finalParams, sessionId, ws, startedAt)
+        const result = await executeMcpTool(toolName, finalParams, sessionId, ws, startedAt, signal)
         logToolFinish(toolCallId, toolName, startedAt, result)
         return result
       } catch (err: any) {
@@ -553,6 +553,7 @@ async function executeMcpTool(
   sessionId: string,
   ws: WebSocket,
   startedAt: number,
+  signal?: AbortSignal,
 ): Promise<{ success: boolean; data?: any; error?: string }> {
   const manager = getMcpManager()
   const route = manager.resolveToolName(toolName)
@@ -610,7 +611,7 @@ async function executeMcpTool(
 
   const callStartedAt = Date.now()
   try {
-    const result = await manager.callTool(route, params || {})
+    const result = await manager.callTool(route, params || {}, signal)
     const durationMs = Date.now() - callStartedAt
     broadcastToClients({
       type: "mcp.tool_call_finished",

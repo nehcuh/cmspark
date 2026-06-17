@@ -322,3 +322,39 @@ test("McpManager.stopClient clears deadServers + restartAttempts + restartTimers
   assert.equal(internals.restartTimers.has("fs"), false, "restartTimers must be cleared")
   clearTimeout(fakeTimer)
 })
+
+// =============================================================================
+// Signal threading (audit item 17 regression check)
+// =============================================================================
+
+test("manager.callTool passes AbortSignal through to client.callTool", async () => {
+  // Regression test for item 17: the chat-level abort signal must reach the
+  // SDK's RequestOptions.signal. We verify the manager → client hop here; the
+  // client → SDK hop is verified at runtime via SDK cancellation behavior.
+  const { manager, internals } = makeManagerWithFakeClient("fs", stdioCfg())
+  let capturedSignal: AbortSignal | undefined
+  internals.clients.get("fs")!.callTool = async (
+    _toolName: string,
+    _args: Record<string, any>,
+    signal?: AbortSignal,
+  ) => {
+    capturedSignal = signal
+    return { content: [], isError: false }
+  }
+
+  const controller = new AbortController()
+  await manager.callTool({ serverName: "fs", toolName: "read" }, {}, controller.signal)
+
+  assert.equal(capturedSignal, controller.signal,
+    "manager.callTool must forward the AbortSignal to client.callTool verbatim")
+})
+
+test("manager.callTool works without a signal (back-compat for non-chat callers)", async () => {
+  // Some call sites (e.g. mcp.read_resource via executeMcpMetaTool) don't have
+  // a chat-level signal. They should still work — signal is optional.
+  const { manager, internals } = makeManagerWithFakeClient("fs", stdioCfg())
+  internals.clients.get("fs")!.callTool = async () => ({ content: [], isError: false })
+
+  const result = await manager.callTool({ serverName: "fs", toolName: "read" }, {})
+  assert.deepEqual(result, { content: [], isError: false })
+})
