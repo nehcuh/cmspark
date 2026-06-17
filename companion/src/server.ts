@@ -627,8 +627,66 @@ async function executeMcpTool(
     }
     return { success: true, data: result?.content ?? result }
   } catch (err: any) {
-    return { success: false, error: `MCP call failed: ${err.message || String(err)}` }
+    // Audit item 18: surface actionable hints so the LLM can self-correct
+    // instead of blindly retrying with identical args. Also emit the
+    // tool_call_finished notification with success:false so the UI flags the
+    // failed call (previously only the success path emitted it).
+    const durationMs = Date.now() - callStartedAt
+    broadcastToClients({
+      type: "mcp.tool_call_finished",
+      serverName: route.serverName,
+      toolName: route.toolName,
+      namespacedName: toolName,
+      durationMs,
+      success: false,
+      error: err?.message || String(err),
+    })
+    const rawErr = err?.message || String(err)
+    return { success: false, error: enhanceMcpError(rawErr, route, params) }
   }
+}
+
+/**
+ * Wrap a raw MCP error message with an actionable hint for the LLM. The LLM
+ * has no signal whether to retry (transient), narrow the request (too much
+ * data), or skip the tool entirely without these hints — bare "MCP call failed:
+ * MCP timeout" leaves it to guess, and the default guess is identical retry.
+ *
+ * Exported for unit tests (audit item 18).
+ */
+export function enhanceMcpError(
+  rawErr: string,
+  route: { serverName: string; toolName: string },
+  params: any,
+): string {
+  const ctx = `MCP ${route.serverName}/${route.toolName}`
+  // Timeout — the server may be slow / busy / hung. Suggest retry + narrowing.
+  if (/MCP timeout/i.test(rawErr)) {
+    const argHint = params && typeof params === "object" && Object.keys(params).length > 0
+      ? " or try smaller/simpler arguments"
+      : ""
+    return `MCP call to ${ctx} timed out. The server may be slow, busy, or hung. You can retry once${argHint}, or skip this tool and continue. Underlying error: ${rawErr}`
+  }
+  // Abort (chat.abort fired or external cancellation)
+  if (/MCP call aborted/i.test(rawErr)) {
+    return `MCP call to ${ctx} was cancelled (likely because the user clicked stop or a new chat replaced this one). Do not retry automatically; wait for the user's next instruction.`
+  }
+  // Server not connected / disconnected mid-call — usually transient (restart
+  // in progress, or applyConfig diff triggered a stop+start).
+  if (/not connected|Connection Closed|disconnect|EPIPE|ECONNRESET/i.test(rawErr)) {
+    return `MCP server ${route.serverName} is unavailable right now (status: disconnected / restarting). Wait a moment and retry, or pick a different tool. Underlying error: ${rawErr}`
+  }
+  // Server-not-found — config issue, not transient.
+  if (/MCP server .* not found/i.test(rawErr)) {
+    return `${rawErr} This usually means the server was removed from the config or has not finished starting yet. Check the MCP panel and retry.`
+  }
+  // Capability-gating error — caller is asking for something the server doesn't support.
+  if (/does not advertise/i.test(rawErr)) {
+    return `${rawErr} Use a different tool that the server actually exposes.`
+  }
+  // Fallback — keep the original but prefix with context so the LLM knows which
+  // server/tool produced it (multi-server setups would otherwise be ambiguous).
+  return `MCP call to ${ctx} failed: ${rawErr}`
 }
 
 /** Execute mcp_list_resources / mcp_read_resource / mcp_get_prompt. */
