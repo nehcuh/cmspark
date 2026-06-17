@@ -250,3 +250,102 @@ test("McpManager.stopClient clears deadServers so a reused server name can resta
     "restartTimers must be cleared (already pre-existing behavior, asserting for completeness)",
   )
 })
+
+// ============================================================================
+// createTransport env / PATH construction (audit item 5c)
+// ============================================================================
+
+test("createTransport: stdio without config.env uses buildSpawnPath() for PATH", () => {
+  const { createTransport } = require("../src/mcp/transport")
+  const { buildSpawnPath } = require("../src/mcp/transport")
+  const transport = createTransport({
+    transport: "stdio",
+    command: "echo",
+    enabled: true,
+    trust_level: "first-use",
+  })
+  const params = (transport as any)._serverParams
+  assert.equal(params.env.PATH, buildSpawnPath(),
+    "PATH should default to buildSpawnPath() (which prepends node bin dir + nvm/homebrew fallbacks)")
+})
+
+test("createTransport: stdio with config.env.PATH override respects it VERBATIM", () => {
+  // This is the roadmap item 5c specific assertion: if the user supplies a
+  // custom PATH in their MCP server config, that value must be used exactly —
+  // NOT merged with buildSpawnPath() and NOT augmented. A regression here
+  // could silently break servers that ship their own runtime (e.g. a vendored
+  // Python) by polluting PATH with companion's node-bin path.
+  const { createTransport } = require("../src/mcp/transport")
+  const customPath = "/usr/local/my-mcp-runtime/bin:/opt/strict"
+  const transport = createTransport({
+    transport: "stdio",
+    command: "echo",
+    enabled: true,
+    trust_level: "first-use",
+    env: { PATH: customPath },
+  })
+  const params = (transport as any)._serverParams
+  assert.equal(params.env.PATH, customPath,
+    `config.env.PATH must override verbatim; got: ${params.env.PATH}`)
+})
+
+test("createTransport: stdio with config.env (no PATH) merges custom vars + buildSpawnPath()", () => {
+  const { createTransport } = require("../src/mcp/transport")
+  const { buildSpawnPath } = require("../src/mcp/transport")
+  const transport = createTransport({
+    transport: "stdio",
+    command: "echo",
+    enabled: true,
+    trust_level: "first-use",
+    env: { API_KEY: "secret-123", LOG_LEVEL: "debug" },
+  })
+  const params = (transport as any)._serverParams
+  // Custom vars passed through
+  assert.equal(params.env.API_KEY, "secret-123")
+  assert.equal(params.env.LOG_LEVEL, "debug")
+  // PATH defaults to buildSpawnPath() because config.env.PATH wasn't set
+  assert.equal(params.env.PATH, buildSpawnPath())
+})
+
+test("createTransport: stdio passes command/args/cwd through to StdioClientTransport", () => {
+  const { createTransport } = require("../src/mcp/transport")
+  const transport = createTransport({
+    transport: "stdio",
+    command: "npx",
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
+    cwd: "/var/empty",
+    enabled: true,
+    trust_level: "first-use",
+  })
+  const params = (transport as any)._serverParams
+  assert.equal(params.command, "npx")
+  assert.deepEqual(params.args, ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"])
+  assert.equal(params.cwd, "/var/empty")
+  assert.equal(params.stderr, "pipe", "stderr should be piped so onStderr can capture it")
+})
+
+test("createTransport: http transport constructs without throwing for valid URL", () => {
+  const { createTransport } = require("../src/mcp/transport")
+  // We don't start the transport — just verify construction succeeds. The SDK
+  // throws on malformed URLs.
+  const transport = createTransport({
+    transport: "http",
+    url: "http://127.0.0.1:9999/mcp",
+    enabled: true,
+    trust_level: "first-use",
+  })
+  assert.ok(transport, "http transport should be constructable")
+})
+
+test("createTransport: http transport throws on malformed URL", () => {
+  const { createTransport } = require("../src/mcp/transport")
+  assert.throws(
+    () => createTransport({
+      transport: "http",
+      url: "not-a-url",
+      enabled: true,
+      trust_level: "first-use",
+    }),
+    /Invalid URL/,
+  )
+})
