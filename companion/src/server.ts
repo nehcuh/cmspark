@@ -759,7 +759,20 @@ async function executeMcpMetaTool(
         return { success: false, error: `Unknown MCP meta tool: ${toolName}` }
     }
   } catch (err: any) {
-    return { success: false, error: err.message || String(err) }
+    const rawErr = err.message || String(err)
+    // Capability mismatch: give the LLM concrete guidance toward namespaced tools.
+    if (/does not advertise/i.test(rawErr)) {
+      const client = manager.listServers().find((s) => s.name === serverName)
+      const toolNames = client?.tools.map((t) => `mcp__${serverName}__${t.name}`) ?? []
+      const toolHint = toolNames.length > 0
+        ? ` Available namespaced tools on this server: ${toolNames.join(", ")}.`
+        : ""
+      return {
+        success: false,
+        error: `${rawErr}${toolHint} Do not retry mcp_list_resources / mcp_read_resource / mcp_get_prompt against this server; use the namespaced tools instead.`,
+      }
+    }
+    return { success: false, error: rawErr }
   }
 }
 

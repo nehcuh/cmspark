@@ -12,6 +12,7 @@ import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js"
 import path from "node:path"
 import os from "node:os"
 import fs from "node:fs"
+import { logger } from "../logger.js"
 import type { McpServerConfig } from "./types.js"
 
 export interface TransportExtras {
@@ -45,7 +46,9 @@ export function buildSpawnPath(): string {
   }
   // 2. macOS homebrew (apple silicon + intel)
   candidates.push("/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin", "/usr/local/sbin")
-  // 3. Linux common
+  // 3. pip/pipx user installs and other common per-user bins
+  candidates.push(path.join(os.homedir(), ".local", "bin"))
+  // 4. Linux common
   candidates.push("/usr/bin", "/bin")
   // 4. nvm default if NVM_DIR is set
   const nvmDir = process.env.NVM_DIR ?? path.join(os.homedir(), ".nvm")
@@ -96,11 +99,28 @@ export function createTransport(config: McpServerConfig, extras?: TransportExtra
       // If the user overrode PATH in config.env, respect their value verbatim.
       if (config.env.PATH) env.PATH = config.env.PATH
     }
+
+    // spawn() fails with ENOENT if cwd points to a non-existent directory. This
+    // is easy to hit when configs are copied across machines with different
+    // usernames. Validate and fall back to the process cwd so the real error
+    // (e.g. command not found) surfaces instead of a misleading cwd ENOENT.
+    let cwd = config.cwd
+    if (cwd) {
+      try {
+        if (!fs.existsSync(cwd) || !fs.statSync(cwd).isDirectory()) {
+          logger.warn("mcp.transport.cwd_missing", { server: config.command, cwd })
+          cwd = undefined
+        }
+      } catch {
+        cwd = undefined
+      }
+    }
+
     const transport = new StdioClientTransport({
       command: config.command,
       args: config.args,
       env,
-      cwd: config.cwd,
+      cwd,
       stderr: "pipe",
     })
     if (extras?.onStderr && transport.stderr) {

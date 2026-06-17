@@ -4,7 +4,7 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import { resolveTargetTab } from "../src/bridge/tab-resolver.js"
-import { getToolDefinitions } from "../src/bridge/tool-definitions.js"
+import { getToolDefinitions, getMcpMetaToolDefinitions } from "../src/bridge/tool-definitions.js"
 
 test("tab-resolver: explicit returns explicit tabId when valid", () => {
   const tab = (id: number, url: string, title: string, active = false, index = 0) => ({
@@ -382,4 +382,32 @@ test("tool-definitions: record_experience has enum for target and category", () 
   assert.ok(recordExperience)
   assert.deepEqual(recordExperience.function.parameters.properties.target.enum, ["site", "domain"])
   assert.deepEqual(recordExperience.function.parameters.properties.category.enum, ["problem", "success", "tip", "rule"])
+})
+
+// MCP meta tools are exposed dynamically based on connected server capabilities.
+test("tool-definitions: static list does NOT include mcp meta tools", () => {
+  const tools = getToolDefinitions()
+  const toolNames = tools.map((t: any) => t.function.name)
+  assert.ok(!toolNames.includes("mcp_list_resources"))
+  assert.ok(!toolNames.includes("mcp_read_resource"))
+  assert.ok(!toolNames.includes("mcp_get_prompt"))
+})
+
+test("tool-definitions: getMcpMetaToolDefinitions returns resources tools only when resources capability is advertised", () => {
+  const noCaps = getMcpMetaToolDefinitions({ resources: false, prompts: false })
+  assert.equal(noCaps.length, 0)
+
+  const resourcesOnly = getMcpMetaToolDefinitions({ resources: true, prompts: false })
+  const names = resourcesOnly.map((t: any) => t.function.name)
+  assert.ok(names.includes("mcp_list_resources"))
+  assert.ok(names.includes("mcp_read_resource"))
+  assert.ok(!names.includes("mcp_get_prompt"))
+})
+
+test("tool-definitions: getMcpMetaToolDefinitions returns prompts tool only when prompts capability is advertised", () => {
+  const promptsOnly = getMcpMetaToolDefinitions({ resources: false, prompts: true })
+  const names = promptsOnly.map((t: any) => t.function.name)
+  assert.ok(names.includes("mcp_get_prompt"))
+  assert.ok(!names.includes("mcp_list_resources"))
+  assert.ok(!names.includes("mcp_read_resource"))
 })

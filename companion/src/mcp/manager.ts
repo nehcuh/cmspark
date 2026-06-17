@@ -405,7 +405,8 @@ export function getMcpManager(): McpManager {
  *   RIGHT:  { servers: { "filesystem": { transport: "stdio", command: "npx", ... } } }
  *
  * Also drops entries whose value isn't a valid McpServerConfig object, logging a warning
- * so the user can see what went wrong instead of having servers silently ignored.
+ * with the specific reason (missing trust_level, wrong transport, etc.) so the user can
+ * see what went wrong instead of having servers silently ignored.
  */
 function sanitizeMcpConfig(raw: McpConfig | undefined | null): McpConfig {
   const fallback: McpConfig = { enabled: false, servers: {} }
@@ -431,20 +432,37 @@ function sanitizeMcpConfig(raw: McpConfig | undefined | null): McpConfig {
 
   const servers: Record<string, McpServerConfig> = {}
   for (const [name, value] of Object.entries(serversRaw)) {
-    if (!isValidServerConfig(value)) {
-      logger.warn("mcp.config.server_invalid", { name, reason: "expected { transport, ... } object" })
+    const reason = validateServerConfig(value)
+    if (reason) {
+      logger.warn("mcp.config.server_invalid", { name, reason })
       continue
     }
-    servers[name] = value
+    servers[name] = value as McpServerConfig
   }
   return { enabled, servers }
 }
 
-function isValidServerConfig(value: any): value is McpServerConfig {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false
-  if (value.transport !== "stdio" && value.transport !== "http") return false
-  if (typeof value.trust_level !== "string") return false
-  if (value.transport === "stdio" && typeof value.command !== "string") return false
-  if (value.transport === "http" && typeof value.url !== "string") return false
-  return true
+function validateServerConfig(value: any): string | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return "expected a server config object"
+  }
+  if (value.transport !== "stdio" && value.transport !== "http") {
+    return `transport must be "stdio" or "http", got "${value.transport}"`
+  }
+  if (value.enabled !== undefined && typeof value.enabled !== "boolean") {
+    return "enabled must be a boolean if provided"
+  }
+  if (typeof value.trust_level !== "string") {
+    return `trust_level is required (manual, first-use, or trusted), got "${value.trust_level}"`
+  }
+  if (!["manual", "first-use", "trusted"].includes(value.trust_level)) {
+    return `trust_level must be manual, first-use, or trusted, got "${value.trust_level}"`
+  }
+  if (value.transport === "stdio" && typeof value.command !== "string") {
+    return "stdio server requires a string command"
+  }
+  if (value.transport === "http" && typeof value.url !== "string") {
+    return "http server requires a string url"
+  }
+  return null
 }

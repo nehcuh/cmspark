@@ -480,59 +480,6 @@ export function getToolDefinitions(): ToolDefinition[] {
         },
       },
     },
-    // --- MCP meta tools: read-only access to MCP server Resources and Prompts.
-    // MCP Tools are exposed 1:1 with mcp__<server>__<tool> namespacing and do NOT
-    // go through these meta tools. Resources/Prompts are too numerous to expand
-    // individually, so the agent must list-then-read.
-    {
-      type: "function",
-      function: {
-        name: "mcp_list_resources",
-        description: "List resources exposed by an MCP server. Returns URIs that can be passed to mcp_read_resource. Only servers that advertise the resources capability will return results; tools-only servers (e.g. the official @modelcontextprotocol/server-filesystem) expose file access via their own namespaced tools instead. Check the MCP panel for available server names and capabilities.",
-        parameters: {
-          type: "object",
-          properties: {
-            server: { type: "string", description: "MCP server name (as shown in MCP panel)" },
-          },
-          required: ["server"],
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "mcp_read_resource",
-        description: "Read the contents of a specific MCP resource by URI. Use mcp_list_resources first to discover available URIs.",
-        parameters: {
-          type: "object",
-          properties: {
-            server: { type: "string", description: "MCP server name" },
-            uri: { type: "string", description: "Resource URI (returned by mcp_list_resources)" },
-          },
-          required: ["server", "uri"],
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "mcp_get_prompt",
-        description: "Fetch a prompt template from an MCP server with arguments filled in. Returns ready-to-use messages. Useful for canned workflows like code-review, summarize, explain-error that the server provides.",
-        parameters: {
-          type: "object",
-          properties: {
-            server: { type: "string", description: "MCP server name" },
-            name: { type: "string", description: "Prompt name" },
-            arguments: {
-              type: "object",
-              description: "Prompt arguments (server-specific; consult server docs)",
-              properties: {},
-            },
-          },
-          required: ["server", "name"],
-        },
-      },
-    },
     {
       type: "function",
       function: {
@@ -577,6 +524,71 @@ export function getToolDefinitions(): ToolDefinition[] {
   }
 
   logger.info("tools_loaded", { count: tools.length }, "bridge")
+  return tools
+}
+
+/** Build MCP meta tools (resources/prompts access) only when at least one connected
+ *  server advertises the corresponding capability. This prevents the LLM from
+ *  trying mcp_list_resources on tools-only servers like filesystem or brave-search.
+ */
+export function getMcpMetaToolDefinitions(capabilities: {
+  resources: boolean
+  prompts: boolean
+}): ToolDefinition[] {
+  const tools: ToolDefinition[] = []
+  if (capabilities.resources) {
+    tools.push({
+      type: "function",
+      function: {
+        name: "mcp_list_resources",
+        description: "List resources exposed by an MCP server. Returns URIs that can be passed to mcp_read_resource. Only servers that advertise the resources capability support this; tools-only servers expose file access via their own namespaced tools instead.",
+        parameters: {
+          type: "object",
+          properties: {
+            server: { type: "string", description: "MCP server name (as shown in MCP panel)" },
+          },
+          required: ["server"],
+        },
+      },
+    })
+    tools.push({
+      type: "function",
+      function: {
+        name: "mcp_read_resource",
+        description: "Read the contents of a specific MCP resource by URI. Use mcp_list_resources first to discover available URIs. Only servers that advertise the resources capability support this.",
+        parameters: {
+          type: "object",
+          properties: {
+            server: { type: "string", description: "MCP server name" },
+            uri: { type: "string", description: "Resource URI (returned by mcp_list_resources)" },
+          },
+          required: ["server", "uri"],
+        },
+      },
+    })
+  }
+  if (capabilities.prompts) {
+    tools.push({
+      type: "function",
+      function: {
+        name: "mcp_get_prompt",
+        description: "Fetch a prompt template from an MCP server with arguments filled in. Returns ready-to-use messages. Useful for canned workflows like code-review, summarize, explain-error that the server provides.",
+        parameters: {
+          type: "object",
+          properties: {
+            server: { type: "string", description: "MCP server name" },
+            name: { type: "string", description: "Prompt name" },
+            arguments: {
+              type: "object",
+              description: "Prompt arguments (server-specific; consult server docs)",
+              properties: {},
+            },
+          },
+          required: ["server", "name"],
+        },
+      },
+    })
+  }
   return tools
 }
 

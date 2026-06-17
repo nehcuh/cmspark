@@ -53,5 +53,13 @@ When the user types `/dev-*`, run the corresponding workflow in `workflows/`.
 - Session management is handled by CMspark; use `/new`, `/resume`, `/fork` commands
 - Compaction is automatic — no manual memory flush needed
 
+## MCP Support
+
+- User-facing guide: `docs/mcp.md`
+- Troubleshooting: `docs/TROUBLESHOOTING.md#mcp-相关`
+- Core implementation: `companion/src/mcp/` (`client.ts`, `manager.ts`, `aggregator.ts`, `transport.ts`, `confirm-cache.ts`)
+- UI: `chrome-extension/src/sidepanel/components/McpPanel.tsx`, `McpServerForm.tsx`
+- MCP meta tools (`mcp_list_resources`, `mcp_read_resource`, `mcp_get_prompt`) are exposed dynamically based on connected server capabilities — they are NOT in the static `getToolDefinitions()` list.
+
 ---
 *CMspark Agent v0.2.0*

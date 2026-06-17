@@ -35,6 +35,45 @@ export DEEPSEEK_API_KEY=sk-xxx
 2. 确认 Extension 已加载：`chrome://extensions` 中 CMspark 状态为"已启用"
 3. 如果 Side Panel 显示断连提示，点击"重试"按钮
 
+## MCP 相关
+
+### "spawn npx ENOENT" / "spawn <command> ENOENT"
+
+daemon 启动时 PATH 被系统剥离，找不到命令。
+
+**解决：**
+1. 优先在 `command` 里写完整路径，例如 `"/Users/you/.local/bin/ptai"`。
+2. 确认 `cwd` 指向的目录真实存在。
+3. 对于 `npx` 等 Node 工具，确保已安装在 nvm/npm 全局目录；Companion 会自动补充 nvm、homebrew、~/.local/bin 等路径。
+
+### "MCP error -32000: Connection closed" / "Crashed N times; giving up"
+
+通常是 stdio server 启动后立刻崩溃。
+
+**排查：**
+```bash
+tail -f ~/.cmspark-agent/logs/companion-$(date +%Y-%m-%d).log | grep -i "mcp.client.start_failed"
+```
+
+常见原因：
+- `args` 里的允许目录不存在（filesystem server 会因此崩溃）。
+- server 需要交互式确认（如 pentest-ai 的 AUP），但 daemon 是非交互的 —— 加对应 env var，如 `PENTEST_AI_AUP_ACCEPTED=1`。
+- command/args 写错，或依赖的命令未安装。
+
+### "此 server 未声明 tools 能力"
+
+server 没连上或没声明 `tools` capability。先解决上面的连接问题；连接成功后这个提示会消失。
+
+### filesystem server 提示 "Access denied - path outside allowed directories"
+
+`args` 里列出的路径才是允许访问的范围，`cwd` 不影响访问控制。
+
+**解决：** 在 `args` 里加上你想访问的目录，并确保目录存在。详细配置见 [`docs/mcp.md`](./mcp.md)。
+
+### LLM 反复调用 `mcp_list_resources` 失败
+
+只有声明了 `resources` 能力的 server 才支持 `mcp_list_resources`。filesystem / brave-search 等 tools-only server 应该使用 `mcp__<server>__<tool>` 形式的 namespaced 工具。如果 LLM 仍反复误用，检查 server 是否已正常连接；连接正常时 meta tools 会按 capability 动态暴露。
+
 ## Extension 相关
 
 ### "No tab with id 303" 错误

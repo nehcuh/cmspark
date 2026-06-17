@@ -102,6 +102,31 @@ describe("ThreadManager - Normal Paths", () => {
     assert.equal(updated!.config_override.temperature, 0.9)
   })
 
+  test("update accepts all valid mcp_selection_mode values", () => {
+    const tm = new ThreadManager()
+    const thread = tm.create("MCP Mode")
+    for (const mode of ["auto", "all", "manual"] as const) {
+      const updated = tm.update(thread.id, { mcp_selection_mode: mode })
+      assert.equal(updated!.mcp_selection_mode, mode)
+    }
+  })
+
+  test("update rejects invalid mcp_selection_mode", () => {
+    const tm = new ThreadManager()
+    const thread = tm.create("MCP Mode Bad")
+    assert.throws(
+      () => tm.update(thread.id, { mcp_selection_mode: "unknown" as any }),
+      /Invalid mcp_selection_mode/,
+    )
+  })
+
+  test("update accepts active_mcp_server_ids array", () => {
+    const tm = new ThreadManager()
+    const thread = tm.create("MCP Servers")
+    const updated = tm.update(thread.id, { active_mcp_server_ids: ["filesystem", "brave-search"] })
+    assert.deepEqual(updated!.active_mcp_server_ids, ["filesystem", "brave-search"])
+  })
+
   test("delete removes thread from index and filesystem", () => {
     const tm = new ThreadManager()
     const thread = tm.create("Delete Me")

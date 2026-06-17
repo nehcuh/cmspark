@@ -16,9 +16,9 @@ interface Thread {
   skill_selection_mode?: "auto" | "all" | "manual"
   knowledge_selection_mode?: "auto" | "all" | "manual"
   // Audit item 7: per-thread MCP server selection. "auto" exposes every
-  // connected server's tools to the LLM (legacy default). "manual" restricts
-  // to the servers in active_mcp_server_ids.
-  mcp_selection_mode?: "auto" | "manual"
+  // connected server's tools to the LLM (legacy default). "all" exposes every
+  // connected server explicitly. "manual" restricts to active_mcp_server_ids.
+  mcp_selection_mode?: "auto" | "all" | "manual"
   active_mcp_server_ids?: string[]
 }
 
@@ -244,7 +244,7 @@ export class ThreadManager {
     }
     // Audit item 7: validate mcp_selection_mode + active_mcp_server_ids shape
     if (updates.mcp_selection_mode !== undefined) {
-      const validMcpModes = ["auto", "manual"]
+      const validMcpModes = ["auto", "all", "manual"]
       if (!validMcpModes.includes(updates.mcp_selection_mode)) {
         throw new Error(`Invalid mcp_selection_mode: ${updates.mcp_selection_mode}. Must be one of ${validMcpModes.join(", ")}`)
       }
