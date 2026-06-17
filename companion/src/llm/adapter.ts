@@ -5,6 +5,7 @@ import type { ThreadManager } from "../threads/thread-manager"
 import type { SkillEngine } from "../skills/skill-engine"
 import type { HistoryStore } from "../history/store"
 import { getToolDefinitions, ToolDefinition } from "../bridge/tool-definitions"
+import { tryParseToolArgs } from "../bridge/tool-schemas"
 import { classifyError } from "../security"
 import { logger } from "../logger"
 import { analyzeImage } from "./vision-pipeline"
@@ -394,6 +395,41 @@ CRITICAL RULES:
           })
           continue
         }
+
+        // Audit item 4: validate the parsed args against the per-tool zod schema.
+        // LLM-produced JSON crosses the runtime boundary untyped; a hallucinated
+        // shape (tabId as string, url as number, fields as object) would otherwise
+        // flow straight into executeTool / executeCompanionTool / MCP subprocess
+        // / osascript. On validation failure, route to the same recovery path as
+        // JSON.parse errors — return an error tool_result so the LLM can self-
+        // correct on the next turn.
+        const parsed = tryParseToolArgs(toolName, params)
+        if (!parsed.ok) {
+          logger.warn("llm.tool_arg_validation_failed", {
+            tool_call_id: tc.id,
+            tool_name: toolName,
+            arguments: tc.function.arguments,
+            error: parsed.error,
+          })
+          const validationResult = {
+            success: false,
+            error: parsed.error,
+          }
+          threadManager.addMessage(threadId, createToolResultMessage(threadId, tc, validationResult, {}))
+          sendToExtension({
+            type: "tool.result",
+            tool_call_id: tc.id,
+            tool_name: toolName,
+            result: validationResult,
+          })
+          toolResults.push({
+            role: "tool" as const,
+            tool_call_id: tc.id,
+            content: JSON.stringify(validationResult),
+          })
+          continue
+        }
+        params = parsed.args
 
         const startTime = Date.now()
 

@@ -1,0 +1,205 @@
+// Tool-arg zod schema tests (audit item 4)
+//
+// Verifies the per-tool validation gates the LLM's tool-call args before they
+// reach executeTool. The recovery path (LLM-self-correction via tool_result
+// error) is in adapter.ts; this file tests the pure validation logic.
+
+import test from "node:test"
+import assert from "node:assert/strict"
+import { parseToolArgs, tryParseToolArgs, TOOL_ARG_SCHEMAS } from "../src/bridge/tool-schemas.js"
+
+// =============================================================================
+// evaluate — high-risk (arbitrary JS in a real Chrome tab)
+// =============================================================================
+
+test("evaluate: well-formed args pass", () => {
+  const out = parseToolArgs("evaluate", { tabId: 1, code: "1 + 1" })
+  assert.equal(out.tabId, 1)
+  assert.equal(out.code, "1 + 1")
+})
+
+test("evaluate: rejects code as number (must be string)", () => {
+  // ZodError.message is a JSON dump of issues; check both substrings appear
+  // (the regex doesn't span newlines, so check separately).
+  try {
+    parseToolArgs("evaluate", { tabId: 1, code: 123 })
+    assert.fail("should have thrown")
+  } catch (err: any) {
+    assert.match(err.message, /code/i, "error should reference the field name")
+    assert.match(err.message, /string/i, "error should mention the expected type")
+  }
+})
+
+test("evaluate: rejects missing required tabId", () => {
+  assert.throws(
+    () => parseToolArgs("evaluate", { code: "1+1" }),
+    /tabId/i,
+  )
+})
+
+test("evaluate: rejects missing required code", () => {
+  assert.throws(
+    () => parseToolArgs("evaluate", { tabId: 1 }),
+    /code/i,
+  )
+})
+
+test("evaluate: rejects tabId as string (must be number)", () => {
+  assert.throws(
+    () => parseToolArgs("evaluate", { tabId: "1", code: "1+1" }),
+    /tabId/i,
+  )
+})
+
+test("evaluate: accepts optional await_promise + security_token", () => {
+  const out = parseToolArgs("evaluate", {
+    tabId: 1, code: "1+1", await_promise: false, security_token: "abc",
+  })
+  assert.equal(out.await_promise, false)
+  assert.equal(out.security_token, "abc")
+})
+
+// =============================================================================
+// navigate / create_tab — high-risk (drive browser to any URL)
+// =============================================================================
+
+test("navigate: rejects malformed URL", () => {
+  assert.throws(
+    () => parseToolArgs("navigate", { tabId: 1, url: "not-a-url" }),
+    /url/i,
+  )
+})
+
+test("navigate: accepts well-formed URL", () => {
+  const out = parseToolArgs("navigate", { tabId: 1, url: "https://example.com/page" })
+  assert.equal(out.url, "https://example.com/page")
+})
+
+test("create_tab: accepts http URL with optional active flag", () => {
+  const out = parseToolArgs("create_tab", { url: "http://localhost:3000", active: false })
+  assert.equal(out.url, "http://localhost:3000")
+  assert.equal(out.active, false)
+})
+
+test("create_tab: rejects missing URL", () => {
+  assert.throws(
+    () => parseToolArgs("create_tab", {}),
+    /url/i,
+  )
+})
+
+// =============================================================================
+// set_cookie / get_cookies / delete_cookie — high-risk (trust gate depends on
+// `domain` being a string)
+// =============================================================================
+
+test("set_cookie: rejects domain as number", () => {
+  assert.throws(
+    () => parseToolArgs("set_cookie", { domain: 42, name: "x", value: "y" }),
+    /domain/i,
+  )
+})
+
+test("set_cookie: accepts full cookie spec", () => {
+  const out = parseToolArgs("set_cookie", {
+    domain: "example.com",
+    name: "session",
+    value: "abc",
+    path: "/",
+    secure: true,
+    httpOnly: true,
+  })
+  assert.equal(out.domain, "example.com")
+  assert.equal(out.secure, true)
+})
+
+test("get_cookies: requires domain string", () => {
+  assert.throws(
+    () => parseToolArgs("get_cookies", {}),
+    /domain/i,
+  )
+  assert.throws(
+    () => parseToolArgs("get_cookies", { domain: 42 }),
+    /domain/i,
+  )
+  const out = parseToolArgs("get_cookies", { domain: "example.com" })
+  assert.equal(out.domain, "example.com")
+})
+
+// =============================================================================
+// osascript_eval — high-risk (arbitrary AppleScript on the host)
+// =============================================================================
+
+test("osascript_eval: rejects non-string expression", () => {
+  assert.throws(
+    () => parseToolArgs("osascript_eval", { expression: 42 }),
+    /expression/i,
+  )
+})
+
+test("osascript_eval: accepts string expression", () => {
+  const out = parseToolArgs("osascript_eval", { expression: 'display dialog "hi"' })
+  assert.equal(out.expression, 'display dialog "hi"')
+})
+
+// =============================================================================
+// Generic fallback — non-high-risk tools pass through unchanged
+// =============================================================================
+
+test("unknown tool passes through unchanged (generic fallback)", () => {
+  const args = { query: "list open tabs", arbitrary: [1, 2, 3], nested: { a: true } }
+  const out = parseToolArgs("list_tabs", args)
+  assert.deepEqual(out, args)
+})
+
+test("unknown tool accepts any shape including edge cases", () => {
+  // Empty object — fine for tools with no required fields.
+  assert.deepEqual(parseToolArgs("list_tabs", {}), {})
+  // Wild shapes — generic fallback doesn't constrain.
+  const wild = { foo: null, bar: [true, false, null] }
+  assert.deepEqual(parseToolArgs("some_unknown_tool", wild), wild)
+})
+
+// =============================================================================
+// tryParseToolArgs — Result-style variant
+// =============================================================================
+
+test("tryParseToolArgs returns ok:true + args on success", () => {
+  const result = tryParseToolArgs("evaluate", { tabId: 1, code: "1+1" })
+  assert.equal(result.ok, true)
+  if (result.ok) {
+    assert.equal(result.args.tabId, 1)
+    assert.equal(result.args.code, "1+1")
+  }
+})
+
+test("tryParseToolArgs returns ok:false + readable error on failure", () => {
+  const result = tryParseToolArgs("navigate", { tabId: 1, url: "garbage" })
+  assert.equal(result.ok, false)
+  if (!result.ok) {
+    assert.match(result.error, /navigate/, "error should name the tool")
+    assert.match(result.error, /url/i, "error should mention the failing field")
+  }
+})
+
+test("tryParseToolArgs error aggregates multiple field failures into one message", () => {
+  // tabId wrong type AND url missing — both should appear in the error.
+  const result = tryParseToolArgs("navigate", { tabId: "not-a-number" })
+  assert.equal(result.ok, false)
+  if (!result.ok) {
+    assert.match(result.error, /tabId/i)
+    assert.match(result.error, /url/i)
+    assert.match(result.error, /;/, "multiple issues should be separated by semicolons")
+  }
+})
+
+// =============================================================================
+// Sanity: every high-risk tool has a schema
+// =============================================================================
+
+test("TOOL_ARG_SCHEMAS covers the high-risk tools the audit named", () => {
+  const expected = ["evaluate", "osascript_eval", "set_cookie", "navigate", "create_tab"]
+  for (const name of expected) {
+    assert.ok(name in TOOL_ARG_SCHEMAS, `${name} should have a zod schema`)
+  }
+})
