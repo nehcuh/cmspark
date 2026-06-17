@@ -288,13 +288,17 @@ export class McpManager extends EventEmitter {
 
   // --- RPC routing ---
 
-  async callTool(route: McpToolRoute, args: Record<string, any>): Promise<any> {
+  async callTool(
+    route: McpToolRoute,
+    args: Record<string, any>,
+    signal?: AbortSignal,
+  ): Promise<any> {
     const client = this.clients.get(route.serverName)
     if (!client) throw new Error(`MCP server ${route.serverName} not found`)
     if (client.connection.status !== "connected") {
       throw new Error(`MCP server ${route.serverName} not connected (status: ${client.connection.status})`)
     }
-    return client.callTool(route.toolName, args)
+    return client.callTool(route.toolName, args, signal)
   }
 
   async listResources(serverName: string): Promise<any> {

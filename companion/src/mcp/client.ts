@@ -267,21 +267,66 @@ export class McpClient extends EventEmitter {
     return this._promptsCache
   }
 
-  async callTool(toolName: string, args: Record<string, any>): Promise<any> {
+  async callTool(
+    toolName: string,
+    args: Record<string, any>,
+    externalSignal?: AbortSignal,
+  ): Promise<any> {
     if (!this.client) throw new Error(`MCP server ${this.name} not connected`)
     if (!this._capabilities.tools) {
       throw new Error(`MCP server ${this.name} does not support tools`)
     }
     const timeout = resolveCallTimeout(this._config)
-    const result = await withTimeout(
-      this.client.callTool({ name: toolName, arguments: args }),
-      timeout,
-      `call ${this.name}/${toolName} > ${timeout}ms`,
-    )
-    // Result shape: { content: [{type, text|...}], isError }
-    return {
-      content: (result as any).content,
-      isError: (result as any).isError === true,
+
+    // Audit item 15: use an AbortController so that BOTH the per-call timeout
+    // AND an externally-supplied signal (e.g. chat.abort from the adapter)
+    // trigger the same cancellation path. Passing controller.signal to the
+    // SDK's RequestOptions causes the SDK to:
+    //   1. Remove the in-flight response handler (no leak — previously timed-
+    //      out calls left handlers dangling in _responseHandlers forever)
+    //   2. Send JSON-RPC `notifications/cancelled` to the server so the
+    //      subprocess can stop working on the request
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), timeout)
+
+    // If the caller already aborted before we started, bail fast without
+    // dispatching to the SDK at all.
+    if (externalSignal?.aborted) {
+      clearTimeout(timer)
+      throw new Error(`MCP call aborted before dispatch: ${this.name}/${toolName}`)
+    }
+    // Wire external aborts through to the controller so the SDK gets the
+    // cancellation signal even if our timer hasn't fired yet.
+    const onExternalAbort = () => controller.abort()
+    if (externalSignal) {
+      externalSignal.addEventListener("abort", onExternalAbort, { once: true })
+    }
+
+    try {
+      const result = await this.client.callTool(
+        { name: toolName, arguments: args },
+        undefined,
+        { signal: controller.signal },
+      )
+      // Result shape: { content: [{type, text|...}], isError }
+      return {
+        content: (result as any).content,
+        isError: (result as any).isError === true,
+      }
+    } catch (err: any) {
+      // Distinguish our timer-driven abort (timeout) from an external abort
+      // or a genuine SDK error so the LLM gets a useful message.
+      if (controller.signal.aborted) {
+        const wasExternal = externalSignal?.aborted
+        if (wasExternal) {
+          throw new Error(`MCP call aborted: ${this.name}/${toolName}`)
+        }
+        throw new Error(`MCP timeout: call ${this.name}/${toolName} > ${timeout}ms`)
+      }
+      throw err
+    } finally {
+      clearTimeout(timer)
+      if (externalSignal) externalSignal.removeEventListener("abort", onExternalAbort)
     }
   }
 
