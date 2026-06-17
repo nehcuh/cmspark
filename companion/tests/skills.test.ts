@@ -1717,3 +1717,88 @@ test("thread-manager: update rejects invalid skill_selection_mode", async () => 
     /Invalid skill_selection_mode/,
   )
 })
+
+// --- Tests for thread-manager mcp_selection_mode (audit item 7) ---
+
+test("thread-manager: create initializes mcp_selection_mode to auto + empty active_mcp_server_ids", async () => {
+  resetMockDirs()
+  process.env.HOME = tempHome
+
+  const { ThreadManager } = await import("../src/threads/thread-manager")
+  const tm = new ThreadManager()
+  const thread = tm.create("test-thread")
+
+  assert.equal(thread.mcp_selection_mode, "auto")
+  assert.deepEqual(thread.active_mcp_server_ids, [])
+})
+
+test("thread-manager: update accepts valid mcp_selection_mode values", async () => {
+  resetMockDirs()
+  process.env.HOME = tempHome
+
+  const { ThreadManager } = await import("../src/threads/thread-manager")
+  const tm = new ThreadManager()
+  const thread = tm.create("test-thread")
+
+  const updated = tm.update(thread.id, { mcp_selection_mode: "manual" })
+  assert.equal(updated?.mcp_selection_mode, "manual")
+
+  const updated2 = tm.update(thread.id, { mcp_selection_mode: "auto" })
+  assert.equal(updated2?.mcp_selection_mode, "auto")
+})
+
+test("thread-manager: update rejects invalid mcp_selection_mode", async () => {
+  resetMockDirs()
+  process.env.HOME = tempHome
+
+  const { ThreadManager } = await import("../src/threads/thread-manager")
+  const tm = new ThreadManager()
+  const thread = tm.create("test-thread")
+
+  // 'all' is NOT valid for mcp_selection_mode (only auto/manual) — MCP doesn't
+  // have a bulk "all servers" concept distinct from "auto".
+  assert.throws(
+    () => tm.update(thread.id, { mcp_selection_mode: "all" as any }),
+    /Invalid mcp_selection_mode/,
+  )
+  assert.throws(
+    () => tm.update(thread.id, { mcp_selection_mode: "garbage" as any }),
+    /Invalid mcp_selection_mode/,
+  )
+})
+
+test("thread-manager: update accepts string array for active_mcp_server_ids", async () => {
+  resetMockDirs()
+  process.env.HOME = tempHome
+
+  const { ThreadManager } = await import("../src/threads/thread-manager")
+  const tm = new ThreadManager()
+  const thread = tm.create("test-thread")
+
+  const updated = tm.update(thread.id, { active_mcp_server_ids: ["fs", "git"] })
+  assert.deepEqual(updated?.active_mcp_server_ids, ["fs", "git"])
+
+  // Empty array is valid (user deselected everything)
+  const cleared = tm.update(thread.id, { active_mcp_server_ids: [] })
+  assert.deepEqual(cleared?.active_mcp_server_ids, [])
+})
+
+test("thread-manager: update rejects non-string active_mcp_server_ids entries", async () => {
+  resetMockDirs()
+  process.env.HOME = tempHome
+
+  const { ThreadManager } = await import("../src/threads/thread-manager")
+  const tm = new ThreadManager()
+  const thread = tm.create("test-thread")
+
+  // Mixed-type array
+  assert.throws(
+    () => tm.update(thread.id, { active_mcp_server_ids: ["fs", 42] as any }),
+    /active_mcp_server_ids must be an array of strings/,
+  )
+  // Not an array at all
+  assert.throws(
+    () => tm.update(thread.id, { active_mcp_server_ids: "fs" as any }),
+    /active_mcp_server_ids must be an array of strings/,
+  )
+})

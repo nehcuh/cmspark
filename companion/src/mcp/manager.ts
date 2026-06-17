@@ -10,6 +10,7 @@
 
 import { EventEmitter } from "events"
 import { logger } from "../logger.js"
+import type { ToolDefinition } from "../bridge/tool-definitions.js"
 import { McpClient } from "./client.js"
 import { aggregateMcpTools, type AggregatedTools } from "./aggregator.js"
 import {
@@ -279,6 +280,28 @@ export class McpManager extends EventEmitter {
 
   getAggregatedTools() {
     return this.aggregated.definitions
+  }
+
+  /**
+   * Filter the aggregated tool list to only expose tools from the named servers.
+   * Used by the per-thread MCP selection mode (audit item 7) — when a thread's
+   * mcp_selection_mode is "manual", only tools from active_mcp_server_ids reach
+   * the LLM. Tools whose server isn't in the allow-list are dropped, including
+   * their aliases (so the LLM can't discover them and the router can't dispatch
+   * to them).
+   *
+   * Returns a fresh array; does not mutate this.aggregated.
+   */
+  getAggregatedToolsForServers(serverIds: Set<string>): ToolDefinition[] {
+    if (serverIds.size === 0) return []
+    const out: ToolDefinition[] = []
+    for (const def of this.aggregated.definitions) {
+      const route = this.aggregated.aliases.get(def.function.name)
+      if (route && serverIds.has(route.serverName)) {
+        out.push(def)
+      }
+    }
+    return out
   }
 
   /** Look up (server, originalTool) from a namespaced name. */

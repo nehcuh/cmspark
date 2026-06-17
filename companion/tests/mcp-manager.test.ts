@@ -358,3 +358,67 @@ test("manager.callTool works without a signal (back-compat for non-chat callers)
   const result = await manager.callTool({ serverName: "fs", toolName: "read" }, {})
   assert.deepEqual(result, { content: [], isError: false })
 })
+
+// =============================================================================
+// getAggregatedToolsForServers — per-thread MCP selection (audit item 7)
+// =============================================================================
+
+test("getAggregatedToolsForServers returns ONLY tools whose server is in the allow-set", () => {
+  const { manager, internals } = makeManagerWithFakeClient("fs", stdioCfg())
+  // Add a second fake client
+  internals.clients.set("git", makeFakeClient("git", stdioCfg()))
+
+  // Stub getMeta on both — inject tools with server-distinct names
+  internals.clients.get("fs")!.getMeta = () => ({
+    name: "fs", transport: "stdio", enabled: true, trust_level: "first-use",
+    connection: { status: "connected", restart_count: 0 },
+    capabilities: { tools: true, resources: false, prompts: false },
+    tools: [
+      { name: "read_file", description: "Read", inputSchema: {}, namespacedName: "" },
+      { name: "write_file", description: "Write", inputSchema: {}, namespacedName: "" },
+    ],
+    resources: [], prompts: [],
+    config: stdioCfg() as any,
+  })
+  internals.clients.get("git")!.getMeta = () => ({
+    name: "git", transport: "stdio", enabled: true, trust_level: "first-use",
+    connection: { status: "connected", restart_count: 0 },
+    capabilities: { tools: true, resources: false, prompts: false },
+    tools: [
+      { name: "commit", description: "Commit", inputSchema: {}, namespacedName: "" },
+    ],
+    resources: [], prompts: [],
+    config: stdioCfg() as any,
+  })
+  // Recompute aggregated via reaggregate (private, but we can call it)
+  ;(manager as any).reaggregate()
+
+  // Allow-list only "fs"
+  const filtered = manager.getAggregatedToolsForServers(new Set(["fs"]))
+  assert.equal(filtered.length, 2, "should expose only the 2 fs tools")
+  assert.ok(filtered.every((d: any) => d.function.name.startsWith("mcp__fs__")),
+    "every tool should be namespaced under fs")
+
+  // Allow-list both
+  const both = manager.getAggregatedToolsForServers(new Set(["fs", "git"]))
+  assert.equal(both.length, 3, "should expose all 3 tools (2 fs + 1 git)")
+
+  // Empty allow-list → empty result
+  assert.equal(manager.getAggregatedToolsForServers(new Set()).length, 0)
+})
+
+test("getAggregatedToolsForServers with unknown server name returns empty for that server", () => {
+  const { manager, internals } = makeManagerWithFakeClient("fs", stdioCfg())
+  internals.clients.get("fs")!.getMeta = () => ({
+    name: "fs", transport: "stdio", enabled: true, trust_level: "first-use",
+    connection: { status: "connected", restart_count: 0 },
+    capabilities: { tools: true, resources: false, prompts: false },
+    tools: [{ name: "read", description: "Read", inputSchema: {}, namespacedName: "" }],
+    resources: [], prompts: [],
+    config: stdioCfg() as any,
+  })
+  ;(manager as any).reaggregate()
+
+  // Only an unknown server in allow-list → empty
+  assert.equal(manager.getAggregatedToolsForServers(new Set(["nonexistent"])).length, 0)
+})

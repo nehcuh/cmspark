@@ -256,8 +256,19 @@ CRITICAL RULES:
     maxRetries: 0,
   })
 
-  // Native tools + dynamically aggregated MCP tools (mcp__<server>__<tool>)
-  const mcpTools = getMcpManager().getAggregatedTools()
+  // Native tools + dynamically aggregated MCP tools (mcp__<server>__<tool>).
+  // Audit item 7: honor per-thread MCP selection. When the thread's
+  // mcp_selection_mode is "manual", only tools from active_mcp_server_ids
+  // reach the LLM — the user's UI toggle finally does something.
+  const thread = threadManager.get(threadId)
+  const mcpManager = getMcpManager()
+  let mcpTools
+  if (thread?.mcp_selection_mode === "manual") {
+    const allowSet = new Set(thread.active_mcp_server_ids || [])
+    mcpTools = mcpManager.getAggregatedToolsForServers(allowSet)
+  } else {
+    mcpTools = mcpManager.getAggregatedTools()
+  }
   const tools = [...getToolDefinitions(), ...mcpTools]
 
   // Tool calling loop

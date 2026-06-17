@@ -15,6 +15,11 @@ interface Thread {
   active_skill_ids: string[]
   skill_selection_mode?: "auto" | "all" | "manual"
   knowledge_selection_mode?: "auto" | "all" | "manual"
+  // Audit item 7: per-thread MCP server selection. "auto" exposes every
+  // connected server's tools to the LLM (legacy default). "manual" restricts
+  // to the servers in active_mcp_server_ids.
+  mcp_selection_mode?: "auto" | "manual"
+  active_mcp_server_ids?: string[]
 }
 
 // Allowed config_override keys and their expected types
@@ -168,6 +173,8 @@ export class ThreadManager {
       active_skill_ids: ["browse"],
       skill_selection_mode: "auto",
       knowledge_selection_mode: "auto",
+      mcp_selection_mode: "auto",
+      active_mcp_server_ids: [],
     }
 
     this.index.threads.unshift(thread)
@@ -233,6 +240,19 @@ export class ThreadManager {
       const validModes = ["auto", "all", "manual"]
       if (!validModes.includes(updates.knowledge_selection_mode)) {
         throw new Error(`Invalid knowledge_selection_mode: ${updates.knowledge_selection_mode}. Must be one of ${validModes.join(", ")}`)
+      }
+    }
+    // Audit item 7: validate mcp_selection_mode + active_mcp_server_ids shape
+    if (updates.mcp_selection_mode !== undefined) {
+      const validMcpModes = ["auto", "manual"]
+      if (!validMcpModes.includes(updates.mcp_selection_mode)) {
+        throw new Error(`Invalid mcp_selection_mode: ${updates.mcp_selection_mode}. Must be one of ${validMcpModes.join(", ")}`)
+      }
+    }
+    if (updates.active_mcp_server_ids !== undefined) {
+      if (!Array.isArray(updates.active_mcp_server_ids) ||
+          !updates.active_mcp_server_ids.every((id: any) => typeof id === "string")) {
+        throw new Error("active_mcp_server_ids must be an array of strings")
       }
     }
     Object.assign(thread, updates, { updated_at: new Date().toISOString() })
