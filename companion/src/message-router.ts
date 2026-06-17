@@ -8,7 +8,7 @@ import type { ThreadManager } from "./threads/thread-manager"
 import type { SkillEngine } from "./skills/skill-engine"
 import type { HistoryStore } from "./history/store"
 import { getConfig, saveConfig, replaceMcpServers, setMcpEnabled } from "./config"
-import { chatCreate } from "./llm/adapter"
+import { chatCreate, generateThreadTitle } from "./llm/adapter"
 import { parseFile } from "./file-parser"
 import type { FileParseResult } from "./file-parser"
 import { analyzeImage } from "./llm/vision-pipeline"
@@ -669,6 +669,21 @@ export async function handleMessage(
       }
       return { type: "thread.cleanup_empty.completed", deleted_count: deletedIds.length, deleted_ids: deletedIds }
     }
+    case "thread.generate_title": {
+      if (!rest.thread_id) return { type: "error", error: "thread_id required" }
+      const thread = threadManager.get(rest.thread_id)
+      if (!thread) return { type: "error", error: `Thread not found: ${rest.thread_id}` }
+
+      await generateThreadTitle({
+        threadId: rest.thread_id,
+        threadManager,
+        config: getConfig().llm,
+        sendToExtension: session?.sendToExtension || (() => {}),
+        force: true,
+      })
+
+      return { type: "thread.title_generated", thread_id: rest.thread_id, thread: threadManager.get(rest.thread_id) }
+    }
     case "thread.list":
       return { type: "thread.list", threads: threadManager.list() }
     case "thread.select":
@@ -702,7 +717,7 @@ export async function handleMessage(
       if (!rest.thread_id) return { type: "error", error: "thread_id required" }
       const allowedUpdates: Record<string, any> = {}
       const updates = rest.updates || {}
-      for (const key of ["alias", "config_override", "tool_whitelist", "pinned_tabs", "active_skill_ids", "skill_selection_mode", "knowledge_selection_mode"]) {
+      for (const key of ["alias", "config_override", "tool_whitelist", "pinned_tabs", "active_skill_ids", "skill_selection_mode", "knowledge_selection_mode", "mcp_selection_mode", "active_mcp_server_ids"]) {
         if (Object.prototype.hasOwnProperty.call(updates, key)) {
           allowedUpdates[key] = updates[key]
         }

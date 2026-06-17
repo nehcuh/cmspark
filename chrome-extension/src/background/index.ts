@@ -436,6 +436,11 @@ function setupMessageHandlers() {
         sendResponse({ ok: true })
         return true
 
+      case "thread.generate_title":
+        wsClient.send({ type: "thread.generate_title", thread_id: message.thread_id })
+        sendResponse({ ok: true })
+        return true
+
       case "thread.fork": {
         const sent = wsClient.send({ type: "thread.fork", thread_id: message.thread_id, message_id: message.message_id })
         if (!sent) {

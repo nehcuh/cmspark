@@ -283,18 +283,31 @@ class TrayDelegate: NSObject {
     button.image = makeStatusIcon(currentStatus, ws: wsConnected)
     button.toolTip = tooltipForStatus(currentStatus)
 
-    statusItem?.menu = buildMenu(target: self, action: #selector(menuAction(_:)))
+    // Explicitly handle both left and right mouse clicks so the menu pops up
+    // reliably on either button (macOS default only shows the menu on left-click).
+    button.target = self
+    button.action = #selector(showMenu)
+    button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+  }
+
+  @objc func showMenu() {
+    guard let button = statusItem?.button else { return }
+    let menu = buildMenu(target: self, action: #selector(menuAction(_:)))
+    statusItem?.menu = menu
+    // Position the menu just below the status item button.
+    let origin = NSPoint(x: button.bounds.minX, y: button.bounds.maxY + 4)
+    menu.popUp(positioning: nil, at: origin, in: button)
   }
 
   func rebuildMenu() {
-    statusItem?.menu = buildMenu(target: self, action: #selector(menuAction(_:)))
+    // Menu is rebuilt fresh each time showMenu() is invoked, so no need to
+    // regenerate it here; just make sure the current menu is assigned.
   }
 
   func updateAppearance() {
     guard let button = statusItem?.button else { return }
     button.image = makeStatusIcon(currentStatus, ws: wsConnected)
     button.toolTip = tooltipForStatus(currentStatus)
-    rebuildMenu()
   }
 
   @objc func menuAction(_ sender: NSMenuItem) {

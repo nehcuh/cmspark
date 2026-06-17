@@ -4,7 +4,7 @@ import OpenAI from "openai"
 import type { ThreadManager } from "../threads/thread-manager"
 import type { SkillEngine } from "../skills/skill-engine"
 import type { HistoryStore } from "../history/store"
-import { getToolDefinitions, ToolDefinition } from "../bridge/tool-definitions"
+import { getToolDefinitions, getMcpMetaToolDefinitions, ToolDefinition } from "../bridge/tool-definitions"
 import { tryParseToolArgs } from "../bridge/tool-schemas"
 import { classifyError } from "../security"
 import { logger } from "../logger"
@@ -164,7 +164,7 @@ CRITICAL RULES:
 7. For reading page content: use get_page_text (preferred, cross-platform) or evaluate.
 8. osascript_eval is macOS-ONLY and will FAIL on Windows/Linux. On non-macOS systems, NEVER call osascript_eval — always use get_page_text or evaluate instead.
 9. When a page contains important visual content (product images, data charts, diagrams, maps, infographics), use analyze_image with a CSS selector to understand the image content rather than relying solely on alt text.
-10. MCP servers may expose local filesystem tools with names like mcp__filesystem__list_directory or mcp__filesystem__read_text_file. For local file or directory operations, use these namespaced MCP tools directly. mcp_list_resources and mcp_read_resource only work for servers that explicitly advertise the resources capability; if they fail, switch to the corresponding namespaced tool.`
+10. MCP servers expose namespaced tools as mcp__<server>__<tool> (e.g. mcp__filesystem__read_text_file, mcp__brave_search__brave_web_search). For file/search/local operations, use these namespaced tools directly. mcp_list_resources / mcp_read_resource / mcp_get_prompt are only available when a connected server explicitly advertises the resources/prompts capability; if they are not in the tool list, do not attempt to use them.`
   const skillPrompt = skillEngine.buildSystemPrompt(threadId, undefined, skillIds, knowledgeIds, message)
 
   // Inject safety-guard skills at the END of system prompt (highest priority)
@@ -257,19 +257,40 @@ CRITICAL RULES:
   })
 
   // Native tools + dynamically aggregated MCP tools (mcp__<server>__<tool>).
-  // Audit item 7: honor per-thread MCP selection. When the thread's
-  // mcp_selection_mode is "manual", only tools from active_mcp_server_ids
-  // reach the LLM — the user's UI toggle finally does something.
+  // Audit item 7: honor per-thread MCP selection.
+  //   "manual"  -> only tools from active_mcp_server_ids reach the LLM.
+  //   "all"     -> expose every connected, enabled server.
+  //   "auto"    -> legacy default; currently behaves like "all" (future: auto-select).
+  // Mode is persisted via thread.update and validated in thread-manager.ts.
   const thread = threadManager.get(threadId)
   const mcpManager = getMcpManager()
+  const mcpSelectionMode = thread?.mcp_selection_mode || "auto"
+  const activeServerIds = new Set(thread?.active_mcp_server_ids || [])
   let mcpTools
-  if (thread?.mcp_selection_mode === "manual") {
-    const allowSet = new Set(thread.active_mcp_server_ids || [])
-    mcpTools = mcpManager.getAggregatedToolsForServers(allowSet)
+  if (mcpSelectionMode === "manual") {
+    mcpTools = mcpManager.getAggregatedToolsForServers(activeServerIds)
   } else {
     mcpTools = mcpManager.getAggregatedTools()
   }
-  const tools = [...getToolDefinitions(), ...mcpTools]
+
+  // Only expose MCP meta tools (resources/prompts) when at least one connected,
+  // enabled, and (in manual mode) selected server advertises the capability.
+  // This stops the LLM from calling mcp_list_resources on tools-only servers
+  // like @modelcontextprotocol/server-filesystem or brave-search.
+  const visibleServers = mcpManager.listServers().filter((s) => {
+    if (s.connection.status !== "connected" || !s.enabled) return false
+    if (mcpSelectionMode === "manual") return activeServerIds.has(s.name)
+    return true
+  })
+  const metaCapabilities = visibleServers.reduce(
+    (acc, s) => ({
+      resources: acc.resources || s.capabilities.resources,
+      prompts: acc.prompts || s.capabilities.prompts,
+    }),
+    { resources: false, prompts: false },
+  )
+  const mcpMetaTools = getMcpMetaToolDefinitions(metaCapabilities)
+  const tools = [...getToolDefinitions(), ...mcpTools, ...mcpMetaTools]
 
   // Tool calling loop
   let round = 0
@@ -368,7 +389,7 @@ CRITICAL RULES:
       if (assistantMsg.length === 0) {
         sendToExtension({ type: "chat.done", thread_id: threadId })
         // Best-effort auto-alias: generate a short title if thread has no alias yet
-        autoAliasThread({ threadId, threadManager, config, sendToExtension })
+        generateThreadTitle({ threadId, threadManager, config, sendToExtension })
         return
       }
 
@@ -786,17 +807,19 @@ CRITICAL RULES:
   })
 }
 
-/** Best-effort auto-naming: when a thread has no alias, summarize the first exchange into a short title. */
-async function autoAliasThread(params: {
+/** Best-effort auto-naming: summarize the first exchange into a short title. Set force=true to overwrite an existing alias. */
+export async function generateThreadTitle(params: {
   threadId: string
   threadManager: ThreadManager
   config: ChatCreateParams["config"]
   sendToExtension: (data: any) => void
+  force?: boolean
 }) {
-  const { threadId, threadManager, config, sendToExtension } = params
+  const { threadId, threadManager, config, sendToExtension, force } = params
   try {
     const thread = threadManager.get(threadId)
-    if (!thread || thread.alias) return
+    if (!thread) return
+    if (thread.alias && !force) return
 
     const msgs = threadManager.getMessages(threadId)
     const hasUser = msgs.some(m => m.role === "user")

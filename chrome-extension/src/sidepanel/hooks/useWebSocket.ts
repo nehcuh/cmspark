@@ -294,6 +294,22 @@ export function useWebSocket() {
           chrome.runtime.sendMessage({ type: "thread.list" })
           break
         }
+        case "thread.title_generated": {
+          if (msg.thread) {
+            dispatch({ type: "UPSERT_THREAD", thread: msg.thread })
+          }
+          dispatch({
+            type: "ADD_LOG",
+            entry: {
+              ts: new Date().toISOString(),
+              level: "info",
+              source: "extension",
+              event: "thread_title_generated",
+              data: { thread_id: msg.thread_id, alias: msg.thread?.alias },
+            },
+          })
+          break
+        }
         case "thread.forked": {
           dispatch({ type: "UPSERT_THREAD", thread: msg.thread })
           dispatch({ type: "SET_ACTIVE_THREAD", threadId: msg.thread.id })

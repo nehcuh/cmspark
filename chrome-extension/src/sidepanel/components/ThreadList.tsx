@@ -50,6 +50,16 @@ export function ThreadList() {
     setOpen(false)
   }
 
+  const handleGenerateTitle = () => {
+    const targetThreadId = activeThreadId || threads[0]?.id
+    if (!targetThreadId) {
+      alert("暂无线程可生成标题")
+      return
+    }
+    chrome.runtime.sendMessage({ type: "thread.generate_title", thread_id: targetThreadId })
+    setOpen(false)
+  }
+
   const handleSelect = (threadId: string) => {
     dispatch({ type: "SET_ACTIVE_THREAD", threadId })
     setOpen(false)
@@ -75,7 +85,8 @@ export function ThreadList() {
           <div style={styles.panel}>
             <div style={styles.panelHeader}>
               <span style={{ fontWeight: 600, fontSize: 13 }}>线程</span>
-              <div style={{ display: "flex", gap: 6 }}>
+              <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                <button style={styles.generateTitleBtn} onClick={handleGenerateTitle} title="为当前线程生成标题">✨ 生成标题</button>
                 <button style={styles.cleanupBtn} onClick={handleCleanupEmpty} title="清理没有消息的空白线程">🧹 清理空白</button>
                 <button style={styles.newBtn} onClick={handleNewThread} title="新建线程">+ 新建</button>
               </div>
@@ -137,7 +148,7 @@ const styles: Record<string, React.CSSProperties> = {
     position: "absolute",
     top: "100%",
     left: 0,
-    width: 260,
+    width: 300,
     maxHeight: 320,
     background: "#fff",
     border: "1px solid #e0e0e0",
@@ -163,6 +174,8 @@ const styles: Record<string, React.CSSProperties> = {
     padding: "3px 10px",
     fontSize: 11,
     cursor: "pointer",
+    whiteSpace: "nowrap",
+    flexShrink: 0,
   },
   cleanupBtn: {
     background: "#fff",
@@ -172,6 +185,19 @@ const styles: Record<string, React.CSSProperties> = {
     padding: "3px 10px",
     fontSize: 11,
     cursor: "pointer",
+    whiteSpace: "nowrap",
+    flexShrink: 0,
+  },
+  generateTitleBtn: {
+    background: "#fff",
+    color: "#666",
+    border: "1px solid #ddd",
+    borderRadius: 4,
+    padding: "3px 10px",
+    fontSize: 11,
+    cursor: "pointer",
+    whiteSpace: "nowrap",
+    flexShrink: 0,
   },
   list: {
     overflowY: "auto",
