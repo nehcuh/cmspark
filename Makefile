@@ -13,18 +13,31 @@ dev: install
 	cd chrome-extension && npm run dev & \
 	wait
 
+# ── 依赖管理 ──
+
+COMPANION_STAMP := companion/node_modules/.install-stamp
+EXTENSION_STAMP := chrome-extension/node_modules/.install-stamp
+
+$(COMPANION_STAMP): companion/package-lock.json
+	@echo "Installing companion dependencies..."
+	@cd companion && npm ci
+	@touch $@
+
+$(EXTENSION_STAMP): chrome-extension/package-lock.json
+	@echo "Installing chrome-extension dependencies..."
+	@cd chrome-extension && npm ci
+	@touch $@
+
 # 安装所有依赖
-install:
-	cd companion && npm install
-	cd chrome-extension && npm install
+install: $(COMPANION_STAMP) $(EXTENSION_STAMP)
 
 # 运行全部测试
-test:
+test: install
 	npm --prefix companion test
 	npm --prefix chrome-extension test
 
 # 构建所有
-build:
+build: install
 	cd companion && npm run build
 	cd chrome-extension && npm run build
 
