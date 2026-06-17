@@ -1,6 +1,10 @@
 // Content sanitizer — prompt injection filtering for knowledge docs and page content
 
-const INJECTION_PATTERNS = [
+/**
+ * Prompt-injection regex bank. Exported (audit item 9) so the MCP aggregator can
+ * reuse the same patterns to scan tool metadata before exposing it to the LLM.
+ */
+export const INJECTION_PATTERNS = [
   // English patterns (1-16)
   /ignore\s+(?:all\s+)?(?:previous\s+)?instructions?/i,
   /system\s*prompt\s*override/i,
