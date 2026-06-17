@@ -165,3 +165,83 @@ test("getMcpConfirmCache returns the same singleton across calls", () => {
   const b = getMcpConfirmCache()
   assert.equal(a, b, "getMcpConfirmCache must return the same instance")
 })
+
+// =============================================================================
+// TTL + call-count gating (audit item 8)
+// =============================================================================
+
+test("isApproved returns false after the TTL expires", async () => {
+  // Use a very short TTL so the test runs fast.
+  const cache = new McpConfirmCache({ ttlMs: 50 })
+  const key = { sessionId: "s1", serverName: "fs", toolName: "read" }
+  cache.approve(key)
+  assert.equal(cache.isApproved(key), true, "should be approved immediately after approve()")
+
+  // Wait beyond TTL
+  await new Promise((r) => setTimeout(r, 70))
+  assert.equal(cache.isApproved(key), false,
+    "approval must expire after TTL elapses (default 1h, here 50ms)")
+})
+
+test("isApproved returns false after MAX_CALLS tool invocations", () => {
+  const cache = new McpConfirmCache({ maxCalls: 3 })
+  const key = { sessionId: "s1", serverName: "fs", toolName: "read" }
+  cache.approve(key)
+
+  // First 3 calls are within budget
+  for (let i = 0; i < 3; i++) {
+    assert.equal(cache.isApproved(key), true, `call ${i + 1} should be approved`)
+    cache.recordCall(key)
+  }
+  // 4th call exceeds cap → re-prompt
+  assert.equal(cache.isApproved(key), false,
+    "approval must be revoked after maxCalls invocations (here 3)")
+})
+
+test("recordCall is a no-op when no prior approval exists (defensive)", () => {
+  const cache = makeCache()
+  const key = { sessionId: "s1", serverName: "fs", toolName: "read" }
+  // No approve() called — recordCall must not throw or create state
+  assert.doesNotThrow(() => cache.recordCall(key))
+  assert.equal(cache.isApproved(key), false)
+})
+
+test("approve() after expiry starts a fresh window (resets approvedAt + callCount)", async () => {
+  const cache = new McpConfirmCache({ ttlMs: 30, maxCalls: 2 })
+  const key = { sessionId: "s1", serverName: "fs", toolName: "read" }
+  cache.approve(key)
+  cache.recordCall(key)
+  cache.recordCall(key)
+  assert.equal(cache.isApproved(key), false, "exhausted by call cap")
+
+  // Re-approve resets
+  cache.approve(key)
+  assert.equal(cache.isApproved(key), true, "re-approve restarts the window")
+  cache.recordCall(key)
+  assert.equal(cache.isApproved(key), true, "fresh window has budget for at least 1 call")
+})
+
+test("approveServer bulk-trust is NOT TTL-gated (explicit user choice is permanent within session)", async () => {
+  // The bulk-trust path is for power users who explicitly said "trust this whole
+  // server" — it would be hostile to silently expire that mid-session. TTL/cap
+  // only apply to per-tool first-use approvals.
+  const cache = new McpConfirmCache({ ttlMs: 30, maxCalls: 1 })
+  cache.approveServer("s1", "fs")
+
+  await new Promise((r) => setTimeout(r, 40))  // past TTL
+  // Hammer it past maxCalls
+  for (let i = 0; i < 5; i++) cache.recordCall({ sessionId: "s1", serverName: "fs", toolName: "any" })
+
+  assert.equal(cache.isApproved({ sessionId: "s1", serverName: "fs", toolName: "read" }), true,
+    "bulk-trust must NOT be affected by TTL/cap (explicit session-scoped choice)")
+  assert.equal(cache.isApproved({ sessionId: "s1", serverName: "fs", toolName: "write" }), true)
+})
+
+test("clearServer drops TTL/cap state too (not just bulk-trust)", () => {
+  const cache = makeCache()
+  cache.approve({ sessionId: "s1", serverName: "fs", toolName: "read" })
+  cache.approve({ sessionId: "s2", serverName: "fs", toolName: "write" })
+  cache.clearServer("fs")
+  assert.equal(cache.isApproved({ sessionId: "s1", serverName: "fs", toolName: "read" }), false)
+  assert.equal(cache.isApproved({ sessionId: "s2", serverName: "fs", toolName: "write" }), false)
+})

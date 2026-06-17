@@ -53,6 +53,21 @@ export const pendingToolCalls = new Map<string, {
 // Exported for integration tests (audit item 2 / 12) so tests can drive
 // securityConfirmations.respond(...) when simulating user approval/denial.
 export const securityConfirmations = new SecurityConfirmationManager()
+
+// Audit item 8: tool-name patterns that signal destructive operations. Matching
+// tools bypass the server's trust_level and always require per-call confirmation
+// (manual mode). The patterns cover the common verbs across filesystem / shell /
+// git / database MCP servers; the regex is intentionally permissive on prefixes
+// (e.g. "write_file", "delete_record", "exec_query", "rm_path") to err on the
+// side of caution.
+const DESTRUCTIVE_MCP_TOOL_PATTERN = /\b(write|delete|exec|commit|rm|remove|shell|curl|wget|spawn|fork|kill|drop|truncate|wipe|destroy)\b/i
+
+// Per-connection MCP session IDs (randomUUID from createToolExecutor) keyed by
+// the WebSocket they belong to. Used by ws.on("close") to clear the
+// McpConfirmCache for that session — without this, stale first-use approvals
+// linger in the module-level singleton forever (memory leak + the approval
+// persists for whatever reconnects with a different sessionId).
+const mcpSessionByWs = new Map<WebSocket, string>()
 const LOG_LEVELS = new Set<LogLevel>(["debug", "info", "warn", "error"])
 
 function safeLogLevel(level: unknown): LogLevel {
@@ -114,6 +129,9 @@ export function createToolExecutor(ws: WebSocket) {
   // Per-connection session id — used as the key for MCP first-use confirmation cache
   // so approvals don't bleed across browser sessions.
   const sessionId = randomUUID()
+  // Audit item 8: register the (ws, sessionId) pair so ws.on("close") can clean
+  // up the per-session MCP confirm-cache. Without this, stale approvals leak.
+  mcpSessionByWs.set(ws, sessionId)
   return async (toolCallId: string, toolName: string, params: any, signal?: AbortSignal): Promise<{ success: boolean; data?: any; error?: string }> => {
     let finalParams = params || {}
     const startedAt = Date.now()
@@ -561,7 +579,20 @@ async function executeMcpTool(
     return { success: false, error: `MCP tool ${toolName} not found (server may be disconnected)` }
   }
 
-  const trustLevel = manager.getTrustLevel(route.serverName) ?? "first-use"
+  const configuredTrustLevel = manager.getTrustLevel(route.serverName) ?? "first-use"
+  // Audit item 8: destructive-looking tool names ALWAYS require per-call confirmation,
+  // regardless of the server's configured trust_level. A first-use approval for a
+  // filesystem-write tool shouldn't auto-apply to the next 10 write/delete calls —
+  // that's exactly the prompt-injection amplification path the audit flagged.
+  const isDestructiveName = DESTRUCTIVE_MCP_TOOL_PATTERN.test(route.toolName)
+  const trustLevel = isDestructiveName ? "manual" : configuredTrustLevel
+  if (isDestructiveName && configuredTrustLevel !== "manual") {
+    logger.warn("mcp.destructive_force_manual", {
+      server: route.serverName, tool: route.toolName,
+      configured: configuredTrustLevel, effective: "manual",
+    })
+  }
+
   const cache = getMcpConfirmCache()
   const cacheKey = { sessionId, serverName: route.serverName, toolName: route.toolName }
 
@@ -607,6 +638,11 @@ async function executeMcpTool(
       cache.approve(cacheKey)
     }
     logger.info("mcp.confirm.approved", { server: route.serverName, tool: route.toolName })
+  } else if (trustLevel === "first-use") {
+    // Audit item 8: count this invocation against the per-tool approval's call cap.
+    // When the cap (default 10) is hit, the next isApproved() returns false and
+    // the user is re-prompted. recordCall is a no-op for bulk-trust / manual paths.
+    cache.recordCall(cacheKey)
   }
 
   const callStartedAt = Date.now()
@@ -1212,6 +1248,14 @@ export async function startServer() {
       clients.delete(ws)
       applyConnectionCloseGracePeriod()
       securityConfirmations.rejectAll("disconnect")
+      // Audit item 8: clear the per-session MCP confirm-cache so approvals
+      // don't leak across reconnects (memory + a stale "approved" entry could
+      // wrongly auto-approve a tool call from whatever reconnects next).
+      const sessionId = mcpSessionByWs.get(ws)
+      if (sessionId) {
+        getMcpConfirmCache().clearSession(sessionId)
+        mcpSessionByWs.delete(ws)
+      }
       console.log(`[cmspark-agent] Client disconnected (${clients.size} remaining)`)
       logger.info("ws.client_disconnected", { clients: clients.size })
     })
@@ -1229,6 +1273,17 @@ export async function startServer() {
     console.error("[cmspark-agent] Server error:", err)
     logger.error("server.error", { error: err })
   })
+
+  // Audit item 8: periodic sweep of stale MCP confirm-cache sessions. The
+  // primary cleanup path is ws.on("close") → clearSession (above), but if a
+  // connection is dropped without firing close (process exit, network loss),
+  // approvals would otherwise linger in the module-level singleton forever.
+  // Every 5 min, drop any session not in the active-sessions set.
+  const mcpPruneTimer = setInterval(() => {
+    const active = new Set(Array.from(mcpSessionByWs.values()))
+    getMcpConfirmCache().pruneStaleSessions(active)
+  }, 5 * 60 * 1000)
+  mcpPruneTimer.unref?.()
 
   // Graceful shutdown
   const shutdown = (signal: string) => {
