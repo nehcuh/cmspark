@@ -121,6 +121,10 @@ export interface LLMConfig {
   vision_model_name?: string
   vision_timeout_ms?: number
   vision_fallback?: "metadata" | "passthrough" | "error"
+  // File upload fields (flattened from config.file_upload)
+  file_upload_max_size?: number
+  file_upload_max_tokens?: number
+  file_upload_vision?: boolean
 }
 
 export interface Message {

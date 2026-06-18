@@ -51,6 +51,13 @@ export function normalizeConfig(config: any): Partial<LLMConfig> {
     // Explicitly disable vision when companion sends no vision block
     normalized.vision_enabled = false
   }
+  // File upload config fields (flattened from config.file_upload)
+  const fileUpload = config.file_upload
+  if (fileUpload) {
+    normalized.file_upload_max_size = fileUpload.max_file_size
+    normalized.file_upload_max_tokens = fileUpload.max_file_tokens
+    normalized.file_upload_vision = !!fileUpload.enable_vision_analysis
+  }
   return Object.fromEntries(
     Object.entries(normalized).filter(([, value]) => value !== undefined)
   ) as Partial<LLMConfig>

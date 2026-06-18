@@ -272,8 +272,11 @@ function ServerCard(props: ServerCardProps) {
           {server.tools.length === 0 && server.capabilities.tools && (
             <div style={styles.emptyMini}>工具列表为空</div>
           )}
-          {server.tools.length === 0 && !server.capabilities.tools && (
+          {status === "connected" && server.tools.length === 0 && !server.capabilities.tools && (
             <div style={styles.emptyMini}>此 server 未声明 tools 能力</div>
+          )}
+          {(status === "disconnected" || status === "connecting") && server.tools.length === 0 && (
+            <div style={styles.emptyMini}>{STATUS_LABELS[status]}，无法获取工具列表</div>
           )}
           {server.tools.map((tool) => (
             <div key={tool.namespacedName} style={styles.toolRow}>

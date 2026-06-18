@@ -391,6 +391,57 @@ export function SettingsSlideout() {
               </div>
             </>
           )}
+
+          <div style={styles.divider} />
+
+          {/* --- File Upload Settings --- */}
+          <div style={styles.sectionTitle}>文件上传</div>
+
+          <div style={styles.field}>
+            <label style={styles.label}>最大文件大小: {((config.file_upload_max_size ?? 10485760) / (1024 * 1024)).toFixed(0)} MB</label>
+            <input
+              style={{ width: "100%" }}
+              type="range"
+              min={1}
+              max={100}
+              step={1}
+              value={(config.file_upload_max_size ?? 10485760) / (1024 * 1024)}
+              onChange={e => dispatch({ type: "SET_CONFIG", config: { file_upload_max_size: parseInt(e.target.value) * 1024 * 1024 } })}
+            />
+            <div style={styles.helpText}>
+              上传文件的大小上限，范围 1–100 MB
+            </div>
+          </div>
+
+          <div style={styles.field}>
+            <label style={styles.label}>最大 Token 数</label>
+            <input
+              style={styles.input}
+              type="number"
+              value={config.file_upload_max_tokens ?? 50000}
+              onChange={e => dispatch({ type: "SET_CONFIG", config: { file_upload_max_tokens: parseInt(e.target.value) || 50000 } })}
+              min={1000}
+              max={200000}
+              step={1000}
+            />
+            <div style={styles.helpText}>
+              文件内容截断阈值，范围 1000–200000
+            </div>
+          </div>
+
+          <div style={styles.field}>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13 }}>
+              <input
+                type="checkbox"
+                checked={config.file_upload_vision ?? true}
+                onChange={e => dispatch({ type: "SET_CONFIG", config: { file_upload_vision: e.target.checked } })}
+              />
+              启用文件视觉分析
+            </label>
+            <div style={styles.helpText}>
+              上传图片时尝试使用视觉模型分析图片内容
+            </div>
+          </div>
         </div>
 
         <div style={styles.footer}>

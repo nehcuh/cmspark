@@ -3,6 +3,7 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import path from "node:path"
 import os from "node:os"
+import fs from "node:fs"
 import { McpClient } from "../src/mcp/client.js"
 import { McpManager } from "../src/mcp/manager.js"
 import {
@@ -265,6 +266,26 @@ test("buildSpawnPath fills in common Windows locations when PATH is stripped", (
 // ============================================================================
 // McpManager state cleanup tests (audit item 16)
 // ============================================================================
+
+test("buildSpawnPath includes nvm-windows version directory when present", () => {
+  const savedAppData = process.env.APPDATA
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-test-nvmwin-"))
+  try {
+    process.env.APPDATA = tmpDir
+    const nvmVerDir = path.join(tmpDir, "nvm", "v22.12.0")
+    fs.mkdirSync(nvmVerDir, { recursive: true })
+
+    const p = buildSpawnPath()
+    const segments = p.split(path.delimiter)
+    assert.ok(
+      segments.includes(nvmVerDir),
+      `buildSpawnPath should include nvm-windows version dir (${nvmVerDir}); got: ${p}`,
+    )
+  } finally {
+    process.env.APPDATA = savedAppData
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+  }
+})
 
 test("McpManager.stopClient clears deadServers so a reused server name can restart", async () => {
   const manager = new McpManager()

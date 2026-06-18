@@ -94,6 +94,16 @@ export async function handleMessage(
         if (cfg.vision_timeout_ms !== undefined) normalized.vision.timeout_ms = cfg.vision_timeout_ms
         if (cfg.vision_fallback) normalized.vision.fallback = cfg.vision_fallback
       }
+      // File upload config: normalize flat file_upload_* fields into nested file_upload object
+      if (cfg.file_upload) {
+        normalized.file_upload = { ...cfg.file_upload }
+      } else if (cfg.file_upload_max_size !== undefined || cfg.file_upload_max_tokens !== undefined || cfg.file_upload_vision !== undefined) {
+        const current = getConfig()
+        normalized.file_upload = { ...(current.file_upload || {}) }
+        if (cfg.file_upload_max_size !== undefined) normalized.file_upload.max_file_size = cfg.file_upload_max_size
+        if (cfg.file_upload_max_tokens !== undefined) normalized.file_upload.max_file_tokens = cfg.file_upload_max_tokens
+        if (cfg.file_upload_vision !== undefined) normalized.file_upload.enable_vision_analysis = !!cfg.file_upload_vision
+      }
       const updated = saveConfig(normalized)
       return {
         type: "config.updated",

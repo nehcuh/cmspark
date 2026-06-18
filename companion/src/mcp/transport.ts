@@ -107,6 +107,19 @@ export function buildSpawnPath(): string {
   } catch {
     // ignore — nvm scan is best-effort
   }
+  // 12. Windows: nvm-windows (%APPDATA%/nvm/<version>/)
+  {
+    const appData = process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming")
+    const nvmWinBase = path.join(appData, "nvm")
+    try {
+      if (fs.existsSync(nvmWinBase)) {
+        const vers = fs.readdirSync(nvmWinBase).filter((v) => /^v?\d+\./.test(v))
+        for (const v of vers) candidates.push(path.join(nvmWinBase, v))
+      }
+    } catch {
+      // best-effort scan
+    }
+  }
 
   for (const c of candidates) {
     if (c && !segments.has(c)) {

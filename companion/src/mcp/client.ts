@@ -137,7 +137,10 @@ export class McpClient extends EventEmitter {
     try {
       await withTimeout(client.connect(transport), startupTimeout, `startup > ${startupTimeout}ms`)
     } catch (err: any) {
-      this.setStatus("error", err?.message || String(err))
+      const baseMsg = err?.message || String(err)
+      const tail = this._stderrBuffer.trim()
+      const fullMsg = tail ? `${baseMsg}\nstderr: ${tail.slice(-500)}` : baseMsg
+      this.setStatus("error", fullMsg)
       await this.cleanupTransport()
       throw err
     }
