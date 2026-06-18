@@ -2,6 +2,7 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import path from "node:path"
+import os from "node:os"
 import { McpClient } from "../src/mcp/client.js"
 import { McpManager } from "../src/mcp/manager.js"
 import {
@@ -210,6 +211,54 @@ test("buildSpawnPath fills in common macOS/Linux locations when PATH is stripped
     )
   } finally {
     process.env.PATH = saved
+  }
+})
+
+test("buildSpawnPath fills in common Windows locations when PATH is stripped", () => {
+  const saved = process.env.PATH
+  const savedAppData = process.env.APPDATA
+  const savedLocalAppData = process.env.LOCALAPPDATA
+  const savedProgramFiles = process.env.ProgramFiles
+  try {
+    // Simulate Task Scheduler launch: minimal PATH without npm/fnm/Volta dirs.
+    process.env.PATH = "C:\\Windows\\System32"
+    process.env.APPDATA = "C:\\Users\\test\\AppData\\Roaming"
+    process.env.LOCALAPPDATA = "C:\\Users\\test\\AppData\\Local"
+    process.env.ProgramFiles = "C:\\Program Files"
+    const p = buildSpawnPath()
+    const segments = p.split(path.delimiter)
+    // Should preserve existing Windows system path
+    assert.ok(segments.includes("C:\\Windows\\System32"), "should preserve existing System32")
+    // Should add npm global bin
+    assert.ok(
+      segments.includes("C:\\Users\\test\\AppData\\Roaming\\npm"),
+      `should add npm global bin; got: ${p}`,
+    )
+    // Should add Node.js default install
+    assert.ok(
+      segments.includes("C:\\Program Files\\nodejs"),
+      `should add Node.js install dir; got: ${p}`,
+    )
+    // Should add fnm default alias
+    assert.ok(
+      segments.includes("C:\\Users\\test\\AppData\\Local\\fnm\\aliases\\default"),
+      `should add fnm alias dir; got: ${p}`,
+    )
+    // Should add Volta bin
+    assert.ok(
+      segments.includes("C:\\Users\\test\\AppData\\Local\\Volta\\bin"),
+      `should add Volta bin dir; got: ${p}`,
+    )
+    // Should add Scoop shims
+    assert.ok(
+      segments.includes(path.join(os.homedir(), "scoop", "shims")),
+      `should add Scoop shims; got: ${p}`,
+    )
+  } finally {
+    process.env.PATH = saved
+    process.env.APPDATA = savedAppData
+    process.env.LOCALAPPDATA = savedLocalAppData
+    process.env.ProgramFiles = savedProgramFiles
   }
 })
 

@@ -8,6 +8,7 @@ import {
   acquireLock,
   releaseLock,
   isProcessRunning,
+  isDaemonRunning,
   readPidFile,
   writePidFile,
   cleanupPidFile,
@@ -106,8 +107,12 @@ async function handleDaemonStart(): Promise<void> {
   const lockPath = getLockFilePath()
   const pidPath = getPidFilePath()
 
+  // Use isDaemonRunning (not isProcessRunning): a stale daemon.pid can point at
+  // a PID the OS has recycled to an unrelated process (e.g. RuntimeBroker.exe on
+  // Windows). The bare PID-existence check would then falsely report "already
+  // running" and refuse to start the real server.
   const existingPid = readPidFile(pidPath)
-  if (existingPid && isProcessRunning(existingPid)) {
+  if (existingPid && isDaemonRunning(existingPid)) {
     console.log(`[cmspark-agent] Daemon already running (pid: ${existingPid})`)
     process.exit(0)
   }

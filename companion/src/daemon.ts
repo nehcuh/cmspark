@@ -242,6 +242,82 @@ export function isProcessRunning(pid: number): boolean {
   }
 }
 
+/**
+ * Return the full command line of a process by PID, or `null` when it cannot be
+ * determined (process gone, query failed, or insufficient permissions).
+ *
+ * This is used to distinguish a genuine cmspark daemon from an unrelated process
+ * that happens to reuse a stale PID. PID reuse is common on Windows, where the
+ * OS recycles PIDs aggressively — a stale `daemon.pid` can end up pointing at
+ * something like `RuntimeBroker.exe`.
+ */
+export function getProcessCommandLine(pid: number): string | null {
+  if (!Number.isFinite(pid) || pid <= 0) return null
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { execFileSync } = require("child_process") as typeof import("child_process")
+    let out: string
+    if (isWindows()) {
+      // wmic is deprecated/absent on recent Windows; CIM via PowerShell is reliable.
+      out = execFileSync(
+        "powershell",
+        [
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}" -ErrorAction SilentlyContinue).CommandLine`,
+        ],
+        { encoding: "utf-8", timeout: 4000, windowsHide: true },
+      )
+    } else {
+      // macOS + Linux: print the full command (args) for the pid, no header.
+      out = execFileSync("ps", ["-p", String(pid), "-o", "command="], {
+        encoding: "utf-8",
+        timeout: 4000,
+      })
+    }
+    const trimmed = out.trim()
+    return trimmed.length > 0 ? trimmed : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Heuristic identity check: does this command line belong to a cmspark daemon?
+ *
+ * Requires both the product name (`cmspark`) and the `daemon` subcommand. The
+ * `daemon` requirement excludes the long-lived tray process (also launched from
+ * `cmspark-agent.exe`, but without a `daemon` argument), which would otherwise
+ * be mistaken for the daemon if a PID were recycled to it.
+ */
+export function isCmsparkDaemonCommandLine(commandLine: string | null | undefined): boolean {
+  if (!commandLine) return false
+  const lc = commandLine.toLowerCase()
+  return lc.includes("cmspark") && lc.includes("daemon")
+}
+
+/**
+ * Stronger liveness check than {@link isProcessRunning}: confirms the PID is
+ * alive AND that the owning process is actually a cmspark daemon. This guards
+ * against PID recycling, where a stale `daemon.pid` points at an unrelated
+ * process the OS assigned the same PID.
+ *
+ * When the command line cannot be determined, the PID is treated as NOT a
+ * running daemon: the UDS/named-pipe lock and the WS port bind remain the
+ * authoritative backstops against a true double-start, so the safe choice is to
+ * let startup proceed rather than wedge on a false positive.
+ *
+ * @param lookup injectable command-line resolver (defaults to {@link getProcessCommandLine}); exposed for testing.
+ */
+export function isDaemonRunning(
+  pid: number,
+  lookup: (pid: number) => string | null = getProcessCommandLine,
+): boolean {
+  if (!isProcessRunning(pid)) return false
+  return isCmsparkDaemonCommandLine(lookup(pid))
+}
+
 // ---------------------------------------------------------------------------
 // PID file helpers
 // ---------------------------------------------------------------------------

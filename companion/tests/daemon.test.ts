@@ -13,6 +13,8 @@ const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-agent-test-daemo
 let acquireLock: typeof import("../src/daemon").acquireLock
 let releaseLock: typeof import("../src/daemon").releaseLock
 let isProcessRunning: typeof import("../src/daemon").isProcessRunning
+let isCmsparkDaemonCommandLine: typeof import("../src/daemon").isCmsparkDaemonCommandLine
+let isDaemonRunning: typeof import("../src/daemon").isDaemonRunning
 let writePidFile: typeof import("../src/daemon").writePidFile
 let readPidFile: typeof import("../src/daemon").readPidFile
 let cleanupPidFile: typeof import("../src/daemon").cleanupPidFile
@@ -30,6 +32,8 @@ before(async () => {
   acquireLock = daemon.acquireLock
   releaseLock = daemon.releaseLock
   isProcessRunning = daemon.isProcessRunning
+  isCmsparkDaemonCommandLine = daemon.isCmsparkDaemonCommandLine
+  isDaemonRunning = daemon.isDaemonRunning
   writePidFile = daemon.writePidFile
   readPidFile = daemon.readPidFile
   cleanupPidFile = daemon.cleanupPidFile
@@ -192,6 +196,68 @@ test("isProcessRunning returns false for negative PID", () => {
 
 test("isProcessRunning returns false for NaN", () => {
   assert.equal(isProcessRunning(Number.NaN), false)
+})
+
+// ============================================================================
+// isCmsparkDaemonCommandLine — identity heuristic (guards against PID reuse)
+// ============================================================================
+
+test("isCmsparkDaemonCommandLine rejects an unrelated recycled process", () => {
+  // The real-world bug: daemon.pid pointed at a PID the OS recycled to
+  // RuntimeBroker.exe, so the daemon refused to start.
+  assert.equal(isCmsparkDaemonCommandLine("C:\\Windows\\System32\\RuntimeBroker.exe"), false)
+})
+
+test("isCmsparkDaemonCommandLine matches the SEA exe daemon command line", () => {
+  assert.equal(
+    isCmsparkDaemonCommandLine('"D:\\Projects\\cmspark\\dist-package\\cmspark-agent.exe" daemon start'),
+    true,
+  )
+})
+
+test("isCmsparkDaemonCommandLine matches the node bundle daemon command line", () => {
+  assert.equal(isCmsparkDaemonCommandLine("node cmspark-agent.js daemon start"), true)
+})
+
+test("isCmsparkDaemonCommandLine rejects the tray process (no daemon subcommand)", () => {
+  // The long-lived tray is also cmspark-agent.exe but has no `daemon` arg —
+  // it must not be mistaken for the daemon.
+  assert.equal(isCmsparkDaemonCommandLine('"D:\\Projects\\cmspark\\dist-package\\cmspark-agent.exe"'), false)
+})
+
+test("isCmsparkDaemonCommandLine returns false for empty/blank input", () => {
+  assert.equal(isCmsparkDaemonCommandLine(""), false)
+  assert.equal(isCmsparkDaemonCommandLine("   "), false)
+})
+
+// ============================================================================
+// isDaemonRunning — liveness + identity (recycled-PID safe)
+// ============================================================================
+
+test("isDaemonRunning returns false when a live PID is a recycled non-cmspark process", () => {
+  // process.pid is alive, but the lookup reports an unrelated process.
+  const result = isDaemonRunning(process.pid, () => "C:\\Windows\\System32\\RuntimeBroker.exe")
+  assert.equal(result, false)
+})
+
+test("isDaemonRunning returns true when a live PID is an actual cmspark daemon", () => {
+  const result = isDaemonRunning(process.pid, () => "cmspark-agent.exe daemon start")
+  assert.equal(result, true)
+})
+
+test("isDaemonRunning short-circuits for a dead PID without consulting the lookup", () => {
+  let consulted = false
+  const result = isDaemonRunning(99999, () => {
+    consulted = true
+    return "cmspark-agent.exe daemon start"
+  })
+  assert.equal(result, false)
+  assert.equal(consulted, false)
+})
+
+test("isDaemonRunning treats an unavailable command line as not running", () => {
+  const result = isDaemonRunning(process.pid, () => null)
+  assert.equal(result, false)
 })
 
 // ============================================================================

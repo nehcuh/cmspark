@@ -20,8 +20,9 @@ export interface TransportExtras {
 }
 
 /**
- * Build a PATH that lets stdio MCP servers find `npx` / `node` even when the
- * companion process was launched with a stripped env (launchd, GUI apps, etc.).
+ * Build a PATH that lets stdio MCP servers find `npx` / `node` / `uvx` even
+ * when the companion process was launched with a stripped env (launchd, Task
+ * Scheduler, GUI apps, etc.).
  *
  * Node's child_process.spawn looks up binaries via `process.env.PATH`, not the
  * directory of `process.execPath`. So if companion is running under
@@ -29,6 +30,8 @@ export interface TransportExtras {
  * `spawn("npx", ...)` fails with ENOENT. We fix this by prepending:
  *   1. The directory of the currently-running node binary (covers nvm/fnm/volta)
  *   2. Well-known macOS/Linux locations (homebrew, /usr/local, nvm default)
+ *   3. Well-known Windows locations (npm global bin, Node.js, fnm, Volta,
+ *      Python Scripts for pip/uvx, Scoop, Chocolatey)
  */
 export function buildSpawnPath(): string {
   const existing = process.env.PATH ?? ""
@@ -50,7 +53,41 @@ export function buildSpawnPath(): string {
   candidates.push(path.join(os.homedir(), ".local", "bin"))
   // 4. Linux common
   candidates.push("/usr/bin", "/bin")
-  // 4. nvm default if NVM_DIR is set
+  // 5. Windows: npm global bin (npx.cmd location)
+  candidates.push(
+    path.join(process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming"), "npm"),
+  )
+  // 6. Windows: Node.js default install directories
+  candidates.push(
+    path.join(process.env.ProgramFiles || "C:\\Program Files", "nodejs"),
+    path.join(process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)", "nodejs"),
+  )
+  // 7. Windows: fnm (Fast Node Manager)
+  {
+    const localAppData = process.env.LOCALAPPDATA || path.join(os.homedir(), "AppData", "Local")
+    candidates.push(path.join(localAppData, "fnm", "aliases", "default"))
+  }
+  // 8. Windows: Volta
+  candidates.push(
+    path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), "AppData", "Local"), "Volta", "bin"),
+  )
+  // 9. Windows: pip/pipx Python Scripts (for uvx and pip-installed MCP servers)
+  {
+    const appData = process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming")
+    const pyBase = path.join(appData, "Python")
+    try {
+      if (fs.existsSync(pyBase)) {
+        const vers = fs.readdirSync(pyBase).filter(v => /^Python\d+/.test(v))
+        for (const v of vers) candidates.push(path.join(pyBase, v, "Scripts"))
+      }
+    } catch { /* best-effort scan */ }
+  }
+  // 10. Windows: package managers (Scoop, Chocolatey)
+  candidates.push(
+    path.join(os.homedir(), "scoop", "shims"),
+    path.join(process.env.ProgramData || "C:\\ProgramData", "chocolatey", "bin"),
+  )
+  // 11. nvm default if NVM_DIR is set
   const nvmDir = process.env.NVM_DIR ?? path.join(os.homedir(), ".nvm")
   const nvmDefault = path.join(nvmDir, "versions", "node")
   try {
