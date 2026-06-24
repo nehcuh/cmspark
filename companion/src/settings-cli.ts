@@ -1,11 +1,26 @@
 // Interactive settings CLI for LLM configuration
-// Usage: cmspark-agent settings              → interactive mode
+// Usage: cmspark-agent settings                → interactive mode (web page)
 //        cmspark-agent settings --set key=value → non-interactive mode
+//        cmspark-agent settings --set-stdin key  → reads value from stdin (one line)
+//
+// Security: api_key (and other secret-like keys) cannot be set via --set
+// because argv is world-readable via `ps`. Use --set-stdin or the
+// CMSPARK_API_KEY env var (also CMSPARK_<UPPER_KEY> for other sensitive keys).
 
 import * as readline from "readline"
 import { getConfig, saveConfig, DATA_DIR } from "./config"
 
 const VALID_KEYS = ["api_key", "base_url", "model_name", "temperature", "context_window"]
+
+// Keys that must never appear in argv. They are world-readable via `ps -ef`
+// and would leak for the entire process lifetime.
+const SENSITIVE_KEYS = new Set(["api_key", "auth_token", "secret", "password", "token"])
+
+function isSensitiveKey(key: string): boolean {
+  const lower = key.toLowerCase()
+  if (SENSITIVE_KEYS.has(lower)) return true
+  return SENSITIVE_KEYS.has(lower) || lower.endsWith("_api_key") || lower.includes("secret") || lower.includes("password") || lower.includes("token")
+}
 
 function maskApiKey(key: string): string {
   if (!key || key.length <= 8) return key ? "***" : ""
@@ -115,7 +130,138 @@ export async function runInteractiveSettings(): Promise<void> {
   console.log("\n设置已保存到:", DATA_DIR + "/config.json\n")
 }
 
+// Resolve a value for a sensitive key, preferring env var over stdin-supplied.
+// Lookup order: CMSPARK_<UPPER_KEY> env var, then provided stdin value.
+function resolveSensitiveValue(key: string, stdinValue: string | undefined): { value: string; source: string } | { error: string } {
+  const envName = `CMSPARK_${key.toUpperCase()}`
+  const envVal = process.env[envName]
+  if (typeof envVal === "string" && envVal.length > 0) {
+    return { value: envVal, source: `env ${envName}` }
+  }
+  if (stdinValue !== undefined && stdinValue.length > 0) {
+    return { value: stdinValue, source: "stdin" }
+  }
+  return {
+    error: `Refusing to set ${key} from argv (visible in ps). Use --set-stdin ${key} or the ${envName} env var.`,
+  }
+}
+
+function readStdinLine(): Promise<string> {
+  return new Promise((resolve) => {
+    const rl = readline.createInterface({ input: process.stdin, output: undefined, terminal: false })
+    let collected = ""
+    rl.on("line", (line) => {
+      collected = line
+      rl.close()
+    })
+    rl.on("close", () => resolve(collected.trim()))
+    rl.on("end", () => resolve(collected.trim()))
+  })
+}
+
+// Public entrypoint invoked from index.ts. Recognized argv shapes:
+//   --set key=value [...]
+//   --set-stdin key [...]  (value read from stdin; multiple keys read consecutive lines)
+// Returns whether stdin was needed (so the caller can await this before exit).
+export async function runNonInteractiveSettingsCli(argv: string[]): Promise<void> {
+  const setFlags: string[] = []
+  const setStdinKeys: string[] = []
+  for (const a of argv) {
+    if (a.startsWith("--set=")) {
+      setFlags.push(a.slice("--set=".length))
+    } else if (a === "--set-stdin") {
+      // skip — value is the next positional, captured separately below
+    }
+  }
+  // Pull positional keys following --set-stdin
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === "--set-stdin") {
+      const next = argv[i + 1]
+      if (next && !next.startsWith("--")) setStdinKeys.push(next)
+    }
+  }
+
+  // Step 1: reject sensitive keys in --set
+  for (const pair of setFlags) {
+    const eq = pair.indexOf("=")
+    const key = (eq < 0 ? pair : pair.slice(0, eq)).trim()
+    if (isSensitiveKey(key)) {
+      console.error(
+        `Refusing to set ${key} from argv (visible in ps). Use --set-stdin ${key} or CMSPARK_${key.toUpperCase()} env var.`,
+      )
+      process.exit(2)
+    }
+  }
+
+  // Step 2: process --set pairs (non-sensitive)
+  const results: Array<{ key: string; ok: boolean; error?: string }> = []
+  for (const pair of setFlags) {
+    const eq = pair.indexOf("=")
+    if (eq < 0) {
+      results.push({ key: pair, ok: false, error: "格式错误，应为 key=value" })
+      continue
+    }
+    const key = pair.slice(0, eq).trim()
+    const value = pair.slice(eq + 1).trim()
+
+    if (!VALID_KEYS.includes(key)) {
+      results.push({ key, ok: false, error: `不支持的配置项，支持: ${VALID_KEYS.join(", ")}` })
+      continue
+    }
+
+    if (isSensitiveKey(key)) {
+      // already exited above; keep narrowing
+      results.push({ key, ok: false, error: "sensitive key blocked from argv" })
+      continue
+    }
+
+    results.push({ key, ...applySetting(key, value) })
+  }
+
+  // Step 3: process --set-stdin keys (may be sensitive — read from stdin or env)
+  for (const key of setStdinKeys) {
+    if (!VALID_KEYS.includes(key)) {
+      results.push({ key, ok: false, error: `不支持的配置项，支持: ${VALID_KEYS.join(", ")}` })
+      continue
+    }
+    let stdinValue: string | undefined
+    if (process.stdin.isTTY === false || !process.stdin.isTTY) {
+      stdinValue = await readStdinLine()
+    }
+    const resolved = resolveSensitiveValue(key, stdinValue)
+    if ("error" in resolved) {
+      results.push({ key, ok: false, error: resolved.error })
+      continue
+    }
+    results.push({ key, ...applySetting(key, resolved.value) })
+  }
+
+  for (const r of results) {
+    if (r.ok) {
+      console.log(`✅ ${r.key} 已更新`)
+    } else {
+      console.log(`❌ ${r.key}: ${r.error}`)
+    }
+  }
+}
+
+// Back-compat shim: callers that previously invoked the synchronous function
+// with kvPairs now go through the argv-aware CLI; this signature remains for
+// any tests or external users.
 export function runNonInteractiveSettings(kvPairs: string[]): void {
+  // Synchronous path: rejects sensitive keys but does NOT support stdin/env
+  // resolution. Use runNonInteractiveSettingsCli() for the full feature set.
+  for (const pair of kvPairs) {
+    const eq = pair.indexOf("=")
+    const key = (eq < 0 ? pair : pair.slice(0, eq)).trim()
+    if (isSensitiveKey(key)) {
+      console.error(
+        `Refusing to set ${key} from argv (visible in ps). Use --set-stdin ${key} or CMSPARK_${key.toUpperCase()} env var.`,
+      )
+      process.exit(2)
+    }
+  }
+
   const results: Array<{ key: string; ok: boolean; error?: string }> = []
 
   for (const pair of kvPairs) {

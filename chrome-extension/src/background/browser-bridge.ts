@@ -593,9 +593,10 @@ export class BrowserBridge {
   private async getElementInfo(params: Record<string, any>): Promise<ToolResult> {
     const tabId = this.getTabId(params)
     if (!params.selector) throw new Error("selector is required")
+    // Safe interpolation: JSON.stringify produces a valid JS string literal.
     const expression = `
       (() => {
-        const el = document.querySelector('${params.selector}');
+        const el = document.querySelector(${JSON.stringify(params.selector)});
         if (!el) return null;
         const rect = el.getBoundingClientRect();
         return {
@@ -636,9 +637,9 @@ export class BrowserBridge {
     } catch (err: any) {
       // Fallback: direct DOM click when CDP mouse events fail (e.g. debugger not attached)
       if (selector) {
-        const escapedSelector = selector.replace(/'/g, "\\'")
+        // Safe interpolation: JSON.stringify produces a valid JS string literal.
         const found = await this.scriptingExecute(tabId,
-          `(()=>{const el=document.querySelector('${escapedSelector}');if(el){el.focus();el.click();for(let i=1;i<${clickCount};i++)el.click();return true}return false})()`)
+          `(()=>{const el=document.querySelector(${JSON.stringify(selector)});if(el){el.focus();el.click();for(let i=1;i<${clickCount};i++)el.click();return true}return false})()`)
         if (!found) {
           return { success: false, error: `Element not found for selector: ${selector}` }
         }
@@ -661,14 +662,15 @@ export class BrowserBridge {
     try {
       await this.sendCdp(tabId, "Input.insertText", { text: params.value })
     } catch {
-      // Fallback: set value via DOM scripting
-      const escaped = params.value.replace(/'/g, "\\'")
+      // Fallback: set value via DOM scripting.
+      // Safe interpolation: JSON.stringify produces a valid JS string literal.
+      const valueLit = JSON.stringify(String(params.value))
       if (params.selector) {
         await this.scriptingExecute(tabId,
-          `(()=>{const el=document.querySelector('${params.selector.replace(/'/g, "\\'")}');if(el){el.value='${escaped}';el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));return true}return false})()`)
+          `(()=>{const el=document.querySelector(${JSON.stringify(params.selector)});if(el){el.value=${valueLit};el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));return true}return false})()`)
       } else {
         await this.scriptingExecute(tabId,
-          `(()=>{const el=document.activeElement;if(el&&(el.tagName==='INPUT'||el.tagName==='TEXTAREA')){el.value='${escaped}';el.dispatchEvent(new Event('input',{bubbles:true}));return true}return false})()`)
+          `(()=>{const el=document.activeElement;if(el&&(el.tagName==='INPUT'||el.tagName==='TEXTAREA')){el.value=${valueLit};el.dispatchEvent(new Event('input',{bubbles:true}));return true}return false})()`)
       }
     }
     return { success: true }
@@ -738,12 +740,13 @@ export class BrowserBridge {
   private async selectOption(params: Record<string, any>): Promise<ToolResult> {
     const tabId = this.getTabId(params)
     if (!params.selector || params.value === undefined) throw new Error("selector and value are required")
+    // Safe interpolation: JSON.stringify produces a valid JS string literal (selector AND value).
     await this.sendCdp(tabId, "Runtime.evaluate", {
       expression: `
         (() => {
-          const el = document.querySelector('${params.selector}');
+          const el = document.querySelector(${JSON.stringify(params.selector)});
           if (!el) throw new Error('Select not found');
-          el.value = '${params.value}';
+          el.value = ${JSON.stringify(String(params.value))};
           el.dispatchEvent(new Event('change', { bubbles: true }));
         })()
       `,
@@ -784,7 +787,8 @@ export class BrowserBridge {
       while (Date.now() - start < timeout) {
         try {
           const result = await this.sendCdp(tabId, "Runtime.evaluate", {
-            expression: `!!document.querySelector('${selector}')`,
+            // Safe interpolation: JSON.stringify produces a valid JS string literal.
+            expression: `!!document.querySelector(${JSON.stringify(selector)})`,
             returnByValue: true,
           })
           const exists = result.result?.value === true
@@ -820,25 +824,11 @@ export class BrowserBridge {
 
     const matches = detectDangerousApis(codeToExecute)
     if (matches.length > 0) {
-      // Validate HMAC security token instead of boolean flag (P0)
-      if (!params.security_token) {
-        return {
-          success: false,
-          error: `Security Block: evaluate contains high-risk APIs (${matches.join(", ")}). Execution requires user confirmation.`,
-          data: { dangerous_apis_found: matches },
-        }
-      }
-      // Token was issued and validated by Companion; extension trusts it.
-      // Companion is the sole authority for token validation. Extension-side
-      // HMAC verification is disabled because the shared secret is no longer
-      // transmitted over WebSocket (security improvement).
-      if (typeof params.security_token !== "string" || !params.security_token) {
-        return {
-          success: false,
-          error: `Security Block: Invalid security token for evaluate. Execution requires user confirmation.`,
-          data: { dangerous_apis_found: matches },
-        }
-      }
+      // Companion-side confirmation is the sole authority; extension does not gate evaluate.
+      // The dangerous-API detection result is forwarded to the companion as a hint.
+      // (Previously: extension checked for a non-empty `security_token` string — this
+      // provided no real security since any string passed, and the HMAC validator was
+      // never wired up. Removed in Batch A3.)
     }
 
     const result = await this.safeEvaluate(tabId, codeToExecute)
