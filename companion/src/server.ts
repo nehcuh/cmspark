@@ -1164,7 +1164,23 @@ export async function startServer() {
         }
 
         if (msg.type === "security.confirmation.response") {
-          securityConfirmations.respond(String(msg.confirmation_id || ""), msg.approved === true)
+          // Pass `ws` so SecurityConfirmationManager can enforce origin binding
+          // (only the socket that owns the pending confirmation may resolve it).
+          const responded = securityConfirmations.respondFrom(
+            String(msg.confirmation_id || ""),
+            msg.approved === true,
+            ws,
+          )
+          if (!responded) {
+            // Either no such pending entry, or the response arrived on a
+            // different socket than the one the confirmation was issued to.
+            // [C-SEC-2]: do not silently drop — log so operators can spot the
+            // pattern (e.g., a rogue local process trying to self-approve).
+            logger.warn("security.confirmation.origin_mismatch_or_unknown", {
+              confirmation_id: String(msg.confirmation_id || ""),
+              approved_requested: msg.approved === true,
+            })
+          }
           return
         }
 
@@ -1196,6 +1212,7 @@ export async function startServer() {
               dangerousApis: [],
               code: `export(${JSON.stringify({ thread_id: msg.thread_id, from: msg.from, to: msg.to })})`,
             },
+            { originWs: ws },
           )
           if (!decision.approved) {
             const reason = decision.reason === "approved" ? "unavailable" : decision.reason
@@ -1260,7 +1277,7 @@ export async function startServer() {
       clearInterval(pingInterval)
       clients.delete(ws)
       applyConnectionCloseGracePeriod()
-      securityConfirmations.rejectAll("disconnect")
+      securityConfirmations.rejectAll("disconnect", ws)
       // Audit item 8: clear the per-session MCP confirm-cache so approvals
       // don't leak across reconnects (memory + a stale "approved" entry could
       // wrongly auto-approve a tool call from whatever reconnects next).

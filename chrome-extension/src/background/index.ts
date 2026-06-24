@@ -4,7 +4,6 @@
 import { WSClient } from "./ws-client"
 import { BrowserBridge } from "./browser-bridge"
 import { KeepAlive } from "./keep-alive"
-import { setSecuritySecret } from "./security-token"
 import { PageSanitizer, pageSanitizer } from "./page-sanitizer"
 
 let wsClient: WSClient
@@ -260,9 +259,8 @@ async function handleCompanionMessage(msg: any) {
   }
 
   if (msg.type === "security.config") {
-    if (typeof msg.secret === "string" && msg.secret) {
-      setSecuritySecret(msg.secret)
-    }
+    // No-op: extension no longer performs HMAC token validation.
+    // Companion-side confirmation is the sole authority; extension does not gate evaluate.
     return
   }
 

@@ -1,6 +1,7 @@
 // Security confirmation flow — request/response queue for high-risk tool execution
 
 import { randomUUID } from "crypto"
+import type { WebSocket } from "ws"
 
 export const DEFAULT_SECURITY_CONFIRMATION_TIMEOUT_MS = 45000
 const CODE_PREVIEW_LIMIT = 1200
@@ -22,10 +23,22 @@ export interface SecurityConfirmationDecision {
   reason: "approved" | "denied" | "timeout" | "disconnect"
 }
 
+export interface SecurityConfirmationRequestOptions {
+  /**
+   * Originating WebSocket for this confirmation. When set, only responses
+   * (security.confirmation.response) arriving on this same socket may resolve
+   * the confirmation — closes [C-SEC-2] (a different connected client approving
+   * its own request). When undefined, the confirmation is broadcast-style and
+   * any inbound response may resolve it (backward-compatible behavior).
+   */
+  originWs?: WebSocket
+}
+
 interface PendingConfirmation {
   resolve: (decision: SecurityConfirmationDecision) => void
   timer: NodeJS.Timeout
   send: (data: any) => void
+  originWs?: WebSocket
 }
 
 function codePreview(code: string): string {
@@ -39,7 +52,11 @@ export class SecurityConfirmationManager {
 
   constructor(private timeoutMs = DEFAULT_SECURITY_CONFIRMATION_TIMEOUT_MS) {}
 
-  request(send: (data: any) => void, details: SecurityConfirmationDetails): Promise<SecurityConfirmationDecision> {
+  request(
+    send: (data: any) => void,
+    details: SecurityConfirmationDetails,
+    options?: SecurityConfirmationRequestOptions,
+  ): Promise<SecurityConfirmationDecision> {
     const confirmationId = randomUUID()
 
     return new Promise((resolve) => {
@@ -49,7 +66,7 @@ export class SecurityConfirmationManager {
         resolve({ confirmationId, approved: false, reason: "timeout" })
       }, this.timeoutMs)
 
-      this.pending.set(confirmationId, { resolve, timer, send })
+      this.pending.set(confirmationId, { resolve, timer, send, originWs: options?.originWs })
 
       send({
         type: "security.confirmation.request",
@@ -68,6 +85,43 @@ export class SecurityConfirmationManager {
     })
   }
 
+  /**
+   * Resolve a confirmation in response to an inbound security.confirmation.response
+   * arriving from `sourceWs`. If the pending entry has originWs set, sourceWs MUST
+   * match — otherwise the response is rejected (returns false) and the original
+   * confirmation stays pending. Returns false if no pending entry exists, or if
+   * the origin check fails.
+   */
+  respondFrom(confirmationId: string, approved: boolean, sourceWs?: WebSocket): boolean {
+    const pending = this.pending.get(confirmationId)
+    if (!pending) return false
+
+    if (pending.originWs !== undefined && pending.originWs !== sourceWs) {
+      // Origin mismatch — a different socket attempted to answer this
+      // confirmation. Leave the pending entry intact so the legitimate
+      // origin can still respond (or it times out).
+      return false
+    }
+
+    clearTimeout(pending.timer)
+    this.pending.delete(confirmationId)
+    pending.send({ type: "security.confirmation.resolved", confirmation_id: confirmationId, approved })
+    pending.resolve({
+      confirmationId,
+      approved,
+      reason: approved ? "approved" : "denied",
+    })
+    return true
+  }
+
+  /**
+   * Legacy respond() — privileged test/admin path that bypasses origin binding.
+   * Resolves any pending entry regardless of originWs. Existing test code and
+   * integration-test paths that don't track a source ws continue to work; in
+   * production the live server routes inbound responses through respondFrom(),
+   * which enforces the origin check. Treat respond() as a privileged escape
+   * hatch — never call it from request-handling code paths.
+   */
   respond(confirmationId: string, approved: boolean): boolean {
     const pending = this.pending.get(confirmationId)
     if (!pending) return false
@@ -83,11 +137,28 @@ export class SecurityConfirmationManager {
     return true
   }
 
-  rejectAll(reason: "disconnect" | "timeout" = "disconnect") {
+  /**
+   * Reject pending confirmations. If `ws` is provided, only entries whose
+   * originWs matches (or is undefined — broadcast-style) are rejected; entries
+   * owned by a different socket survive — closes [C-SRV-1] where a disconnect
+   * on one connection would reject prompts on other connections. If `ws` is
+   * undefined, all pending entries are rejected (backward-compatible).
+   */
+  rejectAll(reason: "disconnect" | "timeout" = "disconnect", ws?: WebSocket) {
+    if (ws === undefined) {
+      for (const [confirmationId, pending] of this.pending) {
+        clearTimeout(pending.timer)
+        pending.resolve({ confirmationId, approved: false, reason })
+      }
+      this.pending.clear()
+      return
+    }
+
     for (const [confirmationId, pending] of this.pending) {
+      if (pending.originWs !== undefined && pending.originWs !== ws) continue
       clearTimeout(pending.timer)
       pending.resolve({ confirmationId, approved: false, reason })
+      this.pending.delete(confirmationId)
     }
-    this.pending.clear()
   }
 }

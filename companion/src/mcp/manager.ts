@@ -309,6 +309,16 @@ export class McpManager extends EventEmitter {
     return this.aggregated.aliases.get(namespacedName)
   }
 
+  /**
+   * Look up the cached MCP inputSchema for a namespaced tool name. Used by
+   * tool-schemas.ts to convert JSON Schema → zod and validate args before
+   * dispatch (audit item C-MCP-1). Returns undefined when the tool isn't
+   * aggregated (server not connected, tool list not yet received, or unknown).
+   */
+  getToolInputSchema(namespacedName: string): Record<string, any> | undefined {
+    return this.aggregated.metas.get(namespacedName)?.inputSchema
+  }
+
   // --- RPC routing ---
 
   async callTool(

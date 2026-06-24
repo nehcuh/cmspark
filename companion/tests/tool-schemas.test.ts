@@ -6,7 +6,13 @@
 
 import test from "node:test"
 import assert from "node:assert/strict"
-import { parseToolArgs, tryParseToolArgs, TOOL_ARG_SCHEMAS } from "../src/bridge/tool-schemas.js"
+import {
+  parseToolArgs,
+  tryParseToolArgs,
+  TOOL_ARG_SCHEMAS,
+  setMcpSchemaResolverForTests,
+  __test__,
+} from "../src/bridge/tool-schemas.js"
 
 // =============================================================================
 // evaluate — high-risk (arbitrary JS in a real Chrome tab)
@@ -202,4 +208,193 @@ test("TOOL_ARG_SCHEMAS covers the high-risk tools the audit named", () => {
   for (const name of expected) {
     assert.ok(name in TOOL_ARG_SCHEMAS, `${name} should have a zod schema`)
   }
+})
+
+// =============================================================================
+// C-MCP-1: MCP tools use the server's inputSchema (no generic any-record bypass)
+// =============================================================================
+
+// Fixture: filesystem-style tool with a required `path: string`.
+const FS_READ_SCHEMA = {
+  type: "object",
+  properties: {
+    path: { type: "string", description: "Absolute path to read" },
+    encoding: { type: "string", description: "Optional encoding" },
+  },
+  required: ["path"],
+  additionalProperties: false,
+}
+
+// Fixture: tool with mixed primitive types and arrays (typical MCP shape).
+const SEARCH_SCHEMA = {
+  type: "object",
+  properties: {
+    query: { type: "string" },
+    limit: { type: "integer" },
+    count: { type: "number" },
+    fresh: { type: "boolean" },
+    tags: { type: "array", items: { type: "string" } },
+  },
+  required: ["query"],
+}
+
+test("mcp: inputSchema with valid args parses successfully", () => {
+  setMcpSchemaResolverForTests((name) =>
+    name === "mcp__filesystem__read_text_file" ? FS_READ_SCHEMA : undefined,
+  )
+  try {
+    const out = parseToolArgs("mcp__filesystem__read_text_file", {
+      path: "/tmp/foo.txt",
+    }) as any
+    assert.equal(out.path, "/tmp/foo.txt")
+  } finally {
+    setMcpSchemaResolverForTests(null)
+  }
+})
+
+test("mcp: inputSchema rejects wrong-type required field (path: number)", () => {
+  setMcpSchemaResolverForTests((name) =>
+    name === "mcp__filesystem__read_text_file" ? FS_READ_SCHEMA : undefined,
+  )
+  try {
+    const result = tryParseToolArgs("mcp__filesystem__read_text_file", { path: 12345 })
+    assert.equal(result.ok, false, "path:12345 must fail validation, not pass through")
+    if (!result.ok) {
+      assert.match(result.error, /path/i, "error should reference the bad field")
+      assert.match(result.error, /mcp__filesystem__read_text_file/, "error should name the tool")
+    }
+  } finally {
+    setMcpSchemaResolverForTests(null)
+  }
+})
+
+test("mcp: inputSchema rejects missing required field", () => {
+  setMcpSchemaResolverForTests((name) =>
+    name === "mcp__filesystem__read_text_file" ? FS_READ_SCHEMA : undefined,
+  )
+  try {
+    const result = tryParseToolArgs("mcp__filesystem__read_text_file", {})
+    assert.equal(result.ok, false)
+    if (!result.ok) assert.match(result.error, /path/i)
+  } finally {
+    setMcpSchemaResolverForTests(null)
+  }
+})
+
+test("mcp: inputSchema rejects unknown field when additionalProperties:false", () => {
+  setMcpSchemaResolverForTests((name) =>
+    name === "mcp__filesystem__read_text_file" ? FS_READ_SCHEMA : undefined,
+  )
+  try {
+    const result = tryParseToolArgs("mcp__filesystem__read_text_file", {
+      path: "/x",
+      sneaky: "extra",
+    })
+    assert.equal(result.ok, false, "additionalProperties:false should reject unknown keys")
+  } finally {
+    setMcpSchemaResolverForTests(null)
+  }
+})
+
+test("mcp: mixed primitive types validated correctly (integer/number/boolean/array)", () => {
+  setMcpSchemaResolverForTests((name) =>
+    name === "mcp__search__web" ? SEARCH_SCHEMA : undefined,
+  )
+  try {
+    // All correct types pass.
+    const ok = tryParseToolArgs("mcp__search__web", {
+      query: "rust async",
+      limit: 5,
+      count: 1.5,
+      fresh: true,
+      tags: ["a", "b"],
+    })
+    assert.equal(ok.ok, true)
+
+    // Integer mismatch — passing a non-integer number for an integer field fails.
+    const intBad = tryParseToolArgs("mcp__search__web", { query: "x", limit: 1.5 })
+    assert.equal(intBad.ok, false)
+
+    // Boolean mismatch — passing a string for boolean fails.
+    const boolBad = tryParseToolArgs("mcp__search__web", { query: "x", fresh: "yes" })
+    assert.equal(boolBad.ok, false)
+
+    // Array items type-checked — array of numbers for {array, items: string} fails.
+    const arrBad = tryParseToolArgs("mcp__search__web", { query: "x", tags: [1, 2, 3] })
+    assert.equal(arrBad.ok, false)
+  } finally {
+    setMcpSchemaResolverForTests(null)
+  }
+})
+
+test("mcp: missing cached inputSchema falls back to generic record + emits warning", () => {
+  // Resolver returns undefined — simulates server not having sent tools/list yet.
+  setMcpSchemaResolverForTests(() => undefined)
+  try {
+    // Should not throw — graceful fallback.
+    const out = parseToolArgs("mcp__filesystem__read_text_file", { path: 12345 }) as any
+    // Generic fallback accepts any shape — the wrong type passes through.
+    assert.equal(out.path, 12345)
+  } finally {
+    setMcpSchemaResolverForTests(null)
+  }
+})
+
+test("mcp: empty object inputSchema accepts empty args (legitimate no-arg tool)", () => {
+  setMcpSchemaResolverForTests((name) =>
+    name === "mcp__svc__noop" ? { type: "object", properties: {} } : undefined,
+  )
+  try {
+    const out = parseToolArgs("mcp__svc__noop", {})
+    assert.deepEqual(out, {})
+  } finally {
+    setMcpSchemaResolverForTests(null)
+  }
+})
+
+test("mcp: converter degrades unknown JSON-schema types to z.unknown() (fail-open)", () => {
+  const schema = {
+    type: "object",
+    properties: {
+      any: { oneOf: [{ type: "string" }, { type: "number" }] },
+      ref: { $ref: "#/definitions/Foo" },
+      regular: { type: "string" },
+    },
+    required: ["regular"],
+  }
+  setMcpSchemaResolverForTests(() => schema)
+  try {
+    // The unknown-typed fields accept anything; the typed one is still enforced.
+    const ok = tryParseToolArgs("mcp__svc__mixed", { regular: "hi", any: 42, ref: { x: 1 } })
+    assert.equal(ok.ok, true)
+
+    const bad = tryParseToolArgs("mcp__svc__mixed", { any: 42 })
+    assert.equal(bad.ok, false, "required field `regular` must still be enforced")
+  } finally {
+    setMcpSchemaResolverForTests(null)
+  }
+})
+
+test("mcp: native tools still validate (no regression after MCP path added)", () => {
+  // evaluate should still work — the native path is untouched for non-mcp__ names.
+  const ok = tryParseToolArgs("evaluate", { tabId: 1, code: "1+1" })
+  assert.equal(ok.ok, true)
+  const bad = tryParseToolArgs("evaluate", { tabId: "x", code: "1+1" })
+  assert.equal(bad.ok, false)
+})
+
+test("mcp: converter direct unit (jsonSchemaPrimitiveToZod round-trips)", () => {
+  const { jsonSchemaPrimitiveToZod } = __test__
+  assert.equal(jsonSchemaPrimitiveToZod({ type: "string" }).safeParse("x").success, true)
+  assert.equal(jsonSchemaPrimitiveToZod({ type: "string" }).safeParse(1).success, false)
+  assert.equal(jsonSchemaPrimitiveToZod({ type: "integer" }).safeParse(1.5).success, false)
+  assert.equal(jsonSchemaPrimitiveToZod({ type: "boolean" }).safeParse("yes").success, false)
+  assert.equal(
+    jsonSchemaPrimitiveToZod({ type: "array", items: { type: "string" } }).safeParse(["a"]).success,
+    true,
+  )
+  assert.equal(
+    jsonSchemaPrimitiveToZod({ type: "array", items: { type: "string" } }).safeParse([1]).success,
+    false,
+  )
 })

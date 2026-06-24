@@ -855,3 +855,190 @@ test("HistoryStore.record() does NOT redact non-sensitive tool params", async ()
     store.close()
   }
 })
+
+// --- MCP redaction (audit item C-MCP-2) ---
+
+test("HistoryStore.record() fully redacts result_summary for mcp__filesystem__read_file with key material", async () => {
+  const store = new HistoryStore()
+  await store.waitReady()
+  try {
+    const params = JSON.stringify({ path: "/home/user/.ssh/id_rsa" })
+    // Simulate what adapter.ts would write: JSON.stringify(data).slice(0, 500).
+    const fileContent = "-----BEGIN OPENSSH PRIVATE KEY-----\nMIIEogIBAAKCAQEAdummy_secret_key_material_xyz\n-----END OPENSSH PRIVATE KEY-----\n"
+    const result_summary = JSON.stringify({ content: fileContent, bytes: fileContent.length }).slice(0, 500)
+
+    store.record({
+      thread_id: "t-mcp-fs",
+      tool_name: "mcp__filesystem__read_file",
+      params,
+      result_summary,
+      error: null,
+      success: 1,
+      duration_ms: 80,
+      created_at: new Date().toISOString(),
+    })
+
+    const rows = store.query({ thread_id: "t-mcp-fs" })
+    assert.equal(rows.length, 1)
+    const stored = rows[0]
+
+    // The key material must NOT appear in either field.
+    assert.ok(!stored.result_summary.includes(fileContent),
+      "private key content must not be persisted; got: " + stored.result_summary)
+    assert.ok(!stored.result_summary.includes("MIIEogIBAAKCAQ"),
+      "raw key base64 must not be persisted")
+
+    // The whole result must be replaced by a redacted marker.
+    assert.match(stored.result_summary, /^<redacted:len=\d+:sha256=[a-f0-9]{12}>$/)
+  } finally {
+    store.close()
+  }
+})
+
+test("HistoryStore.record() redacts sensitive keys in mcp__shell__exec params but preserves others", async () => {
+  const store = new HistoryStore()
+  await store.waitReady()
+  try {
+    const params = JSON.stringify({
+      api_key: "sk-secret-1234567890",
+      command: "ls -la",
+      cwd: "/tmp",
+    })
+
+    store.record({
+      thread_id: "t-mcp-shell",
+      tool_name: "mcp__shell__exec",
+      params,
+      result_summary: JSON.stringify({ stdout: "file1.txt\nfile2.txt" }),
+      error: null,
+      success: 1,
+      duration_ms: 40,
+      created_at: new Date().toISOString(),
+    })
+
+    const rows = store.query({ thread_id: "t-mcp-shell" })
+    assert.equal(rows.length, 1)
+    const stored = rows[0]
+
+    // api_key value must be gone.
+    assert.ok(!stored.params.includes("sk-secret-1234567890"),
+      "api_key value must not be persisted; got: " + stored.params)
+    // Other params preserved.
+    assert.match(stored.params, /"command":\s*"ls -la"/)
+    assert.match(stored.params, /"cwd":\s*"\/tmp"/)
+    // Redacted marker in place of api_key.
+    assert.match(stored.params, /"api_key":\s*"<redacted:len=\d+:sha256=[a-f0-9]{12}>"/)
+
+    // result_summary is NOT in the sensitive-result pattern set (mcp__shell__exec
+    // does not match /read|file|secret|token|key|env|credential|ssh|aws/), so
+    // it is preserved verbatim.
+    assert.match(stored.result_summary, /"stdout":\s*"file1.txt/)
+  } finally {
+    store.close()
+  }
+})
+
+test("HistoryStore.record() redacts set_cookie single-object result_summary", async () => {
+  const store = new HistoryStore()
+  await store.waitReady()
+  try {
+    // set_cookie returns the created cookie object (NOT an array). Audit item
+    // C-SEC-1: the previous redactor early-returned on non-array shapes.
+    const result_summary = JSON.stringify({
+      name: "auth",
+      domain: "example.com",
+      value: "plaintext-session-token-abc-xyz",
+      secure: true,
+      httpOnly: true,
+    }).slice(0, 500)
+
+    store.record({
+      thread_id: "t-setcookie-result",
+      tool_name: "set_cookie",
+      params: JSON.stringify({ domain: "example.com", name: "auth" }),
+      result_summary,
+      error: null,
+      success: 1,
+      duration_ms: 30,
+      created_at: new Date().toISOString(),
+    })
+
+    const rows = store.query({ thread_id: "t-setcookie-result" })
+    assert.equal(rows.length, 1)
+    const stored = rows[0]
+
+    // Plaintext value MUST be gone.
+    assert.ok(!stored.result_summary.includes("plaintext-session-token-abc-xyz"),
+      "set_cookie result value must not be persisted; got: " + stored.result_summary)
+    // Hash + length present so the value can be correlated.
+    assert.match(stored.result_summary, /"value_hash":\s*"[a-f0-9]{12}"/)
+    assert.match(stored.result_summary, /"value_length":\s*\d+/)
+    // Non-sensitive metadata preserved.
+    assert.match(stored.result_summary, /"name":\s*"auth"/)
+    assert.match(stored.result_summary, /"domain":\s*"example.com"/)
+  } finally {
+    store.close()
+  }
+})
+
+test("HistoryStore.record() still redacts get_cookies array result_summary (no regression)", async () => {
+  const store = new HistoryStore()
+  await store.waitReady()
+  try {
+    const result_summary = JSON.stringify([
+      { name: "sess", domain: "a.com", value: "v1-secret", secure: true, httpOnly: true },
+      { name: "csrf", domain: "a.com", value: "v2-secret", secure: false, httpOnly: false },
+    ]).slice(0, 500)
+
+    store.record({
+      thread_id: "t-cookies-regress",
+      tool_name: "get_cookies",
+      params: JSON.stringify({ domain: "a.com" }),
+      result_summary,
+      error: null,
+      success: 1,
+      duration_ms: 20,
+      created_at: new Date().toISOString(),
+    })
+
+    const rows = store.query({ thread_id: "t-cookies-regress" })
+    assert.equal(rows.length, 1)
+    const stored = rows[0]
+
+    assert.ok(!stored.result_summary.includes("v1-secret"))
+    assert.ok(!stored.result_summary.includes("v2-secret"))
+    assert.match(stored.result_summary, /"value_hash":\s*"[a-f0-9]{12}"/)
+    // Array shape preserved (starts with [).
+    assert.equal(stored.result_summary.trim().charAt(0), "[")
+  } finally {
+    store.close()
+  }
+})
+
+// --- history.db permissions (audit item C-PERS-1) ---
+
+test("HistoryStore.save() writes history.db with mode 0o600", async () => {
+  // Skip on platforms where POSIX perms are not enforced (Windows).
+  if (process.platform === "win32") {
+    return
+  }
+  const configDir = getConfigDir()
+  const dbPath = path.join(configDir, "history.db")
+
+  const store = new HistoryStore()
+  await store.waitReady()
+  try {
+    store.record(createTestRecord({ thread_id: "perm-test" }))
+    store.close()
+  } catch {
+    store.close()
+  }
+
+  const stat = fs.statSync(dbPath)
+  const mode = stat.mode & 0o777
+  assert.equal(
+    mode,
+    0o600,
+    `history.db must be 0600 owner-only; got 0o${mode.toString(8)}`,
+  )
+})

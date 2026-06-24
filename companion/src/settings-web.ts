@@ -1,7 +1,23 @@
 // Local Web settings server for CMspark Companion
 // Spawns a temporary HTTP server on 127.0.0.1, opens browser to settings page.
+//
+// Security model:
+// - Loopback-only bind (127.0.0.1)
+// - Per-session random token in query string. Printed to the terminal once and
+//   embedded in the URL the browser opens. Every request MUST include the
+//   correct `?token=<hex>` — otherwise 403. Because the token is unguessable
+//   and not exposed anywhere except the local terminal, this doubles as CSRF
+//   defense (a malicious page cannot know the token).
+// - Host header must equal `127.0.0.1:<port>` or `localhost:<port>`.
+// - Origin header (on POSTs) must equal one of those loopback origins.
+// - `/api/test` and `/api/testVision` enforce an SSRF guard: private IPs,
+//   loopback, link-local (incl. AWS metadata 169.254.169.254) are blocked.
+//   A small LLM-provider host allowlist may bypass the private-IP block.
 
 import * as http from "http"
+import * as crypto from "crypto"
+import * as dns from "dns"
+import * as net from "net"
 import { getConfig, saveConfig } from "./config"
 
 // ---------------------------------------------------------------------------
@@ -50,11 +66,135 @@ function readBody(req: http.IncomingMessage, maxSize: number): Promise<string> {
 }
 
 function jsonResponse(res: http.ServerResponse, data: any, status = 200) {
-  res.writeHead(status, {
-    "Content-Type": "application/json",
-    "Access-Control-Allow-Origin": "http://127.0.0.1",
-  })
+  if (!res.headersSent) {
+    res.writeHead(status, { "Content-Type": "application/json" })
+  }
   res.end(JSON.stringify(data))
+}
+
+function forbidden(res: http.ServerResponse, reason: string) {
+  if (res.headersSent) {
+    res.end()
+    return
+  }
+  res.writeHead(403, { "Content-Type": "text/plain; charset=utf-8" })
+  res.end(`Forbidden: ${reason}`)
+}
+
+// ---------------------------------------------------------------------------
+// SSRF guard
+// ---------------------------------------------------------------------------
+
+// Known LLM / vision provider hostnames that the user may legitimately test
+// against. Hosts on this list bypass the private-IP block (DNS resolution can
+// still be skipped, but we trust these names). Users can extend this list by
+// editing the array below.
+const LLM_HOST_ALLOWLIST = new Set<string>([
+  "api.openai.com",
+  "api.anthropic.com",
+  "api.deepseek.com",
+  "api.moonshot.cn",
+  "api.siliconflow.cn",
+  "dashscope.aliyuncs.com",
+  "api.languagemodel.googleapis.com",
+  "generativelanguage.googleapis.com",
+  "api.together.xyz",
+  "api.groq.com",
+  "open.bigmodel.cn",
+  "api.mistral.ai",
+  "api.x.ai",
+  "api.cohere.ai",
+  "api.endpoints.anyscale.com",
+  "api.fireworks.ai",
+  "api.novita.ai",
+  "api.perplexity.ai",
+  // local model servers — loopback, but allowlisted for the vision test
+  "localhost",
+  "127.0.0.1",
+])
+
+// Returns true if the IP literal is in a private / reserved range that must
+// not be reachable from the SSRF proxy.
+function isPrivateIp(ip: string): boolean {
+  // Normalize IPv6-mapped IPv4
+  const v4 = ip.startsWith("::ffff:") ? ip.slice(7) : ip
+
+  // IPv6 loopback / link-local / unique-local / unspecified
+  if (v4 === ip) {
+    // pure IPv4
+    if (net.isIPv4(v4)) {
+      const parts = v4.split(".").map((p) => parseInt(p, 10))
+      if (parts.length !== 4 || parts.some((n) => isNaN(n) || n < 0 || n > 255)) return true
+      const [a, b] = parts
+      if (a === 10) return true // 10.0.0.0/8
+      if (a === 127) return true // 127.0.0.0/8 loopback
+      if (a === 0) return true // 0.0.0.0/8 "this host"
+      if (a === 169 && b === 254) return true // 169.254.0.0/16 link-local (incl. AWS metadata)
+      if (a === 172 && b >= 16 && b <= 31) return true // 172.16.0.0/12
+      if (a === 192 && b === 168) return true // 192.168.0.0/16
+      if (a === 100 && b >= 64 && b <= 127) return true // 100.64.0.0/10 CGNAT
+      if (a === 192 && b === 0 && parts[2] === 0) return true // 192.0.0.0/24
+      if (a === 198 && (b === 18 || b === 19)) return true // 198.18.0.0/15 benchmark
+      if (a >= 224) return true // multicast (224.0.0.0/4) + reserved (240.0.0.0/4)
+      return false
+    }
+  }
+  // IPv6
+  const lower = v4.toLowerCase()
+  if (lower === "::1") return true // loopback
+  if (lower.startsWith("fe80")) return true // link-local
+  if (lower.startsWith("fc") || lower.startsWith("fd")) return true // unique-local fc00::/7
+  if (lower === "::") return true // unspecified
+  if (lower.startsWith("ff")) return true // multicast
+  return false
+}
+
+// Resolve a hostname via dns.lookup (returns all addresses) and check each.
+async function hostnameIsBlocked(hostname: string): Promise<boolean> {
+  // Literal IP?
+  if (net.isIP(hostname)) {
+    return isPrivateIp(hostname)
+  }
+  // Allowlisted DNS name (still subject to local-only loopback allowance above).
+  const lowerHost = hostname.toLowerCase()
+  if (LLM_HOST_ALLOWLIST.has(lowerHost)) {
+    return false
+  }
+  // Resolve and check
+  try {
+    const result = await dns.promises.lookup(hostname, { all: true })
+    if (result.length === 0) return true
+    for (const r of result) {
+      if (isPrivateIp(r.address)) return true
+    }
+    return false
+  } catch {
+    // Resolution failed — block to avoid an error-path bypass
+    return true
+  }
+}
+
+// Validate and normalize a base_url for the /api/test* SSRF proxy.
+// Throws on violation. Returns the validated URL string.
+async function validateTestBaseUrl(rawBaseUrl: string): Promise<string> {
+  if (!rawBaseUrl || typeof rawBaseUrl !== "string") {
+    throw new Error("base_url is required")
+  }
+  let parsed: URL
+  try {
+    parsed = new URL(rawBaseUrl)
+  } catch {
+    throw new Error("base_url is not a valid URL")
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error(`base_url protocol must be http or https (got ${parsed.protocol})`)
+  }
+  if (await hostnameIsBlocked(parsed.hostname)) {
+    throw new Error(
+      `base_url host "${parsed.hostname}" resolves to a private/loopback/link-local address; blocked by SSRF guard. To allow a known LLM provider, add it to LLM_HOST_ALLOWLIST in companion/src/settings-web.ts.`,
+    )
+  }
+  return parsed.toString()
 }
 
 // ---------------------------------------------------------------------------
@@ -63,21 +203,23 @@ function jsonResponse(res: http.ServerResponse, data: any, status = 200) {
 
 let activeServer: http.Server | null = null
 let activePort: number | null = null
+let sessionToken: string | null = null
 let lastAccessTime = Date.now()
 let autoCloseTimer: ReturnType<typeof setInterval> | null = null
 
-export async function startSettingsServer(preferredPort = 23402): Promise<number> {
-  if (activeServer && activePort) {
+export async function startSettingsServer(preferredPort = 23402): Promise<{ port: number; token: string }> {
+  if (activeServer && activePort && sessionToken) {
     lastAccessTime = Date.now()
-    return activePort
+    return { port: activePort, token: sessionToken }
   }
 
   const port = await findAvailablePort(preferredPort)
   lastAccessTime = Date.now()
+  const token = crypto.randomBytes(32).toString("hex")
 
   const server = http.createServer((req, res) => {
     lastAccessTime = Date.now()
-    handleRequest(req, res)
+    handleRequest(req, res, port, token)
   })
 
   await new Promise<void>((resolve, reject) => {
@@ -87,6 +229,7 @@ export async function startSettingsServer(preferredPort = 23402): Promise<number
 
   activeServer = server
   activePort = port
+  sessionToken = token
 
   autoCloseTimer = setInterval(() => {
     if (Date.now() - lastAccessTime > 5 * 60 * 1000) {
@@ -94,7 +237,7 @@ export async function startSettingsServer(preferredPort = 23402): Promise<number
     }
   }, 60 * 1000)
 
-  return port
+  return { port, token }
 }
 
 export function stopSettingsServer(): void {
@@ -106,6 +249,7 @@ export function stopSettingsServer(): void {
     activeServer.close()
     activeServer = null
     activePort = null
+    sessionToken = null
   }
 }
 
@@ -113,13 +257,67 @@ export function stopSettingsServer(): void {
 // Request handler
 // ---------------------------------------------------------------------------
 
-function handleRequest(req: http.IncomingMessage, res: http.ServerResponse) {
-  const url = (req.url || "/").split("?")[0]
+function parseQuery(qs: string): Map<string, string> {
+  const out = new Map<string, string>()
+  if (!qs) return out
+  for (const pair of qs.split("&")) {
+    if (!pair) continue
+    const eq = pair.indexOf("=")
+    const k = eq < 0 ? decodeURIComponent(pair) : decodeURIComponent(pair.slice(0, eq))
+    const v = eq < 0 ? "" : decodeURIComponent(pair.slice(eq + 1))
+    out.set(k, v)
+  }
+  return out
+}
 
-  // CORS preflight
+function tokenOk(req: http.IncomingMessage, expected: string): boolean {
+  const raw = req.url || ""
+  const qIdx = raw.indexOf("?")
+  if (qIdx < 0) return false
+  const query = parseQuery(raw.slice(qIdx + 1))
+  const provided = query.get("token")
+  if (!provided) return false
+  if (provided.length !== expected.length) return false
+  // constant-time compare
+  return crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(expected))
+}
+
+function hostOk(req: http.IncomingMessage, port: number): boolean {
+  const host = (req.headers.host || "").toLowerCase()
+  return host === `127.0.0.1:${port}` || host === `localhost:${port}` || host === `[::1]:${port}`
+}
+
+function originOk(req: http.IncomingMessage, port: number): boolean {
+  const origin = (req.headers.origin || "").toLowerCase()
+  if (!origin) return true // same-origin request — browsers omit Origin
+  return (
+    origin === `http://127.0.0.1:${port}` ||
+    origin === `http://localhost:${port}` ||
+    origin === `http://[::1]:${port}`
+  )
+}
+
+function handleRequest(req: http.IncomingMessage, res: http.ServerResponse, port: number, token: string) {
+  const raw = req.url || "/"
+  const pathOnly = raw.split("?")[0]
+
+  // Token gate — every request, including GET /, must carry the right token.
+  // The terminal-printed URL contains the token; a malicious page cannot guess it.
+  if (!tokenOk(req, token)) {
+    forbidden(res, "missing or invalid session token (open the settings URL printed by the CLI)")
+    return
+  }
+
+  // Host header check — defends against DNS-rebinding.
+  if (!hostOk(req, port)) {
+    forbidden(res, `unexpected Host header "${req.headers.host || ""}"`)
+    return
+  }
+
+  // CORS preflight (after token + host checks; only same-origin is allowed)
   if (req.method === "OPTIONS") {
     res.writeHead(204, {
-      "Access-Control-Allow-Origin": "http://127.0.0.1",
+      "Access-Control-Allow-Origin": `http://127.0.0.1:${port}`,
       "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
       "Access-Control-Allow-Headers": "Content-Type",
     })
@@ -128,18 +326,18 @@ function handleRequest(req: http.IncomingMessage, res: http.ServerResponse) {
   }
 
   try {
-    if (url === "/" || url === "/settings") {
+    if (pathOnly === "/" || pathOnly === "/settings") {
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" })
       res.end(SETTINGS_HTML)
       return
     }
 
-    if (url === "/api/health") {
+    if (pathOnly === "/api/health") {
       jsonResponse(res, { status: "ok", uptime: process.uptime() })
       return
     }
 
-    if (url === "/api/config" && req.method === "GET") {
+    if (pathOnly === "/api/config" && req.method === "GET") {
       const config = getConfig()
       const vision = config.vision
       jsonResponse(res, {
@@ -151,7 +349,12 @@ function handleRequest(req: http.IncomingMessage, res: http.ServerResponse) {
       return
     }
 
-    if (url === "/api/config" && req.method === "POST") {
+    if (pathOnly === "/api/config" && req.method === "POST") {
+      // CSRF: token-in-URL + Host check + Origin check
+      if (!originOk(req, port)) {
+        forbidden(res, `unexpected Origin header "${req.headers.origin || ""}"`)
+        return
+      }
       readBody(req, 10 * 1024)
         .then((body) => {
           if (res.writableEnded) return
@@ -190,80 +393,21 @@ function handleRequest(req: http.IncomingMessage, res: http.ServerResponse) {
       return
     }
 
-    if (url === "/api/test" && req.method === "POST") {
-      readBody(req, 10 * 1024)
-        .then(async (body) => {
-          if (res.writableEnded) return
-          const { base_url, api_key, model_name } = JSON.parse(body)
-          const config = getConfig()
-          // Use saved key if the provided one is masked or empty
-          const key = (!api_key || api_key.includes("*")) ? config.llm.api_key : api_key
-          if (!key) throw new Error("API Key is empty")
-
-          const response = await fetch(`${base_url}/chat/completions`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${key}`,
-            },
-            body: JSON.stringify({
-              model: model_name || "deepseek-chat",
-              messages: [{ role: "user", content: "Reply OK" }],
-              max_tokens: 5,
-            }),
-            signal: AbortSignal.timeout(10000),
-          })
-
-          if (response.ok) {
-            if (!res.writableEnded) jsonResponse(res, { ok: true, message: "Connection successful" })
-          } else {
-            const err = await response.text()
-            if (!res.writableEnded) {
-              jsonResponse(res, {
-                ok: false,
-                error: `API error (${response.status}): ${err.slice(0, 200)}`,
-              })
-            }
-          }
-        })
-        .catch((e: any) => {
-          if (!res.writableEnded) jsonResponse(res, { ok: false, error: `Connection failed: ${e.message}` })
-        })
+    if (pathOnly === "/api/test" && req.method === "POST") {
+      if (!originOk(req, port)) {
+        forbidden(res, `unexpected Origin header "${req.headers.origin || ""}"`)
+        return
+      }
+      handleTestProxy(req, res, "llm")
       return
     }
 
-    if (url === "/api/testVision" && req.method === "POST") {
-      readBody(req, 10 * 1024)
-        .then(async (body) => {
-          if (res.writableEnded) return
-          const { base_url, api_key, model_name } = JSON.parse(body)
-          const config = getConfig()
-          // Use saved key if the provided one is masked or empty
-          const key = (!api_key || api_key.includes("*")) ? (config.vision?.api_key || "") : api_key
-
-          // Test via OpenAI-compatible /models endpoint (works for Ollama, LM Studio, cloud APIs)
-          const modelsUrl = base_url.endsWith("/models")
-            ? base_url
-            : base_url.replace(/\/+$/, "") + "/models"
-
-          const response = await fetch(modelsUrl, {
-            method: "GET",
-            headers: key ? { Authorization: `Bearer ${key}` } : {},
-            signal: AbortSignal.timeout(10000),
-          })
-
-          if (response.ok) {
-            if (!res.writableEnded) jsonResponse(res, { ok: true, message: `Vision model connected (${model_name || "default"})` })
-          } else {
-            const err = await response.text()
-            if (!res.writableEnded) {
-              jsonResponse(res, { ok: false, error: `Vision server error (${response.status}): ${err.slice(0, 200)}` })
-            }
-          }
-        })
-        .catch((e: any) => {
-          if (!res.writableEnded) jsonResponse(res, { ok: false, error: `Vision server connection failed: ${e.message}` })
-        })
+    if (pathOnly === "/api/testVision" && req.method === "POST") {
+      if (!originOk(req, port)) {
+        forbidden(res, `unexpected Origin header "${req.headers.origin || ""}"`)
+        return
+      }
+      handleTestProxy(req, res, "vision")
       return
     }
 
@@ -271,6 +415,83 @@ function handleRequest(req: http.IncomingMessage, res: http.ServerResponse) {
     res.end("Not found")
   } catch (e: any) {
     jsonResponse(res, { error: e.message }, 500)
+  }
+}
+
+// Unified handler for /api/test and /api/testVision — enforces SSRF guard
+// and avoids reflecting the upstream response body (only status + short msg).
+async function handleTestProxy(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  kind: "llm" | "vision",
+): Promise<void> {
+  let parsed: any
+  try {
+    const body = await readBody(req, 10 * 1024)
+    parsed = JSON.parse(body)
+  } catch (e: any) {
+    jsonResponse(res, { ok: false, error: `Bad request: ${e.message}` })
+    return
+  }
+  if (res.writableEnded) return
+
+  const { base_url, api_key, model_name } = parsed
+  const config = getConfig()
+
+  let validatedBaseUrl: string
+  try {
+    validatedBaseUrl = await validateTestBaseUrl(base_url)
+  } catch (e: any) {
+    jsonResponse(res, { ok: false, error: e.message })
+    return
+  }
+  if (res.writableEnded) return
+
+  // Resolve the key against saved config if the user-submitted value is masked/empty.
+  const savedKey = kind === "vision" ? config.vision?.api_key || "" : config.llm.api_key
+  const key = (!api_key || (typeof api_key === "string" && api_key.includes("*"))) ? savedKey : api_key
+
+  try {
+    if (kind === "llm") {
+      if (!key) throw new Error("API Key is empty")
+      const url = `${validatedBaseUrl.replace(/\/+$/, "")}/chat/completions`
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${key}`,
+        },
+        body: JSON.stringify({
+          model: model_name || "deepseek-chat",
+          messages: [{ role: "user", content: "Reply OK" }],
+          max_tokens: 5,
+        }),
+        signal: AbortSignal.timeout(10000),
+      })
+      // Do NOT reflect upstream body — only status.
+      if (response.ok) {
+        jsonResponse(res, { ok: true, message: `success: ${response.status}` })
+      } else {
+        jsonResponse(res, { ok: false, error: `error: upstream returned ${response.status}` })
+      }
+    } else {
+      // vision — probe /models
+      const url = validatedBaseUrl.endsWith("/models")
+        ? validatedBaseUrl
+        : validatedBaseUrl.replace(/\/+$/, "") + "/models"
+      const response = await fetch(url, {
+        method: "GET",
+        headers: key ? { Authorization: `Bearer ${key}` } : {},
+        signal: AbortSignal.timeout(10000),
+      })
+      if (response.ok) {
+        jsonResponse(res, { ok: true, message: `success: ${response.status} (${model_name || "default"})` })
+      } else {
+        jsonResponse(res, { ok: false, error: `error: upstream returned ${response.status}` })
+      }
+    }
+  } catch (e: any) {
+    jsonResponse(res, { ok: false, error: `Connection failed: ${e.message}` })
   }
 }
 
@@ -465,6 +686,10 @@ input:focus{border-color:#4A90D9}
 
 <script>
 (function(){
+  // The page was loaded with ?token=<hex> in the URL. Reuse it for every fetch.
+  var token=(location.search.match(/[?&]token=([^&]+)/)||[])[1]||"";
+  function url(path){return path+(path.indexOf("?")>=0?"&":"?")+"token="+encodeURIComponent(token)}
+
   var $=function(id){return document.getElementById(id)};
   var apiKeyEl=$("apiKey"),baseUrlEl=$("baseUrl"),modelNameEl=$("modelName"),
       tempEl=$("temperature"),tempValEl=$("tempVal"),ctxWinEl=$("contextWindow"),
@@ -484,7 +709,7 @@ input:focus{border-color:#4A90D9}
   visionEnabledEl.onchange=toggleVisionFields;
 
   function load(){
-    fetch("/api/config").then(function(r){return r.json()}).then(function(d){
+    fetch(url("/api/config")).then(function(r){return r.json()}).then(function(d){
       var llm=d.llm||{};
       apiKeyEl.value=llm.api_key||"";
       baseUrlEl.value=llm.base_url||"";
@@ -539,7 +764,7 @@ input:focus{border-color:#4A90D9}
 
   $("saveBtn").onclick=function(){
     resultEl.className="result";
-    fetch("/api/config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(collect())})
+    fetch(url("/api/config"),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(collect())})
     .then(function(r){return r.json()}).then(function(d){
       if(d.ok){
         savedFlash.classList.add("show");
@@ -556,7 +781,7 @@ input:focus{border-color:#4A90D9}
     resultEl.className="result";
     $("testBtn").textContent="Testing...";
     $("testBtn").disabled=true;
-    fetch("/api/test",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data.llm)})
+    fetch(url("/api/test"),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data.llm)})
     .then(function(r){return r.json()}).then(function(d){
       showResult(d.ok?d.message:d.error,d.ok);
       $("testBtn").textContent="Test Connection";
@@ -590,7 +815,7 @@ input:focus{border-color:#4A90D9}
     visionResultEl.className="result";
     $("testVisionBtn").textContent="Testing...";
     $("testVisionBtn").disabled=true;
-    fetch("/api/testVision",{
+    fetch(url("/api/testVision"),{
       method:"POST",
       headers:{"Content-Type":"application/json"},
       body:JSON.stringify({base_url:visionBaseUrlEl.value,api_key:visionApiKeyEl.value,model_name:visionModelEl.value})

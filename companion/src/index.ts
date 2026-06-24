@@ -16,7 +16,7 @@ import {
   setupGracefulShutdown,
 } from "./daemon"
 import { startMenuBarAgent } from "./menu-bar-agent"
-import { runInteractiveSettings, runNonInteractiveSettings } from "./settings-cli"
+import { runInteractiveSettings, runNonInteractiveSettings, runNonInteractiveSettingsCli } from "./settings-cli"
 import { getPlatform } from "./platform"
 import * as fs from "fs"
 import * as path from "path"
@@ -325,17 +325,18 @@ async function main() {
     }
 
     case "settings": {
-      const setFlags = process.argv.slice(3).filter((a) => a.startsWith("--set="))
-      if (setFlags.length > 0) {
-        const pairs = setFlags.map((f) => f.slice(6))
-        runNonInteractiveSettings(pairs)
+      const cliArgs = process.argv.slice(3)
+      const setFlags = cliArgs.filter((a) => a.startsWith("--set="))
+      const hasSetStdin = cliArgs.includes("--set-stdin")
+      if (setFlags.length > 0 || hasSetStdin) {
+        await runNonInteractiveSettingsCli(cliArgs)
         process.exit(0)
       }
       // Interactive mode -> Web settings page
       try {
         const { startSettingsServer } = await import("./settings-web")
-        const port = await startSettingsServer()
-        const url = `http://127.0.0.1:${port}/settings`
+        const { port, token } = await startSettingsServer()
+        const url = `http://127.0.0.1:${port}/settings?token=${token}`
         const platform = getPlatform()
         if (platform === "darwin") {
           child_process.execSync(`open "${url}"`, { stdio: "ignore" })
