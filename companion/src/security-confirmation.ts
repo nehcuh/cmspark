@@ -15,6 +15,13 @@ export interface SecurityConfirmationDetails {
   riskLevel?: 'low' | 'medium' | 'high'
   autoConfirmEligible?: boolean
   defenseLayer?: number
+  /**
+   * Domains the user might want to add to auto_approved_domains if they approve.
+   * Surfaced in the confirmation dialog as an "add to whitelist" option. Empty
+   * when companion can't determine the acting domain (e.g. evaluate with unknown
+   * tabId) — in that case the dialog just hides the whitelist option.
+   */
+  relevantDomains?: string[]
 }
 
 export interface SecurityConfirmationDecision {
@@ -39,6 +46,15 @@ interface PendingConfirmation {
   timer: NodeJS.Timeout
   send: (data: any) => void
   originWs?: WebSocket
+  /**
+   * Domains presented to the user as candidates for "add to whitelist" in this
+   * confirmation's dialog. Tracked server-side so the response handler can
+   * validate that any add_to_whitelist pattern returned by the client actually
+   * corresponds to a domain the user was shown — prevents a compromised client
+   * (or any loopback WS peer) from injecting arbitrary patterns like "*" or
+   * "*.com" via a crafted response payload.
+   */
+  relevantDomains: string[]
 }
 
 function codePreview(code: string): string {
@@ -66,7 +82,15 @@ export class SecurityConfirmationManager {
         resolve({ confirmationId, approved: false, reason: "timeout" })
       }, this.timeoutMs)
 
-      this.pending.set(confirmationId, { resolve, timer, send, originWs: options?.originWs })
+      this.pending.set(confirmationId, {
+        resolve,
+        timer,
+        send,
+        originWs: options?.originWs,
+        relevantDomains: Array.isArray(details.relevantDomains)
+          ? details.relevantDomains.filter((d): d is string => typeof d === "string" && d.length > 0)
+          : [],
+      })
 
       send({
         type: "security.confirmation.request",
@@ -81,8 +105,20 @@ export class SecurityConfirmationManager {
         risk_level: details.riskLevel,
         auto_confirm_eligible: details.autoConfirmEligible,
         defense_layer: details.defenseLayer,
+        relevant_domains: details.relevantDomains,
       })
     })
+  }
+
+  /**
+   * Return the relevant_domains originally presented in the confirmation dialog
+   * for `confirmationId`. Used by the response handler to validate that any
+   * add_to_whitelist patterns in the inbound response actually match a domain
+   * the user was shown. Returns undefined when the confirmation no longer
+   * exists (already resolved, expired, or unknown id).
+   */
+  getRelevantDomains(confirmationId: string): string[] | undefined {
+    return this.pending.get(confirmationId)?.relevantDomains
   }
 
   /**

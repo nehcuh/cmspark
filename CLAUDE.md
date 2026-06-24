@@ -71,7 +71,17 @@ Chrome Extension (Plasmo + React)  ←→  WebSocket (ws://127.0.0.1:23401)  ←
 - **A1. 双层拓扑**：Extension 只做浏览器操作，LLM 推理和状态管理在 Companion
 - **A2. 通信协议**：WebSocket + OpenAI-compatible streaming，异步 tool 回路 (Promise bridge)
 - **A3. 数据目录**：~/.cmspark-agent/ 统一管理配置、技能、线程、历史
-- **A4. 安全**：双层安全架构（实际生效）— ① 信任域通配符门控 cookie 工具 (get_cookies/set_cookie/list_all_cookies 要求 domain 在 trusted_domains)；② `evaluate`/`osascript_eval` 通过 `checkHighRiskExecution` 正则黑名单 + `SecurityConfirmationManager` 交互确认队列阻断。配合 `security-policy.ts`（token 颁发 + HMAC 服务端校验，constant-time）、`security-confirmation.ts`（45s 超时的 Promise-based 确认队列）、`page-sanitizer`（extension 端 ~11 模式 prompt-injection 过滤）、错误三级分类、越狱检测。注：原设计的 risk-engine / privilege-manager / page-scanner 三层在 2026-06-16 审计后删除（dead code，runtime 零调用）；M2 roadmap 计划把 evaluate 改为 default-deny（item 2）+ 新增 navigate 信任门（item 12），届时 A4 会再次更新。
+- **A4. 安全**：双层安全架构（实际生效）—
+  - ① **Cookie 信任域**：`trusted_domains` 通配符门控 cookie 工具（`get_cookies`/`set_cookie`/`delete_cookie`/`list_all_cookies`）。
+  - ② **`evaluate`/`osascript_eval` 默认阻断**：所有调用强制走 `SecurityConfirmationManager` 交互确认；`checkHighRiskExecution` 正则黑名单（~57 模式）仅作为风险预览升级提示，不再 gate WHETHER to confirm。
+  - ③ **`navigate`/`create_tab`/`set_tab_url` URL 门**：非 http(s) scheme 直接阻断；hostname 不在 `trusted_domains` ∪ `auto_approved_domains` 时强制确认。
+  - ④ **域白名单 + 全局自动批准**（2026-06-24 新增，详见 [ADR-007](docs/adr/007-domain-whitelist-auto-approve.md)）：
+    - `auto_approved_domains: string[]` — 独立于 `trusted_domains`，专管工具执行确认的跳过（evaluate/navigate 等），支持 `*` / 精确 / `*.suffix` 通配符。
+    - `security.auto_approve_dangerous: boolean`（默认 false）— 全局 kill-switch，跳过所有危险工具确认；仅供无人值守工作流。
+    - 确认弹窗支持「添加到白名单」单选（精确 / `*.domain` 通配符），由 extension 端构造 pattern；companion 端**强制校验** add_to_whitelist 必须等于 `relevant_domains[0]` 或其通配形式，防止 WS 注入。
+  - ⑤ **关键实现要点**：`osascript_eval` 因属宿主执行（任意 shell）**不走域白名单**，只能由全局开关放行；`tabUrlCache` 在 `list_tabs`/`navigate`/`set_tab_url`/`create_tab` 后同步刷新，避免跨域自动批准；`respondFrom` 必须先于 `saveConfig` 完成，且白名单持久化以 `responded === true` 为前提。
+  - 配合 `security-policy.ts`（token 颁发 + HMAC 服务端校验，constant-time）、`security-confirmation.ts`（45s 超时的 Promise-based 确认队列 + origin 绑定）、`page-sanitizer`（extension 端 ~11 模式 prompt-injection 过滤）、错误三级分类、越狱检测。
+  - 注：原设计的 risk-engine / privilege-manager / page-scanner 三层在 2026-06-16 审计后删除（dead code，runtime 零调用）。
 - **A5. Skill 格式**：Markdown + YAML frontmatter，支持内置技能、Skill Crafting、TF-IDF + 语义匹配
 
 ## Common Issues

@@ -3,24 +3,48 @@
 import { getConfig } from "./config"
 
 /**
- * Check if a domain is in the trusted domain list.
- * Supports wildcards: *.company.com matches hr.company.com, finance.company.com
+ * Match a hostname against a list of patterns.
+ * Supported patterns:
+ *   - "*"            matches any hostname (global wildcard)
+ *   - "example.com"  exact match (apex or bare hostname)
+ *   - "*.example.com" matches any subdomain of example.com, plus the bare apex
+ *                    (so "*.company.com" matches "hr.company.com" AND "company.com")
+ *
+ * Extracted from isTrustedDomain so auto_approved_domains and trusted_domains
+ * share identical semantics.
  */
-export function isTrustedDomain(domain: string): boolean {
-  const config = getConfig()
-  const trusted = config.trusted_domains
-
-  if (trusted.length === 0) return false
-
-  return trusted.some(pattern => {
-    if (pattern === "*") return true
-    if (pattern === domain) return true
-    if (pattern.startsWith("*.")) {
-      const suffix = pattern.slice(1) // ".company.com"
-      return domain.endsWith(suffix) || domain === pattern.slice(2)
+export function matchDomain(patterns: string[], domain: string): boolean {
+  if (!patterns || patterns.length === 0) return false
+  const host = String(domain || "").toLowerCase()
+  if (!host) return false
+  return patterns.some(pattern => {
+    const p = String(pattern || "").toLowerCase()
+    if (!p) return false
+    if (p === "*") return true
+    if (p === host) return true
+    if (p.startsWith("*.")) {
+      const suffix = p.slice(1) // ".example.com"
+      return host.endsWith(suffix) || host === p.slice(2)
     }
     return false
   })
+}
+
+/**
+ * Check if a domain is in the trusted_domains list (gates cookie tools).
+ * Supports wildcards: *.company.com matches hr.company.com, finance.company.com
+ */
+export function isTrustedDomain(domain: string): boolean {
+  return matchDomain(getConfig().trusted_domains, domain)
+}
+
+/**
+ * Check if a domain is in the auto_approved_domains list (skips tool-call
+ * confirmations for evaluate/navigate/etc.). Same matcher as isTrustedDomain
+ * but reads from a separate config field so the two gates don't bleed together.
+ */
+export function isAutoApprovedDomain(domain: string): boolean {
+  return matchDomain(getConfig().auto_approved_domains, domain)
 }
 
 /** Weight mapping for dangerous APIs (higher = more dangerous). */

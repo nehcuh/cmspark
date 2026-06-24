@@ -126,6 +126,15 @@ function SecurityConfirmationDialog() {
   const { state, dispatch } = useAgentStore()
   const request = state.pendingSecurityConfirmations[0]
 
+  const relevantDomain = request?.relevant_domains?.[0]
+  const [whitelistMode, setWhitelistMode] = useState<"none" | "exact" | "wildcard">("none")
+
+  // Reset selection whenever the active confirmation changes — otherwise the
+  // radio from a previous prompt would bleed into the next one.
+  useEffect(() => {
+    setWhitelistMode("none")
+  }, [request?.confirmation_id])
+
   if (!request) return null
 
   const riskLevel = request.risk_level || "high"
@@ -133,11 +142,16 @@ function SecurityConfirmationDialog() {
   const riskLabel = riskLevel === "low" ? "低风险" : riskLevel === "medium" ? "中风险" : "高风险"
 
   const decide = (approved: boolean, stopThread = false) => {
+    const addToWhitelist: string[] = []
+    if (approved && relevantDomain && whitelistMode !== "none") {
+      addToWhitelist.push(whitelistMode === "wildcard" ? `*.${relevantDomain}` : relevantDomain)
+    }
     chrome.runtime.sendMessage({
       type: "security.confirmation.response",
       confirmation_id: request.confirmation_id,
       approved,
       stop_thread: stopThread,
+      add_to_whitelist: addToWhitelist,
     })
     dispatch({ type: "REMOVE_SECURITY_CONFIRMATION", confirmationId: request.confirmation_id })
     if (stopThread) {
@@ -155,7 +169,7 @@ function SecurityConfirmationDialog() {
         risk_level: riskLevel,
         risk_score: request.risk_score || 0,
         defense_layer: request.defense_layer,
-        message: `${approved ? "允许" : "拒绝"}执行 ${request.tool_name}`,
+        message: `${approved ? "允许" : "拒绝"}执行 ${request.tool_name}${addToWhitelist.length ? `（加入白名单：${addToWhitelist.join(", ")}）` : ""}`,
       },
     })
   }
@@ -182,6 +196,38 @@ function SecurityConfirmationDialog() {
         <div style={styles.securityCode}>
           <HighlightedCode code={request.code_preview || "(无代码预览)"} />
         </div>
+        {relevantDomain && (
+          <div style={styles.whitelistSection}>
+            <div style={styles.whitelistLabel}>添加到自动批准白名单（避免下次再问）：</div>
+            <label style={styles.whitelistOption}>
+              <input
+                type="radio"
+                name={`wl-${request.confirmation_id}`}
+                checked={whitelistMode === "none"}
+                onChange={() => setWhitelistMode("none")}
+              />
+              <span>不添加</span>
+            </label>
+            <label style={styles.whitelistOption}>
+              <input
+                type="radio"
+                name={`wl-${request.confirmation_id}`}
+                checked={whitelistMode === "exact"}
+                onChange={() => setWhitelistMode("exact")}
+              />
+              <span>添加 <code style={styles.whitelistCode}>{relevantDomain}</code>（仅此主机名）</span>
+            </label>
+            <label style={styles.whitelistOption}>
+              <input
+                type="radio"
+                name={`wl-${request.confirmation_id}`}
+                checked={whitelistMode === "wildcard"}
+                onChange={() => setWhitelistMode("wildcard")}
+              />
+              <span>添加 <code style={styles.whitelistCode}>*.{relevantDomain}</code>（含所有子域名）</span>
+            </label>
+          </div>
+        )}
         {state.pendingSecurityConfirmations.length > 1 && (
           <div style={styles.securityQueueHint}>
             还有 {state.pendingSecurityConfirmations.length - 1} 个确认请求在等待。
@@ -850,6 +896,39 @@ const styles: Record<string, React.CSSProperties> = {
     color: "#888",
     fontSize: 11,
     fontStyle: "italic",
+  },
+  whitelistSection: {
+    marginTop: 10,
+    padding: 10,
+    background: "#F5FBFF",
+    border: "1px solid #CFE6F7",
+    borderRadius: 6,
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+  },
+  whitelistLabel: {
+    fontSize: 12,
+    fontWeight: 600,
+    color: "#2C5D8F",
+    marginBottom: 2,
+  },
+  whitelistOption: {
+    display: "flex",
+    alignItems: "flex-start",
+    gap: 6,
+    fontSize: 12,
+    color: "#333",
+    cursor: "pointer",
+    lineHeight: 1.4,
+  },
+  whitelistCode: {
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+    background: "#EAF4FB",
+    padding: "1px 4px",
+    borderRadius: 3,
+    fontSize: 11,
+    color: "#1976D2",
   },
   securityActions: {
     display: "flex",

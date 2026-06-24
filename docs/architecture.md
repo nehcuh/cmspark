@@ -63,7 +63,8 @@
     │  │  │  └──────────────────────┘  │  │ │
     │  │  │  ┌──────────────────────┐  │  │ │
     │  │  │  │   Security Engine    │  │  │ │
-    │  │  │  │   (风险引擎/特权/确认) │  │  │ │
+    │  │  │  │   (确认队列/信任域/   │  │  │ │
+    │  │  │  │    域白名单/HMAC token)│  │  │ │
     │  │  │  └──────────────────────┘  │  │ │
     │  │  │  ┌──────────────────────┐  │  │ │
     │  │  │  │   History Store      │  │  │ │
@@ -120,7 +121,8 @@
 ├── thread.select/fork             → 线程切换与分支
 ├── thread.update                  → 线程元数据更新（pinned_tabs, alias 等）
 ├── history.query/export  → 操作历史查询与导出
-├── security.confirmation.response → 安全确认响应
+├── security.confirmation.request  ← 高危操作确认请求（companion → extension，含 relevant_domains）
+├── security.confirmation.response → 确认响应 + 可选 add_to_whitelist（仅允许 relevant_domains 的精确或 *.domain）
 └── system.ping/pong     → 心跳保活
 ```
 
@@ -163,6 +165,57 @@ Side Panel (React) ──WS──▶ Companion (Core Engine)
                               │
                               └─ done → History Store 批量写入 → UI 完成
 ```
+
+### 1.5 安全架构
+
+CMspark 的安全模型是**单层、默认拒绝、human-in-the-loop** 的——2026-06-16 审计后删除了原设计的 risk-engine / privilege-manager / page-scanner 三层（dead code，见 [ADR-006](adr/006-layered-defense.md)），改为以下 5 个互相独立的门：
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                    Tool Executor (companion/src/server.ts)          │
+└─────────────────────────────────────────────────────────────────────┘
+   │
+   ├─① Cookie 信任域门 ──────────────────────────────────────────────┐
+   │   get_cookies / set_cookie / delete_cookie / list_all_cookies    │
+   │   必须满足 isTrustedDomain(domain) — 读 config.trusted_domains   │
+   │                                                                  │
+   ├─② evaluate / osascript_eval 默认阻断门 ─────────────────────────┤
+   │   所有调用强制走 SecurityConfirmationManager（45s 超时）         │
+   │   - checkHighRiskExecution ~57 正则 → 风险预览升级提示（不 gate）│
+   │   - security-policy.issueToken → HMAC + constant-time 校验       │
+   │   - osascript_eval 因属宿主执行（任意 shell）                    │
+   │     【不走域白名单】，只能由全局开关放行                          │
+   │                                                                  │
+   ├─③ navigate / create_tab / set_tab_url URL 门 ───────────────────┤
+   │   非 http(s) scheme 直接阻断                                     │
+   │   hostname 不在 trusted_domains ∪ auto_approved_domains → 确认   │
+   │                                                                  │
+   ├─④ 域白名单 + 全局自动批准 ──────────────────────────────────────┤
+   │   auto_approved_domains: string[]  独立字段（≠ trusted_domains） │
+   │     支持 * / 精确 / *.suffix 通配符（matchDomain 共享实现）      │
+   │   security.auto_approve_dangerous: boolean  默认 false           │
+   │     全局 kill-switch，绕过所有确认（仅供无人值守工作流）         │
+   │                                                                  │
+   └─⑤ 弹窗「添加到白名单」回路 ─────────────────────────────────────┘
+       confirmation 携带 relevant_domains → 弹窗显示「精确 / *.domain」单选
+       响应里的 add_to_whitelist 必须等于 relevant_domains[0] 或 *.prefix
+       （服务端强制校验，防 WS 注入），且仅在 respondFrom 成功后持久化
+```
+
+**关键不变量**（implementation invariants，详见 [ADR-007](adr/007-domain-whitelist-auto-approve.md)）：
+
+- `tabUrlCache` 在 `list_tabs` / `navigate` / `set_tab_url` / `create_tab` 后同步刷新——避免跨域自动批准
+- `respondFrom` 必须先于 `saveConfig` 完成，且白名单持久化以 `responded === true` 为前提——防非权威响应污染
+- `tabId` 在 tool executor 入口规范化为 number——防字符串 tabId 让 cache 更新静默跳过
+
+**Extension 侧补充**：`page-sanitizer` 在内容进入 LLM context 前做 ~11 模式 prompt-injection 过滤；`security-token.ts` 管理 evaluate 调用的 HMAC token 颁发。
+
+**残留风险**（已记录，待后续迭代）：
+
+- Page-initiated 导航（`window.location`）需要 extension 端订阅 `chrome.tabs.onUpdated` 才能感知
+- 多 label TLD 通配符（`*.co.uk`）启发式漏检，需完整 PSL 才能闭环
+
+**关联 ADR**：[ADR-005](adr/005-cookie-trust-domain-security.md)（cookie 信任域）、[ADR-006](adr/006-layered-defense.md)（原设计 → 删除路径）、[ADR-007](adr/007-domain-whitelist-auto-approve.md)（域白名单 + 自动批准）。
 
 ---
 
@@ -358,7 +411,7 @@ cmsspark/
 │   │   │   ├── hooks/
 │   │   │   │   └── useWebSocket.ts  # WS 连接管理
 │   │   │   ├── store/
-│   │   │   │   └── agentStore.tsx   # 全局状态 (Zustand)
+│   │   │   │   └── agentStore.tsx   # 全局状态 (useReducer + Context)
 │   │   │   └── types.ts            # 类型定义
 │   │   ├── background/
 │   │   │   ├── index.ts             # Service Worker 入口
@@ -388,7 +441,7 @@ cmsspark/
 │   │   ├── llm/
 │   │   │   └── adapter.ts           # LLM 适配器（OpenAI SDK + streaming + tool calling）
 │   │   ├── bridge/
-│   │   │   ├── tool-definitions.ts  # 26 种工具 schema 定义
+│   │   │   ├── tool-definitions.ts  # 30+ 种工具 schema 定义
 │   │   │   └── tab-resolver.ts      # 标签页解析
 │   │   ├── skills/
 │   │   │   ├── skill-engine.ts      # Skill 加载/匹配/注入
@@ -400,13 +453,10 @@ cmsspark/
 │   │   │   └── thread-manager.ts    # 线程 CRUD + context 构建
 │   │   ├── history/
 │   │   │   └── store.ts             # sql.js 操作历史
-│   │   ├── security.ts              # 基础危险 API 检测
-│   │   ├── security-policy.ts       # 令牌安全策略
-│   │   ├── security-confirmation.ts # 安全确认管理
-│   │   ├── security/
-│   │   │   ├── risk-engine.ts       # 风险评分引擎
-│   │   │   ├── privilege-manager.ts # 三级特权模式
-│   │   │   └── page-scanner.ts      # 页面安全扫描
+│   │   ├── security.ts              # 危险 API 检测 + 域名匹配 (matchDomain/isTrustedDomain/isAutoApprovedDomain)
+│   │   ├── security-policy.ts       # 令牌安全策略 (HMAC + constant-time)
+│   │   ├── security-confirmation.ts # 安全确认队列 (45s 超时 + origin 绑定 + relevantDomains 跟踪)
+│   │   ├── security/                # (历史: risk-engine/privilege-manager/page-scanner 三层在 2026-06-16 审计后删除 — 见 ADR-006 演进说明)
 │   │   ├── tray/                    # 系统托盘
 │   │   │   ├── tray-adapter.ts      # 统一托盘接口
 │   │   │   ├── swift-tray-bridge.ts # macOS Swift NSStatusBar

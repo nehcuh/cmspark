@@ -43,11 +43,13 @@ before(async () => {
       context_window: 128000,
     },
     trusted_domains: [],
+    auto_approved_domains: [],
     history_retention_days: 30,
     security: {
       safety_skills_enabled: [],
       auto_confirm_same_thread: false,
       confirmation_timeout_seconds: 45,
+      auto_approve_dangerous: false,
     },
   })
 })
@@ -308,11 +310,13 @@ describe("settings-cli", { concurrency: 1 }, () => {
     port: 23401,
     llm: { ...getConfig().llm, api_key: "sk-baseline-1234567890" },
     trusted_domains: [],
+    auto_approved_domains: [],
     history_retention_days: 30,
     security: {
       safety_skills_enabled: [],
       auto_confirm_same_thread: false,
       confirmation_timeout_seconds: 45,
+      auto_approve_dangerous: false,
     },
   })
 

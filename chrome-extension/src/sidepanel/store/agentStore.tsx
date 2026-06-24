@@ -94,6 +94,8 @@ export const initialState: AgentState = {
     trusted_domains: [],
     privilege_mode: "standard",
     safety_skills_enabled: [],
+    auto_approved_domains: [],
+    auto_approve_dangerous: false,
     vision_enabled: false,
     vision_api_key: "",
     vision_base_url: "http://localhost:11434/v1",

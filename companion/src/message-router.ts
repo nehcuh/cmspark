@@ -79,7 +79,18 @@ export async function handleMessage(
       }
       if (cfg.port) normalized.port = cfg.port
       if (Array.isArray(cfg.trusted_domains)) normalized.trusted_domains = cfg.trusted_domains
+      if (Array.isArray(cfg.auto_approved_domains)) normalized.auto_approved_domains = cfg.auto_approved_domains
       if (cfg.history_retention_days) normalized.history_retention_days = cfg.history_retention_days
+      // Security config: normalize flat security_* fields into nested security object
+      if (cfg.security && typeof cfg.security === "object") {
+        normalized.security = { ...cfg.security }
+      } else if (cfg.auto_approve_dangerous !== undefined) {
+        const current = getConfig()
+        normalized.security = {
+          ...(current.security || {}),
+          auto_approve_dangerous: !!cfg.auto_approve_dangerous,
+        }
+      }
       // Vision config: normalize flat vision_* fields into nested vision object
       if (cfg.vision) {
         normalized.vision = { ...cfg.vision }
