@@ -289,7 +289,15 @@ async function startCompanion(): Promise<void> {
     const { execPath, args } = getSelfSpawnArgs(["daemon", "start", "--daemonize"])
     const proc = child_process.spawn(execPath, args, { detached: true, stdio: "ignore", windowsHide: true })
     proc.unref()
-    setTimeout(() => pollCompanionStatus(), 1500)
+    // The daemonized daemon is a two-hop spawn (parent → grandchild) that still has to
+    // load the bundle, acquire the UDS lock, init the data dir, and bind port 23401 —
+    // easily 2-4s in the packaged .app. A single 1.5s re-poll usually lands while the
+    // PID file is written but the port isn't bound yet (processRunning && !wsReachable
+    // → "stopped"), so the tray flashes "已停止" until the next 10s poll. Burst-poll so
+    // it flips to "运行中" as soon as the server is actually up.
+    for (const delay of [1000, 2500, 4500, 7000]) {
+      setTimeout(() => pollCompanionStatus().catch(() => {}), delay)
+    }
   } catch (err: any) {
     safeNotify({ title: "CMspark Agent", message: `启动失败 ❌: ${err.message}`, timeout: 5 })
   }
@@ -391,27 +399,37 @@ function openLogsDir(): void {
 async function openSettingsUI(): Promise<void> {
   try {
     const { startSettingsServer } = require("./settings-web") as typeof import("./settings-web")
-    const port = await startSettingsServer()
-    const url = `http://127.0.0.1:${port}/settings`
+    // startSettingsServer() returns { port, token } — the token is REQUIRED on every
+    // request (loopback CSRF defense). Treating the return as a bare port produced a
+    // malformed `http://127.0.0.1:[object Object]/settings` URL with no token, which
+    // failed to open and fell through to the fallback below.
+    const { port, token } = await startSettingsServer()
+    const url = `http://127.0.0.1:${port}/settings?token=${token}`
     const platform = getPlatform()
 
+    // Open detached + unref'd so a slow/hung `open` can never block this tray
+    // process's event loop (which would freeze status polling).
     if (platform === "darwin") {
-      child_process.execSync(`open "${url}"`, { stdio: "ignore" })
+      child_process.spawn("open", [url], { detached: true, stdio: "ignore" }).unref()
     } else if (platform === "linux") {
-      child_process.execSync(`xdg-open "${url}"`, { stdio: "ignore" })
+      child_process.spawn("xdg-open", [url], { detached: true, stdio: "ignore" }).unref()
     } else if (platform === "win32") {
       // Use "start" command — explorer.exe may treat the URL as a file path and open
       // File Explorer instead of the browser.
-      child_process.execSync(`cmd /c start "" "${url}"`, { stdio: "ignore" })
+      child_process.spawn("cmd", ["/c", "start", "", url], { detached: true, stdio: "ignore", shell: true }).unref()
     }
 
     safeNotify({ title: "CMspark Agent", message: `Settings page opened in browser`, timeout: 3 })
   } catch (err: any) {
-    // Fallback to CLI settings if web server fails
+    // Fallback: spawn a DETACHED settings process. NEVER use execFileSync here — the
+    // `settings` command is a long-running server (it awaits forever), so a synchronous
+    // call blocks this tray process's event loop for its full timeout, freezing status
+    // polling and leaving the tray stuck on a stale "已停止" while companion runs fine.
     try {
       const { getSelfSpawnArgs } = require("./paths")
       const { execPath, args } = getSelfSpawnArgs(["settings"])
-      child_process.execFileSync(execPath, args, { stdio: "inherit", timeout: 300000 })
+      child_process.spawn(execPath, args, { detached: true, stdio: "ignore", windowsHide: true }).unref()
+      safeNotify({ title: "CMspark Agent", message: `Settings page opened in browser`, timeout: 3 })
     } catch {
       safeNotify({ title: "CMspark Agent", message: `Failed to open settings: ${err.message}`, timeout: 5 })
     }
