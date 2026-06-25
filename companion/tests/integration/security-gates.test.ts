@@ -19,9 +19,10 @@ import {
   applyConnectionCloseGracePeriod,
   pendingToolCalls,
   securityConfirmations,
+  handleSecurityConfirmationResponse,
 } from "../../src/server.js"
 import { detectDangerousApis } from "../../src/security.js"
-import { saveConfig } from "../../src/config.js"
+import { saveConfig, getConfig } from "../../src/config.js"
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-secg-"))
 
@@ -47,7 +48,7 @@ beforeEach(async () => {
     pendingToolCalls.delete(id)
   }
   securityConfirmations.rejectAll("disconnect")
-  saveConfig({ trusted_domains: ["trusted.example.com", "*.company.com"] })
+  saveConfig({ trusted_domains: ["trusted.example.com", "*.company.com"], auto_approved_domains: [] })
 
   await new Promise<void>((resolve) => {
     wss = new WebSocketServer({ port: 0, host: "127.0.0.1" }, () => resolve())
@@ -329,4 +330,91 @@ test("item 12: create_tab uses the same gate", async () => {
   assert.equal(result.success, false)
   assert.ok(result.error)
   assert.match(result.error!, /scheme is not allowed/i)
+})
+
+// =============================================================================
+// Whitelist forwarding: add_to_whitelist persisted into auto_approved_domains.
+// Regression for the bug where background/index.ts DROPPED the add_to_whitelist
+// field when forwarding security.confirmation.response, making "add to
+// whitelist" a silent no-op (config never updated → same domain re-prompted
+// forever, UI whitelist stayed empty).
+// =============================================================================
+
+test("whitelist: add_to_whitelist pattern is persisted into auto_approved_domains", async () => {
+  const executeTool = createToolExecutor(serverSideWs)
+  const confirmationPromise = expectClientMessage("security.confirmation.request")
+  const resultPromise = executeTool("tc_wl_add", "navigate", {
+    tabId: 1,
+    url: "https://attacker.example.com/phish",
+  })
+
+  const confirmation = await confirmationPromise
+  assert.deepEqual(confirmation.relevant_domains, ["attacker.example.com"])
+
+  // Mimic the (now-fixed) extension forward: client replies WITH add_to_whitelist.
+  await handleSecurityConfirmationResponse(serverSideWs, {
+    type: "security.confirmation.response",
+    confirmation_id: confirmation.confirmation_id,
+    approved: true,
+    add_to_whitelist: ["*.attacker.example.com"],
+  })
+
+  assert.ok(
+    getConfig().auto_approved_domains.includes("*.attacker.example.com"),
+    `expected *.attacker.example.com persisted; got ${JSON.stringify(getConfig().auto_approved_domains)}`,
+  )
+
+  // Drain: the approved navigate proceeds and sends tool.execute to the client.
+  await expectClientMessage("tool.execute")
+  clientSideWs.send(JSON.stringify({ type: "tool.result", tool_call_id: "tc_wl_add", result: { success: true } }))
+  const result = await resultPromise
+  assert.equal(result.success, true)
+})
+
+test("whitelist: response WITHOUT add_to_whitelist does NOT persist (regression: field was dropped)", async () => {
+  const executeTool = createToolExecutor(serverSideWs)
+  const confirmationPromise = expectClientMessage("security.confirmation.request")
+  const resultPromise = executeTool("tc_wl_drop", "navigate", {
+    tabId: 1,
+    url: "https://attacker.example.com/x",
+  })
+  const confirmation = await confirmationPromise
+
+  // Simulate the pre-fix background forward: add_to_whitelist omitted entirely.
+  await handleSecurityConfirmationResponse(serverSideWs, {
+    type: "security.confirmation.response",
+    confirmation_id: confirmation.confirmation_id,
+    approved: true,
+  })
+  assert.equal(getConfig().auto_approved_domains.length, 0, "missing field must not persist anything")
+
+  await expectClientMessage("tool.execute")
+  clientSideWs.send(JSON.stringify({ type: "tool.result", tool_call_id: "tc_wl_drop", result: { success: true } }))
+  const result = await resultPromise
+  assert.equal(result.success, true)
+})
+
+test("whitelist: out-of-scope add_to_whitelist patterns are rejected (anti-injection)", async () => {
+  const executeTool = createToolExecutor(serverSideWs)
+  const confirmationPromise = expectClientMessage("security.confirmation.request")
+  const resultPromise = executeTool("tc_wl_inj", "navigate", {
+    tabId: 1,
+    url: "https://attacker.example.com/x",
+  })
+  const confirmation = await confirmationPromise
+
+  // None of these match attacker.example.com — a loopback peer trying to widen
+  // the gate. All must be rejected; nothing may persist.
+  await handleSecurityConfirmationResponse(serverSideWs, {
+    type: "security.confirmation.response",
+    confirmation_id: confirmation.confirmation_id,
+    approved: true,
+    add_to_whitelist: ["*", "*.com", "evil.com"],
+  })
+  assert.equal(getConfig().auto_approved_domains.length, 0, "out-of-scope patterns must not persist")
+
+  await expectClientMessage("tool.execute")
+  clientSideWs.send(JSON.stringify({ type: "tool.result", tool_call_id: "tc_wl_inj", result: { success: true } }))
+  const result = await resultPromise
+  assert.equal(result.success, true)
 })

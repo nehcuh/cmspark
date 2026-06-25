@@ -401,6 +401,12 @@ function setupMessageHandlers() {
           type: "security.confirmation.response",
           confirmation_id: message.confirmation_id,
           approved: message.approved === true,
+          // Forward the whitelist patterns chosen in the dialog so the companion
+          // can persist them into auto_approved_domains. Dropping this field
+          // (regression) silently makes "add to whitelist" a no-op: the companion
+          // sees an empty array, skips saveConfig, and every future evaluate on
+          // the same domain re-prompts.
+          add_to_whitelist: Array.isArray(message.add_to_whitelist) ? message.add_to_whitelist : [],
         })
         sendResponse({ ok: true })
         return true
