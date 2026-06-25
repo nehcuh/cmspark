@@ -525,6 +525,115 @@ export function handleToolResult(msg: any) {
 }
 
 /**
+ * Process a `security.confirmation.response` from a WS peer: resolve the
+ * pending confirmation (origin-bound via respondFrom), then — only when this
+ * response is authoritative AND approved — persist the add_to_whitelist
+ * patterns into auto_approved_domains. Patterns are validated against the
+ * domains actually shown in the dialog, so a loopback peer cannot ship
+ * ["*", "*.com", "attacker.com"] and poison the gate.
+ *
+ * Extracted from the ws.on("message") handler in startServer() so integration
+ * tests can exercise the persistence path (the extension's add_to_whitelist
+ * forwarding) without booting the full server. Logic is unchanged.
+ */
+export async function handleSecurityConfirmationResponse(ws: WebSocket, msg: any): Promise<void> {
+  const confirmationId = String(msg.confirmation_id || "")
+  const approved = msg.approved === true
+
+  // Validate add_to_whitelist against the domains actually shown in the
+  // dialog. Without this check, any loopback WS peer could ship a
+  // crafted response with add_to_whitelist: ["*", "*.com", "attacker.com"]
+  // and permanently bypass the dangerous-tool gate.
+  const rawWhitelist: string[] = Array.isArray(msg.add_to_whitelist)
+    ? msg.add_to_whitelist.map((p: any) => String(p || "").trim()).filter(Boolean)
+    : []
+  const relevantDomains = securityConfirmations.getRelevantDomains(confirmationId) || []
+  const allowedPatterns = new Set<string>()
+  for (const d of relevantDomains) {
+    const lower = d.toLowerCase()
+    allowedPatterns.add(lower)
+    allowedPatterns.add(`*.${lower}`)
+  }
+  const validPatterns: string[] = []
+  const rejectedPatterns: string[] = []
+  for (const p of rawWhitelist) {
+    if (allowedPatterns.has(p.toLowerCase())) {
+      validPatterns.push(p)
+    } else {
+      rejectedPatterns.push(p)
+    }
+  }
+  if (rejectedPatterns.length > 0) {
+    logger.warn("security.whitelist.invalid_patterns_rejected", {
+      confirmation_id: confirmationId,
+      relevant_domains: relevantDomains,
+      rejected: rejectedPatterns,
+    })
+  }
+
+  // Resolve the confirmation FIRST so a saveConfig failure cannot hang the
+  // approved tool call. Persistence runs after, best-effort. By the time the
+  // LLM's next tool call reaches the whitelist gate (next macrotask),
+  // fs.writeFileSync has completed.
+  const responded = securityConfirmations.respondFrom(confirmationId, approved, ws)
+  if (!responded) {
+    // Either no such pending entry, or the response arrived on a different
+    // socket than the one the confirmation was issued to. [C-SEC-2]: do not
+    // silently drop — log so operators can spot the pattern (e.g., a rogue
+    // local process trying to self-approve).
+    logger.warn("security.confirmation.origin_mismatch_or_unknown", {
+      confirmation_id: confirmationId,
+      approved_requested: approved,
+    })
+  }
+
+  // Only persist whitelist additions when the confirmation was actually
+  // resolved by THIS response. If respondFrom returned false (origin mismatch,
+  // unknown id, or already-expired entry), the response is not authoritative —
+  // accepting its add_to_whitelist payload would let any loopback WS peer that
+  // can guess a confirmation_id poison auto_approved_domains without ever
+  // resolving the prompt.
+  if (responded && approved && validPatterns.length > 0) {
+    try {
+      const current = getConfig().auto_approved_domains || []
+      const seen = new Set(current.map((d: string) => d.toLowerCase()))
+      // Lowercase + dedupe on persist. validPatterns is already validated
+      // case-insensitively, so storing the lowercase form keeps config tidy
+      // (matchDomain lowercases both sides, so matching is unaffected). Adding
+      // to `seen` as we go also dedupes within this single response.
+      const newPatterns: string[] = []
+      for (const p of validPatterns) {
+        const lower = p.toLowerCase()
+        if (!seen.has(lower)) {
+          seen.add(lower)
+          newPatterns.push(lower)
+        }
+      }
+      if (newPatterns.length > 0) {
+        saveConfig({ auto_approved_domains: [...current, ...newPatterns] })
+        logger.info("security.whitelist.added", {
+          confirmation_id: confirmationId,
+          patterns: newPatterns,
+        })
+      }
+    } catch (err: any) {
+      // Persistence is best-effort — don't fail the tool call.
+      logger.error("security.whitelist.persist_failed", {
+        confirmation_id: confirmationId,
+        error: err?.message || String(err),
+      })
+    }
+  } else if (!responded && validPatterns.length > 0) {
+    // Defensive: log every attempt to add via a non-authoritative response so
+    // operators can spot a peer probing confirmation ids.
+    logger.warn("security.whitelist.add_ignored_non_authoritative", {
+      confirmation_id: confirmationId,
+      valid_patterns: validPatterns,
+    })
+  }
+}
+
+/**
  * Grace-period cleanup applied when a WebSocket connection drops mid-tool-call.
  * Replaces each pending tool's normal timeout timer with a shorter (5s) grace
  * timer that rejects with "WebSocket disconnected" — giving a reconnecting
@@ -1271,93 +1380,7 @@ export async function startServer() {
         }
 
         if (msg.type === "security.confirmation.response") {
-          const confirmationId = String(msg.confirmation_id || "")
-          const approved = msg.approved === true
-
-          // Validate add_to_whitelist against the domains actually shown in the
-          // dialog. Without this check, any loopback WS peer could ship a
-          // crafted response with add_to_whitelist: ["*", "*.com", "attacker.com"]
-          // and permanently bypass the dangerous-tool gate.
-          const rawWhitelist: string[] = Array.isArray(msg.add_to_whitelist)
-            ? msg.add_to_whitelist.map((p: any) => String(p || "").trim()).filter(Boolean)
-            : []
-          const relevantDomains = securityConfirmations.getRelevantDomains(confirmationId) || []
-          const allowedPatterns = new Set<string>()
-          for (const d of relevantDomains) {
-            const lower = d.toLowerCase()
-            allowedPatterns.add(lower)
-            allowedPatterns.add(`*.${lower}`)
-          }
-          const validPatterns: string[] = []
-          const rejectedPatterns: string[] = []
-          for (const p of rawWhitelist) {
-            if (allowedPatterns.has(p.toLowerCase())) {
-              validPatterns.push(p)
-            } else {
-              rejectedPatterns.push(p)
-            }
-          }
-          if (rejectedPatterns.length > 0) {
-            logger.warn("security.whitelist.invalid_patterns_rejected", {
-              confirmation_id: confirmationId,
-              relevant_domains: relevantDomains,
-              rejected: rejectedPatterns,
-            })
-          }
-
-          // Resolve the confirmation FIRST so a saveConfig failure cannot hang
-          // the approved tool call. The whitelist persistence runs after, on a
-          // best-effort basis. By the time the LLM's next tool call reaches the
-          // whitelist gate (next macrotask), fs.writeFileSync has completed.
-          const responded = securityConfirmations.respondFrom(
-            confirmationId,
-            approved,
-            ws,
-          )
-          if (!responded) {
-            // Either no such pending entry, or the response arrived on a
-            // different socket than the one the confirmation was issued to.
-            // [C-SEC-2]: do not silently drop — log so operators can spot the
-            // pattern (e.g., a rogue local process trying to self-approve).
-            logger.warn("security.confirmation.origin_mismatch_or_unknown", {
-              confirmation_id: confirmationId,
-              approved_requested: approved,
-            })
-          }
-
-          // Only persist whitelist additions when the confirmation was actually
-          // resolved by THIS response. If respondFrom returned false (origin
-          // mismatch, unknown id, or already-expired entry), the response is
-          // not authoritative — accepting its add_to_whitelist payload would
-          // let any loopback WS peer that can guess a confirmation_id poison
-          // auto_approved_domains without ever resolving the prompt.
-          if (responded && approved && validPatterns.length > 0) {
-            try {
-              const current = getConfig().auto_approved_domains || []
-              const seen = new Set(current.map((d: string) => d.toLowerCase()))
-              const newPatterns = validPatterns.filter(p => !seen.has(p.toLowerCase()))
-              if (newPatterns.length > 0) {
-                saveConfig({ auto_approved_domains: [...current, ...newPatterns] })
-                logger.info("security.whitelist.added", {
-                  confirmation_id: confirmationId,
-                  patterns: newPatterns,
-                })
-              }
-            } catch (err: any) {
-              // Persistence is best-effort — don't fail the tool call.
-              logger.error("security.whitelist.persist_failed", {
-                confirmation_id: confirmationId,
-                error: err?.message || String(err),
-              })
-            }
-          } else if (!responded && validPatterns.length > 0) {
-            // Defensive: log every attempt to add via a non-authoritative response
-            // so operators can spot a peer probing confirmation ids.
-            logger.warn("security.whitelist.add_ignored_non_authoritative", {
-              confirmation_id: confirmationId,
-              valid_patterns: validPatterns,
-            })
-          }
+          await handleSecurityConfirmationResponse(ws, msg)
           return
         }
 
