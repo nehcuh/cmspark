@@ -17,6 +17,13 @@ export interface SecurityConfig {
   safety_skills_enabled: string[]
   auto_confirm_same_thread: boolean
   confirmation_timeout_seconds: number
+  /**
+   * When true, ALL dangerous tool calls (evaluate, osascript_eval, navigate to
+   * untrusted domain, etc.) are auto-approved without showing the confirmation
+   * dialog. Intended for long-running unattended agents only — bypasses the
+   * primary human-in-the-loop safety gate. Defaults to false.
+   */
+  auto_approve_dangerous: boolean
 }
 
 export interface VisionConfig {
@@ -50,6 +57,13 @@ export interface CompanionConfig {
   }
   vision?: VisionConfig
   trusted_domains: string[]
+  /**
+   * Domains (with wildcard support, same matcher as trusted_domains) for which
+   * high-risk tool confirmations are skipped. Distinct from trusted_domains,
+   * which gates cookie/data access only — auto_approved_domains governs tool
+   * execution confirmations (evaluate, navigate, etc.).
+   */
+  auto_approved_domains: string[]
   history_retention_days: number
   security: SecurityConfig
   file_upload?: FileUploadConfig
@@ -80,11 +94,13 @@ const defaultConfig: CompanionConfig = {
     cache_ttl_seconds: 300,
   },
   trusted_domains: [],
+  auto_approved_domains: [],
   history_retention_days: 30,
   security: {
     safety_skills_enabled: ["prompt-injection-defense", "jailbreak-detection", "instruction-hierarchy"],
     auto_confirm_same_thread: false,
     confirmation_timeout_seconds: 45,
+    auto_approve_dangerous: false,
   },
   file_upload: {
     max_file_size: 10 * 1024 * 1024,
@@ -212,6 +228,26 @@ export function saveConfig(config: Partial<CompanionConfig>): CompanionConfig {
   // Warn when '*' is used as a trusted domain (global wildcard)
   if (config.trusted_domains?.includes("*")) {
     console.warn("[cmspark-agent] WARNING: '*' wildcard trusted domain — all cookie access is allowed. Use only for development.")
+  }
+  // Warn when '*' is used as an auto-approved domain — this disables the
+  // dangerous-tool confirmation gate for EVERY domain. Distinct from
+  // trusted_domains (cookie/data access): this gate covers evaluate, navigate,
+  // and friends, so '*' here is strictly more dangerous.
+  if (config.auto_approved_domains?.includes("*")) {
+    console.warn("[cmspark-agent] WARNING: '*' wildcard in auto_approved_domains — all dangerous tool calls (evaluate, navigate, etc.) will be auto-approved on EVERY domain. Prefer listing specific hostnames or use '*.example.com' for subdomain scope.")
+  }
+  // Heuristic TLD-wildcard detection: patterns like '*.com' or '*.cn' auto-
+  // approve every domain under a public suffix. We can't ship the full PSL
+  // list, so we approximate by flagging '*.X' where X has no further dots.
+  // '*.co.uk' / '*.com.cn' won't be caught by this heuristic — power users
+  // editing config.json should mind that.
+  const tldWildcardPattern = /^\s*\*\.[^.]+\s*$/
+  if (config.auto_approved_domains?.some(p => typeof p === "string" && tldWildcardPattern.test(p))) {
+    console.warn("[cmspark-agent] WARNING: TLD-level wildcard in auto_approved_domains (e.g. '*.com', '*.cn') — auto-approves an entire TLD. Prefer '*.example.com' (with a registered domain label) for subdomain scope.")
+  }
+  // Warn when dangerous auto-approve is enabled — it bypasses the human-in-the-loop gate.
+  if (config.security?.auto_approve_dangerous === true) {
+    console.warn("[cmspark-agent] WARNING: security.auto_approve_dangerous is enabled — all dangerous tool calls will be auto-approved without user confirmation. Use only for trusted unattended workflows.")
   }
   const current = getConfig()
   const updated = deepMerge(current, config) as CompanionConfig

@@ -114,6 +114,12 @@ export interface LLMConfig {
   trusted_domains: string[]
   privilege_mode: PrivilegeMode
   safety_skills_enabled: string[]
+  // Domains whose tool-call confirmations (evaluate, navigate, etc.) are auto-approved.
+  // Flattened from companion config top-level `auto_approved_domains`.
+  auto_approved_domains?: string[]
+  // Global bypass for ALL dangerous tool confirmations. Flattened from companion
+  // config `security.auto_approve_dangerous`. Default false.
+  auto_approve_dangerous?: boolean
   // Vision model fields (flattened for UI convenience)
   vision_enabled?: boolean
   vision_api_key?: string
@@ -149,6 +155,12 @@ export interface SecurityConfirmationRequest {
   risk_level?: "low" | "medium" | "high"
   auto_confirm_eligible?: boolean
   defense_layer?: number
+  /**
+   * Domains the user may add to auto_approved_domains when approving. Empty or
+   * missing when companion couldn't determine the acting domain — UI hides the
+   * "add to whitelist" option in that case.
+   */
+  relevant_domains?: string[]
 }
 
 export interface ToolCall {

@@ -22,6 +22,7 @@ export function SettingsSlideout() {
   const [showKey, setShowKey] = useState(false)
   const [showAuditLog, setShowAuditLog] = useState(false)
   const [trustedDomainsConfirm, setTrustedDomainsConfirm] = useState(false)
+  const [autoApprovedConfirm, setAutoApprovedConfirm] = useState(false)
 
   if (!state.settingsOpen) return null
 
@@ -39,6 +40,18 @@ export function SettingsSlideout() {
       .map(domain => domain.trim())
       .filter(Boolean)
     dispatch({ type: "SET_CONFIG", config: { trusted_domains } })
+  }
+
+  const handleAutoApprovedDomainsChange = (value: string) => {
+    const auto_approved_domains = value
+      .split(/\n|,/)
+      .map(domain => domain.trim())
+      .filter(Boolean)
+    dispatch({ type: "SET_CONFIG", config: { auto_approved_domains } })
+  }
+
+  const handleAutoApproveDangerousChange = (checked: boolean) => {
+    dispatch({ type: "SET_CONFIG", config: { auto_approve_dangerous: checked } })
   }
 
   const handleShortcutChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -146,6 +159,52 @@ export function SettingsSlideout() {
                 </div>
               </div>
             )}
+          </div>
+
+          <div style={styles.field}>
+            <label style={styles.label}>自动批准域名白名单</label>
+            {autoApprovedConfirm ? (
+              <>
+                <textarea
+                  style={{ ...styles.input, minHeight: 72, resize: "vertical" }}
+                  value={(config.auto_approved_domains || []).join("\n")}
+                  onChange={e => handleAutoApprovedDomainsChange(e.target.value)}
+                  placeholder={"example.com\n*.company.com"}
+                />
+                <div style={styles.helpText}>
+                  列入此处的域名，<code>evaluate</code> / <code>osascript_eval</code> / <code>navigate</code> / <code>create_tab</code> / <code>set_tab_url</code> 等高危操作将跳过确认弹窗。每行一个域名，支持 <code>*.company.com</code> 通配子域。
+                </div>
+              </>
+            ) : (
+              <div>
+                <button
+                  style={styles.secondaryBtn}
+                  onClick={() => setAutoApprovedConfirm(true)}
+                >
+                  管理白名单（需二次确认）
+                </button>
+                <div style={styles.helpText}>
+                  当前已配置 {(config.auto_approved_domains || []).length} 个自动批准域名
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div style={styles.field}>
+            <label style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer", fontSize: 13 }}>
+              <input
+                type="checkbox"
+                checked={config.auto_approve_dangerous === true}
+                onChange={e => handleAutoApproveDangerousChange(e.target.checked)}
+                style={{ marginTop: 3 }}
+              />
+              <div>
+                <div style={{ fontWeight: 500 }}>自动批准所有危险操作</div>
+                <div style={{ fontSize: 11, color: "#B26B00", marginTop: 2 }}>
+                  ⚠ 跳过所有 evaluate / navigate 等高危操作确认弹窗。仅供长期无人值守的可信工作流使用；任何被注入的恶意指令也将不再被拦截。
+                </div>
+              </div>
+            </label>
           </div>
 
           <div style={styles.field}>

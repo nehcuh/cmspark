@@ -38,6 +38,13 @@ export function normalizeConfig(config: any): Partial<LLMConfig> {
   if (Array.isArray(config.trusted_domains)) {
     normalized.trusted_domains = config.trusted_domains
   }
+  if (Array.isArray(config.auto_approved_domains)) {
+    normalized.auto_approved_domains = config.auto_approved_domains
+  }
+  // Security: flatten nested config.security.auto_approve_dangerous → LLMConfig.auto_approve_dangerous
+  if (config.security && typeof config.security.auto_approve_dangerous === "boolean") {
+    normalized.auto_approve_dangerous = config.security.auto_approve_dangerous
+  }
   // Vision config fields (flattened from config.vision)
   const vision = config.vision
   if (vision) {
@@ -247,6 +254,7 @@ export function useWebSocket() {
               risk_level: msg.risk_level ?? "high",
               auto_confirm_eligible: msg.auto_confirm_eligible ?? false,
               defense_layer: msg.defense_layer,
+              relevant_domains: Array.isArray(msg.relevant_domains) ? msg.relevant_domains : [],
             },
           })
           break
