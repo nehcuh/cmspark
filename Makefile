@@ -51,7 +51,9 @@ load-extension:
 # 清理构建产物
 clean:
 	rm -rf companion/dist companion/.test-dist
-	rm -rf chrome-extension/build chrome-extension/.test-dist
+	rm -rf chrome-extension/build chrome-extension/.test-dist chrome-extension/.plasmo
+	rm -rf dist-package
+	find . -name ".DS_Store" -not -path "*/node_modules/*" -delete
 
 # ── Swift 托盘 ──
 

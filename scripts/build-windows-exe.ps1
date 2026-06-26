@@ -10,8 +10,8 @@
 #
 # Output:
 #   dist-package\cmspark-windows-x64\cmspark-agent.exe   <- standalone exe
-#   dist-package\CMspark-v0.2.0-windows-x64.zip          <- portable package
-#   dist-package\CMspark-Setup-v0.2.0.exe                 <- installer (if NSIS found)
+#   dist-package\CMspark-v{VERSION}-windows-x64.zip       <- portable package
+#   dist-package\CMspark-Setup-v{VERSION}.exe                 <- installer (if NSIS found)
 # =============================================================================
 
 [CmdletBinding()]
@@ -27,7 +27,8 @@ $CompanionDir = Join-Path $ProjectRoot "companion"
 $ChromeExtDir = Join-Path $ProjectRoot "chrome-extension"
 $DistDir      = Join-Path $ProjectRoot "dist-package"
 $StagingDir   = Join-Path $DistDir "cmspark-windows-x64"
-$Version      = "0.2.0"
+$CompanionPkg = Get-Content "$CompanionDir\package.json" -Raw | ConvertFrom-Json
+$Version      = $CompanionPkg.version
 
 function Step($n, $total, $msg) {
     Write-Host "[$n/$total] $msg" -ForegroundColor Yellow
