@@ -297,7 +297,12 @@ export class CompanionClient {
       return
     }
 
-    // Handle server pushes (type starts with known patterns)
+    // --- Server push handlers ---
+    // IMPORTANT: only handle TRUE server pushes here. Any message carrying an `id`
+    // was already matched to a pending request above and returned. NEVER add a
+    // response-type name (e.g. skill.list / thread.list / *.list) to these
+    // conditions — a response re-triggering its own request creates a tight
+    // request/response loop (see the skill.list hotfix that pinned both CPUs).
     if (msg.type === "connected") {
       // Initial handshake from server
       return
@@ -310,7 +315,10 @@ export class CompanionClient {
       }).catch(() => {})
     }
 
-    if (msg.type === "skill.activated" || msg.type === "skill.deactivated" || msg.type === "skill.list") {
+    // `skill.list` is the response to our own fetchQuickActions() request, not a
+    // server push. Reacting to it here re-triggers fetchQuickActions() on every
+    // response, creating a request/response loop. Match responses by id above.
+    if (msg.type === "skill.activated" || msg.type === "skill.deactivated") {
       this.fetchQuickActions().then(() => {
         this.dataChangedCbs.forEach(cb => cb())
       }).catch(() => {})
