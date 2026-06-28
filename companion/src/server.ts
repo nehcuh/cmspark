@@ -1463,7 +1463,11 @@ export async function startServer() {
         )
 
         if (response && ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify(response))
+          // Echo the request id so clients can match this response to a pending
+          // request. Without it, request-type responses (e.g. skill.list) are
+          // indistinguishable from server pushes and may be re-issued by clients
+          // that dispatch by type.
+          ws.send(JSON.stringify({ ...response, id: msg?.id }))
         }
       } catch (e: any) {
         logger.error("ws.message_error", { error: e.message || String(e) })
