@@ -16,6 +16,11 @@
 - Result: companion receives `undefined` thread_id, deletion never executes
 - Fix: read `message.thread_id || message.threadId` in background for backward compatibility
 
+### CMspark .app 部署:不能只换 cmspark-agent.js(依赖漂移)
+- `/Applications/CMspark.app/Contents/Resources/node_modules` 是打包时冻结的。当前源码 `dist/mcp/client.js` 深路径 `require('@modelcontextprotocol/sdk/client/index.js')`,而 `bundle:exe` 把该包 externalize → 只换 bundle 会启动即崩(MODULE_NOT_FOUND)
+- 必须整机重打包:`make package-macos`(或 package-windows/linux)—— scripts/package.sh 会把 companion/node_modules 一起 stage 进新 .app
+- app 未签名,文件可换;但 node_modules 必须与 bundle 同步更新
+
 ## Reusable Patterns
 
 ### Broadcast pattern for cross-client actions
@@ -23,6 +28,12 @@
 - The extension picks it up and initiates its own request through its connection, so streaming flows naturally
 - Avoids needing to modify the chat/streaming pipeline to support cross-client routing
 - Files: server.ts `broadcast` fn → message-router.ts broadcasts `quickAction.start` → extension forwards to sidepanel → sidepanel sends `chat.send` through its own WS connection
+
+### 定点修复: kimi 改动前复审的动态工作流
+- 已沉淀为个人技能 `kimi-gated-fix`(~/.config/skills/kimi-gated-fix/),含可移植的 workflow-template.js
+- 模式: 对已诊断到代码行的 bug,dynamic workflow pipeline(Design 精确 diff → kimi 改动前复审 → 仅 APPROVE 才 Apply → build 验证);主会话再对完整 git diff 做 kimi 终审
+- kimi 调用: Write prompt 文件 → `$KIMI -p "$(<file)" --output-format text`(避开 shell 转义)
+- apply 子代理 stall 兜底: 主会话手动补 kimi 复审 + Edit,不重跑整流(实战遇过连 stall 6 次)
 
 ## Architecture Decisions
 

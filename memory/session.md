@@ -16,6 +16,14 @@
 - Both chrome-extension and companion type-check clean
 - Recorded: yes — systray2 internalIdMap pitfall, extension snake/camelCase trap
 
+### S3 (2026-06-28) [cmspark tray↔daemon CPU 死循环]
+- 诊断: tray↔daemon 的 WebSocket skill.list 请求/响应死循环(daemon 响应不带请求 id,tray 把响应误当 push 再发请求)→ 两进程空闲 ~60%/45% CPU,本地 socket 29MB/s,累计 ~108GB
+- 修复(已合并 main, PR #4 squash 3e60cc5): server.ts 响应透传请求 id + companion-client.ts 移除 skill.list push 误触发 + 守卫注释。kimi 改动前复审 APPROVE×2,tsc 绿,ws-roundtrip 5/5
+- 部署: 单换 bundle 因 node_modules 依赖漂移失败 → make package-macos 整机重打包 → 装新 .app → 实测 CPU 60%→0、吞吐 29MB/s→0
+- 平台: bug 在共享 TS,Windows/Linux 同样中招,一份修复覆盖全平台
+- 沉淀: 个人技能 kimi-gated-fix(~/.config/skills/kimi-gated-fix/)
+- Recorded: yes — .app 部署依赖漂移坑、kimi-gated-fix 技能(详见 project-knowledge.md)
+
 ## In-Flight Tasks (Cross-Session)
 
 ### Quick Actions Runtime Verification

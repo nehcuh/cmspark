@@ -8,3 +8,10 @@ instincts:
     source_session: "2026-06-09 quick actions simplification"
     tags: [architecture, websocket, cross-client]
     applications: 1
+
+  - id: ws-response-id-pairing
+    pattern: "WebSocket 请求/响应必须用唯一 id 配对;响应的 type 字段不能复用为 push 订阅条件,否则响应会触发同名请求形成死循环。daemon 端响应应回显请求 id,客户端优先按 id 匹配 pending 再分发剩余消息。"
+    confidence: 0.8
+    source_session: "2026-06-28 tray↔daemon skill.list 死循环修复"
+    tags: [websocket, bug, request-response, loop]
+    applications: 1
