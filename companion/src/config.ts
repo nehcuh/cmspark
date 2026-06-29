@@ -148,6 +148,7 @@ export async function initDataDir(): Promise<void> {
     path.join(DATA_DIR, "builtin-skills", "security"),
     path.join(DATA_DIR, "mcp"),
     path.join(DATA_DIR, "mcp", "logs"),
+    path.join(DATA_DIR, "obsidian"),
   ]
   for (const dir of dirs) {
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
