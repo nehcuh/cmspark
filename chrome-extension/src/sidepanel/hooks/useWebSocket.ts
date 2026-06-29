@@ -65,6 +65,10 @@ export function normalizeConfig(config: any): Partial<LLMConfig> {
     normalized.file_upload_max_tokens = fileUpload.max_file_tokens
     normalized.file_upload_vision = !!fileUpload.enable_vision_analysis
   }
+  // Obsidian export: flatten config.obsidian.vault_path
+  if (config.obsidian && typeof config.obsidian.vault_path === "string") {
+    normalized.obsidian_vault_path = config.obsidian.vault_path
+  }
   return Object.fromEntries(
     Object.entries(normalized).filter(([, value]) => value !== undefined)
   ) as Partial<LLMConfig>
@@ -463,6 +467,17 @@ export function useWebSocket() {
             a.click()
             URL.revokeObjectURL(url)
           }
+          break
+        }
+
+        case "obsidian.profile_ready": {
+          const profile = msg.profile
+          dispatch({
+            type: "SET_OBSIDIAN_PROFILE_STATUS",
+            status: profile
+              ? { ok: true, message: `✓ Vault 档案已更新（分析了 ${msg.files_sampled ?? profile.files_sampled ?? "?"} 篇笔记）` }
+              : { ok: false, message: msg.reason || "未识别到 vault 结构化约定" },
+          })
           break
         }
 

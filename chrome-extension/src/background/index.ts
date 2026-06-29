@@ -461,6 +461,7 @@ function setupMessageHandlers() {
 
       case "thread.list":
       case "thread.export_obsidian":
+      case "obsidian.refresh_profile":
       case "skill.list":
       case "skill.craft":
       case "skill.activate":

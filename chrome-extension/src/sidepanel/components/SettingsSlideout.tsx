@@ -91,6 +91,37 @@ export function SettingsSlideout() {
         </div>
 
         <div style={styles.body}>
+          {/* --- Obsidian Export --- */}
+          <div style={styles.sectionTitle}>Obsidian 导出</div>
+          <div style={styles.field}>
+            <label style={styles.label}>Vault 路径</label>
+            <input
+              style={styles.input}
+              value={config.obsidian_vault_path || ""}
+              onChange={e => dispatch({ type: "SET_CONFIG", config: { obsidian_vault_path: e.target.value } })}
+              placeholder="/path/to/your/vault"
+            />
+            <div style={styles.helpText}>
+              导出对话到 Obsidian 时会先扫描此 vault 提取你的 frontmatter / 命名 / tag 约定。会把约 200 篇笔记的 frontmatter + 正文前 200 字发给你的 LLM 提取约定，缓存后导出时自动套用。
+            </div>
+            <button
+              style={styles.secondaryBtn}
+              onClick={() => {
+                const vp = config.obsidian_vault_path?.trim()
+                if (!vp) return
+                dispatch({ type: "SET_OBSIDIAN_PROFILE_STATUS", status: { ok: true, message: "分析中…" } })
+                chrome.runtime.sendMessage({ type: "obsidian.refresh_profile", vault_path: vp })
+              }}
+            >
+              刷新 vault 档案
+            </button>
+            {state.obsidianProfileStatus && (
+              <div style={{ ...styles.helpText, color: state.obsidianProfileStatus.ok ? "#2E7D32" : "#F44336", marginTop: 6 }}>
+                {state.obsidianProfileStatus.message}
+              </div>
+            )}
+          </div>
+
           {/* --- Security Settings --- */}
           <div style={styles.sectionTitle}>安全设置</div>
 

@@ -29,6 +29,7 @@ export interface AgentState {
   securityAuditLog: SecurityAuditEntry[]
   companionConfig: LLMConfig | null
   isProcessing: boolean
+  obsidianProfileStatus: { ok: boolean; message: string } | null
   mcpServers: McpServerMeta[]
   mcpSelectionMode: McpSelectionMode
   activeMcpServerIds: string[]
@@ -71,6 +72,7 @@ export type AgentAction =
   | { type: "ADD_SECURITY_AUDIT"; entry: SecurityAuditEntry }
   | { type: "SET_COMPANION_CONFIG"; config: LLMConfig }
   | { type: "SET_PROCESSING"; isProcessing: boolean }
+  | { type: "SET_OBSIDIAN_PROFILE_STATUS"; status: { ok: boolean; message: string } | null }
   | { type: "SET_MCP_SERVERS"; servers: McpServerMeta[] }
   | { type: "UPDATE_MCP_SERVER_STATUS"; server: McpServerMeta }
   | { type: "TOGGLE_MCP_SERVER"; serverName: string }
@@ -123,6 +125,7 @@ export const initialState: AgentState = {
   securityAuditLog: [],
   companionConfig: null,
   isProcessing: false,
+  obsidianProfileStatus: null,
   mcpServers: [],
   mcpSelectionMode: "auto",
   activeMcpServerIds: [],
@@ -205,6 +208,8 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       return { ...state, operations: action.operations }
     case "SET_CONFIG":
       return { ...state, config: { ...state.config, ...action.config } }
+    case "SET_OBSIDIAN_PROFILE_STATUS":
+      return { ...state, obsidianProfileStatus: action.status }
     case "TOGGLE_SETTINGS":
       return { ...state, settingsOpen: !state.settingsOpen }
     case "SET_TAB_LIST":
