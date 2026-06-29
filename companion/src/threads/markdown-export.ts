@@ -40,11 +40,20 @@ export interface ExportThreadMeta {
   updated_at: string
 }
 
+/** Subset of the cached VaultProfile used at export time (structural — accepts a full VaultProfile). */
+export interface ExportProfile {
+  frontmatter_schema?: { name: string; type: string }[]
+  tag_conventions?: string[]
+  note_name_template?: string
+}
+
 export interface ExportOptions {
   scope: ExportScope
   anchorMessageId?: string
   config: ObsidianExportConfig
   thread: ExportThreadMeta
+  /** Cached vault profile (P1). When present, frontmatter + filename adapt to vault conventions. */
+  profile?: ExportProfile
 }
 
 export interface ExportResult {
@@ -74,8 +83,8 @@ export function serializeThreadToMarkdown(
   const body = renderBody(blocks)
   const firstUserLine = computeFirstUserLine(selected)
   const frontmatter = buildFrontmatter(options, firstUserLine)
-  const filename =
-    applyNameTemplate(options.config.name_template, options.thread, firstUserLine) + ".md"
+  const nameTemplate = options.profile?.note_name_template || options.config.name_template
+  const filename = applyNameTemplate(nameTemplate, options.thread, firstUserLine) + ".md"
   return { filename, content: frontmatter + body, format: "markdown" }
 }
 
@@ -348,7 +357,7 @@ function stripDocuments(content: string): string {
 // ---------------- frontmatter + filename ----------------
 
 function buildFrontmatter(options: ExportOptions, firstUserLine: string): string {
-  const { thread, scope, config } = options
+  const { thread, scope, config, profile } = options
   // default_frontmatter first so reserved provenance keys cannot be silently overridden.
   // title granularity matches the export scope: whole-thread exports use the thread alias;
   // slice exports (single/qa_pair) use the slice's first user line. Thread provenance is
@@ -359,6 +368,7 @@ function buildFrontmatter(options: ExportOptions, firstUserLine: string): string
       : firstUserLine || thread.alias || "CMspark 对话"
   const fm: Record<string, any> = {
     ...config.default_frontmatter,
+    ...profileFrontmatterAdditions(profile, title),
     source: `cmspark://thread/${thread.id}`,
     thread_id: thread.id,
     scope,
@@ -366,6 +376,28 @@ function buildFrontmatter(options: ExportOptions, firstUserLine: string): string
     title,
   }
   return `---\n${yaml.dump(fm, { lineWidth: -1, sortKeys: false })}---\n\n`
+}
+
+/**
+ * Derive safe, unambiguous frontmatter keys from the vault profile's schema (P1).
+ * Only adds keys whose value is deterministic: date-like fields → today, aliases → title.
+ * Speculative keys (type/status/...) are deliberately NOT auto-guessed (would pollute the
+ * user's taxonomy) — that's left to P2 semantic matching.
+ */
+function profileFrontmatterAdditions(
+  profile: ExportProfile | undefined,
+  title: string,
+): Record<string, any> {
+  const out: Record<string, any> = {}
+  if (!profile?.frontmatter_schema) return out
+  const today = new Date().toISOString().slice(0, 10)
+  const dateFields = new Set(["created", "date", "published", "created_at", "publish_date"])
+  for (const f of profile.frontmatter_schema) {
+    if (!f || typeof f.name !== "string") continue
+    if (dateFields.has(f.name)) out[f.name] = today
+    else if (f.name === "aliases") out.aliases = [title]
+  }
+  return out
 }
 
 function applyNameTemplate(

@@ -354,6 +354,41 @@ test("thread-scope title prefers the thread alias", () => {
   assert.match(r.content, /title: My Thread/)
 })
 
+test("profile: note_name_template overrides config name_template", () => {
+  const c: ObsidianExportConfig = { ...cfg, name_template: "SHOULD-NOT-USE" }
+  const r = serializeThreadToMarkdown(
+    [msg({ id: "u1", role: "user", content: "hello world" })],
+    {
+      scope: "single", anchorMessageId: "u1", config: c, thread,
+      profile: { note_name_template: "{{date}} {{first_user_line}}" },
+    },
+  )
+  assert.ok(r.filename.includes("hello world"))
+  assert.ok(!r.filename.includes("SHOULD-NOT-USE"))
+})
+
+test("profile: frontmatter_schema adds date + aliases keys; speculative keys not auto-added; reserved win", () => {
+  const r = serializeThreadToMarkdown(
+    [msg({ id: "u1", role: "user", content: "topic" })],
+    {
+      scope: "thread", config: cfg, thread,
+      profile: {
+        frontmatter_schema: [
+          { name: "created", type: "date" },
+          { name: "aliases", type: "array" },
+          { name: "type", type: "string" }, // speculative — must NOT be auto-added
+        ],
+      },
+    },
+  )
+  assert.match(r.content, /created: '?\d{4}-\d{2}-\d{2}/)
+  assert.match(r.content, /aliases:\n\s+- /)
+  // speculative "type" is not auto-guessed into frontmatter
+  assert.ok(!/\ntype:/.test(r.content))
+  // reserved provenance keys still present
+  assert.match(r.content, /source: cmspark:\/\/thread\/t1/)
+})
+
 test("tool result containing triple-backtick markdown uses a longer fence (no premature close)", () => {
   const r = serializeThreadToMarkdown(
     [

@@ -1,11 +1,13 @@
 // Message router — dispatches incoming WebSocket messages to handlers
 
 import os from "os"
+import * as fs from "fs"
 import path from "path"
 import { URL } from "url"
 import OpenAI from "openai"
 import type { ThreadManager } from "./threads/thread-manager"
 import { serializeThreadToMarkdown } from "./threads/markdown-export"
+import { resolveVaultPath, profileVault, saveProfile, loadCachedProfile } from "./obsidian/vault-profiler"
 import type { SkillEngine } from "./skills/skill-engine"
 import type { HistoryStore } from "./history/store"
 import { getConfig, saveConfig, replaceMcpServers, setMcpEnabled } from "./config"
@@ -882,6 +884,8 @@ export async function handleMessage(
       }
       const obsCfg = getConfig().obsidian
       if (!obsCfg) return { type: "error", error: "obsidian export not configured" }
+      // Apply the cached vault profile (P1) if present + matches the configured vault.
+      const profile = loadCachedProfile(obsCfg.vault_path)
       const result = serializeThreadToMarkdown(messages, {
         scope: rest.scope,
         anchorMessageId: rest.anchor_message_id,
@@ -892,6 +896,7 @@ export async function handleMessage(
           created_at: thread.created_at,
           updated_at: thread.updated_at,
         },
+        ...(profile ? { profile } : {}),
       })
       return {
         type: "thread.exported_obsidian",
@@ -1086,6 +1091,52 @@ export async function handleMessage(
         }
       } catch (e: any) {
         return { type: "error", error: `技能生成失败: ${e.message || String(e)}` }
+      }
+    }
+    case "obsidian.refresh_profile": {
+      // Scan the user's Obsidian vault, extract conventions via LLM, cache the profile (P1).
+      // On-demand (user clicks refresh); export then applies the cached profile.
+      try {
+        const raw = rest.vault_path ? rest.vault_path : getConfig().obsidian?.vault_path
+        if (!raw) {
+          return { type: "error", error: "vault_path 未设置（请在 设置 → Obsidian 填写）" }
+        }
+        let resolved: string
+        try {
+          resolved = resolveVaultPath(raw)
+        } catch (e: any) {
+          return { type: "error", error: e.message || "invalid vault_path" }
+        }
+        let stat: fs.Stats
+        try {
+          stat = fs.statSync(resolved)
+        } catch {
+          return { type: "error", error: `vault 路径不存在: ${resolved}` }
+        }
+        if (!stat.isDirectory()) {
+          return { type: "error", error: `vault 路径不是目录: ${resolved}` }
+        }
+        // Persist the resolved vault_path so later exports can find the cached profile.
+        const curObs = getConfig().obsidian
+        saveConfig({
+          obsidian: {
+            name_template: curObs?.name_template ?? "{{date}} {{first_user_line}}",
+            default_frontmatter: curObs?.default_frontmatter ?? { tags: ["cmspark"] },
+            vault_path: resolved,
+          },
+        })
+        const profile = await profileVault({ vaultPath: resolved, config: getConfig().llm })
+        if (!profile) {
+          return {
+            type: "obsidian.profile_ready",
+            profile: null,
+            reason: "未识别到 vault 结构化约定（空 vault 或 LLM 未提取出）",
+          }
+        }
+        saveProfile(profile)
+        return { type: "obsidian.profile_ready", profile, files_sampled: profile.files_sampled }
+      } catch (e: any) {
+        return { type: "error", error: `vault 分析失败: ${e.message || String(e)}` }
       }
     }
 
