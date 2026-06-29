@@ -68,6 +68,17 @@ export function ChatView() {
     })
   }, [activeThreadId])
 
+  // Export the Q&A pair containing this message to Obsidian markdown (UI-side download).
+  const handleExport = useCallback((messageId: string) => {
+    if (!activeThreadId) return
+    chrome.runtime.sendMessage({
+      type: "thread.export_obsidian",
+      thread_id: activeThreadId,
+      scope: "qa_pair",
+      anchor_message_id: messageId,
+    })
+  }, [activeThreadId])
+
   return (
     <div style={styles.container} ref={containerRef}>
       {messages.length === 0 && !streamingContent && !processingLabel && (
@@ -80,6 +91,7 @@ export function ChatView() {
           activeThreadId={activeThreadId}
           onRegenerate={handleRegenerate}
           onFork={handleFork}
+          onExport={handleExport}
           dispatch={dispatch}
         />
       ))}
@@ -110,12 +122,14 @@ const MessageRow = memo(function MessageRow({
   activeThreadId,
   onRegenerate,
   onFork,
+  onExport,
   dispatch,
 }: {
   msg: any
   activeThreadId: string | null
   onRegenerate: (messageId: string, editedMessage?: string) => void
   onFork: (messageId: string) => void
+  onExport: (messageId: string) => void
   dispatch: any
 }) {
   const isUser = msg.role === "user"
@@ -212,6 +226,9 @@ const MessageRow = memo(function MessageRow({
               )}
               <button style={styles.actionBtn} onClick={() => onFork(msg.id)} title="创建分支">
                 🔀
+              </button>
+              <button style={styles.actionBtn} onClick={() => onExport(msg.id)} title="导出此轮到 Obsidian">
+                📥
               </button>
             </div>
           </>

@@ -7,6 +7,7 @@ import { EventEmitter } from "events"
 import { getLockPath } from "./platform"
 import { getBuiltinSkillsSrc } from "./paths"
 import type { McpConfig } from "./mcp/types"
+import type { ObsidianExportConfig } from "./threads/markdown-export"
 
 export const configEvents = new EventEmitter()
 export const CONFIG_CHANGE_EVENT = "config.change"
@@ -68,6 +69,7 @@ export interface CompanionConfig {
   security: SecurityConfig
   file_upload?: FileUploadConfig
   mcp?: McpConfig
+  obsidian?: ObsidianExportConfig
 }
 
 function getEnvApiKey(): string {
@@ -123,6 +125,11 @@ const defaultConfig: CompanionConfig = {
   mcp: {
     enabled: false,
     servers: {},
+  },
+  obsidian: {
+    name_template: "{{date}} {{first_user_line}}",
+    default_frontmatter: { tags: ["cmspark"] },
+    vault_path: null,
   },
 }
 

@@ -452,6 +452,20 @@ export function useWebSocket() {
           break
         }
 
+        case "thread.exported_obsidian": {
+          const { content, filename } = msg
+          if (content) {
+            const blob = new Blob([new TextEncoder().encode(content)], { type: "text/markdown" })
+            const url = URL.createObjectURL(blob)
+            const a = document.createElement("a")
+            a.href = url
+            a.download = filename || "export.md"
+            a.click()
+            URL.revokeObjectURL(url)
+          }
+          break
+        }
+
         case "skill.imported":
         case "skill.deleted":
           chrome.runtime.sendMessage({ type: "skill.list" })

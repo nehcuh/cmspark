@@ -5,6 +5,7 @@ import path from "path"
 import { URL } from "url"
 import OpenAI from "openai"
 import type { ThreadManager } from "./threads/thread-manager"
+import { serializeThreadToMarkdown } from "./threads/markdown-export"
 import type { SkillEngine } from "./skills/skill-engine"
 import type { HistoryStore } from "./history/store"
 import { getConfig, saveConfig, replaceMcpServers, setMcpEnabled } from "./config"
@@ -860,6 +861,45 @@ export async function handleMessage(
     }
     case "skill.export":
       return { type: "skill.exported", ...skillEngine.exportSkill(rest.skill_name) }
+    case "thread.export_obsidian": {
+      // Serialize (a slice of) a thread to Obsidian markdown and return it for UI-side
+      // Blob download. Mirrors skill.export. v1 is UI-download only — no file write here.
+      const thread = services.threadManager.get(rest.thread_id)
+      if (!thread) return { type: "error", error: "thread not found" }
+      if (rest.scope !== "single" && rest.scope !== "qa_pair" && rest.scope !== "thread") {
+        return { type: "error", error: `invalid scope: ${rest.scope}` }
+      }
+      const messages = services.threadManager.getMessages(rest.thread_id)
+      // For slice scopes, require a valid anchor — otherwise the serializer would silently
+      // fall back to exporting the whole thread under a mismatched scope label.
+      if (rest.scope !== "thread") {
+        if (!rest.anchor_message_id) {
+          return { type: "error", error: "anchor_message_id is required for single/qa_pair scope" }
+        }
+        if (!messages.some((m: any) => m.id === rest.anchor_message_id)) {
+          return { type: "error", error: "anchor_message_id not found in thread" }
+        }
+      }
+      const obsCfg = getConfig().obsidian
+      if (!obsCfg) return { type: "error", error: "obsidian export not configured" }
+      const result = serializeThreadToMarkdown(messages, {
+        scope: rest.scope,
+        anchorMessageId: rest.anchor_message_id,
+        config: obsCfg,
+        thread: {
+          id: thread.id,
+          alias: thread.alias,
+          created_at: thread.created_at,
+          updated_at: thread.updated_at,
+        },
+      })
+      return {
+        type: "thread.exported_obsidian",
+        content: result.content,
+        filename: result.filename,
+        format: result.format,
+      }
+    }
     case "skill.import": {
       if (rest.url) {
         // SSRF protection: protocol whitelist, block internal IPs (P0)
