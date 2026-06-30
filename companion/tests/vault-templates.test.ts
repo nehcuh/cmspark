@@ -11,6 +11,7 @@ import {
   substituteTemplateText,
   saveTemplates,
   loadCachedTemplates,
+  isStrictlyInside,
   VaultTemplate,
 } from "../src/obsidian/vault-templates"
 
@@ -203,5 +204,31 @@ test("applyTemplate: CRLF template frontmatter does not leak \\r into values", (
   assert.equal(applied.frontmatter.title, "T")
   assert.equal(applied.frontmatter.type, "meeting")
   assert.ok(!JSON.stringify(applied.frontmatter).includes("\\r"), "no CR leaked into values")
+})
+
+test("isStrictlyInside: handles filesystem root '/' without producing '//' prefix", () => {
+  assert.equal(isStrictlyInside("/templates", "/"), true)
+  assert.equal(isStrictlyInside("/", "/"), false)
+  assert.equal(isStrictlyInside("/tmp", "/"), true)
+  assert.equal(isStrictlyInside("/templates/sub", "/templates"), true)
+  assert.equal(isStrictlyInside("/templates", "/templates"), false)
+})
+
+test("detectTemplates: a file inside the template folder that is a symlink to outside is not read", () => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), "vault-internal-symlink-"))
+  try {
+    const root = path.join(parent, "root")
+    const outside = path.join(parent, "outside")
+    fs.mkdirSync(root)
+    fs.mkdirSync(outside)
+    fs.mkdirSync(path.join(root, "templates"))
+    fs.writeFileSync(path.join(outside, "secret.md"), "---\ntoken: LEAKED\n---\nSECRET BODY")
+    fs.symlinkSync(path.join(outside, "secret.md"), path.join(root, "templates", "secret.md"))
+    const t = detectTemplates(root)
+    assert.equal(t.templates.length, 0, "internal file symlink to outside must not be read")
+    assert.ok(!JSON.stringify(t).includes("LEAKED"), "outside secret not leaked via internal file symlink")
+  } finally {
+    fs.rmSync(parent, { recursive: true, force: true })
+  }
 })
 

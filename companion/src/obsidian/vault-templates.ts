@@ -48,13 +48,21 @@ const MAX_TEMPLATES = 10
 export function detectTemplates(vaultPath: string): VaultTemplates {
   const templates: VaultTemplate[] = []
   const dir = resolveTemplatesDir(vaultPath) // absolute, containment-checked
-  if (dir) {
+  const root = path.resolve(vaultPath)
+  const realRoot = realpathSafe(root)
+  if (dir && realRoot) {
     try {
       for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
         if (templates.length >= MAX_TEMPLATES) break
         if (entry.isFile() && entry.name.toLowerCase().endsWith(".md")) {
           try {
-            const raw = fs.readFileSync(path.join(dir, entry.name), "utf-8")
+            const filePath = path.join(dir, entry.name)
+            // Defense-in-depth: ensure the file we are about to read is still inside the vault
+            // (mitigates TOCTOU where a file inside the template dir is swapped for a symlink
+            // that escapes the vault between readdir and readFile).
+            const realFile = realpathSafe(filePath)
+            if (!realFile || !isStrictlyInside(realFile, realRoot)) continue
+            const raw = fs.readFileSync(filePath, "utf-8")
             const parsed = matter(raw)
             templates.push({
               name: entry.name.replace(/\.md$/i, ""),
@@ -70,7 +78,7 @@ export function detectTemplates(vaultPath: string): VaultTemplates {
       /* unreadable folder */
     }
   }
-  return { vault_path: path.resolve(vaultPath), generated_at: new Date().toISOString(), templates }
+  return { vault_path: root, generated_at: new Date().toISOString(), templates }
 }
 
 /**
@@ -101,7 +109,10 @@ function resolveTemplatesDir(vaultPath: string): string | null {
     const realResolved = realpathSafe(resolved)
     if (!realResolved || !isStrictlyInside(realResolved, realRoot)) continue
     try {
-      if (fs.statSync(resolved).isDirectory()) return resolved
+      // Use lstat + !isSymbolicLink to avoid a TOCTOU race where the candidate is a real
+      // directory during the realpath check but is swapped to a symlink before stat follows it.
+      const st = fs.lstatSync(resolved)
+      if (st.isDirectory() && !st.isSymbolicLink()) return resolved
     } catch {
       /* not present */
     }
@@ -119,8 +130,12 @@ function realpathSafe(p: string): string | null {
 }
 
 /** True iff `target` (real, absolute) is strictly below `root` (real, absolute) — not root itself. */
-function isStrictlyInside(target: string, root: string): boolean {
-  return target.startsWith(root + path.sep)
+export function isStrictlyInside(target: string, root: string): boolean {
+  if (target === root) return false
+  // When root is the filesystem root ("/"), root + path.sep becomes "//", which would
+  // incorrectly reject every legitimate child path. Normalize the trailing separator.
+  const prefix = root.endsWith(path.sep) ? root : root + path.sep
+  return target.startsWith(prefix)
 }
 
 /** Pick the template to apply: prefer one named default/默认/Default, else the first, else null. */
