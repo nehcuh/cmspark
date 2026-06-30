@@ -10,6 +10,18 @@
 
 ---
 
+## 已交付功能扩展：Obsidian 对话导出（2026-06-30，PR #5）
+
+在稳定化 MVP 之外交付的首个功能扩展：把对话导出成贴合用户 Obsidian vault 约定的 markdown 笔记。
+
+- **P0 干净导出**：单条 📥（per-message）/ 整 thread 📥（header）→ companion 纯序列化（tool 噪音折叠/截断/合法 JSON）→ 浏览器 Blob 下载。UI 下载模式（不写宿主文件、无路径沙箱）。
+- **P1 vault 档案**：扫描 vault，LLM 提取 frontmatter/命名/tag 约定（隐私：仅 basename + capped 预览），缓存后导出自动套用。
+- **P2 智能整合**：footer `[[wikilinks]]`（纯 TF 余弦 top-K）+ vault 模板骨架（静态占位符替换，不执行 Templater JS）；realpath containment 防 symlink 逃逸。
+- **P3 NotebookLM 摘要**：🧠 → LLM 结构化摘要（TL;DR/关键主题/结论/决策/待办）+ 折叠完整对话附录。
+- 详见 [ADR-008](adr/008-obsidian-export.md) 与 [architecture.md §5](architecture.md#5-obsidian-对话导出)。
+
+---
+
 ## 当前真实目标：安全稳定化 MVP
 
 当前阶段的目标不是一次性完成完整企业级自动化平台，而是先把可验证、可恢复、可安全中断的浏览器 Agent MVP 做稳定：Side Panel 能可靠驱动 Companion 和浏览器，线程状态能闭环持久化，工具调用结果能进入后续 LLM 上下文，高风险浏览器/系统执行在确认机制完成前默认阻断，并建立最小回归测试来保护这些核心路径。
