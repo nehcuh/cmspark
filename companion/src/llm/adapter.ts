@@ -363,7 +363,7 @@ CRITICAL RULES:
         content: assistantContent,
         tool_calls: assistantMsg,
       }
-      threadManager.addMessage(threadId, savedMsg)
+      const savedAssistant = threadManager.addMessage(threadId, savedMsg)
 
       // Push assistant message with tool_calls and reasoning_content to messages array
       const assistantPushMsg: any = {
@@ -387,7 +387,11 @@ CRITICAL RULES:
 
       // If no tool calls, we're done
       if (assistantMsg.length === 0) {
-        sendToExtension({ type: "chat.done", thread_id: threadId })
+        // Echo the persisted assistant message id so the UI adopts it (instead of its own
+        // client-generated id) — this keeps the UI's message id in sync with what the
+        // companion stored, so anchor-based features (per-message export) work on the
+        // just-received response without a thread reload.
+        sendToExtension({ type: "chat.done", thread_id: threadId, message_id: savedAssistant.id })
         // Best-effort auto-alias: generate a short title if thread has no alias yet
         generateThreadTitle({ threadId, threadManager, config, sendToExtension })
         return

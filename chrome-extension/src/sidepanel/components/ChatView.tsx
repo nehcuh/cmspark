@@ -74,7 +74,9 @@ export function ChatView() {
     chrome.runtime.sendMessage({
       type: "thread.export_obsidian",
       thread_id: activeThreadId,
-      scope: "qa_pair",
+      // "single" = export just the clicked message (e.g. one response), not the whole
+      // Q&A turn. (qa_pair would include the preceding question too.)
+      scope: "single",
       anchor_message_id: messageId,
     })
   }, [activeThreadId])
@@ -227,7 +229,7 @@ const MessageRow = memo(function MessageRow({
               <button style={styles.actionBtn} onClick={() => onFork(msg.id)} title="创建分支">
                 🔀
               </button>
-              <button style={styles.actionBtn} onClick={() => onExport(msg.id)} title="导出此轮到 Obsidian">
+              <button style={styles.actionBtn} onClick={() => onExport(msg.id)} title="导出此条到 Obsidian">
                 📥
               </button>
             </div>

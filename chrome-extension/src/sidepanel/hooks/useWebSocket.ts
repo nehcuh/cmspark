@@ -112,7 +112,11 @@ export function useWebSocket() {
             dispatch({
               type: "ADD_MESSAGE",
               message: {
-                id: `${activeThreadRef.current}_assistant_${Date.now()}`,
+                // Prefer the companion's persisted message id (echoed in chat.done) so the
+                // UI id matches what's stored — anchor-based features (per-message export)
+                // then work on the just-received response without a thread reload. Fall back
+                // to a client id only if the companion didn't echo one.
+                id: msg.message_id || `${activeThreadRef.current}_assistant_${Date.now()}`,
                 thread_id: activeThreadRef.current,
                 role: "assistant",
                 content,
