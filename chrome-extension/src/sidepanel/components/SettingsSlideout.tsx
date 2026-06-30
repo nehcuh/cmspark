@@ -102,7 +102,7 @@ export function SettingsSlideout() {
               placeholder="/path/to/your/vault"
             />
             <div style={styles.helpText}>
-              导出对话到 Obsidian 时会先扫描此 vault 提取你的 frontmatter / 命名 / tag 约定。会把约 200 篇笔记的 frontmatter + 正文前 200 字发给你的 LLM 提取约定，缓存后导出时自动套用。
+              导出时会扫描此 vault:把约 200 篇笔记的 frontmatter + 正文前 200 字发给你的 LLM 提取 frontmatter / 命名 / tag 约定,并建立笔记索引、检测模板。缓存后导出自动套用——frontmatter 贴合约定、footer 用 [[wikilinks]] 链向相关笔记、并用 vault 模板骨架包裹。
             </div>
             <button
               style={styles.secondaryBtn}

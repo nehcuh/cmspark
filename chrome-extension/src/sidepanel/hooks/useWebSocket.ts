@@ -472,12 +472,21 @@ export function useWebSocket() {
 
         case "obsidian.profile_ready": {
           const profile = msg.profile
-          dispatch({
-            type: "SET_OBSIDIAN_PROFILE_STATUS",
-            status: profile
-              ? { ok: true, message: `✓ Vault 档案已更新（分析了 ${msg.files_sampled ?? profile.files_sampled ?? "?"} 篇笔记）` }
-              : { ok: false, message: msg.reason || "未识别到 vault 结构化约定" },
-          })
+          if (profile) {
+            // Summarize what was learned: notes sampled + (P2) vault index size + template count.
+            const parts = [`分析了 ${msg.files_sampled ?? profile.files_sampled ?? "?"} 篇笔记`]
+            if (msg.index_count != null) parts.push(`索引 ${msg.index_count} 篇`)
+            if (msg.template_count != null && msg.template_count > 0) parts.push(`模板 ${msg.template_count} 个`)
+            dispatch({
+              type: "SET_OBSIDIAN_PROFILE_STATUS",
+              status: { ok: true, message: `✓ Vault 档案已更新（${parts.join(" · ")}）` },
+            })
+          } else {
+            dispatch({
+              type: "SET_OBSIDIAN_PROFILE_STATUS",
+              status: { ok: false, message: msg.reason || "未识别到 vault 结构化约定" },
+            })
+          }
           break
         }
 
