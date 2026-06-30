@@ -32,7 +32,7 @@ export interface ObsidianExportConfig {
   profile_path?: string
 }
 
-export type ExportScope = "single" | "qa_pair" | "thread"
+export type ExportScope = "single" | "qa_pair" | "thread" | "summary"
 
 export interface ExportThreadMeta {
   id: string
@@ -68,6 +68,22 @@ export interface ExportResult {
   content: string
   format: "markdown"
 }
+
+/**
+ * Parsed LLM summary of a thread (produced by summary-export.ts, consumed by
+ * serializeSummaryToMarkdown). `title` may be empty (LLM omitted TITLE) — the assembler
+ * falls back to the thread alias / first user line. `body` is the structured markdown
+ * (关键主题 / 结论 / 决策 / 待办 …); `tldr` is the optional one-line summary.
+ */
+export interface ThreadSummary {
+  title: string
+  tldr?: string
+  body: string
+}
+
+/** Options for summary-note assembly — everything ExportOptions has except `scope`
+ *  (always "summary") and `anchorMessageId` (summaries are whole-thread). */
+export type SummaryOptions = Omit<ExportOptions, "scope" | "anchorMessageId">
 
 // --- tunables (named constants; hoist to config if user customization is needed) ---
 const MAX_FIELD_LEN = 400 // trim any single string field (kills base64, full HTML, manuals)
@@ -108,6 +124,68 @@ export function serializeThreadToMarkdown(
   const frontmatter = buildFrontmatter(options, title, templateFm)
   const nameTemplate = options.profile?.note_name_template || options.config.name_template
   const filename = applyNameTemplate(nameTemplate, options.thread, firstUserLine) + ".md"
+  return { filename, content: frontmatter + finalBody, format: "markdown" }
+}
+
+/**
+ * Assemble a P3 summary note: LLM-generated structured summary on top + the full
+ * conversation folded in a collapsible Obsidian callout below + (optional) related-notes
+ * footer + (optional) vault template skeleton. Reuses the same frontmatter/footer/template
+ * pipeline as serializeThreadToMarkdown — only the body source differs (summary vs raw convo).
+ * Pure: takes the already-parsed ThreadSummary, no LLM/IO.
+ */
+export function serializeSummaryToMarkdown(
+  summary: ThreadSummary,
+  messages: ExportMessage[],
+  options: SummaryOptions,
+): ExportResult {
+  const convo = messages.filter(m => m.role !== "system")
+  const firstUserLine = computeFirstUserLine(convo)
+  const title = summary.title || options.thread.alias || firstUserLine || "CMspark 对话摘要"
+
+  // Summary section: optional TLDR + structured body (关键主题/结论/…). We prepend an H1
+  // ONLY when no template is applied — a vault template owns the heading structure (its
+  // {{title}}), so adding our own would duplicate the H1 (the raw-conversation exporter has
+  // the same contract: body never starts with an H1 when a template wraps it). Defensive:
+  // strip a leading H1 off the LLM body (it was told H2+; the note's single H1 comes from us
+  // or the template), so a deviation can't produce two H1s.
+  const bodyNoH1 = summary.body.replace(/^(#{1}(?!#)[^\n]*\n\s*)+/, "")
+  const inner = [summary.tldr ? `> ${summary.tldr}` : "", bodyNoH1].filter(s => s !== "").join("\n\n")
+  const summarySection = options.template ? inner : `# ${title}\n\n${inner}`
+
+  // Folded full-conversation appendix (reuses the conversation renderer; tool noise already
+  // folded/truncated by renderBody). Skipped when there's nothing renderable.
+  const appendixBody = renderBody(pairBlocks(convo))
+  const appendix = appendixBody ? quote(`[!note]- 完整对话\n${appendixBody.trimEnd()}`) : ""
+
+  const footer = renderRelatedNotesFooter({ ...options } as ExportOptions)
+
+  // P2 template skeleton wraps the whole note (summary + appendix + footer) as {{content}}.
+  let templateFm: Record<string, any> | undefined
+  let finalBody = [summarySection, appendix, footer].filter(Boolean).join("\n\n")
+  if (options.template) {
+    const iso = new Date().toISOString()
+    const applied = applyTemplate(options.template, {
+      title,
+      date: iso.slice(0, 10),
+      time: iso.slice(11, 16).replace(":", ""),
+      content: finalBody,
+    })
+    templateFm = applied.frontmatter
+    finalBody = applied.body
+  }
+
+  const frontmatter = buildFrontmatter(
+    { ...options, scope: "summary" } as ExportOptions,
+    title,
+    templateFm,
+  )
+  const nameTemplate = options.profile?.note_name_template || options.config.name_template
+  // Filename prefers the first user line; for a summary whose thread has no user message,
+  // fall back to the LLM title / thread alias so the filename stays descriptive (matches the
+  // note's frontmatter title rather than degrading to a bare date).
+  const filenameSeed = firstUserLine || summary.title || options.thread.alias
+  const filename = applyNameTemplate(nameTemplate, options.thread, filenameSeed) + ".md"
   return { filename, content: frontmatter + finalBody, format: "markdown" }
 }
 
