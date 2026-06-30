@@ -5,6 +5,7 @@
 // Callers bring their own system prompt + parser; this just returns the raw text.
 
 import OpenAI from "openai"
+import { stripLoneSurrogates } from "./text-sanitize"
 
 export interface LlmExtractConfig {
   base_url: string
@@ -34,7 +35,10 @@ export async function llmExtract(params: {
     temperature: Math.min(config.temperature, temperatureCap),
     messages: [
       { role: "system", content: systemPrompt },
-      { role: "user", content: userContent },
+      // Strip lone surrogates from user content — vault notes / thread text can contain them
+      // (corrupt files or a slice() that split a surrogate pair), and they make strict server
+      // JSON parsers reject the body as a malformed \u escape.
+      { role: "user", content: stripLoneSurrogates(userContent) },
     ],
   })
   return response.choices[0]?.message?.content?.trim() || ""

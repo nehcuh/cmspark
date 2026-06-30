@@ -15,6 +15,7 @@ import * as path from "path"
 import matter from "gray-matter"
 import { DATA_DIR } from "../config"
 import { llmExtract, LlmExtractConfig } from "../llm/llm-extract"
+import { stripLoneSurrogates, safeSlice } from "../llm/text-sanitize"
 
 export interface FrontmatterField {
   name: string
@@ -106,7 +107,9 @@ export function scanVault(vaultPath: string, opts: { maxNotes?: number } = {}): 
             samples.push({
               relPath: path.relative(vaultPath, full),
               frontmatter: parsed.data || {},
-              bodyPreview: (parsed.content || "").trim().slice(0, BODY_PREVIEW_CHARS),
+              // Strip lone surrogates (corrupt files) + slice without splitting a surrogate
+              // pair, so the sampled preview can't produce an unpaired \u escape downstream.
+              bodyPreview: safeSlice(stripLoneSurrogates((parsed.content || "").trim()), BODY_PREVIEW_CHARS),
             })
           } catch {
             /* skip unreadable/malformed note */
