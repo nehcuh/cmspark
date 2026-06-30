@@ -445,3 +445,27 @@ test("P2 footer: profile.wikilink_style '几乎不用' suppresses footer even wi
   )
   assert.ok(!r.content.includes("相关笔记"))
 })
+
+test("P2 template: wraps body + contributes frontmatter skeleton; template overrides default, reserved win", () => {
+  const r = serializeThreadToMarkdown(
+    [msg({ id: "u1", role: "user", content: "对话内容 here" })],
+    {
+      scope: "thread", config: cfg, thread,
+      template: {
+        name: "default",
+        frontmatterRaw: "type: meeting\ntags: [会议]\ntitle: {{title}}",
+        body: "# {{title}}\n\n{{content}}",
+      },
+    },
+  )
+  // template frontmatter contributed (substituted) + overrides default tags
+  assert.match(r.content, /type: meeting/)
+  assert.match(r.content, /- 会议/)
+  assert.ok(!r.content.includes("- cmspark"), "template tags must override default_frontmatter tags")
+  // body wrapped: template heading + injected content
+  assert.ok(r.content.includes("# My Thread")) // {{title}} substituted (thread scope → alias)
+  assert.ok(r.content.includes("对话内容 here")) // {{content}} injected
+  // reserved provenance keys still win
+  assert.match(r.content, /source: cmspark:\/\/thread\/t1/)
+  assert.match(r.content, /title: My Thread/)
+})

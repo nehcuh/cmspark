@@ -10,6 +10,7 @@
 // readable AND the rendered JSON stays structurally valid. See renderJsonBounded.
 
 import * as yaml from "js-yaml"
+import { applyTemplate, type VaultTemplate } from "../obsidian/vault-templates"
 
 /** Structurally compatible with thread-manager's (private) Message — no export coupling. */
 export interface ExportMessage {
@@ -58,6 +59,8 @@ export interface ExportOptions {
   profile?: ExportProfile
   /** Top-K related vault note names (P2) — rendered as a [[wikilink]] footer. Absent/empty → no footer. */
   relatedNotes?: string[]
+  /** Cached vault template (P2) — wraps the body + contributes a frontmatter skeleton. Absent → no template. */
+  template?: VaultTemplate
 }
 
 export interface ExportResult {
@@ -86,11 +89,26 @@ export function serializeThreadToMarkdown(
   const blocks = pairBlocks(selected)
   const body = renderBody(blocks)
   const firstUserLine = computeFirstUserLine(selected)
-  const frontmatter = buildFrontmatter(options, firstUserLine)
+  const footer = renderRelatedNotesFooter(options)
+  const title = computeExportTitle(options, firstUserLine)
+  const iso = new Date().toISOString()
+  // P2: if a vault template is provided, it wraps the body+footer and contributes frontmatter.
+  let templateFm: Record<string, any> | undefined
+  let finalBody = body + footer
+  if (options.template) {
+    const applied = applyTemplate(options.template, {
+      title,
+      date: iso.slice(0, 10),
+      time: iso.slice(11, 16).replace(":", ""),
+      content: body + footer,
+    })
+    templateFm = applied.frontmatter
+    finalBody = applied.body
+  }
+  const frontmatter = buildFrontmatter(options, title, templateFm)
   const nameTemplate = options.profile?.note_name_template || options.config.name_template
   const filename = applyNameTemplate(nameTemplate, options.thread, firstUserLine) + ".md"
-  const footer = renderRelatedNotesFooter(options)
-  return { filename, content: frontmatter + body + footer, format: "markdown" }
+  return { filename, content: frontmatter + finalBody, format: "markdown" }
 }
 
 // ---------------- selection ----------------
@@ -361,19 +379,28 @@ function stripDocuments(content: string): string {
 
 // ---------------- frontmatter + filename ----------------
 
-function buildFrontmatter(options: ExportOptions, firstUserLine: string): string {
+/** Export-title granularity: whole-thread → alias; slice → first user line. Provenance is
+ *  carried by source/thread_id, so title is free to describe the exported content. */
+function computeExportTitle(options: ExportOptions, firstUserLine: string): string {
+  const { thread, scope } = options
+  return scope === "thread"
+    ? thread.alias || firstUserLine || "CMspark 对话"
+    : firstUserLine || thread.alias || "CMspark 对话"
+}
+
+function buildFrontmatter(
+  options: ExportOptions,
+  title: string,
+  templateFm?: Record<string, any>,
+): string {
   const { thread, scope, config, profile } = options
-  // default_frontmatter first so reserved provenance keys cannot be silently overridden.
-  // title granularity matches the export scope: whole-thread exports use the thread alias;
-  // slice exports (single/qa_pair) use the slice's first user line. Thread provenance is
-  // already carried by source/thread_id, so title is free to describe the exported content.
-  const title =
-    scope === "thread"
-      ? thread.alias || firstUserLine || "CMspark 对话"
-      : firstUserLine || thread.alias || "CMspark 对话"
+  // Layer precedence (low → high): default_frontmatter → profile schema additions →
+  // template skeleton → reserved provenance keys. The template overrides generic defaults
+  // (it's the user's note-type skeleton); reserved keys (source/thread_id/scope/.../title) win.
   const fm: Record<string, any> = {
     ...config.default_frontmatter,
     ...profileFrontmatterAdditions(profile, title),
+    ...(templateFm || {}),
     source: `cmspark://thread/${thread.id}`,
     thread_id: thread.id,
     scope,

@@ -9,6 +9,7 @@ import type { ThreadManager } from "./threads/thread-manager"
 import { serializeThreadToMarkdown } from "./threads/markdown-export"
 import { resolveVaultPath, profileVault, saveProfile, loadCachedProfile } from "./obsidian/vault-profiler"
 import { buildVaultIndex, saveIndex, loadCachedIndex, queryRelatedNotes } from "./obsidian/vault-index"
+import { detectTemplates, saveTemplates, loadCachedTemplates, pickTemplate } from "./obsidian/vault-templates"
 import type { SkillEngine } from "./skills/skill-engine"
 import type { HistoryStore } from "./history/store"
 import { getConfig, saveConfig, replaceMcpServers, setMcpEnabled } from "./config"
@@ -889,6 +890,8 @@ export async function handleMessage(
       const profile = loadCachedProfile(obsCfg.vault_path)
       // P2: find topically-related vault notes (from the cached index) for the [[wikilinks]] footer.
       const index = loadCachedIndex(obsCfg.vault_path)
+      // P2: apply a vault template skeleton (default/first) if templates were detected.
+      const template = pickTemplate(loadCachedTemplates(obsCfg.vault_path))
       let relatedNotes: string[] = []
       if (index) {
         const queryText = messages
@@ -910,6 +913,7 @@ export async function handleMessage(
         },
         ...(profile ? { profile } : {}),
         ...(relatedNotes.length ? { relatedNotes } : {}),
+        ...(template ? { template } : {}),
       })
       return {
         type: "thread.exported_obsidian",
@@ -1157,11 +1161,21 @@ export async function handleMessage(
         } catch {
           /* index is best-effort */
         }
+        // P2: detect vault templates (best-effort, non-blocking) for export-time skeleton.
+        let template_count: number | undefined
+        try {
+          const templates = detectTemplates(resolved)
+          saveTemplates(templates)
+          template_count = templates.templates.length
+        } catch {
+          /* templates best-effort */
+        }
         return {
           type: "obsidian.profile_ready",
           profile,
           files_sampled: profile.files_sampled,
           index_count,
+          template_count,
         }
       } catch (e: any) {
         return { type: "error", error: `vault 分析失败: ${e.message || String(e)}` }
