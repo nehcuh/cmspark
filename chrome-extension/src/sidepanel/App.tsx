@@ -283,7 +283,7 @@ function PrivilegeModeIndicator({ mode }: { mode: PrivilegeMode }) {
 }
 
 function Header({ connectionState, onCraft, onToggleLogs }: { connectionState: ConnectionState; onCraft: () => void; onToggleLogs: () => void }) {
-  const { state } = useAgentStore()
+  const { state, dispatch } = useAgentStore()
   const hasMessages = state.messages.length > 0 && !!state.activeThreadId
 
   return (
@@ -322,6 +322,27 @@ function Header({ connectionState, onCraft, onToggleLogs }: { connectionState: C
         title={hasMessages ? "导出整个线程到 Obsidian" : "当前线程没有消息"}
       >
         📥
+      </button>
+      <button
+        style={{
+          ...styles.craftBtn,
+          opacity: hasMessages ? 1 : 0.4,
+          cursor: hasMessages ? "pointer" : "not-allowed",
+        }}
+        disabled={!hasMessages || state.summarizingThreadId === state.activeThreadId}
+        onClick={() => {
+          if (state.activeThreadId) {
+            dispatch({ type: "SET_SUMMARIZING_THREAD", threadId: state.activeThreadId })
+            chrome.runtime.sendMessage({
+              type: "thread.export_obsidian",
+              thread_id: state.activeThreadId,
+              scope: "summary",
+            })
+          }
+        }}
+        title={hasMessages ? "导出整线程摘要到 Obsidian(结构化总结 + 折叠原文)" : "当前线程没有消息"}
+      >
+        {state.summarizingThreadId === state.activeThreadId ? "⏳" : "🧠"}
       </button>
       <button onClick={onToggleLogs} style={styles.craftBtn} title="日志">📋</button>
       <div

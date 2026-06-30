@@ -467,6 +467,8 @@ export function useWebSocket() {
             a.click()
             URL.revokeObjectURL(url)
           }
+          // P3: a pending summary export just resolved (download or not) — clear its spinner.
+          dispatch({ type: "SET_SUMMARIZING_THREAD", threadId: null })
           break
         }
 
@@ -511,6 +513,8 @@ export function useWebSocket() {
               created_at: new Date().toISOString(),
             },
           })
+          // P3: a failed summary export surfaces as an error chat message \u2014 clear its spinner.
+          dispatch({ type: "SET_SUMMARIZING_THREAD", threadId: null })
           break
 
         case "history.result":

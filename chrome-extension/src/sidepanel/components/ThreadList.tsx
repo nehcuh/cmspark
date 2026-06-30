@@ -110,6 +110,22 @@ export function ThreadList() {
                   </div>
                   <button
                     style={styles.deleteBtn}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      dispatch({ type: "SET_SUMMARIZING_THREAD", threadId: t.id })
+                      chrome.runtime.sendMessage({
+                        type: "thread.export_obsidian",
+                        thread_id: t.id,
+                        scope: "summary",
+                      })
+                    }}
+                    disabled={state.summarizingThreadId === t.id}
+                    title="导出此线程摘要到 Obsidian"
+                  >
+                    {state.summarizingThreadId === t.id ? "⏳" : "🧠"}
+                  </button>
+                  <button
+                    style={styles.deleteBtn}
                     onClick={(e) => handleDelete(t.id, e)}
                     title="删除线程"
                   >

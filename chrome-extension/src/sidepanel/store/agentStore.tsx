@@ -30,6 +30,8 @@ export interface AgentState {
   companionConfig: LLMConfig | null
   isProcessing: boolean
   obsidianProfileStatus: { ok: boolean; message: string } | null
+  /** P3: thread currently being summarized (null when idle). Drives the 🧠 button spinner. */
+  summarizingThreadId: string | null
   mcpServers: McpServerMeta[]
   mcpSelectionMode: McpSelectionMode
   activeMcpServerIds: string[]
@@ -73,6 +75,7 @@ export type AgentAction =
   | { type: "SET_COMPANION_CONFIG"; config: LLMConfig }
   | { type: "SET_PROCESSING"; isProcessing: boolean }
   | { type: "SET_OBSIDIAN_PROFILE_STATUS"; status: { ok: boolean; message: string } | null }
+  | { type: "SET_SUMMARIZING_THREAD"; threadId: string | null }
   | { type: "SET_MCP_SERVERS"; servers: McpServerMeta[] }
   | { type: "UPDATE_MCP_SERVER_STATUS"; server: McpServerMeta }
   | { type: "TOGGLE_MCP_SERVER"; serverName: string }
@@ -126,6 +129,7 @@ export const initialState: AgentState = {
   companionConfig: null,
   isProcessing: false,
   obsidianProfileStatus: null,
+  summarizingThreadId: null,
   mcpServers: [],
   mcpSelectionMode: "auto",
   activeMcpServerIds: [],
@@ -210,6 +214,8 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       return { ...state, config: { ...state.config, ...action.config } }
     case "SET_OBSIDIAN_PROFILE_STATUS":
       return { ...state, obsidianProfileStatus: action.status }
+    case "SET_SUMMARIZING_THREAD":
+      return { ...state, summarizingThreadId: action.threadId }
     case "TOGGLE_SETTINGS":
       return { ...state, settingsOpen: !state.settingsOpen }
     case "SET_TAB_LIST":
