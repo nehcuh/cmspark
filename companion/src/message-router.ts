@@ -1,10 +1,17 @@
 // Message router — dispatches incoming WebSocket messages to handlers
 
 import os from "os"
+import * as fs from "fs"
 import path from "path"
 import { URL } from "url"
 import OpenAI from "openai"
 import type { ThreadManager } from "./threads/thread-manager"
+import { serializeThreadToMarkdown, serializeSummaryToMarkdown } from "./threads/markdown-export"
+import { summarizeThread } from "./threads/summary-export"
+import { resolveVaultPath, profileVault, saveProfile, loadCachedProfile } from "./obsidian/vault-profiler"
+import { buildVaultIndex, saveIndex, loadCachedIndex, queryRelatedNotes } from "./obsidian/vault-index"
+import { detectTemplates, saveTemplates, loadCachedTemplates, pickTemplate } from "./obsidian/vault-templates"
+import { pickFolderNative } from "./obsidian/folder-picker"
 import type { SkillEngine } from "./skills/skill-engine"
 import type { HistoryStore } from "./history/store"
 import { getConfig, saveConfig, replaceMcpServers, setMcpEnabled } from "./config"
@@ -860,6 +867,102 @@ export async function handleMessage(
     }
     case "skill.export":
       return { type: "skill.exported", ...skillEngine.exportSkill(rest.skill_name) }
+    case "thread.export_obsidian": {
+      // Serialize (a slice of) a thread to Obsidian markdown and return it for UI-side
+      // Blob download. Mirrors skill.export. v1 is UI-download only — no file write here.
+      const thread = services.threadManager.get(rest.thread_id)
+      if (!thread) return { type: "error", error: "thread not found" }
+      if (
+        rest.scope !== "single" &&
+        rest.scope !== "qa_pair" &&
+        rest.scope !== "thread" &&
+        rest.scope !== "summary"
+      ) {
+        return { type: "error", error: `invalid scope: ${rest.scope}` }
+      }
+      const messages = services.threadManager.getMessages(rest.thread_id)
+      // For slice scopes, require a valid anchor — otherwise the serializer would silently
+      // fall back to exporting the whole thread under a mismatched scope label. Summary and
+      // thread scopes consume the whole thread, so no anchor is needed.
+      if (rest.scope !== "thread" && rest.scope !== "summary") {
+        if (!rest.anchor_message_id) {
+          return { type: "error", error: "anchor_message_id is required for single/qa_pair scope" }
+        }
+        if (!messages.some((m: any) => m.id === rest.anchor_message_id)) {
+          return { type: "error", error: "anchor_message_id not found in thread" }
+        }
+      }
+      const obsCfg = getConfig().obsidian
+      if (!obsCfg) return { type: "error", error: "obsidian export not configured" }
+      // Apply the cached vault profile (P1) if present + matches the configured vault.
+      const profile = loadCachedProfile(obsCfg.vault_path)
+      // P2: find topically-related vault notes (from the cached index) for the [[wikilinks]] footer.
+      const index = loadCachedIndex(obsCfg.vault_path)
+      // P2: apply a vault template skeleton (default/first) if templates were detected.
+      const template = pickTemplate(loadCachedTemplates(obsCfg.vault_path))
+      let relatedNotes: string[] = []
+      if (index) {
+        const queryText = messages
+          .filter((m: any) => m.role === "user" || m.role === "assistant")
+          .map((m: any) => m.content || "")
+          .join(" ")
+          .slice(0, 5000)
+        if (queryText) relatedNotes = queryRelatedNotes(index, queryText, 5)
+      }
+      const threadMeta = {
+        id: thread.id,
+        alias: thread.alias,
+        created_at: thread.created_at,
+        updated_at: thread.updated_at,
+      }
+      // P3 summary scope: send the (token-budgeted) thread to the LLM, then assemble a
+      // summary note (LLM summary + folded full-conversation appendix + footer + template).
+      // Mirrors the raw-export shape so the UI's existing download path handles it unchanged.
+      if (rest.scope === "summary") {
+        const llm = getConfig().llm
+        let summary
+        try {
+          summary = await summarizeThread({
+            messages,
+            config: llm,
+            contextWindow: llm.context_window,
+          })
+        } catch (e: any) {
+          return { type: "error", error: `摘要生成失败: ${e.message || String(e)}` }
+        }
+        if (!summary) {
+          return { type: "error", error: "对话太短或模型未返回可用摘要" }
+        }
+        const result = serializeSummaryToMarkdown(summary, messages, {
+          config: obsCfg,
+          thread: threadMeta,
+          ...(profile ? { profile } : {}),
+          ...(relatedNotes.length ? { relatedNotes } : {}),
+          ...(template ? { template } : {}),
+        })
+        return {
+          type: "thread.exported_obsidian",
+          content: result.content,
+          filename: result.filename,
+          format: result.format,
+        }
+      }
+      const result = serializeThreadToMarkdown(messages, {
+        scope: rest.scope,
+        anchorMessageId: rest.anchor_message_id,
+        config: obsCfg,
+        thread: threadMeta,
+        ...(profile ? { profile } : {}),
+        ...(relatedNotes.length ? { relatedNotes } : {}),
+        ...(template ? { template } : {}),
+      })
+      return {
+        type: "thread.exported_obsidian",
+        content: result.content,
+        filename: result.filename,
+        format: result.format,
+      }
+    }
     case "skill.import": {
       if (rest.url) {
         // SSRF protection: protocol whitelist, block internal IPs (P0)
@@ -1046,6 +1149,86 @@ export async function handleMessage(
         }
       } catch (e: any) {
         return { type: "error", error: `技能生成失败: ${e.message || String(e)}` }
+      }
+    }
+    case "obsidian.pick_vault_folder": {
+      // Open the OS native folder-picker (companion-side; extensions can't read real paths)
+      // and return the chosen vault path. The UI adopts it as the obsidian vault_path.
+      const result = await pickFolderNative()
+      return {
+        type: "obsidian.vault_folder_picked",
+        ...(result.path ? { path: result.path } : { error: result.error || "未选择文件夹" }),
+      }
+    }
+    case "obsidian.refresh_profile": {
+      // Scan the user's Obsidian vault, extract conventions via LLM, cache the profile (P1).
+      // On-demand (user clicks refresh); export then applies the cached profile.
+      try {
+        const raw = rest.vault_path ? rest.vault_path : getConfig().obsidian?.vault_path
+        if (!raw) {
+          return { type: "error", error: "vault_path 未设置（请在 设置 → Obsidian 填写）" }
+        }
+        let resolved: string
+        try {
+          resolved = resolveVaultPath(raw)
+        } catch (e: any) {
+          return { type: "error", error: e.message || "invalid vault_path" }
+        }
+        let stat: fs.Stats
+        try {
+          stat = fs.statSync(resolved)
+        } catch {
+          return { type: "error", error: `vault 路径不存在: ${resolved}` }
+        }
+        if (!stat.isDirectory()) {
+          return { type: "error", error: `vault 路径不是目录: ${resolved}` }
+        }
+        // Persist the resolved vault_path so later exports can find the cached profile.
+        const curObs = getConfig().obsidian
+        saveConfig({
+          obsidian: {
+            name_template: curObs?.name_template ?? "{{date}} {{first_user_line}}",
+            default_frontmatter: curObs?.default_frontmatter ?? { tags: ["cmspark"] },
+            vault_path: resolved,
+          },
+        })
+        const profile = await profileVault({ vaultPath: resolved, config: getConfig().llm })
+        if (!profile) {
+          return {
+            type: "obsidian.profile_ready",
+            profile: null,
+            reason: "未识别到 vault 结构化约定（空 vault 或 LLM 未提取出）",
+          }
+        }
+        saveProfile(profile)
+        // P2: also build the note index for export-time [[wikilinks]] (best-effort, non-blocking —
+        // an index failure must not fail the profile refresh).
+        let index_count: number | undefined
+        try {
+          const index = buildVaultIndex(resolved)
+          saveIndex(index)
+          index_count = index.entries.length
+        } catch {
+          /* index is best-effort */
+        }
+        // P2: detect vault templates (best-effort, non-blocking) for export-time skeleton.
+        let template_count: number | undefined
+        try {
+          const templates = detectTemplates(resolved)
+          saveTemplates(templates)
+          template_count = templates.templates.length
+        } catch {
+          /* templates best-effort */
+        }
+        return {
+          type: "obsidian.profile_ready",
+          profile,
+          files_sampled: profile.files_sampled,
+          index_count,
+          template_count,
+        }
+      } catch (e: any) {
+        return { type: "error", error: `vault 分析失败: ${e.message || String(e)}` }
       }
     }
 

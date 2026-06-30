@@ -460,6 +460,9 @@ function setupMessageHandlers() {
         return true
 
       case "thread.list":
+      case "thread.export_obsidian":
+      case "obsidian.pick_vault_folder":
+      case "obsidian.refresh_profile":
       case "skill.list":
       case "skill.craft":
       case "skill.activate":

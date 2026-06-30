@@ -91,6 +91,54 @@ export function SettingsSlideout() {
         </div>
 
         <div style={styles.body}>
+          {/* --- Obsidian Export --- */}
+          <div style={styles.sectionTitle}>Obsidian 导出</div>
+          <div style={styles.field}>
+            <label style={styles.label}>Vault 路径</label>
+            <input
+              style={styles.input}
+              value={config.obsidian_vault_path || ""}
+              onChange={e => dispatch({ type: "SET_CONFIG", config: { obsidian_vault_path: e.target.value } })}
+              placeholder="/path/to/your/vault"
+            />
+            <button
+              style={{ ...styles.secondaryBtn, marginTop: 6 }}
+              disabled={state.vaultPicker.picking}
+              onClick={() => {
+                // Ask the companion to open the OS native folder-picker (extensions can't
+                // read real folder paths). The response sets config.obsidian_vault_path.
+                dispatch({ type: "SET_VAULT_PICKER", picking: true, error: null })
+                chrome.runtime.sendMessage({ type: "obsidian.pick_vault_folder" })
+              }}
+            >
+              {state.vaultPicker.picking ? "选择中…" : "📂 选择文件夹"}
+            </button>
+            {state.vaultPicker.error && (
+              <div style={{ ...styles.helpText, color: "#F44336", marginTop: 4 }}>
+                {state.vaultPicker.error}
+              </div>
+            )}
+            <div style={styles.helpText}>
+              导出时会扫描此 vault:把约 200 篇笔记的 frontmatter + 正文前 200 字发给你的 LLM 提取 frontmatter / 命名 / tag 约定,并建立笔记索引、检测模板。缓存后导出自动套用——frontmatter 贴合约定、footer 用 [[wikilinks]] 链向相关笔记、并用 vault 模板骨架包裹。
+            </div>
+            <button
+              style={styles.secondaryBtn}
+              onClick={() => {
+                const vp = config.obsidian_vault_path?.trim()
+                if (!vp) return
+                dispatch({ type: "SET_OBSIDIAN_PROFILE_STATUS", status: { ok: true, message: "分析中…" } })
+                chrome.runtime.sendMessage({ type: "obsidian.refresh_profile", vault_path: vp })
+              }}
+            >
+              刷新 vault 档案
+            </button>
+            {state.obsidianProfileStatus && (
+              <div style={{ ...styles.helpText, color: state.obsidianProfileStatus.ok ? "#2E7D32" : "#F44336", marginTop: 6 }}>
+                {state.obsidianProfileStatus.message}
+              </div>
+            )}
+          </div>
+
           {/* --- Security Settings --- */}
           <div style={styles.sectionTitle}>安全设置</div>
 

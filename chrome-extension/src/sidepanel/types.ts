@@ -131,6 +131,8 @@ export interface LLMConfig {
   file_upload_max_size?: number
   file_upload_max_tokens?: number
   file_upload_vision?: boolean
+  // Obsidian export vault path (flattened from companion config.obsidian.vault_path)
+  obsidian_vault_path?: string
 }
 
 export interface Message {

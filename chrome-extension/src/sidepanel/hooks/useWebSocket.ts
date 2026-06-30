@@ -65,6 +65,10 @@ export function normalizeConfig(config: any): Partial<LLMConfig> {
     normalized.file_upload_max_tokens = fileUpload.max_file_tokens
     normalized.file_upload_vision = !!fileUpload.enable_vision_analysis
   }
+  // Obsidian export: flatten config.obsidian.vault_path
+  if (config.obsidian && typeof config.obsidian.vault_path === "string") {
+    normalized.obsidian_vault_path = config.obsidian.vault_path
+  }
   return Object.fromEntries(
     Object.entries(normalized).filter(([, value]) => value !== undefined)
   ) as Partial<LLMConfig>
@@ -108,7 +112,11 @@ export function useWebSocket() {
             dispatch({
               type: "ADD_MESSAGE",
               message: {
-                id: `${activeThreadRef.current}_assistant_${Date.now()}`,
+                // Prefer the companion's persisted message id (echoed in chat.done) so the
+                // UI id matches what's stored — anchor-based features (per-message export)
+                // then work on the just-received response without a thread reload. Fall back
+                // to a client id only if the companion didn't echo one.
+                id: msg.message_id || `${activeThreadRef.current}_assistant_${Date.now()}`,
                 thread_id: activeThreadRef.current,
                 role: "assistant",
                 content,
@@ -452,6 +460,56 @@ export function useWebSocket() {
           break
         }
 
+        case "thread.exported_obsidian": {
+          const { content, filename } = msg
+          if (content) {
+            const blob = new Blob([new TextEncoder().encode(content)], { type: "text/markdown" })
+            const url = URL.createObjectURL(blob)
+            const a = document.createElement("a")
+            a.href = url
+            a.download = filename || "export.md"
+            a.click()
+            URL.revokeObjectURL(url)
+          }
+          // P3: a pending summary export just resolved (download or not) — clear its spinner.
+          dispatch({ type: "SET_SUMMARIZING_THREAD", threadId: null })
+          break
+        }
+
+        case "obsidian.vault_folder_picked": {
+          // Native folder-picker result from the companion. Adopt the path (config binds to
+          // the input); clear the spinner. A cancel is silent; a real error is surfaced.
+          if (msg.path) {
+            dispatch({ type: "SET_CONFIG", config: { obsidian_vault_path: msg.path } })
+            dispatch({ type: "SET_VAULT_PICKER", picking: false, error: null })
+          } else if (msg.error === "cancelled") {
+            dispatch({ type: "SET_VAULT_PICKER", picking: false, error: null })
+          } else {
+            dispatch({ type: "SET_VAULT_PICKER", picking: false, error: msg.error || "选择失败" })
+          }
+          break
+        }
+
+        case "obsidian.profile_ready": {
+          const profile = msg.profile
+          if (profile) {
+            // Summarize what was learned: notes sampled + (P2) vault index size + template count.
+            const parts = [`分析了 ${msg.files_sampled ?? profile.files_sampled ?? "?"} 篇笔记`]
+            if (msg.index_count != null) parts.push(`索引 ${msg.index_count} 篇`)
+            if (msg.template_count != null && msg.template_count > 0) parts.push(`模板 ${msg.template_count} 个`)
+            dispatch({
+              type: "SET_OBSIDIAN_PROFILE_STATUS",
+              status: { ok: true, message: `✓ Vault 档案已更新（${parts.join(" · ")}）` },
+            })
+          } else {
+            dispatch({
+              type: "SET_OBSIDIAN_PROFILE_STATUS",
+              status: { ok: false, message: msg.reason || "未识别到 vault 结构化约定" },
+            })
+          }
+          break
+        }
+
         case "skill.imported":
         case "skill.deleted":
           chrome.runtime.sendMessage({ type: "skill.list" })
@@ -473,6 +531,8 @@ export function useWebSocket() {
               created_at: new Date().toISOString(),
             },
           })
+          // P3: a failed summary export surfaces as an error chat message \u2014 clear its spinner.
+          dispatch({ type: "SET_SUMMARIZING_THREAD", threadId: null })
           break
 
         case "history.result":
