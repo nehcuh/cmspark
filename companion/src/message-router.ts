@@ -6,7 +6,8 @@ import path from "path"
 import { URL } from "url"
 import OpenAI from "openai"
 import type { ThreadManager } from "./threads/thread-manager"
-import { serializeThreadToMarkdown } from "./threads/markdown-export"
+import { serializeThreadToMarkdown, serializeSummaryToMarkdown } from "./threads/markdown-export"
+import { summarizeThread } from "./threads/summary-export"
 import { resolveVaultPath, profileVault, saveProfile, loadCachedProfile } from "./obsidian/vault-profiler"
 import { buildVaultIndex, saveIndex, loadCachedIndex, queryRelatedNotes } from "./obsidian/vault-index"
 import { detectTemplates, saveTemplates, loadCachedTemplates, pickTemplate } from "./obsidian/vault-templates"
@@ -870,13 +871,19 @@ export async function handleMessage(
       // Blob download. Mirrors skill.export. v1 is UI-download only — no file write here.
       const thread = services.threadManager.get(rest.thread_id)
       if (!thread) return { type: "error", error: "thread not found" }
-      if (rest.scope !== "single" && rest.scope !== "qa_pair" && rest.scope !== "thread") {
+      if (
+        rest.scope !== "single" &&
+        rest.scope !== "qa_pair" &&
+        rest.scope !== "thread" &&
+        rest.scope !== "summary"
+      ) {
         return { type: "error", error: `invalid scope: ${rest.scope}` }
       }
       const messages = services.threadManager.getMessages(rest.thread_id)
       // For slice scopes, require a valid anchor — otherwise the serializer would silently
-      // fall back to exporting the whole thread under a mismatched scope label.
-      if (rest.scope !== "thread") {
+      // fall back to exporting the whole thread under a mismatched scope label. Summary and
+      // thread scopes consume the whole thread, so no anchor is needed.
+      if (rest.scope !== "thread" && rest.scope !== "summary") {
         if (!rest.anchor_message_id) {
           return { type: "error", error: "anchor_message_id is required for single/qa_pair scope" }
         }
@@ -901,16 +908,49 @@ export async function handleMessage(
           .slice(0, 5000)
         if (queryText) relatedNotes = queryRelatedNotes(index, queryText, 5)
       }
+      const threadMeta = {
+        id: thread.id,
+        alias: thread.alias,
+        created_at: thread.created_at,
+        updated_at: thread.updated_at,
+      }
+      // P3 summary scope: send the (token-budgeted) thread to the LLM, then assemble a
+      // summary note (LLM summary + folded full-conversation appendix + footer + template).
+      // Mirrors the raw-export shape so the UI's existing download path handles it unchanged.
+      if (rest.scope === "summary") {
+        const llm = getConfig().llm
+        let summary
+        try {
+          summary = await summarizeThread({
+            messages,
+            config: llm,
+            contextWindow: llm.context_window,
+          })
+        } catch (e: any) {
+          return { type: "error", error: `摘要生成失败: ${e.message || String(e)}` }
+        }
+        if (!summary) {
+          return { type: "error", error: "对话太短或模型未返回可用摘要" }
+        }
+        const result = serializeSummaryToMarkdown(summary, messages, {
+          config: obsCfg,
+          thread: threadMeta,
+          ...(profile ? { profile } : {}),
+          ...(relatedNotes.length ? { relatedNotes } : {}),
+          ...(template ? { template } : {}),
+        })
+        return {
+          type: "thread.exported_obsidian",
+          content: result.content,
+          filename: result.filename,
+          format: result.format,
+        }
+      }
       const result = serializeThreadToMarkdown(messages, {
         scope: rest.scope,
         anchorMessageId: rest.anchor_message_id,
         config: obsCfg,
-        thread: {
-          id: thread.id,
-          alias: thread.alias,
-          created_at: thread.created_at,
-          updated_at: thread.updated_at,
-        },
+        thread: threadMeta,
         ...(profile ? { profile } : {}),
         ...(relatedNotes.length ? { relatedNotes } : {}),
         ...(template ? { template } : {}),
