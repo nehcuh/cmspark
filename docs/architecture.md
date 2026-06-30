@@ -489,3 +489,46 @@ cmsspark/
     ├── adr/                          # 架构决策记录
     └── requirements/                 # 需求文档
 ```
+
+---
+
+## 5. Obsidian 对话导出
+
+> 详见 [ADR-008](adr/008-obsidian-export.md)。把对话导出成贴合用户 Obsidian vault 约定的 markdown 笔记，**UI 下载模式**（不写宿主文件、无路径沙箱）。
+
+### 5.1 触发与数据流
+
+```
+Side Panel 📥(单条/整 thread) / 🧠(摘要)
+        │  chrome.runtime.sendMessage({ type:"thread.export_obsidian", thread_id, scope, anchor_message_id? })
+        ▼
+background (forward) → Companion message-router.ts:
+   case "thread.export_obsidian":
+     1. 加载 messages + 缓存的 profile / vault-index / template（loadCached*，vault_path resolve 校验）
+     2. (P2) queryRelatedNotes(index, body, 5) → footer [[wikilinks]]
+     3. scope 分支:
+        - single/qa_pair/thread → serializeThreadToMarkdown（纯函数）
+        - summary              → summarizeThread(llmExtract 90s) → serializeSummaryToMarkdown
+                                  (LLM 结构化摘要 + 折叠完整对话附录)
+     4. return { type:"thread.exported_obsidian", content, filename, format }
+        ▼
+Side Panel useWebSocket → Blob 下载
+```
+
+### 5.2 模块（companion/src/）
+
+| 模块 | 职责 |
+|---|---|
+| `threads/markdown-export.ts` | 纯序列化器：`serializeThreadToMarkdown`（tool 噪音折叠/截断/合法 JSON）+ `serializeSummaryToMarkdown`（摘要+折叠附录+footer+模板）；frontmatter 优先级 reserved > template > profile > default |
+| `threads/summary-export.ts` | P3 摘要：`SUMMARY_SYSTEM_PROMPT`（固定结构 TL;DR/主题/结论/决策/待办）、`buildSummaryTranscript`（token 预算 head+tail，强制保留开篇提问）、`parseSummary`（鲁棒解析）、`summarizeThread`（llmExtract） |
+| `obsidian/vault-profiler.ts` | P1 vault 档案：`scanVault`（递归采样 ~200 篇，safeSlice+stripLoneSurrogates）、`profileVault`（LLM 提取约定）、`parseVaultProfile`（fence-anywhere + 空值守卫）、缓存 |
+| `obsidian/vault-index.ts` | P2 笔记索引：`buildVaultIndex`（semantic-match tokenize/tokensToVec）+ `queryRelatedNotes`（纯 TF 余弦 top-K，isSafeWikilinkName 过滤） |
+| `obsidian/vault-templates.ts` | P2 模板：`detectTemplates`（frontmatterRaw **正则确定性提取**，非 gray-matter `.matter`）、`applyTemplate`（静态占位符替换）、realpath containment（防 symlink 逃逸/TOCTOU） |
+| `obsidian/folder-picker.ts` | 原生文件夹选择器（macOS osascript / Linux zenity / Windows PowerShell）— 扩展无法读真实路径，故走 companion |
+| `llm/llm-extract.ts` | 一次性非流式 LLM 调用（profileVault / summarizeThread 复用）；`stripLoneSurrogates` 在 boundary 防御 |
+
+### 5.3 关键约束
+
+- **隐私**：vault 档案只发笔记 basename + frontmatter(capped) + 正文前 200 字给 LLM；cache 文件 mode 0o600。
+- **纯度边界**：`markdown-export.ts` 保持纯函数（无 IO/LLM）；LLM 调用集中在 `summary-export.ts` / `vault-profiler.ts`。
+- **缓存失效**：profile/index/templates 按需刷新（Settings → 刷新 vault 档案），导出时不重扫。
