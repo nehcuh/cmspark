@@ -419,3 +419,29 @@ test("tool result containing triple-backtick markdown uses a longer fence (no pr
   assert.match(r.content, /````json/)
   assert.ok(r.content.includes("```js"))
 })
+
+test("P2 footer: relatedNotes → '## 相关笔记' with [[wikilinks]] appended", () => {
+  const r = serializeThreadToMarkdown(
+    [msg({ id: "u1", role: "user", content: "topic" }), msg({ id: "a1", role: "assistant", content: "answer" })],
+    { ...opt("thread"), relatedNotes: ["RAG 入门", "向量数据库"] },
+  )
+  assert.match(r.content, /## 相关笔记/)
+  assert.match(r.content, /\[\[RAG 入门\]\]/)
+  assert.match(r.content, /\[\[向量数据库\]\]/)
+})
+
+test("P2 footer: absent relatedNotes → no footer", () => {
+  const r = serializeThreadToMarkdown(
+    [msg({ id: "u1", role: "user", content: "topic" })],
+    opt("thread"),
+  )
+  assert.ok(!r.content.includes("相关笔记"))
+})
+
+test("P2 footer: profile.wikilink_style '几乎不用' suppresses footer even with relatedNotes", () => {
+  const r = serializeThreadToMarkdown(
+    [msg({ id: "u1", role: "user", content: "topic" })],
+    { scope: "thread", config: cfg, thread, relatedNotes: ["X"], profile: { wikilink_style: "几乎不用 wikilink" } },
+  )
+  assert.ok(!r.content.includes("相关笔记"))
+})

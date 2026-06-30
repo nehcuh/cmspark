@@ -8,6 +8,7 @@ import OpenAI from "openai"
 import type { ThreadManager } from "./threads/thread-manager"
 import { serializeThreadToMarkdown } from "./threads/markdown-export"
 import { resolveVaultPath, profileVault, saveProfile, loadCachedProfile } from "./obsidian/vault-profiler"
+import { buildVaultIndex, saveIndex, loadCachedIndex, queryRelatedNotes } from "./obsidian/vault-index"
 import type { SkillEngine } from "./skills/skill-engine"
 import type { HistoryStore } from "./history/store"
 import { getConfig, saveConfig, replaceMcpServers, setMcpEnabled } from "./config"
@@ -886,6 +887,17 @@ export async function handleMessage(
       if (!obsCfg) return { type: "error", error: "obsidian export not configured" }
       // Apply the cached vault profile (P1) if present + matches the configured vault.
       const profile = loadCachedProfile(obsCfg.vault_path)
+      // P2: find topically-related vault notes (from the cached index) for the [[wikilinks]] footer.
+      const index = loadCachedIndex(obsCfg.vault_path)
+      let relatedNotes: string[] = []
+      if (index) {
+        const queryText = messages
+          .filter((m: any) => m.role === "user" || m.role === "assistant")
+          .map((m: any) => m.content || "")
+          .join(" ")
+          .slice(0, 5000)
+        if (queryText) relatedNotes = queryRelatedNotes(index, queryText, 5)
+      }
       const result = serializeThreadToMarkdown(messages, {
         scope: rest.scope,
         anchorMessageId: rest.anchor_message_id,
@@ -897,6 +909,7 @@ export async function handleMessage(
           updated_at: thread.updated_at,
         },
         ...(profile ? { profile } : {}),
+        ...(relatedNotes.length ? { relatedNotes } : {}),
       })
       return {
         type: "thread.exported_obsidian",
@@ -1134,7 +1147,22 @@ export async function handleMessage(
           }
         }
         saveProfile(profile)
-        return { type: "obsidian.profile_ready", profile, files_sampled: profile.files_sampled }
+        // P2: also build the note index for export-time [[wikilinks]] (best-effort, non-blocking —
+        // an index failure must not fail the profile refresh).
+        let index_count: number | undefined
+        try {
+          const index = buildVaultIndex(resolved)
+          saveIndex(index)
+          index_count = index.entries.length
+        } catch {
+          /* index is best-effort */
+        }
+        return {
+          type: "obsidian.profile_ready",
+          profile,
+          files_sampled: profile.files_sampled,
+          index_count,
+        }
       } catch (e: any) {
         return { type: "error", error: `vault 分析失败: ${e.message || String(e)}` }
       }

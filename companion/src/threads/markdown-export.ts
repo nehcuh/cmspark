@@ -45,6 +45,8 @@ export interface ExportProfile {
   frontmatter_schema?: { name: string; type: string }[]
   tag_conventions?: string[]
   note_name_template?: string
+  folder_structure?: string
+  wikilink_style?: string
 }
 
 export interface ExportOptions {
@@ -54,6 +56,8 @@ export interface ExportOptions {
   thread: ExportThreadMeta
   /** Cached vault profile (P1). When present, frontmatter + filename adapt to vault conventions. */
   profile?: ExportProfile
+  /** Top-K related vault note names (P2) — rendered as a [[wikilink]] footer. Absent/empty → no footer. */
+  relatedNotes?: string[]
 }
 
 export interface ExportResult {
@@ -85,7 +89,8 @@ export function serializeThreadToMarkdown(
   const frontmatter = buildFrontmatter(options, firstUserLine)
   const nameTemplate = options.profile?.note_name_template || options.config.name_template
   const filename = applyNameTemplate(nameTemplate, options.thread, firstUserLine) + ".md"
-  return { filename, content: frontmatter + body, format: "markdown" }
+  const footer = renderRelatedNotesFooter(options)
+  return { filename, content: frontmatter + body + footer, format: "markdown" }
 }
 
 // ---------------- selection ----------------
@@ -376,6 +381,16 @@ function buildFrontmatter(options: ExportOptions, firstUserLine: string): string
     title,
   }
   return `---\n${yaml.dump(fm, { lineWidth: -1, sortKeys: false })}---\n\n`
+}
+
+/** P2: "相关笔记" footer with [[wikilinks]] to topically-related vault notes. */
+function renderRelatedNotesFooter(options: ExportOptions): string {
+  const notes = options.relatedNotes
+  if (!notes || notes.length === 0) return ""
+  // Respect the user's wikilink habit — if they rarely/never use wikilinks, don't impose a footer.
+  const style = options.profile?.wikilink_style || ""
+  if (/(几乎不用|不用|极少|never|rarely)/i.test(style)) return ""
+  return "\n\n## 相关笔记\n\n" + notes.map(n => `- [[${n}]]`).join("\n") + "\n"
 }
 
 /**
