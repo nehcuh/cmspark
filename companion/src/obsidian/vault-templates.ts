@@ -64,9 +64,15 @@ export function detectTemplates(vaultPath: string): VaultTemplates {
             if (!realFile || !isStrictlyInside(realFile, realRoot)) continue
             const raw = fs.readFileSync(filePath, "utf-8")
             const parsed = matter(raw)
+            // Extract the raw frontmatter text DETERMINISTICALLY rather than via
+            // `parsed.matter`: that property is unreliable (undefined for some template
+            // contents / gray-matter versions), which would silently drop the frontmatter
+            // skeleton. The regex keeps {{placeholders}} intact (yaml-parsing would mangle
+            // them) and matches only a leading `---\n…\n---` block.
+            const fm = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/)
             templates.push({
               name: entry.name.replace(/\.md$/i, ""),
-              frontmatterRaw: parsed.matter || "",
+              frontmatterRaw: fm ? fm[1] : "",
               body: parsed.content || "",
             })
           } catch {
