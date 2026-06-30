@@ -11,6 +11,7 @@ import { summarizeThread } from "./threads/summary-export"
 import { resolveVaultPath, profileVault, saveProfile, loadCachedProfile } from "./obsidian/vault-profiler"
 import { buildVaultIndex, saveIndex, loadCachedIndex, queryRelatedNotes } from "./obsidian/vault-index"
 import { detectTemplates, saveTemplates, loadCachedTemplates, pickTemplate } from "./obsidian/vault-templates"
+import { pickFolderNative } from "./obsidian/folder-picker"
 import type { SkillEngine } from "./skills/skill-engine"
 import type { HistoryStore } from "./history/store"
 import { getConfig, saveConfig, replaceMcpServers, setMcpEnabled } from "./config"
@@ -1148,6 +1149,15 @@ export async function handleMessage(
         }
       } catch (e: any) {
         return { type: "error", error: `技能生成失败: ${e.message || String(e)}` }
+      }
+    }
+    case "obsidian.pick_vault_folder": {
+      // Open the OS native folder-picker (companion-side; extensions can't read real paths)
+      // and return the chosen vault path. The UI adopts it as the obsidian vault_path.
+      const result = await pickFolderNative()
+      return {
+        type: "obsidian.vault_folder_picked",
+        ...(result.path ? { path: result.path } : { error: result.error || "未选择文件夹" }),
       }
     }
     case "obsidian.refresh_profile": {

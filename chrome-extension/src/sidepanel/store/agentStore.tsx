@@ -32,6 +32,8 @@ export interface AgentState {
   obsidianProfileStatus: { ok: boolean; message: string } | null
   /** P3: thread currently being summarized (null when idle). Drives the 🧠 button spinner. */
   summarizingThreadId: string | null
+  /** Vault folder-picker state (P3.5): picking + last error. */
+  vaultPicker: { picking: boolean; error: string | null }
   mcpServers: McpServerMeta[]
   mcpSelectionMode: McpSelectionMode
   activeMcpServerIds: string[]
@@ -76,6 +78,7 @@ export type AgentAction =
   | { type: "SET_PROCESSING"; isProcessing: boolean }
   | { type: "SET_OBSIDIAN_PROFILE_STATUS"; status: { ok: boolean; message: string } | null }
   | { type: "SET_SUMMARIZING_THREAD"; threadId: string | null }
+  | { type: "SET_VAULT_PICKER"; picking: boolean; error: string | null }
   | { type: "SET_MCP_SERVERS"; servers: McpServerMeta[] }
   | { type: "UPDATE_MCP_SERVER_STATUS"; server: McpServerMeta }
   | { type: "TOGGLE_MCP_SERVER"; serverName: string }
@@ -130,6 +133,7 @@ export const initialState: AgentState = {
   isProcessing: false,
   obsidianProfileStatus: null,
   summarizingThreadId: null,
+  vaultPicker: { picking: false, error: null },
   mcpServers: [],
   mcpSelectionMode: "auto",
   activeMcpServerIds: [],
@@ -216,6 +220,8 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       return { ...state, obsidianProfileStatus: action.status }
     case "SET_SUMMARIZING_THREAD":
       return { ...state, summarizingThreadId: action.threadId }
+    case "SET_VAULT_PICKER":
+      return { ...state, vaultPicker: { picking: action.picking, error: action.error } }
     case "TOGGLE_SETTINGS":
       return { ...state, settingsOpen: !state.settingsOpen }
     case "SET_TAB_LIST":

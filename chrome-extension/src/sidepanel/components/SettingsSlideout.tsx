@@ -101,6 +101,23 @@ export function SettingsSlideout() {
               onChange={e => dispatch({ type: "SET_CONFIG", config: { obsidian_vault_path: e.target.value } })}
               placeholder="/path/to/your/vault"
             />
+            <button
+              style={{ ...styles.secondaryBtn, marginTop: 6 }}
+              disabled={state.vaultPicker.picking}
+              onClick={() => {
+                // Ask the companion to open the OS native folder-picker (extensions can't
+                // read real folder paths). The response sets config.obsidian_vault_path.
+                dispatch({ type: "SET_VAULT_PICKER", picking: true, error: null })
+                chrome.runtime.sendMessage({ type: "obsidian.pick_vault_folder" })
+              }}
+            >
+              {state.vaultPicker.picking ? "选择中…" : "📂 选择文件夹"}
+            </button>
+            {state.vaultPicker.error && (
+              <div style={{ ...styles.helpText, color: "#F44336", marginTop: 4 }}>
+                {state.vaultPicker.error}
+              </div>
+            )}
             <div style={styles.helpText}>
               导出时会扫描此 vault:把约 200 篇笔记的 frontmatter + 正文前 200 字发给你的 LLM 提取 frontmatter / 命名 / tag 约定,并建立笔记索引、检测模板。缓存后导出自动套用——frontmatter 贴合约定、footer 用 [[wikilinks]] 链向相关笔记、并用 vault 模板骨架包裹。
             </div>
