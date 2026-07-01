@@ -22,6 +22,17 @@
 
 ---
 
+## 已交付功能扩展：Side Panel Mermaid 图表渲染（2026-07-01，PR #9）
+
+稳定化之外的第二个功能扩展：把 LLM 产出的 ` ```mermaid ` 块在 Side Panel 渲染成可读 SVG 图（流程图/时序图/gantt/类图/ER/状态机…全类型）。
+
+- **CSP-safe 客户端渲染**：spike 验证 mermaid 11.16 在 MV3 默认 strict CSP 下直跑（无 eval 类构造），无需 sandbox/offscreen/server。
+- **安全（特权页面）**：`securityLevel:'strict'` + `htmlLabels:false`（纯 SVG）→ DOMPurify SVG profile 二次过；不可信 LLM 输出的 SVG 双层净化。
+- **体验**：仅落定消息渲染（流式当代码块）+ 响应式缩放 + 点击新标签页开全尺寸（320px 窄面板可读性兜底）+ 懒加载双预取（面板秒开、首图不 stall）+ 坏语法回退。
+- 详见 [ADR-009](adr/009-mermaid-rendering.md)。
+
+---
+
 ## 当前真实目标：安全稳定化 MVP
 
 当前阶段的目标不是一次性完成完整企业级自动化平台，而是先把可验证、可恢复、可安全中断的浏览器 Agent MVP 做稳定：Side Panel 能可靠驱动 Companion 和浏览器，线程状态能闭环持久化，工具调用结果能进入后续 LLM 上下文，高风险浏览器/系统执行在确认机制完成前默认阻断，并建立最小回归测试来保护这些核心路径。
