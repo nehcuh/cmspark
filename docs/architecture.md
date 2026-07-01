@@ -532,3 +532,40 @@ Side Panel useWebSocket → Blob 下载
 - **隐私**：vault 档案只发笔记 basename + frontmatter(capped) + 正文前 200 字给 LLM；cache 文件 mode 0o600。
 - **纯度边界**：`markdown-export.ts` 保持纯函数（无 IO/LLM）；LLM 调用集中在 `summary-export.ts` / `vault-profiler.ts`。
 - **缓存失效**：profile/index/templates 按需刷新（Settings → 刷新 vault 档案），导出时不重扫。
+
+---
+
+## 6. Side Panel Mermaid 图表渲染
+
+> 详见 [ADR-009](adr/009-mermaid-rendering.md)。把 ` ```mermaid ` 块在 Side Panel 渲染成 SVG 图，**客户端直跑**（MV3 strict CSP，无 sandbox/offscreen/server）。
+
+### 6.1 触发与数据流
+
+```
+LLM 输出含 ```mermaid 块
+   │  marked.parse → <pre><code class="language-mermaid">
+   │  DOMPurify（markdown 白名单）→ dangerouslySetInnerHTML
+   ▼
+MarkdownRenderer useEffect（renderMermaid=true，仅落定消息）
+   → renderMermaidBlocks(bodyRef)：
+       ① ensureMermaid()（懒加载 + once-init：securityLevel:'strict' + htmlLabels:false）
+       ② 取 code.textContent → mermaid.render(id, code) → { svg }
+       ③ DOMPurify.sanitize(svg, USE_PROFILES svg+svgFilters)  ← 二次过
+       ④ 套响应式样式 + click→Blob→chrome.tabs.create → 替换 <pre>
+       ⑤ throw → 保留代码块 + "⚠️ 图表语法错误" 标签
+```
+
+### 6.2 模块（chrome-extension/src/sidepanel/）
+
+| 模块 | 职责 |
+|---|---|
+| `components/mermaid.ts` | `ensureMermaid`（懒加载 + init，`securityLevel:'strict'`+`htmlLabels:false`）/ `prefetchMermaid`（once-flag）/ `renderMermaidBlocks`（找 `.language-mermaid` → render → DOMPurify SVG 二次过 → 响应式+点击放大 → 替换；`pending`/`isConnected` 守 React 竞态；try/catch 回退） |
+| `components/ChatView.tsx` | `MarkdownRenderer` 加 `renderMermaid?:boolean` + `bodyRef` + `useEffect`；`MessageRow`/`CollapsibleMarkdown` 传 true、`StreamingMarkdown` 不传（流式不渲染）；`ChatView` idle 预取 + `StreamingMarkdown` 首 token 预取 |
+
+### 6.3 关键约束
+
+- **安全**：图源 = 不可信 LLM 输出（提示注入可达）；Side Panel 是特权页 → SVG 必须双层净化（mermaid strict + 我们的 DOMPurify SVG profile），绝不绕过。残留 `<style>`/`<image>` 资源外泄面与现有 markdown 渲染器同面，全局 `style-src` 硬化为独立议题。
+- **打包坑**：`@mermaid-js/parser@1.2.0` 的 `exports` 只有 `import`（无 `default`），Plasmo/Parcel 解析失败 → `package.json` 加 `alias` 指向其 dist。
+- **`htmlLabels:false` mandatory**：默认 `htmlLabels:true` 把节点标签渲成 `<foreignObject>`，被 DOMPurify SVG profile 剥掉 → 节点文字消失。
+- **流式隔离**：mermaid 仅在落定消息渲染（plan A），流式期间 ` ```mermaid ` 当代码块。
+- **加载**：各 diagram 类型为 Parcel 自动 code-split 的懒加载 chunk；core 经 idle/流式双预取，面板秒开。
