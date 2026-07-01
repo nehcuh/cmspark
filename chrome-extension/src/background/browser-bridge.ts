@@ -1,6 +1,7 @@
 // Browser Bridge — executes tool calls via Chrome APIs and CDP
 
 import { PageSanitizer, pageSanitizer } from "./page-sanitizer"
+import { fetchImageAsBase64 } from "./image-extract-utils"
 
 interface ToolResult {
   success: boolean
@@ -444,7 +445,17 @@ export class BrowserBridge {
                 alt: el.alt || ""
               };
             } catch (e) {
-              return { error: "Cannot extract image (CORS): " + e.message, src: el.src || "" };
+              // Cross-origin image tainted the canvas. Signal the background to
+              // fetch the raw bytes directly — host_permissions: <all_urls> lets
+              // the service worker bypass page CORS / canvas taint.
+              const src = el.currentSrc || el.src || "";
+              if (!src) return { error: "Cannot extract image (CORS, no src): " + e.message };
+              return {
+                fetchSrc: src,
+                width: el.naturalWidth || el.width || 0,
+                height: el.naturalHeight || el.height || 0,
+                alt: el.alt || ""
+              };
             }
           }
 
@@ -514,8 +525,35 @@ export class BrowserBridge {
     })
 
     const data = extractResult?.result?.value
-    if (!data || data.error) {
-      return { success: false, error: data?.error || "Failed to extract image data" }
+    if (!data) {
+      return { success: false, error: "Failed to extract image data" }
+    }
+    // Cross-origin image: the in-page canvas was tainted. Fetch the raw bytes
+    // from the service worker (host_permissions bypasses page CORS).
+    if (data.fetchSrc) {
+      try {
+        const { base64 } = await fetchImageAsBase64(data.fetchSrc)
+        return {
+          success: true,
+          data: {
+            image_base64: base64,
+            width: data.width,
+            height: data.height,
+            url: data.fetchSrc,
+            title: tab.title,
+            alt_text: data.alt || "",
+            selector,
+          },
+        }
+      } catch (e: any) {
+        return {
+          success: false,
+          error: `Cannot extract image (fetch fallback failed): ${e?.message || e}`,
+        }
+      }
+    }
+    if (data.error) {
+      return { success: false, error: data.error }
     }
 
     return {
