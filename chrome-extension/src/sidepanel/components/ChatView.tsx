@@ -6,6 +6,7 @@ import { useAgentStore } from "../store/agentStore"
 import { marked } from "marked"
 import markedKatex from "marked-katex-extension"
 import DOMPurify from "dompurify"
+import { renderMermaidBlocks, prefetchMermaid } from "./mermaid"
 // KaTeX stylesheet — bundled by Plasmo; needed for math glyph fonts/layout.
 import "katex/dist/katex.min.css"
 
@@ -58,6 +59,20 @@ export function ChatView() {
       })
     }
   }, [messages.length, streamingContent])
+
+  // Prefetch mermaid in the background once the panel is idle so the first
+  // committed diagram doesn't stall on the chunk load (decision G3).
+  useEffect(() => {
+    const ric = (window as any).requestIdleCallback as
+      | ((cb: () => void, opts?: { timeout: number }) => number)
+      | undefined
+    if (ric) {
+      const h = ric(() => prefetchMermaid(), { timeout: 3000 })
+      return () => (window as any).cancelIdleCallback?.(h)
+    }
+    const t = setTimeout(prefetchMermaid, 1500)
+    return () => clearTimeout(t)
+  }, [])
 
   // Stable callbacks so MessageRow memoization is effective (audit item 11).
   // Without useCallback, every ChatView render creates new function identities,
@@ -214,9 +229,9 @@ const MessageRow = memo(function MessageRow({
           <>
             <div style={isUser ? styles.userBubble : styles.agentBubble}>
               {hasLongContent ? (
-                <CollapsibleMarkdown content={msg.content} maxPreview={LONG_CONTENT_PREVIEW} />
+                <CollapsibleMarkdown content={msg.content} maxPreview={LONG_CONTENT_PREVIEW} renderMermaid />
               ) : (
-                <MarkdownRenderer content={msg.content} />
+                <MarkdownRenderer content={msg.content} renderMermaid />
               )}
               {msg.tool_calls?.map((tc: any) => (
                 <ToolCallCard key={tc.id} tc={tc} />
@@ -267,14 +282,14 @@ const MessageRow = memo(function MessageRow({
   )
 })
 
-function CollapsibleMarkdown({ content, maxPreview }: { content: string; maxPreview: number }) {
+function CollapsibleMarkdown({ content, maxPreview, renderMermaid = false }: { content: string; maxPreview: number; renderMermaid?: boolean }) {
   const [expanded, setExpanded] = useState(false)
   const preview = content.substring(0, maxPreview)
   const needsCollapse = content.length > maxPreview
 
   return (
     <div>
-      <MarkdownRenderer content={expanded ? content : preview + (needsCollapse ? "\n\n..." : "")} />
+      <MarkdownRenderer content={expanded ? content : preview + (needsCollapse ? "\n\n..." : "")} renderMermaid={renderMermaid} />
       {needsCollapse && (
         <button
           onClick={() => setExpanded(!expanded)}
@@ -397,6 +412,15 @@ function StreamingMarkdown({ content }: { content: string }) {
   const latestRef = useRef(content)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastFlushRef = useRef(0)
+  // Kick off mermaid prefetch on the first streamed token (decision G3) so it's
+  // warm by the time the message commits and MarkdownRenderer's effect runs.
+  const prefetchedRef = useRef(false)
+  useEffect(() => {
+    if (!prefetchedRef.current && content) {
+      prefetchedRef.current = true
+      prefetchMermaid()
+    }
+  }, [content])
 
   useEffect(() => {
     latestRef.current = content
@@ -434,7 +458,8 @@ function StreamingMarkdown({ content }: { content: string }) {
 // DOMPurify.sanitize unconditionally on every render — including when a parent
 // re-rendered due to unrelated state (e.g. streaming token arriving) — costing
 // O(N messages × tokens/sec) of parse work per token.
-function MarkdownRenderer({ content }: { content: string }) {
+function MarkdownRenderer({ content, renderMermaid = false }: { content: string; renderMermaid?: boolean }) {
+  const bodyRef = useRef<HTMLDivElement>(null)
   const { html, error } = useMemo(() => {
     if (!content) return { html: "", error: false }
     try {
@@ -468,6 +493,14 @@ function MarkdownRenderer({ content }: { content: string }) {
     }
   }, [content])
 
+  // Render mermaid blocks (committed messages only — plan A). Runs after React
+  // injects the sanitized HTML; re-runs whenever content changes. The async
+  // work is resilient to React re-injection (stale-node guard inside).
+  useEffect(() => {
+    if (!renderMermaid || !html || !bodyRef.current) return
+    void renderMermaidBlocks(bodyRef.current)
+  }, [html, renderMermaid])
+
   if (error) {
     console.warn("[MarkdownRenderer] falling back to raw text")
     return <div style={{ whiteSpace: "pre-wrap", lineHeight: 1.5 }}>{content}</div>
@@ -479,6 +512,7 @@ function MarkdownRenderer({ content }: { content: string }) {
       <style>{markdownCSS}</style>
       <div
         className="markdown-body"
+        ref={bodyRef}
         dangerouslySetInnerHTML={{ __html: html }}
       />
     </>
@@ -538,6 +572,27 @@ const markdownCSS = `
     background: none;
     padding: 0;
     font-size: inherit;
+  }
+  /* Mermaid diagrams (decisions F3 + default theme).
+     - .mermaid-wrap: centers the svg, caps height so tall diagrams scroll
+       vertically instead of blowing out the bubble.
+     - .mermaid-svg: responsive — scales to bubble width via the svg's viewBox;
+       zoom-in cursor signals click-to-expand (opens full-size in a new tab). */
+  .markdown-body .mermaid-wrap {
+    margin: 6px 0;
+    text-align: center;
+    max-height: 60vh;
+    overflow-y: auto;
+  }
+  .markdown-body .mermaid-svg {
+    max-width: 100%;
+    height: auto;
+    cursor: zoom-in;
+  }
+  .markdown-body .mermaid-error {
+    color: #c33;
+    font-size: 11px;
+    margin-bottom: 4px;
   }
 `
 
