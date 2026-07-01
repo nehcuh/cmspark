@@ -24,6 +24,14 @@
 - 沉淀: 个人技能 kimi-gated-fix(~/.config/skills/kimi-gated-fix/)
 - Recorded: yes — .app 部署依赖漂移坑、kimi-gated-fix 技能(详见 project-knowledge.md)
 
+### S4 (2026-07-01) [cmspark Side Panel Mermaid 渲染]
+- 交付：` ```mermaid ` 块在 Side Panel 渲染成 SVG 图（全类型，各自懒加载 chunk）。流程：grilling（5 题设计树）→ CSP runtime spike（验证 strict CSP 可客户端直跑）→ 5 阶段实现（mermaid.ts util + ChatView 集成 + CSS + build + kimi 门）
+- 已合并 main：PR #9 代码（squash 999a307）+ PR #10 文档（squash 94ca77e，ADR-009 + CLAUDE.md A7 + GOAL + arch §6）。两 PR 分支已清理，本地 main 同步 94ca77e
+- 决策：客户端直跑 strict CSP（无 sandbox/offscreen）；纵深防御净化（securityLevel:'strict' + htmlLabels:false 纯 SVG → DOMPurify SVG profile 二次过）；仅落定消息渲染（renderMermaid prop 分流，流式当代码块）；响应式缩放 + 点击新标签页开全尺寸（Blob URL）；懒加载 + idle/流式双预取；坏语法回退代码块
+- bug 修复：DOMPurify SVG profile 剥 foreignObject + mermaid 默认 htmlLabels:true → 节点文字消失；`htmlLabels:false` 修复（用户 live 验证通过）
+- 打包坑：`@mermaid-js/parser` exports 缺 `default` 需 Parcel `alias`（build 失败根因）
+- Recorded: yes — 见 project-knowledge.md「Mermaid 图表渲染的三个坑」+ docs/adr/009
+
 ## In-Flight Tasks (Cross-Session)
 
 ### Quick Actions Runtime Verification
