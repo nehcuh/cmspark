@@ -4,7 +4,21 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type { CSSProperties } from "react"
 import { useAgentStore } from "../store/agentStore"
 import { marked } from "marked"
+import markedKatex from "marked-katex-extension"
 import DOMPurify from "dompurify"
+// KaTeX stylesheet — bundled by Plasmo; needed for math glyph fonts/layout.
+import "katex/dist/katex.min.css"
+
+// LaTeX math rendering via KaTeX: $...$ inline, $$...$$ block.
+// Registered once at module load so every marked.parse (history + streaming)
+// shares the extension.
+//   - output:"html"  → emits only <span>/<svg>/<path> (no MathML), keeping the
+//                      DOMPurify tag whitelist minimal.
+//   - nonStandard    → parses math adjacent to CJK text (no inter-word spaces).
+//                      Code spans/blocks are still protected: marked tokenizes
+//                      them before the katex inline tokenizer runs.
+//   - throwOnError   → invalid LaTeX degrades to inline text instead of throwing.
+marked.use(markedKatex({ throwOnError: false, output: "html", nonStandard: true }))
 
 const LONG_CONTENT_THRESHOLD = 3000
 const LONG_CONTENT_PREVIEW = 500
@@ -85,7 +99,10 @@ export function ChatView() {
       ))}
       {streamingContent && (
         <div style={styles.agentMsg}>
-          <div style={styles.agentBubble}>{streamingContent}<Cursor /></div>
+          <div style={styles.agentBubble}>
+            <StreamingMarkdown content={streamingContent} />
+            <Cursor />
+          </div>
         </div>
       )}
       {processingLabel && !streamingContent && (
@@ -341,6 +358,54 @@ function Cursor() {
   }} />
 }
 
+/**
+ * Throttled markdown rendering for the live streaming bubble.
+ *
+ * chat.token dispatches the FULL accumulated content on every token (not a
+ * delta). Running marked.parse + DOMPurify on every token is wasteful and can
+ * jank on long replies, so this snapshots content at most once per
+ * STREAMING_RENDER_MS via a leading+trailing throttle. Code formatting / LaTeX
+ * still appears incrementally as the reply streams in — just not re-parsed on
+ * every single token.
+ *
+ * The trailing-edge timer always fires with the freshest content, so the view
+ * is never stale relative to the message committed on chat.done.
+ */
+const STREAMING_RENDER_MS = 60
+
+function StreamingMarkdown({ content }: { content: string }) {
+  const [rendered, setRendered] = useState(content)
+  const latestRef = useRef(content)
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const lastFlushRef = useRef(0)
+
+  useEffect(() => {
+    latestRef.current = content
+    // A trailing flush is already scheduled — it will pick up this newer value.
+    if (timerRef.current != null) return
+    const delay = Math.max(0, STREAMING_RENDER_MS - (Date.now() - lastFlushRef.current))
+    timerRef.current = setTimeout(() => {
+      timerRef.current = null
+      lastFlushRef.current = Date.now()
+      setRendered(latestRef.current)
+    }, delay)
+  }, [content])
+
+  // Cancel any pending flush when the bubble unmounts (streamingContent clears
+  // on chat.done). The committed message carries the full content, so dropping
+  // a pending trailing update here loses nothing.
+  useEffect(() => {
+    return () => {
+      if (timerRef.current != null) {
+        clearTimeout(timerRef.current)
+        timerRef.current = null
+      }
+    }
+  }, [])
+
+  return <MarkdownRenderer content={rendered} />
+}
+
 // Markdown renderer — uses marked + DOMPurify to sanitize LLM output before rendering.
 // react-markdown/remark-gfm ecosystem is ESM-only with Node.js deps that crash in Chrome extension context.
 // DOMPurify strips dangerous HTML (scripts, event handlers, etc.) to prevent XSS (P0).
@@ -362,8 +427,19 @@ function MarkdownRenderer({ content }: { content: string }) {
           "ul", "ol", "li", "blockquote", "hr",
           "a", "code", "pre", "table", "thead", "tbody", "tr", "th", "td",
           "span", "div", "sup", "sub",
+          // KaTeX (output:"html") emits only <span> + inline <svg>/<path> for
+          // stretchy glyphs (√, large delimiters). DOMPurify still strips
+          // <script>/event handlers from these, so adding them stays XSS-safe.
+          "svg", "path",
         ],
-        ALLOWED_ATTR: ["href", "title", "class", "style"],
+        ALLOWED_ATTR: [
+          "href", "title", "class", "style",
+          // KaTeX span/svg attributes. viewBox/preserveAspectRatio are matched
+          // case-insensitively; list both parser-lowercased and camelCase forms.
+          "aria-hidden", "d", "fill", "xmlns", "height", "width",
+          "viewbox", "preserveaspectratio",
+          "viewBox", "preserveAspectRatio",
+        ],
         ALLOW_DATA_ATTR: false,
       })
       return { html: sanitized, error: false }
