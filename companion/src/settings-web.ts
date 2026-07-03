@@ -18,7 +18,7 @@ import * as http from "http"
 import * as crypto from "crypto"
 import * as dns from "dns"
 import * as net from "net"
-import { getConfig, saveConfig } from "./config"
+import { getConfig, saveConfig, isMaskedApiKey } from "./config"
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -27,32 +27,6 @@ import { getConfig, saveConfig } from "./config"
 function maskApiKey(key: string): string {
   if (!key || key.length <= 8) return key ? "***" : ""
   return key.slice(0, 4) + "****" + key.slice(-4)
-}
-
-/**
- * Check if an API key is masked (i.e., a placeholder like "***" or "sk-****xyz").
- * This prevents accidentally overwriting a real key with a masked placeholder.
- */
-function isMaskedApiKey(key: string | undefined | null): boolean {
-  if (!key || typeof key !== "string") return false
-  // Check for simple "***" mask
-  if (key === "***") return true
-  // Check for "sk-****xyz" format (4 chars + "****" + 4 chars)
-  // Pattern: exactly 4 characters, followed by 4+ asterisks, followed by exactly 4 characters
-  if (key.length >= 12) {
-    const hasAsterisks = key.includes("****")
-    const hasPrefixSuffix = key.length >= 12
-    // Common pattern: "sk-" + "****..." + tail
-    if (hasAsterisks && hasPrefixSuffix) {
-      // Check if it matches the mask pattern: prefix (any) + "****" + suffix (any)
-      const asteriskCount = (key.match(/\*/g) || []).length
-      if (asteriskCount >= 4) {
-        // Additional check: if it has both prefix and suffix parts that look like masking
-        return true
-      }
-    }
-  }
-  return false
 }
 
 async function findAvailablePort(startPort: number): Promise<number> {

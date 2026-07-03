@@ -14,7 +14,7 @@ import { detectTemplates, saveTemplates, loadCachedTemplates, pickTemplate } fro
 import { pickFolderNative } from "./obsidian/folder-picker"
 import type { SkillEngine } from "./skills/skill-engine"
 import type { HistoryStore } from "./history/store"
-import { getConfig, saveConfig, replaceMcpServers, setMcpEnabled } from "./config"
+import { getConfig, saveConfig, replaceMcpServers, setMcpEnabled, isMaskedApiKey } from "./config"
 import { chatCreate, generateThreadTitle } from "./llm/adapter"
 import { parseFile } from "./file-parser"
 import type { FileParseResult } from "./file-parser"
@@ -75,11 +75,11 @@ export async function handleMessage(
       const normalized: any = {}
       if (cfg.llm) {
         normalized.llm = sanitizeConfig({ ...cfg.llm })
-        if (normalized.llm.api_key === "***") delete normalized.llm.api_key
+        if (isMaskedApiKey(normalized.llm.api_key)) delete normalized.llm.api_key
       } else if (cfg.base_url || cfg.model_name || cfg.temperature !== undefined || cfg.context_window !== undefined) {
         normalized.llm = {}
         if (cfg.base_url) normalized.llm.base_url = cfg.base_url
-        if (cfg.api_key && cfg.api_key !== "***") normalized.llm.api_key = cfg.api_key
+        if (cfg.api_key && !isMaskedApiKey(cfg.api_key)) normalized.llm.api_key = cfg.api_key
         if (cfg.model_name) normalized.llm.model_name = cfg.model_name
         if (cfg.temperature !== undefined) normalized.llm.temperature = cfg.temperature
         if (cfg.context_window !== undefined) normalized.llm.context_window = cfg.context_window
@@ -101,12 +101,12 @@ export async function handleMessage(
       // Vision config: normalize flat vision_* fields into nested vision object
       if (cfg.vision) {
         normalized.vision = { ...cfg.vision }
-        if (normalized.vision.api_key === "***") delete normalized.vision.api_key
+        if (isMaskedApiKey(normalized.vision.api_key)) delete normalized.vision.api_key
       } else if (cfg.vision_enabled !== undefined || cfg.vision_base_url || cfg.vision_model_name) {
         const current = getConfig()
         normalized.vision = { ...(current.vision || {}) }
         if (cfg.vision_enabled !== undefined) normalized.vision.enabled = !!cfg.vision_enabled
-        if (cfg.vision_api_key && cfg.vision_api_key !== "***") normalized.vision.api_key = cfg.vision_api_key
+        if (cfg.vision_api_key && !isMaskedApiKey(cfg.vision_api_key)) normalized.vision.api_key = cfg.vision_api_key
         if (cfg.vision_base_url) normalized.vision.base_url = cfg.vision_base_url
         if (cfg.vision_model_name) normalized.vision.model_name = cfg.vision_model_name
         if (cfg.vision_timeout_ms !== undefined) normalized.vision.timeout_ms = cfg.vision_timeout_ms
@@ -139,7 +139,7 @@ export async function handleMessage(
       // If the caller (extension UI) sends llm_override with a valid API key, test that
       // config; otherwise fall back to the companion's stored config (set via tray).
       const override = rest.llm_override as Record<string, unknown> | undefined
-      const hasOverrideKey = !!(override?.api_key && override.api_key !== "***")
+      const hasOverrideKey = !!(override?.api_key && !isMaskedApiKey(override.api_key as string))
       const testConfig = hasOverrideKey
         ? {
             api_key:        String(override!.api_key),
@@ -152,7 +152,7 @@ export async function handleMessage(
             model_name: config.llm.model_name,
           }
 
-      if (!testConfig.api_key || testConfig.api_key === "**************") {
+      if (!testConfig.api_key || testConfig.api_key === "sk-placeholder" || isMaskedApiKey(testConfig.api_key)) {
         return { type: "config.testResult", ok: false, error: "API Key 未配置" }
       }
       try {
@@ -208,7 +208,7 @@ export async function handleMessage(
         return { type: "error", error: "Invalid config keys detected" }
       }
       const normalized: any = { llm: {} }
-      if (cfg.api_key && cfg.api_key !== "***") normalized.llm.api_key = cfg.api_key
+      if (cfg.api_key && !isMaskedApiKey(cfg.api_key)) normalized.llm.api_key = cfg.api_key
       if (cfg.base_url) normalized.llm.base_url = cfg.base_url
       if (cfg.model_name) normalized.llm.model_name = cfg.model_name
       if (cfg.temperature !== undefined) normalized.llm.temperature = cfg.temperature
@@ -269,7 +269,7 @@ export async function handleMessage(
 
       // (1) apply extension-level llm_override if it carries a valid API key
       const msgOverride = rest.llm_override as Record<string, unknown> | undefined
-      if (msgOverride?.api_key && msgOverride.api_key !== "***") {
+      if (msgOverride?.api_key && !isMaskedApiKey(msgOverride.api_key as string)) {
         for (const k of ["api_key", "base_url", "model_name", "temperature", "context_window"] as const) {
           if (msgOverride[k] !== undefined && msgOverride[k] !== null) {
             (effectiveLLMConfig as any)[k] = msgOverride[k]

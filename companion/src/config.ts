@@ -135,6 +135,11 @@ const defaultConfig: CompanionConfig = {
 
 let cachedConfig: CompanionConfig | null = null
 
+/** Clear the in-memory config cache. Intended for tests only. */
+export function clearConfigCache(): void {
+  cachedConfig = null
+}
+
 export async function initDataDir(): Promise<void> {
   const dirs = [
     DATA_DIR,
@@ -181,8 +186,8 @@ export async function initDataDir(): Promise<void> {
 
 export function getConfig(): CompanionConfig {
   if (cachedConfig) {
-    // Always refresh env var (it takes priority)
-    if (getEnvApiKey()) {
+    // Refresh env var ONLY if no user-provided key exists
+    if (getEnvApiKey() && !isUserProvidedApiKey(cachedConfig.llm.api_key)) {
       cachedConfig.llm.api_key = getEnvApiKey()
     }
     return cachedConfig
@@ -195,8 +200,9 @@ export function getConfig(): CompanionConfig {
   } catch {
     cachedConfig = { ...defaultConfig }
   }
-  // Environment variable always wins
-  if (getEnvApiKey()) {
+  // Environment variable takes priority ONLY when no user-provided key exists.
+  // If the file has a user-provided API key (non-empty, not masked), respect it.
+  if (getEnvApiKey() && !isUserProvidedApiKey(cachedConfig.llm.api_key)) {
     cachedConfig.llm.api_key = getEnvApiKey()
   }
   // Ensure mcp config exists with sane defaults (older config.json may not have it)
@@ -232,6 +238,70 @@ export function setMcpEnabled(enabled: boolean): CompanionConfig {
   return saveConfig({ mcp })
 }
 
+/**
+ * Check if an API key is masked (i.e., a placeholder like "***" or "sk-****xyz").
+ * This prevents accidentally overwriting a real key with a masked placeholder.
+ *
+ * A masked key matches the output of `maskApiKey()` in settings-web.ts:
+ * - short keys (<= 8 chars) become "***"
+ * - longer keys become prefix(4) + "****" + suffix(4), total length >= 12
+ *
+ * Also accepts "...." dot-masking used by some UIs.
+ */
+export function isMaskedApiKey(key: string | undefined | null): boolean {
+  if (!key || typeof key !== "string") return false
+  if (key === "***") return true
+  // Any occurrence of 4+ consecutive asterisks indicates masking.
+  // Covers maskApiKey() output (prefix(4) + "****" + suffix(4)) as well as
+  // shorter UI forms like "sk-****xyz".
+  if (key.includes("****")) return true
+  // Some UIs use dots instead of asterisks
+  if (key.includes("....") && key.length >= 10) return true
+  return false
+}
+
+/**
+ * Check if an API key is explicitly provided by the user (not from env var).
+ * A user-provided key should be persisted to disk, while env var keys should not.
+ */
+function isUserProvidedApiKey(key: string | undefined): boolean {
+  if (!key || typeof key !== "string") return false
+  // If it's a masked placeholder, it's not a real user-provided key
+  if (isMaskedApiKey(key)) return false
+  const envKey = getEnvApiKey()
+  return !envKey || key !== envKey
+}
+
+/**
+ * Resolve which API key should be kept when saving config.
+ *
+ * Priority:
+ * 1. New, non-masked key provided by the caller
+ * 2. Current user-provided key (not masked, not from env)
+ * 3. Environment variable key (if provided)
+ *
+ * Returns undefined when no preference exists, letting the caller keep the
+ * deepMerge result unchanged.
+ */
+function resolveApiKey(
+  callerKey: string | undefined,
+  currentKey: string | undefined,
+  envKey: string | undefined,
+): string | undefined {
+  if (callerKey && !isMaskedApiKey(callerKey)) {
+    return callerKey
+  }
+  if (currentKey && !isMaskedApiKey(currentKey)) {
+    if (!envKey || currentKey !== envKey) {
+      return currentKey
+    }
+  }
+  if (envKey) {
+    return envKey
+  }
+  return undefined
+}
+
 export function saveConfig(config: Partial<CompanionConfig>): CompanionConfig {
   // Warn when '*' is used as a trusted domain (global wildcard)
   if (config.trusted_domains?.includes("*")) {
@@ -260,15 +330,26 @@ export function saveConfig(config: Partial<CompanionConfig>): CompanionConfig {
   const current = getConfig()
   const updated = deepMerge(current, config) as CompanionConfig
 
-  // Environment variable always wins for api_key
-  if (getEnvApiKey()) {
-    updated.llm.api_key = getEnvApiKey()
+  // Resolve LLM and vision API keys using the same priority rules.
+  // Note: vision has no env-var equivalent, so envKey is undefined for it.
+  const envKey = getEnvApiKey()
+  const resolvedLlmKey = resolveApiKey(config.llm?.api_key, current.llm.api_key, envKey)
+  if (resolvedLlmKey !== undefined) {
+    updated.llm.api_key = resolvedLlmKey
+  }
+  if (updated.vision) {
+    const resolvedVisionKey = resolveApiKey(config.vision?.api_key, current.vision?.api_key, undefined)
+    if (resolvedVisionKey !== undefined) {
+      updated.vision.api_key = resolvedVisionKey
+    }
   }
 
   const configPath = path.join(DATA_DIR, "config.json")
   // Save to file with api_key masked (don't persist the env var to disk)
   const toSave = JSON.parse(JSON.stringify(updated))
-  if (getEnvApiKey() && toSave.llm?.api_key === getEnvApiKey()) {
+  // Only mask the LLM API key if it matches the env var (don't leak env to disk)
+  // If the user provided a different key, persist it
+  if (envKey && toSave.llm?.api_key === envKey) {
     toSave.llm.api_key = ""  // Don't write env var to disk
   }
   fs.writeFileSync(configPath, JSON.stringify(toSave, null, 2))

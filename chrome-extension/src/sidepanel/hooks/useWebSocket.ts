@@ -10,23 +10,11 @@ import type { LLMConfig } from "../types"
  */
 function isMaskedApiKey(key: string | undefined | null): boolean {
   if (!key || typeof key !== "string") return false
-  // Check for simple "***" mask
   if (key === "***") return true
-  // Check for "sk-****xyz" format (4 chars + "****" + 4 chars)
-  // Pattern: exactly 4 characters, followed by 4+ asterisks, followed by exactly 4 characters
-  if (key.length >= 12) {
-    const hasAsterisks = key.includes("****")
-    const hasPrefixSuffix = key.length >= 12
-    // Common pattern: "sk-" + "****..." + tail
-    if (hasAsterisks && hasPrefixSuffix) {
-      // Check if it matches the mask pattern: prefix (any) + "****" + suffix (any)
-      const asteriskCount = (key.match(/\*/g) || []).length
-      if (asteriskCount >= 4) {
-        // Additional check: if it has both prefix and suffix parts that look like masking
-        return true
-      }
-    }
-  }
+  // Any occurrence of 4+ consecutive asterisks indicates masking.
+  if (key.includes("****")) return true
+  // Some UIs use dots instead of asterisks
+  if (key.includes("....") && key.length >= 10) return true
   return false
 }
 
