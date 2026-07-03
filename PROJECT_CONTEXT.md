@@ -3,6 +3,17 @@
 ## Session Handoff
 
 <!-- handoff:start -->
+### 2026-07-03 (session-end)
+- 审核并修复 cmspark config API key 同步问题：`DEEPSEEK_API_KEY` env var 强制覆盖用户通过 UI/Tray 设置的 key，导致 Tray 与 Extension 配置不一致
+- 已推送到远程 main：commit `944dbea`。改动包括：
+  - `companion/src/config.ts`：新增 `isUserProvidedApiKey()` + `resolveApiKey()`，优先级 = 新非 masked key > 当前用户 key > env var；env var 仅在等于当前值时落盘为空
+  - 导出统一 `isMaskedApiKey()` 并在 `settings-web.ts` 复用；`chrome-extension` 两端实现同步，支持 `sk-****xyz` 短格式
+  - `message-router.ts`：所有硬编码 `"***"` 检查替换为 `isMaskedApiKey()`；`config.test` 识别 `sk-placeholder` 与 masked key，修复 2 个既有失败测试
+  - `saveConfig` 对 `vision.api_key` 应用同样的 masked key 过滤
+  - 新增 `companion/tests/config.test.ts`：17 个用例覆盖 key 优先级、env var 不落盘、vision key 保护
+- 验证：companion + chrome-extension 构建通过；相关测试 105/105 通过
+- Next: 无未决项；可观察用户是否仍有 UI 与文件配置不同步的反馈
+
 ### 2026-07-01 (session-end)
 - 交付 Side Panel Mermaid 图表渲染：` ```mermaid ` 块 → SVG 图（全类型，各自懒加载 chunk）。流程：grilling 5 题设计树 → CSP runtime spike（验证 strict CSP 可客户端直跑，无 sandbox/offscreen/server）→ 5 阶段实现 + kimi 门
 - 已合并 main：PR #9 代码（squash 999a307）+ PR #10 文档（squash 94ca77e）。两分支已清理，本地 main 同步 94ca77e
@@ -11,12 +22,4 @@
 - 打包坑：`@mermaid-js/parser@1.2.0` exports 只有 import（无 default）→ Plasmo/Parcel build 失败 → `package.json` 加 alias 指向其 dist
 - 详见 docs/adr/009-mermaid-rendering.md（CLAUDE.md A7 / GOAL / arch §6 同步）
 - Next: 无未决项；可选后续 = 全局 style-src CSP 硬化（C3，独立议题）/ mermaid 锁版本关注上游 CVE
-
-### 2026-06-28 (session-end)
-- 根因定位+修复: tray↔daemon WebSocket skill.list 请求/响应死循环 → 两进程空闲 ~60%/45% CPU、本地 socket 29MB/s、累计 ~108GB。daemon 响应不带请求 id,tray 把响应误当 push 再发请求
-- 已合并 main: PR #4 (squash, 3e60cc5)。两处互补修复: server.ts 响应透传 id + companion-client.ts 移除 skill.list push 误触发 + 守卫注释。bug 在共享 TS → Windows/Linux 同样中招,一份修复覆盖全平台
-- 验证: kimi 改动前复审 APPROVE×2、tsc 绿、ws-roundtrip 5/5、部署后实测 CPU 60%→0
-- 部署坑: .app 不能只换 bundle(node_modules 依赖漂移,缺 @modelcontextprotocol/sdk)→ 必须 make package-macos 整机重打包
-- 沉淀: 个人技能 kimi-gated-fix(~/.config/skills/kimi-gated-fix/)——定点修复改动前 kimi 复审的动态工作流
-- Next: 确认稳定后删旧 app 备份;Windows/Linux 出包重装(make package-windows/linux)
 <!-- handoff:end -->

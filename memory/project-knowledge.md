@@ -2,6 +2,20 @@
 
 ## Technical Pitfalls
 
+### CMspark config: env var must not override user-provided API key
+- `DEEPSEEK_API_KEY` environment variable used to take unconditional priority in both `getConfig()` and `saveConfig()`, causing UI-set keys to be overwritten and then saved as empty strings
+- Fix: only fall back to env var when no user-provided (non-masked, non-env) key exists; persist user-provided keys to disk; mask only when the saved value equals the env var
+- Files: `companion/src/config.ts`, `companion/src/message-router.ts`, `companion/src/settings-web.ts`
+
+### Masked API key detection must be consistent across modules
+- `isMaskedApiKey()` had divergent implementations in `config.ts`, `settings-web.ts`, `background/index.ts`, and `useWebSocket.ts`; some required `length >= 12` and missed shorter UI masks like `sk-****xyz`
+- Fix: unified rule — `"***"`, any substring `"****"`, or `"...."` dot-masking (length >= 10); exported from `config.ts` and reused where possible
+
+### Module-level config cache breaks test isolation
+- `config.ts` keeps `cachedConfig` at module scope; tests that mutate `process.env.DEEPSEEK_API_KEY` or `config.json` can see stale cached state across test cases
+- Fix for tests: export `clearConfigCache()` (test-only helper) and reset file + cache in `before()` hooks
+- Files: `companion/src/config.ts`, `companion/tests/config.test.ts`
+
 ### Quick Action ID collision in companion-client.ts
 - `Object.assign(msg, params)` would overwrite `msg.id` with `params.id` (actionId), causing request/response ID mismatch and timeout
 - Fix: renamed to `actionId` field in params

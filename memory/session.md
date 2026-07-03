@@ -2,6 +2,18 @@
 
 ## Current Session
 
+### S5 (2026-07-03) [cmspark config API key sync]
+- 审核并修复：环境变量 `DEEPSEEK_API_KEY` 强制覆盖用户通过 UI/Tray 设置的 API Key，导致配置无法在 Tray 和 Extension 间同步
+- 根因：`getConfig()`/`saveConfig()` 无条件优先使用 env var；保存到磁盘时把 key 设为空字符串防止泄露 env var
+- 修复：新增 `isUserProvidedApiKey()` + `resolveApiKey()`，优先级 = 新提供的非 masked key > 当前用户 key > env var；仅当 key 等于 env var 时才落盘为空
+- 统一：`isMaskedApiKey()` 导出并在 `settings-web.ts` 复用；`chrome-extension` 两端实现同步，支持 `sk-****xyz` 等短格式 masked key
+- `message-router.ts`：所有硬编码 `"***"` 检查替换为 `isMaskedApiKey()`；`config.test` 同时识别 `sk-placeholder` 和 masked key，修复 2 个既有失败测试
+- `saveConfig` 扩展：对 `vision.api_key` 应用同样的 masked key 过滤逻辑
+- 新增 `companion/tests/config.test.ts`：17 个用例覆盖 masked key 判定、key 优先级、env var 不落盘、vision key 保护
+- 验证：companion + chrome-extension 构建通过；相关测试 105/105 通过
+- 已推送到远程：commit `944dbea`
+- Recorded: yes — env var 覆盖 user key 的优先级模式、跨模块 masked key 检测一致性、模块级 config cache 的测试隔离
+
 ### S2 (chrome-extension & windows fixes) [cmspark]
 - Fixed 4 Chrome extension issues:
   1. Missing button hover tooltips → added `title` attrs to SecurityConfirmationDialog buttons, settings gear, and "+ 新建"
