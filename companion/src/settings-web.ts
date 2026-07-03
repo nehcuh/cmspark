@@ -29,6 +29,32 @@ function maskApiKey(key: string): string {
   return key.slice(0, 4) + "****" + key.slice(-4)
 }
 
+/**
+ * Check if an API key is masked (i.e., a placeholder like "***" or "sk-****xyz").
+ * This prevents accidentally overwriting a real key with a masked placeholder.
+ */
+function isMaskedApiKey(key: string | undefined | null): boolean {
+  if (!key || typeof key !== "string") return false
+  // Check for simple "***" mask
+  if (key === "***") return true
+  // Check for "sk-****xyz" format (4 chars + "****" + 4 chars)
+  // Pattern: exactly 4 characters, followed by 4+ asterisks, followed by exactly 4 characters
+  if (key.length >= 12) {
+    const hasAsterisks = key.includes("****")
+    const hasPrefixSuffix = key.length >= 12
+    // Common pattern: "sk-" + "****..." + tail
+    if (hasAsterisks && hasPrefixSuffix) {
+      // Check if it matches the mask pattern: prefix (any) + "****" + suffix (any)
+      const asteriskCount = (key.match(/\*/g) || []).length
+      if (asteriskCount >= 4) {
+        // Additional check: if it has both prefix and suffix parts that look like masking
+        return true
+      }
+    }
+  }
+  return false
+}
+
 async function findAvailablePort(startPort: number): Promise<number> {
   for (let port = startPort; port < startPort + 10; port++) {
     try {
@@ -360,22 +386,24 @@ function handleRequest(req: http.IncomingMessage, res: http.ServerResponse, port
           if (res.writableEnded) return
           const data = JSON.parse(body)
           const update: any = {}
+          const current = getConfig()
+
           // LLM config
           if (data.llm) {
             const llm = { ...data.llm }
-            if (llm.api_key === "***" || llm.api_key === "") {
+            // Skip masked/empty API keys to keep the existing value
+            if (isMaskedApiKey(llm.api_key) || llm.api_key === "") {
               delete llm.api_key
             }
-            const current = getConfig()
             update.llm = { ...current.llm, ...llm }
           }
           // Vision config
           if (data.vision) {
             const vision = { ...data.vision }
-            if (vision.api_key === "***" || vision.api_key === "") {
+            // Skip masked/empty API keys to keep the existing value
+            if (isMaskedApiKey(vision.api_key) || vision.api_key === "") {
               delete vision.api_key
             }
-            const current = getConfig()
             update.vision = { ...(current.vision || {}), ...vision }
           }
           const updated = saveConfig(update)

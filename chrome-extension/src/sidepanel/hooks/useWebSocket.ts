@@ -4,6 +4,32 @@ import { useEffect, useRef } from "react"
 import { useAgentStore } from "../store/agentStore"
 import type { LLMConfig } from "../types"
 
+/**
+ * Check if an API key is masked (i.e., a placeholder like "***" or "sk-****xyz").
+ * This prevents accidentally overwriting a real key with a masked placeholder.
+ */
+function isMaskedApiKey(key: string | undefined | null): boolean {
+  if (!key || typeof key !== "string") return false
+  // Check for simple "***" mask
+  if (key === "***") return true
+  // Check for "sk-****xyz" format (4 chars + "****" + 4 chars)
+  // Pattern: exactly 4 characters, followed by 4+ asterisks, followed by exactly 4 characters
+  if (key.length >= 12) {
+    const hasAsterisks = key.includes("****")
+    const hasPrefixSuffix = key.length >= 12
+    // Common pattern: "sk-" + "****..." + tail
+    if (hasAsterisks && hasPrefixSuffix) {
+      // Check if it matches the mask pattern: prefix (any) + "****" + suffix (any)
+      const asteriskCount = (key.match(/\*/g) || []).length
+      if (asteriskCount >= 4) {
+        // Additional check: if it has both prefix and suffix parts that look like masking
+        return true
+      }
+    }
+  }
+  return false
+}
+
 function generateShortId(): string {
   const chars = "abcdefghijklmnopqrstuvwxyz0123456789"
   let id = ""
@@ -30,7 +56,8 @@ export function normalizeConfig(config: any): Partial<LLMConfig> {
   const llm = config.llm || config
   const normalized: Partial<LLMConfig> = {
     base_url: llm.base_url,
-    api_key: llm.api_key === "***" ? "" : llm.api_key,
+    // Skip masked API keys to keep the existing value
+    api_key: isMaskedApiKey(llm.api_key) ? "" : llm.api_key,
     model_name: llm.model_name,
     temperature: llm.temperature,
     context_window: llm.context_window,
@@ -49,7 +76,8 @@ export function normalizeConfig(config: any): Partial<LLMConfig> {
   const vision = config.vision
   if (vision) {
     normalized.vision_enabled = !!vision.enabled
-    normalized.vision_api_key = vision.api_key === "***" ? "" : vision.api_key
+    // Skip masked vision API keys
+    normalized.vision_api_key = isMaskedApiKey(vision.api_key) ? "" : vision.api_key
     normalized.vision_base_url = vision.base_url
     normalized.vision_model_name = vision.model_name
     normalized.vision_timeout_ms = vision.timeout_ms

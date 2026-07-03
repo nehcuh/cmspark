@@ -49,6 +49,32 @@ function loadExtensionConfig() {
   })
 }
 
+/**
+ * Check if an API key is masked (i.e., a placeholder like "***" or "sk-****xyz").
+ * This prevents accidentally overwriting a real key with a masked placeholder.
+ */
+function isMaskedApiKey(key: string | undefined | null): boolean {
+  if (!key || typeof key !== "string") return false
+  // Check for simple "***" mask
+  if (key === "***") return true
+  // Check for "sk-****xyz" format (4 chars + "****" + 4 chars)
+  // Pattern: exactly 4 characters, followed by 4+ asterisks, followed by exactly 4 characters
+  if (key.length >= 12) {
+    const hasAsterisks = key.includes("****")
+    const hasPrefixSuffix = key.length >= 12
+    // Common pattern: "sk-" + "****..." + tail
+    if (hasAsterisks && hasPrefixSuffix) {
+      // Check if it matches the mask pattern: prefix (any) + "****" + suffix (any)
+      const asteriskCount = (key.match(/\*/g) || []).length
+      if (asteriskCount >= 4) {
+        // Additional check: if it has both prefix and suffix parts that look like masking
+        return true
+      }
+    }
+  }
+  return false
+}
+
 /** Persist the full config locally so it survives SW restarts. */
 function saveExtensionConfig(cfg: Record<string, unknown>) {
   // Support both flat (legacy settings.set) and nested (config.set) formats
@@ -56,7 +82,10 @@ function saveExtensionConfig(cfg: Record<string, unknown>) {
   const vision = cfg.vision as Record<string, unknown> | undefined
 
   const next: ExtensionConfig = {
-    api_key: (llm.api_key as string) || extensionConfig?.api_key || "",
+    // Skip masked/empty API keys to keep the existing value
+    api_key: (llm.api_key as string) && !isMaskedApiKey(llm.api_key)
+      ? (llm.api_key as string)
+      : (extensionConfig?.api_key || ""),
     base_url: String(llm.base_url ?? extensionConfig?.base_url ?? ""),
     model_name: String(llm.model_name ?? extensionConfig?.model_name ?? ""),
     temperature: llm.temperature !== undefined ? Number(llm.temperature) : extensionConfig?.temperature,
@@ -72,9 +101,10 @@ function saveExtensionConfig(cfg: Record<string, unknown>) {
     next.vision_enabled = extensionConfig.vision_enabled
   }
 
-  if (cfg.vision_api_key !== undefined) {
+  // Skip masked vision API keys
+  if (cfg.vision_api_key !== undefined && !isMaskedApiKey(cfg.vision_api_key as string)) {
     next.vision_api_key = cfg.vision_api_key as string
-  } else if (vision?.api_key !== undefined) {
+  } else if (vision?.api_key !== undefined && !isMaskedApiKey(vision.api_key as string)) {
     next.vision_api_key = vision.api_key as string
   } else if (extensionConfig?.vision_api_key !== undefined) {
     next.vision_api_key = extensionConfig.vision_api_key
