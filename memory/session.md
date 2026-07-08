@@ -2,6 +2,14 @@
 
 ## Current Session
 
+### S6 (2026-07-09) [cmspark 全量代码审计]
+- 用 Fuck My Shit Mountain skill(full 模式)对 cmspark 做 25 维度全量审计;5 个并行子代理按维度簇采集证据,主会话对 2 个 Critical 论断(history 不落盘 / WS 无鉴权)直接读源码对抗复核
+- 交付:`audit-report-cmspark-2026-07-09.md`(96k/1459 行,55 findings)+ `.claude/audits/audit-cmspark-2026-07-09-metadata.json`;`report_lint.py --modes full` → OK
+- 总分 4.4/C。**4 Critical**:C1 WS 控制面零鉴权(根因,server.ts:1287 无 verifyClient/Origin/握手)·C2 history.db 永不落盘(record 不 flush + shutdown 从不调 close)·C3 CI 永久绿-on-red(`|| true` 吞失败+hang,5 个安全闸门测试静默红)·C4 2 critical npm 漏洞(decompress zip-slip 经 officeparser)。另 10 High(config 0644 / evaluate token 未校 / 非原子写 / config 损坏静默默认 / saveConfig 竞态 / 扩展 67 high 漏洞 / 扩展 9 tsc 错发布 / 无签名-SBOM / evaluate 扩展零门 / 安全弹窗无 a11y)
+- 边界:只审计出报告,**未改任何源码**(技能规则)。修复建议在报告 §31/§32(12 项 Quick Wins)
+- 坑:lint 要求 finding 头 `### Finding:` + 字段 `- Field:` 无 bold + 统计=全局 Severity 行数 + 25 维度小节齐;初稿 emoji 头+bold 字段 → 整份重写一次
+- Recorded: yes — 见 project-knowledge.md「全量代码审计 via Fuck My Shit Mountain skill」+ 自动记忆 audit-2026-07-09-full.md;CI 记忆 ci-test-hang-companion.md 已据审计升级为 Critical
+
 ### S5 (2026-07-03) [cmspark config API key sync]
 - 审核并修复：环境变量 `DEEPSEEK_API_KEY` 强制覆盖用户通过 UI/Tray 设置的 API Key，导致配置无法在 Tray 和 Extension 间同步
 - 根因：`getConfig()`/`saveConfig()` 无条件优先使用 env var；保存到磁盘时把 key 设为空字符串防止泄露 env var

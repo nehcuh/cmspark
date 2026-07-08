@@ -15,3 +15,10 @@ instincts:
     source_session: "2026-06-28 tray↔daemon skill.list 死循环修复"
     tags: [websocket, bug, request-response, loop]
     applications: 1
+
+  - id: parallel-audit-fanout-then-verify
+    pattern: "对大规模代码审计/审查:按维度簇(安全/前端/后端/发布等)fan-out 并行 general-purpose 子代理,每个深读相关文件返回 file:line 级结构化 findings(issue-card 格式);主会话对 Critical/High 论断做对抗性复核——直接 Read 源码确认,避免子代理误报导致虚高评分;再综合打分(判断非扣分,按系统性 vs 孤立)。子代理做广度,主会话保准确度。"
+    confidence: 0.6
+    source_session: "2026-07-09 Fuck My Shit Mountain 全量审计"
+    tags: [audit, review, parallel-agents, adversarial-verify, evidence]
+    applications: 1
