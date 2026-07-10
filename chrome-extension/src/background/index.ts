@@ -71,8 +71,8 @@ function saveExtensionConfig(cfg: Record<string, unknown>) {
 
   const next: ExtensionConfig = {
     // Skip masked/empty API keys to keep the existing value
-    api_key: (llm.api_key as string) && !isMaskedApiKey(llm.api_key)
-      ? (llm.api_key as string)
+    api_key: typeof llm.api_key === "string" && llm.api_key && !isMaskedApiKey(llm.api_key)
+      ? llm.api_key
       : (extensionConfig?.api_key || ""),
     base_url: String(llm.base_url ?? extensionConfig?.base_url ?? ""),
     model_name: String(llm.model_name ?? extensionConfig?.model_name ?? ""),

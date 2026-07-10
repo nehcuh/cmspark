@@ -9,6 +9,11 @@ interface ToolResult {
   error?: string
 }
 
+// chrome.scripting.InjectionResult in @types/chrome omits the runtime `error` field that Chrome
+// sets when an injection fails; include it locally so the fallback-on-injection-error logic in
+// scriptingExecute type-checks (audit H7 — the build was shipping with these tsc errors).
+type ScriptingResult = chrome.scripting.InjectionResult<any> & { error?: string }
+
 // Dangerous API patterns — kept in sync with companion/src/security.ts
 const DANGEROUS_API_PATTERNS: Array<{ name: string; pattern: RegExp }> = [
   // Direct API calls
@@ -196,7 +201,7 @@ export class BrowserBridge {
       await chrome.debugger.sendCommand({ tabId }, "DOM.enable")
     } catch { /* ignore */ }
 
-    const { root } = await chrome.debugger.sendCommand({ tabId }, "DOM.getDocument", {
+    const { root } = await this.sendCdp(tabId, "DOM.getDocument", {
       depth: -1,
       pierce: true,
     })
@@ -204,7 +209,7 @@ export class BrowserBridge {
 
     let nodeId = root.nodeId
     if (selector) {
-      const result = await chrome.debugger.sendCommand({ tabId }, "DOM.querySelector", {
+      const result = await this.sendCdp(tabId, "DOM.querySelector", {
         nodeId: root.nodeId,
         selector,
       })
@@ -212,7 +217,7 @@ export class BrowserBridge {
       nodeId = result.nodeId
     }
 
-    const { outerHTML } = await chrome.debugger.sendCommand({ tabId }, "DOM.getOuterHTML", { nodeId })
+    const { outerHTML } = await this.sendCdp(tabId, "DOM.getOuterHTML", { nodeId })
     return String(outerHTML || "").substring(0, 500000)
   }
 
@@ -225,7 +230,7 @@ export class BrowserBridge {
 
     // Strategy 1: ISOLATED world
     try {
-      let results: chrome.scripting.InjectionResult<any>[] | undefined
+      let results: ScriptingResult[] | undefined
       if (bodyTextExpr) {
         results = await chrome.scripting.executeScript({
           target: { tabId }, injectImmediately: true,
@@ -249,7 +254,7 @@ export class BrowserBridge {
 
     // Strategy 2: MAIN world (subject to page CSP)
     try {
-      let results: chrome.scripting.InjectionResult<any>[] | undefined
+      let results: ScriptingResult[] | undefined
       if (bodyTextExpr) {
         results = await chrome.scripting.executeScript({
           target: { tabId }, injectImmediately: true, world: "MAIN",
@@ -892,10 +897,10 @@ export class BrowserBridge {
     if (!params.selector || !params.filePath) throw new Error("selector and filePath are required")
     await this.ensureAttached(tabId)
     try {
-      const { root } = await chrome.debugger.sendCommand({ tabId }, "DOM.getDocument", {})
+      const { root } = await this.sendCdp(tabId, "DOM.getDocument", {})
       if (!root?.nodeId) throw new Error("Could not retrieve DOM Document root")
 
-      const { nodeId } = await chrome.debugger.sendCommand({ tabId }, "DOM.querySelector", {
+      const { nodeId } = await this.sendCdp(tabId, "DOM.querySelector", {
         nodeId: root.nodeId,
         selector: params.selector,
       })
