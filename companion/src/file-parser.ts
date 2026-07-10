@@ -243,10 +243,11 @@ async function parseOfficeFile(buffer: Buffer, filename: string, mimeType: strin
   fs.writeFileSync(tmpPath, buffer)
 
   try {
-    const [rawText, embeddedImages] = await Promise.all([
-      officeparser.parseOfficeAsync(tmpPath),
+    const [officeResult, embeddedImages] = await Promise.all([
+      officeparser.convert(tmpPath, "md"),
       Promise.resolve(extractEmbeddedImages(buffer, filename)),
     ])
+    const rawText = typeof officeResult.value === "string" ? officeResult.value : ""
 
     const text = cleanHeaderFooter(rawText)
 
