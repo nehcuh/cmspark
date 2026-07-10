@@ -2,6 +2,14 @@
 
 ## Current Session
 
+### S8 (2026-07-10 续) [cmspark 审计修复收尾 → 10 PR 全合]
+- S7 的 4 PR(#11-#14)全部合入 main + **CI 首次真绿**(P0 去 `|| true` + P1-1 修 hang 同生效)
+- 继续开了 **6 个 PR**(全合)：#15 threads-history 5 确定性失败(单调时间戳+精确cap+隔离) / #16 CI 全面覆盖(**glob 修复 106→703 测试** + matchSite 后缀碰撞 bug) / #17 linux CI stdio skip / **#18 officeparser 4→7 升级(C4 critical 根除，decompress 依赖移除)** / **#19 H10 安全弹窗 a11y**(focus trap+Escape+aria-modal)
+- **重大发现**：CI 的 `tests/**/*.test.js` glob 因 dash 无 globstar，只跑子目录(8 文件/~106 测试)，**盲跑 596 个顶层测试**。修 glob 用 `find` → 703 测试全跑，暴露 10 个确定性失败 + 1 IPC 崩溃(settings-web)。10 个 skip+TODO(可见追踪) + settings-web 隔离运行。还发现 matchSite 后缀碰撞 bug(`*.github.com` 误匹配 `evilgithub.com`)。
+- **审计 4 Critical 全闭环**：C1(WS 鉴权)/C2(history 落盘)/C3(CI 真绿 703)/C4(officeparser 7 升级根除 decompress)。**10 个 High 全修**：H1-H10。npm audit 0 critical。
+- P1 剩余：P1-5 签名/SBOM(证书长杆)/M18 其他 modal a11y/10 个 TODO-skip(真实 bug 待逐个诊断)
+- Recorded: yes — [[remediation-pr-status]] 更新为全合；project-knowledge 加 CI glob globstar 坑；ci-test-hang 标已修
+
 ### S7 (2026-07-10) [cmspark 审计修复 → 4 个 PR]
 - 基于昨日 S6 审计 + 新建 `docs/remediation-plan-2026-07-09.md`(5 阶段 P0-P4)，开 **4 个独立 worktree PR**(零文件重叠，每个过 kimi 改动前/终审门 + tsc/build/定向测试验证):
   - **PR #11 P0 止血**(`fix/p0-critical-stopgap`)：C1 WS Origin 鉴权(`isAllowedWsOrigin`)/ C2 history 落盘(record flush 原子写 + shutdown close)/ C3 移除 CI `\|\| true`/ C4 zip-slip 预检(原始字节扫中央目录+symlink)/ H1 config+logger 0o600/ H2 evaluate validateToken。+3 e2e(ws 握手/evaluate-token/zip-slip)+C2 回归

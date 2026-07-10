@@ -3,18 +3,17 @@
 ## Session Handoff
 
 <!-- handoff:start -->
-### 2026-07-10 (session-end)
-- 基于 S6 审计 + 新建 `docs/remediation-plan-2026-07-09.md`（5 阶段 P0–P4），开 **4 个独立 worktree PR**（零文件重叠，每个过 kimi 改动前/终审门 + tsc/build/定向测试验证）：
-  - **#11 P0 止血** `fix/p0-critical-stopgap`：C1 WS Origin 鉴权 / C2 history 落盘 / C3 移除 CI `|| true` / C4 zip-slip 预检 / H1 文件 0o600 / H2 evaluate validateToken（+3 e2e + C2 回归）
-  - **#12 P1-1 CI 解封** `fix/p1-1-ci-hang`：6 红=测试隔离 bug（静态 import 读真实 config，**非生产 bug**）+ ws teardown 异步错误 + issueToken 定时器 unref + daemon-cli lock 泄漏 → `npm test` 103/103 绿 ~0.4s
-  - **#13 P1-3 持久化** `fix/p1-3-persistence`：H3 atomicWriteJSON（config+threads 6 处）+ H4 损坏保留 + H5 查证非 bug（saveConfig 全同步无竞态，未加锁）
-  - **#14 P1-4 扩展 tsc** `fix/p1-4-extension-tsc`：9 个 tsc 错 + build 脚本改 `tsc --noEmit && plasmo build`（本地/release 也关门）
-- kimi 门多次拦下真问题（P0-5 adm-zip 规范化 `..` 失效预检 / P1-3 浅拷贝污染默认 / P1-4 build 未关门），也反驳了 kimi 几处过度建议（H5 close 同步 / P1-3 fsync 限制 / P1-4 sendCdp any 既有）
-- 4 PR 任意顺序合（零重叠）→ **CI 首次真转绿** + 数据完整性 + 类型安全扩展。主仓库未提交：审计报告（Kimi 修正 + 独立复核小节）+ remediation-plan + 本次记忆/handoff
-- Next: P1 剩余 P1-2（供应链 officeparser 7.x）/ P1-6（evaluate AST 门）/ P1-7（Modal a11y）/ P1-5（签名-SBOM）；或先 review/merge 4 PR
+### 2026-07-10 (session-end S8 — 10 PR 全合)
+- 从 S6 审计(4 Critical/10 High/4.4/C) → S7 开 4 PR → S8 续开 6 PR → **10 PR 全部合入 main**。审计 **4 Critical 全闭环** + **10 High 全修**。
+- #11 P0 止血(C1 WS 鉴权/C2 history 落盘/C3 去||true/C4 zip-slip 预检/H1 0o600/H2 evaluate token)
+- #12 P1-1 CI 解封(测试隔离=静态 import 读真实 config/teardown hang) → #15 threads-history(单调时间戳+精确 cap+隔离)
+- #13 P1-3 持久化(原子写+损坏保留/H5 查证非 bug) → #16 CI 全面覆盖(**glob 修复 106→703 测试** + matchSite 后缀碰撞 bug) → #17 linux CI stdio skip
+- #18 **officeparser 4→7**(C4 critical 根除，decompress 依赖移除，API parseOfficeAsync→convert) → #19 **H10 安全弹窗 a11y**(focus trap+Escape+aria-modal)
+- **重大发现**：CI 的 glob `tests/**/*.test.js` 因 dash 无 globstar → 只跑子目录(~106 测试)，**盲跑 596 个顶层测试**(含 config/history/file-parser/threads-history 等)。修 glob 用 `find` → 703 全跑 + 暴露 10 确定性失败(skip+TODO) + 1 IPC 崩溃(settings-web 隔离运行)。npm audit **0 critical**(原 2)。
+- CI 状态：全面 703 测试，0 fail，11 skip(TODO 追踪)。main = 32847d4。
+- Next: P1-5 签名/SBOM(证书长杆)/M18 其他 modal a11y/10 个 TODO-skip(真实 bug 逐个诊断)/P1-6 evaluate AST 门
 
-### 2026-07-09 (session-end)
-- Fuck My Shit Mountain full 审计交付：`audit-report-cmspark-2026-07-09.md`（55 findings，4.4/C）+ `.claude/audits/` 元数据
-- 4 Critical：C1 WS 无鉴权（根因）·C2 history 不落盘·C3 CI 绿-on-red·C4 供应链。另 10 High
-- 边界：当日只审计出报告（修复见 2026-07-10 的 4 个 PR）
+### 2026-07-09 (session-end S6 — 审计)
+- Fuck My Shit Mountain full 审计：`audit-report-cmspark-2026-07-09.md`（55 findings，4.4/C）+ remediation-plan + Kimi 独立复核
+- 4 Critical：C1 WS 无鉴权·C2 history 不落盘·C3 CI 绿-on-red·C4 供应链。10 High。修复见 S7/S8 的 10 个 PR
 <!-- handoff:end -->
