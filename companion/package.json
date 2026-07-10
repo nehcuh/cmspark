@@ -8,7 +8,7 @@
   "scripts": {
     "prebuild": "node scripts/generate-tray-icons.mjs",
     "build": "tsc && node -e \"process.platform!=='win32'&&require('fs').chmodSync('dist/index.js',0o755)\"",
-    "test": "node -e \"require('fs').rmSync('.test-dist',{recursive:true,force:true})\" && tsc -p tsconfig.test.json && node --test $(find .test-dist/tests -name '*.test.js' -not -name '_*' -not -name 'settings-web.test.js')",
+    "test": "node -e \"require('fs').rmSync('.test-dist',{recursive:true,force:true})\" && tsc -p tsconfig.test.json && node --test $(find .test-dist/tests -name '*.test.js' -not -name '_*' -not -name 'settings-web.test.js') && node --test .test-dist/tests/settings-web.test.js",
     "start": "node dist/index.js start",
     "dev": "tsx src/index.ts start",
     "daemon:start": "node dist/index.js daemon start --daemonize",
