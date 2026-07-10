@@ -1747,7 +1747,7 @@ test("thread-manager: update accepts valid mcp_selection_mode values", async () 
   assert.equal(updated2?.mcp_selection_mode, "auto")
 })
 
-test.skip("thread-manager: update rejects invalid mcp_selection_mode", async () => { // TODO(ci-coverage): Missing expected exception — update() not rejecting invalid mcp_selection_mode; the threads-history copy of this test passes, so reconcile which code path each exercises
+test("thread-manager: update rejects invalid mcp_selection_mode", async () => {
   resetMockDirs()
   process.env.HOME = tempHome
 
@@ -1755,14 +1755,17 @@ test.skip("thread-manager: update rejects invalid mcp_selection_mode", async () 
   const tm = new ThreadManager()
   const thread = tm.create("test-thread")
 
-  // 'all' is NOT valid for mcp_selection_mode (only auto/manual) — MCP doesn't
-  // have a bulk "all servers" concept distinct from "auto".
+  // Valid modes are auto | all | manual (thread-manager.ts validMcpModes).
+  // "all" IS valid (selects every MCP server) — it must NOT throw. This was the
+  // bug in the original skipped test, which wrongly assumed "all" was invalid.
+  // Consistent with threads-history.test.ts ("accepts all valid ... values").
+  assert.doesNotThrow(() => tm.update(thread.id, { mcp_selection_mode: "all" as any }))
   assert.throws(
-    () => tm.update(thread.id, { mcp_selection_mode: "all" as any }),
+    () => tm.update(thread.id, { mcp_selection_mode: "garbage" as any }),
     /Invalid mcp_selection_mode/,
   )
   assert.throws(
-    () => tm.update(thread.id, { mcp_selection_mode: "garbage" as any }),
+    () => tm.update(thread.id, { mcp_selection_mode: "manual-all" as any }),
     /Invalid mcp_selection_mode/,
   )
 })
