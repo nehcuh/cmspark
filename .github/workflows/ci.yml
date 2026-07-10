@@ -35,3 +35,14 @@ jobs:
       - name: Run companion tests
         run: |
           cd companion && npm test || true
+
+      - name: Setup chrome-extension Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: chrome-extension/package-lock.json
+
+      - name: Build + typecheck chrome-extension (audit H7)
+        run: |
+          cd chrome-extension && npm ci && npm run build
