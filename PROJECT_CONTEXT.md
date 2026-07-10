@@ -3,6 +3,14 @@
 ## Session Handoff
 
 <!-- handoff:start -->
+### 2026-07-10 (S9 — TODO-skip 修复启动，未完成)
+- 目标：修复 CI coverage 解封后遗留的 10 个 `test.skip` + TODO 真实 bug。
+- 已建立 10 个顺序 task，切入 worktree `fix-ci-coverage-todos`。
+- Task 1 诊断完成：`tab-resolver.ts` pinned tab 反向迭代导致测试 "first available pinned tab" 失败；需改为正向迭代。
+- 阻塞：kimi-gated-fix 复审需使用 `kimi-2.7 code` 模型重跑。
+- 临时文件已清理，worktree 保留待续。
+- **Next**：用 `kimi-2.7 code` 跑 task 1 复审 → apply → 验证 → 依次处理 task 2-10。
+
 ### 2026-07-10 (session-end S8 — 10 PR 全合)
 - 从 S6 审计(4 Critical/10 High/4.4/C) → S7 开 4 PR → S8 续开 6 PR → **10 PR 全部合入 main**。审计 **4 Critical 全闭环** + **10 High 全修**。
 - #11 P0 止血(C1 WS 鉴权/C2 history 落盘/C3 去||true/C4 zip-slip 预检/H1 0o600/H2 evaluate token)
