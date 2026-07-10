@@ -6,6 +6,7 @@
 //   * Item 12: navigate/create_tab/set_tab_url gate (non-http(s) blocked
 //     outright; untrusted-domain URLs require confirmation)
 
+import "./_security-gates-setup.js"
 import test, { before, after, beforeEach, afterEach } from "node:test"
 import assert from "node:assert/strict"
 import * as os from "node:os"
@@ -60,6 +61,10 @@ beforeEach(async () => {
     wss.once("connection", (ws) => {
       clearTimeout(timeout)
       serverSideWs = ws
+      // Swallow close/abort errors so afterEach teardown doesn't leak an uncaught
+      // "WebSocket was closed before the connection was established" (node:test flags that
+      // as the file failing even when every assertion passed).
+      ws.on("error", () => { /* expected during teardown */ })
       // Wire BOTH security.confirmation.response → securityConfirmations.respond
       // AND tool.result → handleToolResult, mirroring server.ts's ws.on("message")
       // routing. Required so the executor's confirmation Promise AND its tool-
@@ -77,10 +82,11 @@ beforeEach(async () => {
       resolve()
     })
     clientSideWs = new WebSocket(`ws://127.0.0.1:${serverPort}`)
+    clientSideWs.on("error", () => { /* expected during teardown */ })
   })
 })
 
-afterEach(() => {
+afterEach(async () => {
   for (const id of Array.from(pendingToolCalls.keys())) {
     const pending = pendingToolCalls.get(id)!
     clearTimeout(pending.timer)
@@ -88,9 +94,16 @@ afterEach(() => {
   }
   applyConnectionCloseGracePeriod()
   securityConfirmations.rejectAll("disconnect")
-  try { clientSideWs?.close() } catch { /* ignore */ }
-  try { serverSideWs?.close() } catch { /* ignore */ }
-  try { wss?.close() } catch { /* ignore */ }
+  // Fully tear down the WS layer so node --test doesn't report pending handles. ws.close() is
+  // an async closing handshake — by the time afterEach returns, the sockets are still alive and
+  // keep the process from exiting cleanly. terminate() destroys the underlying socket at once.
+  const safeTerminate = (ws: WebSocket | undefined) => { try { (ws as any)?.terminate?.() } catch { /* */ } }
+  safeTerminate(clientSideWs)
+  safeTerminate(serverSideWs)
+  try { wss?.clients.forEach((c) => safeTerminate(c)) } catch { /* */ }
+  await new Promise<void>((resolve) => {
+    try { wss?.close(() => resolve()) } catch { resolve() }
+  })
 })
 
 /**
