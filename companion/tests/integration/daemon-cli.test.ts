@@ -31,23 +31,24 @@ test("getPidFilePath returns correct path", () => {
 })
 
 test("acquireLock returns true on first acquire", async () => {
-  const { acquireLock } = require("../../src/daemon")
+  const { acquireLock, releaseLock } = require("../../src/daemon")
   const lockPath = path.join(tempHome, "test.lock")
   const result = await acquireLock(lockPath)
   assert.equal(result, true)
-  // Cleanup
-  fs.unlinkSync(lockPath)
+  // Cleanup: releaseLock closes the underlying net.Server handle (unlinkSync alone would leak
+  // the listening server and keep the test process alive).
+  releaseLock(lockPath)
 })
 
 test("acquireLock returns false when lock already held", async () => {
-  const { acquireLock } = require("../../src/daemon")
+  const { acquireLock, releaseLock } = require("../../src/daemon")
   const lockPath = path.join(tempHome, "test2.lock")
   const first = await acquireLock(lockPath)
   assert.equal(first, true)
   const second = await acquireLock(lockPath)
   assert.equal(second, false)
-  // Cleanup
-  fs.unlinkSync(lockPath)
+  // Cleanup: release the held lock (closes the net.Server handle).
+  releaseLock(lockPath)
 })
 
 test("isProcessRunning detects current process", () => {

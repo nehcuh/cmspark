@@ -3,6 +3,7 @@
 import * as fs from "fs"
 import * as path from "path"
 import { getConfigDir } from "../config"
+import { atomicWriteJSON } from "../io"
 
 interface Thread {
   id: string
@@ -115,7 +116,7 @@ export class ThreadManager {
   }
 
   private saveIndex(): void {
-    fs.writeFileSync(this.indexPath, JSON.stringify(this.index, null, 2))
+    atomicWriteJSON(this.indexPath, this.index)
   }
 
   private threadFilePath(threadId: string): string {
@@ -181,7 +182,7 @@ export class ThreadManager {
     this.saveIndex()
 
     // Create messages file
-    fs.writeFileSync(this.threadFilePath(thread.id), JSON.stringify({ messages: [] }, null, 2))
+    atomicWriteJSON(this.threadFilePath(thread.id), { messages: [] })
 
     return thread
   }
@@ -296,7 +297,7 @@ export class ThreadManager {
       console.warn(`[Thread ${threadId}] Message cap reached, trimmed oldest messages`)
     }
 
-    fs.writeFileSync(filePath, JSON.stringify(data, null, 2))
+    atomicWriteJSON(filePath, data)
 
     // Update thread timestamp
     const thread = this.index.threads.find(t => t.id === threadId)
@@ -315,7 +316,7 @@ export class ThreadManager {
       const data = JSON.parse(raw)
       const msg = data.messages.find((m: Message) => m.id === messageId)
       if (msg) Object.assign(msg, updates)
-      fs.writeFileSync(filePath, JSON.stringify(data, null, 2))
+      atomicWriteJSON(filePath, data)
     } catch { /* ignore */ }
   }
 
@@ -337,7 +338,7 @@ export class ThreadManager {
       const idx = messages.findIndex(m => m.id === messageId)
       if (idx < 0) return false
       data.messages = messages.slice(0, idx)
-      fs.writeFileSync(filePath, JSON.stringify(data, null, 2))
+      atomicWriteJSON(filePath, data)
       return true
     } catch {
       return false

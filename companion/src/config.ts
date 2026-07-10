@@ -6,6 +6,7 @@ import * as os from "os"
 import { EventEmitter } from "events"
 import { getLockPath } from "./platform"
 import { getBuiltinSkillsSrc } from "./paths"
+import { atomicWriteJSON } from "./io"
 import type { McpConfig } from "./mcp/types"
 import type { ObsidianExportConfig } from "./threads/markdown-export"
 
@@ -188,6 +189,29 @@ export async function initDataDir(): Promise<void> {
   }
 }
 
+// H4 (audit): a truncated/garbage config.json must NOT silently reset to defaults (that would
+// wipe llm.api_key / trusted_domains / mcp servers with zero signal). Validate the root is a
+// JSON object; on any parse/validation failure the caller preserves the corrupt file for
+// inspection and logs loudly, then falls back to defaults so the companion still starts.
+function loadConfigFile(configPath: string): CompanionConfig {
+  let raw: string
+  try {
+    raw = fs.readFileSync(configPath, "utf-8")
+  } catch {
+    // Deep-clone (not shallow spread): getConfig() mutates `cachedConfig.llm.api_key` with the
+    // env var, and a shallow `{...defaultConfig}` would alias the nested `llm`/`security` objects
+    // and let that mutation leak into `defaultConfig` itself.
+    return structuredClone(defaultConfig) // file doesn't exist yet — normal first-run path
+  }
+  const parsed = JSON.parse(raw) // throws on truncated/garbage JSON
+  // Reject non-object roots (e.g. a bare `[1,2,3]`, `"string"`, `42`, `null`) that would
+  // otherwise be silently deep-merged into garbage. (Full field-level zod schema is future work.)
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error("config root is not a JSON object")
+  }
+  return deepMerge(defaultConfig, parsed) as CompanionConfig
+}
+
 export function getConfig(): CompanionConfig {
   if (cachedConfig) {
     // Refresh env var ONLY if no user-provided key exists
@@ -198,11 +222,16 @@ export function getConfig(): CompanionConfig {
   }
   const configPath = path.join(DATA_DIR, "config.json")
   try {
-    const raw = fs.readFileSync(configPath, "utf-8")
-    const fileConfig = JSON.parse(raw)
-    cachedConfig = deepMerge(defaultConfig, fileConfig) as CompanionConfig
-  } catch {
-    cachedConfig = { ...defaultConfig }
+    cachedConfig = loadConfigFile(configPath)
+  } catch (err: any) {
+    // Corrupt config: preserve it for inspection + log loudly, then use defaults so the
+    // companion still starts. Previously this was a silent reset that wiped keys/domains.
+    const backup = `${configPath}.corrupt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    console.error(
+      `[cmspark-agent] config.json corrupt/unreadable — backing up to ${path.basename(backup)} and starting with defaults. Cause: ${err?.message || err}`,
+    )
+    try { fs.renameSync(configPath, backup) } catch { /* best-effort preservation */ }
+    cachedConfig = structuredClone(defaultConfig)
   }
   // Environment variable takes priority ONLY when no user-provided key exists.
   // If the file has a user-provided API key (non-empty, not masked), respect it.
@@ -356,11 +385,11 @@ export function saveConfig(config: Partial<CompanionConfig>): CompanionConfig {
   if (envKey && toSave.llm?.api_key === envKey) {
     toSave.llm.api_key = ""  // Don't write env var to disk
   }
-  fs.writeFileSync(configPath, JSON.stringify(toSave, null, 2), { mode: 0o600 })
-  // P0-3 (audit H1): writeFileSync mode only applies on file CREATION; explicitly tighten
-  // pre-existing files (were 0o644) so an API saveConfig can't leave the key world-readable
-  // before the next startup's initDataDir chmod runs.
-  try { fs.chmodSync(configPath, 0o600) } catch { /* best-effort */ }
+  // H3 (audit): atomic write (tmp + rename) so a crash mid-save can't leave a truncated
+  // config.json (which the H4 load path would then treat as corrupt). mode 0o600 — holds api_key.
+  // (Supersedes the P0-3 writeFileSync+chmod: atomicWriteJSON already does atomic + 0o600 + chmod
+  // internally — merged from PR #13.)
+  atomicWriteJSON(configPath, toSave)
   cachedConfig = updated
   configEvents.emit(CONFIG_CHANGE_EVENT, updated)
   return updated
