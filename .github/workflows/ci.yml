@@ -34,4 +34,4 @@ jobs:
 
       - name: Run companion tests
         run: |
-          cd companion && npm test || true
+          cd companion && npm test

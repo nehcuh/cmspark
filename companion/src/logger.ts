@@ -88,7 +88,7 @@ export function logEvent(
       data: redactLogData(data),
     }
     const line = `${JSON.stringify(entry)}\n`
-    fs.appendFileSync(filePath, line)
+    fs.appendFileSync(filePath, line, { mode: 0o600 })
     // Also output to stdout for daemon mode visibility
     if (process.stdout && process.stdout.isTTY) {
       console.log(`[${level}] ${event}`)

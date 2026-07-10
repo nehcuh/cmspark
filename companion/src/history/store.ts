@@ -272,10 +272,16 @@ export class HistoryStore {
       // regresses). Lock it to owner-only, matching config.ts / daemon.ts /
       // menu-bar-agent.ts. The mkdir above may pre-create with looser perms;
       // fchmod-mode 0o600 + explicit chmod covers pre-existing files.
-      fs.writeFileSync(this.dbPath, buffer, { mode: 0o600 })
+      // P0-1: atomic write (tmp + rename) so a crash mid-flush can't truncate history.db.
+      const tmp = `${this.dbPath}.tmp-${process.pid}`
+      fs.writeFileSync(tmp, buffer, { mode: 0o600 })
+      fs.renameSync(tmp, this.dbPath)
       try { fs.chmodSync(this.dbPath, 0o600) } catch { /* best-effort */ }
-    } catch {
-      // best-effort save
+    } catch (saveErr: any) {
+      // P0-1: record() now flushes on every call, so a save failure (disk full, EACCES) is more
+      // impactful than before — surface it so the audit-trail gap is observable, not silent.
+      // Return semantics unchanged (record() still reports success); this is diagnostics only.
+      try { console.error("[cmspark-agent] history.save_failed:", saveErr?.message || String(saveErr)) } catch { /* ignore */ }
     }
   }
 
@@ -317,6 +323,11 @@ export class HistoryStore {
       ],
     )
     const row = this.db.exec("SELECT last_insert_rowid() as id")
+    // P0-1 (audit C2): flush on every record so a crash/SIGKILL can't lose the audit trail.
+    // sql.js is in-memory; without this the on-disk db only reflected boot-time state and
+    // every normal shutdown lost the whole session. (Per-write full export is acceptable for
+    // single-user load; debounce / migrate to better-sqlite3 is tracked as P4 / L10.)
+    this.save()
     return row.length > 0 ? (row[0].values[0][0] as number) : 0
   }
 
