@@ -104,6 +104,28 @@ test("HistoryStore.init() loads existing database when file exists", async () =>
   store2.close()
 })
 
+test("HistoryStore.record() persists to disk WITHOUT close() (audit C2 regression)", async () => {
+  // P0-1 / audit C2: record() must flush on every call so a crash / SIGKILL (or any exit
+  // that skips close()) cannot lose the session. Before the fix, record() only mutated the
+  // in-memory sql.js db; the on-disk file reflected boot-time state, so reopening yielded
+  // zero rows here. With the fix, record() calls save() and the reopen sees both records.
+  const configDir = getConfigDir()
+  const dbPath = path.join(configDir, "history.db")
+  if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath)
+
+  const writer = new HistoryStore()
+  await writer.waitReady()
+  writer.record(createTestRecord({ thread_id: "c2-crash-test", tool_name: "navigate" }))
+  writer.record(createTestRecord({ thread_id: "c2-crash-test", tool_name: "evaluate" }))
+  // Deliberately do NOT call writer.close() — simulates a crash mid-session.
+
+  const reader = new HistoryStore()
+  await reader.waitReady()
+  const persisted = reader.query({ thread_id: "c2-crash-test" })
+  assert.equal(persisted.length, 2, "record() must flush to disk without close() (C2); got " + persisted.length)
+  reader.close()
+})
+
 test("HistoryStore.waitReady() resolves when initialization complete", async () => {
   const store = new HistoryStore()
   const readyPromise = store.waitReady()

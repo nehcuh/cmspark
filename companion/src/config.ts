@@ -169,8 +169,12 @@ export async function initDataDir(): Promise<void> {
 
   const configPath = path.join(DATA_DIR, "config.json")
   if (!fs.existsSync(configPath)) {
-    fs.writeFileSync(configPath, JSON.stringify(defaultConfig, null, 2))
+    fs.writeFileSync(configPath, JSON.stringify(defaultConfig, null, 2), { mode: 0o600 })
   }
+  // P0-3 (audit H1): tighten config.json to owner-only — it holds llm.api_key / vision.api_key.
+  // Covers newly-created files (mode above) AND pre-existing ones (previously 0o644 because
+  // writeFileSync had no mode arg). Mirrors history.db 0o600 in history/store.ts.
+  try { fs.chmodSync(configPath, 0o600) } catch { /* best-effort */ }
 
   // Copy builtin skills if they don't exist
   const builtinSkillsSrc = getBuiltinSkillsSrc()
@@ -383,6 +387,8 @@ export function saveConfig(config: Partial<CompanionConfig>): CompanionConfig {
   }
   // H3 (audit): atomic write (tmp + rename) so a crash mid-save can't leave a truncated
   // config.json (which the H4 load path would then treat as corrupt). mode 0o600 — holds api_key.
+  // (Supersedes the P0-3 writeFileSync+chmod: atomicWriteJSON already does atomic + 0o600 + chmod
+  // internally — merged from PR #13.)
   atomicWriteJSON(configPath, toSave)
   cachedConfig = updated
   configEvents.emit(CONFIG_CHANGE_EVENT, updated)

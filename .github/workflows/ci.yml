@@ -34,7 +34,7 @@ jobs:
 
       - name: Run companion tests
         run: |
-          cd companion && npm test || true
+          cd companion && npm test
 
       - name: Setup chrome-extension Node.js
         uses: actions/setup-node@v4

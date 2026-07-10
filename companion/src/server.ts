@@ -24,6 +24,22 @@ const PORT = 23401
 // Exported for integration tests (audit item 6). Production reads the const directly.
 export const TOOL_EXECUTION_TIMEOUT_MS = 15000
 
+/**
+ * P0-2 (audit C1): only chrome-extension:// origins may open a WebSocket to the companion.
+ * Web origins (http/https/file) are rejected so a page the user visits cannot connect to
+ * ws://127.0.0.1:23401 and drive the agent (config.set / list_all_cookies / evaluate ...).
+ * The browser sets the WS Origin from the page/worker origin and page JS cannot forge it.
+ * Exported for unit testing the gate without spinning up the full server.
+ * Residual risks (intentionally out of P0 scope):
+ *  - ANY chrome extension (not just CMspark) matches — this is a scheme-level gate only. Pinning
+ *    to the specific extension id requires a config step / P2.
+ *  - A local process can still spoof the Origin header (curl -H); that needs the P2 shared-secret
+ *    handshake. The id charset is restricted to [A-Za-z0-9_-] so CRLF/control chars are rejected.
+ */
+export function isAllowedWsOrigin(origin: string | undefined | null): boolean {
+  return typeof origin === "string" && /^chrome-extension:\/\/[A-Za-z0-9_-]+$/i.test(origin)
+}
+
 function getDomainFromUrl(urlString: string): string {
   try {
     const parsed = new URL(urlString)
@@ -305,6 +321,21 @@ export function createToolExecutor(ws: WebSocket) {
       // Issue a fresh token (post-approval or for auto-approved skip path)
       const approvedToken = securityPolicy.issueToken(toolName, code)
       finalParams = { ...finalParams, security_token: approvedToken.token }
+    } else if (toolName === "evaluate" && finalParams.security_token) {
+      // P0-4 (audit H2): evaluate is forwarded to the extension — unlike osascript_eval
+      // (validated companion-side in executeCompanionTool), the evaluate security_token was
+      // previously never checked, so confirm/exec binding was unenforced. When a token is
+      // already present (replay/stale path where the confirmation block above was skipped
+      // because security_token was pre-set), validate it binds to the code being executed.
+      const evalCode = String(finalParams.code || "")
+      const tokenValid = securityPolicy.validateToken(
+        String(finalParams.security_token), "evaluate", evalCode,
+      )
+      if (!tokenValid) {
+        const result = { success: false, error: "Invalid or expired security token for evaluate" }
+        logToolFinish(toolCallId, toolName, startedAt, result)
+        return result
+      }
     }
 
     // Audit item 12: navigate / create_tab trust-domain gate. Agents can otherwise
@@ -1284,7 +1315,32 @@ export async function startServer() {
     logger.warn("mcp.manager.start_failed", { error: err?.message || String(err) })
   }
 
-  wss = new WebSocketServer({ port, host: "127.0.0.1" })
+  wss = new WebSocketServer({
+    port,
+    host: "127.0.0.1",
+    // P0-2 (audit C1): reject non-extension origins to close the web-page attack vector —
+    // HTTP pages / file:// / other browser extensions can otherwise open a loopback WS and
+    // drive the agent (config.set, list_all_cookies, evaluate, ...). Browsers set the WS Origin
+    // from the page/worker origin and page JS cannot forge it, so this is robust against web
+    // origins. MV3 Service Worker / popup / side panel all send Origin: chrome-extension://<id>,
+    // so legitimate extension connections are not blocked.
+    // NOTE: this does NOT stop a local process — a local attacker can freely set the Origin
+    // header (curl -H "Origin: chrome-extension://..."). The local-process vector needs a
+    // shared-secret handshake (P2 / P0-2B) and is intentionally out of P0 scope.
+    verifyClient: (info, cb) => {
+      const origin = info.origin
+      const ok = isAllowedWsOrigin(origin)
+      if (!ok) {
+        logger.warn("ws.rejected_origin", {
+          origin: origin || "<none>",
+          remote: info.req.socket.remoteAddress,
+        })
+        cb(false, 403, "Forbidden")
+      } else {
+        cb(true)
+      }
+    },
+  })
 
   wss.on("listening", () => {
     console.log(`[cmspark-agent] Companion started on ws://127.0.0.1:${port}`)
@@ -1527,6 +1583,11 @@ export async function startServer() {
     mcpManager.shutdown().catch((err) => {
       logger.warn("mcp.shutdown_failed", { error: err?.message || String(err) })
     }).finally(() => {
+      // P0-1 (audit C2): flush history.db before exiting. Previously close() was never
+      // called on shutdown, so every normal SIGTERM/SIGINT lost the session's audit records.
+      try { historyStore?.close() } catch (err: any) {
+        logger.warn("history.close_failed", { error: err?.message || String(err) })
+      }
       wss.close()
       releaseLock(getLockFilePath())
       process.exit(0)
