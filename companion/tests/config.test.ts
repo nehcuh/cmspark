@@ -16,9 +16,12 @@ let clearConfigCache: typeof import("../src/config").clearConfigCache
 
 async function resetConfigFile() {
   clearConfigCache()
-  const configPath = path.join(tempHome, "config.json")
-  if (fs.existsSync(configPath)) {
-    fs.rmSync(configPath)
+  // Clean config.json plus any .corrupt-<ts> backups / .tmp- files left by prior tests so
+  // each H3/H4 assertion starts from a known-clean slate.
+  for (const f of fs.readdirSync(tempHome)) {
+    if (f === "config.json" || f.startsWith("config.json.corrupt-") || f.includes(".tmp-")) {
+      try { fs.rmSync(path.join(tempHome, f)) } catch { /* ignore */ }
+    }
   }
   await initDataDir()
   clearConfigCache()
@@ -240,5 +243,48 @@ describe("saveConfig vision API key", { concurrency: 1 }, () => {
 
     assert.equal(getConfig().vision?.api_key, "vision-user-key")
     assert.equal(readSavedConfig().vision.api_key, "vision-user-key")
+  })
+
+  // --- audit H4: corrupt config must be preserved + logged, not silently reset ---
+
+  test("H4: truncated config.json is preserved as .corrupt-<ts>, defaults used (not silent wipe)", async () => {
+    await resetConfigFile()
+    const configPath = path.join(tempHome, "config.json")
+    // Simulates a crash mid-write (pre-H3 atomic writes): truncated, unparseable JSON.
+    fs.writeFileSync(configPath, '{ "llm": { "api_key": "sk-corrupt', "utf-8")
+    clearConfigCache()
+
+    const cfg = getConfig()
+    // Companion still starts with defaults...
+    assert.equal(cfg.security.auto_approve_dangerous, false, "must fall back to default config")
+    // ...but the corrupt file is preserved for inspection, not silently overwritten/lost.
+    const backups = fs.readdirSync(tempHome).filter(f => f.startsWith("config.json.corrupt-"))
+    assert.equal(backups.length, 1, "corrupt config must be backed up to config.json.corrupt-<ts>")
+  })
+
+  test("H4: non-object config root (e.g. a JSON array) is treated as corrupt + preserved", async () => {
+    await resetConfigFile()
+    fs.writeFileSync(path.join(tempHome, "config.json"), "[1, 2, 3]", "utf-8")
+    clearConfigCache()
+    const cfg = getConfig()
+    assert.equal(cfg.security.auto_approve_dangerous, false, "must fall back to default config")
+    const backups = fs.readdirSync(tempHome).filter(f => f.startsWith("config.json.corrupt-"))
+    assert.equal(backups.length, 1, "non-object config root must be backed up, not silently merged")
+  })
+
+  // --- audit H3: atomic writes ---
+
+  test("H3: saveConfig writes atomically — no leftover .tmp, file valid + 0o600", async () => {
+    await resetConfigFile()
+    saveConfig({ trusted_domains: ["atomic.example.com"] })
+    const tmpFiles = fs.readdirSync(tempHome).filter(f => f.includes(".tmp-"))
+    assert.equal(tmpFiles.length, 0, "atomic write must not leave a .tmp file behind")
+    clearConfigCache()
+    assert.ok(
+      getConfig().trusted_domains.includes("atomic.example.com"),
+      "saved value must persist + reload",
+    )
+    const mode = fs.statSync(path.join(tempHome, "config.json")).mode & 0o777
+    assert.equal(mode, 0o600, "config.json must be owner-only (0o600)")
   })
 })
