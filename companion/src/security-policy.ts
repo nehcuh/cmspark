@@ -41,8 +41,10 @@ export class SecurityPolicy {
     const payload: TokenPayload = { toolName, code, ts, nonce, codeHash, threadId }
     const token = this._sign(payload)
     this.issuedTokens.set(token, payload)
-    // Auto-expire
-    setTimeout(() => this.issuedTokens.delete(token), TOKEN_TTL_MS)
+    // Auto-expire. `.unref()` so this TTL timer doesn't keep the process (or the node:test
+    // runner) alive on its own — tokens are in-memory and die with the process anyway.
+    const expiryTimer = setTimeout(() => this.issuedTokens.delete(token), TOKEN_TTL_MS)
+    expiryTimer.unref()
     return { token, expiresAt: ts + TOKEN_TTL_MS }
   }
 
