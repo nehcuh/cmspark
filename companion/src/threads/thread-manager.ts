@@ -96,6 +96,26 @@ interface Message {
 
 const MAX_MESSAGES_PER_THREAD = 1000
 
+// Monotonic timestamp: Date only has ms precision, so two creates/updates in the same tick get
+// identical ISO strings — which breaks reverse-creation-order listing and "updated_at is newer"
+// assertions (and makes ordering non-deterministic in general). This never returns the same
+// value twice within a process: if Date.now() hasn't advanced, bump by 1ms.
+//
+// Scope: IN-PROCESS monotonic only (not cross-restart persistent). On restart _lastTs resets to
+// 0, so a newly-created thread's ts starts from real Date.now() — which is normally > persisted
+// timestamps (drift is at most +1ms per in-process collision), so "newer" holds in practice.
+// Don't use these timestamps for wall-clock TTL/expiry; they're for ordering/display only.
+let _lastTs = 0
+function monotonicTimestamp(): string {
+  const now = Date.now()
+  _lastTs = now > _lastTs ? now : _lastTs + 1
+  return new Date(_lastTs).toISOString()
+}
+
+// Track which threads have already logged the message-cap warning, so a long thread doesn't
+// spam the log on every addMessage after hitting the cap.
+const _capWarnedThreads = new Set<string>()
+
 export class ThreadManager {
   private index: ThreadIndex
   private indexPath: string
@@ -162,7 +182,7 @@ export class ThreadManager {
       }
       safeConfigOverride = validation.sanitized
     }
-    const now = new Date().toISOString()
+    const now = monotonicTimestamp()
     const thread: Thread = {
       id: safeId,
       alias: safeAlias,
@@ -256,7 +276,7 @@ export class ThreadManager {
         throw new Error("active_mcp_server_ids must be an array of strings")
       }
     }
-    Object.assign(thread, updates, { updated_at: new Date().toISOString() })
+    Object.assign(thread, updates, { updated_at: monotonicTimestamp() })
     this.saveIndex()
     return thread
   }
@@ -277,7 +297,7 @@ export class ThreadManager {
     const msg: Message = {
       ...message,
       id: `${threadId}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-      created_at: new Date().toISOString(),
+      created_at: monotonicTimestamp(),
     }
 
     const filePath = this.threadFilePath(threadId)
@@ -292,9 +312,12 @@ export class ThreadManager {
     data.messages.push(msg)
 
     // Soft cap enforcement
-    if (data.messages.length > MAX_MESSAGES_PER_THREAD + 100) {
+    if (data.messages.length > MAX_MESSAGES_PER_THREAD) {
       data.messages = data.messages.slice(-MAX_MESSAGES_PER_THREAD)
-      console.warn(`[Thread ${threadId}] Message cap reached, trimmed oldest messages`)
+      if (!_capWarnedThreads.has(threadId)) {
+        _capWarnedThreads.add(threadId)
+        console.warn(`[Thread ${threadId}] Message cap reached, trimmed oldest messages`)
+      }
     }
 
     atomicWriteJSON(filePath, data)
@@ -302,7 +325,7 @@ export class ThreadManager {
     // Update thread timestamp
     const thread = this.index.threads.find(t => t.id === threadId)
     if (thread) {
-      thread.updated_at = new Date().toISOString()
+      thread.updated_at = monotonicTimestamp()
       this.saveIndex()
     }
 

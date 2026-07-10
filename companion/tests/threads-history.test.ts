@@ -1,4 +1,5 @@
-import test, { after, before, describe } from "node:test"
+import "./_threads-history-setup.js"
+import test, { after, before, beforeEach, describe } from "node:test"
 import assert from "node:assert/strict"
 import * as fs from "node:fs"
 import * as os from "node:os"
@@ -29,6 +30,19 @@ before(async () => {
 
 after(() => {
   fs.rmSync(tempHome, { recursive: true, force: true })
+})
+
+// Each test assumes a clean ThreadManager (e.g. "list returns all threads in reverse creation
+// order" asserts exactly 2 threads it just created). The file shares one DATA_DIR, so without
+// wiping threads/ between tests, earlier tests' threads accumulate and break count/ordering
+// assertions. Clear the threads directory before every test.
+beforeEach(() => {
+  const threadsDir = path.join(getConfigDir(), "threads")
+  if (fs.existsSync(threadsDir)) {
+    for (const f of fs.readdirSync(threadsDir)) {
+      try { fs.rmSync(path.join(threadsDir, f), { recursive: true, force: true }) } catch { /* ignore */ }
+    }
+  }
 })
 
 // ============================================
@@ -89,10 +103,11 @@ describe("ThreadManager - Normal Paths", () => {
   test("update modifies thread fields", () => {
     const tm = new ThreadManager()
     const thread = tm.create("Update Me")
+    const createdAt = thread.updated_at // capture value: update() mutates the same object in-place
     const updated = tm.update(thread.id, { alias: "Updated" })
     assert.ok(updated, "update should return thread")
     assert.equal(updated!.alias, "Updated")
-    assert.ok(updated!.updated_at > thread.updated_at, "updated_at should be newer")
+    assert.ok(updated!.updated_at > createdAt, "updated_at should be newer")
   })
 
   test("update with config_override validates and sanitizes", () => {
@@ -255,7 +270,10 @@ describe("ThreadManager - Abnormal/Boundary Paths", () => {
   test("create with prototype pollution keys throws", () => {
     const tm = new ThreadManager()
     assert.throws(() => {
-      tm.create("Proto", undefined, { __proto__: "pollute" } as any)
+      // JSON.parse creates `__proto__` as an OWN key (the real threat vector — config arrives
+      // as JSON over WS). The object literal `{__proto__: ...}` would just set the prototype and
+      // not surface as an own key, so it's not a valid pollution PoC.
+      tm.create("Proto", undefined, JSON.parse('{"__proto__":"pollute"}') as any)
     }, /Invalid config key/)
     assert.throws(() => {
       tm.create("Proto", undefined, { constructor: "pollute" } as any)
@@ -509,7 +527,7 @@ describe("HistoryStore - Abnormal/Boundary Paths", () => {
         created_at: new Date().toISOString(),
       })
     }
-    const results = store.query({ thread_id: "thread-bulk" })
+    const results = store.query({ thread_id: "thread-bulk", limit: 1000 })
     assert.equal(results.length, 500)
     // Verify order is DESC by created_at
     for (let i = 0; i < results.length - 1; i++) {
