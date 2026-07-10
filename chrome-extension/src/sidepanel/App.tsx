@@ -135,6 +135,49 @@ function SecurityConfirmationDialog() {
     setWhitelistMode("none")
   }, [request?.confirmation_id])
 
+  // H10 (audit): keyboard a11y — focus trap + Escape→deny + aria-modal + restore focus.
+  // Without this, keyboard users couldn't reliably drive the dialog (Tab leaked to the chat,
+  // Escape did nothing, screen readers didn't announce the modal context).
+  const overlayRef = useRef<HTMLDivElement>(null)
+  const denyRef = useRef<() => void>(() => {})
+  useEffect(() => {
+    if (!request) return
+    const overlay = overlayRef.current
+    if (!overlay) return
+    const prevFocus = document.activeElement as HTMLElement | null
+    // Auto-focus "拒绝" (safe non-destructive default; [0]=拒绝并停止, [1]=拒绝)
+    const btns = overlay.querySelectorAll<HTMLButtonElement>("button")
+    if (btns[1]) btns[1].focus()
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault()
+        e.stopPropagation()
+        denyRef.current()
+        return
+      }
+      if (e.key === "Tab") {
+        const f = overlay.querySelectorAll<HTMLElement>(
+          'button, input, [tabindex]:not([tabindex="-1"])',
+        )
+        if (!f.length) return
+        const first = f[0]
+        const last = f[f.length - 1]
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault()
+          last.focus()
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault()
+          first.focus()
+        }
+      }
+    }
+    overlay.addEventListener("keydown", onKeyDown)
+    return () => {
+      overlay.removeEventListener("keydown", onKeyDown)
+      prevFocus?.focus()
+    }
+  }, [request?.confirmation_id])
+
   if (!request) return null
 
   const riskLevel = request.risk_level || "high"
@@ -174,8 +217,10 @@ function SecurityConfirmationDialog() {
     })
   }
 
+  denyRef.current = () => decide(false)
+
   return (
-    <div style={styles.securityOverlay}>
+    <div ref={overlayRef} role="dialog" aria-modal="true" aria-label={`${riskLabel}操作确认`} style={styles.securityOverlay}>
       <div style={styles.securityCard}>
         <div style={{ ...styles.securityBadge, background: riskColor + "22", color: riskColor }}>
           {riskLabel}操作确认
