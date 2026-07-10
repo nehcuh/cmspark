@@ -22,3 +22,17 @@ instincts:
     source_session: "2026-07-09 Fuck My Shit Mountain 全量审计"
     tags: [audit, review, parallel-agents, adversarial-verify, evidence]
     applications: 1
+
+  - id: verify-race-before-locking
+    pattern: "审计/评审提'竞态/需加锁'时,先确认是否存在 await 间隙。JS 单线程下,全同步的 read-modify-write(如 getConfig→deepMerge→writeFileSync 无 await)天然原子,不存在交错竞态;只有 caller'读→await→用陈旧快照写'才有竞态。别为不存在的竞态加 mutex(cargo-cult)。cmspark saveConfig 审计标 High 竞态,查证为非 bug。"
+    confidence: 0.8
+    source_session: "2026-07-10 P1-3 saveConfig H5 查证"
+    tags: [concurrency, race-condition, javascript, single-thread, mutex, verify]
+    applications: 1
+
+  - id: kimi-gate-catches-real-issues
+    pattern: "对每处改动跑 kimi 独立终审($KIMI -p \"$(<difffile)\")常拦下真问题:kimi 实测/独立验证比纯推理准。本轮拦下:zip-slip 预检用 adm-zip(读写都规范化..→失效)、{...defaultConfig} 浅拷贝污染默认、build 脚本未关门。同时要敢于反驳 kimi 的过度建议(如对全同步函数要求加锁/await)。采纳前验证,错的反驳。"
+    confidence: 0.75
+    source_session: "2026-07-10 4 PR 的 kimi 终审"
+    tags: [kimi, code-review, verification, methodology, pushback]
+    applications: 4

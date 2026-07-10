@@ -2,6 +2,16 @@
 
 ## Current Session
 
+### S7 (2026-07-10) [cmspark 审计修复 → 4 个 PR]
+- 基于昨日 S6 审计 + 新建 `docs/remediation-plan-2026-07-09.md`(5 阶段 P0-P4)，开 **4 个独立 worktree PR**(零文件重叠，每个过 kimi 改动前/终审门 + tsc/build/定向测试验证):
+  - **PR #11 P0 止血**(`fix/p0-critical-stopgap`)：C1 WS Origin 鉴权(`isAllowedWsOrigin`)/ C2 history 落盘(record flush 原子写 + shutdown close)/ C3 移除 CI `\|\| true`/ C4 zip-slip 预检(原始字节扫中央目录+symlink)/ H1 config+logger 0o600/ H2 evaluate validateToken。+3 e2e(ws 握手/evaluate-token/zip-slip)+C2 回归
+  - **PR #12 P1-1 CI 解封**(`fix/p1-1-ci-hang`)：诊断 6 红=测试隔离 bug(静态 import 读真实 config，非生产)、ws teardown 异步错误、issueToken 定时器不 unref、daemon-cli lock 泄漏 → `npm test` 103/103 绿 ~0.4s
+  - **PR #13 P1-3 持久化**(`fix/p1-3-persistence`)：H3 atomicWriteJSON(config+threads 6 处)+ H4 损坏保留(getConfig 备份.corrupt+日志，structuredClone 深拷贝)+ H5 查证非 bug(saveConfig 全同步无竞态，未加锁)
+  - **PR #14 P1-4 扩展 tsc**(`fix/p1-4-extension-tsc`)：9 个 tsc 错(sendCdp 路由+ScriptingResult+typeof 守卫)+ build 脚本改 `tsc --noEmit && plasmo build`(本地/release 也关门)+ CI 跑 build
+- kimi 门多次拦下真问题：P0-5 adm-zip 读写都规范化`..`(失效预检→改原始字节扫)、P1-3 `{...defaultConfig}`浅拷贝污染默认、P1-4 build 脚本未关门。反驳了 kimi 几处(P0-2 网页向量精度/H5 close 同步/P1-3 fsync 限制/P1-4 sendCdp any 既有)
+- 4 PR 零重叠，任意顺序合；全合入→CI 首次真转绿 + 数据完整性 + 类型安全扩展。P1 剩余 P1-2(供应链)/P1-6(eval AST)/P1-7(a11y)/P1-5(签名)待开工
+- Recorded: yes — 见 project-knowledge.md「测试隔离/node:test ws teardown/验证竞态再加锁」3 个 pitfall + 自动记忆 remediation-pr-status.md;ci-test-hang-companion.md 标记已修(PR #12);audit-2026-07-09-full.md 更新为 4 PR 在途
+
 ### S6 (2026-07-09) [cmspark 全量代码审计]
 - 用 Fuck My Shit Mountain skill(full 模式)对 cmspark 做 25 维度全量审计;5 个并行子代理按维度簇采集证据,主会话对 2 个 Critical 论断(history 不落盘 / WS 无鉴权)直接读源码对抗复核
 - 交付:`audit-report-cmspark-2026-07-09.md`(96k/1459 行,55 findings)+ `.claude/audits/audit-cmspark-2026-07-09-metadata.json`;`report_lint.py --modes full` → OK
