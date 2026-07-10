@@ -18,8 +18,13 @@ test("wildcard match: *.github.com matches api.github.com", () => {
   assert.equal(matchSite("*.github.com", "www.github.com"), true)
 })
 
-test.skip("wildcard match: *.github.com does not match github.com", () => { // TODO(ci-coverage): expects apex NOT to match, but matchDomain (audit-verified, ADR-007) matches apex for *.suffix — reconcile site-matcher vs security matchDomain semantics
-  assert.equal(matchSite("*.github.com", "github.com"), false)
+test("wildcard match: *.github.com matches github.com (apex, consistent with matchDomain/ADR-007)", () => {
+  assert.equal(matchSite("*.github.com", "github.com"), true)
+})
+
+test("wildcard match: *.github.com does NOT match suffix-collision (evilgithub.com)", () => {
+  // Domain-boundary fix: bare endsWith(suffix) would wrongly match evilgithub.com.
+  assert.equal(matchSite("*.github.com", "evilgithub.com"), false)
 })
 
 test("wildcard match: *.github.com does not match unrelated domain", () => {
