@@ -40,7 +40,7 @@ test("tab-resolver: explicit ignores invalid explicit tabId and falls back to pi
   assert.equal(result.matched, "pinned")
 })
 
-test.skip("tab-resolver: pinned returns first available pinned tab", () => { // TODO(ci-coverage): failing — diagnose pinned-tab resolution
+test("tab-resolver: pinned returns first available pinned tab", () => {
   const tab = (id: number, url: string, title: string, active = false, index = 0) => ({
     id,
     url,
@@ -56,6 +56,28 @@ test.skip("tab-resolver: pinned returns first available pinned tab", () => { // 
     tab(3, "https://github.com", "GitHub"),
   ]
   const result = resolveTargetTab(tabs, [3, 1], "test query")
+
+  assert.equal(result.tabId, 3)
+  assert.equal(result.matched, "pinned")
+})
+
+test("tab-resolver: pinned skips stale ids and returns first PRESENT pinned tab", () => {
+  // [999, 3, 1]: 999 is stale (no longer open). Forward iteration must skip it and
+  // return 3 (first present), NOT 1 — which reverse iteration would wrongly return.
+  const tab = (id: number, url: string, title: string, active = false, index = 0) => ({
+    id,
+    url,
+    title,
+    active,
+    index,
+    status: "complete" as const,
+  })
+
+  const tabs = [
+    tab(1, "https://example.com", "Example"),
+    tab(3, "https://github.com", "GitHub"),
+  ]
+  const result = resolveTargetTab(tabs, [999, 3, 1], "test query")
 
   assert.equal(result.tabId, 3)
   assert.equal(result.matched, "pinned")

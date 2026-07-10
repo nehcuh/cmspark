@@ -106,14 +106,14 @@ export function resolveTargetTab(
     // Explicit tabId invalid — fall through silently (LLM hallucination is common, not worth logging)
   }
 
-  // Priority 2: Pinned tabs — use the LAST matching one (highest priority)
-  // FIX: Reverse iteration so the most-recently-pinned tab (end of array) has highest priority
-  // This matches the user's mental model where "pinning" a tab makes it the current focus
-  // FIXED [HIGH]: Guard clause added - skip loop entirely when pinnedTabIds is empty
-  // Previously, empty arrays would still enter loop context (though no iterations)
-  // Now we explicitly check to make intent clear and avoid unnecessary context setup
+  // Priority 2: Pinned tabs — use the FIRST matching one (highest priority)
+  // Forward iteration so the first pinned tab (start of array) has highest priority.
+  // This is consistent with src/llm/adapter.ts:475, which uses `pinned_tabs[0]` as
+  // the default target — the first pinned tab is the thread's primary focus.
+  // Guard clause: skip the loop entirely when pinnedTabIds is empty. (An empty array
+  // would yield zero iterations anyway, but the explicit check makes intent clear.)
   if (pinnedTabIds.length > 0) {
-    for (let i = pinnedTabIds.length - 1; i >= 0; i--) {
+    for (let i = 0; i < pinnedTabIds.length; i++) {
       const id = pinnedTabIds[i]
       const tab = tabList.find(t => t.id === id)
       if (tab) {
