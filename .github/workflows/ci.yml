@@ -65,3 +65,25 @@ jobs:
         # globstar.
         run: |
           cd chrome-extension && npm test
+
+      - name: Supply-chain audit — chrome-extension PRODUCTION deps (gating)
+        # Shipped (non-dev) deps must be advisory-free. Currently 0 after the
+        # dompurify@3.4.11 floor bump (audit P1-2). These deps ship inside the
+        # MV3 bundle to end users, so a NEW advisory here MUST block CI until
+        # patched or explicitly overridden in package.json. Escape hatch: add a
+        # targeted `overrides` entry + document the accepted risk in
+        # docs/supply-chain.md, then re-pin.
+        run: |
+          cd chrome-extension && npm audit --omit=dev
+
+      - name: Supply-chain audit — chrome-extension full tree (informational)
+        # Dev-toolchain advisories (plasmo, the @parcel/* + @plasmohq/parcel-*
+        # family, svelte, esbuild, lmdb, msgpackr, tsup, @babel/core,
+        # content-security-policy-parser) are BUILD-TIME ONLY — they are the
+        # bundler and its plugins and are NOT shipped in the extension artifact.
+        # They are blocked on plasmo upgrading its Parcel pin upstream (see
+        # docs/supply-chain.md). continue-on-error so the known-unfixable set
+        # does not gate; the step still surfaces NEW advisories for triage.
+        continue-on-error: true
+        run: |
+          cd chrome-extension && npm audit
