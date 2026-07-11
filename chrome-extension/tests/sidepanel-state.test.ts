@@ -109,16 +109,28 @@ test("security confirmation requests are queued and removable", () => {
   assert.equal(removed.pendingSecurityConfirmations.length, 0)
 })
 
-test("initial side panel sync requests threads, skills, and config exactly once per connection", () => {
+test("initial side panel sync requests threads, skills, knowledge, config, and mcp servers exactly once per connection", () => {
   const sent: object[] = []
   const initializedRef = { current: false }
 
+  // Production requestInitialSidePanelData (useWebSocket.ts) sends 5 messages
+  // on connect: threads, skills, knowledge, config, and the MCP server list.
+  // Keep these in lock-step — a new initial-sync message means updating this
+  // expected array. The CI extension `npm test` step now catches such drift.
+  const expected = [
+    { type: "thread.list" },
+    { type: "skill.list" },
+    { type: "knowledge.list" },
+    { type: "config.get" },
+    { type: "mcp.list" },
+  ]
+
   assert.equal(requestInitialSidePanelData((message) => sent.push(message), initializedRef), true)
-  assert.deepEqual(sent, [{ type: "thread.list" }, { type: "skill.list" }, { type: "knowledge.list" }, { type: "config.get" }])
+  assert.deepEqual(sent, expected)
   assert.equal(initializedRef.current, true)
 
   assert.equal(requestInitialSidePanelData((message) => sent.push(message), initializedRef), false)
-  assert.deepEqual(sent, [{ type: "thread.list" }, { type: "skill.list" }, { type: "knowledge.list" }, { type: "config.get" }])
+  assert.deepEqual(sent, expected)
 })
 
 test("SET_THREADS keeps active thread when it exists in the new list and syncs metadata", () => {

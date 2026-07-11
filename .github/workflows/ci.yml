@@ -56,3 +56,12 @@ jobs:
       - name: Build + typecheck chrome-extension (audit H7)
         run: |
           cd chrome-extension && npm ci && npm run build
+
+      - name: Run chrome-extension tests
+        # Runs the full extension test suite in CI so drift between production
+        # initial-sync messages and the sidepanel-state test (and any other
+        # extension test) is caught here, not silently. The test script's glob
+        # is POSIX-portable (*.test.js) so it matches under dash/sh without
+        # globstar.
+        run: |
+          cd chrome-extension && npm test
