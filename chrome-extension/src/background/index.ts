@@ -514,4 +514,28 @@ function setupMessageHandlers() {
   })
 }
 
+// M1 (audit P2-1): keep the companion's tabUrlCache (the evaluate auto-approve
+// trust anchor) current by pushing every tab URL change. Without this, a tab can
+// navigate from a trusted domain to an untrusted one and the companion keeps
+// auto-approving evaluate against the STALE trusted hostname (cross-domain bypass).
+//
+// Registered at TOP-LEVEL module scope (not inside init()) so Chrome wakes the
+// service worker when a navigation fires even while it was suspended (MV3). The
+// callback guards on wsClient state — if the WS is down, the push is dropped
+// (the cache is refreshed by the next list_tabs; tools can't run over a down WS
+// anyway). Every scheme is pushed (including chrome://) so a trusted→non-web
+// navigation also invalidates the trust anchor — filtering to http(s) would
+// re-introduce the very staleness this fixes.
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, _tab) => {
+  // onUpdated also fires for title/favicon/status; only a URL change is trust-relevant.
+  if (typeof changeInfo.url !== "string" || !changeInfo.url) return
+  try {
+    if (wsClient?.getState() === "connected") {
+      wsClient.send({ type: "tab.navigated", tabId, url: changeInfo.url })
+    }
+  } catch {
+    // Cache-sync must never affect extension behavior.
+  }
+})
+
 init()
