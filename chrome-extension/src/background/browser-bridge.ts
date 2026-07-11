@@ -2,6 +2,7 @@
 
 import { PageSanitizer, pageSanitizer } from "./page-sanitizer"
 import { fetchImageAsBase64 } from "./image-extract-utils"
+import { detectDangerousApis } from "./dangerous-apis"
 
 interface ToolResult {
   success: boolean
@@ -13,49 +14,6 @@ interface ToolResult {
 // sets when an injection fails; include it locally so the fallback-on-injection-error logic in
 // scriptingExecute type-checks (audit H7 — the build was shipping with these tsc errors).
 type ScriptingResult = chrome.scripting.InjectionResult<any> & { error?: string }
-
-// Dangerous API patterns — kept in sync with companion/src/security.ts
-const DANGEROUS_API_PATTERNS: Array<{ name: string; pattern: RegExp }> = [
-  // Direct API calls
-  { name: "fetch", pattern: /\bfetch\s*\(/ },
-  { name: "XMLHttpRequest", pattern: /\bXMLHttpRequest\b/ },
-  { name: "localStorage", pattern: /\blocalStorage\b/ },
-  { name: "sessionStorage", pattern: /\bsessionStorage\b/ },
-  { name: "document.cookie", pattern: /\bdocument\.cookie\b/ },
-  { name: "window.open", pattern: /\bwindow\.open\s*\(/ },
-  { name: "navigator.sendBeacon", pattern: /\bnavigator\.sendBeacon\s*\(/ },
-  { name: "WebSocket", pattern: /\bnew\s+WebSocket\s*\(/ },
-  { name: "EventSource", pattern: /\bnew\s+EventSource\s*\(/ },
-  { name: "indexedDB", pattern: /\bindexedDB\b/ },
-  // Bracket notation bypasses
-  { name: "bracket-fetch", pattern: /\[\s*["']fetch["']\s*\]\s*\(/ },
-  { name: "bracket-open", pattern: /\[\s*["']open["']\s*\]\s*\(/ },
-  { name: "bracket-localStorage", pattern: /\[\s*["']localStorage["']\s*\]/ },
-  { name: "bracket-sessionStorage", pattern: /\[\s*["']sessionStorage["']\s*\]/ },
-  { name: "bracket-cookie", pattern: /\[\s*["']cookie["']\s*\]/ },
-  { name: "bracket-sendBeacon", pattern: /\[\s*["']sendBeacon["']\s*\]\s*\(/ },
-  { name: "bracket-indexedDB", pattern: /\[\s*["']indexedDB["']\s*\]/ },
-  { name: "bracket-XMLHttpRequest", pattern: /\[\s*["']XMLHttpRequest["']\s*\]/ },
-  // Method call / reflection bypasses
-  { name: "fetch.call", pattern: /\.call\s*\(.*fetch/ },
-  { name: "fetch.apply", pattern: /\.apply\s*\(.*fetch/ },
-  { name: "Reflect.apply", pattern: /\bReflect\.apply\s*\(/ },
-  { name: "Reflect.construct", pattern: /\bReflect\.construct\s*\(/ },
-  { name: "Proxy", pattern: /\bnew\s+Proxy\s*\(/ },
-  // Code generation
-  { name: "eval", pattern: /\beval\s*\(/ },
-  { name: "Function", pattern: /\bnew\s+Function\s*\(/ },
-  { name: "setTimeout-string", pattern: /setTimeout\s*\(\s*["']/ },
-  { name: "setInterval-string", pattern: /setInterval\s*\(\s*["']/ },
-]
-
-function detectDangerousApis(code: string): string[] {
-  const found = new Set<string>()
-  for (const { name, pattern } of DANGEROUS_API_PATTERNS) {
-    if (pattern.test(code)) found.add(name)
-  }
-  return Array.from(found)
-}
 
 export class BrowserBridge {
   private attachedTabs: Set<number> = new Set()
@@ -865,14 +823,14 @@ export class BrowserBridge {
     const sanitizedCodeResult = this.sanitizer.sanitizeText(params.code)
     const codeToExecute = sanitizedCodeResult.sanitized
 
+    // ADVISORY ONLY (audit H9): detectDangerousApis annotates the result with
+    // statically-matchable risky tokens. It does NOT gate execution — the
+    // companion-side SecurityConfirmationManager is the sole authority for
+    // whether `evaluate` runs (design decision A4②). The field is named
+    // `risk_pattern_matches` (not `has_dangerous_apis`) so an empty result is
+    // not mistaken for a safety verdict: regex cannot resolve runtime dispatch
+    // like window["ev"+"al"](...), so absence of matches ≠ safe.
     const matches = detectDangerousApis(codeToExecute)
-    if (matches.length > 0) {
-      // Companion-side confirmation is the sole authority; extension does not gate evaluate.
-      // The dangerous-API detection result is forwarded to the companion as a hint.
-      // (Previously: extension checked for a non-empty `security_token` string — this
-      // provided no real security since any string passed, and the HMAC validator was
-      // never wired up. Removed in Batch A3.)
-    }
 
     const result = await this.safeEvaluate(tabId, codeToExecute)
 
@@ -881,8 +839,7 @@ export class BrowserBridge {
       data: {
         result: result.result?.value,
         type: result.result?.type,
-        has_dangerous_apis: matches.length > 0,
-        dangerous_apis_found: matches.length > 0 ? matches : undefined,
+        risk_pattern_matches: matches.length > 0 ? matches : undefined,
         threats_removed: sanitizedCodeResult.threatsRemoved.length > 0 ? sanitizedCodeResult.threatsRemoved : undefined,
         exception: result.exceptionDetails ? {
           text: result.exceptionDetails.text,
