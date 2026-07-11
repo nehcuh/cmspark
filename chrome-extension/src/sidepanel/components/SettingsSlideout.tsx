@@ -2,6 +2,7 @@
 
 import { useState } from "react"
 import { useAgentStore } from "../store/agentStore"
+import { Modal } from "./ui/Modal"
 import type { PrivilegeMode } from "../types"
 
 const PRIVILEGE_MODE_OPTIONS: { value: PrivilegeMode; label: string; desc: string }[] = [
@@ -83,8 +84,13 @@ export function SettingsSlideout() {
   }
 
   return (
-    <div style={styles.backdrop} onClick={() => dispatch({ type: "TOGGLE_SETTINGS" })}>
-      <div style={styles.panel} onClick={e => e.stopPropagation()}>
+    <Modal
+      open={state.settingsOpen}
+      onClose={() => dispatch({ type: "TOGGLE_SETTINGS" })}
+      overlayStyle={styles.backdrop}
+      panelStyle={styles.panel}
+      ariaLabel="设置"
+    >
         <div style={styles.header}>
           <h3 style={{ margin: 0, fontSize: 15 }}>设置</h3>
           <button style={styles.closeBtn} onClick={() => dispatch({ type: "TOGGLE_SETTINGS" })}>✕</button>
@@ -571,8 +577,7 @@ export function SettingsSlideout() {
             Companion 全局配置已同步{state.companionConfig.model_name ? ` (${state.companionConfig.model_name})` : ""}
           </div>
         )}
-      </div>
-    </div>
+    </Modal>
   )
 }
 
