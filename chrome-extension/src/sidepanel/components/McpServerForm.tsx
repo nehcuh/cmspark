@@ -4,6 +4,7 @@
 
 import { useEffect, useState } from "react"
 import { useAgentStore } from "../store/agentStore"
+import { Modal } from "./ui/Modal"
 import type {
   McpHttpServerConfig,
   McpServerConfig,
@@ -188,8 +189,13 @@ export function McpServerForm() {
   }
 
   return (
-    <div style={styles.backdrop} onClick={close}>
-      <div style={styles.panel} onClick={(e) => e.stopPropagation()}>
+    <Modal
+      open={state.mcpServerFormOpen}
+      onClose={close}
+      overlayStyle={styles.backdrop}
+      panelStyle={styles.panel}
+      ariaLabel={state.mcpServerFormEditing ? "编辑 MCP Server" : "添加 MCP Server"}
+    >
         <div style={styles.header}>
           <h3 style={{ margin: 0, fontSize: 15 }}>
             {state.mcpServerFormEditing ? "编辑 MCP Server" : "添加 MCP Server"}
@@ -382,8 +388,7 @@ export function McpServerForm() {
             {state.mcpServerFormEditing ? "保存修改" : "添加"}
           </button>
         </div>
-      </div>
-    </div>
+    </Modal>
   )
 }
 

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react"
 import { useAgentStore } from "../store/agentStore"
+import { Modal } from "./ui/Modal"
 
 interface SkillParameter {
   name: string
@@ -119,10 +120,17 @@ export function SkillCraftPanel({ onClose }: { onClose: () => void }) {
   }, [editName, editDesc, editType, editBody, craftedSkill, onClose])
 
   return (
-    <div style={styles.overlay} onClick={(e) => {
-      if (e.target === e.currentTarget) onClose()
-    }}>
-      <div style={styles.panel}>
+    // Conditionally mounted by the parent ({craftOpen && <SkillCraftPanel/>}),
+    // so when we render we are open. <Modal> adds the focus trap + Escape +
+    // focus-restore this panel previously lacked (backdrop click was its only
+    // dismiss path). open is pinned true because mount/unmount is the gate.
+    <Modal
+      open={true}
+      onClose={onClose}
+      overlayStyle={styles.overlay}
+      panelStyle={styles.panel}
+      ariaLabel="提取技能"
+    >
         <div style={styles.header}>
           <span style={styles.title}>提取技能</span>
           <button style={styles.closeBtn} onClick={onClose}>✕</button>
@@ -212,8 +220,7 @@ export function SkillCraftPanel({ onClose }: { onClose: () => void }) {
             </div>
           </div>
         )}
-      </div>
-    </div>
+    </Modal>
   )
 }
 
