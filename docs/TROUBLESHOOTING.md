@@ -31,7 +31,11 @@ export DEEPSEEK_API_KEY=sk-xxx
 
 ### 首条消息返回 400 / "model not found"
 
-配置里的 `model_name` 不是 provider 当前提供的模型 id。**DeepSeek 的旧名 `deepseek-chat` / `deepseek-reasoner` 将于 2026-07-24 15:59 UTC 停用**，取代为 `deepseek-v4-pro`（原 chat/非思考模式）与 `deepseek-v4-flash`（轻量快速）。若你的 `~/.cmspark-agent/config.json` 仍用旧名，把 `llm.model_name` 改成 `deepseek-v4-pro` 或 `deepseek-v4-flash`（默认即 `deepseek-v4-flash`，或在设置面板的 Model 预设里选）。启动时若配置了 API key，companion 会探测 `/v1/models`，当配置的模型不在 provider 当前列表时打 `startup.model_probe.model_not_listed` 警告。
+配置里的 `model_name` 不是 provider 当前提供的模型 id。**DeepSeek 的旧名 `deepseek-chat` / `deepseek-reasoner` 将于 2026-07-24 15:59 UTC 停用**，取代为 `deepseek-v4-pro`（更强）与 `deepseek-v4-flash`（轻量快速，**默认**）。两者在过渡期都已指向 `deepseek-v4-flash` 的两种模式（chat=非思考 / reasoner=思考）。
+
+**companion 启动时会自动迁移旧名**：若 `~/.cmspark-agent/config.json` 的 `llm.model_name` 仍是 `deepseek-chat` 或 `deepseek-reasoner`，启动时自动改写为 `deepseek-v4-flash`（原子写入，保留 api_key / 域白名单等其余配置），并打 `config.model_migrated` 警告日志。想要更强模型可手动改成 `deepseek-v4-pro`（设置面板的 Model 预设里选）。
+
+启动时若配置了 API key，companion 还会探测 `/v1/models`，当配置的模型不在 provider 当前列表时打 `startup.model_probe.model_not_listed` 警告。
 
 ### 启动后 Side Panel 连不上
 

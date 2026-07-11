@@ -13,6 +13,7 @@ let saveConfig: typeof import("../src/config").saveConfig
 let isMaskedApiKey: typeof import("../src/config").isMaskedApiKey
 let initDataDir: typeof import("../src/config").initDataDir
 let clearConfigCache: typeof import("../src/config").clearConfigCache
+let migrateLegacyModelName: typeof import("../src/config").migrateLegacyModelName
 
 async function resetConfigFile() {
   clearConfigCache()
@@ -39,6 +40,7 @@ before(async () => {
   isMaskedApiKey = cfg.isMaskedApiKey
   initDataDir = cfg.initDataDir
   clearConfigCache = cfg.clearConfigCache
+  migrateLegacyModelName = cfg.migrateLegacyModelName
 
   await initDataDir()
 })
@@ -359,5 +361,97 @@ describe("saveConfig H5 atomicity (synchronous read-modify-write)", { concurrenc
     assert.ok(final.includes("add-1.example.com"), "first append must survive the second")
     assert.ok(final.includes("add-2.example.com"), "second append must persist")
     assert.equal(final.length, 3, "no append lost, no duplicate introduced")
+  })
+})
+
+// --- DeepSeek 2026-07-24 deprecation: legacy model-name auto-migration ---
+//
+// Per the official DeepSeek API changelog (2026-04-24), deepseek-chat and
+// deepseek-reasoner are retired on 2026-07-24; during the transition BOTH resolve
+// to deepseek-v4-flash. migrateLegacyModelName() rewrites a legacy id to
+// deepseek-v4-flash at startup via the atomic saveConfig path, idempotently, and
+// only on exact match. These pin that contract.
+
+describe("migrateLegacyModelName (DeepSeek 2026-07-24 deprecation)", { concurrency: 1 }, () => {
+  before(async () => {
+    delete process.env.DEEPSEEK_API_KEY
+    await resetConfigFile()
+  })
+
+  test("deepseek-chat → deepseek-v4-flash, persisted to disk + reported", async () => {
+    await resetConfigFile()
+    saveConfig({ llm: { model_name: "deepseek-chat" } as any })
+    const result = migrateLegacyModelName()
+    assert.equal(result.migrated, true)
+    assert.equal(result.from, "deepseek-chat")
+    assert.equal(result.to, "deepseek-v4-flash")
+    assert.equal(getConfig().llm.model_name, "deepseek-v4-flash", "cache reflects migration")
+    assert.equal(readSavedConfig().llm.model_name, "deepseek-v4-flash", "disk reflects migration")
+  })
+
+  test("deepseek-reasoner → deepseek-v4-flash, persisted to disk + reported", async () => {
+    await resetConfigFile()
+    saveConfig({ llm: { model_name: "deepseek-reasoner" } as any })
+    const result = migrateLegacyModelName()
+    assert.equal(result.migrated, true)
+    assert.equal(result.from, "deepseek-reasoner")
+    assert.equal(result.to, "deepseek-v4-flash")
+    assert.equal(readSavedConfig().llm.model_name, "deepseek-v4-flash")
+  })
+
+  test("already deepseek-v4-flash → no-op (idempotent at the default)", async () => {
+    await resetConfigFile()
+    saveConfig({ llm: { model_name: "deepseek-v4-flash" } as any })
+    const result = migrateLegacyModelName()
+    assert.equal(result.migrated, false)
+    assert.equal(getConfig().llm.model_name, "deepseek-v4-flash")
+  })
+
+  test("deepseek-v4-pro (higher tier) is NOT migrated away", async () => {
+    await resetConfigFile()
+    saveConfig({ llm: { model_name: "deepseek-v4-pro" } as any })
+    const result = migrateLegacyModelName()
+    assert.equal(result.migrated, false)
+    assert.equal(getConfig().llm.model_name, "deepseek-v4-pro")
+  })
+
+  test("custom / other-provider model is left untouched (exact-match only)", async () => {
+    await resetConfigFile()
+    saveConfig({ llm: { model_name: "gpt-4o" } as any })
+    const result = migrateLegacyModelName()
+    assert.equal(result.migrated, false)
+    assert.equal(getConfig().llm.model_name, "gpt-4o")
+  })
+
+  test("migration preserves api_key + trusted_domains — only model_name changes", async () => {
+    await resetConfigFile()
+    saveConfig({
+      llm: { api_key: "sk-secret", model_name: "deepseek-chat" } as any,
+      trusted_domains: ["a.example.com"],
+    })
+    migrateLegacyModelName()
+    const cfg = getConfig()
+    assert.equal(cfg.llm.model_name, "deepseek-v4-flash")
+    assert.equal(cfg.llm.api_key, "sk-secret", "api_key must survive migration")
+    assert.ok(cfg.trusted_domains.includes("a.example.com"), "trusted_domains must survive migration")
+    assert.equal(readSavedConfig().llm.api_key, "sk-secret", "api_key preserved on disk too")
+  })
+
+  test("calling twice is idempotent — second call is a no-op", async () => {
+    await resetConfigFile()
+    saveConfig({ llm: { model_name: "deepseek-reasoner" } as any })
+    const first = migrateLegacyModelName()
+    assert.equal(first.migrated, true)
+    const second = migrateLegacyModelName()
+    assert.equal(second.migrated, false, "second call must not re-migrate a V4 id")
+    assert.equal(getConfig().llm.model_name, "deepseek-v4-flash")
+  })
+
+  test("migrated config.json stays owner-only (0o600) after rewrite", async () => {
+    await resetConfigFile()
+    saveConfig({ llm: { model_name: "deepseek-chat" } as any })
+    migrateLegacyModelName()
+    const mode = fs.statSync(path.join(tempHome, "config.json")).mode & 0o777
+    assert.equal(mode, 0o600, "migration must preserve the 0o600 mode (holds api_key)")
   })
 })

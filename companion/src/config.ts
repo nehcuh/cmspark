@@ -411,6 +411,51 @@ export function saveConfig(config: Partial<CompanionConfig>): CompanionConfig {
   return updated
 }
 
+/**
+ * Deprecated DeepSeek chat model ids and their V4 successors.
+ *
+ * Per the official DeepSeek API changelog (2026-04-24), `deepseek-chat` and
+ * `deepseek-reasoner` are retired on 2026-07-24 15:59 UTC. During the transition
+ * BOTH legacy names resolve to `deepseek-v4-flash` (chat = non-thinking mode,
+ * reasoner = thinking mode) — so `deepseek-v4-flash` is the behavior-preserving
+ * target and also CMspark's default. Users who want the higher-tier model can set
+ * `deepseek-v4-pro` manually.
+ */
+const DEPRECATED_MODEL_MAP: Readonly<Record<string, string>> = {
+  "deepseek-chat": "deepseek-v4-flash",
+  "deepseek-reasoner": "deepseek-v4-flash",
+}
+
+export interface ModelMigration {
+  migrated: boolean
+  from?: string
+  to?: string
+}
+
+/**
+ * Migrate a deprecated DeepSeek chat model id to its V4 successor.
+ *
+ * If the configured `llm.model_name` is a legacy id, rewrite it in place via the
+ * atomic saveConfig path (H3: tmp+rename, 0o600) so a legacy config keeps working
+ * past the 2026-07-24 retirement without a hard break, and return what changed so
+ * the caller can log it. Idempotent — a no-op once the model is already a V4 id.
+ * Only EXACT-match legacy ids are rewritten; custom/other models (and the higher-
+ * tier `deepseek-v4-pro`) are left untouched. Only `llm.model_name` is touched —
+ * api_key / trusted_domains / everything else is preserved (deepMerge + the spread
+ * below). Runs at startup before the model-validity probe (server.ts startServer)
+ * so the probe validates the migrated name.
+ */
+export function migrateLegacyModelName(): ModelMigration {
+  const cfg = getConfig()
+  const target = DEPRECATED_MODEL_MAP[cfg.llm.model_name]
+  if (!target) return { migrated: false }
+  // Spread the full llm block (type-safe, no cast) and override only model_name;
+  // saveConfig deep-merges against the latest cached state and re-resolves the api
+  // key (env keys are still masked on disk), so nothing but model_name changes.
+  saveConfig({ llm: { ...cfg.llm, model_name: target } })
+  return { migrated: true, from: cfg.llm.model_name, to: target }
+}
+
 function deepMerge(target: any, source: any): any {
   const result = { ...target }
   for (const key of Object.keys(source)) {

@@ -729,6 +729,8 @@ Overall         ████░░░░░░  4.4  C
 - Regression test suggestion: 测试断言默认模型在 DeepSeek 文档模型列表。
 - Estimated effort: 15 分钟。
 
+> **🔴 RESOLUTION（2026-07-11）：本 finding 为误报（方向反了）。** kimi 终审 push-back + 独立核对 DeepSeek 官方 changelog（api-docs.deepseek.com/updates，2026-04-24 条目）：`deepseek-v4-flash`/`deepseek-v4-pro` **正是当前真实模型 id**；相反，旧名 `deepseek-chat`/`deepseek-reasoner` 将于 **2026-07-24 15:59 UTC 停用**——若按本 finding 字面把默认改成 `deepseek-chat`，会在停用日后破坏所有新装。默认保持 `deepseek-v4-flash`。审计里「Suspected」级 finding 在动 model/API 名前必须核官方文档。**真实衍生工作（已闭环）**：PR #32 启动 `/v1/models` 探测（warn-only，不阻塞）+ 本 PR 启动时自动把旧名迁移为 `deepseek-v4-flash`（原子写入 + warn），见 `companion/src/config.ts migrateLegacyModelName`、`docs/TROUBLESHOOTING.md`。
+
 ### Finding: M20 无 LLM 成本/token/并发预算 → 无界花费
 - Severity: Medium
 - Confidence: High

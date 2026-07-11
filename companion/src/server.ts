@@ -5,7 +5,7 @@ import { execFile } from "child_process"
 import { randomUUID } from "crypto"
 import os from "os"
 import { URL } from "url"
-import { getConfig, saveConfig, initDataDir, configEvents, CONFIG_CHANGE_EVENT } from "./config"
+import { getConfig, saveConfig, initDataDir, configEvents, CONFIG_CHANGE_EVENT, migrateLegacyModelName } from "./config"
 import { handleMessage } from "./message-router"
 import { ThreadManager } from "./threads/thread-manager"
 import { SkillEngine } from "./skills/skill-engine"
@@ -1272,6 +1272,21 @@ export async function probeChatModel(
 }
 
 export async function startServer() {
+  // Migrate deprecated DeepSeek model ids (deepseek-chat/deepseek-reasoner, retiring
+  // 2026-07-24) to deepseek-v4-flash BEFORE the probe, so the probe validates the
+  // migrated name. Idempotent; rewrites via the atomic saveConfig path and warns so
+  // the user knows their config.json changed.
+  const migration = migrateLegacyModelName()
+  if (migration.migrated) {
+    // deepseek-reasoner loses its name-based thinking mode under V4 (mode is selected
+    // by a separate parameter CMspark does not send) — call that out so the user can
+    // opt into deepseek-v4-pro for a stronger reasoning model.
+    const note =
+      migration.from === "deepseek-reasoner"
+        ? "DeepSeek retires deepseek-chat/deepseek-reasoner on 2026-07-24; llm.model_name auto-updated to deepseek-v4-flash. You used deepseek-reasoner (thinking mode) — set deepseek-v4-pro to keep a stronger reasoning model."
+        : "DeepSeek retires deepseek-chat/deepseek-reasoner on 2026-07-24; llm.model_name auto-updated to deepseek-v4-flash. Set it to deepseek-v4-pro for the higher-tier model."
+    logger.warn("config.model_migrated", { from: migration.from, to: migration.to, note })
+  }
   const config = getConfig()
   // Best-effort model-validity probe — fire-and-forget; never blocks or crashes startup.
   void probeChatModel(config)
