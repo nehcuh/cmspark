@@ -1223,8 +1223,58 @@ function validateWsMessage(msg: any): WsValidationResult {
   return { valid: true }
 }
 
+/**
+ * Best-effort, non-blocking startup probe. When an API key is configured, ask
+ * the provider's /models endpoint whether the configured chat model is actually
+ * advertised. Warns (never throws) on mismatch or failure, so an unreachable
+ * provider cannot delay or block startup. Catches the "wrong/renamed/deprecated
+ * model id → 400 on first message" footgun (e.g. DeepSeek retiring
+ * deepseek-chat/deepseek-reasoner on 2026-07-24 in favor of deepseek-v4-pro /
+ * deepseek-v4-flash) without becoming a hard dependency on provider reachability.
+ *
+ * `warn` is injectable so tests can capture warnings without mocking the logger.
+ */
+export type ModelProbeWarn = (event: string, ctx: Record<string, unknown>) => void
+
+export async function probeChatModel(
+  config: ReturnType<typeof getConfig>,
+  warn: ModelProbeWarn = (event, ctx) => logger.warn(event, ctx),
+): Promise<void> {
+  const { base_url, api_key, model_name } = config.llm
+  if (!api_key) return // nothing to probe without a key
+  try {
+    const url = base_url.replace(/\/+$/, "") + "/models"
+    const res = await fetch(url, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${api_key}` },
+      signal: AbortSignal.timeout(8000),
+    })
+    if (!res.ok) {
+      warn("startup.model_probe.http_error", { status: res.status, model_name })
+      return
+    }
+    const data = (await res.json()) as { data?: Array<{ id?: string }> }
+    const ids = (data?.data ?? [])
+      .map((m) => m.id)
+      .filter((x): x is string => typeof x === "string")
+    if (ids.length === 0) return // unexpected payload shape — don't false-alarm
+    if (!ids.includes(model_name)) {
+      warn("startup.model_probe.model_not_listed", {
+        model_name,
+        available_sample: ids.slice(0, 12),
+      })
+    }
+  } catch (e) {
+    warn("startup.model_probe.failed", {
+      error: e instanceof Error ? e.message : String(e),
+    })
+  }
+}
+
 export async function startServer() {
   const config = getConfig()
+  // Best-effort model-validity probe — fire-and-forget; never blocks or crashes startup.
+  void probeChatModel(config)
   const port = config.port || PORT
 
   // --- UDS Lock: check for existing instance ---
