@@ -184,7 +184,20 @@ if [ "${PLATFORM}" = "windows-x64" ]; then
     curl -fSL --retry 3 "${NODE_MIRROR}/${NODE_VERSION}/node-v${NODE_VERSION#v}-${NODE_ARCH}.zip" -o "${CACHE_ZIP}"
   fi
   bash "${ROOT_DIR}/scripts/verify-node.sh" "${CACHE_ZIP}" "${NODE_SHASUMS}" "Node ${NODE_VERSION} ${NODE_ARCH} (.zip)"
-  cd "${STAGING}" && unzip -jo "${CACHE_ZIP}" "*/node.exe" && cd "${ROOT_DIR}"
+  if command -v unzip >/dev/null 2>&1; then
+    ( cd "${STAGING}" && unzip -jo "${CACHE_ZIP}" "*/node.exe" )
+  elif command -v 7z >/dev/null 2>&1; then
+    # Git Bash on windows-latest does not reliably ship Info-ZIP unzip, but
+    # 7-Zip is always preinstalled. Extract to a temp dir then move node.exe
+    # flat into staging (matches `unzip -jo` junk-paths behavior).
+    tmp_extract="$(mktemp -d)"
+    7z x "${CACHE_ZIP}" -o"${tmp_extract}" -bd -y >/dev/null
+    mv "${tmp_extract}"/node-*/node.exe "${STAGING}/node.exe"
+    rm -rf "${tmp_extract}"
+  else
+    echo "ERROR: neither unzip nor 7z available to extract Node runtime" >&2
+    exit 1
+  fi
   echo "  node.exe: $(du -h "${STAGING}/node.exe" | cut -f1)"
 else
   # Download official Node.js binary for consistent universal/fat builds
@@ -233,7 +246,17 @@ echo "  $(du -sh "${STAGING}" | cut -f1) total"
 echo "[9/9] Compressing..."
 cd "${ROOT_DIR}/dist-package"
 rm -f "${ZIP_NAME}"
-zip -rq "${ZIP_NAME}" "cmspark-${PLATFORM}"
+if command -v zip >/dev/null 2>&1; then
+  zip -rq "${ZIP_NAME}" "cmspark-${PLATFORM}"
+elif command -v 7z >/dev/null 2>&1; then
+  # Git Bash on windows-latest does not reliably ship Info-ZIP zip; 7-Zip is
+  # always preinstalled. -tzip produces a standard zip; -bd disables the
+  # progress bar (CI logs). Output layout matches `zip -rq dir`.
+  7z a -tzip -bd "${ZIP_NAME}" "cmspark-${PLATFORM}" >/dev/null
+else
+  echo "ERROR: neither zip nor 7z available to create artifact" >&2
+  exit 1
+fi
 echo "  $(du -sh "${ZIP_NAME}" | cut -f1) compressed"
 
 echo ""

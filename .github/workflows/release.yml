@@ -1,0 +1,126 @@
+name: Release
+
+# Builds distributable artifacts on native runners for all 3 platforms and
+# publishes a GitHub Release when a `v*` tag is pushed.
+#
+# `workflow_dispatch` lets the matrix be dry-run on main WITHOUT creating a
+# release (the release job is gated on a tag) — use it to verify the 3-platform
+# build before tagging.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write   # softprops/action-gh-release creates the release + uploads assets
+
+jobs:
+  package:
+    name: Build (${{ matrix.platform }})
+    permissions:
+      contents: read   # least-privilege: builders only checkout + upload artifacts
+    strategy:
+      fail-fast: false   # a Windows/Linux failure must not abort the macOS build
+      matrix:
+        include:
+          - os: macos-latest    # arm64
+            platform: macos-arm64
+          - os: ubuntu-latest
+            platform: linux-x64
+          - os: windows-latest
+            platform: windows-x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: |
+            companion/package-lock.json
+            chrome-extension/package-lock.json
+
+      # package.sh runs `npm run build` in both dirs, so deps must be installed.
+      # The companion postinstall (verify-systray2 + build-swift-tray) is
+      # cross-platform safe — Swift build no-ops off macOS.
+      - name: Install companion deps
+        run: cd companion && npm ci
+
+      - name: Install extension deps
+        run: cd chrome-extension && npm ci
+
+      - name: Package (${{ matrix.platform }})
+        # package.sh: builds both projects, esbuild-bundles the companion,
+        # sha256-verifies + downloads the target Node runtime, strips the
+        # non-target systray2/node-notifier binaries, and zips the staging dir.
+        # package.sh prefers Info-ZIP zip/unzip and falls back to 7-Zip on
+        # windows-latest (Git Bash does not reliably ship zip/unzip); its tar
+        # fallback chain handles BSD/libarchive tar on macOS/Windows.
+        shell: bash
+        run: bash scripts/package.sh ${{ matrix.platform }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cmspark-${{ matrix.platform }}
+          path: dist-package/cmspark-*.zip
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: package
+    # Only create a release for a real tag — workflow_dispatch dry-runs stop here.
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all platform artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*.zip
+          draft: false
+          prerelease: false
+          body: |
+            ## CMspark ${{ github.ref_name }}
+
+            First tagged release. Closes the 2026-07-09 full audit's **P0 + P1**
+            (all 4 Critical + 10 High findings) — see
+            [`docs/remediation-plan-2026-07-09.md`](https://github.com/nehcuh/cmspark/blob/main/docs/remediation-plan-2026-07-09.md)
+            and [`docs/supply-chain.md`](https://github.com/nehcuh/cmspark/blob/main/docs/supply-chain.md).
+
+            ### Downloads
+            Each zip is **self-contained** — it includes the companion, the
+            Chrome extension (`chrome-extension/`, load unpacked), the Node
+            runtime (sha256-verified against nodejs.org), builtin skills, and
+            the platform tray binary. Pick the one for your OS:
+
+            | File | Platform |
+            |---|---|
+            | `cmspark-v*-macos-arm64.zip` | macOS (Apple Silicon) |
+            | `cmspark-v*-linux-x64.zip` | Linux x64 |
+            | `cmspark-v*-windows-x64.zip` | Windows x64 |
+
+            ### Known limitations (non-blocking, documented)
+            - **WS auth (audit C1)**: origin allowlist closes the web-page
+              vector; the local-process shared-secret handshake is deferred to
+              P2. Don't overstate WS protection in downstream docs.
+            - **Supply chain**: chrome-extension has 71 build-time-only
+              advisories (plasmo/Parcel, not shipped; `npm audit --omit=dev` = 0);
+              companion has 2 moderate (`node-notifier→uuid`, blocked-on-upstream,
+              path unexercised). See `docs/supply-chain.md`.
+            - **Signing**: the bundled Node runtime is sha256-verified; the
+              binary itself is **not** codesigned/notarized (deferred pending
+              certificates). macOS Gatekeeper / Windows SmartScreen may warn.
+
+            Full install steps: project `CLAUDE.md` Quick Start.

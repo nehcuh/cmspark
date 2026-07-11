@@ -23,7 +23,7 @@ import * as path from "path"
 import * as child_process from "child_process"
 
 function printUsage(): void {
-  console.log(`cmspark-agent v0.2.0
+  console.log(`cmspark-agent v0.3.0
 
 Usage:
   cmspark-agent start                      启动 Companion 服务器（前台）
