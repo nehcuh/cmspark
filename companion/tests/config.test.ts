@@ -288,3 +288,76 @@ describe("saveConfig vision API key", { concurrency: 1 }, () => {
     assert.equal(mode, 0o600, "config.json must be owner-only (0o600)")
   })
 })
+
+// --- audit H5: saveConfig read-modify-write atomicity ---
+//
+// The audit proposed a promise-queue mutex to serialize saveConfig. Verified
+// by inspection + execution: saveConfig is fully SYNCHRONOUS (getConfig →
+// deepMerge → atomicWriteJSON, the last being writeFileSync+renameSync+chmodSync
+// with no `await`). Under Node's single thread the whole body is atomic — two
+// calls cannot interleave, so there is no yield point for a mutex to serialize
+// and the proposed fix would be a no-op. These tests lock the ACTUAL invariant
+// in place: saveConfig must stay synchronous, and the read-modify-write must
+// merge against the latest cached state (not a stale caller snapshot), so
+// sequential writes to disjoint keys never lose data. If a future refactor
+// introduces an `await` here, the first test fails loudly.
+
+describe("saveConfig H5 atomicity (synchronous read-modify-write)", { concurrency: 1 }, () => {
+  before(async () => {
+    delete process.env.DEEPSEEK_API_KEY
+    await resetConfigFile()
+  })
+
+  test("H5: saveConfig is synchronous — returns a plain object, not a Promise", () => {
+    // The whole point: with no yield point, read-modify-write cannot interleave.
+    // If someone switches to fs.promises / an async atomicWriteJSON, saveConfig
+    // would start returning a Promise and callers like server.ts's whitelist
+    // append would race — this assertion fails first and points at the cause.
+    const result = saveConfig({ trusted_domains: ["sync-check.example.com"] })
+    assert.equal(
+      typeof (result as any)?.then,
+      "undefined",
+      "saveConfig must return a plain object — an async refactor would break the atomicity invariant",
+    )
+    // The disk write must have already happened before saveConfig returned
+    // (synchronous I/O), not be pending on a microtask.
+    assert.ok(
+      readSavedConfig().trusted_domains.includes("sync-check.example.com"),
+      "saveConfig must complete the disk write before returning (synchronous I/O)",
+    )
+  })
+
+  test("H5: two saveConfig calls writing disjoint keys both persist (atomic read-modify-write)", async () => {
+    await resetConfigFile()
+    // Each call deep-merges against the LATEST cached state, not a snapshot the
+    // caller captured — so the second write does not clobber the first.
+    saveConfig({ trusted_domains: ["a.example.com"] })
+    saveConfig({ auto_approved_domains: ["b.example.com"] })
+    clearConfigCache()
+    const onDisk = readSavedConfig()
+    assert.ok(onDisk.trusted_domains.includes("a.example.com"), "first write must survive the second")
+    assert.ok(onDisk.auto_approved_domains.includes("b.example.com"), "second write must persist too")
+  })
+
+  test("H5: whitelist-append pattern (read array → write full array) does not lose data across sequential appends", async () => {
+    // Mirrors server.ts:644 — getConfig().auto_approved_domains is read, new
+    // patterns are appended, and the FULL array is written back via saveConfig.
+    // deepMerge REPLACES arrays (no union), so this is only safe because each
+    // append reads the latest state and writes immediately with no `await`
+    // between read and write. This test pins that property.
+    await resetConfigFile()
+    saveConfig({ auto_approved_domains: ["seed.example.com"] })
+    // First append
+    const cur1 = getConfig().auto_approved_domains || []
+    saveConfig({ auto_approved_domains: [...cur1, "add-1.example.com"] })
+    // Second append (simulating a second confirmation response arriving right after)
+    const cur2 = getConfig().auto_approved_domains || []
+    saveConfig({ auto_approved_domains: [...cur2, "add-2.example.com"] })
+    clearConfigCache()
+    const final = getConfig().auto_approved_domains
+    assert.ok(final.includes("seed.example.com"), "seed must survive both appends")
+    assert.ok(final.includes("add-1.example.com"), "first append must survive the second")
+    assert.ok(final.includes("add-2.example.com"), "second append must persist")
+    assert.equal(final.length, 3, "no append lost, no duplicate introduced")
+  })
+})
