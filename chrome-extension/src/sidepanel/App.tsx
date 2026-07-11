@@ -9,6 +9,7 @@ import { SettingsSlideout } from "./components/SettingsSlideout"
 import { McpServerForm } from "./components/McpServerForm"
 import { SlashCommandPopover } from "./components/SlashCommandPopover"
 import { SkillCraftPanel } from "./components/SkillCraftPanel"
+import { Modal } from "./components/ui/Modal"
 import { AgentStoreProvider, useAgentStore } from "./store/agentStore"
 import type { ConnectionState, SkillMeta, PrivilegeMode, FileAttachment } from "./types"
 
@@ -135,48 +136,13 @@ function SecurityConfirmationDialog() {
     setWhitelistMode("none")
   }, [request?.confirmation_id])
 
-  // H10 (audit): keyboard a11y — focus trap + Escape→deny + aria-modal + restore focus.
-  // Without this, keyboard users couldn't reliably drive the dialog (Tab leaked to the chat,
-  // Escape did nothing, screen readers didn't announce the modal context).
-  const overlayRef = useRef<HTMLDivElement>(null)
+  // H10/M18 (audit): keyboard a11y (focus trap + Escape→deny + aria-modal +
+  // focus restore) now lives in the shared <Modal>/useModalDialog primitive.
+  // denyRef stays a ref so Escape always calls the latest decide() (whitelist
+  // radio may have changed since mount); denyBtnRef pins initial focus to
+  // "拒绝" — the safe non-destructive default ([0]=拒绝并停止, [1]=拒绝).
   const denyRef = useRef<() => void>(() => {})
-  useEffect(() => {
-    if (!request) return
-    const overlay = overlayRef.current
-    if (!overlay) return
-    const prevFocus = document.activeElement as HTMLElement | null
-    // Auto-focus "拒绝" (safe non-destructive default; [0]=拒绝并停止, [1]=拒绝)
-    const btns = overlay.querySelectorAll<HTMLButtonElement>("button")
-    if (btns[1]) btns[1].focus()
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault()
-        e.stopPropagation()
-        denyRef.current()
-        return
-      }
-      if (e.key === "Tab") {
-        const f = overlay.querySelectorAll<HTMLElement>(
-          'button, input, [tabindex]:not([tabindex="-1"])',
-        )
-        if (!f.length) return
-        const first = f[0]
-        const last = f[f.length - 1]
-        if (e.shiftKey && document.activeElement === first) {
-          e.preventDefault()
-          last.focus()
-        } else if (!e.shiftKey && document.activeElement === last) {
-          e.preventDefault()
-          first.focus()
-        }
-      }
-    }
-    overlay.addEventListener("keydown", onKeyDown)
-    return () => {
-      overlay.removeEventListener("keydown", onKeyDown)
-      prevFocus?.focus()
-    }
-  }, [request?.confirmation_id])
+  const denyBtnRef = useRef<HTMLButtonElement>(null)
 
   if (!request) return null
 
@@ -220,75 +186,83 @@ function SecurityConfirmationDialog() {
   denyRef.current = () => decide(false)
 
   return (
-    <div ref={overlayRef} role="dialog" aria-modal="true" aria-label={`${riskLabel}操作确认`} style={styles.securityOverlay}>
-      <div style={styles.securityCard}>
-        <div style={{ ...styles.securityBadge, background: riskColor + "22", color: riskColor }}>
-          {riskLabel}操作确认
-        </div>
-        <h3 style={styles.securityTitle}>允许执行 `{request.tool_name}` 吗？</h3>
-        <p style={styles.securityText}>
-          检测到高风险 API：{" "}
-          <span style={{ color: "#F44336", fontWeight: 700 }}>
-            {request.dangerous_apis.join(", ") || "未知"}
-          </span>
-          。请确认这段代码符合你的意图后再允许执行。
-        </p>
-        {request.defense_layer !== undefined && (
-          <div style={styles.defenseLayerHint}>
-            防御层：Layer {request.defense_layer}
-          </div>
-        )}
-        <div style={styles.securityCode}>
-          <HighlightedCode code={request.code_preview || "(无代码预览)"} />
-        </div>
-        {relevantDomain && (
-          <div style={styles.whitelistSection}>
-            <div style={styles.whitelistLabel}>添加到自动批准白名单（避免下次再问）：</div>
-            <label style={styles.whitelistOption}>
-              <input
-                type="radio"
-                name={`wl-${request.confirmation_id}`}
-                checked={whitelistMode === "none"}
-                onChange={() => setWhitelistMode("none")}
-              />
-              <span>不添加</span>
-            </label>
-            <label style={styles.whitelistOption}>
-              <input
-                type="radio"
-                name={`wl-${request.confirmation_id}`}
-                checked={whitelistMode === "exact"}
-                onChange={() => setWhitelistMode("exact")}
-              />
-              <span>添加 <code style={styles.whitelistCode}>{relevantDomain}</code>（仅此主机名）</span>
-            </label>
-            <label style={styles.whitelistOption}>
-              <input
-                type="radio"
-                name={`wl-${request.confirmation_id}`}
-                checked={whitelistMode === "wildcard"}
-                onChange={() => setWhitelistMode("wildcard")}
-              />
-              <span>添加 <code style={styles.whitelistCode}>*.{relevantDomain}</code>（含所有子域名）</span>
-            </label>
-          </div>
-        )}
-        {state.pendingSecurityConfirmations.length > 1 && (
-          <div style={styles.securityQueueHint}>
-            还有 {state.pendingSecurityConfirmations.length - 1} 个确认请求在等待。
-          </div>
-        )}
-        <div style={styles.securityActions}>
-          <button style={styles.denyStopBtn} onClick={() => decide(false, true)} title="拒绝本次操作并停止对话">
-            拒绝并停止对话
-          </button>
-          <button style={styles.denyBtn} onClick={() => decide(false)} title="拒绝本次操作">拒绝</button>
-          <button style={{ ...styles.allowBtn, background: riskColor }} onClick={() => decide(true)} title="允许执行本次操作">
-            允许执行
-          </button>
-        </div>
+    <Modal
+      open
+      onClose={() => denyRef.current()}
+      backdropDismiss={false}
+      role="dialog"
+      ariaLabel={`${riskLabel}操作确认`}
+      overlayStyle={styles.securityOverlay}
+      panelStyle={styles.securityCard}
+      initialFocusRef={denyBtnRef}
+      deps={[request?.confirmation_id]}
+    >
+      <div style={{ ...styles.securityBadge, background: riskColor + "22", color: riskColor }}>
+        {riskLabel}操作确认
       </div>
-    </div>
+      <h3 style={styles.securityTitle}>允许执行 `{request.tool_name}` 吗？</h3>
+      <p style={styles.securityText}>
+        检测到高风险 API：{" "}
+        <span style={{ color: "#F44336", fontWeight: 700 }}>
+          {request.dangerous_apis.join(", ") || "未知"}
+        </span>
+        。请确认这段代码符合你的意图后再允许执行。
+      </p>
+      {request.defense_layer !== undefined && (
+        <div style={styles.defenseLayerHint}>
+          防御层：Layer {request.defense_layer}
+        </div>
+      )}
+      <div style={styles.securityCode}>
+        <HighlightedCode code={request.code_preview || "(无代码预览)"} />
+      </div>
+      {relevantDomain && (
+        <div style={styles.whitelistSection}>
+          <div style={styles.whitelistLabel}>添加到自动批准白名单（避免下次再问）：</div>
+          <label style={styles.whitelistOption}>
+            <input
+              type="radio"
+              name={`wl-${request.confirmation_id}`}
+              checked={whitelistMode === "none"}
+              onChange={() => setWhitelistMode("none")}
+            />
+            <span>不添加</span>
+          </label>
+          <label style={styles.whitelistOption}>
+            <input
+              type="radio"
+              name={`wl-${request.confirmation_id}`}
+              checked={whitelistMode === "exact"}
+              onChange={() => setWhitelistMode("exact")}
+            />
+            <span>添加 <code style={styles.whitelistCode}>{relevantDomain}</code>（仅此主机名）</span>
+          </label>
+          <label style={styles.whitelistOption}>
+            <input
+              type="radio"
+              name={`wl-${request.confirmation_id}`}
+              checked={whitelistMode === "wildcard"}
+              onChange={() => setWhitelistMode("wildcard")}
+            />
+            <span>添加 <code style={styles.whitelistCode}>*.{relevantDomain}</code>（含所有子域名）</span>
+          </label>
+        </div>
+      )}
+      {state.pendingSecurityConfirmations.length > 1 && (
+        <div style={styles.securityQueueHint}>
+          还有 {state.pendingSecurityConfirmations.length - 1} 个确认请求在等待。
+        </div>
+      )}
+      <div style={styles.securityActions}>
+        <button style={styles.denyStopBtn} onClick={() => decide(false, true)} title="拒绝本次操作并停止对话">
+          拒绝并停止对话
+        </button>
+        <button ref={denyBtnRef} style={styles.denyBtn} onClick={() => decide(false)} title="拒绝本次操作">拒绝</button>
+        <button style={{ ...styles.allowBtn, background: riskColor }} onClick={() => decide(true)} title="允许执行本次操作">
+          允许执行
+        </button>
+      </div>
+    </Modal>
   )
 }
 
