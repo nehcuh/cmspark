@@ -71,7 +71,7 @@
 ### P2-4 · 配置
 | 任务 | Finding | 改动 | 工时 |
 |---|---|---|---|
-| 默认模型改 deepseek-chat | M19 | `config.ts:84`；启动 `/v1/models` 探测 | 15min（trivial，可作 P2 首个 warm-up PR） |
+| ~~默认模型改 deepseek-chat~~ | ~~M19~~ | **❌ 误报**：`deepseek-v4-flash`/`v4-pro` 是当前真实 id（DeepSeek 官方 changelog 2026-04-24）；旧名 `deepseek-chat`/`deepseek-reasoner` 反而 2026-07-24 停用。默认保持 `deepseek-v4-flash`。已做：PR #32 启动 `/v1/models` 探测 + 本 PR 启动时自动迁移旧名 → `deepseek-v4-flash`（原子写入 + warn） | ✅ 已闭环 |
 
 **P2 Done 判据**：安全纵深多层化；可靠性 mediums 清零；成本可观测。**→ 总分 ~6.5–7.0。**
 
@@ -118,7 +118,7 @@
 
 按「价值 × 风险 × 依赖」推荐顺序：
 
-1. **P2-4 M19**（默认模型，15min）—— trivial warm-up，重启 P2 节奏。
+1. **~~P2-4 M19~~ 已证为误报**：默认模型 `deepseek-v4-flash` 本就正确；旧名停用风险由 PR #32 探测 + 本 PR 自动迁移闭环。
 2. **P2-1 安全纵深**（M1→M2→M3→M4→M5）—— 价值最高，C1 已解锁；M1/M2/M3 先做（小而清晰），M5（cookie）压轴单独 kimi 终审。
 3. **P2-2 可靠性**—— 每个 item 独立 PR（因各有权衡），M9（双 shutdown）和 M11（MCP kill）可优先（影响数据完整性/资源泄漏）；M6（fatal rejection）需先决策 supervisor 策略；M10（abort 孤儿）需逐 site 设计。
 4. **P2-3 可观测+成本** + **P3**（可并行）。
