@@ -11,6 +11,18 @@ NODE_VERSION="v22.16.0"
 NODE_MIRROR="${NODE_MIRROR:-https://nodejs.org/dist}"
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
+# Git Bash on windows-latest returns MSYS-style paths (e.g. /d/a/cmspark) that
+# Windows Node cannot resolve in require()/fs — the very first `node -p` below
+# would throw MODULE_NOT_FOUND. Convert ROOT_DIR (and every path derived from
+# it — STAGING, CACHE_DIR, plus the temp dir in the 7z fallback) to MIXED form
+# (D:/a/cmspark), which BOTH MSYS bash tools (cp/rm/curl/du/…) AND Windows Node
+# accept. No-op on macOS/Linux, where cygpath is absent and Unix paths already
+# work everywhere.
+to_mixed() {
+  if command -v cygpath >/dev/null 2>&1; then cygpath -m "$1"; else printf '%s' "$1"; fi
+}
+ROOT_DIR="$(to_mixed "${ROOT_DIR}")"
+
 # --- Platform detection ---
 if [ -z "${1:-}" ]; then
   OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
@@ -190,7 +202,7 @@ if [ "${PLATFORM}" = "windows-x64" ]; then
     # Git Bash on windows-latest does not reliably ship Info-ZIP unzip, but
     # 7-Zip is always preinstalled. Extract to a temp dir then move node.exe
     # flat into staging (matches `unzip -jo` junk-paths behavior).
-    tmp_extract="$(mktemp -d)"
+    tmp_extract="$(to_mixed "$(mktemp -d)")"
     7z x "${CACHE_ZIP}" -o"${tmp_extract}" -bd -y >/dev/null
     mv "${tmp_extract}"/node-*/node.exe "${STAGING}/node.exe"
     rm -rf "${tmp_extract}"
