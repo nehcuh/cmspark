@@ -21,6 +21,7 @@ import {
   pendingToolCalls,
   securityConfirmations,
   handleSecurityConfirmationResponse,
+  applyTabNavigated,
 } from "../../src/server.js"
 import { detectDangerousApis } from "../../src/security.js"
 import { saveConfig, getConfig } from "../../src/config.js"
@@ -430,4 +431,85 @@ test("whitelist: out-of-scope add_to_whitelist patterns are rejected (anti-injec
   clientSideWs.send(JSON.stringify({ type: "tool.result", tool_call_id: "tc_wl_inj", result: { success: true } }))
   const result = await resultPromise
   assert.equal(result.success, true)
+})
+
+// =============================================================================
+// M1 (audit P2-1): tab.navigated keeps tabUrlCache fresh — the evaluate auto-approve
+// gate re-resolves the acting domain from the CURRENT url. Without the navigation
+// push, a tab that was auto-approved on a trusted domain would keep being
+// auto-approved after navigating to an untrusted one (stale-cache cross-domain
+// bypass). applyTabNavigated is the exact function the ws.on("message") handler
+// calls on a "tab.navigated" push — so these tests exercise the real cache path.
+// =============================================================================
+
+test("M1: evaluate auto-approves when the cached tab is on a whitelisted domain", async () => {
+  saveConfig({ trusted_domains: [], auto_approved_domains: ["trusted.example.com"] })
+  // Seed the cache: tab 1 is currently on the whitelisted domain.
+  applyTabNavigated(1, "https://trusted.example.com/page")
+
+  const executeTool = createToolExecutor(serverSideWs)
+  const executePromise = expectClientMessage("tool.execute")
+  const noConfirmation = expectNoClientMessage("security.confirmation.request")
+
+  const resultPromise = executeTool("tc_m1_trusted", "evaluate", { tabId: 1, code: "document.title" })
+
+  const executeMsg = await executePromise
+  assert.equal(executeMsg.tool_name, "evaluate", "trusted-domain tab → auto-approve forwards tool.execute")
+  await noConfirmation
+
+  clientSideWs.send(JSON.stringify({ type: "tool.result", tool_call_id: "tc_m1_trusted", result: { success: true } }))
+  const result = await resultPromise
+  assert.equal(result.success, true)
+})
+
+test("M1: after the tab navigates to an untrusted domain, evaluate requires confirmation (stale-cache bypass CLOSED)", async () => {
+  saveConfig({ trusted_domains: [], auto_approved_domains: ["trusted.example.com"] })
+  // Tab starts on the whitelisted domain, then the user/page navigates it away.
+  // Both pushes go through applyTabNavigated — the exact path a tab.navigated message takes.
+  applyTabNavigated(1, "https://trusted.example.com/page")
+  applyTabNavigated(1, "https://evil.attacker.com/page")
+
+  const executeTool = createToolExecutor(serverSideWs)
+  const confirmationPromise = expectClientMessage("security.confirmation.request")
+
+  const resultPromise = executeTool("tc_m1_navigated_untrusted", "evaluate", {
+    tabId: 1,
+    code: "document.title",
+  })
+
+  const confirmation = await confirmationPromise
+  assert.equal(confirmation.tool_name, "evaluate")
+  // The confirmation must surface the NEW (untrusted) domain, not the stale trusted
+  // one — this is the proof the cache actually updated via the navigation push.
+  assert.deepEqual(confirmation.relevant_domains, ["evil.attacker.com"])
+
+  clientSideWs.send(JSON.stringify({
+    type: "security.confirmation.response",
+    confirmation_id: confirmation.confirmation_id,
+    approved: false,
+  }))
+  const result = await resultPromise
+  assert.equal(result.success, false)
+})
+
+test("M1: evaluate on a tab with NO cached url (unknown) requires confirmation — safe default", async () => {
+  saveConfig({ trusted_domains: [], auto_approved_domains: ["trusted.example.com"] })
+  // NOTE: tab 99 has never been seeded — cache miss. The gate must confirm (not
+  // auto-approve) because it cannot prove the acting domain is whitelisted.
+  const executeTool = createToolExecutor(serverSideWs)
+  const confirmationPromise = expectClientMessage("security.confirmation.request")
+
+  const resultPromise = executeTool("tc_m1_unknown_tab", "evaluate", { tabId: 99, code: "document.title" })
+
+  const confirmation = await confirmationPromise
+  assert.equal(confirmation.tool_name, "evaluate")
+  assert.deepEqual(confirmation.relevant_domains, [], "unknown tab → no resolvable domain")
+
+  clientSideWs.send(JSON.stringify({
+    type: "security.confirmation.response",
+    confirmation_id: confirmation.confirmation_id,
+    approved: false,
+  }))
+  const result = await resultPromise
+  assert.equal(result.success, false)
 })
