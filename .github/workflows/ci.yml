@@ -28,6 +28,16 @@ jobs:
         run: |
           cd companion && node ../scripts/verify-systray2.js --strict
 
+      - name: Verify Node archive checksum helper (audit H8)
+        # package.sh now sha256-verifies the downloaded Node binary against
+        # nodejs.org SHASUMS256.txt before extracting. This runs that helper's
+        # self-test + a syntax check on the packager so a regression can't ship
+        # an unverified (supply-chain-tamperable) node binary.
+        run: |
+          bash -n scripts/package.sh
+          bash -n scripts/verify-node.sh
+          bash scripts/tests/test-verify-node.sh
+
       - name: Build companion
         run: |
           cd companion && npm run build
