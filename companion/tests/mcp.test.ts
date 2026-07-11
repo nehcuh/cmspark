@@ -6,6 +6,9 @@ import os from "node:os"
 import fs from "node:fs"
 import { McpClient } from "../src/mcp/client.js"
 import { McpManager } from "../src/mcp/manager.js"
+import { Server } from "@modelcontextprotocol/sdk/server/index.js"
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js"
+import { ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js"
 import {
   aggregateMcpTools,
   buildNamespacedName,
@@ -151,17 +154,34 @@ test("McpClient listResources throws helpful error when server lacks resources",
 // Integration: official filesystem server is tools-only
 // ============================================================================
 
-test.skip("McpClient connects to official filesystem server and reports tools-only capabilities", async () => { // TODO(ci-coverage): spawns/real-connects to an external MCP server (timed out ~1.5s); needs a fixture/mock, not a live server
+test("McpClient connects to official filesystem server and reports tools-only capabilities", async () => {
+  // In-process mock stands in for the official @modelcontextprotocol/server-filesystem:
+  // it advertises tools (read_text_file) but NOT resources, over an in-memory transport
+  // pair. This replaces the old live `npx` spawn (slow, network-dependent, non-portable).
+  const server = new Server(
+    { name: "mock-filesystem", version: "1.0.0" },
+    { capabilities: { tools: {} } },
+  )
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools: [
+      {
+        name: "read_text_file",
+        description: "Read a text file",
+        inputSchema: { type: "object", properties: { path: { type: "string" } } },
+      },
+    ],
+  }))
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+  await server.connect(serverTransport)
+
   const client = new McpClient("filesystem", {
     transport: "stdio",
     command: "npx",
-    args: ["-y", "@modelcontextprotocol/server-filesystem", "/Users/chenhu/Projects/cmspark"],
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
     enabled: true,
     trust_level: "first-use",
-    roots: [{ uri: "file:///Users/chenhu/Projects/cmspark" }],
   })
-
-  await client.connect()
+  await client.connect(clientTransport)
   try {
     const meta = client.getMeta()
     assert.equal(meta.capabilities.tools, true)
@@ -172,6 +192,8 @@ test.skip("McpClient connects to official filesystem server and reports tools-on
       "filesystem server should expose read_text_file tool",
     )
 
+    // No resources capability advertised → listResources rejects with a helpful hint
+    // pointing at the namespaced file tools.
     await assert.rejects(
       () => client.listResources(),
       /does not advertise the resources capability/,
@@ -179,6 +201,7 @@ test.skip("McpClient connects to official filesystem server and reports tools-on
     )
   } finally {
     await client.close().catch(() => {})
+    await (server as any).close?.().catch(() => {})
   }
 })
 
@@ -377,21 +400,30 @@ test("createTransport: stdio with config.env (no PATH) merges custom vars + buil
   assert.equal(params.env.PATH, buildSpawnPath())
 })
 
-test.skip("createTransport: stdio passes command/args/cwd through to StdioClientTransport", () => { // TODO(ci): fails on linux CI — params.cwd is undefined (SDK StdioClientTransport doesn't expose cwd the same way on linux); passes on macOS. Env/SDK-version specific, needs investigation.
+test("createTransport: stdio passes command/args/cwd through to StdioClientTransport", () => {
   const { createTransport } = require("../src/mcp/transport")
-  const transport = createTransport({
-    transport: "stdio",
-    command: "npx",
-    args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
-    cwd: "/var/empty",
-    enabled: true,
-    trust_level: "first-use",
-  })
-  const params = (transport as any)._serverParams
-  assert.equal(params.command, "npx")
-  assert.deepEqual(params.args, ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"])
-  assert.equal(params.cwd, "/var/empty")
-  assert.equal(params.stderr, "pipe", "stderr should be piped so onStderr can capture it")
+  // Use a real temp dir — transport.ts deliberately falls back to undefined when
+  // cwd doesn't exist (to avoid a misleading ENOENT). The old "/var/empty" exists
+  // on macOS but not linux CI, making params.cwd undefined there. A fresh temp
+  // dir is portable so the assertion holds everywhere.
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "mcp-cwd-"))
+  try {
+    const transport = createTransport({
+      transport: "stdio",
+      command: "npx",
+      args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
+      cwd,
+      enabled: true,
+      trust_level: "first-use",
+    })
+    const params = (transport as any)._serverParams
+    assert.equal(params.command, "npx")
+    assert.deepEqual(params.args, ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"])
+    assert.equal(params.cwd, cwd)
+    assert.equal(params.stderr, "pipe", "stderr should be piped so onStderr can capture it")
+  } finally {
+    fs.rmSync(cwd, { recursive: true, force: true })
+  }
 })
 
 test("createTransport: http transport constructs without throwing for valid URL", () => {

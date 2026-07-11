@@ -36,12 +36,29 @@ after(() => {
 function writeSkillFile(skillsDir: string, filename: string, frontmatter: Record<string, string>, content: string) {
   const lines = ["---"]
   for (const [k, v] of Object.entries(frontmatter)) {
-    lines.push(`${k}: ${v}`)
+    lines.push(`${k}: ${yamlScalar(v)}`)
   }
   lines.push("---")
   lines.push("")
   lines.push(content)
   fs.writeFileSync(path.join(skillsDir, filename), lines.join("\n"))
+}
+
+// Quote a frontmatter value if it would be misparsed as plain YAML — notably a
+// leading "*" (YAML alias indicator), which makes js-yaml throw "unidentified
+// alias" and causes the skill to be silently skipped on load. Production writes
+// via yaml.dump already quote these; this helper keeps test fixtures equally valid.
+function yamlScalar(v: string): string {
+  if (/^[*&!\[\]{}>,|?]/.test(v)) return `"${v}"`
+  return v
+}
+
+// Wipe the skills dir so each getBySite test is isolated — otherwise skill files
+// written by earlier tests accumulate and leak into later match counts.
+function resetSkillsDir() {
+  const skillsDir = path.join(getConfigDir(), "skills")
+  fs.rmSync(skillsDir, { recursive: true, force: true })
+  fs.mkdirSync(skillsDir, { recursive: true })
 }
 
 // --- Skill loading tests ---
@@ -219,13 +236,13 @@ test("buildSystemPrompt returns compact index for activated skills", () => {
   assert.ok(!prompt.includes("Prompt Skill Content"), "should NOT include full content (compact index)")
 })
 
-// TODO(ci-coverage): fails — buildSystemPrompt returns a non-empty default prompt for a
-// thread with no active skills (skill-engine evolved). Diagnose expected vs actual; tracked
-// separately from the glob/coverage fix.
-test.skip("buildSystemPrompt returns empty string when no skills active", () => {
+test("buildSystemPrompt includes default-active skills even with none explicitly set", () => {
+  // skill-engine evolved: buildSystemPrompt never returns "" — for a thread it always
+  // injects default-active skills (the builtin "browse" skill) even when no skill is
+  // explicitly activated. The old "returns empty string" contract is obsolete.
   const engine = new SkillEngine()
   const prompt = engine.buildSystemPrompt("thread-no-skills")
-  assert.equal(prompt, "")
+  assert.ok(prompt.includes("browse"), "default browse skill should be injected")
 })
 
 test("getActiveForThread defaults to browse skill for new threads", () => {
@@ -269,7 +286,7 @@ test("importSkill throws if no name in frontmatter", () => {
   )
 })
 
-test.skip("exportSkill outputs markdown with YAML frontmatter for flat skill", () => { // TODO(ci-coverage): failing — diagnose export format drift
+test("exportSkill outputs markdown with YAML frontmatter for flat skill", () => {
   const skillsDir = path.join(getConfigDir(), "skills")
   writeSkillFile(skillsDir, "export-me.md", {
     name: "export-me",
@@ -283,10 +300,10 @@ test.skip("exportSkill outputs markdown with YAML frontmatter for flat skill", (
   assert.equal(exported.format, "markdown")
   assert.equal(exported.skill_name, "export-me")
 
-  // Decode base64 content
-  const decoded = Buffer.from(exported.content, "base64").toString("utf-8")
-  assert.ok(decoded.includes("name: export-me"))
-  assert.ok(decoded.includes("Content here."))
+  // Flat .md skills export as plaintext markdown (NOT base64 — only folder/zip
+  // skills are base64-encoded). The content is frontmatter + body, directly readable.
+  assert.ok(exported.content.includes("name: export-me"))
+  assert.ok(exported.content.includes("Content here."))
 })
 
 test("exportSkill throws for non-existent skill", () => {
@@ -344,7 +361,8 @@ test("getBySite returns array with exact match", () => {
   assert.equal(matched[0]?.name, "github-knowledge")
 })
 
-test.skip("getBySite returns array with wildcard match", () => { // TODO(ci-coverage): failing — diagnose site wildcard match
+test("getBySite returns array with wildcard match", () => {
+  resetSkillsDir()
   const skillsDir = path.join(getConfigDir(), "skills")
   writeSkillFile(skillsDir, "github-wildcard.md", {
     name: "github-wildcard",
@@ -369,7 +387,8 @@ test("getBySite returns empty array for non-matching site", () => {
   assert.equal(matched.length, 0)
 })
 
-test.skip("getBySite returns multiple matches for overlapping patterns", () => { // TODO(ci-coverage): failing — diagnose overlapping patterns
+test("getBySite returns multiple matches for overlapping patterns", () => {
+  resetSkillsDir()
   const skillsDir = path.join(getConfigDir(), "skills")
   writeSkillFile(skillsDir, "exact-api.md", {
     name: "exact-api",
@@ -477,7 +496,7 @@ test("buildSystemPrompt filters prompt injection in knowledge content", () => {
   assert.ok(prompt.includes("[FILTERED]"))
 })
 
-test.skip("knowledge docs loaded from knowledge/ directory", () => { // TODO(ci-coverage): failing — diagnose knowledge dir loading
+test("knowledge docs loaded from knowledge/ directory", () => {
   const knowledgeDir = path.join(getConfigDir(), "knowledge")
   fs.mkdirSync(path.join(knowledgeDir, "global"), { recursive: true })
   writeSkillFile(path.join(knowledgeDir, "global"), "knowledge-test.md", {
@@ -487,8 +506,9 @@ test.skip("knowledge docs loaded from knowledge/ directory", () => { // TODO(ci-
   }, "# Knowledge Test")
 
   const engine = new SkillEngine()
-  const listed = engine.list()
-  const knowledge = listed.find(s => s.name === "knowledge-test")
+  // list() deliberately excludes knowledge types (site_knowledge/domain_knowledge);
+  // get() searches the full cache, so use it to confirm the doc was loaded.
+  const knowledge = engine.get("knowledge-test")
 
   assert.ok(knowledge, "knowledge doc should be loaded from knowledge/ dir")
   assert.equal(knowledge?.type, "domain_knowledge")

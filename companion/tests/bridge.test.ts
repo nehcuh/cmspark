@@ -40,7 +40,7 @@ test("tab-resolver: explicit ignores invalid explicit tabId and falls back to pi
   assert.equal(result.matched, "pinned")
 })
 
-test.skip("tab-resolver: pinned returns first available pinned tab", () => { // TODO(ci-coverage): failing — diagnose pinned-tab resolution
+test("tab-resolver: pinned returns first available pinned tab", () => {
   const tab = (id: number, url: string, title: string, active = false, index = 0) => ({
     id,
     url,
@@ -56,6 +56,28 @@ test.skip("tab-resolver: pinned returns first available pinned tab", () => { // 
     tab(3, "https://github.com", "GitHub"),
   ]
   const result = resolveTargetTab(tabs, [3, 1], "test query")
+
+  assert.equal(result.tabId, 3)
+  assert.equal(result.matched, "pinned")
+})
+
+test("tab-resolver: pinned skips stale ids and returns first PRESENT pinned tab", () => {
+  // [999, 3, 1]: 999 is stale (no longer open). Forward iteration must skip it and
+  // return 3 (first present), NOT 1 — which reverse iteration would wrongly return.
+  const tab = (id: number, url: string, title: string, active = false, index = 0) => ({
+    id,
+    url,
+    title,
+    active,
+    index,
+    status: "complete" as const,
+  })
+
+  const tabs = [
+    tab(1, "https://example.com", "Example"),
+    tab(3, "https://github.com", "GitHub"),
+  ]
+  const result = resolveTargetTab(tabs, [999, 3, 1], "test query")
 
   assert.equal(result.tabId, 3)
   assert.equal(result.matched, "pinned")
@@ -197,7 +219,7 @@ test("tab-resolver: fallback returns active tab when not relevant", () => {
   assert.equal(result.matched, "active")
 })
 
-test.skip("tab-resolver: fallback returns first tab when no active tab exists", () => { // TODO(ci-coverage): failing — diagnose fallback resolution
+test("tab-resolver: fallback returns newest tab (last_resort) when no active tab exists", () => {
   const tab = (id: number, url: string, title: string, active = false, index = 0) => ({
     id,
     url,
@@ -207,11 +229,16 @@ test.skip("tab-resolver: fallback returns first tab when no active tab exists", 
     status: "complete" as const,
   })
 
-  const tabs = [tab(1, "https://example.com", "Example"), tab(2, "https://google.com", "Google")]
+  // No pinned, no active, no semantic match -> falls through to last_resort (newest by index).
+  // Distinct indices exercise the "reverse open order" fallback rather than stable-sort ties.
+  const tabs = [
+    tab(1, "https://example.com", "Example", false, 0),
+    tab(2, "https://google.com", "Google", false, 5),
+  ]
   const result = resolveTargetTab(tabs, [], "test query")
 
-  assert.equal(result.tabId, 1)
-  assert.equal(result.matched, "active")
+  assert.equal(result.tabId, 2)
+  assert.equal(result.matched, "last_resort")
 })
 
 test("tab-resolver: throws error when no tabs available", () => {

@@ -82,8 +82,11 @@ export class McpClient extends EventEmitter {
     }
   }
 
-  /** Start transport and run initialize handshake. Throws on timeout/failure. */
-  async connect(): Promise<void> {
+  /** Start transport and run initialize handshake. Throws on timeout/failure.
+   *  Production spawns the configured transport; tests may inject an in-memory
+   *  transport pair (e.g. InMemoryTransport) to exercise the handshake without
+   *  an external server process. */
+  async connect(injectedTransport?: Transport): Promise<void> {
     if (this._connection.status === "connected" || this._connection.status === "connecting") {
       return
     }
@@ -91,7 +94,7 @@ export class McpClient extends EventEmitter {
     this.setStatus("connecting")
     this._stderrBuffer = ""
 
-    const transport = createTransport(this._config, {
+    const transport = injectedTransport ?? createTransport(this._config, {
       onStderr: (chunk) => {
         this._stderrBuffer += chunk
         if (this._stderrBuffer.length > 8192) {
