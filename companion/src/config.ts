@@ -360,6 +360,22 @@ export function saveConfig(config: Partial<CompanionConfig>): CompanionConfig {
   if (config.security?.auto_approve_dangerous === true) {
     console.warn("[cmspark-agent] WARNING: security.auto_approve_dangerous is enabled — all dangerous tool calls will be auto-approved without user confirmation. Use only for trusted unattended workflows.")
   }
+  // ── H5 invariant: saveConfig is SYNCHRONOUS by design ──────────────────
+  // The read-modify-write below (getConfig → deepMerge → atomicWriteJSON) has
+  // no `await` anywhere, and atomicWriteJSON is writeFileSync+renameSync+chmodSync
+  // (all synchronous). Under Node's single-threaded event loop this means the
+  // whole body runs to completion before any other code — two saveConfig calls
+  // CANNOT interleave, and a caller like server.ts's whitelist append (which
+  // reads auto_approved_domains then writes the full array) is race-free as
+  // long as it does not await between its read and its saveConfig call.
+  //
+  // The 2026-07-09 audit (H5) proposed a promise-queue mutex here; that would
+  // be a no-op, because there is no yield point to serialize. Instead this
+  // invariant is locked in by tests/config.test.ts ("H5: saveConfig is
+  // synchronous + atomic read-modify-write"). DO NOT introduce an `await`
+  // (e.g. switching to fs.promises, or a better-sqlite3 async path) in this
+  // function without first adding serialization — otherwise the whitelist
+  // append and concurrent settings writes will silently lose data.
   const current = getConfig()
   const updated = deepMerge(current, config) as CompanionConfig
 
