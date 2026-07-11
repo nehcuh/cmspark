@@ -46,6 +46,18 @@ jobs:
         run: |
           cd companion && npm test
 
+      - name: Supply-chain audit — companion (gating, high+)
+        # Companion ships to users in the packaged binary; its production deps
+        # (dependencies, not devDependencies) must be free of high/critical
+        # advisories. Currently green (audit P1-2): the only prod advisories are
+        # 2 moderate via node-notifier→uuid, which is blocked-on-upstream and
+        # accepted (see docs/supply-chain.md). `--audit-level=high` sets the bar
+        # at high+ so that known moderate set does not gate, while any NEW
+        # high/critical on a shipped dep blocks CI. `--omit=dev` scopes to
+        # shipped deps — devDeps (tsx/typescript/@types/*) are build-time only.
+        run: |
+          cd companion && npm audit --omit=dev --audit-level=high
+
       - name: Setup chrome-extension Node.js
         uses: actions/setup-node@v4
         with:
