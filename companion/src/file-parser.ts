@@ -217,11 +217,16 @@ async function parseOfficeFile(buffer: Buffer, filename: string, mimeType: strin
   const officeparser = await import("officeparser")
 
   // P0-5 (audit C4): pre-flight zip-slip check via raw central-directory walk. Office files are
-  // zip archives; officeparser decompresses them internally via `decompress`, which is vulnerable
-  // to GHSA-mp2f-45pm-3cg9 (extraction can write files/symlinks outside the target dir →
-  // arbitrary file write / RCE on the user-upload path). Reject entries with absolute paths, a
-  // `..` path component, a NUL byte, or a Unix symlink mode BEFORE handing the buffer to
-  // officeparser. Proper fix (officeparser 7.x) tracked as P1-2.
+  // zip archives; the original C4 finding involved officeparser's historical use of `decompress`
+  // (GHSA-mp2f-45pm-3cg9: extraction could write files/symlinks outside the target dir →
+  // arbitrary file write / RCE on the user-upload path). The current officeparser 7.2.3 tree no
+  // longer contains `decompress` (`npm ls decompress` is empty) and the advisory is no longer
+  // reported by `npm audit`, but this gate remains as defense-in-depth: reject entries with
+  // absolute paths, a `..` path component, a NUL byte, or a Unix symlink mode BEFORE handing the
+  // buffer to officeparser. The walk IS the production mitigation (P1-2 closed C4): canonical
+  // EOCD validation resists forged-EOCD tricks, and the Unix symlink-mode rejection covers the
+  // link half of GHSA-mp2f-45pm-3cg9, so a future officeparser/decompress regression cannot
+  // reopen the user-upload RCE path.
   for (const { name, unixMode } of rawZipEntries(buffer)) {
     const traverses = path.isAbsolute(name)
       || name.split(/[\\/]/).includes("..") // component-level: avoids false-positive on "budget..2025.xml"

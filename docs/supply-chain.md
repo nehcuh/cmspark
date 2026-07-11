@@ -1,4 +1,4 @@
-# Supply-Chain Posture — `chrome-extension`
+# Supply-Chain Posture — CMspark (`chrome-extension` + `companion`)
 
 > Companion to the 2026-07-09 full audit (`audit-report-cmspark-2026-07-09.md`,
 > finding "supply-chain") and remediation plan (`docs/remediation-plan-2026-07-09.md`,
@@ -13,14 +13,19 @@ alarm) can tell a *known, triaged* advisory from a *new, actionable* one.
 
 | Surface | Vulnerabilities | CI posture |
 |---|---|---|
-| **Production deps** (`dependencies` — ship in the MV3 bundle) | **0** | **Gating** — `npm audit --omit=dev` must pass |
-| **Dev-toolchain** (`devDependencies` — bundler + plugins, never shipped) | 71 (1 low / 3 moderate / 67 high) | **Informational** — `continue-on-error: true` |
+| **chrome-extension — production deps** (`dependencies`, ship in the MV3 bundle) | **0** | **Gating** — `npm audit --omit=dev` must pass |
+| **chrome-extension — dev-toolchain** (`devDependencies`, bundler + plugins, never shipped) | 71 (1 low / 3 moderate / 67 high) | **Informational** — `continue-on-error: true` |
+| **companion — production deps** (`dependencies`, ship in the packaged binary) | **2 moderate** (`node-notifier` → `uuid`) | **Gating** — `npm audit --omit=dev --audit-level=high` |
 
 The extension that users install contains **zero** known-vulnerable packages.
-All remaining advisories live in the build tool (plasmo + Parcel) and its
-plugins, which compile the bundle but are not present in the shipped artifact.
+The companion ships two triaged, blocked-on-upstream moderate advisories and
+zero high/critical. All remaining extension advisories live in the build tool
+(plasmo + Parcel) and its plugins, which compile the bundle but are not present
+in the shipped artifact.
 
-## Fixed in P1-2
+## chrome-extension (`chrome-extension/`)
+
+### Fixed in P1-2
 
 1. **`dompurify` 3.4.8 → 3.4.11** (`dependencies`, direct).
    The only vulnerable package that actually ships and runs in the extension.
@@ -76,7 +81,7 @@ the advisories are predominantly **SSR**-specific (irrelevant to a build-time
 transformer that does no SSR). Net runtime risk: none. Override would be
 security theater that risks the build. → documented as blocked-on-upstream.
 
-## CI
+## CI — chrome-extension
 
 `.github/workflows/ci.yml` runs two audit steps for `chrome-extension`:
 
@@ -88,7 +93,77 @@ security theater that risks the build. → documented as blocked-on-upstream.
    Surfaces the known dev-toolchain set plus any **new** advisory for triage
    without gating on the unfixable plasmo/Parcel noise.
 
-## Re-evaluation trigger
+## Companion (`companion/`)
+
+Companion is a Node.js+TypeScript local server (`cmspark-agent`) packaged as a
+CLI/binary. Its `dependencies` ship in the distributed artifact; `devDependencies`
+(`tsx`, `typescript`, `@types/*`) are build-time only.
+
+### Current state
+
+`npm audit` reports **2 moderate** vulnerabilities, both in the production tree,
+both the same chain: `node-notifier >=7.0.0` → `uuid <11.1.1`
+(GHSA-w5hq-g745-h8pq, "Missing buffer bounds check in v3/v5/v6 when buf is
+provided"). **0 high/critical.** `npm audit --omit=dev --audit-level=high`
+exits 0.
+
+### Fixed in P1-2
+
+1. **Removed unused `dompurify` + `@types/dompurify`** (`dependencies`).
+   Companion is a Node server that never renders untrusted HTML/SVG — DOMPurify
+   sanitization is the **extension's** job (ADR-009 Mermaid SVG). These were
+   dormant leftovers (`grep` across `companion/src`, `tests`, `scripts`: zero
+   references). Removing them shrinks the shipped dep surface.
+2. **C4 zip-slip closed and documented.** The original C4 critical involved
+   officeparser's historical use of `decompress` (GHSA-mp2f-45pm-3cg9). The
+   current `officeparser@7.2.3` tree **no longer depends on `decompress` at all**
+   (`npm ls decompress` is empty), so the advisory no longer appears in audit.
+   The pre-flight central-directory walk in `companion/src/file-parser.ts:172-239`
+   (canonical EOCD validation + symlink-mode rejection, kimi-reviewed
+   2026-07-10) stays as defense-in-depth so a future officeparser/decompress
+   regression cannot reopen the user-upload RCE path.
+
+### Accepted risk — `node-notifier` → `uuid` (moderate, blocked on upstream)
+
+This cannot be fixed without a breaking change, so it is accepted:
+
+- `node-notifier@10.0.1` is the **latest** published version and pins
+  `uuid@^8.3.2`. There is no newer node-notifier release to bump to.
+- `npm audit fix --force` proposes **node-notifier@6.0.0** — a major downgrade
+  (breaking). Not acceptable.
+- An `overrides` pin of `uuid` to `^11.1.1` (the only clearing range) is unsafe:
+  uuid 8→11 dropped the CommonJS deep-require API (`require('uuid/v4')`) that
+  node-notifier@10 uses; forcing uuid-11 breaks notification generation at
+  runtime. (uuid 9.x keeps the API but is still `<11.1.1`, so it does not clear.)
+- **The vulnerable code path is not exercised.** The advisory is "v3/v5/v6
+  **when buf is provided**". node-notifier's only uuid usage is
+  `notifiers/toaster.js`: `const { v4: uuid } = require('uuid')` called as
+  `uuid()` with no caller-supplied buffer — a v4 call with no buf, so the
+  v3/v5/v6 buffer-bounds branch is never reached.
+- **On macOS (the primary platform) node-notifier is not even called**:
+  `menu-bar-agent.ts` `safeNotify()` uses native `osascript display notification`
+  on darwin; node-notifier is only the Linux/Windows fallback.
+
+Real-world risk: low. Re-evaluate when node-notifier releases a version pinning
+uuid ≥11, or if companion adds a notification path that supplies a buffer to a
+v3/v5/v6 uuid call (none today).
+
+### CI — companion
+
+`.github/workflows/ci.yml` runs one gating audit step for `companion`:
+
+- **PRODUCTION (gating, high+)** — `npm audit --omit=dev --audit-level=high`.
+  Fails the build on any high/critical advisory in shipped deps. The 2 known
+  moderate (node-notifier→uuid) are below the `high` bar, so they do not gate;
+  any NEW high/critical on a shipped dep blocks CI. `--omit=dev` scopes to
+  shipped deps; companion devDeps are build-time only and not in `dist/`.
+
+Companion gates at `high+` rather than all-severities (as the extension does)
+because it cannot reach 0 moderate without a breaking node-notifier downgrade
+or a runtime-breaking uuid override. Escape hatch if a future shipped dep gains
+a moderate we can't patch: document it here as accepted risk.
+
+## Re-evaluation trigger — chrome-extension
 
 When **plasmo** releases a version that bumps its Parcel dependency (watch
 `plasmo` releases / `@parcel/core` resolution in `npm ls @parcel/core`),
@@ -96,3 +171,10 @@ re-run `npm audit` after upgrading. The entire blocked-on-upstream set above is
 expected to clear in one plasmo bump; until then it is accepted, bounded to the
 build toolchain, and separated from the shipped surface by the production audit
 gate.
+
+## Re-evaluation trigger — companion
+
+Re-run `npm audit --omit=dev` when: `node-notifier` publishes a release that
+pins `uuid` ≥11 (would clear the 2 moderate); or companion adds a new direct
+production dependency. The `--audit-level=high` CI gate will surface any new
+high/critical on a shipped dep automatically.
