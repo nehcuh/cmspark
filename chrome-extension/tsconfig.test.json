@@ -19,6 +19,7 @@
     "src/sidepanel/hooks/useWebSocket.ts",
     "src/background/page-sanitizer.ts",
     "src/background/image-extract-utils.ts",
+    "src/background/dangerous-apis.ts",
     "tests/**/*.ts"
   ],
   "exclude": ["node_modules", "build", ".plasmo", ".test-dist"]
