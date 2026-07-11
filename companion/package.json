@@ -1,6 +1,6 @@
 {
   "name": "cmspark-agent",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Local companion for CMspark Browser Agent — manages LLM calls, skills, threads, and operation history. Now with cross-platform system tray.",
   "bin": {
     "cmspark-agent": "./dist/index.js"
