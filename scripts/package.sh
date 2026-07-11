@@ -160,12 +160,30 @@ esac
 CACHE_TAR="${CACHE_DIR}/node-${NODE_VERSION}-${NODE_ARCH}.tar.gz"
 mkdir -p "${CACHE_DIR}"
 
+# H8 (audit 2026-07-09): verify the Node archive's sha256 against nodejs.org's
+# SHASUMS256.txt before extracting it into the build. Without this, a poisoned
+# NODE_MIRROR (env-overridable) or a MITM on the download could substitute a
+# trojaned node binary that exfiltrates config.json on first run. Fetched fresh
+# each build (small file) so a mirror switch is never served from stale cache.
+#
+# TRUST ANCHOR: the manifest is fetched from the CANONICAL nodejs.org, NOT from
+# NODE_MIRROR. This is the whole point of the check — fetching the manifest
+# from the same env-overridable mirror as the archive would let a poisoned
+# mirror serve a matching manifest for its own trojaned archive. NODE_SHASUMS_MIRROR
+# defaults to nodejs.org and is separately overridable ONLY for a fully-offline,
+# operator-trusted mirror.
+NODE_SHASUMS_MIRROR="${NODE_SHASUMS_MIRROR:-https://nodejs.org/dist}"
+NODE_SHASUMS="${CACHE_DIR}/SHASUMS256-${NODE_VERSION}.txt"
+echo "  Fetching SHASUMS256.txt for Node ${NODE_VERSION} from ${NODE_SHASUMS_MIRROR}..."
+curl -fSL --retry 3 "${NODE_SHASUMS_MIRROR}/${NODE_VERSION}/SHASUMS256.txt" -o "${NODE_SHASUMS}"
+
 if [ "${PLATFORM}" = "windows-x64" ]; then
   CACHE_ZIP="${CACHE_DIR}/node-${NODE_VERSION}-${NODE_ARCH}.zip"
   if [ ! -f "${CACHE_ZIP}" ]; then
     echo "  Downloading..."
     curl -fSL --retry 3 "${NODE_MIRROR}/${NODE_VERSION}/node-v${NODE_VERSION#v}-${NODE_ARCH}.zip" -o "${CACHE_ZIP}"
   fi
+  bash "${ROOT_DIR}/scripts/verify-node.sh" "${CACHE_ZIP}" "${NODE_SHASUMS}" "Node ${NODE_VERSION} ${NODE_ARCH} (.zip)"
   cd "${STAGING}" && unzip -jo "${CACHE_ZIP}" "*/node.exe" && cd "${ROOT_DIR}"
   echo "  node.exe: $(du -h "${STAGING}/node.exe" | cut -f1)"
 else
@@ -176,6 +194,7 @@ else
       echo "  Downloading..."
       curl -fSL --retry 3 "${NODE_MIRROR}/${NODE_VERSION}/node-${NODE_VERSION}-${NODE_ARCH}.tar.gz" -o "${CACHE_TAR}"
     fi
+    bash "${ROOT_DIR}/scripts/verify-node.sh" "${CACHE_TAR}" "${NODE_SHASUMS}" "Node ${NODE_VERSION} ${NODE_ARCH} (.tar.gz)"
     tar xzf "${CACHE_TAR}" -C "${STAGING}" --include="*/bin/node" --strip-components=2 2>/dev/null || \
     tar xzf "${CACHE_TAR}" -C "${STAGING}" --wildcards "*/bin/node" --strip-components=2 2>/dev/null || {
       cd "${STAGING}"
