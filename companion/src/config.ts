@@ -27,17 +27,22 @@ export interface SecurityConfig {
    */
   auto_approve_dangerous: boolean
   /**
-   * GOD-MODE. When true, BOTH security layers are bypassed:
+   * GOD-MODE. When true, bypasses Layer 1 FULLY and Layer 2 PARTIALLY:
    *   - Layer 1 (scheme hard-block): non-http(s) schemes (javascript:, data:,
    *     about:, file:, chrome:) are permitted for navigate / create_tab /
-   *     set_tab_url.
+   *     set_tab_url. (Fully bypassed.)
    *   - Layer 2 (confirmation gate): evaluate / osascript_eval / untrusted-
-   *     domain navigation skip the human-in-the-loop dialog.
-   * Strictly stronger than auto_approve_dangerous (which bypasses Layer 2 only).
-   * The field NAME describes the Layer 1 effect; each gate's code comment must
-   * make the Layer 2 effect explicit. Defaults to false. Enabling is intended
-   * for fully-trusted, user-supervised power workflows — a prompt-injected agent
-   * can otherwise drive the browser to any scheme with NO check.
+   *     domain navigation skip the human-in-the-loop dialog — EXCEPT the
+   *     never-auto CRITICAL_API_GATE subset (exfil + sandbox-escape APIs:
+   *     fetch / eval / Function / ...) and the analyze_image IMAGE_FETCH_GATE,
+   *     which STILL require confirmation even under god-mode (§6.1.5 / §6.2).
+   * Strictly stronger than auto_approve_dangerous (which bypasses Layer 2 only
+   * and likewise does NOT bypass the critical / image gates). The field NAME
+   * describes the Layer 1 effect; each gate's code comment must make the Layer 2
+   * effect explicit. Defaults to false. Enabling is intended for fully-trusted,
+   * user-supervised power workflows — a prompt-injected agent can otherwise
+   * drive the browser to any scheme and run non-critical dangerous code with
+   * no human check.
    */
   allow_all_schemes: boolean
 }
@@ -375,12 +380,14 @@ export function saveConfig(config: Partial<CompanionConfig>): CompanionConfig {
   if (config.security?.auto_approve_dangerous === true) {
     console.warn("[cmspark-agent] WARNING: security.auto_approve_dangerous is enabled — all dangerous tool calls will be auto-approved without user confirmation. Use only for trusted unattended workflows.")
   }
-  // Warn when GOD-MODE is enabled — it bypasses BOTH the URL-scheme hard-block
-  // (Layer 1: any non-http(s) scheme, e.g. javascript:/data:/about:/file:/chrome:)
-  // AND the confirmation gate (Layer 2), so any prompt-injected instruction can
-  // drive the browser with no human check. Strictly stronger than auto_approve_dangerous.
+  // Warn when GOD-MODE is enabled — it bypasses Layer 1 (URL-scheme hard-block:
+  // any non-http(s) scheme, e.g. javascript:/data:/about:/file:/chrome:) fully,
+  // and Layer 2 (confirmation gate) for NON-critical dangerous tool calls +
+  // untrusted-domain navigation. The CRITICAL_API_GATE (exfil/escape APIs) and
+  // the analyze_image IMAGE_FETCH_GATE STILL require confirmation under god-mode
+  // (§6.1.5 / §6.2). Strictly stronger than auto_approve_dangerous.
   if (config.security?.allow_all_schemes === true) {
-    console.warn("[cmspark-agent] WARNING: security.allow_all_schemes (GOD-MODE) is enabled — BOTH the URL-scheme hard-block (any non-http(s) scheme, e.g. javascript:/data:/about:/file:/chrome:) AND the dangerous-tool confirmation gate are bypassed. Any prompt-injected instruction can drive the browser with no human check. Use only for fully-trusted, supervised workflows.")
+    console.warn("[cmspark-agent] WARNING: security.allow_all_schemes (GOD-MODE) is enabled — bypasses the URL-scheme hard-block (any non-http(s) scheme, e.g. javascript:/data:/about:/file:/chrome:) AND the confirmation gate for NON-critical dangerous tool calls / untrusted-domain navigation. CRITICAL exfil/escape APIs (fetch/eval/Function/...) and analyze_image fetch STILL require confirmation (§6.1.5/§6.2). A prompt-injected agent can drive the browser to any scheme and run non-critical dangerous code with no human check. Use only for fully-trusted, supervised workflows.")
   }
   // ── H5 invariant: saveConfig is SYNCHRONOUS by design ──────────────────
   // The read-modify-write below (getConfig → deepMerge → atomicWriteJSON) has
