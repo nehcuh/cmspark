@@ -56,9 +56,9 @@
 | 任务 | Finding | 权衡/注意 |
 |---|---|---|
 | unhandledRejection 退出 | M6 (`index.ts:442`) | **权衡 = 可用性 vs 清洁度**：当前 handler 只写 crash log 不退出（吞掉 rejection）；改 exit(1) 对齐 uncaughtException。**但代码内无 daemon 自动重启**——fatal rejection 会中断 companion，除非 launchd/systemd KeepAlive 配置。决策点：要么先加 supervisor 重启逻辑再 fatal，要么接受「依赖 OS 守护」。30min 实现，但设计需定。 |
-| 双 shutdown 合并 | M9 (`daemon.ts:484` + `server.ts:1579`) | **是真重构非快修**：daemon 模式同时注册了两个 SIGTERM handler——`daemon.ts` 的同步 `process.exit(0)` 会 preempt `server.ts` 的异步 mcp/history/WS 清理（MCP 子进程可能孤儿化、history 未 flush）。需合并为单 handler 并 await server shutdown promise。1–2h |
+| ~~双 shutdown 合并~~ | ~~M9 (`daemon.ts:484` + `server.ts:2197`)~~ | **✅ 已闭环（PR #49）**：daemon 模式两个 SIGTERM handler racing——`daemon.ts` 同步 `process.exit(0)` preempt `server.ts` 异步 mcp/history/WS 清理（MCP 子进程孤儿化、history 未 flush，回归审计 C2）。合并为 `startServer` 经 async-aware `setupGracefulShutdown` 注册的**单一** handler，index.ts 把 pidFile 清理作 `onShutdown` hook；shutdown 改 async/await 逐步 try/catch；signal 转发保留审计 SIGINT/SIGTERM 区分。已知可接受权衡：handler 装在 startServer 末尾，启动期信号不再清 pid（init 短 + stale pid 自愈）。 | ✅ 已闭环 |
 | abort 孤儿消息 | M10 (`adapter.ts` 多处 addMessage) | **消息丢失风险**：abort 后 in-flight addMessage 仍执行会留孤儿消息；但盲目全跳过会丢用户消息/部分 assistant 回复。需逐 site 判断哪些 addMessage 应在 abort 后保留。1–2h，需细致 |
-| MCP 子进程 force-kill | M11 (`mcp/client.ts:191`) | **触达 SDK 内部**：SDK `client.close()` 不保证 stdio 子进程已死；需 close 后宽限期 `kill(pid, SIGKILL)`。但拿 pid 要读 SDK 内部（kimi 之前对触达 SDK 内部有 push-back，见历史 Task 10）。需确认 SDK 暴露的稳定 API。1–2h |
+| ~~MCP 子进程 force-kill~~ | ~~M11 (`mcp/client.ts:191`)~~ | **❌ 误报**：SDK `StdioClientTransport.close()`（`@modelcontextprotocol/sdk@^1.0.4`，解析至 1.29.0）已内置 stdin-close → 2s grace → SIGTERM → 2s grace → SIGKILL 阶梯；SIGKILL 不可捕获/忽略，子进程必死。再自己 `kill(pid, SIGKILL)` 既冗余又 race（close 后 `transport.pid` 被 SDK 置 null）。M9（PR #49）已保证 `mcpManager.shutdown()` 被 await，阶梯完整跑完。详见 [`p2-2-m11-mcp-forcekill-audit-2026-07-12.md`](p2-2-m11-mcp-forcekill-audit-2026-07-12.md)。 | ✅ 已闭环 |
 
 ### P2-3 · 可观测 + 成本
 | 任务 | Finding | 改动 | 工时 |
@@ -120,7 +120,7 @@
 
 1. **~~P2-4 M19~~ 已证为误报**：默认模型 `deepseek-v4-flash` 本就正确；旧名停用风险由 PR #32 探测 + 本 PR 自动迁移闭环。
 2. **P2-1 安全纵深**（M1→M2→M3→M4→M5）—— 价值最高，C1 已解锁；M1/M2/M3 先做（小而清晰），M5（cookie）压轴单独 kimi 终审。
-3. **P2-2 可靠性**—— 每个 item 独立 PR（因各有权衡），M9（双 shutdown）和 M11（MCP kill）可优先（影响数据完整性/资源泄漏）；M6（fatal rejection）需先决策 supervisor 策略；M10（abort 孤儿）需逐 site 设计。
+3. **P2-2 可靠性**—— ~~M9（双 shutdown）~~ ✅ PR #49 闭环；~~M11（MCP kill）~~ 已证为 SDK 覆盖的误报；M6（fatal rejection）需先决策 supervisor 策略；M10（abort 孤儿）需逐 site 设计。
 4. **P2-3 可观测+成本** + **P3**（可并行）。
 5. **P4** 按需。
 
@@ -132,4 +132,5 @@
 
 | 日期 | 变更 |
 |---|---|
+| 2026-07-12 | M9 闭环（PR #49）：SIGTERM/SIGINT 双 handler race 合并为 startServer 单一 async handler，history.db flush 回归修复；M11 标记为误报/已闭环：SDK `^1.0.4`（解析至 1.29.0）`StdioClientTransport.close()` 已内置 SIGTERM→SIGKILL 阶梯，无需额外 force-kill |
 | 2026-07-11 | 初版：v0.3.0 发布后创建；记录 P0+P1 闭环状态、P2–P4 计划、P2-2 权衡发现、技术债 follow-up |
