@@ -24,7 +24,7 @@ import {
   applyTabNavigated,
 } from "../../src/server.js"
 import { detectDangerousApis } from "../../src/security.js"
-import { saveConfig, getConfig } from "../../src/config.js"
+import { saveConfig, getConfig, getConfigDir } from "../../src/config.js"
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-secg-"))
 
@@ -50,7 +50,14 @@ beforeEach(async () => {
     pendingToolCalls.delete(id)
   }
   securityConfirmations.rejectAll("disconnect")
-  saveConfig({ trusted_domains: ["trusted.example.com", "*.company.com"], auto_approved_domains: [] })
+  // Reset the bypass toggles so a god-mode / auto-approve test can't leak its
+  // state into later tests (saveConfig deep-merges; security is not otherwise
+  // touched here, so without this an allow_all_schemes:true would persist).
+  saveConfig({
+    trusted_domains: ["trusted.example.com", "*.company.com"],
+    auto_approved_domains: [],
+    security: { ...getConfig().security, allow_all_schemes: false, auto_approve_dangerous: false },
+  })
 
   await new Promise<void>((resolve) => {
     wss = new WebSocketServer({ port: 0, host: "127.0.0.1" }, () => resolve())
@@ -512,4 +519,149 @@ test("M1: evaluate on a tab with NO cached url (unknown) requires confirmation �
   }))
   const result = await resultPromise
   assert.equal(result.success, false)
+})
+
+// =============================================================================
+// God-mode (security.allow_all_schemes): bypasses BOTH layers.
+//   Layer 1 (scheme hard-block): javascript:/data:/about:/file: permitted.
+//   Layer 2 (confirmation gate): evaluate / osascript_eval / untrusted-domain
+//   navigation skip the human-in-the-loop dialog.
+// Strictly stronger than auto_approve_dangerous (Layer 2 only). Each god-mode
+// bypass is audited via security.godmode_bypassed (javascript: flagged).
+// =============================================================================
+
+/** Read today's companion log (the real audit sink; logger appends synchronously
+ *  to <DATA_DIR>/logs/companion-<date>.log). DATA_DIR is pinned by the setup file
+ *  to a throwaway temp dir, so this reads exactly where the logger writes. */
+function readTodayLog(): string {
+  const day = new Date().toISOString().slice(0, 10)
+  const logPath = path.join(getConfigDir(), "logs", `companion-${day}.log`)
+  try { return fs.readFileSync(logPath, "utf8") } catch { return "" }
+}
+
+/** Enable god-mode for a test by flipping only allow_all_schemes (spreading the
+ *  rest of security so the object stays a complete SecurityConfig). */
+function enableGodMode(): void {
+  saveConfig({ security: { ...getConfig().security, allow_all_schemes: true } })
+}
+
+test("god-mode OFF (default): javascript: scheme is still blocked (regression)", async () => {
+  // beforeEach already resets allow_all_schemes:false — this is the explicit
+  // regression guard that god-mode did NOT silently weaken the default L1 block.
+  const executeTool = createToolExecutor(serverSideWs)
+  const result = await executeTool("tc_god_off_js", "navigate", {
+    tabId: 1,
+    url: "javascript:void(0)",
+  })
+  assert.equal(result.success, false)
+  assert.match(result.error!, /scheme is not allowed/i)
+  assert.ok(!readTodayLog().includes("godmode_bypassed"),
+    "no godmode_bypassed audit when god-mode is off")
+})
+
+test("god-mode ON: navigate to javascript: scheme is allowed (L1 bypass) and audited", async () => {
+  enableGodMode()
+  const executeTool = createToolExecutor(serverSideWs)
+  const executePromise = expectClientMessage("tool.execute")
+  const noConfirmation = expectNoClientMessage("security.confirmation.request")
+
+  const resultPromise = executeTool("tc_god_js", "navigate", {
+    tabId: 1,
+    url: "javascript:void(0)",
+  })
+  const executeMsg = await executePromise
+  assert.equal(executeMsg.tool_name, "navigate")
+  await noConfirmation
+
+  clientSideWs.send(JSON.stringify({ type: "tool.result", tool_call_id: "tc_god_js", result: { success: true } }))
+  const result = await resultPromise
+  assert.equal(result.success, true, "god-mode must let javascript: through (Layer 1 bypass)")
+
+  // Audit trail: the bypass must be traceable, javascript: flagged explicitly.
+  const line = readTodayLog().split("\n").find((l) => l.includes("tc_god_js") && l.includes("godmode_bypassed"))
+  assert.ok(line, "security.godmode_bypassed audit line must exist for this tool_call_id")
+  assert.ok(line!.includes('"layer":"scheme"'), "audit records Layer 1 (scheme)")
+  assert.ok(line!.includes('"javascript":true'), "javascript: scheme must be flagged in the audit")
+})
+
+test("god-mode ON: create_tab to data: scheme is allowed (L1 bypass)", async () => {
+  enableGodMode()
+  const executeTool = createToolExecutor(serverSideWs)
+  const executePromise = expectClientMessage("tool.execute")
+  const noConfirmation = expectNoClientMessage("security.confirmation.request")
+
+  const resultPromise = executeTool("tc_god_data", "create_tab", {
+    url: "data:text/html,<script>alert(1)</script>",
+  })
+  await executePromise
+  await noConfirmation
+  clientSideWs.send(JSON.stringify({ type: "tool.result", tool_call_id: "tc_god_data", result: { success: true } }))
+  const result = await resultPromise
+  assert.equal(result.success, true, "god-mode must let data: through (regression vs the off-path block)")
+
+  const line = readTodayLog().split("\n").find((l) => l.includes("tc_god_data") && l.includes("godmode_bypassed"))
+  assert.ok(line, "data: scheme bypass audited")
+})
+
+test("god-mode ON: set_tab_url to about: scheme is allowed (L1 bypass — same gate)", async () => {
+  // set_tab_url shares the URL_GATE_TOOLS gate with navigate/create_tab; cover it
+  // explicitly so a future split-out of the gate can't silently drop god-mode here.
+  enableGodMode()
+  const executeTool = createToolExecutor(serverSideWs)
+  const executePromise = expectClientMessage("tool.execute")
+  const noConfirmation = expectNoClientMessage("security.confirmation.request")
+
+  const resultPromise = executeTool("tc_god_about", "set_tab_url", {
+    tabId: 1,
+    url: "about:blank",
+  })
+  await executePromise
+  await noConfirmation
+  clientSideWs.send(JSON.stringify({ type: "tool.result", tool_call_id: "tc_god_about", result: { success: true } }))
+  const result = await resultPromise
+  assert.equal(result.success, true, "god-mode must let about: through set_tab_url (Layer 1 bypass)")
+
+  const line = readTodayLog().split("\n").find((l) => l.includes("tc_god_about") && l.includes("godmode_bypassed"))
+  assert.ok(line, "about: scheme bypass audited")
+})
+
+test("god-mode ON: navigate to an UNTRUSTED http domain skips confirmation (L2 bypass)", async () => {
+  enableGodMode()
+  const executeTool = createToolExecutor(serverSideWs)
+  const executePromise = expectClientMessage("tool.execute")
+  const noConfirmation = expectNoClientMessage("security.confirmation.request")
+
+  const resultPromise = executeTool("tc_god_untrusted", "navigate", {
+    tabId: 1,
+    url: "https://attacker.example.com/phish",
+  })
+  await executePromise
+  await noConfirmation
+  clientSideWs.send(JSON.stringify({ type: "tool.result", tool_call_id: "tc_god_untrusted", result: { success: true } }))
+  const result = await resultPromise
+  assert.equal(result.success, true, "god-mode bypasses the untrusted-domain confirmation gate")
+
+  // L2 bypass reason is recorded as god_mode (not global_toggle/domain_whitelist).
+  const line = readTodayLog().split("\n").find((l) => l.includes("tc_god_untrusted") && l.includes("url_auto_approved"))
+  assert.ok(line, "auto-approved bypass logged")
+  assert.ok(line!.includes('"reason":"god_mode"'), "bypass reason attributed to god_mode")
+})
+
+test("god-mode ⊇ auto-approve: evaluate on an untrusted tab skips confirmation", async () => {
+  // With ONLY auto_approve_dangerous the existing gate skips confirmation; god-mode
+  // must do the same (it is strictly stronger) — proves god-mode ⊇ auto-approve for L2.
+  enableGodMode()
+  const executeTool = createToolExecutor(serverSideWs)
+  const executePromise = expectClientMessage("tool.execute")
+  const noConfirmation = expectNoClientMessage("security.confirmation.request")
+
+  const resultPromise = executeTool("tc_god_eval", "evaluate", {
+    tabId: 1,
+    code: "document.cookie",
+  })
+  await executePromise
+  await noConfirmation
+  clientSideWs.send(JSON.stringify({ type: "tool.result", tool_call_id: "tc_god_eval", result: { success: true } }))
+  const result = await resultPromise
+  assert.equal(result.success, true, "god-mode lets evaluate proceed without confirmation (⊇ auto-approve)")
 })

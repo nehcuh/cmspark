@@ -292,7 +292,10 @@ export function createToolExecutor(ws: WebSocket) {
         ? getDomainFromUrl(getCachedTabUrl(finalParams.tabId) || "")
         : ""
       const securityConfig = getConfig().security
+      // skipL2 = auto_approve_dangerous || allow_all_schemes || (domain whitelist).
+      // allow_all_schemes (GOD-MODE) bypasses Layer 2 too — see config.ts SecurityConfig.
       const skipConfirmation = securityConfig.auto_approve_dangerous === true
+        || securityConfig.allow_all_schemes === true
         || (relevantDomain !== "" && isAutoApprovedDomain(relevantDomain))
 
       if (!skipConfirmation) {
@@ -351,7 +354,8 @@ export function createToolExecutor(ws: WebSocket) {
           tool_call_id: toolCallId,
           tool_name: toolName,
           domain: relevantDomain || "unknown",
-          reason: securityConfig.auto_approve_dangerous ? "global_toggle" : "domain_whitelist",
+          reason: securityConfig.allow_all_schemes ? "god_mode"
+            : securityConfig.auto_approve_dangerous ? "global_toggle" : "domain_whitelist",
         })
       }
       // Issue a fresh token (post-approval or for auto-approved skip path)
@@ -389,20 +393,37 @@ export function createToolExecutor(ws: WebSocket) {
         logToolFinish(toolCallId, toolName, startedAt, result)
         return result
       }
+      const securityConfig = getConfig().security
+      // Layer 1 — scheme hard-block. skipL1 = allow_all_schemes (GOD-MODE). When
+      // bypassed, emit a prominent audit log (javascript: flagged) so god-mode
+      // navigations stay traceable, then fall through to the Layer 2 domain gate.
       if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
-        const result = {
-          success: false,
-          error: `Security Block: ${toolName} to ${parsedUrl.protocol} scheme is not allowed. Only http/https URLs are permitted.`,
+        if (securityConfig.allow_all_schemes !== true) {
+          const result = {
+            success: false,
+            error: `Security Block: ${toolName} to ${parsedUrl.protocol} scheme is not allowed. Only http/https URLs are permitted.`,
+          }
+          logger.warn("security.url_scheme_blocked", { tool_call_id: toolCallId, tool_name: toolName, scheme: parsedUrl.protocol })
+          logToolFinish(toolCallId, toolName, startedAt, result)
+          return result
         }
-        logger.warn("security.url_scheme_blocked", { tool_call_id: toolCallId, tool_name: toolName, scheme: parsedUrl.protocol })
-        logToolFinish(toolCallId, toolName, startedAt, result)
-        return result
+        // GOD-MODE bypass of Layer 1. javascript: is especially dangerous — it
+        // runs arbitrary script in the target tab's origin — so flag it explicitly.
+        logger.warn("security.godmode_bypassed", {
+          tool_call_id: toolCallId,
+          tool_name: toolName,
+          layer: "scheme",
+          scheme: parsedUrl.protocol,
+          javascript: parsedUrl.protocol === "javascript:",
+          url: rawUrl,
+        })
       }
       const host = parsedUrl.hostname
-      const securityConfig = getConfig().security
+      // skipL2 = trusted || autoApproved || auto_approve_dangerous || allow_all_schemes.
       const skipUrlConfirmation = isTrustedDomain(host)
         || isAutoApprovedDomain(host)
         || securityConfig.auto_approve_dangerous === true
+        || securityConfig.allow_all_schemes === true
       if (!skipUrlConfirmation) {
         if (ws.readyState !== WebSocket.OPEN) {
           const result = {
@@ -448,14 +469,15 @@ export function createToolExecutor(ws: WebSocket) {
         }
         logger.info("security.url_confirmation.approved", { tool_call_id: toolCallId, tool_name: toolName, url: rawUrl })
       } else if (!isTrustedDomain(host)) {
-        // Skipped specifically because of auto_approved_domains or the global toggle
-        // (not because the host was already cookie-trusted). Log so audits can tell
-        // the two bypass paths apart.
+        // Skipped specifically because of auto_approved_domains, the global toggle,
+        // or god-mode (not because the host was already cookie-trusted). Log so
+        // audits can tell the bypass paths apart.
         logger.info("security.url_auto_approved", {
           tool_call_id: toolCallId,
           tool_name: toolName,
           host,
-          reason: securityConfig.auto_approve_dangerous ? "global_toggle" : "domain_whitelist",
+          reason: securityConfig.allow_all_schemes ? "god_mode"
+            : securityConfig.auto_approve_dangerous ? "global_toggle" : "domain_whitelist",
         })
       }
     }

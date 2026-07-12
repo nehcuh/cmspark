@@ -50,6 +50,7 @@ before(async () => {
       auto_confirm_same_thread: false,
       confirmation_timeout_seconds: 45,
       auto_approve_dangerous: false,
+      allow_all_schemes: false,
     },
   })
 })
@@ -317,6 +318,7 @@ describe("settings-cli", { concurrency: 1 }, () => {
       auto_confirm_same_thread: false,
       confirmation_timeout_seconds: 45,
       auto_approve_dangerous: false,
+      allow_all_schemes: false,
     },
   })
 
