@@ -22,7 +22,7 @@ import {
   pendingToolCalls,
   securityConfirmations,
 } from "../../src/server.js"
-import { classifyMcpCall, CRITICAL_MCP_CAPABILITIES } from "../../src/security.js"
+import { classifyMcpCall, mergeCapabilities, CRITICAL_MCP_CAPABILITIES } from "../../src/security.js"
 import type { McpCapability } from "../../src/security.js"
 import { getMcpManager, getMcpConfirmCache } from "../../src/mcp/index.js"
 import { McpClient } from "../../src/mcp/client.js"
@@ -104,6 +104,10 @@ afterEach(async () => {
   }
   injected.length = 0
   try { (manager as any).reaggregate?.() } catch { /* */ }
+  // §6.3 Phase 2-B: reset currentConfig so a declared-capabilities test's
+  // currentConfig.servers[name] entry (set by injectServerWithCaps) doesn't leak
+  // into the next test's getServerConfig() read.
+  try { (manager as any).currentConfig = null } catch { /* */ }
 
   const safeTerminate = (ws: WebSocket | undefined) => { try { (ws as any)?.terminate?.() } catch { /* */ } }
   safeTerminate(clientSideWs)
@@ -406,4 +410,190 @@ test("unclassifiable tool (zzz) on trusted server → forceMcpConfirm (unknown=c
   assert.ok(conf.critical_apis?.includes("unknown"), `unknown should be critical; got ${JSON.stringify(conf.critical_apis)}`)
   clientSideWs.send(JSON.stringify({ type: "security.confirmation.response", confirmation_id: conf.confirmation_id, approved: true }))
   assert.equal((await rp).success, true)
+})
+
+// =============================================================================
+// §6.3 Phase 2-B: mergeCapabilities unit tests (fail-safe union, Option C)
+// =============================================================================
+
+test("merge: inferred critical + no declaration → unchanged (I4 regression)", () => {
+  const m = mergeCapabilities(["file-write"], undefined)
+  assert.deepEqual(m.capabilities, ["file-write"])
+  assert.equal(m.declaredResolvedUnknown, false)
+})
+
+test("merge: inferred unknown + no declaration → unknown, not resolved (Phase 1 default)", () => {
+  const m = mergeCapabilities(["unknown"], undefined)
+  assert.deepEqual(m.capabilities, ["unknown"])
+  assert.equal(m.declaredResolvedUnknown, false)
+})
+
+test("merge: inferred unknown + declared read-only → resolves unknown (I2)", () => {
+  const m = mergeCapabilities(["unknown"], ["read-only"])
+  assert.deepEqual(m.capabilities, ["read-only"])
+  assert.equal(m.declaredResolvedUnknown, true)
+})
+
+test("merge: inferred file-write + declared read-only → STILL file-write (I1, the Option-B bypass stays closed)", () => {
+  // The critical case: a declaration must NEVER suppress a positively-inferred
+  // critical capability. {file-write} ∪ {read-only} → file-write forces confirm.
+  const m = mergeCapabilities(["file-write"], ["read-only"])
+  assert.ok(m.capabilities.includes("file-write"), "inferred critical must survive")
+  assert.equal(m.capabilities.some(c => CRITICAL_MCP_CAPABILITIES.has(c)), true)
+  assert.equal(m.declaredResolvedUnknown, false)
+})
+
+test("merge: inferred read-only + declared exec → escalates to critical (I3)", () => {
+  const m = mergeCapabilities(["read-only"], ["exec"])
+  assert.ok(m.capabilities.includes("exec"), "declared exec added")
+  assert.equal(m.capabilities.some(c => CRITICAL_MCP_CAPABILITIES.has(c)), true)
+  assert.equal(m.declaredResolvedUnknown, false)
+})
+
+test("merge: union of two criticals stays critical", () => {
+  const m = mergeCapabilities(["file-write"], ["exec"])
+  assert.ok(m.capabilities.includes("file-write"))
+  assert.ok(m.capabilities.includes("exec"))
+  assert.equal(m.capabilities.some(c => CRITICAL_MCP_CAPABILITIES.has(c)), true)
+})
+
+test("merge: invalid declared values ignored (defensive filter)", () => {
+  // "bogus" is not a valid declared capability; merge ignores it → behaves as
+  // empty declaration → unknown stays (sanitization also strips, but merge is
+  // robust to direct callers).
+  const m1 = mergeCapabilities(["unknown"], ["bogus"])
+  assert.deepEqual(m1.capabilities, ["unknown"])
+  assert.equal(m1.declaredResolvedUnknown, false, "invalid-only declaration does not resolve unknown")
+
+  // Mixed: valid + invalid → valid kept, invalid dropped, unknown resolved.
+  const m2 = mergeCapabilities(["unknown"], ["read-only", "bogus", "unknown" as any])
+  assert.deepEqual(m2.capabilities, ["read-only"])
+  assert.equal(m2.declaredResolvedUnknown, true)
+})
+
+test("merge: empty inferred + declared read-only → read-only, resolved (defensive)", () => {
+  // classifyMcpCall never returns an empty array (always at least ["unknown"]),
+  // but mergeCapabilities treats empty inferred as unknown-equivalent for safety.
+  const m = mergeCapabilities([], ["read-only"])
+  assert.deepEqual(m.capabilities, ["read-only"])
+  assert.equal(m.declaredResolvedUnknown, true)
+})
+
+// =============================================================================
+// §6.3 Phase 2-B integration: declared security_capabilities gate behavior
+// =============================================================================
+
+/**
+ * Like injectServer, but ALSO seeds the singleton manager's currentConfig with a
+ * server entry carrying `security_capabilities`, so executeMcpTool's
+ * `manager.getServerConfig(name)?.security_capabilities` read finds the declaration.
+ * (Plain injectServer only sets the clients Map, not currentConfig.)
+ */
+async function injectServerWithCaps(
+  name: string,
+  trustLevel: "manual" | "first-use" | "trusted",
+  tools: Array<{ name: string; description?: string; inputSchema?: any }>,
+  securityCapabilities: string[],
+): Promise<(tool: string) => string> {
+  const ns = await injectServer(name, trustLevel, tools)
+  const manager: any = getMcpManager()
+  if (!manager.currentConfig) manager.currentConfig = { enabled: true, servers: {} }
+  manager.currentConfig.servers[name] = {
+    transport: "stdio",
+    command: "node",
+    args: [],
+    enabled: true,
+    trust_level: trustLevel,
+    security_capabilities: securityCapabilities,
+  }
+  return ns
+}
+
+test("P2B: trusted + save_file (inferred file-write) + declared [read-only] → STILL confirms (Option-B bypass closed)", async () => {
+  // The hole pure-REPLACE (Option B) would open: declaring read-only must NOT
+  // suppress the inferred file-write on a trusted server.
+  const ns = await injectServerWithCaps("fs", "trusted",
+    [{ name: "save_file", inputSchema: { type: "object", properties: {} } }], ["read-only"])
+  const executeTool = createToolExecutor(serverSideWs)
+  const confp = expectClientMessage("security.confirmation.request")
+  const rp = executeTool("p2b1", ns("save_file"), { path: "/tmp/x", content: "y" })
+  const conf = await confp
+  assert.ok(conf.critical_apis?.includes("file-write"), `inferred file-write survived; got ${JSON.stringify(conf.critical_apis)}`)
+  assert.equal(conf.risk_level, "high")
+  clientSideWs.send(JSON.stringify({ type: "security.confirmation.response", confirmation_id: conf.confirmation_id, approved: true }))
+  assert.equal((await rp).success, true)
+})
+
+test("P2B: trusted + unclassifiable (foobar) + declared [read-only] → NO confirm (resolves unknown, I2)", async () => {
+  // foobar → inferred unknown (would force-confirm under Phase 1). The user
+  // declares read-only → unknown resolved → trusted server skips confirmation.
+  const ns = await injectServerWithCaps("fs", "trusted",
+    [{ name: "foobar", inputSchema: { type: "object", properties: {} } }], ["read-only"])
+  const executeTool = createToolExecutor(serverSideWs)
+  const noPrompt = expectNoClientMessage("security.confirmation.request")
+  const result = await executeTool("p2b2", ns("foobar"), { x: 1 })
+  await noPrompt
+  assert.equal(result.success, true, `resolved-unknown + trusted should skip+succeed; got: ${result.error}`)
+})
+
+test("P2B: trusted + unclassifiable (foobar) + declared [exec] → forceMcpConfirm (declaration escalates, I3)", async () => {
+  // foobar → inferred unknown. User declares exec → union {unknown, exec} →
+  // critical → force-confirm despite trusted server + benign name.
+  const ns = await injectServerWithCaps("fs", "trusted",
+    [{ name: "foobar", inputSchema: { type: "object", properties: {} } }], ["exec"])
+  const executeTool = createToolExecutor(serverSideWs)
+  const confp = expectClientMessage("security.confirmation.request")
+  const rp = executeTool("p2b3", ns("foobar"), { x: 1 })
+  const conf = await confp
+  assert.ok(conf.critical_apis?.includes("exec"), `declared exec escalated; got ${JSON.stringify(conf.critical_apis)}`)
+  clientSideWs.send(JSON.stringify({ type: "security.confirmation.response", confirmation_id: conf.confirmation_id, approved: true }))
+  assert.equal((await rp).success, true)
+})
+
+test("P2B: trusted + read_file (inferred read-only) + declared [file-write] → escalates to confirm", async () => {
+  // read_file name → inferred read-only (non-critical). User declares file-write
+  // → union → critical → force-confirm even on a trusted server.
+  const ns = await injectServerWithCaps("fs", "trusted",
+    [{ name: "read_file", inputSchema: { type: "object", properties: {} } }], ["file-write"])
+  const executeTool = createToolExecutor(serverSideWs)
+  const confp = expectClientMessage("security.confirmation.request")
+  const rp = executeTool("p2b4", ns("read_file"), { path: "/tmp/x" })
+  const conf = await confp
+  assert.ok(conf.critical_apis?.includes("file-write"), `declared file-write escalated a read tool; got ${JSON.stringify(conf.critical_apis)}`)
+  clientSideWs.send(JSON.stringify({ type: "security.confirmation.response", confirmation_id: conf.confirmation_id, approved: true }))
+  assert.equal((await rp).success, true)
+})
+
+test("P2B: trusted + read_file, NO declaration → NO confirm (Phase 1 regression intact)", async () => {
+  // With no security_capabilities, behavior is pure Phase 1 inference:
+  // read_file → read-only → non-critical → trusted skip.
+  const ns = await injectServer("fs", "trusted",
+    [{ name: "read_file", inputSchema: { type: "object", properties: {} } }])
+  const executeTool = createToolExecutor(serverSideWs)
+  const noPrompt = expectNoClientMessage("security.confirmation.request")
+  const result = await executeTool("p2b5", ns("read_file"), { path: "/tmp/x" })
+  await noPrompt
+  assert.equal(result.success, true, `no-declaration read on trusted should skip (Phase 1); got: ${result.error}`)
+})
+
+test("P2B: first-use + unclassifiable + declared [read-only], approved once → cached, 2nd skips (non-critical caching)", async () => {
+  // Resolving unknown to read-only makes the call non-critical → first-use
+  // approval IS cached (critical calls never are). 2nd call uses cache.
+  const ns = await injectServerWithCaps("fs", "first-use",
+    [{ name: "foobar", inputSchema: { type: "object", properties: {} } }], ["read-only"])
+  const executeTool = createToolExecutor(serverSideWs)
+
+  // Call 1: first-use, uncached → confirm. Approve → cached (non-critical).
+  const conf1p = expectClientMessage("security.confirmation.request")
+  const r1p = executeTool("p2b6a", ns("foobar"), { x: 1 })
+  const conf1 = await conf1p
+  assert.equal(conf1.risk_level, "medium", "resolved-to-read-only is non-critical → medium risk")
+  clientSideWs.send(JSON.stringify({ type: "security.confirmation.response", confirmation_id: conf1.confirmation_id, approved: true }))
+  assert.equal((await r1p).success, true)
+
+  // Call 2: cached → no prompt.
+  const noPrompt = expectNoClientMessage("security.confirmation.request")
+  const r2 = await executeTool("p2b6b", ns("foobar"), { x: 2 })
+  await noPrompt
+  assert.equal(r2.success, true)
 })

@@ -262,13 +262,26 @@ export function detectCriticalApis(code: string): string[] {
 // regardless of trust_level/cache/god-mode — same invariant as §6.1.5/§6.2:
 // god-mode (and trust_level) bypass the UI prompt, not the capability boundary.
 //
-// Phase 1 (here): inferred from tool name + args — no config field. Phase 2
-// will add a user-declared `capabilities` field on McpServerConfig as the
-// primary source, with this inference as a defense-in-depth fallback.
+// Phase 1 (here): inferred from tool name + args. Phase 2-B adds a user-declared
+// `security_capabilities` field on McpServerConfig (McpDeclaredCapability[]) as
+// the primary source, merged with this inference via mergeCapabilities() below.
+// The merge is a fail-safe union (Option C, kimi-approved 2026-07-12): a
+// positively-inferred critical capability can NEVER be suppressed by a
+// declaration; a declaration only (a) escalates (adds caps inference missed)
+// or (b) resolves the "unknown" sentinel when inference found nothing.
 
 export type McpCapability =
   | "file-read" | "file-write" | "exec" | "network-egress"
   | "db-read" | "db-mutate" | "read-only" | "unknown"
+
+/**
+ * The subset a user may declare for a server via McpServerConfig. Excludes
+ * "unknown" — a non-declarable sentinel meaning "inference found nothing"
+ * (declaring "I don't know" is meaningless). The read variants are kept so a
+ * user can explicitly vouch for read-only behavior to resolve a false-positive
+ * (see mergeCapabilities, Option C case I2).
+ */
+export type McpDeclaredCapability = Exclude<McpCapability, "unknown">
 
 /**
  * The never-auto-approved subset — mirror of §6.2 `critical: true`. A call
@@ -376,6 +389,79 @@ export function classifyMcpCall(toolName: string, params: unknown): McpCapabilit
 
   if (caps.size === 0) caps.add("unknown")
   return Array.from(caps)
+}
+
+/**
+ * §6.3 Phase 2-B: merge inferred capabilities (classifyMcpCall) with the
+ * server's user-declared `security_capabilities`. Fail-safe union — Option C,
+ * kimi-approved 2026-07-12 (see docs/followup-c-p2b-declared-capabilities-rfc-2026-07-12.md §4).
+ *
+ *   inferred = classifyMcpCall(toolName, params)   // may include "unknown"
+ *   inferredK = inferred minus "unknown"           // strip the non-declarable sentinel
+ *
+ *   - inferredK non-empty → union with declared (inferred ALWAYS applies; a
+ *     declaration can only ESCALATE). [I1: a positively-inferred critical cap
+ *     is never suppressible.]
+ *   - inferredK empty + declared non-empty → use declared (resolves the
+ *     "unknown" ambiguity — the user is explicitly vouching). [I2]
+ *   - both empty → ["unknown"] (Phase 1 default → critical). [I4]
+ *
+ * Unknown declared values are ignored here (sanitizeMcpConfig already strips
+ * them with a warning, but this stays robust to direct callers). Returns the
+ * final capability array and a flag indicating whether a declaration RESOLVED
+ * an "unknown" (for forensic logging — kimi suggestion: make the trust grant
+ * traceable).
+ */
+export interface MergedCapabilities {
+  capabilities: McpCapability[]
+  /** True when inference found nothing AND a declaration replaced "unknown".
+   *  The caller should warn-log this so the trust grant is auditable. */
+  declaredResolvedUnknown: boolean
+}
+
+const VALID_DECLARED_CAPABILITIES: ReadonlySet<string> = new Set<McpDeclaredCapability>([
+  "file-read", "file-write", "exec", "network-egress",
+  "db-read", "db-mutate", "read-only",
+])
+
+/** Whether `value` is a valid user-declarable capability (used by config
+ *  sanitization to strip typos without dropping the whole server). */
+export function isValidDeclaredCapability(value: unknown): value is McpDeclaredCapability {
+  return typeof value === "string" && VALID_DECLARED_CAPABILITIES.has(value)
+}
+
+export function mergeCapabilities(
+  inferred: McpCapability[],
+  declared: readonly string[] | undefined | null,
+): MergedCapabilities {
+  const inferredKnown = inferred.filter((c) => c !== "unknown")
+
+  // Filter declared to known, non-"unknown" values only (defense-in-depth even
+  // though sanitizeMcpConfig should have already stripped them).
+  const declaredKnown = (declared ?? []).filter(
+    (c): c is McpDeclaredCapability => VALID_DECLARED_CAPABILITIES.has(c),
+  )
+
+  const seen = new Set<McpCapability>()
+  const out: McpCapability[] = []
+  const push = (c: McpCapability) => {
+    if (!seen.has(c)) { seen.add(c); out.push(c) }
+  }
+
+  if (inferredKnown.length > 0) {
+    for (const c of inferredKnown) push(c)
+    for (const c of declaredKnown) push(c)
+    return { capabilities: out, declaredResolvedUnknown: false }
+  }
+
+  // Inference found nothing (only "unknown", or genuinely empty).
+  if (declaredKnown.length > 0) {
+    for (const c of declaredKnown) push(c)
+    return { capabilities: out, declaredResolvedUnknown: true }
+  }
+
+  // No signal at all — Phase 1 default.
+  return { capabilities: ["unknown"], declaredResolvedUnknown: false }
 }
 
 /** Legacy check result for backward compatibility. */

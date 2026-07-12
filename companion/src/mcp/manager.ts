@@ -10,6 +10,7 @@
 
 import { EventEmitter } from "events"
 import { logger } from "../logger.js"
+import { isValidDeclaredCapability } from "../security.js"
 import type { ToolDefinition } from "../bridge/tool-definitions.js"
 import { McpClient } from "./client.js"
 import { aggregateMcpTools, type AggregatedTools } from "./aggregator.js"
@@ -447,9 +448,49 @@ function sanitizeMcpConfig(raw: McpConfig | undefined | null): McpConfig {
       logger.warn("mcp.config.server_invalid", { name, reason })
       continue
     }
-    servers[name] = value as McpServerConfig
+    servers[name] = normalizeServerConfig(value as McpServerConfig)
   }
   return { enabled, servers }
+}
+
+/**
+ * Lenient normalization of an already-validated McpServerConfig. Today this
+ * only affects §6.3 Phase 2-B `security_capabilities`: strip entries that
+ * aren't valid declared-capability strings (typos / stale values) WITH a
+ * warning, but NEVER drop the whole server — a single bad capability value
+ * shouldn't orphan a configured server. If the field isn't an array at all
+ * (structural mistake), drop it entirely + warn (treated as absent → pure
+ * inference, Phase 1 behavior).
+ */
+function normalizeServerConfig(cfg: McpServerConfig): McpServerConfig {
+  const raw = (cfg as any).security_capabilities
+  if (raw === undefined) return cfg
+  if (!Array.isArray(raw)) {
+    logger.warn("mcp.config.security_capabilities_not_array", {
+      hint: "security_capabilities must be an array of capability strings; ignoring the field",
+      got: typeof raw,
+    })
+    const { security_capabilities: _omit, ...rest } = cfg as any
+    return rest as McpServerConfig
+  }
+  const valid: string[] = []
+  const dropped: string[] = []
+  for (const entry of raw) {
+    if (isValidDeclaredCapability(entry)) {
+      valid.push(entry)
+    } else {
+      dropped.push(String(entry))
+    }
+  }
+  if (dropped.length > 0) {
+    logger.warn("mcp.config.security_capabilities_invalid_dropped", {
+      hint: `security_capabilities entries must be one of file-read|file-write|exec|network-egress|db-read|db-mutate|read-only; dropped invalid entries`,
+      dropped,
+    })
+  }
+  return valid.length > 0
+    ? { ...cfg, security_capabilities: valid as McpServerConfig["security_capabilities"] }
+    : (() => { const { security_capabilities: _o, ...rest } = cfg as any; return rest as McpServerConfig })()
 }
 
 function validateServerConfig(value: any): string | null {

@@ -1,5 +1,7 @@
 // MCP (Model Context Protocol) client types — shared between config, manager, and frontend.
 
+import type { McpDeclaredCapability } from "../security.js"
+
 export type McpTransportKind = "stdio" | "http"
 
 export type McpTrustLevel = "manual" | "first-use" | "trusted"
@@ -18,6 +20,17 @@ interface McpBaseServerConfig {
   restart_policy?: Partial<McpRestartPolicy>
   /** Optional MCP roots to advertise to the server. Filesystem servers use these as allowed directories. */
   roots?: Array<{ uri: string; name?: string }>
+  /** §6.3 Phase 2-B (follow-up C): user-declared security capabilities for this
+   *  server's namespaced tools. Used as the PRIMARY classification source by the
+   *  capability gate (executeMcpTool); Phase 1's classifyMcpCall inference stays
+   *  as defense-in-depth, merged via a fail-safe union (a declaration can only
+   *  escalate, never suppress a positively-inferred critical capability). Omit
+   *  to keep pure-inference behavior (Phase 1 default).
+   *
+   *  Valid values: file-read | file-write | exec | network-egress | db-read |
+   *  db-mutate | read-only ("unknown" is not declarable). Unknown values are
+   *  stripped with a warning at sanitize time, never dropping the server. */
+  security_capabilities?: McpDeclaredCapability[]
 }
 
 export interface McpStdioServerConfig extends McpBaseServerConfig {

@@ -10,7 +10,7 @@ import { handleMessage } from "./message-router"
 import { ThreadManager } from "./threads/thread-manager"
 import { SkillEngine } from "./skills/skill-engine"
 import { HistoryStore } from "./history/store"
-import { checkHighRiskExecution, highRiskExecutionDeniedError, isTrustedDomain, isAutoApprovedDomain, isCloudMetadataIp, isPrivateOrLoopbackIp, detectCriticalApis, classifyMcpCall, CRITICAL_MCP_CAPABILITIES, CRITICAL_MCP_META_TOOLS } from "./security"
+import { checkHighRiskExecution, highRiskExecutionDeniedError, isTrustedDomain, isAutoApprovedDomain, isCloudMetadataIp, isPrivateOrLoopbackIp, detectCriticalApis, classifyMcpCall, mergeCapabilities, CRITICAL_MCP_CAPABILITIES, CRITICAL_MCP_META_TOOLS } from "./security"
 import { SecurityConfirmationManager } from "./security-confirmation"
 import { securityPolicy, getTokenSecret } from "./security-policy"
 import { logger, type LogLevel } from "./logger"
@@ -1137,8 +1137,26 @@ async function executeMcpTool(
   // (same invariant as §6.1.5/§6.2). Without this, a `trusted` filesystem
   // server's `save_file` (name evades DESTRUCTIVE_MCP_TOOL_PATTERN) or a
   // `fetch_data` tool called with an attacker URL would execute zero-confirmation.
-  const mcpCaps = classifyMcpCall(route.toolName, params)
+  //
+  // Phase 2-B: merge the server's user-declared `security_capabilities`
+  // (primary source) with classifyMcpCall inference (defense-in-depth) via
+  // mergeCapabilities. Fail-safe union (Option C, kimi-approved): a positively-
+  // inferred critical capability can NEVER be suppressed by a declaration; a
+  // declaration only escalates or resolves the "unknown" sentinel.
+  const declaredCaps = manager.getServerConfig(route.serverName)?.security_capabilities
+  const mcpMerged = mergeCapabilities(classifyMcpCall(route.toolName, params), declaredCaps)
+  const mcpCaps = mcpMerged.capabilities
   const forceMcpConfirm = mcpCaps.some(c => CRITICAL_MCP_CAPABILITIES.has(c))
+  // kimi suggestion: make the trust grant auditable. When a declaration RESOLVED
+  // an "unknown" (inference found nothing, user vouched), warn so it's traceable.
+  if (mcpMerged.declaredResolvedUnknown) {
+    logger.warn("mcp.declared_resolved_unknown", {
+      server: route.serverName,
+      tool: route.toolName,
+      declared: declaredCaps,
+      trust_level: trustLevel,
+    })
+  }
 
   if (needsConfirm || forceMcpConfirm) {
     if (ws.readyState !== WebSocket.OPEN) {
@@ -1154,6 +1172,7 @@ async function executeMcpTool(
       trust_level: trustLevel,
       session: sessionId,
       capabilities: mcpCaps,
+      declared_capabilities: declaredCaps ?? [],
       force_confirm: forceMcpConfirm,
     })
     const decision = await securityConfirmations.request(
@@ -1177,6 +1196,7 @@ async function executeMcpTool(
           server: route.serverName,
           tool: route.toolName,
           capabilities: mcpCaps,
+          declared_capabilities: declaredCaps ?? [],
           god_mode_active: securityConfig.allow_all_schemes === true,
           auto_approve_active: securityConfig.auto_approve_dangerous === true,
           trust_level: trustLevel,
@@ -1201,6 +1221,7 @@ async function executeMcpTool(
         server: route.serverName,
         tool: route.toolName,
         capabilities: mcpCaps,
+        declared_capabilities: declaredCaps ?? [],
         god_mode_active: securityConfig.allow_all_schemes === true,
         auto_approve_active: securityConfig.auto_approve_dangerous === true,
         trust_level: trustLevel,
