@@ -1,37 +1,10 @@
 // Front-end state management security tests — Module 5: Testing & Documentation
-// Tests: privilegeMode switching, securityAuditLog recording, SecurityConfirmationRequest type extension
+// Tests: securityAuditLog recording, SecurityConfirmationRequest type extension.
 
 import test from "node:test"
 import assert from "node:assert/strict"
 import { agentReducer, initialState } from "../src/sidepanel/store/agentStore"
 import type { SecurityConfirmationRequest, SecurityAuditEntry } from "../src/sidepanel/types"
-
-// ---------------------------------------------------------------------------
-// privilegeMode state switching
-// ---------------------------------------------------------------------------
-
-test("SET_PRIVILEGE_MODE updates privilegeMode in state", () => {
-  const next = agentReducer(initialState, { type: "SET_PRIVILEGE_MODE", mode: "advanced" })
-  assert.equal(next.privilegeMode, "advanced")
-})
-
-test("SET_PRIVILEGE_MODE can switch to readonly", () => {
-  const next = agentReducer(initialState, { type: "SET_PRIVILEGE_MODE", mode: "readonly" })
-  assert.equal(next.privilegeMode, "readonly")
-})
-
-test("SET_PRIVILEGE_MODE can switch back to standard", () => {
-  const state = agentReducer(initialState, { type: "SET_PRIVILEGE_MODE", mode: "advanced" })
-  const next = agentReducer(state, { type: "SET_PRIVILEGE_MODE", mode: "standard" })
-  assert.equal(next.privilegeMode, "standard")
-})
-
-test("SET_PRIVILEGE_MODE does not affect other state fields", () => {
-  const next = agentReducer(initialState, { type: "SET_PRIVILEGE_MODE", mode: "advanced" })
-  assert.equal(next.connectionState, initialState.connectionState)
-  assert.deepEqual(next.threads, initialState.threads)
-  assert.equal(next.messages.length, initialState.messages.length)
-})
 
 // ---------------------------------------------------------------------------
 // securityAuditLog recording
@@ -250,25 +223,7 @@ test("SecurityConfirmationRequest high risk has auto_confirm_eligible false", ()
 // Integration: reducer handles security-related actions together
 // ---------------------------------------------------------------------------
 
-test("reducer handles privilege mode change followed by audit log entry", () => {
-  const state1 = agentReducer(initialState, { type: "SET_PRIVILEGE_MODE", mode: "advanced" })
-  const entry: SecurityAuditEntry = {
-    id: "audit-1",
-    ts: "2026-06-07T10:00:00.000Z",
-    level: "warn",
-    tool_name: "evaluate",
-    action: "allowed",
-    risk_level: "medium",
-    risk_score: 5,
-    message: "允许执行 evaluate",
-  }
-  const state2 = agentReducer(state1, { type: "ADD_SECURITY_AUDIT", entry })
-  assert.equal(state2.privilegeMode, "advanced")
-  assert.equal(state2.securityAuditLog.length, 1)
-  assert.equal(state2.securityAuditLog[0].tool_name, "evaluate")
-})
-
-test("reducer preserves audit log across privilege mode changes", () => {
+test("reducer preserves audit log across unrelated state changes", () => {
   const entry: SecurityAuditEntry = {
     id: "audit-1",
     ts: "2026-06-07T10:00:00.000Z",
@@ -280,14 +235,10 @@ test("reducer preserves audit log across privilege mode changes", () => {
     message: "自动执行 screenshot",
   }
   const state1 = agentReducer(initialState, { type: "ADD_SECURITY_AUDIT", entry })
-  const state2 = agentReducer(state1, { type: "SET_PRIVILEGE_MODE", mode: "readonly" })
+  // An unrelated state change (connection state) must not wipe the audit log.
+  const state2 = agentReducer(state1, { type: "SET_CONNECTION", state: "disconnected" })
   assert.equal(state2.securityAuditLog.length, 1)
-  assert.equal(state2.privilegeMode, "readonly")
-})
-
-test("initialState has privilege_mode in config", () => {
-  assert.equal(initialState.config.privilege_mode, "standard")
-  assert.equal(["readonly", "standard", "advanced"].includes(initialState.config.privilege_mode), true)
+  assert.equal(state2.securityAuditLog[0].id, "audit-1")
 })
 
 test("initialState has safety_skills_enabled in config", () => {

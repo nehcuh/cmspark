@@ -1,6 +1,6 @@
 # ADR-010: 三层权限阶梯与 God-mode（`allow_all_schemes`）
 
-**日期**: 2026-07-12 | **状态**: 已确认（PR #35 PR-0 / #36 PR-A 已合并；PR-B 本 PR）
+**日期**: 2026-07-12 | **状态**: 已确认（PR #35 PR-0 / #36 PR-A / #37 PR-B 已合并；PR-C 本 PR）
 
 ## 背景
 
@@ -108,8 +108,8 @@ God-mode **不**自动放行 analyze_image / MCP——这些门本就不在 L1/L
 |---|---|---|
 | PR-0 (#35) | WS 共享密钥鉴权（HMAC 握手） | ✅ 已合并 |
 | PR-A (#36) | Companion 核心：config schema + 两道门 + `godmode_bypassed` 审计 + 测试 | ✅ 已合并 |
-| PR-B | 扩展 UI：勾选框 + 确认短语 + 风险文案；审计展示 godmode 开/关条目；config.json 启用说明入文档（本 ADR） | 本 PR |
-| PR-C | 删除孤儿 `security.setPrivilege` / `PrivilegeMode` 死代码 | 待办 |
+| PR-B (#37) | 扩展 UI：勾选框 + 确认短语 + 风险文案；审计展示 godmode 开/关条目；config.json 启用说明入文档（本 ADR） | ✅ 已合并 |
+| PR-C | 删除孤儿 `security.setPrivilege` / `PrivilegeMode` 死代码 | 本 PR |
 | follow-up | Companion `security.godmode_bypassed` 实时推送至扩展审计 UI（每次绕过可见，非仅开/关） | 待办（kimi 裁决可后置） |
 | follow-up | M4 `analyze_image` 门、MCP 工具调用门（god-mode 不自动放行） | 待办 |
 

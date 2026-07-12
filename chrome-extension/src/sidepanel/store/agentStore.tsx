@@ -1,7 +1,7 @@
 // Global state store for the agent
 
 import { createContext, useContext, useReducer, type ReactNode, type Dispatch } from "react"
-import type { ConnectionState, Thread, Message, SkillMeta, OperationRecord, LLMConfig, SendShortcut, SecurityConfirmationRequest, LogEntry, KnowledgeMeta, SkillSelectionMode, PrivilegeMode, SecurityAuditEntry, McpServerMeta, McpSelectionMode } from "../types"
+import type { ConnectionState, Thread, Message, SkillMeta, OperationRecord, LLMConfig, SendShortcut, SecurityConfirmationRequest, LogEntry, KnowledgeMeta, SkillSelectionMode, SecurityAuditEntry, McpServerMeta, McpSelectionMode } from "../types"
 
 export interface AgentState {
   connectionState: ConnectionState
@@ -25,7 +25,6 @@ export interface AgentState {
   skillSelectionMode: SkillSelectionMode
   knowledgeSelectionMode: "auto" | "all" | "manual"
   activeKnowledgeIds: string[]
-  privilegeMode: PrivilegeMode
   securityAuditLog: SecurityAuditEntry[]
   companionConfig: LLMConfig | null
   isProcessing: boolean
@@ -72,7 +71,6 @@ export type AgentAction =
   | { type: "SET_SKILL_SELECTION_MODE"; mode: SkillSelectionMode }
   | { type: "SET_KNOWLEDGE_SELECTION_MODE"; mode: "auto" | "all" | "manual" }
   | { type: "TOGGLE_KNOWLEDGE"; knowledgeId: string }
-  | { type: "SET_PRIVILEGE_MODE"; mode: PrivilegeMode }
   | { type: "ADD_SECURITY_AUDIT"; entry: SecurityAuditEntry }
   | { type: "SET_COMPANION_CONFIG"; config: LLMConfig }
   | { type: "SET_PROCESSING"; isProcessing: boolean }
@@ -100,7 +98,6 @@ export const initialState: AgentState = {
     temperature: 0.7,
     context_window: 1000000,
     trusted_domains: [],
-    privilege_mode: "standard",
     safety_skills_enabled: [],
     auto_approved_domains: [],
     auto_approve_dangerous: false,
@@ -128,7 +125,6 @@ export const initialState: AgentState = {
   skillSelectionMode: "auto",
   knowledgeSelectionMode: "auto",
   activeKnowledgeIds: [],
-  privilegeMode: "standard",
   securityAuditLog: [],
   companionConfig: null,
   isProcessing: false,
@@ -321,8 +317,6 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
           ? state.activeKnowledgeIds.filter(id => id !== action.knowledgeId)
           : [...state.activeKnowledgeIds, action.knowledgeId],
       }
-    case "SET_PRIVILEGE_MODE":
-      return { ...state, privilegeMode: action.mode }
     case "ADD_SECURITY_AUDIT":
       return { ...state, securityAuditLog: [...state.securityAuditLog.slice(-199), action.entry] }
     case "SET_COMPANION_CONFIG":

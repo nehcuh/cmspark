@@ -11,7 +11,7 @@ import { SlashCommandPopover } from "./components/SlashCommandPopover"
 import { SkillCraftPanel } from "./components/SkillCraftPanel"
 import { Modal } from "./components/ui/Modal"
 import { AgentStoreProvider, useAgentStore } from "./store/agentStore"
-import type { ConnectionState, SkillMeta, PrivilegeMode, FileAttachment } from "./types"
+import type { ConnectionState, SkillMeta, FileAttachment } from "./types"
 
 // Error Boundary — catches rendering errors to prevent white screen
 class ErrorBoundary extends Component<{ children: React.ReactNode }, { error: Error | null }> {
@@ -290,17 +290,6 @@ function HighlightedCode({ code }: { code: string }) {
   )
 }
 
-function PrivilegeModeIndicator({ mode }: { mode: PrivilegeMode }) {
-  const color = mode === "readonly" ? "#4CAF50" : mode === "standard" ? "#FFC107" : "#F44336"
-  const label = mode === "readonly" ? "只读" : mode === "standard" ? "标准" : "高级"
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "#666", cursor: "pointer" }} title={`特权模式: ${label}`}>
-      <div style={{ width: 8, height: 8, borderRadius: "50%", background: color, flexShrink: 0 }} />
-      <span>{label}</span>
-    </div>
-  )
-}
-
 function Header({ connectionState, onCraft, onToggleLogs }: { connectionState: ConnectionState; onCraft: () => void; onToggleLogs: () => void }) {
   const { state, dispatch } = useAgentStore()
   const hasMessages = state.messages.length > 0 && !!state.activeThreadId
@@ -309,7 +298,6 @@ function Header({ connectionState, onCraft, onToggleLogs }: { connectionState: C
     <div style={styles.header}>
       <ThreadList />
       <div style={styles.headerTitle}>CMspark Agent</div>
-      <PrivilegeModeIndicator mode={state.privilegeMode} />
       <button
         style={{
           ...styles.craftBtn,

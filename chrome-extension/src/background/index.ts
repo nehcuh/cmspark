@@ -449,15 +449,6 @@ function setupMessageHandlers() {
         sendResponse({ ok: true })
         return true
 
-      case "security.setPrivilege":
-        wsClient.send({
-          type: "security.setPrivilege",
-          privilege: message.privilege,
-          enabled: message.enabled,
-        })
-        sendResponse({ ok: true })
-        return true
-
       case "thread.select":
         wsClient.send({ type: "thread.select", thread_id: message.threadId })
         sendResponse({ ok: true })

@@ -31,7 +31,6 @@ export function ThreadList() {
         temperature: 0.7,
         context_window: 1000000,
         trusted_domains: [],
-        privilege_mode: "standard" as const,
         safety_skills_enabled: [] as string[],
       },
       tool_whitelist: null as string[] | null,

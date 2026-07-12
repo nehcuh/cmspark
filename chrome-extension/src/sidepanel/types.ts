@@ -12,8 +12,6 @@ export type McpTransportKind = "stdio" | "http"
 
 export type McpConnectionStatus = "disconnected" | "connecting" | "connected" | "error" | "dead"
 
-export type PrivilegeMode = "readonly" | "standard" | "advanced"
-
 export interface Thread {
   id: string
   alias: string
@@ -112,7 +110,6 @@ export interface LLMConfig {
   temperature: number
   context_window: number
   trusted_domains: string[]
-  privilege_mode: PrivilegeMode
   safety_skills_enabled: string[]
   // Domains whose tool-call confirmations (evaluate, navigate, etc.) are auto-approved.
   // Flattened from companion config top-level `auto_approved_domains`.
