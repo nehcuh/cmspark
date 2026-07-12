@@ -14,7 +14,7 @@ import { checkHighRiskExecution, highRiskExecutionDeniedError, isTrustedDomain, 
 import { SecurityConfirmationManager } from "./security-confirmation"
 import { securityPolicy, getTokenSecret } from "./security-policy"
 import { logger, type LogLevel } from "./logger"
-import { acquireLock, releaseLock, isProcessRunning, readPidFile, cleanupPidFile } from "./daemon"
+import { acquireLock, releaseLock, isProcessRunning, readPidFile, cleanupPidFile, setupGracefulShutdown } from "./daemon"
 import { getLockFilePath, getPidFilePath } from "./config"
 import { getMcpManager, getMcpConfirmCache, isMcpNamespaced } from "./mcp"
 import {
@@ -1701,7 +1701,7 @@ export async function probeChatModel(
   }
 }
 
-export async function startServer() {
+export async function startServer(options: { onShutdown?: () => void } = {}) {
   // Migrate deprecated DeepSeek model ids (deepseek-chat/deepseek-reasoner, retiring
   // 2026-07-24) to deepseek-v4-flash BEFORE the probe, so the probe validates the
   // migrated name. Idempotent; rewrites via the atomic saveConfig path and warns so
@@ -2177,23 +2177,37 @@ export async function startServer() {
   mcpPruneTimer.unref?.()
 
   // Graceful shutdown
-  const shutdown = (signal: string) => {
+  const shutdown = async (signal: string) => {
     console.log(`\n[cmspark-agent] Shutting down (${signal})...`)
     logger.info("server.shutdown", { signal })
     // Stop MCP servers first (terminates child processes) before closing WS
-    mcpManager.shutdown().catch((err) => {
+    try {
+      await mcpManager.shutdown()
+    } catch (err: any) {
       logger.warn("mcp.shutdown_failed", { error: err?.message || String(err) })
-    }).finally(() => {
-      // P0-1 (audit C2): flush history.db before exiting. Previously close() was never
-      // called on shutdown, so every normal SIGTERM/SIGINT lost the session's audit records.
-      try { historyStore?.close() } catch (err: any) {
-        logger.warn("history.close_failed", { error: err?.message || String(err) })
-      }
+    }
+    // P0-1 (audit C2): flush history.db before exiting. Previously close() was never
+    // called on shutdown, so every normal SIGTERM/SIGINT lost the session's audit records.
+    try {
+      historyStore?.close()
+    } catch (err: any) {
+      logger.warn("history.close_failed", { error: err?.message || String(err) })
+    }
+    try {
       wss.close()
+    } catch {
+      // ignore
+    }
+    try {
       releaseLock(getLockFilePath())
-      process.exit(0)
-    })
+    } catch {
+      // ignore
+    }
+    try {
+      options.onShutdown?.()
+    } catch (err: any) {
+      logger.warn("shutdown.hook_failed", { error: err?.message || String(err) })
+    }
   }
-  process.on("SIGINT", () => shutdown("SIGINT"))
-  process.on("SIGTERM", () => shutdown("SIGTERM"))
+  setupGracefulShutdown((signal) => shutdown(signal))
 }
