@@ -60,6 +60,10 @@ export function normalizeConfig(config: any): Partial<LLMConfig> {
   if (config.security && typeof config.security.auto_approve_dangerous === "boolean") {
     normalized.auto_approve_dangerous = config.security.auto_approve_dangerous
   }
+  // Security: flatten nested config.security.allow_all_schemes (GOD-MODE) → LLMConfig.allow_all_schemes
+  if (config.security && typeof config.security.allow_all_schemes === "boolean") {
+    normalized.allow_all_schemes = config.security.allow_all_schemes
+  }
   // Vision config fields (flattened from config.vision)
   const vision = config.vision
   if (vision) {

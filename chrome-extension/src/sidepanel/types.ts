@@ -120,6 +120,11 @@ export interface LLMConfig {
   // Global bypass for ALL dangerous tool confirmations. Flattened from companion
   // config `security.auto_approve_dangerous`. Default false.
   auto_approve_dangerous?: boolean
+  // GOD-MODE: bypasses BOTH the URL-scheme hard-block (Layer 1) AND the dangerous-tool
+  // confirmation gate (Layer 2). Strictly stronger than auto_approve_dangerous (L2 only).
+  // Flattened from companion config `security.allow_all_schemes`. Default false.
+  // UI enable requires a typed confirmation phrase (PR-B); gated behind PR-0 WS auth.
+  allow_all_schemes?: boolean
   // Vision model fields (flattened for UI convenience)
   vision_enabled?: boolean
   vision_api_key?: string
@@ -231,9 +236,17 @@ export interface SecurityAuditEntry {
   ts: string
   level: "info" | "warn" | "error" | "block"
   tool_name: string
-  action: "allowed" | "denied" | "blocked"
+  // "allowed"/"denied"/"blocked" = a tool-gate decision (confirmation dialog).
+  // "changed" = a security-setting change (e.g. god-mode armed/disarmed via UI phrase).
+  // tool_name discriminates which setting (e.g. "allow_all_schemes" = the
+  // design's godmode_enabled_changed event); `source` records the provenance.
+  action: "allowed" | "denied" | "blocked" | "changed"
   risk_level: "low" | "medium" | "high"
   risk_score: number
   defense_layer?: number
   message: string
+  // Provenance of a security-setting change (design §B godmode_enabled_changed).
+  // "ui_phrase_confirmed" = armed/disarmed from this UI's typed-confirmation panel.
+  // The other two originate companion-side (future live-bypass broadcast follow-up).
+  source?: "ui_phrase_confirmed" | "config.json_manual" | "ws_authenticated"
 }
