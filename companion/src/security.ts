@@ -252,6 +252,102 @@ export function detectCriticalApis(code: string): string[] {
     .map(({ name }) => name)
 }
 
+// ─── §6.3 MCP_CAPABILITY_GATE (follow-up C) ─────────────────────────────────
+// MCP tool calls carry no JS code string to scan (unlike evaluate's
+// detectCriticalApis). Their capability lives in the (server, tool, args)
+// tuple, so we classify the call by name + serialized args. This is the MCP
+// analog of §6.2: a `trusted` server or a `first-use`-cached tool can otherwise
+// skip ALL confirmation (server.ts needsConfirm), letting a destructive/exfil
+// call execute zero-confirmation. The critical subset forces confirmation
+// regardless of trust_level/cache/god-mode — same invariant as §6.1.5/§6.2:
+// god-mode (and trust_level) bypass the UI prompt, not the capability boundary.
+//
+// Phase 1 (here): inferred from tool name + args — no config field. Phase 2
+// will add a user-declared `capabilities` field on McpServerConfig as the
+// primary source, with this inference as a defense-in-depth fallback.
+
+export type McpCapability =
+  | "file-read" | "file-write" | "exec" | "network-egress"
+  | "db-read" | "db-mutate" | "read-only" | "unknown"
+
+/**
+ * The never-auto-approved subset — mirror of §6.2 `critical: true`. A call
+ * touching any of these forces interactive confirmation and is NEVER cached
+ * (per-call confirm, like DESTRUCTIVE_MCP_TOOL_PATTERN → manual at server.ts).
+ * `unknown` is critical: if we cannot classify, we confirm (err on caution).
+ *
+ * Reads (file-read/db-read/read-only) are intentionally NON-critical — their
+ * exfil risk is real but lower than write/exec/egress, and is mitigated by M2
+ * `<untrusted>` (result treated as data, not instructions) + the server's
+ * trust_level. (See follow-up C §6.6 / RFC D8 — kimi-approved trade-off.)
+ */
+export const CRITICAL_MCP_CAPABILITIES: ReadonlySet<McpCapability> = new Set([
+  "file-write", "exec", "network-egress", "db-mutate", "unknown",
+])
+
+// Name heuristics. Intentionally BROADER than DESTRUCTIVE_MCP_TOOL_PATTERN
+// (server.ts:137) — that regex only catches write|delete|exec|...|destroy and
+// misses save/put/create/mkdir/upload/etc., so a `trusted` server's `save_file`
+// or `put_record` would otherwise skip confirmation entirely. A false positive
+// only costs one prompt; a false negative exfils.
+//
+// Token boundary: `(?<![a-z0-9])…(?![a-z0-9])`, NOT `\b`. `\b` treats `_` as a
+// word char (it's in `\w`), so `\bwrite\b` does NOT match `write_file` /
+// `exec_cmd` / `read_file` — exactly the snake_case names MCP tools use. The
+// custom boundary splits on `_`, `-`, and any non-alphanumeric, so each regex
+// matches a whole token whether the name uses snake_case, kebab-case, or
+// camelCase. (`write` won't match inside `rewrite`/`writer` since those are
+// `r…e[a-z]`; same substring guard `\b` gave.)
+const _L = "(?<![a-z0-9])"
+const _R = "(?![a-z0-9])"
+const MCP_NAME_FILE_WRITE = new RegExp(`${_L}(write|create|save|put|append|truncate|rm|remove|delete|destroy|wipe|move|copy|mkdir|touch|chmod|chown|rename|upload|set)${_R}`, "i")
+const MCP_NAME_DB_MUTATE = new RegExp(`${_L}(insert|update|drop|alter|merge|upsert|commit)${_R}`, "i")
+const MCP_NAME_EXEC = new RegExp(`${_L}(exec|run|spawn|shell|bash|cmd|process|subprocess|system|kill|fork|popen|terminal)${_R}`, "i")
+const MCP_NAME_EGRESS = new RegExp(`${_L}(curl|wget|download|upload|send|post|request|crawl|scrape|fetch|http)${_R}`, "i")
+const MCP_NAME_READ = new RegExp(`${_L}(read|cat|head|tail|grep|find|glob|list|stat|search|query|select|describe|show|get|info|status)${_R}`, "i")
+
+// Arg heuristics — the real exfil/escape detector. Name heuristics are evadable
+// (`fetch_data`/`get_info`/`query` pass DESTRUCTIVE_MCP_TOOL_PATTERN); the arg
+// scan catches the actual payload regardless of tool name.
+//
+// Loopback host anchor: each loopback literal is followed by a host-TERMINATOR
+// guard (`.`/digit for IPv4, `[a-z0-9.-]` for hostname/IPv6-bracket). Without
+// it, a prefix-based `(?!localhost)` would treat `https://localhost.attacker.com`
+// and `https://127.0.0.1.attacker.com` as loopback (lookahead sees the loopback
+// prefix and bails) — an attacker-controlled domain exfiling zero-confirmation.
+const MCP_ARG_EXTERNAL_URL = /https?:\/\/(?!(?:127\.0\.0\.1(?![.\d])|localhost(?![a-z0-9.-])|\[::1\](?![a-z0-9.-])))/i
+const MCP_ARG_SHELL = /(?:^|[^a-z0-9_])(?:bash|\/bin\/sh|zsh|cmd\.exe|powershell)\b|\brm\s+-rf\b|\bsudo\b|\bsh\s+-c\b/i
+const MCP_ARG_WRITE_PAIR = /\b(?:content|body|payload|data|text|bytes)\b/i
+
+/**
+ * Classify an MCP tool call by the capabilities it touches. Returns the matched
+ * capability set (defaulting to ["unknown"] — critical — when nothing matches).
+ * Used by executeMcpTool (server.ts) to compute `forceMcpConfirm`.
+ */
+export function classifyMcpCall(toolName: string, params: unknown): McpCapability[] {
+  const caps = new Set<McpCapability>()
+  const name = String(toolName || "")
+  let args = ""
+  try { args = JSON.stringify(params ?? {}).slice(0, 4000) } catch { args = "" }
+
+  if (MCP_NAME_FILE_WRITE.test(name)) caps.add("file-write")
+  if (MCP_NAME_DB_MUTATE.test(name)) caps.add("db-mutate")
+  if (MCP_NAME_EXEC.test(name)) caps.add("exec")
+  if (MCP_NAME_EGRESS.test(name)) caps.add("network-egress")
+  if (MCP_NAME_READ.test(name)) caps.add("read-only")
+
+  // Arg-based (independent of name — catches name-evasion).
+  if (MCP_ARG_EXTERNAL_URL.test(args)) caps.add("network-egress")
+  if (MCP_ARG_SHELL.test(args)) caps.add("exec")
+  // file-write: a destination path arg paired with a content arg.
+  if (MCP_ARG_WRITE_PAIR.test(args) && /\b(?:path|file|filename|dest|destination|output|to)\b/i.test(args)) {
+    caps.add("file-write")
+  }
+
+  if (caps.size === 0) caps.add("unknown")
+  return Array.from(caps)
+}
+
 /** Legacy check result for backward compatibility. */
 export interface HighRiskCheckResult {
   blocked: boolean
