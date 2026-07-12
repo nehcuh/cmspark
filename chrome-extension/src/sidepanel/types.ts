@@ -10,6 +10,18 @@ export type McpTrustLevel = "manual" | "first-use" | "trusted"
 
 export type McpTransportKind = "stdio" | "http"
 
+/**
+ * User-declarable security capability for an MCP server (mirrors
+ * companion/src/security.ts McpDeclaredCapability = Exclude<McpCapability,"unknown">).
+ * The 7 values a user may declare; "unknown" is not declarable. Used by the
+ * §6.3 capability gate (Phase 2-B): declared caps merge with inferred caps via
+ * a fail-safe union — a declaration can only escalate or resolve "unknown",
+ * never suppress a positively-inferred critical capability.
+ */
+export type McpDeclaredCapability =
+  | "file-read" | "file-write" | "exec" | "network-egress"
+  | "db-read" | "db-mutate" | "read-only"
+
 export type McpConnectionStatus = "disconnected" | "connecting" | "connected" | "error" | "dead"
 
 export interface Thread {
@@ -79,6 +91,9 @@ export interface McpStdioServerConfig {
   trust_level: McpTrustLevel
   startup_timeout_ms?: number
   call_timeout_ms?: number
+  /** §6.3 Phase 2-B: user-declared security capabilities. Optional — omit for
+   *  pure inference (Phase 1 behavior). */
+  security_capabilities?: McpDeclaredCapability[]
 }
 
 export interface McpHttpServerConfig {
@@ -89,6 +104,9 @@ export interface McpHttpServerConfig {
   trust_level: McpTrustLevel
   startup_timeout_ms?: number
   call_timeout_ms?: number
+  /** §6.3 Phase 2-B: user-declared security capabilities. Optional — omit for
+   *  pure inference (Phase 1 behavior). */
+  security_capabilities?: McpDeclaredCapability[]
 }
 
 export type McpServerConfig = McpStdioServerConfig | McpHttpServerConfig
