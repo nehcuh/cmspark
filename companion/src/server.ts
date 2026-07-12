@@ -10,7 +10,7 @@ import { handleMessage } from "./message-router"
 import { ThreadManager } from "./threads/thread-manager"
 import { SkillEngine } from "./skills/skill-engine"
 import { HistoryStore } from "./history/store"
-import { checkHighRiskExecution, highRiskExecutionDeniedError, isTrustedDomain, isAutoApprovedDomain, isCloudMetadataIp, isPrivateOrLoopbackIp, detectCriticalApis } from "./security"
+import { checkHighRiskExecution, highRiskExecutionDeniedError, isTrustedDomain, isAutoApprovedDomain, isCloudMetadataIp, isPrivateOrLoopbackIp, detectCriticalApis, classifyMcpCall, CRITICAL_MCP_CAPABILITIES } from "./security"
 import { SecurityConfirmationManager } from "./security-confirmation"
 import { securityPolicy, getTokenSecret } from "./security-policy"
 import { logger, type LogLevel } from "./logger"
@@ -1129,18 +1129,32 @@ async function executeMcpTool(
     trustLevel === "manual" ||
     (trustLevel === "first-use" && !cache.isApproved(cacheKey))
 
-  if (needsConfirm) {
+  // §6.3 MCP_CAPABILITY_GATE (follow-up C): capability classification that
+  // survives trusted/first-use-cache/god-mode — mirror of §6.2. Even a `trusted`
+  // server or a first-use-cached tool must confirm when the call touches a
+  // critical capability (file-write/exec/network-egress/db-mutate/unknown).
+  // god-mode / trust_level bypass the UI prompt, not this capability boundary
+  // (same invariant as §6.1.5/§6.2). Without this, a `trusted` filesystem
+  // server's `save_file` (name evades DESTRUCTIVE_MCP_TOOL_PATTERN) or a
+  // `fetch_data` tool called with an attacker URL would execute zero-confirmation.
+  const mcpCaps = classifyMcpCall(route.toolName, params)
+  const forceMcpConfirm = mcpCaps.some(c => CRITICAL_MCP_CAPABILITIES.has(c))
+
+  if (needsConfirm || forceMcpConfirm) {
     if (ws.readyState !== WebSocket.OPEN) {
       return {
         success: false,
         error: `Security Block: MCP tool ${route.serverName}/${route.toolName} cannot be confirmed (extension disconnected)`,
       }
     }
+    const securityConfig = getConfig().security
     logger.info("mcp.confirm.requested", {
       server: route.serverName,
       tool: route.toolName,
       trust_level: trustLevel,
       session: sessionId,
+      capabilities: mcpCaps,
+      force_confirm: forceMcpConfirm,
     })
     const decision = await securityConfirmations.request(
       (data) => {
@@ -1150,27 +1164,53 @@ async function executeMcpTool(
       },
       {
         toolName,
-        dangerousApis: [],
+        dangerousApis: mcpCaps,
         code: safeJsonStringify(params, 1200),
         riskLevel: "medium",
+        ...(forceMcpConfirm ? { criticalApis: mcpCaps, riskLevel: "high" as const, autoConfirmEligible: false } : {}),
       },
     )
     if (!decision.approved) {
       const reason = decision.reason === "approved" ? "unavailable" : decision.reason
+      if (forceMcpConfirm) {
+        logger.warn("security.mcp_critical_denied", {
+          server: route.serverName,
+          tool: route.toolName,
+          capabilities: mcpCaps,
+          god_mode_active: securityConfig.allow_all_schemes === true,
+          auto_approve_active: securityConfig.auto_approve_dangerous === true,
+          trust_level: trustLevel,
+          reason,
+        })
+      }
       return {
         success: false,
         error: `Security Block: MCP tool ${route.serverName}/${route.toolName} ${reason} by user`,
       }
     }
-    // Only cache approvals for first-use (manual re-prompts every time)
-    if (trustLevel === "first-use") {
+    // Only cache first-use approvals for NON-critical calls. Critical calls
+    // (forceMcpConfirm) confirm every time — args can change between calls, and
+    // a cached approval must not auto-apply to a later destructive invocation
+    // (mirror of DESTRUCTIVE_MCP_TOOL_PATTERN → manual at server.ts:1117).
+    if (trustLevel === "first-use" && !forceMcpConfirm) {
       cache.approve(cacheKey)
     }
     logger.info("mcp.confirm.approved", { server: route.serverName, tool: route.toolName })
+    if (forceMcpConfirm) {
+      logger.warn("security.mcp_critical_confirmed", {
+        server: route.serverName,
+        tool: route.toolName,
+        capabilities: mcpCaps,
+        god_mode_active: securityConfig.allow_all_schemes === true,
+        auto_approve_active: securityConfig.auto_approve_dangerous === true,
+        trust_level: trustLevel,
+      })
+    }
   } else if (trustLevel === "first-use") {
     // Audit item 8: count this invocation against the per-tool approval's call cap.
     // When the cap (default 10) is hit, the next isApproved() returns false and
     // the user is re-prompted. recordCall is a no-op for bulk-trust / manual paths.
+    // (forceMcpConfirm is false here — critical calls never reach this branch.)
     cache.recordCall(cacheKey)
   }
 
