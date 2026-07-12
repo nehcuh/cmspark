@@ -10,7 +10,7 @@ import { handleMessage } from "./message-router"
 import { ThreadManager } from "./threads/thread-manager"
 import { SkillEngine } from "./skills/skill-engine"
 import { HistoryStore } from "./history/store"
-import { checkHighRiskExecution, highRiskExecutionDeniedError, isTrustedDomain, isAutoApprovedDomain, isCloudMetadataIp, isPrivateOrLoopbackIp, detectCriticalApis, classifyMcpCall, CRITICAL_MCP_CAPABILITIES } from "./security"
+import { checkHighRiskExecution, highRiskExecutionDeniedError, isTrustedDomain, isAutoApprovedDomain, isCloudMetadataIp, isPrivateOrLoopbackIp, detectCriticalApis, classifyMcpCall, CRITICAL_MCP_CAPABILITIES, CRITICAL_MCP_META_TOOLS } from "./security"
 import { SecurityConfirmationManager } from "./security-confirmation"
 import { securityPolicy, getTokenSecret } from "./security-policy"
 import { logger, type LogLevel } from "./logger"
@@ -1294,17 +1294,91 @@ export function enhanceMcpError(
   return `MCP call to ${ctx} failed: ${rawErr}`
 }
 
-/** Execute mcp_list_resources / mcp_read_resource / mcp_get_prompt. */
+/** Execute mcp_list_resources / mcp_read_resource / mcp_get_prompt.
+ *
+ *  §6.3 Phase 2-A (follow-up C): this is a SEPARATE MCP dispatch path from
+ *  executeMcpTool — the meta-tools are not namespaced (`isMcpNamespaced` is
+ *  false), so Phase 1's capability gate never saw them. Historically this
+ *  function had NO gate at all, so `mcp_read_resource({server, uri})` read
+ *  arbitrary URIs (file:///etc/passwd, data:, http://…) on a trusted server
+ *  zero-confirmation. Now: mcp_read_resource / mcp_get_prompt force-confirm
+ *  (CRITICAL_MCP_META_TOOLS, never cached, god-mode-unaware — mirror of Phase 1);
+ *  mcp_list_resources is gated purely by trust_level (D8-consistent). */
 async function executeMcpMetaTool(
   toolName: string,
   params: any,
-  _sessionId: string,
-  _ws: WebSocket,
+  sessionId: string,
+  ws: WebSocket,
 ): Promise<{ success: boolean; data?: any; error?: string }> {
   const manager = getMcpManager()
   const args = params || {}
   const serverName = String(args.server || "").trim()
   if (!serverName) return { success: false, error: "MCP server name is required" }
+
+  const forceMetaConfirm = CRITICAL_MCP_META_TOOLS.has(toolName)
+  const configuredTrustLevel = manager.getTrustLevel(serverName) ?? "first-use"
+  const cache = getMcpConfirmCache()
+  const cacheKey = { sessionId, serverName, toolName }
+  const needsConfirm =
+    forceMetaConfirm ||
+    configuredTrustLevel === "manual" ||
+    (configuredTrustLevel === "first-use" && !cache.isApproved(cacheKey))
+
+  if (needsConfirm) {
+    if (ws.readyState !== WebSocket.OPEN) {
+      return {
+        success: false,
+        error: `Security Block: MCP meta-tool ${toolName} (${serverName}) cannot be confirmed (extension disconnected)`,
+      }
+    }
+    const securityConfig = getConfig().security
+    // Capability label for the audit/UI (the meta-tool's operation kind).
+    const metaCap = toolName === "mcp_read_resource" ? "resource-read" : "prompt-injection"
+    logger.info("mcp.meta.confirm.requested", {
+      tool: toolName, server: serverName, trust_level: configuredTrustLevel,
+      session: sessionId, force_confirm: forceMetaConfirm,
+    })
+    const decision = await securityConfirmations.request(
+      (data) => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(data)) },
+      {
+        toolName,
+        dangerousApis: forceMetaConfirm ? [metaCap] : [],
+        code: safeJsonStringify(params, 1200),
+        riskLevel: forceMetaConfirm ? "high" : "medium",
+        ...(forceMetaConfirm ? { criticalApis: [metaCap], autoConfirmEligible: false } : {}),
+      },
+    )
+    if (!decision.approved) {
+      const reason = decision.reason === "approved" ? "unavailable" : decision.reason
+      if (forceMetaConfirm) {
+        logger.warn("security.mcp_meta_critical_denied", {
+          tool: toolName, server: serverName,
+          god_mode_active: securityConfig.allow_all_schemes === true,
+          auto_approve_active: securityConfig.auto_approve_dangerous === true,
+          trust_level: configuredTrustLevel, reason,
+        })
+      }
+      return {
+        success: false,
+        error: `Security Block: MCP meta-tool ${toolName} (${serverName}) ${reason} by user`,
+      }
+    }
+    // Only cache first-use approvals for NON-critical meta-tools (mcp_list_resources).
+    // Critical meta-tools confirm every time (never cached).
+    if (configuredTrustLevel === "first-use" && !forceMetaConfirm) {
+      cache.approve(cacheKey)
+    }
+    if (forceMetaConfirm) {
+      logger.warn("security.mcp_meta_critical_confirmed", {
+        tool: toolName, server: serverName,
+        god_mode_active: securityConfig.allow_all_schemes === true,
+        auto_approve_active: securityConfig.auto_approve_dangerous === true,
+        trust_level: configuredTrustLevel,
+      })
+    }
+  } else if (configuredTrustLevel === "first-use") {
+    cache.recordCall(cacheKey)
+  }
 
   try {
     switch (toolName) {
