@@ -285,6 +285,36 @@ export const CRITICAL_MCP_CAPABILITIES: ReadonlySet<McpCapability> = new Set([
   "file-write", "exec", "network-egress", "db-mutate", "unknown",
 ])
 
+/**
+ * §6.3 Phase 2-A: MCP META-tools that force interactive confirmation regardless
+ * of trust_level / first-use cache / god-mode — the meta-tool analog of the
+ * Phase 1 namespaced-tool gate. These are NOT namespaced (`isMcpNamespaced` is
+ * false), so executeMcpTool's gate never sees them; executeMcpMetaTool is a
+ * separate dispatch path (server.ts) that historically had NO capability gate
+ * and NO confirmation at all.
+ *
+ *   - `mcp_read_resource`: reads an arbitrary resource URI (e.g.
+ *     `file:///etc/passwd`, `data:`, `http://…`) on a server. Unlike a
+ *     namespaced `read_*` tool, the URI is NOT constrained by the server's
+ *     `roots`, so this is a broader read surface. D8's "reads are non-critical,
+ *     mitigated by M2 + trust_level" does NOT hold here: executeMcpMetaTool
+ *     doesn't even consult trust_level. Force-confirm closes the bypass.
+ *   - `mcp_get_prompt`: returns prompt template text — a prompt-injection
+ *     surface that can shape subsequent instructions. Treated as critical.
+ *
+ * `mcp_list_resources` is intentionally NOT in this set: it only enumerates
+ * resource metadata (URIs), risk-equivalent to a namespaced `list_*` read tool,
+ * so it stays D8-non-critical and is gated purely by trust_level (manual /
+ * first-use-uncached → confirm; trusted / first-use-cached → skip).
+ *
+ * This set is deliberately SEPARATE from CRITICAL_MCP_CAPABILITIES: adding
+ * "file-read" to the capability set would re-criticalize all namespaced read
+ * tools and contradict the Phase 1 D8 decision. Meta-tools get their own gate.
+ */
+export const CRITICAL_MCP_META_TOOLS: ReadonlySet<string> = new Set([
+  "mcp_read_resource", "mcp_get_prompt",
+])
+
 // Name heuristics. Intentionally BROADER than DESTRUCTIVE_MCP_TOOL_PATTERN
 // (server.ts:137) — that regex only catches write|delete|exec|...|destroy and
 // misses save/put/create/mkdir/upload/etc., so a `trusted` server's `save_file`
