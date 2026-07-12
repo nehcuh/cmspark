@@ -26,6 +26,20 @@ export interface SecurityConfig {
    * primary human-in-the-loop safety gate. Defaults to false.
    */
   auto_approve_dangerous: boolean
+  /**
+   * GOD-MODE. When true, BOTH security layers are bypassed:
+   *   - Layer 1 (scheme hard-block): non-http(s) schemes (javascript:, data:,
+   *     about:, file:, chrome:) are permitted for navigate / create_tab /
+   *     set_tab_url.
+   *   - Layer 2 (confirmation gate): evaluate / osascript_eval / untrusted-
+   *     domain navigation skip the human-in-the-loop dialog.
+   * Strictly stronger than auto_approve_dangerous (which bypasses Layer 2 only).
+   * The field NAME describes the Layer 1 effect; each gate's code comment must
+   * make the Layer 2 effect explicit. Defaults to false. Enabling is intended
+   * for fully-trusted, user-supervised power workflows — a prompt-injected agent
+   * can otherwise drive the browser to any scheme with NO check.
+   */
+  allow_all_schemes: boolean
 }
 
 export interface VisionConfig {
@@ -104,6 +118,7 @@ const defaultConfig: CompanionConfig = {
     auto_confirm_same_thread: false,
     confirmation_timeout_seconds: 45,
     auto_approve_dangerous: false,
+    allow_all_schemes: false,
   },
   file_upload: {
     max_file_size: 10 * 1024 * 1024,
@@ -359,6 +374,13 @@ export function saveConfig(config: Partial<CompanionConfig>): CompanionConfig {
   // Warn when dangerous auto-approve is enabled — it bypasses the human-in-the-loop gate.
   if (config.security?.auto_approve_dangerous === true) {
     console.warn("[cmspark-agent] WARNING: security.auto_approve_dangerous is enabled — all dangerous tool calls will be auto-approved without user confirmation. Use only for trusted unattended workflows.")
+  }
+  // Warn when GOD-MODE is enabled — it bypasses BOTH the URL-scheme hard-block
+  // (Layer 1: any non-http(s) scheme, e.g. javascript:/data:/about:/file:/chrome:)
+  // AND the confirmation gate (Layer 2), so any prompt-injected instruction can
+  // drive the browser with no human check. Strictly stronger than auto_approve_dangerous.
+  if (config.security?.allow_all_schemes === true) {
+    console.warn("[cmspark-agent] WARNING: security.allow_all_schemes (GOD-MODE) is enabled — BOTH the URL-scheme hard-block (any non-http(s) scheme, e.g. javascript:/data:/about:/file:/chrome:) AND the dangerous-tool confirmation gate are bypassed. Any prompt-injected instruction can drive the browser with no human check. Use only for fully-trusted, supervised workflows.")
   }
   // ── H5 invariant: saveConfig is SYNCHRONOUS by design ──────────────────
   // The read-modify-write below (getConfig → deepMerge → atomicWriteJSON) has

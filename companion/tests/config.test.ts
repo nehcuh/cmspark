@@ -114,6 +114,7 @@ describe("saveConfig API key priority", { concurrency: 1 }, () => {
         auto_confirm_same_thread: false,
         confirmation_timeout_seconds: 45,
         auto_approve_dangerous: false,
+        allow_all_schemes: false,
       },
     })
   })
@@ -162,6 +163,7 @@ describe("saveConfig with DEEPSEEK_API_KEY env var", { concurrency: 1 }, () => {
         auto_confirm_same_thread: false,
         confirmation_timeout_seconds: 45,
         auto_approve_dangerous: false,
+        allow_all_schemes: false,
       },
     })
   })
@@ -229,6 +231,7 @@ describe("saveConfig vision API key", { concurrency: 1 }, () => {
         auto_confirm_same_thread: false,
         confirmation_timeout_seconds: 45,
         auto_approve_dangerous: false,
+        allow_all_schemes: false,
       },
     })
   })
