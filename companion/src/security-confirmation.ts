@@ -16,6 +16,14 @@ export interface SecurityConfirmationDetails {
   autoConfirmEligible?: boolean
   defenseLayer?: number
   /**
+   * CRITICAL dangerous APIs (never-auto-approved subset, §6.2). When non-empty,
+   * the confirmation was force-shown even under god-mode / auto-approve / domain
+   * whitelist. Surfaced to the client so the dialog can render a high-risk
+   * banner distinguishing "critical capability requires explicit OK" from a
+   * routine dangerous-API preview.
+   */
+  criticalApis?: string[]
+  /**
    * Domains the user might want to add to auto_approved_domains if they approve.
    * Surfaced in the confirmation dialog as an "add to whitelist" option. Empty
    * when companion can't determine the acting domain (e.g. evaluate with unknown
@@ -97,6 +105,7 @@ export class SecurityConfirmationManager {
         confirmation_id: confirmationId,
         tool_name: details.toolName,
         dangerous_apis: details.dangerousApis,
+        critical_apis: details.criticalApis,
         code_preview: codePreview(details.code),
         timeout_ms: this.timeoutMs,
         requested_at: new Date().toISOString(),

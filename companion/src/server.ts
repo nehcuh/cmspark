@@ -10,7 +10,7 @@ import { handleMessage } from "./message-router"
 import { ThreadManager } from "./threads/thread-manager"
 import { SkillEngine } from "./skills/skill-engine"
 import { HistoryStore } from "./history/store"
-import { checkHighRiskExecution, highRiskExecutionDeniedError, isTrustedDomain, isAutoApprovedDomain, isCloudMetadataIp, isPrivateOrLoopbackIp } from "./security"
+import { checkHighRiskExecution, highRiskExecutionDeniedError, isTrustedDomain, isAutoApprovedDomain, isCloudMetadataIp, isPrivateOrLoopbackIp, detectCriticalApis } from "./security"
 import { SecurityConfirmationManager } from "./security-confirmation"
 import { securityPolicy, getTokenSecret } from "./security-policy"
 import { logger, type LogLevel } from "./logger"
@@ -282,12 +282,15 @@ export function createToolExecutor(ws: WebSocket) {
       // Resolve acting domain so we can skip the confirmation dialog when the
       // user has whitelisted the domain (or enabled the global auto-approve).
       // evaluate({tabId}) → resolve via tabUrlCache. osascript_eval is EXCLUDED
-      // from domain-based auto-approval: it executes host AppleScript (arbitrary
-      // shell access), and its `url` parameter only locates a Chrome tab — not
-      // a meaningful trust anchor. Allowing it to be whitelisted by URL would
-      // let an attacker hide a destructive payload behind a whitelisted URL.
-      // osascript_eval still respects the global auto_approve_dangerous toggle
-      // (explicit user opt-in for unattended workflows).
+      // from domain-based auto-approval: it is a fixed AppleScript wrapper that
+      // only executes the supplied JS expression inside a Chrome tab via
+      // `execute t javascript` (see the osascript_eval template below + §6.2) —
+      // NOT arbitrary host AppleScript (no `do shell script`/keychain/Finder).
+      // Its `url` parameter only locates a Chrome tab, not a meaningful trust
+      // anchor, so whitelisting it by URL would let an attacker hide a
+      // destructive JS payload behind a whitelisted URL. osascript_eval still
+      // respects the global auto_approve_dangerous toggle (explicit user opt-in
+      // for unattended workflows).
       const relevantDomain = toolName === "evaluate"
         ? getDomainFromUrl(getCachedTabUrl(finalParams.tabId) || "")
         : ""
@@ -297,8 +300,17 @@ export function createToolExecutor(ws: WebSocket) {
       const skipConfirmation = securityConfig.auto_approve_dangerous === true
         || securityConfig.allow_all_schemes === true
         || (relevantDomain !== "" && isAutoApprovedDomain(relevantDomain))
+      // §6.2 CRITICAL_API_GATE: detectCriticalApis() is the never-auto-approved
+      // subset of detectDangerousApis() (exfil + sandbox-escape + obfuscation
+      // variants). Even when skipConfirmation is true (god-mode / global toggle
+      // / domain whitelist), a non-empty critical set forces interactive
+      // confirmation — god-mode bypasses the UI prompt, not this capability
+      // boundary (mirror of §6.1.5). Without this, a fetch/exfil payload would
+      // execute zero-confirmation under god-mode.
+      const criticalApis = detectCriticalApis(code)
+      const forceConfirm = criticalApis.length > 0
 
-      if (!skipConfirmation) {
+      if (!skipConfirmation || forceConfirm) {
         // Audit item 2: default-deny. ALL evaluate/osascript_eval calls require
         // interactive confirmation unless whitelisted above. The regex match
         // (safety.dangerousApis) becomes a risk-preview escalation hint shown to
@@ -318,6 +330,8 @@ export function createToolExecutor(ws: WebSocket) {
           tool_call_id: toolCallId,
           tool_name: toolName,
           dangerous_apis: safety.dangerousApis,
+          critical_apis: criticalApis,
+          force_confirm: forceConfirm,
         })
         const decision = await securityConfirmations.request(
           (data) => {
@@ -330,6 +344,8 @@ export function createToolExecutor(ws: WebSocket) {
             dangerousApis: safety.dangerousApis,
             code,
             relevantDomains: relevantDomain ? [relevantDomain] : [],
+            criticalApis,
+            ...(forceConfirm ? { riskLevel: "high" as const, autoConfirmEligible: false } : {}),
           },
         )
         if (!decision.approved) {
@@ -345,10 +361,31 @@ export function createToolExecutor(ws: WebSocket) {
             reason,
             dangerous_apis: safety.dangerousApis,
           })
+          if (forceConfirm) {
+            logger.warn("security.critical_capability_denied", {
+              tool_call_id: toolCallId,
+              tool_name: toolName,
+              critical_apis: criticalApis,
+              god_mode_active: securityConfig.allow_all_schemes === true,
+              auto_approve_active: securityConfig.auto_approve_dangerous === true,
+              relevant_domain: relevantDomain,
+              reason,
+            })
+          }
           logToolFinish(toolCallId, toolName, startedAt, result)
           return result
         }
         logger.info("security.confirmation.approved", { tool_call_id: toolCallId, tool_name: toolName })
+        if (forceConfirm) {
+          logger.info("security.critical_capability_confirmed", {
+            tool_call_id: toolCallId,
+            tool_name: toolName,
+            critical_apis: criticalApis,
+            god_mode_active: securityConfig.allow_all_schemes === true,
+            auto_approve_active: securityConfig.auto_approve_dangerous === true,
+            relevant_domain: relevantDomain,
+          })
+        }
       } else {
         logger.info("security.auto_approved", {
           tool_call_id: toolCallId,
@@ -375,6 +412,23 @@ export function createToolExecutor(ws: WebSocket) {
         const result = { success: false, error: "Invalid or expired security token for evaluate" }
         logToolFinish(toolCallId, toolName, startedAt, result)
         return result
+      }
+      // §6.2 token-replay audit: this branch is reached when a pre-existing
+      // security_token skipped the confirmation block above (agent replayed a
+      // prior approved token). The token binds to evalCode and is one-time, so a
+      // stale replay is already rejected above — but if the bound code carries a
+      // critical API, surface it as an audit event so critical-capability use on
+      // the no-confirm path stays traceable under god-mode / auto-approve.
+      const replayCritical = detectCriticalApis(evalCode)
+      if (replayCritical.length > 0) {
+        const replayCfg = getConfig().security
+        logger.info("security.critical_capability_token_replay", {
+          tool_call_id: toolCallId,
+          tool_name: toolName,
+          critical_apis: replayCritical,
+          god_mode_active: replayCfg.allow_all_schemes === true,
+          auto_approve_active: replayCfg.auto_approve_dangerous === true,
+        })
       }
     }
 
@@ -983,7 +1037,13 @@ async function executeCompanionTool(toolName: string, params: any): Promise<any>
       if (os.platform() !== "darwin") {
         return { success: false, error: "osascript_eval is macOS-only. Use get_page_text with tabId instead (cross-platform)." }
       }
-      // Use execFile with -e arguments and argv passing to avoid string injection (P0)
+      // Use execFile with -e arguments and argv passing to avoid string injection (P0).
+      // CAPABILITY INVARIANT (§6.2): this template ONLY runs `execute t javascript
+      // jsExpr` — it executes the supplied JS inside a Chrome tab, NOT arbitrary
+      // host AppleScript. NEVER introduce `do shell script` / `tell application
+      // "Finder"` / keychain access here: doing so would widen the capability
+      // boundary that §6.2's CRITICAL_API_GATE and the L2 confirmation gate assume.
+      // `pageUrl` and `jsExpr` are passed as argv (after `--`), never interpolated.
       const { promisify } = await import("util")
       const execFileAsync = promisify(execFile)
       try {

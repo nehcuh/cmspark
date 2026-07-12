@@ -152,50 +152,61 @@ export const API_WEIGHTS: Record<string, number> = {
  * Detect dangerous APIs in JavaScript code using regex with word boundaries.
  * Avoids false positives like "prefetch" matching "fetch" or "window.openModal" matching "window.open".
  */
-export const DANGEROUS_API_PATTERNS: Array<{ name: string; pattern: RegExp }> = [
+export const DANGEROUS_API_PATTERNS: Array<{ name: string; pattern: RegExp; critical?: boolean }> = [
   // Direct API calls (1-16)
-  { name: "fetch", pattern: /\bfetch\s*\(/ },
-  { name: "XMLHttpRequest", pattern: /\bXMLHttpRequest\b/ },
-  { name: "localStorage", pattern: /\blocalStorage\b/ },
-  { name: "sessionStorage", pattern: /\bsessionStorage\b/ },
-  { name: "document.cookie", pattern: /\bdocument\.cookie\b/ },
+  { name: "fetch", pattern: /\bfetch\s*\(/, critical: true },
+  { name: "XMLHttpRequest", pattern: /\bXMLHttpRequest\b/, critical: true },
+  { name: "localStorage", pattern: /\blocalStorage\b/, critical: true },
+  { name: "sessionStorage", pattern: /\bsessionStorage\b/, critical: true },
+  { name: "document.cookie", pattern: /\bdocument\.cookie\b/, critical: true },
   { name: "window.open", pattern: /\bwindow\.open\s*\(/ },
-  { name: "navigator.sendBeacon", pattern: /\bnavigator\.sendBeacon\s*\(/ },
-  { name: "WebSocket", pattern: /\bnew\s+WebSocket\s*\(/ },
+  { name: "navigator.sendBeacon", pattern: /\bnavigator\.sendBeacon\s*\(/, critical: true },
+  { name: "WebSocket", pattern: /\bnew\s+WebSocket\s*\(/, critical: true },
   { name: "EventSource", pattern: /\bnew\s+EventSource\s*\(/ },
   { name: "indexedDB", pattern: /\bindexedDB\b/ },
-  { name: "eval", pattern: /\beval\s*\(/ },
-  { name: "Function", pattern: /\bnew\s+Function\s*\(/ },
-  { name: "setTimeout(string)", pattern: /setTimeout\s*\(\s*["']/ },
-  { name: "setInterval(string)", pattern: /setInterval\s*\(\s*["']/ },
-  { name: "Reflect.apply", pattern: /\bReflect\.apply\s*\(/ },
-  { name: "Reflect.construct", pattern: /\bReflect\.construct\s*\(/ },
+  { name: "eval", pattern: /\beval\s*\(/, critical: true },
+  { name: "Function", pattern: /\bnew\s+Function\s*\(/, critical: true },
+  { name: "setTimeout(string)", pattern: /setTimeout\s*\(\s*["']/, critical: true },
+  { name: "setInterval(string)", pattern: /setInterval\s*\(\s*["']/, critical: true },
+  { name: "Reflect.apply", pattern: /\bReflect\.apply\s*\(/, critical: true },
+  { name: "Reflect.construct", pattern: /\bReflect\.construct\s*\(/, critical: true },
   // Obfuscation / bypass patterns (17-32)
-  { name: "bracket-fetch", pattern: /\[\s*["']fetch["']\s*\]\s*\(/ },
+  { name: "bracket-fetch", pattern: /\[\s*["']fetch["']\s*\]\s*\(/, critical: true },
   { name: "bracket-open", pattern: /\[\s*["']open["']\s*\]\s*\(/ },
-  { name: "bracket-localStorage", pattern: /\[\s*["']localStorage["']\s*\]/ },
-  { name: "bracket-sessionStorage", pattern: /\[\s*["']sessionStorage["']\s*\]/ },
-  { name: "bracket-cookie", pattern: /\[\s*["']cookie["']\s*\]/ },
-  { name: "bracket-sendBeacon", pattern: /\[\s*["']sendBeacon["']\s*\]\s*\(/ },
+  { name: "bracket-localStorage", pattern: /\[\s*["']localStorage["']\s*\]/, critical: true },
+  { name: "bracket-sessionStorage", pattern: /\[\s*["']sessionStorage["']\s*\]/, critical: true },
+  { name: "bracket-cookie", pattern: /\[\s*["']cookie["']\s*\]/, critical: true },
+  { name: "bracket-sendBeacon", pattern: /\[\s*["']sendBeacon["']\s*\]\s*\(/, critical: true },
   { name: "bracket-indexedDB", pattern: /\[\s*["']indexedDB["']\s*\]/ },
-  { name: "bracket-XMLHttpRequest", pattern: /\[\s*["']XMLHttpRequest["']\s*\]/ },
-  { name: "fetch.call", pattern: /\.call\s*\(.*fetch/ },
-  { name: "fetch.apply", pattern: /\.apply\s*\(.*fetch/ },
-  { name: "Proxy", pattern: /\bnew\s+Proxy\s*\(/ },
-  { name: "constructor", pattern: /\["constructor"\]\s*\(/ },
-  { name: "__proto__", pattern: /\b__proto__\b/ },
-  { name: "prototype-pollution", pattern: /prototype\s*\[\s*["'][^"']+["']\s*\]\s*=/ },
+  { name: "bracket-XMLHttpRequest", pattern: /\[\s*["']XMLHttpRequest["']\s*\]/, critical: true },
+  // bracket-eval / bracket-Function close the window["eval"]() / window["Function"]()
+  // dynamic-dispatch bypass of the eval/Function patterns (§6.2.2 obfuscation critical).
+  { name: "bracket-eval", pattern: /\[\s*["']eval["']\s*\]\s*\(/, critical: true },
+  { name: "bracket-Function", pattern: /\[\s*["']Function["']\s*\]\s*\(/, critical: true },
+  // fetch.call / fetch.apply: catch the indirect-invocation bypass
+  // `fetch.call(null, url)` / `fetch.apply(null, [url])` (fetch as the receiver
+  // of Function.prototype.call/apply). The previous `/\.call\s*\(.*fetch/` form
+  // matched the WRONG order (`.call(...,fetch)` — fetch as an arg) and was both
+  // missing the real bypass and FP-prone (`console.log.call(console,'fetching')`).
+  // Fixed in M3' (§6.2) now that these are critical — a critical pattern must
+  // actually detect its target vector.
+  { name: "fetch.call", pattern: /\bfetch\s*\.\s*call\s*\(/, critical: true },
+  { name: "fetch.apply", pattern: /\bfetch\s*\.\s*apply\s*\(/, critical: true },
+  { name: "Proxy", pattern: /\bnew\s+Proxy\s*\(/, critical: true },
+  { name: "constructor", pattern: /\[\s*["']constructor["']\s*\]\s*\(/, critical: true },
+  { name: "__proto__", pattern: /\b__proto__\b/, critical: true },
+  { name: "prototype-pollution", pattern: /prototype\s*\[\s*["'][^"']+["']\s*\]\s*=/, critical: true },
   { name: "Object.assign", pattern: /\bObject\.assign\s*\(/ },
   { name: "defineProperty", pattern: /\bObject\.defineProperty\s*\(/ },
   // Network / data exfiltration (33-40)
-  { name: "navigator.clipboard", pattern: /\bnavigator\.clipboard\b/ },
+  { name: "navigator.clipboard", pattern: /\bnavigator\.clipboard\b/, critical: true },
   { name: "postMessage", pattern: /\bpostMessage\s*\(/ },
   { name: "openDatabase", pattern: /\bopenDatabase\s*\(/ },
   { name: "requestFileSystem", pattern: /\brequestFileSystem\s*\(/ },
   { name: "webkitRequestFileSystem", pattern: /\bwebkitRequestFileSystem\s*\(/ },
-  { name: "RTCPeerConnection", pattern: /\bnew\s+RTCPeerConnection\s*\(/ },
-  { name: "Worker", pattern: /\bnew\s+Worker\s*\(/ },
-  { name: "SharedWorker", pattern: /\bnew\s+SharedWorker\s*\(/ },
+  { name: "RTCPeerConnection", pattern: /\bnew\s+RTCPeerConnection\s*\(/, critical: true },
+  { name: "Worker", pattern: /\bnew\s+Worker\s*\(/, critical: true },
+  { name: "SharedWorker", pattern: /\bnew\s+SharedWorker\s*\(/, critical: true },
   // DOM manipulation / injection (41-48)
   { name: "innerHTML", pattern: /\.innerHTML\s*=/ },
   { name: "outerHTML", pattern: /\.outerHTML\s*=/ },
@@ -212,17 +223,32 @@ export const DANGEROUS_API_PATTERNS: Array<{ name: string; pattern: RegExp }> = 
   { name: "location-assign", pattern: /\blocation\.(assign|replace)\s*\(/ },
   { name: "location-href-set", pattern: /location\.href\s*=/ },
   { name: "location-bare", pattern: /\blocation\s*=/ },
-  { name: "dynamic-import", pattern: /\bimport\s*\(/ },
+  { name: "dynamic-import", pattern: /\bimport\s*\(/, critical: true },
   { name: "globalThis-index", pattern: /(?:globalThis|window|self|top)\s*\[\s*["']/ },
-  { name: "comma-eval", pattern: /\(\s*0\s*,\s*(?:eval|Function)/ },
+  { name: "comma-eval", pattern: /\(\s*0\s*,\s*(?:eval|Function)/, critical: true },
   { name: "reflect-get", pattern: /\bReflect\.get\s*\(/ },
-  { name: "image-src-exfil", pattern: /new\s+Image\s*\(\s*\)\s*[\s\S]{0,40}\.src\s*=/ },
-  { name: "atob-function", pattern: /\batob\s*\([\s\S]{0,200}Function/ },
+  { name: "image-src-exfil", pattern: /new\s+Image\s*\(\s*\)\s*[\s\S]{0,40}\.src\s*=/, critical: true },
+  { name: "atob-function", pattern: /\batob\s*\([\s\S]{0,200}Function/, critical: true },
 ]
 
 export function detectDangerousApis(code: string): string[] {
   return DANGEROUS_API_PATTERNS
     .filter(({ pattern }) => pattern.test(code))
+    .map(({ name }) => name)
+}
+
+/**
+ * Detect CRITICAL dangerous APIs — the never-auto-approved subset (exfil +
+ * sandbox-escape + their obfuscation variants). Per §6.2 (CRITICAL_API_GATE),
+ * even when god-mode (`allow_all_schemes`) / `auto_approve_dangerous` /
+ * domain-whitelist would otherwise skip the confirmation gate, a non-empty
+ * critical set forces interactive confirmation. god-mode bypasses the UI
+ * prompt, not this capability boundary (mirror of §6.1.5). The critical set is
+ * a subset of detectDangerousApis() (same table, `critical: true` filter).
+ */
+export function detectCriticalApis(code: string): string[] {
+  return DANGEROUS_API_PATTERNS
+    .filter(({ critical, pattern }) => critical === true && pattern.test(code))
     .map(({ name }) => name)
 }
 
