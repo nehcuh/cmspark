@@ -358,7 +358,18 @@ const MCP_NAME_READ = new RegExp(`${_L}(read|cat|head|tail|grep|find|glob|list|s
 // it, a prefix-based `(?!localhost)` would treat `https://localhost.attacker.com`
 // and `https://127.0.0.1.attacker.com` as loopback (lookahead sees the loopback
 // prefix and bails) — an attacker-controlled domain exfiling zero-confirmation.
-const MCP_ARG_EXTERNAL_URL = /https?:\/\/(?!(?:127\.0\.0\.1(?![.\d])|localhost(?![a-z0-9.-])|\[::1\](?![a-z0-9.-])))/i
+//
+// §6.3 Phase 2-E: expand URL scheme set to any network-egress scheme
+// (ftp/ftps/ws/wss) and add a host:port signal for scheme-less targets.
+// file:// / data:// / mailto: are intentionally excluded — they do not open a
+// remote socket. Private RFC1918 addresses are intentionally NOT whitelisted:
+// SSRF pivoting into 192.168.x.x / 10.x.x.x is exactly what we want to catch.
+const MCP_ARG_EXTERNAL_URL = /(?:https?|ftps?|wss?):\/\/(?!(?:127\.0\.0\.1(?![.\d])|localhost(?![a-z0-9.-])|\[::1\](?![a-z0-9.-])))/i
+// host:port is a high-precision socket signal — much lower false-positive rate
+// than bare hostnames (which appear in docs/error messages). Loopback is removed
+// by a second pass; private ranges remain egress (SSRF pivot).
+const MCP_ARG_HOST_PORT = /(?:(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}|\d{1,3}(?:\.\d{1,3}){3})(?::\d{2,5})\b/i
+const MCP_ARG_LOOPBACK_HOST_PORT = /(?:127\.0\.0\.1|localhost|\[::1\]):\d{2,5}\b/i
 const MCP_ARG_SHELL = /(?:^|[^a-z0-9_])(?:bash|\/bin\/sh|zsh|cmd\.exe|powershell)\b|\brm\s+-rf\b|\bsudo\b|\bsh\s+-c\b/i
 const MCP_ARG_WRITE_PAIR = /\b(?:content|body|payload|data|text|bytes)\b/i
 
@@ -371,7 +382,13 @@ export function classifyMcpCall(toolName: string, params: unknown): McpCapabilit
   const caps = new Set<McpCapability>()
   const name = String(toolName || "")
   let args = ""
-  try { args = JSON.stringify(params ?? {}).slice(0, 4000) } catch { args = "" }
+  try {
+    const full = JSON.stringify(params ?? {})
+    // §6.3 Phase 2-E: scan both head and tail of very large args so an attacker
+    // cannot hide a URL/shell marker beyond the 4000-char prefix. A space
+    // separator prevents accidental cross-boundary matches.
+    args = full.length > 6000 ? full.slice(0, 4000) + " " + full.slice(-2000) : full
+  } catch { args = "" }
 
   if (MCP_NAME_FILE_WRITE.test(name)) caps.add("file-write")
   if (MCP_NAME_DB_MUTATE.test(name)) caps.add("db-mutate")
@@ -381,6 +398,12 @@ export function classifyMcpCall(toolName: string, params: unknown): McpCapabilit
 
   // Arg-based (independent of name — catches name-evasion).
   if (MCP_ARG_EXTERNAL_URL.test(args)) caps.add("network-egress")
+  // host:port signal: remove loopback occurrences first, then re-test so a mixed
+  // arg (loopback + attacker host) is still flagged.
+  if (MCP_ARG_HOST_PORT.test(args)) {
+    const withoutLoopback = args.replace(MCP_ARG_LOOPBACK_HOST_PORT, "")
+    if (MCP_ARG_HOST_PORT.test(withoutLoopback)) caps.add("network-egress")
+  }
   if (MCP_ARG_SHELL.test(args)) caps.add("exec")
   // file-write: a destination path arg paired with a content arg.
   if (MCP_ARG_WRITE_PAIR.test(args) && /\b(?:path|file|filename|dest|destination|output|to)\b/i.test(args)) {

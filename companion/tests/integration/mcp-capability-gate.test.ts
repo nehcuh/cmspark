@@ -271,6 +271,48 @@ test("classify: loopback-PREFIXED attacker domains ARE network-egress (host-boun
   }
 })
 
+test("classify: NIT-1 non-http(s) network schemes trigger network-egress", () => {
+  for (const url of ["ftp://evil.com/x", "ftps://evil.com/x", "ws://evil.com/ws", "wss://evil.com/ws"]) {
+    const caps = classifyMcpCall("get_info", { url })
+    assert.ok(caps.includes("network-egress"), `${url} must be egress`)
+    assert.equal(caps.some(c => CRITICAL_MCP_CAPABILITIES.has(c)), true, `${url} must be critical`)
+  }
+  // Non-egress schemes must NOT be flagged.
+  for (const url of ["file:///etc/passwd", "data:text/plain,hello", "mailto:evil@example.com"]) {
+    const caps = classifyMcpCall("get_info", { url })
+    assert.equal(caps.includes("network-egress"), false, `${url} is not network egress`)
+  }
+})
+
+test("classify: NIT-2 bare host:port triggers network-egress (scheme-less target)", () => {
+  // Domain + port and public IPv4 + port.
+  for (const target of ["evil.attacker.com:443/exfil", "1.2.3.4:8080"]) {
+    const caps = classifyMcpCall("get_info", { target })
+    assert.ok(caps.includes("network-egress"), `${target} must be egress`)
+  }
+  // Loopback host:port is excluded.
+  assert.equal(classifyMcpCall("get_info", { ip: "127.0.0.1:8080" }).includes("network-egress"), false)
+  // Private ranges are intentionally treated as egress (SSRF pivot).
+  assert.ok(classifyMcpCall("get_info", { ip: "192.168.1.5:80" }).includes("network-egress"), "RFC1918 is egress")
+  assert.ok(classifyMcpCall("get_info", { ip: "10.0.0.1:80" }).includes("network-egress"), "10.x is egress")
+  // Bare hostname without port is too noisy — not an egress signal.
+  assert.equal(classifyMcpCall("get_info", { desc: "see docs.example.com for help" }).includes("network-egress"), false)
+})
+
+test("classify: NIT-3 very large args scan head + tail, not just prefix", () => {
+  const padding = "a".repeat(5000)
+  const caps = classifyMcpCall("get_info", { padding, url: "https://evil.com/x" })
+  assert.ok(caps.includes("network-egress"), "URL hidden near the tail is still detected")
+
+  // Accepted gap: a marker in the middle (between head and tail windows) may be
+  // missed. This is a deliberate trade-off to bound regex cost on huge blobs.
+  const prefix = "a".repeat(4500)
+  const middle = "https://middle-gap.example.com/x"
+  const suffix = "b".repeat(2500)
+  const capsGap = classifyMcpCall("get_info", { prefix, middle, suffix })
+  assert.equal(capsGap.includes("network-egress"), false, "middle-gap marker is accepted miss")
+})
+
 test("classify: unclassifiable → unknown (critical, force confirm)", () => {
   const caps = classifyMcpCall("zzz", {})
   assert.deepEqual(caps, ["unknown"])
@@ -399,6 +441,19 @@ test("name-evasion: get_info + external URL arg on trusted server → forceMcpCo
   const result = await rp
   assert.equal(result.success, false, "denied critical call must fail")
   assert.match(result.error || "", /denied|unavailable|by user/)
+})
+
+test("NIT-3 integration: get_info + tail-hidden URL arg on trusted server → forceMcpConfirm", async () => {
+  const ns = await injectServer("net", "trusted", [{ name: "get_info", inputSchema: { type: "object", properties: {} } }])
+  const executeTool = createToolExecutor(serverSideWs)
+  const padding = "a".repeat(5000)
+  const confp = expectClientMessage("security.confirmation.request")
+  const rp = executeTool("tc8-tail", ns("get_info"), { padding, url: "https://attacker.example.com/exfil" })
+  const conf = await confp
+  assert.ok(conf.critical_apis?.includes("network-egress"), `tail egress detected; got ${JSON.stringify(conf.critical_apis)}`)
+  clientSideWs.send(JSON.stringify({ type: "security.confirmation.response", confirmation_id: conf.confirmation_id, approved: false }))
+  const result = await rp
+  assert.equal(result.success, false, "denied critical call must fail")
 })
 
 test("unclassifiable tool (zzz) on trusted server → forceMcpConfirm (unknown=critical)", async () => {
