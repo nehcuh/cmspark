@@ -6,6 +6,7 @@ import { useEffect, useState } from "react"
 import { useAgentStore } from "../store/agentStore"
 import { Modal } from "./ui/Modal"
 import type {
+  McpDeclaredCapability,
   McpHttpServerConfig,
   McpServerConfig,
   McpStdioServerConfig,
@@ -24,6 +25,28 @@ const TRUST_OPTIONS: { value: McpTrustLevel; label: string; desc: string }[] = [
   { value: "trusted", label: "信任", desc: "完全不确认（仅用于可信 server，如本地 filesystem）" },
 ]
 
+/**
+ * §6.3 Phase 2-B: user-declarable security capabilities. The gate merges these
+ * with classifyMcpCall inference via a fail-safe union (companion Option C):
+ *   - Declaring a CRITICAL cap (file-write/db-mutate/exec/network-egress) ESCALATES
+ *     — forces confirmation even when the tool name looks benign (catches a
+ *     dangerous tool whose name evades the heuristic).
+ *   - Declaring a non-critical cap (read-only/file-read/db-read) RESOLVES the
+ *     "unknown" sentinel — stops the false-positive nag on a vetted tool whose
+ *     name the heuristic can't classify.
+ *   - Leaving all unchecked = pure automatic inference (Phase 1 default).
+ * A declaration can NEVER suppress a positively-inferred critical capability.
+ */
+const CAPABILITY_OPTIONS: { value: McpDeclaredCapability; label: string; desc: string; critical: boolean }[] = [
+  { value: "read-only", label: "只读", desc: "仅读取无副作用；勾选后未识别工具不再强制确认（消除误报）", critical: false },
+  { value: "file-read", label: "读取文件", desc: "读取本地文件（同样让未识别工具不再强制确认）", critical: false },
+  { value: "file-write", label: "写入文件", desc: "创建/修改/删除文件 → 即便工具名无害也强制确认", critical: true },
+  { value: "db-read", label: "读取数据库", desc: "查询数据库（同样让未识别工具不再强制确认）", critical: false },
+  { value: "db-mutate", label: "写入数据库", desc: "插入/更新/删除数据 → 即便工具名无害也强制确认", critical: true },
+  { value: "exec", label: "执行命令", desc: "运行 shell/子进程 → 即便工具名无害也强制确认", critical: true },
+  { value: "network-egress", label: "网络外联", desc: "向外部 URL 发起请求 → 即便工具名无害也强制确认", critical: true },
+]
+
 export function McpServerForm() {
   const { state, dispatch } = useAgentStore()
   const [name, setName] = useState("")
@@ -38,6 +61,7 @@ export function McpServerForm() {
   const [enabled, setEnabled] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [confirmTrusted, setConfirmTrusted] = useState(false)
+  const [securityCapabilities, setSecurityCapabilities] = useState<McpDeclaredCapability[]>([])
 
   // Pre-fill when editing
   useEffect(() => {
@@ -52,6 +76,7 @@ export function McpServerForm() {
       setTransport(existing.transport)
       setTrustLevel(existing.trust_level)
       setEnabled(existing.enabled)
+      setSecurityCapabilities(Array.isArray(serverCfg?.security_capabilities) ? serverCfg.security_capabilities : [])
       if (serverCfg?.transport === "stdio") {
         setCommand(serverCfg.command || "")
         setArgs(Array.isArray(serverCfg.args) ? serverCfg.args.join(" ") : "")
@@ -88,6 +113,7 @@ export function McpServerForm() {
       setHeaderEntries([{ key: "", value: "" }])
       setTrustLevel("first-use")
       setEnabled(true)
+      setSecurityCapabilities([])
     }
   }, [state.mcpServerFormOpen, state.mcpServerFormEditing, state.mcpServers, state.config])
 
@@ -110,6 +136,11 @@ export function McpServerForm() {
     const next = [...headerEntries]
     next[i] = { ...next[i], [field]: v }
     setHeaderEntries(next)
+  }
+  const toggleCapability = (cap: McpDeclaredCapability) => {
+    setSecurityCapabilities((prev) =>
+      prev.includes(cap) ? prev.filter((c) => c !== cap) : [...prev, cap],
+    )
   }
 
   const buildConfig = (): McpServerConfig | { error: string } => {
@@ -140,6 +171,7 @@ export function McpServerForm() {
       if (argsArr && argsArr.length > 0) cfg.args = argsArr
       if (Object.keys(envObj).length > 0) cfg.env = envObj
       if (cwd.trim()) cfg.cwd = cwd.trim()
+      if (securityCapabilities.length > 0) cfg.security_capabilities = securityCapabilities
       return cfg
     } else {
       if (!url.trim()) return { error: "url 不能为空（http server 必填）" }
@@ -155,6 +187,7 @@ export function McpServerForm() {
         trust_level: trustLevel,
       }
       if (Object.keys(headersObj).length > 0) cfg.headers = headersObj
+      if (securityCapabilities.length > 0) cfg.security_capabilities = securityCapabilities
       return cfg
     }
   }
@@ -369,6 +402,29 @@ export function McpServerForm() {
             )}
           </div>
 
+          {/* Security capabilities (§6.3 Phase 2-B) */}
+          <div style={styles.field}>
+            <label style={styles.label}>安全能力声明（可选）</label>
+            <div style={styles.hint}>(留空 = 纯自动推断)</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              {CAPABILITY_OPTIONS.map((opt) => (
+                <label key={opt.value} style={styles.radioLabel}>
+                  <input
+                    type="checkbox"
+                    checked={securityCapabilities.includes(opt.value)}
+                    onChange={() => toggleCapability(opt.value)}
+                  />
+                  <span>
+                    <b>{opt.label}</b>
+                    {opt.critical && <span style={styles.criticalTag}>高敏感</span>}
+                    <br />
+                    <span style={styles.hint}>{opt.desc}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+          </div>
+
           {/* Enabled */}
           <div style={styles.field}>
             <label style={styles.radioLabel}>
@@ -465,6 +521,17 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 10,
     color: "#888",
     lineHeight: 1.4,
+  },
+  criticalTag: {
+    display: "inline-block",
+    marginLeft: 6,
+    padding: "0 4px",
+    fontSize: 9,
+    color: "#dc2626",
+    background: "#fef2f2",
+    border: "1px solid #fecaca",
+    borderRadius: 3,
+    verticalAlign: "middle",
   },
   radioRow: {
     display: "flex",

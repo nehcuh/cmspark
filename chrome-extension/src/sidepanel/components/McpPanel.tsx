@@ -202,6 +202,14 @@ function ServerCard(props: ServerCardProps) {
             <span style={{ fontWeight: 500 }}>{server.name}</span>
             <span style={styles.transportBadge}>{transportLabel}</span>
             <span style={styles.trustBadge}>信任：{TRUST_LABELS[server.trust_level]}</span>
+            {Array.isArray(server.config?.security_capabilities) && server.config.security_capabilities.length > 0 && (
+              <span
+                style={styles.capBadge}
+                title={`声明的安全能力（§6.3 能力门）：${server.config.security_capabilities.join(", ")}`}
+              >
+                🔒 {server.config.security_capabilities.join("/")}
+              </span>
+            )}
           </div>
           <div style={styles.cardMeta}>
             {server.tools.length > 0 && <span>🛠 {server.tools.length} 工具</span>}
@@ -359,6 +367,13 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 3,
     background: "#fef3c7",
     color: "#92400e",
+  },
+  capBadge: {
+    fontSize: 10,
+    padding: "1px 4px",
+    borderRadius: 3,
+    background: "#f3e8ff",
+    color: "#6b21a8",
   },
   cardMeta: {
     display: "flex",
