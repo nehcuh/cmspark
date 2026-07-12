@@ -1,6 +1,6 @@
 // Settings slideout panel for LLM configuration
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useAgentStore } from "../store/agentStore"
 import { Modal } from "./ui/Modal"
 import type { PrivilegeMode } from "../types"
@@ -24,6 +24,20 @@ export function SettingsSlideout() {
   const [showAuditLog, setShowAuditLog] = useState(false)
   const [trustedDomainsConfirm, setTrustedDomainsConfirm] = useState(false)
   const [autoApprovedConfirm, setAutoApprovedConfirm] = useState(false)
+  const [wsSecretInput, setWsSecretInput] = useState("")
+  const [wsPaired, setWsPaired] = useState<boolean | null>(null)
+  const [wsPairingMsg, setWsPairingMsg] = useState<{ ok: boolean; text: string } | null>(null)
+
+  // P0-2B: check on open whether a WS pairing secret is already stored, so the
+  // status badge reflects the real pairing state (not just connection state).
+  useEffect(() => {
+    if (!state.settingsOpen) return
+    // Reset stale pairing feedback + re-check stored-secret presence each open.
+    setWsPairingMsg(null)
+    chrome.runtime.sendMessage({ type: "ws.getPairingStatus" }, (resp: { paired?: boolean } | undefined) => {
+      setWsPaired(!!resp?.paired)
+    })
+  }, [state.settingsOpen])
 
   if (!state.settingsOpen) return null
 
@@ -32,6 +46,27 @@ export function SettingsSlideout() {
   const handleSave = () => {
     chrome.runtime.sendMessage({ type: "config.set", config }, () => {
       dispatch({ type: "TOGGLE_SETTINGS" })
+    })
+  }
+
+  // P0-2B: store the WS shared secret (out-of-band, pasted from
+  // `cmspark-agent settings --ws-secret` first-run output) and reconnect so the
+  // background WSClient authenticates against the companion's challenge.
+  const handleWsPair = () => {
+    const secret = wsSecretInput.trim()
+    if (!secret) {
+      setWsPairingMsg({ ok: false, text: "请粘贴 Companion 输出的配对密钥" })
+      return
+    }
+    setWsPairingMsg({ ok: true, text: "配对中，正在重连…" })
+    chrome.runtime.sendMessage({ type: "ws.setSecret", secret }, (resp: { ok?: boolean; error?: string }) => {
+      if (resp?.ok) {
+        setWsPaired(true)
+        setWsSecretInput("")
+        setWsPairingMsg({ ok: true, text: "已配对，正在鉴权重连…" })
+      } else {
+        setWsPairingMsg({ ok: false, text: resp?.error || "配对失败" })
+      }
     })
   }
 
@@ -97,6 +132,44 @@ export function SettingsSlideout() {
         </div>
 
         <div style={styles.body}>
+          {/* --- Connection (P0-2B WS pairing) --- */}
+          <div style={styles.sectionTitle}>连接</div>
+          <div style={styles.field}>
+            <label style={styles.label}>
+              WS 配对密钥{" "}
+              <span style={{
+                fontSize: 10,
+                fontWeight: 400,
+                padding: "1px 6px",
+                borderRadius: 8,
+                color: wsPaired ? "#2E7D32" : "#B26B00",
+                background: wsPaired ? "#E8F5E9" : "#FFF3E0",
+              }}>
+                {wsPaired === null ? "检测中…" : wsPaired ? "已配对" : "未配对"}
+              </span>
+            </label>
+            <div style={{ display: "flex", gap: 6 }}>
+              <input
+                style={{ ...styles.input, flex: 1 }}
+                type="password"
+                value={wsSecretInput}
+                onChange={e => setWsSecretInput(e.target.value)}
+                placeholder="粘贴 cmspark-agent settings --ws-secret 输出的密钥"
+                autoComplete="off"
+                spellCheck={false}
+              />
+              <button style={styles.toggleBtn} onClick={handleWsPair}>配对</button>
+            </div>
+            <div style={styles.helpText}>
+              首次启动 Companion 会在终端打印一段配对密钥。把它粘贴到上方并点「配对」即可建立加密握手——之后所有通信都需要该密钥鉴权，本机其他进程无法再伪造来源驱动 Agent。重新查看密钥：<code>cmspark-agent settings --ws-secret</code>。
+            </div>
+            {wsPairingMsg && (
+              <div style={{ ...styles.helpText, color: wsPairingMsg.ok ? "#2E7D32" : "#F44336", marginTop: 4 }}>
+                {wsPairingMsg.text}
+              </div>
+            )}
+          </div>
+
           {/* --- Obsidian Export --- */}
           <div style={styles.sectionTitle}>Obsidian 导出</div>
           <div style={styles.field}>
