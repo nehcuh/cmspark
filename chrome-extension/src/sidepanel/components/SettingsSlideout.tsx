@@ -11,6 +11,12 @@ const PRIVILEGE_MODE_OPTIONS: { value: PrivilegeMode; label: string; desc: strin
   { value: "advanced", label: "高级", desc: "允许所有操作，确认阈值降低" },
 ]
 
+// PR-B: typed-confirmation phrase required to arm God-mode. Deliberately high
+// friction — God-mode is the max-risk toggle (bypasses both security layers).
+// A prompt-injected instruction cannot type into this settings panel, so the
+// phrase gate exists to prevent *accidental* arming, not to resist a human.
+const GODMODE_CONFIRM_PHRASE = "我了解风险"
+
 const SAFETY_SKILLS = [
   { id: "cookie_guard", label: "Cookie 守卫" },
   { id: "eval_guard", label: "代码执行守卫" },
@@ -27,6 +33,10 @@ export function SettingsSlideout() {
   const [wsSecretInput, setWsSecretInput] = useState("")
   const [wsPaired, setWsPaired] = useState<boolean | null>(null)
   const [wsPairingMsg, setWsPairingMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  // PR-B God-mode: the typed-confirmation sub-panel + its input + feedback.
+  const [godmodeConfirm, setGodmodeConfirm] = useState(false)
+  const [godmodePhrase, setGodmodePhrase] = useState("")
+  const [godmodeMsg, setGodmodeMsg] = useState<string | null>(null)
 
   // P0-2B: check on open whether a WS pairing secret is already stored, so the
   // status badge reflects the real pairing state (not just connection state).
@@ -34,6 +44,10 @@ export function SettingsSlideout() {
     if (!state.settingsOpen) return
     // Reset stale pairing feedback + re-check stored-secret presence each open.
     setWsPairingMsg(null)
+    // Reset any stale God-mode confirmation panel from a previous open.
+    setGodmodeConfirm(false)
+    setGodmodePhrase("")
+    setGodmodeMsg(null)
     chrome.runtime.sendMessage({ type: "ws.getPairingStatus" }, (resp: { paired?: boolean } | undefined) => {
       setWsPaired(!!resp?.paired)
     })
@@ -88,6 +102,61 @@ export function SettingsSlideout() {
 
   const handleAutoApproveDangerousChange = (checked: boolean) => {
     dispatch({ type: "SET_CONFIG", config: { auto_approve_dangerous: checked } })
+  }
+
+  // PR-B God-mode (security.allow_all_schemes). Bypasses BOTH layers — strictly
+  // stronger than auto_approve_dangerous. Arming requires a typed phrase; disarming
+  // is frictionless (safe direction). Either direction is recorded as an audit entry
+  // (design §B godmode_enabled_changed, source = ui_phrase_confirmed).
+  const handleGodModeToggle = (checked: boolean) => {
+    if (checked) {
+      // Arming: open the typed-confirmation panel, do NOT flip yet.
+      setGodmodeConfirm(true)
+      setGodmodePhrase("")
+      setGodmodeMsg(null)
+      return
+    }
+    // Disarming is safe — flip immediately + audit.
+    dispatch({ type: "SET_CONFIG", config: { allow_all_schemes: false } })
+    dispatch({
+      type: "ADD_SECURITY_AUDIT",
+      entry: {
+        id: `godmode-off-${crypto.randomUUID()}`,
+        ts: new Date().toISOString(),
+        level: "info",
+        tool_name: "allow_all_schemes",
+        action: "changed",
+        risk_level: "low",
+        risk_score: 0,
+        source: "ui_phrase_confirmed",
+        message: "已关闭 God-mode（恢复协议保护：L1 scheme 硬阻断 + L2 确认门重新生效）",
+      },
+    })
+  }
+
+  const handleGodModeConfirm = () => {
+    if (godmodePhrase.trim() !== GODMODE_CONFIRM_PHRASE) {
+      setGodmodeMsg(`确认短语不匹配，请输入「${GODMODE_CONFIRM_PHRASE}」`)
+      return
+    }
+    dispatch({ type: "SET_CONFIG", config: { allow_all_schemes: true } })
+    dispatch({
+      type: "ADD_SECURITY_AUDIT",
+      entry: {
+        id: `godmode-on-${crypto.randomUUID()}`,
+        ts: new Date().toISOString(),
+        level: "error",
+        tool_name: "allow_all_schemes",
+        action: "changed",
+        risk_level: "high",
+        risk_score: 100,
+        source: "ui_phrase_confirmed",
+        message: "已启用 God-mode（允许所有协议）— L1 scheme 硬阻断 + L2 确认门均已绕过，prompt 注入可直接驱动浏览器",
+      },
+    })
+    setGodmodeConfirm(false)
+    setGodmodePhrase("")
+    setGodmodeMsg(null)
   }
 
   const handleShortcutChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -334,6 +403,65 @@ export function SettingsSlideout() {
             </label>
           </div>
 
+          {/* PR-B God-mode (security.allow_all_schemes) — bypasses BOTH layers. */}
+          <div style={{ ...styles.field, padding: 10, borderRadius: 8, background: "#FFF8F8", border: "1px solid #F0C0C0" }}>
+            <label style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer", fontSize: 13 }}>
+              <input
+                type="checkbox"
+                checked={config.allow_all_schemes === true}
+                onChange={e => handleGodModeToggle(e.target.checked)}
+                style={{ marginTop: 3 }}
+              />
+              <div>
+                <div style={{ fontWeight: 500, color: "#B71C1C" }}>
+                  God-mode（允许所有协议）
+                  {config.allow_all_schemes === true && (
+                    <span style={{
+                      fontSize: 10, fontWeight: 600, marginLeft: 6, padding: "1px 6px",
+                      borderRadius: 8, color: "#fff", background: "#C62828",
+                    }}>已启用</span>
+                  )}
+                </div>
+                <div style={{ fontSize: 11, color: "#C62828", marginTop: 4, lineHeight: 1.5 }}>
+                  ☠ <b>最高风险</b>：同时绕过协议硬阻断（L1）与高危确认门（L2）——比「自动批准危险操作」更强。
+                  关闭协议保护后，<b>prompt 注入</b>即可执行 <code>data:</code> 脚本、打开 <code>chrome://</code> 特权页、读取 <code>file:</code> 本地文件。
+                  仅在你完全信任的机器上，为你完全信任的工作流启用。
+                </div>
+              </div>
+            </label>
+
+            {godmodeConfirm && (
+              <div style={{ marginTop: 10, padding: 8, background: "#fff", borderRadius: 6, border: "1px solid #E0B4B4" }}>
+                <div style={{ fontSize: 12, color: "#B71C1C", fontWeight: 500, marginBottom: 6 }}>
+                  请输入「<b>{GODMODE_CONFIRM_PHRASE}</b>」以确认开启 God-mode：
+                </div>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <input
+                    style={{ ...styles.input, flex: 1 }}
+                    type="text"
+                    value={godmodePhrase}
+                    onChange={e => { setGodmodePhrase(e.target.value); setGodmodeMsg(null) }}
+                    placeholder={GODMODE_CONFIRM_PHRASE}
+                    autoComplete="off"
+                    spellCheck={false}
+                    autoFocus
+                  />
+                  <button
+                    style={{ ...styles.toggleBtn, color: "#fff", background: "#C62828", borderColor: "#C62828" }}
+                    onClick={handleGodModeConfirm}
+                  >确认开启</button>
+                  <button
+                    style={styles.toggleBtn}
+                    onClick={() => { setGodmodeConfirm(false); setGodmodePhrase(""); setGodmodeMsg(null) }}
+                  >取消</button>
+                </div>
+                {godmodeMsg && (
+                  <div style={{ fontSize: 11, color: "#C62828", marginTop: 4 }}>{godmodeMsg}</div>
+                )}
+              </div>
+            )}
+          </div>
+
           <div style={styles.field}>
             <label style={styles.label}>安全审计日志</label>
             {showAuditLog ? (
@@ -345,15 +473,29 @@ export function SettingsSlideout() {
                     <div key={entry.id} style={{ marginBottom: 6, paddingBottom: 6, borderBottom: "1px solid #eee" }}>
                       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                         <span style={{
-                          color: entry.action === "allowed" ? "#4CAF50" : entry.action === "denied" ? "#FF9800" : "#F44336",
+                          color: entry.action === "allowed" ? "#4CAF50"
+                            : entry.action === "denied" ? "#FF9800"
+                            // "changed" risk is level-driven: arming (error) = dark red,
+                            // disarming (info) = green (restoring safety).
+                            : entry.action === "changed" ? (entry.level === "error" ? "#B71C1C" : "#2E7D32")
+                            : "#F44336",
                           fontWeight: 600,
                         }}>
-                          {entry.action === "allowed" ? "允许" : entry.action === "denied" ? "拒绝" : "阻断"}
+                          {entry.action === "allowed" ? "允许"
+                            : entry.action === "denied" ? "拒绝"
+                            : entry.action === "changed" ? "变更"
+                            : "阻断"}
                         </span>
                         <span style={{ color: "#666" }}>{entry.tool_name}</span>
                         <span style={{ color: "#999", marginLeft: "auto" }}>{entry.ts.slice(11, 19)}</span>
                       </div>
-                      <div style={{ color: "#888", marginTop: 2 }}>{entry.message}</div>
+                      <div style={{
+                        color: entry.action === "changed"
+                          ? (entry.level === "error" ? "#B71C1C" : "#2E7D32")
+                          : "#888",
+                        marginTop: 2,
+                        fontWeight: entry.action === "changed" ? 500 : 400,
+                      }}>{entry.message}</div>
                     </div>
                   ))
                 )}

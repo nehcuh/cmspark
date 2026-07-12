@@ -88,14 +88,20 @@ export async function handleMessage(
       if (Array.isArray(cfg.trusted_domains)) normalized.trusted_domains = cfg.trusted_domains
       if (Array.isArray(cfg.auto_approved_domains)) normalized.auto_approved_domains = cfg.auto_approved_domains
       if (cfg.history_retention_days) normalized.history_retention_days = cfg.history_retention_days
-      // Security config: normalize flat security_* fields into nested security object
+      // Security config: normalize flat security_* fields into nested security object.
+      // The extension UI sends flattened fields (auto_approve_dangerous, allow_all_schemes)
+      // at the top level; re-nest them under `security`, preserving the rest of the
+      // current security block (deepMerge fills the partner field from current config).
       if (cfg.security && typeof cfg.security === "object") {
         normalized.security = { ...cfg.security }
-      } else if (cfg.auto_approve_dangerous !== undefined) {
+      } else if (cfg.auto_approve_dangerous !== undefined || cfg.allow_all_schemes !== undefined) {
         const current = getConfig()
-        normalized.security = {
-          ...(current.security || {}),
-          auto_approve_dangerous: !!cfg.auto_approve_dangerous,
+        normalized.security = { ...(current.security || {}) }
+        if (cfg.auto_approve_dangerous !== undefined) {
+          normalized.security.auto_approve_dangerous = !!cfg.auto_approve_dangerous
+        }
+        if (cfg.allow_all_schemes !== undefined) {
+          normalized.security.allow_all_schemes = !!cfg.allow_all_schemes
         }
       }
       // Vision config: normalize flat vision_* fields into nested vision object
