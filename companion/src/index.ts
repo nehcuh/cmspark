@@ -326,6 +326,13 @@ async function main() {
 
     case "settings": {
       const cliArgs = process.argv.slice(3)
+      // P0-2B: read-only WS pairing secret (first-run / re-pair display). The
+      // secret is generated, not user-set, so it has no place in --set.
+      if (cliArgs.includes("--ws-secret")) {
+        const { getSharedSecretForDisplay } = await import("./ws-auth")
+        process.stdout.write(getSharedSecretForDisplay() + "\n")
+        process.exit(0)
+      }
       const setFlags = cliArgs.filter((a) => a.startsWith("--set="))
       const hasSetStdin = cliArgs.includes("--set-stdin")
       if (setFlags.length > 0 || hasSetStdin) {

@@ -414,6 +414,26 @@ function setupMessageHandlers() {
         sendResponse({ ok: true })
         return true
 
+      // P0-2B WS pairing: store the shared secret (pasted from
+      // `cmspark-agent settings --ws-secret`) and (re)connect to authenticate.
+      case "ws.setSecret": {
+        const secret = typeof message.secret === "string" ? message.secret.trim() : ""
+        if (!secret) {
+          sendResponse({ ok: false, error: "密钥不能为空" })
+          return true
+        }
+        wsClient.setSecret(secret)
+        logToCompanion("info", "extension.ws_secret_set", {})
+        sendResponse({ ok: true })
+        return true
+      }
+
+      // Whether a pairing secret is already stored (for the Settings UI status).
+      case "ws.getPairingStatus": {
+        wsClient.hasSecret().then((paired) => sendResponse({ paired }))
+        return true // keep the channel open for the async response
+      }
+
       case "security.confirmation.response":
         wsClient.send({
           type: "security.confirmation.response",

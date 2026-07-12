@@ -17,6 +17,14 @@ import { logger, type LogLevel } from "./logger"
 import { acquireLock, releaseLock, isProcessRunning, readPidFile, cleanupPidFile } from "./daemon"
 import { getLockFilePath, getPidFilePath } from "./config"
 import { getMcpManager, getMcpConfirmCache, isMcpNamespaced } from "./mcp"
+import {
+  getOrCreateSharedSecret,
+  consumeSecretFreshlyGenerated,
+  consumeSecretPersistFailed,
+  issueChallenge,
+  verifyProof,
+  AUTH_TIMEOUT_MS,
+} from "./ws-auth"
 
 const MAX_WS_MESSAGE_SIZE = 10 * 1024 * 1024 // 10MB
 
@@ -51,6 +59,13 @@ function getDomainFromUrl(urlString: string): string {
 
 let wss: WebSocketServer
 let clients: Set<WebSocket> = new Set()
+
+// P0-2B: per-connection authentication state. A peer is UNauthenticated until it
+// completes the ws-auth challenge–response handshake (auth.handshake). Every app
+// message is rejected (and the connection terminated) until then, so a local
+// process that forged the Origin header still cannot drive the agent without the
+// shared secret. See ws-auth.ts and server.ts:1418-1420 for the threat model.
+const wsAuth = new WeakMap<WebSocket, { nonce: string; authenticated: boolean; timer: NodeJS.Timeout }>()
 
 // Core services — initialized on first connection
 let threadManager: ThreadManager
@@ -1184,6 +1199,14 @@ function validateWsMessage(msg: any): WsValidationResult {
       return { valid: true }
     },
     "system.ping": () => ({ valid: true }),
+    // P0-2B: the ONLY message an unauthenticated peer may send. proof is verified
+    // against HMAC-SHA256(sharedSecret, nonce) in the connection handler.
+    "auth.handshake": (m) => {
+      if (typeof m.proof !== "string" || !m.proof) {
+        return { valid: false, error: "auth.handshake requires proof string" }
+      }
+      return { valid: true }
+    },
     "executeQuickAction": (m) => {
       const aid = m.actionId || m.id
       if (typeof aid !== "string" || !aid) return { valid: false, error: "executeQuickAction requires actionId" }
@@ -1316,6 +1339,29 @@ export async function startServer() {
   const config = getConfig()
   // Best-effort model-validity probe — fire-and-forget; never blocks or crashes startup.
   void probeChatModel(config)
+
+  // P0-2B: materialize the WS shared secret BEFORE any peer can connect. On first
+  // run it is generated + persisted (0o600, ~/.cmspark-agent/ws_secret); the user
+  // must paste it once into the extension Settings to pair. Until paired, the
+  // extension cannot authenticate and all app messages are rejected.
+  getOrCreateSharedSecret()
+  if (consumeSecretFreshlyGenerated()) {
+    logger.warn("ws.shared_secret_generated", {})
+    console.log(
+      "[cmspark-agent] 🔑 First run: generated a WebSocket pairing secret.\n" +
+      "    Paste it once into the extension (Settings → 连接 → WS 配对密钥).\n" +
+      "    Re-view anytime: `cmspark-agent settings --ws-secret`.",
+    )
+  }
+  // The in-memory secret authenticates this run regardless, but if it could not
+  // be persisted the extension will have to re-pair after the next restart.
+  if (consumeSecretPersistFailed()) {
+    logger.error("ws.shared_secret_persist_failed", {})
+    console.error(
+      "[cmspark-agent] ⚠ Could not persist the WebSocket pairing secret to disk. " +
+      "Pairing will not survive a restart — check permissions on the data directory.",
+    )
+  }
   const port = config.port || PORT
 
   // --- UDS Lock: check for existing instance ---
@@ -1479,6 +1525,23 @@ export async function startServer() {
     console.log(`[cmspark-agent] Client connected (${clients.size} total)`)
     logger.info("ws.client_connected", { clients: clients.size })
 
+    // P0-2B: challenge this peer immediately. It must reply (auth.handshake) with
+    // proof = HMAC-SHA256(sharedSecret, nonce) within AUTH_TIMEOUT_MS, else we
+    // terminate. No app message is processed until the handshake completes.
+    const sharedSecret = getOrCreateSharedSecret()
+    const challengeNonce = issueChallenge()
+    const authTimer = setTimeout(() => {
+      const st = wsAuth.get(ws)
+      if (st && !st.authenticated) {
+        logger.warn("ws.auth_timeout", {})
+        try { ws.terminate() } catch { /* closing */ }
+      }
+    }, AUTH_TIMEOUT_MS)
+    wsAuth.set(ws, { nonce: challengeNonce, authenticated: false, timer: authTimer })
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "auth.challenge", nonce: challengeNonce }))
+    }
+
     const executeTool = createToolExecutor(ws)
 
     // Ping/pong keepalive — terminate clients that don't respond within 30s
@@ -1507,6 +1570,18 @@ export async function startServer() {
           return
         }
         msg = JSON.parse(raw.toString())
+        // P0-2B: an unauthenticated peer may send ONLY auth.handshake. Any other
+        // message — including ones that would fail structural validation below —
+        // terminates the connection immediately. Without this early gate a forged-
+        // Origin local process could send malformed known-type messages to harvest
+        // the API structure (the validator echoes field requirements) and linger
+        // for the full 5s handshake timeout. Structural validation runs only after
+        // this auth check.
+        if (!wsAuth.get(ws)?.authenticated && msg?.type !== "auth.handshake") {
+          logger.warn("ws.unauthenticated_message", { type: msg?.type })
+          try { ws.terminate() } catch { /* closing */ }
+          return
+        }
         // Stricter message validation (P2)
         const validation = validateWsMessage(msg)
         if (!validation.valid) {
@@ -1514,6 +1589,44 @@ export async function startServer() {
           if (ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ type: "error", error: `Invalid message: ${validation.error}` }))
           }
+          return
+        }
+        // P0-2B: auth.handshake is the ONLY message an unauthenticated peer may
+        // send. Verify proof = HMAC-SHA256(sharedSecret, nonce); on success mark
+        // the connection authenticated, clear the timeout, and deliver the
+        // app-level "connected" state. Bad/missing proof → terminate.
+        // Keep in sync with companion/tests/integration/ws-auth-handshake.test.ts
+        // (which replicates this exact gate, since no test calls startServer()).
+        if (msg.type === "auth.handshake") {
+          const st = wsAuth.get(ws)
+          if (!st) {
+            try { ws.terminate() } catch { /* closing */ }
+            return
+          }
+          // Idempotent: ignore a duplicate handshake on an already-authenticated
+          // connection instead of re-emitting auth.ok + connected.
+          if (st.authenticated) return
+          if (verifyProof(sharedSecret, st.nonce, String(msg.proof))) {
+            st.authenticated = true
+            clearTimeout(st.timer)
+            logger.info("ws.authenticated", {})
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: "auth.ok" }))
+              ws.send(JSON.stringify({ type: "connected" }))
+            }
+          } else {
+            logger.warn("ws.auth_failed", {})
+            try { ws.terminate() } catch { /* closing */ }
+          }
+          return
+        }
+        // Every other message requires a completed handshake — otherwise a local
+        // process that forged the Origin header could send config.set / mcp.add /
+        // history.export before authenticating.
+        const authState = wsAuth.get(ws)
+        if (!authState?.authenticated) {
+          logger.warn("ws.unauthenticated_message", { type: msg.type })
+          try { ws.terminate() } catch { /* closing */ }
           return
         }
         if (msg.type !== "system.ping") {
@@ -1636,6 +1749,12 @@ export async function startServer() {
     ws.on("close", () => {
       clearInterval(pingInterval)
       clients.delete(ws)
+      // P0-2B: clear the per-connection auth timer + state.
+      const closedAuth = wsAuth.get(ws)
+      if (closedAuth) {
+        clearTimeout(closedAuth.timer)
+        wsAuth.delete(ws)
+      }
       applyConnectionCloseGracePeriod()
       securityConfirmations.rejectAll("disconnect", ws)
       // Audit item 8: clear the per-session MCP confirm-cache so approvals
@@ -1654,9 +1773,10 @@ export async function startServer() {
       pongReceived = true
     })
 
-    // Send initial state (security secret no longer transmitted over WS)
-    ws.send(JSON.stringify({ type: "connected" }))
-    // Note: Token validation is now done by sending token to Companion for verification
+    // P0-2B: the app-level "connected" state is sent AFTER auth.handshake
+    // succeeds (in the message handler above), not here — an unauthenticated
+    // peer must not receive it. The stale "security secret" comments below
+    // referred to the removed HMAC-token iteration; ws-auth.ts is the successor.
   })
 
   wss.on("error", (err) => {
