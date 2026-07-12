@@ -101,6 +101,15 @@ test("requiresRestart: returns FALSE when only restart_policy changes (soft upda
   assert.equal(requiresRestart(a, b), false)
 })
 
+test("requiresRestart: returns FALSE when only security_capabilities changes (soft update path)", () => {
+  // §6.3 Phase 2-B: security_capabilities is a classification annotation, NOT a
+  // transport param, so it's deliberately excluded from RESTART_FIELD_KEYS.
+  // applyConfig updates currentConfig immediately; the gate reads it live next call.
+  const a = stdioCfg({ security_capabilities: ["read-only"] })
+  const b = stdioCfg({ security_capabilities: ["exec"] })
+  assert.equal(requiresRestart(a, b), false)
+})
+
 test("resolveRestartPolicy: returns DEFAULT when cfg has no override", () => {
   const policy = resolveRestartPolicy(stdioCfg())
   assert.deepEqual(policy, DEFAULT_RESTART_POLICY)
@@ -251,6 +260,37 @@ test("applyConfig: when mcp.enabled=false, stops all clients", async () => {
 
   assert.deepEqual(closed.sort(), ["a", "b"], "both clients should be closed when mcp.enabled=false")
   assert.equal(internals.clients.size, 0)
+})
+
+// =============================================================================
+// §6.3 Phase 2-B: security_capabilities sanitization (lenient — never drop server)
+// =============================================================================
+
+test("applyConfig: security_capabilities invalid values stripped, valid kept, server NOT dropped", async () => {
+  // A typo'd / stale / non-declarable value must NOT orphan the whole server.
+  // "bogus" is unknown; "unknown" is a non-declarable sentinel; "read-only" is valid.
+  const { manager, internals } = makeManagerWithFakeClient("fs", stdioCfg())
+  await manager.applyConfig({
+    enabled: true,
+    servers: { fs: stdioCfg({ security_capabilities: ["read-only", "bogus", "unknown"] as any }) },
+  })
+  const cfg = manager.getServerConfig("fs")
+  assert.ok(cfg, "server must NOT be dropped for a bad capability value")
+  assert.deepEqual(cfg!.security_capabilities, ["read-only"], "only valid declarable caps kept")
+  assert.equal(internals.clients.has("fs"), true, "client still present")
+})
+
+test("applyConfig: security_capabilities not an array → field dropped entirely, server kept", async () => {
+  // Structural mistake (string instead of array): drop the field, treat as absent
+  // (→ pure inference, Phase 1 behavior). Never drop the server.
+  const { manager } = makeManagerWithFakeClient("fs", stdioCfg())
+  await manager.applyConfig({
+    enabled: true,
+    servers: { fs: stdioCfg({ security_capabilities: "read-only" as any }) },
+  })
+  const cfg = manager.getServerConfig("fs")
+  assert.ok(cfg, "server kept even when security_capabilities has wrong type")
+  assert.equal(cfg!.security_capabilities, undefined, "non-array field dropped → treated as absent")
 })
 
 // =============================================================================
