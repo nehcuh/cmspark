@@ -47,6 +47,53 @@ export function isAutoApprovedDomain(domain: string): boolean {
   return matchDomain(getConfig().auto_approved_domains, domain)
 }
 
+/**
+ * Is `hostname` a cloud instance-metadata endpoint? These expose ephemeral
+ * IAM credentials / tokens reachable from inside the host and have NO legitimate
+ * analyze_image use case → IMAGE_FETCH_GATE hard-blocks them outright (§6.1.4).
+ * `hostname` is expected pre-normalized (no port, no brackets), as produced by
+ * `new URL(url).hostname`.
+ */
+export function isCloudMetadataIp(hostname: string): boolean {
+  const h = String(hostname || "").toLowerCase().trim()
+  // AWS IMDSv1/v2 (169.254.169.254), ECS task metadata (169.254.170.2),
+  // AWS IMDS IPv6 (fd00:ec2::254), and GCP/Azure (metadata.google.internal
+  // resolves to 169.254.169.254).
+  return h === "169.254.169.254" || h === "169.254.170.2" || h === "fd00:ec2::254" || h === "metadata.google.internal"
+}
+
+/**
+ * Is `hostname` a private / loopback / link-local address? Such hosts are
+ * reachable from the extension's `<all_urls>` service worker but not from the
+ * public internet → IMAGE_FETCH_GATE requires user confirmation (not a hard
+ * block, since a user may legitimately analyze an image on a local dashboard).
+ * Cloud-metadata endpoints are a stricter subset handled by isCloudMetadataIp.
+ */
+export function isPrivateOrLoopbackIp(hostname: string): boolean {
+  const h = String(hostname || "").toLowerCase().trim()
+  if (!h) return false
+  if (h === "localhost") return true
+  // IPv6 loopback / unspecified / ULA (fc00::/7) / link-local (fe80::/10)
+  if (h === "::1" || h === "::") return true
+  if (h.startsWith("fc") || h.startsWith("fd")) return true
+  if (/^fe[89ab][0-9a-f]?:/.test(h)) return true
+  // IPv4 dotted-quad
+  const m = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/)
+  if (m) {
+    const a = parseInt(m[1], 10)
+    const b = parseInt(m[2], 10)
+    if (Number.isNaN(a) || Number.isNaN(b)) return false
+    if (a === 10) return true                       // 10.0.0.0/8
+    if (a === 127) return true                      // 127.0.0.0/8 loopback
+    if (a === 0) return true                        // 0.0.0.0/8 "this network"
+    if (a === 169 && b === 254) return true         // 169.254.0.0/16 link-local (incl. metadata)
+    if (a === 172 && b >= 16 && b <= 31) return true // 172.16.0.0/12
+    if (a === 192 && b === 168) return true         // 192.168.0.0/16
+    if (a === 100 && b >= 64 && b <= 127) return true // 100.64.0.0/10 CGNAT
+  }
+  return false
+}
+
 /** Weight mapping for dangerous APIs (higher = more dangerous). */
 export const API_WEIGHTS: Record<string, number> = {
   eval: 4,

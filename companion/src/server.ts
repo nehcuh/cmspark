@@ -10,7 +10,7 @@ import { handleMessage } from "./message-router"
 import { ThreadManager } from "./threads/thread-manager"
 import { SkillEngine } from "./skills/skill-engine"
 import { HistoryStore } from "./history/store"
-import { checkHighRiskExecution, highRiskExecutionDeniedError, isTrustedDomain, isAutoApprovedDomain } from "./security"
+import { checkHighRiskExecution, highRiskExecutionDeniedError, isTrustedDomain, isAutoApprovedDomain, isCloudMetadataIp, isPrivateOrLoopbackIp } from "./security"
 import { SecurityConfirmationManager } from "./security-confirmation"
 import { securityPolicy, getTokenSecret } from "./security-policy"
 import { logger, type LogLevel } from "./logger"
@@ -482,6 +482,124 @@ export function createToolExecutor(ws: WebSocket) {
       }
     }
 
+    // analyze_image_fetch is an INTERNAL phase-2 tool, dispatched only by the
+    // analyze_image branch below via dispatchToExtension (which does NOT re-enter
+    // this function). It is not in the LLM tool schema, so a top-level call here
+    // means a malformed/hallucinated request — reject it rather than let it fall
+    // through to the default forward and fetch an arbitrary URL past the gate.
+    if (toolName === "analyze_image_fetch") {
+      const result = {
+        success: false,
+        error: "Security Block: analyze_image_fetch is an internal tool and cannot be called directly.",
+      }
+      logger.warn("security.image_fetch_direct_call_rejected", { tool_call_id: toolCallId })
+      logToolFinish(toolCallId, toolName, startedAt, result)
+      return result
+    }
+
+    // M4 (§6.1) — analyze_image IMAGE_FETCH_GATE. Unlike URL_GATE_TOOLS, the
+    // image URL is not known until the extension resolves the <img> element, and
+    // the SSRF fetch happens inside the extension's <all_urls> service worker.
+    // So this is a two-phase dispatch:
+    //   phase 1 analyze_image → extension resolves the element, returns either
+    //     {type:"canvas", image_base64} (same-origin; zero new exfil capability
+    //     since screenshot already captures those pixels → UNGATED) or
+    //     {type:"fetch_required", candidate_url} (cross-origin canvas-tainted).
+    //   phase 2 analyze_image_fetch → dispatched ONLY after the gate approves;
+    //     extension fetches candidate_url → image_base64 (adapter VISION_TOOLS
+    //     then runs vision, same as today).
+    // Neither god-mode (allow_all_schemes) nor auto_approve_dangerous bypasses
+    // this gate — only trusted/auto-approved domains skip confirmation.
+    if (toolName === "analyze_image") {
+      const phase1 = await dispatchToExtension(toolCallId, "analyze_image", finalParams, ws)
+      const p1 = phase1?.data
+      // Path A (canvas → image_base64) or any error: return as-is. The adapter's
+      // VISION_TOOLS post-processing runs vision when image_base64 is present.
+      if (phase1?.success !== true || !p1 || p1.type !== "fetch_required") {
+        logToolFinish(toolCallId, toolName, startedAt, phase1)
+        return phase1
+      }
+      const candidateUrl = String(p1.candidate_url || "")
+      let parsedCu: URL | null = null
+      try { parsedCu = new URL(candidateUrl) } catch { /* invalid → blocked below */ }
+      const scheme = parsedCu?.protocol || ""
+      const host = parsedCu?.hostname || ""
+      const isPriv = isPrivateOrLoopbackIp(host)
+      const metadata = isCloudMetadataIp(host)
+      const schemeOk = scheme === "http:" || scheme === "https:"
+      // `data:` never reaches path B (it does not taint the canvas → path A);
+      // file:/ftp:/javascript:/blob:/etc. are not http(s) → hard-block.
+      if (!parsedCu || !schemeOk || metadata) {
+        const reason = !parsedCu ? "invalid_url" : metadata ? "cloud_metadata_endpoint" : "blocked_scheme"
+        logger.warn("security.image_fetch_blocked", {
+          tool_call_id: toolCallId, tool_name: toolName,
+          candidate_url: candidateUrl, scheme, host, is_private_ip: isPriv, reason,
+        })
+        const result = {
+          success: false,
+          error: `Security Block: analyze_image cannot read ${metadata ? "a cloud metadata endpoint" : `${scheme || "non-http(s)"} URL`}${candidateUrl ? ` (${candidateUrl})` : ""}.`,
+        }
+        logToolFinish(toolCallId, toolName, startedAt, result)
+        return result
+      }
+      const trusted = isTrustedDomain(host)
+      const autoApproved = isAutoApprovedDomain(host)
+      if (trusted || autoApproved) {
+        logger.info("security.image_fetch_auto_approved", {
+          tool_call_id: toolCallId, tool_name: toolName,
+          candidate_url: candidateUrl, scheme, host, is_private_ip: isPriv,
+          reason: trusted ? "trusted_domain" : "auto_approved_domain",
+        })
+      } else {
+        // Non-trusted public URL or (non-metadata) private IP → confirm.
+        if (ws.readyState !== WebSocket.OPEN) {
+          const result = {
+            success: false,
+            error: `Security Block: analyze_image needs to read an untrusted image source (${candidateUrl}) which requires confirmation, but the WebSocket is not connected.`,
+          }
+          logToolFinish(toolCallId, toolName, startedAt, result)
+          return result
+        }
+        const decision = await securityConfirmations.request(
+          (data) => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(data)) },
+          {
+            toolName: "analyze_image_fetch",
+            dangerousApis: [],
+            code: `analyze_image_fetch(${candidateUrl})`,
+            relevantDomains: [host],
+            defenseLayer: 2,
+            riskLevel: "high",
+          },
+        )
+        if (!decision.approved) {
+          const reason = decision.reason === "approved" ? "unavailable" : decision.reason
+          logger.info("security.image_fetch_denied", {
+            tool_call_id: toolCallId, tool_name: toolName,
+            candidate_url: candidateUrl, scheme, host, is_private_ip: isPriv, reason,
+          })
+          const result = {
+            success: false,
+            error: `Security Block: analyze_image read of "${candidateUrl}" was ${reason === "denied" ? "denied by user" : reason}.`,
+          }
+          logToolFinish(toolCallId, toolName, startedAt, result)
+          return result
+        }
+        logger.warn("security.image_fetch_confirmed", {
+          tool_call_id: toolCallId, tool_name: toolName,
+          candidate_url: candidateUrl, scheme, host, is_private_ip: isPriv,
+        })
+      }
+      // Gate passed → phase 2 fetch. Synthetic id keeps the LLM-facing
+      // tool_call_id for the final result while correlating the internal fetch.
+      const phase2 = await dispatchToExtension(`${toolCallId}__image_fetch`, "analyze_image_fetch", {
+        tabId: finalParams.tabId,
+        candidate_url: candidateUrl,
+        selector: finalParams.selector,
+      }, ws)
+      logToolFinish(toolCallId, toolName, startedAt, phase2)
+      return phase2
+    }
+
     // Companion-side tools (executed locally, not forwarded to extension)
     const COMPANION_TOOLS = ["osascript_eval", "use_skill", "record_experience"]
     if (COMPANION_TOOLS.includes(toolName)) {
@@ -611,6 +729,52 @@ export function handleToolResult(msg: any) {
       pending.resolve(result)
     }
   }
+}
+
+/**
+ * Dispatch a single tool execution to the extension and await its result via
+ * the `pendingToolCalls` / `handleToolResult` correlation (same plumbing the
+ * default forward branch uses). Factored out so the analyze_image two-phase
+ * gate (§6.1) can issue a phase-1 resolve and a phase-2 fetch without
+ * duplicating the send/timeout/pending-map dance. Resolves to a tool-result
+ * object `{ success, data?, error? }`; never rejects (timeouts and send
+ * failures are returned as `{ success: false, error }`).
+ */
+function dispatchToExtension(
+  toolCallId: string,
+  toolName: string,
+  params: any,
+  ws: WebSocket,
+): Promise<{ success: boolean; data?: any; error?: string }> {
+  return new Promise((resolve) => {
+    let settled = false
+    const finish = (result: { success: boolean; data?: any; error?: string }) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      pendingToolCalls.delete(toolCallId)
+      resolve(result)
+    }
+    const timer = setTimeout(() => {
+      const result = { success: false, error: `Tool execution timeout (${TOOL_EXECUTION_TIMEOUT_MS}ms): ${toolName}` }
+      logger.warn("tool.timeout", { tool_call_id: toolCallId, tool_name: toolName, timeout_ms: TOOL_EXECUTION_TIMEOUT_MS })
+      finish(result)
+    }, TOOL_EXECUTION_TIMEOUT_MS)
+    pendingToolCalls.set(toolCallId, { resolve: finish as any, reject: finish as any, timer })
+    if (ws.readyState !== WebSocket.OPEN) {
+      const result = { success: false, error: "WebSocket not connected" }
+      logger.warn("tool.dispatch_failed", { tool_call_id: toolCallId, tool_name: toolName, error: result.error })
+      finish(result)
+      return
+    }
+    try {
+      ws.send(JSON.stringify({ type: "tool.execute", tool_call_id: toolCallId, tool_name: toolName, params }))
+    } catch (err: any) {
+      const result = { success: false, error: `WebSocket send failed: ${err.message || String(err)}` }
+      logger.error("tool.dispatch_failed", { tool_call_id: toolCallId, tool_name: toolName, error: err.message || String(err) })
+      finish(result)
+    }
+  })
 }
 
 /**

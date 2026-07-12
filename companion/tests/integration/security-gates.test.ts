@@ -23,7 +23,7 @@ import {
   handleSecurityConfirmationResponse,
   applyTabNavigated,
 } from "../../src/server.js"
-import { detectDangerousApis } from "../../src/security.js"
+import { detectDangerousApis, isPrivateOrLoopbackIp, isCloudMetadataIp } from "../../src/security.js"
 import { saveConfig, getConfig, getConfigDir } from "../../src/config.js"
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-secg-"))
@@ -664,4 +664,314 @@ test("god-mode ⊇ auto-approve: evaluate on an untrusted tab skips confirmation
   clientSideWs.send(JSON.stringify({ type: "tool.result", tool_call_id: "tc_god_eval", result: { success: true } }))
   const result = await resultPromise
   assert.equal(result.success, true, "god-mode lets evaluate proceed without confirmation (⊇ auto-approve)")
+})
+
+// =============================================================================
+// M4 (§6.1): analyze_image IMAGE_FETCH_GATE — two-phase resolve→gate→fetch.
+// Path A (same-origin canvas) is ungated; path B (cross-origin fetch_required)
+// must be companion-approved before the extension fetches (closes SSRF via the
+// <all_urls> service worker). god-mode and auto_approve_dangerous do NOT bypass.
+// =============================================================================
+
+test("M4 unit: isCloudMetadataIp flags IMDS endpoints", () => {
+  assert.equal(isCloudMetadataIp("169.254.169.254"), true)
+  assert.equal(isCloudMetadataIp("169.254.170.2"), true)   // ECS task metadata
+  assert.equal(isCloudMetadataIp("fd00:ec2::254"), true)   // AWS IMDS IPv6
+  assert.equal(isCloudMetadataIp("metadata.google.internal"), true)
+  assert.equal(isCloudMetadataIp("192.168.1.1"), false)
+  assert.equal(isCloudMetadataIp("example.com"), false)
+})
+
+test("M4 unit: isPrivateOrLoopbackIp covers RFC1918 / loopback / link-local / ULA / CGNAT", () => {
+  // IPv4 private ranges
+  for (const ip of ["10.0.0.1", "10.255.255.255", "127.0.0.1", "127.1.2.3",
+    "192.168.0.1", "192.168.99.99", "172.16.0.1", "172.31.255.255", "172.32.0.1" /* NOT private → false */,
+    "169.254.1.1", "0.0.0.0", "100.64.0.1", "100.127.255.255"]) {
+    // 172.32 is outside 172.16/12 → must be false; everything else true.
+    if (ip === "172.32.0.1") assert.equal(isPrivateOrLoopbackIp(ip), false, `${ip} is outside 172.16/12`)
+    else assert.equal(isPrivateOrLoopbackIp(ip), true, `${ip} should be private`)
+  }
+  // 172.32 confirmed false above; also 172.15 / 8.8.8.8 are public
+  assert.equal(isPrivateOrLoopbackIp("172.15.0.1"), false)
+  assert.equal(isPrivateOrLoopbackIp("8.8.8.8"), false)
+  assert.equal(isPrivateOrLoopbackIp("localhost"), true)
+  // IPv6 loopback / ULA / link-local
+  assert.equal(isPrivateOrLoopbackIp("::1"), true)
+  assert.equal(isPrivateOrLoopbackIp("fc00::1"), true)
+  assert.equal(isPrivateOrLoopbackIp("fd12:3456::1"), true)
+  assert.equal(isPrivateOrLoopbackIp("fe80::1"), true)
+  assert.equal(isPrivateOrLoopbackIp("2001:4860:4860::8888"), false) // public IPv6
+})
+
+test("M4 path A (same-origin canvas): ungated, returns image_base64, no phase-2 fetch", async () => {
+  const executeTool = createToolExecutor(serverSideWs)
+  const phase1Promise = expectClientMessage("tool.execute")
+  const noConfirmation = expectNoClientMessage("security.confirmation.request")
+
+  const resultPromise = executeTool("tc_ai_canvas", "analyze_image", { selector: ".hero" })
+  const phase1 = await phase1Promise
+  assert.equal(phase1.tool_name, "analyze_image")
+  assert.equal(phase1.tool_call_id, "tc_ai_canvas")
+
+  // Extension resolved via canvas (same-origin) — base64 already in hand.
+  clientSideWs.send(JSON.stringify({
+    type: "tool.result",
+    tool_call_id: "tc_ai_canvas",
+    result: { success: true, data: { type: "canvas", image_base64: "AAA", width: 8, height: 8 } },
+  }))
+  const result = await resultPromise
+  assert.equal(result.success, true)
+  assert.equal(result.data.image_base64, "AAA")
+  await noConfirmation
+  // No phase-2 fetch dispatched for path A.
+  assert.equal(pendingToolCalls.size, 0, "path A must not leave a pending phase-2 fetch")
+})
+
+test("M4 path B trusted domain: auto-approved, phase-2 fetch dispatched", async () => {
+  const executeTool = createToolExecutor(serverSideWs)
+  const phase1Promise = expectClientMessage("tool.execute")
+  const noConfirmation = expectNoClientMessage("security.confirmation.request")
+
+  const resultPromise = executeTool("tc_ai_trusted", "analyze_image", { selector: "img.x" })
+  const phase1 = await phase1Promise
+  assert.equal(phase1.tool_name, "analyze_image")
+
+  // Register the phase-2 listener BEFORE replying to phase-1: the trusted-domain
+  // gate has no confirmation await, so phase-2 fires within microseconds of our
+  // reply and would be lost if the listener were registered after.
+  const phase2Promise = expectClientMessage("tool.execute")
+  clientSideWs.send(JSON.stringify({
+    type: "tool.result",
+    tool_call_id: "tc_ai_trusted",
+    result: { success: true, data: { type: "fetch_required", candidate_url: "https://trusted.example.com/a.png", width: 8, height: 8 } },
+  }))
+  await noConfirmation
+
+  // Trusted domain → no confirmation → phase-2 analyze_image_fetch dispatched.
+  const phase2 = await phase2Promise
+  assert.equal(phase2.tool_name, "analyze_image_fetch", "phase-2 must dispatch analyze_image_fetch")
+  assert.equal(phase2.tool_call_id, "tc_ai_trusted__image_fetch")
+  assert.equal(phase2.params.candidate_url, "https://trusted.example.com/a.png")
+
+  clientSideWs.send(JSON.stringify({
+    type: "tool.result",
+    tool_call_id: "tc_ai_trusted__image_fetch",
+    result: { success: true, data: { type: "canvas", image_base64: "BBB", width: 8, height: 8 } },
+  }))
+  const result = await resultPromise
+  assert.equal(result.success, true)
+  assert.equal(result.data.image_base64, "BBB")
+
+  const line = readTodayLog().split("\n").find((l) => l.includes("tc_ai_trusted") && l.includes("image_fetch_auto_approved"))
+  assert.ok(line, "trusted-domain fetch must log image_fetch_auto_approved")
+})
+
+test("M4 path B untrusted public: confirmation requested, deny → blocked, NO phase-2 fetch", async () => {
+  const executeTool = createToolExecutor(serverSideWs)
+  const phase1Promise = expectClientMessage("tool.execute")
+  const confirmationPromise = expectClientMessage("security.confirmation.request")
+
+  const resultPromise = executeTool("tc_ai_untrusted", "analyze_image", { selector: "img.x" })
+  await phase1Promise
+  clientSideWs.send(JSON.stringify({
+    type: "tool.result",
+    tool_call_id: "tc_ai_untrusted",
+    result: { success: true, data: { type: "fetch_required", candidate_url: "https://attacker.example.com/x.png", width: 8, height: 8 } },
+  }))
+
+  const confirmation = await confirmationPromise
+  assert.equal(confirmation.tool_name, "analyze_image_fetch")
+  assert.deepEqual(confirmation.relevant_domains, ["attacker.example.com"])
+
+  // Deny — must NOT dispatch phase-2 fetch.
+  const noPhase2 = expectNoClientMessage("tool.execute", 200)
+  clientSideWs.send(JSON.stringify({
+    type: "security.confirmation.response",
+    confirmation_id: confirmation.confirmation_id,
+    approved: false,
+  }))
+  await noPhase2
+  const result = await resultPromise
+  assert.equal(result.success, false)
+  assert.match(result.error!, /denied|unavailable/)
+
+  const line = readTodayLog().split("\n").find((l) => l.includes("tc_ai_untrusted") && l.includes("image_fetch_denied"))
+  assert.ok(line, "denial must log image_fetch_denied")
+})
+
+test("M4 path B untrusted: confirm APPROVE → phase-2 fetch runs", async () => {
+  const executeTool = createToolExecutor(serverSideWs)
+  const phase1Promise = expectClientMessage("tool.execute")
+  const confirmationPromise = expectClientMessage("security.confirmation.request")
+
+  const resultPromise = executeTool("tc_ai_approve", "analyze_image", { selector: "img.x" })
+  await phase1Promise
+  clientSideWs.send(JSON.stringify({
+    type: "tool.result",
+    tool_call_id: "tc_ai_approve",
+    result: { success: true, data: { type: "fetch_required", candidate_url: "https://picsum.photos/200", width: 8, height: 8 } },
+  }))
+  const confirmation = await confirmationPromise
+  assert.equal(confirmation.tool_name, "analyze_image_fetch")
+
+  clientSideWs.send(JSON.stringify({
+    type: "security.confirmation.response",
+    confirmation_id: confirmation.confirmation_id,
+    approved: true,
+  }))
+
+  const phase2 = await expectClientMessage("tool.execute")
+  assert.equal(phase2.tool_name, "analyze_image_fetch")
+  assert.equal(phase2.params.candidate_url, "https://picsum.photos/200")
+  clientSideWs.send(JSON.stringify({
+    type: "tool.result",
+    tool_call_id: "tc_ai_approve__image_fetch",
+    result: { success: true, data: { type: "canvas", image_base64: "CCC", width: 8, height: 8 } },
+  }))
+  const result = await resultPromise
+  assert.equal(result.success, true)
+  assert.equal(result.data.image_base64, "CCC")
+
+  const line = readTodayLog().split("\n").find((l) => l.includes("tc_ai_approve") && l.includes("image_fetch_confirmed"))
+  assert.ok(line, "approved fetch must log image_fetch_confirmed")
+})
+
+test("M4: cloud metadata endpoint (169.254.169.254) hard-blocked, NO fetch, NO confirmation", async () => {
+  const executeTool = createToolExecutor(serverSideWs)
+  const phase1Promise = expectClientMessage("tool.execute")
+  const noConfirmation = expectNoClientMessage("security.confirmation.request")
+
+  const resultPromise = executeTool("tc_ai_metadata", "analyze_image", { selector: "img.x" })
+  await phase1Promise
+  clientSideWs.send(JSON.stringify({
+    type: "tool.result",
+    tool_call_id: "tc_ai_metadata",
+    result: { success: true, data: { type: "fetch_required", candidate_url: "http://169.254.169.254/latest/meta-data/iam/security-credentials/", width: 8, height: 8 } },
+  }))
+
+  const noPhase2 = expectNoClientMessage("tool.execute", 200)
+  await noConfirmation
+  await noPhase2
+  const result = await resultPromise
+  assert.equal(result.success, false)
+  assert.match(result.error!, /metadata/i)
+
+  const line = readTodayLog().split("\n").find((l) => l.includes("tc_ai_metadata") && l.includes("image_fetch_blocked"))
+  assert.ok(line, "metadata endpoint must log image_fetch_blocked")
+  assert.ok(line!.includes("cloud_metadata_endpoint"), "blocked reason must be cloud_metadata_endpoint")
+})
+
+test("M4: non-http(s) candidate scheme (file:) hard-blocked", async () => {
+  const executeTool = createToolExecutor(serverSideWs)
+  const phase1Promise = expectClientMessage("tool.execute")
+  const resultPromise = executeTool("tc_ai_file", "analyze_image", { selector: "img.x" })
+  await phase1Promise
+  clientSideWs.send(JSON.stringify({
+    type: "tool.result",
+    tool_call_id: "tc_ai_file",
+    result: { success: true, data: { type: "fetch_required", candidate_url: "file:///etc/passwd", width: 8, height: 8 } },
+  }))
+  const result = await resultPromise
+  assert.equal(result.success, false)
+  assert.match(result.error!, /Security Block/i)
+})
+
+test("M4: god-mode ON does NOT bypass the image gate (untrusted still confirms)", async () => {
+  // The defining property of §6.1.5: allow_all_schemes is for NAVIGATION debug,
+  // not for "read any URL into the LLM". god-mode must leave this gate intact.
+  enableGodMode()
+  const executeTool = createToolExecutor(serverSideWs)
+  const phase1Promise = expectClientMessage("tool.execute")
+  const confirmationPromise = expectClientMessage("security.confirmation.request")
+
+  const resultPromise = executeTool("tc_ai_godmode", "analyze_image", { selector: "img.x" })
+  await phase1Promise
+  clientSideWs.send(JSON.stringify({
+    type: "tool.result",
+    tool_call_id: "tc_ai_godmode",
+    result: { success: true, data: { type: "fetch_required", candidate_url: "https://attacker.example.com/x.png", width: 8, height: 8 } },
+  }))
+  const confirmation = await confirmationPromise
+  assert.equal(confirmation.tool_name, "analyze_image_fetch", "god-mode must STILL confirm an untrusted image fetch")
+  clientSideWs.send(JSON.stringify({
+    type: "security.confirmation.response",
+    confirmation_id: confirmation.confirmation_id,
+    approved: false,
+  }))
+  const result = await resultPromise
+  assert.equal(result.success, false)
+  // No godmode_bypassed audit line for THIS analyze_image call (the log file
+  // accumulates across the whole suite, so scope the check to this tool_call_id).
+  const myLines = readTodayLog().split("\n").filter((l) => l.includes("tc_ai_godmode"))
+  assert.ok(myLines.length > 0, "tc_ai_godmode should appear (image_fetch audit)")
+  assert.ok(!myLines.some((l) => l.includes("godmode_bypassed")),
+    "god-mode bypass must NOT be logged for analyze_image")
+})
+
+test("M4: auto_approve_dangerous ON does NOT bypass the image gate", async () => {
+  saveConfig({ security: { ...getConfig().security, auto_approve_dangerous: true } })
+  const executeTool = createToolExecutor(serverSideWs)
+  const phase1Promise = expectClientMessage("tool.execute")
+  const confirmationPromise = expectClientMessage("security.confirmation.request")
+
+  const resultPromise = executeTool("tc_ai_autodanger", "analyze_image", { selector: "img.x" })
+  await phase1Promise
+  clientSideWs.send(JSON.stringify({
+    type: "tool.result",
+    tool_call_id: "tc_ai_autodanger",
+    result: { success: true, data: { type: "fetch_required", candidate_url: "https://attacker.example.com/x.png", width: 8, height: 8 } },
+  }))
+  const confirmation = await confirmationPromise
+  assert.equal(confirmation.tool_name, "analyze_image_fetch", "auto_approve_dangerous must STILL confirm an untrusted image fetch")
+  clientSideWs.send(JSON.stringify({
+    type: "security.confirmation.response",
+    confirmation_id: confirmation.confirmation_id,
+    approved: false,
+  }))
+  const result = await resultPromise
+  assert.equal(result.success, false)
+})
+
+test("M4: private IP (192.168.x) triggers confirmation, not hard-block", async () => {
+  const executeTool = createToolExecutor(serverSideWs)
+  const phase1Promise = expectClientMessage("tool.execute")
+  const confirmationPromise = expectClientMessage("security.confirmation.request")
+
+  const resultPromise = executeTool("tc_ai_private", "analyze_image", { selector: "img.x" })
+  await phase1Promise
+  clientSideWs.send(JSON.stringify({
+    type: "tool.result",
+    tool_call_id: "tc_ai_private",
+    result: { success: true, data: { type: "fetch_required", candidate_url: "http://192.168.1.5/chart.png", width: 8, height: 8 } },
+  }))
+  const confirmation = await confirmationPromise
+  assert.deepEqual(confirmation.relevant_domains, ["192.168.1.5"], "private IP → confirmation (not hard-block)")
+  clientSideWs.send(JSON.stringify({
+    type: "security.confirmation.response",
+    confirmation_id: confirmation.confirmation_id,
+    approved: true,
+  }))
+  const phase2 = await expectClientMessage("tool.execute")
+  assert.equal(phase2.tool_name, "analyze_image_fetch")
+  clientSideWs.send(JSON.stringify({
+    type: "tool.result",
+    tool_call_id: "tc_ai_private__image_fetch",
+    result: { success: true, data: { type: "canvas", image_base64: "DDD", width: 8, height: 8 } },
+  }))
+  const result = await resultPromise
+  assert.equal(result.success, true, "user-approved private-IP image fetch proceeds")
+})
+
+test("M4: direct analyze_image_fetch call is rejected (no gate bypass via internal tool)", async () => {
+  // analyze_image_fetch is internal-only (not in the LLM tool schema). A direct
+  // top-level call would mean a hallucinated/malformed request trying to fetch an
+  // arbitrary URL past the gate. It must be rejected and NOT forwarded.
+  const executeTool = createToolExecutor(serverSideWs)
+  const noForward = expectNoClientMessage("tool.execute", 200)
+  const result = await executeTool("tc_ai_direct", "analyze_image_fetch", {
+    candidate_url: "http://169.254.169.254/x",
+  })
+  await noForward
+  assert.equal(result.success, false)
+  assert.match(result.error!, /internal tool/i)
 })

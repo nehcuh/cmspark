@@ -51,6 +51,8 @@ export class BrowserBridge {
           return await this.screenshot(params)
         case "analyze_image":
           return await this.analyzeImage(params)
+        case "analyze_image_fetch":
+          return await this.analyzeImageFetch(params)
 
         // Page read tools
         case "get_page_text":
@@ -491,37 +493,34 @@ export class BrowserBridge {
     if (!data) {
       return { success: false, error: "Failed to extract image data" }
     }
-    // Cross-origin image: the in-page canvas was tainted. Fetch the raw bytes
-    // from the service worker (host_permissions bypasses page CORS).
+    // Cross-origin image: the in-page canvas was tainted. Do NOT fetch here —
+    // the companion IMAGE_FETCH_GATE (§6.1) must approve the candidate URL first
+    // (it may be an internal/metadata endpoint = SSRF). Return the candidate so
+    // the companion can gate, then dispatch analyze_image_fetch for the fetch.
     if (data.fetchSrc) {
-      try {
-        const { base64 } = await fetchImageAsBase64(data.fetchSrc)
-        return {
-          success: true,
-          data: {
-            image_base64: base64,
-            width: data.width,
-            height: data.height,
-            url: data.fetchSrc,
-            title: tab.title,
-            alt_text: data.alt || "",
-            selector,
-          },
-        }
-      } catch (e: any) {
-        return {
-          success: false,
-          error: `Cannot extract image (fetch fallback failed): ${e?.message || e}`,
-        }
+      return {
+        success: true,
+        data: {
+          type: "fetch_required",
+          candidate_url: data.fetchSrc,
+          width: data.width,
+          height: data.height,
+          title: tab.title,
+          alt_text: data.alt || "",
+          selector,
+        },
       }
     }
     if (data.error) {
       return { success: false, error: data.error }
     }
 
+    // Path A — same-origin canvas (bytes already in the page; screenshot already
+    // captures these pixels, so this adds zero exfiltration capability → ungated).
     return {
       success: true,
       data: {
+        type: "canvas",
         image_base64: data.base64,
         width: data.width,
         height: data.height,
@@ -530,6 +529,47 @@ export class BrowserBridge {
         alt_text: data.alt || "",
         selector,
       },
+    }
+  }
+
+  /** Phase 2 of the analyze_image gate (§6.1.3): the companion has approved the
+   *  candidate URL via IMAGE_FETCH_GATE. Fetch the raw bytes from the service
+   *  worker (host_permissions bypasses page CORS for the now-approved URL) and
+   *  return base64 so the adapter's VISION_TOOLS post-processing can run. */
+  private async analyzeImageFetch(params: Record<string, any>): Promise<ToolResult> {
+    const candidateUrl = String(params?.candidate_url || "")
+    if (!candidateUrl) {
+      return { success: false, error: "candidate_url is required for analyze_image_fetch" }
+    }
+    let title = "fetched image"
+    try {
+      if (params.tabId != null) {
+        const tab = await chrome.tabs.get(Number(params.tabId))
+        if (tab?.title) title = tab.title
+      }
+    } catch {
+      /* tab metadata is best-effort only */
+    }
+    try {
+      const { base64 } = await fetchImageAsBase64(candidateUrl)
+      return {
+        success: true,
+        data: {
+          type: "canvas",
+          image_base64: base64,
+          width: Number(params.width) || 0,
+          height: Number(params.height) || 0,
+          url: candidateUrl,
+          title,
+          alt_text: String(params.alt_text || ""),
+          selector: String(params.selector || ""),
+        },
+      }
+    } catch (e: any) {
+      return {
+        success: false,
+        error: `analyze_image_fetch failed for ${candidateUrl}: ${e?.message || e}`,
+      }
     }
   }
 
