@@ -13,7 +13,6 @@ import {
   writePidFile,
   cleanupPidFile,
   daemonize,
-  setupGracefulShutdown,
 } from "./daemon"
 import { startMenuBarAgent } from "./menu-bar-agent"
 import { runInteractiveSettings, runNonInteractiveSettings, runNonInteractiveSettingsCli } from "./settings-cli"
@@ -160,12 +159,8 @@ async function handleDaemonStart(): Promise<void> {
   // Release daemon lock — startServer() will acquire its own
   releaseLock(lockPath)
 
-  setupGracefulShutdown(() => {
-    cleanupPidFile(pidPath)
-  })
-
   await initDataDir()
-  await startServer()
+  await startServer({ onShutdown: () => cleanupPidFile(pidPath) })
 }
 
 async function handleDaemonStop(): Promise<void> {

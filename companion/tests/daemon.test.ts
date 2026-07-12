@@ -411,6 +411,26 @@ test("setupGracefulShutdown ignores duplicate signals", async () => {
   assert.equal(matches?.length, 1, `Expected cleanup called exactly once, got: ${output}`)
 })
 
+test("setupGracefulShutdown awaits async cleanup on SIGTERM", async () => {
+  const markerPath = path.join(tempHome, "async-sigterm.marker")
+  const script = `
+    const fs = require("fs");
+    const { setupGracefulShutdown } = require(${JSON.stringify(path.join(__dirname, "../src/daemon"))});
+    setupGracefulShutdown(async () => {
+      await new Promise(resolve => setTimeout(resolve, 50));
+      fs.writeFileSync(${JSON.stringify(markerPath)}, "ASYNC_CLEANUP_DONE");
+    });
+    setTimeout(() => process.kill(process.pid, "SIGTERM"), 50);
+    setTimeout(() => {}, 300);
+  `
+
+  const child = spawn(process.execPath, ["-e", script], { cwd: tempHome })
+  await new Promise<void>((resolve) => child.on("close", resolve))
+
+  assert.equal(fs.existsSync(markerPath), true, "Expected async marker file to exist")
+  assert.equal(fs.readFileSync(markerPath, "utf-8"), "ASYNC_CLEANUP_DONE")
+})
+
 // ============================================================================
 // DaemonError
 // ============================================================================

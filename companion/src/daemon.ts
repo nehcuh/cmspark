@@ -474,17 +474,17 @@ export function daemonize(options: DaemonizeOptions): void {
  * Install SIGTERM and SIGINT handlers that run the provided cleanup callback
  * before exiting.
  *
- * The cleanup function is called synchronously. After cleanup completes,
- * the process exits with code 0. If cleanup throws, the error is logged
- * and the process exits with code 1.
+ * The cleanup function may be synchronous or asynchronous. After cleanup
+ * completes, the process exits with code 0. If cleanup throws/rejects, the
+ * error is logged and the process exits with code 1.
  *
  * Only the first signal is honored; subsequent signals are ignored to avoid
  * re-entrant cleanup.
  */
-export function setupGracefulShutdown(cleanup: () => void): void {
+export function setupGracefulShutdown(cleanup: (signal: NodeJS.Signals) => void | Promise<void>): void {
   let shuttingDown = false
 
-  const handler = (signal: NodeJS.Signals) => {
+  const handler = async (signal: NodeJS.Signals) => {
     if (shuttingDown) {
       return
     }
@@ -493,7 +493,7 @@ export function setupGracefulShutdown(cleanup: () => void): void {
     console.log(`[daemon] Received ${signal}, shutting down gracefully...`)
 
     try {
-      cleanup()
+      await cleanup(signal)
     } catch (err: any) {
       console.error(`[daemon] Cleanup error: ${err.message || String(err)}`)
       process.exit(1)
@@ -502,8 +502,8 @@ export function setupGracefulShutdown(cleanup: () => void): void {
     process.exit(0)
   }
 
-  process.on("SIGTERM", () => handler("SIGTERM"))
-  process.on("SIGINT", () => handler("SIGINT"))
+  process.on("SIGTERM", () => void handler("SIGTERM"))
+  process.on("SIGINT", () => void handler("SIGINT"))
 }
 
 // ---------------------------------------------------------------------------
