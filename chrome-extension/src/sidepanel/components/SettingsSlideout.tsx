@@ -3,13 +3,6 @@
 import { useState, useEffect } from "react"
 import { useAgentStore } from "../store/agentStore"
 import { Modal } from "./ui/Modal"
-import type { PrivilegeMode } from "../types"
-
-const PRIVILEGE_MODE_OPTIONS: { value: PrivilegeMode; label: string; desc: string }[] = [
-  { value: "readonly", label: "只读", desc: "仅允许查询和浏览操作，禁止任何修改" },
-  { value: "standard", label: "标准", desc: "允许常规操作，高风险操作需确认" },
-  { value: "advanced", label: "高级", desc: "允许所有操作，确认阈值降低" },
-]
 
 // PR-B: typed-confirmation phrase required to arm God-mode. Deliberately high
 // friction — God-mode is the max-risk toggle (bypasses both security layers).
@@ -174,11 +167,6 @@ export function SettingsSlideout() {
     chrome.runtime.sendMessage({ type: "config.test", llmOverride })
   }
 
-  const handlePrivilegeChange = (mode: PrivilegeMode) => {
-    dispatch({ type: "SET_PRIVILEGE_MODE", mode })
-    dispatch({ type: "SET_CONFIG", config: { privilege_mode: mode } })
-  }
-
   const toggleSafetySkill = (skillId: string) => {
     const current = config.safety_skills_enabled || []
     const next = current.includes(skillId)
@@ -289,28 +277,6 @@ export function SettingsSlideout() {
 
           {/* --- Security Settings --- */}
           <div style={styles.sectionTitle}>安全设置</div>
-
-          <div style={styles.field}>
-            <label style={styles.label}>特权模式</label>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {PRIVILEGE_MODE_OPTIONS.map(opt => (
-                <label key={opt.value} style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer" }}>
-                  <input
-                    type="radio"
-                    name="privilege_mode"
-                    value={opt.value}
-                    checked={(config.privilege_mode || "standard") === opt.value}
-                    onChange={() => handlePrivilegeChange(opt.value)}
-                    style={{ marginTop: 3 }}
-                  />
-                  <div>
-                    <div style={{ fontSize: 13, fontWeight: 500 }}>{opt.label}</div>
-                    <div style={{ fontSize: 11, color: "#888" }}>{opt.desc}</div>
-                  </div>
-                </label>
-              ))}
-            </div>
-          </div>
 
           <div style={styles.field}>
             <label style={styles.label}>安全技能</label>
