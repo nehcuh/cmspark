@@ -57,7 +57,7 @@
 |---|---|---|
 | ~~unhandledRejection 退出~~ | ~~M6 (`index.ts:442`)~~ | **✅ 已闭环（PR #51）**：kimi 裁决选项 A（fatal-exit 对齐 uncaughtException，单独采纳，不加 supervisor 重启）。核心论点：uncaughtException 今天已 fatal 且无 supervisor 重启，M6 不新增可用性缺口——「supervisor 崩溃重启」是正交、既存问题（已影响 uncaughtException），作独立 follow-up。fail-fast 优于 zombie：对持有 history.db + in-flight tool 的单进程 agent，silent corruption 是最坏失败模式；与 Node ≥v15 默认 `--unhandled-rejections=throw` 语义一致。实现：提取 `crash-handlers.ts`（`writeCrashLog` + `installFatalHandlers`，两者均 `exit(1)`），index.ts 调用——可测试 seam 仿 daemon.ts `setupGracefulShutdown` 先例。+3 spawn 测（unhandledRejection→exit1+crash.log / uncaughtException parity / writeCrashLog unit）。全量 826+15 测绿。RFC [`p2-2-m6-unhandled-rejection-exit-rfc-2026-07-13.md`](p2-2-m6-unhandled-rejection-exit-rfc-2026-07-13.md)。**Follow-up（独立 issue，不在本 PR）**：跨平台 supervisor 崩溃重启策略（launchd KeepAlive / systemd Restart=on-failure / Windows schtasks 已知局限） | ✅ 已闭环 |
 | ~~双 shutdown 合并~~ | ~~M9 (`daemon.ts:484` + `server.ts:2197`)~~ | **✅ 已闭环（PR #49）**：daemon 模式两个 SIGTERM handler racing——`daemon.ts` 同步 `process.exit(0)` preempt `server.ts` 异步 mcp/history/WS 清理（MCP 子进程孤儿化、history 未 flush，回归审计 C2）。合并为 `startServer` 经 async-aware `setupGracefulShutdown` 注册的**单一** handler，index.ts 把 pidFile 清理作 `onShutdown` hook；shutdown 改 async/await 逐步 try/catch；signal 转发保留审计 SIGINT/SIGTERM 区分。已知可接受权衡：handler 装在 startServer 末尾，启动期信号不再清 pid（init 短 + stale pid 自愈）。 | ✅ 已闭环 |
-| abort 孤儿消息 | M10 (`adapter.ts` 多处 addMessage) | **消息丢失风险**：abort 后 in-flight addMessage 仍执行会留孤儿消息；但盲目全跳过会丢用户消息/部分 assistant 回复。需逐 site 判断哪些 addMessage 应在 abort 后保留。1–2h，需细致 |
+| ~~abort 孤儿消息~~ | ~~M10 (`adapter.ts`)~~ | **✅ 已闭环（PR #52）**：kimi 裁决采纳全部推荐 fork——F1-b（abort-during-streaming 保非空部分回复为 text-only）/ F2-a（`deleteMessagesFrom(savedAssistantId)` rollback 整轮）/ F3-a（tool catch 重抛 abort→`chat.aborted`）/ F4-a（scope 仅 abort，非-abort shouldStop 异常 orphan 作独立 follow-up）。**根因**：assistant 消息流结束后立即持久化（含全部 N tool_calls）后才进 tool 循环；早退（abort 期间 MCP 工具抛 / 任意工具异常 shouldStop break）时剩余 tool_calls 无结果→持久化态 assistant 带 N tool_calls 只有 M<N 结果→下次送 LLM **400 structural**。**修**（`adapter.ts` +27/-2）：提升 `assistantContent`+`savedAssistantId` 到 round-loop 作用域；tool 循环顶部 `if (signal?.aborted) break`；tool 异常 catch `if (AbortError||signal?.aborted) throw e` 重抛；round-loop abort 分支 `deleteMessagesFrom(savedAssistantId)` rollback +（未持久化时）保非空 `assistantContent` 为 text-only。race 已分析：message-router per-thread 单 AbortController 串行化，rollback 无并发追加。+3 fake-LLM-server 集成测（仿 m2 先例：rollback 后仅 user 消息无 dangling tool_calls / streaming abort 保部分 text-only / 空 content 不追加）。全量 **829 测（baseline 826+3）+ settings-web 15 全绿**，跑两遍稳。kimi 实现 + 终审 GO。RFC [`p2-2-m10-abort-orphans-rfc-2026-07-13.md`](p2-2-m10-abort-orphans-rfc-2026-07-13.md)。**Follow-up（独立）**：非-abort shouldStop 多-tool 异常 orphan（F4-b，同 rollback 机制可扩） | ✅ 已闭环 |
 | ~~MCP 子进程 force-kill~~ | ~~M11 (`mcp/client.ts:191`)~~ | **❌ 误报**：SDK `StdioClientTransport.close()`（`@modelcontextprotocol/sdk@^1.0.4`，解析至 1.29.0）已内置 stdin-close → 2s grace → SIGTERM → 2s grace → SIGKILL 阶梯；SIGKILL 不可捕获/忽略，子进程必死。再自己 `kill(pid, SIGKILL)` 既冗余又 race（close 后 `transport.pid` 被 SDK 置 null）。M9（PR #49）已保证 `mcpManager.shutdown()` 被 await，阶梯完整跑完。详见 [`p2-2-m11-mcp-forcekill-audit-2026-07-12.md`](p2-2-m11-mcp-forcekill-audit-2026-07-12.md)。 | ✅ 已闭环 |
 
 ### P2-3 · 可观测 + 成本
@@ -120,7 +120,7 @@
 
 1. **~~P2-4 M19~~ 已证为误报**：默认模型 `deepseek-v4-flash` 本就正确；旧名停用风险由 PR #32 探测 + 本 PR 自动迁移闭环。
 2. **P2-1 安全纵深**（M1→M2→M3→M4→M5）—— 价值最高，C1 已解锁；M1/M2/M3 先做（小而清晰），M5（cookie）压轴单独 kimi 终审。
-3. **P2-2 可靠性**—— ~~M9（双 shutdown）~~ ✅ PR #49 闭环；~~M11（MCP kill）~~ 已证为 SDK 覆盖的误报；~~M6（fatal rejection）~~ ✅ PR #51 闭环（kimi 裁决选项 A：fatal-exit 对齐 uncaughtException，supervisor 重启作独立 follow-up）；M10（abort 孤儿）需逐 site 设计。
+3. **P2-2 可靠性**—— ~~M9（双 shutdown）~~ ✅ PR #49 闭环；~~M11（MCP kill）~~ 已证为 SDK 覆盖的误报；~~M6（fatal rejection）~~ ✅ PR #51 闭环（kimi 裁决选项 A：fatal-exit 对齐 uncaughtException，supervisor 重启作独立 follow-up）；~~M10（abort 孤儿）~~ ✅ PR #52 闭环（kimi 裁决 F1-b/F2-a/F3-a/F4-a：rollback 整轮 + 保部分回复 + 重抛 abort）。**P2-2 全部 4 项闭环。**
 4. **P2-3 可观测+成本** + **P3**（可并行）。
 5. **P4** 按需。
 
@@ -132,6 +132,7 @@
 
 | 日期 | 变更 |
 |---|---|
+| 2026-07-13 | M10 闭环（PR #52）：kimi 裁决 F1-b/F2-a/F3-a/F4-a——abort 后 `deleteMessagesFrom` rollback 整轮持久化（消除 dangling tool_calls 致 400）+ tool catch 重抛 abort（发 chat.aborted）+ streaming abort 保非空部分回复；+3 fake-LLM-server 集成测。**P2-2 全部 4 项（M6/M9/M10/M11）闭环** |
 | 2026-07-13 | M6 闭环（PR #51）：kimi 裁决选项 A——unhandledRejection 对齐 uncaughtException 走 fatal exit(1)（提取 `crash-handlers.ts`，+3 spawn 测）；supervisor 崩溃重启作独立 follow-up（不新增可用性缺口，uncaughtException 早已 fatal） |
 | 2026-07-12 | M9 闭环（PR #49）：SIGTERM/SIGINT 双 handler race 合并为 startServer 单一 async handler，history.db flush 回归修复；M11 标记为误报/已闭环：SDK `^1.0.4`（解析至 1.29.0）`StdioClientTransport.close()` 已内置 SIGTERM→SIGKILL 阶梯，无需额外 force-kill |
 | 2026-07-11 | 初版：v0.3.0 发布后创建；记录 P0+P1 闭环状态、P2–P4 计划、P2-2 权衡发现、技术债 follow-up |
