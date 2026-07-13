@@ -5,6 +5,7 @@ import * as crypto from "crypto"
 import { WebSocketServer } from "ws"
 
 import { CompanionClient } from "../src/tray/companion-client"
+import { AUTH_TIMEOUT_MS } from "../src/ws-auth"
 import { TEST_SECRET } from "./_companion-client-auth-setup"
 
 // E2E for the tray CompanionClient's #35 (P0-2B) shared-secret handshake. Drives
@@ -23,16 +24,20 @@ interface AuthServer {
   receivedProof: () => string | null
   /** App-level messages (everything after auth.ok) the client sent. */
   appMessages: () => any[]
+  /** Total inbound connections (used to detect reconnect behavior). */
+  connectionCount: () => number
   close: () => Promise<void>
 }
 
 /** Mock companion server. `serverSecret` is what the SERVER uses to verify the
  *  proof; the client computes its proof against ws_secret on disk (TEST_SECRET).
- *  Pass a mismatched secret to simulate a rejected handshake. */
-function startAuthServer(serverSecret: string, requireOrigin = true): Promise<AuthServer> {
+ *  Pass a mismatched secret to simulate a rejected handshake. `silent` skips the
+ *  auth.challenge (to exercise the client's auth-watchdog). */
+function startAuthServer(serverSecret: string, requireOrigin = true, silent = false): Promise<AuthServer> {
   return new Promise((resolve) => {
     let proofValue: string | null = null
     const app: any[] = []
+    let connections = 0
 
     const wss = new WebSocketServer(
       {
@@ -53,6 +58,7 @@ function startAuthServer(serverSecret: string, requireOrigin = true): Promise<Au
           port,
           receivedProof: () => proofValue,
           appMessages: () => app,
+          connectionCount: () => connections,
           close: () =>
             new Promise<void>((done) => {
               for (const c of wss.clients) {
@@ -65,8 +71,11 @@ function startAuthServer(serverSecret: string, requireOrigin = true): Promise<Au
     )
 
     wss.on("connection", (ws) => {
-      // Mirror server.ts: challenge immediately on connect.
-      ws.send(JSON.stringify({ type: "auth.challenge", nonce: NONCE }))
+      connections++
+      // Mirror server.ts: challenge immediately on connect (unless `silent`).
+      if (!silent) {
+        ws.send(JSON.stringify({ type: "auth.challenge", nonce: NONCE }))
+      }
 
       ws.on("message", (raw) => {
         let msg: any
@@ -237,6 +246,74 @@ test("CompanionClient with a wrong Origin is rejected by the server gate", async
       "a non-tray origin must not authenticate",
     )
     assert.equal(server.receivedProof(), null, "rejected at upgrade — no handshake reached")
+  } finally {
+    client.disconnect()
+    await server.close()
+  }
+})
+
+test("CompanionClient with no shared secret marks unpaired and suppresses the reconnect storm", async () => {
+  const server = await startAuthServer(TEST_SECRET)
+  const client = new CompanionClient({
+    host: "127.0.0.1",
+    port: server.port,
+    reconnectInterval: 50,
+    maxReconnectAttempts: -1, // infinite — only the unpaired guard should stop retries
+    secretLoader: () => "", // simulate "no ws_secret on disk yet"
+  })
+
+  try {
+    await client.connect() // resolves on close (no secret → respondToChallenge closes)
+
+    assert.notEqual(
+      client.connectionState,
+      "connected",
+      "unpaired client must not reach 'connected'",
+    )
+    assert.equal(server.receivedProof(), null, "must not send a handshake with no secret")
+
+    // Wait well past one reconnect interval; unpaired must suppress ALL retries.
+    await new Promise((r) => setTimeout(r, 250))
+    assert.equal(
+      server.connectionCount(),
+      1,
+      "unpaired client must NOT reconnect (storm suppressed until a secret exists)",
+    )
+  } finally {
+    client.disconnect()
+    await server.close()
+  }
+})
+
+test("CompanionClient closes + reconnects when the server upgrades but never challenges (auth watchdog)", async () => {
+  // `silent` server: accepts the WS upgrade but never sends auth.challenge. Without
+  // the watchdog, connect() would park in "connecting" forever. With it, the client
+  // closes at AUTH_TIMEOUT_MS and scheduleReconnect fires.
+  const server = await startAuthServer(TEST_SECRET, true, /* silent */ true)
+  const client = new CompanionClient({
+    host: "127.0.0.1",
+    port: server.port,
+    reconnectInterval: 50,
+    maxReconnectAttempts: -1,
+  })
+
+  try {
+    const t0 = Date.now()
+    await client.connect() // resolves once the watchdog closes the socket
+    const elapsed = Date.now() - t0
+
+    assert.notEqual(client.connectionState, "connected", "silent server must not authenticate")
+    assert.ok(
+      elapsed >= AUTH_TIMEOUT_MS - 100,
+      `connect() must hang for ~the full watchdog (${AUTH_TIMEOUT_MS}ms), got ${elapsed}ms`,
+    )
+
+    // Watchdog closed the parked socket → scheduleReconnect fires ~interval later.
+    await new Promise((r) => setTimeout(r, 300))
+    assert.ok(
+      server.connectionCount() >= 2,
+      "watchdog must close the parked socket and trigger at least one reconnect",
+    )
   } finally {
     client.disconnect()
     await server.close()

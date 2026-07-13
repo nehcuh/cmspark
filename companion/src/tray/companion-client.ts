@@ -17,7 +17,7 @@
 import * as crypto from "crypto"
 import WebSocket from "ws"
 import { QuickActionItem, RecentThreadItem } from "./tray-adapter"
-import { getOrCreateSharedSecret } from "../ws-auth"
+import { getOrCreateSharedSecret, AUTH_TIMEOUT_MS } from "../ws-auth"
 
 // ---------------------------------------------------------------------------
 // Constants & types
@@ -36,6 +36,9 @@ export interface CompanionClientOptions {
   maxReconnectAttempts: number
   /** Override the WS Origin header (defaults to the trusted tray origin). */
   origin?: string
+  /** Override the shared-secret source (defaults to getOrCreateSharedSecret).
+   *  Mainly a test seam for simulating the unpaired (no-secret) state. */
+  secretLoader?: () => string
 }
 
 export type ConnectionState = "connected" | "connecting" | "disconnected"
@@ -77,6 +80,9 @@ export class CompanionClient {
   private unpaired = false
   /** Resolver for the in-flight connect() promise (fired once on auth.ok or close). */
   private connectResolve: (() => void) | null = null
+  /** Auth-handshake watchdog; if the server upgrades but never challenges within
+   *  AUTH_TIMEOUT_MS, close so we reconnect instead of parking in "connecting". */
+  private connectAuthTimer: ReturnType<typeof setTimeout> | null = null
 
   // Heartbeat: detect dead connections where TCP is silently dropped
   private lastActivityAt = 0
@@ -116,6 +122,16 @@ export class CompanionClient {
         // any app message now is terminated by the companion (unauthenticated).
         this.reconnectAttempts = 0
         this.debug("socket open; awaiting auth.ok")
+
+        // Watchdog: the server challenges on connect, so auth.ok should land within
+        // AUTH_TIMEOUT_MS. If it never does (server upgraded then hung/crashed), close
+        // so handleDisconnect + scheduleReconnect take over — otherwise connect() would
+        // park in "connecting" forever with no data and no retry.
+        this.connectAuthTimer = setTimeout(() => {
+          this.connectAuthTimer = null
+          this.debug("auth handshake timed out; closing to reconnect")
+          try { ws.close() } catch { /* closing */ }
+        }, AUTH_TIMEOUT_MS)
       })
 
       ws.on("message", (raw: WebSocket.Data) => {
@@ -141,8 +157,13 @@ export class CompanionClient {
     })
   }
 
-  /** Resolve the in-flight connect() promise exactly once (idempotent). */
+  /** Resolve the in-flight connect() promise exactly once (idempotent). Also
+   *  clears the auth-handshake watchdog (no longer needed once settled). */
   private settleConnect(): void {
+    if (this.connectAuthTimer) {
+      clearTimeout(this.connectAuthTimer)
+      this.connectAuthTimer = null
+    }
     if (this.connectResolve) {
       const r = this.connectResolve
       this.connectResolve = null
@@ -401,9 +422,16 @@ export class CompanionClient {
   }
 
   /** Load the shared secret from the companion data dir (same file the server
-   *  uses; getOrCreateSharedSecret reads-or-creates it owner-only at 0o600). */
+   *  uses; getOrCreateSharedSecret reads-or-creates it owner-only at 0o600).
+   *  The tray creates the file if missing so it always has a secret to present —
+   *  the server reads the same file, so both converge on one secret regardless of
+   *  startup order. `secretLoader` is a test seam for the unpaired state. */
   private loadSecret(): string {
-    try { return getOrCreateSharedSecret() } catch { return "" }
+    try {
+      return this.options.secretLoader ? this.options.secretLoader() : getOrCreateSharedSecret()
+    } catch {
+      return ""
+    }
   }
 
   private handleDisconnect(): void {
