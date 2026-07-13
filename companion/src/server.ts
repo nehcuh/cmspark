@@ -3,6 +3,7 @@
 import { WebSocketServer, WebSocket } from "ws"
 import { execFile } from "child_process"
 import { randomUUID } from "crypto"
+import http from "http"
 import os from "os"
 import { URL } from "url"
 import { getConfig, saveConfig, initDataDir, configEvents, CONFIG_CHANGE_EVENT, migrateLegacyModelName } from "./config"
@@ -46,6 +47,23 @@ export const TOOL_EXECUTION_TIMEOUT_MS = 15000
  */
 export function isAllowedWsOrigin(origin: string | undefined | null): boolean {
   return typeof origin === "string" && /^chrome-extension:\/\/[A-Za-z0-9_-]+$/i.test(origin)
+}
+
+/**
+ * L12 healthz handler. Mounted on the same loopback HTTP server that carries the
+ * WebSocket upgrade. Liveness probes (launchd/docker/supervisor) call this
+ * without any WS handshake, so it is intentionally outside the shared-secret
+ * auth flow and exposes no sensitive state.
+ */
+export function handleHealthzRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
+  const pathOnly = req.url ? req.url.split("?")[0] : ""
+  if (req.method === "GET" && pathOnly === "/healthz") {
+    res.writeHead(200, { "Content-Type": "application/json" })
+    res.end(JSON.stringify({ status: "ok", uptime: process.uptime() }))
+    return
+  }
+  res.writeHead(404, { "Content-Type": "text/plain" })
+  res.end("Not Found")
 }
 
 function getDomainFromUrl(urlString: string): string {
@@ -1833,9 +1851,15 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
     logger.warn("mcp.manager.start_failed", { error: err?.message || String(err) })
   }
 
+  // L12: share one loopback HTTP server between the healthz liveness probe and the
+  // WebSocket upgrade. This is the ws-recommended pattern and keeps the loopback-only
+  // trust boundary unchanged. We listen explicitly so we can close the httpServer on
+  // shutdown (M9 regression guard).
+  const httpServer = http.createServer(handleHealthzRequest)
+  httpServer.listen(port, "127.0.0.1")
+
   wss = new WebSocketServer({
-    port,
-    host: "127.0.0.1",
+    server: httpServer,
     // P0-2 (audit C1): reject non-extension origins to close the web-page attack vector —
     // HTTP pages / file:// / other browser extensions can otherwise open a loopback WS and
     // drive the agent (config.set, list_all_cookies, evaluate, ...). Browsers set the WS Origin
@@ -1860,7 +1884,7 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
     },
   })
 
-  wss.on("listening", () => {
+  httpServer.on("listening", () => {
     console.log(`[cmspark-agent] Companion started on ws://127.0.0.1:${port}`)
     logger.info("server.listening", { port })
   })
@@ -2195,6 +2219,13 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
     }
     try {
       wss.close()
+    } catch {
+      // ignore
+    }
+    // L12 / M9: with `{server}` wiring, wss.close() does NOT close our http.Server.
+    // Close it explicitly so the process exits and the port is released.
+    try {
+      await new Promise<void>((resolve) => httpServer.close(() => resolve()))
     } catch {
       // ignore
     }
