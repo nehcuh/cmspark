@@ -41,7 +41,11 @@ export function detectJailbreakInOutput(text: string): string[] {
 
 /** Chars of previously-streamed text re-scanned alongside each incoming token, so
  *  a jailbreak phrase split across a token boundary is still caught. Sized above
- *  the longest pattern (~40 chars) with margin. */
+ *  the longest pattern (~40 chars) with margin.
+ *
+ *  INVARIANT: this MUST stay larger than the longest possible jailbreak match
+ *  (the longest JAILBREAK_OUTPUT_PATTERNS source is ~40 chars). Lowering it below
+ *  that would let a phrase split across a token boundary slip through undetected. */
 export const JAILBREAK_SCAN_OVERLAP = 200
 
 /** The slice of accumulated streaming text to jailbreak-scan for the current
