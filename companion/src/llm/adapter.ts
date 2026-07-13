@@ -29,7 +29,7 @@ const JAILBREAK_OUTPUT_PATTERNS = [
   /新\s*角色\s*：\s*你现在是/,
 ]
 
-function detectJailbreakInOutput(text: string): string[] {
+export function detectJailbreakInOutput(text: string): string[] {
   const found: string[] = []
   for (const pattern of JAILBREAK_OUTPUT_PATTERNS) {
     if (pattern.test(text)) {
@@ -37,6 +37,36 @@ function detectJailbreakInOutput(text: string): string[] {
     }
   }
   return found
+}
+
+/** Chars of previously-streamed text re-scanned alongside each incoming token, so
+ *  a jailbreak phrase split across a token boundary is still caught. Sized above
+ *  the longest pattern (~40 chars) with margin.
+ *
+ *  INVARIANT: this MUST stay larger than the longest possible jailbreak match
+ *  (the longest JAILBREAK_OUTPUT_PATTERNS source is ~40 chars). Lowering it below
+ *  that would let a phrase split across a token boundary slip through undetected. */
+export const JAILBREAK_SCAN_OVERLAP = 200
+
+/** The slice of accumulated streaming text to jailbreak-scan for the current
+ *  token: the incoming delta plus a trailing overlap window. Its length is bounded
+ *  by (incomingLength + overlap) regardless of total response length — so the
+ *  per-token scan is O(delta), not O(full content).
+ *
+ *  Re-scanning the FULL accumulated content on every token is O(N²) (12 regexes ×
+ *  the growing content × every token) and pins the main thread on long responses,
+ *  blocking the WS heartbeat and stalling the daemon — the root cause of the
+ *  2026-07-13 main-thread spin (PID 23854). Because each position is scanned
+ *  exactly once, when its own token arrives, no phrase is missed by scanning only
+ *  a bounded window; the overlap merely re-covers the boundary between the last
+ *  scanned token and this one. Pure function for direct unit testing. */
+export function jailbreakScanWindow(
+  accumulated: string,
+  incomingLength: number,
+  overlap: number,
+): string {
+  const scanFrom = Math.max(0, accumulated.length - incomingLength - overlap)
+  return accumulated.slice(scanFrom)
 }
 
 interface ChatCreateParams {
@@ -331,9 +361,15 @@ CRITICAL RULES:
         }
 
         if (delta?.content) {
-          assistantContent += delta.content
-          // Real-time jailbreak detection during streaming
-          const jailbreakPatterns = detectJailbreakInOutput(assistantContent)
+          const incoming = delta.content
+          assistantContent += incoming
+          // Real-time jailbreak detection during streaming. Scan only the incoming
+          // token plus a small trailing window — NOT the full accumulated content.
+          // (See jailbreakScanWindow: the old full-content scan was the O(N²) root
+          // cause of the 2026-07-13 main-thread spin.)
+          const jailbreakPatterns = detectJailbreakInOutput(
+            jailbreakScanWindow(assistantContent, incoming.length, JAILBREAK_SCAN_OVERLAP),
+          )
           if (jailbreakPatterns.length > 0) {
             logger.warn("llm.jailbreak_detected", {
               thread_id: threadId,
