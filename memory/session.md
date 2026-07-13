@@ -2,6 +2,14 @@
 
 ## Current Session
 
+### S10 (2026-07-13) [cmspark daemon 主线程 spin 根因 + live 部署]
+- 诊断 daemon 主线程 spin(PID 23854，症状"启动失败"，需 kill 才能恢复)：V8 `sample` 确证 LLM 流式循环每 token 对**完整累积内容**跑 12 条正则 `detectJailbreakInOutput(assistantContent)` → **O(N²)**(12 regex × 增长到 N × 每 token)，长回复钉死主线程 → WS 心跳停 → 客户端以为 companion 死了 → daemon 卡死。同 PR #4(tray↔daemon skill.list 回声环)「主线程热循环」类
+- 修复 **PR #64**(已合 main b0ad317)：每 token 只扫 incoming delta + 200 字符 trailing overlap(`jailbreakScanWindow` + `JAILBREAK_SCAN_OVERLAP`，**INVARIANT > 最长可能匹配 ~40 字符**)→ 整流 O(N)。回归测 6 例(确定性复现 O(N²) ratio≈4 + 证 fix O(N) ratio≈2，无时序 flaky)
+- **live 部署**(用户机)：用 `scripts/package.sh` 的**权威 esbuild**(**MCP 必须 inlined，不可 --external**；dev 的 `npm run bundle:exe` 误 `--external @modelcontextprotocol/sdk` 致 .app 启动报 `Cannot find module`)重建 bundle → 热替换 `/Applications/CMspark.app/Contents/Resources/cmspark-agent.js`(旧备份 `.bak-pre-spinfix`)→ `daemon stop` + `daemon start --daemonize`。验证 idle：`top -l 2`=0.0%、`sample`=100% `uv__io_poll`(libuv idle block)
+- **关键坑**：`ps -o pcpu`(及 `top -pid` 单次)是**过去一分钟衰减平均**，刚启动 daemon 即使瞬时 idle 也显 ~30%(启动尖峰 + extension 重连 burst 的衰减尾巴)。**判 spin 必须用 `top -l 2 -pid <PID>` 取第二次瞬时值**。本次被 30% 误判为"fix 没生效、仍在 spin"，实为 idle，sample 才是真相
+- defer：`chat.token`(adapter.ts:349) 每 token 重发完整累积内容是次要 O(N²)，但为文档化 REPLACE 协议(`ChatView.tsx:432`)，改需 companion+extension delta 协同，比 regex 便宜不单独钉 CPU，未修
+- Recorded: yes — 自动记忆 spin-rc-on-squared-jailbreak-scan.md 已更 fix-live + CPU 衰减平均坑；project-knowledge 加 macOS CPU 衰减平均坑
+
 ### S8 (2026-07-10 续) [cmspark 审计修复收尾 → 10 PR 全合]
 - S7 的 4 PR(#11-#14)全部合入 main + **CI 首次真绿**(P0 去 `|| true` + P1-1 修 hang 同生效)
 - 继续开了 **6 个 PR**(全合)：#15 threads-history 5 确定性失败(单调时间戳+精确cap+隔离) / #16 CI 全面覆盖(**glob 修复 106→703 测试** + matchSite 后缀碰撞 bug) / #17 linux CI stdio skip / **#18 officeparser 4→7 升级(C4 critical 根除，decompress 依赖移除)** / **#19 H10 安全弹窗 a11y**(focus trap+Escape+aria-modal)
