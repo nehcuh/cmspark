@@ -88,6 +88,10 @@ export async function handleMessage(
       if (Array.isArray(cfg.trusted_domains)) normalized.trusted_domains = cfg.trusted_domains
       if (Array.isArray(cfg.auto_approved_domains)) normalized.auto_approved_domains = cfg.auto_approved_domains
       if (cfg.history_retention_days) normalized.history_retention_days = cfg.history_retention_days
+      // `!== undefined` (not truthy) so the UI can disable retention/rotation by sending 0,
+      // which the backend treats as "off" (pruneOldLogs / rotateLogFileIfNeeded early-return on <=0).
+      if (cfg.log_retention_days !== undefined) normalized.log_retention_days = cfg.log_retention_days
+      if (cfg.log_max_file_mb !== undefined) normalized.log_max_file_mb = cfg.log_max_file_mb
       // Security config: normalize flat security_* fields into nested security object.
       // The extension UI sends flattened fields (auto_approve_dangerous, allow_all_schemes)
       // at the top level; re-nest them under `security`, preserving the rest of the
