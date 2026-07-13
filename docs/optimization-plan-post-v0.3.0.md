@@ -79,6 +79,15 @@
 
 ## 3. P3 — 🟢 可维护性重构（~4 天，可与 P2 并行）
 
+> **进度 (2026-07-13)**：P3 快速清理批次已交付（每项最小修复 + 独立小 PR + kimi 门）——
+> **L1 ✅ #57**（删 proto-pollution value 误报检查 + deepMerge 显式 proto-key skip）、
+> **L3 ✅ #60**（DOMPurify `afterSanitizeAttributes` 加 target/rel + http(s)→`chrome.tabs.create`）、
+> **L4 ✅ #58**（删零引用 InputArea/ConnectionStatus 死代码）、
+> **L5 ✅ #60**（pinnedRef 最小修复，virtuoso 迁移 defer）、
+> **L7 ✅ #9**（早已修，标 close）、
+> **L9 ✅ #59**（sendingRef 同步互斥防双发）。
+> 剩余 defer：god-file 拆分 M12/M14、virtuoso 性能 M15/M16、WS 类型化 M21、杂项 M13/M17、L13/L14 文档版本。
+
 | 任务 | Finding | 说明 |
 |---|---|---|
 | 前端 god-file 拆分 | M12+M14+L4 | sidepanel 大组件拆分 |
@@ -132,6 +141,7 @@
 
 | 日期 | 变更 |
 |---|---|
+| 2026-07-13 | **P3 快速清理批次闭环（PR #57-#60）**：kimi 实现 + 独立终审（#57/#58/#59 LGTM；#60 NIT 2 项已修——thread 切换重置 pinnedRef 修 L5 回归 + 链接 click 仅放行 http(s) 避免 extension-origin tab）。①**L1 #57**：`hasPrototypePollutionKey` 删 value-string 误报检查（值非污染向量）+ `deepMerge` 显式 skip `__proto__`/`constructor`/`prototype` key（去 "by accident" 安全）；+7 测确认误报已修且守卫保留。②**L4 #58**：删零引用死代码 InputArea.tsx/ConnectionStatus.tsx（App.tsx 用内联版）。③**L9 #59**：`sendingRef` 同步互斥防 handleSend 重入双发。④**L5+L3 #60**：pinnedRef 尊重用户上滚 + thread 切换重置；DOMPurify `afterSanitizeAttributes` 加 target=_blank rel=noopener + markdown-body click capture 仅 http(s)→`chrome.tabs.create({active:false})`（仿 mermaid 先例）。L7 标 close（PR #9 早已修 pending 竞态）。剩余 P3（god-file/virtuoso/WS 类型化/M13/M17/L13/L14）defer。全量 companion 883 测 + extension 70 测绿 |
 | 2026-07-13 | M20 闭环（PR #55）：kimi 裁决 F1-a/F2-a/F4-0/F5 no-op——纯成本可观测，零行为变更。①`chatCreate` 流式加 `stream_options:{include_usage:true}` + 捕获终末 `chunk.usage`，`generateThreadTitle` 捕获 `response.usage`，两处 `logger.info("llm.usage",…)`（kind chat/title，含 prompt/completion/total/reasoning_tokens，无 usage 不抛不记）；②F1-a 保持 abort-and-replace（不引入 queue/reject），3 abort 点（chat.create/regenerate/file.upload）加 `llm.thread_request_superseded`；③F5 continuousFailures 重置今日已实现=no-op；④F4 daily_token_budget defer P4。+5 测（OpenAI proto mock + logger capture），全量 857 绿 |
 | 2026-07-13 | M8 闭环（PR #54）：kimi 裁决 D1-D4——retention `log_retention_days`=14 / per-write 大小轮转 `log_max_file_mb`=10MB 保 1 份 `.1` / 覆盖 `mcp/logs`（mtime）/ `companion-DATE.log→.1.log` 覆盖。新增 `log-rotation.ts`（`pruneOldLogs` 在 `initDataDir` 末尾 + `rotateLogFileIfNeeded` 在 `logEvent` append 前）；kimi 终审 2 NEEDS-FIX 已修（cutoff 改 UTC 零点消时区 off-by-one + normalize 改 `!== undefined` 让 UI 能 disable）+ pruneByMtime 限 `.log`；+10 测，全量 852 绿 |
 | 2026-07-13 | M7 闭环（PR #53）：kimi 裁决 Option B（URL 净化保审计，非字面整值脱敏）——新增 `redactUrl()`（剥 userinfo + 脱敏 secret query param 含 `id_token`）+ `redactLogData` 三分支（敏感 key / URL-ish key / 递归）+ 防御性 `\bcode\b`/`\bparams\b`（跳过 `selector`）；kimi 终审 2 NEEDS-FIX（id_token 假阴性 + params 子串假阳性）已修；+13 测，全量 842 绿。**P2-3 首项闭环** |
