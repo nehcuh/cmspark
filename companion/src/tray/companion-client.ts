@@ -4,20 +4,38 @@
 // existing message protocol (thread.list, skill.list, system.ping, etc.)
 // to populate tray menus with live data.
 //
+// P0-2B (#35) authentication: the companion challenges every new connection,
+// so this client must complete the shared-secret HMAC handshake before any app
+// message is accepted. "connected" means AUTHENTICATED — refreshAll() runs only
+// after auth.ok, mirroring the extension's chrome-extension/src/background/ws-client.ts.
+// The tray is a first-party local process in the same codebase as the server and
+// reads the SAME ws_secret file via getOrCreateSharedSecret(), so it always holds
+// the secret the server will accept (both sides converge on ~/.cmspark-agent/ws_secret).
+//
 // When the companion is unreachable, returns default Quick Actions.
 
+import * as crypto from "crypto"
 import WebSocket from "ws"
 import { QuickActionItem, RecentThreadItem } from "./tray-adapter"
+import { getOrCreateSharedSecret } from "../ws-auth"
 
 // ---------------------------------------------------------------------------
-// Types
+// Constants & types
 // ---------------------------------------------------------------------------
+
+/** Origin presented on the WS upgrade. Allow-listed by isAllowedWsOrigin as a
+ *  trusted first-party tray origin. The real gate is the #35 HMAC handshake —
+ *  a web page cannot forge an arbitrary browser Origin, so this string only ever
+ *  reaches the server from the local tray. */
+const DEFAULT_TRAY_ORIGIN = "cmspark-tray://local"
 
 export interface CompanionClientOptions {
   host: string
   port: number
   reconnectInterval: number
   maxReconnectAttempts: number
+  /** Override the WS Origin header (defaults to the trusted tray origin). */
+  origin?: string
 }
 
 export type ConnectionState = "connected" | "connecting" | "disconnected"
@@ -52,6 +70,14 @@ export class CompanionClient {
   private requestId = 0
   private _state: ConnectionState = "disconnected"
 
+  /** Authenticated = companion accepted our HMAC handshake. App sends + data
+   *  fetches are gated on this; promoted to "connected" only after auth.ok. */
+  private authenticated = false
+  /** No shared secret available (first run, not paired). Suppresses reconnect storm. */
+  private unpaired = false
+  /** Resolver for the in-flight connect() promise (fired once on auth.ok or close). */
+  private connectResolve: (() => void) | null = null
+
   // Heartbeat: detect dead connections where TCP is silently dropped
   private lastActivityAt = 0
   private heartbeatTimer: ReturnType<typeof setTimeout> | null = null
@@ -74,26 +100,22 @@ export class CompanionClient {
   async connect(): Promise<void> {
     if (this._state === "connected" || this._state === "connecting") return
     this._state = "connecting"
+    this.authenticated = false
 
     const url = `ws://${this.options.host}:${this.options.port}`
+    const origin = this.options.origin ?? DEFAULT_TRAY_ORIGIN
 
-    return new Promise((resolve, reject) => {
-      let settled = false
-      const ws = new WebSocket(url, { handshakeTimeout: 3000 })
+    return new Promise((resolve) => {
+      this.connectResolve = resolve
+
+      const ws = new WebSocket(url, { handshakeTimeout: 3000, origin })
 
       ws.on("open", () => {
-        if (settled) return
-        settled = true
-        this._state = "connected"
+        // WS open ≠ authenticated. The companion sends auth.challenge immediately;
+        // we stay "connecting" and promote to "connected" only on auth.ok. Sending
+        // any app message now is terminated by the companion (unauthenticated).
         this.reconnectAttempts = 0
-        this.lastActivityAt = Date.now()
-        this.startHeartbeat()
-        this.connectedCbs.forEach(cb => cb())
-        this.debug("connected")
-
-        // Fetch initial data
-        this.refreshAll().catch(() => {})
-        resolve()
+        this.debug("socket open; awaiting auth.ok")
       })
 
       ws.on("message", (raw: WebSocket.Data) => {
@@ -107,22 +129,25 @@ export class CompanionClient {
 
       ws.on("close", () => {
         this.handleDisconnect()
-        if (!settled) {
-          settled = true
-          resolve() // resolve, not reject — disconnected is a valid initial state
-        }
+        this.settleConnect()
       })
 
       ws.on("error", () => {
         this.handleDisconnect()
-        if (!settled) {
-          settled = true
-          resolve()
-        }
+        this.settleConnect()
       })
 
       this.ws = ws
     })
+  }
+
+  /** Resolve the in-flight connect() promise exactly once (idempotent). */
+  private settleConnect(): void {
+    if (this.connectResolve) {
+      const r = this.connectResolve
+      this.connectResolve = null
+      r()
+    }
   }
 
   disconnect(): void {
@@ -133,7 +158,9 @@ export class CompanionClient {
       this.ws = null
     }
     this._state = "disconnected"
+    this.authenticated = false
     this.rejectAllPending("disconnect")
+    this.settleConnect()
   }
 
   get connectionState(): ConnectionState {
@@ -248,7 +275,9 @@ export class CompanionClient {
 
   private sendRequest(type: string, params?: Record<string, any>, timeoutMs?: number): Promise<any> {
     return new Promise((resolve, reject) => {
-      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      // Must be AUTHENTICATED, not merely socket-open: between open and auth.ok the
+      // companion terminates any non-handshake message (ws.unauthenticated_message).
+      if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.authenticated) {
         reject(new Error("Not connected"))
         return
       }
@@ -283,6 +312,26 @@ export class CompanionClient {
       return
     }
 
+    // --- Auth handshake (handled inline, never matched as request/response) ---
+    if (msg.type === "auth.challenge") {
+      this.respondToChallenge(msg.nonce).catch(() => {})
+      return
+    }
+    if (msg.type === "auth.ok") {
+      // Promote to authenticated+connected. App sends are now accepted; fetch data.
+      this.authenticated = true
+      this._state = "connected"
+      this.lastActivityAt = Date.now()
+      this.startHeartbeat()
+      this.debug("authenticated")
+      this.settleConnect()
+      this.connectedCbs.forEach(cb => cb())
+      this.refreshAll().catch(() => {})
+      return
+    }
+    // auth.failed / handshake timeout → companion terminates the socket; the
+    // "close" handler resets state and schedules a reconnect.
+
     // Match response to pending request
     if (msg.id && this.pendingRequests.has(msg.id)) {
       const pending = this.pendingRequests.get(msg.id)!
@@ -304,7 +353,8 @@ export class CompanionClient {
     // conditions — a response re-triggering its own request creates a tight
     // request/response loop (see the skill.list hotfix that pinned both CPUs).
     if (msg.type === "connected") {
-      // Initial handshake from server
+      // App-level connected (server sends this right after auth.ok). We already
+      // promoted on auth.ok, so this is a no-op here — kept for clarity.
       return
     }
 
@@ -325,9 +375,41 @@ export class CompanionClient {
     }
   }
 
+  /** Respond to the companion's auth.challenge with proof = HMAC(secret, nonce).
+   *  Mirrors the extension's ws-client handleChallenge. If no secret is available,
+   *  mark unpaired and close so we don't storm reconnect with doomed handshakes. */
+  private async respondToChallenge(nonce: string): Promise<void> {
+    const secret = this.loadSecret()
+    if (!secret) {
+      this.unpaired = true
+      this.debug("no shared secret; marking unpaired and closing")
+      try { this.ws?.close() } catch { /* closing */ }
+      return
+    }
+    this.unpaired = false
+    try {
+      // Matches ws-auth verifyProof exactly:
+      //   crypto.createHmac("sha256", secret).update(nonce).digest("hex")
+      // (UTF-8 bytes of the hex secret as the HMAC key, UTF-8 nonce as the message.)
+      const proof = crypto.createHmac("sha256", secret).update(String(nonce)).digest("hex")
+      if (this.ws?.readyState === WebSocket.OPEN) {
+        this.ws.send(JSON.stringify({ type: "auth.handshake", proof }))
+      }
+    } catch (err) {
+      this.debug(`auth handshake failed: ${(err as Error).message}`)
+    }
+  }
+
+  /** Load the shared secret from the companion data dir (same file the server
+   *  uses; getOrCreateSharedSecret reads-or-creates it owner-only at 0o600). */
+  private loadSecret(): string {
+    try { return getOrCreateSharedSecret() } catch { return "" }
+  }
+
   private handleDisconnect(): void {
     if (this._state === "disconnected") return
     this._state = "disconnected"
+    this.authenticated = false
     this.ws = null
     this.stopHeartbeat()
 
@@ -363,6 +445,13 @@ export class CompanionClient {
   }
 
   private scheduleReconnect(): void {
+    // No secret yet → don't storm the companion with doomed handshakes; the tray
+    // reconnects on the next launch once a secret exists (after pairing).
+    if (this.unpaired) {
+      this.debug("unpaired — suppressing reconnect until a shared secret exists")
+      return
+    }
+
     if (this.options.maxReconnectAttempts >= 0 &&
         this.reconnectAttempts >= this.options.maxReconnectAttempts) {
       this.debug("max reconnect attempts reached")
@@ -391,7 +480,7 @@ export class CompanionClient {
   }
 
   private rejectAllPending(reason: string): void {
-    for (const [id, pending] of this.pendingRequests) {
+    for (const [, pending] of this.pendingRequests) {
       clearTimeout(pending.timer)
       pending.reject(new Error(reason))
     }
