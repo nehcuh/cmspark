@@ -24,7 +24,7 @@ import {
 // ---------------------------------------------------------------------------
 
 /** Expected SHA256 of the Swift tray binary (update via build-tray.sh) */
-const SWIFT_TRAY_SHA256 = "1e66cb0fd0d105d17851aebf0626cf024781cdcfacbfee32fb4199bb2248e8ff"
+const SWIFT_TRAY_SHA256 = "10a586ea861746f756bcf04a9520cfe3484981d8be0b616ae6189d65fba56c6d"
 
 function getSwiftTrayBinPath(): string {
   const { getSwiftTrayPath } = require("../paths")
@@ -125,6 +125,12 @@ export class SwiftTrayAdapter implements UnifiedTray {
 
   setDataProvider(provider: TrayDataProvider): void {
     this.dataProvider = provider
+  }
+
+  showPairingWindow(secret: string, paired: boolean): void {
+    // The secret travels only over this stdin pipe to the Swift binary; it is NEVER
+    // logged. Tray.swift renders it in a native selectable window on receipt.
+    this.send({ cmd: "show-pairing-window", secret, paired })
   }
 
   async stop(): Promise<void> {

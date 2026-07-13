@@ -104,10 +104,12 @@ export function consumeSecretPersistFailed(): boolean {
 
 /** Force-regenerate the secret (e.g. a "reset pairing" action). Existing
  *  connected peers remain authed until they reconnect; they will then fail and
- *  must re-pair. Returns the new secret. */
+ *  must re-pair. Returns the new secret. Also clears the .paired marker so the tray
+ *  re-enters the first-run pairing flow (auto-surface the new secret). */
 export function resetSharedSecret(): string {
   clearSecretCache()
   try { fs.rmSync(SECRET_PATH, { force: true }) } catch { /* ignore */ }
+  try { fs.rmSync(PAIRED_PATH, { force: true }) } catch { /* ignore */ }
   return getOrCreateSharedSecret()
 }
 
@@ -115,6 +117,28 @@ export function resetSharedSecret(): string {
  *  it if absent so pairing always has something to show. */
 export function getSharedSecretForDisplay(): string {
   return getOrCreateSharedSecret()
+}
+
+const PAIRED_PATH = path.join(DATA_DIR, ".paired")
+
+/** Path of the "has any peer ever paired" marker. Kept in lock-step with the tray's
+ *  pairing.ts (same DATA_DIR / getConfigDir()). */
+export function getPairedMarkerPath(): string {
+  return PAIRED_PATH
+}
+
+/**
+ * Best-effort: record that at least one peer has completed the WS handshake, so the
+ * tray knows it can stop auto-surfacing the pairing secret. Idempotent — only writes
+ * on the FIRST ever successful auth — and NEVER throws (a missing/unwritable marker
+ * just means the tray treats the install as unpaired, which is the safe default). */
+export function markPaired(): void {
+  try {
+    if (fs.existsSync(PAIRED_PATH)) return
+    atomicWriteText(PAIRED_PATH, new Date().toISOString() + "\n", 0o600)
+  } catch {
+    /* never block pairing on marker persistence */
+  }
 }
 
 /** Fresh per-connection challenge nonce (16 random bytes, hex). */

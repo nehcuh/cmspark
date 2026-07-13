@@ -98,6 +98,11 @@ Chrome Extension (Plasmo + React)  ←→  WebSocket (ws://127.0.0.1:23401)  ←
   - **纵深防御净化**：`securityLevel:'strict'` + `htmlLabels:false`（纯 SVG）→ DOMPurify SVG profile 二次过；特权页面下不可信 SVG 绝不绕过净化。
   - **仅落定消息渲染**（`renderMermaid` prop 分流，流式当代码块）；**响应式缩放 + 点击新标签页开全尺寸**（Blob URL）；懒加载 + idle/流式双预取；坏语法回退代码块 + 错误标签。
   - **关键坑**：`@mermaid-js/parser` 的 `exports` 缺 `default` 需 Parcel `alias`；`htmlLabels:false` 是 mandatory（DOMPurify SVG profile 剥 `foreignObject`，否则节点文字消失）；React 异步 effect 用 `pending`/`isConnected` 守竞态。
+- **A8. Tray 配对码弹窗**（2026-07-13）— 既然做了 tray，配对（`ws_secret`）就不该逼用户开命令行：
+  - **触发**：tray 启动后若扩展**从未配对**（`~/.cmspark-agent/.paired` 不存在）且 `ws_secret` 已生成，**自动弹一次**配对窗；常驻菜单项「🔑 显示配对码」可随时重显。Swift backend 弹原生可选窗口（📋 复制 / 🧩 复制并打开 Chrome）；systray2/readline 退化成「复制到剪贴板 + 系统通知」。
+  - **密钥流向**：launcher（`menu-bar-agent.ts`）读 `ws_secret` → 经 stdin JSON `{cmd:"show-pairing-window",secret,paired}` 推给 Swift 二进制（`Tray.swift` PairingController）。**密钥只走这条 stdin 管道，从不落日志**。
+  - **`.paired` 契约（跨进程，必须保持 lock-step）**：companion 在首次 `auth.ok` 时由 `ws-auth.markPaired()` 幂等写 `~/.cmspark-agent/.paired`（0o600，best-effort 不阻塞鉴权）；launcher 的 `tray/pairing.ts hasPaired()` 读它判断是否停止自动弹窗。两侧文件名/目录必须一致（皆基于 `DATA_DIR`/`getConfigDir()`）—— 任一方改名都会让自动弹窗永远停不下来。
+  - **Swift 二进制完整性**：改 `Tray.swift` 后必须 `bash companion/src/tray/build-tray.sh` 重编译，并把输出的 SHA256 更新到 `swift-tray-bridge.ts` 的 `SWIFT_TRAY_SHA256`（launcher 启动时校验哈希，不匹配则自动重编）。
 
 ## Common Issues
 

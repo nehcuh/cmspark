@@ -24,6 +24,7 @@ import {
   consumeSecretPersistFailed,
   issueChallenge,
   verifyProof,
+  markPaired,
   AUTH_TIMEOUT_MS,
 } from "./ws-auth"
 
@@ -2015,6 +2016,9 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
             st.authenticated = true
             clearTimeout(st.timer)
             logger.info("ws.authenticated", {})
+            // Record (idempotently) that some peer has paired, so the tray can stop
+            // auto-surfacing the pairing secret. Best-effort; never blocks auth.
+            markPaired()
             if (ws.readyState === WebSocket.OPEN) {
               ws.send(JSON.stringify({ type: "auth.ok" }))
               ws.send(JSON.stringify({ type: "connected" }))

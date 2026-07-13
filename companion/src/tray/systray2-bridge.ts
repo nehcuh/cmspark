@@ -161,6 +161,10 @@ export class SysTray2Adapter implements UnifiedTray {
     this.dataProvider = provider
   }
 
+  // systray2 is menu-only (no rich window). The launcher handles the pairing-code
+  // popup for this backend itself via clipboard-copy + notification.
+  showPairingWindow(_secret: string, _paired: boolean): void { /* no-op */ }
+
   async stop(): Promise<void> {
     this.shuttingDown = true
     if (this.systray) {
@@ -234,6 +238,7 @@ export class SysTray2Adapter implements UnifiedTray {
 
     push("打开日志目录", { type: "logs" })
     push("打开 Chrome", { type: "chrome" })
+    push("显示配对码", { type: "show-pairing" })
     push("设置", { type: "settings" })
 
     items.push(SEP)

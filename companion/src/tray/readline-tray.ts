@@ -83,6 +83,9 @@ export class ReadlineTrayAdapter implements UnifiedTray {
     this.dataProvider = provider
   }
 
+  // No native window here; the launcher falls back to clipboard-copy + notification.
+  showPairingWindow(_secret: string, _paired: boolean): void { /* no-op */ }
+
   async stop(): Promise<void> {
     if (this.rl) {
       this.rl.close()
@@ -129,6 +132,7 @@ export class ReadlineTrayAdapter implements UnifiedTray {
 
     console.log(`[${idx++}] 打开日志目录`)
     console.log(`[${idx++}] 打开 Chrome`)
+    console.log(`[${idx++}] 显示配对码`)
     console.log(`[${idx}] 退出`)
 
     console.log("")
@@ -166,6 +170,7 @@ export class ReadlineTrayAdapter implements UnifiedTray {
     // Fixed tail
     if (this.parseInt(choice) === idx++) { this.emit("logs"); this.pause(); return }
     if (this.parseInt(choice) === idx++) { this.emit("chrome"); this.pause(); return }
+    if (this.parseInt(choice) === idx++) { this.emit("show-pairing"); this.pause(); return }
     if (this.parseInt(choice) === idx || choice === "q" || choice === "quit") {
       this.emit("quit")
       return
