@@ -86,6 +86,8 @@ export interface CompanionConfig {
    */
   auto_approved_domains: string[]
   history_retention_days: number
+  log_retention_days: number
+  log_max_file_mb: number
   security: SecurityConfig
   file_upload?: FileUploadConfig
   mcp?: McpConfig
@@ -118,6 +120,8 @@ const defaultConfig: CompanionConfig = {
   trusted_domains: [],
   auto_approved_domains: [],
   history_retention_days: 30,
+  log_retention_days: 14,
+  log_max_file_mb: 10,
   security: {
     safety_skills_enabled: ["prompt-injection-defense", "jailbreak-detection", "instruction-hierarchy"],
     auto_confirm_same_thread: false,
@@ -207,6 +211,12 @@ export async function initDataDir(): Promise<void> {
       }
     }
   }
+
+  // M8: prune stale log files after directories exist so retention never blocks startup.
+  try {
+    const { pruneOldLogs } = await import("./log-rotation")
+    pruneOldLogs()
+  } catch { /* best-effort */ }
 }
 
 // H4 (audit): a truncated/garbage config.json must NOT silently reset to defaults (that would
