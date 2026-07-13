@@ -374,6 +374,7 @@ function InputArea() {
   const [fileError, setFileError] = useState("")
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const sendingRef = useRef(false)
 
   const isStreaming = !!state.streamingContent
   const hasContent = text.trim().length > 0 || selectedFiles.length > 0
@@ -467,68 +468,73 @@ function InputArea() {
   }
 
   const handleSend = () => {
-    if (!canSend) return
-    const trimmed = text.trim()
+    if (!canSend || sendingRef.current) return
+    sendingRef.current = true
+    try {
+      const trimmed = text.trim()
 
-    // Parse slash command to auto-activate skill
-    const slashMatch = trimmed.match(/^\/(\S+)/)
-    let skillIds = state.activeSkillIds
-    if (slashMatch) {
-      const cmdName = slashMatch[1]
-      const matchedSkill = state.skills.find(
-        s => s.name.toLowerCase() === cmdName.toLowerCase()
-      )
-      if (matchedSkill && !skillIds.includes(matchedSkill.name)) {
-        skillIds = [...skillIds, matchedSkill.name]
+      // Parse slash command to auto-activate skill
+      const slashMatch = trimmed.match(/^\/(\S+)/)
+      let skillIds = state.activeSkillIds
+      if (slashMatch) {
+        const cmdName = slashMatch[1]
+        const matchedSkill = state.skills.find(
+          s => s.name.toLowerCase() === cmdName.toLowerCase()
+        )
+        if (matchedSkill && !skillIds.includes(matchedSkill.name)) {
+          skillIds = [...skillIds, matchedSkill.name]
+        }
       }
+
+      // File upload path
+      if (selectedFiles.length > 0) {
+        const userMessage = trimmed || "请分析我上传的文件"
+        const fileSummary = selectedFiles.map(f => f.name).join(", ")
+
+        chrome.runtime.sendMessage({
+          type: "file.upload",
+          threadId: state.activeThreadId,
+          message: userMessage,
+          files: selectedFiles,
+          skillIds,
+        })
+        dispatch({ type: "SET_PROCESSING", isProcessing: true })
+        dispatch({
+          type: "ADD_MESSAGE",
+          message: {
+            id: `${state.activeThreadId}_${Date.now()}`,
+            thread_id: state.activeThreadId!,
+            role: "user",
+            content: `${userMessage}\n📎 ${fileSummary}`,
+            created_at: new Date().toISOString(),
+          },
+        })
+      } else {
+        chrome.runtime.sendMessage({
+          type: "chat.send",
+          threadId: state.activeThreadId,
+          message: trimmed,
+          skillIds,
+        })
+        dispatch({ type: "SET_PROCESSING", isProcessing: true })
+        dispatch({
+          type: "ADD_MESSAGE",
+          message: {
+            id: `${state.activeThreadId}_${Date.now()}`,
+            thread_id: state.activeThreadId!,
+            role: "user",
+            content: trimmed,
+            created_at: new Date().toISOString(),
+          },
+        })
+      }
+
+      setText("")
+      setSlashVisible(false)
+      setSelectedFiles([])
+    } finally {
+      sendingRef.current = false
     }
-
-    // File upload path
-    if (selectedFiles.length > 0) {
-      const userMessage = trimmed || "请分析我上传的文件"
-      const fileSummary = selectedFiles.map(f => f.name).join(", ")
-
-      chrome.runtime.sendMessage({
-        type: "file.upload",
-        threadId: state.activeThreadId,
-        message: userMessage,
-        files: selectedFiles,
-        skillIds,
-      })
-      dispatch({ type: "SET_PROCESSING", isProcessing: true })
-      dispatch({
-        type: "ADD_MESSAGE",
-        message: {
-          id: `${state.activeThreadId}_${Date.now()}`,
-          thread_id: state.activeThreadId!,
-          role: "user",
-          content: `${userMessage}\n📎 ${fileSummary}`,
-          created_at: new Date().toISOString(),
-        },
-      })
-    } else {
-      chrome.runtime.sendMessage({
-        type: "chat.send",
-        threadId: state.activeThreadId,
-        message: trimmed,
-        skillIds,
-      })
-      dispatch({ type: "SET_PROCESSING", isProcessing: true })
-      dispatch({
-        type: "ADD_MESSAGE",
-        message: {
-          id: `${state.activeThreadId}_${Date.now()}`,
-          thread_id: state.activeThreadId!,
-          role: "user",
-          content: trimmed,
-          created_at: new Date().toISOString(),
-        },
-      })
-    }
-
-    setText("")
-    setSlashVisible(false)
-    setSelectedFiles([])
   }
 
   const handleStop = () => {
