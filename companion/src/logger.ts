@@ -22,11 +22,36 @@ const REDACTED = "[REDACTED]"
 const MAX_STRING_LENGTH = 2000
 const MAX_ARRAY_LENGTH = 50
 const MAX_DEPTH = 6
-const SENSITIVE_KEY_RE = /(api[_-]?key|authorization|auth[_-]?token|access[_-]?token|refresh[_-]?token|password|passwd|secret|cookie|set-cookie|session|bearer)/i
+const SENSITIVE_KEY_RE = /(api[_-]?key|authorization|auth[_-]?token|access[_-]?token|refresh[_-]?token|password|passwd|secret|cookie|set-cookie|session|bearer|\bcode\b|\bparams\b)/i
+const URL_KEY_RE = /(^|_)(url|href|link|endpoint|origin)$/i
+// Query-param keys whose VALUE is secret material. `id_token` (OIDC JWT) is
+// included alongside access/refresh tokens; `code` covers the OAuth
+// authorization code. Anchored so `?keep=1`-style keys are left intact.
+const SECRET_QS_KEY_RE = /^(token|access[_-]?token|refresh[_-]?token|id[_-]?token|api[_-]?key|apikey|secret|password|passwd|code|authorization|session|bearer|client[_-]?secret)$/i
 
 function truncateString(value: string): string {
   if (value.length <= MAX_STRING_LENGTH) return value
   return `${value.slice(0, MAX_STRING_LENGTH)}…[truncated ${value.length - MAX_STRING_LENGTH} chars]`
+}
+
+export function redactUrl(raw: string): string {
+  if (typeof raw !== "string" || raw.length === 0) return raw
+  let parsed: URL
+  try {
+    parsed = new URL(raw)
+  } catch {
+    return truncateString(raw)
+  }
+  // Strip embedded credentials before they hit the log file.
+  parsed.username = ""
+  parsed.password = ""
+  const params = parsed.searchParams
+  for (const key of [...params.keys()]) {
+    if (SECRET_QS_KEY_RE.test(key)) {
+      params.set(key, REDACTED)
+    }
+  }
+  return parsed.toString()
 }
 
 export function redactLogData(value: unknown, depth = 0, seen = new WeakSet<object>()): unknown {
@@ -57,9 +82,23 @@ export function redactLogData(value: unknown, depth = 0, seen = new WeakSet<obje
 
   const output: Record<string, unknown> = {}
   for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
-    output[key] = SENSITIVE_KEY_RE.test(key)
-      ? REDACTED
-      : redactLogData(item, depth + 1, seen)
+    if (SENSITIVE_KEY_RE.test(key)) {
+      output[key] = REDACTED
+    } else if (URL_KEY_RE.test(key)) {
+      if (typeof item === "string") {
+        output[key] = redactUrl(item)
+      } else if (Array.isArray(item)) {
+        const items = item.slice(0, MAX_ARRAY_LENGTH).map(element =>
+          typeof element === "string" ? redactUrl(element) : redactLogData(element, depth + 1, seen),
+        )
+        if (item.length > MAX_ARRAY_LENGTH) items.push(`…[${item.length - MAX_ARRAY_LENGTH} more items]`)
+        output[key] = items
+      } else {
+        output[key] = redactLogData(item, depth + 1, seen)
+      }
+    } else {
+      output[key] = redactLogData(item, depth + 1, seen)
+    }
   }
   return output
 }

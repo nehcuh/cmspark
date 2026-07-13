@@ -63,7 +63,7 @@
 ### P2-3 · 可观测 + 成本
 | 任务 | Finding | 改动 | 工时 |
 |---|---|---|---|
-| logger 脱敏 + 0o600 | M7 | 复用 history `redactForStorage`；扩 SENSITIVE_KEY_RE 含 url/selector/code/params | 2–3h |
+| ~~logger 脱敏 + 0o600~~ | ~~M7~~ | **✅ 已闭环（PR #53）**：0o600 部分 H1 阶段已做（`logger.ts:91` appendFileSync `{mode:0o600}` + mkdirSync `0o700`）。脱敏部分 kimi 裁决 **Option B（URL 净化保审计）** 而非字面整值脱敏——grounding 发现 logger 只记结构化安全事件，`code`/`params`/`selector` 今天从不作为 key 出现（加正则是 no-op），`url` 是审计关键字段（整值脱敏会破坏 `security.url_confirmation.*` 审计能力）。**修**：新增 `redactUrl()`（剥 userinfo `user:pass@` + 脱敏 secret query param：`token`/`access_token`/`refresh_token`/`id_token`/`api_key`/`code`(OAuth)/`secret`/`authorization`/`client_secret` 等，保 host+path+非 secret 参数）；`redactLogData` 三分支（敏感 key→`[REDACTED]` / URL-ish key(`url`/`*_url`/`href`/`link`/`endpoint`/`origin`，含数组)→`redactUrl` / 其余递归）；`SENSITIVE_KEY_RE` 防御性加 `\bcode\b`/`\bparams\b`（跳过 `selector`）。**kimi 终审 2 NEEDS-FIX 已修**：①`id_token`/`idToken`（OIDC JWT）假阴性→加 `id[_-]?token`；②`params` 子串假阳性（误伤 `query_params`/`paramString`）→改 `\bparams\b`。+13 测。全量 **842 测** 绿。RFC [`p2-3-m7-logger-sanitize-rfc-2026-07-13.md`](p2-3-m7-logger-sanitize-rfc-2026-07-13.md) | ✅ 已闭环 |
 | 日志轮转 | M8 | initDataDir retention 扫除（默认 7/30 天）+ 大小轮转 | 1–2h |
 | LLM 并发+usage+预算 | M20 | per-thread in-flight cap(1)；日志记 `usage.total_tokens`；可选 `daily_token_budget`；成功重置 continuousFailures | 1d |
 | healthz 端点 | L12 | WS 端口加小 HTTP `/healthz` | 0.5d |
@@ -121,7 +121,7 @@
 1. **~~P2-4 M19~~ 已证为误报**：默认模型 `deepseek-v4-flash` 本就正确；旧名停用风险由 PR #32 探测 + 本 PR 自动迁移闭环。
 2. **P2-1 安全纵深**（M1→M2→M3→M4→M5）—— 价值最高，C1 已解锁；M1/M2/M3 先做（小而清晰），M5（cookie）压轴单独 kimi 终审。
 3. **P2-2 可靠性**—— ~~M9（双 shutdown）~~ ✅ PR #49 闭环；~~M11（MCP kill）~~ 已证为 SDK 覆盖的误报；~~M6（fatal rejection）~~ ✅ PR #51 闭环（kimi 裁决选项 A：fatal-exit 对齐 uncaughtException，supervisor 重启作独立 follow-up）；~~M10（abort 孤儿）~~ ✅ PR #52 闭环（kimi 裁决 F1-b/F2-a/F3-a/F4-a：rollback 整轮 + 保部分回复 + 重抛 abort）。**P2-2 全部 4 项闭环。**
-4. **P2-3 可观测+成本** + **P3**（可并行）。
+4. **P2-3 可观测+成本** + **P3**（可并行）。~~M7 logger 脱敏~~ ✅ PR #53 闭环（kimi 裁决 Option B URL 净化保审计 + 防御性 `\bcode\b`/`\bparams\b`，终审 2 NEEDS-FIX 已修，+13 测 842 绿）；P2-3 剩 M8 日志轮转 / M20 LLM 并发+usage+预算 / L12 healthz。
 5. **P4** 按需。
 
 **方法论**（见 memory `methodology-goal-driven-workflow`）：每个 item 走 kimi-gated-fix——worktree → 实现 → 对完整 diff 跑 kimi 终审（`/Users/huchen/.kimi-code/bin/kimi -m kimi-code/kimi-for-coding -p "$(<file)"`，6min 超时）→ NEEDS-FIX 验证后采纳/反驳 → tsc/build/定向测试绿 → push + gh pr create → CI 绿 → merge。`superpowers`/`omx` skill 被标记不安全，禁用。
@@ -132,6 +132,7 @@
 
 | 日期 | 变更 |
 |---|---|
+| 2026-07-13 | M7 闭环（PR #53）：kimi 裁决 Option B（URL 净化保审计，非字面整值脱敏）——新增 `redactUrl()`（剥 userinfo + 脱敏 secret query param 含 `id_token`）+ `redactLogData` 三分支（敏感 key / URL-ish key / 递归）+ 防御性 `\bcode\b`/`\bparams\b`（跳过 `selector`）；kimi 终审 2 NEEDS-FIX（id_token 假阴性 + params 子串假阳性）已修；+13 测，全量 842 绿。**P2-3 首项闭环** |
 | 2026-07-13 | M10 闭环（PR #52）：kimi 裁决 F1-b/F2-a/F3-a/F4-a——abort 后 `deleteMessagesFrom` rollback 整轮持久化（消除 dangling tool_calls 致 400）+ tool catch 重抛 abort（发 chat.aborted）+ streaming abort 保非空部分回复；+3 fake-LLM-server 集成测。**P2-2 全部 4 项（M6/M9/M10/M11）闭环** |
 | 2026-07-13 | M6 闭环（PR #51）：kimi 裁决选项 A——unhandledRejection 对齐 uncaughtException 走 fatal exit(1)（提取 `crash-handlers.ts`，+3 spawn 测）；supervisor 崩溃重启作独立 follow-up（不新增可用性缺口，uncaughtException 早已 fatal） |
 | 2026-07-12 | M9 闭环（PR #49）：SIGTERM/SIGINT 双 handler race 合并为 startServer 单一 async handler，history.db flush 回归修复；M11 标记为误报/已闭环：SDK `^1.0.4`（解析至 1.29.0）`StdioClientTransport.close()` 已内置 SIGTERM→SIGKILL 阶梯，无需额外 force-kill |
