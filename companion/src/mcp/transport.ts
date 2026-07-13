@@ -168,7 +168,7 @@ export function createTransport(config: McpServerConfig, extras?: TransportExtra
 
     const transport = new StdioClientTransport({
       command: config.command,
-      args: config.args,
+      args: normalizeArgsForPlatform(config.args),
       env,
       cwd,
       stderr: "pipe",
@@ -197,4 +197,22 @@ export function extractPid(transport: Transport): number | undefined {
   const anyT = transport as any
   if (anyT && typeof anyT.pid === "number") return anyT.pid
   return undefined
+}
+
+/**
+ * Normalize path-like arguments for the current platform.
+ * On Windows, converts backslashes in arguments that look like paths to
+ * forward slashes so they are not misinterpreted as escape sequences by
+ * spawned subprocesses (e.g. C:\Users\HuChen → C:/Users/HuChen).
+ */
+function normalizeArgsForPlatform(args: string[] | undefined): string[] | undefined {
+  if (!args || process.platform !== "win32") return args
+  return args.map((arg) => {
+    // Heuristic: if the arg contains backslashes and looks like a path
+    // (starts with a drive letter or a known prefix), convert to forward slashes.
+    if (arg.includes("\\") && /^[a-zA-Z]:[\\/]|^[/\\]/.test(arg)) {
+      return arg.replace(/\\/g, "/")
+    }
+    return arg
+  })
 }
