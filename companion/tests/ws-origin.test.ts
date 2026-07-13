@@ -10,6 +10,7 @@ const ALLOW: Array<[string, string]> = [
   ["chrome-extension://abcdefghijklmnopabcdefghijklmnop", "valid 32-char extension id"],
   ["chrome-extension://abc123", "short id (scheme still valid)"],
   ["Chrome-Extension://abc123", "scheme is case-insensitive"],
+  ["cmspark-tray://local", "trusted first-party tray client (must still pass the #35 HMAC handshake)"],
 ]
 
 const REJECT: Array<[string | undefined | null, string]> = [
@@ -20,6 +21,9 @@ const REJECT: Array<[string | undefined | null, string]> = [
   ["chrome-extension://abc/path", "trailing path component"],
   ["https://chrome-extension://x", "prefix spoof attempt"],
   ["chrome-extension://", "empty id"],
+  ["cmspark-tray://local/extra", "tray origin with trailing path (not the exact sentinel)"],
+  ["cmspark-tray://evil", "tray scheme but wrong host (not the exact sentinel)"],
+  ["cmspark-tray://", "tray scheme, empty host"],
   ["", "empty string"],
   [undefined, "no Origin header (local process without -H)"],
   [null, "null"],

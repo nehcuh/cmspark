@@ -47,7 +47,18 @@ export const TOOL_EXECUTION_TIMEOUT_MS = 15000
  *    handshake. The id charset is restricted to [A-Za-z0-9_-] so CRLF/control chars are rejected.
  */
 export function isAllowedWsOrigin(origin: string | undefined | null): boolean {
-  return typeof origin === "string" && /^chrome-extension:\/\/[A-Za-z0-9_-]+$/i.test(origin)
+  if (typeof origin !== "string") return false
+  // Trusted extension (Chrome side panel / popup / service worker). Page JS cannot
+  // forge the browser-set Origin, so this reliably excludes visited web pages.
+  if (/^chrome-extension:\/\/[A-Za-z0-9_-]+$/i.test(origin)) return true
+  // Trusted first-party tray client (the local Node menu-bar agent, a sibling of
+  // this server in the same codebase). A web page CANNOT set an arbitrary Origin —
+  // the browser enforces the real page origin — so this only ever matches the local
+  // tray, which must still complete the #35 HMAC handshake below. The shared secret
+  // is the real gate; the Origin is only a first filter (a local process can spoof
+  // either, which is exactly why P0-2B layered the HMAC challenge on top).
+  if (origin === "cmspark-tray://local") return true
+  return false
 }
 
 /**
