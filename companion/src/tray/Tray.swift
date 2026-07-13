@@ -115,6 +115,7 @@ enum MenuTag: Int {
   case logs = 200
   case chrome = 201
   case settings = 202
+  case pairing = 203
   case autostart = 300
   case quit = 999
   // Dynamic ranges
@@ -232,6 +233,11 @@ func buildMenu(target: AnyObject?, action: Selector?) -> NSMenu {
   logsItem.tag = MenuTag.logs.rawValue
   menu.addItem(logsItem)
 
+  let pairingItem = NSMenuItem(title: "🔑 显示配对码", action: action, keyEquivalent: "p")
+  pairingItem.target = target
+  pairingItem.tag = MenuTag.pairing.rawValue
+  menu.addItem(pairingItem)
+
   let chromeItem = NSMenuItem(title: "🌐 打开 Chrome", action: action, keyEquivalent: "c")
   chromeItem.target = target
   chromeItem.tag = MenuTag.chrome.rawValue
@@ -325,6 +331,8 @@ class TrayDelegate: NSObject {
       jsonLine(["type": "click", "action": "logs"])
     } else if tag == MenuTag.chrome.rawValue {
       jsonLine(["type": "click", "action": "chrome"])
+    } else if tag == MenuTag.pairing.rawValue {
+      jsonLine(["type": "click", "action": "show-pairing"])
     } else if tag == MenuTag.settings.rawValue {
       jsonLine(["type": "click", "action": "settings"])
     } else if tag == MenuTag.autostart.rawValue {
@@ -433,6 +441,15 @@ func handleCommand(_ cmd: String, json: [String: Any], delegate: TrayDelegate) {
       delegate.rebuildMenu()
     }
 
+  case "show-pairing-window":
+    // Launcher pushes the freshly-read WS secret here so it can be shown in a native
+    // selectable window — users pair without ever touching the command line.
+    let secret = (json["secret"] as? String) ?? ""
+    let paired = (json["paired"] as? Bool) ?? false
+    if !secret.isEmpty {
+      pairingController.show(secret: secret, paired: paired)
+    }
+
   case "quit":
     delegate.shutdown()
     jsonLine(["type": "exit", "code": 0])
@@ -442,6 +459,133 @@ func handleCommand(_ cmd: String, json: [String: Any], delegate: TrayDelegate) {
     break
   }
 }
+
+// ---------------------------------------------------------------------------
+// Pairing window — native window surfacing the WS shared secret so users can pair
+// the Chrome extension without the command line. Shown on demand (menu item) and
+// auto-pushed by the launcher on first run / while unpaired.
+// ---------------------------------------------------------------------------
+
+class PairingController: NSObject {
+  // One reusable window for the process lifetime (isReleasedWhenClosed = false). For a
+  // long-lived tray app this is cheaper than rebuilding the view tree on each show and
+  // avoids flicker; re-show just refreshes the secret text + hint. No retain cycle:
+  // the window's buttons target `self`, but the controller (not the window) owns the
+  // strong reference chain, and both die together when the process exits.
+  private var window: NSWindow?
+  private var secretField: NSTextView?
+  private var hintField: NSTextField?
+  private var secret: String = ""
+
+  func show(secret: String, paired: Bool) {
+    if window == nil { window = makeWindow() }
+    guard let window = window else { return }
+    self.secret = secret
+    secretField?.string = secret
+    hintField?.stringValue = paired
+      ? "（扩展曾配对过；如需在另一台设备上配对，可再次复制这串码。）"
+      : "（尚未配对：复制下面这串码，粘贴进 Chrome 扩展即可完成配对。）"
+    // .accessory apps must explicitly steal focus for a window to come to front.
+    NSApp.activate(ignoringOtherApps: true)
+    window.center()
+    window.makeKeyAndOrderFront(nil)
+  }
+
+  private func makeWindow() -> NSWindow? {
+    let contentRect = NSRect(x: 0, y: 0, width: 480, height: 320)
+    let style: NSWindow.StyleMask = [.titled, .closable, .miniaturizable]
+    let win = NSWindow(contentRect: contentRect, styleMask: style, backing: .buffered, defer: false)
+    win.title = "🔑 CMspark 配对码"
+    win.isReleasedWhenClosed = false
+    win.minSize = NSSize(width: 420, height: 260)
+
+    let stack = NSStackView()
+    stack.orientation = .vertical
+    stack.alignment = .leading
+    stack.spacing = 12
+    stack.edgeInsets = NSEdgeInsets(top: 18, left: 18, bottom: 18, right: 18)
+    stack.translatesAutoresizingMaskIntoConstraints = false
+
+    let label = NSTextField(wrappingLabelWithString:
+      "把这串配对码粘贴到 Chrome 扩展 → 设置 → 连接 →「WS 配对密钥」，然后点「配对」。")
+    label.font = .systemFont(ofSize: 13)
+    label.isSelectable = false
+    label.isEditable = false
+    label.isBezeled = false
+    label.drawsBackground = false
+    label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    stack.addArrangedSubview(label)
+
+    // Selectable, monospaced, scrollable secret display.
+    let scrollView = NSScrollView()
+    scrollView.hasVerticalScroller = true
+    scrollView.borderType = .bezelBorder
+    scrollView.heightAnchor.constraint(greaterThanOrEqualToConstant: 80).isActive = true
+    let tv = NSTextView()
+    tv.isEditable = false
+    tv.isSelectable = true
+    tv.isRichText = false
+    tv.drawsBackground = true
+    tv.backgroundColor = .textBackgroundColor
+    tv.textColor = .textColor
+    tv.font = NSFont(name: "Menlo", size: 13) ?? .monospacedSystemFont(ofSize: 13, weight: .regular)
+    tv.autoresizingMask = [.width]
+    tv.textContainer?.widthTracksTextView = true
+    tv.textContainer?.lineBreakMode = .byCharWrapping
+    scrollView.documentView = tv
+    secretField = tv
+    stack.addArrangedSubview(scrollView)
+
+    let hint = NSTextField(labelWithString: "")
+    hint.font = .systemFont(ofSize: 11)
+    hint.textColor = .secondaryLabelColor
+    hint.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    hintField = hint
+    stack.addArrangedSubview(hint)
+
+    let buttons = NSStackView()
+    buttons.orientation = .horizontal
+    buttons.spacing = 10
+    let copyBtn = NSButton(title: "📋 复制到剪贴板", target: self, action: #selector(copySecret))
+    let chromeBtn = NSButton(title: "🧩 复制并打开 Chrome", target: self, action: #selector(copyAndOpenChrome))
+    let closeBtn = NSButton(title: "关闭", target: self, action: #selector(closeWindow))
+    closeBtn.keyEquivalent = "\u{1b}" // Esc
+    buttons.addArrangedSubview(copyBtn)
+    buttons.addArrangedSubview(chromeBtn)
+    buttons.addArrangedSubview(closeBtn)
+    stack.addArrangedSubview(buttons)
+
+    win.contentView = stack
+    if let cv = win.contentView {
+      NSLayoutConstraint.activate([
+        stack.topAnchor.constraint(equalTo: cv.topAnchor),
+        stack.bottomAnchor.constraint(equalTo: cv.bottomAnchor),
+        stack.leadingAnchor.constraint(equalTo: cv.leadingAnchor),
+        stack.trailingAnchor.constraint(equalTo: cv.trailingAnchor),
+      ])
+    }
+    return win
+  }
+
+  @objc func copySecret() {
+    let pb = NSPasteboard.general
+    pb.clearContents()
+    pb.setString(secret, forType: .string)
+  }
+
+  @objc func copyAndOpenChrome() {
+    copySecret()
+    // Reuse the existing "open Chrome side panel" click path (handled by the launcher).
+    jsonLine(["type": "click", "action": "chrome"])
+  }
+
+  @objc func closeWindow() {
+    window?.close()
+  }
+}
+
+// Lazily initialized on first show (always on the main thread, from handleCommand).
+let pairingController = PairingController()
 
 // ---------------------------------------------------------------------------
 // Entry point

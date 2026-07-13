@@ -19,6 +19,7 @@ export type TrayActionType =
   | "status" | "logs" | "chrome" | "settings"
   | "autostart" | "quit"
   | "quick-action" | "recent-thread"
+  | "show-pairing"
 
 export interface TrayMenuAction {
   type: TrayActionType
@@ -62,6 +63,11 @@ export interface UnifiedTray {
   setRecentThreads(threads: RecentThreadItem[]): void
   onAction(callback: (action: TrayMenuAction) => void): void
   setDataProvider(provider: TrayDataProvider): void
+  /**
+   * Pop up a native window showing the WS pairing secret (Swift backend). Non-Swift
+   * backends no-op here — the launcher falls back to clipboard-copy + notification.
+   * `paired` hints whether the extension has ever paired (drives the window copy). */
+  showPairingWindow(secret: string, paired: boolean): void
   stop(): Promise<void>
 }
 

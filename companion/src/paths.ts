@@ -71,7 +71,13 @@ export function getAssetsDir(): string {
 }
 
 export function getSwiftTrayPath(): string {
-  return path.join(getAppRoot(), "cmspark-tray")
+  const root = getAppRoot()
+  // Packaged: <root>/cmspark-tray (copied next to the bundle by scripts/package.sh).
+  // Dev (tsc): getAppRoot() is the companion root, and build-tray.sh emits the binary
+  // at <root>/dist/cmspark-tray — so honor both, preferring the packaged location.
+  const packaged = path.join(root, "cmspark-tray")
+  if (fs.existsSync(packaged)) return packaged
+  return path.join(root, "dist", "cmspark-tray")
 }
 
 export function getTrayBuildScript(): string {

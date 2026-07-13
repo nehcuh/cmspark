@@ -15,12 +15,14 @@ import {
   createTray,
   detectTrayBackend,
   TrayConfig,
+  TrayBackend,
   UnifiedTray,
   TrayMenuAction,
   QuickActionItem,
   RecentThreadItem,
 } from "./tray/tray-adapter"
 import { CompanionClient } from "./tray/companion-client"
+import { readPairingSecret, hasPaired, resolveClipboardCommand } from "./tray/pairing"
 
 // node-notifier does not ship TypeScript declarations
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -71,9 +73,13 @@ let state: MenuBarState = {
 }
 
 let trayInstance: UnifiedTray | null = null
+let activeBackend: TrayBackend | null = null
 let companionClient: CompanionClient | null = null
 let pollTimer: NodeJS.Timeout | null = null
 let lastNotifiedStatus: CompanionStatus | null = null
+// Auto-surface the pairing popup at most once per launcher session — only while the
+// extension has never paired (companion writes ~/.cmspark-agent/.paired on first auth).
+let autoShowedPairing = false
 
 // ---------------------------------------------------------------------------
 // Status detection
@@ -151,6 +157,16 @@ async function pollCompanionStatus(): Promise<void> {
     }
   }
   lastNotifiedStatus = newStatus
+
+  // First-run pairing aid: while the extension has never paired and a secret now
+  // exists, auto-surface the pairing popup once per session. Swift-only so we never
+  // silently clobber the clipboard on systray2/readline (those backends surface the
+  // code only on an explicit menu click). activeBackend is null during the pre-tray
+  // initial poll, which also guards against firing before the tray is up.
+  if (!autoShowedPairing && activeBackend === "swift" && !hasPaired(getConfigDir()) && readPairingSecret(getConfigDir())) {
+    autoShowedPairing = true
+    showPairingCode()
+  }
 }
 
 function writeStatusFile(): void {
@@ -268,6 +284,71 @@ async function toggleAutoStart(): Promise<void> {
 
   const newEnabled = await checkAutoStart()
   if (trayInstance) trayInstance.updateAutostart(newEnabled)
+}
+
+// ---------------------------------------------------------------------------
+// Pairing-code popup — surfaces the WS shared secret so users pair the Chrome
+// extension without ever touching the command line. Swift backend shows a native
+// selectable window; systray2/readline fall back to clipboard-copy + notification.
+// The secret is pushed only over the Swift stdin pipe — it is NEVER logged.
+// ---------------------------------------------------------------------------
+
+const PAIRING_TARGET_LABEL = "Chrome 扩展 → 设置 → 连接 →「WS 配对密钥」"
+
+function commandAvailable(cmd: string): boolean {
+  try {
+    const r = child_process.spawnSync("which", [cmd], { stdio: "ignore", timeout: 1500 })
+    return r.status === 0
+  } catch {
+    return false
+  }
+}
+
+/** Copy text to the system clipboard. Returns false if no clipboard tool is available. */
+function copyToClipboard(text: string): boolean {
+  const resolved = resolveClipboardCommand(process.platform, {
+    xclip: commandAvailable("xclip"),
+    xsel: commandAvailable("xsel"),
+  })
+  if (!resolved) return false
+  try {
+    const child = child_process.spawnSync(resolved.cmd, resolved.args, {
+      input: text,
+      stdio: ["pipe", "ignore", "ignore"],
+      timeout: 3000,
+    })
+    return child.status === 0
+  } catch {
+    return false
+  }
+}
+
+/** Show the pairing code: native window (Swift) or clipboard+notify (other backends). */
+function showPairingCode(): void {
+  const secret = readPairingSecret(getConfigDir())
+  if (!secret) {
+    safeNotify({
+      title: "🔑 CMspark 配对码",
+      message: "尚未生成配对码 — 请先启动 Companion 后再试。",
+      timeout: 5,
+    })
+    return
+  }
+  if (activeBackend === "swift" && trayInstance) {
+    trayInstance.showPairingWindow(secret, hasPaired(getConfigDir()))
+    return
+  }
+  // Non-Swift fallback: copy to clipboard + notify. The secret is NEVER placed in the
+  // (persisted, lock-screen-visible) notification — if no clipboard tool is available
+  // we guide the user to the Settings page rather than leak the key.
+  const copied = copyToClipboard(secret)
+  safeNotify({
+    title: "🔑 CMspark 配对码",
+    message: copied
+      ? `配对码已复制到剪贴板。请粘贴到 ${PAIRING_TARGET_LABEL} 完成配对。`
+      : "未检测到剪贴板工具（请安装 xclip/xsel），无法自动复制。请通过菜单 →「设置」打开设置页查看配对码。",
+    timeout: 10,
+  })
 }
 
 // ---------------------------------------------------------------------------
@@ -448,6 +529,7 @@ async function handleAction(action: TrayMenuAction): Promise<void> {
     case "status": showStatusNotification(); break
     case "logs": openLogsDir(); break
     case "chrome": openChromeSidePanel(); break
+    case "show-pairing": showPairingCode(); break
     case "settings":
       await openSettingsUI()
       break
@@ -537,6 +619,7 @@ export async function startMenuBarAgent(): Promise<void> {
       trayInstance.updateAutostart(autoStart)
 
       console.log(`[tray] Started with ${candidate} backend`)
+      activeBackend = candidate
       break
     } catch (err: any) {
       console.warn(`[tray] ${candidate} failed: ${err.message}`)
