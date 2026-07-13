@@ -315,13 +315,20 @@ CRITICAL RULES:
         tools,
         tool_choice: "auto",
         stream: true,
+        stream_options: { include_usage: true },
       }, { signal })
 
       let reasoningContent = ""
       let toolCalls: any[] = []
+      let finalUsage: any = undefined
 
       for await (const chunk of stream) {
         const delta = chunk.choices[0]?.delta as any
+
+        // OpenAI-compatible providers emit usage on the terminal chunk (empty choices).
+        if ((chunk as any).usage) {
+          finalUsage = (chunk as any).usage
+        }
 
         if (delta?.content) {
           assistantContent += delta.content
@@ -359,6 +366,20 @@ CRITICAL RULES:
             }
           }
         }
+      }
+
+      // Log usage for the completed LLM round (terminal chunk carries usage).
+      if (finalUsage?.total_tokens !== undefined) {
+        logger.info("llm.usage", {
+          thread_id: threadId,
+          model: config.model_name,
+          kind: "chat",
+          round,
+          prompt_tokens: finalUsage.prompt_tokens,
+          completion_tokens: finalUsage.completion_tokens,
+          total_tokens: finalUsage.total_tokens,
+          reasoning_tokens: finalUsage.completion_tokens_details?.reasoning_tokens,
+        })
       }
 
       // Save assistant message
@@ -890,6 +911,18 @@ export async function generateThreadTitle(params: {
         { role: "user", content: previewMsgs },
       ],
     })
+
+    if (response.usage?.total_tokens !== undefined) {
+      logger.info("llm.usage", {
+        thread_id: threadId,
+        model: config.model_name,
+        kind: "title",
+        prompt_tokens: response.usage.prompt_tokens,
+        completion_tokens: response.usage.completion_tokens,
+        total_tokens: response.usage.total_tokens,
+        reasoning_tokens: (response.usage as any).completion_tokens_details?.reasoning_tokens,
+      })
+    }
 
     let alias = response.choices[0]?.message?.content?.trim().replace(/[\n"'"]/g, "") || ""
     // Truncate and sanitize

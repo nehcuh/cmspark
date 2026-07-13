@@ -24,6 +24,7 @@ import { craftSkill, craftSkillToMarkdown } from "./skills/skill-craft"
 import { checkHighRiskExecution } from "./security"
 import { securityPolicy } from "./security-policy"
 import { getMcpManager } from "./mcp"
+import { logger } from "./logger"
 import type {
   McpServerConfig,
   McpServerMeta,
@@ -290,6 +291,7 @@ export async function handleMessage(
       // Cancel any existing request for this thread
       const existing = abortControllers.get(rest.thread_id)
       if (existing) {
+        logger.info("llm.thread_request_superseded", { thread_id: rest.thread_id })
         existing.abort()
         abortControllers.delete(rest.thread_id)
       }
@@ -454,6 +456,7 @@ export async function handleMessage(
       // Cancel any existing request for this thread
       const existingUpload = abortControllers.get(thread_id)
       if (existingUpload) {
+        logger.info("llm.thread_request_superseded", { thread_id })
         existingUpload.abort()
         abortControllers.delete(thread_id)
       }
@@ -620,6 +623,7 @@ export async function handleMessage(
       // Cancel any existing request for this thread
       const existing = abortControllers.get(thread_id)
       if (existing) {
+        logger.info("llm.thread_request_superseded", { thread_id })
         existing.abort()
         abortControllers.delete(thread_id)
       }
