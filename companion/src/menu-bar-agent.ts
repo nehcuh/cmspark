@@ -31,13 +31,33 @@ const notifier = require("node-notifier") as {
 }
 
 function safeNotify(options: { title?: string; message?: string; sound?: boolean | string; timeout?: number }): void {
+  // Debug log to file (stdout is swallowed in SEA mode)
+  try {
+    const logPath = path.join(getConfigDir(), "tray-debug.log")
+    fs.appendFileSync(logPath, `[${new Date().toISOString()}] safeNotify called: ${options.title} - ${options.message}\n`)
+  } catch { /* ignore */ }
+
   if (process.platform === "darwin") {
-    // Use native osascript to avoid x86_64 terminal-notifier requiring Rosetta
     try {
       const title = (options.title || "CMspark Agent").replace(/"/g, '\\"')
       const msg = (options.message || "").replace(/"/g, '\\"')
       child_process.execSync(`osascript -e 'display notification "${msg}" with title "${title}"'`, { stdio: "ignore" })
     } catch { /* ignore */ }
+    return
+  }
+  if (process.platform === "win32") {
+    try {
+      const title = (options.title || "CMspark Agent").replace(/'/g, "''")
+      const msg = (options.message || "").replace(/'/g, "''")
+      // Blocking execSync: the MessageBox will stay on screen until the user clicks OK.
+      // This is intentional — we want the user to see the notification.
+      child_process.execSync(
+        `powershell.exe -Command "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.MessageBox]::Show('${msg}', '${title}')"`,
+        { stdio: "inherit", windowsHide: false, timeout: 60000 }
+      )
+    } catch {
+      try { notifier.notify(options) } catch { /* ignore */ }
+    }
     return
   }
   try { notifier.notify(options) } catch { /* ignore */ }
@@ -316,6 +336,7 @@ function copyToClipboard(text: string): boolean {
       input: text,
       stdio: ["pipe", "ignore", "ignore"],
       timeout: 3000,
+      windowsHide: true,
     })
     return child.status === 0
   } catch {
@@ -326,7 +347,9 @@ function copyToClipboard(text: string): boolean {
 /** Show the pairing code: native window (Swift) or clipboard+notify (other backends). */
 function showPairingCode(): void {
   const secret = readPairingSecret(getConfigDir())
+  console.log("[pairing] showPairingCode called, secret length:", secret.length, "backend:", activeBackend)
   if (!secret) {
+    console.log("[pairing] No secret available, showing notification")
     safeNotify({
       title: "🔑 CMspark 配对码",
       message: "尚未生成配对码 — 请先启动 Companion 后再试。",
@@ -335,13 +358,16 @@ function showPairingCode(): void {
     return
   }
   if (activeBackend === "swift" && trayInstance) {
+    console.log("[pairing] Using Swift native window")
     trayInstance.showPairingWindow(secret, hasPaired(getConfigDir()))
     return
   }
   // Non-Swift fallback: copy to clipboard + notify. The secret is NEVER placed in the
   // (persisted, lock-screen-visible) notification — if no clipboard tool is available
   // we guide the user to the Settings page rather than leak the key.
+  console.log("[pairing] Using non-Swift fallback (clipboard + notify)")
   const copied = copyToClipboard(secret)
+  console.log("[pairing] copyToClipboard result:", copied)
   safeNotify({
     title: "🔑 CMspark 配对码",
     message: copied
@@ -349,6 +375,7 @@ function showPairingCode(): void {
       : "未检测到剪贴板工具（请安装 xclip/xsel），无法自动复制。请通过菜单 →「设置」打开设置页查看配对码。",
     timeout: 10,
   })
+  console.log("[pairing] safeNotify called")
 }
 
 // ---------------------------------------------------------------------------
@@ -522,6 +549,7 @@ async function openSettingsUI(): Promise<void> {
 // ---------------------------------------------------------------------------
 
 async function handleAction(action: TrayMenuAction): Promise<void> {
+  console.log("[menu-bar] handleAction:", action.type)
   switch (action.type) {
     case "start": await startCompanion(); break
     case "stop": await stopCompanion(); break

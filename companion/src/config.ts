@@ -282,11 +282,26 @@ export function getConfig(): CompanionConfig {
  */
 export function replaceMcpServers(servers: McpConfig["servers"]): CompanionConfig {
   const current = getConfig()
-  const mcp: McpConfig = {
-    enabled: current.mcp?.enabled ?? false,
-    servers: { ...servers },
+  // Bypass deepMerge for the servers map: deepMerge(target.servers, source.servers)
+  // preserves keys when source.servers is {} (empty object has no keys to overwrite).
+  // We build the full config object explicitly so the atomic write is exact.
+  const updated: CompanionConfig = {
+    ...current,
+    mcp: {
+      enabled: current.mcp?.enabled ?? false,
+      servers: { ...servers },
+    },
   }
-  return saveConfig({ mcp })
+  const configPath = path.join(DATA_DIR, "config.json")
+  const toSave = JSON.parse(JSON.stringify(updated))
+  const envKey = getEnvApiKey()
+  if (envKey && toSave.llm?.api_key === envKey) {
+    toSave.llm.api_key = ""
+  }
+  atomicWriteJSON(configPath, toSave)
+  cachedConfig = updated
+  configEvents.emit(CONFIG_CHANGE_EVENT, updated)
+  return updated
 }
 
 /**

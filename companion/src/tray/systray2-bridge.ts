@@ -94,11 +94,13 @@ export class SysTray2Adapter implements UnifiedTray {
 
     instance.onClick((action: any) => {
       const seqId = action?.seq_id
+      console.log("[systray2] onClick seq_id:", seqId, "seqMap length:", this.seqMap.length)
       if (typeof seqId !== "number" || seqId < 0 || seqId >= this.seqMap.length) {
         console.error("[systray2] Invalid seq_id:", seqId, "seqMap length:", this.seqMap.length)
         return
       }
       const mapped = this.seqMap[seqId]
+      console.log("[systray2] Mapped action:", mapped?.type)
       if (mapped && this.actionCallback) {
         this.actionCallback(mapped)
       }
