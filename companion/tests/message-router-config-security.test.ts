@@ -80,3 +80,47 @@ test("config.set: nested security object still passes through (direct security.a
   assert.equal(sec.allow_all_schemes, true)
   assert.equal(sec.auto_approve_dangerous, true, "nested path must also preserve partner field via deepMerge")
 })
+
+// --- audit L1: prototype-pollution value check removal + key guard remains ---
+
+test("config.set: string value 'prototype' is allowed (value is not a pollution key)", async () => {
+  const r: any = await postConfigSet({ llm: { model_name: "prototype" } })
+  assert.equal(r.type, "config.updated")
+  assert.equal(getConfig().llm.model_name, "prototype")
+})
+
+test("config.set: __proto__ key is still rejected as prototype pollution", async () => {
+  // JSON.parse makes __proto__ an own enumerable property — the realistic attack vector.
+  const r: any = await postConfigSet(JSON.parse('{ "llm": { "__proto__": { "polluted": true } } }'))
+  assert.equal(r.type, "error")
+  assert.equal(r.error, "Invalid config keys detected")
+})
+
+test("mcp.update: command value 'prototype' is allowed (key-level guard remains)", async () => {
+  // Seed an MCP server so mcp.update has a target.
+  const add: any = await handleMessage({
+    type: "mcp.add",
+    name: "proto-value-test",
+    server: { command: "node", args: ["server.js"], transport: "stdio", trust_level: "manual" },
+  } as any, {} as any)
+  assert.equal(add.type, "mcp.servers.updated", `expected add to succeed, got: ${add.error || JSON.stringify(add)}`)
+
+  const r: any = await handleMessage({
+    type: "mcp.update",
+    name: "proto-value-test",
+    patch: { command: "prototype" },
+  } as any, {} as any)
+  assert.equal(r.type, "mcp.servers.updated", `expected update to succeed, got: ${r.error || JSON.stringify(r)}`)
+  const updatedServer = getConfig().mcp?.servers?.["proto-value-test"] as import("../src/mcp/types").McpStdioServerConfig
+  assert.equal(updatedServer?.command, "prototype")
+})
+
+test("mcp.update: __proto__ key is still rejected as prototype pollution", async () => {
+  const r: any = await handleMessage({
+    type: "mcp.update",
+    name: "proto-value-test",
+    patch: JSON.parse('{ "__proto__": { "polluted": true } }'),
+  } as any, {} as any)
+  assert.equal(r.type, "error")
+  assert.equal(r.error, "Invalid config keys detected")
+})

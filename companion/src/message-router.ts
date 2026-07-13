@@ -1355,9 +1355,7 @@ function hasPrototypePollutionKey(obj: any): boolean {
   if (!obj || typeof obj !== "object") return false
   for (const key of Object.keys(obj)) {
     if (PROTOTYPE_POLLUTION_KEYS.has(key)) return true
-    // Also check if any value is a pollution key string (e.g., {"foo": "__proto__"})
     const val = obj[key]
-    if (typeof val === "string" && PROTOTYPE_POLLUTION_KEYS.has(val)) return true
     if (typeof val === "object" && hasPrototypePollutionKey(val)) return true
   }
   return false

@@ -458,3 +458,36 @@ describe("migrateLegacyModelName (DeepSeek 2026-07-24 deprecation)", { concurren
     assert.equal(mode, 0o600, "migration must preserve the 0o600 mode (holds api_key)")
   })
 })
+
+// --- audit L1: prototype-pollution hardening ---
+
+describe("saveConfig prototype-pollution defense", { concurrency: 1 }, () => {
+  before(async () => {
+    delete process.env.DEEPSEEK_API_KEY
+    await resetConfigFile()
+  })
+
+  test("__proto__ key in nested object is dropped and does not pollute Object.prototype", () => {
+    // Use JSON.parse so __proto__ becomes an own enumerable property (the shape
+    // a malicious config.set message would actually carry), not a prototype setter.
+    saveConfig(JSON.parse('{ "llm": { "__proto__": { "polluted": true } } }'))
+    // Object.prototype must remain untouched.
+    assert.equal(({} as any).polluted, undefined, "Object.prototype must not be polluted")
+    // The merged config must not inherit the dropped key either.
+    assert.equal((getConfig().llm as any).polluted, undefined, "merged llm must not inherit __proto__ payload")
+  })
+
+  test("constructor/prototype own keys are dropped during deepMerge", () => {
+    saveConfig(JSON.parse('{ "security": { "constructor": { "polluted": true }, "prototype": { "polluted": true } } }'))
+    const sec = getConfig().security
+    assert.equal(Object.hasOwn(sec, "constructor"), false)
+    assert.equal(Object.hasOwn(sec, "prototype"), false)
+    assert.equal((sec as any).polluted, undefined)
+  })
+
+  test("string value 'prototype' is preserved as a normal value (not a pollution key)", () => {
+    // Regression: the previous value-string check rejected harmless string values.
+    saveConfig({ llm: { api_key: "prototype" } as any })
+    assert.equal(getConfig().llm.api_key, "prototype")
+  })
+})
