@@ -21,6 +21,15 @@ import "katex/dist/katex.min.css"
 //   - throwOnError   → invalid LaTeX degrades to inline text instead of throwing.
 marked.use(markedKatex({ throwOnError: false, output: "html", nonStandard: true }))
 
+// Harden markdown links: open in a new tab with noopener, and intercept clicks
+// inside the extension side panel so external origins cannot navigate the panel.
+DOMPurify.addHook("afterSanitizeAttributes", (node) => {
+  if (node.tagName === "A" && node instanceof HTMLAnchorElement) {
+    node.setAttribute("target", "_blank")
+    node.setAttribute("rel", "noopener noreferrer")
+  }
+})
+
 const LONG_CONTENT_THRESHOLD = 3000
 const LONG_CONTENT_PREVIEW = 500
 const TOOL_RESULT_PREVIEW = 200
@@ -30,6 +39,7 @@ export function ChatView() {
   const { messages, streamingContent, activeThreadId, isProcessing } = state
   const containerRef = useRef<HTMLDivElement>(null)
   const lastMessageCountRef = useRef(messages.length)
+  const pinnedRef = useRef(true)
 
   // Show processing label only when there is an active request
   const processingLabel = (() => {
@@ -46,7 +56,9 @@ export function ChatView() {
     return "🤔 思考中"
   })()
 
-  // Auto-scroll to bottom when new messages arrive or streaming updates
+  // Auto-scroll to bottom when new messages arrive or streaming updates.
+  // Respects user scroll: if the user has scrolled up to read history, we stop
+  // forcing the view back to the bottom on every token (audit L5).
   useEffect(() => {
     const container = containerRef.current
     if (!container) return
@@ -55,10 +67,32 @@ export function ChatView() {
       lastMessageCountRef.current = messages.length
       // Use requestAnimationFrame to ensure DOM has updated
       requestAnimationFrame(() => {
-        container.scrollTop = container.scrollHeight
+        if (pinnedRef.current) {
+          container.scrollTop = container.scrollHeight
+        }
       })
     }
   }, [messages.length, streamingContent])
+
+  const handleScroll = useCallback(() => {
+    const container = containerRef.current
+    if (!container) return
+    const distanceFromBottom =
+      container.scrollHeight - container.scrollTop - container.clientHeight
+    pinnedRef.current = distanceFromBottom < 60
+  }, [])
+
+  // On thread switch, re-pin to the bottom so the new thread auto-scrolls
+  // instead of inheriting a stale "user scrolled up" pin from the previous
+  // thread (audit L5).
+  useEffect(() => {
+    pinnedRef.current = true
+    const container = containerRef.current
+    if (!container) return
+    requestAnimationFrame(() => {
+      container.scrollTop = container.scrollHeight
+    })
+  }, [activeThreadId])
 
   // Prefetch mermaid in the background once the panel is idle so the first
   // committed diagram doesn't stall on the chunk load (decision G3).
@@ -111,7 +145,7 @@ export function ChatView() {
   }, [activeThreadId])
 
   return (
-    <div style={styles.container} ref={containerRef}>
+    <div style={styles.container} ref={containerRef} onScroll={handleScroll}>
       {messages.length === 0 && !streamingContent && !processingLabel && (
         <div style={styles.empty}>输入指令开始与 CMspark Agent 对话</div>
       )}
@@ -477,7 +511,7 @@ function MarkdownRenderer({ content, renderMermaid = false }: { content: string;
           "svg", "path",
         ],
         ALLOWED_ATTR: [
-          "href", "title", "class", "style",
+          "href", "title", "class", "style", "target", "rel",
           // KaTeX span/svg attributes. viewBox/preserveAspectRatio are matched
           // case-insensitively; list both parser-lowercased and camelCase forms.
           "aria-hidden", "d", "fill", "xmlns", "height", "width",
@@ -501,6 +535,20 @@ function MarkdownRenderer({ content, renderMermaid = false }: { content: string;
     void renderMermaidBlocks(bodyRef.current)
   }, [html, renderMermaid])
 
+  const handleMarkdownClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLElement
+    const anchor = target.closest("a") as HTMLAnchorElement | null
+    if (!anchor || !anchor.href) return
+    // Always stop the link from navigating the side panel (audit L3).
+    e.preventDefault()
+    // Open only external http(s) links in a background tab. Fragment / relative /
+    // mailto: links are swallowed — opening them would resolve against the
+    // extension origin and open a side-panel copy in a new tab, which is worse.
+    if (anchor.protocol === "http:" || anchor.protocol === "https:") {
+      chrome.tabs.create({ url: anchor.href, active: false })
+    }
+  }, [])
+
   if (error) {
     console.warn("[MarkdownRenderer] falling back to raw text")
     return <div style={{ whiteSpace: "pre-wrap", lineHeight: 1.5 }}>{content}</div>
@@ -513,6 +561,7 @@ function MarkdownRenderer({ content, renderMermaid = false }: { content: string;
       <div
         className="markdown-body"
         ref={bodyRef}
+        onClick={handleMarkdownClick}
         dangerouslySetInnerHTML={{ __html: html }}
       />
     </>
