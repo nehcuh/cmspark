@@ -304,6 +304,9 @@ CRITICAL RULES:
   while (round < MAX_TOOL_CALL_ROUNDS) {
     round++
 
+    let assistantContent = ""
+    let savedAssistantId: string | undefined
+
     try {
       const stream = await client.chat.completions.create({
         model: config.model_name,
@@ -314,7 +317,6 @@ CRITICAL RULES:
         stream: true,
       }, { signal })
 
-      let assistantContent = ""
       let reasoningContent = ""
       let toolCalls: any[] = []
 
@@ -368,6 +370,7 @@ CRITICAL RULES:
         tool_calls: assistantMsg,
       }
       const savedAssistant = threadManager.addMessage(threadId, savedMsg)
+      savedAssistantId = savedAssistant.id
 
       // Push assistant message with tool_calls and reasoning_content to messages array
       const assistantPushMsg: any = {
@@ -406,6 +409,9 @@ CRITICAL RULES:
       let shouldStop = false
 
       for (const tc of assistantMsg) {
+        // Abort during tool execution: stop before adding more partial results
+        if (signal?.aborted) break
+
         const toolName = tc.function.name
         let params: any = {}
         try {
@@ -715,6 +721,9 @@ CRITICAL RULES:
             content: resultContent,
           })
         } catch (e: any) {
+          // Propagate abort so the round-loop handler can roll back and emit chat.aborted
+          if (e.name === "AbortError" || signal?.aborted) throw e
+
           logger.error("llm.tool_execution_exception", {
             tool_call_id: tc.id,
             tool_name: toolName,
@@ -745,7 +754,23 @@ CRITICAL RULES:
       messages.push(...toolResults)
 
     } catch (e: any) {
-      if (e.name === "AbortError" || signal?.aborted) throw e
+      if (e.name === "AbortError" || signal?.aborted) {
+        // Roll back any assistant message and partial tool results persisted this round
+        if (savedAssistantId) {
+          threadManager.deleteMessagesFrom(threadId, savedAssistantId)
+        }
+        // If we aborted during streaming before the assistant message was persisted,
+        // keep any non-empty streamed text as a text-only message so the user doesn't
+        // see their partial reply vanish on reload.
+        if (!savedAssistantId && assistantContent && assistantContent.trim()) {
+          threadManager.addMessage(threadId, {
+            thread_id: threadId,
+            role: "assistant",
+            content: assistantContent,
+          })
+        }
+        throw e
+      }
 
       const errorMsg = e.message || String(e)
       const isAuthError = errorMsg.includes("401") || errorMsg.includes("403") || errorMsg.includes("Incorrect API key")
