@@ -203,6 +203,19 @@ test("classifyError 'permission denied: camera' is non_recoverable", () => {
   assert.equal(classifyError("permission denied: camera access"), "non_recoverable")
 })
 
+test("classifyError MCP EPERM (.Trash TCC denial) is recoverable", () => {
+  // Repro: directory_tree on /Users/huchen hits macOS TCC at ~/.Trash. Upstream
+  // MCP server-filesystem surfaces this as "EPERM: operation not permitted,
+  // scandir '/Users/huchen/.Trash'" and the LLM should narrow scope and retry
+  // — not have the whole conversation killed by the non_recoverable default.
+  // See security.ts:recoverable list (added 2026-07-14).
+  assert.equal(
+    classifyError("MCP filesystem/directory_tree returned error: EPERM: operation not permitted, scandir '/Users/huchen/.Trash'"),
+    "recoverable",
+  )
+  assert.equal(classifyError("EPERM: operation not permitted"), "recoverable")
+})
+
 test("classifyError 'timeout waiting for selector' is recoverable", () => {
   assert.equal(classifyError("timeout waiting for selector '#btn'"), "recoverable")
 })

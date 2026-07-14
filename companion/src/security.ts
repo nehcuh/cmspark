@@ -599,6 +599,13 @@ export function classifyError(errorMessage: string, context?: { toolName?: strin
     "unknown tool",
     "disconnected",
     "does not advertise the resources capability",
+    // Filesystem TCC denials (macOS protects ~/.Trash, ~/Library/Mail, etc. even
+    // for processes with FS access). Upstream MCP server surfaces these as
+    // `EPERM: operation not permitted, scandir <path>`. The LLM should narrow
+    // scope and retry (e.g. scan ~/.cmspark-agent/knowledge/global instead of
+    // the home dir), not bail the whole conversation.
+    "eperm",
+    "operation not permitted",
   ]
   if (recoverable.some(p => msg.includes(p))) {
     return "recoverable"
