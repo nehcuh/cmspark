@@ -33,6 +33,8 @@ export function McpPanel() {
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
 
+  const mcpEnabled = state.companionConfig?.mcp_enabled ?? false
+
   const toggleExpand = (name: string) => {
     setExpanded((prev) => {
       const next = new Set(prev)
@@ -59,6 +61,13 @@ export function McpPanel() {
       type: "mcp.toggle_server",
       name,
       enabled: !enabledInConfig,
+    })
+  }
+
+  const handleToggleGlobal = () => {
+    chrome.runtime.sendMessage({
+      type: "mcp.toggle_enabled",
+      enabled: !mcpEnabled,
     })
   }
 
@@ -105,55 +114,75 @@ export function McpPanel() {
 
   return (
     <div style={styles.panelContent}>
-      {/* Mode switcher */}
-      <div style={styles.modeSwitcher}>
-        {(["auto", "all", "manual"] as const).map((mode) => (
-          <button
-            key={mode}
-            style={{
-              ...styles.modeBtn,
-              background: state.mcpSelectionMode === mode ? "#4A90D9" : "#fff",
-              color: state.mcpSelectionMode === mode ? "#fff" : "#666",
-              borderColor: state.mcpSelectionMode === mode ? "#4A90D9" : "#ddd",
-            }}
-            onClick={() => handleModeChange(mode)}
-            title={modeHints[mode]}
-          >
-            {modeLabels[mode]}
-          </button>
-        ))}
-        <button
-          style={{ ...styles.modeBtn, marginLeft: "auto", minWidth: "auto" }}
-          onClick={handleRefresh}
-          title="刷新 MCP 状态"
-        >
-          ↻
-        </button>
+      {/* Global MCP kill-switch — master toggle above everything else.
+          When off, McpManager refuses to start any client, so server cards
+          below show "未连接" regardless of their per-server enabled flag. */}
+      <div style={styles.globalToggleRow}>
+        <label style={styles.globalToggleLabel} title="全局 MCP 总开关：关闭后所有 server 都不会启动">
+          <input
+            type="checkbox"
+            checked={mcpEnabled}
+            onChange={handleToggleGlobal}
+            style={{ marginRight: 6 }}
+          />
+          <span style={{ fontWeight: 500 }}>全局 MCP</span>
+        </label>
+        {!mcpEnabled && (
+          <span style={styles.globalOffHint}>已关闭 · server 不会启动</span>
+        )}
       </div>
 
-      {/* Server list */}
-      {state.mcpServers.length === 0 && (
-        <div style={styles.emptyText}>
-          尚未配置 MCP server。点击下方按钮添加，让 agent 接入 filesystem / git / 数据库等外部工具。
+      <div style={{ ...styles.mcpBody, opacity: mcpEnabled ? 1 : 0.5, pointerEvents: mcpEnabled ? "auto" : "none" }}>
+        {/* Mode switcher */}
+        <div style={styles.modeSwitcher}>
+          {(["auto", "all", "manual"] as const).map((mode) => (
+            <button
+              key={mode}
+              style={{
+                ...styles.modeBtn,
+                background: state.mcpSelectionMode === mode ? "#4A90D9" : "#fff",
+                color: state.mcpSelectionMode === mode ? "#fff" : "#666",
+                borderColor: state.mcpSelectionMode === mode ? "#4A90D9" : "#ddd",
+              }}
+              onClick={() => handleModeChange(mode)}
+              title={modeHints[mode]}
+            >
+              {modeLabels[mode]}
+            </button>
+          ))}
+          <button
+            style={{ ...styles.modeBtn, marginLeft: "auto", minWidth: "auto" }}
+            onClick={handleRefresh}
+            title="刷新 MCP 状态"
+          >
+            ↻
+          </button>
         </div>
-      )}
 
-      {state.mcpServers.map((server) => (
-        <ServerCard
-          key={server.name}
-          server={server}
-          selectionMode={state.mcpSelectionMode}
-          activeInThread={state.activeMcpServerIds.includes(server.name)}
-          expanded={expanded.has(server.name)}
-          menuOpen={menuOpen === server.name}
-          onToggleExpand={() => toggleExpand(server.name)}
-          onToggleEnabled={() => handleToggleServer(server.name, server.enabled)}
-          onToggleActive={() => handleToggleActive(server.name)}
-          onEdit={() => handleEdit(server.name)}
-          onDelete={() => handleDelete(server.name)}
-          onMenuToggle={() => setMenuOpen(menuOpen === server.name ? null : server.name)}
-        />
-      ))}
+        {/* Server list */}
+        {state.mcpServers.length === 0 && (
+          <div style={styles.emptyText}>
+            尚未配置 MCP server。点击下方按钮添加，让 agent 接入 filesystem / git / 数据库等外部工具。
+          </div>
+        )}
+
+        {state.mcpServers.map((server) => (
+          <ServerCard
+            key={server.name}
+            server={server}
+            selectionMode={state.mcpSelectionMode}
+            activeInThread={state.activeMcpServerIds.includes(server.name)}
+            expanded={expanded.has(server.name)}
+            menuOpen={menuOpen === server.name}
+            onToggleExpand={() => toggleExpand(server.name)}
+            onToggleEnabled={() => handleToggleServer(server.name, server.enabled)}
+            onToggleActive={() => handleToggleActive(server.name)}
+            onEdit={() => handleEdit(server.name)}
+            onDelete={() => handleDelete(server.name)}
+            onMenuToggle={() => setMenuOpen(menuOpen === server.name ? null : server.name)}
+          />
+        ))}
+      </div>
 
       {/* Add button */}
       <button style={styles.addBtn} onClick={handleAdd}>
@@ -303,6 +332,31 @@ function ServerCard(props: ServerCardProps) {
 const styles: Record<string, React.CSSProperties> = {
   panelContent: {
     padding: 8,
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+  },
+  globalToggleRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    padding: "6px 8px",
+    background: "#f9fafb",
+    border: "1px solid #e5e7eb",
+    borderRadius: 4,
+  },
+  globalToggleLabel: {
+    display: "flex",
+    alignItems: "center",
+    fontSize: 12,
+    color: "#374151",
+    cursor: "pointer",
+  },
+  globalOffHint: {
+    fontSize: 10,
+    color: "#9ca3af",
+  },
+  mcpBody: {
     display: "flex",
     flexDirection: "column",
     gap: 6,

@@ -89,6 +89,11 @@ export function normalizeConfig(config: any): Partial<LLMConfig> {
   if (config.obsidian && typeof config.obsidian.vault_path === "string") {
     normalized.obsidian_vault_path = config.obsidian.vault_path
   }
+  // Global MCP kill-switch: flatten config.mcp.enabled so the UI can render
+  // the master toggle without a separate dispatch path.
+  if (config.mcp && typeof config.mcp.enabled === "boolean") {
+    normalized.mcp_enabled = config.mcp.enabled
+  }
   return Object.fromEntries(
     Object.entries(normalized).filter(([, value]) => value !== undefined)
   ) as Partial<LLMConfig>

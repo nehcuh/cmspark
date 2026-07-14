@@ -805,8 +805,15 @@ export async function handleMessage(
       if (config.mcp?.servers?.[name]) {
         return { type: "error", error: `MCP server "${name}" already exists. Use mcp.update to modify.` }
       }
+      const wasEmpty = Object.keys(config.mcp?.servers || {}).length === 0
       const newServers = { ...(config.mcp?.servers || {}), [name]: serverCfg }
       replaceMcpServers(newServers)
+      // Auto-enable the global kill-switch when the user adds their first server.
+      // Without this, the default `mcp.enabled: false` leaves the new server
+      // disconnected with no UI surface to flip it (see mcp.toggle_enabled UI gap).
+      if (wasEmpty && !config.mcp?.enabled) {
+        setMcpEnabled(true)
+      }
       return { type: "mcp.servers.updated", servers: getMcpManager().listServers() }
     }
     case "mcp.update": {

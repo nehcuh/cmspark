@@ -17,6 +17,7 @@ import * as assert from "node:assert/strict"
 let handleMessage: typeof import("../src/message-router").handleMessage
 let getConfig: typeof import("../src/config").getConfig
 let saveConfig: typeof import("../src/config").saveConfig
+let replaceMcpServers: typeof import("../src/config").replaceMcpServers
 let initDataDir: typeof import("../src/config").initDataDir
 
 before(async () => {
@@ -25,6 +26,7 @@ before(async () => {
   handleMessage = mr.handleMessage
   getConfig = cfg.getConfig
   saveConfig = cfg.saveConfig
+  replaceMcpServers = cfg.replaceMcpServers
   initDataDir = cfg.initDataDir
   await initDataDir()
   // Start from a clean, god-mode-off baseline so each assertion is unambiguous.
@@ -123,4 +125,54 @@ test("mcp.update: __proto__ key is still rejected as prototype pollution", async
   } as any, {} as any)
   assert.equal(r.type, "error")
   assert.equal(r.error, "Invalid config keys detected")
+})
+
+// --- mcp.add auto-enable regression ---
+// Default config ships with `mcp.enabled: false`, and replaceMcpServers preserves
+// the existing flag. Without the auto-enable in mcp.add, a user's first server add
+// would leave the global kill-switch off — the server card shows "未连接" forever
+// because McpManager.start() bails on enabled=false. The UI has no global toggle
+// to recover (mcp.toggle_enabled handler exists but pre-fix no component dispatched it).
+
+test("mcp.add: first server auto-flips mcp.enabled false → true", async () => {
+  // Use replaceMcpServers (not saveConfig) to clear the servers map — deepMerge
+  // would preserve existing server keys since {} has no keys to overwrite.
+  replaceMcpServers({})
+  saveConfig({ mcp: { enabled: false, servers: getConfig().mcp?.servers ?? {} } })
+  assert.equal(getConfig().mcp?.enabled, false)
+  assert.equal(Object.keys(getConfig().mcp?.servers || {}).length, 0)
+
+  const r: any = await handleMessage({
+    type: "mcp.add",
+    name: "auto-enable-fixture",
+    server: { command: "node", args: ["server.js"], transport: "stdio", trust_level: "manual" },
+  } as any, {} as any)
+  assert.equal(r.type, "mcp.servers.updated")
+  assert.equal(getConfig().mcp?.enabled, true, "first server add must auto-enable the global kill-switch")
+})
+
+test("mcp.add: adding a second server does not re-trigger auto-enable (already enabled)", async () => {
+  replaceMcpServers({ "seed-server": { transport: "stdio", command: "node", args: [], enabled: true, trust_level: "manual" } as any })
+  saveConfig({ mcp: { enabled: true, servers: getConfig().mcp?.servers ?? {} } })
+  const before = getConfig().mcp?.enabled
+  await handleMessage({
+    type: "mcp.add",
+    name: "second-server-fixture",
+    server: { command: "node", args: ["server.js"], transport: "stdio", trust_level: "manual" },
+  } as any, {} as any)
+  assert.equal(getConfig().mcp?.enabled, before, "auto-enable must only fire on the 0→1 server transition")
+})
+
+test("mcp.add: adding to non-empty server map does NOT silently re-enable a user-disabled MCP", async () => {
+  // User explicitly disabled MCP globally (e.g. via the UI toggle) but kept configured
+  // servers. Editing/adding another server must not undo that choice.
+  replaceMcpServers({ "kept-server": { transport: "stdio", command: "node", args: [], enabled: true, trust_level: "manual" } as any })
+  saveConfig({ mcp: { enabled: false, servers: getConfig().mcp?.servers ?? {} } })
+  assert.equal(Object.keys(getConfig().mcp?.servers || {}).length, 1)
+  await handleMessage({
+    type: "mcp.add",
+    name: "extra-server-fixture",
+    server: { command: "node", args: ["server.js"], transport: "stdio", trust_level: "manual" },
+  } as any, {} as any)
+  assert.equal(getConfig().mcp?.enabled, false, "explicit user disable must survive a non-first server add")
 })

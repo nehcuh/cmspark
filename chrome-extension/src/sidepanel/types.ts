@@ -153,6 +153,10 @@ export interface LLMConfig {
   file_upload_vision?: boolean
   // Obsidian export vault path (flattened from companion config.obsidian.vault_path)
   obsidian_vault_path?: string
+  // Global MCP kill-switch (flattened from companion config.mcp.enabled).
+  // When false, the McpManager refuses to start any client and listServers()
+  // synthesizes disconnected metas — UI uses this to render the master toggle.
+  mcp_enabled?: boolean
 }
 
 export interface Message {
