@@ -734,7 +734,13 @@ export async function handleMessage(
       const sourceThread = threadManager.get(rest.thread_id)
       if (!sourceThread) return { type: "error", error: "Thread not found" }
 
-      const newThread = threadManager.create(rest.alias || `分支-${sourceThread.id}`)
+      // Default to an empty alias instead of "分支-${sourceThread.id}". The old
+      // default was persisted immediately and then tripped the "alias is set"
+      // guard inside generateThreadTitle, so the forked thread was stuck with
+      // a meaningless name forever (UI rendered it literally next to the
+      // parent it forked from, looking like a duplicate). Empty alias makes
+      // the UI fall back to the thread id and lets auto-titling kick in below.
+      const newThread = threadManager.create(rest.alias || "")
       const messages = threadManager.getMessages(rest.thread_id)
       const idx = messages.findIndex(m => m.id === rest.message_id)
       const msgsToCopy = idx >= 0 ? messages.slice(0, idx + 1) : messages
@@ -751,6 +757,19 @@ export async function handleMessage(
       threadManager.update(newThread.id, {
         active_skill_ids: sourceThread.active_skill_ids,
         pinned_tabs: sourceThread.pinned_tabs,
+      })
+
+      // Best-effort auto-title: if the forked-in prefix already has a user +
+      // assistant exchange, summarize it into a fresh alias. force=false keeps
+      // the LLM call cheap (skipped if the user passed an explicit alias), and
+      // failure is silent — empty alias just falls back to the thread id in UI.
+      const forkedConfig = getConfig().llm
+      void generateThreadTitle({
+        threadId: newThread.id,
+        threadManager,
+        config: forkedConfig,
+        sendToExtension: session?.sendToExtension || (() => {}),
+        force: false,
       })
 
       return { type: "thread.forked", thread: newThread, messages: threadManager.getMessages(newThread.id) }
