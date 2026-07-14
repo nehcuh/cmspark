@@ -1,0 +1,34 @@
+Warning: no stdin data received in 3s, proceeding without it. If piping from a slow command, redirect stdin explicitly: < /dev/null to skip, or wait longer.
+# 独立 Code Review — NotebookLM 导入 v1
+
+## Critical（阻塞 ship）
+
+无。但 Bug A 是隐藏的功能性缺陷，强烈建议 ship 前修。
+
+## Major（应修）
+
+- **`chrome-extension/src/notebooklm/extractor.ts:84`** — `(clone as HTMLElement).innerText` 在 detached `cloneNode(true)` 上**永远返回空字符串**（innerText 依赖 layout/rendering 上下文，clone 未挂载到 document）。代码注释声称「innerText layout-aware, textContent 兜底」，实际上**主路径是死代码**，永远走 fallback。所谓「跳过 display:none」的收益不存在。建议：删掉 innerText 这一层，或把 clone 临时 attach 到隐藏 iframe；至少改注释、避免误导后续维护者。 | 建议：直接用 `textContent`，注释更新为「textContent 唯一路」。
+
+- **`chrome-extension/src/sidepanel/App.tsx:314-317`** — `<a>` 元素**未 appendChild 到 document.body**就调用 `.click()`。在某些 Chrome 版本/side panel 上下文里会静默丢弃下载（虽然现行 Chrome MV3 side panel 通常容忍，但行为不可靠）。建议：`document.body.appendChild(a); a.click(); a.remove();`。 | 建议：用标准 anchor 模式。
+
+- **`chrome-extension/src/background/index.ts:496`** — `handleNotebooklmExport().then(sendResponse)` **无 `.catch`**。当前 handler 内部 try/catch 总返回值，但任何未来回归（如 sendResponse 同步抛错、arg 序列化失败）都会让 message channel 永久挂起，调用方 `await sendMessage` 永远不 resolve。 | 建议：`.then(sendResponse).catch(e => sendResponse({ok:false, error:String(e)}))`。
+
+- **`chrome-extension/src/background/notebooklm-handler.ts:47`** — 仅检查 `typeof result.text !== "string"`，**接受空字符串**。一个 sanitize 后 0 字符的页面（如 canvas-only、paywall、SPA shadow DOM）会被静默导出为空 `.md`，用户拖进 NotebookLM 才发现没内容。 | 建议：加 `result.text.trim().length === 0` 判空并返回 `{ok:false, error:"..."}`。
+
+- **`chrome-extension/tests/notebooklm-extractor.test.ts`**（整文件）— 所有用例只 `extractPageContentRunner.toString().includes("cloneNode(true)")`，**纯源码字符串匹配**。改函数实现（如调换 clone/mutate 顺序但保留字面量）能让测试通过而安全属性丢失。该 runner 是 DOM 安全的关键边界，却零运行时覆盖。 | 建议：用 jsdom 跑一次真实 clone → mutate 顺序断言。
+
+## Minor（nits）
+
+- **`markdown-builder.ts:39-42`** — `escapeYaml` 不转义 C0 控制字符（`\t`、`\x1b`、`\x07` 等）。YAML 双引号串中这些非法。标题含 ESC 等会产出 parser-invalid YAML（无注入风险，新行已折叠，但 NotebookLM 可能报错）。
+- **`extractor.ts:56`** — 页面里 `JSON.parse(selectorsJSON)` 无防御校验。当前安全（args 来自常量），但无 `Array.isArray` + 字符串校验，未来误用即报错。
+- **`App.tsx:322,326,332,337`** — `setTimeout` 未在 unmount 时 clear。
+- **`markdown-builder.ts:80`** — 文件名时间戳秒级精度，同秒同标题导出会覆盖。
+- **`extractor.ts:75`** — `root = document.body` 时 `cloneNode(true)` 深拷整个 body，超大 SPA 可能 OOM；无 size cap。
+- **`extractor.ts:60-72`** — selector loop 在 clone 前对 **live** 元素读 `innerText`（每次触发 reflow），与「永不碰 live DOM」的注释不符（非 mutation，但 perf 上是 live read）。
+- **`App.tsx:319-322`** — truncated 路径设 `nbState="warning"`，图标显示 ⚠️ 暗示失败；实际是成功。建议引入 `truncated` 第四态或用不同 emoji。
+- **`notebooklm-handler.ts:43`** — `JSON.stringify(EXTRACTOR_SELECTORS)` 传 `as const` 元组正常；但建议 handler 端缓存一次 stringify，避免每次导出重算。
+- **`extractor.ts:78`** — 净化选择器含 `[aria-hidden='true']`，主流站点开 modal 时会把主内容 `aria-hidden` → 误删正文。
+
+## Verdict
+
+**FIX** — 架构干净、 sanitization 边界正确、ADR 与实现一致；但 `innerText` dead path（Bug A）让声称的「layout-aware 抽取」失效，加上 `<a>.click()` 下载可靠性 + 空 body 静默 + 零运行时 runner 测试，v1 ship 前应至少修 A/B/D。

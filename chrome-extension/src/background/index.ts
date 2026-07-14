@@ -5,6 +5,7 @@ import { WSClient } from "./ws-client"
 import { BrowserBridge } from "./browser-bridge"
 import { KeepAlive } from "./keep-alive"
 import { PageSanitizer, pageSanitizer } from "./page-sanitizer"
+import { handleNotebooklmExport } from "./notebooklm-handler"
 
 let wsClient: WSClient
 let browserBridge: BrowserBridge
@@ -487,6 +488,21 @@ function setupMessageHandlers() {
         wsClient.send({ type: "thread.create", alias: message.alias || "", id: message.id })
         sendResponse({ ok: true })
         return true
+
+      case "page.import_notebooklm": {
+        // v1: extension-only. Extracts current tab content via chrome.scripting,
+        // formats as frontmatter Markdown, returns to caller for Blob download.
+        // No companion round-trip (Round 2 architecture decision: Z over X).
+        //
+        // `.catch` is mandatory: any future regression that throws synchronously inside
+        // handleNotebooklmExport (instead of being caught and returned as {ok:false})
+        // would otherwise leave the message channel hanging — caller's `await
+        // sendMessage` never resolves. (Phase 4 review catch.)
+        handleNotebooklmExport()
+          .then(sendResponse)
+          .catch(e => sendResponse({ ok: false, error: `Background handler crashed: ${e?.message || String(e)}` }))
+        return true
+      }
 
       case "thread.list":
       case "thread.export_obsidian":

@@ -1,0 +1,142 @@
+• The user wants me to act as an independent adversarial reviewer. I need to read two files in the docs/decisions directory:
+  1. docs/decisions/notebooklm-import-impl-plan.md
+  2. docs/decisions/notebooklm-import-round1-synthesis.md
+
+  Then answer 8 adversarial questions in max 200 words total, with specific format.
+
+  Let me read both files first.I need to answer 8 adversarial questions in max 200 words total. The user is asking about the implementation plan. I need to be concise.
+
+  Let me craft the response. The user wants:
+  - 风险等级(低/中/高): <一句话> + 必要时一句话缓解建议
+  - Each question answered
+  - Final verdict: approve / approve-with-changes / reject
+
+  Key issues to identify:
+  1. Architecture X vs Z - The plan actually mentions both. The question is whether X's only justification "A1 consistency" is enough. The plan has substantial reasoning about Z being simpler but chooses X. I should challenge: if companion only does trivial formatting, the WS round-trip is overhead without benefit for v1.
+  2. CDP detach - The plan says "need to verify" and mentions explicit detach. Potential cleanup issues: ensure detach in success AND failure paths, handle tabs detached by other code.
+  3. Selector list vs Readability - IIFE selectors are ad-hoc. Could be brittle. But Readability adds dependency. Reasonable for v1 but should test.
+  4. innerText vs textContent - Layout-aware risk. In CDP Runtime.evaluate on real tab, should be OK. But display:none / hidden content could be skipped.
+  5. 200k truncation - NotebookLM source limits? Need to check if this is accurate. Actually NotebookLM has limits but 200k chars is quite large. The claim "500KB text sources" needs verification.
+  6. Single commit - For this size (small feature), single commit is reasonable.
+  7. No e2e, manual validation - For overnight push, risky but acceptable if small scope. Should note regression risk.
+  8. Missed risks - Google ToS (scraping/using content), MV3 SW killed during download, error handling if tab is chrome:// or file:// where debugger can't attach, CORS/permissions, CSP blocking evaluation? Actually Runtime.evaluate runs in page context so CSP applies. Also error if page is PDF viewer or no DOM.
+
+  The question 8 specifically asks about any missed key risks (security/performance/MV3 SW/privacy/Google ToS).
+
+  Final verdict: probably approve-with-changes given the concerns are manageable.
+
+  I need to be under 200 words total. This is tight. Let me draft carefully.
+
+  Draft:
+
+  1. 中: A1一致性单独不足以承担WS往返成本；若companion只做模板字符串拼接，X是过早分布式。缓解：v1先用Z全扩展内实现，v1.1有服务端 enrichment 再迁X。
+
+  2. 中: 仅计划显式detach不够。缓解：try/finally/timeout都调detach，并处理attach失败和tab已关闭。
+
+  3. 中: 选择器列表是够用但脆弱的经验集合。缓解：v1可接受，但应加body回退和最小长度阈值；考虑引入Readability作为v1.1候选。
+
+  4. 低: CDP在真实tab跑，innerText风险可控；但遇到display:none或动态懒加载内容可能丢字。
+
+  5. 中: 200k/500KB是经验值，未引用NotebookLM官方限制。缓解：先实现可配置上限，并验证实际导入失败边界。
+
+  6. 低: 此size单commit合理，但应将CDP提取与MD构建逻辑拆为独立文件以便回滚。
+
+  7. 中: 一夜推进手动e2e可接受，但无回归防护；缓解：至少补vitest单元测试和一条失败路径集成测试。
+
+  8. 中: 漏掉debugger禁用的chrome:///PDF/CSP页面错误处理、tab权限时序、文件名路径注入、以及Google ToS对自动化抓取的解释空间。
+
+  最终：approve-with-changes。
+
+  Let me count words in Chinese. The instruction says max 200 words. Chinese characters count as words typically. I need to be careful. Maybe around 200 characters/words.
+
+  Actually the user says "最多 200 字". In Chinese context "字" usually means Chinese characters. But for mixed content, it could be ambiguous. I'll aim for around 200 Chinese characters plus punctuation.
+
+  Let me count my draft roughly:
+  1. 中: A1一致性单独不足以承担WS往返成本；若companion只做模板字符串拼接，X是过早分布式。缓解：v1先用Z全扩展内实现，v1.1有服务端enrichment再迁X。 (~70 chars)
+  2. 中: 仅计划显式detach不够。缓解：try/finally/timeout都调detach，并处理attach失败和tab已关闭。 (~50 chars)
+  3. 中: 选择器列表是够用但脆弱的经验集合。缓解：v1可接受，但应加body回退和最小长度阈值；考虑引入Readability作为v1.1候选。 (~70 chars)
+  4. 低: CDP在真实tab跑，innerText风险可控；但遇到display:none或动态懒加载内容可能丢字。 (~40 chars)
+  5. 中: 200k/500KB是经验值，未引用NotebookLM官方限制。缓解：先实现可配置上限，并验证实际导入失败边界。 (~55 chars)
+  6. 低: 此size单commit合理，但应将CDP提取与MD构建逻辑拆为独立文件以便回滚。 (~45 chars)
+  7. 中: 一夜推进手动e2e可接受，但无回归防护；缓解：至少补vitest单元测试和一条失败路径集成测试。 (~55 chars)
+  8. 中: 漏掉debugger禁用的chrome:///PDF/CSP页面错误处理、tab权限时序、文件名路径注入、以及Google ToS对自动化抓取的解释空间。 (~70 chars)
+  Final: approve-with-changes. (~20 chars)
+
+  Total would be way over 200. I need to compress significantly.
+
+  The user wants "最多 200 字回答以下对抗性问题" - this is total for all 8 answers. Very tight.
+
+  Let me be extremely concise:
+
+  1. 中：X 的唯一理由不足以抵消 WS 往返；Z 更简单，v1 建议 Z。
+  2. 中：漏了失败/超时/已关闭 tab 的 detach 路径；加 try/finally。
+  3. 中：选择器够用但脆弱；v1 可接受，优先 body 回退。
+  4. 低：CDP 在真实 tab 上基本 OK，但 display:none 懒加载会丢字。
+  5. 中：200k 是经验值；应可配置并实测 NotebookLM 上限。
+  6. 低：单 commit 合理，但提取/格式化应分文件。
+  7. 中：手动 e2e 可接受，至少补 vitest 失败路径。
+  8. 高：漏 chrome:// PDF CSP 页错误、文件名注入、Google ToS 风险。
+
+  approve-with-changes.
+
+  Count:
+  1. 中：X 的唯一理由不足以抵消 WS 往返；Z 更简单，v1 建议 Z。 (28 chars)
+  2. 中：漏了失败/超时/已关闭 tab 的 detach 路径；加 try/finally。 (31 chars)
+  3. 中：选择器够用但脆弱；v1 可接受，优先 body 回退。 (26 chars)
+  4. 低：CDP 在真实 tab 上基本 OK，但 display:none 懒加载会丢字。 (33 chars)
+  5. 中：200k 是经验值；应可配置并实测 NotebookLM 上限。 (26 chars)
+  6. 低：单 commit 合理，但提取/格式化应分文件。 (21 chars)
+  7. 中：手动 e2e 可接受，至少补 vitest 失败路径。 (24 chars)
+  8. 高：漏 chrome:// PDF CSP 页错误、文件名注入、Google ToS 风险。 (39 chars)
+  Final: 6 chars
+
+  Total: ~234 chars. Still over.
+
+  Need to cut more. Remove some detail:
+
+  1. 中：X 理由不足抵 WS 往返；v1 建议 Z。 (18)
+  2. 中：漏失败/超时 detach；加 try/finally。 (20)
+  3. 中：选择器够用但脆弱；body 回退兜底。 (20)
+  4. 低：真实 tab OK，display:none/懒加载或丢字。 (22)
+  5. 中：200k 经验值；应可配置并实测上限。 (19)
+  6. 低：单 commit 合理，提取/格式化分文件。 (20)
+  7. 中：手动 e2e 可接受，补 vitest 失败路径。 (22)
+  8. 高：漏 chrome:// PDF CSP 错误、文件名注入、ToS。 (29)
+  Final: approve-with-changes (19)
+
+  Total: ~189 chars. Good.
+
+  But wait, I should make sure each answer has the risk level and a one-sentence format. The user wants: `风险等级(低/中/高): <一句话>` + 必要时一句话缓解建议.
+
+  My compressed version includes the mitigation in the same sentence. That's fine.
+
+  Actually the final verdict should be "approve-with-changes" - I need to make sure it's one of the three options.
+
+  Let me reconsider the architecture question. The plan actually waffles between X and Z and ends on X. The adversarial question asks: "Z 更简单省一个 WS 往返。我做 X 的唯一理由是「与 CLAUDE.md A1 架构意图一致」。这个理由站得住吗？" 
+
+  I think the answer is: 中/高 - A1 consistency alone is weak when companion adds no value in v1. I rated 中.
+
+  For question 8, I rated 高 because missing Google ToS and CSP/chrome pages are significant.
+
+  Let me finalize. I'll present in the requested format. I'll aim for under 200 Chinese characters.
+
+  One more consideration: the user said "只用最多 200 字回答以下对抗性问题". Does this include the final verdict sentence? Probably yes. My count is ~189 including final. Good.
+
+  Actually I should also read CLAUDE.md to verify A1? The plan quotes it. I don't strictly need to, but to be thorough... The user asked to read the two files. The question references CLAUDE.md A1. I can rely on the plan's quote. But maybe I should quickly check? The response limit is tight. I'll rely on the plan.
+
+  Actually, to be a good adversarial reviewer, maybe I should verify. But 200 words is very tight and the user said "阅读仓库内文件" - the two decision files. I'll answer based on those.
+
+  Let me write the final response.
+
+• 1. **中**: X 理由不足抵 WS 往返；v1 建议 Z。
+  2. **中**: 漏失败/超时 detach；加 try/finally。
+  3. **中**: 选择器够用但脆弱；body 回退兜底。
+  4. **低**: 真实 tab OK，display:none/懒加载或丢字。
+  5. **中**: 200k 经验值；应可配置并实测上限。
+  6. **低**: 单 commit 合理，提取/格式化分文件。
+  7. **中**: 手动 e2e 可接受，补 vitest 失败路径。
+  8. **高**: 漏 chrome:// PDF CSP 错误、文件名注入、Google ToS 风险。
+
+  **approve-with-changes**
+
+To resume this session: kimi -r session_b7e257ae-5368-440e-b6c1-fd06e4db8413
