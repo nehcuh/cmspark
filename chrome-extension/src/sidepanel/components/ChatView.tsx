@@ -36,7 +36,7 @@ const TOOL_RESULT_PREVIEW = 200
 
 export function ChatView() {
   const { state, dispatch } = useAgentStore()
-  const { messages, streamingContent, activeThreadId, isProcessing } = state
+  const { messages, streamingContent, activeThreadId, isProcessing, sendShortcut } = state
   const containerRef = useRef<HTMLDivElement>(null)
   const lastMessageCountRef = useRef(messages.length)
   const pinnedRef = useRef(true)
@@ -154,6 +154,7 @@ export function ChatView() {
           key={msg.id}
           msg={msg}
           activeThreadId={activeThreadId}
+          sendShortcut={sendShortcut}
           onRegenerate={handleRegenerate}
           onFork={handleFork}
           onExport={handleExport}
@@ -188,6 +189,7 @@ export function ChatView() {
 const MessageRow = memo(function MessageRow({
   msg,
   activeThreadId,
+  sendShortcut,
   onRegenerate,
   onFork,
   onExport,
@@ -195,6 +197,7 @@ const MessageRow = memo(function MessageRow({
 }: {
   msg: any
   activeThreadId: string | null
+  sendShortcut: string
   onRegenerate: (messageId: string, editedMessage?: string) => void
   onFork: (messageId: string) => void
   onExport: (messageId: string) => void
@@ -204,6 +207,10 @@ const MessageRow = memo(function MessageRow({
   const hasLongContent = (msg.content?.length || 0) > LONG_CONTENT_THRESHOLD
   const [isEditing, setIsEditing] = useState(false)
   const [editingText, setEditingText] = useState("")
+  // useRef so the keydown handler always sees the latest shortcut without
+  // busting MessageRow's memo when the user changes the setting.
+  const sendShortcutRef = useRef(sendShortcut)
+  sendShortcutRef.current = sendShortcut
 
   const handleCopy = async (text: string) => {
     try {
@@ -229,7 +236,18 @@ const MessageRow = memo(function MessageRow({
               value={editingText}
               onChange={(e) => setEditingText(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                // Mirror InputArea's strict modifier check so editor submit matches the
+                // configured send shortcut (Cmd-only / Ctrl-only / Enter-only).
+                const shortcut = sendShortcutRef.current
+                let submit = false
+                if (shortcut === "Enter") {
+                  submit = e.key === "Enter" && !e.shiftKey && !e.metaKey && !e.ctrlKey
+                } else if (shortcut === "Cmd+Enter") {
+                  submit = e.key === "Enter" && e.metaKey && !e.ctrlKey
+                } else if (shortcut === "Ctrl+Enter") {
+                  submit = e.key === "Enter" && e.ctrlKey && !e.metaKey
+                }
+                if (submit) {
                   e.preventDefault()
                   onRegenerate(msg.id, editingText)
                   setIsEditing(false)
@@ -312,7 +330,8 @@ const MessageRow = memo(function MessageRow({
     prev.msg.id === next.msg.id &&
     prev.msg.content === next.msg.content &&
     prev.msg.tool_calls === next.msg.tool_calls &&
-    prev.activeThreadId === next.activeThreadId
+    prev.activeThreadId === next.activeThreadId &&
+    prev.sendShortcut === next.sendShortcut
   )
 })
 

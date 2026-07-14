@@ -454,9 +454,12 @@ function InputArea() {
     let shouldSend = false
 
     if (shortcut === "Enter") {
-      shouldSend = e.key === "Enter" && !e.shiftKey
+      shouldSend = e.key === "Enter" && !e.shiftKey && !e.metaKey && !e.ctrlKey
     } else if (shortcut === "Cmd+Enter") {
-      shouldSend = e.key === "Enter" && (e.metaKey || e.ctrlKey)
+      // Strict: Cmd (metaKey) only — Ctrl+Enter must NOT trigger when user chose Cmd+Enter.
+      // Cross-platform: on Windows/Linux keyboards without a meta key this shortcut is a no-op;
+      // users on those platforms should pick Ctrl+Enter instead.
+      shouldSend = e.key === "Enter" && e.metaKey && !e.ctrlKey
     } else if (shortcut === "Ctrl+Enter") {
       shouldSend = e.key === "Enter" && e.ctrlKey && !e.metaKey
     }
