@@ -17,6 +17,7 @@ export interface AgentState {
   pinnedTabIds: number[]
   streamingContent: string
   testResult: string | null
+  testVisionResult: string | null
   sendShortcut: SendShortcut
   pendingSecurityConfirmations: SecurityConfirmationRequest[]
   logs: LogEntry[]
@@ -54,6 +55,7 @@ export type AgentAction =
   | { type: "SET_OPERATIONS"; operations: OperationRecord[] }
   | { type: "SET_CONFIG"; config: Partial<LLMConfig> }
   | { type: "TOGGLE_SETTINGS" }
+  | { type: "SET_SETTINGS_OPEN"; open: boolean }
   | { type: "SET_TAB_LIST"; tabs: chrome.tabs.Tab[] }
   | { type: "TOGGLE_PIN_TAB"; tabId: number }
   | { type: "SET_PINNED_TABS"; tabIds: number[] }
@@ -62,6 +64,7 @@ export type AgentAction =
   | { type: "REMOVE_THREAD"; threadId: string }
   | { type: "SET_STREAMING"; content: string }
   | { type: "SET_TEST_RESULT"; result: string | null }
+  | { type: "SET_TEST_VISION_RESULT"; result: string | null }
   | { type: "SET_SEND_SHORTCUT"; shortcut: SendShortcut }
   | { type: "ADD_SECURITY_CONFIRMATION"; request: SecurityConfirmationRequest }
   | { type: "REMOVE_SECURITY_CONFIRMATION"; confirmationId: string }
@@ -117,6 +120,7 @@ export const initialState: AgentState = {
   pinnedTabIds: [],
   streamingContent: "",
   testResult: null,
+  testVisionResult: null,
   sendShortcut: "Enter",
   pendingSecurityConfirmations: [],
   logs: [],
@@ -221,6 +225,8 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       return { ...state, vaultPicker: { picking: action.picking, error: action.error } }
     case "TOGGLE_SETTINGS":
       return { ...state, settingsOpen: !state.settingsOpen }
+    case "SET_SETTINGS_OPEN":
+      return { ...state, settingsOpen: action.open }
     case "SET_TAB_LIST":
       return { ...state, tabList: action.tabs }
     case "TOGGLE_PIN_TAB":
@@ -284,6 +290,8 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       return { ...state, streamingContent: action.content }
     case "SET_TEST_RESULT":
       return { ...state, testResult: action.result }
+    case "SET_TEST_VISION_RESULT":
+      return { ...state, testVisionResult: action.result }
     case "SET_SEND_SHORTCUT":
       chrome.storage.local.set({ sendShortcut: action.shortcut })
       return { ...state, sendShortcut: action.shortcut }

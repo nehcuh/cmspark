@@ -42,10 +42,14 @@ export function requestInitialSidePanelData(
 export function normalizeConfig(config: any): Partial<LLMConfig> {
   if (!config) return {}
   const llm = config.llm || config
+  const llmKeyMasked = isMaskedApiKey(llm.api_key)
   const normalized: Partial<LLMConfig> = {
     base_url: llm.base_url,
-    // Skip masked API keys to keep the existing value
-    api_key: isMaskedApiKey(llm.api_key) ? "" : llm.api_key,
+    // Drop the masked placeholder from the editable field — the user re-types
+    // their key on save. But preserve the "is the key already set?" signal so
+    // the UI can show "已配置 ✓" without exposing the actual secret.
+    api_key: llmKeyMasked ? "" : llm.api_key,
+    api_key_set: llmKeyMasked ? true : (llm.api_key ? true : false),
     model_name: llm.model_name,
     temperature: llm.temperature,
     context_window: llm.context_window,
@@ -68,8 +72,11 @@ export function normalizeConfig(config: any): Partial<LLMConfig> {
   const vision = config.vision
   if (vision) {
     normalized.vision_enabled = !!vision.enabled
-    // Skip masked vision API keys
-    normalized.vision_api_key = isMaskedApiKey(vision.api_key) ? "" : vision.api_key
+    // Same masked-key pattern as the main LLM key — keep the editable field empty
+    // but expose `vision_api_key_set` so the UI can show "已配置" indicators.
+    const visionKeyMasked = isMaskedApiKey(vision.api_key)
+    normalized.vision_api_key = visionKeyMasked ? "" : vision.api_key
+    normalized.vision_api_key_set = visionKeyMasked ? true : (vision.api_key ? true : false)
     normalized.vision_base_url = vision.base_url
     normalized.vision_model_name = vision.model_name
     normalized.vision_timeout_ms = vision.timeout_ms
@@ -117,6 +124,15 @@ export function useWebSocket() {
     chrome.storage.local.get("sendShortcut", (result) => {
       if (result.sendShortcut) {
         dispatch({ type: "SET_SEND_SHORTCUT", shortcut: result.sendShortcut })
+      }
+    })
+    // Popup "设置" button sets this flag before opening the side panel + closing
+    // itself. Read it once on mount and pop the settings view, then clear so a
+    // later sidepanel reopen (without going through popup) doesn't auto-open.
+    chrome.storage.local.get("openSettingsOnSpawn", (result) => {
+      if (result.openSettingsOnSpawn) {
+        chrome.storage.local.remove("openSettingsOnSpawn")
+        dispatch({ type: "SET_SETTINGS_OPEN", open: true })
       }
     })
 
@@ -254,7 +270,7 @@ export function useWebSocket() {
 
         case "config.testVisionResult":
           dispatch({
-            type: "SET_TEST_RESULT",
+            type: "SET_TEST_VISION_RESULT",
             result: msg.ok
               ? `视觉模型连接成功 ✓ (${msg.model || ""})`
               : `视觉模型连接失败: ${msg.error || "未知错误"}`,
@@ -263,6 +279,11 @@ export function useWebSocket() {
 
         case "config.testResult":
           dispatch({ type: "SET_TEST_RESULT", result: msg.ok ? "连接成功 ✓" : `连接失败: ${msg.error || "未知错误"}` })
+          break
+
+        case "openSettings":
+          // Popup "设置" button opened the side panel — land on the settings view.
+          dispatch({ type: "SET_SETTINGS_OPEN", open: true })
           break
 
         case "config.updated":

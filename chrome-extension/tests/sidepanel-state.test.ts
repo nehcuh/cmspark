@@ -81,6 +81,9 @@ test("normalizeConfig flattens companion config and keeps masked API keys out of
   }), {
     base_url: "https://example.test/v1",
     api_key: "",
+    // Masked key still signals "is set" so the UI can show "已配置 ✓"
+    // without ever exposing the real key.
+    api_key_set: true,
     model_name: "model-x",
     temperature: 0.2,
     context_window: 4096,

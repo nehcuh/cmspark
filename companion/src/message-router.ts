@@ -61,7 +61,11 @@ export async function handleMessage(
         type: "config.updated",
         config: {
           ...config,
-          llm: { ...config.llm, api_key: "***" },
+          // Preserve "is set" signal: "***" when an api_key exists, "" otherwise.
+          // The frontend normalizes "***" back to "" but uses it as a truthy signal
+          // for "已配置" indicators (UX fix: users had no way to tell their key was
+          // already saved because the input was always blank).
+          llm: { ...config.llm, api_key: config.llm.api_key ? "***" : "" },
           vision: config.vision ? { ...config.vision, api_key: config.vision.api_key ? "***" : "" } : undefined,
         },
       }
@@ -138,7 +142,8 @@ export async function handleMessage(
         type: "config.updated",
         config: {
           ...updated,
-          llm: { ...updated.llm, api_key: "***" },
+          // Same "is set" signal preservation as config.get — see comment there.
+          llm: { ...updated.llm, api_key: updated.llm.api_key ? "***" : "" },
           vision: updated.vision ? { ...updated.vision, api_key: updated.vision.api_key ? "***" : "" } : undefined,
         },
       }

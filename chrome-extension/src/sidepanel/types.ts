@@ -124,6 +124,9 @@ export type SendShortcut = "Enter" | "Cmd+Enter" | "Ctrl+Enter"
 export interface LLMConfig {
   base_url: string
   api_key: string
+  // True when companion reports a non-empty api_key (masked as "***"). Lets the
+  // settings UI show "已配置 ✓" without ever exposing the real key.
+  api_key_set?: boolean
   model_name: string
   temperature: number
   context_window: number
@@ -143,6 +146,8 @@ export interface LLMConfig {
   // Vision model fields (flattened for UI convenience)
   vision_enabled?: boolean
   vision_api_key?: string
+  // True when companion reports a non-empty vision api_key (masked as "***").
+  vision_api_key_set?: boolean
   vision_base_url?: string
   vision_model_name?: string
   vision_timeout_ms?: number

@@ -157,7 +157,16 @@ export function SettingsSlideout() {
   }
 
   const handleTest = () => {
+    // Reset both result channels — main LLM test always runs, vision test runs
+    // only when the user has enabled 截图视觉分析. Showing both side-by-side
+    // (instead of overwriting one result) lets the user see e.g. "主 API ✓ /
+    // 视觉 ✗" without re-clicking.
     dispatch({ type: "SET_TEST_RESULT", result: "测试中..." })
+    if (config.vision_enabled) {
+      dispatch({ type: "SET_TEST_VISION_RESULT", result: "测试视觉模型中..." })
+    } else {
+      dispatch({ type: "SET_TEST_VISION_RESULT", result: null })
+    }
     // Pass the API key currently shown in the UI so the test reflects what the
     // user sees — even before they click Save. Falls back to the last saved key
     // in the background if config.api_key is empty.
@@ -165,6 +174,9 @@ export function SettingsSlideout() {
       ? { api_key: config.api_key, base_url: config.base_url, model_name: config.model_name }
       : null
     chrome.runtime.sendMessage({ type: "config.test", llmOverride })
+    if (config.vision_enabled) {
+      chrome.runtime.sendMessage({ type: "config.testVision" })
+    }
   }
 
   const toggleSafetySkill = (skillId: string) => {
@@ -493,22 +505,33 @@ export function SettingsSlideout() {
           </div>
 
           <div style={styles.field}>
-            <label style={styles.label}>API Key</label>
+            <label style={styles.label}>
+              API Key{" "}
+              {!config.api_key && state.companionConfig?.api_key_set && (
+                <span style={{
+                  fontSize: 10, fontWeight: 500, marginLeft: 6,
+                  padding: "1px 6px", borderRadius: 8,
+                  color: "#2E7D32", background: "#E8F5E9",
+                }}>
+                  ✓ 已配置
+                </span>
+              )}
+            </label>
             <div style={{ display: "flex", gap: 6 }}>
               <input
                 style={{ ...styles.input, flex: 1 }}
                 type={showKey ? "text" : "password"}
                 value={config.api_key}
                 onChange={e => dispatch({ type: "SET_CONFIG", config: { api_key: e.target.value } })}
-                placeholder="sk-..."
+                placeholder={state.companionConfig?.api_key_set ? "（已配置，留空保持不变；输入新值覆盖）" : "sk-..."}
               />
               <button style={styles.toggleBtn} onClick={() => setShowKey(!showKey)}>
                 {showKey ? "隐藏" : "显示"}
               </button>
             </div>
-            {!config.api_key && state.companionConfig?.api_key && (
-              <div style={{ fontSize: 10, color: "#aaa", marginTop: 2 }}>
-                Using Companion global config
+            {!config.api_key && state.companionConfig?.api_key_set && (
+              <div style={{ fontSize: 11, color: "#2E7D32", marginTop: 4 }}>
+                ✓ Companion 已保存 API Key 并正常工作。如需更换，请在上方输入新值；留空保存将沿用现有密钥。
               </div>
             )}
           </div>
@@ -601,14 +624,29 @@ export function SettingsSlideout() {
           {config.vision_enabled && (
             <>
               <div style={styles.field}>
-                <label style={styles.label}>API Key</label>
+                <label style={styles.label}>
+                  API Key{" "}
+                  {!config.vision_api_key && state.companionConfig?.vision_api_key_set && (
+                    <span style={{
+                      fontSize: 10, fontWeight: 500, marginLeft: 6,
+                      padding: "1px 6px", borderRadius: 8,
+                      color: "#2E7D32", background: "#E8F5E9",
+                    }}>
+                      ✓ 已配置
+                    </span>
+                  )}
+                </label>
                 <div style={{ display: "flex", gap: 6 }}>
                   <input
                     style={{ ...styles.input, flex: 1 }}
                     type={showKey ? "text" : "password"}
                     value={config.vision_api_key || ""}
                     onChange={e => dispatch({ type: "SET_CONFIG", config: { vision_api_key: e.target.value } })}
-                    placeholder="留空则使用 Ollama（无需 API Key）"
+                    placeholder={
+                      state.companionConfig?.vision_api_key_set
+                        ? "（已配置，留空保持不变；输入新值覆盖）"
+                        : "留空则使用 Ollama（无需 API Key）"
+                    }
                   />
                 </div>
                 <div style={styles.helpText}>
@@ -739,11 +777,23 @@ export function SettingsSlideout() {
         </div>
 
         <div style={styles.footer}>
-          {state.testResult && <span style={{
-            fontSize: 12,
-            color: state.testResult.includes("成功") ? "#4CAF50" : "#F44336",
-          }}>{state.testResult}</span>}
-          <button style={styles.testBtn} onClick={handleTest}>测试连接</button>
+          <div style={{ display: "flex", flexDirection: "column", gap: 2, marginRight: "auto", textAlign: "left" }}>
+            {state.testResult && (
+              <span style={{
+                fontSize: 12,
+                color: state.testResult.includes("成功") ? "#4CAF50" : "#F44336",
+              }}>{state.testResult}</span>
+            )}
+            {state.testVisionResult && (
+              <span style={{
+                fontSize: 12,
+                color: state.testVisionResult.includes("成功") ? "#4CAF50" : "#F44336",
+              }}>{state.testVisionResult}</span>
+            )}
+          </div>
+          <button style={styles.testBtn} onClick={handleTest}>
+            {config.vision_enabled ? "测试连接（含视觉）" : "测试连接"}
+          </button>
           <button style={styles.saveBtn} onClick={handleSave}>保存</button>
         </div>
 

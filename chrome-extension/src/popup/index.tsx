@@ -31,10 +31,28 @@ function Popup() {
     disconnected: "未连接",
   }
 
-  const openSidePanel = () => {
+  const openSidePanel = (thenOpenSettings = false) => {
+    // Set the "land on settings" flag BEFORE opening the panel / closing the
+    // popup. The previous design tried to chrome.runtime.sendMessage('openSettings')
+    // from inside a setTimeout after chrome.sidePanel.open().then(...) — but
+    // window.close() below ran synchronously and killed the popup context
+    // before the timeout ever fired, so the side panel never got the message
+    // and just sat on the chat view. chrome.storage.local is durable across
+    // context teardown: popup writes → close → side panel reads on mount.
+    if (thenOpenSettings) {
+      chrome.storage.local.set({ openSettingsOnSpawn: true })
+    }
     chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
       if (tab?.windowId) {
-        chrome.sidePanel.open({ windowId: tab.windowId })
+        chrome.sidePanel.open({ windowId: tab.windowId }).catch(() => {
+          // User dismissed the side-panel prompt — fall back to options page.
+          if (thenOpenSettings) {
+            chrome.storage.local.remove("openSettingsOnSpawn")
+            chrome.runtime.openOptionsPage()
+          }
+        })
+      } else if (thenOpenSettings) {
+        chrome.runtime.openOptionsPage()
       }
     })
     window.close()
@@ -53,12 +71,12 @@ function Popup() {
         </span>
       </div>
 
-      <button style={styles.sidePanelBtn} onClick={openSidePanel}>
+      <button style={styles.sidePanelBtn} onClick={() => openSidePanel(false)}>
         打开 Side Panel
       </button>
 
       <div style={styles.footer}>
-        <button style={styles.linkBtn} onClick={() => chrome.runtime.openOptionsPage()}>
+        <button style={styles.linkBtn} onClick={() => openSidePanel(true)}>
           设置
         </button>
       </div>
