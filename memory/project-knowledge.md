@@ -46,6 +46,13 @@
 - 修法（诊断流程）：判 spin **必须**用 `top -l 2 -pid <PID> -n 0`（`-l 2` 采样两次，第二次才是瞬时稳态）；配合 `sample <PID> <秒>` 看 `uv__io_poll`（idle）vs `OnUvRead`/`Writev`（活跃 IO）的采样占比。**真 spin 的特征是主线程阻塞 → 日志静默**（心跳/事件全停）；若日志持续输出 + healthz 响应正常，则非 spin。
 - 教训：2026-07-13 部署 spin fix（PR #64，O(N²) 流式越狱扫描 → 有界窗口 O(N)）时被 30% 误判"fix 没生效仍在 spin"，实为 idle。`sample` + 日志连续性才是真相，`ps pcpu` 不是。详见 [[spin-rc-on-squared-jailbreak-scan]]。
 
+### macOS tray 配对码窗口不显示：accessory app 需 `orderFrontRegardless`（2026-07-14）
+- 现象：packaged macOS tray 点「🔑 显示配对码」毫无反应（无窗口、无通知）；菜单/状态图标正常。
+- 根因：macOS 14+ 弃用 `NSApp.activate(ignoringOtherApps:)`。Swift tray 是 `.accessory` app（且从 `LSBackgroundOnly` 的 .app 派生），配对码窗口**被创建**（`isVisible=true`、有时 `isKeyWindow`）但**不真正到前台**，静默留在后面 → 用户看不到。菜单/图标靠鼠标事件驱动不受影响，掩盖了失败。
+- 诊断关键：一度被"shipped 二进制坏了"误导——其实 `build-tray.sh` 产出与 shipped 哈希一致（`10a586ea`），Tray.swift `git diff` 为空（手动 `swiftc` 哈希不同 `de53a716` 只是内嵌源码路径元数据差异，功能等价）。破局点是写**最小 `.accessory` Swift harness**（同 activate/makeKeyAndOrderFront），它**能**弹窗 → 证明策略/API 没问题，失败是窗口**排序**不是创建。
+- 修法（PR #65，9315d31）：`Tray.swift` `PairingController.show()` 在 `makeKeyAndOrderFront` 后加 `window.orderFrontRegardless()`（AppKit「即使激活被压制也强制到前台」原语，无 Dock 闪烁）。配套 `SWIFT_TRAY_SHA256` `10a586ea`→`46d866a6`（A8 lock-step）。
+- 教训：① 任何 Swift tray/NSWindow 弹窗：`makeKeyAndOrderFront` 后**必加** `orderFrontRegardless()`，别依赖已弃用的 `activate(ignoringOtherApps:)`。② 诊断"窗口不显示"先分清 **create vs order**——最小 harness + 打印窗口属性（isVisible/isOnActiveSpace/isKeyWindow/frame）是客观证据，别只靠肉眼、别被哈希差异带偏。③ Tray.swift 改动 → `bash companion/src/tray/build-tray.sh` 重编 → 更新 `companion/src/tray/swift-tray-bridge.ts` 的 `SWIFT_TRAY_SHA256`（build-tray.sh 末尾提示 `menu-bar-agent.ts` 是**错的**，常量实际在 `swift-tray-bridge.ts`）。
+
 ## Reusable Patterns
 
 ### Broadcast pattern for cross-client actions
