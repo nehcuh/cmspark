@@ -111,7 +111,11 @@ export function useWebSocket() {
   const streamingRef = useRef("")
   const initializedRef = useRef(false)
   const activeThreadRef = useRef<string | null>(null)
-  const blankThreadCreatedRef = useRef(false)
+  // Tracks an in-flight "auto-create blank thread" request so we don't fire a
+  // second one before the first resolves. Reset whenever a non-empty thread.list
+  // arrives (so a future empty state — e.g. after user deletes everything —
+  // will auto-create again) or when thread.created acknowledges the request.
+  const creatingBlankThreadRef = useRef(false)
 
   // Keep refs in sync
   activeThreadRef.current = state.activeThreadId
@@ -321,6 +325,8 @@ export function useWebSocket() {
         case "thread.created": {
           // Upsert: don't duplicate if already added locally
           dispatch({ type: "UPSERT_THREAD", thread: msg.thread })
+          // In-flight auto-create blank thread request acknowledged.
+          creatingBlankThreadRef.current = false
           // Auto-select when:
           //  - quick action explicitly requests it, OR
           //  - no thread is currently active (fresh load: our new blank thread)
@@ -389,14 +395,49 @@ export function useWebSocket() {
 
         case "thread.list":
           dispatch({ type: "SET_THREADS", threads: msg.threads })
-          // Only create a fresh blank thread on first load when there are no
-          // existing threads. Creating one on every thread.list refresh (for
-          // example when the side panel is reopened or becomes visible again)
-          // causes empty threads to pile up in the conversation history.
-          if (msg.threads.length === 0 && !blankThreadCreatedRef.current) {
-            blankThreadCreatedRef.current = true
-            const id = generateShortId()
-            chrome.runtime.sendMessage({ type: "thread.create", alias: "", id })
+          if (msg.threads.length === 0) {
+            // Empty state — auto-create a blank thread. Critically, do the UI
+            // update optimistically (ADD_THREAD + SET_ACTIVE_THREAD) BEFORE
+            // messaging companion, so the input becomes usable immediately even
+            // when WS is still connecting or slow. Without this, the user saw
+            // "请先创建或选择一个线程" until the round-trip completed — and if WS
+            // was down, indefinitely. The companion will UPSERT the same id when
+            // it acks thread.created; the in-flight ref prevents dup creates.
+            if (!creatingBlankThreadRef.current) {
+              creatingBlankThreadRef.current = true
+              const id = generateShortId()
+              const now = new Date().toISOString()
+              dispatch({
+                type: "ADD_THREAD",
+                thread: {
+                  id,
+                  alias: "",
+                  created_at: now,
+                  updated_at: now,
+                  config_override: {} as any,
+                  tool_whitelist: null,
+                  pinned_tabs: [],
+                  active_skill_ids: [],
+                },
+              })
+              dispatch({ type: "SET_ACTIVE_THREAD", threadId: id })
+              dispatch({ type: "SET_MESSAGES", messages: [] })
+              chrome.runtime.sendMessage({ type: "thread.create", alias: "", id })
+            }
+          } else {
+            // Reset so the NEXT time we hit an empty list (after a delete/cleanup),
+            // we'll auto-create again.
+            creatingBlankThreadRef.current = false
+            // Has threads but none active (e.g. fresh load where activeThreadId
+            // never got set) — auto-select the most recent one. Without this the
+            // input placeholder still says "请先创建或选择一个线程" even though
+            // threads exist.
+            if (!activeThreadRef.current) {
+              const first = msg.threads[0]
+              dispatch({ type: "SET_ACTIVE_THREAD", threadId: first.id })
+              dispatch({ type: "SET_MESSAGES", messages: [] })
+              chrome.runtime.sendMessage({ type: "thread.select", threadId: first.id })
+            }
           }
           break
 
