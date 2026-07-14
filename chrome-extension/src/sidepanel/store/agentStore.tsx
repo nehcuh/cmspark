@@ -30,6 +30,8 @@ export interface AgentState {
   companionConfig: LLMConfig | null
   isProcessing: boolean
   obsidianProfileStatus: { ok: boolean; message: string } | null
+  /** Status of the last companion-side folder import (null = idle). */
+  knowledgeImportStatus: { ok: boolean; message: string } | null
   /** P3: thread currently being summarized (null when idle). Drives the 🧠 button spinner. */
   summarizingThreadId: string | null
   /** Vault folder-picker state (P3.5): picking + last error. */
@@ -78,6 +80,7 @@ export type AgentAction =
   | { type: "SET_COMPANION_CONFIG"; config: LLMConfig }
   | { type: "SET_PROCESSING"; isProcessing: boolean }
   | { type: "SET_OBSIDIAN_PROFILE_STATUS"; status: { ok: boolean; message: string } | null }
+  | { type: "SET_KNOWLEDGE_IMPORT_STATUS"; status: { ok: boolean; message: string } | null }
   | { type: "SET_SUMMARIZING_THREAD"; threadId: string | null }
   | { type: "SET_VAULT_PICKER"; picking: boolean; error: string | null }
   | { type: "SET_MCP_SERVERS"; servers: McpServerMeta[] }
@@ -133,6 +136,7 @@ export const initialState: AgentState = {
   companionConfig: null,
   isProcessing: false,
   obsidianProfileStatus: null,
+  knowledgeImportStatus: null,
   summarizingThreadId: null,
   vaultPicker: { picking: false, error: null },
   mcpServers: [],
@@ -219,6 +223,8 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       return { ...state, config: { ...state.config, ...action.config } }
     case "SET_OBSIDIAN_PROFILE_STATUS":
       return { ...state, obsidianProfileStatus: action.status }
+    case "SET_KNOWLEDGE_IMPORT_STATUS":
+      return { ...state, knowledgeImportStatus: action.status }
     case "SET_SUMMARIZING_THREAD":
       return { ...state, summarizingThreadId: action.threadId }
     case "SET_VAULT_PICKER":

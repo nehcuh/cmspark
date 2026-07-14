@@ -526,6 +526,29 @@ export function useWebSocket() {
           dispatch({ type: "SET_KNOWLEDGE_DOCS", docs: msg.docs || [] })
           break
 
+        case "knowledge.import_directory_result": {
+          if (msg.error) {
+            const message = msg.error === "cancelled" ? "已取消选择文件夹" : `导入失败：${msg.error}`
+            dispatch({ type: "SET_KNOWLEDGE_IMPORT_STATUS", status: { ok: false, message } })
+            break
+          }
+          // Update the docs list regardless — even on partial failure, any
+          // successfully imported notes should appear in the UI immediately.
+          dispatch({ type: "SET_KNOWLEDGE_DOCS", docs: msg.docs || [] })
+
+          const pieces: string[] = [`✓ 导入 ${msg.imported} 篇`]
+          if (msg.skippedOversize > 0) pieces.push(`跳过 ${msg.skippedOversize} 个 >6MB`)
+          if (msg.skippedUnsupported > 0) pieces.push(`跳过 ${msg.skippedUnsupported} 个不支持格式`)
+          if (msg.failed > 0) pieces.push(`失败 ${msg.failed}`)
+          if (msg.truncated) pieces.push(`(已达 ${msg.maxFiles} 上限)`)
+
+          dispatch({
+            type: "SET_KNOWLEDGE_IMPORT_STATUS",
+            status: { ok: msg.imported > 0, message: pieces.join(" · ") },
+          })
+          break
+        }
+
         case "skill.exported": {
           const { content, format, skill_name } = msg
           if (content) {

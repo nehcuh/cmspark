@@ -504,6 +504,7 @@ function setupMessageHandlers() {
       case "skill.delete":
       case "knowledge.list":
       case "knowledge.import":
+      case "knowledge.import_directory":
       case "knowledge.delete":
       case "history.query":
       case "history.export":

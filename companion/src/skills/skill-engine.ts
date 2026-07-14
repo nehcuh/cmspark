@@ -892,8 +892,8 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
       }))
   }
 
-  importKnowledge(content: string, fallbackName?: string): void {
-    content = this.ensureKnowledgeFrontmatter(content, fallbackName)
+  importKnowledge(content: string, fallbackName?: string, nameOverride?: string): void {
+    content = this.ensureKnowledgeFrontmatter(content, fallbackName, nameOverride)
 
     let parsed: { data: { name?: string; site?: string; type?: string }; content: string }
     try {
@@ -921,11 +921,16 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
   }
 
   /** Auto-generate frontmatter for knowledge docs that lack it.
-   * - name: frontmatter > first # heading > fallbackName > "未命名知识库"
+   * - name: nameOverride > frontmatter > first # heading > fallbackName > "未命名知识库"
    * - description: frontmatter > first 150 chars of body (cleaned)
    * - type: frontmatter > "domain_knowledge"
-   * Preserves existing frontmatter fields. */
-  private ensureKnowledgeFrontmatter(content: string, fallbackName?: string): string {
+   * Preserves existing frontmatter fields.
+   *
+   * `nameOverride` (when provided) takes precedence over every other name source.
+   * Used by directory import to guarantee unique doc names per file — without it,
+   * two files sharing the same first-#-heading would sanitize to the same filename
+   * and silently overwrite each other. */
+  private ensureKnowledgeFrontmatter(content: string, fallbackName?: string, nameOverride?: string): string {
     let parsed: { data: Record<string, any>; content: string }
     try {
       parsed = matter(content)
@@ -934,20 +939,24 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
       parsed = { data: {}, content: content.trimStart() }
     }
 
-    // If already has a valid name, assume frontmatter is complete
-    if (parsed.data.name && typeof parsed.data.name === "string") {
+    // If already has a valid name AND no override, assume frontmatter is complete
+    if (!nameOverride && parsed.data.name && typeof parsed.data.name === "string") {
       return content
     }
 
     // --- Infer name ---
     let inferredName = ""
-    const firstHeading = parsed.content.match(/^#\s+(.+)$/m)?.[1]?.trim()
-    if (firstHeading) {
-      inferredName = firstHeading
-    } else if (fallbackName) {
-      inferredName = fallbackName
+    if (nameOverride) {
+      inferredName = nameOverride
     } else {
-      inferredName = "未命名知识库"
+      const firstHeading = parsed.content.match(/^#\s+(.+)$/m)?.[1]?.trim()
+      if (firstHeading) {
+        inferredName = firstHeading
+      } else if (fallbackName) {
+        inferredName = fallbackName
+      } else {
+        inferredName = "未命名知识库"
+      }
     }
 
     // --- Infer description ---

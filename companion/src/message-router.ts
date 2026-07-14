@@ -33,6 +33,36 @@ import type {
 // Per-thread abort controllers for cancelling in-flight LLM requests
 const abortControllers = new Map<string, AbortController>()
 
+/**
+ * Inject (or override) the `name:` field in a knowledge doc's YAML frontmatter.
+ * Used by directory import to guarantee each file lands at a unique filename —
+ * importKnowledge sanitizes the name to a safe filename, and two files sharing
+ * the same first-#-heading would otherwise overwrite each other.
+ *
+ * - If content has no frontmatter, prepend `---\nname: <name>\n---\n`.
+ * - If content has frontmatter but no `name:` field, inject it as the first key.
+ * - If content already has a `name:` field, replace its value.
+ */
+function injectKnowledgeName(content: string, name: string): string {
+  const startsWithFm = content.startsWith("---")
+  if (startsWithFm) {
+    const endIdx = content.indexOf("\n---", 3)
+    if (endIdx !== -1) {
+      const fm = content.slice(0, endIdx)
+      const rest = content.slice(endIdx)
+      // Replace existing name line, or inject as first key after the opening ---
+      if (/^name:.*$/m.test(fm)) {
+        const updated = fm.replace(/^name:.*$/m, `name: ${name}`)
+        return updated + rest
+      }
+      // No existing name — insert right after the opening "---"
+      return `---\nname: ${name}` + fm.slice(3) + rest
+    }
+  }
+  // No frontmatter at all — wrap the content
+  return `---\nname: ${name}\n---\n${content}`
+}
+
 interface Services {
   threadManager: ThreadManager
   skillEngine: SkillEngine
@@ -1151,6 +1181,117 @@ export async function handleMessage(
       }
       skillEngine.refresh()
       return { type: "knowledge.list", docs: skillEngine.listKnowledge() }
+    }
+    case "knowledge.import_directory": {
+      // Companion-side bulk import. The extension-side <input webkitdirectory>
+      // crashes Chromium 149's main process (SIGSEGV at 0x38 on CrBrowserMain)
+      // when the user picks an iCloud-synced folder with many nested entries —
+      // the crash is in native code BEFORE our JS runs, so any extension-side
+      // guard (file count, size, try/catch) is too late. Routing the pick
+      // through companion's native OS dialog sidesteps the Chromium bug entirely
+      // and lets us enforce per-file size + total-count caps server-side.
+      const pick = await pickFolderNative()
+      if (pick.error) {
+        return { type: "knowledge.import_directory_result", error: pick.error }
+      }
+      if (!pick.path) {
+        return { type: "knowledge.import_directory_result", error: "未选择文件夹" }
+      }
+
+      const vaultPath = pick.path
+      const MAX_FILES = 200
+      const MAX_FILE_SIZE = 6 * 1024 * 1024
+      const TEXT_EXTS = new Set(["md", "markdown", "txt", "csv", "html", "htm"])
+      const BINARY_EXTS = new Set(["docx", "pdf", "xlsx", "pptx", "odt", "rtf"])
+
+      let imported = 0
+      let skippedOversize = 0
+      let skippedUnsupported = 0
+      let failed = 0
+      let totalScanned = 0
+      const errors: string[] = []
+
+      // Iterative walk — same safety shape as scanVault() in obsidian/vault-profiler.ts:
+      // skip dotfiles/dot-dirs (covers .DS_Store, .obsidian, .git, .icloud stubs),
+      // never follow symlinks (use Dirent type, not stat), cap total files.
+      const stack: string[] = [vaultPath]
+      while (stack.length) {
+        const dir = stack.pop() as string
+        let entries: fs.Dirent[]
+        try {
+          entries = fs.readdirSync(dir, { withFileTypes: true })
+        } catch {
+          continue
+        }
+        for (const entry of entries) {
+          if (entry.name.startsWith(".")) continue
+          const full = path.join(dir, entry.name)
+          if (entry.isDirectory()) {
+            stack.push(full)
+          } else if (entry.isFile()) {
+            if (totalScanned >= MAX_FILES) continue
+            totalScanned++
+
+            const ext = entry.name.split(".").pop()?.toLowerCase() || ""
+            if (!TEXT_EXTS.has(ext) && !BINARY_EXTS.has(ext)) {
+              skippedUnsupported++
+              continue
+            }
+
+            try {
+              const stat = fs.statSync(full)
+              if (stat.size > MAX_FILE_SIZE) {
+                skippedOversize++
+                continue
+              }
+
+              const baseName = entry.name.replace(/\.[^.]+$/, "")
+              // Pass the vault-relative path as nameOverride so importKnowledge
+              // uses it instead of the first-#-heading. Without this, two files
+              // sharing the same heading (common in Obsidian vaults — daily notes,
+              // per-folder READMEs) would sanitize to the same filename and
+              // silently overwrite each other. 笨牛棚: 79 .md files collapsed to
+              // 5 unique docs without this override.
+              const relPath = path.relative(vaultPath, full).replace(/\.[^.]+$/, "")
+
+              if (TEXT_EXTS.has(ext)) {
+                const content = fs.readFileSync(full, "utf-8")
+                skillEngine.importKnowledge(content, baseName, relPath)
+                imported++
+              } else {
+                const buffer = fs.readFileSync(full)
+                const parsed = await parseFile(buffer, entry.name, "application/octet-stream")
+                if (parsed.success) {
+                  skillEngine.importKnowledge(parsed.text, baseName, relPath)
+                  imported++
+                } else {
+                  failed++
+                  if (errors.length < 5) errors.push(`${entry.name}: ${parsed.error}`)
+                }
+              }
+            } catch (e: any) {
+              failed++
+              if (errors.length < 5) errors.push(`${entry.name}: ${e.message || String(e)}`)
+            }
+          }
+        }
+      }
+
+      skillEngine.refresh()
+
+      return {
+        type: "knowledge.import_directory_result",
+        path: vaultPath,
+        imported,
+        skippedOversize,
+        skippedUnsupported,
+        failed,
+        totalScanned,
+        truncated: totalScanned >= MAX_FILES,
+        maxFiles: MAX_FILES,
+        errors,
+        docs: skillEngine.listKnowledge(),
+      }
     }
     case "knowledge.delete":
       skillEngine.deleteKnowledge(rest.name)

@@ -12,7 +12,6 @@ export function KnowledgeSubPanel() {
   const [status, setStatus] = useState<string>("")
   const menuRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const folderInputRef = useRef<HTMLInputElement>(null)
 
   const showStatus = (msg: string) => {
     setStatus(msg)
@@ -67,34 +66,115 @@ export function KnowledgeSubPanel() {
 
   const handleImportFiles = (files: FileList | null) => {
     if (!files) return
-    const allowedExts = new Set([
-      "md", "markdown", "docx", "pdf", "xlsx", "pptx", "odt", "rtf", "txt", "csv", "html", "htm",
-    ])
-    const list = Array.from(files).filter(f => {
-      const ext = f.name.split(".").pop()?.toLowerCase() || ""
-      return allowedExts.has(ext) && !f.name.startsWith(".")
-    })
-    if (!list.length) {
-      showStatus("没有可导入的文件")
-      return
-    }
-    showStatus(`正在导入 ${list.length} 个文件...`)
-    for (const file of list) {
-      const reader = new FileReader()
-      reader.onload = () => {
-        const arrayBuffer = reader.result as ArrayBuffer
-        const bytes = new Uint8Array(arrayBuffer)
-        let binary = ""
-        for (let i = 0; i < bytes.byteLength; i++) {
-          binary += String.fromCharCode(bytes[i])
-        }
-        const base64 = btoa(binary)
-        chrome.runtime.sendMessage({
-          type: "knowledge.import",
-          file: { name: file.name, content: base64 },
-        })
+    // Wrap everything in a try/catch — a single unexpected throw inside a
+    // FileReader callback would otherwise bubble up and kill the side panel
+    // (or worse, in MV3 service-worker memory-pressure scenarios, take Chrome
+    // down with it). Multi-select file input is untrusted at scale.
+    try {
+      const allowedExts = new Set([
+        "md", "markdown", "docx", "pdf", "xlsx", "pptx", "odt", "rtf", "txt", "csv", "html", "htm",
+      ])
+      // Per-file size cap. Base64 expansion is 4/3 plus JSON overhead, so 6MB raw
+      // keeps each WS frame well under companion's 10MB hard limit. Files above
+      // this are skipped (not crashed on) with a counted report at the end.
+      const MAX_FILE_SIZE = 6 * 1024 * 1024
+      // HARD refusal threshold for multi-select file input. Each file is base64'd
+      // in the SW and shipped as a separate chrome.runtime.sendMessage — past 30,
+      // peak SW memory and message-queue depth get risky. Users who legitimately
+      // need to import a whole folder should use the "导入文件夹" button, which
+      // routes through companion's native picker and walks the directory server-side
+      // (no base64 round-trip, scales to 200 notes).
+      const HARD_REFUSE_LIMIT = 30
+
+      // Cheap length check FIRST — don't materialize / iterate a huge
+      // FileList just to filter it.
+      const total = files.length
+      if (total > HARD_REFUSE_LIMIT) {
+        showStatus(
+          `⚠ 选中 ${total} 个文件，超过 ${HARD_REFUSE_LIMIT} 上限。` +
+          ` 导入整个文件夹请改用「导入文件夹」按钮——那套走 Companion 原生 picker，可处理 200 篇笔记。`
+        )
+        return
       }
-      reader.readAsArrayBuffer(file)
+
+      // Pass 1: filter by extension/dotfile.
+      const candidates = Array.from(files).filter(f => {
+        const ext = f.name.split(".").pop()?.toLowerCase() || ""
+        return allowedExts.has(ext) && !f.name.startsWith(".")
+      })
+      if (!candidates.length) {
+        showStatus("没有可导入的文件")
+        return
+      }
+
+      // Pass 2: separate by size; count skipped oversized files.
+      const oversized: string[] = []
+      const list = candidates.filter(f => {
+        if (f.size > MAX_FILE_SIZE) {
+          oversized.push(f.name)
+          return false
+        }
+        return true
+      })
+
+      // Build the user-facing status *before* we start so they see what's happening.
+      const pieces: string[] = [`正在导入 ${list.length} 个文件`]
+      if (oversized.length > 0) pieces.push(`跳过 ${oversized.length} 个 >6MB（如 ${oversized[0]}）`)
+      showStatus(pieces.join(" · "))
+
+      // Sequential import (not concurrent) — concurrent FileReader on many
+      // files spikes MV3 service-worker memory. Sequential keeps peak memory
+      // flat. Each read starts only after the previous base64 was handed off.
+      const queue = [...list]
+      let imported = 0
+      let failed = 0
+      const processNext = (): void => {
+        const file = queue.shift()
+        if (!file) {
+          const done: string[] = [`完成：导入 ${imported}`]
+          if (failed > 0) done.push(`失败 ${failed}`)
+          if (oversized.length > 0) done.push(`跳过 ${oversized.length}`)
+          showStatus(done.join(" · "))
+          return
+        }
+        const reader = new FileReader()
+        reader.onload = () => {
+          try {
+            const arrayBuffer = reader.result as ArrayBuffer
+            const bytes = new Uint8Array(arrayBuffer)
+            // Chunked base64: building a single JS string by concatenating one
+            // char per byte balloons to ~3x the file size in heap and trips V8's
+            // string-length cap on large files. Process in 64KB chunks instead.
+            const CHUNK = 0x8000
+            let base64 = ""
+            for (let i = 0; i < bytes.length; i += CHUNK) {
+              const slice = bytes.subarray(i, Math.min(i + CHUNK, bytes.length))
+              base64 += btoa(String.fromCharCode.apply(null, Array.from(slice) as unknown as number[]))
+            }
+            chrome.runtime.sendMessage({
+              type: "knowledge.import",
+              file: { name: file.name, content: base64 },
+            })
+            imported += 1
+          } catch (err) {
+            console.error("[KnowledgeSubPanel] import failed for", file.name, err)
+            failed += 1
+          }
+          processNext()
+        }
+        reader.onerror = () => {
+          console.error("[KnowledgeSubPanel] FileReader error for", file.name, reader.error)
+          failed += 1
+          processNext()
+        }
+        reader.readAsArrayBuffer(file)
+      }
+      processNext()
+    } catch (err) {
+      // Last-resort safety net — any unexpected throw above must not crash the
+      // panel. Surface a short status and redirect to the safe folder-import path.
+      console.error("[KnowledgeSubPanel] handleImportFiles top-level error:", err)
+      showStatus("导入失败：文件可能过大或格式不支持。请改用「导入文件夹」按钮（走 Companion 原生 picker）")
     }
   }
 
@@ -112,7 +192,14 @@ export function KnowledgeSubPanel() {
   }
 
   const handleFolderPick = () => {
-    folderInputRef.current?.click()
+    // Route through companion's native folder picker. The previous <input webkitdirectory>
+    // approach crashed Chromium 149's main process (SIGSEGV at 0x38 on CrBrowserMain)
+    // when picking iCloud-synced folders like 笨牛棚 — the crash is in native code
+    // BEFORE our JS runs, so any extension-side guard (file count, size, try/catch)
+    // is too late. Companion walks the dir safely (skips dotfiles, caps at 200 files,
+    // 6MB per file) and imports each note directly to the knowledge store.
+    showStatus("正在打开文件夹选择器…")
+    chrome.runtime.sendMessage({ type: "knowledge.import_directory" })
   }
 
   // Group knowledge docs by site, with current site first
@@ -143,10 +230,14 @@ export function KnowledgeSubPanel() {
 
       {/* Import toolbar */}
       <div style={styles.toolbar}>
-        <button style={styles.toolbarBtn} onClick={handleFilePick} title="导入单个或多个文件">
+        <button style={styles.toolbarBtn} onClick={handleFilePick} title="导入单个或多个文件（≤30 个）">
           导入文件
         </button>
-        <button style={styles.toolbarBtn} onClick={handleFolderPick} title="导入整个文件夹">
+        <button
+          style={styles.toolbarBtn}
+          onClick={handleFolderPick}
+          title="通过 Companion 原生选择器导入整个文件夹（支持 Obsidian / iCloud vault，最多 200 篇笔记）"
+        >
           导入文件夹
         </button>
         <button style={styles.toolbarBtn} onClick={() => setShowUrlImport(!showUrlImport)} title="从 URL 导入">
@@ -157,17 +248,6 @@ export function KnowledgeSubPanel() {
           type="file"
           multiple
           accept=".md,.markdown,.docx,.pdf,.xlsx,.pptx,.odt,.rtf,.txt,.csv,.html"
-          style={{ display: "none" }}
-          onChange={(e) => {
-            handleImportFiles(e.target.files)
-            e.currentTarget.value = ""
-          }}
-        />
-        <input
-          ref={folderInputRef}
-          type="file"
-          // @ts-ignore — webkitdirectory is non-standard but widely supported
-          webkitdirectory=""
           style={{ display: "none" }}
           onChange={(e) => {
             handleImportFiles(e.target.files)
@@ -195,6 +275,16 @@ export function KnowledgeSubPanel() {
       {status && (
         <div style={{ fontSize: 11, color: "#4A90D9", marginBottom: 8, padding: "2px 4px" }}>
           {status}
+        </div>
+      )}
+      {state.knowledgeImportStatus && (
+        <div style={{
+          fontSize: 11,
+          color: state.knowledgeImportStatus.ok ? "#4CAF50" : "#F44336",
+          marginBottom: 8,
+          padding: "2px 4px",
+        }}>
+          {state.knowledgeImportStatus.message}
         </div>
       )}
 
