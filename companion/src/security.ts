@@ -347,7 +347,7 @@ const MCP_NAME_FILE_WRITE = new RegExp(`${_L}(write|create|save|put|append|trunc
 const MCP_NAME_DB_MUTATE = new RegExp(`${_L}(insert|update|drop|alter|merge|upsert|commit)${_R}`, "i")
 const MCP_NAME_EXEC = new RegExp(`${_L}(exec|run|spawn|shell|bash|cmd|process|subprocess|system|kill|fork|popen|terminal)${_R}`, "i")
 const MCP_NAME_EGRESS = new RegExp(`${_L}(curl|wget|download|upload|send|post|request|crawl|scrape|fetch|http)${_R}`, "i")
-const MCP_NAME_READ = new RegExp(`${_L}(read|cat|head|tail|grep|find|glob|list|stat|search|query|select|describe|show|get|info|status)${_R}`, "i")
+const MCP_NAME_READ = new RegExp(`${_L}(read|cat|head|tail|grep|find|glob|list|stat|search|query|select|describe|show|get|info|status|directory|tree|walk|traverse|enumerate)${_R}`, "i")
 
 // Arg heuristics — the real exfil/escape detector. Name heuristics are evadable
 // (`fetch_data`/`get_info`/`query` pass DESTRUCTIVE_MCP_TOOL_PATTERN); the arg

@@ -232,6 +232,18 @@ test("classify: read-named tools → read-only (NON-critical, D8 trade-off)", ()
   assert.equal(caps.some(c => CRITICAL_MCP_CAPABILITIES.has(c)), false, "read of sensitive path stays non-critical (D8)")
 })
 
+test("classify: directory_tree / walk / traverse → read-only (regression: was 'unknown' → critical)", () => {
+  // @modelcontextprotocol/server-filesystem exposes `directory_tree`. Before the
+  // fix, none of the read tokens matched → inference returned ["unknown"] → the
+  // unknown-is-critical rule forced confirmation even under god_mode + trusted.
+  // Repro was a system-wide popup on every filesystem listing for trusted users.
+  for (const n of ["directory_tree", "list_directory", "walk_files", "traverse", "enumerate_records"]) {
+    const caps = classifyMcpCall(n, {})
+    assert.ok(caps.includes("read-only"), `${n} → read-only`)
+    assert.equal(caps.some(c => CRITICAL_MCP_CAPABILITIES.has(c)), false, `${n} must NOT be critical`)
+  }
+})
+
 test("classify: name-evasion caught by ARG scan (the §3.1 gap-closer)", () => {
   // get_info name → read-only (non-critical). But an external-URL arg adds
   // network-egress → critical, regardless of the benign tool name.
