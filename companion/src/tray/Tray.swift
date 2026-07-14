@@ -489,6 +489,13 @@ class PairingController: NSObject {
     NSApp.activate(ignoringOtherApps: true)
     window.center()
     window.makeKeyAndOrderFront(nil)
+    // On macOS 14+ the deprecated activate(ignoringOtherApps:) no longer reliably
+    // brings an accessory app's window to front (the window is created + isVisible,
+    // but often stays behind / never becomes key), so a freshly-launched or
+    // background-only-descended tray shows nothing when "显示配对码" is clicked.
+    // orderFrontRegardless() forces ordering to the front even when activation is
+    // suppressed — the documented primitive for exactly this case.
+    window.orderFrontRegardless()
   }
 
   private func makeWindow() -> NSWindow? {

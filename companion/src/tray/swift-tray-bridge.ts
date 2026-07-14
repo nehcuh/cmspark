@@ -24,7 +24,7 @@ import {
 // ---------------------------------------------------------------------------
 
 /** Expected SHA256 of the Swift tray binary (update via build-tray.sh) */
-const SWIFT_TRAY_SHA256 = "10a586ea861746f756bcf04a9520cfe3484981d8be0b616ae6189d65fba56c6d"
+const SWIFT_TRAY_SHA256 = "46d866a69f6ce211e077c6e6107110aaef243fcbeeeb26158d362a98e219ca4a"
 
 function getSwiftTrayBinPath(): string {
   const { getSwiftTrayPath } = require("../paths")
