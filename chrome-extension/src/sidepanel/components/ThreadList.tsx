@@ -98,7 +98,24 @@ export function ThreadList() {
                     ...styles.threadItem,
                     background: t.id === activeThreadId ? "#e8f0fe" : "transparent",
                   }}
-                  onClick={() => {
+                  onMouseDown={(e) => {
+                    // Allow text selection inside the row (threadAlias / threadId) to
+                    // propagate without starting the "click to switch thread" gesture.
+                    // Without this, the row's onClick below fires on mouseup and steals
+                    // the selection (closing the panel and clearing it). When the user
+                    // drags to select text, e.detail === 1 but the upcoming mouseup will
+                    // have a non-empty selection — we let the click handler check that.
+                    const target = e.target as HTMLElement
+                    if (target.closest("[data-nothreadselect]")) return
+                  }}
+                  onClick={(e) => {
+                    // If the user just finished dragging to select text (e.g. the thread
+                    // alias to copy it), do NOT switch threads / close the panel — that
+                    // would wipe the selection they're about to Cmd+C.
+                    const sel = window.getSelection?.()
+                    if (sel && sel.toString().length > 0) {
+                      return
+                    }
                     handleSelect(t.id)
                     chrome.runtime.sendMessage({ type: "thread.select", threadId: t.id })
                   }}
@@ -225,6 +242,10 @@ const styles: Record<string, React.CSSProperties> = {
     display: "flex",
     alignItems: "center",
     gap: 8,
+    // Explicit text selection inside rows — combined with the click-handler
+    // selection check, this lets users drag-select the thread alias to copy.
+    userSelect: "text",
+    WebkitUserSelect: "text",
   },
   deleteBtn: {
     background: "none",
