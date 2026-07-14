@@ -104,3 +104,47 @@
 - 现象：companion `npm test` 的 glob `tests/**/*.test.js` 在 CI(ubuntu dash)下，`**` 无 globstar 支持 → 只匹配 `tests/<subdir>/*.test.js`（8 个子目录文件），**漏掉所有顶层 `tests/*.test.js`**（config/history/file-parser/ws-origin/threads-history/skills/knowledge/… 共 ~20 个文件/~596 测试）。CI 一直"绿"但只跑 <15% 测试。
 - 修复：改用 `find .test-dist/tests -name '*.test.js' -not -name '_*'`（递归 + 排除 setup 模块）。+ settings-web.test 需单独 `node --test` 调用（多文件并发时 node:test IPC 崩溃）。
 - 教训：shell globstar (`**`) 不是跨 shell 可移植的——dash/sh 默认不支持，bash 需 `shopt -s globstar`。CI 的 `npm test` 脚本里用 `**` 要么确认 CI shell 支持，要么用 `find` 替代。
+
+### MCP capability 推断的 "unknown" 是 critical，god mode 绕不过（2026-07-14）
+- 现象：filesystem MCP server（trust_level="trusted"）的 `directory_tree` 工具，即使开了 god mode（`security.allow_all_schemes`）也强制弹确认窗。
+- 根因：`classifyMcpCall`（security.ts:381）按 tool name 正则匹配能力（read/write/exec/egress/db-mutate）。匹配不上就返回 `["unknown"]`。而 `CRITICAL_MCP_CAPABILITIES`（security.ts:297）显式包含 `"unknown"` —— "推断不出来就当危险的，强制确认"（§6.3 defense-in-depth）。**god mode 只 bypass UI prompt，不 bypass critical capability 边界**（§6.1.5/§6.2 mirror）。
+- `directory_tree` / `walk_files` / `traverse` / `enumerate_records` 这种 read-flavored token 原 regex 不认（既不含 `read/list/find/get/info/...`，也不含 `directory/tree`）→ 落到 unknown → critical。
+- 两条修法（互补）：
+  1. **代码侧**（C4）：扩 `MCP_NAME_READ` regex 加 `directory|tree|walk|traverse|enumerate` → 推断成 `read-only`（D8 non-critical）
+  2. **config 侧**（用户声明）：filesystem server 配置加 `security_capabilities: ["file-read", "read-only"]`（**必须是数组**，给字符串会被 `sanitizeMcpConfig` 静默丢弃，日志见 `mcp.config.security_capabilities_not_array got:"string"`）。merge 逻辑（Option C）：inferred 非空 → 并集；inferred=[unknown] + declared 非空 → 用 declared 解决 unknown
+- 诊断入口：日志里 grep `security.mcp_critical_confirmed` 看 `capabilities` 字段是否含 `unknown`，是 → 推断器没认出 + 用户没声明
+- 文件：security.ts:297/350/381/439, mcp/manager.ts:466（sanitizeMcpConfig）
+
+### MCP filesystem directory_tree 在 $HOME 必撞 TCC EPERM（2026-07-14）
+- 现象：让 agent `directory_tree /Users/huchen`，秒回 `EPERM: operation not permitted, scandir '/Users/huchen/.Trash'` → 整个对话被 `"不可恢复错误"` 杀死。
+- 根因链：
+  1. macOS TCC 保护 `~/.Trash` / `~/Library/Mail` 等即使进程有 FS 访问权
+  2. 上游 `@modelcontextprotocol/server-filesystem` 一遇 EPERM **整次 walk bail**（不 skip-and-continue），返回 JSON-RPC error
+  3. companion 收到 error 字符串 `"MCP filesystem/directory_tree returned error: EPERM: operation not permitted, scandir..."` 送进 `classifyError`
+  4. `classifyError` 的 non_recoverable 列表只匹配 `"permission denied"` / `"permission not granted"`，**不匹配 `"eperm"` / `"operation not permitted"`** → 落到默认 non_recoverable → 杀对话
+- 修复（C5）：`security.ts` recoverable 列表加 `"eperm"` + `"operation not permitted"` → LLM 收到 recoverable 反馈，可改扫 `~/.cmspark-agent/knowledge/global/` 这种窄路径重试。recoverable-loop guard（adapter.ts）会兜底防死循环。
+- 注意区分：`"permission denied"`（EACCES）保留 non_recoverable，因为本仓库里它通常是 trust-policy denial（"不在 trusted_domains"），不是 fs TCC。
+- 教训：错误分类器要枚举足够多的错误字符串模式；默认 fallthrough 到 non_recoverable 是激进的 —— 对 fs/MCP 上游错误尤其要补 recoverable 模式，否则一次 OSErr 就让 agent 整段对话死掉。
+- 文件：security.ts:574-608（classifyError）, security-thread.test.ts
+
+### Claude Code sandbox 无法触发 osascript GUI 对话框（2026-07-14）
+- 现象：从 Claude Code bash 启动的 companion，`osascript -e 'POSIX path of (choose folder)'` 8 秒内返回 `用户已取消 (-128)`，**对话框压根没出现**。
+- 根因：Claude Code 的 bash sandbox 没有 WindowServer / GUI session 访问权 → macOS Apple Events 直接当"无权显示 UI"返回 cancel。
+- 验证：直接在 Claude bash 跑 `timeout 8 osascript -e 'POSIX path of (choose folder with prompt "test")'`，秒回 -128 + 无对话框 = sandbox 限制；从 Terminal.app 跑正常弹窗。
+- 影响：任何用 `pickFolderNative()`（obsidian/folder-picker.ts）或 osascript 的 companion 功能（Obsidian 导出、knowledge.import_directory）都不能从 Claude sandbox 验证。
+- 解法：
+  1. 用户从 Terminal.app 跑 `cd ~/Projects/cmspark/companion && node dist/index.js start`（Terminal 有 GUI session）
+  2. 或用 production tray 启动的 daemon（pid 1 父进程但同 UID，由 tray app 在 GUI session 启动）
+- 生产环境影响：tray app 是 GUI app（在 user session 里），它启的 daemon 继承 GUI 访问权，osascript 能弹。Claude sandbox 启的 companion 才有问题。
+- 文件：companion/src/obsidian/folder-picker.ts:40-53（pickMacOS）
+
+### `git add -p` 通过 heredoc 实现非交互 partial-stage（reusable pattern）
+- 场景：一个文件里有多个主题的改动（如 `message-router.ts` 同时含 knowledge.import_directory / thread.fork / config masking 三件事），想拆 commit。
+- 流程：
+  1. 列 hunk：`git diff <file> | grep "^@@"`
+  2. 计划每 hunk 归属哪个 commit
+  3. `git add -p <file> << 'EOF'\ny\nn\ny\ny\nn\nEOF`（每行一个 hunk 的 y/n）
+  4. hunk 包含多个主题：答 `s`（split）→ 自动拆成子 hunks → 逐个 y/n
+  5. mixed hunk 拆不开的：答 `e` 手动编辑 patch
+- 注意：zsh 把 `rm` alias 成 `rm -i`，批量删文件用 `\rm` 或 `command rm` 绕过
+- 案例（2026-07-14）：13 文件 +576 -93 改动，按 8 个主题拆 commit；message-router.ts 6 hunks 分到 C1/C2/C3；agentStore.tsx 一个 hunk 同时含 C1（SET_KNOWLEDGE_IMPORT_STATUS reducer）+ C3（SET_SETTINGS_OPEN reducer），用 `s` 拆成两个子 hunk 分别归 commit

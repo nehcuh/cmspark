@@ -3,6 +3,17 @@
 ## Session Handoff
 
 <!-- handoff:start -->
+### 2026-07-14 (session-end S11 — knowledge.import_directory 收尾 + 2 MCP 安全 fix + 拆 8 commit)
+- 中断恢复 + 完成：13 文件 +576 -93 改动按 8 个独立主题拆 commit 全合 origin/main（`bd0b52c`）。912 tests 全过。
+- **主功能 `knowledge.import_directory`**（C1，6 文件 +324 -54）：companion 走 `pickFolderNative()` 原生 picker（绕 Chromium 149 `<input webkitdirectory>` SIGSEGV），核心 bug 是 name collision —— 两份 md 共享同首 `# 标题` 会 sanitize 同文件名静默相互覆盖（笨牛棚 79 篇塌缩成 5）。修：`importKnowledge` 加 `nameOverride` 参数，walk 时传 vault 相对路径。详见 commit `bd0b52c`。
+- **2 个独立 MCP 安全 fix**（用户在 cmspark 里跑 `directory_tree /Users/huchen` 连环撞到）：
+  - C4（`1cce265`）：`directory_tree` 推断成 `["unknown"]` → CRITICAL_MCP_CAPABILITIES 把 unknown 算 critical → god mode 也绕不过。修：`MCP_NAME_READ` 加 `directory|tree|walk|traverse|enumerate`。用户 config 加 `security_capabilities: ["file-read","read-only"]` 数组（之前给字符串被静默丢）。
+  - C5（`a47a7f2`）：`.Trash` 被 TCC 拒 → MCP server bail → `"eperm: operation not permitted"` 不匹配 `classifyError` 任何 recoverable 模式 → 默认 non_recoverable → 杀对话。修：recoverable 列表加 `"eperm"` + `"operation not permitted"`。
+- **顺手发现 3 个 UX fix**：C6 send shortcut 严格 modifier（`de3dbe0`）/ C7 ThreadList 行允许拖选（`ee1a6a0`）/ C8 空白 thread 自动创建改乐观 UI（`79cccba`）。
+- 还有 C2 thread.fork 默认 alias 改 ""（`6a2d701`）/ C3 config api_key_set 信号 + popup→sidepanel 交接（`91174d5`）。
+- 工具坑：Claude sandbox 启的 companion 没 GUI session → osascript 秒回 -128 不弹窗。e2e 验证必须从 Terminal.app 起 companion。
+- **未完成**：knowledge.import_directory 的 e2e 真跑（点按钮选 笨牛棚 → 看 imported/docsCount/failed）。功能代码已 ship origin/main，验证留给下一会话。
+
 ### 2026-07-10 (S9 — TODO-skip 修复启动，未完成)
 - 目标：修复 CI coverage 解封后遗留的 10 个 `test.skip` + TODO 真实 bug。
 - 已建立 10 个顺序 task，切入 worktree `fix-ci-coverage-todos`。

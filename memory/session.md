@@ -2,6 +2,19 @@
 
 ## Current Session
 
+### S11 (2026-07-14) [cmspark knowledge.import_directory 收尾 + 2 个 MCP 安全 fix + 拆 8 commit 推远程]
+- 中断恢复：13 文件 +576 -93 未提交改动（S10 之后的新工作）。代码完整 tsc 干净，但 dist 旧、未 e2e、4 个调试 `.cjs` 未清。
+- 主功能 `knowledge.import_directory`：companion 走 `pickFolderNative()` 原生 picker，避免扩展端 `<input webkitdirectory>` 触发 Chromium 149 SIGSEGV。核心 bug = name collision（两份 md 共享同首 `# 标题` → sanitize 同文件名 → 静默相互覆盖；笨牛棚 79 篇塌缩成 5）。修：`skill-engine.importKnowledge(content, fallbackName, nameOverride)` 加 nameOverride 参数，message-router 走 walk 时传 vault 相对路径。
+- 诊断 + 修了**两个独立 MCP bug**（用户在 cmspark 里跑 `directory_tree /Users/huchen` 撞到）：
+  1. **C4 capability gate**：`directory_tree` 推断不出能力 → `["unknown"]` → CRITICAL_MCP_CAPABILITIES 把 unknown 算 critical → god_mode 也绕不过。修：`MCP_NAME_READ` regex 加 `directory|tree|walk|traverse|enumerate`（security.ts:350）。同时用户 config 加 `security_capabilities: ["file-read","read-only"]` 数组（之前给成字符串被 sanitizeMcpConfig 静默丢）。
+  2. **C5 EPERM classifier**：`.Trash` 被 TCC 拒 → MCP server 整次 walk bail → 错误字符串 `"eperm: operation not permitted"` 不匹配 `classifyError` 任何 recoverable 模式 → 默认 non_recoverable → 杀对话。修：recoverable 列表加 `"eperm"` + `"operation not permitted"`（security.ts:574）。
+- 顺手发现 3 个独立 UX fix（不在原计划）：C6 send shortcut 严格 modifier 检查（App.tsx + ChatView.tsx）/ C7 ThreadList 行允许拖选 copy（ThreadList.tsx）/ C8 空白 thread 自动创建改成乐观 UI + 重命名 `blankThreadCreatedRef → creatingBlankThreadRef`（useWebSocket.ts）
+- **partial-stage 拆 8 commit**：`git add -p file << 'EOF' y\nn\ny...` 通过 heredoc 非交互 partial-stage；agentStore.tsx 一个 hunk 含 C1+C3 用 `s` split 拆开。详见 project-knowledge 的 reusable pattern 条目。
+- 912 tests 全过；8 commit 全合 origin/main（bd0b52c）。push 时被 Claude Code auto mode classifier 硬拦（防误推），用户用 `! cd ... && git push` 手动跑通。
+- 工具坑：Claude sandbox 启的 companion 没有 GUI session → `osascript` 秒回 -128 不弹窗。e2e 验证 `knowledge.import_directory` 必须从 Terminal.app 起 companion（tray 启的 daemon 同 UID 在 GUI session，也可以）。详见 project-knowledge 对应条目。
+- **未完成**：knowledge.import_directory 的 e2e 真跑（点按钮选 笨牛棚 → 看 imported/docsCount/failed）。重启 companion 后回 side panel 验。功能代码已 ship，验证留给下一会话。
+- Recorded: yes — project-knowledge 加 4 条坑（MCP unknown-critical / directory_tree TCC EPERM / Claude sandbox 无 GUI / git add -p heredoc 模式）
+
 ### S10 (2026-07-13) [cmspark daemon 主线程 spin 根因 + live 部署]
 - 诊断 daemon 主线程 spin(PID 23854，症状"启动失败"，需 kill 才能恢复)：V8 `sample` 确证 LLM 流式循环每 token 对**完整累积内容**跑 12 条正则 `detectJailbreakInOutput(assistantContent)` → **O(N²)**(12 regex × 增长到 N × 每 token)，长回复钉死主线程 → WS 心跳停 → 客户端以为 companion 死了 → daemon 卡死。同 PR #4(tray↔daemon skill.list 回声环)「主线程热循环」类
 - 修复 **PR #64**(已合 main b0ad317)：每 token 只扫 incoming delta + 200 字符 trailing overlap(`jailbreakScanWindow` + `JAILBREAK_SCAN_OVERLAP`，**INVARIANT > 最长可能匹配 ~40 字符**)→ 整流 O(N)。回归测 6 例(确定性复现 O(N²) ratio≈4 + 证 fix O(N) ratio≈2，无时序 flaky)
