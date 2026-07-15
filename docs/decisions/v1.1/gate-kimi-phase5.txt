@@ -1,0 +1,446 @@
+• The user is asking me to act as the final GATE reviewer for a NotebookLM online batch import feature in CMspark v1.1. I need to read several documents and code files, then provide a concise assessment.
+
+  Let me start by reading the required files. I should read them in parallel where possible.I have read the key documents. Now I need to read the implementation files. The user listed several files. Let me read the Phase 0 research fully (it was truncated), and then read the code files. Actually the Phase 0 file is very large (91KB). Let me read it in parts or focus on key findings. But I think I have enough from the brief and ADR. Let me read the core code files now in parallel.I need to read the remaining files: background/index.ts, sidepanel components. Also I need to verify the test results and build. Let me read those files first, and then run tests/build.I have read the core files. Now I need to:
+  1. Verify test results (104/104 tests passing)
+  2. Verify Plasmo build passes
+  3. Verify TS strict has no errors
+  4. Check the implementation against Round 1 requirements and Phase 5 review findings
+
+  Let me run the tests/build. First I need to check the package structure - chrome-extension has its own package.json. Let me run tests there.{
+  "name": "cmspark-browser-agent",
+  "displayName": "CMspark Browser Agent",
+  "version": "0.3.0",
+  "description": "AI-powered browser agent — read, operate tabs, use cookies, configure LLM, support skills",
+  "author": "cmspark",
+  "scripts": {
+    "dev": "plasmo dev",
+    "postinstall": "node scripts/patch-vfile.mjs",
+    "test": "node -e \"require('fs').rmSync('.test-dist',{recursive:true,force:true})\" && tsc -p tsconfig.test.json && node --test .test-dist/tests/*.test.js",
+    "prebuild": "node scripts/generate-icons.mjs",
+    "build": "tsc --noEmit && plasmo build",
+    "package": "plasmo package"
+  },
+  "dependencies": {
+    "dompurify": "^3.4.11",
+    "katex": "^0.16.47",
+    "marked": "^18.0.4",
+    "marked-katex-extension": "^5.1.10",
+    "mermaid": "^11.16.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.268",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "plasmo": "^0.90.5",
+    "svgo": "^3.3.3",
+    "typescript": "^5.4.5"
+  },
+  "overrides": {
+    "js-yaml": "^4.1.2"
+  },
+  "alias": {
+    "@mermaid-js/parser": "@mermaid-js/parser/dist/mermaid-parser.core.mjs"
+  },
+  "manifest": {    "host_permissions": [
+      "<all_urls>",
+      "http://127.0.0.1/*",
+      "http://localhost/*"
+    ],
+    "permissions": [
+      "debugger",
+      "tabs",
+      "activeTab",
+      "storage",
+      "alarms",
+      "sidePanel",
+      "cookies",
+      "scripting",
+      "notifications"
+    ]
+  }
+}
+Let me run the tests and build. Use nvm first if needed./bin/bash: nvm: command not found
+nvm not available as shell command. Maybe node is available directly. Let me check node version and run tests.v24.16.0
+✔ sanitizeText detects DAN mode pattern (0.259583ms)
+✔ sanitizeText detects system override pattern (0.07775ms)
+✔ sanitizeText detects Chinese injection patterns (0.693542ms)
+✔ sanitizeText returns empty threats for clean text (0.144417ms)
+✔ sanitize handles empty string (0.063709ms)
+✔ sanitizeText handles empty string (0.0485ms)
+✔ ADD_SECURITY_AUDIT appends entry to securityAuditLog (0.959791ms)
+✔ ADD_SECURITY_AUDIT preserves existing entries (0.1275ms)
+✔ securityAuditLog is empty array in initialState (0.200667ms)
+✔ ADD_SECURITY_AUDIT entry with block level is recorded (0.060875ms)
+✔ ADD_SECURITY_AUDIT entry with info level is recorded (0.060709ms)
+✔ SecurityConfirmationRequest includes risk_score field (0.062791ms)
+✔ SecurityConfirmationRequest includes risk_category field (0.047792ms)
+✔ SecurityConfirmationRequest includes risk_level field with correct union type (0.138417ms)
+✔ SecurityConfirmationRequest includes auto_confirm_eligible field (0.08725ms)
+✔ SecurityConfirmationRequest includes optional defense_layer field (0.74475ms)
+✔ SecurityConfirmationRequest works without defense_layer (0.072125ms)
+✔ SecurityConfirmationRequest low risk has auto_confirm_eligible true (0.046916ms)
+✔ SecurityConfirmationRequest high risk has auto_confirm_eligible false (0.053417ms)
+✔ reducer preserves audit log across unrelated state changes (0.057208ms)
+✔ initialState has safety_skills_enabled in config (0.041833ms)
+✔ SET_ACTIVE_THREAD restores pinned tabs, skillSelectionMode, and knowledgeSelectionMode from thread metadata (1.27775ms)
+✔ SET_ACTIVE_THREAD defaults skillSelectionMode to auto when thread has no mode (0.110459ms)
+✔ SET_PINNED_TABS updates active thread metadata (0.098875ms)
+✔ normalizeConfig flattens companion config and keeps masked API keys out of UI state (0.46025ms)
+✔ security confirmation requests are queued and removable (0.717917ms)
+✔ initial side panel sync requests threads, skills, knowledge, config, and mcp servers exactly once per connection (0.291291ms)
+✔ SET_THREADS keeps active thread when it exists in the new list and syncs metadata (0.119542ms)
+✔ SET_THREADS clears active thread when it is not in the new list (0.194084ms)
+✔ SET_THREADS defaults skillSelectionMode to auto when thread has no mode (0.170792ms)
+✔ SET_SKILL_SELECTION_MODE updates state (0.119ms)
+✔ SET_KNOWLEDGE_SELECTION_MODE updates state (0.0635ms)
+✔ reducer handles unknown action type without crashing (0.112167ms)
+✔ getFocusableEdges returns first and last in list order (1.218417ms)
+✔ getFocusableEdges handles a single focusable element (0.078ms)
+✔ getFocusableEdges returns null when the list is empty (0.058875ms)
+✔ computeTabWrap wraps FORWARD (Tab) at the last element → 'first' (0.058792ms)
+✔ computeTabWrap wraps BACKWARD (Shift+Tab) at the first element → 'last' (0.04875ms)
+✔ computeTabWrap returns null for mid-cycle Tabs (browser handles natively) (0.073125ms)
+✔ computeTabWrap returns null when focus is elsewhere (not at an edge) (0.050416ms)
+✔ computeTabWrap is symmetric: only the (active, shiftKey) combo at an edge wraps (0.054ms)
+✔ FOCUSABLE_SELECTOR is pinned to the documented element set (regression guard) (0.059333ms)
+ℹ tests 104
+ℹ suites 0
+ℹ pass 104
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 9359.136791
+Tests pass (104/104). Now let me verify TS and Plasmo build.npm warn Unknown user config "//registry.npmmirror.com" (registry https://registry.npmmirror.com). This will stop working in the next major version of npm. See `npm help npmrc` for supported config options.
+
+> cmspark-browser-agent@0.3.0 prebuild
+> node scripts/generate-icons.mjs
+
+  icon16.png (903 bytes)
+  icon32.png (3032 bytes)
+  icon48.png (6307 bytes)
+  icon64.png (10596 bytes)
+  icon128.png (36424 bytes)
+  icon.png (36424 bytes)
+  icon_16x16.png (903 bytes)
+  icon_16x16@2x.png (3032 bytes)
+  icon_32x32.png (3032 bytes)
+  icon_32x32@2x.png (10596 bytes)
+  icon_128x128.png (36424 bytes)
+  icon_128x128@2x.png (116683 bytes)
+  icon_256x256.png (116683 bytes)
+  icon_256x256@2x.png (328574 bytes)
+  icon_512x512.png (328574 bytes)
+  icon_512x512@2x.png (788319 bytes)
+
+Portal icon generation complete!
+
+> cmspark-browser-agent@0.3.0 build
+> tsc --noEmit && plasmo build
+
+🟣 Plasmo v0.90.5
+🔴 The Browser Extension Framework
+🔵 INFO   | Prepare to bundle the extension...
+🔵 INFO   | Building for target: chrome-mv3
+🔵 INFO   | Loaded environment variables from: []
+🟢 DONE   | Finished in 11920ms!
+Build passes. Now I need to carefully evaluate the implementation against Round 1 requirements and Phase 5 review findings. Let me think through each issue.
+
+  The user's questions:
+  1. approve / approve-with-changes / reject?
+  2. Is implementation faithful to Round 1 decisions?
+  3. Are Phase 5 fixes in place? Any omissions?
+  4. Any remaining ship-blocking risks?
+  5. One-sentence summary.
+
+  Round 1 decisions (from round1-synthesis.md):
+  - Q1: Pure DOM automation (no CDP Fetch in v1.1) ✓ — implementation uses chrome.scripting.executeScript with importUrlRunner/importTextRunner
+  - Q2: List via wXbhsf, no create ✓ — notebook-api.ts only implements listNotebooks
+  - Q3: MutationObserver self-heal runtime; CI canary deferred ✓ — resolveStrategy has CSS → text → aria-label → role fallbacks
+  - Q4: Generic article extractor (reuse v1); per-site + LLM deferred ✓ — not in scope (v1.1 only does URL/text import, not AI chat extraction)
+  - Q5: Separate buttons ✓ — App.tsx has 📓 and 💾 buttons
+  - Q6: P0 ship + P1 = notebook picker only ✓ — UI has notebook picker dropdown
+
+  Round 1 mandatory requirements:
+  1. Angular waiter — MutationObserver quiescence + rAF×2, NOT fixed setTimeout
+     - Implementation: waitForDomQuiescence uses MutationObserver + rAF polling; waitForRaf uses rAF×2
+     - However waitForAngularEnabled has `await new Promise(r => setTimeout(r, 50))` inside loop — Phase 5 reviewer noted this as minor "可辩护"
+     - waitForSelector uses setTimeout polling — but that's for waiting for element appearance, not Angular state
+     - waitForSuccess now uses MutationObserver ✓
+
+  2. State persistence after EVERY source ✓ — persist(activeBatch) after every item
+
+  3. CSRF caching with retry-on-failure ✓ — cached with TTL, forceRefresh, 401/403/empty response handled
+
+  4. Multi-strategy selector resolution with ≥2 fallbacks each
+     - Most have multiple CSS + text/aria fallbacks
+     - submitButton: css has 3, textContent has ["Insert", "插入", "Add", "添加", "Save", "保存"] — Phase 5 concern was text "Add" could match outer "Add source" button. But now lookups are scoped to dialog subtree. ✓
+
+  5. Angular state assertions ✓ — waitForAngularEnabled checks disabled, aria-disabled, mat classes, pointer-events
+
+  6. Two separate UI buttons ✓
+
+  7. world: 'MAIN' for executeScript when needed
+     - Implementation uses default (ISOLATED) world. Round 1 said use MAIN when needed to read Angular state. But the runner doesn't need to read Angular window models — it just drives DOM. Is this OK? The ADR mentions native setter for textarea which works in isolated world. I think this is acceptable since they're not reading Angular internals.
+
+  8. Tab-state dedupe — track (tabId, dialogPhase) to avoid re-injecting handlers on a tab already mid-dialog
+     - This is not explicitly implemented. But the orchestrator only injects one runner per item sequentially, and runner itself handles existing dialog. So this specific requirement is arguably not needed for the current design.
+
+  Phase 5 review findings and claimed fixes:
+  - startBatch waits for resumeIfPending + rejects persisted state (防双批次) ✓
+  - ensureNotebookLmTab explicit navigate to target notebook URL ✓
+  - listNotebooks distinguishes authFailed vs empty list ✓
+  - tab-lost detection: capture "No tab with id" re-acquire tab, >2 failures abort ✓
+  - cancelRequested persisted to BatchState ✓
+  - waitForTabReady checks readyState + add-source button ✓
+  - runner closeAnyOpenDialog on startup ✓
+  - submit/url/text lookups limited to dialog subtree ✓
+  - waitForSuccess uses MutationObserver ✓
+  - "导入" button useRef lock ✓
+
+  Phase 5 issues that were NOT in the claimed fixes but mentioned:
+  - Minor: selectors.ts sourceTitle strategy unused — still unused (minor, acceptable)
+  - Minor: waitForAngularEnabled has setTimeout(50) — still there (minor, acceptable)
+  - Minor: handleAddCurrentTab doesn't dedupe, handleAddAllTabs does — still inconsistent (minor, acceptable)
+  - Minor: notebook-api.ts title strip only `^thought\n`, no trim — now they do `.trim()` after replace
+
+  Wait, let me re-check the "deterministic error also retries 3 times" issue. Phase 5 said:
+  - "Add-source button not found" deterministic error also goes through 3 retries, wasting time and if partial success will duplicate.
+  This is NOT in the claimed fixes. Is it still there? Looking at runBatchLoop: for each item, it retries up to MAX_RETRIES (2) for ANY failure. There's no distinction between deterministic selector errors and transient errors. So this Phase 5 issue is NOT fixed. However, the user listed the fixes they claim were made, and this one is not in that list. So it might be a remaining issue.
+
+  Also the duplicate-source issue: Phase 5 said nextIndex=idx+1 and await persist between could cause SW death → resume reruns same item → duplicate source. Suggested idempotency via source-title text. This is NOT in the claimed fixes and still not implemented. This is a more serious issue because it can cause duplicate sources.
+
+  Wait, actually they did implement: persist happens AFTER setting nextIndex = idx + 1 and results[idx]. But the race is:
+  1. runOne(item idx) succeeds
+  2. activeBatch.results[idx] = result
+  3. activeBatch.nextIndex = idx + 1
+  4. await persist(activeBatch) — SW dies here
+  5. On resume, nextIndex = idx+1, so it continues with idx+1. Good.
+
+  But what if:
+  1. runOne succeeds
+  2. set results[idx]
+  3. set nextIndex = idx+1
+  4. SW dies before persist
+  5. Resume from old persisted state where nextIndex = idx
+  6. Re-run item idx → duplicate
+
+  So the issue is real. The only way to prevent duplicates is idempotency check. This is NOT fixed.
+
+  Also, the Phase 5 reviewer said "用 source-title 文本去重做幂等". This is still missing.
+
+  Actually wait, there's another subtle issue. The runner returns success based on sourceRow count increasing. But if the source already exists, the count might not increase, and it would be reported as failure. But that's different from duplicate prevention.
+
+  Let me re-examine the `isCancelled` function:
+  ```
+  async function isCancelled(): Promise<boolean> {
+    if (activeBatch && activeBatch.cancelRequested) return true
+    const persisted = await loadPersistedBatch()
+    return !persisted // loadPersistedBatch returns null if cancelled OR done
+  }
+  ```
+  This function is defined but never called! The loop uses `activeBatch.cancelRequested` directly. So the isCancelled helper is dead code. But the loop does check activeBatch.cancelRequested between items and retries, which is fine for in-memory. For persisted cancel, loadPersistedBatch returns null if cancelRequested, so resumeIfPending won't resume it. Good.
+
+  But there's a subtle bug: in runBatchLoop, after the item finishes, it does:
+  ```
+  if (activeBatch.nextIndex < activeBatch.items.length && !activeBatch.cancelRequested) {
+    await randomDelay()
+  }
+  ```
+  But then at the end:
+  ```
+  if (activeBatch && !activeBatch.cancelRequested) {
+    activeBatch.status = "done"
+  ```
+  If cancel was requested during the random delay, it would still mark done? No, the check is after delay. OK.
+
+  Wait, actually after the while loop exits because nextIndex >= length, it checks cancelRequested. If cancel was requested after the last item completed but before this check, it would mark done instead of cancelled. Minor edge case.
+
+  Another issue: in `cancelBatch`, it sets activeBatch = null and clears persisted state. But runBatchLoop may still be running and reference activeBatch. After cancelBatch, activeBatch is null, so the loop's `if (activeBatch)` guards will skip updating status. But the loop will continue running because the cancellation is checked only at certain points. Actually, cancelBatch sets cancelRequested=true and status=cancelled, persists, THEN sets activeBatch=null. So when loop next checks activeBatch, it's null and skips the final state update. But it already persisted cancelled. Fine.
+
+  But actually, between setting cancelRequested and activeBatch=null, the loop might not see cancelRequested because it's async. The persisted state has cancelRequested, so resumeIfPending won't resume. But current loop iteration continues... until it hits `if (activeBatch.cancelRequested) break`. Since activeBatch is now null, that check would throw TypeError. Wait, the code is:
+  ```
+  while (activeBatch && activeBatch.nextIndex < activeBatch.items.length) {
+      if (activeBatch.cancelRequested) break
+  ```
+  If activeBatch is null, the while condition fails and loop exits. Then the final if checks `if (activeBatch && !activeBatch.cancelRequested)` — false, so skips. Then `else if (activeBatch && activeBatch.cancelRequested)` — false. So it doesn't broadcast cancelled, but cancelBatch already did. However it doesn't clear persisted batch. But cancelBatch already did. So OK.
+
+  Hmm, but there's a race: cancelBatch sets activeBatch=null after persist. If runBatchLoop is in the middle of runOne, when it returns, activeBatch might be null, so it won't record the result. But that's expected for cancellation.
+
+  Now let me think about the major remaining risks:
+
+  1. Duplicate sources on SW death mid-persist — not fixed. This is a real ship-blocking risk? The probability is low but the impact is data duplication. Round 1 explicitly required persistence after every source to prevent data loss, but didn't explicitly require idempotency. Phase 5 flagged it. Since it's not fixed, I should mention it.
+
+  2. Deterministic errors retried — wastes time, could cause duplicates. Not fixed.
+
+  3. The `isCancelled` function is dead code. Minor.
+
+  4. No `world: 'MAIN'` usage. Round 1 required it "when needed". Since they're using native setter and DOM queries, isolated world is sufficient. The requirement was perhaps overly broad. I don't think this blocks ship.
+
+  5. Tab-state dedupe — not implemented, but design doesn't really need it.
+
+  6. waitForAngularEnabled still has setTimeout(50). Minor.
+
+  7. `sourceTitle` selector unused. Minor.
+
+  8. handleAddCurrentTab doesn't dedupe. Minor.
+
+  9. One subtle issue: `loadPersistedBatch` returns null if state.status === "running" && state.cancelRequested. But what about states "done", "cancelled", "error", "paused"? It returns null for those. Good.
+
+  10. Another subtle issue: In `resumeIfPending`, if persisted.status !== "running", returns. Good.
+
+  11. The `waitForTabReady` polls every 300ms for up to 15s. It checks both readyState and add-source button. Good.
+
+  12. `ensureNotebookLmTab` navigates to target notebook URL if mismatch. Good. But it only navigates if `notebookId` is set. If no notebookId (use current notebook), it could still land on wrong notebook if user has multiple tabs. But that's the user's responsibility when they choose "use current". The Phase 5 concern was specifically about notebookId mismatch. OK.
+
+  13. Phase 5 said "0-notebook 200 响应与 token 失效无法区分，未触发刷新重试". Now notebook-api.ts treats empty parsed response as authFailed and clears cache. But it doesn't retry automatically — it returns authFailed to UI. Round 1 requirement was "0-notebook response = token maybe dead, refetch HTML and retry once." The current implementation doesn't retry; it just signals failure. Is this a gap?
+
+  Looking at notebook-api.ts:
+  ```
+  if (!parsed || !Array.isArray(parsed)) {
+    cachedCsrfToken = null
+    return { ok: false, authFailed: true, error: "NotebookLM 返回空响应（CSRF 可能已失效）", notebooks: [] }
+  }
+  ```
+  Round 1 said: "Detect failure: redirect to accounts.google.com OR HTTP 200 with empty wrb.fr envelope (silent invalidation — most common). 0-notebook response = 'token maybe dead, refetch HTML and retry once.'"
+
+  So the requirement was to retry once on 0-notebook. The current implementation doesn't. Phase 5 flagged this. Is it fixed? The user didn't list it in claimed fixes. So it's still an issue.
+
+  However, in practice, if token is valid and user has 0 notebooks, retrying won't help. But if token is stale, retrying with forceRefresh would help. The current code clears cache but doesn't retry. The UI shows "请登录". Next refresh would work. Minor UX issue, not ship-blocking.
+
+  14. Cancel during in-flight item retries: Phase 5 said cancelBatch sets cancelled=true but while condition doesn't check outside, so during in-flight item's 3 retries (~51s), cancel is ineffective. Is this fixed? Looking at runBatchLoop, it checks `if (activeBatch.cancelRequested) break` at the top of the while loop and inside the retry loop. So between retry attempts, cancellation works. But during a single runOne execution, it won't cancel until runOne returns. runOne timeout is 15s (waitForSuccess) plus other waits. So max ~15-20s, not 51s. The exponential backoff is between attempts. So this is mostly fixed.
+
+  Actually wait, Phase 5 said "~51s期间取消无效". With 3 retries and backoff 2s, 4s, that's ~6s of backoff plus 3 × runOne (~15s each) = ~51s total if all fail. The cancel check happens between attempts (after runOne returns), so during a runOne it can't cancel. But runOne is not 51s; the whole retry sequence could be. The cancel will be checked after each runOne. So it's better than Phase 5 described, but not instantaneous. Acceptable.
+
+  15. Phase 5 "runner 启动时 closeAnyOpenDialog" — implemented.
+
+  16. Phase 5 "submit/url/text 查找限定 dialog 子树" — implemented. urlInput, textInput, submitButton lookups now pass `dialog` as root. websiteLinkOption, copiedTextOption also pass dialog. Good.
+
+  17. Phase 5 "waitForSuccess 改用 MutationObserver" — implemented.
+
+  18. Phase 5 "导入按钮 useRef 锁" — implemented.
+
+  So the major unfixed Phase 5 items are:
+  - Duplicate source on SW death mid-persist (idempotency)
+  - Deterministic errors still retried
+  - 0-notebook response doesn't auto-retry once
+
+  Of these, the duplicate source issue is the most concerning. Is it ship-blocking? I need to decide.
+
+  Actually, looking more carefully at the persist order:
+  ```
+  activeBatch.results[idx] = result
+  activeBatch.nextIndex = idx + 1
+  await persist(activeBatch)
+  ```
+  The await persist is the critical section. If SW dies during await persist, chrome.storage.local.set might or might not complete. If it completes partially, resume from old state. If it fails, we don't know. The result is potential duplicate.
+
+  A simple fix would be to persist BEFORE setting nextIndex? No, that doesn't help. Or set nextIndex before running the item? Then if it fails, we'd skip it. Not good.
+
+  The proper fix is idempotency: before adding a URL, check if a source with that URL/title already exists. But the runner doesn't have access to existing source metadata easily. It could check source titles or URLs. NotebookLM source list shows titles, not URLs. So checking by URL is hard. Checking by title would require the title to be known (which we don't have until after fetch).
+
+  Given the complexity, Phase 5 suggested it but it's a non-trivial fix. For v1.1 ship, this might be acceptable as a known limitation. But I should flag it.
+
+  Now, regarding "approve / approve-with-changes / reject":
+
+  The implementation is generally solid, tests pass, build passes, most Phase 5 fixes are in. I would say approve-with-changes because there are remaining issues that should be addressed before ship, particularly:
+  1. Idempotency / duplicate source risk on SW death
+  2. Deterministic error retries
+  3. 0-notebook response auto-retry
+
+  But are these ship-blocking? The user is asking for a final gate decision. If I say "approve-with-changes", I need to specify what changes.
+
+  Actually, the duplicate source issue is the most important. If SW dies mid-batch, the resume will replay the last completed item. This is a real risk for large batches. However, the probability depends on SW stability. With the keep-alive port from sidepanel, SW should stay alive while panel is open. But if user closes panel mid-batch, SW can die.
+
+  Given that v1.1 is an MVP and this is a known limitation, I might approve-with-changes requiring the idempotency fix. But if the fix is complex, maybe just flag it as a post-ship follow-up.
+
+  Wait, I need to be decisive. Let me re-read the user's question. They want:
+  1. approve / approve-with-changes / reject
+  2. faithful to Round 1?
+  3. Phase 5 fixes done? omissions?
+  4. ship-blocking risks?
+  5. one-sentence summary
+
+  I think the right answer is approve-with-changes. The changes needed:
+  - Add idempotency check before submitting (source-title text or URL match) to prevent duplicates on SW resume
+  - Don't retry deterministic selector-not-found errors
+  - Auto-retry listNotebooks once on 0-notebook/empty response
+
+  But actually, the idempotency check is hard. Let me think if there's a simpler way. The runner could take a list of source titles already present and skip if the URL matches... but URLs aren't shown in source list. Titles are shown but we don't know the title until NotebookLM fetches the page.
+
+  Alternatively, the orchestrator could persist a "commit" flag: before runOne, set state to "committing idx" and persist. After runOne succeeds, set nextIndex. If resume sees "committing idx", it knows idx may have been added and should check. But without idempotency, still don't know.
+
+  A practical approach: on resume, if the last item's result is undefined but previous items exist, assume the last item MIGHT have succeeded and skip it (mark as maybe-succeeded). But this would falsely mark failures as success.
+
+  I think the cleanest is to accept this as a known limitation and document it. For ship, approve-with-changes where the changes are the deterministic-error-retry and 0-notebook-retry. The duplicate issue is more of a "ship with known risk" that should be in ADR known limitations.
+
+  Hmm, but Phase 5 explicitly called it a problem. Let me check if I missed any fix for it. Search for "idempot" or "duplicate" or "source-title" in the orchestrator.Confirmed no idempotency/dedup logic. The duplicate source issue is unfixed.
+
+  Now let me also check if deterministic errors are still retried. Looking at runBatchLoop, all errors go through retry loop. There's no classification of errors. So yes, still retried.
+
+  Let me also verify the 0-notebook retry issue. notebook-api.ts doesn't retry. It clears cache and returns authFailed.
+
+  Let me also check if `world: 'MAIN'` is used anywhere.No MAIN world usage. But as I argued, it's not clearly needed for this implementation.
+
+  Let me also check the minor issue: handleAddCurrentTab doesn't dedupe. Confirmed from code.
+
+  Now, for the final verdict, I need to be concise (<500 Chinese characters). Let me draft:
+
+  1. approve-with-changes
+  2. 忠实 Round 1：是。纯 DOM automation、只 list 不 create、多策略 selector、独立按钮、P0 范围一致。
+  3. Phase 5 修复：大部分到位。遗漏：SW 在 persist 期间重启会导致 nextIndex 回退，重复添加同一源（idempotency 未做）；selector 类确定性失败仍走 3 次重试；0-notebook 空响应未自动 forceRefresh 重试一次。
+  4. ship-blocking risks：重复源风险是主要残余；Google 风控/selector 漂移为已知外部风险。修复上述遗漏后可 ship。
+  5. 一句话：实现扎实，测试构建通过，但需在 ship 前补上幂等检查并精简确定性错误重试。
+
+  Wait, the user asked for 简洁，500 字以内. I need to be concise. Let me count characters.
+
+  Let me write a tighter version.
+
+  Also I should consider: is the duplicate source issue truly ship-blocking? If I call it "ship-blocking", I should recommend reject or approve-with-changes. Since I think it's fixable and important, approve-with-changes is right.
+
+  Let me reconsider the deterministic retry issue. Phase 5 said "确定性错误（"Add-source button not found"）也走 3 次重试，浪费时间且若前次部分成功会重复添加。" If the first retry partially succeeded (e.g., dialog opened but submit failed), the second retry would open another dialog or reuse existing. With closeAnyOpenDialog now, it would close and reopen. But if the first attempt actually added the source before failing on success detection, retry would add duplicate. This connects to the duplicate issue.
+
+  Actually, the duplicate issue is broader than just SW death. If runOne returns success but the success detection is wrong, or if persist fails, etc.
+
+  I think my assessment is fair.
+
+  Let me also double check the "0-notebook response doesn't retry" issue. Round 1 said retry once. Phase 5 said it doesn't trigger refresh retry. The current code clears cache but doesn't retry. This is a minor UX issue. Should I call it ship-blocking? Probably not, but worth mentioning as a missed requirement.
+
+  Now let me write the final answer. I should be concise.
+
+  Actually, before finalizing, let me think if there are any other issues I missed.
+
+  One thing: the `isCancelled` function in orchestrator.ts is defined but never used. This is dead code. Minor.
+
+  Another: `loadPersistedBatch` returns null if state.cancelRequested. But if a batch is cancelled, the persisted state still has cancelRequested=true. resumeIfPending clears it. Good.
+
+  Another: `cancelBatch` sets status to "cancelled" before persist. But runBatchLoop might be in the middle. After cancelBatch, activeBatch=null. The loop will eventually hit the while condition and exit. It won't update status or broadcast, but cancelBatch already did. Good.
+
+  Another potential issue: in `startBatch`, it checks `activeBatch && activeBatch.status === "running"`. But what if activeBatch is in "paused" or other state? Not relevant.
+
+  Another: the runner's `waitForSuccess` watches `document.body` for sourceRow count increase. If the sourceRow selector is wrong, it times out after 15s. OK.
+
+  Another: `resolveStrategy` with text fallback does `txt.toLowerCase().includes(t.toLowerCase())`. For submitButton text "Add", it could match a button with text "Add source" if the dialog-scoped lookup somehow includes it. But now dialog-scoped. OK.
+
+  Another: `websiteLinkOption` and `copiedTextOption` both use css `.drop-zone-icon-button` and text fallback. If there are multiple drop-zone buttons, text fallback will return the first matching one. The contains() matching might be too loose. But CSS class is tried first, and if there are multiple, it returns the first in DOM order. This could be wrong if order changes. But it's a known limitation.
+
+  I think I've covered the main issues. Let me write the final response.
+
+• **approve-with-changes**
+
+  1. **是否忠实 Round 1**：是。纯 DOM automation、只 `list` 不 `create`、多策略 selector、独立 📓/💾 按钮、P0 范围一致。
+
+  2. **Phase 5 修复是否到位**：大部分到位。遗漏：
+     - **SW 在 `persist` 间隙重启会导致同一 item 重复添加** —— 未做 source-title/URL 幂等检查；
+     - **确定性 selector 失败仍走 3 次重试**，浪费且增加重复风险；
+     - **`listNotebooks` 对 0-notebook/空响应未自动 `forceRefresh` 重试一次**。
+
+  3. **ship-blocking 风险**：重复源是主要残余风险；Google 风控与 selector 漂移为已知外部风险。
+
+  4. **一句话总评**：实现扎实、测试与构建通过，但须在 ship 前补上幂等检查并精简确定性错误重试。
+
+To resume this session: kimi -r session_5b1d63cd-675b-4626-a06f-68455530faa3

@@ -1,0 +1,24 @@
+Warning: no stdin data received in 3s, proceeding without it. If piping from a slow command, redirect stdin explicitly: < /dev/null to skip, or wait longer.
+## 严重问题
+- `notebooklm-import-orchestrator.ts:144-156` — `startBatch` 只检查内存 `activeBatch`，不检查 `loadPersistedBatch()`。SW 刚重启、`resumeIfPending` 尚未完成时，用户点导入会覆盖在途批次。 | 建议：startBatch 入口先 `await loadPersistedBatch()`，存在即拒绝或合并。
+- `notebooklm-import-orchestrator.ts:61-81` — `ensureNotebookLmTab` fallback 到 `tabs[0]`，多 tab 时会落在错误 notebook 上跑 runner → 源被静默加进错 notebook（不可撤销）。 | 建议：未精确命中时强制 `chrome.tabs.update(tab.id,{url:target})` 导航到目标 notebook。
+- `notebooklm-import-orchestrator.ts:205,236` — `tabId` 循环开始只取一次；NotebookLM tab 被关后所有后续 item cascade 失败，无重新获取 (re-acquire)。 | 建议：catch 到 "No tab with id" 时重新 `ensureNotebookLmTab` 一次。
+- `notebooklm-import-orchestrator.ts:255-257` — `nextIndex=idx+1` 与 `await persist` 之间 SW 死 → resume 重跑同一 item → NotebookLM 出现重复源。 | 建议：runOne 前/后用 `source-title` 文本去重做幂等 (idempotent)。
+
+## 主要问题
+- `dom-automation.ts:58-74,259-275` — `resolveStrategy` 文本回退 (fallback) 遍历 `*`，`submitButton.textContent=["Add","Insert","Save"...]` 会先命中 "Add source" 按钮本身，点错。 | 建议：文本匹配 (text match) 限定 `dialogContainer` 子树，或 CSS 优先且文本要求 `innerText` 紧匹配。
+- `notebook-api.ts:97-103` — 0-notebook 200 响应与 token 失效无法区分，未触发刷新重试（规格要求）。 | 建议：parsed 为空时强制刷新 (force-refresh) CSRF 重试一次。
+- `notebooklm-import-orchestrator.ts:185-195` — `cancelBatch` 设 `cancelled=true` 但 while 条件外不检查，正在执行 (in-flight) item 的 3 次重试 (~51s) 期间取消无效。
+- `NotebooklmImporterPanel.tsx:84-111` — "导入" 按钮双击竞态：`setStarting(true)` 异步，两次点击都发 start_batch，第二次被 orchestrator throw 弹 alert（orchestrator 兜底，UX 差）。 | 建议：用 ref 同步锁。
+- `notebooklm-import-orchestrator.ts:84-98` — `waitForTabReady` 用 readyState==="complete"，SPA 在 Angular 启动 (boot) 前就 complete，首批 (first item) 必然找不到 add-source 按钮、靠重试兜底。
+- `notebooklm-import-orchestrator.ts:233-247` — 确定性错误（"Add-source button not found"）也走 3 次重试，浪费时间且若前次部分成功会重复添加。
+- `dom-automation.ts:166-177` — resume 时若页面残留上次未关 dialog，`openAddSourceDialog` 直接复用，子页面状态未知 → stale。
+
+## 次要问题
+- `selectors.ts:66-69` — `sourceTitle` 策略定义但 runner 从未读，已废弃 (dead)。
+- `dom-automation.ts:140,337` — `waitForAngularEnabled` 内有 `setTimeout(50)` 轮询，与"不退化为固定 setTimeout"的注释冲突（可辩护）。
+- `NotebooklmImporterPanel.tsx:129` — `handleAddCurrentTab` 不去重，`handleAddAllTabs` 去重，行为不一致。
+- `notebook-api.ts:112` — title 仅 strip `^thought\n`，不 trim；UI 安全（React escape）。
+
+## 结论
+修复 (FIX) — wrong-notebook misroute 是静默数据损坏，必须先解决；持久化与内存 (persisted-vs-in-memory) 去同步 (desync) 和 tab 生命周期级联故障 (cascade) 也需先修复 (fix)。runner 自包含、Angular waiter、CSRF 缓存、XSS 防御都过关 (OK)。

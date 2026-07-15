@@ -9,6 +9,7 @@ import { SettingsSlideout } from "./components/SettingsSlideout"
 import { McpServerForm } from "./components/McpServerForm"
 import { SlashCommandPopover } from "./components/SlashCommandPopover"
 import { SkillCraftPanel } from "./components/SkillCraftPanel"
+import { NotebooklmImporterPanel } from "./components/NotebooklmImporterPanel"
 import { Modal } from "./components/ui/Modal"
 import { AgentStoreProvider, useAgentStore } from "./store/agentStore"
 import type { ConnectionState, SkillMeta, FileAttachment } from "./types"
@@ -83,6 +84,7 @@ export function App() {
 function AppContent() {
   const { connectionState } = useWebSocket()
   const [craftOpen, setCraftOpen] = useState(false)
+  const [nbImporterOpen, setNbImporterOpen] = useState(false)
   const [showLogs, setShowLogs] = useState(false)
   const { state: appState, dispatch } = useAgentStore()
   const [toast, setToast] = useState("")
@@ -100,7 +102,7 @@ function AppContent() {
     <div style={styles.container}>
       <style>{globalCSS}</style>
       {toast && <div style={toastStyles.toast}>{toast}</div>}
-      <Header connectionState={connectionState} onCraft={() => setCraftOpen(true)} onToggleLogs={() => setShowLogs(!showLogs)} />
+      <Header connectionState={connectionState} onCraft={() => setCraftOpen(true)} onToggleLogs={() => setShowLogs(!showLogs)} onOpenNotebooklmImporter={() => setNbImporterOpen(true)} />
       <ChatView />
       <BottomBar />
       <InputArea />
@@ -109,6 +111,7 @@ function AppContent() {
       <SecurityConfirmationDialog />
       <McpServerForm />
       {craftOpen && <SkillCraftPanel onClose={() => setCraftOpen(false)} />}
+      {nbImporterOpen && <NotebooklmImporterPanel onClose={() => setNbImporterOpen(false)} />}
       <DisconnectedBanner visible={connectionState === "disconnected"} onRetry={() => {
         chrome.runtime.sendMessage({ type: "getStatus" }, (response) => {
           if (chrome.runtime.lastError) return
@@ -290,11 +293,11 @@ function HighlightedCode({ code }: { code: string }) {
   )
 }
 
-function Header({ connectionState, onCraft, onToggleLogs }: { connectionState: ConnectionState; onCraft: () => void; onToggleLogs: () => void }) {
+function Header({ connectionState, onCraft, onToggleLogs, onOpenNotebooklmImporter }: { connectionState: ConnectionState; onCraft: () => void; onToggleLogs: () => void; onOpenNotebooklmImporter: () => void }) {
   const { state, dispatch } = useAgentStore()
   const hasMessages = state.messages.length > 0 && !!state.activeThreadId
   const [nbState, setNbState] = useState<"idle" | "working" | "warning">("idle")
-  const [nbTooltip, setNbTooltip] = useState<string>("将当前页导出为 Markdown（拖入 NotebookLM 作为来源）")
+  const [nbTooltip, setNbTooltip] = useState<string>("离线导出当前页为 Markdown（拖入 NotebookLM 作为来源）")
   // useRef lock is mandatory: React state updates are async, so a rapid second click
   // within the same tick can pass the `nbState === "working"` guard before the first
   // setNbState commits — both fire sendMessage → double download. The ref is synchronous.
@@ -303,13 +306,13 @@ function Header({ connectionState, onCraft, onToggleLogs }: { connectionState: C
   const resetNbIdle = (delay: number, immediate?: boolean) => {
     if (immediate) {
       setNbState("idle")
-      setNbTooltip("将当前页导出为 Markdown（拖入 NotebookLM 作为来源）")
+      setNbTooltip("离线导出当前页为 Markdown（拖入 NotebookLM 作为来源）")
       nbInflightRef.current = false
       return
     }
     setTimeout(() => {
       setNbState("idle")
-      setNbTooltip("将当前页导出为 Markdown（拖入 NotebookLM 作为来源）")
+      setNbTooltip("离线导出当前页为 Markdown（拖入 NotebookLM 作为来源）")
       nbInflightRef.current = false
     }, delay)
   }
@@ -416,13 +419,22 @@ function Header({ connectionState, onCraft, onToggleLogs }: { connectionState: C
       <button
         style={{
           ...styles.craftBtn,
+        }}
+        onClick={onOpenNotebooklmImporter}
+        title="打开 NotebookLM 导入器（在线批量导入到 NotebookLM）"
+      >
+        📓
+      </button>
+      <button
+        style={{
+          ...styles.craftBtn,
           ...(nbState === "warning" ? { background: "#FFF3CD" } : {}),
         }}
         disabled={nbState === "working"}
         onClick={runNotebooklmExport}
         title={nbTooltip}
       >
-        {nbState === "working" ? "⏳" : nbState === "warning" ? "⚠️" : "📓"}
+        {nbState === "working" ? "⏳" : nbState === "warning" ? "⚠️" : "💾"}
       </button>
       <button
         style={{

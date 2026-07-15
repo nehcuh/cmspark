@@ -1,0 +1,397 @@
+• The user wants me to read a design brief in the repo and answer Q1-Q6, then give a final recommendation. I should read the specified files first.I have the design brief fully. The research-phase0.txt is huge but the brief already summarizes the key findings. The user wants me to answer Q1-Q6 from the brief (the "6 architecture questions for 3-way decision" section near the end, lines 149-204) in the format `<选项>: <一句话理由>`, with 1-3 lines per question. Then a one-line final verdict on whether I approve / approve-with-changes / reject the scope (P0 ship + P1/P2 defer).
+
+  Wait, the brief has TWO sets of Q1-Q6:
+  1. Lines 57-99 "Revised architecture questions (post-research)" — these are earlier, with "my lean" answers.
+  2. Lines 149-204 "6 architecture questions for 3-way decision" — these are later, with different/divergent "my lean" answers.
+
+  The user's question says "针对 brief 里 Q1-Q6 给出你的判断". The brief asks advisors (Kimi and Pi-sub) specifically at the end: "Both: short, decisive, per-question format `<choice>: <reason>`." This refers to the final Q1-Q6 section (lines 149-204), which is the actual advisor-question block. Also the earlier Q1-Q6 are inconsistent with the later ones (e.g., Q1 earlier says A, later says D; Q3 earlier says A, later says A but with different framing). The "What I want from each advisor" appears twice — the second one at lines 205-210 is the actual ask. So I should answer the second Q1-Q6 set.
+
+  But wait, the user also explicitly says: "最后用一句话告诉我：你 approve / approve-with-changes / reject 这个 v1.1 scope（P0 ship + P1/P2 defer）？" This maps to the "Scope cut for overnight ship" section (Q6 in the earlier set, lines 92-99), not the final Q6 about MD offline fallback integration. The "P0 ship + P1/P2 defer" scope is explicitly discussed at lines 92-99. So the user is asking me to evaluate BOTH sets of Q1-Q6? No, they said "Q1-Q6" singular. But then the final question about scope uses P0/P1/P2 terminology which only appears in the earlier Q6.
+
+  Hmm. Let me re-read the user's request carefully:
+
+  "请针对 brief 里 Q1-Q6 给出你的判断，格式严格为 `<选项>: <一句话理由>`，每题 1-3 行。最后用一句话告诉我：你 approve / approve-with-changes / reject 这个 v1.1 scope（P0 ship + P1/P2 defer）？"
+
+  The "v1.1 scope（P0 ship + P1/P2 defer）" is exactly the earlier Q6 (lines 92-99). The earlier Q1-Q6 are "Revised architecture questions (post-research)". The later Q1-Q6 are "6 architecture questions for 3-way decision". The later section is more detailed and is the actual advisor prompt. But the earlier Q6 is the scope question.
+
+  Actually, I think the brief may have been edited/merged from two versions. The user wants Kimi's judgment on the architecture decisions AND the scope. Since there are two Q1-Q6 blocks, I need to be careful which I answer.
+
+  But the user's instruction "格式严格为 `<选项>: <一句话理由>`，每题 1-3 行" maps to "short, decisive, per-question format `<choice>: <reason>`" — which appears at line 107 and line 211, both asking advisors. Line 107 says that about the first Q1-Q6. Line 211 says it about the second Q1-Q6. The earlier set ends with "My lean: Above. Be honest about what ships vs what's deferred." which directly relates to the user's final scope approval question.
+
+  The later Q1-Q6 does NOT include scope (P0/P1/P2). It includes Q6 about MD offline fallback integration.
+
+  Given the user's explicit mention of "P0 ship + P1/P2 defer", I believe they want me to answer the **first Q1-Q6** (the "Revised architecture questions" at lines 57-99), because only that set includes the scope question. However, the first Q1 is about "Import mechanism" with options A/B/C, while the later Q1 is about "Fetch interception method" with options A/B/C/D. They are related but different.
+
+  Alternatively, the user may want me to answer the **later Q1-Q6** and separately approve the scope proposal from lines 92-99. This seems most consistent with the request: "针对 brief 里 Q1-Q6 给出你的判断" could refer to the main architecture questions, and "这个 v1.1 scope" is a separate final item.
+
+  Actually, let me look at the wording: "P0 ship + P1/P2 defer" is not one of the options in Q6 of the later set. It's the entire scope section at lines 92-99. So the user is definitely asking about that scope. But they also say "Q1-Q6" which must refer to one of the Q1-Q6 blocks. The first block's Q6 IS the scope. So likely they want the first block.
+
+  But the first block's Q1-Q5 are simpler and some are superseded by the later block. For example, first block Q1: Option A/C (DOM vs CDP); later block Q1: A/B/C/D (different framing). The first block Q3: selector drift; later block Q4: selector drift. The numbering is overlapping.
+
+  I think the most helpful and accurate answer is to recognize there are two Q1-Q6 blocks and answer both, or at least clarify which one. But the user asked for Q1-Q6, not Q1-Q6 twice. The safest interpretation: answer the **main architecture questions for the 3-way decision** (later block, lines 149-204), and then separately answer the **scope approval** (lines 92-99). But that would mean I'm not answering Q1-Q6 of the first block.
+
+  Alternatively, answer the first block Q1-Q6, and in the final scope approval also implicitly cover the scope. But then I wouldn't address the more nuanced fetch interception questions in the later block.
+
+  Given the user explicitly mentions "P0 ship + P1/P2 defer" in the final question, and the first block's Q6 is exactly that, I will answer the **first block Q1-Q6** (lines 57-99). But I should also note if my views differ from the later block's leans, or I could mention the later block's considerations.
+
+  Wait, the user says "格式严格为 `<选项>: <一句话理由>`". For Q6 of the first block, the options are:
+  A: P0 ship (DOM automation, selector registry, batch state machine, UI, list notebooks RPC)
+  B: P0 + P1 (add AI chat extraction generic, notebook picker dropdown)
+  C: P0 + P1 + P2 (everything)
+
+  Actually no, the first block Q6 says:
+  "**Ship tonight (P0)**: DOM automation, selector registry, batch state machine, UI, list notebooks RPC
+  **Ship tonight (P1, time-permitting)**: AI chat extraction (B path — generic), notebook picker dropdown
+  **Defer to next session (P2)**: CDP interception, create notebook, RSS/OPML, YouTube, page link extractor, CI canary"
+
+  So Q6 options are A/B/C as the scope cut choices. The user's "approve / approve-with-changes / reject 这个 v1.1 scope（P0 ship + P1/P2 defer）" suggests they want approval of this specific P0/P1/P2 split, not choosing among A/B/C. They want me to say approve/approve-with-changes/reject.
+
+  I think the best approach is:
+  1. Answer Q1-Q6 from the first block (the "Revised architecture questions" — because its Q6 is the scope they're asking about in the final question).
+  2. But also incorporate insights from the second block where relevant, especially for Q1 (CDP capture vs DOM).
+  3. Give final scope verdict.
+
+  Actually, looking more carefully, the first block seems to be the decision-maker's own preliminary leans after Phase 0 research, and the second block is a more refined set of questions for advisors. The second block has MORE nuance (e.g., Q1 includes CDP Network capture-only as option D, which is a good middle ground). The user is asking me as the "资深架构师 Kimi" — that's exactly the role in the "What I want from each advisor" section. The final "What I want" at lines 205-210 says: "**Kimi**: Architect-level critique. Are my Q1-Q6 leans right? What am I missing?" This refers to the **second block's** Q1-Q6 (the "6 architecture questions for 3-way decision"), because that's where the final advisor prompt appears.
+
+  But the user's final question about scope ("P0 ship + P1/P2 defer") isn't in the second block's Q6. It's in the first block. Hmm.
+
+  I think the document is poorly structured. The user likely considers the entire brief and wants me to answer:
+  - The Q1-Q6 in the second block (the main architecture decision questions), AND
+  - Approve/reject the scope in the first block Q6 / lines 92-99.
+
+  So I'll answer the second block's Q1-Q6, and then give scope approval for the P0/P1/P2 split from lines 92-99.
+
+  But wait, the second block's Q6 is about MD offline fallback integration, not scope. If I answer Q1-Q6 of the second block, my Q6 answer will be about MD buttons, not scope. Then the user's final question about scope will be answered separately. That makes sense.
+
+  However, the user said "针对 brief 里 Q1-Q6" — singular, implying one set. If I answer the second set, the numbering matches the "6 architecture questions for 3-way decision". If I answer the first set, the final scope question is more natural.
+
+  I think I'll answer the second set because:
+  - It's the actual advisor prompt.
+  - It has richer, more decision-relevant questions.
+  - The "What I want from Kimi" at the end refers to it.
+  - The scope question is then handled by the explicit final question.
+
+  But I also want to address the first block's scope in the final line. So:
+  - Q1-Q6: second block answers.
+  - Final line: approve/approve-with-changes/reject the first block's P0/P1/P2 scope.
+
+  This seems like the right interpretation. But to be safe, I can add a brief note that I'm answering the main architecture Q1-Q6 (second block) and the scope from lines 92-99.
+
+  Actually, re-reading the user's question once more: "请针对 brief 里 Q1-Q6 给出你的判断... 最后用一句话告诉我：你 approve / approve-with-changes / reject 这个 v1.1 scope（P0 ship + P1/P2 defer）？"
+
+  The phrase "P0 ship + P1/P2 defer" is the **scope**. The first Q1-Q6 block's Q6 is the scope question. The second Q1-Q6 block does not have a scope question. Therefore, "brief 里 Q1-Q6" most naturally refers to the first block, whose Q6 is the scope. If the user wanted the second block, they wouldn't have tied the final question to "P0 ship + P1/P2 defer".
+
+  OK, I'll answer the **first block Q1-Q6** and then give the scope approval. But the first block's Q1 is "Import mechanism: A pure DOM, B CDP Fetch, C both". Given the research, pure DOM (A) is the right v1.1 ship choice. The second block explores more nuance but the first block's A is consistent with "ship proven path first".
+
+  For Q1 first block: Option A. Reason: both competitors' fetch interception is dead code; DOM automation is the proven production path; CDP fetch interception has UX and fragility risks not worth taking for v1.1 ship.
+
+  For Q2 first block: Option A. Reason: list via wXbhsf is proven; create notebook via boVbkv is unverified and adds ToS/account risk; manual notebook creation is one click.
+
+  For Q3 first block: Option A (MutationObserver self-healing). Reason: cheap runtime resilience; CI canary is v1.2 dev-infra. Actually, wait — the first block Q3 options are A: MutationObserver self-healing, B: CI canary, C: both. The lean is A first. I agree for v1.1 ship.
+
+  For Q4 first block: Option B (generic article extractor). Reason: reuse v1 code; per-site scrapers + LLM are v1.2 differentiation; AI chat extraction is P1 anyway.
+
+  For Q5 first block: Option A (two separate buttons). Reason: clear separation of online import vs offline MD.
+
+  For Q6 first block (scope): This is the P0/P1/P2 scope. The options aren't explicitly A/B/C but the "My lean" describes the split. I should answer by approving or rejecting this split. But the user wants per-question format `<选项>: <一句话理由>`. For Q6, I can frame it as: "Approve the P0/P1/P2 split: P0 targets the proven DOM automation core; P1 adds low-risk generic extraction; P2 defers unproven CDP/create/RSS/YouTube work."
+
+  Then final line: "approve-with-changes: ship P0 tonight, keep P1 as a fast-follow rather than same-session, and do not promise P2 until P0 is stable in user's hands."
+
+  Actually the user says "每题 1-3 行". For Q6, 1-3 lines is fine.
+
+  But wait — if I answer the first block, I miss the second block entirely. The user might expect me to address the more detailed Q3 about create notebook and ToS red line. The first block Q2 is about notebook management (list vs create). The second block Q3 is specifically about batchexecute write operations and ToS. These are different.
+
+  Given the user mentions "Google account flagging risk" in the prompt background and the first "What I want from Kimi" asks about it, I should address ToS/account flagging in my Q2 answer.
+
+  Let me reconsider. Maybe I should answer BOTH sets? But that would be 12 answers, not Q1-Q6. The user explicitly says Q1-Q6.
+
+  I think the cleanest approach: answer the **second block Q1-Q6** (the main architecture advisor questions) because:
+  - It directly asks Kimi for architect-level critique.
+  - It includes the ToS/account flagging question (Q3).
+  - The user's background explicitly mentions "Phase 0 research" findings that map to the second block's concerns.
+  - Then for the scope, I give final verdict based on lines 92-99.
+
+  But then my Q6 answer will be about MD buttons, and the user's final explicit question about scope will be answered after. That's okay — they asked two things: Q1-Q6 judgments, and scope approval.
+
+  However, the first block Q1-Q6 also directly uses the research findings. The second block's Q1 references "3-way decision" and includes the CDP Network capture option D which is a synthesis of the research. This is more decision-oriented.
+
+  I'll go with the second block Q1-Q6 + scope approval. But to avoid confusion, I'll explicitly say "以下回答 brief 后半部分‘6 architecture questions for 3-way decision’的 Q1–Q6，最后对 P0/P1/P2 scope 给出 verdict。"
+
+  Wait, but the user said "P0 ship + P1/P2 defer" scope. That's not in the second block. If I say I'm answering the second block, the scope is separate. Good.
+
+  Let me also check if there are any other relevant files I should read. The user mentioned "docs/decisions/v1.1/design-brief.md" and "research-phase0.txt". The research file is huge and truncated. I have enough from the brief summary. But maybe I should read more of research-phase0.txt to get concrete code quotes about API shapes, especially for Q2 in the second block (primed API shape hardcoding). Let me read the full research file with line offsets.
+
+  Actually, the Read tool output was truncated to 73 lines with a note that it exceeded 50000 chars. I can use Read with output_path to page through. But the brief already contains the synthesized findings. For an architecture-level answer, I don't need the raw code quotes. The user wants concise judgments, not a rehash of research.
+
+  So I'll answer based on the brief.
+
+  Now let me draft the answers for the second block Q1-Q6:
+
+  Q1. Fetch interception method
+  Options: A (content script wrapper), B (CDP Fetch.enable), C (CDP Network capture only), D (hybrid CDP Network capture + chrome.scripting replay)
+  My choice: D or A? 
+  Reasoning: The research found that Web Importer's fetch interception is dead code — they wrote it but don't use it. Both extensions use pure DOM automation. CDP Fetch.enable has yellow banner UX cost and body encoding fragility. Option D (CDP Network for capture + standard fetch replay) avoids long debugger attach and captures before SPA wrappers. But it still requires figuring out the API shape and CSRF. For v1.1 P0 ship, the safest is actually A (pure DOM automation, jetpack/Web Importer proven path) or D if we want to try the API path.
+
+  But the second block Q1 doesn't have "pure DOM automation" as an option. Option A is content-script-injected wrapper, which is what Web Importer tried and abandoned. Option D is CDP Network capture + replay. None of the options is "just DOM automation". However, the brief's first block Q1 includes pure DOM as option A. This is a discrepancy.
+
+  Given the second block options, D is the best — it uses CDP for clean capture (CMspark moat) but avoids the debugger banner by detaching after capture and replaying via background fetch. This is clever and market-unique. But is it proven? The research says Web Importer's interceptor is dead code, but that was content-script wrapper, not CDP Network capture. CDP Network.requestWillBeSent is reliable; CMspark already uses chrome.debugger. So D is feasible.
+
+  However, for v1.1 P0 ship, the brief's own lean in the first block is A (pure DOM). The second block leans D. As Kimi, I should reconcile: I think D is the right medium-term architecture, but for an overnight ship, the proven path is pure DOM. Since the second block forces a choice among A-D, I'll pick D with the caveat that the first import should be DOM-primed (user manually adds one source) or we hardcode the shape.
+
+  Actually, the priming question is Q2. So Q1 D + Q2 B (skip priming, hardcode API shape) is a consistent pair. But hardcoding the API shape is risky if we haven't validated it. The research says create notebook via boVbkv is unverified. The add-source API shape presumably is known from Web Importer's dead code. We can lift it.
+
+  For v1.1 P0, I'd actually recommend: ship DOM automation (proven) for the core, and run a spike on D in parallel. But the second block Q1 doesn't have that option. If forced to choose, I'll say D with the condition that we validate the captured shape immediately.
+
+  Wait, I think I'm overcomplicating. The user is asking for MY judgment as an architect. I can say: for the main architecture Q1, I choose A (pure DOM automation) if we're talking about the first block, or D (CDP Network + standard fetch replay) if we're talking about the second block. 
+
+  Given the user's final question uses P0/P1/P2 scope terminology from the first block, I'll answer the **first block Q1-Q6** and be done. The second block is interesting but the user didn't explicitly ask for it. I'll mention the second block's nuance in Q1/Q3 if relevant.
+
+  Final decision: Answer first block Q1-Q6. Then give scope verdict.
+
+  Let me write the answers:
+
+  Q1. Import mechanism — Option A: Pure DOM automation.
+  理由：Phase 0 已确认两家扩展的 fetch interception 都是 dead code，生产环境全部走 DOM automation；CDP Fetch 拦截虽独特，但黄色调试横幅 + 请求体编解码脆弱性使其不适合作为 v1.1 ship 的依赖路径。
+  （可补充：CDP 可作为 v1.2 差异化技术研究，而非 P0 ship。）
+
+  Q2. Notebook management — Option A: List via wXbhsf，跳过 create。
+  理由：list 的 RPC 和 CSRF 提取已被 jetpack 验证；create 的 boVbkv RPC 未经验证，且对私有 RPC 做写操作有 ToS/账号标记风险；用户手动创建 notebook 只是一次点击，不值得为 v1.1 引入该风险。
+
+  Q3. Selector drift — Option A: MutationObserver self-healing first。
+  理由：运行时 fallback 成本低、用户立刻受益；CI canary 是优秀的 v1.2 工程基础设施，但不是今晚 ship 的阻塞项。
+
+  Q4. AI chat extraction — Option B: Generic article extractor。
+  理由：直接复用 v1 的 extractPageContentRunner，当晚可 ship；per-site scraper + LLM 后处理是 CMspark 的差异化方向，应作为 v1.2 而非 v1.1 P0。
+
+  Q5. MD offline button — Option A: Two separate buttons。
+  理由：在线导入与离线 MD 的意图完全不同，分开按钮可避免用户误操作，也保留 v1 的隐私/离线场景。
+
+  Q6. Scope cut — Approve the P0/P1/P2 split。
+  理由：P0 聚焦已验证的 DOM automation + list RPC + 批处理状态机，风险可控；P1 的 generic AI extraction 是低 hanging fruit；P2 的 CDP/create/RSS/YouTube 全是未验证或高 ToS 风险项，defer 正确。
+
+  Final scope verdict: approve-with-changes — ship P0 tonight, treat P1 as a fast-follow rather than same-session stretch, and gate P2 on real user feedback + a short CDP feasibility spike.
+
+  Wait, the format for Q6 should also be `<选项>: <一句话理由>` per the user's instruction. But Q6 in the first block doesn't have A/B/C as scope options. It has "Ship tonight P0 / P1 / Defer P2". I can phrase Q6 as:
+  "P0 ship + P1 time-permitting + P2 defer: 正确的 scope cut，P0 全是已验证路径，P1 是低风险扩展，P2 包含未验证/高风险项。"
+
+  Then final line: "approve-with-changes: 同意 P0/P2 划分，但建议把 P1 也拆出本次 session，避免 overnight ship 因 P1 膨胀而延期。"
+
+  Actually, the user wants "每题 1-3 行". For Q6 I can do 1-3 lines.
+
+  Let me also address the Google account flagging risk explicitly since the user asked Kimi about it. I'll weave it into Q1/Q2.
+
+  Let me refine the answers to be crisp and in Chinese as requested.
+
+  Q1. A: 纯 DOM automation。
+  理由： competitors 的真实代码已证明这是唯一在产线跑通的路径；fetch/CDP 拦截目前都是未验证的“差异化”，不宜作为 v1.1 P0 的依赖。
+  补充（account flagging risk）：100+ 连点确实有触发 Google 风控的可能，但 DOM automation 的指纹与真人操作最接近；建议加入随机延迟（±300ms）、每批限速、以及失败/限速检测，而非为了“更快”切到未验证的 API replay。
+
+  Hmm, the user said "每题 1-3 行". I should keep each answer to 1-3 lines. Let me make Q1 2-3 lines.
+
+  Q1. A: 纯 DOM automation。
+  理由：Phase 0 已确认两家扩展的 fetch interception 都是 dead code，产线全部走 DOM；CDP 拦截虽有差异化潜力，但黄色调试横幅和请求体编解码问题使其不适合作为 overnight ship 的 P0 路径。100+ 连点可加入随机延迟和每批限速来降低账号风控概率。
+
+  Q2. A: list 用 wXbhsf，跳过 create。
+  理由：list 的 RPC 和 CSRF 提取已被 jetpack 验证且只读；create 的 boVbkv 未验证，对 Google 私有 RPC 做写操作有 ToS 和账号标记风险，手动创建 notebook 只是一次点击，不值得在 v1.1 引入。
+
+  Q3. A: 先做 MutationObserver self-healing。
+  理由：运行时 fallback 成本低、用户直接受益；CI canary 是优秀的 v1.2 工程基础设施，但不是今晚 ship 的阻塞项。
+
+  Q4. B: 复用 v1 的 generic article extractor。
+  理由：当晚可 ship，且避免 per-site scraper 的维护负担；LLM 后处理是 CMspark 的差异化方向，应放到 v1.2。
+
+  Q5. A: 两个独立按钮。
+  理由：在线导入与离线 MD 的用户意图和产品场景不同，分开按钮可减少误操作，也保留 v1 的隐私/离线能力。
+
+  Q6. P0 ship + P1 time-permitting + P2 defer: 正确的 scope cut。
+  理由：P0 聚焦已验证的 DOM automation + list RPC + 批处理状态机，风险可控；P1 的 generic AI extraction 是低风险扩展；P2 的 CDP/create/RSS/YouTube 均为未验证或高风险项，defer 合理。
+
+  Final: approve-with-changes: 同意 P0/P2 划分，但建议把 P1 也移出本次 session，避免 overnight ship 因 AI extraction 膨胀而延期；P1 可作为下次迭代的 fast-follow。
+
+  Hmm, but the user said "每题 1-3 行". My answers are roughly 2-3 lines each. Good.
+
+  Should I mention the second block at all? I think it's fine to answer the first block since the scope terminology matches. If the user wanted the second block, they'll correct me. But I can add a one-sentence note at the top: "我按 brief 中‘Revised architecture questions (post-research)’的 Q1–Q6 作答（该节的 Q6 即 P0/P1/P2 scope）。" This clarifies.
+
+  Actually, I think it might be better to answer the **second block** because it's the actual "6 architecture questions for 3-way decision" and more architecturally substantive. The first block is titled "Revised architecture questions (post-research)" and is more like a pre-draft. The second block is what the advisor is explicitly asked to critique at the end.
+
+  But the user's final scope question maps to the first block. This is the conflict.
+
+  Let me make a hybrid: answer the second block Q1-Q6 (main architecture), and then answer the scope from the first block as a separate item. But the user asked for "Q1-Q6" answers, not 7 items. Hmm.
+
+  I'll answer the first block Q1-Q6 and add a note that the second block's more detailed Q1/Q3 considerations are reflected in my reasons. This is cleanest and matches the scope question.
+
+  Wait, one more consideration: the user said "背景：v1 已实现简单的 MD 下载；v1.1 要追平 + 差异化 jetpack 和 Web Importer。Phase 0 research 已完成..." This background is from the beginning of the brief. They then say "请针对 brief 里 Q1-Q6 给出你的判断". The brief's actual Q1-Q6 for advisors is the second block. But the first block is also labeled Q1-Q6.
+
+  I think the user is treating the brief as having one Q1-Q6. The document has a duplication/iteration. To be most helpful, I should answer the **second block** because it's the final, refined set of questions that the decision-maker is actually asking advisors. And then separately answer the scope.
+
+  But if I answer the second block, my Q6 will be about MD buttons, and the user will then get the scope answer. That's fine.
+
+  OK let me just decide: I'll answer the second block Q1-Q6 (the final advisor questions), because:
+  1. The prompt's "What I want from each advisor" at the end references "my Q1-Q6 leans" — which are the second block's leans.
+  2. The second block is more decision-oriented and includes the ToS/account flagging question explicitly.
+  3. The user's background explicitly mentions ToS/account flagging concerns.
+  4. The scope question is then a separate, explicit final ask.
+
+  I'll also add a note at the top clarifying which Q1-Q6 I'm answering.
+
+  Let me draft second block answers:
+
+  Q1. Fetch interception method — Option D: Hybrid — CDP Network for capture, chrome.scripting for replay.
+  理由：CDP Network.requestWillBeSent 能在 SPA wrapper 之前干净捕获请求，避免 content-script wrapper 被反制；捕获后从 extension background 用标准 fetch + credentials:'include' 重放，无需长时间挂 debugger，规避黄色横幅。前提是先用一次手动导入或已知模板验证 f.req 形状。
+
+  Q2. Priming UX — Option C: Skip priming, fall back to DOM automation if no API template cached.
+  理由：hardcode API 模板（选项 B）在未充分验证前风险高；选项 C 允许首次/模板失效时自动回退到已验证的 DOM 路径，既减少摩擦又保证不中断。验证后的模板可渐进缓存。
+
+  Q3. batchexecute write (create notebook) — Option B: Don't do create.
+  理由：对 Google 私有 RPC 做写操作确实触碰 ToS 灰区，且 boVbkv 未经验证；账号标记/限速风险不可忽略，手动创建 notebook 只是一次点击，不应为 v1.1 承担该风险。
+
+  Q4. Selector drift — Option C: Both.
+  理由：MutationObserver 提供运行时自愈，CI canary 提供早期预警，两者互补；canary 实现成本不高（可复用 jetpack 的 check-selectors 思路），值得 v1.1 一起上，否则 selector 漂移会直接影响 P0 核心体验。
+
+  Q5. AI chat extraction — Option B: Generic article extractor。
+  理由：per-site scraper 维护成本高且易碎，LLM 后处理（C）虽是 CMspark moat 但会引入延迟和成本；v1.1 复用 v1 的 generic extractor 当晚可 ship，结构化 Q&A 留给 v1.2。
+
+  Q6. MD offline fallback — Option A: Two separate buttons。
+  理由：在线导入与离线 MD 的场景和用户意图完全不同，合并会增加认知负荷；分开按钮可保留 v1 的隐私/离线能力，也避免在线失败时自动 fallback 带来的意外行为。
+
+  Final scope verdict: approve-with-changes: 同意 P0（DOM automation + list + batch state machine）当晚 ship，P2（CDP/create/RSS/YouTube）defer；但建议把 P1（AI chat extraction + notebook picker）也移出本次 session，作为 fast-follow，避免 overnight scope 膨胀导致 P0 延期。
+
+  Wait, but the second block Q1 Option D says "Hybrid — CDP Network for capture (priming), chrome.scripting for replay (no continued debugger attach)". Actually it says "chrome.scripting for replay" but I think it means "standard fetch from extension background" — the brief says "replay from background via standard fetch". The option D text says "chrome.scripting for replay" which is odd. Let me re-read:
+
+  "**Option D**: Hybrid — CDP `Network` for capture (priming), `chrome.scripting` for replay (no continued debugger attach)"
+
+  Hmm, "chrome.scripting for replay" doesn't make sense for replaying an HTTP request. The brief's explanation at line 157 says "then we replay from background via standard fetch with the user's cookies attached". So Option D's parenthetical is misleading. I should base my answer on the explanation, not the option label. My reason can say "background fetch replay".
+
+  For Q4 selector drift, the second block's "my lean" is C (both). But the first block's Q3 lean is A first. As Kimi, I should give my own judgment. I think C (both) is actually better if canary is cheap, but for overnight ship, A is more realistic. The second block forces a choice; I'll go with C but note canary can be lightweight.
+
+  Actually, for v1.1 overnight ship, I think A is more honest. But the second block's Q4 options: A (MutationObserver), B (CI canary), C (both). If I pick A, I'm matching the first block. If I pick C, I'm matching the second block's lean. Both are defensible. I'll pick C because early warning prevents broken deploys and the cost is low (a headless script hitting notebooklm.google.com).
+
+  For Q5, the second block's lean is C (per-site + LLM). I think B is more shippable. The user wants my judgment, not agreement. I'll pick B.
+
+  For Q6, the second block's lean is A, which I agree with.
+
+  OK, final answers for second block Q1-Q6:
+
+  Q1. D: CDP Network 捕获 + background fetch 重放。
+  理由：在 SPA wrapper 之前干净捕获请求，避免 content-script wrapper 被反制；重放时不挂 debugger，规避黄色横幅。前提是先用一次真实导入或已知模板验证 f.req 形状与 CSRF 刷新行为。
+
+  Q2. C: 跳过 priming，无模板时自动回退 DOM automation。
+  理由：hardcode 模板在未充分验证前风险高；首次或模板失效时回退到已验证的 DOM 路径，既减少摩擦又保证不中断。
+
+  Q3. B: 不做 create notebook。
+  理由：对私有 RPC 做写操作触碰 ToS 灰区，boVbkv 未经验证，账号标记/限速风险不可忽略；手动创建只是一次点击，不值得为 v1.1 承担。
+
+  Q4. A: 先做 MutationObserver self-healing。
+  理由：运行时 fallback 成本低、当晚可 ship；CI canary 是优秀的 v1.2 工程基础设施，但不是 P0 阻塞项。（如果团队有余力，C 是更好的中长期组合。）
+
+  Wait, the user asked for decisive answers, not hedging. I'll pick A decisively.
+
+  Actually, for Q4, I think C is better because selector drift is the #1 risk for DOM automation. Without CI canary, we won't know when selectors break until users complain. A MutationObserver helps runtime but doesn't tell us when Google changed the UI. A lightweight canary is cheap. I'll pick C.
+
+  Q4. C: MutationObserver + CI canary 双保险。
+  理由：运行时自愈保证用户体验不中断，CI canary 提前发现 selector 漂移；canary 成本低，是 DOM automation 方案的必要配套。
+
+  Q5. B: 复用 generic article extractor。
+  理由：per-site scraper 维护成本高且易碎，LLM 后处理会引入延迟和成本；v1.1 先 ship 可用的 generic 提取，结构化 Q&A 作为 v1.2 差异化。
+
+  Q6. A: 两个独立按钮。
+  理由：在线导入与离线 MD 的场景和意图完全不同，合并会增加认知负荷；分开保留 v1 的隐私/离线能力，避免失败自动 fallback 的意外行为。
+
+  Final scope verdict: approve-with-changes: 同意 P0 当晚 ship 与 P2 defer；但建议把 P1 的 AI chat extraction 也移出本次 session，notebook picker 可保留在 P1，避免 overnight scope 膨胀。
+
+  Hmm, but the user asked "你 approve / approve-with-changes / reject 这个 v1.1 scope（P0 ship + P1/P2 defer）?" The scope is the specific split. My "approve-with-changes" should describe what change. I think the change is: move P1 AI chat extraction out of "time-permitting tonight" to a fast-follow; keep notebook picker in P1 maybe. Or: be stricter and say P1 should not be part of tonight's ship.
+
+  Let me finalize. I'll go with second block Q1-Q6 + scope verdict.
+
+  Actually, I realize the user's request could be interpreted as wanting the FIRST block Q1-Q6 because:
+  - The first block's Q6 is literally "Scope cut for overnight ship" with P0/P1/P2.
+  - The user's final question asks about that exact scope.
+  - The first block's Q1-Q5 are simpler and directly feed into the scope.
+
+  If I answer the second block, I'm answering different questions than the ones whose scope is at the end. This is confusing.
+
+  Let me reconsider once more. The brief is structured as:
+  - "What v1.1 must deliver" and research findings.
+  - "Revised architecture questions (post-research)" Q1-Q6 with scope as Q6.
+  - "What I want from each advisor" — asks Kimi/Pi-sub about Q1-Q6 leans.
+  - "Reference architectures".
+  - "Key insight: where CMspark differentiates".
+  - "6 architecture questions for 3-way decision" Q1-Q6 (different set).
+  - "What I want from each advisor" — again asks Kimi/Pi-sub.
+
+  So the brief asks advisors TWICE, with two different Q1-Q6 sets. This is a document structure issue. The user's question "针对 brief 里 Q1-Q6" is ambiguous. But the user's final question about "P0 ship + P1/P2 defer" clearly points to the first block.
+
+  I think I should answer the **first block Q1-Q6**, because:
+  1. Its Q6 is the scope the user explicitly asks about.
+  2. The first block is titled "Revised architecture questions (post-research)" — directly tied to the Phase 0 research the user summarized.
+  3. The second block appears to be a deeper dive that may be redundant or a different framing.
+
+  I'll answer the first block. I'll keep answers crisp. I can reference the second block's nuances in my reasons where helpful.
+
+  Final first-block answers:
+
+  Q1. A: 纯 DOM automation。
+  理由：Phase 0 已确认两家扩展的 fetch interception 都是 dead code，产线全部走 DOM；CDP 拦截虽有差异化潜力，但黄色调试横幅和请求体编解码问题使其不适合作为 overnight ship 的 P0 路径。100+ 连点可加入随机延迟和每批限速来降低账号风控概率。
+
+  Q2. A: list 用 wXbhsf，跳过 create。
+  理由：list 的 RPC 和 CSRF 提取已被 jetpack 验证且只读；create 的 boVbkv 未验证，对 Google 私有 RPC 做写操作有 ToS 和账号标记风险，手动创建 notebook 只是一次点击，不值得在 v1.1 引入。
+
+  Q3. A: 先做 MutationObserver self-healing。
+  理由：运行时 fallback 成本低、用户直接受益；CI canary 是优秀的 v1.2 工程基础设施，但不是今晚 ship 的阻塞项。
+
+  Q4. B: 复用 v1 的 generic article extractor。
+  理由：当晚可 ship，且避免 per-site scraper 的维护负担；LLM 后处理是 CMspark 的差异化方向，应放到 v1.2。
+
+  Q5. A: 两个独立按钮。
+  理由：在线导入与离线 MD 的用户意图和产品场景不同，分开按钮可减少误操作，也保留 v1 的隐私/离线能力。
+
+  Q6. P0 ship + P1 time-permitting + P2 defer: 正确的 scope cut。
+  理由：P0 聚焦已验证的 DOM automation + list RPC + 批处理状态机，风险可控；P1 的 generic AI extraction 是低风险扩展；P2 的 CDP/create/RSS/YouTube 均为未验证或高风险项，defer 合理。
+
+  Final: approve-with-changes: 同意 P0/P2 划分，但建议把 P1 的 AI chat extraction 也移出本次 session，避免 overnight ship 因 P1 膨胀而延期；仅保留 notebook picker 作为 P1 fast-follow。
+
+  This looks good. But wait, Q6's options in the first block are not explicitly A/B/C; the "My lean" gives the P0/P1/P2 split. The user's instruction is `<选项>: <一句话理由>`. I can format Q6 as "P0+P1/P2 split:" or similar. Or I can map it to A/B/C implicitly:
+  A = P0 ship + P1 time-permitting + P2 defer
+  B = ??? 
+  C = ???
+  There aren't clear alternatives. So I'll just use the descriptive label.
+
+  Actually, looking again at lines 92-99, there are no Option A/B/C labels for Q6. It's just a proposed scope. So my Q6 answer can be: "P0 ship + P1 time-permitting + P2 defer: 正确..." This fits the spirit.
+
+  Let me also double-check line counts. The user said "每题 1-3 行". My Q1 is 3 lines; Q2 is 2 lines; Q3 is 2 lines; Q4 is 2 lines; Q5 is 2 lines; Q6 is 2 lines. Good.
+
+  One more thing: the user asked "你 approve / approve-with-changes / reject 这个 v1.1 scope（P0 ship + P1/P2 defer）?" I should use exactly one of those terms in the final sentence. I'll use "approve-with-changes".
+
+  Final response in Chinese.
+
+  I should not call any more tools. I have the brief. I'll write the answer directly.
+
+• 我按 brief 中「Revised architecture questions (post-research)」的 Q1–Q6 作答（该节的 Q6 即 P0/P1/P2 scope）。
+
+  **Q1. Import mechanism**
+  A: 纯 DOM automation。
+  理由：Phase 0 已确认两家扩展的 fetch interception 都是 dead code，产线全部走 DOM；CDP 拦截虽有差异化潜力，但黄色调试横幅和请求体编解码问题使其不适合作为 overnight ship 的 P0 路径。100+ 连点可加入随机延迟和每批限速来降低账号风控概率。
+
+  **Q2. Notebook management**
+  A: list 用 `wXbhsf`，跳过 create。
+  理由：list 的 RPC 和 CSRF 提取已被 jetpack 验证且只读；create 的 `boVbkv` 未验证，对 Google 私有 RPC 做写操作有 ToS 和账号标记风险，手动创建 notebook 只是一次点击，不值得在 v1.1 引入。
+
+  **Q3. Selector drift**
+  A: 先做 MutationObserver self-healing。
+  理由：运行时 fallback 成本低、用户直接受益；CI canary 是优秀的 v1.2 工程基础设施，但不是今晚 ship 的阻塞项。
+
+  **Q4. AI chat extraction**
+  B: 复用 v1 的 generic article extractor。
+  理由：当晚可 ship，且避免 per-site scraper 的维护负担；LLM 后处理是 CMspark 的差异化方向，应放到 v1.2。
+
+  **Q5. MD offline button integration**
+  A: 两个独立按钮。
+  理由：在线导入与离线 MD 的用户意图和产品场景不同，分开按钮可减少误操作，也保留 v1 的隐私/离线能力。
+
+  **Q6. Scope cut for overnight ship**
+  P0 ship + P1 time-permitting + P2 defer: 正确的 scope cut。
+  理由：P0 聚焦已验证的 DOM automation + list RPC + 批处理状态机，风险可控；P1 的 generic AI extraction 是低风险扩展；P2 的 CDP/create/RSS/YouTube 均为未验证或高风险项，defer 合理。
+
+  **最终 verdict**：approve-with-changes：同意 P0/P2 划分，但建议把 P1 的 AI chat extraction 也移出本次 session，避免 overnight ship 因 P1 膨胀而延期，仅保留 notebook picker 作为下次 fast-follow。
+
+To resume this session: kimi -r session_f83b829a-5dc7-4b9b-b3f3-da91d55c4877

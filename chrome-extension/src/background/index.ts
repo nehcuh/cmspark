@@ -6,6 +6,8 @@ import { BrowserBridge } from "./browser-bridge"
 import { KeepAlive } from "./keep-alive"
 import { PageSanitizer, pageSanitizer } from "./page-sanitizer"
 import { handleNotebooklmExport } from "./notebooklm-handler"
+import { cancelBatch, getActiveBatch, resumeIfPending, startBatch } from "./notebooklm-import-orchestrator"
+import { listNotebooks } from "../notebooklm/notebook-api"
 
 let wsClient: WSClient
 let browserBridge: BrowserBridge
@@ -504,6 +506,32 @@ function setupMessageHandlers() {
         return true
       }
 
+      // ---------- v1.1: NotebookLM online importer ----------
+      case "notebooklm.list_notebooks": {
+        listNotebooks()
+          .then(result => sendResponse(result))
+          .catch(e => sendResponse({ ok: false, error: e?.message || String(e), notebooks: [] }))
+        return true
+      }
+      case "notebooklm.start_batch": {
+        const items = Array.isArray(message.items) ? message.items : []
+        const notebookId = typeof message.notebook_id === "string" ? message.notebook_id : undefined
+        startBatch(items, notebookId)
+          .then(state => sendResponse({ ok: true, state }))
+          .catch(e => sendResponse({ ok: false, error: e?.message || String(e) }))
+        return true
+      }
+      case "notebooklm.cancel_batch": {
+        cancelBatch()
+          .then(() => sendResponse({ ok: true }))
+          .catch(e => sendResponse({ ok: false, error: e?.message || String(e) }))
+        return true
+      }
+      case "notebooklm.get_batch_state": {
+        sendResponse({ ok: true, state: getActiveBatch() })
+        return false
+      }
+
       case "thread.list":
       case "thread.export_obsidian":
       case "obsidian.pick_vault_folder":
@@ -567,3 +595,8 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, _tab) => {
 })
 
 init()
+
+// v1.1: resume any in-flight NotebookLM batch import that was interrupted by SW
+// restart (MV3 idle timeout / memory pressure). The persisted state in
+// chrome.storage.local is the source of truth — closure state is lost on SW death.
+resumeIfPending().catch(e => console.error("[notebooklm] resume failed:", e))
