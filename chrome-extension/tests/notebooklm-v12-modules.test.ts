@@ -15,6 +15,82 @@ import {
 import { extractPageLinksRunner } from "../src/notebooklm/page-link-extractor"
 import { parseOpml } from "../src/notebooklm/rss-parser"
 import { parsePlaylistId } from "../src/notebooklm/youtube-api"
+import { isYouTubeUrl, normalizeYouTubeUrl } from "../src/notebooklm/rpc-client"
+
+// ---------- YouTube ----------
+
+test("isYouTubeUrl: detects standard video URL", () => {
+  assert.equal(isYouTubeUrl("https://www.youtube.com/watch?v=bZeL1IDM4PM"), true)
+})
+
+test("isYouTubeUrl: detects YouTube even with zero-width whitespace", () => {
+  assert.equal(isYouTubeUrl("https://www.youtube.com/watch?v=bZeL1IDM4PM\u200b"), true)
+})
+
+test("isYouTubeUrl: rejects non-YouTube URL", () => {
+  assert.equal(isYouTubeUrl("https://example.com/watch?v=bZeL1IDM4PM"), false)
+})
+
+test("normalizeYouTubeUrl: keeps clean URL minimal", () => {
+  assert.equal(
+    normalizeYouTubeUrl("https://www.youtube.com/watch?v=bZeL1IDM4PM"),
+    "https://www.youtube.com/watch?v=bZeL1IDM4PM",
+  )
+})
+
+test("normalizeYouTubeUrl: strips playlist params", () => {
+  assert.equal(
+    normalizeYouTubeUrl("https://www.youtube.com/watch?v=bZeL1IDM4PM&list=PL1234567890&index=2"),
+    "https://www.youtube.com/watch?v=bZeL1IDM4PM",
+  )
+})
+
+test("normalizeYouTubeUrl: strips zero-width whitespace from video ID", () => {
+  assert.equal(
+    normalizeYouTubeUrl("https://www.youtube.com/watch?v=bZeL1IDM4PM\u200b&list=PL123"),
+    "https://www.youtube.com/watch?v=bZeL1IDM4PM",
+  )
+})
+
+test("normalizeYouTubeUrl: strips CRLF pollution from clipboard", () => {
+  assert.equal(
+    normalizeYouTubeUrl("https://www.youtube.com/watch?v=bZeL1IDM4PM\r\n"),
+    "https://www.youtube.com/watch?v=bZeL1IDM4PM",
+  )
+})
+
+test("normalizeYouTubeUrl: strips non-breaking spaces (NBSP/NNBSP) common on Windows", () => {
+  assert.equal(
+    normalizeYouTubeUrl("https://www.youtube.com/watch?v=bZeL1IDM4PM\u00A0&list=PL123"),
+    "https://www.youtube.com/watch?v=bZeL1IDM4PM",
+  )
+  assert.equal(
+    normalizeYouTubeUrl("https://www.youtube.com/watch?v=bZeL1IDM4PM\u202F&list=PL123"),
+    "https://www.youtube.com/watch?v=bZeL1IDM4PM",
+  )
+})
+
+test("normalizeYouTubeUrl: strips figure space and object replacement chars", () => {
+  assert.equal(
+    normalizeYouTubeUrl("https://www.youtube.com/watch?v=bZeL1IDM4PM\u2007&list=PL123"),
+    "https://www.youtube.com/watch?v=bZeL1IDM4PM",
+  )
+  assert.equal(
+    normalizeYouTubeUrl("https://www.youtube.com/watch?v=bZeL1IDM4PM\uFFFC&list=PL123"),
+    "https://www.youtube.com/watch?v=bZeL1IDM4PM",
+  )
+})
+
+test("normalizeYouTubeUrl: handles youtu.be short URL", () => {
+  assert.equal(
+    normalizeYouTubeUrl("https://youtu.be/bZeL1IDM4PM?list=PL123"),
+    "https://www.youtube.com/watch?v=bZeL1IDM4PM",
+  )
+})
+
+test("normalizeYouTubeUrl: returns sanitized input when it is not a URL", () => {
+  assert.equal(normalizeYouTubeUrl("not a url"), "notaurl")
+})
 
 // ---------- AI chat extractor ----------
 

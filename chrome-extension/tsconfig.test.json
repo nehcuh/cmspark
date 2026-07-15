@@ -31,6 +31,7 @@
     "src/notebooklm/rss-parser.ts",
     "src/notebooklm/youtube-api.ts",
     "src/notebooklm/cdp-fetch-interceptor.ts",
+    "src/notebooklm/rpc-client.ts",
     "src/sidepanel/hooks/useModalDialog.ts",
     "tests/**/*.ts"
   ],

@@ -76,10 +76,26 @@ export function buildAddTextSourceParams(notebookId: string, title: string, cont
 
 // ----------------------- self-contained runner (injected) -----------------------
 
+/** Strip invisible / control / whitespace characters that commonly ride along when a URL is
+ *  copied from a chat app, email, or (on Windows) the clipboard. These bytes
+ *  break URL.hostname matching and pollute URLSearchParams values, which makes
+ *  normalizeYouTubeUrl fall back to the raw URL — leaving playlist params in
+ *  place and causing NotebookLM to return status [5] = NOT_FOUND.
+ *
+ *  Covers \p{C} (control/format/private-use/surrogate/unassigned) and \p{Z}
+ *  (space separators such as NBSP \u00A0, NNBSP \u202F, figure space \u2007)
+ *  which are common Windows clipboard contaminants. */
+function sanitizeUrlInput(url: string): string {
+  // \p{C} = all control/format/private-use/surrogate/unassigned characters
+  // \p{Z} = all space separators (incl. NBSP \u00A0, NNBSP \u202F, figure space \u2007)
+  // \uFFFC = Object Replacement Character (Windows clipboard artifact, not in \p{C}).
+  return url.replace(/[\p{C}\p{Z}\uFFFC]+/gu, "")
+}
+
 /** Detect if a URL is a YouTube video URL. */
 export function isYouTubeUrl(url: string): boolean {
   try {
-    const u = new URL(url)
+    const u = new URL(sanitizeUrlInput(url))
     const host = u.hostname.toLowerCase()
     return (
       host === "youtube.com" || host === "www.youtube.com" ||
@@ -95,22 +111,23 @@ export function isYouTubeUrl(url: string): boolean {
  *  NotebookLM's backend rejects YouTube URLs with extra query params (status [5] = NOT_FOUND).
  *  notebooklm-py passes raw URLs but real-world testing shows playlist params break it. */
 export function normalizeYouTubeUrl(url: string): string {
+  const cleaned = sanitizeUrlInput(url)
   try {
-    const u = new URL(url)
+    const u = new URL(cleaned)
     const host = u.hostname.toLowerCase()
     let videoId: string | null = null
 
     if (host === "youtu.be") {
-      videoId = u.pathname.slice(1).split("/")[0] || null
+      videoId = sanitizeUrlInput(u.pathname.slice(1).split("/")[0] || "")
     } else {
       // watch?v=VIDEO_ID
-      videoId = u.searchParams.get("v")
+      videoId = sanitizeUrlInput(u.searchParams.get("v") || "")
       // youtu.be/VIDEO_ID, youtube.com/shorts/VIDEO_ID, /embed/VIDEO_ID
       if (!videoId) {
         const parts = u.pathname.split("/").filter(Boolean)
         const prefixes = ["shorts", "embed", "live", "v"]
         if (parts.length >= 2 && prefixes.includes(parts[0].toLowerCase())) {
-          videoId = parts[1]
+          videoId = sanitizeUrlInput(parts[1])
         }
       }
     }
@@ -118,10 +135,11 @@ export function normalizeYouTubeUrl(url: string): string {
     if (videoId && /^[a-zA-Z0-9_-]+$/.test(videoId)) {
       return `https://www.youtube.com/watch?v=${videoId}`
     }
-    // If we can't extract a video ID, return original (might fail but at least try)
-    return url
+    // If we can't extract a video ID, at least return the sanitized URL rather
+    // than the raw clipboard payload which may contain invisible characters.
+    return cleaned
   } catch {
-    return url
+    return cleaned
   }
 }
 
