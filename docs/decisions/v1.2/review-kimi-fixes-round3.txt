@@ -1,0 +1,81 @@
+tee: docs/decisions/v1.2/review-kimi-fixes-round3.txt: No such file or directory
+  18. **Potential issue: createNotebookRunner button selection could fail if the create button is inside a shadow DOM. NotebookLM uses Angular Material which doesn't typically use shadow DOM. OK.**
+
+  19. **Potential issue in listNotebooksViaTab parsing**: The regex for chunk length `/^(\d+)\s*\n/` might not handle all chunked encoding formats. But this is from round 2, not round 3.
+
+  20. **The UI select minWidth fix uses inline styles. OK.**
+
+  Now, the user asks me to answer 5 questions concisely (<= 500字). I should give:
+  1. approve / approve-with-changes / reject
+  2. Are the three fixes complete? Any omissions?
+  3. New risks?
+  4. What else should be changed?
+  5. One-sentence overall assessment.
+
+  Let me formulate my answer in Chinese since user wrote in Chinese. Keep it under 500 Chinese characters ideally, but the user said <= 500字 which could mean Chinese characters. I'll be concise.
+
+  My verdict:
+  1. approve-with-changes (or maybe approve since the required fixes are there, but I want to note importTextRunner gap). Given the user asked for a strict independent reviewer, I'll say approve-with-changes because importTextRunner needs the same submit fallback.
+
+  2. Three fixes are all in place. UI layout fixed. Notebook create button disambiguation fixed. URL submit fallback + Enter + pointer events fixed. Round 2 fixes also verified. Omission: the same permissive submit fallback wasn't applied to importTextRunner.
+
+  3. New risk: text import still relies solely on registry S.submitButton + .click(), no fallback. If Angular's text-import submit differs or selector drifts, it will fail. Also, homeReady pre-check doesn't require "notebook" so could falsely ready on source-only page. And full pointer sequences lack coordinates which some frameworks require.
+
+  4. Also change: apply the same submit fallback + pointer sequence to importTextRunner; align homeReady check to require "notebook"/"笔记本" to avoid false ready.
+
+  5. One-sentence: "本轮三个核心修复均已落地，但 importTextRunner 的提交按钮仍沿用旧路径，建议补齐后再合并。"
+
+  Let me count characters roughly. Should be under 500字.
+
+  Actually, I should be more precise. Let me also consider whether to actually run tests or build. The user is asking for a code review of these three files. They didn't ask me to run tests. As an independent reviewer, I could verify by reading. Since this is a review of uncommitted changes, reading is appropriate. I won't run tests unless asked.
+
+  Wait, the user's request says "请阅读这些文件的最新版本（有未提交修改）" and then answer. So reading is exactly what's requested. No need to run build.
+
+  Let me double check importTextRunner submit handling again:
+  Lines 667-671:
+  ```
+  const submit = resolveStrategy<HTMLElement>(S.submitButton, 2000, dialog)
+  if (!submit) return { ok: false, error: "Submit button not found" }
+  const enabled = await waitForAngularEnabled(submit, 5000)
+  if (!enabled) return { ok: false, error: "Submit button did not become enabled" }
+  submit.click()
+  ```
+  Yes, no fallback, no full pointer sequence. This is a clear gap.
+
+  Also note that openAddSourceDialog in importTextRunner has full pointer sequence. navigateToTextSubPage uses just click for backBtn and textBtn. Could be improved but less critical.
+
+  Another thing: In createNotebookRunner, after clicking newBtn, it waits for dialog. But what if the button click navigates instead of opening dialog? Probably not relevant.
+
+  One more: The homeReady check in create() and the retry re-check (lines 719-750) duplicate the same button-finding logic inline. This is a lot of duplication. Could be extracted. But that's a refactor, not required.
+
+  OK I have my answer.
+
+• **1.  verdict：approve-with-changes**
+
+  **2. 三个问题修复是否到位？**
+  - 问题 1（UI 布局）：已到位。`select` 加了 `minWidth: 0`、`flex: 1`；按钮加了 `flexShrink: 0, whiteSpace: "nowrap"`；容器加了 `alignItems: "center"`。
+  - 问题 2（untitled notebook）：已到位。`createNotebookRunner` 里候选按钮必须同时含 `create/new/创建/新建` 与 `notebook/笔记本`，可过滤掉 "Create new source"。
+  - 问题 3（YouTube URL submit 找不到）：已到位。`importUrlRunner` 先走 registry selector，再扫描 dialog 内按钮做 text/aria 关键词匹配，最后还有 Enter + form submit 兜底，并补全 pointer 事件序列。
+
+  **Round 2 四项修复也已落实：**
+  - `resolveStrategyAsync` 确实是跨 rAF + setTimeout 轮询；
+  - `parseBatchExecuteResponse` / `listNotebooksOnce` 已删除；
+  - `create()` 重试时重新 `waitForTabComplete` 并再次检测 home create 按钮；
+  - add-source 点击已使用完整 pointer 序列。
+
+  **遗漏：**
+  - `importTextRunner` 的提交按钮仍只依赖 registry selector + 普通 `.click()`，没有 URL runner 的 permissive fallback、Enter 兜底和完整 pointer 序列。文本导入同样走 Angular dialog，存在同样风险，建议补齐。
+
+  **3. 新风险**
+  - 文本导入提交路径比 URL 导入脆弱，selector 漂移或 Angular 事件监听不响应 `.click()` 时会失败。
+  - `create()` 的 homeReady 预检只要求按钮含 `create/new/创建/新建`，未要求含 `notebook/笔记本`，若首页仅出现 "Create new source" 会被误判为 ready，随后 runner 才报错。
+  - 所有 pointer 事件未带 `clientX/clientY`，对依赖坐标的框架可能仍不够。
+
+  **4. 还应改什么**
+  - 给 `importTextRunner` 施加与 `importUrlRunner` 相同的 submit fallback、Enter 兜底和完整 pointer 序列。
+  - `create()` 的 homeReady 检测与 runner 对齐，要求按钮 text/aria 含 `notebook/笔记本`。
+
+  **5. 一句话总评**
+  本轮三个核心问题均已落地，但 `importTextRunner` 的提交逻辑仍沿用旧路径，补齐后合并更稳妥。
+
+To resume this session: kimi -r session_7ee5c32e-4bae-409a-9670-fa46ee05ca39

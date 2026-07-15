@@ -1,0 +1,81 @@
+tee: docs/decisions/v1.2/review-kimi-fixes-round4.txt: No such file or directory
+     - `resolveStrategy` 在 `waitForSuccess` 中只使用 CSS 第一个 selector。如果 `S.dialogContainer.css[0]` 不存在或失效，heuristic 不工作。
+     - waitForSuccess 的 MutationObserver 观察整个 document.body，可能性能开销大，但对于 30s 还好。
+     - dialog closed heuristic 在 2s 后触发，但如果 dialog 在 submit 后立刻关闭（<2s），会等到 2s 后才检测到，然后等 1.5s，总共 3.5s 就成功。这个时间对于 YouTube 来说可能不够让 source row 出现，但因为 heuristic 认为 dialog closed = accepted，所以会直接成功。这正是设计意图。
+
+  5. **关于问题2的修复**:
+     - 超时改到 30s ✓
+     - dialog closed heuristic ✓
+     - 诊断信息 ✓
+     - 但遗漏了一个点：heuristic 在 dialog 关闭后只等 1.5s 就返回成功，即使 source row 还没渲染。这意味着后续流程可能会假设 source 已经存在。但用户的要求就是 "认为成功"，所以这是符合要求的。
+
+  6. **关于问题1的修复**:
+     - 代码实现了 race，但 race 只检查 dialog 选择器和 navigation。如果 NotebookLM 创建 untitled 后导航到 /notebook/<id>，会直接走 navigation 分支。
+     - 然后等待导航，成功后尝试 rename。
+     - rename 失败不致命 ✓
+
+  让我再检查一些细节：
+
+  - 第568-569行：`document.execCommand("selectAll", false)` 和 `document.execCommand("insertText", false, name)`。selectAll 没有第三个参数，传 false 作为 showUI 参数，第三个参数 undefined 应该没问题。
+  - 第575行：分号位置 `(titleEl as HTMLElement).blur()`，前面有分号，这是正确的。
+  - 第564行：如果 titleEl 存在，先 focus 再 click。但如果 titleEl 是 contenteditable，click 可能没问题。
+  - 第555-560行：查找 button 文本是 "untitled notebook" 等。但 button 可能不是 contenteditable，对 button 使用 execCommand 不会修改其文本。不过代码把它当作 fallback，可能打开编辑模式但文本修改失败。
+
+  我觉得修复基本到位，但有几个改进点：
+
+  1. **execCommand selectAll 作用域问题**：虽然 focus 在 titleEl 上，但 `document.execCommand("selectAll")` 会选择整个可编辑区域。如果 titleEl 是 contenteditable，它会选择 titleEl 内所有内容，这是 OK 的。但如果 titleEl 不是 contenteditable，可能选择文档中其他 focus 区域。当前代码只在找到 titleEl 时才执行，但 titleEl 可能是 button。
+
+  2. **button 作为 titleEl 的处理**：如果 titleEl 是 button，点击后可能变成 input 或 contenteditable。应该等待一下让 UI 转换。当前只有 `await waitForRaf(2)`，可能不够。但因为是 best-effort，可以接受。
+
+  3. **dialog closed heuristic 的 2s 延迟**：如果 dialog 在 submit 后立即关闭，需要等到 2s 后才能检测到。但这是为了确认不是 submit 后立即关闭（例如验证错误）。不过 2s 对于某些快速失败可能仍然太短。但这是 heuristic，可以接受。
+
+  4. **缺少对 rename 成功的验证**：rename 后没有检查标题是否真的变了。但用户说 "rename 失败不致命"，所以这是符合要求的。
+
+  5. **createNotebookRunner 中 race 后没有处理 dialog 出现但没有 input 的情况**：可能需要增加诊断。
+
+  总体评价：approve-with-changes，有一些小改进可以做，但核心修复到位。
+
+  让我组织答案，<= 500 字：
+
+  1. approve-with-changes
+  2. 两个问题的修复是否到位？有遗漏吗？
+     - 问题1：基本到位。race 逻辑、dialog 流程、页面 rename、失败不致命都实现了。遗漏：rename 后没有验证标题确实改变；button fallback 上用 execCommand 修改文本可能无效。
+     - 问题2：基本到位。30s 超时、dialog closed heuristic、诊断信息都实现了。遗漏：heuristic 在 2s 后触发，如果 dialog 因错误（invalid URL）在 2s 后关闭，会假阳性。
+  3. 新风险：
+     - execCommand selectAll 在 button fallback 上可能改错地方或无效。
+     - dialog-closed heuristic 假阳性：URL 无效/网络错误导致 dialog 关闭时会被误判成功。
+     - createNotebookRunner 中 race 阶段若 dialog 出现但无 nameInput，会 30s 超时且无针对性诊断。
+  4. 还应改什么：
+     - rename 成功后验证标题文本；非 contenteditable 的 title 走 click→等待 input→setAngularValue 路径。
+     - 给 dialog-closed heuristic 增加反例检查：如错误提示/红色 snackbar 存在时不视为成功。
+     - createNotebook 的 nameInput 缺失时增加诊断返回。
+  5. 一句话总评。
+
+  控制在 500 字以内。
+
+• **1. 结论：approve-with-changes**
+
+  **2. 修复是否到位**
+
+  - **问题 1（untitled notebook）**：核心路径已覆盖。`createNotebookRunner` 中点击后通过 race 同时监听 navigation / dialog（L456-468），dialog 流程保留填名+Enter+submit（L470-525），导航到 `/notebook/<id>` 后再通过页面 title 元素 rename（L548-581），且用 try/catch 保证 rename 失败不致命。  
+    遗漏：没有验证 rename 后标题确实变成了目标名；对“文本是 Untitled notebook 的 button”fallback 使用 `execCommand` 修改可能无效。
+
+  - **问题 2（YouTube source 超时）**：已到位。`waitForSuccess` 超时改为 30s（L414/L771），增加了“submit 2s 后 dialog 关闭则再等 1.5s 即认为成功”的 heuristic（L317-327），超时返回 `sourceCount` 与 `dialogOpen` 诊断（L333-335）。
+
+  **3. 新风险**
+
+  - `document.execCommand("selectAll")` 依赖当前 focus；若 `titleEl` 是 button 而非 contenteditable，可能选不中目标或无法写入。
+  - `dialog-closed` heuristic 有假阳性：URL 无效、网络错误、服务端拒绝时也可能关闭 dialog，2s 阈值后会被判成功。
+  - race 阶段若 dialog 出现但找不到 `nameInput`，代码会跳过 dialog 块直接等导航，30s 超时后诊断较泛。
+
+  **4. 还应改什么**
+
+  - rename 成功后校验标题文本；button fallback 应 click 后等待出现 input/contenteditable，再走 `setAngularValue`。
+  - heuristic 增加反例信号：页面出现错误提示 / snackbar / 红色文本时，不因为 dialog 关闭而成功。
+  - dialog 出现但无 nameInput 时返回更有针对性的诊断。
+
+  **5. 一句话总评**
+
+  修复方向正确且覆盖了两个实测根因，但 rename 的 button-fallback 和 dialog-closed heuristic 仍有脆弱性，建议加上标题校验与错误提示反例后即可合并。
+
+To resume this session: kimi -r session_1150f815-83f5-474c-9c7f-85ea255f8f1e

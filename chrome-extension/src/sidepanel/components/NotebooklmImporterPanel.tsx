@@ -1,21 +1,21 @@
-// NotebookLM Importer side-panel overlay (v1.2 — full pathway coverage).
+// NotebookLM Importer side-panel overlay.
 //
 // Tabs:
-//   URLs     — bulk paste (v1.1)
-//   Links    — extract from current tab (v1.2 Phase C)
-//   RSS      — RSS/Atom/OPML (v1.2 Phase D)
-//   YouTube  — playlist expansion (v1.2 Phase E)
-//   AI Chat  — Claude/ChatGPT/Gemini (v1.2 Phase A)
-//
-// Notebook picker includes "+ 新建 notebook" button (v1.2 Phase B).
+//   URLs     — bulk paste
+//   Links    — extract from current tab
+//   RSS      — RSS/Atom/OPML
+//   YouTube  — playlist expansion
+//   Thread   — export current CMspark conversation thread (product-aligned
+//              replacement for the old "AI Chat from Claude/ChatGPT/Gemini" tab)
 
 import { useEffect, useRef, useState } from "react"
+import { useAgentStore } from "../store/agentStore"
 import type { BatchState, ImportItem, NotebookInfo } from "../../notebooklm/types"
 import type { ExtractedLink } from "../../notebooklm/page-link-extractor"
 import type { FeedEntry } from "../../notebooklm/rss-parser"
 import type { YouTubeVideo } from "../../notebooklm/youtube-api"
 
-type TabKey = "urls" | "links" | "rss" | "youtube" | "ai-chat"
+type TabKey = "urls" | "links" | "rss" | "youtube" | "thread"
 
 interface Props {
   onClose: () => void
@@ -54,10 +54,8 @@ export function NotebooklmImporterPanel({ onClose }: Props) {
   const [ytApiKey, setYtApiKey] = useState("")
   const [showYtKeyInput, setShowYtKeyInput] = useState(false)
 
-  // AI Chat
-  const [aiPreview, setAiPreview] = useState("")
-  const [aiPlatform, setAiPlatform] = useState("")
-  const [loadingAi, setLoadingAi] = useState(false)
+  // Thread — export current CMspark conversation
+  const [threadPreview, setThreadPreview] = useState("")
 
   // Track selected items per tab (URLs are derived from urlText; others use explicit sets)
   const [selectedLinks, setSelectedLinks] = useState<Set<string>>(new Set())
@@ -115,7 +113,7 @@ export function NotebooklmImporterPanel({ onClose }: Props) {
     if (tab === "links") return Array.from(selectedLinks).map(url => ({ url }))
     if (tab === "rss") return Array.from(selectedFeedEntries).map(url => ({ url }))
     if (tab === "youtube") return Array.from(selectedYtVideos).map(url => ({ url }))
-    if (tab === "ai-chat") return aiPreview ? [{ text: aiPreview }] : []
+    if (tab === "thread") return threadPreview ? [{ text: threadPreview }] : []
     return []
   }
 
@@ -154,7 +152,27 @@ export function NotebooklmImporterPanel({ onClose }: Props) {
   }
 
   const handleCreateNotebook = async () => {
-    const name = prompt("新 Notebook 名称：")
+    // Phase v1.2 enhancement: AI-suggest a name from the current page, then let
+    // user edit in the prompt dialog. Falls back to document.title if no LLM.
+    setCreatingNotebook(true)
+    let suggestedName = ""
+    let suggestSource: "llm" | "title" | "none" = "none"
+    try {
+      const sug = (await chrome.runtime.sendMessage({ type: "notebooklm.suggest_notebook_name" })) as
+        | { ok?: boolean; name?: string; source?: "llm" | "title" | "none"; error?: string }
+        | undefined
+      if (sug?.ok && sug.name) {
+        suggestedName = sug.name
+        suggestSource = sug.source || "none"
+      }
+    } catch {
+      // ignore — fall through to empty prompt
+    } finally {
+      setCreatingNotebook(false)
+    }
+    const placeholder = suggestSource === "llm" ? "AI 建议的名字（可编辑）" : suggestSource === "title" ? "页面标题（可编辑）" : "新 Notebook 名称"
+    const hint = suggestSource === "llm" ? "🤖 AI 基于当前页面生成" : suggestSource === "title" ? "📄 来自页面标题" : ""
+    const name = prompt(`${placeholder}${hint ? `\n${hint}` : ""}：`, suggestedName)
     if (!name || !name.trim()) return
     setCreatingNotebook(true)
     try {
@@ -249,22 +267,36 @@ export function NotebooklmImporterPanel({ onClose }: Props) {
     finally { setLoadingYt(false) }
   }
 
-  const handleExtractAiChat = async () => {
-    setLoadingAi(true)
-    setAiPreview("")
-    setAiPlatform("")
-    try {
-      const res = (await chrome.runtime.sendMessage({ type: "notebooklm.extract_ai_chat" })) as
-        | { ok?: boolean; text?: string; platform?: string; error?: string }
-        | undefined
-      if (res?.ok && res.text) {
-        setAiPreview(res.text)
-        setAiPlatform(res.platform || "unknown")
-      } else {
-        alert(`抽取失败：${res?.error || "未知"}`)
-      }
-    } catch (e: any) { alert(`异常：${e?.message || String(e)}`) }
-    finally { setLoadingAi(false) }
+  // Thread: serialize current CMspark conversation from the side panel's message
+  // state. This is the product-aligned replacement for "AI Chat from
+  // Claude/ChatGPT/Gemini" — CMspark's own thread is the valuable conversation
+  // the user wants to send to NotebookLM.
+  const { state: agentState } = useAgentStore()
+  const handleExtractThread = () => {
+    const messages = (agentState.messages || []).filter(
+      (m: any) => (m.role === "user" || m.role === "assistant") && m.content?.trim()
+    )
+    if (messages.length === 0) {
+      alert("当前线程没有可导出的对话")
+      return
+    }
+    const activeThread = (agentState.threads || []).find(t => t.id === agentState.activeThreadId)
+    const threadAlias = activeThread?.alias || "Untitled Thread"
+    const lines: string[] = [
+      `# CMspark Conversation — ${threadAlias}`,
+      `Source: CMspark Browser Agent`,
+      `Extracted: ${new Date().toISOString()}`,
+      `Turns: ${messages.length}`,
+      ``,
+      `---`,
+      ``,
+    ]
+    for (const msg of messages) {
+      const label = msg.role === "user" ? "🧑 User" : "🤖 Assistant"
+      const content = (msg.content || "").replace(/\s+/g, " ").trim()
+      lines.push(`## ${label}`, ``, content, ``, `---`, ``)
+    }
+    setThreadPreview(lines.join("\n"))
   }
 
   const handleSaveYtKey = async () => {
@@ -302,12 +334,12 @@ export function NotebooklmImporterPanel({ onClose }: Props) {
           {/* Notebook picker */}
           <div style={{ marginTop: 4 }}>
             <div style={{ fontSize: 12, color: "#888", marginBottom: 4 }}>目标 Notebook</div>
-            <div style={{ display: "flex", gap: 6 }}>
+            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
               <select
                 value={selectedNotebookId}
                 onChange={e => setSelectedNotebookId(e.target.value)}
                 disabled={loadingNotebooks || isRunning}
-                style={{ ...selectStyle, flex: 1 }}
+                style={{ ...selectStyle, flex: 1, minWidth: 0 }}
               >
                 <option value="">（使用当前打开的 Notebook）</option>
                 {notebooks.map(nb => <option key={nb.id} value={nb.id}>{nb.title}</option>)}
@@ -315,7 +347,7 @@ export function NotebooklmImporterPanel({ onClose }: Props) {
               <button
                 onClick={handleCreateNotebook}
                 disabled={creatingNotebook || isRunning}
-                style={btnStyle}
+                style={{ ...btnStyle, flexShrink: 0, whiteSpace: "nowrap" }}
                 title="创建新 notebook"
               >
                 {creatingNotebook ? "⏳" : "➕ 新建"}
@@ -334,7 +366,7 @@ export function NotebooklmImporterPanel({ onClose }: Props) {
               { k: "links", label: "📄 页面链接" },
               { k: "rss", label: "📡 RSS/OPML" },
               { k: "youtube", label: "▶️ YouTube" },
-              { k: "ai-chat", label: "🤖 AI 对话" },
+              { k: "thread", label: "💬 当前对话" },
             ] as Array<{ k: TabKey; label: string }>).map(t => (
               <button
                 key={t.k}
@@ -540,23 +572,32 @@ export function NotebooklmImporterPanel({ onClose }: Props) {
               </div>
             )}
 
-            {tab === "ai-chat" && (
+            {tab === "thread" && (
               <div>
                 <div style={{ display: "flex", gap: 8, marginBottom: 6 }}>
-                  <button onClick={handleExtractAiChat} disabled={loadingAi || isRunning} style={btnStyle}>
-                    {loadingAi ? "抽取中..." : "从当前 tab 抽取对话"}
+                  <button onClick={handleExtractThread} disabled={isRunning} style={btnStyle}>
+                    抽取当前对话
                   </button>
-                  <span style={hintStyle}>支持 Claude / ChatGPT / Gemini</span>
+                  <span style={hintStyle}>
+                    {(agentState.messages || []).filter((m: any) => m.role === "user" || m.role === "assistant").length} 条消息
+                  </span>
                 </div>
-                {aiPlatform && <div style={hintStyle}>检测到平台: {aiPlatform}</div>}
-                <textarea
-                  value={aiPreview}
-                  onChange={e => setAiPreview(e.target.value)}
-                  placeholder="抽取后会显示在这里（可编辑后再导入）"
-                  disabled={isRunning}
-                  style={{ ...textareaStyle, minHeight: 200 }}
-                />
-                <div style={hintStyle}>{aiPreview.length} 字符</div>
+                {threadPreview ? (
+                  <>
+                    <textarea
+                      value={threadPreview}
+                      onChange={e => setThreadPreview(e.target.value)}
+                      placeholder="点击「抽取当前对话」生成预览（可编辑后再导入）"
+                      disabled={isRunning}
+                      style={{ ...textareaStyle, minHeight: 200 }}
+                    />
+                    <div style={hintStyle}>{threadPreview.length} 字符</div>
+                  </>
+                ) : (
+                  <div style={{ ...textareaStyle, minHeight: 100, color: "#999", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    点击「抽取当前对话」从 CMspark 线程生成 NotebookLM 文本源
+                  </div>
+                )}
               </div>
             )}
           </div>

@@ -8,6 +8,8 @@ import { PageSanitizer, pageSanitizer } from "./page-sanitizer"
 import { handleNotebooklmExport } from "./notebooklm-handler"
 import { cancelBatch, getActiveBatch, resumeIfPending, startBatch } from "./notebooklm-import-orchestrator"
 import { createNotebook, listNotebooks } from "../notebooklm/notebook-api"
+import { createNotebookViaRpc } from "../notebooklm/rpc-client"
+import { suggestNotebookName } from "../notebooklm/notebook-name-suggester"
 import { extractAiChatRunner } from "../notebooklm/ai-chat-extractor"
 import { extractPageLinksRunner } from "../notebooklm/page-link-extractor"
 import { discoverFeed, fetchFeed, fetchMultipleFeeds, parseOpml } from "../notebooklm/rss-parser"
@@ -543,9 +545,18 @@ function setupMessageHandlers() {
           sendResponse({ ok: false, error: "Notebook name required" })
           return false
         }
-        createNotebook(name)
+        // v1.3: RPC-first. The old DOM-automation createNotebook is unreliable
+        // (untitled notebooks, false positives). RPC returns definitive notebookId.
+        createNotebookViaRpc(name)
           .then(sendResponse)
           .catch(e => sendResponse({ ok: false, error: e?.message || String(e) }))
+        return true
+      }
+
+      case "notebooklm.suggest_notebook_name": {
+        suggestNotebookName()
+          .then(sendResponse)
+          .catch(e => sendResponse({ ok: false, source: "none", error: e?.message || String(e) }))
         return true
       }
 

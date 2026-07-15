@@ -12,9 +12,21 @@ import type { SelectorRegistry, SelectorStrategy } from "./types"
 
 const addSourceButton: SelectorStrategy = {
   key: "addSourceButton",
-  css: [".add-source-button", 'button[aria-label*="Add source"]', 'button[aria-label*="添加来源"]'],
-  textContent: ["Add source", "添加来源"],
-  ariaLabel: ["Add source", "添加来源"],
+  // Bug fix: NotebookLM UI changed — old `.add-source-button` class may be gone.
+  // Cast a wider net: Material fab, button with add icon, button with "add" text.
+  css: [
+    ".add-source-button",
+    'button[aria-label*="Add source"]',
+    'button[aria-label*="添加来源"]',
+    'button[aria-label*="Add"]',
+    'button[aria-label*="添加"]',
+    "button.mat-fab",
+    "button.mdc-fab",
+    ".mat-mdc-fab",
+    'button[color="primary"]',
+  ],
+  textContent: ["Add source", "Add sources", "Add", "添加来源", "添加", "新增来源", "新增"],
+  ariaLabel: ["Add source", "Add sources", "Add", "添加来源", "添加", "新增来源"],
 }
 
 const dialogContainer: SelectorStrategy = {
@@ -24,25 +36,62 @@ const dialogContainer: SelectorStrategy = {
 
 const websiteLinkOption: SelectorStrategy = {
   key: "websiteLinkOption",
-  // .drop-zone-icon-button whose inner <img> has text/icon matching "link"
-  css: [".drop-zone-icon-button"],
-  textContent: ["Website", "网站", "Link", "Paste any link", "粘贴任何链接"],
+  // Bug fix: NotebookLM UI changed — old .drop-zone-icon-button may be gone.
+  // Cast wider net: any clickable element whose text/aria mentions link/website/url.
+  css: [
+    ".drop-zone-icon-button",
+    "button[aria-label*='Website']",
+    "button[aria-label*='Link']",
+    "button[aria-label*='网站']",
+    "button[aria-label*='链接']",
+    "[role='button'][aria-label*='Website']",
+    "[role='button'][aria-label*='Link']",
+  ],
+  textContent: ["Website", "网站", "Link", "URL", "链接", "Paste any link", "粘贴任何链接", "网址"],
+  ariaLabel: ["Website", "网站", "Link", "URL", "链接", "Paste any link", "粘贴任何链接", "网址"],
 }
 
 const copiedTextOption: SelectorStrategy = {
   key: "copiedTextOption",
-  css: [".drop-zone-icon-button"],
-  textContent: ["Copied text", "复制的文字", "Text", "Paste text here", "在此处粘贴文字"],
+  css: [
+    ".drop-zone-icon-button",
+    "button[aria-label*='Copied text']",
+    "button[aria-label*='Text']",
+    "button[aria-label*='复制的文字']",
+    "button[aria-label*='文字']",
+    "[role='button'][aria-label*='Copied text']",
+    "[role='button'][aria-label*='Text']",
+  ],
+  textContent: ["Copied text", "复制的文字", "Text", "Paste text", "粘贴文字", "在此处粘贴文字", "文字"],
+  ariaLabel: ["Copied text", "复制的文字", "Text", "Paste text", "粘贴文字", "文字"],
 }
 
 const urlInput: SelectorStrategy = {
   key: "urlInput",
-  css: [".urls-input-container textarea", "textarea[placeholder*='Paste any link']", "textarea[placeholder*='粘贴任何链接']"],
+  // Bug fix: also accept <input> (not just textarea) + broader placeholders.
+  css: [
+    ".urls-input-container textarea",
+    ".urls-input-container input",
+    "textarea[placeholder*='Paste']",
+    "textarea[placeholder*='粘贴']",
+    "input[placeholder*='Paste']",
+    "input[placeholder*='粘贴']",
+    "input[type='url']",
+    "input[type='text']",
+  ],
+  ariaLabel: ["URL", "Website", "Link", "网址", "链接"],
 }
 
 const textInput: SelectorStrategy = {
   key: "textInput",
-  css: [".copied-text-input-textarea", "textarea[placeholder*='Paste text here']", "textarea[placeholder*='在此处粘贴文字']"],
+  css: [
+    ".copied-text-input-textarea",
+    "textarea[placeholder*='Paste text']",
+    "textarea[placeholder*='粘贴文字']",
+    "textarea[placeholder*='在此处粘贴']",
+    "textarea",
+  ],
+  ariaLabel: ["Text", "Paste text", "文字", "粘贴文字"],
 }
 
 const submitButton: SelectorStrategy = {

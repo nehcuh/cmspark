@@ -18,8 +18,18 @@
 // Anti-pattern: do NOT cache batch state in closure across awaits — SW may die and
 // the closure is lost. Always read/write via chrome.storage.local.
 
-import { encodeSelectorsForRunner, importTextRunner, importUrlRunner } from "../notebooklm/dom-automation"
+// v1.3: DOM automation removed from main path. RPC-first architecture.
+// Imports kept commented for reference; if RPC ever needs DOM fallback, uncomment.
+// import { encodeSelectorsForRunner, importTextRunner, importUrlRunner } from "../notebooklm/dom-automation"
+import {
+  addSourceViaRpc,
+  addTextSourceViaRpc,
+  isYouTubeUrl,
+} from "../notebooklm/rpc-client"
 import type { BatchState, ImportItem, ImportItemResult } from "../notebooklm/types"
+
+// Suppress unused-import warning during transition (isYouTubeUrl used in runOne)
+void isYouTubeUrl
 
 const STORAGE_KEY = "notebooklm_batch_state_v1"
 const MAX_BATCH = 50
@@ -107,28 +117,25 @@ async function ensureNotebookLmTab(notebookId?: string): Promise<number> {
   return tab.id
 }
 
-/** Poll a tab until readyState=complete AND the add-source button is present.
+/** Poll a tab until readyState AND we're on a /notebook/ page.
  *
- * Phase 5 review fix: readyState=complete fires BEFORE Angular boot on SPAs,
- * causing the first item to fail selector match. Also wait for a known Angular
- * element (the add-source button) to appear. */
+ * Kimi review catch: NotebookLM is an Angular SPA — readyState may stay at
+ * "interactive" indefinitely. Accept "interactive" or "complete". The real
+ * readiness signal is isNotebookPage (URL on /notebook/<id>). */
 async function waitForTabReady(tabId: number, timeoutMs: number): Promise<void> {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     try {
       const [result] = await chrome.scripting.executeScript({
         target: { tabId },
-        func: () => {
-          // Both readyState AND a NotebookLM-specific element must be present
-          const addBtn = document.querySelector(".add-source-button") || document.querySelector('button[aria-label*="Add source"]') || document.querySelector('button[aria-label*="添加来源"]')
-          return {
-            ready: document.readyState,
-            hasAddBtn: !!addBtn,
-          }
-        },
+        func: () => ({
+          ready: document.readyState,
+          pathname: location.pathname,
+          isNotebookPage: location.pathname.startsWith("/notebook/"),
+        }),
       })
-      const r = result?.result as { ready: string; hasAddBtn: boolean } | undefined
-      if (r?.ready === "complete" && r?.hasAddBtn) return
+      const r = result?.result as { ready: string; isNotebookPage: boolean } | undefined
+      if ((r?.ready === "complete" || r?.ready === "interactive") && r?.isNotebookPage) return
     } catch {
       // Tab may not be ready for injection yet
     }
@@ -158,34 +165,42 @@ function isRetryableError(error: string | undefined): boolean {
   return true
 }
 
-/** Run a single import via injected runner. Returns ok + optional error. */
-async function runOne(tabId: number, item: ImportItem): Promise<{ ok: boolean; error?: string }> {
+/** Run a single import. v1.3: RPC-first (definitive success), DOM fallback only
+ *  if RPC fails with a non-recoverable error.
+ *
+ *  RPC architecture: batchexecute call inside NotebookLM tab. Response contains
+ *  source ID on success → definitive. No more "dialog closed = success" false
+ *  positives that plagued v1.1/v1.2.
+ */
+async function runOne(item: ImportItem, notebookId?: string): Promise<{ ok: boolean; error?: string }> {
   const isUrl = !!item.url
   const isText = !!item.text
   if (!isUrl && !isText) return { ok: false, error: "Item has neither url nor text" }
   if (isUrl && isText) return { ok: false, error: "Item has both url and text" }
 
-  // Cache selectors once per SW life
-  const selectorsJSON = encodeSelectorsForRunner()
+  // RPC-first path
+  if (!notebookId) {
+    return { ok: false, error: "RPC path requires a target notebookId (no 'use currently-open notebook' supported yet)" }
+  }
 
   try {
-    const results = await chrome.scripting.executeScript({
-      target: { tabId },
-      func: isUrl ? importUrlRunner : importTextRunner,
-      args: isUrl ? [item.url!, selectorsJSON] : [item.text!, selectorsJSON],
-    })
-    const frame = results?.[0] as any
-    if (frame?.error) return { ok: false, error: `Injection error: ${frame.error}` }
-    const result = frame?.result as { ok: boolean; error?: string } | undefined
-    if (!result) return { ok: false, error: "Runner returned no result" }
-    return result
-  } catch (e: any) {
-    const msg = e?.message || String(e)
-    // Phase 5 review: detect tab-lost signals explicitly so the loop can re-acquire
-    if (msg.includes("No tab with id") || msg.includes("Cannot access contents") || msg.includes("Tab was closed")) {
-      return { ok: false, error: `__TAB_LOST__: ${msg}` }
+    if (isUrl) {
+      const r = await addSourceViaRpc(notebookId, item.url!)
+      // Kimi review: RPC response is definitive — sourceId present = success.
+      // No more false positives from dialog-closure heuristics.
+      return r.ok
+        ? { ok: true }
+        : { ok: false, error: r.error || "RPC add source failed" }
+    } else {
+      // Text import: title is the first 30 chars of text (NotebookLM uses title for display)
+      const title = (item.text!.slice(0, 50).replace(/\n/g, " ").trim()) || "Imported text"
+      const r = await addTextSourceViaRpc(notebookId, title, item.text!)
+      return r.ok
+        ? { ok: true }
+        : { ok: false, error: r.error || "RPC add text failed" }
     }
-    return { ok: false, error: `executeScript failed: ${msg}` }
+  } catch (e: any) {
+    return { ok: false, error: `RPC crashed: ${e?.message || String(e)}` }
   }
 }
 
@@ -327,7 +342,7 @@ async function runBatchLoop(notebookId?: string): Promise<void> {
       if (activeBatch.cancelRequested) break
       if (!tabId) break
 
-      const r = await runOne(tabId, item)
+      const r = await runOne(item, activeBatch.notebookId)
       if (r.ok) {
         ok = true
         break
