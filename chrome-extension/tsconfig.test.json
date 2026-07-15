@@ -26,6 +26,11 @@
     "src/notebooklm/selectors.ts",
     "src/notebooklm/notebook-api.ts",
     "src/notebooklm/dom-automation.ts",
+    "src/notebooklm/ai-chat-extractor.ts",
+    "src/notebooklm/page-link-extractor.ts",
+    "src/notebooklm/rss-parser.ts",
+    "src/notebooklm/youtube-api.ts",
+    "src/notebooklm/cdp-fetch-interceptor.ts",
     "src/sidepanel/hooks/useModalDialog.ts",
     "tests/**/*.ts"
   ],

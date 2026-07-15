@@ -7,7 +7,11 @@ import { KeepAlive } from "./keep-alive"
 import { PageSanitizer, pageSanitizer } from "./page-sanitizer"
 import { handleNotebooklmExport } from "./notebooklm-handler"
 import { cancelBatch, getActiveBatch, resumeIfPending, startBatch } from "./notebooklm-import-orchestrator"
-import { listNotebooks } from "../notebooklm/notebook-api"
+import { createNotebook, listNotebooks } from "../notebooklm/notebook-api"
+import { extractAiChatRunner } from "../notebooklm/ai-chat-extractor"
+import { extractPageLinksRunner } from "../notebooklm/page-link-extractor"
+import { discoverFeed, fetchFeed, fetchMultipleFeeds, parseOpml } from "../notebooklm/rss-parser"
+import { fetchPlaylist, getYouTubeApiKey, parsePlaylistId, setYouTubeApiKey } from "../notebooklm/youtube-api"
 
 let wsClient: WSClient
 let browserBridge: BrowserBridge
@@ -530,6 +534,150 @@ function setupMessageHandlers() {
       case "notebooklm.get_batch_state": {
         sendResponse({ ok: true, state: getActiveBatch() })
         return false
+      }
+
+      // ---------- v1.2: pathways + notebook create ----------
+      case "notebooklm.create_notebook": {
+        const name = typeof message.name === "string" ? message.name : ""
+        if (!name.trim()) {
+          sendResponse({ ok: false, error: "Notebook name required" })
+          return false
+        }
+        createNotebook(name)
+          .then(sendResponse)
+          .catch(e => sendResponse({ ok: false, error: e?.message || String(e) }))
+        return true
+      }
+
+      case "notebooklm.extract_page_links": {
+        ;(async () => {
+          try {
+            const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
+            if (!tab?.id) {
+              sendResponse({ ok: false, error: "No active tab" })
+              return
+            }
+            const results = await chrome.scripting.executeScript({
+              target: { tabId: tab.id },
+              func: extractPageLinksRunner,
+            })
+            const frame = results?.[0] as any
+            if (frame?.error) {
+              sendResponse({ ok: false, error: `Injection error: ${frame.error}` })
+              return
+            }
+            sendResponse(frame?.result || { ok: false, error: "No result" })
+          } catch (e: any) {
+            sendResponse({ ok: false, error: e?.message || String(e) })
+          }
+        })()
+        return true
+      }
+
+      case "notebooklm.extract_ai_chat": {
+        ;(async () => {
+          try {
+            const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
+            if (!tab?.id) {
+              sendResponse({ ok: false, error: "No active tab" })
+              return
+            }
+            const results = await chrome.scripting.executeScript({
+              target: { tabId: tab.id },
+              func: extractAiChatRunner,
+            })
+            const frame = results?.[0] as any
+            if (frame?.error) {
+              sendResponse({ ok: false, error: `Injection error: ${frame.error}` })
+              return
+            }
+            sendResponse(frame?.result || { ok: false, error: "No result" })
+          } catch (e: any) {
+            sendResponse({ ok: false, error: e?.message || String(e) })
+          }
+        })()
+        return true
+      }
+
+      case "notebooklm.fetch_feed": {
+        const url = typeof message.url === "string" ? message.url : ""
+        if (!url) {
+          sendResponse({ ok: false, error: "URL required" })
+          return false
+        }
+        ;(async () => {
+          try {
+            const feed = await fetchFeed(url)
+            if (feed) {
+              sendResponse({ ok: true, feed })
+              return
+            }
+            const discovered = await discoverFeed(url)
+            if (discovered) {
+              const feed2 = await fetchFeed(discovered)
+              if (feed2) {
+                sendResponse({ ok: true, feed: feed2, discoveredFrom: discovered })
+                return
+              }
+            }
+            sendResponse({ ok: false, error: "无法解析为 RSS / Atom feed（也尝试了自动发现）" })
+          } catch (e: any) {
+            sendResponse({ ok: false, error: e?.message || String(e) })
+          }
+        })()
+        return true
+      }
+
+      case "notebooklm.parse_opml": {
+        const text = typeof message.text === "string" ? message.text : ""
+        try {
+          const feeds = parseOpml(text)
+          sendResponse({ ok: true, feeds })
+        } catch (e: any) {
+          sendResponse({ ok: false, error: e?.message || String(e) })
+        }
+        return false
+      }
+
+      case "notebooklm.fetch_multiple_feeds": {
+        const urls: string[] = Array.isArray(message.urls) ? message.urls : []
+        ;(async () => {
+          try {
+            const feeds = await fetchMultipleFeeds(urls)
+            sendResponse({ ok: true, feeds })
+          } catch (e: any) {
+            sendResponse({ ok: false, error: e?.message || String(e) })
+          }
+        })()
+        return true
+      }
+
+      case "notebooklm.fetch_youtube_playlist": {
+        const url = typeof message.url === "string" ? message.url : ""
+        const playlistId = parsePlaylistId(url)
+        if (!playlistId) {
+          sendResponse({ ok: false, error: "无法解析 playlist ID（确认是 YouTube playlist URL）" })
+          return false
+        }
+        fetchPlaylist(playlistId)
+          .then(sendResponse)
+          .catch(e => sendResponse({ ok: false, error: e?.message || String(e) }))
+        return true
+      }
+
+      case "notebooklm.set_youtube_api_key": {
+        const key = typeof message.key === "string" ? message.key : ""
+        setYouTubeApiKey(key)
+          .then(() => sendResponse({ ok: true }))
+          .catch(e => sendResponse({ ok: false, error: e?.message || String(e) }))
+        return true
+      }
+
+      case "notebooklm.get_youtube_api_key": {
+        getYouTubeApiKey()
+          .then(key => sendResponse({ ok: true, key }))
+          .catch(e => sendResponse({ ok: false, error: e?.message || String(e) }))
+        return true
       }
 
       case "thread.list":
