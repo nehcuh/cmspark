@@ -1,0 +1,101 @@
+tee: docs/decisions/v1.2/review-kimi-fixes-round2.txt: No such file or directory
+
+  Let me double-check the isCancelled logic:
+  ```
+  async function isCancelled(): Promise<boolean> {
+    if (activeBatch && activeBatch.cancelRequested) return true
+    const persisted = await loadPersistedBatch()
+    return !persisted
+  }
+  ```
+  If activeBatch exists and cancelRequested false, it loads persisted. If persisted returns null (because done/cancelled), returns true. But during running, persisted exists, returns false. OK. But if SW died and activeBatch is null, it relies on persisted. If persisted is running, returns false. OK.
+
+  Wait: after batch completes, activeBatch is set to null and persisted cleared. If isCancelled called after completion, returns true. That's fine because loop wouldn't be running.
+
+  Actually in runBatchLoop, it only calls isCancelled? No, it checks activeBatch.cancelRequested directly. It doesn't call isCancelled. So isCancelled is unused? Let me grep... It's defined but I don't see it called. So it's dead code. Not a big issue.
+
+  OK, now write the review in Chinese, <= 500 words.
+
+  Need to cite file/line references.
+
+  Let me count words roughly.
+
+  I'll structure:
+  1. 结论：approve-with-changes
+  2. 是否解决：基本解决，但有遗漏
+  3. 新风险
+  4. 还应改什么
+  5. 一句话总评
+
+  Keep under 500 Chinese characters or words? The user said <= 500字 which likely means 500 Chinese characters. I'll aim for ~400-500 characters.
+
+  Actually they said "<= 500 字" which is characters. So I should keep it around 450 Chinese characters.
+
+  Let me draft:
+
+  **1. 结论：approve-with-changes。** 修复方向正确，但有两处实现缺陷需要修。
+
+  **2. Bug 修复评估：**
+  - Bug 1 基本解决：改为 tab 内 fetch home HTML + regex 取 SNlM0e，处理 UUID 在 nb[2]，用 UUID 前缀兜底。
+  - Bug 2 基本解决：`waitForTabComplete` 监听 `onUpdated` status=complete + URL 匹配，runner 有 5 次指数退避。
+  - Bug 3 基本解决：FAB/mat-icon add/最短文本优先级，完整 pointer/mouse 序列，先 Enter 再 button。
+  - Bug 4 基本解决：selectors 扩宽 + runner 宽松 fallback + 诊断输出。
+  - Bug 5 已加 10s AbortController。
+  - Bug 6 finally 关 tab 已加。
+
+  **3. 新风险：**
+  - 宽松选择器可能误点（如页面上的 "Add" 文本），靠长度<30 和 dialog root 缓解。
+  - 重试延迟较长，失败反馈慢。
+  - 只关闭自己开的 tab，不会清理用户已有的 NLM tab。
+
+  **4. 还应改：**
+  - `dom-automation.ts:resolveStrategy` 的 text/aria fallback 轮询是死的：while 里直接 break，`timeoutMs` 被 void，动态 Angular 元素检测不可靠。应实现真正轮询。
+  - `notebook-api.ts` 里 `parseBatchExecuteResponse` / `listNotebooksOnce` 已成死代码且没处理 chunk length，注释也过期。
+  - `create()` 重试时未重新等待 homeReady，非 frame 类错误（Angular 未 bootstrap）会永久失败。
+  - add-source 点击也应使用完整 pointer 序列。
+  - create() 开的 tab 未关闭。
+
+  **5. 一句话总评：** 方向对、覆盖全，但 `resolveStrategy` 的失效轮询和若干死代码/注释会让后续 Angular UI 变化时再次脆断，建议先修再合。
+
+  Let me count: that's around 420 characters. Good.
+
+  Actually I should be more precise about line refs. The user asked to cite code locations. I'll add line refs.
+
+  - `dom-automation.ts` resolveStrategy: lines 57-60, 330-345, the while loops have `void timeoutMs` and immediate `break`. In importUrlRunner at lines 42-75, line 60 `void timeoutMs` and the while at 397-412 has `break`. In importTextRunner similar at 330-359 and 454+.
+
+  Actually line 60 says `void timeoutMs` - it explicitly ignores timeout. And the while loop at 397 has break. So yes.
+
+  For notebook-api.ts dead code: lines 52-74 parseBatchExecuteResponse, lines 88-149 listNotebooksOnce.
+
+  For create() not re-checking homeReady: lines 785-820 retry loop, doesn't re-poll create button.
+
+  For create tab not closed: create() at line 700 doesn't have finally to remove tab.
+
+  OK, I'll include concise refs.
+
+  Let me write final response in Chinese with refs.
+
+• **1. 结论：approve-with-changes。** 第二轮修复方向正确，但有两处实现缺陷需要先修。
+
+  **2. 修复评估：** 6 个 bug 基本都已覆盖。
+  - Bug 1：`notebook-api.ts` 改为在 tab 内 fetch home HTML + regex 取 `SNlM0e`（`listNotebooksViaTab`），解析 `nb[2]` 为 UUID，title 兜底为 UUID 前缀。
+  - Bug 2：`create()` 用 `chrome.tabs.onUpdated` 等 `status=complete` + URL 匹配，runner 注入 5 次指数退避。
+  - Bug 3：`createNotebookRunner` 用 FAB / mat-icon add / 最短文本优先级，完整 pointer/mouse 事件序列，先 Enter 再 button。
+  - Bug 4：`selectors.ts` 大幅扩宽；`dom-automation.ts` 加了宽松 fallback 和诊断 dump。
+  - Bug 5：`notebook-name-suggester.ts` 已加 10s `AbortController`。
+  - Bug 6：`listNotebooksViaTab` 的 `finally` 会关闭自己开的 tab。
+
+  **3. 新风险：**
+  - 宽松 text/aria 选择器仍可能误点页面上的 “Add” 元素（靠长度<30 和 dialog root 缓解）。
+  - 重试最长可达 30s，失败反馈偏慢。
+  - `create()` 开的 tab 不会被关闭，可能留下后台标签。
+
+  **4. 还应改：**
+  - `dom-automation.ts` 的 `resolveStrategy` text/aria fallback 轮询是死的：`void timeoutMs` 且 `while` 里直接 `break`（如 `importUrlRunner:60,397-412`），动态 Angular 元素检测不可靠，应实现真正轮询。
+  - `notebook-api.ts` 的 `parseBatchExecuteResponse` / `listNotebooksOnce` 已成死代码且未处理 chunked 行，注释也过期。
+  - `create()` 的 5 次重试没有重新等待 homeReady，非 frame 类错误（Angular 未 bootstrap）会永久失败。
+  - add-source 点击也应使用完整 pointer 序列，而不是仅 `.click()`。
+
+  **5. 一句话总评：** 修复方向对、覆盖全，但 `resolveStrategy` 失效的轮询和死代码会让下次 UI 微调时再次脆断，建议修完再合。
+
+To resume this session: kimi -r session_5c26db58-a035-499f-ad64-d5b8430c56b2

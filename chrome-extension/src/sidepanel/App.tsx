@@ -9,6 +9,7 @@ import { SettingsSlideout } from "./components/SettingsSlideout"
 import { McpServerForm } from "./components/McpServerForm"
 import { SlashCommandPopover } from "./components/SlashCommandPopover"
 import { SkillCraftPanel } from "./components/SkillCraftPanel"
+import { NotebooklmImporterPanel } from "./components/NotebooklmImporterPanel"
 import { Modal } from "./components/ui/Modal"
 import { AgentStoreProvider, useAgentStore } from "./store/agentStore"
 import type { ConnectionState, SkillMeta, FileAttachment } from "./types"
@@ -83,6 +84,7 @@ export function App() {
 function AppContent() {
   const { connectionState } = useWebSocket()
   const [craftOpen, setCraftOpen] = useState(false)
+  const [nbImporterOpen, setNbImporterOpen] = useState(false)
   const [showLogs, setShowLogs] = useState(false)
   const { state: appState, dispatch } = useAgentStore()
   const [toast, setToast] = useState("")
@@ -100,7 +102,7 @@ function AppContent() {
     <div style={styles.container}>
       <style>{globalCSS}</style>
       {toast && <div style={toastStyles.toast}>{toast}</div>}
-      <Header connectionState={connectionState} onCraft={() => setCraftOpen(true)} onToggleLogs={() => setShowLogs(!showLogs)} />
+      <Header connectionState={connectionState} onCraft={() => setCraftOpen(true)} onToggleLogs={() => setShowLogs(!showLogs)} onOpenNotebooklmImporter={() => setNbImporterOpen(true)} />
       <ChatView />
       <BottomBar />
       <InputArea />
@@ -109,6 +111,7 @@ function AppContent() {
       <SecurityConfirmationDialog />
       <McpServerForm />
       {craftOpen && <SkillCraftPanel onClose={() => setCraftOpen(false)} />}
+      {nbImporterOpen && <NotebooklmImporterPanel onClose={() => setNbImporterOpen(false)} />}
       <DisconnectedBanner visible={connectionState === "disconnected"} onRetry={() => {
         chrome.runtime.sendMessage({ type: "getStatus" }, (response) => {
           if (chrome.runtime.lastError) return
@@ -290,9 +293,92 @@ function HighlightedCode({ code }: { code: string }) {
   )
 }
 
-function Header({ connectionState, onCraft, onToggleLogs }: { connectionState: ConnectionState; onCraft: () => void; onToggleLogs: () => void }) {
+function Header({ connectionState, onCraft, onToggleLogs, onOpenNotebooklmImporter }: { connectionState: ConnectionState; onCraft: () => void; onToggleLogs: () => void; onOpenNotebooklmImporter: () => void }) {
   const { state, dispatch } = useAgentStore()
   const hasMessages = state.messages.length > 0 && !!state.activeThreadId
+  const [nbState, setNbState] = useState<"idle" | "working" | "warning">("idle")
+  const [nbTooltip, setNbTooltip] = useState<string>("离线导出当前页为 Markdown（拖入 NotebookLM 作为来源）")
+  // useRef lock is mandatory: React state updates are async, so a rapid second click
+  // within the same tick can pass the `nbState === "working"` guard before the first
+  // setNbState commits — both fire sendMessage → double download. The ref is synchronous.
+  const nbInflightRef = useRef(false)
+
+  const resetNbIdle = (delay: number, immediate?: boolean) => {
+    if (immediate) {
+      setNbState("idle")
+      setNbTooltip("离线导出当前页为 Markdown（拖入 NotebookLM 作为来源）")
+      nbInflightRef.current = false
+      return
+    }
+    setTimeout(() => {
+      setNbState("idle")
+      setNbTooltip("离线导出当前页为 Markdown（拖入 NotebookLM 作为来源）")
+      nbInflightRef.current = false
+    }, delay)
+  }
+
+  const runNotebooklmExport = async () => {
+    if (nbInflightRef.current) return
+    nbInflightRef.current = true
+    setNbState("working")
+    setNbTooltip("正在抽取页面内容…")
+
+    // Race against a 30s timeout: if the service worker is killed mid-extraction
+    // (MV3 lifecycle), the sendMessage promise may never resolve. Without this,
+    // the button stays disabled forever. (Phase 4 review catch.)
+    const timeout = new Promise<{ _timeout: true }>(resolve => setTimeout(() => resolve({ _timeout: true }), 30_000))
+
+    type ExportResponse = { ok?: boolean; content?: string; filename?: string; truncated?: boolean; error?: string }
+    type RaceResult = ExportResponse | { _timeout: true } | undefined
+
+    try {
+      const res = (await Promise.race<RaceResult>([
+        chrome.runtime.sendMessage({ type: "page.import_notebooklm" }) as Promise<ExportResponse>,
+        timeout,
+      ])) as RaceResult
+
+      if (res && typeof res === "object" && "_timeout" in res) {
+        setNbState("warning")
+        setNbTooltip("导出超时（30s）— service worker 可能被挂起，请重试")
+        resetNbIdle(6000)
+        return
+      }
+
+      // After the timeout early-return, res is narrowed to ExportResponse | undefined.
+      const r = res as ExportResponse | undefined
+      if (r && r.ok && r.content) {
+        const blob = new Blob([new TextEncoder().encode(r.content)], { type: "text/markdown" })
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement("a")
+        a.href = url
+        a.download = r.filename || "notebooklm-export.md"
+        // Append-then-click-then-remove: some Chrome contexts silently ignore .click()
+        // on a detached anchor. (Phase 4 review catch.)
+        document.body.appendChild(a)
+        a.click()
+        a.remove()
+        // Delay revoke — Chrome may not have started the download yet at click() return.
+        setTimeout(() => URL.revokeObjectURL(url), 1000)
+        if (r.truncated) {
+          setNbState("warning")
+          setNbTooltip("已导出（内容超过 200k 字符，已截断）")
+          resetNbIdle(6000)
+        } else {
+          setNbTooltip("已导出 ✓")
+          resetNbIdle(2500)
+        }
+      } else {
+        const err = (r && r.error) || "导出失败"
+        setNbState("warning")
+        setNbTooltip(err)
+        resetNbIdle(6000)
+      }
+    } catch (e: any) {
+      setNbState("warning")
+      setNbTooltip(`导出失败: ${e?.message || String(e)}`)
+      resetNbIdle(6000)
+    }
+  }
 
   return (
     <div style={styles.header}>
@@ -329,6 +415,26 @@ function Header({ connectionState, onCraft, onToggleLogs }: { connectionState: C
         title={hasMessages ? "导出整个线程到 Obsidian" : "当前线程没有消息"}
       >
         📥
+      </button>
+      <button
+        style={{
+          ...styles.craftBtn,
+        }}
+        onClick={onOpenNotebooklmImporter}
+        title="打开 NotebookLM 导入器（在线批量导入到 NotebookLM）"
+      >
+        📓
+      </button>
+      <button
+        style={{
+          ...styles.craftBtn,
+          ...(nbState === "warning" ? { background: "#FFF3CD" } : {}),
+        }}
+        disabled={nbState === "working"}
+        onClick={runNotebooklmExport}
+        title={nbTooltip}
+      >
+        {nbState === "working" ? "⏳" : nbState === "warning" ? "⚠️" : "💾"}
       </button>
       <button
         style={{

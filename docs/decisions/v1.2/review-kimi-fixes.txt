@@ -1,0 +1,149 @@
+• The user wants me to independently review recent fixes in the CMspark NotebookLM importer. I need to read the specified files and evaluate them against the user-reported bugs. This is a code review task. I should use Read tools to inspect the files in parallel.
+
+  Let me read the files first.Let me analyze the code carefully.
+
+  The user wants me to review fixes to CMspark NotebookLM importer v1.2. Let me evaluate each file against the reported bugs.
+
+  Reported issues:
+  1. `listNotebooks` cross-origin fetch failing → fixed by injecting into tab
+  2. `createNotebook` tab query URL pattern too strict → fixed with wildcard
+  3. Navigation race → wait for URL change
+  4. readyState stays "interactive" → accept "interactive"
+  5. Create notebook button detection → permissive + diagnostics
+  6. Add source button selector → widened
+  7. openAddSourceDialog fallback + diagnostics
+  8. New notebook-name-suggester
+  9. waitForTabReady no longer depends on .add-source-button
+
+  Let me check for issues:
+
+  notebook-api.ts:
+  - listNotebooksViaTab: waits for readyState === "complete" AND hasWiz (line 195). But the user says readyState stays at "interactive". This is a bug in the fix itself! The fix claims to accept "interactive" for createNotebook, but listNotebooksViaTab still requires "complete". Wait, let me re-read. Actually line 195 says `info?.ready === "complete"`. The user diagnosis says readyState stays interactive. So listNotebooksViaTab might still fail. This is an inconsistency.
+  - createNotebookRunner: line 378 - if on /notebook/ page, it navigates to home and returns error asking to retry. This is odd because createNotebook already handles navigation before injecting. But there's a retry loop in createNotebook for this.
+  - createNotebook: line 579 accepts ready === "interactive" or "complete". Good.
+  - But wait, createNotebookRunner line 376-379 checks if pathname starts with /notebook/ and navigates home then returns error. But createNotebook already navigates to home if on /notebook/ (lines 515-517) and waits for URL change. So this runner check seems defensive but could cause unnecessary retries.
+  - Actually there's a subtle issue: the runner checks `location.pathname.startsWith("/notebook/")`. But if the tab is still transitioning or Angular hasn't updated URL, it might think it's on notebook page. However the createNotebook function waits for tab.url to not include /notebook/.
+
+  selectors.ts:
+  - addSourceButton is much wider. Good.
+  - But `button[color="primary"]` is very broad and could match many buttons.
+
+  dom-automation.ts:
+  - openAddSourceDialog has permissive fallback scanning buttons for "add". Good.
+  - But in fallback, `t.length < 30` might still match wrong things. The exact equality checks are good though.
+  - Diagnostic dump of 20 buttons is good.
+  - Note: the resolveStrategy text fallback scans ALL descendants of root, which could match dialog container itself if text includes matching words. But openAddSourceDialog first checks if dialog exists and returns it.
+
+  notebook-name-suggester.ts:
+  - New file. Uses chrome.storage.local keys "extensionConfig" and "extensionLLMConfig". Need to verify these are correct names.
+  - Calls LLM with user page content. Potential privacy issue but it's extension-configured LLM.
+  - No validation of base_url format. Could be used for SSRF if config is malicious. But it's user's own config.
+  - The prompt asks for Chinese name. Might not match user preference.
+
+  notebooklm-import-orchestrator.ts:
+  - waitForTabReady now checks ready === "complete" && isNotebookPage. But user says readyState stays "interactive". This is another inconsistency! The orchestrator waits for "complete" but the page may never reach it. This is a real bug.
+  - Also, waitForTabReady only accepts "complete", not "interactive". This contradicts the notebook-api.ts createNotebook fix.
+
+  Wait, let me double-check. The user reported that readyState stays "interactive". The createNotebook fix accepts "interactive". But the orchestrator waitForTabReady (used for batch imports) still requires "complete". This is a bug/limitation.
+
+  Also listNotebooksViaTab requires "complete" (line 195). This is another inconsistency.
+
+  So the fixes are incomplete because not all wait-for-ready paths accept "interactive".
+
+  Other concerns:
+  - The listNotebooksViaTab function reimplements RPC parsing inline (lines 212-258) instead of reusing the existing listNotebooksOnce. This is code duplication. The existing listNotebooksOnce function is now dead code (lines 89-149) since listNotebooks just calls listNotebooksViaTab. This is poor maintainability.
+  - Actually wait, listNotebooksOnce still exists but is no longer called. That's dead code.
+  - getCsrfToken still exists and may be used elsewhere, but listNotebooks doesn't use it.
+
+  Security concerns:
+  - notebook-name-suggester sends page content to user-configured LLM endpoint. Since base_url is from storage, if an attacker can control extensionConfig, they could exfiltrate page content. But this requires the attacker to already have access to extension storage, which is a high bar. Still worth noting.
+  - The fetch uses credentials? No, it doesn't send credentials, just Authorization header. Good.
+  - But no timeout on LLM call. Could hang.
+
+  Race conditions:
+  - createNotebook: the URL wait loop checks tab.url, but tab.url might be stale. However it's better than before.
+  - listNotebooksViaTab opens a new tab in background then waits for ready. If it fails, it doesn't close the tab. Resource leak.
+  - createNotebook opens/reuses tab in background. If navigation fails or runner fails, tab remains open.
+
+  UX:
+  - Error messages are in Chinese. Good for the reported UI.
+  - Diagnostic dumps are helpful.
+
+  Other missing fixes:
+  - The selectors.ts submitButton for dialog submit is still narrow. But createNotebookRunner has its own submit detection.
+  - waitForTabReady in orchestrator should accept "interactive" too.
+  - listNotebooksViaTab should accept "interactive" too.
+  - Dead code listNotebooksOnce should be removed or reused.
+  - createNotebookRunner's navigation-to-home logic conflicts with createNotebook's pre-navigation. Could cause retry loops.
+  - LLM suggester has no timeout.
+
+  Let me also check if createNotebookRunner handles the button text "add Create new" correctly. The user says homepage button text is "add Create new" or "addCreate new notebook" (where add is mat-icon text). The runner searches for textContent including "create" or "new notebook" with length < 40. So "add Create new" would match (includes "create" and length ~15). Good.
+
+  But wait, the runner filters `t.length > 0 && t.length < 40`. "addCreate new notebook" is length ~22, includes "create" and "new notebook". Good.
+
+  For add-source button in dom-automation.ts fallback, it checks exact text equality (`t === "add"`, `t === "add source"`, etc.) not includes. So "add Create new" won't match add-source. Good.
+
+  But selectors.ts addSourceButton textContent uses includes (`t.toLowerCase().includes(t.toLowerCase())`). So resolveStrategy with textContent "Add" could match "add Create new". That's a concern - the add-source selector might accidentally match the create-new-notebook button. But resolveStrategy is used after we're already on a notebook page, not home. So probably okay.
+
+  Actually in waitForTabReady, we just check URL contains /notebook/, so we know we're on notebook page. Then add-source button should be the actual add source button. But "Add" textContent matching could still be broad.
+
+  Let me think about whether to approve. The fixes address the reported issues but introduce new issues:
+  1. listNotebooksViaTab and waitForTabReady still require "complete" readyState, which contradicts the user diagnosis and the createNotebook fix.
+  2. Dead code (listNotebooksOnce).
+  3. Potential resource leak (tabs left open).
+  4. LLM suggester no timeout.
+
+  Overall: approve-with-changes seems right.
+
+  Now I need to write a review within 500 words. Let me structure it:
+  1. Verdict: approve-with-changes
+  2. Do fixes solve problems? Mostly yes, but with gaps.
+  3. New risks? Minor: broad selectors, dead code, LLM privacy/timeout, tab leaks, readyState inconsistency.
+  4. What else should change? Accept interactive in listNotebooksViaTab and waitForTabReady, remove dead code, add LLM timeout, close orphan tabs, make submitButton selector consistent.
+  5. One-sentence summary.
+
+  I should be concise and technical. Keep under 500 words.
+
+  Wait, I should also verify whether the LLM config key names are correct. Let me check if extensionConfig is used elsewhere. I don't have access to all files but the suggester uses it. It's likely fine.
+
+  Let me also note that the createNotebookRunner's early return "Navigating to home; please retry" is awkward because createNotebook already handles navigation. But the retry loop in createNotebook handles it. It's defensive but adds complexity.
+
+  One more thing: in notebook-api.ts createNotebook, line 579 checks `!info.pathname.startsWith("/notebook/")`. But when on homepage, pathname is "/". That's fine. But what if pathname is "/library" or some other path? It would pass. But create button detection should fail safely.
+
+  Actually I realize listNotebooksViaTab waits for "complete" (line 195). The user diagnosis says readyState stays "interactive". This is a critical issue because listNotebooks would timeout. This alone warrants approve-with-changes.
+
+  Similarly waitForTabReady in orchestrator requires "complete" (line 129). For batch imports, this would fail on notebook pages where readyState stays interactive.
+
+  These are clear bugs in the fixes. I should highlight them.
+
+  Let me draft the review now.
+
+• ## Review: NotebookLM Importer v1.2 Fixes
+
+  **Verdict: `approve-with-changes`**
+
+  **1. Do the fixes solve the reported problems?**  
+  Mostly yes, but with two gaps that contradict the user's own diagnosis:
+
+  - `createNotebook` correctly switches to `https://notebooklm.google.com/*` tab querying, waits for the URL to actually change, and accepts `readyState === "interactive"` — this addresses the reported tab-mismatch and SPA-ready issues.
+  - The permissive "Create new" button matching plus Enter-key fallback should catch `"add Create new"` / `"addCreate new notebook"`.
+  - `openAddSourceDialog` fallback and the diagnostic button dumps are the right response to UI churn.
+  - **However**, `listNotebooksViaTab` (notebook-api.ts:195) still requires `readyState === "complete"`, and `waitForTabReady` in the orchestrator (notebooklm-import-orchestrator.ts:129) also requires `"complete"`. The user explicitly said readyState stays `"interactive"` and never reaches `"complete"`. These two paths will still timeout.
+
+  **2. New risks introduced**
+  - **Selector over-breadth**: `button[color="primary"]` and `textContent: ["Add"]` in `addSourceButton` could match the wrong button on some NotebookLM pages.
+  - **Race / retry churn**: `createNotebookRunner` can still self-navigate and return `"Navigating to home; please retry"`, even though `createNotebook` already pre-navigates. The outer retry loop papers over it but adds flakiness.
+  - **Resource leak**: `listNotebooksViaTab` and `createNotebook` open background tabs but never close them on failure.
+  - **LLM suggester**: no request timeout; if the configured endpoint hangs, the prompt dialog hangs. Also sends page title/description/first paragraph to a user-configured endpoint — acceptable, but should be obvious to the user.
+
+  **3. What else should change**
+  - Accept `"interactive"` in `listNotebooksViaTab` and `waitForTabReady`.
+  - Remove or reuse the now-dead `listNotebooksOnce` code instead of duplicating the batchexecute parser inside the injected runner.
+  - Add a timeout to the LLM call and surface `source: "title"` fallback clearly in the UI.
+  - Close the background tab opened by `listNotebooksViaTab` / `createNotebook` on failure.
+  - Scope the `addSourceButton` text fallback more narrowly (e.g., require `"source"` or the `"add"` icon plus short text).
+
+  **4. One-sentence summary**  
+  The fixes hit the right targets but left two readiness checks at `"complete"`, which will still break in the reported SPA environment; tighten those and clean up the dead-code / timeout / tab-cleanup issues before shipping.
+
+To resume this session: kimi -r session_e840ffa6-176c-46c6-b8ad-d3d86a69d35f

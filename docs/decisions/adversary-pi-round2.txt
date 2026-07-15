@@ -1,0 +1,17 @@
+1. **中**：A1 意图是「LLM/状态在 companion」——纯字符串格式化不在其列，Z 更省 WS 往返+SW 生命周期面。建议 v1 走 Z，v1.1 引入 LLM 摘要时再拆 X。
+
+2. **中**：缺 try/finally 保证 detach + `chrome.debugger.onDetach` / `tabs.onRemoved` 监听；evaluate 抛错或 tab 被关会留 zombie attach。
+
+3. **中**：选择器列表对 SPA / Shadow DOM / Substack paywall 脆弱。建议直接用 `@mozilla/readability`（~70KB，MV3 兼容，Firefox Reader Mode 同款），fallback 才用你的 selector。
+
+4. **中**：真实 tab innerText 通常 OK；但 Shadow DOM 闭根不穿透、跨域 iframe 读不到——文档点名即可，不必改实现。
+
+5. **低**：NotebookLM 上限约 500KB/source，200k chars 有头部空间。但截断应回 UI 给可见 banner，而非静默砍尾。
+
+6. **低**：5 文件、无架构变更，单 commit 可接受。
+
+7. **中**：一夜推进可；但 IIFE 是最易回归的部位——至少加 1 个真实文章 HTML 快照的 jsdom 单测，而非纯合成 DOM。
+
+8. **中（关键漏点）**：你的 IIFE 在**原地改 live DOM**（`root.querySelectorAll(...).forEach(e => e.remove())` 真删页面节点）——必须先 `root.cloneNode(true)` 再净化。另：`chrome.debugger.attach` 会在 tab 顶部显示黄色「正在调试」横幅，UX 上是已知 wart。
+
+**Verdict：approve-with-changes**——核心方向稳，但 #1（X vs Z）和 #8（DOM 破坏性）是要落手改的硬伤，#3 强烈建议引入 Readability 否则抽取质量会在第 5 个真实站点翻车。

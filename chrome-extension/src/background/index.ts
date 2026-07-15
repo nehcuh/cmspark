@@ -5,6 +5,15 @@ import { WSClient } from "./ws-client"
 import { BrowserBridge } from "./browser-bridge"
 import { KeepAlive } from "./keep-alive"
 import { PageSanitizer, pageSanitizer } from "./page-sanitizer"
+import { handleNotebooklmExport } from "./notebooklm-handler"
+import { cancelBatch, getActiveBatch, resumeIfPending, startBatch } from "./notebooklm-import-orchestrator"
+import { createNotebook, listNotebooks } from "../notebooklm/notebook-api"
+import { createNotebookViaRpc } from "../notebooklm/rpc-client"
+import { suggestNotebookName } from "../notebooklm/notebook-name-suggester"
+import { extractAiChatRunner } from "../notebooklm/ai-chat-extractor"
+import { extractPageLinksRunner } from "../notebooklm/page-link-extractor"
+import { discoverFeed, fetchFeed, fetchMultipleFeeds, parseOpml } from "../notebooklm/rss-parser"
+import { fetchPlaylist, getYouTubeApiKey, parsePlaylistId, setYouTubeApiKey } from "../notebooklm/youtube-api"
 
 let wsClient: WSClient
 let browserBridge: BrowserBridge
@@ -488,6 +497,200 @@ function setupMessageHandlers() {
         sendResponse({ ok: true })
         return true
 
+      case "page.import_notebooklm": {
+        // v1: extension-only. Extracts current tab content via chrome.scripting,
+        // formats as frontmatter Markdown, returns to caller for Blob download.
+        // No companion round-trip (Round 2 architecture decision: Z over X).
+        //
+        // `.catch` is mandatory: any future regression that throws synchronously inside
+        // handleNotebooklmExport (instead of being caught and returned as {ok:false})
+        // would otherwise leave the message channel hanging — caller's `await
+        // sendMessage` never resolves. (Phase 4 review catch.)
+        handleNotebooklmExport()
+          .then(sendResponse)
+          .catch(e => sendResponse({ ok: false, error: `Background handler crashed: ${e?.message || String(e)}` }))
+        return true
+      }
+
+      // ---------- v1.1: NotebookLM online importer ----------
+      case "notebooklm.list_notebooks": {
+        listNotebooks()
+          .then(result => sendResponse(result))
+          .catch(e => sendResponse({ ok: false, error: e?.message || String(e), notebooks: [] }))
+        return true
+      }
+      case "notebooklm.start_batch": {
+        const items = Array.isArray(message.items) ? message.items : []
+        const notebookId = typeof message.notebook_id === "string" ? message.notebook_id : undefined
+        startBatch(items, notebookId)
+          .then(state => sendResponse({ ok: true, state }))
+          .catch(e => sendResponse({ ok: false, error: e?.message || String(e) }))
+        return true
+      }
+      case "notebooklm.cancel_batch": {
+        cancelBatch()
+          .then(() => sendResponse({ ok: true }))
+          .catch(e => sendResponse({ ok: false, error: e?.message || String(e) }))
+        return true
+      }
+      case "notebooklm.get_batch_state": {
+        sendResponse({ ok: true, state: getActiveBatch() })
+        return false
+      }
+
+      // ---------- v1.2: pathways + notebook create ----------
+      case "notebooklm.create_notebook": {
+        const name = typeof message.name === "string" ? message.name : ""
+        if (!name.trim()) {
+          sendResponse({ ok: false, error: "Notebook name required" })
+          return false
+        }
+        // v1.3: RPC-first. The old DOM-automation createNotebook is unreliable
+        // (untitled notebooks, false positives). RPC returns definitive notebookId.
+        createNotebookViaRpc(name)
+          .then(sendResponse)
+          .catch(e => sendResponse({ ok: false, error: e?.message || String(e) }))
+        return true
+      }
+
+      case "notebooklm.suggest_notebook_name": {
+        suggestNotebookName()
+          .then(sendResponse)
+          .catch(e => sendResponse({ ok: false, source: "none", error: e?.message || String(e) }))
+        return true
+      }
+
+      case "notebooklm.extract_page_links": {
+        ;(async () => {
+          try {
+            const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
+            if (!tab?.id) {
+              sendResponse({ ok: false, error: "No active tab" })
+              return
+            }
+            const results = await chrome.scripting.executeScript({
+              target: { tabId: tab.id },
+              func: extractPageLinksRunner,
+            })
+            const frame = results?.[0] as any
+            if (frame?.error) {
+              sendResponse({ ok: false, error: `Injection error: ${frame.error}` })
+              return
+            }
+            sendResponse(frame?.result || { ok: false, error: "No result" })
+          } catch (e: any) {
+            sendResponse({ ok: false, error: e?.message || String(e) })
+          }
+        })()
+        return true
+      }
+
+      case "notebooklm.extract_ai_chat": {
+        ;(async () => {
+          try {
+            const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
+            if (!tab?.id) {
+              sendResponse({ ok: false, error: "No active tab" })
+              return
+            }
+            const results = await chrome.scripting.executeScript({
+              target: { tabId: tab.id },
+              func: extractAiChatRunner,
+            })
+            const frame = results?.[0] as any
+            if (frame?.error) {
+              sendResponse({ ok: false, error: `Injection error: ${frame.error}` })
+              return
+            }
+            sendResponse(frame?.result || { ok: false, error: "No result" })
+          } catch (e: any) {
+            sendResponse({ ok: false, error: e?.message || String(e) })
+          }
+        })()
+        return true
+      }
+
+      case "notebooklm.fetch_feed": {
+        const url = typeof message.url === "string" ? message.url : ""
+        if (!url) {
+          sendResponse({ ok: false, error: "URL required" })
+          return false
+        }
+        ;(async () => {
+          try {
+            const feed = await fetchFeed(url)
+            if (feed) {
+              sendResponse({ ok: true, feed })
+              return
+            }
+            const discovered = await discoverFeed(url)
+            if (discovered) {
+              const feed2 = await fetchFeed(discovered)
+              if (feed2) {
+                sendResponse({ ok: true, feed: feed2, discoveredFrom: discovered })
+                return
+              }
+            }
+            sendResponse({ ok: false, error: "无法解析为 RSS / Atom feed（也尝试了自动发现）" })
+          } catch (e: any) {
+            sendResponse({ ok: false, error: e?.message || String(e) })
+          }
+        })()
+        return true
+      }
+
+      case "notebooklm.parse_opml": {
+        const text = typeof message.text === "string" ? message.text : ""
+        try {
+          const feeds = parseOpml(text)
+          sendResponse({ ok: true, feeds })
+        } catch (e: any) {
+          sendResponse({ ok: false, error: e?.message || String(e) })
+        }
+        return false
+      }
+
+      case "notebooklm.fetch_multiple_feeds": {
+        const urls: string[] = Array.isArray(message.urls) ? message.urls : []
+        ;(async () => {
+          try {
+            const feeds = await fetchMultipleFeeds(urls)
+            sendResponse({ ok: true, feeds })
+          } catch (e: any) {
+            sendResponse({ ok: false, error: e?.message || String(e) })
+          }
+        })()
+        return true
+      }
+
+      case "notebooklm.fetch_youtube_playlist": {
+        const url = typeof message.url === "string" ? message.url : ""
+        const playlistId = parsePlaylistId(url)
+        if (!playlistId) {
+          sendResponse({ ok: false, error: "无法解析 playlist ID（确认是 YouTube playlist URL）" })
+          return false
+        }
+        fetchPlaylist(playlistId)
+          .then(sendResponse)
+          .catch(e => sendResponse({ ok: false, error: e?.message || String(e) }))
+        return true
+      }
+
+      case "notebooklm.set_youtube_api_key": {
+        const key = typeof message.key === "string" ? message.key : ""
+        setYouTubeApiKey(key)
+          .then(() => sendResponse({ ok: true }))
+          .catch(e => sendResponse({ ok: false, error: e?.message || String(e) }))
+        return true
+      }
+
+      case "notebooklm.get_youtube_api_key": {
+        getYouTubeApiKey()
+          .then(key => sendResponse({ ok: true, key }))
+          .catch(e => sendResponse({ ok: false, error: e?.message || String(e) }))
+        return true
+      }
+
       case "thread.list":
       case "thread.export_obsidian":
       case "obsidian.pick_vault_folder":
@@ -551,3 +754,8 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, _tab) => {
 })
 
 init()
+
+// v1.1: resume any in-flight NotebookLM batch import that was interrupted by SW
+// restart (MV3 idle timeout / memory pressure). The persisted state in
+// chrome.storage.local is the source of truth — closure state is lost on SW death.
+resumeIfPending().catch(e => console.error("[notebooklm] resume failed:", e))

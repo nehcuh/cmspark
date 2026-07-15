@@ -1,0 +1,36 @@
+Warning: no stdin data received in 3s, proceeding without it. If piping from a slow command, redirect stdin explicitly: < /dev/null to skip, or wait longer.
+Override note: `grill-with-docs` expects me to interview you, but you've explicitly cast me as Pi-sub giving terse advisor output — applying META-0 (situated judgment) and answering directly.
+
+## Q1-Q6 (Pi-sub)
+
+- **Q1**: A — Web Importer shipped then dead-coded fetch interception; their telemetry proved DOM wins. Don't pay CDP debugger-banner cost for unproven speedup.
+- **Q2**: A — `boVbkv` create is unverified in either Chrome ext; one-click manual create isn't worth the ToS surface for v1.1.
+- **Q3**: A — MutationObserver self-heal runs in-product today; CI canary is dev-infra, defer to P2.
+- **Q4**: B — generic extractor reuses v1 code; C (LLM cleanup) is real differentiation but not on the ship path.
+- **Q5**: A — explicit buttons avoid silent-fallback surprise; users hitting "import" while offline expect an error, not a mystery MD file.
+- **Q6**: Approved as written — P0 cut is honest, matches one-session reality.
+
+## Concrete failure modes
+
+**(a) MV3 SW + `chrome.scripting.executeScript`:**
+- SW 30s idle timeout + memory-pressure eviction kills in-flight batches; promise rejects with `Extension context invalidated`. Persist state to `chrome.storage.local` after *every* source, not at end.
+- `func` arg cannot close over batch state — must be serializable; pass everything via `args`.
+- `world: 'MAIN'` needed to poke Angular's `window.NgModel` if you ever do; default ISOLATED can't see page JS — easy footgun.
+- Re-injecting on a tab already mid-dialog double-fires handlers. Track tab-state machine in SW, dedupe by `(tabId, dialogPhase)`.
+
+**(b) SNlM0e CSRF:**
+- Rotates on: logout/login, account switcher, long idle (hours, not minutes), server-side roll. **Not** per-request.
+- Detect failure: `batchexecute` returns redirect to `accounts.google.com`, or HTTP 200 with empty `wrb.fr` envelope (silent invalidation — most common).
+- Cache strategy: cache in `chrome.storage.local` with TTL, but **always re-extract on batch start**. Treat 0-notebook response as "token maybe dead, refetch HTML and retry once."
+- Multi-account gotcha: user switches Google account in another tab → cached token silently invalid against new session.
+
+**(c) Angular state desync (highest flake risk):**
+- NotebookLM = Angular Material + zone.js. Click → element exists in DOM but `ngModel` not bound → you set `textarea.value` → Angular next CD cycle overwrites with `''`.
+- Submit button `[disabled]` is Angular-controlled; clicking before enabled is silent no-op (no error, no add — worst kind of failure).
+- Dialog enter-animation ~250ms; selector matches before `pointer-events:auto`.
+- Source-ack `.single-source-container` renders async; diffing before CD runs falsely reports "not added" → infinite retry.
+- **Mitigation (mandatory for v1.1):** after every action, wait via `MutationObserver` quiescence + `requestAnimationFrame` x2, **not** fixed `setTimeout`. Assert on Angular state (`disabled` attr, ng-pristine/dirty classes), not just selector existence. Without this you'll see ~30% flake on batches >10.
+
+## Verdict
+
+**Approve-with-changes** — P0 scope is sound; ship is contingent on (c) Angular waiter strategy (MutationObserver quiescence, no fixed sleeps) being baked into the batch state machine from day one, otherwise the "resilience" claim collapses in production.

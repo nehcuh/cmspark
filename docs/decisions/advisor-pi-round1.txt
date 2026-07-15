@@ -1,0 +1,20 @@
+**Q1.** A: B carries Google ToS + UI-selector drift as permanent maintenance tax, and account-suspension risk falls on the *user*; ship A tonight, earn B only after real demand surfaces.
+
+**Q2.** Extension via CDP `Runtime.evaluate` (your hybrid): tab is already attached, no raw-HTML WS payload, reuses `browser-bridge.execute`; companion only formats.
+
+**Q3.** Skip PDF — ship `.md` for v1: NotebookLM accepts MD, zero new deps, no print-CSS roulette, no cookie/auth bleed into a rendered PDF; revisit PDF only if MD underperforms. printToPDF-on-original-tab is more fragile than the brief admits (per-site print CSS is garbage, reader-mode stylesheet injection is its own rabbit hole).
+
+**Q4.** No tool in v1: button is enough surface; tool wrapper drags in `SecurityConfirmationManager` overhead and tool-schema work for zero user value tonight.
+
+**Q5.** Side-panel button only: context menu adds host-permission checks + page/link/selection dispatch — bundle it with the tool wrapper in v1.1.
+
+**Q6.** Yes — B is cross-origin browser automation, same risk class as `evaluate`; gate it even when opt-in. (Moot for A.)
+
+**Q7.** Underweighted risks:
+- **Account-level bot-flagging for B** — not just selector drift; Google can suspend the user's NotebookLM/Google account on automated uploads, and that's irreversible & falls on them, not us. ToS-gray understates it.
+- **Cookie/auth bleed into PDF for A** — printToPDF on a logged-in tab bakes account chips, email, personalized nav into the doc. Print in a detached/cleaned context, never the live tab. MD extraction sidesteps this entirely (another reason to prefer Q3=MD).
+- **MV3 SW lifecycle** — keep-alive.ts must hold the debugger attach across the whole extract+format+download or the SW dies mid-print and the user sees nothing. Existing obsidian flow doesn't span CDP attach so this is *new* lifecycle surface, not borrowed.
+
+**Final:** Agree on A-first / B-as-v1.1-opt-in — with the tweak that A ships **Markdown `.md`**, not PDF. Side-panel button only, no tool, no context menu. That genuinely lands tonight and avoids the two risks above. Obsidian export pattern is the right template *for the message-routing shape*; it leads astray on the CDP attach lifecycle, which obsidian never touches.
+
+One parting shot: brief says "Showcases our CDP moat" as a B pro. A moat nobody asked for is just debt — make v1.1 B contingent on a user actually requesting 1-click, not on us wanting to demo the capability.
