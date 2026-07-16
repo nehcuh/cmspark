@@ -241,39 +241,47 @@ export interface HostAdapter {
 
 ---
 
-## 6. 待用户决策的关键问题
+## 6. 决策记录
 
-本综合基于 Kimi + Pi 评审收敛，但**有一处与用户原话直接冲突**，需要用户明确决策：
-
-### 6.1 Windows 处理（与用户原话「三平台从最开始支持」冲突）
+### 6.1 Windows 处理（用户原话「三平台从最开始支持」 vs 工程现实）
 
 **用户原话**：「最开始我想要支持的包括 macos，windows 以及 ubuntu」
 **综合建议**：macOS + Ubuntu Phase 1，Windows Phase 1.5（条件触发）
 
-**冲突根源**：Windows 在未签名 binary 下连 read-only UIAutomation 都跑不通（UIAccess protected 进程），不是工程问题，是 Apple-style 签名门槛。
+**冲突根源**：Windows 在未签名 binary 下连 read-only UIAutomation 都跑不通（UIAccess protected 进程），不是工程问题，是签名门槛。
 
-**用户需要二选一**：
+**选项**：
 
 - **Option X**：接受综合建议。批准 macOS + Ubuntu Phase 1 ship（W14）；Windows Phase 1.5 启动条件（EV cert $499/yr + 公司主体注册）按 Phase 0 完成后批准。
 - **Option Y**：坚持三平台同步 ship。立即批准 Windows EV cert 预算 + 公司主体注册流程，Phase 0 三平台 spike 同时启动；Phase 1 工期从 12-14 周延长到 18-22 周（Windows 多 6-8 周签名/UIAccess 工作）。
 
-**推荐 Option X**（理由：Windows 未签名 binary 实测阻塞率太高，强行同步 ship 会让 Phase 1 整体延期且 Windows 用户实际安装率 <30%）。
+### 6.2 决策（2026-07-16）
+
+**用户选定：Option X** ✅
+
+- Phase 1 = macOS + Ubuntu Linux 同步 ship（W4-W14）
+- Windows 推 Phase 1.5，**前置条件**：EV cert $499/yr + 公司主体注册 + Authenticode 签名流程 + UIAccess manifest 设计
+- Phase 0 仍做三平台 spike（含 Windows），目的从「跑通」改为「收集 UIAccess 阻塞证据」
+- Windows Phase 1.5 启动需另批准，不是自动触发
+- Phase 1 ship 时 README/docs 显式标注「Windows not supported in Phase 1, requires EV cert + legal entity」
 
 ---
 
 ## 7. 下一步行动
 
 1. ✅ Round 2 brief + Kimi + Pi + synthesis 提交到 `worktree-notebooklm-import`
-2. ⏸️ **等用户对 §6.1 Windows 处理的决策**（Option X or Y）
-3. 决策后：
-   - Option X → 启动 Phase 0 macOS + Linux 双平台 spike
-   - Option Y → 启动 Phase 0 三平台 spike + 同步开始 EV cert 申请流程
-4. 新建 worktree `computer-use-phase0`（当前 worktree 名 `notebooklm-import` 已混淆）
-5. Phase 0 实施清单：
-   - macOS：`companion/src/host-use/darwin/applescript.ts`（Round 1 设计直接用）
-   - Linux：`companion/src/host-use/linux/atspi.ts`（gdbus shell 调用）+ `companion/src/tray/rust-tray/`（独立 Rust binary，~300 行）
-   - Windows（如选 Option Y）：`companion/src/host-use/win/uiautomation.ps1`（PowerShell spike）+ 测试 UIAccess 阻塞
-6. 找测试机：macOS Sonoma 14.4+ 5 台 + Ubuntu 24.04 5 台（+ Windows 11 5 台如选 Option Y）
+2. ✅ **用户决策 Option X 锁定**（2026-07-16）—— macOS + Ubuntu Phase 1 ship，Windows Phase 1.5 条件触发
+3. 新建 worktree `computer-use-phase0`（当前 worktree 名 `notebooklm-import` 已混淆，应换新）
+4. Phase 0 三平台并行 spike（W1-W3）：
+   - macOS：`companion/src/host-use/darwin/applescript.ts`（Round 1 设计直接用，Mail read inbox top 1）
+   - Linux：`companion/src/host-use/linux/atspi.ts`（`gdbus call org.a11y.atspi.Registry` shell 调用）+ `companion/src/tray/rust-tray/`（独立 Rust binary，~300 行）+ Evolution mail read spike
+   - Windows（仅收集阻塞证据）：`companion/src/host-use/win/uiautomation.ps1`（PowerShell spike 读 Outlook）+ 记录 UIAccess 实际阻塞行为 + SmartScreen 拦截率
+5. 找测试机：macOS Sonoma 14.4+ 5 台 + Ubuntu 24.04 5 台 + Windows 11 5 台（Windows 仅作阻塞证据收集）
+6. Phase 0 W3 末尾决策门：
+   - macOS spike 失败 → kill 整个项目
+   - Linux spike 失败 → 退化到 darwin-only Phase 1（Round 1 方案）
+   - Windows spike 失败（预期内）→ Windows Phase 1.5 阻塞证据归档，等用户另批准 EV cert
+   - 三平台通过（含 Windows 阻塞证据收集完成）→ W4 定义 HostAdapter interface（3 方法）→ 进入 Phase 1
 
 ---
 
