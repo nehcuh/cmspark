@@ -12,18 +12,29 @@ function mockWs(): any {
   return { readyState: 1 /* WebSocket.OPEN */, send: () => { /* swallow tool.start */ } }
 }
 
-test("executeTool rejects evaluate with an invalid/stale pre-existing token (audit H2 / P0-4)", async () => {
+test("Phase 1 W8 bugfix: evaluate with LLM-provided bogus token gets STRIPPED → gate runs", async () => {
+  // W8 bugfix: security_token from LLM is stripped before L2 gate. Previous
+  // behavior: token validation in executeCompanionTool caught stale tokens.
+  // New behavior: tokens never reach executeCompanionTool — gate always runs,
+  // fresh token issued internally. This test verifies the strip works: instead
+  // of forwarding to extension (which would hang without a real ws handler),
+  // the call should request confirmation (or fail with connection error since
+  // mockWs doesn't handle confirmations). Either way, "evaluate" should NOT
+  // succeed silently.
   const executeTool = createToolExecutor(mockWs())
-  // A pre-existing (replay/stale) token present → the confirmation `if` block is skipped → the
-  // P0-4 `else if` must validate the token against the code. A bogus/never-issued token must be
-  // rejected before any forwarding to the extension.
   const result = await executeTool("tc-eval-1", "evaluate", {
     tabId: 1,
     code: "document.title",
     security_token: "bogus-never-issued-token",
   })
-  assert.equal(result.success, false, "evaluate with an invalid token must be rejected")
-  assert.match(result.error || "", /token/i, `error should mention the token, got: ${result.error}`)
+  // With strip, the L2 gate tries to send security.confirmation.request via ws.
+  // mockWs.send is a no-op, so the request times out at the 45s confirmation
+  // gate (or returns "unavailable" because ws not really connected). Both are
+  // acceptable — what's NOT acceptable is silent execution with bogus token.
+  assert.equal(result.success, false, "evaluate with stripped bogus token must NOT execute silently")
+  // The error is "unavailable" (ws not actually connected for confirmation flow)
+  // rather than "Invalid token" (the old path). Either is fine — what matters
+  // is the call did not bypass the confirmation gate.
 })
 
 test("issueToken/validateToken bind the token to the confirmed code (H2 binding contract)", async () => {

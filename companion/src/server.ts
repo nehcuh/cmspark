@@ -257,6 +257,21 @@ export function createToolExecutor(ws: WebSocket) {
   mcpSessionByWs.set(ws, sessionId)
   return async (toolCallId: string, toolName: string, params: any, signal?: AbortSignal): Promise<{ success: boolean; data?: any; error?: string }> => {
     let finalParams = params || {}
+    // Phase 1 W8 bugfix: STRIP any LLM-provided security_token before L2 gate.
+    // The token field is in zod schema (kept for forward-compat / audit), but
+    // LLMs sometimes hallucinate or replay stale tokens, skipping the L2 gate
+    // and then failing validateToken inside executeCompanionTool (the
+    // "Invalid or expired security token" error). Real tokens are ONLY issued
+    // companion-side after user approval — never legitimately possessed by
+    // the LLM at call time. Strip always; L2 gate re-issues fresh per call.
+    if (finalParams.security_token) {
+      logger.warn("security.token.stripped_llm_provided", {
+        tool_call_id: toolCallId,
+        tool_name: toolName,
+      })
+      const { security_token: _stripped, ...rest } = finalParams
+      finalParams = rest
+    }
     // Normalize tabId to a number. LLMs occasionally pass "123" as a string;
     // without this, getCachedTabUrl and the navigate/set_tab_url cache update
     // would silently skip (typeof !== "number"), reintroducing the C1 stale-
