@@ -1,6 +1,7 @@
 import * as path from "path"
 import { promisify } from "util"
 import { execFile } from "child_process"
+import { randomBytes } from "crypto"
 import type { HostReadParams, HostReadResult } from "../types"
 import { isVaultApp, isReadAllowed } from "./blacklist"
 
@@ -70,5 +71,44 @@ export async function hostRead(params: HostReadParams): Promise<HostReadResult> 
       throw new Error(`host_read: ${err.stderr}`)
     }
     throw err
+  }
+}
+
+/**
+ * Phase 1 W8 biometric verification (Touch ID per call).
+ * Round 2 §4.2 + Kimi+Pi W8 advisor Option A: ALL writes go through biometric.
+ *
+ * Returns the nonce on success. Throws on cancel / lockout / failure.
+ * Nonce is bound to tool_call_id by caller for audit trail (W7 Q8).
+ */
+export async function biometricVerify(toolCallId: string, reason: string): Promise<string> {
+  const bin = resolveHostBinary()
+  // Generate 16-char nonce for audit binding. Not a user-facing code
+  // (that's the Linux manual nonce path; macOS uses Touch ID).
+  const nonce = randomBytes(8).toString("hex")
+  try {
+    const result = await execFileAsync(
+      bin,
+      ["biometric-verify", "--nonce", nonce, "--reason", reason],
+      { encoding: "utf-8", timeout: 60000 },  // 60s for user to find sensor
+    )
+    const parsed = parseJsonSafeRaw(String(result.stdout), "biometric-verify")
+    if (parsed.verified !== true || parsed.nonce !== nonce) {
+      throw new Error("biometric verification returned invalid payload")
+    }
+    return nonce
+  } catch (err: any) {
+    if (err && typeof err === "object" && "stderr" in err && err.stderr) {
+      throw new Error(`biometric: ${err.stderr}`)
+    }
+    throw err
+  }
+}
+
+function parseJsonSafeRaw(stdout: string, label: string): { verified?: boolean; nonce?: string } {
+  try {
+    return JSON.parse(stdout)
+  } catch (err) {
+    throw new Error(`${label}: invalid JSON (${(err as Error).message})`)
   }
 }

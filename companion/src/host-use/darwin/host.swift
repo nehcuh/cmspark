@@ -1,4 +1,5 @@
 import Foundation
+import LocalAuthentication
 
 // cmspark-host: minimal macOS binary that loads a precompiled .scpt and runs
 // it in-process via NSAppleScript. The binary is the TCC-attribution anchor:
@@ -165,6 +166,68 @@ func argValue(_ key: String) -> String? {
     return nil
 }
 
+// MARK: - biometric-verify subcommand (Phase 1 W8: Touch ID via LAContext)
+//
+// Round 2 §4.2 + Kimi+Pi W8 advisor: ALL writes go through biometric tier.
+// Pi-sub implementation tips:
+//   - localizedFallbackTitle = "" — NO password fallback (would collapse tier)
+//   - LAError.userCancel / systemCancel → non-retryable
+//   - LAError.biometryLockout → exit with specific code, clear message
+//   - Pipe through existing cmspark-host binary (SecStaticCodeCheckValidity
+//     covers biometric path too — no side channel)
+//   - Nonce binds biometric success to specific tool_call_id (audit trail)
+
+func runBiometricVerify(nonce: String, reason: String) throws -> String {
+    let context = LAContext()
+    context.localizedFallbackTitle = ""  // disable password fallback (Pi-sub)
+
+    var error: NSError?
+    let policy: LAPolicy = .deviceOwnerAuthenticationWithBiometrics
+    guard context.canEvaluatePolicy(policy, error: &error) else {
+        // biometryUnavailable / biometryNotEnrolled / biometryLockout
+        let code = error?.code ?? -1
+        let msg = error?.localizedDescription ?? "biometry unavailable"
+        if code == LAError.biometryNotEnrolled.rawValue {
+            throw HostError(code: 11, message: "Touch ID not enrolled: \(msg)")
+        }
+        if code == LAError.biometryLockout.rawValue {
+            throw HostError(code: 12, message: "Touch ID locked out — open System Settings → Touch ID to unlock: \(msg)")
+        }
+        throw HostError(code: 10, message: "biometry unavailable (oserr=\(code)): \(msg)")
+    }
+
+    // Synchronous evaluation. Touch ID dialog appears; user must physically
+    // touch the sensor. NO password fallback (would collapse tier per Pi-sub).
+    // LAContext.evaluatePolicy is async (closure-based); we wrap in semaphore
+    // because cmspark-host is a short-lived CLI binary — async/await would
+    // require a Runloop and complicate exit handling.
+    var evalError: NSError?
+    var evalResult: Bool = false
+    let semaphore = DispatchSemaphore(value: 0)
+    context.evaluatePolicy(policy, localizedReason: reason) { success, err in
+        evalResult = success
+        evalError = err as NSError?
+        semaphore.signal()
+    }
+    semaphore.wait()
+
+    if !evalResult {
+        let code = evalError?.code ?? -1
+        let msg = evalError?.localizedDescription ?? "evaluation failed"
+        // userCancel / systemCancel / appCancel → non-retryable per Pi-sub
+        if code == LAError.userCancel.rawValue || code == LAError.systemCancel.rawValue || code == LAError.appCancel.rawValue {
+            throw HostError(code: 13, message: "biometric canceled by user (non-retryable): \(msg)")
+        }
+        if code == LAError.userFallback.rawValue {
+            // Shouldn't happen (localizedFallbackTitle="") but defense in depth
+            throw HostError(code: 14, message: "password fallback attempted (blocked by policy)")
+        }
+        throw HostError(code: 15, message: "biometric failed (oserr=\(code)): \(msg)")
+    }
+
+    return "{\"verified\":true,\"nonce\":\"\(nonce)\"}"
+}
+
 // MARK: - write subcommand (Phase 1 W6: Notes create + Finder move)
 
 // Escape a string for use inside AppleScript double-quoted string literal.
@@ -270,8 +333,9 @@ guard argv.count >= 2 else {
           read-message --target <TargetId>     — read message by stable id
           list-notes                           — list notes TargetIds (Phase 1 W7)
           list-files                           — list Documents folder TargetIds (Phase 1 W7)
-          create-note --name N [--body B]      — create a new Note (Phase 1 W6)
-          move-file --source P --destination D — move file via Finder (Phase 1 W6)
+          create-note --name N [--body B]      — create a new Note (Phase 1 W6, biometric in W8)
+          move-file --source P --destination D — move file via Finder (Phase 1 W6, biometric in W8)
+          biometric-verify --nonce N [--reason R] — Touch ID verification (Phase 1 W8)
 
         """
     FileHandle.standardError.write(usage.data(using: .utf8)!)
@@ -313,6 +377,13 @@ do {
             exit(2)
         }
         out = try runMoveFile(sourcePath: src, destPath: dest)
+    case "biometric-verify":
+        guard let nonce = argValue("--nonce") else {
+            FileHandle.standardError.write("biometric-verify: --nonce <id> required\n".data(using: .utf8)!)
+            exit(2)
+        }
+        let reason = argValue("--reason") ?? "Confirm host_write operation"
+        out = try runBiometricVerify(nonce: nonce, reason: reason)
     default:
         FileHandle.standardError.write("unknown subcommand: \(subcommand)\n".data(using: .utf8)!)
         exit(2)

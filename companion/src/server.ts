@@ -744,7 +744,7 @@ export function createToolExecutor(ws: WebSocket) {
     const COMPANION_TOOLS = ["osascript_eval", "host_read", "host_write", "use_skill", "record_experience"]
     if (COMPANION_TOOLS.includes(toolName)) {
       try {
-        const result = await executeCompanionTool(toolName, finalParams)
+        const result = await executeCompanionTool(toolName, finalParams, toolCallId)
         logToolFinish(toolCallId, toolName, startedAt, result)
         return result
       } catch (err: any) {
@@ -1094,7 +1094,7 @@ export function applyConnectionCloseGracePeriod(): void {
 
 // --- Companion-side tool executor (runs locally, not forwarded to extension) ---
 
-async function executeCompanionTool(toolName: string, params: any): Promise<any> {
+async function executeCompanionTool(toolName: string, params: any, toolCallId?: string): Promise<any> {
   switch (toolName) {
     case "use_skill": {
       const skillName = params.name
@@ -1243,8 +1243,8 @@ async function executeCompanionTool(toolName: string, params: any): Promise<any>
       }
     }
     case "host_write": {
-      // Phase 1 W6: Notes create + Finder move via HostAdapter.writeOne.
-      // Same L2 confirmation gate + security_token validation as host_read.
+      // Phase 1 W8 (Kimi+Pi advisor Option A): ALL writes go through biometric
+      // tier per Round 2 §4.2. W6 ask-once behavior replaced.
       if (params.security_token) {
         const valid = securityPolicy.validateToken(
           String(params.security_token),
@@ -1258,14 +1258,32 @@ async function executeCompanionTool(toolName: string, params: any): Promise<any>
       if (os.platform() !== "darwin") {
         return {
           success: false,
-          error: `host_write is macOS-only in Phase 1 W6 (platform=${os.platform()})`,
+          error: `host_write is macOS-only in Phase 1 (platform=${os.platform()})`,
         }
       }
       try {
         const { getDarwinAdapter } = await import("./host-use/darwin/adapter")
+        const { biometricVerify } = await import("./host-use/darwin")
         const adapter = getDarwinAdapter()
         const kind = String(params.kind) as "create" | "move" | "update" | "delete"
-        // Build WritePayload discriminated union from raw params.
+
+        // Phase 1 W8: biometric verification BEFORE building payload + dispatch.
+        // Reason text shown in Touch ID dialog so user sees what they're approving.
+        const reasonMap: Record<string, string> = {
+          create: "Create a new Note",
+          move: "Move a file via Finder",
+          update: "Update an existing item",
+          delete: "Delete an item (destructive)",
+        }
+        const biometricReason = reasonMap[kind] || `host_write ${kind}`
+        const nonce = await biometricVerify(toolCallId || "no-tool-call-id", biometricReason)
+        logger.info("security.biometric.verified", {
+          tool_call_id: toolCallId,
+          tool_name: "host_write",
+          kind,
+          nonce,
+        })
+
         let payload: any
         if (kind === "create") {
           if (typeof params.body !== "string") {
@@ -1284,22 +1302,25 @@ async function executeCompanionTool(toolName: string, params: any): Promise<any>
             destination: params.destination,
             source_path: params.source_path,
           }
-        } else {
-          return {
-            success: false,
-            error: `host_write ${kind}: requires biometric confirmation — Phase 1 W7+ deliverable`,
+        } else if (kind === "update") {
+          if (typeof params.body !== "string") {
+            return { success: false, error: "host_write update: body required" }
           }
+          payload = { kind: "update", body: params.body }
+        } else if (kind === "delete") {
+          payload = { kind: "delete" }
+        } else {
+          return { success: false, error: `host_write: unknown kind "${kind}"` }
         }
-        // TargetId for Phase 1 W6:
-        //   create: synthesized as "macos:com.apple.Notes:default:note-new"
-        //   move:   synthesized as "macos:com.apple.finder:default:file-source"
-        // Phase 2 will pass real TargetIds from listReadTargets.
-        const syntheticTarget = kind === "create"
-          ? "macos:com.apple.Notes:default:note-new"
-          : "macos:com.apple.finder:default:file-source"
+        // TargetId for Phase 1 W6/W8:
+        //   create/update/delete (Notes): "macos:com.apple.Notes:default:note-X"
+        //   move (Finder):                "macos:com.apple.finder:default:file-source"
+        const syntheticTarget = kind === "move"
+          ? "macos:com.apple.finder:default:file-source"
+          : "macos:com.apple.Notes:default:note-default"
         const target = adapter.validateTargetId(syntheticTarget)
         const result = await adapter.writeOne(target, payload)
-        return { success: true, data: result }
+        return { success: true, data: { ...result, biometric_nonce: nonce } }
       } catch (err: any) {
         return { success: false, error: `host_write error: ${err.message || String(err)}` }
       }
