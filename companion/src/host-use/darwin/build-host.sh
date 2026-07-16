@@ -20,11 +20,13 @@ echo "[build-host] Output: ${OUTPUT_BIN}"
 mkdir -p "${OUTPUT_DIR}" "${SCRIPTS_DIR}"
 
 # (1) Precompile .scpt — Round 1 D3: no runtime osacompile
-echo "[build-host] (1/4) Precompiling read-mail.scpt..."
+echo "[build-host] (1/4) Precompiling read-mail.scpt + list-mail.scpt..."
 osacompile -o "${SCRIPTS_DIR}/read-mail.scpt" \
     "${SCRIPT_DIR}/read-mail.applescript"
+osacompile -o "${SCRIPTS_DIR}/list-mail.scpt" \
+    "${SCRIPT_DIR}/list-mail.applescript"
 
-if [[ ! -f "${SCRIPTS_DIR}/read-mail.scpt" ]]; then
+if [[ ! -f "${SCRIPTS_DIR}/read-mail.scpt" ]] || [[ ! -f "${SCRIPTS_DIR}/list-mail.scpt" ]]; then
   echo "[build-host] ERROR: osacompile failed — .scpt not produced"
   exit 1
 fi
