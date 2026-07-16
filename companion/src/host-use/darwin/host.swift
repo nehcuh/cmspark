@@ -165,6 +165,100 @@ func argValue(_ key: String) -> String? {
     return nil
 }
 
+// MARK: - write subcommand (Phase 1 W6: Notes create + Finder move)
+
+// Escape a string for use inside AppleScript double-quoted string literal.
+// Returns nil if the string contains characters we can't safely escape
+// (currently: single quote is rejected because we use it elsewhere in the
+// source template — could be fixed by switching to quoted-form form, but
+// better to fail loud than risk injection).
+func appleScriptEscape(_ s: String) -> String? {
+    if s.contains("'") { return nil }  // safety: rejected entirely
+    var out = ""
+    for ch in s.unicodeScalars {
+        switch ch {
+        case "\\": out += "\\\\"
+        case "\"": out += "\\\""
+        case "\n": out += "\" & return & \""  // AppleScript line break concat
+        case "\r": out += ""  // drop CR; treated as line break by AppleScript
+        case "\t": out += "\\t"
+        default: out.append(Character(ch))
+        }
+    }
+    return out
+}
+
+// runCreateNote: create a new note in Notes.app with given name + body.
+// Returns JSON {"target_id":"macos:com.apple.Notes:default:note-<id>","undoable":true}
+func runCreateNote(name: String, body: String) throws -> String {
+    guard let escName = appleScriptEscape(name) else {
+        throw HostError(code: 6, message: "create-note: name contains single quote (rejected)")
+    }
+    guard let escBody = appleScriptEscape(body) else {
+        throw HostError(code: 6, message: "create-note: body contains single quote (rejected)")
+    }
+
+    let source = """
+    set outId to ""
+    tell application "Notes"
+        set newNote to make new note with properties {name:"\(escName)", body:"\(escBody)"}
+        set outId to id of newNote as string
+    end tell
+    return "{\\"target_id\\":\\"macos:com.apple.Notes:default:note-" & outId & "\\",\\"undoable\\":true}"
+    """
+
+    var error: NSDictionary?
+    guard let script = NSAppleScript(source: source) else {
+        throw HostError(code: 3, message: "NSAppleScript source init failed")
+    }
+    let result = script.executeAndReturnError(&error)
+    if let err = error {
+        let msg = (err[NSAppleScript.errorMessage] as? String) ?? "\(err)"
+        let num = (err[NSAppleScript.errorNumber] as? Int) ?? -1
+        if num == -1743 || num == -1719 {
+            throw HostError(code: 5, message: "TCC denied or sandbox blocked (oserr=\(num)): \(msg)")
+        }
+        throw HostError(code: 4, message: "AppleScript error (oserr=\(num)): \(msg)")
+    }
+    return result.stringValue ?? "{}"
+}
+
+// runMoveFile: move a POSIX file to a POSIX destination via Finder.
+// Uses `trash`-compatible move (Finder move is reversible via Finder undo).
+// Returns JSON {"target_id":"macos:com.apple.finder:<folder>:file-<name>","undoable":true}
+func runMoveFile(sourcePath: String, destPath: String) throws -> String {
+    guard let escSrc = appleScriptEscape(sourcePath) else {
+        throw HostError(code: 6, message: "move-file: source path contains single quote")
+    }
+    guard let escDest = appleScriptEscape(destPath) else {
+        throw HostError(code: 6, message: "move-file: destination path contains single quote")
+    }
+
+    let source = """
+    tell application "Finder"
+        set srcFile to POSIX file "\(escSrc)" as alias
+        set destFolder to POSIX file "\(escDest)" as alias
+        move srcFile to destFolder
+    end tell
+    return "{\\"target_id\\":\\"macos:com.apple.finder:moved:file-ok\\",\\"undoable\\":true}"
+    """
+
+    var error: NSDictionary?
+    guard let script = NSAppleScript(source: source) else {
+        throw HostError(code: 3, message: "NSAppleScript source init failed")
+    }
+    let result = script.executeAndReturnError(&error)
+    if let err = error {
+        let msg = (err[NSAppleScript.errorMessage] as? String) ?? "\(err)"
+        let num = (err[NSAppleScript.errorNumber] as? Int) ?? -1
+        if num == -1743 || num == -1719 {
+            throw HostError(code: 5, message: "TCC denied or sandbox blocked (oserr=\(num)): \(msg)")
+        }
+        throw HostError(code: 4, message: "AppleScript error (oserr=\(num)): \(msg)")
+    }
+    return result.stringValue ?? "{}"
+}
+
 // MARK: - Entry point
 
 let argv = CommandLine.arguments
@@ -174,6 +268,8 @@ guard argv.count >= 2 else {
           read-mail                            — read top-1 Mail inbox
           list-mail [--limit N]                — list inbox TargetIds (default limit 100)
           read-message --target <TargetId>     — read message by stable id
+          create-note --name N [--body B]      — create a new Note (Phase 1 W6)
+          move-file --source P --destination D — move file via Finder (Phase 1 W6)
 
         """
     FileHandle.standardError.write(usage.data(using: .utf8)!)
@@ -194,6 +290,23 @@ do {
             exit(2)
         }
         out = try runReadMessage(targetId: target)
+    case "create-note":
+        guard let name = argValue("--name") else {
+            FileHandle.standardError.write("create-note: --name <name> required\n".data(using: .utf8)!)
+            exit(2)
+        }
+        let body = argValue("--body") ?? ""
+        out = try runCreateNote(name: name, body: body)
+    case "move-file":
+        guard let src = argValue("--source") else {
+            FileHandle.standardError.write("move-file: --source <posix-path> required\n".data(using: .utf8)!)
+            exit(2)
+        }
+        guard let dest = argValue("--destination") else {
+            FileHandle.standardError.write("move-file: --destination <posix-path> required\n".data(using: .utf8)!)
+            exit(2)
+        }
+        out = try runMoveFile(sourcePath: src, destPath: dest)
     default:
         FileHandle.standardError.write("unknown subcommand: \(subcommand)\n".data(using: .utf8)!)
         exit(2)

@@ -135,12 +135,85 @@ export class DarwinHostAdapter implements HostAdapter {
     }
   }
 
-  async writeOne(_targetId: TargetId, _payload: WritePayload): Promise<WriteResult> {
-    // Phase 1 W6 deliverable: Notes create + Finder move.
-    // host.swift doesn't yet support write subcommands.
-    throw new Error(
-      "DarwinHostAdapter.writeOne: not implemented in Phase 1 W5 — scheduled for W6 (Notes create + Finder move)",
-    )
+  async writeOne(targetId: TargetId, payload: WritePayload): Promise<WriteResult> {
+    // Re-validate TargetId on consume side.
+    const raw = targetId as string
+    if (!DARWIN_TARGET_RE.test(raw)) {
+      throw new Error(`writeOne: TargetId malformed (failed re-validation)`)
+    }
+
+    try {
+      let stdout = ""
+      switch (payload.kind) {
+        case "create": {
+          // Phase 1 W6: only Notes create is implemented. The TargetId's app
+          // segment must be "Notes"; we parse + enforce here.
+          if (!raw.startsWith("macos:com.apple.Notes:")) {
+            throw new Error(
+              `writeOne create: Phase 1 W6 only supports Notes (got "${raw.slice(0, 40)}...")`,
+            )
+          }
+          // payload.body is the note body. The "name" is derived from the
+          // first line for now — Phase 2 can split into separate fields.
+          const body = payload.body
+          const name = body.split("\n")[0].slice(0, 80) || "Untitled"
+          const result = await execFileAsync(
+            this.binPath,
+            ["create-note", "--name", name, "--body", body],
+            { encoding: "utf-8", timeout: HOST_TIMEOUT_MS },
+          )
+          stdout = String(result.stdout)
+          break
+        }
+        case "move": {
+          // Phase 1 W6: Finder move. TargetId encodes the source file; payload.destination
+          // is the destination folder POSIX path.
+          if (!raw.startsWith("macos:com.apple.finder:")) {
+            throw new Error(
+              `writeOne move: Phase 1 W6 only supports Finder (got "${raw.slice(0, 40)}...")`,
+            )
+          }
+          // Extract source path from TargetId. Format:
+          //   macos:com.apple.finder:<folder>:file-<encoded-path>
+          // For Phase 1 W6 simplicity, the source path is passed via payload
+          // and TargetId is decorative. Phase 2 will encode properly.
+          const sourcePath = (payload as any).source_path as string | undefined
+          if (!sourcePath) {
+            throw new Error("writeOne move: payload.source_path required (Phase 1 W6)")
+          }
+          const result = await execFileAsync(
+            this.binPath,
+            ["move-file", "--source", sourcePath, "--destination", payload.destination],
+            { encoding: "utf-8", timeout: HOST_TIMEOUT_MS },
+          )
+          stdout = String(result.stdout)
+          break
+        }
+        case "update":
+          throw new Error(
+            "writeOne update: not implemented in Phase 1 W6 (deferred to W7+)",
+          )
+        case "delete":
+          throw new Error(
+            "writeOne delete: requires biometric confirmation — Phase 1 W7+ deliverable",
+          )
+        default:
+          throw new Error(`writeOne: unknown payload kind "${(payload as any).kind}"`)
+      }
+      const parsed = parseJsonSafe<Record<string, unknown>>(stdout, "write")
+      const out: WriteResult = {
+        undoable: parsed.undoable === true,
+      }
+      if (typeof parsed.target_id === "string") {
+        out.target_id = this.validateTargetId(parsed.target_id)
+      }
+      return out
+    } catch (err: any) {
+      if (err && typeof err === "object" && "stderr" in err && err.stderr) {
+        throw new Error(`write: ${err.stderr}`)
+      }
+      throw err
+    }
   }
 
   validateTargetId(raw: string): TargetId {

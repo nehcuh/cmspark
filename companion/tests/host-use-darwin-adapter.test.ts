@@ -61,12 +61,39 @@ test("validateTargetId: rejects non-string input", () => {
   assert.throws(() => a.validateTargetId(null as any), /empty or non-string/)
 })
 
-test("writeOne: throws NotImplemented (Phase 1 W6)", async () => {
+test("writeOne: create rejects non-Notes TargetId (Phase 1 W6 only supports Notes)", async () => {
   const a = new DarwinHostAdapter(FAKE_BIN)
-  const id = a.validateTargetId("macos:com.apple.mail:iCloud:msg-1")
+  const mailId = a.validateTargetId("macos:com.apple.mail:iCloud:msg-1")
   await assert.rejects(
-    () => a.writeOne(id, { kind: "create", body: "x" }),
-    /not implemented in Phase 1 W5/,
+    () => a.writeOne(mailId, { kind: "create", body: "x" }),
+    /Phase 1 W6 only supports Notes/,
+  )
+})
+
+test("writeOne: move rejects non-Finder TargetId (Phase 1 W6 only supports Finder)", async () => {
+  const a = new DarwinHostAdapter(FAKE_BIN)
+  const mailId = a.validateTargetId("macos:com.apple.mail:iCloud:msg-1")
+  await assert.rejects(
+    () => a.writeOne(mailId, { kind: "move", destination: "/tmp", source_path: "/tmp/x" }),
+    /Phase 1 W6 only supports Finder/,
+  )
+})
+
+test("writeOne: update throws NotImplemented (Phase 1 W7+)", async () => {
+  const a = new DarwinHostAdapter(FAKE_BIN)
+  const id = a.validateTargetId("macos:com.apple.Notes:default:note-1")
+  await assert.rejects(
+    () => a.writeOne(id, { kind: "update", body: "x" }),
+    /not implemented in Phase 1 W6/,
+  )
+})
+
+test("writeOne: delete throws NotImplemented (requires biometric)", async () => {
+  const a = new DarwinHostAdapter(FAKE_BIN)
+  const id = a.validateTargetId("macos:com.apple.Notes:default:note-1")
+  await assert.rejects(
+    () => a.writeOne(id, { kind: "delete" } as any),
+    /requires biometric confirmation/,
   )
 })
 

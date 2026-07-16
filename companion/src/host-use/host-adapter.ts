@@ -50,10 +50,15 @@ export interface ReadResult {
  * Discriminated union per Kimi Round 2. `kind` discriminates the payload
  * shape — invalid combinations (e.g., `delete` with body, `create` without
  * body) are unrepresentable at the type level.
+ *
+ * Phase 1 W6: `move` carries `source_path` because Finder move needs both
+ * source (POSIX path) and destination. The TargetId in writeOne's signature
+ * is the source for move operations; `source_path` is the canonical path
+ * string. Phase 2 may encode source_path into TargetId directly.
  */
 export type WritePayload =
   | { kind: "create"; body: string }
-  | { kind: "move"; destination: string }
+  | { kind: "move"; destination: string; source_path: string }
   | { kind: "update"; body: string }
   | { kind: "delete" }
 

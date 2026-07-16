@@ -314,7 +314,7 @@ export function createToolExecutor(ws: WebSocket) {
     // are explicit user opt-in). Vault-app bundle ids (1Password / Keychain /
     // etc) are still blocked unconditionally downstream in
     // host-use/darwin/blacklist.ts.
-    if ((toolName === "evaluate" || toolName === "osascript_eval" || toolName === "host_read") && !finalParams.security_token) {
+    if ((toolName === "evaluate" || toolName === "osascript_eval" || toolName === "host_read" || toolName === "host_write") && !finalParams.security_token) {
       const code = String(finalParams.code || finalParams.expression || "")
       const lengthCheck = securityPolicy.checkLength(toolName, code)
       if (!lengthCheck.ok) {
@@ -699,7 +699,7 @@ export function createToolExecutor(ws: WebSocket) {
     }
 
     // Companion-side tools (executed locally, not forwarded to extension)
-    const COMPANION_TOOLS = ["osascript_eval", "host_read", "use_skill", "record_experience"]
+    const COMPANION_TOOLS = ["osascript_eval", "host_read", "host_write", "use_skill", "record_experience"]
     if (COMPANION_TOOLS.includes(toolName)) {
       try {
         const result = await executeCompanionTool(toolName, finalParams)
@@ -1155,6 +1155,68 @@ async function executeCompanionTool(toolName: string, params: any): Promise<any>
         return { success: true, data: result }
       } catch (err: any) {
         return { success: false, error: `host_read error: ${err.message || String(err)}` }
+      }
+    }
+    case "host_write": {
+      // Phase 1 W6: Notes create + Finder move via HostAdapter.writeOne.
+      // Same L2 confirmation gate + security_token validation as host_read.
+      if (params.security_token) {
+        const valid = securityPolicy.validateToken(
+          String(params.security_token),
+          "host_write",
+          String(params.kind || ""),
+        )
+        if (!valid) {
+          return { success: false, error: "Invalid or expired security token for host_write" }
+        }
+      }
+      if (os.platform() !== "darwin") {
+        return {
+          success: false,
+          error: `host_write is macOS-only in Phase 1 W6 (platform=${os.platform()})`,
+        }
+      }
+      try {
+        const { getDarwinAdapter } = await import("./host-use/darwin/adapter")
+        const adapter = getDarwinAdapter()
+        const kind = String(params.kind) as "create" | "move" | "update" | "delete"
+        // Build WritePayload discriminated union from raw params.
+        let payload: any
+        if (kind === "create") {
+          if (typeof params.body !== "string") {
+            return { success: false, error: "host_write create: body required" }
+          }
+          payload = { kind: "create", body: params.body }
+        } else if (kind === "move") {
+          if (typeof params.destination !== "string" || typeof params.source_path !== "string") {
+            return {
+              success: false,
+              error: "host_write move: source_path + destination required",
+            }
+          }
+          payload = {
+            kind: "move",
+            destination: params.destination,
+            source_path: params.source_path,
+          }
+        } else {
+          return {
+            success: false,
+            error: `host_write ${kind}: requires biometric confirmation — Phase 1 W7+ deliverable`,
+          }
+        }
+        // TargetId for Phase 1 W6:
+        //   create: synthesized as "macos:com.apple.Notes:default:note-new"
+        //   move:   synthesized as "macos:com.apple.finder:default:file-source"
+        // Phase 2 will pass real TargetIds from listReadTargets.
+        const syntheticTarget = kind === "create"
+          ? "macos:com.apple.Notes:default:note-new"
+          : "macos:com.apple.finder:default:file-source"
+        const target = adapter.validateTargetId(syntheticTarget)
+        const result = await adapter.writeOne(target, payload)
+        return { success: true, data: result }
+      } catch (err: any) {
+        return { success: false, error: `host_write error: ${err.message || String(err)}` }
       }
     }
     default:

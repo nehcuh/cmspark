@@ -512,6 +512,24 @@ export function getToolDefinitions(): ToolDefinition[] {
     {
       type: "function",
       function: {
+        name: "host_write",
+        description: "(macOS ONLY — Phase 1 W6) Write to a host app. Phase 1 supports: Notes create (kind=create, body=note content, first line becomes name) and Finder move (kind=move, source_path=POSIX file path, destination=POSIX folder path). Update/delete require biometric (Phase 1 W7+).",
+        parameters: {
+          type: "object",
+          properties: {
+            kind: { type: "string", enum: ["create", "move", "update", "delete"], description: "Write operation kind." },
+            target_id: { type: "string", description: "Opaque TargetId from listReadTargets (decorative for create; source identifier for move)." },
+            body: { type: "string", description: "For create/update: the content. Notes create: first 80 chars of first line becomes note name." },
+            destination: { type: "string", description: "For move: POSIX destination folder path." },
+            source_path: { type: "string", description: "For move: POSIX source file path (Phase 1 W6 — encoded in TargetId in Phase 2)." },
+          },
+          required: ["kind"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
         name: "record_experience",
         description: "记录一条操作经验。当用户说'记住这个'或'记录下这条经验'时调用。将经验保存到站点知识库(site_knowledge)或业务域知识库(domain_knowledge)，下次操作该站点时会自动注入。",
         parameters: {

@@ -86,6 +86,16 @@ export const TOOL_ARG_SCHEMAS: Record<string, z.ZodTypeAny> = {
     security_token: z.string().optional(),
   }),
 
+  // --- macOS host_write (Phase 1 W6: Notes create + Finder move) ---
+  host_write: z.object({
+    kind: z.enum(["create", "move", "update", "delete"]),
+    target_id: z.string().optional(),
+    body: z.string().optional(),
+    destination: z.string().optional(),
+    source_path: z.string().optional(),
+    security_token: z.string().optional(),
+  }),
+
   // --- Navigation (high-risk: agent can drive browser to any URL) ---
   navigate: z.object({
     tabId: tabIdSchema,
