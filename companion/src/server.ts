@@ -496,8 +496,10 @@ export function createToolExecutor(ws: WebSocket) {
             : securityConfig.auto_approve_dangerous ? "global_toggle" : "domain_whitelist",
         })
       }
-      // Issue a fresh token (post-approval or for auto-approved skip path)
-      const approvedToken = securityPolicy.issueToken(toolName, code)
+      // Issue a fresh token (post-approval or for auto-approved skip path).
+      // Phase 1 W8 bugfix (Kimi+Pi advisor Fix C): use bindingPayloadFor via
+      // issueTokenFor so issuance and validation CANNOT diverge per tool.
+      const approvedToken = securityPolicy.issueTokenFor(toolName, finalParams)
       finalParams = { ...finalParams, security_token: approvedToken.token }
     } else if (toolName === "evaluate" && finalParams.security_token) {
       // P0-4 (audit H2): evaluate is forwarded to the extension — unlike osascript_eval
@@ -1238,10 +1240,10 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
       // Without this, any non-empty security_token string in params bypasses
       // the L2 gate at server.ts:303 and host_read executes without confirmation.
       if (params.security_token) {
-        const valid = securityPolicy.validateToken(
+        const valid = securityPolicy.validateTokenFor(
           String(params.security_token),
           "host_read",
-          String(params.application || ""),
+          params,
         )
         if (!valid) {
           return { success: false, error: "Invalid or expired security token for host_read" }
@@ -1261,10 +1263,10 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
       // Phase 1 W8 (Kimi+Pi advisor Option A): ALL writes go through biometric
       // tier per Round 2 §4.2. W6 ask-once behavior replaced.
       if (params.security_token) {
-        const valid = securityPolicy.validateToken(
+        const valid = securityPolicy.validateTokenFor(
           String(params.security_token),
           "host_write",
-          String(params.kind || ""),
+          params,
         )
         if (!valid) {
           return { success: false, error: "Invalid or expired security token for host_write" }

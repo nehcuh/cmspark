@@ -33,6 +33,31 @@ export class SecurityPolicy {
     return createHash("sha256").update(code).digest("hex").slice(0, 16)
   }
 
+  /**
+   * Phase 1 W8 bugfix (Kimi+Pi advisor Fix C): Compute the token-binding payload
+   * for a given tool. Token is bound to (toolName, code, threadId); this helper
+   * centralizes what "code" means per tool so issuance and validation CANNOT
+   * diverge. Previously, gate issued with `code=""` for host_read/host_write
+   * but cases validated with `application`/`kind` → mismatch → "Invalid token".
+   *
+   * Adding a new L2-gated tool: extend this function ONLY. Both issuance
+   * (server.ts L2 gate) and validation (executeCompanionTool cases) call this.
+   */
+  static bindingPayloadFor(toolName: string, params: Record<string, any>): string {
+    switch (toolName) {
+      case "evaluate":
+        return String(params?.code || "")
+      case "osascript_eval":
+        return String(params?.expression || "")
+      case "host_read":
+        return String(params?.application || "")
+      case "host_write":
+        return String(params?.kind || "")
+      default:
+        return ""
+    }
+  }
+
   /** Generate a one-time HMAC token for dangerous code execution. */
   issueToken(toolName: string, code: string, threadId = "default"): SecurityToken {
     const nonce = randomBytes(16).toString("hex")
@@ -46,6 +71,23 @@ export class SecurityPolicy {
     const expiryTimer = setTimeout(() => this.issuedTokens.delete(token), TOKEN_TTL_MS)
     expiryTimer.unref()
     return { token, expiresAt: ts + TOKEN_TTL_MS }
+  }
+
+  /**
+   * Thin wrapper: issue token for a tool's params. Use this from L2 gate to
+   * guarantee binding payload matches what the validateToken case will check.
+   */
+  issueTokenFor(toolName: string, params: Record<string, any>, threadId = "default"): SecurityToken {
+    return this.issueToken(toolName, SecurityPolicy.bindingPayloadFor(toolName, params), threadId)
+  }
+
+  /**
+   * Thin wrapper: validate token for a tool's params. Use this from
+   * executeCompanionTool cases to guarantee binding payload matches what the
+   * L2 gate issued.
+   */
+  validateTokenFor(token: string, toolName: string, params: Record<string, any>, threadId = "default"): boolean {
+    return this.validateToken(token, toolName, SecurityPolicy.bindingPayloadFor(toolName, params), threadId)
   }
 
   /** Validate that a token was issued by us and matches the tool/code/thread. */
