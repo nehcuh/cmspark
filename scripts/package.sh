@@ -139,6 +139,15 @@ case "${PLATFORM}" in
     if [ -f companion/dist/cmspark-tray ]; then
       cp companion/dist/cmspark-tray "${STAGING}/"
     fi
+    # Phase 1 W5-W8: cmspark-host Swift binary + precompiled .scpt scripts.
+    # Without these, host_read/host_write tools ENOENT at runtime.
+    if [ -f companion/dist/cmspark-host ]; then
+      cp companion/dist/cmspark-host "${STAGING}/"
+      mkdir -p "${STAGING}/host-scripts"
+      cp companion/dist/host-scripts/*.scpt "${STAGING}/host-scripts/" 2>/dev/null || true
+    else
+      echo "[package] WARNING: companion/dist/cmspark-host not built — run 'npm run build:host' in companion/ first"
+    fi
     ;;
   windows-*)
     rm -f "${STAGING}/node_modules/systray2/traybin/tray_darwin_release"

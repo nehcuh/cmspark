@@ -21,8 +21,29 @@ function resolveHostBinary(): string {
     }
     throw new Error("host_read: CMSPARK_HOST_BIN override disabled in production")
   }
-  const projectRoot = path.resolve(__dirname, "../../..")
-  return path.join(projectRoot, "dist", "cmspark-host")
+  // Search order covers 3 deployment modes:
+  //   1. DMG / packaged install: STAGING/cmspark-agent.js + STAGING/cmspark-host
+  //      (siblings — Swift binary staged next to bundled companion entry)
+  //   2. npm dev mode: companion/dist/host-use/darwin/index.js → projectRoot = companion/
+  //      binary at companion/dist/cmspark-host (3 levels up from darwin/)
+  //   3. Repo root scripts: rare; check both candidates and return whichever exists.
+  const fs = require("fs") as typeof import("fs")
+  const candidates = [
+    path.resolve(__dirname, "../cmspark-host"),           // staged alongside (DMG)
+    path.resolve(__dirname, "../../cmspark-host"),        // alt staging layout
+    path.resolve(__dirname, "../../dist/cmspark-host"),   // dev mode: companion/dist/
+    path.resolve(__dirname, "../../../dist/cmspark-host"),// dev mode: repo-root/dist/
+  ]
+  for (const c of candidates) {
+    try {
+      if (fs.existsSync(c)) return c
+    } catch {
+      // ignore — try next candidate
+    }
+  }
+  // Fall back to dev-mode path (will ENOENT at execFile with clear error
+  // pointing to the missing binary; better than silent wrong-path).
+  return path.resolve(__dirname, "../../dist/cmspark-host")
 }
 
 function parseHostJson(stdout: string): HostReadResult {
