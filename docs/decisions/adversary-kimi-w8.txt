@@ -1,0 +1,129 @@
+• The user wants a critical/adversarial review of a Phase 1 W8 biometric scope brief. I need to read the referenced files first, especially the brief itself and the supporting references. The user wants under 600 words, with file:line citations.
+
+  Let me start by reading the key files in parallel.Now I need to read more of server.ts around host_write and host_read to understand the current L2 gate structure. The brief mentioned lines 1115-1200 for host_write but my read started at 1100 and host_read starts at 1214. I need to find host_write. Let me search for it.I need to read the host_write case in server.ts to see the current confirmation gate.Interesting — the host_write case in server.ts doesn't actually show the L2 confirmation gate inline; it checks security_token. The L2 gate must be earlier in the flow. Let me search for how host_write gets confirmed (security-confirmation.ts). But the brief says "当前 host_write case 走 ask-once L2 gate" so maybe the gate is handled by securityPolicy.validateToken or there's a confirmation manager. Let me search.I see. The L2 confirmation gate is at server.ts:322 and applies to evaluate/osascript_eval/host_read. host_write is also gated because it falls into the same block. Let me read lines 300-380 to confirm host_write is in the gate and that it's currently ask-once.Now I have enough context. The user wants an adversarial review of the brief with three options evaluated, final recommendation, and "if wrong" sentence, under 600 words, with file:line citations.
+
+  Key facts:
+  - Round 2 synthesis §4.2 (line 198-200): Phase 1 2-tier gradient: ask-once for all reads, biometric for writes ("Touch ID 用于 write"). Tool list: host_read and host_write; host_write limited to Notes create note / Finder move.
+  - Round 1 synthesis §4.5 (line 152-154): biometric: Touch ID for any write operation; Phase 1 only Notes create note; Finder move pushed to Phase 2. But also earlier Round 1 §4.5 says Notes create + Finder move reversible? Wait, I need to check Round 1 §4.5 more carefully. The brief says Round 1 §4.5 classified Notes create + Finder move as reversible (backup 7 days / trash). But in the Round 1 synthesis file, §4.5 says "Phase 1 (W2-W4) — MVP" with confirmation gradient: ask-once: all read operations (Mail/Finder/Notes create); biometric: Touch ID for any write operation (Phase 1 only Notes create note; Finder move pushed Phase 2). It says "Notes create" is ask-once, not biometric. Wait, the Round 1 synthesis says:
+    - ask-once: all read operations (Mail/Finder/Notes create)
+    - biometric: Touch ID用于任何写操作（Phase 1 仅有 Notes create note；Finder move 推 Phase 2）
+
+  This is contradictory within itself: it says ask-once includes "Notes create", but biometric includes "Notes create note". The brief interprets Round 1 §4.5 as classifying Notes create + Finder move as reversible → no biometric. But the Round 1 text literally says Notes create is ask-once (under reads?) and Notes create note is biometric. This is confusing. Actually, the brief says "W6 设计依据：Round 1 §4.5 把 Notes create + Finder move 归类为可逆（备份 7 天 / trash）。" I didn't see explicit "backup 7 days / trash" in Round 1 §4.5. Let me re-read the Round 1 file around §4.5. I read lines 140-166. It didn't mention backup/trash. Maybe the brief is referring to earlier Round 1 content? Or maybe the brief author is summarizing. Let me search for "reversible" or "trash" in Round 1 synthesis.
+
+  Actually the user says "Round 1 §4.5：Notes create + Finder move 是可逆操作 → 不需 biometric". So I should accept that as the user's framing of Round 1, but verify. Let me search Round 1 for "可逆" or "trash" or "backup".No matches for reversible/trash/backup/undo in Round 1 synthesis. So the brief's claim that "Round 1 §4.5 把 Notes create + Finder move 归类为可逆" is not literally in the file. The Round 1 synthesis §4.5 actually says Notes create is ask-once (contradicting Round 2) and Finder move is Phase 2. The brief may be misattributing the reversibility rationale. This is an important adversarial finding.
+
+  Round 1 §4.5 (line 152-154) says:
+  - ask-once: all read operations (Mail/Finder/Notes create)
+  - biometric: Touch ID for any write operation (Phase 1 only Notes create note; Finder move pushed to Phase 2)
+
+  This is internally inconsistent: "Notes create" appears under ask-once, but "Notes create note" appears under biometric. It seems Round 1 itself was confused.
+
+  Round 2 §4.2 (line 198-200) is clearer:
+  - ask-once: all read
+  - biometric: macOS Touch ID for write; Linux manual 6-digit nonce
+
+  And Round 2 §4.2 tool list says host_write Phase 1 limited to Notes create note / Finder move.
+
+  W7 final decision (line 28-32) has ship blocker 1: "Round 2 §4.2 locks host_write behind biometric tier. Thread-scope biometric bypass collapses the tier into ask-once... Writes always require biometric per call." So W7 already locked in that writes are biometric per call.
+
+  But the user says W6 current state is Notes create + Finder move both ask-once (conflicts with Round 2 literal). Wait, W7 is after W6. W7 decision says writes always biometric per call. So the current state in server.ts at line 322-336 shows host_write goes through L2 confirmation gate (ask-once) when no security_token. That seems to reflect W6 state, not W7. The brief says "W6 当前：Notes create + Finder move 都走 ask-once". Actually W7 decision was to make writes biometric. So W8 is about implementing the biometric tier, but the decision to apply it to writes was already made in W7.
+
+  Actually re-reading the brief: "W7 Kimi+Pi 三方共识的 Q1 ship blocker：「writes always biometric per call, never thread-trusted」——但这只针对 thread-scoped bypass，未明确 per-call 是否一定 biometric." Wait, W7 Q1 says "Touch ID per call. Writes are biometric-gated per Round 2 §4.2". That does explicitly say per-call biometric. But the brief says "未明确 per-call 是否一定 biometric". There's some hedging.
+
+  Actually I think the brief is asking: W7 decided writes always biometric (no thread bypass). But does that mean *all* host_write calls, including the currently-reversible Notes create and Finder move, must be biometric? Option A says yes (literal Round 2). Option B says no, only destructive writes. Option C compromise.
+
+  So the core conflict is Round 2 §4.2 "Touch ID 用于 write" is broad (all writes) vs Round 1 §4.5's practical classification that some writes (Notes create, Finder move) are low-risk/reversible. Even though Round 1 file doesn't literally say "reversible", the brief frames it that way. The Round 1 synthesis does say "Notes create" is ask-once, which functionally matches the brief.
+
+  Now I need to make a recommendation. Given the W7 decision explicitly locks writes behind biometric per Round 2 §4.2, and calls it a ship blocker, Option B would violate a locked W7 decision and Round 2 literal. Option A is consistent but has UX cost. Option C is a partial compromise but creates inconsistent policy.
+
+  But the adversarial review should be critical. Let me think through each option.
+
+  Option A: All writes biometric.
+  - Pros: consistent with Round 2 §4.2 (line 198-200) and W7 Q1 ship blocker (w7-trusted-apps-final.md:28-32). Preserves security model integrity. Simple to implement: host_write always requires biometric, no per-kind branching.
+  - Cons: Notes create per call Touch ID is fatiguing. Finder move per call Touch ID is also fatiguing. W6 behavior change. But W7 already decided this.
+  - Would-block-ship? No, it's the locked decision.
+
+  Option B: Only destructive biometric.
+  - Pros: UX, matches Round 1 practical intent. 
+  - Cons: Violates W7 ship blocker 1 (w7-trusted-apps-final.md:28-32: "Writes always require biometric per call"). Violates Round 2 §4.2. Makes Phase 1 biometric infrastructure unused (but infrastructure could be tested). 
+  - Would-block-ship? Yes, because it reopens a settled ship blocker.
+
+  Option C: Notes create biometric, Finder move ask-once.
+  - Pros: Notes contain user data, move is location-only. 
+  - Cons: Subjective boundary. Finder move can move SSH keys or sensitive files. Inconsistent with W7 decision that writes always biometric. Also, Round 1 §4.5 actually said Finder move is Phase 2, not ask-once in Phase 1.
+  - Would-block-ship? Likely yes, because it partially violates W7 blocker.
+
+  Recommendation: Option A, because W7 already locked it and Round 2 is the governing synthesis. But I should note the UX fatigue and recommend a time-bounded session as a fast-follow, which W7 already allowed for Phase 2 if fatigue emerges.
+
+  "If wrong" sentence: If we choose B/C, we create a tier downgrade that a future audit or adversarial review will flag as contradicting w7-trusted-apps-final.md:28-32 and Round 2 §4.2, forcing a W8.5 remediation or shipping with a known policy regression.
+
+  Wait, the user asks "最后选一个 + 一句'如果选错会怎样'". So I need to pick one and give that sentence.
+
+  Under 600 words. Need file:line citations. I should cite:
+  - Round 2 §4.2: docs/decisions/computer-use-round2-synthesis.md:198-200
+  - Round 1 §4.5: docs/decisions/computer-use-round1-synthesis.md:152-154 (but also note it says Notes create is ask-once there)
+  - W7 blocker: docs/decisions/w7-trusted-apps-final.md:28-32
+  - server.ts:336 (host_write in L2 gate), server.ts:1245-1306 (host_write implementation), adapter.ts:144-223 (writeOne)
+
+  Let me write the review. I should be critical/adversarial. I can point out that the brief mischaracterizes Round 1 §4.5 (no "reversible" wording found), but the conflict is real because Round 1 itself is inconsistent (Notes create listed under both ask-once and biometric).
+
+  Word count target: under 600. Let me draft.
+
+  Draft:
+
+  Critical review of `w8-biometric-scope-brief.md`.
+
+  First, the brief's framing of Round 1 §4.5 is slightly off. The file (`computer-use-round1-synthesis.md:152-154`) does not say Notes create + Finder move are "reversible"; it says "ask-once: all read operations (Mail/Finder/Notes create)" and "biometric: Touch ID for any write operation (Phase 1 only Notes create note; Finder move pushed to Phase 2)". It is internally inconsistent (Notes create appears in both tiers), but it never invokes reversibility. The real conflict is that Round 2 (`computer-use-round2-synthesis.md:198-200`) narrows the gradient to "ask-once = all read, biometric = Touch ID for write" and explicitly keeps Finder move in Phase 1 host_write scope (`computer-use-round2-synthesis.md:190`), whereas Round 1 pushed Finder move to Phase 2.
+
+  Current code: `server.ts:336` puts `host_write` through the same L2 confirmation gate as `host_read`, i.e. ask-once. `adapter.ts:144-223` implements `create-note` and `move-file` without any biometric branch. So W6 is indeed ask-once.
+
+  Options:
+
+  **A — all writes biometric.** Recommend. It honors `w7-trusted-apps-final.md:28-32`, which is a locked ship blocker: "Writes always require biometric per call." Round 2 §4.2 is the governing synthesis and it says "Touch ID 用于 write" without carving out reversible verbs. Trade-off: Touch ID fatigue on every Note creation and file move. Acceptable because W7 already anticipated a 5-minute session-bound relief in Phase 2 if fatigue surfaces (`w7-trusted-apps-final.md:63`). Would-block-ship: no.
+
+  **B — only destructive writes biometric.** Do not recommend. It would make the W7 ship blocker meaningless: the blocker exists precisely because thread-scope bypass would "collapse the tier into ask-once" (`w7-trusted-apps-final.md:31`). Reclassifying whole categories of writes as non-biometric is the same collapse via a different door. Trade-off: Phase 1 biometric infrastructure ships unused. That is a real cost, but it is not a reason to violate a locked security decision. Would-block-ship: yes, because it reopens a settled blocker and contradicts Round 2 §4.2.
+
+  **C — Notes create biometric, Finder move ask-once.** Do not recommend. The boundary is subjective and dangerous: moving `~/.ssh/id_ed25519` to trash is a "move" (`adapter.ts:192` `move-file`), not a delete, yet it is destructive. Conversely, creating a Note is low-grade data creation. There is no principled way to draw the line that does not also violate W7's "writes always biometric" rule. Trade-off: partial UX relief at the cost of policy inconsistency. Would-block-ship: yes, partial violation of the same blocker.
+
+  **Choice: A.** 
+
+  If we choose B or C, we ship a known policy regression against `w7-trusted-apps-final.md:28-32` and `computer-use-round2-synthesis.md:198-200`, which a future security audit will flag as a tier downgrade and force a W8.5 remediation while live users have already been trained that some writes need only a click.
+
+  Check word count... Let me count roughly: about 360 words. Good.
+
+  But wait, the user says "对每个 Option：推荐或不推荐 + 接受的 trade-off + would-block-Phase-1-ship 判断。" I covered that. "最后选一个 + 一句'如果选错会怎样'." Covered.
+
+  I should also note the current code location more precisely: server.ts:336 for the gate, server.ts:1245-1306 for host_write case, adapter.ts:144-223 for writeOne.
+
+  I think this is good. Let me also double-check the Round 1 line reference. I cited lines 152-154. Let me verify those are the right lines.Good. Lines 152-154 are correct.
+
+  One more check: I claimed Round 2 explicitly keeps Finder move in Phase 1 host_write scope. Let me verify line 190.Good. Now I have all the references. I'll write the final response in Chinese as requested, under 600 words, with file:line citations.
+
+  I want to make sure my response is critical/adversarial and doesn't just accept the brief's framing. I'll explicitly call out the misattribution of "reversible" to Round 1.
+
+  Let me finalize the response.
+
+• Critical review of `docs/decisions/w8-biometric-scope-brief.md`.
+
+  First, the brief’s framing of Round 1 §4.5 is slightly off. The file (`docs/decisions/computer-use-round1-synthesis.md:152-154`) never says Notes create + Finder move are “reversible”; it says `ask-once: 所有 read 操作（Mail/Finder/Notes create）` and `biometric: Touch ID 用于任何写操作（Phase 1 仅有 Notes create note；Finder move 推 Phase 2)`. It is internally inconsistent—Notes create appears in both tiers—but it does not invoke reversibility. The real conflict is that Round 2 (`docs/decisions/computer-use-round2-synthesis.md:190,198-200`) keeps Finder move in Phase 1 `host_write` scope and narrows the gradient to “ask-once = read, biometric = write”.
+
+  Current code matches W6 ask-once: `companion/src/server.ts:336` routes `host_write` through the same L2 gate as `host_read`, and `companion/src/host-use/darwin/adapter.ts:144-223` implements `create-note` / `move-file` with no biometric branch.
+
+  ## Options
+
+  **A — 所有 write 走 biometric。** 推荐。  
+  它直接执行 `docs/decisions/w7-trusted-apps-final.md:28-32` 这个已锁定的 ship blocker：“Writes always require biometric per call.” Round 2 §4.2 写明 “Touch ID 用于 write”，未对可逆动词开例外。Trade-off：每次建 Note、每次 Finder move 都要 Touch ID，确实疲劳；但 W7 已允许 Phase 2 根据疲劳数据加 5 分钟 session（`w7-trusted-apps-final.md:63`）。Would-block-Phase-1-ship：**否**。
+
+  **B — 仅 destructive write 走 biometric。** 不推荐。  
+  这与 W7 blocker 1 的精神完全相反：该 blocker 存在就是因为 thread-scope bypass 会 “collapse the tier into ask-once”（`w7-trusted-apps-final.md:31`）。把整类 write 重新划为 non-biometric 是同一类 tier collapse，只是换了扇门。Trade-off：Phase 1 biometric 基础设施空转——这是真实成本，但不是推翻已锁定安全决策的理由。Would-block-Phase-1-ship：**是**，因为它重开已关闭的 blocker 并违反 Round 2 §4.2。
+
+  **C — Notes create biometric，Finder move ask-once。** 不推荐。  
+  界限主观且危险：`move-file`（`adapter.ts:192`）把 `~/.ssh/id_ed25519` 移进 Trash 在语义上是 move，后果却是 destructive；反之创建 Note 只是低敏感度数据写入。没有原则性方法划这条线，同时还不违反 W7 “writes always biometric”。Trade-off：用政策不一致换取部分 UX 缓解。Would-block-Phase-1-ship：**是**，部分违反同一 blocker。
+
+  ## Final choice
+
+  **选 A。**
+
+  如果选 B 或 C，等于带着一个已知的政策回归 ship：`w7-trusted-apps-final.md:28-32` 与 `computer-use-round2-synthesis.md:198-200` 都会被未来安全审计钉为 tier downgrade，迫使我们做 W8.5 补救，而线上用户已经被训练成“某些 write 只需点一下”。
+
+To resume this session: kimi -r session_35a87d3e-6a8b-4d57-96a8-0ef085bd2719
