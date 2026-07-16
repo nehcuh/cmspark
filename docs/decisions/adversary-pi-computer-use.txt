@@ -1,0 +1,55 @@
+Pi-sub 评审。从 macOS native 实现成本侧砍，不和 Kimi 重复安全/产品视角。
+
+## D1-D8
+
+- **D1（4 档梯度）**：同意 Kimi「保留 4 档」。但 Kimi 漏了真实工程账：L0 Smart scope「同 app 同窗口 5s 内降档」需要你维护 (app, window_id, verb, ts) 四元组状态。AX 的 `_AXUIElementGetWindow` 大多数 app 不返回 stable window id，你拿到的 window ref 在 AX tree 重建后会失效。Phase 1 砍掉 L0，省一周 AX window tracking 的脏活。
+
+- **D2（剔 5 tool）**：同意 Kimi，但要更狠。`applescript_run` 也别让 LLM 写 args，Phase 0 只允许「verb 白名单 + 预编译模板 + 参数 enum 化」。LLM 给我一个 free-form string 我就 abort。
+
+- **D3（AST 白名单）**：同意 Kimi 工程难度判断。补一刀：`osacompile` 在 Apple Silicon 上调用慢（冷启 300-500ms），且 AppleScript source 里中文/Unicode 会触发 osacompile 的 encoding heuristics bug。**别用 osacompile 做 runtime gate**——用预编译的 `.scpt` 文件 + argv 注入，runtime 只跑不编译。AST 校验是 dev-time 工具，不是 runtime 工具。
+
+- **D4（双信道）**：同意 Kimi。tray 必须是独立 Swift binary，**不能是 systray2 Node 进程**——否则和 companion 同进程空间被一锅端。Phase 1 强制：双信道只在 macOS + Swift tray 编译产物 SHA256 匹配时启用；Linux/systray2 走降级，critical 操作直接拒绝。
+
+- **D5（vault 黑名单）**：同意，但实现细节 Kimi 没点透。`blocked_bundles` 的 bundle id 拿不到——很多敏感 app（1Password、银行）的 AX tree 默认就是 `AXManualAccessibility`="NO"，你连窗口都看不见。真正的兜底是：AXUIElement role == `AXSecureTextField` 时无条件 critical + 不允许 vision_click 命中。
+
+- **D6（screenshot redact）**：反对 Kimi「本地 OCR + redact 再喂 LLM」的折中。VisionKit 的 `VNRecognizeTextRequest` 在 M1 上 1080p 截图大约 200-400ms，但准确度对 CJK 一塌糊涂（中文识别漏字率 15%+）。redact regex 命中银行/密码 manager 自定义字段根本不可能覆盖。**Phase 1 直接禁掉 screenshot 进 LLM**，screenshot 只用于 audit log，user visible 在 tray UI。
+
+- **D7（daemon 推到 Phase 2）**：同意 Kimi 反对。但 Kimi 的「最小 daemon」还是太重。Phase 1 daemon 只做一件事：tray 常驻 + 系统通知 click-to-confirm。不要在 daemon 模式跑 LLM streaming，那是 Phase 2。
+
+- **D8（darwin only）**：同意。Phase 1 把 `HostAdapter` interface 干脆别定义，直接 `darwin/` 目录裸写。interface 抽象是 Phase 4 才该做的事——现在抽象一定是错的。
+
+## Q1-Q4
+
+- **Q1（4 档 vs 3 档）**：同意 Kimi 不回 3 档。但 L0/L1/L2/L3 命名换成 `silent / ask-once / double-confirm / biometric`，codebase 里用 enum 不用字符串。
+
+- **Q2（SHA256 够吗）**：不够，且 Kimi 的「Developer ID + notarization」对个人开发者门槛太高（$99/year + Apple 审核）。**实际可行方案**：Swift binary 用 ad-hoc signing + `SecStaticCodeCheckValidity` 在 companion 启动时校验 code signature（不只 hash），加上 `com.apple.security.cs.disable-library-validation` 不开。DYLD 注入靠 hardened runtime + library validation 拦，不靠 notarization。
+
+- **Q3（OCR 过激？）**：Phase 1 不做 OCR，Kimi 的方向是错的。VisionKit 准确度问题 + redact 误杀 = 用户看到「邮件内容被糊掉」直接卸载。
+
+- **Q4（绝不主动？）**：同意 Kimi。但补充：Phase 1 的 system prompt 只宣告「我能读 Mail / 整理 Finder」，不宣告任何写能力。这样 agent 主动提议时也只能提议读，写必须用户显式动词。
+
+## Kimi 漏掉的风险 / 过设计
+
+1. **Automation 权限 UX 的真相**：`shortcuts run` 第一次执行时，macOS 会弹「cmspark-agent 想要控制 Shortcuts」对话框，但**这个对话框 24 小时内只弹一次**——之后即使你换了 shortcut 也 silent allow。这意味着 T2（恶意重名 Shortcut）在权限授予后无法被用户察觉。Phase 1 不做 Shortcut 的理由又多一条。
+
+2. **ScreenCaptureKit 的窗口枚举泄漏**：`SCShareableContent` 拿当前所有窗口列表时，会暴露所有正在运行 app 的窗口标题（包括 1Password 的「Login - 1Password」、银行 app 的账户余额预览）。即使你不截图，光 `app_list_running` + window title 就已经泄露。Phase 1 `app_list_running` 必须只返回 bundle id，不返回 window title。
+
+3. **AX API 的 `AXSetMessagingTimeout` 默认 6s 太长**：AppleScript `tell application "Mail"` hang 住时，companion 整个事件循环阻塞。每个 AX/AppleScript 调用必须包一层 `AXSetMessagingTimeout(elem, 0.5)` + execFile 的 `timeout: 3000` 双保险。
+
+4. **过设计：4.4 节的 whitelist 演化计数（3-7-10）**。同意 Kimi 反对，但补一条实现细节：这个计数要持久化到 config.json，而 config.json 现在没加密——攻击者直接编辑计数让某 tool 永远 silent allow。Phase 1 whitelist 只存「allow/deny per tool per app」二元状态，不存计数。
+
+## Phase 1 最小 scope
+
+Kimi 给 3 个 tool（applescript_run + 2 个辅助），我比 Kimi 更激进：
+
+- **1 个 tool**：`applescript_run`，预编译 `.scpt` 模板，verb 白名单 = {Mail: read messages, Finder: move to folder, Notes: create note}。
+- **0 个辅助 tool**：`app_activate` / `app_list_running` 砍掉——用户不需要 agent 列他的 app，这功能对 LLM 决策无价值，纯攻击面。
+- **2 档**：ask-once + biometric（写操作）。没有 L0/silent，没有 double-confirm（Phase 1 没有 Swift tray 编译产物的双向确认流程）。
+- **daemon**：tray 常驻 + 系统通知 click-to-confirm。不跑 LLM streaming。
+- **screenshot / vision / shortcut / AX / menu**：代码层面不存在。
+
+对比 Kimi：我把 Kimi 的 3 tool 砍到 1 tool，因为 Phase 1 的目标是验证「用户愿不愿意给 Automation 权限」，不是「agent 能干多少事」。3 个 tool 不会比 1 个 tool 多验证任何东西，但会多 2 倍 attack surface。
+
+## Kill 判定
+
+不 kill，但 Phase 0 必须先回答一个问题：**Automation 权限对话框是否能在不签 Developer ID 的情况下被用户接受**。如果 ad-hoc signed companion 第一次跑 `osascript` 时 macOS 直接拒（Sonoma 14.4+ 对未签名 binary 的 Automation 权限越来越严），整个项目在个人开发者手里就是死的。Phase 0 tracer bullet 唯一目标：让 ad-hoc signed binary 跑通 Mail.app read，能在 5 个测试机上弹权限对话框且用户敢点同意。其他都是次要的。

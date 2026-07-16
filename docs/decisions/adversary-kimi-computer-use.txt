@@ -1,0 +1,175 @@
+• The user wants me to read a specific file and provide a strict adversarial review. Let me first read the file.I have read the full design brief. Now I need to provide an adversarial review in Chinese (the user's language), at least 1500 words, covering:
+  1. D1-D8 positions with reasons
+  2. Q1-Q4 answers
+  3. At least 3 missed risks or over-designs
+  4. Recommended minimal Phase 1 scope vs theirs
+  5. Fatal defect judgment (kill or not)
+
+  I should be direct, judgmental, avoid jargon stacking. This is a text-only response task - no file modifications needed. I can respond directly.
+
+  Let me structure this well.
+
+• 我已读完这份 brief。以下是以 adversarial reviewer 身份的严格评审，直接给判断，不做和事佬。
+
+  ---
+
+  ## 一、D1-D8 决策表态
+
+  ### D1：4 档梯度（L0/L1/L2/L3）取代 3 档
+  **修订**。4 档的方向是对的，但名字和边界把问题搞混了。
+
+  3 档的问题不是「档数少」，而是 trusted/critical 的语义把「操作破坏力」和「数据敏感度」搅在一起。4 档把 destructive 单拎成 L3 Touch ID 是对的，但 L0「静默」和 L1「单确认」的边界写得太宽：「同 app 同窗口 5s 内连续 read 自动降档」这个 Smart scope 非常危险。5 秒足够 agent 把 Mail 读出来的内容复制一份、塞进 Notes、再触发一次 export。连续 read 的降档应该加「同 verb + 同对象 + 输出不回 LLM」三重条件，而不是仅凭时间窗口。
+
+  另外，L2 双信道定义为「任一信道确认即可」是对的，但 brief 里又说「任一信道点确认即可，不是两个都点」，这个表述容易让工程实现跑偏：不是「两个都点」变成「两个中一个可点」，而是**两个独立表面各自都能触发同一次确认事件，但确认事件本身必须只能消费一次**。实现上要用一个 nonce + 原子消费，不能是 tray 和 panel 各发一条请求导致 double-approve。
+
+  结论：保留 4 档，但收窄 L0 条件、明确 L2 的原子确认语义。
+
+  ### D2：Phase 1 严格剔除 5 个高风险 tool
+  **同意**，但剔除清单不够狠。
+
+  - `applescript_eval_host` 剔除：完全同意。和 `osascript_eval` 是同一类能力，重复暴露。
+  - `shortcut_run` 推迟：同意，但 brief 说 Phase 3 才做签名校验，这等于承认 Phase 1 不做 Shortcut。那应该把它从整个 Phase 1-2 都删掉，而不是「Phase 1 禁用、Phase 2 又放出来」。Phase 2 的 AX API 和 daemon 还没站稳，不应该让 Shortcut 这种图灵完备黑盒混进来。
+  - `vision_click` Phase 1 默认禁用：同意，但「默认禁用」是废话。默认禁用意味着还是代码里存在、配置项可调，攻击面没减少。应该**代码层面不实现**，Phase 1 连入口都没有。
+  - `menu_click` 同理，应该从代码层移除，不要给「高级用户开关」留后门。
+  - `notification_send` 限 title 固定前缀：反对这个处理方式。限制前缀防不住钓鱼，因为 title 后面可以写「[cmSpark] 你的账户需要验证」。要么不要这个 tool，要么只让 companion 自己发系统通知、不让 LLM 控制内容。
+
+  ### D3：AppleScript AST 级白名单，LLM 只产 JSON args
+  **同意**，但 brief 低估了实现难度。
+
+  `osacompile` 做 AST 枚举的方向正确，regex 一定被绕过。但「LLM 只产 JSON args」需要一个非常厚的 runtime 模板层：每个允许的 verb 都要有预编译的 AppleScript 模板和参数注入点。这不是一两天能写干净的，Phase 0 如果只做「Notes 建 note」，OK；Phase 1 如果要支持 Mail/Finder/Notes，必须先把每个 app 的 sdef 拉出来，把允许调用的 command/event 列成白名单，再写模板。否则 JSON args 转 AppleScript 的边界会千疮百孔。
+
+  更关键的一点：AST 校验只能保证源码结构干净，不能保证运行时行为干净。`tell application "Finder" to delete file "xxx"` 是合法 AST，但 destructive。所以 AST 白名单之外还必须加 verb 的风险分级。
+
+  ### D4：critical 操作双信道（Side Panel + tray），任一信道确认即可
+  **同意**。这是 brief 里最扎实的安全决策。
+
+  但执行层有两个坑：第一，tray 进程本身是否可信？如果 tray 是 Node 跑的 systray2，那它和 companion 在同一进程空间，被攻破后一样能伪造确认。Swift tray 是独立 binary，但 brief 没明确说双信道必须跨进程。第二，确认弹窗的内容必须是不可伪造的上下文摘要，不能只是「允许 action 吗？」，而应该是「Mail.app：发送邮件给 attacker@example.com，主题：你的备份」。否则用户会被训练乱点。
+
+  ### D5：vault 黑名单硬编码（1Password/Keychain/银行 app），god-mode 不可跳过
+  **同意**，但要再加一条：**这个黑名单不能只在 client 侧校验**。
+
+  client 侧的 `blocked_bundles` 容易被绕过：agent 可以直接让 AppleScript 写「System Events」去枚举 1Password 窗口，而不是直接 tell 1Password。黑名单必须同时作用于：目标 app bundle、被访问窗口的 owner、截图 OCR 命中后的 redact。而且「银行 app」无法穷举，应该用 heuristics（窗口标题含「password」「login」「bank」「2FA」）兜底。
+
+  ### D6：screenshot 后置 OCR + 敏感区域像素模糊 + 原图只存 hash
+  **修订**。方向对，但「后置 OCR 模糊」是把成本堆在 companion 侧，且模糊后 LLM 可能反而读不懂界面。
+
+  更实际的方案是分层：
+  1. screenshot 默认不进 LLM，只进一个「视觉摘要」流程：由本地轻量 OCR 提取文本、用规则 redact 疑似 credential 后再给 LLM；
+  2. 用户显式选择「让 LLM 看原图」时才进 vision；
+  3. 所有截图原图加密存在本地，7 天后删除，hash 进 audit log，不进 history.db。
+
+  brief 里的「原图只存 hash」会导致无法事后审计，矫枉过正。
+
+  ### D7：daemon 模式作为 computer use 的杀手级 feature，Phase 2+ 而非 Phase 1
+  **反对**。这个判断会杀死产品价值。
+
+  brief 第 5 节自己也说 computer use 的核心价值是「关掉 Chrome 也能用 agent」。如果 Phase 1 不做 daemon，那 Phase 1 能演示什么？在浏览器里用 AppleScript 操控 Mail？这和用浏览器插件直接读 Gmail 没有本质区别，用户不会为此打开权限。
+
+  daemon 不一定是「完全无 UI」，Phase 1 可以做成「关闭 sidepanel 后 tray 常驻、通过系统通知确认」，这已经能证明价值。把 daemon 推到 Phase 2，等于把 go/no-go 决策推迟两个月，风险更大。
+
+  ### D8：Phase 1 仅 macOS，Win/Linux Phase 4 才做
+  **同意**。这是唯一正确的平台策略。
+
+  但有个隐藏成本 brief 没提：Win/Linux 的 `HostAdapter` 抽象如果在 Phase 1 设计错了，后面重构很贵。建议 Phase 1 就把 interface 写死为「darwin-only 语义」，不要假装跨平台。Phase 4 重做适配器时，宁可重写 interface，也不要早期背上抽象包袱。
+
+  ---
+
+  ## 二、Q1-Q4 开放问题明确答案
+
+  ### Q1：4 档是否过复杂？是否应回到 3 档 + destructive 加 Touch ID？
+  **不应该回到 3 档**。3 档的问题是「trusted」这个筐太大，会塞进写文件、发邮件、读邮件、开 app 等完全不同风险的操作，UX 上一视同仁会让用户疲劳。
+
+  但 4 档的命名可以改。L0/L1/L2/L3 是技术分级，用户看不懂。建议改成用户语言：Silent / Ask Once / Double Check / Biometric。分级数量不是问题，问题是每一级有没有清晰的触发规则。当前 brief 的 Smart scope 规则太松，需要收紧。
+
+  ### Q2：daemon 的 tray 信任根（Swift binary SHA256）够吗？还是需要证书签名 + notarization？
+  **仅 SHA256 不够**。一个本地恶意进程完全可以用 `DYLD_INSERT_LIBRARIES` 注入 tray，或者替换 tray binary 后再更新 plist 里的 hash。
+
+  最低要求是：
+  - Swift tray binary 由开发者 ID 签名 + notarization；
+  - companion 启动时校验 tray 的 code signature，不只是 SHA256；
+  - daemon 模式下，tray 和 companion 通过 UDS（Unix Domain Socket）或 XPC 通信，不要走 WebSocket；
+  - 配置文件（含白名单）用硬件绑定或至少 keychain 存储，不要让任意进程能改。
+
+  如果做不到签名，那 daemon 模式不应该进入 Phase 1。
+
+  ### Q3：screenshot OCR 是否过激？是否应该让用户选「截屏不喂 LLM，只存元数据」？
+  **不是过激，是方向对但实现重**。
+
+  用户不会想每次截图都做一次选择，所以「让用户选」不是好 UX。应该默认：截图先本地 OCR + redact，redact 后的文本摘要进 LLM；只有当任务明确需要视觉（比如「点这个按钮」）时才走 vision。这个默认行为要在隐私政策里写清楚。
+
+  性能上，macOS 有 VisionKit / ScreenCaptureKit 的 live text API，OCR 可以做到 100-300ms，不是 blocker。真正的问题是准确度：自动 redact 可能误杀（把正常邮件内容糊掉），也可能漏掉（密码 manager 的自定义字段）。所以必须给截图加一个「原图本地保留、用户可复查」的逃生舱。
+
+  ### Q4：agent 自主性曲线——「绝不主动提议 native」是否会损失价值？
+  **会损失价值，而且这个规则无法执行**。
+
+  用户说「整理我的桌面」时，agent 如果不主动说「我可以移动这些文件到按日期命名的文件夹」，那这个功能就没人用。用户不会凭空知道你能干什么。
+
+  正确的边界不是「绝不主动」，而是：
+  - 不主动提议**高风险** native 操作；
+  - 低风险的（读 Mail 摘要、整理 Finder 文件）可以主动提议，但第一次必须获得一次性授权；
+  - 任何 destructive 操作必须显式用户指令，不能由 agent 自己推断。
+
+  brief 里「绝不主动」太极端，会让 adoption 死掉。
+
+  ---
+
+  ## 三、至少 3 个漏掉的风险或过设计
+
+  ### 风险 1：LLM 输出端本身没有审计
+  brief  threat model 全在执行侧：AppleScript 怎么校验、截图怎么 redact、确认怎么双信道。但漏了最关键一环：LLM 收到的 prompt 和返回的 tool call  plans 本身可能被污染。一个 prompt injection 可以让 LLM 直接生成「假装用户已确认」的 JSON，或者在聊天里诱导用户点击确认。
+
+  必须加：LLM 输出在转成 tool call 前再过一道「计划校验层」，检查是否符合当前 thread 的授权范围。不能无条件相信 LLM 会遵守 system prompt。
+
+  ### 风险 2：history.db 的泄露路径没封死
+  brief 提到 screenshot 原图不进 history.db，但任何 tool 的结果、包括 redacted 文本摘要、Mail 邮件内容摘要，都会进 history。history.db 本身是否有加密？是否有导出到 Obsidian 的自动流程？ADR-008 说 vault 档案隐私，但具体实现没在本 brief 里审计。
+
+  如果 history.db 是明文 SQLite，且用户开了 Obsidian sync，那所谓「本地优先」的 privacy 承诺就是笑话。Phase 1 必须：history.db 加密-at-rest，Obsidian 导出前再跑一遍 PII redaction。
+
+  ### 风险 3：SO_REUSEADDR / socket 劫持被轻轻带过
+  T13 只提了一句「companion 重启时恶意进程抢 23401 + SO_REUSEADDR」。这是 daemon 模式的**致命漏洞**，不应该只作为 13 个威胁之一列出来。
+
+  如果 daemon 监听 TCP 127.0.0.1:23401，任何本地非 sandbox 应用都能连上来发 tool call。解决方案是：daemon 模式不用 TCP，改用 UDS + 文件权限 0600；或者 TCP 连接必须 TLS + client cert。brief 的架构图还画着 `ws://127.0.0.1:23401`，这就是在埋雷。
+
+  ### 过设计 1：15 条红队强化建议想全做
+  N1-N15 里至少有 5 条是 Phase 1 不该碰的：N6 destructive 2-of-2 或 Touch ID、N9 audit log 链式哈希、N11 sandbox/dry-run mode、N13 vault 黑名单、N14 LLM decoy detection。这些不是不重要，而是 Phase 1 资源有限，全做会让 tracer bullet 拖到 Phase 1.5。
+
+  建议 Phase 1 只保：N2 Shortcut 签名校验（但推迟 Shortcut）、N3 双信道、N4 AST 白名单、N15 screenshot redact。其他进 backlog。
+
+  ### 过设计 2：4 层能力模型 + 12 个 tool 一次性规划
+  L1-L4 的分层模型很漂亮，但 Phase 1 能用的其实只有 L1 AppleScript 和 L4 screenshot 的部分。L2 Shortcuts 没签名校验不做，L3 AX API 要 Accessibility 全局权限、用户教育成本极高。一次性定义 12 个 tool 会让代码膨胀，且很多 tool Phase 1 用不上。建议 Phase 1 只实现 4-5 个，其他 placeholder 都不要留。
+
+  ### 过设计 3：whitelist「3 次同意 → 建议加白 → 7 次再问 → 10 次后默认」
+  这个演化规则太复杂，用户记不住，实现也重。更简单的规则：第一次弹窗给「仅这次 / 总是允许 / 拒绝」三个按钮；「总是允许」进设置页可管理。不要搞 3-4-7-10 的计数逻辑，容易出 bug，而且计数状态本身要持久化、防篡改，增加攻击面。
+
+  ---
+
+  ## 四、建议的最小 Phase 1 scope
+
+  你们建议的 Phase 1 保留 5 个 tool：`applescript_run`、`app_activate`、`app_list_running`、`ax_tree_query`、`screenshot_capture`、`file_open_with`。我认为还是太多。
+
+  我的最小 Phase 1：
+
+  1. **1 个核心 tool**：`applescript_run`，且只支持 2 个 app：Mail.app（只读）和 Finder（只读/移动，不可删除）。
+  2. **2 个辅助 tool**：`app_activate`、`app_list_running`。
+  3. **确认梯度**：只有 L1（单确认）和 L3（Touch ID 用于任何写/发操作）。不要 L0 静默，Phase 1 不需要自动化授权。
+  4. **screenshot**：只作为审计/调试工具，**不进入 LLM 决策流**，Phase 1 不做 vision。
+  5. **daemon**：必须做，但最小版本是「关闭浏览器后 tray 常驻、系统通知确认、只做 Mail 摘要和 Finder 整理」。
+  6. **不做**：Shortcuts、AX action、menu_click、vision_click、notification_send、跨平台 stub。
+
+  对比你们：我砍掉了 `ax_tree_query`、`file_open_with`、screenshot 进 LLM、以及所有 L0 静默逻辑。原因是 Phase 1 的核心目标是验证「用户是否愿意让 agent 读本地数据」，而不是验证「agent 能操控多少 GUI」。`ax_tree_query` 需要 Accessibility 权限，会吓跑用户；`file_open_with` 的用处被 `applescript_run` 覆盖。
+
+  ---
+
+  ## 五、致命缺陷判断：要不要 kill？
+
+  **暂时不 kill，但有两个红灯必须解决，否则 Phase 0 结束就 kill。**
+
+  红灯 1：daemon 模式的 socket 安全方案。如果 brief 坚持 `ws://127.0.0.1:23401` 且不改成 UDS/TLS-client-cert，那 daemon 模式等于给本地恶意软件开 API，这是不可接受的。
+
+  红灯 2：Phase 0 后必须立刻测用户信任。如果 tracer bullet（Notes 建 note 或 Mail 读摘要）跑出来后，10 个目标用户里有 3 个以上拒绝开 Accessibility/Automation 权限，说明信任赤字无法跨越，应 kill。
+
+  还有一个隐藏致命点：brief 反复说 cmSpark 的护城河是「完整 security 栈」，但 security 栈本身还没被外部审计过。如果 ADR-010（tiered-privilege + godmode + 不可篡改审计）还没实现或没 review，那「护城河」是自我安慰。Phase 0 应该先做一轮内部红队 + 代码审计，再扩 tool。
+
+  **最终判断**：这个项目有产品价值，但当前 brief 把 Phase 1 铺得太开、对 daemon 安全又太轻。如果按我建议的最小 scope 聚焦，并且把 UDS/TLS 和 trust root 做实，可以往下走。否则 6 个月后会在 Hacker News 上看到「cmSpark daemon 本地任意代码执行」的帖子。
+
+To resume this session: kimi -r session_5fddb274-32f4-44fc-a86f-d96afffd09ef
