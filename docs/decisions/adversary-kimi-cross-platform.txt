@@ -1,0 +1,41 @@
+总判断：brief 还在用「Phase 1.5」逃避用户原话。「最开始就要支持 macOS、Windows、Ubuntu」是硬需求，不是「先 macOS 再友好地捎上另外两个」。Option B 只是把 Round 1 的 darwin-first 重新包装成「spike 过三平台」的版本，本质没变。要么同步 ship，要么诚实砍掉某个平台，别造新词让用户误以为需求被满足了。
+
+Q5：必须同步发布（Option A）。
+
+分批 ship 在产品安全上更差。darwin 先跑 6 周，AppleScript AST 白名单、TCC 权限逻辑、Touch ID 集成会不可避免侵入 server，成为默认路径和隐性假设。6 周后回头做 Win/Linux，不是移植，是在有真实用户和压力的情况下重构核心模块。Round 1 的教训已经写在那里：Pi 反对定义 HostAdapter interface 的前提是 darwin-only，现在前提被推翻了，interface 必须前置。Option B 的「darwin 先 ship」会让 interface 设计被 macOS 实现绑架，Phase 1.5 发现 Windows 的 hwnd、Linux 的 AT-SPI role 塞不进 interface 时，代价就是重写 darwin 模块。
+
+工期上 Option A 12-16 周，Option B 10-12 周，只差 2-4 周。这 2-4 周买的是架构一致性、测试覆盖完整性和用户对跨平台承诺的信任。用户不会感激 macOS 早 6 周可用，他只会记得 Windows 和 Ubuntu 是二等公民，而且迁移时可能丢权限配置、丢确认偏好。
+
+唯一可以分批的理由：Phase 0 spike 证明某平台权限模型完全不可行。比如 Ubuntu Wayland 下键盘注入被永久沙箱拦截且没有用户可理解的授权路径。但 brief 里列的是「问题」，不是「死刑」。在没跑完 spike 之前就预定 darwin 先 ship，是预判结果，不是风险驱动。
+
+Q8：必须调整，Linux 是重灾区。
+
+macOS Touch ID 和 Windows Hello 基本可映射。Linux 没有可依赖的生物识别基线：`fprintd` 覆盖率极低，很多笔记本没有指纹读取器，桌面环境对生物识别 API 也没有统一抽象。
+
+brief 作者建议「Linux 没 biometric 时强制走 double-confirm + 6 位 nonce，不允许降级到 ask-once」。方向正确，但还不够狠。真正该问的是：如果某类操作在 macOS/Windows 上定义为 biometric-only，那么在 Linux 上凭什么进入 silent 或 ask-once？答案是不应该。Linux 用户要么提供可验证的第二因素（hardware key 或手动 nonce），要么该操作在 Linux 上被禁止。不要给用户「我和别人一样安全」的错觉，那是欺骗。
+
+nonce 必须手动输入、不可复制粘贴。体验差才是对的，因为它诚实地反映了 Linux 平台的安全能力缺口。如果你把 Linux 的 critical 操作降级到 ask-once，等于在安全性最弱的平台上给最高危操作开绿灯，这是产品设计上的自相矛盾。
+
+确认梯度必须和平台原生权限 gate 解耦。macOS TCC 弹一次「允许控制 X.app」不等于用户确认了某个具体操作；Windows 没有 per-app automation gate，比 macOS 更依赖 cmSpark 自己的确认层。产品契约不能因平台权限模型弱就整体下滑。
+
+Q10：是硬阻塞，而且 brief 作者在这个问题上偏保守。
+
+SmartScreen 不是「首次启动弹个警告」那么简单。普通用户看到「Windows 已保护你的电脑」蓝色全屏拦截，第一反应是直接关掉，不是去点「更多信息」再找「仍要运行」。未签名或仅自签名 binary 在 Windows consumer 市场的实际完成安装率，乐观估计 30%，悲观估计低于 10%。你花 10 周做 Windows 适配，结果 70%-90% 的用户装不上，这不叫 ship，叫演示。
+
+$499/年的 EV cert 不是成本问题，是准入问题。普通 Authenticode cert 便宜，但仍会触发 SmartScreen，直到建立 reputation；EV cert 才能显著缩短甚至跳过 reputation 积累期。对于一个新的 agent 类产品，用户没有耐心等待你攒 reputation。
+
+更隐蔽的阻塞是公司主体。EV cert 需要法人实体。如果 cmSpark 目前是个人项目或没有正式公司，499 美元只是小头，法人结构才是大阻塞。brief 没有提项目主体状态，这是需要立即确认的事实。
+
+Windows Phase 1 的实际 checklist：1）确认有公司主体；2）购买 EV cert；3）完成 Authenticode 签名流程；4）做 SmartScreen 实际安装测试。任何一项没完成，Windows 就不该进入 Phase 1。如果用户坚持 Windows 必须「从一开始支持」，那先让他批准 EV cert 预算和法人主体；否则「支持」只是谎言。
+
+有没有任何一个平台技术上或商业上不应该 Phase 1 做？
+
+有。
+
+第一个是 Windows，如果 EV cert 不落地。brief 作者自己也承认没 cert 可达用户低于 30%，那还做它干什么？把资源集中到 macOS 和 Linux，Windows 放到 Phase 2 等 cert 到位，是更负责任的产品决策。
+
+第二个是 Linux，虽然用户明确点了 Ubuntu。Linux 不是技术不可行，而是安全承诺最难兑现。Wayland/X11 分裂、沙箱限制、生物识别缺失、发行版碎片化，意味着 Linux 版需要最多的兼容性测试，却给不出和 macOS/Windows 同等的安全保证。如果团队规模有限，Linux 也可以是 Phase 2。但这需要 Phase 0 spike 给出硬数据：Ubuntu 24.04 Wayland 下键盘注入和截屏到底能不能走通？走不通就直说，别硬上。
+
+结论：
+
+别再做「名义三平台、实际 darwin-first」的折中。要么同步 ship（Q5 Option A），要么诚实砍掉一个平台。Linux 的安全降级要硬，不能骗用户（Q8）。Windows 没有 EV cert 就不该进场（Q10）。这三条里任何一条妥协，都会在 Phase 2 以翻倍成本还回来。
