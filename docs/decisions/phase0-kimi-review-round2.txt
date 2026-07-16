@@ -1,0 +1,1040 @@
+• We need perform adversarial/critical review of Round 2 changes in the worktree. Need inspect git diff between e40065b..HEAD, and review specific files. Must use tools. We need read relevant docs and code. Need check commits b13836b and 9a92e85? Actually range e40065b..HEAD includes both. Need output markdown with Critical/Major/Already right sections.
+
+  First, understand repo. Use git diff. Also read relevant docs. Use Bash for git diff. Read files: docs/decisions/host-adapter-interface.md, docs/decisions/computer-use-round2-synthesis.md, round1 synthesis, phase0-kimi-review-fixes.md, phase0-kimi-review.txt. Also inspect code changes: host-use files, server.ts, docs.
+
+  Let's start with parallel Bash diff and Read docs. companion/src/server.ts                      |  23 ++--
+ docs/decisions/host-adapter-interface.md     | 184 +++++++++++++++++++++++++++
+ docs/decisions/phase0-go-no-go.md            |  38 +++---
+ docs/decisions/phase0-kimi-review-fixes.md   |  13 +-
+ docs/decisions/phase0-macos-gate-evidence.md |  77 ++++++-----
+ 5 files changed, 271 insertions(+), 64 deletions(-)
+9a92e85 docs(host-use): HostAdapter interface — Phase 1 W4 design
+b13836b refactor(host-use): tighten standards review findings (M1+M2+M3)
+Need see diff for server.ts and docs changes. Also read phase0-kimi-review.txt and fixes. Also inspect host-use files, types, darwin. Use git diff and reads.diff --git a/companion/src/server.ts b/companion/src/server.ts
+index 521fe8a..ad30f57 100644
+--- a/companion/src/server.ts
++++ b/companion/src/server.ts
+@@ -300,6 +300,15 @@ export function createToolExecutor(ws: WebSocket) {
+       }
+     }
+ 
++    // L2 confirmation gate (evaluate / osascript_eval / host_read). Each of
++    // these tools reaches host-side or browser-DOM state that requires explicit
++    // user approval. NOTE: host_read is the first tool in this gate that reads
++    // host-side USER DATA (Mail inbox) rather than browser-DOM or fixed
++    // AppleScript. Under security.allow_all_schemes=true (god-mode), this gate
++    // is skipped and host_read can read Mail without per-call prompt — the
++    // user must have explicitly opted into god-mode via the standard phrase
++    // gate per ADR-010. Vault-app bundle ids (1Password / Keychain / etc) are
++    // still blocked unconditionally downstream in host-use/darwin/blacklist.ts.
+     if ((toolName === "evaluate" || toolName === "osascript_eval" || toolName === "host_read") && !finalParams.security_token) {
+       const code = String(finalParams.code || finalParams.expression || "")
+       const lengthCheck = securityPolicy.checkLength(toolName, code)
+@@ -1114,15 +1123,11 @@ async function executeCompanionTool(toolName: string, params: any): Promise<any>
+     }
+     case "host_read": {
+       // Phase 0 computer-use spike — see docs/decisions/computer-use-round2-synthesis.md.
+-      // Delegates to companion/src/host-use/{darwin,linux,win}/ which dispatch on
+-      // process.platform. Darwin spawns dist/cmspark-host (ad-hoc signed Swift
+-      // binary); Linux/Win throw NotImplementedOnPlatform.
+-      if (os.platform() !== "darwin") {
+-        return {
+-          success: false,
+-          error: `host_read is macOS-only in Phase 0 (platform=${os.platform()})`,
+-        }
+-      }
++      // Delegates to companion/src/host-use/ which dispatches on process.platform.
++      // Darwin spawns dist/cmspark-host (ad-hoc signed Swift binary); Linux/Win
++      // stubs throw NotImplementedOnPlatform — caught below and surfaced as
++      // {success:false}. Single source of truth for platform check lives in
++      // host-use/index.ts (Standards review M2: drop duplicate guard here).
+       try {
+         const { hostRead } = await import("./host-use")
+         const application = typeof params.application === "string" ? params.application : undefined
+diff --git a/docs/decisions/host-adapter-interface.md b/docs/decisions/host-adapter-interface.md
+new file mode 100644
+index 0000000..f51e36b
+--- /dev/null
++++ b/docs/decisions/host-adapter-interface.md
+@@ -0,0 +1,184 @@
++# HostAdapter Interface — Phase 1 W4 Definition
++
++> **Date**: 2026-07-16
++> **Authority**: Round 2 synthesis §2.1 (Pi rule-of-three wins over Brief / Kimi "define first")
++> **Source material**:
++> - macOS implementation: `companion/src/host-use/darwin/` (Phase 0 spike)
++> - Linux shape: `companion/src/host-use/linux/RUNBOOK-phase0.md`
++> - Windows shape: `companion/src/host-use/win/RUNBOOK-phase0.md`
++> **Status**: design doc — implementation will follow in Phase 1 W5-W6.
++
++## Context
++
++Round 2 synthesis §2.1 explicitly defers HostAdapter interface definition to W4 (end of Phase 0 spike), AFTER three real platform implementations exist. The rule-of-three rationale: abstracting from imagined platforms gets the abstraction wrong; abstracting from three real ones gets it right.
++
++Phase 0 produced:
++- **macOS real implementation** (Mail inbox top-1 read via Swift binary + precompiled .scpt)
++- **Linux RUNBOOK** (concrete pyatspi/gdbus shape for Evolution)
++- **Windows RUNBOOK** (concrete UIAutomation shape for Outlook — expected UIAccess-blocked)
++
++All three converge on: **list targets → read one → write one**. That's the abstraction.
++
++## The interface
++
++```typescript
++// companion/src/host-use/host-adapter.ts
++
++/**
++ * Platform-agnostic host-use adapter. Each platform (darwin/linux/win) implements
++ * this against its native accessibility stack:
++ *   - darwin: AppleScript via precompiled .scpt + Swift binary (NSAppleScript)
++ *   - linux:  AT-SPI via pyatspi/gdbus shell calls + Rust tray binary
++ *   - win:    UIAutomation via PowerShell + C# WinForms tray (Phase 1.5)
++ *
++ * The interface is deliberately minimal (3 methods). Round 2 §2.1 explicitly
++ * forbids 6- or 8-method "kitchen sink" abstractions — opaque TargetId + 3
++ * methods is the rule-of-three output.
++ */
++export interface HostAdapter {
++  /** List readable targets of a given kind (inbox / calendar / notes / files). */
++  listReadTargets(kind: TargetKind): Promise<TargetId[]>
++
++  /** Read one target's current content. Returns platform-agnostic shape. */
++  readOne(targetId: TargetId): Promise<ReadResult>
++
++  /** Write to a target (create / move / update). Phase 1 limited to Notes create + Finder move. */
++  writeOne(targetId: TargetId, payload: WritePayload): Promise<WriteResult>
++}
++
++/**
++ * Opaque platform-specific target identifier. Companion code never inspects
++ * the internal structure — only passes it back to the same adapter that
++ * produced it.
++ *
++ * Platform conventions:
++ *   - darwin: `bundleId:accountId:itemId` (e.g. `com.apple.mail:INBOX:msg-12345`)
++ *   - linux:  `atspi://path/to/object` (AT-SPI registry path)
++ *   - win:    `hwnd:automationId` (UIAutomation cache key)
++ */
++export type TargetId = string & { readonly __brand: unique symbol }
++
++export type TargetKind =
++  | "mail-inbox"
++  | "mail-thread"
++  | "calendar-event"
++  | "note"
++  | "file"
++
++export interface ReadResult {
++  /** Platform-agnostic field set. Phase 0 Mail spike emits all 4. */
++  sender?: string
++  subject?: string
++  date_received?: string  // ISO 8601 (Phase 1 normalizes from AppleScript locale)
++  body_preview?: string
++  /** Future-proofing: platforms may emit additional fields. */
++  [key: string]: unknown
++}
++
++export interface WritePayload {
++  /** Kind of write — controls what `target` and `body` mean. */
++  kind: "create" | "move" | "update" | "delete"
++  /** Body content for create/update. Format depends on TargetKind. */
++  body?: string
++  /** Destination for move operations (e.g. Finder folder path). */
++  destination?: string
++}
++
++export interface WriteResult {
++  /** Opaque ID of the created/updated target, if applicable. */
++  target_id?: TargetId
++  /** Whether the write was undoable (Finder trash = yes; Mail send = no). */
++  undoable: boolean
++}
++```
++
++## Platform-specific implementation map
++
++### `companion/src/host-use/darwin/adapter.ts` (refactor of existing `index.ts`)
++
++| Method | Maps to |
++|---|---|
++| `listReadTargets("mail-inbox")` | AppleScript: `messages of inbox` → array of `com.apple.mail:INBOX:msg-N` |
++| `readOne(targetId)` | AppleScript: `message N of inbox` → 4 fields |
++| `writeOne(targetId, {kind:"create"})` for Notes | AppleScript: `make new note with properties {name:..., body:...}` |
++
++Reuses existing `cmspark-host` Swift binary. Phase 0's `hostRead(params)` function becomes a thin wrapper: `listReadTargets("mail-inbox")[0]` + `readOne(first)`.
++
++### `companion/src/host-use/linux/adapter.ts` (Phase 1 W5 new)
++
++| Method | Maps to |
++|---|---|
++| `listReadTargets("mail-inbox")` | `pyatspi.Registry.getDesktop(0)` walk → Evolution message-list nodes |
++| `readOne(targetId)` | AT-SPI text-cell query on the row |
++| `writeOne(...)` | AT-SPI action invoke (limited; mostly create-via-keyboard) |
++
++Linux tray = Rust binary via `ksni` crate (independent of Swift tray).
++
++### `companion/src/host-use/win/adapter.ts` (Phase 1.5 — UIAccess-gated)
++
++| Method | Maps to |
++|---|---|
++| `listReadTargets("mail-inbox")` | UIAutomation `FindAll` on Outlook window |
++| `readOne(targetId)` | UIAutomation cache request (5-30ms per Round 2 §1.3) |
++| `writeOne(...)` | UIAutomation `InvokePattern` / `ValuePattern` |
++
++Blocked until EV cert + Authenticode + UIAccess manifest ready.
++
++## Open design questions for review
++
++### Q1: Should `TargetId` be branded or plain string?
++
++**Current proposal**: branded for type safety (`string & { __brand }`).
++
++**Alternative**: plain `string`. Simpler, no casting needed at platform boundaries.
++
++**Recommendation**: branded. The brand is zero-runtime-cost and prevents companion code from accidentally constructing fake target ids (e.g., from LLM output without validation). Platform adapters cast at the boundary; companion code only consumes.
++
++### Q2: Is `listReadTargets` returning `[]` an error or "empty inbox"?
++
++**Current proposal**: empty array is valid (empty inbox is normal).
++
++**Implication**: companion must handle empty list gracefully — LLM should be told "no messages" rather than retry / error.
++
++**Recommendation**: keep as valid empty. Add to LLM system prompt: "if listReadTargets returns [], report 'inbox empty' to user".
++
++### Q3: Should `writeOne` accept `targetId: null` for create operations?
++
++**Current proposal**: `writeOne(targetId, payload)` where targetId may be a "parent" (e.g., Notes app for create).
++
++**Alternative**: separate `createOne(parentId, payload)` method.
++
++**Recommendation**: keep single `writeOne`. Phase 1 only does Notes create + Finder move; both can be modeled as `writeOne(parentTargetId, {kind:"create", body})`. If Phase 2 adds more write scenarios and the model strains, refactor then.
++
++### Q4: `ReadResult` extension — `[key: string]: unknown` index signature vs explicit union?
++
++**Current proposal**: index signature for forward compatibility.
++
++**Alternative**: discriminated union per TargetKind (`MailReadResult | CalendarReadResult | ...`).
++
++**Recommendation**: index signature for Phase 1 (less ceremony, platforms emit what they have). Refactor to union in Phase 2 if LLM gets confused by inconsistent shapes.
++
++### Q5: Async iterator for `listReadTargets`?
++
++When inbox has 1000+ messages, returning `TargetId[]` materializes all. Should we use `AsyncIterable<TargetId>` instead?
++
++**Recommendation**: Phase 1 keeps array. Mail inbox top-1 read is the only Phase 1 use case; large mailboxes are Phase 2+. If performance becomes an issue, add `listReadTargets(kind, {limit, cursor})` later.
++
++## Phase 1 W5 implementation plan
++
++After this interface is approved (Kimi Round 2 / user sign-off):
++
++1. Create `companion/src/host-use/host-adapter.ts` with the interface
++2. Refactor `darwin/index.ts` → `darwin/adapter.ts` implementing `HostAdapter`
++3. Add `darwin/list-targets.scpt` + extend `host.swift` with `list-mail` subcommand
++4. Update `server.ts host_read` case to use the adapter (compose `listReadTargets` + `readOne`)
++5. Add tests for adapter interface contract (mock platform adapter, verify companion uses it correctly)
++6. Phase 1 W6-W7: implement Linux adapter against RUNBOOK
++7. Phase 1 W8-W14: integrate with daemon mode + 4-tier confirmation (ask-once + Touch ID)
++
++## Migration impact
++
++- `host-use/darwin/index.ts:hostRead(params)` → deprecated, becomes thin wrapper around `HostAdapter.readOne(listReadTargets("mail-inbox")[0])`
++- `host-use/types.ts:HostReadResult` → replaced by `ReadResult`
++- `host-use/types.ts:HostReadParams` → replaced by `TargetKind` argument to `listReadTargets`
++- Existing `host_read` tool surface in `tool-schemas.ts` / `tool-definitions.ts` / `server.ts` unchanged (LLM-facing API stays the same; internal dispatch only)
+diff --git a/docs/decisions/phase0-go-no-go.md b/docs/decisions/phase0-go-no-go.md
+index b61dafd..831c3a8 100644
+--- a/docs/decisions/phase0-go-no-go.md
++++ b/docs/decisions/phase0-go-no-go.md
+@@ -3,14 +3,19 @@
+ > **Date**: 2026-07-16
+ > **Branch**: `computer-use-phase0` (worktree at `.claude/worktrees/computer-use-phase0`)
+ > **Authority**: Round 2 synthesis §5.1 kill signals
++>
++> **Evidence convention** (per behaviors.md R1.2):
++> - `[executed]` = command run this session, output captured
++> - `[inspected]` = static reading of code / artifact
++> - `[assumed]` = inferred from documentation or pattern
+ 
+ ## Three-platform status
+ 
+ | Platform | Gate criteria | Status | Evidence |
+ |---|---|---|---|
+-| macOS | TCC Automation permission granted to `cmspark-host` (ad-hoc + hardened runtime + entitlement) on Sonoma 14.4+; reads Mail inbox top-1 | ⏳ **PENDING** — see `phase0-macos-gate-evidence.md` Step 4 | AppleScript works, codesign flags correct, JSON returns; TCC attribution awaits user-side Terminal verification |
+-| Linux | AT-SPI reads Evolution top-1 inbox on Ubuntu 24.04 Wayland default; no Electron-app D-Bus deadlock | 📋 **RUNBOOK READY** — no test machine access | `companion/src/host-use/linux/RUNBOOK-phase0.md` executable on Ubuntu test machine when available |
+-| Windows | UIAccess blocking confirmed for unsigned binary on Win11 24H2+ (negative result is pass) | 📋 **RUNBOOK READY** — no test machine access | `companion/src/host-use/win/RUNBOOK-phase0.md` collects the 3 blocking behaviors |
++| macOS | TCC Automation permission granted to `cmspark-host` (ad-hoc + hardened runtime + entitlement) on Sonoma 14.4+; reads Mail inbox top-1 | ✅ **SOFT-PASS** | `[executed]` codesign flags correct + binary returns valid JSON + TCC dialog appeared after global reset (user confirmed 2026-07-16); `[assumed]` prompt named `cmspark-host` (not explicitly captured) — see `phase0-macos-gate-evidence.md` Step 4 |
++| Linux | AT-SPI reads Evolution top-1 inbox on Ubuntu 24.04 Wayland default; no Electron-app D-Bus deadlock | 📋 **RUNBOOK READY** — no test machine access | `[inspected]` `companion/src/host-use/linux/RUNBOOK-phase0.md` executable on Ubuntu test machine when available |
++| Windows | UIAccess blocking confirmed for unsigned binary on Win11 24H2+ (negative result is pass) | 📋 **RUNBOOK READY** — no test machine access | `[inspected]` `companion/src/host-use/win/RUNBOOK-phase0.md` collects the 3 blocking behaviors |
+ 
+ ## Decision logic (per Round 2 §5.1)
+ 
+@@ -18,18 +23,16 @@
+ macOS FAIL → kill entire project, delete worktree, postmortem.
+ macOS PASS + Linux PASS + Windows blocked-as-expected → Phase 1 begin (W4 HostAdapter interface definition).
+ macOS PASS + Linux FAIL → Phase 1 reverts to darwin-only.
+-macOS PASS + Linux/Windows PENDING (RUNBOOK-only) → Phase 1 macOS-first, parallel Linux/Windows spike runs.
++macOS SOFT-PASS + Linux/Windows PENDING (RUNBOOK-only) → Phase 1 macOS-first, parallel Linux/Windows spike runs.
+ ```
+ 
+ ## Recommended path forward (2026-07-16)
+ 
+-Given no Linux/Windows test machine access currently, **proceed conditionally**:
++macOS SOFT-PASS achieved; no Linux/Windows test machine access currently. **Proceed with Phase 1 macOS-first**:
+ 
+-1. **macOS gate** (user-side Terminal verification required):
+-   - If `cmspark-host` TCC dialog names "cmspark-host" → macOS PASS.
+-   - If TCC fails or attribution leaks to parent → kill project.
++1. **macOS gate**: `[executed]` binary works end-to-end; `[executed]` TCC dialog appears after reset; `[assumed]` attribution to `cmspark-host`. Re-verification with screenshot can run in parallel with Phase 1 W4 — no longer blocking.
+ 
+-2. **HostAdapter interface definition at W4** (deferred until macOS PASS confirmed):
++2. **HostAdapter interface definition at W4** (next session):
+    - 3-method interface per Round 2 §2.1: `listReadTargets` / `readOne` / `writeOne`
+    - `TargetId` opaque string: macOS=`bundle+path`, Linux=`atspi://path`, Windows=`hwnd`
+    - Document at `docs/decisions/host-adapter-interface.md`
+@@ -42,13 +45,14 @@ Given no Linux/Windows test machine access currently, **proceed conditionally**:
+ 
+ ## Outstanding risks
+ 
+-- **TCC attribution unverified**: the most consequential unknown. If `cmspark-host` cannot get its own TCC row when run from a normal user Terminal, the entire ad-hoc signing strategy is broken and Developer ID ($99/year) becomes mandatory before any user-facing ship.
+-- **AppleScript handler invocation gotcha**: `on run argv` doesn't fire when .scpt loaded via `NSAppleScript(contentsOf:)`. Worked around by removing the handler wrapper, but Phase 1 needs `executeAppleEvent(_:withParameters:)` for proper argv.
+-- **Date locale**: Phase 0 returns locale-formatted date string. Phase 1 must normalize.
++- **TCC attribution name not screenshot-captured**: `[assumed]` only. If a future re-verification shows the prompt names Terminal/Node instead of `cmspark-host`, the ad-hoc signing strategy is broken and Developer ID ($99/year) becomes mandatory. Mitigation: re-run protocol in `phase0-macos-gate-evidence.md` Step 4 with screenshot before Phase 1 ship.
++- **AppleScript handler invocation gotcha**: `[inspected]` `on run argv` doesn't fire when .scpt loaded via `NSAppleScript(contentsOf:)`. Worked around by removing the handler wrapper; Phase 1 needs `executeAppleEvent(_:withParameters:)` for proper argv.
++- **Date locale**: `[executed]` Phase 0 returns locale-formatted date string ("2023年10月8日 星期日 上午11:22:32"). Phase 1 must normalize to ISO 8601.
+ 
+-## Action items before Phase 1 kickoff
++## Action items before Phase 1 ship (not W4 kickoff)
++
++- [x] User runs TCC verification from Terminal — done 2026-07-16 (SOFT-PASS)
++- [ ] Optional: re-verify TCC attribution with screenshot (closes the `[assumed]` → `[executed]` gap)
++- [ ] Write `host-adapter-interface.md` at W4 (next session)
++- [ ] Run Kimi Round 2 review on fix commits (per `kimi_review_every_fix`)
+ 
+-- [ ] User runs TCC verification from Terminal per Step 4 of `phase0-macos-gate-evidence.md`
+-- [ ] Update this doc + macOS evidence doc with verification result
+-- [ ] If PASS: write `host-adapter-interface.md` at W4
+-- [ ] If FAIL: write `phase0-no-go-postmortem.md` and delete `computer-use-phase0` worktree
+diff --git a/docs/decisions/phase0-kimi-review-fixes.md b/docs/decisions/phase0-kimi-review-fixes.md
+index 3b2dfa2..7b00c47 100644
+--- a/docs/decisions/phase0-kimi-review-fixes.md
++++ b/docs/decisions/phase0-kimi-review-fixes.md
+@@ -3,6 +3,11 @@
+ > **Source review**: `docs/decisions/phase0-kimi-review.txt` (Kimi CLI, session `be6dfa9e`)
+ > **Date**: 2026-07-16
+ > **Reviewer's verdict**: "修复前不应进入 Phase 0 用户测试"
++>
++> **Evidence convention** (per behaviors.md R1.2):
++> - `[executed]` = command run + output captured
++> - `[inspected]` = static code reading
++> - `[assumed]` = inferred from docs/pattern
+ 
+ ## Critical issues — status
+ 
+@@ -10,7 +15,7 @@
+ 
+ **File**: `companion/src/host-use/darwin/read-mail.applescript`
+ 
+-**Bug**: `set s to (text items of s) as string` was called twice in a row with the same delimiter, which split+joined with the same character — a no-op. No actual JSON escaping happened.
++`[inspected]` **Bug**: `set s to (text items of s) as string` was called twice in a row with the same delimiter, which split+joined with the same character — a no-op. No actual JSON escaping happened.
+ 
+ **Fix**: Capture `text items of s` into a variable BEFORE switching the delimiter:
+ ```applescript
+@@ -20,15 +25,15 @@ set AppleScript's text item delimiters to "\\\\"
+ set s to sParts as string               -- join with new delimiter
+ ```
+ 
+-**Verification**: `/tmp/test-jsonescape.scpt` returns valid JSON for malicious input `attacker"foo\bar[CR][LF]embedded` — properly escaped to `attacker\"foo\\bar\r\nembedded`. Attempted injection `safe","injected_key":"value` is escaped and stays as a single field value.
++`[executed]` **Verification**: `/tmp/test-jsonescape.scpt` returns valid JSON for malicious input `attacker"foo\bar[CR][LF]embedded` — properly escaped to `attacker\"foo\\bar\r\nembedded`. Attempted injection `safe","injected_key":"value` is escaped and stays as a single field value.
+ 
+ ### 🔴 C2: `.scpt` file is unsigned — **Phase 1 prerequisite (documented)**
+ 
+ **File**: `companion/dist/host-scripts/read-mail.scpt`
+ 
+-**Bug**: Attacker who can write to `dist/host-scripts/` replaces the .scpt with arbitrary AppleScript, which then runs under the already-granted TCC permission of `cmspark-host`. Devs/users who clicked "Allow" once for the binary implicitly trust any .scpt dropped next to it.
++`[inspected]` **Bug**: Attacker who can write to `dist/host-scripts/` replaces the .scpt with arbitrary AppleScript, which then runs under the already-granted TCC permission of `cmspark-host`. Devs/users who clicked "Allow" once for the binary implicitly trust any .scpt dropped next to it.
+ 
+-**Why Phase 0 defers**: Phase 0 is single-machine spike proving TCC attribution. The `.scpt` is created by build-host.sh on the dev's own machine; no distribution; no attacker in trust model yet. Phase 1 must:
++`[assumed]` **Why Phase 0 defers**: Phase 0 is single-machine spike proving TCC attribution. The `.scpt` is created by build-host.sh on the dev's own machine; no distribution; no attacker in trust model yet. Phase 1 must:
+ - Embed `.scpt` into signed Swift binary as resource, OR
+ - Hash-verify `.scpt` against a constant compiled into the binary, OR
+ - Move all AppleScript into Swift via `NSAppleScript(source:)` + compile-time validation
+diff --git a/docs/decisions/phase0-macos-gate-evidence.md b/docs/decisions/phase0-macos-gate-evidence.md
+index 5ebd8ba..52319a0 100644
+--- a/docs/decisions/phase0-macos-gate-evidence.md
++++ b/docs/decisions/phase0-macos-gate-evidence.md
+@@ -3,20 +3,26 @@
+ > **Date**: 2026-07-16
+ > **Binary**: `companion/dist/cmspark-host` (built from `companion/src/host-use/darwin/host.swift`)
+ > **Gate question**: Can an ad-hoc signed Swift binary (hardened runtime + automation entitlement) get TCC Automation permission on macOS Sonoma 14.4+?
++>
++> **Evidence convention** (per behaviors.md R1.2 Calibrated Reporting):
++> - `[executed]` = ran the command in this session, observed the captured output
++> - `[inspected]` = read the code / static artifact, no runtime observation
++> - `[assumed]` = inferred from documentation or pattern, not directly verified
+ 
+ ## Summary
+ 
+-| Check | Status | Notes |
+-|---|---|---|
+-| Local macOS version | ✅ 26.5.1 (build 25F80) | >> Sonoma 14.4 floor |
+-| AppleScript reads Mail inbox top-1 | ✅ Verified | iCloud welcome email returned |
+-| `cmspark-host` builds + codesigns | ✅ Verified | `flags=0x10002(adhoc,runtime)`, all entitlements present |
+-| Binary executes AppleScript in-process via NSAppleScript | ✅ Verified | No subprocess osascript dependency |
+-| TCC prompt names "cmspark-host" | ⏳ **Pending user-side verification** | Bash tool environment suppresses TCC prompt; user must run from real Terminal |
++| Check | Status | Evidence | Notes |
++|---|---|---|---|
++| Local macOS version | ✅ | `[executed]` `sw_vers` → 26.5.1 build 25F80 | >> Sonoma 14.4 floor |
++| AppleScript reads Mail inbox top-1 | ✅ | `[executed]` `osascript read-mail.scpt` returned iCloud welcome email 4-tuple | sender/subject/date/body_preview |
++| `cmspark-host` builds + codesigns | ✅ | `[executed]` `npm run build:host` + `codesign -dv --verbose=4` output captured below | `flags=0x10002(adhoc,runtime)`, all entitlements present |
++| Binary executes AppleScript in-process via NSAppleScript | ✅ | `[executed]` `./dist/cmspark-host read-mail` returned valid JSON; `[inspected]` host.swift uses `NSAppleScript(contentsOf:)` not subprocess | No osascript dependency |
++| TCC prompt appears after global reset | ✅ | `[executed]` user-side Terminal: `tccutil reset AppleEvents` → `./dist/cmspark-host read-mail` → dialog appeared → user clicked OK → JSON returned | Dialog observed by user on 2026-07-16 ~14:37 |
++| TCC prompt names "cmspark-host" specifically | ⚠️ SOFT-PASS | `[assumed]` user confirmed dialog appeared and approved; name in prompt not explicitly captured | Re-verification recommended: re-run reset+run, read prompt name explicitly |
+ 
+ ## Step 1 — AppleScript functional smoke (Day 1)
+ 
+-Hand-ran the `read-mail.applescript` via `osascript /tmp/phase0-smoke/read-mail.scpt`:
++`[executed]` Hand-ran the `read-mail.applescript` via `osascript /tmp/phase0-smoke/read-mail.scpt`:
+ 
+ ```
+ ===count messages===
+@@ -33,16 +39,16 @@ After empty-inbox handling + recompile:
+ «class sndr»:, «class subj»:, date_received:, body_preview:[inbox empty]
+ ```
+ 
+-**Interpretation**: AppleScript reaches Mail.app successfully. TCC wasn't an obstacle from osascript (likely pre-approved for `osascript` globally or the calling Terminal context). Day 1 PASS.
++`[executed]` AppleScript reaches Mail.app — count/name/mailboxes all return expected values. Day 1 PASS.
+ 
+ ## Step 2 — Swift binary build (Day 2)
+ 
+-`bash companion/src/host-use/darwin/build-host.sh` produces:
++`[executed]` `bash companion/src/host-use/darwin/build-host.sh` produces:
+ 
+ - `dist/cmspark-host` (78256 bytes, Mach-O 64-bit arm64)
+ - `dist/host-scripts/read-mail.scpt` (precompiled)
+ 
+-**Codesign output** (`codesign -dv --verbose=4`):
++`[executed]` **Codesign output** (`codesign -dv --verbose=4`):
+ 
+ ```
+ Identifier=com.cmspark.host
+@@ -54,7 +60,7 @@ VersionSDK=1705216
+ TeamIdentifier=not set
+ ```
+ 
+-The `flags=0x10002(adhoc,runtime)` line confirms both:
++`[inspected]` The `flags=0x10002(adhoc,runtime)` line confirms both:
+ - `adhoc` — no Developer ID, just ad-hoc signature
+ - `runtime` — hardened runtime enabled
+ 
+@@ -67,11 +73,11 @@ com.apple.security.cs.allow-unsigned-executable-memory = false
+ com.apple.security.cs.disable-library-validation  = false
+ ```
+ 
+-Library validation is ON (`disable-library-validation=false`) per Round 2 D4.
++Library validation is ON (`disable-library-validation=false`) per Round 2 D4. `[inspected]`
+ 
+ ## Step 3 — Binary execution
+ 
+-`./dist/cmspark-host read-mail` returns:
++`[executed]` `./dist/cmspark-host read-mail` returns:
+ 
+ ```json
+ {"sender":"iCloud <noreply@email.apple.com>",
+@@ -80,33 +86,34 @@ Library validation is ON (`disable-library-validation=false`) per Round 2 D4.
+  "body_preview":"...Welcome to iCloud Mail, Hu!..."}
+ ```
+ 
+-Valid JSON, all 4 fields populated.
++`[executed]` Valid JSON, all 4 fields populated. Verified `JSON.parse(stdout)` succeeds in companion `host-use/darwin/index.ts:parseHostJson`.
+ 
+-## Step 4 — TCC attribution verification (PENDING)
++## Step 4 — TCC attribution verification
+ 
+-The Claude Code Bash tool environment suppresses TCC prompts (parent process
+-has elevated TCC privileges). To verify TCC attribution binds to `cmspark-host`
+-(not a parent process), run from a **real user Terminal**:
++`[executed]` User-side Terminal run on 2026-07-16:
+ 
+ ```bash
+ cd /Users/huchen/Projects/cmspark/.claude/worktrees/computer-use-phase0/companion
+-tccutil reset AppleEvents                          # clears all AppleEvents TCC rows
+-./dist/cmspark-host read-mail                     # first run — should prompt
+-# (Take screenshot of TCC dialog showing "cmspark-host wants to control Mail")
+-# Approve
+-./dist/cmspark-host read-mail                     # second run — should succeed silently
++tccutil reset AppleEvents        # → "Successfully reset AppleEvents"
++./dist/cmspark-host read-mail    # → TCC dialog appeared, user clicked OK, JSON returned
+ ```
+ 
+-**PASS criterion**: TCC dialog explicitly names **`cmspark-host`** as the
+-requester (not `osascript`, not `Terminal`, not `node`, not `claude`).
++**Observed**: TCC dialog appeared after global reset; user approved; binary returned the JSON payload above.
++
++**Not captured**: screenshot / explicit confirmation that the prompt named `cmspark-host` (vs Terminal / node / osascript). `[assumed]` The dialog most likely named `cmspark-host` because:
++- `tccutil reset` cleared prior entries (verified via success message)
++- Binary is the only AppleEvent sender in the call chain (no Node parent, no osascript subprocess — `[inspected]` host.swift uses `NSAppleScript` in-process)
++- Binary's `CFBundleIdentifier=com.cmspark.host` is set in `host-Info.plist` and bound via `-sectcreate`
++
++**Re-verification protocol** (if user wants 100% certainty): re-run `tccutil reset AppleEvents && ./dist/cmspark-host read-mail` from a fresh Terminal window; capture screenshot of dialog; confirm the quoted name is exactly `cmspark-host`.
+ 
+-**FAIL criterion**: Dialog names any other binary, OR no dialog appears after
+-global reset AND the binary still succeeds (suggests silent inheritance from
+-parent process — the Round 2 D4 ad-hoc signing approach would be insufficient).
++**PASS criterion**: TCC dialog explicitly names `cmspark-host` as the requester. **Status: SOFT-PASS** (one step removed from direct observation).
++
++**FAIL criterion**: Dialog names any other binary, OR no dialog appears after global reset AND the binary still succeeds. **Not observed.**
+ 
+ ## Step 5 — JSON shape verification
+ 
+-Swift binary emits:
++`[inspected]` Swift binary emits:
+ 
+ | Field | Type | Source |
+ |---|---|---|
+@@ -115,10 +122,12 @@ Swift binary emits:
+ | `date_received` | string | Mail AppleScript `date received of message 1 of inbox` (AppleScript locale format — Phase 1 will normalize to ISO 8601) |
+ | `body_preview` | string | First 500 chars of `content of message 1 of inbox`, JSON-escaped via TID in AppleScript |
+ 
+-Matches Round 2 synthesis §4.2 spec. ✅
++`[executed]` Output matches Round 2 synthesis §4.2 spec shape.
+ 
+ ## Known limitations carried into Phase 1
+ 
++`[inspected]` All limitations below are documented in source code or `phase0-kimi-review-fixes.md`:
++
+ 1. **`max_chars` is hardcoded at 500 in AppleScript** — Phase 0 .scpt has no argv support (NSAppleScript's `executeAndReturnError` doesn't run the `on run argv` handler by default for compiled .scpt loaded via `init(contentsOf:)`). Phase 1 will use `executeAppleEvent(_:withParameters:)` to pass `--max-chars` properly.
+ 
+ 2. **Date format is locale-dependent** — AppleScript `date received as string` uses user's locale (e.g., "2023年10月8日 星期日 上午11:22:32"). Swift's `isoDate()` attempts parsing with multiple formats but falls back to raw string. Phase 1 will use `«class isot»` AppleScript coercion or NSCalendar for deterministic ISO 8601.
+@@ -127,8 +136,8 @@ Matches Round 2 synthesis §4.2 spec. ✅
+ 
+ ## Decision
+ 
+-**Status**: macOS Phase 0 = **PASS** (conditional on Step 4 TCC verification confirming attribution to `cmspark-host`).
++**Status**: macOS Phase 0 = **SOFT-PASS**. `[executed]` binary builds + codesigns + runs + returns valid Mail JSON. `[executed]` TCC dialog appeared after global reset (user confirmed). `[assumed]` TCC attribution to `cmspark-host` specifically (name in prompt not captured).
+ 
+-If Step 4 confirms TCC attribution → proceed to Phase 1 implementation (define HostAdapter interface at W4).
++**Next step**: proceed to Phase 1 implementation (define HostAdapter interface at W4). TCC re-verification can run in parallel — it's no longer blocking because the binary demonstrably works end-to-end and the dialog demonstrably appears.
+ 
+-If Step 4 shows attribution leaks to parent process → Phase 0 FAIL, postmortem at `docs/decisions/phase0-no-go-postmortem.md`, kill project per Round 2 synthesis §5.1.
++If a future re-verification shows the prompt names a different binary → retroactively FAIL Phase 0, postmortem at `docs/decisions/phase0-no-go-postmortem.md`, halt Phase 1.
+Need inspect host-use code: host-use/index.ts, darwin/index.ts, darwin/blacklist.ts, types.ts, build-host.sh. Also maybe NotImplementedOnPlatform class. Need understand M2 removal and error handling. Also read relevant parts of server.ts around 1118. Also inspect ADR-010 maybe for god-mode comment. Need assess M1 evidence tags in docs: phase0-macos-gate-evidence and go-no-go and fixes. We have diff. Need identify issues.
+
+  Need view host-use/index.ts.Need inspect linux/win stubs to see NotImplementedOnPlatform usage.Need read ADR-010 maybe to verify comment about god-mode and standard phrase gate. Search.Need see if behaviors.md R1.2 evidence convention exists, to verify M1 tags. Also maybe phase0-kimi-review.txt contains Round 1 issues; we may not need full. We already read fixes. Need maybe inspect runbooks for linux/win to assess architecture coverage? Maybe not needed but helpful for C. Need also check existing tests? The user wants adversarial review of docs and code. We need deliver markdown.
+
+  We must think through each point.
+
+  A1 M1 evidence tags. We saw docs. Need verify tags accurate. In phase0-macos-gate-evidence:
+  - "Local macOS version" `[executed]` sw_vers -> yes.
+  - "AppleScript reads Mail inbox top-1" `[executed]` osascript returned 4-tuple. yes.
+  - "cmspark-host builds+codesigns" `[executed]` npm run build + codesign -dv. yes.
+  - "Binary executes AppleScript in-process via NSAppleScript" `[executed]` binary returned valid JSON; `[inspected]` host.swift uses NSAppleScript. This combines executed+inspected. Fine.
+  - "TCC prompt appears after global reset" `[executed]` user-side Terminal reset + run dialog appeared. yes.
+  - "TCC prompt names cmspark-host specifically" `[assumed]` only; reasonable.
+  - Step 1 `[executed]`. Step 2 `[executed]` build, `[executed]` codesign output, `[inspected]` flags line. Step 3 `[executed]`. Step 4 `[executed]` user-side terminal run; `[assumed]` name; `[inspected]` call chain. Step 5 `[inspected]` swift binary emits table; `[executed]` output matches shape. Known limitations `[inspected]`. Decision `[executed]`/`[assumed]`.
+
+  Issues? `[inspected]` for `flags=0x10002` line: that's reading output, could be `[executed]` codesign output already. Not over-assumed. TCC attribution to `cmspark-host` marked `[assumed]`, accurate. But note: In `phase0-go-no-go.md` macOS gate evidence row says `[executed]` codesign flags correct + binary returns valid JSON + TCC dialog appeared after global reset (user confirmed 2026-07-16); `[assumed]` prompt named `cmspark-host`. Good. Linux/Windows `[inspected]` RUNBOOK. Good.
+
+  But maybe some `[executed]` are actually user-reported not captured by tool output? The Bash tool environment suppresses TCC prompt; user ran in Terminal. It's executed but not captured by Bash tool. The convention says "command run this session, output captured" maybe implies captured in this doc. They captured user confirmation. Could be okay. But `[executed]` tag on user-side Terminal without tool-captured output might be slightly overstretch; maybe should be `[reported]` or `[assumed]`? But they wrote convention only 3 tags. Acceptable? We can flag as Major: evidence convention conflates tool-captured and user-reported; maybe distinguish. But asked to verify accuracy. The prompt says `[executed]` only for actual run commands. User actually ran commands, so ok.
+
+  A more critical issue: TCC attribution status changed from PENDING to SOFT-PASS. Is that reasonable? The only unverified item is prompt name. Since binary works and dialog appeared after reset, likely attribution to binary. But it's not 100% verified. SOFT-PASS reasonable if they document the gap and plan re-verification. The doc does. However, the go/no-go decision logic says macOS PASS + Linux/Windows pending -> Phase 1 begin; they changed to macOS SOFT-PASS + ... -> proceed macOS-first. Is that consistent with Round 2 synthesis kill signals? Synthesis says macOS PASS + Linux/Windows PENDING (RUNBOOK-only) -> Phase 1 macOS-first, parallel Linux/Windows spike runs. But also says macOS FAIL -> kill. SOFT-PASS isn't PASS. They now proceed conditionally. It may be okay but the change from "deferred until macOS PASS confirmed" to "next session" might lower gate. They still say re-verification can run in parallel, and if future re-verification fails, retroactively FAIL and halt. Good. But maybe Critical: you cannot retroactively halt Phase 1 if work already done based on false assumption; could waste time. But since they proceed to interface definition only, not ship, acceptable. Round 2 §4.1 says Phase 0 decision gate: macOS spike pass required. They treat as pass with one unverified assumption. This could be flagged Major: changing PASS criterion to SOFT-PASS without explicit user approval; but doc says proceed with Phase 1 macOS-first. Maybe okay.
+
+  Need also verify `[assumed]` not overused. In phase0-kimi-review-fixes, C2 "Why Phase 0 defers" is `[assumed]`: inferred from docs. That is okay. C3 partial fix: no tag? Not relevant. 
+
+  M1 tags in `phase0-kimi-review-fixes.md`: C1 bug `[inspected]`, verification `[executed]`. C2 bug `[inspected]`, why defer `[assumed]`. Good. M5 fixed etc not tagged. That's fine.
+
+  A2 M2 removal of platform guard. Need verify error propagation path. In server.ts host_read case, it catches any error and returns {success:false,error:`host_read error: ...`}. The import of `./host-use` at runtime; host-use/index.ts throws generic Error for unknown platform; linux/win throw NotImplementedOnPlatform. All caught. Good. No silent failure because error message surfaced. However, there is a subtle issue: `await import("./host-use")` is dynamic import inside try/catch. If module fails to load for some reason, caught. Good.
+
+  But is NotImplementedOnPlatform class actually load-bearing? The class extends Error, caught generically by `err.message`. Since catch uses `err.message`, name not needed. But the comment says caught below and surfaced. The class could be useful for instanceof filtering if implemented; currently not used. The user asks "是否真的被 catch 块正确处理？" Yes, because Error. But maybe it should be checked specifically to provide a clearer public error, but not necessary. However, there is potential issue: host-use/index.ts for unknown platform throws plain `Error`, not NotImplementedOnPlatform. The class is defined in types.ts but not used in index.ts. Should it be used there? For linux/win stubs they throw it; for unknown platform, plain Error. If in future freebsd etc, error not typed. Minor. 
+
+  Also `NotImplementedOnPlatform` exported from types and host-use/index.ts re-exports it (but doesn't use). The class extends Error; no `Error.captureStackTrace`? Not needed.
+
+  Is there any silent failure introduced by removing guard? Previously non-darwin returned success false with explicit message. Now still returns success false with host_read error message. Not silent. Good.
+
+  But maybe a problem: dynamic import `./host-use` with circular or side effects? host-use/index.ts imports types; no side effects. Fine.
+
+  A3 M3 god-mode comment. Need verify accuracy. Comment at server.ts:303 says "Under security.allow_all_schemes=true (god-mode), this gate is skipped and host_read can read Mail without per-call prompt — the user must have explicitly opted into god-mode via the standard phrase gate per ADR-010." ADR-010 says enabling God-mode via UI requires typing confirmation phrase "我了解风险" (or direct config.json). It calls "standard phrase gate" maybe inaccurate? The ADR says "确认短语" not "standard phrase gate". Also config.json path doesn't require phrase. Comment says "via the standard phrase gate per ADR-010" may misrepresent that config.json bypasses phrase. But likely acceptable. More important: the question asks "是否应该不止加注释，而是加 runtime 检查（比如 god-mode + host_read 时强制额外审计）？" Need check if there's audit for host_read under god-mode. The code at gate skip has skipConfirmation for allow_all_schemes. It doesn't log godmode_bypassed for host_read because this gate is before tool execution and not in the scheme/URL path. ADR-010 says each god-mode bypass writes `security.godmode_bypassed`. For host_read, is there audit? In this code, when skipConfirmation true due to allow_all_schemes, the confirmation dialog is skipped, but no `logger.warn("security.godmode_bypassed", ...)` for host_read. That could be a gap: god-mode bypassing per-call prompt for reading Mail should be audited. The comment notes gate skipped but doesn't add audit. So we should flag Major or Critical: need runtime audit log for host_read under god-mode. However, maybe `executeCompanionTool` wrapper or `logToolFinish` logs tool calls? But not specifically godmode bypassed. The ADR requires every god-mode放行 writes godmode_bypassed before action. Host-read not currently included. So this is a real issue. Need verify if any other logging. Search for godmode_bypassed.In the auto-approved path (line 428-436), when skipConfirmation true (god-mode) and not forceConfirm, it logs `security.auto_approved` with reason god_mode. That includes evaluate/osascript_eval/host_read because these tools go through this block. But the comment at 303 specifically about host_read. The auto_approved log is an audit event; but is it enough? ADR-010 specifically wants `security.godmode_bypassed` event. There is no `godmode_bypassed` for this skip path. The URL gate logs `security.godmode_bypassed` at line 505. For evaluate/osascript_eval/host_read auto-approved under god-mode, only `security.auto_approved` reason god_mode is logged. This may be acceptable but not matching ADR. However, the comment says gate skipped under god-mode. It doesn't mention audit. Should add runtime audit? Since auto_approved logs reason, maybe enough, but ADR says every god-mode bypass writes godmode_bypassed. So Major: host_read god-mode bypass not recorded as `godmode_bypassed`; should either align ADR or update ADR. Could be critical because reading user data under god-mode is high risk.
+
+  Also the comment says "standard phrase gate per ADR-010". ADR doesn't use term "standard phrase gate"; it's "确认短语". Minor.
+
+  The user asks "注释内容是否准确（有没有 misrepresent ADR-010）？" Comment says user must have opted in via standard phrase gate per ADR-010. But ADR also allows config.json direct edit without phrase. Also `auto_approve_dangerous` also skips prompt; host_read is in gate with evaluate/osascript_eval. The comment singles out god-mode, but `auto_approve_dangerous` also bypasses. Maybe comment should mention both. Also the phrase "the first tool in this gate that reads host-side USER DATA" is accurate: evaluate reads browser DOM or JS; osascript_eval runs AppleScript in Chrome tab; host_read reads Mail. Fine.
+
+  M3 issue: Should add runtime check/audit for god-mode + host_read. We can flag Major: at minimum log `security.godmode_bypassed` with `tool_name: host_read` when `allow_all_schemes` skips confirmation, per ADR-010. Or define host_read as critical capability requiring confirmation even under god-mode? But Round 2 says ask-once for reads. Maybe not critical. But audit needed.
+
+  Now B HostAdapter interface design doc.
+
+  Need read RUNBOOK files for linux/win to assess coverage and platform tokens? Possibly. Also need check if docs mention 4-tier confirmation gradient? The interface doc W5-W7 plan says integrate daemon mode + 4-tier confirmation (ask-once + Touch ID). But Q5 doesn't address relation of confirmation gradient to interface. We need evaluate.
+
+  Let's read RUNBOOK files.Need also read host-use/darwin/host.swift maybe to verify TCC and `.scpt` argv. Also maybe check if host_read tool schema to see parameters and confirmation. But not necessary for review. However for M3 comment and host_read, we might want to see security confirmation for host_read. The tool is called by LLM with params and goes through L2 gate. Since host_read doesn't have `code`, the lengthCheck uses `code` empty; checkLength maybe ok. Need confirm. But not main.
+
+  Now B1 Q1 TargetId branded. Need assess TypeScript CommonJS runtime cost and cast holes. The doc proposes `export type TargetId = string & { readonly __brand: unique symbol }`. In TS, branded type compiles to `string` at runtime (type erased). Zero runtime cost yes. But `unique symbol` in intersection with string? Actually `type TargetId = string & { readonly __brand: unique symbol }` is a phantom type. At compile time, you can't assign a plain string to TargetId without cast. At runtime it's just string. Good.
+
+  But in CommonJS compiled JS, there is no type checking at runtime. So branded type is zero cost. However, platform adapters will cast `as TargetId` at boundaries. If companion code only consumes, it's fine. But the design doc says "Platform adapters cast at the boundary; companion code only consumes." Need ensure no `as TargetId` in companion. That's okay if enforced.
+
+  Potential issue: `unique symbol` in a type alias cannot be exported as value; it's a type-level phantom. Actually `unique symbol` is a type, not a value; it compiles to nothing. Good. Could use `interface TargetId { readonly __brand: unique symbol }` as nominal? That would make TargetId not a string, requiring wrapping/unwrapping at boundaries, not zero cost. Current branded string is better.
+
+  But there is a subtle TS issue: `string & { readonly __brand: unique symbol }` still has all string methods and can be used as string. If platform adapter receives a string from LLM and casts to TargetId, type hole. Need enforce validation function. The doc says brand prevents companion code from accidentally constructing fake target ids, but cast can still be abused. Need document "never cast user input to TargetId; always validate". Could flag Major: without a runtime validation helper, the type safety is an illusion; any `as TargetId` at boundaries must be audited. Also the branded type with `unique symbol` not exported as runtime value means there is no runtime discriminator; need separate validation.
+
+  Also nominal typing alternative question: should use `interface TargetId { readonly __brand: "TargetId" }`? That is also phantom but not string. Actually if not string, can't pass where string expected. Branded string is appropriate. 
+
+  B2 Q2 empty list semantics. The interface doc says empty array valid. Companion must handle. It suggests adding to LLM system prompt. But actual implementation plan doesn't mention adapter error types for permission denied. Round 2 §4.2 says read is ask-once. Permission denied would be caught by system if user denies; but if TCC/AT-SPI permission not granted, the native call may error. The adapter could throw. Should empty list be distinguished from permission denied? For Phase 1 mail read top-1, empty inbox vs denied matters. If permission denied, should surface error, not "inbox empty". The doc says "empty array is valid" but doesn't say how to report permission denied. This could be Major. Need adapter errors vs empty list. The current host-read code uses execFile; if permission denied, binary may error with stderr, caught and thrown as error. For HostAdapter, listReadTargets on permission denied should throw, not return []? If TCC not granted, AppleScript may error. The doc doesn't discuss error contract. We can flag Major: empty-list semantics need an explicit error contract for permission/auth failures; otherwise LLM misreports "inbox empty" when it's actually blocked.
+
+  Also the RUNBOOK handoff says listReadTargets("mail") returns `[{id: ...}]` (object with id) but interface says `TargetId[]` (string). Inconsistency? In linux runbook handoff line: `listReadTargets("mail")` returns `[{id: "atspi://..."}]` but interface says `TargetId[]`. This is a discrepancy: object vs string. But maybe runbook outdated; doc interface uses opaque string. Flag minor? Could be Major because implementation map may diverge.
+
+  B3 Q3 single writeOne with kind. Create targetId meaning ambiguous (parent vs null). Delete payload must be empty; type system can't express because body/destination optional. The doc recommends keeping single method, with targetId as parent for create. This is a design tradeoff. We should flag Major: create operation taking a parent targetId overloads semantics; for Notes create, targetId might be the Notes app target? But listReadTargets returns readable targets of kind "note"; how do you get parent targetId for create? You'd need a pseudo-target like "com.apple.notes" which is not returned by listReadTargets. This leaks platform specifics and is confusing. Also delete payload must be empty but type allows body/destination; runtime validation needed. Discriminated union for payload by kind would help: `WritePayload` union of `{kind:"create", body:string}` | `{kind:"delete"}` | etc. But current interface has optional fields; TypeScript won't enforce delete has no body. Could flag Major: use discriminated union for WritePayload to make invalid states unrepresentable. Or split methods? Round 2 says 3 methods only, so single writeOne with union payload is acceptable. But current `WritePayload` is not a union; it's one interface with optional fields. That's a type hole. We can recommend discriminated union.
+
+  Also `WriteResult.undoable: boolean` non-optional. For delete, undoable maybe true (trash) or false. Fine.
+
+  B4 Q4 ReadResult index signature. `ReadResult` has optional known fields plus `[key: string]: unknown`. Because known fields are optional, type checking: accessing any string key returns unknown, but known fields are typed as string | undefined? Actually with index signature, property types must be assignable to index signature type. Since optional known fields are `string | undefined`, and index signature returns `unknown`, `string | undefined` is assignable to unknown. Accessing `result.sender` yields `string | undefined`. Accessing arbitrary key yields unknown. This doesn't make type checking "completely失效"; it still type-checks known fields and restricts unknown key to unknown. But it does allow setting/accessing any field as unknown, which reduces safety. For LLM consuming ReadResult, the schema might not enforce fields. The doc recommends index signature. The question asks if discriminated union by TargetKind is safer. Yes. But for Phase 1 minimal, maybe acceptable. We can flag Major: index signature allows platforms to emit arbitrary fields, making LLM prompt contracts unstable; recommend at least a base interface with known fields and no index signature for Phase 1, or a union. However, the doc says future-proofing. We can note that `[key: string]: unknown` means any extra field is allowed but typed unknown; in practice if code accesses `result.foo` it gets unknown and must narrow. This is not complete失效 but weak. We should advise either remove index signature and version interface, or use union.
+
+  B5 Q5 sync vs async iterable. Array recommendation. Is deferring performance to Phase 2 reasonable? Phase 1 only top-1 mail read; listReadTargets may materialize all messages. On macOS, AppleScript `messages of inbox` for large inbox could be slow but only top 1 needed. The wrapper in migration impact uses `listReadTargets("mail-inbox")[0]` which materializes entire list just to read first. This is inefficient and may be slow/hang for large mailboxes. The interface should support `limit` or `cursor` to avoid materializing all. The doc says add later. But if Phase 1 wrapper uses `[0]`, it's already inefficient. We can flag Major: the planned `hostRead` wrapper `readOne(listReadTargets(...)[0])` defeats top-1 optimization; should add `{limit}` option now or use direct read path for Phase 1. Also race condition: list returns [first], then readOne; if inbox changes, first may be stale or invalid. Could flag Critical? The wrapper is described as thin, but actual host_read likely should call binary directly for top-1 to avoid race/perf. But the interface design doc says wrapper; if implemented literally, it would reintroduce race. Since it's design not implementation, flag Major: don't literally implement wrapper; keep a direct top-1 read path for Phase 1, use adapter for list only when needed. Also need `limit` parameter.
+
+  C overall architecture consistency:
+  - Does HostAdapter cover darwin/linux/win? The interface maps to three platform implementation maps. But Linux RUNBOOK handoff says listReadTargets("mail") returns object with id, contradicts string TargetId. Also Windows implementation is stub Phase 1.5; interface says Phase 1.5 blocked. The doc says HostAdapter covers win but actual win adapter is stub. That's consistent with synthesis (Phase 1.5). But the question "是否真的能 cover 三个平台" — design maps cover conceptually. However, the `TargetKind` enum values like `mail-inbox`, `mail-thread`, `calendar-event`, `note`, `file` may not map cleanly to Linux Evolution and Windows Outlook. For Linux, mail client is Evolution, not Mail; `mail-inbox` works. `note` maybe gedit? `file` nautilus. Windows Outlook `mail-inbox` works; `file` Explorer; `note` OneNote? Not sure. But design claims it covers. We can flag Major: TargetKind values are currently macOS-centric; Linux/Windows may need different kinds or the abstraction will leak. For Phase 1, only `mail-inbox` and `note`/`file` (macOS Notes/Finder) are planned; but the enum includes `mail-thread` and `calendar-event` not in Phase 1, which may be early abstraction (Round 1 Pi warning). Indeed D includes Pi warning. So flag Major: enum includes kinds not validated by any of the three spikes (`mail-thread`, `calendar-event` for Linux/Windows?), premature abstraction.
+
+  - Platform-specific tokens leaking interface boundary? TargetId is opaque string with platform conventions documented (bundleId, atspi path, hwnd). As long as companion doesn't parse, fine. But the doc documents conventions inside interface file; that's okay for implementers. However, these conventions are platform-specific tokens, but not in interface type. So no leak.
+
+  - Refactor hostRead(params) into `HostAdapter.readOne(listReadTargets("mail-inbox")[0])` race condition? Yes. If list returns targets and inbox changes before read, targetId may refer to a different message or stale. Also if list returns empty, `[0]` undefined leads to error. Need handle empty list. We can flag Critical/ Major: planned wrapper has TOCTOU race and undefined dereference. Should either pass `limit:1` to list, or keep direct top-1 read.
+
+  D consistency with Round 2 synthesis:
+  - 3-method interface matches §2.1 rule of three? Yes.
+  - TargetKind enum values premature abstraction? Yes, as noted. Round 1 Pi warned early abstraction. `mail-thread` and `calendar-event` not part of Phase 1 and not validated by spikes. Round 2 synthesis Phase 1 tool: host_read and host_write limited to Notes create/Finder move. The TargetKind includes file, note, mail-inbox. `mail-thread` and `calendar-event` are extra. Could flag Major: remove `mail-thread` and `calendar-event` from Phase 1 enum; add when validated by rule-of-three.
+  - Did doc miss 4-tier confirmation gradient? Round 2 §4.2 has `silent / ask-once / double-confirm / biometric`. Interface doc W5-W7 says integrate daemon mode + 4-tier confirmation (ask-once + Touch ID). But the interface itself has no place for confirmation policy/level. How does adapter know which operations require biometric vs ask-once? Should HostAdapter have a `requiresConfirmation(targetId, payload)` method? Or should companion layer decide based on TargetKind and WritePayload.kind. The doc doesn't model confirmation gradient. Round 2 §4.2 says macOS read = ask-once, write = biometric; Linux critical = manual nonce. The interface is about data operations, not confirmation. But since the same adapter methods may trigger different confirmation tiers per platform, the interface should perhaps expose platform confirmation capabilities or let companion call security-confirmation before writeOne. The doc's open questions Q1-Q5 don't address this. We can flag Major: HostAdapter interface is silent on where the 4-tier confirmation gradient lives; this risks each platform adapter implementing its own confirmation (bad) or companion missing platform-specific Linux nonce. Need explicit design: companion security layer gates before `writeOne`, not inside adapter; document in interface.
+
+  Also check D4: Round 2 synthesis §4.2 says Phase 1 implementation 2档：ask-once for read, biometric for write (macOS Touch ID; Linux manual nonce). The interface doc plan line 178 says "integrate with daemon mode + 4-tier confirmation (ask-once + Touch ID)". It omits Linux manual nonce and says 4-tier but only 2. Could flag Minor/Major.
+
+  Also the interface doc's "Phase 1 limited to Notes create + Finder move" but TargetKind includes `note` and `file`. Good. But writeOne `kind` includes `update` and `delete` even though Phase 1 limited to create/move. Premature? The kind enum has delete/update not used. Could flag Minor.
+
+  Need also check Round 1 synthesis D8: Pi said don't define HostAdapter Phase 1. But Round 2 changed that. The doc says authority Round 2 synthesis §2.1. Good.
+
+  Need mention what's done right: M1 tags generally accurate, M2 removal correct, interface 3-method matches rule-of-three, opaque TargetId, platform tokens not leaking, RUNBOOK-based design, Phase 1.5 gating documented.
+
+  Need provide each with file:line + recommendation.
+
+  Need maybe inspect actual line numbers in files for references. We have them. For host-adapter-interface.md, line numbers from Read. For server.ts we have approximate. Need precise line numbers for the issues.
+
+  Let's get precise line numbers for:
+  - server.ts comment at 303-311 (we saw).
+  - server.ts host_read case 1124-1139.
+  - host-use/index.ts lines for platform dispatch and NotImplementedOnPlatform not used for unknown platform.
+  - types.ts NotImplementedOnPlatform class.
+  - host-adapter-interface.md lines for Q1-Q5, interface, migration impact.
+
+  We can cite line numbers from Read output. Good.
+
+  Need also perhaps inspect if `listReadTargets` wrapper would be in server.ts or darwin/adapter. Since not implemented, only doc. We can cite `docs/decisions/host-adapter-interface.md:105` and `:181`.
+
+  Need review M1 tags in `phase0-go-no-go.md` and `phase0-macos-gate-evidence.md`. Provide file:line references.
+
+  Potential additional issues:
+
+  - In `phase0-go-no-go.md`, evidence tag convention says `[executed]` = command run this session, output captured. But user-side Terminal commands are not captured by Bash tool. The doc records them as `[executed]` based on user report. If strictly following convention, maybe should be `[assumed]` or add a `[reported]` tag. However, the convention only defines three. Could flag Minor/Major: evidence tags conflate tool-captured and user-reported observations; for a security gate, user-reported dialog appearance should not be `[executed]` if output wasn't captured. But since user is trusted? This is a process issue. The user asked to verify accuracy. I'll mention as Major maybe: TCC dialog appearance is user-reported, not tool-captured; tagging it `[executed]` overstates the evidence quality. But the convention says "command run this session, output captured"—they didn't capture output, only user said dialog appeared. Better tag `[assumed]`? Hmm.
+
+  - In `phase0-macos-gate-evidence.md` Step 4: they say user confirmed dialog appeared and approved; name not captured. They tag the dialog appearance as `[executed]` (user-side Terminal run) and the prompt name as `[assumed]`. But the actual command output wasn't captured in Bash tool. The doc records it. Maybe okay.
+
+  - TCC attribution SOFT-PASS: Is it reasonable? Yes if they plan re-verification. But they also changed action items to "before Phase 1 ship" not kickoff. Good.
+
+  - M2: The comment in server.ts says "Linux/Win stubs throw NotImplementedOnPlatform — caught below and surfaced as {success:false}". The catch does `error: `host_read error: ${err.message || String(err)}``. So error surfaced. Good.
+
+  - But the dynamic import of `./host-use` could throw if the module doesn't exist on a platform? It exists. But `host-use/index.ts` imports `./types`, which exists. On Linux, dynamic import of `./linux` resolves to `linux/index.ts` which exists and throws NotImplementedOnPlatform. Good.
+
+  - `NotImplementedOnPlatform` class is defined in types.ts but `host-use/index.ts` for unknown platform throws plain Error. Could recommend using `NotImplementedOnPlatform` for consistency.
+
+  - The `host-use/index.ts` re-exports `NotImplementedOnPlatform` but server.ts doesn't import it; no instanceof check. That's fine but class load-bearing only as Error. The user asks "是否真的被 catch 块正确处理？" Yes because catch is generic. But if they wanted to distinguish for user message, they don't. Not an issue.
+
+  - M3: The comment says "host_read is the first tool in this gate that reads host-side USER DATA (Mail inbox) rather than browser-DOM or fixed AppleScript." This is accurate. But the comment also says under god-mode gate skipped. Need note that `auto_approve_dangerous` also skips. Also the comment says "user must have explicitly opted into god-mode via the standard phrase gate per ADR-010". ADR-010 says UI path requires phrase; config.json path does not. This is a misrepresentation. Could be flagged Major or Minor. Since the comment is for developers, not user-facing, maybe Major if it leads to false assumptions. Also missing audit.
+
+  Need also inspect `security-confirmation.ts` maybe to see if host_read gets a confirmation UI; the L2 gate issues token and finalParams.security_token. But executeCompanionTool host_read case doesn't check security_token. Wait: In server.ts `createToolExecutor`, at line 312, the confirmation gate checks `!finalParams.security_token` for evaluate/osascript_eval/host_read. If no token, it runs confirmation. After approval, it issues token and sets finalParams.security_token. Then later it routes to executeCompanionTool. In executeCompanionTool, host_read case doesn't validate the token. The token is only used to skip confirmation on replay? Actually for evaluate there's token validation at line 440; for osascript_eval, perhaps also? But host_read doesn't validate token. That means an attacker could call host_read with a token issued for evaluate. Is that a security issue? The security_token is per tool? Let's check `securityPolicy.issueToken` and validateToken.The TodoList reminder is system; ignore in final but we can use TodoList if helpful. We are doing a review; not necessary. Continue analysis.
+
+  We discovered token issue: host_read doesn't validate security_token, while evaluate and osascript_eval do. The confirmation gate issues token bound to toolName and code. For host_read, code is empty string (since finalParams.code/expression undefined). If host_read is called with a security_token, the confirmation block is skipped (because `!finalParams.security_token` false). Then executeCompanionTool host_read case doesn't validate token. This means a token from any tool could skip host_read confirmation. This is a security bug. But is it within Round 2 scope? It relates to M3 god-mode comment and host_read being a new tool. Round 1 may not have covered host_read token validation because it was new. The user asked to review Round 2 changes; M3 comment added at gate but token validation missing. This is a Critical issue. Need confirm by reading security-policy.ts to see token tool binding.This token issue is significant. Let's analyze confirmation gate more precisely.
+
+  In `createToolExecutor`, for `evaluate`/`osascript_eval`/`host_read` and no security_token, the L2 confirmation gate runs. It issues a token bound to `toolName` and `code` (where code is built from finalParams.code/expression, empty for host_read). It sets finalParams.security_token. Then after that block, the executor eventually calls `executeCompanionTool(toolName, finalParams, ...)`. In `executeCompanionTool`:
+  - `evaluate`: if security_token, validates token for toolName "evaluate" and code. Good.
+  - `osascript_eval`: validates token for "osascript_eval" and jsExpr. Good.
+  - `host_read`: does NOT validate token. It just runs hostRead.
+
+  Thus if a caller includes a valid security_token from a prior evaluate/osascript_eval approval, host_read skips confirmation and executes. This violates the L2 gate. Even if the token is toolName-bound, host_read doesn't check. So this is a Critical issue. However, is the token bound to toolName? Yes. The token from evaluate has toolName "evaluate". Since host_read doesn't validate at all, it doesn't matter. So any valid token (even from evaluate) skips host_read confirmation. This is a clear security bug.
+
+  But wait, the confirmation gate at line 312 only runs if `!finalParams.security_token`. If a token is present, it skips gate for all three tools. Then executeCompanionTool for evaluate/osascript_eval validates token, host_read doesn't. So host_read can be called with any token. Critical.
+
+  This is not directly in Round 2 diff? The host_read case existed before; the Round 2 change added comment and removed platform guard. But the token validation issue is present and relevant because the comment now highlights host_read as L2-gated. Round 1 review may have missed because host_read was new. We should flag it as Critical under M3 / overall.
+
+  Need also check if there is a separate host_read schema that requires security_token? Search.Need read tool-schemas for host_read to see parameters.Tool schema allows security_token optional. In executeCompanionTool host_read, if token present, no validation. So bug.
+
+  But wait, the L2 gate at line 312 runs if `!finalParams.security_token`. If token is present, gate skipped. But who provides token? The agent/LLM can include security_token from prior approval? In the normal flow, after confirmation, the code sets finalParams.security_token and then calls executeCompanionTool. The token is one-time, consumed by evaluate/osascript_eval. But host_read doesn't consume it. However, the token is in finalParams from the gate; not from LLM. Actually the gate issues token and passes it to executeCompanionTool. Since host_read doesn't validate it, it will run. But that's the intended flow for the first call: after user confirms, the token is issued and host_read runs. The problem is that any token (including stale or for different tool?) would bypass. The gate issues token with toolName = host_read and code = "" (since code empty). But host_read doesn't validate, so it can't distinguish. A caller could supply a token from a previous evaluate approval (toolName evaluate) and skip confirmation. Since the gate sees security_token present, it skips. Then host_read runs. That's a bypass.
+
+  But can the agent/LLM supply security_token? The schema allows it. If the agent had obtained a token from an earlier evaluate confirmation (e.g., via tool result), it could supply it. The token is returned in tool result? Let's see if the confirmation flow returns the token to the agent or if it's internal. In `createToolExecutor`, after confirmation, the code issues token and sets finalParams.security_token, then presumably proceeds to execute the tool. The tool result likely doesn't include the token. But the agent could infer? No, tokens are internal. However, an attacker with access to the WS or who can set params could supply any string? But if attacker can send tool calls, they could also set allow_all_schemes. This is a local process threat. Still, token validation is expected for consistency.
+
+  Wait, the token is generated in the same request, not returned. The flow: request arrives without token -> gate prompts user -> if approved, token issued -> tool executes. So the token is never exposed to the agent; it's internal. But the code path for `params.security_token` being present from an external request is possible if someone replays a token? But tokens are one-time and validated for evaluate/osascript_eval. For host_read, no validation. So if an external attacker has a valid token (e.g., from sniffing the internal map? Not realistic) they can bypass. But the bigger issue: the `params.security_token` is optional in schema; if the agent includes a bogus token, the gate is skipped and host_read runs. If token is invalid, no validation. So the presence of any token bypasses confirmation. That is a bug.
+
+  But maybe `security_token` in schema is for the internal flow, not for LLM. However, the schema is the LLM-facing API. If LLM can pass it, it could pass an empty string? `!finalParams.security_token` would be true for empty string? Actually empty string is falsy, so gate runs. But any non-empty string skips. LLM could pass "foo". That would skip confirmation. So definitely Critical.
+
+  But is this within Round 2 scope? The host_read tool was added earlier maybe in Round 1; the Round 2 diff didn't change token handling. The user asked to review Round 2 changes and validate Round 1 fixes + Phase 1 design. They said Round 1 issues fixed include C1,C4,M5,M7,m12. The token validation for host_read might have been missed in Round 1. Since we are adversarial/critical, we should flag it. The user explicitly wants critical perspective. This is a Critical find.
+
+  Need verify if host_read is in SENSITIVE_CODE_TOOLS set for history; but not relevant.
+
+  Now, also check the `executeCompanionTool` signature: It receives `params` which is `finalParams` including security_token. It doesn't validate. Should add validation like:
+  ```
+  if (params.security_token) {
+    const valid = securityPolicy.validateToken(params.security_token, "host_read", "")
+    if (!valid) return { success:false, error:"Invalid or expired security token" }
+  } else {
+    // maybe shouldn't happen because gate handles, but defensive
+  }
+  ```
+  But code is empty. However, the token issued for host_read has code = `String(finalParams.code || finalParams.expression || "")` = "". So validate with code "" works. But this means a token issued for any tool with empty code could also validate? Only if toolName matches. The gate issues token with toolName=host_read. So validation toolName host_read + code "" would accept only tokens issued for host_read. Good.
+
+  But the gate's lengthCheck uses `code` for host_read; code empty, ok. So token validation needed.
+
+  Now, is there also an issue that host_read confirmation dialog risk preview uses `checkHighRiskExecution(toolName, code)` with code empty; the risk preview may be minimal. But not critical.
+
+  Now back to B.
+
+  B1 branded TargetId: also note that using `string & { readonly __brand: unique symbol }` means the type is assignable to string and can be used where string expected. The platform adapter casts at boundaries. However, if the companion code constructs a TargetId via template literal from LLM output, it would need cast; but should not. Need validation. Could recommend a runtime helper `assertTargetId(value: unknown): TargetId` in companion that validates format (e.g., from known platform prefix) before casting. But interface doc says opaque. Since it's string, validation can be regex per platform. But if opaque, maybe no validation needed except that it was produced by adapter. The companion should not accept TargetId from LLM; it will only get it from listReadTargets. The LLM-facing host_read tool currently takes `application` and `max_chars`, not targetId. So fine. For future host_write, the LLM may need targetId? Then validation becomes critical. We can flag Major: when host_write exposes TargetId to LLM, need input validation; brand alone insufficient.
+
+  B2 empty list semantics: Also the wrapper `listReadTargets(...)[0]` will throw or produce undefined if empty. The doc says add to system prompt, but no runtime handling. We can recommend listReadTargets returns empty and companion checks before indexing.
+
+  B3 writeOne single method: Create targetId ambiguous; delete payload not enforced. Recommend discriminated union. Also `WriteResult.target_id?: TargetId` for create; but `undoable` non-optional. For delete, no target_id. Fine.
+
+  B4 ReadResult index signature: recommend remove index signature for Phase 1 or use union. The doc's "any field access allowed" is not quite true; known fields typed, unknown fields unknown. But still weak. We can flag Major.
+
+  B5 async iterable: recommend array for Phase 1; but wrapper [0] is inefficient. Add `limit` option. Also race condition.
+
+  C architecture consistency:
+  - TargetKind enum includes `mail-thread`, `calendar-event` not validated by three spikes. This violates rule-of-three and is early abstraction. Round 1 Pi warned. Flag Major/Critical? Since it's design doc not code, could lead to premature implementation. We can flag Major: remove until validated.
+  - Does interface cover three platforms? Conceptually yes, but RUNBOOK handoff for Linux uses object shape not string. Also Windows Phase 1.5 not validated. The design doc says blocked. So okay.
+  - Platform tokens: TargetId conventions documented but not in type; no leak. Good.
+  - Race condition: wrapper `readOne(listReadTargets("mail-inbox")[0])` has TOCTOU. Flag Critical/ Major.
+
+  D consistency with Round 2 synthesis:
+  - 3-method interface matches §2.1. Good.
+  - TargetKind enum premature abstraction. Already.
+  - 4-tier confirmation gradient missing in interface. Flag Major.
+
+  Need also check if `host_read` under god-mode has `godmode_bypassed` audit. In auto-approved path, `security.auto_approved` is logged with reason god_mode. That is an audit event. Is it equivalent to `security.godmode_bypassed`? ADR-010 says each god-mode bypass writes `security.godmode_bypassed`. The code for URL gate logs `security.godmode_bypassed` (line 505). For evaluate/osascript_eval auto-approved under god-mode, it logs `security.auto_approved` reason god_mode. So host_read would also log `security.auto_approved`. But ADR specifically wants `godmode_bypassed`. We can flag Major: inconsistency with ADR-010; host_read god-mode bypass should emit `security.godmode_bypassed` or ADR should be updated. Since the comment references ADR-010, this is relevant.
+
+  Let's read lines 490-580 to confirm URL gate logs godmode_bypassed and evaluate auto-approved logs auto_approved.Confirmed. So audit inconsistency.
+
+  Now, need also consider if `host_read` confirmation gate logs auto_approved with reason god_mode. The `skipConfirmation` for host_read uses same logic as evaluate: `auto_approve_dangerous || allow_all_schemes || domain whitelist` but relevantDomain empty for osascript_eval/host_read, so domain whitelist false. If god-mode, skipConfirmation true, then logs `security.auto_approved` reason god_mode. So it's audited, but event name differs from ADR. We can note.
+
+  Now, we should also check if `host_read` has a `SENSITIVE_CODE_TOOLS` set in history; maybe privacy. Not needed.
+
+  Now, compile review items.
+
+  Need produce markdown with sections:
+  - 🔴 Critical
+  - 🟡 Major
+  - 🟢 Already right / don't over-fix
+
+  Each item with file:line + recommendation.
+
+  Need decide classification. Some findings:
+  1. host_read missing security_token validation (token bypass) -> Critical. file `companion/src/server.ts:1124-1139` and `companion/src/server.ts:312`. Recommendation: add token validation for host_read in executeCompanionTool, mirroring osascript_eval; bind token to toolName "host_read" and empty code.
+  2. host_read god-mode bypass not logged as `security.godmode_bypassed` per ADR-010 -> Major or Critical? It's an audit gap. Since reading Mail under god-mode is sensitive, I'd say Major. File `companion/src/server.ts:428-436`. Recommendation: emit `security.godmode_bypassed` when `allow_all_schemes` causes host_read confirmation skip; or update ADR.
+  3. M1 evidence tag `[executed]` for user-reported TCC dialog overstates evidence quality -> Major? Or Minor. The user asked to verify labels. Could be Major because security gate depends on it. File `docs/decisions/phase0-macos-gate-evidence.md:30` and `docs/decisions/phase0-go-no-go.md:15`. Recommendation: introduce `[reported]` tag or downgrade user-reported observations to `[assumed]` per convention; capture screenshot before ship.
+  4. TCC attribution SOFT-PASS changed to proceed with Phase 1; if later fails, retroactive halt wastes work -> Major. File `docs/decisions/phase0-go-no-go.md:24-26` and `:49-53`. Recommendation: keep W4 interface design as non-shipping prep only; do not merge macOS-first runtime code or ship until TCC name captured.
+  5. M2: NotImplementedOnPlatform class not used for unknown platform; plain Error in host-use/index.ts -> Minor? Could be Major for consistency. File `companion/src/host-use/index.ts:19`. Recommendation: throw NotImplementedOnPlatform for unknown platforms too.
+  6. M3 comment misrepresents ADR-010: config.json bypasses phrase gate; comment says standard phrase gate. Also auto_approve_dangerous also skips. -> Major. File `companion/src/server.ts:303-311`. Recommendation: rewrite comment to mention both `allow_all_schemes` and `auto_approve_dangerous`; note config.json path has no phrase gate; or reference config.ts.
+  7. HostAdapter interface Q1 branded type cast hole -> Major. File `docs/decisions/host-adapter-interface.md:59` and `:135`. Recommendation: add a runtime validation helper and forbid casting LLM strings; document cast rules.
+  8. Q2 empty list semantics missing permission-denied error contract -> Major. File `docs/decisions/host-adapter-interface.md:139-143`. Recommendation: specify adapter throws `HostAdapterError` with `code: "permission_denied"` vs returning []; companion surfaces accordingly.
+  9. Q3 writeOne payload not a discriminated union; create targetId ambiguous, delete can't enforce empty payload -> Major. File `docs/decisions/host-adapter-interface.md:78-85` and `:147-151`. Recommendation: use `WritePayload` discriminated union; model create with `parentTargetId` or accept `null` targetId; separate `delete` payload type.
+  10. Q4 ReadResult index signature weak; arbitrary fields allowed -> Major. File `docs/decisions/host-adapter-interface.md:68-76` and `:155-160`. Recommendation: drop index signature for Phase 1 or add per-TargetKind union.
+  11. Q5 array materialization + wrapper `listReadTargets(...)[0]` causes performance/race -> Major. File `docs/decisions/host-adapter-interface.md:105` and `:181`. Recommendation: add `listReadTargets(kind, {limit?: number, cursor?: string})` or keep direct top-1 path for Phase 1; handle empty list.
+  12. TargetKind enum premature abstraction (`mail-thread`, `calendar-event`) -> Major. File `docs/decisions/host-adapter-interface.md:61-67`. Recommendation: reduce Phase 1 enum to `mail-inbox | note | file`; add others only after rule-of-three validation.
+  13. HostAdapter interface silent on 4-tier confirmation gradient -> Major. File `docs/decisions/host-adapter-interface.md:127-166`. Recommendation: document that companion security layer gates before adapter; per-platform confirmation capabilities table; include Linux manual nonce.
+  14. Windows UIAccess blocking evidence not yet collected but interface maps Phase 1.5; ok but doc says "three real implementations exist" -> maybe Minor. Actually doc says Phase 0 produced macOS real, Linux RUNBOOK, Windows RUNBOOK. It says "All three converge". Windows RUNBOOK is not an implementation. The rule-of-three is slightly violated: only one real implementation. But Round 2 says Windows blocked, RUNBOOKs acceptable for W4. Could flag Major: claiming "three real implementations" is misleading; it's one implementation + two RUNBOOKs. The abstraction may be premature for Windows. But synthesis accepted. We can mention as Major: interface claims cover Windows but Windows hasn't produced a working spike; risk that UIAccess may require different method shapes.
+  15. Linux RUNBOOK handoff uses `listReadTargets("mail")` returning `[{id:...}]` contradicts interface `TargetId[]` -> Major. File `companion/src/host-use/linux/RUNBOOK-phase0.md:168-169` and `docs/decisions/host-adapter-interface.md:59`. Recommendation: align RUNBOOK with interface (string TargetId) or update interface.
+  16. `TargetKind` value `"mail"` vs `"mail-inbox"`: RUNBOOK uses "mail". Interface uses "mail-inbox". Inconsistency. Major. 
+  17. `ReadResult` date_received comment says Phase 1 normalizes from AppleScript locale; but interface doesn't specify who normalizes (adapter vs companion). Major? Could be Minor.
+  18. `WriteResult.undoable: boolean` maybe should be optional or tri-state. Minor.
+  19. `WritePayload` includes `update` and `delete` though Phase 1 only create/move. Minor.
+
+  Already right:
+  - M1 tags mostly accurate; TCC name appropriately `[assumed]`.
+  - M2 removal duplicate platform guard correct; error propagation surfaces via catch.
+  - M3 adding comment is good; but needs token validation and audit.
+  - Interface 3-method abstraction matches Round 2 rule-of-three.
+  - Opaque TargetId string type keeps platform tokens out of companion.
+  - Phase 1.5 Windows gating documented.
+  - RUNBOOKs exist for Linux/Windows.
+  - Build-host.sh codesign --verify fixed.
+
+  Need also perhaps mention C1 jsonEscape fix not re-reviewing as instructed. Don't include.
+
+  Need ensure we don't re-review Round 1 fixes except where Round 2 changes relate.
+
+  Now, we need provide output in Chinese (user language). Use markdown. Include file:line references. Keep concise but thorough.
+
+  Need also verify line numbers for some items precisely. Let's get line numbers for interface doc Q sections and migration. We have from Read. We can cite. For server.ts comment lines 303-311, host_read case 1124-1139, auto_approved log 428-436. For host-use/index.ts line 19. For types.ts line 13-18. For RUNBOOK lines 168-169.
+
+  Need perhaps read `companion/src/host-use/linux/RUNBOOK-phase0.md` line numbers? We read full. The handoff at line 168-169. Good.
+
+  Need maybe read `docs/decisions/host-adapter-interface.md` line numbers for Q2, Q3, etc. We have full file content with line numbers. Good.
+
+  Now, should we also check if `host_read` token validation was already missing in baseline e40065b? It was. But since we review Round 2 and the diff only touched comment and platform guard, the token issue is pre-existing. However, the user asked "Round 2 重点" includes M3 god-mode comment and "是否应该不止加注释，而是加 runtime 检查". The missing token validation is a runtime check that should have been added. So include.
+
+  Need consider if the token validation missing is actually a false positive because host_read doesn't take code, so the token bound to empty code can be validated. But the gate issues token only after confirmation. The token is not exposed. However, the schema exposes security_token. The agent could pass any token. In normal flow, the LLM doesn't see the token. But if there is a way to replay? The token is one-time and validated for evaluate. Since host_read doesn't validate, a replay of an evaluate token would bypass. But to replay, the attacker needs the token value. If they can read the tool result of an evaluate call, they can get token? The tool result of evaluate doesn't include token; token is internal. But the security_token is part of finalParams passed to executeCompanionTool; not returned. So external attacker cannot easily get it. However, a malicious local process sending WS messages could set security_token to any string and skip confirmation for host_read. But if they can send WS messages, they likely already have other access. Still, the L2 gate is designed to require confirmation for host_read. The missing validation breaks the gate's contract. Critical because it's a security boundary.
+
+  But wait: the L2 gate checks `!finalParams.security_token`. If a malicious local process sends a non-empty security_token, the gate skips. Then host_read runs. But the malicious process could also set `allow_all_schemes` via config if WS not authenticated? PR-0 fixed that. But they could call host_read with a token. Since token validation missing, they bypass confirmation. So yes, security boundary issue.
+
+  Now, also note that `host_read` is included in `SENSITIVE_CODE_TOOLS` history store. Good.
+
+  Need maybe mention the `WriteResult.target_id?: TargetId` returning TargetId from create; but for delete/update no id. Fine.
+
+  Need also mention `listReadTargets` returning TargetId[] but the adapter needs to know which app to target per platform (Mail/Evolution/Outlook). The `TargetKind` "mail-inbox" is abstract enough. Good.
+
+  Potential issue: In `docs/decisions/host-adapter-interface.md` line 20 says "All three converge on: list targets → read one → write one. That's the abstraction." But Windows RUNBOOK doesn't have a working spike; it expects UIAccess blocking. The convergence is theoretical. Could flag Major.
+
+  Now let's also verify if any tests exist for host-use. Not required but could mention test plan. The doc includes tests. Good.
+
+  Now, we need produce final answer. But before final, maybe we should create a concise summary. The user asked "请用 markdown 输出". So final should be markdown with sections. No need for code changes, but recommendations. We should be adversarial/critical.
+
+  Need include line numbers exactly. For server.ts lines we have from grep/read. Let's confirm line numbers for the host_read case: Read output line 1124 case "host_read":. Yes. The comment at line 303. auto_approved log at line 428-436. L2 gate if at 312. token issue at 1124-1139. 
+
+  For types.ts line 13 class. host-use/index.ts line 19 throw. 
+
+  For docs:
+  - host-adapter-interface.md interface lines 38-46.
+  - TargetId line 59.
+  - TargetKind lines 61-67.
+  - ReadResult lines 68-76.
+  - WritePayload lines 78-85.
+  - WriteResult lines 87-92.
+  - Migration impact line 181.
+
+  Need also mention `phase0-go-no-go.md` line numbers from diff: evidence convention at lines 7-10; macOS row line 15; decision logic line 24-26; recommended path line 36-40. But line numbers may differ from current file. We should read current files to get exact line numbers maybe. The diff showed changes but current file line numbers can be obtained by Read. We read phase0-go-no-go.md partially via diff; need actual file. Let's read it quickly.Good. We have exact line numbers.
+
+  Now also read remaining lines of phase0-macos-gate-evidence.md for Step 4-5 line numbers if needed. We have from earlier diff. But can cite summary lines.
+
+  Need decide final structure. We can include a short intro, then sections. Use Chinese. Provide file:line references.
+
+  Need maybe note that this is Round 2 review after Round 1 fixes; we are not re-reviewing fixed items.
+
+  Let's also double-check if the `host_read` L2 gate uses `checkLength(toolName, code)` where code empty; `checkLength` returns ok. Good.
+
+  Now, maybe there is another issue: The M2 removal of platform guard means that on non-darwin, `executeCompanionTool` imports `./host-use`, which for unknown platform throws plain Error. The catch returns success false. Good. But the `host-use/index.ts` dynamic import inside `try` means if `./linux` module fails to load due to missing dependency, it throws and is caught. Fine.
+
+  Now, maybe there is issue with `NotImplementedOnPlatform` being load-bearing but not imported in server.ts; the catch doesn't check name. The comment says caught below. It is caught generically. The class is not used for anything else. So "load-bearing" is overstatement. Could flag Minor: either use class in catch to provide clearer error or remove class. But not critical.
+
+  Now, for the evidence tags, also note in `phase0-macos-gate-evidence.md` line 20: `[executed]` user-side Terminal: dialog appeared → user clicked OK → JSON returned. The convention says `[executed]` = ran command in this session, observed captured output. Here output is user observation, not tool-captured. This is the over-tagging. We can recommend adding a `[reported]` tag or using `[assumed]` for human-observed UI. Also line 33 in go-no-go: `[executed]` TCC dialog appears after reset. Same.
+
+  Now, TCC SOFT-PASS: Is it reasonable? The user asked specifically. We can say: SOFT-PASS is defensible as a project management label if re-verification is scheduled before ship, but it is not a PASS per Round 2 §5.1. The doc correctly says "proceed with Phase 1 macOS-first" and re-verification can run in parallel. However, the decision logic line 26 says "macOS SOFT-PASS + ... → Phase 1 macOS-first". This introduces a new state not in synthesis. Should get explicit sign-off. Also if later re-verification fails, Phase 1 work may need rework. Recommend gating any code that depends on TCC attribution (e.g., shipping) until PASS.
+
+  Now, maybe we should also note that `phase0-go-no-go.md` line 44 says "Phase 1 ship scope = macOS-only until Linux spike result is in hand. README and docs must explicitly mark Linux as 'spike pending, not shipped'". This is good (avoid vague Phase 1.5). Already right.
+
+  Now, for HostAdapter interface, maybe check if the doc says "three real implementations exist" but Windows is RUNBOOK only. That's a factual overstatement. We can flag in Major.
+
+  Now, also the interface says `ReadResult` fields optional. If `listReadTargets` returns a target and `readOne` returns result, for empty inbox there are no targets, so fields not needed. But if read fails, throw. Good.
+
+  Now, need maybe mention `WritePayload` `kind` includes "delete" but Phase 1 doesn't plan delete. Minor.
+
+  Now, we should also consider if `TargetId` branded type in TS CommonJS with `unique symbol` has any issue with declaration file. `unique symbol` in a type alias cannot be exported as a value. The type alias `TargetId` is exported. Fine. At runtime, nothing. Good.
+
+  Now, the user wants "参考" docs. We should reference them in findings. We can cite `computer-use-round2-synthesis.md` §2.1, §4.2, `phase0-kimi-review.txt`, etc.
+
+  Now, final answer. Need include all sections. Ensure not overly verbose. Each item: severity, title, location, issue, recommendation. Also a "已经做对" section.
+
+  Let's craft.
+
+  Potential structure:
+
+  # Round 2 Review: Phase 0 computer-use
+
+  ## 🔴 Critical
+  1. host_read 在 executeCompanionTool 中不校验 security_token，任意 token 可绕过 L2 确认门
+     - `companion/src/server.ts:1124-1139`, `companion/src/server.ts:312`
+     - 说明: gate 只在 `!security_token` 时弹窗；host_read 分支未像 osascript_eval 那样 validateToken，导致传入任意非空 token 即可跳过确认。 ...
+     - 建议: 在 host_read 分支加入 `securityPolicy.validateToken(params.security_token, "host_read", "")` 或统一要求 token。
+
+  2. (Maybe) host_read god-mode bypass audit gap? Could be Critical but I think Major. Let's keep Critical limited to token bypass. The audit gap is Major.
+
+  Actually, reading Mail without per-call prompt under god-mode but no `godmode_bypassed` audit is also critical? ADR-010 says each bypass must be logged. Missing log for host_read means compliance/forensics gap. But doesn't allow attack. I'd classify Major.
+
+  ## 🟡 Major
+  Then list the rest.
+
+  ## 🟢 已经做对的
+  List.
+
+  Need decide if TCC SOFT-PASS is Critical? It could kill project if wrong. But it's documented as assumption. I'd say Major: gate label drift.
+
+  The token bypass is definitely Critical.
+
+  Now, maybe also Critical: planned wrapper `readOne(listReadTargets(...)[0])` introduces TOCTOU and undefined deref. But it's design, not implemented. Could be Major. The user asked C: "是否会引入 race condition". Answer yes. This is a design flaw. Severity Major/Critical? Since it could read wrong message or crash, but not security. Major.
+
+  Let's include in Major.
+
+  Now, also need mention M2 platform guard removal is correct. In Already right.
+
+  Let's formulate each item in Chinese.
+
+  Need ensure line numbers accurate. For `host_read` token validation: `companion/src/server.ts:1057-1061` for osascript_eval example, `companion/src/server.ts:1124-1139` for host_read. Maybe cite both.
+
+  For M3 comment: `companion/src/server.ts:303-311`.
+
+  For auto_approved log: `companion/src/server.ts:428-436`.
+
+  For host-use/index.ts unknown platform: `companion/src/host-use/index.ts:19`.
+
+  For NotImplementedOnPlatform class: `companion/src/host-use/types.ts:13-18`.
+
+  For M1 evidence: `docs/decisions/phase0-macos-gate-evidence.md:20`, `docs/decisions/phase0-go-no-go.md:16,33`.
+
+  For TCC SOFT-PASS: `docs/decisions/phase0-go-no-go.md:24-26,31-33,48`.
+
+  For host-adapter-interface items: cite lines.
+
+  For RUNBOOK inconsistencies: `companion/src/host-use/linux/RUNBOOK-phase0.md:168-169`.
+
+  Now, also note that `phase0-kimi-review-fixes.md` line 92 says Round 2 Kimi review NOT DONE; user is now doing it. Good.
+
+  Now final. Ensure no mention of TodoList. Use Chinese.
+
+• # Phase 0 computer-use Round 2 评审（adversarial / critical）
+
+  范围：`e40065b..HEAD`（`b13836b` standards fixes + `9a92e85` HostAdapter interface 设计）。  
+  以下按 **🔴 Critical / 🟡 Major / 🟢 已做对** 分类，带具体 `file:line` 与修复建议。
+
+  ---
+
+  ## 🔴 Critical
+
+  ### 1. `host_read` 未校验 `security_token`，任意 token 都能绕过 L2 确认门
+  - **位置**：`companion/src/server.ts:1124-1139`（`case "host_read"`），对照 `companion/src/server.ts:1057-1061`（`osascript_eval` 的正确做法）
+  - **问题**：
+    - L2 gate（`:312`）只在 `!finalParams.security_token` 时弹窗/确认；
+    - `host_read` 分支拿到 `params.security_token` 后**完全不验证**，直接执行；
+    - schema 里 `host_read` 的 `security_token` 又是 `optional()`（`companion/src/bridge/tool-schemas.ts:86`）。
+    - 结果：调用方只要传任意非空 `security_token`（包括复用 evaluate/osascript_eval 的 token），就能跳过 `host_read` 的人工确认，直接读 Mail。
+  - **建议**：在 `host_read` 分支照搬 `osascript_eval` 的 token 校验：
+    ```ts
+    if (params.security_token) {
+      const valid = securityPolicy.validateToken(params.security_token, "host_read", "")
+      if (!valid) return { success: false, error: "Invalid or expired security token" }
+    }
+    ```
+    或者统一在 gate 处把 token 消费掉，不要传到具体 tool 分支再各自校验。
+
+  ---
+
+  ## 🟡 Major
+
+  ### 2. `host_read` 在 god-mode / auto-approve 下缺少 `security.godmode_bypassed` 审计
+  - **位置**：`companion/src/server.ts:428-436`（auto_approved 日志），`companion/src/server.ts:303-311`（注释提到 ADR-010）
+  - **问题**：ADR-010 要求 **每次 god-mode 放行**都写 `security.godmode_bypassed`。URL gate（`:505`）做到了，但 `evaluate/osascript_eval/host_read` 的 L2 跳过只写 `security.auto_approved`，事件名不一致。`host_read` 读的是用户 Mail 这种高敏感数据，审计事件却比其他 gate 弱。
+  - **建议**：当 `skipConfirmation === true` 且原因是 `allow_all_schemes` 时，对 `host_read` 也补一条 `security.godmode_bypassed`（layer: "confirmation", tool_name: "host_read"）。
+
+  ### 3. `host_read` 的 god-mode 注释 misrepresent ADR-010
+  - **位置**：`companion/src/server.ts:307-310`
+  - **问题**：
+    - 注释说“用户必须通过 standard phrase gate 开启 god-mode per ADR-010”，但 ADR-010 还允许直接改 `~/.cmspark-agent/config.json` 开启，**不需要短语门**；
+    - 注释只提 `allow_all_schemes`，没提 `auto_approve_dangerous` 同样会跳过 `host_read` 的确认；
+    - 注释只“说明”不“检查”，没有 runtime 审计/加严。
+  - **建议**：改写成“`allow_all_schemes` 或 `auto_approve_dangerous` 都会跳过此门；config.json 路径无短语门；god-mode 下必须留 `godmode_bypassed` 审计”。
+
+  ### 4. M1 evidence tag `[executed]` 被用在“用户口述观察”上，证据强度被夸大
+  - **位置**：`docs/decisions/phase0-macos-gate-evidence.md:20`，`docs/decisions/phase0-go-no-go.md:16、33`
+  - **问题**：你们自定义的 convention 说 `[executed] = ran the command in this session, output captured`。TCC dialog 是否出现、用户是否点击，是**用户侧 Terminal 的人工观察**，并没有被 Bash tool / 日志 capture。把它标成 `[executed]` 会让读者误以为这是可复现的自动化输出。
+  - **建议**：
+    - 给人眼观察的 UI 事件新增一个 tag，例如 `[reported]` 或 `[observed_by_user]`；
+    - 在 TCC 名称被截图/日志 capture 之前，把“prompt named cmspark-host”从 `[assumed]` 保留，不要升级到 `[executed]`。
+
+  ### 5. TCC attribution 从 PENDING 改成 SOFT-PASS 引入了新的“半通过”状态
+  - **位置**：`docs/decisions/phase0-go-no-go.md:24-26、31-33、48`
+  - **问题**：Round 2 synthesis §5.1 的 kill 信号只有 PASS/FAIL，没有 SOFT-PASS。现在文档把“名字未 capture”包装成 SOFT-PASS 并允许进入 Phase 1 W4，这相当于在没有真正验证最关键假设（TCC attribution）的情况下启动下一步。
+  - **建议**：
+    - 明确这是**管理上的条件前进**，不是技术 gate 通过；
+    - 把“TCC 名称截图复核”从 `[ ] Optional` 改成 `[ ] Blocker for Phase 1 ship`；
+    - W4 只应产出设计文档/接口定义，**不应写依赖 TCC attribution 成立的 runtime 代码**。
+
+  ### 6. `NotImplementedOnPlatform` 类对未知平台没用上
+  - **位置**：`companion/src/host-use/index.ts:19`，`companion/src/host-use/types.ts:13-18`
+  - **问题**：`linux`/`win` stub 会抛 `NotImplementedOnPlatform`，但 `host-use/index.ts` 对未知平台（如 `freebsd`）抛的是普通 `Error`。既然文档说“这个类现在 load-bearing”，应该统一错误类型。
+  - **建议**：`index.ts:19` 也改为 `throw new NotImplementedOnPlatform(process.platform)`。
+
+  ### 7. HostAdapter 设计文档声称“三个真实实现”收敛，实际只有 macOS 一个能跑
+  - **位置**：`docs/decisions/host-adapter-interface.md:15-20`
+  - **问题**：Phase 0 只有 macOS 实装；Linux/Windows 是 RUNBOOK。说“three real platform implementations exist”是事实错误。Round 2 接受 RUNBOOK 是因为 Windows 被 UIAccess 阻塞、Linux 还没机器，但接口文档不应把 RUNBOOK 说成 implementation。
+  - **建议**：改成“**one real implementation (macOS) + two RUNBOOK-shaped targets (Linux/Windows)** converge on list/read/write”；并显式列出 Windows UIAccess 阻塞尚未被验证的风险。
+
+  ### 8. Linux RUNBOOK 的 handoff 与 interface 形状不一致
+  - **位置**：`companion/src/host-use/linux/RUNBOOK-phase0.md:168-169`，`docs/decisions/host-adapter-interface.md:59`
+  - **问题**：
+    - RUNBOOK 说 `listReadTargets("mail")` 返回 `[{id: "atspi://..."}]`（对象数组）；
+    - interface 说 `listReadTargets(kind: TargetKind): Promise<TargetId[]>`（字符串数组）；
+    - RUNBOOK 用的是 `"mail"`，interface 用的是 `"mail-inbox"`。
+  - **建议**：统一为 interface 的 `TargetId[]` + `"mail-inbox"`；RUNBOOK 作为 source material 必须与接口一致。
+
+  ### 9. `TargetKind` enum 过早抽象了未经验证的 kind
+  - **位置**：`docs/decisions/host-adapter-interface.md:61-67`
+  - **问题**：Round 1 Pi 明确警告 early abstraction。Phase 1 实际只计划 `mail-inbox` / `note` / `file`；`mail-thread`、`calendar-event` 在三平台 spike 中都没有被验证过，尤其是 Linux Evolution / Windows Outlook 是否天然有“thread”概念还不清楚。
+  - **建议**：Phase 1 把 enum 砍到 `mail-inbox | note | file`，其余 kind 在 rule-of-three 验证后再加。
+
+  ### 10. `WritePayload` 不是 discriminated union，create/delete 语义无法用类型表达
+  - **位置**：`docs/decisions/host-adapter-interface.md:78-85、147-151`
+  - **问题**：
+    - `kind: "create"` 时 `targetId` 到底是 parent 还是 null？文档说“parentTargetId”，但 interface 签名没体现；
+    - `kind: "delete"` 时 `body`/`destination` 必须为空，但当前类型允许传；
+    - `kind: "update"` 时 `body` 必填，但 interface 里 `body?: string`。
+  - **建议**：改成 discriminated union：
+    ```ts
+    type WritePayload =
+      | { kind: "create"; body: string }
+      | { kind: "move"; destination: string }
+      | { kind: "update"; body: string }
+      | { kind: "delete" }
+    ```
+    并明确 `create` 的 `targetId` 语义（parent / app-scoped target / null）。
+
+  ### 11. `ReadResult` 的 `[key: string]: unknown` 让“forward compatibility”变成 type hole
+  - **位置**：`docs/decisions/host-adapter-interface.md:68-76、155-160`
+  - **问题**：index signature 下，任何平台都可以往结果里塞任意字段，LLM prompt contract 会变得不稳定；而且 `ReadResult` 已知字段都是 optional，platform 可以合法返回 `{}`。
+  - **建议**：Phase 1 至少去掉 index signature，严格返回 4 个字段；如果允许扩展，用 `& Record<string, unknown>` 并在 adapter 层做 schema 校验，而不是让 interface 放任。
+
+  ### 12. `listReadTargets` 返回 array + wrapper `readOne(listReadTargets(...)[0])` 有性能/竞态问题
+  - **位置**：`docs/decisions/host-adapter-interface.md:105、181`
+  - **问题**：
+    - 大 inbox 下 materialize 全部 `TargetId[]` 再取 `[0]`，与 Phase 0 直接读 top-1 相比性能倒退；
+    - list 和 read 之间 inbox 可能变化，导致读到非目标邮件或 targetId 失效；
+    - 空 inbox 时 `[0]` 是 `undefined`，直接传给 `readOne` 会崩溃。
+  - **建议**：
+    - 给 `listReadTargets` 加 `{ limit?: number; cursor?: string }` options；
+    - Phase 1 保留一条直接的 top-1 read 路径，不要把 `hostRead(params)` 真改成 `readOne(listReadTargets("mail-inbox")[0])`；
+    - 在调用处显式处理 `[]`。
+
+  ### 13. HostAdapter interface 完全没处理 4 档确认梯度
+  - **位置**：`docs/decisions/host-adapter-interface.md:127-166`，对照 `docs/decisions/computer-use-round2-synthesis.md:198-200`
+  - **问题**：Round 2 §4.2 规定了 `silent / ask-once / double-confirm / biometric` 四档，Phase 1 至少要有 macOS `ask-once`(read) + `biometric`(write)，Linux 用“手动输入 6 位 nonce 不可复制粘贴”。但 interface 只定义数据操作，没说明确认发生在哪一层、adapter 是否需要暴露平台能力。
+  - **建议**：在 interface 文档中新增一节“确认责任边界”：
+    - companion `security-confirmation.ts` 负责按 TargetKind + WritePayload.kind 决定梯度；
+    - adapter 只实现数据操作，不进确认逻辑；
+    - Linux 手动 nonce 作为 platform capability 显式文档化。
+
+  ### 14. `TargetId` branded type 的 cast 规则没文档化，存在 type hole
+  - **位置**：`docs/decisions/host-adapter-interface.md:59、129-136`
+  - **问题**：
+    - branded type 在 TS→CommonJS 下确实是零 runtime 成本；
+    - 但只要 platform adapter 或 companion 某处写 `as TargetId`，type safety 就失效；
+    - 未来 `host_write` 若把 `TargetId` 暴露给 LLM，LLM 可以直接拼字符串，必须经过 runtime validation。
+  - **建议**：
+    - 规定“只有 adapter 内部可以把平台字符串 cast 成 `TargetId`；companion 代码禁止 `as TargetId`”；
+    - 提供一个运行时 validator（例如校验 macOS `bundleId:` / Linux `atspi://` / Win `hwnd:` 前缀），并在 LLM 输入路径强制调用。
+
+  ---
+
+  ## 🟢 已经做对的（不要再重复挑刺）
+
+  - **M1 evidence tags 总体准确**：`[assumed]` 只用在 TCC prompt 名称这种确实没 capture 的地方；`[inspected]` 用于静态代码/entitlement；`[executed]` 用于 build/codesign/run 命令输出。
+  - **M2 移除 `os.platform() !== "darwin"` 重复 guard 是对的**：错误通过 `try/catch` 在 `companion/src/server.ts:1137-1138`  surfaced 为 `{success:false, error: ...}`，没有 silent failure。
+  - **M3 加注释本身是正确方向**：至少让维护者知道 `host_read` 是第一个读 host-side user data 的工具；只是注释需要更准确，并补 runtime 校验/审计。
+  - **HostAdapter 3 方法抽象符合 Round 2 §2.1 的 rule-of-three**：`listReadTargets / readOne / writeOne` 与 synthesis 一致，没有 kitchen-sink。
+  - **`TargetId` opaque string 设计正确**：platform token 没有泄漏到 interface 类型里，companion 不需要知道 `bundleId` / `hwnd` / `atspi-path` 的内部结构。
+  - **Windows Phase 1.5 的 gating 诚实**：interface 文档明确写“Blocked until EV cert + Authenticode + UIAccess manifest ready”，没有造新词软着陆。
+  - **`build-host.sh` 加 `codesign --verify` 已落地**：`companion/src/host-use/darwin/build-host.sh:64-67` 会让签名损坏时 build fail。
+
+  ---
+
+  ## 一句话总结
+
+  Round 2 的 standards fixes 基本到位，但 **`host_read` 的 `security_token` 校验缺失是一个 Critical 漏洞**，必须补上；HostAdapter interface 作为 W4 设计文档，在 `WritePayload` 类型、`ReadResult` 扩展性、`listReadTargets` 的 limit/cursor、以及 4 档确认梯度的职责边界上还需要收紧，避免 Phase 1 实现时把早期抽象写死。
+
+To resume this session: kimi -r session_34c642e9-8cb0-4602-a3a5-3f20c5cd8fbe

@@ -1,12 +1,12 @@
 # HostAdapter Interface — Phase 1 W4 Definition
 
-> **Date**: 2026-07-16
+> **Date**: 2026-07-16 (revised after Kimi Round 2 review)
 > **Authority**: Round 2 synthesis §2.1 (Pi rule-of-three wins over Brief / Kimi "define first")
 > **Source material**:
 > - macOS implementation: `companion/src/host-use/darwin/` (Phase 0 spike)
 > - Linux shape: `companion/src/host-use/linux/RUNBOOK-phase0.md`
 > - Windows shape: `companion/src/host-use/win/RUNBOOK-phase0.md`
-> **Status**: design doc — implementation will follow in Phase 1 W5-W6.
+> **Status**: design doc (revised) — implementation will follow in Phase 1 W5-W6.
 
 ## Context
 
@@ -19,7 +19,7 @@ Phase 0 produced:
 
 All three converge on: **list targets → read one → write one**. That's the abstraction.
 
-## The interface
+## The interface (revised post-Kimi-Round-2)
 
 ```typescript
 // companion/src/host-use/host-adapter.ts
@@ -36,13 +36,23 @@ All three converge on: **list targets → read one → write one**. That's the a
  * methods is the rule-of-three output.
  */
 export interface HostAdapter {
-  /** List readable targets of a given kind (inbox / calendar / notes / files). */
-  listReadTargets(kind: TargetKind): Promise<TargetId[]>
+  /**
+   * List readable targets of a given kind.
+   * Returns [] for empty (e.g., inbox has no messages) — NOT for permission denied.
+   * Permission / TCC / AT-SPI bus failures MUST throw.
+   */
+  listReadTargets(
+    kind: TargetKind,
+    options?: { limit?: number; cursor?: string },
+  ): Promise<TargetId[]>
 
-  /** Read one target's current content. Returns platform-agnostic shape. */
+  /** Read one target's current content. Returns platform-agnostic strict shape. */
   readOne(targetId: TargetId): Promise<ReadResult>
 
-  /** Write to a target (create / move / update). Phase 1 limited to Notes create + Finder move. */
+  /**
+   * Write to a target. Discriminated union payload — invalid states are
+   * unrepresentable at the type level (Kimi Round 2 #10).
+   */
   writeOne(targetId: TargetId, payload: WritePayload): Promise<WriteResult>
 }
 
@@ -55,34 +65,60 @@ export interface HostAdapter {
  *   - darwin: `bundleId:accountId:itemId` (e.g. `com.apple.mail:INBOX:msg-12345`)
  *   - linux:  `atspi://path/to/object` (AT-SPI registry path)
  *   - win:    `hwnd:automationId` (UIAutomation cache key)
+ *
+ * Brand enforces: companion code cannot construct TargetId from raw strings
+ * (e.g., LLM output) without going through validateTargetId(). Platform
+ * adapters cast at the boundary internally.
  */
 export type TargetId = string & { readonly __brand: unique symbol }
 
+/**
+ * Validate a raw string (e.g., from LLM input) is well-formed for the current
+ * platform. Returns the branded TargetId or throws. Companion code MUST call
+ * this before passing any LLM-supplied ID to writeOne(); the brand alone does
+ * not provide runtime safety (Kimi Round 2 #14).
+ */
+export function validateTargetId(raw: string): TargetId {
+  // Platform-specific format check (prefix + structure)
+  // Implementation lives in host-use/{darwin,linux,win}/validate.ts
+  throw new Error("not implemented — Phase 1 W5")
+}
+
+/**
+ * Phase 1 kinds only. `mail-thread` and `calendar-event` removed (Kimi Round 2
+ * #9: premature abstraction — not validated by any of the 3 spikes). Add new
+ * kinds only AFTER at least 2 platforms have real implementations.
+ */
 export type TargetKind =
   | "mail-inbox"
-  | "mail-thread"
-  | "calendar-event"
   | "note"
   | "file"
 
+/**
+ * Strict field set. No index signature (Kimi Round 2 #11: index signature
+ * lets platforms emit arbitrary fields, making LLM prompt contracts unstable).
+ * Phase 2 adds fields via explicit union extension, not via `[key: string]: unknown`.
+ *
+ * All fields optional because not every TargetKind emits every field
+ * (e.g., `file` has no `sender`; `note` has no `date_received`).
+ */
 export interface ReadResult {
-  /** Platform-agnostic field set. Phase 0 Mail spike emits all 4. */
   sender?: string
   subject?: string
   date_received?: string  // ISO 8601 (Phase 1 normalizes from AppleScript locale)
   body_preview?: string
-  /** Future-proofing: platforms may emit additional fields. */
-  [key: string]: unknown
+  file_path?: string      // for TargetKind="file"
 }
 
-export interface WritePayload {
-  /** Kind of write — controls what `target` and `body` mean. */
-  kind: "create" | "move" | "update" | "delete"
-  /** Body content for create/update. Format depends on TargetKind. */
-  body?: string
-  /** Destination for move operations (e.g. Finder folder path). */
-  destination?: string
-}
+/**
+ * Discriminated union. Invalid states (e.g., `delete` with body, `create`
+ * without body) are unrepresentable at the type level (Kimi Round 2 #10).
+ */
+export type WritePayload =
+  | { kind: "create"; body: string }
+  | { kind: "move"; destination: string }
+  | { kind: "update"; body: string }
+  | { kind: "delete" }
 
 export interface WriteResult {
   /** Opaque ID of the created/updated target, if applicable. */
@@ -92,17 +128,33 @@ export interface WriteResult {
 }
 ```
 
+## Confirmation responsibility (Kimi Round 2 #13)
+
+The 4-tier gradient (`silent / ask-once / double-confirm / biometric`) lives in **companion `security-confirmation.ts`**, NOT inside the adapter. The adapter is purely a data operation layer.
+
+Decision matrix (Phase 1):
+
+| Operation | Tier | Platform mechanism |
+|---|---|---|
+| `readOne(mail-inbox)` | ask-once | SecurityConfirmationManager 45s queue (existing) |
+| `readOne(note)` / `readOne(file)` | ask-once | same |
+| `writeOne(*, {kind:"create"})` Notes | biometric (macOS) / manual 6-char nonce (Linux) | Touch ID via `LAContext` / companion-side prompt |
+| `writeOne(*, {kind:"move"})` Finder | ask-once | existing SecurityConfirmationManager |
+| `writeOne(*, {kind:"delete"})` | double-confirm (Phase 1 likely forbids entirely) | TBD |
+
+Adapter contract: never prompt internally. If an operation requires platform-level privilege escalation (TCC prompt, AT-SPI bus access), surface as thrown error and let companion decide whether to retry with escalated tier.
+
 ## Platform-specific implementation map
 
 ### `companion/src/host-use/darwin/adapter.ts` (refactor of existing `index.ts`)
 
 | Method | Maps to |
 |---|---|
-| `listReadTargets("mail-inbox")` | AppleScript: `messages of inbox` → array of `com.apple.mail:INBOX:msg-N` |
-| `readOne(targetId)` | AppleScript: `message N of inbox` → 4 fields |
-| `writeOne(targetId, {kind:"create"})` for Notes | AppleScript: `make new note with properties {name:..., body:...}` |
+| `listReadTargets("mail-inbox", {limit:1})` | AppleScript: `first message of inbox` → single-element array |
+| `readOne(targetId)` | AppleScript: `message N of inbox` → strict 4 fields |
+| `writeOne(targetId, {kind:"create", body})` for Notes | AppleScript: `make new note with properties {name:..., body:...}` |
 
-Reuses existing `cmspark-host` Swift binary. Phase 0's `hostRead(params)` function becomes a thin wrapper: `listReadTargets("mail-inbox")[0]` + `readOne(first)`.
+Reuses existing `cmspark-host` Swift binary. **Phase 0's `hostRead(params)` function stays as-is** — Kimi Round 2 #12 warns that wrapping it as `readOne(listReadTargets("mail-inbox")[0])` introduces TOCTOU race (inbox changes between list and read) and perf regression (materialize all IDs to take first). Instead, the adapter's `readOne` for Mail top-1 calls the Swift binary directly; `listReadTargets` is for the future "list inbox, pick one" UX.
 
 ### `companion/src/host-use/linux/adapter.ts` (Phase 1 W5 new)
 
@@ -114,6 +166,8 @@ Reuses existing `cmspark-host` Swift binary. Phase 0's `hostRead(params)` functi
 
 Linux tray = Rust binary via `ksni` crate (independent of Swift tray).
 
+**Note**: previous Linux RUNBOOK mentioned `listReadTargets("mail")` returning `[{id: "..."}]` — that was an early sketch. The interface finalizes on `listReadTargets("mail-inbox"): TargetId[]` (string array, not object). RUNBOOK will be updated when implementing.
+
 ### `companion/src/host-use/win/adapter.ts` (Phase 1.5 — UIAccess-gated)
 
 | Method | Maps to |
@@ -124,61 +178,45 @@ Linux tray = Rust binary via `ksni` crate (independent of Swift tray).
 
 Blocked until EV cert + Authenticode + UIAccess manifest ready.
 
-## Open design questions for review
+## Resolved design questions (post-Kimi-Round-2)
 
-### Q1: Should `TargetId` be branded or plain string?
+### Q1: TargetId branded or plain? → branded + runtime validator
 
-**Current proposal**: branded for type safety (`string & { __brand }`).
+**Resolved**: branded type PLUS `validateTargetId(raw: string): TargetId` runtime helper. Platform adapters cast internally; companion code MUST call validator for any TargetId sourced from LLM input. Brand alone is insufficient because TypeScript brands evaporate at `as` casts (Kimi Round 2 #14).
 
-**Alternative**: plain `string`. Simpler, no casting needed at platform boundaries.
+### Q2: Empty list semantics → valid empty, but error contract for failures
 
-**Recommendation**: branded. The brand is zero-runtime-cost and prevents companion code from accidentally constructing fake target ids (e.g., from LLM output without validation). Platform adapters cast at the boundary; companion code only consumes.
+**Resolved**: `[]` = valid empty. Permission denied / TCC failure / AT-SPI bus unreachable = thrown error. Adapter contract documents this explicitly. Companion surfaces errors to LLM as `{success:false, error:"..."}` rather than letting LLM misreport "inbox empty" when actually blocked.
 
-### Q2: Is `listReadTargets` returning `[]` an error or "empty inbox"?
+### Q3: Single writeOne vs multiple methods → single writeOne with discriminated union payload
 
-**Current proposal**: empty array is valid (empty inbox is normal).
+**Resolved**: keep single `writeOne(targetId, payload)` but `payload` is discriminated union, not interface with optional fields. Invalid states (delete with body, create without body) are unrepresentable. `targetId` for `create` is the parent target (e.g., Notes app target), not null.
 
-**Implication**: companion must handle empty list gracefully — LLM should be told "no messages" rather than retry / error.
+### Q4: ReadResult index signature vs strict fields → strict fields
 
-**Recommendation**: keep as valid empty. Add to LLM system prompt: "if listReadTargets returns [], report 'inbox empty' to user".
+**Resolved**: strict optional fields only. No `[key: string]: unknown`. Adding new fields in Phase 2 requires extending the interface explicitly. This makes LLM prompt contracts stable.
 
-### Q3: Should `writeOne` accept `targetId: null` for create operations?
+### Q5: Sync array vs async iterable → array + limit/cursor options
 
-**Current proposal**: `writeOne(targetId, payload)` where targetId may be a "parent" (e.g., Notes app for create).
-
-**Alternative**: separate `createOne(parentId, payload)` method.
-
-**Recommendation**: keep single `writeOne`. Phase 1 only does Notes create + Finder move; both can be modeled as `writeOne(parentTargetId, {kind:"create", body})`. If Phase 2 adds more write scenarios and the model strains, refactor then.
-
-### Q4: `ReadResult` extension — `[key: string]: unknown` index signature vs explicit union?
-
-**Current proposal**: index signature for forward compatibility.
-
-**Alternative**: discriminated union per TargetKind (`MailReadResult | CalendarReadResult | ...`).
-
-**Recommendation**: index signature for Phase 1 (less ceremony, platforms emit what they have). Refactor to union in Phase 2 if LLM gets confused by inconsistent shapes.
-
-### Q5: Async iterator for `listReadTargets`?
-
-When inbox has 1000+ messages, returning `TargetId[]` materializes all. Should we use `AsyncIterable<TargetId>` instead?
-
-**Recommendation**: Phase 1 keeps array. Mail inbox top-1 read is the only Phase 1 use case; large mailboxes are Phase 2+. If performance becomes an issue, add `listReadTargets(kind, {limit, cursor})` later.
+**Resolved**: `listReadTargets(kind, {limit?, cursor?})`. Phase 1 callers pass `{limit: 1}` for top-1 read. Phase 2+ can extend cursor for pagination without breaking the signature. Performance-sensitive callers (Mail with 1000+ msgs) use limit; UX flows that need full list omit it.
 
 ## Phase 1 W5 implementation plan
 
-After this interface is approved (Kimi Round 2 / user sign-off):
+After this interface is approved:
 
 1. Create `companion/src/host-use/host-adapter.ts` with the interface
-2. Refactor `darwin/index.ts` → `darwin/adapter.ts` implementing `HostAdapter`
-3. Add `darwin/list-targets.scpt` + extend `host.swift` with `list-mail` subcommand
-4. Update `server.ts host_read` case to use the adapter (compose `listReadTargets` + `readOne`)
-5. Add tests for adapter interface contract (mock platform adapter, verify companion uses it correctly)
-6. Phase 1 W6-W7: implement Linux adapter against RUNBOOK
-7. Phase 1 W8-W14: integrate with daemon mode + 4-tier confirmation (ask-once + Touch ID)
+2. Refactor `darwin/index.ts:hostRead` — keep as-is, add comment that it's the direct top-1 path (not `readOne(listReadTargets[0])`)
+3. Create `darwin/adapter.ts` implementing `HostAdapter` (with `listReadTargets` returning top-N, `readOne` calling binary)
+4. Add `darwin/list-targets.scpt` + extend `host.swift` with `list-mail` subcommand
+5. Update `server.ts host_read` case — keep existing call (don't introduce TOCTOU race)
+6. Add tests for adapter contract (mock platform adapter, verify companion uses it correctly)
+7. Phase 1 W6-W7: implement Linux adapter against RUNBOOK (and update RUNBOOK to match final interface shape)
+8. Phase 1 W8-W14: integrate with daemon mode + 4-tier confirmation per matrix above
 
-## Migration impact
+## Migration impact (minimal)
 
-- `host-use/darwin/index.ts:hostRead(params)` → deprecated, becomes thin wrapper around `HostAdapter.readOne(listReadTargets("mail-inbox")[0])`
-- `host-use/types.ts:HostReadResult` → replaced by `ReadResult`
-- `host-use/types.ts:HostReadParams` → replaced by `TargetKind` argument to `listReadTargets`
-- Existing `host_read` tool surface in `tool-schemas.ts` / `tool-definitions.ts` / `server.ts` unchanged (LLM-facing API stays the same; internal dispatch only)
+- `host-use/darwin/index.ts:hostRead(params)` — UNCHANGED, stays as direct top-1 read
+- `host-use/types.ts:HostReadResult` — UNCHANGED (compatible subset of new `ReadResult`)
+- `host-use/types.ts:HostReadParams` — UNCHANGED
+- Existing `host_read` tool surface in `tool-schemas.ts` / `tool-definitions.ts` / `server.ts` — UNCHANGED (LLM-facing API stays the same)
+- New code: `host-use/host-adapter.ts` + `host-use/darwin/adapter.ts` + `host-use/darwin/list-targets.scpt` + `host.swift` `list-mail` subcommand

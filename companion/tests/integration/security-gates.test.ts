@@ -1002,6 +1002,38 @@ test("Phase 0 §4.1: host_read forces confirmation (deny path — never invokes 
   assert.match(result.error!, /denied|unavailable/)
 })
 
+test("Kimi Round 2 Critical: host_read with invalid security_token is rejected (no L2 bypass)", async () => {
+  // Without validateToken in the host_read case, any non-empty security_token
+  // would bypass the L2 gate at server.ts:303 (gate only checks truthy) and
+  // host_read would execute without confirmation. The fix mirrors osascript_eval:
+  // validate the token in executeCompanionTool. This test asserts that an
+  // invalid token produces an explicit rejection rather than silent execution.
+  const executeTool = createToolExecutor(serverSideWs)
+  const noConfirmation = expectNoClientMessage("security.confirmation.request")
+  const result = await executeTool("tc_p0_host_token_invalid", "host_read", {
+    security_token: "forged-or-stale-token",
+  })
+  assert.equal(result.success, false)
+  assert.match(result.error!, /Invalid or expired security token/)
+  await noConfirmation
+})
+
+test("Kimi Round 2 Critical: host_read with token issued for evaluate is rejected (toolName binding)", async () => {
+  // Tokens are toolName-bound in security-policy.ts:55. A token issued for
+  // evaluate must NOT validate for host_read — otherwise approving evaluate
+  // would auto-approve host_read.
+  const { securityPolicy } = await import("../../src/security-policy.js")
+  const crossToolToken = securityPolicy.issueToken("evaluate", "document.cookie").token
+  const executeTool = createToolExecutor(serverSideWs)
+  const noConfirmation = expectNoClientMessage("security.confirmation.request")
+  const result = await executeTool("tc_p0_host_token_cross", "host_read", {
+    security_token: crossToolToken,
+  })
+  assert.equal(result.success, false)
+  assert.match(result.error!, /Invalid or expired security token/)
+  await noConfirmation
+})
+
 test("M3' §6.2.9: security_token replay of critical code logs critical_capability_token_replay", async () => {
   // The token path (agent re-plays a prior approved token) skips the 273-363
   // confirmation block. A valid token already binds to the code (one-time), so

@@ -304,11 +304,16 @@ export function createToolExecutor(ws: WebSocket) {
     // these tools reaches host-side or browser-DOM state that requires explicit
     // user approval. NOTE: host_read is the first tool in this gate that reads
     // host-side USER DATA (Mail inbox) rather than browser-DOM or fixed
-    // AppleScript. Under security.allow_all_schemes=true (god-mode), this gate
-    // is skipped and host_read can read Mail without per-call prompt — the
-    // user must have explicitly opted into god-mode via the standard phrase
-    // gate per ADR-010. Vault-app bundle ids (1Password / Keychain / etc) are
-    // still blocked unconditionally downstream in host-use/darwin/blacklist.ts.
+    // AppleScript.
+    //
+    // Under security.allow_all_schemes=true (god-mode), this gate is skipped
+    // and the auto-approved path at line ~428 logs `security.auto_approved`
+    // with `reason:"god_mode"` — that is the audit trail. God-mode itself is
+    // gated upstream: enabling via UI requires the confirmation phrase, OR
+    // the user can set it directly in config.json (per ADR-010, both paths
+    // are explicit user opt-in). Vault-app bundle ids (1Password / Keychain /
+    // etc) are still blocked unconditionally downstream in
+    // host-use/darwin/blacklist.ts.
     if ((toolName === "evaluate" || toolName === "osascript_eval" || toolName === "host_read") && !finalParams.security_token) {
       const code = String(finalParams.code || finalParams.expression || "")
       const lengthCheck = securityPolicy.checkLength(toolName, code)
@@ -1128,6 +1133,20 @@ async function executeCompanionTool(toolName: string, params: any): Promise<any>
       // stubs throw NotImplementedOnPlatform — caught below and surfaced as
       // {success:false}. Single source of truth for platform check lives in
       // host-use/index.ts (Standards review M2: drop duplicate guard here).
+      //
+      // Kimi Round 2 Critical: validate security_token like osascript_eval does.
+      // Without this, any non-empty security_token string in params bypasses
+      // the L2 gate at server.ts:303 and host_read executes without confirmation.
+      if (params.security_token) {
+        const valid = securityPolicy.validateToken(
+          String(params.security_token),
+          "host_read",
+          String(params.application || ""),
+        )
+        if (!valid) {
+          return { success: false, error: "Invalid or expired security token for host_read" }
+        }
+      }
       try {
         const { hostRead } = await import("./host-use")
         const application = typeof params.application === "string" ? params.application : undefined
