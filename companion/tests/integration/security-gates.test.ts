@@ -986,6 +986,22 @@ test("M3' §6.2.9: osascript_eval + critical under god-mode forces confirmation 
   assert.match(result.error!, /denied|unavailable/)
 })
 
+test("Phase 0 §4.1: host_read forces confirmation (deny path — never invokes cmspark-host)", async () => {
+  // host_read shares the L2 gate with evaluate/osascript_eval. Confirmation
+  // must ALWAYS be requested. Deny path only — never reaches the Swift binary
+  // (which would actually trigger TCC and read Mail).
+  const executeTool = createToolExecutor(serverSideWs)
+  const confirmationPromise = expectClientMessage("security.confirmation.request")
+  const resultPromise = executeTool("tc_p0_host_read", "host_read", {})
+  const confirmation = await confirmationPromise
+  assert.equal(confirmation.tool_name, "host_read")
+
+  clientSideWs.send(JSON.stringify({ type: "security.confirmation.response", confirmation_id: confirmation.confirmation_id, approved: false }))
+  const result = await resultPromise
+  assert.equal(result.success, false)
+  assert.match(result.error!, /denied|unavailable/)
+})
+
 test("M3' §6.2.9: security_token replay of critical code logs critical_capability_token_replay", async () => {
   // The token path (agent re-plays a prior approved token) skips the 273-363
   // confirmation block. A valid token already binds to the code (one-time), so

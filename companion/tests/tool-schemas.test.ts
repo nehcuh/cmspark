@@ -149,6 +149,34 @@ test("osascript_eval: accepts string expression", () => {
 })
 
 // =============================================================================
+// host_read — Phase 0 computer-use spike (Mail inbox top-1 read)
+// =============================================================================
+
+test("host_read: accepts empty params (application defaults at runtime)", () => {
+  const out = parseToolArgs("host_read", {})
+  // No required fields; application is optional with runtime default.
+  assert.equal(out.application, undefined)
+})
+
+test("host_read: accepts application + max_chars", () => {
+  const out = parseToolArgs("host_read", { application: "com.apple.mail", max_chars: 200 })
+  assert.equal(out.application, "com.apple.mail")
+  assert.equal(out.max_chars, 200)
+})
+
+test("host_read: rejects non-string application", () => {
+  assert.throws(
+    () => parseToolArgs("host_read", { application: 42 }),
+    /application/i,
+  )
+})
+
+test("host_read: rejects max_chars out of range", () => {
+  assert.throws(() => parseToolArgs("host_read", { max_chars: 0 }), /max_chars|max/i)
+  assert.throws(() => parseToolArgs("host_read", { max_chars: 99999 }), /max_chars|max/i)
+})
+
+// =============================================================================
 // Generic fallback — non-high-risk tools pass through unchanged
 // =============================================================================
 
