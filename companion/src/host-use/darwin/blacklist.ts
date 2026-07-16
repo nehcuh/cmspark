@@ -44,11 +44,15 @@ export const VAULT_BUNDLE_IDS: ReadonlySet<string> = new Set([
   "org.electrum.electrum",
 ])
 
-// Phase 0: only Mail is readable. Any other bundle id is rejected before
-// dispatching to host.swift, regardless of blacklist status. This is a
-// stricter check than the blacklist (Kimi phase0 review Critical #4).
+// Phase 1 W7 (Q4 expansion per W7 final doc): Notes + Finder added so the
+// inline checkbox is functional for non-Mail reads. Without this expansion,
+// the checkbox is inert (Pi-sub structural finding — would-block-Phase-1-ship).
+// Finder "read" is metadata-only (size, mod date); file CONTENT reads still
+// go through MCP filesystem, not host_read.
 export const READ_ALLOWED_APPS: ReadonlySet<string> = new Set([
   "com.apple.mail",
+  "com.apple.Notes",
+  "com.apple.finder",
 ])
 
 export function isVaultApp(application: string): boolean {

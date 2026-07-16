@@ -192,6 +192,12 @@ export interface SecurityConfirmationRequest {
    * "add to whitelist" option in that case.
    */
   relevant_domains?: string[]
+  /**
+   * Phase 1 W7 — bundle ids the user may add to thread-scoped trust when
+   * approving. Empty/missing for non-host_use tools. UI shows inline checkbox
+   * "信任此 app，本线程内不再询问" only for host_read (writes always biometric).
+   */
+  relevant_apps?: string[]
 }
 
 export interface ToolCall {

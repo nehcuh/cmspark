@@ -97,15 +97,14 @@ test("writeOne: delete throws NotImplemented (requires biometric)", async () => 
   )
 })
 
-test("listReadTargets: throws NotImplemented for non-mail-inbox kinds", async () => {
+test("listReadTargets: throws NotImplemented for unsupported kinds", async () => {
   const a = new DarwinHostAdapter(FAKE_BIN)
+  // Phase 1 W7: mail-inbox / note / file are all valid kinds now.
+  // Future kinds (e.g., "calendar-event") would be rejected here.
+  // Use a fake kind that's not in the TargetKind union via cast.
   await assert.rejects(
-    () => a.listReadTargets("note"),
-    /kind "note" not implemented in Phase 1 W5/,
-  )
-  await assert.rejects(
-    () => a.listReadTargets("file"),
-    /kind "file" not implemented in Phase 1 W5/,
+    () => a.listReadTargets("calendar-event" as any),
+    /kind "calendar-event" not supported/,
   )
 })
 

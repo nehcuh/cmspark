@@ -70,24 +70,30 @@ export class DarwinHostAdapter implements HostAdapter {
   }
 
   async listReadTargets(kind: TargetKind, options?: ListOptions): Promise<TargetId[]> {
-    if (kind !== "mail-inbox") {
-      throw new Error(
-        `DarwinHostAdapter.listReadTargets: kind "${kind}" not implemented in Phase 1 W5 (only mail-inbox)`,
-      )
-    }
     const limit = options?.limit ?? DEFAULT_LIMIT
+    const subcommand = (() => {
+      switch (kind) {
+        case "mail-inbox": return "list-mail"
+        case "note": return "list-notes"
+        case "file": return "list-files"
+        default:
+          throw new Error(
+            `DarwinHostAdapter.listReadTargets: kind "${kind}" not supported`,
+          )
+      }
+    })()
     try {
       const result = await execFileAsync(
         this.binPath,
-        ["list-mail", "--limit", String(limit)],
+        [subcommand, "--limit", String(limit)],
         { encoding: "utf-8", timeout: HOST_TIMEOUT_MS },
       )
-      const parsed = parseJsonSafe<string[]>(String(result.stdout), "list-mail")
+      const parsed = parseJsonSafe<string[]>(String(result.stdout), subcommand)
       // Validate every returned id before branding — defense in depth.
       return parsed.map((raw) => this.validateTargetId(raw))
     } catch (err: any) {
       if (err && typeof err === "object" && "stderr" in err && err.stderr) {
-        throw new Error(`list-mail: ${err.stderr}`)
+        throw new Error(`${subcommand}: ${err.stderr}`)
       }
       throw err
     }

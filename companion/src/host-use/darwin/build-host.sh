@@ -20,16 +20,14 @@ echo "[build-host] Output: ${OUTPUT_BIN}"
 mkdir -p "${OUTPUT_DIR}" "${SCRIPTS_DIR}"
 
 # (1) Precompile .scpt — Round 1 D3: no runtime osacompile
-echo "[build-host] (1/4) Precompiling read-mail.scpt + list-mail.scpt..."
-osacompile -o "${SCRIPTS_DIR}/read-mail.scpt" \
-    "${SCRIPT_DIR}/read-mail.applescript"
-osacompile -o "${SCRIPTS_DIR}/list-mail.scpt" \
-    "${SCRIPT_DIR}/list-mail.applescript"
-
-if [[ ! -f "${SCRIPTS_DIR}/read-mail.scpt" ]] || [[ ! -f "${SCRIPTS_DIR}/list-mail.scpt" ]]; then
-  echo "[build-host] ERROR: osacompile failed — .scpt not produced"
-  exit 1
-fi
+echo "[build-host] (1/4) Precompiling all .scpt files..."
+for script in read-mail list-mail list-notes list-files; do
+  osacompile -o "${SCRIPTS_DIR}/${script}.scpt" "${SCRIPT_DIR}/${script}.applescript"
+  if [[ ! -f "${SCRIPTS_DIR}/${script}.scpt" ]]; then
+    echo "[build-host] ERROR: osacompile failed for ${script}.scpt"
+    exit 1
+  fi
+done
 
 # (2) Swift compile + bind Info.plist into __TEXT __info_plist section
 echo "[build-host] (2/4) Compiling Swift binary..."

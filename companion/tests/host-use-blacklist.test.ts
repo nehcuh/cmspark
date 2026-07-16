@@ -58,15 +58,19 @@ test("isVaultApp case-sensitive (bundle ids are case-sensitive in macOS)", () =>
   assert.equal(isVaultApp("com.1Password.1Password"), false)
 })
 
-test("READ_ALLOWED_APPS Phase 0 whitelist is Mail-only", () => {
-  assert.equal(READ_ALLOWED_APPS.size, 1, "Phase 0 must restrict to exactly 1 app")
+test("READ_ALLOWED_APPS Phase 1 W7 whitelist includes Mail + Notes + Finder (Q4 expansion)", () => {
+  assert.equal(READ_ALLOWED_APPS.size, 3, "Phase 1 W7 expanded to 3 read-allowed apps")
   assert.ok(READ_ALLOWED_APPS.has("com.apple.mail"))
+  assert.ok(READ_ALLOWED_APPS.has("com.apple.Notes"))
+  assert.ok(READ_ALLOWED_APPS.has("com.apple.finder"))
 })
 
-test("isReadAllowed returns true for Mail, false for Finder/Notes (Phase 0 scope)", () => {
+test("isReadAllowed returns true for Mail/Notes/Finder, false for others (Phase 1 W7 scope)", () => {
   assert.equal(isReadAllowed("com.apple.mail"), true)
-  assert.equal(isReadAllowed("com.apple.finder"), false)
-  assert.equal(isReadAllowed("com.apple.Notes"), false)
+  assert.equal(isReadAllowed("com.apple.Notes"), true)
+  assert.equal(isReadAllowed("com.apple.finder"), true)
+  assert.equal(isReadAllowed("com.apple.Photos"), false)
+  assert.equal(isReadAllowed("com.apple.Safari"), false)
 })
 
 test("isReadAllowed returns false even for apps NOT on blacklist (defense in depth)", () => {

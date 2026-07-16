@@ -268,6 +268,8 @@ guard argv.count >= 2 else {
           read-mail                            — read top-1 Mail inbox
           list-mail [--limit N]                — list inbox TargetIds (default limit 100)
           read-message --target <TargetId>     — read message by stable id
+          list-notes                           — list notes TargetIds (Phase 1 W7)
+          list-files                           — list Documents folder TargetIds (Phase 1 W7)
           create-note --name N [--body B]      — create a new Note (Phase 1 W6)
           move-file --source P --destination D — move file via Finder (Phase 1 W6)
 
@@ -284,6 +286,10 @@ do {
         out = try runCompiledScript("read-mail")
     case "list-mail":
         out = try runCompiledScript("list-mail")
+    case "list-notes":
+        out = try runCompiledScript("list-notes")
+    case "list-files":
+        out = try runCompiledScript("list-files")
     case "read-message":
         guard let target = argValue("--target") else {
             FileHandle.standardError.write("read-message: --target <TargetId> required\n".data(using: .utf8)!)

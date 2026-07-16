@@ -313,6 +313,7 @@ export function useWebSocket() {
               auto_confirm_eligible: msg.auto_confirm_eligible ?? false,
               defense_layer: msg.defense_layer,
               relevant_domains: Array.isArray(msg.relevant_domains) ? msg.relevant_domains : [],
+              relevant_apps: Array.isArray(msg.relevant_apps) ? msg.relevant_apps : [],
             },
           })
           break

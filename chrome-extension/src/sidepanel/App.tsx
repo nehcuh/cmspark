@@ -131,12 +131,19 @@ function SecurityConfirmationDialog() {
   const request = state.pendingSecurityConfirmations[0]
 
   const relevantDomain = request?.relevant_domains?.[0]
+  const relevantApp = request?.relevant_apps?.[0]
+  // Phase 1 W7: thread-scoped trust ONLY applies to reads (host_read).
+  // Writes always require biometric per call — Q1 ship blocker. Don't show
+  // the inline checkbox for host_write even if relevant_apps is set.
+  const canThreadTrust = request?.tool_name === "host_read" && !!relevantApp
   const [whitelistMode, setWhitelistMode] = useState<"none" | "exact" | "wildcard">("none")
+  const [threadTrust, setThreadTrust] = useState(false)
 
   // Reset selection whenever the active confirmation changes — otherwise the
   // radio from a previous prompt would bleed into the next one.
   useEffect(() => {
     setWhitelistMode("none")
+    setThreadTrust(false)
   }, [request?.confirmation_id])
 
   // H10/M18 (audit): keyboard a11y (focus trap + Escape→deny + aria-modal +
@@ -164,12 +171,16 @@ function SecurityConfirmationDialog() {
       approved,
       stop_thread: stopThread,
       add_to_whitelist: addToWhitelist,
+      // Phase 1 W7 — only send add_to_thread_whitelist when allowed (host_read
+      // + user checked the box). Companion validates against relevantApps[0].
+      add_to_thread_whitelist: approved && canThreadTrust && threadTrust,
     })
     dispatch({ type: "REMOVE_SECURITY_CONFIRMATION", confirmationId: request.confirmation_id })
     if (stopThread) {
       chrome.runtime.sendMessage({ type: "chat.abort", threadId: state.activeThreadId })
       dispatch({ type: "SET_STREAMING", content: "" })
     }
+    const trustMsg = approved && canThreadTrust && threadTrust ? `（本线程内信任 ${relevantApp}）` : ""
     dispatch({
       type: "ADD_SECURITY_AUDIT",
       entry: {
@@ -181,7 +192,7 @@ function SecurityConfirmationDialog() {
         risk_level: riskLevel,
         risk_score: request.risk_score || 0,
         defense_layer: request.defense_layer,
-        message: `${approved ? "允许" : "拒绝"}执行 ${request.tool_name}${addToWhitelist.length ? `（加入白名单：${addToWhitelist.join(", ")}）` : ""}`,
+        message: `${approved ? "允许" : "拒绝"}执行 ${request.tool_name}${addToWhitelist.length ? `（加入白名单：${addToWhitelist.join(", ")}）` : ""}${trustMsg}`,
       },
     })
   }
@@ -248,6 +259,24 @@ function SecurityConfirmationDialog() {
               onChange={() => setWhitelistMode("wildcard")}
             />
             <span>添加 <code style={styles.whitelistCode}>*.{relevantDomain}</code>（含所有子域名）</span>
+          </label>
+        </div>
+      )}
+      {canThreadTrust && (
+        <div style={{ ...styles.whitelistSection, marginTop: 8 }}>
+          <label style={{ ...styles.whitelistOption, cursor: "pointer" }}>
+            <input
+              type="checkbox"
+              checked={threadTrust}
+              onChange={(e) => setThreadTrust(e.target.checked)}
+              style={{ marginRight: 6 }}
+            />
+            <span>
+              信任 <code style={styles.whitelistCode}>{relevantApp}</code>，本线程内不再询问
+              <span style={{ color: "#888", fontSize: 11, marginLeft: 4 }}>
+                （切换会话后失效；不影响写操作）
+              </span>
+            </span>
           </label>
         </div>
       )}
