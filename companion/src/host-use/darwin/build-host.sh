@@ -48,7 +48,11 @@ if [[ ! -f "${OUTPUT_BIN}" ]]; then
   exit 1
 fi
 
-# (3) Codesign: ad-hoc + hardened runtime + entitlements — Round 2 D4
+# (3) Set restrictive perms BEFORE codesign (CodeRabbit review: codesign
+# captures file mode in seal; setting perms after signing may invalidate it).
+chmod 755 "${OUTPUT_BIN}"
+
+# (3b) Codesign: ad-hoc + hardened runtime + entitlements — Round 2 D4
 echo "[build-host] (3/4) Ad-hoc codesign with hardened runtime + automation entitlement..."
 codesign \
   --force \
@@ -57,8 +61,9 @@ codesign \
   --entitlements "${SCRIPT_DIR}/host.entitlements" \
   "${OUTPUT_BIN}"
 
-# (4) Restrictive perms + verify (Kimi phase0 review Major #7: add --verify)
-chmod 755 "${OUTPUT_BIN}"
+# (4) Verify signature (Kimi phase0 review Major #7: add --verify).
+# Restrictive perms already set in step 3 before codesign (CodeRabbit review:
+# codesign captures file mode in seal).
 
 echo "[build-host] (4/4) Verifying signature..."
 echo

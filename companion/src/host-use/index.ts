@@ -1,3 +1,4 @@
+import { NotImplementedOnPlatform } from "./types"
 import type { HostReadParams, HostReadResult } from "./types"
 
 export { NotImplementedOnPlatform } from "./types"
@@ -16,5 +17,5 @@ export async function hostRead(params: HostReadParams): Promise<HostReadResult> 
     const { hostRead: winHostRead } = await import("./win")
     return winHostRead(params)
   }
-  throw new Error(`host_read: not implemented on ${process.platform}`)
+  throw new NotImplementedOnPlatform(process.platform)
 }

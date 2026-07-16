@@ -456,7 +456,7 @@ index 5ebd8ba..52319a0 100644
 +`[executed]` User-side Terminal run on 2026-07-16:
  
  ```bash
- cd /Users/huchen/Projects/cmspark/.claude/worktrees/computer-use-phase0/companion
+ cd <redacted:path>
 -tccutil reset AppleEvents                          # clears all AppleEvents TCC rows
 -./dist/cmspark-host read-mail                     # first run — should prompt
 -# (Take screenshot of TCC dialog showing "cmspark-host wants to control Mail")

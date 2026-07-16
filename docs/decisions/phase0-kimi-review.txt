@@ -1,22 +1,22 @@
-• We need perform security review of files in /Users/huchen/Projects/cmspark/.claude/worktrees/computer-use-phase0/companion/src/host-use/darwin/. User wants adversarial/critical review, focusing fatal flaws, security vulns, signature/TCC/AppleScript argv boundary errors. Need read files and reference docs. Must use tools. First read all target files and docs.We need find docs. Use Glob/Grep.Docs missing? Maybe in parent worktree root not companion. Let's search broader./Users/huchen/Projects/cmspark/.claude/worktrees/computer-use-phase0/chrome-extension/tests/background-notifications.test.ts
-/Users/huchen/Projects/cmspark/.claude/worktrees/computer-use-phase0/chrome-extension/.test-dist/tests/background-notifications.test.js
-/Users/huchen/Projects/cmspark/.claude/worktrees/computer-use-phase0/docs/decisions/computer-use-round1-synthesis.md
-/Users/huchen/Projects/cmspark/.claude/worktrees/computer-use-phase0/docs/decisions/adversary-kimi-computer-use.txt
-/Users/huchen/Projects/cmspark/.claude/worktrees/computer-use-phase0/docs/decisions/notebooklm-import-round1-synthesis.md
-/Users/huchen/Projects/cmspark/.claude/worktrees/computer-use-phase0/docs/decisions/adversary-kimi-round2.txt
-/Users/huchen/Projects/cmspark/.claude/worktrees/computer-use-phase0/docs/decisions/adversary-pi-round2.txt
-/Users/huchen/Projects/cmspark/.claude/worktrees/computer-use-phase0/docs/decisions/advisor-pi-round1.txt
-/Users/huchen/Projects/cmspark/.claude/worktrees/computer-use-phase0/docs/decisions/v1.1/round1-synthesis.md
-/Users/huchen/Projects/cmspark/.claude/worktrees/computer-use-phase0/docs/decisions/v1.1/advisor-pi-round1.txt
-/Users/huchen/Projects/cmspark/.claude/worktrees/computer-use-phase0/docs/decisions/v1.1/advisor-kimi-round1.txt
-/Users/huchen/Projects/cmspark/.claude/worktrees/computer-use-phase0/docs/decisions/notebooklm-import-round2-synthesis.md
-/Users/huchen/Projects/cmspark/.claude/worktrees/computer-use-phase0/docs/decisions/adversary-pi-computer-use.txt
-/Users/huchen/Projects/cmspark/.claude/worktrees/computer-use-phase0/docs/decisions/computer-use-round2-synthesis.md
-/Users/huchen/Projects/cmspark/.claude/worktrees/computer-use-phase0/docs/decisions/computer-use-design-brief.md
-/Users/huchen/Projects/cmspark/.claude/worktrees/computer-use-phase0/docs/decisions/v1.2/review-kimi-fixes-round3.txt
-/Users/huchen/Projects/cmspark/.claude/worktrees/computer-use-phase0/docs/decisions/v1.2/review-kimi-fixes-round2.txt
-/Users/huchen/Projects/cmspark/.claude/worktrees/computer-use-phase0/docs/decisions/v1.2/review-kimi-fixes-round4.txt
-/Users/huchen/Projects/cmspark/.claude/worktrees/computer-use-phase0/companion/tests/integration/ws-roundtrip.test.ts
+• We need perform security review of files in <redacted:path>
+<redacted:path>
+<redacted:path>
+<redacted:path>
+<redacted:path>
+<redacted:path>
+<redacted:path>
+<redacted:path>
+<redacted:path>
+<redacted:path>
+<redacted:path>
+<redacted:path>
+<redacted:path>
+<redacted:path>
+<redacted:path>
+<redacted:path>
+<redacted:path>
+<redacted:path>
+<redacted:path>
 Read docs from parent root, also maybe adversary-kimi-computer-use.txt useful. Read them.We have files and docs. Need answer six questions with critical review. We need produce markdown list critical/major/minor, each with file:line + suggested fix. We need examine details:
 
   host.swift: NSAppleScript usage. We need assess whether TCC attribution binds to cmspark-host or hijacked by parent. There is nuance: NSAppleScript in-process executes Apple events on behalf of the process. TCC attribution for Automation (kTCCServiceAppleEvents) is generally tied to the code identity of the process that sends the Apple event. Running NSAppleScript within cmspark-host should attribute to cmspark-host binary (its code signing identifier). However parent process could influence via environment? But because binary is ad-hoc signed, no stable identity; any local process could replace/rebuild a binary with same ad-hoc signature? Also DYLD injection? With hardened runtime + library validation, injection limited. Parent can pass CMSPARK_HOST_BIN env to point to a different binary (in index.ts resolveHostBinary). That's TCC hijack: if companion process (Node) is compromised, it can set env to another binary, e.g., attacker-controlled binary named cmspark-host with ad-hoc signature, which when executed gets TCC Automation permission attributed to it, then perform actions. But TCC dialog will show different binary path? The prompt may show "cmspark-host" from different path, but user might not notice. Need mention lack of path validation / signature verification by companion before spawning. The docs said companion should verify SecStaticCodeCheckValidity before spawning, but index.ts doesn't. Also host.swift itself loads .scpt from sibling directory without verifying signature/hash of .scpt. Attacker can replace read-mail.scpt with malicious compiled script; host.swift executes it with same TCC permission. Since .scpt is not signed, this is a code injection. Need fix: embed .scpt in binary or verify signature; bind script path; maybe load from app bundle resources and validate hash/signature. But ad-hoc signature doesn't sign resources. Could embed script as data segment or use swift code to verify SHA256 of .scpt. The docs specify precompiled .scpt + argv injection, but not runtime verification. Critical.

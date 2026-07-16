@@ -167,13 +167,15 @@ function redactCodeParams(raw: string): string {
   try {
     const parsed = JSON.parse(raw) as Record<string, unknown>
     const redacted: Record<string, unknown> = { ...parsed }
-    // evaluate/osascript_eval params include `code` or `expression` with the
-    // actual JS/AppleScript body. Replace with hash + length so the historical
-    // record shows "this code ran" without persisting the code itself.
-    for (const key of ["code", "expression"]) {
+    // evaluate/osascript_eval/host_read/host_write params include `code` or
+    // `expression` with the actual JS/AppleScript body, plus a `security_token`
+    // that grants re-execution. Replace each with hash + length so the
+    // historical record shows "this code ran" / "this token was used" without
+    // persisting the secret material itself (CodeRabbit review fix).
+    for (const key of ["code", "expression", "security_token"]) {
       if (key in redacted && typeof redacted[key] === "string") {
-        const code = redacted[key] as string
-        redacted[key] = `<redacted:hash=${shortHash(code)},len=${code.length}>`
+        const val = redacted[key] as string
+        redacted[key] = `<redacted:hash=${shortHash(val)},len=${val.length}>`
       }
     }
     return JSON.stringify(redacted)

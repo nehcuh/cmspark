@@ -178,7 +178,7 @@ export interface HostAdapter {
   writeOne(targetId: TargetId, payload: WritePayload): Promise<WriteResult>;
 }
 // TargetId 是 opaque string（macOS=bundle+window_id, Windows=hwnd, Linux=atspi-path）
-```
+```typescript
 
 **实现**：
 - `companion/src/host-use/darwin/`（TS + 预编译 .scpt + osascript_eval 复用）
