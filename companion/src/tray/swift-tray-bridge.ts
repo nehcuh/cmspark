@@ -187,6 +187,19 @@ export class SwiftTrayAdapter implements UnifiedTray {
         if (msg) console.error("[swift-tray] stderr:", msg)
       })
 
+      // EPIPE / stream errors on stdin/stdout fire ASYNC and would crash the
+      // process via uncaughtException if not listened to. The 'exit' handler
+      // below already deals with dead Swift tray; these handlers just prevent
+      // the stream-error from killing the companion. (W9 tray-launch bugfix.)
+      proc.stdin?.on("error", (err: NodeJS.ErrnoException) => {
+        if (err.code === "EPIPE") return  // expected when Swift tray exits first
+        console.error("[swift-tray] stdin error:", err.message)
+      })
+      proc.stdout?.on("error", (err: NodeJS.ErrnoException) => {
+        if (err.code === "EPIPE") return
+        console.error("[swift-tray] stdout error:", err.message)
+      })
+
       proc.on("error", (err) => {
         if (!ready) reject(err)
         else console.error("[swift-tray] Process error:", err)
@@ -241,6 +254,10 @@ export class SwiftTrayAdapter implements UnifiedTray {
 
   private send(obj: Record<string, any>): void {
     if (!this.proc?.stdin?.writable) return
+    // proc.stdin.destroyed means the Swift tray process exited; the 'exit'
+    // handler in spawn() will trigger restart. Skip the write to avoid
+    // spurious EPIPE noise between exit-detected and restart.
+    if (this.proc.stdin.destroyed) return
     try {
       this.proc.stdin.write(`${JSON.stringify(obj)}\n`)
     } catch {
