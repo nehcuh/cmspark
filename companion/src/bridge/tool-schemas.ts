@@ -79,6 +79,13 @@ export const TOOL_ARG_SCHEMAS: Record<string, z.ZodTypeAny> = {
     security_token: z.string().optional(),
   }),
 
+  // --- macOS host_read (Phase 0 computer-use: read Mail inbox top-1) ---
+  host_read: z.object({
+    application: z.string().optional(),
+    max_chars: z.number().int().min(1).max(5000).optional(),
+    security_token: z.string().optional(),
+  }),
+
   // --- Navigation (high-risk: agent can drive browser to any URL) ---
   navigate: z.object({
     tabId: tabIdSchema,

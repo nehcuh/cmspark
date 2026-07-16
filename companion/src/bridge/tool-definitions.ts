@@ -498,6 +498,20 @@ export function getToolDefinitions(): ToolDefinition[] {
     {
       type: "function",
       function: {
+        name: "host_read",
+        description: "(macOS ONLY — Phase 0 computer-use spike) Read top-1 message from Mail.app inbox. Returns {sender, subject, date_received, body_preview}. Requires user confirmation; subject to bundle-id vault blacklist.",
+        parameters: {
+          type: "object",
+          properties: {
+            application: { type: "string", description: "Bundle id of target app. Phase 0 only supports 'com.apple.mail' (default)." },
+            max_chars: { type: "integer", description: "Max body_preview characters (default 500, max 5000)." },
+          },
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
         name: "record_experience",
         description: "记录一条操作经验。当用户说'记住这个'或'记录下这条经验'时调用。将经验保存到站点知识库(site_knowledge)或业务域知识库(domain_knowledge)，下次操作该站点时会自动注入。",
         parameters: {

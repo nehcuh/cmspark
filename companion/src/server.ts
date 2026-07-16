@@ -300,7 +300,7 @@ export function createToolExecutor(ws: WebSocket) {
       }
     }
 
-    if ((toolName === "evaluate" || toolName === "osascript_eval") && !finalParams.security_token) {
+    if ((toolName === "evaluate" || toolName === "osascript_eval" || toolName === "host_read") && !finalParams.security_token) {
       const code = String(finalParams.code || finalParams.expression || "")
       const lengthCheck = securityPolicy.checkLength(toolName, code)
       if (!lengthCheck.ok) {
@@ -685,7 +685,7 @@ export function createToolExecutor(ws: WebSocket) {
     }
 
     // Companion-side tools (executed locally, not forwarded to extension)
-    const COMPANION_TOOLS = ["osascript_eval", "use_skill", "record_experience"]
+    const COMPANION_TOOLS = ["osascript_eval", "host_read", "use_skill", "record_experience"]
     if (COMPANION_TOOLS.includes(toolName)) {
       try {
         const result = await executeCompanionTool(toolName, finalParams)
@@ -1110,6 +1110,27 @@ async function executeCompanionTool(toolName: string, params: any): Promise<any>
         return { success: true, data: { result: output } }
       } catch (err: any) {
         return { success: false, error: `osascript_eval error: ${err.message || String(err)}` }
+      }
+    }
+    case "host_read": {
+      // Phase 0 computer-use spike — see docs/decisions/computer-use-round2-synthesis.md.
+      // Delegates to companion/src/host-use/{darwin,linux,win}/ which dispatch on
+      // process.platform. Darwin spawns dist/cmspark-host (ad-hoc signed Swift
+      // binary); Linux/Win throw NotImplementedOnPlatform.
+      if (os.platform() !== "darwin") {
+        return {
+          success: false,
+          error: `host_read is macOS-only in Phase 0 (platform=${os.platform()})`,
+        }
+      }
+      try {
+        const { hostRead } = await import("./host-use")
+        const application = typeof params.application === "string" ? params.application : undefined
+        const maxChars = typeof params.max_chars === "number" ? params.max_chars : undefined
+        const result = await hostRead({ application, maxChars })
+        return { success: true, data: result }
+      } catch (err: any) {
+        return { success: false, error: `host_read error: ${err.message || String(err)}` }
       }
     }
     default:
