@@ -16,3 +16,16 @@ export class NotImplementedOnPlatform extends Error {
     this.name = "NotImplementedOnPlatform"
   }
 }
+
+/**
+ * Phase 1 W9 — Biometric verification result. Same shape across platforms:
+ *   - darwin: Touch ID via Swift binary subprocess
+ *   - linux: 6-char manual nonce typed by user (paste blocked)
+ *
+ * Nonce is bound to the originating tool_call_id for audit trail (W7 Q8).
+ */
+export interface BiometricResult {
+  verified: true
+  nonce: string
+  method: "touchid" | "manual-nonce"
+}

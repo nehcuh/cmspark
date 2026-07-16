@@ -38,6 +38,13 @@ export interface SecurityConfirmationDetails {
    * (same anti-WS-injection pattern as relevantDomains).
    */
   relevantApps?: string[]
+  /**
+   * Phase 1 W9 — Linux manual nonce for biometric tier. When set (Linux only),
+   * the dialog displays the code prominently + a paste-blocked text input.
+   * User must type the code back to confirm. Round 2 §2.3 Kimi加严:
+   * "手动输入 6 位 nonce，不可复制粘贴". Empty on darwin (uses Touch ID instead).
+   */
+  nonceChallenge?: string
 }
 
 export interface SecurityConfirmationDecision {
@@ -135,6 +142,7 @@ export class SecurityConfirmationManager {
         defense_layer: details.defenseLayer,
         relevant_domains: details.relevantDomains,
         relevant_apps: details.relevantApps,
+        nonce_challenge: details.nonceChallenge,
       })
     })
   }

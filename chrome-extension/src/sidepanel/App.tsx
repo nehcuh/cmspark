@@ -132,18 +132,25 @@ function SecurityConfirmationDialog() {
 
   const relevantDomain = request?.relevant_domains?.[0]
   const relevantApp = request?.relevant_apps?.[0]
+  const nonceChallenge = request?.nonce_challenge
   // Phase 1 W7: thread-scoped trust ONLY applies to reads (host_read).
   // Writes always require biometric per call — Q1 ship blocker. Don't show
   // the inline checkbox for host_write even if relevant_apps is set.
   const canThreadTrust = request?.tool_name === "host_read" && !!relevantApp
   const [whitelistMode, setWhitelistMode] = useState<"none" | "exact" | "wildcard">("none")
   const [threadTrust, setThreadTrust] = useState(false)
+  // Phase 1 W9: Linux nonce input. User must TYPE the code (no paste).
+  const [nonceInput, setNonceInput] = useState("")
+  const [pasteBlocked, setPasteBlocked] = useState(false)
+  const nonceMatches = !!nonceChallenge && nonceInput.toUpperCase() === nonceChallenge.toUpperCase()
 
   // Reset selection whenever the active confirmation changes — otherwise the
   // radio from a previous prompt would bleed into the next one.
   useEffect(() => {
     setWhitelistMode("none")
     setThreadTrust(false)
+    setNonceInput("")
+    setPasteBlocked(false)
   }, [request?.confirmation_id])
 
   // H10/M18 (audit): keyboard a11y (focus trap + Escape→deny + aria-modal +
@@ -165,6 +172,12 @@ function SecurityConfirmationDialog() {
     if (approved && relevantDomain && whitelistMode !== "none") {
       addToWhitelist.push(whitelistMode === "wildcard" ? `*.${relevantDomain}` : relevantDomain)
     }
+    // Phase 1 W9: when nonceChallenge is set, approval is BLOCKED until user
+    // types the code correctly. The Approve button is disabled; this is a
+    // safety net in case decide() is invoked another way (keyboard shortcut).
+    if (approved && nonceChallenge && !nonceMatches) {
+      return  // silently no-op — button should be disabled anyway
+    }
     chrome.runtime.sendMessage({
       type: "security.confirmation.response",
       confirmation_id: request.confirmation_id,
@@ -174,6 +187,8 @@ function SecurityConfirmationDialog() {
       // Phase 1 W7 — only send add_to_thread_whitelist when allowed (host_read
       // + user checked the box). Companion validates against relevantApps[0].
       add_to_thread_whitelist: approved && canThreadTrust && threadTrust,
+      // Phase 1 W9 — send typed nonce for Linux biometric tier validation.
+      nonce_response: approved && nonceChallenge ? nonceInput.toUpperCase() : undefined,
     })
     dispatch({ type: "REMOVE_SECURITY_CONFIRMATION", confirmationId: request.confirmation_id })
     if (stopThread) {
@@ -181,6 +196,7 @@ function SecurityConfirmationDialog() {
       dispatch({ type: "SET_STREAMING", content: "" })
     }
     const trustMsg = approved && canThreadTrust && threadTrust ? `（本线程内信任 ${relevantApp}）` : ""
+    const nonceMsg = approved && nonceChallenge ? `（输入确认码 ${nonceChallenge}）` : ""
     dispatch({
       type: "ADD_SECURITY_AUDIT",
       entry: {
@@ -192,7 +208,7 @@ function SecurityConfirmationDialog() {
         risk_level: riskLevel,
         risk_score: request.risk_score || 0,
         defense_layer: request.defense_layer,
-        message: `${approved ? "允许" : "拒绝"}执行 ${request.tool_name}${addToWhitelist.length ? `（加入白名单：${addToWhitelist.join(", ")}）` : ""}${trustMsg}`,
+        message: `${approved ? "允许" : "拒绝"}执行 ${request.tool_name}${addToWhitelist.length ? `（加入白名单：${addToWhitelist.join(", ")}）` : ""}${trustMsg}${nonceMsg}`,
       },
     })
   }
@@ -280,6 +296,70 @@ function SecurityConfirmationDialog() {
           </label>
         </div>
       )}
+      {nonceChallenge && (
+        <div style={{ ...styles.whitelistSection, marginTop: 8, background: "#FFF3CD", border: "1px solid #FFC107" }}>
+          <div style={{ fontWeight: 600, marginBottom: 6 }}>
+            🔐 请输入确认码（手动输入，不可粘贴）：
+          </div>
+          <div style={{
+            fontSize: 28, fontWeight: 700, letterSpacing: 8, fontFamily: "monospace",
+            textAlign: "center", padding: "12px 0", background: "#fff", borderRadius: 6,
+            border: "2px dashed #FFC107", userSelect: "none",
+          }}>
+            {nonceChallenge}
+          </div>
+          <input
+            type="text"
+            maxLength={6}
+            value={nonceInput}
+            onChange={(e) => {
+              setNonceInput(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))
+              setPasteBlocked(false)
+            }}
+            onPaste={(e) => {
+              e.preventDefault()
+              setPasteBlocked(true)
+            }}
+            onContextMenu={(e) => e.preventDefault()}
+            onKeyDown={(e) => {
+              // Block Cmd+V / Ctrl+V / Shift+Insert
+              if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "v") {
+                e.preventDefault()
+                setPasteBlocked(true)
+              }
+              if (e.shiftKey && e.key === "Insert") {
+                e.preventDefault()
+                setPasteBlocked(true)
+              }
+            }}
+            onDrop={(e) => e.preventDefault()}
+            placeholder="6 位确认码"
+            style={{
+              width: "100%", marginTop: 8, padding: "10px 12px", fontSize: 18,
+              fontFamily: "monospace", letterSpacing: 4, textAlign: "center",
+              borderRadius: 6, border: `2px solid ${nonceMatches ? "#4CAF50" : pasteBlocked ? "#F44336" : "#FFC107"}`,
+              outline: "none",
+            }}
+            autoComplete="off"
+            spellCheck={false}
+          />
+          {pasteBlocked && (
+            <div style={{ color: "#F44336", fontSize: 12, marginTop: 4 }}>
+              ⛔ 粘贴被禁止 — 请手动输入确认码（Round 2 §2.3 安全要求）
+            </div>
+          )}
+          {!pasteBlocked && !nonceMatches && nonceInput.length > 0 && (
+            <div style={{ color: "#FF9800", fontSize: 12, marginTop: 4 }}>
+              输入与确认码不匹配
+            </div>
+          )}
+          {nonceMatches && (
+            <div style={{ color: "#4CAF50", fontSize: 12, marginTop: 4 }}>
+              ✓ 确认码匹配，可以允许执行
+            </div>
+          )}
+        </div>
+      )}
       {state.pendingSecurityConfirmations.length > 1 && (
         <div style={styles.securityQueueHint}>
           还有 {state.pendingSecurityConfirmations.length - 1} 个确认请求在等待。
@@ -290,7 +370,12 @@ function SecurityConfirmationDialog() {
           拒绝并停止对话
         </button>
         <button ref={denyBtnRef} style={styles.denyBtn} onClick={() => decide(false)} title="拒绝本次操作">拒绝</button>
-        <button style={{ ...styles.allowBtn, background: riskColor }} onClick={() => decide(true)} title="允许执行本次操作">
+        <button
+          style={{ ...styles.allowBtn, background: nonceChallenge && !nonceMatches ? "#999" : riskColor, cursor: nonceChallenge && !nonceMatches ? "not-allowed" : "pointer" }}
+          onClick={() => decide(true)}
+          disabled={!!nonceChallenge && !nonceMatches}
+          title={nonceChallenge && !nonceMatches ? "请先正确输入确认码" : "允许执行本次操作"}
+        >
           允许执行
         </button>
       </div>

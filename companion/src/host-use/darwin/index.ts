@@ -75,8 +75,13 @@ export async function hostRead(params: HostReadParams): Promise<HostReadResult> 
 }
 
 /**
- * Phase 1 W8 biometric verification (Touch ID per call).
- * Round 2 §4.2 + Kimi+Pi W8 advisor Option A: ALL writes go through biometric.
+ * Phase 1 W8/W9 biometric verification.
+ *
+ * darwin (W8): Touch ID via Swift binary subprocess. Returns nonce on success.
+ * linux (W9): would route through manual-nonce flow; but companion process
+ *   is darwin-only in Phase 1 ship (Linux is RUNBOOK-only). This function
+ *   is called on darwin; linux path is wired but unreachable until Linux
+ *   companion ships.
  *
  * Returns the nonce on success. Throws on cancel / lockout / failure.
  * Nonce is bound to tool_call_id by caller for audit trail (W7 Q8).
@@ -103,6 +108,35 @@ export async function biometricVerify(toolCallId: string, reason: string): Promi
     }
     throw err
   }
+}
+
+/**
+ * Phase 1 W9 — Linux manual nonce generator.
+ *
+ * Generates a 6-char alphanumeric code (excluding ambiguous chars like 0/O/1/I)
+ * that the user must TYPE BACK in the extension UI (paste blocked). The code
+ * is sent via security.confirmation.request.nonceChallenge; user response
+ * arrives via security.confirmation.response.nonceResponse.
+ *
+ * Caller (server.ts host_write case) is responsible for:
+ *   1. Sending the confirmation request with nonceChallenge set
+ *   2. Validating response nonceResponse matches the challenge
+ *   3. Rejecting after 3 failed attempts
+ *
+ * This function ONLY generates the code. Round 2 §2.3: "手动输入 6 位 nonce，
+ * 不可复制粘贴". The paste-block is enforced in extension UI (onPaste handler).
+ */
+export function generateLinuxNonce(): string {
+  // Ambiguous chars removed per standard Crockford-style / OS-otp conventions:
+  //   0/O, 1/I/L, 2/Z, 5/S, 8/B
+  // After removal: 21 letters + 4 digits = 25 chars.
+  const alphabet = "ACDEFGHJKMNPQRTUVWXY34679"
+  const out: string[] = []
+  const bytes = randomBytes(6)
+  for (let i = 0; i < 6; i++) {
+    out.push(alphabet[bytes[i] % alphabet.length])
+  }
+  return out.join("")
 }
 
 function parseJsonSafeRaw(stdout: string, label: string): { verified?: boolean; nonce?: string } {

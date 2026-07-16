@@ -314,6 +314,7 @@ export function useWebSocket() {
               defense_layer: msg.defense_layer,
               relevant_domains: Array.isArray(msg.relevant_domains) ? msg.relevant_domains : [],
               relevant_apps: Array.isArray(msg.relevant_apps) ? msg.relevant_apps : [],
+              nonce_challenge: typeof msg.nonce_challenge === "string" ? msg.nonce_challenge : undefined,
             },
           })
           break

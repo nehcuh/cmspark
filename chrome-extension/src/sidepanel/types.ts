@@ -198,6 +198,12 @@ export interface SecurityConfirmationRequest {
    * "信任此 app，本线程内不再询问" only for host_read (writes always biometric).
    */
   relevant_apps?: string[]
+  /**
+   * Phase 1 W9 — Linux manual nonce for biometric tier. 6-char code shown
+   * prominently in dialog; user must TYPE it back in a paste-blocked input.
+   * Round 2 §2.3 Kimi加严: 不可复制粘贴. Undefined on darwin (uses Touch ID).
+   */
+  nonce_challenge?: string
 }
 
 export interface ToolCall {

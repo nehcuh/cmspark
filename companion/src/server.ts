@@ -1255,20 +1255,20 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
           return { success: false, error: "Invalid or expired security token for host_write" }
         }
       }
-      if (os.platform() !== "darwin") {
+      if (os.platform() !== "darwin" && os.platform() !== "linux") {
         return {
           success: false,
-          error: `host_write is macOS-only in Phase 1 (platform=${os.platform()})`,
+          error: `host_write is macOS/Linux-only in Phase 1 (platform=${os.platform()})`,
         }
       }
       try {
         const { getDarwinAdapter } = await import("./host-use/darwin/adapter")
-        const { biometricVerify } = await import("./host-use/darwin")
         const adapter = getDarwinAdapter()
         const kind = String(params.kind) as "create" | "move" | "update" | "delete"
 
-        // Phase 1 W8: biometric verification BEFORE building payload + dispatch.
-        // Reason text shown in Touch ID dialog so user sees what they're approving.
+        // Phase 1 W8/W9: biometric verification BEFORE writeOne.
+        // - darwin (W8): Touch ID via Swift binary subprocess
+        // - linux (W9): 6-char manual nonce typed by user (paste-blocked)
         const reasonMap: Record<string, string> = {
           create: "Create a new Note",
           move: "Move a file via Finder",
@@ -1276,12 +1276,35 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
           delete: "Delete an item (destructive)",
         }
         const biometricReason = reasonMap[kind] || `host_write ${kind}`
-        const nonce = await biometricVerify(toolCallId || "no-tool-call-id", biometricReason)
+
+        let nonce: string
+        let method: "touchid" | "manual-nonce"
+        if (os.platform() === "darwin") {
+          const { biometricVerify } = await import("./host-use/darwin")
+          nonce = await biometricVerify(toolCallId || "no-tool-call-id", biometricReason)
+          method = "touchid"
+        } else {
+          // Phase 1 W9 Linux path: not yet wired through SecurityConfirmationManager
+          // (Linux companion itself is RUNBOOK-only in Phase 1 ship). The nonce
+          // generator + WS protocol are in place; integration pending Phase 2.
+          const { generateLinuxNonce } = await import("./host-use/darwin")
+          nonce = generateLinuxNonce()
+          method = "manual-nonce"
+          // TODO Phase 2: send security.confirmation.request with nonceChallenge,
+          // wait for response with nonceResponse, validate match, reject after 3 fails.
+          // For now Linux returns the generated nonce but no writeOne execution
+          // (writeOne is darwin-only in adapter).
+          return {
+            success: false,
+            error: `host_write on Linux: biometric nonce generated (${nonce}) but writeOne adapter is darwin-only in Phase 1. Linux implementation pending Phase 2.`,
+          }
+        }
         logger.info("security.biometric.verified", {
           tool_call_id: toolCallId,
           tool_name: "host_write",
           kind,
           nonce,
+          method,
         })
 
         let payload: any
