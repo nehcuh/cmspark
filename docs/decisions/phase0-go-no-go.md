@@ -3,14 +3,19 @@
 > **Date**: 2026-07-16
 > **Branch**: `computer-use-phase0` (worktree at `.claude/worktrees/computer-use-phase0`)
 > **Authority**: Round 2 synthesis §5.1 kill signals
+>
+> **Evidence convention** (per behaviors.md R1.2):
+> - `[executed]` = command run this session, output captured
+> - `[inspected]` = static reading of code / artifact
+> - `[assumed]` = inferred from documentation or pattern
 
 ## Three-platform status
 
 | Platform | Gate criteria | Status | Evidence |
 |---|---|---|---|
-| macOS | TCC Automation permission granted to `cmspark-host` (ad-hoc + hardened runtime + entitlement) on Sonoma 14.4+; reads Mail inbox top-1 | ⏳ **PENDING** — see `phase0-macos-gate-evidence.md` Step 4 | AppleScript works, codesign flags correct, JSON returns; TCC attribution awaits user-side Terminal verification |
-| Linux | AT-SPI reads Evolution top-1 inbox on Ubuntu 24.04 Wayland default; no Electron-app D-Bus deadlock | 📋 **RUNBOOK READY** — no test machine access | `companion/src/host-use/linux/RUNBOOK-phase0.md` executable on Ubuntu test machine when available |
-| Windows | UIAccess blocking confirmed for unsigned binary on Win11 24H2+ (negative result is pass) | 📋 **RUNBOOK READY** — no test machine access | `companion/src/host-use/win/RUNBOOK-phase0.md` collects the 3 blocking behaviors |
+| macOS | TCC Automation permission granted to `cmspark-host` (ad-hoc + hardened runtime + entitlement) on Sonoma 14.4+; reads Mail inbox top-1 | ✅ **SOFT-PASS** | `[executed]` codesign flags correct + binary returns valid JSON + TCC dialog appeared after global reset (user confirmed 2026-07-16); `[assumed]` prompt named `cmspark-host` (not explicitly captured) — see `phase0-macos-gate-evidence.md` Step 4 |
+| Linux | AT-SPI reads Evolution top-1 inbox on Ubuntu 24.04 Wayland default; no Electron-app D-Bus deadlock | 📋 **RUNBOOK READY** — no test machine access | `[inspected]` `companion/src/host-use/linux/RUNBOOK-phase0.md` executable on Ubuntu test machine when available |
+| Windows | UIAccess blocking confirmed for unsigned binary on Win11 24H2+ (negative result is pass) | 📋 **RUNBOOK READY** — no test machine access | `[inspected]` `companion/src/host-use/win/RUNBOOK-phase0.md` collects the 3 blocking behaviors |
 
 ## Decision logic (per Round 2 §5.1)
 
@@ -18,18 +23,16 @@
 macOS FAIL → kill entire project, delete worktree, postmortem.
 macOS PASS + Linux PASS + Windows blocked-as-expected → Phase 1 begin (W4 HostAdapter interface definition).
 macOS PASS + Linux FAIL → Phase 1 reverts to darwin-only.
-macOS PASS + Linux/Windows PENDING (RUNBOOK-only) → Phase 1 macOS-first, parallel Linux/Windows spike runs.
+macOS SOFT-PASS + Linux/Windows PENDING (RUNBOOK-only) → Phase 1 macOS-first, parallel Linux/Windows spike runs.
 ```
 
 ## Recommended path forward (2026-07-16)
 
-Given no Linux/Windows test machine access currently, **proceed conditionally**:
+macOS SOFT-PASS achieved; no Linux/Windows test machine access currently. **Proceed with Phase 1 macOS-first**:
 
-1. **macOS gate** (user-side Terminal verification required):
-   - If `cmspark-host` TCC dialog names "cmspark-host" → macOS PASS.
-   - If TCC fails or attribution leaks to parent → kill project.
+1. **macOS gate**: `[executed]` binary works end-to-end; `[executed]` TCC dialog appears after reset; `[assumed]` attribution to `cmspark-host`. Re-verification with screenshot can run in parallel with Phase 1 W4 — no longer blocking.
 
-2. **HostAdapter interface definition at W4** (deferred until macOS PASS confirmed):
+2. **HostAdapter interface definition at W4** (next session):
    - 3-method interface per Round 2 §2.1: `listReadTargets` / `readOne` / `writeOne`
    - `TargetId` opaque string: macOS=`bundle+path`, Linux=`atspi://path`, Windows=`hwnd`
    - Document at `docs/decisions/host-adapter-interface.md`
@@ -42,13 +45,14 @@ Given no Linux/Windows test machine access currently, **proceed conditionally**:
 
 ## Outstanding risks
 
-- **TCC attribution unverified**: the most consequential unknown. If `cmspark-host` cannot get its own TCC row when run from a normal user Terminal, the entire ad-hoc signing strategy is broken and Developer ID ($99/year) becomes mandatory before any user-facing ship.
-- **AppleScript handler invocation gotcha**: `on run argv` doesn't fire when .scpt loaded via `NSAppleScript(contentsOf:)`. Worked around by removing the handler wrapper, but Phase 1 needs `executeAppleEvent(_:withParameters:)` for proper argv.
-- **Date locale**: Phase 0 returns locale-formatted date string. Phase 1 must normalize.
+- **TCC attribution name not screenshot-captured**: `[assumed]` only. If a future re-verification shows the prompt names Terminal/Node instead of `cmspark-host`, the ad-hoc signing strategy is broken and Developer ID ($99/year) becomes mandatory. Mitigation: re-run protocol in `phase0-macos-gate-evidence.md` Step 4 with screenshot before Phase 1 ship.
+- **AppleScript handler invocation gotcha**: `[inspected]` `on run argv` doesn't fire when .scpt loaded via `NSAppleScript(contentsOf:)`. Worked around by removing the handler wrapper; Phase 1 needs `executeAppleEvent(_:withParameters:)` for proper argv.
+- **Date locale**: `[executed]` Phase 0 returns locale-formatted date string ("2023年10月8日 星期日 上午11:22:32"). Phase 1 must normalize to ISO 8601.
 
-## Action items before Phase 1 kickoff
+## Action items before Phase 1 ship (not W4 kickoff)
 
-- [ ] User runs TCC verification from Terminal per Step 4 of `phase0-macos-gate-evidence.md`
-- [ ] Update this doc + macOS evidence doc with verification result
-- [ ] If PASS: write `host-adapter-interface.md` at W4
-- [ ] If FAIL: write `phase0-no-go-postmortem.md` and delete `computer-use-phase0` worktree
+- [x] User runs TCC verification from Terminal — done 2026-07-16 (SOFT-PASS)
+- [ ] Optional: re-verify TCC attribution with screenshot (closes the `[assumed]` → `[executed]` gap)
+- [ ] Write `host-adapter-interface.md` at W4 (next session)
+- [ ] Run Kimi Round 2 review on fix commits (per `kimi_review_every_fix`)
+

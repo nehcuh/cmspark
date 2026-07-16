@@ -300,6 +300,15 @@ export function createToolExecutor(ws: WebSocket) {
       }
     }
 
+    // L2 confirmation gate (evaluate / osascript_eval / host_read). Each of
+    // these tools reaches host-side or browser-DOM state that requires explicit
+    // user approval. NOTE: host_read is the first tool in this gate that reads
+    // host-side USER DATA (Mail inbox) rather than browser-DOM or fixed
+    // AppleScript. Under security.allow_all_schemes=true (god-mode), this gate
+    // is skipped and host_read can read Mail without per-call prompt — the
+    // user must have explicitly opted into god-mode via the standard phrase
+    // gate per ADR-010. Vault-app bundle ids (1Password / Keychain / etc) are
+    // still blocked unconditionally downstream in host-use/darwin/blacklist.ts.
     if ((toolName === "evaluate" || toolName === "osascript_eval" || toolName === "host_read") && !finalParams.security_token) {
       const code = String(finalParams.code || finalParams.expression || "")
       const lengthCheck = securityPolicy.checkLength(toolName, code)
@@ -1114,15 +1123,11 @@ async function executeCompanionTool(toolName: string, params: any): Promise<any>
     }
     case "host_read": {
       // Phase 0 computer-use spike — see docs/decisions/computer-use-round2-synthesis.md.
-      // Delegates to companion/src/host-use/{darwin,linux,win}/ which dispatch on
-      // process.platform. Darwin spawns dist/cmspark-host (ad-hoc signed Swift
-      // binary); Linux/Win throw NotImplementedOnPlatform.
-      if (os.platform() !== "darwin") {
-        return {
-          success: false,
-          error: `host_read is macOS-only in Phase 0 (platform=${os.platform()})`,
-        }
-      }
+      // Delegates to companion/src/host-use/ which dispatches on process.platform.
+      // Darwin spawns dist/cmspark-host (ad-hoc signed Swift binary); Linux/Win
+      // stubs throw NotImplementedOnPlatform — caught below and surfaced as
+      // {success:false}. Single source of truth for platform check lives in
+      // host-use/index.ts (Standards review M2: drop duplicate guard here).
       try {
         const { hostRead } = await import("./host-use")
         const application = typeof params.application === "string" ? params.application : undefined

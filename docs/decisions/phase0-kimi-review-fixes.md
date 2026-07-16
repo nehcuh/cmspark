@@ -3,6 +3,11 @@
 > **Source review**: `docs/decisions/phase0-kimi-review.txt` (Kimi CLI, session `be6dfa9e`)
 > **Date**: 2026-07-16
 > **Reviewer's verdict**: "修复前不应进入 Phase 0 用户测试"
+>
+> **Evidence convention** (per behaviors.md R1.2):
+> - `[executed]` = command run + output captured
+> - `[inspected]` = static code reading
+> - `[assumed]` = inferred from docs/pattern
 
 ## Critical issues — status
 
@@ -10,7 +15,7 @@
 
 **File**: `companion/src/host-use/darwin/read-mail.applescript`
 
-**Bug**: `set s to (text items of s) as string` was called twice in a row with the same delimiter, which split+joined with the same character — a no-op. No actual JSON escaping happened.
+`[inspected]` **Bug**: `set s to (text items of s) as string` was called twice in a row with the same delimiter, which split+joined with the same character — a no-op. No actual JSON escaping happened.
 
 **Fix**: Capture `text items of s` into a variable BEFORE switching the delimiter:
 ```applescript
@@ -20,15 +25,15 @@ set AppleScript's text item delimiters to "\\\\"
 set s to sParts as string               -- join with new delimiter
 ```
 
-**Verification**: `/tmp/test-jsonescape.scpt` returns valid JSON for malicious input `attacker"foo\bar[CR][LF]embedded` — properly escaped to `attacker\"foo\\bar\r\nembedded`. Attempted injection `safe","injected_key":"value` is escaped and stays as a single field value.
+`[executed]` **Verification**: `/tmp/test-jsonescape.scpt` returns valid JSON for malicious input `attacker"foo\bar[CR][LF]embedded` — properly escaped to `attacker\"foo\\bar\r\nembedded`. Attempted injection `safe","injected_key":"value` is escaped and stays as a single field value.
 
 ### 🔴 C2: `.scpt` file is unsigned — **Phase 1 prerequisite (documented)**
 
 **File**: `companion/dist/host-scripts/read-mail.scpt`
 
-**Bug**: Attacker who can write to `dist/host-scripts/` replaces the .scpt with arbitrary AppleScript, which then runs under the already-granted TCC permission of `cmspark-host`. Devs/users who clicked "Allow" once for the binary implicitly trust any .scpt dropped next to it.
+`[inspected]` **Bug**: Attacker who can write to `dist/host-scripts/` replaces the .scpt with arbitrary AppleScript, which then runs under the already-granted TCC permission of `cmspark-host`. Devs/users who clicked "Allow" once for the binary implicitly trust any .scpt dropped next to it.
 
-**Why Phase 0 defers**: Phase 0 is single-machine spike proving TCC attribution. The `.scpt` is created by build-host.sh on the dev's own machine; no distribution; no attacker in trust model yet. Phase 1 must:
+`[assumed]` **Why Phase 0 defers**: Phase 0 is single-machine spike proving TCC attribution. The `.scpt` is created by build-host.sh on the dev's own machine; no distribution; no attacker in trust model yet. Phase 1 must:
 - Embed `.scpt` into signed Swift binary as resource, OR
 - Hash-verify `.scpt` against a constant compiled into the binary, OR
 - Move all AppleScript into Swift via `NSAppleScript(source:)` + compile-time validation
