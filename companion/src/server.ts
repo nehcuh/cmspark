@@ -1,6 +1,24 @@
 // Companion server — WebSocket server, message routing, tool execution bridge
 
 import { WebSocketServer, WebSocket } from "ws"
+
+// Phase 1 W7 — resolve bundle id from host_read/host_write params for
+// thread-scoped trust + relevantApps in confirmation dialog.
+function resolveHostUseApp(toolName: string, params: any): string {
+  if (toolName === "host_read") {
+    const app = typeof params?.application === "string" ? params.application : ""
+    if (app) return app
+    // Phase 0 default when application omitted.
+    return "com.apple.mail"
+  }
+  if (toolName === "host_write") {
+    const kind = typeof params?.kind === "string" ? params.kind : ""
+    if (kind === "create") return "com.apple.Notes"
+    if (kind === "move") return "com.apple.finder"
+    return ""
+  }
+  return ""
+}
 import { execFile } from "child_process"
 import { randomUUID } from "crypto"
 import http from "http"
@@ -13,6 +31,7 @@ import { SkillEngine } from "./skills/skill-engine"
 import { HistoryStore } from "./history/store"
 import { checkHighRiskExecution, highRiskExecutionDeniedError, isTrustedDomain, isAutoApprovedDomain, isCloudMetadataIp, isPrivateOrLoopbackIp, detectCriticalApis, classifyMcpCall, mergeCapabilities, CRITICAL_MCP_CAPABILITIES, CRITICAL_MCP_META_TOOLS } from "./security"
 import { SecurityConfirmationManager } from "./security-confirmation"
+import { getThreadApprovals } from "./host-use/thread-approvals"
 import { securityPolicy, getTokenSecret } from "./security-policy"
 import { logger, type LogLevel } from "./logger"
 import { acquireLock, releaseLock, isProcessRunning, readPidFile, cleanupPidFile, setupGracefulShutdown } from "./daemon"
@@ -338,12 +357,34 @@ export function createToolExecutor(ws: WebSocket) {
       const relevantDomain = toolName === "evaluate"
         ? getDomainFromUrl(getCachedTabUrl(finalParams.tabId) || "")
         : ""
+      // Phase 1 W7 — relevant app for host_read/host_write (bundle id).
+      // Used to populate inline-checkbox trust option in confirmation dialog.
+      const relevantApp = (toolName === "host_read" || toolName === "host_write")
+        ? resolveHostUseApp(toolName, finalParams)
+        : ""
       const securityConfig = getConfig().security
-      // skipL2 = auto_approve_dangerous || allow_all_schemes || (domain whitelist).
+      // skipL2 = auto_approve_dangerous || allow_all_schemes || (domain whitelist)
+      //         || (Phase 1 W7: thread-scoped host_read trust).
       // allow_all_schemes (GOD-MODE) bypasses Layer 2 too — see config.ts SecurityConfig.
+      // Phase 1 W7 Q1 blocker: thread-scoped trust applies to READ only.
+      // Writes always go through confirmation (biometric tier is preserved).
+      let threadTrusted = false
+      if (toolName === "host_read" && relevantApp && sessionId) {
+        threadTrusted = getThreadApprovals().has(sessionId, relevantApp, "read")
+        if (threadTrusted) {
+          logger.info("security.thread_auto_approved", {
+            tool_call_id: toolCallId,
+            tool_name: toolName,
+            thread_id: sessionId,
+            bundle_id: relevantApp,
+            kind: "read",
+          })
+        }
+      }
       const skipConfirmation = securityConfig.auto_approve_dangerous === true
         || securityConfig.allow_all_schemes === true
         || (relevantDomain !== "" && isAutoApprovedDomain(relevantDomain))
+        || threadTrusted
       // §6.2 CRITICAL_API_GATE: detectCriticalApis() is the never-auto-approved
       // subset of detectDangerousApis() (exfil + sandbox-escape + obfuscation
       // variants). Even when skipConfirmation is true (god-mode / global toggle
@@ -388,6 +429,7 @@ export function createToolExecutor(ws: WebSocket) {
             dangerousApis: safety.dangerousApis,
             code,
             relevantDomains: relevantDomain ? [relevantDomain] : [],
+            relevantApps: relevantApp ? [relevantApp] : [],
             criticalApis,
             ...(forceConfirm ? { riskLevel: "high" as const, autoConfirmEligible: false } : {}),
           },
@@ -887,7 +929,7 @@ function dispatchToExtension(
  * tests can exercise the persistence path (the extension's add_to_whitelist
  * forwarding) without booting the full server. Logic is unchanged.
  */
-export async function handleSecurityConfirmationResponse(ws: WebSocket, msg: any): Promise<void> {
+export async function handleSecurityConfirmationResponse(ws: WebSocket, msg: any, sessionId?: string): Promise<void> {
   const confirmationId = String(msg.confirmation_id || "")
   const approved = msg.approved === true
 
@@ -919,6 +961,25 @@ export async function handleSecurityConfirmationResponse(ws: WebSocket, msg: any
       confirmation_id: confirmationId,
       relevant_domains: relevantDomains,
       rejected: rejectedPatterns,
+    })
+  }
+
+  // Phase 1 W7 — Validate add_to_thread_whitelist (boolean) for host_use tools.
+  // Validates the requested bundle id against relevantApps originally shown.
+  // Same anti-injection contract as add_to_whitelist above.
+  const rawThreadWhitelist: boolean = msg.add_to_thread_whitelist === true
+  const relevantApps = securityConfirmations.getRelevantApps(confirmationId) || []
+  let threadWhitelistApp: string | null = null
+  if (rawThreadWhitelist && relevantApps.length > 0) {
+    // The first (and currently only) relevant app is what the user was shown.
+    // User cannot type a different bundle id — the checkbox is grayed-out
+    // pre-filled by the extension UI.
+    threadWhitelistApp = relevantApps[0]
+  } else if (rawThreadWhitelist && relevantApps.length === 0) {
+    // WS injection attempt: client sent add_to_thread_whitelist=true for a
+    // confirmation that didn't show any app checkbox.
+    logger.warn("security.thread_whitelist.relevant_apps_missing", {
+      confirmation_id: confirmationId,
     })
   }
 
@@ -981,6 +1042,30 @@ export async function handleSecurityConfirmationResponse(ws: WebSocket, msg: any
       confirmation_id: confirmationId,
       valid_patterns: validPatterns,
     })
+  }
+
+  // Phase 1 W7 — Record thread-scoped trust when user approved with
+  // add_to_thread_whitelist=true. Only for read operations (Q1 blocker:
+  // writes always require biometric per call, never thread-trusted).
+  if (responded && approved && threadWhitelistApp) {
+    const toolName = securityConfirmations.getToolName(confirmationId)
+    if (toolName === "host_read" && sessionId) {
+      getThreadApprovals().add(sessionId, threadWhitelistApp, "read")
+      logger.info("security.thread_whitelist.added", {
+        confirmation_id: confirmationId,
+        thread_id: sessionId,
+        bundle_id: threadWhitelistApp,
+        kind: "read",
+      })
+    } else if (toolName === "host_write") {
+      // Q1 ship blocker: writes NEVER thread-trust. Log rejection so
+      // operators can spot a buggy/malicious client attempting bypass.
+      logger.warn("security.thread_whitelist.write_rejected", {
+        confirmation_id: confirmationId,
+        bundle_id: threadWhitelistApp,
+        reason: "biometric per-call is non-negotiable for writes (W7 Q1 blocker)",
+      })
+    }
   }
 }
 
@@ -2167,7 +2252,10 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
         }
 
         if (msg.type === "security.confirmation.response") {
-          await handleSecurityConfirmationResponse(ws, msg)
+          // Phase 1 W7: pass per-connection session id (used as thread proxy)
+          // so handleSecurityConfirmationResponse can record thread-scoped trust.
+          const sid = mcpSessionByWs.get(ws)
+          await handleSecurityConfirmationResponse(ws, msg, sid)
           return
         }
 

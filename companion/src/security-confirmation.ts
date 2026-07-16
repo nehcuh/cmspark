@@ -30,6 +30,14 @@ export interface SecurityConfirmationDetails {
    * tabId) — in that case the dialog just hides the whitelist option.
    */
   relevantDomains?: string[]
+  /**
+   * Phase 1 W7 — bundle ids relevant to this confirmation (for host_read /
+   * host_write tools). Surfaced in the dialog as an inline checkbox "信任此 app
+   * 本线程内不再询问". When user approves with add_to_thread_whitelist=true,
+   * companion validates the response payload's bundle id against this set
+   * (same anti-WS-injection pattern as relevantDomains).
+   */
+  relevantApps?: string[]
 }
 
 export interface SecurityConfirmationDecision {
@@ -54,6 +62,7 @@ interface PendingConfirmation {
   timer: NodeJS.Timeout
   send: (data: any) => void
   originWs?: WebSocket
+  toolName: string
   /**
    * Domains presented to the user as candidates for "add to whitelist" in this
    * confirmation's dialog. Tracked server-side so the response handler can
@@ -63,6 +72,12 @@ interface PendingConfirmation {
    * "*.com" via a crafted response payload.
    */
   relevantDomains: string[]
+  /**
+   * Phase 1 W7 — bundle ids presented in the dialog as inline-checkbox
+   * candidates for thread-scoped trust. Same anti-injection contract as
+   * relevantDomains: server tracks what was shown, validates response.
+   */
+  relevantApps: string[]
 }
 
 function codePreview(code: string): string {
@@ -95,8 +110,12 @@ export class SecurityConfirmationManager {
         timer,
         send,
         originWs: options?.originWs,
+        toolName: details.toolName,
         relevantDomains: Array.isArray(details.relevantDomains)
           ? details.relevantDomains.filter((d): d is string => typeof d === "string" && d.length > 0)
+          : [],
+        relevantApps: Array.isArray(details.relevantApps)
+          ? details.relevantApps.filter((d): d is string => typeof d === "string" && d.length > 0)
           : [],
       })
 
@@ -115,6 +134,7 @@ export class SecurityConfirmationManager {
         auto_confirm_eligible: details.autoConfirmEligible,
         defense_layer: details.defenseLayer,
         relevant_domains: details.relevantDomains,
+        relevant_apps: details.relevantApps,
       })
     })
   }
@@ -128,6 +148,24 @@ export class SecurityConfirmationManager {
    */
   getRelevantDomains(confirmationId: string): string[] | undefined {
     return this.pending.get(confirmationId)?.relevantDomains
+  }
+
+  /**
+   * Phase 1 W7 — Return the relevant_apps originally presented in the dialog.
+   * Same anti-injection contract as getRelevantDomains: response handler
+   * validates add_to_thread_whitelist payloads against this set.
+   */
+  getRelevantApps(confirmationId: string): string[] | undefined {
+    return this.pending.get(confirmationId)?.relevantApps
+  }
+
+  /**
+   * Phase 1 W7 — Return the toolName for this confirmation. Used by response
+   * handler to decide whether to record thread-scoped trust (host_read only,
+   * never host_write per Q1 ship blocker).
+   */
+  getToolName(confirmationId: string): string | undefined {
+    return this.pending.get(confirmationId)?.toolName
   }
 
   /**
