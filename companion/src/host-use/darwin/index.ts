@@ -134,31 +134,15 @@ export async function biometricVerify(toolCallId: string, reason: string): Promi
 /**
  * Phase 1 W9 — Linux manual nonce generator.
  *
- * Generates a 6-char alphanumeric code (excluding ambiguous chars like 0/O/1/I)
- * that the user must TYPE BACK in the extension UI (paste blocked). The code
- * is sent via security.confirmation.request.nonceChallenge; user response
- * arrives via security.confirmation.response.nonceResponse.
+ * Implementation moved to host-use/nonce.ts (generateManualNonce) so the
+ * Windows Hello-unavailable fallback and the Linux path share one generator.
+ * Re-exported here under the original name to keep existing imports (server.ts
+ * Linux branch, host-use-linux-nonce tests) stable.
  *
- * Caller (server.ts host_write case) is responsible for:
- *   1. Sending the confirmation request with nonceChallenge set
- *   2. Validating response nonceResponse matches the challenge
- *   3. Rejecting after 3 failed attempts
- *
- * This function ONLY generates the code. Round 2 §2.3: "手动输入 6 位 nonce，
- * 不可复制粘贴". The paste-block is enforced in extension UI (onPaste handler).
+ * The 6-char code (ambiguous chars removed) must be TYPED BACK in the
+ * extension UI (paste blocked). Round 2 §2.3: "手动输入 6 位 nonce，不可复制粘贴".
  */
-export function generateLinuxNonce(): string {
-  // Ambiguous chars removed per standard Crockford-style / OS-otp conventions:
-  //   0/O, 1/I/L, 2/Z, 5/S, 8/B
-  // After removal: 21 letters + 4 digits = 25 chars.
-  const alphabet = "ACDEFGHJKMNPQRTUVWXY34679"
-  const out: string[] = []
-  const bytes = randomBytes(6)
-  for (let i = 0; i < 6; i++) {
-    out.push(alphabet[bytes[i] % alphabet.length])
-  }
-  return out.join("")
-}
+export { generateManualNonce as generateLinuxNonce } from "../nonce"
 
 function parseJsonSafeRaw(stdout: string, label: string): { verified?: boolean; nonce?: string } {
   try {

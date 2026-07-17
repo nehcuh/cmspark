@@ -44,6 +44,12 @@ export interface ReadResult {
   date_received?: string
   body_preview?: string
   file_path?: string
+  /**
+   * Phase 1 W8-windows — fs metadata read surface (mtime, ISO-8601). Win file
+   * reads are metadata-only (path + mtime); content stays with MCP filesystem
+   * (plan §D.12). Explicit field addition per the strict-field contract above.
+   */
+  file_mtime?: string
 }
 
 /**
@@ -80,7 +86,10 @@ export interface WriteResult {
  * (3-way advisor: Kimi + Pi-sub + brief author, 2026-07-16):
  *   - darwin: "macos:com.apple.<app>:<account-id>:<kind>-<stable-id>"
  *   - linux:  "linux:..." (Phase 1.5 — format TBD against RUNBOOK)
- *   - win:    "win:..."   (Phase 1.5 — UIAccess-gated)
+ *   - win:    "win:<app>:<account-or-root>:<kind>-<stable-id>" — defined and
+ *             implemented on computer-use-w8-windows via COM automation +
+ *             Node fs (data contract only, no UI-driving; app ∈ {outlook,
+ *             onenote, fs}). See docs/decisions/windows-host-use-plan.md §B.
  */
 export interface HostAdapter {
   /**
