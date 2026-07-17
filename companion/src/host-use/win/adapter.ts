@@ -272,20 +272,23 @@ export class WinHostAdapter implements HostAdapter {
         // destination must stay inside %USERPROFILE%\{Documents,Desktop,
         // Downloads}. The boundary check (exact match OR root + path.sep) is
         // applied TWICE per side: once to the path.resolve() result and once
-        // to fs.realpathSync(parent) — defeats "Documents2"/"Documents-evil"
-        // sibling-prefix escapes and junctioned parent dirs.
+        // to the realpath of the container that could be junctioned —
+        // dirname(source) for the source FILE, the destination FOLDER itself
+        // (falling back to its parent when it doesn't exist yet). This
+        // defeats "Documents2"/"Documents-evil" sibling-prefix escapes and
+        // junctioned directories. (Applying realpath to the destination's
+        // PARENT would resolve root-level destinations like "Desktop" to
+        // %USERPROFILE% itself and reject every legitimate move.)
         const resolvedSource = path.resolve(payload.source_path)
         const resolvedDest = path.resolve(payload.destination)
         this.assertInsideRoots(resolvedSource)
         this.assertInsideRoots(resolvedDest)
         this.assertInsideRoots(this.fsOps.realpathSync(path.dirname(resolvedSource)))
-        this.assertInsideRoots(this.fsOps.realpathSync(path.dirname(resolvedDest)))
-        // Extra beyond the amendment: if the destination dir itself exists,
-        // realpath it too — a junctioned destination dir would otherwise
-        // redirect the move outside the allowlist.
-        if (this.fsOps.existsSync(resolvedDest)) {
-          this.assertInsideRoots(this.fsOps.realpathSync(resolvedDest))
-        }
+        this.assertInsideRoots(
+          this.fsOps.existsSync(resolvedDest)
+            ? this.fsOps.realpathSync(resolvedDest)
+            : this.fsOps.realpathSync(path.dirname(resolvedDest)),
+        )
         try {
           this.fsOps.renameSync(
             resolvedSource,
