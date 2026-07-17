@@ -499,11 +499,11 @@ export function getToolDefinitions(): ToolDefinition[] {
       type: "function",
       function: {
         name: "host_read",
-        description: "(macOS ONLY — Phase 0 computer-use spike) Read top-1 message from Mail.app inbox. Returns {sender, subject, date_received, body_preview}. Requires user confirmation; subject to bundle-id vault blacklist.",
+        description: "Read the top-1 inbox message from the host mail app (macOS: Mail.app; Windows: classic Outlook via COM — 'New Outlook' is NOT supported and returns a typed error naming a browser fallback; Linux: pending). Returns {sender, subject, date_received, body_preview}. Requires user confirmation; subject to app vault blacklist.",
         parameters: {
           type: "object",
           properties: {
-            application: { type: "string", description: "Bundle id of target app. Phase 0 only supports 'com.apple.mail' (default)." },
+            application: { type: "string", description: "Host app token. macOS: 'com.apple.mail' (default). Windows: 'win.outlook.classic' (default). Any other token is rejected by the read whitelist." },
             max_chars: { type: "integer", description: "Max body_preview characters (default 500, max 5000)." },
           },
         },
@@ -513,15 +513,15 @@ export function getToolDefinitions(): ToolDefinition[] {
       type: "function",
       function: {
         name: "host_write",
-        description: "(macOS ONLY — Phase 1 W6) Write to a host app. Phase 1 supports: Notes create (kind=create, body=note content, first line becomes name) and Finder move (kind=move, source_path=POSIX file path, destination=POSIX folder path). Update/delete require biometric (Phase 1 W7+).",
+        description: "Write to a host app (macOS: Notes create + Finder move; Windows: OneNote create + file move restricted to %USERPROFILE%\\Documents, Desktop and Downloads). kind=create: body=note content (first line becomes the title). kind=move: source_path + destination (macOS: POSIX paths; Windows: both ends must stay inside Documents/Desktop/Downloads). update/delete are not implemented and return errors. Every write requires per-call biometric verification (Touch ID / Windows Hello), or a 6-char manually typed code when biometrics are unavailable.",
         parameters: {
           type: "object",
           properties: {
             kind: { type: "string", enum: ["create", "move", "update", "delete"], description: "Write operation kind." },
             target_id: { type: "string", description: "Opaque TargetId from listReadTargets (decorative for create; source identifier for move)." },
-            body: { type: "string", description: "For create/update: the content. Notes create: first 80 chars of first line becomes note name." },
-            destination: { type: "string", description: "For move: POSIX destination folder path." },
-            source_path: { type: "string", description: "For move: POSIX source file path (Phase 1 W6 — encoded in TargetId in Phase 2)." },
+            body: { type: "string", description: "For create/update: the content. Notes/OneNote create: first 80 chars of first line becomes the title." },
+            destination: { type: "string", description: "For move: destination folder path (macOS: POSIX; Windows: inside Documents/Desktop/Downloads)." },
+            source_path: { type: "string", description: "For move: source file path (macOS: POSIX, Phase 1 W6 — encoded in TargetId in Phase 2; Windows: inside Documents/Desktop/Downloads)." },
           },
           required: ["kind"],
         },

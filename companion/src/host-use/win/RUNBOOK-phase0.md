@@ -1,5 +1,16 @@
 # Windows Phase 0 Spike — RUNBOOK
 
+> **Addendum (computer-use-w8-windows, 2026-07-17)**: the spike evidence below
+> stands for **UI-driving** paths (UIAutomation / SetForegroundWindow /
+> SendInput still require UIAccess + EV cert — that NON-goal is unchanged).
+> However, the Phase 1 `HostAdapter` **data contract** is satisfiable without
+> UI-driving, via COM automation (classic Outlook read, OneNote create),
+> Node `fs` (allowlisted file metadata/move), and WinRT `UserConsentVerifier`
+> (Windows Hello — verified callable unsigned on this machine). Those COM/fs
+> data paths are implemented on this branch; see
+> `docs/decisions/windows-host-use-plan.md` (amended) for the design and
+> `companion/src/host-use/win/` for the implementation.
+
 > **Platform scope**: Windows 11 (24H2+). **Goal is NOT to make it work** —
 > Phase 0 Windows spike exists to **collect blocking evidence** that
 > unsigned/ad-hoc-signed binaries cannot:
