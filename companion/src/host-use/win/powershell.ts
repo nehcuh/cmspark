@@ -20,6 +20,32 @@ const execFileAsync = promisify(execFile)
 export const PS_DEFAULT_TIMEOUT_MS = 15000
 export const PS_HELLO_TIMEOUT_MS = 60000 // 60s for user to interact with Hello dialog (darwin parity)
 
+/**
+ * Resolve powershell.exe. Prefer the absolute System32 path:
+ *   1. Robustness — the launcher environment may have a stripped PATH (e.g.
+ *      Git Bash lacks WindowsPowerShell\v1.0; spawn then fails ENOENT).
+ *   2. Security — an absolute path is immune to PATH-hijack (a malicious
+ *      "powershell.exe" placed earlier in PATH).
+ * Falls back to bare "powershell.exe" when the SystemRoot candidate is absent
+ * (exotic layouts); the ENOENT then surfaces honestly at execFile time.
+ */
+export function resolvePowerShellExe(): string {
+  const sysroot = process.env.SystemRoot || process.env.windir || "C:\\Windows"
+  const candidate = path.join(
+    sysroot,
+    "System32",
+    "WindowsPowerShell",
+    "v1.0",
+    "powershell.exe",
+  )
+  try {
+    if (fs.existsSync(candidate)) return candidate
+  } catch {
+    // fall through to PATH lookup
+  }
+  return "powershell.exe"
+}
+
 export type PsRunner = (
   script: string,
   args: string[],
@@ -70,7 +96,7 @@ export function resolveWinScript(name: string): string {
  */
 export const runPs: PsRunner = async (script, args, opts) => {
   const result = await execFileAsync(
-    "powershell.exe",
+    resolvePowerShellExe(),
     ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script, ...args],
     { encoding: "utf-8", timeout: opts?.timeoutMs ?? PS_DEFAULT_TIMEOUT_MS },
   )
