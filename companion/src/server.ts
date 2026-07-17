@@ -2,19 +2,21 @@
 
 import { WebSocketServer, WebSocket } from "ws"
 
-// Phase 1 W7 — resolve bundle id from host_read/host_write params for
+// Phase 1 W7 — resolve app token from host_read/host_write params for
 // thread-scoped trust + relevantApps in confirmation dialog.
+// Phase 1 W8-windows: platform-aware defaults (win32 uses win.* tokens).
 function resolveHostUseApp(toolName: string, params: any): string {
+  const isWin = os.platform() === "win32"
   if (toolName === "host_read") {
     const app = typeof params?.application === "string" ? params.application : ""
     if (app) return app
     // Phase 0 default when application omitted.
-    return "com.apple.mail"
+    return isWin ? "win.outlook.classic" : "com.apple.mail"
   }
   if (toolName === "host_write") {
     const kind = typeof params?.kind === "string" ? params.kind : ""
-    if (kind === "create") return "com.apple.Notes"
-    if (kind === "move") return "com.apple.finder"
+    if (kind === "create") return isWin ? "win.onenote.desktop" : "com.apple.Notes"
+    if (kind === "move") return isWin ? "win.fs" : "com.apple.finder"
     return ""
   }
   return ""
@@ -30,7 +32,7 @@ import { ThreadManager } from "./threads/thread-manager"
 import { SkillEngine } from "./skills/skill-engine"
 import { HistoryStore } from "./history/store"
 import { checkHighRiskExecution, highRiskExecutionDeniedError, isTrustedDomain, isAutoApprovedDomain, isCloudMetadataIp, isPrivateOrLoopbackIp, detectCriticalApis, classifyMcpCall, mergeCapabilities, CRITICAL_MCP_CAPABILITIES, CRITICAL_MCP_META_TOOLS } from "./security"
-import { SecurityConfirmationManager } from "./security-confirmation"
+import { SecurityConfirmationManager, type SecurityConfirmationDetails, type SecurityConfirmationDecision } from "./security-confirmation"
 import { getThreadApprovals } from "./host-use/thread-approvals"
 import { securityPolicy, getTokenSecret } from "./security-policy"
 import { logger, type LogLevel } from "./logger"
@@ -348,6 +350,12 @@ export function createToolExecutor(ws: WebSocket) {
     // are explicit user opt-in). Vault-app bundle ids (1Password / Keychain /
     // etc) are still blocked unconditionally downstream in
     // host-use/darwin/blacklist.ts.
+    //
+    // Phase 1 W8-windows (adversary amendment A3): when a host_write L2
+    // dialog will show on win32 and Windows Hello is unavailable, the
+    // manual-nonce challenge rides INSIDE this same dialog. Declared here so
+    // the executor can consume the prevalidated nonce after approval.
+    let winL2NonceChallenge: string | undefined
     if ((toolName === "evaluate" || toolName === "osascript_eval" || toolName === "host_read" || toolName === "host_write") && !finalParams.security_token) {
       const code = String(finalParams.code || finalParams.expression || "")
       const lengthCheck = securityPolicy.checkLength(toolName, code)
@@ -433,6 +441,26 @@ export function createToolExecutor(ws: WebSocket) {
           critical_apis: criticalApis,
           force_confirm: forceConfirm,
         })
+        // Phase 1 W8-windows (adversary amendment A3 — single-dialog nonce
+        // routing): for host_write on win32, probe Windows Hello availability
+        // BEFORE showing this L2 dialog. When Hello is unavailable, the
+        // manual-nonce challenge is attached to THIS SAME request (the
+        // extension renders an inline paste-blocked nonce input,
+        // App.tsx:299-377) — no second executor-internal prompt on the
+        // normal path. The standalone executor prompt is retained only for
+        // the skip-L2 path (god-mode / auto-approve).
+        if (toolName === "host_write" && os.platform() === "win32") {
+          const { probeWindowsHello } = await import("./host-use/win")
+          if (!(await probeWindowsHello())) {
+            const { generateManualNonce } = await import("./host-use/nonce")
+            winL2NonceChallenge = generateManualNonce()
+            // Adversary amendment 7a: dedicated downgrade audit event.
+            logger.info("security.biometric.downgrade", {
+              tool_call_id: toolCallId,
+              reason: "windows_hello_unavailable",
+            })
+          }
+        }
         const decision = await securityConfirmations.request(
           (data) => {
             if (ws.readyState === WebSocket.OPEN) {
@@ -447,7 +475,13 @@ export function createToolExecutor(ws: WebSocket) {
             relevantApps: relevantApp ? [relevantApp] : [],
             criticalApis,
             ...(forceConfirm ? { riskLevel: "high" as const, autoConfirmEligible: false } : {}),
+            ...(winL2NonceChallenge ? { nonceChallenge: winL2NonceChallenge } : {}),
           },
+          // Adversary amendment A1: a confirmation carrying a nonce challenge
+          // MUST be origin-bound — otherwise any loopback WS peer could burn
+          // the 3 nonce attempts (DoS). Requests without a nonce keep the
+          // existing broadcast behavior unchanged.
+          winL2NonceChallenge ? { originWs: ws } : undefined,
         )
         if (!decision.approved) {
           const reason = decision.reason === "approved" ? "unavailable" : decision.reason
@@ -761,7 +795,27 @@ export function createToolExecutor(ws: WebSocket) {
     const COMPANION_TOOLS = ["osascript_eval", "host_read", "host_write", "use_skill", "record_experience"]
     if (COMPANION_TOOLS.includes(toolName)) {
       try {
-        const result = await executeCompanionTool(toolName, finalParams, toolCallId)
+        const result = await executeCompanionTool(toolName, finalParams, toolCallId, {
+          // Executor-internal confirmation channel (Phase 1 W8-windows
+          // skip-L2 manual-nonce prompt). Adversary amendment A1: ALWAYS
+          // origin-bound — a ws-bound send alone binds only the outbound
+          // direction; without originWs any loopback WS peer could burn the
+          // 3 nonce attempts (DoS).
+          sendConfirmation: (details) =>
+            securityConfirmations.request(
+              (data) => {
+                if (ws.readyState === WebSocket.OPEN) {
+                  ws.send(JSON.stringify(data))
+                }
+              },
+              details,
+              { originWs: ws },
+            ),
+          // Amendment A3: set only when the L2 dialog above carried this
+          // challenge and was approved (respondFrom resolves "approved" for
+          // a challenge-carrying request only after an exact match).
+          prevalidatedNonce: winL2NonceChallenge,
+        })
         logToolFinish(toolCallId, toolName, startedAt, result)
         return result
       } catch (err: any) {
@@ -1004,8 +1058,16 @@ export async function handleSecurityConfirmationResponse(ws: WebSocket, msg: any
   // approved tool call. Persistence runs after, best-effort. By the time the
   // LLM's next tool call reaches the whitelist gate (next macrotask),
   // fs.writeFileSync has completed.
-  const responded = securityConfirmations.respondFrom(confirmationId, approved, ws)
-  if (!responded) {
+  //
+  // Phase 1 W8-windows / W9: pass the typed manual nonce into respondFrom.
+  // The extension sends nonce_response (uppercased by the UI); matching is
+  // case-insensitive. Adversary amendment A4: nonce_retry / nonce_locked are
+  // dedicated audit events and must NOT be lumped into
+  // origin_mismatch_or_unknown.
+  const nonceResponse = typeof msg.nonce_response === "string" ? msg.nonce_response : undefined
+  const respondResult = securityConfirmations.respondFrom(confirmationId, approved, ws, nonceResponse)
+  const responded = respondResult.outcome === "resolved"
+  if (respondResult.outcome === "unknown" || respondResult.outcome === "origin_mismatch") {
     // Either no such pending entry, or the response arrived on a different
     // socket than the one the confirmation was issued to. [C-SEC-2]: do not
     // silently drop — log so operators can spot the pattern (e.g., a rogue
@@ -1013,6 +1075,20 @@ export async function handleSecurityConfirmationResponse(ws: WebSocket, msg: any
     logger.warn("security.confirmation.origin_mismatch_or_unknown", {
       confirmation_id: confirmationId,
       approved_requested: approved,
+    })
+  } else if (respondResult.outcome === "nonce_retry") {
+    // Wrong code typed — entry stays pending; the client got a
+    // security.confirmation.nonce_retry with attempts_left.
+    logger.warn("security.confirmation.nonce_retry", {
+      confirmation_id: confirmationId,
+      attempts_left: respondResult.attemptsLeft,
+    })
+  } else if (respondResult.outcome === "nonce_locked") {
+    // Max attempts exhausted — confirmation resolved denied.
+    logger.warn("security.confirmation.nonce_locked", {
+      confirmation_id: confirmationId,
+      attempts_left: 0,
+      reason: "max nonce attempts exceeded",
     })
   }
 
@@ -1111,7 +1187,24 @@ export function applyConnectionCloseGracePeriod(): void {
 
 // --- Companion-side tool executor (runs locally, not forwarded to extension) ---
 
-async function executeCompanionTool(toolName: string, params: any, toolCallId?: string): Promise<any> {
+/**
+ * Optional execution context for companion tools. Phase 1 W8-windows uses
+ * this for the manual-nonce fallback routing (adversary amendment A3):
+ *   - Normal path: the L2 dialog carried the nonce challenge; its validated
+ *     value arrives as prevalidatedNonce and the executor skips re-prompting.
+ *   - skip-L2 path (god-mode / auto-approve): the standalone executor prompt
+ *     via sendConfirmation is the sole remaining user gate and IS required.
+ */
+interface CompanionToolExecOptions {
+  /** ws-bound + originWs-bound confirmation request channel (amendment A1). */
+  sendConfirmation?: (
+    details: SecurityConfirmationDetails,
+  ) => Promise<SecurityConfirmationDecision>
+  /** Nonce challenge already validated inside the L2 dialog. */
+  prevalidatedNonce?: string
+}
+
+async function executeCompanionTool(toolName: string, params: any, toolCallId?: string, execOpts?: CompanionToolExecOptions): Promise<any> {
   switch (toolName) {
     case "use_skill": {
       const skillName = params.name
@@ -1272,34 +1365,85 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
           return { success: false, error: "Invalid or expired security token for host_write" }
         }
       }
-      if (os.platform() !== "darwin" && os.platform() !== "linux") {
+      const hostPlatform = os.platform()
+      if (hostPlatform !== "darwin" && hostPlatform !== "linux" && hostPlatform !== "win32") {
         return {
           success: false,
-          error: `host_write is macOS/Linux-only in Phase 1 (platform=${os.platform()})`,
+          error: `host_write is macOS/Linux/Windows-only in Phase 1 (platform=${hostPlatform})`,
         }
       }
       try {
-        const { getDarwinAdapter } = await import("./host-use/darwin/adapter")
-        const adapter = getDarwinAdapter()
+        const isWin = hostPlatform === "win32"
+        // Phase 1 W8-windows: win32 dispatches to the COM/fs-based WinHostAdapter.
+        const adapter = isWin
+          ? (await import("./host-use/win/adapter")).getWinAdapter()
+          : (await import("./host-use/darwin/adapter")).getDarwinAdapter()
         const kind = String(params.kind) as "create" | "move" | "update" | "delete"
 
         // Phase 1 W8/W9: biometric verification BEFORE writeOne.
         // - darwin (W8): Touch ID via Swift binary subprocess
-        // - linux (W9): 6-char manual nonce typed by user (paste-blocked)
+        // - win32  (W8): Windows Hello UserConsentVerifier (OS-hosted dialog,
+        //   unsigned-safe); hardware absent → manual-nonce downgrade
+        // - linux  (W9): 6-char manual nonce typed by user (paste-blocked)
         const reasonMap: Record<string, string> = {
-          create: "Create a new Note",
-          move: "Move a file via Finder",
+          create: isWin ? "Create a new OneNote page" : "Create a new Note",
+          move: "Move a file",
           update: "Update an existing item",
           delete: "Delete an item (destructive)",
         }
         const biometricReason = reasonMap[kind] || `host_write ${kind}`
 
         let nonce: string
-        let method: "touchid" | "manual-nonce"
-        if (os.platform() === "darwin") {
+        let method: "touchid" | "windows-hello" | "manual-nonce"
+        if (hostPlatform === "darwin") {
           const { biometricVerify } = await import("./host-use/darwin")
           nonce = await biometricVerify(toolCallId || "no-tool-call-id", biometricReason)
           method = "touchid"
+        } else if (isWin) {
+          const { tryWindowsHello } = await import("./host-use/win")
+          const hello = await tryWindowsHello(toolCallId || "no-tool-call-id", biometricReason)
+          if ("ok" in hello) {
+            nonce = hello.nonce
+            method = "windows-hello"
+          } else if ("cancelled" in hello) {
+            // Adversary H1: cancel → denied, NEVER downgrade on cancel.
+            throw new Error("host_write denied: Windows Hello verification cancelled by user")
+          } else {
+            // Hello unavailable → manual-nonce downgrade (Round 2 §2.3 tier,
+            // triggered by real hardware state — not process-forgeable).
+            if (execOpts?.prevalidatedNonce) {
+              // Normal path (amendment A3): the challenge rode inside the L2
+              // dialog and was already validated there — no second prompt.
+              nonce = execOpts.prevalidatedNonce
+              method = "manual-nonce"
+            } else {
+              // skip-L2 path (god-mode / auto-approve): the standalone
+              // executor prompt is the sole remaining user gate — REQUIRED.
+              if (!execOpts?.sendConfirmation) {
+                throw new Error(
+                  "host_write: manual-nonce fallback unavailable (no confirmation channel)",
+                )
+              }
+              const { generateManualNonce } = await import("./host-use/nonce")
+              const challenge = generateManualNonce()
+              // Adversary amendment 7a: dedicated downgrade audit event.
+              logger.info("security.biometric.downgrade", {
+                tool_call_id: toolCallId,
+                reason: "windows_hello_unavailable",
+              })
+              const decision = await execOpts.sendConfirmation({
+                toolName: "host_write",
+                dangerousApis: [],
+                code: `host_write ${kind} — Windows Hello unavailable; type the 6-char code to approve`,
+                nonceChallenge: challenge,
+              })
+              if (!decision.approved) {
+                throw new Error(`host_write denied: manual-nonce confirmation ${decision.reason}`)
+              }
+              nonce = challenge
+              method = "manual-nonce"
+            }
+          }
         } else {
           // Phase 1 W9 Linux path: not yet wired through SecurityConfirmationManager
           // (Linux companion itself is RUNBOOK-only in Phase 1 ship). The nonce
@@ -1353,11 +1497,17 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
           return { success: false, error: `host_write: unknown kind "${kind}"` }
         }
         // TargetId for Phase 1 W6/W8:
-        //   create/update/delete (Notes): "macos:com.apple.Notes:default:note-X"
-        //   move (Finder):                "macos:com.apple.finder:default:file-source"
-        const syntheticTarget = kind === "move"
-          ? "macos:com.apple.finder:default:file-source"
-          : "macos:com.apple.Notes:default:note-default"
+        //   darwin create/update/delete (Notes): "macos:com.apple.Notes:default:note-default"
+        //   darwin move (Finder):                "macos:com.apple.finder:default:file-source"
+        //   win32  create/update/delete (OneNote): "win:onenote:default:note-default"
+        //   win32  move (fs):                      "win:fs:default:file-source"
+        const syntheticTarget = isWin
+          ? (kind === "move"
+              ? "win:fs:default:file-source"
+              : "win:onenote:default:note-default")
+          : (kind === "move"
+              ? "macos:com.apple.finder:default:file-source"
+              : "macos:com.apple.Notes:default:note-default")
         const target = adapter.validateTargetId(syntheticTarget)
         const result = await adapter.writeOne(target, payload)
         return { success: true, data: { ...result, biometric_nonce: nonce } }

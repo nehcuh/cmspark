@@ -6,6 +6,32 @@ import type { WebSocket } from "ws"
 export const DEFAULT_SECURITY_CONFIRMATION_TIMEOUT_MS = 45000
 const CODE_PREVIEW_LIMIT = 1200
 
+/**
+ * Phase 1 W8-windows / W9 — max manual-nonce attempts before the confirmation
+ * resolves denied (lockout). Attempts are tracked per pending confirmation;
+ * origin-mismatch responses are rejected BEFORE nonce logic so a rogue
+ * loopback peer cannot burn attempts (adversary amendment A1).
+ */
+export const MAX_NONCE_ATTEMPTS = 3
+
+/**
+ * Outcome of respondFrom — replaces the bare boolean so nonce retries /
+ * lockouts are NEVER logged as security.confirmation.origin_mismatch_or_unknown
+ * (adversary amendment A4: they get their own dedicated audit events).
+ */
+export type ConfirmationRespondOutcome =
+  | "resolved"
+  | "unknown"
+  | "origin_mismatch"
+  | "nonce_retry"
+  | "nonce_locked"
+
+export interface ConfirmationRespondResult {
+  outcome: ConfirmationRespondOutcome
+  /** Remaining nonce attempts after this response (nonce_retry / nonce_locked only). */
+  attemptsLeft?: number
+}
+
 export interface SecurityConfirmationDetails {
   toolName: string
   dangerousApis: string[]
@@ -85,6 +111,15 @@ interface PendingConfirmation {
    * relevantDomains: server tracks what was shown, validates response.
    */
   relevantApps: string[]
+  /**
+   * Phase 1 W8-windows / W9 — manual nonce challenge shown in the dialog
+   * (Windows Hello-unavailable fallback / Linux biometric tier). When set,
+   * an approval resolves only after the typed response matches; mismatches
+   * consume attempts (MAX_NONCE_ATTEMPTS) while the entry stays pending.
+   */
+  nonceChallenge?: string
+  /** Consumed manual-nonce attempts for this confirmation (starts at 0). */
+  nonceAttempts: number
 }
 
 function codePreview(code: string): string {
@@ -124,6 +159,10 @@ export class SecurityConfirmationManager {
         relevantApps: Array.isArray(details.relevantApps)
           ? details.relevantApps.filter((d): d is string => typeof d === "string" && d.length > 0)
           : [],
+        nonceChallenge: typeof details.nonceChallenge === "string" && details.nonceChallenge.length > 0
+          ? details.nonceChallenge
+          : undefined,
+        nonceAttempts: 0,
       })
 
       send({
@@ -177,21 +216,71 @@ export class SecurityConfirmationManager {
   }
 
   /**
+   * Phase 1 W8-windows / W9 — Return the manual-nonce challenge for this
+   * confirmation (undefined when the dialog carries no nonce or the entry is
+   * gone). Test/debug surface; response validation lives in respondFrom.
+   */
+  getNonceChallenge(confirmationId: string): string | undefined {
+    return this.pending.get(confirmationId)?.nonceChallenge
+  }
+
+  /**
    * Resolve a confirmation in response to an inbound security.confirmation.response
    * arriving from `sourceWs`. If the pending entry has originWs set, sourceWs MUST
-   * match — otherwise the response is rejected (returns false) and the original
-   * confirmation stays pending. Returns false if no pending entry exists, or if
-   * the origin check fails.
+   * match — otherwise the response is rejected (outcome "origin_mismatch") and the
+   * original confirmation stays pending. Outcome "unknown" means no pending entry.
+   *
+   * Phase 1 W8-windows / W9 manual nonce: when the entry carries a
+   * nonceChallenge and the response is an approval, `nonceResponse` must match
+   * (case-insensitive). A mismatch consumes one attempt, emits
+   * security.confirmation.nonce_retry to the client, and keeps the entry
+   * pending (outcome "nonce_retry"); the MAX_NONCE_ATTEMPTS-th mismatch
+   * resolves the confirmation denied (outcome "nonce_locked"). Origin check
+   * runs BEFORE nonce logic so a rogue loopback peer cannot burn attempts
+   * (adversary amendment A1).
    */
-  respondFrom(confirmationId: string, approved: boolean, sourceWs?: WebSocket): boolean {
+  respondFrom(
+    confirmationId: string,
+    approved: boolean,
+    sourceWs?: WebSocket,
+    nonceResponse?: string,
+  ): ConfirmationRespondResult {
     const pending = this.pending.get(confirmationId)
-    if (!pending) return false
+    if (!pending) return { outcome: "unknown" }
 
     if (pending.originWs !== undefined && pending.originWs !== sourceWs) {
       // Origin mismatch — a different socket attempted to answer this
       // confirmation. Leave the pending entry intact so the legitimate
       // origin can still respond (or it times out).
-      return false
+      return { outcome: "origin_mismatch" }
+    }
+
+    // Manual-nonce gate: only approvals carry a nonce worth validating;
+    // denials resolve immediately regardless of the typed code.
+    if (approved && pending.nonceChallenge !== undefined) {
+      const expected = pending.nonceChallenge.toUpperCase()
+      const got = (nonceResponse ?? "").trim().toUpperCase()
+      if (got !== expected) {
+        pending.nonceAttempts += 1
+        const attemptsLeft = MAX_NONCE_ATTEMPTS - pending.nonceAttempts
+        if (attemptsLeft <= 0) {
+          clearTimeout(pending.timer)
+          this.pending.delete(confirmationId)
+          pending.send({ type: "security.confirmation.resolved", confirmation_id: confirmationId, approved: false })
+          pending.resolve({
+            confirmationId,
+            approved: false,
+            reason: "denied",
+          })
+          return { outcome: "nonce_locked", attemptsLeft: 0 }
+        }
+        pending.send({
+          type: "security.confirmation.nonce_retry",
+          confirmation_id: confirmationId,
+          attempts_left: attemptsLeft,
+        })
+        return { outcome: "nonce_retry", attemptsLeft }
+      }
     }
 
     clearTimeout(pending.timer)
@@ -202,7 +291,7 @@ export class SecurityConfirmationManager {
       approved,
       reason: approved ? "approved" : "denied",
     })
-    return true
+    return { outcome: "resolved" }
   }
 
   /**

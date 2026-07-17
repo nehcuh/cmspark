@@ -53,17 +53,18 @@ test("[C-SEC-2] respondFrom rejects response from a non-origin socket; original 
 
   const confirmationId = sent[0].confirmation_id
 
-  // Rogue socket attempts to approve — must be rejected (returns false) and
-  // leave the pending entry intact so the legitimate origin can still answer.
+  // Rogue socket attempts to approve — must be rejected (outcome
+  // "origin_mismatch") and leave the pending entry intact so the legitimate
+  // origin can still answer.
   const acceptedFromRogue = manager.respondFrom(confirmationId, true, rogueWs)
-  assert.equal(acceptedFromRogue, false, "respondFrom must reject non-origin socket")
+  assert.equal(acceptedFromRogue.outcome, "origin_mismatch", "respondFrom must reject non-origin socket")
 
   // Original confirmation still pending (no resolved message emitted yet).
   assert.equal(sent.some((m) => m.type === "security.confirmation.resolved"), false)
 
   // Origin socket approves — must succeed.
   const acceptedFromOrigin = manager.respondFrom(confirmationId, true, originWs)
-  assert.equal(acceptedFromOrigin, true)
+  assert.equal(acceptedFromOrigin.outcome, "resolved")
 
   const decision = await pending
   assert.equal(decision.approved, true)
@@ -84,7 +85,7 @@ test("[C-SEC-2] respondFrom with no sourceWs is also rejected for origin-bound e
 
   // respondFrom called with no source ws — must NOT silently resolve an
   // origin-bound confirmation. Forces call sites to pass the source ws.
-  assert.equal(manager.respondFrom(confirmationId, true), false)
+  assert.equal(manager.respondFrom(confirmationId, true).outcome, "origin_mismatch")
 
   // Legacy privileged respond() — bypasses origin check, resolves anything.
   assert.equal(manager.respond(confirmationId, true), true)
@@ -179,7 +180,7 @@ test("[backward compat] request() without originWs still works; any socket may r
   const id = sent[0].confirmation_id
 
   // A different socket responds — broadcast-style must accept it.
-  assert.equal(manager.respondFrom(id, true, ws), true)
+  assert.equal(manager.respondFrom(id, true, ws).outcome, "resolved")
   const decision = await pending2
   assert.equal(decision.approved, true)
 
