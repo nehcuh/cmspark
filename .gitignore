@@ -40,3 +40,4 @@ companion/sql-wasm.wasm
 
 # Claude Code local state
 .claude/
+.tmp/
