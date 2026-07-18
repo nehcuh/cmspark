@@ -27,7 +27,7 @@ $CompanionDir = Join-Path $ProjectRoot "companion"
 $ChromeExtDir = Join-Path $ProjectRoot "chrome-extension"
 $DistDir      = Join-Path $ProjectRoot "dist-package"
 $StagingDir   = Join-Path $DistDir "cmspark-windows-x64"
-$Version      = "0.2.0"
+$Version      = "0.3.0-computer-use"
 
 function Step($n, $total, $msg) {
     Write-Host "[$n/$total] $msg" -ForegroundColor Yellow
@@ -126,8 +126,15 @@ try {
     if (-not (Test-Path "sea-prep.blob")) { Fail "sea-prep.blob not found after generation" }
     Ok "sea-prep.blob generated"
 
-    # Copy node.exe as the base for our exe
-    $NodeExe = (Get-Command node -ErrorAction Stop).Source
+    # Copy node.exe as the base for our exe.
+    # Resolve node.exe specifically — `Get-Command node` may return a node.cmd
+    # shim (e.g. managed runtime wrappers), which postject cannot inject into.
+    $NodeExe = $null
+    foreach ($candidate in @("node.exe", "node")) {
+        $cmd = Get-Command $candidate -ErrorAction SilentlyContinue
+        if ($cmd -and $cmd.Source -like "*.exe") { $NodeExe = $cmd.Source; break }
+    }
+    if (-not $NodeExe) { Fail "Could not resolve a real node.exe on PATH (found only shim wrappers)" }
     $AppExe  = Join-Path $CompanionDir "dist\cmspark-agent.exe"
     Copy-Item $NodeExe $AppExe -Force
     Ok "Copied: $NodeExe -> dist\cmspark-agent.exe"
@@ -211,6 +218,17 @@ $SkillsSrc = "$CompanionDir\builtin-skills"
 if (Test-Path $SkillsSrc) {
     Copy-Item $SkillsSrc "$StagingDir\builtin-skills" -Recurse
     Ok "builtin-skills/"
+}
+
+# Windows host-use PowerShell scripts (computer-use). resolveWinScript candidate 0
+# looks in <exe-dir>\host-scripts-win\ — without this, packaged host_read/host_write
+# fail with ENOENT and Windows Hello silently downgrades to manual-nonce.
+$WinScriptsSrc = "$CompanionDir\src\host-use\win\scripts"
+if (Test-Path $WinScriptsSrc) {
+    Copy-Item $WinScriptsSrc "$StagingDir\host-scripts-win" -Recurse -Filter *.ps1
+    Ok "host-scripts-win/ (Windows host-use scripts)"
+} else {
+    Warn "win host-use scripts not found — host_read/host_write will not work in the package"
 }
 
 # systray2 + its full transitive dependency tree.

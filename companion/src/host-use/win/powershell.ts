@@ -67,6 +67,10 @@ export function resolveWinScript(name: string): string {
     throw new Error("host-use/win: CMSPARK_WIN_SCRIPTS override disabled in production")
   }
   const candidates = [
+    // 0. SEA exe layout: scripts staged next to the executable itself
+    //    (dist-package/cmspark-windows-x64/host-scripts-win/). process.execPath
+    //    is deterministic for a SEA; __dirname semantics vary, so this comes first.
+    path.resolve(path.dirname(process.execPath), "host-scripts-win", name),
     // 1. Packaged: scripts staged next to the bundled companion entry.
     path.resolve(__dirname, "../../host-scripts-win", name),
     // 2. npm dev mode: companion/dist/host-use/win/ → companion/dist/host-scripts-win/.
