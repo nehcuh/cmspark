@@ -2070,6 +2070,35 @@ function validateWsMessage(msg: any): WsValidationResult {
       if (typeof m.thread_id !== "string" || !m.thread_id) return { valid: false, error: "mcp.set_selection requires thread_id" }
       return { valid: true }
     },
+    "apps.list": () => ({ valid: true }),
+    "apps.enumerate": () => ({ valid: true }),
+    "apps.add": (m) => {
+      // Exactly one of path / aumid (the handler re-validates + canonicalizes).
+      const hasPath = typeof m.path === "string" && m.path.length > 0
+      const hasAumid = typeof m.aumid === "string" && m.aumid.length > 0
+      if (hasPath === hasAumid) return { valid: false, error: "apps.add requires exactly one of path / aumid" }
+      if (m.policy !== undefined && !["auto", "ai", "manual"].includes(m.policy)) {
+        return { valid: false, error: "apps.add policy must be auto, ai, or manual" }
+      }
+      if (m.display_name !== undefined && typeof m.display_name !== "string") {
+        return { valid: false, error: "apps.add display_name must be a string" }
+      }
+      return { valid: true }
+    },
+    "apps.remove": (m) => {
+      if (typeof m.token !== "string" || !m.token) return { valid: false, error: "apps.remove requires token" }
+      return { valid: true }
+    },
+    "apps.set_policy": (m) => {
+      if (typeof m.token !== "string" || !m.token) return { valid: false, error: "apps.set_policy requires token" }
+      if (!["auto", "ai", "manual"].includes(m.policy)) return { valid: false, error: "apps.set_policy policy must be auto, ai, or manual" }
+      return { valid: true }
+    },
+    "apps.set_enabled": (m) => {
+      if (typeof m.token !== "string" || !m.token) return { valid: false, error: "apps.set_enabled requires token" }
+      if (typeof m.enabled !== "boolean") return { valid: false, error: "apps.set_enabled requires boolean enabled" }
+      return { valid: true }
+    },
     "tab.navigated": (m) => {
       if (typeof m.tabId !== "number") return { valid: false, error: "tab.navigated requires tabId number" }
       if (typeof m.url !== "string" || !m.url) return { valid: false, error: "tab.navigated requires url string" }
@@ -2544,6 +2573,20 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
               }
             },
             executeTool,
+            // App tab D2 biometric gates (apps.add/set_policy →auto): same
+            // origin-bound confirmation channel as executeTool's
+            // sendConfirmation above — nonce-carrying confirmations resolve
+            // only on the socket that requested them (amendment A1).
+            requestConfirmation: (details) =>
+              securityConfirmations.request(
+                (data) => {
+                  if (ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify(data))
+                  }
+                },
+                details,
+                { originWs: ws },
+              ),
             broadcast: (data: any) => {
               const message = JSON.stringify(data)
               for (const client of clients) {

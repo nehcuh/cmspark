@@ -25,6 +25,11 @@ import { checkHighRiskExecution } from "./security"
 import { securityPolicy } from "./security-policy"
 import { getMcpManager } from "./mcp"
 import { logger } from "./logger"
+import { handleAppsMessage } from "./apps/handlers"
+import type {
+  SecurityConfirmationDecision,
+  SecurityConfirmationDetails,
+} from "./security-confirmation"
 import type {
   McpServerConfig,
   McpServerMeta,
@@ -73,6 +78,15 @@ interface SessionCallbacks {
   sendToExtension: (data: any) => void
   executeTool: (toolCallId: string, toolName: string, params: any, signal?: AbortSignal) => Promise<{ success: boolean; data?: any; error?: string }>
   broadcast?: (data: any) => void
+  /**
+   * Origin-bound security-confirmation channel (App tab D2 biometric gates).
+   * server.ts wires this exactly like executeTool's sendConfirmation —
+   * securityConfirmations.request(..., { originWs: ws }) — so a confirmation
+   * carrying a nonce challenge can only be resolved by the originating socket.
+   */
+  requestConfirmation?: (
+    details: SecurityConfirmationDetails,
+  ) => Promise<SecurityConfirmationDecision>
 }
 
 export async function handleMessage(
@@ -920,6 +934,20 @@ export async function handleMessage(
       }
       return { type: "mcp.selection_updated", thread_id: rest.thread_id }
     }
+
+    // --- Apps (App tab, WP2) — delegated to apps/handlers.ts so gate/fs deps
+    // stay injectable in tests. Mutations validate+normalize before
+    // replaceAppsEntries and broadcast apps.updated (mcp.servers.updated parity).
+    case "apps.list":
+    case "apps.enumerate":
+    case "apps.add":
+    case "apps.remove":
+    case "apps.set_policy":
+    case "apps.set_enabled":
+      return handleAppsMessage(msg, {
+        requestConfirmation: session?.requestConfirmation,
+        broadcast: session?.broadcast,
+      })
     case "skill.activate": {
       skillEngine.activate(rest.thread_id, rest.skill_name)
       const thread = threadManager.get(rest.thread_id)
