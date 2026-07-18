@@ -32,7 +32,15 @@ export interface EvidenceActionRecord {
   y?: number
   layer?: string
   confidence?: number
+  /**
+   * WP1 honest semantics (review R4): true means the PIXEL-REGION channel
+   * confirmed target stability between the locate frame and the pre-inject
+   * frame. This is a pixel-STABILITY cross-check, NOT a semantic OCR↔UIA
+   * verification — WP1 has no second semantic layer (that arrives with WP3).
+   */
   crossverified: boolean
+  /** Which channel verified: "pixel-region" (WP1). Absent when not verified. */
+  crossverifyChannel?: string
   uncrossverified: boolean
   dangerScan?: { regionLevel: string; windowLevel: string; regionHits: string[]; windowHits: string[] }
   beforeSha256?: string

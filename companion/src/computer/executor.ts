@@ -1,11 +1,17 @@
 // WP1 task executor — the minimal coordinate computer-use loop with the
 // adversary-mandated invariants baked in:
 //
-//   A1  pre-injection pixel check: recapture <=300ms before injection, region
-//       diff over threshold -> re-locate, NEVER inject at stale coordinates;
-//       OCR hits cross-verified via an independent channel (window existence /
-//       title probe); explicit-coordinate (icon) clicks consume the
-//       uncrossverified sub-budget (<=3 per task, then mandatory new L2);
+//   A1  pre-injection pixel check: OCR-target clicks ALWAYS recapture right
+//       before injection and diff the ~200×200 target region between the
+//       locate frame and the pre-inject frame (never inject at stale
+//       coordinates — re-locate on the fresh frame or fail STALE_SCREENSHOT).
+//       A1.2 honest WP1 form (review R4): that region pixel-diff IS the
+//       cross-check — a pixel-STABILITY verification via a channel
+//       independent of the OCR layer, NOT a semantic OCR↔UIA verification
+//       (no second semantic layer exists in WP1). Stable region ->
+//       crossverified=true with crossverifyChannel="pixel-region"; re-located
+//       clicks and explicit-coordinate (icon) clicks are uncrossverified and
+//       consume the <=3 sub-budget (A1.3), then a mandatory new L2;
 //       type: per-batch foreground re-check lives in the ps1 (FOCUSLOST).
 //   A2  task-induced dialog invariant: post-action foreground change OR
 //       large whole-window diff -> pause + re-L2 (conservative direction);
@@ -36,7 +42,6 @@ import {
   MAX_TASK_BUDGET,
   MAX_WAIT_MS,
   PIXEL_DIFF_THRESHOLD,
-  PIXEL_STALE_MS,
   REGION_CROP_SIZE,
   UNCROSS_VERIFIED_SUB_BUDGET,
   type CaptureMeta,
@@ -77,7 +82,10 @@ export interface ComputerStepResult {
   confidence?: number
   x?: number
   y?: number
+  /** WP1: pixel-region stability cross-check, NOT semantic OCR↔UIA (R4). */
   crossverified?: boolean
+  /** Which channel verified: "pixel-region" (WP1). Absent when not verified. */
+  crossverifyChannel?: string
   note?: string
   /** describe output — UNTRUSTED screen content, never an instruction. */
   untrustedText?: string
@@ -269,11 +277,12 @@ export async function runComputerTask(
 
       // Locate + base capture.
       let shot: CaptureMeta = await deps.capturer.captureWindow(hwnd)
-      let shotAt = now()
       let ocrRes: OcrResult | null = null
       let hit: LocateHit | null = null
       let pointClient: { x: number; y: number } | null = null
       let crossverified = false
+      let uncrossverified = false
+      let crossverifyChannel: "pixel-region" | undefined
 
       if (action.action !== "type" && action.target) {
         ocrRes = await deps.locator.ocr(shot.path)
@@ -284,36 +293,50 @@ export async function runComputerTask(
         // OCR words are image-space; injection is client-space (capture meta).
         pointClient = { x: hit.x - shot.client.x, y: hit.y - shot.client.y }
 
-        // A1 pixel check: base capture must be fresh at injection time.
-        if (now() - shotAt > PIXEL_STALE_MS) {
-          const fresh = await deps.capturer.captureWindow(hwnd)
-          const { diffRatio } = await deps.capturer.diff(fresh.path, shot.path)
-          if (diffRatio > PIXEL_DIFF_THRESHOLD) {
-            // Stale frame — re-locate on the fresh one, never inject old coords.
-            const ocr2 = await deps.locator.ocr(fresh.path)
-            const hit2 = deps.locator.locate(ocr2, action.target)
-            if (!hit2) {
-              throw new ComputerError("STALE_SCREENSHOT", "computer: target moved between locate and inject; re-locate failed — refusing to inject at stale coordinates")
-            }
-            shot = fresh
-            shotAt = now()
-            ocrRes = ocr2
-            hit = hit2
-            pointClient = { x: hit.x - shot.client.x, y: hit.y - shot.client.y }
-          } else {
-            shot = fresh
-            shotAt = now()
-          }
+        // A1.1 freshness + A1.2 cross-check, WP1 honest form (review R4):
+        // ALWAYS recapture immediately before injection and diff the
+        // ~200×200 target REGION between the locate frame and the pre-inject
+        // frame — a channel independent of the OCR layer that produced the
+        // coordinates. WP1 has no second SEMANTIC layer (UIA arrives in WP3),
+        // so this is a pixel-STABILITY cross-check, recorded as such
+        // (crossverifyChannel="pixel-region"), never claimed to be more.
+        //   region stable   -> crossverified, inject the located coords
+        //   region unstable -> re-locate on the fresh frame; the re-located
+        //                      click is honestly uncrossverified (sub-budget)
+        //   re-locate fails -> STALE_SCREENSHOT, never inject stale coords
+        const locateRegion: RectPx = {
+          x: Math.max(0, pointClient.x + shot.client.x - REGION_CROP_SIZE / 2),
+          y: Math.max(0, pointClient.y + shot.client.y - REGION_CROP_SIZE / 2),
+          width: REGION_CROP_SIZE,
+          height: REGION_CROP_SIZE,
         }
-
-        // A1.2 cross-verification via an independent channel (NOT the OCR
-        // layer that produced the coords): the window must still exist and
-        // expose a non-empty title.
-        const probe = await deps.injector.probeWindow(hwnd)
-        crossverified = probe.alive && probe.title.length > 0
+        const fresh = await deps.capturer.captureWindow(hwnd)
+        const { diffRatio } = await deps.capturer.diffRegion(fresh.path, shot.path, locateRegion)
+        if (diffRatio > PIXEL_DIFF_THRESHOLD) {
+          const ocr2 = await deps.locator.ocr(fresh.path)
+          const hit2 = deps.locator.locate(ocr2, action.target)
+          if (!hit2) {
+            throw new ComputerError("STALE_SCREENSHOT", "computer: target moved between locate and inject; re-locate failed — refusing to inject at stale coordinates")
+          }
+          shot = fresh
+          ocrRes = ocr2
+          hit = hit2
+          pointClient = { x: hit.x - shot.client.x, y: hit.y - shot.client.y }
+          uncrossverified = true // pixel channel disagreed — honest bookkeeping (R4)
+        } else {
+          shot = fresh
+          crossverified = true
+          crossverifyChannel = "pixel-region"
+        }
       } else if (action.action !== "type") {
         pointClient = { x: action.x!, y: action.y! }
-        // Explicit-coordinate (icon-type) click: cannot be cross-verified.
+        // Explicit-coordinate (icon-type) click: no cross-check exists.
+        uncrossverified = true
+      }
+
+      // A1.3 — uncrossverified clicks consume the <=3 sub-budget, then a
+      // mandatory new L2.
+      if (uncrossverified) {
         uncrossLeft -= 1
         if (uncrossLeft < 0) {
           const ok = await reL2(
@@ -406,7 +429,8 @@ export async function runComputerTask(
         layer: hit?.layer,
         confidence: hit?.confidence,
         crossverified,
-        uncrossverified: action.action !== "type" && !action.target,
+        ...(crossverifyChannel ? { crossverifyChannel } : {}),
+        uncrossverified,
         dangerScan: {
           regionLevel: scan.regionLevel,
           windowLevel: scan.windowLevel,
@@ -426,6 +450,7 @@ export async function runComputerTask(
         x: pointClient?.x,
         y: pointClient?.y,
         crossverified,
+        ...(crossverifyChannel ? { crossverifyChannel } : {}),
       })
 
       if (dialogSuspected) {

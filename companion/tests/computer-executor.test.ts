@@ -91,6 +91,11 @@ class FakeCapturer implements ScreenCapturer {
     this.diffs.push(v)
     return { diffRatio: v }
   }
+  async diffRegion(): Promise<{ diffRatio: number }> {
+    // R4 pixel channel consumes the SAME script as whole-frame diffs, in
+    // call order (region check runs before the post-action whole diff).
+    return this.diff()
+  }
 }
 
 const realLocate = PsLocator.prototype.locate
@@ -177,7 +182,7 @@ const clickOk: ComputerAction = { action: "click", target: "确定" }
 
 // --- happy path ---------------------------------------------------------------
 
-test("executor: OCR-located click executes and is crossverified via the window channel", async () => {
+test("executor: OCR-located click executes and is crossverified via the pixel-region channel (R4)", async () => {
   const injector = new RecordingInjector()
   const evidence = new FakeEvidence()
   const deps = makeDeps({ injector, evidenceFactory: () => evidence })
@@ -187,6 +192,8 @@ test("executor: OCR-located click executes and is crossverified via the window c
   // OCR image-space (190,223) - client offset (10,40) = client (180,183)
   assert.deepEqual([injector.clicks[0].x, injector.clicks[0].y], [180, 183])
   assert.equal(evidence.records[0].crossverified, true)
+  assert.equal(evidence.records[0].crossverifyChannel, "pixel-region", "R4: honest channel label, not semantic OCR<->UIA")
+  assert.equal(evidence.records[0].uncrossverified, false)
   assert.equal(evidence.records[0].layer, "ocr")
   assert.equal(evidence.sealed.length, 2) // before + after
 })
@@ -239,14 +246,12 @@ test("executor: coordinates outside the client rect -> OUT_OF_BOUNDS (never clam
 
 // --- A1 pixel check -------------------------------------------------------------
 
-test("executor: stale frame with failed re-locate -> STALE_SCREENSHOT, no injection", async () => {
-  let tick = 0
-  const clock = () => (tick += 500) // every now() call jumps 500ms > 300ms budget
-  const capturer = new FakeCapturer([0.5]) // recapture diff = 0.5 > threshold
-  const locator = new FakeLocator([]) // re-locate on the fresh frame finds nothing
+test("executor: unstable region with failed re-locate -> STALE_SCREENSHOT, no injection", async () => {
+  const capturer = new FakeCapturer([0.5]) // region diff = 0.5 > threshold
   const injector = new RecordingInjector()
-  const deps = makeDeps({ capturer, locator, injector, now: clock })
-  // First locate happens on a locator with words... use two-stage locator:
+  const deps = makeDeps({ capturer, injector })
+  // Two-stage locator: first locate succeeds, re-locate on the fresh frame
+  // finds nothing.
   const twoStage: Locator = {
     async ensureLanguage() {},
     calls: 0,
@@ -262,9 +267,7 @@ test("executor: stale frame with failed re-locate -> STALE_SCREENSHOT, no inject
   assert.equal(injector.clicks.length, 0)
 })
 
-test("executor: stale frame with successful re-locate proceeds with FRESH coordinates", async () => {
-  let tick = 0
-  const clock = () => (tick += 500)
+test("executor: unstable region with successful re-locate proceeds with FRESH coordinates, honestly uncrossverified", async () => {
   const capturer = new FakeCapturer([0.5])
   const twoStage: Locator = {
     async ensureLanguage() {},
@@ -277,11 +280,16 @@ test("executor: stale frame with successful re-locate proceeds with FRESH coordi
     locate(result: OcrResult, text: string) { return realLocate.call(this, result, text) },
   } as unknown as Locator
   const injector = new RecordingInjector()
-  const deps = makeDeps({ capturer, locator: twoStage, injector, now: clock })
+  const evidence = new FakeEvidence()
+  const deps = makeDeps({ capturer, locator: twoStage, injector, evidenceFactory: () => evidence })
   const r = await runComputerTask({ task: "t", app: "win.app.test", actions: [clickOk] }, deps)
   assert.equal(r.success, true)
   // fresh coords: image (290,223) - offset (10,40) = (280,183)
   assert.deepEqual([injector.clicks[0].x, injector.clicks[0].y], [280, 183])
+  // R4: the pixel channel DISAGREED — the re-located click is uncrossverified
+  assert.equal(evidence.records[0].crossverified, false)
+  assert.equal(evidence.records[0].uncrossverified, true)
+  assert.equal(evidence.records[0].crossverifyChannel, undefined)
 })
 
 // --- uncrossverified sub-budget -------------------------------------------------
@@ -418,7 +426,8 @@ test("executor: foreground change after action -> pause + re-L2; denial stops (A
 
 test("executor: large post-action whole-window diff -> dialog pause re-L2", async () => {
   const confirm = scriptedConfirm([true])
-  const capturer = new FakeCapturer([0.9]) // post-action diff
+  // [region cross-check 0 = stable, post-action whole-window diff 0.9]
+  const capturer = new FakeCapturer([0, 0.9])
   const deps = makeDeps({ confirm: confirm.fn, capturer })
   const r = await runComputerTask({ task: "t", app: "win.app.test", actions: [clickOk] }, deps)
   assert.equal(r.success, true, "approved re-L2 lets the task finish")

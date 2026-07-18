@@ -190,6 +190,13 @@ export interface ScreenCapturer {
   crop(srcPath: string, rect: RectPx, outPath: string): Promise<string>
   /** diffRatio in [0,1] between two same-subject captures (optional crop on A). */
   diff(aPath: string, bPath: string, crop?: RectPx): Promise<{ diffRatio: number }>
+  /**
+   * The R4 pixel channel: diffRatio in [0,1] between the SAME `region` rect
+   * of two captures — crops BOTH frames to the rect internally and diffs the
+   * crops (diff()'s optional crop only applies to A; see N4). Temp crops are
+   * created and deleted inside the adapter; the caller tracks no extra raws.
+   */
+  diffRegion(aPath: string, bPath: string, region: RectPx): Promise<{ diffRatio: number }>
 }
 
 export interface Locator {

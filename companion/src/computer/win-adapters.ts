@@ -129,6 +129,23 @@ export class PsScreenCapturer implements ScreenCapturer {
     const r = parsePsJson<any>(stdout!, "computer.diff")
     return { diffRatio: Number(r.diffRatio ?? 1) }
   }
+
+  async diffRegion(aPath: string, bPath: string, region: RectPx): Promise<{ diffRatio: number }> {
+    // R4 pixel channel: crop BOTH frames to the same rect, diff the crops.
+    // The temp crops live and die inside this call — the executor's raw
+    // tracking (R1) never sees them.
+    const ca = tmpPng("diffregion-a")
+    const cb = tmpPng("diffregion-b")
+    try {
+      await this.crop(aPath, region, ca)
+      await this.crop(bPath, region, cb)
+      return await this.diff(ca, cb)
+    } finally {
+      for (const p of [ca, cb]) {
+        try { fs.rmSync(p, { force: true }) } catch { /* best-effort */ }
+      }
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
