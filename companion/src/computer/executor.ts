@@ -356,7 +356,11 @@ export async function runComputerTask(
           { hits: scan.windowHits },
         )
       }
-      if (scan.regionLevel === "hard") {
+      if (scan.regionLevel === "hard" && action.action !== "type") {
+        // A4 no-path deny — scoped to the final-confirm CLICK (review R5).
+        // For a type action the "region" IS the whole window (above), so a
+        // region-hard verdict there is really window-level financial context
+        // and keeps a path: it falls through to the re-L2 branch below.
         throw new ComputerError(
           "DANGER_HARD_DENY",
           `computer: click target matches a payment/transfer/captcha final-confirm (${scan.regionHits.join(", ")}) — hard-denied, no re-confirm path (A4)`,

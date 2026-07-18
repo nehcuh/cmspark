@@ -348,6 +348,33 @@ test("executor: payment word in the click region -> DANGER_HARD_DENY with NO re-
   assert.equal(confirm.captured.length, 0, "hard deny has NO re-confirm path")
 })
 
+test("executor: window-level payment word + type -> re-L2 (has a path), NOT hard deny (R5)", async () => {
+  const confirm = scriptedConfirm([true])
+  const injector = new RecordingInjector()
+  const locator = new FakeLocator([{ text: "立即支付", x: 400, y: 300, w: 120, h: 30 }])
+  const deps = makeDeps({ confirm: confirm.fn, injector, locator })
+  const r = await runComputerTask(
+    { task: "t", app: "win.app.test", actions: [{ action: "type", text: "青花瓷" }] },
+    deps,
+  )
+  assert.equal(r.success, true, "approved re-L2 lets the type proceed")
+  assert.equal(confirm.captured.length, 1, "window-level hard goes through the re-L2 channel")
+  assert.deepEqual(injector.types.map((t) => t.text), ["青花瓷"])
+})
+
+test("executor: window-level payment word + type, re-L2 denied -> DANGER_DENIED_BY_USER (R5)", async () => {
+  const confirm = scriptedConfirm([false])
+  const injector = new RecordingInjector()
+  const locator = new FakeLocator([{ text: "立即支付", x: 400, y: 300, w: 120, h: 30 }])
+  const deps = makeDeps({ confirm: confirm.fn, injector, locator })
+  const r = await runComputerTask(
+    { task: "t", app: "win.app.test", actions: [{ action: "type", text: "青花瓷" }] },
+    deps,
+  )
+  assert.equal(r.errorCode, "DANGER_DENIED_BY_USER")
+  assert.equal(injector.types.length, 0, "denied re-L2 blocks the injection")
+})
+
 test("executor: destructive word in region -> re-L2; denial blocks the click (A2)", async () => {
   const confirm = scriptedConfirm([false])
   const injector = new RecordingInjector()
