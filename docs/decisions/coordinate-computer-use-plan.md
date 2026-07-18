@@ -247,6 +247,7 @@ Locator.locate(screenshot, hwnd, target: { kind: "text", value } | { kind: "desc
 ### WP1 — 最小回路（可独立验证） ⭐
 - **范围**：截图（BitBlt + DPI 物理像素 + 黑图检测）→ OCR 定位层（`computer-ocr.ps1`，E3/E10 模式）→ SendInput click/type（同 IL + 逐动作 IL/桌面名校验）→ 自绘夹具（G.1）→ 任务级 L2（critical-class、originWs、预算骨架）→ 证据链 v1。内嵌 spike：S-4（PrintWindow 对夹具/网易云出图）、S-5（同 IL SendInput 可用性 + OSR 丢键率）、S-6（OCR 中文语言包）、S-7（前台焦点成功率）。
 - **A1.2 的 WP1 诚实形态（WP1 评审 R4）**：WP1 无 UIA/模型第二语义层，OCR 命中的「独立层交叉验证」以**像素通道**替身实现——OCR 定位点击在注入前必重截一帧，对 ~200×200 目标区域裁片跑 imgdiff（独立于 OCR 的通道）；区域稳定才记 `crossverified=true` 且证据字段 `crossverifyChannel:"pixel-region"` 明示这是**像素稳定性互证、非语义互证**；区域不稳定则在新鲜帧上重定位，重定位后的点击记 `uncrossverified` 并与图标点击同吃 ≤3 子预算（A1.3 保守读法）。UIA↔OCR 语义互证随 WP3 落地后取代像素替身。
+- **A2.1 差分通道的「阈值—面积」定量关系（对抗裁决 X1）**：整窗 diffRatio 本质是面积比下限——500×350 对话框在 1054×736 窗口理论 ≈0.22，真实渲染（白底叠浅灰窗体）实测仅 ≈0.12，**必然漏过 0.3 阈值**；最大化（1920×1080）进一步摊薄到 ≈0.08。故 WP1 对话框检测为四通道 OR：前台 hwnd 变化、同 exe 新顶层窗口、整窗 diffRatio>0.3、**8×8 宏区覆盖率 maxZoneRatio≥0.5**（对话框整片饱和所在宏区，实测 0.75–1.0）、**最大 4-连通差分块 maxBlobRatio≥0.05**（对话框是一个连通大块，实测 0.058–0.22；闪烁光标 ≈0.001）。**残余盲区（明示）**：面积 <5% 的小型弹层/通知三像素通道全部漏检，只有当其成为新顶层窗口或抢占前台时才被捕获——OSR 同 hwnd 自绘小弹层在 WP1 无可靠检出手段，列入 WP3 UIA WindowOpened 事件与 WP7 红队语料的明示债务。
 - **验收**：夹具上「点击『确定』」「在输入框输入『青花瓷』」端到端通过；IL/桌面名 fail-closed 单测齐；证据落盘可查；OCR 中文缺失语言包时诚实跳过该层。
 - **不做**：UIA 层、模型层、云图层、UI 美化。
 

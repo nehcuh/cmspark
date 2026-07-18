@@ -43,6 +43,8 @@ import {
   corpusHashOf,
   corpusOf,
   DIALOG_DIFF_THRESHOLD,
+  DIALOG_BLOB_THRESHOLD,
+  DIALOG_ZONE_THRESHOLD,
   DEFAULT_TASK_BUDGET,
   INJECTIVE_ACTIONS,
   MAX_TASK_BUDGET,
@@ -480,6 +482,12 @@ export async function runComputerTask(
         if (!ok) throw new ComputerError("DANGER_DENIED_BY_USER", "computer: dangerous action denied at re-confirm")
       }
 
+      // X1: snapshot the exe's top-level hwnds BEFORE injection — a new
+      // top-level window afterwards is dialog evidence independent of pixels.
+      const beforeWinHwnds = new Set(
+        (await deps.windows.enumerateByExe(entry.exe!.path).catch(() => [])).map((w) => w.hwnd),
+      )
+
       // Inject (ps1 re-checks IL/desktop/bounds; type re-checks foreground).
       if (action.action === "type") {
         await deps.injector.typeText(hwnd, action.text)
@@ -491,11 +499,24 @@ export async function runComputerTask(
       // A2.1 — task-induced dialog invariant (post-action): a new foreground
       // window OR a large whole-window change => pause + re-L2. Conservative
       // direction: false positives pause the task, never the reverse.
+      // X1: a whole-window ratio quantitatively misses LOCAL popups (a 500x350
+      // dialog in a 1054x736 window measures ~0.12 — far under 0.3), so the
+      // detector is an OR over FOUR independent channels: foreground change,
+      // new top-level window of the same exe, whole-window diff, and the two
+      // zoned metrics (8x8 macro-zone coverage; largest 4-connected blob).
+      // Absent zoned channels (old script, fakes) simply do not participate.
       // NOTE: the diff must run BEFORE any sealing — the sealer deletes raws.
       const afterShot = await trackCapture(hwnd)
       const fg = await deps.injector.foregroundHwnd()
-      const { diffRatio } = await deps.capturer.diff(afterShot.path, shot.path)
-      const dialogSuspected = (fg !== 0 && fg !== hwnd) || diffRatio > DIALOG_DIFF_THRESHOLD
+      const { diffRatio, maxZoneRatio, maxBlobRatio } = await deps.capturer.diff(afterShot.path, shot.path)
+      const afterWinHwnds = await deps.windows.enumerateByExe(entry.exe!.path).catch(() => [])
+      const newTopLevel = afterWinHwnds.some((w) => !beforeWinHwnds.has(w.hwnd))
+      const dialogSuspected =
+        (fg !== 0 && fg !== hwnd) ||
+        newTopLevel ||
+        diffRatio > DIALOG_DIFF_THRESHOLD ||
+        (maxZoneRatio !== undefined && maxZoneRatio >= DIALOG_ZONE_THRESHOLD) ||
+        (maxBlobRatio !== undefined && maxBlobRatio >= DIALOG_BLOB_THRESHOLD)
 
       // Seal both frames into the evidence chain (credential neighborhoods
       // pixelated BEFORE the bytes are encrypted; raws deleted by the sealer).
@@ -537,7 +558,15 @@ export async function runComputerTask(
       })
 
       if (dialogSuspected) {
-        log("computer.task.dialog_suspected", { taskId, seq, fgChanged: fg !== hwnd, diffRatio })
+        log("computer.task.dialog_suspected", {
+          taskId,
+          seq,
+          fgChanged: fg !== hwnd,
+          newTopLevel,
+          diffRatio,
+          maxZoneRatio,
+          maxBlobRatio,
+        })
         const ok = await reL2(
           "本任务的操作引发了新对话框或大面积界面变化（确认型对话框的按钮不会由 agent 点击）。请检查目标窗口后决定是否继续。",
           ["computer.task_induced_dialog"],

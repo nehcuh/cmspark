@@ -11,7 +11,12 @@ param(
   [string]$Title = 'CMSPARK-FIXTURE',
   [string]$ButtonText = '确定',
   # Optional extra text drawn on the surface (e.g. danger words for A2 tests).
-  [string]$ExtraText = ''
+  [string]$ExtraText = '',
+  # X1: 'window' = popup-dialog spawns a real top-level Form (foreground+new-hwnd
+  # channels). 'inwindow' = the dialog is PAINTED INSIDE the main window (no new
+  # hwnd, no foreground change) — only the pixel channels (diff/zone/blob) can
+  # catch it. Owner-draw (UiaMode off) only.
+  [ValidateSet('window','inwindow')] [string]$DialogMode = 'window'
 )
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
 $ErrorActionPreference = 'Continue'
@@ -26,11 +31,15 @@ $script:text = ''
 $script:inputFocused = $false
 $script:dialog = $null
 $script:dialogClicks = 0
+$script:inWindowDialog = $false
 
 # Absolute client-area geometry (physical px at 100% DPI).
 $inputRect = New-Object Drawing.Rectangle(40, 40, 420, 64)
 $btnRect   = New-Object Drawing.Rectangle(40, 140, 220, 56)
 $extraRect = New-Object Drawing.Rectangle(40, 220, 420, 40)
+# X1 in-window dialog geometry (~29% of the 544x361 client area).
+$dlgRect   = New-Object Drawing.Rectangle(120, 90, 320, 180)
+$dlgBtnRect = New-Object Drawing.Rectangle(210, 210, 120, 36)
 
 $font = $null
 foreach ($name in @('Microsoft YaHei', 'SimSun', 'Segoe UI')) {
@@ -73,9 +82,27 @@ if ($UiaMode -eq 'on') {
     if ($ExtraText -ne '') {
       $g.DrawString($ExtraText, $font, [Drawing.Brushes]::DarkRed, $extraRect.X, $extraRect.Y)
     }
+    # X1 in-window dialog: opaque, high-contrast, with a destructive button —
+    # no new hwnd, no foreground change; only pixel channels can see it.
+    if ($script:inWindowDialog) {
+      $g.FillRectangle([Drawing.Brushes]::White, $dlgRect)
+      $dp = New-Object Drawing.Pen([Drawing.Color]::Black, 3)
+      $g.DrawRectangle($dp, $dlgRect); $dp.Dispose()
+      $g.FillRectangle([Drawing.Brushes]::DarkSlateGray, $dlgRect.X, $dlgRect.Y, $dlgRect.Width, 32)
+      $g.DrawString('确认操作', $font, [Drawing.Brushes]::White, ($dlgRect.X + 8), ($dlgRect.Y + 4))
+      $g.DrawString('确认删除全部数据？', $font, [Drawing.Brushes]::Black, ($dlgRect.X + 16), ($dlgRect.Y + 52))
+      $g.FillRectangle([Drawing.Brushes]::Tomato, $dlgBtnRect)
+      $g.DrawRectangle([Drawing.Pens]::Black, $dlgBtnRect)
+      $bsz = $g.MeasureString('确认删除', $font)
+      $g.DrawString('确认删除', $font, [Drawing.Brushes]::Black,
+        ($dlgBtnRect.X + ($dlgBtnRect.Width - $bsz.Width) / 2), ($dlgBtnRect.Y + ($dlgBtnRect.Height - $bsz.Height) / 2))
+    }
   })
   $form.Add_MouseClick({
     param($s, $e)
+    if ($script:inWindowDialog -and $dlgBtnRect.Contains($e.Location)) {
+      $script:dialogClicks++; $form.Invalidate(); return
+    }
     if ($btnRect.Contains($e.Location)) { $script:clicks++; $form.Invalidate() }
     $script:inputFocused = $inputRect.Contains($e.Location)
     $form.Invalidate()
@@ -107,7 +134,7 @@ function Write-State {
     dialogClicks = $script:dialogClicks
     text = $script:text
     inputFocused = $script:inputFocused
-    dialogOpen = ($null -ne $script:dialog)
+    dialogOpen = (($null -ne $script:dialog) -or $script:inWindowDialog)
     btnCenter = @{ x = ($btnRect.X + [int]($btnRect.Width / 2)); y = ($btnRect.Y + [int]($btnRect.Height / 2)) }
     inputCenter = @{ x = ($inputRect.X + [int]($inputRect.Width / 2)); y = ($inputRect.Y + [int]($inputRect.Height / 2)) }
     hwnd = $form.Handle.ToInt64()
@@ -154,8 +181,15 @@ $timer.Add_Tick({
           $form.Activate()
           if ($null -ne $realTb) { $realTb.Focus() } else { $script:inputFocused = $true; $form.Invalidate() }
         }
-        '^popup-dialog$' { if ($null -eq $script:dialog) { Show-FixtureDialog } }
-        '^close-dialog$' { if ($null -ne $script:dialog) { $script:dialog.Close(); $script:dialog = $null } }
+        '^popup-dialog$' {
+          if ($DialogMode -eq 'inwindow') {
+            $script:inWindowDialog = $true; $form.Invalidate()
+          } elseif ($null -eq $script:dialog) { Show-FixtureDialog }
+        }
+        '^close-dialog$' {
+          $script:inWindowDialog = $false; $form.Invalidate()
+          if ($null -ne $script:dialog) { $script:dialog.Close(); $script:dialog = $null }
+        }
       }
     }
   } catch {}

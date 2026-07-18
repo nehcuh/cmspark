@@ -12,6 +12,7 @@ import {
   ComputerError,
   type CaptureMeta,
   type ComputerAction,
+  type DiffMetrics,
   type InputInjector,
   type Locator,
   type OcrResult,
@@ -77,11 +78,14 @@ function shot(path: string): CaptureMeta {
   }
 }
 
+/** X1: script entries are either a bare diffRatio or full zoned metrics. */
+type DiffScriptEntry = number | DiffMetrics
+
 class FakeCapturer implements ScreenCapturer {
   captures = 0
   paths: string[] = []
   diffs: number[] = []
-  constructor(private diffScript: number[] = []) {}
+  constructor(private diffScript: DiffScriptEntry[] = []) {}
   async captureWindow(): Promise<CaptureMeta> {
     this.captures += 1
     const p = `cap-${this.captures}.png`
@@ -89,15 +93,18 @@ class FakeCapturer implements ScreenCapturer {
     return shot(p)
   }
   async crop(_s: string, _r: any, out: string): Promise<string> { return out }
-  async diff(): Promise<{ diffRatio: number }> {
+  async diff(): Promise<DiffMetrics> {
     const v = this.diffScript.length > 0 ? this.diffScript.shift()! : 0
-    this.diffs.push(v)
-    return { diffRatio: v }
+    const m: DiffMetrics = typeof v === "number" ? { diffRatio: v } : v
+    this.diffs.push(m.diffRatio)
+    return m
   }
   async diffRegion(): Promise<{ diffRatio: number }> {
     // R4 pixel channel consumes the SAME script as whole-frame diffs, in
     // call order (region check runs before the post-action whole diff).
-    return this.diff()
+    // Zoning is meaningless on a crop — only diffRatio is returned.
+    const m = await this.diff()
+    return { diffRatio: m.diffRatio }
   }
 }
 
@@ -446,6 +453,60 @@ test("executor: large post-action whole-window diff -> dialog pause re-L2", asyn
   const deps = makeDeps({ confirm: confirm.fn, capturer })
   const r = await runComputerTask({ task: "t", app: "win.app.test", actions: [clickOk] }, deps)
   assert.equal(r.success, true, "approved re-L2 lets the task finish")
+  assert.equal(confirm.captured.length, 1)
+})
+
+// --- X1: zoned pixel channels + new-top-level-window channel --------------------
+// A 500x350 dialog in a 1054x736 window measures ~0.12-0.22 whole-window —
+// UNDER the 0.3 threshold. The macro-zone / blob / new-hwnd channels must
+// catch what the whole-window ratio misses.
+
+test("executor X1: 500×350 对话框必须触发暂停 — zone channel catches the local popup the whole-window ratio misses", async () => {
+  const confirm = scriptedConfirm([false])
+  // [region cross-check 0 = stable, post-action: whole 0.22 < 0.3 BUT zone saturated]
+  const capturer = new FakeCapturer([0, { diffRatio: 0.22, maxZoneRatio: 1.0, maxBlobRatio: 0.22 }])
+  const deps = makeDeps({ confirm: confirm.fn, capturer })
+  const r = await runComputerTask({ task: "t", app: "win.app.test", actions: [clickOk] }, deps)
+  assert.equal(r.errorCode, "DIALOG_PAUSED_DENIED")
+  assert.equal(confirm.captured.length, 1)
+  assert.ok(confirm.captured[0].details.code.includes("对话框"))
+})
+
+test("executor X1: below all zoned thresholds -> NO pause (no false positive)", async () => {
+  const confirm = scriptedConfirm([true])
+  // whole 0.22 < 0.3, zone 0.3 < 0.5, blob 0.02 < 0.05 → no channel fires
+  const capturer = new FakeCapturer([0, { diffRatio: 0.22, maxZoneRatio: 0.3, maxBlobRatio: 0.02 }])
+  const deps = makeDeps({ confirm: confirm.fn, capturer })
+  const r = await runComputerTask({ task: "t", app: "win.app.test", actions: [clickOk] }, deps)
+  assert.equal(r.success, true)
+  assert.equal(confirm.captured.length, 0)
+})
+
+test("executor X1: blob channel alone (zone not saturated) -> dialog pause", async () => {
+  const confirm = scriptedConfirm([false])
+  // whole 0.1, zone 0.2 — but one coherent 6% blob (small dialog)
+  const capturer = new FakeCapturer([0, { diffRatio: 0.1, maxZoneRatio: 0.2, maxBlobRatio: 0.06 }])
+  const deps = makeDeps({ confirm: confirm.fn, capturer })
+  const r = await runComputerTask({ task: "t", app: "win.app.test", actions: [clickOk] }, deps)
+  assert.equal(r.errorCode, "DIALOG_PAUSED_DENIED")
+  assert.equal(confirm.captured.length, 1)
+})
+
+test("executor X1: new top-level window of the same exe after the action -> dialog pause", async () => {
+  const confirm = scriptedConfirm([false])
+  const info = winInfo()
+  let enumCalls = 0
+  const windows: WindowEnumerator = {
+    // call 1 = startup resolve, call 2 = pre-inject snapshot, call 3+ = post-action
+    async enumerateByExe() {
+      enumCalls += 1
+      return enumCalls <= 2 ? [info] : [info, winInfo({ hwnd: 777777, title: "确认操作" })]
+    },
+    async infoForHwnd() { return info },
+  }
+  const deps = makeDeps({ confirm: confirm.fn, windows })
+  const r = await runComputerTask({ task: "t", app: "win.app.test", actions: [clickOk] }, deps)
+  assert.equal(r.errorCode, "DIALOG_PAUSED_DENIED")
   assert.equal(confirm.captured.length, 1)
 })
 

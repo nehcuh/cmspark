@@ -74,6 +74,23 @@ export const PIXEL_STALE_MS = 300
 export const PIXEL_DIFF_THRESHOLD = 0.08
 /** A2: whole-window post-action diff above this → suspected task-induced dialog → pause + re-L2. */
 export const DIALOG_DIFF_THRESHOLD = 0.3
+/**
+ * X1: a whole-window ratio quantitatively MISSES local popups — a 500x350
+ * dialog in a 1054x736 window is ~22% of pixels in theory, and a realistically
+ * rendered one (white interior on light-gray background) measures only ~0.12
+ * whole-window (measured on the imgdiff smoke fixture), far under 0.3. The
+ * zoned metrics below catch what the whole-window channel cannot:
+ *   - maxZoneRatio: the 64x64 sampled grid split into 8x8-cell macro-zones
+ *     (~132x92 px at 1054x736); a dialog saturates the zones it falls in
+ *     (measured 0.75-1.0) → threshold 0.5.
+ *   - maxBlobRatio: largest 4-connected changed cluster / cells; a dialog is
+ *     one coherent blob (measured 0.058-0.22), a blinking cursor ~0.001 →
+ *     threshold 0.05.
+ * Known residual blind spot: popups smaller than ~5% of the frame escape all
+ * three channels (documented in the plan's WP1 section).
+ */
+export const DIALOG_ZONE_THRESHOLD = 0.5
+export const DIALOG_BLOB_THRESHOLD = 0.05
 /** A1.3: per-task sub-budget for clicks that could not be cross-verified. */
 export const UNCROSS_VERIFIED_SUB_BUDGET = 3
 /** A1.2: side length of the cross-check / danger-scan crop around the target point. */
@@ -199,7 +216,7 @@ export interface ScreenCapturer {
   /** Crop srcPath to rect (clamped to image), write outPath, return outPath. */
   crop(srcPath: string, rect: RectPx, outPath: string): Promise<string>
   /** diffRatio in [0,1] between two same-subject captures (optional crop on A). */
-  diff(aPath: string, bPath: string, crop?: RectPx): Promise<{ diffRatio: number }>
+  diff(aPath: string, bPath: string, crop?: RectPx): Promise<DiffMetrics>
   /**
    * The R4 pixel channel: diffRatio in [0,1] between the SAME `region` rect
    * of two captures — crops BOTH frames to the rect internally and diffs the
@@ -207,6 +224,17 @@ export interface ScreenCapturer {
    * created and deleted inside the adapter; the caller tracks no extra raws.
    */
   diffRegion(aPath: string, bPath: string, region: RectPx): Promise<{ diffRatio: number }>
+}
+
+/**
+ * X1 zoned diff metrics. `diffRatio` is always present; the zoned channels are
+ * optional so that fakes and region diffs (where zoning is meaningless) can
+ * omit them — an absent channel simply does not participate in the dialog OR.
+ */
+export interface DiffMetrics {
+  diffRatio: number
+  maxZoneRatio?: number
+  maxBlobRatio?: number
 }
 
 export interface Locator {

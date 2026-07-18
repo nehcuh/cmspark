@@ -14,6 +14,7 @@ import { resolveWinScript } from "../host-use/win/powershell"
 import {
   ComputerError,
   type CaptureMeta,
+  type DiffMetrics,
   type InputInjector,
   type LocateHit,
   type Locator,
@@ -111,7 +112,7 @@ export class PsScreenCapturer implements ScreenCapturer {
     return outPath
   }
 
-  async diff(aPath: string, bPath: string, crop?: RectPx): Promise<{ diffRatio: number }> {
+  async diff(aPath: string, bPath: string, crop?: RectPx): Promise<DiffMetrics> {
     const args = ["-A", aPath, "-B", bPath]
     if (crop) {
       args.push(
@@ -128,7 +129,13 @@ export class PsScreenCapturer implements ScreenCapturer {
       rethrowComputerPsError(err, "diff")
     }
     const r = parsePsJson<any>(stdout!, "computer.diff")
-    return { diffRatio: Number(r.diffRatio ?? 1) }
+    // X1: zoned channels are optional — absent (older script / fake) simply
+    // means they do not participate in the dialog OR.
+    return {
+      diffRatio: Number(r.diffRatio ?? 1),
+      maxZoneRatio: r.maxZoneRatio === undefined || r.maxZoneRatio === null ? undefined : Number(r.maxZoneRatio),
+      maxBlobRatio: r.maxBlobRatio === undefined || r.maxBlobRatio === null ? undefined : Number(r.maxBlobRatio),
+    }
   }
 
   async diffRegion(aPath: string, bPath: string, region: RectPx): Promise<{ diffRatio: number }> {
