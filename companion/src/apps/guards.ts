@@ -26,8 +26,9 @@ import type { AppKind } from "./types"
 export const COMPANION_EXE_BASENAME = "cmspark-agent"
 
 /**
- * Lowercase basenames WITHOUT extension. Match normalizes
- * path.basename(p).toLowerCase() and strips a single trailing .exe/.bat/.cmd/.com.
+ * Lowercase basenames WITHOUT extension. Matching uses exeBasename() — the
+ * prefix before the first dot (WP2 review W1, fail-closed; "cmd.exe.exe"
+ * cannot bypass).
  */
 export const LOLBIN_BASENAMES: ReadonlySet<string> = new Set([
   // shells / script hosts
@@ -87,20 +88,29 @@ const BASENAME_TO_VAULT_TOKEN: Readonly<Record<string, string>> = {
   electrum: "win.electrum",
 }
 
-/** Normalize an exe path (or bare name) to its lowercase extension-less basename. */
+/**
+ * Normalize an exe path (or bare name) to its lowercase match key.
+ *
+ * WP2 review W1 (fail-closed): the match key is the prefix before the FIRST
+ * dot, not "strip one trailing extension". The old loop stripped a single
+ * known extension, so "cmd.exe.exe" → "cmd.exe" → NOT in the blocklist →
+ * lolbin bypass (the add-flow only requires the path to END in .exe, which
+ * "cmd.exe.exe" satisfies). Extension-list stripping also misses
+ * "cmd.fake.exe" (".fake" not in the list). Prefix-before-first-dot closes
+ * both: "cmd.exe.exe" → "cmd", "cmd.fake.exe" → "cmd".
+ *
+ * Direction of error is intentional: a multi-dot exe whose first segment is
+ * a lolbin/vault name ("cmd.tools.exe") is now over-blocked — acceptable for
+ * a denylist; the reverse (under-blocking) is the security hole.
+ */
 export function exeBasename(p: string): string {
   // Split on BOTH separators — guard logic must be deterministic whether the
   // host parsing the path is Windows or not (tests run cross-platform; the
   // targets are always Windows paths).
   const segments = String(p || "").split(/[\\/]/)
-  let base = (segments[segments.length - 1] || "").toLowerCase()
-  for (const ext of [".exe", ".bat", ".cmd", ".com"]) {
-    if (base.endsWith(ext)) {
-      base = base.slice(0, -ext.length)
-      break
-    }
-  }
-  return base
+  const base = (segments[segments.length - 1] || "").toLowerCase()
+  const dot = base.indexOf(".")
+  return dot > 0 ? base.slice(0, dot) : base
 }
 
 /** True when the exe basename is a hard-deny lolbin (any policy, any kind). */

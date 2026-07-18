@@ -153,13 +153,25 @@ export function validateAppEntry(raw: unknown): string | null {
 }
 
 /**
+ * WP2 review W4: UNC paths (\\server\share\… or //server/share/…) — the
+ * binary lives on a network share and is replaceable by ANYONE with write
+ * access to that share (a weaker trust anchor than even a user-writable
+ * local dir). Same ceiling as unsigned/user-writable: "ai".
+ */
+function isUncPath(p: string): boolean {
+  return p.startsWith("\\\\") || p.startsWith("//")
+}
+
+/**
  * Policy ceiling for an entry (Owner decision 3): "ai" when the exe lives in a
  * user-writable directory or there is no signer on record (unsigned / AUMID —
  * a same-user process could replace the binary), else "auto".
+ * WP2 review W4: UNC (network-share) paths also cap at "ai".
  */
 export function maxPolicyForEntry(entry: AppEntry): "auto" | "ai" {
   const exe = entry.exe
   if (!exe) return "ai" // AUMID entry: no signer on record
+  if (isUncPath(exe.path)) return "ai" // W4: network-share binary, replaceable upstream
   if (exe.user_writable_dir === true) return "ai"
   if (!exe.signer) return "ai" // absent or empty = unsigned
   return "auto"

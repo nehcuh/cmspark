@@ -302,6 +302,23 @@ describe("maxPolicyForEntry / normalizeAppEntry policy cap", { concurrency: 1 },
     assert.equal(maxPolicyForEntry(guiAumidEntry() as AppEntry), "ai", "aumid: no signer on record")
   })
 
+  // WP2 review W4 — a signed exe on a network share is replaceable by anyone
+  // with write access to the share; it must never be auto-eligible.
+  test("W4: UNC exe path caps at ai (signed or not, either slash style)", () => {
+    const uncSigned = guiExeEntry({ policy: "auto" })
+    ;(uncSigned.exe as any).path = "\\\\fileserver\\tools\\signed.exe"
+    assert.equal(maxPolicyForEntry(uncSigned as AppEntry), "ai")
+
+    const uncFwd = guiExeEntry({ policy: "auto" })
+    ;(uncFwd.exe as any).path = "//fileserver/tools/signed.exe"
+    assert.equal(maxPolicyForEntry(uncFwd as AppEntry), "ai")
+
+    // normalizeAppEntry clamps a persisted auto UNC entry with a loud log.
+    const clamped = captureConsoleError(() => normalizeAppEntry(uncSigned as AppEntry))
+    assert.equal(clamped.result.policy, "ai")
+    assert.ok(clamped.lines.some(l => l.includes("exceeds cap") && l.includes("clamped")))
+  })
+
   test("unknown policy value coerces to manual + loud log", () => {
     const e = guiExeEntry({ policy: "godmode" }) as AppEntry
     const { result, lines } = captureConsoleError(() => normalizeAppEntry(e))

@@ -23,6 +23,31 @@ test("exeBasename: strips directory + .exe, lowercases", () => {
   assert.equal(exeBasename(""), "")
 })
 
+// WP2 review W1 — the old "strip ONE trailing extension" loop let
+// "cmd.exe.exe" through as "cmd.exe" (not in the blocklist) even though the
+// add-flow's `.exe$` check passes. Prefix-before-first-dot is fail-closed.
+test("W1: multi-extension lolbin bypass is closed (cmd.exe.exe, cmd.fake.exe)", () => {
+  assert.equal(exeBasename("C:\\Windows\\System32\\cmd.exe.exe"), "cmd")
+  assert.equal(exeBasename("C:\\Temp\\cmd.fake.exe"), "cmd")
+  assert.equal(exeBasename("C:\\Temp\\powershell.exe.bat.exe"), "powershell")
+  for (const evil of [
+    "C:\\Windows\\System32\\cmd.exe.exe",
+    "C:\\Temp\\cmd.fake.exe",
+    "C:\\Temp\\powershell.exe.bat.exe",
+    "wscript.exe.exe",
+  ]) {
+    assert.ok(isLolbinPath(evil), `isLolbinPath(${evil}) must be true`)
+    const verdict = checkAddAllowed(evil, "gui")
+    assert.equal(verdict.allowed, false, `${evil} must be denied`)
+  }
+  // Fail-closed direction is intentional: a lolbin-FIRST-segment multi-dot
+  // name is blocked; a benign multi-dot name still matches its own prefix.
+  assert.equal(exeBasename("C:\\Apps\\my.tool.exe"), "my")
+  assert.ok(!isLolbinPath("C:\\Apps\\my.tool.exe"))
+  // Vault mapping still lands on multi-dot paths (msedge_proxy has no dot).
+  assert.equal(basenameToVault("C:\\Google\\chrome.exe.exe"), "win.chrome")
+})
+
 // --- lolbin hard deny -------------------------------------------------------
 
 const REQUIRED_LOLBINS = [

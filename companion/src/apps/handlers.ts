@@ -37,7 +37,7 @@ import {
 } from "./add-flow"
 import { enumerateApps, type EnumeratedAppCandidate } from "./enumerate"
 import { basenameToVault, isLolbinPath } from "./guards"
-import { materializePresets, type PresetStatus } from "./presets"
+import { materializePresets } from "./presets"
 import { requireAppsBiometric } from "./biometric-gate"
 
 export interface AppsHandlerContext {
