@@ -522,8 +522,33 @@ export async function runComputerTask(
       // pixelated BEFORE the bytes are encrypted; raws deleted by the sealer).
       const beforeSeal = await evidence.sealScreenshot(shot.path, seq, "before", scan.credentialRects)
       sealConsumed(shot.path)
-      const afterSeal = await evidence.sealScreenshot(afterShot.path, seq, "after", scan.credentialRects)
-      sealConsumed(afterShot.path)
+      // X5: the AFTER frame needs its OWN credential scan — the action may
+      // have surfaced a credential field that was not present in the before
+      // frame (e.g. a password prompt the click triggered). Sealing it with
+      // the before frame's blur rects would persist those credentials in
+      // cleartext inside the evidence bundle. A7.4 fail-closed: if the after
+      // OCR is unavailable the frame is DROPPED (raw swept, hash omitted,
+      // note recorded) — an unblurred frame is never persisted.
+      let afterSha256: string | undefined
+      let afterNote: string | undefined
+      let afterOcr: OcrResult | null = null
+      try {
+        afterOcr = await deps.locator.ocr(afterShot.path)
+      } catch {
+        afterOcr = null // any OCR failure → fail-closed drop below
+      }
+      if (afterOcr === null) {
+        await releaseRaw(afterShot.path)
+        afterNote = "after frame dropped (OCR unavailable)"
+      } else {
+        // Seal failures (evidence integrity) propagate — they are NOT
+        // misclassified as OCR-unavailable.
+        const afterWhole: RectPx = { x: 0, y: 0, width: afterShot.rect.width, height: afterShot.rect.height }
+        const afterBlur = scanDanger(afterOcr.words, afterWhole, REGION_CROP_SIZE).credentialRects
+        const afterSeal = await evidence.sealScreenshot(afterShot.path, seq, "after", afterBlur)
+        sealConsumed(afterShot.path)
+        afterSha256 = afterSeal.sha256
+      }
 
       await evidence.appendAction({
         seq,
@@ -542,7 +567,8 @@ export async function runComputerTask(
           windowHits: scan.windowHits,
         },
         beforeSha256: beforeSeal.sha256,
-        afterSha256: afterSeal.sha256,
+        ...(afterSha256 !== undefined ? { afterSha256 } : {}),
+        ...(afterNote !== undefined ? { note: afterNote } : {}),
         durationMs: now() - startedAt,
       })
       steps.push({

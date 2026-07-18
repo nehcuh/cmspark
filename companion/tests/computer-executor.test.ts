@@ -510,6 +510,62 @@ test("executor X1: new top-level window of the same exe after the action -> dial
   assert.equal(confirm.captured.length, 1)
 })
 
+// --- X5: the after frame gets its OWN credential scan; OCR failure drops it -----
+
+test("executor X5: credential surfacing ONLY in the after frame is blurred (own OCR)", async () => {
+  const evidence = new FakeEvidence()
+  let ocrCalls = 0
+  const staged: Locator = {
+    async ensureLanguage() {},
+    async ocr() {
+      ocrCalls += 1
+      // call 1 = locate (clean); call 2 = after frame — a password prompt
+      // the click surfaced (the before frame's blur rects know nothing of it)
+      return {
+        language: "zh-Hans",
+        words: ocrCalls === 1 ? OK_WORDS : [{ text: "密码", x: 300, y: 200, w: 60, h: 30 }],
+      }
+    },
+    locate(result: OcrResult, text: string) { return realLocate.call(this, result, text) },
+  } as unknown as Locator
+  const deps = makeDeps({ locator: staged, evidenceFactory: () => evidence })
+  const r = await runComputerTask({ task: "t", app: "win.app.test", actions: [clickOk] }, deps)
+  assert.equal(r.success, true)
+  const beforeSeal = evidence.sealed.find((s) => s.phase === "before")!
+  const afterSeal = evidence.sealed.find((s) => s.phase === "after")!
+  assert.equal(beforeSeal.blur.length, 0, "before frame is clean")
+  assert.equal(afterSeal.blur.length, 1, "after frame's OWN credential neighborhood is blurred")
+})
+
+test("executor X5: after-frame OCR failure -> frame dropped, never persisted unblurred (A7.4)", async () => {
+  const capturer = new FakeCapturer()
+  const evidence = new FakeEvidence()
+  const removed: string[] = []
+  let ocrCalls = 0
+  const staged: Locator = {
+    async ensureLanguage() {},
+    async ocr() {
+      ocrCalls += 1
+      if (ocrCalls === 1) return { language: "zh-Hans", words: OK_WORDS }
+      throw new Error("ocr boom")
+    },
+    locate(result: OcrResult, text: string) { return realLocate.call(this, result, text) },
+  } as unknown as Locator
+  const deps = makeDeps({
+    capturer,
+    locator: staged,
+    evidenceFactory: () => evidence,
+    removeFile: async (p) => { removed.push(p) },
+  })
+  const r = await runComputerTask({ task: "t", app: "win.app.test", actions: [clickOk] }, deps)
+  assert.equal(r.success, true, "the action happened — only the unverifiable after frame is dropped")
+  assert.deepEqual(evidence.sealedRaws, ["cap-2.png"], "only the before frame is sealed")
+  assert.ok(removed.includes("cap-3.png"), "after raw is swept")
+  assert.equal(evidence.records[0].afterSha256, undefined)
+  assert.equal(evidence.records[0].note, "after frame dropped (OCR unavailable)")
+  assertNoRawResidue(capturer, evidence, removed)
+})
+
 // --- R1: no plaintext raw residue at ANY exit -------------------------------------
 
 test("executor R1: success path — locate frame swept, before/after sealed, zero residue", async () => {
