@@ -79,11 +79,14 @@ function shot(path: string): CaptureMeta {
 
 class FakeCapturer implements ScreenCapturer {
   captures = 0
+  paths: string[] = []
   diffs: number[] = []
   constructor(private diffScript: number[] = []) {}
   async captureWindow(): Promise<CaptureMeta> {
     this.captures += 1
-    return shot(`cap-${this.captures}.png`)
+    const p = `cap-${this.captures}.png`
+    this.paths.push(p)
+    return shot(p)
   }
   async crop(_s: string, _r: any, out: string): Promise<string> { return out }
   async diff(): Promise<{ diffRatio: number }> {
@@ -137,14 +140,26 @@ class FakeWindows implements WindowEnumerator {
 class FakeEvidence implements EvidenceSink {
   readonly dir = "evidence-dir"
   sealed: Array<{ seq: number; phase: string; blur: any[] }> = []
+  sealedRaws: string[] = []
   records: EvidenceActionRecord[] = []
   async init(): Promise<void> {}
-  async sealScreenshot(_raw: string, seq: number, phase: string, blurRects: any[]): Promise<{ sha256: string }> {
+  async sealScreenshot(raw: string, seq: number, phase: string, blurRects: any[]): Promise<{ sha256: string }> {
     this.sealed.push({ seq, phase, blur: blurRects })
+    this.sealedRaws.push(raw)
     return { sha256: `sha-${seq}-${phase}` }
   }
   async appendAction(r: EvidenceActionRecord): Promise<void> { this.records.push(r) }
   async finalize(): Promise<void> {}
+}
+
+/** R1 property: every captured raw path is either sealed or swept — none lingers. */
+function assertNoRawResidue(capturer: FakeCapturer, evidence: FakeEvidence, removed: string[]) {
+  for (const p of capturer.paths) {
+    assert.ok(
+      evidence.sealedRaws.includes(p) || removed.includes(p),
+      `raw ${p} was neither sealed into evidence nor swept (R1 leak)`,
+    )
+  }
 }
 
 interface ConfirmCall { details: SecurityConfirmationDetails }
@@ -432,6 +447,108 @@ test("executor: large post-action whole-window diff -> dialog pause re-L2", asyn
   const r = await runComputerTask({ task: "t", app: "win.app.test", actions: [clickOk] }, deps)
   assert.equal(r.success, true, "approved re-L2 lets the task finish")
   assert.equal(confirm.captured.length, 1)
+})
+
+// --- R1: no plaintext raw residue at ANY exit -------------------------------------
+
+test("executor R1: success path — locate frame swept, before/after sealed, zero residue", async () => {
+  const capturer = new FakeCapturer()
+  const evidence = new FakeEvidence()
+  const removed: string[] = []
+  const deps = makeDeps({
+    capturer,
+    evidenceFactory: () => evidence,
+    removeFile: async (p) => { removed.push(p) },
+  })
+  const r = await runComputerTask({ task: "t", app: "win.app.test", actions: [clickOk] }, deps)
+  assert.equal(r.success, true)
+  // cap-1 = locate frame (superseded, swept); cap-2/3 = pre-inject/after (sealed)
+  assert.deepEqual(removed, ["cap-1.png"])
+  assert.deepEqual(evidence.sealedRaws, ["cap-2.png", "cap-3.png"])
+  assertNoRawResidue(capturer, evidence, removed)
+})
+
+test("executor R1: ELEMENT_NOT_FOUND — the captured frame is swept at the failure exit", async () => {
+  const capturer = new FakeCapturer()
+  const evidence = new FakeEvidence()
+  const removed: string[] = []
+  const deps = makeDeps({
+    capturer,
+    locator: new FakeLocator([]),
+    evidenceFactory: () => evidence,
+    removeFile: async (p) => { removed.push(p) },
+  })
+  const r = await runComputerTask({ task: "t", app: "win.app.test", actions: [clickOk] }, deps)
+  assert.equal(r.errorCode, "ELEMENT_NOT_FOUND")
+  assert.deepEqual(evidence.sealedRaws, [])
+  assert.deepEqual(removed, ["cap-1.png"])
+  assertNoRawResidue(capturer, evidence, removed)
+})
+
+test("executor R1: STALE_SCREENSHOT — BOTH the locate and fresh frames are swept", async () => {
+  const capturer = new FakeCapturer([0.5])
+  const evidence = new FakeEvidence()
+  const removed: string[] = []
+  const twoStage: Locator = {
+    async ensureLanguage() {},
+    calls: 0,
+    async ocr(this: any) {
+      this.calls += 1
+      return { language: "zh-Hans", words: this.calls === 1 ? OK_WORDS : [] }
+    },
+    locate(result: OcrResult, text: string) { return realLocate.call(this, result, text) },
+  } as unknown as Locator
+  const deps = makeDeps({
+    capturer,
+    locator: twoStage,
+    evidenceFactory: () => evidence,
+    removeFile: async (p) => { removed.push(p) },
+  })
+  const r = await runComputerTask({ task: "t", app: "win.app.test", actions: [clickOk] }, deps)
+  assert.equal(r.errorCode, "STALE_SCREENSHOT")
+  assert.deepEqual(evidence.sealedRaws, [])
+  assert.deepEqual(removed, ["cap-1.png", "cap-2.png"])
+  assertNoRawResidue(capturer, evidence, removed)
+})
+
+test("executor R1: DANGER_HARD_DENY — captured frames swept, nothing sealed, no re-L2", async () => {
+  const confirm = scriptedConfirm([true])
+  const capturer = new FakeCapturer()
+  const evidence = new FakeEvidence()
+  const removed: string[] = []
+  const locator = new FakeLocator([{ text: "立即支付", x: 160, y: 208, w: 120, h: 30 }])
+  const deps = makeDeps({
+    capturer,
+    locator,
+    confirm: confirm.fn,
+    evidenceFactory: () => evidence,
+    removeFile: async (p) => { removed.push(p) },
+  })
+  const r = await runComputerTask(
+    { task: "t", app: "win.app.test", actions: [{ action: "click", target: "立即支付" }] },
+    deps,
+  )
+  assert.equal(r.errorCode, "DANGER_HARD_DENY")
+  assert.equal(confirm.captured.length, 0)
+  assert.deepEqual(evidence.sealedRaws, [])
+  assert.deepEqual(removed, ["cap-1.png", "cap-2.png"])
+  assertNoRawResidue(capturer, evidence, removed)
+})
+
+test("executor R1: read-only describe frame is sealed (sealer-consumed), zero residue", async () => {
+  const capturer = new FakeCapturer()
+  const evidence = new FakeEvidence()
+  const removed: string[] = []
+  const deps = makeDeps({
+    capturer,
+    evidenceFactory: () => evidence,
+    removeFile: async (p) => { removed.push(p) },
+  })
+  const r = await runComputerTask({ task: "t", app: "win.app.test", actions: [{ action: "describe" }] }, deps)
+  assert.equal(r.success, true)
+  assert.deepEqual(evidence.sealedRaws, ["cap-1.png"])
+  assert.deepEqual(removed, [])
+  assertNoRawResidue(capturer, evidence, removed)
 })
 
 // --- read-only actions -------------------------------------------------------------

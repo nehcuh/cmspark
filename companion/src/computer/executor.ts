@@ -22,11 +22,17 @@
 //       final-confirm click -> NO re-L2 path exists; credential context for a
 //       type action is likewise a no-path deny.
 //
+//   A7  every raw capture path is tracked in pendingRaws (review R1): sealed
+//       frames are consumed by the sealer, superseded locate frames are
+//       released immediately, and ALL exits (success / fail / throw) sweep
+//       whatever remains — plaintext pixels never linger in %TEMP%.
+//
 // The initial task L2 (critical-class, god-mode included) happens in the
 // server gate BEFORE this executor runs; re-L2s raised here go through the
 // injected origin-bound confirmation channel.
 
 import { randomUUID } from "crypto"
+import * as fs from "fs"
 import type { CompanionConfig } from "../config"
 import type { SecurityConfirmationDecision, SecurityConfirmationDetails } from "../security-confirmation"
 import { scanDanger, type DangerScan } from "./danger"
@@ -72,6 +78,11 @@ export interface ComputerExecutorDeps {
   log?: (event: string, data: Record<string, unknown>) => void
   now?: () => number
   sleep?: (ms: number) => Promise<void>
+  /**
+   * R1 raw sweeper — deletes an abandoned plaintext capture. Injectable for
+   * the no-residue property tests; production default is fs.rm force.
+   */
+  removeFile?: (path: string) => Promise<void>
 }
 
 export interface ComputerStepResult {
@@ -146,10 +157,49 @@ export async function runComputerTask(
   const steps: ComputerStepResult[] = []
   let evidence: EvidenceSink | null = null
 
-  const fail = (err: ComputerError): ComputerTaskResult => {
+  // R1 — plaintext raw capture tracking. captureWindow writes UNENCRYPTED
+  // window bitmaps under %TEMP%; only frames that reach the sealer are
+  // consumed there. Every other frame must be deleted by us: superseded
+  // locate frames immediately, everything else at the exit sweep.
+  const removeRaw =
+    deps.removeFile ??
+    (async (p: string) => {
+      try {
+        await fs.promises.rm(p, { force: true })
+      } catch {
+        /* best-effort */
+      }
+    })
+  const pendingRaws = new Set<string>()
+  const trackCapture = async (h: number): Promise<CaptureMeta> => {
+    const meta = await deps.capturer.captureWindow(h)
+    if (meta.path) pendingRaws.add(meta.path)
+    return meta
+  }
+  /** Sealer consumed the bytes — stop tracking (no removeFile call). */
+  const sealConsumed = (p: string | undefined) => {
+    if (p) pendingRaws.delete(p)
+  }
+  /** Abandoned frame — stop tracking AND delete the plaintext bytes. */
+  const releaseRaw = async (p: string | undefined) => {
+    if (p && pendingRaws.delete(p)) await removeRaw(p)
+  }
+  const sweepRaws = async () => {
+    for (const p of [...pendingRaws]) {
+      pendingRaws.delete(p)
+      await removeRaw(p)
+    }
+  }
+
+  const fail = async (err: ComputerError): Promise<ComputerTaskResult> => {
     log("computer.task.failed", { taskId, code: err.code, error: err.message })
+    await sweepRaws() // R1: no plaintext capture survives ANY exit
     if (evidence) {
-      void evidence.finalize({ ok: false, code: err.code, error: err.message }).catch(() => {})
+      try {
+        await evidence.finalize({ ok: false, code: err.code, error: err.message })
+      } catch {
+        /* best-effort */
+      }
     }
     return {
       success: false,
@@ -237,7 +287,7 @@ export async function runComputerTask(
     }
     if (action.action === "screenshot" || action.action === "describe") {
       try {
-        const shot = await deps.capturer.captureWindow(hwnd)
+        const shot = await trackCapture(hwnd)
         const blur: RectPx[] = []
         let untrustedText: string | undefined
         if (action.action === "describe") {
@@ -245,6 +295,7 @@ export async function runComputerTask(
           untrustedText = ocrRes.words.map((w) => w.text).join(" ")
         }
         await evidence.sealScreenshot(shot.path, seq, "before", blur)
+        sealConsumed(shot.path)
         steps.push({ seq, action: action.action, ok: true, ...(untrustedText !== undefined ? { untrustedText } : {}) })
         await evidence.appendAction({ seq, action: action.action, crossverified: true, uncrossverified: false, durationMs: now() - startedAt })
       } catch (err) {
@@ -276,7 +327,7 @@ export async function runComputerTask(
       }
 
       // Locate + base capture.
-      let shot: CaptureMeta = await deps.capturer.captureWindow(hwnd)
+      let shot: CaptureMeta = await trackCapture(hwnd)
       let ocrRes: OcrResult | null = null
       let hit: LocateHit | null = null
       let pointClient: { x: number; y: number } | null = null
@@ -310,8 +361,9 @@ export async function runComputerTask(
           width: REGION_CROP_SIZE,
           height: REGION_CROP_SIZE,
         }
-        const fresh = await deps.capturer.captureWindow(hwnd)
-        const { diffRatio } = await deps.capturer.diffRegion(fresh.path, shot.path, locateRegion)
+        const locateFrame = shot
+        const fresh = await trackCapture(hwnd)
+        const { diffRatio } = await deps.capturer.diffRegion(fresh.path, locateFrame.path, locateRegion)
         if (diffRatio > PIXEL_DIFF_THRESHOLD) {
           const ocr2 = await deps.locator.ocr(fresh.path)
           const hit2 = deps.locator.locate(ocr2, action.target)
@@ -328,6 +380,9 @@ export async function runComputerTask(
           crossverified = true
           crossverifyChannel = "pixel-region"
         }
+        // The locate frame is superseded in BOTH branches — its raw would
+        // otherwise linger in %TEMP% unsealed (review R1 leak path 1).
+        await releaseRaw(locateFrame.path)
       } else if (action.action !== "type") {
         pointClient = { x: action.x!, y: action.y! }
         // Explicit-coordinate (icon-type) click: no cross-check exists.
@@ -411,7 +466,7 @@ export async function runComputerTask(
       // window OR a large whole-window change => pause + re-L2. Conservative
       // direction: false positives pause the task, never the reverse.
       // NOTE: the diff must run BEFORE any sealing — the sealer deletes raws.
-      const afterShot = await deps.capturer.captureWindow(hwnd)
+      const afterShot = await trackCapture(hwnd)
       const fg = await deps.injector.foregroundHwnd()
       const { diffRatio } = await deps.capturer.diff(afterShot.path, shot.path)
       const dialogSuspected = (fg !== 0 && fg !== hwnd) || diffRatio > DIALOG_DIFF_THRESHOLD
@@ -419,7 +474,9 @@ export async function runComputerTask(
       // Seal both frames into the evidence chain (credential neighborhoods
       // pixelated BEFORE the bytes are encrypted; raws deleted by the sealer).
       const beforeSeal = await evidence.sealScreenshot(shot.path, seq, "before", scan.credentialRects)
+      sealConsumed(shot.path)
       const afterSeal = await evidence.sealScreenshot(afterShot.path, seq, "after", scan.credentialRects)
+      sealConsumed(afterShot.path)
 
       await evidence.appendAction({
         seq,
@@ -476,6 +533,7 @@ export async function runComputerTask(
     totalActions: params.actions.length,
     steps,
   }
+  await sweepRaws() // normally a no-op — every frame was sealed or released
   await evidence.finalize({ ok: true, completed: result.completedActions, total: result.totalActions })
   log("computer.task.completed", { taskId, completed: result.completedActions, total: result.totalActions })
   return result
