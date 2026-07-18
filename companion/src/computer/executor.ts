@@ -51,6 +51,7 @@ import {
   MAX_TYPE_TEXT_CHARS,
   MAX_WAIT_MS,
   PIXEL_DIFF_THRESHOLD,
+  PIXEL_STALE_MS,
   REGION_CROP_SIZE,
   UNCROSS_VERIFIED_SUB_BUDGET,
   type CaptureMeta,
@@ -356,6 +357,11 @@ export async function runComputerTask(
 
       // Locate + base capture.
       let shot: CaptureMeta = await trackCapture(hwnd)
+      let shotAt = now() // X3: age of the CURRENT shot frame (updated on every reassignment)
+      // X3: set ONLY by mid-action re-L2 approvals (danger / uncross sub-budget)
+      // — a human decision necessarily stales the frame. The budget re-L2 runs
+      // before capture and the dialog re-L2 after injection; neither sets this.
+      let reL2ApprovedMidAction = false
       let ocrRes: OcrResult | null = null
       let hit: LocateHit | null = null
       let pointClient: { x: number; y: number } | null = null
@@ -399,12 +405,14 @@ export async function runComputerTask(
             throw new ComputerError("STALE_SCREENSHOT", "computer: target moved between locate and inject; re-locate failed — refusing to inject at stale coordinates")
           }
           shot = fresh
+          shotAt = now()
           ocrRes = ocr2
           hit = hit2
           pointClient = { x: hit.x - shot.client.x, y: hit.y - shot.client.y }
           uncrossverified = true // pixel channel disagreed — honest bookkeeping (R4)
         } else {
           shot = fresh
+          shotAt = now()
           crossverified = true
           crossverifyChannel = "pixel-region"
         }
@@ -428,6 +436,7 @@ export async function runComputerTask(
           )
           if (!ok) throw new ComputerError("UNCROSS_DENIED", "computer: uncrossverified click sub-budget exceeded and renewal was denied")
           uncrossLeft = UNCROSS_VERIFIED_SUB_BUDGET
+          reL2ApprovedMidAction = true // X3: approved coordinates are now stale
         }
       }
 
@@ -451,7 +460,9 @@ export async function runComputerTask(
             height: REGION_CROP_SIZE,
           }
         : { x: 0, y: 0, width: shot.rect.width, height: shot.rect.height } // type: whole window
-      const scan: DangerScan = scanDanger(ocrRes.words, regionImg, REGION_CROP_SIZE)
+      // X3: `let` — the post-approval refresh re-scans on the refreshed frame
+      // and replaces this (the sealed blur must match the frame actually sealed).
+      let scan: DangerScan = scanDanger(ocrRes.words, regionImg, REGION_CROP_SIZE)
 
       if (action.action === "type" && scan.credentialRects.length > 0) {
         // A4.3: credential context for a type action — no-path deny (the OSR
@@ -480,6 +491,105 @@ export async function runComputerTask(
           ["computer.danger_detected"],
         )
         if (!ok) throw new ComputerError("DANGER_DENIED_BY_USER", "computer: dangerous action denied at re-confirm")
+        reL2ApprovedMidAction = true // X3: approved frame/coords are now stale
+      }
+
+      // X3 — post-approval freshness refresh. A mid-action re-L2 approval
+      // means a human just spent SECONDS deciding while the screen kept
+      // changing; injecting the pre-approval coordinates would be the exact
+      // pixel-TOCTOU A1 forbids. PIXEL_STALE_MS is wired HERE (the approval
+      // path necessarily exceeds it): re-capture and re-run the R4 chain.
+      //   target click: F1 force re-locate (gone -> STALE_SCREENSHOT), then
+      //     F2 + region diff re-decides crossverified/uncrossverified
+      //   explicit-coords / type: no anchor exists — only the frame is
+      //     replaced so the sealed "before" is the frame we actually act on
+      // Every superseded frame is releaseRaw'd (R1). After the refresh the
+      // danger scan re-runs on the new OCR — but only UPGRADES are
+      // actionable: the user JUST approved this same level (re-asking would
+      // be a prompt loop), while a NEW hard verdict fails closed.
+      if (reL2ApprovedMidAction && now() - shotAt > PIXEL_STALE_MS) {
+        const staleFrame = shot
+        if (action.action !== "type" && action.target) {
+          const f1 = await trackCapture(hwnd)
+          const ocrF1 = await deps.locator.ocr(f1.path)
+          const hitF1 = deps.locator.locate(ocrF1, action.target)
+          if (!hitF1) {
+            await releaseRaw(f1.path)
+            throw new ComputerError("STALE_SCREENSHOT", "computer: target moved after the re-confirm approval; re-locate failed — refusing to inject at pre-approval coordinates")
+          }
+          const ptF1 = { x: hitF1.x - f1.client.x, y: hitF1.y - f1.client.y }
+          const regionF1: RectPx = {
+            x: Math.max(0, hitF1.x - REGION_CROP_SIZE / 2),
+            y: Math.max(0, hitF1.y - REGION_CROP_SIZE / 2),
+            width: REGION_CROP_SIZE,
+            height: REGION_CROP_SIZE,
+          }
+          const f2 = await trackCapture(hwnd)
+          const { diffRatio: refreshDiff } = await deps.capturer.diffRegion(f2.path, f1.path, regionF1)
+          if (refreshDiff > PIXEL_DIFF_THRESHOLD) {
+            const ocrF2 = await deps.locator.ocr(f2.path)
+            const hitF2 = deps.locator.locate(ocrF2, action.target)
+            if (!hitF2) {
+              await releaseRaw(f1.path)
+              await releaseRaw(f2.path)
+              throw new ComputerError("STALE_SCREENSHOT", "computer: target unstable after the re-confirm approval; re-locate failed — refusing to inject")
+            }
+            shot = f2
+            ocrRes = ocrF2
+            hit = hitF2
+            pointClient = { x: hitF2.x - f2.client.x, y: hitF2.y - f2.client.y }
+            crossverified = false
+            crossverifyChannel = undefined
+            uncrossverified = true // pixel channel disagreed post-approval (R4)
+            await releaseRaw(f1.path)
+          } else {
+            shot = f2
+            ocrRes = ocrF1
+            hit = hitF1
+            pointClient = ptF1
+            crossverified = true
+            crossverifyChannel = "pixel-region"
+            uncrossverified = false
+            await releaseRaw(f1.path)
+          }
+        } else {
+          const f1 = await trackCapture(hwnd)
+          ocrRes = await deps.locator.ocr(f1.path)
+          shot = f1
+        }
+        await releaseRaw(staleFrame.path)
+        shotAt = now()
+        // Re-check bounds on the (possibly moved) point.
+        if (pointClient) {
+          const cw = shot.client.width
+          const ch = shot.client.height
+          if (pointClient.x < 0 || pointClient.y < 0 || pointClient.x >= cw || pointClient.y >= ch) {
+            throw new ComputerError("OUT_OF_BOUNDS", `computer: (${pointClient.x},${pointClient.y}) outside client rect ${cw}x${ch} after post-approval refresh`)
+          }
+        }
+        const refreshRegion: RectPx = pointClient
+          ? {
+              x: Math.max(0, pointClient.x + shot.client.x - REGION_CROP_SIZE / 2),
+              y: Math.max(0, pointClient.y + shot.client.y - REGION_CROP_SIZE / 2),
+              width: REGION_CROP_SIZE,
+              height: REGION_CROP_SIZE,
+            }
+          : { x: 0, y: 0, width: shot.rect.width, height: shot.rect.height }
+        scan = scanDanger(ocrRes!.words, refreshRegion, REGION_CROP_SIZE)
+        if (action.action === "type" && scan.credentialRects.length > 0) {
+          throw new ComputerError(
+            "DANGER_HARD_DENY",
+            "computer: credential context appeared after the re-confirm approval — type is hard-denied (no re-confirm path)",
+            { hits: scan.windowHits },
+          )
+        }
+        if (scan.regionLevel === "hard" && action.action !== "type") {
+          throw new ComputerError(
+            "DANGER_HARD_DENY",
+            `computer: click target escalated to a payment/transfer/captcha final-confirm after the re-confirm approval (${scan.regionHits.join(", ")}) — hard-denied`,
+            { hits: scan.regionHits },
+          )
+        }
       }
 
       // X1: snapshot the exe's top-level hwnds BEFORE injection — a new

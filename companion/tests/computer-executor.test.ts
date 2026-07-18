@@ -566,6 +566,102 @@ test("executor X5: after-frame OCR failure -> frame dropped, never persisted unb
   assertNoRawResidue(capturer, evidence, removed)
 })
 
+// --- X3: post-approval freshness refresh (re-L2 stales the frame) ---------------
+
+/** Clock that advances 1s per read — a human re-L2 decision always exceeds PIXEL_STALE_MS. */
+function advancingClock() {
+  let t = 1_000_000
+  return () => (t += 1000)
+}
+
+test("executor X3: caution re-L2 approved + target moved during the decision -> click lands at REFRESHED coords", async () => {
+  const confirm = scriptedConfirm([true])
+  const injector = new RecordingInjector()
+  // [initial region cross-check 0, refresh F2-vs-F1 0, post-action whole 0]
+  const capturer = new FakeCapturer([0, 0, 0])
+  let ocrCalls = 0
+  const staged: Locator = {
+    async ensureLanguage() {},
+    async ocr() {
+      ocrCalls += 1
+      // call 1 = initial locate (word at old spot); calls 2+ = post-approval
+      // frame (the destructive button MOVED while the human decided)
+      const words = ocrCalls === 1
+        ? [{ text: "确认删除", x: 160, y: 208, w: 60, h: 30 }]
+        : [{ text: "确认删除", x: 250, y: 168, w: 60, h: 30 }]
+      return { language: "zh-Hans", words }
+    },
+    locate(result: OcrResult, text: string) { return realLocate.call(this, result, text) },
+  } as unknown as Locator
+  const deps = makeDeps({
+    confirm: confirm.fn, injector, capturer, locator: staged, now: advancingClock(),
+  })
+  const r = await runComputerTask(
+    { task: "t", app: "win.app.test", actions: [{ action: "click", target: "确认删除" }] }, deps)
+  assert.equal(r.success, true)
+  assert.equal(confirm.captured.length, 1, "one caution re-L2 — the same level is NOT re-asked after refresh")
+  assert.equal(injector.clicks.length, 1)
+  // refreshed image-space center (250+30, 168+15) = (280,183) minus client (10,40)
+  assert.deepEqual({ x: injector.clicks[0].x, y: injector.clicks[0].y }, { x: 270, y: 143 })
+})
+
+test("executor X3: target gone after the approval -> STALE_SCREENSHOT, zero injection", async () => {
+  const confirm = scriptedConfirm([true])
+  const injector = new RecordingInjector()
+  const capturer = new FakeCapturer([0])
+  let ocrCalls = 0
+  const staged: Locator = {
+    async ensureLanguage() {},
+    async ocr() {
+      ocrCalls += 1
+      return {
+        language: "zh-Hans",
+        words: ocrCalls === 1 ? [{ text: "确认删除", x: 160, y: 208, w: 60, h: 30 }] : [],
+      }
+    },
+    locate(result: OcrResult, text: string) { return realLocate.call(this, result, text) },
+  } as unknown as Locator
+  const deps = makeDeps({
+    confirm: confirm.fn, injector, capturer, locator: staged, now: advancingClock(),
+  })
+  const r = await runComputerTask(
+    { task: "t", app: "win.app.test", actions: [{ action: "click", target: "确认删除" }] }, deps)
+  assert.equal(r.errorCode, "STALE_SCREENSHOT")
+  assert.equal(injector.clicks.length, 0)
+  assert.equal(confirm.captured.length, 1)
+})
+
+test("executor X3: escalation to region-hard after the approval -> DANGER_HARD_DENY, zero injection", async () => {
+  const confirm = scriptedConfirm([true])
+  const injector = new RecordingInjector()
+  const capturer = new FakeCapturer([0, 0])
+  let ocrCalls = 0
+  const staged: Locator = {
+    async ensureLanguage() {},
+    async ocr() {
+      ocrCalls += 1
+      // call 1: caution word only. Post-approval frame: the SAME spot now also
+      // OCRs as a payment final-confirm (adversarial relabel during the decision).
+      const words = ocrCalls === 1
+        ? [{ text: "确认删除", x: 160, y: 208, w: 60, h: 30 }]
+        : [
+            { text: "确认删除", x: 250, y: 168, w: 60, h: 30 },
+            { text: "确认支付", x: 250, y: 168, w: 60, h: 30 },
+          ]
+      return { language: "zh-Hans", words }
+    },
+    locate(result: OcrResult, text: string) { return realLocate.call(this, result, text) },
+  } as unknown as Locator
+  const deps = makeDeps({
+    confirm: confirm.fn, injector, capturer, locator: staged, now: advancingClock(),
+  })
+  const r = await runComputerTask(
+    { task: "t", app: "win.app.test", actions: [{ action: "click", target: "确认删除" }] }, deps)
+  assert.equal(r.errorCode, "DANGER_HARD_DENY")
+  assert.equal(injector.clicks.length, 0)
+  assert.equal(confirm.captured.length, 1, "escalation is a no-path deny — no second prompt")
+})
+
 // --- R1: no plaintext raw residue at ANY exit -------------------------------------
 
 test("executor R1: success path — locate frame swept, before/after sealed, zero residue", async () => {
