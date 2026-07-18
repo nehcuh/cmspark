@@ -79,3 +79,31 @@ git checkout computer-use-w8-windows
 git log --oneline computer-use-w8-snapshot..HEAD   # 10 个 commit
 # 验证满意后：合并到 main 或 push 分支开 PR，由你决定
 ```
+
+---
+
+## 追加：darwin 审计修复（2026-07-18 上午）
+
+审计（`macos-host-use-review.md`，M1–M11）已全部修复并经评审 **APPROVED**，4 个 commit：
+
+```
+bd2652a M3 jsonEscape + M5 正确定界符守卫 + M7 放行单引号 + M8 诚实固定默认值
+d206a9f M6 Finder move 强制绝对 POSIX 路径(DarwinPathNotAbsolute)
+5c01c41 M2 list 边界 base64url 编解码 + M4 共享 host-bin resolver + M11 可注入 DarwinRunner + spawn 级测试 + M10 注释
+6e081a8 M1 hostRead 按 application 分支(NotImplementedForApp,不再静默返回 Mail) + M8-TS + M9 注释清扫
+```
+
+- 本机复验：host-use 套件 **90/90**（darwin 13→29，新增 16 个 spawn 级测试）；`tsc` 主构建 + 测试构建均干净；win32 与 chrome-extension 零改动
+- 评审额外做了对抗探针：9 组刁钻文件名 + 200 组随机字节 round-trip 全部无损；crafted id 解码陷阱均 fail-closed
+- M8 走了 fallback 分支（TS 侧截断 + 文档对齐），真正的 `--limit`/`--max-chars` 透传需要 NSAppleEventDescriptor，列为 Phase 2
+- 评审发现 3 条低优先 follow-up（均非本次引入）：F1 jsonEscape 未覆盖全部 C0 控制字符（fail-closed）；F2 host-bin 候选 3 路径数学 pre-existing 瑕疵；F3 list-files.applescript 的 urlEncode 对 CJK 有损（producer 旧缺陷）
+
+### ⚠️ 必须在 Mac 上验证（本机无法编译 Swift）
+
+1. `bash companion/src/host-use/darwin/build-host.sh` 重新编译（重点：jsonEscape 的转义序列）
+2. M3 smoke：subject 含 `"` `\` 的邮件 read-message → `jq .` 能 parse
+3. M5/M7 smoke：account 含 `'`（如 John's Gmail）正常读取；create-note 正文含引号正常
+4. M2 e2e：Documents 放 `John's report.pdf`、`100%.txt`、中文名文件 → listReadTargets 不再抛错、readOne 回读成功
+5. M1 e2e：`com.apple.Notes` 调 host_read → typed 错误，**不返回 Mail 数据**
+6. M6 e2e：相对路径 move 报错且 Finder 无动作
+7. M8 e2e：`max_chars=200` → ≤200；`max_chars=5000` → ≤500
