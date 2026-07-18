@@ -31,6 +31,20 @@
 **Reason**: Round 2 §4.2 locks `host_write` behind biometric tier. Thread-scope biometric bypass collapses the tier into ask-once, violating the 4-tier gradient that the whole security model rests on. Prompt injection surviving within a thread could chain destructive writes without ever touching the sensor.
 **Resolution**: Phase 1 W7 inline checkbox applies to **read only**. Writes always require biometric per call. If user feedback shows fatigue, add time-bounded session (5min) in Phase 2.
 
+> **AMENDMENT (2026-07-18, owner decision — App tab WP3)**: Blocker 1's
+> read-only lock is formally amended with ONE exception. Per
+> `app-tab-design-draft.md` «Owner 决策 2» (2026-07-18 10:56): thread-trust
+> gains a second kind, `"app-launch"`, scoped to **L0 no-arg launches** of
+> user-whitelisted App-tab entries (`host_app` tool, policy `"ai"` only —
+> `"manual"` never offers the checkbox, `"auto"` skips L2 entirely).
+> Rationale: the lock is a decision, not a mechanism, and the owner judged a
+> plain app launch (no args, no templates, no output capture) read-class for
+> trust purposes. Read semantics are unchanged; writes and dangerous
+> operations NEVER use thread-trust. Safeguards implemented in WP3: the grant
+> only happens via the L2 dialog's trust checkbox, and
+> `apps.remove` / `apps.set_policy` / `apps.set_enabled(false)` clear the
+> token's `"app-launch"` entries across all threads.
+
 ### Blocker 2: Q4 — Expand READ_ALLOWED_APPS alongside W7
 
 **Source**: Pi.
