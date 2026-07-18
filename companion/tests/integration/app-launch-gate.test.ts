@@ -277,6 +277,55 @@ test("manual policy: always L2, NO checkbox; trust-injection attempt is a no-op"
 })
 
 // =============================================================================
+// W2 (WP3 review follow-up) — host_read thread-trust grant composition.
+// Mirrors the host_app "ai" test above: dialog → approve with
+// add_to_thread_whitelist via the REAL response handler → has(sid, id, "read")
+// → second read silent. This composition had NO coverage when the
+// getToolName-after-respondFrom bug existed (WP3 commit message: "W7 host_read
+// was equally affected") — the grant silently never happened and nothing
+// failed. OneNote is used as the application so the APPROVED path fails fast
+// inside host-use with a typed Phase-1 error (never spawns the Outlook PS).
+// =============================================================================
+
+test("host_read: approve WITH checkbox → thread-trusted (kind read); second read silent", { skip: !WIN }, async () => {
+  const executeTool = createToolExecutor(serverSideWs)
+  const sid = getSessionIdForTests(serverSideWs)
+  assert.ok(sid, "executor session id must be registered")
+
+  // First read: L2 dialog offers the trust checkbox (relevant_apps = the
+  // resolved application). Approve WITH add_to_thread_whitelist.
+  const confirmationPromise = expectClientMessage("security.confirmation.request")
+  const firstPromise = executeTool("tc_hr_trust_1", "host_read", { application: "win.onenote.desktop" })
+  const confirmation = await confirmationPromise
+  assert.equal(confirmation.tool_name, "host_read")
+  assert.deepEqual(confirmation.relevant_apps, ["win.onenote.desktop"], "host_read must offer the W7 trust checkbox")
+  await handleSecurityConfirmationResponse(serverSideWs, {
+    type: "security.confirmation.response",
+    confirmation_id: confirmation.confirmation_id,
+    approved: true,
+    add_to_thread_whitelist: true,
+  }, sid)
+  const first = await firstPromise
+  // Approved → gate passed; executor reached host-use, which rejects OneNote
+  // reads with a typed Phase-1 error — proof the whole chain ran post-grant.
+  assert.equal(first.success, false)
+  assert.match(first.error!, /not implemented in Phase 1/)
+  assert.equal(
+    getThreadApprovals().has(sid!, "win.onenote.desktop", "read"),
+    true,
+    "W7 read trust must be granted (regression: getToolName must be captured before respondFrom)",
+  )
+
+  // Second read in the same thread/session: NO confirmation (threadTrusted
+  // skips L2), executor reaches host-use again.
+  const noConfirm = expectNoClientMessage("security.confirmation.request")
+  const second = await executeTool("tc_hr_trust_2", "host_read", { application: "win.onenote.desktop" })
+  await noConfirm
+  assert.equal(second.success, false)
+  assert.match(second.error!, /not implemented in Phase 1/)
+})
+
+// =============================================================================
 // Typed errors (no dialog)
 // =============================================================================
 
