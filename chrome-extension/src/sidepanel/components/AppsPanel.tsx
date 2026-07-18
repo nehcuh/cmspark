@@ -374,7 +374,7 @@ export function AppsPanel() {
                 )
               })}
               {addPolicy === "auto" && (
-                <div style={styles.autoBioHint}>「全自动」需要 Windows Hello（或确认码）验证一次。</div>
+                <div style={styles.autoBioHint}>「全自动(仅启动免确认)」需要 Windows Hello（或确认码）验证一次。</div>
               )}
               <button style={styles.submitBtn} onClick={handleSubmitAdd}>
                 添加

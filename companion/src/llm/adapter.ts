@@ -148,7 +148,13 @@ export function buildAppIndexSection(platform: NodeJS.Platform, appsCfg: AppsCon
   const lines = entries.map((e) => {
     // display_name originates from process titles / manual paste — strip line
     // breaks so a crafted name can't inject extra prompt lines; cap length.
-    const name = e.display_name.replace(/[\r\n]+/g, " ").slice(0, 80)
+    // WP6a nit: C0/DEL control chars and U+2028/U+2029 must not survive
+    // either — \r\n are already gone (they're C0 too), this catches the rest
+    // (\x00-\x08, \x0B-\x1F, \x7F) plus Unicode line separators.
+    const name = e.display_name
+      .replace(/[\r\n]+/g, " ")
+      .replace(/[\x00-\x1F\x7F\u2028\u2029]+/g, " ")
+      .slice(0, 80)
     return `- ${e.token} — ${name} (policy: ${e.policy}) [launch only, no args]`
   })
   return `## Whitelisted apps (host_app)\n${lines.join("\n")}`

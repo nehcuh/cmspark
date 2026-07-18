@@ -169,6 +169,13 @@ function SecurityConfirmationDialog() {
   const riskLevel = request.risk_level || "high"
   const riskColor = riskLevel === "low" ? "#FFC107" : riskLevel === "medium" ? "#FF9800" : "#F44336"
   const riskLabel = riskLevel === "low" ? "低风险" : riskLevel === "medium" ? "中风险" : "高风险"
+  // WP6a (Finding 3): a host_app launch is not a code execution — the dialog
+  // gets launch-appropriate copy (no「高风险 API：未知」scare section when the
+  // dangerous-API list is empty; the code_preview already reads
+  // `Launch app "<display>" (<token>) — no arguments`). host_read/host_write/
+  // evaluate rendering is unchanged.
+  const isAppLaunch = request.tool_name === "host_app"
+  const dialogLabel = isAppLaunch ? "启动应用确认" : `${riskLabel}操作确认`
 
   const decide = (approved: boolean, stopThread = false) => {
     const addToWhitelist: string[] = []
@@ -187,8 +194,9 @@ function SecurityConfirmationDialog() {
       approved,
       stop_thread: stopThread,
       add_to_whitelist: addToWhitelist,
-      // Phase 1 W7 — only send add_to_thread_whitelist when allowed (host_read
-      // + user checked the box). Companion validates against relevantApps[0].
+      // Phase 1 W7 (extended by WP4 W1) — only send add_to_thread_whitelist
+      // when allowed (host_read / host_app + user checked the box). Companion
+      // validates against relevantApps[0].
       add_to_thread_whitelist: approved && canThreadTrust && threadTrust,
       // Phase 1 W9 — send typed nonce for Linux biometric tier validation.
       nonce_response: approved && nonceChallenge ? nonceInput.toUpperCase() : undefined,
@@ -224,23 +232,32 @@ function SecurityConfirmationDialog() {
       onClose={() => denyRef.current()}
       backdropDismiss={false}
       role="dialog"
-      ariaLabel={`${riskLabel}操作确认`}
+      ariaLabel={dialogLabel}
       overlayStyle={styles.securityOverlay}
       panelStyle={styles.securityCard}
       initialFocusRef={denyBtnRef}
       deps={[request?.confirmation_id]}
     >
       <div style={{ ...styles.securityBadge, background: riskColor + "22", color: riskColor }}>
-        {riskLabel}操作确认
+        {dialogLabel}
       </div>
-      <h3 style={styles.securityTitle}>允许执行 `{request.tool_name}` 吗？</h3>
-      <p style={styles.securityText}>
-        检测到高风险 API：{" "}
-        <span style={{ color: "#F44336", fontWeight: 700 }}>
-          {request.dangerous_apis.join(", ") || "未知"}
-        </span>
-        。请确认这段代码符合你的意图后再允许执行。
-      </p>
+      <h3 style={styles.securityTitle}>
+        {isAppLaunch ? "允许启动此应用吗？" : `允许执行 \`${request.tool_name}\` 吗？`}
+      </h3>
+      {(!isAppLaunch || request.dangerous_apis.length > 0) && (
+        <p style={styles.securityText}>
+          检测到高风险 API：{" "}
+          <span style={{ color: "#F44336", fontWeight: 700 }}>
+            {request.dangerous_apis.join(", ") || "未知"}
+          </span>
+          。请确认这段代码符合你的意图后再允许执行。
+        </p>
+      )}
+      {isAppLaunch && (
+        <p style={styles.securityText}>
+          host_app 将启动白名单中的应用（无参数启动）。请确认这是你要启动的应用：
+        </p>
+      )}
       {request.defense_layer !== undefined && (
         <div style={styles.defenseLayerHint}>
           防御层：Layer {request.defense_layer}
