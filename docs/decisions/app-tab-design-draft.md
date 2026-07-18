@@ -126,3 +126,11 @@
 10. **D12 (scope)**：**L1 templates 移 P2**；注册表 Uninstall 枚举移 P2；preset 收敛到 1 个。**P1 = App tab + 枚举添加 + L0 launch + 三档 policy + 安全三件套 + 审计 + system prompt 索引注入**。
 11. **Q5 确定性兜底（采纳靶向版）**：thread 内见过 CLI 输出后，state-changing op 强制 L2、auto 按 ai 降级，至下一个真实 user message 清除。
 12. **接线警示**：host_app/host_cli 进 gate = 三处接线（tool 名单 + bindingPayloadFor switch + executor validate 分支），需测试断言 binding payload 非空。
+
+---
+
+## Owner 决策（2026-07-18 10:56，P1 需求基线）
+
+1. **auto 档语义**：接受「仅启动免确认、带参必确认（L2）、危险操作必 Hello」。（对应对抗修订 D3 结构规则，正式采纳）
+2. **W7 read-only 锁：为"启动应用"正式破例**。thread-trust 扩展一个 kind：`"app-launch"`，**仅限 L0 无参启动**；读操作语义不变；写/危险操作永远不适用 thread-trust。此为 owner 对 W7 Blocker 1 的显式裁决（锁是决策不是机制），需在 `w7-trusted-apps-final.md` 补 amendment 注记。
+3. **user-writable 目录 / 未签名应用**：允许添加 + 黄色警告徽标，**但此类应用禁止设为 auto**（最高 policy = `ai`）。（对 §10 问题 5/8 的合并裁决——若理解有偏差 owner 将纠正）
