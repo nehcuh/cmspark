@@ -1,4 +1,4 @@
-# computer-ocr.ps1 — coordinate computer-use WP1 OCR layer (plan B.2 L1).
+﻿# computer-ocr.ps1 — coordinate computer-use WP1 OCR layer (plan B.2 L1).
 # Windows.Media.Ocr via the hello-verify WinRT call pattern (E3): unsigned
 # PowerShell 5.1, no downloads, no new permissions.
 #

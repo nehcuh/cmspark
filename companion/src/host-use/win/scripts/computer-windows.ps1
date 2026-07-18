@@ -1,4 +1,4 @@
-# computer-windows.ps1 — window enumeration / hwnd introspection for the
+﻿# computer-windows.ps1 — window enumeration / hwnd introspection for the
 # whitelist-ownership gate (plan E.2.1: hwnd -> pid -> exe path -> AppEntry).
 #
 # Modes:

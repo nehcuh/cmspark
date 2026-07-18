@@ -1,4 +1,4 @@
-# computer-input.ps1 — coordinate computer-use WP1 SendInput injection.
+﻿# computer-input.ps1 — coordinate computer-use WP1 SendInput injection.
 # Built on the S-5 spike actor (scripts/spike/s5-sendinput/s5-actor.ps1, gate
 # PASS): unsigned medium-IL same-IL SendInput + AttachThreadInput foregrounding
 # + MOUSEEVENTF_VIRTUALDESK|ABSOLUTE normalization + KEYEVENTF_UNICODE typing.

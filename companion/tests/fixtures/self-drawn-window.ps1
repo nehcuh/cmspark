@@ -149,7 +149,7 @@ function Show-FixtureDialog {
   # confirm button that the agent must NEVER click without re-L2.
   $script:dialog = New-Object Windows.Forms.Form -Property @{
     Text = '确认操作'; Width = 320; Height = 180
-    StartPosition = 'Manual'; Location = (New-Object Drawing.Point($form.Location.X + 120, $form.Location.Y + 90))
+    StartPosition = 'Manual'; Location = (New-Object Drawing.Point(($form.Location.X + 120), ($form.Location.Y + 90)))
     FormBorderStyle = 'FixedDialog'; TopMost = $true
   }
   $lbl = New-Object Windows.Forms.Label -Property @{

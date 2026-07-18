@@ -1,4 +1,4 @@
-# computer-capture.ps1 — coordinate computer-use WP1 screenshot capture.
+﻿# computer-capture.ps1 — coordinate computer-use WP1 screenshot capture.
 # Strategy (plan D.1): PrintWindow(PW_RENDERFULLCONTENT) first -> black-image
 # detection (near-zero pixel variance = S-4 OSR marker) -> optional BitBlt
 # fallback after force-foregrounding the target window.
