@@ -1139,6 +1139,11 @@ export async function handleSecurityConfirmationResponse(ws: WebSocket, msg: any
   // Same anti-injection contract as add_to_whitelist above.
   const rawThreadWhitelist: boolean = msg.add_to_thread_whitelist === true
   const relevantApps = securityConfirmations.getRelevantApps(confirmationId) || []
+  // Capture the tool name BEFORE respondFrom() below deletes the pending
+  // entry — getToolName afterwards would return undefined and the W7/WP3
+  // thread-trust grant would silently never happen (pre-existing bug: the
+  // host_read grant was equally affected; no test covered the composition).
+  const confirmationToolName = securityConfirmations.getToolName(confirmationId)
   let threadWhitelistApp: string | null = null
   if (rawThreadWhitelist && relevantApps.length > 0) {
     // The first (and currently only) relevant app is what the user was shown.
@@ -1240,7 +1245,7 @@ export async function handleSecurityConfirmationResponse(ws: WebSocket, msg: any
   // add_to_thread_whitelist=true. Only for read operations (Q1 blocker:
   // writes always require biometric per call, never thread-trusted).
   if (responded && approved && threadWhitelistApp) {
-    const toolName = securityConfirmations.getToolName(confirmationId)
+    const toolName = confirmationToolName
     if (toolName === "host_read" && sessionId) {
       getThreadApprovals().add(sessionId, threadWhitelistApp, "read")
       logger.info("security.thread_whitelist.added", {

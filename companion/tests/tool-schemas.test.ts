@@ -177,6 +177,25 @@ test("host_read: rejects max_chars out of range", () => {
 })
 
 // =============================================================================
+// host_app — App tab WP3 (L0 no-arg launch of whitelisted apps)
+// =============================================================================
+
+test("host_app: accepts {app, action:'launch'} + optional security_token", () => {
+  const out = parseToolArgs("host_app", { app: "win.app.cloudmusic", action: "launch" })
+  assert.equal(out.app, "win.app.cloudmusic")
+  assert.equal(out.action, "launch")
+  const withToken = parseToolArgs("host_app", { app: "win.app.cloudmusic", action: "launch", security_token: "t" })
+  assert.equal(withToken.security_token, "t")
+})
+
+test("host_app: rejects missing app, empty app, and non-launch actions", () => {
+  assert.throws(() => parseToolArgs("host_app", { action: "launch" }))
+  assert.throws(() => parseToolArgs("host_app", { app: "", action: "launch" }))
+  assert.throws(() => parseToolArgs("host_app", { app: "win.app.x", action: "run_template" }))
+  assert.throws(() => parseToolArgs("host_app", { app: "win.app.x" }))
+})
+
+// =============================================================================
 // Generic fallback — non-high-risk tools pass through unchanged
 // =============================================================================
 

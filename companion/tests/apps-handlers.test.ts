@@ -470,3 +470,61 @@ test("message-router delegates apps.list and apps.add (AUMID round-trip, no fs d
   assert.equal(add.added, "win.app.calculator")
   assert.ok(getConfig().apps?.entries?.["win.app.calculator"])
 })
+
+// --- WP3: app-launch thread-trust clearing (owner decision 2 obligation) ----
+
+test("apps.remove / set_policy / set_enabled(false) invoke clearAppTrust; set_enabled(true) does not", async () => {
+  reset()
+  replaceAppsEntries({ "win.app.app": seedEntry("win.app.app", { policy: "ai" }) })
+  const calls: string[] = []
+  const d = deps({ clearAppTrust: (t) => { calls.push(t); return 2 } })
+
+  await handleAppsMessage({ type: "apps.set_policy", token: "win.app.app", policy: "manual" }, {}, d)
+  assert.deepEqual(calls, ["win.app.app"], "policy change must clear trust")
+
+  await handleAppsMessage({ type: "apps.set_enabled", token: "win.app.app", enabled: false }, {}, d)
+  assert.deepEqual(calls, ["win.app.app", "win.app.app"], "disable must clear trust")
+
+  await handleAppsMessage({ type: "apps.set_enabled", token: "win.app.app", enabled: true }, {}, d)
+  assert.equal(calls.length, 2, "re-enable must NOT touch trust (nothing to resurrect)")
+
+  await handleAppsMessage({ type: "apps.remove", token: "win.app.app" }, {}, d)
+  assert.equal(calls.length, 3, "remove must clear trust")
+})
+
+test("apps.set_policy same-policy no-op does NOT clear trust", async () => {
+  reset()
+  replaceAppsEntries({ "win.app.app": seedEntry("win.app.app", { policy: "manual" }) })
+  const calls: string[] = []
+  const r: any = await handleAppsMessage(
+    { type: "apps.set_policy", token: "win.app.app", policy: "manual" },
+    {}, deps({ clearAppTrust: (t) => { calls.push(t); return 0 } }),
+  )
+  assert.equal(r.changed, false)
+  assert.equal(calls.length, 0)
+})
+
+test("default clearer removes ONLY the token's app-launch entries (kind + bundle scoped)", async () => {
+  reset()
+  const { getThreadApprovals } = await import("../src/host-use/thread-approvals")
+  const approvals = getThreadApprovals()
+  const T = "wp3-clear-test-thread"
+  // Seed: target token's app-launch trust in two threads, a read-kind entry
+  // for the same bundle id, and another app's app-launch entry.
+  approvals.add(T, "win.app.app", "app-launch")
+  approvals.add(`${T}-2`, "win.app.app", "app-launch")
+  approvals.add(T, "win.app.app", "read")
+  approvals.add(T, "win.app.other", "app-launch")
+  try {
+    replaceAppsEntries({ "win.app.app": seedEntry("win.app.app"), "win.app.other": seedEntry("win.app.other") })
+    // No clearAppTrust dep → the default ThreadApprovals-backed clearer runs.
+    await handleAppsMessage({ type: "apps.remove", token: "win.app.app" }, {}, deps())
+    assert.equal(approvals.has(T, "win.app.app", "app-launch"), false, "target token trust must be cleared")
+    assert.equal(approvals.has(`${T}-2`, "win.app.app", "app-launch"), false, "cleared across ALL threads")
+    assert.equal(approvals.has(T, "win.app.app", "read"), true, "other kinds must survive")
+    assert.equal(approvals.has(T, "win.app.other", "app-launch"), true, "other apps must survive")
+  } finally {
+    approvals.clearThread(T)
+    approvals.clearThread(`${T}-2`)
+  }
+})
