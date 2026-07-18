@@ -606,6 +606,49 @@ test("executor: screenshot/describe/wait do not consume the action budget", asyn
   assert.ok(describe?.untrustedText?.includes("确定"), "describe returns OCR text as untrusted data")
 })
 
+// --- X4: type.text cap ----------------------------------------------------------
+
+test("executor X4: type text beyond 2000 chars -> TYPE_TEXT_TOO_LONG, nothing injected, no confirm", async () => {
+  const confirm = scriptedConfirm([true])
+  const injector = new RecordingInjector()
+  const deps = makeDeps({ confirm: confirm.fn, injector })
+  const r = await runComputerTask(
+    { task: "t", app: "win.app.test", actions: [{ action: "type", text: "长".repeat(2001) }] },
+    deps,
+  )
+  assert.equal(r.errorCode, "TYPE_TEXT_TOO_LONG")
+  assert.equal(injector.types.length, 0)
+  assert.equal(confirm.captured.length, 0)
+})
+
+test("executor X4: task corpus TOTAL beyond 2000 chars -> TYPE_TEXT_TOO_LONG (task-splitting guard)", async () => {
+  const injector = new RecordingInjector()
+  const deps = makeDeps({ injector })
+  const r = await runComputerTask(
+    {
+      task: "t",
+      app: "win.app.test",
+      actions: [
+        { action: "type", text: "a".repeat(1200) },
+        { action: "type", text: "b".repeat(900) },
+      ],
+    },
+    deps,
+  )
+  assert.equal(r.errorCode, "TYPE_TEXT_TOO_LONG")
+  assert.equal(injector.types.length, 0)
+})
+
+test("executor X4: corpus at exactly 2000 chars passes the cap", async () => {
+  const injector = new RecordingInjector()
+  const deps = makeDeps({ injector })
+  const r = await runComputerTask(
+    { task: "t", app: "win.app.test", actions: [{ action: "type", text: "z".repeat(2000) }] },
+    deps,
+  )
+  assert.equal(r.success, true)
+})
+
 // --- missing anchor ------------------------------------------------------------------
 
 test("executor: OCR anchor not found -> ELEMENT_NOT_FOUND, nothing injected", async () => {

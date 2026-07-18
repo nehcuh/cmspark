@@ -445,3 +445,25 @@ test("mcp: converter direct unit (jsonSchemaPrimitiveToZod round-trips)", () => 
     false,
   )
 })
+
+// =============================================================================
+// host_computer — X4 type.text cap
+// =============================================================================
+
+test("host_computer: type text at the 2000-char cap passes", () => {
+  const out = parseToolArgs("host_computer", {
+    task: "t",
+    app: "win.app.test",
+    actions: [{ action: "type", text: "x".repeat(2000) }],
+  })
+  assert.equal(out.actions.length, 1)
+})
+
+test("host_computer: type text beyond 2000 chars is rejected at the schema boundary (X4)", () => {
+  const bad = tryParseToolArgs("host_computer", {
+    task: "t",
+    app: "win.app.test",
+    actions: [{ action: "type", text: "x".repeat(2001) }],
+  })
+  assert.equal(bad.ok, false)
+})

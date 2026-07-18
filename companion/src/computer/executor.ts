@@ -46,6 +46,7 @@ import {
   DEFAULT_TASK_BUDGET,
   INJECTIVE_ACTIONS,
   MAX_TASK_BUDGET,
+  MAX_TYPE_TEXT_CHARS,
   MAX_WAIT_MS,
   PIXEL_DIFF_THRESHOLD,
   REGION_CROP_SIZE,
@@ -128,6 +129,14 @@ function validateDraft(params: ComputerTaskParams): ComputerError | null {
         if (typeof (a as any).text !== "string" || (a as any).text.length === 0) {
           return new ComputerError("INVALID_ACTION", "computer: type action requires non-empty text")
         }
+        // X4 layer 2 (schema is layer 1, ps1 layer 3): bound the foreground
+        // hijack window — per-text cap.
+        if ((a as any).text.length > MAX_TYPE_TEXT_CHARS) {
+          return new ComputerError(
+            "TYPE_TEXT_TOO_LONG",
+            `computer: type text is ${(a as any).text.length} chars — exceeds the ${MAX_TYPE_TEXT_CHARS}-char cap (X4)`,
+          )
+        }
       } else {
         const hasCoords = Number.isInteger((a as any).x) && Number.isInteger((a as any).y)
         const hasTarget = typeof (a as any).target === "string" && (a as any).target.length > 0
@@ -142,6 +151,17 @@ function validateDraft(params: ComputerTaskParams): ComputerError | null {
     } else if (kind !== "screenshot" && kind !== "describe") {
       return new ComputerError("INVALID_ACTION", `computer: unsupported action "${kind}" in WP1`)
     }
+  }
+  // X4: corpus TOTAL cap — task-splitting must not multiply the injection window.
+  const corpusChars = params.actions.reduce(
+    (n, a) => n + ((a as any)?.action === "type" && typeof (a as any).text === "string" ? (a as any).text.length : 0),
+    0,
+  )
+  if (corpusChars > MAX_TYPE_TEXT_CHARS) {
+    return new ComputerError(
+      "TYPE_TEXT_TOO_LONG",
+      `computer: task type corpus totals ${corpusChars} chars — exceeds the ${MAX_TYPE_TEXT_CHARS}-char cap (X4)`,
+    )
   }
   return null
 }

@@ -209,9 +209,15 @@ switch ($Action) {
   }
   'type' {
     if ($Text -eq "") { Fail "BADARGS" "type action requires non-empty -Text" 2 }
+    $chars = $Text.ToCharArray()
+    # X4: hard injection-window cap, layer 3 (zod schema + TS executor enforce
+    # the same 2000-char limit; this guards hand-rolled callers). 2000 chars ×
+    # ≤80ms throttle ≈ 110s — under the 120s absolute ceiling below.
+    if ($chars.Length -gt 2000) { Fail "SENDFAILED" "type text is $($chars.Length) chars — exceeds the 2000-char cap (X4)" 9 }
+    $estimatedMs = $chars.Length * $ThrottleMaxMs
+    if ($estimatedMs -gt 120000) { Fail "SENDFAILED" "estimated inject time ${estimatedMs}ms exceeds the 120s hard cap (X4)" 9 }
     $rand = New-Object Random
     $sentChars = 0
-    $chars = $Text.ToCharArray()
     for ($i = 0; $i -lt $chars.Length; $i += $FocusCheckEvery) {
       # A1.4: foreground drift mid-type = abort remaining events (the text must
       # never spray into a popup dialog / password field that appeared mid-task).

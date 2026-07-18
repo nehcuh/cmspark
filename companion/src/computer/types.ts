@@ -80,6 +80,14 @@ export const UNCROSS_VERIFIED_SUB_BUDGET = 3
 export const REGION_CROP_SIZE = 200
 /** wait clamp (plan §D.3). */
 export const MAX_WAIT_MS = 5000
+/**
+ * X4: per-text AND per-task-corpus character cap for type actions. Bound the
+ * worst-case foreground hijack time (WP1 has no emergency stop — A9 is WP2):
+ * 2000 chars × ≤80ms/char throttle ≈ 110s, under the ps1 120s hard cap.
+ * Enforced at THREE layers: zod schema (tool boundary), executor
+ * validateDraft (belt), ps1 (hand-rolled caller guard).
+ */
+export const MAX_TYPE_TEXT_CHARS = 2000
 
 // ---------------------------------------------------------------------------
 // Typed errors — every fail-closed path has a stable code (ps1 stderr prefixes
@@ -107,6 +115,7 @@ export type ComputerErrorCode =
   | "BUDGET_DENIED" // budget-exhaustion re-L2 denied
   | "UNCROSS_DENIED" // uncrossverified sub-budget re-L2 denied
   | "TYPE_TEXT_NOT_CONFIRMED" // A3: text outside the confirmed corpus
+  | "TYPE_TEXT_TOO_LONG" // X4: type text / task corpus beyond MAX_TYPE_TEXT_CHARS
   | "CAPTURE_FAILED"
   | "INJECT_FAILED"
   | "EVIDENCE_ERROR"

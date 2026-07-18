@@ -115,7 +115,7 @@ export const TOOL_ARG_SCHEMAS: Record<string, z.ZodTypeAny> = {
           y: z.number().int().min(0).optional(),
           target: z.string().min(1).optional(),
         }).strict(),
-        z.object({ action: z.literal("type"), text: z.string().min(1) }).strict(),
+        z.object({ action: z.literal("type"), text: z.string().min(1).max(2000) }).strict(),
         z.object({ action: z.literal("wait"), ms: z.number().int().min(0).max(5000) }).strict(),
         z.object({ action: z.literal("screenshot") }).strict(),
         z.object({ action: z.literal("describe") }).strict(),
