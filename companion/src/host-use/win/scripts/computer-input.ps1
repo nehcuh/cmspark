@@ -10,11 +10,15 @@
 #   3. input desktop name == "Default" (UAC / secure desktop / lock denied)
 #   4. client coords within the target client rect (reject, never clamp)
 #   5. type: foreground hwnd re-checked every batch; drift aborts (A1.4)
+#   6. ForceForeground must report success (X2 — foreground lock = no blind inject)
+#   7. click: target must be foreground AND own the root window at the landing
+#      point (WindowFromPoint + GetAncestor GA_ROOT; X2 — overlays intercept)
 #
 # stdout contract: single-line JSON { ok, action, ... }
 # stderr contract:
 #   HWNDDEAD:<d> (4)  ILDENIED:<d> (5)  DESKTOPDENIED:<d> (6)
-#   OUTOFBOUNDS:<d> (7)  FOCUSLOST:<d> (8)  SENDFAILED:<d> (9)  BADARGS:<d> (2)
+#   OUTOFBOUNDS:<d> (7)  FOCUSLOST:<d> (8)  SENDFAILED:<d> (9)
+#   OCCLUDED:<d> (10)  BADARGS:<d> (2)
 param(
   [Parameter(Mandatory=$true)][long]$Hwnd,
   [Parameter(Mandatory=$true)][ValidateSet('click','double_click','right_click','type')] [string]$Action,
@@ -54,6 +58,8 @@ public class InpW32 {
   [DllImport("user32.dll")] public static extern IntPtr OpenInputDesktop(uint flags, bool inherit, uint access);
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern bool GetUserObjectInformation(IntPtr hObj, int index, IntPtr buf, int len, out uint needed);
   [DllImport("user32.dll")] public static extern bool CloseDesktop(IntPtr h);
+  [DllImport("user32.dll")] public static extern IntPtr WindowFromPoint(POINT p);
+  [DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr h, uint flags);
   [DllImport("kernel32.dll")] public static extern IntPtr OpenProcess(uint access, bool inherit, uint pid);
   [DllImport("kernel32.dll")] public static extern bool CloseHandle(IntPtr h);
   [DllImport("advapi32.dll")] public static extern bool OpenProcessToken(IntPtr proc, uint access, out IntPtr token);
@@ -186,11 +192,34 @@ if ($Action -ne 'type') {
 }
 
 # --- execute ---------------------------------------------------------------------
-[InpW32]::ForceForeground($hwndPtr) | Out-Null
+# X2: ForceForeground's return was previously discarded — a silent foreground
+# lock failure meant the click/type went to whatever WAS foreground.
+if (-not [InpW32]::ForceForeground($hwndPtr)) {
+  Fail "FOCUSLOST" "SetForegroundWindow failed (foreground lock) — refusing to inject blind" 8
+}
 Start-Sleep -Milliseconds 120
 
 switch ($Action) {
   { $_ -in 'click','double_click','right_click' } {
+    # X2: landing-window ownership — the click must land on the TARGET, not on
+    # an overlay. Both checks fail closed:
+    #   a) the target must actually BE foreground after the force;
+    #   b) the root window at the landing point must be the target hwnd
+    #      (WindowFromPoint sees through nothing — an AlwaysOnTop/notification
+    #      window covering the point reports itself).
+    # Residual (documented): a millisecond race remains between these checks
+    # and SendInput; the post-action A2.1 dialog invariant is the backstop.
+    if ([InpW32]::GetForegroundWindow() -ne $hwndPtr) {
+      Fail "FOCUSLOST" "target hwnd $Hwnd is not foreground after force — refusing to click" 8
+    }
+    $ptCheck = New-Object InpW32+POINT
+    $ptCheck.X = $screenX; $ptCheck.Y = $screenY
+    $landed = [InpW32]::GetAncestor([InpW32]::WindowFromPoint($ptCheck), 2) # GA_ROOT
+    if ($landed -ne $hwndPtr) {
+      $landedId = 0
+      if ($landed -ne [IntPtr]::Zero) { $landedId = $landed.ToInt64() }
+      Fail "OCCLUDED" "point ($screenX,$screenY) lands on hwnd $landedId, not target hwnd $Hwnd — click would be intercepted by another window" 10
+    }
     $down = [InpW32]::MOUSEEVENTF_LEFTDOWN; $up = [InpW32]::MOUSEEVENTF_LEFTUP
     if ($_ -eq 'right_click') { $down = [InpW32]::MOUSEEVENTF_RIGHTDOWN; $up = [InpW32]::MOUSEEVENTF_RIGHTUP }
     $batch = @([InpW32]::Mouse($screenX, $screenY, [InpW32]::MOUSEEVENTF_MOVE),

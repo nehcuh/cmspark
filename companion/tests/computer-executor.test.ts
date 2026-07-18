@@ -649,6 +649,31 @@ test("executor X4: corpus at exactly 2000 chars passes the cap", async () => {
   assert.equal(r.success, true)
 })
 
+// --- X2: landing-window interception (click occlusion) ----------------------------
+
+test("executor X2: landing point owned by another window -> CLICK_OCCLUDED, fail-closed, no re-L2 path", async () => {
+  const confirm = scriptedConfirm([true])
+  const injector = new RecordingInjector()
+  injector.click = async () => {
+    throw new ComputerError("CLICK_OCCLUDED", "point lands on hwnd 999999, not target")
+  }
+  const evidence = new FakeEvidence()
+  const capturer = new FakeCapturer()
+  const removed: string[] = []
+  const deps = makeDeps({
+    capturer,
+    injector,
+    confirm: confirm.fn,
+    evidenceFactory: () => evidence,
+    removeFile: async (p) => { removed.push(p) },
+  })
+  const r = await runComputerTask({ task: "t", app: "win.app.test", actions: [clickOk] }, deps)
+  assert.equal(r.success, false)
+  assert.equal(r.errorCode, "CLICK_OCCLUDED")
+  assert.equal(confirm.captured.length, 0, "occlusion is a hard fail-closed, never a re-L2 question")
+  assertNoRawResidue(capturer, evidence, removed)
+})
+
 // --- missing anchor ------------------------------------------------------------------
 
 test("executor: OCR anchor not found -> ELEMENT_NOT_FOUND, nothing injected", async () => {

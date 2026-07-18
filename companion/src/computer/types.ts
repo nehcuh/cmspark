@@ -105,6 +105,7 @@ export type ComputerErrorCode =
   | "INTEGRITY_LEVEL_DENIED" // cross-IL target — fail-closed (§D.2)
   | "DESKTOP_DENIED" // OpenInputDesktop name != "Default" (UAC/secure desktop)
   | "OUT_OF_BOUNDS" // coordinates outside target window rect — reject, never clamp
+  | "CLICK_OCCLUDED" // X2: landing point owned by another (overlay) window — fail-closed
   | "FOCUS_LOST" // foreground hwnd changed mid-type batch (A1.4)
   | "OCR_LANGUAGE_MISSING" // honest layer skip (plan §B.2 L1)
   | "ELEMENT_NOT_FOUND"
