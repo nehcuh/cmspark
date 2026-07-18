@@ -119,3 +119,57 @@ d206a9f M6 Finder move 强制绝对 POSIX 路径(DarwinPathNotAbsolute)
 - 该分支已推送至远程：`origin/computer-use-w8-windows`
 - 后续 main 上的修复需要时 cherry-pick / merge 进本分支，而非反向合并
 - 遗留验证与 Phase 2 事项统一追踪于 GitHub Issue #69
+
+---
+
+# 附录 B：App 页签（本地应用启动台）— P1 完成交接（2026-07-18）
+
+## 范围
+
+在 sidepanel 新增「App」页签：枚举本机已安装应用 → 用户选信任级别（仅启动免确认 auto / AI 判断 ai / 手工确认 manual）加入白名单 → 对话框说「打开网易云音乐」即可经 host_app 工具启动。P1 仅 Windows、纯启动（无参数模板、无 CLI track、无 kill）。
+
+## 工作包与评审记录（12 commits，e55fee0..8f83a87，已推送）
+
+| WP | 内容 | 评审结论 |
+|---|---|---|
+| WP1 | `companion/src/apps/types.ts` AppEntry schema + 校验 + policy cap + config 块 | APPROVED |
+| WP2 | 枚举/签名脚本（apps-enumerate.ps1 / apps-signer.ps1）、D1 guards、add-flow、D2 biometric 门、apps.* WS handlers | APPROVED（修了 W1 多扩展名 lolbin 绕过、W4 UNC 路径 cap ai） |
+| WP3 | host_app 工具、三处 gate 接线、策略链、D7 启动引擎（apps-probe.ps1）、线程信任清除 | APPROVED；**顺带修了真实 bug：respondFrom 先删 pending 导致 host_read 的 W7 线程信任从未生效** |
+| WP4 | AppsPanel.tsx + BottomBar 页签 + App.tsx canThreadTrust 含 host_app | APPROVED + follow-ups |
+| WP5 | buildAppIndexSection 注入 system prompt + W2 测试 | APPROVED |
+| WP6a | 终审修复：错误全带 `family:"apps"` 并按 family 路由面板；apps.list 带 `platform`；host_app L2 弹窗显示「启动应用确认」不带高风险 API 区 | APPROVED — ready for owner E2E |
+
+## Owner 三项决策（已确认，全文在 docs/decisions/app-tab-design-draft.md 末尾）
+
+1. **auto 语义** = 仅启动免确认；带参数必 L2 确认；危险操作必 Hello/手输码
+2. **W7 线程信任为 app-launch 破例**：勾「此线程不再询问」后同线程同应用免确认；删除应用/改配置即清除信任
+3. **未签名或用户可写目录的应用 cap 在 "ai"**，不允许设为 auto（添加时黄标警告，strict 模式下禁止）
+
+## 测试基线
+
+- companion：apps/host-use 相关套件 **251 tests / 250 pass / 1 skip**（off-win32 条件跳）
+- 扩展：`tsc --noEmit` 干净，**145/145**
+- 全量套件 ~34–53 个预存 Windows 环境失败（daemon unix socket EACCES、symlink EPERM、0o600 断言），与本分支无关，**不要修**
+
+## 安装包
+
+- 已重打包：`dist-package\CMspark-v0.3.0-computer-use-windows-x64.zip`（含 7 个 host-scripts-win ps1 + 新扩展）
+- 本机冒烟：exe 正常启动、`server.listening` port 23401
+
+## ⚠️ 待 Owner E2E 验收清单（Windows 本机）
+
+1. 启动 `dist-package\cmspark-windows-x64\cmspark-agent.exe tray`，Chrome 加载包内 `chrome-extension/`
+2. 打开 App 页签 → 枚举 → 找到**网易云音乐**（本机已装，NetEase 签名有效，可 auto）
+3. 以「AI 判断」添加 → 对话框输入「打开网易云音乐」→ 应弹「**启动应用确认**」（无高风险 API 区、带线程信任 checkbox）
+4. 批准 → 应用启动（evidence 应为 process_running / already_running，单实例不误报）
+5. 同线程第二次 → 免确认；升级为 auto → 走 Hello/手输码（本机无 Hello 硬件 → 自动 fallback 手输码）
+6. 删除该应用 → 信任清除，再次启动重新弹窗
+
+## P1 边界（有意为之）
+
+- kill-switch 只能改 config.json（UI 只读）
+- 仅 Windows；纯启动无参数；无 CLI track；无 preset gallery 扩充
+
+## P2 挂账（未开工，等 owner 发话）
+
+L1 参数模板、CLI track（开放前必须补 powershell_ise 等 vault 映射 + AUMID→vault heuristic）、枚举注册表 Uninstall 键、preset gallery、drift sha256 re-approve 的 biometric 门、全量测试 Windows 环境失败加平台 skip（可开 tracking issue）。
