@@ -19,7 +19,6 @@
 //     the CLI track outright, and GUI vault apps may only do plain L0 launch
 //     (never templates — P1 ships no templates anyway).
 
-import * as path from "path"
 import { VAULT_WIN_APPS } from "../host-use/win/blacklist"
 import type { AppKind } from "./types"
 
@@ -90,7 +89,11 @@ const BASENAME_TO_VAULT_TOKEN: Readonly<Record<string, string>> = {
 
 /** Normalize an exe path (or bare name) to its lowercase extension-less basename. */
 export function exeBasename(p: string): string {
-  let base = path.basename(String(p || "")).toLowerCase()
+  // Split on BOTH separators — guard logic must be deterministic whether the
+  // host parsing the path is Windows or not (tests run cross-platform; the
+  // targets are always Windows paths).
+  const segments = String(p || "").split(/[\\/]/)
+  let base = (segments[segments.length - 1] || "").toLowerCase()
   for (const ext of [".exe", ".bat", ".cmd", ".com"]) {
     if (base.endsWith(ext)) {
       base = base.slice(0, -ext.length)

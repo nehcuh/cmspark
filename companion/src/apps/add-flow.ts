@@ -266,7 +266,9 @@ export async function buildAppEntry(
   }
 
   const display = input.displayName?.trim() || path.basename(canonical).replace(/\.exe$/i, "")
-  const token = uniqueToken(slugify(display), input.kind, input.existingEntries)
+  // Slug source: exe basename first (stable, usually latin) — a CJK display
+  // name would sanitize to the useless "app".
+  const token = uniqueToken(slugify(path.basename(canonical)), input.kind, input.existingEntries)
   const entry: AppEntry = {
     token,
     kind: input.kind,
