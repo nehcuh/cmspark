@@ -57,10 +57,87 @@ export function rethrowComputerPsError(err: any, label: string): never {
   throw err
 }
 
+export const COMPUTER_TEMP_DIR_NAME = "cmspark-computer"
+
+export function computerTempDir(): string {
+  return path.join(os.tmpdir(), COMPUTER_TEMP_DIR_NAME)
+}
+
 function tmpPng(prefix: string): string {
-  const dir = path.join(os.tmpdir(), "cmspark-computer")
+  const dir = computerTempDir()
   try { fs.mkdirSync(dir, { recursive: true }) } catch { /* best-effort */ }
   return path.join(dir, `${prefix}-${process.pid}-${crypto.randomBytes(6).toString("hex")}.png`)
+}
+
+// ---------------------------------------------------------------------------
+// X6 — temp-capture janitor. Raw frames carry a pid + random suffix; a crash
+// can strand them in %TEMP% unblurred. Sweep at daemon startup: a capture is
+// removed when its owning process is DEAD, or it is older than the TTL even
+// if alive (a wedged task must not pin plaintext forever). Files we cannot
+// attribute (foreign names, our own pid) are kept.
+// ---------------------------------------------------------------------------
+
+/** fs surface the janitor needs (injectable for tests). */
+export interface SweepFsLike {
+  readdirSync(dir: string): string[]
+  statSync(p: string): { mtimeMs: number }
+  rmSync(p: string, opts?: { force?: boolean }): unknown
+}
+
+export interface SweepComputerTempOptions {
+  dir?: string
+  now?: number
+  ttlMs?: number // default 1h
+  selfPid?: number // default process.pid
+  isPidAlive?: (pid: number) => boolean // default process.kill(pid, 0)
+  fsLike?: SweepFsLike
+}
+
+export function sweepComputerTempCaptures(opts: SweepComputerTempOptions = {}): { removed: string[]; kept: string[] } {
+  const dir = opts.dir ?? computerTempDir()
+  const nowMs = opts.now ?? Date.now()
+  const ttl = opts.ttlMs ?? 3_600_000
+  const selfPid = opts.selfPid ?? process.pid
+  const fsx: SweepFsLike = opts.fsLike ?? (fs as unknown as SweepFsLike)
+  const alive =
+    opts.isPidAlive ??
+    ((pid: number) => {
+      try { process.kill(pid, 0); return true } catch { return false }
+    })
+  const removed: string[] = []
+  const kept: string[] = []
+  let names: string[]
+  try {
+    names = fsx.readdirSync(dir)
+  } catch {
+    return { removed, kept } // no temp dir — nothing to sweep
+  }
+  for (const name of names) {
+    // prefix itself may contain '-' (e.g. "diffregion-a") — anchor on the
+    // LAST '-<pid>-<12hex>.png' tail.
+    const m = /^.+-(\d+)-[0-9a-f]{12}\.png$/.exec(name)
+    if (!m) { kept.push(name); continue }
+    const pid = Number(m[1])
+    if (pid === selfPid) { kept.push(name); continue }
+    const p = path.join(dir, name)
+    let mtimeMs: number
+    try {
+      mtimeMs = fsx.statSync(p).mtimeMs
+    } catch {
+      continue // vanished mid-sweep / unreadable — leave it
+    }
+    if (!alive(pid) || nowMs - mtimeMs > ttl) {
+      try {
+        fsx.rmSync(p, { force: true })
+        removed.push(name)
+      } catch {
+        kept.push(name)
+      }
+    } else {
+      kept.push(name)
+    }
+  }
+  return { removed, kept }
 }
 
 // ---------------------------------------------------------------------------

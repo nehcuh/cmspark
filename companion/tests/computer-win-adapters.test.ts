@@ -79,3 +79,80 @@ test("ps error: label is carried into the message", () => {
   const m = mappingOf("ILDENIED", "inject.click")
   assert.ok(m.message.startsWith("computer.inject.click:"))
 })
+
+// --- X6: temp-capture janitor --------------------------------------------------
+// Filenames: `${prefix}-${pid}-${12hex}.png` (prefix itself may contain '-').
+// Removal rule: pid is not ours AND (process is dead OR file older than TTL).
+
+import { sweepComputerTempCaptures, type SweepFsLike } from "../src/computer/win-adapters"
+
+function fakeFs(files: Record<string, number /* mtimeMs */>): { fsLike: SweepFsLike; removedPaths: string[] } {
+  const removedPaths: string[] = []
+  const fsLike: SweepFsLike = {
+    readdirSync: () => Object.keys(files),
+    statSync: (p) => {
+      const name = p.split(/[\\/]/).pop()!
+      if (!(name in files)) throw new Error("ENOENT")
+      return { mtimeMs: files[name] }
+    },
+    rmSync: (p) => { removedPaths.push(p.split(/[\\/]/).pop()!) },
+  }
+  return { fsLike, removedPaths }
+}
+
+const NOW = 10_000_000
+const HOUR = 3_600_000
+
+test("X6 sweep: dead pid's capture is removed", () => {
+  const { fsLike, removedPaths } = fakeFs({ "cap-4444-aaaaaaaaaaaa.png": NOW - 1000 })
+  const r = sweepComputerTempCaptures({
+    dir: "t", now: NOW, selfPid: 1111, fsLike,
+    isPidAlive: () => false,
+  })
+  assert.deepEqual(removedPaths, ["cap-4444-aaaaaaaaaaaa.png"])
+  assert.deepEqual(r.removed, ["cap-4444-aaaaaaaaaaaa.png"])
+})
+
+test("X6 sweep: own pid is NEVER removed, even when stale", () => {
+  const { fsLike, removedPaths } = fakeFs({ "cap-1111-aaaaaaaaaaaa.png": NOW - 10 * HOUR })
+  const r = sweepComputerTempCaptures({ dir: "t", now: NOW, selfPid: 1111, fsLike, isPidAlive: () => false })
+  assert.deepEqual(removedPaths, [])
+  assert.deepEqual(r.kept, ["cap-1111-aaaaaaaaaaaa.png"])
+})
+
+test("X6 sweep: live pid + fresh file is kept", () => {
+  const { fsLike, removedPaths } = fakeFs({ "cap-4444-aaaaaaaaaaaa.png": NOW - 1000 })
+  const r = sweepComputerTempCaptures({ dir: "t", now: NOW, selfPid: 1111, fsLike, isPidAlive: () => true })
+  assert.deepEqual(removedPaths, [])
+  assert.deepEqual(r.kept, ["cap-4444-aaaaaaaaaaaa.png"])
+})
+
+test("X6 sweep: live pid + file older than TTL is removed (wedged task pins nothing)", () => {
+  const { fsLike, removedPaths } = fakeFs({ "cap-4444-aaaaaaaaaaaa.png": NOW - 2 * HOUR })
+  const r = sweepComputerTempCaptures({ dir: "t", now: NOW, selfPid: 1111, fsLike, isPidAlive: () => true })
+  assert.deepEqual(removedPaths, ["cap-4444-aaaaaaaaaaaa.png"])
+})
+
+test("X6 sweep: hyphenated prefix parses (diffregion-a) and foreign names are kept", () => {
+  const { fsLike, removedPaths } = fakeFs({
+    "diffregion-a-4444-bbbbbbbbbbbb.png": NOW - 1000, // dead pid -> removed
+    "diffregion-b-4444-nothexsuffix.png": NOW - 10 * HOUR, // bad suffix -> kept
+    "unrelated.txt": NOW - 10 * HOUR,
+    "cap-4444-aaaaaaaaaaaa.bak": NOW - 10 * HOUR,
+  })
+  const r = sweepComputerTempCaptures({ dir: "t", now: NOW, selfPid: 1111, fsLike, isPidAlive: () => false })
+  assert.deepEqual(removedPaths, ["diffregion-a-4444-bbbbbbbbbbbb.png"])
+  assert.equal(r.kept.length, 3)
+})
+
+test("X6 sweep: missing temp dir is a no-op (never throws)", () => {
+  const r = sweepComputerTempCaptures({
+    dir: "t", now: NOW, selfPid: 1111,
+    fsLike: {
+      readdirSync: () => { throw new Error("ENOENT") },
+      statSync: () => { throw new Error("ENOENT") },
+      rmSync: () => {},
+    },
+  })
+  assert.deepEqual(r, { removed: [], kept: [] })
+})

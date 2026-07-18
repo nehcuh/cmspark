@@ -1801,6 +1801,15 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
         const { ComputerEvidence, runEvidenceJanitor } = await import("./computer/evidence")
         // A7.2: 7-day TTL janitor — best-effort, never blocks the task.
         try { runEvidenceJanitor({}) } catch { /* best-effort */ }
+        // X6: sweep %TEMP% raw captures stranded by crashed companion
+        // processes (dead pid, or older than 1h even if alive) — best-effort.
+        try {
+          const { sweepComputerTempCaptures } = await import("./computer/win-adapters")
+          const swept = sweepComputerTempCaptures()
+          if (swept.removed.length > 0) {
+            logger.info("computer.temp.swept", { removed: swept.removed.length })
+          }
+        } catch { /* best-effort */ }
         const sealer = new PsEvidenceSealer()
         const result = await runComputerTask(
           {
