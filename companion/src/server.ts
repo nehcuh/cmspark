@@ -1454,10 +1454,10 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
           // TODO Phase 2: send security.confirmation.request with nonceChallenge,
           // wait for response with nonceResponse, validate match, reject after 3 fails.
           // For now Linux returns the generated nonce but no writeOne execution
-          // (writeOne is darwin-only in adapter).
+          // (Phase 1 writeOne adapters exist for darwin + win32 only).
           return {
             success: false,
-            error: `host_write on Linux: biometric nonce generated (${nonce}) but writeOne adapter is darwin-only in Phase 1. Linux implementation pending Phase 2.`,
+            error: `host_write on Linux: biometric nonce generated (${nonce}) but Linux has no writeOne adapter in Phase 1 (darwin + win32 only). Linux implementation pending Phase 2.`,
           }
         }
         logger.info("security.biometric.verified", {

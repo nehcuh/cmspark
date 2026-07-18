@@ -3,6 +3,7 @@ import { promisify } from "util"
 import { execFile } from "child_process"
 import { randomBytes } from "crypto"
 import type { HostReadParams, HostReadResult } from "../types"
+import { NotImplementedForApp } from "../types"
 import { isVaultApp, isReadAllowed } from "./blacklist"
 
 const execFileAsync = promisify(execFile)
@@ -68,25 +69,45 @@ function parseHostJson(stdout: string): HostReadResult {
 
 export async function hostRead(params: HostReadParams): Promise<HostReadResult> {
   const application = params.application ?? "com.apple.mail"
-  // Defense in depth: check vault first (blacklist), then whitelist.
-  // Phase 0 only allows com.apple.mail; any other bundle id is rejected
-  // even if not on the vault list (Kimi phase0 review Critical #4).
+  // Defense in depth: check vault first (blacklist), then whitelist (Kimi
+  // phase0 review Critical #4). The W7 whitelist admits Mail + Notes + Finder
+  // so the inline-checkbox trust option is functional for non-Mail reads.
   if (isVaultApp(application)) {
     throw new Error(`host_read blocked: ${application} is on the vault blacklist`)
   }
   if (!isReadAllowed(application)) {
     throw new Error(
-      `host_read blocked: ${application} not in Phase 0 read whitelist (only com.apple.mail)`,
+      `host_read blocked: ${application} not in read whitelist ` +
+        `(com.apple.mail / com.apple.Notes / com.apple.finder)`,
+    )
+  }
+  // Audit M1: the Phase 1 host_read path is Mail-only. Branch honestly on the
+  // application token instead of silently returning Mail data for a
+  // Notes/Finder request (thread-trust is granted per-app — "trust Notes"
+  // must not yield Mail data). Mirrors win/index.ts's not-implemented throw.
+  if (application !== "com.apple.mail") {
+    throw new NotImplementedForApp(
+      application,
+      "host_read currently implements com.apple.mail only; Notes/Finder reads are pending",
     )
   }
   const maxChars = params.maxChars ?? DEFAULT_MAX_CHARS
   const bin = resolveHostBinary()
   try {
-    const result = await execFileAsync(bin, ["read-mail", "--max-chars", String(maxChars)], {
+    // Audit M8: read-mail.scpt truncates at a FIXED 500 chars script-side —
+    // the binary cannot pass argv into a precompiled .scpt without
+    // NSAppleEventDescriptor handler invocation (Phase 2). --max-chars is
+    // intentionally NOT sent (don't pretend it's honored); a smaller maxChars
+    // is applied TS-side below. Values > 500 return at most 500 (script cap).
+    const result = await execFileAsync(bin, ["read-mail"], {
       encoding: "utf-8",
       timeout: HOST_READ_TIMEOUT_MS,
     })
-    return parseHostJson(String(result.stdout))
+    const parsed = parseHostJson(String(result.stdout))
+    if (maxChars < parsed.body_preview.length) {
+      parsed.body_preview = parsed.body_preview.slice(0, maxChars)
+    }
+    return parsed
   } catch (err: any) {
     if (err && typeof err === "object" && "stderr" in err && err.stderr) {
       throw new Error(`host_read: ${err.stderr}`)

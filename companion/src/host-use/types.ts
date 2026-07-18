@@ -18,6 +18,26 @@ export class NotImplementedOnPlatform extends Error {
 }
 
 /**
+ * macOS host-use audit M1 — the requested app IS on the read whitelist (W7
+ * expanded it to Mail + Notes + Finder so the inline-checkbox trust option is
+ * functional) but its read path is not implemented yet. Raised instead of
+ * silently serving another app's data (the previous behavior returned Mail
+ * data for Notes/Finder host_read requests, and thread-trust is granted
+ * per-app — "trust Notes" must not yield Mail data). Same shape as
+ * WinAppNotAvailable: typed appToken + recovery hint for the LLM.
+ */
+export class NotImplementedForApp extends Error {
+  readonly appToken: string
+  readonly hint: string
+  constructor(appToken: string, hint: string) {
+    super(`host_use: ${appToken} read is not implemented yet — ${hint}`)
+    this.name = "NotImplementedForApp"
+    this.appToken = appToken
+    this.hint = hint
+  }
+}
+
+/**
  * Phase 1 W8-windows — target app is not available on this machine.
  * Raised when a COM ProgID is unregistered (0x80040154 REGDB_E_CLASSNOTREG,
  * e.g. "New Outlook" MSIX has no COM server) or a required script is missing.

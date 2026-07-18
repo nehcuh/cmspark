@@ -499,12 +499,12 @@ export function getToolDefinitions(): ToolDefinition[] {
       type: "function",
       function: {
         name: "host_read",
-        description: "Read the top-1 inbox message from the host mail app (macOS: Mail.app; Windows: classic Outlook via COM — 'New Outlook' is NOT supported and returns a typed error naming a browser fallback; Linux: pending). Returns {sender, subject, date_received, body_preview}. Requires user confirmation; subject to app vault blacklist.",
+        description: "Read the top-1 inbox message from the host mail app (macOS: Mail.app only — com.apple.Notes/com.apple.finder pass the read whitelist but return a typed not-implemented error, they do NOT return Mail data; Windows: classic Outlook via COM — 'New Outlook' is NOT supported and returns a typed error naming a browser fallback; Linux: pending). Returns {sender, subject, date_received, body_preview}. Requires user confirmation; subject to app vault blacklist.",
         parameters: {
           type: "object",
           properties: {
-            application: { type: "string", description: "Host app token. macOS: 'com.apple.mail' (default). Windows: 'win.outlook.classic' (default). Any other token is rejected by the read whitelist." },
-            max_chars: { type: "integer", description: "Max body_preview characters (default 500, max 5000)." },
+            application: { type: "string", description: "Host app token. macOS: 'com.apple.mail' (default; the only implemented macOS read). Windows: 'win.outlook.classic' (default). Any other token is rejected by the read whitelist or a typed not-implemented error." },
+            max_chars: { type: "integer", description: "Max body_preview characters (default 500, max 5000). Note: the macOS Mail read path caps body_preview at 500 script-side (Phase 1) — values above 500 return at most 500 on macOS; smaller values are honored." },
           },
         },
       },
