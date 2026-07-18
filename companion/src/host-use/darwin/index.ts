@@ -1,51 +1,15 @@
-import * as path from "path"
 import { promisify } from "util"
 import { execFile } from "child_process"
 import { randomBytes } from "crypto"
 import type { HostReadParams, HostReadResult } from "../types"
 import { NotImplementedForApp } from "../types"
 import { isVaultApp, isReadAllowed } from "./blacklist"
+import { resolveHostBinary } from "./host-bin"
 
 const execFileAsync = promisify(execFile)
 
 const DEFAULT_MAX_CHARS = 500
 const HOST_READ_TIMEOUT_MS = 15000
-
-// Phase 0: CMSPARK_HOST_BIN is dev-only (lets tests inject a mock binary).
-// Phase 1 must replace this with SecStaticCodeCheckValidity before ship
-// (Kimi phase0 review Critical #3): an attacker who can set env vars can
-// already compromise the user, but we shouldn't make it easy.
-function resolveHostBinary(): string {
-  if (process.env.CMSPARK_HOST_BIN) {
-    if (process.env.NODE_ENV !== "production") {
-      return process.env.CMSPARK_HOST_BIN
-    }
-    throw new Error("host_read: CMSPARK_HOST_BIN override disabled in production")
-  }
-  // Search order covers 3 deployment modes:
-  //   1. DMG / packaged install: STAGING/cmspark-agent.js + STAGING/cmspark-host
-  //      (siblings — Swift binary staged next to bundled companion entry)
-  //   2. npm dev mode: companion/dist/host-use/darwin/index.js → projectRoot = companion/
-  //      binary at companion/dist/cmspark-host (3 levels up from darwin/)
-  //   3. Repo root scripts: rare; check both candidates and return whichever exists.
-  const fs = require("fs") as typeof import("fs")
-  const candidates = [
-    path.resolve(__dirname, "../cmspark-host"),           // staged alongside (DMG)
-    path.resolve(__dirname, "../../cmspark-host"),        // alt staging layout
-    path.resolve(__dirname, "../../dist/cmspark-host"),   // dev mode: companion/dist/
-    path.resolve(__dirname, "../../../dist/cmspark-host"),// dev mode: repo-root/dist/
-  ]
-  for (const c of candidates) {
-    try {
-      if (fs.existsSync(c)) return c
-    } catch {
-      // ignore — try next candidate
-    }
-  }
-  // Fall back to dev-mode path (will ENOENT at execFile with clear error
-  // pointing to the missing binary; better than silent wrong-path).
-  return path.resolve(__dirname, "../../dist/cmspark-host")
-}
 
 function parseHostJson(stdout: string): HostReadResult {
   let parsed: unknown
