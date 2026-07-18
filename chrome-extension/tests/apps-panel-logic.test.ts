@@ -6,10 +6,12 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import {
+  appsPlatformSupported,
   autoEligible,
   appWarnReasons,
   canOfferThreadTrust,
   ellipsizePath,
+  isAppsErrorMessage,
   policyBadge,
   threadTrustHint,
 } from "../src/sidepanel/utils/apps-utils"
@@ -95,4 +97,58 @@ test("ellipsizePath: short paths unchanged; long paths keep head + tail", () => 
   assert.ok(out.includes("…"))
   assert.ok(out.startsWith("C:\\"))
   assert.ok(out.endsWith("application.exe"))
+})
+
+// --- WP6a Finding 1: apps error routing (family discriminator) ---
+// useWebSocket's "error" case dispatches SET_APPS_ERROR (panel error area)
+// when isAppsErrorMessage is true, and falls through to ADD_MESSAGE (chat
+// stream) when false. The pure function IS the routing decision.
+
+test("apps error routing: family=apps sends lowercase add-flow codes to the PANEL (SET_APPS_ERROR), not chat", () => {
+  // WP4 routed by an uppercase code set, so these AddFlowError codes
+  // (duplicate_app et al.) leaked into the chat stream.
+  for (const code of [
+    "duplicate_app",
+    "not_an_exe",
+    "path_and_aumid_exclusive",
+    "absolute_path_required",
+    "not_found",
+    "lolbin_denied",
+    "vault_cli_denied",
+  ]) {
+    assert.equal(isAppsErrorMessage({ family: "apps", code }), true, `${code} must route to the panel`)
+  }
+  // Family alone suffices — code-less emissions (pollution guard, schema belt).
+  assert.equal(isAppsErrorMessage({ family: "apps" }), true)
+  assert.equal(isAppsErrorMessage({ family: "apps", error: "Invalid config keys detected" }), true)
+})
+
+test("apps error routing: legacy code set is the backward-compat fallback (pre-WP6a companion, no family)", () => {
+  assert.equal(isAppsErrorMessage({ code: "BIOMETRIC_DENIED" }), true)
+  assert.equal(isAppsErrorMessage({ code: "POLICY_CAP_EXCEEDED" }), true)
+  assert.equal(isAppsErrorMessage({ code: "PRESET_NOT_REMOVABLE" }), true)
+  assert.equal(isAppsErrorMessage({ code: "PLATFORM_UNSUPPORTED" }), true)
+})
+
+test("apps error routing: non-apps errors still fall through to the chat stream", () => {
+  assert.equal(isAppsErrorMessage({ code: "SOME_OTHER_ERROR" }), false)
+  assert.equal(isAppsErrorMessage({ family: "mcp", code: "SOME_OTHER_ERROR" }), false)
+  assert.equal(isAppsErrorMessage({ error: "plain message, no code/family" }), false)
+  assert.equal(isAppsErrorMessage({}), false)
+  // A bare lowercase add-flow code WITHOUT family does not match the legacy
+  // set — pinning the exact gap the family tag fixes (only pre-WP6a
+  // companions can emit this shape).
+  assert.equal(isAppsErrorMessage({ code: "duplicate_app" }), false)
+})
+
+// --- WP6a Finding 2: platform gating for the add/enumerate UI ---
+
+test("appsPlatformSupported: win32 + unknown (null/undefined) → UI enabled; other platforms → honest 仅 Windows 可用 state", () => {
+  assert.equal(appsPlatformSupported("win32"), true)
+  // Unknown platform (pre-WP6a companion sent no platform field) must NOT
+  // disable the UI — backward compatible default.
+  assert.equal(appsPlatformSupported(null), true)
+  assert.equal(appsPlatformSupported(undefined), true)
+  assert.equal(appsPlatformSupported("darwin"), false)
+  assert.equal(appsPlatformSupported("linux"), false)
 })

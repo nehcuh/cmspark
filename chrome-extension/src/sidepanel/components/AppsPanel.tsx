@@ -10,6 +10,7 @@ import { useState } from "react"
 import { useAgentStore } from "../store/agentStore"
 import type { AppEntry, AppEnumerateCandidate, AppPolicy } from "../types"
 import {
+  appsPlatformSupported,
   autoEligible,
   appWarnReasons,
   ellipsizePath,
@@ -30,6 +31,11 @@ export function AppsPanel() {
   const [addPolicy, setAddPolicy] = useState<AppPolicy>("ai")
 
   const appsEnabled = state.appsEnabled
+  // WP6a (Finding 2): the companion reports its platform via apps.list.
+  // Off win32, enumerate/add can never succeed — render an honest state
+  // instead of a dead add button. Unknown platform (older companion) keeps
+  // the UI enabled (backward compatible).
+  const platformSupported = appsPlatformSupported(state.appsPlatform)
 
   const clearFeedback = () => {
     dispatch({ type: "SET_APPS_WARNINGS", warnings: [] })
@@ -66,6 +72,7 @@ export function AppsPanel() {
   }
 
   const handleOpenAdd = () => {
+    if (!platformSupported) return
     const next = !addOpen
     setAddOpen(next)
     setPicked(null)
@@ -248,12 +255,21 @@ export function AppsPanel() {
         )}
       </div>
 
-      {/* Add flow */}
-      <button style={styles.addBtn} onClick={handleOpenAdd}>
-        {addOpen ? "− 收起添加" : "+ 添加应用"}
-      </button>
+      {/* Add flow — WP6a (Finding 2): off win32 the enumerate/add round-trip
+          can never succeed, so the button is replaced by the honest platform
+          state instead of failing dead-ended at the server. */}
+      {!platformSupported ? (
+        <div style={styles.platformNotice}>
+          ⛔ 应用启动仅 Windows 可用{state.appsPlatform ? `（当前平台：${state.appsPlatform}）` : ""}。
+          已添加的应用不会被启动。
+        </div>
+      ) : (
+        <button style={styles.addBtn} onClick={handleOpenAdd}>
+          {addOpen ? "− 收起添加" : "+ 添加应用"}
+        </button>
+      )}
 
-      {addOpen && (
+      {platformSupported && addOpen && (
         <div style={styles.addArea}>
           <div style={styles.addTabs}>
             <button
@@ -754,6 +770,16 @@ const styles: Record<string, React.CSSProperties> = {
     color: "#4A90D9",
     cursor: "pointer",
     fontSize: 12,
+  },
+  platformNotice: {
+    marginTop: 6,
+    padding: "8px 10px",
+    border: "1px solid #e5e7eb",
+    borderRadius: 6,
+    background: "#f9fafb",
+    color: "#6b7280",
+    fontSize: 11,
+    lineHeight: 1.5,
   },
   addArea: {
     border: "1px solid #e5e7eb",

@@ -52,6 +52,9 @@ export interface AgentState {
   appsWarnings: AppAddWarning[]
   /** Last apps.* error (BIOMETRIC_DENIED / POLICY_CAP_EXCEEDED / ...). */
   appsError: string | null
+  /** WP6a (Finding 2): companion platform from apps.list (null = unknown /
+   *  pre-WP6a companion → panel keeps the add UI enabled). */
+  appsPlatform: string | null
 }
 
 export type AgentAction =
@@ -100,7 +103,7 @@ export type AgentAction =
   | { type: "SET_MCP_SELECTION_MODE"; mode: McpSelectionMode }
   | { type: "OPEN_MCP_SERVER_FORM"; editing: string | null }
   | { type: "CLOSE_MCP_SERVER_FORM" }
-  | { type: "SET_APPS_STATE"; enabled: boolean; entries: AppEntry[]; presets?: AppPresetStatus[] }
+  | { type: "SET_APPS_STATE"; enabled: boolean; entries: AppEntry[]; presets?: AppPresetStatus[]; platform?: string }
   | { type: "SET_APPS_CANDIDATES"; candidates: AppEnumerateCandidate[] | null }
   | { type: "SET_APPS_WARNINGS"; warnings: AppAddWarning[] }
   | { type: "SET_APPS_ERROR"; error: string | null }
@@ -165,6 +168,7 @@ export const initialState: AgentState = {
   appCandidates: null,
   appsWarnings: [],
   appsError: null,
+  appsPlatform: null,
 }
 
 export function agentReducer(state: AgentState, action: AgentAction): AgentState {
@@ -381,12 +385,14 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
     case "CLOSE_MCP_SERVER_FORM":
       return { ...state, mcpServerFormOpen: false, mcpServerFormEditing: null }
     case "SET_APPS_STATE":
-      // apps.updated carries no presets array — keep the last known one.
+      // apps.updated carries no presets array (and no platform) — keep the
+      // last known values for both.
       return {
         ...state,
         appsEnabled: action.enabled,
         appEntries: action.entries,
         appPresets: action.presets ?? state.appPresets,
+        appsPlatform: action.platform ?? state.appsPlatform,
       }
     case "SET_APPS_CANDIDATES":
       return { ...state, appCandidates: action.candidates }

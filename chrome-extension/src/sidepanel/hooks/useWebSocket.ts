@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react"
 import { useAgentStore } from "../store/agentStore"
 import type { LLMConfig } from "../types"
+import { isAppsErrorMessage } from "../utils/apps-utils"
 
 /**
  * Check if an API key is masked (i.e., a placeholder like "***" or "sk-****xyz").
@@ -24,20 +25,6 @@ function generateShortId(): string {
   for (let i = 0; i < 6; i++) id += chars[Math.floor(Math.random() * chars.length)]
   return id
 }
-
-/** App tab (WP4): error codes emitted exclusively by the apps.* WS handlers
- *  (companion/src/apps/handlers.ts) — routed to the AppsPanel error area. */
-const APPS_ERROR_CODES: ReadonlySet<string> = new Set([
-  "INVALID_TOKEN",
-  "NOT_FOUND",
-  "INVALID_POLICY",
-  "INVALID_ENABLED",
-  "POLICY_CAP_EXCEEDED",
-  "BIOMETRIC_DENIED",
-  "NO_CONFIRMATION_CHANNEL",
-  "CLI_PHASE2",
-  "PRESET_NOT_REMOVABLE",
-])
 
 export function requestInitialSidePanelData(
   sendMessage: (message: object) => void,
@@ -533,6 +520,9 @@ export function useWebSocket() {
             enabled: msg.enabled !== false,
             entries: Array.isArray(msg.entries) ? msg.entries : [],
             presets: Array.isArray(msg.presets) ? msg.presets : [],
+            // WP6a (Finding 2): companion's process.platform — gates the
+            // add/enumerate UI off win32.
+            platform: typeof msg.platform === "string" ? msg.platform : undefined,
           })
           break
 
@@ -679,10 +669,12 @@ export function useWebSocket() {
           break
 
         case "error":
-          // App tab (WP4): apps.* mutation failures (biometric cancel, policy
-          // cap, preset removal, …) render in the panel's error area instead of
-          // the chat stream — the user is acting in the panel, not chatting.
-          if (typeof msg.code === "string" && APPS_ERROR_CODES.has(msg.code)) {
+          // App tab (WP4, routing hardened in WP6a): apps.* failures
+          // (biometric cancel, policy cap, add-flow validation, …) render in
+          // the panel's error area instead of the chat stream — the user is
+          // acting in the panel, not chatting. Routed by family:"apps" with
+          // the legacy code set as fallback (isAppsErrorMessage).
+          if (isAppsErrorMessage(msg)) {
             dispatch({ type: "SET_APPS_ERROR", error: msg.error || "Unknown apps error" })
             break
           }

@@ -110,6 +110,17 @@ function entriesList(entries: Record<string, AppEntry>) {
     .sort((a, b) => a.added_at.localeCompare(b.added_at))
 }
 
+/**
+ * WP6a (WP4+WP5 review Finding 1): every apps.* error payload carries
+ * family:"apps" so the extension routes it to the AppsPanel error area by
+ * family instead of an ever-growing code set. AddFlowError codes are
+ * lowercase (duplicate_app, not_an_exe, …) — code-set routing alone sent
+ * add-flow validation failures to the chat stream.
+ */
+function appsError(error: string, extra?: Record<string, unknown>) {
+  return { type: "error", family: "apps" as const, error, ...extra }
+}
+
 function appsUpdatedPayload(entries: Record<string, AppEntry>) {
   return {
     type: "apps.updated",
@@ -149,6 +160,10 @@ export async function handleAppsMessage(
         enabled: after.enabled,
         entries: entriesList(after.entries),
         presets,
+        // WP6a (Finding 2): the extension can't see process.platform — ship it
+        // so the panel renders an honest「仅 Windows 可用」state off win32
+        // instead of a dead add button.
+        platform: deps.platform ?? os.platform(),
       }
     }
 
@@ -156,7 +171,10 @@ export async function handleAppsMessage(
     case "apps.enumerate": {
       const platform = deps.platform ?? os.platform()
       if (platform !== "win32") {
-        return { type: "error", error: "apps.enumerate is supported on Windows (win32) only" }
+        return appsError("apps.enumerate is supported on Windows (win32) only", {
+          code: "PLATFORM_UNSUPPORTED",
+          platform,
+        })
       }
       const run = deps.enumerate ?? (() => enumerateApps())
       const candidates = await run()
@@ -179,19 +197,17 @@ export async function handleAppsMessage(
     // --- apps.add: enumeration pick OR manual paste → validated entry --------
     case "apps.add": {
       if (hasPrototypePollutionKey(rest)) {
-        return { type: "error", error: "Invalid config keys detected" }
+        return appsError("Invalid config keys detected")
       }
       const kind: AppKind = rest.kind === "cli" ? "cli" : "gui"
       if (kind !== "gui") {
-        return {
-          type: "error",
-          error: "apps.add: kind \"cli\" is Phase-2 (P1 supports gui only)",
+        return appsError("apps.add: kind \"cli\" is Phase-2 (P1 supports gui only)", {
           code: "CLI_PHASE2",
-        }
+        })
       }
       const policy = rest.policy === undefined ? "manual" : String(rest.policy)
       if (!VALID_POLICIES.has(policy)) {
-        return { type: "error", error: `Invalid policy "${policy}" (must be auto, ai, or manual)`, code: "INVALID_POLICY" }
+        return appsError(`Invalid policy "${policy}" (must be auto, ai, or manual)`, { code: "INVALID_POLICY" })
       }
       const origin: AddFlowOrigin =
         rest.origin === "enumerate" || rest.origin === "manual-paste"
@@ -219,7 +235,7 @@ export async function handleAppsMessage(
       } catch (e: any) {
         if (e instanceof AddFlowError) {
           logger.warn("apps.add_denied", { code: e.code, error: e.message })
-          return { type: "error", error: e.message, code: e.code }
+          return appsError(e.message, { code: e.code })
         }
         throw e
       }
@@ -228,23 +244,19 @@ export async function handleAppsMessage(
       // entries always cap "ai" (note ⑤) — maxPolicyForEntry encodes both.
       const cap = maxPolicyForEntry(entry)
       if (POLICY_RANK[policy as AppPolicy] > POLICY_RANK[cap]) {
-        return {
-          type: "error",
-          error: `policy "${policy}" exceeds the maximum allowed for this app ("${cap}" — unsigned binary, user-writable directory, or AUMID)`,
-          code: "POLICY_CAP_EXCEEDED",
-          cap,
-        }
+        return appsError(
+          `policy "${policy}" exceeds the maximum allowed for this app ("${cap}" — unsigned binary, user-writable directory, or AUMID)`,
+          { code: "POLICY_CAP_EXCEEDED", cap },
+        )
       }
 
       // D2: auto is a persistent grant → biometric gate (Hello + manual-nonce
       // fallback; cancel → hard deny, never L2, no confirmation → no grant).
       if (policy === "auto") {
         if (!ctx.requestConfirmation) {
-          return {
-            type: "error",
-            error: "apps.add with policy \"auto\" requires an interactive confirmation channel",
+          return appsError("apps.add with policy \"auto\" requires an interactive confirmation channel", {
             code: "NO_CONFIRMATION_CHANNEL",
-          }
+          })
         }
         const gate = deps.gate ?? requireAppsBiometric
         const outcome = await gate({
@@ -254,12 +266,10 @@ export async function handleAppsMessage(
         })
         if (!outcome.approved) {
           logger.warn("apps.add_auto_denied", { token: entry.token, reason: outcome.reason })
-          return {
-            type: "error",
-            error: `auto policy ${outcome.reason === "cancelled" ? "cancelled by user" : `denied (${outcome.reason})`} — app was NOT added`,
-            code: "BIOMETRIC_DENIED",
-            reason: outcome.reason,
-          }
+          return appsError(
+            `auto policy ${outcome.reason === "cancelled" ? "cancelled by user" : `denied (${outcome.reason})`} — app was NOT added`,
+            { code: "BIOMETRIC_DENIED", reason: outcome.reason },
+          )
         }
         logger.info("apps.add_auto_approved", {
           token: entry.token,
@@ -270,7 +280,7 @@ export async function handleAppsMessage(
 
       const finalEntry = normalizeAppEntry({ ...entry, policy: policy as AppPolicy })
       const schemaErr = validateAppEntry(finalEntry)
-      if (schemaErr) return { type: "error", error: schemaErr } // belt — unreachable
+      if (schemaErr) return appsError(schemaErr) // belt — unreachable
       const newEntries = { ...existing, [finalEntry.token]: finalEntry }
       replaceAppsEntries(newEntries)
       logger.info("apps.added", {
@@ -292,17 +302,15 @@ export async function handleAppsMessage(
     case "apps.remove": {
       const token = String(rest.token || "")
       if (!APP_TOKEN_PATTERN.test(token)) {
-        return { type: "error", error: `Invalid app token "${token}"`, code: "INVALID_TOKEN" }
+        return appsError(`Invalid app token "${token}"`, { code: "INVALID_TOKEN" })
       }
       const existing = getConfig().apps?.entries ?? {}
       const entry = existing[token]
-      if (!entry) return { type: "error", error: `App "${token}" not found`, code: "NOT_FOUND" }
+      if (!entry) return appsError(`App "${token}" not found`, { code: "NOT_FOUND" })
       if (entry.source === "preset") {
-        return {
-          type: "error",
-          error: `preset app "${token}" cannot be removed — disable it instead`,
+        return appsError(`preset app "${token}" cannot be removed — disable it instead`, {
           code: "PRESET_NOT_REMOVABLE",
-        }
+        })
       }
       const newEntries = { ...existing }
       delete newEntries[token]
@@ -319,15 +327,15 @@ export async function handleAppsMessage(
     case "apps.set_policy": {
       const token = String(rest.token || "")
       if (!APP_TOKEN_PATTERN.test(token)) {
-        return { type: "error", error: `Invalid app token "${token}"`, code: "INVALID_TOKEN" }
+        return appsError(`Invalid app token "${token}"`, { code: "INVALID_TOKEN" })
       }
       const policy = String(rest.policy || "")
       if (!VALID_POLICIES.has(policy)) {
-        return { type: "error", error: `Invalid policy "${policy}" (must be auto, ai, or manual)`, code: "INVALID_POLICY" }
+        return appsError(`Invalid policy "${policy}" (must be auto, ai, or manual)`, { code: "INVALID_POLICY" })
       }
       const existing = getConfig().apps?.entries ?? {}
       const entry = existing[token]
-      if (!entry) return { type: "error", error: `App "${token}" not found`, code: "NOT_FOUND" }
+      if (!entry) return appsError(`App "${token}" not found`, { code: "NOT_FOUND" })
       const current = entry.policy
       if (current === policy) {
         return broadcastAndReturn(ctx, appsUpdatedPayload(existing), { token, policy, changed: false })
@@ -336,22 +344,18 @@ export async function handleAppsMessage(
       // request is validated so a tampered exe block can't smuggle auto.
       const cap = maxPolicyForEntry(entry)
       if (POLICY_RANK[policy as AppPolicy] > POLICY_RANK[cap]) {
-        return {
-          type: "error",
-          error: `policy "${policy}" exceeds the maximum allowed for this app ("${cap}" — unsigned binary, user-writable directory, or AUMID)`,
-          code: "POLICY_CAP_EXCEEDED",
-          cap,
-        }
+        return appsError(
+          `policy "${policy}" exceeds the maximum allowed for this app ("${cap}" — unsigned binary, user-writable directory, or AUMID)`,
+          { code: "POLICY_CAP_EXCEEDED", cap },
+        )
       }
       // D2: upgrade →auto requires the biometric gate. Downgrades and
       // manual↔ai moves below auto are free (design §1: policy 降级自由).
       if (policy === "auto") {
         if (!ctx.requestConfirmation) {
-          return {
-            type: "error",
-            error: "upgrade to \"auto\" requires an interactive confirmation channel",
+          return appsError("upgrade to \"auto\" requires an interactive confirmation channel", {
             code: "NO_CONFIRMATION_CHANNEL",
-          }
+          })
         }
         const gate = deps.gate ?? requireAppsBiometric
         const outcome = await gate({
@@ -361,18 +365,16 @@ export async function handleAppsMessage(
         })
         if (!outcome.approved) {
           logger.warn("apps.policy_upgrade_denied", { token, from: current, reason: outcome.reason })
-          return {
-            type: "error",
-            error: `policy upgrade ${outcome.reason === "cancelled" ? "cancelled by user" : `denied (${outcome.reason})`} — policy unchanged`,
-            code: "BIOMETRIC_DENIED",
-            reason: outcome.reason,
-          }
+          return appsError(
+            `policy upgrade ${outcome.reason === "cancelled" ? "cancelled by user" : `denied (${outcome.reason})`} — policy unchanged`,
+            { code: "BIOMETRIC_DENIED", reason: outcome.reason },
+          )
         }
         logger.info("apps.set_policy_auto_approved", { token, from: current, method: outcome.method })
       }
       const updated = normalizeAppEntry({ ...entry, policy: policy as AppPolicy })
       const schemaErr = validateAppEntry(updated)
-      if (schemaErr) return { type: "error", error: schemaErr }
+      if (schemaErr) return appsError(schemaErr)
       const newEntries = { ...existing, [token]: updated }
       replaceAppsEntries(newEntries)
       logger.info("apps.policy_changed", { token, from: current, to: policy, gated: policy === "auto" })
@@ -387,14 +389,14 @@ export async function handleAppsMessage(
     case "apps.set_enabled": {
       const token = String(rest.token || "")
       if (!APP_TOKEN_PATTERN.test(token)) {
-        return { type: "error", error: `Invalid app token "${token}"`, code: "INVALID_TOKEN" }
+        return appsError(`Invalid app token "${token}"`, { code: "INVALID_TOKEN" })
       }
       if (typeof rest.enabled !== "boolean") {
-        return { type: "error", error: "apps.set_enabled requires boolean enabled", code: "INVALID_ENABLED" }
+        return appsError("apps.set_enabled requires boolean enabled", { code: "INVALID_ENABLED" })
       }
       const existing = getConfig().apps?.entries ?? {}
       const entry = existing[token]
-      if (!entry) return { type: "error", error: `App "${token}" not found`, code: "NOT_FOUND" }
+      if (!entry) return appsError(`App "${token}" not found`, { code: "NOT_FOUND" })
       const newEntries = { ...existing, [token]: { ...entry, enabled: rest.enabled } }
       replaceAppsEntries(newEntries)
       logger.info("apps.enabled_changed", { token, enabled: rest.enabled })
@@ -408,6 +410,6 @@ export async function handleAppsMessage(
     }
 
     default:
-      return { type: "error", error: `Unknown apps message type: ${type}` }
+      return appsError(`Unknown apps message type: ${type}`)
   }
 }

@@ -118,12 +118,85 @@ test("apps.list: entries carry max_policy for the panel badge", async () => {
   assert.equal(e.max_policy, "ai")
 })
 
+test("apps.list: response carries the companion platform (WP6a Finding 2 — panel platform gating)", async () => {
+  reset()
+  const win: any = await handleAppsMessage({ type: "apps.list" }, {}, deps({ exists: () => false }))
+  assert.equal(win.platform, "win32")
+  const mac: any = await handleAppsMessage({ type: "apps.list" }, {}, deps({ exists: () => false, platform: "darwin" }))
+  assert.equal(mac.platform, "darwin")
+})
+
+// --- WP6a Finding 1: family:"apps" discriminator on every error payload ------
+// The extension routes panel errors by family; the legacy uppercase code set
+// is only the backward-compat fallback. Every apps.* handler error — including
+// lowercase AddFlowError codes — must carry the tag.
+
+test("apps errors: every handler error payload carries family=apps (representative matrix)", async () => {
+  // add-flow (lowercase code) — the exact case that leaked into chat in WP4
+  reset()
+  replaceAppsEntries({ "win.app.dup": seedEntry("win.app.dup") })
+  const dup: any = await handleAppsMessage(
+    { type: "apps.add", kind: "gui", path: SYS_EXE, origin: "manual-paste" },
+    {},
+    deps(),
+  )
+  assert.equal(dup.type, "error")
+  assert.equal(dup.code, "duplicate_app")
+  assert.equal(dup.family, "apps")
+
+  // code-less handler errors (pollution guard / unknown type)
+  const pollution: any = await handleAppsMessage(
+    JSON.parse(`{"type":"apps.add","path":"${SYS_EXE.replace(/\\/g, "\\\\")}","__proto__":{"x":1}}`),
+    {},
+    deps(),
+  )
+  assert.equal(pollution.type, "error")
+  assert.equal(pollution.family, "apps")
+
+  const unknown: any = await handleAppsMessage({ type: "apps.bogus" }, {}, deps())
+  assert.equal(unknown.type, "error")
+  assert.equal(unknown.family, "apps")
+
+  // token-guard errors on the mutation handlers
+  for (const msg of [
+    { type: "apps.remove", token: "BAD TOKEN" },
+    { type: "apps.set_policy", token: "BAD TOKEN", policy: "ai" },
+    { type: "apps.set_enabled", token: "BAD TOKEN", enabled: true },
+  ]) {
+    const r: any = await handleAppsMessage(msg, {}, deps())
+    assert.equal(r.type, "error")
+    assert.equal(r.code, "INVALID_TOKEN")
+    assert.equal(r.family, "apps", `${msg.type} must tag family`)
+  }
+
+  // gated-path errors (no confirmation channel) and enum guards
+  const noChan: any = await handleAppsMessage(
+    { type: "apps.set_policy", token: "win.app.dup", policy: "auto" },
+    {},
+    deps(),
+  )
+  assert.equal(noChan.code, "NO_CONFIRMATION_CHANNEL")
+  assert.equal(noChan.family, "apps")
+
+  const badEnabled: any = await handleAppsMessage(
+    { type: "apps.set_enabled", token: "win.app.dup", enabled: "yes" },
+    {},
+    deps(),
+  )
+  assert.equal(badEnabled.code, "INVALID_ENABLED")
+  assert.equal(badEnabled.family, "apps")
+})
+
 // --- apps.enumerate --------------------------------------------------------------
 
 test("apps.enumerate: non-win32 → typed unsupported error", async () => {
   const r: any = await handleAppsMessage({ type: "apps.enumerate" }, {}, deps({ platform: "linux" }))
   assert.equal(r.type, "error")
   assert.match(r.error, /win32|Windows/)
+  // WP6a (Finding 2): stable code + family tag so the panel routes/renders it.
+  assert.equal(r.code, "PLATFORM_UNSUPPORTED")
+  assert.equal(r.family, "apps")
+  assert.equal(r.platform, "linux")
 })
 
 test("apps.enumerate: candidates annotated with lolbin block + vault token", async () => {

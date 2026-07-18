@@ -5,6 +5,44 @@
 import type { AppEntry, AppPolicy } from "../types"
 
 /**
+ * Apps error routing (WP6a, WP4+WP5 review Finding 1). The companion tags
+ * every apps.* handler error with family:"apps" — route by family so add-flow
+ * validation codes (lowercase: duplicate_app, not_an_exe, …) land in the
+ * panel's error area instead of the chat stream. APPS_ERROR_CODES remains as
+ * the backward-compat fallback for pre-WP6a companions that emitted only the
+ * uppercase handler codes without a family tag.
+ */
+const APPS_ERROR_CODES: ReadonlySet<string> = new Set([
+  "INVALID_TOKEN",
+  "NOT_FOUND",
+  "INVALID_POLICY",
+  "INVALID_ENABLED",
+  "POLICY_CAP_EXCEEDED",
+  "BIOMETRIC_DENIED",
+  "NO_CONFIRMATION_CHANNEL",
+  "CLI_PHASE2",
+  "PRESET_NOT_REMOVABLE",
+  "PLATFORM_UNSUPPORTED",
+])
+
+export function isAppsErrorMessage(msg: { family?: unknown; code?: unknown; error?: unknown }): boolean {
+  if (!msg || typeof msg !== "object") return false
+  if (msg.family === "apps") return true
+  return typeof msg.code === "string" && APPS_ERROR_CODES.has(msg.code)
+}
+
+/**
+ * Platform gating (WP6a, Finding 2). The panel learns the companion's
+ * platform from the apps.list response. Unknown (pre-WP6a companion) → treat
+ * as supported so the UI is never needlessly disabled; anything non-win32 →
+ * the add/enumerate flow is hidden behind an honest「仅 Windows 可用」state.
+ */
+export function appsPlatformSupported(platform: string | null | undefined): boolean {
+  if (platform === null || platform === undefined) return true
+  return platform === "win32"
+}
+
+/**
  * W1 (WP4 follow-up): the inline thread-trust checkbox is offered for
  * host_read (W7 read-only lock) AND host_app launches (owner decision 2,
  * W7 Blocker-1 "app-launch" exception). host_write is NEVER eligible —
