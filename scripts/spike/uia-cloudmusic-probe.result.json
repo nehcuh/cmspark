@@ -1,0 +1,47 @@
+﻿{
+    "timestamp":  "2026-07-18T17:39:34.8771187+08:00",
+    "processFound":  true,
+    "launchedBySpike":  true,
+    "windowFound":  true,
+    "uia":  {
+                "passA_nodes":  5,
+                "passB_nodes":  5,
+                "hitNodeCap":  false,
+                "byControlType":  {
+                                      "Pane":  4,
+                                      "Window":  1
+                                  },
+                "documentCount":  0,
+                "editControls":  [
+
+                                 ],
+                "sampleButtonNames":  [
+
+                                      ],
+                "accessibilityHydrated":  false,
+                "editControlCount":  0
+            },
+    "smtc":  {
+                 "sessionCount":  1,
+                 "sessions":  [
+                                  {
+                                      "appId":  "Chrome",
+                                      "title":  "这次终于可以说再见了“拜拜！珠穆朗玛峰”",
+                                      "artist":  "",
+                                      "playbackStatus":  "Paused"
+                                  }
+                              ]
+             },
+    "errors":  [
+
+               ],
+    "processId":  16340,
+    "mainWindowTitle":  "网易云音乐",
+    "verdict":  {
+                    "uiaTreeAccessible":  true,
+                    "contentExposed":  false,
+                    "searchBoxCandidate":  false,
+                    "uiaViable":  false,
+                    "smtcViable":  true
+                }
+}

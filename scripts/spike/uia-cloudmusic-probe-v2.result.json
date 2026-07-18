@@ -1,0 +1,43 @@
+﻿{
+    "timestamp":  "2026-07-18T17:41:11.5459968+08:00",
+    "windows":  [
+                    {
+                        "idx":  1,
+                        "name":  "Libérée, délivrée - Anaïs Delva",
+                        "className":  "OrpheusBrowserHost",
+                        "pid":  16340,
+                        "passA":  5,
+                        "passB":  5,
+                        "edits":  [
+
+                                  ],
+                        "interesting":  [
+
+                                        ],
+                        "byType":  {
+                                       "Pane":  4,
+                                       "Window":  1
+                                   },
+                        "hydrated":  false
+                    }
+                ],
+    "verdict":  {
+                    "topLevelWindows":  1,
+                    "maxTreeNodes":  5,
+                    "totalEditFound":  0,
+                    "anyHydration":  false,
+                    "windowClasses":  [
+                                          "OrpheusBrowserHost"
+                                      ],
+                    "uiaViable":  false
+                },
+    "processes":  [
+                      "cloudmusic#772 hwnd=0",
+                      "cloudmusic#1564 hwnd=0",
+                      "cloudmusic#16340 hwnd=918732",
+                      "cloudmusic_reporter#20336 hwnd=0"
+                  ],
+    "fromPoint":  {
+                      "atCenter":  "ControlType.Pane name=\u0027\u0027 class=\u0027Chrome_WidgetWin_1\u0027 pid=25108"
+                  }
+}
