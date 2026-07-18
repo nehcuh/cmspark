@@ -107,3 +107,15 @@ d206a9f M6 Finder move 强制绝对 POSIX 路径(DarwinPathNotAbsolute)
 5. M1 e2e：`com.apple.Notes` 调 host_read → typed 错误，**不返回 Mail 数据**
 6. M6 e2e：相对路径 move 报错且 Finder 无动作
 7. M8 e2e：`max_chars=200` → ≤200；`max_chars=5000` → ≤500
+
+---
+
+## 分支策略决策（owner，2026-07-18 09:39）
+
+**Computer use 作为独立于 `main` 的长期分支存在，不合并入 main。**
+
+- 普通用户：使用 `main`，无 computer-use 能力
+- Computer use 用户：需自行 `git checkout computer-use-w8-windows` 并从源码编译（companion `npm run build`；macOS 还需 `bash companion/src/host-use/darwin/build-host.sh`）
+- 该分支已推送至远程：`origin/computer-use-w8-windows`
+- 后续 main 上的修复需要时 cherry-pick / merge 进本分支，而非反向合并
+- 遗留验证与 Phase 2 事项统一追踪于 GitHub Issue #69
