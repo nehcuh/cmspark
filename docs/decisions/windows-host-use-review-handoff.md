@@ -172,4 +172,4 @@ d206a9f M6 Finder move 强制绝对 POSIX 路径(DarwinPathNotAbsolute)
 
 ## P2 挂账（未开工，等 owner 发话）
 
-L1 参数模板、CLI track（开放前必须补 powershell_ise 等 vault 映射 + AUMID→vault heuristic）、枚举注册表 Uninstall 键、preset gallery、drift sha256 re-approve 的 biometric 门、全量测试 Windows 环境失败加平台 skip（可开 tracking issue）。
+L1 参数模板、CLI track（开放前必须补 powershell_ise 等 vault 映射 + AUMID→vault heuristic）、枚举注册表 Uninstall 键、preset gallery、drift sha256 re-approve 的 biometric 门、全量测试 Windows 环境失败加平台 skip。**统一跟踪于 GitHub Issue #70。**
