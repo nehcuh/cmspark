@@ -149,6 +149,8 @@ export interface WindowInfo {
 export interface CaptureMeta {
   hwnd: number
   rect: RectPx
+  /** Client area in IMAGE coordinates (bitmap covers full window incl. title bar). */
+  client: RectPx
   dpi: number
   /** Raw (unsealed) PNG path — transient; evidence seal consumes and deletes it. */
   path: string
