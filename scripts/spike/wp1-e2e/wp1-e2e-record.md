@@ -29,6 +29,6 @@ Win11 26H1 build 28000，DPI 150%（144），actor = powershell.exe 未提权。
 
 ## 未覆盖（明示）
 
-- 提权窗口 ILDENIED 负向探针：需触发 UAC，VM 上未做；IL fail-closed 由单测 fake IL provider 覆盖
+- 提权窗口 ILDENIED 负向探针：需触发 UAC，VM 上未做；IL 检查代码路径由前缀映射单测覆盖（无 fake IL provider 级覆盖，列入 WP2 真实机矩阵）
 - 组合型 IME 激活态（C1 保留）：本机无微软拼音
 - 网易云真实注入（S-5/C2 保留）：owner E2E 专属，agent 不做

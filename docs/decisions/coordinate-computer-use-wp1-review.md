@@ -128,4 +128,86 @@ WP1 的骨架是扎实的：A3 语料绑定全链、A4 无放行路径硬拒、A
 
 ---
 
-*复审触发条件：R1–R5 修复合入 + 缺口 6 手动集成测试执行留痕。*
+# 终审（2026-07-19 02:32 +0800）
+
+> **增审范围**: `694b4d9..df227a1`（R1–R5 修复 5 commit + N10 映射测试 1 commit + X1–X6 修复 6 commit + 缺口 6 E2E 留痕 1 commit，共 13 commit）
+> **新增基准**: `coordinate-computer-use-wp1-adversary.md`（代码级对抗裁决 SOUND WITH MANDATORY FIXES，X1–X6）、`scripts/spike/wp1-e2e/wp1-e2e-record.md`（父 Agent 真机夹具留痕）
+> **方法**: 修复 commit 逐 diff 抽查（重点 X1/X2/X3 全 diff 精读）+ E2E 留痕对照评审最低清单逐项核验 + 本机亲自复跑
+
+## 终审裁决: `APPROVED` — WP1 宣告通过
+
+R1–R5 与 X1–X6 全部验证为**真修复而非表面修复**（§T1/T2）；缺口 6 E2E 留痕可信且覆盖度满足门禁（§T3），并超额完成 X1/X2 的真实环境实证；本机复跑 `tsc -p tsconfig.test.json` exit 0、computer+apps 套件 **293/293 全绿**（与基线一致）。剩余项全部为已文档化的 Y 类残余/NIT，不构成 WP1 验收条件，整理为 WP2 输入清单（§T5）。
+
+**X1/X2/X3 的 A1/A2 合规性成立**（WP1 诚实形态 + 明示残余，逐条论证见 §T2 末）。
+
+## T1. R1–R5 修复真实性（抽查）
+
+| # | 结论 | 关键证据 |
+|---|---|---|
+| R1 | 真修复 | `executor.ts:183-215` pendingRaws/trackCapture/releaseRaw/sweepRaws 全出口跟踪；`fail()` 先 sweep 再 finalize（:217-219）；陈旧定位帧双分支即时 releaseRaw（:419-421）；成功路径收尾 sweep（:727） |
+| R2 | 真修复 | 只读帧一律 OCR + `scanDanger` 取 credentialRects 后 seal（:311-327），语言包缺失 fail-closed |
+| R3 | 真修复 | bare "pay" 入 HARD 集（`danger.ts:32`）；ASCII 词元 `\b` 边界、CJK 子串（:75-93）；bare "confirm/确认" 排除理由成文；16 条性质测试双向锁定 |
+| R4 | 真修复 | 像素通道替身按评审选项②落地：注入前必重截 + `diffRegion` 双裁片比对（`win-adapters.ts:135-150`，临时裁片 finally 删除）；`crossverifyChannel:"pixel-region"` 明示「像素稳定性、非语义互证」；重定位点击诚实吃 ≤3 子预算；方案文档 WP1 节已同步降级语义（plan :249） |
+| R5 | 真修复 | region-hard 无路径拒按 `action!=="type"` 门控（`executor.ts:476`），type 窗口级 HARD 落入 re-L2 通道，凭证无路径拒保持不变 |
+
+## T2. X1–X6 修复真实性（重点三条全 diff 精读）
+
+| # | 结论 | 关键证据与评估 |
+|---|---|---|
+| X1 | 真修复 + 真机实证 | 四通道 OR（前台变化 / 同 exe 新顶层窗口 / 整窗 0.3 / zone/blob）落地 `executor.ts:619-629`；`computer-imgdiff.ps1` 的 zone/blob 是**真实计算**（逐 cell 变化图 → 8×8 宏区覆盖率 + 4-连通迭代 DFS、防换行回绕、PS 5.1 兼容）；`DiffMetrics` 可选通道设计使 fake 不参与（types.ts:229-239）；夹具 inwindow 自绘对话框模式真实绘制无新 hwnd；<5% 盲区已写入 plan :250 明示债务。**E2E 第 7 项实测**：整窗 0.1494（旧指标必然漏检，实证对抗定量分析）vs zone 0.7812 / blob 0.1257 双通道命中 |
+| X2 | 真修复 + 真机实证 | `computer-input.ps1`：ForceForeground 返回值不再丢弃（false→FOCUSLOST）、`GetForegroundWindow()==hwnd` 复核、`GetAncestor(WindowFromPoint(pt),GA_ROOT)==hwnd` 落点归属复核（新前缀 OCCLUDED exit 10 → `CLICK_OCCLUDED` typed code）；属性测试断言零 confirm 调用零 raw 残留；毫秒级 race 残余已文档化（A2.1 事后通道兜底）。**E2E 第 6 项实测**：真实置顶对话框遮挡点击 → `OCCLUDED` 拒绝且 clicks/dialogClicks 保持 0，关窗后恢复 |
+| X3 | 真修复 | `PIXEL_STALE_MS` 从 dead constant 变为真门禁（`executor.ts:494-596`）：仅 danger/uncross 两个**动作中** re-L2 置位（budget re-L2 在捕获前、dialog re-L2 在注入后，均不置位——分类正确）；target 点击走 F1 强制重定位→F2 diffRegion 重判互证语义；显式坐标/type 换帧保密封一致性；每帧 releaseRaw；危险扫描重跑且**仅升级可行动**（同级不重复询问避免 prompt 循环，新 hard/新凭证 → 无路径拒）；3 条新性质测试（移动目标点中刷新坐标 / 目标消失 STALE 零注入 / 升级为 region-hard 拒） |
+| X4 | 真修复 | 三层帽：zod schema 2000、executor 单条 + 语料总量 2000（:137-168）、ps1 2000 字符 + 120s 预估时长硬帽（`computer-input.ps1:245-247`） |
+| X5 | 真修复 | after 帧独立凭证扫描（:644-661）；OCR 不可用 → 帧 fail-closed 丢弃（raw swept、hash 省略、note 记录）；seal 失败与 OCR 失败不错误归类 |
+| X6 | 真修复 | `sweepComputerTempCaptures`（dead-pid 或 >1h 即删，本 pid/不可解析名保留，可注入 fs）wiring 到任务启动旁路（`server.ts:1804-1812`），6 条性质测试 |
+
+**A1/A2 合规性论证**：A1（像素 TOCTOU）——注入前重截 + 区域 diff + 重定位拒注的主链（R4 形态）、re-L2 批准后强制刷新（X3）、type 逐批 FOCUSLOST、UNICODE 强制，闭环成立；A1.2 以「像素稳定性互证」的诚实降级形态存在且证据字段名不夸大（WP3 UIA 落地后取代，plan :249 成文）。A2（对话框不变量 + 双通道危险检测）——X1 使差分通道在定量上真实有效（真机实测佐证）、X2 补上 click 的落点归属检查使白名单边界在 Z 序维度闭合、词库完整性 R3 修复。两者在 WP1 范围内的承诺均已兑现，残余（<5% 小弹层、毫秒 race、同级不再问）全部明示成文并有后续归属（WP3/WP7）。
+
+## T3. E2E 留痕可信度与覆盖度核验
+
+对照评审最低清单逐项：
+
+| 评审最低清单 | 留痕 | 结论 |
+|---|---|---|
+| 夹具 OCR 定位「确定」+ 真实点击验 clicks | 第 2/3 项（bbox 偏差 <20px、clicks 0→1、screen 坐标留档） | ✓ |
+| type「青花瓷」验 UNICODE CJK | 第 4 项（text 精确相等） | ✓ |
+| seal 往返 + raw 删除 | 第 8 项（blurred:1、原 after.png 已删、unprotect 成功） | ✓ |
+| 提权窗口 ILDENIED 负向探针 | **未做**，作者明示原因（VM 触发 UAC 不便） | 接受——ps1 IL 逻辑 fail-closed by construction（探测失败即拒）且经两轮读码；但见 NIT-F1 |
+| 弹窗后 FOCUSLOST | **部分**：第 6 项实证的是 click 侧 OCCLUDED（WindowFromPoint 路径），mid-type FOCUSLOST 循环未直接实测 | 残余列入 WP2 输入（Y9 类） |
+| 前缀映射单测 | `computer-win-adapters.test.ts`（含 OCCLUDED 行） | ✓ |
+| （超额）X1 inwindow 像素通道实测 | 第 7 项定量数据 | ✓ 价值高 |
+| （超额）X2 真实对话框遮挡 | 第 6 项 | ✓ 价值高 |
+
+**可信度评估：高**。留痕含真实数值/真实 stderr 前缀/环境参数（Win11 26H1、DPI 150%），且**自证其力**：顺带捕获两个真实缺陷——夹具 window 模式弹窗的 Point 参数模式解析 bug（证明 X1 window 通道此前从未被真实弹窗验证过；若手工测试缺位此 bug 将带伤进 WP2）与 5 个 ps1 缺 UTF-8 BOM。第 9 项对马赛克强度如实保留、未覆盖项明示——符合留痕文档的诚实标准。
+
+**NIT-F1（文档准确性）**：留痕「未覆盖」节称「IL fail-closed 由单测 fake IL provider 覆盖」——实际并无 fake IL provider，真实覆盖仅为 stderr 前缀映射单测（`computer-win-adapters.test.ts:25,79`）。建议一句修正，并将真实跨 IL 拒绝探针并入 WP2 真实机验收矩阵。
+
+## T4. 本机复跑（2026-07-19 02:3x +0800，亲自执行）
+
+| 命令 | 结果 |
+|---|---|
+| `companion: node node_modules/typescript/bin/tsc -p tsconfig.test.json` | **exit 0** |
+| `node --test .test-dist/tests/computer-*.test.js + apps-*.test.js` | **293/293 pass**，0 fail（与基线一致） |
+
+## T5. WP2 输入清单（Y 类残余 + NIT，均非 WP1 验收条件）
+
+1. **真实机矩阵**：提权窗口 ILDENIED 负向探针、mid-type FOCUSLOST 弹窗喷雾中止探针、组合型 IME 激活态（S-5 C1 保留）、网易云真实注入（owner E2E 专属）；同步修正 E2E 留痕 NIT-F1。
+2. **Y1** 危险扫描窗口通道改用注入前新鲜帧 OCR（当前复用定位帧 OCR，区域外新浮现内容不入检测）。
+3. **Y2** 词库 NFKC 规范化 + 零宽字符剥离；PayPal/Alipay 驼峰品牌词决策；OCR 引擎规范化行为列为未验证依赖。
+4. **Y3** L2 对话框逐字枚举点击目标（锚文本/坐标）+ task 行转义防版式伪造。
+5. **Y4** type 节流改按字符/小批真实 SendInput（当前 sleep 在事件累积阶段，16 字符仍单次爆发；S-5 C2 对 OSR 未证）。
+6. **Y5** evidence/%TEMP% 目录 reparse-point 拒绝 + init 检查；马赛克改纯色填充评估（E2E 第 9 项保留）。
+7. **Y6** OCRFAILED 前缀入 `PS_ERROR_CODES`；`runPs` maxBuffer 评估放大；`ensureLanguage` 死接口清理；预算续期回读 `config.computer?.budget`。
+8. **Y7** 跨任务注入动作累计进 L2 对话框或速率限制（防任务拆分放大）。
+9. **Y8** seal/imgdiff 注释坐标系修正（图像空间，非 client px）。
+10. **Y10** DPAPI 同用户威胁模型同步进 `evidence.ts` 头注释与 plan §E.5。
+11. **X 类明示债务跟踪**：<5% 小弹层盲区（→WP3 UIA WindowOpened + WP7 红队语料）；X2 毫秒 race（A2.1 兜底语义）；X3「同级不再问」的词集变化语义（同级异词不再 re-L2，WP2 评估是否按词集变化重问）。
+12. **评审 NIT 遗留**：screenshot/describe 不做逐动作 hwnd 归属重查（只读低风险）；显式坐标点击无帧间 diff 护栏（现由子预算+事后通道约束，WP2 可加「与任务内最近帧 diff」）。
+
+## T6. 终审结语
+
+WP1 两轮修复（评审 R1–R5、对抗 X1–X6）共 11 个 fix commit 全部真修复，缺口 6 以高可信留痕关闭，Amendments A1–A10 中 WP1 承担的部分全部落地（A1/A2/A3/A4/A7/A10 ✅，A5/A6/A8/A9 按方案映射不属 WP1）。**WP1 宣告通过**，可以进入 WP2（执行层完备与白名单绑定）——WP2 启动时把 §T5 清单作为输入，其中第 1 项真实机矩阵与第 11 项明示债务为强制性跟踪项。
+
+---
+
+*终审人：Reviewer · 方法：逐 diff 抽查 + 留痕逐项核验 + 本机复跑（非转述）*
