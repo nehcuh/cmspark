@@ -17,6 +17,7 @@
     "src/sidepanel/types.ts",
     "src/sidepanel/store/agentStore.tsx",
     "src/sidepanel/hooks/useWebSocket.ts",
+    "src/sidepanel/utils/apps-utils.ts",
     "src/background/page-sanitizer.ts",
     "src/background/image-extract-utils.ts",
     "src/background/dangerous-apis.ts",

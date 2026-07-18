@@ -4,8 +4,9 @@ import { useState, useRef, useEffect } from "react"
 import { useAgentStore } from "../store/agentStore"
 import { KnowledgeSubPanel } from "./KnowledgeSubPanel"
 import { McpPanel } from "./McpPanel"
+import { AppsPanel } from "./AppsPanel"
 
-type Panel = "tabs" | "history" | "skills" | "knowledge" | "mcp"
+type Panel = "tabs" | "history" | "skills" | "knowledge" | "mcp" | "apps"
 
 export function BottomBar() {
   const [activePanel, setActivePanel] = useState<Panel | null>(null)
@@ -17,6 +18,7 @@ export function BottomBar() {
     { id: "skills" as const, label: "Skills", icon: "🧩" },
     { id: "knowledge" as const, label: "Know", icon: "📚" },
     { id: "mcp" as const, label: "MCP", icon: "🔌" },
+    { id: "apps" as const, label: "App", icon: "🚀" },
   ]
 
   return (
@@ -50,6 +52,9 @@ export function BottomBar() {
             if (tab.id === "mcp") {
               chrome.runtime.sendMessage({ type: "mcp.list" })
             }
+            if (tab.id === "apps") {
+              chrome.runtime.sendMessage({ type: "apps.list" })
+            }
           }}
           >
             {tab.icon} {tab.label}
@@ -64,6 +69,7 @@ export function BottomBar() {
           {activePanel === "skills" && <SkillsPanel />}
           {activePanel === "knowledge" && <KnowledgeSubPanel />}
           {activePanel === "mcp" && <McpPanel />}
+          {activePanel === "apps" && <AppsPanel />}
         </div>
       )}
     </div>

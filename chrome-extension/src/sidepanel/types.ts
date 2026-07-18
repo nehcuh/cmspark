@@ -286,3 +286,57 @@ export interface SecurityAuditEntry {
   // The other two originate companion-side (future live-bypass broadcast follow-up).
   source?: "ui_phrase_confirmed" | "config.json_manual" | "ws_authenticated"
 }
+
+// --- App tab (WP4) — mirrors companion/src/apps/types.ts ---
+// The extension is a pure view: entries arrive via apps.list / apps.updated.
+
+export type AppPolicy = "auto" | "ai" | "manual"
+
+export interface AppExeBlock {
+  path: string
+  sha256?: string
+  /** Authenticode signer captured at add-time; absent/empty = unsigned. */
+  signer?: string
+  user_writable_dir: boolean
+}
+
+export interface AppEntry {
+  token: string
+  kind: "gui" | "cli"
+  display_name: string
+  source: "preset" | "user"
+  policy: AppPolicy
+  enabled: boolean
+  added_at: string
+  exe?: AppExeBlock
+  aumid?: string
+  /** Policy ceiling attached by the backend (unsigned/user-writable/AUMID → "ai"). */
+  max_policy?: "auto" | "ai"
+}
+
+/** Preset detection status from apps.list (companion/src/apps/presets.ts). */
+export interface AppPresetStatus {
+  token: string
+  display_name: string
+  detected: boolean
+  persisted: boolean
+}
+
+/** Candidate from apps.enumerate.result, annotated by the backend guards. */
+export interface AppEnumerateCandidate {
+  name: string
+  source: "running" | "startapps"
+  path?: string
+  aumid?: string
+  /** Hard-denied by the lolbin blocklist — UI shows the row disabled. */
+  blocked: boolean
+  block_reason?: "lolbin"
+  /** Basename maps to a vault-blacklist app — allowed, but UI warns. */
+  vault_token?: string
+}
+
+/** Warning returned with an apps.add response (D8 — rendered prominently). */
+export interface AppAddWarning {
+  code: string
+  message: string
+}

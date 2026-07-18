@@ -25,6 +25,20 @@ function generateShortId(): string {
   return id
 }
 
+/** App tab (WP4): error codes emitted exclusively by the apps.* WS handlers
+ *  (companion/src/apps/handlers.ts) — routed to the AppsPanel error area. */
+const APPS_ERROR_CODES: ReadonlySet<string> = new Set([
+  "INVALID_TOKEN",
+  "NOT_FOUND",
+  "INVALID_POLICY",
+  "INVALID_ENABLED",
+  "POLICY_CAP_EXCEEDED",
+  "BIOMETRIC_DENIED",
+  "NO_CONFIRMATION_CHANNEL",
+  "CLI_PHASE2",
+  "PRESET_NOT_REMOVABLE",
+])
+
 export function requestInitialSidePanelData(
   sendMessage: (message: object) => void,
   initializedRef: { current: boolean },
@@ -510,6 +524,38 @@ export function useWebSocket() {
           }
           break
 
+        // App tab (WP4) — apps.list response and apps.updated broadcasts
+        // (mutations broadcast to all clients; the requester's response also
+        // carries warnings/added — update state from both, keep warnings).
+        case "apps.list":
+          dispatch({
+            type: "SET_APPS_STATE",
+            enabled: msg.enabled !== false,
+            entries: Array.isArray(msg.entries) ? msg.entries : [],
+            presets: Array.isArray(msg.presets) ? msg.presets : [],
+          })
+          break
+
+        case "apps.updated":
+          dispatch({
+            type: "SET_APPS_STATE",
+            enabled: msg.enabled !== false,
+            entries: Array.isArray(msg.entries) ? msg.entries : [],
+          })
+          // Only the apps.add response carries warnings — the broadcast copy
+          // doesn't, and must NOT clear the follow-up render area (D8).
+          if (Array.isArray(msg.warnings)) {
+            dispatch({ type: "SET_APPS_WARNINGS", warnings: msg.warnings })
+          }
+          break
+
+        case "apps.enumerate.result":
+          dispatch({
+            type: "SET_APPS_CANDIDATES",
+            candidates: Array.isArray(msg.candidates) ? msg.candidates : [],
+          })
+          break
+
         case "mcp.server.status_changed": {
           const server = msg.server
           if (server && server.name) {
@@ -633,6 +679,13 @@ export function useWebSocket() {
           break
 
         case "error":
+          // App tab (WP4): apps.* mutation failures (biometric cancel, policy
+          // cap, preset removal, …) render in the panel's error area instead of
+          // the chat stream — the user is acting in the panel, not chatting.
+          if (typeof msg.code === "string" && APPS_ERROR_CODES.has(msg.code)) {
+            dispatch({ type: "SET_APPS_ERROR", error: msg.error || "Unknown apps error" })
+            break
+          }
           dispatch({
             type: "ADD_MESSAGE",
             message: {

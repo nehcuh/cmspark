@@ -718,6 +718,12 @@ function setupMessageHandlers() {
       case "mcp.delete":
       case "mcp.toggle_server":
       case "mcp.set_selection":
+      case "apps.list":
+      case "apps.enumerate":
+      case "apps.add":
+      case "apps.remove":
+      case "apps.set_policy":
+      case "apps.set_enabled":
         // Forward to companion
         wsClient.send(message)
         sendResponse({ ok: true })

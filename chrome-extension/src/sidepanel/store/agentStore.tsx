@@ -1,7 +1,7 @@
 // Global state store for the agent
 
 import { createContext, useContext, useReducer, type ReactNode, type Dispatch } from "react"
-import type { ConnectionState, Thread, Message, SkillMeta, OperationRecord, LLMConfig, SendShortcut, SecurityConfirmationRequest, LogEntry, KnowledgeMeta, SkillSelectionMode, SecurityAuditEntry, McpServerMeta, McpSelectionMode } from "../types"
+import type { ConnectionState, Thread, Message, SkillMeta, OperationRecord, LLMConfig, SendShortcut, SecurityConfirmationRequest, LogEntry, KnowledgeMeta, SkillSelectionMode, SecurityAuditEntry, McpServerMeta, McpSelectionMode, AppEntry, AppPresetStatus, AppEnumerateCandidate, AppAddWarning } from "../types"
 
 export interface AgentState {
   connectionState: ConnectionState
@@ -41,6 +41,17 @@ export interface AgentState {
   activeMcpServerIds: string[]
   mcpServerFormOpen: boolean
   mcpServerFormEditing: string | null
+  // App tab (WP4) — view state fed by apps.list / apps.updated broadcasts.
+  /** Global apps kill-switch state (read-only view — set in config.json). */
+  appsEnabled: boolean
+  appEntries: AppEntry[]
+  appPresets: AppPresetStatus[]
+  /** Latest apps.enumerate.result (null = no enumeration run this session). */
+  appCandidates: AppEnumerateCandidate[] | null
+  /** Warnings from the last successful apps.add (D8 prominent render area). */
+  appsWarnings: AppAddWarning[]
+  /** Last apps.* error (BIOMETRIC_DENIED / POLICY_CAP_EXCEEDED / ...). */
+  appsError: string | null
 }
 
 export type AgentAction =
@@ -89,6 +100,10 @@ export type AgentAction =
   | { type: "SET_MCP_SELECTION_MODE"; mode: McpSelectionMode }
   | { type: "OPEN_MCP_SERVER_FORM"; editing: string | null }
   | { type: "CLOSE_MCP_SERVER_FORM" }
+  | { type: "SET_APPS_STATE"; enabled: boolean; entries: AppEntry[]; presets?: AppPresetStatus[] }
+  | { type: "SET_APPS_CANDIDATES"; candidates: AppEnumerateCandidate[] | null }
+  | { type: "SET_APPS_WARNINGS"; warnings: AppAddWarning[] }
+  | { type: "SET_APPS_ERROR"; error: string | null }
 export const initialState: AgentState = {
   connectionState: "disconnected",
   threads: [],
@@ -144,6 +159,12 @@ export const initialState: AgentState = {
   activeMcpServerIds: [],
   mcpServerFormOpen: false,
   mcpServerFormEditing: null,
+  appsEnabled: true,
+  appEntries: [],
+  appPresets: [],
+  appCandidates: null,
+  appsWarnings: [],
+  appsError: null,
 }
 
 export function agentReducer(state: AgentState, action: AgentAction): AgentState {
@@ -359,6 +380,20 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       return { ...state, mcpServerFormOpen: true, mcpServerFormEditing: action.editing }
     case "CLOSE_MCP_SERVER_FORM":
       return { ...state, mcpServerFormOpen: false, mcpServerFormEditing: null }
+    case "SET_APPS_STATE":
+      // apps.updated carries no presets array — keep the last known one.
+      return {
+        ...state,
+        appsEnabled: action.enabled,
+        appEntries: action.entries,
+        appPresets: action.presets ?? state.appPresets,
+      }
+    case "SET_APPS_CANDIDATES":
+      return { ...state, appCandidates: action.candidates }
+    case "SET_APPS_WARNINGS":
+      return { ...state, appsWarnings: action.warnings }
+    case "SET_APPS_ERROR":
+      return { ...state, appsError: action.error }
     default:
       return state
   }

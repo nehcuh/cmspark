@@ -12,6 +12,7 @@ import { SkillCraftPanel } from "./components/SkillCraftPanel"
 import { NotebooklmImporterPanel } from "./components/NotebooklmImporterPanel"
 import { Modal } from "./components/ui/Modal"
 import { AgentStoreProvider, useAgentStore } from "./store/agentStore"
+import { canOfferThreadTrust, threadTrustHint } from "./utils/apps-utils"
 import type { ConnectionState, SkillMeta, FileAttachment } from "./types"
 
 // Error Boundary — catches rendering errors to prevent white screen
@@ -133,10 +134,12 @@ function SecurityConfirmationDialog() {
   const relevantDomain = request?.relevant_domains?.[0]
   const relevantApp = request?.relevant_apps?.[0]
   const nonceChallenge = request?.nonce_challenge
-  // Phase 1 W7: thread-scoped trust ONLY applies to reads (host_read).
-  // Writes always require biometric per call — Q1 ship blocker. Don't show
-  // the inline checkbox for host_write even if relevant_apps is set.
-  const canThreadTrust = request?.tool_name === "host_read" && !!relevantApp
+  // Phase 1 W7 + App tab WP4 (W1 follow-up): thread-scoped trust applies to
+  // host_read (read-only lock) AND host_app L0 no-arg launches (owner decision
+  // 2, W7 Blocker-1 "app-launch" exception). Writes always require biometric
+  // per call — Q1 ship blocker; the checkbox stays hidden for host_write even
+  // when relevant_apps is set.
+  const canThreadTrust = canOfferThreadTrust(request?.tool_name, relevantApp)
   const [whitelistMode, setWhitelistMode] = useState<"none" | "exact" | "wildcard">("none")
   const [threadTrust, setThreadTrust] = useState(false)
   // Phase 1 W9: Linux nonce input. User must TYPE the code (no paste).
@@ -290,7 +293,7 @@ function SecurityConfirmationDialog() {
             <span>
               信任 <code style={styles.whitelistCode}>{relevantApp}</code>，本线程内不再询问
               <span style={{ color: "#888", fontSize: 11, marginLeft: 4 }}>
-                （切换会话后失效；不影响写操作）
+                {threadTrustHint(request?.tool_name)}
               </span>
             </span>
           </label>
