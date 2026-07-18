@@ -11,6 +11,7 @@
 // apps are capped at "ai" — they can never be "auto" (normalizeAppEntry clamps).
 
 import * as path from "path"
+import { basenameToVault, isLolbinPath } from "./guards"
 
 export type AppKind = "gui" | "cli"
 export type AppSource = "preset" | "user"
@@ -38,6 +39,14 @@ export interface AppEntry {
   templates?: []
   /** Phase-2 placeholder: may be an empty object until the CLI track lands. */
   cli_manifest?: Record<string, unknown> | null
+  /**
+   * A10 (coordinate computer-use): per-app opt-in bit for coordinate input
+   * injection (host_computer). DEFAULT FALSE and structurally independent of
+   * the launch policy — "allowed to launch" NEVER implies "allowed to be
+   * clicked into". Setting it goes through the biometric gate; vault-mapped
+   * and LOLBIN binaries can never hold it (normalizeAppEntry force-clears).
+   */
+  coordinateAllowed?: boolean
 }
 
 export interface AppsConfig {
@@ -149,6 +158,9 @@ export function validateAppEntry(raw: unknown): string | null {
       return `app "${e.token}" cli_manifest must be an object or null`
     }
   }
+  if (e.coordinateAllowed !== undefined && typeof e.coordinateAllowed !== "boolean") {
+    return `app "${e.token}" coordinateAllowed must be a boolean`
+  }
   return null
 }
 
@@ -200,7 +212,25 @@ export function normalizeAppEntry(entry: AppEntry): AppEntry {
     )
     normalized = cap
   }
-  return normalized === entry.policy ? entry : { ...entry, policy: normalized }
+  // A10.3: vault-mapped / LOLBIN binaries can NEVER hold coordinateAllowed —
+  // structural exclusion, not a config option. A hand-edited config.json that
+  // sets it is force-cleared with a loud log (ADR-010 tampering semantics).
+  let coordinateAllowed = entry.coordinateAllowed
+  if (coordinateAllowed === true && entry.exe?.path) {
+    if (isLolbinPath(entry.exe.path) || basenameToVault(entry.exe.path) !== null) {
+      console.error(
+        `[cmspark-agent] apps entry "${entry.token}" has coordinateAllowed=true on a vault/LOLBIN binary — force-cleared (structural exclusion, A10)`,
+      )
+      coordinateAllowed = false
+    }
+  }
+  const changed = normalized !== entry.policy || coordinateAllowed !== entry.coordinateAllowed
+  if (!changed) return entry
+  return {
+    ...entry,
+    policy: normalized,
+    ...(coordinateAllowed !== entry.coordinateAllowed ? { coordinateAllowed } : {}),
+  }
 }
 
 /**

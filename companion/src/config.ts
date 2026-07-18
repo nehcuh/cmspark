@@ -68,6 +68,13 @@ export interface FileUploadConfig {
   max_file_tokens: number
 }
 
+export interface ComputerConfig {
+  /** A10 global switch — default false. Coordinate tools fail-closed when off. */
+  coordinateEnabled: boolean
+  /** Per-task action budget ceiling override (default 15, max 30). */
+  budget?: number
+}
+
 export interface CompanionConfig {
   port: number
   llm: {
@@ -93,6 +100,13 @@ export interface CompanionConfig {
   file_upload?: FileUploadConfig
   mcp?: McpConfig
   apps?: AppsConfig
+  /**
+   * Coordinate computer-use (A10 default-deny). coordinateEnabled is the
+   * GLOBAL kill-switch for host_computer: default false; enabling goes through
+   * the biometric gate (computer/handlers.ts) — a hand-edited config.json is
+   * treated as explicit owner opt-in (ADR-010), same as god-mode.
+   */
+  computer?: ComputerConfig
   obsidian?: ObsidianExportConfig
 }
 
@@ -156,6 +170,9 @@ const defaultConfig: CompanionConfig = {
   apps: {
     enabled: true,
     entries: {},
+  },
+  computer: {
+    coordinateEnabled: false,
   },
   obsidian: {
     name_template: "{{date}} {{first_user_line}}",
@@ -288,6 +305,18 @@ export function getConfig(): CompanionConfig {
     cachedConfig.apps = { enabled: true, entries: {} }
   }
   cachedConfig.apps.entries = sanitizeAppEntries(cachedConfig.apps.entries)
+  // Ensure computer block exists (A10 default-deny: absent/false = off). A
+  // non-boolean hand-edit coerces to false with a loud log — the flag may only
+  // be TRUE by explicit owner action (gated UI write or deliberate file edit).
+  if (!cachedConfig.computer || typeof cachedConfig.computer !== "object") {
+    cachedConfig.computer = { coordinateEnabled: false }
+  }
+  if (typeof cachedConfig.computer.coordinateEnabled !== "boolean") {
+    console.error(
+      `[cmspark-agent] computer.coordinateEnabled is not a boolean — coercing to false (config tampering?)`,
+    )
+    cachedConfig.computer.coordinateEnabled = false
+  }
   return cachedConfig
 }
 
@@ -347,6 +376,32 @@ export function replaceAppsEntries(entries: AppsConfig["entries"]): CompanionCon
     apps: {
       enabled: current.apps?.enabled ?? true,
       entries: { ...entries },
+    },
+  }
+  const configPath = path.join(DATA_DIR, "config.json")
+  const toSave = JSON.parse(JSON.stringify(updated))
+  const envKey = getEnvApiKey()
+  if (envKey && toSave.llm?.api_key === envKey) {
+    toSave.llm.api_key = ""
+  }
+  atomicWriteJSON(configPath, toSave)
+  cachedConfig = updated
+  configEvents.emit(CONFIG_CHANGE_EVENT, updated)
+  return updated
+}
+
+/**
+ * A10 — flip the global coordinate computer-use switch without touching any
+ * other config. Callers must run the biometric gate BEFORE enabling
+ * (computer/handlers.ts); disabling is always free (fail-closed direction).
+ */
+export function setComputerCoordinateEnabled(enabled: boolean): CompanionConfig {
+  const current = getConfig()
+  const updated: CompanionConfig = {
+    ...current,
+    computer: {
+      ...(current.computer ?? {}),
+      coordinateEnabled: enabled === true,
     },
   }
   const configPath = path.join(DATA_DIR, "config.json")
