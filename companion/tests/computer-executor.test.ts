@@ -551,6 +551,43 @@ test("executor R1: read-only describe frame is sealed (sealer-consumed), zero re
   assertNoRawResidue(capturer, evidence, removed)
 })
 
+// --- R2: read-only frames are credential-blurred before sealing --------------------
+
+test("executor R2: describe frame carries credentialRects from its OWN OCR result", async () => {
+  const evidence = new FakeEvidence()
+  const locator = new FakeLocator([{ text: "密码", x: 300, y: 300, w: 40, h: 20 }])
+  const deps = makeDeps({ locator, evidenceFactory: () => evidence })
+  const r = await runComputerTask({ task: "t", app: "win.app.test", actions: [{ action: "describe" }] }, deps)
+  assert.equal(r.success, true)
+  assert.equal(evidence.sealed.length, 1)
+  assert.equal(evidence.sealed[0].blur.length, 1, "credential neighborhood pixelated before seal")
+  const rect = evidence.sealed[0].blur[0]
+  assert.equal(rect.x + rect.width / 2, 320, "blur rect centered on the credential word")
+  assert.equal(rect.y + rect.height / 2, 310)
+})
+
+test("executor R2: screenshot frame is credential-scanned too (no longer a fixed empty blur)", async () => {
+  const evidence = new FakeEvidence()
+  const locator = new FakeLocator([{ text: "password", x: 100, y: 100, w: 80, h: 20 }])
+  const deps = makeDeps({ locator, evidenceFactory: () => evidence })
+  const r = await runComputerTask({ task: "t", app: "win.app.test", actions: [{ action: "screenshot" }] }, deps)
+  assert.equal(r.success, true)
+  assert.equal(evidence.sealed[0].blur.length, 1)
+})
+
+test("executor R2: clean window -> read-only frames seal with empty blur (no over-blur)", async () => {
+  const evidence = new FakeEvidence()
+  const deps = makeDeps({ evidenceFactory: () => evidence }) // OK_WORDS: 确定 only
+  const r = await runComputerTask(
+    { task: "t", app: "win.app.test", actions: [{ action: "screenshot" }, { action: "describe" }] },
+    deps,
+  )
+  assert.equal(r.success, true)
+  assert.equal(evidence.sealed.length, 2)
+  assert.deepEqual(evidence.sealed[0].blur, [])
+  assert.deepEqual(evidence.sealed[1].blur, [])
+})
+
 // --- read-only actions -------------------------------------------------------------
 
 test("executor: screenshot/describe/wait do not consume the action budget", async () => {

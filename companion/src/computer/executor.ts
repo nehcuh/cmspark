@@ -288,10 +288,16 @@ export async function runComputerTask(
     if (action.action === "screenshot" || action.action === "describe") {
       try {
         const shot = await trackCapture(hwnd)
-        const blur: RectPx[] = []
+        // R2: read-only frames go through the same credential-neighborhood
+        // scan as injection frames — the evidence chain must never persist an
+        // unblurred credential region, regardless of action kind. OCR runs
+        // for BOTH actions (screenshot too); a missing language pack fails
+        // closed, same as the injection paths.
+        const ocrRes = await deps.locator.ocr(shot.path)
+        const wholeImg: RectPx = { x: 0, y: 0, width: shot.rect.width, height: shot.rect.height }
+        const blur = scanDanger(ocrRes.words, wholeImg, REGION_CROP_SIZE).credentialRects
         let untrustedText: string | undefined
         if (action.action === "describe") {
-          const ocrRes = await deps.locator.ocr(shot.path)
           untrustedText = ocrRes.words.map((w) => w.text).join(" ")
         }
         await evidence.sealScreenshot(shot.path, seq, "before", blur)
