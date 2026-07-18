@@ -530,6 +530,21 @@ export function getToolDefinitions(): ToolDefinition[] {
     {
       type: "function",
       function: {
+        name: "host_app",
+        description: "(Windows ONLY — not available on macOS/Linux) Launch an application the user has personally whitelisted in the CMspark App tab, referenced by its token (win.app.<slug>). Phase 1 supports action \"launch\" ONLY: a plain no-argument start of the app — you CANNOT pass command-line arguments, open files in it, or read/control it afterwards. Confirmation depends on the app's per-app policy set by the user: 「全自动」(auto) launches silently; 「AI 判断」(ai) asks the user once per thread, then launches without asking again in that thread; 「每次确认」(manual) asks every time. If the app is disabled, unknown, or the Apps feature is off, the call fails with a typed error — do NOT retry in a loop. Only launch an app the user asked for (or that obviously serves their request); NEVER launch speculatively.",
+        parameters: {
+          type: "object",
+          properties: {
+            app: { type: "string", description: "Whitelisted app token, e.g. 'win.app.cloudmusic'. Must come from the user's App-tab whitelist (shown in the system prompt app index); arbitrary tokens are rejected." },
+            action: { type: "string", enum: ["launch"], description: "Phase 1: only 'launch' (plain no-arg start)." },
+          },
+          required: ["app", "action"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
         name: "record_experience",
         description: "记录一条操作经验。当用户说'记住这个'或'记录下这条经验'时调用。将经验保存到站点知识库(site_knowledge)或业务域知识库(domain_knowledge)，下次操作该站点时会自动注入。",
         parameters: {

@@ -53,6 +53,11 @@ export class SecurityPolicy {
         return String(params?.application || "")
       case "host_write":
         return String(params?.kind || "")
+      case "host_app":
+        // App tab WP3 (adversary 接线警示 ②): bind the launch target + action.
+        // MUST be non-empty for a well-formed call — an empty payload would
+        // make tokens replayable across apps (the `default: ""` footgun).
+        return `${String(params?.app || "")}|${String(params?.action || "")}`
       default:
         return ""
     }

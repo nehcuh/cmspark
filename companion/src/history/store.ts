@@ -20,7 +20,7 @@ import { logger } from "../logger.js"
  * identical values without recovering them.
  */
 const SENSITIVE_COOKIE_TOOLS = new Set(["get_cookies", "list_all_cookies", "set_cookie", "delete_cookie"])
-const SENSITIVE_CODE_TOOLS = new Set(["evaluate", "osascript_eval", "host_read", "host_write"])
+const SENSITIVE_CODE_TOOLS = new Set(["evaluate", "osascript_eval", "host_read", "host_write", "host_app"])
 
 // MCP namespaced tools (mcp__<server>__<tool>) — audit item C-MCP-2. These flow
 // through the same record path with raw params/result. We treat any tool whose

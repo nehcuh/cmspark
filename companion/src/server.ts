@@ -34,6 +34,7 @@ import { HistoryStore } from "./history/store"
 import { checkHighRiskExecution, highRiskExecutionDeniedError, isTrustedDomain, isAutoApprovedDomain, isCloudMetadataIp, isPrivateOrLoopbackIp, detectCriticalApis, classifyMcpCall, mergeCapabilities, CRITICAL_MCP_CAPABILITIES, CRITICAL_MCP_META_TOOLS } from "./security"
 import { SecurityConfirmationManager, type SecurityConfirmationDetails, type SecurityConfirmationDecision } from "./security-confirmation"
 import { getThreadApprovals } from "./host-use/thread-approvals"
+import { APP_TOKEN_PATTERN, type AppEntry, type AppPolicy } from "./apps/types"
 import { securityPolicy, getTokenSecret } from "./security-policy"
 import { logger, type LogLevel } from "./logger"
 import { acquireLock, releaseLock, isProcessRunning, readPidFile, cleanupPidFile, setupGracefulShutdown } from "./daemon"
@@ -193,6 +194,16 @@ const DESTRUCTIVE_MCP_TOOL_PATTERN = /\b(write|delete|exec|commit|rm|remove|shel
 // linger in the module-level singleton forever (memory leak + the approval
 // persists for whatever reconnects with a different sessionId).
 const mcpSessionByWs = new Map<WebSocket, string>()
+
+/**
+ * Exported for integration tests (audit item 6 pattern): the per-connection
+ * session id createToolExecutor registered for this socket. Tests need it to
+ * drive handleSecurityConfirmationResponse with the SAME session id the gate
+ * used, so W7/WP3 thread-scoped trust grants line up with later gate checks.
+ */
+export function getSessionIdForTests(ws: WebSocket): string | undefined {
+  return mcpSessionByWs.get(ws)
+}
 const LOG_LEVELS = new Set<LogLevel>(["debug", "info", "warn", "error"])
 
 function safeLogLevel(level: unknown): LogLevel {
@@ -356,7 +367,16 @@ export function createToolExecutor(ws: WebSocket) {
     // manual-nonce challenge rides INSIDE this same dialog. Declared here so
     // the executor can consume the prevalidated nonce after approval.
     let winL2NonceChallenge: string | undefined
-    if ((toolName === "evaluate" || toolName === "osascript_eval" || toolName === "host_read" || toolName === "host_write") && !finalParams.security_token) {
+    // App tab WP3: the tier this host_app call took through the gate
+    // ("l2" | "app_whitelist" | "thread_trust" | "god_mode" | "global_toggle"),
+    // forwarded to the executor for the apps.launch audit event.
+    let hostAppTier: string | undefined
+    // App tab WP3 (adversary 接线警示 ①): host_app joins the L2 gate tool
+    // list — on win32 only. Off win32 the gate is skipped entirely so the
+    // executor can return the typed platform error without a pointless dialog.
+    const L2_GATE_TOOLS = ["evaluate", "osascript_eval", "host_read", "host_write"]
+    const hostAppGated = toolName === "host_app" && os.platform() === "win32"
+    if ((L2_GATE_TOOLS.includes(toolName) || hostAppGated) && !finalParams.security_token) {
       const code = String(finalParams.code || finalParams.expression || "")
       const lengthCheck = securityPolicy.checkLength(toolName, code)
       if (!lengthCheck.ok) {
@@ -385,6 +405,46 @@ export function createToolExecutor(ws: WebSocket) {
       const relevantApp = (toolName === "host_read" || toolName === "host_write")
         ? resolveHostUseApp(toolName, finalParams)
         : ""
+
+      // App tab WP3 — host_app policy resolution. The tier decision is made
+      // HERE (the gate), never by the LLM and never from a tool param:
+      //   apps.enabled kill-switch → typed error (no dialog)
+      //   unknown token / disabled entry / non-gui kind / bad action → typed error
+      //   policy "auto"   → skip L2 (L0 no-arg launch only), audit app_whitelist
+      //   policy "ai"     → first launch in thread: L2 WITH trust checkbox;
+      //                     trusted thread: skip (kind "app-launch", owner decision 2)
+      //   policy "manual" → always L2, NO trust checkbox offered
+      let hostApp: { token: string; entry: AppEntry; policy: AppPolicy } | null = null
+      if (hostAppGated) {
+        const appToken = String(finalParams.app || "")
+        const action = String(finalParams.action || "")
+        const fail = (error: string) => {
+          const result = { success: false, error }
+          logToolFinish(toolCallId, toolName, startedAt, result)
+          return result
+        }
+        if (!APP_TOKEN_PATTERN.test(appToken)) {
+          return fail(`host_app: invalid app token "${appToken}" (expected win.app.<slug> / win.cli.<slug>)`)
+        }
+        if (action !== "launch") {
+          return fail(`host_app: unsupported action "${action}" — Phase 1 supports "launch" (plain no-arg start) only`)
+        }
+        const appsCfg = getConfig().apps
+        if (!appsCfg || appsCfg.enabled === false) {
+          return fail(`host_app: the Apps feature is disabled (apps.enabled=false in config.json)`)
+        }
+        const entry = appsCfg.entries?.[appToken]
+        if (!entry) {
+          return fail(`host_app: unknown app token "${appToken}" — not in the App-tab whitelist. Only launch apps from the system-prompt app index; NEVER guess tokens.`)
+        }
+        if (!entry.enabled) {
+          return fail(`host_app: app "${entry.display_name}" (${appToken}) is disabled in the App tab`)
+        }
+        if (entry.kind !== "gui") {
+          return fail(`host_app: "${appToken}" is a CLI app — the CLI track is Phase-2 and cannot be launched yet`)
+        }
+        hostApp = { token: appToken, entry, policy: entry.policy }
+      }
       const securityConfig = getConfig().security
       // skipL2 = auto_approve_dangerous || allow_all_schemes || (domain whitelist)
       //         || (Phase 1 W7: thread-scoped host_read trust).
@@ -404,10 +464,30 @@ export function createToolExecutor(ws: WebSocket) {
           })
         }
       }
+      // App tab WP3 (owner decision 2 — W7 Blocker-1 "app-launch" exception):
+      // under policy "ai", a launch already trusted in this thread skips L2.
+      // "manual" NEVER consults thread-trust (even if a stale entry existed).
+      if (hostApp && hostApp.policy === "ai" && sessionId) {
+        threadTrusted = getThreadApprovals().has(sessionId, hostApp.token, "app-launch")
+        if (threadTrusted) {
+          logger.info("security.thread_auto_approved", {
+            tool_call_id: toolCallId,
+            tool_name: toolName,
+            thread_id: sessionId,
+            bundle_id: hostApp.token,
+            kind: "app-launch",
+          })
+        }
+      }
+      // App tab WP3 (owner decision 1): auto = 仅启动免确认 — an L0 no-arg
+      // launch of an auto-policy app skips L2. (P1 ships launch only; any
+      // future with-args op must NOT inherit this skip — adversary D3.)
+      const appWhitelisted = hostApp?.policy === "auto"
       const skipConfirmation = securityConfig.auto_approve_dangerous === true
         || securityConfig.allow_all_schemes === true
         || (relevantDomain !== "" && isAutoApprovedDomain(relevantDomain))
         || threadTrusted
+        || appWhitelisted
       // §6.2 CRITICAL_API_GATE: detectCriticalApis() is the never-auto-approved
       // subset of detectDangerousApis() (exfil + sandbox-escape + obfuscation
       // variants). Even when skipConfirmation is true (god-mode / global toggle
@@ -470,9 +550,17 @@ export function createToolExecutor(ws: WebSocket) {
           {
             toolName,
             dangerousApis: safety.dangerousApis,
-            code,
+            // App tab WP3: no code to preview — show WHAT will be launched.
+            code: hostApp
+              ? `Launch app "${hostApp.entry.display_name}" (${hostApp.token}) — no arguments`
+              : code,
             relevantDomains: relevantDomain ? [relevantDomain] : [],
-            relevantApps: relevantApp ? [relevantApp] : [],
+            // App tab WP3: the thread-trust checkbox (relevantApps) is offered
+            // ONLY under policy "ai". "manual" must never show it (owner
+            // decision 2); "auto" never reaches this dialog.
+            relevantApps: hostApp
+              ? (hostApp.policy === "ai" ? [hostApp.token] : [])
+              : (relevantApp ? [relevantApp] : []),
             criticalApis,
             ...(forceConfirm ? { riskLevel: "high" as const, autoConfirmEligible: false } : {}),
             ...(winL2NonceChallenge ? { nonceChallenge: winL2NonceChallenge } : {}),
@@ -511,6 +599,7 @@ export function createToolExecutor(ws: WebSocket) {
           return result
         }
         logger.info("security.confirmation.approved", { tool_call_id: toolCallId, tool_name: toolName })
+        if (hostApp) hostAppTier = "l2"
         if (forceConfirm) {
           logger.info("security.critical_capability_confirmed", {
             tool_call_id: toolCallId,
@@ -522,12 +611,20 @@ export function createToolExecutor(ws: WebSocket) {
           })
         }
       } else {
+        // App tab WP3: app_whitelist / thread_trust reasons precede the
+        // domain_whitelist fallback (host_app never carries a domain).
+        const autoReason = securityConfig.allow_all_schemes ? "god_mode"
+          : securityConfig.auto_approve_dangerous ? "global_toggle"
+          : appWhitelisted ? "app_whitelist"
+          : threadTrusted ? "thread_trust"
+          : "domain_whitelist"
+        if (hostApp) hostAppTier = autoReason
         logger.info("security.auto_approved", {
           tool_call_id: toolCallId,
           tool_name: toolName,
           domain: relevantDomain || "unknown",
-          reason: securityConfig.allow_all_schemes ? "god_mode"
-            : securityConfig.auto_approve_dangerous ? "global_toggle" : "domain_whitelist",
+          ...(hostApp ? { app: hostApp.token, app_policy: hostApp.policy } : {}),
+          reason: autoReason,
         })
       }
       // Issue a fresh token (post-approval or for auto-approved skip path).
@@ -792,7 +889,7 @@ export function createToolExecutor(ws: WebSocket) {
     }
 
     // Companion-side tools (executed locally, not forwarded to extension)
-    const COMPANION_TOOLS = ["osascript_eval", "host_read", "host_write", "use_skill", "record_experience"]
+    const COMPANION_TOOLS = ["osascript_eval", "host_read", "host_write", "host_app", "use_skill", "record_experience"]
     if (COMPANION_TOOLS.includes(toolName)) {
       try {
         const result = await executeCompanionTool(toolName, finalParams, toolCallId, {
@@ -815,6 +912,8 @@ export function createToolExecutor(ws: WebSocket) {
           // challenge and was approved (respondFrom resolves "approved" for
           // a challenge-carrying request only after an exact match).
           prevalidatedNonce: winL2NonceChallenge,
+          // App tab WP3: tier the gate decided for host_app (audit only).
+          appLaunchTier: hostAppTier,
         })
         logToolFinish(toolCallId, toolName, startedAt, result)
         return result
@@ -1150,6 +1249,21 @@ export async function handleSecurityConfirmationResponse(ws: WebSocket, msg: any
         bundle_id: threadWhitelistApp,
         kind: "read",
       })
+    } else if (toolName === "host_app" && sessionId) {
+      // App tab WP3 — owner decision 2 (2026-07-18, W7 Blocker-1 amendment):
+      // L0 no-arg app launch MAY be thread-trusted under kind "app-launch".
+      // Reachable only when the gate offered the checkbox (policy "ai" —
+      // "manual" never offers it; the checkbox payload is validated against
+      // the relevantApps shown, so an injected grant for a manual app is
+      // impossible here). The gate additionally never consults trust for
+      // "manual", and apps.remove/set_policy/set_enabled(false) clear it.
+      getThreadApprovals().add(sessionId, threadWhitelistApp, "app-launch")
+      logger.info("security.thread_whitelist.added", {
+        confirmation_id: confirmationId,
+        thread_id: sessionId,
+        bundle_id: threadWhitelistApp,
+        kind: "app-launch",
+      })
     } else if (toolName === "host_write") {
       // Q1 ship blocker: writes NEVER thread-trust. Log rejection so
       // operators can spot a buggy/malicious client attempting bypass.
@@ -1202,6 +1316,8 @@ interface CompanionToolExecOptions {
   ) => Promise<SecurityConfirmationDecision>
   /** Nonce challenge already validated inside the L2 dialog. */
   prevalidatedNonce?: string
+  /** App tab WP3: tier the L2 gate assigned to a host_app call (apps.launch audit). */
+  appLaunchTier?: string
 }
 
 async function executeCompanionTool(toolName: string, params: any, toolCallId?: string, execOpts?: CompanionToolExecOptions): Promise<any> {
@@ -1513,6 +1629,91 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
         return { success: true, data: { ...result, biometric_nonce: nonce } }
       } catch (err: any) {
         return { success: false, error: `host_write error: ${err.message || String(err)}` }
+      }
+    }
+    case "host_app": {
+      // App tab WP3 — L0 no-arg launch of a user-whitelisted app (win32, P1).
+      // Adversary 接线警示 ③: THIS is the executor validate branch of the
+      // three-place gate wiring (① L2 gate tool list, ② bindingPayloadFor).
+      if (params.security_token) {
+        const valid = securityPolicy.validateTokenFor(
+          String(params.security_token),
+          "host_app",
+          params,
+        )
+        if (!valid) {
+          return { success: false, error: "Invalid or expired security token for host_app" }
+        }
+      }
+      if (os.platform() !== "win32") {
+        return { success: false, error: `host_app is Windows-only in Phase 1 (platform=${os.platform()})` }
+      }
+      // Belt re-validation of the gate's preconditions — config may have
+      // changed between gate and execution, and tests reach the executor
+      // directly. The gate already produced the user-facing typed errors;
+      // these are the same checks in the same order.
+      const appToken = String(params.app || "")
+      const action = String(params.action || "")
+      if (!APP_TOKEN_PATTERN.test(appToken)) {
+        return { success: false, error: `host_app: invalid app token "${appToken}"` }
+      }
+      if (action !== "launch") {
+        return { success: false, error: `host_app: unsupported action "${action}" — Phase 1 supports "launch" only` }
+      }
+      const appsCfg = getConfig().apps
+      if (!appsCfg || appsCfg.enabled === false) {
+        return { success: false, error: "host_app: the Apps feature is disabled (apps.enabled=false in config.json)" }
+      }
+      const entry = appsCfg.entries?.[appToken]
+      if (!entry) {
+        return { success: false, error: `host_app: unknown app token "${appToken}" — not in the App-tab whitelist` }
+      }
+      if (!entry.enabled) {
+        return { success: false, error: `host_app: app "${entry.display_name}" (${appToken}) is disabled in the App tab` }
+      }
+      if (entry.kind !== "gui") {
+        return { success: false, error: `host_app: "${appToken}" is a CLI app — the CLI track is Phase-2` }
+      }
+      const launchStartedAt = Date.now()
+      try {
+        const { launchApp } = await import("./apps/launch")
+        const outcome = await launchApp(entry)
+        // Design §7.10: per-app audit {token, action, policy, tier_used,
+        // confirmation_id?, evidence, duration_ms}. confirmation_id is not
+        // plumbed through the gate; tool_call_id is the correlation key.
+        logger.info("apps.launch", {
+          tool_call_id: toolCallId,
+          token: appToken,
+          action,
+          policy: entry.policy,
+          tier_used: execOpts?.appLaunchTier ?? "unknown",
+          launched: outcome.launched,
+          evidence: outcome.evidence,
+          duration_ms: outcome.duration_ms,
+        })
+        return {
+          success: true,
+          data: {
+            token: appToken,
+            action,
+            display_name: entry.display_name,
+            launched: outcome.launched,
+            evidence: outcome.evidence,
+            ...(outcome.detail ? { detail: outcome.detail } : {}),
+          },
+        }
+      } catch (err: any) {
+        logger.warn("apps.launch", {
+          tool_call_id: toolCallId,
+          token: appToken,
+          action,
+          policy: entry.policy,
+          tier_used: execOpts?.appLaunchTier ?? "unknown",
+          launched: false,
+          error: err?.message || String(err),
+          duration_ms: Date.now() - launchStartedAt,
+        })
+        return { success: false, error: `host_app launch failed: ${err?.message || String(err)}` }
       }
     }
     default:

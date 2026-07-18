@@ -15,6 +15,7 @@
 import os from "os"
 import { getConfig, replaceAppsEntries } from "../config"
 import { logger } from "../logger"
+import { getThreadApprovals } from "../host-use/thread-approvals"
 import type {
   SecurityConfirmationDecision,
   SecurityConfirmationDetails,
@@ -52,6 +53,38 @@ export interface AppsHandlerDeps extends AddFlowDeps {
   enumerate?: () => Promise<EnumeratedAppCandidate[]>
   gate?: typeof requireAppsBiometric
   platform?: NodeJS.Platform
+  /**
+   * WP3 obligation (owner decision 2): clear the token's thread-scoped
+   * "app-launch" trust entries across all threads. Called on apps.remove,
+   * apps.set_policy (any change), and apps.set_enabled(false) — the trust
+   * context a user approved ("launch THIS app, as currently registered")
+   * no longer holds once the entry changes or disappears.
+   * Returns the number of cleared entries (for audit). Injectable for tests.
+   */
+  clearAppTrust?: (token: string) => number
+}
+
+/** Default trust clearer — ThreadApprovals singleton, kind "app-launch" only. */
+function defaultClearAppTrust(token: string): number {
+  return getThreadApprovals().clearBundle(token, "app-launch")
+}
+
+/**
+ * Clear app-launch trust + audit when anything was actually cleared.
+ * Called AFTER the config mutation has persisted.
+ */
+function clearAppLaunchTrust(token: string, deps: AppsHandlerDeps, via: string): void {
+  const clear = deps.clearAppTrust ?? defaultClearAppTrust
+  let cleared = 0
+  try {
+    cleared = clear(token)
+  } catch (err: any) {
+    logger.error("apps.launch_trust_clear_failed", { token, via, error: err?.message || String(err) })
+    return
+  }
+  if (cleared > 0) {
+    logger.info("apps.launch_trust_cleared", { token, via, cleared })
+  }
 }
 
 const POLICY_RANK: Record<AppPolicy, number> = { manual: 0, ai: 1, auto: 2 }
@@ -275,9 +308,10 @@ export async function handleAppsMessage(
       delete newEntries[token]
       replaceAppsEntries(newEntries)
       logger.info("apps.removed", { token, display_name: entry.display_name })
-      // WP3 note: thread-scoped "app-launch" trust (owner decision 2) must be
-      // cleared here once the execution layer lands — no thread-trust entries
-      // can exist in WP2 because nothing grants them yet.
+      // WP3 obligation (owner decision 2): a removed app's "app-launch"
+      // thread-trust entries must die with it — a re-added app (same token,
+      // new binary) must NOT inherit launches approved for the old entry.
+      clearAppLaunchTrust(token, deps, "apps.remove")
       return broadcastAndReturn(ctx, appsUpdatedPayload(newEntries), { removed: token })
     }
 
@@ -342,6 +376,10 @@ export async function handleAppsMessage(
       const newEntries = { ...existing, [token]: updated }
       replaceAppsEntries(newEntries)
       logger.info("apps.policy_changed", { token, from: current, to: policy, gated: policy === "auto" })
+      // WP3 obligation: ANY policy change invalidates the "app-launch" trust
+      // context (the user approved launches under the OLD policy). Clearing
+      // on upgrade→auto is belt-and-braces (auto never consults trust).
+      clearAppLaunchTrust(token, deps, "apps.set_policy")
       return broadcastAndReturn(ctx, appsUpdatedPayload(newEntries), { token, policy, changed: true })
     }
 
@@ -360,6 +398,12 @@ export async function handleAppsMessage(
       const newEntries = { ...existing, [token]: { ...entry, enabled: rest.enabled } }
       replaceAppsEntries(newEntries)
       logger.info("apps.enabled_changed", { token, enabled: rest.enabled })
+      // WP3 obligation: disabling clears "app-launch" trust — re-enabling
+      // must NOT resurrect it (the disable→enable window may have replaced
+      // the binary; the user re-approves via the next L2 dialog).
+      if (rest.enabled === false) {
+        clearAppLaunchTrust(token, deps, "apps.set_enabled")
+      }
       return broadcastAndReturn(ctx, appsUpdatedPayload(newEntries), { token, enabled: rest.enabled })
     }
 

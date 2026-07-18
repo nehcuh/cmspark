@@ -96,6 +96,13 @@ export const TOOL_ARG_SCHEMAS: Record<string, z.ZodTypeAny> = {
     security_token: z.string().optional(),
   }),
 
+  // --- Windows host_app (App tab WP3: L0 no-arg launch of whitelisted apps) ---
+  host_app: z.object({
+    app: z.string().min(1),
+    action: z.enum(["launch"]),
+    security_token: z.string().optional(),
+  }),
+
   // --- Navigation (high-risk: agent can drive browser to any URL) ---
   navigate: z.object({
     tabId: tabIdSchema,
