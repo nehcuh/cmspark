@@ -56,6 +56,22 @@ export class WinAppNotAvailable extends Error {
 }
 
 /**
+ * macOS host-use audit M6 — Finder move received a non-absolute POSIX path.
+ * Both source_path and destination must start with "/": a relative path would
+ * resolve against the spawned cmspark-host process's inherited cwd, which is
+ * unpredictable for a packaged app. Cheap alignment with win rule-4 (absolute
+ * path enforcement before any fs mutation); thrown before the binary spawns.
+ */
+export class DarwinPathNotAbsolute extends Error {
+  constructor(pathTried: string) {
+    super(
+      `host_use: Finder move requires absolute POSIX paths (starting with "/"): ${pathTried}`,
+    )
+    this.name = "DarwinPathNotAbsolute"
+  }
+}
+
+/**
  * Phase 1 W8-windows hardening W-1 — a file path escaped the allowlisted
  * roots (%USERPROFILE%\{Documents,Desktop,Downloads}). Thrown before any fs
  * mutation; never catch-and-continue.

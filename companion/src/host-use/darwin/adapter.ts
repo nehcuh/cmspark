@@ -9,7 +9,7 @@ import type {
   WritePayload,
   WriteResult,
 } from "../host-adapter"
-import { NotImplementedForApp } from "../types"
+import { NotImplementedForApp, DarwinPathNotAbsolute } from "../types"
 import { isVaultApp } from "./blacklist"
 import { resolveHostBinary } from "./host-bin"
 
@@ -17,6 +17,17 @@ const execFileAsync = promisify(execFile)
 
 const DEFAULT_LIMIT = 100
 const HOST_TIMEOUT_MS = 15000
+
+/**
+ * Audit M6 — cheap win rule-4 alignment: Finder move requires BOTH paths to
+ * be absolute POSIX. A relative path would resolve against the spawned
+ * cmspark-host process's inherited cwd (unpredictable for a packaged app).
+ */
+function assertAbsolutePosix(p: unknown, field: string): asserts p is string {
+  if (typeof p !== "string" || !p.startsWith("/")) {
+    throw new DarwinPathNotAbsolute(`${field}=${String(p)}`)
+  }
+}
 
 // TargetId format per docs/decisions/targetid-format-synthesis.md:
 //   "macos:com.apple.<app>:<account-id>:<kind>-<stable-id>"
@@ -294,17 +305,21 @@ export class DarwinHostAdapter implements HostAdapter {
               `writeOne move: Phase 1 W6 only supports Finder (got "${raw.slice(0, 40)}...")`,
             )
           }
-          // Extract source path from TargetId. Format:
-          //   macos:com.apple.finder:<folder>:file-<encoded-path>
           // For Phase 1 W6 simplicity, the source path is passed via payload
           // and TargetId is decorative. Phase 2 will encode properly.
-          const sourcePath = (payload as any).source_path as string | undefined
-          if (!sourcePath) {
-            throw new Error("writeOne move: payload.source_path required (Phase 1 W6)")
-          }
+          //
+          // Audit M6: BOTH paths must be absolute POSIX (enforced above via
+          // assertAbsolutePosix — relative paths would resolve against the
+          // spawned binary's inherited cwd).
+          // Symlink semantics: the Swift side moves `POSIX file <src> as alias`
+          // — `as alias` RESOLVES symlinks/Finder aliases, so moving a link
+          // moves its TARGET (the original), leaving the link itself in
+          // place. Callers must not assume link-preserving behavior.
+          assertAbsolutePosix(payload.source_path, "source_path")
+          assertAbsolutePosix(payload.destination, "destination")
           stdout = await this.runner(
             this.binPath,
-            ["move-file", "--source", sourcePath, "--destination", payload.destination],
+            ["move-file", "--source", payload.source_path, "--destination", payload.destination],
           )
           break
         }

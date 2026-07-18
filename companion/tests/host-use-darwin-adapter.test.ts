@@ -23,7 +23,7 @@ import {
   type DarwinRunner,
 } from "../src/host-use/darwin/adapter.js"
 import { hostRead } from "../src/host-use/darwin/index.js"
-import { NotImplementedForApp } from "../src/host-use/types.js"
+import { NotImplementedForApp, DarwinPathNotAbsolute } from "../src/host-use/types.js"
 
 // Mock binary path — tests construct adapter directly with a fake bin path.
 // We don't actually spawn anything in these tests (writeOne/non-mail kind/
@@ -323,8 +323,64 @@ test("writeOne create: LLM values travel as separate argv elements (no interpola
   )
 })
 
-// --- M1 index-level branching (hostRead) --------------------------------------
+// --- M6 Finder move path validation --------------------------------------------
 
+test("writeOne move: relative source_path / destination rejected with DarwinPathNotAbsolute BEFORE spawning (M6)", async () => {
+  let spawned = false
+  const runner: DarwinRunner = async () => { spawned = true; return "{}" }
+  const a = makeAdapter(runner)
+  const id = a.validateTargetId(encodeRawTargetId("macos:com.apple.finder:Documents:file-a.txt"))
+  await assert.rejects(
+    () => a.writeOne(id, { kind: "move", destination: "/Users/x/Desktop", source_path: "reports/a.txt" }),
+    (err: any) => {
+      assert.ok(err instanceof DarwinPathNotAbsolute)
+      assert.match(err.message, /source_path=reports\/a\.txt/)
+      return true
+    },
+  )
+  await assert.rejects(
+    () => a.writeOne(id, { kind: "move", destination: "Desktop", source_path: "/Users/x/Documents/a.txt" }),
+    (err: any) => {
+      assert.ok(err instanceof DarwinPathNotAbsolute)
+      assert.match(err.message, /destination=Desktop/)
+      return true
+    },
+  )
+  // Empty / missing source is rejected by the same absolute-path check.
+  await assert.rejects(
+    () => a.writeOne(id, { kind: "move", destination: "/Users/x/Desktop", source_path: "" }),
+    (err: any) => err instanceof DarwinPathNotAbsolute,
+  )
+  assert.equal(spawned, false)
+})
+
+test("writeOne move: absolute paths pass through as argv verbatim (M6 happy path)", async () => {
+  const calls: string[][] = []
+  const runner: DarwinRunner = async (_bin, args) => {
+    calls.push(args)
+    return JSON.stringify({ target_id: "macos:com.apple.finder:moved:file-ok", undoable: true })
+  }
+  const a = makeAdapter(runner)
+  const id = a.validateTargetId(encodeRawTargetId("macos:com.apple.finder:Documents:file-a.txt"))
+  // A path with a single quote is now legitimate: TS passes it through as an
+  // argv element; the Swift side escapes it for the double-quoted AppleScript
+  // context (M7 — previously rejected outright).
+  const out = await a.writeOne(id, {
+    kind: "move",
+    destination: "/Users/x/Desktop",
+    source_path: "/Users/x/Documents/John's report.pdf",
+  })
+  assert.equal(out.undoable, true)
+  assert.deepEqual(calls[0], [
+    "move-file",
+    "--source", "/Users/x/Documents/John's report.pdf",
+    "--destination", "/Users/x/Desktop",
+  ])
+  // M2: the decorative raw target_id returned by move-file is re-encoded too.
+  assert.equal(out.target_id as string, `macos:com.apple.finder:${b64("moved")}:file-${b64("ok")}`)
+})
+
+// --- M1 index-level branching (hostRead) --------------------------------------
 test("hostRead: com.apple.Notes / com.apple.finder throw NotImplementedForApp (M1 — no silent Mail fallback)", async () => {
   for (const app of ["com.apple.Notes", "com.apple.finder"]) {
     await assert.rejects(
