@@ -103,6 +103,28 @@ export const TOOL_ARG_SCHEMAS: Record<string, z.ZodTypeAny> = {
     security_token: z.string().optional(),
   }),
 
+  // --- Windows host_computer (coordinate computer-use WP1, critical-class) ---
+  host_computer: z.object({
+    task: z.string().min(1),
+    app: z.string().min(1),
+    actions: z.array(
+      z.discriminatedUnion("action", [
+        z.object({
+          action: z.enum(["click", "double_click", "right_click"]),
+          x: z.number().int().min(0).optional(),
+          y: z.number().int().min(0).optional(),
+          target: z.string().min(1).optional(),
+        }).strict(),
+        z.object({ action: z.literal("type"), text: z.string().min(1) }).strict(),
+        z.object({ action: z.literal("wait"), ms: z.number().int().min(0).max(5000) }).strict(),
+        z.object({ action: z.literal("screenshot") }).strict(),
+        z.object({ action: z.literal("describe") }).strict(),
+      ]),
+    ).min(1).max(50),
+    budget: z.number().int().min(1).max(30).optional(),
+    security_token: z.string().optional(),
+  }).strict(),
+
   // --- Navigation (high-risk: agent can drive browser to any URL) ---
   navigate: z.object({
     tabId: tabIdSchema,

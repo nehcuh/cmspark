@@ -20,7 +20,10 @@ import { logger } from "../logger.js"
  * identical values without recovering them.
  */
 const SENSITIVE_COOKIE_TOOLS = new Set(["get_cookies", "list_all_cookies", "set_cookie", "delete_cookie"])
-const SENSITIVE_CODE_TOOLS = new Set(["evaluate", "osascript_eval", "host_read", "host_write", "host_app"])
+// A7.1 (coordinate computer-use): host_computer joins the sensitive set —
+// history.db stores hashes + metadata (layer/confidence/coords/sha256) ONLY,
+// never task text, type.text literals, image bytes, or full-window OCR text.
+const SENSITIVE_CODE_TOOLS = new Set(["evaluate", "osascript_eval", "host_read", "host_write", "host_app", "host_computer"])
 
 // MCP namespaced tools (mcp__<server>__<tool>) — audit item C-MCP-2. These flow
 // through the same record path with raw params/result. We treat any tool whose
@@ -80,6 +83,12 @@ function redactForStorage(
   if (SENSITIVE_COOKIE_TOOLS.has(toolName)) {
     params = redactCookieParams(params)
     result_summary = redactCookieSummary(result_summary)
+  } else if (toolName === "host_computer") {
+    // A7.1: task text and type.text literals are user-confirmed corpus — store
+    // only their hashes; result steps may carry OCR text (untrustedText) and
+    // evidence paths, so the whole summary collapses to hash+length.
+    params = redactComputerParams(params)
+    result_summary = `<redacted:len=${result_summary.length}:sha256=${shortHash(result_summary)}>`
   } else if (SENSITIVE_CODE_TOOLS.has(toolName)) {
     params = redactCodeParams(params)
     // result_summary for evaluate/osascript typically contains the tool result
@@ -177,6 +186,37 @@ function redactCodeParams(raw: string): string {
         const val = redacted[key] as string
         redacted[key] = `<redacted:hash=${shortHash(val)},len=${val.length}>`
       }
+    }
+    return JSON.stringify(redacted)
+  } catch {
+    return "{}"
+  }
+}
+
+/**
+ * A7.1 — host_computer params redaction. Keeps the audit-useful metadata
+ * (app token, action kinds, coords, budget) while hashing the task string and
+ * every type.text literal; security_token is hash-bound as usual.
+ */
+function redactComputerParams(raw: string): string {
+  try {
+    const parsed = JSON.parse(raw) as Record<string, any>
+    const redacted: Record<string, any> = { ...parsed }
+    if (typeof redacted.task === "string") {
+      redacted.task = `<redacted:hash=${shortHash(redacted.task)},len=${redacted.task.length}>`
+    }
+    if (typeof redacted.security_token === "string") {
+      redacted.security_token = `<redacted:hash=${shortHash(redacted.security_token)},len=${redacted.security_token.length}>`
+    }
+    if (Array.isArray(redacted.actions)) {
+      redacted.actions = redacted.actions.map((a: any) => {
+        if (!a || typeof a !== "object") return a
+        const copy = { ...a }
+        if (typeof copy.text === "string") {
+          copy.text = `<redacted:hash=${shortHash(copy.text)},len=${copy.text.length}>`
+        }
+        return copy
+      })
     }
     return JSON.stringify(redacted)
   } catch {

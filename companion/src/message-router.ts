@@ -26,6 +26,7 @@ import { securityPolicy } from "./security-policy"
 import { getMcpManager } from "./mcp"
 import { logger } from "./logger"
 import { handleAppsMessage } from "./apps/handlers"
+import { handleComputerMessage } from "./computer/handlers"
 import type {
   SecurityConfirmationDecision,
   SecurityConfirmationDetails,
@@ -944,7 +945,16 @@ export async function handleMessage(
     case "apps.remove":
     case "apps.set_policy":
     case "apps.set_enabled":
+    case "apps.set_coordinate_allowed":
       return handleAppsMessage(msg, {
+        requestConfirmation: session?.requestConfirmation,
+        broadcast: session?.broadcast,
+      })
+    // --- Coordinate computer-use (A10 global switch; per-app bit lives under
+    // apps.set_coordinate_allowed above) ---
+    case "computer.get_state":
+    case "computer.set_enabled":
+      return handleComputerMessage(msg, {
         requestConfirmation: session?.requestConfirmation,
         broadcast: session?.broadcast,
       })

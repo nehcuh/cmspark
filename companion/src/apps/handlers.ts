@@ -409,6 +409,61 @@ export async function handleAppsMessage(
       return broadcastAndReturn(ctx, appsUpdatedPayload(newEntries), { token, enabled: rest.enabled })
     }
 
+    // --- apps.set_coordinate_allowed: A10 per-app coordinate opt-in -----------
+    case "apps.set_coordinate_allowed": {
+      const token = String(rest.token || "")
+      if (!APP_TOKEN_PATTERN.test(token)) {
+        return appsError(`Invalid app token "${token}"`, { code: "INVALID_TOKEN" })
+      }
+      if (typeof rest.allowed !== "boolean") {
+        return appsError("apps.set_coordinate_allowed requires boolean allowed", { code: "INVALID_ENABLED" })
+      }
+      const existing = getConfig().apps?.entries ?? {}
+      const entry = existing[token]
+      if (!entry) return appsError(`App "${token}" not found`, { code: "NOT_FOUND" })
+      // A10.3 — structural exclusion: vault-mapped / LOLBIN binaries can never
+      // opt into coordinate injection, no matter the gate outcome.
+      if (rest.allowed === true && entry.exe?.path) {
+        if (isLolbinPath(entry.exe.path) || basenameToVault(entry.exe.path) !== null) {
+          logger.warn("apps.coordinate_structural_deny", { token, exe: entry.exe.path })
+          return appsError(
+            `"${token}" maps to a vault/LOLBIN binary — coordinate operation is structurally denied (A10)`,
+            { code: "COORDINATE_STRUCTURAL_DENY" },
+          )
+        }
+      }
+      // Setting the bit is a persistent grant -> biometric gate; clearing is free.
+      if (rest.allowed === true) {
+        if (!ctx.requestConfirmation) {
+          return appsError("apps.set_coordinate_allowed(true) requires an interactive confirmation channel", {
+            code: "NO_CONFIRMATION_CHANNEL",
+          })
+        }
+        const gate = deps.gate ?? requireAppsBiometric
+        const outcome = await gate({
+          action: "apps.set_coordinate_allowed",
+          reason: `Allow coordinate input injection into "${entry.display_name}" (${token})`,
+          requestConfirmation: ctx.requestConfirmation,
+        })
+        if (!outcome.approved) {
+          logger.warn("apps.coordinate_enable_denied", { token, reason: outcome.reason })
+          return appsError(
+            `coordinateAllowed ${outcome.reason === "cancelled" ? "cancelled by user" : `denied (${outcome.reason})`} — bit unchanged`,
+            { code: "BIOMETRIC_DENIED", reason: outcome.reason },
+          )
+        }
+        logger.info("apps.coordinate_enabled", { token, method: outcome.method })
+      } else {
+        logger.info("apps.coordinate_disabled", { token })
+      }
+      const newEntries = { ...existing, [token]: { ...entry, coordinateAllowed: rest.allowed } }
+      replaceAppsEntries(newEntries)
+      return broadcastAndReturn(ctx, appsUpdatedPayload(newEntries), {
+        token,
+        coordinateAllowed: rest.allowed,
+      })
+    }
+
     default:
       return appsError(`Unknown apps message type: ${type}`)
   }

@@ -1,0 +1,185 @@
+// A7 — evidence chain v1: ~/.cmspark-agent/computer-evidence/<taskId>/
+//   task.json.sealed        task metadata (app, corpus hash, hwnd — sealed)
+//   actions.json.sealed     per-action records (action, coords, layer,
+//                           confidence, timings, before/after sha256, flags)
+//   before-<seq>.png.sealed / after-<seq>.png.sealed
+//
+// Properties (A7):
+//  - DPAPI CurrentUser at-rest encryption for EVERY persisted artifact
+//    (screenshots AND metadata) — offline/backup/other-user reads get ciphertext.
+//  - Credential neighborhoods (danger scan hits) are pixelated BEFORE sealing;
+//    the raw capture is deleted by the sealer — original pixels never persist.
+//  - 7-day TTL janitor + purge-all, covering the whole evidence directory.
+//  - history.db NEVER stores image bytes or full OCR text (store.ts redaction).
+
+import * as fs from "fs"
+import * as path from "path"
+import { DATA_DIR } from "../config"
+import { ComputerError, type RectPx, sha256Hex } from "./types"
+
+export const EVIDENCE_DIR_NAME = "computer-evidence"
+export const EVIDENCE_TTL_MS = 7 * 24 * 60 * 60 * 1000
+
+/** Injectable sealer — PsEvidenceSealer in production, fake in tests. */
+export interface EvidenceSealer {
+  protect(inPath: string, outPath: string, blurRects: RectPx[]): Promise<{ sha256: string }>
+}
+
+export interface EvidenceActionRecord {
+  seq: number
+  action: string
+  x?: number
+  y?: number
+  layer?: string
+  confidence?: number
+  crossverified: boolean
+  uncrossverified: boolean
+  dangerScan?: { regionLevel: string; windowLevel: string; regionHits: string[]; windowHits: string[] }
+  beforeSha256?: string
+  afterSha256?: string
+  durationMs: number
+  note?: string
+}
+
+export interface EvidenceSink {
+  readonly dir: string
+  init(meta: Record<string, unknown>): Promise<void>
+  sealScreenshot(rawPath: string, seq: number, phase: "before" | "after", blurRects: RectPx[]): Promise<{ sha256: string }>
+  appendAction(record: EvidenceActionRecord): Promise<void>
+  finalize(summary: Record<string, unknown>): Promise<void>
+}
+
+export function evidenceBaseDir(baseDir?: string): string {
+  return baseDir ?? path.join(DATA_DIR, EVIDENCE_DIR_NAME)
+}
+
+export class ComputerEvidence implements EvidenceSink {
+  readonly dir: string
+  private records: EvidenceActionRecord[] = []
+
+  constructor(
+    readonly taskId: string,
+    private sealer: EvidenceSealer,
+    baseDir?: string,
+  ) {
+    // taskId is a companion-generated uuid — sanitize defensively anyway.
+    const safe = taskId.replace(/[^a-zA-Z0-9_-]/g, "")
+    this.dir = path.join(evidenceBaseDir(baseDir), safe)
+  }
+
+  async init(meta: Record<string, unknown>): Promise<void> {
+    fs.mkdirSync(this.dir, { recursive: true })
+    const tmp = path.join(this.dir, `.task-${process.pid}.tmp`)
+    fs.writeFileSync(tmp, JSON.stringify(meta, null, 2), "utf8")
+    await this.sealer.protect(tmp, path.join(this.dir, "task.json.sealed"), [])
+    // sealer deletes the raw tmp (production); belt cleanup for fake sealers.
+    try { fs.rmSync(tmp, { force: true }) } catch { /* best-effort */ }
+  }
+
+  async sealScreenshot(
+    rawPath: string,
+    seq: number,
+    phase: "before" | "after",
+    blurRects: RectPx[],
+  ): Promise<{ sha256: string }> {
+    const out = path.join(this.dir, `${phase}-${seq}.png.sealed`)
+    try {
+      return await this.sealer.protect(rawPath, out, blurRects)
+    } catch (err) {
+      if (err instanceof ComputerError) throw err
+      throw new ComputerError("EVIDENCE_ERROR", `computer.evidence: seal failed: ${(err as Error)?.message}`)
+    }
+  }
+
+  async appendAction(record: EvidenceActionRecord): Promise<void> {
+    this.records.push(record)
+    await this.flushActions()
+  }
+
+  async finalize(summary: Record<string, unknown>): Promise<void> {
+    const tmp = path.join(this.dir, `.summary-${process.pid}.tmp`)
+    fs.writeFileSync(tmp, JSON.stringify(summary, null, 2), "utf8")
+    await this.sealer.protect(tmp, path.join(this.dir, "summary.json.sealed"), [])
+    try { fs.rmSync(tmp, { force: true }) } catch { /* best-effort */ }
+  }
+
+  private async flushActions(): Promise<void> {
+    const tmp = path.join(this.dir, `.actions-${process.pid}.tmp`)
+    fs.writeFileSync(tmp, JSON.stringify(this.records, null, 2), "utf8")
+    await this.sealer.protect(tmp, path.join(this.dir, "actions.json.sealed"), [])
+    try { fs.rmSync(tmp, { force: true }) } catch { /* best-effort */ }
+  }
+}
+
+export type EvidenceFactory = (taskId: string) => EvidenceSink
+
+// ---------------------------------------------------------------------------
+// TTL janitor + purge-all (A7.2). Pure over an injected fs-like surface so the
+// retention property is unit-testable without touching the real directory.
+// ---------------------------------------------------------------------------
+
+export interface JanitorFs {
+  readdir(dir: string): string[]
+  statMtimeMs(p: string): number
+  rmrf(p: string): void
+  exists(p: string): boolean
+}
+
+export const realJanitorFs: JanitorFs = {
+  readdir(dir) {
+    try { return fs.readdirSync(dir) } catch { return [] }
+  },
+  statMtimeMs(p) {
+    try { return fs.statSync(p).mtimeMs } catch { return 0 }
+  },
+  rmrf(p) {
+    try { fs.rmSync(p, { recursive: true, force: true }) } catch { /* best-effort */ }
+  },
+  exists(p) {
+    return fs.existsSync(p)
+  },
+}
+
+/**
+ * Delete task directories whose newest artifact is older than ttlMs. Returns
+ * the removed task ids. Cascade note (A7.2): history.db holds only hashes +
+ * metadata for host_computer (store.ts redaction), so wiping this directory
+ * removes every persisted pixel/text artifact of the task.
+ */
+export function runEvidenceJanitor(opts: {
+  baseDir?: string
+  ttlMs?: number
+  now?: number
+  fsLike?: JanitorFs
+}): string[] {
+  const f = opts.fsLike ?? realJanitorFs
+  const dir = evidenceBaseDir(opts.baseDir)
+  const ttl = opts.ttlMs ?? EVIDENCE_TTL_MS
+  const now = opts.now ?? Date.now()
+  const removed: string[] = []
+  if (!f.exists(dir)) return removed
+  for (const entry of f.readdir(dir)) {
+    const full = path.join(dir, entry)
+    const mtime = f.statMtimeMs(full)
+    if (mtime > 0 && now - mtime > ttl) {
+      f.rmrf(full)
+      removed.push(entry)
+    }
+  }
+  return removed
+}
+
+/** 「立即清除全部证据」— wipe the entire evidence directory. */
+export function purgeAllEvidence(opts: { baseDir?: string; fsLike?: JanitorFs } = {}): number {
+  const f = opts.fsLike ?? realJanitorFs
+  const dir = evidenceBaseDir(opts.baseDir)
+  if (!f.exists(dir)) return 0
+  const entries = f.readdir(dir)
+  for (const entry of entries) f.rmrf(path.join(dir, entry))
+  return entries.length
+}
+
+/** Stable audit id for an evidence artifact set (hash of ordered sha256s). */
+export function evidenceDigest(sha256s: string[]): string {
+  return sha256Hex([...sha256s].sort().join("|")).slice(0, 16)
+}

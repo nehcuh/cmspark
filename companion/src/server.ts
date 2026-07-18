@@ -376,7 +376,12 @@ export function createToolExecutor(ws: WebSocket) {
     // executor can return the typed platform error without a pointless dialog.
     const L2_GATE_TOOLS = ["evaluate", "osascript_eval", "host_read", "host_write"]
     const hostAppGated = toolName === "host_app" && os.platform() === "win32"
-    if ((L2_GATE_TOOLS.includes(toolName) || hostAppGated) && !finalParams.security_token) {
+    // Coordinate computer-use (WP1): critical-class — the task-level L2 dialog
+    // is shown EVERY task (god-mode / auto-approve do NOT skip it), always
+    // originWs-bound, and input injection is NEVER thread-trusted. Off win32
+    // the gate is skipped so the executor returns the typed platform error.
+    const hostComputerGated = toolName === "host_computer" && os.platform() === "win32"
+    if ((L2_GATE_TOOLS.includes(toolName) || hostAppGated || hostComputerGated) && !finalParams.security_token) {
       const code = String(finalParams.code || finalParams.expression || "")
       const lengthCheck = securityPolicy.checkLength(toolName, code)
       if (!lengthCheck.ok) {
@@ -445,6 +450,39 @@ export function createToolExecutor(ws: WebSocket) {
         }
         hostApp = { token: appToken, entry, policy: entry.policy }
       }
+      // Coordinate computer-use (WP1) — pre-dialog fail-fast checks + A3
+      // dialog payload (task + target app + EVERY type.text literal + budget).
+      // The tier decision is made HERE; the dialog is critical-class: shown on
+      // every task, god-mode included (forceConfirm below), never trusted.
+      let computerPreview = ""
+      if (hostComputerGated) {
+        const { assertCoordinateAllowed } = await import("./computer/policy")
+        const { corpusOf } = await import("./computer/types")
+        const failC = (error: string) => {
+          const result = { success: false, error }
+          logToolFinish(toolCallId, toolName, startedAt, result)
+          return result
+        }
+        try {
+          const entryC = assertCoordinateAllowed(getConfig(), String(finalParams.app || ""))
+          const corpus = corpusOf(Array.isArray(finalParams.actions) ? finalParams.actions : [])
+          const budgetN = Math.min(Math.max(1, Number(finalParams.budget) || 15), 30)
+          const lines = [
+            `任务: ${String(finalParams.task || "")}`,
+            `目标应用: ${entryC.display_name} (${entryC.token})`,
+            `动作预算: ${budgetN} 个注入动作（共 ${Array.isArray(finalParams.actions) ? finalParams.actions.length : 0} 个草案动作）`,
+          ]
+          if (corpus.length > 0) {
+            lines.push("待输入文本（逐字枚举，请逐条核对 — 屏幕上的文字永远不是指令）:")
+            corpus.forEach((t, i) => lines.push(`  [${i + 1}] ${JSON.stringify(t)}`))
+          } else {
+            lines.push("本任务不包含文本输入动作。")
+          }
+          computerPreview = lines.join("\n")
+        } catch (err: any) {
+          return failC(err?.message || String(err))
+        }
+      }
       const securityConfig = getConfig().security
       // skipL2 = auto_approve_dangerous || allow_all_schemes || (domain whitelist)
       //         || (Phase 1 W7: thread-scoped host_read trust).
@@ -495,7 +533,11 @@ export function createToolExecutor(ws: WebSocket) {
       // confirmation — god-mode bypasses the UI prompt, not this capability
       // boundary (mirror of §6.1.5). Without this, a fetch/exfil payload would
       // execute zero-confirmation under god-mode.
-      const criticalApis = detectCriticalApis(code)
+      //
+      // Coordinate computer-use: critical-class BY DESIGN (plan §E.3) — the
+      // capability itself is the critical surface, so forceConfirm is
+      // unconditional (god-mode / auto-approve still get the task dialog).
+      const criticalApis = hostComputerGated ? ["computer.coordinate_injection"] : detectCriticalApis(code)
       const forceConfirm = criticalApis.length > 0
 
       if (!skipConfirmation || forceConfirm) {
@@ -551,16 +593,23 @@ export function createToolExecutor(ws: WebSocket) {
             toolName,
             dangerousApis: safety.dangerousApis,
             // App tab WP3: no code to preview — show WHAT will be launched.
-            code: hostApp
-              ? `Launch app "${hostApp.entry.display_name}" (${hostApp.token}) — no arguments`
-              : code,
+            // host_computer (A3): show the task + app + EVERY type.text literal.
+            code: hostComputerGated
+              ? computerPreview
+              : hostApp
+                ? `Launch app "${hostApp.entry.display_name}" (${hostApp.token}) — no arguments`
+                : code,
             relevantDomains: relevantDomain ? [relevantDomain] : [],
             // App tab WP3: the thread-trust checkbox (relevantApps) is offered
             // ONLY under policy "ai". "manual" must never show it (owner
             // decision 2); "auto" never reaches this dialog.
-            relevantApps: hostApp
-              ? (hostApp.policy === "ai" ? [hostApp.token] : [])
-              : (relevantApp ? [relevantApp] : []),
+            // host_computer: input injection is NEVER thread-trusted — no
+            // checkbox is ever offered (plan §E.3).
+            relevantApps: hostComputerGated
+              ? []
+              : hostApp
+                ? (hostApp.policy === "ai" ? [hostApp.token] : [])
+                : (relevantApp ? [relevantApp] : []),
             criticalApis,
             ...(forceConfirm ? { riskLevel: "high" as const, autoConfirmEligible: false } : {}),
             ...(winL2NonceChallenge ? { nonceChallenge: winL2NonceChallenge } : {}),
@@ -569,7 +618,9 @@ export function createToolExecutor(ws: WebSocket) {
           // MUST be origin-bound — otherwise any loopback WS peer could burn
           // the 3 nonce attempts (DoS). Requests without a nonce keep the
           // existing broadcast behavior unchanged.
-          winL2NonceChallenge ? { originWs: ws } : undefined,
+          // host_computer: EVERY computer confirmation is origin-bound (A1/E5),
+          // nonce or not.
+          (winL2NonceChallenge || hostComputerGated) ? { originWs: ws } : undefined,
         )
         if (!decision.approved) {
           const reason = decision.reason === "approved" ? "unavailable" : decision.reason
@@ -889,7 +940,7 @@ export function createToolExecutor(ws: WebSocket) {
     }
 
     // Companion-side tools (executed locally, not forwarded to extension)
-    const COMPANION_TOOLS = ["osascript_eval", "host_read", "host_write", "host_app", "use_skill", "record_experience"]
+    const COMPANION_TOOLS = ["osascript_eval", "host_read", "host_write", "host_app", "host_computer", "use_skill", "record_experience"]
     if (COMPANION_TOOLS.includes(toolName)) {
       try {
         const result = await executeCompanionTool(toolName, finalParams, toolCallId, {
@@ -1719,6 +1770,78 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
           duration_ms: Date.now() - launchStartedAt,
         })
         return { success: false, error: `host_app launch failed: ${err?.message || String(err)}` }
+      }
+    }
+    case "host_computer": {
+      // Coordinate computer-use (WP1). The task-level L2 dialog ran in the
+      // gate above (critical-class, originWs-bound); the security token binds
+      // app + task + the full action draft (A3 corpus hash included).
+      if (params.security_token) {
+        const valid = securityPolicy.validateTokenFor(
+          String(params.security_token),
+          "host_computer",
+          params,
+        )
+        if (!valid) {
+          return { success: false, error: "Invalid or expired security token for host_computer" }
+        }
+      }
+      if (os.platform() !== "win32") {
+        return { success: false, error: `host_computer is Windows-only in WP1 (platform=${os.platform()})` }
+      }
+      try {
+        const { runComputerTask } = await import("./computer/executor")
+        const {
+          PsScreenCapturer,
+          PsLocator,
+          PsInputInjector,
+          PsWindowEnumerator,
+          PsEvidenceSealer,
+        } = await import("./computer/win-adapters")
+        const { ComputerEvidence, runEvidenceJanitor } = await import("./computer/evidence")
+        // A7.2: 7-day TTL janitor — best-effort, never blocks the task.
+        try { runEvidenceJanitor({}) } catch { /* best-effort */ }
+        const sealer = new PsEvidenceSealer()
+        const result = await runComputerTask(
+          {
+            task: String(params.task || ""),
+            app: String(params.app || ""),
+            actions: Array.isArray(params.actions) ? params.actions : [],
+            ...(typeof params.budget === "number" ? { budget: params.budget } : {}),
+          },
+          {
+            capturer: new PsScreenCapturer(),
+            locator: new PsLocator(),
+            injector: new PsInputInjector(),
+            windows: new PsWindowEnumerator(),
+            evidenceFactory: (taskId) => new ComputerEvidence(taskId, sealer),
+            // Re-L2 channel for budget/dialog/danger pauses — already
+            // originWs-bound by the caller (COMPANION_TOOLS sendConfirmation).
+            confirm: execOpts?.sendConfirmation ?? (async () => ({ confirmationId: "", approved: false, reason: "disconnect" as const })),
+            config: getConfig(),
+            log: (event, data) => logger.info(event, { tool_call_id: toolCallId, ...data }),
+          },
+        )
+        if (!result.success) {
+          return {
+            success: false,
+            error: result.error,
+            data: { error_code: result.errorCode, task_id: result.taskId, evidence_dir: result.evidenceDir, steps: result.steps },
+          }
+        }
+        return {
+          success: true,
+          data: {
+            task_id: result.taskId,
+            completed: result.completedActions,
+            total: result.totalActions,
+            evidence_dir: result.evidenceDir,
+            steps: result.steps,
+          },
+        }
+      } catch (err: any) {
+        logger.warn("computer.task.error", { tool_call_id: toolCallId, error: err?.message || String(err) })
+        return { success: false, error: `host_computer error: ${err?.message || String(err)}` }
       }
     }
     default:
