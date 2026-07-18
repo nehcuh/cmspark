@@ -35,6 +35,10 @@ end jsonEscape
 -- Folder is hardcoded to "Documents" for Phase 1 W7 simplicity. Phase 2 will
 -- accept a folder path argument. Stable id uses URL-encoded file name.
 -- Note: this script returns top-N only (default 100) and is read-only.
+-- Audit M2: KEEP EMITTING RAW ids — the TS adapter re-encodes both volatile
+-- segments (folder + file name) base64url at the list boundary so the strict
+-- TargetId validator charset [A-Za-z0-9_-] is always satisfied. Names like
+-- "John's report.pdf" / "100%.txt" are expected to arrive URL-encoded here.
 
 set maxCount to 100
 set ids to {}

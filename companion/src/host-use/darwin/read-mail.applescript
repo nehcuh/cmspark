@@ -35,7 +35,11 @@ on jsonEscape(s)
 	return s
 end jsonEscape
 
--- Phase 0: max-chars hardcoded; Phase 1 will pass argv via executeAppleEvent.
+-- Audit M8: maxChars is FIXED script-side. cmspark-host runs this precompiled
+-- .scpt via NSAppleScript executeAndReturnError, which cannot receive argv
+-- (Phase 2 may add NSAppleEventDescriptor handler invocation). The TS layer
+-- no longer sends --max-chars (it was silently dropped); smaller max_chars
+-- values are applied TS-side after parsing. Values above 500 return ≤500.
 set maxChars to 500
 set theSender to ""
 set theSubject to ""

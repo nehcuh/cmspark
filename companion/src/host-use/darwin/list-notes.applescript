@@ -33,6 +33,9 @@ end jsonEscape
 -- Phase 1 W7: list notes TargetIds (top-N).
 -- Format: "macos:com.apple.Notes:<account>:note-<stable-id>"
 -- Notes AppleScript `id of note` is stable across launches.
+-- Audit M2: KEEP EMITTING RAW ids — the account name and CoreData id contain
+-- characters outside the TS validator charset (spaces, ":", "/"); the TS
+-- adapter re-encodes both volatile segments base64url at the list boundary.
 
 set maxCount to 100
 tell application "Notes"

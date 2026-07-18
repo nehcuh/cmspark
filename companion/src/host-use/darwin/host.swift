@@ -6,10 +6,15 @@ import LocalAuthentication
 // the Automation permission dialog should name "cmspark-host", not osascript
 // nor any parent process. See docs/decisions/computer-use-round2-synthesis.md.
 //
-// Phase 1 W5 scope:
-//   - `read-mail`                  — read top-1 Mail inbox (Phase 0 path, retained)
-//   - `list-mail [--limit N]`      — list inbox TargetIds (Phase 1 W5)
-//   - `read-message --account A --id I` — read by stable id (Phase 1 W5)
+// Subcommands (Phase 1 W5–W8):
+//   - read-mail                        — read top-1 Mail inbox (Phase 0 path, retained)
+//   - list-mail / list-notes / list-files — list TargetIds; FIXED top-100 cap
+//     script-side (audit M8: argv cannot be passed into a precompiled .scpt
+//     without NSAppleEventDescriptor handler invocation — Phase 2. The TS
+//     layer applies smaller limits itself and does not send --limit.)
+//   - read-message --target <TargetId> — read Mail message by stable id (W5)
+//   - create-note / move-file          — writes (W6; biometric tier in W8)
+//   - biometric-verify                 — Touch ID via LAContext (W8)
 //
 // The list-mail and read-message paths reuse findScript() + executeAndReturnError()
 // for precompiled .scpt files. read-message constructs an AppleScript source
@@ -64,8 +69,11 @@ func runCompiledScript(_ name: String) throws -> String {
 //
 // TargetId format per docs/decisions/targetid-format-synthesis.md:
 //   "macos:com.apple.mail:<account-name>:msg-<stable-id>"
-// Swift parses this and constructs an AppleScript source string at runtime
-// (with single-quoted args to prevent injection) and runs via NSAppleScript.
+// (The TS adapter decodes its base64url-validated id back to this raw form
+// before spawning — audit M2.) Swift parses this and constructs an
+// AppleScript source string at runtime — the account segment is interpolated
+// into a DOUBLE-quoted literal escaped via appleScriptEscape (`"` and `\`
+// are the dangerous delimiters there; audit M5) — and runs via NSAppleScript.
 //
 // Cost: ~300ms per call due to runtime compilation (Round 1 D3 tradeoff).
 // Acceptable because read-by-id is NOT the hot path — Phase 0's read-mail
@@ -92,23 +100,58 @@ func parseTargetId(_ raw: String) throws -> (account: String, messageId: Int) {
     return (account, msgId)
 }
 
-// Escape a string for inclusion in single-quoted AppleScript context.
-// AppleScript single-quote string: backslash and double-quote are NOT special;
-// only the single quote itself needs escaping (which we do by closing, adding
-// "'" via concat, and reopening). Simpler: just reject single quotes entirely.
-func validateNoSingleQuote(_ s: String) throws {
-    if s.contains("'") {
-        throw HostError(code: 6, message: "read-message: account name contains single quote (rejected for safety)")
-    }
-}
-
+// Audit M5: account is interpolated into a DOUBLE-quoted AppleScript string
+// literal below (`is "<account>"`) — the dangerous delimiters are `"` and `\`,
+// NOT `'`. The previous guard (validateNoSingleQuote) checked the WRONG
+// delimiter: it rejected `'` (harmless in a double-quoted context) while
+// letting `"` and `\` through — only non-exploitable because the TS TargetId
+// validator backstopped it; a direct binary invocation could inject.
+// appleScriptEscape (see write subcommands below) escapes exactly `"` and `\`
+// and leaves `'` intact (M7), so account names like "John's Gmail" work.
 func runReadMessage(targetId: String) throws -> String {
     let (account, msgId) = try parseTargetId(targetId)
-    try validateNoSingleQuote(account)
+    let escAccount = appleScriptEscape(account)
 
-    // Build AppleScript source. Account goes in single quotes (rejected above
-    // if it contains '). Message id is integer-coerced so no injection risk.
+    // Build AppleScript source. Account goes into a double-quoted literal
+    // (escaped above). Message id is integer-coerced so no injection risk.
+    // Audit M3: fields are wrapped in jsonEscape (same handler as
+    // read-mail.applescript) — a message containing `"` or `\` previously
+    // produced invalid JSON and was permanently unreadable.
+    // maxChars is a fixed script-side cap (audit M8: the TS layer applies
+    // smaller max_chars values itself after parsing).
     let source = """
+    on jsonEscape(s)
+        set oldTids to AppleScript's text item delimiters
+
+        set AppleScript's text item delimiters to "\\\\"
+        set sParts to text items of s
+        set AppleScript's text item delimiters to "\\\\\\\\"
+        set s to sParts as string
+
+        set AppleScript's text item delimiters to "\\""
+        set sParts to text items of s
+        set AppleScript's text item delimiters to "\\\\""
+        set s to sParts as string
+
+        set AppleScript's text item delimiters to (character id 13)
+        set sParts to text items of s
+        set AppleScript's text item delimiters to "\\\\r"
+        set s to sParts as string
+
+        set AppleScript's text item delimiters to (character id 10)
+        set sParts to text items of s
+        set AppleScript's text item delimiters to "\\\\n"
+        set s to sParts as string
+
+        set AppleScript's text item delimiters to (character id 9)
+        set sParts to text items of s
+        set AppleScript's text item delimiters to "\\\\t"
+        set s to sParts as string
+
+        set AppleScript's text item delimiters to oldTids
+        return s
+    end jsonEscape
+
     set maxChars to 500
     set theSender to ""
     set theSubject to ""
@@ -118,7 +161,7 @@ func runReadMessage(targetId: String) throws -> String {
         repeat with m in messages of inbox
             try
                 if (id of m) is \(msgId) then
-                    if (name of account of mailbox of m) is "\(account)" then
+                    if (name of account of mailbox of m) is "\(escAccount)" then
                         set theSender to sender of m
                         set theSubject to subject of m
                         set theDate to (date received of m) as string
@@ -132,7 +175,7 @@ func runReadMessage(targetId: String) throws -> String {
             end try
         end repeat
     end tell
-    return "{\\"sender\\":\\"" & theSender & "\\",\\"subject\\":\\"" & theSubject & "\\",\\"date_received\\":\\"" & theDate & "\\",\\"body_preview\\":\\"" & theBody & "\\"}"
+    return "{\\"sender\\":\\"" & my jsonEscape(theSender) & "\\",\\"subject\\":\\"" & my jsonEscape(theSubject) & "\\",\\"date_received\\":\\"" & my jsonEscape(theDate) & "\\",\\"body_preview\\":\\"" & my jsonEscape(theBody) & "\\"}"
     """
 
     var error: NSDictionary?
@@ -230,13 +273,13 @@ func runBiometricVerify(nonce: String, reason: String) throws -> String {
 
 // MARK: - write subcommand (Phase 1 W6: Notes create + Finder move)
 
-// Escape a string for use inside AppleScript double-quoted string literal.
-// Returns nil if the string contains characters we can't safely escape
-// (currently: single quote is rejected because we use it elsewhere in the
-// source template — could be fixed by switching to quoted-form form, but
-// better to fail loud than risk injection).
-func appleScriptEscape(_ s: String) -> String? {
-    if s.contains("'") { return nil }  // safety: rejected entirely
+// Escape a string for use inside an AppleScript DOUBLE-quoted string literal.
+// In that context `"` and `\` are the only special delimiters; `'` has NO
+// special meaning and passes through verbatim (audit M7 — the previous
+// version rejected `'` outright, breaking legitimate values like
+// "John's report.pdf"). Also used by read-message for the account literal
+// (audit M5).
+func appleScriptEscape(_ s: String) -> String {
     var out = ""
     for ch in s.unicodeScalars {
         switch ch {
@@ -254,12 +297,8 @@ func appleScriptEscape(_ s: String) -> String? {
 // runCreateNote: create a new note in Notes.app with given name + body.
 // Returns JSON {"target_id":"macos:com.apple.Notes:default:note-<id>","undoable":true}
 func runCreateNote(name: String, body: String) throws -> String {
-    guard let escName = appleScriptEscape(name) else {
-        throw HostError(code: 6, message: "create-note: name contains single quote (rejected)")
-    }
-    guard let escBody = appleScriptEscape(body) else {
-        throw HostError(code: 6, message: "create-note: body contains single quote (rejected)")
-    }
+    let escName = appleScriptEscape(name)
+    let escBody = appleScriptEscape(body)
 
     let source = """
     set outId to ""
@@ -289,13 +328,13 @@ func runCreateNote(name: String, body: String) throws -> String {
 // runMoveFile: move a POSIX file to a POSIX destination via Finder.
 // Uses `trash`-compatible move (Finder move is reversible via Finder undo).
 // Returns JSON {"target_id":"macos:com.apple.finder:<folder>:file-<name>","undoable":true}
+// Audit M6: the TS adapter rejects non-absolute POSIX paths before spawning
+// (a relative path would resolve against this process's inherited cwd).
+// NOTE: `POSIX file <src> as alias` RESOLVES symlinks/Finder aliases — moving
+// a link moves its TARGET (the original), leaving the link in place.
 func runMoveFile(sourcePath: String, destPath: String) throws -> String {
-    guard let escSrc = appleScriptEscape(sourcePath) else {
-        throw HostError(code: 6, message: "move-file: source path contains single quote")
-    }
-    guard let escDest = appleScriptEscape(destPath) else {
-        throw HostError(code: 6, message: "move-file: destination path contains single quote")
-    }
+    let escSrc = appleScriptEscape(sourcePath)
+    let escDest = appleScriptEscape(destPath)
 
     let source = """
     tell application "Finder"
@@ -328,11 +367,11 @@ let argv = CommandLine.arguments
 guard argv.count >= 2 else {
     let usage = """
         usage: cmspark-host <subcommand> [options]
-          read-mail                            — read top-1 Mail inbox
-          list-mail [--limit N]                — list inbox TargetIds (default limit 100)
+          read-mail                            — read top-1 Mail inbox (body capped at 500 chars script-side)
+          list-mail                            — list inbox TargetIds (fixed top-100, script-side)
           read-message --target <TargetId>     — read message by stable id
-          list-notes                           — list notes TargetIds (Phase 1 W7)
-          list-files                           — list Documents folder TargetIds (Phase 1 W7)
+          list-notes                           — list notes TargetIds (fixed top-100)
+          list-files                           — list Documents folder TargetIds (fixed top-100)
           create-note --name N [--body B]      — create a new Note (Phase 1 W6, biometric in W8)
           move-file --source P --destination D — move file via Finder (Phase 1 W6, biometric in W8)
           biometric-verify --nonce N [--reason R] — Touch ID verification (Phase 1 W8)

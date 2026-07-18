@@ -34,6 +34,9 @@ end jsonEscape
 -- Format per docs/decisions/targetid-format-synthesis.md:
 --   "macos:com.apple.mail:<account-name>:msg-<stable-id>"
 -- The account-name segment disambiguates Mail's account-scoped message ids.
+-- Audit M2: KEEP EMITTING RAW ids — account names may contain spaces or
+-- punctuation outside the TS validator charset; the TS adapter re-encodes
+-- both volatile segments base64url at the list boundary.
 
 set maxCount to 100
 tell application "Mail"
