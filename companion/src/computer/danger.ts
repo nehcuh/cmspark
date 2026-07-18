@@ -9,6 +9,11 @@
 //   - CAUTION set hit in the REGION → destructive-ish target → pause + re-L2.
 //   - CAUTION set in the WINDOW only → recorded in evidence, no pause.
 //
+// Matching semantics (review R3): Latin tokens match on word boundaries
+// (\b) so "pin" does not fire inside "shopping" nor "format" inside
+// "information"; CJK tokens stay plain substring. Bare "Pay" IS enumerated
+// (A2.2) — a final payment button is often labelled exactly that.
+//
 // Documented evadability (A2.3): image-rendered text and owner-drawn fonts are
 // invisible to OCR — compensation is the A1.2 independent-channel region check
 // plus the A2.1 task-induced-dialog invariant, NOT a bigger word list.
@@ -21,8 +26,16 @@ export const HARD_DENY_WORDS: readonly string[] = [
   "确认支付", "立即支付", "立即付款", "确认付款", "支付", "转账", "付款", "购买",
   "付款码", "验证码", "银行卡", "确认购买", "免密支付",
   // en
-  "confirm payment", "pay now", "payment", "transfer", "purchase", "buy now",
+  // "pay" is listed BARE (A2.2 enumeration): a final payment button is often
+  // labelled exactly "Pay". Word-boundary matching (below) keeps it from
+  // firing inside "payment" — that entry stands on its own.
+  "pay", "confirm payment", "pay now", "payment", "transfer", "purchase", "buy now",
   "checkout", "captcha", "verification code", "card number", "confirm purchase",
+  // Deliberately NOT listed bare: "confirm" / "确认" — every ordinary
+  // confirmation dialog carries it, so a bare listing would hard-deny normal
+  // work (the A2.1 dialog invariant already force-pauses those). Only
+  // payment/destructive COMPOUNDS ("confirm payment", "confirm purchase",
+  // "确认支付", "确认删除") are enumerated.
 ]
 
 /** A2 — destructive/irreversible semantics: pause + re-L2. */
@@ -55,13 +68,37 @@ function normalize(text: string): string {
   return text.toLowerCase()
 }
 
-/** Longest-match-first substring scan; returns matched lexicon entries (deduped). */
+// Review R3/N2: pure substring matching both MISSES (nothing) and over-fires
+// for Latin tokens — "pin" ⊂ "shopping", "format" ⊂ "information". Latin
+// (ASCII) tokens therefore match on WORD BOUNDARIES (\b); CJK tokens have no
+// word-boundary concept and stay plain substring. \b is ASCII-centric
+// (\w = [A-Za-z0-9_]), so "pin码" still matches \bpin\b — desirable for the
+// credential set.
+const ASCII_TOKEN_RE = /^[\x00-\x7F]+$/
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+}
+
+const latinMatchers = new Map<string, RegExp>()
+
+function tokenMatches(hayLower: string, tokenLower: string): boolean {
+  if (!ASCII_TOKEN_RE.test(tokenLower)) return hayLower.includes(tokenLower)
+  let re = latinMatchers.get(tokenLower)
+  if (!re) {
+    re = new RegExp(`\\b${escapeRegExp(tokenLower)}\\b`)
+    latinMatchers.set(tokenLower, re)
+  }
+  return re.test(hayLower)
+}
+
+/** Longest-match-first scan; returns matched lexicon entries (deduped). */
 export function matchWords(text: string, lexicon: readonly string[]): string[] {
   const hay = normalize(text)
   const sorted = [...lexicon].sort((a, b) => b.length - a.length)
   const hits: string[] = []
   for (const w of sorted) {
-    if (hay.includes(normalize(w)) && !hits.includes(w)) hits.push(w)
+    if (tokenMatches(hay, normalize(w)) && !hits.includes(w)) hits.push(w)
   }
   return hits
 }
