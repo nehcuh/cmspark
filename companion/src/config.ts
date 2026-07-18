@@ -8,6 +8,7 @@ import { getLockPath } from "./platform"
 import { getBuiltinSkillsSrc } from "./paths"
 import { atomicWriteJSON } from "./io"
 import type { McpConfig } from "./mcp/types"
+import { sanitizeAppEntries, type AppsConfig } from "./apps/types"
 import type { ObsidianExportConfig } from "./threads/markdown-export"
 
 export const configEvents = new EventEmitter()
@@ -91,6 +92,7 @@ export interface CompanionConfig {
   security: SecurityConfig
   file_upload?: FileUploadConfig
   mcp?: McpConfig
+  apps?: AppsConfig
   obsidian?: ObsidianExportConfig
 }
 
@@ -150,6 +152,10 @@ const defaultConfig: CompanionConfig = {
   mcp: {
     enabled: false,
     servers: {},
+  },
+  apps: {
+    enabled: true,
+    entries: {},
   },
   obsidian: {
     name_template: "{{date}} {{first_user_line}}",
@@ -272,6 +278,16 @@ export function getConfig(): CompanionConfig {
   if (!cachedConfig.mcp) {
     cachedConfig.mcp = { enabled: false, servers: {} }
   }
+  // Ensure apps config exists with sane defaults (older config.json may not have
+  // it), then validate + normalize entries on load: direct config.json edits follow
+  // ADR-010 tampering semantics (design §6) — unknown policy → "manual", schema
+  // failure → entry disabled, policy clamped to the signer/user-writable cap —
+  // and must never crash startup (H4 philosophy). Runs once per cache miss, so
+  // tamper logs are not re-emitted on every getConfig() call.
+  if (!cachedConfig.apps) {
+    cachedConfig.apps = { enabled: true, entries: {} }
+  }
+  cachedConfig.apps.entries = sanitizeAppEntries(cachedConfig.apps.entries)
   return cachedConfig
 }
 
@@ -314,6 +330,35 @@ export function setMcpEnabled(enabled: boolean): CompanionConfig {
     servers: current.mcp?.servers ?? {},
   }
   return saveConfig({ mcp })
+}
+
+/**
+ * Replace the entire `apps.entries` map. Mirrors replaceMcpServers: unlike
+ * saveConfig's deepMerge (which would preserve stale entries), this performs a
+ * wholesale swap so removed apps actually disappear from the persisted config.
+ * Triggers CONFIG_CHANGE_EVENT. Validation/normalization of entries is the
+ * caller's job (mirrors mcp.add → validateMcpServerConfig → replaceMcpServers);
+ * the getConfig() load path re-sanitizes whatever lands on disk.
+ */
+export function replaceAppsEntries(entries: AppsConfig["entries"]): CompanionConfig {
+  const current = getConfig()
+  const updated: CompanionConfig = {
+    ...current,
+    apps: {
+      enabled: current.apps?.enabled ?? true,
+      entries: { ...entries },
+    },
+  }
+  const configPath = path.join(DATA_DIR, "config.json")
+  const toSave = JSON.parse(JSON.stringify(updated))
+  const envKey = getEnvApiKey()
+  if (envKey && toSave.llm?.api_key === envKey) {
+    toSave.llm.api_key = ""
+  }
+  atomicWriteJSON(configPath, toSave)
+  cachedConfig = updated
+  configEvents.emit(CONFIG_CHANGE_EVENT, updated)
+  return updated
 }
 
 /**
