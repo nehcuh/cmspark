@@ -271,6 +271,118 @@ Locator.locate(screenshot, hwnd, target: { kind: "text", value } | { kind: "desc
 - **范围**：L2 对话框 preview_image/caption、任务条 + 急停按钮、步骤时间线、证据查看入口、AppsPanel uiaCapable 徽标。
 - **依赖**：WP2（协议字段）、WP3（layer 徽标数据）。**验收**：扩展 tsc 干净 + 单测过；确认对话框含标注截图；急停按钮与热键等效。
 
+#### WP4 实施详案（规划者轮次产物，2026-07 读码核定；含对抗修订 P1–P6，裁决文档 coordinate-computer-use-wp4-plan-adversary.md）
+
+**读码结论（实施前的事实基线，勿猜）**：
+
+1. **协议面（companion）**：
+   - `computer.task.event` 已由 executor 经 `broadcastToClients` 推送（server.ts:1997），事件四种：`started / step / paused / finished`（computer/preview.ts `ComputerTaskEvent`）。step 现携 `seq/action/x/y/budgetLeft/caption/previewImage`（after 帧标注图，凭证区已黑化，≤200KB，too_large 降级为无图）；**缺** layer/confidence/durationMs/locateAttempts（降级日志在证据链里有，事件流未透传）。finished **缺** evidenceDir。
+   - L2 确认复用 `security.confirmation.request`（security-confirmation.ts:168 发送负载），`code_preview` 已承载 buildComputerL2Preview 的逐条枚举文本（Y3 防伪造纪律）；**无** preview_image/preview_caption 字段——§F.1 规格需新增（可选字段，向后兼容）。**附带发现（对抗 P1）**：`code_preview` 经 `codePreview()` 截断（security-confirmation.ts:7 `CODE_PREVIEW_LIMIT = 1200`，超限加「…」）——30 动作 + 2000 字符语料的枚举全文必然被截尾，清单尾部动作与待输入文本对人不可见；这是 WP1 起就存在的现网洞，WP4 顺带修复（落点见 WI-1/WI-2/WI-3）。
+   - 急停三通道现状：热键 helper（computer-estop.ps1，Ctrl+Alt+End→estop.flag）、WS `computer.task.abort {task_id|"*"}`（server.ts:228 handleComputerTaskAbort，已导出且有测试，应答 `computer.task.abort.ack {matched}`）、任务条按钮——**前两者已就绪，按钮通道只缺 UI 发送方**。abortCheck 三通道汇于 server.ts:1985（panel/hotkey/estop-lost）。
+   - `computer.get_state / computer.set_enabled`（computer/handlers.ts）与 `apps.set_coordinate_allowed`（apps/handlers.ts:413，生物识别门）均已在线；message-router.ts:942-960 已路由；validateWsMessage 对未知类型默认放行（server.ts:2688）。
+   - `apps.list` 条目经 `entriesList` 全量展开 `...e`（apps/handlers.ts:107），**uiaCapable / uiaProbedAt / coordinateAllowed 已在网线上**——扩展侧只是没声明、没渲染。
+   - 证据链（computer/evidence.ts）：`~/.cmspark-agent/computer-evidence/<taskId>/` 全工件 DPAPI 密封（.sealed），taskId 构造时已做字符清洗；`assertNotReparsePath` 防符号链接（Y5）。host_computer 工具结果 data 已含 `evidence_dir`（server.ts:2032/2041）。**无任何「打开目录」WS 通道**——需新增。
+2. **UI 面（chrome-extension）**：
+   - background/index.ts:325 把 companion 全部下行消息原样 `chrome.runtime.sendMessage(msg)` 广播给 sidepanel——`computer.task.event` **天然可达**，无需 background 改动；上行则是白名单透传（index.ts:694-730），`computer.task.abort` 等需显式加进列表。
+   - 确认对话框为 App.tsx 内 `SecurityConfirmationDialog`（复用 ui/Modal 焦点陷阱原语），走 `pendingSecurityConfirmations` 队列；useWebSocket.ts:301 已映射请求字段。
+   - AppsPanel.tsx 卡片徽标区（AppCard，~line 433-446）是 uiaCapable 徽标落点；「全局 App」只读行是 computer 全局态的镜像先例。
+   - 测试基建：`node:test` + `tsc -p tsconfig.test.json` 编译到 .test-dist，**纯逻辑测试、无 React 渲染测试**——组件逻辑必须抽进 utils 纯函数才可测（apps-utils.ts/apps-panel-logic.test.ts 是既定先例）；新文件需手工加进 tsconfig.test.json include。
+
+**任务拆分（6 个工作项，各自独立可提交、可回滚）**：
+
+- **WI-1 扩展协议类型与状态切片**（纯扩展，无 companion 依赖；先落地）
+  - 改：`chrome-extension/src/sidepanel/types.ts`（SecurityConfirmationRequest 增 `preview_image?: string` / `preview_caption?: string` / **`full_preview?: string`（P1：完整预览文本独立字段，绕过 1200 截断）**；AppEntry 增 `uiaCapable?: boolean` / `uiaProbedAt?: string` / `coordinateAllowed?: boolean`；新增 `ComputerTaskEventView` / `ComputerStepView` / `ComputerTaskState` 镜像事件负载）
+  - 改：`chrome-extension/src/sidepanel/store/agentStore.tsx`（新增 `computerTask: ComputerTaskState | null` 切片 + actions：`COMPUTER_TASK_EVENT`（折叠 started/step/paused/finished）、`COMPUTER_TASK_ABORT_ACK`、`SET_COMPUTER_COORDINATE_STATE`）
+  - 改：`chrome-extension/src/sidepanel/hooks/useWebSocket.ts`（新增 case `computer.task.event` / `computer.task.abort.ack` / `computer.state`；`security.confirmation.request` 映射增 preview_image / preview_caption / **full_preview**）
+  - 改：`chrome-extension/src/background/index.ts`（透传列表加 `computer.task.abort`、`computer.get_state`、`computer.evidence.open`）
+  - 新增：`chrome-extension/src/sidepanel/utils/computer-utils.ts`——纯函数：`reduceComputerTaskEvent(state, ev)`（taskId 关联 + 状态机校验：finished 后到的 step 丢弃；**P4：见到未知 taskId 的 step/paused 懒创建任务状态，任务条出现并标记「进行中（恢复同步）」——急停按钮的存在性优先于事件流整洁性**；不同 taskId 的 finished 后迟到事件丢弃）、`capTimeline(steps)`（默认保留最近 30 步；预览图总字节 >4MB 时先丢旧图保文字行）、`previewImageSafe(b64)`（>300KB 拒渲染）、`uiaCapableBadge(entry)` 三态、`isValidEvidenceTaskId(id)`（镜像 evidence.ts 清洗规则 `^[a-zA-Z0-9_-]+$`）
+  - 改：`chrome-extension/tsconfig.test.json`（include 加 computer-utils.ts）
+  - 测试：新增 `chrome-extension/tests/computer-task-state.test.ts`（事件折叠状态机、乱序/迟到事件丢弃、**P4 懒创建用例：面板迟连 → 首个 step 事件 → 任务条与急停按钮可用**、时间线截断、字节上限丢图、abort.ack 置位、previewImageSafe 守卫）；`tests/apps-panel-logic.test.ts` 追加 uiaCapableBadge 三态矩阵
+- **WI-2 companion 协议增改**（纯 companion，扩展缺席时优雅降级——全部字段可选）
+  - 改：`companion/src/computer/preview.ts`（ComputerTaskEvent：step 增 `layer?/confidence?/durationMs?/locateAttempts?/crossverified?/crossverifyChannel?`；started 增 `budget?`；finished 增 `evidenceDir?`。**step 事件 caption 与 L2 caption 共用下述同一字符类清洗函数（P3）**）
+  - 改：`companion/src/computer/executor.ts`（三处 emit 点补字段——step 处 durationMs=now()-startedAt、layer/confidence/locateAttempts 复用证据链同源变量；finished 成功/失败两处附 `evidence.dir`；**不改任何决策逻辑**）
+  - 改：`companion/src/security-confirmation.ts`（SecurityConfirmationDetails 增 `previewImage?: string` / `previewCaption?: string` / **`fullPreview?: string`——computer 类确认的完整预览文本走独立字段，绕过 `codePreview()` 的 CODE_PREVIEW_LIMIT=1200 截断（P1；等价替代：request 序列化时对 host_computer 豁免截断/提限至 8KB——实现时二选一并在代码注释记录理由）**；request 发送负载仅在存在时附 `preview_image` / `preview_caption` / `full_preview`）
+  - 新增：caption 清洗函数（落 `companion/src/computer/preview.ts` 或独立模块）——caption 构造链在模板化 + JSON.stringify 之外**剥离 `\p{Zl}\p{Zp}`（行/段分隔符）与零宽格式字符（U+200B–U+200F、U+FEFF、U+2060 等）**（P3：JSON.stringify 不转义 U+2028/U+2029——JSON 字符串内的合法字符，pre-wrap 渲染语境会强制断行；任务文本/锚文本是 LLM 生成的不可信内容）
+  - 新增：`companion/src/computer/l2-preview-image.ts`——任务级 L2 标注截图 helper：解析 hwnd（enumerator）→ capture → OCR（凭证 blackout + 首动作锚文本定位）→ 首动作为坐标点击或锚文本命中时画十字线 → preview build → **raw 帧立即删除**（任务未批准，像素不得持久化，R1 纪律）。全依赖注入；整体包 try/catch + 超时（5s）降级为「无图」。caption 模板**强制三段式（P2 非绑定声明）**：「① 将在 <应用名> 窗口中执行 N 个动作（下方逐条列出）；② 十字线仅标注第 1 个动作的当前位置；③ 批准后将按实时屏幕重新定位，实际点击位置以执行为准」。**超时路径显式「先杀进程 → 等 exit → 再删 raw」**（P5：防止被杀的 capture/OCR ps1 在删除之后完成写盘导致 raw 复活；WP2 sweepComputerTempCaptures 为兜底）
+  - 改：`companion/src/server.ts`（host_computer 闸门调 helper 生成 previewImage/previewCaption 注入确认 details——best-effort，helper 失败/超时绝不影响确认门；**helper 调用点显式固定在闸门廉价前门（assertCoordinateAllowed / COMPUTER_TASK_BUSY 检查 / rate-limit 检查）之后**——对抗裁决护栏 a，防后续重构挪前；validateWsMessage 表增 `computer.evidence.open` 校验）
+  - 改：`companion/src/computer/handlers.ts` + `companion/src/message-router.ts`（新增 `computer.evidence.open {task_id}`：严格字符校验 → evidenceBaseDir 解析 → `assertNotReparsePath` 复查 → 存在性检查 → explorer 打开；返回 `computer.evidence.open.result {ok, error?}`；family:"computer" 错误惯例；**P6：每面板每分钟频率上限 5 次，超限返回 ok:false + rate_limited**）
+  - 测试：`companion/tests/computer-l2-preview-image.test.ts`（新：锚文本命中画点/坐标画点/无首动作无点、blackout 调用断言、raw 清理断言、**超时路径「杀进程→等 exit→删 raw」顺序与无残留断言（P5）**、builder 失败降级 null、超时降级、caption 三段式文案断言）；**P1 性质测试：30 动作 + 2000 字符语料的 full_preview 到达面板时逐字完整（不经 codePreview 截断）**；**P2 不变量测试：host_computer 工具结果对象无 preview_image 字段（预览绝不进工具结果/LLM 上下文）**；**P3 性质测试：caption 载荷含 U+2028/零宽字符时不产生第二行** + 清洗函数单测（\p{Zl}\p{Zp}/U+200B/U+FEFF 剥离）；`computer-preview.test.ts` 追加事件字段形状；security-confirmation 既有套件追加 preview/full_preview 字段透传；computer handlers 测试追加 evidence.open（taskId 非法拒绝、路径穿越拒绝、不存在返回 ok:false、reparse 拒绝、**第 6 次/分钟调用被频率上限拒绝（P6）**）
+- **WI-3 L2 对话框标注截图渲染**（依赖 WI-1 类型 + WI-2 字段）
+  - 改：`chrome-extension/src/sidepanel/App.tsx`（SecurityConfirmationDialog：`preview_image` 存在且过 `previewImageSafe` 守卫时渲染 `<img src="data:image/jpeg;base64,...">` + `preview_caption` 说明行（三段式文案原样展示）；**`full_preview` 存在时优先于 code_preview 渲染为可滚动区（max-height + overflow:auto），保证大预算任务逐条枚举对人完整可见（P1）**；host_computer 时徽标文案为「坐标操作确认」；图像渲染失败静默回退纯文本——确认门永不被图片阻塞）
+  - 按钮语义不动：拒绝/拒绝并停止/允许执行与现有一致；originWs 绑定、超时、nonce 流均不受影响
+  - 测试：WI-1 守卫函数单测覆盖；本项无新外漏逻辑
+- **WI-4 任务条 + 急停按钮 + 步骤时间线**（依赖 WI-1）
+  - 新增：`chrome-extension/src/sidepanel/components/ComputerTaskBar.tsx`——常驻任务条（`ChatView` 与 `BottomBar` 之间挂载于 App.tsx）：任务名 + 目标应用 + 预算 `已用/总量`（started.budget / step.budgetLeft）+ 大红「⏹ 急停」按钮（`chrome.runtime.sendMessage({type:"computer.task.abort", task_id})`；收到 ack matched>0 后置「已急停，等待任务退出…」态；3s 无 ack 提示「急停未确认——可用 Ctrl+Alt+End 热键」）；点击任务条展开步骤时间线：每步一行 = caption + layer 徽标（uia/ocr 着色，缺省不显示）+ confidence + durationMs + 缩略图（点击放大覆盖层，复用 Modal）；paused 行黄色原因条；locateAttempts 折叠为「降级详情」（每层一行 outcome+reason）；**懒创建状态（P4）的任务条带「恢复同步」标记，started 事件到达后转为正常显示**
+  - 测试：状态折叠已在 WI-1 覆盖；组件保持纯渲染
+- **WI-5 证据查看入口**（依赖 WI-1 + WI-2 evidence.open/finished.evidenceDir）
+  - 改：`chrome-extension/src/sidepanel/components/ChatView.tsx`（ToolCallCard 特判 `host_computer`：紧凑任务卡——completed/total、error_code（失败红色）、「📂 打开证据目录」按钮（`computer.evidence.open {task_id}`，taskId 先过 `isValidEvidenceTaskId`）；无 evidence_dir 的旧 companion 结果只读展示）
+  - 改：ComputerTaskBar 完结态同样挂「打开证据目录」（finished.evidenceDir 在时）
+  - 测试：`isValidEvidenceTaskId` 单测（WI-1）；companion 侧 handler 测试在 WI-2
+- **WI-6 AppsPanel uiaCapable 徽标 + 坐标开关**（依赖 WI-1 类型）
+  - 改：`chrome-extension/src/sidepanel/components/AppsPanel.tsx`（AppCard 徽标区加 uiaCapable 三态徽标：`true`→「UIA」蓝 / `false`→「OCR」灰（title「UIA 不可用，走 OCR 定位」）/ `undefined`→「未探测」点灰（title「首次坐标任务时自动探测」）——**中性能力措辞，绝不渲染成安全背书**；卡片菜单加「允许坐标操作」开关行，复用 `apps.set_coordinate_allowed`（生物识别门由 companion 现有确认对话框承担，扩展零新增）；vault/LOLBIN 条目由服务端 COORDINATE_STRUCTURAL_DENY 拒绝，UI 仅展示 appsError）
+  - 改：AppsPanel 头部加 computer 全局态只读行（`computer.get_state`，镜像「全局 App」只读先例；title 提示 config.json `computer.coordinateEnabled`）——**WP4 不做全局开关切换**
+  - 测试：apps-panel-logic.test.ts 追加三态徽标 + 手设覆盖（uiaCapable 有值但 uiaProbedAt 缺失 → title 标注「人工设定」）
+
+**协议增改清单**：
+
+| 消息/字段 | 状态 | 说明 |
+|---|---|---|
+| `computer.task.event`（started/step/paused/finished 广播） | 已有可复用 | WI-2 仅加可选字段：step.`layer/confidence/durationMs/locateAttempts/crossverified/crossverifyChannel`、started.`budget`、finished.`evidenceDir`（**新增字段**，旧扩展忽略） |
+| `security.confirmation.request`.`preview_image` / `preview_caption` | **新增**（可选字段） | §F.1 规格落地；SecurityConfirmationDetails 增 previewImage/previewCaption，仅存在时下发；旧扩展忽略即回退现版对话框 |
+| `security.confirmation.request`.`full_preview` | **新增**（可选字段，P1） | computer 类确认的完整预览文本独立字段，绕过 CODE_PREVIEW_LIMIT=1200 截断；WI-3 渲染为可滚动区；旧扩展忽略即回退 code_preview（保持截断现状） |
+| `computer.task.abort {task_id|"*"}` → `computer.task.abort.ack` | 已有可复用 | server 端处理器+测试已就绪；WP4 只补 background 透传 + UI 发送方 |
+| `computer.evidence.open {task_id}` → `computer.evidence.open.result` | **新增**（消息） | v1 仅「打开目录」，**每面板每分钟 5 次频率上限（P6）**；面板内只读浏览器是 v2（§F.3） |
+| `computer.get_state` / `computer.state` | 已有可复用 | AppsPanel 全局态只读行数据源；`computer.set_enabled` 不进 WP4 UI |
+| `apps.set_coordinate_allowed` | 已有可复用 | 徽标开关复用；生物识别门服务端已就绪 |
+| `apps.list` 条目 `uiaCapable/uiaProbedAt/coordinateAllowed` | 已有可复用 | 网线已在传，扩展只需声明+渲染 |
+
+**组件设计要点**：
+
+1. **L2 确认对话框**：复用 SecurityConfirmationDialog/Modal，不改按钮语义与队列。`preview_image` 渲染区位于 risk 徽标与预览文本之间，`max-height` 限制 + 完整图点击放大（可选，v1 可只做内联）；`preview_caption` 为**三段式非绑定声明**（① N 个动作逐条列出；② 十字线仅标注第 1 个动作的当前位置；③ 批准后按实时屏幕重新定位、实际点击位置以执行为准），caption 构造链 = 模板化 + JSON.stringify + **字符类清洗（剥离 `\p{Zl}\p{Zp}` 与零宽格式字符，P3）**；`full_preview` 可滚动区承载完整逐条枚举（P1）；无图时与现版完全一致。
+2. **任务条**：仅 `computerTask != null` 时渲染（含 P4 懒创建的「恢复同步」态）；`finished` 后保留 5s 完结态（✅/❌ + 「已急停」区分 errorCode=TASK_ABORTED）再自动清空；急停按钮是第三通道的发送方，与热键**同汇于 executor abortCheck 的 "panel" 分支**——等效性由协议保证，UI 不做第二套停止逻辑。
+3. **步骤时间线**：数据 = store 里折叠的 step 事件流；layer 徽标三态着色（uia=蓝/ocr=绿/缺省=灰点）；locateAttempts 默认折叠；缩略图惰性渲染（仅在时间线展开且进入视口的行渲染 `<img>`），字节上限见 WI-1 capTimeline。
+4. **证据入口**：按钮只发 task_id，路径解析全在 companion；扩展永不接触证据字节（DPAPI sealed，读了也是密文）。
+5. **AppsPanel 徽标**：三态徽章 + 手设标注 + 中性文案；坐标开关乐观更新关闭——等 apps.updated 广播为准（与 policy 切换同模式）。
+
+**验收映射**：
+
+| WP4 验收标准 | 工作项 | 测试 |
+|---|---|---|
+| 扩展 tsc 干净 + 单测过 | 全部 WI（WI-1/3/4/5/6 扩展侧） | `npm run build`（tsc --noEmit）+ `npm test`：computer-task-state.test.ts + apps-panel-logic 追加 + 既有套件回归 |
+| 确认对话框含标注截图 | WI-2（l2-preview-image + 协议字段）+ WI-3（渲染） | computer-l2-preview-image.test.ts（画点/blackout/raw 清理/超时顺序/降级/三段式）；P1 逐字完整性质测试；P2 预览不进工具结果不变量测试；P3 U+2028 性质测试；手动验收：真实机 host_computer 任务 L2 弹窗可见十字线截图 + caption |
+| 急停按钮与热键等效 | WI-4（按钮→WS abort→abortCheck "panel"）+ WI-1（透传/ack/P4 懒创建） | computer-task-state.test.ts（ack 状态机 + 迟连懒创建）；手动验收：任务中点急停 <500ms 注入停止、事件流 finished errorCode=TASK_ABORTED，与 Ctrl+Alt+End 行为一致；server 侧 handleComputerTaskAbort 测试已存在 |
+
+**风险与边界（明确不做）**：
+
+- **L2 截图时机（对抗裁决采纳，定案）**：闸门前 best-effort + 超时降级，四条护栏——a) helper 调用点固定在廉价前门（coordinateAllowed/busy/rate-limit）之后；b) 非绑定 caption（三段式，P2）；c) 超时路径「杀进程 → 等 exit → 删 raw」（P5）；d) 「预览不进工具结果/LLM 上下文」不变量测试（P2）。
+- 不改 executor 决策/安全逻辑（仅事件负载加字段）；reL2 暂停对话框附最近 step 图为**可选增强**，超出预算即砍。
+- 不动 estop 热键通道、helper ps1、rate-limit；面板按钮只走已有 WS abort。
+- 预览图体积双保险：ps1 too_large（≤200KB）服务端兜底 + 扩展 300KB 拒渲染守卫；时间线 30 步/4MB 上限，先丢图保文字。
+- 证据 v1 只「打开目录」（+ 每分钟 5 次频率上限）；不做面板内浏览器、不解密、不扩展证据保留策略。
+- 不引入任何新第三方 UI 依赖（inline style + 既有 Modal/store/reducer 模式；中文注释风格沿用）。
+- `computer.set_enabled` 不做面板切换（只读行）；全局授权开关留 config.json/后续 WP。
+- L2 截图 helper 严格 best-effort：失败/超时/非 win32 一律降级无图，确认门延迟预算 5s，raw 帧必删。
+- 任务级 L2 截图不进证据链（任务尚未批准）——只有批准后的 step 帧才密封。
+- `full_preview` 仅 computer 类确认使用；其余工具的 codePreview 截断行为不变（P1 修复面刻意收窄）。
+
+**给对抗 agent 的攻击面提示**：
+
+1. **L2 截图 helper 把确认闸门变成副作用点**：闸门内新增 hwnd 解析+capture+OCR+locate，若 try/catch/超时包裹不严，预览失败会让整个 host_computer 拒飞（可用性回退）；超时路径若未按「杀进程 → 等 exit → 删 raw」顺序（P5），被杀 ps1 可在删除后完成写盘、raw 帧在 %TEMP% 复活（违反 R1「无明文残帧」，WP2 sweep 兜底但有时间窗）。重点审：helper 调用点是否真在廉价前门之后、超时兑现、所有异常路径的 raw 删除断言、helper 对确认门延迟的实测影响。
+2. **`computer.evidence.open` 的路径校验**：taskId 若未严格 `^[a-zA-Z0-9_-]+$` + 基目录内解析 + reparse 复查，`task_id="../.."` 类穿越可让 companion 以用户权限 explorer 打开任意目录（信息暴露/社会工程跳板）；P6 频率上限只是可用性缓解，不替代路径校验。重点审：校验顺序、证据目录不存在时的行为、explorer 调用参数注入（taskId 绝不拼进命令行模板，必须作为独立 argv）、频率上限的计数粒度（每连接 vs 全局）。
+3. **preview_caption / 对话框文本伪造**：JSON.stringify **不充分**——不转义 U+2028/U+2029（pre-wrap 语境强制断行）与零宽格式字符，LLM 生成的任务文本/锚文本可借此伪造「系统提示」行（Y3 在 code_preview 只堵了 ASCII 控制符）。防御 = 模板化 + JSON.stringify + **字符类清洗（P3）**，且 caption 必须保持三段式非绑定声明（P2），否则十字线被读成「精确背书」而非「参考快照」。重点审：清洗函数是否被 L2 caption 与 step 事件 caption 一致复用。
+4. **面板侧事件流状态机**：`computer.task.event` 是广播、无来源绑定、无序号；reducer 须做 taskId 关联与状态迁移校验（finished 后 step、重复 started），同时按 P4 对 step-without-started **懒创建**而非丢弃——「不同 taskId 一律丢弃」的字面实现会让重开面板上的运行中任务没有任务条 = 急停按钮静默缺席。重点审：reduceComputerTaskEvent 的乱序/重复/越态/迟连用例，懒创建态与正常态的显示区分。
+5. **徽标信任放大**：uiaCapable 是**非权限位**的探测提示（WP3 §K.5 明示，写回面已是 K.5 攻击面），若徽标渲染成绿色对勾式「安全」背书，会把能力提示误读为安全保证；coordinateAllowed 开关若乐观更新而不等 apps.updated，可在生物识别被拒后短暂显示「已允许」。重点审：徽标文案与开关的状态来源。
+
+**对抗修订记录**（裁决 coordinate-computer-use-wp4-plan-adversary.md，2026-07-20）：
+
+- P1（HIGH 强制）→ WI-1 类型/映射增 `full_preview` + WI-2 security-confirmation 增 `fullPreview` 独立字段（绕过 CODE_PREVIEW_LIMIT=1200）+「30 动作 + 2000 语料逐字到达」性质测试 + WI-3 可滚动渲染；现网洞（WP1 起存在），WP4 顺带修复
+- P2（HIGH 强制）→ WI-2 caption 强制三段式模板 +「预览不进工具结果/LLM 上下文」不变量测试；组件设计要点 1、边界节护栏 b/d 同步
+- P3 → WI-2 caption 字符类清洗函数（剥离 `\p{Zl}\p{Zp}` + 零宽格式字符，L2/step caption 复用）+ U+2028 性质测试；组件设计要点 1、攻击面提示 3 同步
+- P4 → WI-1 reducer 懒创建任务状态（「进行中（恢复同步）」）+ 迟连用例测试；WI-4 任务条「恢复同步」标记、攻击面提示 4 同步
+- P5 → WI-2 helper 超时路径显式「杀进程 → 等 exit → 删 raw」+ 无残留断言；攻击面提示 1 同步
+- P6 → WI-2 evidence.open 每面板每分钟 5 次频率上限 + 超限测试；协议增改清单同步
+- 截图时机裁决（闸门前 best-effort + 四护栏）→ 风险与边界节首条定案 + WI-2 server.ts 闸门调用点护栏 a
+
 ### WP5 — 本地模型层（spike 门禁：S-1/S-2/S-3 全绿才开工）
 - **范围**：TinyClick ONNX 导出工具链（dev-only 脚本 + 导出物哈希登记进 models.manifest.json）、下载管理器（§C.2 全项：许可证门/断点/校验/预算/删除）、onnxruntime-node 集成（worker_threads、单飞、超时）、ROI 缩放策略、L2 层接入编排器。
 - **验收**：录播 golden 集点定位准确率达 spike 校准阈值（初值：desktop 子集 ≥55%，中文 case 单独报告不设硬门槛）；模型文件篡改 → 加载拒绝；下载失败自动降级 L1/L3。
