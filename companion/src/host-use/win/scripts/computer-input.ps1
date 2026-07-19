@@ -15,7 +15,10 @@
 #      the landing point (WindowFromPoint + GetAncestor GA_ROOT; X2); drag
 #      checks BOTH endpoints
 #   8. key: named-key WHITELIST chords only (WP2 — no arbitrary VK; printable
-#      text goes through 'type' with its A3 corpus gate)
+#      text goes through 'type' with its A3 corpus gate) + foreground
+#      re-verified immediately before SendBatch (adversary WP2 X2 — keys go
+#      to the FOCUS window; a popup in the settle window would eat
+#      enter/space/alt,f4). Residual backstop: post-action A2.1, same as type.
 #
 # stdout contract: single-line JSON { ok, action, ... }
 # stderr contract:
@@ -254,7 +257,10 @@ $VkMap = @{
 #      (WindowFromPoint sees through nothing — an AlwaysOnTop/notification
 #      window covering the point reports itself).
 # Residual (documented): a millisecond race remains between these checks and
-# SendInput; the post-action A2.1 dialog invariant is the backstop.
+# SendInput; the post-action A2.1 dialog invariant is the backstop. The key
+# branch re-checks the same foreground half immediately before its SendBatch
+# (adversary WP2 X2) — keys have no landing point, so its residual backstop
+# is likewise the A2.1 dialog channel.
 function Assert-Landing([int]$sx, [int]$sy) {
   if ([InpW32]::GetForegroundWindow() -ne $hwndPtr) {
     Fail "FOCUSLOST" "target hwnd $Hwnd is not foreground after force — refusing to inject" 8
@@ -319,6 +325,16 @@ switch ($Action) {
     foreach ($n in $names) { $batch += [InpW32]::KeyVk([uint16]$VkMap[$n], 0) }
     $rev = @($names); [array]::Reverse($rev)
     foreach ($n in $rev) { $batch += [InpW32]::KeyVk([uint16]$VkMap[$n], [InpW32]::KEYEVENTF_KEYUP) }
+    # X2 (adversary WP2): key events go to the FOCUS window, not a screen
+    # point — a dialog that popped during the 120ms settle above would eat
+    # the chord (enter/space = confirm default button, alt,f4 = close
+    # foreground). Re-verify foreground immediately before SendBatch — the
+    # same check as Assert-Landing's foreground half (WindowFromPoint does
+    # not apply to keys). Drift = FOCUSLOST, fail-closed; the post-action
+    # A2.1 dialog invariant is the residual backstop, same as type.
+    if ([InpW32]::GetForegroundWindow() -ne $hwndPtr) {
+      Fail "FOCUSLOST" "foreground hwnd changed before key chord — refusing to inject into a possible popup" 8
+    }
     $sent = [InpW32]::SendBatch($batch)
     if ($sent -ne $batch.Length) { Fail "SENDFAILED" "SendInput delivered $sent/$($batch.Length) events" 9 }
     Write-Output (ConvertTo-Json -Compress -InputObject ([ordered]@{

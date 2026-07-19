@@ -967,6 +967,21 @@ test("executor WP2: key chord in a credential context -> DANGER_HARD_DENY (submi
   assert.equal(injector.keyChords.length, 0)
 })
 
+test("executor X2: key chord FOCUSLOST from the injector -> task fails closed, next action never injects", async () => {
+  const injector = new RecordingInjector()
+  // Fake adapter simulating the ps1 X2 fix: foreground drift detected between
+  // ForceForeground and SendBatch -> FOCUSLOST, fail-closed.
+  injector.keyChord = async () => { throw new ComputerError("FOCUS_LOST", "foreground hwnd changed before key chord") }
+  const deps = makeDeps({ injector })
+  const r = await runComputerTask(
+    { task: "t", app: "win.app.test", actions: [{ action: "key", keys: ["enter"] }, clickOk] },
+    deps,
+  )
+  assert.equal(r.success, false)
+  assert.equal(r.errorCode, "FOCUS_LOST")
+  assert.equal(injector.clicks.length, 0, "the following click must never run after a FOCUSLOST key chord")
+})
+
 test("executor WP2: scroll dispatches with point + delta; uncrossverified bookkeeping", async () => {
   const injector = new RecordingInjector()
   const evidence = new FakeEvidence()

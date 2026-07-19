@@ -195,6 +195,8 @@ Locator.locate(screenshot, hwnd, target: { kind: "text", value } | { kind: "desc
 
 **线程信任**：只读动作可信任（W7  reads-only 语义一致）；**输入注入永不线程信任**（每次任务必弹 L2）。
 
+**WP2 原语落点校验补记（对抗 X2）**：click/scroll/drag 在 SendInput 前做 Assert-Landing（前台归属 + WindowFromPoint 根窗口归属）；`key` 无坐标落点（键事件投递给焦点窗口），故 SendBatch 前复核 `GetForegroundWindow()==hwnd`，与 type 逐批复查同级，漂移即 FOCUSLOST fail-closed；其毫秒级残余窗口与鼠标系动作相同，**事后兜底同为 A2.1 对话框通道**。
+
 **确认基础设施复用纪律（E5/A1/A3 教训）**：`securityConfirmations.request(send, details, { originWs: ws })` 必传 originWs；`relevantApps` 携带 app token；对话框扩展字段见 §F。
 
 ### E.4 危险场景硬拒绝（fail-closed，不可配置放行）
