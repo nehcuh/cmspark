@@ -25,6 +25,9 @@ param(
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
 $ErrorActionPreference = 'Stop'
 
+Add-Type -MemberDefinition '[DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(System.IntPtr v);' -Name DPI -Namespace CU
+try { [CU.DPI]::SetProcessDpiAwarenessContext([IntPtr]::new(-4)) | Out-Null } catch {}
+
 function Fail([string]$prefix, [string]$detail, [int]$code) {
   [Console]::Error.WriteLine("${prefix}:$detail")
   exit $code

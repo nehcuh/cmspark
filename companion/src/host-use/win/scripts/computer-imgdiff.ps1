@@ -17,7 +17,8 @@
 param(
   [Parameter(Mandatory=$true)][string]$A,
   [Parameter(Mandatory=$true)][string]$B,
-  # Optional crop applied to A before comparison (window-client px).
+  # Optional crop applied to A before comparison (capture-image px — the
+  # bitmap's pixel space, NOT window-client space).
   [int]$CropX = -1, [int]$CropY = -1, [int]$CropW = 0, [int]$CropH = 0,
   [int]$Sample = 64,
   [double]$CellThreshold = 24.0

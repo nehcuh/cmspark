@@ -30,6 +30,10 @@ param(
 )
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
 $ErrorActionPreference = 'Stop'
+
+Add-Type -MemberDefinition '[DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(System.IntPtr v);' -Name DPI -Namespace CU
+try { [CU.DPI]::SetProcessDpiAwarenessContext([IntPtr]::new(-4)) | Out-Null } catch {}
+
 if ($MaxSeconds -lt 1 -or $MaxSeconds -gt 3600) {
   [Console]::Error.WriteLine("BADARGS:MaxSeconds $MaxSeconds out of range 1..3600")
   exit 2

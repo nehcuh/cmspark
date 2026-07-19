@@ -56,3 +56,31 @@ test("ps1 guard (X2): key branch re-verifies foreground BEFORE SendBatch, drift 
   )
   assert.match(branch, /FOCUSLOST/, "foreground drift in the key branch fails FOCUSLOST (fail-closed)")
 })
+
+// WP3 review R1 (WP1 Amendments A5 修订要求②): every COORDINATE-EMITTING
+// computer-*.ps1 must normalize its own DPI context to physical pixels —
+// UIA/OCR outputs cross process boundaries, and a system-DPI-aware
+// PowerShell is virtualized on mixed-DPI multi-monitor setups, silently
+// skewing every returned coordinate. The image-space scripts
+// (estop/ocr/preview/seal/imgdiff) emit no cross-process coordinates and
+// are deliberately NOT in this list.
+const DPI_AWARE_PS1 = [
+  "computer-capture.ps1",
+  "computer-input.ps1",
+  "computer-windows.ps1",
+  "computer-uia-probe.ps1",
+  "computer-uia-locate.ps1",
+  "computer-uia-watch.ps1",
+]
+
+test("ps1 guard (R1): every coordinate-emitting computer-*.ps1 sets PerMonitorV2 (SetProcessDpiAwarenessContext -4)", () => {
+  for (const name of DPI_AWARE_PS1) {
+    const p = path.join(SCRIPTS_DIR, name)
+    assert.ok(fs.existsSync(p), `missing script ${p}`)
+    const src = fs.readFileSync(p, "utf8")
+    assert.ok(
+      src.includes("SetProcessDpiAwarenessContext([IntPtr]::new(-4))"),
+      `${name}: SetProcessDpiAwarenessContext(-4) missing — coordinates would be DPI-virtualized on mixed-DPI setups`,
+    )
+  }
+})

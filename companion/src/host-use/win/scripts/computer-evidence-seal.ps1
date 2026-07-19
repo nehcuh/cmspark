@@ -12,7 +12,8 @@ param(
   [Parameter(Mandatory=$true)][ValidateSet('protect','unprotect')] [string]$Mode,
   [Parameter(Mandatory=$true)][string]$InPath,
   [Parameter(Mandatory=$true)][string]$OutPath,
-  # Semicolon-separated "x,y,w,h" rects (window-client px) to pixelate pre-seal.
+  # Semicolon-separated "x,y,w,h" rects (capture-image px — the sealed
+  # bitmap's pixel space, NOT window-client space) to pixelate pre-seal.
   [string]$BlurRects = "",
   # Keep the raw input file (tests); production callers leave this off so the
   # unblurred capture is deleted after sealing.
