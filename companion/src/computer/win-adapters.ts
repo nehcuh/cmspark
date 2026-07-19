@@ -11,6 +11,7 @@ import * as fs from "fs"
 import * as crypto from "crypto"
 import { parsePsJson, runPs, type PsRunner } from "../host-use/win/powershell"
 import { resolveWinScript } from "../host-use/win/powershell"
+import type { PreviewBuilder } from "./preview"
 import {
   ComputerError,
   type CaptureMeta,
@@ -528,6 +529,41 @@ export class PsSecurityEnvironment implements SecurityEnvironment {
         `computer.probe: input desktop is "${String(r.desktop ?? "")}", not "Default" (UAC/secure desktop/lock)`,
       )
     }
+  }
+}
+
+// ---------------------------------------------------------------------------
+
+/**
+ * WP2 (§E.4): ps1-backed preview builder — computer-preview.ps1 annotates a
+ * captured frame (credential blackout + optional crosshair), downscales, and
+ * returns a base64 JPEG. The executor wraps every call in try/catch and
+ * degrades to "no image", so a preview failure can never fail a task; a
+ * too_large verdict returns null (image dropped, step event still emitted).
+ */
+export class PsPreviewBuilder implements PreviewBuilder {
+  constructor(private runner: PsRunner = runPs) {}
+
+  async build(imagePath: string, point?: { x: number; y: number }, blurRects?: RectPx[]): Promise<string | null> {
+    const args = ["-InPath", imagePath]
+    if (point) {
+      args.push("-X", String(Math.round(point.x)), "-Y", String(Math.round(point.y)))
+    }
+    if (blurRects && blurRects.length > 0) {
+      args.push(
+        "-BlurRects",
+        blurRects.map((r) => `${Math.round(r.x)},${Math.round(r.y)},${Math.round(r.width)},${Math.round(r.height)}`).join(";"),
+      )
+    }
+    let stdout: string
+    try {
+      stdout = await this.runner(resolveWinScript("computer-preview.ps1"), args)
+    } catch (err) {
+      rethrowComputerPsError(err, "preview")
+    }
+    const r = parsePsJson<any>(stdout!, "computer.preview")
+    if (r.ok !== true || typeof r.base64 !== "string") return null
+    return r.base64
   }
 }
 

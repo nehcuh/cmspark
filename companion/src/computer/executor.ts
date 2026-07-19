@@ -37,6 +37,7 @@ import type { CompanionConfig } from "../config"
 import type { SecurityConfirmationDecision, SecurityConfirmationDetails } from "../security-confirmation"
 import { scanDanger, type DangerScan } from "./danger"
 import type { EvidenceFactory, EvidenceSink } from "./evidence"
+import type { ComputerTaskEvent, PreviewBuilder } from "./preview"
 import { assertCoordinateAllowed, assertExeNotDrifted, assertHwndOwnedByEntry, normalizeExePath } from "./policy"
 import {
   ALLOWED_KEY_SET,
@@ -110,6 +111,16 @@ export interface ComputerExecutorDeps {
    * zero-residue exit path.
    */
   abortCheck?: () => "hotkey" | "panel" | null
+  /**
+   * WP2 (§E.4): task progress events (started/step/paused/finished) for the
+   * panel live view. Fire-and-forget — listener errors are swallowed.
+   */
+  onEvent?: (ev: ComputerTaskEvent) => void
+  /**
+   * WP2 (§E.4): per-step annotated preview image. ANY failure degrades to
+   * "no image" — the task never blocks on a preview.
+   */
+  previewBuilder?: PreviewBuilder
 }
 
 export interface ComputerStepResult {
@@ -229,6 +240,15 @@ export async function runComputerTask(
   // WP2: the server passes its registry task id so the panel abort channel
   // can target THIS run; standalone callers get a fresh id.
   const taskId = params.taskId ?? randomUUID()
+  // WP2 (§E.4): fire-and-forget panel events — a listener failure never
+  // reaches the task.
+  const emit = (ev: ComputerTaskEvent) => {
+    try {
+      deps.onEvent?.(ev)
+    } catch {
+      /* best-effort */
+    }
+  }
   const steps: ComputerStepResult[] = []
   let evidence: EvidenceSink | null = null
 
@@ -268,6 +288,14 @@ export async function runComputerTask(
 
   const fail = async (err: ComputerError): Promise<ComputerTaskResult> => {
     log("computer.task.failed", { taskId, code: err.code, error: err.message })
+    emit({
+      event: "finished",
+      taskId,
+      ok: false,
+      completed: steps.filter((s) => s.ok).length,
+      total: params.actions?.length ?? 0,
+      errorCode: err.code,
+    })
     await sweepRaws() // R1: no plaintext capture survives ANY exit
     if (evidence) {
       try {
@@ -341,10 +369,34 @@ export async function runComputerTask(
     startedAt: new Date(now()).toISOString(),
   })
   log("computer.task.started", { taskId, app: entry.token, hwnd, budget })
+  emit({ event: "started", taskId, app: entry.display_name, task: params.task, total: params.actions.length })
+
+  /** Short human label for the panel live view (never the type text itself). */
+  const captionOf = (a: ComputerAction): string => {
+    switch (a.action) {
+      case "click":
+      case "double_click":
+      case "right_click": {
+        const verb = a.action === "click" ? "点击" : a.action === "double_click" ? "双击" : "右键点击"
+        return (a as any).target ? `${verb}「${(a as any).target}」` : `${verb} (${(a as any).x}, ${(a as any).y})`
+      }
+      case "type":
+        return `输入文本（${(a as any).text.length} 字符）`
+      case "key":
+        return `按键 ${((a as any).keys as string[]).join("+")}`
+      case "scroll":
+        return `滚动 (${(a as any).x}, ${(a as any).y}) delta=${(a as any).delta}`
+      case "drag":
+        return `拖拽 (${(a as any).x}, ${(a as any).y}) → (${(a as any).x2}, ${(a as any).y2})`
+      default:
+        return a.action
+    }
+  }
 
   /** Re-L2 with an explicit reason; returns true when approved. */
-  const reL2 = async (reason: string, dangerous: string[]): Promise<boolean> => {
+  const reL2 = async (reason: string, dangerous: string[], seqNum?: number): Promise<boolean> => {
     log("computer.task.reconfirm", { taskId, reason })
+    emit({ event: "paused", taskId, ...(seqNum !== undefined ? { seq: seqNum } : {}), reason })
     const decision = await deps.confirm({
       toolName: "host_computer",
       dangerousApis: dangerous,
@@ -384,6 +436,7 @@ export async function runComputerTask(
       }
       steps.push({ seq, action: "wait", ok: true })
       await evidence.appendAction({ seq, action: "wait", crossverified: true, uncrossverified: false, durationMs: now() - startedAt })
+      emit({ event: "step", taskId, seq, action: "wait", budgetLeft: budget, caption: `等待 ${Math.min(action.ms, MAX_WAIT_MS)}ms` })
       continue
     }
     if (action.action === "screenshot" || action.action === "describe") {
@@ -401,10 +454,29 @@ export async function runComputerTask(
         if (action.action === "describe") {
           untrustedText = ocrRes.words.map((w) => w.text).join(" ")
         }
+        // WP2 (§E.4): panel preview with the SAME credential blackout as the
+        // evidence seal — built before sealing (the sealer deletes the raw).
+        let previewImage: string | undefined
+        if (deps.previewBuilder) {
+          try {
+            previewImage = (await deps.previewBuilder.build(shot.path, undefined, blur)) ?? undefined
+          } catch {
+            /* degrade to no image */
+          }
+        }
         await evidence.sealScreenshot(shot.path, seq, "before", blur)
         sealConsumed(shot.path)
         steps.push({ seq, action: action.action, ok: true, ...(untrustedText !== undefined ? { untrustedText } : {}) })
         await evidence.appendAction({ seq, action: action.action, crossverified: true, uncrossverified: false, durationMs: now() - startedAt })
+        emit({
+          event: "step",
+          taskId,
+          seq,
+          action: action.action,
+          budgetLeft: budget,
+          caption: action.action === "screenshot" ? "截图" : "读取屏幕内容",
+          ...(previewImage ? { previewImage } : {}),
+        })
       } catch (err) {
         return fail(err instanceof ComputerError ? err : new ComputerError("CAPTURE_FAILED", String((err as Error)?.message ?? err)))
       }
@@ -425,7 +497,7 @@ export async function runComputerTask(
 
       // Budget: exhausted -> mandatory new L2 (default 15 per task).
       if (budget <= 0) {
-        const ok = await reL2(`动作预算已耗尽（默认 ${DEFAULT_TASK_BUDGET}）。批准以续作，拒绝以终止任务。`, ["computer.budget_exhausted"])
+        const ok = await reL2(`动作预算已耗尽（默认 ${DEFAULT_TASK_BUDGET}）。批准以续作，拒绝以终止任务。`, ["computer.budget_exhausted"], seq)
         if (!ok) throw new ComputerError("BUDGET_DENIED", "computer: action budget exhausted and renewal was denied")
         budget = Math.min(params.budget ?? DEFAULT_TASK_BUDGET, MAX_TASK_BUDGET)
       }
@@ -526,6 +598,7 @@ export async function runComputerTask(
           const ok = await reL2(
             `本任务无法交叉验证的点击已超过 ${UNCROSS_VERIFIED_SUB_BUDGET} 次上限。批准以继续，拒绝以终止任务。`,
             ["computer.uncrossverified_exceeded"],
+            seq,
           )
           if (!ok) throw new ComputerError("UNCROSS_DENIED", "computer: uncrossverified click sub-budget exceeded and renewal was denied")
           uncrossLeft = UNCROSS_VERIFIED_SUB_BUDGET
@@ -589,6 +662,7 @@ export async function runComputerTask(
         const ok = await reL2(
           `检测到高风险内容（${hits.join(", ")}）。目标区域或窗口涉及敏感操作，确认后继续。`,
           ["computer.danger_detected"],
+          seq,
         )
         if (!ok) throw new ComputerError("DANGER_DENIED_BY_USER", "computer: dangerous action denied at re-confirm")
         reL2ApprovedMidAction = true // X3: approved frame/coords are now stale
@@ -758,6 +832,7 @@ export async function runComputerTask(
       let afterSha256: string | undefined
       let afterNote: string | undefined
       let afterOcr: OcrResult | null = null
+      let previewImage: string | undefined
       try {
         afterOcr = await deps.locator.ocr(afterShot.path)
       } catch {
@@ -771,6 +846,22 @@ export async function runComputerTask(
         // misclassified as OCR-unavailable.
         const afterWhole: RectPx = { x: 0, y: 0, width: afterShot.rect.width, height: afterShot.rect.height }
         const afterBlur = scanDanger(afterOcr.words, afterWhole, REGION_CROP_SIZE).credentialRects
+        // WP2 (§E.4): panel preview of the AFTER frame — same credential
+        // blackout as the evidence seal, crosshair at the actuation point
+        // (image coordinates). Built BEFORE sealing (the sealer deletes the
+        // raw); when the after OCR was unavailable the frame is dropped, so
+        // no unblurred preview can leak either. Best-effort: builder failure
+        // degrades to "no image".
+        if (deps.previewBuilder) {
+          try {
+            const imgPoint = pointClient
+              ? { x: afterShot.client.x + pointClient.x, y: afterShot.client.y + pointClient.y }
+              : undefined
+            previewImage = (await deps.previewBuilder.build(afterShot.path, imgPoint, afterBlur)) ?? undefined
+          } catch {
+            /* degrade to no image */
+          }
+        }
         const afterSeal = await evidence.sealScreenshot(afterShot.path, seq, "after", afterBlur)
         sealConsumed(afterShot.path)
         afterSha256 = afterSeal.sha256
@@ -808,6 +899,16 @@ export async function runComputerTask(
         crossverified,
         ...(crossverifyChannel ? { crossverifyChannel } : {}),
       })
+      emit({
+        event: "step",
+        taskId,
+        seq,
+        action: action.action,
+        ...(pointClient ? { x: pointClient.x, y: pointClient.y } : {}),
+        budgetLeft: budget,
+        caption: captionOf(action),
+        ...(previewImage ? { previewImage } : {}),
+      })
 
       if (dialogSuspected) {
         // WP2 (§E.2.4) — classify the foreground change: when the foreground
@@ -843,6 +944,7 @@ export async function runComputerTask(
             ? `前台窗口被其他进程（${fgName}）接管——目标窗口已让位，继续注入可能落在非白名单窗口上。请检查屏幕后决定是否继续。`
             : "本任务的操作引发了新对话框或大面积界面变化（确认型对话框的按钮不会由 agent 点击）。请检查目标窗口后决定是否继续。",
           [fgYielded ? "computer.foreground_yielded" : "computer.task_induced_dialog"],
+          seq,
         )
         if (!ok) {
           throw new ComputerError("DIALOG_PAUSED_DENIED", "computer: task paused on a suspected task-induced dialog; continuation denied")
@@ -864,5 +966,6 @@ export async function runComputerTask(
   await sweepRaws() // normally a no-op — every frame was sealed or released
   await evidence.finalize({ ok: true, completed: result.completedActions, total: result.totalActions })
   log("computer.task.completed", { taskId, completed: result.completedActions, total: result.totalActions })
+  emit({ event: "finished", taskId, ok: true, completed: result.completedActions, total: result.totalActions })
   return result
 }

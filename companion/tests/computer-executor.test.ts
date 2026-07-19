@@ -1248,3 +1248,91 @@ test("executor WP2: probe denial mid-task stops before the NEXT injection", asyn
   assert.equal(injector.clicks.length, 1, "first action injected; second was blocked at the probe")
   assert.equal(r.completedActions, 1)
 })
+
+
+// --- WP2: task preview events (§E.4) -------------------------------------------
+
+test("executor WP2: started/step/finished event sequence on the happy path", async () => {
+  const events: Array<Record<string, unknown>> = []
+  const deps = makeDeps({ onEvent: (ev) => events.push(ev as unknown as Record<string, unknown>) })
+  const r = await runComputerTask({ task: "t", app: "win.app.test", actions: [clickOk, { action: "wait", ms: 1 }] }, deps)
+  assert.equal(r.success, true)
+  assert.deepEqual(
+    events.map((e) => e.event),
+    ["started", "step", "step", "finished"],
+  )
+  assert.equal(events[0].total, 2)
+  assert.equal(events[1].caption, "点击「确定」")
+  assert.equal(events[1].x, 180) // client coords (image 190 - client offset 10)
+  assert.equal(events[2].action, "wait")
+  assert.equal(events[3].ok, true)
+  assert.equal(events[3].completed, 2)
+})
+
+test("executor WP2: step event carries the builder's preview image + crosshair point", async () => {
+  const events: Array<Record<string, unknown>> = []
+  const builds: Array<{ path: string; point?: { x: number; y: number }; blur?: unknown[] }> = []
+  const deps = makeDeps({
+    onEvent: (ev) => events.push(ev as unknown as Record<string, unknown>),
+    previewBuilder: {
+      build: async (p, point, blur) => {
+        builds.push({ path: p, point, blur })
+        return "BASE64JPEG"
+      },
+    },
+  })
+  const r = await runComputerTask({ task: "t", app: "win.app.test", actions: [clickOk] }, deps)
+  assert.equal(r.success, true)
+  assert.equal(builds.length, 1, "one preview build for the after frame")
+  // image-space crosshair = client point (180,183) + client offset (10,40)
+  assert.deepEqual(builds[0].point, { x: 190, y: 223 })
+  const step = events.find((e) => e.event === "step")
+  assert.equal(step?.previewImage, "BASE64JPEG")
+})
+
+test("executor WP2: builder failure degrades to no image — task still succeeds", async () => {
+  const events: Array<Record<string, unknown>> = []
+  const deps = makeDeps({
+    onEvent: (ev) => events.push(ev as unknown as Record<string, unknown>),
+    previewBuilder: {
+      build: async () => {
+        throw new Error("preview ps1 exploded")
+      },
+    },
+  })
+  const r = await runComputerTask({ task: "t", app: "win.app.test", actions: [clickOk] }, deps)
+  assert.equal(r.success, true)
+  const step = events.find((e) => e.event === "step")
+  assert.ok(step, "step event still emitted")
+  assert.equal(step?.previewImage, undefined)
+})
+
+test("executor WP2: paused event fires with the re-L2 reason (budget exhaustion)", async () => {
+  const events: Array<Record<string, unknown>> = []
+  const deps = makeDeps({
+    onEvent: (ev) => events.push(ev as unknown as Record<string, unknown>),
+    confirm: scriptedConfirm([true]).fn, // approve the renewal
+  })
+  const r = await runComputerTask(
+    { task: "t", app: "win.app.test", actions: [clickOk, clickOk], budget: 1 },
+    deps,
+  )
+  assert.equal(r.success, true)
+  const paused = events.find((e) => e.event === "paused")
+  assert.ok(paused, "paused emitted when the budget ran out")
+  assert.ok(String(paused?.reason).includes("预算"))
+  assert.equal(paused?.seq, 2)
+})
+
+test("executor WP2: finished carries errorCode on failure", async () => {
+  const events: Array<Record<string, unknown>> = []
+  const deps = makeDeps({ onEvent: (ev) => events.push(ev as unknown as Record<string, unknown>) })
+  const r = await runComputerTask(
+    { task: "t", app: "win.app.test", actions: [{ action: "click", target: "不存在" }] },
+    deps,
+  )
+  assert.equal(r.success, false)
+  const fin = events.find((e) => e.event === "finished")
+  assert.equal(fin?.ok, false)
+  assert.equal(fin?.errorCode, "ELEMENT_NOT_FOUND")
+})

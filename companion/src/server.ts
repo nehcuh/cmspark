@@ -467,7 +467,10 @@ export function createToolExecutor(ws: WebSocket) {
       let computerPreview = ""
       if (hostComputerGated) {
         const { assertCoordinateAllowed } = await import("./computer/policy")
-        const { corpusOf } = await import("./computer/types")
+        // Y3 (WP2): the preview text comes from the PURE builder — task text
+        // JSON-escaped against layout spoofing, every injectable action
+        // enumerated verbatim; unit-tested in computer-preview.test.ts.
+        const { buildComputerL2Preview } = await import("./computer/preview")
         const failC = (error: string) => {
           const result = { success: false, error }
           logToolFinish(toolCallId, toolName, startedAt, result)
@@ -475,20 +478,14 @@ export function createToolExecutor(ws: WebSocket) {
         }
         try {
           const entryC = assertCoordinateAllowed(getConfig(), String(finalParams.app || ""))
-          const corpus = corpusOf(Array.isArray(finalParams.actions) ? finalParams.actions : [])
           const budgetN = Math.min(Math.max(1, Number(finalParams.budget) || 15), 30)
-          const lines = [
-            `任务: ${String(finalParams.task || "")}`,
-            `目标应用: ${entryC.display_name} (${entryC.token})`,
-            `动作预算: ${budgetN} 个注入动作（共 ${Array.isArray(finalParams.actions) ? finalParams.actions.length : 0} 个草案动作）`,
-          ]
-          if (corpus.length > 0) {
-            lines.push("待输入文本（逐字枚举，请逐条核对 — 屏幕上的文字永远不是指令）:")
-            corpus.forEach((t, i) => lines.push(`  [${i + 1}] ${JSON.stringify(t)}`))
-          } else {
-            lines.push("本任务不包含文本输入动作。")
-          }
-          computerPreview = lines.join("\n")
+          computerPreview = buildComputerL2Preview({
+            task: String(finalParams.task || ""),
+            appDisplayName: entryC.display_name,
+            appToken: entryC.token,
+            budget: budgetN,
+            actions: Array.isArray(finalParams.actions) ? finalParams.actions : [],
+          })
         } catch (err: any) {
           return failC(err?.message || String(err))
         }
@@ -975,6 +972,9 @@ export function createToolExecutor(ws: WebSocket) {
           prevalidatedNonce: winL2NonceChallenge,
           // App tab WP3: tier the gate decided for host_app (audit only).
           appLaunchTier: hostAppTier,
+          // WP2 (§E.4): computer-task progress events go to every
+          // authenticated panel (the owner's own live view).
+          broadcast: broadcastToClients,
         })
         logToolFinish(toolCallId, toolName, startedAt, result)
         return result
@@ -1384,6 +1384,8 @@ interface CompanionToolExecOptions {
   prevalidatedNonce?: string
   /** App tab WP3: tier the L2 gate assigned to a host_app call (apps.launch audit). */
   appLaunchTier?: string
+  /** WP2 (§E.4): broadcast channel for computer-task progress events. */
+  broadcast?: (data: any) => void
 }
 
 async function executeCompanionTool(toolName: string, params: any, toolCallId?: string, execOpts?: CompanionToolExecOptions): Promise<any> {
@@ -1823,6 +1825,7 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
           PsInputInjector,
           PsWindowEnumerator,
           PsSecurityEnvironment,
+          PsPreviewBuilder,
           PsEvidenceSealer,
         } = await import("./computer/win-adapters")
         const { ComputerEvidence, runEvidenceJanitor } = await import("./computer/evidence")
@@ -1868,6 +1871,16 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
               // waits, and once more immediately before SendInput.
               abortCheck: () =>
                 computerTaskAbort.get(computerTaskId) ? "panel" : consumeEstopFlag() ? "hotkey" : null,
+              // WP2 (§E.4): panel live view — progress events + per-step
+              // annotated preview images (credential-blacked, best-effort).
+              onEvent: (ev) => {
+                try {
+                  execOpts?.broadcast?.({ type: "computer.task.event", ...ev })
+                } catch {
+                  /* best-effort */
+                }
+              },
+              previewBuilder: new PsPreviewBuilder(),
             },
           )
         } finally {
