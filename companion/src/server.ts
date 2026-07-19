@@ -206,6 +206,25 @@ const mcpSessionByWs = new Map<WebSocket, string>()
 const computerTaskAbort = new Map<string, boolean>()
 
 /**
+ * Exported for integration tests (R1, §E.6.2): direct access to the running-
+ * task registry so tests can seed a fake in-flight task and assert the
+ * single-task mutex. Production code never calls this.
+ */
+export function getComputerTaskRegistryForTests(): Map<string, boolean> {
+  return computerTaskAbort
+}
+
+/**
+ * Exported for integration tests (R1): substitute the estop preflight so the
+ * host_computer handler can be exercised end-to-end without spawning the real
+ * ps helper / injecting. Pass null to restore production behavior.
+ */
+let computerEstopEnsureOverride: (() => Promise<{ ok: boolean; reason?: string }>) | null = null
+export function setComputerEstopEnsureForTests(fn: (() => Promise<{ ok: boolean; reason?: string }>) | null): void {
+  computerEstopEnsureOverride = fn
+}
+
+/**
  * WP2 (Y7): session-level injection rate limiter (process singleton). The
  * pre-dialog gate refuses new computer tasks while the 60s window is
  * saturated; the handler records every successful injection. Lazily created
@@ -494,6 +513,17 @@ export function createToolExecutor(ws: WebSocket) {
         try {
           const entryC = assertCoordinateAllowed(getConfig(), String(finalParams.app || ""))
           const budgetN = Math.min(Math.max(1, Number(finalParams.budget) || 15), 30)
+          // R1 (§E.6.2): global single-task invariant — a second computer
+          // task is refused BEFORE the L2 dialog while one is executing (no
+          // queue, no wait). This early check only spares a pointless dialog;
+          // the AUTHORITATIVE check-and-set is in executeCompanionTool, which
+          // closes the race where both tasks passed this gate before either
+          // registered.
+          if (computerTaskAbort.size > 0) {
+            return failC(
+              "host_computer refused: another computer task is already executing (global single-task invariant, plan §E.6.2) [COMPUTER_TASK_BUSY] — wait for it to finish or abort it from the panel.",
+            )
+          }
           // Y7: session rate gate — a saturated 60s window refuses the task
           // BEFORE the L2 dialog; a runaway agent must not burn human clicks.
           const limiter = await computerRateLimiter()
@@ -1825,23 +1855,46 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
       if (os.platform() !== "win32") {
         return { success: false, error: `host_computer is Windows-only in WP1 (platform=${os.platform()})` }
       }
-      // WP2 (§E.6): emergency-stop preflight — the hotkey helper must be
-      // alive (ready.json heartbeat < 3s) before ANY injection task starts.
-      // Spawns the helper when missing; refuses fail-closed when it cannot
-      // come up: an injection loop with no kill switch must never run.
-      const { ensureEstopHelper, clearEstopFlag, consumeEstopFlag, estopFlagPath } = await import("./computer/estop")
-      const estop = await ensureEstopHelper()
-      if (!estop.ok) {
-        logger.warn("computer.estop.unavailable", { tool_call_id: toolCallId, reason: estop.reason })
+      // R1 (§E.6.2): global single-task invariant — at most ONE coordinate
+      // computer task executes process-wide, across threadIds. The pre-dialog
+      // gate refuses early; THIS synchronous check-and-set is authoritative
+      // (no await between check and set → race-free) and closes the race
+      // where both tasks passed the gate inside their own L2 dialogs. The
+      // entry is registered BEFORE the estop preflight / clearEstopFlag so a
+      // concurrent second task can never clear the running task's fresh
+      // emergency-stop press, and it is released in the finally below on
+      // EVERY exit path (success / refusal / abort / throw).
+      const computerTaskId = randomUUID()
+      if (computerTaskAbort.size > 0) {
+        logger.warn("computer.task.busy", { tool_call_id: toolCallId })
         return {
           success: false,
-          error: `host_computer refused: emergency-stop unavailable (${estop.reason}). The computer-estop.ps1 helper must be running with a working hotkey.`,
-          data: { error_code: "EMERGENCY_STOP_UNAVAILABLE" },
+          error: "host_computer refused: another computer task is already executing (global single-task invariant, plan §E.6.2) [COMPUTER_TASK_BUSY] — wait for it to finish or abort it from the panel.",
+          data: { error_code: "COMPUTER_TASK_BUSY" },
         }
       }
-      // A STALE flag (pressed before this task) must not abort the new run.
-      clearEstopFlag()
+      computerTaskAbort.set(computerTaskId, false)
       try {
+        // WP2 (§E.6): emergency-stop preflight — the hotkey helper must be
+        // alive (ready.json heartbeat < 3s) before ANY injection task starts.
+        // Spawns the helper when missing; refuses fail-closed when it cannot
+        // come up: an injection loop with no kill switch must never run.
+        const { ensureEstopHelper, clearEstopFlag, consumeEstopFlag, estopFlagPath } = await import("./computer/estop")
+        const estop = computerEstopEnsureOverride ? await computerEstopEnsureOverride() : await ensureEstopHelper()
+        if (!estop.ok) {
+          logger.warn("computer.estop.unavailable", { tool_call_id: toolCallId, reason: estop.reason })
+          return {
+            success: false,
+            error: `host_computer refused: emergency-stop unavailable (${estop.reason}). The computer-estop.ps1 helper must be running with a working hotkey.`,
+            data: { error_code: "EMERGENCY_STOP_UNAVAILABLE" },
+          }
+        }
+        // A STALE flag (pressed before this task) must not abort the new run.
+        // N3: a press landing in the ms-window between this clear and the
+        // executor's first abortCheck is lost — accepted: the single-task
+        // gate above bounds that window to THIS task's own startup (no other
+        // task can clear a fresh press), and the user can simply press again.
+        clearEstopFlag()
         const { runComputerTask } = await import("./computer/executor")
         const {
           PsScreenCapturer,
@@ -1865,13 +1918,7 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
           }
         } catch { /* best-effort */ }
         const sealer = new PsEvidenceSealer()
-        // WP2 (§E.6): register BEFORE the run so the panel abort channel can
-        // target this task while it is still inside its first action.
-        const computerTaskId = randomUUID()
-        computerTaskAbort.set(computerTaskId, false)
-        let result
-        try {
-          result = await runComputerTask(
+        const result = await runComputerTask(
             {
               task: String(params.task || ""),
               app: String(params.app || ""),
@@ -1916,9 +1963,6 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
               },
             },
           )
-        } finally {
-          computerTaskAbort.delete(computerTaskId)
-        }
         if (!result.success) {
           return {
             success: false,
@@ -1939,6 +1983,11 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
       } catch (err: any) {
         logger.warn("computer.task.error", { tool_call_id: toolCallId, error: err?.message || String(err) })
         return { success: false, error: `host_computer error: ${err?.message || String(err)}` }
+      } finally {
+        // R1 (§E.6.2): release the single-task slot on EVERY exit path —
+        // success, typed refusal, abort, or throw. Runs after the return
+        // value is computed; delete is idempotent.
+        computerTaskAbort.delete(computerTaskId)
       }
     }
     default:
