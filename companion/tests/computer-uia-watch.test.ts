@@ -1,13 +1,15 @@
 // WP3 — WindowOpened watcher drain wiring in the executor (the <5% small-popup
-// channel). All providers are fakes; assertions target the wiring contract:
-// factory receives {hwnd, pid} of the resolved target, drained events feed the
-// task-induced-dialog invariant (OR'd with the pixel/foreground channels),
-// drain is consume-once, the watcher is disposed on EVERY exit, a factory
-// failure degrades honestly (log + continue), and uiaCapable:false gates the
-// subscription off entirely.
+// channel) + X2 (WP3 adversary) lifecycle semantics. All providers are fakes
+// except one win32 real-ps1 smoke; assertions target the wiring contract:
+// factory receives {hwnd, pid}, drained events feed the dialog invariant
+// (OR'd with the pixel/foreground channels), drain is consume-once, disposal
+// on every exit, honest degrade on factory failure, the uiaCapable gate, and
+// the X2 lifecycle: ready handshake gating, mid-task death detection with
+// evidence liveness, and fail-safe buffer overflow.
 
 import test from "node:test"
 import assert from "node:assert/strict"
+import * as path from "node:path"
 
 import { runComputerTask, type ComputerExecutorDeps } from "../src/computer/executor"
 import {
@@ -23,6 +25,7 @@ import {
   type UiaWindowOpenedEvent,
   type WindowEnumerator,
 } from "../src/computer/types"
+import { createUiaWatchBuffer, startUiaWindowWatcher, UIA_WATCH_BUFFER_CAP } from "../src/computer/win-adapters"
 import type { EvidenceActionRecord, EvidenceSink } from "../src/computer/evidence"
 import type { CompanionConfig } from "../src/config"
 
@@ -84,6 +87,7 @@ class ExecCapturer implements ScreenCapturer {
 class RecordEvidence implements EvidenceSink {
   readonly dir = "evidence"
   records: EvidenceActionRecord[] = []
+  finalized: Record<string, unknown> | null = null
   async init() {}
   async sealScreenshot() {
     return { sha256: "s" }
@@ -91,7 +95,9 @@ class RecordEvidence implements EvidenceSink {
   async appendAction(r: EvidenceActionRecord) {
     this.records.push(r)
   }
-  async finalize() {}
+  async finalize(summary: Record<string, unknown>) {
+    this.finalized = summary
+  }
 }
 
 function winInfo() {
@@ -119,10 +125,21 @@ function exeConfig(uia: { uiaCapable?: boolean; uiaProbedAt?: string }): Compani
 class FakeWatcher implements UiaWatcher {
   drainCalls = 0
   disposed = 0
-  constructor(private script: UiaWindowOpenedEvent[][] = []) {}
+  dead = false
+  exitCode: number | null = null
+  constructor(
+    private script: UiaWindowOpenedEvent[][] = [],
+    private opts: { dieAfterDrains?: number; dieExitCode?: number } = {},
+  ) {}
   drain(): UiaWindowOpenedEvent[] {
     this.drainCalls++
-    return this.script.length > 0 ? this.script.shift()! : []
+    const out = this.script.length > 0 ? this.script.shift()! : []
+    // X2: simulate a mid-task process death surfacing at a drain boundary.
+    if (this.opts.dieAfterDrains !== undefined && this.drainCalls >= this.opts.dieAfterDrains) {
+      this.dead = true
+      this.exitCode = this.opts.dieExitCode ?? 5
+    }
+    return out
   }
   dispose(): void {
     this.disposed++
@@ -183,7 +200,7 @@ test("watch: drained WindowOpened event pauses the task; denial -> DIALOG_PAUSED
     CLICK_OK,
     execDeps(
       {
-        uiaWatcherFactory: (t) => {
+        uiaWatcherFactory: async (t) => {
           factoryTarget = t
           return watcher
         },
@@ -214,7 +231,7 @@ test("watch: empty drain -> success with NO re-L2 (confirm never called), dispos
     CLICK_OK,
     execDeps(
       {
-        uiaWatcherFactory: () => watcher,
+        uiaWatcherFactory: async () => watcher,
         confirm: async () => {
           confirmCalls++
           return { confirmationId: "", approved: true } as any
@@ -227,6 +244,8 @@ test("watch: empty drain -> success with NO re-L2 (confirm never called), dispos
   assert.equal(confirmCalls, 0)
   assert.ok(watcher.drainCalls >= 1)
   assert.equal(watcher.disposed, 1)
+  // X2: a live watcher at the tail is recorded started/!died.
+  assert.deepEqual((evidence.finalized as any)?.uiaWatcher, { started: true, died: false, exitCode: null })
 })
 
 test("watch: uiaCapable:false entry -> factory NEVER called (subscription gated off)", async () => {
@@ -237,7 +256,7 @@ test("watch: uiaCapable:false entry -> factory NEVER called (subscription gated 
     execDeps(
       {
         config: exeConfig({ uiaCapable: false, uiaProbedAt: "2026-07-19T00:00:00.000Z" }),
-        uiaWatcherFactory: () => {
+        uiaWatcherFactory: async () => {
           factoryCalls++
           return new FakeWatcher([[popupEvent()]]) // would fire — must never exist
         },
@@ -247,6 +266,8 @@ test("watch: uiaCapable:false entry -> factory NEVER called (subscription gated 
   )
   assert.equal(r.success, true, r.error)
   assert.equal(factoryCalls, 0)
+  // never started -> liveness says so
+  assert.deepEqual((evidence.finalized as any)?.uiaWatcher, { started: false, died: false, exitCode: null })
 })
 
 test("watch: factory throw -> computer.uia.watch_failed logged, task continues honestly", async () => {
@@ -282,7 +303,7 @@ test("watch: approved pause consumes the event — the NEXT action does not re-t
     { task: "t", app: "win.app.test", actions: [{ action: "click" as const, target: ANCHOR }, { action: "click" as const, target: ANCHOR }] },
     execDeps(
       {
-        uiaWatcherFactory: () => watcher,
+        uiaWatcherFactory: async () => watcher,
         confirm: async () => {
           confirmCalls++
           return { confirmationId: "", approved: true } as any
@@ -295,4 +316,92 @@ test("watch: approved pause consumes the event — the NEXT action does not re-t
   assert.equal(r.completedActions, 2)
   assert.equal(confirmCalls, 1, "the drained event must not pause again on the next action")
   assert.equal(watcher.disposed, 1)
+})
+
+// --- X2 (WP3 adversary): watcher lifecycle seams --------------------------------
+
+test("X2: ready handshake rejection -> watch_failed (NEVER watch_started), task continues", async () => {
+  const evidence = new RecordEvidence()
+  const logs: Array<{ event: string; data: any }> = []
+  const r = await runComputerTask(
+    CLICK_OK,
+    execDeps(
+      {
+        // async rejection = the ps1 exited before ready / handshake timeout
+        uiaWatcherFactory: async () => {
+          throw new Error("computer-uia-watch ready handshake timeout (10000ms)")
+        },
+        log: (event: string, data: any) => logs.push({ event, data }),
+      },
+      evidence,
+    ),
+  )
+  assert.equal(r.success, true, r.error)
+  assert.ok(logs.some((l) => l.event === "computer.uia.watch_failed"), "rejection must be recorded")
+  assert.ok(
+    !logs.some((l) => l.event === "computer.uia.watch_started"),
+    "watch_started may only fire for a LIVE channel (the old code logged it unconditionally)",
+  )
+  assert.deepEqual((evidence.finalized as any)?.uiaWatcher, { started: false, died: false, exitCode: null })
+})
+
+test("X2: mid-task watcher death -> watch_died logged ONCE, evidence finalize marks the channel offline", async () => {
+  const evidence = new RecordEvidence()
+  // Dies at the first drain boundary (exit code 5, the ps1's WATCHFAILED).
+  const watcher = new FakeWatcher([], { dieAfterDrains: 1, dieExitCode: 5 })
+  const logs: Array<{ event: string; data: any }> = []
+  const r = await runComputerTask(
+    { task: "t", app: "win.app.test", actions: [{ action: "click" as const, target: ANCHOR }, { action: "click" as const, target: ANCHOR }] },
+    execDeps(
+      {
+        uiaWatcherFactory: async () => watcher,
+        log: (event: string, data: any) => logs.push({ event, data }),
+      },
+      evidence,
+    ),
+  )
+  assert.equal(r.success, true, r.error)
+  const died = logs.filter((l) => l.event === "computer.uia.watch_died")
+  assert.equal(died.length, 1, "death is logged exactly once (watcher is disposed+null afterwards)")
+  assert.equal(died[0].data.exitCode, 5)
+  assert.deepEqual(
+    (evidence.finalized as any)?.uiaWatcher,
+    { started: true, died: true, exitCode: 5 },
+    "the evidence tail must NOT claim the channel was online",
+  )
+})
+
+test("X2: buffer overflow is FAIL-SAFE — drain past the cap carries a synthetic popup marker", () => {
+  const buf = createUiaWatchBuffer(1234)
+  assert.equal(buf.feed('{"ready":true}'), true, "the ready handshake is recognized")
+  for (let i = 0; i < UIA_WATCH_BUFFER_CAP + 44; i++) {
+    buf.feed(`{"event":"window-opened","controlType":"Window","className":"Popup","pid":1234,"at":"t${i}"}`)
+  }
+  const out = buf.drain()
+  assert.equal(out.length, UIA_WATCH_BUFFER_CAP + 1, "capped buffer + one fail-safe marker")
+  assert.equal(out[out.length - 1].className, "(watcher-buffer-overflow)")
+  assert.equal(buf.drain().length, 0, "overflow marker is consume-once")
+  // pid filtering stays intact
+  buf.feed(`{"event":"window-opened","controlType":"Window","className":"Other","pid":999,"at":"t"}`)
+  assert.equal(buf.drain().length, 0)
+})
+
+test("X2: win32 smoke — real ps1 ready handshake resolves; dispose flips dead promptly", { skip: process.platform !== "win32", timeout: 60_000 }, async () => {
+  // resolveWinScript falls back to the packaged staged path under the kimi
+  // runtime node — the dev-only override points it at the repo scripts.
+  const prevScripts = process.env.CMSPARK_WIN_SCRIPTS
+  process.env.CMSPARK_WIN_SCRIPTS = path.resolve(__dirname, "..", "..", "src", "host-use", "win", "scripts")
+  let watcher: UiaWatcher | null = null
+  try {
+    watcher = await startUiaWindowWatcher({ hwnd: 0, pid: process.pid }, { maxSeconds: 60, readyTimeoutMs: 20_000 })
+  } finally {
+    if (prevScripts === undefined) delete process.env.CMSPARK_WIN_SCRIPTS
+    else process.env.CMSPARK_WIN_SCRIPTS = prevScripts
+  }
+  assert.equal(watcher!.dead, false)
+  assert.equal(watcher!.exitCode, null)
+  assert.deepEqual(watcher!.drain(), [])
+  watcher!.dispose()
+  await new Promise((r) => setTimeout(r, 1500))
+  assert.equal(watcher!.dead, true, "exit monitoring must surface the killed child")
 })

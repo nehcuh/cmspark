@@ -305,6 +305,16 @@ export async function runComputerTask(
   // WP3: WindowOpened watcher (UIA-capable targets only) — disposed on
   // EVERY exit (fail() and the success tail).
   let uiaWatcher: UiaWatcher | null = null
+  // X2 (WP3 adversary): channel liveness for the evidence finalize — a dead
+  // watcher is NOT a quiet watcher. started = the ready handshake resolved;
+  // died = the process exited mid-task (logged once at the next drain).
+  let uiaWatchStarted = false
+  let uiaWatchDied: { exitCode: number | null } | null = null
+  const uiaWatcherLiveness = () => ({
+    started: uiaWatchStarted,
+    died: uiaWatchDied !== null,
+    exitCode: uiaWatchDied?.exitCode ?? null,
+  })
 
   // R1 — plaintext raw capture tracking. captureWindow writes UNENCRYPTED
   // window bitmaps under %TEMP%; only frames that reach the sealer are
@@ -359,7 +369,7 @@ export async function runComputerTask(
     await sweepRaws() // R1: no plaintext capture survives ANY exit
     if (evidence) {
       try {
-        await evidence.finalize({ ok: false, code: err.code, error: err.message })
+        await evidence.finalize({ ok: false, code: err.code, error: err.message, uiaWatcher: uiaWatcherLiveness() })
       } catch {
         /* best-effort */
       }
@@ -464,10 +474,18 @@ export async function runComputerTask(
   // pixel channels and a small in-window popup under the diff/zone/blob
   // thresholds remains the known <5% blind spot. A factory failure degrades
   // honestly to "no watcher"; it never fails the task.
+  // X2 ①: the factory resolves ONLY after the ps1 ready handshake — a
+  // rejection (subscribe failure / handshake timeout) is watch_failed, and
+  // watch_started is logged only for a LIVE channel. X2 ③: the backstop is
+  // aligned to the task budget (per-action cap 130s + 15min re-L2 headroom,
+  // clamped to the ps1's 600..3600 range; the ps1 also dies with its parent).
   if (uiaCapable && deps.uiaWatcherFactory) {
     try {
-      uiaWatcher = deps.uiaWatcherFactory({ hwnd, pid: targetPid })
-      log("computer.uia.watch_started", { taskId, pid: targetPid })
+      const budgetGuess = Math.min(Math.max(1, params.budget ?? deps.config.computer?.budget ?? DEFAULT_TASK_BUDGET), MAX_TASK_BUDGET)
+      const watcherMaxSeconds = Math.min(3600, Math.max(600, budgetGuess * 130 + 900))
+      uiaWatcher = await deps.uiaWatcherFactory({ hwnd, pid: targetPid }, { maxSeconds: watcherMaxSeconds })
+      uiaWatchStarted = true
+      log("computer.uia.watch_started", { taskId, pid: targetPid, maxSeconds: watcherMaxSeconds })
     } catch (err) {
       uiaWatcher = null
       log("computer.uia.watch_failed", { taskId, error: String((err as Error)?.message ?? err) })
@@ -962,6 +980,19 @@ export async function runComputerTask(
       // caused it and consumed exactly once (an approved pause never
       // re-triggers on the next action).
       const uiaOpened = uiaWatcher?.drain() ?? []
+      // X2 ②: a dead watcher (crash / kill / backstop) is NOT a quiet
+      // watcher — log once, record the channel offline for the evidence
+      // finalize, and dispose so no later drain mistakes silence for safety.
+      if (uiaWatcher?.dead) {
+        log("computer.uia.watch_died", { taskId, seq, exitCode: uiaWatcher.exitCode })
+        uiaWatchDied = { exitCode: uiaWatcher.exitCode }
+        try {
+          uiaWatcher.dispose()
+        } catch {
+          /* best-effort */
+        }
+        uiaWatcher = null
+      }
       const dialogSuspected =
         (fg !== 0 && fg !== hwnd) ||
         newTopLevel ||
@@ -1130,7 +1161,7 @@ export async function runComputerTask(
   } catch {
     /* best-effort — the ps1 self-destructs at -MaxSeconds regardless */
   }
-  await evidence.finalize({ ok: true, completed: result.completedActions, total: result.totalActions })
+  await evidence.finalize({ ok: true, completed: result.completedActions, total: result.totalActions, uiaWatcher: uiaWatcherLiveness() })
   log("computer.task.completed", { taskId, completed: result.completedActions, total: result.totalActions })
   emit({ event: "finished", taskId, ok: true, completed: result.completedActions, total: result.totalActions })
   return result

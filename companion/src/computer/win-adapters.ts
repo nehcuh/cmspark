@@ -531,17 +531,80 @@ export class PsUiaLocator implements UiaLocator {
 // ---------------------------------------------------------------------------
 
 /**
- * WP3 (<5% small-popup channel): spawn computer-uia-watch.ps1 as a
- * line-buffered event source. NOT runPs — the watcher is long-lived and
- * streams events; the executor drains them per action and kills the process
- * when the task ends (the script's -MaxSeconds backstop caps leaks).
- * Spawn failure degrades honestly to "no watcher" (the other dialog
- * channels still stand).
+ * X2 ④ (WP3 adversary): bounded, line-fed event buffer for the WindowOpened
+ * watcher. Overflow is FAIL-SAFE: the buffer caps at UIA_WATCH_BUFFER_CAP
+ * and the next drain appends a synthetic marker event, so an event flood
+ * looks like "a popup happened" (the dialog invariant pauses the task)
+ * instead of silently dropping popups. Exported for unit tests.
+ */
+export const UIA_WATCH_BUFFER_CAP = 256
+
+export function createUiaWatchBuffer(targetPid: number): {
+  /** Feed one raw stdout line; returns true when it was the ready handshake. */
+  feed: (line: string) => boolean
+  drain: () => UiaWindowOpenedEvent[]
+} {
+  const events: UiaWindowOpenedEvent[] = []
+  let overflowed = false
+  return {
+    feed(line: string): boolean {
+      if (!line.startsWith("{")) return false
+      try {
+        const j = JSON.parse(line)
+        if (j.ready === true) return true
+        if (j.event === "window-opened" && Number(j.pid) === targetPid) {
+          if (events.length >= UIA_WATCH_BUFFER_CAP) {
+            overflowed = true // drop the newest — the fail-safe marker covers it
+          } else {
+            events.push({
+              controlType: String(j.controlType ?? ""),
+              className: String(j.className ?? ""),
+              pid: targetPid,
+              at: String(j.at ?? ""),
+            })
+          }
+        }
+      } catch {
+        /* partial/garbled line — skip */
+      }
+      return false
+    },
+    drain(): UiaWindowOpenedEvent[] {
+      const out = events.splice(0, events.length)
+      if (overflowed) {
+        overflowed = false
+        out.push({
+          controlType: "Window",
+          className: "(watcher-buffer-overflow)",
+          pid: targetPid,
+          at: new Date().toISOString(),
+        })
+      }
+      return out
+    },
+  }
+}
+
+/**
+ * WP3 (<5% small-popup channel) + X2 lifecycle: spawn computer-uia-watch.ps1
+ * as a line-buffered event source. NOT runPs — the watcher is long-lived.
+ *
+ * X2 ① ready handshake: this promise resolves ONLY after the ps1 printed
+ *     {"ready":true} (the UIA subscription is actually live); a pre-ready
+ *     exit (e.g. WATCHFAILED) or the handshake timeout rejects, so the
+ *     executor records watch_failed — never watch_started on a dead channel.
+ * X2 ② exit monitoring: exit/close flips dead + exitCode; the executor
+ *     surfaces computer.uia.watch_died and marks the evidence channel
+ *     offline (a dead watcher is not a quiet watcher).
+ * X2 ③ -MaxSeconds comes from the caller aligned to the task budget; the
+ *     ps1 additionally dies with its parent process (orphan guard).
+ * X2 ④ the event buffer is bounded (createUiaWatchBuffer) — overflow is
+ *     fail-safe (a synthetic marker event).
  */
 export function startUiaWindowWatcher(
   target: { hwnd: number; pid: number },
-  opts: { maxSeconds?: number } = {},
-): UiaWatcher {
+  opts: { maxSeconds?: number; readyTimeoutMs?: number } = {},
+): Promise<UiaWatcher> {
   const child = spawn(
     resolvePowerShellExe(),
     [
@@ -550,11 +613,16 @@ export function startUiaWindowWatcher(
       "-TargetPid", String(target.pid),
       "-MaxSeconds", String(opts.maxSeconds ?? 600),
     ],
-    { stdio: ["ignore", "pipe", "ignore"], windowsHide: true },
+    { stdio: ["ignore", "pipe", "pipe"], windowsHide: true },
   )
+  const buffer = createUiaWatchBuffer(target.pid)
   let buf = ""
-  const events: UiaWindowOpenedEvent[] = []
+  let errTail = ""
+  let dead = false
+  let exitCode: number | null = null
+  let sawReady = false
   child.stdout?.setEncoding("utf8")
+  child.stderr?.setEncoding("utf8")
   child.stdout?.on("data", (chunk: string) => {
     buf += chunk
     let idx = buf.indexOf("\n")
@@ -562,27 +630,29 @@ export function startUiaWindowWatcher(
       const line = buf.slice(0, idx).trim()
       buf = buf.slice(idx + 1)
       idx = buf.indexOf("\n")
-      if (!line.startsWith("{")) continue
-      try {
-        const j = JSON.parse(line)
-        if (j.event === "window-opened" && Number(j.pid) === target.pid) {
-          events.push({
-            controlType: String(j.controlType ?? ""),
-            className: String(j.className ?? ""),
-            pid: target.pid,
-            at: String(j.at ?? ""),
-          })
-        }
-      } catch {
-        /* partial/garbled line — skip */
-      }
+      if (buffer.feed(line)) sawReady = true
     }
   })
-  // A dead/failed child simply stops producing events — drain stays empty.
-  child.on("error", () => {})
-  return {
+  child.stderr?.on("data", (chunk: string) => {
+    // Keep only the tail (WATCHFAILED:<detail> etc.) for the handshake error.
+    errTail = (errTail + chunk).slice(-512)
+  })
+  child.on("error", () => {
+    dead = true
+  })
+  child.on("exit", (code) => {
+    dead = true
+    exitCode = typeof code === "number" ? code : exitCode
+  })
+  const watcher: UiaWatcher = {
+    get dead() {
+      return dead
+    },
+    get exitCode() {
+      return exitCode
+    },
     drain() {
-      return events.splice(0, events.length)
+      return buffer.drain()
     },
     dispose() {
       try {
@@ -592,6 +662,28 @@ export function startUiaWindowWatcher(
       }
     },
   }
+  const timeoutMs = opts.readyTimeoutMs ?? 10_000
+  return new Promise<UiaWatcher>((resolve, reject) => {
+    const startedAt = Date.now()
+    const timer = setInterval(() => {
+      if (sawReady) {
+        clearInterval(timer)
+        resolve(watcher)
+      } else if (dead) {
+        clearInterval(timer)
+        const detail = errTail.trim().split(/\r?\n/).filter(Boolean).pop()
+        reject(new Error(`computer-uia-watch exited before ready (code ${exitCode ?? "?"})${detail ? `: ${detail}` : ""}`))
+      } else if (Date.now() - startedAt > timeoutMs) {
+        clearInterval(timer)
+        try {
+          child.kill()
+        } catch {
+          /* best-effort */
+        }
+        reject(new Error(`computer-uia-watch ready handshake timeout (${timeoutMs}ms)`))
+      }
+    }, 50)
+  })
 }
 
 // ---------------------------------------------------------------------------

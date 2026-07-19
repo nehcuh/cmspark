@@ -2014,7 +2014,7 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
               // WP3 (<5% small-popup channel): WindowOpened subscription —
               // started by the executor for UIA-capable targets only and
               // drained after every injection into the dialog invariant.
-              uiaWatcherFactory: (t) => startUiaWindowWatcher(t),
+              uiaWatcherFactory: (t, opts) => startUiaWindowWatcher(t, opts),
               // WP3 (§K.5): config write-back of the probed admission hint.
               // writeBackUiaVerdict enforces the hand-set-override rule and
               // revalidates before replaceAppsEntries; the outcome is logged

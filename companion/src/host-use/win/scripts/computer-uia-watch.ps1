@@ -21,9 +21,10 @@
 # be delivered. The C# handler formats the JSON line itself on the UIA
 # callback thread.
 #
-# Lifecycle: the companion kills the process to stop watching; -MaxSeconds is
-# the backstop self-termination so a leaked watcher never outlives a task by
-# more than the cap.
+# Lifecycle: the companion kills the process to stop watching (dispose);
+# -MaxSeconds (aligned to the task budget by the executor) is only the final
+# backstop, and the parent-process liveness poll in the keep-alive loop is
+# the orphan guard — a crashed companion never leaves a watcher behind.
 param(
   [Parameter(Mandatory=$true)][long]$TargetPid,
   [int]$MaxSeconds = 600
@@ -93,11 +94,20 @@ try {
 
 [Console]::WriteLine('{"ready":true}')
 
+# X2 (WP3 adversary): orphan guard — die with the companion. The parent of
+# this powershell process IS the companion process; poll it via a cached
+# handle (a cheap OS check per iteration) instead of relying on the time cap
+# alone — a crashed companion used to leave a polling watcher behind.
+$ownerPid = (Get-CimInstance Win32_Process -Filter "ProcessId=$PID").ParentProcessId
+$owner = $null
+try { $owner = Get-Process -Id $ownerPid -ErrorAction Stop } catch { $owner = $null }
+
 $sw = [Diagnostics.Stopwatch]::StartNew()
 while ($sw.Elapsed.TotalSeconds -lt $MaxSeconds) {
   Start-Sleep -Milliseconds 200
+  if ($null -eq $owner -or $owner.HasExited) { break }
 }
-# Backstop reached — unsubscribe best-effort and exit (the companion normally
+# Backstop or orphan exit — unsubscribe best-effort (the companion normally
 # kills us first).
 try { [System.Windows.Automation.Automation]::RemoveAutomationEventHandler([System.Windows.Automation.WindowPattern]::WindowOpenedEvent, $root, $handler) } catch {}
 exit 0

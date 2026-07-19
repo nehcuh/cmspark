@@ -318,10 +318,28 @@ export interface UiaWindowOpenedEvent {
 export interface UiaWatcher {
   /** Events accumulated since the last drain (buffer cleared). */
   drain(): UiaWindowOpenedEvent[]
+  /**
+   * X2 (WP3 adversary): true once the watcher process has exited (crash /
+   * kill / backstop). A DEAD watcher is not a quiet watcher — the executor
+   * logs computer.uia.watch_died and records the channel offline instead of
+   * draining a silent empty buffer while the evidence claims it online.
+   */
+  readonly dead: boolean
+  /** X2: process exit code when known; null while running. */
+  readonly exitCode: number | null
   dispose(): void
 }
 
-export type UiaWatcherFactory = (target: { hwnd: number; pid: number }) => UiaWatcher
+/**
+ * X2: the factory is async — it resolves ONLY after the ps1 printed its
+ * ready handshake (subscription actually live); a timeout or pre-ready exit
+ * rejects, which the executor records as computer.uia.watch_failed (never
+ * watch_started). maxSeconds aligns the ps1 backstop to the task budget.
+ */
+export type UiaWatcherFactory = (
+  target: { hwnd: number; pid: number },
+  opts?: { maxSeconds?: number },
+) => Promise<UiaWatcher>
 
 export interface ScreenCapturer {
   captureWindow(hwnd: number): Promise<CaptureMeta>
