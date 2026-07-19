@@ -521,3 +521,37 @@ test("host_computer: drag requires both endpoints", () => {
     false,
   )
 })
+
+// =============================================================================
+// host_computer — Y1 task/target caps (WP4 代码级对抗裁决)
+// =============================================================================
+
+test("host_computer: task at the 4000-char cap passes; 4001 rejected at the schema boundary (Y1)", () => {
+  const ok = parseToolArgs("host_computer", {
+    task: "t".repeat(4000),
+    app: "win.app.test",
+    actions: [{ action: "click", x: 1, y: 1 }],
+  })
+  assert.equal(ok.actions.length, 1)
+  const bad = tryParseToolArgs("host_computer", {
+    task: "t".repeat(4001),
+    app: "win.app.test",
+    actions: [{ action: "click", x: 1, y: 1 }],
+  })
+  assert.equal(bad.ok, false, "task 长度上限收窄 full_preview 尺寸与 re-L2 信息饥饿面")
+})
+
+test("host_computer: click target at the 500-char cap passes; 501 rejected (Y1)", () => {
+  const ok = parseToolArgs("host_computer", {
+    task: "t",
+    app: "win.app.test",
+    actions: [{ action: "click", target: "确".repeat(500) }],
+  })
+  assert.equal(ok.actions.length, 1)
+  const bad = tryParseToolArgs("host_computer", {
+    task: "t",
+    app: "win.app.test",
+    actions: [{ action: "click", target: "确".repeat(501) }],
+  })
+  assert.equal(bad.ok, false)
+})

@@ -39,6 +39,9 @@ export class EvidenceOpenRateLimiter {
   ) {}
   /** true = 放行(已计数);false = 超限拒绝。 */
   tryConsume(panelId: string, nowMs: number = Date.now()): boolean {
+    // Y2 (WP4 代码级对抗裁决):access 时顺带全表过期清扫——死 panelId
+    // (断连不再来的 WS)的空桶不永久驻留(长驻进程缓增长)。
+    this.sweep(nowMs)
     const arr = (this.hits.get(panelId) ?? []).filter((t) => nowMs - t < this.windowMs)
     if (arr.length >= this.limit) {
       this.hits.set(panelId, arr)
@@ -47,6 +50,18 @@ export class EvidenceOpenRateLimiter {
     arr.push(nowMs)
     this.hits.set(panelId, arr)
     return true
+  }
+  /** 全表过期清扫:窗口内已无命中的桶整体删除。 */
+  private sweep(nowMs: number): void {
+    for (const [key, arr] of this.hits) {
+      const live = arr.filter((t) => nowMs - t < this.windowMs)
+      if (live.length === 0) this.hits.delete(key)
+      else if (live.length !== arr.length) this.hits.set(key, live)
+    }
+  }
+  /** 测试观测:当前驻留桶数。 */
+  bucketCount(): number {
+    return this.hits.size
   }
 }
 
@@ -70,6 +85,10 @@ export interface ComputerHandlerDeps {
 
 /** 生产默认:explorer 打开目录。dir 作为独立 argv(绝不拼进命令行模板)。 */
 function defaultOpenDir(dir: string): void {
+  // Y3 (WP4 对抗 NIT,已文档化):explorer.exe 的参数解析会把「逗号」当分隔
+  // 符——用户名含逗号的 profile 路径下,目录可能被误切而打开失败。argv
+  // 数组传递本身正确(无命令行注入面),发生率极低,暂不引 cmd /c start
+  // 迂回(其引号转义面更大)。打开失败对用户可见性低,error 吞掉。
   const child = spawn("explorer.exe", [dir], { detached: true, stdio: "ignore" })
   // spawn 的 ENOENT 经 error 事件异步到达——吞掉(打开失败对用户可见性低,
   // 但绝不能成为未捕获异常)。explorer 对存在目录的打开几乎不会失败。

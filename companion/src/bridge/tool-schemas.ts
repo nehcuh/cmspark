@@ -105,7 +105,9 @@ export const TOOL_ARG_SCHEMAS: Record<string, z.ZodTypeAny> = {
 
   // --- Windows host_computer (coordinate computer-use WP1+WP2, critical-class) ---
   host_computer: z.object({
-    task: z.string().min(1),
+    // Y1 (WP4 代码级对抗裁决):task 封顶 4000——full_preview 尺寸与 re-L2
+    // 信息饥饿面由此有界(此前仅受 LLM 输出极限约束,出向 WS 无门)。
+    task: z.string().min(1).max(4000),
     app: z.string().min(1),
     actions: z.array(
       z.discriminatedUnion("action", [
@@ -113,7 +115,8 @@ export const TOOL_ARG_SCHEMAS: Record<string, z.ZodTypeAny> = {
           action: z.enum(["click", "double_click", "right_click"]),
           x: z.number().int().min(0).optional(),
           y: z.number().int().min(0).optional(),
-          target: z.string().min(1).optional(),
+          // Y1:锚文本一并封顶(UI 标签量级;同时收窄逐条枚举全文尺寸)。
+          target: z.string().min(1).max(500).optional(),
         }).strict(),
         z.object({ action: z.literal("type"), text: z.string().min(1).max(2000) }).strict(),
         // WP2: named-key whitelist chords (no arbitrary VK; text goes via type).

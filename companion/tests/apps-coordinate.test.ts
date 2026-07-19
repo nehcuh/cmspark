@@ -401,3 +401,37 @@ test("computer.evidence.open P6: 滑动窗口——60 秒后旧命中过期,恢�
   )
   assert.equal(after.ok, true, "窗口滑过后恢复放行")
 })
+
+test("computer.evidence.open Y2: 死 panelId 的桶在 access 时被过期清扫(不永久驻留)", async () => {
+  const limiter = new EvidenceOpenRateLimiter()
+  let nowMs = 1_000_000
+  const deps = { evidenceOpen: evidenceSurface({ limiter, now: () => nowMs }) }
+  const open = (panelId: string) =>
+    handleComputerMessage({ type: "computer.evidence.open", task_id: "task_1" }, { panelId }, deps as any)
+
+  await open("dead-1")
+  await open("dead-2")
+  assert.equal(limiter.bucketCount(), 2)
+  nowMs += 61_000 // 两桶全部出窗(>60s 无新命中)
+  await open("live") // access 触发全表清扫
+  assert.equal(limiter.bucketCount(), 1, "dead-1/dead-2 桶被清扫,只剩 live")
+})
+
+test("computer.evidence.open Y2: 活跃桶的窗口内命中在清扫中保留(不误伤计数)", async () => {
+  const limiter = new EvidenceOpenRateLimiter()
+  let nowMs = 1_000_000
+  const deps = { evidenceOpen: evidenceSurface({ limiter, now: () => nowMs }) }
+  // pA 在 t0 打满 5 次;t+30s pB access(清扫不应删 pA 的窗口内命中)
+  for (let i = 0; i < 5; i++) {
+    await handleComputerMessage({ type: "computer.evidence.open", task_id: "task_1" }, { panelId: "pA" }, deps as any)
+  }
+  nowMs += 30_000
+  await handleComputerMessage({ type: "computer.evidence.open", task_id: "task_1" }, { panelId: "pB" }, deps as any)
+  // pA 第 6 次仍在窗口内 → 仍被限(清扫没把它的计数误删)
+  const r6: any = await handleComputerMessage(
+    { type: "computer.evidence.open", task_id: "task_1" },
+    { panelId: "pA" },
+    deps as any,
+  )
+  assert.equal(r6.error, "rate_limited")
+})
