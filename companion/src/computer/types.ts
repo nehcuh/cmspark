@@ -298,6 +298,31 @@ export interface UiaLocator {
   locate(hwnd: number, target: string): Promise<UiaLocateHit | null>
 }
 
+/**
+ * WP3 (<5% small-popup channel): a UIA WindowOpened event for the target
+ * process. Element NAMES are deliberately excluded at the source (dialog
+ * titles are user content — same privacy rule as the probe script).
+ */
+export interface UiaWindowOpenedEvent {
+  controlType: string
+  className: string
+  pid: number
+  at: string
+}
+
+/**
+ * WP3: live WindowOpened subscription. Exists only for UIA-capable targets;
+ * for UIA-blind apps the small-popup residual stays on the pixel channels
+ * (documented in the executor).
+ */
+export interface UiaWatcher {
+  /** Events accumulated since the last drain (buffer cleared). */
+  drain(): UiaWindowOpenedEvent[]
+  dispose(): void
+}
+
+export type UiaWatcherFactory = (target: { hwnd: number; pid: number }) => UiaWatcher
+
 export interface ScreenCapturer {
   captureWindow(hwnd: number): Promise<CaptureMeta>
   /** Crop srcPath to rect (clamped to image), write outPath, return outPath. */

@@ -9,7 +9,8 @@ import * as os from "os"
 import * as path from "path"
 import * as fs from "fs"
 import * as crypto from "crypto"
-import { parsePsJson, runPs, type PsRunner } from "../host-use/win/powershell"
+import { spawn } from "child_process"
+import { parsePsJson, resolvePowerShellExe, runPs, type PsRunner } from "../host-use/win/powershell"
 import { resolveWinScript } from "../host-use/win/powershell"
 import type { PreviewBuilder } from "./preview"
 import {
@@ -26,6 +27,8 @@ import {
   type SecurityEnvironment,
   type UiaLocateHit,
   type UiaLocator,
+  type UiaWatcher,
+  type UiaWindowOpenedEvent,
   type WindowEnumerator,
   type WindowInfo,
 } from "./types"
@@ -522,6 +525,72 @@ export class PsUiaLocator implements UiaLocator {
       confidence: Number(r.confidence ?? 1),
       candidates: Number(r.candidates ?? 1),
     }
+  }
+}
+
+// ---------------------------------------------------------------------------
+
+/**
+ * WP3 (<5% small-popup channel): spawn computer-uia-watch.ps1 as a
+ * line-buffered event source. NOT runPs — the watcher is long-lived and
+ * streams events; the executor drains them per action and kills the process
+ * when the task ends (the script's -MaxSeconds backstop caps leaks).
+ * Spawn failure degrades honestly to "no watcher" (the other dialog
+ * channels still stand).
+ */
+export function startUiaWindowWatcher(
+  target: { hwnd: number; pid: number },
+  opts: { maxSeconds?: number } = {},
+): UiaWatcher {
+  const child = spawn(
+    resolvePowerShellExe(),
+    [
+      "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+      "-File", resolveWinScript("computer-uia-watch.ps1"),
+      "-TargetPid", String(target.pid),
+      "-MaxSeconds", String(opts.maxSeconds ?? 600),
+    ],
+    { stdio: ["ignore", "pipe", "ignore"], windowsHide: true },
+  )
+  let buf = ""
+  const events: UiaWindowOpenedEvent[] = []
+  child.stdout?.setEncoding("utf8")
+  child.stdout?.on("data", (chunk: string) => {
+    buf += chunk
+    let idx = buf.indexOf("\n")
+    while (idx >= 0) {
+      const line = buf.slice(0, idx).trim()
+      buf = buf.slice(idx + 1)
+      idx = buf.indexOf("\n")
+      if (!line.startsWith("{")) continue
+      try {
+        const j = JSON.parse(line)
+        if (j.event === "window-opened" && Number(j.pid) === target.pid) {
+          events.push({
+            controlType: String(j.controlType ?? ""),
+            className: String(j.className ?? ""),
+            pid: target.pid,
+            at: String(j.at ?? ""),
+          })
+        }
+      } catch {
+        /* partial/garbled line — skip */
+      }
+    }
+  })
+  // A dead/failed child simply stops producing events — drain stays empty.
+  child.on("error", () => {})
+  return {
+    drain() {
+      return events.splice(0, events.length)
+    },
+    dispose() {
+      try {
+        child.kill()
+      } catch {
+        /* best-effort */
+      }
+    },
   }
 }
 

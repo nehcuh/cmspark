@@ -71,6 +71,8 @@ import {
   type ScreenCapturer,
   type SecurityEnvironment,
   type UiaLocator,
+  type UiaWatcher,
+  type UiaWatcherFactory,
   type WindowEnumerator,
 } from "./types"
 
@@ -149,6 +151,14 @@ export interface ComputerExecutorDeps {
    * absent dep = L0 skipped with the structured reason (unit tests).
    */
   uiaLocator?: UiaLocator
+  /**
+   * WP3 (<5% small-popup channel): WindowOpened subscription factory.
+   * Started once per task for UIA-CAPABLE targets only; events drained
+   * after every injection feed the task-induced-dialog invariant. Absent
+   * dep or a factory throw = no watcher (honest residual: pixel channels
+   * only). Disposed on every task exit.
+   */
+  uiaWatcherFactory?: UiaWatcherFactory
 }
 
 export interface ComputerStepResult {
@@ -292,6 +302,9 @@ export async function runComputerTask(
   }
   const steps: ComputerStepResult[] = []
   let evidence: EvidenceSink | null = null
+  // WP3: WindowOpened watcher (UIA-capable targets only) — disposed on
+  // EVERY exit (fail() and the success tail).
+  let uiaWatcher: UiaWatcher | null = null
 
   // R1 — plaintext raw capture tracking. captureWindow writes UNENCRYPTED
   // window bitmaps under %TEMP%; only frames that reach the sealer are
@@ -329,6 +342,12 @@ export async function runComputerTask(
 
   const fail = async (err: ComputerError): Promise<ComputerTaskResult> => {
     log("computer.task.failed", { taskId, code: err.code, error: err.message })
+    try {
+      uiaWatcher?.dispose()
+      uiaWatcher = null
+    } catch {
+      /* best-effort */
+    }
     emit({
       event: "finished",
       taskId,
@@ -381,6 +400,7 @@ export async function runComputerTask(
 
   // Resolve the target window (largest visible window of the whitelisted exe).
   let hwnd = 0
+  let targetPid = 0
   try {
     const wins = await deps.windows.enumerateByExe(entry.exe!.path)
     if (wins.length === 0) {
@@ -388,6 +408,7 @@ export async function runComputerTask(
     }
     wins.sort((a, b) => b.rect.width * b.rect.height - a.rect.width * a.rect.height)
     hwnd = wins[0].hwnd
+    targetPid = wins[0].pid
     assertHwndOwnedByEntry(wins[0], entry)
   } catch (err) {
     return fail(err instanceof ComputerError ? err : new ComputerError("APP_WINDOW_NOT_FOUND", String((err as Error)?.message ?? err)))
@@ -432,6 +453,24 @@ export async function runComputerTask(
     } catch (err) {
       log("computer.uia.probe_failed", { taskId, app: entry.token, error: String((err as Error)?.message ?? err) })
       uiaCapable = false
+    }
+  }
+
+  // WP3 (<5% small-popup channel): WindowOpened subscription for UIA-CAPABLE
+  // targets — it catches task-induced dialogs that the pixel/foreground/
+  // top-level-hwnd channels miss (small owned/child popups under the diff
+  // thresholds that never take foreground). RESIDUAL, documented: for
+  // UIA-BLIND apps this channel does not exist — detection stays on the
+  // pixel channels and a small in-window popup under the diff/zone/blob
+  // thresholds remains the known <5% blind spot. A factory failure degrades
+  // honestly to "no watcher"; it never fails the task.
+  if (uiaCapable && deps.uiaWatcherFactory) {
+    try {
+      uiaWatcher = deps.uiaWatcherFactory({ hwnd, pid: targetPid })
+      log("computer.uia.watch_started", { taskId, pid: targetPid })
+    } catch (err) {
+      uiaWatcher = null
+      log("computer.uia.watch_failed", { taskId, error: String((err as Error)?.message ?? err) })
     }
   }
 
@@ -912,9 +951,17 @@ export async function runComputerTask(
       const { diffRatio, maxZoneRatio, maxBlobRatio } = await deps.capturer.diff(afterShot.path, shot.path)
       const afterWinHwnds = await deps.windows.enumerateByExe(entry.exe!.path).catch(() => [])
       const newTopLevel = afterWinHwnds.some((w) => !beforeWinHwnds.has(w.hwnd))
+      // WP3 (<5% small-popup channel): drain the WindowOpened subscription —
+      // a task-induced window (owned/child popup of the target pid) that the
+      // pixel channels and the top-level-hwnd channel both missed. Draining
+      // AFTER the injection means each event is attributed to the action that
+      // caused it and consumed exactly once (an approved pause never
+      // re-triggers on the next action).
+      const uiaOpened = uiaWatcher?.drain() ?? []
       const dialogSuspected =
         (fg !== 0 && fg !== hwnd) ||
         newTopLevel ||
+        uiaOpened.length > 0 ||
         diffRatio > DIALOG_DIFF_THRESHOLD ||
         (maxZoneRatio !== undefined && maxZoneRatio >= DIALOG_ZONE_THRESHOLD) ||
         (maxBlobRatio !== undefined && maxBlobRatio >= DIALOG_BLOB_THRESHOLD)
@@ -1037,6 +1084,11 @@ export async function runComputerTask(
           fgChanged: fg !== hwnd,
           fgOwnerExe,
           newTopLevel,
+          uiaWindowOpened: uiaOpened.length,
+          // UI class only (e.g. "WindowsForms10.Window.8...") — never the
+          // window title, which is user content (same privacy rule as the
+          // watcher ps1, which omits Name from its event lines).
+          uiaWindowClass: uiaOpened[0]?.className,
           diffRatio,
           maxZoneRatio,
           maxBlobRatio,
@@ -1067,6 +1119,12 @@ export async function runComputerTask(
     steps,
   }
   await sweepRaws() // normally a no-op — every frame was sealed or released
+  try {
+    uiaWatcher?.dispose()
+    uiaWatcher = null
+  } catch {
+    /* best-effort — the ps1 self-destructs at -MaxSeconds regardless */
+  }
   await evidence.finalize({ ok: true, completed: result.completedActions, total: result.totalActions })
   log("computer.task.completed", { taskId, completed: result.completedActions, total: result.totalActions })
   emit({ event: "finished", taskId, ok: true, completed: result.completedActions, total: result.totalActions })
