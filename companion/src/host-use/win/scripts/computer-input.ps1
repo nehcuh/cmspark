@@ -260,8 +260,18 @@ function Assert-Landing([int]$sx, [int]$sy) {
 # --- execute ---------------------------------------------------------------------
 # X2: ForceForeground's return was previously discarded — a silent foreground
 # lock failure meant the click/type went to whatever WAS foreground.
-if (-not [InpW32]::ForceForeground($hwndPtr)) {
-  Fail "FOCUSLOST" "SetForegroundWindow failed (foreground lock) — refusing to inject blind" 8
+# WP2: retry — on 24H2 the foreground lock (LockSetForegroundWindow style
+# heuristics) can reject a first SetForegroundWindow while another app holds
+# focus; the AttachThreadInput pattern inside ForceForeground plus a short
+# retry absorbs the transient failure. Persistent failure = honest FOCUSLOST,
+# never a blind inject.
+$fgOk = $false
+for ($fgTry = 1; $fgTry -le 3; $fgTry++) {
+  if ([InpW32]::ForceForeground($hwndPtr)) { $fgOk = $true; break }
+  Start-Sleep -Milliseconds 150
+}
+if (-not $fgOk) {
+  Fail "FOCUSLOST" "SetForegroundWindow failed after 3 attempts (foreground lock) — refusing to inject blind" 8
 }
 Start-Sleep -Milliseconds 120
 
@@ -356,24 +366,28 @@ switch ($Action) {
     if ($estimatedMs -gt 120000) { Fail "SENDFAILED" "estimated inject time ${estimatedMs}ms exceeds the 120s hard cap (X4)" 9 }
     $rand = New-Object Random
     $sentChars = 0
-    for ($i = 0; $i -lt $chars.Length; $i += $FocusCheckEvery) {
+    # Y4 (WP2): REAL per-char throttle — every character is its own SendInput
+    # call and the jittered sleep happens BETWEEN sends. The WP1 code slept
+    # while ACCUMULATING a batch and then burst the whole batch (32 events for
+    # 16 chars) — against OSR apps that drop instantaneous event streams, that
+    # was the exact failure mode the throttle was meant to prevent.
+    for ($i = 0; $i -lt $chars.Length; $i++) {
       # A1.4: foreground drift mid-type = abort remaining events (the text must
       # never spray into a popup dialog / password field that appeared mid-task).
-      if ([InpW32]::GetForegroundWindow() -ne $hwndPtr) {
-        Fail "FOCUSLOST" "foreground hwnd changed after $sentChars/$($chars.Length) chars" 8
+      if ($i % $FocusCheckEvery -eq 0) {
+        if ([InpW32]::GetForegroundWindow() -ne $hwndPtr) {
+          Fail "FOCUSLOST" "foreground hwnd changed after $sentChars/$($chars.Length) chars" 8
+        }
       }
-      $batch = @()
-      $end = [Math]::Min($i + $FocusCheckEvery, $chars.Length)
-      for ($j = $i; $j -lt $end; $j++) {
-        $scan = [uint16]$chars[$j]
-        $batch += [InpW32]::Key($scan, 0)
-        $batch += [InpW32]::Key($scan, [InpW32]::KEYEVENTF_KEYUP)
+      $scan = [uint16]$chars[$i]
+      $pair = @([InpW32]::Key($scan, 0), [InpW32]::Key($scan, [InpW32]::KEYEVENTF_KEYUP))
+      $sent = [InpW32]::SendBatch($pair)
+      if ($sent -ne $pair.Length) { Fail "SENDFAILED" "SendInput delivered $sent/$($pair.Length) events at char $i" 9 }
+      $sentChars++
+      if ($i -lt $chars.Length - 1) {
         $th = $ThrottleMinMs + $rand.Next([Math]::Max(1, $ThrottleMaxMs - $ThrottleMinMs + 1))
         Start-Sleep -Milliseconds $th
       }
-      $sent = [InpW32]::SendBatch($batch)
-      if ($sent -ne $batch.Length) { Fail "SENDFAILED" "SendInput delivered $sent/$($batch.Length) events" 9 }
-      $sentChars += ($end - $i)
     }
     Write-Output (ConvertTo-Json -Compress -InputObject ([ordered]@{
       ok = $true; action = "type"; chars = $sentChars
