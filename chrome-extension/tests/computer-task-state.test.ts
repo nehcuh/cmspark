@@ -16,6 +16,7 @@ import {
   COMPUTER_TIMELINE_MAX_STEPS,
   PREVIEW_IMAGE_MAX_BYTES,
   capTimeline,
+  extractComputerCardData,
   isValidEvidenceTaskId,
   previewImageSafe,
   reduceComputerTaskEvent,
@@ -312,4 +313,73 @@ test("finished 后同 id step 不追加时间线(经 reducer 集成路径)", () 
   const t = must(s.computerTask)
   assert.equal(t.steps.length, stepsAfterFinish)
   assert.equal(t.status, "finished")
+})
+
+// --- X2 (WP4 代码级对抗裁决):extractComputerCardData 真实网线形状 fixture -------
+// fixture 录制自 companion server.ts host_computer 工具结果序列化
+// (snake_case;经 msg.result 原样透传到面板,无 camel 转换层)。
+// WI-5 初版只读 camelCase → 证据按钮永不渲染、步数恒 "?";此套件锁死网线契约。
+
+const WIRE_SUCCESS = {
+  success: true,
+  data: {
+    task_id: "abc-DEF_123",
+    completed: 3,
+    total: 5,
+    evidence_dir: "C:\\evidence\\abc-DEF_123",
+    steps: [{ seq: 1, action: "click", ok: true }],
+  },
+}
+
+const WIRE_FAILURE = {
+  success: false,
+  error: "computer: no element found [ELEMENT_NOT_FOUND]",
+  data: {
+    error_code: "ELEMENT_NOT_FOUND",
+    task_id: "abc-DEF_123",
+    evidence_dir: "C:\\evidence\\abc-DEF_123",
+    steps: [],
+  },
+}
+
+test("X2 fixture: snake_case 成功结果 → 证据按钮条件成立、步数正确", () => {
+  const d = must(extractComputerCardData(WIRE_SUCCESS))
+  assert.equal(d.taskId, "abc-DEF_123")
+  assert.equal(d.completed, 3)
+  assert.equal(d.total, 5)
+  assert.equal(d.evidenceDir, "C:\\evidence\\abc-DEF_123")
+  assert.equal(d.failed, false)
+  assert.equal(d.canOpenEvidence, true, "evidence_dir 非空 + task_id 过守卫 → 按钮渲染")
+})
+
+test("X2 fixture: snake_case 失败结果 → error_code 提取、证据按钮仍可用", () => {
+  const d = must(extractComputerCardData(WIRE_FAILURE))
+  assert.equal(d.failed, true)
+  assert.equal(d.errorCode, "ELEMENT_NOT_FOUND")
+  assert.equal(d.completed, undefined, "失败形状不带 completed/total(卡片回退显 ?)")
+  assert.equal(d.total, undefined)
+  assert.equal(d.canOpenEvidence, true)
+})
+
+test("X2: camelCase(executor 直返形状)回退同样成立", () => {
+  const d = must(
+    extractComputerCardData({
+      success: true,
+      data: { taskId: "t1", completedActions: 2, totalActions: 4, evidenceDir: "C:\\e\\t1" },
+    }),
+  )
+  assert.equal(d.taskId, "t1")
+  assert.equal(d.completed, 2)
+  assert.equal(d.total, 4)
+  assert.equal(d.canOpenEvidence, true)
+})
+
+test("X2: 按钮守卫——路径穿越 taskId 拒渲染;无 evidence_dir 旧结果只读;非对象安全", () => {
+  const evil = must(extractComputerCardData({ success: true, data: { task_id: "../x", evidence_dir: "C:\\e" } }))
+  assert.equal(evil.canOpenEvidence, false, "taskId 不过字符集守卫 → 不渲染")
+  const legacy = must(extractComputerCardData({ success: true, data: { task_id: "t1", completed: 1, total: 1 } }))
+  assert.equal(legacy.canOpenEvidence, false, "无 evidence_dir(旧 companion)→ 只读展示")
+  assert.equal(extractComputerCardData(null), null)
+  assert.equal(extractComputerCardData("x"), null)
+  assert.equal(extractComputerCardData(undefined), null)
 })

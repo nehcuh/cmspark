@@ -7,7 +7,7 @@ import { marked } from "marked"
 import markedKatex from "marked-katex-extension"
 import DOMPurify from "dompurify"
 import { renderMermaidBlocks, prefetchMermaid } from "./mermaid"
-import { isValidEvidenceTaskId } from "../utils/computer-utils"
+import { extractComputerCardData } from "../utils/computer-utils"
 // KaTeX stylesheet — bundled by Plasmo; needed for math glyph fonts/layout.
 import "katex/dist/katex.min.css"
 
@@ -369,18 +369,13 @@ function ToolCallCard({ tc }: { tc: any }) {
   const visionDescription = tc.result?.data?.vision_description
   const hasVisionDescription = isVisionTool && visionDescription
 
-  // WP4 (WI-5): host_computer 紧凑任务卡——completed/total、error_code(失败
-  // 红色)、「📂 打开证据目录」(taskId 先过 isValidEvidenceTaskId;路径解析
-  // 全在 companion)。无 evidenceDir 的旧 companion 结果只读展示。字段名兼容
-  // camel/snake(结果形状以 companion ComputerTaskResult 为准)。
+  // WP4 (WI-5/X2): host_computer 紧凑任务卡——completed/total、error_code
+  // (失败红色)、「📂 打开证据目录」。字段提取走纯函数 extractComputerCardData
+  // (真实网线 snake_case 优先、camel 回退;无 evidenceDir 的旧 companion
+  // 结果只读展示),fixture 测试在 computer-task-state 套件。
   const isComputerTask = tc.tool_name === "host_computer"
-  const computerData = isComputerTask && tc.result?.data && typeof tc.result.data === "object" ? tc.result.data : null
-  const computerTaskId = computerData?.taskId
-  const computerEvidenceDir = computerData?.evidenceDir ?? computerData?.evidence_dir
-  const computerErrorCode = computerData?.errorCode ?? computerData?.error_code
-  const computerFailed = computerData !== null && (computerData.success === false || tc.status === "error")
-  const canOpenEvidence =
-    typeof computerEvidenceDir === "string" && computerEvidenceDir !== "" && isValidEvidenceTaskId(computerTaskId)
+  const computerCard = isComputerTask ? extractComputerCardData(tc.result) : null
+  const computerFailed = computerCard !== null && (computerCard.failed || tc.status === "error")
 
   return (
     <div style={{
@@ -439,7 +434,7 @@ function ToolCallCard({ tc }: { tc: any }) {
           )}
         </div>
       )}
-      {computerData && (
+      {computerCard && (
         <div
           style={{
             marginTop: 6,
@@ -456,18 +451,18 @@ function ToolCallCard({ tc }: { tc: any }) {
           }}
         >
           <span>
-            坐标任务：完成 {computerData.completedActions ?? "?"}/{computerData.totalActions ?? "?"} 步
+            坐标任务：完成 {computerCard.completed ?? "?"}/{computerCard.total ?? "?"} 步
           </span>
-          {computerFailed && computerErrorCode && (
-            <span style={{ color: "#F44336", fontWeight: 700 }}>{String(computerErrorCode)}</span>
+          {computerFailed && computerCard.errorCode && (
+            <span style={{ color: "#F44336", fontWeight: 700 }}>{computerCard.errorCode}</span>
           )}
-          {canOpenEvidence && (
+          {computerCard.canOpenEvidence && (
             <button
               type="button"
               title="在 companion 机器上打开该任务的证据目录（explorer）"
               onClick={(e) => {
                 e.stopPropagation()
-                chrome.runtime.sendMessage({ type: "computer.evidence.open", task_id: computerTaskId })
+                chrome.runtime.sendMessage({ type: "computer.evidence.open", task_id: computerCard.taskId })
               }}
               style={{
                 marginLeft: "auto",

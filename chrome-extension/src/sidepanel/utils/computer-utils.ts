@@ -202,3 +202,50 @@ export function uiaCapableBadge(
     title: "首次坐标任务时自动探测（能力提示，非安全背书）",
   }
 }
+
+/** WI-5 证据卡提取结果(字段名已对齐真实网线形状,snake 优先 camel 回退)。 */
+export interface ComputerCardData {
+  taskId?: string
+  evidenceDir?: string
+  errorCode?: string
+  completed?: number
+  total?: number
+  /** 结果级失败(顶层 success:false 或 data.success:false)。 */
+  failed: boolean
+  /** 「打开证据目录」按钮渲染条件:evidenceDir 非空且 taskId 过字符集守卫。 */
+  canOpenEvidence: boolean
+}
+
+/**
+ * X2 (WP4 代码级对抗裁决):host_computer 工具结果的字段提取纯函数。
+ * 真实网线形状是 snake_case(companion server.ts 工具结果序列化:
+ * task_id / completed / total / evidence_dir / error_code,经 msg.result
+ * 原样透传,无 camel 转换层);executor 直返是 camelCase(ComputerTaskResult:
+ * taskId / completedActions / totalActions / evidenceDir / errorCode)。
+ * 两套都接受、snake 优先——任一缺失回退另一套,绝不恒 undefined
+ * (WI-5 初版只读 camel 导致按钮永不渲染、步数恒 "?",本函数+fixture 锁死)。
+ */
+export function extractComputerCardData(result: unknown): ComputerCardData | null {
+  if (!result || typeof result !== "object") return null
+  const r = result as { success?: unknown; data?: unknown }
+  const data = (r.data && typeof r.data === "object" ? r.data : {}) as Record<string, unknown>
+  const pickStr = (snake: unknown, camel: unknown): string | undefined => {
+    const v = snake ?? camel
+    return typeof v === "string" ? v : undefined
+  }
+  const pickNum = (snake: unknown, camel: unknown): number | undefined => {
+    const v = snake ?? camel
+    return typeof v === "number" ? v : undefined
+  }
+  const taskId = pickStr(data.task_id, data.taskId)
+  const evidenceDir = pickStr(data.evidence_dir, data.evidenceDir)
+  return {
+    taskId,
+    evidenceDir,
+    errorCode: pickStr(data.error_code, data.errorCode),
+    completed: pickNum(data.completed, data.completedActions),
+    total: pickNum(data.total, data.totalActions),
+    failed: r.success === false || data.success === false,
+    canOpenEvidence: typeof evidenceDir === "string" && evidenceDir !== "" && isValidEvidenceTaskId(taskId),
+  }
+}
