@@ -88,6 +88,11 @@ interface SessionCallbacks {
   requestConfirmation?: (
     details: SecurityConfirmationDetails,
   ) => Promise<SecurityConfirmationDecision>
+  /**
+   * WP4: 面板(WS 连接)标识——computer.evidence.open 的 P6 频率上限按
+   * 每面板计数。server.ts 为每个连接生成一个 id。
+   */
+  panelId?: string
 }
 
 export async function handleMessage(
@@ -954,9 +959,12 @@ export async function handleMessage(
     // apps.set_coordinate_allowed above) ---
     case "computer.get_state":
     case "computer.set_enabled":
+    case "computer.evidence.open":
       return handleComputerMessage(msg, {
         requestConfirmation: session?.requestConfirmation,
         broadcast: session?.broadcast,
+        // WP4: P6 频率上限按每面板(每 WS 连接)计数。
+        panelId: session?.panelId,
       })
     case "skill.activate": {
       skillEngine.activate(rest.thread_id, rest.skill_name)

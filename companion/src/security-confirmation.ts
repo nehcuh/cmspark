@@ -71,6 +71,23 @@ export interface SecurityConfirmationDetails {
    * "手动输入 6 位 nonce，不可复制粘贴". Empty on darwin (uses Touch ID instead).
    */
   nonceChallenge?: string
+  /**
+   * WP4 (§F.1) — host_computer L2 对话框的标注截图(base64 JPEG,凭证区已
+   * 黑化,十字线标注首动作当前位置)。可选;仅存在时随请求下发。绝不进入
+   * 工具结果/LLM 上下文(P2 不变量——本字段只流向 originWs 面板的确认对话框)。
+   */
+  previewImage?: string
+  /** 截图说明行(三段式非绑定声明;companion 侧已过 P3 字符类清洗)。 */
+  previewCaption?: string
+  /**
+   * P1 (WP4 对抗裁决) — computer 类确认的完整预览文本独立字段。
+   * code_preview 经 codePreview() 截断(CODE_PREVIEW_LIMIT=1200)——30 动作 +
+   * 2000 字符语料的逐条枚举必然被截尾,排在清单尾部的动作与待输入文本对人
+   * 不可见(WP1 起存在的现网洞)。实现选择:独立字段绕过截断(而非对
+   * host_computer 豁免/提限 code_preview)——其余工具的 1200 截断行为完全
+   * 不变,修复面刻意收窄;旧扩展忽略本字段即回退截断版 code_preview。
+   */
+  fullPreview?: string
 }
 
 export interface SecurityConfirmationDecision {
@@ -182,6 +199,17 @@ export class SecurityConfirmationManager {
         relevant_domains: details.relevantDomains,
         relevant_apps: details.relevantApps,
         nonce_challenge: details.nonceChallenge,
+        // WP4: 可选字段,仅存在时下发(旧扩展忽略即回退现版对话框)。
+        ...(typeof details.previewImage === "string" && details.previewImage
+          ? { preview_image: details.previewImage }
+          : {}),
+        ...(typeof details.previewCaption === "string" && details.previewCaption
+          ? { preview_caption: details.previewCaption }
+          : {}),
+        // P1: 完整预览文本独立字段,绕过 codePreview 的 1200 截断。
+        ...(typeof details.fullPreview === "string" && details.fullPreview
+          ? { full_preview: details.fullPreview }
+          : {}),
       })
     })
   }

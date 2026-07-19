@@ -39,6 +39,7 @@ import { scanDanger, type DangerScan } from "./danger"
 import type { EvidenceFactory, EvidenceSink } from "./evidence"
 import { locateTargetWithChain, type WitnessVerdict } from "./locate-chain"
 import type { ComputerTaskEvent, PreviewBuilder } from "./preview"
+import { sanitizeComputerCaption } from "./preview"
 import { assertCoordinateAllowed, assertExeNotDrifted, assertHwndOwnedByEntry, normalizeExePath } from "./policy"
 import {
   ALLOWED_KEY_SET,
@@ -365,6 +366,8 @@ export async function runComputerTask(
       completed: steps.filter((s) => s.ok).length,
       total: params.actions?.length ?? 0,
       errorCode: err.code,
+      // WP4: 失败路径同样附证据目录(证据已密封的部分仍可打开查看)。
+      ...(evidence ? { evidenceDir: evidence.dir } : {}),
     })
     await sweepRaws() // R1: no plaintext capture survives ANY exit
     if (evidence) {
@@ -540,7 +543,8 @@ export async function runComputerTask(
     startedAt: new Date(now()).toISOString(),
   })
   log("computer.task.started", { taskId, app: entry.token, hwnd, budget })
-  emit({ event: "started", taskId, app: entry.display_name, task: params.task, total: params.actions.length })
+  // WP4: started 附 budget(任务条「已用/总量」分母)。
+  emit({ event: "started", taskId, app: entry.display_name, task: params.task, total: params.actions.length, budget })
 
   /** Short human label for the panel live view (never the type text itself). */
   const captionOf = (a: ComputerAction): string => {
@@ -607,7 +611,7 @@ export async function runComputerTask(
       }
       steps.push({ seq, action: "wait", ok: true })
       await evidence.appendAction({ seq, action: "wait", crossverified: true, uncrossverified: false, durationMs: now() - startedAt })
-      emit({ event: "step", taskId, seq, action: "wait", budgetLeft: budget, caption: `等待 ${Math.min(action.ms, MAX_WAIT_MS)}ms` })
+      emit({ event: "step", taskId, seq, action: "wait", budgetLeft: budget, caption: sanitizeComputerCaption(`等待 ${Math.min(action.ms, MAX_WAIT_MS)}ms`), durationMs: now() - startedAt })
       continue
     }
     if (action.action === "screenshot" || action.action === "describe") {
@@ -645,7 +649,8 @@ export async function runComputerTask(
           seq,
           action: action.action,
           budgetLeft: budget,
-          caption: action.action === "screenshot" ? "截图" : "读取屏幕内容",
+          caption: sanitizeComputerCaption(action.action === "screenshot" ? "截图" : "读取屏幕内容"),
+          durationMs: now() - startedAt,
           ...(previewImage ? { previewImage } : {}),
         })
       } catch (err) {
@@ -1098,8 +1103,16 @@ export async function runComputerTask(
         action: action.action,
         ...(pointClient ? { x: pointClient.x, y: pointClient.y } : {}),
         budgetLeft: budget,
-        caption: captionOf(action),
+        // P3:step caption 与 L2 caption 共用同一字符类清洗(锚文本是 LLM
+        // 生成的不可信内容,U+2028/零宽字符可在 pre-wrap 语境伪造行)。
+        caption: sanitizeComputerCaption(captionOf(action)),
         ...(previewImage ? { previewImage } : {}),
+        // WP4: 透传证据链同源的定位可观测字段(不改任何决策逻辑)。
+        durationMs: now() - startedAt,
+        ...(hit ? { layer: hit.layer, confidence: hit.confidence } : {}),
+        ...(locateAttempts ? { locateAttempts } : {}),
+        crossverified,
+        ...(crossverifyChannel ? { crossverifyChannel } : {}),
       })
 
       if (dialogSuspected) {
@@ -1169,6 +1182,6 @@ export async function runComputerTask(
   }
   await evidence.finalize({ ok: true, completed: result.completedActions, total: result.totalActions, uiaWatcher: uiaWatcherLiveness() })
   log("computer.task.completed", { taskId, completed: result.completedActions, total: result.totalActions })
-  emit({ event: "finished", taskId, ok: true, completed: result.completedActions, total: result.totalActions })
+  emit({ event: "finished", taskId, ok: true, completed: result.completedActions, total: result.totalActions, evidenceDir: evidence.dir })
   return result
 }

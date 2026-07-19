@@ -23,9 +23,13 @@ export interface ComputerTaskEvent {
   app?: string
   task?: string
   total?: number
+  /** WP4: started 附动作预算总量(任务条「已用/总量」的分母)。 */
+  budget?: number
   ok?: boolean
   completed?: number
   errorCode?: string
+  /** WP4: finished 附证据目录(任务条/工具卡的「打开证据目录」入口)。 */
+  evidenceDir?: string
   /** step/paused: 1-based action sequence number. */
   seq?: number
   action?: string
@@ -38,6 +42,40 @@ export interface ComputerTaskEvent {
   previewImage?: string
   /** paused: the re-L2 reason shown to the user. */
   reason?: string
+  /**
+   * WP4: step 事件增配的定位可观测字段(复用证据链同源变量,不改决策逻辑):
+   * 实际命中层 / 置信度 / 动作耗时 / 逐层降级日志 / 交叉验证通道。
+   */
+  layer?: string
+  confidence?: number
+  durationMs?: number
+  locateAttempts?: import("./types").LocateAttempt[]
+  crossverified?: boolean
+  crossverifyChannel?: string
+}
+
+/**
+ * P3(WP4 对抗裁决):caption 字符类清洗。
+ *
+ * JSON.stringify 不充分——它不转义 U+2028/U+2029(JSON 字符串内的合法字符),
+ * 在 pre-wrap 渲染语境会强制断行;零宽/格式字符(U+200B–U+200F、U+FEFF、
+ * U+2060 等)也原样通过。任务文本/锚文本是 LLM 生成的不可信内容,可借此在
+ * caption 里伪造「系统提示」行(Y3 在 code_preview 只堵了 ASCII 控制符)。
+ *
+ * 规则:
+ *  - \p{Zl}\p{Zp}(行/段分隔符)与 \p{Cc}(控制符,含 \n \r \t)→ 单个空格
+ *    (视觉不断行,保留词间间隔);
+ *  - \p{Cf}(格式字符:零宽空格/连接符、bidi 嵌入/覆盖/隔离、WORD JOINER、
+ *    FEFF 等)→ 删除(本不可见,删除不改变人读内容)。
+ *
+ * L2 截图 caption 与 step 事件 caption 必须共用本函数(对抗复核重点)。
+ */
+export function sanitizeComputerCaption(s: string): string {
+  return String(s ?? "")
+    .replace(/[\p{Zl}\p{Zp}\p{Cc}]/gu, " ")
+    .replace(/\p{Cf}/gu, "")
+    .replace(/ {2,}/g, " ")
+    .trim()
 }
 
 /**

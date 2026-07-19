@@ -532,6 +532,9 @@ export function createToolExecutor(ws: WebSocket) {
       // The tier decision is made HERE; the dialog is critical-class: shown on
       // every task, god-mode included (forceConfirm below), never trusted.
       let computerPreview = ""
+      // WP4: L2 标注截图 + 三段式 caption(best-effort;undefined = 无图降级)。
+      let computerL2PreviewImage: string | undefined
+      let computerL2PreviewCaption: string | undefined
       if (hostComputerGated) {
         const { assertCoordinateAllowed } = await import("./computer/policy")
         // Y3 (WP2): the preview text comes from the PURE builder — task text
@@ -573,6 +576,39 @@ export function createToolExecutor(ws: WebSocket) {
             actions: Array.isArray(finalParams.actions) ? finalParams.actions : [],
             extraLines: [limiter.statusLine()],
           })
+          // WP4 (护栏 a,对抗裁决定案):L2 标注截图 helper 的调用点固定在这
+          // 里——全部廉价前门(assertCoordinateAllowed / COMPUTER_TASK_BUSY /
+          // rate-limit)通过之后、L2 对话框发出之前;后续重构不得挪前(每次
+          // 确认 ≤5s 的代价只对真实候选任务支付)。best-effort:helper 失败/
+          // 超时/非 win32/无 exe(AUMID 条目)一律降级无图,绝不影响确认门。
+          if (os.platform() === "win32" && entryC.exe?.path) {
+            try {
+              const { buildComputerL2PreviewImage } = await import("./computer/l2-preview-image")
+              const { PsScreenCapturer, PsLocator, PsWindowEnumerator, PsPreviewBuilder } = await import("./computer/win-adapters")
+              const l2img = await buildComputerL2PreviewImage(
+                {
+                  windows: new PsWindowEnumerator(),
+                  capturer: new PsScreenCapturer(),
+                  locator: new PsLocator(),
+                  previewBuilder: new PsPreviewBuilder(),
+                  log: (event, data) => logger.info(event, { tool_call_id: toolCallId, ...data }),
+                },
+                {
+                  exePath: entryC.exe.path,
+                  appDisplayName: entryC.display_name,
+                  actions: Array.isArray(finalParams.actions) ? finalParams.actions : [],
+                  timeoutMs: 5000,
+                },
+              )
+              if (l2img) {
+                computerL2PreviewImage = l2img.image
+                computerL2PreviewCaption = l2img.caption
+              }
+            } catch (helperErr: any) {
+              // best-effort:helper 异常绝不拒飞任务(降级无图)。
+              logger.info("computer.l2preview.failed", { tool_call_id: toolCallId, error: helperErr?.message || String(helperErr) })
+            }
+          }
         } catch (err: any) {
           return failC(err?.message || String(err))
         }
@@ -707,6 +743,14 @@ export function createToolExecutor(ws: WebSocket) {
             criticalApis,
             ...(forceConfirm ? { riskLevel: "high" as const, autoConfirmEligible: false } : {}),
             ...(winL2NonceChallenge ? { nonceChallenge: winL2NonceChallenge } : {}),
+            // P1 (WP4): computer 类确认的完整预览文本走独立字段,绕过
+            // code_preview 的 CODE_PREVIEW_LIMIT=1200 截断(30 动作 + 2000
+            // 语料的逐条枚举对人完整可见);其余工具不设置,修复面收窄。
+            ...(hostComputerGated && computerPreview ? { fullPreview: computerPreview } : {}),
+            // WP4 (§F.1): L2 标注截图 + 三段式非绑定 caption(best-effort,
+            // 仅存在时下发;绝不进入工具结果/LLM 上下文——P2 不变量)。
+            ...(computerL2PreviewImage ? { previewImage: computerL2PreviewImage } : {}),
+            ...(computerL2PreviewCaption ? { previewCaption: computerL2PreviewCaption } : {}),
           },
           // Adversary amendment A1: a confirmation carrying a nonce challenge
           // MUST be origin-bound — otherwise any loopback WS peer could burn
@@ -2578,6 +2622,10 @@ function validateWsMessage(msg: any): WsValidationResult {
       if (typeof m.task_id !== "string" || !m.task_id) return { valid: false, error: "computer.task.abort requires task_id (a task id or '*')" }
       return { valid: true }
     },
+    "computer.evidence.open": (m) => {
+      if (typeof m.task_id !== "string" || !m.task_id) return { valid: false, error: "computer.evidence.open requires task_id" }
+      return { valid: true }
+    },
     "tool.result": (m) => {
       if (typeof m.tool_call_id !== "string" || !m.tool_call_id) return { valid: false, error: "tool.result requires tool_call_id" }
       return { valid: true }
@@ -2967,6 +3015,9 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
 
     const executeTool = createToolExecutor(ws)
 
+    // WP4: 每连接面板标识——computer.evidence.open 的 P6 频率上限按它计数。
+    const panelId = randomUUID()
+
     // Ping/pong keepalive — terminate clients that don't respond within 30s
     let pongReceived = true
     const pingInterval = setInterval(() => {
@@ -3184,6 +3235,8 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
                 } catch { /* ignore disconnected */ }
               }
             },
+            // WP4: 每连接面板标识(computer.evidence.open P6 频率上限计数)。
+            panelId,
           },
         )
 
