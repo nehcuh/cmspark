@@ -15,6 +15,12 @@
 # For UIA-BLIND apps this channel does not exist and the residual stays
 # pixel-only (documented in the executor).
 #
+# Targeting residual (Y3): the ProcessId filter scopes events to the MAIN
+# window's process. A multi-process app whose dialogs come from a broker /
+# helper pid escapes this channel — bounded by Assert-Landing (a click
+# landing on a foreign window is refused OCCLUDED) and by the foreground
+# channel (documented in the executor and plan).
+#
 # Implementation note: the event handler is a C# delegate (Add-Type), NOT a
 # PowerShell scriptblock — a scriptblock handler marshals back onto the
 # runspace thread, which the keep-alive loop occupies, so events would never

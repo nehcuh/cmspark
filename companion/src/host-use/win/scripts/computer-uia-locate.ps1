@@ -76,7 +76,11 @@ while ($stack.Count -gt 0 -and $nodes -lt $MaxNodes) {
     try { $nm = $cur.Current.Name } catch { $nm = '' }
     if ($nm -ne '') {
       $norm = (Normalize-Anchor $nm)
-      $isExact = ($norm -eq $anchor)
+      # Y4 (WP3 adversary): explicit OrdinalIgnoreCase — PowerShell's -eq is
+      # already case-insensitive but culture-dependent (Turkish-i edge);
+      # the substring path below is ToLowerInvariant. Both paths are now
+      # explicitly culture-independent.
+      $isExact = $norm.Equals($anchor, [StringComparison]::OrdinalIgnoreCase)
       $isSub = (-not $isExact) -and ($norm.ToLowerInvariant().Contains($anchorLower))
       if ($isExact -or $isSub) {
         $off = $true; $rr = $null

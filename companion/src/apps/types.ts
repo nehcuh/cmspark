@@ -261,21 +261,35 @@ export function normalizeAppEntry(entry: AppEntry): AppEntry {
   // A10.3: vault-mapped / LOLBIN binaries can NEVER hold coordinateAllowed —
   // structural exclusion, not a config option. A hand-edited config.json that
   // sets it is force-cleared with a loud log (ADR-010 tampering semantics).
+  // Y5 (WP3 adversary): the UIA admission hint (uiaCapable/uiaProbedAt) is
+  // force-cleared on the same binaries — coordinateAllowed remains the actual
+  // gate today (LOLBIN is never injectable), so this is pure defense-in-depth:
+  // a structurally excluded binary must never carry a UIA-capable verdict.
   let coordinateAllowed = entry.coordinateAllowed
-  if (coordinateAllowed === true && entry.exe?.path) {
+  let uiaCapable = entry.uiaCapable
+  let uiaProbedAt = entry.uiaProbedAt
+  if ((coordinateAllowed === true || uiaCapable !== undefined || uiaProbedAt !== undefined) && entry.exe?.path) {
     if (isLolbinPath(entry.exe.path) || basenameToVault(entry.exe.path) !== null) {
       console.error(
-        `[cmspark-agent] apps entry "${entry.token}" has coordinateAllowed=true on a vault/LOLBIN binary — force-cleared (structural exclusion, A10)`,
+        `[cmspark-agent] apps entry "${entry.token}" has coordinate/UIA hints on a vault/LOLBIN binary — force-cleared (structural exclusion, A10/Y5)`,
       )
       coordinateAllowed = false
+      uiaCapable = undefined
+      uiaProbedAt = undefined
     }
   }
-  const changed = normalized !== entry.policy || coordinateAllowed !== entry.coordinateAllowed
+  const changed =
+    normalized !== entry.policy ||
+    coordinateAllowed !== entry.coordinateAllowed ||
+    uiaCapable !== entry.uiaCapable ||
+    uiaProbedAt !== entry.uiaProbedAt
   if (!changed) return entry
   return {
     ...entry,
     policy: normalized,
     ...(coordinateAllowed !== entry.coordinateAllowed ? { coordinateAllowed } : {}),
+    ...(uiaCapable !== entry.uiaCapable ? { uiaCapable } : {}),
+    ...(uiaProbedAt !== entry.uiaProbedAt ? { uiaProbedAt } : {}),
   }
 }
 

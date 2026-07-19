@@ -479,6 +479,12 @@ export async function runComputerTask(
   // watch_started is logged only for a LIVE channel. X2 ③: the backstop is
   // aligned to the task budget (per-action cap 130s + 15min re-L2 headroom,
   // clamped to the ps1's 600..3600 range; the ps1 also dies with its parent).
+  // Y3 (WP3 adversary, documented residual): the ps1 filters events by the
+  // MAIN window's pid — a small popup from a DIFFERENT pid of the same app
+  // (multi-process broker/helper architectures) escapes this channel AND the
+  // top-level-hwnd channel (not the tracked exe) AND the pixel channels
+  // (under the diff thresholds). Bounded by Assert-Landing (a click landing
+  // on a foreign window is refused OCCLUDED) and the foreground channel.
   if (uiaCapable && deps.uiaWatcherFactory) {
     try {
       const budgetGuess = Math.min(Math.max(1, params.budget ?? deps.config.computer?.budget ?? DEFAULT_TASK_BUDGET), MAX_TASK_BUDGET)
