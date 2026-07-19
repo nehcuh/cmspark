@@ -14,6 +14,7 @@ import {
   consumeEstopFlag,
   ensureEstopHelper,
   estopFlagPath,
+  estopHeartbeatLost,
   estopReadyPath,
   type EstopFsLike,
 } from "../src/computer/estop"
@@ -147,4 +148,29 @@ test("estop ensure: already ready -> no spawn at all", async () => {
   })
   assert.equal(s.ok, true)
   assert.equal(spawns, 0)
+})
+
+// --- adversary WP2 X1: in-flight heartbeat watchdog ---------------------------
+// estopHeartbeatLost polls the SAME ready.json the takeoff preflight reads,
+// but DURING the task (server abortCheck). Any unhealthy state = the hotkey
+// silently died -> the task must abort fail-closed (EMERGENCY_STOP_LOST).
+
+test("X1 watchdog: missing/corrupt/stale ready file -> heartbeat lost", () => {
+  const fs = new FakeEstopFs()
+  assert.equal(estopHeartbeatLost({ fs, now: () => NOW, dir: DIR }), true, "missing ready file")
+  fs.files.set(estopReadyPath(DIR), "{not json")
+  assert.equal(estopHeartbeatLost({ fs, now: () => NOW, dir: DIR }), true, "corrupt ready file")
+  fs.files.set(estopReadyPath(DIR), readyFile({ heartbeat: NOW - 3100 }))
+  assert.equal(estopHeartbeatLost({ fs, now: () => NOW, dir: DIR }), true, "stale heartbeat")
+  fs.files.set(estopReadyPath(DIR), readyFile({ hotkeyOk: false }))
+  assert.equal(estopHeartbeatLost({ fs, now: () => NOW, dir: DIR }), true, "hotkey lost")
+})
+
+test("X1 watchdog: fresh heartbeat -> not lost (no spurious abort)", () => {
+  const fs = new FakeEstopFs()
+  fs.files.set(estopReadyPath(DIR), readyFile())
+  assert.equal(estopHeartbeatLost({ fs, now: () => NOW, dir: DIR }), false)
+  // Boundary: exactly at the max age the heartbeat still counts as fresh.
+  fs.files.set(estopReadyPath(DIR), readyFile({ heartbeat: NOW - 3000 }))
+  assert.equal(estopHeartbeatLost({ fs, now: () => NOW, dir: DIR }), false)
 })

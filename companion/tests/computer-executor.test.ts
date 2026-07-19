@@ -1177,6 +1177,59 @@ test("executor WP2: caller-supplied taskId is echoed (panel abort targets THIS r
 })
 
 
+test("executor X1: estop-lost between actions -> EMERGENCY_STOP_LOST, prior kept, next never injects", async () => {
+  const injector = new RecordingInjector()
+  let calls = 0
+  const deps = makeDeps({
+    injector,
+    abortCheck: () => {
+      calls += 1
+      // action1 loop-top (1) + action1 pre-inject (2) pass; action2 loop-top (3) = heartbeat stale
+      return calls >= 3 ? "estop-lost" : null
+    },
+  })
+  const r = await runComputerTask({ task: "t", app: "win.app.test", actions: [clickOk, clickOk] }, deps)
+  assert.equal(r.success, false)
+  assert.equal(r.errorCode, "EMERGENCY_STOP_LOST", "helper death mid-task is NOT a user abort")
+  assert.ok(r.error?.includes("estop-lost"), "channel named in the error")
+  assert.equal(r.completedActions, 1, "the first click completed before the watchdog fired")
+  assert.equal(injector.clicks.length, 1, "ZERO injections after the heartbeat went stale")
+})
+
+test("executor X1: estop-lost immediately before SendInput -> EMERGENCY_STOP_LOST, that action never injects", async () => {
+  const injector = new RecordingInjector()
+  let calls = 0
+  const deps = makeDeps({
+    injector,
+    abortCheck: () => {
+      calls += 1
+      return calls >= 2 ? "estop-lost" : null // 1st = loop-top, 2nd = pre-inject gate
+    },
+  })
+  const r = await runComputerTask({ task: "t", app: "win.app.test", actions: [clickOk] }, deps)
+  assert.equal(r.errorCode, "EMERGENCY_STOP_LOST")
+  assert.equal(injector.clicks.length, 0, "no injection once the kill switch is known dead")
+  assert.equal(r.completedActions, 0)
+})
+
+test("executor X1: estop-lost during a wait -> EMERGENCY_STOP_LOST (watchdog polls inside waits)", async () => {
+  let calls = 0
+  const deps = makeDeps({
+    abortCheck: () => {
+      calls += 1
+      return calls >= 2 ? "estop-lost" : null // 1st = loop-top, 2nd = after first wait chunk
+    },
+  })
+  const r = await runComputerTask(
+    { task: "t", app: "win.app.test", actions: [{ action: "wait", ms: 5000 }, clickOk] },
+    deps,
+  )
+  assert.equal(r.errorCode, "EMERGENCY_STOP_LOST")
+  assert.equal(r.completedActions, 0)
+  assert.equal(r.steps.length, 0)
+})
+
+
 // --- WP2: per-action security-environment re-probe (§T5-8) --------------------
 
 test("executor WP2: IL probe denies -> INTEGRITY_LEVEL_DENIED, zero injections", async () => {

@@ -105,12 +105,13 @@ export interface ComputerExecutorDeps {
   hashFile?: (path: string) => string
   /**
    * WP2 (§E.6): emergency-stop probe. Returns the channel that fired
-   * ("hotkey" = PS helper flag file, "panel" = WS abort) or null. Checked
-   * before EVERY action, inside waits, and once more immediately before the
-   * SendInput call — an abort mid-task fails TASK_ABORTED through the normal
-   * zero-residue exit path.
+   * ("hotkey" = PS helper flag file, "panel" = WS abort, "estop-lost" =
+   * adversary X1: the helper's heartbeat went stale MID-task — the kill
+   * switch itself died) or null. Checked before EVERY action, inside waits,
+   * and once more immediately before the SendInput call — an abort mid-task
+   * fails through the normal zero-residue exit path.
    */
-  abortCheck?: () => "hotkey" | "panel" | null
+  abortCheck?: () => "hotkey" | "panel" | "estop-lost" | null
   /**
    * WP2 (§E.4): task progress events (started/step/paused/finished) for the
    * panel live view. Fire-and-forget — listener errors are swallowed.
@@ -234,6 +235,17 @@ function validateDraft(params: ComputerTaskParams): ComputerError | null {
     )
   }
   return null
+}
+
+/**
+ * Adversary WP2 X1: map an abortCheck channel to its typed error. A
+ * user-initiated stop (hotkey flag / panel abort) is TASK_ABORTED; an
+ * "estop-lost" — the helper's heartbeat died MID-task — is the distinct
+ * EMERGENCY_STOP_LOST: the kill switch itself failed, so the refusal must be
+ * distinguishable from a deliberate user stop in audit + evidence.
+ */
+function abortChannelError(channel: string, message: string): ComputerError {
+  return new ComputerError(channel === "estop-lost" ? "EMERGENCY_STOP_LOST" : "TASK_ABORTED", message)
 }
 
 export async function runComputerTask(
@@ -423,7 +435,7 @@ export async function runComputerTask(
     const abortedAtTop = deps.abortCheck?.() ?? null
     if (abortedAtTop) {
       log("computer.task.aborted", { taskId, seq, channel: abortedAtTop })
-      return fail(new ComputerError("TASK_ABORTED", `computer: task aborted by emergency stop (${abortedAtTop})`))
+      return fail(abortChannelError(abortedAtTop, `computer: task aborted by emergency stop (${abortedAtTop})`))
     }
 
     // ---- non-injective actions -------------------------------------------------
@@ -437,7 +449,7 @@ export async function runComputerTask(
         const abortedMidWait = deps.abortCheck?.() ?? null
         if (abortedMidWait) {
           log("computer.task.aborted", { taskId, seq, channel: abortedMidWait, during: "wait" })
-          return fail(new ComputerError("TASK_ABORTED", `computer: task aborted by emergency stop (${abortedMidWait}) during wait`))
+          return fail(abortChannelError(abortedMidWait, `computer: task aborted by emergency stop (${abortedMidWait}) during wait`))
         }
       }
       steps.push({ seq, action: "wait", ok: true })
@@ -791,7 +803,7 @@ export async function runComputerTask(
       const abortedPreInject = deps.abortCheck?.() ?? null
       if (abortedPreInject) {
         log("computer.task.aborted", { taskId, seq, channel: abortedPreInject, during: "pre-inject" })
-        throw new ComputerError("TASK_ABORTED", `computer: task aborted by emergency stop (${abortedPreInject}) before injection`)
+        throw abortChannelError(abortedPreInject, `computer: task aborted by emergency stop (${abortedPreInject}) before injection`)
       }
 
       // Inject (ps1 re-checks IL/desktop/bounds; type re-checks foreground).

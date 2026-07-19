@@ -159,3 +159,19 @@ export async function ensureEstopHelper(deps: EnsureEstopDeps = {}): Promise<Est
   }
   return last
 }
+
+/**
+ * In-flight watchdog (adversary WP2 X1 / §E.6). The takeoff preflight checks
+ * helper health ONCE; the server's abortCheck polls THIS during the task
+ * (before every action, inside waits, immediately before SendInput). Returns
+ * true when the helper is unhealthy — ready file missing/corrupt, hotkey
+ * lost, or heartbeat older than maxAgeMs — because a dead helper means the
+ * Ctrl+Alt+End hotkey silently stops working: an injection loop whose kill
+ * switch died must fail CLOSED and abort (EMERGENCY_STOP_LOST).
+ *
+ * Documented residual: a disk failure that stalls the heartbeat WRITE also
+ * trips this — the abort direction is fail-closed, which is acceptable.
+ */
+export function estopHeartbeatLost(deps: EstopCheckDeps = {}): boolean {
+  return !checkEstopReady(deps).ok
+}

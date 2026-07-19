@@ -1879,7 +1879,7 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
         // alive (ready.json heartbeat < 3s) before ANY injection task starts.
         // Spawns the helper when missing; refuses fail-closed when it cannot
         // come up: an injection loop with no kill switch must never run.
-        const { ensureEstopHelper, clearEstopFlag, consumeEstopFlag, estopFlagPath } = await import("./computer/estop")
+        const { ensureEstopHelper, clearEstopFlag, consumeEstopFlag, estopFlagPath, estopHeartbeatLost } = await import("./computer/estop")
         const estop = computerEstopEnsureOverride ? await computerEstopEnsureOverride() : await ensureEstopHelper()
         if (!estop.ok) {
           logger.warn("computer.estop.unavailable", { tool_call_id: toolCallId, reason: estop.reason })
@@ -1939,9 +1939,18 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
               config: getConfig(),
               log: (event, data) => logger.info(event, { tool_call_id: toolCallId, ...data }),
               // WP2 (§E.6): polled by the executor before every action, during
-              // waits, and once more immediately before SendInput.
+              // waits, and once more immediately before SendInput. X1 (adversary
+              // WP2): third component — the helper's heartbeat going stale
+              // MID-task means the hotkey silently died; abort fail-closed
+              // (EMERGENCY_STOP_LOST) rather than inject without a kill switch.
               abortCheck: () =>
-                computerTaskAbort.get(computerTaskId) ? "panel" : consumeEstopFlag() ? "hotkey" : null,
+                computerTaskAbort.get(computerTaskId)
+                  ? "panel"
+                  : consumeEstopFlag()
+                    ? "hotkey"
+                    : estopHeartbeatLost()
+                      ? "estop-lost"
+                      : null,
               // WP2 (§E.4): panel live view — progress events + per-step
               // annotated preview images (credential-blacked, best-effort).
               onEvent: (ev) => {
