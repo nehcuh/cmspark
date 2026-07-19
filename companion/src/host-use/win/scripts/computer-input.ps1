@@ -1,4 +1,4 @@
-﻿# computer-input.ps1 — coordinate computer-use WP1 SendInput injection.
+﻿# computer-input.ps1 — coordinate computer-use WP1/WP2 SendInput injection.
 # Built on the S-5 spike actor (scripts/spike/s5-sendinput/s5-actor.ps1, gate
 # PASS): unsigned medium-IL same-IL SendInput + AttachThreadInput foregrounding
 # + MOUSEEVENTF_VIRTUALDESK|ABSOLUTE normalization + KEYEVENTF_UNICODE typing.
@@ -11,8 +11,11 @@
 #   4. client coords within the target client rect (reject, never clamp)
 #   5. type: foreground hwnd re-checked every batch; drift aborts (A1.4)
 #   6. ForceForeground must report success (X2 — foreground lock = no blind inject)
-#   7. click: target must be foreground AND own the root window at the landing
-#      point (WindowFromPoint + GetAncestor GA_ROOT; X2 — overlays intercept)
+#   7. click/scroll/drag: target must be foreground AND own the root window at
+#      the landing point (WindowFromPoint + GetAncestor GA_ROOT; X2); drag
+#      checks BOTH endpoints
+#   8. key: named-key WHITELIST chords only (WP2 — no arbitrary VK; printable
+#      text goes through 'type' with its A3 corpus gate)
 #
 # stdout contract: single-line JSON { ok, action, ... }
 # stderr contract:
@@ -21,12 +24,19 @@
 #   OCCLUDED:<d> (10)  BADARGS:<d> (2)
 param(
   [Parameter(Mandatory=$true)][long]$Hwnd,
-  [Parameter(Mandatory=$true)][ValidateSet('click','double_click','right_click','type')] [string]$Action,
-  # Client-area physical pixels (click kinds only).
+  [Parameter(Mandatory=$true)][ValidateSet('click','double_click','right_click','type','key','scroll','drag')] [string]$Action,
+  # Client-area physical pixels (point actions: click kinds, scroll, drag start).
   [int]$X = -1,
   [int]$Y = -1,
   # Text for -Action type (argv-only — never interpolated into script source).
   [string]$Text = "",
+  # Comma-separated key names for -Action key (whitelist, e.g. "ctrl,enter").
+  [string]$Keys = "",
+  # Wheel delta for -Action scroll (non-zero, ±1200 max).
+  [int]$Delta = 0,
+  # Drag endpoint, client px.
+  [int]$X2 = -1,
+  [int]$Y2 = -1,
   # Per-key throttle jitter bounds (ms). OSR apps drop instantaneous bursts (S-5).
   [int]$ThrottleMinMs = 30,
   [int]$ThrottleMaxMs = 80,
@@ -77,6 +87,7 @@ public class InpW32 {
 
   public const uint MOUSEEVENTF_MOVE=0x1, MOUSEEVENTF_LEFTDOWN=0x2, MOUSEEVENTF_LEFTUP=0x4,
                     MOUSEEVENTF_RIGHTDOWN=0x8, MOUSEEVENTF_RIGHTUP=0x10,
+                    MOUSEEVENTF_WHEEL=0x0800,
                     MOUSEEVENTF_ABSOLUTE=0x8000, MOUSEEVENTF_VIRTUALDESK=0x4000,
                     KEYEVENTF_KEYUP=0x2, KEYEVENTF_UNICODE=0x4;
 
@@ -92,6 +103,18 @@ public class InpW32 {
   public static INPUT Key(ushort scan, uint flags){
     INPUT i = new INPUT(); i.type = 1;
     i.u.ki = new KEYBDINPUT(); i.u.ki.wVk = 0; i.u.ki.wScan = scan; i.u.ki.dwFlags = flags | KEYEVENTF_UNICODE;
+    return i;
+  }
+  // WP2: named-VK key event (key chords) — wVk, NOT the UNICODE channel.
+  public static INPUT KeyVk(ushort vk, uint flags){
+    INPUT i = new INPUT(); i.type = 1;
+    i.u.ki = new KEYBDINPUT(); i.u.ki.wVk = vk; i.u.ki.wScan = 0; i.u.ki.dwFlags = flags;
+    return i;
+  }
+  // WP2: wheel event at a point (delta in wheel units, mouseData carries it).
+  public static INPUT Wheel(int x, int y, int delta){
+    INPUT i = Mouse(x, y, MOUSEEVENTF_WHEEL);
+    i.u.mi.mouseData = (uint)delta;
     return i;
   }
   public static uint SendBatch(INPUT[] arr){ return SendInput((uint)arr.Length, arr, Marshal.SizeOf(typeof(INPUT))); }
@@ -175,10 +198,11 @@ $desk = [InpW32]::InputDesktopName()
 if ($null -eq $desk) { Fail "DESKTOPDENIED" "OpenInputDesktop failed" 6 }
 if ($desk -ne "Default") { Fail "DESKTOPDENIED" "input desktop is '$desk', not 'Default'" 6 }
 
-# --- 4. bounds (click kinds) ----------------------------------------------------
-$screenX = 0; $screenY = 0
-if ($Action -ne 'type') {
-  if ($X -lt 0 -or $Y -lt 0) { Fail "BADARGS" "click action requires -X/-Y client coords" 2 }
+# --- 4. bounds (point actions: click kinds / scroll / drag) -------------------
+$screenX = 0; $screenY = 0; $screenX2 = 0; $screenY2 = 0
+$needsPoint = $Action -in 'click','double_click','right_click','scroll','drag'
+if ($needsPoint) {
+  if ($X -lt 0 -or $Y -lt 0) { Fail "BADARGS" "$Action requires -X/-Y client coords" 2 }
   $cr = New-Object InpW32+RECT
   [InpW32]::GetClientRect($hwndPtr, [ref]$cr) | Out-Null
   $cw = $cr.Right - $cr.Left; $ch = $cr.Bottom - $cr.Top
@@ -189,6 +213,48 @@ if ($Action -ne 'type') {
   $pt.X = $cr.Left + $X; $pt.Y = $cr.Top + $Y
   [InpW32]::ClientToScreen($hwndPtr, [ref]$pt) | Out-Null
   $screenX = $pt.X; $screenY = $pt.Y
+  if ($Action -eq 'drag') {
+    if ($X2 -lt 0 -or $Y2 -lt 0) { Fail "BADARGS" "drag requires -X2/-Y2 client coords" 2 }
+    if ($X2 -ge $cw -or $Y2 -ge $ch) {
+      Fail "OUTOFBOUNDS" "drag endpoint ($X2,$Y2) outside client rect ${cw}x${ch}" 7
+    }
+    $pt2 = New-Object InpW32+POINT
+    $pt2.X = $cr.Left + $X2; $pt2.Y = $cr.Top + $Y2
+    [InpW32]::ClientToScreen($hwndPtr, [ref]$pt2) | Out-Null
+    $screenX2 = $pt2.X; $screenY2 = $pt2.Y
+  }
+}
+
+# WP2 key whitelist (named VK only — printable text goes through 'type').
+$VkMap = @{
+  ctrl = 0x11; alt = 0x12; shift = 0x10; win = 0x5B
+  enter = 0x0D; escape = 0x1B; tab = 0x09; space = 0x20; backspace = 0x08; delete = 0x2E
+  up = 0x26; down = 0x28; left = 0x25; right = 0x27
+  home = 0x24; end = 0x23; pageup = 0x21; pagedown = 0x22
+  f1 = 0x70; f2 = 0x71; f3 = 0x72; f4 = 0x73; f5 = 0x74; f6 = 0x75
+  f7 = 0x76; f8 = 0x77; f9 = 0x78; f10 = 0x79; f11 = 0x7A; f12 = 0x7B
+}
+
+# X2: landing-window ownership — the event must land on the TARGET, not on an
+# overlay. Both checks fail closed:
+#   a) the target must actually BE foreground after the force;
+#   b) the root window at the landing point must be the target hwnd
+#      (WindowFromPoint sees through nothing — an AlwaysOnTop/notification
+#      window covering the point reports itself).
+# Residual (documented): a millisecond race remains between these checks and
+# SendInput; the post-action A2.1 dialog invariant is the backstop.
+function Assert-Landing([int]$sx, [int]$sy) {
+  if ([InpW32]::GetForegroundWindow() -ne $hwndPtr) {
+    Fail "FOCUSLOST" "target hwnd $Hwnd is not foreground after force — refusing to inject" 8
+  }
+  $ptCheck = New-Object InpW32+POINT
+  $ptCheck.X = $sx; $ptCheck.Y = $sy
+  $landed = [InpW32]::GetAncestor([InpW32]::WindowFromPoint($ptCheck), 2) # GA_ROOT
+  if ($landed -ne $hwndPtr) {
+    $landedId = 0
+    if ($landed -ne [IntPtr]::Zero) { $landedId = $landed.ToInt64() }
+    Fail "OCCLUDED" "point ($sx,$sy) lands on hwnd $landedId, not target hwnd $Hwnd — injection would be intercepted by another window" 10
+  }
 }
 
 # --- execute ---------------------------------------------------------------------
@@ -201,25 +267,7 @@ Start-Sleep -Milliseconds 120
 
 switch ($Action) {
   { $_ -in 'click','double_click','right_click' } {
-    # X2: landing-window ownership — the click must land on the TARGET, not on
-    # an overlay. Both checks fail closed:
-    #   a) the target must actually BE foreground after the force;
-    #   b) the root window at the landing point must be the target hwnd
-    #      (WindowFromPoint sees through nothing — an AlwaysOnTop/notification
-    #      window covering the point reports itself).
-    # Residual (documented): a millisecond race remains between these checks
-    # and SendInput; the post-action A2.1 dialog invariant is the backstop.
-    if ([InpW32]::GetForegroundWindow() -ne $hwndPtr) {
-      Fail "FOCUSLOST" "target hwnd $Hwnd is not foreground after force — refusing to click" 8
-    }
-    $ptCheck = New-Object InpW32+POINT
-    $ptCheck.X = $screenX; $ptCheck.Y = $screenY
-    $landed = [InpW32]::GetAncestor([InpW32]::WindowFromPoint($ptCheck), 2) # GA_ROOT
-    if ($landed -ne $hwndPtr) {
-      $landedId = 0
-      if ($landed -ne [IntPtr]::Zero) { $landedId = $landed.ToInt64() }
-      Fail "OCCLUDED" "point ($screenX,$screenY) lands on hwnd $landedId, not target hwnd $Hwnd — click would be intercepted by another window" 10
-    }
+    Assert-Landing $screenX $screenY
     $down = [InpW32]::MOUSEEVENTF_LEFTDOWN; $up = [InpW32]::MOUSEEVENTF_LEFTUP
     if ($_ -eq 'right_click') { $down = [InpW32]::MOUSEEVENTF_RIGHTDOWN; $up = [InpW32]::MOUSEEVENTF_RIGHTUP }
     $batch = @([InpW32]::Mouse($screenX, $screenY, [InpW32]::MOUSEEVENTF_MOVE),
@@ -233,6 +281,67 @@ switch ($Action) {
     if ($sent -ne $batch.Length) { Fail "SENDFAILED" "SendInput delivered $sent/$($batch.Length) events" 9 }
     Write-Output (ConvertTo-Json -Compress -InputObject ([ordered]@{
       ok = $true; action = $_; x = $X; y = $Y; screenX = $screenX; screenY = $screenY; sent = $sent
+    }))
+    exit 0
+  }
+  'key' {
+    # WP2: whitelist chord — press in order, release in reverse.
+    if ($Keys -eq "") { Fail "BADARGS" "key action requires -Keys (comma-separated names)" 2 }
+    $names = @($Keys.Split(',') | ForEach-Object { $_.Trim().ToLower() } | Where-Object { $_ -ne "" })
+    if ($names.Count -eq 0 -or $names.Count -gt 4) { Fail "BADARGS" "key chord must be 1..4 names" 2 }
+    foreach ($n in $names) {
+      if (-not $VkMap.ContainsKey($n)) { Fail "BADARGS" "key name '$n' is not in the whitelist" 2 }
+    }
+    $batch = @()
+    foreach ($n in $names) { $batch += [InpW32]::KeyVk([uint16]$VkMap[$n], 0) }
+    $rev = @($names); [array]::Reverse($rev)
+    foreach ($n in $rev) { $batch += [InpW32]::KeyVk([uint16]$VkMap[$n], [InpW32]::KEYEVENTF_KEYUP) }
+    $sent = [InpW32]::SendBatch($batch)
+    if ($sent -ne $batch.Length) { Fail "SENDFAILED" "SendInput delivered $sent/$($batch.Length) events" 9 }
+    Write-Output (ConvertTo-Json -Compress -InputObject ([ordered]@{
+      ok = $true; action = "key"; keys = $names; sent = $sent
+    }))
+    exit 0
+  }
+  'scroll' {
+    if ($Delta -eq 0 -or [Math]::Abs($Delta) -gt 1200) {
+      Fail "BADARGS" "scroll delta must be a non-zero integer within ±1200" 2
+    }
+    Assert-Landing $screenX $screenY
+    $batch = @([InpW32]::Mouse($screenX, $screenY, [InpW32]::MOUSEEVENTF_MOVE),
+               [InpW32]::Wheel($screenX, $screenY, $Delta))
+    $sent = [InpW32]::SendBatch($batch)
+    if ($sent -ne $batch.Length) { Fail "SENDFAILED" "SendInput delivered $sent/$($batch.Length) events" 9 }
+    Write-Output (ConvertTo-Json -Compress -InputObject ([ordered]@{
+      ok = $true; action = "scroll"; x = $X; y = $Y; delta = $Delta; sent = $sent
+    }))
+    exit 0
+  }
+  'drag' {
+    # WP2: BOTH endpoints must be owned by the target (a drag ending on an
+    # overlay would drop onto the wrong window).
+    Assert-Landing $screenX $screenY
+    Assert-Landing $screenX2 $screenY2
+    $first = @([InpW32]::Mouse($screenX, $screenY, [InpW32]::MOUSEEVENTF_MOVE),
+               [InpW32]::Mouse($screenX, $screenY, [InpW32]::MOUSEEVENTF_LEFTDOWN))
+    $sent = [InpW32]::SendBatch($first)
+    if ($sent -ne $first.Length) { Fail "SENDFAILED" "SendInput delivered $sent/$($first.Length) events" 9 }
+    # Interpolated move steps with small sleeps — a single burst risks the OSR
+    # target dropping the drag mid-way (same lesson as type throttle, S-5).
+    $steps = 16
+    for ($s = 1; $s -le $steps; $s++) {
+      $ix = [int]($screenX + ($screenX2 - $screenX) * $s / $steps)
+      $iy = [int]($screenY + ($screenY2 - $screenY) * $s / $steps)
+      $m = @([InpW32]::Mouse($ix, $iy, [InpW32]::MOUSEEVENTF_MOVE))
+      $sent = [InpW32]::SendBatch($m)
+      if ($sent -ne 1) { Fail "SENDFAILED" "SendInput delivered $sent/1 move events at step $s" 9 }
+      Start-Sleep -Milliseconds 8
+    }
+    $last = @([InpW32]::Mouse($screenX2, $screenY2, [InpW32]::MOUSEEVENTF_LEFTUP))
+    $sent = [InpW32]::SendBatch($last)
+    if ($sent -ne $last.Length) { Fail "SENDFAILED" "SendInput delivered $sent/$($last.Length) events" 9 }
+    Write-Output (ConvertTo-Json -Compress -InputObject ([ordered]@{
+      ok = $true; action = "drag"; x = $X; y = $Y; x2 = $X2; y2 = $Y2
     }))
     exit 0
   }

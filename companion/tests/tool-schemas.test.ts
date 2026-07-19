@@ -467,3 +467,57 @@ test("host_computer: type text beyond 2000 chars is rejected at the schema bound
   })
   assert.equal(bad.ok, false)
 })
+
+// =============================================================================
+// host_computer — WP2 key/scroll/drag primitives
+// =============================================================================
+
+test("host_computer: key chord passes; non-whitelist key is rejected", () => {
+  const ok = parseToolArgs("host_computer", {
+    task: "t",
+    app: "win.app.test",
+    actions: [{ action: "key", keys: ["ctrl", "enter"] }],
+  })
+  assert.equal(ok.actions.length, 1)
+  for (const bad of [
+    [{ action: "key", keys: ["a"] }], // printable — belongs to type
+    [{ action: "key", keys: [] }], // empty chord
+    [{ action: "key", keys: ["ctrl", "alt", "shift", "win", "enter"] }], // > MAX_KEY_CHORD
+    [{ action: "key", keys: ["ctrl"], extra: 1 }], // strict — no extra fields
+  ]) {
+    assert.equal(tryParseToolArgs("host_computer", { task: "t", app: "win.app.test", actions: bad }).ok, false)
+  }
+})
+
+test("host_computer: scroll bounds (delta 0 / beyond ±1200 / missing coords rejected)", () => {
+  const ok = parseToolArgs("host_computer", {
+    task: "t",
+    app: "win.app.test",
+    actions: [{ action: "scroll", x: 100, y: 100, delta: -240 }],
+  })
+  assert.equal(ok.actions.length, 1)
+  for (const bad of [
+    [{ action: "scroll", x: 1, y: 1, delta: 0 }],
+    [{ action: "scroll", x: 1, y: 1, delta: 1201 }],
+    [{ action: "scroll", x: 1, y: 1, delta: -1201 }],
+    [{ action: "scroll", x: 1, delta: 120 }], // missing y
+  ]) {
+    assert.equal(tryParseToolArgs("host_computer", { task: "t", app: "win.app.test", actions: bad }).ok, false)
+  }
+})
+
+test("host_computer: drag requires both endpoints", () => {
+  const ok = parseToolArgs("host_computer", {
+    task: "t",
+    app: "win.app.test",
+    actions: [{ action: "drag", x: 10, y: 10, x2: 200, y2: 200 }],
+  })
+  assert.equal(ok.actions.length, 1)
+  assert.equal(
+    tryParseToolArgs("host_computer", {
+      task: "t", app: "win.app.test",
+      actions: [{ action: "drag", x: 10, y: 10, x2: 200 }], // missing y2
+    }).ok,
+    false,
+  )
+})

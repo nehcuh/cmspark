@@ -39,6 +39,7 @@ import { scanDanger, type DangerScan } from "./danger"
 import type { EvidenceFactory, EvidenceSink } from "./evidence"
 import { assertCoordinateAllowed, assertHwndOwnedByEntry } from "./policy"
 import {
+  ALLOWED_KEY_SET,
   ComputerError,
   corpusHashOf,
   corpusOf,
@@ -47,6 +48,8 @@ import {
   DIALOG_ZONE_THRESHOLD,
   DEFAULT_TASK_BUDGET,
   INJECTIVE_ACTIONS,
+  MAX_KEY_CHORD,
+  MAX_SCROLL_DELTA,
   MAX_TASK_BUDGET,
   MAX_TYPE_TEXT_CHARS,
   MAX_WAIT_MS,
@@ -140,7 +143,34 @@ function validateDraft(params: ComputerTaskParams): ComputerError | null {
             `computer: type text is ${(a as any).text.length} chars — exceeds the ${MAX_TYPE_TEXT_CHARS}-char cap (X4)`,
           )
         }
+      } else if (kind === "key") {
+        // WP2: named-key whitelist chords only — arbitrary VK / printable text
+        // via key is rejected (text entry is the type primitive, A3 corpus).
+        const keys = (a as any).keys
+        if (!Array.isArray(keys) || keys.length === 0 || keys.length > MAX_KEY_CHORD) {
+          return new ComputerError("INVALID_ACTION", `computer: key requires 1..${MAX_KEY_CHORD} key names`)
+        }
+        for (const k of keys) {
+          if (typeof k !== "string" || !ALLOWED_KEY_SET.has(k.toLowerCase())) {
+            return new ComputerError("INVALID_ACTION", `computer: key name "${String(k)}" is not in the whitelist (plan §D.3)`)
+          }
+        }
+      } else if (kind === "scroll") {
+        if (!Number.isInteger((a as any).x) || !Number.isInteger((a as any).y)) {
+          return new ComputerError("INVALID_ACTION", "computer: scroll requires integer x/y")
+        }
+        const d = (a as any).delta
+        if (!Number.isInteger(d) || d === 0 || Math.abs(d) > MAX_SCROLL_DELTA) {
+          return new ComputerError("INVALID_ACTION", `computer: scroll delta must be a non-zero integer within ±${MAX_SCROLL_DELTA}`)
+        }
+      } else if (kind === "drag") {
+        for (const f of ["x", "y", "x2", "y2"]) {
+          if (!Number.isInteger((a as any)[f])) {
+            return new ComputerError("INVALID_ACTION", `computer: drag requires integer ${f}`)
+          }
+        }
       } else {
+        // click family: explicit x/y or an OCR target anchor
         const hasCoords = Number.isInteger((a as any).x) && Number.isInteger((a as any).y)
         const hasTarget = typeof (a as any).target === "string" && (a as any).target.length > 0
         if (!hasCoords && !hasTarget) {
@@ -152,7 +182,7 @@ function validateDraft(params: ComputerTaskParams): ComputerError | null {
         return new ComputerError("INVALID_ACTION", "computer: wait requires integer ms >= 0")
       }
     } else if (kind !== "screenshot" && kind !== "describe") {
-      return new ComputerError("INVALID_ACTION", `computer: unsupported action "${kind}" in WP1`)
+      return new ComputerError("INVALID_ACTION", `computer: unsupported action "${kind}"`)
     }
   }
   // X4: corpus TOTAL cap — task-splitting must not multiply the injection window.
@@ -369,7 +399,7 @@ export async function runComputerTask(
       let uncrossverified = false
       let crossverifyChannel: "pixel-region" | undefined
 
-      if (action.action !== "type" && action.target) {
+      if ((action.action === "click" || action.action === "double_click" || action.action === "right_click") && action.target) {
         ocrRes = await deps.locator.ocr(shot.path)
         hit = deps.locator.locate(ocrRes, action.target)
         if (!hit) {
@@ -419,6 +449,15 @@ export async function runComputerTask(
         // The locate frame is superseded in BOTH branches — its raw would
         // otherwise linger in %TEMP% unsealed (review R1 leak path 1).
         await releaseRaw(locateFrame.path)
+      } else if (action.action === "scroll" || action.action === "drag") {
+        pointClient = { x: action.x, y: action.y }
+        // WP2: no anchor exists for explicit scroll/drag coordinates — same
+        // honest bookkeeping as explicit-coordinate clicks (A1.3 sub-budget).
+        uncrossverified = true
+      } else if (action.action === "key") {
+        // WP2: a key chord has no coordinates — nothing to cross-check; it
+        // consumes the same uncrossverified sub-budget (A1.3 conservative).
+        uncrossverified = true
       } else if (action.action !== "type") {
         pointClient = { x: action.x!, y: action.y! }
         // Explicit-coordinate (icon-type) click: no cross-check exists.
@@ -447,6 +486,12 @@ export async function runComputerTask(
         if (pointClient.x < 0 || pointClient.y < 0 || pointClient.x >= cw || pointClient.y >= ch) {
           throw new ComputerError("OUT_OF_BOUNDS", `computer: (${pointClient.x},${pointClient.y}) outside client rect ${cw}x${ch}`)
         }
+        // WP2: the drag ENDPOINT is bounds-checked the same way.
+        if (action.action === "drag") {
+          if (action.x2 < 0 || action.y2 < 0 || action.x2 >= cw || action.y2 >= ch) {
+            throw new ComputerError("OUT_OF_BOUNDS", `computer: drag endpoint (${action.x2},${action.y2}) outside client rect ${cw}x${ch}`)
+          }
+        }
       }
 
       // Danger scan (A2 dual-channel; A4 no-path deny). Needs OCR text — reuse
@@ -464,18 +509,19 @@ export async function runComputerTask(
       // and replaces this (the sealed blur must match the frame actually sealed).
       let scan: DangerScan = scanDanger(ocrRes.words, regionImg, REGION_CROP_SIZE)
 
-      if (action.action === "type" && scan.credentialRects.length > 0) {
+      if ((action.action === "type" || action.action === "key") && scan.credentialRects.length > 0) {
         // A4.3: credential context for a type action — no-path deny (the OSR
-        // fallback for the UIA IsPassword check).
+        // fallback for the UIA IsPassword check). WP2: key chords (enter/tab
+        // SUBMIT forms) are denied in credential context on the same grounds.
         throw new ComputerError(
           "DANGER_HARD_DENY",
-          "computer: credential context detected in the target window — type is hard-denied (no re-confirm path)",
+          `computer: credential context detected in the target window — ${action.action} is hard-denied (no re-confirm path)`,
           { hits: scan.windowHits },
         )
       }
-      if (scan.regionLevel === "hard" && action.action !== "type") {
+      if (scan.regionLevel === "hard" && action.action !== "type" && action.action !== "key") {
         // A4 no-path deny — scoped to the final-confirm CLICK (review R5).
-        // For a type action the "region" IS the whole window (above), so a
+        // For a type/key action the "region" IS the whole window (above), so a
         // region-hard verdict there is really window-level financial context
         // and keeps a path: it falls through to the re-L2 branch below.
         throw new ComputerError(
@@ -509,7 +555,7 @@ export async function runComputerTask(
       // be a prompt loop), while a NEW hard verdict fails closed.
       if (reL2ApprovedMidAction && now() - shotAt > PIXEL_STALE_MS) {
         const staleFrame = shot
-        if (action.action !== "type" && action.target) {
+        if ((action.action === "click" || action.action === "double_click" || action.action === "right_click") && action.target) {
           const f1 = await trackCapture(hwnd)
           const ocrF1 = await deps.locator.ocr(f1.path)
           const hitF1 = deps.locator.locate(ocrF1, action.target)
@@ -576,14 +622,14 @@ export async function runComputerTask(
             }
           : { x: 0, y: 0, width: shot.rect.width, height: shot.rect.height }
         scan = scanDanger(ocrRes!.words, refreshRegion, REGION_CROP_SIZE)
-        if (action.action === "type" && scan.credentialRects.length > 0) {
+        if ((action.action === "type" || action.action === "key") && scan.credentialRects.length > 0) {
           throw new ComputerError(
             "DANGER_HARD_DENY",
-            "computer: credential context appeared after the re-confirm approval — type is hard-denied (no re-confirm path)",
+            `computer: credential context appeared after the re-confirm approval — ${action.action} is hard-denied (no re-confirm path)`,
             { hits: scan.windowHits },
           )
         }
-        if (scan.regionLevel === "hard" && action.action !== "type") {
+        if (scan.regionLevel === "hard" && action.action !== "type" && action.action !== "key") {
           throw new ComputerError(
             "DANGER_HARD_DENY",
             `computer: click target escalated to a payment/transfer/captcha final-confirm after the re-confirm approval (${scan.regionHits.join(", ")}) — hard-denied`,
@@ -601,6 +647,12 @@ export async function runComputerTask(
       // Inject (ps1 re-checks IL/desktop/bounds; type re-checks foreground).
       if (action.action === "type") {
         await deps.injector.typeText(hwnd, action.text)
+      } else if (action.action === "key") {
+        await deps.injector.keyChord(hwnd, action.keys.map((k) => k.toLowerCase()))
+      } else if (action.action === "scroll") {
+        await deps.injector.scroll(hwnd, pointClient!.x, pointClient!.y, action.delta)
+      } else if (action.action === "drag") {
+        await deps.injector.drag(hwnd, pointClient!.x, pointClient!.y, action.x2, action.y2)
       } else {
         await deps.injector.click(hwnd, pointClient!.x, pointClient!.y, action.action)
       }

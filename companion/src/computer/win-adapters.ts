@@ -366,6 +366,47 @@ export class PsInputInjector implements InputInjector {
     }
   }
 
+  async keyChord(hwnd: number, keys: string[]): Promise<void> {
+    try {
+      await this.runner(resolveWinScript("computer-input.ps1"), [
+        "-Hwnd", String(hwnd),
+        "-Action", "key",
+        "-Keys", keys.join(","),
+      ])
+    } catch (err) {
+      rethrowComputerPsError(err, "inject.key")
+    }
+  }
+
+  async scroll(hwnd: number, x: number, y: number, delta: number): Promise<void> {
+    try {
+      await this.runner(resolveWinScript("computer-input.ps1"), [
+        "-Hwnd", String(hwnd),
+        "-Action", "scroll",
+        "-X", String(Math.round(x)),
+        "-Y", String(Math.round(y)),
+        "-Delta", String(Math.round(delta)),
+      ])
+    } catch (err) {
+      rethrowComputerPsError(err, "inject.scroll")
+    }
+  }
+
+  async drag(hwnd: number, x: number, y: number, x2: number, y2: number): Promise<void> {
+    try {
+      await this.runner(resolveWinScript("computer-input.ps1"), [
+        "-Hwnd", String(hwnd),
+        "-Action", "drag",
+        "-X", String(Math.round(x)),
+        "-Y", String(Math.round(y)),
+        "-X2", String(Math.round(x2)),
+        "-Y2", String(Math.round(y2)),
+      ])
+    } catch (err) {
+      rethrowComputerPsError(err, "inject.drag")
+    }
+  }
+
   async probeWindow(hwnd: number): Promise<WindowInfo> {
     return psWindowInfo(this.runner, hwnd)
   }

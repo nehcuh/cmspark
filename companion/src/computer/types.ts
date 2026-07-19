@@ -9,10 +9,12 @@
 import * as crypto from "crypto"
 
 // ---------------------------------------------------------------------------
-// Action schema (plan §D.3 closed discriminated union, WP1 subset).
-// click/double_click/right_click/type are injective; wait/screenshot/describe
-// are non-injective. key/scroll/drag are WP2 — absent here BY DESIGN (a draft
-// containing them must fail schema validation, not be silently ignored).
+// Action schema (plan §D.3 closed discriminated union).
+// click family / type / key / scroll / drag are injective; wait/screenshot/
+// describe are non-injective. WP2 added key/scroll/drag with their own
+// boundary rules: key = named-key WHITELIST chords only (text entry is the
+// type primitive's job, never arbitrary VK), scroll delta capped, drag
+// endpoints bounds-checked like clicks.
 // ---------------------------------------------------------------------------
 
 export type ComputerClickAction = {
@@ -34,12 +36,22 @@ export type ComputerTypeAction = {
   text: string
 }
 
+/** WP2: named-key chord (e.g. ["ctrl","enter"]). Whitelist below — no arbitrary VK. */
+export type ComputerKeyAction = { action: "key"; keys: string[] }
+/** WP2: wheel scroll at a client point; delta in wheel units (±, capped). */
+export type ComputerScrollAction = { action: "scroll"; x: number; y: number; delta: number }
+/** WP2: left-button drag from (x,y) to (x2,y2), client px. */
+export type ComputerDragAction = { action: "drag"; x: number; y: number; x2: number; y2: number }
+
 export type ComputerWaitAction = { action: "wait"; ms: number }
 export type ComputerReadAction = { action: "screenshot" } | { action: "describe" }
 
 export type ComputerAction =
   | ComputerClickAction
   | ComputerTypeAction
+  | ComputerKeyAction
+  | ComputerScrollAction
+  | ComputerDragAction
   | ComputerWaitAction
   | ComputerReadAction
 
@@ -48,7 +60,26 @@ export const INJECTIVE_ACTIONS: ReadonlySet<string> = new Set([
   "double_click",
   "right_click",
   "type",
+  "key",
+  "scroll",
+  "drag",
 ])
+
+/**
+ * WP2 key whitelist (plan §D.3 "白名单键名 + 组合"). Modifiers + named keys
+ * ONLY — printable text goes through `type` (A3 corpus). Lowercase names.
+ */
+export const ALLOWED_KEY_NAMES: readonly string[] = [
+  "ctrl", "alt", "shift", "win",
+  "enter", "escape", "tab", "space", "backspace", "delete",
+  "up", "down", "left", "right", "home", "end", "pageup", "pagedown",
+  "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12",
+]
+export const ALLOWED_KEY_SET: ReadonlySet<string> = new Set(ALLOWED_KEY_NAMES)
+/** Max keys in one chord (e.g. ctrl+shift+enter = 3). */
+export const MAX_KEY_CHORD = 4
+/** Scroll delta bounds (wheel units; 120 = one notch). */
+export const MAX_SCROLL_DELTA = 1200
 
 export interface ComputerTaskParams {
   /** User task description — the ONLY instruction source (plan §E.1). */
@@ -250,6 +281,12 @@ export type ClickKind = "click" | "double_click" | "right_click"
 export interface InputInjector {
   click(hwnd: number, x: number, y: number, kind: ClickKind): Promise<void>
   typeText(hwnd: number, text: string): Promise<void>
+  /** WP2: named-key chord, whitelist-validated upstream (executor + ps1). */
+  keyChord(hwnd: number, keys: string[]): Promise<void>
+  /** WP2: wheel scroll at a client point (delta in wheel units, ± capped). */
+  scroll(hwnd: number, x: number, y: number, delta: number): Promise<void>
+  /** WP2: left-button drag (x,y) -> (x2,y2), client px. */
+  drag(hwnd: number, x: number, y: number, x2: number, y2: number): Promise<void>
   probeWindow(hwnd: number): Promise<WindowInfo>
   foregroundHwnd(): Promise<number>
 }

@@ -126,6 +126,9 @@ class FakeLocator implements Locator {
 class RecordingInjector implements InputInjector {
   clicks: Array<{ hwnd: number; x: number; y: number; kind: string }> = []
   types: Array<{ hwnd: number; text: string }> = []
+  keyChords: Array<{ hwnd: number; keys: string[] }> = []
+  scrolls: Array<{ hwnd: number; x: number; y: number; delta: number }> = []
+  drags: Array<{ hwnd: number; x: number; y: number; x2: number; y2: number }> = []
   foreground: number = HWND
   alive = true
   async click(hwnd: number, x: number, y: number, kind: any): Promise<void> {
@@ -133,6 +136,15 @@ class RecordingInjector implements InputInjector {
   }
   async typeText(hwnd: number, text: string): Promise<void> {
     this.types.push({ hwnd, text })
+  }
+  async keyChord(hwnd: number, keys: string[]): Promise<void> {
+    this.keyChords.push({ hwnd, keys })
+  }
+  async scroll(hwnd: number, x: number, y: number, delta: number): Promise<void> {
+    this.scrolls.push({ hwnd, x, y, delta })
+  }
+  async drag(hwnd: number, x: number, y: number, x2: number, y2: number): Promise<void> {
+    this.drags.push({ hwnd, x, y, x2, y2 })
   }
   async probeWindow(): Promise<WindowInfo> { return winInfo({ alive: this.alive }) }
   async foregroundHwnd(): Promise<number> { return this.foreground }
@@ -906,4 +918,102 @@ test("executor: OCR language missing propagates as OcrLanguageMissing typed skip
   const deps = makeDeps({ locator })
   const r = await runComputerTask({ task: "t", app: "win.app.test", actions: [clickOk] }, deps)
   assert.equal(r.errorCode, "OCR_LANGUAGE_MISSING")
+})
+
+// --- WP2: key / scroll / drag primitives -----------------------------------------
+
+test("executor WP2: key chord dispatches to the injector (whitelist chord)", async () => {
+  const injector = new RecordingInjector()
+  const deps = makeDeps({ injector })
+  const r = await runComputerTask(
+    { task: "t", app: "win.app.test", actions: [{ action: "key", keys: ["ctrl", "enter"] }] },
+    deps,
+  )
+  assert.equal(r.success, true)
+  assert.deepEqual(injector.keyChords, [{ hwnd: HWND, keys: ["ctrl", "enter"] }])
+  assert.equal(injector.clicks.length, 0)
+})
+
+test("executor WP2: non-whitelist / empty / over-length key chords -> INVALID_ACTION, nothing injected", async () => {
+  for (const keys of [["a"], [], ["ctrl", "alt", "shift", "win", "enter"]]) {
+    const injector = new RecordingInjector()
+    const deps = makeDeps({ injector })
+    const r = await runComputerTask(
+      { task: "t", app: "win.app.test", actions: [{ action: "key", keys }] as any },
+      deps,
+    )
+    assert.equal(r.errorCode, "INVALID_ACTION", `keys=${JSON.stringify(keys)}`)
+    assert.equal(injector.keyChords.length, 0)
+  }
+})
+
+test("executor WP2: key chord in a credential context -> DANGER_HARD_DENY (submits forms too)", async () => {
+  const injector = new RecordingInjector()
+  const deps = makeDeps({
+    injector,
+    locator: new FakeLocator([{ text: "密码", x: 100, y: 100, w: 60, h: 30 }]),
+  })
+  const r = await runComputerTask(
+    { task: "t", app: "win.app.test", actions: [{ action: "key", keys: ["enter"] }] },
+    deps,
+  )
+  assert.equal(r.errorCode, "DANGER_HARD_DENY")
+  assert.equal(injector.keyChords.length, 0)
+})
+
+test("executor WP2: scroll dispatches with point + delta; uncrossverified bookkeeping", async () => {
+  const injector = new RecordingInjector()
+  const evidence = new FakeEvidence()
+  const deps = makeDeps({ injector, evidenceFactory: () => evidence })
+  const r = await runComputerTask(
+    { task: "t", app: "win.app.test", actions: [{ action: "scroll", x: 100, y: 100, delta: -240 }] },
+    deps,
+  )
+  assert.equal(r.success, true)
+  assert.deepEqual(injector.scrolls, [{ hwnd: HWND, x: 100, y: 100, delta: -240 }])
+  assert.equal(evidence.records[0].uncrossverified, true, "explicit coords consume the A1.3 sub-budget")
+})
+
+test("executor WP2: scroll delta 0 / beyond ±1200 -> INVALID_ACTION", async () => {
+  for (const delta of [0, 1201, -1201]) {
+    const injector = new RecordingInjector()
+    const deps = makeDeps({ injector })
+    const r = await runComputerTask(
+      { task: "t", app: "win.app.test", actions: [{ action: "scroll", x: 1, y: 1, delta }] },
+      deps,
+    )
+    assert.equal(r.errorCode, "INVALID_ACTION", `delta=${delta}`)
+    assert.equal(injector.scrolls.length, 0)
+  }
+})
+
+test("executor WP2: scroll point outside client rect -> OUT_OF_BOUNDS", async () => {
+  const injector = new RecordingInjector()
+  const deps = makeDeps({ injector })
+  const r = await runComputerTask(
+    { task: "t", app: "win.app.test", actions: [{ action: "scroll", x: 10000, y: 10, delta: 120 }] },
+    deps,
+  )
+  assert.equal(r.errorCode, "OUT_OF_BOUNDS")
+  assert.equal(injector.scrolls.length, 0)
+})
+
+test("executor WP2: drag dispatches start+endpoint; endpoint outside client rect -> OUT_OF_BOUNDS", async () => {
+  const injector = new RecordingInjector()
+  const deps = makeDeps({ injector })
+  const ok = await runComputerTask(
+    { task: "t", app: "win.app.test", actions: [{ action: "drag", x: 10, y: 10, x2: 200, y2: 200 }] },
+    deps,
+  )
+  assert.equal(ok.success, true)
+  assert.deepEqual(injector.drags, [{ hwnd: HWND, x: 10, y: 10, x2: 200, y2: 200 }])
+
+  const injector2 = new RecordingInjector()
+  const deps2 = makeDeps({ injector: injector2 })
+  const bad = await runComputerTask(
+    { task: "t", app: "win.app.test", actions: [{ action: "drag", x: 10, y: 10, x2: 99999, y2: 10 }] },
+    deps2,
+  )
+  assert.equal(bad.errorCode, "OUT_OF_BOUNDS")
+  assert.equal(injector2.drags.length, 0)
 })

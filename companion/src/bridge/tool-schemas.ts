@@ -103,7 +103,7 @@ export const TOOL_ARG_SCHEMAS: Record<string, z.ZodTypeAny> = {
     security_token: z.string().optional(),
   }),
 
-  // --- Windows host_computer (coordinate computer-use WP1, critical-class) ---
+  // --- Windows host_computer (coordinate computer-use WP1+WP2, critical-class) ---
   host_computer: z.object({
     task: z.string().min(1),
     app: z.string().min(1),
@@ -116,6 +116,31 @@ export const TOOL_ARG_SCHEMAS: Record<string, z.ZodTypeAny> = {
           target: z.string().min(1).optional(),
         }).strict(),
         z.object({ action: z.literal("type"), text: z.string().min(1).max(2000) }).strict(),
+        // WP2: named-key whitelist chords (no arbitrary VK; text goes via type).
+        z.object({
+          action: z.literal("key"),
+          keys: z.array(z.enum([
+            "ctrl", "alt", "shift", "win",
+            "enter", "escape", "tab", "space", "backspace", "delete",
+            "up", "down", "left", "right", "home", "end", "pageup", "pagedown",
+            "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12",
+          ])).min(1).max(4),
+        }).strict(),
+        // WP2: wheel scroll at a client point (delta in wheel units).
+        z.object({
+          action: z.literal("scroll"),
+          x: z.number().int().min(0),
+          y: z.number().int().min(0),
+          delta: z.number().int().min(-1200).max(1200).refine((d) => d !== 0, "delta must be non-zero"),
+        }).strict(),
+        // WP2: left-button drag between two client points.
+        z.object({
+          action: z.literal("drag"),
+          x: z.number().int().min(0),
+          y: z.number().int().min(0),
+          x2: z.number().int().min(0),
+          y2: z.number().int().min(0),
+        }).strict(),
         z.object({ action: z.literal("wait"), ms: z.number().int().min(0).max(5000) }).strict(),
         z.object({ action: z.literal("screenshot") }).strict(),
         z.object({ action: z.literal("describe") }).strict(),
