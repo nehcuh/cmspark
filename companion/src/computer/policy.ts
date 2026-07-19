@@ -91,6 +91,10 @@ export function normalizeExePath(p: string): string {
  * §E.2.1/B5 — hwnd ownership: the window's process exe must resolve to the
  * SAME binary recorded in the AppEntry. Re-checked before every injection
  * (window replacement / pid reuse mid-task stops the task, fail-closed).
+ * WP2: the RESOLVED exe also passes the vault/LOLBIN structural recheck —
+ * a whitelisted-looking entry whose hwnd now belongs to a browser/LOLBIN
+ * process (config tamper, path swap) is denied at execution time, same as
+ * `win/adapter.ts`'s vacuous recheck philosophy (§E.2.2).
  */
 export function assertHwndOwnedByEntry(info: WindowInfo, entry: AppEntry): void {
   if (!info.alive) {
@@ -105,6 +109,46 @@ export function assertHwndOwnedByEntry(info: WindowInfo, entry: AppEntry): void 
       "HWND_NOT_OWNED",
       `computer: hwnd ${info.hwnd} belongs to "${info.exePath ?? "unknown"}", not the whitelisted "${entryPath}" — refusing to inject`,
       { hwnd: info.hwnd, actual: info.exePath, expected: entryPath },
+    )
+  }
+  // WP2: defensive structural recheck on the RESOLVED exe (not just the
+  // recorded entry config) — the coordinate path re-denies vault/LOLBIN at
+  // the moment of truth.
+  if (isLolbinPath(info.exePath!) || basenameToVault(info.exePath!) !== null) {
+    throw new ComputerError(
+      "APP_COORDINATE_STRUCTURAL",
+      `computer: hwnd ${info.hwnd} resolves to a vault/LOLBIN binary "${info.exePath}" — coordinate operation is structurally denied`,
+      { hwnd: info.hwnd, actual: info.exePath },
+    )
+  }
+}
+
+/**
+ * WP2: exe sha256 drift vs the add-time record (§E.2.1 optional hardening).
+ * Computed ONCE per task (hashing per action would re-read a multi-MB binary
+ * on every step; the per-action path+structural checks above stay fresh).
+ * Drift = the binary on disk no longer matches what the owner whitelisted —
+ * for coordinate injection this fails CLOSED (the plan's "drift -> manual"
+ * downgrade means: the task stops and a human must re-review the entry).
+ */
+export function assertExeNotDrifted(entry: AppEntry, hashFile: (p: string) => string): void {
+  const recorded = entry.exe?.sha256
+  const exePath = entry.exe?.path
+  if (!recorded || !exePath) return // no add-time record — nothing to compare
+  let actual: string
+  try {
+    actual = hashFile(exePath)
+  } catch (err) {
+    throw new ComputerError(
+      "APP_EXE_DRIFT",
+      `computer: could not hash "${exePath}" for the drift check (${String((err as Error)?.message ?? err)}) — fail-closed`,
+    )
+  }
+  if (actual.toLowerCase() !== recorded.toLowerCase()) {
+    throw new ComputerError(
+      "APP_EXE_DRIFT",
+      `computer: "${exePath}" sha256 drifted since add-time — the whitelisted binary was replaced; refusing coordinate operation until the entry is re-reviewed`,
+      { expected: recorded.toLowerCase(), actual: actual.toLowerCase() },
     )
   }
 }

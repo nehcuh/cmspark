@@ -30,7 +30,7 @@ import type { SecurityConfirmationDetails } from "../src/security-confirmation"
 const EXE = "C:\\Program Files\\TestApp\\app.exe"
 const HWND = 424242
 
-function testConfig(overrides: { coordinateEnabled?: boolean; coordinateAllowed?: boolean; exePath?: string } = {}): CompanionConfig {
+function testConfig(overrides: { coordinateEnabled?: boolean; coordinateAllowed?: boolean; exePath?: string; exeSha256?: string } = {}): CompanionConfig {
   return {
     apps: {
       enabled: true,
@@ -43,7 +43,12 @@ function testConfig(overrides: { coordinateEnabled?: boolean; coordinateAllowed?
           policy: "manual",
           enabled: true,
           added_at: "2026-07-18T10:00:00.000Z",
-          exe: { path: overrides.exePath ?? EXE, signer: "CN=Test", user_writable_dir: false },
+          exe: {
+            path: overrides.exePath ?? EXE,
+            signer: "CN=Test",
+            user_writable_dir: false,
+            ...(overrides.exeSha256 !== undefined ? { sha256: overrides.exeSha256 } : {}),
+          },
           ...(overrides.coordinateAllowed !== undefined ? { coordinateAllowed: overrides.coordinateAllowed } : { coordinateAllowed: true }),
         },
       },
@@ -1016,4 +1021,40 @@ test("executor WP2: drag dispatches start+endpoint; endpoint outside client rect
   )
   assert.equal(bad.errorCode, "OUT_OF_BOUNDS")
   assert.equal(injector2.drags.length, 0)
+})
+
+// --- WP2: exe sha256 drift binding --------------------------------------------
+
+test("executor WP2: exe sha256 drift since add-time -> APP_EXE_DRIFT, zero injection", async () => {
+  const injector = new RecordingInjector()
+  const deps = makeDeps({
+    injector,
+    config: testConfig({ exeSha256: "abc123" }),
+    hashFile: () => "deadbeef", // the binary on disk no longer matches the record
+  })
+  const r = await runComputerTask({ task: "t", app: "win.app.test", actions: [clickOk] }, deps)
+  assert.equal(r.errorCode, "APP_EXE_DRIFT")
+  assert.equal(injector.clicks.length, 0)
+})
+
+test("executor WP2: matching exe sha256 -> drift check hashes ONCE per task", async () => {
+  let hashCalls = 0
+  const deps = makeDeps({
+    config: testConfig({ exeSha256: "abc123" }),
+    hashFile: () => { hashCalls += 1; return "ABC123" },
+  })
+  const r = await runComputerTask(
+    { task: "t", app: "win.app.test", actions: [clickOk, { action: "wait", ms: 1 }] },
+    deps,
+  )
+  assert.equal(r.success, true)
+  assert.equal(hashCalls, 1, "hash is computed once — the per-action path/structural checks stay fresh")
+})
+
+test("executor WP2: entry without an add-time hash -> hasher never runs", async () => {
+  let hashCalls = 0
+  const deps = makeDeps({ hashFile: () => { hashCalls += 1; return "x" } })
+  const r = await runComputerTask({ task: "t", app: "win.app.test", actions: [clickOk] }, deps)
+  assert.equal(r.success, true)
+  assert.equal(hashCalls, 0)
 })

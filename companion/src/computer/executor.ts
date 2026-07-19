@@ -31,13 +31,13 @@
 // server gate BEFORE this executor runs; re-L2s raised here go through the
 // injected origin-bound confirmation channel.
 
-import { randomUUID } from "crypto"
+import { createHash, randomUUID } from "crypto"
 import * as fs from "fs"
 import type { CompanionConfig } from "../config"
 import type { SecurityConfirmationDecision, SecurityConfirmationDetails } from "../security-confirmation"
 import { scanDanger, type DangerScan } from "./danger"
 import type { EvidenceFactory, EvidenceSink } from "./evidence"
-import { assertCoordinateAllowed, assertHwndOwnedByEntry } from "./policy"
+import { assertCoordinateAllowed, assertExeNotDrifted, assertHwndOwnedByEntry } from "./policy"
 import {
   ALLOWED_KEY_SET,
   ComputerError,
@@ -90,6 +90,11 @@ export interface ComputerExecutorDeps {
    * the no-residue property tests; production default is fs.rm force.
    */
   removeFile?: (path: string) => Promise<void>
+  /**
+   * WP2: exe hasher for the add-time sha256 drift check (§E.2.1). Computed
+   * once per task. Injectable for tests; production default reads the file.
+   */
+  hashFile?: (path: string) => string
 }
 
 export interface ComputerStepResult {
@@ -273,6 +278,11 @@ export async function runComputerTask(
   let entry
   try {
     entry = assertCoordinateAllowed(deps.config, params.app)
+    // WP2: exe sha256 drift vs the add-time record (§E.2.1) — computed once,
+    // fail-closed; the per-action path + vault/LOLBIN rechecks stay fresh.
+    const hashFile =
+      deps.hashFile ?? ((p: string) => createHash("sha256").update(fs.readFileSync(p)).digest("hex"))
+    assertExeNotDrifted(entry, hashFile)
   } catch (err) {
     return fail(err as ComputerError)
   }
@@ -308,6 +318,9 @@ export async function runComputerTask(
     hwnd,
     corpusHash,
     budget,
+    // WP2: hwnd binding evidence — the entry carried an add-time exe hash
+    // and it verified (assertExeNotDrifted passed by the time we are here).
+    exeSha256Verified: entry.exe?.sha256 ? true : false,
     startedAt: new Date(now()).toISOString(),
   })
   log("computer.task.started", { taskId, app: entry.token, hwnd, budget })

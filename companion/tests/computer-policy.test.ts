@@ -7,6 +7,7 @@ import assert from "node:assert/strict"
 
 import {
   assertCoordinateAllowed,
+  assertExeNotDrifted,
   assertHwndOwnedByEntry,
   canEverCoordinate,
   normalizeExePath,
@@ -269,4 +270,42 @@ test("policy: validateAppEntry rejects non-boolean coordinateAllowed", () => {
   ;(entry as any).coordinateAllowed = "yes"
   const err = validateAppEntry(entry)
   assert.ok(err !== null && err.includes("coordinateAllowed must be a boolean"))
+})
+
+// --- WP2: resolved-exe vault/LOLBIN recheck + exe sha256 drift -------------------
+
+test("policy WP2: hwnd resolves to a VAULT binary matching a tampered entry -> APP_COORDINATE_STRUCTURAL", () => {
+  const tampered = makeEntry({ exe: { path: CHROME_EXE, user_writable_dir: false }, coordinateAllowed: true })
+  assertComputerError(
+    () => assertHwndOwnedByEntry(hwndInfo({ exePath: CHROME_EXE }), tampered),
+    "APP_COORDINATE_STRUCTURAL",
+  )
+})
+
+test("policy WP2: hwnd resolves to a LOLBIN matching a tampered entry -> APP_COORDINATE_STRUCTURAL", () => {
+  const tampered = makeEntry({ exe: { path: POWERSHELL_EXE, user_writable_dir: false }, coordinateAllowed: true })
+  assertComputerError(
+    () => assertHwndOwnedByEntry(hwndInfo({ exePath: POWERSHELL_EXE }), tampered),
+    "APP_COORDINATE_STRUCTURAL",
+  )
+})
+
+test("policy WP2: clean resolved exe passes the structural recheck", () => {
+  assertHwndOwnedByEntry(hwndInfo(), makeEntry())
+})
+
+test("policy WP2 drift: matching sha256 -> ok; drifted -> APP_EXE_DRIFT; unreadable -> APP_EXE_DRIFT (fail-closed)", () => {
+  const entry = makeEntry({ exe: { path: EXE, user_writable_dir: false, sha256: "abc123" } as any })
+  assertExeNotDrifted(entry, () => "ABC123") // case-insensitive compare
+  assertComputerError(() => assertExeNotDrifted(entry, () => "deadbeef"), "APP_EXE_DRIFT")
+  assertComputerError(
+    () => assertExeNotDrifted(entry, () => { throw new Error("open failed") }),
+    "APP_EXE_DRIFT",
+  )
+})
+
+test("policy WP2 drift: no add-time record -> nothing to compare (passes)", () => {
+  let calls = 0
+  assertExeNotDrifted(makeEntry(), () => { calls += 1; return "x" })
+  assert.equal(calls, 0, "hasher must not run when the entry carries no sha256")
 })

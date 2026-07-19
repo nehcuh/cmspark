@@ -148,6 +148,7 @@ export type ComputerErrorCode =
   | "APP_COORDINATE_STRUCTURAL" // vault/LOLBIN-mapped app can never opt in (A10.3)
   | "APP_NOT_WHITELISTED"
   | "APP_WINDOW_NOT_FOUND"
+  | "APP_EXE_DRIFT" // WP2: exe sha256 differs from the add-time record — fail-closed
   | "HWND_NOT_OWNED" // hwnd drifted to a non-whitelisted process (§E.2.4)
   | "HWND_DEAD"
   | "INTEGRITY_LEVEL_DENIED" // cross-IL target — fail-closed (§D.2)
