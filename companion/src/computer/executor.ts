@@ -37,7 +37,7 @@ import type { CompanionConfig } from "../config"
 import type { SecurityConfirmationDecision, SecurityConfirmationDetails } from "../security-confirmation"
 import { scanDanger, type DangerScan } from "./danger"
 import type { EvidenceFactory, EvidenceSink } from "./evidence"
-import { assertCoordinateAllowed, assertExeNotDrifted, assertHwndOwnedByEntry } from "./policy"
+import { assertCoordinateAllowed, assertExeNotDrifted, assertHwndOwnedByEntry, normalizeExePath } from "./policy"
 import {
   ALLOWED_KEY_SET,
   ComputerError,
@@ -759,18 +759,39 @@ export async function runComputerTask(
       })
 
       if (dialogSuspected) {
-        log("computer.task.dialog_suspected", {
+        // WP2 (§E.2.4) — classify the foreground change: when the foreground
+        // window now belongs to a DIFFERENT process than the whitelisted exe,
+        // this is a FOREGROUND YIELD (借尸还魂 — a foreign window covered the
+        // target), not a task-induced dialog. Same conservative pause + re-L2,
+        // but the reason names the foreign process and the audit event
+        // distinguishes the channels. Probe failure = treated as foreign
+        // (fail-closed direction).
+        let fgYielded = false
+        let fgOwnerExe: string | null = null
+        if (fg !== 0 && fg !== hwnd) {
+          try {
+            fgOwnerExe = (await deps.windows.infoForHwnd(fg)).exePath
+          } catch {
+            fgOwnerExe = null
+          }
+          fgYielded = fgOwnerExe === null || normalizeExePath(fgOwnerExe) !== normalizeExePath(entry.exe!.path)
+        }
+        log(fgYielded ? "computer.task.foreground_yielded" : "computer.task.dialog_suspected", {
           taskId,
           seq,
           fgChanged: fg !== hwnd,
+          fgOwnerExe,
           newTopLevel,
           diffRatio,
           maxZoneRatio,
           maxBlobRatio,
         })
+        const fgName = fgOwnerExe ? fgOwnerExe.split(/[\\/]/).pop() : "unknown"
         const ok = await reL2(
-          "本任务的操作引发了新对话框或大面积界面变化（确认型对话框的按钮不会由 agent 点击）。请检查目标窗口后决定是否继续。",
-          ["computer.task_induced_dialog"],
+          fgYielded
+            ? `前台窗口被其他进程（${fgName}）接管——目标窗口已让位，继续注入可能落在非白名单窗口上。请检查屏幕后决定是否继续。`
+            : "本任务的操作引发了新对话框或大面积界面变化（确认型对话框的按钮不会由 agent 点击）。请检查目标窗口后决定是否继续。",
+          [fgYielded ? "computer.foreground_yielded" : "computer.task_induced_dialog"],
         )
         if (!ok) {
           throw new ComputerError("DIALOG_PAUSED_DENIED", "computer: task paused on a suspected task-induced dialog; continuation denied")

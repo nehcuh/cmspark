@@ -1058,3 +1058,61 @@ test("executor WP2: entry without an add-time hash -> hasher never runs", async 
   assert.equal(r.success, true)
   assert.equal(hashCalls, 0)
 })
+
+// --- WP2: foreground-yield classification (§E.2.4) ------------------------------
+
+test("executor WP2: foreground owned by a DIFFERENT process -> yield pause naming the process", async () => {
+  const confirm = scriptedConfirm([false])
+  const injector = new RecordingInjector()
+  injector.foreground = 999999
+  const info = winInfo()
+  const windows: WindowEnumerator = {
+    async enumerateByExe() { return [info] },
+    async infoForHwnd(h: number) {
+      return h === 999999 ? winInfo({ hwnd: 999999, exePath: "C:\\Other\\sneaky.exe" }) : info
+    },
+  }
+  const deps = makeDeps({ confirm: confirm.fn, injector, windows })
+  const r = await runComputerTask({ task: "t", app: "win.app.test", actions: [clickOk] }, deps)
+  assert.equal(r.errorCode, "DIALOG_PAUSED_DENIED")
+  assert.equal(confirm.captured.length, 1)
+  assert.ok(confirm.captured[0].details.code.includes("sneaky.exe"), "reason names the foreign process")
+  assert.ok(confirm.captured[0].details.code.includes("让位"), "yield semantics, not dialog semantics")
+  assert.ok(confirm.captured[0].details.dangerousApis.includes("computer.foreground_yielded"))
+})
+
+test("executor WP2: foreground probe failure -> treated as foreign yield (fail-closed)", async () => {
+  const confirm = scriptedConfirm([false])
+  const injector = new RecordingInjector()
+  injector.foreground = 999999
+  const info = winInfo()
+  const windows: WindowEnumerator = {
+    async enumerateByExe() { return [info] },
+    async infoForHwnd(h: number) {
+      if (h === 999999) throw new Error("hwnd dead mid-probe")
+      return info
+    },
+  }
+  const deps = makeDeps({ confirm: confirm.fn, injector, windows })
+  const r = await runComputerTask({ task: "t", app: "win.app.test", actions: [clickOk] }, deps)
+  assert.equal(r.errorCode, "DIALOG_PAUSED_DENIED")
+  assert.ok(confirm.captured[0].details.code.includes("unknown"))
+})
+
+test("executor WP2: same-exe foreground window keeps the DIALOG channel (not a yield)", async () => {
+  const confirm = scriptedConfirm([false])
+  const injector = new RecordingInjector()
+  injector.foreground = 999999
+  const info = winInfo()
+  const windows: WindowEnumerator = {
+    async enumerateByExe() { return [info] },
+    async infoForHwnd(h: number) {
+      return h === 999999 ? winInfo({ hwnd: 999999 }) : info // same exePath as the entry
+    },
+  }
+  const deps = makeDeps({ confirm: confirm.fn, injector, windows })
+  const r = await runComputerTask({ task: "t", app: "win.app.test", actions: [clickOk] }, deps)
+  assert.equal(r.errorCode, "DIALOG_PAUSED_DENIED")
+  assert.ok(confirm.captured[0].details.code.includes("对话框"))
+  assert.ok(confirm.captured[0].details.dangerousApis.includes("computer.task_induced_dialog"))
+})
