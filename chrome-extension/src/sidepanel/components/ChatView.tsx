@@ -7,6 +7,7 @@ import { marked } from "marked"
 import markedKatex from "marked-katex-extension"
 import DOMPurify from "dompurify"
 import { renderMermaidBlocks, prefetchMermaid } from "./mermaid"
+import { isValidEvidenceTaskId } from "../utils/computer-utils"
 // KaTeX stylesheet — bundled by Plasmo; needed for math glyph fonts/layout.
 import "katex/dist/katex.min.css"
 
@@ -368,6 +369,19 @@ function ToolCallCard({ tc }: { tc: any }) {
   const visionDescription = tc.result?.data?.vision_description
   const hasVisionDescription = isVisionTool && visionDescription
 
+  // WP4 (WI-5): host_computer 紧凑任务卡——completed/total、error_code(失败
+  // 红色)、「📂 打开证据目录」(taskId 先过 isValidEvidenceTaskId;路径解析
+  // 全在 companion)。无 evidenceDir 的旧 companion 结果只读展示。字段名兼容
+  // camel/snake(结果形状以 companion ComputerTaskResult 为准)。
+  const isComputerTask = tc.tool_name === "host_computer"
+  const computerData = isComputerTask && tc.result?.data && typeof tc.result.data === "object" ? tc.result.data : null
+  const computerTaskId = computerData?.taskId
+  const computerEvidenceDir = computerData?.evidenceDir ?? computerData?.evidence_dir
+  const computerErrorCode = computerData?.errorCode ?? computerData?.error_code
+  const computerFailed = computerData !== null && (computerData.success === false || tc.status === "error")
+  const canOpenEvidence =
+    typeof computerEvidenceDir === "string" && computerEvidenceDir !== "" && isValidEvidenceTaskId(computerTaskId)
+
   return (
     <div style={{
       ...styles.toolCard,
@@ -421,6 +435,52 @@ function ToolCallCard({ tc }: { tc: any }) {
               style={{ fontSize: 10, color: "#4A90D9", background: "none", border: "none", cursor: "pointer", padding: "2px 0", marginTop: 2 }}
             >
               {visionExpanded ? "收起 ▲" : "展开全部 ▼"}
+            </button>
+          )}
+        </div>
+      )}
+      {computerData && (
+        <div
+          style={{
+            marginTop: 6,
+            padding: "6px 10px",
+            background: computerFailed ? "#FFF5F5" : "#F0F7FF",
+            borderRadius: 4,
+            borderLeft: `3px solid ${computerFailed ? "#F44336" : "#4A90D9"}`,
+            fontSize: 11,
+            color: "#333",
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            flexWrap: "wrap",
+          }}
+        >
+          <span>
+            坐标任务：完成 {computerData.completedActions ?? "?"}/{computerData.totalActions ?? "?"} 步
+          </span>
+          {computerFailed && computerErrorCode && (
+            <span style={{ color: "#F44336", fontWeight: 700 }}>{String(computerErrorCode)}</span>
+          )}
+          {canOpenEvidence && (
+            <button
+              type="button"
+              title="在 companion 机器上打开该任务的证据目录（explorer）"
+              onClick={(e) => {
+                e.stopPropagation()
+                chrome.runtime.sendMessage({ type: "computer.evidence.open", task_id: computerTaskId })
+              }}
+              style={{
+                marginLeft: "auto",
+                fontSize: 11,
+                color: "#1d4ed8",
+                background: "#dbeafe",
+                border: "none",
+                borderRadius: 4,
+                padding: "2px 8px",
+                cursor: "pointer",
+              }}
+            >
+              📂 打开证据目录
             </button>
           )}
         </div>

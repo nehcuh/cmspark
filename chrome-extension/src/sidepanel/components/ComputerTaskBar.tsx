@@ -14,7 +14,7 @@
 
 import { useEffect, useState } from "react"
 import { useAgentStore } from "../store/agentStore"
-import { previewImageSafe } from "../utils/computer-utils"
+import { isValidEvidenceTaskId, previewImageSafe } from "../utils/computer-utils"
 import { Modal } from "./ui/Modal"
 import type { ComputerLocateAttemptView, ComputerStepView } from "../types"
 
@@ -208,9 +208,24 @@ export function ComputerTaskBar() {
       )}
       {finished && (
         <div style={{ ...styles.finishedBar, background: task.ok === false ? "#FFEBEE" : "#E8F5E9" }}>
-          {task.ok === false
-            ? `任务失败${task.errorCode ? `（${task.errorCode}）` : ""}，完成 ${task.completed ?? 0}/${task.total ?? "?"} 步`
-            : `任务完成，共 ${task.completed ?? 0}/${task.total ?? "?"} 步`}
+          <span>
+            {task.ok === false
+              ? `任务失败${task.errorCode ? `（${task.errorCode}）` : ""}，完成 ${task.completed ?? 0}/${task.total ?? "?"} 步`
+              : `任务完成，共 ${task.completed ?? 0}/${task.total ?? "?"} 步`}
+          </span>
+          {task.evidenceDir && isValidEvidenceTaskId(task.taskId) && (
+            <button
+              type="button"
+              title="在 companion 机器上打开该任务的证据目录（explorer）"
+              style={styles.evidenceBtn}
+              onClick={(e) => {
+                e.stopPropagation()
+                chrome.runtime.sendMessage({ type: "computer.evidence.open", task_id: task.taskId })
+              }}
+            >
+              📂 打开证据目录
+            </button>
+          )}
         </div>
       )}
       {abortUnconfirmed && !task.abortAcked && !finished && (
@@ -314,6 +329,20 @@ const styles: Record<string, React.CSSProperties> = {
     padding: "6px 10px",
     color: "#374151",
     borderTop: "1px solid #e5e7eb",
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+  },
+  evidenceBtn: {
+    marginLeft: "auto",
+    fontSize: 11,
+    color: "#1d4ed8",
+    background: "#dbeafe",
+    border: "none",
+    borderRadius: 4,
+    padding: "2px 8px",
+    cursor: "pointer",
+    flexShrink: 0,
   },
   abortWarnBar: {
     background: "#FFF3CD",
