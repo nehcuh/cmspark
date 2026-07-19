@@ -11,6 +11,14 @@
 //    the raw capture is deleted by the sealer — original pixels never persist.
 //  - 7-day TTL janitor + purge-all, covering the whole evidence directory.
 //  - history.db NEVER stores image bytes or full OCR text (store.ts redaction).
+//
+// Y10 threat model (DPAPI CurrentUser): the encryption binds ciphertext to
+// THIS Windows account. It defeats offline/disk/backup reads and OTHER local
+// users. It does NOT defeat a process running as the SAME user — any such
+// process can CryptUnprotectData with the same account entropy. Residual
+// accepted and documented (plan §E.5): same-user malware already owns the
+// desktop; DPAPI here is the at-rest/offline boundary, NOT an anti-malware
+// boundary.
 
 import * as fs from "fs"
 import * as path from "path"
