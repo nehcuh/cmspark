@@ -15,6 +15,10 @@ import * as os from "node:os"
 import * as path from "node:path"
 import type { WebSocket } from "ws"
 
+// 纯函数模块(无 config/env 触碰),可静态 import。
+import { buildComputerL2Preview } from "../src/computer/preview"
+import type { ComputerAction } from "../src/computer/types"
+
 let SecurityConfirmationManager: typeof import("../src/security-confirmation").SecurityConfirmationManager
 
 const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-sec-confirm-origin-"))
@@ -188,4 +192,94 @@ test("[backward compat] request() without originWs still works; any socket may r
   manager.rejectAll("disconnect")
   const d1 = await pending
   assert.equal(d1.reason, "disconnect")
+})
+
+// --- WP4: preview_image / preview_caption / full_preview 透传 ------------------
+// (§F.1 + P1 对抗裁决。三字段只流向 originWs 面板的确认对话框,绝不进工具结果。)
+
+test("WP4: details 三字段存在时逐字透传;缺省/空串时 payload 无对应 key", async () => {
+  const sent: any[] = []
+  const manager = new SecurityConfirmationManager(60_000)
+  const pending = manager.request(
+    (msg) => sent.push(msg),
+    {
+      toolName: "host_computer",
+      dangerousApis: [],
+      code: "computer task",
+      previewImage: "base64jpegdata",
+      previewCaption: "截图说明行",
+      fullPreview: "完整预览文本",
+    },
+    { originWs: mockWs("wp4-full") },
+  )
+  const req = sent[0]
+  assert.equal(req.preview_image, "base64jpegdata")
+  assert.equal(req.preview_caption, "截图说明行")
+  assert.equal(req.full_preview, "完整预览文本")
+  manager.rejectAll("disconnect")
+  await pending
+
+  // 缺省 → key 不存在(旧扩展忽略即回退现版对话框)
+  const sent2: any[] = []
+  const manager2 = new SecurityConfirmationManager(60_000)
+  const pending2 = manager2.request(
+    (msg) => sent2.push(msg),
+    { toolName: "evaluate", dangerousApis: [], code: "x" },
+    { originWs: mockWs("wp4-none") },
+  )
+  const req2 = sent2[0]
+  assert.equal("preview_image" in req2, false)
+  assert.equal("preview_caption" in req2, false)
+  assert.equal("full_preview" in req2, false)
+  manager2.rejectAll("disconnect")
+  await pending2
+
+  // 空串 → 同样不下发(条件是非空 string)
+  const sent3: any[] = []
+  const manager3 = new SecurityConfirmationManager(60_000)
+  const pending3 = manager3.request(
+    (msg) => sent3.push(msg),
+    { toolName: "host_computer", dangerousApis: [], code: "c", previewImage: "", previewCaption: "", fullPreview: "" },
+    { originWs: mockWs("wp4-empty") },
+  )
+  const req3 = sent3[0]
+  assert.equal("preview_image" in req3, false)
+  assert.equal("preview_caption" in req3, false)
+  assert.equal("full_preview" in req3, false)
+  manager3.rejectAll("disconnect")
+  await pending3
+})
+
+test("P1: 30 动作 + 2000 语料的 full_preview 逐字完整;code_preview 仍被 1200 截断", async () => {
+  const actions: ComputerAction[] = []
+  for (let i = 0; i < 29; i++) {
+    actions.push({ action: "click", x: 100 + i, y: 200 + i } as ComputerAction)
+  }
+  actions.push({ action: "type", text: "汉".repeat(2000) } as ComputerAction)
+  const full = buildComputerL2Preview({
+    task: "批量操作",
+    appDisplayName: "TestApp",
+    appToken: "win.app.test",
+    budget: 30,
+    actions,
+  })
+  assert.ok(full.length > 1200, `前提:枚举全文 ${full.length} 超过 CODE_PREVIEW_LIMIT`)
+
+  const sent: any[] = []
+  const manager = new SecurityConfirmationManager(60_000)
+  const pending = manager.request(
+    (msg) => sent.push(msg),
+    // code 与 fullPreview 同文:对照截断与非截断两条通路。
+    { toolName: "host_computer", dangerousApis: [], code: full, fullPreview: full },
+    { originWs: mockWs("p1-prop") },
+  )
+  const req = sent[0]
+  assert.equal(req.full_preview, full, "full_preview 逐字等于枚举全文(独立字段,绕过截断)")
+  assert.ok(req.code_preview.endsWith("\n…"), "code_preview 走 codePreview() 截断")
+  assert.equal(req.code_preview.length, 1202, "1200 前缀 + \\n…")
+  // 待输入语料的尾部:full_preview 对人可见,code_preview 不可见——P1 修复的洞。
+  assert.ok(req.full_preview.includes("汉".repeat(2000)))
+  assert.equal(req.code_preview.includes("汉".repeat(2000)), false)
+  manager.rejectAll("disconnect")
+  await pending
 })

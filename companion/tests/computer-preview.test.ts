@@ -10,7 +10,7 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 
-import { buildComputerL2Preview } from "../src/computer/preview"
+import { buildComputerL2Preview, sanitizeComputerCaption, type ComputerTaskEvent } from "../src/computer/preview"
 import type { ComputerAction } from "../src/computer/types"
 
 const BASE = {
@@ -84,4 +84,85 @@ test("L2 preview: anchor text containing quotes/newlines is escape-rendered", ()
     actions: [{ action: "click", target: '确定"\n支付' } as ComputerAction],
   })
   assert.ok(out.includes(String.raw`"确定\"\n支付"`), "hostile anchor cannot break the enumeration layout")
+})
+
+// --- WP4 P1:大预算任务的预览文本必然超过 code_preview 的 1200 截断 ----------
+// (full_preview 独立字段的逐字完整性质测试在 security-confirmation 套件;
+// 这里锁定「30 动作 + 2000 语料的枚举全文 > 1200」这一前提。)
+
+test("P1 premise: 30 actions + 2000-char corpus produce a preview far beyond CODE_PREVIEW_LIMIT(1200)", () => {
+  const actions: ComputerAction[] = []
+  for (let i = 0; i < 29; i++) {
+    actions.push({ action: "click", x: 100 + i, y: 200 + i } as ComputerAction)
+  }
+  actions.push({ action: "type", text: "汉".repeat(2000) } as ComputerAction)
+  const out = buildComputerL2Preview({ ...BASE, actions })
+  assert.ok(out.length > 1200, `preview length ${out.length} must exceed 1200`)
+  // 注入枚举只含 actuation 动作(29 个 click → [29];type 不进枚举);
+  // 语料在「待输入文本」区逐字枚举——两区尾部都在全文里。
+  assert.ok(out.includes("[29]"))
+  assert.ok(out.includes("汉".repeat(2000)))
+})
+
+// --- WP4 P3:sanitizeComputerCaption 字符类清洗(字面量一律显式 \uXXXX 转义,
+// 杜绝不可见字符落进源文件) -------------------------------------------------
+
+test("sanitizeComputerCaption: U+2028/U+2029/控制符 → 空格(不断行)", () => {
+  assert.equal(sanitizeComputerCaption("甲\u2028乙"), "甲 乙")
+  assert.equal(sanitizeComputerCaption("甲\u2029乙"), "甲 乙")
+  assert.equal(sanitizeComputerCaption("甲\n乙"), "甲 乙")
+  assert.equal(sanitizeComputerCaption("甲\r\n乙"), "甲 乙")
+  assert.equal(sanitizeComputerCaption("甲\t乙"), "甲 乙")
+})
+
+test("sanitizeComputerCaption: 零宽/格式字符(U+200B–U+200F、FEFF、U+2060、bidi)→ 删除", () => {
+  assert.equal(sanitizeComputerCaption("甲\u200B乙"), "甲乙")
+  assert.equal(sanitizeComputerCaption("甲\u200C乙"), "甲乙")
+  assert.equal(sanitizeComputerCaption("甲\u200D乙"), "甲乙")
+  assert.equal(sanitizeComputerCaption("甲\u200E乙"), "甲乙") // U+200E LRM
+  assert.equal(sanitizeComputerCaption("甲\uFEFF乙"), "甲乙") // FEFF BOM
+  assert.equal(sanitizeComputerCaption("甲\u2060乙"), "甲乙") // U+2060 WORD JOINER
+  assert.equal(sanitizeComputerCaption("甲\u202A乙\u202C"), "甲乙") // bidi 嵌入
+})
+
+test("sanitizeComputerCaption: 连续空格折叠 + 首尾 trim;非字符串输入安全", () => {
+  assert.equal(sanitizeComputerCaption("  甲   乙  "), "甲 乙")
+  assert.equal(sanitizeComputerCaption(undefined as any), "")
+  assert.equal(sanitizeComputerCaption(null as any), "")
+})
+
+test("P3 property: 含 U+2028/零宽字符的 caption 载荷不产生第二行", () => {
+  const forged = sanitizeComputerCaption("点击「确定\u2028\u200B」")
+  assert.equal(forged.split("\n").length, 1)
+  assert.equal(/[\u2028\u2029\u200B\uFEFF]/.test(forged), false)
+})
+
+// --- WP4:ComputerTaskEvent 事件字段形状(新增可选字段) ----------------------
+
+test("ComputerTaskEvent: WP4 新增字段形状(started.budget / step 定位字段 / finished.evidenceDir)", () => {
+  const started: ComputerTaskEvent = { event: "started", taskId: "t1", app: "A", task: "t", total: 3, budget: 15 }
+  assert.equal(started.budget, 15)
+  const step: ComputerTaskEvent = {
+    event: "step",
+    taskId: "t1",
+    seq: 1,
+    action: "click",
+    caption: "点击「确定」",
+    layer: "ocr",
+    confidence: 0.9,
+    durationMs: 123,
+    locateAttempts: [{ layer: "ocr", outcome: "hit", confidence: 0.9, ms: 100 }],
+    crossverified: true,
+    crossverifyChannel: "pixel-region",
+  }
+  assert.equal(step.locateAttempts?.[0].layer, "ocr")
+  assert.equal(step.crossverifyChannel, "pixel-region")
+  const finished: ComputerTaskEvent = {
+    event: "finished",
+    taskId: "t1",
+    ok: true,
+    completed: 3,
+    evidenceDir: "C:\\evidence\\t1",
+  }
+  assert.equal(finished.evidenceDir, "C:\\evidence\\t1")
 })

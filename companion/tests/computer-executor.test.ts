@@ -1429,3 +1429,65 @@ test("executor WP2: failed action never consumes the rate window", async () => {
   assert.equal(r.success, false)
   assert.equal(injected, 0)
 })
+
+// --- WP4: 事件字段透传 + P2/P3 不变量 -----------------------------------------
+
+test("executor WP4: started 带 budget;click step 带定位可观测字段;finished 带 evidenceDir", async () => {
+  const events: any[] = []
+  const deps = makeDeps({ onEvent: (ev: any) => events.push(ev) })
+  const r = await runComputerTask({ task: "t", app: "win.app.test", actions: [clickOk] }, deps)
+  assert.equal(r.success, true)
+
+  const started = events.find((e) => e.event === "started")
+  assert.equal(started.total, 1)
+  assert.equal(typeof started.budget, "number", "started 附动作预算总量(任务条分母)")
+  assert.ok(started.budget >= 1)
+
+  const step = events.find((e) => e.event === "step" && e.action === "click")
+  assert.equal(step.layer, "ocr")
+  assert.equal(typeof step.confidence, "number")
+  assert.equal(typeof step.durationMs, "number")
+  assert.ok(Array.isArray(step.locateAttempts) && step.locateAttempts.length >= 1, "证据链同源 locateAttempts")
+  assert.equal(step.crossverified, true)
+  assert.equal(step.crossverifyChannel, "pixel-region")
+  assert.equal(step.caption, "点击「确定」")
+
+  const finished = events.find((e) => e.event === "finished")
+  assert.equal(finished.ok, true)
+  assert.equal(finished.evidenceDir, "evidence-dir", "FakeEvidence.dir 透传(任务条证据入口)")
+})
+
+test("executor P3: 锚文本含 U+2028 时 step caption 单行(与 L2 caption 共用字符类清洗)", async () => {
+  const events: any[] = []
+  // OCR 词与锚文本同含 U+2028——locate 是精确子串匹配,同文才能命中,
+  // 从而走到 step emit 验证 caption 清洗。
+  const evilWords: OcrWord[] = [{ text: "确定\u2028X", x: 160, y: 208, w: 120, h: 30 }]
+  const deps = makeDeps({ locator: new FakeLocator(evilWords), onEvent: (ev: any) => events.push(ev) })
+  const r = await runComputerTask(
+    { task: "t", app: "win.app.test", actions: [{ action: "click", target: "确定\u2028X" } as ComputerAction] },
+    deps,
+  )
+  assert.equal(r.success, true)
+  const step = events.find((e) => e.event === "step" && e.action === "click")
+  assert.equal(step.caption.split("\n").length, 1, "pre-wrap 语境下不得出现第二行")
+  assert.equal(step.caption, "点击「确定 X」", "U+2028 → 空格")
+})
+
+test("executor P2: 工具结果 JSON 不含 previewImage/preview_image(预览只走事件通路,不进 LLM 上下文)", async () => {
+  const events: any[] = []
+  const previewBuilder = { build: async () => "BASE64_JPEG_PAYLOAD" }
+  const deps = makeDeps({ previewBuilder, onEvent: (ev: any) => events.push(ev) })
+  const r = await runComputerTask(
+    { task: "t", app: "win.app.test", actions: [{ action: "screenshot" } as ComputerAction, clickOk] },
+    deps,
+  )
+  assert.equal(r.success, true)
+  // 对照:面板事件通路确实携带预览图(能力本身存在)。
+  const shotStep = events.find((e) => e.event === "step" && e.action === "screenshot")
+  assert.equal(shotStep.previewImage, "BASE64_JPEG_PAYLOAD")
+  // P2 不变量:runComputerTask 返回值(进 LLM 上下文)绝不含预览图或其字段名。
+  const json = JSON.stringify(r)
+  assert.equal(json.includes("previewImage"), false)
+  assert.equal(json.includes("preview_image"), false)
+  assert.equal(json.includes("BASE64_JPEG_PAYLOAD"), false)
+})

@@ -10,8 +10,9 @@ import test, { before } from "node:test"
 import * as assert from "node:assert/strict"
 
 import { handleAppsMessage, type AppsHandlerDeps } from "../src/apps/handlers"
-import { handleComputerMessage } from "../src/computer/handlers"
+import { EvidenceOpenRateLimiter, handleComputerMessage } from "../src/computer/handlers"
 import type { AppEntry } from "../src/apps/types"
+import * as path from "path"
 
 let getConfig: typeof import("../src/config").getConfig
 let replaceAppsEntries: typeof import("../src/config").replaceAppsEntries
@@ -266,4 +267,137 @@ test("computer.set_enabled: unknown message -> error", async () => {
   reset()
   const r: any = await handleComputerMessage({ type: "computer.bogus" }, {})
   assert.equal(r.type, "error")
+})
+
+// --- computer.evidence.open (WP4) --------------------------------------------
+// 校验四件套:严格字符集 → 基目录内解析 → Y5 reparse 复查 → 存在性检查;
+// P6 频率上限按每 panelId 滑动窗口计数。openDir 只收解析后的完整路径
+// (独立 argv 传给 explorer,taskId 绝不拼进命令行模板)。
+
+const EVIDENCE_BASE = "C:\\evidence-test"
+
+function evidenceSurface(overrides: Record<string, unknown> = {}) {
+  return {
+    baseDir: EVIDENCE_BASE,
+    exists: () => true,
+    openDir: () => {},
+    limiter: new EvidenceOpenRateLimiter(),
+    reparseFs: { lstatSync: () => ({ isSymbolicLink: () => false }) },
+    ...overrides,
+  }
+}
+
+test("computer.evidence.open: 非法/穿越 task_id → INVALID_TASK_ID(在任何 fs 触碰之前)", async () => {
+  const openCalls: string[] = []
+  const deps = {
+    evidenceOpen: evidenceSurface({ openDir: (d: string) => openCalls.push(d) }),
+  }
+  for (const bad of ["../x", "a/b", "a\\b", "a b", "..", "", "a.b", "a;b"]) {
+    const r: any = await handleComputerMessage({ type: "computer.evidence.open", task_id: bad }, {}, deps as any)
+    assert.equal(r.type, "error", `task_id ${JSON.stringify(bad)}`)
+    assert.equal(r.code, "INVALID_TASK_ID")
+  }
+  // task_id 缺失(非 string)同样拒绝
+  const r: any = await handleComputerMessage({ type: "computer.evidence.open" }, {}, deps as any)
+  assert.equal(r.code, "INVALID_TASK_ID")
+  assert.equal(openCalls.length, 0, "openDir 从未被调")
+})
+
+test("computer.evidence.open: 目录不存在 → not_found", async () => {
+  const r: any = await handleComputerMessage(
+    { type: "computer.evidence.open", task_id: "task_1" },
+    {},
+    { evidenceOpen: evidenceSurface({ exists: () => false }) } as any,
+  )
+  assert.deepEqual(r, { type: "computer.evidence.open.result", ok: false, error: "not_found" })
+})
+
+test("computer.evidence.open: 任务目录是 reparse point → EVIDENCE_ERROR(Y5 复查)", async () => {
+  const openCalls: string[] = []
+  const dir = path.join(EVIDENCE_BASE, "task_1")
+  const r: any = await handleComputerMessage(
+    { type: "computer.evidence.open", task_id: "task_1" },
+    {},
+    {
+      evidenceOpen: evidenceSurface({
+        reparseFs: { lstatSync: (p: string) => ({ isSymbolicLink: () => p === dir }) },
+        openDir: (d: string) => openCalls.push(d),
+      }),
+    } as any,
+  )
+  assert.equal(r.type, "error")
+  assert.equal(r.code, "EVIDENCE_ERROR")
+  assert.equal(openCalls.length, 0, "reparse 拒绝发生在 openDir 之前")
+})
+
+test("computer.evidence.open: 成功 → openDir 收到 base+taskId 解析路径,result ok", async () => {
+  const openCalls: string[] = []
+  const r: any = await handleComputerMessage(
+    { type: "computer.evidence.open", task_id: "Task-1_a" },
+    { panelId: "p1" },
+    { evidenceOpen: evidenceSurface({ openDir: (d: string) => openCalls.push(d) }) } as any,
+  )
+  assert.deepEqual(r, { type: "computer.evidence.open.result", ok: true })
+  assert.deepEqual(openCalls, [path.join(EVIDENCE_BASE, "Task-1_a")])
+})
+
+test("computer.evidence.open P6: 同 panelId 第 6 次/分钟 → rate_limited,openDir 停在前 5 次", async () => {
+  const openCalls: string[] = []
+  const deps = {
+    evidenceOpen: evidenceSurface({ openDir: (d: string) => openCalls.push(d) }),
+  }
+  for (let i = 0; i < 5; i++) {
+    const r: any = await handleComputerMessage(
+      { type: "computer.evidence.open", task_id: "task_1" },
+      { panelId: "pA" },
+      deps as any,
+    )
+    assert.equal(r.ok, true, `第 ${i + 1} 次放行`)
+  }
+  const r6: any = await handleComputerMessage(
+    { type: "computer.evidence.open", task_id: "task_1" },
+    { panelId: "pA" },
+    deps as any,
+  )
+  assert.deepEqual(r6, { type: "computer.evidence.open.result", ok: false, error: "rate_limited" })
+  assert.equal(openCalls.length, 5, "超限调用不触达 openDir")
+})
+
+test("computer.evidence.open P6: 不同 panelId 独立计数桶", async () => {
+  const deps = { evidenceOpen: evidenceSurface() }
+  for (let i = 0; i < 5; i++) {
+    await handleComputerMessage({ type: "computer.evidence.open", task_id: "task_1" }, { panelId: "pA" }, deps as any)
+  }
+  const rB: any = await handleComputerMessage(
+    { type: "computer.evidence.open", task_id: "task_1" },
+    { panelId: "pB" },
+    deps as any,
+  )
+  assert.equal(rB.ok, true, "pB 桶未被 pA 消耗")
+  // 无 panelId 退化为进程级单桶,与命名桶互不影响
+  const rD: any = await handleComputerMessage({ type: "computer.evidence.open", task_id: "task_1" }, {}, deps as any)
+  assert.equal(rD.ok, true)
+})
+
+test("computer.evidence.open P6: 滑动窗口——60 秒后旧命中过期,恢复放行", async () => {
+  let nowMs = 1_000_000
+  const deps = {
+    evidenceOpen: evidenceSurface({ now: () => nowMs }),
+  }
+  for (let i = 0; i < 5; i++) {
+    await handleComputerMessage({ type: "computer.evidence.open", task_id: "task_1" }, { panelId: "pA" }, deps as any)
+  }
+  const blocked: any = await handleComputerMessage(
+    { type: "computer.evidence.open", task_id: "task_1" },
+    { panelId: "pA" },
+    deps as any,
+  )
+  assert.equal(blocked.error, "rate_limited")
+  nowMs += 61_000 // 过窗
+  const after: any = await handleComputerMessage(
+    { type: "computer.evidence.open", task_id: "task_1" },
+    { panelId: "pA" },
+    deps as any,
+  )
+  assert.equal(after.ok, true, "窗口滑过后恢复放行")
 })
