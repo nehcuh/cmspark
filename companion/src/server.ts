@@ -206,6 +206,21 @@ const mcpSessionByWs = new Map<WebSocket, string>()
 const computerTaskAbort = new Map<string, boolean>()
 
 /**
+ * WP2 (Y7): session-level injection rate limiter (process singleton). The
+ * pre-dialog gate refuses new computer tasks while the 60s window is
+ * saturated; the handler records every successful injection. Lazily created
+ * via dynamic import so non-Windows startups never load the module.
+ */
+let computerRateLimiterSingleton: import("./computer/rate-limit").InjectionRateLimiter | null = null
+async function computerRateLimiter(): Promise<import("./computer/rate-limit").InjectionRateLimiter> {
+  if (!computerRateLimiterSingleton) {
+    const { InjectionRateLimiter } = await import("./computer/rate-limit")
+    computerRateLimiterSingleton = new InjectionRateLimiter()
+  }
+  return computerRateLimiterSingleton
+}
+
+/**
  * Exported for integration tests (audit item 6 pattern): the per-connection
  * session id createToolExecutor registered for this socket. Tests need it to
  * drive handleSecurityConfirmationResponse with the SAME session id the gate
@@ -479,12 +494,21 @@ export function createToolExecutor(ws: WebSocket) {
         try {
           const entryC = assertCoordinateAllowed(getConfig(), String(finalParams.app || ""))
           const budgetN = Math.min(Math.max(1, Number(finalParams.budget) || 15), 30)
+          // Y7: session rate gate — a saturated 60s window refuses the task
+          // BEFORE the L2 dialog; a runaway agent must not burn human clicks.
+          const limiter = await computerRateLimiter()
+          if (limiter.saturated()) {
+            return failC(
+              `host_computer refused: session injection rate limit reached (${limiter.countInWindow()}/30 in the last 60s) [RATE_LIMITED] — wait for the window to drain before starting another computer task.`,
+            )
+          }
           computerPreview = buildComputerL2Preview({
             task: String(finalParams.task || ""),
             appDisplayName: entryC.display_name,
             appToken: entryC.token,
             budget: budgetN,
             actions: Array.isArray(finalParams.actions) ? finalParams.actions : [],
+            extraLines: [limiter.statusLine()],
           })
         } catch (err: any) {
           return failC(err?.message || String(err))
@@ -1881,6 +1905,15 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
                 }
               },
               previewBuilder: new PsPreviewBuilder(),
+              // Y7: count every successful injection into the session rate
+              // window (the singleton exists — the gate created it).
+              onActionInjected: () => {
+                try {
+                  computerRateLimiterSingleton?.record()
+                } catch {
+                  /* best-effort */
+                }
+              },
             },
           )
         } finally {

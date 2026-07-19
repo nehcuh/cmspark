@@ -1336,3 +1336,28 @@ test("executor WP2: finished carries errorCode on failure", async () => {
   assert.equal(fin?.ok, false)
   assert.equal(fin?.errorCode, "ELEMENT_NOT_FOUND")
 })
+
+
+// --- WP2: session rate-limit hook (Y7) ------------------------------------------
+
+test("executor WP2: onActionInjected fires once per SUCCESSFUL injection only", async () => {
+  let injected = 0
+  const deps = makeDeps({ onActionInjected: () => { injected += 1 } })
+  const r = await runComputerTask(
+    { task: "t", app: "win.app.test", actions: [clickOk, { action: "wait", ms: 1 }, { action: "screenshot" }, clickOk] },
+    deps,
+  )
+  assert.equal(r.success, true)
+  assert.equal(injected, 2, "two clicks injected; wait/screenshot are not injections")
+})
+
+test("executor WP2: failed action never consumes the rate window", async () => {
+  let injected = 0
+  const deps = makeDeps({ onActionInjected: () => { injected += 1 } })
+  const r = await runComputerTask(
+    { task: "t", app: "win.app.test", actions: [{ action: "click", target: "不存在" }] },
+    deps,
+  )
+  assert.equal(r.success, false)
+  assert.equal(injected, 0)
+})

@@ -121,6 +121,12 @@ export interface ComputerExecutorDeps {
    * "no image" — the task never blocks on a preview.
    */
   previewBuilder?: PreviewBuilder
+  /**
+   * WP2 (Y7): called once after EVERY successful SendInput dispatch — the
+   * server's session rate limiter counts these. Only successful injections
+   * are reported; a failed action must not consume the rate window.
+   */
+  onActionInjected?: () => void
 }
 
 export interface ComputerStepResult {
@@ -795,6 +801,12 @@ export async function runComputerTask(
         await deps.injector.click(hwnd, pointClient!.x, pointClient!.y, action.action)
       }
       budget -= 1
+      // Y7: only a SUCCESSFUL dispatch consumes the session rate window.
+      try {
+        deps.onActionInjected?.()
+      } catch {
+        /* best-effort */
+      }
 
       // A2.1 — task-induced dialog invariant (post-action): a new foreground
       // window OR a large whole-window change => pause + re-L2. Conservative

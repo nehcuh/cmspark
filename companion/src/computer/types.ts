@@ -179,6 +179,7 @@ export type ComputerErrorCode =
   | "CONFIRMATION_UNAVAILABLE"
   | "TASK_ABORTED" // WP2: emergency stop fired (hotkey flag / panel abort) mid-task
   | "EMERGENCY_STOP_UNAVAILABLE" // WP2: estop hotkey helper missing/stale at task start
+  | "RATE_LIMITED" // WP2 (Y7): session injection rate window saturated (30/60s)
 
 export class ComputerError extends Error {
   readonly code: ComputerErrorCode
