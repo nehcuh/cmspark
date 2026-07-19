@@ -13,6 +13,7 @@ import { NotebooklmImporterPanel } from "./components/NotebooklmImporterPanel"
 import { Modal } from "./components/ui/Modal"
 import { AgentStoreProvider, useAgentStore } from "./store/agentStore"
 import { canOfferThreadTrust, threadTrustHint } from "./utils/apps-utils"
+import { previewImageSafe } from "./utils/computer-utils"
 import type { ConnectionState, SkillMeta, FileAttachment } from "./types"
 
 // Error Boundary — catches rendering errors to prevent white screen
@@ -146,6 +147,8 @@ function SecurityConfirmationDialog() {
   const [nonceInput, setNonceInput] = useState("")
   const [pasteBlocked, setPasteBlocked] = useState(false)
   const nonceMatches = !!nonceChallenge && nonceInput.toUpperCase() === nonceChallenge.toUpperCase()
+  // WP4 (WI-3): L2 标注截图渲染失败时静默回退纯文本——确认门永不被图片阻塞。
+  const [previewImgFailed, setPreviewImgFailed] = useState(false)
 
   // Reset selection whenever the active confirmation changes — otherwise the
   // radio from a previous prompt would bleed into the next one.
@@ -154,6 +157,7 @@ function SecurityConfirmationDialog() {
     setThreadTrust(false)
     setNonceInput("")
     setPasteBlocked(false)
+    setPreviewImgFailed(false)
   }, [request?.confirmation_id])
 
   // H10/M18 (audit): keyboard a11y (focus trap + Escape→deny + aria-modal +
@@ -175,7 +179,12 @@ function SecurityConfirmationDialog() {
   // `Launch app "<display>" (<token>) — no arguments`). host_read/host_write/
   // evaluate rendering is unchanged.
   const isAppLaunch = request.tool_name === "host_app"
-  const dialogLabel = isAppLaunch ? "启动应用确认" : `${riskLabel}操作确认`
+  // WP4 (WI-3): 坐标 computer-use 的 L2 对话框——徽标点名操作性质;
+  // full_preview(P1 独立字段)存在时优先于 code_preview 渲染;标注截图过
+  // previewImageSafe 守卫才渲染,渲染失败静默回退纯文本。
+  const isComputerTask = request.tool_name === "host_computer"
+  const dialogLabel = isAppLaunch ? "启动应用确认" : isComputerTask ? "坐标操作确认" : `${riskLabel}操作确认`
+  const showPreviewImage = isComputerTask && !previewImgFailed && previewImageSafe(request.preview_image)
 
   const decide = (approved: boolean, stopThread = false) => {
     const addToWhitelist: string[] = []
@@ -263,9 +272,28 @@ function SecurityConfirmationDialog() {
           防御层：Layer {request.defense_layer}
         </div>
       )}
-      <div style={styles.securityCode}>
-        <HighlightedCode code={request.code_preview || "(无代码预览)"} />
-      </div>
+      {showPreviewImage && (
+        <div style={styles.computerPreview}>
+          <img
+            src={`data:image/jpeg;base64,${request.preview_image}`}
+            alt="目标窗口标注截图（凭证区已黑化）"
+            style={styles.computerPreviewImg}
+            onError={() => setPreviewImgFailed(true)}
+          />
+          {request.preview_caption && (
+            <div style={styles.computerPreviewCaption}>{request.preview_caption}</div>
+          )}
+        </div>
+      )}
+      {request.full_preview ? (
+        // P1:完整预览文本独立字段——30 动作 + 2000 语料逐条枚举对人完整可见;
+        // 可滚动区(maxHeight + overflow),纯文本 pre-wrap(非代码,不高亮)。
+        <div style={styles.securityFullPreview}>{request.full_preview}</div>
+      ) : (
+        <div style={styles.securityCode}>
+          <HighlightedCode code={request.code_preview || "(无代码预览)"} />
+        </div>
+      )}
       {relevantDomain && (
         <div style={styles.whitelistSection}>
           <div style={styles.whitelistLabel}>添加到自动批准白名单（避免下次再问）：</div>
@@ -1182,6 +1210,36 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 11,
     lineHeight: 1.45,
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+  },
+  // WP4 (WI-3): full_preview 可滚动区——比 code 区更高,长枚举清单少翻页。
+  securityFullPreview: {
+    maxHeight: 260,
+    overflow: "auto",
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-word",
+    background: "#f6f8fa",
+    border: "1px solid #e5e7eb",
+    borderRadius: 6,
+    padding: 10,
+    fontSize: 11,
+    lineHeight: 1.45,
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+  },
+  // WP4 (WI-3): L2 标注截图块(凭证区已黑化 + 十字线)。
+  computerPreview: {
+    marginBottom: 10,
+  },
+  computerPreviewImg: {
+    display: "block",
+    width: "100%",
+    borderRadius: 6,
+    border: "1px solid #e5e7eb",
+  },
+  computerPreviewCaption: {
+    marginTop: 6,
+    fontSize: 11,
+    color: "#666",
+    lineHeight: 1.5,
   },
   securityQueueHint: {
     marginTop: 8,
