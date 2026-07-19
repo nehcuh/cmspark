@@ -3136,7 +3136,9 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
               const message = JSON.stringify(data)
               for (const client of clients) {
                 try {
-                  if (client.readyState === WebSocket.OPEN) {
+                  // Y-e: mirror broadcastToClients (X3) — never fan out to
+                  // unauthenticated connections inside the handshake window.
+                  if (client.readyState === WebSocket.OPEN && wsAuth.get(client)?.authenticated === true) {
                     client.send(message)
                   }
                 } catch { /* ignore disconnected */ }
