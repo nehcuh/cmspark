@@ -215,6 +215,39 @@ export function getComputerTaskRegistryForTests(): Map<string, boolean> {
 }
 
 /**
+ * WP2 (§E.6) F1: computer.task.abort WS handler — extracted from the message
+ * dispatch so the abort semantics are testable at the socket boundary.
+ * task_id targets one run (the id is broadcast in the task events); "*" is
+ * the panic button — aborts every running task. Stopping injection is always
+ * the safe direction, so any authenticated panel connection may send this
+ * (no origin binding). The flag flip is UNCONDITIONAL: the abort takes
+ * effect even when the ack can no longer be delivered (socket closing at
+ * the WS seam) — the send alone is guarded by the OPEN check. Returns the
+ * ack payload (also used by the dispatch to send the ack).
+ */
+export function handleComputerTaskAbort(
+  ws: { readyState: number; send: (data: string) => void },
+  msg: { task_id?: unknown },
+): { taskId: string; matched: number } {
+  const tid = typeof msg.task_id === "string" ? msg.task_id : ""
+  let matched = 0
+  if (tid === "*") {
+    for (const k of computerTaskAbort.keys()) {
+      computerTaskAbort.set(k, true)
+      matched++
+    }
+  } else if (tid && computerTaskAbort.has(tid)) {
+    computerTaskAbort.set(tid, true)
+    matched = 1
+  }
+  if (matched > 0) logger.warn("computer.task.abort.requested", { taskId: tid, matched })
+  if (ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: "computer.task.abort.ack", task_id: tid, matched }))
+  }
+  return { taskId: tid, matched }
+}
+
+/**
  * Exported for integration tests (R1): substitute the estop preflight so the
  * host_computer handler can be exercised end-to-end without spawning the real
  * ps helper / injecting. Pass null to restore production behavior.
@@ -3044,23 +3077,10 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
         // task_id targets one run (the id is broadcast in the task events);
         // "*" is the panic button — aborts every running task. Stopping
         // injection is always the safe direction, so any authenticated panel
-        // connection may send this (no origin binding).
+        // connection may send this (no origin binding). F1: the semantics live
+        // in handleComputerTaskAbort (exported, tested at the socket seam).
         if (msg.type === "computer.task.abort") {
-          const tid = typeof msg.task_id === "string" ? msg.task_id : ""
-          let matched = 0
-          if (tid === "*") {
-            for (const k of computerTaskAbort.keys()) {
-              computerTaskAbort.set(k, true)
-              matched++
-            }
-          } else if (tid && computerTaskAbort.has(tid)) {
-            computerTaskAbort.set(tid, true)
-            matched = 1
-          }
-          if (matched > 0) logger.warn("computer.task.abort.requested", { taskId: tid, matched })
-          if (ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: "computer.task.abort.ack", task_id: tid, matched }))
-          }
+          handleComputerTaskAbort(ws, msg)
           return
         }
 
