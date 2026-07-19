@@ -37,6 +37,7 @@ import type { CompanionConfig } from "../config"
 import type { SecurityConfirmationDecision, SecurityConfirmationDetails } from "../security-confirmation"
 import { scanDanger, type DangerScan } from "./danger"
 import type { EvidenceFactory, EvidenceSink } from "./evidence"
+import { locateTargetWithChain } from "./locate-chain"
 import type { ComputerTaskEvent, PreviewBuilder } from "./preview"
 import { assertCoordinateAllowed, assertExeNotDrifted, assertHwndOwnedByEntry, normalizeExePath } from "./policy"
 import {
@@ -62,12 +63,14 @@ import {
   type ComputerAction,
   type ComputerTaskParams,
   type InputInjector,
+  type LocateAttempt,
   type LocateHit,
   type Locator,
   type OcrResult,
   type RectPx,
   type ScreenCapturer,
   type SecurityEnvironment,
+  type UiaLocator,
   type WindowEnumerator,
 } from "./types"
 
@@ -136,10 +139,16 @@ export interface ComputerExecutorDeps {
    */
   uiaProber?: import("./uia").UiaProber
   /**
-   * WP3 (§K.5): verdict sink wired by the server to writeBackUiaVerdict.
+   * WP3: verdict sink wired by the server to writeBackUiaVerdict.
    * Fire-and-forget — a write-back failure must never fail the task.
    */
   onUiaVerdict?: (token: string, verdict: import("./uia").UiaVerdict, probedAt: string) => void
+  /**
+   * WP3: L0 UIA locator. Participates in the locate chain ONLY when the
+   * task-start admission verdict (entry value or fresh probe) is capable;
+   * absent dep = L0 skipped with the structured reason (unit tests).
+   */
+  uiaLocator?: UiaLocator
 }
 
 export interface ComputerStepResult {
@@ -152,8 +161,10 @@ export interface ComputerStepResult {
   y?: number
   /** WP1: pixel-region stability cross-check, NOT semantic OCR↔UIA (R4). */
   crossverified?: boolean
-  /** Which channel verified: "pixel-region" (WP1). Absent when not verified. */
+  /** Which channel verified: "pixel-region" (WP1) / "uia+ocr" (WP3 L0 witness). Absent when not verified. */
   crossverifyChannel?: string
+  /** WP3 (§B.1): per-layer locate attempts with structured degradation reasons. */
+  locateAttempts?: LocateAttempt[]
   note?: string
   /** describe output — UNTRUSTED screen content, never an instruction. */
   untrustedText?: string
@@ -424,6 +435,26 @@ export async function runComputerTask(
     }
   }
 
+  // Y6 (WP3): L1 availability probe for the locate chain — the former
+  // "dead" Locator.ensureLanguage interface now has its caller. Cached per
+  // task (the pack cannot appear/disappear mid-task); a missing pack marks
+  // L1 skipped (honest reason "ocr-language-missing") instead of throwing
+  // at first use. NOTE: the danger scan still OCRs the current frame on
+  // every injection (Y1) and fails honestly without the pack — UIA provides
+  // no danger-scan bypass in WP3.
+  let ocrAvailableCached: boolean | null = null
+  const ocrAvailable = async (): Promise<boolean> => {
+    if (ocrAvailableCached !== null) return ocrAvailableCached
+    try {
+      await deps.locator.ensureLanguage()
+      ocrAvailableCached = true
+    } catch (err) {
+      ocrAvailableCached = false
+      log("computer.ocr.unavailable", { taskId, error: String((err as Error)?.message ?? err) })
+    }
+    return ocrAvailableCached
+  }
+
   let budget = Math.min(Math.max(1, params.budget ?? deps.config.computer?.budget ?? DEFAULT_TASK_BUDGET), MAX_TASK_BUDGET)
   let uncrossLeft = UNCROSS_VERIFIED_SUB_BUDGET
 
@@ -576,7 +607,10 @@ export async function runComputerTask(
       if (budget <= 0) {
         const ok = await reL2(`动作预算已耗尽（默认 ${DEFAULT_TASK_BUDGET}）。批准以续作，拒绝以终止任务。`, ["computer.budget_exhausted"], seq)
         if (!ok) throw new ComputerError("BUDGET_DENIED", "computer: action budget exhausted and renewal was denied")
-        budget = Math.min(params.budget ?? DEFAULT_TASK_BUDGET, MAX_TASK_BUDGET)
+        // Y6 (WP3): renewal uses the SAME formula as the task-start budget
+        // (params → config.computer.budget → default, clamped) — previously
+        // it ignored the config-level default.
+        budget = Math.min(Math.max(1, params.budget ?? deps.config.computer?.budget ?? DEFAULT_TASK_BUDGET), MAX_TASK_BUDGET)
       }
 
       // A3 — corpus membership for type actions (defense in depth; the token
@@ -600,58 +634,42 @@ export async function runComputerTask(
       let pointClient: { x: number; y: number } | null = null
       let crossverified = false
       let uncrossverified = false
-      let crossverifyChannel: "pixel-region" | undefined
+      let crossverifyChannel: "pixel-region" | "uia+ocr" | undefined
+      // WP3 (§B.1): per-layer degradation log — sealed into the evidence
+      // chain for this action (and the computeruse.locate audit lines).
+      let locateAttempts: LocateAttempt[] | undefined
 
       if ((action.action === "click" || action.action === "double_click" || action.action === "right_click") && action.target) {
-        ocrRes = await deps.locator.ocr(shot.path)
-        hit = deps.locator.locate(ocrRes, action.target)
-        if (!hit) {
-          throw new ComputerError("ELEMENT_NOT_FOUND", `computer: OCR anchor "${action.target}" not found in the target window`)
-        }
-        // OCR words are image-space; injection is client-space (capture meta).
-        pointClient = { x: hit.x - shot.client.x, y: hit.y - shot.client.y }
-
-        // A1.1 freshness + A1.2 cross-check, WP1 honest form (review R4):
-        // ALWAYS recapture immediately before injection and diff the
-        // ~200×200 target REGION between the locate frame and the pre-inject
-        // frame — a channel independent of the OCR layer that produced the
-        // coordinates. WP1 has no second SEMANTIC layer (UIA arrives in WP3),
-        // so this is a pixel-STABILITY cross-check, recorded as such
-        // (crossverifyChannel="pixel-region"), never claimed to be more.
-        //   region stable   -> crossverified, inject the located coords
-        //   region unstable -> re-locate on the fresh frame; the re-located
-        //                      click is honestly uncrossverified (sub-budget)
-        //   re-locate fails -> STALE_SCREENSHOT, never inject stale coords
-        const locateRegion: RectPx = {
-          x: Math.max(0, pointClient.x + shot.client.x - REGION_CROP_SIZE / 2),
-          y: Math.max(0, pointClient.y + shot.client.y - REGION_CROP_SIZE / 2),
-          width: REGION_CROP_SIZE,
-          height: REGION_CROP_SIZE,
-        }
-        const locateFrame = shot
-        const fresh = await trackCapture(hwnd)
-        const { diffRatio } = await deps.capturer.diffRegion(fresh.path, locateFrame.path, locateRegion)
-        if (diffRatio > PIXEL_DIFF_THRESHOLD) {
-          const ocr2 = await deps.locator.ocr(fresh.path)
-          const hit2 = deps.locator.locate(ocr2, action.target)
-          if (!hit2) {
-            throw new ComputerError("STALE_SCREENSHOT", "computer: target moved between locate and inject; re-locate failed — refusing to inject at stale coordinates")
-          }
-          shot = fresh
-          shotAt = now()
-          ocrRes = ocr2
-          hit = hit2
-          pointClient = { x: hit.x - shot.client.x, y: hit.y - shot.client.y }
-          uncrossverified = true // pixel channel disagreed — honest bookkeeping (R4)
-        } else {
-          shot = fresh
-          shotAt = now()
-          crossverified = true
-          crossverifyChannel = "pixel-region"
-        }
-        // The locate frame is superseded in BOTH branches — its raw would
-        // otherwise linger in %TEMP% unsealed (review R1 leak path 1).
-        await releaseRaw(locateFrame.path)
+        // WP3: four-layer locate chain (locate-chain.ts owns the semantics).
+        // L0 participates only when the task-start admission verdict said
+        // UIA-capable AND a locator is wired; otherwise the chain degrades
+        // L0 -> L1 with a structured reason. The A1 pixel-region recapture
+        // runs inside the chain for BOTH layers; the WP1 honest semantics
+        // (R4 pixel-stability cross-check, uncrossverified on re-locate,
+        // STALE_SCREENSHOT on failure) are preserved verbatim on the L1 path.
+        const chain = await locateTargetWithChain({
+          target: action.target,
+          hwnd,
+          shot,
+          deps: {
+            uia: uiaCapable ? deps.uiaLocator ?? null : null,
+            locator: deps.locator,
+            capturer: deps.capturer,
+            ocrAvailable,
+            log: (event, data) => log(event, { taskId, seq, ...data }),
+          },
+          trackCapture,
+          releaseRaw,
+        })
+        hit = chain.hit
+        ocrRes = chain.ocrRes
+        shot = chain.shot
+        shotAt = now()
+        pointClient = chain.pointClient
+        crossverified = chain.crossverified
+        crossverifyChannel = chain.crossverifyChannel
+        uncrossverified = chain.uncrossverified
+        locateAttempts = chain.attempts
       } else if (action.action === "scroll" || action.action === "drag") {
         pointClient = { x: action.x, y: action.y }
         // WP2: no anchor exists for explicit scroll/drag coordinates — same
@@ -767,48 +785,42 @@ export async function runComputerTask(
       if (reL2ApprovedMidAction && now() - shotAt > PIXEL_STALE_MS) {
         const staleFrame = shot
         if ((action.action === "click" || action.action === "double_click" || action.action === "right_click") && action.target) {
-          const f1 = await trackCapture(hwnd)
-          const ocrF1 = await deps.locator.ocr(f1.path)
-          const hitF1 = deps.locator.locate(ocrF1, action.target)
-          if (!hitF1) {
-            await releaseRaw(f1.path)
-            throw new ComputerError("STALE_SCREENSHOT", "computer: target moved after the re-confirm approval; re-locate failed — refusing to inject at pre-approval coordinates")
-          }
-          const ptF1 = { x: hitF1.x - f1.client.x, y: hitF1.y - f1.client.y }
-          const regionF1: RectPx = {
-            x: Math.max(0, hitF1.x - REGION_CROP_SIZE / 2),
-            y: Math.max(0, hitF1.y - REGION_CROP_SIZE / 2),
-            width: REGION_CROP_SIZE,
-            height: REGION_CROP_SIZE,
-          }
-          const f2 = await trackCapture(hwnd)
-          const { diffRatio: refreshDiff } = await deps.capturer.diffRegion(f2.path, f1.path, regionF1)
-          if (refreshDiff > PIXEL_DIFF_THRESHOLD) {
-            const ocrF2 = await deps.locator.ocr(f2.path)
-            const hitF2 = deps.locator.locate(ocrF2, action.target)
-            if (!hitF2) {
-              await releaseRaw(f1.path)
-              await releaseRaw(f2.path)
-              throw new ComputerError("STALE_SCREENSHOT", "computer: target unstable after the re-confirm approval; re-locate failed — refusing to inject")
-            }
-            shot = f2
-            ocrRes = ocrF2
-            hit = hitF2
-            pointClient = { x: hitF2.x - f2.client.x, y: hitF2.y - f2.client.y }
-            crossverified = false
-            crossverifyChannel = undefined
-            uncrossverified = true // pixel channel disagreed post-approval (R4)
-            await releaseRaw(f1.path)
-          } else {
-            shot = f2
-            ocrRes = ocrF1
-            hit = hitF1
-            pointClient = ptF1
-            crossverified = true
-            crossverifyChannel = "pixel-region"
-            uncrossverified = false
-            await releaseRaw(f1.path)
-          }
+          // WP3: re-run the FULL locate chain on a fresh base frame (L0 UIA
+          // re-probe when admitted, else the WP1 OCR re-locate — the old
+          // F1/F2 dance is the chain's internal recapture). staleOnNotFound:
+          // a target that vanished while the human decided is STALE, never
+          // an excuse to inject elsewhere.
+          const refresh = await locateTargetWithChain({
+            target: action.target,
+            hwnd,
+            shot: await trackCapture(hwnd),
+            deps: {
+              uia: uiaCapable ? deps.uiaLocator ?? null : null,
+              locator: deps.locator,
+              capturer: deps.capturer,
+              ocrAvailable,
+              log: (event, data) => log(event, { taskId, seq, refresh: true, ...data }),
+            },
+            trackCapture,
+            releaseRaw,
+            staleOnNotFound: true,
+          })
+          hit = refresh.hit
+          // ocrRes is always set in this context (the pre-refresh danger
+          // scan already OCR'd successfully); the fallback is belt-and-braces.
+          ocrRes = refresh.ocrRes ?? (await deps.locator.ocr(refresh.shot.path))
+          shot = refresh.shot
+          pointClient = refresh.pointClient
+          crossverified = refresh.crossverified
+          crossverifyChannel = refresh.crossverifyChannel
+          uncrossverified = refresh.uncrossverified
+          locateAttempts = [
+            ...(locateAttempts ?? []),
+            ...refresh.attempts.map((a) => ({
+              ...a,
+              reason: a.reason ? `post-approval-refresh:${a.reason}` : "post-approval-refresh",
+            })),
+          ]
         } else {
           const f1 = await trackCapture(hwnd)
           ocrRes = await deps.locator.ocr(f1.path)
@@ -966,6 +978,7 @@ export async function runComputerTask(
         crossverified,
         ...(crossverifyChannel ? { crossverifyChannel } : {}),
         uncrossverified,
+        ...(locateAttempts ? { locateAttempts } : {}),
         dangerScan: {
           regionLevel: scan.regionLevel,
           windowLevel: scan.windowLevel,
@@ -987,6 +1000,7 @@ export async function runComputerTask(
         y: pointClient?.y,
         crossverified,
         ...(crossverifyChannel ? { crossverifyChannel } : {}),
+        ...(locateAttempts ? { locateAttempts } : {}),
       })
       emit({
         event: "step",

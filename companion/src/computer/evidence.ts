@@ -39,9 +39,16 @@ export interface EvidenceActionRecord {
    * verification — WP1 has no second semantic layer (that arrives with WP3).
    */
   crossverified: boolean
-  /** Which channel verified: "pixel-region" (WP1). Absent when not verified. */
+  /** Which channel verified: "pixel-region" (WP1) / "uia+ocr" (WP3 L0 witness). Absent when not verified. */
   crossverifyChannel?: string
   uncrossverified: boolean
+  /**
+   * WP3 (§B.1): per-layer locate attempts with structured degradation
+   * reasons (uia-not-found / uia-ocr-disagree / ocr-language-missing /
+   * wp5-not-implemented / wp6-not-implemented …). Present on click-family
+   * actions that located through the layer chain.
+   */
+  locateAttempts?: import("./types").LocateAttempt[]
   dangerScan?: { regionLevel: string; windowLevel: string; regionHits: string[]; windowHits: string[] }
   beforeSha256?: string
   afterSha256?: string

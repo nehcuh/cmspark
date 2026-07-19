@@ -24,6 +24,8 @@ import {
   type RectPx,
   type ScreenCapturer,
   type SecurityEnvironment,
+  type UiaLocateHit,
+  type UiaLocator,
   type WindowEnumerator,
   type WindowInfo,
 } from "./types"
@@ -38,6 +40,7 @@ const PS_ERROR_CODES: Record<string, import("./types").ComputerErrorCode> = {
   FOCUSLOST: "FOCUS_LOST",
   STOPPED: "TASK_ABORTED", // WP2 (§E.6): -StopFile flag seen mid-injection
   OCRLANGMISSING: "OCR_LANGUAGE_MISSING",
+  OCRFAILED: "OCR_FAILED", // Y6 (WP3): decode/recognize failures no longer masquerade as INJECT_FAILED
   SENDFAILED: "INJECT_FAILED",
   CAPTUREFAILED: "CAPTURE_FAILED",
   DIFFFAILED: "CAPTURE_FAILED",
@@ -484,6 +487,41 @@ export class PsWindowEnumerator implements WindowEnumerator {
 
   async infoForHwnd(hwnd: number): Promise<WindowInfo> {
     return psWindowInfo(this.runner, hwnd)
+  }
+}
+
+// ---------------------------------------------------------------------------
+
+/**
+ * WP3 L0: ps1-backed UIA locator — computer-uia-locate.ps1 is READ-ONLY and
+ * returns SCREEN physical pixels; the locate chain (not this adapter) maps
+ * them into capture image space. found:false → honest null (NotFound).
+ */
+export class PsUiaLocator implements UiaLocator {
+  constructor(private runner: PsRunner = runPs) {}
+
+  async locate(hwnd: number, target: string): Promise<UiaLocateHit | null> {
+    let stdout: string
+    try {
+      stdout = await this.runner(resolveWinScript("computer-uia-locate.ps1"), [
+        "-Hwnd", String(hwnd),
+        "-Name", target,
+      ])
+    } catch (err) {
+      rethrowComputerPsError(err, "uia.locate")
+    }
+    const r = parsePsJson<any>(stdout!, "computer.uia.locate")
+    if (r.found !== true) return null
+    return {
+      x: Number(r.x ?? 0),
+      y: Number(r.y ?? 0),
+      bbox: r.bbox ?? { x: 0, y: 0, width: 0, height: 0 },
+      name: String(r.name ?? ""),
+      controlType: String(r.controlType ?? ""),
+      ...(r.automationId ? { automationId: String(r.automationId) } : {}),
+      confidence: Number(r.confidence ?? 1),
+      candidates: Number(r.candidates ?? 1),
+    }
   }
 }
 

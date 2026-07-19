@@ -163,6 +163,7 @@ export type ComputerErrorCode =
   | "CLICK_OCCLUDED" // X2: landing point owned by another (overlay) window — fail-closed
   | "FOCUS_LOST" // foreground hwnd changed mid-type batch (A1.4)
   | "OCR_LANGUAGE_MISSING" // honest layer skip (plan §B.2 L1)
+  | "OCR_FAILED" // WP3 (Y6): OCR decode/recognize failure (ps1 OCRFAILED) — was mislabeled INJECT_FAILED
   | "ELEMENT_NOT_FOUND"
   | "STALE_SCREENSHOT" // A1 pixel check failed after re-locate
   | "DANGER_HARD_DENY" // A4: payment/transfer/captcha final-confirm — NO re-L2 path
@@ -248,9 +249,53 @@ export interface LocateHit {
   x: number
   y: number
   bbox: RectPx
-  layer: "ocr"
+  layer: LocateLayer
   confidence: number
   matchedText: string
+}
+
+/**
+ * WP3 (plan §B.1): the four locator layers. "uia" = L0 (WP3), "ocr" = L1
+ * (WP1), "tinyclick" = L2 (WP5 stub — honest skip), "cloud" = L3 (WP6
+ * stub — honest skip). Degradation is one-way down the chain.
+ */
+export type LocateLayer = "uia" | "ocr" | "tinyclick" | "cloud"
+
+/**
+ * WP3: one layer attempt in the locate chain (structured degradation log —
+ * recorded per action into the evidence chain + computeruse.locate audit).
+ */
+export interface LocateAttempt {
+  layer: LocateLayer
+  outcome: "hit" | "not-found" | "skipped" | "error"
+  /** Degradation reason when outcome != "hit" (e.g. "uia-not-found",
+   *  "uia-ocr-disagree", "ocr-language-missing", "wp5-not-implemented"). */
+  reason?: string
+  confidence?: number
+  ms: number
+}
+
+/**
+ * WP3: L0 live-tree locate hit. Coordinates are SCREEN physical pixels
+ * (UIA BoundingRectangle is screen-space); the chain maps them into the
+ * capture's image space via CaptureMeta.rect.
+ */
+export interface UiaLocateHit {
+  x: number
+  y: number
+  bbox: RectPx
+  name: string
+  controlType: string
+  automationId?: string
+  confidence: number
+  /** Total equal-score candidates (>1 = ambiguous — logged, first taken). */
+  candidates: number
+}
+
+/** WP3: L0 provider (production: PsUiaLocator; tests: fakes). */
+export interface UiaLocator {
+  /** Live-tree locate by accessible-Name anchor; null = honest NotFound. */
+  locate(hwnd: number, target: string): Promise<UiaLocateHit | null>
 }
 
 export interface ScreenCapturer {

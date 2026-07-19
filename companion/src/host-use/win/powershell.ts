@@ -102,7 +102,15 @@ export const runPs: PsRunner = async (script, args, opts) => {
   const result = await execFileAsync(
     resolvePowerShellExe(),
     ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script, ...args],
-    { encoding: "utf-8", timeout: opts?.timeoutMs ?? PS_DEFAULT_TIMEOUT_MS },
+    {
+      encoding: "utf-8",
+      timeout: opts?.timeoutMs ?? PS_DEFAULT_TIMEOUT_MS,
+      // Y6 (WP3): execFile's default maxBuffer is 1MB — a dense full-window
+      // OCR JSON (4K, CJK per-char words) can exceed it, and truncation
+      // surfaces as a misleading JSON.parse crash. 16MB is bounded headroom;
+      // a runaway script still dies at the timeout with a bounded buffer.
+      maxBuffer: 16 * 1024 * 1024,
+    },
   )
   return String(result.stdout)
 }

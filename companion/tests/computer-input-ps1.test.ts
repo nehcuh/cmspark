@@ -22,6 +22,7 @@ const COMPUTER_PS1 = [
   "computer-probe.ps1",
   "computer-preview.ps1",
   "computer-uia-probe.ps1",
+  "computer-uia-locate.ps1",
 ]
 
 test("ps1 guard: every computer-*.ps1 carries a UTF-8 BOM (efbbbf)", () => {

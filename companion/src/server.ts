@@ -1904,6 +1904,7 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
           PsSecurityEnvironment,
           PsPreviewBuilder,
           PsEvidenceSealer,
+          PsUiaLocator,
         } = await import("./computer/win-adapters")
         const { PsUiaProber, writeBackUiaVerdict } = await import("./computer/uia")
         const { ComputerEvidence, runEvidenceJanitor } = await import("./computer/evidence")
@@ -1933,6 +1934,9 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
               injector: new PsInputInjector(undefined, estopFlagPath()),
               windows: new PsWindowEnumerator(),
               securityEnv: new PsSecurityEnvironment(),
+              // WP3: L0 UIA locator (read-only live-tree queries; admission
+              // decided per task by the executor's probe verdict).
+              uiaLocator: new PsUiaLocator(),
               evidenceFactory: (taskId) => new ComputerEvidence(taskId, sealer),
               // Re-L2 channel for budget/dialog/danger pauses — already
               // originWs-bound by the caller (COMPANION_TOOLS sendConfirmation).

@@ -1,0 +1,335 @@
+// WP3 — four-layer locate orchestrator (plan §B.1/§B.2).
+//
+//   L0 UIA (admission via the task-start probe verdict) → L1 OCR (WP1)
+//   → L2 TinyClick (WP5 — honest stub) → L3 cloud (WP6 — honest stub).
+//
+// Degradation is ONE-WAY down the chain; every attempt is recorded with a
+// structured reason and surfaces per action in the evidence chain
+// (actions.json locateAttempts) and the computeruse.locate audit log.
+//
+// Cross-verification semantics (WP3 decision, aligned with A1.2/R4):
+//   - UIA coordinates are authoritative (confidence 1.0). OCR is a WITNESS
+//     layer, never a coordinate source while L0 stands: the anchor text
+//     appearing inside the UIA bbox (+tolerance) on the locate frame yields
+//     crossverifyChannel "uia+ocr". Disagreement degrades to L1 (OCR becomes
+//     the coordinate source via the WP1 pixel-region channel).
+//   - When OCR is unavailable (language pack missing), L0 coordinates are
+//     guarded by the SAME pixel-stability channel A1 mandates for OCR
+//     (crossverifyChannel "pixel-region").
+//   - The pixel-region recapture (A1: never inject at stale coordinates)
+//     runs for BOTH layers. Region instability triggers ONE re-probe on the
+//     producing layer (UIA live re-read / OCR re-locate on the fresh frame);
+//     success is honestly uncrossverified, failure is STALE_SCREENSHOT.
+//
+// Frame discipline (R1): the chain releases superseded LOCATE frames on
+// success paths only. On any throw the executor's exit sweep owns every
+// tracked frame — the chain must never release-then-throw.
+//
+// NOT in scope (documented): L2/L3 are honest stubs; the post-injection
+// danger scan (executor, Y1) always re-OCRs the current frame, so a missing
+// language pack fails any injection honestly even when L0 located (UIA
+// provides no danger-scan bypass in WP3).
+
+import {
+  ComputerError,
+  PIXEL_DIFF_THRESHOLD,
+  REGION_CROP_SIZE,
+  type CaptureMeta,
+  type LocateAttempt,
+  type LocateHit,
+  type Locator,
+  type OcrResult,
+  type RectPx,
+  type ScreenCapturer,
+  type UiaLocator,
+} from "./types"
+
+export interface LocateChainDeps {
+  /** L0 provider. The EXECUTOR decides admission (uiaCapable) — it passes
+   *  null when the app is UIA-incapable/unprobed, so a non-null uia here
+   *  means L0 participates. */
+  uia: UiaLocator | null
+  /** L1 provider (existing WP1 Locator). */
+  locator: Locator
+  capturer: ScreenCapturer
+  /**
+   * Y6: L1 availability probe (PsLocator.ensureLanguage, cached per task by
+   * the caller — this is what gives the former "dead interface" its
+   * caller). Absent = assume available (unit fakes).
+   */
+  ocrAvailable?: () => Promise<boolean>
+  log?: (event: string, data: Record<string, unknown>) => void
+  now?: () => number
+}
+
+export interface ChainLocateResult {
+  /** Image-space hit (same convention as the WP1 OCR hit). */
+  hit: LocateHit
+  pointClient: { x: number; y: number }
+  /** OCR output when OCR ran (witness or L1 locate); null otherwise. */
+  ocrRes: OcrResult | null
+  /** The frame to inject against (tracked by the caller's pendingRaws). */
+  shot: CaptureMeta
+  crossverified: boolean
+  crossverifyChannel?: "uia+ocr" | "pixel-region"
+  uncrossverified: boolean
+  attempts: LocateAttempt[]
+}
+
+/** UIA↔OCR witness tolerance (px) around the UIA bbox. */
+const WITNESS_TOLERANCE_PX = 8
+
+/** Does the anchor text appear (as OCR words) inside rect + tolerance? */
+function ocrWitnessAgrees(ocrRes: OcrResult, target: string, bbox: RectPx): boolean {
+  const within = (w: { x: number; y: number; w: number; h: number }) => {
+    const cx = w.x + w.w / 2
+    const cy = w.y + w.h / 2
+    return (
+      cx >= bbox.x - WITNESS_TOLERANCE_PX &&
+      cx <= bbox.x + bbox.width + WITNESS_TOLERANCE_PX &&
+      cy >= bbox.y - WITNESS_TOLERANCE_PX &&
+      cy <= bbox.y + bbox.height + WITNESS_TOLERANCE_PX
+    )
+  }
+  // Word-level: any single OCR word inside the bbox that is a substring of
+  // the anchor or vice versa (OCR splits CJK into per-char words — the WP1
+  // line-grouping logic is overkill for a witness; proximity + containment
+  // of ANY anchor character is enough to corroborate, not to locate).
+  const anchorChars = new Set([...target])
+  let matched = 0
+  for (const w of ocrRes.words) {
+    if (!within(w)) continue
+    if (w.text.length === 0) continue
+    if (target.includes(w.text) || [...w.text].some((ch) => anchorChars.has(ch))) matched++
+  }
+  return matched > 0
+}
+
+/**
+ * Locate `target` for a click-family action through the layer chain.
+ * `shot` is the base frame (already tracked by the caller). Throws
+ * ELEMENT_NOT_FOUND (all layers missed, reasons in the message and the
+ * locateAttempts log) or STALE_SCREENSHOT / propagates ComputerErrors.
+ */
+export async function locateTargetWithChain(args: {
+  target: string
+  hwnd: number
+  shot: CaptureMeta
+  deps: LocateChainDeps
+  trackCapture: (hwnd: number) => Promise<CaptureMeta>
+  releaseRaw: (path?: string) => Promise<void>
+  /** Refresh context (post-approval): a not-found re-probe means the target
+   *  moved after a human decision — STALE_SCREENSHOT, not ELEMENT_NOT_FOUND. */
+  staleOnNotFound?: boolean
+}): Promise<ChainLocateResult> {
+  const { target, hwnd, deps, trackCapture, releaseRaw } = args
+  const now = deps.now ?? (() => Date.now())
+  const log = deps.log ?? (() => {})
+  const attempts: LocateAttempt[] = []
+  let shot = args.shot
+  let ocrRes: OcrResult | null = null
+
+  const notFoundError = (): ComputerError => {
+    const why = attempts.map((a) => `${a.layer}:${a.outcome}${a.reason ? `(${a.reason})` : ""}`).join(" → ")
+    if (args.staleOnNotFound) {
+      return new ComputerError(
+        "STALE_SCREENSHOT",
+        `computer: target "${target}" not found on any layer after the re-confirm approval — refusing to inject at pre-approval coordinates [${why}]`,
+      )
+    }
+    return new ComputerError("ELEMENT_NOT_FOUND", `computer: anchor "${target}" not found on any locate layer [${why}]`)
+  }
+
+  /** A1: located, then the pixel region went unstable, then the re-probe
+   *  missed — the target MOVED between locate and inject (always STALE,
+   *  regardless of which layer produced the coordinates). */
+  const staleError = (layer: string): ComputerError =>
+    new ComputerError(
+      "STALE_SCREENSHOT",
+      `computer: target "${target}" moved between locate and inject; ${layer} re-locate failed — refusing to inject at stale coordinates`,
+    )
+
+  // ---- L0: UIA (live tree) ---------------------------------------------------
+  if (deps.uia) {
+    const t0 = now()
+    let uiaHit = null
+    try {
+      uiaHit = await deps.uia.locate(hwnd, target)
+    } catch (err) {
+      // UIA infrastructure failure (window died mid-walk etc.) — degrade
+      // honestly; HWND-dead conditions surface via the per-action ownership
+      // revalidation and the pixel channels regardless.
+      attempts.push({ layer: "uia", outcome: "error", reason: String((err as Error)?.message ?? err).slice(0, 120), ms: now() - t0 })
+      log("computeruse.locate", { layer: "uia", hit: false, error: true, ms: now() - t0 })
+    }
+    if (uiaHit) {
+      attempts.push({ layer: "uia", outcome: "hit", confidence: uiaHit.confidence, ms: now() - t0 })
+      if (uiaHit.candidates > 1) {
+        log("computeruse.locate", { layer: "uia", hit: true, ambiguous: uiaHit.candidates, confidence: uiaHit.confidence, ms: now() - t0 })
+      } else {
+        log("computeruse.locate", { layer: "uia", hit: true, confidence: uiaHit.confidence, ms: now() - t0 })
+      }
+      // SCREEN → image space (capture meta: rect is the window's screen rect).
+      const img = { x: uiaHit.x - shot.rect.x, y: uiaHit.y - shot.rect.y }
+      const imgBbox: RectPx = {
+        x: uiaHit.bbox.x - shot.rect.x,
+        y: uiaHit.bbox.y - shot.rect.y,
+        width: uiaHit.bbox.width,
+        height: uiaHit.bbox.height,
+      }
+      // Witness OCR on the locate frame (skipped when the pack is missing).
+      let witness: "agree" | "disagree" | "unavailable" = "unavailable"
+      const available = deps.ocrAvailable ? await deps.ocrAvailable() : true
+      if (available) {
+        ocrRes = await deps.locator.ocr(shot.path)
+        witness = ocrWitnessAgrees(ocrRes, target, imgBbox) ? "agree" : "disagree"
+      }
+      if (witness === "disagree") {
+        // UIA and OCR name DIFFERENT realities — do not inject UIA coords
+        // blindly; OCR takes over as the coordinate source below (L1).
+        attempts.push({ layer: "uia", outcome: "error", reason: "uia-ocr-disagree", ms: 0 })
+        log("computeruse.locate", { layer: "uia", hit: false, reason: "uia-ocr-disagree" })
+      } else {
+        // A1 parity: pixel-region freshness between locate and pre-inject.
+        const region: RectPx = {
+          x: Math.max(0, img.x - REGION_CROP_SIZE / 2),
+          y: Math.max(0, img.y - REGION_CROP_SIZE / 2),
+          width: REGION_CROP_SIZE,
+          height: REGION_CROP_SIZE,
+        }
+        const locateFrame = shot
+        const fresh = await trackCapture(hwnd)
+        const { diffRatio } = await deps.capturer.diffRegion(fresh.path, locateFrame.path, region)
+        if (diffRatio <= PIXEL_DIFF_THRESHOLD) {
+          shot = fresh
+          await releaseRaw(locateFrame.path)
+          const hit: LocateHit = {
+            x: img.x,
+            y: img.y,
+            bbox: imgBbox,
+            layer: "uia",
+            confidence: uiaHit.confidence,
+            matchedText: uiaHit.name,
+          }
+          return {
+            hit,
+            pointClient: { x: img.x - shot.client.x, y: img.y - shot.client.y },
+            ocrRes,
+            shot,
+            crossverified: true,
+            crossverifyChannel: witness === "agree" ? "uia+ocr" : "pixel-region",
+            uncrossverified: false,
+            attempts,
+          }
+        }
+        // Unstable region: ONE live re-probe (UIA re-read on the fresh frame).
+        const t1 = now()
+        const uiaHit2 = await deps.uia.locate(hwnd, target)
+        if (!uiaHit2) {
+          attempts.push({ layer: "uia", outcome: "not-found", reason: "uia-reprobe-moved", ms: now() - t1 })
+          throw staleError("UIA") // frames stay tracked — the exit sweep owns them
+        }
+        attempts.push({ layer: "uia", outcome: "hit", confidence: uiaHit2.confidence, reason: "re-probe after pixel instability", ms: now() - t1 })
+        shot = fresh
+        await releaseRaw(locateFrame.path)
+        const img2 = { x: uiaHit2.x - shot.rect.x, y: uiaHit2.y - shot.rect.y }
+        const hit: LocateHit = {
+          x: img2.x,
+          y: img2.y,
+          bbox: {
+            x: uiaHit2.bbox.x - shot.rect.x,
+            y: uiaHit2.bbox.y - shot.rect.y,
+            width: uiaHit2.bbox.width,
+            height: uiaHit2.bbox.height,
+          },
+          layer: "uia",
+          confidence: uiaHit2.confidence,
+          matchedText: uiaHit2.name,
+        }
+        return {
+          hit,
+          pointClient: { x: img2.x - shot.client.x, y: img2.y - shot.client.y },
+          ocrRes,
+          shot,
+          crossverified: false,
+          uncrossverified: true, // pixel channel disagreed — honest bookkeeping (R4)
+          attempts,
+        }
+      }
+    } else if (!attempts.some((a) => a.layer === "uia" && a.outcome === "error")) {
+      attempts.push({ layer: "uia", outcome: "not-found", ms: now() - t0 })
+      log("computeruse.locate", { layer: "uia", hit: false, reason: "uia-not-found", ms: now() - t0 })
+    }
+  } else {
+    attempts.push({ layer: "uia", outcome: "skipped", reason: "uia-incapable-or-unprobed", ms: 0 })
+  }
+
+  // ---- L1: OCR (WP1 pixel-region channel) ------------------------------------
+  const available = deps.ocrAvailable ? await deps.ocrAvailable() : true
+  if (!available) {
+    attempts.push({ layer: "ocr", outcome: "skipped", reason: "ocr-language-missing", ms: 0 })
+    log("computeruse.locate", { layer: "ocr", hit: false, reason: "ocr-language-missing" })
+  } else {
+    const t0 = now()
+    // An ocr() THROW propagates (today's executor semantics — the danger
+    // scan would fail the same way); only an honest NotFound degrades.
+    if (ocrRes === null) ocrRes = await deps.locator.ocr(shot.path)
+    const ocrHit = deps.locator.locate(ocrRes, target)
+    if (ocrHit) {
+      attempts.push({ layer: "ocr", outcome: "hit", confidence: ocrHit.confidence, ms: now() - t0 })
+      log("computeruse.locate", { layer: "ocr", hit: true, confidence: ocrHit.confidence, ms: now() - t0 })
+      const pointClient0 = { x: ocrHit.x - shot.client.x, y: ocrHit.y - shot.client.y }
+      const region: RectPx = {
+        x: Math.max(0, pointClient0.x + shot.client.x - REGION_CROP_SIZE / 2),
+        y: Math.max(0, pointClient0.y + shot.client.y - REGION_CROP_SIZE / 2),
+        width: REGION_CROP_SIZE,
+        height: REGION_CROP_SIZE,
+      }
+      const locateFrame = shot
+      const fresh = await trackCapture(hwnd)
+      const { diffRatio } = await deps.capturer.diffRegion(fresh.path, locateFrame.path, region)
+      if (diffRatio <= PIXEL_DIFF_THRESHOLD) {
+        shot = fresh
+        await releaseRaw(locateFrame.path)
+        return {
+          hit: ocrHit,
+          pointClient: { x: ocrHit.x - shot.client.x, y: ocrHit.y - shot.client.y },
+          ocrRes,
+          shot,
+          crossverified: true,
+          crossverifyChannel: "pixel-region",
+          uncrossverified: false,
+          attempts,
+        }
+      }
+      // Unstable: re-locate on the fresh frame (WP1 semantics unchanged).
+      const ocr2 = await deps.locator.ocr(fresh.path)
+      const hit2 = deps.locator.locate(ocr2, target)
+      if (!hit2) {
+        attempts.push({ layer: "ocr", outcome: "not-found", reason: "ocr-relocate-moved", ms: now() - t0 })
+        throw staleError("OCR")
+      }
+      shot = fresh
+      ocrRes = ocr2
+      await releaseRaw(locateFrame.path)
+      return {
+        hit: hit2,
+        pointClient: { x: hit2.x - shot.client.x, y: hit2.y - shot.client.y },
+        ocrRes,
+        shot,
+        crossverified: false,
+        uncrossverified: true, // pixel channel disagreed — honest bookkeeping (R4)
+        attempts,
+      }
+    }
+    attempts.push({ layer: "ocr", outcome: "not-found", ms: now() - t0 })
+    log("computeruse.locate", { layer: "ocr", hit: false, reason: "ocr-not-found", ms: now() - t0 })
+  }
+
+  // ---- L2 / L3: honest stubs (WP5 / WP6) --------------------------------------
+  attempts.push({ layer: "tinyclick", outcome: "skipped", reason: "wp5-not-implemented", ms: 0 })
+  attempts.push({ layer: "cloud", outcome: "skipped", reason: "wp6-not-implemented", ms: 0 })
+  log("computeruse.locate", { layer: "tinyclick", hit: false, reason: "wp5-not-implemented" })
+  log("computeruse.locate", { layer: "cloud", hit: false, reason: "wp6-not-implemented" })
+  throw notFoundError()
+}
