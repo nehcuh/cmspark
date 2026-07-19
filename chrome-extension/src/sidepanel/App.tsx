@@ -3,6 +3,7 @@
 import { Component, useState, useRef, useCallback, useEffect } from "react"
 import { useWebSocket } from "./hooks/useWebSocket"
 import { ChatView } from "./components/ChatView"
+import { ComputerTaskBar } from "./components/ComputerTaskBar"
 import { ThreadList } from "./components/ThreadList"
 import { BottomBar } from "./components/BottomBar"
 import { SettingsSlideout } from "./components/SettingsSlideout"
@@ -106,6 +107,7 @@ function AppContent() {
       {toast && <div style={toastStyles.toast}>{toast}</div>}
       <Header connectionState={connectionState} onCraft={() => setCraftOpen(true)} onToggleLogs={() => setShowLogs(!showLogs)} onOpenNotebooklmImporter={() => setNbImporterOpen(true)} />
       <ChatView />
+      <ComputerTaskBar />
       <BottomBar />
       <InputArea />
       {showLogs && <LogBar onClose={() => setShowLogs(false)} />}
