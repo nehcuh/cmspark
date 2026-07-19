@@ -65,7 +65,14 @@ export interface DangerScan {
 }
 
 function normalize(text: string): string {
-  return text.toLowerCase()
+  // Y2 (WP2): NFKC folds full-width/half-width lookalikes (Ｐａｙ → pay,
+  // ！→ !, 全角空格 → space) and zero-width codepoints (U+200B..U+200D,
+  // FEFF) are stripped — both are one-keystroke evasions against lexicon
+  // matching. NFKC leaves ordinary CJK untouched, so the zh lexicon is safe.
+  return text
+    .normalize("NFKC")
+    .replace(/[\u200B-\u200D\uFEFF]/g, "")
+    .toLowerCase()
 }
 
 // Review R3/N2: pure substring matching both MISSES (nothing) and over-fires

@@ -61,6 +61,33 @@ export function evidenceBaseDir(baseDir?: string): string {
   return baseDir ?? path.join(DATA_DIR, EVIDENCE_DIR_NAME)
 }
 
+/** Injectable lstat surface for the Y5 reparse-point check. */
+export interface ReparseFsLike {
+  lstatSync(p: string): { isSymbolicLink(): boolean }
+}
+
+/**
+ * Y5 (WP2): refuse reparse points (symlink/junction) in the evidence dir
+ * chain. A pre-planted symlink at the base or task dir would redirect sealed
+ * evidence outside the sandbox — and the A7.2 janitor's deletes would
+ * follow it too. Checked before every init, fail-closed. A missing
+ * component is fine (it will be created as a real directory).
+ */
+export function assertNotReparsePath(target: string, f: ReparseFsLike = fs): void {
+  let isLink = false
+  try {
+    isLink = f.lstatSync(target).isSymbolicLink()
+  } catch {
+    return // does not exist — nothing to reparse through
+  }
+  if (isLink) {
+    throw new ComputerError(
+      "EVIDENCE_ERROR",
+      `computer.evidence: "${target}" is a reparse point — refusing to store evidence through it (Y5)`,
+    )
+  }
+}
+
 export class ComputerEvidence implements EvidenceSink {
   readonly dir: string
   private records: EvidenceActionRecord[] = []
@@ -72,10 +99,16 @@ export class ComputerEvidence implements EvidenceSink {
   ) {
     // taskId is a companion-generated uuid — sanitize defensively anyway.
     const safe = taskId.replace(/[^a-zA-Z0-9_-]/g, "")
-    this.dir = path.join(evidenceBaseDir(baseDir), safe)
+    this.baseDir = evidenceBaseDir(baseDir)
+    this.dir = path.join(this.baseDir, safe)
   }
+  private readonly baseDir: string
 
   async init(meta: Record<string, unknown>): Promise<void> {
+    // Y5: refuse reparse points BEFORE creating anything (symlinked base or
+    // pre-planted task dir redirects sealed evidence outside the sandbox).
+    assertNotReparsePath(this.baseDir)
+    assertNotReparsePath(this.dir)
     fs.mkdirSync(this.dir, { recursive: true })
     const tmp = path.join(this.dir, `.task-${process.pid}.tmp`)
     fs.writeFileSync(tmp, JSON.stringify(meta, null, 2), "utf8")

@@ -627,9 +627,15 @@ export async function runComputerTask(
         }
       }
 
-      // Danger scan (A2 dual-channel; A4 no-path deny). Needs OCR text — reuse
-      // the locate OCR when present, otherwise OCR the fresh frame once.
-      if (!ocrRes) ocrRes = await deps.locator.ocr(shot.path)
+      // Danger scan (A2 dual-channel; A4 no-path deny).
+      // Y1 (WP2): ALWAYS OCR the CURRENT pre-injection frame for the danger
+      // verdict — the locate OCR (when it exists) describes the older LOCATE
+      // frame, and only the 200×200 region is pixel-cross-checked; a
+      // credential field or payment button appearing OUTSIDE that region
+      // between locate and inject is invisible unless the whole frame is
+      // re-read. The locate OCR still owns the coordinates; this fresh OCR
+      // owns the danger verdict.
+      const scanOcr = await deps.locator.ocr(shot.path)
       const regionImg: RectPx = pointClient
         ? {
             x: Math.max(0, pointClient.x + shot.client.x - REGION_CROP_SIZE / 2),
@@ -640,7 +646,7 @@ export async function runComputerTask(
         : { x: 0, y: 0, width: shot.rect.width, height: shot.rect.height } // type: whole window
       // X3: `let` — the post-approval refresh re-scans on the refreshed frame
       // and replaces this (the sealed blur must match the frame actually sealed).
-      let scan: DangerScan = scanDanger(ocrRes.words, regionImg, REGION_CROP_SIZE)
+      let scan: DangerScan = scanDanger(scanOcr.words, regionImg, REGION_CROP_SIZE)
 
       if ((action.action === "type" || action.action === "key") && scan.credentialRects.length > 0) {
         // A4.3: credential context for a type action — no-path deny (the OSR

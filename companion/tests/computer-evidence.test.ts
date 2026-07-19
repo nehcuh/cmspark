@@ -271,3 +271,51 @@ test("history redaction: non-sensitive tools pass through unchanged (control)", 
   assert.equal(rows[0].result_summary, "ok")
   store.close()
 })
+
+
+// --- WP2 Y5: reparse-point refusal ------------------------------------------------
+
+test("evidence Y5: assertNotReparsePath — symlink throws, real dir and ENOENT pass", async () => {
+  const { assertNotReparsePath } = await import("../src/computer/evidence")
+  // symlink
+  assert.throws(
+    () => assertNotReparsePath("/x", { lstatSync: () => ({ isSymbolicLink: () => true }) }),
+    (err: any) => err instanceof ComputerError && err.code === "EVIDENCE_ERROR",
+  )
+  // real directory
+  assertNotReparsePath("/x", { lstatSync: () => ({ isSymbolicLink: () => false }) })
+  // missing component
+  assertNotReparsePath("/x", {
+    lstatSync: () => {
+      throw new Error("ENOENT")
+    },
+  })
+})
+
+test("evidence Y5: init refuses a symlinked base dir (real fs junction)", async () => {
+  const real = tempDir("y5-real-")
+  const linkParent = tempDir("y5-link-")
+  const link = path.join(linkParent, "evidence-link")
+  fs.symlinkSync(real, link, "junction") // junction needs no privilege on Windows
+  const ev = new ComputerEvidence("task-y5", new FakeSealer(), link)
+  await assert.rejects(
+    () => ev.init({ taskId: "task-y5" }),
+    (err: any) => err instanceof ComputerError && err.code === "EVIDENCE_ERROR",
+  )
+  // and the SAME task id under a REAL base works (the check is path-shaped, not id-shaped)
+  const okBase = tempDir("y5-ok-")
+  const ev2 = new ComputerEvidence("task-y5", new FakeSealer(), okBase)
+  await ev2.init({ taskId: "task-y5" })
+  assert.ok(fs.existsSync(path.join(okBase, "task-y5", "task.json.sealed")))
+})
+
+test("evidence Y5: init refuses a pre-planted symlinked TASK dir", async () => {
+  const base = tempDir("y5-base-")
+  const elsewhere = tempDir("y5-elsewhere-")
+  fs.symlinkSync(elsewhere, path.join(base, "task-planted"), "junction")
+  const ev = new ComputerEvidence("task-planted", new FakeSealer(), base)
+  await assert.rejects(
+    () => ev.init({ taskId: "task-planted" }),
+    (err: any) => err instanceof ComputerError && err.code === "EVIDENCE_ERROR",
+  )
+})

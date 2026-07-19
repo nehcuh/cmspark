@@ -123,3 +123,24 @@ test("danger: credential rect clamps at the top-left image edge", () => {
   assert.equal(scan.credentialRects[0].x, 0)
   assert.equal(scan.credentialRects[0].y, 0)
 })
+
+
+// --- WP2 Y2: NFKC + zero-width evasion resistance ------------------------------
+
+test("danger Y2: full-width Latin lookalikes fold via NFKC (Ｐａｙ -> pay)", () => {
+  // Ｐａｙ in full-width Latin — previously invisible to the Latin matcher.
+  const scan = scanDanger([word("Ｐａｙ", 50, 50, 60, 20)], REGION, CROP)
+  assert.equal(scan.regionLevel, "hard")
+  assert.ok(scan.regionHits.includes("pay"))
+})
+
+test("danger Y2: zero-width characters inside a token are stripped (支​付 -> 支付)", () => {
+  const scan = scanDanger([word("支\u200B付", 50, 50, 60, 20)], REGION, CROP)
+  assert.equal(scan.regionLevel, "hard")
+  assert.ok(scan.regionHits.includes("支付"))
+})
+
+test("danger Y2: full-width credential token still blurs (ｐａｓｓｗｏｒｄ)", () => {
+  const scan = scanDanger([word("ｐａｓｓｗｏｒｄ", 300, 300, 40, 20)], REGION, CROP)
+  assert.equal(scan.credentialRects.length, 1)
+})

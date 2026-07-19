@@ -537,11 +537,11 @@ test("executor X5: credential surfacing ONLY in the after frame is blurred (own 
     async ensureLanguage() {},
     async ocr() {
       ocrCalls += 1
-      // call 1 = locate (clean); call 2 = after frame — a password prompt
+      // calls 1-2 = locate + Y1 pre-inject danger scan (clean); call 3+ = after frame — a password prompt
       // the click surfaced (the before frame's blur rects know nothing of it)
       return {
         language: "zh-Hans",
-        words: ocrCalls === 1 ? OK_WORDS : [{ text: "密码", x: 300, y: 200, w: 60, h: 30 }],
+        words: ocrCalls <= 2 ? OK_WORDS : [{ text: "密码", x: 300, y: 200, w: 60, h: 30 }],
       }
     },
     locate(result: OcrResult, text: string) { return realLocate.call(this, result, text) },
@@ -564,7 +564,7 @@ test("executor X5: after-frame OCR failure -> frame dropped, never persisted unb
     async ensureLanguage() {},
     async ocr() {
       ocrCalls += 1
-      if (ocrCalls === 1) return { language: "zh-Hans", words: OK_WORDS }
+      if (ocrCalls <= 2) return { language: "zh-Hans", words: OK_WORDS }
       throw new Error("ocr boom")
     },
     locate(result: OcrResult, text: string) { return realLocate.call(this, result, text) },
@@ -602,9 +602,9 @@ test("executor X3: caution re-L2 approved + target moved during the decision -> 
     async ensureLanguage() {},
     async ocr() {
       ocrCalls += 1
-      // call 1 = initial locate (word at old spot); calls 2+ = post-approval
+      // calls 1-2 = initial locate + Y1 danger scan (word at old spot); calls 3+ = post-approval
       // frame (the destructive button MOVED while the human decided)
-      const words = ocrCalls === 1
+      const words = ocrCalls <= 2
         ? [{ text: "确认删除", x: 160, y: 208, w: 60, h: 30 }]
         : [{ text: "确认删除", x: 250, y: 168, w: 60, h: 30 }]
       return { language: "zh-Hans", words }
@@ -634,7 +634,7 @@ test("executor X3: target gone after the approval -> STALE_SCREENSHOT, zero inje
       ocrCalls += 1
       return {
         language: "zh-Hans",
-        words: ocrCalls === 1 ? [{ text: "确认删除", x: 160, y: 208, w: 60, h: 30 }] : [],
+        words: ocrCalls <= 2 ? [{ text: "确认删除", x: 160, y: 208, w: 60, h: 30 }] : [],
       }
     },
     locate(result: OcrResult, text: string) { return realLocate.call(this, result, text) },
@@ -658,9 +658,9 @@ test("executor X3: escalation to region-hard after the approval -> DANGER_HARD_D
     async ensureLanguage() {},
     async ocr() {
       ocrCalls += 1
-      // call 1: caution word only. Post-approval frame: the SAME spot now also
+      // calls 1-2: caution word only (locate + Y1 scan). Post-approval frame: the SAME spot now also
       // OCRs as a payment final-confirm (adversarial relabel during the decision).
-      const words = ocrCalls === 1
+      const words = ocrCalls <= 2
         ? [{ text: "确认删除", x: 160, y: 208, w: 60, h: 30 }]
         : [
             { text: "确认删除", x: 250, y: 168, w: 60, h: 30 },
