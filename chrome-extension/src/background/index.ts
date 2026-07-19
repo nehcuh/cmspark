@@ -724,6 +724,10 @@ function setupMessageHandlers() {
       case "apps.remove":
       case "apps.set_policy":
       case "apps.set_enabled":
+      // 坐标 computer-use(WP4):急停按钮(任务条)、全局态只读行、证据目录打开。
+      case "computer.task.abort":
+      case "computer.get_state":
+      case "computer.evidence.open":
         // Forward to companion
         wsClient.send(message)
         sendResponse({ ok: true })

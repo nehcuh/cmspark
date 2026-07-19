@@ -1,7 +1,8 @@
 // Global state store for the agent
 
 import { createContext, useContext, useReducer, type ReactNode, type Dispatch } from "react"
-import type { ConnectionState, Thread, Message, SkillMeta, OperationRecord, LLMConfig, SendShortcut, SecurityConfirmationRequest, LogEntry, KnowledgeMeta, SkillSelectionMode, SecurityAuditEntry, McpServerMeta, McpSelectionMode, AppEntry, AppPresetStatus, AppEnumerateCandidate, AppAddWarning } from "../types"
+import type { ConnectionState, Thread, Message, SkillMeta, OperationRecord, LLMConfig, SendShortcut, SecurityConfirmationRequest, LogEntry, KnowledgeMeta, SkillSelectionMode, SecurityAuditEntry, McpServerMeta, McpSelectionMode, AppEntry, AppPresetStatus, AppEnumerateCandidate, AppAddWarning, ComputerTaskEventView, ComputerTaskState } from "../types"
+import { reduceComputerTaskEvent } from "../utils/computer-utils"
 
 export interface AgentState {
   connectionState: ConnectionState
@@ -55,6 +56,11 @@ export interface AgentState {
   /** WP6a (Finding 2): companion platform from apps.list (null = unknown /
    *  pre-WP6a companion → panel keeps the add UI enabled). */
   appsPlatform: string | null
+  // 坐标 computer-use(WP4)— computer.task.event 折叠视图 + 全局坐标开关只读镜像。
+  /** 当前/最近一个坐标任务的折叠状态(null = 无任务;驱动任务条 + 急停按钮)。 */
+  computerTask: ComputerTaskState | null
+  /** computer.state 只读镜像(null = 尚未查询;WP4 不做面板内全局开关切换)。 */
+  computerCoordinateEnabled: boolean | null
 }
 
 export type AgentAction =
@@ -107,6 +113,9 @@ export type AgentAction =
   | { type: "SET_APPS_CANDIDATES"; candidates: AppEnumerateCandidate[] | null }
   | { type: "SET_APPS_WARNINGS"; warnings: AppAddWarning[] }
   | { type: "SET_APPS_ERROR"; error: string | null }
+  | { type: "COMPUTER_TASK_EVENT"; event: ComputerTaskEventView }
+  | { type: "COMPUTER_TASK_ABORT_ACK"; taskId: string; matched: number }
+  | { type: "SET_COMPUTER_COORDINATE_STATE"; enabled: boolean }
 export const initialState: AgentState = {
   connectionState: "disconnected",
   threads: [],
@@ -169,6 +178,8 @@ export const initialState: AgentState = {
   appsWarnings: [],
   appsError: null,
   appsPlatform: null,
+  computerTask: null,
+  computerCoordinateEnabled: null,
 }
 
 export function agentReducer(state: AgentState, action: AgentAction): AgentState {
@@ -400,6 +411,18 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       return { ...state, appsWarnings: action.warnings }
     case "SET_APPS_ERROR":
       return { ...state, appsError: action.error }
+    case "COMPUTER_TASK_EVENT":
+      // 状态机(含 P4 懒创建/完结后丢弃)全部在纯函数 reduceComputerTaskEvent 里。
+      return { ...state, computerTask: reduceComputerTaskEvent(state.computerTask, action.event) }
+    case "COMPUTER_TASK_ABORT_ACK": {
+      // matched>0 才置位;task_id="*"(急停全部)对当前任务同样生效。
+      const t = state.computerTask
+      if (!t || action.matched <= 0) return state
+      if (t.taskId !== action.taskId && action.taskId !== "*") return state
+      return { ...state, computerTask: { ...t, abortAcked: true } }
+    }
+    case "SET_COMPUTER_COORDINATE_STATE":
+      return { ...state, computerCoordinateEnabled: action.enabled }
     default:
       return state
   }

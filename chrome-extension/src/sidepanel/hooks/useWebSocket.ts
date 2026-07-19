@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from "react"
 import { useAgentStore } from "../store/agentStore"
-import type { LLMConfig } from "../types"
+import type { ComputerTaskEventView, LLMConfig } from "../types"
 import { isAppsErrorMessage } from "../utils/apps-utils"
 
 /**
@@ -316,6 +316,11 @@ export function useWebSocket() {
               relevant_domains: Array.isArray(msg.relevant_domains) ? msg.relevant_domains : [],
               relevant_apps: Array.isArray(msg.relevant_apps) ? msg.relevant_apps : [],
               nonce_challenge: typeof msg.nonce_challenge === "string" ? msg.nonce_challenge : undefined,
+              // 坐标 computer-use(WP4):L2 标注截图 + 三段式 caption + P1 完整预览
+              // 文本(绕过 code_preview 的 1200 截断)——全部可选,旧 companion 不下发。
+              preview_image: typeof msg.preview_image === "string" ? msg.preview_image : undefined,
+              preview_caption: typeof msg.preview_caption === "string" ? msg.preview_caption : undefined,
+              full_preview: typeof msg.full_preview === "string" ? msg.full_preview : undefined,
             },
           })
           break
@@ -544,6 +549,26 @@ export function useWebSocket() {
             type: "SET_APPS_CANDIDATES",
             candidates: Array.isArray(msg.candidates) ? msg.candidates : [],
           })
+          break
+
+        // 坐标 computer-use(WP4)— 任务事件折叠(状态机/P4 懒创建在
+        // reduceComputerTaskEvent 纯函数里)、急停 ack、全局坐标开关只读镜像。
+        case "computer.task.event":
+          if (typeof msg.taskId === "string" && typeof msg.event === "string") {
+            dispatch({ type: "COMPUTER_TASK_EVENT", event: msg as ComputerTaskEventView })
+          }
+          break
+
+        case "computer.task.abort.ack":
+          dispatch({
+            type: "COMPUTER_TASK_ABORT_ACK",
+            taskId: typeof msg.task_id === "string" ? msg.task_id : "",
+            matched: typeof msg.matched === "number" ? msg.matched : 0,
+          })
+          break
+
+        case "computer.state":
+          dispatch({ type: "SET_COMPUTER_COORDINATE_STATE", enabled: msg.coordinateEnabled === true })
           break
 
         case "mcp.server.status_changed": {

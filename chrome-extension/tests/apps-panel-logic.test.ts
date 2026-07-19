@@ -15,6 +15,7 @@ import {
   policyBadge,
   threadTrustHint,
 } from "../src/sidepanel/utils/apps-utils"
+import { uiaCapableBadge } from "../src/sidepanel/utils/computer-utils"
 
 // --- W1: canOfferThreadTrust matrix ---
 
@@ -151,4 +152,39 @@ test("appsPlatformSupported: win32 + unknown (null/undefined) → UI enabled; ot
   assert.equal(appsPlatformSupported(undefined), true)
   assert.equal(appsPlatformSupported("darwin"), false)
   assert.equal(appsPlatformSupported("linux"), false)
+})
+
+// --- 坐标 computer-use(WP4 WI-6):uiaCapable 三态徽标 ---
+// 中性能力措辞,绝不渲染成安全背书(WP3 §K.5:非权限位的探测提示)。
+
+test("uiaCapableBadge: true → 「UIA」蓝(能力提示,非安全背书)", () => {
+  const b = uiaCapableBadge({ uiaCapable: true, uiaProbedAt: "2026-07-20T00:00:00Z" })
+  assert.equal(b.label, "UIA")
+  assert.match(b.title, /能力提示，非安全背书/)
+  assert.equal(/人工设定/.test(b.title), false)
+  // 蓝系配色(与 policyBadge 的色板约定一致:label/color/bg 三件套)。
+  assert.ok(b.color.length > 0 && b.bg.length > 0)
+})
+
+test("uiaCapableBadge: false → 「OCR」灰,title 说明 UIA 不可用走 OCR 定位", () => {
+  const b = uiaCapableBadge({ uiaCapable: false, uiaProbedAt: "2026-07-20T00:00:00Z" })
+  assert.equal(b.label, "OCR")
+  assert.match(b.title, /UIA 不可用，走 OCR 定位/)
+  assert.match(b.title, /非安全背书/)
+})
+
+test("uiaCapableBadge: undefined → 「未探测」点灰,title 说明首次坐标任务时自动探测", () => {
+  const b = uiaCapableBadge({})
+  assert.equal(b.label, "未探测")
+  assert.match(b.title, /首次坐标任务时自动探测/)
+  assert.equal(/人工设定/.test(b.title), false)
+})
+
+test("uiaCapableBadge: 手设覆盖——uiaCapable 有值但 uiaProbedAt 缺失 → title 标注「人工设定」", () => {
+  // WP3 §K.5:config.json 里可手工写 uiaCapable,此时没有探测时间戳。
+  assert.match(uiaCapableBadge({ uiaCapable: true }).title, /人工设定/)
+  assert.match(uiaCapableBadge({ uiaCapable: false }).title, /人工设定/)
+  assert.match(uiaCapableBadge({ uiaCapable: true, uiaProbedAt: "" }).title, /人工设定/)
+  // 探测时间戳存在 = 机器探测结果,不标人工。
+  assert.equal(/人工设定/.test(uiaCapableBadge({ uiaCapable: false, uiaProbedAt: "2026-07-20T00:00:00Z" }).title), false)
 })
