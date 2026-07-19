@@ -22,6 +22,7 @@ import {
   type OcrWord,
   type RectPx,
   type ScreenCapturer,
+  type SecurityEnvironment,
   type WindowEnumerator,
   type WindowInfo,
 } from "./types"
@@ -482,6 +483,51 @@ export class PsWindowEnumerator implements WindowEnumerator {
 
   async infoForHwnd(hwnd: number): Promise<WindowInfo> {
     return psWindowInfo(this.runner, hwnd)
+  }
+}
+
+// ---------------------------------------------------------------------------
+
+/**
+ * WP2 (§T5-8): ps1-backed security-environment probe. computer-probe.ps1 is
+ * READ-ONLY (no SendInput, no SetForegroundWindow — it can never trigger a
+ * UAC prompt or change focus); the IL/desktop verdict is applied here so
+ * tests can inject the same contract via the SecurityEnvironment interface.
+ * The probe's own ILDENIED/DESKTOPDENIED stderr prefixes already map to the
+ * typed codes via rethrowComputerPsError; the JSON verdicts below cover the
+ * success-but-denied shapes (probe succeeded, policy says no).
+ */
+export class PsSecurityEnvironment implements SecurityEnvironment {
+  constructor(private runner: PsRunner = runPs) {}
+
+  async assertInjectable(hwnd: number): Promise<void> {
+    let stdout: string
+    try {
+      stdout = await this.runner(resolveWinScript("computer-probe.ps1"), ["-Hwnd", String(hwnd)])
+    } catch (err) {
+      rethrowComputerPsError(err, "probe")
+    }
+    const r = parsePsJson<any>(stdout!, "computer.probe")
+    const ownIl = Number(r.ownIl ?? -1)
+    const targetIl = Number(r.targetIl ?? -1)
+    if (ownIl < 0 || targetIl < 0) {
+      throw new ComputerError(
+        "INTEGRITY_LEVEL_DENIED",
+        `computer.probe: integrity levels unavailable (own=${ownIl} target=${targetIl}) — fail-closed`,
+      )
+    }
+    if (targetIl > ownIl) {
+      throw new ComputerError(
+        "INTEGRITY_LEVEL_DENIED",
+        `computer.probe: target pid ${Number(r.pid ?? 0)} IL=${targetIl} above own IL=${ownIl} — the app was likely relaunched elevated mid-task; cross-IL injection is never attempted`,
+      )
+    }
+    if (String(r.desktop ?? "") !== "Default") {
+      throw new ComputerError(
+        "DESKTOP_DENIED",
+        `computer.probe: input desktop is "${String(r.desktop ?? "")}", not "Default" (UAC/secure desktop/lock)`,
+      )
+    }
   }
 }
 

@@ -208,6 +208,7 @@ function makeDeps(overrides: Partial<ComputerExecutorDeps> = {}): ComputerExecut
     locator: new FakeLocator(OK_WORDS),
     injector: new RecordingInjector(),
     windows: new FakeWindows(),
+    securityEnv: { assertInjectable: async () => {} },
     evidenceFactory: () => new FakeEvidence(),
     confirm: scriptedConfirm([true]).fn,
     config: testConfig(),
@@ -1173,4 +1174,77 @@ test("executor WP2: caller-supplied taskId is echoed (panel abort targets THIS r
     deps,
   )
   assert.equal(r.taskId, "task-abc-123")
+})
+
+
+// --- WP2: per-action security-environment re-probe (§T5-8) --------------------
+
+test("executor WP2: IL probe denies -> INTEGRITY_LEVEL_DENIED, zero injections", async () => {
+  const injector = new RecordingInjector()
+  const deps = makeDeps({
+    injector,
+    securityEnv: {
+      assertInjectable: async () => {
+        throw new ComputerError("INTEGRITY_LEVEL_DENIED", "probe: target IL above own IL")
+      },
+    },
+  })
+  const r = await runComputerTask({ task: "t", app: "win.app.test", actions: [clickOk] }, deps)
+  assert.equal(r.success, false)
+  assert.equal(r.errorCode, "INTEGRITY_LEVEL_DENIED")
+  assert.equal(injector.clicks.length, 0, "no injection attempted after the probe denial")
+})
+
+test("executor WP2: secure desktop detected -> DESKTOP_DENIED, zero injections", async () => {
+  const injector = new RecordingInjector()
+  const deps = makeDeps({
+    injector,
+    securityEnv: {
+      assertInjectable: async () => {
+        throw new ComputerError("DESKTOP_DENIED", 'probe: input desktop is "Winlogon"')
+      },
+    },
+  })
+  const r = await runComputerTask({ task: "t", app: "win.app.test", actions: [clickOk] }, deps)
+  assert.equal(r.errorCode, "DESKTOP_DENIED")
+  assert.equal(injector.clicks.length, 0)
+})
+
+test("executor WP2: probe runs once per INJECTIVE action (waits/screenshots skip it)", async () => {
+  let probes = 0
+  const deps = makeDeps({
+    securityEnv: {
+      assertInjectable: async () => {
+        probes += 1
+      },
+    },
+  })
+  const r = await runComputerTask(
+    {
+      task: "t",
+      app: "win.app.test",
+      actions: [clickOk, { action: "wait", ms: 1 }, { action: "screenshot" }, clickOk],
+    },
+    deps,
+  )
+  assert.equal(r.success, true)
+  assert.equal(probes, 2, "one probe per click; wait/screenshot are not injectable")
+})
+
+test("executor WP2: probe denial mid-task stops before the NEXT injection", async () => {
+  const injector = new RecordingInjector()
+  let probes = 0
+  const deps = makeDeps({
+    injector,
+    securityEnv: {
+      assertInjectable: async () => {
+        probes += 1
+        if (probes === 2) throw new ComputerError("INTEGRITY_LEVEL_DENIED", "relaunched elevated mid-task")
+      },
+    },
+  })
+  const r = await runComputerTask({ task: "t", app: "win.app.test", actions: [clickOk, clickOk] }, deps)
+  assert.equal(r.errorCode, "INTEGRITY_LEVEL_DENIED")
+  assert.equal(injector.clicks.length, 1, "first action injected; second was blocked at the probe")
+  assert.equal(r.completedActions, 1)
 })

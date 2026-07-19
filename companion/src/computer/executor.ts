@@ -66,6 +66,7 @@ import {
   type OcrResult,
   type RectPx,
   type ScreenCapturer,
+  type SecurityEnvironment,
   type WindowEnumerator,
 } from "./types"
 
@@ -79,6 +80,12 @@ export interface ComputerExecutorDeps {
   locator: Locator
   injector: InputInjector
   windows: WindowEnumerator
+  /**
+   * WP2 (§T5-8): per-action IL + input-desktop re-probe. REQUIRED — a dep
+   * that cannot answer is not a safe default; tests inject an allow-all
+   * fake explicitly, production injects PsSecurityEnvironment.
+   */
+  securityEnv: SecurityEnvironment
   evidenceFactory: EvidenceFactory
   confirm: ComputerConfirmationChannel
   config: CompanionConfig
@@ -409,6 +416,12 @@ export async function runComputerTask(
       // Per-action revalidation (§E.2.4/B5): hwnd still owned by the whitelisted exe.
       const info = await deps.windows.infoForHwnd(hwnd)
       assertHwndOwnedByEntry(info, entry)
+
+      // WP2 (§T5-8): IL + input desktop re-probe — the app may have been
+      // relaunched elevated (hwnd ownership still matches, but SendInput
+      // would cross UIPI) or the session switched to a secure desktop
+      // between actions. Fail-closed before ANY further work this action.
+      await deps.securityEnv.assertInjectable(hwnd)
 
       // Budget: exhausted -> mandatory new L2 (default 15 per task).
       if (budget <= 0) {

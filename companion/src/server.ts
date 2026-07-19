@@ -1822,6 +1822,7 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
           PsLocator,
           PsInputInjector,
           PsWindowEnumerator,
+          PsSecurityEnvironment,
           PsEvidenceSealer,
         } = await import("./computer/win-adapters")
         const { ComputerEvidence, runEvidenceJanitor } = await import("./computer/evidence")
@@ -1856,6 +1857,7 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
               locator: new PsLocator(),
               injector: new PsInputInjector(undefined, estopFlagPath()),
               windows: new PsWindowEnumerator(),
+              securityEnv: new PsSecurityEnvironment(),
               evidenceFactory: (taskId) => new ComputerEvidence(taskId, sealer),
               // Re-L2 channel for budget/dialog/danger pauses — already
               // originWs-bound by the caller (COMPANION_TOOLS sendConfirmation).

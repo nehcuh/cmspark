@@ -306,6 +306,20 @@ export interface WindowEnumerator {
   infoForHwnd(hwnd: number): Promise<WindowInfo>
 }
 
+/**
+ * WP2 (§T5-8): per-action security-environment probe — the target process
+ * integrity level and the input desktop, RE-CHECKED between actions. A
+ * whitelisted app can be relaunched elevated mid-task (hwnd ownership still
+ * matches, but SendInput would cross UIPI), and the session can switch to a
+ * secure desktop (UAC/lock); both must stop the task BEFORE the next
+ * injection attempt. The ps1-side IL/desktop checks stay as defense in
+ * depth; this is the mockable TS gate. Fail-closed on any probe error.
+ */
+export interface SecurityEnvironment {
+  /** Throws ComputerError(INTEGRITY_LEVEL_DENIED | DESKTOP_DENIED) when not injectable. */
+  assertInjectable(hwnd: number): Promise<void>
+}
+
 // ---------------------------------------------------------------------------
 // A3 — confirmed corpus. The L2 dialog enumerates every type.text literal;
 // the executor binds the corpus HASH into the task context and rejects any
