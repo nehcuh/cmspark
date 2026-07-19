@@ -2377,18 +2377,51 @@ function extractMcpError(result: any): string {
   return JSON.stringify(result).slice(0, 500)
 }
 
-/** Broadcast a message to all connected WebSocket clients (used for MCP status updates). */
-function broadcastToClients(data: any): void {
+/**
+ * Broadcast a message to all AUTHENTICATED WebSocket clients (MCP status
+ * updates, computer.task.event progress + preview JPEGs).
+ *
+ * X3 (adversary WP2): outbound payloads turned sensitive in WP2 — per-step
+ * desktop preview JPEGs ride this channel. The inbound gate (P0-2B) already
+ * rejects pre-handshake messages, but the outbound side used to check only
+ * readyState, letting a forged-Origin localhost peer siphon every broadcast
+ * inside the 5s handshake window (and reconnect indefinitely). Mirror the
+ * inbound semantics: no completed auth.handshake, NO broadcasts.
+ */
+export function broadcastToClients(data: any): void {
   if (!wss) return
   const message = JSON.stringify(data)
   for (const client of wss.clients) {
-    if (client.readyState === WebSocket.OPEN) {
+    if (client.readyState === WebSocket.OPEN && wsAuth.get(client)?.authenticated === true) {
       try {
         client.send(message)
       } catch {
         // ignore send failures (client disconnect)
       }
     }
+  }
+}
+
+/**
+ * Exported for integration tests (X3): aim broadcastToClients at a test
+ * WebSocketServer and seed wsAuth entries (both states), so the REAL
+ * broadcast path runs without booting startServer (singleton wss + UDS lock
+ * + MCP manager). Pass null to detach. Mirrors getSessionIdForTests /
+ * setComputerEstopEnsureForTests.
+ */
+export function setupBroadcastAuthForTests(
+  server: WebSocketServer | null,
+  authenticatedClients: WebSocket[] = [],
+  unauthenticatedClients: WebSocket[] = [],
+): void {
+  wss = server as WebSocketServer
+  for (const [client, authenticated] of [
+    ...authenticatedClients.map((c): [WebSocket, boolean] => [c, true]),
+    ...unauthenticatedClients.map((c): [WebSocket, boolean] => [c, false]),
+  ]) {
+    const timer = setTimeout(() => {}, 60000)
+    timer.unref()
+    wsAuth.set(client, { nonce: "test-nonce", authenticated, timer })
   }
 }
 
