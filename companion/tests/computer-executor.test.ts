@@ -1116,3 +1116,61 @@ test("executor WP2: same-exe foreground window keeps the DIALOG channel (not a y
   assert.ok(confirm.captured[0].details.code.includes("对话框"))
   assert.ok(confirm.captured[0].details.dangerousApis.includes("computer.task_induced_dialog"))
 })
+
+
+// --- WP2: emergency-stop abort channels (§E.6) --------------------------------
+
+test("executor WP2: abort before the first action -> TASK_ABORTED, zero injections", async () => {
+  const injector = new RecordingInjector()
+  const deps = makeDeps({ injector, abortCheck: () => "panel" })
+  const r = await runComputerTask({ task: "t", app: "win.app.test", actions: [clickOk] }, deps)
+  assert.equal(r.success, false)
+  assert.equal(r.errorCode, "TASK_ABORTED")
+  assert.ok(r.error?.includes("panel"), "channel named in the error")
+  assert.equal(injector.clicks.length, 0, "no injection happened")
+  assert.equal(r.completedActions, 0)
+})
+
+test("executor WP2: abort fires DURING a wait -> TASK_ABORTED, wait step not completed", async () => {
+  let calls = 0
+  const deps = makeDeps({
+    abortCheck: () => {
+      calls += 1
+      return calls >= 2 ? "hotkey" : null // 1st = loop-top, 2nd = after first wait chunk
+    },
+  })
+  const r = await runComputerTask(
+    { task: "t", app: "win.app.test", actions: [{ action: "wait", ms: 5000 }, clickOk] },
+    deps,
+  )
+  assert.equal(r.errorCode, "TASK_ABORTED")
+  assert.ok(r.error?.includes("hotkey"))
+  assert.equal(r.completedActions, 0, "the wait never completed")
+  assert.equal(r.steps.length, 0)
+})
+
+test("executor WP2: abort between actions -> prior action kept, next never injects", async () => {
+  const injector = new RecordingInjector()
+  let calls = 0
+  const deps = makeDeps({
+    injector,
+    abortCheck: () => {
+      calls += 1
+      // action1 loop-top (1) + action1 pre-inject (2) pass; action2 loop-top (3) fires
+      return calls >= 3 ? "panel" : null
+    },
+  })
+  const r = await runComputerTask({ task: "t", app: "win.app.test", actions: [clickOk, clickOk] }, deps)
+  assert.equal(r.errorCode, "TASK_ABORTED")
+  assert.equal(r.completedActions, 1, "the first click completed before the abort")
+  assert.equal(injector.clicks.length, 1)
+})
+
+test("executor WP2: caller-supplied taskId is echoed (panel abort targets THIS run)", async () => {
+  const deps = makeDeps({ abortCheck: () => "panel" })
+  const r = await runComputerTask(
+    { task: "t", app: "win.app.test", actions: [clickOk], taskId: "task-abc-123" },
+    deps,
+  )
+  assert.equal(r.taskId, "task-abc-123")
+})

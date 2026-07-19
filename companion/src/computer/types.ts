@@ -90,6 +90,12 @@ export interface ComputerTaskParams {
   actions: ComputerAction[]
   /** Per-task action budget (default DEFAULT_TASK_BUDGET). */
   budget?: number
+  /**
+   * WP2: caller-supplied task id (the server generates one so the panel
+   * abort channel can target THIS run before it starts). Defaults to a
+   * fresh randomUUID inside the executor.
+   */
+  taskId?: string
 }
 
 // ---------------------------------------------------------------------------
@@ -171,6 +177,8 @@ export type ComputerErrorCode =
   | "EVIDENCE_ERROR"
   | "INVALID_ACTION"
   | "CONFIRMATION_UNAVAILABLE"
+  | "TASK_ABORTED" // WP2: emergency stop fired (hotkey flag / panel abort) mid-task
+  | "EMERGENCY_STOP_UNAVAILABLE" // WP2: estop hotkey helper missing/stale at task start
 
 export class ComputerError extends Error {
   readonly code: ComputerErrorCode

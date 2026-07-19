@@ -34,6 +34,7 @@ const PS_ERROR_CODES: Record<string, import("./types").ComputerErrorCode> = {
   OUTOFBOUNDS: "OUT_OF_BOUNDS",
   OCCLUDED: "CLICK_OCCLUDED",
   FOCUSLOST: "FOCUS_LOST",
+  STOPPED: "TASK_ABORTED", // WP2 (§E.6): -StopFile flag seen mid-injection
   OCRLANGMISSING: "OCR_LANGUAGE_MISSING",
   SENDFAILED: "INJECT_FAILED",
   CAPTUREFAILED: "CAPTURE_FAILED",
@@ -338,16 +339,29 @@ export class PsLocator implements Locator {
 // ---------------------------------------------------------------------------
 
 export class PsInputInjector implements InputInjector {
-  constructor(private runner: PsRunner = runPs) {}
+  /**
+   * @param runner ps1 runner (tests inject a fake).
+   * @param stopFile WP2 (§E.6): emergency-stop flag path — forwarded as
+   *   -StopFile so the ps1 aborts mid-injection (STOPPED, exit 11) when the
+   *   hotkey fires during a long type batch. Undefined = no flag forwarding.
+   */
+  constructor(
+    private runner: PsRunner = runPs,
+    private stopFile?: string,
+  ) {}
+
+  private withStop(args: string[]): string[] {
+    return this.stopFile ? [...args, "-StopFile", this.stopFile] : args
+  }
 
   async click(hwnd: number, x: number, y: number, kind: "click" | "double_click" | "right_click"): Promise<void> {
     try {
-      await this.runner(resolveWinScript("computer-input.ps1"), [
+      await this.runner(resolveWinScript("computer-input.ps1"), this.withStop([
         "-Hwnd", String(hwnd),
         "-Action", kind,
         "-X", String(Math.round(x)),
         "-Y", String(Math.round(y)),
-      ])
+      ]))
     } catch (err) {
       rethrowComputerPsError(err, "inject.click")
     }
@@ -356,11 +370,11 @@ export class PsInputInjector implements InputInjector {
   async typeText(hwnd: number, text: string): Promise<void> {
     try {
       // argv-only: the text travels as an argv element, never interpolated.
-      await this.runner(resolveWinScript("computer-input.ps1"), [
+      await this.runner(resolveWinScript("computer-input.ps1"), this.withStop([
         "-Hwnd", String(hwnd),
         "-Action", "type",
         "-Text", text,
-      ], { timeoutMs: 15000 + text.length * 120 }) // throttle headroom, still bounded
+      ]), { timeoutMs: 15000 + text.length * 120 }) // throttle headroom, still bounded
     } catch (err) {
       rethrowComputerPsError(err, "inject.type")
     }
@@ -368,11 +382,11 @@ export class PsInputInjector implements InputInjector {
 
   async keyChord(hwnd: number, keys: string[]): Promise<void> {
     try {
-      await this.runner(resolveWinScript("computer-input.ps1"), [
+      await this.runner(resolveWinScript("computer-input.ps1"), this.withStop([
         "-Hwnd", String(hwnd),
         "-Action", "key",
         "-Keys", keys.join(","),
-      ])
+      ]))
     } catch (err) {
       rethrowComputerPsError(err, "inject.key")
     }
@@ -380,13 +394,13 @@ export class PsInputInjector implements InputInjector {
 
   async scroll(hwnd: number, x: number, y: number, delta: number): Promise<void> {
     try {
-      await this.runner(resolveWinScript("computer-input.ps1"), [
+      await this.runner(resolveWinScript("computer-input.ps1"), this.withStop([
         "-Hwnd", String(hwnd),
         "-Action", "scroll",
         "-X", String(Math.round(x)),
         "-Y", String(Math.round(y)),
         "-Delta", String(Math.round(delta)),
-      ])
+      ]))
     } catch (err) {
       rethrowComputerPsError(err, "inject.scroll")
     }
@@ -394,14 +408,14 @@ export class PsInputInjector implements InputInjector {
 
   async drag(hwnd: number, x: number, y: number, x2: number, y2: number): Promise<void> {
     try {
-      await this.runner(resolveWinScript("computer-input.ps1"), [
+      await this.runner(resolveWinScript("computer-input.ps1"), this.withStop([
         "-Hwnd", String(hwnd),
         "-Action", "drag",
         "-X", String(Math.round(x)),
         "-Y", String(Math.round(y)),
         "-X2", String(Math.round(x2)),
         "-Y2", String(Math.round(y2)),
-      ])
+      ]))
     } catch (err) {
       rethrowComputerPsError(err, "inject.drag")
     }

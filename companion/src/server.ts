@@ -196,6 +196,16 @@ const DESTRUCTIVE_MCP_TOOL_PATTERN = /\b(write|delete|exec|commit|rm|remove|shel
 const mcpSessionByWs = new Map<WebSocket, string>()
 
 /**
+ * WP2 (§E.6): running computer-task abort registry. The host_computer handler
+ * inserts its taskId before runComputerTask starts (so the panel can target a
+ * run that is still inside its first L2 gate) and removes it in a finally.
+ * A computer.task.abort WS message flips the flag; the executor's abortCheck
+ * polls it between actions / during waits. Any authenticated panel connection
+ * may abort — stopping injection is always the safe direction.
+ */
+const computerTaskAbort = new Map<string, boolean>()
+
+/**
  * Exported for integration tests (audit item 6 pattern): the per-connection
  * session id createToolExecutor registered for this socket. Tests need it to
  * drive handleSecurityConfirmationResponse with the SAME session id the gate
@@ -1789,6 +1799,22 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
       if (os.platform() !== "win32") {
         return { success: false, error: `host_computer is Windows-only in WP1 (platform=${os.platform()})` }
       }
+      // WP2 (§E.6): emergency-stop preflight — the hotkey helper must be
+      // alive (ready.json heartbeat < 3s) before ANY injection task starts.
+      // Spawns the helper when missing; refuses fail-closed when it cannot
+      // come up: an injection loop with no kill switch must never run.
+      const { ensureEstopHelper, clearEstopFlag, consumeEstopFlag, estopFlagPath } = await import("./computer/estop")
+      const estop = await ensureEstopHelper()
+      if (!estop.ok) {
+        logger.warn("computer.estop.unavailable", { tool_call_id: toolCallId, reason: estop.reason })
+        return {
+          success: false,
+          error: `host_computer refused: emergency-stop unavailable (${estop.reason}). The computer-estop.ps1 helper must be running with a working hotkey.`,
+          data: { error_code: "EMERGENCY_STOP_UNAVAILABLE" },
+        }
+      }
+      // A STALE flag (pressed before this task) must not abort the new run.
+      clearEstopFlag()
       try {
         const { runComputerTask } = await import("./computer/executor")
         const {
@@ -1811,26 +1837,40 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
           }
         } catch { /* best-effort */ }
         const sealer = new PsEvidenceSealer()
-        const result = await runComputerTask(
-          {
-            task: String(params.task || ""),
-            app: String(params.app || ""),
-            actions: Array.isArray(params.actions) ? params.actions : [],
-            ...(typeof params.budget === "number" ? { budget: params.budget } : {}),
-          },
-          {
-            capturer: new PsScreenCapturer(),
-            locator: new PsLocator(),
-            injector: new PsInputInjector(),
-            windows: new PsWindowEnumerator(),
-            evidenceFactory: (taskId) => new ComputerEvidence(taskId, sealer),
-            // Re-L2 channel for budget/dialog/danger pauses — already
-            // originWs-bound by the caller (COMPANION_TOOLS sendConfirmation).
-            confirm: execOpts?.sendConfirmation ?? (async () => ({ confirmationId: "", approved: false, reason: "disconnect" as const })),
-            config: getConfig(),
-            log: (event, data) => logger.info(event, { tool_call_id: toolCallId, ...data }),
-          },
-        )
+        // WP2 (§E.6): register BEFORE the run so the panel abort channel can
+        // target this task while it is still inside its first action.
+        const computerTaskId = randomUUID()
+        computerTaskAbort.set(computerTaskId, false)
+        let result
+        try {
+          result = await runComputerTask(
+            {
+              task: String(params.task || ""),
+              app: String(params.app || ""),
+              actions: Array.isArray(params.actions) ? params.actions : [],
+              ...(typeof params.budget === "number" ? { budget: params.budget } : {}),
+              taskId: computerTaskId,
+            },
+            {
+              capturer: new PsScreenCapturer(),
+              locator: new PsLocator(),
+              injector: new PsInputInjector(undefined, estopFlagPath()),
+              windows: new PsWindowEnumerator(),
+              evidenceFactory: (taskId) => new ComputerEvidence(taskId, sealer),
+              // Re-L2 channel for budget/dialog/danger pauses — already
+              // originWs-bound by the caller (COMPANION_TOOLS sendConfirmation).
+              confirm: execOpts?.sendConfirmation ?? (async () => ({ confirmationId: "", approved: false, reason: "disconnect" as const })),
+              config: getConfig(),
+              log: (event, data) => logger.info(event, { tool_call_id: toolCallId, ...data }),
+              // WP2 (§E.6): polled by the executor before every action, during
+              // waits, and once more immediately before SendInput.
+              abortCheck: () =>
+                computerTaskAbort.get(computerTaskId) ? "panel" : consumeEstopFlag() ? "hotkey" : null,
+            },
+          )
+        } finally {
+          computerTaskAbort.delete(computerTaskId)
+        }
         if (!result.success) {
           return {
             success: false,
@@ -2342,6 +2382,10 @@ function validateWsMessage(msg: any): WsValidationResult {
       if (typeof m.approved !== "boolean") return { valid: false, error: "approved must be a boolean" }
       return { valid: true }
     },
+    "computer.task.abort": (m) => {
+      if (typeof m.task_id !== "string" || !m.task_id) return { valid: false, error: "computer.task.abort requires task_id (a task id or '*')" }
+      return { valid: true }
+    },
     "tool.result": (m) => {
       if (typeof m.tool_call_id !== "string" || !m.tool_call_id) return { valid: false, error: "tool.result requires tool_call_id" }
       return { valid: true }
@@ -2834,6 +2878,30 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
           // so handleSecurityConfirmationResponse can record thread-scoped trust.
           const sid = mcpSessionByWs.get(ws)
           await handleSecurityConfirmationResponse(ws, msg, sid)
+          return
+        }
+
+        // WP2 (§E.6): panel emergency stop for a RUNNING computer task.
+        // task_id targets one run (the id is broadcast in the task events);
+        // "*" is the panic button — aborts every running task. Stopping
+        // injection is always the safe direction, so any authenticated panel
+        // connection may send this (no origin binding).
+        if (msg.type === "computer.task.abort") {
+          const tid = typeof msg.task_id === "string" ? msg.task_id : ""
+          let matched = 0
+          if (tid === "*") {
+            for (const k of computerTaskAbort.keys()) {
+              computerTaskAbort.set(k, true)
+              matched++
+            }
+          } else if (tid && computerTaskAbort.has(tid)) {
+            computerTaskAbort.set(tid, true)
+            matched = 1
+          }
+          if (matched > 0) logger.warn("computer.task.abort.requested", { taskId: tid, matched })
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: "computer.task.abort.ack", task_id: tid, matched }))
+          }
           return
         }
 

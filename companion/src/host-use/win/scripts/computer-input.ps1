@@ -21,7 +21,7 @@
 # stderr contract:
 #   HWNDDEAD:<d> (4)  ILDENIED:<d> (5)  DESKTOPDENIED:<d> (6)
 #   OUTOFBOUNDS:<d> (7)  FOCUSLOST:<d> (8)  SENDFAILED:<d> (9)
-#   OCCLUDED:<d> (10)  BADARGS:<d> (2)
+#   OCCLUDED:<d> (10)  STOPPED:<d> (11)  BADARGS:<d> (2)
 param(
   [Parameter(Mandatory=$true)][long]$Hwnd,
   [Parameter(Mandatory=$true)][ValidateSet('click','double_click','right_click','type','key','scroll','drag')] [string]$Action,
@@ -41,7 +41,10 @@ param(
   [int]$ThrottleMinMs = 30,
   [int]$ThrottleMaxMs = 80,
   # Foreground re-check cadence for type (A1.4).
-  [int]$FocusCheckEvery = 16
+  [int]$FocusCheckEvery = 16,
+  # WP2 (E.6): emergency-stop flag file — polled before injection and between
+  # type characters; its mere presence aborts the run with STOPPED (exit 11).
+  [string]$StopFile = ""
 )
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
 $ErrorActionPreference = 'Stop'
@@ -176,6 +179,15 @@ function Fail([string]$prefix, [string]$detail, [int]$code) {
   exit $code
 }
 
+# WP2 (E.6): emergency-stop flag — its mere presence aborts the injection,
+# fail-closed. Checked after the foreground force (single-shot actions) and
+# between type characters (the long-running channel).
+function Test-StopFlag {
+  if ($StopFile -ne "" -and (Test-Path -LiteralPath $StopFile)) {
+    Fail "STOPPED" "emergency-stop flag present — injection aborted" 11
+  }
+}
+
 $hwndPtr = [IntPtr]::new($Hwnd)
 
 # --- 1. live window ------------------------------------------------------------
@@ -274,6 +286,7 @@ if (-not $fgOk) {
   Fail "FOCUSLOST" "SetForegroundWindow failed after 3 attempts (foreground lock) — refusing to inject blind" 8
 }
 Start-Sleep -Milliseconds 120
+Test-StopFlag
 
 switch ($Action) {
   { $_ -in 'click','double_click','right_click' } {
@@ -372,6 +385,9 @@ switch ($Action) {
     # 16 chars) — against OSR apps that drop instantaneous event streams, that
     # was the exact failure mode the throttle was meant to prevent.
     for ($i = 0; $i -lt $chars.Length; $i++) {
+      # WP2 (E.6): emergency stop — polled between EVERY character; a pressed
+      # stop flag ends the batch here, not after the remaining chars spray.
+      Test-StopFlag
       # A1.4: foreground drift mid-type = abort remaining events (the text must
       # never spray into a popup dialog / password field that appeared mid-task).
       if ($i % $FocusCheckEvery -eq 0) {

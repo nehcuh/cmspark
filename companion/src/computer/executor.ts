@@ -95,6 +95,14 @@ export interface ComputerExecutorDeps {
    * once per task. Injectable for tests; production default reads the file.
    */
   hashFile?: (path: string) => string
+  /**
+   * WP2 (§E.6): emergency-stop probe. Returns the channel that fired
+   * ("hotkey" = PS helper flag file, "panel" = WS abort) or null. Checked
+   * before EVERY action, inside waits, and once more immediately before the
+   * SendInput call — an abort mid-task fails TASK_ABORTED through the normal
+   * zero-residue exit path.
+   */
+  abortCheck?: () => "hotkey" | "panel" | null
 }
 
 export interface ComputerStepResult {
@@ -211,7 +219,9 @@ export async function runComputerTask(
   const now = deps.now ?? (() => Date.now())
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)))
   const log = deps.log ?? (() => {})
-  const taskId = randomUUID()
+  // WP2: the server passes its registry task id so the panel abort channel
+  // can target THIS run; standalone callers get a fresh id.
+  const taskId = params.taskId ?? randomUUID()
   const steps: ComputerStepResult[] = []
   let evidence: EvidenceSink | null = null
 
@@ -344,9 +354,27 @@ export async function runComputerTask(
     seq += 1
     const startedAt = now()
 
+    // WP2 (§E.6): emergency stop — polled before EVERY action of any kind.
+    const abortedAtTop = deps.abortCheck?.() ?? null
+    if (abortedAtTop) {
+      log("computer.task.aborted", { taskId, seq, channel: abortedAtTop })
+      return fail(new ComputerError("TASK_ABORTED", `computer: task aborted by emergency stop (${abortedAtTop})`))
+    }
+
     // ---- non-injective actions -------------------------------------------------
     if (action.action === "wait") {
-      await sleep(Math.min(action.ms, MAX_WAIT_MS))
+      // Chunked sleep — the abort channel is polled during long waits too.
+      let remaining = Math.min(action.ms, MAX_WAIT_MS)
+      while (remaining > 0) {
+        const chunk = Math.min(remaining, 50)
+        await sleep(chunk)
+        remaining -= chunk
+        const abortedMidWait = deps.abortCheck?.() ?? null
+        if (abortedMidWait) {
+          log("computer.task.aborted", { taskId, seq, channel: abortedMidWait, during: "wait" })
+          return fail(new ComputerError("TASK_ABORTED", `computer: task aborted by emergency stop (${abortedMidWait}) during wait`))
+        }
+      }
       steps.push({ seq, action: "wait", ok: true })
       await evidence.appendAction({ seq, action: "wait", crossverified: true, uncrossverified: false, durationMs: now() - startedAt })
       continue
@@ -656,6 +684,16 @@ export async function runComputerTask(
       const beforeWinHwnds = new Set(
         (await deps.windows.enumerateByExe(entry.exe!.path).catch(() => [])).map((w) => w.hwnd),
       )
+
+      // WP2 (§E.6): final abort gate immediately BEFORE the irreversible
+      // SendInput — a stop requested during locate/danger/re-L2 phases must
+      // still prevent injection. The ps1 side additionally polls the stop
+      // flag mid-type (-StopFile).
+      const abortedPreInject = deps.abortCheck?.() ?? null
+      if (abortedPreInject) {
+        log("computer.task.aborted", { taskId, seq, channel: abortedPreInject, during: "pre-inject" })
+        throw new ComputerError("TASK_ABORTED", `computer: task aborted by emergency stop (${abortedPreInject}) before injection`)
+      }
 
       // Inject (ps1 re-checks IL/desktop/bounds; type re-checks foreground).
       if (action.action === "type") {
