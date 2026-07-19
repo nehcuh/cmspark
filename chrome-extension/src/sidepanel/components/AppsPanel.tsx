@@ -6,7 +6,7 @@
 // WS messages; the companion validates, gates (D2 biometric for auto), and
 // broadcasts apps.updated to every client.
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { useAgentStore } from "../store/agentStore"
 import type { AppEntry, AppEnumerateCandidate, AppPolicy } from "../types"
 import {
@@ -16,6 +16,7 @@ import {
   ellipsizePath,
   policyBadge,
 } from "../utils/apps-utils"
+import { uiaCapableBadge } from "../utils/computer-utils"
 
 export function AppsPanel() {
   const { state, dispatch } = useAgentStore()
@@ -31,6 +32,16 @@ export function AppsPanel() {
   const [addPolicy, setAddPolicy] = useState<AppPolicy>("ai")
 
   const appsEnabled = state.appsEnabled
+  // WP4 (WI-6): 全局坐标开关只读镜像(null = 尚未查询)。WP4 不做面板内
+  // 全局开关切换——开启需 companion 生物识别门,本行只展示状态。
+  const computerCoordinateEnabled = state.computerCoordinateEnabled
+  useEffect(() => {
+    if (computerCoordinateEnabled === null) {
+      chrome.runtime.sendMessage({ type: "computer.get_state" })
+    }
+    // 仅在尚未查询时拉一次;后续由 computer.state 广播驱动。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   // WP6a (Finding 2): the companion reports its platform via apps.list.
   // Off win32, enumerate/add can never succeed — render an honest state
   // instead of a dead add button. Unknown platform (older companion) keeps
@@ -61,6 +72,19 @@ export function AppsPanel() {
     // Downgrades are free; →auto triggers the companion's D2 biometric gate
     // (existing security.confirmation.request dialog, nonce fallback).
     chrome.runtime.sendMessage({ type: "apps.set_policy", token: entry.token, policy })
+  }
+
+  // WP4 (WI-6): 每应用坐标开关。开启走 companion 生物识别门(现有确认对话框,
+  // 扩展零新增);关闭免费(fail-closed 方向)。vault/LOLBIN 由服务端
+  // COORDINATE_STRUCTURAL_DENY 拒绝 → 经 apps.updated/错误广播落 appsError 展示。
+  const handleToggleCoordinate = (entry: AppEntry) => {
+    setMenuOpen(null)
+    clearFeedback()
+    chrome.runtime.sendMessage({
+      type: "apps.set_coordinate_allowed",
+      token: entry.token,
+      allowed: entry.coordinateAllowed !== true,
+    })
   }
 
   const handleDelete = (entry: AppEntry) => {
@@ -160,6 +184,25 @@ export function AppsPanel() {
         </button>
       </div>
 
+      {/* WP4 (WI-6): 全局坐标开关只读行(镜像「全局 App」先例)——WP4 不做
+          面板内全局切换,开启路径 = companion 确认门或 config.json。 */}
+      <div style={styles.globalToggleRow}>
+        <label
+          style={{ ...styles.globalToggleLabel, cursor: "default" }}
+          title="全局坐标操作：关闭后 host_computer 一律拒绝执行。开启需经确认门验证，或在 config.json 修改 computer.coordinateEnabled"
+        >
+          <input type="checkbox" checked={computerCoordinateEnabled === true} disabled style={{ marginRight: 6 }} />
+          <span style={{ fontWeight: 500 }}>坐标操作</span>
+        </label>
+        {computerCoordinateEnabled === null && <span style={styles.globalOffHint}>状态查询中…</span>}
+        {computerCoordinateEnabled === false && (
+          <span style={styles.globalOffHint}>已关闭 · 坐标任务不会执行</span>
+        )}
+        {computerCoordinateEnabled === true && (
+          <span style={styles.globalOffHint}>已开启 · 仍需逐应用授权</span>
+        )}
+      </div>
+
       <div style={{ ...styles.mcpBody, opacity: appsEnabled ? 1 : 0.5, pointerEvents: appsEnabled ? "auto" : "none" }}>
         {/* Segment switcher — Segment B (CLI 工具) is a Phase-2 placeholder (D12). */}
         <div style={styles.modeSwitcher}>
@@ -248,6 +291,7 @@ export function AppsPanel() {
                 onMenuToggle={() => setMenuOpen(menuOpen === entry.token ? null : entry.token)}
                 onToggleEnabled={() => handleToggleEntry(entry)}
                 onSetPolicy={(p) => handleSetPolicy(entry, p)}
+                onToggleCoordinate={() => handleToggleCoordinate(entry)}
                 onDelete={() => handleDelete(entry)}
               />
             ))}
@@ -416,6 +460,7 @@ interface AppCardProps {
   onMenuToggle: () => void
   onToggleEnabled: () => void
   onSetPolicy: (p: AppPolicy) => void
+  onToggleCoordinate: () => void
   onDelete: () => void
 }
 
@@ -425,6 +470,8 @@ function AppCard(props: AppCardProps) {
   const warns = appWarnReasons(entry)
   const autoOk = autoEligible(entry)
   const isPreset = entry.source === "preset"
+  // WP4 (WI-6): uiaCapable 三态徽标——中性能力措辞,绝不渲染成安全背书。
+  const uiaBadge = uiaCapableBadge(entry)
 
   return (
     <div style={{ ...styles.serverCard, opacity: entry.enabled ? 1 : 0.55 }}>
@@ -439,6 +486,17 @@ function AppCard(props: AppCardProps) {
             >
               {badge.label}
             </span>
+            <span
+              style={{ ...styles.policyBadgeMini, color: uiaBadge.color, background: uiaBadge.bg }}
+              title={uiaBadge.title}
+            >
+              {uiaBadge.label}
+            </span>
+            {entry.coordinateAllowed === true && (
+              <span style={{ ...styles.policyBadgeMini, color: "#047857", background: "#d1fae5" }} title="已允许 agent 在此应用窗口内执行坐标操作">
+                坐标
+              </span>
+            )}
             {warns.map((w) => (
               <span key={w} style={styles.warnBadge} title={`${w} — 最高只能设为「AI 判断」`}>
                 ⚠ {w}
@@ -503,6 +561,22 @@ function AppCard(props: AppCardProps) {
                 </button>
               )
             })}
+            <div style={{ ...styles.menuSectionTitle, borderTop: "1px solid #f3f4f6" }}>坐标操作</div>
+            <button
+              style={{
+                ...styles.menuItem,
+                color: entry.coordinateAllowed === true ? "#047857" : "#333",
+              }}
+              title={
+                entry.coordinateAllowed === true
+                  ? "已允许坐标操作——点击关闭（立即生效，无需验证）"
+                  : "允许 agent 在此应用窗口内执行坐标点击/输入（开启需 Windows Hello 验证）"
+              }
+              onClick={props.onToggleCoordinate}
+            >
+              {entry.coordinateAllowed === true ? "✓ 允许坐标操作" : "允许坐标操作"}
+              {entry.coordinateAllowed !== true && "（需 Hello 验证）"}
+            </button>
             <button
               style={{
                 ...styles.menuItem,

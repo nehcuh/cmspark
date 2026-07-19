@@ -724,7 +724,9 @@ function setupMessageHandlers() {
       case "apps.remove":
       case "apps.set_policy":
       case "apps.set_enabled":
-      // 坐标 computer-use(WP4):急停按钮(任务条)、全局态只读行、证据目录打开。
+      // 坐标 computer-use(WP4):每应用坐标开关(AppsPanel 卡片菜单;开启由
+      // companion 生物识别门承担)、急停按钮(任务条)、全局态只读行、证据目录打开。
+      case "apps.set_coordinate_allowed":
       case "computer.task.abort":
       case "computer.get_state":
       case "computer.evidence.open":
