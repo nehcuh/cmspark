@@ -1905,6 +1905,7 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
           PsPreviewBuilder,
           PsEvidenceSealer,
         } = await import("./computer/win-adapters")
+        const { PsUiaProber, writeBackUiaVerdict } = await import("./computer/uia")
         const { ComputerEvidence, runEvidenceJanitor } = await import("./computer/evidence")
         // A7.2: 7-day TTL janitor — best-effort, never blocks the task.
         try { runEvidenceJanitor({}) } catch { /* best-effort */ }
@@ -1969,6 +1970,16 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
                 } catch {
                   /* best-effort */
                 }
+              },
+              // WP3 (§K.5): task-start lazy UIA admission probe (read-only).
+              uiaProber: new PsUiaProber(),
+              // WP3 (§K.5): config write-back of the probed admission hint.
+              // writeBackUiaVerdict enforces the hand-set-override rule and
+              // revalidates before replaceAppsEntries; the outcome is logged
+              // either way, and a refused/failed write never fails the task.
+              onUiaVerdict: (token, verdict, probedAt) => {
+                const wb = writeBackUiaVerdict(token, verdict, probedAt)
+                logger.info("computer.uia.writeback", { tool_call_id: toolCallId, token, applied: wb.applied, reason: wb.reason })
               },
             },
           )

@@ -47,6 +47,18 @@ export interface AppEntry {
    * and LOLBIN binaries can never hold it (normalizeAppEntry force-clears).
    */
   coordinateAllowed?: boolean
+  /**
+   * WP3 (plan §K.5): UIA admission hint — selects the locator LAYER ORDER
+   * (L0 UIA first vs L1 OCR only). THREE-STATE: undefined = never probed
+   * (the executor lazy-probes at task start). NOT a privilege bit — no
+   * injection-safety invariant depends on it, so it carries no biometric
+   * gate (ADR-010 protects capability grants, not layer hints; full
+   * rationale in computer/uia.ts). A value WITHOUT uiaProbedAt is a
+   * hand-set human override and is never overwritten by the auto write-back.
+   */
+  uiaCapable?: boolean
+  /** ISO timestamp of the last auto-probe write-back; absent = hand-set. */
+  uiaProbedAt?: string
 }
 
 export interface AppsConfig {
@@ -161,6 +173,12 @@ export function validateAppEntry(raw: unknown): string | null {
   if (e.coordinateAllowed !== undefined && typeof e.coordinateAllowed !== "boolean") {
     return `app "${e.token}" coordinateAllowed must be a boolean`
   }
+  if (e.uiaCapable !== undefined && typeof e.uiaCapable !== "boolean") {
+    return `app "${e.token}" uiaCapable must be a boolean`
+  }
+  if (e.uiaProbedAt !== undefined && typeof e.uiaProbedAt !== "string") {
+    return `app "${e.token}" uiaProbedAt must be a string`
+  }
   return null
 }
 
@@ -190,6 +208,34 @@ export function maxPolicyForEntry(entry: AppEntry): "auto" | "ai" {
 }
 
 const POLICY_RANK: Record<AppPolicy, number> = { manual: 0, ai: 1, auto: 2 }
+
+/**
+ * WP3 (§K.5): apply a task-start UIA probe verdict to an entries map. Pure —
+ * the caller (computer/uia.ts writeBackUiaVerdict) performs the
+ * replaceAppsEntries swap. Tampering semantics:
+ *   - unprobed (uiaCapable undefined)          → fill the verdict;
+ *   - previously auto-probed (uiaProbedAt set) → refresh allowed;
+ *   - HAND-SET (uiaCapable present, uiaProbedAt absent) → human override,
+ *     NEVER overwritten (applied:false, reason "hand-set-override").
+ * The write touches ONLY uiaCapable + uiaProbedAt; the new entry is
+ * revalidated before it is returned (caller-swap parity with ADR-010).
+ */
+export function applyUiaProbedVerdict(
+  entries: Record<string, AppEntry>,
+  token: string,
+  uiaCapable: boolean,
+  probedAt: string,
+): { entries: Record<string, AppEntry>; applied: boolean; reason?: string } {
+  const entry = entries[token]
+  if (!entry) return { entries, applied: false, reason: "unknown-token" }
+  if (entry.uiaCapable !== undefined && entry.uiaProbedAt === undefined) {
+    return { entries, applied: false, reason: "hand-set-override" }
+  }
+  const next: AppEntry = { ...entry, uiaCapable, uiaProbedAt: probedAt }
+  const err = validateAppEntry(next)
+  if (err) return { entries, applied: false, reason: `validation: ${err}` }
+  return { entries: { ...entries, [token]: next }, applied: true }
+}
 
 /**
  * Normalize a schema-valid entry: coerce unknown policy values to "manual"

@@ -128,6 +128,18 @@ export interface ComputerExecutorDeps {
    * are reported; a failed action must not consume the rate window.
    */
   onActionInjected?: () => void
+  /**
+   * WP3 (§K.5): lazy UIA admission probe. When the entry's uiaCapable hint is
+   * unprobed (undefined), the executor probes the resolved hwnd ONCE at task
+   * start (read-only) and reports the verdict through onUiaVerdict for the
+   * server-side config write-back. Absent dep = probe skipped (unit tests).
+   */
+  uiaProber?: import("./uia").UiaProber
+  /**
+   * WP3 (§K.5): verdict sink wired by the server to writeBackUiaVerdict.
+   * Fire-and-forget — a write-back failure must never fail the task.
+   */
+  onUiaVerdict?: (token: string, verdict: import("./uia").UiaVerdict, probedAt: string) => void
 }
 
 export interface ComputerStepResult {
@@ -370,6 +382,48 @@ export async function runComputerTask(
     return fail(err instanceof ComputerError ? err : new ComputerError("APP_WINDOW_NOT_FOUND", String((err as Error)?.message ?? err)))
   }
 
+  // WP3 (§K.5): task-start lazy UIA admission probe. Timing decision: probe
+  // HERE (hwnd resolved, the app is confirmed running) — not at app-add time
+  // (app may not be running; the panel add-flow must stay fast) and not in
+  // the launch path (host_computer never starts apps). A probe FAILURE is an
+  // honest "unknown": the task treats the app as UIA-incapable (OCR layer
+  // order) and NOTHING is written back (unknown is not a verdict).
+  // Hand-set entries (uiaCapable present, uiaProbedAt absent — enforced by
+  // applyUiaProbedVerdict) and previously probed entries skip this entirely.
+  let uiaCapable = entry.uiaCapable === true
+  let uiaFreshProbe = false
+  if (entry.uiaCapable === undefined && deps.uiaProber) {
+    try {
+      const verdict = await deps.uiaProber.probe(hwnd)
+      uiaCapable = verdict.uiaCapable
+      uiaFreshProbe = true
+      const probedAt = new Date(now()).toISOString()
+      log("computer.uia.probed", {
+        taskId,
+        app: entry.token,
+        uiaCapable: verdict.uiaCapable,
+        confidence: verdict.confidence,
+        nodes: verdict.stats.nodes,
+        maxDepth: verdict.stats.maxDepth,
+        edits: verdict.stats.edits,
+        documents: verdict.stats.documents,
+        interactive: verdict.stats.interactive,
+        named: verdict.stats.named,
+        namedOnscreen: verdict.stats.namedOnscreen,
+        hydrationRechecked: verdict.stats.hydrationRechecked,
+        ms: verdict.stats.durationMs,
+      })
+      try {
+        deps.onUiaVerdict?.(entry.token, verdict, probedAt)
+      } catch {
+        /* best-effort — a write-back failure never fails the task */
+      }
+    } catch (err) {
+      log("computer.uia.probe_failed", { taskId, app: entry.token, error: String((err as Error)?.message ?? err) })
+      uiaCapable = false
+    }
+  }
+
   let budget = Math.min(Math.max(1, params.budget ?? deps.config.computer?.budget ?? DEFAULT_TASK_BUDGET), MAX_TASK_BUDGET)
   let uncrossLeft = UNCROSS_VERIFIED_SUB_BUDGET
 
@@ -384,6 +438,11 @@ export async function runComputerTask(
     // WP2: hwnd binding evidence — the entry carried an add-time exe hash
     // and it verified (assertExeNotDrifted passed by the time we are here).
     exeSha256Verified: entry.exe?.sha256 ? true : false,
+    // WP3 (§K.5): UIA admission verdict effective for THIS task and its
+    // provenance ("entry" = preset/hand-set, "probe" = fresh lazy probe,
+    // "unknown" = probe unavailable/failed — nothing was written back).
+    uiaCapable,
+    uiaVerdictSource: entry.uiaCapable !== undefined ? "entry" : uiaFreshProbe ? "probe" : "unknown",
     startedAt: new Date(now()).toISOString(),
   })
   log("computer.task.started", { taskId, app: entry.token, hwnd, budget })
