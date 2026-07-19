@@ -49,6 +49,21 @@ export interface EvidenceActionRecord {
    * actions that located through the layer chain.
    */
   locateAttempts?: import("./types").LocateAttempt[]
+  /**
+   * X1 (WP3 adversary): quantified UIA↔OCR witness strength — present on
+   * click-family actions where the L0 witness ran. Records WHY "uia+ocr"
+   * was (or was not) granted: dual bbox size caps (oversized), anchor char
+   * coverage, contiguous reconstruction, window-area ratio.
+   */
+  witness?: {
+    agree: boolean
+    oversized: boolean
+    matchedChars: number
+    anchorChars: number
+    coverage: number
+    reconstructed: boolean
+    bboxAreaRatio: number
+  }
   dangerScan?: { regionLevel: string; windowLevel: string; regionHits: string[]; windowHits: string[] }
   beforeSha256?: string
   afterSha256?: string

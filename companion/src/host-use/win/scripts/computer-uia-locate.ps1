@@ -54,12 +54,18 @@ $ae = [System.Windows.Automation.AutomationElement]
 $rootEl = $null
 try { $rootEl = $ae::FromHandle($hwndPtr) } catch { $rootEl = $null }
 if ($null -eq $rootEl) { Fail "HWNDDEAD" "hwnd $Hwnd has no UIA element (cross-IL or dead)" 4 }
+# X1 (WP3 adversary): window rect for the witness bbox size caps — a forged
+# node can inflate its BoundingRectangle so the REAL anchor text falls inside
+# it while the center (the injection point) sits on an attacker's button.
+$winRect = $null
+try { $winRect = $rootEl.Current.BoundingRectangle } catch { $winRect = $null }
 
 $sw = [Diagnostics.Stopwatch]::StartNew()
 $wv = [System.Windows.Automation.TreeWalker]::ControlViewWalker
 $stack = New-Object System.Collections.Stack
 $stack.Push(@{ el = $rootEl; depth = 0 })
 $nodes = 0
+$oversized = 0
 $exactHits = New-Object System.Collections.ArrayList
 $subHit = $null
 while ($stack.Count -gt 0 -and $nodes -lt $MaxNodes) {
@@ -77,15 +83,28 @@ while ($stack.Count -gt 0 -and $nodes -lt $MaxNodes) {
         try { $off = [bool]$cur.Current.IsOffscreen } catch { $off = $true }
         if (-not $off) { try { $rr = $cur.Current.BoundingRectangle } catch { $rr = $null } }
         if ($null -ne $rr -and $rr.Width -gt 0 -and $rr.Height -gt 0) {
-          $info = @{
-            name = $nm
-            controlType = ''; automationId = ''
-            x = [int]($rr.X + $rr.Width / 2); y = [int]($rr.Y + $rr.Height / 2)
-            bbox = @{ x = [int]$rr.X; y = [int]$rr.Y; width = [int]$rr.Width; height = [int]$rr.Height }
+          # X1 (WP3 adversary): dual bbox size cap — absolute area AND window-
+          # area ratio (locate-chain.ts re-checks the same caps witness-side:
+          # WITNESS_BBOX_MAX_AREA_PX2 / WITNESS_BBOX_MAX_WINDOW_RATIO). An
+          # oversized element is never a legitimate interactive target — a
+          # forged node inflates its bbox exactly this way to swallow the real
+          # anchor text. Dropped at the source (fail-closed), counted.
+          $bboxArea = [double]$rr.Width * [double]$rr.Height
+          $winArea = 0.0
+          if ($null -ne $winRect) { $winArea = [double]$winRect.Width * [double]$winRect.Height }
+          if ($bboxArea -gt 150000 -or ($winArea -gt 0 -and ($bboxArea / $winArea) -gt 0.3)) {
+            $oversized++
+          } else {
+            $info = @{
+              name = $nm
+              controlType = ''; automationId = ''
+              x = [int]($rr.X + $rr.Width / 2); y = [int]($rr.Y + $rr.Height / 2)
+              bbox = @{ x = [int]$rr.X; y = [int]$rr.Y; width = [int]$rr.Width; height = [int]$rr.Height }
+            }
+            try { $info.controlType = $cur.Current.ControlType.ProgrammaticName -replace '^ControlType\.', '' } catch {}
+            try { $info.automationId = $cur.Current.AutomationId } catch {}
+            if ($isExact) { [void]$exactHits.Add($info) } elseif ($null -eq $subHit) { $subHit = $info }
           }
-          try { $info.controlType = $cur.Current.ControlType.ProgrammaticName -replace '^ControlType\.', '' } catch {}
-          try { $info.automationId = $cur.Current.AutomationId } catch {}
-          if ($isExact) { [void]$exactHits.Add($info) } elseif ($null -eq $subHit) { $subHit = $info }
         }
       }
     }
@@ -109,7 +128,7 @@ if ($exactHits.Count -gt 0) {
     ok = $true; found = $true; exact = $true; candidates = $exactHits.Count
     x = $hit.x; y = $hit.y; bbox = $hit.bbox
     name = $hit.name; controlType = $hit.controlType; automationId = $hit.automationId
-    confidence = $conf; nodes = $nodes; ms = [int]$sw.ElapsedMilliseconds
+    confidence = $conf; nodes = $nodes; oversized = $oversized; ms = [int]$sw.ElapsedMilliseconds
   }))
   exit 0
 }
@@ -118,11 +137,11 @@ if ($null -ne $subHit) {
     ok = $true; found = $true; exact = $false; candidates = 1
     x = $subHit.x; y = $subHit.y; bbox = $subHit.bbox
     name = $subHit.name; controlType = $subHit.controlType; automationId = $subHit.automationId
-    confidence = 0.8; nodes = $nodes; ms = [int]$sw.ElapsedMilliseconds
+    confidence = 0.8; nodes = $nodes; oversized = $oversized; ms = [int]$sw.ElapsedMilliseconds
   }))
   exit 0
 }
 Write-Output (ConvertTo-Json -Compress -InputObject ([ordered]@{
-  ok = $true; found = $false; candidates = 0; nodes = $nodes; ms = [int]$sw.ElapsedMilliseconds
+  ok = $true; found = $false; candidates = 0; nodes = $nodes; oversized = $oversized; ms = [int]$sw.ElapsedMilliseconds
 }))
 exit 0

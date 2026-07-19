@@ -74,13 +74,75 @@ export interface ChainLocateResult {
   crossverifyChannel?: "uia+ocr" | "pixel-region"
   uncrossverified: boolean
   attempts: LocateAttempt[]
+  /** X1: quantified witness strength (present when the L0 witness OCR ran). */
+  witness?: WitnessVerdict
 }
 
 /** UIA↔OCR witness tolerance (px) around the UIA bbox. */
 const WITNESS_TOLERANCE_PX = 8
 
-/** Does the anchor text appear (as OCR words) inside rect + tolerance? */
-function ocrWitnessAgrees(ocrRes: OcrResult, target: string, bbox: RectPx): boolean {
+/**
+ * X1 (WP3 adversary): witness bbox size caps. The old witness had NO size
+ * limit, so a forged UIA node defeated it by construction: inflate the
+ * BoundingRectangle until the REAL anchor text falls inside it (the bbox
+ * CENTER is the injection point, so the attacker parks the center on any
+ * button of their choice while the giant bbox still "contains" the anchor).
+ * Dual cap — absolute area AND window-area ratio; an oversized bbox can
+ * NEVER corroborate (fail-closed to disagree). computer-uia-locate.ps1
+ * enforces the same caps at the source and drops oversized hits outright.
+ */
+export const WITNESS_BBOX_MAX_AREA_PX2 = 150_000
+export const WITNESS_BBOX_MAX_WINDOW_RATIO = 0.3
+
+/** X1: witness strength verdict — recorded in the evidence chain (§B.1). */
+export interface WitnessVerdict {
+  agree: boolean
+  /** bbox exceeded the size caps — corroboration refused regardless of content. */
+  oversized: boolean
+  matchedChars: number
+  anchorChars: number
+  /** matchedChars / anchorChars (1 = full coverage). */
+  coverage: number
+  /** anchor reconstructed contiguously from in-bbox words (reading order). */
+  reconstructed: boolean
+  /** bbox area / window area. */
+  bboxAreaRatio: number
+}
+
+/** Reading-order line reconstruction: group words by vertical center, join each line x-sorted. */
+function reconstructLines(words: Array<{ x: number; y: number; w: number; h: number; text: string }>): string[] {
+  const sorted = [...words].sort((a, b) => a.y + a.h / 2 - (b.y + b.h / 2))
+  const lines: Array<{ cy: number; tol: number; words: typeof sorted }> = []
+  for (const w of sorted) {
+    const cy = w.y + w.h / 2
+    const tol = Math.max(4, w.h * 0.6)
+    const line = lines.find((l) => Math.abs(l.cy - cy) <= Math.max(l.tol, tol))
+    if (line) {
+      line.words.push(w)
+    } else {
+      lines.push({ cy, tol, words: [w] })
+    }
+  }
+  return lines.map((l) => [...l.words].sort((a, b) => a.x - b.x).map((w) => w.text).join(""))
+}
+
+/**
+ * X1 quantified witness: does the anchor text appear inside bbox+tolerance
+ * STRONGLY enough to corroborate? Three rules, all required to say "agree":
+ *   ① size: bbox within the dual caps (a giant bbox proves nothing);
+ *   ② strength: the anchor is CONTINUOUSLY RECONSTRUCTED from the in-bbox
+ *      words (reading order) OR every distinct anchor char is covered by
+ *      them — a single overlapping char of a multi-char anchor no longer
+ *      counts (the old `[...w.text].some(...)` flaw);
+ *   ③ single-char anchors (N1): char presence has zero discriminatory power
+ *      (CJK overlap) — only a FULL-WORD hit (an in-bbox word that IS exactly
+ *      the anchor) corroborates.
+ */
+function ocrWitnessCheck(ocrRes: OcrResult, target: string, bbox: RectPx, windowRect: { width: number; height: number }): WitnessVerdict {
+  const bboxArea = bbox.width * bbox.height
+  const winArea = Math.max(1, windowRect.width * windowRect.height)
+  const bboxAreaRatio = bboxArea / winArea
+  const oversized = bboxArea > WITNESS_BBOX_MAX_AREA_PX2 || bboxAreaRatio > WITNESS_BBOX_MAX_WINDOW_RATIO
   const within = (w: { x: number; y: number; w: number; h: number }) => {
     const cx = w.x + w.w / 2
     const cy = w.y + w.h / 2
@@ -91,18 +153,21 @@ function ocrWitnessAgrees(ocrRes: OcrResult, target: string, bbox: RectPx): bool
       cy <= bbox.y + bbox.height + WITNESS_TOLERANCE_PX
     )
   }
-  // Word-level: any single OCR word inside the bbox that is a substring of
-  // the anchor or vice versa (OCR splits CJK into per-char words — the WP1
-  // line-grouping logic is overkill for a witness; proximity + containment
-  // of ANY anchor character is enough to corroborate, not to locate).
+  const inside = ocrRes.words.filter((w) => w.text.length > 0 && within(w))
   const anchorChars = new Set([...target])
-  let matched = 0
-  for (const w of ocrRes.words) {
-    if (!within(w)) continue
-    if (w.text.length === 0) continue
-    if (target.includes(w.text) || [...w.text].some((ch) => anchorChars.has(ch))) matched++
+  const covered = new Set<string>()
+  for (const w of inside) for (const ch of [...w.text]) if (anchorChars.has(ch)) covered.add(ch)
+  const coverage = anchorChars.size === 0 ? 0 : covered.size / anchorChars.size
+  const reconstructed = target.length > 0 && reconstructLines(inside).some((line) => line.includes(target))
+  let agree = false
+  if (!oversized) {
+    if ([...target].length < 2) {
+      agree = inside.some((w) => w.text === target)
+    } else {
+      agree = reconstructed || coverage >= 1
+    }
   }
-  return matched > 0
+  return { agree, oversized, matchedChars: covered.size, anchorChars: anchorChars.size, coverage, reconstructed, bboxAreaRatio }
 }
 
 /**
@@ -128,6 +193,10 @@ export async function locateTargetWithChain(args: {
   const attempts: LocateAttempt[] = []
   let shot = args.shot
   let ocrRes: OcrResult | null = null
+  // X1: witness verdict is function-scoped — a REFUSED witness (disagree /
+  // oversized bbox) degrades to L1, and the evidence record on that L1 path
+  // must still carry WHY the L0 cross-check was not granted.
+  let witnessVerdict: WitnessVerdict | undefined
 
   const notFoundError = (): ComputerError => {
     const why = attempts.map((a) => `${a.layer}:${a.outcome}${a.reason ? `(${a.reason})` : ""}`).join(" → ")
@@ -178,17 +247,34 @@ export async function locateTargetWithChain(args: {
         height: uiaHit.bbox.height,
       }
       // Witness OCR on the locate frame (skipped when the pack is missing).
+      // X1: quantified verdict — dual bbox size caps + reconstruction /
+      // full-coverage strength + single-char full-word rule (ocrWitnessCheck).
       let witness: "agree" | "disagree" | "unavailable" = "unavailable"
       const available = deps.ocrAvailable ? await deps.ocrAvailable() : true
       if (available) {
         ocrRes = await deps.locator.ocr(shot.path)
-        witness = ocrWitnessAgrees(ocrRes, target, imgBbox) ? "agree" : "disagree"
+        witnessVerdict = ocrWitnessCheck(ocrRes, target, imgBbox, shot.rect)
+        witness = witnessVerdict.agree ? "agree" : "disagree"
+        if (witnessVerdict.oversized) {
+          log("computeruse.locate", {
+            layer: "uia",
+            witness: "oversized-bbox",
+            bboxAreaRatio: Number(witnessVerdict.bboxAreaRatio.toFixed(3)),
+          })
+        }
       }
       if (witness === "disagree") {
         // UIA and OCR name DIFFERENT realities — do not inject UIA coords
         // blindly; OCR takes over as the coordinate source below (L1).
         attempts.push({ layer: "uia", outcome: "error", reason: "uia-ocr-disagree", ms: 0 })
-        log("computeruse.locate", { layer: "uia", hit: false, reason: "uia-ocr-disagree" })
+        log("computeruse.locate", {
+          layer: "uia",
+          hit: false,
+          reason: "uia-ocr-disagree",
+          ...(witnessVerdict
+            ? { matchedChars: witnessVerdict.matchedChars, anchorChars: witnessVerdict.anchorChars, oversized: witnessVerdict.oversized }
+            : {}),
+        })
       } else {
         // A1 parity: pixel-region freshness between locate and pre-inject.
         const region: RectPx = {
@@ -211,15 +297,23 @@ export async function locateTargetWithChain(args: {
             confidence: uiaHit.confidence,
             matchedText: uiaHit.name,
           }
+          // X1 ③: an ambiguous tree-order first pick (candidates>1) is NEVER
+          // a full-strength badge — forced uncrossverified so it consumes the
+          // A1.3 sub-budget instead of silently carrying "uia+ocr".
+          const ambiguous = uiaHit.candidates > 1
+          if (ambiguous) {
+            log("computeruse.locate", { layer: "uia", ambiguous: uiaHit.candidates, downgraded: "uncrossverified" })
+          }
           return {
             hit,
             pointClient: { x: img.x - shot.client.x, y: img.y - shot.client.y },
             ocrRes,
             shot,
-            crossverified: true,
-            crossverifyChannel: witness === "agree" ? "uia+ocr" : "pixel-region",
-            uncrossverified: false,
+            crossverified: !ambiguous,
+            crossverifyChannel: ambiguous ? undefined : witness === "agree" ? "uia+ocr" : "pixel-region",
+            uncrossverified: ambiguous,
             attempts,
+            ...(witnessVerdict ? { witness: witnessVerdict } : {}),
           }
         }
         // Unstable region: ONE live re-probe (UIA re-read on the fresh frame).
@@ -254,6 +348,7 @@ export async function locateTargetWithChain(args: {
           crossverified: false,
           uncrossverified: true, // pixel channel disagreed — honest bookkeeping (R4)
           attempts,
+          ...(witnessVerdict ? { witness: witnessVerdict } : {}),
         }
       }
     } else if (!attempts.some((a) => a.layer === "uia" && a.outcome === "error")) {
@@ -300,6 +395,9 @@ export async function locateTargetWithChain(args: {
           crossverifyChannel: "pixel-region",
           uncrossverified: false,
           attempts,
+          // X1: on the L0→L1 degrade path this records WHY the witness
+          // refused (oversized bbox / weak corroboration) — spec ④.
+          ...(witnessVerdict ? { witness: witnessVerdict } : {}),
         }
       }
       // Unstable: re-locate on the fresh frame (WP1 semantics unchanged).
@@ -320,6 +418,7 @@ export async function locateTargetWithChain(args: {
         crossverified: false,
         uncrossverified: true, // pixel channel disagreed — honest bookkeeping (R4)
         attempts,
+        ...(witnessVerdict ? { witness: witnessVerdict } : {}),
       }
     }
     attempts.push({ layer: "ocr", outcome: "not-found", ms: now() - t0 })

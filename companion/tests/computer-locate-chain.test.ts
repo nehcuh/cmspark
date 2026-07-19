@@ -386,3 +386,93 @@ test("executor: UIA-incapable entry (fixture off-mode shape) -> L0 skipped, L1 p
     [["uia", "skipped", "uia-incapable-or-unprobed"], ["ocr", "hit", ""]],
   )
 })
+
+// --- X1 (WP3 adversary): quantified witness — adversarial shapes --------------
+//
+// The old witness had no bbox size cap and counted ANY overlapping anchor
+// char as corroboration, so a forged UIA node with an inflated bbox (center
+// parked on the attacker's button, bbox swallowing the REAL anchor text)
+// earned the full-strength "uia+ocr" badge without consuming the A1.3
+// sub-budget. These shapes are now locked: ① oversized bbox can never
+// corroborate, ② single-char anchors need a full-word hit, ③ candidates>1
+// is forced uncrossverified.
+
+async function runChainTarget(target: string, deps: LocateChainDeps) {
+  const capturer = deps.capturer as unknown as FakeCapturer
+  return locateTargetWithChain({
+    target,
+    hwnd: HWND,
+    shot: shotAt("cap-0.png"),
+    deps,
+    trackCapture: async () => capturer.captureWindow(),
+    releaseRaw: async () => {},
+  })
+}
+
+test("X1: forged oversized bbox containing the real anchor can NEVER corroborate -> honest degrade L1", async () => {
+  // Window 640x480 (=307200px²). Forged node: bbox 560x400 (=224000px² >
+  // 150000 abs cap, 73% of the window) — the REAL "确定" word at (130,170)
+  // falls inside it BY CONSTRUCTION (the old witness said "agree" here).
+  const uia = new FakeUia([uiaHit({ x: 500, y: 400, bbox: { x: 140, y: 130, width: 560, height: 400 } })])
+  const locator = new FakeLocator([{ text: "确定", x: 130, y: 170, w: 40, h: 20 }])
+  const result = await runChainTarget("确定", chainDeps({ uia, locator }))
+  assert.equal(result.hit.layer, "ocr", "forged UIA coords must be refused — OCR takes over")
+  assert.equal(result.crossverifyChannel, "pixel-region")
+  assert.equal(result.witness?.agree, false)
+  assert.equal(result.witness?.oversized, true)
+  // The anchor WAS fully covered inside the bbox — size alone refused it.
+  assert.equal(result.witness?.matchedChars, 2)
+  assert.equal(result.witness?.anchorChars, 2)
+  assert.deepEqual(
+    result.attempts.map((a) => [a.layer, a.outcome, a.reason ?? ""]),
+    [["uia", "hit", ""], ["uia", "error", "uia-ocr-disagree"], ["ocr", "hit", ""]],
+  )
+})
+
+test("X1: single-char anchor — char overlap inside the bbox does NOT corroborate (full-word hit required)", async () => {
+  // Anchor "确"; the in-bbox word is "确定" — char overlap exists (old code
+  // counted this) but no word IS the anchor.
+  const uia = new FakeUia([uiaHit({ name: "确" })])
+  const locator = new FakeLocator([{ text: "确定", x: 130, y: 170, w: 40, h: 20 }])
+  const result = await runChainTarget("确", chainDeps({ uia, locator }))
+  assert.equal(result.hit.layer, "ocr", "single-char overlap must not stand as witness")
+  assert.equal(result.witness?.agree, false)
+  // Full coverage (1/1) and STILL not corroborated — the rule is explicit.
+  assert.equal(result.witness?.matchedChars, 1)
+  assert.equal(result.witness?.anchorChars, 1)
+  assert.equal(result.witness?.coverage, 1)
+})
+
+test("X1: single-char anchor with an exact in-bbox word DOES corroborate", async () => {
+  const uia = new FakeUia([uiaHit({ name: "确" })])
+  const locator = new FakeLocator([{ text: "确", x: 140, y: 170, w: 15, h: 20 }])
+  const result = await runChainTarget("确", chainDeps({ uia, locator }))
+  assert.equal(result.hit.layer, "uia")
+  assert.equal(result.crossverified, true)
+  assert.equal(result.crossverifyChannel, "uia+ocr")
+  assert.equal(result.witness?.agree, true)
+})
+
+test("X1: multi-char anchor — contiguous reconstruction from split words corroborates", async () => {
+  // OCR split "确定" into per-char words on the same line.
+  const uia = new FakeUia([uiaHit()])
+  const locator = new FakeLocator([
+    { text: "确", x: 125, y: 170, w: 15, h: 20 },
+    { text: "定", x: 145, y: 170, w: 15, h: 20 },
+  ])
+  const result = await runChainTarget("确定", chainDeps({ uia, locator }))
+  assert.equal(result.hit.layer, "uia")
+  assert.equal(result.crossverifyChannel, "uia+ocr")
+  assert.equal(result.witness?.agree, true)
+  assert.equal(result.witness?.reconstructed, true)
+})
+
+test("X1: candidates>1 (tree-order first pick) is forced uncrossverified — never the full-strength badge", async () => {
+  // Witness agrees and pixels are stable, yet the pick is ambiguous.
+  const uia = new FakeUia([uiaHit({ candidates: 2 })])
+  const { result } = await runChain(chainDeps({ uia }))
+  assert.equal(result.hit.layer, "uia", "coordinates still used (witness agreed, pixels stable)")
+  assert.equal(result.crossverified, false)
+  assert.equal(result.uncrossverified, true, "ambiguity consumes the A1.3 sub-budget")
+  assert.equal(result.crossverifyChannel, undefined, "no uia+ocr badge on a guessed pick")
+})

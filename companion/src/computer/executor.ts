@@ -37,7 +37,7 @@ import type { CompanionConfig } from "../config"
 import type { SecurityConfirmationDecision, SecurityConfirmationDetails } from "../security-confirmation"
 import { scanDanger, type DangerScan } from "./danger"
 import type { EvidenceFactory, EvidenceSink } from "./evidence"
-import { locateTargetWithChain } from "./locate-chain"
+import { locateTargetWithChain, type WitnessVerdict } from "./locate-chain"
 import type { ComputerTaskEvent, PreviewBuilder } from "./preview"
 import { assertCoordinateAllowed, assertExeNotDrifted, assertHwndOwnedByEntry, normalizeExePath } from "./policy"
 import {
@@ -677,6 +677,9 @@ export async function runComputerTask(
       // WP3 (§B.1): per-layer degradation log — sealed into the evidence
       // chain for this action (and the computeruse.locate audit lines).
       let locateAttempts: LocateAttempt[] | undefined
+      // X1 (WP3 adversary): quantified witness strength from the L0↔OCR
+      // cross-check — sealed into the evidence record when the witness ran.
+      let witnessStrength: WitnessVerdict | undefined
 
       if ((action.action === "click" || action.action === "double_click" || action.action === "right_click") && action.target) {
         // WP3: four-layer locate chain (locate-chain.ts owns the semantics).
@@ -709,6 +712,7 @@ export async function runComputerTask(
         crossverifyChannel = chain.crossverifyChannel
         uncrossverified = chain.uncrossverified
         locateAttempts = chain.attempts
+        witnessStrength = chain.witness
       } else if (action.action === "scroll" || action.action === "drag") {
         pointClient = { x: action.x, y: action.y }
         // WP2: no anchor exists for explicit scroll/drag coordinates — same
@@ -1026,6 +1030,7 @@ export async function runComputerTask(
         ...(crossverifyChannel ? { crossverifyChannel } : {}),
         uncrossverified,
         ...(locateAttempts ? { locateAttempts } : {}),
+        ...(witnessStrength ? { witness: witnessStrength } : {}),
         dangerScan: {
           regionLevel: scan.regionLevel,
           windowLevel: scan.windowLevel,
