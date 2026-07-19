@@ -571,12 +571,26 @@ export async function runComputerTask(
   /** Re-L2 with an explicit reason; returns true when approved. */
   const reL2 = async (reason: string, dangerous: string[], seqNum?: number): Promise<boolean> => {
     log("computer.task.reconfirm", { taskId, reason })
-    emit({ event: "paused", taskId, ...(seqNum !== undefined ? { seq: seqNum } : {}), reason })
+    // X1 (WP4 代码级对抗裁决) — re-L2 对话框双洞修复:
+    //  分支 A(伪造):params.task 是 LLM 生成的不可信文本,raw 插值可在对话框
+    //    伪造对话行(code_preview 如实呈现换行)。按初始 L2 的 Y3 纪律
+    //    JSON.stringify 转义 + P3 字符类清洗(与 caption 同一防线)。
+    //  分支 B(信息饥饿):reason 前置——code_preview 恒过 codePreview() 1200
+    //    截断,reason 由模板+固定词表构成长度有界,永远落在截断预算内;
+    //    完整文本同时走 fullPreview 独立字段(P1 通道,WI-2),对话框优先
+    //    渲染全文可滚动区,长 task 不丢一个字。
+    //  Y4(并入):paused 事件的 reason 内嵌应用可控文本(fgName 等),同步过
+    //    P3 清洗,防任务条 pausedBar 伪造断行。
+    const safeReason = sanitizeComputerCaption(reason)
+    emit({ event: "paused", taskId, ...(seqNum !== undefined ? { seq: seqNum } : {}), reason: safeReason })
+    const safeTask = sanitizeComputerCaption(JSON.stringify(params.task ?? ""))
+    const fullText = `${safeReason}\n任务: ${safeTask}`
     const decision = await deps.confirm({
       toolName: "host_computer",
       dangerousApis: dangerous,
       criticalApis: ["computer.coordinate_injection"],
-      code: `任务「${params.task}」需要再次确认：\n${reason}`,
+      code: fullText,
+      fullPreview: fullText,
       riskLevel: "high",
       autoConfirmEligible: false,
     })
