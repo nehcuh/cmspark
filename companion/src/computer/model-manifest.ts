@@ -188,7 +188,20 @@ export async function loadVerifiedFileBytes(
   filePath: string,
   expected: { sha256: string; size: number },
 ): Promise<Buffer> {
-  const buf = await readFile(filePath)
+  let buf: Buffer
+  try {
+    buf = await readFile(filePath)
+  } catch (err) {
+    // 三态之一「缺文件」结构化：未下载/已删除/路径错误统一 model-file-missing，
+    // 与错哈希（model-hash-mismatch）/断网（network-error，下载侧）供 UI 区分呈现
+    if ((err as NodeJS.ErrnoException)?.code === "ENOENT") {
+      throw new ModelGateError(
+        "model-file-missing",
+        `模型文件不存在（未下载或已删除）: ${filePath}`,
+      )
+    }
+    throw err
+  }
   if (buf.byteLength !== expected.size) {
     throw new ModelGateError(
       "model-size-mismatch",
