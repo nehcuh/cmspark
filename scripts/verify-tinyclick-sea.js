@@ -212,29 +212,33 @@ async function main() {
     const reportLine = out.split(/\r?\n/).find((l) => l.startsWith("[smoke] REPORT "));
     if (!reportLine) {
       error("smoke 未产出 REPORT（见上方输出）");
-      process.exit(EXIT_FAIL);
+      process.exitCode = EXIT_FAIL; // return 经由 finally 清理（process.exit 会跳过 finally）
+      return;
     }
     const report = JSON.parse(reportLine.slice("[smoke] REPORT ".length));
     if (report.isSea !== true) {
       error(`isSea() != true —— SEA 分支未生效，worker 旁置路径未被验证`);
-      process.exit(EXIT_FAIL);
+      process.exitCode = EXIT_FAIL;
+      return;
     }
     ok("isSea()=true：runtime 走旁置 worker eval 分支");
     if (!out.includes("[smoke] RESULT: PASS")) {
       error(`token parity FAIL: ${JSON.stringify(report.tokenIds)}`);
-      process.exit(EXIT_FAIL);
+      process.exitCode = EXIT_FAIL;
+      return;
     }
     ok(`SEA×真模型 token parity 7/7，point ${JSON.stringify(report.point)}`);
     if (!(report.rssMB.warm >= RSS_WARM_FLOOR_MB)) {
       error(`O-1 围栏：RSS warm ${report.rssMB.warm}MB < ${RSS_WARM_FLOOR_MB}MB —— 模型未尺寸级物化`);
-      process.exit(EXIT_FAIL);
+      process.exitCode = EXIT_FAIL;
+      return;
     }
     ok(`O-1 尺寸级围栏：RSS warm ${report.rssMB.warm}MB ≥ ${RSS_WARM_FLOOR_MB}MB（真 705MB 物化，非 dummy 假象）`);
     ok(`SEA 延迟: prepare ${report.prepareMs}ms（create ${report.totalCreateMs}ms + warmup ${report.warmupMs}ms），e2e ${report.e2eMs}ms（worker ${report.workerTotalMs}ms），intraOp=${report.intraOp}`);
 
     console.log("");
     ok("All gates passed: SEA isSea 分支 + 旁置 worker + 真 705MB 模型加载 + token 7/7 + RSS 尺寸级。");
-    process.exit(EXIT_OK);
+    process.exitCode = EXIT_OK;
   } finally {
     fs.rmSync(workDir, { recursive: true, force: true });
   }
