@@ -38,6 +38,7 @@ import type { SecurityConfirmationDecision, SecurityConfirmationDetails } from "
 import { scanDanger, type DangerScan } from "./danger"
 import type { EvidenceFactory, EvidenceSink } from "./evidence"
 import { locateTargetWithChain, type WitnessVerdict } from "./locate-chain"
+import type { TinyClickLocator } from "./tinyclick-locator"
 import type { ComputerTaskEvent, PreviewBuilder } from "./preview"
 import { sanitizeComputerCaption } from "./preview"
 import { assertCoordinateAllowed, assertExeNotDrifted, assertHwndOwnedByEntry, normalizeExePath } from "./policy"
@@ -160,6 +161,14 @@ export interface ComputerExecutorDeps {
    * only). Disposed on every task exit.
    */
   uiaWatcherFactory?: UiaWatcherFactory
+  /**
+   * WP5 I3 (G4): L2 TinyClick 实验层。ADMISSION 由调用方决定——开关开 + 模型
+   * ready（文件在盘且校验过，session 懒建）+ 无熔断才传非 null；executor 原样
+   * 透传给 locate chain。命中永不直接注入：re-L2 人审（caption「实验层建议，
+   * 可能完全错误」+ 建议点标注预览）→ 批准走 A1 区域新鲜度复核 → 注入；拒绝
+   * 诚实降级 ELEMENT_NOT_FOUND。缺省 = 层关闭（unit tests 默认形态）。
+   */
+  tinyclickLocator?: Pick<TinyClickLocator, "locate"> | null
 }
 
 export interface ComputerStepResult {
@@ -569,7 +578,7 @@ export async function runComputerTask(
   }
 
   /** Re-L2 with an explicit reason; returns true when approved. */
-  const reL2 = async (reason: string, dangerous: string[], seqNum?: number): Promise<boolean> => {
+  const reL2 = async (reason: string, dangerous: string[], seqNum?: number, previewImage?: string): Promise<boolean> => {
     log("computer.task.reconfirm", { taskId, reason })
     // X1 (WP4 代码级对抗裁决) — re-L2 对话框双洞修复:
     //  分支 A(伪造):params.task 是 LLM 生成的不可信文本,raw 插值可在对话框
@@ -593,6 +602,9 @@ export async function runComputerTask(
       fullPreview: fullText,
       riskLevel: "high",
       autoConfirmEligible: false,
+      // WP5 I3：实验层建议门可附建议点标注预览（§F.1 同字段，凭证区已黑化；
+      // 只流向 originWs 面板确认对话框，绝不进工具结果/LLM 上下文）。
+      ...(previewImage ? { previewImage } : {}),
     })
     return decision.approved === true
   }
@@ -723,6 +735,10 @@ export async function runComputerTask(
       // X1 (WP3 adversary): quantified witness strength from the L0↔OCR
       // cross-check — sealed into the evidence record when the witness ran.
       let witnessStrength: WitnessVerdict | undefined
+      // WP5 I3 (G4): the locate hit came from the experimental layer — gated
+      // by the dedicated re-L2 below, NEVER auto-injected.
+      let experimentalSuggestion = false
+      let experimentalTarget: string | undefined
 
       if ((action.action === "click" || action.action === "double_click" || action.action === "right_click") && action.target) {
         // WP3: four-layer locate chain (locate-chain.ts owns the semantics).
@@ -741,6 +757,7 @@ export async function runComputerTask(
             locator: deps.locator,
             capturer: deps.capturer,
             ocrAvailable,
+            tinyclick: deps.tinyclickLocator ?? null,
             log: (event, data) => log(event, { taskId, seq, ...data }),
           },
           trackCapture,
@@ -756,6 +773,10 @@ export async function runComputerTask(
         uncrossverified = chain.uncrossverified
         locateAttempts = chain.attempts
         witnessStrength = chain.witness
+        if (chain.experimental === true) {
+          experimentalSuggestion = true
+          experimentalTarget = action.target
+        }
       } else if (action.action === "scroll" || action.action === "drag") {
         pointClient = { x: action.x, y: action.y }
         // WP2: no anchor exists for explicit scroll/drag coordinates — same
@@ -855,6 +876,50 @@ export async function runComputerTask(
         reL2ApprovedMidAction = true // X3: approved frame/coords are now stale
       }
 
+      // WP5 I3 (G4) — experimental-layer suggestion gate. The hit NEVER enters
+      // the acceptance chain automatically: the existing re-L2 channel asks a
+      // human (caption「实验层建议，可能完全错误」+ crosshair-annotated preview
+      // of the suggested point, credential blackout per the step-preview
+      // discipline). Denial = honest degrade to ELEMENT_NOT_FOUND (L3 is still
+      // a stub); approval stales the frame (X3) and the freshness block below
+      // takes the REGION-diff branch — never a chain re-run, which would only
+      // produce another suggestion needing another human decision (prompt loop).
+      if (experimentalSuggestion && pointClient && experimentalTarget !== undefined) {
+        let suggestionPreview: string | undefined
+        if (deps.previewBuilder) {
+          try {
+            const imgPoint = { x: shot.client.x + pointClient.x, y: shot.client.y + pointClient.y }
+            suggestionPreview = (await deps.previewBuilder.build(shot.path, imgPoint, scan.credentialRects)) ?? undefined
+          } catch {
+            /* best-effort preview — the gate itself never degrades */
+          }
+        }
+        log("computer.task.experimental_gate", {
+          taskId,
+          seq,
+          x: pointClient.x,
+          y: pointClient.y,
+          preview: suggestionPreview !== undefined,
+        })
+        const ok = await reL2(
+          `实验层建议（TinyClick 本地模型，未校准，可能完全错误）：建议点击「${experimentalTarget}」于客户端坐标 (${pointClient.x}, ${pointClient.y})。批准以执行此次点击，拒绝以放弃该建议。`,
+          ["computer.experimental_suggestion"],
+          seq,
+          suggestionPreview,
+        )
+        if (!ok) {
+          locateAttempts = [
+            ...(locateAttempts ?? []),
+            { layer: "tinyclick", outcome: "error", reason: "experimental-denied-by-user", ms: 0 },
+          ]
+          throw new ComputerError(
+            "ELEMENT_NOT_FOUND",
+            `computer: experimental-layer suggestion for anchor "${experimentalTarget}" denied at re-confirm; no further locate layer available (honest degrade)`,
+          )
+        }
+        reL2ApprovedMidAction = true // X3: the human decision staled the frame
+      }
+
       // X3 — post-approval freshness refresh. A mid-action re-L2 approval
       // means a human just spent SECONDS deciding while the screen kept
       // changing; injecting the pre-approval coordinates would be the exact
@@ -870,7 +935,22 @@ export async function runComputerTask(
       // be a prompt loop), while a NEW hard verdict fails closed.
       if (reL2ApprovedMidAction && now() - shotAt > PIXEL_STALE_MS) {
         const staleFrame = shot
-        if ((action.action === "click" || action.action === "double_click" || action.action === "right_click") && action.target) {
+        if (experimentalSuggestion && pointClient) {
+          // G4/A1: the approval endorsed THIS point — freshness is a pixel-region
+          // stability re-check of that point, NEVER a chain re-run (a re-run
+          // would emit a fresh suggestion requiring a fresh human gate — a
+          // prompt loop). Unstable region → STALE, never inject stale coords.
+          const fresh = await trackCapture(hwnd)
+          const { diffRatio } = await deps.capturer.diffRegion(fresh.path, shot.path, regionImg)
+          if (diffRatio > PIXEL_DIFF_THRESHOLD) {
+            throw new ComputerError(
+              "STALE_SCREENSHOT",
+              "computer: experimental suggestion region went unstable after the re-confirm approval — refusing to inject at stale coordinates (A1)",
+            )
+          }
+          shot = fresh
+          ocrRes = await deps.locator.ocr(fresh.path)
+        } else if ((action.action === "click" || action.action === "double_click" || action.action === "right_click") && action.target) {
           // WP3: re-run the FULL locate chain on a fresh base frame (L0 UIA
           // re-probe when admitted, else the WP1 OCR re-locate — the old
           // F1/F2 dance is the chain's internal recapture). staleOnNotFound:
@@ -885,6 +965,10 @@ export async function runComputerTask(
               locator: deps.locator,
               capturer: deps.capturer,
               ocrAvailable,
+              // G4：刷新是对已门控决定的新鲜度复核，永不引入实验层新建议——
+              // 否则未经人审的建议会借刷新通道绕过 G4 门（实验层命中只在首个
+              // locate 通道产生，且该命中走上方区域复核分支，不到这里）。
+              tinyclick: null,
               log: (event, data) => log(event, { taskId, seq, refresh: true, ...data }),
             },
             trackCapture,
