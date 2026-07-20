@@ -6,3 +6,4 @@ code-review/
 test_image.png
 torch_intermediates.npz
 __pycache__/
+onnx-vendored/

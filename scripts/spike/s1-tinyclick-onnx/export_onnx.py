@@ -18,10 +18,60 @@ from transformers import AutoModelForCausalLM, AutoProcessor
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 MODEL_DIR = os.path.join(ROOT, "model")
-OUT = os.path.join(ROOT, "onnx")
+# T5: output dir overridable for vendored regression runs (S1_OUT_DIR=onnx-vendored)
+OUT = os.path.join(ROOT, os.environ.get("S1_OUT_DIR", "onnx"))
 os.makedirs(OUT, exist_ok=True)
 
 OPSET = 17
+
+
+def prepare_vendored_model():
+    """T5: pin trust_remote_code to vendored files (microsoft/Florence-2-base
+    @5ca5edf5, sha256-pinned in vendor/). Copies vendor/*.py into the model
+    snapshot and rewrites auto_map to local (repo-prefix-free) form so NO
+    remote code is fetched at load time. Run with TRANSFORMERS_OFFLINE=1 to
+    prove the export chain is network-independent."""
+    import hashlib
+    import json
+    import shutil
+
+    PINNED = {
+        "configuration_florence2.py": "de2e45a975b3582de05d2f4d963a3e9f9a3d20dccf78d28e0052932a0be93bdf",
+        "modeling_florence2.py": "5162bf465e61b6e29cc113a467630ec3cb56ed8e4d46eb6207157f10fb9b8a24",
+        "processing_florence2.py": "f146023a507c009f425a49ee39aa037f4f25c64e14336e3e4f3f1d7377a68e98",
+    }
+    vdir = os.path.join(ROOT, "vendor")
+    for name, want in PINNED.items():
+        p = os.path.join(vdir, name)
+        got = hashlib.sha256(open(p, "rb").read()).hexdigest()
+        assert got == want, f"vendor hash drift: {name} {got} != {want}"
+        shutil.copy(p, os.path.join(MODEL_DIR, name))
+
+    def strip_repo_prefix(cfg_path):
+        with open(cfg_path, encoding="utf-8") as f:
+            cfg = json.load(f)
+        am = cfg.get("auto_map")
+        if not am:
+            return
+        changed = False
+        for k, v in list(am.items()):
+            if isinstance(v, str) and "--" in v:
+                am[k] = v.split("--", 1)[1]
+                changed = True
+            elif isinstance(v, list):
+                am[k] = [x.split("--", 1)[1] if isinstance(x, str) and "--" in x else x for x in v]
+                changed = True
+        if changed:
+            with open(cfg_path, "w", encoding="utf-8") as f:
+                json.dump(cfg, f, indent=2, ensure_ascii=False)
+            print(f"[vendor] patched auto_map in {os.path.basename(cfg_path)}")
+
+    strip_repo_prefix(os.path.join(MODEL_DIR, "config.json"))
+    strip_repo_prefix(os.path.join(MODEL_DIR, "preprocessor_config.json"))
+    print("[vendor] model dir now resolves custom code locally (sha256-pinned)")
+
+
+prepare_vendored_model()
 
 processor = AutoProcessor.from_pretrained(MODEL_DIR, trust_remote_code=True)
 model = AutoModelForCausalLM.from_pretrained(MODEL_DIR, trust_remote_code=True).eval()
