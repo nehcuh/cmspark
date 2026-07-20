@@ -447,6 +447,13 @@ export class TinyClickRuntime {
       this.registerFault("warmup-failed", err);
       throw err;
     }
+    // M3：dispose×warming 竞态——warming 完成前实例可能已 disposed（I3 开关关断
+    // 首启加载是现实触发形态）；此时落地 worker/status 即线程+~1.3GB RSS 泄漏。
+    // 落地前查 disposed：terminate 收尸并以 model-disabled 拒绝。
+    if (this.disposed) {
+      this.terminateWorker(worker);
+      throw new ModelRuntimeError("model-disabled", "warming 完成前实例已 dispose，worker 已回收");
+    }
     this.worker = worker;
     this.status = "warm";
     this.log("computeruse.model.warm", {
@@ -534,6 +541,12 @@ export class TinyClickRuntime {
 
   /** worker 进程级故障（error / 意外 exit）：拒绝其全部 pending、计熔断、懒重建。 */
   private onWorkerGone(worker: WorkerLike, err: Error): void {
+    // M4：同一 worker 只计一次故障——① 真实崩溃是 error+exit 序列（exit 无
+    // expectedExits 标记会再入一次）；② 超时/值域违规路径主动 terminate 后，
+    // 撕毁中的 worker 尾随 error 事件（expectedExits 只守卫 exit 不守卫 error）。
+    // 两种形态都经 terminatedWorkers 幂等闸：首次入事件才计数。
+    const firstGone = !this.terminatedWorkers.has(worker);
+    this.terminatedWorkers.add(worker);
     for (const [id, entry] of this.pending) {
       if (entry.worker === worker) {
         clearTimeout(entry.timer);
@@ -542,9 +555,11 @@ export class TinyClickRuntime {
       }
     }
     if (this.worker === worker) this.worker = null;
-    this.registerFault("worker-gone", err);
+    if (firstGone) {
+      this.registerFault("worker-gone", err);
+    }
     // 故障后懒重建：不在此处重建，下次 infer 走 prepare；重建期 infer fail-fast
-    if (this.status !== "disabled") this.status = "idle";
+    if ((this.status as RuntimeStatus) !== "disabled") this.status = "idle";
   }
 
   /** 熔断计数；达阈值 → disabled + 审计 + 广播（plan 明定广播形状）。 */

@@ -288,8 +288,12 @@ test("loadVerifiedTokenizer: manifest 缺 tokenizer 条目 → load-failed", asy
 test("熔断透传: 3 次 worker 故障 → locate 拒 model-disabled + 广播", async () => {
   const h = makeHarness();
   await h.session.prepare();
-  const w = h.workers[0]!;
-  for (let i = 0; i < 3; i++) w.emit("error", new Error(`crash-${i}`));
+  // M4 后同一 worker 只计一次——三次故障须落在三个 worker 上（每次懒重建后再崩）
+  for (let i = 0; i < 3; i++) {
+    const w = h.workers[h.workers.length - 1]!;
+    w.emit("error", new Error(`crash-${i}`));
+    if (i < 2) await h.session.locate("click ok", FRAME); // 触发懒重建
+  }
   assert.strictEqual(h.session.getStatus(), "disabled");
   await assert.rejects(h.session.locate("click ok", FRAME), (err: unknown) => {
     assert.strictEqual((err as { code?: string }).code, "model-disabled");
