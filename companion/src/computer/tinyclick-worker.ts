@@ -142,11 +142,12 @@ async function handleInfer(ort: OrtModule, msg: WorkerInferMsg): Promise<void> {
   inputsEmbeds.set(txtData, imgLen * hidden);
   timings.embedMs = performance.now() - t;
 
-  // 4) encoder
+  // 4) encoder（attention_mask 为 float32 全 1——spike w2-worker.js:96 同款，非 int64）
   t = performance.now();
+  const encMask = new Float32Array(totalLen).fill(1);
   const encoderOut = await s.encoder.run({
     inputs_embeds: new ort.Tensor("float32", inputsEmbeds, [1, totalLen, hidden]),
-    attention_mask: new ort.Tensor("int64", new BigInt64Array(totalLen).fill(1n), [1, totalLen]),
+    attention_mask: new ort.Tensor("float32", encMask, [1, totalLen]),
   });
   const encoderHidden = Object.values(encoderOut)[0];
   timings.encoderMs = performance.now() - t;
@@ -166,11 +167,7 @@ async function handleInfer(ort: OrtModule, msg: WorkerInferMsg): Promise<void> {
         encoderHidden.data as Float32Array,
         totalDims as number[],
       ),
-      encoder_attention_mask: new ort.Tensor(
-        "int64",
-        new BigInt64Array(totalLen).fill(1n),
-        [1, totalLen],
-      ),
+      encoder_attention_mask: new ort.Tensor("float32", encMask, [1, totalLen]),
     });
     const logits = Object.values(decOut)[0];
     return logits.data as Float32Array;

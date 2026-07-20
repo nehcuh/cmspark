@@ -113,6 +113,7 @@ export class TinyClickSession {
         broadcast: deps.broadcast,
         log: deps.log,
         cpuModel: deps.cpuModel,
+        intraOpNumThreads: deps.intraOpNumThreads,
         inferTimeoutMs: deps.inferTimeoutMs,
         loadTimeoutMs: deps.loadTimeoutMs,
         createBudgetMs: deps.createBudgetMs,

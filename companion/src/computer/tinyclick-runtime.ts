@@ -76,6 +76,8 @@ export interface TinyClickRuntimeDeps {
   log?: (event: string, payload: Record<string, unknown>) => void;
   /** 拓扑测试注入；缺省 os.cpus()[0].model。 */
   cpuModel?: string;
+  /** 显式 intraOp 线程数（基准/补测覆盖，如 hybrid@4；优先于 cpuModel 映射，生产勿用）。 */
+  intraOpNumThreads?: number;
   /** 单帧推理超时（默认 5000ms，超时 terminate + 计熔断）。 */
   inferTimeoutMs?: number;
   /** 冷启动 load 超时（默认 30000ms，不计熔断，M6）。 */
@@ -202,7 +204,7 @@ export class TinyClickRuntime {
     this.modelId = deps.modelId ?? "tinyclick";
     this.variant = deps.variant ?? "hybrid";
     this.modelDir = deps.modelDir ?? modelDirFor(this.variant);
-    this.intraOp = resolveIntraOpThreads(deps.cpuModel);
+    this.intraOp = deps.intraOpNumThreads ?? resolveIntraOpThreads(deps.cpuModel);
     this.inferTimeoutMs = deps.inferTimeoutMs ?? 5000;
     this.loadTimeoutMs = deps.loadTimeoutMs ?? 30000;
     this.createBudgetMs = deps.createBudgetMs ?? 2200;

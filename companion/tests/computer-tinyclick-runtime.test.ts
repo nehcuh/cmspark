@@ -458,3 +458,25 @@ test("预算: createMs 超 2.2s 预算仅 loud log 告警，不阻塞 warm", asy
   assert.strictEqual(warmupLog.payload.createBudgetExceeded, true);
   assert.strictEqual(warmupLog.payload.totalCreateMs, 2500);
 });
+
+test("拓扑 override: 显式 intraOpNumThreads 优先于 CPU 映射（基准/补测用）", async () => {
+  const { modelDir, manifest } = makeModelDir();
+  const workers: FakeWorker[] = [];
+  const runtime = new TinyClickRuntime({
+    manifest,
+    modelDir,
+    cpuModel: "Intel(R) Core(TM) i9-14900KF", // 映射应为 8
+    intraOpNumThreads: 4, // 覆盖优先
+    workerFactory: () => {
+      const w = new FakeWorker();
+      workers.push(w);
+      return w;
+    },
+  });
+  await runtime.prepare();
+  const load = workers[0]!.posted.find((p) => p.msg.type === "load");
+  assert.deepStrictEqual((load!.msg as { sessionOptions: unknown }).sessionOptions, {
+    intraOpNumThreads: 4,
+    interOpNumThreads: 1,
+  });
+});
