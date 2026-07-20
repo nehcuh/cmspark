@@ -427,6 +427,8 @@ Locator.locate(screenshot, hwnd, target: { kind: "text", value } | { kind: "desc
 
 ##### 迭代 I2 — ORT worker 推理主干（B2/B3/B4/B5）
 
+> **I2 收口（2026-07-20，分支 computer-use-w8-windows）**：WI-2.1 worker 骨架+runtime 熔断/单飞/拓扑 `c697af5`；WI-2.2 BPE tokenizer（1238 条 HF 向量零分叉）`ebac316`；WI-2.3 预处理+解码纯函数 `aafd09a`；WI-2.4 会话封装 `e877adb`；WI-2.5 基准门禁+hybrid@4 补测 `4ce57ec` + SEA 真机门禁（本标记同批 commit）。门禁 510→553 全绿。基准：非 SEA hybrid@8 稳态 682-704ms / hybrid@4 1038-1078ms，SEA×真 705MB token 7/7、RSS warm 1283MB（wp5-envelope.md §8）。**决策变更**：worker 打包由「esbuild codegen 内联 eval」改为「旁置 tinyclick-worker.js 读文本 eval」（与 ORT dll 旁置同安全级，免 codegen 脆弱面；ps1 已接线）。**未收口**：plan WI-2.5 的 golden 19-case 回放 harness（verify-tinyclick-golden.js）顺延 I3/backlog——s1 参考帧 token 7/7 门禁（非 SEA + SEA 双臂）已覆盖 parity 回归主面。
+
 > 出口标准：worker 内推理全链路（预处理→tokenizer→4 图→贪心解码→坐标反变换）单测覆盖；单飞/超时/熔断/拓扑回退带 fake 测试；golden harness 本机可跑。
 
 - **WI-2.1 worker 集成主干**（B2）

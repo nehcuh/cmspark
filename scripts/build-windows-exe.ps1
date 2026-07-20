@@ -94,6 +94,18 @@ try {
         --outfile=dist/cmspark-agent.js
     if ($LASTEXITCODE -ne 0) { Fail "esbuild bundle failed" }
     Ok "Bundle: dist/cmspark-agent.js"
+
+    # WP5 I2: TinyClick inference worker as a SEPARATE bundle. In SEA mode the
+    # runtime loads it as a sidecar file via eval (see tinyclick-runtime.ts);
+    # onnxruntime-node stays external and is resolved with createRequire at runtime.
+    npx esbuild dist/computer/tinyclick-worker.js `
+        --bundle `
+        --platform=node `
+        --target=node22 `
+        --external:onnxruntime-node `
+        --outfile=dist/tinyclick-worker.js
+    if ($LASTEXITCODE -ne 0) { Fail "esbuild worker bundle failed" }
+    Ok "Bundle: dist/tinyclick-worker.js"
 } finally { Pop-Location }
 
 # ---------------------------------------------------------------------------
@@ -198,6 +210,10 @@ New-Item -ItemType Directory -Force $StagingDir | Out-Null
 # Core exe
 Copy-Item "$CompanionDir\dist\cmspark-agent.exe" $StagingDir
 Ok "cmspark-agent.exe"
+
+# WP5 I2: TinyClick worker sidecar (SEA eval load; same trust level as the ORT dll sidecar)
+Copy-Item "$CompanionDir\dist\tinyclick-worker.js" $StagingDir
+Ok "tinyclick-worker.js (SEA sidecar)"
 
 # WASM file for sql.js (loaded at runtime via getSqlWasmPath())
 $WasmSrc = "$CompanionDir\node_modules\sql.js\dist\sql-wasm.wasm"
