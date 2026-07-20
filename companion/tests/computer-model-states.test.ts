@@ -183,3 +183,62 @@ test("未知 reason → 兜底文案不崩溃", () => {
   assert.strictEqual(msg.title, "模型层不可用")
   assert.ok(msg.detail.includes("some-future-reason"))
 })
+
+
+// --- WI-3.4 三层开关交互文案（MODEL_SWITCH_COPY 存在性 + 关键短语断言） ----------------
+
+import { MODEL_SWITCH_COPY } from "../src/computer/model-state-messages"
+import { LICENSE_DOOR_TEXT } from "../src/computer/model-license"
+
+test("MODEL_SWITCH_COPY：六字段齐备非空", () => {
+  for (const key of [
+    "switchLabel",
+    "switchHint",
+    "masterOffHint",
+    "appNotAllowedHint",
+    "layerSemantics",
+    "licenseDoorHint",
+    "firstLoadTimeline",
+  ] as const) {
+    assert.ok(typeof MODEL_SWITCH_COPY[key] === "string" && MODEL_SWITCH_COPY[key].length > 0, `${key} 为空`)
+  }
+})
+
+test("三层依赖提示：①主开关关→不参与任何定位 ②app 未许可→对该 app 不参与", () => {
+  assert.ok(MODEL_SWITCH_COPY.masterOffHint.includes("主开关"))
+  assert.ok(MODEL_SWITCH_COPY.masterOffHint.includes("不参与任何定位"))
+  assert.ok(MODEL_SWITCH_COPY.appNotAllowedHint.includes("coordinateAllowed"))
+  assert.ok(MODEL_SWITCH_COPY.appNotAllowedHint.includes("不参与"))
+})
+
+test("③开关本体语义：L2 建议层 + 坐标候选 + 人工确认 + 未校准披露", () => {
+  const s = MODEL_SWITCH_COPY.layerSemantics
+  assert.ok(s.includes("L2"))
+  assert.ok(s.includes("人工确认"), "命中仍需人工确认（G4）必须明示")
+  assert.ok(s.includes("可能完全错误"), "未校准披露必须明示")
+  assert.ok(s.includes("不受影响"), "降级叙事（§C.2.4）必须明示")
+})
+
+test("默认关闭语义：开关旁注与许可证门文案一致", () => {
+  assert.ok(MODEL_SWITCH_COPY.switchHint.includes("默认关闭"))
+  assert.ok(LICENSE_DOOR_TEXT.includes("默认关闭"), "LICENSE_DOOR_TEXT 须同为默认关闭叙事")
+})
+
+test("许可证门引导：许可确认 + 拒绝可永久跳过 + 降级叙事", () => {
+  const s = MODEL_SWITCH_COPY.licenseDoorHint
+  assert.ok(s.includes("许可证"))
+  assert.ok(s.includes("拒绝"))
+  assert.ok(s.includes("不受影响"))
+})
+
+test("时间线文案：首触 35s 上界 + 不计熔断 + 降级叙事（无未校准数字）", () => {
+  const s = MODEL_SWITCH_COPY.firstLoadTimeline
+  assert.ok(s.includes("35 秒"), "首触加载上界必须声明")
+  assert.ok(s.includes("不受影响"))
+  assert.ok(!/准确率|命中率|成功率/.test(s), "时间线文案不得夹带未校准性能数字")
+})
+
+test("开关文案不与 LICENSE_DOOR_TEXT 矛盾：人工确认条款双源一致", () => {
+  assert.ok(LICENSE_DOOR_TEXT.includes("人工确认"))
+  assert.ok(MODEL_SWITCH_COPY.layerSemantics.includes("人工确认"))
+})

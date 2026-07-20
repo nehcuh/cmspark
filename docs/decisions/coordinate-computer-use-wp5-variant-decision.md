@@ -43,3 +43,22 @@
 ---
 
 *WP5 I1 收口文档 — 变体决策（B8）+ 发布链流程（M4）+ 诚实出口态。*
+
+---
+
+## 附录 A — B10 with-past/merged decoder 触发条件评估（WP5 I3 WI-3.5，结论：不建设）
+
+**评估问题**（plan:468）：是否建设 with-past/merged decoder（optimum ModelPatcher 或 past 长度显式 tensor 化重导）以压缩 decoder 延迟？
+
+**触发条件**：decoder 占端到端推理耗时 >40% 才启动建设。
+
+**实测证据**（两组独立数据，口径一致）：
+
+| 数据源 | decoderMs | e2e totalMs | 占比 |
+| --- | --- | --- | --- |
+| plan:468 冻结值（S-3 实测） | 46ms | 736ms | ≈6% |
+| `scripts/spike/s3-golden/i2-worker-benchmark-hybrid.json`（I2 worker 基准，intraOp=8，5 次稳态） | 50.6ms | 684.5ms | ≈7.4% |
+
+延迟大头在 vision encoder（同基准 584.8ms / 684.5ms ≈ 85%），decoder 为绝对小项。
+
+**结论**：触发条件不成立（≈6–7% ≪ 40%），**with-past/merged decoder 不建设**。若未来实测 decoder 占比 >40%（如换更大 decoder 或 vision 侧大幅优化后），再按 plan:468 路径启用（optimum ModelPatcher 或 past 长度显式 tensor 化重导 + token 级回归）。本评估为纯记录项，无代码变更。

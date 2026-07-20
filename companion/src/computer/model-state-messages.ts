@@ -130,3 +130,49 @@ export function modelStateMessage(reason: string): ModelStateMessage {
     }
   )
 }
+
+// --- WI-3.4 三层开关交互文案（设置页单一真源） -------------------------------------
+//
+// 三层开关语义（依赖方向 ①→②→③，任一层关闭即下层整体不参与）：
+//   ① 主开关 computer.use：关闭 → 实验层不参与任何定位（连编排器都不进）。
+//   ② 应用层 coordinateAllowed：当前 app 未在允许列表 → 对该 app 不参与。
+//   ③ 实验层开关本体：语义 = 定位链 L2 建议层——输出仅作坐标候选，
+//      命中仍需人工确认（G4 reL2 门），未校准，可能完全错误。
+// 共同纪律：默认关闭；首次开启经许可证门（LICENSE_DOOR_TEXT）；任何态下
+// UIA / OCR / 用户框选兜底不受影响（§C.2.4）；文案只许从本表取，禁止 UI 侧私编。
+
+export interface ModelSwitchCopy {
+  /** 实验层开关行标签与旁注（含默认关闭语义） */
+  switchLabel: string
+  switchHint: string
+  /** ①主开关关闭时实验层开关的禁用态提示 */
+  masterOffHint: string
+  /** ②当前 app 未在 coordinateAllowed 时的提示 */
+  appNotAllowedHint: string
+  /** ③实验层开关本体语义（L2 建议层 + 人工确认 + 未校准披露） */
+  layerSemantics: string
+  /** 首次开启的许可证门引导提示 */
+  licenseDoorHint: string
+  /** 时间线文案（WI-3.5④：首触加载上界声明；loadTimeoutMs 默认 30s + 余量） */
+  firstLoadTimeline: string
+}
+
+export const MODEL_SWITCH_COPY: ModelSwitchCopy = {
+  switchLabel: "实验层：TinyClick 本地视觉定位",
+  switchHint:
+    "默认关闭。开启后仅作为定位链第 2 层（L2）的坐标候选建议；" +
+    "命中在执行前仍会弹出人工确认。",
+  masterOffHint: "主开关（computer.use）已关闭——实验层不参与任何定位。",
+  appNotAllowedHint:
+    "当前应用未加入允许列表（coordinateAllowed）——实验层对该应用不参与定位。",
+  layerSemantics:
+    "本层是定位链的实验性建议层（L2）：模型输出仅作为坐标候选，" +
+    "任何点击执行前必经人工确认；本层未校准，可能完全错误。" +
+    "拒绝或关闭后，UIA / OCR / 用户框选兜底不受影响。",
+  licenseDoorHint:
+    "首次开启需阅读并接受模型许可证与研究品免责声明；" +
+    "拒绝则本实验层永久跳过，其余定位层不受影响。",
+  firstLoadTimeline:
+    "模型首次加载最长约 35 秒（超时自动降级，且不计入故障熔断）；" +
+    "加载期间 UIA / OCR / 用户框选定位不受影响。",
+}
