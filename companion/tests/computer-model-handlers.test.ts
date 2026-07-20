@@ -73,7 +73,7 @@ test("③ handler：非 settings 来源 → INVALID_SOURCE，会话绝不被触�
   ]) {
     const r = await handleComputerModelMessage(msg, {}, holderWith(session))
     assert.equal(r.type, "error")
-    assert.equal(r.family, "computer")
+    assert.equal(r.family, "computer.model")
     assert.equal(r.code, "INVALID_SOURCE")
   }
   assert.equal(session.resetCalls, 0, "围栏拒绝时复位绝不发生")

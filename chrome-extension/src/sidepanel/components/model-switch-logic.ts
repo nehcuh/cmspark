@@ -1,18 +1,25 @@
-// WP5 I1 WI-1.7 — 模型三态文案映射（缺文件/错哈希/断网 及全词表）。
+// WP5-I4 WI-4.4 — 设置页「实验功能」段纯逻辑（组件纯渲染，逻辑全抽本模块；
+// apps-utils.ts / computer-utils.ts 先例：node:test 直接驱动，不挂 React）。
 //
-// I1 集成验收交付物：把下载门禁全部结构化 reason（model-manifest.ts 的
-// ModelGateError.code 与 model-download.ts 的 ModelUnavailableReason）映射为
-// 用户可见文案 hook。I3 设置页/通知直接消费本表——reason 词表即协议
-// （computer.model.state 的 error 字段），文案只许从本表取，禁止 UI 侧私编。
-//
-// 三态锚点（plan WI-1.7 验收）：
-//   缺文件  model-file-missing  → 「模型未下载或已被删除」+ 去下载
-//   错哈希  model-hash-mismatch → 「可能被篡改或损坏，已拒绝加载」+ 删除重下
-//   断网    network-error       → 「下载中断，已自动降级」+ 重试
-// 共同语义：任何一态都永不阻塞 UIA/OCR/云端定位层（§C.2.4），文案必须明示。
+// 文案纪律（单一真源）：
+//   - MODEL_STATE_MESSAGES / MODEL_SWITCH_COPY 逐字镜像自
+//     companion/src/computer/model-state-messages.ts——companion 是唯一真源，
+//     本表为只读镜像；改动必须先改 companion 并同步本表（两侧文案断言测试互锁：
+//     companion computer-model-states.test.ts ↔ 本仓 model-switch-logic.test.ts）。
+//   - 许可证门全文不走镜像——渲染 license_required 载荷原文（扩展不复制不私编）。
+//   - reason 词表即协议（computer.model.state 的 error 字段），文案只许从本表取。
+
+import type {
+  ComputerModelLicenseDoor,
+  ComputerModelProgress,
+  ComputerModelState,
+  ComputerTaskState,
+} from "../types"
+
+// --- 逐字镜像：companion model-state-messages.ts（改动须先改 companion 并同步） ------
 
 export interface ModelStateMessage {
-  /** 设置页状态行/通知标题（短句） */
+  /** 状态行/通知标题（短句） */
   title: string
   /** 详情说明（含对其他定位层无影响的明示） */
   detail: string
@@ -21,7 +28,6 @@ export interface ModelStateMessage {
 }
 
 export const MODEL_STATE_MESSAGES: Record<string, ModelStateMessage> = {
-  // --- 三态锚点 ----------------------------------------------------------------
   "model-file-missing": {
     title: "模型文件缺失",
     detail:
@@ -43,7 +49,6 @@ export const MODEL_STATE_MESSAGES: Record<string, ModelStateMessage> = {
       "UIA / OCR / 云端定位不受影响。",
     action: "重试下载",
   },
-  // --- 下载管理器其余原因（与 ModelUnavailableReason 词表对齐） ------------------
   "model-unknown": {
     title: "模型未登记",
     detail: "manifest 中不存在该模型条目（发版内容异常）。其余定位层不受影响。",
@@ -100,7 +105,6 @@ export const MODEL_STATE_MESSAGES: Record<string, ModelStateMessage> = {
       "其余定位层不受影响；请检查镜像设置后重试，复现请向项目反馈。",
     action: "重试下载",
   },
-  // --- manifest 层其余原因（与 ModelGateError.code 词表对齐） ----------------------
   "model-size-mismatch": {
     title: "模型文件大小异常",
     detail: "磁盘上的模型文件大小与登记不符，已拒绝加载。请删除后重新下载；其余定位层不受影响。",
@@ -118,7 +122,6 @@ export const MODEL_STATE_MESSAGES: Record<string, ModelStateMessage> = {
       "其余定位层不受影响。",
     action: null,
   },
-  // --- WP5-I4 WI-4.2 开关族文案 -----------------------------------------------------
   "download-host-unset": {
     title: "模型发布地址未配置",
     detail:
@@ -133,7 +136,6 @@ export const MODEL_STATE_MESSAGES: Record<string, ModelStateMessage> = {
       "UIA / OCR / 用户框选定位不受影响。",
     action: "下载当前变体",
   },
-  // --- WP5-I4 WI-4.4 熔断状态文案（runtime 熔断广播 reason=circuit-breaker） ---------
   "circuit-breaker": {
     title: "模型层已熔断停用",
     detail:
@@ -154,39 +156,18 @@ export function modelStateMessage(reason: string): ModelStateMessage {
   )
 }
 
-// --- WI-3.4 三层开关交互文案（设置页单一真源） -------------------------------------
-//
-// 三层开关语义（依赖方向 ①→②→③，任一层关闭即下层整体不参与）：
-//   ① 主开关 computer.use：关闭 → 实验层不参与任何定位（连编排器都不进）。
-//   ② 应用层 coordinateAllowed：当前 app 未在允许列表 → 对该 app 不参与。
-//   ③ 实验层开关本体：语义 = 定位链 L2 建议层——输出仅作坐标候选，
-//      命中仍需人工确认（G4 reL2 门），未校准，可能完全错误。
-// 共同纪律：默认关闭；首次开启经许可证门（LICENSE_DOOR_TEXT）；任何态下
-// UIA / OCR / 用户框选兜底不受影响（§C.2.4）；文案只许从本表取，禁止 UI 侧私编。
-
 export interface ModelSwitchCopy {
-  /** 实验层开关行标签与旁注（含默认关闭语义） */
   switchLabel: string
   switchHint: string
-  /** ①主开关关闭时实验层开关的禁用态提示 */
   masterOffHint: string
-  /** ②当前 app 未在 coordinateAllowed 时的提示 */
   appNotAllowedHint: string
-  /** ③实验层开关本体语义（L2 建议层 + 人工确认 + 未校准披露 + P2 per-task 生效语义） */
   layerSemantics: string
-  /** 首次开启的许可证门引导提示 */
   licenseDoorHint: string
-  /** 时间线文案（WI-3.5④：首触加载上界声明；loadTimeoutMs 默认 30s + 余量） */
   firstLoadTimeline: string
-  /** P2：任务运行中拨动开关的旁注（per-task 生效 + estop 引导） */
   switchRunningNote: string
-  /** 状态行：模型就绪且实验层已开启 */
   statusReadyEnabled: string
-  /** 状态行：模型就绪但实验层未开启 */
   statusReadyDisabled: string
-  /** 状态行：下载中文本前缀（百分比/文件名由逻辑层拼接） */
   downloadInProgress: string
-  /** 许可证已拒绝的恒态提示（永久跳过，无 UI 复位——裁决 2） */
   licenseDeclinedNotice: string
 }
 
@@ -198,8 +179,7 @@ export const MODEL_SWITCH_COPY: ModelSwitchCopy = {
   masterOffHint: "主开关（computer.use）已关闭——实验层不参与任何定位。",
   appNotAllowedHint:
     "当前应用未加入允许列表（coordinateAllowed）——实验层对该应用不参与定位。",
-  // P2（WP5-I4 对抗修订）：补 per-task 生效语义 + estop 引导——被坏建议惊动而
-  // 关开关的用户恰是最需要 estop 引导的人；「任务运行中关闭即生效」是虚假保证。
+  // P2 修订镜像：per-task 生效语义 + estop 引导（companion 侧断言互锁）。
   layerSemantics:
     "本层是定位链的实验性建议层（L2）：模型输出仅作为坐标候选，" +
     "任何点击执行前必经人工确认；本层未校准，可能完全错误。" +
@@ -222,4 +202,121 @@ export const MODEL_SWITCH_COPY: ModelSwitchCopy = {
   licenseDeclinedNotice:
     "你已拒绝实验层许可证——本层永久跳过，其余定位层不受影响。" +
     "（复位路径 = 手动编辑 config.json，属显式 owner opt-in。）",
+}
+
+// --- 纯函数判定 -------------------------------------------------------------------
+
+/** 状态行视图（组件只渲染，不组文案）。 */
+export interface ModelStatusLineView {
+  kind: "loading" | "ok" | "info" | "error"
+  /** 主文本（标题级） */
+  text: string
+  /** 详情（error 态来自 MODEL_STATE_MESSAGES.detail） */
+  detail?: string
+  /** 建议动作文案（error 态来自词表；null=无动作） */
+  action?: string | null
+}
+
+/**
+ * 状态行文案选择：state × progress → 状态行视图。
+ *   state=null → loading；error(reason) → 词表；absent → 词表 model-file-missing；
+ *   downloading → 百分比文本；disabled → 词表 circuit-breaker；ready → 就绪双态。
+ */
+export function modelStatusLine(
+  modelState: ComputerModelState | null,
+  progress: ComputerModelProgress | null,
+): ModelStatusLineView {
+  if (modelState === null) {
+    return { kind: "loading", text: "模型状态查询中…" }
+  }
+  if (modelState.error) {
+    const m = modelStateMessage(modelState.error)
+    return { kind: "error", text: m.title, detail: m.detail, action: m.action }
+  }
+  switch (modelState.modelStatus) {
+    case "absent": {
+      const m = modelStateMessage("model-file-missing")
+      return { kind: "error", text: m.title, detail: m.detail, action: m.action }
+    }
+    case "downloading": {
+      const pct = downloadPercent(progress)
+      return {
+        kind: "info",
+        text:
+          pct === null
+            ? `${MODEL_SWITCH_COPY.downloadInProgress}…`
+            : `${MODEL_SWITCH_COPY.downloadInProgress}…${pct}%（${progress!.file}）`,
+      }
+    }
+    case "disabled": {
+      const m = modelStateMessage("circuit-breaker")
+      return { kind: "error", text: m.title, detail: m.detail, action: m.action }
+    }
+    case "ready":
+      return {
+        kind: "ok",
+        text: modelState.modelEnabled
+          ? MODEL_SWITCH_COPY.statusReadyEnabled
+          : MODEL_SWITCH_COPY.statusReadyDisabled,
+      }
+    default:
+      return { kind: "info", text: modelStateMessage(modelState.modelStatus).title }
+  }
+}
+
+/**
+ * 三层依赖提示优先级：masterOffHint > appNotAllowedHint > null（显示本体
+ * layerSemantics）。输入为 null = 该层状态未知（不判该层）。
+ */
+export function modelSwitchHint(args: {
+  masterEnabled: boolean | null
+  appCoordinateAllowed: boolean | null
+}): string | null {
+  if (args.masterEnabled === false) return MODEL_SWITCH_COPY.masterOffHint
+  if (args.appCoordinateAllowed === false) return MODEL_SWITCH_COPY.appNotAllowedHint
+  return null
+}
+
+/** 许可证门触发条件：license_required 载荷到达（非 null）即弹门。 */
+export function licenseDoorShouldOpen(door: ComputerModelLicenseDoor | null): boolean {
+  return door !== null
+}
+
+/**
+ * 开关禁用原因（组件据此禁用开关行）：
+ *   许可证已拒绝 → 永久跳过提示（裁决 2，无 UI 复位）；其余 → null（可拨动）。
+ */
+export function modelSwitchDisabledReason(modelState: ComputerModelState | null): string | null {
+  if (modelState?.modelLicenseDeclined === true) return MODEL_SWITCH_COPY.licenseDeclinedNotice
+  return null
+}
+
+/** 下载百分比（0-100；totalBytes<=0 或 progress=null → null 不显示数字）。 */
+export function downloadPercent(progress: ComputerModelProgress | null): number | null {
+  if (!progress || !(progress.totalBytes > 0)) return null
+  const pct = Math.floor((progress.receivedBytes / progress.totalBytes) * 100)
+  return Math.max(0, Math.min(100, pct))
+}
+
+/**
+ * P2 任务运行中旁注判定：有活动 computer 任务（running/paused）拨动开关时
+ * 显示「当前任务结束后生效」+ estop 引导；无任务/已完结 → null。
+ */
+export function modelSwitchRunningNote(task: ComputerTaskState | null): string | null {
+  if (!task) return null
+  if (task.status === "running" || task.status === "paused") {
+    return MODEL_SWITCH_COPY.switchRunningNote
+  }
+  return null
+}
+
+/**
+ * computer.model.* 错误路由守卫（family:"computer.model"——apps family:"apps"
+ * 先例）：命中 → 设置页实验区错误位；否则交回通用流（chat）。仅认 family，不用
+ * code 回退集——BIOMETRIC_DENIED 等共享 code 在 apps/computer 流间不可分，
+ * family 是唯一无歧义路由键（model-handlers.ts modelError 注释）。
+ */
+export function isComputerModelErrorMessage(msg: { family?: unknown }): boolean {
+  if (!msg || typeof msg !== "object") return false
+  return msg.family === "computer.model"
 }

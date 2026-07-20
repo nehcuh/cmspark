@@ -4,6 +4,7 @@ import { useEffect, useRef } from "react"
 import { useAgentStore } from "../store/agentStore"
 import type { ComputerTaskEventView, LLMConfig } from "../types"
 import { isAppsErrorMessage } from "../utils/apps-utils"
+import { isComputerModelErrorMessage } from "../components/model-switch-logic"
 
 /**
  * Check if an API key is masked (i.e., a placeholder like "***" or "sk-****xyz").
@@ -571,6 +572,47 @@ export function useWebSocket() {
           dispatch({ type: "SET_COMPUTER_COORDINATE_STATE", enabled: msg.coordinateEnabled === true })
           break
 
+        // WP5-I4 实验层:state/progress/license_required → model 切片(无乐观更新,
+        // 字段逐个形状校验;license_required 载荷原文进 store,组件渲染不复制)。
+        case "computer.model.state":
+          dispatch({
+            type: "SET_COMPUTER_MODEL_STATE",
+            modelState: {
+              modelEnabled: msg.modelEnabled === true,
+              licenseAccepted: msg.licenseAccepted === true,
+              ...(typeof msg.licenseAcceptedAt === "string" ? { licenseAcceptedAt: msg.licenseAcceptedAt } : {}),
+              modelLicenseDeclined: msg.modelLicenseDeclined === true,
+              modelStatus: typeof msg.modelStatus === "string" ? msg.modelStatus : "error",
+              variant: typeof msg.variant === "string" ? msg.variant : "hybrid",
+              ...(typeof msg.sizeBytes === "number" ? { sizeBytes: msg.sizeBytes } : {}),
+              ...(typeof msg.error === "string" ? { error: msg.error } : {}),
+              faults: typeof msg.faults === "number" ? msg.faults : 0,
+            },
+          })
+          break
+
+        case "computer.model.progress":
+          dispatch({
+            type: "SET_COMPUTER_MODEL_PROGRESS",
+            progress: {
+              variant: typeof msg.variant === "string" ? msg.variant : "",
+              file: typeof msg.file === "string" ? msg.file : "",
+              receivedBytes: typeof msg.receivedBytes === "number" ? msg.receivedBytes : 0,
+              totalBytes: typeof msg.totalBytes === "number" ? msg.totalBytes : 0,
+            },
+          })
+          break
+
+        case "computer.model.license_required":
+          dispatch({
+            type: "SET_COMPUTER_MODEL_LICENSE_DOOR",
+            door: {
+              licenseText: typeof msg.licenseText === "string" ? msg.licenseText : "",
+              notice: typeof msg.notice === "string" ? msg.notice : "",
+            },
+          })
+          break
+
         case "mcp.server.status_changed": {
           const server = msg.server
           if (server && server.name) {
@@ -694,6 +736,12 @@ export function useWebSocket() {
           break
 
         case "error":
+          // WP5-I4: computer.model.* 错误(family:"computer.model")→ 设置页实验区
+          // 错误位;判定先于 apps(family 无歧义,code 回退集含共享 BIOMETRIC_DENIED)。
+          if (isComputerModelErrorMessage(msg)) {
+            dispatch({ type: "SET_COMPUTER_MODEL_ERROR", error: msg.error || "Unknown computer.model error" })
+            break
+          }
           // App tab (WP4, routing hardened in WP6a): apps.* failures
           // (biometric cancel, policy cap, add-flow validation, …) render in
           // the panel's error area instead of the chat stream — the user is

@@ -68,7 +68,10 @@ export interface ComputerModelHandlerDeps {
 }
 
 function modelError(error: string, extra?: Record<string, unknown>) {
-  return { type: "error", family: "computer" as const, error, ...extra }
+  // family "computer.model"（WI-4.4）：扩展按 family 把模型错误路由到设置页
+  // 实验区错误位（apps family:"apps" 先例）；旧扩展忽略 family 落 chat 流，
+  // 向后兼容。computer 其余 handler 维持 family "computer" 不变。
+  return { type: "error", family: "computer.model" as const, error, ...extra }
 }
 
 /** manifest 随发版路径解析：src 布局（companion/src/computer → 上两级）/

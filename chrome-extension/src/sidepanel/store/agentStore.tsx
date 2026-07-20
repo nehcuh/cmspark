@@ -1,7 +1,7 @@
 // Global state store for the agent
 
 import { createContext, useContext, useReducer, type ReactNode, type Dispatch } from "react"
-import type { ConnectionState, Thread, Message, SkillMeta, OperationRecord, LLMConfig, SendShortcut, SecurityConfirmationRequest, LogEntry, KnowledgeMeta, SkillSelectionMode, SecurityAuditEntry, McpServerMeta, McpSelectionMode, AppEntry, AppPresetStatus, AppEnumerateCandidate, AppAddWarning, ComputerTaskEventView, ComputerTaskState } from "../types"
+import type { ConnectionState, Thread, Message, SkillMeta, OperationRecord, LLMConfig, SendShortcut, SecurityConfirmationRequest, LogEntry, KnowledgeMeta, SkillSelectionMode, SecurityAuditEntry, McpServerMeta, McpSelectionMode, AppEntry, AppPresetStatus, AppEnumerateCandidate, AppAddWarning, ComputerTaskEventView, ComputerTaskState, ComputerModelState, ComputerModelProgress, ComputerModelLicenseDoor } from "../types"
 import { reduceComputerTaskEvent } from "../utils/computer-utils"
 
 export interface AgentState {
@@ -61,6 +61,16 @@ export interface AgentState {
   computerTask: ComputerTaskState | null
   /** computer.state 只读镜像(null = 尚未查询;WP4 不做面板内全局开关切换)。 */
   computerCoordinateEnabled: boolean | null
+  // WP5-I4 实验层模型切片——全部只读镜像,无乐观更新(设置页实验区消费):
+  // 每次操作只发 WS 消息,UI 态由 companion state 广播/应答驱动刷新。
+  /** computer.model.state 最新镜像(null = 尚未查询;设置页打开时拉一次)。 */
+  computerModel: ComputerModelState | null
+  /** 最后一条 computer.model.progress(非下载中 state 到达时由 reducer 清除)。 */
+  computerModelProgress: ComputerModelProgress | null
+  /** license_required 载荷(非 null = 许可证门应弹出;渲染载荷原文)。 */
+  computerModelLicenseDoor: ComputerModelLicenseDoor | null
+  /** 最后一条 computer.model.* 错误(family:"computer.model" 路由;LICENSE_DECLINED 等)。 */
+  computerModelError: string | null
 }
 
 export type AgentAction =
@@ -116,6 +126,10 @@ export type AgentAction =
   | { type: "COMPUTER_TASK_EVENT"; event: ComputerTaskEventView }
   | { type: "COMPUTER_TASK_ABORT_ACK"; taskId: string; matched: number }
   | { type: "SET_COMPUTER_COORDINATE_STATE"; enabled: boolean }
+  | { type: "SET_COMPUTER_MODEL_STATE"; modelState: ComputerModelState }
+  | { type: "SET_COMPUTER_MODEL_PROGRESS"; progress: ComputerModelProgress }
+  | { type: "SET_COMPUTER_MODEL_LICENSE_DOOR"; door: ComputerModelLicenseDoor | null }
+  | { type: "SET_COMPUTER_MODEL_ERROR"; error: string | null }
 export const initialState: AgentState = {
   connectionState: "disconnected",
   threads: [],
@@ -180,6 +194,10 @@ export const initialState: AgentState = {
   appsPlatform: null,
   computerTask: null,
   computerCoordinateEnabled: null,
+  computerModel: null,
+  computerModelProgress: null,
+  computerModelLicenseDoor: null,
+  computerModelError: null,
 }
 
 export function agentReducer(state: AgentState, action: AgentAction): AgentState {
@@ -423,6 +441,20 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
     }
     case "SET_COMPUTER_COORDINATE_STATE":
       return { ...state, computerCoordinateEnabled: action.enabled }
+    case "SET_COMPUTER_MODEL_STATE":
+      // 非下载中的 state 到达 = 下载已完结/失败/无下载——清掉陈旧进度镜像。
+      return {
+        ...state,
+        computerModel: action.modelState,
+        computerModelProgress:
+          action.modelState.modelStatus === "downloading" ? state.computerModelProgress : null,
+      }
+    case "SET_COMPUTER_MODEL_PROGRESS":
+      return { ...state, computerModelProgress: action.progress }
+    case "SET_COMPUTER_MODEL_LICENSE_DOOR":
+      return { ...state, computerModelLicenseDoor: action.door }
+    case "SET_COMPUTER_MODEL_ERROR":
+      return { ...state, computerModelError: action.error }
     default:
       return state
   }

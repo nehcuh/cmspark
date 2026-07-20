@@ -190,7 +190,7 @@ test("未知 reason → 兜底文案不崩溃", () => {
 import { MODEL_SWITCH_COPY } from "../src/computer/model-state-messages"
 import { LICENSE_DOOR_TEXT } from "../src/computer/model-license"
 
-test("MODEL_SWITCH_COPY：六字段齐备非空", () => {
+test("MODEL_SWITCH_COPY：全字段齐备非空（WI-4.4 增五字段）", () => {
   for (const key of [
     "switchLabel",
     "switchHint",
@@ -199,6 +199,11 @@ test("MODEL_SWITCH_COPY：六字段齐备非空", () => {
     "layerSemantics",
     "licenseDoorHint",
     "firstLoadTimeline",
+    "switchRunningNote",
+    "statusReadyEnabled",
+    "statusReadyDisabled",
+    "downloadInProgress",
+    "licenseDeclinedNotice",
   ] as const) {
     assert.ok(typeof MODEL_SWITCH_COPY[key] === "string" && MODEL_SWITCH_COPY[key].length > 0, `${key} 为空`)
   }
@@ -241,4 +246,48 @@ test("时间线文案：首触 35s 上界 + 不计熔断 + 降级叙事（无未
 test("开关文案不与 LICENSE_DOOR_TEXT 矛盾：人工确认条款双源一致", () => {
   assert.ok(LICENSE_DOOR_TEXT.includes("人工确认"))
   assert.ok(MODEL_SWITCH_COPY.layerSemantics.includes("人工确认"))
+})
+
+
+// --- WP5-I4 WI-4.4：P2 per-task 语义 + estop 引导 + 新文案字段 + 熔断词表 ------------
+
+test("P2：layerSemantics 补 per-task 生效语义 + estop 引导（虚假保证消除）", () => {
+  const s = MODEL_SWITCH_COPY.layerSemantics
+  assert.ok(s.includes("当前任务结束后生效"), "per-task 生效语义必须明示（P2）")
+  assert.ok(s.includes("Ctrl+Alt+End"), "estop 引导必须存在（P2）")
+  assert.ok(s.includes("中止当前任务") || s.includes("中止任务"), "中止任务通道必须明示")
+  // 原断言保持：L2/人工确认/未校准披露/降级叙事不受修订影响
+  assert.ok(s.includes("人工确认"))
+  assert.ok(s.includes("可能完全错误"))
+  assert.ok(s.includes("不受影响"))
+})
+
+test("P2：switchRunningNote 任务运行中旁注 = per-task 生效 + estop 引导", () => {
+  const s = MODEL_SWITCH_COPY.switchRunningNote
+  assert.ok(s.includes("当前任务结束后生效"))
+  assert.ok(s.includes("Ctrl+Alt+End"))
+})
+
+test("状态行文案：就绪双态 + 下载前缀 + 拒绝恒态（无未校准数字）", () => {
+  assert.ok(MODEL_SWITCH_COPY.statusReadyEnabled.includes("人工确认"), "开启态仍须 G4 叙事")
+  assert.ok(MODEL_SWITCH_COPY.statusReadyDisabled.includes("未开启"))
+  assert.ok(MODEL_SWITCH_COPY.downloadInProgress.includes("下载"))
+  assert.ok(MODEL_SWITCH_COPY.licenseDeclinedNotice.includes("永久跳过"))
+  assert.ok(MODEL_SWITCH_COPY.licenseDeclinedNotice.includes("不受影响"))
+  for (const s of [
+    MODEL_SWITCH_COPY.statusReadyEnabled,
+    MODEL_SWITCH_COPY.statusReadyDisabled,
+    MODEL_SWITCH_COPY.licenseDeclinedNotice,
+  ]) {
+    assert.ok(!/准确率|命中率|成功率/.test(s), "状态行不得夹带未校准性能数字")
+  }
+})
+
+test("熔断文案：circuit-breaker 词表条目（熔断广播 reason 有文案、降级叙事齐）", () => {
+  const m = MODEL_STATE_MESSAGES["circuit-breaker"]
+  assert.ok(m, "circuit-breaker 必须在词表（runtime 熔断广播 reason）")
+  assert.ok(m!.title.includes("熔断"))
+  assert.ok(m!.detail.includes("不受影响"), "降级叙事（§C.2.4）必须明示")
+  assert.ok(m!.detail.includes("无自动恢复"), "M3 从严语义（无自动恢复）必须明示")
+  assert.strictEqual(m!.action, "重置熔断")
 })

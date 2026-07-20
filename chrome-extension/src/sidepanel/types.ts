@@ -452,3 +452,35 @@ export interface ComputerTaskState {
   /** finished 到达时刻(ms 时间戳)——完结态保留 5s 再自动清空,由组件计时。 */
   finishedAt?: number
 }
+
+// --- WP5-I4 实验层模型态(镜像 companion model-handlers statePayload,plan:476 全形) ---
+
+/** computer.model.state 下行负载(扩展纯只读镜像,无乐观更新)。 */
+export interface ComputerModelState {
+  modelEnabled: boolean
+  licenseAccepted: boolean
+  licenseAcceptedAt?: string
+  modelLicenseDeclined: boolean
+  /** absent=未下载 / error=半成品或校验失败 / ready=在盘就绪 /
+   *  downloading=下载中 / disabled=熔断停用 */
+  modelStatus: string
+  variant: string
+  sizeBytes?: number
+  /** I1 词表 reason(model-file-missing 等;MODEL_STATE_MESSAGES 消费) */
+  error?: string
+  faults: number
+}
+
+/** computer.model.progress 下行负载(单文件下载进度;state 广播到达后由 reducer 清理)。 */
+export interface ComputerModelProgress {
+  variant: string
+  file: string
+  receivedBytes: number
+  totalBytes: number
+}
+
+/** computer.model.license_required 下行负载(许可证门;渲染原文,扩展不复制不私编)。 */
+export interface ComputerModelLicenseDoor {
+  licenseText: string
+  notice: string
+}

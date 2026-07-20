@@ -19,6 +19,7 @@
     "src/sidepanel/hooks/useWebSocket.ts",
     "src/sidepanel/utils/apps-utils.ts",
     "src/sidepanel/utils/computer-utils.ts",
+    "src/sidepanel/components/model-switch-logic.ts",
     "src/background/page-sanitizer.ts",
     "src/background/image-extract-utils.ts",
     "src/background/dangerous-apis.ts",

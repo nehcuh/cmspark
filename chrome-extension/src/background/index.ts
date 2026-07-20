@@ -730,6 +730,16 @@ function setupMessageHandlers() {
       case "computer.task.abort":
       case "computer.get_state":
       case "computer.evidence.open":
+      // WP5-I4 实验层开关族:设置页六路由透传。开启由 companion 生物识别门
+      // 承担(D2,同 :727-728 坐标开关先例);license/download/delete/reset 由
+      // companion validateWsMessage + handler belt 双层围栏(source:"settings"
+      // 在面板侧固定注入,扩展不做信任判定)。
+      case "computer.model.get_state":
+      case "computer.model.set_enabled":
+      case "computer.model.license_response":
+      case "computer.model.download":
+      case "computer.model.delete":
+      case "computer.model.reset_circuit_breaker":
         // Forward to companion
         wsClient.send(message)
         sendResponse({ ok: true })
