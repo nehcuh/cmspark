@@ -967,11 +967,17 @@ export async function handleMessage(
         // WP4: P6 频率上限按每面板(每 WS 连接)计数。
         panelId: session?.panelId,
       })
-    // --- WP5 I3: 模型实验层——登记项③：reset_circuit_breaker 仅设置页来源
-    // （validateWsMessage 形状围栏 + handler 层二次核查） ---
+    // --- WP5 I3/I4: 模型实验层——开关族四路由 + 观测面/熔断复位；均 settings
+    // 双层围栏（validateWsMessage + handler belt），set_enabled(true) 另过
+    // 生物识别门（P5：requestConfirmation 通道注入，apps 系 :961-966 先例） ---
     case "computer.model.get_state":
     case "computer.model.reset_circuit_breaker":
+    case "computer.model.set_enabled":
+    case "computer.model.license_response":
+    case "computer.model.download":
+    case "computer.model.delete":
       return handleComputerModelMessage(msg, {
+        requestConfirmation: session?.requestConfirmation,
         broadcast: session?.broadcast,
       })
     case "skill.activate": {

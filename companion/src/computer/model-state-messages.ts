@@ -118,6 +118,21 @@ export const MODEL_STATE_MESSAGES: Record<string, ModelStateMessage> = {
       "其余定位层不受影响。",
     action: null,
   },
+  // --- WP5-I4 WI-4.2 开关族文案 -----------------------------------------------------
+  "download-host-unset": {
+    title: "模型发布地址未配置",
+    detail:
+      "模型发布地址尚未配置（发布链 owner 决策中）——当前构建不可下载模型。" +
+      "UIA / OCR / 用户框选定位不受影响。",
+    action: null,
+  },
+  "model-variant-missing": {
+    title: "当前变体未下载",
+    detail:
+      "当前配置交付变体的模型文件未下载或不完整。下载当前变体后方可启用实验层；" +
+      "UIA / OCR / 用户框选定位不受影响。",
+    action: "下载当前变体",
+  },
 }
 
 /** 取 reason 对应文案；未知 reason 给兜底（词表外新码不应让 UI 崩溃）。 */

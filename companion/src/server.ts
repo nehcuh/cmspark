@@ -2633,6 +2633,26 @@ export function validateWsMessage(msg: any): WsValidationResult {
       if (m.source !== "settings") return { valid: false, error: 'computer.model.reset_circuit_breaker requires source:"settings" (settings-page only)' }
       return { valid: true }
     },
+    // WP5-I4 WI-4.2 开关族（plan:538）：四路由同样仅设置页来源（双层围栏第一
+    // 层；handler belt 为第二层，P6）。set_enabled/license_response 另强制形状。
+    "computer.model.set_enabled": (m) => {
+      if (typeof m.enabled !== "boolean") return { valid: false, error: "computer.model.set_enabled requires enabled:boolean" }
+      if (m.source !== "settings") return { valid: false, error: 'computer.model.set_enabled requires source:"settings" (settings-page only)' }
+      return { valid: true }
+    },
+    "computer.model.license_response": (m) => {
+      if (typeof m.accepted !== "boolean") return { valid: false, error: "computer.model.license_response requires accepted:boolean" }
+      if (m.source !== "settings") return { valid: false, error: 'computer.model.license_response requires source:"settings" (settings-page only)' }
+      return { valid: true }
+    },
+    "computer.model.download": (m) => {
+      if (m.source !== "settings") return { valid: false, error: 'computer.model.download requires source:"settings" (settings-page only)' }
+      return { valid: true }
+    },
+    "computer.model.delete": (m) => {
+      if (m.source !== "settings") return { valid: false, error: 'computer.model.delete requires source:"settings" (settings-page only)' }
+      return { valid: true }
+    },
     "tool.result": (m) => {
       if (typeof m.tool_call_id !== "string" || !m.tool_call_id) return { valid: false, error: "tool.result requires tool_call_id" }
       return { valid: true }

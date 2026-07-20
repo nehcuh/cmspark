@@ -9,6 +9,8 @@
 // companion/THIRD_PARTY_NOTICES 文件内容必须与之逐字节一致（测试强制防漂移）。
 // 修改文案 = 改本文件 + 同步重写 notice 文件（scripts 或手工），测试会拦住漂移。
 
+import { createHash } from "node:crypto"
+
 // --- MIT 全文（标准文本，版权行按方替换） --------------------------------------
 
 function mitFullText(copyrightLine: string): string {
@@ -111,3 +113,17 @@ TinyClick 模型以 MIT 许可证发布：
 
 接受后将开始下载模型文件（约 705MB，磁盘预算可配）。
 拒绝则本实验层永久跳过，其余定位层不受影响。`
+
+// --- 文本版本绑定哈希（WP5-I4 P1） -------------------------------------------------
+//
+// 接受记录绑定文本版本：license_response 接受时把本哈希写进
+// config.modelLicenseAcceptedTextHash；文本漂移（文案修订/篡改）→ 哈希不符 →
+// enable/admission 重新弹门（旧接受不得对新文本默示生效）。sha256 前 12 位足够
+// 区分版本（非密码学校验，是版本指纹）。
+
+/** LICENSE_DOOR_TEXT 的 sha256 前 12 位小写 hex（config normalize 同形状校验）。 */
+export const LICENSE_DOOR_TEXT_HASH = createHash("sha256")
+  .update(LICENSE_DOOR_TEXT, "utf8")
+  .digest("hex")
+  .slice(0, 12)
+
