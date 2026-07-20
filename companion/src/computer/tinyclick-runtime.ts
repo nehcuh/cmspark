@@ -564,6 +564,20 @@ export class TinyClickRuntime {
 
   /** 熔断计数；达阈值 → disabled + 审计 + 广播（plan 明定广播形状）。 */
   private registerFault(reason: string, err: unknown): void {
+    // P4（WP5-I4）dispose 竞态豁免——M6 冷启动排除语义扩展：主动 dispose
+    // 撕毁 worker 的尾随失败（in-flight infer 超时定时器 / teardown error
+    // 事件）是预期噪声而非模型故障；不计数、不触发熔断、不广播（否则用户
+    // 关闭/删除模型后可能看到一次伪造的「熔断」遥测）。审计 log 仍留痕。
+    // disposed 在 dispose() 首句同步置位，无置位前窗口。
+    if (this.disposed) {
+      this.log("computeruse.model.fault-suppressed", {
+        modelId: this.modelId,
+        variant: this.variant,
+        reason,
+        message: err instanceof Error ? err.message : String(err),
+      });
+      return;
+    }
     this.faults++;
     this.hadFault = true;
     this.log("computeruse.model.fault", {

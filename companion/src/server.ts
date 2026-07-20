@@ -1998,6 +1998,21 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
           }
         } catch { /* best-effort */ }
         const sealer = new PsEvidenceSealer()
+        // WP5-I4 WI-4.3：TinyClick 实验层 per-task admission——任一拒绝路径
+        // fail-closed（locator=null=层关闭，UIA/OCR/框选链不受影响，attempts
+        // 记 skipped model-disabled）；会话懒建 ~1.4s 仅在开关开+许可已接受+
+        // 无熔断且首次时发生。stillEnabled 新鲜度复核防 build×关闭落地竞态。
+        const { resolveTinyClickAdmission } = await import("./computer/model-admission")
+        const { computerModelSession } = await import("./computer/model-handlers")
+        const tinyclickAdmission = await resolveTinyClickAdmission({
+          config: getConfig().computer,
+          holder: computerModelSession,
+          deps: {
+            broadcast: (m) => { try { execOpts?.broadcast?.(m) } catch { /* best-effort */ } },
+            log: (event, payload) => logger.info(event, { tool_call_id: toolCallId, ...payload }),
+            stillEnabled: () => getConfig().computer?.modelEnabled === true,
+          },
+        })
         const result = await runComputerTask(
             {
               task: String(params.task || ""),
@@ -2059,6 +2074,9 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
               // started by the executor for UIA-capable targets only and
               // drained after every injection into the dialog invariant.
               uiaWatcherFactory: (t, opts) => startUiaWindowWatcher(t, opts),
+              // WP5-I4 WI-4.3：per-task admission 结果（null=层关闭；executor
+              // 原样透传 locate-chain，刷新链显式 tinyclick:null 不动——P7）。
+              tinyclickLocator: tinyclickAdmission.locator,
               // WP3 (§K.5): config write-back of the probed admission hint.
               // writeBackUiaVerdict enforces the hand-set-override rule and
               // revalidates before replaceAppsEntries; the outcome is logged

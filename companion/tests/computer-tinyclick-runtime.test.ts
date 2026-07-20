@@ -557,3 +557,23 @@ test("M4: 超时 terminate 后尾随 error 事件不双计熔断", async () => {
   assert.strictEqual(h.runtime.getFaults(), 1, "terminate 后尾随 error 不得双计");
   assert.strictEqual(h.runtime.getStatus(), "idle");
 });
+
+test("P4: dispose×in-flight infer 竞态——超时尾随失败豁免熔断（WP5-I4）", async () => {
+  // maxFaults:1 收紧判定：无 P4 豁免时一次尾随超时即熔断+广播，测试必红。
+  const h = makeHarness({ inferTimeoutMs: 50, maxFaults: 1 });
+  hangRealInfer(h.next());
+  await h.runtime.prepare();
+  const inferPromise = h.runtime.infer(FRAME, INPUT_IDS);
+  // infer 挂起期间用户关闭/删除模型 → dispose 撕毁 worker（disposed 同步置位）
+  await h.runtime.dispose();
+  // infer 超时定时器仍在飞：触发 infer-timeout，但 P4 豁免——不计 faults、
+  // 不得翻成 disabled、不得广播伪造熔断（用户主动关闭后的遥测诚实性）。
+  await expectCode(inferPromise, "infer-timeout");
+  assert.strictEqual(h.runtime.getFaults(), 0, "dispose 尾随超时不计熔断");
+  assert.strictEqual(h.runtime.getStatus(), "idle", "dispose 后不得被尾随失败翻成 disabled");
+  assert.strictEqual(h.broadcasts.length, 0, "不得广播伪造熔断");
+  assert.ok(
+    h.logs.some((l) => l.event === "computeruse.model.fault-suppressed"),
+    "豁免须审计留痕",
+  );
+});
