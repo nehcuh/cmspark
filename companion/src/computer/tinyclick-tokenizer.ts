@@ -31,9 +31,19 @@ export interface TinyClickTokenizer {
   vocabSize(): number;
 }
 
-/** 官方 prompt 配方（golden_build.py:50 / ort_infer.py:52 同款，python strip == JS trim）。 */
+/**
+ * 官方 prompt 配方（golden_build.py:50 / ort_infer.py:52 同款，python strip == JS trim）。
+ *
+ * M5 输入消毒（I2 对抗 P3-c）：剥离 `<...>` 形态子串——HF added_tokens 左最长匹配
+ * 会把命令中字面 `<loc_282>` 编成控制 token 50551 入 prompt（prompt-injection 经
+ * planner 命令注入的面；定位 token 永非合法命令成分，命令语义不受损）。
+ * 大小写不敏感：`/i` 先于 toLowerCase 剥离，否则 `<LOC_282>` 会在 lower 后变为可匹配形态。
+ * tokenizer 本体保持 HF 忠实不动（1238 向量锁的就是 added_tokens 语义）——消毒只在
+ * prompt 配方这一唯一入口。
+ */
 export function buildCommandPrompt(command: string): string {
-  return ("What to do to execute the command? " + command.trim()).toLowerCase();
+  const sanitized = command.replace(/<[^>\r\n]*>/gi, "");
+  return ("What to do to execute the command? " + sanitized.trim()).toLowerCase();
 }
 
 // --- bytes_to_unicode（GPT-2 表，算法生成，与 transformers 同源） -------------------

@@ -15,9 +15,12 @@
 //
 // Usage:
 //   node scripts/verify-tinyclick-worker.js [--variant hybrid|int8] [--intraop N]
-//                                           [--repeat N] [--json OUT]
+//                                           [--repeat N] [--json OUT] [--freeze]
 // Defaults: --variant hybrid --intraop <真实 CPU 拓扑> --repeat 5
 //   --intraop 4 即 plan M6 要求的 hybrid@4 补测配置。
+//   输出（F-1 修复）：默认写**时间戳新文件**（i2-worker-benchmark-*-<ts>.json，
+//   非冻结路径）——冻结基准文件（envelope §8 锚点）只在显式 --freeze 或 --json
+//   指定同名路径时才覆写，杜绝「每次复跑都在消耗冻结语义」。
 //
 // Exit codes: 0 = token parity 通过；1 = 门禁失败；2 = 环境/前置缺失。
 
@@ -45,12 +48,13 @@ const FRAME_H = 400;
 const CREATE_BUDGET_MS = 2200;
 
 function parseArgs(argv) {
-  const out = { variant: "hybrid", intraop: null, repeat: 5, json: null };
+  const out = { variant: "hybrid", intraop: null, repeat: 5, json: null, freeze: false };
   for (let i = 2; i < argv.length; i++) {
     if (argv[i] === "--variant") out.variant = argv[++i];
     else if (argv[i] === "--intraop") out.intraop = Number(argv[++i]);
     else if (argv[i] === "--repeat") out.repeat = Number(argv[++i]);
     else if (argv[i] === "--json") out.json = argv[++i];
+    else if (argv[i] === "--freeze") out.freeze = true;
     else { error(`未知参数: ${argv[i]}`); process.exit(EXIT_SETUP); }
   }
   return out;
@@ -170,14 +174,15 @@ async function main() {
     at: new Date().toISOString(),
   };
   console.log("[verify-tinyclick-worker] REPORT: " + JSON.stringify(report, null, 2));
-  const jsonPath =
-    args.json ??
-    path.join(
-      REPO_ROOT, "scripts", "spike", "s3-golden",
-      `i2-worker-benchmark-${args.variant}${args.intraop ? `@${args.intraop}` : ""}.json`,
-    );
+  // F-1：默认时间戳新文件（非冻结）；--freeze 才写 envelope §8 锚定的冻结名
+  const canonical = `i2-worker-benchmark-${args.variant}${args.intraop ? `@${args.intraop}` : ""}.json`;
+  const ts = new Date().toISOString().replace(/[:.]/g, "-").replace("T", "_").slice(0, 19);
+  const outName = args.freeze
+    ? canonical
+    : `i2-worker-benchmark-${args.variant}${args.intraop ? `@${args.intraop}` : ""}-${ts}.json`;
+  const jsonPath = args.json ?? path.join(REPO_ROOT, "scripts", "spike", "s3-golden", outName);
   fs.writeFileSync(jsonPath, JSON.stringify(report, null, 2));
-  ok(`基准数据已写入: ${jsonPath}`);
+  ok(`基准数据已写入: ${jsonPath}${args.freeze ? "（--freeze：冻结锚点已覆写）" : "（时间戳新文件，冻结锚点未动）"}`);
 
   await session.dispose();
   ok("门禁通过：token 7/7 + point ±1px（spike 复现门槛）");

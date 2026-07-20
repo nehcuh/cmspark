@@ -172,3 +172,24 @@ test("fuzz: 非字符串输入 → input-invalid（不崩）", () => {
     (err: unknown) => err instanceof TokenizerError && err.code === "input-invalid",
   );
 });
+
+// --- M5: prompt 注入面消毒（I2 对抗 P3-c） ---------------------------------------------
+
+test("M5: buildCommandPrompt 剥离 <...> 形态子串——定位 token 永不入 prompt", () => {
+  // 字面 <loc_282> 被剥离，不编成 50551
+  const p1 = buildCommandPrompt("click <loc_282> the ok button");
+  assert.ok(!p1.includes("<loc_282>"), "prompt 不得含定位 token 字面量");
+  const ids1 = tokenizer.encode(p1);
+  assert.ok(!ids1.includes(50551), "编码结果不得含 <loc_282> 控制 token");
+  // 大写形态：<LOC_999> 若先 lower 会变成可匹配形态——/i 先剥离
+  const ids2 = tokenizer.encode(buildCommandPrompt("press <LOC_999> enter"));
+  assert.ok(!ids2.includes(50269 + 999), "大写注入同样不得入 prompt");
+  // 普通命令语义不受损（无 <...> 时与未消毒逐 token 一致）
+  assert.deepStrictEqual(
+    tokenizer.encode(buildCommandPrompt("click on the ok button")),
+    [0, 12196, 7, 109, 7, 11189, 5, 5936, 116, 3753, 15, 5, 15983, 6148, 2],
+  );
+  // 尖括号普通语义损失可接受（定位 token 永非合法命令成分；括号对非命令要素）
+  const p3 = buildCommandPrompt("choose option <none> now");
+  assert.ok(!p3.includes("<"), "所有 <...> 形态一律剥离（fail-closed 方向）");
+});

@@ -155,13 +155,39 @@ async function main() {
       "--external:onnxruntime-node",
       `--outfile=${path.join(workDir, "smoke-bundle.cjs")}`,
     ]);
-    // worker 旁置 bundle（与 ps1 新增段同款）
-    run(process.execPath, [
-      esbuildBin, distWorkerJs,
-      "--bundle", "--platform=node", "--target=node22",
-      "--external:onnxruntime-node",
-      `--outfile=${path.join(workDir, "tinyclick-worker.js")}`,
-    ]);
+    // worker 旁置 bundle（F-2 修复）：优先消费 staging 内 ps1 产出物本体（端到端
+    // 验证 ps1 接线）；缺失时回退门禁自构建——与 ps1 的 worker esbuild 段旗帜逐字
+    // 一致，且落跑前作漂移断言（读 ps1 原文比对，旗帜漂移即门禁失败）。
+    const stagedWorker = path.join(stagingDir, "tinyclick-worker.js");
+    const WORKER_FLAGS = ["--bundle", "--platform=node", "--target=node22", "--external:onnxruntime-node"];
+    if (fs.existsSync(stagedWorker)) {
+      fs.copyFileSync(stagedWorker, path.join(workDir, "tinyclick-worker.js"));
+      ok("worker 旁置 = staging 内 ps1 产出物本体（端到端验证 ps1 接线）");
+    } else {
+      info("staging 无 tinyclick-worker.js（ps1 未重跑或旧构建）——回退门禁自构建 + 旗帜漂移断言");
+      const ps1 = fs.readFileSync(path.join(projectRoot, "scripts", "build-windows-exe.ps1"), "utf-8");
+      const segStart = ps1.indexOf("esbuild dist/computer/tinyclick-worker.js");
+      const segEnd = ps1.indexOf("--outfile=dist/tinyclick-worker.js");
+      if (segStart < 0 || segEnd < 0 || segEnd < segStart) {
+        error("F-2 漂移断言：ps1 未找到 worker esbuild 段（接线缺失或已漂移）");
+        process.exitCode = EXIT_FAIL;
+        return;
+      }
+      const seg = ps1.slice(segStart, segEnd);
+      for (const flag of WORKER_FLAGS) {
+        if (!seg.includes(flag)) {
+          error(`F-2 漂移断言：ps1 worker esbuild 段缺旗帜 ${flag}（自构建与 ps1 不再等价）`);
+          process.exitCode = EXIT_FAIL;
+          return;
+        }
+      }
+      run(process.execPath, [
+        esbuildBin, distWorkerJs,
+        ...WORKER_FLAGS,
+        `--outfile=${path.join(workDir, "tinyclick-worker.js")}`,
+      ]);
+      ok("worker 旁置 = 门禁自构建（旗帜与 ps1 段逐字一致，漂移断言已过）");
+    }
     ok("esbuild: smoke-bundle.cjs + tinyclick-worker.js 旁置");
 
     fs.writeFileSync(
