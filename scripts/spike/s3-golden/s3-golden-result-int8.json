@@ -1,0 +1,475 @@
+{
+ "variant": "int8",
+ "intraOp": 8,
+ "createMs": {
+  "vision_encoder": 1658,
+  "embed_tokens": 122,
+  "encoder_model": 123,
+  "decoder_model": 328
+ },
+ "totalCreateMs": 2232,
+ "results": [
+  {
+   "id": "f-ok-en",
+   "group": "fixture",
+   "lang": "en",
+   "pred": {
+    "x": 881,
+    "y": 600,
+    "locRaw": [
+     918,
+     938
+    ]
+   },
+   "gt": {
+    "cx": 884,
+    "cy": 602,
+    "w": 120,
+    "h": 44
+   },
+   "distPx": 3.6,
+   "hit": true,
+   "totalMs": 2370.4
+  },
+  {
+   "id": "f-ok-zh",
+   "group": "fixture",
+   "lang": "zh",
+   "pred": {
+    "x": 75,
+    "y": 600,
+    "locRaw": [
+     78,
+     938
+    ]
+   },
+   "gt": {
+    "cx": 884,
+    "cy": 602,
+    "w": 120,
+    "h": 44
+   },
+   "distPx": 809,
+   "hit": false,
+   "totalMs": 2437.5
+  },
+  {
+   "id": "f-file-zh",
+   "group": "fixture",
+   "lang": "zh",
+   "pred": {
+    "x": 75,
+    "y": 599,
+    "locRaw": [
+     78,
+     936
+    ]
+   },
+   "gt": {
+    "cx": 76,
+    "cy": 38,
+    "w": 120,
+    "h": 44
+   },
+   "distPx": 561,
+   "hit": false,
+   "totalMs": 2469.2
+  },
+  {
+   "id": "f-setting-zh",
+   "group": "fixture",
+   "lang": "zh",
+   "pred": {
+    "x": 75,
+    "y": 599,
+    "locRaw": [
+     78,
+     936
+    ]
+   },
+   "gt": {
+    "cx": 884,
+    "cy": 38,
+    "w": 120,
+    "h": 44
+   },
+   "distPx": 984.5,
+   "hit": false,
+   "totalMs": 2430.6
+  },
+  {
+   "id": "f-help-zh",
+   "group": "fixture",
+   "lang": "zh",
+   "pred": {
+    "x": 75,
+    "y": 599,
+    "locRaw": [
+     78,
+     936
+    ]
+   },
+   "gt": {
+    "cx": 76,
+    "cy": 602,
+    "w": 120,
+    "h": 44
+   },
+   "distPx": 3.2,
+   "hit": true,
+   "totalMs": 2464.6
+  },
+  {
+   "id": "f-play-en",
+   "group": "fixture",
+   "lang": "en",
+   "pred": {
+    "x": 481,
+    "y": 171,
+    "locRaw": [
+     501,
+     267
+    ]
+   },
+   "gt": {
+    "cx": 480,
+    "cy": 320,
+    "w": 120,
+    "h": 60
+   },
+   "distPx": 149,
+   "hit": false,
+   "totalMs": 2471.5
+  },
+  {
+   "id": "f-play-zh",
+   "group": "fixture",
+   "lang": "zh",
+   "pred": {
+    "x": 75,
+    "y": 599,
+    "locRaw": [
+     78,
+     936
+    ]
+   },
+   "gt": {
+    "cx": 480,
+    "cy": 320,
+    "w": 120,
+    "h": 60
+   },
+   "distPx": 491.8,
+   "hit": false,
+   "totalMs": 2395.2
+  },
+  {
+   "id": "f-search-zh",
+   "group": "fixture",
+   "lang": "zh",
+   "pred": {
+    "x": 481,
+    "y": 316,
+    "locRaw": [
+     501,
+     494
+    ]
+   },
+   "gt": {
+    "cx": 480,
+    "cy": 102,
+    "w": 300,
+    "h": 44
+   },
+   "distPx": 214,
+   "hit": false,
+   "totalMs": 2488.7
+  },
+  {
+   "id": "f-icon-en",
+   "group": "fixture",
+   "lang": "en",
+   "pred": {
+    "x": 481,
+    "y": 172,
+    "locRaw": [
+     501,
+     269
+    ]
+   },
+   "gt": {
+    "cx": 482,
+    "cy": 172,
+    "w": 24,
+    "h": 24
+   },
+   "distPx": 1,
+   "hit": true,
+   "totalMs": 2491.8
+  },
+  {
+   "id": "f-long-zh",
+   "group": "fixture",
+   "lang": "zh",
+   "pred": {
+    "x": 320,
+    "y": 214,
+    "locRaw": [
+     333,
+     335
+    ]
+   },
+   "gt": {
+    "cx": 366,
+    "cy": 218,
+    "w": 700,
+    "h": 36
+   },
+   "distPx": 46.2,
+   "hit": true,
+   "totalMs": 2587.8
+  },
+  {
+   "id": "d-start-zh",
+   "group": "desktop",
+   "lang": "zh",
+   "pred": {
+    "x": 23,
+    "y": 48,
+    "locRaw": [
+     12,
+     44
+    ]
+   },
+   "gt": {
+    "cx": 760,
+    "cy": 1057,
+    "w": 28,
+    "h": 28
+   },
+   "distPx": 1249.5,
+   "hit": false,
+   "totalMs": 2446.5
+  },
+  {
+   "id": "d-search-zh",
+   "group": "desktop",
+   "lang": "zh",
+   "pred": {
+    "x": 23,
+    "y": 48,
+    "locRaw": [
+     12,
+     44
+    ]
+   },
+   "gt": {
+    "cx": 875,
+    "cy": 1057,
+    "w": 150,
+    "h": 28
+   },
+   "distPx": 1320.6,
+   "hit": false,
+   "totalMs": 2451.8
+  },
+  {
+   "id": "d-taskchrome-zh",
+   "group": "desktop",
+   "lang": "zh",
+   "pred": {
+    "x": 23,
+    "y": 557,
+    "locRaw": [
+     12,
+     516
+    ]
+   },
+   "gt": {
+    "cx": 1025,
+    "cy": 1057,
+    "w": 28,
+    "h": 28
+   },
+   "distPx": 1119.8,
+   "hit": false,
+   "totalMs": 2460.2
+  },
+  {
+   "id": "d-deskchrome-en",
+   "group": "desktop",
+   "lang": "en",
+   "pred": {
+    "x": 36,
+    "y": 1058,
+    "locRaw": [
+     19,
+     980
+    ]
+   },
+   "gt": {
+    "cx": 26,
+    "cy": 243,
+    "w": 32,
+    "h": 40
+   },
+   "distPx": 815.1,
+   "hit": false,
+   "totalMs": 2448.9
+  },
+  {
+   "id": "d-taskexp-zh",
+   "group": "desktop",
+   "lang": "zh",
+   "pred": {
+    "x": 23,
+    "y": 557,
+    "locRaw": [
+     12,
+     516
+    ]
+   },
+   "gt": {
+    "cx": 1058,
+    "cy": 1057,
+    "w": 28,
+    "h": 28
+   },
+   "distPx": 1149.4,
+   "hit": false,
+   "totalMs": 2442.6
+  },
+  {
+   "id": "s-search-zh",
+   "group": "settings",
+   "lang": "zh",
+   "pred": {
+    "x": 929,
+    "y": 500,
+    "locRaw": [
+     484,
+     479
+    ]
+   },
+   "gt": {
+    "cx": 955,
+    "cy": 18,
+    "w": 380,
+    "h": 24
+   },
+   "distPx": 482.7,
+   "hit": false,
+   "totalMs": 2436
+  },
+  {
+   "id": "s-home-zh",
+   "group": "settings",
+   "lang": "zh",
+   "pred": {
+    "x": 1091,
+    "y": 680,
+    "locRaw": [
+     568,
+     651
+    ]
+   },
+   "gt": {
+    "cx": 52,
+    "cy": 120,
+    "w": 120,
+    "h": 30
+   },
+   "distPx": 1180.3,
+   "hit": false,
+   "totalMs": 2410.5
+  },
+  {
+   "id": "s-bt-zh",
+   "group": "settings",
+   "lang": "zh",
+   "pred": {
+    "x": 764,
+    "y": 416,
+    "locRaw": [
+     398,
+     398
+    ]
+   },
+   "gt": {
+    "cx": 84,
+    "cy": 182,
+    "w": 160,
+    "h": 30
+   },
+   "distPx": 719.1,
+   "hit": false,
+   "totalMs": 2414.7
+  },
+  {
+   "id": "s-rename-zh",
+   "group": "settings",
+   "lang": "zh",
+   "pred": {
+    "x": 764,
+    "y": 169,
+    "locRaw": [
+     398,
+     162
+    ]
+   },
+   "gt": {
+    "cx": 1385,
+    "cy": 255,
+    "w": 130,
+    "h": 30
+   },
+   "distPx": 626.9,
+   "hit": false,
+   "totalMs": 2411.3
+  }
+ ],
+ "stats": {
+  "fixture": {
+   "n": 10,
+   "hits": 4,
+   "acc": "40%",
+   "medianDistPx": 214,
+   "maxDistPx": 984.5
+  },
+  "en": {
+   "n": 4,
+   "hits": 2,
+   "acc": "50%",
+   "medianDistPx": 149,
+   "maxDistPx": 815.1
+  },
+  "ALL": {
+   "n": 19,
+   "hits": 4,
+   "acc": "21.1%",
+   "medianDistPx": 626.9,
+   "maxDistPx": 1320.6
+  },
+  "zh": {
+   "n": 15,
+   "hits": 2,
+   "acc": "13.3%",
+   "medianDistPx": 719.1,
+   "maxDistPx": 1320.6
+  },
+  "desktop": {
+   "n": 5,
+   "hits": 0,
+   "acc": "0%",
+   "medianDistPx": 1149.4,
+   "maxDistPx": 1320.6
+  },
+  "settings": {
+   "n": 4,
+   "hits": 0,
+   "acc": "0%",
+   "medianDistPx": 719.1,
+   "maxDistPx": 1180.3
+  }
+ }
+}

@@ -1,0 +1,10 @@
+{
+  "name": "w1w2-worker-sea-spike",
+  "version": "0.1.0",
+  "private": true,
+  "description": "WP5 probes W1 (worker_threads x SEA x createRequire) and W2 (JS harness latency/memory)",
+  "dependencies": {
+    "onnxruntime-node": "^1.27.0",
+    "pngjs": "^7.0.0"
+  }
+}

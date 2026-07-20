@@ -1,0 +1,10 @@
+# spike binaries / artifacts — never commit
+node_modules/
+dist/
+dist-app/
+*.npy
+*.blob
+*.exe
+dummy_add.onnx
+corrupt.onnx
+package-lock.json

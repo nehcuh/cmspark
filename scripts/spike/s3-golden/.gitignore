@@ -1,0 +1,5 @@
+# spike binaries / artifacts — never commit
+onnx-int8/
+node_modules/
+*.png
+package-lock.json

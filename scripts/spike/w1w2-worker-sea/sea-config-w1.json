@@ -1,0 +1,7 @@
+{
+  "main": "dist/w1-bundle.js",
+  "output": "sea-prep-w1.blob",
+  "disableExperimentalSEAWarning": true,
+  "useSnapshot": false,
+  "useCodeCache": true
+}
