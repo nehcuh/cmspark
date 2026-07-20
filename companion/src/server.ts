@@ -2524,12 +2524,12 @@ export function setupBroadcastAuthForTests(
 
 // --- WS message validation ---
 
-interface WsValidationResult {
+export interface WsValidationResult {
   valid: boolean
   error?: string
 }
 
-function validateWsMessage(msg: any): WsValidationResult {
+export function validateWsMessage(msg: any): WsValidationResult {
   if (!msg || typeof msg !== "object" || Array.isArray(msg)) {
     return { valid: false, error: "Message must be an object" }
   }
@@ -2624,6 +2624,13 @@ function validateWsMessage(msg: any): WsValidationResult {
     },
     "computer.evidence.open": (m) => {
       if (typeof m.task_id !== "string" || !m.task_id) return { valid: false, error: "computer.evidence.open requires task_id" }
+      return { valid: true }
+    },
+    "computer.model.get_state": () => ({ valid: true }),
+    // WP5 I3 登记项③（plan:480 M3）：熔断手动复位仅接受设置页声明来源——
+    // 未知类型默认放行（本函数尾部），故此条目是真围栏；handler 层二次核查。
+    "computer.model.reset_circuit_breaker": (m) => {
+      if (m.source !== "settings") return { valid: false, error: 'computer.model.reset_circuit_breaker requires source:"settings" (settings-page only)' }
       return { valid: true }
     },
     "tool.result": (m) => {

@@ -27,6 +27,7 @@ import { getMcpManager } from "./mcp"
 import { logger } from "./logger"
 import { handleAppsMessage } from "./apps/handlers"
 import { handleComputerMessage } from "./computer/handlers"
+import { handleComputerModelMessage } from "./computer/model-handlers"
 import type {
   SecurityConfirmationDecision,
   SecurityConfirmationDetails,
@@ -965,6 +966,13 @@ export async function handleMessage(
         broadcast: session?.broadcast,
         // WP4: P6 频率上限按每面板(每 WS 连接)计数。
         panelId: session?.panelId,
+      })
+    // --- WP5 I3: 模型实验层——登记项③：reset_circuit_breaker 仅设置页来源
+    // （validateWsMessage 形状围栏 + handler 层二次核查） ---
+    case "computer.model.get_state":
+    case "computer.model.reset_circuit_breaker":
+      return handleComputerModelMessage(msg, {
+        broadcast: session?.broadcast,
       })
     case "skill.activate": {
       skillEngine.activate(rest.thread_id, rest.skill_name)
