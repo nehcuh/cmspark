@@ -195,9 +195,23 @@ async function main() {
     ok("SEA exe 组装完成（postject 注入）");
 
     // --- 3. 运行 SEA exe（真模型加载 + 推理） --------------------------------------
-    info("运行 tinyclick-smoke.exe（705MB 模型 I1 复验 + 会话创建 + warmup + 推理，约 10-20s）...");
+    // M1 负探针：诱饵 cwd——内置被投毒的 node_modules/onnxruntime-node（require 即抛
+    // marker）。若 worker 经裸 require 从 cwd 解析 ORT（I2 对抗 P1-a 实证的劫持面），
+    // 本探针必爆 marker 使门禁失败；RESULT: PASS 即证明 exe 旁置 execPath-only 加载。
+    const decoyDir = path.join(workDir, "decoy-cwd");
+    const decoyPkgDir = path.join(decoyDir, "node_modules", "onnxruntime-node");
+    fs.mkdirSync(decoyPkgDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(decoyPkgDir, "package.json"),
+      JSON.stringify({ name: "onnxruntime-node", version: "0.0.0-decoy", main: "index.js" }),
+    );
+    fs.writeFileSync(
+      path.join(decoyPkgDir, "index.js"),
+      'throw new Error("DECOY onnxruntime-node LOADED — cwd hijack succeeded");\n',
+    );
+    info("运行 tinyclick-smoke.exe（cwd=诱饵目录；705MB 模型 I1 复验 + 会话创建 + warmup + 推理，约 10-20s）...");
     const out = run(exePath, [], {
-      cwd: workDir,
+      cwd: decoyDir, // 诱饵 cwd：负探针（M1），exe 旁置加载才能通过
       env: {
         ...process.env,
         TC_MODEL_DIR: modelDir,
@@ -222,6 +236,12 @@ async function main() {
       return;
     }
     ok("isSea()=true：runtime 走旁置 worker eval 分支");
+    if (out.includes("DECOY onnxruntime-node LOADED")) {
+      error("M1 负探针命中：worker 经 cwd 裸 require 加载了诱饵 ORT——cwd 劫持面未关闭");
+      process.exitCode = EXIT_FAIL;
+      return;
+    }
+    ok("M1 负探针：诱饵 cwd 的投毒 ORT 未被触碰（execPath-only 加载实证）");
     if (!out.includes("[smoke] RESULT: PASS")) {
       error(`token parity FAIL: ${JSON.stringify(report.tokenIds)}`);
       process.exitCode = EXIT_FAIL;

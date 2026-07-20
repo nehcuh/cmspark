@@ -7,7 +7,8 @@
  *   decoder 贪心循环（全前缀重算，ORT 内部算子融合，异步 session.run 不阻塞线程池）。
  * - W1 发现：worker 内未捕获异常 / abort 只终止 worker，主线程经 error 事件存活——
  *   因此本 worker 不做进程级兜底，异常由主线程 runtime 统一计入熔断。
- * - W1 发现 1：require 解析可能被 cwd 劫持，先裸探测，失败回退 execPath createRequire。
+ * - W1 发现 1：require 解析可能被 cwd 劫持——SEA/eval 模式禁裸 require，
+ *   仅 createRequire(process.execPath)（I2 对抗 M1 修复；dev 模式裸探测+回退）。
  *
  * 职责边界：只负责 ORT 会话生命周期 + 单帧推理；熔断/单飞/拓扑决策全部在主线程
  * tinyclick-runtime.ts。模型字节经 load 消息 transfer 进来（I1 契约），worker 不读盘。
@@ -27,8 +28,26 @@ import type {
 type OrtModule = typeof import("onnxruntime-node");
 type InferenceSession = import("onnxruntime-node").InferenceSession;
 
-/** W1 发现 1：先裸探测，cwd 被污染时回退可执行文件目录的 createRequire。 */
+/**
+ * ORT 加载（M1 修复，plan WI-2.1「禁裸 require，防 cwd 污染，W1 发现 1」）：
+ * - SEA（旁置 eval worker）：**execPath-only**——eval worker 中裸 require 从 process.cwd()
+ *   解析，诱饵 cwd 可供应恶意 node_modules/onnxruntime-node（native dll 载体，I2 对抗
+ *   P1-a 探针实证），故 SEA 分支只信 exe 旁钉哈希副本，无回退。
+ * - dev（tsc 产物路径模式）：裸 require 先行（repo node_modules），失败回退 execPath。
+ */
 function resolveOrt(): OrtModule {
+  let sea = false;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const seaMod = require("node:sea") as { isSea?: () => boolean } | null;
+    sea = seaMod?.isSea?.() === true;
+  } catch {
+    sea = false;
+  }
+  if (sea) {
+    const execRequire = createRequire(process.execPath);
+    return execRequire("onnxruntime-node") as OrtModule;
+  }
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     return require("onnxruntime-node") as OrtModule;
