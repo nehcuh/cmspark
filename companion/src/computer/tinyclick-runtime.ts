@@ -29,6 +29,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { Worker } from "node:worker_threads";
 import { loadVerifiedFileBytes, modelDirFor, type ModelManifest } from "./model-manifest";
+import { MAX_DECODE_STEPS, VOCAB_SIZE } from "./tinyclick-decode";
 import type { InferTimings, WorkerRequest, WorkerResponse } from "./tinyclick-protocol";
 
 // --- 错误与状态 ---------------------------------------------------------------
@@ -160,6 +161,51 @@ function defaultWorkerFactory(source: WorkerSource): WorkerLike {
   return source.kind === "path"
     ? (new Worker(source.path) as unknown as WorkerLike)
     : (new Worker(source.source, { eval: true }) as unknown as WorkerLike);
+}
+
+/**
+ * M2：worker 返回值域校验（越权 worker 防线，plan 攻击面 3 / I2 对抗 P2-a）。
+ * 诚实路径（parseLocBins+locBinToPixel）结构性有界，但 native 级 fault/触发式后门
+ * 可 post 任意字段——runtime 是最后一个统一闸口，违规按 worker-error 计熔断。
+ */
+function validateWorkerResult(
+  msg: Extract<WorkerResponse, { type: "result" }>,
+  width: number,
+  height: number,
+): void {
+  const bad = (what: string): ModelRuntimeError =>
+    new ModelRuntimeError("worker-error", `worker 返回值越域: ${what}`);
+  if (
+    !Array.isArray(msg.tokenIds) ||
+    msg.tokenIds.length < 1 ||
+    msg.tokenIds.length > MAX_DECODE_STEPS + 1 ||
+    msg.tokenIds.some((v) => !Number.isInteger(v) || v < 0 || v >= VOCAB_SIZE)
+  ) {
+    throw bad(`tokenIds 含非法 id（须为 [0,${VOCAB_SIZE}) 整数，长度 ≤${MAX_DECODE_STEPS + 1}）`);
+  }
+  if (msg.locBins !== null) {
+    if (
+      !Array.isArray(msg.locBins) ||
+      msg.locBins.length !== 2 ||
+      msg.locBins.some((v) => !Number.isInteger(v) || v < 0 || v > 999)
+    ) {
+      throw bad(`locBins 须为 [0,999] 整数对或 null，实际 ${JSON.stringify(msg.locBins)}`);
+    }
+  }
+  if (msg.point !== null) {
+    const p = msg.point;
+    if (
+      typeof p !== "object" ||
+      !Number.isFinite(p.x) ||
+      !Number.isFinite(p.y) ||
+      p.x < 0 ||
+      p.y < 0 ||
+      p.x > width ||
+      p.y > height
+    ) {
+      throw bad(`point 越出帧域 [0,${width}]×[0,${height}] 或非有限数: ${JSON.stringify(p)}`);
+    }
+  }
 }
 
 // --- runtime --------------------------------------------------------------------
@@ -299,6 +345,15 @@ export class TinyClickRuntime {
       );
       if (msg.type !== "result") {
         throw new ModelRuntimeError("worker-error", `worker 返回意外消息: ${msg.type}`);
+      }
+      // M2：值域校验（越权 worker 防线）；违规 terminate + 计熔断 + 懒重建
+      try {
+        validateWorkerResult(msg, frame.width, frame.height);
+      } catch (err) {
+        this.terminateWorker(worker);
+        this.registerFault("worker-result-invalid", err);
+        if ((this.status as RuntimeStatus) !== "disabled") this.status = "idle";
+        throw err;
       }
       return {
         tokenIds: msg.tokenIds,

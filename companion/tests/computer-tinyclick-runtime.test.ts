@@ -129,7 +129,7 @@ class FakeWorker implements WorkerLike {
         id,
         tokenIds: [2, 0, 23008, 1437, 50551, 50797, 2],
         locBins: [282, 528],
-        point: { x: 158, y: 211 },
+        point: { x: 2, y: 2 },
         timings: { preprocessMs: 1, visionMs: 2, embedMs: 1, encoderMs: 2, decoderMs: 3, totalMs: 9 },
       });
     }
@@ -311,7 +311,7 @@ test("infer: 成功返回 token/loc/point/timings", async () => {
   const h = makeHarness();
   const out = await h.runtime.infer(FRAME, INPUT_IDS);
   assert.deepStrictEqual(out.locBins, [282, 528]);
-  assert.deepStrictEqual(out.point, { x: 158, y: 211 });
+  assert.deepStrictEqual(out.point, { x: 2, y: 2 });
   assert.deepStrictEqual(out.tokenIds, [2, 0, 23008, 1437, 50551, 50797, 2]);
   assert.strictEqual(out.timings.totalMs, 9);
   // prepare 的 warmup + 本次推理 = 两次 infer
@@ -479,4 +479,38 @@ test("拓扑 override: 显式 intraOpNumThreads 优先于 CPU 映射（基准/�
     intraOpNumThreads: 4,
     interOpNumThreads: 1,
   });
+});
+
+// --- M2: worker 返回值域校验（I2 对抗 P2-a） -----------------------------------------
+
+/** 脚本：load/warmup 正常，真实推理返回篡改结果。 */
+function scriptBadResult(w: FakeWorker, bad: Record<string, unknown>): void {
+  let inferCount = 0;
+  w.onMessage = (msg, reply) => {
+    if (msg.type === "load") {
+      reply(loadedReply(msg.id ?? 0));
+    } else if (msg.type === "infer") {
+      inferCount++;
+      const id = msg.id ?? 0;
+      if (inferCount === 1) reply(resultReply(id)); // warmup 正常
+      else reply({ ...resultReply(id), ...bad } as WorkerResponse);
+    }
+  };
+}
+
+test("M2: 值域校验——NaN/负 bin/超屏 point/越界 tokenId 各拒 worker-error 并计熔断", async () => {
+  const cases: Array<[string, Record<string, unknown>]> = [
+    ["point NaN", { point: { x: NaN, y: 5 } }],
+    ["locBins 负值", { locBins: [-1, 500] }],
+    ["point 超屏（帧 4×4，x=100）", { point: { x: 100, y: 1 } }],
+    ["tokenId 越界（≥51289）", { tokenIds: [2, 51289, 2] }],
+  ];
+  for (const [what, bad] of cases) {
+    const h = makeHarness();
+    scriptBadResult(h.next(), bad);
+    await expectCode(h.runtime.infer(FRAME, INPUT_IDS), "worker-error");
+    assert.strictEqual(h.runtime.getFaults(), 1, `${what}: 应计一次熔断`);
+    assert.strictEqual(h.workers[0]!.terminated, 1, `${what}: 应 terminate 越权 worker`);
+    assert.strictEqual(h.runtime.getStatus(), "idle", `${what}: 故障后懒重建回 idle`);
+  }
 });

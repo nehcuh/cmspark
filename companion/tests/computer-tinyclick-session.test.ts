@@ -135,7 +135,7 @@ class FakeWorker implements WorkerLike {
         id,
         tokenIds: [2, 0, 23008, 1437, 50551, 50797, 2],
         locBins: this.locBins,
-        point: this.locBins ? { x: 158, y: 211 } : null,
+        point: this.locBins ? { x: 2, y: 2 } : null,
         timings: ZERO_TIMINGS,
       });
     }
@@ -191,7 +191,7 @@ test("locate: 官方 prompt → s1 15 token → 推理 → point/timings", async
   assert.deepStrictEqual(out.inputIds, S1_IDS);
   assert.deepStrictEqual(out.tokenIds, [2, 0, 23008, 1437, 50551, 50797, 2]);
   assert.deepStrictEqual(out.locBins, [282, 528]);
-  assert.deepStrictEqual(out.point, { x: 158, y: 211 });
+  assert.deepStrictEqual(out.point, { x: 2, y: 2 });
   // worker 收到的 input_ids 必须与编码一致
   const w = h.workers[0]!;
   const infers = w.posted.filter((p) => p.msg.type === "infer");
