@@ -16,7 +16,13 @@ const { preprocessPng } = require("../w1w2-worker-sea/preprocess");
 const variant = process.argv[2] || "int8";
 const mode = process.argv[3] || "golden";
 const intraOp = parseInt(process.argv[4] || "4", 10);
-const ONNX_DIR = variant === "int8" ? path.join(ROOT, "onnx-int8") : path.join(S1, "onnx");
+const ONNX_DIR = variant === "int8"
+  ? path.join(ROOT, "onnx-int8")
+  : variant === "hybrid"
+    ? path.join(ROOT, "onnx-hybrid")
+    : variant === "vendored"
+      ? path.join(S1, "onnx-vendored")
+      : path.join(S1, "onnx");
 
 const mb = (b) => Math.round(b / 1e6);
 const r1 = (v) => Math.round(v * 10) / 10;
