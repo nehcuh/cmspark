@@ -1,0 +1,95 @@
+{
+  "schemaVersion": 1,
+  "models": {
+    "tinyclick": {
+      "repo": "Krystianz/TinyClick",
+      "revision": "0e1356f0b7cfb416099207121f6a766818ab8a66",
+      "license": "MIT",
+      "licenseCopyright": "Copyright (c) 2024 Samsung R&D Poland",
+      "baseModelNotice": {
+        "repo": "microsoft/Florence-2-base",
+        "license": "MIT"
+      },
+      "provenance": {
+        "sourceFile": "model.safetensors",
+        "sourceSha256": "d52f93704cd178f4dc2ccaf5d17042e85113447c416847f45c7554df16db00a3",
+        "exportVendor": {
+          "configuration": "de2e45a975b3582de05d2f4d963a3e9f9a3d20dccf78d28e0052932a0be93bdf",
+          "modeling": "5162bf465e61b6e29cc113a467630ec3cb56ed8e4d46eb6207157f10fb9b8a24",
+          "processing": "f146023a507c009f425a49ee39aa037f4f25c64e14336e3e4f3f1d7377a68e98"
+        },
+        "exportedAt": "2026-07-20"
+      },
+      "variants": {
+        "hybrid": {
+          "files": [
+            {
+              "name": "decoder_model.onnx",
+              "url": "https://models.cmspark.invalid/tinyclick/0e1356f0b7cfb416099207121f6a766818ab8a66/hybrid/decoder_model.onnx",
+              "sha256": "9cc576298a1530d156fef31fba5c7f2a93da48f883785e356f52b0d363045f65",
+              "size": 137097420
+            },
+            {
+              "name": "embed_tokens.onnx",
+              "url": "https://models.cmspark.invalid/tinyclick/0e1356f0b7cfb416099207121f6a766818ab8a66/hybrid/embed_tokens.onnx",
+              "sha256": "b59e88b766dce012a8fae545ce17ca44202482b116891a8ff34ee041a85f6ce0",
+              "size": 157560032
+            },
+            {
+              "name": "encoder_model.onnx",
+              "url": "https://models.cmspark.invalid/tinyclick/0e1356f0b7cfb416099207121f6a766818ab8a66/hybrid/encoder_model.onnx",
+              "sha256": "88e5b84730170b7d823db8879852bb54e5116c0b2caeeed738f52ebad2799499",
+              "size": 43662734
+            },
+            {
+              "name": "vision_encoder.onnx",
+              "url": "https://models.cmspark.invalid/tinyclick/0e1356f0b7cfb416099207121f6a766818ab8a66/hybrid/vision_encoder.onnx",
+              "sha256": "af0962398dca078c537eb163842de2aec0726f3c9f9a4ff28003aabc2957558e",
+              "size": 366460446
+            },
+            {
+              "name": "tokenizer.json",
+              "url": "https://models.cmspark.invalid/tinyclick/0e1356f0b7cfb416099207121f6a766818ab8a66/hybrid/tokenizer.json",
+              "sha256": "d69dcdb2323e124ac4f800cb9863ddccea0d7bb11e16125e8df3bd60f2f8aeac",
+              "size": 2297961
+            }
+          ]
+        },
+        "int8": {
+          "files": [
+            {
+              "name": "decoder_model.onnx",
+              "url": "https://models.cmspark.invalid/tinyclick/0e1356f0b7cfb416099207121f6a766818ab8a66/int8/decoder_model.onnx",
+              "sha256": "9cc576298a1530d156fef31fba5c7f2a93da48f883785e356f52b0d363045f65",
+              "size": 137097420
+            },
+            {
+              "name": "embed_tokens.onnx",
+              "url": "https://models.cmspark.invalid/tinyclick/0e1356f0b7cfb416099207121f6a766818ab8a66/int8/embed_tokens.onnx",
+              "sha256": "b59e88b766dce012a8fae545ce17ca44202482b116891a8ff34ee041a85f6ce0",
+              "size": 157560032
+            },
+            {
+              "name": "encoder_model.onnx",
+              "url": "https://models.cmspark.invalid/tinyclick/0e1356f0b7cfb416099207121f6a766818ab8a66/int8/encoder_model.onnx",
+              "sha256": "88e5b84730170b7d823db8879852bb54e5116c0b2caeeed738f52ebad2799499",
+              "size": 43662734
+            },
+            {
+              "name": "vision_encoder.onnx",
+              "url": "https://models.cmspark.invalid/tinyclick/0e1356f0b7cfb416099207121f6a766818ab8a66/int8/vision_encoder.onnx",
+              "sha256": "895011bd815847f211ae74782f6dfe9f5bdc739d0be5ecee3f32c251232dc226",
+              "size": 94115352
+            },
+            {
+              "name": "tokenizer.json",
+              "url": "https://models.cmspark.invalid/tinyclick/0e1356f0b7cfb416099207121f6a766818ab8a66/int8/tokenizer.json",
+              "sha256": "d69dcdb2323e124ac4f800cb9863ddccea0d7bb11e16125e8df3bd60f2f8aeac",
+              "size": 2297961
+            }
+          ]
+        }
+      }
+    }
+  }
+}
