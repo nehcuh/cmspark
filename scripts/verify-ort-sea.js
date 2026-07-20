@@ -119,7 +119,20 @@ async function main() {
 
   // --- 2. Assemble dummy SEA app ---------------------------------------------
   const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "verify-ort-sea-"));
+  let code;
   try {
+    code = await smoke(workDir, projectRoot, stagingDir, dummyModel);
+  } finally {
+    fs.rmSync(workDir, { recursive: true, force: true });
+  }
+  process.exit(code);
+}
+
+// WP5 I3 WI-3.5② 修复：本函数原以 process.exit 内联于 try 体（exit-in-try），
+// finally 的临时目录清理被跳过导致 verify-ort-sea-* 泄漏。现改为返回出口码，
+// 由外层 finally 清理后统一 process.exit（exec 异常仍向上传播，经 finally 后由
+// main().catch 收口，路径不变）。
+async function smoke(workDir, projectRoot, stagingDir, dummyModel) {
     // The whole staged node_modules is the artifact under test (whitelist output
     // of build-windows-exe.ps1: onnxruntime-node + onnxruntime-common [+ systray2
     // deps in a full build]) — copy it verbatim next to the exe.
@@ -133,7 +146,7 @@ async function main() {
     const esbuildBin = path.join(projectRoot, "companion", "node_modules", "esbuild", "bin", "esbuild");
     if (!fs.existsSync(esbuildBin)) {
       error(`esbuild not found: ${esbuildBin} (run npm install in companion/ first)`);
-      process.exit(EXIT_SETUP);
+      return EXIT_SETUP;
     }
     run(process.execPath, [
       esbuildBin, path.join(workDir, "smoke-main.cjs"),
@@ -150,7 +163,7 @@ async function main() {
     run(process.execPath, ["--experimental-sea-config", "sea-config.json"], { cwd: workDir });
     if (!fs.existsSync(path.join(workDir, "sea-prep.blob"))) {
       error("sea-prep.blob not generated");
-      process.exit(EXIT_SETUP);
+      return EXIT_SETUP;
     }
 
     // exe = runtime node + postject injection (same postject version as ps1)
@@ -179,7 +192,7 @@ async function main() {
     }
     if (!injected) {
       error(`postject injection failed via all npx candidates: ${lastErr && lastErr.message}`);
-      process.exit(EXIT_SETUP);
+      return EXIT_SETUP;
     }
 
     // --- 3. Run the dummy SEA exe ---------------------------------------------
@@ -187,16 +200,13 @@ async function main() {
     process.stdout.write(out);
     if (!out.includes("[smoke] RESULT: PASS")) {
       error("dummy SEA inference did not report PASS");
-      process.exit(EXIT_FAIL);
+      return EXIT_FAIL;
     }
     ok("dummy SEA exe: createRequire(execPath) loaded staged ORT; inference [1,2,3] -> [2,3,4] PASS");
 
     console.log("");
     ok("All gates passed: staged payload whitelist+size, SEA load, dummy inference.");
-    process.exit(EXIT_OK);
-  } finally {
-    fs.rmSync(workDir, { recursive: true, force: true });
-  }
+    return EXIT_OK;
 }
 
 main().catch((e) => {
