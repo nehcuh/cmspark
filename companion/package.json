@@ -20,7 +20,7 @@
     "menu-bar": "node dist/index.js menu-bar",
     "build:host": "bash src/host-use/darwin/build-host.sh",
     "stage:win-scripts": "node -e \"const fs=require('fs'),path=require('path');const src=path.join('src','host-use','win','scripts');const dst=path.join('dist','host-scripts-win');fs.mkdirSync(dst,{recursive:true});for(const f of fs.readdirSync(src)){if(f.endsWith('.ps1'))fs.copyFileSync(path.join(src,f),path.join(dst,f))}console.log('staged win scripts -> '+dst)\"",
-    "postinstall": "node ../scripts/verify-systray2.js && node ../scripts/build-swift-tray.js",
+    "postinstall": "node ../scripts/verify-systray2.js && node ../scripts/verify-tinyclick-vendor.js && node ../scripts/build-swift-tray.js",
     "bundle:exe": "npx esbuild dist/index.js --bundle --platform=node --target=node22 --external:systray2 --external:canvas --external:pdfjs-dist --external:@modelcontextprotocol/sdk --outfile=dist/cmspark-agent.js",
     "build:exe": "npm run build && npm run stage:win-scripts && npm run bundle:exe"
   },

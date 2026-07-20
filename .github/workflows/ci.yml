@@ -28,6 +28,10 @@ jobs:
         run: |
           cd companion && node ../scripts/verify-systray2.js --strict
 
+      - name: Verify TinyClick vendored Florence-2 files (WP5 single registry)
+        run: |
+          cd companion && node ../scripts/verify-tinyclick-vendor.js --strict
+
       - name: Verify Node archive checksum helper (audit H8)
         # package.sh now sha256-verifies the downloaded Node binary against
         # nodejs.org SHASUMS256.txt before extracting. This runs that helper's

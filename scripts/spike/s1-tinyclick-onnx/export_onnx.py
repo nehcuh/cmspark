@@ -25,6 +25,26 @@ os.makedirs(OUT, exist_ok=True)
 OPSET = 17
 
 
+def _pinned_vendor_hashes():
+    """B6 single-registry: vendor pins come from companion/models.manifest.json
+    (models.tinyclick.provenance.exportVendor) — the same registry the runtime
+    download gate and scripts/verify-tinyclick-vendor.js read. No parallel
+    hardcoded PINNED table here: two registries drift (WP5 backlog B6)."""
+    import json as _json
+
+    manifest_path = os.path.normpath(
+        os.path.join(ROOT, "..", "..", "..", "companion", "models.manifest.json")
+    )
+    with open(manifest_path, encoding="utf-8") as f:
+        manifest = _json.load(f)
+    vendor = manifest["models"]["tinyclick"]["provenance"]["exportVendor"]
+    return {
+        "configuration_florence2.py": vendor["configuration"],
+        "modeling_florence2.py": vendor["modeling"],
+        "processing_florence2.py": vendor["processing"],
+    }
+
+
 def prepare_vendored_model():
     """T5: pin trust_remote_code to vendored files (microsoft/Florence-2-base
     @5ca5edf5, sha256-pinned in vendor/). Copies vendor/*.py into the model
@@ -35,11 +55,7 @@ def prepare_vendored_model():
     import json
     import shutil
 
-    PINNED = {
-        "configuration_florence2.py": "de2e45a975b3582de05d2f4d963a3e9f9a3d20dccf78d28e0052932a0be93bdf",
-        "modeling_florence2.py": "5162bf465e61b6e29cc113a467630ec3cb56ed8e4d46eb6207157f10fb9b8a24",
-        "processing_florence2.py": "f146023a507c009f425a49ee39aa037f4f25c64e14336e3e4f3f1d7377a68e98",
-    }
+    PINNED = _pinned_vendor_hashes()
     vdir = os.path.join(ROOT, "vendor")
     for name, want in PINNED.items():
         p = os.path.join(vdir, name)
