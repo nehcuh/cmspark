@@ -1,0 +1,8 @@
+# spike binaries / artifacts — never commit
+node_modules/
+dist/
+dist-app/
+*.onnx
+*.blob
+*.exe
+package-lock.json

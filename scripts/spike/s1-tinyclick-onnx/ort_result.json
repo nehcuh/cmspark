@@ -1,0 +1,37 @@
+{
+  "onnxruntime_version": "1.27.0",
+  "ort_token_ids": [
+    2,
+    0,
+    23008,
+    1437,
+    50551,
+    50797,
+    2
+  ],
+  "ort_text": "</s><s>click <loc_282><loc_528></s>",
+  "ort_click_point": [
+    157,
+    211
+  ],
+  "ort_loc_raw": [
+    282,
+    528
+  ],
+  "ref_token_ids": [
+    2,
+    0,
+    23008,
+    1437,
+    50551,
+    50797,
+    2
+  ],
+  "token_ids_match": true,
+  "click_point_delta_px": [
+    0,
+    0
+  ],
+  "enc_hidden_maxdiff": 0.000965118408203125,
+  "step1_logits_maxdiff": 1.7642974853515625e-05
+}
