@@ -447,7 +447,7 @@ Locator.locate(screenshot, hwnd, target: { kind: "text", value } | { kind: "desc
   - 新增：`scripts/verify-tinyclick-golden.js`——s3-run.js 生产化（离线回放，±8px 容差，plan:246 惯例）；golden 集扩充：loc bin 0/999 边界、四角、<16px 小目标、>20 词命令；回放需模型在本机（文档化；不进 CI 强制，作发版/本机门禁）
   - 测试：扩充 case 入库 + harness 可跑；逻辑层（命中判定/容差）单测
 
-##### 迭代 I3 — 实验层接入编排器与防信任放大（G2/G3/G4/B9/B10 评估） ✅ 2026-07-20 条件收口（出口标准 4/5 部分完成：文案层交付，功能开关四项——WS 开关族/config 四字段/admission 组装/扩展 UI——留账 → **WP5-I4「实验层用户开关与许可证门」待立项**，出口锚 :465-467 WI-3.4 原文 + 评审 i3-review §4；中间形态 fail-closed 实证：生产侧无 locator 构造点）
+##### 迭代 I3 — 实验层接入编排器与防信任放大（G2/G3/G4/B9/B10 评估） ✅ 2026-07-20 条件收口（出口标准 4/5 部分完成：文案层交付，功能开关四项——WS 开关族/config 四字段/admission 组装/扩展 UI——留账 → **WP5-I4「实验层用户开关与许可证门」已立项（详案见下 WP5-I4 节，2026-07-21）**，出口锚 :465-467 WI-3.4 原文 + 评审 i3-review §4；中间形态 fail-closed 实证：生产侧无 locator 构造点）
 
 > 出口标准：L2 stub 实装（降级日志格式不变）；包线拒绝代码化三类各有测试；experimental→reL2 流通；开关+许可证门+文案评审通过；时间线无未校准数字上屏。
 
@@ -523,6 +523,96 @@ Locator.locate(screenshot, hwnd, target: { kind: "text", value } | { kind: "desc
 - **M5**（P3-a BPE 等价性证据薄）：WI-2.4 测试补 dev 机差分 fuzz（≥1000 随机 ASCII 命令 + 官方模板，HF tokenizer 参考、零分叉锁定）+ tokenizer.json 解析器畸形输入 fuzz。
 - **M6**（P3-b 超时/冷启动未定）：WI-2.3 增 warmup 推理（arena 预分配、首推理是热的）+ hybrid@4 补测写入超时叙事；WI-2.1 增重建期 fail-fast `model-not-ready` 不排队 + 熔断计数排除冷启动超时 + 超时策略文档化（固定 5s + 慢机后果声明）。
 - **M7**（P3-c/d/e 语义与文案缺位）：WI-3.2 定义 ready=文件在盘且校验过（session 懒建）、单飞 busy→`tinyclick-busy` skipped 链继续、重建期→`model-not-ready`；WI-3.4 设置页模型状态行三层开关依赖提示文案；WI-1.2 测试补 stale `.part`（超期或 revision 变更）删除重下。
+
+#### WP5-I4 实施详案（实验层用户开启路径，2026-07-21 立项规划）
+
+> **定位**：I3 条件收口留账四项（plan:450 互链、i3-review §4 处置建议）的收口迭代——实验层代码全链就绪但 fail-closed（生产侧无 locator 构造点：server.ts:2001 不传 `tinyclickLocator`、holder `computerModelSession.session` 全仓零写入、config 无四字段、WS 仅两路由——i3-adversary 角 5 四面复核在案），本迭代交付「用户可见开启路径」。**出口锚 plan:465-467 WI-3.4 原文 + 本节补强六条**。前置未修项：无——i3-adversary M1-M3 已清零（f991ed2/5be7758/9ac1122，i3-review §6 终审 APPROVED）；M1（预算记账移 G4 批准后）挂钩本节出口标准 4 冒烟断言。约束不变：中文注释、零新运行时依赖、扩展组件纯渲染 + 逻辑抽纯函数（WP4 先例）。
+
+**工作项（迭代内独立可提交；WI-4.1→4.2→4.3→4.4 依赖序，WI-4.5 收口）**：
+
+- **WI-4.1 config 五字段 + normalize 防篡改**（留账 2 + P1/P9）
+  - 改：`companion/src/config.ts`——`ComputerConfig`（:71-83）增 `modelEnabled?:boolean`（默认 false）、`modelLicenseAcceptedAt?:string`（ISO 时间戳）、`modelLicenseAcceptedTextHash?:string`（**LICENSE_DOOR_TEXT 的 sha256 前 12 位——接受记录绑定文本版本，条款漂移可判**，P1）、`modelLicenseDeclined?:boolean`（默认 false）、`modelVariant?:"hybrid"\|"int8"`（默认 hybrid）；`defaultConfig` computer 块（:182 邻位）补默认形；normalize（:319-345 ADR-010 惯例区）增五字段——非布尔 → coerce false + loud log；AcceptedAt 非法字符串 → delete + loud log；**AcceptedTextHash 非法形状 → delete + loud log**（P1）；variant 非枚举 → 回退 hybrid + loud log；**加载时 `modelEnabled===true` 打醒目 loud log「实验层经 config.json 手动开启，ADR-010 opt-in」——不阻断，god-mode way B WARNING 先例（ADR-010:73）**，P9
+  - 测试：`config.test.ts` 追加——五字段非法值各 coerce/delete + loud log 断言（含哈希形状负例）、合法值保留、缺省默认形、**手改 enable 启动 loud log 断言**（P9）
+- **WI-4.2 WS 开关族四路由 + get_state 全形**（留账 1 + P1/P5/P6/P3）
+  - 改：`companion/src/computer/model-handlers.ts`——增四 case（状态机见下「设计裁决」1/2）；**四 case 均 handler 层 belt 复核 `source:"settings"`**（reset_circuit_breaker :70-78 先例，防校验面被绕过/未来直调——O-1 行④「双层」之第二层，P6）；license_response accepted:true → 写 `modelLicenseAcceptedAt` **+ `modelLicenseAcceptedTextHash`（当前 LICENSE_DOOR_TEXT 哈希）**；**enable/admission 时比对当前文本哈希，不符（条款漂移）→ 重新弹门 license_required**（P1）；`ComputerModelHandlerContext` 增 `requestConfirmation` 字段（P5）；`statePayload` 扩 plan:476 全形（modelEnabled/licenseAccepted/licenseAcceptedAt?/modelStatus/variant/sizeBytes?/error?；无会话时按磁盘复验细分 absent/error，:42-43 留位处）
+  - 改：`companion/src/server.ts` validateWsMessage（:2629-2635 邻位）增四条目——set_enabled 要求 `enabled:boolean` + `source:"settings"`；license_response 要求 `accepted:boolean` + `source:"settings"`；download/delete 要求 `source:"settings"`（未知类型默认放行，条目即真围栏，同 :2630-2631 注释先例）
+  - 改：`companion/src/message-router.ts`（:970-976）增四 case 路由——**复用 handleComputerModelMessage + `requestConfirmation`/`broadcast` 注入（:961-966 apps 系先例；裁决 1 的生物识别门依赖此确认通道，缺则 NO_CONFIRMATION_CHANNEL——computer/handlers.ts:134-137 先例**，P5）
+  - 改：`companion/src/computer/model-state-messages.ts`——增 `download-host-unset` 文案（禁网兜底，见「设计裁决」5）+ **变体文件缺失诚实状态文案**（当前配置变体未下载时 modelStatus 细分 + 「去下载当前变体」引导，P3）
+  - **download 路由按变体语义**（P3）：下载对象为**当前配置变体**（config.modelVariant，默认 hybrid）的文件组；变体切换后文件缺失 → admission 复验 fail-closed（I1 词表）→ 状态行按上条文案引导下载
+  - 测试：`computer-model-handlers.test.ts` 追加——set_enabled 三分支（未接受 license → license_required 且 config 零写入 / 已拒绝 → LICENSE_DECLINED / 已接受 → fake 生物识别门批准写 config、拒绝不写）+ enabled:false 免费 + dispose 断言；license_response 双路（时间戳 **+ 文本哈希**写入 / 拒绝态写入 + 广播形状）；**条款漂移重门**（旧哈希 + 新文本 → license_required，P1）；download 幂等 + `.invalid` 占位 fail-fast（fake fetch 计数为 0 断言）+ **按变体下载语义**（配置 int8 时请求 int8 文件组）；delete dispose + 广播；**四 case belt 负测试**（缺 source/错 source 直调拒绝 + 审计 warn，P6）；validateWsMessage 四条目形状负测试
+- **WI-4.3 admission 组装**（留账 3；O-1 写入点 ①② + P4/P8）
+  - 新增：`companion/src/computer/model-admission.ts`——纯函数 `resolveTinyClickAdmission({config, holder})`：开关关 / license 未接受 / 已拒绝 → null；磁盘复验失败（I1 loadVerifiedFileBytes reason 词表）→ null+reason；熔断（session.getStatus()==="disabled"）→ null；全通过 → 懒建会话（TinyClickSession + locator，首建 warmup 计时日志，M6 语义）写 holder 返回 locator；**并发首建单飞锁**（见攻击面 4）；**dispose 竞态豁免条款（P4）：dispose 发起后 / 进行中的 locate 失败豁免熔断计数（faults 冻结）**——M6 冷启动排除语义扩展，攻击面 4 该格应答
+  - 改：`companion/src/computer/tinyclick-session.ts` / `model-handlers.ts`——holder Pick 面增 locator 只读访问（现 :24-26 三面：resetCircuitBreaker/getStatus/getFaults）
+  - 改：`companion/src/server.ts:2001` 邻位——runComputerTask deps 增 `tinyclickLocator: resolveTinyClickAdmission({config: getConfig(), holder: computerModelSession}).locator`（**per-task 评估**，任务间 config 翻转即生效；executor 刷新链 :993 显式 null **不动**——G4 防提示循环，i3-review §2.3 已证）
+  - 测试：`computer-model-admission.test.ts`——纯函数六路矩阵（关/未接受/已拒绝/复验失败/熔断/全通过）、holder 写入与 dispose 断言、并发首建单飞、**dispose 竞态不误计熔断**（P4）、per-task 评估（任务间 config 翻转 → 下一任务 admission 变化）、**holder 写入点符号级注释契约（仅 admission/disable/delete 三处**，P8）
+- **WI-4.4 扩展 UI 四件**（留账 4；O-1 写入点 ④ 的用户面 + P2）
+  - 改：`chrome-extension/src/background/index.ts`（:721-736 透传白名单）增 `computer.model.get_state/set_enabled/license_response/download/delete` 五 case（注释：开启由 companion 生物识别门承担，同 :727-728 坐标开关先例）
+  - 改：`chrome-extension/src/sidepanel/types.ts` 增 `ComputerModelState`（对齐 plan:476 全形）+ `ComputerModelProgress`；`store/agentStore.tsx` 增 model 状态切片（:62 computer.state 只读镜像先例，**无乐观更新**）；`hooks/useWebSocket.ts`（:570 邻位）增 `computer.model.state` / `computer.model.progress` 映射
+  - 改：`companion/src/computer/model-state-messages.ts`——**MODEL_SWITCH_COPY.layerSemantics 修订（P2）**：补 per-task 语义「任务运行中关闭将于当前任务结束后生效；**立即停止请按 Ctrl+Alt+End 或中止任务**」——被坏建议惊动而关开关的用户恰是最需要 estop 引导的人，原「拒绝或关闭后……不受影响」在任务运行中构成虚假保证（estop 三通道实证：estop.ts:1-16 / computer.task.abort / 预算耗尽 re-L2）
+  - 新增：`chrome-extension/src/sidepanel/components/model-switch-logic.ts`——纯函数：状态行文案选择（MODEL_STATE_MESSAGES 消费）、三层依赖提示优先级（masterOffHint > appNotAllowedHint > 本体，MODEL_SWITCH_COPY 消费）、许可证门触发条件、下载百分比计算、**任务运行中态旁注判定（有活动 computer 任务时开关旁注「当前任务结束后生效」**，P2）
+  - 改：`chrome-extension/src/sidepanel/components/SettingsSlideout.tsx`——新增「实验功能」段（组件纯渲染消费 logic 纯函数）：开关（默认关 + **任务运行中旁注**）+ 模型状态行（含三层依赖提示 + 下载中百分比文本）+ 删除模型按钮 + 重置熔断按钮（disabled 态）+ 许可证门对话框（复用 Modal，**渲染 license_required 载荷全文**——LICENSE_DOOR_TEXT 单一真源在 companion model-license.ts:77-113，扩展不复制不私编）
+  - 测试：`chrome-extension/tests/computer-model-state.test.ts`（computer-task-state.test.ts 同风格）——状态折叠 / 广播驱动刷新 / 无乐观更新；`model-switch-logic.test.ts`——纯函数矩阵（依赖提示优先级 / 门触发 / 百分比 / **运行中旁注判定**）；companion 侧 layerSemantics 文案断言（per-task 语义 + estop 引导存在，P2）
+- **WI-4.5 端到端验收（本机/发版门禁 + P7/P8）**
+  - 新增：`scripts/verify-tinyclick-enable-smoke.js`——fail-closed 基线（开关关 → skipped `model-disabled`）→ WS 序列演练（get_state → set_enabled(true) 未接受 → license_required → license_response accepted → download → set_enabled(true) → 生物识别批准 → ready+enabled）→ 英文短命令任务走 L2 → reL2 caption 断言 → 拒绝/批准双臂（注入 confirm channel + fake 门为自动臂；真 Hello + 真弹窗为手动臂，发版前人工 checklist）；admission 接线后 golden 双臂重跑（既有 `verify-tinyclick-golden.js --variant hybrid/int8`，**验收记录写明运行机与负载状态备查**——对抗轮校准项）
+  - **回归测试锚（P7）**：admission 开启态下触发刷新重定位路径，断言链 deps.tinyclick 仍为 null——executor.ts:993 显式 null 结构锁定（防未来重构静默破坏「刷新链恒 null」）
+  - **holder 无第二写入方在案化（P8）**：提交时点 grep 证据（holder 写入仅 admission/disable/delete 三处）写入 `docs/decisions/coordinate-computer-use-wp5-i4-implementation-notes.md`；自动化侧 = WI-4.3 符号级注释契约
+  - 测试：脚本 exit 码 + 断言（caption 文案、降级链形状、config 写入形状、golden 双臂 exit 0）+ P7 回归测试入 `computer-executor.test.ts`
+
+**设计裁决（立项轮定案）**：
+
+1. **生物识别门对齐：同级**——`set_enabled(true)` 过 D2 生物识别门（`requireAppsBiometric` 复用，apps/handlers.ts:435-452 coordinateAllowed「set true 是持久授权、clear 免费」先例；Hello + manual-nonce 降级 + `security.biometric.*` 审计）。理由：① 语义同型——持久能力授权；② source 围栏是声明式非密码学（model-handlers.ts:8-11 自承），能力授权需设备主绑定，防 LLM 驱动/脚本化 WS 客户端静默开启；③ 一次性动作（每安装一次），无确认疲劳问题——G4 reL2 的疲劳防线不受影响。`license_response`/`download`/`delete` **不过门**：license 是法律记录非能力本身（未接受则 set_enabled 必被 license_required 拦截）、下载字节无 enable 不可载（I1 校验即加载）、删除是 fail-closed 方向——三者均 settings-source 双层围栏（validateWsMessage + handler belt）。
+2. **许可证门状态机**：set_enabled(true) 时 licenseAcceptedAt 缺 → 返回 `computer.model.license_required {licenseText: LICENSE_DOOR_TEXT, notice}`（**config 零写入**，plan:477）→ UI 弹门 → license_response：accepted:true → `modelLicenseAcceptedAt`=ISO 时间戳 + 自动触发 download + 广播 state；accepted:false → `modelLicenseDeclined=true` + 广播 → 此后 set_enabled(true) 恒返 `LICENSE_DECLINED`（**永久跳过**；复位路径 = 手改 config.json，ADR-010 显式 owner opt-in 同型，**不提供 UI 复位按钮**——防误触、防 LLM 引导复位）。
+3. **手改 config 的语义继承**：主开关先例（config.ts:111-114 注释「手改 config.json = 显式 owner opt-in，同 god-mode」）实验层继承——手改 `modelEnabled:true` + `modelLicenseAcceptedAt` 视为 owner 显式 opt-in，admission 放行（normalize 只防篡改形状、不撤销合法布尔）。此语义进 i4-implementation-notes 文档化，消除「生物识别门可绕」双标叙事。
+4. **变体不热切换（P3 修订：切换路径如实化）**：`modelVariant` 无 WS setter、无 UI 选择器——**切换路径 = 手改 config.json + 重启 companion**（config 缓存不热加载，config.ts:276-281；与 ADR-010 方式 B「保存后重启」同型、god-mode 先例）。**二选一裁决记录**：否决 (a) 新增 `computer.model.set_variant` 路由 + UI 选择器——变体切换是罕见操作（多数用户从不执行；默认 hybrid 覆盖主路径，int8 仅内存硬约束备选），新增 WS 面的围栏/测试/文案成本远超收益；若未来变体族扩展（≥3 或热需求出现）再复审本裁决。会话生命周期：disable/delete → dispose + holder=null；**熔断保活不 dispose**（维持 I2 已终审语义——reset_circuit_breaker 真复位计数，model-handlers.ts:86-90；holder no-session no-op 分支 :80-85 覆盖 dispose 后形态）。download 路由按当前配置变体下载文件组（WI-4.2），切换后文件缺失 → admission 复验 fail-closed + 诚实文案引导。
+5. **下载动作禁网兜底**：manifest 占位主机 `.invalid` TLD（models.manifest.json:28 等）且未配 `modelMirror` → fail-fast 返回 `download-host-unset`（**零网络请求**，非 DNS 失败后的 network-error）+ 诚实文案「模型发布地址尚未配置（发布链 owner 决策中）——当前构建不可下载；UIA/OCR/用户框选不受影响」；配镜像即用户显式配置源，绕过占位判定（resolveDownloadUrl 既有逻辑，model-manifest.ts:154）。
+6. **下载进度 UI 简化**：只状态行 + 百分比文本（消费既有 `computer.model.progress` 广播，plan:479），不做进度条/速度/ETA 组件——单次 705MB、失败文案词表已全，进度组件无安全收益；后续如需可纯渲染层追加。
+
+**出口标准**（锚 plan:465-467 + 补强；均可证伪）：
+
+1. **WI-3.4 原文出口全闭环**（plan:465-467）：开关状态机测试（无乐观更新、拒绝永久跳过）+ license 门文案双引核对 + 扩展 model 状态折叠测试——全绿；**含 P2 挂钩：layerSemantics per-task 语义 + estop 引导文案断言 + 任务运行中旁注判定测试**。
+2. **O-1 四写入点可达性分析表**（i3-adversary O-1 要求，I4 评审逐点重做）：
+
+   | 写入点 | 触发条件 | 围栏 | 伪造路径排除 | 测试锚 |
+   |---|---|---|---|---|
+   | ① server.ts:2001 admission 实参 | per-task resolveTinyClickAdmission | 纯函数六路矩阵 | 无 config/holder 外输入；executor 刷新链恒 null 不动 | computer-model-admission.test.ts + **刷新链 null 回归**（P7，computer-executor.test.ts） |
+   | ② holder 写入 | admission 全通过懒建 / disable·delete dispose | 单例 + 并发首建单飞锁 | 并发首建测试；holder 无第二写入方——**提交时点 grep 证据在案化（i4-implementation-notes）+ WI-4.3 符号级注释契约**（P8） | 同上 |
+   | ③ config 五字段（P1 增文本哈希） | set_enabled / license_response handler | validateWsMessage + handler belt + 生物识别门（enable）+ normalize 防篡改 | 手改 config = 显式 opt-in（裁决 3 文档化）+ **启动期醒目 loud log**（P9） | config.test.ts / computer-model-handlers.test.ts |
+   | ④ WS 四路由 | 扩展设置页 | source:"settings" 双层 + enable 生物识别门 | 未知类型默认放行故此四条目真围栏；**belt 层 = 四 case handler 复核（P6）** | validateWsMessage 负测试 + **belt 四负测试** |
+3. **golden 双臂重跑全绿**（admission 接线后；准确率臂锚冻结基线不变，延迟臂基线相对 ×2.5 既有规则——F-1 已根治不搭车改）。
+4. **开启态冒烟**：实验层 ON → 英文短命令任务 → L2 hit → reL2 caption 含「实验层建议（TinyClick 本地模型，未校准，可能完全错误）」→ 用户拒绝 → 降级链 L1/L3 无污染（attempts 无后续 tinyclick hit）+ ELEMENT_NOT_FOUND 诚实；批准臂 → 注入带 uncrossverified 标记 + **G4 批准后才耗预算**（i3-adversary M1 已修，冒烟挂钩断言）。
+5. **license 门**：未接受开启被拒（license_required 且 config 零写入）；接受后 `modelLicenseAcceptedAt` 时间戳 **+ `modelLicenseAcceptedTextHash` 文本版本绑定**记录；**条款漂移重门**（文本哈希不符 → 重新弹门 license_required，P1）；拒绝文案双引（provenance §5：MIT 全文 + Samsung 版权行 + Ethics 双引 + 实测披露四段齐——LICENSE_DOOR_TEXT 单一真源，扩展渲染载荷原文）；拒绝后 set_enabled 恒 LICENSE_DECLINED。
+6. **生物识别门同级裁决落实**：set_enabled(true) 过 D2 门（fake 门批准/拒绝双路测试 + 真 Hello 手动臂冒烟）；clear 免费；license/download/delete settings-source 双层围栏。
+
+**风险与边界（明确不做）**：
+
+- **不做模型热切换**（裁决 4）；不做变体自动切换 / 自动下载第二变体。
+- **下载进度 UI 简化**（裁决 6）；不做暂停/Resume 按钮（断点续传由重试自动承接，I1 语义）。
+- **owner host 未定 → download 禁网兜底**（裁决 5）；真实发布链 E2E 演练列入 owner host 决策后首日任务（I1 出口外部依赖同型）。
+- **不提供 license 拒绝的 UI 复位**（裁决 2）；空命令 admission 前置不立案（i3-adversary P4-3 登记，包线单点在 locator）。
+- **任务内 admission 不收回**（攻击面 3 登记为设计取舍）：per-task 组装，任务执行中途禁用仅影响下一任务——文档化，I4 评审裁决是否接受；**文案侧已闭环**（P2：开关旁注 + layerSemantics per-task 语义 + estop 引导）。
+- **download/delete 轮询 DoS 残余声明（P10）**：幂等只防并发不防轮询——已认证同级用户可循环 download/delete 烧网络与时间；**损害有界**（磁盘预算 2048MB 封顶塞盘面，config.ts:81-82）且**高度可见**（审计事件 + 状态广播）——不加频率上限（复杂度不值），声明入 i4-implementation-notes；如需升级备选 = 每连接频率上限（apps `evidence.open` P6 先例）。
+
+**给对抗 agent 的攻击面提示**：
+
+1. **声明式 source 围栏的信任放大（license_response 特例）**：set_enabled 有生物识别门兜底成立，但 `license_response{accepted:true}` 仅凭声明式 settings 来源即写法律接受记录 + 触发 705MB 网络下载——伪造来源可代用户「接受」。重点审：是否应给 license_required→license_response 绑一次性 nonce 回声（防重放/伪造）；download/delete 反复循环调用 = 磁盘/网络 DoS 面（幂等只防并发不防轮询）。
+2. **生物识别门的双轨叙事**：set_enabled(true) 过门，但手改 config.json（裁决 3 显式 opt-in 继承）绕过 Hello——若文档化缺位则「门」名不副实；另审门与 config 写入的时序（批准→写入间崩溃 = 未持久，fail-safe 方向；写入→广播间隙 UI 态）。
+3. **admission 输入完整性与任务内收回**：resolveTinyClickAdmission 读 getConfig() 快照 per-task——任务中途 set_enabled(false)，当次任务继续持 locator 用 L2 建议（设计取舍 vs 缺口，风险节已登记）；定位链有无 per-action 重估点；getConfig 缓存与 config.set 写路径的一致性。
+4. **holder 单例并发与生命周期竞态**：两任务同时首建 → 双建 705MB 会话（单飞锁是否真互斥）；delete/disable dispose 与进行中推理竞态（worker 崩溃是否误计熔断——M6 冷启动排除语义是否覆盖 dispose 竞态）；熔断保活 + reset no-op 分支（model-handlers.ts:80-85）组合的形态矩阵。
+5. **许可证门呈现完整性**：LICENSE_DOOR_TEXT 单一真源在 companion、扩展渲染 license_required 载荷——companion 被控时载荷可伪造条款骗接受（WS 对扩展是否可信通道）；license_response 是否应与 license_required 载荷哈希回声绑定；state 广播伪造（companion 报 ready 实际 absent → UI 误显示可开启）的观测面。
+
+**对抗修订记录（I4 规划轮，2026-07-21 落回详案；裁决文档 `coordinate-computer-use-wp5-i4-plan-adversary.md`：PLAN SOUND WITH AMENDMENTS——无 HIGH、无推翻性缺陷）**：
+
+- **P1**（LOW-MED）：license 接受绑定文本版本——WI-4.1 增 `modelLicenseAcceptedTextHash`（sha256 前 12 位）+ normalize 非法形状 delete；WI-4.2 接受时写哈希、enable/admission 比对漂移重门；出口 5 增「条款漂移重门」测试。（攻击面 1 的 nonce 回声建议经对抗轮**否决**——挑战与响应同走一条 WS 属同源通道剧场，伪造者可读可回声；实质修订即本条。）
+- **P2**（LOW-MED）：MODEL_SWITCH_COPY.layerSemantics 补 per-task 语义 + estop 引导（Ctrl+Alt+End / 中止任务）+ 设置页任务运行中态旁注——WI-4.4 + 出口 1 挂钩；「任务运行中关闭即生效」的虚假保证消除。
+- **P3**（LOW-MED）：变体切换路径显式化——二选一裁决：选 **(b) 手改 config.json + 重启 companion**（config 缓存不热加载 config.ts:276-281，ADR-010 方式 B 同型），如实改写裁决 4；**否决 (a) set_variant 路由**（罕见操作，WS 面+UI 成本不值）记录在案；download 补「按当前配置变体下载」语义 + 变体缺失诚实文案（WI-4.2）。
+- **P4**：WI-4.3 增 dispose 竞态豁免条款——dispose 发起后/进行中 locate 失败豁免熔断计数（faults 冻结）+ 测试（攻击面 4 该格应答闭环）。
+- **P5**：WI-4.2 message-router 项显式化 `requestConfirmation` 注入（:961-966 先例）+ `ComputerModelHandlerContext` 增字段——缺通道则生物识别门 NO_CONFIRMATION_CHANNEL（computer/handlers.ts:134-137）。
+- **P6**：WI-4.2 四 case 均 handler 层 belt 复核 `source:"settings"`（:70-78 先例）+ 四 belt 负测试；O-1 行④ 测试锚同步——「双层」名实相符。
+- **P7**：WI-4.5 增回归测试——admission 开启态触发刷新重定位，断言链 deps.tinyclick 仍 null（executor.ts:993 结构锁定）；WI-4.3 行号勘正 :971→:993。
+- **P8**：holder 无第二写入方在案化——提交时点 grep 证据写入 i4-implementation-notes + WI-4.3 符号级注释契约（写入点仅 admission/disable/delete 三处）。
+- **P9**：WI-4.1 normalize 增启动期醒目 loud log——加载时 `modelEnabled===true` 打「实验层经 config.json 手动开启，ADR-010 opt-in」不阻断（god-mode way B WARNING 先例 ADR-010:73）。
+- **P10**：download/delete 轮询 DoS 残余声明入风险边界（同级已认证、磁盘预算封顶、高度可见）；不加频率上限，升级备选 = 每连接上限（apps evidence.open P6 先例）。
+- 附（对抗轮校准项，不另立编号）：manual-nonce 降级真实强度一句话（防 LLM 工具循环、不防有 shell 能力同级脚本——D2 门族固有非 I4 新引入）+ golden 验收记录运行机/负载状态，均入 i4-implementation-notes；攻击面 5（许可证门呈现伪造/哈希回声）对抗轮裁定**不立案**（companion 被控全局皆失，不超 ADR-010 信任边界；哈希回声同 nonce 剧场否决）。
 
 ### WP6 — 云端 VLM 层
 - **范围**：经既有 LLM adapter 接入用户自备视觉端点、schema 约束输出、prompt 隔离（§E.1.3）、逐任务上传授权（§E.6.3）、置信度与降级收尾。
