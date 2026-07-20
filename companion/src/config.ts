@@ -80,6 +80,30 @@ export interface ComputerConfig {
   modelMirror?: string
   /** WP5 模型目录磁盘预算（MB，默认 2048；下载前检查，防塞盘 DoS）。 */
   modelDiskBudgetMB?: number
+  /**
+   * WP5-I4 实验层用户开关（默认 false）。true = 允许 admission 组装 locator
+   * （还需 license 已接受 + 未熔断 + 磁盘复验通过）。开启走生物识别门
+   * （D2，apps coordinateAllowed 先例）；手改 config.json = 显式 owner
+   * opt-in（ADR-010，同 coordinateEnabled 先例），启动期打醒目 loud log（P9）。
+   */
+  modelEnabled?: boolean
+  /** WP5-I4 许可证接受时间戳（ISO 字符串；license_response accepted:true 写入）。 */
+  modelLicenseAcceptedAt?: string
+  /**
+   * WP5-I4 许可证接受时 LICENSE_DOOR_TEXT 的 sha256 前 12 位（P1：接受记录
+   * 绑定文本版本——条款文本漂移（哈希不符）→ enable/admission 重新弹门）。
+   */
+  modelLicenseAcceptedTextHash?: string
+  /**
+   * WP5-I4 许可证已拒绝（默认 false）。true → set_enabled(true) 恒返
+   * LICENSE_DECLINED（永久跳过；复位 = 手改 config.json，不提供 UI 复位）。
+   */
+  modelLicenseDeclined?: boolean
+  /**
+   * WP5-I4 交付变体（默认 "hybrid"）。无 WS setter/无 UI 选择器——切换路径
+   * = 手改 config.json + 重启 companion（裁决 4/P3，ADR-010 方式 B 同型）。
+   */
+  modelVariant?: "hybrid" | "int8"
 }
 
 export interface CompanionConfig {
@@ -180,6 +204,10 @@ const defaultConfig: CompanionConfig = {
   },
   computer: {
     coordinateEnabled: false,
+    // WP5-I4 实验层默认形：开关默认关、许可证未拒绝、变体默认 hybrid。
+    modelEnabled: false,
+    modelLicenseDeclined: false,
+    modelVariant: "hybrid",
   },
   obsidian: {
     name_template: "{{date}} {{first_user_line}}",
@@ -345,6 +373,56 @@ export function getConfig(): CompanionConfig {
       delete cachedConfig.computer.modelDiskBudgetMB
     }
   }
+  // WP5-I4 WI-4.1 实验层五字段 normalize（ADR-010 惯例；只防篡改形状，不撤销
+  // 合法布尔——手改 config.json = 显式 owner opt-in，裁决 3）。
+  if (cachedConfig.computer.modelEnabled !== undefined && typeof cachedConfig.computer.modelEnabled !== "boolean") {
+    console.error(
+      `[cmspark-agent] computer.modelEnabled 非布尔——coerce false (config tampering?)`,
+    )
+    cachedConfig.computer.modelEnabled = false
+  }
+  cachedConfig.computer.modelEnabled = cachedConfig.computer.modelEnabled === true
+  if (cachedConfig.computer.modelLicenseDeclined !== undefined && typeof cachedConfig.computer.modelLicenseDeclined !== "boolean") {
+    console.error(
+      `[cmspark-agent] computer.modelLicenseDeclined 非布尔——coerce false (config tampering?)`,
+    )
+    cachedConfig.computer.modelLicenseDeclined = false
+  }
+  cachedConfig.computer.modelLicenseDeclined = cachedConfig.computer.modelLicenseDeclined === true
+  if (cachedConfig.computer.modelLicenseAcceptedAt !== undefined) {
+    const v = cachedConfig.computer.modelLicenseAcceptedAt
+    if (typeof v !== "string" || v.trim() === "" || Number.isNaN(Date.parse(v))) {
+      console.error(
+        `[cmspark-agent] computer.modelLicenseAcceptedAt 非法（须为 ISO 时间戳字符串）——按未接受处理 (config tampering?)`,
+      )
+      delete cachedConfig.computer.modelLicenseAcceptedAt
+    }
+  }
+  // P1：文本版本绑定哈希——形状非法即 delete（比对漂移重门在 enable/admission 侧）。
+  if (cachedConfig.computer.modelLicenseAcceptedTextHash !== undefined) {
+    const v = cachedConfig.computer.modelLicenseAcceptedTextHash
+    if (typeof v !== "string" || !/^[0-9a-f]{12}$/.test(v)) {
+      console.error(
+        `[cmspark-agent] computer.modelLicenseAcceptedTextHash 非法（须为 sha256 前 12 位小写 hex）——按未接受处理 (config tampering?)`,
+      )
+      delete cachedConfig.computer.modelLicenseAcceptedTextHash
+    }
+  }
+  if (cachedConfig.computer.modelVariant !== undefined && cachedConfig.computer.modelVariant !== "hybrid" && cachedConfig.computer.modelVariant !== "int8") {
+    console.error(
+      `[cmspark-agent] computer.modelVariant 非法（须为 "hybrid"|"int8"）——回退 hybrid (config tampering?)`,
+    )
+    cachedConfig.computer.modelVariant = "hybrid"
+  }
+  cachedConfig.computer.modelVariant = cachedConfig.computer.modelVariant ?? "hybrid"
+  // P9：手改开启的启动期醒目 loud log——本路径每 cache-miss（≈进程启动）只跑
+  // 一次，不刷屏；合法布尔不撤销、不阻断，仅明示（god-mode 方式 B WARNING 先例，
+  // ADR-010:73）。
+  if (cachedConfig.computer.modelEnabled === true) {
+    console.error(
+      `[cmspark-agent] WARNING: computer.modelEnabled=true —— TinyClick 实验层经 config.json 手动开启（ADR-010 显式 owner opt-in，同 god-mode 方式 B）。本层未校准，命中仍必经人工确认；关闭请置 false 或经设置页。`,
+    )
+  }
   return cachedConfig
 }
 
@@ -430,6 +508,40 @@ export function setComputerCoordinateEnabled(enabled: boolean): CompanionConfig 
     computer: {
       ...(current.computer ?? {}),
       coordinateEnabled: enabled === true,
+    },
+  }
+  const configPath = path.join(DATA_DIR, "config.json")
+  const toSave = JSON.parse(JSON.stringify(updated))
+  const envKey = getEnvApiKey()
+  if (envKey && toSave.llm?.api_key === envKey) {
+    toSave.llm.api_key = ""
+  }
+  atomicWriteJSON(configPath, toSave)
+  cachedConfig = updated
+  configEvents.emit(CONFIG_CHANGE_EVENT, updated)
+  return updated
+}
+
+/**
+ * WP5-I4 WI-4.2：实验层四字段原子写入（model-handlers 四 case 唯一持久化通道，
+ * setComputerCoordinateEnabled 先例）。只允许白名单键；调用方负责语义
+ * （license_response 写时间戳+文本哈希；set_enabled 写 modelEnabled）。
+ */
+export function setComputerModelFields(
+  patch: Partial<
+    Pick<
+      ComputerConfig,
+      "modelEnabled" | "modelLicenseAcceptedAt" | "modelLicenseAcceptedTextHash" | "modelLicenseDeclined"
+    >
+  >,
+): CompanionConfig {
+  const current = getConfig()
+  const updated: CompanionConfig = {
+    ...current,
+    computer: {
+      ...(current.computer ?? { coordinateEnabled: false }),
+      ...patch,
+      coordinateEnabled: current.computer?.coordinateEnabled === true,
     },
   }
   const configPath = path.join(DATA_DIR, "config.json")
