@@ -8,6 +8,7 @@ import assert from "node:assert/strict"
 
 import { locateTargetWithChain, type LocateChainDeps } from "../src/computer/locate-chain"
 import { runComputerTask, type ComputerExecutorDeps } from "../src/computer/executor"
+import type { TinyClickLocateOutcome } from "../src/computer/tinyclick-locator"
 import {
   ComputerError,
   type CaptureMeta,
@@ -240,7 +241,9 @@ test("chain: L0 skipped + L1 language-missing -> honest stubs -> ELEMENT_NOT_FOU
   }
   assert.match(captured.message, /uia:skipped\(uia-incapable-or-unprobed\)/)
   assert.match(captured.message, /ocr:skipped\(ocr-language-missing\)/)
-  assert.match(captured.message, /tinyclick:skipped\(wp5-not-implemented\)/)
+  // WP5 I3：admission 关闭（deps.tinyclick 缺省）→ model-disabled（行为与旧
+  // stub 等价，仅 reason 文案变化，plan:489 ③）
+  assert.match(captured.message, /tinyclick:skipped\(model-disabled\)/)
   assert.match(captured.message, /cloud:skipped\(wp6-not-implemented\)/)
 })
 
@@ -475,4 +478,153 @@ test("X1: candidates>1 (tree-order first pick) is forced uncrossverified — nev
   assert.equal(result.crossverified, false)
   assert.equal(result.uncrossverified, true, "ambiguity consumes the A1.3 sub-budget")
   assert.equal(result.crossverifyChannel, undefined, "no uia+ocr badge on a guessed pick")
+})
+
+// --- WP5 I3 WI-3.2: L2 实验层接入（stub→实装） --------------------------------
+//
+// 断言面：skipped 原因矩阵直通、experimental 标记透传、降级链排序（L0/L1 命中
+// 时 L2 零调用）、降级日志/locateAttempts 格式回归（G3：命中日志/attempt 均
+// 无 confidence 键）、L2 命中不重捕获（A1 新鲜度检查留给 re-L2 批准通道）。
+
+class FakeTinyClick {
+  calls: Array<{ command: string; shot: CaptureMeta }> = []
+  constructor(private outcome: TinyClickLocateOutcome) {}
+  async locate(args: { command: string; shot: CaptureMeta }): Promise<TinyClickLocateOutcome> {
+    this.calls.push(args)
+    return this.outcome
+  }
+}
+
+function tcHit(point = { x: 150, y: 180 }): TinyClickLocateOutcome {
+  return {
+    kind: "hit",
+    point,
+    tokenIds: [50551, 50552],
+    prompt: "what to do to execute the command? 确定",
+    timings: { preprocessMs: 1, visionMs: 2, embedMs: 3, encoderMs: 4, decoderMs: 5, totalMs: 15 },
+  }
+}
+
+test("L2: admission 关闭（tinyclick 缺省）→ skipped model-disabled，链落 L3 stub", async () => {
+  const locator = new FakeLocator([]) // L1：语言包在、锚文本不在
+  await assert.rejects(
+    runChain(chainDeps({ locator })),
+    (err: any) =>
+      err instanceof ComputerError &&
+      err.code === "ELEMENT_NOT_FOUND" &&
+      /tinyclick:skipped\(model-disabled\)/.test(err.message) &&
+      /cloud:skipped\(wp6-not-implemented\)/.test(err.message),
+  )
+})
+
+test("L2 skipped 原因矩阵：包线/坍缩/busy/not-ready/disabled 全直通 attempts 与日志，链继续降级", async () => {
+  const reasons = [
+    "tinyclick-envelope:non-ascii",
+    "tinyclick-envelope:too-long",
+    "tinyclick-envelope:frame-too-wide",
+    "tinyclick-collapse-detected",
+    "tinyclick-busy",
+    "model-not-ready",
+    "model-disabled",
+  ]
+  for (const reason of reasons) {
+    const tc = new FakeTinyClick({ kind: "skipped", reason })
+    const logs: Array<Record<string, unknown>> = []
+    let captured: any
+    try {
+      await locateTargetWithChain({
+        target: "确定",
+        hwnd: HWND,
+        shot: shotAt("cap-0.png"),
+        deps: chainDeps({ locator: new FakeLocator([]), tinyclick: tc, log: (_e, d) => logs.push(d) }),
+        trackCapture: async () => shotAt("cap-1.png"),
+        releaseRaw: async () => {},
+      })
+      assert.fail("must throw")
+    } catch (err: any) {
+      captured = err
+    }
+    assert.equal(captured.code, "ELEMENT_NOT_FOUND", `reason=${reason} 后链应继续降级`)
+    assert.ok(
+      captured.message.includes(`tinyclick:skipped(${reason})`),
+      `reason=${reason} 应出现在错误叙事: ${captured.message}`,
+    )
+    assert.equal(tc.calls.length, 1)
+    const skipLog = logs.find((d) => d.layer === "tinyclick" && d.hit === false)
+    assert.ok(skipLog, `reason=${reason} 应有降级日志`)
+    assert.equal(skipLog!.reason, reason)
+  }
+})
+
+test("L2 error：tinyclick-error → outcome error + 链继续降级（错误类型不变）", async () => {
+  const tc = new FakeTinyClick({ kind: "error", reason: "tinyclick-error" })
+  await assert.rejects(
+    runChain(chainDeps({ locator: new FakeLocator([]), tinyclick: tc })),
+    (err: any) =>
+      err instanceof ComputerError &&
+      err.code === "ELEMENT_NOT_FOUND" &&
+      /tinyclick:error\(tinyclick-error\)/.test(err.message) &&
+      /cloud:skipped\(wp6-not-implemented\)/.test(err.message),
+  )
+})
+
+test("L2 命中 → experimental:true 透传 + uncrossverified（吃 A1.3 子预算）+ confidence 缺省 + 不重捕获", async () => {
+  const tc = new FakeTinyClick(tcHit())
+  const logs: Array<Record<string, unknown>> = []
+  const { result, released } = await runChain(
+    chainDeps({ locator: new FakeLocator([]), tinyclick: tc, log: (_e, d) => logs.push(d) }),
+  )
+  // 链排序：L0 skipped（缺省 uia:null）→ L1 not-found → L2 hit，L3 stub 不出现
+  assert.deepEqual(
+    result.attempts.map((a) => [a.layer, a.outcome]),
+    [["uia", "skipped"], ["ocr", "not-found"], ["tinyclick", "hit"]],
+  )
+  assert.equal(result.hit.layer, "tinyclick")
+  assert.equal(result.experimental, true)
+  assert.equal(result.crossverified, false)
+  assert.equal(result.uncrossverified, true)
+  assert.equal(result.crossverifyChannel, undefined, "实验层不给任何交叉验证徽章")
+  // G3：hit 与 attempt 均无 confidence 键（类型缺省贯穿到记录层）
+  assert.equal(result.hit.confidence, undefined)
+  const tcAttempt = result.attempts[2]
+  assert.equal("confidence" in tcAttempt, false, "命中 attempt 不携带 confidence")
+  // 点定位模型：零尺寸 bbox 如实记录；无锚文本不伪造
+  assert.deepEqual(result.hit.bbox, { x: 150, y: 180, width: 0, height: 0 })
+  assert.equal(result.hit.matchedText, "")
+  // image(150,180) → client(140,140)
+  assert.deepEqual(result.pointClient, { x: 140, y: 140 })
+  // 不重捕获：A1 像素新鲜度检查在 re-L2 批准通道执行（plan:490 ④），帧不替换
+  assert.deepEqual(released, [])
+  assert.equal(result.shot.path, "cap-0.png")
+})
+
+test("L2 日志格式回归：命中日志无 confidence 键，字段与既有层同形（layer/hit/ms）", async () => {
+  const tc = new FakeTinyClick(tcHit())
+  const logs: Array<Record<string, unknown>> = []
+  await runChain(chainDeps({ locator: new FakeLocator([]), tinyclick: tc, log: (_e, d) => logs.push(d) }))
+  const hitLog = logs.find((d) => d.layer === "tinyclick" && d.hit === true)
+  assert.ok(hitLog, "命中应有 computeruse.locate 日志")
+  assert.equal("confidence" in hitLog!, false, "G3：命中日志无上屏置信度")
+  assert.deepEqual(Object.keys(hitLog!).sort(), ["hit", "layer", "ms"])
+})
+
+test("L2 排序：L0 命中时 tinyclick 零调用；L1 命中时 tinyclick 零调用", async () => {
+  // L0 命中
+  const tc1 = new FakeTinyClick(tcHit())
+  const r0 = await runChain(chainDeps({ uia: new FakeUia([uiaHit()]), tinyclick: tc1 }))
+  assert.equal(r0.result.hit.layer, "uia")
+  assert.equal(tc1.calls.length, 0, "L0 命中后链短路，实验层不被触碰")
+  // L1 命中（uia 缺省，默认 locator 词表含「确定」）
+  const tc2 = new FakeTinyClick(tcHit())
+  const r1 = await runChain(chainDeps({ tinyclick: tc2 }))
+  assert.equal(r1.result.hit.layer, "ocr")
+  assert.equal(tc2.calls.length, 0, "L1 命中后链短路，实验层不被触碰")
+})
+
+test("L2 命令透传：click target 原样作为实验层 command（官方配方在 locator 内）", async () => {
+  const tc = new FakeTinyClick(tcHit())
+  await runChain(chainDeps({ locator: new FakeLocator([]), tinyclick: tc }))
+  assert.equal(tc.calls.length, 1)
+  assert.equal(tc.calls[0].command, "确定")
+  assert.equal(tc.calls[0].shot.path, "cap-0.png")
 })

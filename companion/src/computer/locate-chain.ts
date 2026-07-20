@@ -1,7 +1,8 @@
 // WP3 — four-layer locate orchestrator (plan §B.1/§B.2).
 //
 //   L0 UIA (admission via the task-start probe verdict) → L1 OCR (WP1)
-//   → L2 TinyClick (WP5 — honest stub) → L3 cloud (WP6 — honest stub).
+//   → L2 TinyClick (WP5 I3 — experimental layer: hits are re-L2 gated,
+//   never auto-injected) → L3 cloud (WP6 — honest stub).
 //
 // Degradation is ONE-WAY down the chain; every attempt is recorded with a
 // structured reason and surfaces per action in the evidence chain
@@ -25,10 +26,12 @@
 // success paths only. On any throw the executor's exit sweep owns every
 // tracked frame — the chain must never release-then-throw.
 //
-// NOT in scope (documented): L2/L3 are honest stubs; the post-injection
+// NOT in scope (documented): L3 stays an honest stub (WP6); the post-injection
 // danger scan (executor, Y1) always re-OCRs the current frame, so a missing
 // language pack fails any injection honestly even when L0 located (UIA
-// provides no danger-scan bypass in WP3).
+// provides no danger-scan bypass in WP3). The WP5 experimental layer adds
+// no bypass either — its hits are re-L2 gated and consume the A1.3
+// uncrossverified sub-budget.
 
 import {
   ComputerError,
@@ -43,6 +46,7 @@ import {
   type ScreenCapturer,
   type UiaLocator,
 } from "./types"
+import type { TinyClickLocator } from "./tinyclick-locator"
 
 export interface LocateChainDeps {
   /** L0 provider. The EXECUTOR decides admission (uiaCapable) — it passes
@@ -58,6 +62,13 @@ export interface LocateChainDeps {
    * caller). Absent = assume available (unit fakes).
    */
   ocrAvailable?: () => Promise<boolean>
+  /**
+   * WP5 I3：L2 实验层。EXECUTOR 决定 admission——开关开 + 模型 ready + 无熔断
+   * 才传非 null（ready 语义：modelStatus:"ready" = 文件在盘且校验过，session
+   * 懒建，P3-c/M7）。null/缺省 = 层未启用 → skipped model-disabled（行为与
+   * 旧 stub 等价，仅 reason 文案变化）。Pick 结构型以便测试注入 fake。
+   */
+  tinyclick?: Pick<TinyClickLocator, "locate"> | null
   log?: (event: string, data: Record<string, unknown>) => void
   now?: () => number
 }
@@ -76,6 +87,12 @@ export interface ChainLocateResult {
   attempts: LocateAttempt[]
   /** X1: quantified witness strength (present when the L0 witness OCR ran). */
   witness?: WitnessVerdict
+  /**
+   * WP5 I3（G4）：L2 实验层命中标记。命中不直接进注入流——executor 见此
+   * 标记走 re-L2 人审（caption「实验层建议，可能完全错误」），批准后经
+   * A1 像素新鲜度检查注入；实验层建议永不自动进入接受链。
+   */
+  experimental?: true
 }
 
 /** UIA↔OCR witness tolerance (px) around the UIA bbox. */
@@ -425,10 +442,47 @@ export async function locateTargetWithChain(args: {
     log("computeruse.locate", { layer: "ocr", hit: false, reason: "ocr-not-found", ms: now() - t0 })
   }
 
-  // ---- L2 / L3: honest stubs (WP5 / WP6) --------------------------------------
-  attempts.push({ layer: "tinyclick", outcome: "skipped", reason: "wp5-not-implemented", ms: 0 })
+  // ---- L2: TinyClick 实验层（WP5 I3 实装；降级日志/locateAttempts 格式不变） -----
+  // admission 由 executor 决定（deps.tinyclick 非 null = 开关开 + 模型 ready +
+  // 无熔断）。层内包线拒绝/坍缩抑制/推理故障均为 skipped|error + 结构化
+  // reason，链继续走向 L3——实验层任何故障不改变既有降级序与错误类型。
+  if (deps.tinyclick) {
+    const t0 = now()
+    const outcome = await deps.tinyclick.locate({ command: target, shot })
+    if (outcome.kind === "hit") {
+      attempts.push({ layer: "tinyclick", outcome: "hit", ms: now() - t0 })
+      // G3：命中日志不携带 confidence（校准前无上屏数值），字段结构与既有
+      // 层日志一致（layer/hit/ms）。
+      log("computeruse.locate", { layer: "tinyclick", hit: true, ms: now() - t0 })
+      const hit: LocateHit = {
+        x: outcome.point.x,
+        y: outcome.point.y,
+        // 点定位模型不产出框——零尺寸 bbox 如实记录（win-adapters:521 同款缺省形）。
+        bbox: { x: outcome.point.x, y: outcome.point.y, width: 0, height: 0 },
+        layer: "tinyclick",
+        matchedText: "", // 实验层无锚文本概念，留空不伪造
+        // confidence 结构性缺省（G3，types.ts LocateHit 注释）
+      }
+      return {
+        hit,
+        pointClient: { x: outcome.point.x - shot.client.x, y: outcome.point.y - shot.client.y },
+        ocrRes,
+        shot,
+        crossverified: false,
+        uncrossverified: true, // 实验层建议吃 A1.3 子预算（plan:458）
+        attempts,
+        experimental: true,
+      }
+    }
+    attempts.push({ layer: "tinyclick", outcome: outcome.kind, reason: outcome.reason, ms: now() - t0 })
+    log("computeruse.locate", { layer: "tinyclick", hit: false, reason: outcome.reason, ms: now() - t0 })
+  } else {
+    attempts.push({ layer: "tinyclick", outcome: "skipped", reason: "model-disabled", ms: 0 })
+    log("computeruse.locate", { layer: "tinyclick", hit: false, reason: "model-disabled" })
+  }
+
+  // ---- L3: cloud（WP6 honest stub，不动） ---------------------------------------
   attempts.push({ layer: "cloud", outcome: "skipped", reason: "wp6-not-implemented", ms: 0 })
-  log("computeruse.locate", { layer: "tinyclick", hit: false, reason: "wp5-not-implemented" })
   log("computeruse.locate", { layer: "cloud", hit: false, reason: "wp6-not-implemented" })
   throw notFoundError()
 }

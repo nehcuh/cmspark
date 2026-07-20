@@ -250,14 +250,19 @@ export interface LocateHit {
   y: number
   bbox: RectPx
   layer: LocateLayer
-  confidence: number
+  /**
+   * UIA/OCR 层照常赋值；WP5 I3 实验层（tinyclick）在校准曲线落地前结构性
+   * 缺省（G3——未校准置信度永不上屏，类型系统强制，校准后升级须评审）。
+   */
+  confidence?: number
   matchedText: string
 }
 
 /**
  * WP3 (plan §B.1): the four locator layers. "uia" = L0 (WP3), "ocr" = L1
- * (WP1), "tinyclick" = L2 (WP5 stub — honest skip), "cloud" = L3 (WP6
- * stub — honest skip). Degradation is one-way down the chain.
+ * (WP1), "tinyclick" = L2 (WP5 I3 — experimental local model layer, re-L2
+ * gated, never auto-injected), "cloud" = L3 (WP6 stub — honest skip).
+ * Degradation is one-way down the chain.
  */
 export type LocateLayer = "uia" | "ocr" | "tinyclick" | "cloud"
 
@@ -269,7 +274,8 @@ export interface LocateAttempt {
   layer: LocateLayer
   outcome: "hit" | "not-found" | "skipped" | "error"
   /** Degradation reason when outcome != "hit" (e.g. "uia-not-found",
-   *  "uia-ocr-disagree", "ocr-language-missing", "wp5-not-implemented"). */
+   *  "uia-ocr-disagree", "ocr-language-missing", "model-disabled",
+   *  "tinyclick-envelope:too-long", "tinyclick-collapse-detected"). */
   reason?: string
   confidence?: number
   ms: number
