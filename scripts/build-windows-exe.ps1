@@ -81,7 +81,8 @@ try {
     Ok "TypeScript compiled to dist/"
 
     # esbuild bundle: --external:systray2 so the Go binary is resolved at runtime
-    # from node_modules/systray2 placed alongside the exe in the package
+    # from node_modules/systray2 placed alongside the exe in the package;
+    # --external:onnxruntime-node likewise (WP5 local model runtime, S-2 verified).
     npx esbuild dist/index.js `
         --bundle `
         --platform=node `
@@ -89,6 +90,7 @@ try {
         --external:systray2 `
         --external:canvas `
         --external:pdfjs-dist `
+        --external:onnxruntime-node `
         --outfile=dist/cmspark-agent.js
     if ($LASTEXITCODE -ne 0) { Fail "esbuild bundle failed" }
     Ok "Bundle: dist/cmspark-agent.js"
@@ -258,6 +260,51 @@ foreach ($pkg in $Systray2Packages) {
 }
 if ($anySystray2Ok) { Ok "node_modules/ systray2 + deps (tray support)" }
 else { Warn "systray2 not installed — tray icon will not work" }
+
+# onnxruntime-node (WP5 local model runtime, B7) — whitelist-copy ONLY the
+# target-arch payload: full npm package is 259MB (darwin+linux+win32), the
+# win32/x64 payload is 62MB (4 dll + .node). Anything else never ships.
+$OrtSrc = "$CompanionDir\node_modules\onnxruntime-node"
+if (Test-Path $OrtSrc) {
+    $OrtDest = "$StagingDir\node_modules\onnxruntime-node"
+    New-Item -ItemType Directory -Force "$OrtDest\bin\napi-v6\win32\x64" | Out-Null
+    # package.json + dist/ (compiled JS; package main = dist/index.js — lib/ is
+    # TypeScript source and must NOT ship) + target-arch native payload only.
+    Copy-Item "$OrtSrc\package.json" $OrtDest
+    Copy-Item "$OrtSrc\dist" "$OrtDest\dist" -Recurse
+    Copy-Item "$OrtSrc\bin\napi-v6\win32\x64\*" "$OrtDest\bin\napi-v6\win32\x64" -Recurse
+    if (Test-Path "$OrtSrc\LICENSE") { Copy-Item "$OrtSrc\LICENSE" $OrtDest }
+    $OrtBytes = (Get-ChildItem $OrtDest -Recurse -File | Measure-Object -Property Length -Sum).Sum
+    $OrtMB = [math]::Round($OrtBytes / 1MB, 1)
+    # Size assertion (B7): 62MB payload + dist/package.json — hard budget 70MB.
+    if ($OrtBytes -gt 70MB) { Fail "onnxruntime-node staging ${OrtMB}MB exceeds 70MB budget (expected ~63MB)" }
+    Ok "node_modules/onnxruntime-node win32/x64 payload only: ${OrtMB}MB (budget 70MB)"
+
+    # onnxruntime-common (runtime dependency of onnxruntime-node's dist/) — pure JS,
+    # same copy shape: package.json + dist/ only (lib/ is TypeScript source).
+    $CommonSrc = "$CompanionDir\node_modules\onnxruntime-common"
+    $CommonDest = "$StagingDir\node_modules\onnxruntime-common"
+    if (Test-Path $CommonSrc) {
+        New-Item -ItemType Directory -Force $CommonDest | Out-Null
+        Copy-Item "$CommonSrc\package.json" $CommonDest
+        Copy-Item "$CommonSrc\dist" "$CommonDest\dist" -Recurse
+        Ok "node_modules/onnxruntime-common (dist only)"
+    } else {
+        Fail "onnxruntime-common missing — onnxruntime-node dist/ requires it at runtime"
+    }
+} else {
+    Warn "onnxruntime-node not installed — WP5 local model layer unavailable in this package"
+}
+
+# THIRD_PARTY_NOTICES must ship with the package (W3 §5.5 MIT notice obligation;
+# generated from companion/src/computer/model-license.ts single source of truth).
+$NoticeSrc = "$CompanionDir\THIRD_PARTY_NOTICES"
+if (Test-Path $NoticeSrc) {
+    Copy-Item $NoticeSrc $StagingDir
+    Ok "THIRD_PARTY_NOTICES"
+} else {
+    Fail "THIRD_PARTY_NOTICES missing in companion/ — MIT notice must ship with the package"
+}
 
 # Launch / install scripts
 foreach ($f in @("install.bat", "uninstall.bat", "launch.bat", "launch-hidden.vbs", "README.txt")) {

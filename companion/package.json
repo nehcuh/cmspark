@@ -32,6 +32,7 @@
     "js-yaml": "^4.2.0",
     "node-notifier": "^10.0.1",
     "officeparser": "^7.2.3",
+    "onnxruntime-node": "^1.27.0",
     "openai": "^4.52.0",
     "pdf-parse": "^1.1.1",
     "pdfjs-dist": "^4.0.0",
