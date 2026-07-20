@@ -491,3 +491,57 @@ describe("saveConfig prototype-pollution defense", { concurrency: 1 }, () => {
     assert.equal(getConfig().llm.api_key, "prototype")
   })
 })
+
+describe("computer 模型下载字段 normalize（WP5 I1 / ADR-010）", { concurrency: 1 }, () => {
+  test("modelMirror 非字符串/空串 → coerce 为未配置 + loud log", async () => {
+    await resetConfigFile()
+    for (const bad of [123, true, "", "   ", null, {}]) {
+      clearConfigCache()
+      saveConfig({ computer: { coordinateEnabled: false, modelMirror: bad } as any })
+      clearConfigCache() // normalize 走 getConfig cache-miss 路径
+      const logs: string[] = []
+      const orig = console.error
+      console.error = (...args: unknown[]) => logs.push(args.map(String).join(" "))
+      try {
+        const cfg = getConfig()
+        assert.equal(cfg.computer?.modelMirror, undefined, `modelMirror=${JSON.stringify(bad)} 应被清除`)
+      } finally {
+        console.error = orig
+      }
+      assert.ok(logs.some((l) => l.includes("modelMirror")), `modelMirror=${JSON.stringify(bad)} 应有 loud log`)
+    }
+  })
+
+  test("modelMirror 合法字符串保留（https 约束在下载时强制执行，config 层只保证类型）", async () => {
+    await resetConfigFile()
+    saveConfig({ computer: { coordinateEnabled: false, modelMirror: "https://hf-mirror.example" } })
+    clearConfigCache()
+    assert.equal(getConfig().computer?.modelMirror, "https://hf-mirror.example")
+  })
+
+  test("modelDiskBudgetMB 非正数/非有限 → coerce 为未配置（回退默认 2048）+ loud log", async () => {
+    await resetConfigFile()
+    for (const bad of [0, -1, Number.NaN, Number.POSITIVE_INFINITY, "2048", null]) {
+      clearConfigCache()
+      saveConfig({ computer: { coordinateEnabled: false, modelDiskBudgetMB: bad } as any })
+      clearConfigCache()
+      const logs: string[] = []
+      const orig = console.error
+      console.error = (...args: unknown[]) => logs.push(args.map(String).join(" "))
+      try {
+        const cfg = getConfig()
+        assert.equal(cfg.computer?.modelDiskBudgetMB, undefined, `modelDiskBudgetMB=${String(bad)} 应被清除`)
+      } finally {
+        console.error = orig
+      }
+      assert.ok(logs.some((l) => l.includes("modelDiskBudgetMB")), `modelDiskBudgetMB=${String(bad)} 应有 loud log`)
+    }
+  })
+
+  test("modelDiskBudgetMB 合法正数保留", async () => {
+    await resetConfigFile()
+    saveConfig({ computer: { coordinateEnabled: false, modelDiskBudgetMB: 4096 } })
+    clearConfigCache()
+    assert.equal(getConfig().computer?.modelDiskBudgetMB, 4096)
+  })
+})

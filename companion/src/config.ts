@@ -73,6 +73,13 @@ export interface ComputerConfig {
   coordinateEnabled: boolean
   /** Per-task action budget ceiling override (default 15, max 30). */
   budget?: number
+  /**
+   * WP5 模型下载镜像主机（https only，仅 origin 生效——镜像可配主机、哈希不可配，
+   * W3 §5.2）。缺省 = manifest 占位主机（owner 定 host 前默认禁网）。
+   */
+  modelMirror?: string
+  /** WP5 模型目录磁盘预算（MB，默认 2048；下载前检查，防塞盘 DoS）。 */
+  modelDiskBudgetMB?: number
 }
 
 export interface CompanionConfig {
@@ -316,6 +323,27 @@ export function getConfig(): CompanionConfig {
       `[cmspark-agent] computer.coordinateEnabled is not a boolean — coercing to false (config tampering?)`,
     )
     cachedConfig.computer.coordinateEnabled = false
+  }
+  // WP5 模型下载字段（ADR-010 normalize 惯例）：非法值 coerce 为未配置/默认并 loud
+  // log——手改 config 不得绕过镜像 https 约束或关闭磁盘预算。scheme 白名单本身在
+  // resolveDownloadUrl 下载时强制执行（这里只保证类型），双层防线。
+  if (cachedConfig.computer.modelMirror !== undefined) {
+    const v = cachedConfig.computer.modelMirror
+    if (typeof v !== "string" || v.trim() === "") {
+      console.error(
+        `[cmspark-agent] computer.modelMirror 非法（须为非空 https 主机字符串）——按未配置处理 (config tampering?)`,
+      )
+      delete cachedConfig.computer.modelMirror
+    }
+  }
+  if (cachedConfig.computer.modelDiskBudgetMB !== undefined) {
+    const v = cachedConfig.computer.modelDiskBudgetMB
+    if (typeof v !== "number" || !Number.isFinite(v) || v <= 0) {
+      console.error(
+        `[cmspark-agent] computer.modelDiskBudgetMB 非法（须为正数 MB）——回退默认 2048 (config tampering?)`,
+      )
+      delete cachedConfig.computer.modelDiskBudgetMB
+    }
   }
   return cachedConfig
 }
