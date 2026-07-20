@@ -127,7 +127,7 @@ Locator.locate(screenshot, hwnd, target: { kind: "text", value } | { kind: "desc
 | 云端 VLM | 2–8s | 网络现实 |
 | 单动作回路合计（定位+注入+验证截图） | ≤4s（本地路径） | 预算内循环 |
 
-**截图缩放策略**：原生分辨率捕获 → letterbox 到 768² 推理 → 坐标反变换回物理像素；1080p 全屏直接缩到 768² 会丢小图标精度 → 任务第一步用全屏概览定位粗区域，后续动作用**以上次命中点为中心的 768² ROI 裁剪**保持有效分辨率；DPI 一律物理像素（§D.1）。
+**截图缩放策略**：原生分辨率捕获 → **stretch 逐轴缩放**到 768² 推理（x/y 独立比率、零 padding，与 Florence-2 训练分布及全部 spike 证据一致；letterbox 系错误措辞已勘误，见 WP5 详案对抗修订记录 M1）→ 坐标逐轴反变换回物理像素；1080p 全屏直接缩到 768² 会丢小图标精度 → 任务第一步用全屏概览定位粗区域，后续动作用**以上次命中点为中心的 768² ROI 裁剪**保持有效分辨率（ROI 分支若确需保比例 letterbox，须先重跑 S-1 parity + golden + G1 包线再启用）；DPI 一律物理像素（§D.1）。
 
 ## D. 执行层
 
@@ -386,6 +386,138 @@ Locator.locate(screenshot, hwnd, target: { kind: "text", value } | { kind: "desc
 ### WP5 — 本地模型层（spike 门禁：S-1/S-2/S-3 全绿才开工）
 - **范围**：TinyClick ONNX 导出工具链（dev-only 脚本 + 导出物哈希登记进 models.manifest.json）、下载管理器（§C.2 全项：许可证门/断点/校验/预算/删除）、onnxruntime-node 集成（worker_threads、单飞、超时）、ROI 缩放策略、L2 层接入编排器。
 - **验收**：录播 golden 集点定位准确率达 spike 校准阈值（初值：desktop 子集 ≥55%，中文 case 单独报告不设硬门槛）；模型文件篡改 → 加载拒绝；下载失败自动降级 L1/L3。
+
+#### WP5 实施详案（规划者轮次产物，2026-07-21 读码核定）
+
+> **定位前提**：S-3 FAIL 已由 plan:401（O-2）消化——WP5 交付**可选实验层**（默认关闭），默认兜底 = OCR 承接文本锚点 + 低置信度要求用户框选。开工唯一清单 = `coordinate-computer-use-wp5-backlog.md`（前置 G1-G6+T5，其中 G5/T5 已完成并归档于 s1 ADDENDUM；任务单 B1-B10；明确不做 4 项）。下载门禁六条 = `coordinate-computer-use-wp5-model-provenance.md` §5。本详案不重新论证以下已定事实：混合量化（vision fp32 + 三图 int8，705MB / RSS 836MB / e2e 736ms / token 7/7）为默认交付变体、全 int8（432MB / RSS 570MB / e2e 1173ms）为内存优先备选；vendored Florence-2 三文件@5ca5edf5 离线导出字节级一致；worker_threads + `createRequire(execPath)` + `intraOp=P核数/interOp=1` + 懒加载 + 5s 超时；命令约束 = 英文**且**短**且**直接指称（代码化，非文档级）。
+
+**迭代划分（3 迭代；迭代内各工作项独立可提交、可回滚；I1→I2→I3 严格依赖）**：
+
+##### 迭代 I1 — 模型供应链与下载门禁（B1/B6/B7/B8 + G1/G6 数据项 + WI-1.8 发布链流程）
+
+> 出口标准：manifest 入库 + 下载/校验/裁剪全链路带负测试；G1 包线数据与校准曲线入库（I3 包线常量以其测定值写入）；G6 OOD case 入库。G1/G6 为测量项，不依赖代码，与编码项并行。**显式外部依赖：owner 自托管发布链 host 决策**——未定前真实下载路径不可端到端演练，I1 诚实标记为「代码完成、E2E 待 host」半成品态（M4）。
+
+- **WI-1.1 models.manifest.json + manifest 模块**（B1）
+  - 新增：`companion/models.manifest.json`（仓库内，**只随发版更新**）——schema 见下「协议/配置增改清单」；新增 `companion/src/computer/model-manifest.ts`：manifest 读取 + schema 校验（三要素/四件套/变体齐全性）+ **拒绝任何运行时网络来源的 manifest**（构造期只接受 exe 旁/仓库路径；镜像可配的只是文件源 URL，哈希字段不可配置——W3 §5.2）
+  - 测试：`computer-model-manifest.test.ts`——合法 manifest 解析、缺字段/坏哈希格式拒绝、网络 URL 作 manifest 源拒绝、镜像 URL 可配但哈希覆盖尝试忽略并 loud log
+- **WI-1.2 下载管理器**（B1，§C.2 全项）
+  - 新增：`companion/src/computer/model-download.ts`——只从 manifest 指定源下载（https only，镜像经 config `computer.modelMirror` 覆盖主机、**scheme 白名单禁 file:///UNC**）；断点续传（`.part` 分片）；下载**前**磁盘预算检查（默认 2GB，`computer.modelDiskBudgetMB` 可调）；完成后 **streaming sha256 全量复验** + 原子 rename；失败/校验失败/磁盘不足 → `computeruse.model.unavailable {reason}` 审计 + 层标记不可用（**永不阻塞 UIA/OCR/云端层**，§C.2.4）；「删除模型」一键回收
+  - 测试：`computer-model-download.test.ts`——fake fetch：断点续传拼接、最终哈希复验（分片篡改检出）、原子 rename（崩溃不留半成品）、预算超限拒下、file:// 镜像拒绝、失败审计事件形状、**stale `.part` 清理（超期或 manifest revision 变更 → 删除重下，防跨 revision 复用旧分片拼出旧哈希文件，P3-e）**
+- **WI-1.3 校验即加载（无 TOCTOU）**（B1/B6）
+  - 新增：`companion/src/computer/model-verify.ts`——读入内存 → streaming sha256 → **从同一内存 buffer 供给 ORT session 创建**（禁「按路径校验、再按路径加载」两段式）；**每次加载前复验**（非仅下载时）；与 `scripts/onnxruntime-sha256.json`（新增，仿 `scripts/verify-systray2.js` + `scripts/systray2-sha256.json` 模式）共用同一哈希登记源（生成器脚本从 models.manifest.json 导出，避免双源漂移）；`scripts/verify-onnxruntime.js`（新增）：旁置 4 dll + .node + 模型文件的加载前复验 CLI
+  - 测试：`computer-model-verify.test.ts`——改 1 字节模型 → 加载拒绝（负测试）；改 1 字节 dll → verify CLI 非零退出；buffer 来源同一性断言（session 创建入参即校验过的 buffer）
+- **WI-1.4 架构裁剪进打包管线**（B7）
+  - 改：`scripts/build-windows-exe.ps1`——staging node_modules 增 `onnxruntime-node`，**按架构白名单只拷 `bin/napi-v6/win32/x64/`（4 dll + .node，259MB→~62MB）**；esbuild 参数增 `--external:onnxruntime-node`（与 systray2/canvas 先例同位）；安装包体积断言步骤（+62MB 预算内）
+  - 测试：打包产物体积断言脚本 + SEA exe 上 dummy 推理冒烟（复用 S-2 管线脚本化为 `scripts/verify-ort-sea.js`，手动/发版门禁）
+- **WI-1.5 变体决策记录 + notice 入包**（B8/W3 §5.5）
+  - 新增：`docs/decisions/coordinate-computer-use-wp5-variant-decision.md`——三变体三轴（体积/延迟/RSS）决策记录：**默认 hybrid**（736ms / 836MB RSS / token 7/7），内存硬约束选全 int8（记录 1 bin 抖动事实），fp32 不交付（体积/速度双劣于 hybrid）；hybrid/int8 各图 sha256+size 登记回 WI-1.1 manifest（量化产出时实测录入）；`THIRD_PARTY_NOTICES`（仓库根或 companion/）收录 MIT 全文 + `Copyright (c) 2024 Samsung R&D Poland` + Florence-2 底座（microsoft/Florence-2-base，MIT）notice，并打入分发包
+  - 测试：notice 文本入包断言（打包脚本检查清单）；选定变体过 golden 回归（WI-2.5 harness）
+- **WI-1.6 G1 包线扫描 + 校准曲线（测量项）**
+  - 改：`scripts/spike/s3-golden/`（扩充 harness）——命令长度/句式扫描（英文/短命令 ≤20 token 量级/直接指称三要素的可判定边界）；**中文可靠性/校准曲线**（confidence proxy vs 实测命中率分桶）；产出写入 `docs/decisions/coordinate-computer-use-wp5-envelope.md`（新增：包线扫描数据 + 校准曲线 + 约束三要素设计文档——I3 的 token 上限等常量以此测定值写入；**G1 职责收窄为导出包线常量与校准曲线，不定准确率阈值——阈值锚定 S-3 冻结基线数据**，M2/P1-b）
+  - 测试：数据文档入库 + 复算脚本可重跑
+- **WI-1.7 G6 网易云 OOD 补测（测量项）**
+  - 改：`scripts/spike/s3-golden/`——按「用户手动打开后录屏人工采集」惯例（plan:246）补网易云自绘页 case，「命令语义与目标布局一致」设计；golden.json 扩充 + 跑出数据入 wp5-envelope.md
+  - 测试：case 入库 + 回放可跑
+- **WI-1.8 自托管发布链安全流程（文档项，承接首轮对抗:62④ 孤儿项，M4）**
+  - 新增：wp5-variant-decision.md 附录（或独立 provenance 附录）——发布账号安全流程：发布账号强制 2FA；发布 PR 双人 review；哈希重登记必须走 PR（禁直接改 manifest 主分支）；发布物与 manifest 同一次提交（防产物与登记漂移）；host 决策前下载 E2E 用 fake fetch 覆盖，真实链路演练列入 owner host 决策后首日任务
+  - 测试：无代码测试（流程文档评审入库）；manifest 哈希变更的 PR 门禁 checklist 列入发版脚本人工核对项
+
+##### 迭代 I2 — ORT worker 推理主干（B2/B3/B4/B5）
+
+> 出口标准：worker 内推理全链路（预处理→tokenizer→4 图→贪心解码→坐标反变换）单测覆盖；单飞/超时/熔断/拓扑回退带 fake 测试；golden harness 本机可跑。
+
+- **WI-2.1 worker 集成主干**（B2）
+  - 新增：`companion/src/computer/tinyclick-worker.ts`（worker 源码，打包时 **esbuild 内联 `eval:true`**——SEA 无文件路径 worker，W1 发现 2）+ `companion/src/computer/tinyclick-runtime.ts`（主线程侧：worker 生命周期、加载一律 `Module.createRequire(process.execPath)`（禁裸 require，防 cwd 污染，W1 发现 1）、**单飞**（同一时间至多 1 推理）、**5s 超时取消**（worker.terminate + 懒重建——超时策略文档化：固定 5s + 慢机后果声明，P3-b；**重建期请求 fail-fast 返回 `model-not-ready`，不排队**，P3-b）、**崩溃熔断**（连续崩溃/超时 ≥3 → 层禁用 + `computeruse.model.disabled` 审计，A8 防崩溃循环 DoS；**熔断计数排除冷启动超时**，P3-b；**熔断时广播 `computer.model.state {modelStatus:"disabled", reason}`，设置页显示「已熔断，重启后恢复」+ 手动「重置熔断」动作——免重启，连续两次熔断后强制手动**，P2-a/M3）；JS 级故障经 error 事件隔离（W1 已证）；**native 内存破坏级 fault 不在 worker 防线内**——文档保留独立进程预案 B 声明（W1:36）
+  - 测试：`computer-tinyclick-runtime.test.ts`（fake worker：单飞拒绝并发、超时 terminate + 重建、熔断计数到阈禁用、**熔断状态广播形状（`modelStatus:"disabled"` + reason）与手动重置路径**，M3；**重建期 fail-fast 不排队、冷启动超时不计熔断**，M6；error 事件主进程存活）
+- **WI-2.2 线程拓扑探测**（B3）
+  - 改：`tinyclick-runtime.ts`——session 配置 `{ intraOpNumThreads: <物理P核数>, interOpNumThreads: 1 }`；启动探测：CPU 型号映射表（i9-14900KF 等实测条目 → P 核数）+ **无拓扑信息回退保守值 4**；**禁止 ORT 默认值**（混合架构 5.4s vs 1.8s，W2）
+  - 测试：默认配置对照证明调优生效（fake 记录 session options）；无拓扑机回退 4 且行为正确
+- **WI-2.3 懒加载启动预算**（B4）
+  - 改：`tinyclick-runtime.ts`——模型 ready 且层启用后后台预创建 4 session（不阻塞启动、不计入点击延迟）+ **懒加载期跑一次 warmup 推理**（arena 预分配，用户首推理是热的——首推理冷分配实测存在，W2 RSS；P3-b/M6）；预算 **hybrid ≤2.2s**（实测 ~1.4-1.5s，对齐 int8 上限）；创建耗时进日志/指标可观测，超标告警；延迟记录附硬件保真声明（i9 P 核 vs 低压 U 偏差方向，评审 NIT-3）；**补测 hybrid@4**（S-3 只测 fp32/int8@4，低压 U 系机 e2e 可能 3-6s、5s 超时在真实低端机上边缘）数据写入超时叙事与 wp5-envelope.md，M6
+  - 测试：冷启动创建耗时可观测断言；预算超标告警事件形状；**warmup 后首推理无冷分配尖刺断言；hybrid@4 补测数据入库**，M6
+- **WI-2.4 JS 生产化三件套**（B5/T3）
+  - 新增：`companion/src/computer/tinyclick-preprocess.ts`——raw RGBA 直吃（免 PNG 解码）→ 768² **stretch 逐轴双线性缩放**（xRatio=sw/dw 与 yRatio=sh/dh 独立、零 padding——与 Florence-2 训练分布及 S-1 parity/W2/S-3 全部 spike 证据一致；letterbox 属证据地基之外的另一种预处理，已勘误，M1/P1-a）+ ImageNet 归一化 + **坐标反变换纯函数**（768² loc → 物理像素，**逐轴线性映射**，与 s3-run.js:82 同函数；保留双线性 vs bicubic 数值抽检机制）；`companion/src/computer/tinyclick-tokenizer.ts`——**自研 BPE 移植**（vocab.json + merges.txt 驱动；tokenizer.json 2.3MB 随模型分发——**不引入 @huggingface/transformers，零新运行时依赖**）；`companion/src/computer/tinyclick-decode.ts`——贪心解码循环（~7 步全前缀重算）+ `<loc_N>` bin→坐标解析
+  - 测试：`computer-tinyclick-tokenizer.test.ts`（与 HF 参考逐 token 一致，用 spike 录制的参考向量；**dev 机差分 fuzz：≥1000 随机 ASCII 命令 + 官方模板，HF tokenizer 作参考，零分叉方锁定，本机门禁同 golden 惯例；tokenizer.json 解析器畸形输入 fuzz——2.3MB 数据文件本身是 DoS 面**，M5/P3-a）；`computer-tinyclick-preprocess.test.ts`（**stretch 反变换往返误差 ≤1px**——逐轴映射 x=bin/1000×W；letterbox 黑边区测试已随 M1 删除）；`computer-tinyclick-decode.test.ts`（fake session runner：贪心循环终止、loc bin 边界 0/999、非坐标输出诚实失败）
+- **WI-2.5 golden 集扩充 + 回放 harness 生产化**（B5，spike 对抗 A3 + 评审 NIT-2）
+  - 新增：`scripts/verify-tinyclick-golden.js`——s3-run.js 生产化（离线回放，±8px 容差，plan:246 惯例）；golden 集扩充：loc bin 0/999 边界、四角、<16px 小目标、>20 词命令；回放需模型在本机（文档化；不进 CI 强制，作发版/本机门禁）
+  - 测试：扩充 case 入库 + harness 可跑；逻辑层（命中判定/容差）单测
+
+##### 迭代 I3 — 实验层接入编排器与防信任放大（G2/G3/G4/B9/B10 评估）
+
+> 出口标准：L2 stub 实装（降级日志格式不变）；包线拒绝代码化三类各有测试；experimental→reL2 流通；开关+许可证门+文案评审通过；时间线无未校准数字上屏。
+
+- **WI-3.1 TinyClickLocator 实装（包线代码化 G2）**
+  - 新增：`companion/src/computer/tinyclick-locator.ts`——包线约束**代码化**：非英文（非 ASCII 可判定子集）/ 超 token 上限（常量取自 WI-1.6 测定值）/ 输入帧宽 >1920 → **层内拒绝并返回结构化原因**（`tinyclick-envelope:<code>`），禁止文档级约束；prompt 按官方配方模板构造（直接指称）；**显著点坍缩检测**（G4：任务级同帧 sha → 建议点历史，不同命令同点 ≤8px 容差 → 抑制建议，reason `tinyclick-collapse-detected`）；**confidence 契约（G3）**：校准曲线落地前**不返回数值置信度**（hit.confidence 缺省，时间线标「未校准」）
+  - 测试：`computer-tinyclick-locator.test.ts`——三类包线越界各有拒绝测试、坍缩检测单测（同图多命令同点抑制）、confidence 缺省断言
+- **WI-3.2 locate-chain L2 stub→实装**
+  - 改：`companion/src/computer/locate-chain.ts`——`LocateChainDeps` 增 `tinyclick?: TinyClickLocator | null`（**executor 决定 admission**：开关开 + 模型 ready + 无熔断才传非 null；**ready 语义定义：`modelStatus:"ready"` = 文件在盘且校验过，session 懒建**，P3-c/M7）；stub 的 `wp5-not-implemented` 替换为真实尝试或具体 skipped 原因（`model-disabled` / `model-not-ready` / **`tinyclick-busy`**——单飞占用时 skipped 链继续，P3-c / `tinyclick-envelope:*` / `tinyclick-collapse-detected` / `tinyclick-error`；**重建期统一 `model-not-ready`**，与 WI-2.1 fail-fast 一致）；**降级日志/locateAttempts 格式不变**；命中返回带 `experimental: true` 标记（ChainLocateResult 增可选字段），`crossverified=false / uncrossverified=true`（吃 A1.3 子预算）
+  - 测试：`computer-locate-chain.test.ts` 追加——skipped 原因矩阵、experimental 标记透传、降级链排序（L0→L1→L2 建议→L3 stub）、日志格式回归
+- **WI-3.3 executor experimental→reL2 流（G4）**
+  - 改：`companion/src/computer/executor.ts`——admission 判定（开关 + 模型状态 + 熔断）组装 deps.tinyclick；`experimental` 命中**不直接注入**：复用既有 reL2 通道弹确认，caption 标注「实验层建议，可能完全错误」+ 建议点标注预览图（PsPreviewBuilder 现成）；批准 → 走 A1 像素新鲜度检查后注入；拒绝 → 诚实降级（L3 stub → ElementNotFound）；**实验层建议永不自动进入 locateAttempts 接受链**（G4）
+  - 测试：`computer-executor.test.ts` 追加——experimental→reL2 流（批准注入/拒绝降级）、caption 文案断言、reL2 拒绝不消耗注入预算
+- **WI-3.4 实验层开关 + 许可证门 + UI 文案（B9/G3）**
+  - 改：companion 侧 `computer.model.*` WS 族（见下「协议/配置增改清单」；`companion/src/computer/model-handlers.ts` 新增 + `message-router.ts` 路由 + `server.ts` validateWsMessage 条目）；`companion/src/config.ts` computer 块增字段 + normalize 防篡改（ADR-010 惯例：非布尔/非法值 coerce + loud log）
+  - 改：扩展侧 `chrome-extension/src/background/index.ts`（透传 computer.model.*）、`sidepanel/types.ts` + `store/agentStore.tsx`（model 状态切片，**无乐观更新**——状态以 companion 广播为准）、`sidepanel/hooks/useWebSocket.ts`（事件映射）、`sidepanel/components/SettingsSlideout.tsx`（「实验功能」段：开关默认关 + 模型状态行 + 删除模型按钮；**模型状态行在主开关 `coordinateEnabled` 关 / 当前 app 未 `coordinateAllowed` 时显示依赖提示**——三层开关 `computer.model.set_enabled` × 主开关 × per-app 允许的心智模型文案，防「开了实验层没反应」支持成本，P3-d/M7）+ 许可证门对话框（复用 Modal：MIT 全文 + Samsung 版权行 + 论文 Ethics 免责声明双引 + 「输出仅作坐标解析候选，任何点击执行前必经 L2 人工确认」+ **实测数字披露**：zh 13.3% 含巧合 / 真实桌面 0/5 / 延迟 2.8-3.3s / 仅限英文短命令；接受记录进 config 含时间戳，拒绝则该层永久跳过、其余层不受影响）
+  - 测试：开关状态机测试（无乐观更新、拒绝永久跳过）；license 门文案评审（双引来源核对）；扩展 model 状态折叠测试（`chrome-extension/tests/computer-task-state.test.ts` 同风格新增）
+- **WI-3.5 B10 触发条件评估记录（不建设）**
+  - 新增：wp5-variant-decision.md 附录——decoder 实测占比（hybrid 46ms / e2e 736ms ≈6%）→ **触发条件不成立，with-past/merged decoder 不建设**；若未来 decoder 占比 >40% 再启用（optimum ModelPatcher 或 past 长度显式 tensor 化重导 + token 级回归）
+  - 测试：无（文档项）
+
+**协议/配置增改清单**：
+
+| 项 | 状态 | 说明 |
+|---|---|---|
+| `companion/models.manifest.json` | **新增**（仓库内，随发版） | schema：`{ models: { tinyclick: { repo:"Krystianz/TinyClick", revision:"0e1356f0b7cfb416099207121f6a766818ab8a66", license:"MIT", licenseCopyright:"Copyright (c) 2024 Samsung R&D Poland", baseModelNotice:{repo:"microsoft/Florence-2-base",license:"MIT"}, provenance:{sourceSha256:"d52f9370…00a3", exportVendor:{configuration:"de2e45a9…", modeling:"5162bf46…", processing:"f146023a…"}, exportedAt }, variants:{ hybrid:{files:[{name,url,sha256,size}×4+tokenizer.json]}, int8:{…} } } } }`——三要素（源 URL/revision/每文件 sha256+size）+ 四件套（license 门/校验即加载/永不网络更新/notice）+ provenance（源权重哈希 + vendor 三文件哈希）；**url 为自托管发布链占位（待 owner 定 host），镜像可配主机、哈希不可配** |
+| `computer.model.get_state` → `computer.model.state` | **新增** | `{ modelEnabled, licenseAccepted, licenseAcceptedAt?, modelStatus:"absent"\|"downloading"\|"ready"\|"error"\|"disabled", variant, sizeBytes?, error? }`——**`disabled` = 熔断禁用态（熔断时广播本状态 + reason，P2-a/M3）**；ready = 文件在盘且校验过（session 懒建，P3-c/M7） |
+| `computer.model.set_enabled {enabled}` | **新增** | 启用且未接受许可证 → 返回 `computer.model.license_required {licenseText, notice}`；禁用永远免费（fail-closed 方向，同 computer.set_enabled 惯例） |
+| `computer.model.license_response {accepted}` | **新增** | 接受 → config 记录时间戳 + 触发下载；拒绝 → 层永久跳过（config 记录拒绝态） |
+| `computer.model.download` / `computer.model.delete` | **新增** | 下载幂等触发；删除回收磁盘；进度广播 `computer.model.progress {receivedBytes,totalBytes}`，状态变更广播 `computer.model.state` |
+| `computer.model.reset_circuit_breaker` | **新增**（M3） | 手动重置熔断（免重启恢复层可用；**连续两次熔断后强制走本动作**，设置页提供按钮，P2-a） |
+| config `computer.*` 增字段 | **新增** | `modelEnabled?:boolean`（默认 false）、`modelLicenseAcceptedAt?:string`、`modelLicenseDeclined?:boolean`、`modelVariant?:"hybrid"\|"int8"`（默认 hybrid）、`modelMirror?:string`（https only）、`modelDiskBudgetMB?:number`（默认 2048）——normalize 防篡改同 ADR-010 惯例 |
+| `scripts/onnxruntime-sha256.json` + `scripts/verify-onnxruntime.js` | **新增** | verify-systray2.js 模式扩展；与 manifest 同一生成源 |
+| esbuild `--external:onnxruntime-node` + worker `eval:true` 内联 | **新增**（打包管线） | S-2/W1 已证模式 |
+
+**L2 stub→实装 接入设计**：
+
+1. **调用点**：`locate-chain.ts:428-433` 的 L2 stub 段（当前 push `{layer:"tinyclick",outcome:"skipped",reason:"wp5-not-implemented"}`）替换为：`deps.tinyclick` 非 null → 真实尝试（包线检查 → runtime 推理 → 坍缩检测 → 命中返回）；null 或不可用 → skipped + 具体原因。**降级日志与 locateAttempts 结构一字不动**（layer/outcome/reason/ms 四字段，`"tinyclick"` layer 名沿用）。
+2. **置信度返回契约**：校准曲线（G1）落地前 hit **不携带数值 confidence**（缺省）；step 事件/时间线对 tinyclick 层显示「未校准」徽标而非数字（G3）；校准曲线入库后可升级为校准后数值，契约变更需评审。
+3. **失败降级语义**：包线拒绝/坍缩抑制/推理错误/超时 → 均为 `skipped` 或 `error` attempt + 结构化 reason，链继续走向 L3 stub（WP6）→ 否则 `ELEMENT_NOT_FOUND`——**实验层任何故障不改变既有降级序与错误类型**；admission 关闭时（开关关/模型 absent/熔断）行为与今日 stub 等价（仅 reason 文案变化）。
+4. **experimental 语义（G4 核心）**：命中不直接进注入流——ChainLocateResult 增 `experimental?: true`；executor 见此标记 → reL2（caption「实验层建议，可能完全错误」+ 标注预览）→ 批准走 A1 新鲜度检查后注入（uncrossverified，吃子预算）→ 拒绝降级。**像素新鲜度/危险扫描/re-L2 全部既有安全通道对实验层建议一视同仁，无旁路**。
+
+**验收映射**：
+
+| plan WP5 验收标准 | 工作项 | 测试 | 诚实备注 |
+|---|---|---|---|
+| golden 集点定位准确率达 spike 校准阈值（desktop ≥55%，中文单独报告） | WI-1.6（G1 常量导出）+ WI-2.5（扩充回放）+ WI-3.1（包线代码化） | golden harness 回放（本机门禁）；包线拒绝×3 单测 | **原 55% 预注册线已被 S-3 证伪**（desktop 0/5，Wilson 上界 29.9%）；且「达 G1 测定包线值」系自测定阈、按构造必过，不可证伪（P1-b/M2）——验收锚定**冻结基线**（golden.json 19 case、s3-golden-result-{int8,fp32}.json 逐 case 预测/偏差/命中均已在 git，提交历史保证不可回溯篡改）：① **包线内英文命中 case：生产管线在相同图片/case 上坐标偏差 ≤ spike 冻结值 +2px**（f-ok-en 3.6px、f-icon-en 1px 为锚）；② **包线外拒绝率 100%**；③ **延迟 ≤ 同批 hybrid 冻结值 ×1.5**。**G1 职责收窄为导出包线常量**（token 上限、句式判定）与校准曲线——它定量化包线边界，**不定准确率阈值；阈值由 S-3 冻结数据定**。中文 case 单独报告不设硬门槛（与原验收后半一致） |
+| 模型文件篡改 → 加载拒绝 | WI-1.1/WI-1.3/WI-1.4 | 改 1 字节模型 → 加载拒绝；改 1 字节 dll → verify 非零；网络 manifest 注入拒绝 | 覆盖「每次加载前复验」非仅下载时 |
+| 下载失败自动降级 L1/L3 | WI-1.2 + WI-3.2 | 下载失败/校验失败/磁盘不足 → `computeruse.model.unavailable` + 层 skipped，UIA/OCR 任务零影响回归 | 永不阻塞其他层（§C.2.4） |
+
+**风险与边界（明确不做）**：
+
+- **明确不做（backlog §4 遵守）**：中文 GUI 命令默认兜底层（O-2 定案：OCR + 用户框选）；多语 GUI 模型评估（Qwen2.5-VL/UI-TARS 登记为后续）；实验层默认开启/未校准置信度上屏（G3/G4 禁止）；worker_threads 作为 native 内存破坏级 fault 防线（W1:36，独立进程预案 B 仅保留文档）。
+- **with-past/merged decoder 不建设**（B10 触发条件不成立——hybrid decoder 占 e2e ≈6%；评估记录入库）；**DirectML/GPU EP 不做**（CPU-only 定案）；**不引入 @huggingface/transformers 等新运行时依赖**（onnxruntime-node 为 §C.1 定案唯一例外；tokenizer 自研 BPE）。
+- **模型文件不进安装包**：§C.2 下载至 `~/.cmspark-agent/models/tinyclick-<variant>/`；安装包仅 +62MB ORT win-x64 运行时（WI-1.4 裁剪断言）；自托管 ONNX 发布链 host 待 owner 决策（GitHub Releases 或既有渠道），manifest url 占位、镜像可配、哈希不可配。
+- **首次启用许可证门文案**（W3 §5.4 全项）：MIT 全文 + Samsung 版权行；论文 Ethics/Limitations 免责双引（新应用准确率可能显著下降/建议仅受控环境测试/风险敏感应用严格避免）；本项目补充条款「点击前必经 L2」；实测数字披露（zh 13.3% 含巧合 / 真实桌面 0/5 / 4 核 2.8-3.3s / 英文短命令约束）。
+- **ROI 缩放 v1 最小形**：整窗 **stretch 逐轴缩放** 768² + 逐轴坐标反变换（映射正确性单测；M1 勘误后统一）；以上次命中点为中心的 768² ROI 裁剪列为后续（以 G1 包线数据决定是否值得；**ROI 分支若确需保比例 letterbox，须先重跑 S-1 parity + golden + G1 包线再启用**，M1/P1-a）；帧宽 >1920 物理像素层内拒绝（G2）。
+- 中文注释风格与现有一致；安装包体积预算 +62MB 以内；golden 回放为本机/发版门禁（模型体积原因不进 CI 强制）。
+
+**给对抗 agent 的攻击面提示**：
+
+1. **manifest/哈希登记源的信任放大**：sha256 钉死证明完整性、不证明来源（W3 §3 已声明）——manifest 本身被篡改（仓库供应链/发版渠道）时，哈希登记反而给恶意字节背书；且「镜像可配、哈希不可配」若在 normalize/config 路径被绕过（如 modelMirror 接受带哈希参数的 URL 或 file:// 本地替换），下载门禁叙事失效。重点审：运行时拒绝网络 manifest 的测试、镜像 scheme 白名单、哈希字段不可配的强制执行点。
+2. **校验即加载的 TOCTOU 退化**：实现若从「同一 buffer 建 session」退化为「按路径校验、再按路径加载」，校验与加载之间的替换窗口 = 投毒入口（ONNX 是代码载体，ORT 官方明示）；「每次加载前复验」若被「已校验」缓存短路同样开窗。重点审：session 创建入参的字节级同源断言、复验无缓存路径。
+3. **worker 边界误信 + 崩溃循环**：worker_threads 不防 native 内存破坏级 fault（W1:36）——通过哈希的模型若带触发式后门（W3 残余：字节级无第二源），输出误定位只靠 L2 人审 + golden 回归兜底；超时 terminate 后的懒重建若无熔断计数，损坏模型可造成「崩溃→重建→再崩溃」循环 DoS（A8）。重点审：熔断阈值/禁用持久性（至重启）、error 事件与 native crash 的区分诚实度、预案 B 声明是否仍在。
+4. **实验层信任放大家族（C-4）**：raw 置信度上屏、开关文案不披露实测数字、显著点建议带十字线进 L2 呈「权威感错误」、同帧多命令同点坍缩未抑制、包线约束停留在文档级——G2/G3/G4 任一失守，实验层从「参考」变「背书」。重点审：包线拒绝是否真代码化（三类越界各有测试）、confidence 缺省是否贯穿 hit→step 事件→时间线、reL2 caption 文案、坍缩检测的同帧追踪窗口（跨帧/跨任务是否误伤）。
+5. **下载管理器磁盘/网络面**：断点续传分片若缺最终全量 streaming sha256 复验，分片级篡改可拼出恶意文件；磁盘预算若下载后而非下载前检查，可被塞盘 DoS；原子 rename 若缺位，崩溃残留半成品可能被后续加载路径当作完整模型（校验兜底但叙事混淆）；进度广播若泄漏镜像 URL 以外的内部路径进面板日志，信息面扩大。重点审：下载前预算检查、原子 rename、`.part` 清理、广播载荷最小化。
+
+**对抗修订记录**（2026-07-21 落回详案；裁决文档 `coordinate-computer-use-wp5-plan-adversary.md`：**SOUND WITH AMENDMENTS**，M1/M2 开工前必修、M3-M7 进对应工作项）：
+
+- **M1**（HIGH，P1-a 预处理语义断裂）：WI-2.4 预处理 letterbox→**stretch 逐轴缩放**（x/y 独立比率、零 padding）+ 删除黑边映射测试 + plan:130 与「风险与边界」ROI 条 letterbox 措辞勘误——S-1 parity/W2/S-3 全部 spike 证据统一回 stretch；未来 ROI 分支若需 letterbox，先重跑 S-1 parity + golden + G1 包线再启用。
+- **M2**（HIGH，P1-b 验收不可证伪）：验收映射首行改锚**冻结基线**（golden.json 19 case + s3-golden-result-{int8,fp32}.json 已在 git）——包线内英文命中 case 偏差 ≤ 冻结值+2px（f-ok-en 3.6px / f-icon-en 1px 为锚）、包线外拒绝率 100%、延迟 ≤ hybrid 冻结值 ×1.5；G1 职责收窄为导出包线常量与校准曲线（WI-1.6 注明），不定准确率阈值——「降标」质疑由此可答辩。
+- **M3**（P2-a 熔断状态模型缺口）：`modelStatus` 枚举增 `"disabled"` + 熔断时广播状态与原因 + 设置页「已熔断，重启后恢复」+ 新增 `computer.model.reset_circuit_breaker`（免重启，连续两次熔断后强制手动）——落 WI-2.1 描述/测试与协议清单。
+- **M4**（P2-b 发布链孤儿项）：新增 **WI-1.8** 发布链安全流程（发布账号 2FA、发布 PR 双人、哈希重登记走 PR、发布物与 manifest 同提交）；owner host 决策列为 I1 出口标准**显式外部依赖**，未定前 I1 标记「代码完成、E2E 待 host」诚实半成品态。
+- **M5**（P3-a BPE 等价性证据薄）：WI-2.4 测试补 dev 机差分 fuzz（≥1000 随机 ASCII 命令 + 官方模板，HF tokenizer 参考、零分叉锁定）+ tokenizer.json 解析器畸形输入 fuzz。
+- **M6**（P3-b 超时/冷启动未定）：WI-2.3 增 warmup 推理（arena 预分配、首推理是热的）+ hybrid@4 补测写入超时叙事；WI-2.1 增重建期 fail-fast `model-not-ready` 不排队 + 熔断计数排除冷启动超时 + 超时策略文档化（固定 5s + 慢机后果声明）。
+- **M7**（P3-c/d/e 语义与文案缺位）：WI-3.2 定义 ready=文件在盘且校验过（session 懒建）、单飞 busy→`tinyclick-busy` skipped 链继续、重建期→`model-not-ready`；WI-3.4 设置页模型状态行三层开关依赖提示文案；WI-1.2 测试补 stale `.part`（超期或 revision 变更）删除重下。
 
 ### WP6 — 云端 VLM 层
 - **范围**：经既有 LLM adapter 接入用户自备视觉端点、schema 约束输出、prompt 隔离（§E.1.3）、逐任务上传授权（§E.6.3）、置信度与降级收尾。
