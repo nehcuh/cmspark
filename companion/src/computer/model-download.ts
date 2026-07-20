@@ -5,6 +5,8 @@
 //     scheme 白名单禁 file:///UNC（resolveDownloadUrl 强制执行）。
 //   - 断点续传：`<name>.part` 分片 + `<name>.part.json` 旁挂 meta（url/revision/
 //     sha256/startedAt）；续传用 Range 请求，服务端 200（不支持 Range）则从头重写。
+//   - 幂等跳过（M5）：最终文件已在盘且 size+sha256 命中 → 零 fetch 跳过该文件，
+//     重复触发「下载」不做全量重拉（哈希钉死，无完整性损失）。
 //   - stale .part 清理（M7）：meta 缺失 / url 变更 / revision 变更 / sha256 变更 /
 //     超 PART_STALE_MS → 删除重下——防跨 revision 复用旧分片拼出旧哈希文件。
 //   - 磁盘预算「下载前」检查（默认 2048MB，computer.modelDiskBudgetMB 可调）：
@@ -213,6 +215,20 @@ export async function downloadModelVariant(
     const destPath = path.join(destDir, f.name)
     const partPath = `${destPath}.part`
     const metaPath = `${partPath}.json`
+
+    // 幂等跳过（I1 对抗 M5）：最终文件已在盘且 size+sha256 命中 → 零 fetch 跳过。
+    // 重复触发「下载」不再全量重拉（双击 = 1.4GB 流量 + 一倍磁盘写放大，P3-c）；
+    // 哈希钉死，streaming 校验成本秒级，无完整性损失。哈希不符则落入正常流程重下。
+    try {
+      const s = await stat(destPath)
+      if (s.size === f.size && (await sha256File(destPath)) === f.sha256) {
+        await rm(partPath, { force: true }) // 顺手清理可能残留的旧分片/meta
+        await rm(metaPath, { force: true })
+        continue
+      }
+    } catch {
+      /* destPath 不存在或竞态删除 → 走正常下载 */
+    }
 
     // stale .part 判定（M7）：meta 缺失/损坏、url 或 revision 或 sha256 漂移、超期 →
     // 删除重下；跨 revision 复用旧分片可拼出旧哈希文件，此检查是下载链路的防混面。

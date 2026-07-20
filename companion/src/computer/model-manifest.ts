@@ -16,7 +16,7 @@
 // 永不解析）——自托管发布链 host 待 owner 决策（plan WP5 风险条 / M4），决策前默认禁网。
 
 import { createHash } from "node:crypto"
-import { readFile } from "node:fs/promises"
+import { readFile, stat } from "node:fs/promises"
 import path from "node:path"
 import { z } from "zod"
 import { DATA_DIR } from "../config"
@@ -182,18 +182,41 @@ export function resolveDownloadUrl(fileUrl: string, mirror?: string): string {
  * 最大 366MB，session 常驻远大于此），不引入额外峰值；哈希在同一 buffer 上计算，
  * 字节级保证「校验的字节 == 建 session 的字节」。
  *
+ * stat-first 预检（I1 对抗 M2）：先 stat 核 size 再 readFile——路径上被放置超大
+ * 文件时干净拒绝，而非全量读入内存后才拒（内存耗尽会先于干净拒绝）。同 buffer
+ * 契约不动：stat→read 之间存在替换窗口，故 buffer 上仍复比 size + sha256。
+ *
  * 无缓存：每次调用都重新读盘复验——「已校验」标记是 TOCTOU 投毒窗口。
  */
 export async function loadVerifiedFileBytes(
   filePath: string,
   expected: { sha256: string; size: number },
 ): Promise<Buffer> {
+  let fileSize: number
+  try {
+    fileSize = (await stat(filePath)).size
+  } catch (err) {
+    // 三态之一「缺文件」结构化：未下载/已删除/路径错误统一 model-file-missing，
+    // 与错哈希（model-hash-mismatch）/断网（network-error，下载侧）供 UI 区分呈现
+    if ((err as NodeJS.ErrnoException)?.code === "ENOENT") {
+      throw new ModelGateError(
+        "model-file-missing",
+        `模型文件不存在（未下载或已删除）: ${filePath}`,
+      )
+    }
+    throw err
+  }
+  if (fileSize !== expected.size) {
+    throw new ModelGateError(
+      "model-size-mismatch",
+      `模型文件大小不符（期望 ${expected.size} 字节，实际 ${fileSize}）: ${filePath}`,
+    )
+  }
   let buf: Buffer
   try {
     buf = await readFile(filePath)
   } catch (err) {
-    // 三态之一「缺文件」结构化：未下载/已删除/路径错误统一 model-file-missing，
-    // 与错哈希（model-hash-mismatch）/断网（network-error，下载侧）供 UI 区分呈现
+    // stat→read 之间文件被删，同样归一为缺文件态
     if ((err as NodeJS.ErrnoException)?.code === "ENOENT") {
       throw new ModelGateError(
         "model-file-missing",
