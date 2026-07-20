@@ -84,4 +84,4 @@ node s3-run.js int8 latency 4     # 4 核延迟
 **产物**：`g1-cases.json`、`g1-envelope-result.json`（hybrid）、`g1-envelope-result-int8.json`（int8）。
 **报告**：包线常量（`MAX_PROMPT_TOKENS=38` / ASCII 判定 / 直接指称=OOD 排除）、校准分桶、歧义发现与 B8 修订输入，全文见 `docs/decisions/coordinate-computer-use-wp5-envelope.md`。不定准确率阈值（M2）。
 
-复跑：`node g1-envelope-scan.js <hybrid|int8> 8`（编码脚本经 S-1 venv 的 python 运行）。
+复跑：`node g1-envelope-scan.js <hybrid|int8> 8 [outFile]`（编码脚本经 S-1 venv 的 python 运行；输出按变体分名，复跑不覆盖另一臂冻结文件）。

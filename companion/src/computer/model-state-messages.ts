@@ -64,7 +64,7 @@ export const MODEL_STATE_MESSAGES: Record<string, ModelStateMessage> = {
   "disk-budget-exceeded": {
     title: "磁盘预算超限",
     detail:
-      "模型目录占用将超过预算（computer.modelDiskBudgetMB，默认 2048MB）。" +
+      "模型根目录占用（全部变体合计）将超过预算（computer.modelDiskBudgetMB，默认 2048MB）。" +
       "可调大预算或删除其他变体后重试；其余定位层不受影响。",
     action: "调整磁盘预算",
   },

@@ -7,8 +7,11 @@
 //   meanLogprob : mean log p over all generated tokens
 //   locLogprob  : mean log p over <loc_N> tokens only (coordinate-bearing)
 //
-// Usage: node g1-envelope-scan.js [variant] [intraOp]   (default hybrid 8)
-// Output: g1-envelope-result.json (+ stdout table)
+// Usage: node g1-envelope-scan.js [variant] [intraOp] [outFile]
+//   默认输出按变体分名：hybrid → g1-envelope-result.json（历史名）、int8 →
+//   g1-envelope-result-int8.json——两臂互不覆盖。复跑预警（I1 对抗 M4）：默认输出
+//   即 git 已提交冻结文件，复跑前请 `git stash` 或用第三参数指定临时输出路径，
+//   跑完比对后如需更新冻结文件须显式提交，杜绝「复跑自毁冻结产物」。
 const path = require("path");
 const fs = require("fs");
 const Module = require("module");
@@ -21,6 +24,9 @@ const { preprocessPng } = require("../w1w2-worker-sea/preprocess");
 
 const variant = process.argv[2] || "hybrid";
 const intraOp = parseInt(process.argv[3] || "8", 10);
+const outFile = process.argv[4]
+  ? path.resolve(process.argv[4])
+  : path.join(ROOT, variant === "int8" ? "g1-envelope-result-int8.json" : "g1-envelope-result.json");
 const ONNX_DIR = variant === "int8"
   ? path.join(ROOT, "onnx-int8")
   : path.join(ROOT, "onnx-hybrid");
@@ -162,8 +168,8 @@ async function runCaseSet(s, cases, locMap, resolveImage) {
   console.log("CALIB:", JSON.stringify(calibTable, null, 1));
 
   const out = { variant, intraOp, sweeps: sweepResults, golden: goldenResults, calibration: calibTable };
-  fs.writeFileSync(path.join(ROOT, "g1-envelope-result.json"), JSON.stringify(out, null, 1));
-  console.log("saved g1-envelope-result.json");
+  fs.writeFileSync(outFile, JSON.stringify(out, null, 1));
+  console.log(`saved ${path.basename(outFile)}`);
 })().catch((e) => {
   console.error("FATAL:", e);
   process.exitCode = 2;

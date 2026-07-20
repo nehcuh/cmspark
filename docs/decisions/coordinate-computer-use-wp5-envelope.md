@@ -11,7 +11,7 @@
 - **双臂**：hybrid（默认交付变体，vision fp32 + 三图 int8，705MB）与 int8（全量备选，432MB），intraOp=8 / interOp=1。S-3 冻结 golden 19 case 同场重跑作校准底座。
 - **置信 proxy 定义**：`meanLogprob` = 全部生成 token（不含 EOS）平均 log p；`locLogprob` = 仅 `<loc_x><loc_y>` 两个坐标承载 token 的平均 log p（输出结构固定 5 gen token，locCount 恒 =2）。
 - **logprob 修正记录**：初版误写 `bestV - log(Σexp)`（得正值，符号错）；修正为 `log p = -log(Σexp(v-bestV))`（数值稳定形）。两臂最终结果 JSON 均为修正后重跑产物。
-- **输出命名注**：脚本固定写 `g1-envelope-result.json`；int8 臂跑完后人工改名 `g1-envelope-result-int8.json`（脚本保持测量时原样未改）。
+- **输出命名**：脚本按变体分名输出（hybrid → `g1-envelope-result.json`，int8 → `g1-envelope-result-int8.json`），两臂互不覆盖；第三参数可指定临时输出路径。默认输出即 git 冻结文件——复跑产物须显式提交才更新冻结态（I1 对抗 M4 修复；此前 int8 臂靠人工改名，复跑曾覆盖/删除冻结文件）。
 
 ## 2. 包线三要素测定值（I3 常量输入）
 
@@ -98,7 +98,7 @@ hybrid 4/7，int8 6/7。**句式 ⇏ 命中单调关系**；pat-loc-only 双 HIT
 cd scripts/spike/s3-golden
 ../s1-tinyclick-onnx/.venv/Scripts/python.exe g1_build_cases.py  # g1-cases.json（transformers 4.45.2 仅此 venv）
 node g1-envelope-scan.js hybrid 8   # → g1-envelope-result.json
-node g1-envelope-scan.js int8 8     # → g1-envelope-result.json（跑后人工改名 -int8）
+node g1-envelope-scan.js int8 8     # → g1-envelope-result-int8.json（按变体分名，互不覆盖）
 ```
 
 依赖：`onnx-hybrid/`、`onnx-int8/`（gitignored 二进制，经 s1 ADDENDUM 复现节再生）；ORT 经 `../w1w2-worker-sea` 的 node_modules createRequire 复用。运行时零新依赖。

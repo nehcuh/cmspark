@@ -10,7 +10,9 @@
 //   - stale .part 清理（M7）：meta 缺失 / url 变更 / revision 变更 / sha256 变更 /
 //     超 PART_STALE_MS → 删除重下——防跨 revision 复用旧分片拼出旧哈希文件。
 //   - 磁盘预算「下载前」检查（默认 2048MB，computer.modelDiskBudgetMB 可调）：
-//     下载后检查会被塞盘 DoS，必须前置（plan 攻击面提示 5）。
+//     下载后检查会被塞盘 DoS，必须前置（plan 攻击面提示 5）。预算按 models/ 根
+//     目录全局核算（双变体合计占用，I1 对抗 M3——per-variant 核算会让双变体各享
+//     2048MB、实际封顶翻倍，与「2048MB 双变体+余量」叙事不符）。
 //   - 流内截流（I1 对抗 M1）：Content-Length 预检 + 流内计数 received > 申报 size
 //     即 abort——预算前置只核算 manifest 申报字节，线路上多吐字节必须中途截断，
 //     落盘后 size 比对只是兜底而非防线（本机探针曾实证 8389× 超收写穿）。
@@ -40,7 +42,7 @@ import {
 /** stale .part 超期阈值（M7）：24h——覆盖「下了一半隔夜续传」场景，超出则重下。 */
 export const PART_STALE_MS = 24 * 60 * 60 * 1000
 
-/** 磁盘预算默认值（MB）：hybrid 705MB + int8 432MB 双变体 + 余量。 */
+/** 磁盘预算默认值（MB）：models/ 根目录全局核算——hybrid 705MB + int8 432MB 双变体 + 余量。 */
 export const DEFAULT_DISK_BUDGET_MB = 2048
 
 /** 下载失败结构化原因（审计事件与错误共用同一词表，fail-closed 契约）。 */
@@ -85,6 +87,8 @@ export interface DownloadModelArgs {
   mirror?: string
   diskBudgetMB?: number
   destDir?: string
+  /** 预算核算范围目录（M3）：默认 destDir 父目录（生产即 models/ 根，双变体全局核算）。 */
+  budgetDir?: string
 }
 
 export interface DownloadModelResult {
@@ -132,10 +136,11 @@ async function sha256File(filePath: string): Promise<string> {
 async function dirOccupiedBytes(dir: string): Promise<number> {
   try {
     let total = 0
-    for (const name of await readdir(dir)) {
+    for (const e of await readdir(dir, { withFileTypes: true })) {
       try {
-        const s = await stat(path.join(dir, name))
-        if (s.isFile()) total += s.size
+        // 递归统计（M3：预算按 models/ 根全局核算，变体字节在子目录内）
+        if (e.isDirectory()) total += await dirOccupiedBytes(path.join(dir, e.name))
+        else if (e.isFile()) total += (await stat(path.join(dir, e.name))).size
       } catch {
         /* 竞态删除忽略 */
       }
@@ -178,15 +183,16 @@ export async function downloadModelVariant(
   await mkdir(destDir, { recursive: true })
   const totalSize = files.reduce((acc, f) => acc + f.size, 0)
 
-  // 磁盘预算——下载前检查（保守上界：目录当前全部占用 + 本次总量，旧文件抵扣不
-  // 重复计算；方向 fail-closed，宁误拒不误放）。
+  // 磁盘预算——下载前检查（保守上界：models/ 根全局占用（双变体合计，M3）+ 本次
+  // 总量，在盘旧文件会被双计、方向 fail-closed 宁误拒不误放）。
   const budgetMB = args.diskBudgetMB ?? DEFAULT_DISK_BUDGET_MB
-  const occupied = await dirOccupiedBytes(destDir)
+  const budgetDir = args.budgetDir ?? path.dirname(destDir)
+  const occupied = await dirOccupiedBytes(budgetDir)
   const projected = occupied + totalSize
   if (projected > budgetMB * 1024 * 1024) {
     return fail(
       "disk-budget-exceeded",
-      `磁盘预算超限：目录占用 ${occupied} + 本次 ${totalSize} = ${projected} 字节 > 预算 ${budgetMB}MB`,
+      `磁盘预算超限：模型根目录占用 ${occupied} + 本次 ${totalSize} = ${projected} 字节 > 预算 ${budgetMB}MB`,
       { budgetMB, occupiedBytes: occupied, requiredBytes: totalSize },
     )
   }
