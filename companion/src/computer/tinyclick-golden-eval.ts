@@ -15,7 +15,8 @@
 //      production error/skipped 视为诚实 MISS 记 pass（不惩罚已知弱点）。
 //   4. 包线内凡实际跑了推理（obs hit 且带 totalMs）→
 //      totalMs ≤ frozen.totalMs × GOLDEN_LATENCY_FACTOR；超即 FAIL。
-//   5. frozen 锚缺失（null）→ 包线内只报告；包线外规则仍然生效。
+//   5. frozen 锚缺失（null）→ 包线内记 FAIL（fail-closed，WP5 I3 对抗修复 M2：
+//      部分锚丢失不得静默降级为 report）；包线外规则仍然生效。
 //
 // 本模块只做纯函数判定；真实模型执行面在 scripts/verify-tinyclick-golden.js。
 
@@ -133,7 +134,12 @@ export function evaluateGoldenCase(
 
   // 包线内。
   if (frozen === null) {
-    return { id: c.id, status: "report", detail: "frozen 锚缺失，仅报告" };
+    // 规则 5（M2 fail-closed）：锚缺失 = 门禁配置缺陷，记 FAIL 不静默降级。
+    return {
+      id: c.id,
+      status: "fail",
+      detail: "包线内 frozen 锚缺失——fail-closed（锚按 id 键取，失配即门禁缺陷）",
+    };
   }
 
   if (frozen.hit) {
@@ -202,4 +208,25 @@ export function summarizeGolden(verdicts: readonly GoldenVerdict[]): GoldenSumma
     else report += 1;
   }
   return { total: verdicts.length, pass, fail, report, ok: fail === 0 };
+}
+
+/**
+ * frozen 锚索引（WP5 I3 对抗修复 M2）：g1-envelope-result*.json 的 golden 段
+ * 以位置索引为键，但每条自带 id——按 id 重建键取，golden.json 增删重排不再
+ * 静默错锚。id 缺失或重复 = 锚文件损坏，throw（脚本侧捕获 → exit 2）。
+ */
+export function indexFrozenAnchors(
+  frozenGolden: Readonly<Record<string, FrozenAnchor & { id?: string }>>,
+): Map<string, FrozenAnchor> {
+  const map = new Map<string, FrozenAnchor>();
+  for (const [key, entry] of Object.entries(frozenGolden)) {
+    if (entry === null || typeof entry !== "object" || typeof entry.id !== "string" || entry.id === "") {
+      throw new Error(`frozen 锚条目缺 id（键 ${key}）——锚文件损坏`);
+    }
+    if (map.has(entry.id)) {
+      throw new Error(`frozen 锚 id 重复（${entry.id}）——锚文件损坏`);
+    }
+    map.set(entry.id, entry);
+  }
+  return map;
 }

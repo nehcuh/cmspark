@@ -13,6 +13,7 @@ import {
   GOLDEN_LATENCY_FACTOR,
   distToGtCenter,
   evaluateGoldenCase,
+  indexFrozenAnchors,
   isEnvelopeIn,
   summarizeGolden,
   type FrozenAnchor,
@@ -159,12 +160,50 @@ test("frozen MISS：production hit → 仅 report 不断言（延迟超也不 fa
   assert.match(v.detail, /frozen MISS/);
 });
 
-// --- 规则 5：frozen 锚缺失 ----------------------------------------------------------
+// --- 规则 5（M2 fail-closed）：frozen 锚缺失 ---------------------------------------
 
-test("frozen null + envelope-in → report；envelope-out 规则仍生效", () => {
-  assert.equal(evaluateGoldenCase(F_OK_EN, null, hitAt(884, 602)).status, "report");
+test("frozen null + envelope-in → FAIL（fail-closed，不静默降级 report）；envelope-out 规则仍生效", () => {
+  const v = evaluateGoldenCase(F_OK_EN, null, hitAt(884, 602));
+  assert.equal(v.status, "fail", v.detail);
+  assert.match(v.detail, /锚缺失/);
   assert.equal(evaluateGoldenCase(F_HELP_ZH, null, skipped()).status, "pass");
   assert.equal(evaluateGoldenCase(F_HELP_ZH, null, hitAt(76, 602)).status, "fail");
+});
+
+// --- M2 回归：锚按 id 键取（重排不静默错锚）+ 锚文件损坏检测 ------------------------
+
+test("indexFrozenAnchors：位置索引重排后仍按 id 正确取锚", () => {
+  // 模拟 golden.json 增删重排：位置键与 id 的对应关系被打乱
+  const reordered = {
+    "0": { id: "f-icon-en", ...HYBRID["f-icon-en"] },
+    "1": { id: "f-ok-en", ...HYBRID["f-ok-en"] },
+    "7": { id: "f-play-en", ...HYBRID["f-play-en"] },
+  };
+  const map = indexFrozenAnchors(reordered);
+  assert.equal(map.size, 3);
+  assert.equal(map.get("f-ok-en")!.hit, false);
+  assert.equal(map.get("f-icon-en")!.hit, true);
+  assert.equal(map.get("f-icon-en")!.distPx, 3.2);
+  // 按 id 取锚后，f-icon-en 拿到的是 HIT 锚（重排前位置 8），hit 达标 → pass
+  const v = evaluateGoldenCase(F_ICON_EN, map.get("f-icon-en")!, hitAt(483, 173, 673));
+  assert.equal(v.status, "pass", v.detail);
+  // 若仍按位置索引取（旧行为），f-icon-en 会错配到 f-ok-en 的 MISS 锚 → report 漏检
+  assert.notEqual(map.get("f-icon-en")!.hit, HYBRID["f-ok-en"].hit);
+});
+
+test("indexFrozenAnchors：id 缺失或重复即 throw（脚本侧 exit 2）", () => {
+  assert.throws(
+    () => indexFrozenAnchors({ "0": { hit: true, distPx: 1, totalMs: 100 } }),
+    /缺 id/,
+  );
+  assert.throws(
+    () =>
+      indexFrozenAnchors({
+        "0": { id: "f-ok-en", ...HYBRID["f-ok-en"] },
+        "1": { id: "f-ok-en", ...HYBRID["f-ok-en"] },
+      }),
+    /重复/,
+  );
 });
 
 // --- 汇总 ------------------------------------------------------------------------

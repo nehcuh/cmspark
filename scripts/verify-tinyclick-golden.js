@@ -16,6 +16,8 @@
 //   2. 包线内 + frozen HIT → 必须 hit 且 dist ≤ frozen.distPx + 2px
 //   3. 包线内 + frozen MISS → 仅报告不断言（frozen 锚定纪律，不自造阈值）
 //   4. 包线内凡跑推理 → totalMs ≤ frozen.totalMs × 1.5
+// 锚定加固（WP5 I3 对抗修复 M2）：锚按 c.id 键取（非位置索引，重排不静默错锚），
+// case 在锚中无 id 条目即 exit 2；包线内锚缺失在 eval 规则 5 记 FAIL（fail-closed）。
 // 坍缩抑制规避：每 case 新建 TinyClickLocator（坍缩历史任务级，同图异命令合法）。
 //
 // Usage:
@@ -142,11 +144,26 @@ async function main() {
   await session.prepare();
   ok(`session prepare 完成（variant=${args.variant}）`);
 
+  // --- frozen 锚按 id 键取（WP5 I3 对抗修复 M2：位置索引重排即静默错锚 → 禁） ------
+  let anchorMap;
+  try {
+    anchorMap = evalMod.indexFrozenAnchors(frozen.golden ?? {});
+  } catch (e) {
+    error(`frozen 锚索引失败: ${e && e.message ? e.message : e}`);
+    process.exit(EXIT_SETUP);
+  }
+  for (const c of golden.cases) {
+    if (!anchorMap.has(c.id)) {
+      error(`golden case "${c.id}" 在 frozen 锚（${FROZEN_BY_VARIANT[args.variant]}）中无对应 id 条目——锚与 case 文件失配`);
+      process.exit(EXIT_SETUP);
+    }
+  }
+
   // --- 逐 case 评估（每 case 新建 locator：坍缩历史任务级，互不抑制） -------------
   const verdicts = [];
   for (let idx = 0; idx < golden.cases.length; idx++) {
     const c = golden.cases[idx];
-    const anchor = frozen.golden?.[String(idx)] ?? null;
+    const anchor = anchorMap.get(c.id) ?? null;
     const pngPath = pngByImage.get(c.image);
 
     const locator = new TinyClickLocator({
