@@ -1,4 +1,4 @@
-# s3-fixture-render.ps1 — S-3 golden fixture: owner-draw 960x640 Chinese UI
+﻿# s3-fixture-render.ps1 — S-3 golden fixture: owner-draw 960x640 Chinese UI
 # rendered DIRECTLY to PNG (DrawToBitmap of the client area) so ground-truth
 # pixel coords are exact by construction. No window interaction of any kind.
 # Layout: 4 corner buttons + center button + search input + long text label.
