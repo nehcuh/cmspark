@@ -9,6 +9,9 @@
 //     超 PART_STALE_MS → 删除重下——防跨 revision 复用旧分片拼出旧哈希文件。
 //   - 磁盘预算「下载前」检查（默认 2048MB，computer.modelDiskBudgetMB 可调）：
 //     下载后检查会被塞盘 DoS，必须前置（plan 攻击面提示 5）。
+//   - 流内截流（I1 对抗 M1）：Content-Length 预检 + 流内计数 received > 申报 size
+//     即 abort——预算前置只核算 manifest 申报字节，线路上多吐字节必须中途截断，
+//     落盘后 size 比对只是兜底而非防线（本机探针曾实证 8389× 超收写穿）。
 //   - 完成后 streaming sha256 全量复验 + 原子 rename（libuv 覆盖式 rename，
 //     崩溃不留半成品最终文件）；复验失败删除 .part（不留篡改分片作续传基础）。
 //   - 任何失败 → computeruse.model.unavailable {reason} 审计 + ModelDownloadError
@@ -49,6 +52,7 @@ export type ModelUnavailableReason =
   | "network-error"
   | "hash-mismatch"
   | "size-mismatch"
+  | "oversize-stream"
 
 export class ModelDownloadError extends Error {
   readonly reason: ModelUnavailableReason
@@ -247,6 +251,12 @@ export async function downloadModelVariant(
         // downloadOne 的结构化失败统一经 fail() 审计——下载失败必须留下
         // computeruse.model.unavailable 事件（层不可用叙事，§C.2.4）
         if (err instanceof ModelDownloadError) {
+          // 超限流截断后删除分片+meta：被污染的 .part 不得留作续传基础（与
+          // 复验失败同处置；stale 检查虽能自愈，不留一版确定损坏的状态更干净）
+          if (err.reason === "oversize-stream") {
+            await rm(partPath, { force: true })
+            await rm(metaPath, { force: true })
+          }
           return fail(err.reason, err.message, { file: f.name })
         }
         throw err
@@ -325,12 +335,31 @@ async function downloadOne(
   if (!res.body) {
     throw new ModelDownloadError("network-error", `响应无 body（${fileName}）`)
   }
+  // Content-Length 预检（M1 第一道）：申报剩余 = expectedSize - appendAt；服务端
+  // 声明字节超剩余即在「零写盘」处拒绝。无 Content-Length（chunked）时靠流内截流兜底。
+  const contentLength = Number(res.headers.get("content-length"))
+  if (Number.isFinite(contentLength) && contentLength > 0 && appendAt + contentLength > expectedSize) {
+    throw new ModelDownloadError(
+      "oversize-stream",
+      `线路声明字节超申报（${fileName}，Content-Length ${contentLength} + 续传基线 ${appendAt} > 申报 ${expectedSize}），零写盘拒绝`,
+    )
+  }
   let received = appendAt
   const source = Readable.fromWeb(res.body as import("node:stream/web").ReadableStream)
-  // data 监听与 pipeline 共存：pipeline 负责背压，监听只做进度计数
+  // data 监听与 pipeline 共存：pipeline 负责背压，监听做进度计数 + 流内截流（M1
+  // 第二道）——线路吐出超 manifest 申报字节即 destroy 中止 fetch，落盘字节有界于
+  // size+ε，下载后 size 比对（调用方）仅作兜底。
   source.on("data", (chunk: Buffer) => {
     received += chunk.byteLength
     onProgress?.(fileName, received, expectedSize)
+    if (received > expectedSize) {
+      source.destroy(
+        new ModelDownloadError(
+          "oversize-stream",
+          `线路字节超申报（${fileName}，已收 ${received} > 申报 ${expectedSize}），流内截断`,
+        ),
+      )
+    }
   })
   try {
     await pipeline(source, createWriteStream(partPath, { flags: appendAt > 0 ? "a" : "w" }))

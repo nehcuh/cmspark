@@ -82,6 +82,10 @@ interface FakeRoute {
   rangeStatus?: number
   /** 在本次响应第 N 字节处翻转一位（分片篡改模拟）。 */
   corruptAt?: number
+  /** 附加响应头（仅无 Range 的 200 响应；Content-Length 预检测试用）。 */
+  headers?: Record<string, string>
+  /** 消费端 destroy/取消后置 true（流内截流回归断言用）。 */
+  cancelled?: boolean
   seenRanges: (string | undefined)[]
 }
 
@@ -106,6 +110,9 @@ function bodyStream(body: Buffer, route: FakeRoute): ReadableStream<Uint8Array> 
         return
       }
       c.close()
+    },
+    cancel() {
+      route.cancelled = true
     },
   })
 }
@@ -132,7 +139,7 @@ function makeFakeFetch(routes: Record<string, FakeRoute>): typeof fetch {
         headers: { "Content-Range": `bytes ${from}-${route.body.byteLength - 1}/${route.body.byteLength}` },
       })
     }
-    return new Response(bodyStream(route.body, route) as any, { status: 200 })
+    return new Response(bodyStream(route.body, route) as any, { status: 200, headers: route.headers })
   }) as unknown as typeof fetch
 }
 
@@ -341,6 +348,75 @@ test("download: http-error（5xx）审计形状", async () => {
     assert.strictEqual(env.events[0]!.event, "computeruse.model.unavailable")
     assert.strictEqual(env.events[0]!.payload.reason, "http-error")
     assert.strictEqual(url.includes("https://"), true)
+  } finally {
+    env.cleanup()
+  }
+})
+
+// --- 超限流截流（M1，I1 对抗 P1-a） ----------------------------------------------
+
+test("oversize: 申报 1000B 吐 8MB——流内截断、fetch 中止、落盘有界、分片清理", async () => {
+  const env = makeEnv()
+  try {
+    const big = contentOf(3, 8 * 1024 * 1024)
+    const manifest = makeManifest([{ name: "a.onnx", content: FILE_A }])
+    const f = manifest.models.tinyclick!.variants.hybrid!.files[0]!
+    f.size = 1000 // manifest 申报 1000B；线路吐 8MB（探针同款 8389× 场景）
+    const route: FakeRoute = { body: big, seenRanges: [] }
+    const progress: number[] = []
+    await assert.rejects(
+      () =>
+        downloadModelVariant(
+          { manifest, modelId: "tinyclick", variant: "hybrid", destDir: env.dir },
+          {
+            ...env.deps,
+            fetchImpl: makeFakeFetch({ [f.url]: route }),
+            onProgress: (_file, received) => progress.push(received),
+          },
+        ),
+      (e) => (expectDownloadError(e, "oversize-stream"), true),
+    )
+    assert.strictEqual(route.cancelled, true, "超限即应中止 fetch（截断于中途，非流尽后拒绝）")
+    assert.ok(progress.length > 0 && Math.max(...progress) < 100_000, "截断点应在 size+ε 量级，远小于 8MB")
+    // 被污染分片+meta 已清理，不留续传基础；最终文件不存在
+    assert.strictEqual(existsSync(path.join(env.dir, "a.onnx.part")), false)
+    assert.strictEqual(existsSync(path.join(env.dir, "a.onnx.part.json")), false)
+    assert.strictEqual(existsSync(path.join(env.dir, "a.onnx")), false)
+    assert.strictEqual(env.events[0]!.payload.reason, "oversize-stream")
+    assert.strictEqual(route.seenRanges.length, 1) // 单次请求内截断
+  } finally {
+    env.cleanup()
+  }
+})
+
+test("oversize: Content-Length 预检——声明字节超申报，零写盘拒绝", async () => {
+  const env = makeEnv()
+  try {
+    const big = contentOf(3, 8 * 1024 * 1024)
+    const manifest = makeManifest([{ name: "a.onnx", content: FILE_A }])
+    const f = manifest.models.tinyclick!.variants.hybrid!.files[0]!
+    f.size = 1000
+    const route: FakeRoute = {
+      body: big,
+      headers: { "Content-Length": String(big.byteLength) },
+      seenRanges: [],
+    }
+    const progress: number[] = []
+    await assert.rejects(
+      () =>
+        downloadModelVariant(
+          { manifest, modelId: "tinyclick", variant: "hybrid", destDir: env.dir },
+          {
+            ...env.deps,
+            fetchImpl: makeFakeFetch({ [f.url]: route }),
+            onProgress: (_file, received) => progress.push(received),
+          },
+        ),
+      (e) => (expectDownloadError(e, "oversize-stream"), true),
+    )
+    assert.deepStrictEqual(progress, [], "预检应在任何 body 字节写盘前拒绝")
+    assert.strictEqual(existsSync(path.join(env.dir, "a.onnx.part")), false) // 零写盘
+    assert.strictEqual(env.events[0]!.payload.reason, "oversize-stream")
   } finally {
     env.cleanup()
   }

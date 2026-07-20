@@ -93,6 +93,13 @@ export const MODEL_STATE_MESSAGES: Record<string, ModelStateMessage> = {
       "其余定位层不受影响；请重试下载，复现请向项目反馈。",
     action: "重试下载",
   },
+  "oversize-stream": {
+    title: "模型下载数据异常",
+    detail:
+      "下载源吐出的字节超过登记大小（分发链异常或镜像不可信），已在传输中途截断并清理。" +
+      "其余定位层不受影响；请检查镜像设置后重试，复现请向项目反馈。",
+    action: "重试下载",
+  },
   // --- manifest 层其余原因（与 ModelGateError.code 词表对齐） ----------------------
   "model-size-mismatch": {
     title: "模型文件大小异常",

@@ -159,6 +159,7 @@ test("文案表覆盖下载侧全部 ModelUnavailableReason + 加载侧 gate cod
     "network-error",
     "hash-mismatch",
     "size-mismatch",
+    "oversize-stream",
     // ModelGateError.code 加载/manifest 侧（model-manifest.ts）
     "model-file-missing",
     "model-hash-mismatch",
