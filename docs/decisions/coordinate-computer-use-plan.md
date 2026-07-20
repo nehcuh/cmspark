@@ -408,6 +408,7 @@ Locator.locate(screenshot, hwnd, target: { kind: "text", value } | { kind: "desc
 - **WI-1.3 校验即加载（无 TOCTOU）**（B1/B6）
   - 新增：`companion/src/computer/model-verify.ts`——读入内存 → streaming sha256 → **从同一内存 buffer 供给 ORT session 创建**（禁「按路径校验、再按路径加载」两段式）；**每次加载前复验**（非仅下载时）；与 `scripts/onnxruntime-sha256.json`（新增，仿 `scripts/verify-systray2.js` + `scripts/systray2-sha256.json` 模式）共用同一哈希登记源（生成器脚本从 models.manifest.json 导出，避免双源漂移）；`scripts/verify-onnxruntime.js`（新增）：旁置 4 dll + .node + 模型文件的加载前复验 CLI
   - 测试：`computer-model-verify.test.ts`——改 1 字节模型 → 加载拒绝（负测试）；改 1 字节 dll → verify CLI 非零退出；buffer 来源同一性断言（session 创建入参即校验过的 buffer）
+  - **I1 收口勘误（2026-07-20，评审 F-4 明示放弃）**：「ORT dll 钉哈希 + `scripts/onnxruntime-sha256.json` + `verify-onnxruntime.js` CLI + 改 1 字节 dll 负测试」**未交付**。实际交付将「校验即加载」并入 `model-manifest.ts`（`loadVerifiedFileBytes`，stat-first + 同 buffer + 每次复验），只覆盖模型文件；dll 与 exe 同目录放置、能写安装目录的 actor 本可换 exe——钉 dll 不闭合威胁模型，边际价值仅纵深防御，经评审明示放弃（威胁模型升级时另立 WI）。模型文件侧契约完整交付并经负测试锁定（`computer-model-manifest.test.ts`）。
 - **WI-1.4 架构裁剪进打包管线**（B7）
   - 改：`scripts/build-windows-exe.ps1`——staging node_modules 增 `onnxruntime-node`，**按架构白名单只拷 `bin/napi-v6/win32/x64/`（4 dll + .node，259MB→~62MB）**；esbuild 参数增 `--external:onnxruntime-node`（与 systray2/canvas 先例同位）；安装包体积断言步骤（+62MB 预算内）
   - 测试：打包产物体积断言脚本 + SEA exe 上 dummy 推理冒烟（复用 S-2 管线脚本化为 `scripts/verify-ort-sea.js`，手动/发版门禁）

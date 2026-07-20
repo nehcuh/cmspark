@@ -17,7 +17,7 @@
 
 约束三要素 = 英文 ∧ 短 ∧ 直接指称（plan:392 既定，本档供给测定值）：
 
-1. **token 上限**：`prompt_tokens`（含固定前缀 ≈10）实测命中最大值 = **38**（len-31-ok，双变体 HIT 3.6/4.2px）；净命令 ≈28 token。>38 在英文包线内无命中证据。**I3 常量：`MAX_PROMPT_TOKENS = 38`**，超出层内拒绝（`tinyclick-envelope:too-long`）。注意：token 上限是必要条件非充分条件——zh case tok≤38 仍系统性 MISS。
+1. **token 上限**：`prompt_tokens`（含固定前缀 ≈10）实测命中最大值 = **38**（len-31-ok，双变体 HIT 3.6/4.2px）；净命令 ≈28 token。**>38 从未被扫描**（g1-cases.json 的 token 上限即 38）——故 38 是「实测命中的最大值」型 **fail-closed 上限（拒绝未测区域）**，非「测过未中」。**I3 常量：`MAX_PROMPT_TOKENS = 38`**，超出层内拒绝（`tinyclick-envelope:too-long`）。注意：token 上限是必要条件非充分条件——zh case tok≤38 仍系统性 MISS。
 2. **英文 = ASCII 可判定子集**：全部命中 en case 为纯 ASCII；zh（非 ASCII）系统性失效（S-3 冻结）。代码判定 = 非 ASCII 拒绝，无需语言检测器。
 3. **直接指称 = 浅层语法判定**：句式扫描证明句式与命中**无单调关系**（pat-imperative2 "press the ok button"：int8 HIT 3.6px / hybrid MISS 809px；pat-please 双 MISS；pat-want/canyou/need 双 HIT）。故该约束定位为 **OOD 排除**（动词白名单 + 单句 + 单目标指称），**不是命中承诺**——包线内命中仍受目标显著性/歧义度支配（§4.1）。
 4. （附）帧宽 ≤1920 约束来自 S-3（3840 桌面降 768² 后图标 ~14px OOD），非本扫描维度，I3 照 plan:450 直接代码化。

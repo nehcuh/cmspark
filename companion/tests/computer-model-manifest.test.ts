@@ -174,6 +174,18 @@ test("parse: 变体 files 为空 → manifest-invalid", () => {
   assert.throws(() => parseModelManifest(JSON.stringify(bad)), (e) => (expectGateError(e, "manifest-invalid"), true))
 })
 
+test("parse: 文件 name 含路径分隔符 → manifest-invalid（M6：path.join 逃逸面关闭）", () => {
+  for (const name of ["../evil.onnx", "a/b.onnx", "a\\b.onnx", "..\\evil.onnx"]) {
+    const bad = makeManifest()
+    ;(bad.models as any).tinyclick.variants.hybrid.files = [makeFile({ name })]
+    assert.throws(
+      () => parseModelManifest(JSON.stringify(bad)),
+      (e) => (expectGateError(e, "manifest-invalid"), true),
+      `name=${name} 应被拒绝`,
+    )
+  }
+})
+
 // --- loadModelManifest：网络源拒绝 -------------------------------------------
 
 test("load: 网络/UNC manifest 源一律拒绝（manifest 永不运行时网络更新）", async () => {

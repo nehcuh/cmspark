@@ -10,7 +10,7 @@
 
 | 变体 | 体积 | RSS | e2e 延迟 | token 级回归 | 裁决 |
 |---|---|---|---|---|---|
-| **hybrid**（vision fp32 + enc/dec/embed int8） | 705MB（704,678,632B 实测） | 836MB | 736ms | 7/7 逐位一致 | **默认交付变体** |
+| **hybrid**（vision fp32 + enc/dec/embed int8） | 705MB（704,780,632B 实测，manifest 四图合计；含 tokenizer.json 共 707,078,593B） | 836MB | 736ms | 7/7 逐位一致 | **默认交付变体** |
 | int8（全量化） | 432MB | 570MB | 1173ms | 7 token 中 6 位一致（1 bin 抖动，无语义改变，S-3 已证） | 内存硬约束备选（保留在 manifest，非默认） |
 | fp32（未量化） | 1.24GB | ~1.9GB | 体积/速度双劣于 hybrid | 7/7（spike 基线） | **不交付** |
 
@@ -31,7 +31,7 @@
 2. **发布 PR 双人 review**：任何发布动作（新变体上架、旧工件替换）走 PR + 至少一名非作者的 reviewer；reviewer 必须复核「发布物 sha256 == manifest 登记值」。
 3. **哈希重登记必须走 PR**：`companion/models.manifest.json` 的任何变更（含 revision、sha256、size、license 字段）禁止直接推主分支；PR 描述须附重登记原因与实测命令输出（`sha256sum` 原文）。
 4. **发布物与 manifest 同一次提交**：上架新工件的发布动作与 manifest 登记更新必须是同一 PR 的同一提交——防止「工件已换、登记未改」或反向漂移（两条都是哈希叙事失效面）。
-5. **本地可复核**：`node scripts/verify-tinyclick-vendor.js --strict`（vendor 三文件）+ golden 回放 harness（`scripts/verify-tinyclick-golden.js`，WI-2.5）为发版前本机门禁；模型文件本身篡改的加载拒绝由 `computer-model-*.test.ts` 负测试覆盖。
+5. **本地可复核**：`node scripts/verify-tinyclick-vendor.js --strict`（vendor 三文件）+ `node scripts/verify-ort-sea.js`（ORT 裁剪 staging 复刻 → ≤70MB 断言 → SEA 组装 → dummy 推理冒烟，plan:413 明定的 B7 手动/发版门禁）+ golden 回放 harness（`scripts/verify-tinyclick-golden.js`，WI-2.5）为发版前本机门禁；模型文件本身篡改的加载拒绝由 `computer-model-*.test.ts` 负测试覆盖。
 6. **E2E 现状**：host 未定前，下载链路全部经 fake fetch 覆盖（`computer-model-download.test.ts`，含断点续传/分片篡改/stale .part/预算/审计形状）；**真实下载链路演练列为 owner host 决策后首日任务**（见 §3）。
 
 ## 3. 显式外部依赖与 I1 出口诚实态

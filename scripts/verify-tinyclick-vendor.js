@@ -120,6 +120,8 @@ async function main() {
       error("  The working copy was checked out with core.autocrlf=true before vendor/.gitattributes");
       error("  pinned eol=lf (or an editor rewrote endings). Fix with:");
       error(`    rm "scripts/spike/s1-tinyclick-onnx/vendor/${name}" && git checkout -- "scripts/spike/s1-tinyclick-onnx/vendor/${name}"`);
+      error("  (no git — e.g. zip distribution? re-download the repo zip: eol=lf is applied");
+      error("   at archive time, so the zip already contains LF bytes.)");
     } else {
       failCount++;
       error(`HASH MISMATCH: ${name}`);

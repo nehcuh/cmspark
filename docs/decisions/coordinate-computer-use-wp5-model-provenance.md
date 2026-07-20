@@ -96,7 +96,7 @@
   | modeling_florence2.py | `5162bf465e61b6e29cc113a467630ec3cb56ed8e4d46eb6207157f10fb9b8a24` |
   | processing_florence2.py | `f146023a507c009f425a49ee39aa037f4f25c64e14336e3e4f3f1d7377a68e98` |
 
-  静态审查结论（S-1 报告）：无网络回调/文件写入/动态执行，安全。**vendor 后必须重跑一次 S-1 导出回归**，确认四图 sha256 不变（`af096239…`/`b59e88b7…`/`2127af82…`/`012cdafe…`）；若变，说明执行字节与被审字节已有漂移，需重新审查并重新登记。
+  静态审查结论（S-1 报告）：无网络回调/文件写入/动态执行，安全。**vendor 后必须重跑一次 S-1 导出回归**，确认四图 sha256 不变（`af096239…`/`b59e88b7…`/`2127af82…`/`012cdafe…`）；若变，说明执行字节与被审字节已有漂移，需重新审查并重新登记。（执行记录 2026-07-20：T5 vendor 后导出回归已跑，四图 sha256 与登记值**字节级一致**，见 s1 ADDENDUM:55-66；此后字节同一性由 `verify-tinyclick-vendor.js --strict` 持续强制——CI 阻断位 + postinstall warn-only + `export_onnx.py` 导出断言，vendor 三文件任何漂移在 CI/导出侧 fail-fast。）
 
 ---
 

@@ -238,6 +238,7 @@ export async function downloadModelVariant(
 
     // stale .part 判定（M7）：meta 缺失/损坏、url 或 revision 或 sha256 漂移、超期 →
     // 删除重下；跨 revision 复用旧分片可拼出旧哈希文件，此检查是下载链路的防混面。
+    // meta.size 纳入判定（M6）：manifest 登记 size 漂移同样使旧分片失效（死字段启用）。
     let resumeFrom = 0
     const meta = await readPartMeta(metaPath)
     const metaValid =
@@ -245,6 +246,7 @@ export async function downloadModelVariant(
       meta.url === url &&
       meta.revision === model.revision &&
       meta.sha256 === f.sha256 &&
+      meta.size === f.size &&
       now() - meta.startedAt <= PART_STALE_MS
     if (metaValid && meta) {
       try {
@@ -325,7 +327,9 @@ async function downloadOne(
     const headers: Record<string, string> = rangeFrom > 0 ? { Range: `bytes=${rangeFrom}-` } : {}
     let res: Response
     try {
-      res = await fetchImpl(url, { headers })
+      // redirect:"manual"（M6）：3xx 不跟随——302 跳 http 降级虽只损可用性（哈希
+      // 兜底），fail-closed 拒跳更干净；3xx/opaqueredirect 由下方统一归一 http-error
+      res = await fetchImpl(url, { headers, redirect: "manual" })
     } catch (err) {
       throw new ModelDownloadError(
         "network-error",
@@ -345,6 +349,11 @@ async function downloadOne(
     res = await doFetch(0)
   }
   const okStatus = appendAt > 0 ? 206 : 200
+  // 重定向归一（M6）：redirect:manual 下 3xx（undici 还可能给 status 0 的
+  // opaqueredirect）不跟随，统一 http-error——拒绝静默跳转到未登记主机
+  if (res.status === 0 || (res.status >= 300 && res.status < 400)) {
+    throw new ModelDownloadError("http-error", `重定向被拒绝（${fileName}，HTTP ${res.status}）: ${url}`)
+  }
   if (res.status !== okStatus) {
     // 续传收到 200（服务端不支持 Range）——从头重写；其余非预期状态 → http-error
     if (appendAt > 0 && res.status === 200) {
@@ -354,6 +363,9 @@ async function downloadOne(
     }
   }
 
+  // Content-Range 偏移未逐项校验（M6 登记 nit）：偏移错误的续传体会拼错文件，
+  // 最终 streaming sha256 全量复验兜底 → 删片重下自愈（fail-closed，无完整性缺口）；
+  // 真实 host 链路演练时复核此项。
   if (!res.body) {
     throw new ModelDownloadError("network-error", `响应无 body（${fileName}）`)
   }

@@ -40,7 +40,9 @@ const sha256Schema = z.string().regex(SHA256_RE, "sha256 必须是 64 位小写 
 
 const fileEntrySchema = z
   .object({
-    name: z.string().min(1),
+    // name 限 basename（M6 纵深硬化）：path.join(destDir, f.name) 的目录逃逸面在
+    // schema 层关闭（触发本需 manifest 信任锚先失守，纵深防御不计成本）
+    name: z.string().min(1).regex(/^[^/\\]+$/, "name 必须是 basename（禁路径分隔符）"),
     // 三要素之一「源 URL」：仅 https（file:///UNC 等本地替换面在 schema 层关闭）
     url: z.string().refine((u) => u.startsWith("https://"), {
       message: "模型文件 url 必须是 https://",
