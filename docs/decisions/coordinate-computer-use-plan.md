@@ -447,7 +447,7 @@ Locator.locate(screenshot, hwnd, target: { kind: "text", value } | { kind: "desc
   - 新增：`scripts/verify-tinyclick-golden.js`——s3-run.js 生产化（离线回放，±8px 容差，plan:246 惯例）；golden 集扩充：loc bin 0/999 边界、四角、<16px 小目标、>20 词命令；回放需模型在本机（文档化；不进 CI 强制，作发版/本机门禁）
   - 测试：扩充 case 入库 + harness 可跑；逻辑层（命中判定/容差）单测
 
-##### 迭代 I3 — 实验层接入编排器与防信任放大（G2/G3/G4/B9/B10 评估）
+##### 迭代 I3 — 实验层接入编排器与防信任放大（G2/G3/G4/B9/B10 评估） ✅ 2026-07-20 收口（出口标准逐项核对见本标记所属 commit message）
 
 > 出口标准：L2 stub 实装（降级日志格式不变）；包线拒绝代码化三类各有测试；experimental→reL2 流通；开关+许可证门+文案评审通过；时间线无未校准数字上屏。
 
