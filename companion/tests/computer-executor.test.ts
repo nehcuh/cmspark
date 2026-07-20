@@ -1716,3 +1716,74 @@ test("executor G4: tinyclickLocator 缺省（admission 关闭）→ 行为与旧
   assert.equal(r.errorCode, "ELEMENT_NOT_FOUND")
   assert.equal(injector.clicks.length, 0)
 })
+
+
+// --- WP5 I3 对抗修复 M1（P2-a）：实验层建议预算记账移至 G4 批准之后 ------------------
+//
+// 断言面：被拒建议零消耗（不触发续期弹窗、不计数——三连弹窗上界消解）；
+// 批准后真注入路径才计数（续期弹窗出现在 G4 批准之后，顺序可证）；
+// 批准但续期被拒 → UNCROSS_DENIED 且该建议零注入。
+
+test("executor M1: 预算耗尽快照下实验层建议被拒 → 零消耗（仅 G4 一窗，无续期弹窗）", async () => {
+  const tc = fakeTinyClickLocator()
+  const confirm = scriptedConfirm([false]) // 唯一一窗（G4）即拒
+  const injector = new RecordingInjector()
+  const deps = makeDeps({
+    injector,
+    locator: new FakeLocator([]), // L1 miss — 链落到 L2
+    confirm: confirm.fn,
+    tinyclickLocator: tc.locator,
+  })
+  const actions: ComputerAction[] = [
+    ...[1, 2, 3].map((i): ComputerAction => ({ action: "click", x: 10 + i, y: 10 })), // 烧光 A1.3 子预算（3 次免审显式坐标）
+    clickOk, // 第 4 动作：实验层建议
+  ]
+  const r = await runComputerTask({ task: "t", app: "win.app.test", actions }, deps)
+  assert.equal(r.errorCode, "ELEMENT_NOT_FOUND", "G4 拒绝 → 诚实降级（预算扣减不得先于拒绝发生）")
+  assert.equal(injector.clicks.length, 3, "仅前 3 个显式坐标注入")
+  assert.equal(confirm.captured.length, 1, "被拒建议不得触发续期弹窗（三连上界消解：只剩 G4 一窗）")
+  assert.deepEqual(confirm.captured[0].details.dangerousApis, ["computer.experimental_suggestion"])
+})
+
+test("executor M1: 实验层建议批准后才计预算（G4 窗在前，续期窗在后）", async () => {
+  const tc = fakeTinyClickLocator()
+  const confirm = scriptedConfirm([true, true]) // G4 批准 → 续期批准
+  const injector = new RecordingInjector()
+  const deps = makeDeps({
+    injector,
+    locator: new FakeLocator([]),
+    confirm: confirm.fn,
+    tinyclickLocator: tc.locator,
+  })
+  const actions: ComputerAction[] = [
+    ...[1, 2, 3].map((i): ComputerAction => ({ action: "click", x: 10 + i, y: 10 })),
+    clickOk,
+  ]
+  const r = await runComputerTask({ task: "t", app: "win.app.test", actions }, deps)
+  assert.equal(r.success, true, r.error)
+  assert.equal(injector.clicks.length, 4, "G4 批准 + 续期批准后建议点真注入")
+  assert.equal(confirm.captured.length, 2)
+  assert.deepEqual(confirm.captured[0].details.dangerousApis, ["computer.experimental_suggestion"], "第一窗 = G4 门")
+  assert.ok(confirm.captured[1].details.code.includes("交叉验证"), "第二窗 = A1.3 续期（批准后才计数）")
+})
+
+test("executor M1: G4 批准但续期被拒 → UNCROSS_DENIED，该建议零注入（计数不伪造）", async () => {
+  const tc = fakeTinyClickLocator()
+  const confirm = scriptedConfirm([true, false]) // G4 批准 → 续期拒绝
+  const injector = new RecordingInjector()
+  const deps = makeDeps({
+    injector,
+    locator: new FakeLocator([]),
+    confirm: confirm.fn,
+    tinyclickLocator: tc.locator,
+  })
+  const actions: ComputerAction[] = [
+    ...[1, 2, 3].map((i): ComputerAction => ({ action: "click", x: 10 + i, y: 10 })),
+    clickOk,
+  ]
+  const r = await runComputerTask({ task: "t", app: "win.app.test", actions }, deps)
+  assert.equal(r.errorCode, "UNCROSS_DENIED")
+  assert.equal(injector.clicks.length, 3, "续期被拒 → 建议点不得注入")
+  assert.equal(confirm.captured.length, 2)
+  assert.deepEqual(confirm.captured[0].details.dangerousApis, ["computer.experimental_suggestion"])
+})

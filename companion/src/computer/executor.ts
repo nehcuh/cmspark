@@ -794,7 +794,11 @@ export async function runComputerTask(
 
       // A1.3 — uncrossverified clicks consume the <=3 sub-budget, then a
       // mandatory new L2.
-      if (uncrossverified) {
+      //   WP5 I3 对抗修复 M1（裁决记录：wp5-i3-adversary.md P2-a）：实验层建议
+      //   （experimentalSuggestion）不在此扣减——它构造上永远逐条人审（G4 门），
+      //   与 A1.3 的设计对象（免审自动注入）不同类；被拒建议必须零消耗，预算
+      //   记账移至 G4 批准之后（见下 experimental 门块尾）。
+      if (uncrossverified && !experimentalSuggestion) {
         uncrossLeft -= 1
         if (uncrossLeft < 0) {
           const ok = await reL2(
@@ -918,6 +922,24 @@ export async function runComputerTask(
           )
         }
         reL2ApprovedMidAction = true // X3: the human decision staled the frame
+      }
+
+      // WP5 I3 对抗修复 M1（P2-a）：实验层建议的 A1.3 子预算记账——只在 G4 门
+      // 批准之后发生（真注入路径才消耗；上面的拒绝分支已 throw，走到这里即已
+      // 批准）。被拒建议零消耗：不给无辜动作制造续期弹窗，不与免审注入共用
+      // 扣减时点（防确认疲劳，C-4）。
+      if (experimentalSuggestion && uncrossverified) {
+        uncrossLeft -= 1
+        if (uncrossLeft < 0) {
+          const ok = await reL2(
+            `本任务无法交叉验证的点击已超过 ${UNCROSS_VERIFIED_SUB_BUDGET} 次上限。批准以继续，拒绝以终止任务。`,
+            ["computer.uncrossverified_exceeded"],
+            seq,
+          )
+          if (!ok) throw new ComputerError("UNCROSS_DENIED", "computer: uncrossverified click sub-budget exceeded and renewal was denied")
+          uncrossLeft = UNCROSS_VERIFIED_SUB_BUDGET
+          reL2ApprovedMidAction = true // X3: approved coordinates are now stale
+        }
       }
 
       // X3 — post-approval freshness refresh. A mid-action re-L2 approval
