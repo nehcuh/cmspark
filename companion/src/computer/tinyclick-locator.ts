@@ -2,9 +2,9 @@
 //
 // 职责（plan:454-456 + envelope §2 冻结常量）：
 //   - 包线约束代码化（G2，禁文档级约束）——三类层内拒绝，各带结构化原因：
-//       ① 非 ASCII 命令      → tinyclick-envelope:non-ascii
+//       ① 非可打印 ASCII 命令 → tinyclick-envelope:non-ascii
 //         （envelope §2.2：全部命中 case 纯 ASCII，zh 系统性失效已 S-3 冻结；
-//          代码判定无需语言检测器）
+//          代码判定无需语言检测器；M3 收紧 0x20-0x7E——控制符/DEL 属未测区域）
 //       ② prompt token >38   → tinyclick-envelope:too-long
 //         （MAX_PROMPT_TOKENS=38 是「实测命中最大值」型 fail-closed 上限——>38
 //          从未被扫描，属拒绝未测区域；I1 O-4 围栏：拒绝不截断，截断即静默换语义）
@@ -80,10 +80,15 @@ export interface TinyClickLocatorDeps {
   collapseTolerancePx?: number;
 }
 
-/** ASCII 判定（envelope §2.2 可判定子集；空串视为 ASCII，token 检查在后方拦）。 */
+/**
+ * 可打印 ASCII 判定（envelope §2.2 可判定子集；空串视为通过，token 检查在后方拦）。
+ * WP5 I3 对抗修复 M3（P3-c）：收紧为可打印 0x20-0x7E——G1 命中证据全为可打印
+ * 英文，C0 控制符（0x00-0x1F）与 DEL（0x7F）属「测量包线外」未测区域，
+ * fail-closed 拒绝（reason 复用 non-ascii，与「拒绝未测区域」常量语义自洽）。
+ */
 function isAscii(s: string): boolean {
   // eslint-disable-next-line no-control-regex
-  return !/[^\x00-\x7f]/.test(s);
+  return !/[^\x20-\x7e]/.test(s);
 }
 
 export class TinyClickLocator {

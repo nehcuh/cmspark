@@ -13,8 +13,10 @@
 //      （frozen HIT + production error/miss/skipped 一律 FAIL——回归即失败。）
 //   3. 包线内 + frozen MISS → 仅报告不断言：production hit 记 report，
 //      production error/skipped 视为诚实 MISS 记 pass（不惩罚已知弱点）。
-//   4. 包线内凡实际跑了推理（obs hit 且带 totalMs）→
-//      totalMs ≤ frozen.totalMs × GOLDEN_LATENCY_FACTOR；超即 FAIL。
+//   4. 包线内凡实际跑了推理（obs hit 且带 totalMs）→ 延迟判定（WP5 I3 评审 F-1
+//      修复）：优先相对本次 run 自测基线（baselineMs × 2.5，机器无关——热机/慢机
+//      不再假阳性）；无基线时回退冻结锚 ×1.5（legacy，纯模块用法）。
+//      纪律：禁止直接放宽冻结锚 ×1.5 或删规则（frozen 锚定纪律）。
 //   5. frozen 锚缺失（null）→ 包线内记 FAIL（fail-closed，WP5 I3 对抗修复 M2：
 //      部分锚丢失不得静默降级为 report）；包线外规则仍然生效。
 //
@@ -24,8 +26,14 @@ import { MAX_PROMPT_TOKENS } from "./tinyclick-locator";
 
 /** 命中容差（px）：frozen distPx 之上允许的漂移余量。 */
 export const GOLDEN_DIST_TOLERANCE_PX = 2;
-/** 延迟上界系数：totalMs ≤ frozen.totalMs × 1.5。 */
+/** 延迟上界系数（legacy 回退）：totalMs ≤ frozen.totalMs × 1.5。 */
 export const GOLDEN_LATENCY_FACTOR = 1.5;
+/**
+ * 延迟上界系数（基线相对，F-1）：totalMs ≤ 本次 run 自测基线 × 2.5。
+ * 机器无关——同机同 run 的稳态推理不应偏离基线 2.5×；冻结锚 ×1.5 对机器
+ * 负载/热态无判别力（同机实测稳态漂移 ~2.5× 致假阳性），故门禁主用本臂。
+ */
+export const GOLDEN_LATENCY_BASELINE_FACTOR = 2.5;
 /** 包线拒绝 reason 前缀（与 tinyclick-locator TINYCLICK_REASON 三值同源）。 */
 export const ENVELOPE_SKIP_PREFIX = "tinyclick-envelope:";
 
@@ -58,6 +66,13 @@ export interface GoldenEvalOptions {
   maxPromptTokens?: number;
   distTolerancePx?: number;
   latencyFactor?: number;
+  /**
+   * 本次 run 自测延迟基线（ms，harness 在门禁前实测 3 次取中位）。
+   * 提供时规则 4 用 baselineMs × latencyBaselineFactor（机器无关，F-1）；
+   * 缺省时回退 frozen.totalMs × latencyFactor（legacy）。
+   */
+  baselineMs?: number;
+  latencyBaselineFactor?: number;
 }
 
 export interface GoldenVerdict {
@@ -77,10 +92,10 @@ export interface GoldenSummary {
 
 // --- 纯函数 ----------------------------------------------------------------------
 
-/** 与 tinyclick-locator.ts isAscii 同一规则（全字符 ∈ U+0000..U+007F）。 */
+/** 与 tinyclick-locator.ts isAscii 同一规则（可打印 U+0020..U+007E，M3 收紧）。 */
 function isAscii(s: string): boolean {
   // eslint-disable-next-line no-control-regex
-  return !/[^\x00-\x7f]/.test(s);
+  return !/[^\x20-\x7e]/.test(s);
 }
 
 /** 包线判定：ASCII 且 token 数 ≤ maxPromptTokens。 */
@@ -113,6 +128,16 @@ export function evaluateGoldenCase(
   const maxTokens = opts.maxPromptTokens ?? MAX_PROMPT_TOKENS;
   const tol = opts.distTolerancePx ?? GOLDEN_DIST_TOLERANCE_PX;
   const latFactor = opts.latencyFactor ?? GOLDEN_LATENCY_FACTOR;
+  const baseFactor = opts.latencyBaselineFactor ?? GOLDEN_LATENCY_BASELINE_FACTOR;
+
+  /**
+   * 规则 4 延迟上界（F-1）：有本次 run 基线 → baselineMs × 2.5（机器无关）；
+   * 无基线 → frozen.totalMs × 1.5（legacy 回退）。返回 [limit, label]。
+   */
+  const latencyLimit = (frozenTotalMs: number): readonly [number, string] =>
+    opts.baselineMs !== undefined
+      ? [opts.baselineMs * baseFactor, `基线 ${opts.baselineMs.toFixed(1)}ms ×${baseFactor}`]
+      : [frozenTotalMs * latFactor, `frozen ×${latFactor}`];
 
   // 规则 1：包线外 → 必须 skipped 且 reason 前缀命中。
   if (!isEnvelopeIn(c.command, c.input_ids.length, maxTokens)) {
@@ -162,13 +187,13 @@ export function evaluateGoldenCase(
         detail: `frozen HIT 漂移超限：dist=${dist.toFixed(1)}px > ${limit.toFixed(1)}px`,
       };
     }
-    // 规则 4：延迟上界。
-    const msLimit = frozen.totalMs * latFactor;
+    // 规则 4：延迟上界（F-1 基线相对优先）。
+    const [msLimit, msLabel] = latencyLimit(frozen.totalMs);
     if (obs.totalMs > msLimit) {
       return {
         id: c.id,
         status: "fail",
-        detail: `延迟超限：totalMs=${obs.totalMs.toFixed(1)} > ${msLimit.toFixed(1)}（×${latFactor}）`,
+        detail: `延迟超限：totalMs=${obs.totalMs.toFixed(1)} > ${msLimit.toFixed(1)}（${msLabel}）`,
       };
     }
     return {
@@ -181,10 +206,10 @@ export function evaluateGoldenCase(
   // 规则 3：frozen MISS → 仅报告；error/skipped 视为诚实 MISS 放行。
   if (obs.kind === "hit") {
     const dist = distToGtCenter(obs.point.x, obs.point.y, c.gt);
-    const msLimit = frozen.totalMs * latFactor;
+    const [msLimit, msLabel] = latencyLimit(frozen.totalMs);
     const latNote =
       obs.totalMs > msLimit
-        ? `（注意：延迟 ${obs.totalMs.toFixed(1)} > ${msLimit.toFixed(1)}，frozen-MISS 不断言）`
+        ? `（注意：延迟 ${obs.totalMs.toFixed(1)} > ${msLimit.toFixed(1)}（${msLabel}），frozen-MISS 不断言）`
         : "";
     return {
       id: c.id,

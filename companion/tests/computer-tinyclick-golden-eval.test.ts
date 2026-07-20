@@ -10,6 +10,7 @@ import assert from "node:assert/strict";
 import {
   ENVELOPE_SKIP_PREFIX,
   GOLDEN_DIST_TOLERANCE_PX,
+  GOLDEN_LATENCY_BASELINE_FACTOR,
   GOLDEN_LATENCY_FACTOR,
   distToGtCenter,
   evaluateGoldenCase,
@@ -83,6 +84,10 @@ test("isEnvelopeIn：ASCII+≤38 内；非 ASCII 或 >38 外；边界 38 在内"
   assert.equal(isEnvelopeIn("点击窗口正中间的播放按钮", 38), false); // 38 tok 但非 ASCII
   assert.equal(isEnvelopeIn("请点击窗口中间偏上位置那一段用于验证长命令定位能力的中文说明文字", 78), false);
   assert.equal(isEnvelopeIn("ascii", 40, 50), true); // maxPromptTokens 可覆写
+  // M3 收紧：C0 控制符与 DEL 属未测区域 → 包线外（可打印 0x20-0x7E 才在内）
+  assert.equal(isEnvelopeIn("click\tok", 15), false);
+  assert.equal(isEnvelopeIn("click ok\x7f", 15), false);
+  assert.equal(isEnvelopeIn("click ~ok", 15), true); // 0x7E 边界在内
 });
 
 test("distToGtCenter：欧氏距离", () => {
@@ -133,7 +138,7 @@ test("frozen HIT（int8 f-ok-en 3.6px）：error/skipped 一律 fail（回归即
 
 // --- 规则 4：延迟上界 -------------------------------------------------------------
 
-test("frozen HIT：totalMs ≤ frozen×1.5 通过，超出 fail", () => {
+test("frozen HIT：totalMs ≤ frozen×1.5 通过，超出 fail（legacy 无基线回退）", () => {
   const anchor = HYBRID["f-icon-en"]; // 673.6 → 上限 1010.4
   assert.equal(
     evaluateGoldenCase(F_ICON_EN, anchor, hitAt(483, 173, 1010.3)).status,
@@ -142,6 +147,31 @@ test("frozen HIT：totalMs ≤ frozen×1.5 通过，超出 fail", () => {
   const over = evaluateGoldenCase(F_ICON_EN, anchor, hitAt(483, 173, 1010.5));
   assert.equal(over.status, "fail");
   assert.match(over.detail, /延迟超限/);
+});
+
+test("规则 4（F-1）：有本次 run 基线 → 基线×2.5 判定（机器无关，冻锚不再误伤热机）", () => {
+  const anchor = HYBRID["f-icon-en"]; // frozen 673.6×1.5=1010.4
+  // 热机场景：基线 1730 → 上限 4325；1717ms 在 legacy 下 fail、基线下 pass（评审 F-1 假阳性实例）
+  const hot = evaluateGoldenCase(F_ICON_EN, anchor, hitAt(483, 173, 1717.1), { baselineMs: 1730 });
+  assert.equal(hot.status, "pass", hot.detail);
+  // 同基线下真回归（10×）仍 fail——比值臂不是放宽，是换参照系
+  const regression = evaluateGoldenCase(F_ICON_EN, anchor, hitAt(483, 173, 4326), { baselineMs: 1730 });
+  assert.equal(regression.status, "fail");
+  assert.match(regression.detail, /基线 1730\.0ms ×2\.5/);
+  // 安静机：基线 700 → 上限 1750
+  assert.equal(
+    evaluateGoldenCase(F_ICON_EN, anchor, hitAt(483, 173, 1750), { baselineMs: 700 }).status,
+    "pass",
+  );
+  assert.equal(
+    evaluateGoldenCase(F_ICON_EN, anchor, hitAt(483, 173, 1751), { baselineMs: 700 }).status,
+    "fail",
+  );
+  // latencyBaselineFactor 可覆写
+  assert.equal(
+    evaluateGoldenCase(F_ICON_EN, anchor, hitAt(483, 173, 1500), { baselineMs: 700, latencyBaselineFactor: 2 }).status,
+    "fail",
+  );
 });
 
 // --- 规则 3：frozen MISS -----------------------------------------------------------
@@ -228,5 +258,6 @@ test("summarizeGolden：fail===0 即 ok，report 不阻塞", () => {
 test("常量契约：容差/系数/前缀", () => {
   assert.equal(GOLDEN_DIST_TOLERANCE_PX, 2);
   assert.equal(GOLDEN_LATENCY_FACTOR, 1.5);
+  assert.equal(GOLDEN_LATENCY_BASELINE_FACTOR, 2.5);
   assert.equal(ENVELOPE_SKIP_PREFIX, "tinyclick-envelope:");
 });

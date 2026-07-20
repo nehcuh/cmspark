@@ -15,7 +15,8 @@
 //   1. 包线外（非 ASCII 或 tok>38）→ 必须 skipped(tinyclick-envelope:*)，拒绝率 100%
 //   2. 包线内 + frozen HIT → 必须 hit 且 dist ≤ frozen.distPx + 2px
 //   3. 包线内 + frozen MISS → 仅报告不断言（frozen 锚定纪律，不自造阈值）
-//   4. 包线内凡跑推理 → totalMs ≤ frozen.totalMs × 1.5
+//   4. 包线内凡跑推理 → totalMs ≤ 本次 run 自测基线 × 2.5（F-1 机器无关；
+//      无基线回退 frozen ×1.5 legacy；禁直接放宽 ×1.5）
 // 锚定加固（WP5 I3 对抗修复 M2）：锚按 c.id 键取（非位置索引，重排不静默错锚），
 // case 在锚中无 id 条目即 exit 2；包线内锚缺失在 eval 规则 5 记 FAIL（fail-closed）。
 // 坍缩抑制规避：每 case 新建 TinyClickLocator（坍缩历史任务级，同图异命令合法）。
@@ -144,6 +145,26 @@ async function main() {
   await session.prepare();
   ok(`session prepare 完成（variant=${args.variant}）`);
 
+  // --- 本次 run 延迟基线（WP5 I3 评审 F-1 修复） ----------------------------------
+  // 冻结锚 ×1.5 对机器负载/热态无判别力（同机实测稳态漂移 ~2.5× 致假阳性）。
+  // 改为：门禁前用 s1 参考命令在 fixture.png 上实测 3 次取中位作基线，
+  // 延迟臂判定 = case totalMs ≤ 基线 × 2.5（机器无关；禁直接放宽 ×1.5）。
+  const REF_COMMAND = "click on the ok button";
+  const fixturePng = pngByImage.get("fixture.jpg");
+  const refRuns = [];
+  for (let i = 0; i < 3; i++) {
+    const png = PNG.sync.read(fs.readFileSync(fixturePng));
+    // transfer 会 detach buffer——每次重读帧（生产亦为每帧新采集）
+    const out = await session.locate(REF_COMMAND, {
+      rgba: Buffer.from(png.data),
+      width: png.width,
+      height: png.height,
+    });
+    refRuns.push(out.timings.totalMs);
+  }
+  const baselineMs = [...refRuns].sort((a, b) => a - b)[1];
+  ok(`本次 run 延迟基线: ${baselineMs.toFixed(1)}ms（3 次实测 [${refRuns.map((x) => x.toFixed(0)).join(", ")}] 中位）→ 延迟臂上界 ${(baselineMs * evalMod.GOLDEN_LATENCY_BASELINE_FACTOR).toFixed(0)}ms`);
+
   // --- frozen 锚按 id 键取（WP5 I3 对抗修复 M2：位置索引重排即静默错锚 → 禁） ------
   let anchorMap;
   try {
@@ -194,7 +215,7 @@ async function main() {
         ? { kind: "hit", point: out.point, totalMs: out.timings.totalMs }
         : { kind: out.kind, reason: out.reason };
 
-    const v = evalMod.evaluateGoldenCase(c, anchor, obs);
+    const v = evalMod.evaluateGoldenCase(c, anchor, obs, { baselineMs });
     verdicts.push(v);
     const mark = v.status === "pass" ? "PASS" : v.status === "fail" ? "FAIL" : "REPORT";
     console.log(`[verify-tinyclick-golden] ${mark}:  ${c.id} [${c.group}/${c.lang}] ${v.detail}`);

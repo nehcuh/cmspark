@@ -77,6 +77,32 @@ test("包线：非 ASCII 命令 → skipped tinyclick-envelope:non-ascii，sessi
   assert.equal(session.calls.length, 0, "包线拒绝必须先于推理");
 });
 
+test("包线（M3 收紧）：C0 控制符与 DEL 命令 → skipped non-ascii，session 零调用", async () => {
+  const session = new FakeSession();
+  const loc = new TinyClickLocator(locatorDeps({ session }));
+  for (const command of [
+    "click the ok button\x00", // NUL
+    "click\tthe ok button", // TAB
+    "click the ok button\n", // LF
+    "click\x1b the ok button", // ESC
+    "click the ok button\x7f", // DEL
+  ]) {
+    const r = await loc.locate({ command, shot: shotAt("a.png") });
+    assert.deepEqual(
+      r,
+      { kind: "skipped", reason: TINYCLICK_REASON.NON_ASCII },
+      `控制符命令必须 fail-closed 拒绝（测量包线外）：${JSON.stringify(command)}`,
+    );
+  }
+  assert.equal(session.calls.length, 0, "控制符命令一律先进包线拒绝，不进推理");
+  // 可打印边界自证：空格（0x20）与波浪号（0x7E）仍放行
+  const ok = new FakeSession();
+  const loc2 = new TinyClickLocator(locatorDeps({ session: ok }));
+  const r2 = await loc2.locate({ command: "click ~", shot: shotAt("a.png") });
+  assert.equal(r2.kind, "hit");
+  assert.equal(ok.calls.length, 1);
+});
+
 test("包线：prompt token >38 → skipped tinyclick-envelope:too-long，session 零调用（拒绝不截断，O-4）", async () => {
   const session = new FakeSession();
   const loc = new TinyClickLocator(locatorDeps({ session, tokenizer: tokenizerOf(39) }));
