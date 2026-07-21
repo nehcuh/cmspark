@@ -33,6 +33,7 @@
 
 import { createHash, randomUUID } from "crypto"
 import * as fs from "fs"
+import * as os from "os"
 import type { CompanionConfig } from "../config"
 import type { SecurityConfirmationDecision, SecurityConfirmationDetails } from "../security-confirmation"
 import { scanDanger, type DangerScan } from "./danger"
@@ -421,10 +422,18 @@ export async function runComputerTask(
   const corpusHash = corpusHashOf([...corpus])
 
   // Resolve the target window (largest visible window of the whitelisted exe).
+  // macOS WP3: use bundleId when available; Windows: use exe path (adversarial review C4).
   let hwnd = 0
   let targetPid = 0
   try {
-    const wins = await deps.windows.enumerateByExe(entry.exe!.path)
+    const exeId = os.platform() === "darwin"
+      ? (entry.bundleId ?? entry.exe?.path ?? "")
+      : (entry.exe?.path ?? "")
+    if (!exeId) {
+      throw new ComputerError("APP_NOT_WHITELISTED",
+        `computer: no bundleId or exe path for "${entry.display_name}"`)
+    }
+    const wins = await deps.windows.enumerateByExe(exeId)
     if (wins.length === 0) {
       throw new ComputerError("APP_WINDOW_NOT_FOUND", `computer: no visible window for "${entry.display_name}" — is it running?`)
     }
@@ -1055,8 +1064,11 @@ export async function runComputerTask(
 
       // X1: snapshot the exe's top-level hwnds BEFORE injection — a new
       // top-level window afterwards is dialog evidence independent of pixels.
+      const exeId = os.platform() === "darwin"
+        ? (entry.bundleId ?? entry.exe?.path ?? "")
+        : (entry.exe?.path ?? "")
       const beforeWinHwnds = new Set(
-        (await deps.windows.enumerateByExe(entry.exe!.path).catch(() => [])).map((w) => w.hwnd),
+        (await deps.windows.enumerateByExe(exeId).catch(() => [])).map((w) => w.hwnd),
       )
 
       // WP2 (§E.6): final abort gate immediately BEFORE the irreversible
@@ -1102,7 +1114,7 @@ export async function runComputerTask(
       const afterShot = await trackCapture(hwnd)
       const fg = await deps.injector.foregroundHwnd()
       const { diffRatio, maxZoneRatio, maxBlobRatio } = await deps.capturer.diff(afterShot.path, shot.path)
-      const afterWinHwnds = await deps.windows.enumerateByExe(entry.exe!.path).catch(() => [])
+      const afterWinHwnds = await deps.windows.enumerateByExe(exeId).catch(() => [])
       const newTopLevel = afterWinHwnds.some((w) => !beforeWinHwnds.has(w.hwnd))
       // WP3 (<5% small-popup channel): drain the WindowOpened subscription —
       // a task-induced window (owned/child popup of the target pid) that the

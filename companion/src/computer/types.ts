@@ -425,7 +425,7 @@ export interface SecurityEnvironment {
 export function corpusOf(actions: ComputerAction[]): string[] {
   const texts: string[] = []
   for (const a of actions) {
-    if (a.action === "type") texts.push(a.text)
+    if (a.action === "type") texts.push(a.text.normalize("NFKC"))
   }
   return texts
 }

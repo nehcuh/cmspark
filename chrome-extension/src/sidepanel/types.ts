@@ -323,6 +323,8 @@ export interface AppEntry {
   added_at: string
   exe?: AppExeBlock
   aumid?: string
+  /** macOS bundle identifier (e.g. "com.apple.Notes") for coordinate computer-use. */
+  bundleId?: string
   /** Policy ceiling attached by the backend (unsigned/user-writable/AUMID → "ai"). */
   max_policy?: "auto" | "ai"
   /**
@@ -347,9 +349,11 @@ export interface AppPresetStatus {
 /** Candidate from apps.enumerate.result, annotated by the backend guards. */
 export interface AppEnumerateCandidate {
   name: string
-  source: "running" | "startapps"
+  source: "running" | "startapps" | "installed"
   path?: string
   aumid?: string
+  /** macOS bundle identifier (e.g. "com.apple.Notes"). */
+  bundleId?: string
   /** Hard-denied by the lolbin blocklist — UI shows the row disabled. */
   blocked: boolean
   block_reason?: "lolbin"

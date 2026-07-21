@@ -98,3 +98,22 @@
 - context: New quick action flow needs end-to-end runtime test
 - next_action: Start companion, load extension, click each quick action from tray, verify thread creation and chat execution in side panel
 - updated: 2026-06-09
+
+### S12 (2026-07-21) [cmspark macOS 坐标级电脑操控 WP3 全栈实现]
+- **核心交付**: Plan→Adversarial→Execute→Review→Test 五阶段流程，实现 macOS 坐标级电脑操控
+- **TypeScript 侧**(14 files, ~1000行): token 模式扩展(`mac.app.*`)、10 个 darwin 适配器、E-Stop(UNIX socket)、证据链(Swift Keychain)、server.ts darwin 分支、policy.ts vault 守卫
+- **Swift 侧**(~400行): `host.swift` 新增 13 个子命令(window-list/ax-probe/ax-locate/screenshot/ocr/inject/preview/evidence-seal/estop...)
+- **Extension 侧**(5 files): App Tab macOS 支持(扫描 /Applications、bundleId 添加、系统提示词平台切换)
+- **对抗审查**: 2 Agent 并行发现 25 条(5 CRITICAL + 8 HIGH)，全部纳入修订版计划 v1.1.0
+- **质量**: tsc 零错误、1696 测试 0 回归、Swift 编译 227KB arm64 signed
+- **测试中发现的 bug 修复循环**:
+  - App Tab 加不上 macOS 应用 → add-flow.ts bundleId 分支 + enumerate.ts PlistBuddy 扫描 + Extension AppsPanel 5 处 platform guard
+  - Tray 停止失败 → handleDaemonStop SIGKILL 兜底 + MCP shutdown 超时
+  - 策略 cap "ai" → maxPolicyForEntry macOS /Applications 路径 → "auto"
+  - 系统提示词无 mac.app.* token → buildAppIndexSection darwin 分支 + tool-definitions 描述更新
+  - Tray 状态 false "已停止" → pollCompanionStatus WS 端口兜底
+  - 生物识别超时 → biometric-gate macOS Touch ID 优先
+  - 重复点坐标操作超时 → handleCoordinateAllowed 幂等检查
+- **关键决策**: AX(NSAccessibility) L0 + OCR(Apple Vision) L1 定位链 / CGEventPost 注入 / screencapture 截图(避免 CGWindowListCreateImage 15.0 废弃) / UNIX socket E-Stop(替代心跳文件) / Keychain SecItemAdd 证据密钥
+- **待完成**: E2E 真机测试(需要 Screen Recording + Accessibility TCC 权限)
+- **Recorded**: yes — 见 project-knowledge macOS computer-use 架构决策

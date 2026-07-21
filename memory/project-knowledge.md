@@ -148,3 +148,30 @@
   5. mixed hunk 拆不开的：答 `e` 手动编辑 patch
 - 注意：zsh 把 `rm` alias 成 `rm -i`，批量删文件用 `\rm` 或 `command rm` 绕过
 - 案例（2026-07-14）：13 文件 +576 -93 改动，按 8 个主题拆 commit；message-router.ts 6 hunks 分到 C1/C2/C3；agentStore.tsx 一个 hunk 同时含 C1（SET_KNOWLEDGE_IMPORT_STATUS reducer）+ C3（SET_SETTINGS_OPEN reducer），用 `s` 拆成两个子 hunk 分别归 commit
+
+### macOS coordinate computer-use: CGWindowListCreateImage deprecated in macOS 15
+- Both `CGWindowListCreateImage` and `CGDisplayCreateImage` are marked unavailable (error, not warning) in macOS 15 SDK
+- ScreenCaptureKit is the replacement but requires macOS 12.3+ and async APIs
+- Workaround: use `/usr/sbin/screencapture -x -R x,y,w,h` subprocess call for window capture
+- Files: `companion/src/host-use/darwin/host.swift` (cuScreenshot function)
+
+### Swift multi-file compilation: only one file can have top-level code
+- Compiling multiple .swift files (not in a target) requires exactly one "main" file with top-level statements
+- Solution: single-file compilation with all functions in one file
+- Files: `companion/src/host-use/darwin/host.swift`
+
+### Extension App Tab macOS support requires 3-layer changes
+- Adding macOS app support needs: (1) companion add-flow.ts bundleId branch, (2) companion enumerate.ts PlistBuddy scanner, (3) extension AppsPanel.tsx platform guard + bundleId field
+- Missing any layer = "应用启动仅 Windows 可用" dead button
+- Files: add-flow.ts, enumerate.ts, handlers.ts, apps-utils.ts, types.ts, AppsPanel.tsx
+
+### System prompt app index was platform-gated to win32 only
+- `buildAppIndexSection(platform)` returned empty string for non-win32 → LLM never saw mac.app.* tokens
+- Fix: also accept "darwin" platform; also update tool-definitions descriptions from "(Windows ONLY)" to "(Windows / macOS)"
+- Files: adapter.ts, tool-definitions.ts
+
+### Biometric gate on macOS should prefer Touch ID over nonce challenge
+- Default non-win32 fallback was 6-char manual nonce code → 45s timeout kills user experience
+- Fix: `requireAppsBiometric` priority chain: win32→Windows Hello / darwin→Touch ID / fallback→nonce
+- Touch ID uses `cmspark-host biometric-verify` subcommand with 60s timeout
+- Files: biometric-gate.ts, host-use/darwin/index.ts

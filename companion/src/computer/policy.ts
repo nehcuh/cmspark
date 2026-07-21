@@ -9,6 +9,7 @@
 // and this module re-checks at execution time (config-tamper belt).
 
 import * as path from "path"
+import * as os from "os"
 import type { CompanionConfig } from "../config"
 import type { AppEntry } from "../apps/types"
 import { basenameToVault, isLolbinPath } from "../apps/guards"
@@ -16,11 +17,48 @@ import { APP_TOKEN_PATTERN } from "../apps/types"
 import { ComputerError, type WindowInfo } from "./types"
 
 /**
+ * macOS vault bundle IDs — structural exclusion set (WP3 + adversarial review H6).
+ * Apps whose bundle ID matches any entry here can NEVER carry coordinateAllowed.
+ */
+const MAC_VAULT_BUNDLE_IDS = new Set([
+  // 密码管理器
+  "com.agilebits.onepassword7", "com.bitwarden.desktop",
+  "com.lastpass.lastpassmacdesktop",
+  // 浏览器
+  "com.apple.Safari", "com.google.Chrome", "org.mozilla.firefox",
+  "company.thebrowser.Browser",     // Arc
+  "com.brave.Browser",              // Brave
+  "com.microsoft.edgemac",          // Edge
+  // 终端 + 编辑器
+  "com.apple.Terminal", "com.googlecode.iterm2",
+  // 系统安全
+  "com.apple.keychainaccess", "com.apple.systempreferences",
+  "com.apple.Passwords",            // macOS Sequoia Passwords.app
+  "com.apple.Wallet",               // Wallet (信用卡/票券)
+  "com.apple.Authenticator",        // 内置认证器
+  // 认证器
+  "com.google.Authenticator", "com.authy.authy-mac",
+  // 加密钱包
+  "com.metamask.MetaMask", "com.ledger.live", "com.exodus.Exodus",
+  // SSH/密钥管理
+  "com.maxgoedjen.secretive.Secretive",
+])
+
+/**
  * Structural eligibility — vault-mapped (browser/password-manager/terminal/
  * wallet) and LOLBIN exes can NEVER carry coordinateAllowed (A10.3).
+ * macOS: vault bundle IDs are structurally excluded.
  */
 export function canEverCoordinate(entry: AppEntry): boolean {
-  if (entry.exe?.path) {
+  // macOS vault bundle ID check (adversarial review H6)
+  if (entry.bundleId && MAC_VAULT_BUNDLE_IDS.has(entry.bundleId)) {
+    return false
+  }
+  // Windows path-based vault/LOLBIN checks.
+  // Guard: skip when running on darwin AND the entry is a macOS entry (has bundleId),
+  // to avoid calling Windows path functions with bundle IDs.
+  const isMacEntry = os.platform() === "darwin" && entry.bundleId != null
+  if (!isMacEntry && entry.exe?.path) {
     if (isLolbinPath(entry.exe.path)) return false
     if (basenameToVault(entry.exe.path) !== null) return false
   }
@@ -100,9 +138,13 @@ export function assertHwndOwnedByEntry(info: WindowInfo, entry: AppEntry): void 
   if (!info.alive) {
     throw new ComputerError("HWND_DEAD", `computer: hwnd ${info.hwnd} is no longer a live window`)
   }
-  const entryPath = entry.exe?.path
+  // macOS WP3: ownership is by bundleId; Windows: ownership is by exe path
+  const entryPath = os.platform() === "darwin"
+    ? (entry.bundleId ?? entry.exe?.path ?? "")
+    : (entry.exe?.path ?? "")
+  const isMacEntry = os.platform() === "darwin" && entry.bundleId != null
   if (!entryPath) {
-    throw new ComputerError("HWND_NOT_OWNED", `computer: app "${entry.token}" has no exe path to bind`)
+    throw new ComputerError("HWND_NOT_OWNED", `computer: app "${entry.token}" has no exe path or bundleId to bind`)
   }
   if (!info.exePath || normalizeExePath(info.exePath) !== normalizeExePath(entryPath)) {
     throw new ComputerError(
@@ -113,13 +155,15 @@ export function assertHwndOwnedByEntry(info: WindowInfo, entry: AppEntry): void 
   }
   // WP2: defensive structural recheck on the RESOLVED exe (not just the
   // recorded entry config) — the coordinate path re-denies vault/LOLBIN at
-  // the moment of truth.
-  if (isLolbinPath(info.exePath!) || basenameToVault(info.exePath!) !== null) {
-    throw new ComputerError(
-      "APP_COORDINATE_STRUCTURAL",
-      `computer: hwnd ${info.hwnd} resolves to a vault/LOLBIN binary "${info.exePath}" — coordinate operation is structurally denied`,
-      { hwnd: info.hwnd, actual: info.exePath },
-    )
+  // the moment of truth. macOS entries (bundleId) skip this Windows-only path.
+  if (!isMacEntry && info.exePath) {
+    if (isLolbinPath(info.exePath) || basenameToVault(info.exePath) !== null) {
+      throw new ComputerError(
+        "APP_COORDINATE_STRUCTURAL",
+        `computer: hwnd ${info.hwnd} resolves to a vault/LOLBIN binary "${info.exePath}" — coordinate operation is structurally denied`,
+        { hwnd: info.hwnd, actual: info.exePath },
+      )
+    }
   }
 }
 
@@ -130,8 +174,13 @@ export function assertHwndOwnedByEntry(info: WindowInfo, entry: AppEntry): void 
  * Drift = the binary on disk no longer matches what the owner whitelisted —
  * for coordinate injection this fails CLOSED (the plan's "drift -> manual"
  * downgrade means: the task stops and a human must re-review the entry).
+ *
+ * macOS: no-op — code signing is the trust anchor (adversarial review M5).
  */
 export function assertExeNotDrifted(entry: AppEntry, hashFile: (p: string) => string): void {
+  // macOS entries use code signing as the integrity anchor — no binary hash drift check
+  const isMacEntry = os.platform() === "darwin" && entry.bundleId != null
+  if (isMacEntry) return
   const recorded = entry.exe?.sha256
   const exePath = entry.exe?.path
   if (!recorded || !exePath) return // no add-time record — nothing to compare

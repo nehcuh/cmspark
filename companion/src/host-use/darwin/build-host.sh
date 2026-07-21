@@ -36,6 +36,11 @@ swiftc \
   -o "${OUTPUT_BIN}" \
   "${SCRIPT_DIR}/host.swift" \
   -framework Foundation \
+  -framework ApplicationServices \
+  -framework Vision \
+  -framework Security \
+  -framework Carbon \
+  -framework CoreImage \
   -Xlinker -sectcreate \
   -Xlinker __TEXT \
   -Xlinker __info_plist \

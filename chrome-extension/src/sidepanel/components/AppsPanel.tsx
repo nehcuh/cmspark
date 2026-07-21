@@ -125,6 +125,7 @@ export function AppsPanel() {
         kind: "gui",
         ...(picked.path ? { path: picked.path } : {}),
         ...(picked.aumid ? { aumid: picked.aumid } : {}),
+        ...(picked.bundleId ? { bundleId: picked.bundleId } : {}),
         display_name: picked.name,
         origin: "enumerate",
         policy: addPolicy,
@@ -153,7 +154,8 @@ export function AppsPanel() {
     return (
       c.name.toLowerCase().includes(q) ||
       (c.path ?? "").toLowerCase().includes(q) ||
-      (c.aumid ?? "").toLowerCase().includes(q)
+      (c.aumid ?? "").toLowerCase().includes(q) ||
+      (c.bundleId ?? "").toLowerCase().includes(q)
     )
   })
 
@@ -361,7 +363,7 @@ export function AppsPanel() {
               <input
                 style={styles.searchInput}
                 type="text"
-                placeholder="C:\\Path\\To\\app.exe（服务端将校验并解析真实路径）"
+                placeholder={navigator.platform?.includes("Mac") ? "com.apple.Notes（macOS Bundle ID）" : "C:\\Path\\To\\app.exe（服务端将校验并解析真实路径）"}
                 value={manualPath}
                 onChange={(e) => setManualPath(e.target.value)}
               />
@@ -512,6 +514,9 @@ function AppCard(props: AppCardProps) {
             {entry.aumid && (
               <span style={styles.uwpBadge} title={entry.aumid}>UWP</span>
             )}
+            {entry.bundleId && (
+              <span style={styles.uwpBadge} title={entry.bundleId}>macOS</span>
+            )}
             {entry.exe?.signer && (
               <span title={`签名：${entry.exe.signer}`}>🔏 已签名</span>
             )}
@@ -619,10 +624,10 @@ function CandidateRow({ candidate, onPick }: { candidate: AppEnumerateCandidate;
         )}
         {c.blocked && <span style={styles.blockedBadge}>禁止添加</span>}
         <span style={styles.candidatePath}>
-          {c.aumid ? "UWP 应用" : c.path ? ellipsizePath(c.path, 36) : ""}
+          {c.aumid ? "UWP 应用" : c.bundleId ? c.bundleId : c.path ? ellipsizePath(c.path, 36) : ""}
         </span>
       </span>
-      <span style={styles.sourceBadge}>{c.source === "running" ? "运行中" : "开始菜单"}</span>
+      <span style={styles.sourceBadge}>{c.source === "running" ? "运行中" : c.source === "installed" ? "已安装" : "开始菜单"}</span>
     </button>
   )
 }

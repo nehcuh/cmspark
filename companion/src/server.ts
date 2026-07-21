@@ -452,12 +452,13 @@ export function createToolExecutor(ws: WebSocket) {
     // list — on win32 only. Off win32 the gate is skipped entirely so the
     // executor can return the typed platform error without a pointless dialog.
     const L2_GATE_TOOLS = ["evaluate", "osascript_eval", "host_read", "host_write"]
-    const hostAppGated = toolName === "host_app" && os.platform() === "win32"
+    const hostAppGated = toolName === "host_app" && (os.platform() === "win32" || os.platform() === "darwin")
     // Coordinate computer-use (WP1): critical-class — the task-level L2 dialog
     // is shown EVERY task (god-mode / auto-approve do NOT skip it), always
     // originWs-bound, and input injection is NEVER thread-trusted. Off win32
-    // the gate is skipped so the executor returns the typed platform error.
-    const hostComputerGated = toolName === "host_computer" && os.platform() === "win32"
+    // or darwin the gate is skipped so the executor returns the typed platform error.
+    const hostComputerGated = toolName === "host_computer" &&
+      (os.platform() === "win32" || os.platform() === "darwin")
     if ((L2_GATE_TOOLS.includes(toolName) || hostAppGated || hostComputerGated) && !finalParams.security_token) {
       const code = String(finalParams.code || finalParams.expression || "")
       const lengthCheck = securityPolicy.checkLength(toolName, code)
@@ -506,7 +507,7 @@ export function createToolExecutor(ws: WebSocket) {
           return result
         }
         if (!APP_TOKEN_PATTERN.test(appToken)) {
-          return fail(`host_app: invalid app token "${appToken}" (expected win.app.<slug> / win.cli.<slug>)`)
+          return fail(`host_app: invalid app token "${appToken}" (expected [win|mac].app.<slug> / [win|mac].cli.<slug>)`)
         }
         if (action !== "launch") {
           return fail(`host_app: unsupported action "${action}" — Phase 1 supports "launch" (plain no-arg start) only`)
@@ -580,8 +581,35 @@ export function createToolExecutor(ws: WebSocket) {
           // 里——全部廉价前门(assertCoordinateAllowed / COMPUTER_TASK_BUSY /
           // rate-limit)通过之后、L2 对话框发出之前;后续重构不得挪前(每次
           // 确认 ≤5s 的代价只对真实候选任务支付)。best-effort:helper 失败/
-          // 超时/非 win32/无 exe(AUMID 条目)一律降级无图,绝不影响确认门。
-          if (os.platform() === "win32" && entryC.exe?.path) {
+          // 超时/非 win32|darwin/无 exe(AUMID 条目)一律降级无图,绝不影响确认门。
+          if (os.platform() === "darwin" && (entryC.bundleId || entryC.exe?.path)) {
+            try {
+              const { buildComputerL2PreviewImage } = await import("./computer/l2-preview-image")
+              const { MacScreenCapturer, MacLocator, MacWindowEnumerator, MacPreviewBuilder } = await import("./computer/darwin-adapters")
+              const l2img = await buildComputerL2PreviewImage(
+                {
+                  windows: new MacWindowEnumerator(),
+                  capturer: new MacScreenCapturer(),
+                  locator: new MacLocator(),
+                  previewBuilder: new MacPreviewBuilder(),
+                  log: (event, data) => logger.info(event, { tool_call_id: toolCallId, ...data }),
+                },
+                {
+                  exePath: entryC.bundleId ?? entryC.exe?.path ?? "",
+                  appDisplayName: entryC.display_name,
+                  actions: Array.isArray(finalParams.actions) ? finalParams.actions : [],
+                  timeoutMs: 5000,
+                },
+              )
+              if (l2img) {
+                computerL2PreviewImage = l2img.image
+                computerL2PreviewCaption = l2img.caption
+              }
+            } catch (helperErr: any) {
+              // best-effort:helper 异常绝不拒飞任务(降级无图)。
+              logger.info("computer.l2preview.failed", { tool_call_id: toolCallId, error: helperErr?.message || String(helperErr) })
+            }
+          } else if (os.platform() === "win32" && entryC.exe?.path) {
             try {
               const { buildComputerL2PreviewImage } = await import("./computer/l2-preview-image")
               const { PsScreenCapturer, PsLocator, PsWindowEnumerator, PsPreviewBuilder } = await import("./computer/win-adapters")
@@ -1844,8 +1872,10 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
           return { success: false, error: "Invalid or expired security token for host_app" }
         }
       }
-      if (os.platform() !== "win32") {
-        return { success: false, error: `host_app is Windows-only in Phase 1 (platform=${os.platform()})` }
+      const isMac = os.platform() === "darwin"
+      const isWin = os.platform() === "win32"
+      if (!isWin && !isMac) {
+        return { success: false, error: `host_app requires macOS or Windows (platform=${os.platform()})` }
       }
       // Belt re-validation of the gate's preconditions — config may have
       // changed between gate and execution, and tests reach the executor
@@ -1929,8 +1959,10 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
           return { success: false, error: "Invalid or expired security token for host_computer" }
         }
       }
-      if (os.platform() !== "win32") {
-        return { success: false, error: `host_computer is Windows-only in WP1 (platform=${os.platform()})` }
+      const isMac = os.platform() === "darwin"
+      const isWin = os.platform() === "win32"
+      if (!isWin && !isMac) {
+        return { success: false, error: `host_computer requires macOS or Windows (platform=${os.platform()})` }
       }
       // R1 (§E.6.2): global single-task invariant — at most ONE coordinate
       // computer task executes process-wide, across threadIds. The pre-dialog
@@ -1973,49 +2005,113 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
         // task can clear a fresh press), and the user can simply press again.
         clearEstopFlag()
         const { runComputerTask } = await import("./computer/executor")
-        const {
-          PsScreenCapturer,
-          PsLocator,
-          PsInputInjector,
-          PsWindowEnumerator,
-          PsSecurityEnvironment,
-          PsPreviewBuilder,
-          PsEvidenceSealer,
-          PsUiaLocator,
-          startUiaWindowWatcher,
-        } = await import("./computer/win-adapters")
-        const { PsUiaProber, writeBackUiaVerdict } = await import("./computer/uia")
-        const { ComputerEvidence, runEvidenceJanitor } = await import("./computer/evidence")
-        // A7.2: 7-day TTL janitor — best-effort, never blocks the task.
-        try { runEvidenceJanitor({}) } catch { /* best-effort */ }
-        // X6: sweep %TEMP% raw captures stranded by crashed companion
-        // processes (dead pid, or older than 1h even if alive) — best-effort.
-        try {
-          const { sweepComputerTempCaptures } = await import("./computer/win-adapters")
-          const swept = sweepComputerTempCaptures()
-          if (swept.removed.length > 0) {
-            logger.info("computer.temp.swept", { removed: swept.removed.length })
+
+        let result: Awaited<ReturnType<typeof runComputerTask>>
+
+        if (isMac) {
+          // macOS WP3: darwin adapters
+          const darwinEstop = await import("./computer/darwin-estop")
+          const darwinEstopOk = await darwinEstop.ensureEstopHelper()
+          if (!darwinEstopOk.ok) {
+            logger.warn("computer.estop.unavailable", { tool_call_id: toolCallId, reason: darwinEstopOk.reason })
+            return {
+              success: false,
+              error: `host_computer refused: emergency-stop unavailable (${darwinEstopOk.reason})`,
+              data: { error_code: "EMERGENCY_STOP_UNAVAILABLE" },
+            }
           }
-        } catch { /* best-effort */ }
-        const sealer = new PsEvidenceSealer()
-        // WP5-I4 WI-4.3：TinyClick 实验层 per-task admission——任一拒绝路径
-        // fail-closed（locator=null=层关闭，UIA/OCR/框选链不受影响，attempts
-        // 记 skipped model-disabled）；会话懒建 ~1.4s 仅在开关开+许可已接受+
-        // 无熔断且首次时发生。stillEnabled 新鲜度复核防 build×关闭落地竞态。
-        // P4（I4 对抗）：safe 包装器防御折叠——admission 任何意外抛出视同
-        // 拒绝 + loud log，UIA/OCR 兜底链密闭。
-        const { resolveTinyClickAdmissionSafe } = await import("./computer/model-admission")
-        const { computerModelSession } = await import("./computer/model-handlers")
-        const tinyclickAdmission = await resolveTinyClickAdmissionSafe({
-          config: getConfig().computer,
-          holder: computerModelSession,
-          deps: {
-            broadcast: (m) => { try { execOpts?.broadcast?.(m) } catch { /* best-effort */ } },
-            log: (event, payload) => logger.info(event, { tool_call_id: toolCallId, ...payload }),
-            stillEnabled: () => getConfig().computer?.modelEnabled === true,
-          },
-        })
-        const result = await runComputerTask(
+          darwinEstop.clearEstopFlag()
+
+          const {
+            MacScreenCapturer,
+            MacLocator,
+            MacInputInjector,
+            MacWindowEnumerator,
+            MacSecurityEnvironment,
+            MacAxLocator,
+            MacPreviewBuilder,
+            startMacAxWindowWatcher,
+            MacAxProber,
+          } = await import("./computer/darwin-adapters")
+          const { MacEvidenceSealer } = await import("./computer/darwin-evidence")
+          const { ComputerEvidence } = await import("./computer/evidence")
+          const { writeBackUiaVerdict } = await import("./computer/uia")
+
+          const macSealer = new MacEvidenceSealer()
+
+          result = await runComputerTask(
+            {
+              task: String(params.task || ""),
+              app: String(params.app || ""),
+              actions: Array.isArray(params.actions) ? params.actions : [],
+              ...(typeof params.budget === "number" ? { budget: params.budget } : {}),
+              taskId: computerTaskId,
+            },
+            {
+              capturer: new MacScreenCapturer(),
+              locator: new MacLocator(),
+              injector: new MacInputInjector(darwinEstop.estopFlagPath()),
+              windows: new MacWindowEnumerator(),
+              securityEnv: new MacSecurityEnvironment(),
+              uiaLocator: new MacAxLocator(),
+              evidenceFactory: (taskId) => new ComputerEvidence(taskId, macSealer),
+              confirm: execOpts?.sendConfirmation ?? (async () => ({ confirmationId: "", approved: false, reason: "disconnect" as const })),
+              config: getConfig(),
+              log: (event, data) => logger.info(event, { tool_call_id: toolCallId, ...data }),
+              abortCheck: () =>
+                computerTaskAbort.get(computerTaskId)
+                  ? "panel"
+                  : darwinEstop.consumeEstopFlag()
+                    ? "hotkey"
+                    : darwinEstop.estopHeartbeatLost()
+                      ? "estop-lost"
+                      : null,
+              onEvent: (ev) => {
+                try { execOpts?.broadcast?.({ type: "computer.task.event", ...ev }) } catch { /* best-effort */ }
+              },
+              previewBuilder: new MacPreviewBuilder(),
+              onActionInjected: () => {
+                try { computerRateLimiterSingleton?.record() } catch { /* best-effort */ }
+              },
+              uiaProber: new MacAxProber(),
+              uiaWatcherFactory: (t, opts) => startMacAxWindowWatcher(t, opts),
+              tinyclickLocator: null,  // WP5 not supported on macOS
+              onUiaVerdict: (token, verdict, probedAt) => {
+                const wb = writeBackUiaVerdict(token, verdict, probedAt)
+                logger.info("computer.uia.writeback", { tool_call_id: toolCallId, token, applied: wb.applied, reason: wb.reason })
+              },
+            },
+          )
+        } else {
+          // Windows: original adapter wiring
+          const { PsScreenCapturer, PsLocator, PsInputInjector, PsWindowEnumerator, PsSecurityEnvironment, PsPreviewBuilder, PsEvidenceSealer, PsUiaLocator, startUiaWindowWatcher } = await import("./computer/win-adapters")
+          const { PsUiaProber, writeBackUiaVerdict } = await import("./computer/uia")
+          const { ComputerEvidence, runEvidenceJanitor } = await import("./computer/evidence")
+          // A7.2: 7-day TTL janitor — best-effort, never blocks the task.
+          try { runEvidenceJanitor({}) } catch { /* best-effort */ }
+          // X6: sweep %TEMP% raw captures stranded by crashed companion
+          try {
+            const { sweepComputerTempCaptures } = await import("./computer/win-adapters")
+            const swept = sweepComputerTempCaptures()
+            if (swept.removed.length > 0) {
+              logger.info("computer.temp.swept", { removed: swept.removed.length })
+            }
+          } catch { /* best-effort */ }
+          const sealer = new PsEvidenceSealer()
+          // WP5-I4 TinyClick admission
+          const { resolveTinyClickAdmissionSafe } = await import("./computer/model-admission")
+          const { computerModelSession } = await import("./computer/model-handlers")
+          const tinyclickAdmission = await resolveTinyClickAdmissionSafe({
+            config: getConfig().computer,
+            holder: computerModelSession,
+            deps: {
+              broadcast: (m) => { try { execOpts?.broadcast?.(m) } catch { /* best-effort */ } },
+              log: (event, payload) => logger.info(event, { tool_call_id: toolCallId, ...payload }),
+              stillEnabled: () => getConfig().computer?.modelEnabled === true,
+            },
+          })
+
+          result = await runComputerTask(
             {
               task: String(params.task || ""),
               app: String(params.app || ""),
@@ -2029,20 +2125,11 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
               injector: new PsInputInjector(undefined, estopFlagPath()),
               windows: new PsWindowEnumerator(),
               securityEnv: new PsSecurityEnvironment(),
-              // WP3: L0 UIA locator (read-only live-tree queries; admission
-              // decided per task by the executor's probe verdict).
               uiaLocator: new PsUiaLocator(),
               evidenceFactory: (taskId) => new ComputerEvidence(taskId, sealer),
-              // Re-L2 channel for budget/dialog/danger pauses — already
-              // originWs-bound by the caller (COMPANION_TOOLS sendConfirmation).
               confirm: execOpts?.sendConfirmation ?? (async () => ({ confirmationId: "", approved: false, reason: "disconnect" as const })),
               config: getConfig(),
               log: (event, data) => logger.info(event, { tool_call_id: toolCallId, ...data }),
-              // WP2 (§E.6): polled by the executor before every action, during
-              // waits, and once more immediately before SendInput. X1 (adversary
-              // WP2): third component — the helper's heartbeat going stale
-              // MID-task means the hotkey silently died; abort fail-closed
-              // (EMERGENCY_STOP_LOST) rather than inject without a kill switch.
               abortCheck: () =>
                 computerTaskAbort.get(computerTaskId)
                   ? "panel"
@@ -2051,44 +2138,23 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
                     : estopHeartbeatLost()
                       ? "estop-lost"
                       : null,
-              // WP2 (§E.4): panel live view — progress events + per-step
-              // annotated preview images (credential-blacked, best-effort).
               onEvent: (ev) => {
-                try {
-                  execOpts?.broadcast?.({ type: "computer.task.event", ...ev })
-                } catch {
-                  /* best-effort */
-                }
+                try { execOpts?.broadcast?.({ type: "computer.task.event", ...ev }) } catch { /* best-effort */ }
               },
               previewBuilder: new PsPreviewBuilder(),
-              // Y7: count every successful injection into the session rate
-              // window (the singleton exists — the gate created it).
               onActionInjected: () => {
-                try {
-                  computerRateLimiterSingleton?.record()
-                } catch {
-                  /* best-effort */
-                }
+                try { computerRateLimiterSingleton?.record() } catch { /* best-effort */ }
               },
-              // WP3 (§K.5): task-start lazy UIA admission probe (read-only).
               uiaProber: new PsUiaProber(),
-              // WP3 (<5% small-popup channel): WindowOpened subscription —
-              // started by the executor for UIA-capable targets only and
-              // drained after every injection into the dialog invariant.
               uiaWatcherFactory: (t, opts) => startUiaWindowWatcher(t, opts),
-              // WP5-I4 WI-4.3：per-task admission 结果（null=层关闭；executor
-              // 原样透传 locate-chain，刷新链显式 tinyclick:null 不动——P7）。
               tinyclickLocator: tinyclickAdmission.locator,
-              // WP3 (§K.5): config write-back of the probed admission hint.
-              // writeBackUiaVerdict enforces the hand-set-override rule and
-              // revalidates before replaceAppsEntries; the outcome is logged
-              // either way, and a refused/failed write never fails the task.
               onUiaVerdict: (token, verdict, probedAt) => {
                 const wb = writeBackUiaVerdict(token, verdict, probedAt)
                 logger.info("computer.uia.writeback", { tool_call_id: toolCallId, token, applied: wb.applied, reason: wb.reason })
               },
             },
           )
+        }
         if (!result.success) {
           return {
             success: false,
@@ -2742,10 +2808,13 @@ export function validateWsMessage(msg: any): WsValidationResult {
     "apps.list": () => ({ valid: true }),
     "apps.enumerate": () => ({ valid: true }),
     "apps.add": (m) => {
-      // Exactly one of path / aumid (the handler re-validates + canonicalizes).
       const hasPath = typeof m.path === "string" && m.path.length > 0
       const hasAumid = typeof m.aumid === "string" && m.aumid.length > 0
-      if (hasPath === hasAumid) return { valid: false, error: "apps.add requires exactly one of path / aumid" }
+      const hasBundleId = typeof m.bundleId === "string" && m.bundleId.length > 0
+      // At least one identifier: path (Windows), aumid (UWP), or bundleId (macOS)
+      if (!hasPath && !hasAumid && !hasBundleId) {
+        return { valid: false, error: "apps.add requires at least one of path / aumid / bundleId" }
+      }
       if (m.policy !== undefined && !["auto", "ai", "manual"].includes(m.policy)) {
         return { valid: false, error: "apps.add policy must be auto, ai, or manual" }
       }
@@ -3355,9 +3424,13 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
   const shutdown = async (signal: string) => {
     console.log(`\n[cmspark-agent] Shutting down (${signal})...`)
     logger.info("server.shutdown", { signal })
-    // Stop MCP servers first (terminates child processes) before closing WS
+    // Stop MCP servers first (terminates child processes) before closing WS.
+    // Wrap in a timeout — a stuck MCP transport must not block shutdown indefinitely.
     try {
-      await mcpManager.shutdown()
+      await Promise.race([
+        mcpManager.shutdown(),
+        new Promise<void>((_, reject) => setTimeout(() => reject(new Error("MCP shutdown timed out after 5s")), 5000)),
+      ])
     } catch (err: any) {
       logger.warn("mcp.shutdown_failed", { error: err?.message || String(err) })
     }
@@ -3376,7 +3449,10 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
     // L12 / M9: with `{server}` wiring, wss.close() does NOT close our http.Server.
     // Close it explicitly so the process exits and the port is released.
     try {
-      await new Promise<void>((resolve) => httpServer.close(() => resolve()))
+      await Promise.race([
+        new Promise<void>((resolve) => httpServer.close(() => resolve())),
+        new Promise<void>((_, reject) => setTimeout(() => reject(new Error("HTTP server close timed out after 3s")), 3000)),
+      ])
     } catch {
       // ignore
     }

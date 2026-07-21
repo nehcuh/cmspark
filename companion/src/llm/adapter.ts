@@ -138,7 +138,7 @@ export function createToolResultMessage(threadId: string, toolCall: any, result:
  * names and policies only. Capped at 20 entries.
  */
 export function buildAppIndexSection(platform: NodeJS.Platform, appsCfg: AppsConfig | undefined | null): string {
-  if (platform !== "win32") return ""
+  if (platform !== "win32" && platform !== "darwin") return ""
   if (!appsCfg || appsCfg.enabled === false) return ""
   const entries = Object.values(appsCfg.entries ?? {})
     .filter((e) => e.kind === "gui" && e.enabled)

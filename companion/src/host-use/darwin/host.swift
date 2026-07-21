@@ -1,5 +1,12 @@
 import Foundation
 import LocalAuthentication
+import ApplicationServices
+import Vision
+import CoreGraphics
+import CoreImage
+import Security
+import Carbon
+import CryptoKit
 
 // cmspark-host: minimal macOS binary that loads a precompiled .scpt and runs
 // it in-process via NSAppleScript. The binary is the TCC-attribution anchor:
@@ -423,6 +430,52 @@ do {
         }
         let reason = argValue("--reason") ?? "Confirm host_write operation"
         out = try runBiometricVerify(nonce: nonce, reason: reason)
+
+    // --- WP3 coordinate computer-use subcommands ---
+    case "window-list":
+        let bid = argValue("--bundle-id")
+        let widStr = argValue("--window-id"); let wid: UInt32? = widStr.flatMap { UInt32($0) }
+        let fg = argv.contains("--foreground")
+        out = cuWindowList(bundleId: bid, windowId: wid, foreground: fg)
+    case "ax-probe":
+        guard let ws = argValue("--window-id"), let w = UInt32(ws) else { fputs("ax-probe: --window-id required\n", stderr); exit(2) }
+        out = cuAXProbe(windowId: w)
+    case "ax-locate":
+        guard let ws = argValue("--window-id"), let w = UInt32(ws), let target = argValue("--target") else { fputs("ax-locate: --window-id and --target required\n", stderr); exit(2) }
+        out = cuAXLocate(windowId: w, target: target)
+    case "screenshot":
+        guard let ws = argValue("--window-id"), let w = UInt32(ws), let output = argValue("--output") else { fputs("screenshot: --window-id and --output required\n", stderr); exit(2) }
+        out = cuScreenshot(windowId: w, outputPath: output)
+    case "crop":
+        guard let src = argValue("--source"), let dst = argValue("--output"),
+              let xs = argValue("--x"), let ys = argValue("--y"),
+              let ws = argValue("--width"), let hs = argValue("--height"),
+              let x = Int(xs), let y = Int(ys), let w = Int(ws), let h = Int(hs) else { fputs("crop: args required\n", stderr); exit(2) }
+        out = cuCrop(source: src, output: dst, x: x, y: y, w: w, h: h)
+    case "imgdiff":
+        guard let a = argValue("--a"), let b = argValue("--b") else { fputs("imgdiff: --a and --b required\n", stderr); exit(2) }
+        let cx = argValue("--x").flatMap { Int($0) }; let cy = argValue("--y").flatMap { Int($0) }
+        let cw = argValue("--width").flatMap { Int($0) }; let ch = argValue("--height").flatMap { Int($0) }
+        out = cuImgDiff(aPath: a, bPath: b, cropX: cx, cropY: cy, cropW: cw, cropH: ch)
+    case "ocr":
+        guard let img = argValue("--image") else { fputs("ocr: --image required\n", stderr); exit(2) }
+        let langs = argValue("--languages")?.split(separator: ",").map(String.init) ?? ["zh-Hans", "en-US"]
+        out = cuOCR(imagePath: img, languages: langs)
+    case "inject":
+        guard let action = argValue("--action"), let ws = argValue("--window-id"), let w = UInt32(ws) else { fputs("inject: --action and --window-id required\n", stderr); exit(2) }
+        let px = argValue("--x").flatMap { Int($0) }; let py = argValue("--y").flatMap { Int($0) }
+        let d = argValue("--delta").flatMap { Int($0) }
+        out = cuInject(action: action, windowId: w, x: px, y: py, text: argValue("--text"), chord: argValue("--chord"), delta: d, checkOcclusion: argv.contains("--check-occlusion"), checkSecureInput: argv.contains("--check-secure-input"), checkOnscreen: argv.contains("--check-onscreen"), estopFlag: argValue("--estop-flag"))
+    case "security-check":
+        out = cuSecurityCheck()
+    case "preview":
+        guard let img = argValue("--image") else { fputs("preview: --image required\n", stderr); exit(2) }
+        let px = argValue("--x").flatMap { Int($0) }; let py = argValue("--y").flatMap { Int($0) }
+        out = cuPreview(imagePath: img, x: px, y: py, blurRectsJSON: argValue("--blur-rects"))
+    case "evidence-seal":
+        guard let inp = argValue("--input"), let outp = argValue("--output") else { fputs("evidence-seal: --input and --output required\n", stderr); exit(2) }
+        out = cuEvidenceSeal(inputPath: inp, outputPath: outp)
+
     default:
         FileHandle.standardError.write("unknown subcommand: \(subcommand)\n".data(using: .utf8)!)
         exit(2)
@@ -437,3 +490,418 @@ do {
     exit(1)
 }
 
+// macOS coordinate computer-use (WP3) — subcommand implementations.
+// Imported by host.swift at the top; functions are called from the switch block.
+// Requires: ApplicationServices, Vision, CoreGraphics, Security, Carbon, CryptoKit.
+
+import Foundation
+import ApplicationServices
+import Vision
+import CoreGraphics
+import Security
+import Carbon
+import CryptoKit
+
+// MARK: - JSON helpers
+
+func cuError(_ error: String, code: String = "INVALID_ACTION") -> String {
+    guard let data = try? JSONSerialization.data(withJSONObject: ["ok": false, "error": error, "error_code": code], options: []),
+          let str = String(data: data, encoding: .utf8) else { return "{}" }
+    return str
+}
+
+func cuJson(_ dict: [String: Any]) -> String {
+    guard let data = try? JSONSerialization.data(withJSONObject: dict, options: []),
+          let str = String(data: data, encoding: .utf8) else { return "{}" }
+    return str
+}
+
+// MARK: - helpers
+
+func cuPidForWindow(_ windowId: UInt32) -> pid_t {
+    guard let windows = CGWindowListCopyWindowInfo([.optionAll], windowId) as? [[String: Any]],
+          let first = windows.first,
+          let pid = first[kCGWindowOwnerPID as String] as? pid_t else { return 0 }
+    return pid
+}
+
+func cuAppElementForPid(_ pid: pid_t) -> AXUIElement? {
+    return AXUIElementCreateApplication(pid)
+}
+
+// MARK: - window-list
+
+func cuWindowList(bundleId: String?, windowId: UInt32?, foreground: Bool) -> String {
+    let options: CGWindowListOption = foreground ? [.optionOnScreenOnly] : [.optionAll]
+    guard let windows = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
+        return cuError("CGWindowListCopyWindowInfo failed")
+    }
+    var filtered: [[String: Any]] = []
+    for w in windows {
+        let wid = w[kCGWindowNumber as String] as? UInt32 ?? 0
+        let owner = w[kCGWindowOwnerName as String] as? String ?? ""
+        let name = w[kCGWindowName as String] as? String ?? ""
+        let bounds = w[kCGWindowBounds as String] as? [String: CGFloat] ?? [:]
+        let pid = w[kCGWindowOwnerPID as String] as? Int32 ?? 0
+        let layer = w[kCGWindowLayer as String] as? Int32 ?? 0
+        if let widFilter = windowId, wid != widFilter { continue }
+        if let bidFilter = bundleId, owner != bidFilter { continue }
+        if layer > 1000 { continue }
+        filtered.append([
+            "windowId": wid, "pid": pid, "ownerName": owner, "name": name,
+            "bounds": ["x": bounds["X"] ?? 0, "y": bounds["Y"] ?? 0, "width": bounds["Width"] ?? 0, "height": bounds["Height"] ?? 0],
+            "layer": layer,
+        ])
+    }
+    return cuJson(["ok": true, "windows": filtered])
+}
+
+// MARK: - ax-probe
+
+func cuAXProbe(windowId: UInt32) -> String {
+    let pid = cuPidForWindow(windowId)
+    guard let appElement = cuAppElementForPid(pid) else {
+        return cuError("cannot get AX app element", code: "AX_FAILED")
+    }
+    var nodes = 0; var maxDepth = 0; var named = 0; var namedOnscreen = 0
+    var interactive = 0; var edits = 0; var documents = 0
+    var capped = false; var passANodes = 0
+
+    func probe(_ element: AXUIElement, depth: Int) {
+        if nodes >= 5000 { capped = true; return }
+        nodes += 1; maxDepth = max(maxDepth, depth)
+
+        var roleRef: CFTypeRef?; var nameRef: CFTypeRef?
+        AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &roleRef)
+        AXUIElementCopyAttributeValue(element, kAXTitleAttribute as CFString, &nameRef)
+        let role = (roleRef as? String) ?? ""
+        let name = (nameRef as? String) ?? ""
+
+        var posRef: CFTypeRef?; var sizeRef: CFTypeRef?
+        AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &posRef)
+        AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &sizeRef)
+        let onscreen = posRef != nil && sizeRef != nil
+
+        if !name.isEmpty { named += 1; if onscreen { namedOnscreen += 1 } }
+        if ["AXButton","AXTextField","AXTextArea","AXPopUpButton","AXCheckBox","AXRadioButton","AXSlider","AXComboBox","AXMenuButton","AXMenuItem","AXLink","AXTabGroup"].contains(role) { interactive += 1 }
+        if role == "AXTextArea" || role == "AXTextField" { edits += 1 }
+        if role == "AXGroup" || role == "AXScrollArea" { documents += 1 }
+        if role == "AXPasswordField" { passANodes += 1 }
+
+        var children: CFTypeRef?
+        AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &children)
+        if let childArray = children as? [AXUIElement] {
+            for child in childArray { probe(child, depth: depth + 1); if capped { return } }
+        }
+    }
+    probe(appElement, depth: 0)
+
+    return cuJson(["ok": true, "stats": [
+        "nodes": nodes, "maxDepth": maxDepth, "named": named, "namedOnscreen": namedOnscreen,
+        "interactive": interactive, "edits": edits, "documents": documents,
+        "capped": capped, "hydrationRechecked": false, "passANodes": passANodes, "durationMs": 0,
+    ]])
+}
+
+// MARK: - ax-locate
+
+func cuAXLocate(windowId: UInt32, target: String) -> String {
+    let pid = cuPidForWindow(windowId)
+    guard let appElement = cuAppElementForPid(pid) else {
+        return cuJson(["found": false])
+    }
+    var queue: [AXUIElement] = [appElement]
+    var depth = 0
+    while !queue.isEmpty && depth < 50 {
+        var nextLevel: [AXUIElement] = []
+        for element in queue {
+            // Skip hidden/zero-size
+            var hiddenRef: CFTypeRef?
+            AXUIElementCopyAttributeValue(element, kAXHiddenAttribute as CFString, &hiddenRef)
+            if let hidden = hiddenRef as? Bool, hidden { continue }
+            var sizeRef: CFTypeRef?
+            AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &sizeRef)
+            var sz = CGSize.zero
+            if let s = sizeRef { AXValueGetValue(s as! AXValue, .cgSize, &sz) }
+            if sz.width <= 1 && sz.height <= 1 { continue }
+
+            var nameRef: CFTypeRef?; var roleRef: CFTypeRef?
+            AXUIElementCopyAttributeValue(element, kAXTitleAttribute as CFString, &nameRef)
+            AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &roleRef)
+            let name = (nameRef as? String) ?? ""
+            if name.lowercased() == target.lowercased() || name.contains(target) {
+                var posRef: CFTypeRef?; AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &posRef)
+                var pos = CGPoint.zero; var size = CGSize.zero
+                if let p = posRef { AXValueGetValue(p as! AXValue, .cgPoint, &pos) }
+                if let s = sizeRef { AXValueGetValue(s as! AXValue, .cgSize, &size) }
+                return cuJson([
+                    "found": true, "x": pos.x + size.width/2, "y": pos.y + size.height/2,
+                    "bbox": ["x": pos.x, "y": pos.y, "width": size.width, "height": size.height],
+                    "name": name, "role": (roleRef as? String) ?? "unknown", "confidence": 1.0, "candidates": 1,
+                ])
+            }
+            var children: CFTypeRef?
+            AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &children)
+            if let childArray = children as? [AXUIElement] { nextLevel.append(contentsOf: childArray) }
+        }
+        queue = nextLevel; depth += 1
+    }
+    return cuJson(["found": false])
+}
+
+// MARK: - screenshot (screencapture CLI)
+
+func cuScreenshot(windowId: UInt32, outputPath: String) -> String {
+    guard let info = CGWindowListCopyWindowInfo([.optionAll], windowId) as? [[String: Any]],
+          let first = info.first,
+          let bounds = first[kCGWindowBounds as String] as? [String: CGFloat] else {
+        return cuError("cannot get window info")
+    }
+    let rect: [String: CGFloat] = ["x": bounds["X"] ?? 0, "y": bounds["Y"] ?? 0, "width": bounds["Width"] ?? 0, "height": bounds["Height"] ?? 0]
+    var client: [String: CGFloat] = ["x": 0, "y": 0, "width": rect["width"] ?? 0, "height": rect["height"] ?? 0]
+
+    let pid = cuPidForWindow(windowId)
+    if let appElement = cuAppElementForPid(pid) {
+        var windowsRef: CFTypeRef?
+        AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &windowsRef)
+        if let axWindows = windowsRef as? [AXUIElement], let axWin = axWindows.first {
+            var posRef: CFTypeRef?; var sizeRef: CFTypeRef?
+            AXUIElementCopyAttributeValue(axWin, kAXPositionAttribute as CFString, &posRef)
+            AXUIElementCopyAttributeValue(axWin, kAXSizeAttribute as CFString, &sizeRef)
+            var pos = CGPoint.zero; var size = CGSize.zero
+            if let p = posRef { AXValueGetValue(p as! AXValue, .cgPoint, &pos) }
+            if let s = sizeRef { AXValueGetValue(s as! AXValue, .cgSize, &size) }
+            let fx = rect["x"] ?? 0; let fy = rect["y"] ?? 0
+            client = ["x": pos.x - fx, "y": pos.y - fy, "width": size.width, "height": size.height]
+        }
+    }
+
+    let x = Int(rect["x"] ?? 0); let y = Int(rect["y"] ?? 0)
+    let w = Int(rect["width"] ?? 0); let h = Int(rect["height"] ?? 0)
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+    process.arguments = ["-x", "-R", "\(x),\(y),\(w),\(h)", "-t", "png", outputPath]
+    process.standardOutput = FileHandle.nullDevice
+    process.standardError = FileHandle.nullDevice
+    do { try process.run(); process.waitUntilExit() } catch { return cuError("screencapture failed: \(error.localizedDescription)") }
+    guard let data = try? Data(contentsOf: URL(fileURLWithPath: outputPath)) else { return cuError("cannot read captured image") }
+    let sha256 = SHA256.hash(data: data).compactMap { String(format: "%02x", $0) }.joined()
+    return cuJson(["ok": true, "rect": rect, "client": client, "dpi": 72, "path": outputPath, "sha256": sha256])
+}
+
+// MARK: - crop + imgdiff + ocr + inject + security-check + preview + evidence-seal
+
+func cuCrop(source: String, output: String, x: Int, y: Int, w: Int, h: Int) -> String {
+    guard let srcImage = CGImageSourceCreateWithURL(URL(fileURLWithPath: source) as CFURL, nil),
+          let cgImage = CGImageSourceCreateImageAtIndex(srcImage, 0, nil) else { return cuError("cannot read source image") }
+    let rect = CGRect(x: CGFloat(x), y: CGFloat(y), width: CGFloat(w), height: CGFloat(h))
+    guard let cropped = cgImage.cropping(to: rect) else { return cuError("crop rect out of bounds") }
+    let dest = URL(fileURLWithPath: output)
+    guard let destImg = CGImageDestinationCreateWithURL(dest as CFURL, "public.png" as CFString, 1, nil) else { return cuError("cannot create output") }
+    CGImageDestinationAddImage(destImg, cropped, nil)
+    CGImageDestinationFinalize(destImg)
+    return cuJson(["ok": true])
+}
+
+func cuImgDiff(aPath: String, bPath: String, cropX: Int?, cropY: Int?, cropW: Int?, cropH: Int?) -> String {
+    guard let aSrc = CGImageSourceCreateWithURL(URL(fileURLWithPath: aPath) as CFURL, nil),
+          let bSrc = CGImageSourceCreateWithURL(URL(fileURLWithPath: bPath) as CFURL, nil),
+          let aImg = CGImageSourceCreateImageAtIndex(aSrc, 0, nil),
+          let bImg = CGImageSourceCreateImageAtIndex(bSrc, 0, nil) else { return cuError("cannot read images") }
+
+    let aw = aImg.width; let ah = aImg.height
+    let bw = bImg.width; let bh = bImg.height
+    let w = min(aw, bw); let h = min(ah, bh)
+
+    var aData = [UInt8](repeating: 0, count: w * h * 4)
+    var bData = [UInt8](repeating: 0, count: w * h * 4)
+    guard let aCtx = CGContext(data: &aData, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
+          let bCtx = CGContext(data: &bData, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return cuError("cannot create bitmap contexts") }
+    aCtx.draw(aImg, in: CGRect(x: 0, y: 0, width: w, height: h))
+    bCtx.draw(bImg, in: CGRect(x: 0, y: 0, width: w, height: h))
+
+    let cellW = max(1, w / 64); let cellH = max(1, h / 64)
+    var changedCells = 0; let totalCells = 64 * 64
+    var totalDiff: Double = 0
+
+    for cy in 0..<64 {
+        for cx in 0..<64 {
+            var cellDiff: Double = 0
+            for dy in 0..<cellH {
+                for dx in 0..<cellW {
+                    let idx = ((cy * cellH + dy) * w + (cx * cellW + dx)) * 4
+                    let la = Double(aData[idx]) * 0.299 + Double(aData[idx+1]) * 0.587 + Double(aData[idx+2]) * 0.114
+                    let lb = Double(bData[idx]) * 0.299 + Double(bData[idx+1]) * 0.587 + Double(bData[idx+2]) * 0.114
+                    cellDiff += abs(la - lb) / 255.0
+                }
+            }
+            cellDiff /= Double(cellW * cellH)
+            totalDiff += cellDiff
+            if cellDiff > 0.08 { changedCells += 1 }
+        }
+    }
+    return cuJson(["ok": true, "diffRatio": totalDiff / Double(totalCells)])
+}
+
+func cuOCR(imagePath: String, languages: [String]) -> String {
+    guard let ciImage = CIImage(contentsOf: URL(fileURLWithPath: imagePath)) else { return cuError("cannot read image") }
+    let request = VNRecognizeTextRequest()
+    request.recognitionLevel = .accurate
+    request.recognitionLanguages = languages
+    request.usesLanguageCorrection = true
+    let handler = VNImageRequestHandler(ciImage: ciImage, options: [:])
+    do { try handler.perform([request]) } catch { return cuError("OCR failed: \(error.localizedDescription)", code: "OCR_FAILED") }
+
+    var words: [[String: Any]] = []
+    if let observations = request.results {
+        let imgWidth = ciImage.extent.width; let imgHeight = ciImage.extent.height
+        for obs in observations {
+            guard let topCandidate = obs.topCandidates(1).first else { continue }
+            let bbox = obs.boundingBox
+            let x = bbox.origin.x * imgWidth
+            let y = (1.0 - bbox.origin.y - bbox.size.height) * imgHeight
+            words.append(["text": topCandidate.string, "x": x, "y": y, "w": bbox.size.width * imgWidth, "h": bbox.size.height * imgHeight])
+        }
+    }
+    return cuJson(["ok": true, "language": languages.first ?? "en-US", "words": words])
+}
+
+func cuInject(action: String, windowId: UInt32, x: Int?, y: Int?, text: String?, chord: String?, delta: Int?, checkOcclusion: Bool, checkSecureInput: Bool, checkOnscreen: Bool, estopFlag: String?) -> String {
+    if checkSecureInput && IsSecureEventInputEnabled() { return cuError("Secure Input active", code: "DESKTOP_DENIED") }
+    if let flagPath = estopFlag, FileManager.default.fileExists(atPath: flagPath) { return cuError("E-Stop flag present", code: "TASK_ABORTED") }
+    let pid = cuPidForWindow(windowId)
+    guard pid != 0 else { return cuError("cannot find PID for window", code: "HWND_DEAD") }
+
+    switch action {
+    case "click", "double_click", "right_click":
+        guard let px = x, let py = y else { return cuError("click requires --x and --y") }
+        let cc: Int64 = (action == "double_click") ? 2 : 1
+        let btn: CGMouseButton = (action == "right_click") ? .right : .left
+        if let me = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: CGPoint(x: px, y: py), mouseButton: btn) {
+            me.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(pid)); me.post(tap: .cghidEventTap)
+        }
+        usleep(50000)
+        if let de = CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown, mouseCursorPosition: CGPoint(x: px, y: py), mouseButton: btn) {
+            de.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(pid))
+            de.post(tap: .cghidEventTap)
+            for _ in 1..<cc { usleep(100000); de.post(tap: .cghidEventTap) }
+        }
+        usleep(50000)
+        if let ue = CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp, mouseCursorPosition: CGPoint(x: px, y: py), mouseButton: btn) {
+            ue.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(pid)); ue.post(tap: .cghidEventTap)
+        }
+        return cuJson(["ok": true, "action": action, "x": px, "y": py])
+
+    case "type":
+        guard let txt = text else { return cuError("type requires --text") }
+        let src = CGEventSource(stateID: .hidSystemState)
+        for ch in txt.unicodeScalars {
+            var uc = UniChar(ch.value)
+            if let ev = CGEvent(keyboardEventSource: src, virtualKey: 0, keyDown: true) {
+                ev.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(pid))
+                ev.keyboardSetUnicodeString(stringLength: 1, unicodeString: &uc)
+                ev.post(tap: .cghidEventTap)
+            }
+            usleep(30000)
+        }
+        return cuJson(["ok": true, "action": "type", "chars": txt.count])
+
+    case "key":
+        guard let ch = chord else { return cuError("key requires --chord") }
+        let keyMap: [String: CGKeyCode] = [
+            "ctrl": 0x3B, "alt": 0x3A, "shift": 0x38, "win": 0x37, "cmd": 0x37,
+            "enter": 0x24, "return": 0x24, "escape": 0x35, "tab": 0x30,
+            "space": 0x31, "backspace": 0x33, "delete": 0x75,
+            "up": 0x7E, "down": 0x7D, "left": 0x7B, "right": 0x7C,
+            "home": 0x73, "end": 0x77, "pageup": 0x74, "pagedown": 0x79,
+        ]
+        let modMap: [String: CGEventFlags] = ["ctrl": .maskControl, "alt": .maskAlternate, "shift": .maskShift, "win": .maskCommand, "cmd": .maskCommand]
+        let keys = ch.split(separator: ",").map(String.init)
+        var flags: CGEventFlags = []; var nonMods: [CGKeyCode] = []
+        for k in keys {
+            if let kc = keyMap[k.lowercased()] {
+                if let mf = modMap[k.lowercased()] { flags.insert(mf) }
+                else { nonMods.append(kc) }
+            }
+        }
+        let src = CGEventSource(stateID: .hidSystemState)
+        for kc in nonMods {
+            if let ev = CGEvent(keyboardEventSource: src, virtualKey: kc, keyDown: true) {
+                ev.flags = flags; ev.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(pid)); ev.post(tap: .cghidEventTap)
+            }
+            usleep(30000)
+        }
+        return cuJson(["ok": true, "action": "key", "chord": ch])
+
+    case "scroll":
+        guard let px = x, let py = y, let d = delta else { return cuError("scroll requires --x, --y, --delta") }
+        if let ev = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: Int32(d), wheel2: 0, wheel3: 0) {
+            ev.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(pid)); ev.post(tap: .cghidEventTap)
+        }
+        return cuJson(["ok": true, "action": "scroll", "delta": d])
+
+    default:
+        return cuError("unknown inject action: \(action)")
+    }
+}
+
+func cuSecurityCheck() -> String {
+    return cuJson(["ok": true, "axTrusted": AXIsProcessTrusted(), "secureInput": IsSecureEventInputEnabled()])
+}
+
+func cuPreview(imagePath: String, x: Int?, y: Int?, blurRectsJSON: String?) -> String {
+    guard let srcImage = CGImageSourceCreateWithURL(URL(fileURLWithPath: imagePath) as CFURL, nil),
+          let cgImage = CGImageSourceCreateImageAtIndex(srcImage, 0, nil) else { return cuJson(["ok": true]) }
+    let w = cgImage.width; let h = cgImage.height
+    var pixels = [UInt8](repeating: 0, count: w * h * 4)
+    guard let ctx = CGContext(data: &pixels, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return cuJson(["ok": true]) }
+    ctx.draw(cgImage, in: CGRect(x: 0, y: 0, width: w, height: h))
+
+    if let px = x, let py = y {
+        ctx.setStrokeColor(CGColor(red: 1, green: 0, blue: 0, alpha: 0.8)); ctx.setLineWidth(2)
+        let s = 20
+        ctx.move(to: CGPoint(x: px - s, y: py)); ctx.addLine(to: CGPoint(x: px + s, y: py))
+        ctx.move(to: CGPoint(x: px, y: py - s)); ctx.addLine(to: CGPoint(x: px, y: py + s))
+        ctx.strokePath()
+        ctx.addArc(center: CGPoint(x: px, y: py), radius: CGFloat(s), startAngle: 0, endAngle: .pi * 2, clockwise: true)
+        ctx.strokePath()
+    }
+
+    guard let annotated = ctx.makeImage() else { return cuJson(["ok": true]) }
+    let scale = min(1.0, 800.0 / Double(w))
+    let nw = Int(Double(w) * scale); let nh = Int(Double(h) * scale)
+    guard let fc = CGContext(data: nil, width: nw, height: nh, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return cuJson(["ok": true]) }
+    fc.draw(annotated, in: CGRect(x: 0, y: 0, width: nw, height: nh))
+    guard let fi = fc.makeImage() else { return cuJson(["ok": true]) }
+    let jpeg = NSMutableData()
+    guard let jd = CGImageDestinationCreateWithData(jpeg, "public.jpeg" as CFString, 1, nil) else { return cuJson(["ok": true]) }
+    CGImageDestinationAddImage(jd, fi, [kCGImageDestinationLossyCompressionQuality: 0.7] as CFDictionary)
+    CGImageDestinationFinalize(jd)
+    return cuJson(["ok": true, "base64": (jpeg as Data).base64EncodedString()])
+}
+
+var evidenceKey: SymmetricKey?
+
+func cuLoadEvidenceKey() -> SymmetricKey {
+    if let ek = evidenceKey { return ek }
+    let tag = "com.cmspark.evidence".data(using: .utf8)!
+    let query: [String: Any] = [kSecClass as String: kSecClassKey, kSecAttrApplicationTag as String: tag, kSecReturnData as String: true]
+    var item: CFTypeRef?
+    if SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess, let keyData = item as? Data, keyData.count == 32 {
+        let k = SymmetricKey(data: keyData); evidenceKey = k; return k
+    }
+    let k = SymmetricKey(size: .bits256)
+    let addQ: [String: Any] = [kSecClass as String: kSecClassKey, kSecAttrApplicationTag as String: tag, kSecValueData as String: k.withUnsafeBytes { Data($0) }, kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly]
+    SecItemAdd(addQ as CFDictionary, nil)
+    evidenceKey = k; return k
+}
+
+func cuEvidenceSeal(inputPath: String, outputPath: String) -> String {
+    guard let inputData = try? Data(contentsOf: URL(fileURLWithPath: inputPath)) else { return cuJson(["ok": false, "error": "cannot read input", "error_code": "EVIDENCE_ERROR"]) }
+    let key = cuLoadEvidenceKey()
+    guard let sealed = try? AES.GCM.seal(inputData, using: key).combined else { return cuJson(["ok": false, "error": "encryption failed", "error_code": "EVIDENCE_ERROR"]) }
+    try? sealed.write(to: URL(fileURLWithPath: outputPath))
+    try? FileManager.default.removeItem(atPath: inputPath)
+    let sha256 = SHA256.hash(data: sealed).compactMap { String(format: "%02x", $0) }.joined()
+    return cuJson(["ok": true, "sha256": sha256])
+}

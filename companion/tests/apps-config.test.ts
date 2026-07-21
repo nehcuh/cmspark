@@ -199,12 +199,17 @@ describe("validateAppEntry schema matrix", { concurrency: 1 }, () => {
     assert.ok(validateAppEntry(guiExeEntry({ policy: 3 })) !== null)
   })
 
-  test("gui requires exactly one of exe / aumid (XOR)", () => {
+  test("gui requires at least one of exe / aumid / bundleId", () => {
     const both = guiExeEntry({ aumid: "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App" })
-    assert.ok(validateAppEntry(both) !== null, "exe + aumid must be rejected")
+    // Both exe + aumid is allowed (macOS WP3: 3 identifiers coexist)
+    assert.equal(validateAppEntry(both), null, "exe + aumid should be allowed")
     const neither = guiExeEntry()
     delete neither.exe
-    assert.ok(validateAppEntry(neither) !== null, "neither exe nor aumid must be rejected")
+    assert.ok(validateAppEntry(neither) !== null, "neither exe nor aumid nor bundleId must be rejected")
+    // macOS bundleId-only entry should be accepted
+    const macOnly = guiExeEntry({ token: "mac.app.notes", kind: "gui", bundleId: "com.apple.Notes" })
+    delete macOnly.exe
+    assert.equal(validateAppEntry(macOnly), null, "bundleId-only macOS entry should be accepted")
   })
 
   test("cli requires exe and forbids aumid", () => {

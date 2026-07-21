@@ -158,6 +158,24 @@ export async function launchApp(entry: AppEntry, deps: LaunchDeps = {}): Promise
     }
   }
 
+  // ---- macOS bundleId branch ------------------------------------------------
+  if (entry.bundleId) {
+    // Use `open -b <bundleId>` to launch on macOS
+    const child = spawnFn("/usr/bin/open", ["-b", entry.bundleId], {
+      detached: true,
+      stdio: "ignore",
+    })
+    child.on?.("error", () => { /* surfaced via probe */ })
+    child.unref?.()
+    await sleep(waitMs)
+    return {
+      launched: true,
+      evidence: "requested_no_pid",
+      duration_ms: Date.now() - startedAt,
+      detail: `macOS launch requested via open -b ${entry.bundleId}`,
+    }
+  }
+
   // ---- exe branch (win32) --------------------------------------------------
   const exePath = entry.exe?.path
   if (!exePath) {

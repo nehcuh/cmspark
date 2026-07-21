@@ -38,6 +38,7 @@ import { getThreadApprovals } from "../../src/host-use/thread-approvals.js"
 import type { AppEntry } from "../../src/apps/types.js"
 
 const WIN = process.platform === "win32"
+const DARWIN = process.platform === "darwin"
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-appgate-"))
 const FAKE_EXE = "C:\\Program Files\\GateTest\\gated.exe" // never existsSync-true
 
@@ -376,11 +377,11 @@ test("non-launch action → typed error, NO confirmation requested", { skip: !WI
 // nothing meaningful — the matrix above owns win32 behavior.
 // =============================================================================
 
-test("host_app off win32 → typed platform error, no dialog", { skip: WIN }, async () => {
+test("host_app off win32+darwin → typed platform error, no dialog", { skip: WIN || DARWIN }, async () => {
   const executeTool = createToolExecutor(serverSideWs)
   const noConfirm = expectNoClientMessage("security.confirmation.request")
   const result = await executeTool("tc_app_platform", "host_app", { app: "win.app.gated", action: "launch" })
   await noConfirm
   assert.equal(result.success, false)
-  assert.match(result.error!, /Windows-only/)
+  assert.match(result.error!, /requires macOS or Windows/)
 })

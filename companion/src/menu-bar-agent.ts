@@ -138,7 +138,7 @@ function checkPortReachable(): Promise<boolean> {
 
 async function pollCompanionStatus(): Promise<void> {
   const pid = getCompanionPid()
-  const processRunning = isCompanionProcessRunning()
+  let processRunning = isCompanionProcessRunning()
 
   // Fast path: if our persistent client is connected, server is alive — skip port check
   let wsReachable: boolean
@@ -146,6 +146,12 @@ async function pollCompanionStatus(): Promise<void> {
     wsReachable = true
   } else {
     wsReachable = await checkPortReachable()
+  }
+
+  // If the port is reachable but PID check failed, the PID file may be stale.
+  // Trust the port check over the PID file to avoid showing "已停止" incorrectly.
+  if (wsReachable && !processRunning) {
+    processRunning = true
   }
 
   const newStatus: CompanionStatus = processRunning && wsReachable ? "running" : "stopped"

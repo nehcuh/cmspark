@@ -35,6 +35,8 @@ export interface AppEntry {
   added_at: string
   exe?: AppExeBlock
   aumid?: string
+  /** macOS bundle identifier (e.g. "com.apple.Notes") for coordinate computer-use WP3. */
+  bundleId?: string
   /** Phase-2 (adversary D12): P1 ships no templates — empty array when present. */
   templates?: []
   /** Phase-2 placeholder: may be an empty object until the CLI track lands. */
@@ -66,8 +68,8 @@ export interface AppsConfig {
   entries: Record<string, AppEntry>
 }
 
-/** win.app.<slug> / win.cli.<slug>; slug 2–32 chars, lowercase (design §5). */
-export const APP_TOKEN_PATTERN = /^win\.(app|cli)\.[a-z0-9][a-z0-9_\-]{1,31}$/
+/** win|mac.app.<slug> / win|mac.cli.<slug>; slug 2–32 chars, lowercase (design §5 + macOS WP3). */
+export const APP_TOKEN_PATTERN = /^(win|mac)\.(app|cli)\.[a-z0-9][a-z0-9_\-]{1,31}$/
 
 /** Adversary D11 (NIT): PackageFamilyName!AppId sanity check for UWP entries. */
 const AUMID_PATTERN = /^[\w.\-]+![\w.\-]+$/
@@ -100,14 +102,18 @@ export function validateAppEntry(raw: unknown): string | null {
   const e = raw as Record<string, any>
   if (hasPrototypePollutionKey(e)) return "Invalid app entry keys"
   if (typeof e.token !== "string" || !APP_TOKEN_PATTERN.test(e.token)) {
-    return `Invalid app token "${e.token}" (must match win.app.<slug> / win.cli.<slug>)`
+    return `Invalid app token "${e.token}" (must match [win|mac].app.<slug> / [win|mac].cli.<slug>)`
   }
   if (e.kind !== "gui" && e.kind !== "cli") {
     return `Invalid app kind "${e.kind}" (must be gui or cli)`
   }
-  // Token namespace must agree with kind: win.app.* = gui, win.cli.* = cli.
-  const ns: AppKind = e.token.startsWith("win.app.") ? "gui" : "cli"
-  if (ns !== e.kind) {
+  // Token namespace must agree with kind: *.app.* = gui, *.cli.* = cli.
+  const ns: AppKind = e.token.endsWith(".app.") || e.token.includes(".app.")  // check for app kind
+    ? (e.token.startsWith("win.app.") || e.token.startsWith("mac.app.") ? "gui" : "cli")
+    : "cli"
+  // Actually, simpler: extract the kind from token
+  const tokenKind: AppKind = e.token.includes(".app.") ? "gui" : "cli"
+  if (tokenKind !== e.kind) {
     return `app token "${e.token}" namespace does not match kind "${e.kind}"`
   }
   if (typeof e.display_name !== "string" || !e.display_name) {
@@ -127,13 +133,14 @@ export function validateAppEntry(raw: unknown): string | null {
   }
   const hasExe = e.exe !== undefined && e.exe !== null
   const hasAumid = e.aumid !== undefined && e.aumid !== null
+  const hasBundleId = e.bundleId !== undefined && e.bundleId !== null && typeof e.bundleId === "string" && e.bundleId.length > 0
   if (e.kind === "gui") {
-    // Exactly one of exe / aumid (XOR): win32 exe path or UWP AUMID.
-    if (hasExe === hasAumid) {
-      return `gui app "${e.token}" requires exactly one of exe / aumid`
+    // At least one identifier: exe path (Windows), aumid (UWP), or bundleId (macOS).
+    if (!hasExe && !hasAumid && !hasBundleId) {
+      return `gui app "${e.token}" requires at least one of exe / aumid / bundleId`
     }
   } else {
-    if (!hasExe) return `cli app "${e.token}" requires an exe block`
+    if (!hasExe && !hasBundleId) return `cli app "${e.token}" requires an exe block or bundleId`
     if (hasAumid) return `cli app "${e.token}" must not have an aumid`
   }
   if (hasExe) {
@@ -197,8 +204,18 @@ function isUncPath(p: string): boolean {
  * user-writable directory or there is no signer on record (unsigned / AUMID —
  * a same-user process could replace the binary), else "auto".
  * WP2 review W4: UNC (network-share) paths also cap at "ai".
+ * macOS WP3: bundleId entries from /Applications (root-owned) → "auto";
+ *             bundleId entries from ~/Applications (user-writable) → "ai".
  */
 export function maxPolicyForEntry(entry: AppEntry): "auto" | "ai" {
+  // macOS bundleId entries: trust based on install location
+  if (entry.bundleId) {
+    // /Applications is root-owned → safe for auto
+    if (entry.exe?.path && entry.exe.path.startsWith("/Applications/") && !entry.exe.path.startsWith("/Applications/CMspark")) {
+      return "auto"
+    }
+    return "ai" // ~/Applications or unknown path → cap at ai
+  }
   const exe = entry.exe
   if (!exe) return "ai" // AUMID entry: no signer on record
   if (isUncPath(exe.path)) return "ai" // W4: network-share binary, replaceable upstream

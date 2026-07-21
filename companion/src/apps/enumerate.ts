@@ -58,3 +58,56 @@ export async function enumerateApps(
     rethrowPsError(err, "apps.enumerate")
   }
 }
+
+// macOS WP3: scan /Applications and ~/Applications for .app bundles.
+import * as fs from "fs"
+import * as path from "path"
+import * as os from "os"
+import { execFileSync } from "child_process"
+
+export interface EnumeratedMacCandidate {
+  name: string
+  source: "installed"
+  bundleId: string
+  path: string
+}
+
+function readPlistString(plistPath: string, key: string): string | null {
+  try {
+    const output = execFileSync("/usr/libexec/PlistBuddy", ["-c", `Print :${key}`, plistPath], {
+      encoding: "utf-8",
+      timeout: 3000,
+      stdio: ["ignore", "pipe", "ignore"],
+    })
+    return output.trim() || null
+  } catch {
+    return null
+  }
+}
+
+export function enumerateMacApps(): EnumeratedMacCandidate[] {
+  const dirs = ["/Applications", path.join(os.homedir(), "Applications")]
+  const results: EnumeratedMacCandidate[] = []
+  const seen = new Set<string>()
+
+  for (const dir of dirs) {
+    let entries: fs.Dirent[]
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }) } catch { continue }
+    for (const entry of entries) {
+      if (!entry.isDirectory() || !entry.name.endsWith(".app")) continue
+      const infoPath = path.join(dir, entry.name, "Contents", "Info.plist")
+      if (!fs.existsSync(infoPath)) continue
+
+      const bundleId = readPlistString(infoPath, "CFBundleIdentifier")
+      if (!bundleId || seen.has(bundleId)) continue
+      seen.add(bundleId)
+
+      const displayName = readPlistString(infoPath, "CFBundleDisplayName")
+        ?? readPlistString(infoPath, "CFBundleName")
+        ?? entry.name.replace(/\.app$/, "")
+
+      results.push({ name: displayName, source: "installed", bundleId, path: path.join(dir, entry.name) })
+    }
+  }
+  return results
+}

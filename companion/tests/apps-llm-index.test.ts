@@ -14,6 +14,7 @@ import { buildAppIndexSection } from "../src/llm/adapter"
 import type { AppEntry, AppsConfig } from "../src/apps/types"
 
 function entry(token: string, overrides: Partial<AppEntry> = {}): AppEntry {
+  const isMac = token.startsWith("mac.")
   return {
     token,
     kind: "gui",
@@ -22,7 +23,10 @@ function entry(token: string, overrides: Partial<AppEntry> = {}): AppEntry {
     policy: "manual",
     enabled: true,
     added_at: "2026-07-18T10:00:00.000Z",
-    exe: { path: "C:\\Program Files\\X\\x.exe", signer: "CN=X", user_writable_dir: false },
+    ...(isMac
+      ? { bundleId: "com.example.app" }
+      : { exe: { path: "C:\\Program Files\\X\\x.exe", signer: "CN=X", user_writable_dir: false } }
+    ),
     ...overrides,
   }
 }
@@ -70,8 +74,9 @@ test("apps.enabled=false kill-switch → empty section", () => {
   assert.equal(section, "")
 })
 
-test("non-win32 → empty section (host_app is Windows-only in Phase 1)", () => {
-  assert.equal(buildAppIndexSection("darwin", cfg({ "win.app.a": entry("win.app.a") })), "")
+test("non-win32/darwin → empty section (linux unsupported)", () => {
+  // macOS now supports host_app (WP3), so darwin should NOT return empty
+  assert.notEqual(buildAppIndexSection("darwin", cfg({ "mac.app.a": entry("mac.app.a", { bundleId: "com.example.a" }) })), "")
   assert.equal(buildAppIndexSection("linux", cfg({ "win.app.a": entry("win.app.a") })), "")
 })
 

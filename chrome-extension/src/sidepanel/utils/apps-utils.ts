@@ -39,7 +39,7 @@ export function isAppsErrorMessage(msg: { family?: unknown; code?: unknown; erro
  */
 export function appsPlatformSupported(platform: string | null | undefined): boolean {
   if (platform === null || platform === undefined) return true
-  return platform === "win32"
+  return platform === "win32" || platform === "darwin"
 }
 
 /**

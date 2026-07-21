@@ -36,7 +36,7 @@ import {
   type AddFlowDeps,
   type AddFlowOrigin,
 } from "./add-flow"
-import { enumerateApps, type EnumeratedAppCandidate } from "./enumerate"
+import { enumerateApps, enumerateMacApps, type EnumeratedAppCandidate } from "./enumerate"
 import { basenameToVault, isLolbinPath } from "./guards"
 import { materializePresets } from "./presets"
 import { requireAppsBiometric } from "./biometric-gate"
@@ -167,14 +167,19 @@ export async function handleAppsMessage(
       }
     }
 
-    // --- apps.enumerate: merged running/startapps candidates (Windows only) ---
+    // --- apps.enumerate: merged running/startapps candidates (Windows: exe; macOS: .app bundles) ---
     case "apps.enumerate": {
       const platform = deps.platform ?? os.platform()
-      if (platform !== "win32") {
-        return appsError("apps.enumerate is supported on Windows (win32) only", {
+      if (platform !== "win32" && platform !== "darwin") {
+        return appsError("apps.enumerate is supported on Windows and macOS only", {
           code: "PLATFORM_UNSUPPORTED",
           platform,
         })
+      }
+      if (platform === "darwin") {
+        // macOS: scan /Applications and ~/Applications for .app bundles
+        const candidates = await enumerateMacApps()
+        return { type: "apps.enumerate.result", candidates }
       }
       const run = deps.enumerate ?? (() => enumerateApps())
       const candidates = await run()
@@ -212,7 +217,7 @@ export async function handleAppsMessage(
       const origin: AddFlowOrigin =
         rest.origin === "enumerate" || rest.origin === "manual-paste"
           ? rest.origin
-          : (rest.path ? "manual-paste" : "enumerate")
+          : (rest.path || rest.bundleId ? "manual-paste" : "enumerate")
 
       const existing = getConfig().apps?.entries ?? {}
       let entry: AppEntry
@@ -223,6 +228,7 @@ export async function handleAppsMessage(
             kind,
             path: typeof rest.path === "string" ? rest.path : undefined,
             aumid: typeof rest.aumid === "string" ? rest.aumid : undefined,
+            bundleId: typeof rest.bundleId === "string" ? rest.bundleId : undefined,
             displayName: typeof rest.display_name === "string" ? rest.display_name : undefined,
             origin,
             existingEntries: existing,
@@ -433,7 +439,13 @@ export async function handleAppsMessage(
         }
       }
       // Setting the bit is a persistent grant -> biometric gate; clearing is free.
+      // Idempotent: if already true, skip the gate (avoids gratuitous timeout errors).
       if (rest.allowed === true) {
+        if (entry.coordinateAllowed === true) {
+          // Already enabled — no-op, return current state without gate
+          logger.info("apps.coordinate_already_enabled", { token })
+          return broadcastAndReturn(ctx, appsUpdatedPayload(existing), { token, coordinateAllowed: true })
+        }
         if (!ctx.requestConfirmation) {
           return appsError("apps.set_coordinate_allowed(true) requires an interactive confirmation channel", {
             code: "NO_CONFIRMATION_CHANNEL",

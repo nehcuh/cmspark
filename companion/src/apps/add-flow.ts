@@ -44,10 +44,12 @@ export type AddFlowOrigin = "enumerate" | "manual-paste"
 
 export interface AddFlowInput {
   kind: AppKind
-  /** win32 exe path (paste or enumeration pick). Exactly one of path/aumid. */
+  /** win32 exe path (paste or enumeration pick). */
   path?: string
   /** UWP AUMID from an enumeration pick. */
   aumid?: string
+  /** macOS bundle identifier (e.g. "com.apple.Notes") for coordinate computer-use. */
+  bundleId?: string
   /** Display name (enumeration name or user-supplied); falls back to exe basename. */
   displayName?: string
   origin: AddFlowOrigin
@@ -105,8 +107,8 @@ function slugify(raw: string): string {
   return s
 }
 
-function uniqueToken(baseSlug: string, kind: AppKind, existing: Record<string, AppEntry>): string {
-  const ns = kind === "cli" ? "win.cli" : "win.app"
+function uniqueToken(baseSlug: string, kind: AppKind, existing: Record<string, AppEntry>, platform: "win" | "mac" = "win"): string {
+  const ns = kind === "cli" ? `${platform}.cli` : `${platform}.app`
   for (let i = 0; i < 100; i++) {
     const slug = i === 0 ? baseSlug : `${baseSlug.slice(0, 29)}_${i + 1}`
     const token = `${ns}.${slug}`
@@ -147,6 +149,39 @@ export async function buildAppEntry(
 
   const hasPath = typeof input.path === "string" && input.path.length > 0
   const hasAumid = typeof input.aumid === "string" && input.aumid.length > 0
+  const hasBundleId = typeof input.bundleId === "string" && input.bundleId.length > 0
+
+  // macOS bundleId branch — coordinate computer-use WP3
+  if (hasBundleId) {
+    const bundleId = input.bundleId!.trim()
+    // Basic bundle ID sanity: must contain at least one dot, alphanumeric+dot+hyphen
+    if (!/^[a-zA-Z][a-zA-Z0-9.-]*\.[a-zA-Z][a-zA-Z0-9.-]*$/.test(bundleId)) {
+      throw new AddFlowError("not_an_exe", `invalid macOS bundle ID "${bundleId}"`)
+    }
+    for (const e of Object.values(input.existingEntries)) {
+      if (e.bundleId && e.bundleId === bundleId) {
+        throw new AddFlowError("duplicate_app", `bundleId "${bundleId}" is already registered as "${e.token}"`)
+      }
+    }
+    // Display name: use input displayName, or derive from last segment of bundleId
+    const display = input.displayName?.trim() ||
+      (bundleId.split(".").pop() ?? bundleId)
+    const token = uniqueToken(slugify(display), "gui", input.existingEntries, "mac")
+    const entry: AppEntry = {
+      token,
+      kind: "gui",
+      display_name: display,
+      source: "user",
+      policy: input.policy ?? "ai",  // macOS: default to "ai" (code signing trust)
+      enabled: true,
+      added_at: now().toISOString(),
+      bundleId,
+    }
+    const schemaErr = validateAppEntry(entry)
+    if (schemaErr) throw new AddFlowError("not_an_exe", `internal: built entry failed schema: ${schemaErr}`)
+    return { entry, warnings }
+  }
+
   if (hasPath === hasAumid) {
     throw new AddFlowError("path_and_aumid_exclusive", "apps.add requires exactly one of path / aumid")
   }

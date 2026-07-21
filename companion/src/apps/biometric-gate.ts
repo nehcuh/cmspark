@@ -22,7 +22,7 @@ import type {
   SecurityConfirmationDetails,
 } from "../security-confirmation"
 
-export type BiometricMethod = "windows-hello" | "manual-nonce"
+export type BiometricMethod = "windows-hello" | "manual-nonce" | "touchid"
 
 export type BiometricGateOutcome =
   | { approved: true; method: BiometricMethod; nonce: string }
@@ -112,7 +112,6 @@ export async function requireAppsBiometric(req: BiometricGateRequest): Promise<B
       return { approved: true, method: "windows-hello", nonce: hello.nonce }
     }
     if ("cancelled" in hello) {
-      // Adversary H1: cancel → denied, NEVER downgrade to the nonce fallback.
       logger.warn("apps.biometric.denied", {
         tool_name: req.action,
         method: "windows-hello",
@@ -120,14 +119,39 @@ export async function requireAppsBiometric(req: BiometricGateRequest): Promise<B
       })
       return { approved: false, reason: "cancelled" }
     }
-    // Hello unavailable → manual-nonce downgrade (triggered by real hardware
-    // state — not process-forgeable). Dedicated downgrade audit event mirrors
-    // security.biometric.downgrade (adversary amendment 7a).
     logger.info("apps.biometric.downgrade", {
       tool_name: req.action,
       reason: "windows_hello_unavailable",
     })
     return confirmWithNonce()
+  }
+
+  // macOS: try Touch ID first, fall back to nonce challenge
+  if (platform === "darwin") {
+    try {
+      const { biometricVerify } = await import("../host-use/darwin")
+      const nonce = await biometricVerify(req.action, req.reason)
+      logger.info("apps.biometric.verified", {
+        tool_name: req.action,
+        nonce,
+        method: "touchid",
+      })
+      return { approved: true, method: "touchid", nonce }
+    } catch (err: any) {
+      const msg = (err?.message || String(err)).toLowerCase()
+      if (msg.includes("cancel") || msg.includes("user")) {
+        logger.warn("apps.biometric.denied", { tool_name: req.action, method: "touchid", reason: "cancelled" })
+        return { approved: false, reason: "cancelled" }
+      }
+      if (msg.includes("locked") || msg.includes("unavailable") || msg.includes("not enrolled")) {
+        // Touch ID unavailable → fallback to nonce
+        logger.info("apps.biometric.downgrade", { tool_name: req.action, reason: "touchid_unavailable" })
+        return confirmWithNonce()
+      }
+      // Unknown failure → also fall back (don't block on Touch ID errors)
+      logger.warn("apps.biometric.downgrade", { tool_name: req.action, reason: `touchid_error: ${msg}` })
+      return confirmWithNonce()
+    }
   }
 
   // Non-win32: the App tab is Windows-first; the manual-nonce flow is
