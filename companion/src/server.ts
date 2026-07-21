@@ -2002,9 +2002,11 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
         // fail-closed（locator=null=层关闭，UIA/OCR/框选链不受影响，attempts
         // 记 skipped model-disabled）；会话懒建 ~1.4s 仅在开关开+许可已接受+
         // 无熔断且首次时发生。stillEnabled 新鲜度复核防 build×关闭落地竞态。
-        const { resolveTinyClickAdmission } = await import("./computer/model-admission")
+        // P4（I4 对抗）：safe 包装器防御折叠——admission 任何意外抛出视同
+        // 拒绝 + loud log，UIA/OCR 兜底链密闭。
+        const { resolveTinyClickAdmissionSafe } = await import("./computer/model-admission")
         const { computerModelSession } = await import("./computer/model-handlers")
-        const tinyclickAdmission = await resolveTinyClickAdmission({
+        const tinyclickAdmission = await resolveTinyClickAdmissionSafe({
           config: getConfig().computer,
           holder: computerModelSession,
           deps: {

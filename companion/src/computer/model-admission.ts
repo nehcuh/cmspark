@@ -64,6 +64,8 @@ export const ADMISSION_REASON = {
   CIRCUIT_DISABLED: "model-circuit-disabled",
   BUILD_FAILED: "model-build-failed",
   SESSION_FOREIGN: "model-session-foreign",
+  /** P4：评估自身抛异常的防御折叠（safe 包装器专用；正常路径永不产生）。 */
+  ADMISSION_ERROR: "model-admission-error",
 } as const;
 
 /** admission 侧会话最小面（holder 四方法 + locate/prepare 构建期需要）。 */
@@ -226,4 +228,29 @@ export async function resolveTinyClickAdmission(args: {
   }
   args.holder.session = session; // P8 写入点①：admission 全通过懒建
   return buildLocator(session);
+}
+
+/**
+ * P4（I4 对抗）：admission 调用的防御折叠——resolveTinyClickAdmission 内部
+ * 已全 catch（buildSession 懒建失败 → null；配置门为纯读），但调用点位于
+ * host_computer 任务起点，一处防御 catch 使「admission 异常永不拖垮
+ * UIA/OCR/框选兜底链」语义密闭：任何意外抛出（含配置对象 getter 抛错、未来
+ * 重构引入的新抛出面）→ 视同拒绝（locator=null，reason=model-admission-
+ * error）+ loud log，任务链照常降级。生产 server.ts 唯一调用点走本包装器。
+ */
+export async function resolveTinyClickAdmissionSafe(args: {
+  config: ComputerConfig | undefined;
+  holder: ComputerModelSessionHolder;
+  deps?: TinyClickAdmissionDeps;
+}): Promise<TinyClickAdmission> {
+  try {
+    return await resolveTinyClickAdmission(args);
+  } catch (err) {
+    const log =
+      args.deps?.log ?? ((event: string, payload: Record<string, unknown>) => logger.info(event, payload));
+    log("computer.model.admission.error", {
+      message: err instanceof Error ? err.message : String(err),
+    });
+    return { locator: null, reason: ADMISSION_REASON.ADMISSION_ERROR };
+  }
 }

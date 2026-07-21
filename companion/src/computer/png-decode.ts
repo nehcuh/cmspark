@@ -95,14 +95,18 @@ export function decodePngToRgba(bytes: Uint8Array): {
   const bpp = colorType === 0 ? 1 : colorType === 2 ? 3 : colorType === 4 ? 2 : colorType === 6 ? 4 : 0;
   if (bpp === 0) fail(`不支持 color type ${colorType}（调色板/未知形态）`);
 
-  let raw: Buffer;
-  try {
-    raw = inflateSync(Buffer.concat(idat));
-  } catch (err) {
-    fail(`deflate 损坏: ${err instanceof Error ? err.message : String(err)}`);
-  }
   const stride = width * bpp;
   const expected = height * (1 + stride);
+  let raw: Buffer;
+  try {
+    // I4 对抗 P2：maxOutputLength 硬顶前移——IHDR 尺寸 inflate 前已知，超限
+    // 输入（解压炸弹形）在解压期即拒（ERR_BUFFER_TOO_LARGE），不再先全量
+    // 解压到 MAX_LENGTH 上限再比对长度。纵深防御一行修：输入源虽收敛于本机
+    // 采集进程输出 + shot.sha256 证据链，硬顶成本为零。
+    raw = inflateSync(Buffer.concat(idat), { maxOutputLength: expected });
+  } catch (err) {
+    fail(`deflate 损坏或输出超限: ${err instanceof Error ? err.message : String(err)}`);
+  }
   if (raw.length !== expected) fail(`解压长度不符：期望 ${expected}，实际 ${raw.length}`);
 
   // 反过滤（recon 原地重建；prior = 上一行 recon）

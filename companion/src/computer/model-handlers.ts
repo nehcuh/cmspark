@@ -77,6 +77,8 @@ export interface ComputerModelHandlerDeps {
   manifestLoader?: () => Promise<ModelManifest>
   downloadImpl?: typeof downloadModelVariant
   deleteImpl?: typeof deleteModelVariant
+  /** P3 节流时钟（测试 seam，同 deps 族纪律）；默认 Date.now。 */
+  now?: () => number
 }
 
 function modelError(error: string, extra?: Record<string, unknown>) {
@@ -221,6 +223,13 @@ function startBackgroundDownload(
 ): void {
   activeDownload = { variant }
   const cfg = getConfig().computer ?? { coordinateEnabled: false }
+  // P3（I4 对抗）：进度广播节流——下载器 per TCP chunk 回调（705MB 快网 ≈
+  // 万级广播/十秒窗口，扩展每消息重建 store）。规则：整百分点前进 或 距上次
+  // ≥200ms 才广播（每文件独立记百分点；0% 首帧与 100% 末帧必达——首/末帧
+  // 相对前一观测恒为百分点变化）。万级 → 百级（≤100/文件 + 时间轴兜底）。
+  const now = deps.now ?? Date.now
+  let lastSentAt = 0
+  const lastPctByFile = new Map<string, number>()
   void (async () => {
     try {
       const manifest = await (deps.manifestLoader ?? (() => loadModelManifest(defaultManifestPath())))()
@@ -234,6 +243,11 @@ function startBackgroundDownload(
         },
         {
           onProgress: (file, receivedBytes, totalBytes) => {
+            const pct = totalBytes > 0 ? Math.floor((receivedBytes / totalBytes) * 100) : -1
+            const t = now()
+            if (pct === lastPctByFile.get(file) && t - lastSentAt < 200) return
+            lastPctByFile.set(file, pct)
+            lastSentAt = t
             ctx.broadcast?.({ type: "computer.model.progress", variant, file, receivedBytes, totalBytes })
           },
         },

@@ -13,6 +13,7 @@ import type { ComputerConfig } from "../src/config";
 import {
   ADMISSION_REASON,
   resolveTinyClickAdmission,
+  resolveTinyClickAdmissionSafe,
   type AdmissionSession,
   type TinyClickAdmissionDeps,
 } from "../src/computer/model-admission";
@@ -309,4 +310,36 @@ test("符号级契约（P8）：holder 写入点注释三处在案", async () =>
     await resolveTinyClickAdmission({ config, holder: h.holder, deps: h.deps });
     assert.strictEqual(h.holder.session, null, "拒绝路径不得写 holder");
   }
+});
+
+// --- P4：safe 包装器防御折叠（I4 对抗；server.ts 生产唯一调用点） ---------------------
+
+test("P4：admission 评估意外抛出 → safe 包装器折叠为 {locator:null, model-admission-error} + loud log", async () => {
+  // 配置对象 getter 抛错（resolve 内部纯读路径之外的意外面）——safe 必须视同
+  // 拒绝而非让异常穿透 host_computer 任务起点（UIA/OCR/框选兜底链密闭）。
+  const throwingCfg = Object.defineProperty({}, "modelEnabled", {
+    get(): never {
+      throw new Error("synthetic admission blow-up");
+    },
+  }) as ComputerConfig;
+  const h = makeHarness();
+  const out = await resolveTinyClickAdmissionSafe({ config: throwingCfg, holder: h.holder, deps: h.deps });
+  assert.strictEqual(out.locator, null);
+  assert.strictEqual(out.reason, ADMISSION_REASON.ADMISSION_ERROR);
+  assert.strictEqual(h.holder.session, null, "异常折叠不得写 holder");
+  const errLogs = h.logs.filter((l) => l.event === "computer.model.admission.error");
+  assert.strictEqual(errLogs.length, 1, "loud log 留痕一次");
+  assert.match(String(errLogs[0]!.payload.message), /synthetic admission blow-up/);
+});
+
+test("P4：safe 包装器正常路径零改语义（拒绝原因原样透传、无 error 日志）", async () => {
+  const h = makeHarness();
+  const out = await resolveTinyClickAdmissionSafe({
+    config: cfg({ modelEnabled: false }),
+    holder: h.holder,
+    deps: h.deps,
+  });
+  assert.strictEqual(out.locator, null);
+  assert.strictEqual(out.reason, ADMISSION_REASON.SWITCH_OFF, "拒绝原因词表原样透传");
+  assert.ok(!h.logs.some((l) => l.event === "computer.model.admission.error"), "正常路径不触发 error 日志");
 });

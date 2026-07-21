@@ -203,3 +203,29 @@ test("畸形矩阵 fail-closed：签名/截断/bit depth/调色板/隔行/deflat
   ]);
   assert.throws(() => decodePngToRgba(bad), /过滤类型/);
 });
+
+test("解压炸弹 fail-closed（I4 对抗 P2）：IDAT 解压量超 IHDR 期望 → inflate 期即拒（maxOutputLength 硬顶）", () => {
+  // IHDR 声明 2×2 rgba（期望 2*(1+8)=18 字节），IDAT 实为 1MB 压缩负载——
+  // maxOutputLength=expected 使超限在解压期抛 ERR_BUFFER_TOO_LARGE（实测
+  // RangeError），解码器折叠为 fail-closed Error，不先全量解压再比对。
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(2, 0);
+  ihdr.writeUInt32BE(2, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 6;
+  const bomb = Buffer.concat([
+    SIG,
+    chunk("IHDR", ihdr),
+    chunk("IDAT", deflateSync(Buffer.alloc(1024 * 1024, 1))),
+    chunk("IEND", Buffer.alloc(0)),
+  ]);
+  assert.throws(() => decodePngToRgba(bomb), /deflate 损坏或输出超限/);
+  // 欠长形态（inflate 成功但长度不足）仍走长度比对 fail-closed——双路径皆拒
+  const short = Buffer.concat([
+    SIG,
+    chunk("IHDR", ihdr),
+    chunk("IDAT", deflateSync(Buffer.alloc(5, 0))),
+    chunk("IEND", Buffer.alloc(0)),
+  ]);
+  assert.throws(() => decodePngToRgba(short), /长度不符/);
+});
