@@ -1787,3 +1787,56 @@ test("executor M1: G4 批准但续期被拒 → UNCROSS_DENIED，该建议零注
   assert.equal(confirm.captured.length, 2)
   assert.deepEqual(confirm.captured[0].details.dangerousApis, ["computer.experimental_suggestion"])
 })
+
+
+// --- WP5-I4 P7: 刷新链恒 null 回归（executor.ts:993 结构锁定） ---------------------
+//
+// admission 开启态（tinyclickLocator 提供）下，G4 之外的 re-L2 批准后刷新通道
+// 永不引入实验层新建议——否则未经人审的建议会借刷新通道绕过 G4 门。本测试锁
+// executor.ts:993 `tinyclick: null`：若未来重构把 deps.tinyclickLocator 透传进
+// 刷新链，下方 tc.calls.length===0 断言必红（刷新 L1 miss → L2 会被调用）。
+
+test("P7 回归：admission 开启态下批准后刷新链 deps.tinyclick 恒 null（X3 形态）", async () => {
+  const tc = fakeTinyClickLocator() // 若被刷新链调用必 hit —— 探测用
+  const confirm = scriptedConfirm([true])
+  const injector = new RecordingInjector()
+  const capturer = new FakeCapturer([0])
+  let ocrCalls = 0
+  const staged: Locator = {
+    async ensureLanguage() {},
+    async ocr() {
+      ocrCalls += 1
+      // calls 1-2 = 初次定位 + Y1 危险词扫描（目标在）；calls 3+ = 批准后刷新帧（目标消失）
+      return {
+        language: "zh-Hans",
+        words: ocrCalls <= 2 ? [{ text: "确认删除", x: 160, y: 208, w: 60, h: 30 }] : [],
+      }
+    },
+    locate(result: OcrResult, text: string) { return realLocate.call(this, result, text) },
+  } as unknown as Locator
+  const logs: Array<{ event: string; data: Record<string, unknown> }> = []
+  const deps = makeDeps({
+    confirm: confirm.fn,
+    injector,
+    capturer,
+    locator: staged,
+    now: advancingClock(),
+    tinyclickLocator: tc.locator, // admission ON——刷新链仍不得见到实验层
+    log: (event, data) => logs.push({ event, data: data as Record<string, unknown> }),
+  })
+  const r = await runComputerTask(
+    { task: "t", app: "win.app.test", actions: [{ action: "click", target: "确认删除" }] }, deps)
+  assert.equal(r.errorCode, "STALE_SCREENSHOT", "刷新帧目标消失 = STALE（staleOnNotFound）")
+  assert.equal(injector.clicks.length, 0, "刷新路径零注入")
+  assert.equal(tc.calls.length, 0, "刷新链 deps.tinyclick 恒 null——实验层全任务零调用（P7 锁）")
+  // 结构证据（executor log 通道）：刷新链以 tinyclick:null 跳过，可观测形态 =
+  // computeruse.locate{layer:"tinyclick", hit:false, reason:"model-disabled",
+  // refresh:true}（初次链 L1 hit 不触及实验层；G4 命中链不走刷新分支）。
+  const tcLogs = logs.filter((l) => l.event === "computeruse.locate" && l.data?.layer === "tinyclick")
+  assert.ok(tcLogs.length >= 1, "刷新链须留下 tinyclick 层跳过日志")
+  for (const l of tcLogs) {
+    assert.equal(l.data.hit, false, "刷新通道绝不产生实验层命中（未经 G4 人审的建议不得借道）")
+    assert.equal(l.data.reason, "model-disabled", "null 注入的可观测形态 = model-disabled 跳过")
+    assert.equal(l.data.refresh, true, "tinyclick 日志只能来自刷新通道的 null 跳过")
+  }
+})
