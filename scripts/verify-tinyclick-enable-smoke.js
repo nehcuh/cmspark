@@ -18,8 +18,8 @@
 //      零注入、completedActions 0（拒绝不耗预算）、无后续 tinyclick hit
 //   7. 出口 4 批准臂：G4 批准 + 续期批准 → 建议点真注入 + uncrossverified +
 //      confidence 缺省（G3）+ completedActions 1（批准后才耗预算，M1 挂钩）
-// 精度对账（非断言）：注入点与 frozen 锚（g1-envelope-result）距离仅打印——
-//   准确率臂归 golden 门禁管，冒烟只证链路。
+// 精度对账：注入点与 frozen 锚（g1-envelope-result）距离打印 + ≤64px 冒烟级
+//   sanity 断言（1920 帧宽 ≈3.3%）——准确率判定归 golden 门禁，冒烟只证链路。
 //
 // Usage: node scripts/verify-tinyclick-enable-smoke.js [--variant hybrid|int8]
 // Exit: 0=全过；1=断言失败；2=环境/前置缺失（spike 模型/编译产物——诚实退出，
@@ -355,7 +355,7 @@ async function main() {
     assert(step.confidence === undefined, "confidence 缺省（G3 未校准不上链）");
     const rec = h.evidence.records.find((x) => x.action === "click" && x.layer === "tinyclick");
     assert(!!rec && rec.uncrossverified === true, "批准注入带 uncrossverified 标记（A1.3，证据链）");
-    // 精度对账（非断言）：与 frozen 锚距离仅打印
+    // 精度对账：打印 + ≤64px 冒烟级 sanity 断言（准确率判定归 golden 门禁）
     const frozen = JSON.parse(fs.readFileSync(frozenPath, "utf8"));
     const anchor = Object.values(frozen.golden || {}).find((a) => a && a.id === SMOKE_CASE_ID);
     const lastClick = h.injector.clicks[h.injector.clicks.length - 1];

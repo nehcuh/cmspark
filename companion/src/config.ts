@@ -415,12 +415,13 @@ export function getConfig(): CompanionConfig {
     cachedConfig.computer.modelVariant = "hybrid"
   }
   cachedConfig.computer.modelVariant = cachedConfig.computer.modelVariant ?? "hybrid"
-  // P9：手改开启的启动期醒目 loud log——本路径每 cache-miss（≈进程启动）只跑
-  // 一次，不刷屏；合法布尔不撤销、不阻断，仅明示（god-mode 方式 B WARNING 先例，
-  // ADR-010:73）。
+  // P9：实验层开启态的启动期醒目 loud log——本路径每 cache-miss（≈进程启动）
+  // 只跑一次，不刷屏；合法布尔不撤销、不阻断，仅明示（god-mode 方式 B WARNING
+  // 先例，ADR-010:73）。I4 对抗 P5：持久化 config 无法区分「设置页经门开启」
+  // 与「手改 opt-in」两源——文案不过归因，如实并陈。
   if (cachedConfig.computer.modelEnabled === true) {
     console.error(
-      `[cmspark-agent] WARNING: computer.modelEnabled=true —— TinyClick 实验层经 config.json 手动开启（ADR-010 显式 owner opt-in，同 god-mode 方式 B）。本层未校准，命中仍必经人工确认；关闭请置 false 或经设置页。`,
+      `[cmspark-agent] WARNING: computer.modelEnabled=true —— TinyClick 实验层处于开启状态（设置页经门开启 或 手改 config.json opt-in 皆可达此态，持久化配置不区分来源；ADR-010 显式 owner opt-in，同 god-mode 方式 B）。本层未校准，命中仍必经人工确认；关闭请置 false 或经设置页。`,
     )
   }
   return cachedConfig
