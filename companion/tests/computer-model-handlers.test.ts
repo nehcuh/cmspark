@@ -507,3 +507,145 @@ test("WI-4.2 delete：dispose + holder=null + 删除当前变体 + 广播", asyn
   assert.equal(r.removedBytes, 123)
   assert.ok(broadcasts.some((b) => b.type === "computer.model.state"))
 })
+
+// --- P1：download/delete handler 级状态互斥（I4 对抗 2026-07-21 必修） ---------------
+
+test("P1：下载中 delete → DOWNLOAD_IN_PROGRESS 拒绝（会话/文件/配置零触碰，诚实文案）；下载完成后 delete 恢复可用", async () => {
+  resetModelConfig({ coordinateEnabled: false, modelMirror: "https://hf-mirror.example", modelVariant: "int8" })
+  const dlCalls: any[] = []
+  let releaseDl!: () => void
+  const dlPending = new Promise<void>((res) => { releaseDl = res })
+  const downloadImpl = async (args: any) => { dlCalls.push(args); await dlPending; return {} as any }
+  const r1 = await handleComputerModelMessage(
+    { type: "computer.model.download", source: "settings" },
+    {},
+    holderWith(null),
+    { manifestLoader: async () => realHostManifest(), downloadImpl: downloadImpl as any },
+  )
+  assert.equal(r1.status, "started")
+  // 下载进行中 → delete 必须被拒且零触碰（拒绝先于 dispose）
+  const session = fakeSessionFull()
+  const holder = holderWith(session)
+  const delCalls: any[] = []
+  const r = await handleComputerModelMessage(
+    { type: "computer.model.delete", source: "settings" },
+    {},
+    holder,
+    { deleteImpl: (async (args: any) => { delCalls.push(args); return { removedBytes: 1 } }) as any },
+  )
+  assert.equal(r.type, "error")
+  assert.equal(r.family, "computer.model")
+  assert.equal(r.code, "DOWNLOAD_IN_PROGRESS")
+  assert.match(r.error, /下载进行中/, "诚实文案而非裸系统错误")
+  assert.equal(session.disposed, 0, "被拒时 dispose 绝不发生")
+  assert.equal(holder.session, session, "holder 不被触碰")
+  assert.equal(delCalls.length, 0, "rm 不发生（Windows .part 占用 EPERM 面闭合）")
+  // 下载完成 → 互斥解除，delete 恢复可用
+  releaseDl()
+  await flush(); await flush(); await flush()
+  const r2 = await handleComputerModelMessage(
+    { type: "computer.model.delete", source: "settings" },
+    {},
+    holder,
+    { deleteImpl: (async (args: any) => { delCalls.push(args); return { removedBytes: 1 } }) as any },
+  )
+  assert.equal(r2.ok, true, "下载完成后删除放行（标志位无泄漏）")
+  assert.equal(delCalls.length, 1)
+})
+
+test("P1：delete 中 download → DELETE_IN_PROGRESS 拒绝（零 manifest 读/零网络）；license_response 自动下载同让路；delete×delete 幂等", async () => {
+  resetModelConfig({ coordinateEnabled: false, modelMirror: "https://hf-mirror.example", modelVariant: "int8" })
+  const delCalls: any[] = []
+  let releaseDel!: () => void
+  const delPending = new Promise<void>((res) => { releaseDel = res })
+  const deleteImpl = async (args: any) => { delCalls.push(args); await delPending; return { removedBytes: 1 } }
+  // delete 进行中（activeDelete 在首个 await 前置位——调用即生效）
+  const pDel = handleComputerModelMessage(
+    { type: "computer.model.delete", source: "settings" },
+    {},
+    holderWith(null),
+    { deleteImpl: deleteImpl as any },
+  )
+  const dlCalls: any[] = []
+  let manifestReads = 0
+  const r = await handleComputerModelMessage(
+    { type: "computer.model.download", source: "settings" },
+    {},
+    holderWith(null),
+    {
+      manifestLoader: async () => { manifestReads += 1; return realHostManifest() },
+      downloadImpl: (async (args: any) => { dlCalls.push(args); return {} as any }) as any,
+    },
+  )
+  assert.equal(r.type, "error")
+  assert.equal(r.code, "DELETE_IN_PROGRESS")
+  assert.match(r.error, /删除进行中/)
+  assert.equal(dlCalls.length, 0, "rm/mkdir 竞态闭合：下载实现零调用")
+  assert.equal(manifestReads, 0, "拒绝 fail-fast 于 manifest 读取之前")
+  // delete×delete → already-running 幂等（与 download 单飞同型）
+  const rDup = await handleComputerModelMessage(
+    { type: "computer.model.delete", source: "settings" },
+    {},
+    holderWith(null),
+    { deleteImpl: deleteImpl as any },
+  )
+  assert.equal(rDup.ok, true)
+  assert.equal(rDup.status, "already-running")
+  assert.equal(delCalls.length, 1, "单飞：删除实现只调一次")
+  // license_response accepted 的自动下载同样让路（config 写入照实，下载不触发）
+  const rLic = await handleComputerModelMessage(
+    { type: "computer.model.license_response", accepted: true, source: "settings" },
+    {},
+    holderWith(null),
+    {
+      manifestLoader: async () => realHostManifest(),
+      downloadImpl: (async (args: any) => { dlCalls.push(args); return {} as any }) as any,
+    },
+  )
+  assert.equal(rLic.download, "delete-in-progress")
+  assert.equal(dlCalls.length, 0, "自动触发路径同受互斥")
+  // delete 完成 → 互斥解除
+  releaseDel()
+  const rDel = await pDel
+  assert.equal(rDel.ok, true)
+  await flush(); await flush(); await flush()
+  const r2 = await handleComputerModelMessage(
+    { type: "computer.model.download", source: "settings" },
+    {},
+    holderWith(null),
+    {
+      manifestLoader: async () => realHostManifest(),
+      downloadImpl: (async (args: any) => { dlCalls.push(args); return {} as any }) as any,
+    },
+  )
+  assert.equal(r2.status, "started", "删除完成后下载放行（标志位无泄漏）")
+  await flush(); await flush(); await flush()
+})
+
+test("P1：deleteImpl 抛错 → DELETE_FAILED 结构化返回（裸 fs 错误不穿透）+ 状态广播 + finally 清标志可重试", async () => {
+  resetModelConfig({ coordinateEnabled: false, modelEnabled: true, modelVariant: "int8" })
+  const session = fakeSessionFull()
+  const holder = holderWith(session)
+  const broadcasts: any[] = []
+  const r = await handleComputerModelMessage(
+    { type: "computer.model.delete", source: "settings" },
+    { broadcast: (d: any) => broadcasts.push(d) },
+    holder,
+    { deleteImpl: (async () => { throw new Error("EPERM: operation not permitted") }) as any },
+  )
+  assert.equal(r.type, "error")
+  assert.equal(r.family, "computer.model")
+  assert.equal(r.code, "DELETE_FAILED")
+  assert.match(r.error, /删除失败：EPERM/, "原因如实上达而非穿透顶层 catch")
+  assert.equal(session.disposed, 1, "会话已 dispose 属实（裁决 4 先行）")
+  assert.equal(holder.session, null)
+  assert.ok(broadcasts.some((b) => b.type === "computer.model.state"), "失败后广播最新状态让 UI 如实落位")
+  // finally 清标志 → 重试删除语义不受损
+  const r2 = await handleComputerModelMessage(
+    { type: "computer.model.delete", source: "settings" },
+    {},
+    holder,
+    { deleteImpl: (async () => ({ removedBytes: 5 })) as any },
+  )
+  assert.equal(r2.ok, true, "失败后重试放行（activeDelete 无泄漏）")
+})

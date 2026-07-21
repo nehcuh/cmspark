@@ -24,6 +24,18 @@
 //     免费，仅 settings 双层围栏）。
 //   - disable/delete → dispose + holder=null（裁决 4）；熔断保活不 dispose
 //     （reset_circuit_breaker 真复位语义维持 I2 终审）。
+//
+// I4 对抗修复 P1（2026-07-21，LOW-MED 必修）：download/delete handler 级状态
+// 互斥——handler 是信任边界，围栏不设于 UI 按钮态假设之上：
+//   - 下载中 delete → 拒（DOWNLOAD_IN_PROGRESS）：否则 Windows 上 rm 撞 .part
+//     写流占用 → EPERM 裸错误穿透、会话已 dispose、下载完成后文件复现；
+//     类 Unix 上 rm 胜 → 下载终段 stat 失败、以误导性 network-error 收尾。
+//   - delete 中 download（含 license_response 自动触发）→ 拒（DELETE_IN_PROGRESS
+//     / note=delete-in-progress）：否则 mkdir recursive 与 rm recursive 竞态
+//     （ENOTEMPTY 或「删除成功但文件随即重建」）。
+//   - delete×delete → already-running 幂等（与 download 单飞同型）。
+//   - deleteImpl 错误归一为结构化返回（DELETE_FAILED + 状态广播），不穿透裸
+//     fs 错误。互斥只防并发不防轮询（P10 同型，损害有界声明在案）。
 
 import * as fs from "node:fs"
 import * as path from "node:path"
@@ -139,6 +151,8 @@ export function modelLicenseAccepted(cfg: {
 // --- 下载单飞（进程级；P10 幂等防并发不防轮询） --------------------------------------
 
 let activeDownload: { variant: string } | null = null
+/** P1：删除进行中标志（download/delete 互斥的另一向；delete×delete 幂等）。 */
+let activeDelete: { variant: string } | null = null
 
 /** 占位主机判定（裁决 5）：manifest url 主机为 .invalid TLD（RFC 2606）且未配镜像。 */
 function isPlaceholderHost(manifest: ModelManifest, variant: string): boolean {
@@ -339,6 +353,10 @@ export async function handleComputerModelMessage(
         let downloadNote: string | undefined
         if (activeDownload) {
           downloadNote = "already-running"
+        } else if (activeDelete) {
+          // P1：删除进行中不自动触发下载（rm/mkdir 竞态 fail-closed）
+          downloadNote = "delete-in-progress"
+          logger.warn("computer.model.download.refused", { reason: "delete-in-progress", variant })
         } else {
           try {
             const manifest = await (deps.manifestLoader ?? (() => loadModelManifest(defaultManifestPath())))()
@@ -372,6 +390,14 @@ export async function handleComputerModelMessage(
       if (activeDownload) {
         return { type: "computer.model.download.result" as const, ok: true, status: "already-running", variant }
       }
+      // P1：删除进行中拒下载（互斥另一向；rm/mkdir 竞态 fail-closed，零网络零写盘）
+      if (activeDelete) {
+        logger.warn("computer.model.download.refused", { reason: "delete-in-progress", variant })
+        return modelError(
+          "模型删除进行中——待其完成后重试下载；本次未发起任何网络请求。",
+          { code: "DELETE_IN_PROGRESS" },
+        )
+      }
       let manifest: ModelManifest
       try {
         manifest = await (deps.manifestLoader ?? (() => loadModelManifest(defaultManifestPath())))()
@@ -398,20 +424,51 @@ export async function handleComputerModelMessage(
     case "computer.model.delete": {
       const cfg = getConfig().computer ?? { coordinateEnabled: false }
       const variant = cfg.modelVariant ?? "hybrid"
-      // dispose 会话 + holder=null（裁决 4）；删除是 fail-closed 方向免费动作
-      if (holder.session) {
-        try {
-          await holder.session.dispose()
-        } catch {
-          /* best-effort dispose */
-        }
-        holder.session = null
+      // P1 互斥：下载中拒删（否则 Windows rm 撞 .part 占用 → 裸 EPERM 穿透 +
+      // 会话已 dispose + 文件复现；类 Unix 下载以误导性 network-error 收尾）。
+      // 拒绝先于 dispose——会话与文件零触碰。
+      if (activeDownload) {
+        logger.warn("computer.model.delete.refused", { reason: "download-in-progress", variant })
+        return modelError(
+          "模型下载进行中——待下载完成或失败后重试删除；已安装文件、会话与配置均未改动。",
+          { code: "DOWNLOAD_IN_PROGRESS" },
+        )
       }
-      const { removedBytes } = await (deps.deleteImpl ?? deleteModelVariant)({ variant })
-      logger.info("computer.model.deleted", { variant, removedBytes })
-      const state = await statePayload(holder, deps)
-      ctx.broadcast?.(state)
-      return { type: "computer.model.delete.result" as const, ok: true, variant, removedBytes }
+      if (activeDelete) {
+        return { type: "computer.model.delete.result" as const, ok: true, status: "already-running", variant }
+      }
+      activeDelete = { variant }
+      try {
+        // dispose 会话 + holder=null（裁决 4）；删除是 fail-closed 方向免费动作
+        if (holder.session) {
+          try {
+            await holder.session.dispose()
+          } catch {
+            /* best-effort dispose */
+          }
+          holder.session = null
+        }
+        const { removedBytes } = await (deps.deleteImpl ?? deleteModelVariant)({ variant })
+        logger.info("computer.model.deleted", { variant, removedBytes })
+        const state = await statePayload(holder, deps)
+        ctx.broadcast?.(state)
+        return { type: "computer.model.delete.result" as const, ok: true, variant, removedBytes }
+      } catch (err) {
+        // P1：删除失败归一为结构化返回（裸 fs 错误不穿透顶层 catch）；会话已
+        // dispose 属实——广播最新状态让 UI 如实落位，重试删除语义不受损。
+        logger.warn("computer.model.delete.failed", {
+          variant,
+          error: err instanceof Error ? err.message : String(err),
+        })
+        const state = await statePayload(holder, deps)
+        ctx.broadcast?.(state)
+        return modelError(
+          `模型删除失败：${err instanceof Error ? err.message : String(err)}——可重试删除；实验层会话已关闭，UIA / OCR / 用户框选定位不受影响。`,
+          { code: "DELETE_FAILED" },
+        )
+      } finally {
+        activeDelete = null
+      }
     }
 
     case "computer.model.reset_circuit_breaker": {
