@@ -447,7 +447,7 @@ Locator.locate(screenshot, hwnd, target: { kind: "text", value } | { kind: "desc
   - 新增：`scripts/verify-tinyclick-golden.js`——s3-run.js 生产化（离线回放，±8px 容差，plan:246 惯例）；golden 集扩充：loc bin 0/999 边界、四角、<16px 小目标、>20 词命令；回放需模型在本机（文档化；不进 CI 强制，作发版/本机门禁）
   - 测试：扩充 case 入库 + harness 可跑；逻辑层（命中判定/容差）单测
 
-##### 迭代 I3 — 实验层接入编排器与防信任放大（G2/G3/G4/B9/B10 评估） ✅ 2026-07-20 条件收口（出口标准 4/5 部分完成：文案层交付，功能开关四项——WS 开关族/config 四字段/admission 组装/扩展 UI——留账 → **WP5-I4「实验层用户开关与许可证门」已立项（详案见下 WP5-I4 节，2026-07-21）**，出口锚 :465-467 WI-3.4 原文 + 评审 i3-review §4；中间形态 fail-closed 实证：生产侧无 locator 构造点）
+##### 迭代 I3 — 实验层接入编排器与防信任放大（G2/G3/G4/B9/B10 评估） ✅ 2026-07-20 条件收口（出口标准 4/5 部分完成：文案层交付，功能开关四项——WS 开关族/config 四字段/admission 组装/扩展 UI——留账 → **WP5-I4「实验层用户开关与许可证门」已立项（详案见下 WP5-I4 节，2026-07-21）并已 ✅ 收口（2026-07-21，评审+对抗+终审三轮 PASS，留账四项全部清零）**，出口锚 :465-467 WI-3.4 原文 + 评审 i3-review §4；中间形态 fail-closed 实证：生产侧无 locator 构造点）
 
 > 出口标准：L2 stub 实装（降级日志格式不变）；包线拒绝代码化三类各有测试；experimental→reL2 流通；开关+许可证门+文案评审通过；时间线无未校准数字上屏。
 
@@ -524,7 +524,7 @@ Locator.locate(screenshot, hwnd, target: { kind: "text", value } | { kind: "desc
 - **M6**（P3-b 超时/冷启动未定）：WI-2.3 增 warmup 推理（arena 预分配、首推理是热的）+ hybrid@4 补测写入超时叙事；WI-2.1 增重建期 fail-fast `model-not-ready` 不排队 + 熔断计数排除冷启动超时 + 超时策略文档化（固定 5s + 慢机后果声明）。
 - **M7**（P3-c/d/e 语义与文案缺位）：WI-3.2 定义 ready=文件在盘且校验过（session 懒建）、单飞 busy→`tinyclick-busy` skipped 链继续、重建期→`model-not-ready`；WI-3.4 设置页模型状态行三层开关依赖提示文案；WI-1.2 测试补 stale `.part`（超期或 revision 变更）删除重下。
 
-#### WP5-I4 实施详案（实验层用户开启路径，2026-07-21 立项规划）
+#### WP5-I4 实施详案（实验层用户开启路径，2026-07-21 立项规划） ✅ 2026-07-21 收口（评审 PASS + 实现对抗 SOUND WITH MANDATORY FIXES + 终审 PASS 三轮闭环：出口标准 6/6 逐条亲跑复验，对抗 P1-P6 修复批次 `90214ab`/`927ddf2`/`99499a0` 全部落实，门禁 660→668 全绿，冒烟/golden 双臂冻结基线一致——评审 `coordinate-computer-use-wp5-i4-review.md` §5 终审段、对抗 `coordinate-computer-use-wp5-i4-adversary.md`）
 
 > **定位**：I3 条件收口留账四项（plan:450 互链、i3-review §4 处置建议）的收口迭代——实验层代码全链就绪但 fail-closed（生产侧无 locator 构造点：server.ts:2001 不传 `tinyclickLocator`、holder `computerModelSession.session` 全仓零写入、config 无四字段、WS 仅两路由——i3-adversary 角 5 四面复核在案），本迭代交付「用户可见开启路径」。**出口锚 plan:465-467 WI-3.4 原文 + 本节补强六条**。前置未修项：无——i3-adversary M1-M3 已清零（f991ed2/5be7758/9ac1122，i3-review §6 终审 APPROVED）；M1（预算记账移 G4 批准后）挂钩本节出口标准 4 冒烟断言。约束不变：中文注释、零新运行时依赖、扩展组件纯渲染 + 逻辑抽纯函数（WP4 先例）。
 
