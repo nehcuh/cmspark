@@ -1,7 +1,10 @@
 import Foundation
+import AppKit
 import LocalAuthentication
 import ApplicationServices
 import Vision
+import ImageIO
+import ScreenCaptureKit
 import CoreGraphics
 import CoreImage
 import Security
@@ -382,6 +385,7 @@ guard argv.count >= 2 else {
           create-note --name N [--body B]      — create a new Note (Phase 1 W6, biometric in W8)
           move-file --source P --destination D — move file via Finder (Phase 1 W6, biometric in W8)
           biometric-verify --nonce N [--reason R] — Touch ID verification (Phase 1 W8)
+          estop --socket-path P [--flag-path F]  — long-running emergency-stop helper (WP3)
 
         """
     FileHandle.standardError.write(usage.data(using: .utf8)!)
@@ -475,6 +479,12 @@ do {
     case "evidence-seal":
         guard let inp = argValue("--input"), let outp = argValue("--output") else { fputs("evidence-seal: --input and --output required\n", stderr); exit(2) }
         out = cuEvidenceSeal(inputPath: inp, outputPath: outp)
+    case "estop":
+        // Long-running emergency-stop helper (WP3 darwin-estop.ts expects this
+        // subcommand): CGEventTap hotkey + UNIX socket proof-of-life. Never
+        // returns on success — it hosts a CFRunLoop until killed.
+        guard let sock = argValue("--socket-path") else { fputs("estop: --socket-path required\n", stderr); exit(2) }
+        try runEstop(socketPath: sock, flagPath: argValue("--flag-path") ?? "/tmp/cmspark-estop.flag")
 
     default:
         FileHandle.standardError.write("unknown subcommand: \(subcommand)\n".data(using: .utf8)!)
@@ -529,9 +539,32 @@ func cuAppElementForPid(_ pid: pid_t) -> AXUIElement? {
     return AXUIElementCreateApplication(pid)
 }
 
+// Activate the target app so its window is frontmost and not occluded before
+// we screenshot or inject events. Without this, clicking the Chrome side
+// panel's security-confirm popup activates Chrome, which occludes the target
+// window (NetEase Music, etc.) — then CGEvent.post to .cghidEventTap delivers
+// the click to whatever window is visually under the cursor (Chrome), not to
+// the target pid we set in eventTargetUnixProcessID (b0faek bug, 2026-07-22).
+// Returns true if activation was attempted for a live pid.
+func cuActivatePid(_ pid: pid_t) -> Bool {
+    guard pid != 0, let app = NSRunningApplication(processIdentifier: pid) else { return false }
+    if app.isHidden { app.unhide() }
+    app.activate()
+    usleep(250000) // 0.25s for the window to actually come to front
+    return true
+}
+
 // MARK: - window-list
 
 func cuWindowList(bundleId: String?, windowId: UInt32?, foreground: Bool) -> String {
+    // kCGWindowOwnerName is the process DISPLAY name (e.g. "网易云音乐"),
+    // NOT the bundle ID — comparing it against bundleId filters out
+    // everything (2026-07-21 APP_WINDOW_NOT_FOUND bug). Resolve the bundle
+    // ID to the app's PID set and filter by kCGWindowOwnerPID instead.
+    var pidFilter: Set<Int32>?
+    if let bid = bundleId {
+        pidFilter = Set(NSRunningApplication.runningApplications(withBundleIdentifier: bid).map { $0.processIdentifier })
+    }
     let options: CGWindowListOption = foreground ? [.optionOnScreenOnly] : [.optionAll]
     guard let windows = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
         return cuError("CGWindowListCopyWindowInfo failed")
@@ -545,10 +578,15 @@ func cuWindowList(bundleId: String?, windowId: UInt32?, foreground: Bool) -> Str
         let pid = w[kCGWindowOwnerPID as String] as? Int32 ?? 0
         let layer = w[kCGWindowLayer as String] as? Int32 ?? 0
         if let widFilter = windowId, wid != widFilter { continue }
-        if let bidFilter = bundleId, owner != bidFilter { continue }
+        if let pids = pidFilter, !pids.contains(pid) { continue }
         if layer > 1000 { continue }
+        // Ownership is by BUNDLE ID on macOS (policy.ts assertHwndOwnedByEntry
+        // compares it against AppEntry.bundleId) — kCGWindowOwnerName is only
+        // a display name ("网易云音乐"), so resolve the real bundle ID per pid.
+        let ownerBid = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier ?? ""
         filtered.append([
             "windowId": wid, "pid": pid, "ownerName": owner, "name": name,
+            "bundleId": ownerBid,
             "bounds": ["x": bounds["X"] ?? 0, "y": bounds["Y"] ?? 0, "width": bounds["Width"] ?? 0, "height": bounds["Height"] ?? 0],
             "layer": layer,
         ])
@@ -649,42 +687,143 @@ func cuAXLocate(windowId: UInt32, target: String) -> String {
     return cuJson(["found": false])
 }
 
-// MARK: - screenshot (screencapture CLI)
+// MARK: - screenshot (ScreenCaptureKit)
 
 func cuScreenshot(windowId: UInt32, outputPath: String) -> String {
-    guard let info = CGWindowListCopyWindowInfo([.optionAll], windowId) as? [[String: Any]],
-          let first = info.first,
+    // Use .optionIncludingWindow (not .optionAll) so the result is filtered to
+    // just this windowId. With .optionAll, macOS 26 returns ALL windows and
+    // ignores the windowId arg, so info.first picked the wrong window and
+    // produced a 64x64 rect for a 1058x752 NetEase Music main window
+    // (ea3y6n bug, 2026-07-22). Defense-in-depth: also filter explicitly by
+    // kCGWindowNumber in case macOS ever honors .optionAll + windowId again.
+    var info: [[String: Any]] = []
+    if let raw = CGWindowListCopyWindowInfo([.optionIncludingWindow], windowId) as? [[String: Any]] {
+        info = raw.filter { ($0[kCGWindowNumber as String] as? UInt32) == windowId }
+        if info.isEmpty { info = raw }
+    } else if let rawAll = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] {
+        info = rawAll.filter { ($0[kCGWindowNumber as String] as? UInt32) == windowId }
+    }
+    guard !info.isEmpty else {
+        return cuError("cannot get window info for windowId \(windowId)")
+    }
+    guard let first = info.first,
           let bounds = first[kCGWindowBounds as String] as? [String: CGFloat] else {
-        return cuError("cannot get window info")
+        return cuError("cannot read window bounds for windowId \(windowId)")
     }
     let rect: [String: CGFloat] = ["x": bounds["X"] ?? 0, "y": bounds["Y"] ?? 0, "width": bounds["Width"] ?? 0, "height": bounds["Height"] ?? 0]
     var client: [String: CGFloat] = ["x": 0, "y": 0, "width": rect["width"] ?? 0, "height": rect["height"] ?? 0]
 
     let pid = cuPidForWindow(windowId)
+    // Pull target app to front so the screenshot captures a visible (non-occluded)
+    // frame. If Chrome side panel is currently frontmost from a confirm click,
+    // without this ScreenCaptureKit may capture a stale frame for an occluded
+    // window. (b0faek bug)
+    cuActivatePid(pid)
     if let appElement = cuAppElementForPid(pid) {
         var windowsRef: CFTypeRef?
         AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &windowsRef)
-        if let axWindows = windowsRef as? [AXUIElement], let axWin = axWindows.first {
-            var posRef: CFTypeRef?; var sizeRef: CFTypeRef?
-            AXUIElementCopyAttributeValue(axWin, kAXPositionAttribute as CFString, &posRef)
-            AXUIElementCopyAttributeValue(axWin, kAXSizeAttribute as CFString, &sizeRef)
-            var pos = CGPoint.zero; var size = CGSize.zero
-            if let p = posRef { AXValueGetValue(p as! AXValue, .cgPoint, &pos) }
-            if let s = sizeRef { AXValueGetValue(s as! AXValue, .cgSize, &size) }
-            let fx = rect["x"] ?? 0; let fy = rect["y"] ?? 0
-            client = ["x": pos.x - fx, "y": pos.y - fy, "width": size.width, "height": size.height]
+        if let axWindows = windowsRef as? [AXUIElement] {
+            // Match AX window to windowId by frame — AX has no public
+            // CGWindowID attribute. Previously this used axWindows.first,
+            // which on multi-window apps (NetEase Music: main + mini-player
+            // + lyric + tray-icon windows) picked the wrong one and produced
+            // a tiny 29x29 client rect → OUT_OF_BOUNDS for every click
+            // (ea3y6n bug, 2026-07-22).
+            let rx = rect["x"] ?? 0, ry = rect["y"] ?? 0
+            let rw = rect["width"] ?? 0, rh = rect["height"] ?? 0
+            var bestWin: AXUIElement? = nil
+            var bestDist: CGFloat = .infinity
+            for axWin in axWindows {
+                var posRef: CFTypeRef?; var sizeRef: CFTypeRef?
+                AXUIElementCopyAttributeValue(axWin, kAXPositionAttribute as CFString, &posRef)
+                AXUIElementCopyAttributeValue(axWin, kAXSizeAttribute as CFString, &sizeRef)
+                var pos = CGPoint.zero; var size = CGSize.zero
+                if let p = posRef { AXValueGetValue(p as! AXValue, .cgPoint, &pos) }
+                if let s = sizeRef { AXValueGetValue(s as! AXValue, .cgSize, &size) }
+                let dist = abs(pos.x - rx) + abs(pos.y - ry) + abs(size.width - rw) + abs(size.height - rh)
+                if dist < bestDist {
+                    bestDist = dist
+                    bestWin = axWin
+                }
+            }
+            if let axWin = bestWin {
+                var posRef: CFTypeRef?; var sizeRef: CFTypeRef?
+                AXUIElementCopyAttributeValue(axWin, kAXPositionAttribute as CFString, &posRef)
+                AXUIElementCopyAttributeValue(axWin, kAXSizeAttribute as CFString, &sizeRef)
+                var pos = CGPoint.zero; var size = CGSize.zero
+                if let p = posRef { AXValueGetValue(p as! AXValue, .cgPoint, &pos) }
+                if let s = sizeRef { AXValueGetValue(s as! AXValue, .cgSize, &size) }
+                let fx = rect["x"] ?? 0; let fy = rect["y"] ?? 0
+                client = ["x": pos.x - fx, "y": pos.y - fy, "width": size.width, "height": size.height]
+            }
         }
     }
 
-    let x = Int(rect["x"] ?? 0); let y = Int(rect["y"] ?? 0)
-    let w = Int(rect["width"] ?? 0); let h = Int(rect["height"] ?? 0)
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
-    process.arguments = ["-x", "-R", "\(x),\(y),\(w),\(h)", "-t", "png", outputPath]
-    process.standardOutput = FileHandle.nullDevice
-    process.standardError = FileHandle.nullDevice
-    do { try process.run(); process.waitUntilExit() } catch { return cuError("screencapture failed: \(error.localizedDescription)") }
-    guard let data = try? Data(contentsOf: URL(fileURLWithPath: outputPath)) else { return cuError("cannot read captured image") }
+    // Capture via ScreenCaptureKit (macOS 14+, MANDATORY in 15+).
+    // CGWindowListCreateImage was obsoleted in macOS 15 and removed in 26;
+    // screencapture CLI on macOS 26 has flaky TCC propagation when the
+    // responsible process is an unsigned .app launcher (re-prompts and fails
+    // even after the user grants permission). SCScreenshotManager.captureImage
+    // is the modern API: it triggers the TCC prompt on first call and throws
+    // a clear error on denial.
+    //
+    // DO NOT add CGPreflightScreenCaptureAccess()/CGRequestScreenCaptureAccess()
+    // back: preflight checks THIS process's TCC entry but TCC records the
+    // grant against the responsible process up the spawn chain, so the two
+    // never line up for an ad-hoc binary → infinite prompt loop.
+    let semaphore = DispatchSemaphore(value: 0)
+    var capturedImage: CGImage?
+    var captureError: String?
+    let hostPid = ProcessInfo.processInfo.processIdentifier
+    let hostParentPid = getppid()
+
+    let task = Task<Void, Never> {
+        do {
+            let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
+            guard let targetWindow = content.windows.first(where: { UInt32($0.windowID) == windowId }) else {
+                captureError = "window \(windowId) not found among \(content.windows.count) SCShareableContent windows (pid=\(hostPid) ppid=\(hostParentPid))"
+                semaphore.signal()
+                return
+            }
+            let filter = SCContentFilter(desktopIndependentWindow: targetWindow)
+            let config = SCStreamConfiguration()
+            config.scalesToFit = false
+            config.showsCursor = false
+            config.ignoreShadowsSingleWindow = true
+            let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
+            capturedImage = image
+        } catch let err as NSError {
+            if err.domain == "com.apple.ScreenCaptureKit" && err.code == -38001 {
+                captureError = "ScreenCaptureKit permission denied (pid=\(hostPid) ppid=\(hostParentPid)) — open System Settings → Privacy & Security → Screen Recording and enable the entry for CMspark Agent / node / cmspark-host, then retry"
+            } else {
+                captureError = "ScreenCaptureKit error: \(err.domain) code=\(err.code) \(err.localizedDescription) (pid=\(hostPid) ppid=\(hostParentPid))"
+            }
+        } catch {
+            captureError = "screenshot capture failed: \(error.localizedDescription) (pid=\(hostPid) ppid=\(hostParentPid))"
+        }
+        semaphore.signal()
+    }
+    _ = task
+    semaphore.wait()
+
+    if let err = captureError {
+        return cuError(err, code: "PERMISSION_DENIED")
+    }
+    guard let image = capturedImage else {
+        return cuError("no image captured (no error reported)", code: "PERMISSION_DENIED")
+    }
+
+    let outURL = URL(fileURLWithPath: outputPath) as CFURL
+    guard let dest = CGImageDestinationCreateWithURL(outURL, "public.png" as CFString, 1, nil) else {
+        return cuError("cannot create CGImageDestination for \(outputPath)")
+    }
+    CGImageDestinationAddImage(dest, image, nil)
+    if !CGImageDestinationFinalize(dest) {
+        return cuError("CGImageDestinationFinalize failed for \(outputPath)")
+    }
+    guard let data = try? Data(contentsOf: URL(fileURLWithPath: outputPath)) else {
+        return cuError("cannot read captured image back from \(outputPath)")
+    }
     let sha256 = SHA256.hash(data: data).compactMap { String(format: "%02x", $0) }.joined()
     return cuJson(["ok": true, "rect": rect, "client": client, "dpi": 72, "path": outputPath, "sha256": sha256])
 }
@@ -771,6 +910,10 @@ func cuInject(action: String, windowId: UInt32, x: Int?, y: Int?, text: String?,
     if let flagPath = estopFlag, FileManager.default.fileExists(atPath: flagPath) { return cuError("E-Stop flag present", code: "TASK_ABORTED") }
     let pid = cuPidForWindow(windowId)
     guard pid != 0 else { return cuError("cannot find PID for window", code: "HWND_DEAD") }
+    // Pull target app to front before injecting — otherwise a click into the
+    // Chrome side panel's confirm popup leaves Chrome frontmost and occluding
+    // the target, and CGEvent.post lands on Chrome instead. (b0faek bug)
+    cuActivatePid(pid)
 
     switch action {
     case "click", "double_click", "right_click":
@@ -904,4 +1047,149 @@ func cuEvidenceSeal(inputPath: String, outputPath: String) -> String {
     try? FileManager.default.removeItem(atPath: inputPath)
     let sha256 = SHA256.hash(data: sealed).compactMap { String(format: "%02x", $0) }.joined()
     return cuJson(["ok": true, "sha256": sha256])
+}
+
+
+// MARK: - estop subcommand (WP3 darwin emergency stop)
+//
+// Architecture mirrors companion/src/computer/darwin-estop.ts:
+//   - CGEventTap registers Ctrl+Shift+Alt+Cmd+E as a global hotkey
+//   - a UNIX domain socket is the proof-of-life channel: the companion holds
+//     an open connection; this process dying closes it (EOF) and the
+//     companion fails closed (EMERGENCY_STOP_LOST)
+//   - on hotkey press: write the estop flag file (JSON {"timestamp": ms})
+//     and push an "estop" event line to every connected socket
+//
+// TCC: CGEventTap creation requires Accessibility (Input Monitoring) trust
+// for THIS binary. tapCreate returning nil = not trusted → exit with a clear
+// stderr message so the companion's preflight fails closed fast.
+
+final class EstopContext {
+    let flagPath: String
+    private var clients: [Int32] = []
+    private let lock = NSLock()
+
+    init(flagPath: String) { self.flagPath = flagPath }
+
+    func addClient(_ fd: Int32) {
+        lock.lock(); clients.append(fd); lock.unlock()
+    }
+
+    /// Hotkey pressed: persist the flag and notify all held connections.
+    func trigger() {
+        let payload = "{\"timestamp\": \(Int(Date().timeIntervalSince1970 * 1000))}"
+        try? payload.write(toFile: flagPath, atomically: true, encoding: .utf8)
+        lock.lock()
+        var alive: [Int32] = []
+        for fd in clients {
+            let written = "estop\n".withCString { write(fd, $0, strlen($0)) }
+            if written >= 0 { alive.append(fd) } else { close(fd) }
+        }
+        clients = alive
+        lock.unlock()
+    }
+}
+
+private var gEstopTap: CFMachPort?
+private var gEstopCtx: EstopContext?
+
+private func estopEventTapCallback(
+    _ proxy: CGEventTapProxy,
+    _ type: CGEventType,
+    _ event: CGEvent,
+    _ userInfo: UnsafeMutableRawPointer?
+) -> Unmanaged<CGEvent>? {
+    // macOS disables slow taps; re-enable instead of losing the kill switch.
+    if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+        if let tap = gEstopTap { CGEvent.tapEnable(tap: tap, enable: true) }
+        return Unmanaged.passUnretained(event)
+    }
+    guard type == .keyDown else { return Unmanaged.passUnretained(event) }
+    let required: CGEventFlags = [.maskControl, .maskAlternate, .maskCommand, .maskShift]
+    if event.getIntegerValueField(.keyboardEventKeycode) == Int64(kVK_ANSI_E),
+       event.flags.contains(required) {
+        gEstopCtx?.trigger()
+    }
+    // Pass the event through — never swallow user keystrokes.
+    return Unmanaged.passUnretained(event)
+}
+
+/// Bind + listen on the UNIX socket, spawn the accept loop, install the
+/// event tap, then run the run loop forever. Returns Never on success;
+/// throws (fast, with a stderr message) when setup fails.
+func runEstop(socketPath: String, flagPath: String) throws -> Never {
+    // 1. UNIX socket server (proof-of-life; accepted connections are held open)
+    unlink(socketPath)  // stale socket from a previous (killed) helper
+    let serverFD = socket(AF_UNIX, SOCK_STREAM, 0)
+    guard serverFD >= 0 else {
+        throw HostError(code: 3, message: "estop: socket() failed: errno=\(errno)")
+    }
+    let pathBytes = Array(socketPath.utf8)
+    guard pathBytes.count < 104 else {  // sizeof(sockaddr_un.sun_path)
+        close(serverFD)
+        throw HostError(code: 2, message: "estop: socket path too long (\(pathBytes.count) bytes)")
+    }
+    var addr = sockaddr_un()
+    addr.sun_len = UInt8(MemoryLayout<sockaddr_un>.stride)
+    addr.sun_family = sa_family_t(AF_UNIX)
+    withUnsafeMutableBytes(of: &addr.sun_path) { raw in
+        for i in 0..<pathBytes.count { raw[i] = pathBytes[i] }
+        raw[pathBytes.count] = 0
+    }
+    let bindResult = withUnsafePointer(to: &addr) { ptr in
+        ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+            bind(serverFD, $0, socklen_t(MemoryLayout<sockaddr_un>.stride))
+        }
+    }
+    guard bindResult == 0 else {
+        let e = errno; close(serverFD)
+        throw HostError(code: 3, message: "estop: bind \(socketPath) failed: errno=\(e)")
+    }
+    guard listen(serverFD, 8) == 0 else {
+        let e = errno; close(serverFD)
+        throw HostError(code: 3, message: "estop: listen failed: errno=\(e)")
+    }
+
+    let ctx = EstopContext(flagPath: flagPath)
+    gEstopCtx = ctx
+
+    DispatchQueue.global().async {
+        while true {
+            let client = accept(serverFD, nil, nil)
+            if client >= 0 { ctx.addClient(client) }
+        }
+    }
+
+    // 2. CGEventTap hotkey: Ctrl+Shift+Alt+Cmd+E
+    // tapCreate fails SILENTLY (returns nil) when the binary is not
+    // TCC-trusted — it never prompts on its own. Request trust explicitly so
+    // the user gets the system "would like to control this computer" dialog
+    // and a landing spot in the Accessibility list instead of a dead helper.
+    if !AXIsProcessTrusted() {
+        let promptOpts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+        _ = AXIsProcessTrustedWithOptions(promptOpts)
+    }
+    let mask = CGEventMask(1 << CGEventType.keyDown.rawValue)
+    guard let tap = CGEvent.tapCreate(
+        tap: .cgSessionEventTap,
+        place: .headInsertEventTap,
+        options: .defaultTap,
+        eventsOfInterest: mask,
+        callback: estopEventTapCallback,
+        userInfo: nil
+    ) else {
+        close(serverFD)
+        throw HostError(
+            code: 4,
+            message: "estop: CGEventTap creation failed — grant Accessibility permission to cmspark-host (System Settings → Privacy & Security → Accessibility)"
+        )
+    }
+    gEstopTap = tap
+    let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+    CFRunLoopAddSource(CFRunLoopGetCurrent(), source, .commonModes)
+    CGEvent.tapEnable(tap: tap, enable: true)
+
+    // 3. Live until killed (companion spawns us non-detached; we die with it)
+    CFRunLoopRun()
+    exit(0)  // unreachable — satisfies Never
 }

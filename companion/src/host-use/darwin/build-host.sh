@@ -41,6 +41,8 @@ swiftc \
   -framework Security \
   -framework Carbon \
   -framework CoreImage \
+  -framework ImageIO \
+  -framework ScreenCaptureKit \
   -Xlinker -sectcreate \
   -Xlinker __TEXT \
   -Xlinker __info_plist \

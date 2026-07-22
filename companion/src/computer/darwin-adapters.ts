@@ -107,7 +107,7 @@ export class MacWindowEnumerator implements WindowEnumerator {
     return windows.map((w: any) => ({
       hwnd: w.windowId ?? 0,
       pid: w.pid ?? 0,
-      exePath: w.ownerName ?? exePath,    // bundle identifier
+      exePath: w.bundleId ?? exePath,    // macOS ownership anchor = bundle ID (ownerName is a display name)
       title: w.name ?? "",
       rect: {
         x: w.bounds?.x ?? 0,
@@ -140,7 +140,7 @@ export class MacWindowEnumerator implements WindowEnumerator {
     return {
       hwnd: w.windowId ?? hwnd,
       pid: w.pid ?? 0,
-      exePath: w.ownerName ?? null,
+      exePath: w.bundleId ?? null,
       title: w.name ?? "",
       rect: { x: w.bounds?.x ?? 0, y: w.bounds?.y ?? 0, width: w.bounds?.width ?? 0, height: w.bounds?.height ?? 0 },
       alive: true,
@@ -396,12 +396,72 @@ export class MacLocator implements Locator {
 export class MacInputInjector implements InputInjector {
   private estopFlagPath: string | undefined
   private segmenter = new Intl.Segmenter("zh-Hans", { granularity: "grapheme" })
+  // LRU-ish hwnd → bundleId cache so repeat clicks on the same window don't
+  // pay the cmspark-host windows-query cost every time.
+  private hwndBidCache = new Map<number, string>()
+  // Throttle: if we just activated this hwnd within this window, skip the
+  // osascript round-trip. Apple Events activate takes ~150ms; we don't want
+  // to repeat it for back-to-back type/key into the same focus.
+  private lastActivatedHwnd: number | undefined
+  private lastActivatedAt = 0
 
   constructor(estopFlagPath?: string) {
     this.estopFlagPath = estopFlagPath
   }
 
+  // Resolve hwnd → bundleId via cmspark-host windows query. Cached.
+  private async resolveBundleIdForHwnd(hwnd: number): Promise<string | undefined> {
+    const cached = this.hwndBidCache.get(hwnd)
+    if (cached) return cached
+    const bin = resolveHostBinary()
+    try {
+      const r = await execFileAsync(bin, ["windows", "--window-id", String(hwnd)],
+                                    { encoding: "utf-8", timeout: 3000 })
+      const parsed = JSON.parse(r.stdout)
+      if (parsed.ok && Array.isArray(parsed.windows) && parsed.windows.length > 0) {
+        const bid = parsed.windows[0].bundleId
+        if (typeof bid === "string" && bid.length > 0) {
+          this.hwndBidCache.set(hwnd, bid)
+          return bid
+        }
+      }
+    } catch { /* best-effort */ }
+    return undefined
+  }
+
+  // Activate target app via Apple Events (`tell application id "X" to activate`).
+  // NSRunningApplication.activate() inside cmspark-host fails silently because
+  // cmspark-host is spawned by node daemon (not a foreground app) — macOS 26
+  // ignores the request. osascript + Apple Events goes through launchd, which
+  // foregrounds the target regardless of caller's activation policy. Without
+  // this, the Chrome side panel's security-confirm popup keeps Chrome
+  // frontmost and CGEvent.post lands on Chrome at the target's coordinates
+  // instead of the target app (psl8ci false-positive bug, 2026-07-22: click
+  // reported ok:true but user observed the click landing on Chrome).
+  // Apple Events "activate" only requires Automation TCC (not Accessibility),
+  // which is a per-target-app one-time grant.
+  private async activateTarget(hwnd: number): Promise<void> {
+    const now = Date.now()
+    if (this.lastActivatedHwnd === hwnd && now - this.lastActivatedAt < 3000) {
+      return // throttled: same target activated recently, focus should still hold
+    }
+    const bid = await this.resolveBundleIdForHwnd(hwnd)
+    if (!bid) return
+    // bundleId is reverse-DNS (e.g. "com.netease.163music") — no shell-quote
+    // risk, but we pass it via execFile argv (no shell), so injection-safe.
+    try {
+      await execFileAsync("/usr/bin/osascript", [
+        "-e",
+        `tell application id "${bid}" to activate`
+      ], { timeout: 2000 })
+      await new Promise((r) => setTimeout(r, 300))
+      this.lastActivatedHwnd = hwnd
+      this.lastActivatedAt = now
+    } catch { /* best-effort: inject still attempted */ }
+  }
+
   async click(hwnd: number, x: number, y: number, kind: ClickKind): Promise<void> {
+    await this.activateTarget(hwnd)
     const bin = resolveHostBinary()
     const args = ["inject", "--action", kind, "--window-id", String(hwnd),
                   "--x", String(Math.round(x)), "--y", String(Math.round(y)),
@@ -415,6 +475,7 @@ export class MacInputInjector implements InputInjector {
   }
 
   async typeText(hwnd: number, text: string): Promise<void> {
+    await this.activateTarget(hwnd)
     const normalized = text.normalize("NFKC")
     const graphemes = [...this.segmenter.segment(normalized)].map((s) => s.segment)
 
@@ -436,6 +497,7 @@ export class MacInputInjector implements InputInjector {
   }
 
   async keyChord(hwnd: number, keys: string[]): Promise<void> {
+    await this.activateTarget(hwnd)
     const bin = resolveHostBinary()
     const args = ["inject", "--action", "key", "--window-id", String(hwnd), "--chord", ...keys]
     if (this.estopFlagPath) args.push("--estop-flag", this.estopFlagPath)
@@ -447,6 +509,7 @@ export class MacInputInjector implements InputInjector {
   }
 
   async scroll(hwnd: number, x: number, y: number, delta: number): Promise<void> {
+    await this.activateTarget(hwnd)
     const bin = resolveHostBinary()
     try {
       await execFileAsync(bin, [
@@ -462,6 +525,7 @@ export class MacInputInjector implements InputInjector {
   }
 
   async drag(hwnd: number, x: number, y: number, x2: number, y2: number): Promise<void> {
+    await this.activateTarget(hwnd)
     const bin = resolveHostBinary()
     try {
       await execFileAsync(bin, [

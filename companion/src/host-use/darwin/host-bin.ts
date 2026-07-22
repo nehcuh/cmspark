@@ -18,14 +18,20 @@ export function resolveHostBinary(): string {
     }
     throw new Error("host-use/darwin: CMSPARK_HOST_BIN override disabled in production")
   }
-  // Search order covers 3 deployment modes:
-  //   1. DMG / packaged install: STAGING/cmspark-agent.js + STAGING/cmspark-host
-  //      (siblings — Swift binary staged next to bundled companion entry)
-  //   2. npm dev mode: companion/dist/host-use/darwin/index.js → projectRoot = companion/
+  // Search order covers 4 deployment modes:
+  //   1. DMG / packaged install: the bundled cmspark-agent.js sits in
+  //      <App>/Contents/Resources with cmspark-host as a SAME-DIR sibling
+  //      (__dirname IS the staging dir once bundled — do not assume it is
+  //      one level below, or Touch ID/biometric-verify ENOENTs and silently
+  //      downgrades to the manual-nonce gate).
+  //   2. Unbundled staging: STAGING/<sub>/cmspark-agent.js + STAGING/cmspark-host
+  //      (binary one level up from the entry's dir).
+  //   3. npm dev mode: companion/dist/host-use/darwin/index.js → projectRoot = companion/
   //      binary at companion/dist/cmspark-host (3 levels up from darwin/)
-  //   3. Repo root scripts: rare; check both candidates and return whichever exists.
+  //   4. Repo root scripts: rare; check both candidates and return whichever exists.
   const candidates = [
-    path.resolve(__dirname, "../cmspark-host"),           // staged alongside (DMG)
+    path.resolve(__dirname, "cmspark-host"),              // same-dir sibling (DMG bundle)
+    path.resolve(__dirname, "../cmspark-host"),           // staged one level up
     path.resolve(__dirname, "../../cmspark-host"),        // alt staging layout
     path.resolve(__dirname, "../../dist/cmspark-host"),   // dev mode: companion/dist/
     path.resolve(__dirname, "../../../dist/cmspark-host"),// dev mode: repo-root/dist/

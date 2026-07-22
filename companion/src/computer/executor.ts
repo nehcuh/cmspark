@@ -1263,7 +1263,12 @@ export async function runComputerTask(
           } catch {
             fgOwnerExe = null
           }
-          fgYielded = fgOwnerExe === null || normalizeExePath(fgOwnerExe) !== normalizeExePath(entry.exe!.path)
+          // Ownership anchor matches policy.ts: bundleId on macOS (entries may
+          // carry NO exe.path — entry.exe!.path would throw), exe path on win.
+          const entryAnchor = os.platform() === "darwin"
+            ? (entry.bundleId ?? entry.exe?.path ?? "")
+            : (entry.exe?.path ?? "")
+          fgYielded = fgOwnerExe === null || entryAnchor === "" || normalizeExePath(fgOwnerExe) !== normalizeExePath(entryAnchor)
         }
         log(fgYielded ? "computer.task.foreground_yielded" : "computer.task.dialog_suspected", {
           taskId,

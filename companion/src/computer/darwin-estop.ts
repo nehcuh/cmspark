@@ -52,32 +52,65 @@ async function connectToEstop(): Promise<Socket> {
 }
 
 /**
+ * Held proof-of-life connection (C2). ensureEstopHelper keeps this socket
+ * OPEN after connecting; the helper dying closes it (EOF) and
+ * estopHeartbeatLost() starts failing closed. Matches the header flow:
+ * "abortCheck polls: socket.read() fails? → EMERGENCY_STOP_LOST".
+ */
+let liveSock: Socket | null = null
+
+function holdSocket(sock: Socket): void {
+  if (liveSock && !liveSock.destroyed) liveSock.destroy()
+  liveSock = sock
+  // A dead helper errors/closes the connection asynchronously — without an
+  // 'error' listener that surfaces as an uncaughtException and kills the
+  // daemon (same crash class as the 2026-07-21 powershell ENOENT).
+  sock.on("error", () => { /* liveness is read via sock.destroyed */ })
+  sock.pause()  // "estop\n" event lines are advisory; flag file is the signal
+}
+
+/**
  * Ensure the estop helper is running. Spawns it if not already alive.
  * Returns ok:true when the helper is connected and the hotkey is registered.
  */
 export async function ensureEstopHelper(): Promise<EstopResult> {
-  // 1. Try existing connection
+  // 1. Held connection from a previous task still alive?
+  if (liveSock && !liveSock.destroyed) return { ok: true }
+
+  // 2. Try connecting to an already-running helper
   try {
     const sock = await connectToEstop()
-    sock.destroy()
+    holdSocket(sock)
     return { ok: true }
   } catch {
     // Not running — spawn
   }
 
-  // 2. Spawn cmspark-host estop (NOT detached — lives and dies with companion)
+  // 3. Spawn cmspark-host estop (NOT detached — lives and dies with companion)
   const child = spawn(resolveHostBinary(), ["estop", "--socket-path", ESTOP_SOCK_PATH], {
     detached: false,
     stdio: "ignore",
   })
   child.unref()
+  let earlyExit: number | null = null
+  // Spawn failure (binary missing) is an ASYNC 'error' event — left unhandled
+  // it becomes an uncaughtException and kills the daemon.
+  child.on("error", () => { earlyExit = -1 })
+  child.on("exit", (code) => { earlyExit = code ?? -1 })
 
-  // 3. Wait for socket to appear (max 5s)
+  // 4. Wait for socket to appear (max 5s); bail early when the helper died
+  //    at startup (unknown subcommand, no Accessibility permission, …).
   for (let i = 0; i < 50; i++) {
     await new Promise((r) => setTimeout(r, 100))
+    if (earlyExit !== null) {
+      return {
+        ok: false,
+        reason: `estop helper exited at startup (code ${earlyExit}) — check Accessibility permission for cmspark-host`,
+      }
+    }
     try {
       const sock = await connectToEstop()
-      sock.destroy()
+      holdSocket(sock)
       return { ok: true }
     } catch {
       /* retry */
@@ -111,15 +144,16 @@ export function clearEstopFlag(): void {
 }
 
 /**
- * Check if the estop helper's socket connection is still alive.
- * A failed connection means the helper process died → EMERGENCY_STOP_LOST.
+ * Check if the estop helper is still alive via the HELD proof-of-life socket:
+ * a closed/errored connection means the helper process died → fail closed
+ * (EMERGENCY_STOP_LOST). Before the first successful ensureEstopHelper()
+ * there is no held connection, which also reads as "lost" (fail-closed).
+ *
+ * NOTE: the previous implementation called createConnection() inside a
+ * synchronous try/catch — connection failure is ASYNC, so it could never
+ * catch anything and ALWAYS returned false ("alive"): a dead helper's kill
+ * switch silently looked healthy.
  */
 export function estopHeartbeatLost(): boolean {
-  try {
-    const sock = createConnection(ESTOP_SOCK_PATH)
-    sock.destroy()
-    return false // connection succeeded — helper is alive
-  } catch {
-    return true // connection failed — helper is dead
-  }
+  return liveSock === null || liveSock.destroyed
 }
