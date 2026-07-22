@@ -110,6 +110,13 @@ export const runPs: PsRunner = async (script, args, opts) => {
       // surfaces as a misleading JSON.parse crash. 16MB is bounded headroom;
       // a runaway script still dies at the timeout with a bounded buffer.
       maxBuffer: 16 * 1024 * 1024,
+      // W8-windows: suppress the PowerShell console window on every ps1 call.
+      // Without this, each spawn briefly shows a console window that:
+      //   (a) is visible to the user (bad UX), and
+      //   (b) steals the foreground — the post-injection foregroundHwnd()
+      //       check then sees a PowerShell HWND instead of the target app,
+      //       triggering a false-positive "foreground hijacked" task pause.
+      windowsHide: true,
     },
   )
   return String(result.stdout)

@@ -1,0 +1,43 @@
+{
+  "variant": "hybrid",
+  "intraOp": 8,
+  "repeat": 5,
+  "prepareMs": 4379,
+  "createMs": {
+    "vision_encoder": 1587.1403999999998,
+    "embed_tokens": 50.489900000000034,
+    "encoder_model": 111.44399999999996,
+    "decoder_model": 243.81140000000005
+  },
+  "totalCreateMs": 1993,
+  "warmupInferMs": 1730,
+  "e2eMs": {
+    "min": 1673,
+    "median": 1714,
+    "max": 1731
+  },
+  "wallMs": {
+    "min": 1674,
+    "median": 1716,
+    "max": 1733
+  },
+  "firstInferTimings": {
+    "preprocessMs": 22.78949999999986,
+    "visionMs": 1332.2143999999998,
+    "embedMs": 0.4162000000005719,
+    "encoderMs": 91.44480000000021,
+    "decoderMs": 267.5707999999995,
+    "totalMs": 1714.4871000000003
+  },
+  "rssMB": {
+    "beforePrepare": 103.2,
+    "warm": 1294.4,
+    "afterInfers": 1642.4
+  },
+  "tokenParity": true,
+  "point": {
+    "x": 158,
+    "y": 211
+  },
+  "at": "2026-07-20T15:27:48.043Z"
+}

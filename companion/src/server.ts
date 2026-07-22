@@ -816,6 +816,20 @@ export function createToolExecutor(ws: WebSocket) {
           return result
         }
         logger.info("security.confirmation.approved", { tool_call_id: toolCallId, tool_name: toolName })
+        // UX-spike 2026-07-23: record per-session re-L2 trust for computer-use.
+        // The INITIAL task L2 just gated the whole task; subsequent mid-task
+        // re-L2 pauses (FOREGROUND-YIELD that escaped self-UI recovery,
+        // budget exhaustion, dialog-suspected) in THIS session for THIS app
+        // will auto-approve. Only reL2() in the executor consults this — the
+        // initial L2 above always asks. See computer/session-trust.ts.
+        if (hostComputerGated && finalParams.app) {
+          const { getComputerSessionTrust } = await import("./computer/session-trust")
+          getComputerSessionTrust().grant(sessionId, String(finalParams.app))
+          logger.info("computer.session_trust.granted", {
+            tool_call_id: toolCallId,
+            app: String(finalParams.app),
+          })
+        }
         if (hostApp) hostAppTier = "l2"
         if (forceConfirm) {
           logger.info("security.critical_capability_confirmed", {
@@ -1134,6 +1148,8 @@ export function createToolExecutor(ws: WebSocket) {
           // WP2 (§E.4): computer-task progress events go to every
           // authenticated panel (the owner's own live view).
           broadcast: broadcastToClients,
+          // UX-spike 2026-07-23: session id for per-session re-L2 trust.
+          computerSessionId: sessionId,
         })
         logToolFinish(toolCallId, toolName, startedAt, result)
         return result
@@ -1545,6 +1561,12 @@ interface CompanionToolExecOptions {
   appLaunchTier?: string
   /** WP2 (§E.4): broadcast channel for computer-task progress events. */
   broadcast?: (data: any) => void
+  /**
+   * UX-spike 2026-07-23: the WS session id for computer-use per-session re-L2
+   * trust. Forwarded from the createToolExecutor closure (where sessionId
+   * lives) into runComputerTask deps; absent = every re-L2 asks.
+   */
+  computerSessionId?: string
 }
 
 async function executeCompanionTool(toolName: string, params: any, toolCallId?: string, execOpts?: CompanionToolExecOptions): Promise<any> {
@@ -2042,6 +2064,7 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
               evidenceFactory: (taskId) => new ComputerEvidence(taskId, macSealer),
               confirm: execOpts?.sendConfirmation ?? (async () => ({ confirmationId: "", approved: false, reason: "disconnect" as const })),
               config: getConfig(),
+              sessionId: execOpts?.computerSessionId,
               log: (event, data) => logger.info(event, { tool_call_id: toolCallId, ...data }),
               abortCheck: () =>
                 computerTaskAbort.get(computerTaskId)
@@ -2136,6 +2159,7 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
               evidenceFactory: (taskId) => new ComputerEvidence(taskId, sealer),
               confirm: execOpts?.sendConfirmation ?? (async () => ({ confirmationId: "", approved: false, reason: "disconnect" as const })),
               config: getConfig(),
+              sessionId: execOpts?.computerSessionId,
               log: (event, data) => logger.info(event, { tool_call_id: toolCallId, ...data }),
               abortCheck: () =>
                 computerTaskAbort.get(computerTaskId)
@@ -3213,6 +3237,14 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
             if (ws.readyState === WebSocket.OPEN) {
               ws.send(JSON.stringify({ type: "auth.ok" }))
               ws.send(JSON.stringify({ type: "connected" }))
+              // Push current coordinate state immediately so the extension always
+              // has fresh data after connect/reconnect — without this, the extension
+              // caches a stale coordinateEnabled value from before a companion restart.
+              const cfg = getConfig()
+              ws.send(JSON.stringify({
+                type: "computer.state",
+                coordinateEnabled: cfg.computer?.coordinateEnabled === true,
+              }))
             }
           } else {
             logger.warn("ws.auth_failed", {})

@@ -47,7 +47,13 @@ param(
   [int]$FocusCheckEvery = 16,
   # WP2 (E.6): emergency-stop flag file — polled before injection and between
   # type characters; its mere presence aborts the run with STOPPED (exit 11).
-  [string]$StopFile = ""
+  [string]$StopFile = "",
+  # UX-spike 2026-07-23: focus-only mode. -Mode force-fg performs ONLY the
+  # ForceForeground retry loop + post-raise foreground assertion and emits
+  # {ok, action:"force-fg", foreground:<bool>}. No bounds check, no landing
+  # check, NO input injection — this is a pure focus recovery used after the
+  # sidepanel snatched the foreground (FOREGROUND-YIELD self-UI path).
+  [ValidateSet('inject','force-fg')][string]$Mode = 'inject'
 )
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
 $ErrorActionPreference = 'Stop'
@@ -182,6 +188,38 @@ function Fail([string]$prefix, [string]$detail, [int]$code) {
   exit $code
 }
 
+# Diagnostics (UX-spike 2026-07-23): the search-box "won't click" symptom on
+# OSR apps like NetEase CloudMusic is almost always a fail-closed rejection
+# from ForceForeground / Assert-Landing (foreground yielded to the sidepanel,
+# or WindowFromPoint at the search box lands on a sibling/overlay). The bare
+# "FOCUSLOST:target hwnd ... not foreground" line names neither the usurper
+# nor where the point actually landed. Append a compact key=value diagnostic
+# tail to the detail so a single log line pins the cause — diagnosis only,
+# the fail-closed decision is unchanged.
+function Get-FgDiag([int]$sx = -1, [int]$sy = -1) {
+  $fgPtr = [InpW32]::GetForegroundWindow()
+  $fgId = if ($fgPtr -ne [IntPtr]::Zero) { $fgPtr.ToInt64() } else { 0 }
+  $fgPid = 0
+  if ($fgId -ne 0) { [InpW32]::GetWindowThreadProcessId($fgPtr, [ref]$fgPid) | Out-Null }
+  # exe basename only (never the full path / window title — privacy parity
+  # with the UIA watcher, which omits Name).
+  $fgExe = ""
+  if ($fgPid -ne 0) {
+    try { $fgExe = (Get-Process -Id $fgPid -ErrorAction Stop).ProcessName } catch {}
+  }
+  $tail = " | fg_hwnd=$fgId fg_pid=$fgPid fg_exe=$fgExe target_hwnd=$Hwnd"
+  if ($sx -ge 0 -and $sy -ge 0) {
+    $pt = New-Object InpW32+POINT
+    $pt.X = $sx; $pt.Y = $sy
+    $wfp = [InpW32]::WindowFromPoint($pt)
+    $wfpId = if ($wfp -ne [IntPtr]::Zero) { $wfp.ToInt64() } else { 0 }
+    $root = [InpW32]::GetAncestor($wfp, 2) # GA_ROOT
+    $rootId = if ($root -ne [IntPtr]::Zero) { $root.ToInt64() } else { 0 }
+    $tail += " wfp_hwnd=$wfpId wfp_root=$rootId pt=($sx,$sy)"
+  }
+  return $tail
+}
+
 # WP2 (E.6): emergency-stop flag — its mere presence aborts the injection,
 # fail-closed. Checked after the foreground force (single-shot actions) and
 # between type characters (the long-running channel).
@@ -195,6 +233,25 @@ $hwndPtr = [IntPtr]::new($Hwnd)
 
 # --- 1. live window ------------------------------------------------------------
 if (-not [InpW32]::IsWindow($hwndPtr)) { Fail "HWNDDEAD" "hwnd $Hwnd is not a live window" 4 }
+
+# --- force-fg short-circuit (UX-spike 2026-07-23) ------------------------------
+# Focus-only recovery: no IL/desktop/bounds/landing checks, NO input injection.
+# The YIELD self-UI path already validated the target moments earlier; this
+# only re-asserts foreground after the sidepanel stole it. Emits a single-line
+# JSON and exits — the inject path below never runs in this mode.
+if ($Mode -eq 'force-fg') {
+  $ok = $false
+  for ($fgTry = 1; $fgTry -le 3; $fgTry++) {
+    if ([InpW32]::ForceForeground($hwndPtr)) { $ok = $true; break }
+    Start-Sleep -Milliseconds 150
+  }
+  Start-Sleep -Milliseconds 80
+  $isFg = ([InpW32]::GetForegroundWindow() -eq $hwndPtr)
+  Write-Output (ConvertTo-Json -Compress -InputObject ([ordered]@{
+    ok = $true; action = "force-fg"; raised = $ok; foreground = $isFg
+  }))
+  exit 0
+}
 
 # --- 2. IL: target process IL must be <= ours (cross-IL = UIPI boundary) -------
 $targetPid = 0
@@ -263,7 +320,7 @@ $VkMap = @{
 # is likewise the A2.1 dialog channel.
 function Assert-Landing([int]$sx, [int]$sy) {
   if ([InpW32]::GetForegroundWindow() -ne $hwndPtr) {
-    Fail "FOCUSLOST" "target hwnd $Hwnd is not foreground after force — refusing to inject" 8
+    Fail "FOCUSLOST" "target hwnd $Hwnd is not foreground after force — refusing to inject$(Get-FgDiag)" 8
   }
   $ptCheck = New-Object InpW32+POINT
   $ptCheck.X = $sx; $ptCheck.Y = $sy
@@ -271,7 +328,7 @@ function Assert-Landing([int]$sx, [int]$sy) {
   if ($landed -ne $hwndPtr) {
     $landedId = 0
     if ($landed -ne [IntPtr]::Zero) { $landedId = $landed.ToInt64() }
-    Fail "OCCLUDED" "point ($sx,$sy) lands on hwnd $landedId, not target hwnd $Hwnd — injection would be intercepted by another window" 10
+    Fail "OCCLUDED" "point ($sx,$sy) lands on hwnd $landedId, not target hwnd $Hwnd — injection would be intercepted by another window$(Get-FgDiag $sx $sy)" 10
   }
 }
 
@@ -289,7 +346,7 @@ for ($fgTry = 1; $fgTry -le 3; $fgTry++) {
   Start-Sleep -Milliseconds 150
 }
 if (-not $fgOk) {
-  Fail "FOCUSLOST" "SetForegroundWindow failed after 3 attempts (foreground lock) — refusing to inject blind" 8
+  Fail "FOCUSLOST" "SetForegroundWindow failed after 3 attempts (foreground lock) — refusing to inject blind$(Get-FgDiag)" 8
 }
 Start-Sleep -Milliseconds 120
 Test-StopFlag

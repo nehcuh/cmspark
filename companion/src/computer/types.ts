@@ -394,6 +394,15 @@ export interface InputInjector {
   drag(hwnd: number, x: number, y: number, x2: number, y2: number): Promise<void>
   probeWindow(hwnd: number): Promise<WindowInfo>
   foregroundHwnd(): Promise<number>
+  /**
+   * Raise the target window back to the foreground WITHOUT injecting input.
+   * Used by the FOREGROUND-YIELD self-UI recovery (UX-spike 2026-07-23): when
+   * the sidepanel (our own browser process) snatched the foreground after the
+   * user clicked Allow, re-raise the target and continue instead of pausing
+   * for a redundant re-L2. Returns true when the window is foreground on
+   * return. Pure focus operation — never injects a click/key.
+   */
+  forceForeground(hwnd: number): Promise<boolean>
 }
 
 export interface WindowEnumerator {

@@ -16,6 +16,7 @@ import os from "os"
 import { getConfig, replaceAppsEntries } from "../config"
 import { logger } from "../logger"
 import { getThreadApprovals } from "../host-use/thread-approvals"
+import { getComputerSessionTrust } from "../computer/session-trust"
 import type {
   SecurityConfirmationDecision,
   SecurityConfirmationDetails,
@@ -66,7 +67,12 @@ export interface AppsHandlerDeps extends AddFlowDeps {
 
 /** Default trust clearer — ThreadApprovals singleton, kind "app-launch" only. */
 function defaultClearAppTrust(token: string): number {
-  return getThreadApprovals().clearBundle(token, "app-launch")
+  // UX-spike 2026-07-23: also clear the computer-use per-session re-L2 trust
+  // for this token — if the app entry changed/disabled, the trust the user
+  // granted ("operate THIS app, as currently registered") no longer holds.
+  let cleared = getThreadApprovals().clearBundle(token, "app-launch")
+  cleared += getComputerSessionTrust().clearApp(token)
+  return cleared
 }
 
 /**

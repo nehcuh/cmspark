@@ -187,6 +187,7 @@ function minimalDeps(over: Partial<ComputerExecutorDeps>): ComputerExecutorDeps 
     async click() {}, async typeText() {}, async keyChord() {}, async scroll() {}, async drag() {},
     async probeWindow() { return winInfo() },
     async foregroundHwnd() { return HWND },
+    async forceForeground() { return true },
   }
   const windows: WindowEnumerator = {
     async enumerateByExe() { return [winInfo()] },

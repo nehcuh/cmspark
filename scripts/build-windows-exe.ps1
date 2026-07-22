@@ -202,7 +202,19 @@ try {
 Step 5 6 "Staging distribution package: $StagingDir"
 
 if (Test-Path $DistDir) {
-    Remove-Item $DistDir -Recurse -Force
+    # Use cmd rmdir first — more tolerant of locked files (e.g. debug.log held
+    # by a previous companion process or the Windows Search Indexer).
+    cmd /c "rmdir /s /q `"$DistDir`"" 2>$null
+    if (Test-Path $DistDir) {
+        # Fallback: remove file-by-file, skip locked ones with a warning.
+        Get-ChildItem $DistDir -Recurse -File | ForEach-Object {
+            try { Remove-Item $_.FullName -Force -ErrorAction Stop }
+            catch { Write-Host "  ! skipped locked file: $($_.Name)" -ForegroundColor DarkYellow }
+        }
+        Get-ChildItem $DistDir -Recurse -Directory | Sort-Object FullName -Descending | ForEach-Object {
+            try { Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue } catch {}
+        }
+    }
     Ok "Cleaned previous dist-package"
 }
 New-Item -ItemType Directory -Force $StagingDir | Out-Null

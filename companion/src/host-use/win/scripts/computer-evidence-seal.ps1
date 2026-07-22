@@ -60,40 +60,52 @@ if ($BlurRects -ne "") {
 }
 
 try {
-  $bmp = [System.Drawing.Bitmap]::FromFile($InPath)
+  $rawBytes = [System.IO.File]::ReadAllBytes($InPath)
   $blurred = 0
-  foreach ($r in $rects) {
-    $rx = [Math]::Max(0, $r[0]); $ry = [Math]::Max(0, $r[1])
-    $rw = [Math]::Min($r[2], $bmp.Width - $rx); $rh = [Math]::Min($r[3], $bmp.Height - $ry)
-    if ($rw -le 0 -or $rh -le 0) { continue }
-    # Pixelate: average each 16x16 block and fill it with the average color.
-    $block = 16
-    for ($by = $ry; $by -lt ($ry + $rh); $by += $block) {
-      for ($bx = $rx; $bx -lt ($rx + $rw); $bx += $block) {
-        $bw = [Math]::Min($block, $rx + $rw - $bx); $bh = [Math]::Min($block, $ry + $rh - $by)
-        $sr = 0; $sg = 0; $sb = 0; $n = 0
-        for ($yy = $by; $yy -lt ($by + $bh); $yy++) {
-          for ($xx = $bx; $xx -lt ($bx + $bw); $xx++) {
-            $c = $bmp.GetPixel($xx, $yy); $sr += $c.R; $sg += $c.G; $sb += $c.B; $n++
+
+  if ($rects.Count -gt 0) {
+    # Only load into GDI+ when blur rects are present.
+    # Use Image.FromStream (more tolerant than Bitmap.FromFile / Bitmap::new for
+    # 32bpp DDB PNGs produced by PrintWindow on Windows).
+    $ms = New-Object System.IO.MemoryStream(,$rawBytes)
+    $img = [System.Drawing.Image]::FromStream($ms, $false, $false)
+    $bmp = New-Object System.Drawing.Bitmap($img)
+    $img.Dispose()
+    foreach ($r in $rects) {
+      $rx = [Math]::Max(0, $r[0]); $ry = [Math]::Max(0, $r[1])
+      $rw = [Math]::Min($r[2], $bmp.Width - $rx); $rh = [Math]::Min($r[3], $bmp.Height - $ry)
+      if ($rw -le 0 -or $rh -le 0) { continue }
+      # Pixelate: average each 16x16 block and fill it with the average color.
+      $block = 16
+      for ($by = $ry; $by -lt ($ry + $rh); $by += $block) {
+        for ($bx = $rx; $bx -lt ($rx + $rw); $bx += $block) {
+          $bw = [Math]::Min($block, $rx + $rw - $bx); $bh = [Math]::Min($block, $ry + $rh - $by)
+          $sr = 0; $sg = 0; $sb = 0; $n = 0
+          for ($yy = $by; $yy -lt ($by + $bh); $yy++) {
+            for ($xx = $bx; $xx -lt ($bx + $bw); $xx++) {
+              $c = $bmp.GetPixel($xx, $yy); $sr += $c.R; $sg += $c.G; $sb += $c.B; $n++
+            }
+          }
+          if ($n -eq 0) { continue }
+          $avg = [System.Drawing.Color]::FromArgb([int]($sr / $n), [int]($sg / $n), [int]($sb / $n))
+          for ($yy = $by; $yy -lt ($by + $bh); $yy++) {
+            for ($xx = $bx; $xx -lt ($bx + $bw); $xx++) { $bmp.SetPixel($xx, $yy, $avg) }
           }
         }
-        if ($n -eq 0) { continue }
-        $avg = [System.Drawing.Color]::FromArgb([int]($sr / $n), [int]($sg / $n), [int]($sb / $n))
-        for ($yy = $by; $yy -lt ($by + $bh); $yy++) {
-          for ($xx = $bx; $xx -lt ($bx + $bw); $xx++) { $bmp.SetPixel($xx, $yy, $avg) }
-        }
       }
+      $blurred++
     }
-    $blurred++
+    $tmpPng = "$OutPath.tmp-$PID.png"
+    $bmp.Save($tmpPng, [System.Drawing.Imaging.ImageFormat]::Png)
+    $bmp.Dispose(); $ms.Dispose()
+    $rawBytes = [System.IO.File]::ReadAllBytes($tmpPng)
+    Remove-Item $tmpPng -Force -ErrorAction SilentlyContinue
   }
-  $tmpPng = "$OutPath.tmp-$PID.png"
-  $bmp.Save($tmpPng, [System.Drawing.Imaging.ImageFormat]::Png)
-  $bmp.Dispose()
-  $bytes = [System.IO.File]::ReadAllBytes($tmpPng)
+
+  # DPAPI-encrypt the (possibly pixelated) PNG bytes.
   $cipher = [System.Security.Cryptography.ProtectedData]::Protect(
-    $bytes, $null, [System.Security.Cryptography.DataProtectionScope]::CurrentUser)
+    $rawBytes, $null, [System.Security.Cryptography.DataProtectionScope]::CurrentUser)
   [System.IO.File]::WriteAllBytes($OutPath, $cipher)
-  Remove-Item $tmpPng -Force -ErrorAction SilentlyContinue
   if (-not $KeepRaw) { Remove-Item $InPath -Force -ErrorAction SilentlyContinue }
   $sha = (Get-FileHash $OutPath -Algorithm SHA256).Hash.ToLower()
   Write-Output (ConvertTo-Json -Compress -InputObject ([ordered]@{

@@ -433,6 +433,24 @@ export class PsInputInjector implements InputInjector {
     return psWindowInfo(this.runner, hwnd)
   }
 
+  async forceForeground(hwnd: number): Promise<boolean> {
+    // UX-spike 2026-07-23: pure focus recovery (FOREROUND-YIELD self-UI path).
+    // Runs computer-input.ps1 in -Mode force-fg — no bounds/landing checks, no
+    // input injection. Best-effort: any failure (dead hwnd, foreground lock)
+    // resolves false so the executor falls back to the re-L2 pause.
+    try {
+      const stdout = await this.runner(resolveWinScript("computer-input.ps1"), [
+        "-Hwnd", String(hwnd),
+        "-Action", "click", // required by param() but unused in force-fg mode
+        "-Mode", "force-fg",
+      ])
+      const parsed = parsePsJson<{ foreground?: boolean }>(stdout, "inject.force-fg")
+      return parsed.foreground === true
+    } catch {
+      return false
+    }
+  }
+
   async foregroundHwnd(): Promise<number> {
     let stdout: string
     try {

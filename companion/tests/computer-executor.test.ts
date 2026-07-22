@@ -22,6 +22,7 @@ import {
   type WindowInfo,
 } from "../src/computer/types"
 import type { EvidenceActionRecord, EvidenceSink } from "../src/computer/evidence"
+import { ComputerSessionTrust } from "../src/computer/session-trust"
 import type { CompanionConfig } from "../src/config"
 import type { SecurityConfirmationDetails } from "../src/security-confirmation"
 
@@ -30,7 +31,7 @@ import type { SecurityConfirmationDetails } from "../src/security-confirmation"
 const EXE = "C:\\Program Files\\TestApp\\app.exe"
 const HWND = 424242
 
-function testConfig(overrides: { coordinateEnabled?: boolean; coordinateAllowed?: boolean; exePath?: string; exeSha256?: string } = {}): CompanionConfig {
+function testConfig(overrides: { coordinateEnabled?: boolean; coordinateAllowed?: boolean; exePath?: string; exeSha256?: string; companionUiBasenames?: string[] } = {}): CompanionConfig {
   return {
     apps: {
       enabled: true,
@@ -54,6 +55,11 @@ function testConfig(overrides: { coordinateEnabled?: boolean; coordinateAllowed?
       },
     },
     computer: { coordinateEnabled: overrides.coordinateEnabled ?? true },
+    // UX-spike 2026-07-23: FOREGROUND-YIELD self-UI recovery allow-list. The
+    // production default lives in config.ts; tests opt in via this override.
+    ...(overrides.companionUiBasenames !== undefined
+      ? { security: { companion_ui_exe_basenames: overrides.companionUiBasenames } }
+      : {}),
   } as unknown as CompanionConfig
 }
 
@@ -153,6 +159,13 @@ class RecordingInjector implements InputInjector {
   }
   async probeWindow(): Promise<WindowInfo> { return winInfo({ alive: this.alive }) }
   async foregroundHwnd(): Promise<number> { return this.foreground }
+  // UX-spike 2026-07-23: focus-only recovery (FOREGROUND-YIELD self-UI path).
+  // The fake simulates a successful re-raise: subsequent foregroundHwnd()
+  // returns the target again.
+  async forceForeground(hwnd: number): Promise<boolean> {
+    this.foreground = hwnd
+    return true
+  }
 }
 
 class FakeWindows implements WindowEnumerator {
@@ -1131,6 +1144,120 @@ test("executor WP2: same-exe foreground window keeps the DIALOG channel (not a y
   assert.equal(r.errorCode, "DIALOG_PAUSED_DENIED")
   assert.ok(confirm.captured[0].details.code.includes("对话框"))
   assert.ok(confirm.captured[0].details.dangerousApis.includes("computer.task_induced_dialog"))
+})
+
+// --- UX-spike 2026-07-23: FOREGROUND-YIELD self-UI recovery + session trust ---
+
+test("executor UX-spike: sidepanel (chrome.exe) steals foreground -> self-UI re-raise, NO re-L2", async () => {
+  // The user just clicked Allow in the sidepanel, so chrome.exe briefly became
+  // frontmost. The post-action detector sees a foreign-process foreground. With
+  // chrome in the companion_ui_exe_basenames allow-list AND no other dialog
+  // channel firing, the executor must silently re-raise the target and continue
+  // — never calling confirm (no redundant re-L2).
+  const confirm = scriptedConfirm([false]) // would DENY if asked — proves it isn't
+  const injector = new RecordingInjector()
+  injector.foreground = 999999 // chrome stole the foreground
+  const info = winInfo()
+  const windows: WindowEnumerator = {
+    async enumerateByExe() { return [info] },
+    async infoForHwnd(h: number) {
+      return h === 999999 ? winInfo({ hwnd: 999999, exePath: "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" }) : info
+    },
+  }
+  const deps = makeDeps({
+    confirm: confirm.fn,
+    injector,
+    windows,
+    config: testConfig({ companionUiBasenames: ["chrome"] }),
+  })
+  const r = await runComputerTask({ task: "t", app: "win.app.test", actions: [clickOk, clickOk] }, deps)
+  assert.equal(r.success, true, "task completes — self-UI yield recovered")
+  assert.equal(confirm.captured.length, 0, "no re-L2 dialog surfaced")
+  assert.equal(injector.clicks.length, 2, "both actions injected")
+})
+
+test("executor UX-spike: self-UI yield WITH a large pixel change still pauses (real dialog)", async () => {
+  // The allow-list must NOT mask a real task-induced dialog. When the foreign
+  // foreground is chrome.exe BUT a large whole-window change also fired, the
+  // pause still happens — the self-UI recovery requires ALL other channels quiet.
+  // diffScript: [locate region cross-check 0 = stable, post-action whole-window 0.9 = large change]
+  const confirm = scriptedConfirm([false])
+  const injector = new RecordingInjector()
+  injector.foreground = 888888
+  const info = winInfo()
+  const windows: WindowEnumerator = {
+    async enumerateByExe() { return [info] },
+    async infoForHwnd(h: number) {
+      return h === 888888 ? winInfo({ hwnd: 888888, exePath: "C:\\Chrome\\chrome.exe" }) : info
+    },
+  }
+  const capturer = new FakeCapturer([0, { diffRatio: 0.9 }])
+  const deps = makeDeps({
+    confirm: confirm.fn,
+    injector,
+    windows,
+    capturer,
+    config: testConfig({ companionUiBasenames: ["chrome"] }),
+  })
+  const r = await runComputerTask({ task: "t", app: "win.app.test", actions: [clickOk] }, deps)
+  assert.equal(r.errorCode, "DIALOG_PAUSED_DENIED", "pause still fires — pixel change disqualifies self-UI recovery")
+  assert.equal(confirm.captured.length, 1)
+})
+
+test("executor UX-spike: session trust suppresses re-L2 after the initial task L2", async () => {
+  // After the server records (sessionId, app) trust on the initial L2 approval,
+  // a mid-task re-L2 (here triggered by a non-self-UI yield — a foreign NON-UI
+  // process) auto-approves without surfacing the dialog. The trust map is
+  // injectable so this test does not touch the process singleton.
+  const confirm = scriptedConfirm([false]) // would DENY if the dialog surfaced
+  const injector = new RecordingInjector()
+  injector.foreground = 999999
+  const info = winInfo()
+  const windows: WindowEnumerator = {
+    async enumerateByExe() { return [info] },
+    async infoForHwnd(h: number) {
+      return h === 999999 ? winInfo({ hwnd: 999999, exePath: "C:\\Other\\sneaky.exe" }) : info
+    },
+  }
+  const trust = new ComputerSessionTrust()
+  trust.grant("sess-1", "win.app.test")
+  const deps = makeDeps({
+    confirm: confirm.fn,
+    injector,
+    windows,
+    sessionId: "sess-1",
+    sessionTrust: trust,
+  })
+  const r = await runComputerTask({ task: "t", app: "win.app.test", actions: [clickOk] }, deps)
+  assert.equal(r.success, true, "re-L2 auto-approved via session trust — task continues")
+  assert.equal(confirm.captured.length, 0, "re-L2 dialog never surfaced")
+})
+
+test("executor UX-spike: session trust does NOT help a different app — re-L2 still asks", async () => {
+  // Trust is per-(session, app). A task for an app the session never approved
+  // still surfaces the re-L2 honestly.
+  const confirm = scriptedConfirm([false])
+  const injector = new RecordingInjector()
+  injector.foreground = 999999
+  const info = winInfo()
+  const windows: WindowEnumerator = {
+    async enumerateByExe() { return [info] },
+    async infoForHwnd(h: number) {
+      return h === 999999 ? winInfo({ hwnd: 999999, exePath: "C:\\Other\\sneaky.exe" }) : info
+    },
+  }
+  const trust = new ComputerSessionTrust()
+  trust.grant("sess-1", "win.app.other") // different app — must not help win.app.test
+  const deps = makeDeps({
+    confirm: confirm.fn,
+    injector,
+    windows,
+    sessionId: "sess-1",
+    sessionTrust: trust,
+  })
+  const r = await runComputerTask({ task: "t", app: "win.app.test", actions: [clickOk] }, deps)
+  assert.equal(r.errorCode, "DIALOG_PAUSED_DENIED", "untrusted app still pauses")
+  assert.equal(confirm.captured.length, 1)
 })
 
 

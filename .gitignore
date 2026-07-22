@@ -32,6 +32,10 @@ Thumbs.db
 .env.local
 .envrc
 dist-package/
+dist-package-new/
+
+# ZCode session state
+.zcode/
 
 # Logs & bundles
 *.log

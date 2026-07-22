@@ -46,6 +46,19 @@ export interface SecurityConfig {
    * no human check.
    */
   allow_all_schemes: boolean
+  /**
+   * Basenames (no extension, lowercased) of the companion's OWN UI host
+   * processes — the browser that renders the sidepanel, plus the packaged
+   * companion binary. When the computer-use FOREGROUND-YIELD detector finds
+   * the foreground was taken over by one of these (the user just clicked
+   * "Allow" in the sidepanel, so the browser briefly became frontmost), the
+   * executor silently re-raises the target window and continues instead of
+   * pausing for a redundant re-L2. Matching is by basename only (multiple
+   * Chrome windows share one exe), so this is a UX heuristic, NOT a security
+   * boundary — the initial task L2 still gates every task. Defaults cover the
+   * browsers CMspark supports plus the packaged agent exe.
+   */
+  companion_ui_exe_basenames: string[]
 }
 
 export interface VisionConfig {
@@ -175,6 +188,12 @@ const defaultConfig: CompanionConfig = {
     confirmation_timeout_seconds: 45,
     auto_approve_dangerous: false,
     allow_all_schemes: false,
+    // UX-spike 2026-07-23: browsers CMspark ships a sidepanel for + the
+    // packaged agent exe. Basenames (no .exe), lowercased — matched against
+    // GetForegroundWindow's owner via ProcessName.
+    companion_ui_exe_basenames: [
+      "chrome", "msedge", "msedge_proxy", "firefox", "brave", "arc", "opera", "cmspark-agent",
+    ],
   },
   file_upload: {
     max_file_size: 10 * 1024 * 1024,

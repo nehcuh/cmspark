@@ -327,6 +327,7 @@ function execDeps(over: Partial<ComputerExecutorDeps>, evidence: RecordEvidence)
     async typeText() {}, async keyChord() {}, async scroll() {}, async drag() {},
     async probeWindow() { return winInfo() },
     async foregroundHwnd() { return HWND },
+    async forceForeground() { return true },
   } as InputInjector & { clicks: any[] }
   const windows: WindowEnumerator = {
     async enumerateByExe() { return [winInfo()] },

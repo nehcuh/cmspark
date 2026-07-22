@@ -555,6 +555,19 @@ export class MacInputInjector implements InputInjector {
     const parsed = parseComputerJson(result.stdout, "window-list")
     return parsed.windowId ?? 0
   }
+
+  async forceForeground(hwnd: number): Promise<boolean> {
+    // UX-spike 2026-07-23: the FOREGROUND-YIELD self-UI recovery path. On
+    // macOS the sidepanel runs as a separate process and the WindowServer
+    // governs activation; there is no shipped raise subcommand today. Rather
+    // than ship an unverified AXRaise/activate osascript, report the current
+    // foreground state honestly: if the target is already frontmost, return
+    // true (continue); otherwise false so the executor falls back to the
+    // re-L2 pause. The Windows path (computer-input.ps1 -Mode force-fg) is
+    // the validated implementation for this spike.
+    const fg = await this.foregroundHwnd()
+    return fg !== 0 && fg === hwnd
+  }
 }
 
 // ---------------------------------------------------------------------------

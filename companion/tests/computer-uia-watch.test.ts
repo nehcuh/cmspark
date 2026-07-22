@@ -166,6 +166,9 @@ function execDeps(
     async foregroundHwnd() {
       return HWND
     },
+    async forceForeground() {
+      return true
+    },
   }
   const windows: WindowEnumerator = {
     async enumerateByExe() {

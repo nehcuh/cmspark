@@ -43,6 +43,8 @@ import type { TinyClickLocator } from "./tinyclick-locator"
 import type { ComputerTaskEvent, PreviewBuilder } from "./preview"
 import { sanitizeComputerCaption } from "./preview"
 import { assertCoordinateAllowed, assertExeNotDrifted, assertHwndOwnedByEntry, normalizeExePath } from "./policy"
+import { exeBasename } from "../apps/guards"
+import { getComputerSessionTrust } from "./session-trust"
 import {
   ALLOWED_KEY_SET,
   ComputerError,
@@ -98,6 +100,19 @@ export interface ComputerExecutorDeps {
   evidenceFactory: EvidenceFactory
   confirm: ComputerConfirmationChannel
   config: CompanionConfig
+  /**
+   * UX-spike 2026-07-23: the WebSocket session id this task belongs to. When
+   * present AND sessionTrust reports the (sessionId, app) tuple as already
+   * approved, mid-task re-L2 pauses auto-approve (audit logged) instead of
+   * re-asking. The INITIAL task L2 is unaffected — only reL2() consults it.
+   * Absent = every re-L2 asks (unit tests / legacy callers).
+   */
+  sessionId?: string
+  /**
+   * UX-spike 2026-07-23: the per-session trust store. Defaults to the process
+   * singleton; injectable for tests.
+   */
+  sessionTrust?: import("./session-trust").ComputerSessionTrust
   log?: (event: string, data: Record<string, unknown>) => void
   now?: () => number
   sleep?: (ms: number) => Promise<void>
@@ -588,6 +603,23 @@ export async function runComputerTask(
 
   /** Re-L2 with an explicit reason; returns true when approved. */
   const reL2 = async (reason: string, dangerous: string[], seqNum?: number, previewImage?: string): Promise<boolean> => {
+    // UX-spike 2026-07-23: per-session re-L2 suppression. After the initial
+    // task L2 gated the whole task (every type literal + budget + target app),
+    // mid-task re-asks are usually the same human repeatedly approving
+    // "continue". When this session has already approved a task for the same
+    // app token, auto-approve the re-L2 (audit logged) and return true WITHOUT
+    // surfacing the dialog. The initial L2 is never affected — only this path.
+    // Safety invariants preserved: the self-UI YIELD recovery above may still
+    // continue WITHOUT calling reL2 at all; a real task-induced dialog still
+    // reaches here when session trust is absent (first task in a session, a
+    // different app, or after companion restart).
+    if (deps.sessionId && params.app) {
+      const trust = deps.sessionTrust ?? getComputerSessionTrust()
+      if (trust.isTrusted(deps.sessionId, params.app)) {
+        log("computer.task.reconfirm.auto_approved", { taskId, reason, app: params.app })
+        return true
+      }
+    }
     log("computer.task.reconfirm", { taskId, reason })
     // X1 (WP4 代码级对抗裁决) — re-L2 对话框双洞修复:
     //  分支 A(伪造):params.task 是 LLM 生成的不可信文本,raw 插值可在对话框
@@ -1285,6 +1317,41 @@ export async function runComputerTask(
           maxZoneRatio,
           maxBlobRatio,
         })
+        // UX-spike 2026-07-23 — FOREGROUND-YIELD self-UI recovery. The common
+        // case behind "every action asks for confirmation" is: the user just
+        // clicked Allow in the sidepanel, so the sidepanel's browser process
+        // briefly became frontmost; the detector then sees a foreign-process
+        // foreground and pauses for a redundant re-L2. When (a) the foreign
+        // foreground is OUR OWN UI host (browser / packaged agent exe) AND
+        // (b) none of the other dialog channels fired (no new top-level
+        // window, no UIA popup, no large pixel change), this is the benign
+        // self-UI yield — silently re-raise the target and continue, skipping
+        // the re-L2. Any other signal = a real dialog; fall through to pause.
+        const selfUiBasenames = deps.config.security?.companion_ui_exe_basenames ?? []
+        const isSelfUiYield =
+          fgYielded &&
+          !!fgOwnerExe &&
+          selfUiBasenames.includes(exeBasename(fgOwnerExe)) &&
+          !newTopLevel &&
+          uiaOpened.length === 0 &&
+          diffRatio <= DIALOG_DIFF_THRESHOLD &&
+          (maxZoneRatio === undefined || maxZoneRatio < DIALOG_ZONE_THRESHOLD) &&
+          (maxBlobRatio === undefined || maxBlobRatio < DIALOG_BLOB_THRESHOLD)
+        if (isSelfUiYield) {
+          log("computer.task.foreground_yielded.self_ui", {
+            taskId,
+            seq,
+            fgOwnerExe,
+          })
+          const raised = await deps.injector.forceForeground(hwnd).catch(() => false)
+          if (raised) {
+            // Target is foreground again — continue the task without a pause.
+            continue
+          }
+          // Re-raise failed (foreground lock / dead hwnd) — fail safe: fall
+          // through to the re-L2 pause so a human decides.
+          log("computer.task.foreground_yielded.self_ui.reraise_failed", { taskId, seq })
+        }
         const fgName = fgOwnerExe ? fgOwnerExe.split(/[\\/]/).pop() : "unknown"
         const ok = await reL2(
           fgYielded
