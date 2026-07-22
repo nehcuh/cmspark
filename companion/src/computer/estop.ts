@@ -123,6 +123,13 @@ export function spawnEstopHelper(scriptPath: string = resolveWinScript("computer
     stdio: "ignore",
     windowsHide: true,
   })
+  // Spawn failure (e.g. powershell.exe missing) is delivered ASYNCHRONOUSLY as
+  // an 'error' event — the try/catch in ensureEstopHelper cannot see it, and
+  // an unhandled 'error' on a ChildProcess becomes an uncaughtException that
+  // kills the whole daemon (crash.log 2026-07-21). Swallow it here: the
+  // preflight's ready-file polling already surfaces "helper never came up" as
+  // a fail-closed EMERGENCY_STOP_UNAVAILABLE refusal.
+  child.on("error", () => { /* surfaced via preflight polling — see above */ })
   child.unref()
 }
 

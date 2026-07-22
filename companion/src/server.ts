@@ -1984,26 +1984,11 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
       }
       computerTaskAbort.set(computerTaskId, false)
       try {
-        // WP2 (§E.6): emergency-stop preflight — the hotkey helper must be
-        // alive (ready.json heartbeat < 3s) before ANY injection task starts.
-        // Spawns the helper when missing; refuses fail-closed when it cannot
-        // come up: an injection loop with no kill switch must never run.
-        const { ensureEstopHelper, clearEstopFlag, consumeEstopFlag, estopFlagPath, estopHeartbeatLost } = await import("./computer/estop")
-        const estop = computerEstopEnsureOverride ? await computerEstopEnsureOverride() : await ensureEstopHelper()
-        if (!estop.ok) {
-          logger.warn("computer.estop.unavailable", { tool_call_id: toolCallId, reason: estop.reason })
-          return {
-            success: false,
-            error: `host_computer refused: emergency-stop unavailable (${estop.reason}). The computer-estop.ps1 helper must be running with a working hotkey.`,
-            data: { error_code: "EMERGENCY_STOP_UNAVAILABLE" },
-          }
-        }
-        // A STALE flag (pressed before this task) must not abort the new run.
-        // N3: a press landing in the ms-window between this clear and the
-        // executor's first abortCheck is lost — accepted: the single-task
-        // gate above bounds that window to THIS task's own startup (no other
-        // task can clear a fresh press), and the user can simply press again.
-        clearEstopFlag()
+        // NOTE (2026-07-21 crash): the Windows estop preflight used to run
+        // here, UNCONDITIONALLY — on macOS it spawned powershell.exe, whose
+        // async spawn ENOENT escaped as an uncaughtException and killed the
+        // daemon. The win preflight now lives in the Windows branch below;
+        // macOS runs only the darwin-estop preflight.
         const { runComputerTask } = await import("./computer/executor")
 
         let result: Awaited<ReturnType<typeof runComputerTask>>
@@ -2084,6 +2069,28 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
           )
         } else {
           // Windows: original adapter wiring
+          // WP2 (§E.6): emergency-stop preflight — the hotkey helper must be
+          // alive (ready.json heartbeat < 3s) before ANY injection task starts.
+          // Spawns the helper when missing; refuses fail-closed when it cannot
+          // come up: an injection loop with no kill switch must never run.
+          // WINDOWS-ONLY: macOS runs the darwin-estop preflight in its branch
+          // above; the ps1 helper must never be spawned off-win32.
+          const { ensureEstopHelper, clearEstopFlag, consumeEstopFlag, estopFlagPath, estopHeartbeatLost } = await import("./computer/estop")
+          const estop = computerEstopEnsureOverride ? await computerEstopEnsureOverride() : await ensureEstopHelper()
+          if (!estop.ok) {
+            logger.warn("computer.estop.unavailable", { tool_call_id: toolCallId, reason: estop.reason })
+            return {
+              success: false,
+              error: `host_computer refused: emergency-stop unavailable (${estop.reason}). The computer-estop.ps1 helper must be running with a working hotkey.`,
+              data: { error_code: "EMERGENCY_STOP_UNAVAILABLE" },
+            }
+          }
+          // A STALE flag (pressed before this task) must not abort the new run.
+          // N3: a press landing in the ms-window between this clear and the
+          // executor's first abortCheck is lost — accepted: the single-task
+          // gate above bounds that window to THIS task's own startup (no other
+          // task can clear a fresh press), and the user can simply press again.
+          clearEstopFlag()
           const { PsScreenCapturer, PsLocator, PsInputInjector, PsWindowEnumerator, PsSecurityEnvironment, PsPreviewBuilder, PsEvidenceSealer, PsUiaLocator, startUiaWindowWatcher } = await import("./computer/win-adapters")
           const { PsUiaProber, writeBackUiaVerdict } = await import("./computer/uia")
           const { ComputerEvidence, runEvidenceJanitor } = await import("./computer/evidence")
