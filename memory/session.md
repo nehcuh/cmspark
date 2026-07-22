@@ -2,6 +2,40 @@
 
 ## Current Session
 
+### S13 (2026-07-21) [cmspark WP3 macOS 坐标链路 live 排障 ×8 — 从未端到端跑通过]
+- 触发：用户给了坐标授权但一直过不去。逐环排障，每一环都是阻断性 bug，**WP3 macOS 链路此前从未真机跑通过**（S12 的"待完成 E2E"实锤）。
+- 修复链（按用户踩到顺序，全部未 commit，在工作树里）：
+  1. `coordinateAllowed` 双开关只开了全局 → 直接帮用户写 `~/.cmspark-agent/config.json`（ADR-010 opt-in）
+  2. `host-bin.ts` 候选路径漏「同目录」→ 打包版找不到 `cmspark-host`，Touch ID 降级成 6 位验证码弹窗（用户四次超时）；日志铁证 `spawn .../dist/cmspark-host ENOENT`
+  3. `server.ts` Windows estop 预检在平台分支**之前**无条件跑 → macOS spawn `powershell.exe` ENOENT → 异步 error 无监听 → uncaughtException **杀 daemon**（crash.log 实锤，L2 确认后 5ms 崩）
+  4. `estop.ts spawnEstopHelper` 补 `child.on("error")` 兜底（同类崩溃根治）
+  5. `host.swift` **estop 子命令整个没实现**（WP3 烂尾，TS 侧 darwin-estop.ts 期望它）→ 补上：CGEventTap 热键 Ctrl+Shift+Alt+Cmd+E + UNIX socket 保活 + `AXIsProcessTrustedWithOptions` 主动弹授权
+  6. `darwin-estop.ts` 三修：spawn 无 error 监听 / 启动即死给具体原因 / `estopHeartbeatLost` 同步 try 接异步错误**永远误报存活**（改持有保活连接，断了 fail-closed）
+  7. `cuWindowList` 拿 bundle ID 比 `kCGWindowOwnerName` 显示名（「网易云音乐」≠ `com.netease.163music`）→ 所有 mac 应用 `APP_WINDOW_NOT_FOUND`。改 `NSRunningApplication` 解析 PID 集合过滤 + 输出真 bundleId 字段；`darwin-adapters.ts` exePath 改映射 bundleId（否则 `HWND_NOT_OWNED` 误杀）；`executor.ts:1266` `entry.exe!.path` 在 mac 条目必抛 TypeError → 平台感知 `entryAnchor`
+  8. `cuScreenshot` 把 screencapture stderr 扔 nullDevice → `cannot read captured image` 藏住真实错误（`could not create image from rect`，主因是重签后 cmspark-host 屏幕录制授权失效）。加 `CGPreflightScreenCaptureAccess` 预检 + `CGRequestScreenCaptureAccess` 弹窗 + PERMISSION_DENIED 明确报错 + stderr/退出码透出
+- 另：EPIPE tray 崩溃（crash.log 07-16）查为 repo 已修（2be63e3），用户包装的是旧包
+- **部署**：`make package-macos` 打了 3 次，最终 DMG = `dist-package/CMspark-v0.3.0-macOS.dmg`（含全部 8 修）。staging 二进制逐项验证（window-list 8 窗口带 bundleId / estop 到权限门 / screenshot 成功）
+- **测试**：tsc 干净；computer/host 相关 577 测试 0 挂（win32-only 集成测试 mac 跳过属预期）
+- **待完成（用户回来后）**：装新 DMG → 重授 TCC（辅助功能 + 屏幕录制，二进制重签旧授权全失效；estop/screenshot 已做主动弹窗引导）→ 跑网易云坐标任务 e2e。若再失败，新错误信息已带具体原因
+- **注意**：所有改动未 commit；下次会话可考虑拆 commit（host-bin/estop-crash/swift-estop/window-list/screenshot 五组）
+- Recorded: yes — 本条目；AGENTS.md 引用的 docs/session-lifecycle.md 和 session-end skill 实际不存在（下次可清理引用）
+
+### S12 (2026-07-21) [vibesop-py] Observability 闭环 — span 追踪 + 聚合器 + 指标驱动 Loop + Dashboard 统一
+
+- 在 VibeSOP 内实现了完整的 **观测→学习→优化** 闭环：`core/observability/` 新模块（Span/Tracer/Writer/Aggregator），`AgentRuntime` 埋点，Dashboard 统一 traces。
+- **对抗验证流程**：3 探索 sub-agent → grill-me 5 题（Kimi Code 回答）→ Claude Code 复审。发现 2 个阻塞问题（Span 模型重复定义、Instinct 反馈语义错误），修复后通过。
+- **实施**（git worktree 隔离开发）：6 个 Tasks、12 files、+1362/-198。E2E + 回归测试全部通过。
+- **Dashboard 对抗审查**：8 个问题（1 CRITICAL metadata 类型不匹配、1 HIGH XSS），修复后部署到 cmspark 验证。
+- **关键设计决策**：
+  - SpanWriter 将 metadata 序列化为 JSON string（脱敏），消费者需反序列化（Aggregator 已处理，Dashboard 修复后处理）
+  - Instinct 反馈桥：热路径用中立信号 `times_matched`，success/failure 仅来自 CLI 显式反馈
+  - MetricCondition 用 Wilson Score Interval 替代简单比率（min_samples=5 天然安全）
+  - Dashboard 前端 data 属性 + 委托事件替代 inline onclick（防 XSS）
+- **部署**: vibesop-py v8.0.0 → v8.1.0，全局 uv tool 更新，cmspark 中测试通过
+- **Git**: feature/observability-loop → main (fast-forward), 推 origin/main。worktree 已清理。
+- **未完成**: LLM span 细粒度埋点（当前仅 task 级）、Langfuse/Panel OTLP 集成、auto_evolve_candidates 实现
+- Recorded: yes — project-knowledge 加 observability 架构、Grill-me 流程、metadata 类型陷阱
+
 ### S11 (2026-07-14) [cmspark knowledge.import_directory 收尾 + 2 个 MCP 安全 fix + 拆 8 commit 推远程]
 - 中断恢复：13 文件 +576 -93 未提交改动（S10 之后的新工作）。代码完整 tsc 干净，但 dist 旧、未 e2e、4 个调试 `.cjs` 未清。
 - 主功能 `knowledge.import_directory`：companion 走 `pickFolderNative()` 原生 picker，避免扩展端 `<input webkitdirectory>` 触发 Chromium 149 SIGSEGV。核心 bug = name collision（两份 md 共享同首 `# 标题` → sanitize 同文件名 → 静默相互覆盖；笨牛棚 79 篇塌缩成 5）。修：`skill-engine.importKnowledge(content, fallbackName, nameOverride)` 加 nameOverride 参数，message-router 走 walk 时传 vault 相对路径。

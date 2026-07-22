@@ -175,3 +175,24 @@
 - Fix: `requireAppsBiometric` priority chain: win32→Windows Hello / darwin→Touch ID / fallback→nonce
 - Touch ID uses `cmspark-host biometric-verify` subcommand with 60s timeout
 - Files: biometric-gate.ts, host-use/darwin/index.ts
+
+### VibeSOP SpanWriter metadata serialisation trap
+- `SpanWriter.write_span()` serialises `metadata` dict → JSON string (for `redact_sensitive()`)
+- `SpanAggregator._read_spans_in_window()` knows this and deserialises back
+- `Dashboard._read_jsonl()` did NOT → crash on `/api/spans?skill_id=...`
+- Fix: add `_normalize_span_metadata()` to dashboard's _read_jsonl
+- Pattern: any consumer of spans.jsonl must handle metadata-as-string
+
+### Instinct feedback signals: neutral vs explicit
+- Hot path (routing) must NOT call `record_feedback_outcome(success=True)` — inflates confidence
+- Route match ≠ user confirmed success
+- Use `times_matched` (neutral counter) in hot path; `success_count/failure_count` only from CLI feedback
+
+### Dashboard XSS: data attributes > inline onclick
+- Span/trace IDs embedded in `onclick="showDetail('...')"` are XSS vectors
+- Fix: `data-trace-id` + `data-trace-source` on `<tr>` + delegated click on `<tbody>`
+
+### Grill-me + multi-agent adversarial verification workflow
+- 3 explore sub-agents parallel → grill-me (5 rounds, Kimi Code answers) → Claude Code final review
+- Found 2 blocking issues (schema duplication, feedback semantic error) before implementation
+- After implementation, adversarial code review found 8 issues (1 CRITICAL, 1 HIGH)
