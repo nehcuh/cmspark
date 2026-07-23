@@ -162,6 +162,7 @@ export type ComputerErrorCode =
   | "OUT_OF_BOUNDS" // coordinates outside target window rect — reject, never clamp
   | "CLICK_OCCLUDED" // X2: landing point owned by another (overlay) window — fail-closed
   | "FOCUS_LOST" // foreground hwnd changed mid-type batch (A1.4)
+  | "FOREGROUND_RAISE_FAILED" // WP-foreground (2026-07-23): osascript activate failed to raise target to frontmost — distinct from FOCUS_LOST (which is mid-batch drift) and from ForegroundProbeBrokenError (which is binary-side probe failure). Precondition guard failed → inject must NOT proceed.
   | "OCR_LANGUAGE_MISSING" // honest layer skip (plan §B.2 L1)
   | "OCR_FAILED" // WP3 (Y6): OCR decode/recognize failure (ps1 OCRFAILED) — was mislabeled INJECT_FAILED
   | "ELEMENT_NOT_FOUND"
@@ -191,6 +192,25 @@ export class ComputerError extends Error {
     this.name = "ComputerError"
     this.code = code
     this.detail = detail
+  }
+}
+
+// macOS foreground-probe failure — binary checkOk passed but no app window
+// matched the on-screen + named filter, OR binary spawn itself failed.
+// Distinct from ComputerError so the executor's *diagnostic* foreground probe
+// (dialogSuspected computation) can catch + degrade to fg=0 (legacy behavior)
+// without bubbling to fail(INJECT_FAILED) on every binary hiccup. The
+// *precondition* probe inside ensureForeground still throws this — the
+// click/typeText/scroll/keyChord/drag catch chain converts it to INJECT_FAILED
+// (correct fail-closed: don't inject when target isn't frontmost).
+//
+// Architect review (2026-07-23 Q4): fail-closed must be observable, not
+// fall-open. Throwing a typed error lets executor.ts:1147 branch cleanly;
+// Pi's earlier "try forceForeground before throw" was layer confusion.
+export class ForegroundProbeBrokenError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = "ForegroundProbeBrokenError"
   }
 }
 

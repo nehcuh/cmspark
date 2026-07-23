@@ -21,6 +21,7 @@ import { createHash, randomUUID } from "crypto"
 import { resolveHostBinary } from "../host-use/darwin/host-bin"
 import {
   ComputerError,
+  ForegroundProbeBrokenError,
   PIXEL_DIFF_THRESHOLD,
   REGION_CROP_SIZE,
   type CaptureMeta,
@@ -83,6 +84,30 @@ function rethrowDarwinExecError(err: ExecFileException | Error, label: string): 
     throw new ComputerError("INVALID_ACTION", `${label}: ${(err as any).stderr}`)
   }
   throw new ComputerError("INVALID_ACTION", `${label}: ${err.message}`)
+}
+
+// Pick the frontmost windowId from a CGWindowListCopyWindowInfo(--foreground)
+// result array (z-order, topmost first). Pure function — extracted so tests
+// can drive it with real-binary captured fixtures without mocking execFile.
+//
+// Filter rationale (review 2026-07-23):
+//   1. layer ∈ [-1000, 20): normal(0)/floating(3)/modal(8) in-band;
+//      menu bar (24/26) and dock backdrop (-2147483622) out.
+//   2. name !== "": kills Chrome's unnamed off-screen aux windows.
+//   3. bounds.y >= 0: double-kills off-screen even if name were populated.
+export function pickFrontmostWindowId(windows: unknown[]): number {
+  for (const w of windows) {
+    if (!w || typeof w !== "object") continue
+    const layer = (w as { layer?: number }).layer
+    const name = (w as { name?: string }).name ?? ""
+    const bounds = (w as { bounds?: { y?: number } }).bounds ?? {}
+    if (typeof layer !== "number" || layer < -1000 || layer >= 20) continue
+    if (name === "") continue
+    if (typeof bounds.y !== "number" || bounds.y < 0) continue
+    const wid = (w as { windowId?: number }).windowId
+    if (typeof wid === "number" && wid > 0) return wid
+  }
+  return 0
 }
 
 // ---------------------------------------------------------------------------
@@ -424,7 +449,53 @@ export class MacInputInjector implements InputInjector {
     return undefined
   }
 
+  /**
+   * Pre-inject guard: raise target to frontmost if it isn't. Without this,
+   * CGEvent.post(.cghidEventTap) in host.swift routes by coordinate+frontmost
+   * window — when Chrome holds frontmost (user just clicked Allow in the
+   * sidepanel), the click lands on Chrome at the target's coordinates. Same
+   * root cause as the b0faek/psl8ci bugs documented in host.swift:915 and the
+   * forceForeground comment below; this guard prevents the misrouted event
+   * instead of recovering after it (post-yield recovery can't undo a click
+   * that already landed on Chrome).
+   *
+   * Fail-closed: throws on raise failure. Letting inject proceed when target
+   * isn't frontmost would reproduce the exact bug this guard exists to prevent
+   * — and unlike click(), typeText/keyChord/scroll/drag do NOT pass
+   * --check-occlusion, so a silent fall-through is unguarded misroute for
+   * 4 of 5 call sites. click()'s --check-occlusion stays as defense-in-depth
+   * for occlusion arising between raise-verify and inject, not as the primary
+   * safety net. foregroundHwnd()=0 (host binary broken) also throws — silent
+   * fail-open on probe failure would disable the guard without a trace.
+   */
+  private async ensureForeground(hwnd: number): Promise<void> {
+    const fg = await this.foregroundHwnd()
+    if (fg === 0) {
+      // ForegroundProbeBrokenError (not generic Error) so executor's diagnostic
+      // probe can branch cleanly. Architect Q4: fail-closed must be observable.
+      throw new ForegroundProbeBrokenError(
+        `ensureForeground: foregroundHwnd=0 after checkOk passed ` +
+        `(no app window onscreen with non-empty name + bounds.y>=0, or binary ok-but-empty-list)`,
+      )
+    }
+    if (fg !== hwnd) {
+      const raised = await this.forceForeground(hwnd)
+      if (!raised) {
+        // ComputerError(FOREGROUND_RAISE_FAILED) — precondition failure, fail-closed.
+        // Distinct from ForegroundProbeBrokenError above (which is binary-side
+        // probe broken). Architect Q1 (2026-07-23): raise-failed path previously
+        // threw generic Error, losing type info + ComputerError code.
+        throw new ComputerError(
+          "FOREGROUND_RAISE_FAILED",
+          `ensureForeground: failed to raise hwnd=${hwnd} (current fg=${fg}; ` +
+          `likely osascript Automation TCC denial, dead window, or bundleId unresolvable)`,
+        )
+      }
+    }
+  }
+
   async click(hwnd: number, x: number, y: number, kind: ClickKind): Promise<void> {
+    await this.ensureForeground(hwnd)
     const bin = resolveHostBinary()
     const args = ["inject", "--action", kind, "--window-id", String(hwnd),
                   "--x", String(Math.round(x)), "--y", String(Math.round(y)),
@@ -438,6 +509,7 @@ export class MacInputInjector implements InputInjector {
   }
 
   async typeText(hwnd: number, text: string): Promise<void> {
+    await this.ensureForeground(hwnd)
     const normalized = text.normalize("NFKC")
     const graphemes = [...this.segmenter.segment(normalized)].map((s) => s.segment)
 
@@ -459,6 +531,7 @@ export class MacInputInjector implements InputInjector {
   }
 
   async keyChord(hwnd: number, keys: string[]): Promise<void> {
+    await this.ensureForeground(hwnd)
     const bin = resolveHostBinary()
     const args = ["inject", "--action", "key", "--window-id", String(hwnd), "--chord", ...keys]
     if (this.estopFlagPath) args.push("--estop-flag", this.estopFlagPath)
@@ -470,6 +543,7 @@ export class MacInputInjector implements InputInjector {
   }
 
   async scroll(hwnd: number, x: number, y: number, delta: number): Promise<void> {
+    await this.ensureForeground(hwnd)
     const bin = resolveHostBinary()
     try {
       await execFileAsync(bin, [
@@ -485,6 +559,7 @@ export class MacInputInjector implements InputInjector {
   }
 
   async drag(hwnd: number, x: number, y: number, x2: number, y2: number): Promise<void> {
+    await this.ensureForeground(hwnd)
     const bin = resolveHostBinary()
     try {
       await execFileAsync(bin, [
@@ -504,15 +579,68 @@ export class MacInputInjector implements InputInjector {
   }
 
   async foregroundHwnd(): Promise<number> {
+    // Contract: returns the window CGEvent will route the next event to
+    // (event-tap target), NOT "what the user perceives as frontmost." These
+    // converge only when the frontmost app has exactly one visible window.
+    //
+    // Filter (Architect + Adversary review 2026-07-23):
+    //   1. layer ∈ [-1000, 20) — covers normal(0)/floating(3)/modal(8),
+    //      excludes menu bar (24+) and dock desktop (-1000+)
+    //   2. name !== "" — kills Chrome's unnamed off-screen aux windows
+    //      (windowId=51/50/1235 in the 2026-07-23 fixture: all layer=0 but
+    //      empty name). name filter beats size heuristic (Adversary: size>=100
+    //      excludes NetEase Music mini-player / lyric / tray-icon windows)
+    //   3. bounds.y >= 0 — double-kills off-screen aux (windowId=51 had
+    //      y=-73 even if name were populated)
+    //
+    // Pi root cause (2026-07-23): old `layer === 0` first-match returned
+    // windowId=51 (off-screen Chrome aux) instead of windowId=47 (visible
+    // main). Fixed via the three predicates above.
     const bin = resolveHostBinary()
     let result: { stdout: string }
     try {
-      result = await execFileAsync(bin, ["window-list", "--foreground"], { timeout: 5000 })
+      result = await execFileAsync(bin, ["window-list", "--foreground"], {
+        timeout: 5000,
+        encoding: "utf-8",
+      })
     } catch (err) {
-      return 0
+      // Binary spawn failed (cmspark-host ENOENT, timeout, killed). Throw
+      // typed error so executor's diagnostic probe can branch; ensureForeground
+      // precondition converts to INJECT_FAILED via the click() catch chain.
+      throw new ForegroundProbeBrokenError(
+        `foregroundHwnd: cmspark-host window-list spawn failed (${(err as Error).message})`,
+      )
     }
-    const parsed = parseComputerJson(result.stdout, "window-list")
-    return parsed.windowId ?? 0
+    // Kimi round-3 residual (2026-07-23): parseComputerJson throws
+    // ComputerError(INVALID_ACTION) on invalid JSON / non-object payload —
+    // a 4th binary-hiccup path (truncated stdout from crashed binary) that
+    // is the SAME severity class as the spawn/checkOk paths above but was
+    // previously NOT wrapped → bubbled to fail(INJECT_FAILED). Wrap it.
+    let parsed: Record<string, any>
+    try {
+      parsed = parseComputerJson(result.stdout, "window-list")
+    } catch (err) {
+      throw new ForegroundProbeBrokenError(
+        `foregroundHwnd: window-list stdout unparseable (${(err as Error).message})`,
+      )
+    }
+    // Adversary C3 / Architect Q2-B (2026-07-23): checkOk normally throws
+    // ComputerError("INVALID_ACTION"). Wrap as ForegroundProbeBrokenError so
+    // the executor's *diagnostic* probe at executor.ts:1147 softens it to
+    // fg=0 instead of bubbling to fail(INJECT_FAILED) on every binary hiccup.
+    // ({ok:false} from cmspark-host = transient binary failure, not a fatal
+    // inject error — same severity bucket as spawn-fail above.)
+    if (parsed.ok !== true) {
+      throw new ForegroundProbeBrokenError(
+        `foregroundHwnd: window-list reported ok=false ` +
+        `(error_code=${parsed.error_code ?? "?"}, error=${parsed.error ?? "unknown"})`,
+      )
+    }
+    // Adversary C1: guard against schema regression — binary returns {ok:true}
+    // without a windows field (or windows is not an array). Without this guard,
+    // pickFrontmostWindowId throws TypeError → bubbles to fail(INJECT_FAILED).
+    const windows = Array.isArray(parsed.windows) ? parsed.windows : []
+    return pickFrontmostWindowId(windows)
   }
 
   async forceForeground(hwnd: number): Promise<boolean> {
@@ -532,16 +660,22 @@ export class MacInputInjector implements InputInjector {
     // keeps Chrome frontmost, CGEvent.post lands on Chrome at the target's
     // coordinates instead of the target app (psl8ci false-positive bug:
     // click reported ok:true but user observed the click landing on Chrome).
-    const bid = await this.resolveBundleIdForHwnd(hwnd)
-    if (!bid) {
-      // Can't resolve bundleId — fall back to "is it already foreground?"
-      // so the executor still has a chance to continue without a pause.
-      const fg = await this.foregroundHwnd()
-      return fg !== 0 && fg === hwnd
-    }
-    // bundleId is reverse-DNS (e.g. "com.netease.163music"); we pass it via
-    // execFile argv (no shell), so injection-safe.
+    //
+    // Adversary C2 / Architect Q2-C (2026-07-23): the entire body is wrapped
+    // so ANY throw (foregroundHwnd probe broken, osascript spawn fail,
+    // setTimeout cancelled) returns false → executor falls back to re-L2
+    // pause. Previously the `!bid` branch called foregroundHwnd outside the
+    // try/catch, letting binary hiccups bubble to fail(INJECT_FAILED).
     try {
+      const bid = await this.resolveBundleIdForHwnd(hwnd)
+      if (!bid) {
+        // Can't resolve bundleId — fall back to "is it already foreground?"
+        // so the executor still has a chance to continue without a pause.
+        const fg = await this.foregroundHwnd()
+        return fg !== 0 && fg === hwnd
+      }
+      // bundleId is reverse-DNS (e.g. "com.netease.163music"); we pass it via
+      // execFile argv (no shell), so injection-safe.
       await execFileAsync("/usr/bin/osascript", [
         "-e",
         `tell application id "${bid}" to activate`,
@@ -553,8 +687,8 @@ export class MacInputInjector implements InputInjector {
       return fg !== 0 && fg === hwnd
     } catch {
       // osascript spawn failed (Automation TCC not granted, target dead,
-      // timeout) — return false so the executor falls back to the re-L2
-      // pause and a human decides.
+      // timeout), OR foregroundHwnd probe broken (binary hiccup) — return
+      // false so the executor falls back to the re-L2 pause and a human decides.
       return false
     }
   }

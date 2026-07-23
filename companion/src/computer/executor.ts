@@ -50,6 +50,7 @@ import {
   ComputerError,
   corpusHashOf,
   corpusOf,
+  ForegroundProbeBrokenError,
   DIALOG_DIFF_THRESHOLD,
   DIALOG_BLOB_THRESHOLD,
   DIALOG_ZONE_THRESHOLD,
@@ -1144,7 +1145,23 @@ export async function runComputerTask(
       // Absent zoned channels (old script, fakes) simply do not participate.
       // NOTE: the diff must run BEFORE any sealing — the sealer deletes raws.
       const afterShot = await trackCapture(hwnd)
-      const fg = await deps.injector.foregroundHwnd()
+      // Diagnostic foreground probe — drives the `fg !== 0 && fg !== hwnd`
+      // channel of dialogSuspected. If the probe throws ForegroundProbeBrokenError
+      // (binary hiccup / spawn fail), degrade to fg=0 (legacy behavior) instead
+      // of bubbling to fail(INJECT_FAILED). Note: ensureForeground *inside*
+      // click/type/etc still throws — that's the precondition path, correctly
+      // fail-closed. This catch only softens the *diagnostic* probe.
+      let fg = 0
+      try {
+        fg = await deps.injector.foregroundHwnd()
+      } catch (err) {
+        if (!(err instanceof ForegroundProbeBrokenError)) throw err
+        log("computer.task.foreground_probe_failed", {
+          taskId,
+          seq,
+          error: (err as Error).message,
+        })
+      }
       const { diffRatio, maxZoneRatio, maxBlobRatio } = await deps.capturer.diff(afterShot.path, shot.path)
       const afterWinHwnds = await deps.windows.enumerateByExe(exeId).catch(() => [])
       const newTopLevel = afterWinHwnds.some((w) => !beforeWinHwnds.has(w.hwnd))
