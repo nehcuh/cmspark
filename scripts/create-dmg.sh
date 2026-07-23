@@ -41,7 +41,7 @@ if [ ! -d "${ICONSET}" ]; then
 fi
 
 # --- Step 1: Create .app bundle structure ---
-echo "[1/5] Creating CMspark.app bundle..."
+echo "[1/6] Creating CMspark.app bundle..."
 rm -rf "${DMG_DIR}"
 mkdir -p "${APP_BUNDLE}/Contents/MacOS"
 mkdir -p "${RESOURCES}"
@@ -51,12 +51,12 @@ sed "s/0.2.0/${VERSION}/g" "${ROOT_DIR}/scripts/macos/Info.plist" \
   > "${APP_BUNDLE}/Contents/Info.plist"
 
 # --- Step 2: Generate .icns from .iconset ---
-echo "[2/5] Generating app icon (.icns)..."
+echo "[2/6] Generating app icon (.icns)..."
 iconutil -c icns "${ICONSET}" -o "${RESOURCES}/AppIcon.icns"
 echo "  AppIcon.icns ($(du -h "${RESOURCES}/AppIcon.icns" | cut -f1))"
 
 # --- Step 3: Copy staging files directly into Resources/ (flat layout) ---
-echo "[3/5] Copying application files..."
+echo "[3/6] Copying application files..."
 cd "${STAGING}"
 cp -r . "${RESOURCES}/"
 cd "${ROOT_DIR}"
@@ -84,8 +84,26 @@ exec "${RESOURCES}/node" "${RESOURCES}/cmspark-agent.js" tray
 LAUNCHER
 chmod +x "${APP_BUNDLE}/Contents/MacOS/CMspark"
 
+# --- Step 3.5: Ad-hoc codesign the entire .app bundle ---
+# Without this, macOS 26 Tahoe TCC treats the bundle as "unsigned" and
+# re-prompts for Screen Capture permission on every launch, even though
+# internal binaries (cmspark-host, node) are individually signed. TCC
+# evaluates bundle-level signature, not per-binary. (2026-07-23 regression:
+# DMG users dragged the unsigned .app into /Applications, overwriting the
+# manually re-signed version, and TCC prompts came back.)
+echo "[4/6] Ad-hoc codesigning .app bundle..."
+ENTITLEMENTS="${ROOT_DIR}/companion/src/host-use/darwin/host.entitlements"
+codesign --force --deep --sign - --options runtime \
+  --entitlements "${ENTITLEMENTS}" \
+  "${APP_BUNDLE}"
+if ! codesign --verify --verbose "${APP_BUNDLE}"; then
+  echo "[create-dmg] ERROR: codesign verify failed for ${APP_BUNDLE}"
+  exit 1
+fi
+codesign -dv --verbose=4 "${APP_BUNDLE}" 2>&1 | grep -E "CDHash|Identifier|TeamIdentifier|flags=" | head -5
+
 # --- Step 4: Create DMG ---
-echo "[4/5] Creating DMG..."
+echo "[5/6] Creating DMG..."
 
 DMG_OUTPUT="${ROOT_DIR}/dist-package/${DMG_NAME}"
 rm -f "${DMG_OUTPUT}"
@@ -146,7 +164,7 @@ sync
 hdiutil detach "${DEVICE}" -quiet
 
 # --- Step 5: Convert to compressed read-only DMG ---
-echo "[5/5] Compressing DMG..."
+echo "[6/6] Compressing DMG..."
 hdiutil convert "${TMP_DMG}" \
   -format UDZO \
   -imagekey zlib-level=9 \
