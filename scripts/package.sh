@@ -78,6 +78,13 @@ cp companion/node_modules/sql.js/dist/sql-wasm.wasm "${STAGING}/"
 # Builtin skills
 cp -r companion/builtin-skills "${STAGING}/"
 
+# TinyClick model manifest — must sit next to cmspark-agent.js so
+# defaultManifestPath() candidate 3 (__dirname/models.manifest.json) hits.
+# Without this, all 3 candidates miss and fallback returns
+# "<bundle>/../../models.manifest.json" → UI shows ENOENT for that path
+# and the download/license gate can't read provenance hashes.
+cp companion/models.manifest.json "${STAGING}/"
+
 # Assets (tray icons)
 if [ -d companion/assets ]; then
   cp -r companion/assets "${STAGING}/"
