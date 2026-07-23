@@ -2,6 +2,15 @@
 
 ## Current Session
 
+### S14 (2026-07-23) [cmspark macOS computer-use: forceForeground 融合 + bundle 级 TCC codesign 根因定位]
+- 拉远程（`26e29c6` session-trust + `51c959f` forceForeground 融合）— 上个会话的「方案 A」已合：每动作 `activateTarget` 折叠进 `forceForeground(hwnd)` 单一入口，executor FOREGROUND-YIELD 自家 UI 静默重抢用同一函数。
+- **TCC 反复弹窗 regression 根因定位**：用户报"chrome 插件执行过程中反复弹窗提示 CMspark.app 需要截屏权限，实际打开都已经有权限"。诊断：`codesign -dv` 显示 `/Applications/CMspark.app` bundle 级未签名 → macOS 26 Tahoe TCC **按 bundle 级评估**（不是 per-binary），未签名 = 每次启动重新评估 = 反复弹。用户从 DMG 拖 `.app` 覆盖了之前手工重签版，问题又回来。
+- **长期修复**（commit `198bfe9`，已推 origin）：`scripts/create-dmg.sh` 在 Step 3（cp staging）和 Step 4（hdiutil create）之间加 Step 3.5：`codesign --force --deep --sign - --options runtime --entitlements <host.entitlements>` + `codesign --verify` 硬门 + CDHash 打印。所有 step 标签 `[X/5]` → `[X/6]`。下次 DMG 重打自动带签名。
+- **短期缓解**：手工 `codesign --force --deep --sign - --options runtime --entitlements ...` 已签的 `/Applications/CMspark.app`（CDHash `0e05a4bd...`），`tccutil reset ScreenCapture` 后让用户重授。daemon 已重启（pid 22448）跑新代码（forceForeground 真实现 + session-trust）。
+- **Memory 更新**：自动记忆 `tcc_cdhash_vs_activate.md` 加 bundle 级签名坑；project-knowledge 加同名 Technical Pitfall 条目。
+- **未完成**：① 用户真机跑网易云 e2e（验证 forceForeground + session-trust + bundle 签名三件套联动）；② Phase 2 长期方案（daemon 化 cmspark-host 或 Apple Developer ID）— TaskList #3 仍 pending。
+- Recorded: yes — project-knowledge Technical Pitfalls 加 macOS bundle 级 TCC 条目；[[tcc-cdhash-vs-activate]] 加 bundle 段落
+
 ### S13 (2026-07-21) [cmspark WP3 macOS 坐标链路 live 排障 ×8 — 从未端到端跑通过]
 - 触发：用户给了坐标授权但一直过不去。逐环排障，每一环都是阻断性 bug，**WP3 macOS 链路此前从未真机跑通过**（S12 的"待完成 E2E"实锤）。
 - 修复链（按用户踩到顺序，全部未 commit，在工作树里）：

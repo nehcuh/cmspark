@@ -3,36 +3,17 @@
 ## Session Handoff
 
 <!-- handoff:start -->
-### 2026-07-14 (session-end S11 — knowledge.import_directory 收尾 + 2 MCP 安全 fix + 拆 8 commit)
-- 中断恢复 + 完成：13 文件 +576 -93 改动按 8 个独立主题拆 commit 全合 origin/main（`bd0b52c`）。912 tests 全过。
-- **主功能 `knowledge.import_directory`**（C1，6 文件 +324 -54）：companion 走 `pickFolderNative()` 原生 picker（绕 Chromium 149 `<input webkitdirectory>` SIGSEGV），核心 bug 是 name collision —— 两份 md 共享同首 `# 标题` 会 sanitize 同文件名静默相互覆盖（笨牛棚 79 篇塌缩成 5）。修：`importKnowledge` 加 `nameOverride` 参数，walk 时传 vault 相对路径。详见 commit `bd0b52c`。
-- **2 个独立 MCP 安全 fix**（用户在 cmspark 里跑 `directory_tree /Users/huchen` 连环撞到）：
-  - C4（`1cce265`）：`directory_tree` 推断成 `["unknown"]` → CRITICAL_MCP_CAPABILITIES 把 unknown 算 critical → god mode 也绕不过。修：`MCP_NAME_READ` 加 `directory|tree|walk|traverse|enumerate`。用户 config 加 `security_capabilities: ["file-read","read-only"]` 数组（之前给字符串被静默丢）。
-  - C5（`a47a7f2`）：`.Trash` 被 TCC 拒 → MCP server bail → `"eperm: operation not permitted"` 不匹配 `classifyError` 任何 recoverable 模式 → 默认 non_recoverable → 杀对话。修：recoverable 列表加 `"eperm"` + `"operation not permitted"`。
-- **顺手发现 3 个 UX fix**：C6 send shortcut 严格 modifier（`de3dbe0`）/ C7 ThreadList 行允许拖选（`ee1a6a0`）/ C8 空白 thread 自动创建改乐观 UI（`79cccba`）。
-- 还有 C2 thread.fork 默认 alias 改 ""（`6a2d701`）/ C3 config api_key_set 信号 + popup→sidepanel 交接（`91174d5`）。
-- 工具坑：Claude sandbox 启的 companion 没 GUI session → osascript 秒回 -128 不弹窗。e2e 验证必须从 Terminal.app 起 companion。
-- **未完成**：knowledge.import_directory 的 e2e 真跑（点按钮选 笨牛棚 → 看 imported/docsCount/failed）。功能代码已 ship origin/main，验证留给下一会话。
+### 2026-07-23 (session-end S14 — macOS computer-use: forceForeground 融合 + bundle 级 TCC codesign 根因)
+- 拉远程 `26e29c6`（session-trust）+ `51c959f`（forceForeground 融合）— 上个会话的「方案 A」已合：每动作 `activateTarget` 折叠进 `forceForeground(hwnd)` 单一入口，executor FOREGROUND-YIELD 自家 UI 静默重抢复用同一函数。
+- **TCC 反复弹窗 regression 根因定位**：用户报"chrome 插件执行过程中反复弹 CMspark.app 需要截屏权限，系统设置里已显示有权限"。诊断：`codesign -dv` 显示 `/Applications/CMspark.app` **bundle 级未签名** → macOS 26 Tahoe TCC 按 bundle 级评估（不是 per-binary），未签名 = 每次启动重新评估 = 反复弹。用户从 DMG 拖 `.app` 覆盖了手工重签版，问题复发。
+- **长期修复**（commit `198bfe9` 已推 origin）：`scripts/create-dmg.sh` 在 Step 3 和 Step 4 之间加 Step 3.5：`codesign --force --deep --sign - --options runtime --entitlements <host.entitlements>` + `codesign --verify` 硬门（失败 `exit 1`）+ CDHash 打印。所有 step 标签 `[X/5]` → `[X/6]`。下次 DMG 重打自动带签名。
+- **短期缓解**：手工 codesign 已签 `/Applications/CMspark.app`（CDHash `0e05a4bd...`），`tccutil reset ScreenCapture` + 用户重授。daemon 已重启（pid 22448）跑新代码。
+- **Memory 更新**：auto-memory `tcc_cdhash_vs_activate.md` 加 bundle 级签名坑；project-knowledge 加同名 Technical Pitfall 条目。
+- **未完成**：① 用户真机跑网易云 e2e（验证 forceForeground + session-trust + bundle 签名三件套联动）；② Phase 2 长期方案（daemon 化 cmspark-host 或 Apple Developer ID）— TaskList #3 仍 pending。
 
-### 2026-07-10 (S9 — TODO-skip 修复启动，未完成)
-- 目标：修复 CI coverage 解封后遗留的 10 个 `test.skip` + TODO 真实 bug。
-- 已建立 10 个顺序 task，切入 worktree `fix-ci-coverage-todos`。
-- Task 1 诊断完成：`tab-resolver.ts` pinned tab 反向迭代导致测试 "first available pinned tab" 失败；需改为正向迭代。
-- 阻塞：kimi-gated-fix 复审需使用 `kimi-2.7 code` 模型重跑。
-- 临时文件已清理，worktree 保留待续。
-- **Next**：用 `kimi-2.7 code` 跑 task 1 复审 → apply → 验证 → 依次处理 task 2-10。
-
-### 2026-07-10 (session-end S8 — 10 PR 全合)
-- 从 S6 审计(4 Critical/10 High/4.4/C) → S7 开 4 PR → S8 续开 6 PR → **10 PR 全部合入 main**。审计 **4 Critical 全闭环** + **10 High 全修**。
-- #11 P0 止血(C1 WS 鉴权/C2 history 落盘/C3 去||true/C4 zip-slip 预检/H1 0o600/H2 evaluate token)
-- #12 P1-1 CI 解封(测试隔离=静态 import 读真实 config/teardown hang) → #15 threads-history(单调时间戳+精确 cap+隔离)
-- #13 P1-3 持久化(原子写+损坏保留/H5 查证非 bug) → #16 CI 全面覆盖(**glob 修复 106→703 测试** + matchSite 后缀碰撞 bug) → #17 linux CI stdio skip
-- #18 **officeparser 4→7**(C4 critical 根除，decompress 依赖移除，API parseOfficeAsync→convert) → #19 **H10 安全弹窗 a11y**(focus trap+Escape+aria-modal)
-- **重大发现**：CI 的 glob `tests/**/*.test.js` 因 dash 无 globstar → 只跑子目录(~106 测试)，**盲跑 596 个顶层测试**(含 config/history/file-parser/threads-history 等)。修 glob 用 `find` → 703 全跑 + 暴露 10 确定性失败(skip+TODO) + 1 IPC 崩溃(settings-web 隔离运行)。npm audit **0 critical**(原 2)。
-- CI 状态：全面 703 测试，0 fail，11 skip(TODO 追踪)。main = 32847d4。
-- Next: P1-5 签名/SBOM(证书长杆)/M18 其他 modal a11y/10 个 TODO-skip(真实 bug 逐个诊断)/P1-6 evaluate AST 门
-
-### 2026-07-09 (session-end S6 — 审计)
-- Fuck My Shit Mountain full 审计：`audit-report-cmspark-2026-07-09.md`（55 findings，4.4/C）+ remediation-plan + Kimi 独立复核
-- 4 Critical：C1 WS 无鉴权·C2 history 不落盘·C3 CI 绿-on-red·C4 供应链。10 High。修复见 S7/S8 的 10 个 PR
+### 2026-07-21 (session-end S13 — cmspark WP3 macOS 坐标链路 live 排障 ×8)
+- 触发：用户给了坐标授权但一直过不去。逐环排障，每一环都是阻断性 bug，**WP3 macOS 链路此前从未真机跑通过**（S12 的"待完成 E2E"实锤）。
+- 8 修复链（按用户踩到顺序）：①coordinateAllowed 双开关只开了全局 → 帮用户写 config.json；②host-bin.ts 候选路径漏「同目录」→ 打包版找不到 cmspark-host → Touch ID 降级 6 位验证码；③server.ts Windows estop 预检平台分支前无条件跑 → macOS spawn powershell.exe ENOENT → daemon crash；④estop.ts spawnEstopHelper 补 child.on("error")；⑤host.swift **estop 子命令整个没实现** → 补 CGEventTap 热键 + UNIX socket 保活；⑥darwin-estop.ts 三修（spawn error/启动即死/heartbeat 永远误报存活）；⑦cuWindowList 比 kCGWindowOwnerName 显示名（「网易云音乐」≠ com.netease.163music）→ 改 NSRunningApplication 解析 PID；⑧cuScreenshot 把 stderr 扔 nullDevice 藏住错误。
+- 部署：`make package-macos` 打 3 次，最终 DMG 含全部 8 修。tsc 干净；577 测试 0 挂。
+- **未完成**：装新 DMG → 重授 TCC → 跑网易云坐标任务 e2e。继续到 S14。
 <!-- handoff:end -->

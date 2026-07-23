@@ -53,6 +53,12 @@
 - 修法（PR #65，9315d31）：`Tray.swift` `PairingController.show()` 在 `makeKeyAndOrderFront` 后加 `window.orderFrontRegardless()`（AppKit「即使激活被压制也强制到前台」原语，无 Dock 闪烁）。配套 `SWIFT_TRAY_SHA256` `10a586ea`→`46d866a6`（A8 lock-step）。
 - 教训：① 任何 Swift tray/NSWindow 弹窗：`makeKeyAndOrderFront` 后**必加** `orderFrontRegardless()`，别依赖已弃用的 `activate(ignoringOtherApps:)`。② 诊断"窗口不显示"先分清 **create vs order**——最小 harness + 打印窗口属性（isVisible/isOnActiveSpace/isKeyWindow/frame）是客观证据，别只靠肉眼、别被哈希差异带偏。③ Tray.swift 改动 → `bash companion/src/tray/build-tray.sh` 重编 → 更新 `companion/src/tray/swift-tray-bridge.ts` 的 `SWIFT_TRAY_SHA256`（build-tray.sh 末尾提示 `menu-bar-agent.ts` 是**错的**，常量实际在 `swift-tray-bridge.ts`）。
 
+### macOS 26 Tahoe TCC 按 bundle 级签名评估，不是 per-binary（2026-07-23 regression）
+- 现象：DMG 安装的 `CMspark.app` 反复弹 ScreenCapture 授权，即使系统设置里已经显示"已授权"。用户每次启动都要重新点允许。
+- 根因：`create-dmg.sh` 历史上没有 codesign 步骤，DMG 里的 `.app` bundle **整体未签名**。即使内部 binary（`cmspark-host`、`node`）单独签了，macOS 26 Tahoe TCC **按 bundle 级签名评估**，未签名 bundle = 每次启动重新评估授权 = 反复弹窗。用户从 DMG 拖 `.app` 到 `/Applications` 还会**覆盖**之前手工重签的版本，把问题带回来。
+- 修法（commit `198bfe9`）：`create-dmg.sh` 在 `cp staging`（Step 3）和 `hdiutil create`（Step 4）之间加 Step 3.5：`codesign --force --deep --sign - --options runtime --entitlements <host.entitlements> "${APP_BUNDLE}"` + `codesign --verify` 硬门（失败 `exit 1`）+ 打印 CDHash/Identifier/flags 便于诊断。所有 step 标签从 `[X/5]` 改成 `[X/6]`。
+- 教训：① **打包脚本必须 codesign 整个 .app bundle**，不能只签内部 binary；TCC 看的是 bundle 级签名。② 诊断"TCC 反复弹已授权权限"先 `codesign -dv --verbose=4 /Applications/CMspark.app` 看 `flags=runtime` 是否在、`CDHash` 是否非空 —— 缺失就是 bundle 未签名。③ 长期解法仍是 Apple Developer ID + notarize（TCC 看 TeamID 不看 cdhash）；短期缓解：DMG 流程必须包含 `codesign --force --deep`。详见 [[tcc-cdhash-vs-activate]]。
+
 ## Reusable Patterns
 
 ### Broadcast pattern for cross-client actions
