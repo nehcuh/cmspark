@@ -18,6 +18,7 @@ import * as path from "path"
 import * as os from "os"
 import * as fs from "fs"
 import { createHash, randomUUID } from "crypto"
+import { logger } from "../logger"
 import { resolveHostBinary } from "../host-use/darwin/host-bin"
 import { spawnHostBin } from "../host-use/darwin/host-integrity"
 import {
@@ -79,6 +80,60 @@ export function checkOk(parsed: Record<string, any>, label: string): void {
       `${label}: ${parsed.error ?? "unknown error"}`,
     )
   }
+}
+
+/**
+ * P2 (Pi C4): when cmspark-host's screenshot subcommand returns {ok:false},
+ * decide what audit to emit and what ComputerError to throw.
+ *
+ * CAPTURE_FAILED carries operator-only metrics under `capture_degraded`. This
+ * function emits `computer.capture.degraded` to the operator audit channel
+ * BEFORE constructing the typed error, so operators see stdev/identity/size in
+ * logs while the LLM-facing `.message` stays generic (no "degraded, please
+ * activate" coaching that page content could teach the model to request).
+ *
+ * Extracted as a pure function (logger side effect aside) so tests can drive
+ * every failure code without spawning the binary. localSha256 only fills in
+ * when the host omitted sha256 from capture_degraded (older binaries).
+ */
+export function interpretScreenshotFailure(
+  hwnd: number,
+  parsed: Record<string, any>,
+  localSha256: string = "",
+): ComputerError {
+  // `parsed.error_code` is any (host.swift output); preserve any-ness so the
+  // ComputerErrorCode union accepts it, mirroring checkOk's pre-existing pattern.
+  const code = parsed.error_code ?? "INVALID_ACTION"
+  if (code === "CAPTURE_FAILED") {
+    const dg = parsed.capture_degraded && typeof parsed.capture_degraded === "object"
+      ? (parsed.capture_degraded as Record<string, unknown>)
+      : null
+    logger.info("computer.capture.degraded", {
+      windowId: hwnd,
+      reason: (dg?.reason as string) ?? "unknown",
+      stdev: dg?.stdev ?? null,
+      identity: dg?.identity ?? null,
+      sizeBytes: dg?.sizeBytes ?? null,
+      imageWidth: dg?.imageWidth ?? null,
+      imageHeight: dg?.imageHeight ?? null,
+      threshold: dg?.threshold ?? null,
+      prior_present: dg?.prior_present ?? null,
+      sha256: (dg?.sha256 as string) || localSha256 || null,
+    })
+    // P2 C4 (Grok blocker 1) defense-in-depth: NEVER echo parsed.error into the
+    // LLM-facing message, even if a future host regression embeds metrics
+    // there. The .message is hardcoded generic; metrics ride only in .detail
+    // + the audit log. Tests assert this for the real host-shaped payload.
+    return new ComputerError(
+      code,
+      "screenshot: stale or solid capture frame",
+      parsed.capture_degraded ? { capture_degraded: parsed.capture_degraded } : undefined,
+    )
+  }
+  return new ComputerError(
+    code,
+    `screenshot: ${parsed.error ?? "unknown error"}`,
+  )
 }
 
 /**
@@ -265,12 +320,16 @@ export class MacScreenCapturer implements ScreenCapturer {
       rethrowDarwinExecError(err as ExecFileException | Error, "screenshot")
     }
     const parsed = parseComputerJson(result.stdout, "screenshot")
-    checkOk(parsed, "screenshot")
-
+    // Compute sha256 BEFORE the ok-check so interpretScreenshotFailure can use
+    // it as a fallback when the host's CAPTURE_FAILED payload omits the field
+    // (older binaries). Replaces `checkOk(parsed, "screenshot")`; see P2 Pi C4.
     let sha256 = ""
     try {
       sha256 = createHash("sha256").update(fs.readFileSync(tmpPath)).digest("hex")
-    } catch { /* file not found — error surfaced below */ }
+    } catch { /* file missing or host failed before writing — sha256 stays "" */ }
+    if (parsed.ok !== true) {
+      throw interpretScreenshotFailure(hwnd, parsed, sha256)
+    }
 
     // v4 Defect 3: plumb real image dimensions + backing scale. Fall back to
     // rect dims when binary lacks the new fields (older host.swift — bridge

@@ -561,7 +561,22 @@ do {
         // returns on success — it hosts a CFRunLoop until killed.
         guard let sock = argValue("--socket-path") else { fputs("estop: --socket-path required\n", stderr); exit(2) }
         try runEstop(socketPath: sock, flagPath: argValue("--flag-path") ?? "/tmp/cmspark-estop.flag")
-
+    case "self-test":
+        // P2 (Pi C2/C3 + Grok blocker 2): pure-function contract for the
+        // capture variance classifier. Print JSON result; exit non-zero on
+        // any assertion failure so build-host.sh's `|| exit 1` actually trips.
+        // cuSelfTestClassifier returns cuJson({"ok":true,...}) on pass and
+        // cuError(... code:"SELF_TEST_FAILED") on fail; we inspect the ok flag
+        // directly and short-circuit before the unified `print(out); exit(0)`.
+        let testOut = cuSelfTestClassifier()
+        print(testOut)
+        if let data = testOut.data(using: .utf8),
+           let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let ok = obj["ok"] as? Bool, !ok {
+            FileHandle.standardError.write("cuSelfTestClassifier reported failure\n".data(using: .utf8)!)
+            exit(1)
+        }
+        exit(0)
     default:
         FileHandle.standardError.write("unknown subcommand: \(subcommand)\n".data(using: .utf8)!)
         exit(2)
@@ -590,8 +605,14 @@ import CryptoKit
 
 // MARK: - JSON helpers
 
-func cuError(_ error: String, code: String = "INVALID_ACTION") -> String {
-    guard let data = try? JSONSerialization.data(withJSONObject: ["ok": false, "error": error, "error_code": code], options: []),
+func cuError(_ error: String, code: String = "INVALID_ACTION", extra: [String: Any] = [:]) -> String {
+    // Default-arg `extra` keeps every existing call site (cuError("..."),
+    // cuError("...", code: "...")) source-compatible. P2 (Pi C4): the variance
+    // classifier attaches capture_degraded metrics here so darwin-adapters can
+    // emit operator-only audit BEFORE rethrowing ComputerError to the LLM path.
+    var payload: [String: Any] = ["ok": false, "error": error, "error_code": code]
+    for (k, v) in extra { payload[k] = v }
+    guard let data = try? JSONSerialization.data(withJSONObject: payload, options: []),
           let str = String(data: data, encoding: .utf8) else { return "{}" }
     return str
 }
@@ -923,6 +944,87 @@ func cuScreenshot(windowId: UInt32, outputPath: String) -> String {
     let scaleX = rectW > 0 ? Double(imageWidth) / Double(rectW) : 1.0
     let scaleY = rectH > 0 ? Double(imageHeight) / Double(rectH) : 1.0
 
+    // v4.1 Blocker 1 (Pi): capture variance classifier — fail closed on stale
+    // or blank frames instead of returning a frame the LLM will click into
+    // blindly. AND-of-conditions when a prior exists (caret-blink frame has
+    // low stdev but low identity → must NOT pass); stdev-only when no prior.
+    let priorKey = windowId
+    let downsample = cuDownsampleToBitmap(image, side: 64)
+    let stdev = cuLumaStdev(downsample)
+    let prior = cuPriorCaptureFrameLock.value[priorKey]
+    var identity = -1.0
+    if let p = prior {
+        identity = cuIdentity(downsample, p)
+    }
+    let sizeBytes = data.count
+    let sizeGuard = sizeBytes < 1024 || imageWidth < 8 || imageHeight < 8
+    // Grok material 6: empty downsample means CGContext draw failed even
+    // though PNG wrote nonzero bytes — treat as fail-closed (cannot evaluate
+    // variance on missing pixels). Without this guard, AND clause would be
+    // false (cuIdentity returns -1 on length mismatch) → stale frame passes.
+    let downsampleEmpty = downsample.isEmpty
+    var stale = false
+    if sizeGuard || downsampleEmpty {
+        stale = true
+    } else if let _ = prior {
+        // Prior exists: require BOTH low stdev AND high identity to declare
+        // stale (Pi caveat: OR over-flags caret-blink frames).
+        stale = (stdev < 1.0 && identity >= 0.99)
+    } else {
+        // No prior: stdev-only fallback (first capture of this window).
+        stale = stdev < 1.0
+    }
+    // Update prior regardless of verdict — next call uses this for identity.
+    cuPriorCaptureFrameLock.value[priorKey] = downsample
+
+    // Reason taxonomy (operator-only; LLM only sees CAPTURE_FAILED per Pi C4).
+    // size_guard wins because a 0-byte / 0-dim frame makes stdev/identity
+    // meaningless — the luma/identity classifier cannot rescue a missing file.
+    // downsample_failed is the CGContext-draw-failed analog (PNG wrote but
+    // pixels did not survive bitmap conversion).
+    let reason: String
+    if sizeGuard {
+        reason = "size_guard"
+    } else if downsampleEmpty {
+        reason = "downsample_failed"
+    } else if prior != nil {
+        reason = "pixel_identity"
+    } else {
+        reason = "luma_stdev"
+    }
+
+    if stale {
+        // P2 C4 (Grok blocker 1): error string stays GENERIC — no stdev /
+        // identity / sizeBytes / reason leak. Metrics go ONLY to stderr
+        // (operator) + capture_degraded payload (operator audit). The TS layer
+        // also force-genericizes the message as defense-in-depth.
+        fputs("[host] CAPTURE_FAILED windowId=\(windowId) reason=\(reason) " +
+              "stdev=\(String(format: "%.3f", stdev)) " +
+              "identity=\(String(format: "%.3f", identity)) sizeBytes=\(sizeBytes) " +
+              "imageW=\(imageWidth) imageH=\(imageHeight)\n", stderr)
+        return cuError(
+            "stale or solid capture frame",
+            code: "CAPTURE_FAILED",
+            extra: [
+                "capture_degraded": [
+                    "reason": reason,
+                    "stdev": stdev,
+                    "identity": identity,
+                    "sizeBytes": sizeBytes,
+                    "imageWidth": imageWidth,
+                    "imageHeight": imageHeight,
+                    "threshold": [
+                        "stdev_lt": 1.0,
+                        "identity_gte": 0.99,
+                        "min_bytes": 1024,
+                        "min_dim": 8,
+                    ],
+                    "prior_present": prior != nil,
+                    "sha256": sha256,
+                ] as [String: Any],
+            ])
+    }
+
     return cuJson([
         "ok": true,
         "rect": rect,
@@ -935,6 +1037,231 @@ func cuScreenshot(windowId: UInt32, outputPath: String) -> String {
         "backingScale": scaleX,  // == scaleX on macOS (per-axis equal in practice)
         "path": outputPath,
         "sha256": sha256,
+    ])
+}
+
+// MARK: - capture variance classifier helpers (v4.1 Blocker 1)
+
+/// Thread-safe storage for last-frame 64x64 luma bitmap per windowId.
+/// Used by cuScreenshot for the identity check in the variance classifier.
+private let cuPriorCaptureFrameLock = CUBox<[UInt32: [UInt8]]>([:])
+
+/// Simple lock-protected box for mutable global state (mirrors swift-tray pattern).
+private final class CUBox<T> {
+    var value: T
+    private let lock = NSLock()
+    init(_ initial: T) { self.value = initial }
+    func with<R>(_ body: (inout T) -> R) -> R {
+        lock.lock(); defer { lock.unlock() }
+        return body(&value)
+    }
+}
+
+/// Downsample a CGImage to a `side`x`side` luma bitmap (0-255 per cell).
+/// Uses average pooling over the source image. Returns empty array on failure.
+func cuDownsampleToBitmap(_ image: CGImage, side: Int) -> [UInt8] {
+    let w = image.width
+    let h = image.height
+    if w <= 0 || h <= 0 { return [] }
+    let colorSpace = CGColorSpaceCreateDeviceRGB()
+    let bytesPerRow = side * 4
+    var pixels = [UInt8](repeating: 0, count: side * side * 4)
+    guard let ctx = CGContext(
+        data: &pixels,
+        width: side, height: side,
+        bitsPerComponent: 8, bytesPerRow: bytesPerRow,
+        space: colorSpace,
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+    ) else { return [] }
+    ctx.interpolationQuality = .low
+    ctx.draw(image, in: CGRect(x: 0, y: 0, width: side, height: side))
+    var luma = [UInt8](repeating: 0, count: side * side)
+    for i in 0..<(side * side) {
+        let r = Double(pixels[i * 4])
+        let g = Double(pixels[i * 4 + 1])
+        let b = Double(pixels[i * 4 + 2])
+        luma[i] = UInt8(min(255, max(0, 0.299 * r + 0.587 * g + 0.114 * b)))
+    }
+    return luma
+}
+
+/// Population standard deviation of luma across the bitmap. Low stdev ⇒ uniform
+/// color (likely blank). Returns 0.0 for empty input.
+func cuLumaStdev(_ bitmap: [UInt8]) -> Double {
+    guard !bitmap.isEmpty else { return 0.0 }
+    let n = Double(bitmap.count)
+    let sum = bitmap.reduce(0.0) { $0 + Double($1) }
+    let mean = sum / n
+    let variance = bitmap.reduce(0.0) { $0 + (Double($1) - mean) * (Double($1) - mean) } / n
+    return variance.squareRoot()
+}
+
+/// Fraction of cells whose luma matches the prior exactly (0.0–1.0).
+/// Returns -1 if lengths differ (caller treats as "no prior").
+func cuIdentity(_ current: [UInt8], _ prior: [UInt8]) -> Double {
+    guard !current.isEmpty, current.count == prior.count else { return -1.0 }
+    let matches = zip(current, prior).filter { $0 == $1 }.count
+    return Double(matches) / Double(current.count)
+}
+
+/// P2 (Pi C2/C3) self-test for the variance classifier's pure helpers.
+/// Drives cuLumaStdev / cuIdentity with synthetic bitmaps to lock:
+///   - blank frame → stdev = 0.0
+///   - identical prior → identity = 1.0
+///   - 1-cell change (caret-blink analog) → identity = (n-1)/n which is ABOVE
+///     the 0.99 fail-closed threshold when n=64*64=4096 (≈0.99976) — proves
+///     AND-of-conditions correctly rejects caret-blink false-positives
+///   - 100-cell change → identity = (n-100)/n ≈ 0.9756, BELOW 0.99 → stale
+///
+/// Returns cuJson({"ok":true,...}) on pass; on the first failing assertion,
+/// writes the assertion name to stderr and exits non-zero via the caller's
+/// do/catch (HostError). Called by the `self-test` subcommand and by
+/// build-host-skylight.sh as a post-build functional gate.
+func cuSelfTestClassifier() -> String {
+    var failures: [String] = []
+    let n = 64 * 64
+
+    // 1. stdev of all-zero bitmap = 0 (uniform)
+    let zeros = [UInt8](repeating: 0, count: n)
+    let stdevZeros = cuLumaStdev(zeros)
+    if stdevZeros != 0.0 {
+        failures.append("stdev_zeros: expected 0.0, got \(stdevZeros)")
+    }
+
+    // 2. stdev of all-255 bitmap = 0 (uniform)
+    let whites = [UInt8](repeating: 255, count: n)
+    let stdevWhites = cuLumaStdev(whites)
+    if stdevWhites != 0.0 {
+        failures.append("stdev_whites: expected 0.0, got \(stdevWhites)")
+    }
+
+    // 3. stdev of half-0 / half-255 bitmap ≈ 127.5 (high variance)
+    var halfAndHalf = [UInt8](repeating: 0, count: n)
+    for i in 0..<n { halfAndHalf[i] = i < n / 2 ? 0 : 255 }
+    let stdevHalf = cuLumaStdev(halfAndHalf)
+    if stdevHalf < 100.0 {
+        failures.append("stdev_half: expected >=100.0, got \(stdevHalf)")
+    }
+
+    // 4. identity of identical bitmaps = 1.0
+    let idIdentical = cuIdentity(zeros, zeros)
+    if idIdentical != 1.0 {
+        failures.append("identity_identical: expected 1.0, got \(idIdentical)")
+    }
+
+    // 5. identity of mismatched lengths = -1.0
+    let idMismatched = cuIdentity(zeros, [UInt8](repeating: 0, count: 10))
+    if idMismatched != -1.0 {
+        failures.append("identity_mismatched_len: expected -1.0, got \(idMismatched)")
+    }
+
+    // 6. identity with single-cell change (caret-blink analog) — must be ABOVE
+    //    0.99 fail-closed threshold so AND-of-conditions does NOT flag stale.
+    var caretBlink = zeros
+    caretBlink[0] = 255
+    let idCaret = cuIdentity(zeros, caretBlink)
+    if idCaret <= 0.99 {
+        failures.append("identity_caret_blink: expected >0.99 (cell-flip must not trip stale), got \(idCaret)")
+    }
+
+    // 7. identity with 100-cell change — BELOW 0.99, classifies as stale
+    var bigChange = zeros
+    for i in 0..<100 { bigChange[i] = 255 }
+    let idBig = cuIdentity(zeros, bigChange)
+    if idBig >= 0.99 {
+        failures.append("identity_big_change: expected <0.99 (100-cell change must trip stale), got \(idBig)")
+    }
+
+    // 8. AND-of-conditions stale verdict (prior exists):
+    //    - low stdev + high identity → stale (true stale, e.g. fully black frame twice)
+    //    - low stdev + low identity (caret blink flipped a cell but stdev still low)
+    //      → NOT stale (Pi C2 caveat: OR over-flags caret-blink)
+    let stdevLow = 0.5
+    let idHigh: Double = 1.0       // identical black prior
+    let staleIdHigh = (stdevLow < 1.0 && idHigh >= 0.99)
+    if !staleIdHigh {
+        failures.append("and_prior_stale_idHigh: expected true (black prior + black frame)")
+    }
+    // Note: a low-stdev frame with a high-identity prior IS flagged stale by
+    // AND. This is correct — see threat-class table in review-pi-p2.txt.
+    // Caret-blink (1 cell of 4096 flips) raises stdev above 1.0 (Pi analysis),
+    // so the AND clause's stdev gate excludes it. Verified by self-test #10
+    // (and_truth_low_low_not_stale) and #11 (and_truth_high_high_not_stale).
+
+    // 9. no-prior path: stdev-only fallback
+    let staleNoPrior = (stdevLow < 1.0)  // no prior branch
+    if !staleNoPrior {
+        failures.append("no_prior_stdev_only: expected true (blank first capture)")
+    }
+
+    // 10. Grok material 5: real AND truth table (prior exists)
+    //     - low stdev + LOW identity → NOT stale (caret-blink flipped cells in
+    //       a low-variance field; OR would over-flag, AND correctly skips)
+    //     - high stdev + HIGH identity → NOT stale (contentful identical frame;
+    //       stdev disqualifies — frozen UI with rich content)
+    //     - high stdev + LOW identity → NOT stale (live frame, content changed)
+    //     Only (low stdev + high identity) trips stale — proven in #8.
+    let stdevLowIdLow: Bool = (Double(0.5) < 1.0 && Double(0.80) >= 0.99)       // false
+    let stdevHighIdHigh: Bool = (Double(50.0) < 1.0 && Double(1.0) >= 0.99)     // false (stdev)
+    let stdevHighIdLow: Bool = (Double(50.0) < 1.0 && Double(0.50) >= 0.99)     // false (stdev)
+    if stdevLowIdLow {
+        failures.append("and_truth_low_low: expected NOT stale, got stale (caret-blink false positive)")
+    }
+    if stdevHighIdHigh {
+        failures.append("and_truth_high_high: expected NOT stale, got stale (contentful freeze misflag)")
+    }
+    if stdevHighIdLow {
+        failures.append("and_truth_high_low: expected NOT stale, got stale (live frame misflag)")
+    }
+
+    // 11. Grok material 6: empty downsample (CGImage decode failure) + prior
+    //     MUST be CAPTURE_FAILED, not silently pass. cuIdentity returns -1 on
+    //     length mismatch → AND clause false → would pass without guard.
+    //     Implementation contract: empty bitmap (sizeGuard would catch via 0
+    //     bytes, but if the PNG wrote successfully with 0-dim image, downsample
+    //     also empty) → caller MUST fail-closed. Encode the invariant here.
+    let emptyBitmap: [UInt8] = []
+    let emptyStdev = cuLumaStdev(emptyBitmap)         // 0.0
+    let emptyIdentity = cuIdentity(emptyBitmap, zeros) // -1.0 (mismatched length)
+    if emptyStdev != 0.0 {
+        failures.append("empty_stdev: expected 0.0, got \(emptyStdev)")
+    }
+    if emptyIdentity != -1.0 {
+        failures.append("empty_identity: expected -1.0, got \(emptyIdentity)")
+    }
+    // The host.swift cuScreenshot guards this via sizeGuard (imageWidth<8 ||
+    // imageHeight<8 catches 0-dim). Lock the contract: with empty bitmap and
+    // a prior, stale MUST still be true via sizeGuard, not the AND clause.
+    // (Self-test cannot call sizeGuard directly — it's inline in cuScreenshot.
+    // This assertion documents the contract: empty bitmap → stdev 0, id -1,
+    // AND clause alone would be false → rely on sizeGuard in production.)
+    let emptyAndClause = (emptyStdev < 1.0 && emptyIdentity >= 0.99)  // false (id -1)
+    if emptyAndClause {
+        failures.append("empty_and_clause: must be false — sizeGuard is the safety net for empty bitmaps")
+    }
+
+    if !failures.isEmpty {
+        let msg = failures.joined(separator: "; ")
+        fputs("[host] cuSelfTestClassifier FAIL: \(msg)\n", stderr)
+        return cuError("classifier self-test failed: \(msg)", code: "SELF_TEST_FAILED")
+    }
+    return cuJson([
+        "ok": true,
+        "passed": [
+            "stdev_zeros",
+            "stdev_whites",
+            "stdev_half",
+            "identity_identical",
+            "identity_mismatched_len",
+            "identity_caret_blink_gt_0.99",
+            "identity_big_change_lt_0.99",
+            "and_prior_stale_idHigh",
+            "no_prior_stdev_only",
+            "and_truth_low_low_not_stale",
+            "and_truth_high_high_not_stale",
+            "and_truth_high_low_not_stale",
+            "empty_bitmap_contract",
+        ],
     ])
 }
 

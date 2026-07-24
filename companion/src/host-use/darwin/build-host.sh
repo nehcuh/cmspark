@@ -87,6 +87,24 @@ echo
 echo "--- file ---"
 file "${OUTPUT_BIN}"
 
+# (4b) P2 functional gate (Pi C2/C3 + Grok blocker 2): run classifier self-test
+# post-sign. The binary now exits non-zero on assertion failure AND we require
+# "ok":true in stdout — double gate so a future regression in either the
+# classifier OR the exit-code wiring still fails the build.
+echo
+echo "[build-host] (4b/5) Running classifier self-test..."
+SELF_TEST_OUT=$("${OUTPUT_BIN}" self-test 2>/dev/null) || {
+  echo "[build-host] ERROR: classifier self-test exited non-zero:"
+  echo "${SELF_TEST_OUT}"
+  exit 1
+}
+if ! echo "${SELF_TEST_OUT}" | grep -q '"ok":true'; then
+  echo "[build-host] ERROR: classifier self-test missing \"ok\":true in stdout:"
+  echo "${SELF_TEST_OUT}"
+  exit 1
+fi
+echo "${SELF_TEST_OUT}"
+
 BINARY_SIZE=$(stat -f%z "${OUTPUT_BIN}" 2>/dev/null || stat -c%s "${OUTPUT_BIN}" 2>/dev/null || echo "?")
 BINARY_HASH=$(shasum -a 256 "${OUTPUT_BIN}" | awk '{print $1}')
 
