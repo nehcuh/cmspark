@@ -241,7 +241,31 @@ export interface CaptureMeta {
   rect: RectPx
   /** Client area in IMAGE coordinates (bitmap covers full window incl. title bar). */
   client: RectPx
+  /**
+   * Legacy DPI hint (always 72 on macOS — kept for older consumers).
+   * Authoritative scale lives in `scaleX` / `scaleY` / `imageWidth` / `imageHeight`.
+   * See Grok v4 §4.4 M1 / host.swift cuScreenshot JSON.
+   */
   dpi: number
+  /**
+   * Image-pixel dimensions of the captured PNG (v4 Defect 3).
+   * On Retina this is typically 2× the client-logical `rect.width` / `rect.height`.
+   * Required for converting LLM image-space coordinates to client-logical.
+   *
+   * Optional because the Windows adapter does not yet report these; consumers
+   * must default to `rect.width` / `rect.height` when absent.
+   */
+  imageWidth?: number
+  imageHeight?: number
+  /**
+   * Per-axis backing scale = imageWidth / rect.width (v4 Defect 3).
+   * Typically 2.0 on Retina, 1.0 on non-Retina. Sender (host.swift) computes
+   * from real measured values; never hardcode 1.0.
+   *
+   * Optional for the same reason as imageWidth; default to 1.0 when absent.
+   */
+  scaleX?: number
+  scaleY?: number
   /** Raw (unsealed) PNG path — transient; evidence seal consumes and deletes it. */
   path: string
   sha256: string

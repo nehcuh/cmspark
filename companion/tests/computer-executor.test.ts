@@ -1205,11 +1205,37 @@ test("executor UX-spike: self-UI yield WITH a large pixel change still pauses (r
 })
 
 test("executor UX-spike: session trust suppresses re-L2 after the initial task L2", async () => {
-  // After the server records (sessionId, app) trust on the initial L2 approval,
-  // a mid-task re-L2 (here triggered by a non-self-UI yield — a foreign NON-UI
-  // process) auto-approves without surfacing the dialog. The trust map is
-  // injectable so this test does not touch the process singleton.
+  // v4.1: trust only suppresses re-L2 reasons that are silent-eligible
+  // (computer.budget_exhausted, computer.task_induced_dialog, etc).
+  // PROMPT_ALWAYS reasons (computer.foreground_yielded, etc) still surface
+  // — see the next test for that guarantee.
+  //
+  // Here we trigger the budget-exhausted re-L2 by setting budget=1 with two
+  // actions. Under trust, the re-L2 auto-approves without surfacing.
   const confirm = scriptedConfirm([false]) // would DENY if the dialog surfaced
+  const injector = new RecordingInjector()
+  const trust = new ComputerSessionTrust()
+  trust.grant("sess-1", "win.app.test")
+  const deps = makeDeps({
+    confirm: confirm.fn,
+    injector,
+    sessionId: "sess-1",
+    sessionTrust: trust,
+  })
+  const r = await runComputerTask(
+    { task: "t", app: "win.app.test", budget: 1, actions: [clickOk, clickOk] },
+    deps,
+  )
+  assert.equal(r.success, true, "re-L2 auto-approved via session trust — task continues")
+  assert.equal(injector.clicks.length, 2, "both actions ran")
+  assert.equal(confirm.captured.length, 0, "re-L2 dialog never surfaced")
+})
+
+test("executor v4.1: PROMPT_ALWAYS re-L2 (foreground_yielded) still surfaces despite trust", async () => {
+  // Pi v4.1: trust does NOT silently auto-approve every re-L2. Reasons in
+  // PROMPT_ALWAYS_TAGS (foreign-process yield, danger_detected,
+  // experimental_suggestion) must prompt even when the session is trusted.
+  const confirm = scriptedConfirm([false])
   const injector = new RecordingInjector()
   injector.foreground = 999999
   const info = winInfo()
@@ -1229,8 +1255,12 @@ test("executor UX-spike: session trust suppresses re-L2 after the initial task L
     sessionTrust: trust,
   })
   const r = await runComputerTask({ task: "t", app: "win.app.test", actions: [clickOk] }, deps)
-  assert.equal(r.success, true, "re-L2 auto-approved via session trust — task continues")
-  assert.equal(confirm.captured.length, 0, "re-L2 dialog never surfaced")
+  assert.equal(r.errorCode, "DIALOG_PAUSED_DENIED", "PROMPT_ALWAYS tag surfaced the dialog")
+  assert.equal(confirm.captured.length, 1)
+  assert.ok(
+    confirm.captured[0].details.dangerousApis.includes("computer.foreground_yielded"),
+    "yield tag is present in dangerousApis",
+  )
 })
 
 test("executor UX-spike: session trust does NOT help a different app — re-L2 still asks", async () => {
@@ -1258,6 +1288,52 @@ test("executor UX-spike: session trust does NOT help a different app — re-L2 s
   const r = await runComputerTask({ task: "t", app: "win.app.test", actions: [clickOk] }, deps)
   assert.equal(r.errorCode, "DIALOG_PAUSED_DENIED", "untrusted app still pauses")
   assert.equal(confirm.captured.length, 1)
+})
+
+test("executor v4.1: OCR failure in danger-scan latches credential surface (defensive TRUE)", async () => {
+  // Pi re-confirm caveat: locator.ocr() THROWS on failure (not returns null),
+  // so without an explicit try/catch the latch block is unreachable and the
+  // "OCR fail → latch TRUE" safety contract is dead code. Verify the wrap
+  // fires the latch BEFORE rethrowing.
+  //
+  // The FakeLocator below succeeds on the first OCR call (locate phase) and
+  // throws on the second (danger-scan phase). We inject a ComputerSessionTrust
+  // and assert its credential latch is set after the task throws.
+  const injector = new RecordingInjector()
+  const trust = new ComputerSessionTrust()
+  trust.grant("sess-1", "win.app.test")
+  const locator: Locator = {
+    async ensureLanguage() {},
+    async ocr() {
+      // First call is the locate OCR; second is the danger-scan OCR.
+      // FakeLocator has no built-in counter, so we use a closure.
+      calls += 1
+      if (calls === 1) {
+        return { language: "zh-Hans", words: [{ text: "确定", x: 100, y: 100, w: 60, h: 30 }] }
+      }
+      throw new ComputerError("OCR_FAILED", "darwin-host ocr subprocess crashed")
+    },
+    locate(result: OcrResult, text: string) {
+      return realLocate.call({} as FakeLocator, result, text)
+    },
+  }
+  let calls = 0
+  const deps = makeDeps({
+    injector,
+    locator,
+    sessionId: "sess-1",
+    sessionTrust: trust,
+  })
+  const r = await runComputerTask({ task: "t", app: "win.app.test", actions: [clickOk] }, deps)
+  // The throw propagates as an error result.
+  assert.equal(r.success, false, "task failed because danger-scan OCR threw")
+  assert.equal(r.errorCode, "OCR_FAILED")
+  // The latch must have fired before the rethrow.
+  assert.equal(
+    trust.isTrusted("sess-1", "win.app.test"),
+    false,
+    "credential latch set after OCR failure — next initial-L2 cannot skip",
+  )
 })
 
 

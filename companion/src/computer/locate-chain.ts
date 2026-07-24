@@ -255,13 +255,23 @@ export async function locateTargetWithChain(args: {
       } else {
         log("computeruse.locate", { layer: "uia", hit: true, confidence: uiaHit.confidence, ms: now() - t0 })
       }
-      // SCREEN → image space (capture meta: rect is the window's screen rect).
-      const img = { x: uiaHit.x - shot.rect.x, y: uiaHit.y - shot.rect.y }
+      // v4 Defect 3 (Grok v4 §4.4 M5): SCREEN-LOGICAL → IMAGE-PIXEL conversion
+      // must apply the per-axis backing scale. UIA returns logical points;
+      // OCR word boxes from the captured PNG are in image-pixel space. The
+      // legacy `* - shot.rect.x` math was 1:1, which silently broke witness
+      // comparisons on Retina (2x). When scale metadata is missing, default
+      // to 1.0 to preserve legacy behavior on non-macOS or pre-v4 binaries.
+      const sxL = shot.scaleX ?? 1
+      const syL = shot.scaleY ?? 1
+      const img = {
+        x: (uiaHit.x - shot.rect.x) * sxL,
+        y: (uiaHit.y - shot.rect.y) * syL,
+      }
       const imgBbox: RectPx = {
-        x: uiaHit.bbox.x - shot.rect.x,
-        y: uiaHit.bbox.y - shot.rect.y,
-        width: uiaHit.bbox.width,
-        height: uiaHit.bbox.height,
+        x: (uiaHit.bbox.x - shot.rect.x) * sxL,
+        y: (uiaHit.bbox.y - shot.rect.y) * syL,
+        width: uiaHit.bbox.width * sxL,
+        height: uiaHit.bbox.height * syL,
       }
       // Witness OCR on the locate frame (skipped when the pack is missing).
       // X1: quantified verdict — dual bbox size caps + reconstruction /
@@ -343,15 +353,21 @@ export async function locateTargetWithChain(args: {
         attempts.push({ layer: "uia", outcome: "hit", confidence: uiaHit2.confidence, reason: "re-probe after pixel instability", ms: now() - t1 })
         shot = fresh
         await releaseRaw(locateFrame.path)
-        const img2 = { x: uiaHit2.x - shot.rect.x, y: uiaHit2.y - shot.rect.y }
+        // v4 Defect 3 (M5): apply backing scale on UIA → image-pixel conversion.
+        const sxL2 = shot.scaleX ?? 1
+        const syL2 = shot.scaleY ?? 1
+        const img2 = {
+          x: (uiaHit2.x - shot.rect.x) * sxL2,
+          y: (uiaHit2.y - shot.rect.y) * syL2,
+        }
         const hit: LocateHit = {
           x: img2.x,
           y: img2.y,
           bbox: {
-            x: uiaHit2.bbox.x - shot.rect.x,
-            y: uiaHit2.bbox.y - shot.rect.y,
-            width: uiaHit2.bbox.width,
-            height: uiaHit2.bbox.height,
+            x: (uiaHit2.bbox.x - shot.rect.x) * sxL2,
+            y: (uiaHit2.bbox.y - shot.rect.y) * syL2,
+            width: uiaHit2.bbox.width * sxL2,
+            height: uiaHit2.bbox.height * syL2,
           },
           layer: "uia",
           confidence: uiaHit2.confidence,

@@ -44,7 +44,8 @@ import type { ComputerTaskEvent, PreviewBuilder } from "./preview"
 import { sanitizeComputerCaption } from "./preview"
 import { assertCoordinateAllowed, assertExeNotDrifted, assertHwndOwnedByEntry, normalizeExePath } from "./policy"
 import { exeBasename } from "../apps/guards"
-import { getComputerSessionTrust } from "./session-trust"
+import { getComputerSessionTrust, reL2ShouldPrompt } from "./session-trust"
+import { maybeAutoscaleImageToClient } from "./coords"
 import {
   ALLOWED_KEY_SET,
   ComputerError,
@@ -616,8 +617,12 @@ export async function runComputerTask(
     // different app, or after companion restart).
     if (deps.sessionId && params.app) {
       const trust = deps.sessionTrust ?? getComputerSessionTrust()
-      if (trust.isTrusted(deps.sessionId, params.app)) {
-        log("computer.task.reconfirm.auto_approved", { taskId, reason, app: params.app })
+      // v4.1 (Grok v4.1 §D3.1 / Pi v4.1 RESOLVED): split re-L2 tags into
+      // silent-eligible vs always-prompt. Previously auto-approved ALL reasons
+      // when trusted — too permissive for danger/experimental. Unknown tags
+      // fail-closed to prompt (reL2ShouldPrompt returns true for unknown).
+      if (trust.isTrusted(deps.sessionId, params.app) && !reL2ShouldPrompt(dangerous)) {
+        log("computer.task.reconfirm.auto_approved", { taskId, reason, tags: dangerous, app: params.app })
         return true
       }
     }
@@ -854,17 +859,55 @@ export async function runComputerTask(
         }
       }
 
-      // Bounds (reject, never clamp — §D.3).
+      // Bounds (reject, never clamp — §D.3). v4 Defect 3 (Grok v4 §4.4 M6):
+      // when the raw point is OOB, attempt ONE autoscale pass in case the
+      // LLM returned image-pixel coords on a Retina display. Pi R5: refuse
+      // autoscale when the swap orientation is also in bounds (ambiguous).
+      // On true OOB, throw with diagnostic payload so the LLM/user can reason
+      // about scale + image dimensions instead of guessing at "880x640".
       if (pointClient) {
         const cw = shot.client.width
         const ch = shot.client.height
+        const scales = {
+          imageWidth: shot.imageWidth ?? shot.rect.width,
+          imageHeight: shot.imageHeight ?? shot.rect.height,
+          scaleX: shot.scaleX ?? 1,
+          scaleY: shot.scaleY ?? 1,
+        }
+        const clientLogical = { x: 0, y: 0, width: cw, height: ch }
         if (pointClient.x < 0 || pointClient.y < 0 || pointClient.x >= cw || pointClient.y >= ch) {
-          throw new ComputerError("OUT_OF_BOUNDS", `computer: (${pointClient.x},${pointClient.y}) outside client rect ${cw}x${ch}`)
+          const auto = maybeAutoscaleImageToClient(pointClient, scales, clientLogical)
+          if (auto) {
+            log("computer.coords.autoscale", {
+              taskId, seq,
+              raw: pointClient,
+              scaled: auto.scaled,
+              reason: auto.reason,
+              scaleX: scales.scaleX,
+              scaleY: scales.scaleY,
+              imageW: scales.imageWidth,
+              imageH: scales.imageHeight,
+              clientW: cw,
+              clientH: ch,
+            })
+            pointClient = auto.scaled
+          } else {
+            throw new ComputerError(
+              "OUT_OF_BOUNDS",
+              `computer: (${pointClient.x},${pointClient.y}) outside client rect ${cw}x${ch} ` +
+              `[scale=${scales.scaleX}x${scales.scaleY} image=${scales.imageWidth}x${scales.imageHeight} ` +
+              `client=${cw}x${ch}; if model used image-pixel coords, divide by scale]`,
+            )
+          }
         }
         // WP2: the drag ENDPOINT is bounds-checked the same way.
         if (action.action === "drag") {
           if (action.x2 < 0 || action.y2 < 0 || action.x2 >= cw || action.y2 >= ch) {
-            throw new ComputerError("OUT_OF_BOUNDS", `computer: drag endpoint (${action.x2},${action.y2}) outside client rect ${cw}x${ch}`)
+            throw new ComputerError(
+              "OUT_OF_BOUNDS",
+              `computer: drag endpoint (${action.x2},${action.y2}) outside client rect ${cw}x${ch} ` +
+              `[scale=${scales.scaleX}x${scales.scaleY} image=${scales.imageWidth}x${scales.imageHeight}]`,
+            )
           }
         }
       }
@@ -877,7 +920,22 @@ export async function runComputerTask(
       // between locate and inject is invisible unless the whole frame is
       // re-read. The locate OCR still owns the coordinates; this fresh OCR
       // owns the danger verdict.
-      const scanOcr = await deps.locator.ocr(shot.path)
+      //
+      // v4.1 Blocker 2 / D3.2 (Pi re-confirm caveat): wrap OCR in try/catch so
+      // the credential latch can fire on the null/failed path. Without this
+      // wrap, locator.ocr() throws on failure and the latch block below is
+      // skipped entirely — defeating the "OCR fail → latch TRUE defensively"
+      // safety contract.
+      let scanOcr: OcrResult | null = null
+      try {
+        scanOcr = await deps.locator.ocr(shot.path)
+      } catch (err) {
+        if (deps.sessionId && params.app) {
+          const trust = deps.sessionTrust ?? getComputerSessionTrust()
+          trust.markCredentialSurfaceSeen(deps.sessionId, params.app, null)
+        }
+        throw err
+      }
       const regionImg: RectPx = pointClient
         ? {
             x: Math.max(0, pointClient.x + shot.client.x - REGION_CROP_SIZE / 2),
@@ -889,6 +947,20 @@ export async function runComputerTask(
       // X3: `let` — the post-approval refresh re-scans on the refreshed frame
       // and replaces this (the sealed blur must match the frame actually sealed).
       let scan: DangerScan = scanDanger(scanOcr.words, regionImg, REGION_CROP_SIZE)
+
+      // v4.1 Blocker 2 / D3.2 (Pi v4.1 RESOLVED-WITH-CAVEAT): credential latch.
+      // When after-frame OCR detects a credential surface, mark the session
+      // trust so the NEXT initial-L2 cannot skip even if the session is
+      // trusted. The null branch is unreachable in practice (the try/catch
+      // above handles OCR failure by latching then rethrowing) but is kept
+      // defensive in case scanOcr is reassigned downstream.
+      if (deps.sessionId && params.app) {
+        const trust = deps.sessionTrust ?? getComputerSessionTrust()
+        const seen = scanOcr ? scan.credentialRects.length > 0 : null
+        if (seen !== false) {
+          trust.markCredentialSurfaceSeen(deps.sessionId, params.app, seen)
+        }
+      }
 
       if ((action.action === "type" || action.action === "key") && scan.credentialRects.length > 0) {
         // A4.3: credential context for a type action — no-path deny (the OSR
@@ -1062,12 +1134,19 @@ export async function runComputerTask(
         }
         await releaseRaw(staleFrame.path)
         shotAt = now()
-        // Re-check bounds on the (possibly moved) point.
+        // Re-check bounds on the (possibly moved) point. v4 Defect 3: include
+        // scale diagnostic on OOB; do NOT autoscale here (post-approval refresh
+        // implies the point was already validated once; a second autoscale
+        // pass would mask drift that the user explicitly approved around).
         if (pointClient) {
           const cw = shot.client.width
           const ch = shot.client.height
           if (pointClient.x < 0 || pointClient.y < 0 || pointClient.x >= cw || pointClient.y >= ch) {
-            throw new ComputerError("OUT_OF_BOUNDS", `computer: (${pointClient.x},${pointClient.y}) outside client rect ${cw}x${ch} after post-approval refresh`)
+            throw new ComputerError(
+              "OUT_OF_BOUNDS",
+              `computer: (${pointClient.x},${pointClient.y}) outside client rect ${cw}x${ch} after post-approval refresh ` +
+              `[scale=${shot.scaleX ?? 1}x${shot.scaleY ?? 1} image=${shot.imageWidth ?? cw}x${shot.imageHeight ?? ch}]`,
+            )
           }
         }
         const refreshRegion: RectPx = pointClient
