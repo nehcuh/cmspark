@@ -11,6 +11,75 @@ import Security
 import Carbon
 import CryptoKit
 
+// ============================================================================
+// SkyLight per-PID event posting (v1.3 — Approach C-minus production swap).
+//
+// Replaces CGEvent.post(tap: .cghidEventTap) with SLEventPostToPid, the
+// SkyLight private API that delivers an event to a specific PID via an
+// auth-signed channel. Chromium renderer IPC trusts this; public postToPid
+// is rejected by Chrome's content renderer. SkyLight delivery also avoids
+// moving the user's real cursor and works regardless of frontmost state.
+//
+// Design lineage (see docs/decisions/v1.3/):
+//   - plan-approach-c-minus.md — production swap Plan v3
+//   - spike-skylight-tahoe-results.md — Tahoe 26.5.2 dlopen+dlsym verified
+//   - spike-daemon-threat-model.md — daemon rejected (C-minus)
+//   - adversary-approach-c-round1.txt — original 3 blockers
+//   - review-grok-spike-fixes.txt + review-claude-code-spike-fixes.txt
+//
+// Library validation: disable-library-validation=false (host.entitlements).
+// Apple-signed SkyLight dylib loads under hardened runtime without the flip
+// (A/B verified on Tahoe 26.5.2). Preserves v1.3 Batch 1 lockdown.
+//
+// Support matrix: Tahoe 26.5+ only for computer-use inject. Older macOS
+// (Sonoma 14.4+ per host-Info.plist LSMinimumSystemVersion) still supports
+// other host features (mail/notes/files/biometric); cuResolveSkyLight()
+// returns false → SKYLIGHT_SPI_UNAVAILABLE → LLM surfaces upgrade prompt.
+// ============================================================================
+
+private var skyLightHandle: UnsafeMutableRawPointer?
+private var slPostEventToPidFn: (@convention(c) (pid_t, CGEvent?) -> Void)?
+private var skyLightResolved = false
+
+// NOTE: SLPSPostEventRecordTo removed (2026-07-24 review). It was resolved but
+// never called, and the (pid_t, CGEvent?) signature is almost certainly wrong
+// (yabai/cua treat it as an event-record SPI with a different shape). If a
+// focus-without-raise step becomes necessary for background Chrome, it must be
+// re-resolved with a verified signature and a named call site — not dead code.
+
+func cuResolveSkyLight() -> Bool {
+    if skyLightResolved { return slPostEventToPidFn != nil }
+    skyLightResolved = true
+    let path = "/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight"
+    // RTLD_LOCAL (not RTLD_GLOBAL): single-shot CLI doesn't need SkyLight
+    // symbols leaking into subsequently loaded dylibs. Tighter boundary.
+    guard let handle = dlopen(path, RTLD_LAZY | RTLD_LOCAL) else {
+        fputs("[host] dlopen SkyLight failed: \(String(cString: dlerror()))\n", stderr)
+        return false
+    }
+    skyLightHandle = handle
+    // Null-safe dlsym: unsafeBitCast on a null symbol produces .some(fn@0x0)
+    // and the first call crashes. Must guard before cast.
+    if let sym = dlsym(handle, "SLEventPostToPid") {
+        slPostEventToPidFn = unsafeBitCast(sym,
+                                           to: (@convention(c) (pid_t, CGEvent?) -> Void).self)
+    } else {
+        fputs("[host] dlsym SLEventPostToPid returned NULL " +
+              "(err: \(String(cString: dlerror())))\n", stderr)
+    }
+    fputs("[host] resolved SLEventPostToPid=\(slPostEventToPidFn != nil)\n", stderr)
+    return slPostEventToPidFn != nil
+}
+
+/// Post a CGEvent to a specific PID via SkyLight's auth-signed channel.
+/// Returns true on success, false if SPI unavailable (caller must fall back to HID).
+@inline(__always)
+func slPostToPid(_ pid: pid_t, _ event: CGEvent?) -> Bool {
+    guard let fn = slPostEventToPidFn, let ev = event else { return false }
+    fn(pid, ev)
+    return true
+}
+
 // cmspark-host: minimal macOS binary that loads a precompiled .scpt and runs
 // it in-process via NSAppleScript. The binary is the TCC-attribution anchor:
 // the Automation permission dialog should name "cmspark-host", not osascript
@@ -469,6 +538,13 @@ do {
         guard let action = argValue("--action"), let ws = argValue("--window-id"), let w = UInt32(ws) else { fputs("inject: --action and --window-id required\n", stderr); exit(2) }
         let px = argValue("--x").flatMap { Int($0) }; let py = argValue("--y").flatMap { Int($0) }
         let d = argValue("--delta").flatMap { Int($0) }
+        // Resolve SkyLight SPI before any inject. Fail-fast if unavailable
+        // (older macOS, broken OS install) — distinct from a per-call post
+        // failure (SKYLIGHT_POST_FAILED). Companion surfaces typed error to LLM.
+        if !cuResolveSkyLight() {
+            out = cuError("SkyLight SPI unavailable on this OS", code: "SKYLIGHT_SPI_UNAVAILABLE")
+            break
+        }
         out = cuInject(action: action, windowId: w, x: px, y: py, text: argValue("--text"), chord: argValue("--chord"), delta: d, checkOcclusion: argv.contains("--check-occlusion"), checkSecureInput: argv.contains("--check-secure-input"), checkOnscreen: argv.contains("--check-onscreen"), estopFlag: argValue("--estop-flag"))
     case "security-check":
         out = cuSecurityCheck()
@@ -714,11 +790,22 @@ func cuScreenshot(windowId: UInt32, outputPath: String) -> String {
     var client: [String: CGFloat] = ["x": 0, "y": 0, "width": rect["width"] ?? 0, "height": rect["height"] ?? 0]
 
     let pid = cuPidForWindow(windowId)
-    // Pull target app to front so the screenshot captures a visible (non-occluded)
-    // frame. If Chrome side panel is currently frontmost from a confirm click,
-    // without this ScreenCaptureKit may capture a stale frame for an occluded
-    // window. (b0faek bug)
-    cuActivatePid(pid)
+    // v4 Defect 1 (Grok v4 plan §2 / Pi review v4 blocker 1): screenshot no
+    // longer activates target. SkyLight per-PID inject (v3) made activation
+    // unnecessary for click delivery; SCK `desktopIndependentWindow` filter
+    // captures window backing store without requiring frontmost. b0faek-class
+    // occlusion misroute is now handled by `--check-occlusion` on inject plus
+    // honest fail-closed on stale frames (v4.1 will add variance classifier).
+    //
+    // Canary only (dev / A-B rollback): CMSPARK_SCREENSHOT_FORCE_FG=1 restores
+    // legacy b0faek activate behavior. Production default = no activate.
+    // Distinct from CMSPARK_SKYLIGHT_FORCE_FG (inject path canary, v3).
+    if ProcessInfo.processInfo.environment["CMSPARK_SCREENSHOT_FORCE_FG"] == "1" {
+        cuActivatePid(pid)
+        fputs("[host] screenshot activate (CMSPARK_SCREENSHOT_FORCE_FG=1 canary)\n", stderr)
+    } else {
+        fputs("[host] screenshot no-activate (Hermes background capture path)\n", stderr)
+    }
     if let appElement = cuAppElementForPid(pid) {
         var windowsRef: CFTypeRef?
         AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &windowsRef)
@@ -910,29 +997,47 @@ func cuInject(action: String, windowId: UInt32, x: Int?, y: Int?, text: String?,
     if let flagPath = estopFlag, FileManager.default.fileExists(atPath: flagPath) { return cuError("E-Stop flag present", code: "TASK_ABORTED") }
     let pid = cuPidForWindow(windowId)
     guard pid != 0 else { return cuError("cannot find PID for window", code: "HWND_DEAD") }
-    // Pull target app to front before injecting — otherwise a click into the
-    // Chrome side panel's confirm popup leaves Chrome frontmost and occluding
-    // the target, and CGEvent.post lands on Chrome instead. (b0faek bug)
-    cuActivatePid(pid)
+    // SkyLight per-PID posting reaches background windows without activation.
+    // CMSPARK_SKYLIGHT_FORCE_FG=1 is a CANARY-ONLY A/B knob for diff testing
+    // (does the no-raise path match legacy activate-then-post behavior on the
+    // same target?). Removed in Stage 3 post-canary per Plan v3.
+    if ProcessInfo.processInfo.environment["CMSPARK_SKYLIGHT_FORCE_FG"] == "1" {
+        cuActivatePid(pid)
+    } else {
+        fputs("[host] skipping forceForeground (SkyLight per-PID path)\n", stderr)
+    }
 
     switch action {
     case "click", "double_click", "right_click":
         guard let px = x, let py = y else { return cuError("click requires --x and --y") }
         let cc: Int64 = (action == "double_click") ? 2 : 1
-        let btn: CGMouseButton = (action == "right_click") ? .right : .left
-        if let me = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: CGPoint(x: px, y: py), mouseButton: btn) {
-            me.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(pid)); me.post(tap: .cghidEventTap)
+        let isRight = (action == "right_click")
+        let btn: CGMouseButton = isRight ? .right : .left
+        // mouseType must match the physical button — leftMouseDown with btn=.right
+        // is interpreted as a left-click by some receivers (notably Chrome).
+        let downType: CGEventType = isRight ? .rightMouseDown : .leftMouseDown
+        let upType: CGEventType = isRight ? .rightMouseUp : .leftMouseUp
+        guard let me = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: CGPoint(x: px, y: py), mouseButton: btn) else {
+            return cuError("CGEvent mouseMoved construction failed", code: "CGEVENT_CONSTRUCT_FAILED")
+        }
+        me.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(pid))
+        if !slPostToPid(pid, me) { return cuError("SkyLight SPI post failed", code: "SKYLIGHT_POST_FAILED") }
+        usleep(50000)
+        guard let de = CGEvent(mouseEventSource: nil, mouseType: downType, mouseCursorPosition: CGPoint(x: px, y: py), mouseButton: btn) else {
+            return cuError("CGEvent mouseDown construction failed", code: "CGEVENT_CONSTRUCT_FAILED")
+        }
+        de.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(pid))
+        if !slPostToPid(pid, de) { return cuError("SkyLight SPI post failed", code: "SKYLIGHT_POST_FAILED") }
+        for _ in 1..<cc {
+            usleep(100000)
+            if !slPostToPid(pid, de) { return cuError("SkyLight SPI post failed", code: "SKYLIGHT_POST_FAILED") }
         }
         usleep(50000)
-        if let de = CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown, mouseCursorPosition: CGPoint(x: px, y: py), mouseButton: btn) {
-            de.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(pid))
-            de.post(tap: .cghidEventTap)
-            for _ in 1..<cc { usleep(100000); de.post(tap: .cghidEventTap) }
+        guard let ue = CGEvent(mouseEventSource: nil, mouseType: upType, mouseCursorPosition: CGPoint(x: px, y: py), mouseButton: btn) else {
+            return cuError("CGEvent mouseUp construction failed", code: "CGEVENT_CONSTRUCT_FAILED")
         }
-        usleep(50000)
-        if let ue = CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp, mouseCursorPosition: CGPoint(x: px, y: py), mouseButton: btn) {
-            ue.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(pid)); ue.post(tap: .cghidEventTap)
-        }
+        ue.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(pid))
+        if !slPostToPid(pid, ue) { return cuError("SkyLight SPI post failed", code: "SKYLIGHT_POST_FAILED") }
         return cuJson(["ok": true, "action": action, "x": px, "y": py])
 
     case "type":
@@ -940,11 +1045,12 @@ func cuInject(action: String, windowId: UInt32, x: Int?, y: Int?, text: String?,
         let src = CGEventSource(stateID: .hidSystemState)
         for ch in txt.unicodeScalars {
             var uc = UniChar(ch.value)
-            if let ev = CGEvent(keyboardEventSource: src, virtualKey: 0, keyDown: true) {
-                ev.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(pid))
-                ev.keyboardSetUnicodeString(stringLength: 1, unicodeString: &uc)
-                ev.post(tap: .cghidEventTap)
+            guard let ev = CGEvent(keyboardEventSource: src, virtualKey: 0, keyDown: true) else {
+                return cuError("CGEvent key construction failed", code: "CGEVENT_CONSTRUCT_FAILED")
             }
+            ev.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(pid))
+            ev.keyboardSetUnicodeString(stringLength: 1, unicodeString: &uc)
+            if !slPostToPid(pid, ev) { return cuError("SkyLight SPI post failed", code: "SKYLIGHT_POST_FAILED") }
             usleep(30000)
         }
         return cuJson(["ok": true, "action": "type", "chars": txt.count])
@@ -969,18 +1075,23 @@ func cuInject(action: String, windowId: UInt32, x: Int?, y: Int?, text: String?,
         }
         let src = CGEventSource(stateID: .hidSystemState)
         for kc in nonMods {
-            if let ev = CGEvent(keyboardEventSource: src, virtualKey: kc, keyDown: true) {
-                ev.flags = flags; ev.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(pid)); ev.post(tap: .cghidEventTap)
+            guard let ev = CGEvent(keyboardEventSource: src, virtualKey: kc, keyDown: true) else {
+                return cuError("CGEvent key construction failed", code: "CGEVENT_CONSTRUCT_FAILED")
             }
+            ev.flags = flags
+            ev.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(pid))
+            if !slPostToPid(pid, ev) { return cuError("SkyLight SPI post failed", code: "SKYLIGHT_POST_FAILED") }
             usleep(30000)
         }
         return cuJson(["ok": true, "action": "key", "chord": ch])
 
     case "scroll":
-        guard let px = x, let py = y, let d = delta else { return cuError("scroll requires --x, --y, --delta") }
-        if let ev = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: Int32(d), wheel2: 0, wheel3: 0) {
-            ev.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(pid)); ev.post(tap: .cghidEventTap)
+        guard let d = delta else { return cuError("scroll requires --delta") }
+        guard let ev = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: Int32(d), wheel2: 0, wheel3: 0) else {
+            return cuError("CGEvent scroll construction failed", code: "CGEVENT_CONSTRUCT_FAILED")
         }
+        ev.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(pid))
+        if !slPostToPid(pid, ev) { return cuError("SkyLight SPI post failed", code: "SKYLIGHT_POST_FAILED") }
         return cuJson(["ok": true, "action": "scroll", "delta": d])
 
     default:

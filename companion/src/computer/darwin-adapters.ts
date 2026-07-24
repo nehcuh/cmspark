@@ -19,6 +19,7 @@ import * as os from "os"
 import * as fs from "fs"
 import { createHash, randomUUID } from "crypto"
 import { resolveHostBinary } from "../host-use/darwin/host-bin"
+import { spawnHostBin } from "../host-use/darwin/host-integrity"
 import {
   ComputerError,
   ForegroundProbeBrokenError,
@@ -54,10 +55,11 @@ const DARWIN_OCR_TIMEOUT_MS = 30000
 const DARWIN_INJECT_TIMEOUT_MS = 10000
 
 // ---------------------------------------------------------------------------
-// Helper: parse JSON from stdout, throw typed ComputerError on failure
+// Helper: parse JSON from stdout, throw typed ComputerError on failure.
+// Exported for unit testing the F9 end-to-end failure contract.
 // ---------------------------------------------------------------------------
 
-function parseComputerJson(stdout: string, label: string): Record<string, any> {
+export function parseComputerJson(stdout: string, label: string): Record<string, any> {
   let parsed: unknown
   try {
     parsed = JSON.parse(stdout)
@@ -70,13 +72,27 @@ function parseComputerJson(stdout: string, label: string): Record<string, any> {
   return parsed as Record<string, any>
 }
 
-function checkOk(parsed: Record<string, any>, label: string): void {
+export function checkOk(parsed: Record<string, any>, label: string): void {
   if (parsed.ok !== true) {
     throw new ComputerError(
       parsed.error_code ?? "INVALID_ACTION",
       `${label}: ${parsed.error ?? "unknown error"}`,
     )
   }
+}
+
+/**
+ * Combined parse + ok-check for spawnHostBin stdout. Used by every inject
+ * path (click / type / key / scroll / drag) so that the binary's structured
+ * failure codes (SKYLIGHT_SPI_UNAVAILABLE, SKYLIGHT_POST_FAILED,
+ * CGEVENT_CONSTRUCT_FAILED, etc.) surface as typed ComputerError instead
+ * of being silently dropped.
+ *
+ * Exported for F9 contract testing.
+ */
+export function assertInjectOk(stdout: string, label = "inject"): void {
+  const parsed = parseComputerJson(stdout, label)
+  checkOk(parsed, label)
 }
 
 function rethrowDarwinExecError(err: ExecFileException | Error, label: string): never {
@@ -495,21 +511,28 @@ export class MacInputInjector implements InputInjector {
   }
 
   async click(hwnd: number, x: number, y: number, kind: ClickKind): Promise<void> {
-    await this.ensureForeground(hwnd)
+    // SkyLight per-PID delivery routes the event to the target window's PID
+    // regardless of frontmost state. ensureForeground is no longer needed
+    // for inject paths and would re-introduce cursor churn.
     const bin = resolveHostBinary()
     const args = ["inject", "--action", kind, "--window-id", String(hwnd),
                   "--x", String(Math.round(x)), "--y", String(Math.round(y)),
                   "--check-occlusion"]
     if (this.estopFlagPath) args.push("--estop-flag", this.estopFlagPath)
+    let stdout: string
     try {
-      await execFileAsync(bin, args, { timeout: DARWIN_INJECT_TIMEOUT_MS })
+      stdout = await spawnHostBin(bin, args, { timeoutMs: DARWIN_INJECT_TIMEOUT_MS })
     } catch (err) {
       rethrowDarwinExecError(err as ExecFileException | Error, "inject")
     }
+    // SkyLight SPI failures (SKYLIGHT_SPI_UNAVAILABLE / SKYLIGHT_POST_FAILED)
+    // are returned as structured JSON `{ok:false, error_code}` by the binary;
+    // surface as typed ComputerError so the LLM sees the failure mode.
+    const parsed = parseComputerJson(stdout, "inject")
+    checkOk(parsed, "inject")
   }
 
   async typeText(hwnd: number, text: string): Promise<void> {
-    await this.ensureForeground(hwnd)
     const normalized = text.normalize("NFKC")
     const graphemes = [...this.segmenter.segment(normalized)].map((s) => s.segment)
 
@@ -521,56 +544,65 @@ export class MacInputInjector implements InputInjector {
                     "--check-secure-input",
                     "--check-onscreen"]
       if (this.estopFlagPath) args.push("--estop-flag", this.estopFlagPath)
+      let stdout: string
       try {
-        await execFileAsync(bin, args, { timeout: 5000 })
+        stdout = await spawnHostBin(bin, args, { timeoutMs: 5000 })
       } catch (err) {
         rethrowDarwinExecError(err as ExecFileException | Error, "inject")
       }
+      const parsed = parseComputerJson(stdout, "inject")
+      checkOk(parsed, "inject")
       await new Promise((r) => setTimeout(r, Math.max(chunk.length * 80, 1)))
     }
   }
 
   async keyChord(hwnd: number, keys: string[]): Promise<void> {
-    await this.ensureForeground(hwnd)
     const bin = resolveHostBinary()
     const args = ["inject", "--action", "key", "--window-id", String(hwnd), "--chord", ...keys]
     if (this.estopFlagPath) args.push("--estop-flag", this.estopFlagPath)
+    let stdout: string
     try {
-      await execFileAsync(bin, args, { timeout: 5000 })
+      stdout = await spawnHostBin(bin, args, { timeoutMs: 5000 })
     } catch (err) {
       rethrowDarwinExecError(err as ExecFileException | Error, "inject")
     }
+    const parsed = parseComputerJson(stdout, "inject")
+    checkOk(parsed, "inject")
   }
 
   async scroll(hwnd: number, x: number, y: number, delta: number): Promise<void> {
-    await this.ensureForeground(hwnd)
     const bin = resolveHostBinary()
+    let stdout: string
     try {
-      await execFileAsync(bin, [
+      stdout = await spawnHostBin(bin, [
         "inject", "--action", "scroll",
         "--window-id", String(hwnd),
         "--x", String(Math.round(x)),
         "--y", String(Math.round(y)),
         "--delta", String(delta),
-      ], { timeout: 5000 })
+      ], { timeoutMs: 5000 })
     } catch (err) {
       rethrowDarwinExecError(err as ExecFileException | Error, "inject")
     }
+    const parsed = parseComputerJson(stdout, "inject")
+    checkOk(parsed, "inject")
   }
 
   async drag(hwnd: number, x: number, y: number, x2: number, y2: number): Promise<void> {
-    await this.ensureForeground(hwnd)
     const bin = resolveHostBinary()
+    let stdout: string
     try {
-      await execFileAsync(bin, [
+      stdout = await spawnHostBin(bin, [
         "inject", "--action", "drag",
         "--window-id", String(hwnd),
         "--x", String(Math.round(x)), "--y", String(Math.round(y)),
         "--x2", String(Math.round(x2)), "--y2", String(Math.round(y2)),
-      ], { timeout: 10000 })
+      ], { timeoutMs: 10000 })
     } catch (err) {
       rethrowDarwinExecError(err as ExecFileException | Error, "inject")
     }
+    const parsed = parseComputerJson(stdout, "inject")
+    checkOk(parsed, "inject")
   }
 
   async probeWindow(hwnd: number): Promise<WindowInfo> {
