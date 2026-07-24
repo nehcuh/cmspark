@@ -115,6 +115,7 @@ describe("saveConfig API key priority", { concurrency: 1 }, () => {
         confirmation_timeout_seconds: 45,
         auto_approve_dangerous: false,
         allow_all_schemes: false,
+        companion_ui_exe_basenames: [],
       },
     })
   })
@@ -164,6 +165,7 @@ describe("saveConfig with DEEPSEEK_API_KEY env var", { concurrency: 1 }, () => {
         confirmation_timeout_seconds: 45,
         auto_approve_dangerous: false,
         allow_all_schemes: false,
+        companion_ui_exe_basenames: [],
       },
     })
   })
@@ -232,6 +234,7 @@ describe("saveConfig vision API key", { concurrency: 1 }, () => {
         confirmation_timeout_seconds: 45,
         auto_approve_dangerous: false,
         allow_all_schemes: false,
+        companion_ui_exe_basenames: [],
       },
     })
   })
@@ -489,5 +492,213 @@ describe("saveConfig prototype-pollution defense", { concurrency: 1 }, () => {
     // Regression: the previous value-string check rejected harmless string values.
     saveConfig({ llm: { api_key: "prototype" } as any })
     assert.equal(getConfig().llm.api_key, "prototype")
+  })
+})
+
+describe("computer 模型下载字段 normalize（WP5 I1 / ADR-010）", { concurrency: 1 }, () => {
+  test("modelMirror 非字符串/空串 → coerce 为未配置 + loud log", async () => {
+    await resetConfigFile()
+    for (const bad of [123, true, "", "   ", null, {}]) {
+      clearConfigCache()
+      saveConfig({ computer: { coordinateEnabled: false, modelMirror: bad } as any })
+      clearConfigCache() // normalize 走 getConfig cache-miss 路径
+      const logs: string[] = []
+      const orig = console.error
+      console.error = (...args: unknown[]) => logs.push(args.map(String).join(" "))
+      try {
+        const cfg = getConfig()
+        assert.equal(cfg.computer?.modelMirror, undefined, `modelMirror=${JSON.stringify(bad)} 应被清除`)
+      } finally {
+        console.error = orig
+      }
+      assert.ok(logs.some((l) => l.includes("modelMirror")), `modelMirror=${JSON.stringify(bad)} 应有 loud log`)
+    }
+  })
+
+  test("modelMirror 合法字符串保留（https 约束在下载时强制执行，config 层只保证类型）", async () => {
+    await resetConfigFile()
+    saveConfig({ computer: { coordinateEnabled: false, modelMirror: "https://hf-mirror.example" } })
+    clearConfigCache()
+    assert.equal(getConfig().computer?.modelMirror, "https://hf-mirror.example")
+  })
+
+  test("modelDiskBudgetMB 非正数/非有限 → coerce 为未配置（回退默认 2048）+ loud log", async () => {
+    await resetConfigFile()
+    for (const bad of [0, -1, Number.NaN, Number.POSITIVE_INFINITY, "2048", null]) {
+      clearConfigCache()
+      saveConfig({ computer: { coordinateEnabled: false, modelDiskBudgetMB: bad } as any })
+      clearConfigCache()
+      const logs: string[] = []
+      const orig = console.error
+      console.error = (...args: unknown[]) => logs.push(args.map(String).join(" "))
+      try {
+        const cfg = getConfig()
+        assert.equal(cfg.computer?.modelDiskBudgetMB, undefined, `modelDiskBudgetMB=${String(bad)} 应被清除`)
+      } finally {
+        console.error = orig
+      }
+      assert.ok(logs.some((l) => l.includes("modelDiskBudgetMB")), `modelDiskBudgetMB=${String(bad)} 应有 loud log`)
+    }
+  })
+
+  test("modelDiskBudgetMB 合法正数保留", async () => {
+    await resetConfigFile()
+    saveConfig({ computer: { coordinateEnabled: false, modelDiskBudgetMB: 4096 } })
+    clearConfigCache()
+    assert.equal(getConfig().computer?.modelDiskBudgetMB, 4096)
+  })
+})
+
+
+describe("computer 实验层五字段 normalize（WP5-I4 WI-4.1 / ADR-010 / P1 / P9）", { concurrency: 1 }, () => {
+  test("modelEnabled / modelLicenseDeclined 非布尔 → coerce false + loud log", async () => {
+    await resetConfigFile()
+    for (const bad of ["true", 1, {}, [], null]) {
+      clearConfigCache()
+      saveConfig({ computer: { coordinateEnabled: false, modelEnabled: bad, modelLicenseDeclined: bad } as any })
+      clearConfigCache()
+      const logs: string[] = []
+      const orig = console.error
+      console.error = (...args: unknown[]) => logs.push(args.map(String).join(" "))
+      try {
+        const cfg = getConfig()
+        assert.equal(cfg.computer?.modelEnabled, false, `modelEnabled=${JSON.stringify(bad)} 应 coerce false`)
+        assert.equal(cfg.computer?.modelLicenseDeclined, false, `modelLicenseDeclined=${JSON.stringify(bad)} 应 coerce false`)
+      } finally {
+        console.error = orig
+      }
+      assert.ok(logs.some((l) => l.includes("modelEnabled")), `modelEnabled=${JSON.stringify(bad)} 应有 loud log`)
+      assert.ok(logs.some((l) => l.includes("modelLicenseDeclined")), `modelLicenseDeclined=${JSON.stringify(bad)} 应有 loud log`)
+    }
+  })
+
+  test("modelLicenseAcceptedAt 非法（非串/空串/非日期）→ delete + loud log；合法 ISO 保留", async () => {
+    await resetConfigFile()
+    for (const bad of [123, true, "", "   ", "not-a-date", {}]) {
+      clearConfigCache()
+      saveConfig({ computer: { coordinateEnabled: false, modelLicenseAcceptedAt: bad } as any })
+      clearConfigCache()
+      const logs: string[] = []
+      const orig = console.error
+      console.error = (...args: unknown[]) => logs.push(args.map(String).join(" "))
+      try {
+        assert.equal(getConfig().computer?.modelLicenseAcceptedAt, undefined, `AcceptedAt=${JSON.stringify(bad)} 应被清除`)
+      } finally {
+        console.error = orig
+      }
+      assert.ok(logs.some((l) => l.includes("modelLicenseAcceptedAt")), `AcceptedAt=${JSON.stringify(bad)} 应有 loud log`)
+    }
+    clearConfigCache()
+    saveConfig({ computer: { coordinateEnabled: false, modelLicenseAcceptedAt: "2026-07-21T10:00:00.000Z" } })
+    clearConfigCache()
+    assert.equal(getConfig().computer?.modelLicenseAcceptedAt, "2026-07-21T10:00:00.000Z")
+  })
+
+  test("modelLicenseAcceptedTextHash 非法形状 → delete + loud log（P1）；合法 12 位 hex 保留", async () => {
+    await resetConfigFile()
+    for (const bad of [123, "", "xyz", "ABCDEF012345", "0123456789ab00", "0123456789a", 0.5]) {
+      clearConfigCache()
+      saveConfig({ computer: { coordinateEnabled: false, modelLicenseAcceptedTextHash: bad } as any })
+      clearConfigCache()
+      const logs: string[] = []
+      const orig = console.error
+      console.error = (...args: unknown[]) => logs.push(args.map(String).join(" "))
+      try {
+        assert.equal(getConfig().computer?.modelLicenseAcceptedTextHash, undefined, `TextHash=${JSON.stringify(bad)} 应被清除`)
+      } finally {
+        console.error = orig
+      }
+      assert.ok(logs.some((l) => l.includes("modelLicenseAcceptedTextHash")), `TextHash=${JSON.stringify(bad)} 应有 loud log`)
+    }
+    clearConfigCache()
+    saveConfig({ computer: { coordinateEnabled: false, modelLicenseAcceptedTextHash: "0123456789ab" } })
+    clearConfigCache()
+    assert.equal(getConfig().computer?.modelLicenseAcceptedTextHash, "0123456789ab")
+  })
+
+  test("modelVariant 非枚举 → 回退 hybrid + loud log；int8 保留；缺省补默认形 hybrid", async () => {
+    await resetConfigFile()
+    for (const bad of ["fp32", "", 1, null, {}]) {
+      clearConfigCache()
+      saveConfig({ computer: { coordinateEnabled: false, modelVariant: bad } as any })
+      clearConfigCache()
+      const logs: string[] = []
+      const orig = console.error
+      console.error = (...args: unknown[]) => logs.push(args.map(String).join(" "))
+      try {
+        assert.equal(getConfig().computer?.modelVariant, "hybrid", `modelVariant=${JSON.stringify(bad)} 应回退 hybrid`)
+      } finally {
+        console.error = orig
+      }
+      assert.ok(logs.some((l) => l.includes("modelVariant")), `modelVariant=${JSON.stringify(bad)} 应有 loud log`)
+    }
+    clearConfigCache()
+    saveConfig({ computer: { coordinateEnabled: false, modelVariant: "int8" } })
+    clearConfigCache()
+    assert.equal(getConfig().computer?.modelVariant, "int8")
+    // 缺省默认形（重置为无五字段的老 config.json → normalize 补齐）
+    await resetConfigFile()
+    clearConfigCache()
+    saveConfig({ computer: { coordinateEnabled: true } })
+    clearConfigCache()
+    const cfg = getConfig()
+    assert.equal(cfg.computer?.modelEnabled, false)
+    assert.equal(cfg.computer?.modelLicenseDeclined, false)
+    assert.equal(cfg.computer?.modelVariant, "hybrid")
+    assert.equal(cfg.computer?.modelLicenseAcceptedAt, undefined)
+    assert.equal(cfg.computer?.modelLicenseAcceptedTextHash, undefined)
+  })
+
+  test("P9：手改 modelEnabled=true → 启动期醒目 loud log（不阻断不撤销）；false 不告警", async () => {
+    await resetConfigFile()
+    clearConfigCache()
+    saveConfig({ computer: { coordinateEnabled: false, modelEnabled: true } })
+    clearConfigCache()
+    const logs: string[] = []
+    const orig = console.error
+    console.error = (...args: unknown[]) => logs.push(args.map(String).join(" "))
+    try {
+      const cfg = getConfig()
+      assert.equal(cfg.computer?.modelEnabled, true, "合法布尔不撤销（手改 = 显式 owner opt-in，裁决 3）")
+    } finally {
+      console.error = orig
+    }
+    assert.ok(
+      logs.some((l) => l.includes("WARNING") && l.includes("modelEnabled") && l.includes("ADR-010")),
+      "P9 启动期醒目 loud log 必须含 WARNING + ADR-010 opt-in 语义",
+    )
+    // false → 无 P9 告警
+    clearConfigCache()
+    saveConfig({ computer: { coordinateEnabled: false, modelEnabled: false } })
+    clearConfigCache()
+    const logs2: string[] = []
+    console.error = (...args: unknown[]) => logs2.push(args.map(String).join(" "))
+    try {
+      getConfig()
+    } finally {
+      console.error = orig
+    }
+    assert.equal(logs2.filter((l) => l.includes("modelEnabled")).length, 0, "modelEnabled=false 不得触发 P9 告警")
+  })
+
+  test("合法五字段全量保留（含文本哈希与时间戳成对）", async () => {
+    await resetConfigFile()
+    saveConfig({
+      computer: {
+        coordinateEnabled: false,
+        modelEnabled: true,
+        modelLicenseAcceptedAt: "2026-07-21T10:00:00.000Z",
+        modelLicenseAcceptedTextHash: "abcdef012345",
+        modelLicenseDeclined: false,
+        modelVariant: "int8",
+      },
+    })
+    clearConfigCache()
+    const c = getConfig().computer
+    assert.equal(c?.modelEnabled, true)
+    assert.equal(c?.modelLicenseAcceptedAt, "2026-07-21T10:00:00.000Z")
+    assert.equal(c?.modelLicenseAcceptedTextHash, "abcdef012345")
+    assert.equal(c?.modelLicenseDeclined, false)
+    assert.equal(c?.modelVariant, "int8")
   })
 })

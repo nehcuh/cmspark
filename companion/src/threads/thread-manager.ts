@@ -120,6 +120,54 @@ export class ThreadManager {
   private index: ThreadIndex
   private indexPath: string
 
+  // C-P0-1 (2026-07-24 diagnosis): per-thread async serialization chain.
+  //
+  // Individual sync methods (addMessage / update / create / delete) are
+  // atomic under Node's single-threaded model — sync code blocks the event
+  // loop, so two concurrent calls execute strictly serially and cannot
+  // interleave inside a single function.
+  //
+  // The remaining race class is compound operations that span `await`
+  // boundaries (e.g. forking a thread: getMessages → async LLM call →
+  // addMessage loop → update). Between awaits, another WS client can
+  // mutate the same file. Callers performing compound ops MUST wrap the
+  // sequence in `withThreadLock(threadId, async () => { ... })` so that
+  // concurrent operations on the same thread serialize.
+  //
+  // Index-level operations (create / delete) are guarded by `indexLock`
+  // because they mutate the shared index.json regardless of thread.
+  private threadLocks = new Map<string, Promise<unknown>>()
+  private indexLock: Promise<unknown> = Promise.resolve()
+
+  /**
+   * Serialize async compound operations on a single thread. Sync methods
+   * don't need this (Node single-thread guarantee), but any caller that
+   * awaits between read and write MUST use this primitive.
+   *
+   * Usage:
+   *   await manager.withThreadLock(threadId, async () => {
+   *     const msgs = manager.getMessages(threadId)
+   *     await llm.generate(msgs)
+   *     manager.addMessage(threadId, result)
+   *   })
+   */
+  async withThreadLock<T>(threadId: string, fn: () => T | Promise<T>): Promise<T> {
+    const prev = this.threadLocks.get(threadId) ?? Promise.resolve()
+    const next = prev.then(() => fn())
+    // Swallow rejections on the chained promise so one failing op doesn't
+    // poison the chain for future callers. Caller sees the rejection via `next`.
+    this.threadLocks.set(threadId, next.then(() => undefined, () => undefined))
+    return await next
+  }
+
+  /** Like withThreadLock but for index-wide operations (create/delete). */
+  async withIndexLock<T>(fn: () => T | Promise<T>): Promise<T> {
+    const prev = this.indexLock
+    const next = prev.then(() => fn())
+    this.indexLock = next.then(() => undefined, () => undefined)
+    return await next
+  }
+
   constructor() {
     const dir = getConfigDir()
     this.indexPath = path.join(dir, "threads", "index.json")

@@ -3,7 +3,7 @@
 ; Requires: makensis (brew install makensis)
 
 !define PRODUCT_NAME "CMspark"
-!define PRODUCT_VERSION "0.2.0"
+!define PRODUCT_VERSION "0.3.0-computer-use"
 !define PRODUCT_PUBLISHER "CMspark"
 !define PRODUCT_UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCT_NAME}"
 

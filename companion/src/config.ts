@@ -8,6 +8,7 @@ import { getLockPath } from "./platform"
 import { getBuiltinSkillsSrc } from "./paths"
 import { atomicWriteJSON } from "./io"
 import type { McpConfig } from "./mcp/types"
+import { sanitizeAppEntries, type AppsConfig } from "./apps/types"
 import type { ObsidianExportConfig } from "./threads/markdown-export"
 
 export const configEvents = new EventEmitter()
@@ -45,6 +46,19 @@ export interface SecurityConfig {
    * no human check.
    */
   allow_all_schemes: boolean
+  /**
+   * Basenames (no extension, lowercased) of the companion's OWN UI host
+   * processes — the browser that renders the sidepanel, plus the packaged
+   * companion binary. When the computer-use FOREGROUND-YIELD detector finds
+   * the foreground was taken over by one of these (the user just clicked
+   * "Allow" in the sidepanel, so the browser briefly became frontmost), the
+   * executor silently re-raises the target window and continues instead of
+   * pausing for a redundant re-L2. Matching is by basename only (multiple
+   * Chrome windows share one exe), so this is a UX heuristic, NOT a security
+   * boundary — the initial task L2 still gates every task. Defaults cover the
+   * browsers CMspark supports plus the packaged agent exe.
+   */
+  companion_ui_exe_basenames: string[]
 }
 
 export interface VisionConfig {
@@ -65,6 +79,44 @@ export interface FileUploadConfig {
   max_embedded_images: number
   enable_vision_analysis: boolean
   max_file_tokens: number
+}
+
+export interface ComputerConfig {
+  /** A10 global switch — default false. Coordinate tools fail-closed when off. */
+  coordinateEnabled: boolean
+  /** Per-task action budget ceiling override (default 15, max 30). */
+  budget?: number
+  /**
+   * WP5 模型下载镜像主机（https only，仅 origin 生效——镜像可配主机、哈希不可配，
+   * W3 §5.2）。缺省 = manifest 占位主机（owner 定 host 前默认禁网）。
+   */
+  modelMirror?: string
+  /** WP5 模型目录磁盘预算（MB，默认 2048；下载前检查，防塞盘 DoS）。 */
+  modelDiskBudgetMB?: number
+  /**
+   * WP5-I4 实验层用户开关（默认 false）。true = 允许 admission 组装 locator
+   * （还需 license 已接受 + 未熔断 + 磁盘复验通过）。开启走生物识别门
+   * （D2，apps coordinateAllowed 先例）；手改 config.json = 显式 owner
+   * opt-in（ADR-010，同 coordinateEnabled 先例），启动期打醒目 loud log（P9）。
+   */
+  modelEnabled?: boolean
+  /** WP5-I4 许可证接受时间戳（ISO 字符串；license_response accepted:true 写入）。 */
+  modelLicenseAcceptedAt?: string
+  /**
+   * WP5-I4 许可证接受时 LICENSE_DOOR_TEXT 的 sha256 前 12 位（P1：接受记录
+   * 绑定文本版本——条款文本漂移（哈希不符）→ enable/admission 重新弹门）。
+   */
+  modelLicenseAcceptedTextHash?: string
+  /**
+   * WP5-I4 许可证已拒绝（默认 false）。true → set_enabled(true) 恒返
+   * LICENSE_DECLINED（永久跳过；复位 = 手改 config.json，不提供 UI 复位）。
+   */
+  modelLicenseDeclined?: boolean
+  /**
+   * WP5-I4 交付变体（默认 "hybrid"）。无 WS setter/无 UI 选择器——切换路径
+   * = 手改 config.json + 重启 companion（裁决 4/P3，ADR-010 方式 B 同型）。
+   */
+  modelVariant?: "hybrid" | "int8"
 }
 
 export interface CompanionConfig {
@@ -91,6 +143,14 @@ export interface CompanionConfig {
   security: SecurityConfig
   file_upload?: FileUploadConfig
   mcp?: McpConfig
+  apps?: AppsConfig
+  /**
+   * Coordinate computer-use (A10 default-deny). coordinateEnabled is the
+   * GLOBAL kill-switch for host_computer: default false; enabling goes through
+   * the biometric gate (computer/handlers.ts) — a hand-edited config.json is
+   * treated as explicit owner opt-in (ADR-010), same as god-mode.
+   */
+  computer?: ComputerConfig
   obsidian?: ObsidianExportConfig
 }
 
@@ -128,6 +188,12 @@ const defaultConfig: CompanionConfig = {
     confirmation_timeout_seconds: 45,
     auto_approve_dangerous: false,
     allow_all_schemes: false,
+    // UX-spike 2026-07-23: browsers CMspark ships a sidepanel for + the
+    // packaged agent exe. Basenames (no .exe), lowercased — matched against
+    // GetForegroundWindow's owner via ProcessName.
+    companion_ui_exe_basenames: [
+      "chrome", "msedge", "msedge_proxy", "firefox", "brave", "arc", "opera", "cmspark-agent",
+    ],
   },
   file_upload: {
     max_file_size: 10 * 1024 * 1024,
@@ -150,6 +216,17 @@ const defaultConfig: CompanionConfig = {
   mcp: {
     enabled: false,
     servers: {},
+  },
+  apps: {
+    enabled: true,
+    entries: {},
+  },
+  computer: {
+    coordinateEnabled: false,
+    // WP5-I4 实验层默认形：开关默认关、许可证未拒绝、变体默认 hybrid。
+    modelEnabled: false,
+    modelLicenseDeclined: false,
+    modelVariant: "hybrid",
   },
   obsidian: {
     name_template: "{{date}} {{first_user_line}}",
@@ -272,6 +349,100 @@ export function getConfig(): CompanionConfig {
   if (!cachedConfig.mcp) {
     cachedConfig.mcp = { enabled: false, servers: {} }
   }
+  // Ensure apps config exists with sane defaults (older config.json may not have
+  // it), then validate + normalize entries on load: direct config.json edits follow
+  // ADR-010 tampering semantics (design §6) — unknown policy → "manual", schema
+  // failure → entry disabled, policy clamped to the signer/user-writable cap —
+  // and must never crash startup (H4 philosophy). Runs once per cache miss, so
+  // tamper logs are not re-emitted on every getConfig() call.
+  if (!cachedConfig.apps) {
+    cachedConfig.apps = { enabled: true, entries: {} }
+  }
+  cachedConfig.apps.entries = sanitizeAppEntries(cachedConfig.apps.entries)
+  // Ensure computer block exists (A10 default-deny: absent/false = off). A
+  // non-boolean hand-edit coerces to false with a loud log — the flag may only
+  // be TRUE by explicit owner action (gated UI write or deliberate file edit).
+  if (!cachedConfig.computer || typeof cachedConfig.computer !== "object") {
+    cachedConfig.computer = { coordinateEnabled: false }
+  }
+  if (typeof cachedConfig.computer.coordinateEnabled !== "boolean") {
+    console.error(
+      `[cmspark-agent] computer.coordinateEnabled is not a boolean — coercing to false (config tampering?)`,
+    )
+    cachedConfig.computer.coordinateEnabled = false
+  }
+  // WP5 模型下载字段（ADR-010 normalize 惯例）：非法值 coerce 为未配置/默认并 loud
+  // log——手改 config 不得绕过镜像 https 约束或关闭磁盘预算。scheme 白名单本身在
+  // resolveDownloadUrl 下载时强制执行（这里只保证类型），双层防线。
+  if (cachedConfig.computer.modelMirror !== undefined) {
+    const v = cachedConfig.computer.modelMirror
+    if (typeof v !== "string" || v.trim() === "") {
+      console.error(
+        `[cmspark-agent] computer.modelMirror 非法（须为非空 https 主机字符串）——按未配置处理 (config tampering?)`,
+      )
+      delete cachedConfig.computer.modelMirror
+    }
+  }
+  if (cachedConfig.computer.modelDiskBudgetMB !== undefined) {
+    const v = cachedConfig.computer.modelDiskBudgetMB
+    if (typeof v !== "number" || !Number.isFinite(v) || v <= 0) {
+      console.error(
+        `[cmspark-agent] computer.modelDiskBudgetMB 非法（须为正数 MB）——回退默认 2048 (config tampering?)`,
+      )
+      delete cachedConfig.computer.modelDiskBudgetMB
+    }
+  }
+  // WP5-I4 WI-4.1 实验层五字段 normalize（ADR-010 惯例；只防篡改形状，不撤销
+  // 合法布尔——手改 config.json = 显式 owner opt-in，裁决 3）。
+  if (cachedConfig.computer.modelEnabled !== undefined && typeof cachedConfig.computer.modelEnabled !== "boolean") {
+    console.error(
+      `[cmspark-agent] computer.modelEnabled 非布尔——coerce false (config tampering?)`,
+    )
+    cachedConfig.computer.modelEnabled = false
+  }
+  cachedConfig.computer.modelEnabled = cachedConfig.computer.modelEnabled === true
+  if (cachedConfig.computer.modelLicenseDeclined !== undefined && typeof cachedConfig.computer.modelLicenseDeclined !== "boolean") {
+    console.error(
+      `[cmspark-agent] computer.modelLicenseDeclined 非布尔——coerce false (config tampering?)`,
+    )
+    cachedConfig.computer.modelLicenseDeclined = false
+  }
+  cachedConfig.computer.modelLicenseDeclined = cachedConfig.computer.modelLicenseDeclined === true
+  if (cachedConfig.computer.modelLicenseAcceptedAt !== undefined) {
+    const v = cachedConfig.computer.modelLicenseAcceptedAt
+    if (typeof v !== "string" || v.trim() === "" || Number.isNaN(Date.parse(v))) {
+      console.error(
+        `[cmspark-agent] computer.modelLicenseAcceptedAt 非法（须为 ISO 时间戳字符串）——按未接受处理 (config tampering?)`,
+      )
+      delete cachedConfig.computer.modelLicenseAcceptedAt
+    }
+  }
+  // P1：文本版本绑定哈希——形状非法即 delete（比对漂移重门在 enable/admission 侧）。
+  if (cachedConfig.computer.modelLicenseAcceptedTextHash !== undefined) {
+    const v = cachedConfig.computer.modelLicenseAcceptedTextHash
+    if (typeof v !== "string" || !/^[0-9a-f]{12}$/.test(v)) {
+      console.error(
+        `[cmspark-agent] computer.modelLicenseAcceptedTextHash 非法（须为 sha256 前 12 位小写 hex）——按未接受处理 (config tampering?)`,
+      )
+      delete cachedConfig.computer.modelLicenseAcceptedTextHash
+    }
+  }
+  if (cachedConfig.computer.modelVariant !== undefined && cachedConfig.computer.modelVariant !== "hybrid" && cachedConfig.computer.modelVariant !== "int8") {
+    console.error(
+      `[cmspark-agent] computer.modelVariant 非法（须为 "hybrid"|"int8"）——回退 hybrid (config tampering?)`,
+    )
+    cachedConfig.computer.modelVariant = "hybrid"
+  }
+  cachedConfig.computer.modelVariant = cachedConfig.computer.modelVariant ?? "hybrid"
+  // P9：实验层开启态的启动期醒目 loud log——本路径每 cache-miss（≈进程启动）
+  // 只跑一次，不刷屏；合法布尔不撤销、不阻断，仅明示（god-mode 方式 B WARNING
+  // 先例，ADR-010:73）。I4 对抗 P5：持久化 config 无法区分「设置页经门开启」
+  // 与「手改 opt-in」两源——文案不过归因，如实并陈。
+  if (cachedConfig.computer.modelEnabled === true) {
+    console.error(
+      `[cmspark-agent] WARNING: computer.modelEnabled=true —— TinyClick 实验层处于开启状态（设置页经门开启 或 手改 config.json opt-in 皆可达此态，持久化配置不区分来源；ADR-010 显式 owner opt-in，同 god-mode 方式 B）。本层未校准，命中仍必经人工确认；关闭请置 false 或经设置页。`,
+    )
+  }
   return cachedConfig
 }
 
@@ -314,6 +485,95 @@ export function setMcpEnabled(enabled: boolean): CompanionConfig {
     servers: current.mcp?.servers ?? {},
   }
   return saveConfig({ mcp })
+}
+
+/**
+ * Replace the entire `apps.entries` map. Mirrors replaceMcpServers: unlike
+ * saveConfig's deepMerge (which would preserve stale entries), this performs a
+ * wholesale swap so removed apps actually disappear from the persisted config.
+ * Triggers CONFIG_CHANGE_EVENT. Validation/normalization of entries is the
+ * caller's job (mirrors mcp.add → validateMcpServerConfig → replaceMcpServers);
+ * the getConfig() load path re-sanitizes whatever lands on disk.
+ */
+export function replaceAppsEntries(entries: AppsConfig["entries"]): CompanionConfig {
+  const current = getConfig()
+  const updated: CompanionConfig = {
+    ...current,
+    apps: {
+      enabled: current.apps?.enabled ?? true,
+      entries: { ...entries },
+    },
+  }
+  const configPath = path.join(DATA_DIR, "config.json")
+  const toSave = JSON.parse(JSON.stringify(updated))
+  const envKey = getEnvApiKey()
+  if (envKey && toSave.llm?.api_key === envKey) {
+    toSave.llm.api_key = ""
+  }
+  atomicWriteJSON(configPath, toSave)
+  cachedConfig = updated
+  configEvents.emit(CONFIG_CHANGE_EVENT, updated)
+  return updated
+}
+
+/**
+ * A10 — flip the global coordinate computer-use switch without touching any
+ * other config. Callers must run the biometric gate BEFORE enabling
+ * (computer/handlers.ts); disabling is always free (fail-closed direction).
+ */
+export function setComputerCoordinateEnabled(enabled: boolean): CompanionConfig {
+  const current = getConfig()
+  const updated: CompanionConfig = {
+    ...current,
+    computer: {
+      ...(current.computer ?? {}),
+      coordinateEnabled: enabled === true,
+    },
+  }
+  const configPath = path.join(DATA_DIR, "config.json")
+  const toSave = JSON.parse(JSON.stringify(updated))
+  const envKey = getEnvApiKey()
+  if (envKey && toSave.llm?.api_key === envKey) {
+    toSave.llm.api_key = ""
+  }
+  atomicWriteJSON(configPath, toSave)
+  cachedConfig = updated
+  configEvents.emit(CONFIG_CHANGE_EVENT, updated)
+  return updated
+}
+
+/**
+ * WP5-I4 WI-4.2：实验层四字段原子写入（model-handlers 四 case 唯一持久化通道，
+ * setComputerCoordinateEnabled 先例）。只允许白名单键；调用方负责语义
+ * （license_response 写时间戳+文本哈希；set_enabled 写 modelEnabled）。
+ */
+export function setComputerModelFields(
+  patch: Partial<
+    Pick<
+      ComputerConfig,
+      "modelEnabled" | "modelLicenseAcceptedAt" | "modelLicenseAcceptedTextHash" | "modelLicenseDeclined"
+    >
+  >,
+): CompanionConfig {
+  const current = getConfig()
+  const updated: CompanionConfig = {
+    ...current,
+    computer: {
+      ...(current.computer ?? { coordinateEnabled: false }),
+      ...patch,
+      coordinateEnabled: current.computer?.coordinateEnabled === true,
+    },
+  }
+  const configPath = path.join(DATA_DIR, "config.json")
+  const toSave = JSON.parse(JSON.stringify(updated))
+  const envKey = getEnvApiKey()
+  if (envKey && toSave.llm?.api_key === envKey) {
+    toSave.llm.api_key = ""
+  }
+  atomicWriteJSON(configPath, toSave)
+  cachedConfig = updated
+  configEvents.emit(CONFIG_CHANGE_EVENT, updated)
+  return updated
 }
 
 /**
@@ -381,25 +641,34 @@ function resolveApiKey(
 }
 
 export function saveConfig(config: Partial<CompanionConfig>): CompanionConfig {
-  // Warn when '*' is used as a trusted domain (global wildcard)
-  if (config.trusted_domains?.includes("*")) {
-    console.warn("[cmspark-agent] WARNING: '*' wildcard trusted domain — all cookie access is allowed. Use only for development.")
+  // S-P0-4 (2026-07-24): previously these were advisory warnings. Now we
+  // FILTER OUT dangerous patterns at saveConfig time — `*`, `*.com`, `*.cn`,
+  // `*.co.uk`, etc. The runtime matchDomain still handles them (for legacy
+  // configs loaded directly from disk via deepMerge), but saveConfig refuses
+  // to persist them. This closes the "edit config.json directly" bypass.
+  const { validateWildcardPattern } = require("./security") as typeof import("./security")
+  const filterPatterns = (arr: string[] | undefined, label: string): string[] => {
+    if (!Array.isArray(arr)) return []
+    const kept: string[] = []
+    for (const p of arr) {
+      if (typeof p !== "string") continue
+      const v = validateWildcardPattern(p)
+      if (v.ok) {
+        kept.push(p)
+      } else {
+        console.warn(
+          `[cmspark-agent] WARNING: rejecting dangerous ${label} pattern '${p}' — ${v.reason}. ` +
+          `Pattern dropped from saved config; edit config.json manually to override (not recommended).`,
+        )
+      }
+    }
+    return kept
   }
-  // Warn when '*' is used as an auto-approved domain — this disables the
-  // dangerous-tool confirmation gate for EVERY domain. Distinct from
-  // trusted_domains (cookie/data access): this gate covers evaluate, navigate,
-  // and friends, so '*' here is strictly more dangerous.
-  if (config.auto_approved_domains?.includes("*")) {
-    console.warn("[cmspark-agent] WARNING: '*' wildcard in auto_approved_domains — all dangerous tool calls (evaluate, navigate, etc.) will be auto-approved on EVERY domain. Prefer listing specific hostnames or use '*.example.com' for subdomain scope.")
+  if (config.trusted_domains) {
+    config.trusted_domains = filterPatterns(config.trusted_domains, "trusted_domains")
   }
-  // Heuristic TLD-wildcard detection: patterns like '*.com' or '*.cn' auto-
-  // approve every domain under a public suffix. We can't ship the full PSL
-  // list, so we approximate by flagging '*.X' where X has no further dots.
-  // '*.co.uk' / '*.com.cn' won't be caught by this heuristic — power users
-  // editing config.json should mind that.
-  const tldWildcardPattern = /^\s*\*\.[^.]+\s*$/
-  if (config.auto_approved_domains?.some(p => typeof p === "string" && tldWildcardPattern.test(p))) {
-    console.warn("[cmspark-agent] WARNING: TLD-level wildcard in auto_approved_domains (e.g. '*.com', '*.cn') — auto-approves an entire TLD. Prefer '*.example.com' (with a registered domain label) for subdomain scope.")
+  if (config.auto_approved_domains) {
+    config.auto_approved_domains = filterPatterns(config.auto_approved_domains, "auto_approved_domains")
   }
   // Warn when dangerous auto-approve is enabled — it bypasses the human-in-the-loop gate.
   if (config.security?.auto_approve_dangerous === true) {

@@ -392,7 +392,7 @@ describe("HistoryStore - Normal Paths", () => {
   test("record and query operations", async () => {
     const store = new HistoryStore()
     await store.waitReady()
-    const id = store.record({
+    const id = await store.record({
       thread_id: "thread-1",
       tool_name: "test_tool",
       params: '{"key": "value"}',
@@ -403,7 +403,7 @@ describe("HistoryStore - Normal Paths", () => {
       created_at: new Date().toISOString(),
     })
     assert.ok(id > 0, "should return positive id")
-    const results = store.query({ thread_id: "thread-1" })
+    const results = await store.query({ thread_id: "thread-1" })
     assert.equal(results.length, 1)
     assert.equal(results[0].tool_name, "test_tool")
   })
@@ -411,9 +411,9 @@ describe("HistoryStore - Normal Paths", () => {
   test("query filters by tool_name", async () => {
     const store = new HistoryStore()
     await store.waitReady()
-    store.record({ thread_id: "thread-2", tool_name: "tool_a", params: "{}", result_summary: "", error: null, success: 1, duration_ms: 0, created_at: new Date().toISOString() })
-    store.record({ thread_id: "thread-2", tool_name: "tool_b", params: "{}", result_summary: "", error: null, success: 1, duration_ms: 0, created_at: new Date().toISOString() })
-    const results = store.query({ thread_id: "thread-2", tool_name: "tool_a" })
+    await store.record({ thread_id: "thread-2", tool_name: "tool_a", params: "{}", result_summary: "", error: null, success: 1, duration_ms: 0, created_at: new Date().toISOString() })
+    await store.record({ thread_id: "thread-2", tool_name: "tool_b", params: "{}", result_summary: "", error: null, success: 1, duration_ms: 0, created_at: new Date().toISOString() })
+    const results = await store.query({ thread_id: "thread-2", tool_name: "tool_a" })
     assert.equal(results.length, 1)
     assert.equal(results[0].tool_name, "tool_a")
   })
@@ -421,9 +421,9 @@ describe("HistoryStore - Normal Paths", () => {
   test("query filters by keyword", async () => {
     const store = new HistoryStore()
     await store.waitReady()
-    store.record({ thread_id: "thread-3", tool_name: "search", params: "{}", result_summary: "found hello world", error: null, success: 1, duration_ms: 0, created_at: new Date().toISOString() })
-    store.record({ thread_id: "thread-3", tool_name: "fetch", params: "{}", result_summary: "nothing here", error: null, success: 1, duration_ms: 0, created_at: new Date().toISOString() })
-    const results = store.query({ thread_id: "thread-3", keyword: "hello" })
+    await store.record({ thread_id: "thread-3", tool_name: "search", params: "{}", result_summary: "found hello world", error: null, success: 1, duration_ms: 0, created_at: new Date().toISOString() })
+    await store.record({ thread_id: "thread-3", tool_name: "fetch", params: "{}", result_summary: "nothing here", error: null, success: 1, duration_ms: 0, created_at: new Date().toISOString() })
+    const results = await store.query({ thread_id: "thread-3", keyword: "hello" })
     assert.equal(results.length, 1)
     assert.ok(results[0].result_summary.includes("hello"))
   })
@@ -436,8 +436,8 @@ describe("HistoryStore - Normal Paths", () => {
     yesterday.setDate(yesterday.getDate() - 1)
     const tomorrow = new Date(now)
     tomorrow.setDate(tomorrow.getDate() + 1)
-    store.record({ thread_id: "thread-4", tool_name: "test", params: "{}", result_summary: "", error: null, success: 1, duration_ms: 0, created_at: now.toISOString() })
-    const results = store.query({ thread_id: "thread-4", from: yesterday.toISOString(), to: tomorrow.toISOString() })
+    await store.record({ thread_id: "thread-4", tool_name: "test", params: "{}", result_summary: "", error: null, success: 1, duration_ms: 0, created_at: now.toISOString() })
+    const results = await store.query({ thread_id: "thread-4", from: yesterday.toISOString(), to: tomorrow.toISOString() })
     assert.equal(results.length, 1)
   })
 
@@ -445,13 +445,13 @@ describe("HistoryStore - Normal Paths", () => {
     const store = new HistoryStore()
     await store.waitReady()
     for (let i = 0; i < 5; i++) {
-      store.record({ thread_id: "thread-5", tool_name: `tool_${i}`, params: "{}", result_summary: "", error: null, success: 1, duration_ms: 0, created_at: new Date().toISOString() })
+      await store.record({ thread_id: "thread-5", tool_name: `tool_${i}`, params: "{}", result_summary: "", error: null, success: 1, duration_ms: 0, created_at: new Date().toISOString() })
     }
-    const allResults = store.query({ thread_id: "thread-5" })
+    const allResults = await store.query({ thread_id: "thread-5" })
     assert.equal(allResults.length, 5)
-    const limited = store.query({ thread_id: "thread-5", limit: 2 })
+    const limited = await store.query({ thread_id: "thread-5", limit: 2 })
     assert.equal(limited.length, 2)
-    const offset = store.query({ thread_id: "thread-5", limit: 2, offset: 2 })
+    const offset = await store.query({ thread_id: "thread-5", limit: 2, offset: 2 })
     assert.equal(offset.length, 2)
     assert.notEqual(offset[0].tool_name, limited[0].tool_name)
   })
@@ -460,17 +460,17 @@ describe("HistoryStore - Normal Paths", () => {
     const store = new HistoryStore()
     await store.waitReady()
     for (let i = 0; i < 5; i++) {
-      store.record({ thread_id: "thread-6", tool_name: `tool_${i}`, params: "{}", result_summary: "", error: null, success: 1, duration_ms: 0, created_at: new Date().toISOString() })
+      await store.record({ thread_id: "thread-6", tool_name: `tool_${i}`, params: "{}", result_summary: "", error: null, success: 1, duration_ms: 0, created_at: new Date().toISOString() })
     }
-    const exported = store.exportJSON({ thread_id: "thread-6" })
+    const exported = await store.exportJSON({ thread_id: "thread-6" })
     assert.equal(exported.length, 5)
   })
 
   test("record with error stores error text", async () => {
     const store = new HistoryStore()
     await store.waitReady()
-    store.record({ thread_id: "thread-7", tool_name: "fail", params: "{}", result_summary: "", error: "Something went wrong", success: 0, duration_ms: 0, created_at: new Date().toISOString() })
-    const results = store.query({ thread_id: "thread-7" })
+    await store.record({ thread_id: "thread-7", tool_name: "fail", params: "{}", result_summary: "", error: "Something went wrong", success: 0, duration_ms: 0, created_at: new Date().toISOString() })
+    const results = await store.query({ thread_id: "thread-7" })
     assert.equal(results.length, 1)
     assert.equal(results[0].error, "Something went wrong")
     assert.equal(results[0].success, 0)
@@ -483,7 +483,7 @@ describe("HistoryStore - Abnormal/Boundary Paths", () => {
     await store.waitReady()
     // Close the db to simulate failure
     store.close()
-    const results = store.query({ thread_id: "thread-x" })
+    const results = await store.query({ thread_id: "thread-x" })
     assert.deepEqual(results, [])
   })
 
@@ -491,14 +491,14 @@ describe("HistoryStore - Abnormal/Boundary Paths", () => {
     const store = new HistoryStore()
     await store.waitReady()
     store.close()
-    const id = store.record({ thread_id: "thread-x", tool_name: "test", params: "{}", result_summary: "", error: null, success: 1, duration_ms: 0, created_at: new Date().toISOString() })
+    const id = await store.record({ thread_id: "thread-x", tool_name: "test", params: "{}", result_summary: "", error: null, success: 1, duration_ms: 0, created_at: new Date().toISOString() })
     assert.equal(id, 0)
   })
 
   test("query with no matching filters returns empty", async () => {
     const store = new HistoryStore()
     await store.waitReady()
-    const results = store.query({ thread_id: "nonexistent-thread" })
+    const results = await store.query({ thread_id: "nonexistent-thread" })
     assert.deepEqual(results, [])
   })
 
@@ -506,9 +506,9 @@ describe("HistoryStore - Abnormal/Boundary Paths", () => {
     const store = new HistoryStore()
     await store.waitReady()
     for (let i = 0; i < 5; i++) {
-      store.record({ thread_id: "thread-empty", tool_name: `tool_${i}`, params: "{}", result_summary: "", error: null, success: 1, duration_ms: 0, created_at: new Date().toISOString() })
+      await store.record({ thread_id: "thread-empty", tool_name: `tool_${i}`, params: "{}", result_summary: "", error: null, success: 1, duration_ms: 0, created_at: new Date().toISOString() })
     }
-    const results = store.query({})
+    const results = await store.query({})
     assert.ok(results.length >= 5, "should return at least the 5 records we added")
   })
 
@@ -516,7 +516,7 @@ describe("HistoryStore - Abnormal/Boundary Paths", () => {
     const store = new HistoryStore()
     await store.waitReady()
     for (let i = 0; i < 500; i++) {
-      store.record({
+      await store.record({
         thread_id: "thread-bulk",
         tool_name: `tool_${i}`,
         params: JSON.stringify({ index: i }),
@@ -527,7 +527,7 @@ describe("HistoryStore - Abnormal/Boundary Paths", () => {
         created_at: new Date().toISOString(),
       })
     }
-    const results = store.query({ thread_id: "thread-bulk", limit: 1000 })
+    const results = await store.query({ thread_id: "thread-bulk", limit: 1000 })
     assert.equal(results.length, 500)
     // Verify order is DESC by created_at
     for (let i = 0; i < results.length - 1; i++) {
@@ -540,9 +540,9 @@ describe("HistoryStore - Abnormal/Boundary Paths", () => {
     await store.waitReady()
     const oldDate = "2020-01-01T00:00:00.000Z"
     const newDate = "2024-01-01T00:00:00.000Z"
-    store.record({ thread_id: "thread-dates", tool_name: "old", params: "{}", result_summary: "", error: null, success: 1, duration_ms: 0, created_at: oldDate })
-    store.record({ thread_id: "thread-dates", tool_name: "new", params: "{}", result_summary: "", error: null, success: 1, duration_ms: 0, created_at: newDate })
-    const exported = store.exportJSON({ thread_id: "thread-dates", from: "2023-01-01T00:00:00.000Z" })
+    await store.record({ thread_id: "thread-dates", tool_name: "old", params: "{}", result_summary: "", error: null, success: 1, duration_ms: 0, created_at: oldDate })
+    await store.record({ thread_id: "thread-dates", tool_name: "new", params: "{}", result_summary: "", error: null, success: 1, duration_ms: 0, created_at: newDate })
+    const exported = await store.exportJSON({ thread_id: "thread-dates", from: "2023-01-01T00:00:00.000Z" })
     assert.equal(exported.length, 1)
     assert.equal(exported[0].tool_name, "new")
   })
@@ -550,8 +550,8 @@ describe("HistoryStore - Abnormal/Boundary Paths", () => {
   test("handles special characters in keyword search", async () => {
     const store = new HistoryStore()
     await store.waitReady()
-    store.record({ thread_id: "thread-special", tool_name: "test", params: "{}", result_summary: "hello%world_test", error: null, success: 1, duration_ms: 0, created_at: new Date().toISOString() })
-    const results = store.query({ thread_id: "thread-special", keyword: "%world" })
+    await store.record({ thread_id: "thread-special", tool_name: "test", params: "{}", result_summary: "hello%world_test", error: null, success: 1, duration_ms: 0, created_at: new Date().toISOString() })
+    const results = await store.query({ thread_id: "thread-special", keyword: "%world" })
     assert.equal(results.length, 1)
   })
 
@@ -579,7 +579,7 @@ describe("Integration: ThreadManager + HistoryStore", () => {
     tm.addMessage(thread.id, { thread_id: thread.id, role: "user", content: "Hello" })
     tm.addMessage(thread.id, { thread_id: thread.id, role: "assistant", content: "Hi there" })
 
-    store.record({
+    await store.record({
       thread_id: thread.id,
       tool_name: "respond",
       params: "{}",
@@ -593,7 +593,7 @@ describe("Integration: ThreadManager + HistoryStore", () => {
     const messages = tm.getMessages(thread.id)
     assert.equal(messages.length, 2)
 
-    const history = store.query({ thread_id: thread.id })
+    const history = await store.query({ thread_id: thread.id })
     assert.equal(history.length, 1)
     assert.equal(history[0].tool_name, "respond")
 

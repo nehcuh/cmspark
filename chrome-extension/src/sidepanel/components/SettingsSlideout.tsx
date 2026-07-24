@@ -3,6 +3,16 @@
 import { useState, useEffect } from "react"
 import { useAgentStore } from "../store/agentStore"
 import { Modal } from "./ui/Modal"
+// WP5-I4 实验功能段:组件纯渲染,文案/判定全部来自 logic 纯函数(镜像
+// companion 单一真源);发送固定 source:"settings"(companion 双层围栏)。
+import {
+  MODEL_SWITCH_COPY,
+  licenseDoorShouldOpen,
+  modelStatusLine,
+  modelSwitchDisabledReason,
+  modelSwitchHint,
+  modelSwitchRunningNote,
+} from "./model-switch-logic"
 
 // PR-B: typed-confirmation phrase required to arm God-mode. Deliberately high
 // friction — God-mode is the max-risk toggle (bypasses both security layers).
@@ -30,6 +40,8 @@ export function SettingsSlideout() {
   const [godmodeConfirm, setGodmodeConfirm] = useState(false)
   const [godmodePhrase, setGodmodePhrase] = useState("")
   const [godmodeMsg, setGodmodeMsg] = useState<string | null>(null)
+  // WP5-I4 实验区:删除模型两步确认按钮的待命态(非 store——纯组件内 UI 态)。
+  const [modelDeleteArmed, setModelDeleteArmed] = useState(false)
 
   // P0-2B: check on open whether a WS pairing secret is already stored, so the
   // status badge reflects the real pairing state (not just connection state).
@@ -41,6 +53,11 @@ export function SettingsSlideout() {
     setGodmodeConfirm(false)
     setGodmodePhrase("")
     setGodmodeMsg(null)
+    // WP5-I4 实验区:打开设置页拉一次模型状态(后续由 state 广播驱动,
+    // 无乐观更新);清掉上次打开残留的错误与删除待命态。
+    setModelDeleteArmed(false)
+    dispatch({ type: "SET_COMPUTER_MODEL_ERROR", error: null })
+    chrome.runtime.sendMessage({ type: "computer.model.get_state" })
     chrome.runtime.sendMessage({ type: "ws.getPairingStatus" }, (resp: { paired?: boolean } | undefined) => {
       setWsPaired(!!resp?.paired)
     })
@@ -487,6 +504,162 @@ export function SettingsSlideout() {
               </button>
             )}
           </div>
+
+          <div style={styles.divider} />
+
+          {/* --- WP5-I4 实验功能(TinyClick 本地模型定位层) --- */}
+          <div style={styles.sectionTitle}>实验功能</div>
+          {(() => {
+            // 纯渲染:一切文案/判定来自 logic 纯函数;发送固定 source:"settings";
+            // 无乐观更新——UI 态由 companion state 广播/应答驱动。
+            const model = state.computerModel
+            const statusLine = modelStatusLine(model, state.computerModelProgress)
+            const disabledReason = modelSwitchDisabledReason(model)
+            const depHint = modelSwitchHint({
+              masterEnabled: state.computerCoordinateEnabled,
+              appCoordinateAllowed: null, // 全局设置页无单应用上下文(每层提示在 AppsPanel)
+            })
+            const runningNote = modelSwitchRunningNote(state.computerTask)
+            const modelEnabled = model?.modelEnabled === true
+            const send = (msg: object) => chrome.runtime.sendMessage(msg)
+            const toggle = () => {
+              dispatch({ type: "SET_COMPUTER_MODEL_ERROR", error: null })
+              send({ type: "computer.model.set_enabled", enabled: !modelEnabled, source: "settings" })
+            }
+            // 词表动作 → 发送映射(组件不组文案,只做按钮接线)
+            const runAction = (action: string) => {
+              if (action === "重置熔断") send({ type: "computer.model.reset_circuit_breaker", source: "settings" })
+              else if (action === "删除并重新下载") setModelDeleteArmed(true)
+              else send({ type: "computer.model.download", source: "settings" })
+            }
+            return (
+              <div style={styles.field}>
+                <label style={styles.label}>{MODEL_SWITCH_COPY.switchLabel}</label>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <button
+                    style={{
+                      ...styles.toggleBtn,
+                      ...(modelEnabled ? { background: "#4A90D9", color: "#fff", borderColor: "#4A90D9" } : {}),
+                    }}
+                    disabled={disabledReason !== null}
+                    onClick={toggle}
+                  >
+                    {modelEnabled ? "已开启" : "已关闭"}
+                  </button>
+                  <span style={styles.helpText}>{MODEL_SWITCH_COPY.switchHint}</span>
+                </div>
+                {/* P2:任务运行中旁注(per-task 生效 + estop 引导) */}
+                {runningNote && (
+                  <div style={{ ...styles.helpText, color: "#B26B00" }}>{runningNote}</div>
+                )}
+                {/* 三层依赖提示(主开关关)优先;否则本体语义 */}
+                <div style={styles.helpText}>{depHint ?? MODEL_SWITCH_COPY.layerSemantics}</div>
+                {disabledReason && (
+                  <div style={{ ...styles.helpText, color: "#B26B00" }}>{disabledReason}</div>
+                )}
+                {/* 状态行 */}
+                <div
+                  style={{
+                    ...styles.helpText,
+                    marginTop: 6,
+                    color:
+                      statusLine.kind === "error" ? "#C62828" : statusLine.kind === "ok" ? "#2E7D32" : "#555",
+                  }}
+                >
+                  {statusLine.text}
+                  {statusLine.detail ? ` ${statusLine.detail}` : ""}
+                  {statusLine.action ? (
+                    <button style={{ ...styles.secondaryBtn, marginLeft: 8 }} onClick={() => runAction(statusLine.action!)}>
+                      {statusLine.action}
+                    </button>
+                  ) : null}
+                </div>
+                {/* 管理按钮行:下载 / 删除(两步确认)/ 重置熔断(disabled 态) */}
+                <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+                  <button
+                    style={styles.secondaryBtn}
+                    disabled={model === null || model.modelStatus === "downloading" || model.modelStatus === "ready"}
+                    onClick={() => send({ type: "computer.model.download", source: "settings" })}
+                  >
+                    下载模型
+                  </button>
+                  <button
+                    style={{
+                      ...styles.secondaryBtn,
+                      ...(modelDeleteArmed ? { borderColor: "#C62828", color: "#C62828" } : {}),
+                    }}
+                    disabled={model === null || (model.modelStatus !== "ready" && model.modelStatus !== "error" && model.modelStatus !== "disabled")}
+                    onClick={() => {
+                      if (!modelDeleteArmed) {
+                        setModelDeleteArmed(true)
+                        return
+                      }
+                      setModelDeleteArmed(false)
+                      send({ type: "computer.model.delete", source: "settings" })
+                    }}
+                  >
+                    {modelDeleteArmed ? "再次点击确认删除" : "删除模型"}
+                  </button>
+                  <button
+                    style={styles.secondaryBtn}
+                    disabled={model?.modelStatus !== "disabled"}
+                    onClick={() => send({ type: "computer.model.reset_circuit_breaker", source: "settings" })}
+                  >
+                    重置熔断
+                  </button>
+                </div>
+                {/* 错误位(family:"computer.model" 路由) */}
+                {state.computerModelError && (
+                  <div style={{ ...styles.helpText, color: "#F44336", marginTop: 4 }}>
+                    {state.computerModelError}
+                  </div>
+                )}
+                <div style={styles.helpText}>{MODEL_SWITCH_COPY.licenseDoorHint}</div>
+              </div>
+            )
+          })()}
+
+          {/* 许可证门:渲染 license_required 载荷原文(LICENSE_DOOR_TEXT 单一真源
+              在 companion model-license.ts,扩展不复制不私编) */}
+          {licenseDoorShouldOpen(state.computerModelLicenseDoor) && (
+            <Modal
+              open={true}
+              onClose={() => dispatch({ type: "SET_COMPUTER_MODEL_LICENSE_DOOR", door: null })}
+              overlayStyle={styles.backdrop}
+              panelStyle={{ ...styles.panel, maxWidth: 520 }}
+              ariaLabel="实验层许可证与免责声明"
+            >
+              <div style={styles.header}>
+                <h3 style={{ margin: 0, fontSize: 15 }}>实验层许可证与免责声明</h3>
+              </div>
+              <div style={{ ...styles.body, maxHeight: 320, overflowY: "auto", whiteSpace: "pre-wrap" }}>
+                {state.computerModelLicenseDoor!.licenseText}
+              </div>
+              <div style={{ ...styles.helpText, padding: "0 16px" }}>
+                {state.computerModelLicenseDoor!.notice}
+              </div>
+              <div style={styles.footer}>
+                <button
+                  style={styles.secondaryBtn}
+                  onClick={() => {
+                    dispatch({ type: "SET_COMPUTER_MODEL_LICENSE_DOOR", door: null })
+                    chrome.runtime.sendMessage({ type: "computer.model.license_response", accepted: false, source: "settings" })
+                  }}
+                >
+                  拒绝(永久跳过)
+                </button>
+                <button
+                  style={styles.saveBtn}
+                  onClick={() => {
+                    dispatch({ type: "SET_COMPUTER_MODEL_LICENSE_DOOR", door: null })
+                    chrome.runtime.sendMessage({ type: "computer.model.license_response", accepted: true, source: "settings" })
+                  }}
+                >
+                  接受并下载模型
+                </button>
+              </div>
+            </Modal>
+          )}
 
           <div style={styles.divider} />
 

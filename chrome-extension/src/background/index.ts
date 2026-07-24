@@ -718,6 +718,28 @@ function setupMessageHandlers() {
       case "mcp.delete":
       case "mcp.toggle_server":
       case "mcp.set_selection":
+      case "apps.list":
+      case "apps.enumerate":
+      case "apps.add":
+      case "apps.remove":
+      case "apps.set_policy":
+      case "apps.set_enabled":
+      // 坐标 computer-use(WP4):每应用坐标开关(AppsPanel 卡片菜单;开启由
+      // companion 生物识别门承担)、急停按钮(任务条)、全局态只读行、证据目录打开。
+      case "apps.set_coordinate_allowed":
+      case "computer.task.abort":
+      case "computer.get_state":
+      case "computer.evidence.open":
+      // WP5-I4 实验层开关族:设置页六路由透传。开启由 companion 生物识别门
+      // 承担(D2,同 :727-728 坐标开关先例);license/download/delete/reset 由
+      // companion validateWsMessage + handler belt 双层围栏(source:"settings"
+      // 在面板侧固定注入,扩展不做信任判定)。
+      case "computer.model.get_state":
+      case "computer.model.set_enabled":
+      case "computer.model.license_response":
+      case "computer.model.download":
+      case "computer.model.delete":
+      case "computer.model.reset_circuit_breaker":
         // Forward to companion
         wsClient.send(message)
         sendResponse({ ok: true })

@@ -1,0 +1,10 @@
+# spike binaries / artifacts — never commit
+.venv/
+model/
+onnx/
+code-review/
+test_image.png
+torch_intermediates.npz
+__pycache__/
+onnx-vendored/
+reference-frame.rgba

@@ -17,6 +17,8 @@ import {
   TrayDataProvider,
   QuickActionItem,
   RecentThreadItem,
+  TrayConfirmRequest,
+  TrayConfirmResponse,
 } from "./tray-adapter"
 
 // ---------------------------------------------------------------------------
@@ -24,7 +26,7 @@ import {
 // ---------------------------------------------------------------------------
 
 /** Expected SHA256 of the Swift tray binary (update via build-tray.sh) */
-const SWIFT_TRAY_SHA256 = "46d866a69f6ce211e077c6e6107110aaef243fcbeeeb26158d362a98e219ca4a"
+const SWIFT_TRAY_SHA256 = "ab183edff34ae211e569a871284fd32d1f389541b038317cba6b78238e499030"
 
 function getSwiftTrayBinPath(): string {
   const { getSwiftTrayPath } = require("../paths")
@@ -36,12 +38,75 @@ function getBuildScriptPath(): string {
   return getTrayBuildScript()
 }
 
-function verifyIntegrity(binPath: string): boolean {
+/**
+ * S-P0-2 (2026-07-24 diagnosis): TOCTOU hardening.
+ *
+ * Old: `readFileSync` then `spawn` — race window between hash and exec.
+ * Attacker who can substitute `dist/cmspark-tray` between these two calls
+ * gains the privileged `respond()` path (bypasses originWs on
+ * SecurityConfirmationManager) — malicious tray self-approves any L2.
+ *
+ * New: open fd once, hash from the fd, fstat to capture inode+device,
+ * spawn via realpath, then post-spawn re-fstat. If inode/dev changed
+ * between pre- and post-spawn, the file was substituted during the race
+ * window — kill the proc immediately and refuse to use it.
+ *
+ * Auto-rebuild is now ONLY for "binary missing" — hash mismatch is treated
+ * as suspicious (refuse, log, require manual intervention) per Grok review
+ * amendment: never auto-rebuild on integrity failure.
+ */
+interface IntegrityCheck {
+  ok: boolean
+  inode: number
+  dev: number
+  realpath: string
+}
+
+/**
+ * Exported for unit testing (A5 — Grok round 2). Production callers should
+ * go through `SwiftTrayAdapter.start()` which orchestrates checkIntegrity +
+ * spawn + post-spawn re-stat.
+ */
+export function checkIntegrity(binPath: string): IntegrityCheck {
+  let fd: number | null = null
   try {
-    const hash = crypto.createHash("sha256").update(fs.readFileSync(binPath)).digest("hex")
-    return hash === SWIFT_TRAY_SHA256
+    const realpath = fs.realpathSync(binPath)
+    fd = fs.openSync(realpath, "r")
+    const stat = fs.fstatSync(fd)
+    const hash = crypto.createHash("sha256")
+    const BUF = Buffer.alloc(64 * 1024)
+    while (true) {
+      const n = fs.readSync(fd, BUF, 0, BUF.length, null)
+      if (n === 0) break
+      hash.update(BUF.slice(0, n))
+    }
+    const digest = hash.digest("hex")
+    return {
+      ok: digest === SWIFT_TRAY_SHA256,
+      inode: stat.ino,
+      dev: stat.dev,
+      realpath,
+    }
   } catch {
-    return false
+    return { ok: false, inode: -1, dev: -1, realpath: "" }
+  } finally {
+    if (fd !== null) {
+      try { fs.closeSync(fd) } catch { /* ignore */ }
+    }
+  }
+}
+
+/** Exported for unit testing (A5 — Grok round 2). */
+export function getExpectedHash(): string {
+  return SWIFT_TRAY_SHA256
+}
+
+function statInodeDev(p: string): { inode: number; dev: number } | null {
+  try {
+    const s = fs.statSync(p)
+    return { inode: s.ino, dev: s.dev }
+  } catch {
+    return null
   }
 }
 
@@ -58,6 +123,16 @@ export class SwiftTrayAdapter implements UnifiedTray {
   private maxRestarts = 3
   private shuttingDown = false
   private config: TrayConfig | null = null
+  /**
+   * Pending tray confirmations keyed by id. Each entry holds the resolve callback
+   * + a timeout. Companion's SecurityConfirmationManager has its own timeout; if
+   * Swift responds first we resolve, if manager times out first we cancelConfirm
+   * (which sends `cancel-confirm` to Swift so it closes the dialog silently).
+   */
+  private pendingConfirms = new Map<string, {
+    resolve: (r: TrayConfirmResponse) => void
+    timer: NodeJS.Timeout
+  }>()
 
   // Cached state for auto-restart
   private lastStatus: { status: string; wsConnected: boolean; pid: number | null } = {
@@ -73,7 +148,9 @@ export class SwiftTrayAdapter implements UnifiedTray {
     this.config = config
     const binPath = getSwiftTrayBinPath()
 
-    // Auto-compile if binary is missing
+    // Auto-compile ONLY when the binary is missing (benign dev case).
+    // Hash mismatch is NOT auto-rebuilt — that's a suspicious signal and
+    // must be surfaced to the operator (Grok amendment A4 on S-P0-2).
     if (!fs.existsSync(binPath)) {
       await this.build()
     }
@@ -82,15 +159,29 @@ export class SwiftTrayAdapter implements UnifiedTray {
       throw new Error(`Swift tray binary not found: ${binPath}`)
     }
 
-    if (!verifyIntegrity(binPath)) {
-      console.warn("[swift-tray] Binary hash mismatch — attempting rebuild")
-      await this.build()
-      if (!verifyIntegrity(binPath)) {
-        throw new Error("Swift tray binary integrity check failed after rebuild")
-      }
+    const pre = checkIntegrity(binPath)
+    if (!pre.ok) {
+      // S-P0-2: do NOT auto-rebuild. Hash mismatch may indicate tampering;
+      // rebuilding silently would replace the evidence and re-open the hole.
+      throw new Error(
+        `[swift-tray] Binary integrity check FAILED — refusing to spawn. ` +
+        `Expected SHA256 ${SWIFT_TRAY_SHA256.slice(0, 16)}…, got mismatched binary at ${binPath}. ` +
+        `If you just rebuilt the binary, update SWIFT_TRAY_SHA256 in swift-tray-bridge.ts. ` +
+        `If not, treat the binary as compromised.`,
+      )
     }
 
-    await this.spawn(binPath)
+    await this.spawn(pre.realpath)
+
+    // Post-spawn inode check: narrows TOCTOU window to microseconds.
+    // If inode/dev changed between pre- and post-spawn, the file was
+    // substituted during the race — kill the proc and refuse to use it.
+    const post = statInodeDev(pre.realpath)
+    if (!post || post.inode !== pre.inode || post.dev !== pre.dev) {
+      console.error("[swift-tray] Binary substituted between hash check and spawn — killing process")
+      this.kill()
+      throw new Error("Swift tray binary TOCTOU detected: inode changed during spawn")
+    }
   }
 
   updateStatus(status: "running" | "stopped" | "unknown", wsConnected: boolean, pid: number | null): void {
@@ -133,6 +224,49 @@ export class SwiftTrayAdapter implements UnifiedTray {
     this.send({ cmd: "show-pairing-window", secret, paired })
   }
 
+  showConfirmDialog(req: TrayConfirmRequest): Promise<TrayConfirmResponse> {
+    return new Promise<TrayConfirmResponse>((resolve) => {
+      // Self-timeout as a safety net — companion's SecurityConfirmationManager
+      // ALSO has a timeout and normally calls cancelConfirm first. If for some
+      // reason it doesn't (bug, race), the Swift binary's own timeout + this
+      // backstop ensure we don't leak the pending entry.
+      const timer = setTimeout(() => {
+        if (this.pendingConfirms.delete(req.id)) {
+          resolve({ id: req.id, approved: false })
+        }
+      }, req.timeoutMs + 1000)
+
+      // Track pending so confirm-response from Swift can resolve it.
+      this.pendingConfirms.set(req.id, { resolve, timer })
+
+      this.send({
+        cmd: "show-confirm",
+        id: req.id,
+        tool_name: req.toolName,
+        risk_level: req.riskLevel,
+        summary: req.summary,
+        critical_apis: req.criticalApis,
+        timeout_ms: req.timeoutMs,
+      })
+    })
+  }
+
+  cancelConfirm(id: string): void {
+    const entry = this.pendingConfirms.get(id)
+    if (!entry) return
+    clearTimeout(entry.timer)
+    this.pendingConfirms.delete(id)
+    // C-P0-7 / Grok C5: resolve the promise with approved=false so any future
+    // `await trayPromise` after cancel doesn't hang. The race in server.ts
+    // already picked a winner (WS-side), so this resolution is observed only
+    // by code that awaits trayPromise directly — currently nothing, but
+    // defensive against future regressions.
+    entry.resolve({ id, approved: false })
+    // Notify Swift to close its dialog without emitting a response — companion
+    // already has the answer from another channel (Side Panel approve / timeout).
+    this.send({ cmd: "cancel-confirm", id })
+  }
+
   async stop(): Promise<void> {
     this.shuttingDown = true
     this.kill()
@@ -173,6 +307,18 @@ export class SwiftTrayAdapter implements UnifiedTray {
           this.handleClick(event)
         }
 
+        if (event.type === "confirm-response") {
+          // Swift emitted Allow/Deny/timeout. Resolve the matching pending entry.
+          const id = typeof event.id === "string" ? event.id : ""
+          const approved = event.approved === true
+          const entry = id ? this.pendingConfirms.get(id) : undefined
+          if (id && entry) {
+            clearTimeout(entry.timer)
+            this.pendingConfirms.delete(id)
+            entry.resolve({ id, approved })
+          }
+        }
+
         if (event.type === "exit") {
           if (!ready) {
             reject(new Error(`Swift tray exited during startup (code: ${event.code})`))
@@ -185,6 +331,19 @@ export class SwiftTrayAdapter implements UnifiedTray {
       proc.stderr?.on("data", (data: Buffer) => {
         const msg = data.toString().trim()
         if (msg) console.error("[swift-tray] stderr:", msg)
+      })
+
+      // EPIPE / stream errors on stdin/stdout fire ASYNC and would crash the
+      // process via uncaughtException if not listened to. The 'exit' handler
+      // below already deals with dead Swift tray; these handlers just prevent
+      // the stream-error from killing the companion. (W9 tray-launch bugfix.)
+      proc.stdin?.on("error", (err: NodeJS.ErrnoException) => {
+        if (err.code === "EPIPE") return  // expected when Swift tray exits first
+        console.error("[swift-tray] stdin error:", err.message)
+      })
+      proc.stdout?.on("error", (err: NodeJS.ErrnoException) => {
+        if (err.code === "EPIPE") return
+        console.error("[swift-tray] stdout error:", err.message)
       })
 
       proc.on("error", (err) => {
@@ -222,8 +381,24 @@ export class SwiftTrayAdapter implements UnifiedTray {
       this.restartCount++
       console.warn(`[swift-tray] Process crashed — restarting (attempt ${this.restartCount}/${this.maxRestarts})`)
 
+      // S-P0-2: re-verify integrity before respawn. A crashed tray should
+      // not auto-respawn a tampered binary; refuse and require operator action.
       const binPath = getSwiftTrayBinPath()
-      this.spawn(binPath).then(() => {
+      const recheck = checkIntegrity(binPath)
+      if (!recheck.ok) {
+        console.error("[swift-tray] Binary integrity check failed on restart — refusing to respawn tampered binary")
+        process.exit(1)
+        return
+      }
+      this.spawn(recheck.realpath).then(() => {
+        // Post-spawn TOCTOU check
+        const post = statInodeDev(recheck.realpath)
+        if (!post || post.inode !== recheck.inode || post.dev !== recheck.dev) {
+          console.error("[swift-tray] Binary TOCTOU on restart — killing")
+          this.kill()
+          process.exit(1)
+          return
+        }
         // Re-apply cached state after restart
         this.updateStatus(this.lastStatus.status as "running" | "stopped" | "unknown", this.lastStatus.wsConnected, this.lastStatus.pid)
         this.updateAutostart(this.lastAutostart)
@@ -241,6 +416,10 @@ export class SwiftTrayAdapter implements UnifiedTray {
 
   private send(obj: Record<string, any>): void {
     if (!this.proc?.stdin?.writable) return
+    // proc.stdin.destroyed means the Swift tray process exited; the 'exit'
+    // handler in spawn() will trigger restart. Skip the write to avoid
+    // spurious EPIPE noise between exit-detected and restart.
+    if (this.proc.stdin.destroyed) return
     try {
       this.proc.stdin.write(`${JSON.stringify(obj)}\n`)
     } catch {

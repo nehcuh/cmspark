@@ -192,6 +192,31 @@ export interface SecurityConfirmationRequest {
    * "add to whitelist" option in that case.
    */
   relevant_domains?: string[]
+  /**
+   * Phase 1 W7 — bundle ids the user may add to thread-scoped trust when
+   * approving. Empty/missing for non-host_use tools. UI shows inline checkbox
+   * "信任此 app，本线程内不再询问" only for host_read (writes always biometric).
+   */
+  relevant_apps?: string[]
+  /**
+   * Phase 1 W9 — Linux manual nonce for biometric tier. 6-char code shown
+   * prominently in dialog; user must TYPE it back in a paste-blocked input.
+   * Round 2 §2.3 Kimi加严: 不可复制粘贴. Undefined on darwin (uses Touch ID).
+   */
+  nonce_challenge?: string
+  /**
+   * 坐标 computer-use(WP4)—— L2 确认对话框的标注截图(base64 JPEG,凭证区已
+   * 黑化)。可选字段,旧 companion 不下发;存在且过 previewImageSafe 守卫时渲染。
+   */
+  preview_image?: string
+  /** 截图说明行(三段式非绑定声明文案,companion 侧已做字符类清洗)。 */
+  preview_caption?: string
+  /**
+   * P1:computer 类确认的完整预览文本独立字段——绕过 code_preview 的
+   * CODE_PREVIEW_LIMIT=1200 截断,保证 30 动作 + 2000 语料逐字对人可见。
+   * 存在时优先于 code_preview 渲染为可滚动区。
+   */
+  full_preview?: string
 }
 
 export interface ToolCall {
@@ -273,4 +298,193 @@ export interface SecurityAuditEntry {
   // "ui_phrase_confirmed" = armed/disarmed from this UI's typed-confirmation panel.
   // The other two originate companion-side (future live-bypass broadcast follow-up).
   source?: "ui_phrase_confirmed" | "config.json_manual" | "ws_authenticated"
+}
+
+// --- App tab (WP4) — mirrors companion/src/apps/types.ts ---
+// The extension is a pure view: entries arrive via apps.list / apps.updated.
+
+export type AppPolicy = "auto" | "ai" | "manual"
+
+export interface AppExeBlock {
+  path: string
+  sha256?: string
+  /** Authenticode signer captured at add-time; absent/empty = unsigned. */
+  signer?: string
+  user_writable_dir: boolean
+}
+
+export interface AppEntry {
+  token: string
+  kind: "gui" | "cli"
+  display_name: string
+  source: "preset" | "user"
+  policy: AppPolicy
+  enabled: boolean
+  added_at: string
+  exe?: AppExeBlock
+  aumid?: string
+  /** macOS bundle identifier (e.g. "com.apple.Notes") for coordinate computer-use. */
+  bundleId?: string
+  /** Policy ceiling attached by the backend (unsigned/user-writable/AUMID → "ai"). */
+  max_policy?: "auto" | "ai"
+  /**
+   * 坐标 computer-use(WP4)—— UIA 探测能力提示(非权限位,WP3 §K.5):
+   * true=支持 UIA 定位 / false=UIA 不可用走 OCR / undefined=未探测。
+   * uiaCapable 有值但 uiaProbedAt 缺失 = 人工在 config.json 手设。
+   */
+  uiaCapable?: boolean
+  uiaProbedAt?: string
+  /** 坐标操作授权位(apps.set_coordinate_allowed,生物识别门在 companion 侧)。 */
+  coordinateAllowed?: boolean
+}
+
+/** Preset detection status from apps.list (companion/src/apps/presets.ts). */
+export interface AppPresetStatus {
+  token: string
+  display_name: string
+  detected: boolean
+  persisted: boolean
+}
+
+/** Candidate from apps.enumerate.result, annotated by the backend guards. */
+export interface AppEnumerateCandidate {
+  name: string
+  source: "running" | "startapps" | "installed"
+  path?: string
+  aumid?: string
+  /** macOS bundle identifier (e.g. "com.apple.Notes"). */
+  bundleId?: string
+  /** Hard-denied by the lolbin blocklist — UI shows the row disabled. */
+  blocked: boolean
+  block_reason?: "lolbin"
+  /** Basename maps to a vault-blacklist app — allowed, but UI warns. */
+  vault_token?: string
+}
+
+/** Warning returned with an apps.add response (D8 — rendered prominently). */
+export interface AppAddWarning {
+  code: string
+  message: string
+}
+
+// --- 坐标 computer-use(WP4)— 镜像 companion/src/computer/preview.ts ---
+// 扩展是纯视图:事件经 computer.task.event 广播到达,新增字段全部可选(向后兼容)。
+
+/** 定位降级日志中的一条尝试记录(镜像 companion 证据链 locateAttempts 条目)。 */
+export interface ComputerLocateAttemptView {
+  layer?: string
+  outcome?: string
+  reason?: string
+  durationMs?: number
+}
+
+/** computer.task.event 的下行负载(镜像 ComputerTaskEvent,含 WI-2 新增可选字段)。 */
+export interface ComputerTaskEventView {
+  event: "started" | "step" | "paused" | "finished"
+  taskId: string
+  /** started:目标应用显示名 + 任务文本。 */
+  app?: string
+  task?: string
+  total?: number
+  /** started:动作预算总量。 */
+  budget?: number
+  /** finished:结果。 */
+  ok?: boolean
+  completed?: number
+  errorCode?: string
+  /** finished:证据目录路径(companion 本地;仅用于展示/打开,扩展永不读字节)。 */
+  evidenceDir?: string
+  /** step/paused:1-based 动作序号。 */
+  seq?: number
+  action?: string
+  x?: number
+  y?: number
+  budgetLeft?: number
+  /** 人读短标签(如 点击「确定」),companion 侧已做字符类清洗。 */
+  caption?: string
+  /** base64 JPEG(after 帧标注图,凭证区已黑化;>300KB 扩展拒渲染)。 */
+  previewImage?: string
+  /** paused:re-L2 暂停原因。 */
+  reason?: string
+  /** step:实际命中的定位层(uia/ocr/…)。 */
+  layer?: string
+  confidence?: number
+  durationMs?: number
+  locateAttempts?: ComputerLocateAttemptView[]
+  crossverified?: boolean
+  crossverifyChannel?: string
+}
+
+/** 步骤时间线中的一行(折叠后的 step 事件)。 */
+export interface ComputerStepView {
+  seq: number
+  action?: string
+  caption?: string
+  x?: number
+  y?: number
+  budgetLeft?: number
+  previewImage?: string
+  layer?: string
+  confidence?: number
+  durationMs?: number
+  locateAttempts?: ComputerLocateAttemptView[]
+  crossverified?: boolean
+  crossverifyChannel?: string
+}
+
+/** store 中折叠后的任务状态(computerTask 切片),驱动任务条 + 急停按钮。 */
+export interface ComputerTaskState {
+  taskId: string
+  app?: string
+  task?: string
+  total?: number
+  budget?: number
+  status: "running" | "paused" | "finished"
+  /**
+   * P4:面板迟连(错过 started)时由首个 step/paused 事件懒创建——任务条标
+   * 「进行中(恢复同步)」;started 到达后转正常。急停按钮的存在性优先于事件流整洁性。
+   */
+  resyncing: boolean
+  steps: ComputerStepView[]
+  pauseReason?: string
+  ok?: boolean
+  completed?: number
+  errorCode?: string
+  evidenceDir?: string
+  /** 急停 ack(matched>0)已收到——任务条置「已急停,等待任务退出…」态。 */
+  abortAcked: boolean
+  /** finished 到达时刻(ms 时间戳)——完结态保留 5s 再自动清空,由组件计时。 */
+  finishedAt?: number
+}
+
+// --- WP5-I4 实验层模型态(镜像 companion model-handlers statePayload,plan:476 全形) ---
+
+/** computer.model.state 下行负载(扩展纯只读镜像,无乐观更新)。 */
+export interface ComputerModelState {
+  modelEnabled: boolean
+  licenseAccepted: boolean
+  licenseAcceptedAt?: string
+  modelLicenseDeclined: boolean
+  /** absent=未下载 / error=半成品或校验失败 / ready=在盘就绪 /
+   *  downloading=下载中 / disabled=熔断停用 */
+  modelStatus: string
+  variant: string
+  sizeBytes?: number
+  /** I1 词表 reason(model-file-missing 等;MODEL_STATE_MESSAGES 消费) */
+  error?: string
+  faults: number
+}
+
+/** computer.model.progress 下行负载(单文件下载进度;state 广播到达后由 reducer 清理)。 */
+export interface ComputerModelProgress {
+  variant: string
+  file: string
+  receivedBytes: number
+  totalBytes: number
+}
+
+/** computer.model.license_required 下行负载(许可证门;渲染原文,扩展不复制不私编)。 */
+export interface ComputerModelLicenseDoor {
+  licenseText: string
+  notice: string
 }

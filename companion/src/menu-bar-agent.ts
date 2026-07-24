@@ -93,6 +93,16 @@ let state: MenuBarState = {
 }
 
 let trayInstance: UnifiedTray | null = null
+
+/**
+ * P0a — accessor for server.ts to dispatch confirmation requests to the tray
+ * (parallel channel alongside WS Side Panel). Returns null when no tray is
+ * running (non-Swift backend, or tray not yet started). Server should fall
+ * back to WS-only in that case. */
+export function getTrayInstance(): UnifiedTray | null {
+  return trayInstance
+}
+
 let activeBackend: TrayBackend | null = null
 let companionClient: CompanionClient | null = null
 let pollTimer: NodeJS.Timeout | null = null
@@ -138,7 +148,7 @@ function checkPortReachable(): Promise<boolean> {
 
 async function pollCompanionStatus(): Promise<void> {
   const pid = getCompanionPid()
-  const processRunning = isCompanionProcessRunning()
+  let processRunning = isCompanionProcessRunning()
 
   // Fast path: if our persistent client is connected, server is alive — skip port check
   let wsReachable: boolean
@@ -146,6 +156,12 @@ async function pollCompanionStatus(): Promise<void> {
     wsReachable = true
   } else {
     wsReachable = await checkPortReachable()
+  }
+
+  // If the port is reachable but PID check failed, the PID file may be stale.
+  // Trust the port check over the PID file to avoid showing "已停止" incorrectly.
+  if (wsReachable && !processRunning) {
+    processRunning = true
   }
 
   const newStatus: CompanionStatus = processRunning && wsReachable ? "running" : "stopped"

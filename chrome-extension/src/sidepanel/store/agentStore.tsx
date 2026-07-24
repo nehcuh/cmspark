@@ -1,7 +1,8 @@
 // Global state store for the agent
 
 import { createContext, useContext, useReducer, type ReactNode, type Dispatch } from "react"
-import type { ConnectionState, Thread, Message, SkillMeta, OperationRecord, LLMConfig, SendShortcut, SecurityConfirmationRequest, LogEntry, KnowledgeMeta, SkillSelectionMode, SecurityAuditEntry, McpServerMeta, McpSelectionMode } from "../types"
+import type { ConnectionState, Thread, Message, SkillMeta, OperationRecord, LLMConfig, SendShortcut, SecurityConfirmationRequest, LogEntry, KnowledgeMeta, SkillSelectionMode, SecurityAuditEntry, McpServerMeta, McpSelectionMode, AppEntry, AppPresetStatus, AppEnumerateCandidate, AppAddWarning, ComputerTaskEventView, ComputerTaskState, ComputerModelState, ComputerModelProgress, ComputerModelLicenseDoor } from "../types"
+import { reduceComputerTaskEvent } from "../utils/computer-utils"
 
 export interface AgentState {
   connectionState: ConnectionState
@@ -41,6 +42,35 @@ export interface AgentState {
   activeMcpServerIds: string[]
   mcpServerFormOpen: boolean
   mcpServerFormEditing: string | null
+  // App tab (WP4) — view state fed by apps.list / apps.updated broadcasts.
+  /** Global apps kill-switch state (read-only view — set in config.json). */
+  appsEnabled: boolean
+  appEntries: AppEntry[]
+  appPresets: AppPresetStatus[]
+  /** Latest apps.enumerate.result (null = no enumeration run this session). */
+  appCandidates: AppEnumerateCandidate[] | null
+  /** Warnings from the last successful apps.add (D8 prominent render area). */
+  appsWarnings: AppAddWarning[]
+  /** Last apps.* error (BIOMETRIC_DENIED / POLICY_CAP_EXCEEDED / ...). */
+  appsError: string | null
+  /** WP6a (Finding 2): companion platform from apps.list (null = unknown /
+   *  pre-WP6a companion → panel keeps the add UI enabled). */
+  appsPlatform: string | null
+  // 坐标 computer-use(WP4)— computer.task.event 折叠视图 + 全局坐标开关只读镜像。
+  /** 当前/最近一个坐标任务的折叠状态(null = 无任务;驱动任务条 + 急停按钮)。 */
+  computerTask: ComputerTaskState | null
+  /** computer.state 只读镜像(null = 尚未查询;WP4 不做面板内全局开关切换)。 */
+  computerCoordinateEnabled: boolean | null
+  // WP5-I4 实验层模型切片——全部只读镜像,无乐观更新(设置页实验区消费):
+  // 每次操作只发 WS 消息,UI 态由 companion state 广播/应答驱动刷新。
+  /** computer.model.state 最新镜像(null = 尚未查询;设置页打开时拉一次)。 */
+  computerModel: ComputerModelState | null
+  /** 最后一条 computer.model.progress(非下载中 state 到达时由 reducer 清除)。 */
+  computerModelProgress: ComputerModelProgress | null
+  /** license_required 载荷(非 null = 许可证门应弹出;渲染载荷原文)。 */
+  computerModelLicenseDoor: ComputerModelLicenseDoor | null
+  /** 最后一条 computer.model.* 错误(family:"computer.model" 路由;LICENSE_DECLINED 等)。 */
+  computerModelError: string | null
 }
 
 export type AgentAction =
@@ -89,6 +119,17 @@ export type AgentAction =
   | { type: "SET_MCP_SELECTION_MODE"; mode: McpSelectionMode }
   | { type: "OPEN_MCP_SERVER_FORM"; editing: string | null }
   | { type: "CLOSE_MCP_SERVER_FORM" }
+  | { type: "SET_APPS_STATE"; enabled: boolean; entries: AppEntry[]; presets?: AppPresetStatus[]; platform?: string }
+  | { type: "SET_APPS_CANDIDATES"; candidates: AppEnumerateCandidate[] | null }
+  | { type: "SET_APPS_WARNINGS"; warnings: AppAddWarning[] }
+  | { type: "SET_APPS_ERROR"; error: string | null }
+  | { type: "COMPUTER_TASK_EVENT"; event: ComputerTaskEventView }
+  | { type: "COMPUTER_TASK_ABORT_ACK"; taskId: string; matched: number }
+  | { type: "SET_COMPUTER_COORDINATE_STATE"; enabled: boolean }
+  | { type: "SET_COMPUTER_MODEL_STATE"; modelState: ComputerModelState }
+  | { type: "SET_COMPUTER_MODEL_PROGRESS"; progress: ComputerModelProgress }
+  | { type: "SET_COMPUTER_MODEL_LICENSE_DOOR"; door: ComputerModelLicenseDoor | null }
+  | { type: "SET_COMPUTER_MODEL_ERROR"; error: string | null }
 export const initialState: AgentState = {
   connectionState: "disconnected",
   threads: [],
@@ -144,6 +185,19 @@ export const initialState: AgentState = {
   activeMcpServerIds: [],
   mcpServerFormOpen: false,
   mcpServerFormEditing: null,
+  appsEnabled: true,
+  appEntries: [],
+  appPresets: [],
+  appCandidates: null,
+  appsWarnings: [],
+  appsError: null,
+  appsPlatform: null,
+  computerTask: null,
+  computerCoordinateEnabled: null,
+  computerModel: null,
+  computerModelProgress: null,
+  computerModelLicenseDoor: null,
+  computerModelError: null,
 }
 
 export function agentReducer(state: AgentState, action: AgentAction): AgentState {
@@ -359,6 +413,48 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       return { ...state, mcpServerFormOpen: true, mcpServerFormEditing: action.editing }
     case "CLOSE_MCP_SERVER_FORM":
       return { ...state, mcpServerFormOpen: false, mcpServerFormEditing: null }
+    case "SET_APPS_STATE":
+      // apps.updated carries no presets array (and no platform) — keep the
+      // last known values for both.
+      return {
+        ...state,
+        appsEnabled: action.enabled,
+        appEntries: action.entries,
+        appPresets: action.presets ?? state.appPresets,
+        appsPlatform: action.platform ?? state.appsPlatform,
+      }
+    case "SET_APPS_CANDIDATES":
+      return { ...state, appCandidates: action.candidates }
+    case "SET_APPS_WARNINGS":
+      return { ...state, appsWarnings: action.warnings }
+    case "SET_APPS_ERROR":
+      return { ...state, appsError: action.error }
+    case "COMPUTER_TASK_EVENT":
+      // 状态机(含 P4 懒创建/完结后丢弃)全部在纯函数 reduceComputerTaskEvent 里。
+      return { ...state, computerTask: reduceComputerTaskEvent(state.computerTask, action.event) }
+    case "COMPUTER_TASK_ABORT_ACK": {
+      // matched>0 才置位;task_id="*"(急停全部)对当前任务同样生效。
+      const t = state.computerTask
+      if (!t || action.matched <= 0) return state
+      if (t.taskId !== action.taskId && action.taskId !== "*") return state
+      return { ...state, computerTask: { ...t, abortAcked: true } }
+    }
+    case "SET_COMPUTER_COORDINATE_STATE":
+      return { ...state, computerCoordinateEnabled: action.enabled }
+    case "SET_COMPUTER_MODEL_STATE":
+      // 非下载中的 state 到达 = 下载已完结/失败/无下载——清掉陈旧进度镜像。
+      return {
+        ...state,
+        computerModel: action.modelState,
+        computerModelProgress:
+          action.modelState.modelStatus === "downloading" ? state.computerModelProgress : null,
+      }
+    case "SET_COMPUTER_MODEL_PROGRESS":
+      return { ...state, computerModelProgress: action.progress }
+    case "SET_COMPUTER_MODEL_LICENSE_DOOR":
+      return { ...state, computerModelLicenseDoor: action.door }
+    case "SET_COMPUTER_MODEL_ERROR":
+      return { ...state, computerModelError: action.error }
     default:
       return state
   }

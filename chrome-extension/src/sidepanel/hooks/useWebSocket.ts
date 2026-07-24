@@ -2,7 +2,9 @@
 
 import { useEffect, useRef } from "react"
 import { useAgentStore } from "../store/agentStore"
-import type { LLMConfig } from "../types"
+import type { ComputerTaskEventView, LLMConfig } from "../types"
+import { isAppsErrorMessage } from "../utils/apps-utils"
+import { isComputerModelErrorMessage } from "../components/model-switch-logic"
 
 /**
  * Check if an API key is masked (i.e., a placeholder like "***" or "sk-****xyz").
@@ -313,6 +315,13 @@ export function useWebSocket() {
               auto_confirm_eligible: msg.auto_confirm_eligible ?? false,
               defense_layer: msg.defense_layer,
               relevant_domains: Array.isArray(msg.relevant_domains) ? msg.relevant_domains : [],
+              relevant_apps: Array.isArray(msg.relevant_apps) ? msg.relevant_apps : [],
+              nonce_challenge: typeof msg.nonce_challenge === "string" ? msg.nonce_challenge : undefined,
+              // 坐标 computer-use(WP4):L2 标注截图 + 三段式 caption + P1 完整预览
+              // 文本(绕过 code_preview 的 1200 截断)——全部可选,旧 companion 不下发。
+              preview_image: typeof msg.preview_image === "string" ? msg.preview_image : undefined,
+              preview_caption: typeof msg.preview_caption === "string" ? msg.preview_caption : undefined,
+              full_preview: typeof msg.full_preview === "string" ? msg.full_preview : undefined,
             },
           })
           break
@@ -508,6 +517,102 @@ export function useWebSocket() {
           }
           break
 
+        // App tab (WP4) — apps.list response and apps.updated broadcasts
+        // (mutations broadcast to all clients; the requester's response also
+        // carries warnings/added — update state from both, keep warnings).
+        case "apps.list":
+          dispatch({
+            type: "SET_APPS_STATE",
+            enabled: msg.enabled !== false,
+            entries: Array.isArray(msg.entries) ? msg.entries : [],
+            presets: Array.isArray(msg.presets) ? msg.presets : [],
+            // WP6a (Finding 2): companion's process.platform — gates the
+            // add/enumerate UI off win32.
+            platform: typeof msg.platform === "string" ? msg.platform : undefined,
+          })
+          break
+
+        case "apps.updated":
+          dispatch({
+            type: "SET_APPS_STATE",
+            enabled: msg.enabled !== false,
+            entries: Array.isArray(msg.entries) ? msg.entries : [],
+          })
+          // Only the apps.add response carries warnings — the broadcast copy
+          // doesn't, and must NOT clear the follow-up render area (D8).
+          if (Array.isArray(msg.warnings)) {
+            dispatch({ type: "SET_APPS_WARNINGS", warnings: msg.warnings })
+          }
+          break
+
+        case "apps.enumerate.result":
+          dispatch({
+            type: "SET_APPS_CANDIDATES",
+            candidates: Array.isArray(msg.candidates) ? msg.candidates : [],
+          })
+          break
+
+        // 坐标 computer-use(WP4)— 任务事件折叠(状态机/P4 懒创建在
+        // reduceComputerTaskEvent 纯函数里)、急停 ack、全局坐标开关只读镜像。
+        case "computer.task.event":
+          if (typeof msg.taskId === "string" && typeof msg.event === "string") {
+            dispatch({ type: "COMPUTER_TASK_EVENT", event: msg as ComputerTaskEventView })
+          }
+          break
+
+        case "computer.task.abort.ack":
+          dispatch({
+            type: "COMPUTER_TASK_ABORT_ACK",
+            taskId: typeof msg.task_id === "string" ? msg.task_id : "",
+            matched: typeof msg.matched === "number" ? msg.matched : 0,
+          })
+          break
+
+        case "computer.state":
+          dispatch({ type: "SET_COMPUTER_COORDINATE_STATE", enabled: msg.coordinateEnabled === true })
+          break
+
+        // WP5-I4 实验层:state/progress/license_required → model 切片(无乐观更新,
+        // 字段逐个形状校验;license_required 载荷原文进 store,组件渲染不复制)。
+        case "computer.model.state":
+          dispatch({
+            type: "SET_COMPUTER_MODEL_STATE",
+            modelState: {
+              modelEnabled: msg.modelEnabled === true,
+              licenseAccepted: msg.licenseAccepted === true,
+              ...(typeof msg.licenseAcceptedAt === "string" ? { licenseAcceptedAt: msg.licenseAcceptedAt } : {}),
+              modelLicenseDeclined: msg.modelLicenseDeclined === true,
+              modelStatus: typeof msg.modelStatus === "string" ? msg.modelStatus : "error",
+              variant: typeof msg.variant === "string" ? msg.variant : "hybrid",
+              ...(typeof msg.sizeBytes === "number" ? { sizeBytes: msg.sizeBytes } : {}),
+              ...(typeof msg.error === "string" ? { error: msg.error } : {}),
+              faults: typeof msg.faults === "number" ? msg.faults : 0,
+            },
+          })
+          break
+
+        case "computer.model.progress":
+          dispatch({
+            type: "SET_COMPUTER_MODEL_PROGRESS",
+            progress: {
+              variant: typeof msg.variant === "string" ? msg.variant : "",
+              file: typeof msg.file === "string" ? msg.file : "",
+              receivedBytes: typeof msg.receivedBytes === "number" ? msg.receivedBytes : 0,
+              totalBytes: typeof msg.totalBytes === "number" ? msg.totalBytes : 0,
+            },
+          })
+          break
+
+        case "computer.model.license_required":
+          dispatch({
+            type: "SET_COMPUTER_MODEL_LICENSE_DOOR",
+            door: {
+              licenseText: typeof msg.licenseText === "string" ? msg.licenseText : "",
+              notice: typeof msg.notice === "string" ? msg.notice : "",
+            },
+          })
+          break
+
         case "mcp.server.status_changed": {
           const server = msg.server
           if (server && server.name) {
@@ -631,6 +736,21 @@ export function useWebSocket() {
           break
 
         case "error":
+          // WP5-I4: computer.model.* 错误(family:"computer.model")→ 设置页实验区
+          // 错误位;判定先于 apps(family 无歧义,code 回退集含共享 BIOMETRIC_DENIED)。
+          if (isComputerModelErrorMessage(msg)) {
+            dispatch({ type: "SET_COMPUTER_MODEL_ERROR", error: msg.error || "Unknown computer.model error" })
+            break
+          }
+          // App tab (WP4, routing hardened in WP6a): apps.* failures
+          // (biometric cancel, policy cap, add-flow validation, …) render in
+          // the panel's error area instead of the chat stream — the user is
+          // acting in the panel, not chatting. Routed by family:"apps" with
+          // the legacy code set as fallback (isAppsErrorMessage).
+          if (isAppsErrorMessage(msg)) {
+            dispatch({ type: "SET_APPS_ERROR", error: msg.error || "Unknown apps error" })
+            break
+          }
           dispatch({
             type: "ADD_MESSAGE",
             message: {

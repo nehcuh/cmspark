@@ -1,0 +1,475 @@
+{
+ "variant": "fp32",
+ "intraOp": 8,
+ "createMs": {
+  "vision_encoder": 1667,
+  "embed_tokens": 113,
+  "encoder_model": 245,
+  "decoder_model": 728
+ },
+ "totalCreateMs": 2754,
+ "results": [
+  {
+   "id": "f-ok-en",
+   "group": "fixture",
+   "lang": "en",
+   "pred": {
+    "x": 481,
+    "y": 321,
+    "locRaw": [
+     501,
+     501
+    ]
+   },
+   "gt": {
+    "cx": 884,
+    "cy": 602,
+    "w": 120,
+    "h": 44
+   },
+   "distPx": 491.3,
+   "hit": false,
+   "totalMs": 1881.2
+  },
+  {
+   "id": "f-ok-zh",
+   "group": "fixture",
+   "lang": "zh",
+   "pred": {
+    "x": 481,
+    "y": 316,
+    "locRaw": [
+     501,
+     494
+    ]
+   },
+   "gt": {
+    "cx": 884,
+    "cy": 602,
+    "w": 120,
+    "h": 44
+   },
+   "distPx": 494.2,
+   "hit": false,
+   "totalMs": 1848.6
+  },
+  {
+   "id": "f-file-zh",
+   "group": "fixture",
+   "lang": "zh",
+   "pred": {
+    "x": 481,
+    "y": 170,
+    "locRaw": [
+     501,
+     266
+    ]
+   },
+   "gt": {
+    "cx": 76,
+    "cy": 38,
+    "w": 120,
+    "h": 44
+   },
+   "distPx": 426,
+   "hit": false,
+   "totalMs": 1862
+  },
+  {
+   "id": "f-setting-zh",
+   "group": "fixture",
+   "lang": "zh",
+   "pred": {
+    "x": 75,
+    "y": 599,
+    "locRaw": [
+     78,
+     936
+    ]
+   },
+   "gt": {
+    "cx": 884,
+    "cy": 38,
+    "w": 120,
+    "h": 44
+   },
+   "distPx": 984.5,
+   "hit": false,
+   "totalMs": 1799.8
+  },
+  {
+   "id": "f-help-zh",
+   "group": "fixture",
+   "lang": "zh",
+   "pred": {
+    "x": 75,
+    "y": 599,
+    "locRaw": [
+     78,
+     936
+    ]
+   },
+   "gt": {
+    "cx": 76,
+    "cy": 602,
+    "w": 120,
+    "h": 44
+   },
+   "distPx": 3.2,
+   "hit": true,
+   "totalMs": 1863.2
+  },
+  {
+   "id": "f-play-en",
+   "group": "fixture",
+   "lang": "en",
+   "pred": {
+    "x": 481,
+    "y": 169,
+    "locRaw": [
+     501,
+     264
+    ]
+   },
+   "gt": {
+    "cx": 480,
+    "cy": 320,
+    "w": 120,
+    "h": 60
+   },
+   "distPx": 151,
+   "hit": false,
+   "totalMs": 1825.9
+  },
+  {
+   "id": "f-play-zh",
+   "group": "fixture",
+   "lang": "zh",
+   "pred": {
+    "x": 348,
+    "y": 214,
+    "locRaw": [
+     363,
+     335
+    ]
+   },
+   "gt": {
+    "cx": 480,
+    "cy": 320,
+    "w": 120,
+    "h": 60
+   },
+   "distPx": 169.3,
+   "hit": false,
+   "totalMs": 1826.9
+  },
+  {
+   "id": "f-search-zh",
+   "group": "fixture",
+   "lang": "zh",
+   "pred": {
+    "x": 476,
+    "y": 316,
+    "locRaw": [
+     496,
+     494
+    ]
+   },
+   "gt": {
+    "cx": 480,
+    "cy": 102,
+    "w": 300,
+    "h": 44
+   },
+   "distPx": 214,
+   "hit": false,
+   "totalMs": 1829.6
+  },
+  {
+   "id": "f-icon-en",
+   "group": "fixture",
+   "lang": "en",
+   "pred": {
+    "x": 481,
+    "y": 172,
+    "locRaw": [
+     501,
+     269
+    ]
+   },
+   "gt": {
+    "cx": 482,
+    "cy": 172,
+    "w": 24,
+    "h": 24
+   },
+   "distPx": 1,
+   "hit": true,
+   "totalMs": 1831.5
+  },
+  {
+   "id": "f-long-zh",
+   "group": "fixture",
+   "lang": "zh",
+   "pred": {
+    "x": 348,
+    "y": 216,
+    "locRaw": [
+     363,
+     337
+    ]
+   },
+   "gt": {
+    "cx": 366,
+    "cy": 218,
+    "w": 700,
+    "h": 36
+   },
+   "distPx": 18.1,
+   "hit": true,
+   "totalMs": 1953.1
+  },
+  {
+   "id": "d-start-zh",
+   "group": "desktop",
+   "lang": "zh",
+   "pred": {
+    "x": 23,
+    "y": 48,
+    "locRaw": [
+     12,
+     44
+    ]
+   },
+   "gt": {
+    "cx": 760,
+    "cy": 1057,
+    "w": 28,
+    "h": 28
+   },
+   "distPx": 1249.5,
+   "hit": false,
+   "totalMs": 1910.1
+  },
+  {
+   "id": "d-search-zh",
+   "group": "desktop",
+   "lang": "zh",
+   "pred": {
+    "x": 23,
+    "y": 122,
+    "locRaw": [
+     12,
+     113
+    ]
+   },
+   "gt": {
+    "cx": 875,
+    "cy": 1057,
+    "w": 150,
+    "h": 28
+   },
+   "distPx": 1265,
+   "hit": false,
+   "totalMs": 1915.6
+  },
+  {
+   "id": "d-taskchrome-zh",
+   "group": "desktop",
+   "lang": "zh",
+   "pred": {
+    "x": 23,
+    "y": 557,
+    "locRaw": [
+     12,
+     516
+    ]
+   },
+   "gt": {
+    "cx": 1025,
+    "cy": 1057,
+    "w": 28,
+    "h": 28
+   },
+   "distPx": 1119.8,
+   "hit": false,
+   "totalMs": 1874.8
+  },
+  {
+   "id": "d-deskchrome-en",
+   "group": "desktop",
+   "lang": "en",
+   "pred": {
+    "x": 36,
+    "y": 1058,
+    "locRaw": [
+     19,
+     980
+    ]
+   },
+   "gt": {
+    "cx": 26,
+    "cy": 243,
+    "w": 32,
+    "h": 40
+   },
+   "distPx": 815.1,
+   "hit": false,
+   "totalMs": 1904.9
+  },
+  {
+   "id": "d-taskexp-zh",
+   "group": "desktop",
+   "lang": "zh",
+   "pred": {
+    "x": 23,
+    "y": 122,
+    "locRaw": [
+     12,
+     113
+    ]
+   },
+   "gt": {
+    "cx": 1058,
+    "cy": 1057,
+    "w": 28,
+    "h": 28
+   },
+   "distPx": 1394.8,
+   "hit": false,
+   "totalMs": 1904.5
+  },
+  {
+   "id": "s-search-zh",
+   "group": "settings",
+   "lang": "zh",
+   "pred": {
+    "x": 1091,
+    "y": 830,
+    "locRaw": [
+     568,
+     795
+    ]
+   },
+   "gt": {
+    "cx": 955,
+    "cy": 18,
+    "w": 380,
+    "h": 24
+   },
+   "distPx": 823.3,
+   "hit": false,
+   "totalMs": 1854
+  },
+  {
+   "id": "s-home-zh",
+   "group": "settings",
+   "lang": "zh",
+   "pred": {
+    "x": 1091,
+    "y": 947,
+    "locRaw": [
+     568,
+     907
+    ]
+   },
+   "gt": {
+    "cx": 52,
+    "cy": 120,
+    "w": 120,
+    "h": 30
+   },
+   "distPx": 1327.9,
+   "hit": false,
+   "totalMs": 1820.3
+  },
+  {
+   "id": "s-bt-zh",
+   "group": "settings",
+   "lang": "zh",
+   "pred": {
+    "x": 1091,
+    "y": 360,
+    "locRaw": [
+     568,
+     345
+    ]
+   },
+   "gt": {
+    "cx": 84,
+    "cy": 182,
+    "w": 160,
+    "h": 30
+   },
+   "distPx": 1022.6,
+   "hit": false,
+   "totalMs": 1863.3
+  },
+  {
+   "id": "s-rename-zh",
+   "group": "settings",
+   "lang": "zh",
+   "pred": {
+    "x": 1091,
+    "y": 360,
+    "locRaw": [
+     568,
+     345
+    ]
+   },
+   "gt": {
+    "cx": 1385,
+    "cy": 255,
+    "w": 130,
+    "h": 30
+   },
+   "distPx": 312.2,
+   "hit": false,
+   "totalMs": 1812.4
+  }
+ ],
+ "stats": {
+  "fixture": {
+   "n": 10,
+   "hits": 3,
+   "acc": "30%",
+   "medianDistPx": 214,
+   "maxDistPx": 984.5
+  },
+  "en": {
+   "n": 4,
+   "hits": 1,
+   "acc": "25%",
+   "medianDistPx": 491.3,
+   "maxDistPx": 815.1
+  },
+  "ALL": {
+   "n": 19,
+   "hits": 3,
+   "acc": "15.8%",
+   "medianDistPx": 494.2,
+   "maxDistPx": 1394.8
+  },
+  "zh": {
+   "n": 15,
+   "hits": 2,
+   "acc": "13.3%",
+   "medianDistPx": 823.3,
+   "maxDistPx": 1394.8
+  },
+  "desktop": {
+   "n": 5,
+   "hits": 0,
+   "acc": "0%",
+   "medianDistPx": 1249.5,
+   "maxDistPx": 1394.8
+  },
+  "settings": {
+   "n": 4,
+   "hits": 0,
+   "acc": "0%",
+   "medianDistPx": 1022.6,
+   "maxDistPx": 1327.9
+  }
+ }
+}

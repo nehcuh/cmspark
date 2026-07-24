@@ -149,6 +149,53 @@ test("osascript_eval: accepts string expression", () => {
 })
 
 // =============================================================================
+// host_read — Phase 0 computer-use spike (Mail inbox top-1 read)
+// =============================================================================
+
+test("host_read: accepts empty params (application defaults at runtime)", () => {
+  const out = parseToolArgs("host_read", {})
+  // No required fields; application is optional with runtime default.
+  assert.equal(out.application, undefined)
+})
+
+test("host_read: accepts application + max_chars", () => {
+  const out = parseToolArgs("host_read", { application: "com.apple.mail", max_chars: 200 })
+  assert.equal(out.application, "com.apple.mail")
+  assert.equal(out.max_chars, 200)
+})
+
+test("host_read: rejects non-string application", () => {
+  assert.throws(
+    () => parseToolArgs("host_read", { application: 42 }),
+    /application/i,
+  )
+})
+
+test("host_read: rejects max_chars out of range", () => {
+  assert.throws(() => parseToolArgs("host_read", { max_chars: 0 }), /max_chars|max/i)
+  assert.throws(() => parseToolArgs("host_read", { max_chars: 99999 }), /max_chars|max/i)
+})
+
+// =============================================================================
+// host_app — App tab WP3 (L0 no-arg launch of whitelisted apps)
+// =============================================================================
+
+test("host_app: accepts {app, action:'launch'} + optional security_token", () => {
+  const out = parseToolArgs("host_app", { app: "win.app.cloudmusic", action: "launch" })
+  assert.equal(out.app, "win.app.cloudmusic")
+  assert.equal(out.action, "launch")
+  const withToken = parseToolArgs("host_app", { app: "win.app.cloudmusic", action: "launch", security_token: "t" })
+  assert.equal(withToken.security_token, "t")
+})
+
+test("host_app: rejects missing app, empty app, and non-launch actions", () => {
+  assert.throws(() => parseToolArgs("host_app", { action: "launch" }))
+  assert.throws(() => parseToolArgs("host_app", { app: "", action: "launch" }))
+  assert.throws(() => parseToolArgs("host_app", { app: "win.app.x", action: "run_template" }))
+  assert.throws(() => parseToolArgs("host_app", { app: "win.app.x" }))
+})
+
+// =============================================================================
 // Generic fallback — non-high-risk tools pass through unchanged
 // =============================================================================
 
@@ -397,4 +444,114 @@ test("mcp: converter direct unit (jsonSchemaPrimitiveToZod round-trips)", () => 
     jsonSchemaPrimitiveToZod({ type: "array", items: { type: "string" } }).safeParse([1]).success,
     false,
   )
+})
+
+// =============================================================================
+// host_computer — X4 type.text cap
+// =============================================================================
+
+test("host_computer: type text at the 2000-char cap passes", () => {
+  const out = parseToolArgs("host_computer", {
+    task: "t",
+    app: "win.app.test",
+    actions: [{ action: "type", text: "x".repeat(2000) }],
+  })
+  assert.equal(out.actions.length, 1)
+})
+
+test("host_computer: type text beyond 2000 chars is rejected at the schema boundary (X4)", () => {
+  const bad = tryParseToolArgs("host_computer", {
+    task: "t",
+    app: "win.app.test",
+    actions: [{ action: "type", text: "x".repeat(2001) }],
+  })
+  assert.equal(bad.ok, false)
+})
+
+// =============================================================================
+// host_computer — WP2 key/scroll/drag primitives
+// =============================================================================
+
+test("host_computer: key chord passes; non-whitelist key is rejected", () => {
+  const ok = parseToolArgs("host_computer", {
+    task: "t",
+    app: "win.app.test",
+    actions: [{ action: "key", keys: ["ctrl", "enter"] }],
+  })
+  assert.equal(ok.actions.length, 1)
+  for (const bad of [
+    [{ action: "key", keys: ["a"] }], // printable — belongs to type
+    [{ action: "key", keys: [] }], // empty chord
+    [{ action: "key", keys: ["ctrl", "alt", "shift", "win", "enter"] }], // > MAX_KEY_CHORD
+    [{ action: "key", keys: ["ctrl"], extra: 1 }], // strict — no extra fields
+  ]) {
+    assert.equal(tryParseToolArgs("host_computer", { task: "t", app: "win.app.test", actions: bad }).ok, false)
+  }
+})
+
+test("host_computer: scroll bounds (delta 0 / beyond ±1200 / missing coords rejected)", () => {
+  const ok = parseToolArgs("host_computer", {
+    task: "t",
+    app: "win.app.test",
+    actions: [{ action: "scroll", x: 100, y: 100, delta: -240 }],
+  })
+  assert.equal(ok.actions.length, 1)
+  for (const bad of [
+    [{ action: "scroll", x: 1, y: 1, delta: 0 }],
+    [{ action: "scroll", x: 1, y: 1, delta: 1201 }],
+    [{ action: "scroll", x: 1, y: 1, delta: -1201 }],
+    [{ action: "scroll", x: 1, delta: 120 }], // missing y
+  ]) {
+    assert.equal(tryParseToolArgs("host_computer", { task: "t", app: "win.app.test", actions: bad }).ok, false)
+  }
+})
+
+test("host_computer: drag requires both endpoints", () => {
+  const ok = parseToolArgs("host_computer", {
+    task: "t",
+    app: "win.app.test",
+    actions: [{ action: "drag", x: 10, y: 10, x2: 200, y2: 200 }],
+  })
+  assert.equal(ok.actions.length, 1)
+  assert.equal(
+    tryParseToolArgs("host_computer", {
+      task: "t", app: "win.app.test",
+      actions: [{ action: "drag", x: 10, y: 10, x2: 200 }], // missing y2
+    }).ok,
+    false,
+  )
+})
+
+// =============================================================================
+// host_computer — Y1 task/target caps (WP4 代码级对抗裁决)
+// =============================================================================
+
+test("host_computer: task at the 4000-char cap passes; 4001 rejected at the schema boundary (Y1)", () => {
+  const ok = parseToolArgs("host_computer", {
+    task: "t".repeat(4000),
+    app: "win.app.test",
+    actions: [{ action: "click", x: 1, y: 1 }],
+  })
+  assert.equal(ok.actions.length, 1)
+  const bad = tryParseToolArgs("host_computer", {
+    task: "t".repeat(4001),
+    app: "win.app.test",
+    actions: [{ action: "click", x: 1, y: 1 }],
+  })
+  assert.equal(bad.ok, false, "task 长度上限收窄 full_preview 尺寸与 re-L2 信息饥饿面")
+})
+
+test("host_computer: click target at the 500-char cap passes; 501 rejected (Y1)", () => {
+  const ok = parseToolArgs("host_computer", {
+    task: "t",
+    app: "win.app.test",
+    actions: [{ action: "click", target: "确".repeat(500) }],
+  })
+  assert.equal(ok.actions.length, 1)
+  const bad = tryParseToolArgs("host_computer", {
+    task: "t",
+    app: "win.app.test",
+    actions: [{ action: "click", target: "确".repeat(501) }],
+  })
+  assert.equal(bad.ok, false)
 })

@@ -27,7 +27,7 @@ $CompanionDir = Join-Path $ProjectRoot "companion"
 $ChromeExtDir = Join-Path $ProjectRoot "chrome-extension"
 $DistDir      = Join-Path $ProjectRoot "dist-package"
 $StagingDir   = Join-Path $DistDir "cmspark-windows-x64"
-$Version      = "0.2.0"
+$Version      = "0.3.0-computer-use"
 
 function Step($n, $total, $msg) {
     Write-Host "[$n/$total] $msg" -ForegroundColor Yellow
@@ -81,7 +81,8 @@ try {
     Ok "TypeScript compiled to dist/"
 
     # esbuild bundle: --external:systray2 so the Go binary is resolved at runtime
-    # from node_modules/systray2 placed alongside the exe in the package
+    # from node_modules/systray2 placed alongside the exe in the package;
+    # --external:onnxruntime-node likewise (WP5 local model runtime, S-2 verified).
     npx esbuild dist/index.js `
         --bundle `
         --platform=node `
@@ -89,9 +90,22 @@ try {
         --external:systray2 `
         --external:canvas `
         --external:pdfjs-dist `
+        --external:onnxruntime-node `
         --outfile=dist/cmspark-agent.js
     if ($LASTEXITCODE -ne 0) { Fail "esbuild bundle failed" }
     Ok "Bundle: dist/cmspark-agent.js"
+
+    # WP5 I2: TinyClick inference worker as a SEPARATE bundle. In SEA mode the
+    # runtime loads it as a sidecar file via eval (see tinyclick-runtime.ts);
+    # onnxruntime-node stays external and is resolved with createRequire at runtime.
+    npx esbuild dist/computer/tinyclick-worker.js `
+        --bundle `
+        --platform=node `
+        --target=node22 `
+        --external:onnxruntime-node `
+        --outfile=dist/tinyclick-worker.js
+    if ($LASTEXITCODE -ne 0) { Fail "esbuild worker bundle failed" }
+    Ok "Bundle: dist/tinyclick-worker.js"
 } finally { Pop-Location }
 
 # ---------------------------------------------------------------------------
@@ -126,8 +140,15 @@ try {
     if (-not (Test-Path "sea-prep.blob")) { Fail "sea-prep.blob not found after generation" }
     Ok "sea-prep.blob generated"
 
-    # Copy node.exe as the base for our exe
-    $NodeExe = (Get-Command node -ErrorAction Stop).Source
+    # Copy node.exe as the base for our exe.
+    # Resolve node.exe specifically — `Get-Command node` may return a node.cmd
+    # shim (e.g. managed runtime wrappers), which postject cannot inject into.
+    $NodeExe = $null
+    foreach ($candidate in @("node.exe", "node")) {
+        $cmd = Get-Command $candidate -ErrorAction SilentlyContinue
+        if ($cmd -and $cmd.Source -like "*.exe") { $NodeExe = $cmd.Source; break }
+    }
+    if (-not $NodeExe) { Fail "Could not resolve a real node.exe on PATH (found only shim wrappers)" }
     $AppExe  = Join-Path $CompanionDir "dist\cmspark-agent.exe"
     Copy-Item $NodeExe $AppExe -Force
     Ok "Copied: $NodeExe -> dist\cmspark-agent.exe"
@@ -181,7 +202,19 @@ try {
 Step 5 6 "Staging distribution package: $StagingDir"
 
 if (Test-Path $DistDir) {
-    Remove-Item $DistDir -Recurse -Force
+    # Use cmd rmdir first — more tolerant of locked files (e.g. debug.log held
+    # by a previous companion process or the Windows Search Indexer).
+    cmd /c "rmdir /s /q `"$DistDir`"" 2>$null
+    if (Test-Path $DistDir) {
+        # Fallback: remove file-by-file, skip locked ones with a warning.
+        Get-ChildItem $DistDir -Recurse -File | ForEach-Object {
+            try { Remove-Item $_.FullName -Force -ErrorAction Stop }
+            catch { Write-Host "  ! skipped locked file: $($_.Name)" -ForegroundColor DarkYellow }
+        }
+        Get-ChildItem $DistDir -Recurse -Directory | Sort-Object FullName -Descending | ForEach-Object {
+            try { Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue } catch {}
+        }
+    }
     Ok "Cleaned previous dist-package"
 }
 New-Item -ItemType Directory -Force $StagingDir | Out-Null
@@ -189,6 +222,10 @@ New-Item -ItemType Directory -Force $StagingDir | Out-Null
 # Core exe
 Copy-Item "$CompanionDir\dist\cmspark-agent.exe" $StagingDir
 Ok "cmspark-agent.exe"
+
+# WP5 I2: TinyClick worker sidecar (SEA eval load; same trust level as the ORT dll sidecar)
+Copy-Item "$CompanionDir\dist\tinyclick-worker.js" $StagingDir
+Ok "tinyclick-worker.js (SEA sidecar)"
 
 # WASM file for sql.js (loaded at runtime via getSqlWasmPath())
 $WasmSrc = "$CompanionDir\node_modules\sql.js\dist\sql-wasm.wasm"
@@ -211,6 +248,17 @@ $SkillsSrc = "$CompanionDir\builtin-skills"
 if (Test-Path $SkillsSrc) {
     Copy-Item $SkillsSrc "$StagingDir\builtin-skills" -Recurse
     Ok "builtin-skills/"
+}
+
+# Windows host-use PowerShell scripts (computer-use). resolveWinScript candidate 0
+# looks in <exe-dir>\host-scripts-win\ — without this, packaged host_read/host_write
+# fail with ENOENT and Windows Hello silently downgrades to manual-nonce.
+$WinScriptsSrc = "$CompanionDir\src\host-use\win\scripts"
+if (Test-Path $WinScriptsSrc) {
+    Copy-Item $WinScriptsSrc "$StagingDir\host-scripts-win" -Recurse -Filter *.ps1
+    Ok "host-scripts-win/ (Windows host-use scripts)"
+} else {
+    Warn "win host-use scripts not found — host_read/host_write will not work in the package"
 }
 
 # systray2 + its full transitive dependency tree.
@@ -240,6 +288,51 @@ foreach ($pkg in $Systray2Packages) {
 }
 if ($anySystray2Ok) { Ok "node_modules/ systray2 + deps (tray support)" }
 else { Warn "systray2 not installed — tray icon will not work" }
+
+# onnxruntime-node (WP5 local model runtime, B7) — whitelist-copy ONLY the
+# target-arch payload: full npm package is 259MB (darwin+linux+win32), the
+# win32/x64 payload is 62MB (4 dll + .node). Anything else never ships.
+$OrtSrc = "$CompanionDir\node_modules\onnxruntime-node"
+if (Test-Path $OrtSrc) {
+    $OrtDest = "$StagingDir\node_modules\onnxruntime-node"
+    New-Item -ItemType Directory -Force "$OrtDest\bin\napi-v6\win32\x64" | Out-Null
+    # package.json + dist/ (compiled JS; package main = dist/index.js — lib/ is
+    # TypeScript source and must NOT ship) + target-arch native payload only.
+    Copy-Item "$OrtSrc\package.json" $OrtDest
+    Copy-Item "$OrtSrc\dist" "$OrtDest\dist" -Recurse
+    Copy-Item "$OrtSrc\bin\napi-v6\win32\x64\*" "$OrtDest\bin\napi-v6\win32\x64" -Recurse
+    if (Test-Path "$OrtSrc\LICENSE") { Copy-Item "$OrtSrc\LICENSE" $OrtDest }
+    $OrtBytes = (Get-ChildItem $OrtDest -Recurse -File | Measure-Object -Property Length -Sum).Sum
+    $OrtMB = [math]::Round($OrtBytes / 1MB, 1)
+    # Size assertion (B7): 62MB payload + dist/package.json — hard budget 70MB.
+    if ($OrtBytes -gt 70MB) { Fail "onnxruntime-node staging ${OrtMB}MB exceeds 70MB budget (expected ~63MB)" }
+    Ok "node_modules/onnxruntime-node win32/x64 payload only: ${OrtMB}MB (budget 70MB)"
+
+    # onnxruntime-common (runtime dependency of onnxruntime-node's dist/) — pure JS,
+    # same copy shape: package.json + dist/ only (lib/ is TypeScript source).
+    $CommonSrc = "$CompanionDir\node_modules\onnxruntime-common"
+    $CommonDest = "$StagingDir\node_modules\onnxruntime-common"
+    if (Test-Path $CommonSrc) {
+        New-Item -ItemType Directory -Force $CommonDest | Out-Null
+        Copy-Item "$CommonSrc\package.json" $CommonDest
+        Copy-Item "$CommonSrc\dist" "$CommonDest\dist" -Recurse
+        Ok "node_modules/onnxruntime-common (dist only)"
+    } else {
+        Fail "onnxruntime-common missing — onnxruntime-node dist/ requires it at runtime"
+    }
+} else {
+    Warn "onnxruntime-node not installed — WP5 local model layer unavailable in this package"
+}
+
+# THIRD_PARTY_NOTICES must ship with the package (W3 §5.5 MIT notice obligation;
+# generated from companion/src/computer/model-license.ts single source of truth).
+$NoticeSrc = "$CompanionDir\THIRD_PARTY_NOTICES"
+if (Test-Path $NoticeSrc) {
+    Copy-Item $NoticeSrc $StagingDir
+    Ok "THIRD_PARTY_NOTICES"
+} else {
+    Fail "THIRD_PARTY_NOTICES missing in companion/ — MIT notice must ship with the package"
+}
 
 # Launch / install scripts
 foreach ($f in @("install.bat", "uninstall.bat", "launch.bat", "launch-hidden.vbs", "README.txt")) {

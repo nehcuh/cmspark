@@ -1,0 +1,159 @@
+# Adversary Review — Capability Token Brief
+> Reviewer: Pi-substitute (independent architect)
+> Date: 2026-07-24
+> Stance: Adversarial. Foundation for next 6-12 months; cheap to fix now.
+
+---
+
+## 1. Restating the brief (to confirm no misread)
+
+cmSpark currently gates every host_computer tool call through a Chrome Side Panel confirmation. Because Side Panel lives in Chrome, each confirmation makes Chrome frontmost, which forces `forceForeground(target)` to race a CGEvent click — and under macOS 26 Tahoe bundle-level TCC (ad-hoc signed daemon) this race is lost often enough that WeChat clicks land on Chrome. The proposed fix is to **shift the permission decision from per-tool × runtime to task-scoped × config-time**: an LLM "compiler" turns the user's natural-language task into a structured YAML capability token (allow / deny / require_approval with app × action × region × condition), the user reviews it once, and a deterministic runtime pattern-matches each action against the token. The brief asks 10 design questions (Q1-Q10), proposes a 6-phase migration (P0-P5), and explicitly invites hole-poking.
+
+I read this as: **the immediate bug is foreground-stealing; the proposed fix is a wholesale permission-model refactor that happens to also solve the bug.** That conflation matters — see §5.
+
+---
+
+## 2. Q1-Q10 answers
+
+### Q1 — Compiler injection risk
+Wrong framing. You cannot "ignore user task semantics beyond action enumeration" — enumeration *is* semantics. The realistic mitigations are layered:
+- (MUST) Compiler LLM operates on a **verb whitelist + per-app verb registry**; outputs outside the registry are schema-invalid (zod rejects pre-display).
+- (MUST) Page-derived content (email body, web page text) is **never fed to the compiler**. Only the user's literal task string. The compiler reasons about *what the user asked*, not what the page told the agent.
+- (MUST) Page-derived content is only seen by the *runtime* LLM, and runtime LLM is bound by the token — it cannot escalate.
+- (b) verb whitelist alone is insufficient: `send_message` is whitelisted, the injection just makes the user ask for it indirectly.
+- (c) user review is necessary but never sufficient — see "review fatigue" §5.
+
+The honest answer: **(b) + (c) + input separation**. The brief's (a) is a non-solution.
+
+### Q2 — Verb enumeration
+Wrong question. The right question is **"what is the closed alphabet the runtime can ever see?"** Anything not in the alphabet is a hard block at the runtime boundary, regardless of token. Pick (c) hybrid but with a hard rule: **generic low-level verbs (`ui_click`, `ui_type`) are the only thing the runtime matcher ever sees**; app-specific verbs are compiler-side sugar that *desugar* to low-level verbs + region predicates before persistence. Otherwise your audit log says "wechat_send_message" and a future refactor silently breaks the semantics. Also: the desugared form is what's canonical for `deny` overlap checks.
+
+### Q3 — Region/resource identification
+No single answer works; pick the **most-specific available signal at runtime** with explicit fallback chain: `AX identifier > OCR text match > semantic label > bounding box`. Coordinates alone (a) is a non-starter for resizable windows. (b) AX is great on macOS but Win UIAutomation coverage is patchy; (c) semantic labels require a per-app region registry (cost); (d) OCR-grep is brittle but cheap. The **token should encode the *predicate*, not the mechanism** — runtime resolves the predicate to whichever signal is live. Concretely: `region: {role: "AXTextField", label: "搜索", ocr_fallback: "文件传输助手"}`. Yes this is more verbose; yes this is correct.
+
+### Q4 — Backward compat with session_trust
+Wrong framing. session_trust is a strict subset of capability token. Keep (b) **coexistence with fallback** for one release cycle, then (a) deprecate. (c) auto-generation is a footgun — auto-generated tokens from loose session_trust entries inherit the exact "one approval → permanent expansion" anti-pattern the paper warns about. Hard NO on (c).
+
+### Q5 — Presentation UX
+(a) natural language + (c) deny/require_approval forward + (d) diff against last similar task. Skip (b) collapsible-tree — research shows users don't expand. Critical addition the brief misses: **show the worst-case action prominently** ("This will let the agent send a message to file_transfer_helper and only that contact"). Users skim; if you don't pin the high-stakes line to the top, review fatigue eats the security gain. Also: a 10-line YAML rendered as 10 bullets is *still* hostile — collapse same-app same-action differing-only-in-region into one row.
+
+### Q6 — Re-compilation triggers
+(d) drift-detect is the right default, but define "drift" tightly: **any action whose `(app, action, region)` triple is not subsumed by an existing token's allow-list (or is explicitly in deny/require_approval)** triggers escalation, not full recompile. (c) time-window is dangerous as a primary mechanism — tokens should expire by wall-clock (`expires_in` already in schema) but should NOT auto-renew by recurrence. (a) every-task is too strict; (b) session-scoped is too loose (a 3-hour session covers a lot of intent drift). Pick (d) + token expiry + per-action escalation.
+
+### Q7 — Tray confirmation sequencing
+**Ship B (Tray) before capability token, on its own, as P0.** The brief's foreground-stealing bug is independent of the permission model — even with capability tokens, *first-time* and *out-of-scope* actions still need confirmation, and that confirmation must not live in Chrome. Doing capability token first defers the bug fix by 2-3 weeks for zero security gain. The brief's (a) is right; (b)/(c) introduce false coupling. Reorder P4 → before P0.
+
+### Q8 — Deterministic execution guarantee
+The line is: **anything whose output determines whether an action executes must be deterministic given the same inputs.** OCR is deterministic (same pixels → same text modulo OCR-version pinning — pin the version). AX-tree walk is deterministic. Heuristics are fine if they're reproducible. The forbidden category is *probabilistic gating*: "LLM judges whether this looks safe" = NO. Note: this means the compiler LLM version is **pinned and hashed** (already in schema, good), AND the OCR / AX libraries must be similarly pinned/attested or audit logs become non-replayable.
+
+### Q9 — Audit log content
+(c) both, but with mandatory per-action record — aggregated summaries without per-action entries are useless for forensics. The per-action entry must include: `(action, app, region_resolved, matched_rule_id, token_id, deny_eval_result, ts, hash_chain_prev)`. The last field matters — see §5 (log tampering).
+
+### Q10 — Compiler LLM down
+(a) fall back to per-tool 4-tier **with a prominent banner** that compiler is degraded and tokens are not in effect. (c) hand-write a token is a power-user escape hatch (paper's AGENTSPEC) — fine to expose via `~/.cmspark-agent/` config but NOT in default UI. (b) hard block is hostile; users will disable the feature. Default = (a); expose (c) as opt-in.
+
+---
+
+## 3. §3.2 Schema critique
+
+**Expressive enough?** Mostly yes for v1. **DSL trap?** Yes, three places.
+
+### Critical
+- **`if:` expression language is unspecified.** `recipient != 'file_transfer_helper'` is raw pseudocode. Without a defined grammar, this becomes TypeScript-in-YAML within two feature requests. MUST: declare a tiny restricted expression language (e.g., `field op literal`, only `==`/`!=`/`in`/`matches`, no arithmetic, no function calls). Document its grammar in EBNF. zod-validate the AST, not the string.
+- **`text_pattern: "*"` is glob but `text_pattern: "hello"` looks like a literal.** Mixed semantics. MUST: separate fields — `text_eq`, `text_glob`, `text_regex`, mutually exclusive.
+
+### Major
+- **No `max_count` / `rate_limit` field.** Paper explicitly calls out "frequency" as a permission dimension. A token that allows `ui_click` indefinitely is indistinguishable from a runaway loop. Add `max_invocations` and `max_per_minute`.
+- **`region` is a string but should be a predicate object** (per Q3 above). As-is, `region: search_box` is unverifiable magic.
+- **No `issued_by` / `signed_by`.** Token is minted by companion but never signed. Any process that can write `~/.cmspark-agent/` can forge one. Add HMAC over canonical-JSON of the token body, keyed by the same `ws_secret` already in use.
+- **`deny: action: delete_*` mixes wildcard at the verb level — fine — but `deny: action: send_*, if: ...` puts the wildcard on a verb that has arguments. Define whether wildcard matches the verb name only or the verb-with-args.**
+
+### Minor
+- `expires_in: 600s` — use RFC3339 absolute `expires_at` instead; relative time is painful across sleep/wake.
+- `compiler_prompt_hash` is good but add `compiler_input_hash` (hash of the exact task string the user typed, before any preprocessing — proves what was actually compiled).
+- `audit.why_allowed_log: true` is a boolean flag on the token itself — that's policy metadata, not audit config. Move audit toggle to companion config, not per-token.
+
+---
+
+## 4. §4 Migration — P0-P5
+
+**Order is wrong.** See Q7: P4 (Tray) should be **P0**, not last. The foreground-stealing bug is the actual user pain; deferring it to "P4 in parallel" means the user lives with the bug for the entire migration. Capability token is a 6-12 month foundation; Tray confirmation is a 1-week fix. Do Tray first, ship value, then refactor permissions.
+
+**Missing phases:**
+- **P-1: Threat model update.** Current `security-policy.ts` HMAC + token model assumes per-tool granularity. Capability token changes the trust boundary (compiler LLM sees user task). Write the threat-model delta doc *before* P0 code.
+- **P2.5: Audit log hash-chaining + rotation.** Otherwise log grows unbounded (see §5) and is tamper-trivial.
+- **P3.5: Privacy disclosure UI.** "Compiler LLM call will send your task description to <provider>." Opt-in for first run; show in tray menu. Without this, you've silently turned cmSpark into a data-exfiltration vector for every task.
+- **P5.5: Token revocation flow.** How does a user *revoke* an active token mid-task? Brief is silent. There's `expires_in` but no `revoke_token` action.
+
+**Risk labels too optimistic:**
+- P1 "Medium — prompt injection risk" should be **High**. Injection at compile time poisons every subsequent action.
+- P3 "Medium — UX design" should be **High**. Review fatigue is a known security failure mode; if users rubber-stamp, the whole model collapses to "auto-approve with extra steps."
+- P5 "Low" should be **Medium**. Removing the 4-tier fallback means any future regression in capability-token land has no safety net.
+
+---
+
+## 5. Blind spots (the actual meat)
+
+### Critical
+
+**B1 — Compiler LLM privacy.** The brief sends the user's task string ("search 文件传输助手 and send hello") to an external LLM provider (DeepSeek/Anthropic). The task string is the user's *private intent*. The current per-tool model never sends intent — only the verb. This is a **regression in privacy posture** that the brief does not mention. Mitigations: (i) on-device compiler model for short tasks; (ii) explicit per-task opt-in with provider disclosure; (iii) redact known PII patterns before send; (iv) at minimum, document data flow in an ADR.
+
+**B2 — Compiler LLM as new attack surface.** The compiler sees user task → emits YAML → user approves → runtime enforces. If an attacker can influence the task string (via clipboard, via injected page content the user copy-pastes, via a malicious skill file that wraps the user's task), they can inject `allow: [{app: "*", action: "*"}]` into the LLM input. Even if zod rejects it, subtler attacks ("broaden allow to reduce user friction") slip through. MUST: (i) compiler system prompt forbids wildcard-app/wildcard-action; (ii) any token with `app: "*"` or `action: "*"` in `allow` is hard-rejected at zod level, no overrides; (iii) compiler input is **task string only**, never page content.
+
+**B3 — Review fatigue quantification.** The brief acknowledges (Q5) that 10-line YAML is hostile but doesn't confront the implication: **if users approve without reading, capability token = auto_approve_dangerous with a fig leaf.** This is worse than the current model because it removes the per-action interruption that *does* sometimes catch mistakes. MUST: instrument approval flow with read-time telemetry; if median review time < 3s, surface a warning. MUST: keep per-action audit logging so post-hoc review is possible even when live review fails.
+
+**B4 — macOS 26 Tahoe bundle-level TCC interaction.** The brief mentions this in §7 constraints but doesn't connect it to the design. The fundamental issue: ad-hoc signed binary means `osascript` Automation TCC attribution is fragile — *every* code change to the daemon resets TCC state (your own memory note `tcc_cdhash_vs_activate.md` confirms this). Capability token doesn't fix this — it just shifts *which* TCC reset breaks you. The fix is either (i) proper Developer ID signing (long-term), or (ii) route Automation calls through a stable signed helper (short-term). Either way, capability token's `app: com.tencent.xinWeChat, action: ui_click` is meaningless if TCC denies the underlying AppleEvent. MUST: capability-token validation must include a **TCC preflight probe** per (app, action) at token-activation time, with clear error if TCC will deny.
+
+### Major
+
+**B5 — Cross-session learning prohibition.** Paper explicitly: "one-time authorization must not be generalized to permanent." The brief's `expires_in: 600s` is good, but there's no language preventing "we saw you approved a similar token yesterday, here's a prefilled one." Add to schema/UX: **token MUST NOT be auto-suggested from prior approvals**; user must explicitly request reuse. Even then, log it.
+
+**B6 — Audit log volume.** Per-action entry at ~200 bytes × ~50 actions/task × ~20 tasks/day = ~200KB/day, ~70MB/year. With hash-chaining (B9) and replay, multiply by 3-4x. MUST: rotate logs (current `history.db` is sql.js — will need retention policy), MUST: separate hot (recent 7 days, queryable) from cold (older, hash-only attestation).
+
+**B7 — Tray (option B) dependency on capability token.** Brief Q7 frames them as parallel. Reality: Tray confirmation needs to render *what* it's confirming. Without capability token, Tray confirms bare verbs ("allow ui_click?") which is useless. So **Tray UI depends on capability token's structured policy** at least minimally — even for the "first-time / out-of-scope" path. This forces a thinner v0 capability token (just enough to render in Tray) to ship alongside Tray, not after.
+
+**B8 — Deny / require_approval precedence is implicit.** Schema lists `allow`, then `deny`, then `require_approval`. Order in YAML does not imply precedence. MUST: explicit evaluation order documented — `deny > require_approval > allow > default-deny`. Currently a reader can't tell what wins when `allow: send_message if recipient=known` overlaps `require_approval: send_message if recipient=unknown`. (They don't overlap by `if`, but a future rule might.)
+
+### Minor
+
+**B9 — Audit log tampering.** No mention of tamper-evidence. A local agent that writes its own audit log can rewrite history. Hash-chain (`hash_chain_prev` field in Q9 answer) gives cheap tamper-detection; not tamper-*prevention* (local attacker owns the box) but enough to catch bugs and casual cover-ups.
+
+**B10 — Skill file as injection vector.** cmSpark has a skill-crafting system; skills can wrap user tasks with templates. A malicious skill could prepend instructions to the user's task before it reaches the compiler. Brief doesn't address. Mitigation: compiler input is **user's typed task verbatim**, never skill-augmented; skill content feeds the runtime LLM, not the compiler.
+
+**B11 — Multi-agent / sub-agent escalation.** `subject: <agent_id>` in schema implies sub-agents exist. No rule prevents a sub-agent from requesting a superset of the parent's token. MUST: sub-agent token scope must be a strict subset of parent (compiler rejects otherwise). This is paper's "continuous control" dimension.
+
+**B12 — No "what did the agent actually do" replay.** Audit log records *matched rules* but not *observable effects* (window that came up, text that got typed). For forensics, a screenshot-per-action (or AX-tree snapshot) at DEBUG log level would help. Optional but flag it.
+
+---
+
+## 6. Verdict
+
+**APPROVE WITH REQUIRED AMENDMENTS**
+
+Direction is correct — capability token is the right abstraction and aligns with the paper. But ship **Tray confirmation (option B) first as P0**; the immediate bug is independent of the permission refactor and users shouldn't wait 2-3 weeks.
+
+### MUST-FIX (blocks ship)
+1. **Reorder migration: Tray (B) → P0, threat-model delta → P-1.** Tray ships in week 1; capability token lands on top.
+2. **Compiler LLM privacy disclosure + opt-in** (B1). Document data flow in ADR; default-on is unacceptable.
+3. **`if:` expression language: define grammar, restrict to literal-comparison AST, zod-validate** (§3 Critical).
+4. **Hard-reject `app: "*"` and `action: "*"` in `allow`** at schema level (B2).
+5. **Token signing** — HMAC over canonical JSON, keyed by `ws_secret` (§3 Major).
+6. **TCC preflight probe** at token activation (B4).
+7. **Deny/require_approval/allow precedence documented explicitly** (B8).
+8. **Read-time telemetry on review UI**; warn if <3s median (B3).
+
+### SHOULD-FIX (before v1 ships)
+- `max_invocations` / `rate_limit` field (§3 Major).
+- `region` as predicate object, not string (Q3).
+- Sub-agent token ⊆ parent token enforcement (B11).
+- Audit log rotation + hash-chaining (B6, B9).
+- Verb whitelist: generic low-level only at runtime; app-specific desugar at compile (Q2).
+
+### NICE-TO-HAVE
+- `compiler_input_hash` field (§3 Minor).
+- Replay screenshots at DEBUG (B12).
+- Cross-session reuse requires explicit user action, never auto-suggested (B5).
+
+---
+
+*End of review.*

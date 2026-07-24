@@ -1,0 +1,435 @@
+• We need perform security review of files in <redacted:path>
+<redacted:path>
+<redacted:path>
+<redacted:path>
+<redacted:path>
+<redacted:path>
+<redacted:path>
+<redacted:path>
+<redacted:path>
+<redacted:path>
+<redacted:path>
+<redacted:path>
+<redacted:path>
+<redacted:path>
+<redacted:path>
+<redacted:path>
+<redacted:path>
+<redacted:path>
+<redacted:path>
+Read docs from parent root, also maybe adversary-kimi-computer-use.txt useful. Read them.We have files and docs. Need answer six questions with critical review. We need produce markdown list critical/major/minor, each with file:line + suggested fix. We need examine details:
+
+  host.swift: NSAppleScript usage. We need assess whether TCC attribution binds to cmspark-host or hijacked by parent. There is nuance: NSAppleScript in-process executes Apple events on behalf of the process. TCC attribution for Automation (kTCCServiceAppleEvents) is generally tied to the code identity of the process that sends the Apple event. Running NSAppleScript within cmspark-host should attribute to cmspark-host binary (its code signing identifier). However parent process could influence via environment? But because binary is ad-hoc signed, no stable identity; any local process could replace/rebuild a binary with same ad-hoc signature? Also DYLD injection? With hardened runtime + library validation, injection limited. Parent can pass CMSPARK_HOST_BIN env to point to a different binary (in index.ts resolveHostBinary). That's TCC hijack: if companion process (Node) is compromised, it can set env to another binary, e.g., attacker-controlled binary named cmspark-host with ad-hoc signature, which when executed gets TCC Automation permission attributed to it, then perform actions. But TCC dialog will show different binary path? The prompt may show "cmspark-host" from different path, but user might not notice. Need mention lack of path validation / signature verification by companion before spawning. The docs said companion should verify SecStaticCodeCheckValidity before spawning, but index.ts doesn't. Also host.swift itself loads .scpt from sibling directory without verifying signature/hash of .scpt. Attacker can replace read-mail.scpt with malicious compiled script; host.swift executes it with same TCC permission. Since .scpt is not signed, this is a code injection. Need fix: embed .scpt in binary or verify signature; bind script path; maybe load from app bundle resources and validate hash/signature. But ad-hoc signature doesn't sign resources. Could embed script as data segment or use swift code to verify SHA256 of .scpt. The docs specify precompiled .scpt + argv injection, but not runtime verification. Critical.
+
+  Also host.swift returns initError message from AppleScript possibly to stderr; could leak script path details.
+
+  Potential TCC attribution: NSAppleScript uses underlying Apple Event manager; on macOS, TCC for Automation is per application (bundle ID/code signing identity). Because the binary is ad-hoc signed, TCC record is tied to the absolute path? Actually for ad-hoc signed binaries, TCC/Security uses code directory hash and possibly path. The prompt may say "cmspark-host" wants to control Mail. If parent launches a different binary, prompt name depends on its Info.plist/bundle identifier; could be same. So parent could hijack by substituting binary. That's critical.
+
+  codesign flags: ad-hoc + runtime + automation entitlement + LV on. Is that enough? Missing: The hardened runtime options include --options runtime; but ad-hoc signed binaries cannot use some entitlements? Actually com.apple.security.automation.apple-events entitlement is allowed with ad-hoc? The automation entitlement requires? I recall entitlement for Apple events can be used with ad-hoc, but might not grant access without notarization? Need verify. Hardened runtime requires library validation (disable-library-validation false means LV ON). However ad-hoc signature cannot be validated by SecStaticCodeCheckValidity? It can: ad-hoc signature is a valid signature, but not anchored to Apple. SecStaticCodeCheckValidity with default will validate ad-hoc? It checks code signature integrity but not a trusted anchor. Should be okay. However the binary is not in an app bundle; Info.plist embedded via __TEXT __info_plist; bundle identifier may not be recognized by TCC? It uses CFBundleIdentifier from embedded Info.plist? Need check. For command-line tools, embedding Info.plist via -sectcreate __TEXT __info_plist makes it visible. TCC should use that. But ad-hoc signed CLI may show "cmspark-host" wants to control Mail. Could be fine.
+
+  Missing entitlement? For reading Mail, automation.apple-events is needed. For library validation, disable false. Also get-task-allow? Ad-hoc signed with runtime not allow debugging? Not needed. But to prevent DYLD environment variables, hardened runtime is enough. However `com.apple.security.automation.apple-events` entitlements require notarization? Let's check from knowledge: Hardened Runtime entitlements include Apple Events; you can use with ad-hoc? In Xcode, the entitlement can be used with ad-hoc signing, but I think Apple Events automation entitlement is one that is "restricted" and requires Developer ID? Actually some entitlements like `com.apple.security.automation.apple-events` are available to any app with Hardened Runtime, but may require notarization for distribution. For local ad-hoc, the entitlement is just in signature. So okay.
+
+  But codesign command doesn't include `--deep` (not needed for single binary), notarization impossible ad-hoc. Missing `--timestamp` etc. Not relevant.
+
+  Potential issue: host-Info.plist uses NSAppleEventsUsageDescription. For CLI tool, the usage description string appears in prompt? Usually for app bundles, the value is shown. For embedded Info.plist in CLI, maybe not; the prompt may just say wants to control Mail. If missing, user sees generic. Fine.
+
+  The binary should also have `com.apple.security.cs.allow-dyld-environment-variables` false? Hardened runtime defaults false. Good.
+
+  Need evaluate build-host.sh: It uses osacompile to produce read-mail.scpt. The source contains hardcoded maxChars 500; index.ts passes --max-chars but host.swift ignores argv beyond subcommand. So params not used; but future argv injection intended. Currently the maxChars argument is silently ignored. This is a bug: host_read params (max_chars) do not affect behavior. Also because host.swift has no validation of argv count beyond subcommand, extra args ignored. Not fatal but boundary issue.
+
+  read-mail.applescript jsonEscape: Uses TID method. Need test mentally. It sets delimiter to "\" then set s to text items of s as string. Wait in AppleScript, if text item delimiters is set to a string, then `text items of s` splits s at delimiter, then `as string` joins using current delimiter. Example: delimiter "\". text items of "a\b" -> {"a","b"}, as string -> join with "\" -> "a\b" unchanged. Then set delimiter to "\\" (two backslashes literal) and apply to s: splits at backslash, joins with double backslash => escapes backslash. Then quote escaping: delimiter "\"" -> split at quote, join with "\""? Actually delimiter "\"" (literal double quote). text items of s as string with delimiter = quote leaves quotes? Wait if delimiter = quote, splitting at quote and rejoining with quote yields original. Then delimiter = "\\\"" (literal backslash-quote) and joining escapes quote. Yes. So order: backslash escape first (correct), then quote, then CR, LF, tab. It does not escape other control chars (0x00-0x08 etc) or line/page separators. But JSON strings also require escaping control chars below space. In mail content, possible NUL? Unlikely but could be injected? `content of m` returns string; AppleScript strings can contain null? Not sure. It also doesn't escape forward slash (not required). It doesn't escape Unicode. JSON allows literal Unicode. Fine.
+
+  But more importantly, TID method fails if the replacement string contains the search delimiter? Let's examine backslash escape:
+  ```
+  set AppleScript's text item delimiters to "\\"
+  set s to (text items of s) as string
+  set AppleScript's text item delimiters to "\\\\"
+  set s to (text items of s) as string
+  ```
+  First line delimiter = "\" (single backslash). Splits on backslash. Second join with "\\" (two backslashes). That escapes. Good.
+  Then quote escape:
+  ```
+  set delim to "\""
+  ```
+  Literal double quote. Splits on quote. Join with "\\\"" (backslash quote). Escapes. Good.
+  CR, LF, tab similarly.
+
+  Potential issue: After escaping backslashes, the string now contains sequences like "\\". Then when splitting on quote, no issue. When later splitting on CR/LF/tab, if escape sequences include those chars? No. Order matters: backslash then quote then CR. Suppose original has "\r" (backslash r). First backslash escape turns into "\\r". Then CR split splits between backslash and r? Actually after first escape, string has "\\" then "r". No CR. Then quote none. Then CR split: at char ''? There is none. Then LF none. Then tab none. Result "\\r" -> JSON parses as backslash r, which is not what original? Original "\r" in mail could be literal two chars backslash+r. Escaping backslash yields "\\r", JSON parses to literal backslash+r, matches original. Good.
+
+  Potential issue: What about U+2028 line separator? Not escaped; JSON strings cannot contain U+2028? Actually JSON strings can contain any Unicode except control chars and must escape quotes/backslash. U+2028 is allowed unescaped? In ECMAScript, line separators must be escaped. JSON spec allows any char except control characters (U+0000-U+001F). U+2028 is not control, allowed. But some parsers may fail? Usually okay.
+
+  But TID implementation is generally okay for simple escaping, but not robust against delimiter containing characters used in later steps? Since we escape backslash first, the string no longer contains unescaped backslashes; subsequent replacements use delimiters that are not backslash-escaped, but if replacement string contains later search delimiter? E.g., when escaping quotes, replacement "\\\"" contains backslash then quote. Since backslash escaping already done, no new quote existed, but replacement includes quote. If later we split on CR/LF, fine. The replacement for CR is "\\r" contains backslash but no CR; since backslash escaping step already passed, new backslashes won't be double escaped, correct. So order works.
+
+  However, there is a subtle AppleScript bug: setting text item delimiters to a string with a backslash may treat backslash as escape in AppleScript string literal. The literal `"\\"` in AppleScript source means a single backslash. `"\\\\"` means two backslashes. The script uses that correctly. Good.
+
+  But what about embedded AppleScript line endings? `content of m` could contain line breaks. They are escaped. Good.
+
+  Potential injection into AppleScript source? The script is static, no interpolation of args. maxChars hardcoded. LLM params application/max_chars not injected into source. So host_read params cannot inject into AppleScript source. But max_chars passed as argv is ignored. If future argv injection uses `run script` with parameters, must be careful. But current implementation static .scpt, no user strings inside source. Good. However if attacker replaces .scpt, then arbitrary AppleScript. So script integrity is critical.
+
+  Vault blacklist: Contains 1Password, Keychain Access, SecurityAgent. Missing many: Safari (password autofill), iCloud Keychain (part of Safari), Chrome, Firefox, Brave (password managers), System Preferences/Settings (passwords), Wallet, Notes maybe if contains passwords? Also `com.apple.systempreferences` / `com.apple.Preferences` / `com.apple.settings` (macOS Ventura+ Settings), `com.apple.keychainaccess`, `com.apple.SecurityAgent`, banking apps (e.g., `com.apple.Wallet`, `com.apple.passbook`? Bank apps numerous), password managers (Dashlane, LastPass, Bitwarden, KeePassXC), developer tools with secrets (Keychain), Terminal? The blacklist is inadequate. Also concept of vault should include apps that store credentials or sensitive tokens. Need heuristics.
+
+  Index.ts uses execFile with bin resolved from env or dist. It doesn't validate path, signature, no escaping? execFile handles argv array safely. But path could be a symlink; Node's execFile follows symlink and executes target. If attacker can create symlink at dist/cmspark-host pointing elsewhere, or set CMSPARK_HOST_BIN env to symlink, TOCTOU. The env variable is high risk: if companion process compromised, can set env to malicious binary. Should remove env override or require signature verification. Also dist path is relative to __dirname; if package installed globally or in different location, maybe okay. But no signature verification (SecStaticCodeCheckValidity) before execFile as per docs. The binary could be replaced. Since companion runs under user, an attacker who can write to dist can also replace. Need fix: verify code signature/hash at spawn. Also the binary path should be inside app bundle, not writable. However companion is Node process; if compromised, can also modify code. But at least trust root is companion's own integrity? The docs call for verifying tray binary; also host binary.
+
+  Also timeout 15s. AppleScript could hang, but execFile timeout kills process. Good.
+
+  blacklist.ts uses exact bundle id set. It doesn't include subdomains/wildcards. `isVaultApp` returns boolean. But `application` param is only used for blacklisting; host_read then calls read-mail regardless of application. The application parameter is currently ignored except for blacklist. If LLM passes `application` not Mail, it still reads Mail. This is a boundary bug: host_read should enforce that application is exactly allowed (com.apple.mail) and reject others, not just check blacklist. The param is an attack vector: passing some other app doesn't change behavior but could confuse logging; also if future apps added, no whitelist.
+
+  Also `application` string passed to isVaultApp could be case-insensitive? Bundle IDs are case-sensitive generally. Should normalize? Not critical.
+
+  Need answer 1: host.swift NSAppleScript TCC attribution: In-process execution attributes Automation to cmspark-host binary identity. Parent cannot directly hijack TCC prompt text unless it substitutes binary. Since companion spawns binary, TCC is tied to spawned binary, not parent. However because index.ts uses env override and no signature verification, parent/companion can launch arbitrary binary with same ad-hoc identity. Also because .scpt is unsigned, an attacker can replace script and host executes it under host's TCC grant. So TCC attribution anchor exists but script integrity + binary verification missing. Suggest verify .scpt signature/hash; companion validates host binary; remove env override or restrict to dev; embed script or sign resources.
+
+  Question 2: codesign flags. Enough? Ad-hoc+runtime+automation+LV-on is minimal. Missing: no `com.apple.security.cs.allow-jit` false? Already false. Need `disable-library-validation` false. Maybe need `com.apple.security.cs.allow-unsigned-executable-memory` false. Already. But hardened runtime alone doesn't prevent parent from using `NSTask`? Not. Need also `com.apple.security.automation.apple-events` exactly. Could be insufficient because ad-hoc signed binary with that entitlement triggers prompt? I think yes. But no `com.apple.security.get-task-allow` false (default). For notarized distribution, needed, not for local. Since ad-hoc signature's identity is path-dependent and not globally unique, TCC may prompt each time path changes. Also if user moves binary, TCC resets? For ad-hoc signed CLI, TCC record may be keyed to both code identity and path? If the binary is moved/renamed, the permission may not apply and prompt again. This is a UX/robustness issue. But not security flaw. Also need `--options runtime` is set.
+
+  Potential codesign issue: `host.entitlements` sets `<false/>` for disable-library-validation. But the default if omitted is false. Explicit false okay. However some hardened runtime options require the binary to be in a signed app bundle? No.
+
+  Need mention missing `com.apple.security.cs.allow-dyld-environment-variables` entitlement? Default false, but if you want to explicitly disable, can add false. Also no `com.apple.security.cs.debugger` false. Not critical.
+
+  Also `--force --sign - --options runtime` plus entitlements. Should verify with `codesign --verify` after sign in build script; currently only display. Suggest add `codesign --verify --verbose "${OUTPUT_BIN}"` and maybe `spctl -a`? spctl will reject ad-hoc. So not.
+
+  Question 3: jsonEscape robust? TID method escapes backslash, quote, CR, LF, tab. Missing JSON-required escapes for other C0 control characters (0x00-0x08, 0x0B, 0x0C, 0x0E-0x1F). Also missing U+2028/U+2029 (line/paragraph separators) which cause issues with JSON.parse in some JS contexts? The JSON spec allows them, but many JSON implementations accept. However some parsers may treat them as line breaks. Not fatal but could break JSON.parse. Also possible AppleScript bug: if `content of m` contains the text item delimiter string itself after previous replacements? We think order fine. But `text item delimiters` global setting not restored on error? It restores at end. If script errors before end, oldTids not restored? Actually oldTids local variable; if error occurs before restoration, AppleScript resets TID automatically at end of handler? Not necessarily; but process exits. Not major.
+
+  Need test? Could perhaps write a quick test in AppleScript? But cannot run osascript maybe. Could reason. Maybe there's a known issue: using TID to replace backslash in AppleScript is okay but if source string contains `\\`? Already addressed. Another issue: AppleScript `as string` coercion uses current text item delimiters; if maxChars truncation `text 1 thru maxChars of theBody` may split in the middle of a surrogate pair? AppleScript strings are UTF-16? It counts UTF-16 code units? Could truncate in the middle of a composed character or surrogate, causing invalid UTF-8 output and JSON parse failure. Also result.stringValue in Swift is String; AppleScript string to NSString. If invalid? Might produce replacement char. Need ensure maxChars based on grapheme clusters or at least not break JSON. Minor.
+
+  Question 4: execFile path TOCTOU/symlink. Yes. resolveHostBinary env override. dist/cmspark-host path relative to __dirname. If attacker can write to dist (or set env), can point to malicious binary or symlink. execFile follows symlink. No signature verification. Also Node's execFile resolves path once; between check and exec no explicit check. TOCTOU is inherent. Need fix: hardcode path inside app bundle; verify signature before execFile (SecStaticCodeCheckValidity via native addon or exec `codesign -v`); remove CMSPARK_HOST_BIN in production or require it only in dev with signature still verified. Also set `cwd`? Not relevant.
+
+  Question 5: LLM injection into AppleScript source? Source static, no interpolation. But params passed as argv ignored. The application param only checked against blacklist but not whitelist; max_chars ignored. The actual AppleScript source is static compiled .scpt. So no injection into source. However if script replacement allowed, arbitrary source. Need clarify. Also if later argv injection implemented, must pass args via `NSAppleScript.executeAppleEvent` with descriptor list, not string interpolation; current static script not using args.
+
+  Question 6: vault blacklist missing. Need list additional bundle IDs. MacOS native sensitive apps: 
+  - Password managers: 1Password variants (`com.1password.1password`, `com.1password.1password-launcher`, `com.1password.browser-support`, `com.agilebits.onepassword-osx`), LastPass (`com.lastpass.lastpassmacdesktop`), Dashlane (`com.dashlane.dashlane`), Bitwarden (`com.bitwarden.desktop`), KeePassXC (`org.keepassx.keepassxc`), RoboForm, NordPass, Proton Pass.
+  - Browsers with keychain/credentials: Safari (`com.apple.Safari`), Safari Technology Preview, Chrome (`com.google.Chrome`), Chromium, Edge (`com.microsoft.edgemac`), Firefox (`org.mozilla.firefox`), Brave, Arc, Opera.
+  - System settings/passwords: `com.apple.systempreferences` (macOS <=12), `com.apple.Settings` (macOS 13+), `com.apple.Preferences`, `com.apple.systempreferences`, `com.apple.systempreferences`, `com.apple.keychainaccess`, `com.apple.SecurityAgent`, `com.apple.authenticatorcored`, `com.apple.otaprofile`, Wallet (`com.apple.Passbook`, `com.apple.wallet`).
+  - Finance/banking: generic impossible; use heuristics. But can add known: PayPal, banking apps if known. Also `com.apple.stocks`, `com.apple.finance`? Not vault.
+  - Crypto/seed: Ledger Live, MetaMask (browser extension not app), etc.
+  - Terminal/SSH key apps: `com.apple.Terminal`, `com.googlecode.iterm2`, `net.shipofools.Cursor`? Terminal can contain credentials in scrollback. But maybe too broad.
+  - Mail/Notes/Finder are not vault but sensitive. Already targeted by host_read. The question specifically asks beyond Mail/Notes/Finder which native apps should be blacklisted. The answer: password managers, browsers, System Settings/Keychain/Wallet, terminal apps, any app with secure text fields per docs (AXSecureTextField heuristics). Suggest heuristics over bundle list.
+
+  Need also review `host.swift` findScript: It searches `host-scripts` directory next to executable. If executable path is a symlink, `CommandLine.arguments[0]` may be symlink path; deleting last path component uses symlink's directory. If attacker changes symlink, script dir changes. Need resolve real path. Also fileExists check vulnerable to race; but less critical.
+
+  Also host.swift prints error messages including `msg` from AppleScript error; `msg` could contain data from Mail? If script fails, error message may leak. But only to stderr. Minor.
+
+  Potential critical: `read-mail.applescript` is compiled with `osacompile`. osacompile could be influenced by environment? The build script runs osacompile with source file; if source file compromised, compiled script is malicious. Need sign/verify script at runtime. Also precompiled `.scpt` is not a code signature target; host.swift loads and executes it. So it's a second code source. This violates "LLM only produces JSON args not source" but not the precompiled script integrity. Critical.
+
+  Need also mention that `host.swift` doesn't validate subcommand whitelist? It only has read-mail. Fine.
+
+  Need also consider that host binary uses `NSAppleScript(contentsOf:)` and `executeAndReturnError`. NSAppleScript can run handlers with parameters via `executeAppleEvent`. Since no parameters passed, script hardcodes maxChars. But if later argv injection, parameters should be passed as descriptors, not string concatenation. Current code doesn't accept parameters. For Phase 0, OK but planned. Mention.
+
+  Need also check that `host.swift` uses `print(out)` and then `exit(0)`. Fine.
+
+  Need also think about codesign entitlements: Is `com.apple.security.automation.apple-events` sufficient to send Apple events to Mail? Yes. But for reading Mail, no additional Mail-specific TCC? Mail is controlled by Automation permission. The script `tell application "Mail"` triggers Automation. Good.
+
+  What about `NSAppleEventsUsageDescription` in host-Info.plist. For command-line tools, TCC prompt might not display the usage description because there's no bundle? Actually macOS can read Info.plist from embedded section; usage description may appear. We should verify; if absent, prompt generic. Minor.
+
+  Need also assess hardened runtime with ad-hoc: Does `codesign --options runtime` with ad-hoc sign reject entitlement `com.apple.security.automation.apple-events`? I think it doesn't. But some Apple docs say "To use the Apple Events entitlement, you must code sign your app with a Developer ID and notarize it"? Actually for App Store, Apple Events entitlement requires justification. For local development/ad-hoc, you can add entitlement. TCC will still enforce user consent. The binary with hardened runtime and automation entitlement can send Apple events; if not entitled, Apple events blocked by runtime. So it's necessary.
+
+  But one major issue: ad-hoc signed binaries with hardened runtime can't be debugged etc. Fine.
+
+  Need also examine `build-host.sh`: It compiles Swift with `-O` optimization. Fine. It uses `osacompile` which may produce a bundle? Actually osacompile -o file.scpt creates compiled script file. Good.
+
+  Potential issue: `osacompile` in build script may produce AppleScript with the same code; if source contains comments with sensitive instructions, compiled. Fine.
+
+  Need maybe read parent package.json? Not necessary but could note build outputs. Maybe check index.ts types. Read types.We have enough context. Need provide final answer in Chinese, as user's language. Must be concise but thorough. We need answer the 6 questions and list critical/major/minor issues with file:line + suggested fix. Need be adversarial.
+
+  Let's structure final response:
+  - Brief executive summary (one paragraph).
+  - Direct answers to 6 questions.
+  - Markdown findings table/list categorized critical/major/minor, each with file:line and fix.
+  - Maybe cross-reference docs.
+
+  Need ensure line numbers accurate. Let's verify file line numbers we cite:
+  - host.swift line 16-25 findScript, line 35 NSAppleScript init, line 40 execute, line 44-48 error handling, line 53-62 argv. index.ts line 12-16 resolveHostBinary, line 18-22 hostRead, line 26 execFile, line 30 JSON.parse. build-host.sh line 24 osacompile, line 34-42 swiftc, line 51-56 codesign. read-mail.applescript line 1-33 jsonEscape, line 36 maxChars hardcoded, line 42-54 tell Mail, line 56 return. blacklist.ts line 1-6 set. host.entitlements line 5-12. host-Info.plist line 15-16.
+
+  Potential line numbers after edits may differ; cite current.
+
+  Need answer Q1 precisely: "host.swift 的 NSAppleScript 用法是否真的把 TCC attribution 绑在 cmspark-host 上？还是会被父进程劫持？" Answer: TCC attribution is to the spawned cmspark-host process's code identity, not parent. However parent can hijack by replacing the binary or setting CMSPARK_HOST_BIN to a different binary, because companion does not verify signature/path. Also .scpt replacement lets attacker run arbitrary AppleScript under cmspark-host's TCC grant. So the attribution anchor is real but brittle due to missing binary/script integrity verification. Fix.
+
+  Q2: "codesign flag 是否足够（adhoc+runtime+LV-on+automation entitlement）？缺什么？" Answer: Minimal technical flags are present for hardened runtime and Automation. But insufficient as a trust boundary because ad-hoc identity is not anchored and can be impersonated by any locally built binary with same identifier/path. Missing: companion-side `SecStaticCodeCheckValidity` verification before spawn (per round2 docs); resource (.scpt) not signed/verified; no restriction on env var; no notarization. Also missing explicit `com.apple.security.cs.allow-dyld-environment-variables` false (default, but better explicit) and `get-task-allow` false. Build script should run `codesign --verify`. For production, Developer ID/notarization needed.
+
+  Q3: jsonEscape robust? TID method escapes quote/backslash/CR/LF/tab. It is not robust against C0 control chars and line/page separators; could produce invalid JSON or break parse. Also TID approach is fragile if order wrong; truncation can split surrogate pairs. Fix: escape all U+0000-U+001F, U+2028/U+2029; consider constructing JSON via `Foundation`/`NSJSONSerialization` in Swift rather than AppleScript string concat. Or use System Events? Better: perform escaping in Swift after receiving raw strings from AppleScript, using JSONEncoder. Also pass values as list instead of building JSON string in AppleScript.
+
+  Q4: execFile path TOCTOU/symlink attack. Yes. `resolveHostBinary` reads env and constructs relative path; no signature verification. Attacker can symlink/swap binary or set env. Fix: remove env override in production; hardcode path inside signed app bundle; verify code signature (SecStaticCodeCheckValidity or `codesign -v`) immediately before execFile; restrict script dir permissions; resolve realpath; use app bundle resource.
+
+  Q5: LLM injection into AppleScript source? Currently source static compiled .scpt, no interpolation, so params cannot inject into source. However `application` is not whitelisted (only blacklist), and `max_chars` is ignored. The actual source is static, but if .scpt is replaced, arbitrary source. Future argv injection must use descriptors, not string concat. Answer: no injection through params into source, but script integrity is the real risk.
+
+  Q6: blacklist incomplete. Need list missing categories and bundle ids. Suggest heuristics. Also note exact-match blacklist is easy to bypass with alternative bundle IDs or app variants; should combine with heuristics (AXSecureTextField, window title, app category). Add password managers, browsers, System Settings/Keychain/Wallet, Terminal/SSH apps, crypto wallets.
+
+  Let's think about the jsonEscape correctness more deeply. We may want to create a test. We can run osacompile and test? We can use `osascript` if available. But not necessary; we can reason. Let's maybe test via Bash to see if AppleScript TID behaves for tricky string. But final answer can mention missing control chars. We can run a quick osascript if available to test jsonEscape. However we are in worktree; we can test the exact function. It might help catch subtle bug. Let's do a quick Bash with osascript to test escaping string with quotes and backslash and newline. But need to define handler; we can copy function and call. Use `/usr/bin/osascript`. Let's test./usr/bin/osascript
+a\"b
+	c
+The output shows a\\"b then CR LF tab c. The backslash escaping turned a single backslash into double? Wait original input: `"a\\\""b"`? In shell quoting, hard. We requested string "a\\\"b" which is a, backslash, quote, b? Actually osascript -e string with escaping may have produced a literal backslash and quote. Output: `a\"b` (characters a, backslash, quote, b). The function should escape backslash -> `\\` and quote -> `\"`. Input contains a backslash and a quote adjacent. After backslash escape: backslash becomes `\\`, quote remains quote. Then quote escape: each quote becomes `\"`, resulting `\\\"`? Let's compute: input chars: a, \, ", b. Step1: delimiter "\" (backslash). Splitting at backslash yields items {"a", "\"b"}? Actually splitting at backslash: string a\"b -> parts: "a", "\"b". Join with "\\" -> "a" + "\\" + "\"b" = a\\"b (a, backslash, backslash, quote, b). Step2: delimiter "\"" (quote). Split at quote: items {"a\\", "b"}. Join with "\\\"" (backslash quote) -> a\\ + \" + b = a\\\"b (a, \, \, ", b). That output appears as `a\"b`? Terminal display may show two backslashes before quote. Indeed output line `a\"b`: there are two backslashes? In raw maybe `a\\\"b`. Let's print with od.0000000    a   \   "   b  \r  \n  \t   c  \n                            
+0000011
+Wait output is a, backslash, quote, b, CR, LF, tab, c. But we expected escaped backslash to be two backslashes and quote escaped to backslash-quote, resulting a\\"b (two backslashes + quote). Let's re-evaluate our test string. We passed `"a\\\""b"` which in shell double quotes? Actually we used single quotes around entire osascript -e argument. Inside single quotes, `\\` is two backslashes and `\"` is backslash quote. So AppleScript string literal `"a\\\""b"` means: in AppleScript, `"a\\\"b"`? AppleScript string escapes: backslash has no special meaning except within `\"`? Actually AppleScript string escapes: to include a quote, use `\"`. To include a backslash, use `\\`. So `"a\\\""b"` contains a, backslash, quote, b? Let's parse: after opening quote, a, then `\\` -> backslash, then `\"` -> quote, then b. So yes input is a, backslash, quote, b. After jsonEscape, we expected a, backslash, backslash, backslash, quote, b? Let's compute manually using TID:
+  Step A (escape backslash): delimiter "\" (single backslash). Input chars a,\,",b. Splitting on backslash: items = ["a", "\"b"] where second item starts with quote then b. Join with "\\" (two backslashes): result = "a" + "\\" + "\"b" = a, \, \, ", b.
+  Step B (escape quote): delimiter "\"" (quote). Input a,\,\,",b. Splitting on quote: before quote = a, backslash, backslash; after = b. Items = ["a\\", "b"]. Join with "\\\"" (backslash quote): result = "a\\" + "\\\"" + "b" = a, \, \, \, ", b. That is three backslashes then quote. But output shows only one backslash then quote. Something is off. Maybe osascript interpreted our source string differently: maybe input string actually was `a\"b` (a, backslash, quote, b) and function output `a\"b` (a, backslash, quote, b) i.e., no escaping occurred? Wait output from od is a, backslash, quote, b. That is same as input if input was a, backslash, quote, b. Did jsonEscape fail to escape? Let's test simpler: input just backslash.0000000    [   \   ]  \n                                                
+0000004
+Input single backslash, output single backslash. That means our test didn't escape. Maybe because the source code literal `"\\"` for delimiter means single backslash, and `"\\\\"` means two backslashes. In function, first delimiter set to `"\\"` should be single backslash. Then `text items of s` split on backslash. Join with `"\\\\"` (two backslashes). That should double. But our result shows no doubling. Why? Could be AppleScript's text item delimiters cannot be a backslash? Or because `text items of s as string` when delimiter equals a single backslash and s is single backslash produces empty items? Let's test with a simpler direct script.0000000    [   \   \   ]  \n                                            
+0000005
+That works: input single backslash -> output double. So our function should double. Why earlier test didn't? Maybe because the input string in our test already had double backslashes due to shell quoting? Let's test function with input from variable containing one backslash. In the earlier test, we wrote `"a\\\""b"`; perhaps AppleScript interpreted `\"` as a quote (ending string?) Wait in AppleScript, inside a string literal, backslash is used to escape quotes, but to represent a backslash you double it. The literal `"a\\\""b"` may be invalid? Let's examine: `"a\\\""b"` characters after opening quote: a, \, \, \", b? Actually `\"` is an escaped quote, so sequence `\\\""` means `\\` (literal backslash) then `\"` (literal quote). So string content: a, backslash, quote, b. Good. Then function should double backslash. But output had one backslash. Let's test exact function call with that string but simpler.0000000    [   a   \   "   b   ]  \n                                    
+0000007
+Interesting! The function with input "a\\\"b" returns unchanged? Wait output is [ a \ " b ]. That means no escaping. But the simple script for single backslash doubled. The difference: after backslash replacement, we then do quote replacement. Let's trace: input a, backslash, quote, b. Step backslash escape: should become a, backslash, backslash, quote, b. Step quote escape: delimiter quote; string now contains a, \, \, ", b. Splitting at quote: before quote = a, backslash, backslash. after quote = b. Join with backslash-quote: a, backslash, backslash, backslash, quote, b. Output should be three backslashes then quote. But output is one backslash then quote. So perhaps the backslash replacement did NOT happen, because `text items of s as string` with delimiter single backslash didn't split? Wait earlier direct script with s="\\" doubled. Why with s containing a backslash and quote didn't? Let's test direct.0000000    [   a   \   "   b   ]  \n                                    
+0000007
+Direct backslash escape on "a\\\"b" does not double backslash! That's weird because s="\\" doubled. Maybe `text items of s` when s contains a backslash followed by quote doesn't split because the backslash is interpreted as escaping the quote in the delimiter split? In AppleScript, backslash is special? Actually text item delimiters treats the string literally? But maybe backslash in text item delimiters is an escape? Could be AppleScript's text item delimiters uses backslash as escape for special chars? Let's test delimiter backslash on string "a\b" where b not quote.0000000    [   a   \   \   b   ]  \n                                    
+0000007
+For "a\\b" (a, backslash, b), it doubles. For "a\\\"b" (a, backslash, quote, b), it doesn't. This suggests that when splitting on backslash, the occurrence of backslash immediately before a quote is not treated as a delimiter because AppleScript interprets `\"` as escaped quote? Or because the delimiter string `"\\"` (single backslash) is treated as a regex? Actually AppleScript text item delimiters may interpret backslash as escape in the delimiter pattern. So backslash before quote is consumed as escape and not recognized. This is a critical bug! The TID-based backslash escape fails when a backslash precedes a quote. Similarly, maybe quote escape fails when quote preceded by backslash. So jsonEscape is not robust. This is exactly the kind of issue to flag. Let's test the actual script on a string with quote after backslash to confirm. The earlier test indeed showed no escape. Let's also test with input containing literal backslash-quote sequence like `\"` in email. Then jsonEscape leaves backslash unescaped, producing `\"` in output which JSON parser interprets as escaped quote, breaking string. So this is a major/critical flaw.
+
+  Let's test the full jsonEscape function on a string that contains `\"` (backslash quote). We did. It returns `\"`. That is invalid JSON if intended literal. Let's also test a string with quote alone: input `a"b`.0000000    [   a   "   b   ]  \n                                        
+0000006
+Input a"b returns a"b unescaped? Wait output shows quote unchanged. So jsonEscape failed to escape quote? But earlier direct test for single quote replacement should work. Let's test quote replacement alone.0000000    [   a   "   b   ]  \n                                        
+0000006
+Quote replacement also not working? But maybe our test string doesn't contain a quote? Wait `set s to "a\"b"` in AppleScript: `\"` is escaped quote, so s contains a, quote, b. Yes. Setting delimiter to `"\"` (escaped quote) = quote. Then split. It should escape. But output unchanged. Maybe setting text item delimiters to a quote doesn't work because AppleScript treats delimiter string specially? Let's test with simpler: replace "x" with "yy".0000000    [   a   x   b   ]  \n                                        
+0000006
+Even replacing "x" with "yy" didn't work. Why? Because after first setting delimiter to "x" and coercing to string, it rejoined with "x" (since delimiter still x), leaving unchanged. Then set delimiter to "yy" and coerce again, but s is now "axb", text items? Wait the idiom is:
+  ```
+  set oldTids to AppleScript's text item delimiters
+  set AppleScript's text item delimiters to "x"
+  set theList to text items of s
+  set AppleScript's text item delimiters to "yy"
+  set s to theList as string
+  ```
+  We must capture text items before changing delimiter. In our tests, we set delimiter to search, then `set s to (text items of s) as string` which rejoins using current delimiter, so no change. Then set delimiter to replacement and `set s to (text items of s) as string` which splits at replacement? Actually after first join, s unchanged; text items of s using replacement delimiter produce same. So the idiom in the source is wrong? Wait source code does:
+  ```
+  set AppleScript's text item delimiters to "\\"
+  set s to (text items of s) as string
+  set AppleScript's text item delimiters to "\\\\"
+  set s to (text items of s) as string
+  ```
+  This is exactly the wrong order if they intend to split on search then join on replacement. Because after first line, delimiter is search. Then `text items of s as string` joins using search delimiter -> unchanged. Then set delimiter to replacement, `text items of s as string` splits using replacement? Actually text items of s uses current delimiter to split. If s is unchanged and delimiter is replacement, then text items will be whole string (since replacement not in s), then join with replacement -> unchanged. So no replacement at all! But our simple backslash test showed doubling? Wait the simple script:
+  ```
+  set s to "\\"
+  set delimiters to "\\"
+  set itemsList to text items of s
+  set delimiters to "\\\\"
+  set s2 to itemsList as string
+  ```
+  Here we captured text items BEFORE changing delimiter. That is correct. The source code does NOT capture text items; it coerces immediately. So source jsonEscape does nothing! Wait then our earlier test of source function returned unchanged. Yes. The source code is broken: it fails to escape. But the earlier test with source on input containing CR/LF maybe also didn't escape. We saw output with CR/LF tab as raw? The first test output `a\"b` with raw CR/LF/tab? Actually first test output line showed `a\"b` then line breaks and tab; raw likely a, backslash, quote, b, CR, LF, tab, c. So no escapes. So jsonEscape is completely ineffective because of the wrong idiom. That's a critical finding. Let's verify by testing the exact source function on input with quote and newline. It returned a"b raw. Yes. So the jsonEscape function in read-mail.applescript is broken. It doesn't escape anything. Wait maybe AppleScript has a subtle behavior: setting delimiter then `(text items of s) as string` could still split? Let's test exactly source style with x.0000000    [   a   x   b   ]  \n                                        
+0000006
+Confirmed: source style does nothing. The correct idiom is to assign `text items of s` to a variable before changing delimiter. So jsonEscape is a no-op. This is a critical bug: malicious mail with quotes/newlines can break JSON and possibly inject. We need to flag. Let's also verify source function leaves quotes unescaped causing JSON parse failure. Input string `foo"bar` would produce `{"sender":"foo"bar",...}` invalid. Also newline produces literal newline inside JSON string -> invalid. So this is fatal.
+
+  But wait the source's comment says order matters backslash first. But implementation is wrong. Did they intend the idiom differently? In AppleScript, `text items of s as string` uses current delimiter both for split and join. If you set delimiter to old then coerce, no change. Then set to new and coerce, splits at new? No, s doesn't contain new. So no change. Therefore jsonEscape is identity function. Critical.
+
+  Need recommend fix: Don't do JSON escaping in AppleScript. Instead return an AppleScript list/record and let Swift use `NSAppleScript` result coercion or JSONEncoder. Or if doing in AppleScript, fix idiom: capture text items, then change delimiter, then coerce. But better avoid manual escaping.
+
+  Also even if fixed, the TID method has backslash-before-quote issue as we discovered? That may be due to wrong idiom; let's test correct idiom with backslash-quote.0000000    [   a   \   \   \   "   b   ]  \n                            
+0000011
+With correct idiom, backslash-quote input becomes three backslashes+quote as expected. But the source uses wrong idiom => no escaping. So primary bug is wrong idiom. Even if fixed, TID escaping is fragile. We can present both.
+
+  We should also check if `read-mail.applescript` uses correct idiom? It does not assign text items to variable. So no-op. Critical.
+
+  Let's also consider whether our test string input `a\\\"b` is exactly `"a\\\"b"` in source. In read-mail, `content of m` returns string. jsonEscape receives s. The function is broken. Good.
+
+  Now need also evaluate NSAppleScript result.stringValue: If the AppleScript returns a JSON string with unescaped quotes/newlines, result.stringValue will return the string as AppleScript string; Swift prints it. JSON.parse will fail. That matches.
+
+  Need maybe run build to confirm? Not needed.
+
+  Now we can produce final answer. But before final, let's think about codesign verification. Could also mention missing `codesign --verify` in build script. Also missing `spctl` not relevant.
+
+  Let's also examine host-use/index.ts at project root? It loads darwin. Fine.
+
+  Need maybe check host-use/darwin/index.ts relative path: `path.resolve(__dirname, "../../..")`. __dirname is companion/src/host-use/darwin. Resolve to project root. Then dist/cmspark-host. If running from compiled JS in dist? The compiled output path may differ. But for dev, okay. Could mention if project is packaged (SEA?), path may be wrong. But not critical.
+
+  Potential issue: `execFileAsync` timeout: If AppleScript hangs waiting for Mail, process killed. But kill may leave NSAppleScript running? execFile kills child process; okay.
+
+  Need mention that host_read params `application` is only used for blacklist and not validated as allowed. This means LLM could request `application: "com.apple.finder"` but the tool still reads Mail, causing confusion and possible policy bypass (e.g., logging says Finder but reads Mail). Should whitelist to exactly `com.apple.mail`.
+
+  Need also mention `maxChars` is passed to binary but binary ignores it (host.swift doesn't parse). The hardcoded 500 in AppleScript means user/LLM cannot control; not a security issue but a boundary mismatch. However if later argv injection, need validate maxChars range (tool schema limits 1-2000 maybe). The current code passes arbitrary but ignored. Major? Minor.
+
+  Need also mention `application` string could be used for log injection? Not critical.
+
+  Now, the user asked "重点不是 nice-to-have，而是 **致命缺陷、安全漏洞、签名/TCC/AppleScript argv 边界错误**". So we should focus.
+
+  Let's also consider whether `host.swift` using NSAppleScript in-process means the AppleScript runs in host process; if host crashes, okay. But the script can `tell application "System Events"` if replaced. TCC Automation for Mail does not allow System Events? Actually Automation permission is per target app; if script tells System Events, a separate TCC prompt for System Events would appear. But if user previously allowed cmspark-host to control System Events (not in Phase 0), then malicious script could. Since Phase 0 only reads Mail, user may only allow Mail. But if script replaced to ask System Events, user would get new prompt. So not silent. However if user has already allowed from prior/other, then malicious script can exploit. Still, script integrity is critical.
+
+  Need also mention that `NSAppleScript` with precompiled `.scpt` can be decompiled? Not relevant.
+
+  Now answer Q1: TCC attribution to cmspark-host yes, but parent can hijack via env/path because no verification. Also .scpt replacement hijacks TCC grant. So the answer: It is bound to the binary, but the current spawn path doesn't protect that anchor.
+
+  Q2: flags enough? The flags enable hardened runtime and entitlement. But they are not enough as a security boundary because ad-hoc signature lacks identity anchoring; companion doesn't verify. So technically enough to trigger prompt, not enough to prevent swap. Also missing resource signing and env controls.
+
+  Q3: jsonEscape broken. Provide file line and fix. Also missing control chars.
+
+  Q4: TOCTOU yes. Provide line and fix.
+
+  Q5: injection into source? No, because source static and params ignored. But app param not enforced. However .scpt replacement allows arbitrary source. So answer nuance.
+
+  Q6: blacklist incomplete. Provide list.
+
+  Need maybe mention `host.swift` line 16-25 uses `CommandLine.arguments[0]` without resolving symlinks and `fileExists` race. Minor.
+
+  Need maybe mention `host.swift` line 35 loads .scpt via `NSAppleScript(contentsOf:)` without sandbox validation. Critical.
+
+  Need maybe mention `build-host.sh` line 51-56 codesign but doesn't verify with `codesign --verify`. Minor/major.
+
+  Need maybe mention `index.ts` line 30 JSON.parse with unvalidated output; if jsonEscape broken, parse fails; no fallback. But not security.
+
+  Need maybe mention `blacklist.ts` line 1-6 no heuristics; should also block by AXSecureTextField. Major.
+
+  Let's also check `host.entitlements`: It sets `disable-library-validation` false and `allow-unsigned-executable-memory` false. Good. But missing `com.apple.security.automation.apple-events`? It is present. Missing `com.apple.security.cs.allow-dyld-environment-variables` false. Not critical. Missing `com.apple.security.cs.debugger` false. Not.
+
+  Could hardened runtime with `--options runtime` plus ad-hoc signature and `automation.apple-events` actually be rejected by macOS? On Sonoma, ad-hoc signed binaries can hold the entitlement. The bigger issue is that TCC records for ad-hoc signed binaries are not portable and can be spoofed. But not a fatal flaw for Phase 0 spike.
+
+  Need maybe mention that `host-Info.plist` line 15-16 `NSAppleEventsUsageDescription` is for app bundle; in a CLI binary embedded via __TEXT __info_plist, the prompt may not display this string, resulting in a generic prompt that reduces trust. Minor.
+
+  Now craft final response in Chinese. Use markdown.
+
+  Need be precise with file:line. Use absolute or relative? User asked file:line. Use relative from project root: `companion/src/host-use/darwin/read-mail.applescript:1`. Good.
+
+  We should include a "结论" section answering 6 questions, then findings list.
+
+  Let's draft.
+
+  We can also reference docs: round2 says companion must verify code signature before spawning; current implementation ignores that. Mention.
+
+  Need note that the review is adversarial and many issues are fixable.
+
+  Let's formulate each finding:
+
+  Critical:
+  1. `read-mail.applescript:1-33` jsonEscape is broken: sets delimiter then immediately coerces to string without saving `text items`, so it is a no-op; quotes/CR/LF/tabs/backslashes are not escaped, causing invalid JSON and allowing JSON injection from mail content. Fix: either return an AppleScript record/list and serialize in Swift with JSONEncoder, or fix idiom: `set theItems to text items of s` before changing delimiter; additionally escape C0 controls/U+2028/U+2029. Recommendation: do not hand-roll JSON in AppleScript.
+  2. `host.swift:16-25,35-40` and `index.ts:12-16,24-29` The Swift binary loads an unsigned `.scpt` from a sibling directory and the companion spawns the binary from an env-controllable path without code-signature verification. An attacker who can replace the script or set CMSPARK_HOST_BIN can execute arbitrary AppleScript under the TCC grant already given to cmspark-host. Fix: embed the script in the signed binary or verify SHA256/signature at load; companion must call SecStaticCodeCheckValidity (or `codesign -v`) before execFile and ignore CMSPARK_HOST_BIN in production.
+  3. `index.ts:12-16,24-29` and `host.swift:1-6` TCC attribution is to the spawned cmspark-host process, but the parent can hijack the anchor because the env var and path are not verified. Fix: hardcode absolute path inside signed app bundle, verify signature, remove env override.
+
+  Maybe combine critical 2 and 3. But need separate points.
+
+  Major:
+  4. `index.ts:18-22` host_read only checks blacklist; it doesn't whitelist `application` to `com.apple.mail` and ignores `maxChars`. LLM can pass arbitrary application and the tool still reads Mail. Fix: enforce exact allowed application(s), validate and forward maxChars to the host (or reject if not supported).
+  5. `blacklist.ts:1-10` vault blacklist is tiny and exact-match only; trivially bypassed by browser password managers, System Settings/Keychain, alternative bundle IDs, or heuristics. Fix: add categories (password managers, browsers, System Settings/Keychain/Wallet, terminals, crypto wallets) and implement heuristics (AXSecureTextField, window title, URL).
+  6. `host.swift:16-25` `CommandLine.arguments[0]` not realpath-resolved and `FileManager.fileExists` is racy; findScript follows symlink directory. Fix: use `Bundle.main` or realpath; load script from signed bundle resources; avoid fileExists race.
+  7. `build-host.sh:51-56` codesign command doesn't include verification step; ad-hoc signature integrity isn't checked in CI. Fix: add `codesign --verify --verbose` after signing; also add `spctl -a` (will fail ad-hoc, document).
+
+  Minor:
+  8. `read-mail.applescript:36,50-52` `maxChars` hardcoded to 500 and `argv` injection not implemented; `index.ts:26` passes `--max-chars` but host.swift ignores it. Fix: either remove the param from the wire or parse argv in host.swift and pass to script via `executeAppleEvent` descriptors.
+  9. `read-mail.applescript:50-52` `text 1 thru maxChars of theBody` counts UTF-16 code units and can split surrogate pairs or combining characters, producing invalid UTF-8 and breaking JSON. Fix: truncate in Swift using `String` grapheme-cluster aware or `prefix(_:)`.
+  10. `host-Info.plist:15-16` `NSAppleEventsUsageDescription` in an embedded CLI Info.plist may not be displayed by TCC prompt; users see generic message. Fix: verify prompt text in testing; if not shown, package as .app bundle.
+  11. `host.swift:41-48` Error messages from AppleScript are written to stderr unfiltered; may leak script paths or partial mail content on failure. Fix: sanitize/limit error output; avoid echoing `msg` directly.
+  12. `host.entitlements:5-12` Could add explicit `com.apple.security.cs.allow-dyld-environment-variables` false and `get-task-allow` false to make hardened runtime policy obvious; not strictly needed because defaults are false.
+
+  Maybe also mention `index.ts:30` JSON.parse could throw with raw output; need catch. Minor.
+
+  Need be careful: The user asked "请用 markdown 列出 critical / major / minor 问题，每条带 file:line + 建议修复". So final should have a list. Also answer six questions.
+
+  Let's produce final in Chinese.
+
+  But we also need consider if the user expects us to not modify files, just review. Yes. So no file edits. We can mention if they want, we can implement fixes.
+
+  Now final response. Ensure language Chinese. Use code paths and line numbers. Keep concise.
+
+• # Phase 0 computer-use spike — adversarial review
+
+  > 审查范围：`companion/src/host-use/darwin/` 下的 Swift binary、构建脚本、AppleScript、TS 调用入口与黑名单。  
+  > 立场：只看**致命缺陷 / 安全漏洞 / 签名-TCC-argv 边界错误**，不做 nice-to-have 点评。
+
+  ---
+
+  ## 先回答 6 个核心问题
+
+  ### 1. `host.swift` 的 NSAppleScript 是否真的把 TCC attribution 绑在 `cmspark-host` 上？还是会被父进程劫持？
+
+  **NSAppleScript 在进程内发 Apple event，TCC Automation 的归因对象确实是当前进程 `cmspark-host`**，不是 `osascript`，也不是 Node 父进程。但当前实现**没有保护好这个归因锚点**：
+
+  - `index.ts` 通过 `CMSPARK_HOST_BIN` 环境变量或相对路径 `dist/cmspark-host` 直接 `execFile`，**没有校验签名/路径**（`host-use/darwin/index.ts:12-16,24-29`）。
+  - `host.swift` 从可执行文件同级的 `host-scripts/` 加载**未签名的 `.scpt`**（`host.swift:16-25,35-40`）。
+
+  结果：攻击者只要能替换 `.scpt` 或把 `CMSPARK_HOST_BIN` 指向另一个 ad-hoc 签名的同名 binary，就能**复用用户已经点过“允许”的 TCC 授权**跑任意 AppleScript。TCC 绑定的是 binary identity，但 binary identity 在这里没有被可信地固定。
+
+  ### 2. codesign flag 是否足够？缺什么？
+
+  `--sign - --options runtime` + `com.apple.security.automation.apple-events` + LV-on 是**技术上能弹出 Automation 权限对话框的最小组合**，但**不足以构成安全边界**：
+
+  - ad-hoc 签名没有 Apple 信任的锚，任何人都能编译一个同 Bundle ID、同 entitlement 的 binary。
+  - 没有资源签名：`.scpt` 不在 signature envelope 里。
+  - 构建脚本只 `codesign -dv` 显示信息，**没有 `codesign --verify`** 验证签名完整性。
+  - 缺少 `com.apple.security.cs.allow-dyld-environment-variables` 显式 `<false/>`（默认 false，但显式更安全）。
+
+  Round 2 综合文档要求 companion 在 spawn 前做 `SecStaticCodeCheckValidity` 校验，当前完全没有实现。
+
+  ### 3. `read-mail.applescript` 的 `jsonEscape` 是否健壮？
+
+  **完全不健壮，实际上是 no-op。** 
+
+  `read-mail.applescript:1-33` 的写法是：
+
+  ```applescript
+  set AppleScript's text item delimiters to "\\"
+  set s to (text items of s) as string
+  set AppleScript's text item delimiters to "\\\\"
+  set s to (text items of s) as string
+  ```
+
+  这个写法**没有先把 `text items of s` 保存到变量**，而是直接 `as string`。由于当前的 delimiter 就是搜索字符串，split 完又立即用同一个 delimiter join，结果原封不动。实际测试确认：输入 `a"b` 或 `a\b` 都不会被转义。
+
+  后果：恶意邮件里含 `"`、`\r`、`\n`、`\t` 会原样进入 JSON 字符串，导致 `JSON.parse` 失败，更严重的是**可能构造 JSON injection**（例如邮件主题里含 `","body_preview":"...` 类的片段）。
+
+  ### 4. `index.ts` 用 `execFile` spawn `dist/cmspark-host`，路径解析是否有 TOCTOU / symlink 攻击面？
+
+  **有。**
+
+  - `resolveHostBinary()` 读取 `CMSPARK_HOST_BIN` 环境变量并直接返回（`host-use/darwin/index.ts:13`）。任何能污染 companion 环境变量的本地攻击者都可以把 host binary 换成自己的。
+  - 即使不用环境变量，`dist/cmspark-host` 是相对 `__dirname` 的路径，安装/打包后目录权限如果不严格，可被替换或 symlink 劫持。
+  - `execFile` 本身会 follow symlink，且调用前后没有签名校验。
+
+  Round 2 文档明确要求校验 code signature 后再 spawn，这里没做。
+
+  ### 5. LLM 能否通过 `host_read` 参数注入到 AppleScript source 里？
+
+  **当前 params 不会进入 AppleScript source，但不是因为设计好，而是因为参数根本没被使用：**
+
+  - `application` 只用于黑名单判断（`host-use/darwin/index.ts:19-22`），没有白名单，也没有传给 host。
+  - `maxChars` 作为 argv 传给 binary（`host-use/darwin/index.ts:26`），但 `host.swift` 只读 `argv[1]`，后面的参数被直接忽略。
+  - `read-mail.applescript` 是静态预编译 `.scpt`，没有插值。
+
+  所以 **LLM 现在无法通过 params 注入 source**。但有两个隐患：
+
+  1. 如果 `.scpt` 被替换，source 完全可控。
+  2. 未来要实现 argv 注入时，**必须用 `NSAppleScript.executeAppleEvent(_:)` 传 descriptor list**，绝不能用字符串拼接把参数插进 AppleScript source。
+
+  ### 6. vault 黑名单是否完整？
+
+  **极不完整。** 当前只有 1Password、Keychain Access、SecurityAgent（`blacklist.ts:1-6`）。macOS 上还需要至少：
+
+  - **浏览器**（都自带密码管理）：`com.apple.Safari`、`com.google.Chrome`、`org.mozilla.firefox`、`com.microsoft.edgemac`、`com.brave.Browser`、`company.thebrowser.Browser`（Arc）等。
+  - **密码管理器**：`com.1password.1password-launcher`、`com.bitwarden.desktop`、`com.lastpass.lastpassmacdesktop`、`com.dashlane.dashlane`、`org.keepassx.keepassxc` 等。
+  - **系统凭据/设置**：`com.apple.systempreferences` / `com.apple.Settings` / `com.apple.keychainaccess` / `com.apple.Passbook`（Wallet）/ `com.apple.authenticatorcored` 等。
+  - **银行/金融 App**：无法穷举，应加 heuristics。
+  - **Terminal / SSH 客户端**：`com.apple.Terminal`、`com.googlecode.iterm2` 等（滚动缓冲区里可能有密钥/密码）。
+  - **硬件钱包 / 加密钱包**：Ledger Live、Electrum 等。
+
+  更关键的是，**纯 bundle-id 精确匹配容易被绕过**，应配合 `AXSecureTextField` 角色、窗口标题 heuristics（`password/login/bank/2FA`）等兜底。
+
+  ---
+
+  ## Critical / Major / Minor 问题清单
+
+  ### 🔴 Critical
+
+  | # | 位置 | 问题 | 建议修复 |
+  |---|------|------|----------|
+  | 1 | `read-mail.applescript:1-33` | `jsonEscape` 因 TID 用法错误而完全失效：未先保存 `text items` 就 `as string`，导致转义是 no-op；邮件内容里的 `"`、`\r`、`\n`、`\t`、`\` 会原样进入 JSON，既可让 `JSON.parse` 失败，也可构造 JSON injection。 | **不要在 AppleScript 里手写 JSON**。改返回 AppleScript `record`/`list`，在 `host.swift` 用 `JSONEncoder` 序列化；若坚持 AppleScript 方案，必须修正 TID 习惯用法，并补全 C0 控制字符与 `U+2028/U+2029` 转义。 |
+  | 2 | `host.swift:16-25` `host.swift:35-40` | `cmspark-host` 从同级 `host-scripts/` 加载**未签名 .scpt** 并直接执行。攻击者替换 `.scpt` 后，即可在用户已授权的 TCC 上下文中运行任意 AppleScript。 | 把 `.scpt` 嵌入 signed binary 的 `__TEXT` 段或 bundle resource，并在加载前校验 SHA256/签名；或把脚本逻辑直接写进 Swift，只把 AppleScript 当作受控的 sdef 调用层。 |
+  | 3 | `host-use/darwin/index.ts:12-16` `host-use/darwin/index.ts:24-29` `host.swift:1-6` | TCC attribution 虽落在 `cmspark-host`，但 companion 既允许 `CMSPARK_HOST_BIN` 环境变量覆盖，又不做 code signature 校验，父进程/本地攻击者可把 host binary 换成同名 ad-hoc binary 劫持 TCC 授权。 | 生产环境删除 `CMSPARK_HOST_BIN` 或仅在 `NODE_ENV=development` 生效；spawn 前调用 `SecStaticCodeCheckValidity` 或 `codesign -v` 验证 binary；host binary 路径应固定在 app bundle 内。 |
+  | 4 | `host-use/darwin/index.ts:18-22` | `application` 参数只走黑名单，没有白名单。LLM 传 `com.apple.finder` 也会去读 Mail，行为与声明不一致，且为审计/策略绕过留下空间。 | 严格白名单：`application` 必须等于 `com.apple.mail`（Phase 0），否则直接拒绝；其他 app 留到 Phase 1 按 verb 白名单扩展。 |
+
+  ### 🟠 Major
+
+  | # | 位置 | 问题 | 建议修复 |
+  |---|------|------|----------|
+  | 5 | `blacklist.ts:1-10` | vault 黑名单过小且只有精确匹配，易被浏览器、其他密码管理器、系统设置等绕过。 | 增补密码管理器、浏览器、System Settings/Keychain/Wallet、Terminal、金融/加密钱包等 bundle id；同时引入 heuristics（`AXSecureTextField`、窗口标题关键字）兜底。 |
+  | 6 | `host.swift:16-25` | `findScript` 使用 `CommandLine.arguments[0]` 而不 `realpath`，且用 `FileManager.fileExists` 做 TOCTOU 检查；若 binary 被 symlink，脚本目录会被重定向。 | 用 `Bundle.main` / `realpath` 定位；从 signed app bundle resources 加载脚本；避免 `fileExists` 后再 open 的 race。 |
+  | 7 | `build-host.sh:51-56` | codesign 只 display，没有验证步骤；ad-hoc 签名是否真生效、entitlement 是否写入，CI 无法自动发现。 | 签名后加 `codesign --verify --verbose "${OUTPUT_BIN}"`；并记录 `codesign -d --entitlements -` 到 CI artifact。 |
+  | 8 | `host-use/darwin/index.ts:26` `read-mail.applescript:36` | `maxChars` 已经作为 argv 传给 binary，但 `host.swift` 完全不解析后续参数；AppleScript 里硬编码 500。 | 要么在 `host.swift` 解析 argv 并通过 `executeAppleEvent` 把 `maxChars` 作为 descriptor 传给 script，要么 Phase 0 先不暴露该参数，避免参数与行为不一致。 |
+
+  ### 🟡 Minor
+
+  | # | 位置 | 问题 | 建议修复 |
+  |---|------|------|----------|
+  | 9 | `read-mail.applescript:50-52` | `text 1 thru maxChars of theBody` 按 UTF-16 code unit 计数，可能在 surrogate pair 或组合字符中间截断，产生无效 UTF-8/JSON。 | 在 Swift 侧用 `String.prefix(_:)`（grapheme-cluster aware）截断后再序列化 JSON。 |
+  | 10 | `host-Info.plist:15-16` | `NSAppleEventsUsageDescription` 通过 `-sectcreate __TEXT __info_plist` 嵌入 CLI binary，TCC 对话框**可能不显示**这条说明，用户看到的是通用提示。 | 实测 Sonoma 14.4+ 的提示文案；如不显示，必须改成真正的 `.app` bundle。 |
+  | 11 | `host.swift:41-48` | AppleScript 错误信息直接写 stderr，可能泄漏脚本路径或邮件部分内容。 | 对 stderr 输出做长度限制与敏感信息过滤，不要直接把 `err[NSAppleScript.errorMessage]` 回传给 companion UI。 |
+  | 12 | `host-use/darwin/index.ts:30` | 直接 `JSON.parse(result.stdout)`，没有处理 AppleScript 返回非 JSON 的情况（与 Critical #1 叠加会导致崩溃）。 | 用 `try/catch` 包裹并返回干净的错误；在解析前验证 stdout 只含可打印字符。 |
+  | 13 | `host.entitlements:5-12` | 未显式声明 `com.apple.security.cs.allow-dyld-environment-variables` / `get-task-allow` / `debugger` 为 false，虽然默认如此，但显式声明可降低误读风险。 | 加入显式 `<false/>` 条目并注释 hardened-runtime 策略。 |
+
+  ---
+
+  ## 一句话结论
+
+  Phase 0 的 TCC 锚点设计方向是对的（ad-hoc signed Swift binary + NSAppleScript in-process），但**实现上把锚点暴露了**：`.scpt` 不签名、companion 不校验 host binary、AppleScript JSON 转义完全失效。这三条任意一条都能在用户点过一次“允许”后，把 `host_read` 变成任意 AppleScript 执行器。修复前不应进入 Phase 0 用户测试。
+
+To resume this session: kimi -r session_be6dfa9e-96f6-40cc-bb46-11bc264520c8

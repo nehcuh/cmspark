@@ -202,7 +202,28 @@ async function handleDaemonStop(): Promise<void> {
     await new Promise((r) => setTimeout(r, 200))
   }
 
-  console.error("[cmspark-agent] Daemon did not exit within 10 seconds")
+  // SIGTERM didn't work within 10s — escalate to SIGKILL
+  console.log(`[cmspark-agent] SIGTERM timed out, sending SIGKILL to process ${pid}...`)
+  try {
+    process.kill(pid, "SIGKILL")
+  } catch (err: any) {
+    console.error("[cmspark-agent] Failed to send SIGKILL:", err.message)
+    process.exit(1)
+  }
+
+  // Wait up to 5 more seconds for SIGKILL to take effect
+  const killStart = Date.now()
+  while (Date.now() - killStart < 5000) {
+    if (!isProcessRunning(pid)) {
+      console.log("[cmspark-agent] Daemon killed successfully")
+      cleanupPidFile(pidPath)
+      releaseLock(lockPath)
+      process.exit(0)
+    }
+    await new Promise((r) => setTimeout(r, 200))
+  }
+
+  console.error("[cmspark-agent] Daemon refused to die even after SIGKILL")
   process.exit(1)
 }
 

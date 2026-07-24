@@ -450,6 +450,32 @@ func handleCommand(_ cmd: String, json: [String: Any], delegate: TrayDelegate) {
       pairingController.show(secret: secret, paired: paired)
     }
 
+  case "show-confirm":
+    // P0a Tray confirmation — companion pushes security.confirmation.request here as
+    // a parallel channel alongside the WS Side Panel. Tray is a separate process;
+    // clicking Allow here does NOT make Chrome frontmost, so target app stays
+    // foreground for subsequent CGEvent injection. See capability-token-round1-synthesis
+    // §"迁移重排" P0a + tcc_cdhash_vs_activate memory.
+    let id = (json["id"] as? String) ?? ""
+    let toolName = (json["tool_name"] as? String) ?? "unknown"
+    let riskLevel = (json["risk_level"] as? String) ?? "medium"
+    let summary = (json["summary"] as? String) ?? ""
+    let criticalApis = (json["critical_apis"] as? [String]) ?? []
+    let timeoutMs = (json["timeout_ms"] as? Int) ?? 45000
+    if !id.isEmpty {
+      confirmController.show(
+        id: id, toolName: toolName, riskLevel: riskLevel,
+        summary: summary, criticalApis: criticalApis, timeoutMs: timeoutMs
+      )
+    }
+
+  case "cancel-confirm":
+    // Companion resolved the confirmation via another channel (WS Side Panel approve,
+    // timeout, disconnect). Close the dialog without sending a response back — the
+    // origin already has its answer.
+    let id = (json["id"] as? String) ?? ""
+    if !id.isEmpty { confirmController.cancel(id: id) }
+
   case "quit":
     delegate.shutdown()
     jsonLine(["type": "exit", "code": 0])
@@ -593,6 +619,252 @@ class PairingController: NSObject {
 
 // Lazily initialized on first show (always on the main thread, from handleCommand).
 let pairingController = PairingController()
+
+// ---------------------------------------------------------------------------
+// Confirm dialog — P0a Tray native confirmation. Separate channel from the WS
+// Side Panel: companion dispatches the same security.confirmation.request to
+// both; whichever resolves first wins (SecurityConfirmationManager's pending
+// map is keyed by confirmationId, first responder claims it). Tray clicks do
+// NOT bring Chrome to front, so target app stays foreground for CGEvent inject.
+// ---------------------------------------------------------------------------
+
+class ConfirmController: NSObject {
+  // One reusable window. Pending state tracked by id so a late cancel from
+  // companion (user approved via Side Panel) can close the dialog without
+  // emitting a stale response.
+  private var window: NSWindow?
+  private var pendingId: String?
+  private var summaryField: NSTextField?
+  private var countdownField: NSTextField?
+  private var timeoutTimer: Timer?
+  private var timeoutAt: Date = Date()
+  private var tickTimer: Timer?
+
+  func show(id: String, toolName: String, riskLevel: String, summary: String,
+            criticalApis: [String], timeoutMs: Int) {
+    // C-P0-5 (2026-07-24 diagnosis): cleanup BEFORE building new state.
+    // Previously, pendingId was reassigned at the top and timers were invalidated
+    // only AFTER window setup. If makeWindow() returned nil → guard early-return,
+    // we'd be left with pendingId = NEW id but OLD timers still scheduled —
+    // their closures capture `self` weakly and call timeoutExpired() which reads
+    // pendingId at fire time (the new id) → premature deny of the new request.
+    // Order now: auto-deny prior (preserve existing emitResponse semantics),
+    // teardown ALL state, then build fresh.
+    if let prev = pendingId {
+      emitResponse(id: prev, approved: false)
+    }
+    cleanup()
+
+    pendingId = id
+
+    if window == nil { window = makeWindow() }
+    guard let window = window else {
+      // makeWindow failed — pendingId is set but no UI/timers. Emit deny so
+      // caller isn't blocked on a confirmation that will never render; reset.
+      emitResponse(id: id, approved: false)
+      cleanup()
+      return
+    }
+
+    // Risk-level badge copy (severity conveyed via emoji + Chinese label; system
+    // colors are not directly applicable to NSWindow title without private API).
+    let badgeText: String
+    switch riskLevel {
+    case "critical", "high":
+      badgeText = criticalApis.contains("computer.coordinate_injection")
+        ? "⛔ 高风险 · 不可逆操作"
+        : "⚠️ 高风险"
+    case "medium":
+      badgeText = "⚠️ 中风险"
+    default:
+      badgeText = "ℹ️ 低风险"
+    }
+
+    // Window title shows tool + risk badge so user sees what's asking without scrolling.
+    window.title = "🔐 CMspark · \(toolName) · \(badgeText)"
+
+    // Title bar color tint is not directly settable without private API; use the
+    // accessory label's color to convey risk severity.
+    // Strip ASCII control chars (0x00-0x1F) and DEL (0x7F) at the Swift boundary
+    // — companion truncates to 800 chars but does NOT sanitize. Defense in depth
+    // against prompt injection via tool summary (e.g. embedded newlines used to
+    // mislead visual layout of the dialog).
+    var safeSummary = summary.isEmpty
+      ? "（companion 未提供动作摘要 — 谨慎允许。）"
+      : summary
+    safeSummary = safeSummary.unicodeScalars.filter {
+      $0.value != 0x7F && !($0.value >= 0 && $0.value < 0x20)
+    }.map { String($0) }.joined()
+    summaryField?.stringValue = String(safeSummary.prefix(2000))
+
+    // Countdown setup.
+    timeoutAt = Date().addingTimeInterval(Double(timeoutMs) / 1000.0)
+    updateCountdown()
+    // cleanup() above already invalidated prior timers — just schedule fresh.
+    tickTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+      self?.updateCountdown()
+    }
+    timeoutTimer = Timer.scheduledTimer(withTimeInterval: Double(timeoutMs) / 1000.0,
+                                        repeats: false) { [weak self] _ in
+      self?.timeoutExpired()
+    }
+
+    // CRITICAL: do NOT call NSApp.activate here. The whole point of P0a Tray is
+    // that this dialog appears WITHOUT stealing foreground from the target app
+    // (e.g. TextEdit) the agent is about to click on. The window is an
+    // NSPanel(.nonactivatingPanel) so it can become key for button clicks
+    // without promoting our .accessory app to active. The user clicks Allow /
+    // Deny via mouse — clicks on a nonactivating panel reach the button target
+    // without activating the owning app. Target stays frontmost → CGEvent inject
+    // after approval lands on the right window.
+    window.center()
+    window.makeKeyAndOrderFront(nil)
+    window.orderFrontRegardless()
+  }
+
+  /// Companion resolved the confirmation elsewhere (Side Panel / disconnect).
+  /// Close the dialog silently — do NOT emit a response (origin already has it).
+  func cancel(id: String) {
+    guard id == pendingId else { return }
+    cleanup()
+    window?.close()
+  }
+
+  private func updateCountdown() {
+    let remainingMs = max(0, Int(timeoutAt.timeIntervalSinceNow * 1000))
+    let displaySecs = max(1, remainingMs / 1000)
+    countdownField?.stringValue = "⏱ \(displaySecs)s 后自动拒绝"
+  }
+
+  private func timeoutExpired() {
+    if let id = pendingId {
+      emitResponse(id: id, approved: false)
+    }
+    cleanup()
+    window?.close()
+  }
+
+  private func cleanup() {
+    timeoutTimer?.invalidate()
+    tickTimer?.invalidate()
+    timeoutTimer = nil
+    tickTimer = nil
+    pendingId = nil
+  }
+
+  private func emitResponse(id: String, approved: Bool) {
+    jsonLine(["type": "confirm-response", "id": id, "approved": approved])
+  }
+
+  @objc func allowClicked() {
+    guard let id = pendingId else { return }
+    emitResponse(id: id, approved: true)
+    cleanup()
+    window?.close()
+  }
+
+  @objc func denyClicked() {
+    guard let id = pendingId else { return }
+    emitResponse(id: id, approved: false)
+    cleanup()
+    window?.close()
+  }
+
+  /// Window will-close hook — user hit Esc or close button. Treat as deny.
+  /// guard pendingId so we don't double-emit (Allow/Deny already cleaned up).
+  @objc func windowWillClose(_ notification: Notification) {
+    if let id = pendingId {
+      emitResponse(id: id, approved: false)
+      cleanup()
+    }
+  }
+
+  private func makeWindow() -> NSWindow? {
+    let contentRect = NSRect(x: 0, y: 0, width: 520, height: 240)
+    // .nonactivatingPanel: panel can become key (so it receives button clicks /
+    // Esc/Return key equivalents) WITHOUT activating the tray app, which would
+    // steal frontmost from the target app the agent is about to act on. This
+    // is the entire reason P0a Tray exists (vs. just using the WS Side Panel).
+    let style: NSWindow.StyleMask = [.titled, .closable, .nonactivatingPanel]
+    // NSPanel is the subclass that honors nonactivatingPanel.
+    let panel = NSPanel(contentRect: contentRect, styleMask: style, backing: .buffered, defer: false)
+    panel.isReleasedWhenClosed = false
+    // becomesKeyOnlyIfNeeded = false means the panel becomes key immediately on
+    // makeKeyAndOrderFront (so Esc/Return key equivalents work). It does NOT
+    // control whether the owner activates — that is what .nonactivatingPanel
+    // does. Target app stays frontmost either way.
+    panel.becomesKeyOnlyIfNeeded = false
+    panel.hidesOnDeactivate = false  // survive app deactivation (we ARE non-activating)
+    // .floating keeps the confirm above normal document windows of other apps
+    // even after orderFrontRegardless (e.g., target app windows raising later).
+    panel.level = .floating
+    panel.minSize = NSSize(width: 480, height: 200)
+    panel.delegate = self  // windowWillClose for Esc / close-button = deny
+
+    let stack = NSStackView()
+    stack.orientation = .vertical
+    stack.alignment = .leading
+    stack.spacing = 10
+    stack.edgeInsets = NSEdgeInsets(top: 16, left: 20, bottom: 16, right: 20)
+    stack.translatesAutoresizingMaskIntoConstraints = false
+
+    // Summary (wraps; user content so sanitize: strip control chars, cap length).
+    let summary = NSTextField(wrappingLabelWithString: "")
+    summary.font = .systemFont(ofSize: 13)
+    summary.isSelectable = true
+    summary.isEditable = false
+    summary.isBezeled = false
+    summary.drawsBackground = false
+    summary.maximumNumberOfLines = 6
+    summary.cell?.truncatesLastVisibleLine = true
+    summary.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    summaryField = summary
+    stack.addArrangedSubview(summary)
+
+    // Countdown row.
+    let countdown = NSTextField(labelWithString: "")
+    countdown.font = .systemFont(ofSize: 11)
+    countdown.textColor = .secondaryLabelColor
+    countdownField = countdown
+    stack.addArrangedSubview(countdown)
+
+    // Buttons row (Allow on right, Deny on left per macOS HIG).
+    let buttons = NSStackView()
+    buttons.orientation = .horizontal
+    buttons.spacing = 10
+    let denyBtn = NSButton(title: "拒绝", target: self, action: #selector(denyClicked))
+    denyBtn.keyEquivalent = "\u{1b}"  // Esc
+    denyBtn.controlSize = .large
+    let allowBtn = NSButton(title: "允许", target: self, action: #selector(allowClicked))
+    allowBtn.keyEquivalent = "\r"  // Return
+    allowBtn.controlSize = .large
+    allowBtn.bezelStyle = .push
+    buttons.addArrangedSubview(NSView())  // spacer
+    buttons.addArrangedSubview(denyBtn)
+    buttons.addArrangedSubview(allowBtn)
+    buttons.distribution = .fill
+    buttons.heightAnchor.constraint(greaterThanOrEqualToConstant: 32).isActive = true
+    stack.addArrangedSubview(buttons)
+
+    panel.contentView = stack
+    if let cv = panel.contentView {
+      NSLayoutConstraint.activate([
+        stack.topAnchor.constraint(equalTo: cv.topAnchor),
+        stack.bottomAnchor.constraint(equalTo: cv.bottomAnchor),
+        stack.leadingAnchor.constraint(equalTo: cv.leadingAnchor),
+        stack.trailingAnchor.constraint(equalTo: cv.trailingAnchor),
+      ])
+    }
+    return panel
+  }
+}
+
+extension ConfirmController: NSWindowDelegate {
+  // Required to make windowWillClose(@objc) visible as NSWindowDelegate method.
+}
+
+// Lazily initialized on first show (main thread, from handleCommand).
+let confirmController = ConfirmController()
 
 // ---------------------------------------------------------------------------
 // Entry point

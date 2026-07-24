@@ -1,0 +1,67 @@
+THIRD_PARTY_NOTICES — CMspark Agent（WP5 本地模型层）
+================================================================================
+
+本分发物支持由用户显式下载以下第三方模型工件（模型文件不随安装包分发，
+下载前须经许可证门确认；工件 sha256 已钉死于 companion/models.manifest.json）。
+
+--------------------------------------------------------------------------------
+1. TinyClick（ONNX 转换工件；衍生自 Krystianz/TinyClick 镜像）
+--------------------------------------------------------------------------------
+Source:   https://huggingface.co/Krystianz/TinyClick
+Revision: 0e1356f0b7cfb416099207121f6a766818ab8a66
+Paper:    arXiv:2410.11871 "TinyClick: Single-Turn Agent for Empowering GUI
+          Automation" (Samsung R&D Poland)
+License:  MIT — 四方一致：原始代码仓 LICENSE 文件（字节级核实）、论文
+          Ethics 节（"model checkpoint and code accessible under the MIT
+          license"）、镜像 YAML、作者 HF 卡。
+
+MIT License
+
+Copyright (c) 2024 Samsung R&D Poland
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+--------------------------------------------------------------------------------
+2. Florence-2 底座（TinyClick 的 base model：microsoft/Florence-2-base）
+--------------------------------------------------------------------------------
+Source:   https://huggingface.co/microsoft/Florence-2-base
+License:  MIT（TinyClick 论文 Ethics 节： "Florence2 model is available
+          under MIT license"）
+
+MIT License
+
+Copyright (c) Microsoft Corporation.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

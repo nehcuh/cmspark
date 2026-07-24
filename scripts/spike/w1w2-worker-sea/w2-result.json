@@ -1,0 +1,187 @@
+{
+  "node": "v24.15.0",
+  "platform": "win32",
+  "arch": "x64",
+  "sessionCreateMs": {
+    "vision_encoder": 1896,
+    "embed_tokens": 240,
+    "encoder_model": 552,
+    "decoder_model": 1211
+  },
+  "rss": {
+    "baselineMB": 81,
+    "after_vision_encoder_MB": 495,
+    "after_embed_tokens_MB": 655,
+    "after_encoder_model_MB": 830,
+    "after_decoder_model_MB": 1381,
+    "afterFirstInferenceMB": 1875,
+    "finalMB": 1875
+  },
+  "correctness": {
+    "tokenMatch": true,
+    "tokenIds": [
+      2,
+      0,
+      23008,
+      1437,
+      50551,
+      50797,
+      2
+    ],
+    "refTokenIds": [
+      2,
+      0,
+      23008,
+      1437,
+      50551,
+      50797,
+      2
+    ]
+  },
+  "latency": {
+    "runs": [
+      {
+        "preprocessMs": 39.4,
+        "preprocessBreakdown": {
+          "decodeMs": 11.2,
+          "resizeMs": 18.4,
+          "normalizeMs": 9.9
+        },
+        "visionMs": 2169.8,
+        "embedMs": 0.3,
+        "concatMs": 0.3,
+        "encoderMs": 853.2,
+        "decoderStepsMs": [
+          247.7,
+          248,
+          240.9,
+          220.3,
+          158.7,
+          219.8
+        ],
+        "decoderTotalMs": 1335.3,
+        "totalMs": 4398.8,
+        "nTokens": 7
+      },
+      {
+        "preprocessMs": 114.2,
+        "preprocessBreakdown": {
+          "decodeMs": 30.5,
+          "resizeMs": 42.2,
+          "normalizeMs": 41.4
+        },
+        "visionMs": 3142.4,
+        "embedMs": 0.2,
+        "concatMs": 2.6,
+        "encoderMs": 851.9,
+        "decoderStepsMs": [
+          173.4,
+          236.8,
+          242.3,
+          200,
+          277.6,
+          202.4
+        ],
+        "decoderTotalMs": 1332.5,
+        "totalMs": 5443.8,
+        "nTokens": 7
+      },
+      {
+        "preprocessMs": 140.3,
+        "preprocessBreakdown": {
+          "decodeMs": 35.2,
+          "resizeMs": 74.3,
+          "normalizeMs": 30.9
+        },
+        "visionMs": 3090.8,
+        "embedMs": 0.2,
+        "concatMs": 0.4,
+        "encoderMs": 847.2,
+        "decoderStepsMs": [
+          177.5,
+          160.9,
+          246.8,
+          255.2,
+          273.6,
+          235.2
+        ],
+        "decoderTotalMs": 1349.2,
+        "totalMs": 5428.3,
+        "nTokens": 7
+      }
+    ],
+    "tokenMatch": true,
+    "tokenIds": [
+      2,
+      0,
+      23008,
+      1437,
+      50551,
+      50797,
+      2
+    ],
+    "medianTotalMs": 5428.3,
+    "rss": {
+      "baselineMB": 905,
+      "after_vision_encoder_MB": 511,
+      "after_embed_tokens_MB": 671,
+      "after_encoder_model_MB": 846,
+      "after_decoder_model_MB": 1396,
+      "afterFirstInferenceMB": 1881,
+      "finalMB": 2253
+    }
+  },
+  "tuning": [
+    {
+      "sessionOptions": {
+        "intraOpNumThreads": 16,
+        "interOpNumThreads": 1
+      },
+      "medianTotalMs": 2654.7,
+      "medianVisionMs": 1355.6,
+      "medianEncoderMs": 502.8,
+      "medianDecoderMs": 795,
+      "medianPreprocessMs": 52.2,
+      "runTotalsMs": [
+        2132.4,
+        2800.9,
+        2654.7
+      ],
+      "tokenMatch": true
+    },
+    {
+      "sessionOptions": {
+        "intraOpNumThreads": 8,
+        "interOpNumThreads": 1
+      },
+      "medianTotalMs": 1821.4,
+      "medianVisionMs": 1247,
+      "medianEncoderMs": 157.9,
+      "medianDecoderMs": 392.7,
+      "medianPreprocessMs": 23.9,
+      "runTotalsMs": [
+        1859.4,
+        1821.4,
+        1787.6
+      ],
+      "tokenMatch": true
+    },
+    {
+      "sessionOptions": {
+        "intraOpNumThreads": 4,
+        "interOpNumThreads": 1
+      },
+      "medianTotalMs": 2839.7,
+      "medianVisionMs": 2192.5,
+      "medianEncoderMs": 284.9,
+      "medianDecoderMs": 332.8,
+      "medianPreprocessMs": 25.5,
+      "runTotalsMs": [
+        2882.9,
+        2839.7,
+        2788.7
+      ],
+      "tokenMatch": true
+    }
+  ]
+}

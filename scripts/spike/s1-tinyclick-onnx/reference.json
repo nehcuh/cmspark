@@ -1,0 +1,55 @@
+{
+  "greedy": {
+    "token_ids": [
+      2,
+      0,
+      23008,
+      1437,
+      50551,
+      50797,
+      2
+    ],
+    "text": "</s><s>click <loc_282><loc_528></s>",
+    "action": "click",
+    "click_point": [
+      157,
+      211
+    ],
+    "loc_raw": [
+      282,
+      528
+    ]
+  },
+  "beam3": {
+    "token_ids": [
+      2,
+      0,
+      23008,
+      1437,
+      50551,
+      50797,
+      2
+    ],
+    "text": "</s><s>click <loc_282><loc_528></s>",
+    "action": "click",
+    "click_point": [
+      157,
+      211
+    ],
+    "loc_raw": [
+      282,
+      528
+    ]
+  },
+  "meta": {
+    "image": "test_image.png",
+    "image_size": [
+      560,
+      400
+    ],
+    "command": "click on the ok button",
+    "input_text": "what to do to execute the command? click on the ok button",
+    "model_dir": "Krystianz/TinyClick (local snapshot)",
+    "torch": "2.5.1+cpu"
+  }
+}

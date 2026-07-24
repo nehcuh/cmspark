@@ -34,6 +34,19 @@ test("validateToken fails for mismatched code", () => {
   assert.equal(valid, false)
 })
 
+test("S-P0-5 / A11: UTF-8 byte-length mismatch does not throw (returns false)", () => {
+  // A11 follow-up (Grok round 3): equal JS string length + unequal UTF-8 byte
+  // length makes crypto.timingSafeEqual throw RangeError. Wrapper must catch.
+  // Repro: "é" (length 1, UTF-8 2 bytes) vs "a" (length 1, UTF-8 1 byte).
+  const policy = new SecurityPolicy()
+  const { token } = policy.issueToken("é", "x") // toolName with multibyte char
+  // Same JS length (1), different UTF-8 byte length — must not throw, must return false:
+  assert.doesNotThrow(() => {
+    const valid = policy.validateToken(token, "a", "x")
+    assert.equal(valid, false)
+  })
+})
+
 test("validateToken fails after single use", () => {
   const policy = new SecurityPolicy()
   const { token } = policy.issueToken("evaluate", "fetch('/api')")
@@ -127,4 +140,43 @@ test("validateToken checks threadId binding", () => {
   assert.equal(valid, true)
   const invalid = policy.validateToken(token, "evaluate", "fetch('/api')", "thread-456")
   assert.equal(invalid, false)
+})
+
+// =============================================================================
+// App tab WP3 — host_app binding payload (adversary 接线警示: the
+// `default: return ""` footgun means a gated tool that forgot to extend the
+// switch gets an EMPTY, replayable binding. These tests pin the non-empty,
+// canonical payload for host_app.)
+// =============================================================================
+
+test("host_app binding payload is non-empty and canonical (app|action)", () => {
+  const payload = SecurityPolicy.bindingPayloadFor("host_app", {
+    app: "win.app.cloudmusic",
+    action: "launch",
+  })
+  assert.notEqual(payload, "", "host_app binding payload must NOT fall through to the empty default")
+  assert.equal(payload, "win.app.cloudmusic|launch")
+  assert.ok(payload.includes("win.app.cloudmusic"), "payload must contain the app token")
+  assert.ok(payload.includes("launch"), "payload must contain the action")
+})
+
+test("host_app issueTokenFor/validateTokenFor round-trip binds app+action", () => {
+  const policy = new SecurityPolicy()
+  const params = { app: "win.app.cloudmusic", action: "launch" }
+  const { token } = policy.issueTokenFor("host_app", params, "thread-1")
+  assert.equal(policy.validateTokenFor(token, "host_app", params, "thread-1"), true)
+})
+
+test("host_app token is NOT replayable across apps or actions", () => {
+  const policy = new SecurityPolicy()
+  const { token } = policy.issueTokenFor("host_app", { app: "win.app.a", action: "launch" })
+  // Different app token → binding mismatch (token already consumed by first
+  // validate in the round-trip test? No — fresh policy + fresh token here,
+  // and validateToken consumes on SUCCESS only... mismatches never consume).
+  assert.equal(policy.validateTokenFor(token, "host_app", { app: "win.app.b", action: "launch" }), false)
+  assert.equal(policy.validateTokenFor(token, "host_app", { app: "win.app.a", action: "run_template" }), false)
+  // Cross-tool replay must also fail.
+  assert.equal(policy.validateTokenFor(token, "host_read", { app: "win.app.a", action: "launch" }), false)
+  // The original binding still validates afterwards (failures didn't consume).
+  assert.equal(policy.validateTokenFor(token, "host_app", { app: "win.app.a", action: "launch" }), true)
 })

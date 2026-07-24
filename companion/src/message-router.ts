@@ -25,6 +25,13 @@ import { checkHighRiskExecution } from "./security"
 import { securityPolicy } from "./security-policy"
 import { getMcpManager } from "./mcp"
 import { logger } from "./logger"
+import { handleAppsMessage } from "./apps/handlers"
+import { handleComputerMessage } from "./computer/handlers"
+import { handleComputerModelMessage } from "./computer/model-handlers"
+import type {
+  SecurityConfirmationDecision,
+  SecurityConfirmationDetails,
+} from "./security-confirmation"
 import type {
   McpServerConfig,
   McpServerMeta,
@@ -73,6 +80,20 @@ interface SessionCallbacks {
   sendToExtension: (data: any) => void
   executeTool: (toolCallId: string, toolName: string, params: any, signal?: AbortSignal) => Promise<{ success: boolean; data?: any; error?: string }>
   broadcast?: (data: any) => void
+  /**
+   * Origin-bound security-confirmation channel (App tab D2 biometric gates).
+   * server.ts wires this exactly like executeTool's sendConfirmation —
+   * securityConfirmations.request(..., { originWs: ws }) — so a confirmation
+   * carrying a nonce challenge can only be resolved by the originating socket.
+   */
+  requestConfirmation?: (
+    details: SecurityConfirmationDetails,
+  ) => Promise<SecurityConfirmationDecision>
+  /**
+   * WP4: 面板(WS 连接)标识——computer.evidence.open 的 P6 频率上限按
+   * 每面板计数。server.ts 为每个连接生成一个 id。
+   */
+  panelId?: string
 }
 
 export async function handleMessage(
@@ -920,6 +941,45 @@ export async function handleMessage(
       }
       return { type: "mcp.selection_updated", thread_id: rest.thread_id }
     }
+
+    // --- Apps (App tab, WP2) — delegated to apps/handlers.ts so gate/fs deps
+    // stay injectable in tests. Mutations validate+normalize before
+    // replaceAppsEntries and broadcast apps.updated (mcp.servers.updated parity).
+    case "apps.list":
+    case "apps.enumerate":
+    case "apps.add":
+    case "apps.remove":
+    case "apps.set_policy":
+    case "apps.set_enabled":
+    case "apps.set_coordinate_allowed":
+      return handleAppsMessage(msg, {
+        requestConfirmation: session?.requestConfirmation,
+        broadcast: session?.broadcast,
+      })
+    // --- Coordinate computer-use (A10 global switch; per-app bit lives under
+    // apps.set_coordinate_allowed above) ---
+    case "computer.get_state":
+    case "computer.set_enabled":
+    case "computer.evidence.open":
+      return handleComputerMessage(msg, {
+        requestConfirmation: session?.requestConfirmation,
+        broadcast: session?.broadcast,
+        // WP4: P6 频率上限按每面板(每 WS 连接)计数。
+        panelId: session?.panelId,
+      })
+    // --- WP5 I3/I4: 模型实验层——开关族四路由 + 观测面/熔断复位；均 settings
+    // 双层围栏（validateWsMessage + handler belt），set_enabled(true) 另过
+    // 生物识别门（P5：requestConfirmation 通道注入，apps 系 :961-966 先例） ---
+    case "computer.model.get_state":
+    case "computer.model.reset_circuit_breaker":
+    case "computer.model.set_enabled":
+    case "computer.model.license_response":
+    case "computer.model.download":
+    case "computer.model.delete":
+      return handleComputerModelMessage(msg, {
+        requestConfirmation: session?.requestConfirmation,
+        broadcast: session?.broadcast,
+      })
     case "skill.activate": {
       skillEngine.activate(rest.thread_id, rest.skill_name)
       const thread = threadManager.get(rest.thread_id)
@@ -1422,12 +1482,12 @@ export async function handleMessage(
     case "history.query":
       return {
         type: "history.result",
-        operations: historyStore.query(rest),
+        operations: await historyStore.query(rest),
       }
     case "history.export":
       return {
         type: "history.exported",
-        data: historyStore.exportJSON(rest),
+        data: await historyStore.exportJSON(rest),
       }
 
     // --- System ---

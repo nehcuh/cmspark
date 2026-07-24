@@ -1,0 +1,10 @@
+{
+  "name": "s2-onnxruntime-sea-spike",
+  "version": "0.1.0",
+  "private": true,
+  "description": "WP5 gate spike S-2: onnxruntime-node load + inference under Node SEA layout",
+  "main": "index.js",
+  "dependencies": {
+    "onnxruntime-node": "^1.27.0"
+  }
+}

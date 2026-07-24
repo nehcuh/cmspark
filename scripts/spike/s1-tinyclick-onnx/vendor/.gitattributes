@@ -1,0 +1,4 @@
+# T5: vendored files are sha256-pinned in export_onnx.py — pin LF so
+# core.autocrlf=true checkouts never flip line endings and break the assert.
+*.py text eol=lf
+LICENSE text eol=lf

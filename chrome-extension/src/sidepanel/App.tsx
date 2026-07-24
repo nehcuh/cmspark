@@ -3,6 +3,7 @@
 import { Component, useState, useRef, useCallback, useEffect } from "react"
 import { useWebSocket } from "./hooks/useWebSocket"
 import { ChatView } from "./components/ChatView"
+import { ComputerTaskBar } from "./components/ComputerTaskBar"
 import { ThreadList } from "./components/ThreadList"
 import { BottomBar } from "./components/BottomBar"
 import { SettingsSlideout } from "./components/SettingsSlideout"
@@ -12,6 +13,8 @@ import { SkillCraftPanel } from "./components/SkillCraftPanel"
 import { NotebooklmImporterPanel } from "./components/NotebooklmImporterPanel"
 import { Modal } from "./components/ui/Modal"
 import { AgentStoreProvider, useAgentStore } from "./store/agentStore"
+import { canOfferThreadTrust, threadTrustHint } from "./utils/apps-utils"
+import { previewImageSafe } from "./utils/computer-utils"
 import type { ConnectionState, SkillMeta, FileAttachment } from "./types"
 
 // Error Boundary — catches rendering errors to prevent white screen
@@ -104,6 +107,7 @@ function AppContent() {
       {toast && <div style={toastStyles.toast}>{toast}</div>}
       <Header connectionState={connectionState} onCraft={() => setCraftOpen(true)} onToggleLogs={() => setShowLogs(!showLogs)} onOpenNotebooklmImporter={() => setNbImporterOpen(true)} />
       <ChatView />
+      <ComputerTaskBar />
       <BottomBar />
       <InputArea />
       {showLogs && <LogBar onClose={() => setShowLogs(false)} />}
@@ -131,12 +135,31 @@ function SecurityConfirmationDialog() {
   const request = state.pendingSecurityConfirmations[0]
 
   const relevantDomain = request?.relevant_domains?.[0]
+  const relevantApp = request?.relevant_apps?.[0]
+  const nonceChallenge = request?.nonce_challenge
+  // Phase 1 W7 + App tab WP4 (W1 follow-up): thread-scoped trust applies to
+  // host_read (read-only lock) AND host_app L0 no-arg launches (owner decision
+  // 2, W7 Blocker-1 "app-launch" exception). Writes always require biometric
+  // per call — Q1 ship blocker; the checkbox stays hidden for host_write even
+  // when relevant_apps is set.
+  const canThreadTrust = canOfferThreadTrust(request?.tool_name, relevantApp)
   const [whitelistMode, setWhitelistMode] = useState<"none" | "exact" | "wildcard">("none")
+  const [threadTrust, setThreadTrust] = useState(false)
+  // Phase 1 W9: Linux nonce input. User must TYPE the code (no paste).
+  const [nonceInput, setNonceInput] = useState("")
+  const [pasteBlocked, setPasteBlocked] = useState(false)
+  const nonceMatches = !!nonceChallenge && nonceInput.toUpperCase() === nonceChallenge.toUpperCase()
+  // WP4 (WI-3): L2 标注截图渲染失败时静默回退纯文本——确认门永不被图片阻塞。
+  const [previewImgFailed, setPreviewImgFailed] = useState(false)
 
   // Reset selection whenever the active confirmation changes — otherwise the
   // radio from a previous prompt would bleed into the next one.
   useEffect(() => {
     setWhitelistMode("none")
+    setThreadTrust(false)
+    setNonceInput("")
+    setPasteBlocked(false)
+    setPreviewImgFailed(false)
   }, [request?.confirmation_id])
 
   // H10/M18 (audit): keyboard a11y (focus trap + Escape→deny + aria-modal +
@@ -152,11 +175,29 @@ function SecurityConfirmationDialog() {
   const riskLevel = request.risk_level || "high"
   const riskColor = riskLevel === "low" ? "#FFC107" : riskLevel === "medium" ? "#FF9800" : "#F44336"
   const riskLabel = riskLevel === "low" ? "低风险" : riskLevel === "medium" ? "中风险" : "高风险"
+  // WP6a (Finding 3): a host_app launch is not a code execution — the dialog
+  // gets launch-appropriate copy (no「高风险 API：未知」scare section when the
+  // dangerous-API list is empty; the code_preview already reads
+  // `Launch app "<display>" (<token>) — no arguments`). host_read/host_write/
+  // evaluate rendering is unchanged.
+  const isAppLaunch = request.tool_name === "host_app"
+  // WP4 (WI-3): 坐标 computer-use 的 L2 对话框——徽标点名操作性质;
+  // full_preview(P1 独立字段)存在时优先于 code_preview 渲染;标注截图过
+  // previewImageSafe 守卫才渲染,渲染失败静默回退纯文本。
+  const isComputerTask = request.tool_name === "host_computer"
+  const dialogLabel = isAppLaunch ? "启动应用确认" : isComputerTask ? "坐标操作确认" : `${riskLabel}操作确认`
+  const showPreviewImage = isComputerTask && !previewImgFailed && previewImageSafe(request.preview_image)
 
   const decide = (approved: boolean, stopThread = false) => {
     const addToWhitelist: string[] = []
     if (approved && relevantDomain && whitelistMode !== "none") {
       addToWhitelist.push(whitelistMode === "wildcard" ? `*.${relevantDomain}` : relevantDomain)
+    }
+    // Phase 1 W9: when nonceChallenge is set, approval is BLOCKED until user
+    // types the code correctly. The Approve button is disabled; this is a
+    // safety net in case decide() is invoked another way (keyboard shortcut).
+    if (approved && nonceChallenge && !nonceMatches) {
+      return  // silently no-op — button should be disabled anyway
     }
     chrome.runtime.sendMessage({
       type: "security.confirmation.response",
@@ -164,12 +205,20 @@ function SecurityConfirmationDialog() {
       approved,
       stop_thread: stopThread,
       add_to_whitelist: addToWhitelist,
+      // Phase 1 W7 (extended by WP4 W1) — only send add_to_thread_whitelist
+      // when allowed (host_read / host_app + user checked the box). Companion
+      // validates against relevantApps[0].
+      add_to_thread_whitelist: approved && canThreadTrust && threadTrust,
+      // Phase 1 W9 — send typed nonce for Linux biometric tier validation.
+      nonce_response: approved && nonceChallenge ? nonceInput.toUpperCase() : undefined,
     })
     dispatch({ type: "REMOVE_SECURITY_CONFIRMATION", confirmationId: request.confirmation_id })
     if (stopThread) {
       chrome.runtime.sendMessage({ type: "chat.abort", threadId: state.activeThreadId })
       dispatch({ type: "SET_STREAMING", content: "" })
     }
+    const trustMsg = approved && canThreadTrust && threadTrust ? `（本线程内信任 ${relevantApp}）` : ""
+    const nonceMsg = approved && nonceChallenge ? `（输入确认码 ${nonceChallenge}）` : ""
     dispatch({
       type: "ADD_SECURITY_AUDIT",
       entry: {
@@ -181,7 +230,7 @@ function SecurityConfirmationDialog() {
         risk_level: riskLevel,
         risk_score: request.risk_score || 0,
         defense_layer: request.defense_layer,
-        message: `${approved ? "允许" : "拒绝"}执行 ${request.tool_name}${addToWhitelist.length ? `（加入白名单：${addToWhitelist.join(", ")}）` : ""}`,
+        message: `${approved ? "允许" : "拒绝"}执行 ${request.tool_name}${addToWhitelist.length ? `（加入白名单：${addToWhitelist.join(", ")}）` : ""}${trustMsg}${nonceMsg}`,
       },
     })
   }
@@ -194,31 +243,59 @@ function SecurityConfirmationDialog() {
       onClose={() => denyRef.current()}
       backdropDismiss={false}
       role="dialog"
-      ariaLabel={`${riskLabel}操作确认`}
+      ariaLabel={dialogLabel}
       overlayStyle={styles.securityOverlay}
       panelStyle={styles.securityCard}
       initialFocusRef={denyBtnRef}
       deps={[request?.confirmation_id]}
     >
       <div style={{ ...styles.securityBadge, background: riskColor + "22", color: riskColor }}>
-        {riskLabel}操作确认
+        {dialogLabel}
       </div>
-      <h3 style={styles.securityTitle}>允许执行 `{request.tool_name}` 吗？</h3>
-      <p style={styles.securityText}>
-        检测到高风险 API：{" "}
-        <span style={{ color: "#F44336", fontWeight: 700 }}>
-          {request.dangerous_apis.join(", ") || "未知"}
-        </span>
-        。请确认这段代码符合你的意图后再允许执行。
-      </p>
+      <h3 style={styles.securityTitle}>
+        {isAppLaunch ? "允许启动此应用吗？" : `允许执行 \`${request.tool_name}\` 吗？`}
+      </h3>
+      {(!isAppLaunch || request.dangerous_apis.length > 0) && (
+        <p style={styles.securityText}>
+          检测到高风险 API：{" "}
+          <span style={{ color: "#F44336", fontWeight: 700 }}>
+            {request.dangerous_apis.join(", ") || "未知"}
+          </span>
+          。请确认这段代码符合你的意图后再允许执行。
+        </p>
+      )}
+      {isAppLaunch && (
+        <p style={styles.securityText}>
+          host_app 将启动白名单中的应用（无参数启动）。请确认这是你要启动的应用：
+        </p>
+      )}
       {request.defense_layer !== undefined && (
         <div style={styles.defenseLayerHint}>
           防御层：Layer {request.defense_layer}
         </div>
       )}
-      <div style={styles.securityCode}>
-        <HighlightedCode code={request.code_preview || "(无代码预览)"} />
-      </div>
+      {showPreviewImage && (
+        <div style={styles.computerPreview}>
+          <img
+            src={`data:image/jpeg;base64,${request.preview_image}`}
+            alt="目标窗口标注截图（凭证区已黑化）"
+            style={styles.computerPreviewImg}
+            onError={() => setPreviewImgFailed(true)}
+          />
+          {request.preview_caption && (
+            <div style={styles.computerPreviewCaption}>{request.preview_caption}</div>
+          )}
+        </div>
+      )}
+      {request.full_preview ? (
+        // P1:完整预览文本独立字段——30 动作 + 2000 语料逐条枚举对人完整可见;
+        // 可滚动区(maxHeight + overflow),纯文本 pre-wrap(非代码,不高亮)。
+        <div style={styles.securityFullPreview}>{request.full_preview}</div>
+      ) : (
+        <div style={styles.securityCode}>
+          <HighlightedCode code={request.code_preview || "(无代码预览)"} />
+        </div>
+      )}
       {relevantDomain && (
         <div style={styles.whitelistSection}>
           <div style={styles.whitelistLabel}>添加到自动批准白名单（避免下次再问）：</div>
@@ -251,6 +328,88 @@ function SecurityConfirmationDialog() {
           </label>
         </div>
       )}
+      {canThreadTrust && (
+        <div style={{ ...styles.whitelistSection, marginTop: 8 }}>
+          <label style={{ ...styles.whitelistOption, cursor: "pointer" }}>
+            <input
+              type="checkbox"
+              checked={threadTrust}
+              onChange={(e) => setThreadTrust(e.target.checked)}
+              style={{ marginRight: 6 }}
+            />
+            <span>
+              信任 <code style={styles.whitelistCode}>{relevantApp}</code>，本线程内不再询问
+              <span style={{ color: "#888", fontSize: 11, marginLeft: 4 }}>
+                {threadTrustHint(request?.tool_name)}
+              </span>
+            </span>
+          </label>
+        </div>
+      )}
+      {nonceChallenge && (
+        <div style={{ ...styles.whitelistSection, marginTop: 8, background: "#FFF3CD", border: "1px solid #FFC107" }}>
+          <div style={{ fontWeight: 600, marginBottom: 6 }}>
+            🔐 请输入确认码（手动输入，不可粘贴）：
+          </div>
+          <div style={{
+            fontSize: 28, fontWeight: 700, letterSpacing: 8, fontFamily: "monospace",
+            textAlign: "center", padding: "12px 0", background: "#fff", borderRadius: 6,
+            border: "2px dashed #FFC107", userSelect: "none",
+          }}>
+            {nonceChallenge}
+          </div>
+          <input
+            type="text"
+            maxLength={6}
+            value={nonceInput}
+            onChange={(e) => {
+              setNonceInput(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))
+              setPasteBlocked(false)
+            }}
+            onPaste={(e) => {
+              e.preventDefault()
+              setPasteBlocked(true)
+            }}
+            onContextMenu={(e) => e.preventDefault()}
+            onKeyDown={(e) => {
+              // Block Cmd+V / Ctrl+V / Shift+Insert
+              if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "v") {
+                e.preventDefault()
+                setPasteBlocked(true)
+              }
+              if (e.shiftKey && e.key === "Insert") {
+                e.preventDefault()
+                setPasteBlocked(true)
+              }
+            }}
+            onDrop={(e) => e.preventDefault()}
+            placeholder="6 位确认码"
+            style={{
+              width: "100%", marginTop: 8, padding: "10px 12px", fontSize: 18,
+              fontFamily: "monospace", letterSpacing: 4, textAlign: "center",
+              borderRadius: 6, border: `2px solid ${nonceMatches ? "#4CAF50" : pasteBlocked ? "#F44336" : "#FFC107"}`,
+              outline: "none",
+            }}
+            autoComplete="off"
+            spellCheck={false}
+          />
+          {pasteBlocked && (
+            <div style={{ color: "#F44336", fontSize: 12, marginTop: 4 }}>
+              ⛔ 粘贴被禁止 — 请手动输入确认码（Round 2 §2.3 安全要求）
+            </div>
+          )}
+          {!pasteBlocked && !nonceMatches && nonceInput.length > 0 && (
+            <div style={{ color: "#FF9800", fontSize: 12, marginTop: 4 }}>
+              输入与确认码不匹配
+            </div>
+          )}
+          {nonceMatches && (
+            <div style={{ color: "#4CAF50", fontSize: 12, marginTop: 4 }}>
+              ✓ 确认码匹配，可以允许执行
+            </div>
+          )}
+        </div>
+      )}
       {state.pendingSecurityConfirmations.length > 1 && (
         <div style={styles.securityQueueHint}>
           还有 {state.pendingSecurityConfirmations.length - 1} 个确认请求在等待。
@@ -261,7 +420,12 @@ function SecurityConfirmationDialog() {
           拒绝并停止对话
         </button>
         <button ref={denyBtnRef} style={styles.denyBtn} onClick={() => decide(false)} title="拒绝本次操作">拒绝</button>
-        <button style={{ ...styles.allowBtn, background: riskColor }} onClick={() => decide(true)} title="允许执行本次操作">
+        <button
+          style={{ ...styles.allowBtn, background: nonceChallenge && !nonceMatches ? "#999" : riskColor, cursor: nonceChallenge && !nonceMatches ? "not-allowed" : "pointer" }}
+          onClick={() => decide(true)}
+          disabled={!!nonceChallenge && !nonceMatches}
+          title={nonceChallenge && !nonceMatches ? "请先正确输入确认码" : "允许执行本次操作"}
+        >
           允许执行
         </button>
       </div>
@@ -1048,6 +1212,36 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 11,
     lineHeight: 1.45,
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+  },
+  // WP4 (WI-3): full_preview 可滚动区——比 code 区更高,长枚举清单少翻页。
+  securityFullPreview: {
+    maxHeight: 260,
+    overflow: "auto",
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-word",
+    background: "#f6f8fa",
+    border: "1px solid #e5e7eb",
+    borderRadius: 6,
+    padding: 10,
+    fontSize: 11,
+    lineHeight: 1.45,
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+  },
+  // WP4 (WI-3): L2 标注截图块(凭证区已黑化 + 十字线)。
+  computerPreview: {
+    marginBottom: 10,
+  },
+  computerPreviewImg: {
+    display: "block",
+    width: "100%",
+    borderRadius: 6,
+    border: "1px solid #e5e7eb",
+  },
+  computerPreviewCaption: {
+    marginTop: 6,
+    fontSize: 11,
+    color: "#666",
+    lineHeight: 1.5,
   },
   securityQueueHint: {
     marginTop: 8,

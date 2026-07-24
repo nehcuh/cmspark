@@ -1,0 +1,603 @@
+// WP2 apps.* handlers — full matrix with injected gate/enumerate/fs deps.
+// Config is real (pinned to a throwaway DATA_DIR by the setup import) so the
+// replaceAppsEntries round-trip is exercised; everything else is faked.
+
+import "./_config-router-setup" // MUST be first — pins DATA_DIR before config import.
+
+import test, { before } from "node:test"
+import * as assert from "node:assert/strict"
+
+import { handleAppsMessage, type AppsHandlerDeps } from "../src/apps/handlers"
+import { maxPolicyForEntry, type AppEntry } from "../src/apps/types"
+
+let getConfig: typeof import("../src/config").getConfig
+let replaceAppsEntries: typeof import("../src/config").replaceAppsEntries
+let initDataDir: typeof import("../src/config").initDataDir
+
+const WIN = process.platform === "win32"
+const SYS_EXE = WIN ? "C:\\Program Files\\TestApp\\app.exe" : "/opt/testapp/app.exe"
+const CHROME_EXE = WIN ? "C:\\Google\\chrome.exe" : "/opt/google/chrome.exe"
+
+before(async () => {
+  const cfg = await import("../src/config")
+  getConfig = cfg.getConfig
+  replaceAppsEntries = cfg.replaceAppsEntries
+  initDataDir = cfg.initDataDir
+  await initDataDir()
+})
+
+function reset() {
+  replaceAppsEntries({})
+}
+
+function deps(overrides: Partial<AppsHandlerDeps> = {}): AppsHandlerDeps {
+  return {
+    realpath: (p) => p,
+    exists: () => true,
+    signerProbe: async () => "CN=Test Signer, O=Test Corp",
+    platform: "win32",
+    ...overrides,
+  }
+}
+
+function seedEntry(token: string, overrides: Partial<AppEntry> = {}): AppEntry {
+  return {
+    token,
+    kind: "gui",
+    display_name: token,
+    source: "user",
+    policy: "manual",
+    enabled: true,
+    added_at: "2026-07-18T10:00:00.000Z",
+    exe: { path: SYS_EXE, signer: "CN=Test Signer", user_writable_dir: false },
+    ...overrides,
+  }
+}
+
+function fakeGate(behavior: "approve" | "deny" | "cancel", captured?: { calls: number; action?: string }) {
+  return async (req: { action: string }) => {
+    if (captured) {
+      captured.calls += 1
+      captured.action = req.action
+    }
+    if (behavior === "approve") return { approved: true as const, method: "windows-hello" as const, nonce: "n1" }
+    if (behavior === "cancel") return { approved: false as const, reason: "cancelled" as const }
+    return { approved: false as const, reason: "denied" as const }
+  }
+}
+
+const approveChannel = async () => ({ confirmationId: "c", approved: true, reason: "approved" as const })
+
+// --- apps.list -----------------------------------------------------------------
+
+test("apps.list: empty config → enabled flag + empty entries + preset status", async () => {
+  reset()
+  const r: any = await handleAppsMessage({ type: "apps.list" }, {}, deps({ exists: () => false }))
+  assert.equal(r.type, "apps.list")
+  assert.equal(r.enabled, true)
+  assert.deepEqual(r.entries, [])
+  assert.ok(Array.isArray(r.presets))
+  const cm = r.presets.find((p: any) => p.token === "win.app.cloudmusic")
+  assert.ok(cm, "cloudmusic preset status must be present")
+  assert.equal(cm.detected, false)
+  assert.equal(cm.persisted, false)
+})
+
+test("apps.list: lazily materializes detected preset (manual, preset source, persisted)", async () => {
+  reset()
+  const r: any = await handleAppsMessage(
+    { type: "apps.list" },
+    {},
+    deps({ exists: (p) => p.toLowerCase().includes("program files"), signerProbe: async () => "CN=NetEase" }),
+  )
+  const cm = r.presets.find((p: any) => p.token === "win.app.cloudmusic")
+  assert.equal(cm.detected, true)
+  assert.equal(cm.persisted, true)
+  const persisted = getConfig().apps?.entries?.["win.app.cloudmusic"]
+  assert.ok(persisted, "preset entry must persist on detection")
+  assert.equal(persisted!.source, "preset")
+  assert.equal(persisted!.policy, "manual")
+  assert.equal(persisted!.exe?.signer, "CN=NetEase")
+  assert.equal(maxPolicyForEntry(persisted!), "auto") // signed + not user-writable
+  // Second list must not re-materialize or clobber user state.
+  replaceAppsEntries({ ...getConfig().apps!.entries, "win.app.cloudmusic": { ...persisted!, policy: "ai", enabled: false } })
+  const r2: any = await handleAppsMessage({ type: "apps.list" }, {}, deps({ exists: (p) => p.toLowerCase().includes("program files") }))
+  const e2 = r2.entries.find((e: any) => e.token === "win.app.cloudmusic")
+  assert.equal(e2.policy, "ai", "user-owned preset policy must survive later lists")
+  assert.equal(e2.enabled, false)
+  assert.equal(e2.max_policy, "auto")
+})
+
+test("apps.list: entries carry max_policy for the panel badge", async () => {
+  reset()
+  replaceAppsEntries({
+    "win.app.capped": seedEntry("win.app.capped", { exe: { path: SYS_EXE, user_writable_dir: true } }),
+  })
+  const r: any = await handleAppsMessage({ type: "apps.list" }, {}, deps({ exists: () => false }))
+  const e = r.entries.find((x: any) => x.token === "win.app.capped")
+  assert.equal(e.max_policy, "ai")
+})
+
+test("apps.list: response carries the companion platform (WP6a Finding 2 — panel platform gating)", async () => {
+  reset()
+  const win: any = await handleAppsMessage({ type: "apps.list" }, {}, deps({ exists: () => false }))
+  assert.equal(win.platform, "win32")
+  const mac: any = await handleAppsMessage({ type: "apps.list" }, {}, deps({ exists: () => false, platform: "darwin" }))
+  assert.equal(mac.platform, "darwin")
+})
+
+// --- WP6a Finding 1: family:"apps" discriminator on every error payload ------
+// The extension routes panel errors by family; the legacy uppercase code set
+// is only the backward-compat fallback. Every apps.* handler error — including
+// lowercase AddFlowError codes — must carry the tag.
+
+test("apps errors: every handler error payload carries family=apps (representative matrix)", async () => {
+  // add-flow (lowercase code) — the exact case that leaked into chat in WP4
+  reset()
+  replaceAppsEntries({ "win.app.dup": seedEntry("win.app.dup") })
+  const dup: any = await handleAppsMessage(
+    { type: "apps.add", kind: "gui", path: SYS_EXE, origin: "manual-paste" },
+    {},
+    deps(),
+  )
+  assert.equal(dup.type, "error")
+  assert.equal(dup.code, "duplicate_app")
+  assert.equal(dup.family, "apps")
+
+  // code-less handler errors (pollution guard / unknown type)
+  const pollution: any = await handleAppsMessage(
+    JSON.parse(`{"type":"apps.add","path":"${SYS_EXE.replace(/\\/g, "\\\\")}","__proto__":{"x":1}}`),
+    {},
+    deps(),
+  )
+  assert.equal(pollution.type, "error")
+  assert.equal(pollution.family, "apps")
+
+  const unknown: any = await handleAppsMessage({ type: "apps.bogus" }, {}, deps())
+  assert.equal(unknown.type, "error")
+  assert.equal(unknown.family, "apps")
+
+  // token-guard errors on the mutation handlers
+  for (const msg of [
+    { type: "apps.remove", token: "BAD TOKEN" },
+    { type: "apps.set_policy", token: "BAD TOKEN", policy: "ai" },
+    { type: "apps.set_enabled", token: "BAD TOKEN", enabled: true },
+  ]) {
+    const r: any = await handleAppsMessage(msg, {}, deps())
+    assert.equal(r.type, "error")
+    assert.equal(r.code, "INVALID_TOKEN")
+    assert.equal(r.family, "apps", `${msg.type} must tag family`)
+  }
+
+  // gated-path errors (no confirmation channel) and enum guards
+  const noChan: any = await handleAppsMessage(
+    { type: "apps.set_policy", token: "win.app.dup", policy: "auto" },
+    {},
+    deps(),
+  )
+  assert.equal(noChan.code, "NO_CONFIRMATION_CHANNEL")
+  assert.equal(noChan.family, "apps")
+
+  const badEnabled: any = await handleAppsMessage(
+    { type: "apps.set_enabled", token: "win.app.dup", enabled: "yes" },
+    {},
+    deps(),
+  )
+  assert.equal(badEnabled.code, "INVALID_ENABLED")
+  assert.equal(badEnabled.family, "apps")
+})
+
+// --- apps.enumerate --------------------------------------------------------------
+
+test("apps.enumerate: non-win32 → typed unsupported error", async () => {
+  const r: any = await handleAppsMessage({ type: "apps.enumerate" }, {}, deps({ platform: "linux" }))
+  assert.equal(r.type, "error")
+  assert.match(r.error, /win32|Windows/)
+  // WP6a (Finding 2): stable code + family tag so the panel routes/renders it.
+  assert.equal(r.code, "PLATFORM_UNSUPPORTED")
+  assert.equal(r.family, "apps")
+  assert.equal(r.platform, "linux")
+})
+
+test("apps.enumerate: candidates annotated with lolbin block + vault token", async () => {
+  const r: any = await handleAppsMessage({ type: "apps.enumerate" }, {}, deps({
+    enumerate: async () => [
+      { name: "CMD", source: "running", path: "C:\\Windows\\System32\\cmd.exe" },
+      { name: "Chrome", source: "running", path: "C:\\Google\\chrome.exe" },
+      { name: "Music", source: "startapps", path: "C:\\Apps\\cloudmusic.exe" },
+      { name: "Calc", source: "startapps", aumid: "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App" },
+    ],
+  }))
+  assert.equal(r.type, "apps.enumerate.result")
+  const [cmd, chrome, music, calc] = r.candidates
+  assert.equal(cmd.blocked, true)
+  assert.equal(cmd.block_reason, "lolbin")
+  assert.equal(chrome.blocked, false)
+  assert.equal(chrome.vault_token, "win.chrome")
+  assert.equal(music.blocked, false)
+  assert.equal(music.vault_token, undefined)
+  assert.equal(calc.blocked, false)
+})
+
+// --- apps.add --------------------------------------------------------------------
+
+test("apps.add (manual, enumerate) → persists + broadcasts apps.updated with warnings", async () => {
+  reset()
+  const broadcasts: any[] = []
+  const r: any = await handleAppsMessage(
+    { type: "apps.add", kind: "gui", path: SYS_EXE, display_name: "Test App", origin: "enumerate" },
+    { broadcast: (d) => broadcasts.push(d) },
+    deps(),
+  )
+  assert.equal(r.type, "apps.updated")
+  assert.equal(r.added, "win.app.app")
+  assert.equal(r.warnings.length, 0)
+  assert.equal(broadcasts.length, 1)
+  assert.equal(broadcasts[0].type, "apps.updated")
+  const persisted = getConfig().apps?.entries?.["win.app.app"]
+  assert.ok(persisted)
+  assert.equal(persisted!.policy, "manual")
+  assert.equal(persisted!.exe?.path, SYS_EXE)
+})
+
+test("apps.add: prototype-pollution payload rejected", async () => {
+  reset()
+  const r: any = await handleAppsMessage(
+    JSON.parse(`{"type":"apps.add","path":"${SYS_EXE.replace(/\\/g, "\\\\")}","__proto__":{"x":1}}`),
+    {},
+    deps(),
+  )
+  assert.equal(r.type, "error")
+  assert.equal(r.error, "Invalid config keys detected")
+  assert.equal(Object.keys(getConfig().apps?.entries ?? {}).length, 0)
+})
+
+test("apps.add policy auto without confirmation channel → NO_CONFIRMATION_CHANNEL", async () => {
+  reset()
+  const r: any = await handleAppsMessage(
+    { type: "apps.add", path: SYS_EXE, policy: "auto" },
+    {}, // no requestConfirmation
+    deps(),
+  )
+  assert.equal(r.type, "error")
+  assert.equal(r.code, "NO_CONFIRMATION_CHANNEL")
+  assert.equal(Object.keys(getConfig().apps?.entries ?? {}).length, 0)
+})
+
+test("apps.add policy auto + gate approved → persisted auto + audit path", async () => {
+  reset()
+  const captured = { calls: 0, action: "" }
+  const r: any = await handleAppsMessage(
+    { type: "apps.add", path: SYS_EXE, policy: "auto" },
+    { requestConfirmation: approveChannel },
+    deps({ gate: fakeGate("approve", captured) }),
+  )
+  assert.equal(r.type, "apps.updated")
+  assert.equal(captured.calls, 1)
+  assert.equal(captured.action, "apps.add")
+  assert.equal(getConfig().apps?.entries?.["win.app.app"]?.policy, "auto")
+})
+
+test("apps.add policy auto + gate denied → BIOMETRIC_DENIED, nothing persisted", async () => {
+  reset()
+  const r: any = await handleAppsMessage(
+    { type: "apps.add", path: SYS_EXE, policy: "auto" },
+    { requestConfirmation: approveChannel },
+    deps({ gate: fakeGate("deny") }),
+  )
+  assert.equal(r.type, "error")
+  assert.equal(r.code, "BIOMETRIC_DENIED")
+  assert.equal(Object.keys(getConfig().apps?.entries ?? {}).length, 0)
+})
+
+test("apps.add policy auto + gate cancelled → hard deny (cancel reason surfaced)", async () => {
+  reset()
+  const r: any = await handleAppsMessage(
+    { type: "apps.add", path: SYS_EXE, policy: "auto" },
+    { requestConfirmation: approveChannel },
+    deps({ gate: fakeGate("cancel") }),
+  )
+  assert.equal(r.type, "error")
+  assert.equal(r.code, "BIOMETRIC_DENIED")
+  assert.equal(r.reason, "cancelled")
+  assert.match(r.error, /cancelled by user/)
+})
+
+test("apps.add auto on unsigned exe → POLICY_CAP_EXCEEDED, gate never invoked", async () => {
+  reset()
+  const captured = { calls: 0, action: "" }
+  const r: any = await handleAppsMessage(
+    { type: "apps.add", path: SYS_EXE, policy: "auto" },
+    { requestConfirmation: approveChannel },
+    deps({ signerProbe: async () => undefined, gate: fakeGate("approve", captured) }),
+  )
+  assert.equal(r.type, "error")
+  assert.equal(r.code, "POLICY_CAP_EXCEEDED")
+  assert.equal(r.cap, "ai")
+  assert.equal(captured.calls, 0, "cap check must run BEFORE the biometric gate")
+})
+
+test("apps.add auto on AUMID → POLICY_CAP_EXCEEDED (AUMID always caps ai)", async () => {
+  reset()
+  const r: any = await handleAppsMessage(
+    { type: "apps.add", aumid: "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App", policy: "auto" },
+    { requestConfirmation: approveChannel },
+    deps(),
+  )
+  assert.equal(r.type, "error")
+  assert.equal(r.code, "POLICY_CAP_EXCEEDED")
+  assert.equal(r.cap, "ai")
+})
+
+test("apps.add lolbin → lolbin_denied error code", async () => {
+  reset()
+  const r: any = await handleAppsMessage(
+    { type: "apps.add", path: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" },
+    {},
+    deps(),
+  )
+  assert.equal(r.type, "error")
+  assert.equal(r.code, "lolbin_denied")
+})
+
+test("apps.add kind cli → CLI_PHASE2 typed error (P1 gui only)", async () => {
+  reset()
+  const r: any = await handleAppsMessage({ type: "apps.add", kind: "cli", path: SYS_EXE }, {}, deps())
+  assert.equal(r.type, "error")
+  assert.equal(r.code, "CLI_PHASE2")
+})
+
+test("apps.add duplicate path → duplicate_app", async () => {
+  reset()
+  replaceAppsEntries({ "win.app.app": seedEntry("win.app.app") })
+  const r: any = await handleAppsMessage({ type: "apps.add", path: SYS_EXE }, {}, deps())
+  assert.equal(r.type, "error")
+  assert.equal(r.code, "duplicate_app")
+})
+
+// --- apps.set_policy --------------------------------------------------------------
+
+test("apps.set_policy downgrade auto→manual is free (gate not invoked)", async () => {
+  reset()
+  replaceAppsEntries({ "win.app.app": seedEntry("win.app.app", { policy: "auto" }) })
+  const captured = { calls: 0, action: "" }
+  const r: any = await handleAppsMessage(
+    { type: "apps.set_policy", token: "win.app.app", policy: "manual" },
+    { requestConfirmation: approveChannel },
+    deps({ gate: fakeGate("approve", captured) }),
+  )
+  assert.equal(r.type, "apps.updated")
+  assert.equal(r.changed, true)
+  assert.equal(captured.calls, 0)
+  assert.equal(getConfig().apps?.entries?.["win.app.app"]?.policy, "manual")
+})
+
+test("apps.set_policy manual→ai is free (below auto, no gate)", async () => {
+  reset()
+  replaceAppsEntries({ "win.app.app": seedEntry("win.app.app", { policy: "manual" }) })
+  const captured = { calls: 0, action: "" }
+  const r: any = await handleAppsMessage(
+    { type: "apps.set_policy", token: "win.app.app", policy: "ai" },
+    { requestConfirmation: approveChannel },
+    deps({ gate: fakeGate("approve", captured) }),
+  )
+  assert.equal(r.changed, true)
+  assert.equal(captured.calls, 0)
+  assert.equal(getConfig().apps?.entries?.["win.app.app"]?.policy, "ai")
+})
+
+test("apps.set_policy upgrade →auto requires the biometric gate (approved path)", async () => {
+  reset()
+  replaceAppsEntries({ "win.app.app": seedEntry("win.app.app", { policy: "manual" }) })
+  const captured = { calls: 0, action: "" }
+  const r: any = await handleAppsMessage(
+    { type: "apps.set_policy", token: "win.app.app", policy: "auto" },
+    { requestConfirmation: approveChannel },
+    deps({ gate: fakeGate("approve", captured) }),
+  )
+  assert.equal(r.type, "apps.updated")
+  assert.equal(captured.calls, 1)
+  assert.equal(captured.action, "apps.set_policy")
+  assert.equal(getConfig().apps?.entries?.["win.app.app"]?.policy, "auto")
+})
+
+test("apps.set_policy upgrade →auto denied → policy unchanged", async () => {
+  reset()
+  replaceAppsEntries({ "win.app.app": seedEntry("win.app.app", { policy: "ai" }) })
+  const r: any = await handleAppsMessage(
+    { type: "apps.set_policy", token: "win.app.app", policy: "auto" },
+    { requestConfirmation: approveChannel },
+    deps({ gate: fakeGate("deny") }),
+  )
+  assert.equal(r.type, "error")
+  assert.equal(r.code, "BIOMETRIC_DENIED")
+  assert.equal(getConfig().apps?.entries?.["win.app.app"]?.policy, "ai")
+})
+
+test("apps.set_policy beyond cap → POLICY_CAP_EXCEEDED (write-time re-check), gate not invoked", async () => {
+  reset()
+  replaceAppsEntries({
+    "win.app.capped": seedEntry("win.app.capped", {
+      policy: "ai",
+      exe: { path: SYS_EXE, user_writable_dir: true }, // unsigned + user-writable → cap ai
+    }),
+  })
+  const captured = { calls: 0, action: "" }
+  const r: any = await handleAppsMessage(
+    { type: "apps.set_policy", token: "win.app.capped", policy: "auto" },
+    { requestConfirmation: approveChannel },
+    deps({ gate: fakeGate("approve", captured) }),
+  )
+  assert.equal(r.type, "error")
+  assert.equal(r.code, "POLICY_CAP_EXCEEDED")
+  assert.equal(r.cap, "ai")
+  assert.equal(captured.calls, 0)
+})
+
+test("apps.set_policy same value → changed:false no-op", async () => {
+  reset()
+  replaceAppsEntries({ "win.app.app": seedEntry("win.app.app", { policy: "manual" }) })
+  const r: any = await handleAppsMessage(
+    { type: "apps.set_policy", token: "win.app.app", policy: "manual" },
+    {},
+    deps(),
+  )
+  assert.equal(r.type, "apps.updated")
+  assert.equal(r.changed, false)
+})
+
+test("apps.set_policy unknown token → NOT_FOUND; invalid token → INVALID_TOKEN", async () => {
+  reset()
+  const nf: any = await handleAppsMessage(
+    { type: "apps.set_policy", token: "win.app.nope", policy: "ai" }, {}, deps(),
+  )
+  assert.equal(nf.code, "NOT_FOUND")
+  const bad: any = await handleAppsMessage(
+    { type: "apps.set_policy", token: "evil.token", policy: "ai" }, {}, deps(),
+  )
+  assert.equal(bad.code, "INVALID_TOKEN")
+})
+
+// --- apps.set_enabled ---------------------------------------------------------------
+
+test("apps.set_enabled toggles persisted enabled flag", async () => {
+  reset()
+  replaceAppsEntries({ "win.app.app": seedEntry("win.app.app") })
+  const off: any = await handleAppsMessage(
+    { type: "apps.set_enabled", token: "win.app.app", enabled: false }, {}, deps(),
+  )
+  assert.equal(off.type, "apps.updated")
+  assert.equal(getConfig().apps?.entries?.["win.app.app"]?.enabled, false)
+  const on: any = await handleAppsMessage(
+    { type: "apps.set_enabled", token: "win.app.app", enabled: true }, {}, deps(),
+  )
+  assert.equal(getConfig().apps?.entries?.["win.app.app"]?.enabled, true)
+  void on
+})
+
+test("apps.set_enabled requires boolean enabled", async () => {
+  reset()
+  replaceAppsEntries({ "win.app.app": seedEntry("win.app.app") })
+  const r: any = await handleAppsMessage(
+    { type: "apps.set_enabled", token: "win.app.app", enabled: "yes" }, {}, deps(),
+  )
+  assert.equal(r.code, "INVALID_ENABLED")
+})
+
+// --- apps.remove ----------------------------------------------------------------------
+
+test("apps.remove user entry → removed + broadcast", async () => {
+  reset()
+  replaceAppsEntries({ "win.app.app": seedEntry("win.app.app") })
+  const broadcasts: any[] = []
+  const r: any = await handleAppsMessage(
+    { type: "apps.remove", token: "win.app.app" },
+    { broadcast: (d) => broadcasts.push(d) },
+    deps(),
+  )
+  assert.equal(r.type, "apps.updated")
+  assert.equal(r.removed, "win.app.app")
+  assert.equal(broadcasts.length, 1)
+  assert.equal(getConfig().apps?.entries?.["win.app.app"], undefined)
+})
+
+test("apps.remove preset entry → PRESET_NOT_REMOVABLE", async () => {
+  reset()
+  replaceAppsEntries({ "win.app.cloudmusic": seedEntry("win.app.cloudmusic", { source: "preset" }) })
+  const r: any = await handleAppsMessage(
+    { type: "apps.remove", token: "win.app.cloudmusic" }, {}, deps(),
+  )
+  assert.equal(r.type, "error")
+  assert.equal(r.code, "PRESET_NOT_REMOVABLE")
+  assert.ok(getConfig().apps?.entries?.["win.app.cloudmusic"], "preset must survive")
+})
+
+test("apps.remove unknown token → NOT_FOUND", async () => {
+  reset()
+  const r: any = await handleAppsMessage({ type: "apps.remove", token: "win.app.nope" }, {}, deps())
+  assert.equal(r.code, "NOT_FOUND")
+})
+
+// --- router delegation (wiring smoke) -------------------------------------------------
+
+test("message-router delegates apps.list and apps.add (AUMID round-trip, no fs deps)", async () => {
+  reset()
+  const mr = await import("../src/message-router")
+  const services: any = {}
+  // apps.list through the router — real deps; on this Windows host the
+  // cloudmusic preset may genuinely materialize (harmless, tmp DATA_DIR).
+  const list: any = await mr.handleMessage({ type: "apps.list" }, services, undefined)
+  assert.equal(list.type, "apps.list")
+  assert.ok(Array.isArray(list.entries))
+  assert.ok(Array.isArray(list.presets))
+  // apps.add through the router — the AUMID branch touches no fs/PS, so this
+  // round-trip is deterministic on any host and proves router→handler→config
+  // wiring end to end (auto-policy gating is covered at the handler level —
+  // the gate is not injectable through the router by design).
+  const add: any = await mr.handleMessage(
+    { type: "apps.add", aumid: "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App", display_name: "Calculator", origin: "enumerate" },
+    services,
+    { sendToExtension: () => {}, executeTool: async () => ({ success: true }) },
+  )
+  assert.equal(add.type, "apps.updated", `expected add to succeed, got: ${add.error || JSON.stringify(add)}`)
+  assert.equal(add.added, "win.app.calculator")
+  assert.ok(getConfig().apps?.entries?.["win.app.calculator"])
+})
+
+// --- WP3: app-launch thread-trust clearing (owner decision 2 obligation) ----
+
+test("apps.remove / set_policy / set_enabled(false) invoke clearAppTrust; set_enabled(true) does not", async () => {
+  reset()
+  replaceAppsEntries({ "win.app.app": seedEntry("win.app.app", { policy: "ai" }) })
+  const calls: string[] = []
+  const d = deps({ clearAppTrust: (t) => { calls.push(t); return 2 } })
+
+  await handleAppsMessage({ type: "apps.set_policy", token: "win.app.app", policy: "manual" }, {}, d)
+  assert.deepEqual(calls, ["win.app.app"], "policy change must clear trust")
+
+  await handleAppsMessage({ type: "apps.set_enabled", token: "win.app.app", enabled: false }, {}, d)
+  assert.deepEqual(calls, ["win.app.app", "win.app.app"], "disable must clear trust")
+
+  await handleAppsMessage({ type: "apps.set_enabled", token: "win.app.app", enabled: true }, {}, d)
+  assert.equal(calls.length, 2, "re-enable must NOT touch trust (nothing to resurrect)")
+
+  await handleAppsMessage({ type: "apps.remove", token: "win.app.app" }, {}, d)
+  assert.equal(calls.length, 3, "remove must clear trust")
+})
+
+test("apps.set_policy same-policy no-op does NOT clear trust", async () => {
+  reset()
+  replaceAppsEntries({ "win.app.app": seedEntry("win.app.app", { policy: "manual" }) })
+  const calls: string[] = []
+  const r: any = await handleAppsMessage(
+    { type: "apps.set_policy", token: "win.app.app", policy: "manual" },
+    {}, deps({ clearAppTrust: (t) => { calls.push(t); return 0 } }),
+  )
+  assert.equal(r.changed, false)
+  assert.equal(calls.length, 0)
+})
+
+test("default clearer removes ONLY the token's app-launch entries (kind + bundle scoped)", async () => {
+  reset()
+  const { getThreadApprovals } = await import("../src/host-use/thread-approvals")
+  const approvals = getThreadApprovals()
+  const T = "wp3-clear-test-thread"
+  // Seed: target token's app-launch trust in two threads, a read-kind entry
+  // for the same bundle id, and another app's app-launch entry.
+  approvals.add(T, "win.app.app", "app-launch")
+  approvals.add(`${T}-2`, "win.app.app", "app-launch")
+  approvals.add(T, "win.app.app", "read")
+  approvals.add(T, "win.app.other", "app-launch")
+  try {
+    replaceAppsEntries({ "win.app.app": seedEntry("win.app.app"), "win.app.other": seedEntry("win.app.other") })
+    // No clearAppTrust dep → the default ThreadApprovals-backed clearer runs.
+    await handleAppsMessage({ type: "apps.remove", token: "win.app.app" }, {}, deps())
+    assert.equal(approvals.has(T, "win.app.app", "app-launch"), false, "target token trust must be cleared")
+    assert.equal(approvals.has(`${T}-2`, "win.app.app", "app-launch"), false, "cleared across ALL threads")
+    assert.equal(approvals.has(T, "win.app.app", "read"), true, "other kinds must survive")
+    assert.equal(approvals.has(T, "win.app.other", "app-launch"), true, "other apps must survive")
+  } finally {
+    approvals.clearThread(T)
+    approvals.clearThread(`${T}-2`)
+  }
+})

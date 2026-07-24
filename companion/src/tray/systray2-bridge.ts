@@ -167,6 +167,12 @@ export class SysTray2Adapter implements UnifiedTray {
   // popup for this backend itself via clipboard-copy + notification.
   showPairingWindow(_secret: string, _paired: boolean): void { /* no-op */ }
 
+  // P0a: systray2 has no native confirmation dialog. Returns a promise that never
+  // resolves so Promise.race falls back to the WS Side Panel. Swift is the only
+  // backend that implements showConfirmDialog for real.
+  showConfirmDialog(): Promise<never> { return new Promise(() => {}) }
+  cancelConfirm(_id: string): void { /* no-op */ }
+
   async stop(): Promise<void> {
     this.shuttingDown = true
     if (this.systray) {

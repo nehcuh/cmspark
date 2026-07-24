@@ -1,6 +1,26 @@
 // Companion server — WebSocket server, message routing, tool execution bridge
 
 import { WebSocketServer, WebSocket } from "ws"
+
+// Phase 1 W7 — resolve app token from host_read/host_write params for
+// thread-scoped trust + relevantApps in confirmation dialog.
+// Phase 1 W8-windows: platform-aware defaults (win32 uses win.* tokens).
+function resolveHostUseApp(toolName: string, params: any): string {
+  const isWin = os.platform() === "win32"
+  if (toolName === "host_read") {
+    const app = typeof params?.application === "string" ? params.application : ""
+    if (app) return app
+    // Phase 0 default when application omitted.
+    return isWin ? "win.outlook.classic" : "com.apple.mail"
+  }
+  if (toolName === "host_write") {
+    const kind = typeof params?.kind === "string" ? params.kind : ""
+    if (kind === "create") return isWin ? "win.onenote.desktop" : "com.apple.Notes"
+    if (kind === "move") return isWin ? "win.fs" : "com.apple.finder"
+    return ""
+  }
+  return ""
+}
 import { execFile } from "child_process"
 import { randomUUID } from "crypto"
 import http from "http"
@@ -12,7 +32,11 @@ import { ThreadManager } from "./threads/thread-manager"
 import { SkillEngine } from "./skills/skill-engine"
 import { HistoryStore } from "./history/store"
 import { checkHighRiskExecution, highRiskExecutionDeniedError, isTrustedDomain, isAutoApprovedDomain, isCloudMetadataIp, isPrivateOrLoopbackIp, detectCriticalApis, classifyMcpCall, mergeCapabilities, CRITICAL_MCP_CAPABILITIES, CRITICAL_MCP_META_TOOLS } from "./security"
-import { SecurityConfirmationManager } from "./security-confirmation"
+import { SecurityConfirmationManager, type SecurityConfirmationDetails, type SecurityConfirmationDecision, DEFAULT_SECURITY_CONFIRMATION_TIMEOUT_MS } from "./security-confirmation"
+import { getTrayInstance } from "./menu-bar-agent"
+import type { TrayConfirmRequest } from "./tray/tray-adapter"
+import { getThreadApprovals } from "./host-use/thread-approvals"
+import { APP_TOKEN_PATTERN, type AppEntry, type AppPolicy } from "./apps/types"
 import { securityPolicy, getTokenSecret } from "./security-policy"
 import { logger, type LogLevel } from "./logger"
 import { acquireLock, releaseLock, isProcessRunning, readPidFile, cleanupPidFile, setupGracefulShutdown } from "./daemon"
@@ -89,6 +113,13 @@ function getDomainFromUrl(urlString: string): string {
 
 let wss: WebSocketServer
 let clients: Set<WebSocket> = new Set()
+
+// C-P0-6 (2026-07-24 diagnosis): track active tray confirmation IDs per WS so
+// that when a WS disconnects mid-confirmation, we can cancel the corresponding
+// tray dialog. Without this, the Swift dialog stays modal until its own timeout
+// even though the requesting WS is gone. The tray adapter is a singleton with
+// its own pendingConfirms Map; cancelConfirm(id) is a no-op if id isn't pending.
+const activeTrayConfirmsByWs = new WeakMap<WebSocket, Set<string>>()
 
 // P0-2B: per-connection authentication state. A peer is UNauthenticated until it
 // completes the ws-auth challenge–response handshake (auth.handshake). Every app
@@ -172,6 +203,93 @@ const DESTRUCTIVE_MCP_TOOL_PATTERN = /\b(write|delete|exec|commit|rm|remove|shel
 // linger in the module-level singleton forever (memory leak + the approval
 // persists for whatever reconnects with a different sessionId).
 const mcpSessionByWs = new Map<WebSocket, string>()
+
+/**
+ * WP2 (§E.6): running computer-task abort registry. The host_computer handler
+ * inserts its taskId before runComputerTask starts (so the panel can target a
+ * run that is still inside its first L2 gate) and removes it in a finally.
+ * A computer.task.abort WS message flips the flag; the executor's abortCheck
+ * polls it between actions / during waits. Any authenticated panel connection
+ * may abort — stopping injection is always the safe direction.
+ */
+const computerTaskAbort = new Map<string, boolean>()
+
+/**
+ * Exported for integration tests (R1, §E.6.2): direct access to the running-
+ * task registry so tests can seed a fake in-flight task and assert the
+ * single-task mutex. Production code never calls this.
+ */
+export function getComputerTaskRegistryForTests(): Map<string, boolean> {
+  return computerTaskAbort
+}
+
+/**
+ * WP2 (§E.6) F1: computer.task.abort WS handler — extracted from the message
+ * dispatch so the abort semantics are testable at the socket boundary.
+ * task_id targets one run (the id is broadcast in the task events); "*" is
+ * the panic button — aborts every running task. Stopping injection is always
+ * the safe direction, so any authenticated panel connection may send this
+ * (no origin binding). The flag flip is UNCONDITIONAL: the abort takes
+ * effect even when the ack can no longer be delivered (socket closing at
+ * the WS seam) — the send alone is guarded by the OPEN check. Returns the
+ * ack payload (also used by the dispatch to send the ack).
+ */
+export function handleComputerTaskAbort(
+  ws: { readyState: number; send: (data: string) => void },
+  msg: { task_id?: unknown },
+): { taskId: string; matched: number } {
+  const tid = typeof msg.task_id === "string" ? msg.task_id : ""
+  let matched = 0
+  if (tid === "*") {
+    for (const k of computerTaskAbort.keys()) {
+      computerTaskAbort.set(k, true)
+      matched++
+    }
+  } else if (tid && computerTaskAbort.has(tid)) {
+    computerTaskAbort.set(tid, true)
+    matched = 1
+  }
+  if (matched > 0) logger.warn("computer.task.abort.requested", { taskId: tid, matched })
+  if (ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: "computer.task.abort.ack", task_id: tid, matched }))
+  }
+  return { taskId: tid, matched }
+}
+
+/**
+ * Exported for integration tests (R1): substitute the estop preflight so the
+ * host_computer handler can be exercised end-to-end without spawning the real
+ * ps helper / injecting. Pass null to restore production behavior.
+ */
+let computerEstopEnsureOverride: (() => Promise<{ ok: boolean; reason?: string }>) | null = null
+export function setComputerEstopEnsureForTests(fn: (() => Promise<{ ok: boolean; reason?: string }>) | null): void {
+  computerEstopEnsureOverride = fn
+}
+
+/**
+ * WP2 (Y7): session-level injection rate limiter (process singleton). The
+ * pre-dialog gate refuses new computer tasks while the 60s window is
+ * saturated; the handler records every successful injection. Lazily created
+ * via dynamic import so non-Windows startups never load the module.
+ */
+let computerRateLimiterSingleton: import("./computer/rate-limit").InjectionRateLimiter | null = null
+async function computerRateLimiter(): Promise<import("./computer/rate-limit").InjectionRateLimiter> {
+  if (!computerRateLimiterSingleton) {
+    const { InjectionRateLimiter } = await import("./computer/rate-limit")
+    computerRateLimiterSingleton = new InjectionRateLimiter()
+  }
+  return computerRateLimiterSingleton
+}
+
+/**
+ * Exported for integration tests (audit item 6 pattern): the per-connection
+ * session id createToolExecutor registered for this socket. Tests need it to
+ * drive handleSecurityConfirmationResponse with the SAME session id the gate
+ * used, so W7/WP3 thread-scoped trust grants line up with later gate checks.
+ */
+export function getSessionIdForTests(ws: WebSocket): string | undefined {
+  return mcpSessionByWs.get(ws)
+}
 const LOG_LEVELS = new Set<LogLevel>(["debug", "info", "warn", "error"])
 
 function safeLogLevel(level: unknown): LogLevel {
@@ -238,6 +356,21 @@ export function createToolExecutor(ws: WebSocket) {
   mcpSessionByWs.set(ws, sessionId)
   return async (toolCallId: string, toolName: string, params: any, signal?: AbortSignal): Promise<{ success: boolean; data?: any; error?: string }> => {
     let finalParams = params || {}
+    // Phase 1 W8 bugfix: STRIP any LLM-provided security_token before L2 gate.
+    // The token field is in zod schema (kept for forward-compat / audit), but
+    // LLMs sometimes hallucinate or replay stale tokens, skipping the L2 gate
+    // and then failing validateToken inside executeCompanionTool (the
+    // "Invalid or expired security token" error). Real tokens are ONLY issued
+    // companion-side after user approval — never legitimately possessed by
+    // the LLM at call time. Strip always; L2 gate re-issues fresh per call.
+    if (finalParams.security_token) {
+      logger.warn("security.token.stripped_llm_provided", {
+        tool_call_id: toolCallId,
+        tool_name: toolName,
+      })
+      const { security_token: _stripped, ...rest } = finalParams
+      finalParams = rest
+    }
     // Normalize tabId to a number. LLMs occasionally pass "123" as a string;
     // without this, getCachedTabUrl and the navigate/set_tab_url cache update
     // would silently skip (typeof !== "number"), reintroducing the C1 stale-
@@ -300,7 +433,42 @@ export function createToolExecutor(ws: WebSocket) {
       }
     }
 
-    if ((toolName === "evaluate" || toolName === "osascript_eval") && !finalParams.security_token) {
+    // L2 confirmation gate (evaluate / osascript_eval / host_read). Each of
+    // these tools reaches host-side or browser-DOM state that requires explicit
+    // user approval. NOTE: host_read is the first tool in this gate that reads
+    // host-side USER DATA (Mail inbox) rather than browser-DOM or fixed
+    // AppleScript.
+    //
+    // Under security.allow_all_schemes=true (god-mode), this gate is skipped
+    // and the auto-approved path at line ~428 logs `security.auto_approved`
+    // with `reason:"god_mode"` — that is the audit trail. God-mode itself is
+    // gated upstream: enabling via UI requires the confirmation phrase, OR
+    // the user can set it directly in config.json (per ADR-010, both paths
+    // are explicit user opt-in). Vault-app bundle ids (1Password / Keychain /
+    // etc) are still blocked unconditionally downstream in
+    // host-use/darwin/blacklist.ts.
+    //
+    // Phase 1 W8-windows (adversary amendment A3): when a host_write L2
+    // dialog will show on win32 and Windows Hello is unavailable, the
+    // manual-nonce challenge rides INSIDE this same dialog. Declared here so
+    // the executor can consume the prevalidated nonce after approval.
+    let winL2NonceChallenge: string | undefined
+    // App tab WP3: the tier this host_app call took through the gate
+    // ("l2" | "app_whitelist" | "thread_trust" | "god_mode" | "global_toggle"),
+    // forwarded to the executor for the apps.launch audit event.
+    let hostAppTier: string | undefined
+    // App tab WP3 (adversary 接线警示 ①): host_app joins the L2 gate tool
+    // list — on win32 only. Off win32 the gate is skipped entirely so the
+    // executor can return the typed platform error without a pointless dialog.
+    const L2_GATE_TOOLS = ["evaluate", "osascript_eval", "host_read", "host_write"]
+    const hostAppGated = toolName === "host_app" && (os.platform() === "win32" || os.platform() === "darwin")
+    // Coordinate computer-use (WP1): critical-class — the task-level L2 dialog
+    // is shown EVERY task (god-mode / auto-approve do NOT skip it), always
+    // originWs-bound, and input injection is NEVER thread-trusted. Off win32
+    // or darwin the gate is skipped so the executor returns the typed platform error.
+    const hostComputerGated = toolName === "host_computer" &&
+      (os.platform() === "win32" || os.platform() === "darwin")
+    if ((L2_GATE_TOOLS.includes(toolName) || hostAppGated || hostComputerGated) && !finalParams.security_token) {
       const code = String(finalParams.code || finalParams.expression || "")
       const lengthCheck = securityPolicy.checkLength(toolName, code)
       if (!lengthCheck.ok) {
@@ -324,12 +492,207 @@ export function createToolExecutor(ws: WebSocket) {
       const relevantDomain = toolName === "evaluate"
         ? getDomainFromUrl(getCachedTabUrl(finalParams.tabId) || "")
         : ""
+      // Phase 1 W7 — relevant app for host_read/host_write (bundle id).
+      // Used to populate inline-checkbox trust option in confirmation dialog.
+      const relevantApp = (toolName === "host_read" || toolName === "host_write")
+        ? resolveHostUseApp(toolName, finalParams)
+        : ""
+
+      // App tab WP3 — host_app policy resolution. The tier decision is made
+      // HERE (the gate), never by the LLM and never from a tool param:
+      //   apps.enabled kill-switch → typed error (no dialog)
+      //   unknown token / disabled entry / non-gui kind / bad action → typed error
+      //   policy "auto"   → skip L2 (L0 no-arg launch only), audit app_whitelist
+      //   policy "ai"     → first launch in thread: L2 WITH trust checkbox;
+      //                     trusted thread: skip (kind "app-launch", owner decision 2)
+      //   policy "manual" → always L2, NO trust checkbox offered
+      let hostApp: { token: string; entry: AppEntry; policy: AppPolicy } | null = null
+      if (hostAppGated) {
+        const appToken = String(finalParams.app || "")
+        const action = String(finalParams.action || "")
+        const fail = (error: string) => {
+          const result = { success: false, error }
+          logToolFinish(toolCallId, toolName, startedAt, result)
+          return result
+        }
+        if (!APP_TOKEN_PATTERN.test(appToken)) {
+          return fail(`host_app: invalid app token "${appToken}" (expected [win|mac].app.<slug> / [win|mac].cli.<slug>)`)
+        }
+        if (action !== "launch") {
+          return fail(`host_app: unsupported action "${action}" — Phase 1 supports "launch" (plain no-arg start) only`)
+        }
+        const appsCfg = getConfig().apps
+        if (!appsCfg || appsCfg.enabled === false) {
+          return fail(`host_app: the Apps feature is disabled (apps.enabled=false in config.json)`)
+        }
+        const entry = appsCfg.entries?.[appToken]
+        if (!entry) {
+          return fail(`host_app: unknown app token "${appToken}" — not in the App-tab whitelist. Only launch apps from the system-prompt app index; NEVER guess tokens.`)
+        }
+        if (!entry.enabled) {
+          return fail(`host_app: app "${entry.display_name}" (${appToken}) is disabled in the App tab`)
+        }
+        if (entry.kind !== "gui") {
+          return fail(`host_app: "${appToken}" is a CLI app — the CLI track is Phase-2 and cannot be launched yet`)
+        }
+        hostApp = { token: appToken, entry, policy: entry.policy }
+      }
+      // Coordinate computer-use (WP1) — pre-dialog fail-fast checks + A3
+      // dialog payload (task + target app + EVERY type.text literal + budget).
+      // The tier decision is made HERE; the dialog is critical-class: shown on
+      // every task, god-mode included (forceConfirm below), never trusted.
+      let computerPreview = ""
+      // WP4: L2 标注截图 + 三段式 caption(best-effort;undefined = 无图降级)。
+      let computerL2PreviewImage: string | undefined
+      let computerL2PreviewCaption: string | undefined
+      if (hostComputerGated) {
+        const { assertCoordinateAllowed } = await import("./computer/policy")
+        // Y3 (WP2): the preview text comes from the PURE builder — task text
+        // JSON-escaped against layout spoofing, every injectable action
+        // enumerated verbatim; unit-tested in computer-preview.test.ts.
+        const { buildComputerL2Preview } = await import("./computer/preview")
+        const failC = (error: string) => {
+          const result = { success: false, error }
+          logToolFinish(toolCallId, toolName, startedAt, result)
+          return result
+        }
+        try {
+          const entryC = assertCoordinateAllowed(getConfig(), String(finalParams.app || ""))
+          const budgetN = Math.min(Math.max(1, Number(finalParams.budget) || 15), 30)
+          // R1 (§E.6.2): global single-task invariant — a second computer
+          // task is refused BEFORE the L2 dialog while one is executing (no
+          // queue, no wait). This early check only spares a pointless dialog;
+          // the AUTHORITATIVE check-and-set is in executeCompanionTool, which
+          // closes the race where both tasks passed this gate before either
+          // registered.
+          if (computerTaskAbort.size > 0) {
+            return failC(
+              "host_computer refused: another computer task is already executing (global single-task invariant, plan §E.6.2) [COMPUTER_TASK_BUSY] — wait for it to finish or abort it from the panel.",
+            )
+          }
+          // Y7: session rate gate — a saturated 60s window refuses the task
+          // BEFORE the L2 dialog; a runaway agent must not burn human clicks.
+          const limiter = await computerRateLimiter()
+          if (limiter.saturated()) {
+            return failC(
+              `host_computer refused: session injection rate limit reached (${limiter.countInWindow()}/30 in the last 60s) [RATE_LIMITED] — wait for the window to drain before starting another computer task.`,
+            )
+          }
+          computerPreview = buildComputerL2Preview({
+            task: String(finalParams.task || ""),
+            appDisplayName: entryC.display_name,
+            appToken: entryC.token,
+            budget: budgetN,
+            actions: Array.isArray(finalParams.actions) ? finalParams.actions : [],
+            extraLines: [limiter.statusLine()],
+          })
+          // WP4 (护栏 a,对抗裁决定案):L2 标注截图 helper 的调用点固定在这
+          // 里——全部廉价前门(assertCoordinateAllowed / COMPUTER_TASK_BUSY /
+          // rate-limit)通过之后、L2 对话框发出之前;后续重构不得挪前(每次
+          // 确认 ≤5s 的代价只对真实候选任务支付)。best-effort:helper 失败/
+          // 超时/非 win32|darwin/无 exe(AUMID 条目)一律降级无图,绝不影响确认门。
+          if (os.platform() === "darwin" && (entryC.bundleId || entryC.exe?.path)) {
+            try {
+              const { buildComputerL2PreviewImage } = await import("./computer/l2-preview-image")
+              const { MacScreenCapturer, MacLocator, MacWindowEnumerator, MacPreviewBuilder } = await import("./computer/darwin-adapters")
+              const l2img = await buildComputerL2PreviewImage(
+                {
+                  windows: new MacWindowEnumerator(),
+                  capturer: new MacScreenCapturer(),
+                  locator: new MacLocator(),
+                  previewBuilder: new MacPreviewBuilder(),
+                  log: (event, data) => logger.info(event, { tool_call_id: toolCallId, ...data }),
+                },
+                {
+                  exePath: entryC.bundleId ?? entryC.exe?.path ?? "",
+                  appDisplayName: entryC.display_name,
+                  actions: Array.isArray(finalParams.actions) ? finalParams.actions : [],
+                  timeoutMs: 5000,
+                },
+              )
+              if (l2img) {
+                computerL2PreviewImage = l2img.image
+                computerL2PreviewCaption = l2img.caption
+              }
+            } catch (helperErr: any) {
+              // best-effort:helper 异常绝不拒飞任务(降级无图)。
+              logger.info("computer.l2preview.failed", { tool_call_id: toolCallId, error: helperErr?.message || String(helperErr) })
+            }
+          } else if (os.platform() === "win32" && entryC.exe?.path) {
+            try {
+              const { buildComputerL2PreviewImage } = await import("./computer/l2-preview-image")
+              const { PsScreenCapturer, PsLocator, PsWindowEnumerator, PsPreviewBuilder } = await import("./computer/win-adapters")
+              const l2img = await buildComputerL2PreviewImage(
+                {
+                  windows: new PsWindowEnumerator(),
+                  capturer: new PsScreenCapturer(),
+                  locator: new PsLocator(),
+                  previewBuilder: new PsPreviewBuilder(),
+                  log: (event, data) => logger.info(event, { tool_call_id: toolCallId, ...data }),
+                },
+                {
+                  exePath: entryC.exe.path,
+                  appDisplayName: entryC.display_name,
+                  actions: Array.isArray(finalParams.actions) ? finalParams.actions : [],
+                  timeoutMs: 5000,
+                },
+              )
+              if (l2img) {
+                computerL2PreviewImage = l2img.image
+                computerL2PreviewCaption = l2img.caption
+              }
+            } catch (helperErr: any) {
+              // best-effort:helper 异常绝不拒飞任务(降级无图)。
+              logger.info("computer.l2preview.failed", { tool_call_id: toolCallId, error: helperErr?.message || String(helperErr) })
+            }
+          }
+        } catch (err: any) {
+          return failC(err?.message || String(err))
+        }
+      }
       const securityConfig = getConfig().security
-      // skipL2 = auto_approve_dangerous || allow_all_schemes || (domain whitelist).
+      // skipL2 = auto_approve_dangerous || allow_all_schemes || (domain whitelist)
+      //         || (Phase 1 W7: thread-scoped host_read trust).
       // allow_all_schemes (GOD-MODE) bypasses Layer 2 too — see config.ts SecurityConfig.
+      // Phase 1 W7 Q1 blocker: thread-scoped trust applies to READ only.
+      // Writes always go through confirmation (biometric tier is preserved).
+      let threadTrusted = false
+      if (toolName === "host_read" && relevantApp && sessionId) {
+        threadTrusted = getThreadApprovals().has(sessionId, relevantApp, "read")
+        if (threadTrusted) {
+          logger.info("security.thread_auto_approved", {
+            tool_call_id: toolCallId,
+            tool_name: toolName,
+            thread_id: sessionId,
+            bundle_id: relevantApp,
+            kind: "read",
+          })
+        }
+      }
+      // App tab WP3 (owner decision 2 — W7 Blocker-1 "app-launch" exception):
+      // under policy "ai", a launch already trusted in this thread skips L2.
+      // "manual" NEVER consults thread-trust (even if a stale entry existed).
+      if (hostApp && hostApp.policy === "ai" && sessionId) {
+        threadTrusted = getThreadApprovals().has(sessionId, hostApp.token, "app-launch")
+        if (threadTrusted) {
+          logger.info("security.thread_auto_approved", {
+            tool_call_id: toolCallId,
+            tool_name: toolName,
+            thread_id: sessionId,
+            bundle_id: hostApp.token,
+            kind: "app-launch",
+          })
+        }
+      }
+      // App tab WP3 (owner decision 1): auto = 仅启动免确认 — an L0 no-arg
+      // launch of an auto-policy app skips L2. (P1 ships launch only; any
+      // future with-args op must NOT inherit this skip — adversary D3.)
+      const appWhitelisted = hostApp?.policy === "auto"
       const skipConfirmation = securityConfig.auto_approve_dangerous === true
         || securityConfig.allow_all_schemes === true
         || (relevantDomain !== "" && isAutoApprovedDomain(relevantDomain))
+        || threadTrusted
+        || appWhitelisted
       // §6.2 CRITICAL_API_GATE: detectCriticalApis() is the never-auto-approved
       // subset of detectDangerousApis() (exfil + sandbox-escape + obfuscation
       // variants). Even when skipConfirmation is true (god-mode / global toggle
@@ -337,7 +700,11 @@ export function createToolExecutor(ws: WebSocket) {
       // confirmation — god-mode bypasses the UI prompt, not this capability
       // boundary (mirror of §6.1.5). Without this, a fetch/exfil payload would
       // execute zero-confirmation under god-mode.
-      const criticalApis = detectCriticalApis(code)
+      //
+      // Coordinate computer-use: critical-class BY DESIGN (plan §E.3) — the
+      // capability itself is the critical surface, so forceConfirm is
+      // unconditional (god-mode / auto-approve still get the task dialog).
+      const criticalApis = hostComputerGated ? ["computer.coordinate_injection"] : detectCriticalApis(code)
       const forceConfirm = criticalApis.length > 0
 
       if (!skipConfirmation || forceConfirm) {
@@ -363,21 +730,172 @@ export function createToolExecutor(ws: WebSocket) {
           critical_apis: criticalApis,
           force_confirm: forceConfirm,
         })
-        const decision = await securityConfirmations.request(
-          (data) => {
-            if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify(data))
+        // Phase 1 W8-windows (adversary amendment A3 — single-dialog nonce
+        // routing): for host_write on win32, probe Windows Hello availability
+        // BEFORE showing this L2 dialog. When Hello is unavailable, the
+        // manual-nonce challenge is attached to THIS SAME request (the
+        // extension renders an inline paste-blocked nonce input,
+        // App.tsx:299-377) — no second executor-internal prompt on the
+        // normal path. The standalone executor prompt is retained only for
+        // the skip-L2 path (god-mode / auto-approve).
+        if (toolName === "host_write" && os.platform() === "win32") {
+          const { probeWindowsHello } = await import("./host-use/win")
+          if (!(await probeWindowsHello())) {
+            const { generateManualNonce } = await import("./host-use/nonce")
+            winL2NonceChallenge = generateManualNonce()
+            // Adversary amendment 7a: dedicated downgrade audit event.
+            logger.info("security.biometric.downgrade", {
+              tool_call_id: toolCallId,
+              reason: "windows_hello_unavailable",
+            })
+          }
+        }
+        const decision = await (async () => {
+          // P0a — pre-generate confirmationId so WS + tray channels share it.
+          // Whichever resolves first wins (manager.pending is keyed by id, first
+          // responder claims it). See capability-token-round1-synthesis §P0a.
+          const sharedConfirmId = randomUUID()
+
+          // Build the same preview text for the tray dialog as the WS Side Panel
+          // gets (computerPreview for host_computer; otherwise the tool's code).
+          const traySummary = hostComputerGated && computerPreview
+            ? computerPreview
+            : hostApp
+              ? `Launch app "${hostApp.entry.display_name}" (${hostApp.token}) — no arguments`
+              : code
+          const tray = getTrayInstance()
+          // Tray dialog is only dispatched when (1) a Swift tray backend is live,
+          // and (2) the confirmation is NOT a Windows Hello nonce challenge
+          // (those need the inline paste-blocked nonce UI in Side Panel — Swift
+          // dialog has no nonce input). Plain macOS computer-use / evaluate / etc.
+          // are eligible for the tray shortcut.
+          const trayEligible = !!tray && !winL2NonceChallenge
+          const trayReq: TrayConfirmRequest | null = trayEligible
+            ? {
+                id: sharedConfirmId,
+                toolName,
+                riskLevel: forceConfirm
+                  ? "high"
+                  : safety.dangerousApis.length > 0 ? "medium" : "low",
+                // Truncate to keep NSWindow readable — full text goes to Side Panel.
+                summary: traySummary.length > 800 ? traySummary.slice(0, 800) + "…" : traySummary,
+                criticalApis,
+                timeoutMs: DEFAULT_SECURITY_CONFIRMATION_TIMEOUT_MS,
+              }
+            : null
+          const trayPromise = trayReq && tray
+            ? tray.showConfirmDialog(trayReq).then((r) => ({
+                source: "tray" as const,
+                approved: r.approved,
+              }))
+              // C-P0-7 (2026-07-24 diagnosis): swallow tray adapter rejects
+              // (IPC error, Swift crash, adapter bug). Without this, the
+              // rejection propagates through Promise.race and the wsPromise
+              // lingers in securityConfirmations.pending until the 45s
+              // timeout — meanwhile the user gets no UI and the tool call
+              // hangs. Now: a rejected tray promise resolves to null, the
+              // race picks wsPromise (the only remaining contender), and
+              // the Side Panel dialog still works.
+              .catch(() => null as null | { source: "tray"; approved: boolean })
+            : null
+
+          // C-P0-6: register this sharedConfirmId against the active ws so
+          // ws.on("close") can cancel the tray dialog if the WS dies first.
+          if (trayPromise) {
+            let set = activeTrayConfirmsByWs.get(ws)
+            if (!set) {
+              set = new Set()
+              activeTrayConfirmsByWs.set(ws, set)
             }
-          },
-          {
-            toolName,
-            dangerousApis: safety.dangerousApis,
-            code,
-            relevantDomains: relevantDomain ? [relevantDomain] : [],
-            criticalApis,
-            ...(forceConfirm ? { riskLevel: "high" as const, autoConfirmEligible: false } : {}),
-          },
-        )
+            set.add(sharedConfirmId)
+          }
+
+          const wsPromise = securityConfirmations.request(
+            (data) => {
+              if (ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify(data))
+              }
+            },
+            {
+              toolName,
+              dangerousApis: safety.dangerousApis,
+              // App tab WP3: no code to preview — show WHAT will be launched.
+              // host_computer (A3): show the task + app + EVERY type.text literal.
+              code: hostComputerGated
+                ? computerPreview
+                : hostApp
+                  ? `Launch app "${hostApp.entry.display_name}" (${hostApp.token}) — no arguments`
+                  : code,
+              relevantDomains: relevantDomain ? [relevantDomain] : [],
+              // App tab WP3: the thread-trust checkbox (relevantApps) is offered
+              // ONLY under policy "ai". "manual" must never show it (owner
+              // decision 2); "auto" never reaches this dialog.
+              // host_computer: input injection is NEVER thread-trusted — no
+              // checkbox is ever offered (plan §E.3).
+              relevantApps: hostComputerGated
+                ? []
+                : hostApp
+                  ? (hostApp.policy === "ai" ? [hostApp.token] : [])
+                  : (relevantApp ? [relevantApp] : []),
+              criticalApis,
+              ...(forceConfirm ? { riskLevel: "high" as const, autoConfirmEligible: false } : {}),
+              ...(winL2NonceChallenge ? { nonceChallenge: winL2NonceChallenge } : {}),
+              // P1 (WP4): computer 类确认的完整预览文本走独立字段,绕过
+              // code_preview 的 CODE_PREVIEW_LIMIT=1200 截断(30 动作 + 2000
+              // 语料的逐条枚举对人完整可见);其余工具不设置,修复面收窄。
+              ...(hostComputerGated && computerPreview ? { fullPreview: computerPreview } : {}),
+              // WP4 (§F.1): L2 标注截图 + 三段式非绑定 caption(best-effort,
+              // 仅存在时下发;绝不进入工具结果/LLM 上下文——P2 不变量)。
+              ...(computerL2PreviewImage ? { previewImage: computerL2PreviewImage } : {}),
+              ...(computerL2PreviewCaption ? { previewCaption: computerL2PreviewCaption } : {}),
+            },
+            // Adversary amendment A1: a confirmation carrying a nonce challenge
+            // MUST be origin-bound — otherwise any loopback WS peer could burn
+            // the 3 nonce attempts (DoS). Requests without a nonce keep the
+            // existing broadcast behavior unchanged.
+            // host_computer: EVERY computer confirmation is origin-bound (A1/E5),
+            // nonce or not.
+            (winL2NonceChallenge || hostComputerGated) ? { originWs: ws } : undefined,
+            // P0a: pre-generated id shared with tray.
+            sharedConfirmId,
+          )
+
+          if (!trayPromise) {
+            // No tray (or Windows-nonce path) — straight WS, original behavior.
+            return wsPromise
+          }
+
+          // Race: first responder wins. Loser is silenced (manager.pending.delete
+          // means the second response is a no-op; tray dialog is closed via cancel).
+          // trayPromise may resolve to null if the tray adapter rejected (C-P0-7).
+          const winner: { source: "ws"; decision: SecurityConfirmationDecision } | { source: "tray"; approved: boolean } | null =
+            await Promise.race([
+              wsPromise.then((d): { source: "ws"; decision: SecurityConfirmationDecision } => ({
+                source: "ws", decision: d,
+              })),
+              trayPromise,
+            ])
+          // C-P0-6: confirmation resolved (one way or another) — drop from
+          // activeTrayConfirmsByWs so ws.close doesn't try to cancel a dialog
+          // that's already gone.
+          activeTrayConfirmsByWs.get(ws)?.delete(sharedConfirmId)
+
+          if (winner === null) {
+            // Tray rejected — fall back to WS-only path. wsPromise still races
+            // in the rest of this async block; just bypass tray-cancellation.
+            return await wsPromise
+          }
+          if (winner.source === "ws") {
+            tray!.cancelConfirm(sharedConfirmId)
+            return winner.decision
+          }
+          // Tray responded first — propagate to manager so the WS Side Panel also
+          // gets its resolved message (extension closes its dialog). respond() is
+          // the privileged path that bypasses originWs check; tray is a trusted
+          // single-instance local channel, no rogue-peer risk.
+          securityConfirmations.respond(sharedConfirmId, winner.approved)
+          return await wsPromise
+        })()
         if (!decision.approved) {
           const reason = decision.reason === "approved" ? "unavailable" : decision.reason
           const result = {
@@ -406,6 +924,21 @@ export function createToolExecutor(ws: WebSocket) {
           return result
         }
         logger.info("security.confirmation.approved", { tool_call_id: toolCallId, tool_name: toolName })
+        // UX-spike 2026-07-23: record per-session re-L2 trust for computer-use.
+        // The INITIAL task L2 just gated the whole task; subsequent mid-task
+        // re-L2 pauses (FOREGROUND-YIELD that escaped self-UI recovery,
+        // budget exhaustion, dialog-suspected) in THIS session for THIS app
+        // will auto-approve. Only reL2() in the executor consults this — the
+        // initial L2 above always asks. See computer/session-trust.ts.
+        if (hostComputerGated && finalParams.app) {
+          const { getComputerSessionTrust } = await import("./computer/session-trust")
+          getComputerSessionTrust().grant(sessionId, String(finalParams.app))
+          logger.info("computer.session_trust.granted", {
+            tool_call_id: toolCallId,
+            app: String(finalParams.app),
+          })
+        }
+        if (hostApp) hostAppTier = "l2"
         if (forceConfirm) {
           logger.info("security.critical_capability_confirmed", {
             tool_call_id: toolCallId,
@@ -417,16 +950,26 @@ export function createToolExecutor(ws: WebSocket) {
           })
         }
       } else {
+        // App tab WP3: app_whitelist / thread_trust reasons precede the
+        // domain_whitelist fallback (host_app never carries a domain).
+        const autoReason = securityConfig.allow_all_schemes ? "god_mode"
+          : securityConfig.auto_approve_dangerous ? "global_toggle"
+          : appWhitelisted ? "app_whitelist"
+          : threadTrusted ? "thread_trust"
+          : "domain_whitelist"
+        if (hostApp) hostAppTier = autoReason
         logger.info("security.auto_approved", {
           tool_call_id: toolCallId,
           tool_name: toolName,
           domain: relevantDomain || "unknown",
-          reason: securityConfig.allow_all_schemes ? "god_mode"
-            : securityConfig.auto_approve_dangerous ? "global_toggle" : "domain_whitelist",
+          ...(hostApp ? { app: hostApp.token, app_policy: hostApp.policy } : {}),
+          reason: autoReason,
         })
       }
-      // Issue a fresh token (post-approval or for auto-approved skip path)
-      const approvedToken = securityPolicy.issueToken(toolName, code)
+      // Issue a fresh token (post-approval or for auto-approved skip path).
+      // Phase 1 W8 bugfix (Kimi+Pi advisor Fix C): use bindingPayloadFor via
+      // issueTokenFor so issuance and validation CANNOT diverge per tool.
+      const approvedToken = securityPolicy.issueTokenFor(toolName, finalParams)
       finalParams = { ...finalParams, security_token: approvedToken.token }
     } else if (toolName === "evaluate" && finalParams.security_token) {
       // P0-4 (audit H2): evaluate is forwarded to the extension — unlike osascript_eval
@@ -685,10 +1228,37 @@ export function createToolExecutor(ws: WebSocket) {
     }
 
     // Companion-side tools (executed locally, not forwarded to extension)
-    const COMPANION_TOOLS = ["osascript_eval", "use_skill", "record_experience"]
+    const COMPANION_TOOLS = ["osascript_eval", "host_read", "host_write", "host_app", "host_computer", "use_skill", "record_experience"]
     if (COMPANION_TOOLS.includes(toolName)) {
       try {
-        const result = await executeCompanionTool(toolName, finalParams)
+        const result = await executeCompanionTool(toolName, finalParams, toolCallId, {
+          // Executor-internal confirmation channel (Phase 1 W8-windows
+          // skip-L2 manual-nonce prompt). Adversary amendment A1: ALWAYS
+          // origin-bound — a ws-bound send alone binds only the outbound
+          // direction; without originWs any loopback WS peer could burn the
+          // 3 nonce attempts (DoS).
+          sendConfirmation: (details) =>
+            securityConfirmations.request(
+              (data) => {
+                if (ws.readyState === WebSocket.OPEN) {
+                  ws.send(JSON.stringify(data))
+                }
+              },
+              details,
+              { originWs: ws },
+            ),
+          // Amendment A3: set only when the L2 dialog above carried this
+          // challenge and was approved (respondFrom resolves "approved" for
+          // a challenge-carrying request only after an exact match).
+          prevalidatedNonce: winL2NonceChallenge,
+          // App tab WP3: tier the gate decided for host_app (audit only).
+          appLaunchTier: hostAppTier,
+          // WP2 (§E.4): computer-task progress events go to every
+          // authenticated panel (the owner's own live view).
+          broadcast: broadcastToClients,
+          // UX-spike 2026-07-23: session id for per-session re-L2 trust.
+          computerSessionId: sessionId,
+        })
         logToolFinish(toolCallId, toolName, startedAt, result)
         return result
       } catch (err: any) {
@@ -873,7 +1443,7 @@ function dispatchToExtension(
  * tests can exercise the persistence path (the extension's add_to_whitelist
  * forwarding) without booting the full server. Logic is unchanged.
  */
-export async function handleSecurityConfirmationResponse(ws: WebSocket, msg: any): Promise<void> {
+export async function handleSecurityConfirmationResponse(ws: WebSocket, msg: any, sessionId?: string): Promise<void> {
   const confirmationId = String(msg.confirmation_id || "")
   const approved = msg.approved === true
 
@@ -908,12 +1478,44 @@ export async function handleSecurityConfirmationResponse(ws: WebSocket, msg: any
     })
   }
 
+  // Phase 1 W7 — Validate add_to_thread_whitelist (boolean) for host_use tools.
+  // Validates the requested bundle id against relevantApps originally shown.
+  // Same anti-injection contract as add_to_whitelist above.
+  const rawThreadWhitelist: boolean = msg.add_to_thread_whitelist === true
+  const relevantApps = securityConfirmations.getRelevantApps(confirmationId) || []
+  // Capture the tool name BEFORE respondFrom() below deletes the pending
+  // entry — getToolName afterwards would return undefined and the W7/WP3
+  // thread-trust grant would silently never happen (pre-existing bug: the
+  // host_read grant was equally affected; no test covered the composition).
+  const confirmationToolName = securityConfirmations.getToolName(confirmationId)
+  let threadWhitelistApp: string | null = null
+  if (rawThreadWhitelist && relevantApps.length > 0) {
+    // The first (and currently only) relevant app is what the user was shown.
+    // User cannot type a different bundle id — the checkbox is grayed-out
+    // pre-filled by the extension UI.
+    threadWhitelistApp = relevantApps[0]
+  } else if (rawThreadWhitelist && relevantApps.length === 0) {
+    // WS injection attempt: client sent add_to_thread_whitelist=true for a
+    // confirmation that didn't show any app checkbox.
+    logger.warn("security.thread_whitelist.relevant_apps_missing", {
+      confirmation_id: confirmationId,
+    })
+  }
+
   // Resolve the confirmation FIRST so a saveConfig failure cannot hang the
   // approved tool call. Persistence runs after, best-effort. By the time the
   // LLM's next tool call reaches the whitelist gate (next macrotask),
   // fs.writeFileSync has completed.
-  const responded = securityConfirmations.respondFrom(confirmationId, approved, ws)
-  if (!responded) {
+  //
+  // Phase 1 W8-windows / W9: pass the typed manual nonce into respondFrom.
+  // The extension sends nonce_response (uppercased by the UI); matching is
+  // case-insensitive. Adversary amendment A4: nonce_retry / nonce_locked are
+  // dedicated audit events and must NOT be lumped into
+  // origin_mismatch_or_unknown.
+  const nonceResponse = typeof msg.nonce_response === "string" ? msg.nonce_response : undefined
+  const respondResult = securityConfirmations.respondFrom(confirmationId, approved, ws, nonceResponse)
+  const responded = respondResult.outcome === "resolved"
+  if (respondResult.outcome === "unknown" || respondResult.outcome === "origin_mismatch") {
     // Either no such pending entry, or the response arrived on a different
     // socket than the one the confirmation was issued to. [C-SEC-2]: do not
     // silently drop — log so operators can spot the pattern (e.g., a rogue
@@ -921,6 +1523,20 @@ export async function handleSecurityConfirmationResponse(ws: WebSocket, msg: any
     logger.warn("security.confirmation.origin_mismatch_or_unknown", {
       confirmation_id: confirmationId,
       approved_requested: approved,
+    })
+  } else if (respondResult.outcome === "nonce_retry") {
+    // Wrong code typed — entry stays pending; the client got a
+    // security.confirmation.nonce_retry with attempts_left.
+    logger.warn("security.confirmation.nonce_retry", {
+      confirmation_id: confirmationId,
+      attempts_left: respondResult.attemptsLeft,
+    })
+  } else if (respondResult.outcome === "nonce_locked") {
+    // Max attempts exhausted — confirmation resolved denied.
+    logger.warn("security.confirmation.nonce_locked", {
+      confirmation_id: confirmationId,
+      attempts_left: 0,
+      reason: "max nonce attempts exceeded",
     })
   }
 
@@ -968,6 +1584,45 @@ export async function handleSecurityConfirmationResponse(ws: WebSocket, msg: any
       valid_patterns: validPatterns,
     })
   }
+
+  // Phase 1 W7 — Record thread-scoped trust when user approved with
+  // add_to_thread_whitelist=true. Only for read operations (Q1 blocker:
+  // writes always require biometric per call, never thread-trusted).
+  if (responded && approved && threadWhitelistApp) {
+    const toolName = confirmationToolName
+    if (toolName === "host_read" && sessionId) {
+      getThreadApprovals().add(sessionId, threadWhitelistApp, "read")
+      logger.info("security.thread_whitelist.added", {
+        confirmation_id: confirmationId,
+        thread_id: sessionId,
+        bundle_id: threadWhitelistApp,
+        kind: "read",
+      })
+    } else if (toolName === "host_app" && sessionId) {
+      // App tab WP3 — owner decision 2 (2026-07-18, W7 Blocker-1 amendment):
+      // L0 no-arg app launch MAY be thread-trusted under kind "app-launch".
+      // Reachable only when the gate offered the checkbox (policy "ai" —
+      // "manual" never offers it; the checkbox payload is validated against
+      // the relevantApps shown, so an injected grant for a manual app is
+      // impossible here). The gate additionally never consults trust for
+      // "manual", and apps.remove/set_policy/set_enabled(false) clear it.
+      getThreadApprovals().add(sessionId, threadWhitelistApp, "app-launch")
+      logger.info("security.thread_whitelist.added", {
+        confirmation_id: confirmationId,
+        thread_id: sessionId,
+        bundle_id: threadWhitelistApp,
+        kind: "app-launch",
+      })
+    } else if (toolName === "host_write") {
+      // Q1 ship blocker: writes NEVER thread-trust. Log rejection so
+      // operators can spot a buggy/malicious client attempting bypass.
+      logger.warn("security.thread_whitelist.write_rejected", {
+        confirmation_id: confirmationId,
+        bundle_id: threadWhitelistApp,
+        reason: "biometric per-call is non-negotiable for writes (W7 Q1 blocker)",
+      })
+    }
+  }
 }
 
 /**
@@ -995,7 +1650,34 @@ export function applyConnectionCloseGracePeriod(): void {
 
 // --- Companion-side tool executor (runs locally, not forwarded to extension) ---
 
-async function executeCompanionTool(toolName: string, params: any): Promise<any> {
+/**
+ * Optional execution context for companion tools. Phase 1 W8-windows uses
+ * this for the manual-nonce fallback routing (adversary amendment A3):
+ *   - Normal path: the L2 dialog carried the nonce challenge; its validated
+ *     value arrives as prevalidatedNonce and the executor skips re-prompting.
+ *   - skip-L2 path (god-mode / auto-approve): the standalone executor prompt
+ *     via sendConfirmation is the sole remaining user gate and IS required.
+ */
+interface CompanionToolExecOptions {
+  /** ws-bound + originWs-bound confirmation request channel (amendment A1). */
+  sendConfirmation?: (
+    details: SecurityConfirmationDetails,
+  ) => Promise<SecurityConfirmationDecision>
+  /** Nonce challenge already validated inside the L2 dialog. */
+  prevalidatedNonce?: string
+  /** App tab WP3: tier the L2 gate assigned to a host_app call (apps.launch audit). */
+  appLaunchTier?: string
+  /** WP2 (§E.4): broadcast channel for computer-task progress events. */
+  broadcast?: (data: any) => void
+  /**
+   * UX-spike 2026-07-23: the WS session id for computer-use per-session re-L2
+   * trust. Forwarded from the createToolExecutor closure (where sessionId
+   * lives) into runComputerTask deps; absent = every re-L2 asks.
+   */
+  computerSessionId?: string
+}
+
+async function executeCompanionTool(toolName: string, params: any, toolCallId?: string, execOpts?: CompanionToolExecOptions): Promise<any> {
   switch (toolName) {
     case "use_skill": {
       const skillName = params.name
@@ -1110,6 +1792,533 @@ async function executeCompanionTool(toolName: string, params: any): Promise<any>
         return { success: true, data: { result: output } }
       } catch (err: any) {
         return { success: false, error: `osascript_eval error: ${err.message || String(err)}` }
+      }
+    }
+    case "host_read": {
+      // Phase 0 computer-use spike — see docs/decisions/computer-use-round2-synthesis.md.
+      // Delegates to companion/src/host-use/ which dispatches on process.platform.
+      // Darwin spawns dist/cmspark-host (ad-hoc signed Swift binary); Linux/Win
+      // stubs throw NotImplementedOnPlatform — caught below and surfaced as
+      // {success:false}. Single source of truth for platform check lives in
+      // host-use/index.ts (Standards review M2: drop duplicate guard here).
+      //
+      // Kimi Round 2 Critical: validate security_token like osascript_eval does.
+      // Without this, any non-empty security_token string in params bypasses
+      // the L2 gate at server.ts:303 and host_read executes without confirmation.
+      if (params.security_token) {
+        const valid = securityPolicy.validateTokenFor(
+          String(params.security_token),
+          "host_read",
+          params,
+        )
+        if (!valid) {
+          return { success: false, error: "Invalid or expired security token for host_read" }
+        }
+      }
+      try {
+        const { hostRead } = await import("./host-use")
+        const application = typeof params.application === "string" ? params.application : undefined
+        const maxChars = typeof params.max_chars === "number" ? params.max_chars : undefined
+        const result = await hostRead({ application, maxChars })
+        return { success: true, data: result }
+      } catch (err: any) {
+        return { success: false, error: `host_read error: ${err.message || String(err)}` }
+      }
+    }
+    case "host_write": {
+      // Phase 1 W8 (Kimi+Pi advisor Option A): ALL writes go through biometric
+      // tier per Round 2 §4.2. W6 ask-once behavior replaced.
+      if (params.security_token) {
+        const valid = securityPolicy.validateTokenFor(
+          String(params.security_token),
+          "host_write",
+          params,
+        )
+        if (!valid) {
+          return { success: false, error: "Invalid or expired security token for host_write" }
+        }
+      }
+      const hostPlatform = os.platform()
+      if (hostPlatform !== "darwin" && hostPlatform !== "linux" && hostPlatform !== "win32") {
+        return {
+          success: false,
+          error: `host_write is macOS/Linux/Windows-only in Phase 1 (platform=${hostPlatform})`,
+        }
+      }
+      try {
+        const isWin = hostPlatform === "win32"
+        // Phase 1 W8-windows: win32 dispatches to the COM/fs-based WinHostAdapter.
+        const adapter = isWin
+          ? (await import("./host-use/win/adapter")).getWinAdapter()
+          : (await import("./host-use/darwin/adapter")).getDarwinAdapter()
+        const kind = String(params.kind) as "create" | "move" | "update" | "delete"
+
+        // Phase 1 W8/W9: biometric verification BEFORE writeOne.
+        // - darwin (W8): Touch ID via Swift binary subprocess
+        // - win32  (W8): Windows Hello UserConsentVerifier (OS-hosted dialog,
+        //   unsigned-safe); hardware absent → manual-nonce downgrade
+        // - linux  (W9): 6-char manual nonce typed by user (paste-blocked)
+        const reasonMap: Record<string, string> = {
+          create: isWin ? "Create a new OneNote page" : "Create a new Note",
+          move: "Move a file",
+          update: "Update an existing item",
+          delete: "Delete an item (destructive)",
+        }
+        const biometricReason = reasonMap[kind] || `host_write ${kind}`
+
+        let nonce: string
+        let method: "touchid" | "windows-hello" | "manual-nonce"
+        if (hostPlatform === "darwin") {
+          const { biometricVerify } = await import("./host-use/darwin")
+          nonce = await biometricVerify(toolCallId || "no-tool-call-id", biometricReason)
+          method = "touchid"
+        } else if (isWin) {
+          const { tryWindowsHello } = await import("./host-use/win")
+          const hello = await tryWindowsHello(toolCallId || "no-tool-call-id", biometricReason)
+          if ("ok" in hello) {
+            nonce = hello.nonce
+            method = "windows-hello"
+          } else if ("cancelled" in hello) {
+            // Adversary H1: cancel → denied, NEVER downgrade on cancel.
+            throw new Error("host_write denied: Windows Hello verification cancelled by user")
+          } else {
+            // Hello unavailable → manual-nonce downgrade (Round 2 §2.3 tier,
+            // triggered by real hardware state — not process-forgeable).
+            if (execOpts?.prevalidatedNonce) {
+              // Normal path (amendment A3): the challenge rode inside the L2
+              // dialog and was already validated there — no second prompt.
+              nonce = execOpts.prevalidatedNonce
+              method = "manual-nonce"
+            } else {
+              // skip-L2 path (god-mode / auto-approve): the standalone
+              // executor prompt is the sole remaining user gate — REQUIRED.
+              if (!execOpts?.sendConfirmation) {
+                throw new Error(
+                  "host_write: manual-nonce fallback unavailable (no confirmation channel)",
+                )
+              }
+              const { generateManualNonce } = await import("./host-use/nonce")
+              const challenge = generateManualNonce()
+              // Adversary amendment 7a: dedicated downgrade audit event.
+              logger.info("security.biometric.downgrade", {
+                tool_call_id: toolCallId,
+                reason: "windows_hello_unavailable",
+              })
+              const decision = await execOpts.sendConfirmation({
+                toolName: "host_write",
+                dangerousApis: [],
+                code: `host_write ${kind} — Windows Hello unavailable; type the 6-char code to approve`,
+                nonceChallenge: challenge,
+              })
+              if (!decision.approved) {
+                throw new Error(`host_write denied: manual-nonce confirmation ${decision.reason}`)
+              }
+              nonce = challenge
+              method = "manual-nonce"
+            }
+          }
+        } else {
+          // Phase 1 W9 Linux path: not yet wired through SecurityConfirmationManager
+          // (Linux companion itself is RUNBOOK-only in Phase 1 ship). The nonce
+          // generator + WS protocol are in place; integration pending Phase 2.
+          const { generateLinuxNonce } = await import("./host-use/darwin")
+          nonce = generateLinuxNonce()
+          method = "manual-nonce"
+          // TODO Phase 2: send security.confirmation.request with nonceChallenge,
+          // wait for response with nonceResponse, validate match, reject after 3 fails.
+          // For now Linux returns the generated nonce but no writeOne execution
+          // (Phase 1 writeOne adapters exist for darwin + win32 only).
+          return {
+            success: false,
+            error: `host_write on Linux: biometric nonce generated (${nonce}) but Linux has no writeOne adapter in Phase 1 (darwin + win32 only). Linux implementation pending Phase 2.`,
+          }
+        }
+        logger.info("security.biometric.verified", {
+          tool_call_id: toolCallId,
+          tool_name: "host_write",
+          kind,
+          nonce,
+          method,
+        })
+
+        let payload: any
+        if (kind === "create") {
+          if (typeof params.body !== "string") {
+            return { success: false, error: "host_write create: body required" }
+          }
+          payload = { kind: "create", body: params.body }
+        } else if (kind === "move") {
+          if (typeof params.destination !== "string" || typeof params.source_path !== "string") {
+            return {
+              success: false,
+              error: "host_write move: source_path + destination required",
+            }
+          }
+          payload = {
+            kind: "move",
+            destination: params.destination,
+            source_path: params.source_path,
+          }
+        } else if (kind === "update") {
+          if (typeof params.body !== "string") {
+            return { success: false, error: "host_write update: body required" }
+          }
+          payload = { kind: "update", body: params.body }
+        } else if (kind === "delete") {
+          payload = { kind: "delete" }
+        } else {
+          return { success: false, error: `host_write: unknown kind "${kind}"` }
+        }
+        // TargetId for Phase 1 W6/W8:
+        //   darwin create/update/delete (Notes): "macos:com.apple.Notes:default:note-default"
+        //   darwin move (Finder):                "macos:com.apple.finder:default:file-source"
+        //   win32  create/update/delete (OneNote): "win:onenote:default:note-default"
+        //   win32  move (fs):                      "win:fs:default:file-source"
+        const syntheticTarget = isWin
+          ? (kind === "move"
+              ? "win:fs:default:file-source"
+              : "win:onenote:default:note-default")
+          : (kind === "move"
+              ? "macos:com.apple.finder:default:file-source"
+              : "macos:com.apple.Notes:default:note-default")
+        const target = adapter.validateTargetId(syntheticTarget)
+        const result = await adapter.writeOne(target, payload)
+        return { success: true, data: { ...result, biometric_nonce: nonce } }
+      } catch (err: any) {
+        return { success: false, error: `host_write error: ${err.message || String(err)}` }
+      }
+    }
+    case "host_app": {
+      // App tab WP3 — L0 no-arg launch of a user-whitelisted app (win32, P1).
+      // Adversary 接线警示 ③: THIS is the executor validate branch of the
+      // three-place gate wiring (① L2 gate tool list, ② bindingPayloadFor).
+      if (params.security_token) {
+        const valid = securityPolicy.validateTokenFor(
+          String(params.security_token),
+          "host_app",
+          params,
+        )
+        if (!valid) {
+          return { success: false, error: "Invalid or expired security token for host_app" }
+        }
+      }
+      const isMac = os.platform() === "darwin"
+      const isWin = os.platform() === "win32"
+      if (!isWin && !isMac) {
+        return { success: false, error: `host_app requires macOS or Windows (platform=${os.platform()})` }
+      }
+      // Belt re-validation of the gate's preconditions — config may have
+      // changed between gate and execution, and tests reach the executor
+      // directly. The gate already produced the user-facing typed errors;
+      // these are the same checks in the same order.
+      const appToken = String(params.app || "")
+      const action = String(params.action || "")
+      if (!APP_TOKEN_PATTERN.test(appToken)) {
+        return { success: false, error: `host_app: invalid app token "${appToken}"` }
+      }
+      if (action !== "launch") {
+        return { success: false, error: `host_app: unsupported action "${action}" — Phase 1 supports "launch" only` }
+      }
+      const appsCfg = getConfig().apps
+      if (!appsCfg || appsCfg.enabled === false) {
+        return { success: false, error: "host_app: the Apps feature is disabled (apps.enabled=false in config.json)" }
+      }
+      const entry = appsCfg.entries?.[appToken]
+      if (!entry) {
+        return { success: false, error: `host_app: unknown app token "${appToken}" — not in the App-tab whitelist` }
+      }
+      if (!entry.enabled) {
+        return { success: false, error: `host_app: app "${entry.display_name}" (${appToken}) is disabled in the App tab` }
+      }
+      if (entry.kind !== "gui") {
+        return { success: false, error: `host_app: "${appToken}" is a CLI app — the CLI track is Phase-2` }
+      }
+      const launchStartedAt = Date.now()
+      try {
+        const { launchApp } = await import("./apps/launch")
+        const outcome = await launchApp(entry)
+        // Design §7.10: per-app audit {token, action, policy, tier_used,
+        // confirmation_id?, evidence, duration_ms}. confirmation_id is not
+        // plumbed through the gate; tool_call_id is the correlation key.
+        logger.info("apps.launch", {
+          tool_call_id: toolCallId,
+          token: appToken,
+          action,
+          policy: entry.policy,
+          tier_used: execOpts?.appLaunchTier ?? "unknown",
+          launched: outcome.launched,
+          evidence: outcome.evidence,
+          duration_ms: outcome.duration_ms,
+        })
+        return {
+          success: true,
+          data: {
+            token: appToken,
+            action,
+            display_name: entry.display_name,
+            launched: outcome.launched,
+            evidence: outcome.evidence,
+            ...(outcome.detail ? { detail: outcome.detail } : {}),
+          },
+        }
+      } catch (err: any) {
+        logger.warn("apps.launch", {
+          tool_call_id: toolCallId,
+          token: appToken,
+          action,
+          policy: entry.policy,
+          tier_used: execOpts?.appLaunchTier ?? "unknown",
+          launched: false,
+          error: err?.message || String(err),
+          duration_ms: Date.now() - launchStartedAt,
+        })
+        return { success: false, error: `host_app launch failed: ${err?.message || String(err)}` }
+      }
+    }
+    case "host_computer": {
+      // Coordinate computer-use (WP1). The task-level L2 dialog ran in the
+      // gate above (critical-class, originWs-bound); the security token binds
+      // app + task + the full action draft (A3 corpus hash included).
+      if (params.security_token) {
+        const valid = securityPolicy.validateTokenFor(
+          String(params.security_token),
+          "host_computer",
+          params,
+        )
+        if (!valid) {
+          return { success: false, error: "Invalid or expired security token for host_computer" }
+        }
+      }
+      const isMac = os.platform() === "darwin"
+      const isWin = os.platform() === "win32"
+      if (!isWin && !isMac) {
+        return { success: false, error: `host_computer requires macOS or Windows (platform=${os.platform()})` }
+      }
+      // R1 (§E.6.2): global single-task invariant — at most ONE coordinate
+      // computer task executes process-wide, across threadIds. The pre-dialog
+      // gate refuses early; THIS synchronous check-and-set is authoritative
+      // (no await between check and set → race-free) and closes the race
+      // where both tasks passed the gate inside their own L2 dialogs. The
+      // entry is registered BEFORE the estop preflight / clearEstopFlag so a
+      // concurrent second task can never clear the running task's fresh
+      // emergency-stop press, and it is released in the finally below on
+      // EVERY exit path (success / refusal / abort / throw).
+      const computerTaskId = randomUUID()
+      if (computerTaskAbort.size > 0) {
+        logger.warn("computer.task.busy", { tool_call_id: toolCallId })
+        return {
+          success: false,
+          error: "host_computer refused: another computer task is already executing (global single-task invariant, plan §E.6.2) [COMPUTER_TASK_BUSY] — wait for it to finish or abort it from the panel.",
+          data: { error_code: "COMPUTER_TASK_BUSY" },
+        }
+      }
+      computerTaskAbort.set(computerTaskId, false)
+      try {
+        // NOTE (2026-07-21 crash): the Windows estop preflight used to run
+        // here, UNCONDITIONALLY — on macOS it spawned powershell.exe, whose
+        // async spawn ENOENT escaped as an uncaughtException and killed the
+        // daemon. The win preflight now lives in the Windows branch below;
+        // macOS runs only the darwin-estop preflight.
+        const { runComputerTask } = await import("./computer/executor")
+
+        let result: Awaited<ReturnType<typeof runComputerTask>>
+
+        if (isMac) {
+          // macOS WP3: darwin adapters
+          const darwinEstop = await import("./computer/darwin-estop")
+          const darwinEstopOk = await darwinEstop.ensureEstopHelper()
+          if (!darwinEstopOk.ok) {
+            logger.warn("computer.estop.unavailable", { tool_call_id: toolCallId, reason: darwinEstopOk.reason })
+            return {
+              success: false,
+              error: `host_computer refused: emergency-stop unavailable (${darwinEstopOk.reason})`,
+              data: { error_code: "EMERGENCY_STOP_UNAVAILABLE" },
+            }
+          }
+          darwinEstop.clearEstopFlag()
+
+          const {
+            MacScreenCapturer,
+            MacLocator,
+            MacInputInjector,
+            MacWindowEnumerator,
+            MacSecurityEnvironment,
+            MacAxLocator,
+            MacPreviewBuilder,
+            startMacAxWindowWatcher,
+            MacAxProber,
+          } = await import("./computer/darwin-adapters")
+          const { MacEvidenceSealer } = await import("./computer/darwin-evidence")
+          const { ComputerEvidence } = await import("./computer/evidence")
+          const { writeBackUiaVerdict } = await import("./computer/uia")
+
+          const macSealer = new MacEvidenceSealer()
+
+          result = await runComputerTask(
+            {
+              task: String(params.task || ""),
+              app: String(params.app || ""),
+              actions: Array.isArray(params.actions) ? params.actions : [],
+              ...(typeof params.budget === "number" ? { budget: params.budget } : {}),
+              taskId: computerTaskId,
+            },
+            {
+              capturer: new MacScreenCapturer(),
+              locator: new MacLocator(),
+              injector: new MacInputInjector(darwinEstop.estopFlagPath()),
+              windows: new MacWindowEnumerator(),
+              securityEnv: new MacSecurityEnvironment(),
+              uiaLocator: new MacAxLocator(),
+              evidenceFactory: (taskId) => new ComputerEvidence(taskId, macSealer),
+              confirm: execOpts?.sendConfirmation ?? (async () => ({ confirmationId: "", approved: false, reason: "disconnect" as const })),
+              config: getConfig(),
+              sessionId: execOpts?.computerSessionId,
+              log: (event, data) => logger.info(event, { tool_call_id: toolCallId, ...data }),
+              abortCheck: () =>
+                computerTaskAbort.get(computerTaskId)
+                  ? "panel"
+                  : darwinEstop.consumeEstopFlag()
+                    ? "hotkey"
+                    : darwinEstop.estopHeartbeatLost()
+                      ? "estop-lost"
+                      : null,
+              onEvent: (ev) => {
+                try { execOpts?.broadcast?.({ type: "computer.task.event", ...ev }) } catch { /* best-effort */ }
+              },
+              previewBuilder: new MacPreviewBuilder(),
+              onActionInjected: () => {
+                try { computerRateLimiterSingleton?.record() } catch { /* best-effort */ }
+              },
+              uiaProber: new MacAxProber(),
+              uiaWatcherFactory: (t, opts) => startMacAxWindowWatcher(t, opts),
+              tinyclickLocator: null,  // WP5 not supported on macOS
+              onUiaVerdict: (token, verdict, probedAt) => {
+                const wb = writeBackUiaVerdict(token, verdict, probedAt)
+                logger.info("computer.uia.writeback", { tool_call_id: toolCallId, token, applied: wb.applied, reason: wb.reason })
+              },
+            },
+          )
+        } else {
+          // Windows: original adapter wiring
+          // WP2 (§E.6): emergency-stop preflight — the hotkey helper must be
+          // alive (ready.json heartbeat < 3s) before ANY injection task starts.
+          // Spawns the helper when missing; refuses fail-closed when it cannot
+          // come up: an injection loop with no kill switch must never run.
+          // WINDOWS-ONLY: macOS runs the darwin-estop preflight in its branch
+          // above; the ps1 helper must never be spawned off-win32.
+          const { ensureEstopHelper, clearEstopFlag, consumeEstopFlag, estopFlagPath, estopHeartbeatLost } = await import("./computer/estop")
+          const estop = computerEstopEnsureOverride ? await computerEstopEnsureOverride() : await ensureEstopHelper()
+          if (!estop.ok) {
+            logger.warn("computer.estop.unavailable", { tool_call_id: toolCallId, reason: estop.reason })
+            return {
+              success: false,
+              error: `host_computer refused: emergency-stop unavailable (${estop.reason}). The computer-estop.ps1 helper must be running with a working hotkey.`,
+              data: { error_code: "EMERGENCY_STOP_UNAVAILABLE" },
+            }
+          }
+          // A STALE flag (pressed before this task) must not abort the new run.
+          // N3: a press landing in the ms-window between this clear and the
+          // executor's first abortCheck is lost — accepted: the single-task
+          // gate above bounds that window to THIS task's own startup (no other
+          // task can clear a fresh press), and the user can simply press again.
+          clearEstopFlag()
+          const { PsScreenCapturer, PsLocator, PsInputInjector, PsWindowEnumerator, PsSecurityEnvironment, PsPreviewBuilder, PsEvidenceSealer, PsUiaLocator, startUiaWindowWatcher } = await import("./computer/win-adapters")
+          const { PsUiaProber, writeBackUiaVerdict } = await import("./computer/uia")
+          const { ComputerEvidence, runEvidenceJanitor } = await import("./computer/evidence")
+          // A7.2: 7-day TTL janitor — best-effort, never blocks the task.
+          try { runEvidenceJanitor({}) } catch { /* best-effort */ }
+          // X6: sweep %TEMP% raw captures stranded by crashed companion
+          try {
+            const { sweepComputerTempCaptures } = await import("./computer/win-adapters")
+            const swept = sweepComputerTempCaptures()
+            if (swept.removed.length > 0) {
+              logger.info("computer.temp.swept", { removed: swept.removed.length })
+            }
+          } catch { /* best-effort */ }
+          const sealer = new PsEvidenceSealer()
+          // WP5-I4 TinyClick admission
+          const { resolveTinyClickAdmissionSafe } = await import("./computer/model-admission")
+          const { computerModelSession } = await import("./computer/model-handlers")
+          const tinyclickAdmission = await resolveTinyClickAdmissionSafe({
+            config: getConfig().computer,
+            holder: computerModelSession,
+            deps: {
+              broadcast: (m) => { try { execOpts?.broadcast?.(m) } catch { /* best-effort */ } },
+              log: (event, payload) => logger.info(event, { tool_call_id: toolCallId, ...payload }),
+              stillEnabled: () => getConfig().computer?.modelEnabled === true,
+            },
+          })
+
+          result = await runComputerTask(
+            {
+              task: String(params.task || ""),
+              app: String(params.app || ""),
+              actions: Array.isArray(params.actions) ? params.actions : [],
+              ...(typeof params.budget === "number" ? { budget: params.budget } : {}),
+              taskId: computerTaskId,
+            },
+            {
+              capturer: new PsScreenCapturer(),
+              locator: new PsLocator(),
+              injector: new PsInputInjector(undefined, estopFlagPath()),
+              windows: new PsWindowEnumerator(),
+              securityEnv: new PsSecurityEnvironment(),
+              uiaLocator: new PsUiaLocator(),
+              evidenceFactory: (taskId) => new ComputerEvidence(taskId, sealer),
+              confirm: execOpts?.sendConfirmation ?? (async () => ({ confirmationId: "", approved: false, reason: "disconnect" as const })),
+              config: getConfig(),
+              sessionId: execOpts?.computerSessionId,
+              log: (event, data) => logger.info(event, { tool_call_id: toolCallId, ...data }),
+              abortCheck: () =>
+                computerTaskAbort.get(computerTaskId)
+                  ? "panel"
+                  : consumeEstopFlag()
+                    ? "hotkey"
+                    : estopHeartbeatLost()
+                      ? "estop-lost"
+                      : null,
+              onEvent: (ev) => {
+                try { execOpts?.broadcast?.({ type: "computer.task.event", ...ev }) } catch { /* best-effort */ }
+              },
+              previewBuilder: new PsPreviewBuilder(),
+              onActionInjected: () => {
+                try { computerRateLimiterSingleton?.record() } catch { /* best-effort */ }
+              },
+              uiaProber: new PsUiaProber(),
+              uiaWatcherFactory: (t, opts) => startUiaWindowWatcher(t, opts),
+              tinyclickLocator: tinyclickAdmission.locator,
+              onUiaVerdict: (token, verdict, probedAt) => {
+                const wb = writeBackUiaVerdict(token, verdict, probedAt)
+                logger.info("computer.uia.writeback", { tool_call_id: toolCallId, token, applied: wb.applied, reason: wb.reason })
+              },
+            },
+          )
+        }
+        if (!result.success) {
+          return {
+            success: false,
+            error: result.error,
+            data: { error_code: result.errorCode, task_id: result.taskId, evidence_dir: result.evidenceDir, steps: result.steps },
+          }
+        }
+        return {
+          success: true,
+          data: {
+            task_id: result.taskId,
+            completed: result.completedActions,
+            total: result.totalActions,
+            evidence_dir: result.evidenceDir,
+            steps: result.steps,
+          },
+        }
+      } catch (err: any) {
+        logger.warn("computer.task.error", { tool_call_id: toolCallId, error: err?.message || String(err) })
+        return { success: false, error: `host_computer error: ${err?.message || String(err)}` }
+      } finally {
+        // R1 (§E.6.2): release the single-task slot on EVERY exit path —
+        // success, typed refusal, abort, or throw. Runs after the return
+        // value is computed; delete is idempotent.
+        computerTaskAbort.delete(computerTaskId)
       }
     }
     default:
@@ -1490,12 +2699,22 @@ function extractMcpError(result: any): string {
   return JSON.stringify(result).slice(0, 500)
 }
 
-/** Broadcast a message to all connected WebSocket clients (used for MCP status updates). */
-function broadcastToClients(data: any): void {
+/**
+ * Broadcast a message to all AUTHENTICATED WebSocket clients (MCP status
+ * updates, computer.task.event progress + preview JPEGs).
+ *
+ * X3 (adversary WP2): outbound payloads turned sensitive in WP2 — per-step
+ * desktop preview JPEGs ride this channel. The inbound gate (P0-2B) already
+ * rejects pre-handshake messages, but the outbound side used to check only
+ * readyState, letting a forged-Origin localhost peer siphon every broadcast
+ * inside the 5s handshake window (and reconnect indefinitely). Mirror the
+ * inbound semantics: no completed auth.handshake, NO broadcasts.
+ */
+export function broadcastToClients(data: any): void {
   if (!wss) return
   const message = JSON.stringify(data)
   for (const client of wss.clients) {
-    if (client.readyState === WebSocket.OPEN) {
+    if (client.readyState === WebSocket.OPEN && wsAuth.get(client)?.authenticated === true) {
       try {
         client.send(message)
       } catch {
@@ -1505,14 +2724,37 @@ function broadcastToClients(data: any): void {
   }
 }
 
+/**
+ * Exported for integration tests (X3): aim broadcastToClients at a test
+ * WebSocketServer and seed wsAuth entries (both states), so the REAL
+ * broadcast path runs without booting startServer (singleton wss + UDS lock
+ * + MCP manager). Pass null to detach. Mirrors getSessionIdForTests /
+ * setComputerEstopEnsureForTests.
+ */
+export function setupBroadcastAuthForTests(
+  server: WebSocketServer | null,
+  authenticatedClients: WebSocket[] = [],
+  unauthenticatedClients: WebSocket[] = [],
+): void {
+  wss = server as WebSocketServer
+  for (const [client, authenticated] of [
+    ...authenticatedClients.map((c): [WebSocket, boolean] => [c, true]),
+    ...unauthenticatedClients.map((c): [WebSocket, boolean] => [c, false]),
+  ]) {
+    const timer = setTimeout(() => {}, 60000)
+    timer.unref()
+    wsAuth.set(client, { nonce: "test-nonce", authenticated, timer })
+  }
+}
+
 // --- WS message validation ---
 
-interface WsValidationResult {
+export interface WsValidationResult {
   valid: boolean
   error?: string
 }
 
-function validateWsMessage(msg: any): WsValidationResult {
+export function validateWsMessage(msg: any): WsValidationResult {
   if (!msg || typeof msg !== "object" || Array.isArray(msg)) {
     return { valid: false, error: "Message must be an object" }
   }
@@ -1601,6 +2843,41 @@ function validateWsMessage(msg: any): WsValidationResult {
       if (typeof m.approved !== "boolean") return { valid: false, error: "approved must be a boolean" }
       return { valid: true }
     },
+    "computer.task.abort": (m) => {
+      if (typeof m.task_id !== "string" || !m.task_id) return { valid: false, error: "computer.task.abort requires task_id (a task id or '*')" }
+      return { valid: true }
+    },
+    "computer.evidence.open": (m) => {
+      if (typeof m.task_id !== "string" || !m.task_id) return { valid: false, error: "computer.evidence.open requires task_id" }
+      return { valid: true }
+    },
+    "computer.model.get_state": () => ({ valid: true }),
+    // WP5 I3 登记项③（plan:480 M3）：熔断手动复位仅接受设置页声明来源——
+    // 未知类型默认放行（本函数尾部），故此条目是真围栏；handler 层二次核查。
+    "computer.model.reset_circuit_breaker": (m) => {
+      if (m.source !== "settings") return { valid: false, error: 'computer.model.reset_circuit_breaker requires source:"settings" (settings-page only)' }
+      return { valid: true }
+    },
+    // WP5-I4 WI-4.2 开关族（plan:538）：四路由同样仅设置页来源（双层围栏第一
+    // 层；handler belt 为第二层，P6）。set_enabled/license_response 另强制形状。
+    "computer.model.set_enabled": (m) => {
+      if (typeof m.enabled !== "boolean") return { valid: false, error: "computer.model.set_enabled requires enabled:boolean" }
+      if (m.source !== "settings") return { valid: false, error: 'computer.model.set_enabled requires source:"settings" (settings-page only)' }
+      return { valid: true }
+    },
+    "computer.model.license_response": (m) => {
+      if (typeof m.accepted !== "boolean") return { valid: false, error: "computer.model.license_response requires accepted:boolean" }
+      if (m.source !== "settings") return { valid: false, error: 'computer.model.license_response requires source:"settings" (settings-page only)' }
+      return { valid: true }
+    },
+    "computer.model.download": (m) => {
+      if (m.source !== "settings") return { valid: false, error: 'computer.model.download requires source:"settings" (settings-page only)' }
+      return { valid: true }
+    },
+    "computer.model.delete": (m) => {
+      if (m.source !== "settings") return { valid: false, error: 'computer.model.delete requires source:"settings" (settings-page only)' }
+      return { valid: true }
+    },
     "tool.result": (m) => {
       if (typeof m.tool_call_id !== "string" || !m.tool_call_id) return { valid: false, error: "tool.result requires tool_call_id" }
       return { valid: true }
@@ -1665,6 +2942,38 @@ function validateWsMessage(msg: any): WsValidationResult {
     },
     "mcp.set_selection": (m) => {
       if (typeof m.thread_id !== "string" || !m.thread_id) return { valid: false, error: "mcp.set_selection requires thread_id" }
+      return { valid: true }
+    },
+    "apps.list": () => ({ valid: true }),
+    "apps.enumerate": () => ({ valid: true }),
+    "apps.add": (m) => {
+      const hasPath = typeof m.path === "string" && m.path.length > 0
+      const hasAumid = typeof m.aumid === "string" && m.aumid.length > 0
+      const hasBundleId = typeof m.bundleId === "string" && m.bundleId.length > 0
+      // At least one identifier: path (Windows), aumid (UWP), or bundleId (macOS)
+      if (!hasPath && !hasAumid && !hasBundleId) {
+        return { valid: false, error: "apps.add requires at least one of path / aumid / bundleId" }
+      }
+      if (m.policy !== undefined && !["auto", "ai", "manual"].includes(m.policy)) {
+        return { valid: false, error: "apps.add policy must be auto, ai, or manual" }
+      }
+      if (m.display_name !== undefined && typeof m.display_name !== "string") {
+        return { valid: false, error: "apps.add display_name must be a string" }
+      }
+      return { valid: true }
+    },
+    "apps.remove": (m) => {
+      if (typeof m.token !== "string" || !m.token) return { valid: false, error: "apps.remove requires token" }
+      return { valid: true }
+    },
+    "apps.set_policy": (m) => {
+      if (typeof m.token !== "string" || !m.token) return { valid: false, error: "apps.set_policy requires token" }
+      if (!["auto", "ai", "manual"].includes(m.policy)) return { valid: false, error: "apps.set_policy policy must be auto, ai, or manual" }
+      return { valid: true }
+    },
+    "apps.set_enabled": (m) => {
+      if (typeof m.token !== "string" || !m.token) return { valid: false, error: "apps.set_enabled requires token" }
+      if (typeof m.enabled !== "boolean") return { valid: false, error: "apps.set_enabled requires boolean enabled" }
       return { valid: true }
     },
     "tab.navigated": (m) => {
@@ -1961,6 +3270,9 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
 
     const executeTool = createToolExecutor(ws)
 
+    // WP4: 每连接面板标识——computer.evidence.open 的 P6 频率上限按它计数。
+    const panelId = randomUUID()
+
     // Ping/pong keepalive — terminate clients that don't respond within 30s
     let pongReceived = true
     const pingInterval = setInterval(() => {
@@ -2033,6 +3345,14 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
             if (ws.readyState === WebSocket.OPEN) {
               ws.send(JSON.stringify({ type: "auth.ok" }))
               ws.send(JSON.stringify({ type: "connected" }))
+              // Push current coordinate state immediately so the extension always
+              // has fresh data after connect/reconnect — without this, the extension
+              // caches a stale coordinateEnabled value from before a companion restart.
+              const cfg = getConfig()
+              ws.send(JSON.stringify({
+                type: "computer.state",
+                coordinateEnabled: cfg.computer?.coordinateEnabled === true,
+              }))
             }
           } else {
             logger.warn("ws.auth_failed", {})
@@ -2060,7 +3380,21 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
         }
 
         if (msg.type === "security.confirmation.response") {
-          await handleSecurityConfirmationResponse(ws, msg)
+          // Phase 1 W7: pass per-connection session id (used as thread proxy)
+          // so handleSecurityConfirmationResponse can record thread-scoped trust.
+          const sid = mcpSessionByWs.get(ws)
+          await handleSecurityConfirmationResponse(ws, msg, sid)
+          return
+        }
+
+        // WP2 (§E.6): panel emergency stop for a RUNNING computer task.
+        // task_id targets one run (the id is broadcast in the task events);
+        // "*" is the panic button — aborts every running task. Stopping
+        // injection is always the safe direction, so any authenticated panel
+        // connection may send this (no origin binding). F1: the semantics live
+        // in handleComputerTaskAbort (exported, tested at the socket seam).
+        if (msg.type === "computer.task.abort") {
+          handleComputerTaskAbort(ws, msg)
           return
         }
 
@@ -2138,16 +3472,34 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
               }
             },
             executeTool,
+            // App tab D2 biometric gates (apps.add/set_policy →auto): same
+            // origin-bound confirmation channel as executeTool's
+            // sendConfirmation above — nonce-carrying confirmations resolve
+            // only on the socket that requested them (amendment A1).
+            requestConfirmation: (details) =>
+              securityConfirmations.request(
+                (data) => {
+                  if (ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify(data))
+                  }
+                },
+                details,
+                { originWs: ws },
+              ),
             broadcast: (data: any) => {
               const message = JSON.stringify(data)
               for (const client of clients) {
                 try {
-                  if (client.readyState === WebSocket.OPEN) {
+                  // Y-e: mirror broadcastToClients (X3) — never fan out to
+                  // unauthenticated connections inside the handshake window.
+                  if (client.readyState === WebSocket.OPEN && wsAuth.get(client)?.authenticated === true) {
                     client.send(message)
                   }
                 } catch { /* ignore disconnected */ }
               }
             },
+            // WP4: 每连接面板标识(computer.evidence.open P6 频率上限计数)。
+            panelId,
           },
         )
 
@@ -2177,6 +3529,20 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
       }
       applyConnectionCloseGracePeriod()
       securityConfirmations.rejectAll("disconnect", ws)
+      // C-P0-6: cancel any tray dialogs that were racing this WS. Without this,
+      // the Swift dialog stays modal until its own timeout. cancelConfirm is
+      // a no-op if the id isn't pending (race already resolved).
+      const tray = getTrayInstance()
+      if (tray) {
+        const activeIds = activeTrayConfirmsByWs.get(ws)
+        if (activeIds) {
+          for (const id of activeIds) {
+            tray.cancelConfirm(id)
+          }
+          activeIds.clear()
+          activeTrayConfirmsByWs.delete(ws)
+        }
+      }
       // Audit item 8: clear the per-session MCP confirm-cache so approvals
       // don't leak across reconnects (memory + a stale "approved" entry could
       // wrongly auto-approve a tool call from whatever reconnects next).
@@ -2219,9 +3585,13 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
   const shutdown = async (signal: string) => {
     console.log(`\n[cmspark-agent] Shutting down (${signal})...`)
     logger.info("server.shutdown", { signal })
-    // Stop MCP servers first (terminates child processes) before closing WS
+    // Stop MCP servers first (terminates child processes) before closing WS.
+    // Wrap in a timeout — a stuck MCP transport must not block shutdown indefinitely.
     try {
-      await mcpManager.shutdown()
+      await Promise.race([
+        mcpManager.shutdown(),
+        new Promise<void>((_, reject) => setTimeout(() => reject(new Error("MCP shutdown timed out after 5s")), 5000)),
+      ])
     } catch (err: any) {
       logger.warn("mcp.shutdown_failed", { error: err?.message || String(err) })
     }
@@ -2240,7 +3610,10 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
     // L12 / M9: with `{server}` wiring, wss.close() does NOT close our http.Server.
     // Close it explicitly so the process exits and the port is released.
     try {
-      await new Promise<void>((resolve) => httpServer.close(() => resolve()))
+      await Promise.race([
+        new Promise<void>((resolve) => httpServer.close(() => resolve())),
+        new Promise<void>((_, reject) => setTimeout(() => reject(new Error("HTTP server close timed out after 3s")), 3000)),
+      ])
     } catch {
       // ignore
     }

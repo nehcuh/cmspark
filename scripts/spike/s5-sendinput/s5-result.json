@@ -1,0 +1,50 @@
+{
+    "timestamp":  "2026-07-18T19:31:42.1413036+08:00",
+    "env":  {
+                "osBuild":  "28000",
+                "displayVersion":  "26H1",
+                "elevated":  false,
+                "actorPid":  16172,
+                "actorProcess":  "powershell"
+            },
+    "tests":  {
+                  "T1_foreground":  {
+                                        "ok":  10,
+                                        "total":  10,
+                                        "pass":  true
+                                    },
+                  "T2_click":  {
+                                   "delivered":  10,
+                                   "total":  10,
+                                   "at":  "401,377",
+                                   "pass":  true
+                               },
+                  "T3_unicodeType":  {
+                                         "want":  "青花瓷 Hello123",
+                                         "got":  "青花瓷 Hello123",
+                                         "pass":  true
+                                     },
+                  "T4_imeActive":  {
+                                       "ime":  "OK:中文(简体) - 美式键盘",
+                                       "want":  "青花瓷测试",
+                                       "got":  "青花瓷测试",
+                                       "pass":  true
+                                   },
+                  "T5_injectedFlag":  {
+                                          "hookEvents":  400,
+                                          "injectedFlagged":  400,
+                                          "note":  "OSR apps CAN filter on LLKHF_INJECTED; desktop apps typically do not"
+                                      },
+                  "T6_keyBurst":  {
+                                      "sent":  200,
+                                      "received":  200,
+                                      "dropRate":  0,
+                                      "pass":  true
+                                  }
+              },
+    "targetPid":  14144,
+    "verdict":  {
+                    "s5Pass":  true,
+                    "imeCase":  "PASS"
+                }
+}

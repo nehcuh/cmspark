@@ -51,6 +51,7 @@ before(async () => {
       confirmation_timeout_seconds: 45,
       auto_approve_dangerous: false,
       allow_all_schemes: false,
+      companion_ui_exe_basenames: [],
     },
   })
 })
@@ -319,6 +320,7 @@ describe("settings-cli", { concurrency: 1 }, () => {
       confirmation_timeout_seconds: 45,
       auto_approve_dangerous: false,
       allow_all_schemes: false,
+      companion_ui_exe_basenames: [],
     },
   })
 
