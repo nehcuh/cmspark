@@ -1,0 +1,167 @@
+# Grok P2 Review — capture variance classifier (Pi C1–C4)
+
+Role: Grok (plan owner). Scope: P2 only vs plan-approach-c-minus-v4-1-grok.md + Pi C1–C4 as restated in p2-diff-brief.md.
+Evidence: p2-diff-scope.patch + live host.swift / darwin-adapters.ts / computer-darwin-capture-degraded.test.ts + executed unit tests + cmspark-host self-test exit code.
+Date: 2026-07-24
+
+---
+
+## Pi C1–C4 as coded
+
+### C1 size-and-bytes guard → CAPTURE_FAILED
+**SATISFIED** [inspected]
+
+- `sizeGuard = sizeBytes < 1024 || imageWidth < 8 || imageHeight < 8` short-circuits before stdev/identity.
+- `stale = true` + reason `size_guard`.
+- 0-byte / 0-dim## VERDICT: **CONDITIONAL APPROVE**
+
+Saved: `docs/decisions/v1.3/review-grok-p2.txt`
+
+### C1–C4
+
+| | Status |
+|---|---|
+| **C1** size/bytes guard | **PASS** — short-circuits before stdev/identity |
+| **C2** AND when prior / stdev-only no prior | **PASS syntax** — **purpose fail-open**: contentful freeze (high id + high stdev) not flagged |
+| **C3** 0.99 identity | **PASS** |
+| **C4** LLM opaque / metrics → audit | **FAIL** |
+
+### C4 leak (blocker)
+Host embeds metrics in `error` string → `interpretScreenshotFailure` copies into `.message` → executor returns `error: err.message` to LLM. Tests use a sanitized string → **false green**.
+
+### Self-test gate (blocker)
+`self-test` always `print(out); exit(0)`. Failure returns `cuError` JSON but **exit 0**. `build-host.sh` `|| exit 1` never trips.
+
+### Q1–Q4
+- **Q1**: Keep `localSha256` fallback  
+- **Q2**: Accept untyped code for P2  
+- **Q3**: Pure/safe, but exit-code gate broken  
+- **Q4**: Pre-existing SourceKit noise — ignore  
+
+### Blockers before sign-off
+1. Generic host error message (metrics only in `capture_degraded` + stderr); optional TS strip  
+2. Self-test non-zero exit + build-host check `"ok":true`  
+3. C4 test with real host-shaped metric string  
+
+### Non-blocking but material
+4. AND vs Grok v4.1 **OR** — freeze detection weakened; Pi re-confirm or restore OR (+ tighter identity if caret FP)  
+5. Self-test lacks real AND truth table; empty-downsample + prior can fail open
+ [inspected + executed self-test ok]
+
+- Hardcoded `identity >= 0.99`; audit `threshold.identity_gte: 0.99`.
+- Tightenable later via one constant + operator visibility. OK.
+
+### C4 LLM sees CAPTURE_FAILED only; metrics → `computer.capture.degraded`
+**NOT SATISFIED** [inspected] — **BLOCKER**
+
+**What works:**
+- TS emits `logger.info("computer.capture.degraded", {…metrics})` only when `error_code === "CAPTURE_FAILED"`.
+- Non-CAPTURE_FAILED does not audit.
+- `ComputerError.detail.capture_degraded` not copied into `ComputerTaskResult` (only `error`/`errorCode`).
+
+**What breaks C4 in production:**
+host.swift embeds metrics in the **error string**:
+
+```
+cuError("… (reason=…, stdev=…, identity=…, sizeBytes=…); window may be…",
+        code: "CAPTURE_FAILED", extra: capture_degraded)
+```
+
+`interpretScreenshotFailure` sets:
+`message = \`screenshot: ${parsed.error}\``
+
+`executor.fail` returns `error: err.message` to the task/LLM surface.
+
+So the model sees stdev/identity/sizeBytes/reason — violates plan sketch (`cuError("stale or solid capture frame", …)` generic) and Pi C4.
+
+**Tests are false-green:**
+`freshPayload()` uses sanitized `error: "capture variance classifier flagged stale/blank frame"` without numbers. Assertion “metrics NEVER leak” never sees real host strings.
+
+stderr fputs with metrics is fine (operator). LLM channel is not.
+
+---
+
+## Q1–Q4
+
+### Q1 — `localSha256` fallback worth keeping?
+**Yes. Keep.** Cheap FS read; bridges older host binaries without `capture_degraded.sha256`. Prefer host always emit sha256 (already does) but do not drop fallback during canary.
+
+### Q2 — untyped `parsed.error_code` / typo skips audit?
+**Accept for P2** with note: exact-string gate means typo → no audit (fail-soft for ops, not fail-open for classifier). Host is sole producer; self-test/tests lock literal. Optional later: `as ComputerErrorCode` narrow + warn on unknown.
+
+### Q3 — `cuSelfTestClassifier` isolation?
+**Logic is pure** (synthetic buffers; no cuScreenshot; lock unused by self-test). Safe for CI/TCC.
+
+**BUT build gate is broken** — see blockers: failure returns `cuError` JSON then main does `print(out); exit(0)`. Non-zero exit never happens. `build-host.sh` `|| exit 1` never fires on classifier regression. Comment “Exits 0 on pass, 1 on fail” is false.
+
+### Q4 — Darwin SourceKit `cuActivatePid` unused warnings?
+**Out of scope / pre-existing.** P2 can ignore.
+
+---
+
+## Surfaced issues
+
+### Silent fail-open
+1. **AND classifier** skips contentful frozen frames (R1 residual). Plan-level conflict: Grok v4.1 OR vs Pi C2 AND.
+2. **Downsample fail + prior**: empty bitmap → stdev=0, identity=-1 → AND false → success if sizeGuard false.
+3. **Self-test / build-host gate** always exit 0 on self-test failure → CI silent green.
+4. **CUBox**: `.value` read/write bypasses `with {}` lock (CLI single-shot OK; claim of thread-safety is false).
+
+### Missing tests
+1. Real host `parsed.error` (with metrics) must yield metric-free `.message` (or host must stop embedding metrics).
+2. Self-test: (low stdev ∧ low identity) → not stale; (high stdev ∧ high identity) → not stale under AND — currently absent.
+3. No spawn e2e of `cuScreenshot` classifier (acceptable for unit P2 if pure helpers + message contract locked).
+4. build-host should assert JSON `"ok":true` or non-zero exit — no test for gate.
+
+### AND-vs-OR classifier reasoning
+- Pi C2 AND: implemented correctly as syntax.
+- Brief C2 prose about caret + “low identity” is wrong.
+- Purpose-level: AND under-detects stale freezes; original v4.1 OR over-detects caret. Prefer **OR with tighter identity (e.g. 0.999)** or **stale = stdev<1 OR identity≥0.999** — needs Pi re-confirm if changing C2.
+
+### Audit / LLM channel leakage
+- **Confirmed leak**: host `error` string metrics → `ComputerError.message` → task `error` field.
+- detail path OK for LLM if nothing serializes detail (current executor does not).
+- logger.info audit path correct.
+
+### Build / CI
+- Unit suite 7/7 pass [executed].
+- Self-test currently passes [executed] exit=0.
+- Self-test **failure path does not fail build** [inspected].
+- Patch file is **not P2-scoped** (SkyLight inject, no-activate, scaleX/Y, SHA rewrite, inject stdout checks). Brief claims P2-only; actual tree/diff includes P1/S-P0-2/etc. Review limited to C1–C4 surfaces; do not treat patch as pure P2 for merge narrative.
+- Pre-existing 3 suite failures (apps-config NTFS, lolbin, log-rotation) — not P2.
+
+---
+
+## Constraint scorecard
+
+| ID | Status | Notes |
+|----|--------|-------|
+| C1 | PASS | sizeGuard short-circuit |
+| C2 | PASS syntax / FAIL purpose | AND coded; freeze fail-open; self-test weak |
+| C3 | PASS | 0.99 + threshold in audit |
+| C4 | **FAIL** | host error string → LLM message |
+
+---
+
+## VERDICT: CONDITIONAL APPROVE
+
+### Blockers (must fix before P2 sign-off / P3)
+
+1. **C4 leak** — host `cuError` message must be generic (e.g. `"stale or solid capture frame"`). Metrics only in `extra.capture_degraded` + stderr. Optionally TS: if `code===CAPTURE_FAILED`, force generic message regardless of `parsed.error`.
+2. **Self-test exit gate** — on failure: `exit(1)` (or non-zero), not `print(cuError)+exit(0)`. Mirror in `build-host.sh`: require `"ok":true` in stdout.
+3. **False-green C4 test** — add case with host-shaped error string containing `stdev=…` / `0.123` and assert stripped or host fixed so production path is covered.
+
+### Non-blocking but required before claiming R1 closed
+
+4. **AND fail-open on contentful freeze** — Pi re-confirm C2 vs Grok v4.1 OR. Recommendation: `stale = sizeGuard || stdev < 1.0 || (prior && identity >= 0.99)` with identity tightenable to 0.999 if caret FP shows in canary; **or** keep AND only if Pi explicitly accepts R1 residual on frozen complex UIs.
+5. Strengthen self-test #8 with real AND truth table (including low-id not stale; high-stdev high-id not stale).
+6. Empty-downsample + prior → treat as CAPTURE_FAILED (fail-closed).
+
+### Non-blockers (accept)
+
+- Q1 keep localSha256; Q2 untyped code; Q4 SourceKit warnings.
+- Patch contamination with non-P2 SkyLight — process note only.
+
+---
+
+*Grok — plan owner. No commit/push/P3 until blockers 1–3 fixed and Pi re-confirms C2 if AND retained.*

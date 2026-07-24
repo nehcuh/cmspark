@@ -1,0 +1,248 @@
+# Final Review — Approach C-minus Merged Diff (Plan v3)
+
+**Reviewer**: Grok (post Plan-v2 review; parallel to Claude Code if any)
+**Date**: 2026-07-24
+**Scope**: Merged implementation of Plan v3 F1–F9 + G2/G3 tests, prior to G1 Tahoe click lab
+**Evidence levels**:
+- `[executed]` — ran tests / host binary / hash compare
+- `[inspected]` — read source paths end-to-end
+- `[assumed]` — reasoned without execution
+
+---
+
+## Verdict: **PROCEED**
+
+G1 manual lab may start. No silent-success path remains on inject. Integrity gate covers both planned spawn surfaces. Plan v2 findings (#1–#6) are addressed in the merged code. Residual items below are Stage-3 / hygiene debt, not G1 blockers.
+
+Do **not** treat this as Stage-3 ship clearance — see § Residual and § Q4.
+
+---
+
+## Plan v2 findings — disposition in merged code
+
+| # | Plan-v2 finding | Merged status | Evidence |
+|---|---|---|---|
+| 1 | F5 wrong path (`host-use/.../darwin-adapters.ts`) | Fixed — edits in `computer/darwin-adapters.ts` inject methods | `[inspected]` |
+| 2 | Integrity gate missed computer-use inject | Fixed — all 5 inject paths call `spawnHostBin` | `[inspected]` |
+| 3 | SPI failure silent (exit 0 + discarded stdout) | Fixed — parse + `checkOk` after every inject spawn | `[inspected]` + F9 tests `[executed]` |
+| 4 | TCC bundle ID wrong | Out of this diff (comms Stage 3 / F10). Code does not hardcode wrong ID. | `[inspected]` |
+| 5 | CI SHA option A vs B | Auto-rewrite present; CI option A assertion **not yet** in `.github/workflows/ci.yml` | `[inspected]` — Stage 3 / PR gate |
+| 6 | Plist floor must stay 14.4 | No plist bump in this diff; runtime `cuResolveSkyLight()` gate | `[inspected]` |
+
+---
+
+## Q1 — Error code taxonomy: keep three, do not collapse
+
+**Answer: Keep the three-way partition. Do not collapse `SKYLIGHT_POST_FAILED` into `CGEVENT_CONSTRUCT_FAILED`.**
+
+| Code | Meaning | When it fires | LLM action |
+|---|---|---|---|
+| `SKYLIGHT_SPI_UNAVAILABLE` | Resolve failed (dlopen/dlsym) | Dispatch-level fail-fast before CGEvent construction | Permanent for this OS: upgrade / unsupported |
+| `SKYLIGHT_POST_FAILED` | Bound SPI present but post helper returned false | Defensive: `fn == nil` or `event == nil` after resolve | Transient / internal — retry once; do **not** say "upgrade OS" |
+| `CGEVENT_CONSTRUCT_FAILED` | `CGEvent(...)` returned nil | Construction site before post | Rare system pressure; distinct from SPI |
+
+**Honesty note** `[inspected]`: `SLEventPostToPid` is `Void`. `slPostToPid` only returns `false` when `fn` or `event` is nil:
+
+```swift
+func slPostToPid(_ pid: pid_t, _ event: CGEvent?) -> Bool {
+    guard let fn = slPostEventToPidFn, let ev = event else { return false }
+    fn(pid, ev)
+    return true
+}
+```
+
+After successful `cuResolveSkyLight()` at the inject case, and after `guard let` on every CGEvent, **`SKYLIGHT_POST_FAILED` is effectively unreachable in the happy path**. That is fine — it is a defensive belt, not a live SPI-status channel. Collapsing it into `CGEVENT_CONSTRUCT_FAILED` would mix "couldn't build event" with "couldn't call SPI", which are different root causes if either guard ever fires.
+
+**Do not** re-introduce a single `SKYLIGHT_SPI_FAILED` umbrella for LLM copy. Plan v2 called that out: upgrade messaging must not apply to post/construct failures.
+
+**NIT**: `slPostToPid` comment still says "caller must fall back to HID" — HID path was removed (F6). Comment is stale; fix in Stage 3 drive-by. Not load-bearing.
+
+---
+
+## Q2 — `assertInjectOk()` silent-failure modes?
+
+**Answer: No new silent-failure modes vs the previous broken inline pattern. One documentation drift.**
+
+**What was fixed (load-bearing):** old inject paths discarded stdout and treated exit 0 as success. Host always `print(out); exit(0)` on structured `cuError` (`host.swift` ~569–570). F9 parse+checkOk closes that hole.
+
+**Production path** `[inspected]`: all five methods use:
+
+```ts
+stdout = await spawnHostBin(...)
+const parsed = parseComputerJson(stdout, "inject")
+checkOk(parsed, "inject")
+```
+
+**`assertInjectOk` itself** is exported and tested, but **not called** by the five inject methods. Comment claims "Used by every inject path" — false. Tests prove composition equivalence (`parse + checkOk === assertInjectOk`). Functionally identical; no silent drop.
+
+**Failure surfaces correctly:**
+
+| Failure | Path | Result |
+|---|---|---|
+| Integrity / TOCTOU / exec throw | `catch` → `rethrowDarwinExecError` | `ComputerError("INVALID_ACTION", …)` |
+| `{ok:false, error_code}` | parse + checkOk | `ComputerError(error_code, …)` |
+| Malformed JSON / non-object | parseComputerJson | `ComputerError("INVALID_ACTION", …)` |
+| Missing `error_code` on ok:false | checkOk default | `INVALID_ACTION` |
+
+**Minor type hygiene** (not a silent failure): `ComputerErrorCode` union in `types.ts` does **not** list `SKYLIGHT_SPI_UNAVAILABLE` | `SKYLIGHT_POST_FAILED` | `CGEVENT_CONSTRUCT_FAILED`. `checkOk` passes `parsed.error_code` via `Record<string, any>`, so runtime works and F9 tests pass `[executed]`, but the type system lies. Executor already forwards `err.code` as a string to the LLM (`errorCode: err.code`). **Recommend 3-line union update before Stage 3 ship**; not required for G1.
+
+**Test gap (honest, low risk):** G3 tests exercise `assertInjectOk` only, not `MacInputInjector.click()` with a mocked `spawnHostBin`. Production methods clearly call parse+checkOk; residual risk is future refactor deleting the inline pair without switching to the helper. Prefer wiring inject methods through `assertInjectOk` in a tiny cleanup commit (DRY + comment truth).
+
+---
+
+## Q3 — TOCTOU gaps vs `swift-tray-bridge.ts`
+
+**Answer: No new TOCTOU gap beyond the tray pattern's known residual. One behavioral difference is inherent to CLI vs long-lived spawn.**
+
+| Step | tray (`swift-tray-bridge`) | `spawnHostBin` | Match? |
+|---|---|---|---|
+| realpath → open fd → fstat → hash from fd | yes | yes | yes |
+| pre-spawn refuse on hash mismatch (no auto-rebuild) | yes | yes | yes |
+| spawn via realpath | yes | yes | yes |
+| post-spawn inode+dev re-stat | yes | yes | yes |
+| on post mismatch: kill long-lived proc | yes (`this.kill()`) | N/A — `execFile` already finished | CLI residual |
+| swap-back race (malicious during exec, restore before post-stat) | residual | residual | same |
+| content rewrite in-place same inode | residual | residual | same |
+| T4 unit-tested | production-tested honesty | same honesty comment | yes |
+
+**Dev hatch split is correct:** `CMSPARK_SKIP_HOST_INTEGRITY=1` ≠ `CMSPARK_ALLOW_HOST_BIN_OVERRIDE`.
+
+**Scope honesty:** `host-integrity.ts` header says "do not call execFileAsync on cmspark-host directly elsewhere." Computer-use **non-inject** paths (window-list, screenshot, OCR, ax-probe, …) still use bare `execFileAsync` `[inspected]`. That matches Plan F4 (inject + `defaultDarwinRunner` only). Comment overclaims; residual S-P0-2 expansion is Stage 4, not a C-minus regression.
+
+**SHA pin** `[executed]`: `dist/cmspark-host` SHA256 `84f89e26…d437a3` matches `CMSPARK_HOST_SHA256`. Integrity T2 spawn of `security-check` returned `ok:true`.
+
+---
+
+## Q4 — Stage 3 cleanup list completeness
+
+**Plan Stage 3 (ship) as written:**
+
+1. Remove `CMSPARK_SKYLIGHT_FORCE_FG` from `host.swift`
+2. `build-host.sh` (auto-SHA)
+3. All tests pass
+4. Tag release
+5. User-comms F10: release notes / banner / DMG README / `tccutil reset Accessibility com.cmspark.host`
+
+**That list is complete for ship of click/type/key/scroll.** Drag is **not** a "cleanup" — it is a **feature gap**.
+
+### drag() status `[executed]`
+
+```
+./dist/cmspark-host inject --action drag ...
+→ {"ok":false,"error":"unknown inject action: drag","error_code":"INVALID_ACTION"}
+exit 0
+```
+
+Companion now surfaces this as typed `ComputerError("INVALID_ACTION", …)` (no longer silent). Acceptable for v1.3 if product docs say drag unsupported on Darwin SkyLight path. **Implementing drag** (mouseDown → moved → mouseUp sequence via `slPostToPid`) is Stage 4 / product backlog unless G1 expands to require it.
+
+### Add to Stage 3 checklist (hygiene, small)
+
+| Item | Why |
+|---|---|
+| Remove `CMSPARK_SKYLIGHT_FORCE_FG` + stderr "skipping forceForeground" noise | Plan Stage 3 |
+| Add three codes to `ComputerErrorCode` | Type hygiene / documentation contract |
+| Prefer inject methods call `assertInjectOk` | Fix false "used by every path" claim |
+| Fix `slPostToPid` HID-fallback comment | Stale after F6 removal |
+| Land CI option A (if `host.swift`/`host.entitlements` change → `host-integrity.ts` must change) | Plan success criterion; **missing from ci.yml today** |
+| F10 comms with `com.cmspark.host` | Plan Stage 3 |
+| Release note: Darwin `drag` → `INVALID_ACTION` until Stage 4 | Known gap honesty |
+
+### Not Stage 3 (explicitly deferred)
+
+- D1–D8 (plan Stage 4)
+- Integrity gate for non-inject computer spawn paths
+- Implementing `checkOcclusion` / `checkOnscreen` (params accepted, **body unused** — pre-existing; out of C-minus scope)
+
+---
+
+## Q5 — Production readiness
+
+### **PROCEED** (for G1 lab)
+
+Not **PROCEED-WITH-FIXES** because no fix is required to make G1 truth-finding valid.
+
+Not **BLOCK** because:
+
+1. Silent SPI success is closed (F9).
+2. Integrity covers inject + host-use runner (F4).
+3. ensureForeground removed from inject (cursor/frontmost coupling).
+4. SPI resolve fail-fast with distinct code.
+5. Entitlements: `disable-library-validation=false` `[inspected]`.
+6. Tests: **16/16 pass** `[executed]` (8 integrity + 8 F9 contract).
+7. Live binary: `SLEventPostToPid=true` on this host; click path returns structured ok `[executed]`.
+
+### G1 still load-bearing
+
+Code review cannot certify Chrome renderer acceptance or real cursor immobility. G1 steps (TextEdit → Safari → **Chrome**) remain the acceptance gate before Stage 3 ship. If Chrome fails, return to plan — do not Stage 3.
+
+### Before Stage 3 ship (not before G1)
+
+1. ComputerErrorCode union + optional `assertInjectOk` wiring
+2. CI option A
+3. FORCE_FG removal + F10 comms
+4. Document drag gap
+
+---
+
+## Additional findings (ranked)
+
+### F-A — Low: `ComputerErrorCode` missing SkyLight codes
+See Q2. Runtime OK; type contract incomplete. Fix before Stage 3.
+
+### F-B — Low: `assertInjectOk` unused in production inject methods
+Comment/docs lie; behavior correct via inline pair. Prefer DRY.
+
+### F-C — Low: CI option A not implemented
+Plan Grok finding #5 / success criteria. Gate PR merge, not G1.
+
+### F-D — Info: `SKYLIGHT_POST_FAILED` nearly dead (Void SPI)
+Keep for defense; do not invent status from a Void call. Do not collapse taxonomy.
+
+### F-E — Info: `checkOcclusion` / `checkOnscreen` unused in `cuInject`
+Pre-existing. Click still passes `--check-occlusion`. Not a regression; not Stage 3 mandatory unless occlusion safety is product-critical for v1.3.
+
+### F-F — Info: non-inject computer paths bypass integrity
+By plan scope. Comment overclaim only.
+
+---
+
+## Design decisions — pass/fail
+
+| Decision | Verdict |
+|---|---|
+| Error taxonomy 3-way | **PASS** — keep |
+| assertInjectOk / F9 surface | **PASS** (wire helper optionally) |
+| Resolve once per inject invocation | **PASS** — dispatch-level fail-fast correct |
+| TOCTOU honesty (T4 not unit-tested) | **PASS** — matches tray |
+| forceForeground removed (+ canary env) | **PASS** for canary; Stage 3 removes env |
+| drag default → cuError | **PASS** as known gap if release-noted |
+
+---
+
+## Verification log
+
+```
+[executed] shasum -a 256 dist/cmspark-host
+         == CMSPARK_HOST_SHA256 (84f89e26…d437a3)
+[executed] npx tsx --test tests/host-use-darwin-integrity.test.ts
+         tests/computer-darwin-inject-contract.test.ts
+         → 16 pass, 0 fail
+[executed] cmspark-host inject --action drag → INVALID_ACTION JSON, exit 0
+[executed] cmspark-host inject --action click --window-id 1
+         → stderr: resolved SLEventPostToPid=true; stdout ok:true
+[inspected] host.swift SkyLight resolve + cuInject + inject case fail-fast
+[inspected] host-integrity.ts vs swift-tray-bridge.ts pattern
+[inspected] darwin-adapters.ts five inject methods
+[inspected] host.entitlements disable-library-validation=false
+[inspected] .github/workflows/ci.yml — no host-integrity option A yet
+```
+
+---
+
+## Bottom line
+
+**PROCEED to G1.**
+
+Plan v2's three load-bearing implementation bugs (wrong file, integrity miss on inject, silent SPI success) are fixed in the merged diff. Residual items (type union, CI option A, FORCE_FG removal, drag feature, comment nits) are **Stage 3 / Stage 4**, not reasons to delay the Tahoe click lab.
+
+If G1 Chrome click fails, stop and re-open the plan — do not paper over with HID.

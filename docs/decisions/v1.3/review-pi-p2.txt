@@ -1,0 +1,80 @@
+
+### Threat-class table
+
+| Threat class | stdev | identity | AND | OR (id≥0.99) |
+|---|---|---|---|---|
+| Occluded blank frame (Pi's original concern) | ~0 | ~1.0 | **stale ✓** | stale ✓ |
+| 0-byte / 0-dim PNG | n/a | n/a | stale (sizeGuard) | stale (sizeGuard) |
+| CGContext draw fail | n/a | n/a | stale (downsampleEmpty) | stale (downsampleEmpty) |
+| Caret-blink in uniform field (1 cell / 4096) | ~3.98 | ~0.99976 | **NOT stale ✓** | stale ✗ (FP) |
+| Caret-blink in rich UI | high | ~0.99976 | NOT stale (stdev≥1) | stale ✗ (FP) |
+| Frozen contentful frame (Grok's new concern) | high | ~1.0 | NOT stale ✗ (FN) | stale ✓ |
+| Live frame | high | <0.99 | NOT stale ✓ | NOT stale ✓ |
+
+### Key finding on caret-blink
+
+Single cell flip in 64×64=4096 grid: identity = 4095/4096 = **0.99976** (>0.99, >0.999, <0.9999); variance ≈ (1/4096)×(255−mean)² ≈ 15.87 → stdev ≈ **3.98** (>1.0). 
+
+**Pi's original worry is correct**: OR trips on caret-blink via id≥0.99 even when stdev is low; AND does NOT trip because stdev rises above 1.0 with even a single cell flip. Grok's "OR + tighter id 0.999" doesn't help — 0.99976 > 0.999 still FP. Only id≥0.9999 escapes caret-blink, which is exact-match-only and useless for real frozen-contentful detection.
+
+### Frozen-contentful is a separate threat class
+
+High stdev + identity≈1.0 — neither AND nor OR-with-sane-threshold catches it. Right detector is **temporal** (3+ consecutive identical captures, or ANR probe). P2's per-frame classifier is the wrong layer.
+
+### Decision: Option A
+
+1. Pi's original threat (occluded blank) — fully caught by AND.
+2. Caret-blink — AND correctly skips; OR over-flags. Dev workflow (terminals/editors/IDEs) has constant carets — OR FP cost is real and ongoing.
+3. Frozen-contentful — defer to temporal detector in later iteration.
+4. Grok's "tighter-id OR" doesn't escape caret-blink at any usable threshold.
+
+R1 **partially closed** by P2: blank/occluded + 0-byte/dim + CGContext-draw covered. Frozen-contentful open as follow-up (not a P2 blocker).
+
+## Other observations (non-blocking)
+
+- **CUBox thread-safety** (`host.swift:1030-1042`): `.value[key]` bypasses `with {}` lock. CLI single-shot — no runtime race. Accepted by Grok.
+- **Patch contamination**: p2-fixup-diff.patch is cumulative (SkyLight inject, no-activate, scaleX/Y, SHA rewrite) — not pure P2. Brief acknowledges. Merge narrative should reflect this.
+- **`parsed.error_code` untyped** in TS — typo → no audit (fail-soft for ops). Accepted for P2.
+- **`localSha256` fallback** retained — cheap bridge for older binaries. Fine.
+
+## Constraint scorecard
+
+| ID | Status | Evidence |
+|---|---|---|
+| C1 size/bytes guard | **PASS** | `host.swift:960,967` |
+| C2 AND when prior / stdev-only no prior | **PASS** | `host.swift:967-976`; Option A ruled above |
+| C3 0.99 identity + threshold audit | **PASS** | `host.swift:972` + `:1015` |
+| C4 metrics → audit only | **PASS** | `darwin-adapters.ts:107-131` |
+
+| # | Blocker | Status |
+|---|---|---|
+| 1 | C4 leak | **RESOLVED** — `host.swift:1005-1010` + `darwin-adapters.ts:127-131` |
+| 2 | self-test exit gate | **RESOLVED** — `host.swift:564-579` + `build-host.sh:96-104` |
+| 3 | false-green C4 test | **RESOLVED** — `computer-darwin-capture-degraded.test.ts:194-231` |
+
+| # | Material | Status |
+|---|---|---|
+| 5 | AND truth table | **RESOLVED-WITH-CAVEAT** — `host.swift:1213-1247` (staleIdCaret dead-var) |
+| 6 | empty-bitmap fail-closed | **RESOLVED** — `host.swift:965-980` |
+
+## VERDICT: **APPROVE**
+
+All 3 Grok blockers resolved as coded (verified from working tree). Both materials resolved. C2 AND-vs-OR formally ruled: **Option A (keep AND)** — Pi's v4.1 caveat upheld; Grok's OR rejected on caret-blink FP analysis; frozen-contentful deferred to temporal detector.
+
+R1 partially closed: blank/occluded ✓, 0-byte/dim ✓, CGContext-draw ✓, frozen-contentful ✗ (P3 follow-up).
+
+**P3 may start.** No commit/push/P3 blocker remaining from P2.
+
+### Conditions (non-blocking, track for P3)
+
+1. **Frozen-contentful detector** — temporal mechanism (N≥3 consecutive identical captures or ANR probe). Not a P2 regression.
+2. **`staleIdCaret` dead-var** — assert or drop. Cosmetic.
+3. **CUBox lock discipline** — if `cuScreenshot` ever runs outside single-shot CLI (daemon mode), `.value` bypass becomes a real race.
+
+---
+
+*Pi — plan confirmer. Grok's blockers cleared; C2 ruled. Hand off to Claude for P2 commit + P3 kick-off.*
+
+---
+
+**Note**: I could not save to `docs/decisions/v1.3/review-pi-p2.txt` — Write/Edit/Bash redirection all denied with "haven't granted it yet". Please either approve write permission or paste the content above into the file. The file currently exists as 0 bytes.
