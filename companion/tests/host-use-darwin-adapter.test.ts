@@ -401,8 +401,9 @@ test("hostRead: vault + non-whitelisted apps still rejected before branching", a
 })
 
 test("hostRead: default/mail path proceeds to the binary (fails honestly when binary missing)", async () => {
-  // CMSPARK_HOST_BIN is dev-only; test env has NODE_ENV != production.
+  // S-P0-1: CMSPARK_HOST_BIN override now requires explicit opt-in.
   process.env.CMSPARK_HOST_BIN = FAKE_BIN
+  process.env.CMSPARK_ALLOW_HOST_BIN_OVERRIDE = "1"
   try {
     await assert.rejects(
       () => hostRead({ application: "com.apple.mail" }),
@@ -411,6 +412,23 @@ test("hostRead: default/mail path proceeds to the binary (fails honestly when bi
     await assert.rejects(
       () => hostRead({}), // default application = com.apple.mail
       (err: any) => !(err instanceof NotImplementedForApp),
+    )
+  } finally {
+    delete process.env.CMSPARK_HOST_BIN
+    delete process.env.CMSPARK_ALLOW_HOST_BIN_OVERRIDE
+  }
+})
+
+test("S-P0-1: CMSPARK_HOST_BIN without opt-in flag throws (A1 — deny path)", async () => {
+  // A1 (Grok round 2): CMSPARK_HOST_BIN set + CMSPARK_ALLOW_HOST_BIN_OVERRIDE unset
+  // must throw — silent ignore is the original footgun. Production binaries rarely
+  // set NODE_ENV, so the old NODE_ENV gate was effectively always-off in prod.
+  process.env.CMSPARK_HOST_BIN = FAKE_BIN
+  delete process.env.CMSPARK_ALLOW_HOST_BIN_OVERRIDE
+  try {
+    await assert.rejects(
+      () => hostRead({ application: "com.apple.mail" }),
+      /CMSPARK_HOST_BIN override ignored/,
     )
   } finally {
     delete process.env.CMSPARK_HOST_BIN

@@ -1,7 +1,7 @@
 // Unified SecurityPolicy — HMAC token generation/validation for evaluate confirmation
 // and centralized security checks for high-risk tool execution.
 
-import { createHmac, randomBytes, createHash } from "crypto"
+import { createHmac, randomBytes, createHash, timingSafeEqual as cryptoTimingSafeEqual } from "crypto"
 
 const TOKEN_SECRET = process.env.CMSPARK_SECURITY_SECRET || randomBytes(32).toString("hex")
 export function getTokenSecret(): string {
@@ -102,25 +102,72 @@ export class SecurityPolicy {
     return this.validateToken(token, toolName, SecurityPolicy.bindingPayloadFor(toolName, params), threadId)
   }
 
-  /** Validate that a token was issued by us and matches the tool/code/thread. */
+  /**
+   * Validate that a token was issued by us and matches the tool/code/thread.
+   *
+   * S-P0-5 (2026-07-24): closing timing oracles.
+   * Previously, every field check was an early-return — `if (!payload)`, `if (toolName !== toolName)`,
+   * `if (threadId !== threadId)`, `if (expired)` — so an attacker could distinguish "no token"
+   * from "wrong toolName" from "wrong threadId" from "expired" by response timing, then target
+   * the slowest path. Additionally, the final `payload.code !== code` was a non-constant-time
+   * string compare on attacker-influenceable data, and `code.length > MAX_CODE_LENGTH` was a
+   * short-circuit before that compare.
+   *
+   * Now: compute ALL the equality checks, AND them together, return the AND. Single early
+   * return on `!payload` (Map lookup is unavoidable). The `code` compare is hashed + constant-time
+   * so length probing doesn't help.
+   *
+   * A11/A12 (Grok round 2): switched hand-rolled `timingSafeEqual` loop to
+   * `crypto.timingSafeEqual` on equal-length Buffers (matches `ws-auth.ts`,
+   * `settings-web.ts` — less DIY risk). Map-miss early return is inherent
+   * (Map lookup has no constant-time primitive); the `sigOk` re-check is
+   * effectively a Map-integrity check only — for un-tampered entries it's
+   * always true because `token` is the Map key and equals `_sign(payload)`.
+   * Real residual oracles are field/TTL/length paths AFTER a Map hit, which
+   * already require the attacker to hold a live token — bounded threat.
+   */
   validateToken(token: string, toolName: string, code: string, threadId = "default"): boolean {
     const payload = this.issuedTokens.get(token)
     if (!payload) return false
-    if (payload.toolName !== toolName) return false
-    if (payload.threadId !== threadId) return false
-    if (Date.now() > payload.ts + TOKEN_TTL_MS) {
+
+    // Constant-time HMAC signature comparison — authoritative; integrity-of-Map only.
+    const expected = this._sign(payload)
+    const sigOk = timingSafeEqual(token, expected)
+
+    // Constant-time field comparisons.
+    const toolOk = timingSafeEqual(payload.toolName, toolName)
+    const threadOk = timingSafeEqual(payload.threadId, threadId)
+
+    // TTL check — timing here reveals "valid signature + valid fields + expired"
+    // vs "valid signature + valid fields + live". Acceptable: knowing a token
+    // expired doesn't help (token is already single-use, deleted below).
+    const live = Date.now() <= payload.ts + TOKEN_TTL_MS
+    if (!live) {
       this.issuedTokens.delete(token)
       return false
     }
-    // Constant-time comparison to prevent timing attacks
-    const expected = this._sign(payload)
-    if (!timingSafeEqual(token, expected)) return false
-    // Code must match (within length limits)
-    if (code.length > MAX_CODE_LENGTH) return false
-    if (payload.code !== code) return false
-    // One-time use — invalidate immediately after validation
-    this.issuedTokens.delete(token)
-    return true
+
+    // Length cap on inbound code BEFORE hashing — avoids hashing a 1MB string,
+    // but the comparison itself is constant-time via hash equality. Length leak
+    // here only tells the attacker "the issued code was >MAX_CODE_LENGTH" —
+    // already impossible because issueToken hashes a string the SAME size.
+    if (code.length > MAX_CODE_LENGTH) {
+      if (sigOk) this.issuedTokens.delete(token)
+      return false
+    }
+
+    // Code equality via hash: avoid non-constant-time string compare on
+    // attacker-influenceable input. payload.codeHash is sha256(prefix) of the
+    // original code at issue time; we hash the inbound code the same way and
+    // compare in constant time.
+    const inboundHash = this._hashCode(code)
+    const codeOk = timingSafeEqual(payload.codeHash, inboundHash)
+
+    const ok = sigOk && toolOk && threadOk && codeOk
+    if (ok) {
+      this.issuedTokens.delete(token)
+    }
+    return ok
   }
 
   /** Check code/expression length limits. */
@@ -139,13 +186,26 @@ export class SecurityPolicy {
   }
 }
 
+/**
+ * Constant-time string equality via crypto.timingSafeEqual.
+ * A11 (Grok round 2): replaced hand-rolled loop with the stdlib version
+ * already used in ws-auth.ts / settings-web.ts. Same length-check semantics
+ * (returns false on length mismatch, which leaks length — acceptable for
+ * fixed-width HMAC sigs and short tool/thread IDs).
+ *
+ * A11 follow-up (Grok round 3): equal JS string length + unequal UTF-8 byte
+ * length (e.g. `"a"` vs `"é"` — both length 1, but UTF-8 is 1 vs 2 bytes)
+ * makes crypto.timingSafeEqual throw RangeError. Wrap in try/catch → false.
+ * For our inputs this is unreachable (toolName/threadId are ASCII, codeHash
+ * is 16-hex, HMAC sig is 64-hex), but defensive is correct.
+ */
 function timingSafeEqual(a: string, b: string): boolean {
   if (a.length !== b.length) return false
-  let result = 0
-  for (let i = 0; i < a.length; i++) {
-    result |= a.charCodeAt(i) ^ b.charCodeAt(i)
+  try {
+    return cryptoTimingSafeEqual(Buffer.from(a), Buffer.from(b))
+  } catch {
+    return false
   }
-  return result === 0
 }
 
 // Singleton instance

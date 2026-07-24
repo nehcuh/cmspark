@@ -52,6 +52,28 @@ export interface TrayDataProvider {
 }
 
 // ---------------------------------------------------------------------------
+// P0a Tray native confirmation — parallel channel to the WS Side Panel.
+// ---------------------------------------------------------------------------
+
+export interface TrayConfirmRequest {
+  /** confirmationId from SecurityConfirmationManager — must echo back in response. */
+  id: string
+  toolName: string
+  riskLevel: "low" | "medium" | "high" | "critical"
+  /** Human-readable summary (from `fullPreview` / `code_preview`); user content. */
+  summary: string
+  /** Critical-API subset — drives "不可逆操作" badge. */
+  criticalApis: string[]
+  /** Milliseconds before auto-deny (mirrors SecurityConfirmationManager timeout). */
+  timeoutMs: number
+}
+
+export interface TrayConfirmResponse {
+  id: string
+  approved: boolean
+}
+
+// ---------------------------------------------------------------------------
 // Unified interface
 // ---------------------------------------------------------------------------
 
@@ -68,6 +90,19 @@ export interface UnifiedTray {
    * backends no-op here — the launcher falls back to clipboard-copy + notification.
    * `paired` hints whether the extension has ever paired (drives the window copy). */
   showPairingWindow(secret: string, paired: boolean): void
+  /**
+   * P0a — Pop a native confirmation dialog (Swift backend only). Resolves when the
+   * user clicks Allow/Deny, when the timeout expires, or when cancelConfirm() is
+   * called for this id. Non-Swift backends reject (caller falls back to WS only).
+   *
+   * Why: Side Panel confirmation makes Chrome frontmost → target app loses
+   * foreground → CGEvent click lands wrong. Tray is a separate process; clicking
+   * Allow here does not change foreground. See `tcc_cdhash_vs_activate` memory +
+   * `capability-token-round1-synthesis` §P0a.
+   */
+  showConfirmDialog(req: TrayConfirmRequest): Promise<TrayConfirmResponse>
+  /** Notify tray that a confirmation was resolved via another channel (close dialog). */
+  cancelConfirm(id: string): void
   stop(): Promise<void>
 }
 

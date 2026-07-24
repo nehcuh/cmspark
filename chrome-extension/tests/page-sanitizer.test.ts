@@ -39,6 +39,48 @@ test("removeJavaScriptUrls strips javascript: pseudo-protocol", () => {
   assert.equal(result.includes("https://example.com"), true)
 })
 
+test("removeScripts strips nested <scr<script>ipt> reassembly (S-P0-3)", () => {
+  // S-P0-3 (2026-07-24): a single strip pass leaves `<scr` + `ipt>` → reassembled `<script>`.
+  // Must loop until stable. Cap at 5 iterations to bound pathological input.
+  // Classic attack: `<scr<script>ipt>` collapses to `<script>` after one strip pass.
+  const sanitizer = new PageSanitizer()
+  const html = `<scr<script>ipt>alert(1)</scr<script>ipt>`
+  const result = sanitizer.removeScripts(html)
+  assert.equal(result.includes("<script>"), false)
+  assert.equal(result.includes("alert(1)"), false)
+})
+
+test("removeEventHandlers strips slash-separated <img/onerror=...> (S-P0-3)", () => {
+  // S-P0-3: `<img/onerror=...>` (slash, no whitespace) bypassed `\s+on\w+\s*=`.
+  // Regex now uses `[\s/]+`.
+  const sanitizer = new PageSanitizer()
+  const html = `<img/onerror="alert(1)" src="x"><svg/onload="alert(2)"/>`
+  const result = sanitizer.removeEventHandlers(html)
+  assert.equal(result.includes("onerror"), false)
+  assert.equal(result.includes("onload"), false)
+})
+
+test("removeJavaScriptUrls strips data: image/svg+xml XSS (S-P0-3)", () => {
+  // S-P0-3: `data:image/svg+xml` payloads executing JS were not in the attr
+  // list / protocol set. Attrs list now includes `data`, `srcset`, `poster`,
+  // `xlink:href`, etc., and matches both `javascript:` and `data:`.
+  const sanitizer = new PageSanitizer()
+  const html = `<img src="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' onload='alert(1)'>">`
+  const result = sanitizer.removeJavaScriptUrls(html)
+  assert.equal(result.includes("data:image/svg+xml"), false)
+  assert.equal(result.includes("onload"), false)
+})
+
+test("removeJavaScriptUrls strips leading-whitespace protocol bypass (A6)", () => {
+  // A6 (Grok round 2): `href=" javascript:..."` and `href="\tjavascript:..."`
+  // bypassed the original prefix-strict pattern. Allow optional whitespace
+  // after the quote before the protocol marker.
+  const sanitizer = new PageSanitizer()
+  const html = `<a href=" javascript:alert(1)">x</a><a href="\tjavascript:alert(2)">y</a>`
+  const result = sanitizer.removeJavaScriptUrls(html)
+  assert.equal(result.includes("javascript:"), false)
+})
+
 test("sanitize runs full pipeline and reports threats", () => {
   const sanitizer = new PageSanitizer()
   const html = `<div>Hello</div><script>alert('xss')</script><a href="javascript:alert(1)">Click</a><img src="x" onerror="alert(1)">`

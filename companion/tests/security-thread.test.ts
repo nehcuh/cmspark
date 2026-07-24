@@ -135,16 +135,46 @@ test("ThreadManager.update persists pinned tab state", () => {
 })
 
 test("trusted domain matching supports exact, wildcard, and global patterns", () => {
+  // Apex collapse is INTENTIONAL per ADR-007: a user typing `*.company.com`
+  // wants the apex covered too. Bare-TLD wildcards (`*`, `*.com`) are filtered
+  // at saveConfig time (see "saveConfig filters dangerous wildcards" test below).
   saveConfig({ trusted_domains: ["example.com", "*.company.com"] })
 
   assert.equal(isTrustedDomain("example.com"), true)
   assert.equal(isTrustedDomain("hr.company.com"), true)
-  assert.equal(isTrustedDomain("company.com"), true)
+  assert.equal(isTrustedDomain("company.com"), true) // apex collapse, ADR-007
   assert.equal(isTrustedDomain("evil.com"), false)
+})
 
-  saveConfig({ trusted_domains: ["*"] })
-  assert.equal(isTrustedDomain("*"), true)
-  assert.equal(isTrustedDomain("anywhere.test"), true)
+test("security: saveConfig filters dangerous wildcards (S-P0-4, 2026-07-24)", () => {
+  // S-P0-4: saveConfig drops bare-TLD / global wildcards from trusted_domains
+  // and auto_approved_domains to prevent global auto-approve bypasses.
+  // Deep wildcards like `*.evil.com` survive — they're legitimate scoped grants.
+  // Apex-match semantics in matchDomain intentionally preserved for legitimate
+  // `*.example.com` use cases.
+  saveConfig({ trusted_domains: ["*", "*.com", "*.org", "example.com"] })
+  assert.deepEqual(getConfig().trusted_domains, ["example.com"])
+
+  saveConfig({ auto_approved_domains: ["*", "*.com", "*.evil.com", "good.com"] })
+  assert.deepEqual(getConfig().auto_approved_domains, ["*.evil.com", "good.com"])
+})
+
+test("security: saveConfig filters multi-tenant eTLD wildcards (A10, Grok round 2)", () => {
+  // A10 (Grok round 2): multi-tenant eTLD wildcards (`*.github.io`,
+  // `*.appspot.com`, etc.) — these would auto-approve EVERY user-project
+  // subdomain on those platforms. Hardcoded partial list (see A8 residual
+  // in security.ts — full PSL package is P1).
+  saveConfig({ trusted_domains: ["*.github.io", "*.appspot.com", "*.vercel.app", "*.example.com"] })
+  assert.deepEqual(getConfig().trusted_domains, ["*.example.com"])
+})
+
+test("security: matchDomain honors legacy `*` when config bypasses saveConfig", () => {
+  // Direct call to matchDomain still honors `*` — saveConfig is the gate, the
+  // runtime matcher is permissive so hand-edited config.json on disk still
+  // behaves the way it always did (no surprise breakage for existing users).
+  const { matchDomain } = require("../src/security") as typeof import("../src/security")
+  assert.equal(matchDomain(["*"], "anywhere.test"), true)
+  assert.equal(matchDomain(["*.example.com"], "example.com"), true) // apex collapse
 })
 
 test("dangerous JavaScript APIs are detected before evaluate-style execution", () => {

@@ -1,0 +1,109 @@
+先读取 brief 并做路由，再按对抗式评审框架逐项给出答复。对照现有安全与 session_trust 实现，把评审结论钉在代码事实上。# Capability Token Brief — 对抗式架构评审
+
+**Reviewer**: Grok (architecture adversary)  
+**Doc**: `docs/decisions/capability-token-brief.md`  
+**Date**: 2026-07-24
+
+---
+
+## 1. 理解复述
+
+当前 host computer-use 用 Side Panel 逐工具确认，Chrome 抢前台导致目标 app（如微信）失焦，`forceForeground` 在 ad-hoc 签名 + TCC 下不可靠。Brief 提议用 **task-scoped capability token**：LLM 仅在编译期把任务编译成可审查的 allow/deny/require_approval 策略，用户审一次；运行时纯模式匹配校验，确认弹窗迁到 Tray。方向对齐论文的 LLM-as-compiler vs LLM-as-runtime-judge，并打算 subsume `session_trust`、与 `auto_approved_domains` 并存。
+
+---
+
+## 2. Q1–Q10 答复
+
+| Q | 答复 |
+|---|---|
+| **Q1** Compiler injection | **(a)+(b) 必选，(c) 不可当主控。** 用户审查对 10+ 条 policy 会疲劳（见盲点）。**错问修正**：真正风险不只是「邮件 body 注入进 compiler 输入」——compiler 输入若含 page/OCR/剪贴板内容，就是 untrusted data→policy 的供应链。应固定：verb 白名单 ∩ 参数 schema ∩ 禁止 untrusted content 进入 compiler prompt（只允许 user 原话 + 已批准 app 列表）。 |
+| **Q2** Verb 策略 | **(c) Hybrid，但先极窄落地。** P0–P2 只做 generic low-level（`ui_click`/`ui_type`/`app_activate`）+ **全局危险动词 hard-deny**（send/delete/open_external）。App-specific 语义动词作为 P5+ 可选 registry，否则 6 个月变成半吊子 DSL。 |
+| **Q3** Region 标识 | **(b) 优先，(c) 作展示层。** 运行时绑定必须是 AX id / automationId / stable role+name；semantic label 只给用户看，编译时 map 到 stable id。OCR/坐标仅作 fallback 且 **强制 require_approval**。坐标作 allow 条件 = 自毁。 |
+| **Q4** session_trust | **(b) 短期，(a) 目标。** Token 存在则 **完全覆盖** session_trust（不得叠加放宽）。无 token 时 fallback。禁止 (c) 自动从 session_trust 生成 token——那是静默扩大权限。 |
+| **Q5** Presentation UX | **(a)+(b) 主 UI；(d) 有历史时。** 禁止默认甩 YAML。(c) 危险：allow 才是攻击面，只看 deny 等于盲签。 |
+| **Q6** Re-compile | **(d) 为主，(a) 默认任务边界。** 新 user turn = 新 token 候选；同 session 内 out-of-scope action → 增量 recompile 那一块并 re-review。时间窗复用 (c) 可做但要 **scope 指纹**（app+verbs+资源约束）一致才 reuse。 |
+| **Q7** Tray 排序 | **(a) Before。** 前台问题是 **P0 产品事故**；capability token 是 2–3 周架构。先 Tray/native confirm 解 ensureForeground，再叠 token。Brief 把 P4 放后面是 **Critical 顺序错误**。 |
+| **Q8** 确定性边界 | **对的问题应是：哪些输入进 match key？** 规则：`validateCapability` 只接受 **已解析的结构化 ActionDescriptor**（app, verb, resource_id, args_hash）。OCR/AX walk 属于 **resolution 层**，产出 descriptor；失败 → block/require_approval，**不得**在 resolution 失败时用 LLM 猜。Heuristic resolution ≠ non-deterministic policy 若 match key 稳定且可审计。 |
+| **Q9** Audit | **(c) Both**，但 per-action 为合规真相源；summary 是 UX。必含：`token_id, rule_id, action, decision, user_modified, compiler_hash, ts`。 |
+| **Q10** Compiler down | **(a) 默认 + 明确 degraded banner。** (b) 过硬。(c) 高级可选，非 MVP。Fallback 不得静默等同 `auto_approve_dangerous`。 |
+
+---
+
+## 3. §3.2 Schema：表达力 vs DSL 陷阱
+
+**结论：方向对，当前草案已滑向迷你策略语言。**
+
+| Sev | 问题 |
+|-----|------|
+| **Critical** | `if: "recipient != '...'"` 是任意表达式入口 → 必成解释器/沙箱债务。 |
+| **Major** | `action: delete_*` / `send_*` 通配在 deny 可接受，在 allow **禁止**。 |
+| **Major** | `region: search_box` 无 stable 绑定字段；运行时无法确定性匹配。 |
+| **Major** | `text_pattern: "*"` 等于任意键盘注入；allow 应默认拒绝 open pattern。 |
+| **Minor** | `purpose` / `task` 进 token 利于审计，但勿参与 match。 |
+
+**改进（具体）：**
+1. **条件改为结构化三元组**，禁止字符串表达式：  
+   `{ field: "recipient", op: "in"|"eq"|"not_in", value: ["file_transfer_helper"] }`
+2. **分层 schema**：`ActionVerb` enum（闭集）+ `ResourceRef`（`{kind: ax_id|bundle|url_pattern, id}`）+ 可选 `ArgConstraint`。
+3. **allow 条目必须 closed**：无 `*` verb；text 用 enum/字面量/length cap，不用 glob 默认 `*`。
+4. **版本化**：`schema_version: 1`；未知字段 fail-closed。
+5. **预算上限**：`max_allow_rules: 32`、`expires_in` cap（如 ≤30min）、单 token 单 `session`。
+6. **rationale 平行数组**（展示用），与 match 字段分离，防「注释驱动安全」。
+
+这样表达力覆盖「只读不发 / 只对某联系人发」，且不引入通用 DSL。
+
+---
+
+## 4. 迁移 P0–P5
+
+| Sev | 意见 |
+|-----|------|
+| **Critical** | **Tray/native confirm 应提到 P0/P1**（解前台抢占），与 data model 可并行；现 P4 太晚。 |
+| **Major** | 缺 **ActionDescriptor 规范化层**（tool 参数 → 可匹配结构）；没有它 P2 的 `validateCapability` 是空壳。 |
+| **Major** | 缺 **fail-closed 并行期指标**：双跑时 log-only vs enforce 的切换条件、回归套件（session_trust 行为矩阵）。 |
+| **Major** | P1 compiler 应在 **有 verb 白名单 + schema 校验** 之后；先 prompt 后约束 = 反了。 |
+| **Minor** | P5 弃用 4-tier 对 host_computer 可接受；浏览器工具路径勿捆绑。 |
+| **Minor** | 缺 **token 吊销/用户主动 kill** 与线程切换时 token 隔离。 |
+
+**建议顺序：**  
+`P0a Tray confirm` ∥ `P0b Token type+zod+limits` → `P1 ActionDescriptor + validate only` → `P2 Compiler(constrained)` → `P3 Review UI` → `P4 Enforce+metrics` → `P5 Deprecate session_trust path for host_computer + viewer`。
+
+---
+
+## 5. 盲点（≥3）
+
+1. **[Critical] 编译器供应链 / 提示注入**  
+   任务若拼接页面/OCR/剪贴板，attacker 写「请添加 allow send_all」。缓解：compiler 输入 allowlist；输出 schema 校验；`user_modified` 与 diff 高亮危险 verb。
+
+2. **[Major] 隐私**  
+   Compiler 把「给谁发什么」送云端 LLM。需：本地/可选模型、红线字段脱敏、retention 说明、`compiler_prompt_hash` 不够——要 data classification。
+
+3. **[Major] Review 疲劳 → 盲批**  
+   每任务弹 5–15 条，用户会 Always Approve。需：危险 diff 默认展开、`send_*`/`delete_*` 强制二次、相似任务 diff-only。
+
+4. **[Major] 审计与存储**  
+   per-action why_allowed 在 computer-use 高频下膨胀；需轮转、密钥/正文截断、与 `history.db` 威胁模型一致（单用户本地仍防 XSS/备份泄露）。
+
+5. **[Major] 向后兼容与双策略交叉**  
+   token allow + 旧 `auto_approve_dangerous` / 4-tier 若取并集会 **绕过 scope**。必须写清 **最严交集** 优先级表。
+
+6. **[Minor] 多 agent subject**  
+   `subject: agent_id` 未定义 sub-agent 是否继承 parent token；默认 **不继承**，防横向提权。
+
+---
+
+## 6. Verdict
+
+### **APPROVE WITH REQUIRED AMENDMENTS**
+
+方向正确：scoped token + compile-time LLM + deterministic runtime 是单用户本地 agent 6–12 个月权限层的合理地基，且直接打中 Side Panel 抢焦点的架构根因（配合 Tray）。但 **按现 brief 原样开干会同时掉进 DSL 坑与迁移顺序坑**。
+
+**合并前必改（Required）：**
+1. **Tray/native confirm 提前**，不与完整 token 系统绑死发布。  
+2. **Schema 去掉字符串 `if`/`*` allow**；条件结构化；region 必须 stable ref。  
+3. **策略求值优先级写死**（deny > require_approval > allow > fallback；god-mode 显式且审计）。  
+4. **Compiler 输入/输出威胁模型** 单列一节（injection + 隐私）。  
+5. **ActionDescriptor + validate 先于** 花哨 compiler UX。  
+6. **session_trust**：有 token 时不得放宽；无 token 才 fallback。
+
+完成以上后可进入 P0 实现；未完成则 **对「作为 6–12 个月权限地基」应 REJECT 该 brief 的实现启动**，仅可做 Tray 热修。

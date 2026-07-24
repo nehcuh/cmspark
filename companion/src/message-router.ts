@@ -1482,12 +1482,12 @@ export async function handleMessage(
     case "history.query":
       return {
         type: "history.result",
-        operations: historyStore.query(rest),
+        operations: await historyStore.query(rest),
       }
     case "history.export":
       return {
         type: "history.exported",
-        data: historyStore.exportJSON(rest),
+        data: await historyStore.exportJSON(rest),
       }
 
     // --- System ---

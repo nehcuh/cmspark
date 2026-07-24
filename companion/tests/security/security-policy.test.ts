@@ -34,6 +34,19 @@ test("validateToken fails for mismatched code", () => {
   assert.equal(valid, false)
 })
 
+test("S-P0-5 / A11: UTF-8 byte-length mismatch does not throw (returns false)", () => {
+  // A11 follow-up (Grok round 3): equal JS string length + unequal UTF-8 byte
+  // length makes crypto.timingSafeEqual throw RangeError. Wrapper must catch.
+  // Repro: "é" (length 1, UTF-8 2 bytes) vs "a" (length 1, UTF-8 1 byte).
+  const policy = new SecurityPolicy()
+  const { token } = policy.issueToken("é", "x") // toolName with multibyte char
+  // Same JS length (1), different UTF-8 byte length — must not throw, must return false:
+  assert.doesNotThrow(() => {
+    const valid = policy.validateToken(token, "a", "x")
+    assert.equal(valid, false)
+  })
+})
+
 test("validateToken fails after single use", () => {
   const policy = new SecurityPolicy()
   const { token } = policy.issueToken("evaluate", "fetch('/api')")

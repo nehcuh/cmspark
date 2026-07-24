@@ -257,10 +257,42 @@ export class HistoryStore {
   private dbPath: string
   private ready: Promise<void>
 
+  // C-P0-2 (2026-07-24 diagnosis): batch writes. db.export() is expensive
+  // (WASM→bytearray copy + tmp+rename fs sync). Debounce: flush every 1s OR
+  // every FLUSH_THRESHOLD records, whichever comes first. Final flush on
+  // shutdown via flushNow(). Periodic checkpoint, not per-row.
+  //
+  // Grok review (review-grok-batch2-round1.txt C2): widened from 5s→1s so the
+  // SIGKILL/OOM loss window is bounded to ~1s of records (~10 max), acceptable
+  // for a redacted observability log.
+  private flushTimer: NodeJS.Timeout | null = null
+  private pendingSinceFlush = 0
+  private static readonly FLUSH_INTERVAL_MS = 1000
+  private static readonly FLUSH_THRESHOLD = 10
+
   constructor() {
     this.dbPath = path.join(getConfigDir(), "history.db")
     this.ready = this.init()
+
+    // C-P0-2 + Grok C3: register shutdown handlers ONCE at module level, not
+    // per-instance — otherwise test suites that spin up many HistoryStore
+    // instances leak handlers and retain instances. flushShutdownHandlersInstalled
+    // gates the registration so only the first constructor wins.
+    if (!HistoryStore.flushShutdownHandlersInstalled) {
+      HistoryStore.flushShutdownHandlersInstalled = true
+      const finalFlush = () => HistoryStore.activeInstance?.flushNow()
+      process.once("SIGTERM", finalFlush)
+      process.once("SIGINT", finalFlush)
+      // `beforeExit` fires on normal Node shutdown (no active event loop).
+      process.once("beforeExit", finalFlush)
+    }
+    // Latest instance wins; previous one's pending writes were flushed on its
+    // close(). Production is a singleton so this is a no-op there.
+    HistoryStore.activeInstance = this
   }
+
+  private static flushShutdownHandlersInstalled = false
+  private static activeInstance: HistoryStore | null = null
 
   private async init(): Promise<void> {
     const sqlJsConfig = (() => {
@@ -276,7 +308,7 @@ export class HistoryStore {
       } else {
         this.db = new SQL.Database()
       }
-      this.initSchema()
+      this.runMigrations()
       this.purgeOldRecords()
       this.save()
     } catch (outerErr: any) {
@@ -285,7 +317,7 @@ export class HistoryStore {
       try {
         const SQL = await initSqlJs(sqlJsConfig)
         this.db = new SQL.Database()
-        this.initSchema()
+        this.runMigrations()
       } catch (innerErr: any) {
         // Total init failure: history is non-critical (observability only), but
         // surface the error so it isn't silently swallowed. All record/query
@@ -320,32 +352,83 @@ export class HistoryStore {
       fs.renameSync(tmp, this.dbPath)
       try { fs.chmodSync(this.dbPath, 0o600) } catch { /* best-effort */ }
     } catch (saveErr: any) {
-      // P0-1: record() now flushes on every call, so a save failure (disk full, EACCES) is more
-      // impactful than before — surface it so the audit-trail gap is observable, not silent.
-      // Return semantics unchanged (record() still reports success); this is diagnostics only.
+      // C-P0-2: save() is now called by the debounce timer (1s) or threshold
+      // trigger, so a failure (disk full, EACCES) batches up to 10 records'
+      // worth of lost durability. Surface it so the audit-trail gap is
+      // observable, not silent. Return semantics unchanged (record() still
+      // reports success); this is diagnostics only.
       try { console.error("[cmspark-agent] history.save_failed:", saveErr?.message || String(saveErr)) } catch { /* ignore */ }
     }
   }
 
-  private initSchema(): void {
+  /**
+   * C-P0-3 (2026-07-24 diagnosis): schema migrations via PRAGMA user_version.
+   * Replaces the additive-only `CREATE TABLE IF NOT EXISTS` pattern that
+   * silently broke old DBs when columns were added or redaction formats changed.
+   *
+   * Each migration is a [version, sql][] step. Apply steps in order, bumping
+   * user_version after each. To add a column in the future, append:
+   *   { version: 2, sql: "ALTER TABLE operations ADD COLUMN foo TEXT" }
+   * The runner is idempotent — old DBs at user_version=0 step through every
+   * migration; DBs caught up skip directly.
+   */
+  private static readonly MIGRATIONS: ReadonlyArray<{ version: number; sql: string[] }> = [
+    {
+      version: 1,
+      sql: [
+        `CREATE TABLE IF NOT EXISTS operations (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          thread_id TEXT NOT NULL,
+          tool_name TEXT NOT NULL,
+          params TEXT,
+          result_summary TEXT,
+          error TEXT,
+          success INTEGER NOT NULL DEFAULT 1,
+          duration_ms INTEGER DEFAULT 0,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )`,
+        `CREATE INDEX IF NOT EXISTS idx_ops_thread ON operations(thread_id)`,
+        `CREATE INDEX IF NOT EXISTS idx_ops_created ON operations(created_at)`,
+        `CREATE INDEX IF NOT EXISTS idx_ops_tool ON operations(tool_name)`,
+      ],
+    },
+  ]
+
+  private runMigrations(): void {
     if (!this.db) return
-    this.db.run(`CREATE TABLE IF NOT EXISTS operations (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      thread_id TEXT NOT NULL,
-      tool_name TEXT NOT NULL,
-      params TEXT,
-      result_summary TEXT,
-      error TEXT,
-      success INTEGER NOT NULL DEFAULT 1,
-      duration_ms INTEGER DEFAULT 0,
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    )`)
-    this.db.run(`CREATE INDEX IF NOT EXISTS idx_ops_thread ON operations(thread_id)`)
-    this.db.run(`CREATE INDEX IF NOT EXISTS idx_ops_created ON operations(created_at)`)
-    this.db.run(`CREATE INDEX IF NOT EXISTS idx_ops_tool ON operations(tool_name)`)
+    const currentVersionRow = this.db.exec("PRAGMA user_version")
+    const currentVersion = currentVersionRow.length > 0
+      ? (currentVersionRow[0].values[0][0] as number)
+      : 0
+
+    for (const migration of HistoryStore.MIGRATIONS) {
+      if (migration.version <= currentVersion) continue
+      // sql.js doesn't have multi-statement run; iterate.
+      for (const stmt of migration.sql) {
+        this.db.run(stmt)
+      }
+      // PRAGMA user_version = N does not support parameter binding in sql.js,
+      // but N is a hardcoded integer from our readonly migration list — safe.
+      this.db.run(`PRAGMA user_version = ${migration.version}`)
+      logger.info("history.migration_applied", {
+        version: migration.version,
+        statements: migration.sql.length,
+      })
+    }
   }
 
-  record(op: OperationRecord): number {
+  /**
+   * C-P0-4 (2026-07-24 diagnosis): all public methods await `ready`.
+   * Without this, calls between construction and `await initSqlJs` resolution
+   * saw `db === null` and silently no-op'd — historical operations went missing
+   * if the LLM fired a tool call in the first ~100ms after process start.
+   *
+   * C-P0-2: also debounces `save()`. The INSERT itself is sync + in-memory;
+   * only the save() export+rename is expensive. Schedule it on a 1s timer
+   * (or flush immediately every FLUSH_THRESHOLD records).
+   */
+  async record(op: OperationRecord): Promise<number> {
+    await this.ready
     if (!this.db) return 0
     // Audit item 3: redact sensitive tool params/results BEFORE persistence.
     // Without this, get_cookies writes every cookie value (including httpOnly
@@ -365,15 +448,41 @@ export class HistoryStore {
       ],
     )
     const row = this.db.exec("SELECT last_insert_rowid() as id")
-    // P0-1 (audit C2): flush on every record so a crash/SIGKILL can't lose the audit trail.
-    // sql.js is in-memory; without this the on-disk db only reflected boot-time state and
-    // every normal shutdown lost the whole session. (Per-write full export is acceptable for
-    // single-user load; debounce / migrate to better-sqlite3 is tracked as P4 / L10.)
-    this.save()
-    return row.length > 0 ? (row[0].values[0][0] as number) : 0
+    const id = row.length > 0 ? (row[0].values[0][0] as number) : 0
+
+    // C-P0-2: debounced flush. The INSERT is in sql.js memory; the file write
+    // is what's expensive. Schedule save() on a timer; if we've already got
+    // FLUSH_THRESHOLD pending, flush now.
+    this.pendingSinceFlush++
+    if (this.pendingSinceFlush >= HistoryStore.FLUSH_THRESHOLD) {
+      this.flushNow()
+    } else if (!this.flushTimer) {
+      this.flushTimer = setTimeout(() => this.flushNow(), HistoryStore.FLUSH_INTERVAL_MS)
+      this.flushTimer.unref?.()
+    }
+
+    return id
   }
 
-  query(params: QueryParams): OperationRecord[] {
+  /**
+   * Flush pending writes to disk immediately. Called by:
+   *   - the debounce timer / threshold trigger
+   *   - SIGTERM/SIGINT/beforeExit handlers (registered in constructor)
+   *   - tests that need determinism
+   */
+  flushNow(): void {
+    if (this.flushTimer) {
+      clearTimeout(this.flushTimer)
+      this.flushTimer = null
+    }
+    if (this.pendingSinceFlush > 0) {
+      this.save()
+      this.pendingSinceFlush = 0
+    }
+  }
+
+  async query(params: QueryParams): Promise<OperationRecord[]> {
+    await this.ready
     if (!this.db) return []
     const conditions: string[] = []
     const values: any[] = []
@@ -398,7 +507,8 @@ export class HistoryStore {
     return results
   }
 
-  exportJSON(params: { thread_id?: string; from?: string; to?: string }): OperationRecord[] {
+  async exportJSON(params: { thread_id?: string; from?: string; to?: string }): Promise<OperationRecord[]> {
+    await this.ready
     if (!this.db) return []
     const conditions: string[] = []
     const values: any[] = []
@@ -428,6 +538,9 @@ export class HistoryStore {
   }
 
   close(): void {
-    if (this.db) { this.save(); this.db.close(); this.db = null }
+    // C-P0-2: flush any pending debounced writes before closing so the
+    // close()-then-reopen test pattern still works.
+    this.flushNow()
+    if (this.db) { this.db.close(); this.db = null }
   }
 }

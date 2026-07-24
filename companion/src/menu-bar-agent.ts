@@ -93,6 +93,16 @@ let state: MenuBarState = {
 }
 
 let trayInstance: UnifiedTray | null = null
+
+/**
+ * P0a — accessor for server.ts to dispatch confirmation requests to the tray
+ * (parallel channel alongside WS Side Panel). Returns null when no tray is
+ * running (non-Swift backend, or tray not yet started). Server should fall
+ * back to WS-only in that case. */
+export function getTrayInstance(): UnifiedTray | null {
+  return trayInstance
+}
+
 let activeBackend: TrayBackend | null = null
 let companionClient: CompanionClient | null = null
 let pollTimer: NodeJS.Timeout | null = null

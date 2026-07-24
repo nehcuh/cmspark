@@ -8,15 +8,25 @@ import * as path from "path"
 import * as fs from "fs"
 
 export function resolveHostBinary(): string {
-  // CMSPARK_HOST_BIN is dev-only (lets tests inject a mock binary). Phase 1
-  // must replace this with SecStaticCodeCheckValidity before ship (Kimi
-  // phase0 review Critical #3): an attacker who can set env vars can already
-  // compromise the user, but we shouldn't make it easy.
+  // S-P0-1 (2026-07-24 diagnosis): CMSPARK_HOST_BIN was previously gated by
+  // `NODE_ENV !== "production"` — but packaged Electron/pkg/S EA apps rarely
+  // set NODE_ENV at all, so the override was live in production. A user-mode
+  // attacker with `launchctl setenv CMSPARK_HOST_BIN /tmp/evil` could substitute
+  // the binary that performs Touch ID (biometricVerify) and host_read — defeating
+  // the Q1 ship blocker ("biometric per-call for writes is non-negotiable").
+  //
+  // Now: ONLY honored when an explicit opt-in env (`CMSPARK_ALLOW_HOST_BIN_OVERRIDE=1`)
+  // is set. This is intentionally separate from NODE_ENV so a misconfigured
+  // NODE_ENV cannot re-open the hole. Tests that need to inject a mock binary
+  // set CMSPARK_ALLOW_HOST_BIN_OVERRIDE=1 in their setup.
   if (process.env.CMSPARK_HOST_BIN) {
-    if (process.env.NODE_ENV !== "production") {
+    if (process.env.CMSPARK_ALLOW_HOST_BIN_OVERRIDE === "1") {
       return process.env.CMSPARK_HOST_BIN
     }
-    throw new Error("host-use/darwin: CMSPARK_HOST_BIN override disabled in production")
+    throw new Error(
+      "host-use/darwin: CMSPARK_HOST_BIN override ignored. " +
+      "Set CMSPARK_ALLOW_HOST_BIN_OVERRIDE=1 to enable (dev/test only).",
+    )
   }
   // Search order covers 4 deployment modes:
   //   1. DMG / packaged install: the bundled cmspark-agent.js sits in

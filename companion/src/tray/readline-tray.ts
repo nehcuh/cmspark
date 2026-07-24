@@ -86,6 +86,11 @@ export class ReadlineTrayAdapter implements UnifiedTray {
   // No native window here; the launcher falls back to clipboard-copy + notification.
   showPairingWindow(_secret: string, _paired: boolean): void { /* no-op */ }
 
+  // P0a: readline has no native confirmation dialog. Never resolves → race falls
+  // back to WS Side Panel.
+  showConfirmDialog(): Promise<never> { return new Promise(() => {}) }
+  cancelConfirm(_id: string): void { /* no-op */ }
+
   async stop(): Promise<void> {
     if (this.rl) {
       this.rl.close()

@@ -37,11 +37,14 @@ const mockSkillEngine = {
 // Track active skills for testing thread isolation
 const activeSkillMap = new Map<string, string[]>()
 
-// Mock history store - use partial interface with 'as any' for compatibility
+// Mock history store - use partial interface with 'as any' for compatibility.
+// Returns Promises (matching the real async API since C-P0-4) so a missing
+// `await` in message-router would leak a Promise into the response payload
+// and trip deepEqual. See Grok B1 (review-grok-batch2-round1.txt).
 const mockHistoryStore = {
-  query: () => [],
-  exportJSON: () => ({ operations: [] }),
-  record: () => 0,
+  query: async () => [],
+  exportJSON: async () => ({ operations: [] }),
+  record: async () => 0,
 } as any
 
 before(async () => {
@@ -533,20 +536,42 @@ test("security: isTrustedDomain returns true for exact match", () => {
   assert.equal(isTrustedDomain("other.com"), false)
 })
 
-test("security: isTrustedDomain supports wildcard patterns", () => {
+test("security: isTrustedDomain supports wildcard patterns (apex collapse per ADR-007)", () => {
+  // Apex collapse is INTENTIONAL: `*.company.com` matches `company.com` too.
+  // A user typing a wildcard typically wants the apex covered.
+  // The dangerous bare-TLD wildcards (`*`, `*.com`) are filtered at saveConfig
+  // time (S-P0-4) — see the filter test below.
   saveConfig({ trusted_domains: ["*.company.com"] })
 
   assert.equal(isTrustedDomain("hr.company.com"), true)
   assert.equal(isTrustedDomain("finance.company.com"), true)
-  assert.equal(isTrustedDomain("company.com"), true) // base domain matches
+  assert.equal(isTrustedDomain("company.com"), true) // apex collapse (ADR-007)
   assert.equal(isTrustedDomain("evil.com"), false)
 })
 
-test("security: isTrustedDomain supports global wildcard", () => {
-  saveConfig({ trusted_domains: ["*"] })
+test("security: saveConfig filters dangerous wildcards (S-P0-4, 2026-07-24)", () => {
+  // S-P0-4: saveConfig FILTERS OUT `*` and bare-TLD wildcards.
+  // Previously these were advisory warnings only — config persisted them,
+  // and `*.com` matched every `.com` host + bare `com` (global bypass).
+  // Deep wildcards (`*.example.com`) and exact domains survive.
+  const before = getConfig().trusted_domains
+  saveConfig({ trusted_domains: ["*", "*.com", "*.cn", "*.co.uk", "*.example.com", "example.com"] })
+  assert.deepEqual(getConfig().trusted_domains.sort(), ["*.example.com", "example.com"])
+  saveConfig({ trusted_domains: before ?? [] })
+})
 
-  assert.equal(isTrustedDomain("any-domain.com"), true)
-  assert.equal(isTrustedDomain("localhost"), true)
+test("security: matchDomain honors global wildcard when config bypasses saveConfig", () => {
+  // S-P0-4: matchDomain (runtime) still honors `*` for hand-edited configs
+  // that bypass saveConfig validation. This is intentional — operators who
+  // edit config.json directly take responsibility. saveConfig is the gate.
+  const before = getConfig().trusted_domains
+  ;(getConfig() as any).trusted_domains = ["*"]
+  try {
+    assert.equal(isTrustedDomain("any-domain.com"), true)
+    assert.equal(isTrustedDomain("localhost"), true)
+  } finally {
+    ;(getConfig() as any).trusted_domains = before ?? []
+  }
 })
 
 test("security: isTrustedDomain returns false for empty list", () => {

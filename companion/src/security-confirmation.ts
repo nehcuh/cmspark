@@ -154,8 +154,15 @@ export class SecurityConfirmationManager {
     send: (data: any) => void,
     details: SecurityConfirmationDetails,
     options?: SecurityConfirmationRequestOptions,
+    /**
+     * Optional pre-generated confirmationId. P0a Tray confirmation needs the id
+     * up-front to share between manager (WS channel) and SwiftTrayAdapter (tray
+     * channel) — whichever resolves first calls respond(confirmationId, ...).
+     * When omitted, a fresh UUID is generated (existing behavior).
+     */
+    preGeneratedId?: string,
   ): Promise<SecurityConfirmationDecision> {
-    const confirmationId = randomUUID()
+    const confirmationId = preGeneratedId ?? randomUUID()
 
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
@@ -323,12 +330,22 @@ export class SecurityConfirmationManager {
   }
 
   /**
-   * Legacy respond() — privileged test/admin path that bypasses origin binding.
-   * Resolves any pending entry regardless of originWs. Existing test code and
-   * integration-test paths that don't track a source ws continue to work; in
-   * production the live server routes inbound responses through respondFrom(),
-   * which enforces the origin check. Treat respond() as a privileged escape
-   * hatch — never call it from request-handling code paths.
+   * Privileged respond() — bypasses origin binding. ONE production caller: the
+   * P0a Swift tray adapter (`companion/src/server.ts` Promise.race), which
+   * dispatches confirmations over the tray's local stdin pipe AND the WS Side
+   * Panel simultaneously using a pre-shared confirmationId. When tray responds
+   * first, server.ts calls respond(confirmationId, approved) so the WS panel
+   * also gets its `security.confirmation.resolved` event and closes.
+   *
+   * Safety contract: tray is a single-instance local subprocess (no remote
+   * peers), its stdin pipe is owned exclusively by companion, and the binary
+   * is hash-gated (SWIFT_TRAY_SHA256 in swift-tray-bridge.ts). Residual risk =
+   * compromised local tray binary — same threat class as any host helper
+   * (cmspark-host binary, etc.). Tests also use this path for non-origin-bound
+   * simulation.
+   *
+   * NEVER call from request-handling code paths that route inbound WS messages
+   * — those must go through respondFrom() which enforces the origin check.
    */
   respond(confirmationId: string, approved: boolean): boolean {
     const pending = this.pending.get(confirmationId)

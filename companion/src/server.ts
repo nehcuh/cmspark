@@ -32,7 +32,9 @@ import { ThreadManager } from "./threads/thread-manager"
 import { SkillEngine } from "./skills/skill-engine"
 import { HistoryStore } from "./history/store"
 import { checkHighRiskExecution, highRiskExecutionDeniedError, isTrustedDomain, isAutoApprovedDomain, isCloudMetadataIp, isPrivateOrLoopbackIp, detectCriticalApis, classifyMcpCall, mergeCapabilities, CRITICAL_MCP_CAPABILITIES, CRITICAL_MCP_META_TOOLS } from "./security"
-import { SecurityConfirmationManager, type SecurityConfirmationDetails, type SecurityConfirmationDecision } from "./security-confirmation"
+import { SecurityConfirmationManager, type SecurityConfirmationDetails, type SecurityConfirmationDecision, DEFAULT_SECURITY_CONFIRMATION_TIMEOUT_MS } from "./security-confirmation"
+import { getTrayInstance } from "./menu-bar-agent"
+import type { TrayConfirmRequest } from "./tray/tray-adapter"
 import { getThreadApprovals } from "./host-use/thread-approvals"
 import { APP_TOKEN_PATTERN, type AppEntry, type AppPolicy } from "./apps/types"
 import { securityPolicy, getTokenSecret } from "./security-policy"
@@ -111,6 +113,13 @@ function getDomainFromUrl(urlString: string): string {
 
 let wss: WebSocketServer
 let clients: Set<WebSocket> = new Set()
+
+// C-P0-6 (2026-07-24 diagnosis): track active tray confirmation IDs per WS so
+// that when a WS disconnects mid-confirmation, we can cancel the corresponding
+// tray dialog. Without this, the Swift dialog stays modal until its own timeout
+// even though the requesting WS is gone. The tray adapter is a singleton with
+// its own pendingConfirms Map; cancelConfirm(id) is a no-op if id isn't pending.
+const activeTrayConfirmsByWs = new WeakMap<WebSocket, Set<string>>()
 
 // P0-2B: per-connection authentication state. A peer is UNauthenticated until it
 // completes the ws-auth challenge–response handshake (auth.handshake). Every app
@@ -741,53 +750,152 @@ export function createToolExecutor(ws: WebSocket) {
             })
           }
         }
-        const decision = await securityConfirmations.request(
-          (data) => {
-            if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify(data))
+        const decision = await (async () => {
+          // P0a — pre-generate confirmationId so WS + tray channels share it.
+          // Whichever resolves first wins (manager.pending is keyed by id, first
+          // responder claims it). See capability-token-round1-synthesis §P0a.
+          const sharedConfirmId = randomUUID()
+
+          // Build the same preview text for the tray dialog as the WS Side Panel
+          // gets (computerPreview for host_computer; otherwise the tool's code).
+          const traySummary = hostComputerGated && computerPreview
+            ? computerPreview
+            : hostApp
+              ? `Launch app "${hostApp.entry.display_name}" (${hostApp.token}) — no arguments`
+              : code
+          const tray = getTrayInstance()
+          // Tray dialog is only dispatched when (1) a Swift tray backend is live,
+          // and (2) the confirmation is NOT a Windows Hello nonce challenge
+          // (those need the inline paste-blocked nonce UI in Side Panel — Swift
+          // dialog has no nonce input). Plain macOS computer-use / evaluate / etc.
+          // are eligible for the tray shortcut.
+          const trayEligible = !!tray && !winL2NonceChallenge
+          const trayReq: TrayConfirmRequest | null = trayEligible
+            ? {
+                id: sharedConfirmId,
+                toolName,
+                riskLevel: forceConfirm
+                  ? "high"
+                  : safety.dangerousApis.length > 0 ? "medium" : "low",
+                // Truncate to keep NSWindow readable — full text goes to Side Panel.
+                summary: traySummary.length > 800 ? traySummary.slice(0, 800) + "…" : traySummary,
+                criticalApis,
+                timeoutMs: DEFAULT_SECURITY_CONFIRMATION_TIMEOUT_MS,
+              }
+            : null
+          const trayPromise = trayReq && tray
+            ? tray.showConfirmDialog(trayReq).then((r) => ({
+                source: "tray" as const,
+                approved: r.approved,
+              }))
+              // C-P0-7 (2026-07-24 diagnosis): swallow tray adapter rejects
+              // (IPC error, Swift crash, adapter bug). Without this, the
+              // rejection propagates through Promise.race and the wsPromise
+              // lingers in securityConfirmations.pending until the 45s
+              // timeout — meanwhile the user gets no UI and the tool call
+              // hangs. Now: a rejected tray promise resolves to null, the
+              // race picks wsPromise (the only remaining contender), and
+              // the Side Panel dialog still works.
+              .catch(() => null as null | { source: "tray"; approved: boolean })
+            : null
+
+          // C-P0-6: register this sharedConfirmId against the active ws so
+          // ws.on("close") can cancel the tray dialog if the WS dies first.
+          if (trayPromise) {
+            let set = activeTrayConfirmsByWs.get(ws)
+            if (!set) {
+              set = new Set()
+              activeTrayConfirmsByWs.set(ws, set)
             }
-          },
-          {
-            toolName,
-            dangerousApis: safety.dangerousApis,
-            // App tab WP3: no code to preview — show WHAT will be launched.
-            // host_computer (A3): show the task + app + EVERY type.text literal.
-            code: hostComputerGated
-              ? computerPreview
-              : hostApp
-                ? `Launch app "${hostApp.entry.display_name}" (${hostApp.token}) — no arguments`
-                : code,
-            relevantDomains: relevantDomain ? [relevantDomain] : [],
-            // App tab WP3: the thread-trust checkbox (relevantApps) is offered
-            // ONLY under policy "ai". "manual" must never show it (owner
-            // decision 2); "auto" never reaches this dialog.
-            // host_computer: input injection is NEVER thread-trusted — no
-            // checkbox is ever offered (plan §E.3).
-            relevantApps: hostComputerGated
-              ? []
-              : hostApp
-                ? (hostApp.policy === "ai" ? [hostApp.token] : [])
-                : (relevantApp ? [relevantApp] : []),
-            criticalApis,
-            ...(forceConfirm ? { riskLevel: "high" as const, autoConfirmEligible: false } : {}),
-            ...(winL2NonceChallenge ? { nonceChallenge: winL2NonceChallenge } : {}),
-            // P1 (WP4): computer 类确认的完整预览文本走独立字段,绕过
-            // code_preview 的 CODE_PREVIEW_LIMIT=1200 截断(30 动作 + 2000
-            // 语料的逐条枚举对人完整可见);其余工具不设置,修复面收窄。
-            ...(hostComputerGated && computerPreview ? { fullPreview: computerPreview } : {}),
-            // WP4 (§F.1): L2 标注截图 + 三段式非绑定 caption(best-effort,
-            // 仅存在时下发;绝不进入工具结果/LLM 上下文——P2 不变量)。
-            ...(computerL2PreviewImage ? { previewImage: computerL2PreviewImage } : {}),
-            ...(computerL2PreviewCaption ? { previewCaption: computerL2PreviewCaption } : {}),
-          },
-          // Adversary amendment A1: a confirmation carrying a nonce challenge
-          // MUST be origin-bound — otherwise any loopback WS peer could burn
-          // the 3 nonce attempts (DoS). Requests without a nonce keep the
-          // existing broadcast behavior unchanged.
-          // host_computer: EVERY computer confirmation is origin-bound (A1/E5),
-          // nonce or not.
-          (winL2NonceChallenge || hostComputerGated) ? { originWs: ws } : undefined,
-        )
+            set.add(sharedConfirmId)
+          }
+
+          const wsPromise = securityConfirmations.request(
+            (data) => {
+              if (ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify(data))
+              }
+            },
+            {
+              toolName,
+              dangerousApis: safety.dangerousApis,
+              // App tab WP3: no code to preview — show WHAT will be launched.
+              // host_computer (A3): show the task + app + EVERY type.text literal.
+              code: hostComputerGated
+                ? computerPreview
+                : hostApp
+                  ? `Launch app "${hostApp.entry.display_name}" (${hostApp.token}) — no arguments`
+                  : code,
+              relevantDomains: relevantDomain ? [relevantDomain] : [],
+              // App tab WP3: the thread-trust checkbox (relevantApps) is offered
+              // ONLY under policy "ai". "manual" must never show it (owner
+              // decision 2); "auto" never reaches this dialog.
+              // host_computer: input injection is NEVER thread-trusted — no
+              // checkbox is ever offered (plan §E.3).
+              relevantApps: hostComputerGated
+                ? []
+                : hostApp
+                  ? (hostApp.policy === "ai" ? [hostApp.token] : [])
+                  : (relevantApp ? [relevantApp] : []),
+              criticalApis,
+              ...(forceConfirm ? { riskLevel: "high" as const, autoConfirmEligible: false } : {}),
+              ...(winL2NonceChallenge ? { nonceChallenge: winL2NonceChallenge } : {}),
+              // P1 (WP4): computer 类确认的完整预览文本走独立字段,绕过
+              // code_preview 的 CODE_PREVIEW_LIMIT=1200 截断(30 动作 + 2000
+              // 语料的逐条枚举对人完整可见);其余工具不设置,修复面收窄。
+              ...(hostComputerGated && computerPreview ? { fullPreview: computerPreview } : {}),
+              // WP4 (§F.1): L2 标注截图 + 三段式非绑定 caption(best-effort,
+              // 仅存在时下发;绝不进入工具结果/LLM 上下文——P2 不变量)。
+              ...(computerL2PreviewImage ? { previewImage: computerL2PreviewImage } : {}),
+              ...(computerL2PreviewCaption ? { previewCaption: computerL2PreviewCaption } : {}),
+            },
+            // Adversary amendment A1: a confirmation carrying a nonce challenge
+            // MUST be origin-bound — otherwise any loopback WS peer could burn
+            // the 3 nonce attempts (DoS). Requests without a nonce keep the
+            // existing broadcast behavior unchanged.
+            // host_computer: EVERY computer confirmation is origin-bound (A1/E5),
+            // nonce or not.
+            (winL2NonceChallenge || hostComputerGated) ? { originWs: ws } : undefined,
+            // P0a: pre-generated id shared with tray.
+            sharedConfirmId,
+          )
+
+          if (!trayPromise) {
+            // No tray (or Windows-nonce path) — straight WS, original behavior.
+            return wsPromise
+          }
+
+          // Race: first responder wins. Loser is silenced (manager.pending.delete
+          // means the second response is a no-op; tray dialog is closed via cancel).
+          // trayPromise may resolve to null if the tray adapter rejected (C-P0-7).
+          const winner: { source: "ws"; decision: SecurityConfirmationDecision } | { source: "tray"; approved: boolean } | null =
+            await Promise.race([
+              wsPromise.then((d): { source: "ws"; decision: SecurityConfirmationDecision } => ({
+                source: "ws", decision: d,
+              })),
+              trayPromise,
+            ])
+          // C-P0-6: confirmation resolved (one way or another) — drop from
+          // activeTrayConfirmsByWs so ws.close doesn't try to cancel a dialog
+          // that's already gone.
+          activeTrayConfirmsByWs.get(ws)?.delete(sharedConfirmId)
+
+          if (winner === null) {
+            // Tray rejected — fall back to WS-only path. wsPromise still races
+            // in the rest of this async block; just bypass tray-cancellation.
+            return await wsPromise
+          }
+          if (winner.source === "ws") {
+            tray!.cancelConfirm(sharedConfirmId)
+            return winner.decision
+          }
+          // Tray responded first — propagate to manager so the WS Side Panel also
+          // gets its resolved message (extension closes its dialog). respond() is
+          // the privileged path that bypasses originWs check; tray is a trusted
+          // single-instance local channel, no rogue-peer risk.
+          securityConfirmations.respond(sharedConfirmId, winner.approved)
+          return await wsPromise
+        })()
         if (!decision.approved) {
           const reason = decision.reason === "approved" ? "unavailable" : decision.reason
           const result = {
@@ -3421,6 +3529,20 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
       }
       applyConnectionCloseGracePeriod()
       securityConfirmations.rejectAll("disconnect", ws)
+      // C-P0-6: cancel any tray dialogs that were racing this WS. Without this,
+      // the Swift dialog stays modal until its own timeout. cancelConfirm is
+      // a no-op if the id isn't pending (race already resolved).
+      const tray = getTrayInstance()
+      if (tray) {
+        const activeIds = activeTrayConfirmsByWs.get(ws)
+        if (activeIds) {
+          for (const id of activeIds) {
+            tray.cancelConfirm(id)
+          }
+          activeIds.clear()
+          activeTrayConfirmsByWs.delete(ws)
+        }
+      }
       // Audit item 8: clear the per-session MCP confirm-cache so approvals
       // don't leak across reconnects (memory + a stale "approved" entry could
       // wrongly auto-approve a tool call from whatever reconnects next).

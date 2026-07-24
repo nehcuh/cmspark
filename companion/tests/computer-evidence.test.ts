@@ -223,7 +223,7 @@ test("history redaction: host_computer task/token/type.text are hashed, summary 
     ],
   })
   const summary = JSON.stringify({ steps: [{ untrustedText: "确定 取消 文件 编辑" }] })
-  store.record({
+  await store.record({
     thread_id: "computer-redact-test",
     tool_name: "host_computer",
     params,
@@ -233,7 +233,7 @@ test("history redaction: host_computer task/token/type.text are hashed, summary 
     duration_ms: 42,
     created_at: new Date().toISOString(),
   })
-  const rows = store.query({ thread_id: "computer-redact-test" })
+  const rows = await store.query({ thread_id: "computer-redact-test" })
   assert.equal(rows.length, 1)
   const storedParams = rows[0].params
   // nothing human-readable from the corpus survives
@@ -256,7 +256,7 @@ test("history redaction: host_computer task/token/type.text are hashed, summary 
 test("history redaction: non-sensitive tools pass through unchanged (control)", async () => {
   const store = new HistoryStore()
   await store.waitReady()
-  store.record({
+  await store.record({
     thread_id: "computer-redact-control",
     tool_name: "navigate",
     params: JSON.stringify({ url: "https://example.com" }),
@@ -266,7 +266,7 @@ test("history redaction: non-sensitive tools pass through unchanged (control)", 
     duration_ms: 1,
     created_at: new Date().toISOString(),
   })
-  const rows = store.query({ thread_id: "computer-redact-control" })
+  const rows = await store.query({ thread_id: "computer-redact-control" })
   assert.equal(JSON.parse(rows[0].params).url, "https://example.com")
   assert.equal(rows[0].result_summary, "ok")
   store.close()

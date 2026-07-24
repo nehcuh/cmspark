@@ -610,8 +610,8 @@ ${hostUseRule12}${appIndexSection ? `\n\n${appIndexSection}` : ""}`
 
           const durationMs = Date.now() - startTime
 
-          // Record to history
-          historyStore.record({
+          // Record to history. C-P0-4: record is async (awaits init).
+          await historyStore.record({
             thread_id: threadId,
             tool_name: toolName,
             params: JSON.stringify(params),

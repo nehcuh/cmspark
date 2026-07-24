@@ -641,25 +641,34 @@ function resolveApiKey(
 }
 
 export function saveConfig(config: Partial<CompanionConfig>): CompanionConfig {
-  // Warn when '*' is used as a trusted domain (global wildcard)
-  if (config.trusted_domains?.includes("*")) {
-    console.warn("[cmspark-agent] WARNING: '*' wildcard trusted domain — all cookie access is allowed. Use only for development.")
+  // S-P0-4 (2026-07-24): previously these were advisory warnings. Now we
+  // FILTER OUT dangerous patterns at saveConfig time — `*`, `*.com`, `*.cn`,
+  // `*.co.uk`, etc. The runtime matchDomain still handles them (for legacy
+  // configs loaded directly from disk via deepMerge), but saveConfig refuses
+  // to persist them. This closes the "edit config.json directly" bypass.
+  const { validateWildcardPattern } = require("./security") as typeof import("./security")
+  const filterPatterns = (arr: string[] | undefined, label: string): string[] => {
+    if (!Array.isArray(arr)) return []
+    const kept: string[] = []
+    for (const p of arr) {
+      if (typeof p !== "string") continue
+      const v = validateWildcardPattern(p)
+      if (v.ok) {
+        kept.push(p)
+      } else {
+        console.warn(
+          `[cmspark-agent] WARNING: rejecting dangerous ${label} pattern '${p}' — ${v.reason}. ` +
+          `Pattern dropped from saved config; edit config.json manually to override (not recommended).`,
+        )
+      }
+    }
+    return kept
   }
-  // Warn when '*' is used as an auto-approved domain — this disables the
-  // dangerous-tool confirmation gate for EVERY domain. Distinct from
-  // trusted_domains (cookie/data access): this gate covers evaluate, navigate,
-  // and friends, so '*' here is strictly more dangerous.
-  if (config.auto_approved_domains?.includes("*")) {
-    console.warn("[cmspark-agent] WARNING: '*' wildcard in auto_approved_domains — all dangerous tool calls (evaluate, navigate, etc.) will be auto-approved on EVERY domain. Prefer listing specific hostnames or use '*.example.com' for subdomain scope.")
+  if (config.trusted_domains) {
+    config.trusted_domains = filterPatterns(config.trusted_domains, "trusted_domains")
   }
-  // Heuristic TLD-wildcard detection: patterns like '*.com' or '*.cn' auto-
-  // approve every domain under a public suffix. We can't ship the full PSL
-  // list, so we approximate by flagging '*.X' where X has no further dots.
-  // '*.co.uk' / '*.com.cn' won't be caught by this heuristic — power users
-  // editing config.json should mind that.
-  const tldWildcardPattern = /^\s*\*\.[^.]+\s*$/
-  if (config.auto_approved_domains?.some(p => typeof p === "string" && tldWildcardPattern.test(p))) {
-    console.warn("[cmspark-agent] WARNING: TLD-level wildcard in auto_approved_domains (e.g. '*.com', '*.cn') — auto-approves an entire TLD. Prefer '*.example.com' (with a registered domain label) for subdomain scope.")
+  if (config.auto_approved_domains) {
+    config.auto_approved_domains = filterPatterns(config.auto_approved_domains, "auto_approved_domains")
   }
   // Warn when dangerous auto-approve is enabled — it bypasses the human-in-the-loop gate.
   if (config.security?.auto_approve_dangerous === true) {
