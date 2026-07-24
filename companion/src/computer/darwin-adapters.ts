@@ -272,11 +272,31 @@ export class MacScreenCapturer implements ScreenCapturer {
       sha256 = createHash("sha256").update(fs.readFileSync(tmpPath)).digest("hex")
     } catch { /* file not found — error surfaced below */ }
 
+    // v4 Defect 3: plumb real image dimensions + backing scale. Fall back to
+    // rect dims when binary lacks the new fields (older host.swift — bridge
+    // period during canary rollout). scaleX/Y default to 1.0 ONLY when binary
+    // did not report; never silently treat retina as 1x.
+    const rect = parsed.rect ?? { x: 0, y: 0, width: 0, height: 0 }
+    const imageWidth = typeof parsed.imageWidth === "number" ? parsed.imageWidth : rect.width
+    const imageHeight = typeof parsed.imageHeight === "number" ? parsed.imageHeight : rect.height
+    const rectW = rect.width || 0
+    const rectH = rect.height || 0
+    const scaleX = typeof parsed.scaleX === "number"
+      ? parsed.scaleX
+      : (rectW > 0 ? imageWidth / rectW : 1.0)
+    const scaleY = typeof parsed.scaleY === "number"
+      ? parsed.scaleY
+      : (rectH > 0 ? imageHeight / rectH : 1.0)
+
     return {
       hwnd,
-      rect: parsed.rect ?? { x: 0, y: 0, width: 0, height: 0 },
+      rect,
       client: parsed.client ?? { x: 0, y: 0, width: parsed.rect?.width ?? 0, height: parsed.rect?.height ?? 0 },
       dpi: parsed.dpi ?? 72,
+      imageWidth,
+      imageHeight,
+      scaleX,
+      scaleY,
       path: tmpPath,
       sha256,
       black: false,

@@ -912,7 +912,30 @@ func cuScreenshot(windowId: UInt32, outputPath: String) -> String {
         return cuError("cannot read captured image back from \(outputPath)")
     }
     let sha256 = SHA256.hash(data: data).compactMap { String(format: "%02x", $0) }.joined()
-    return cuJson(["ok": true, "rect": rect, "client": client, "dpi": 72, "path": outputPath, "sha256": sha256])
+
+    // v4 Defect 3 (Grok v4 §4.4 M1 / Pi v4.1 caveat): return real image
+    // dimensions + backing scale. Replaces hardcoded `"dpi": 72` lie that
+    // hid retina 2x mismatch (root cause of (722, 872) vs 880x640 OOB class).
+    let imageWidth = image.width
+    let imageHeight = image.height
+    let rectW = rect["width"] ?? CGFloat(imageWidth)
+    let rectH = rect["height"] ?? CGFloat(imageHeight)
+    let scaleX = rectW > 0 ? Double(imageWidth) / Double(rectW) : 1.0
+    let scaleY = rectH > 0 ? Double(imageHeight) / Double(rectH) : 1.0
+
+    return cuJson([
+        "ok": true,
+        "rect": rect,
+        "client": client,
+        "dpi": 72,  // legacy field preserved for older consumers; new fields below are authoritative
+        "imageWidth": imageWidth,
+        "imageHeight": imageHeight,
+        "scaleX": scaleX,
+        "scaleY": scaleY,
+        "backingScale": scaleX,  // == scaleX on macOS (per-axis equal in practice)
+        "path": outputPath,
+        "sha256": sha256,
+    ])
 }
 
 // MARK: - crop + imgdiff + ocr + inject + security-check + preview + evidence-seal
