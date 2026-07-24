@@ -89,6 +89,32 @@ file "${OUTPUT_BIN}"
 
 BINARY_SIZE=$(stat -f%z "${OUTPUT_BIN}" 2>/dev/null || stat -c%s "${OUTPUT_BIN}" 2>/dev/null || echo "?")
 BINARY_HASH=$(shasum -a 256 "${OUTPUT_BIN}" | awk '{print $1}')
+
+# (5) Auto-rewrite CMSPARK_HOST_SHA256 constant in host-integrity.ts.
+# Closes adversary N7 (stale-SHA window between binary rebuild and constant
+# bump). Developer MUST commit host-integrity.ts alongside any binary-affecting
+# change — CI (option A) asserts the diff is present.
+INTEGRITY_TS="${SCRIPT_DIR}/host-integrity.ts"
+if [[ -f "${INTEGRITY_TS}" ]]; then
+  echo "[build-host] (5/5) Auto-rewriting CMSPARK_HOST_SHA256 in host-integrity.ts..."
+  # Anchor on the literal constant name; robust to whitespace changes.
+  # Fail-closed: if the regex doesn't match, the build fails — developer must
+  # reconcile manually (constant line was renamed/moved).
+  if ! perl -i -pe 's/(CMSPARK_HOST_SHA256\s*=\s*")[^"]*"/${1}'"${BINARY_HASH}"'"/' "${INTEGRITY_TS}"; then
+    echo "[build-host] ERROR: perl in-place edit failed on ${INTEGRITY_TS}"
+    exit 1
+  fi
+  if ! grep -q "CMSPARK_HOST_SHA256 = \"${BINARY_HASH}\"" "${INTEGRITY_TS}"; then
+    echo "[build-host] ERROR: SHA constant did not update — regex miss. Manual reconciliation required."
+    exit 1
+  fi
+  echo "[build-host]   host-integrity.ts updated with SHA ${BINARY_HASH}"
+  echo "[build-host]   WARNING: working tree is now dirty. Commit host-integrity.ts alongside binary-affecting changes."
+else
+  echo "[build-host] WARNING: host-integrity.ts not found at ${INTEGRITY_TS}"
+  echo "[build-host]   Skipping auto-rewrite. Manual SHA update required if it exists elsewhere."
+fi
+
 echo
 echo "[build-host] SUCCESS"
 echo "[build-host]   Binary: ${OUTPUT_BIN} (${BINARY_SIZE} bytes)"

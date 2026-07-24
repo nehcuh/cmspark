@@ -12,6 +12,7 @@ import type {
 import { NotImplementedForApp, DarwinPathNotAbsolute } from "../types"
 import { isVaultApp } from "./blacklist"
 import { resolveHostBinary } from "./host-bin"
+import { spawnHostBin } from "./host-integrity"
 
 const execFileAsync = promisify(execFile)
 
@@ -123,7 +124,8 @@ export function decodeTargetIdToRaw(validated: string): string {
 
 /**
  * Injectable spawn surface (audit M11 — aligns with win's PsRunner DI).
- * Production default spawns the real cmspark-host binary via execFile argv;
+ * Production default goes through spawnHostBin (host-integrity.ts) which
+ * enforces S-P0-2 (TOCTOU hardening + binary hash check) before exec.
  * LLM-controlled values travel exclusively as argv elements (no shell, no
  * string interpolation). Resolves with stdout on exit 0; rejects with the
  * execFile error (carries .code and .stderr) otherwise. Unit tests inject
@@ -136,11 +138,7 @@ export type DarwinRunner = (
 ) => Promise<string>
 
 export const defaultDarwinRunner: DarwinRunner = async (bin, args, opts) => {
-  const result = await execFileAsync(bin, args, {
-    encoding: "utf-8",
-    timeout: opts?.timeoutMs ?? HOST_TIMEOUT_MS,
-  })
-  return String(result.stdout)
+  return spawnHostBin(bin, args, { timeoutMs: opts?.timeoutMs ?? HOST_TIMEOUT_MS })
 }
 
 export interface DarwinAdapterOpts {
