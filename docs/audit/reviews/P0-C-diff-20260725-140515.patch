@@ -1,0 +1,271 @@
+# Dual external review context
+batch: P0-C
+base: HEAD
+time: 20260725-140515
+
+29db352
+
+ M companion/src/computer/executor.ts
+ M companion/src/computer/session-trust.ts
+ M companion/src/host-use/darwin/host.swift
+ M companion/tests/computer-executor.test.ts
+ M memory/session.md
+?? .omx/
+?? companion/src/host-use/darwin/build-host-skylight.sh
+?? companion/src/host-use/darwin/host-skylight-nolibval.entitlements
+?? companion/src/host-use/darwin/host-skylight.entitlements
+?? companion/src/host-use/darwin/host-skylight.swift
+?? docs/audit/reviews/P0-C-claude-20260725-135958.md
+?? docs/audit/reviews/P0-C-diff-20260725-135958.patch
+?? docs/audit/reviews/P0-C-diff-20260725-140515.patch
+?? docs/audit/reviews/P0-C-pi-20260725-135958.md
+?? docs/decisions/capability-token-brief.md
+?? docs/decisions/capability-token-round1-synthesis.md
+?? docs/decisions/capability-token-threat-model-delta.md
+?? docs/decisions/v1.3/
+
+## Diff (git diff + staged)
+ companion/src/computer/executor.ts        | 22 ++++++---
+ companion/src/computer/session-trust.ts   |  4 ++
+ companion/src/host-use/darwin/host.swift  | 78 +++++++++++++++++++++++++++++--
+ companion/tests/computer-executor.test.ts | 50 ++++++++++++++++++++
+ memory/session.md                         |  5 ++
+ 5 files changed, 148 insertions(+), 11 deletions(-)
+
+diff --git a/companion/src/computer/executor.ts b/companion/src/computer/executor.ts
+index b5c5450..f7e6c40 100644
+--- a/companion/src/computer/executor.ts
++++ b/companion/src/computer/executor.ts
+@@ -105,8 +105,9 @@ export interface ComputerExecutorDeps {
+    * UX-spike 2026-07-23: the WebSocket session id this task belongs to. When
+    * present AND sessionTrust reports the (sessionId, app) tuple as already
+    * approved, mid-task re-L2 pauses auto-approve (audit logged) instead of
+-   * re-asking. The INITIAL task L2 is unaffected — only reL2() consults it.
+-   * Absent = every re-L2 asks (unit tests / legacy callers).
++   * re-asking — except force-interactive reasons (danger_detected /
++   * experimental_suggestion; P0-C). The INITIAL task L2 is unaffected — only
++   * reL2() consults it. Absent = every re-L2 asks (unit tests / legacy callers).
+    */
+   sessionId?: string
+   /**
+@@ -610,11 +611,18 @@ export async function runComputerTask(
+     // "continue". When this session has already approved a task for the same
+     // app token, auto-approve the re-L2 (audit logged) and return true WITHOUT
+     // surfacing the dialog. The initial L2 is never affected — only this path.
+-    // Safety invariants preserved: the self-UI YIELD recovery above may still
+-    // continue WITHOUT calling reL2 at all; a real task-induced dialog still
+-    // reaches here when session trust is absent (first task in a session, a
+-    // different app, or after companion restart).
+-    if (deps.sessionId && params.app) {
++    //
++    // P0-C / TinyClick G4 carve-out: session trust must NEVER auto-approve
++    // computer.danger_detected or computer.experimental_suggestion. Those are
++    // content-sensitive / uncalibrated gates that always need fresh human eyes.
++    // Budget / uncross / foreground_yielded / task_induced_dialog still auto-
++    // approve under trust (UX-spike preserved).
++    const FORCE_INTERACTIVE_DANGEROUS = new Set([
++      "computer.danger_detected",
++      "computer.experimental_suggestion",
++    ])
++    const forceInteractive = dangerous.some((d) => FORCE_INTERACTIVE_DANGEROUS.has(d))
++    if (deps.sessionId && params.app && !forceInteractive) {
+       const trust = deps.sessionTrust ?? getComputerSessionTrust()
+       if (trust.isTrusted(deps.sessionId, params.app)) {
+         log("computer.task.reconfirm.auto_approved", { taskId, reason, app: params.app })
+diff --git a/companion/src/computer/session-trust.ts b/companion/src/computer/session-trust.ts
+index 618bf34..437ddba 100644
+--- a/companion/src/computer/session-trust.ts
++++ b/companion/src/computer/session-trust.ts
+@@ -21,6 +21,10 @@
+ //   - Keyed by (sessionId, appToken): trust is per-conversation AND per-app.
+ //     A new conversation, or a different app in the same conversation, asks
+ //     again.
++//   - P0-C force-interactive carve-out (enforced in executor reL2, not here):
++//     computer.danger_detected and computer.experimental_suggestion (TinyClick
++//     G4) NEVER auto-approve under session trust — always interactive. Budget /
++//     uncross / foreground_yielded / task_induced_dialog still suppress.
+ //
+ // The grant is recorded by the server once the initial task L2 is approved
+ // (server.ts). The executor consults it at the top of reL2().
+diff --git a/companion/src/host-use/darwin/host.swift b/companion/src/host-use/darwin/host.swift
+index fcf7fe1..45a226f 100644
+--- a/companion/src/host-use/darwin/host.swift
++++ b/companion/src/host-use/darwin/host.swift
+@@ -554,6 +554,67 @@ func cuActivatePid(_ pid: pid_t) -> Bool {
+     return true
+ }
+ 
++// P0-C COMP-1: resolve client-area origin in screen CG points for inject.
++// Companion passes client-relative (x,y) (same space as screenshot `client`);
++// CGEvent posts need screen coordinates. Mirrors the screenshot AX-by-frame
++// matcher (multi-window apps) so title-bar / chrome offsets stay consistent
++// with capture. Pure math: screen = clientOrigin + (x, y) in logical CG points.
++// Fail closed when windowId cannot be resolved via CGWindowList.
++func cuClientOriginScreen(windowId: UInt32) -> CGPoint? {
++    var info: [[String: Any]] = []
++    if let raw = CGWindowListCopyWindowInfo([.optionIncludingWindow], windowId) as? [[String: Any]] {
++        info = raw.filter { ($0[kCGWindowNumber as String] as? UInt32) == windowId }
++        if info.isEmpty { info = raw }
++    } else if let rawAll = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] {
++        info = rawAll.filter { ($0[kCGWindowNumber as String] as? UInt32) == windowId }
++    }
++    guard let first = info.first,
++          let bounds = first[kCGWindowBounds as String] as? [String: CGFloat] else {
++        return nil
++    }
++    let fx = bounds["X"] ?? 0
++    let fy = bounds["Y"] ?? 0
++    let fw = bounds["Width"] ?? 0
++    let fh = bounds["Height"] ?? 0
++    // Default: client origin = CGWindow frame origin (no chrome offset known).
++    var clientOrigin = CGPoint(x: fx, y: fy)
++
++    let pid = cuPidForWindow(windowId)
++    if pid != 0, let appElement = cuAppElementForPid(pid) {
++        var windowsRef: CFTypeRef?
++        AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &windowsRef)
++        if let axWindows = windowsRef as? [AXUIElement] {
++            // Same AX↔CGWindow frame matcher as cuScreenshot (ea3y6n).
++            var bestWin: AXUIElement? = nil
++            var bestDist: CGFloat = .infinity
++            for axWin in axWindows {
++                var posRef: CFTypeRef?; var sizeRef: CFTypeRef?
++                AXUIElementCopyAttributeValue(axWin, kAXPositionAttribute as CFString, &posRef)
++                AXUIElementCopyAttributeValue(axWin, kAXSizeAttribute as CFString, &sizeRef)
++                var pos = CGPoint.zero; var size = CGSize.zero
++                if let p = posRef { AXValueGetValue(p as! AXValue, .cgPoint, &pos) }
++                if let s = sizeRef { AXValueGetValue(s as! AXValue, .cgSize, &size) }
++                let dist = abs(pos.x - fx) + abs(pos.y - fy) + abs(size.width - fw) + abs(size.height - fh)
++                if dist < bestDist {
++                    bestDist = dist
++                    bestWin = axWin
++                }
++            }
++            if let axWin = bestWin {
++                var posRef: CFTypeRef?
++                AXUIElementCopyAttributeValue(axWin, kAXPositionAttribute as CFString, &posRef)
++                var pos = CGPoint.zero
++                if let p = posRef { AXValueGetValue(p as! AXValue, .cgPoint, &pos) }
++                // Screenshot reports client offset as (pos - frame); client (0,0)
++                // in screen space is therefore AX position (when AX matched).
++                // When AX frame equals CGWindow frame, this is just (fx, fy).
++                clientOrigin = pos
++            }
++        }
++    }
++    return clientOrigin
++}
++
+ // MARK: - window-list
+ 
+ func cuWindowList(bundleId: String?, windowId: UInt32?, foreground: Bool) -> String {
+@@ -918,22 +979,31 @@ func cuInject(action: String, windowId: UInt32, x: Int?, y: Int?, text: String?,
+     switch action {
+     case "click", "double_click", "right_click":
+         guard let px = x, let py = y else { return cuError("click requires --x and --y") }
++        // P0-C COMP-1: client → screen via window bounds + client origin offset.
++        // Companion injects client-space coords; CGEvent needs screen CG points.
++        guard let clientOrigin = cuClientOriginScreen(windowId: windowId) else {
++            return cuError("cannot resolve client origin for windowId \(windowId)", code: "HWND_DEAD")
++        }
++        let screenX = clientOrigin.x + CGFloat(px)
++        let screenY = clientOrigin.y + CGFloat(py)
++        let screenPt = CGPoint(x: screenX, y: screenY)
+         let cc: Int64 = (action == "double_click") ? 2 : 1
+         let btn: CGMouseButton = (action == "right_click") ? .right : .left
+-        if let me = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: CGPoint(x: px, y: py), mouseButton: btn) {
++        if let me = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: screenPt, mouseButton: btn) {
+             me.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(pid)); me.post(tap: .cghidEventTap)
+         }
+         usleep(50000)
+-        if let de = CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown, mouseCursorPosition: CGPoint(x: px, y: py), mouseButton: btn) {
++        if let de = CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown, mouseCursorPosition: screenPt, mouseButton: btn) {
+             de.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(pid))
+             de.post(tap: .cghidEventTap)
+             for _ in 1..<cc { usleep(100000); de.post(tap: .cghidEventTap) }
+         }
+         usleep(50000)
+-        if let ue = CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp, mouseCursorPosition: CGPoint(x: px, y: py), mouseButton: btn) {
++        if let ue = CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp, mouseCursorPosition: screenPt, mouseButton: btn) {
+             ue.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(pid)); ue.post(tap: .cghidEventTap)
+         }
+-        return cuJson(["ok": true, "action": action, "x": px, "y": py])
++        // x/y remain client coords (Windows computer-input.ps1 parity); screenX/Y report landing.
++        return cuJson(["ok": true, "action": action, "x": px, "y": py, "screenX": screenX, "screenY": screenY])
+ 
+     case "type":
+         guard let txt = text else { return cuError("type requires --text") }
+diff --git a/companion/tests/computer-executor.test.ts b/companion/tests/computer-executor.test.ts
+index 3fc5ff8..0a93a1f 100644
+--- a/companion/tests/computer-executor.test.ts
++++ b/companion/tests/computer-executor.test.ts
+@@ -1260,6 +1260,56 @@ test("executor UX-spike: session trust does NOT help a different app — re-L2 s
+   assert.equal(confirm.captured.length, 1)
+ })
+ 
++// P0-C COMP-2: session trust must NOT auto-approve content-sensitive / G4 gates.
++// Without this carve-out, trust.grant + caution OCR / TinyClick would silently
++// inject under computer.danger_detected / computer.experimental_suggestion
++// (COMP-2 假绿 if only FOREGROUND-YIELD is asserted).
++
++test("executor P0-C: session trust does NOT auto-approve computer.danger_detected", async () => {
++  const confirm = scriptedConfirm([false]) // DENY — proves the dialog still surfaces
++  const injector = new RecordingInjector()
++  const trust = new ComputerSessionTrust()
++  trust.grant("sess-1", "win.app.test")
++  // Caution word → regionLevel caution → reL2(computer.danger_detected)
++  const locator = new FakeLocator([{ text: "确认删除", x: 160, y: 208, w: 60, h: 30 }])
++  const deps = makeDeps({
++    confirm: confirm.fn,
++    injector,
++    locator,
++    sessionId: "sess-1",
++    sessionTrust: trust,
++  })
++  const r = await runComputerTask(
++    { task: "t", app: "win.app.test", actions: [{ action: "click", target: "确认删除" }] },
++    deps,
++  )
++  assert.equal(confirm.captured.length, 1, "danger_detected re-L2 must still surface under session trust")
++  assert.deepEqual(confirm.captured[0].details.dangerousApis, ["computer.danger_detected"])
++  assert.equal(r.errorCode, "DANGER_DENIED_BY_USER")
++  assert.equal(injector.clicks.length, 0, "deny → zero inject")
++})
++
++test("executor P0-C: session trust does NOT auto-approve computer.experimental_suggestion (G4)", async () => {
++  const tc = fakeTinyClickLocator()
++  const confirm = scriptedConfirm([false])
++  const injector = new RecordingInjector()
++  const trust = new ComputerSessionTrust()
++  trust.grant("sess-1", "win.app.test")
++  const deps = makeDeps({
++    confirm: confirm.fn,
++    injector,
++    locator: new FakeLocator([]), // L1 miss → TinyClick G4 gate
++    tinyclickLocator: tc.locator,
++    sessionId: "sess-1",
++    sessionTrust: trust,
++  })
++  const r = await runComputerTask({ task: "t", app: "win.app.test", actions: [clickOk] }, deps)
++  assert.equal(confirm.captured.length, 1, "G4 re-L2 must still surface under session trust")
++  assert.deepEqual(confirm.captured[0].details.dangerousApis, ["computer.experimental_suggestion"])
++  assert.equal(r.errorCode, "ELEMENT_NOT_FOUND", "deny → honest degrade")
++  assert.equal(injector.clicks.length, 0, "deny → zero inject")
++})
++
+ 
+ // --- WP2: emergency-stop abort channels (§E.6) --------------------------------
+ 
+diff --git a/memory/session.md b/memory/session.md
+index b6501f5..87a0259 100644
+--- a/memory/session.md
++++ b/memory/session.md
+@@ -182,3 +182,8 @@
+ - P0-A committed: `360de94` on fix/diagnosis-P0-A (also base of fix/diagnosis-P0-B)
+ - Next: P0-B Stop/stream/thread lifecycle
+ 
++## P0-B committed + P0-C started
++- P0-B commit: `29db352` on fix/diagnosis-P0-B
++- Stacked branch fix/diagnosis-P0-C @ 29db352
++- Launching p0-batch-fix batch=P0-C (computer reL2 session-trust + Darwin client→screen)
++

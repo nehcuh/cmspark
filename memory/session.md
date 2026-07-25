@@ -182,3 +182,8 @@
 - P0-A committed: `360de94` on fix/diagnosis-P0-A (also base of fix/diagnosis-P0-B)
 - Next: P0-B Stop/stream/thread lifecycle
 
+## P0-B committed + P0-C started
+- P0-B commit: `29db352` on fix/diagnosis-P0-B
+- Stacked branch fix/diagnosis-P0-C @ 29db352
+- Launching p0-batch-fix batch=P0-C (computer reL2 session-trust + Darwin client→screen)
+

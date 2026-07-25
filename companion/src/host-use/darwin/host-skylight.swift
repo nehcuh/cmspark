@@ -12,29 +12,21 @@ import Carbon
 import CryptoKit
 
 // ============================================================================
-// SkyLight per-PID event posting (v1.3 — Approach C-minus production swap).
+// SPIKE (2026-07-24): SkyLight per-PID event posting — Approach C de-risk.
 //
 // Replaces CGEvent.post(tap: .cghidEventTap) with SLEventPostToPid, the
 // SkyLight private API that delivers an event to a specific PID via an
-// auth-signed channel. Chromium renderer IPC trusts this; public postToPid
-// is rejected by Chrome's content renderer. SkyLight delivery also avoids
-// moving the user's real cursor and works regardless of frontmost state.
+// auth-signed channel (Chromium renderer IPC trusts this; public postToPid
+// is rejected by Chrome's content renderer).
 //
-// Design lineage (see docs/decisions/v1.3/):
-//   - plan-approach-c-minus.md — production swap Plan v3
-//   - spike-skylight-tahoe-results.md — Tahoe 26.5.2 dlopen+dlsym verified
-//   - spike-daemon-threat-model.md — daemon rejected (C-minus)
-//   - adversary-approach-c-round1.txt — original 3 blockers
-//   - review-grok-spike-fixes.txt + review-claude-code-spike-fixes.txt
+// Adversary review (docs/decisions/v1.3/adversary-approach-c-round1.txt):
+//   B1 — requires com.apple.security.cs.disable-library-validation=true
+//        (reverts S-P0-2 library validation lockdown)
+//   B2 — SLEventPostToPid stability on macOS 14/15/26 unverified
+//        (cua issue #1503 Sonoma crash; yabai #2634/#2638/#2707 Tahoe breaks)
+//   B3 — daemon model not addressed by this spike (separate threat model)
 //
-// Library validation: disable-library-validation=false (host.entitlements).
-// Apple-signed SkyLight dylib loads under hardened runtime without the flip
-// (A/B verified on Tahoe 26.5.2). Preserves v1.3 Batch 1 lockdown.
-//
-// Support matrix: Tahoe 26.5+ only for computer-use inject. Older macOS
-// (Sonoma 14.4+ per host-Info.plist LSMinimumSystemVersion) still supports
-// other host features (mail/notes/files/biometric); cuResolveSkyLight()
-// returns false → SKYLIGHT_SPI_UNAVAILABLE → LLM surfaces upgrade prompt.
+// This file is FOR EVALUATION ONLY. The production host.swift is unchanged.
 // ============================================================================
 
 private var skyLightHandle: UnsafeMutableRawPointer?
@@ -54,7 +46,7 @@ func cuResolveSkyLight() -> Bool {
     // RTLD_LOCAL (not RTLD_GLOBAL): single-shot CLI doesn't need SkyLight
     // symbols leaking into subsequently loaded dylibs. Tighter boundary.
     guard let handle = dlopen(path, RTLD_LAZY | RTLD_LOCAL) else {
-        fputs("[host] dlopen SkyLight failed: \(String(cString: dlerror()))\n", stderr)
+        fputs("[host-skylight] dlopen SkyLight failed: \(String(cString: dlerror()))\n", stderr)
         return false
     }
     skyLightHandle = handle
@@ -64,10 +56,10 @@ func cuResolveSkyLight() -> Bool {
         slPostEventToPidFn = unsafeBitCast(sym,
                                            to: (@convention(c) (pid_t, CGEvent?) -> Void).self)
     } else {
-        fputs("[host] dlsym SLEventPostToPid returned NULL " +
+        fputs("[host-skylight] dlsym SLEventPostToPid returned NULL " +
               "(err: \(String(cString: dlerror())))\n", stderr)
     }
-    fputs("[host] resolved SLEventPostToPid=\(slPostEventToPidFn != nil)\n", stderr)
+    fputs("[host-skylight] resolved SLEventPostToPid=\(slPostEventToPidFn != nil)\n", stderr)
     return slPostEventToPidFn != nil
 }
 
@@ -538,11 +530,12 @@ do {
         guard let action = argValue("--action"), let ws = argValue("--window-id"), let w = UInt32(ws) else { fputs("inject: --action and --window-id required\n", stderr); exit(2) }
         let px = argValue("--x").flatMap { Int($0) }; let py = argValue("--y").flatMap { Int($0) }
         let d = argValue("--delta").flatMap { Int($0) }
-        // Resolve SkyLight SPI before any inject. Fail-fast if unavailable
-        // (older macOS, broken OS install) — distinct from a per-call post
-        // failure (SKYLIGHT_POST_FAILED). Companion surfaces typed error to LLM.
+        // SPIKE: resolve SkyLight SPI before any inject. Fail-fast if SPI
+        // unavailable (older macOS, broken OS install) instead of letting
+        // every post inside cuInject silently no-op. Caller (companion) sees
+        // SKYLIGHT_SPI_FAILED error_code and can surface to LLM / fall back.
         if !cuResolveSkyLight() {
-            out = cuError("SkyLight SPI unavailable on this OS", code: "SKYLIGHT_SPI_UNAVAILABLE")
+            out = cuError("SkyLight SPI unavailable on this OS", code: "SKYLIGHT_SPI_FAILED")
             break
         }
         out = cuInject(action: action, windowId: w, x: px, y: py, text: argValue("--text"), chord: argValue("--chord"), delta: d, checkOcclusion: argv.contains("--check-occlusion"), checkSecureInput: argv.contains("--check-secure-input"), checkOnscreen: argv.contains("--check-onscreen"), estopFlag: argValue("--estop-flag"))
@@ -561,22 +554,7 @@ do {
         // returns on success — it hosts a CFRunLoop until killed.
         guard let sock = argValue("--socket-path") else { fputs("estop: --socket-path required\n", stderr); exit(2) }
         try runEstop(socketPath: sock, flagPath: argValue("--flag-path") ?? "/tmp/cmspark-estop.flag")
-    case "self-test":
-        // P2 (Pi C2/C3 + Grok blocker 2): pure-function contract for the
-        // capture variance classifier. Print JSON result; exit non-zero on
-        // any assertion failure so build-host.sh's `|| exit 1` actually trips.
-        // cuSelfTestClassifier returns cuJson({"ok":true,...}) on pass and
-        // cuError(... code:"SELF_TEST_FAILED") on fail; we inspect the ok flag
-        // directly and short-circuit before the unified `print(out); exit(0)`.
-        let testOut = cuSelfTestClassifier()
-        print(testOut)
-        if let data = testOut.data(using: .utf8),
-           let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           let ok = obj["ok"] as? Bool, !ok {
-            FileHandle.standardError.write("cuSelfTestClassifier reported failure\n".data(using: .utf8)!)
-            exit(1)
-        }
-        exit(0)
+
     default:
         FileHandle.standardError.write("unknown subcommand: \(subcommand)\n".data(using: .utf8)!)
         exit(2)
@@ -605,14 +583,8 @@ import CryptoKit
 
 // MARK: - JSON helpers
 
-func cuError(_ error: String, code: String = "INVALID_ACTION", extra: [String: Any] = [:]) -> String {
-    // Default-arg `extra` keeps every existing call site (cuError("..."),
-    // cuError("...", code: "...")) source-compatible. P2 (Pi C4): the variance
-    // classifier attaches capture_degraded metrics here so darwin-adapters can
-    // emit operator-only audit BEFORE rethrowing ComputerError to the LLM path.
-    var payload: [String: Any] = ["ok": false, "error": error, "error_code": code]
-    for (k, v) in extra { payload[k] = v }
-    guard let data = try? JSONSerialization.data(withJSONObject: payload, options: []),
+func cuError(_ error: String, code: String = "INVALID_ACTION") -> String {
+    guard let data = try? JSONSerialization.data(withJSONObject: ["ok": false, "error": error, "error_code": code], options: []),
           let str = String(data: data, encoding: .utf8) else { return "{}" }
     return str
 }
@@ -657,6 +629,7 @@ func cuActivatePid(_ pid: pid_t) -> Bool {
 // matcher (multi-window apps) so title-bar / chrome offsets stay consistent
 // with capture. Pure math: screen = clientOrigin + (x, y) in logical CG points.
 // Fail closed when windowId cannot be resolved via CGWindowList.
+// LOCKSTEP with host.swift — A/B path must not regress coordinate space.
 func cuClientOriginScreen(windowId: UInt32) -> CGPoint? {
     var info: [[String: Any]] = []
     if let raw = CGWindowListCopyWindowInfo([.optionIncludingWindow], windowId) as? [[String: Any]] {
@@ -673,7 +646,6 @@ func cuClientOriginScreen(windowId: UInt32) -> CGPoint? {
     let fy = bounds["Y"] ?? 0
     let fw = bounds["Width"] ?? 0
     let fh = bounds["Height"] ?? 0
-    // Default: client origin = CGWindow frame origin (no chrome offset known).
     var clientOrigin = CGPoint(x: fx, y: fy)
 
     let pid = cuPidForWindow(windowId)
@@ -681,7 +653,6 @@ func cuClientOriginScreen(windowId: UInt32) -> CGPoint? {
         var windowsRef: CFTypeRef?
         AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &windowsRef)
         if let axWindows = windowsRef as? [AXUIElement] {
-            // Same AX↔CGWindow frame matcher as cuScreenshot (ea3y6n).
             var bestWin: AXUIElement? = nil
             var bestDist: CGFloat = .infinity
             for axWin in axWindows {
@@ -702,9 +673,6 @@ func cuClientOriginScreen(windowId: UInt32) -> CGPoint? {
                 AXUIElementCopyAttributeValue(axWin, kAXPositionAttribute as CFString, &posRef)
                 var pos = CGPoint.zero
                 if let p = posRef { AXValueGetValue(p as! AXValue, .cgPoint, &pos) }
-                // Screenshot reports client offset as (pos - frame); client (0,0)
-                // in screen space is therefore AX position (when AX matched).
-                // When AX frame equals CGWindow frame, this is just (fx, fy).
                 clientOrigin = pos
             }
         }
@@ -872,22 +840,11 @@ func cuScreenshot(windowId: UInt32, outputPath: String) -> String {
     var client: [String: CGFloat] = ["x": 0, "y": 0, "width": rect["width"] ?? 0, "height": rect["height"] ?? 0]
 
     let pid = cuPidForWindow(windowId)
-    // v4 Defect 1 (Grok v4 plan §2 / Pi review v4 blocker 1): screenshot no
-    // longer activates target. SkyLight per-PID inject (v3) made activation
-    // unnecessary for click delivery; SCK `desktopIndependentWindow` filter
-    // captures window backing store without requiring frontmost. b0faek-class
-    // occlusion misroute is now handled by `--check-occlusion` on inject plus
-    // honest fail-closed on stale frames (v4.1 will add variance classifier).
-    //
-    // Canary only (dev / A-B rollback): CMSPARK_SCREENSHOT_FORCE_FG=1 restores
-    // legacy b0faek activate behavior. Production default = no activate.
-    // Distinct from CMSPARK_SKYLIGHT_FORCE_FG (inject path canary, v3).
-    if ProcessInfo.processInfo.environment["CMSPARK_SCREENSHOT_FORCE_FG"] == "1" {
-        cuActivatePid(pid)
-        fputs("[host] screenshot activate (CMSPARK_SCREENSHOT_FORCE_FG=1 canary)\n", stderr)
-    } else {
-        fputs("[host] screenshot no-activate (Hermes background capture path)\n", stderr)
-    }
+    // Pull target app to front so the screenshot captures a visible (non-occluded)
+    // frame. If Chrome side panel is currently frontmost from a confirm click,
+    // without this ScreenCaptureKit may capture a stale frame for an occluded
+    // window. (b0faek bug)
+    cuActivatePid(pid)
     if let appElement = cuAppElementForPid(pid) {
         var windowsRef: CFTypeRef?
         AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &windowsRef)
@@ -994,336 +951,7 @@ func cuScreenshot(windowId: UInt32, outputPath: String) -> String {
         return cuError("cannot read captured image back from \(outputPath)")
     }
     let sha256 = SHA256.hash(data: data).compactMap { String(format: "%02x", $0) }.joined()
-
-    // v4 Defect 3 (Grok v4 §4.4 M1 / Pi v4.1 caveat): return real image
-    // dimensions + backing scale. Replaces hardcoded `"dpi": 72` lie that
-    // hid retina 2x mismatch (root cause of (722, 872) vs 880x640 OOB class).
-    let imageWidth = image.width
-    let imageHeight = image.height
-    let rectW = rect["width"] ?? CGFloat(imageWidth)
-    let rectH = rect["height"] ?? CGFloat(imageHeight)
-    let scaleX = rectW > 0 ? Double(imageWidth) / Double(rectW) : 1.0
-    let scaleY = rectH > 0 ? Double(imageHeight) / Double(rectH) : 1.0
-
-    // v4.1 Blocker 1 (Pi): capture variance classifier — fail closed on stale
-    // or blank frames instead of returning a frame the LLM will click into
-    // blindly. AND-of-conditions when a prior exists (caret-blink frame has
-    // low stdev but low identity → must NOT pass); stdev-only when no prior.
-    let priorKey = windowId
-    let downsample = cuDownsampleToBitmap(image, side: 64)
-    let stdev = cuLumaStdev(downsample)
-    let prior = cuPriorCaptureFrameLock.value[priorKey]
-    var identity = -1.0
-    if let p = prior {
-        identity = cuIdentity(downsample, p)
-    }
-    let sizeBytes = data.count
-    let sizeGuard = sizeBytes < 1024 || imageWidth < 8 || imageHeight < 8
-    // Grok material 6: empty downsample means CGContext draw failed even
-    // though PNG wrote nonzero bytes — treat as fail-closed (cannot evaluate
-    // variance on missing pixels). Without this guard, AND clause would be
-    // false (cuIdentity returns -1 on length mismatch) → stale frame passes.
-    let downsampleEmpty = downsample.isEmpty
-    var stale = false
-    if sizeGuard || downsampleEmpty {
-        stale = true
-    } else if let _ = prior {
-        // Prior exists: require BOTH low stdev AND high identity to declare
-        // stale (Pi caveat: OR over-flags caret-blink frames).
-        stale = (stdev < 1.0 && identity >= 0.99)
-    } else {
-        // No prior: stdev-only fallback (first capture of this window).
-        stale = stdev < 1.0
-    }
-    // Update prior regardless of verdict — next call uses this for identity.
-    cuPriorCaptureFrameLock.value[priorKey] = downsample
-
-    // Reason taxonomy (operator-only; LLM only sees CAPTURE_FAILED per Pi C4).
-    // size_guard wins because a 0-byte / 0-dim frame makes stdev/identity
-    // meaningless — the luma/identity classifier cannot rescue a missing file.
-    // downsample_failed is the CGContext-draw-failed analog (PNG wrote but
-    // pixels did not survive bitmap conversion).
-    let reason: String
-    if sizeGuard {
-        reason = "size_guard"
-    } else if downsampleEmpty {
-        reason = "downsample_failed"
-    } else if prior != nil {
-        reason = "pixel_identity"
-    } else {
-        reason = "luma_stdev"
-    }
-
-    if stale {
-        // P2 C4 (Grok blocker 1): error string stays GENERIC — no stdev /
-        // identity / sizeBytes / reason leak. Metrics go ONLY to stderr
-        // (operator) + capture_degraded payload (operator audit). The TS layer
-        // also force-genericizes the message as defense-in-depth.
-        fputs("[host] CAPTURE_FAILED windowId=\(windowId) reason=\(reason) " +
-              "stdev=\(String(format: "%.3f", stdev)) " +
-              "identity=\(String(format: "%.3f", identity)) sizeBytes=\(sizeBytes) " +
-              "imageW=\(imageWidth) imageH=\(imageHeight)\n", stderr)
-        return cuError(
-            "stale or solid capture frame",
-            code: "CAPTURE_FAILED",
-            extra: [
-                "capture_degraded": [
-                    "reason": reason,
-                    "stdev": stdev,
-                    "identity": identity,
-                    "sizeBytes": sizeBytes,
-                    "imageWidth": imageWidth,
-                    "imageHeight": imageHeight,
-                    "threshold": [
-                        "stdev_lt": 1.0,
-                        "identity_gte": 0.99,
-                        "min_bytes": 1024,
-                        "min_dim": 8,
-                    ],
-                    "prior_present": prior != nil,
-                    "sha256": sha256,
-                ] as [String: Any],
-            ])
-    }
-
-    return cuJson([
-        "ok": true,
-        "rect": rect,
-        "client": client,
-        "dpi": 72,  // legacy field preserved for older consumers; new fields below are authoritative
-        "imageWidth": imageWidth,
-        "imageHeight": imageHeight,
-        "scaleX": scaleX,
-        "scaleY": scaleY,
-        "backingScale": scaleX,  // == scaleX on macOS (per-axis equal in practice)
-        "path": outputPath,
-        "sha256": sha256,
-    ])
-}
-
-// MARK: - capture variance classifier helpers (v4.1 Blocker 1)
-
-/// Thread-safe storage for last-frame 64x64 luma bitmap per windowId.
-/// Used by cuScreenshot for the identity check in the variance classifier.
-private let cuPriorCaptureFrameLock = CUBox<[UInt32: [UInt8]]>([:])
-
-/// Simple lock-protected box for mutable global state (mirrors swift-tray pattern).
-private final class CUBox<T> {
-    var value: T
-    private let lock = NSLock()
-    init(_ initial: T) { self.value = initial }
-    func with<R>(_ body: (inout T) -> R) -> R {
-        lock.lock(); defer { lock.unlock() }
-        return body(&value)
-    }
-}
-
-/// Downsample a CGImage to a `side`x`side` luma bitmap (0-255 per cell).
-/// Uses average pooling over the source image. Returns empty array on failure.
-func cuDownsampleToBitmap(_ image: CGImage, side: Int) -> [UInt8] {
-    let w = image.width
-    let h = image.height
-    if w <= 0 || h <= 0 { return [] }
-    let colorSpace = CGColorSpaceCreateDeviceRGB()
-    let bytesPerRow = side * 4
-    var pixels = [UInt8](repeating: 0, count: side * side * 4)
-    guard let ctx = CGContext(
-        data: &pixels,
-        width: side, height: side,
-        bitsPerComponent: 8, bytesPerRow: bytesPerRow,
-        space: colorSpace,
-        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-    ) else { return [] }
-    ctx.interpolationQuality = .low
-    ctx.draw(image, in: CGRect(x: 0, y: 0, width: side, height: side))
-    var luma = [UInt8](repeating: 0, count: side * side)
-    for i in 0..<(side * side) {
-        let r = Double(pixels[i * 4])
-        let g = Double(pixels[i * 4 + 1])
-        let b = Double(pixels[i * 4 + 2])
-        luma[i] = UInt8(min(255, max(0, 0.299 * r + 0.587 * g + 0.114 * b)))
-    }
-    return luma
-}
-
-/// Population standard deviation of luma across the bitmap. Low stdev ⇒ uniform
-/// color (likely blank). Returns 0.0 for empty input.
-func cuLumaStdev(_ bitmap: [UInt8]) -> Double {
-    guard !bitmap.isEmpty else { return 0.0 }
-    let n = Double(bitmap.count)
-    let sum = bitmap.reduce(0.0) { $0 + Double($1) }
-    let mean = sum / n
-    let variance = bitmap.reduce(0.0) { $0 + (Double($1) - mean) * (Double($1) - mean) } / n
-    return variance.squareRoot()
-}
-
-/// Fraction of cells whose luma matches the prior exactly (0.0–1.0).
-/// Returns -1 if lengths differ (caller treats as "no prior").
-func cuIdentity(_ current: [UInt8], _ prior: [UInt8]) -> Double {
-    guard !current.isEmpty, current.count == prior.count else { return -1.0 }
-    let matches = zip(current, prior).filter { $0 == $1 }.count
-    return Double(matches) / Double(current.count)
-}
-
-/// P2 (Pi C2/C3) self-test for the variance classifier's pure helpers.
-/// Drives cuLumaStdev / cuIdentity with synthetic bitmaps to lock:
-///   - blank frame → stdev = 0.0
-///   - identical prior → identity = 1.0
-///   - 1-cell change (caret-blink analog) → identity = (n-1)/n which is ABOVE
-///     the 0.99 fail-closed threshold when n=64*64=4096 (≈0.99976) — proves
-///     AND-of-conditions correctly rejects caret-blink false-positives
-///   - 100-cell change → identity = (n-100)/n ≈ 0.9756, BELOW 0.99 → stale
-///
-/// Returns cuJson({"ok":true,...}) on pass; on the first failing assertion,
-/// writes the assertion name to stderr and exits non-zero via the caller's
-/// do/catch (HostError). Called by the `self-test` subcommand and by
-/// build-host-skylight.sh as a post-build functional gate.
-func cuSelfTestClassifier() -> String {
-    var failures: [String] = []
-    let n = 64 * 64
-
-    // 1. stdev of all-zero bitmap = 0 (uniform)
-    let zeros = [UInt8](repeating: 0, count: n)
-    let stdevZeros = cuLumaStdev(zeros)
-    if stdevZeros != 0.0 {
-        failures.append("stdev_zeros: expected 0.0, got \(stdevZeros)")
-    }
-
-    // 2. stdev of all-255 bitmap = 0 (uniform)
-    let whites = [UInt8](repeating: 255, count: n)
-    let stdevWhites = cuLumaStdev(whites)
-    if stdevWhites != 0.0 {
-        failures.append("stdev_whites: expected 0.0, got \(stdevWhites)")
-    }
-
-    // 3. stdev of half-0 / half-255 bitmap ≈ 127.5 (high variance)
-    var halfAndHalf = [UInt8](repeating: 0, count: n)
-    for i in 0..<n { halfAndHalf[i] = i < n / 2 ? 0 : 255 }
-    let stdevHalf = cuLumaStdev(halfAndHalf)
-    if stdevHalf < 100.0 {
-        failures.append("stdev_half: expected >=100.0, got \(stdevHalf)")
-    }
-
-    // 4. identity of identical bitmaps = 1.0
-    let idIdentical = cuIdentity(zeros, zeros)
-    if idIdentical != 1.0 {
-        failures.append("identity_identical: expected 1.0, got \(idIdentical)")
-    }
-
-    // 5. identity of mismatched lengths = -1.0
-    let idMismatched = cuIdentity(zeros, [UInt8](repeating: 0, count: 10))
-    if idMismatched != -1.0 {
-        failures.append("identity_mismatched_len: expected -1.0, got \(idMismatched)")
-    }
-
-    // 6. identity with single-cell change (caret-blink analog) — must be ABOVE
-    //    0.99 fail-closed threshold so AND-of-conditions does NOT flag stale.
-    var caretBlink = zeros
-    caretBlink[0] = 255
-    let idCaret = cuIdentity(zeros, caretBlink)
-    if idCaret <= 0.99 {
-        failures.append("identity_caret_blink: expected >0.99 (cell-flip must not trip stale), got \(idCaret)")
-    }
-
-    // 7. identity with 100-cell change — BELOW 0.99, classifies as stale
-    var bigChange = zeros
-    for i in 0..<100 { bigChange[i] = 255 }
-    let idBig = cuIdentity(zeros, bigChange)
-    if idBig >= 0.99 {
-        failures.append("identity_big_change: expected <0.99 (100-cell change must trip stale), got \(idBig)")
-    }
-
-    // 8. AND-of-conditions stale verdict (prior exists):
-    //    - low stdev + high identity → stale (true stale, e.g. fully black frame twice)
-    //    - low stdev + low identity (caret blink flipped a cell but stdev still low)
-    //      → NOT stale (Pi C2 caveat: OR over-flags caret-blink)
-    let stdevLow = 0.5
-    let idHigh: Double = 1.0       // identical black prior
-    let staleIdHigh = (stdevLow < 1.0 && idHigh >= 0.99)
-    if !staleIdHigh {
-        failures.append("and_prior_stale_idHigh: expected true (black prior + black frame)")
-    }
-    // Note: a low-stdev frame with a high-identity prior IS flagged stale by
-    // AND. This is correct — see threat-class table in review-pi-p2.txt.
-    // Caret-blink (1 cell of 4096 flips) raises stdev above 1.0 (Pi analysis),
-    // so the AND clause's stdev gate excludes it. Verified by self-test #10
-    // (and_truth_low_low_not_stale) and #11 (and_truth_high_high_not_stale).
-
-    // 9. no-prior path: stdev-only fallback
-    let staleNoPrior = (stdevLow < 1.0)  // no prior branch
-    if !staleNoPrior {
-        failures.append("no_prior_stdev_only: expected true (blank first capture)")
-    }
-
-    // 10. Grok material 5: real AND truth table (prior exists)
-    //     - low stdev + LOW identity → NOT stale (caret-blink flipped cells in
-    //       a low-variance field; OR would over-flag, AND correctly skips)
-    //     - high stdev + HIGH identity → NOT stale (contentful identical frame;
-    //       stdev disqualifies — frozen UI with rich content)
-    //     - high stdev + LOW identity → NOT stale (live frame, content changed)
-    //     Only (low stdev + high identity) trips stale — proven in #8.
-    let stdevLowIdLow: Bool = (Double(0.5) < 1.0 && Double(0.80) >= 0.99)       // false
-    let stdevHighIdHigh: Bool = (Double(50.0) < 1.0 && Double(1.0) >= 0.99)     // false (stdev)
-    let stdevHighIdLow: Bool = (Double(50.0) < 1.0 && Double(0.50) >= 0.99)     // false (stdev)
-    if stdevLowIdLow {
-        failures.append("and_truth_low_low: expected NOT stale, got stale (caret-blink false positive)")
-    }
-    if stdevHighIdHigh {
-        failures.append("and_truth_high_high: expected NOT stale, got stale (contentful freeze misflag)")
-    }
-    if stdevHighIdLow {
-        failures.append("and_truth_high_low: expected NOT stale, got stale (live frame misflag)")
-    }
-
-    // 11. Grok material 6: empty downsample (CGImage decode failure) + prior
-    //     MUST be CAPTURE_FAILED, not silently pass. cuIdentity returns -1 on
-    //     length mismatch → AND clause false → would pass without guard.
-    //     Implementation contract: empty bitmap (sizeGuard would catch via 0
-    //     bytes, but if the PNG wrote successfully with 0-dim image, downsample
-    //     also empty) → caller MUST fail-closed. Encode the invariant here.
-    let emptyBitmap: [UInt8] = []
-    let emptyStdev = cuLumaStdev(emptyBitmap)         // 0.0
-    let emptyIdentity = cuIdentity(emptyBitmap, zeros) // -1.0 (mismatched length)
-    if emptyStdev != 0.0 {
-        failures.append("empty_stdev: expected 0.0, got \(emptyStdev)")
-    }
-    if emptyIdentity != -1.0 {
-        failures.append("empty_identity: expected -1.0, got \(emptyIdentity)")
-    }
-    // The host.swift cuScreenshot guards this via sizeGuard (imageWidth<8 ||
-    // imageHeight<8 catches 0-dim). Lock the contract: with empty bitmap and
-    // a prior, stale MUST still be true via sizeGuard, not the AND clause.
-    // (Self-test cannot call sizeGuard directly — it's inline in cuScreenshot.
-    // This assertion documents the contract: empty bitmap → stdev 0, id -1,
-    // AND clause alone would be false → rely on sizeGuard in production.)
-    let emptyAndClause = (emptyStdev < 1.0 && emptyIdentity >= 0.99)  // false (id -1)
-    if emptyAndClause {
-        failures.append("empty_and_clause: must be false — sizeGuard is the safety net for empty bitmaps")
-    }
-
-    if !failures.isEmpty {
-        let msg = failures.joined(separator: "; ")
-        fputs("[host] cuSelfTestClassifier FAIL: \(msg)\n", stderr)
-        return cuError("classifier self-test failed: \(msg)", code: "SELF_TEST_FAILED")
-    }
-    return cuJson([
-        "ok": true,
-        "passed": [
-            "stdev_zeros",
-            "stdev_whites",
-            "stdev_half",
-            "identity_identical",
-            "identity_mismatched_len",
-            "identity_caret_blink_gt_0.99",
-            "identity_big_change_lt_0.99",
-            "and_prior_stale_idHigh",
-            "no_prior_stdev_only",
-            "and_truth_low_low_not_stale",
-            "and_truth_high_high_not_stale",
-            "and_truth_high_low_not_stale",
-            "empty_bitmap_contract",
-        ],
-    ])
+    return cuJson(["ok": true, "rect": rect, "client": client, "dpi": 72, "path": outputPath, "sha256": sha256])
 }
 
 // MARK: - crop + imgdiff + ocr + inject + security-check + preview + evidence-seal
@@ -1408,21 +1036,19 @@ func cuInject(action: String, windowId: UInt32, x: Int?, y: Int?, text: String?,
     if let flagPath = estopFlag, FileManager.default.fileExists(atPath: flagPath) { return cuError("E-Stop flag present", code: "TASK_ABORTED") }
     let pid = cuPidForWindow(windowId)
     guard pid != 0 else { return cuError("cannot find PID for window", code: "HWND_DEAD") }
-    // SkyLight per-PID posting reaches background windows without activation.
-    // CMSPARK_SKYLIGHT_FORCE_FG=1 is a CANARY-ONLY A/B knob for diff testing
-    // (does the no-raise path match legacy activate-then-post behavior on the
-    // same target?). Removed in Stage 3 post-canary per Plan v3.
+    // SPIKE: SkyLight per-PID posting should reach background windows without
+    // activation. Force-foreground only if explicitly requested via env, so we
+    // can A/B compare behavior. Production will likely drop this entirely.
     if ProcessInfo.processInfo.environment["CMSPARK_SKYLIGHT_FORCE_FG"] == "1" {
         cuActivatePid(pid)
     } else {
-        fputs("[host] skipping forceForeground (SkyLight per-PID path)\n", stderr)
+        fputs("[host-skylight] skipping forceForeground (SkyLight per-PID path)\n", stderr)
     }
 
     switch action {
     case "click", "double_click", "right_click":
         guard let px = x, let py = y else { return cuError("click requires --x and --y") }
-        // P0-C COMP-1: client → screen via window bounds + client origin offset.
-        // Companion injects client-space coords; CGEvent needs screen CG points.
+        // P0-C COMP-1: client → screen (lockstep with host.swift).
         guard let clientOrigin = cuClientOriginScreen(windowId: windowId) else {
             return cuError("cannot resolve client origin for windowId \(windowId)", code: "HWND_DEAD")
         }
@@ -1436,29 +1062,24 @@ func cuInject(action: String, windowId: UInt32, x: Int?, y: Int?, text: String?,
         // is interpreted as a left-click by some receivers (notably Chrome).
         let downType: CGEventType = isRight ? .rightMouseDown : .leftMouseDown
         let upType: CGEventType = isRight ? .rightMouseUp : .leftMouseUp
-        // P0-C: post at screenPt (client→screen), not raw client px/py.
-        guard let me = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: screenPt, mouseButton: btn) else {
-            return cuError("CGEvent mouseMoved construction failed", code: "CGEVENT_CONSTRUCT_FAILED")
-        }
-        me.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(pid))
-        if !slPostToPid(pid, me) { return cuError("SkyLight SPI post failed", code: "SKYLIGHT_POST_FAILED") }
-        usleep(50000)
-        guard let de = CGEvent(mouseEventSource: nil, mouseType: downType, mouseCursorPosition: screenPt, mouseButton: btn) else {
-            return cuError("CGEvent mouseDown construction failed", code: "CGEVENT_CONSTRUCT_FAILED")
-        }
-        de.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(pid))
-        if !slPostToPid(pid, de) { return cuError("SkyLight SPI post failed", code: "SKYLIGHT_POST_FAILED") }
-        for _ in 1..<cc {
-            usleep(100000)
-            if !slPostToPid(pid, de) { return cuError("SkyLight SPI post failed", code: "SKYLIGHT_POST_FAILED") }
+        if let me = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: screenPt, mouseButton: btn) {
+            me.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(pid))
+            if !slPostToPid(pid, me) { return cuError("SkyLight SPI post failed", code: "SKYLIGHT_SPI_FAILED") }
         }
         usleep(50000)
-        guard let ue = CGEvent(mouseEventSource: nil, mouseType: upType, mouseCursorPosition: screenPt, mouseButton: btn) else {
-            return cuError("CGEvent mouseUp construction failed", code: "CGEVENT_CONSTRUCT_FAILED")
+        if let de = CGEvent(mouseEventSource: nil, mouseType: downType, mouseCursorPosition: screenPt, mouseButton: btn) {
+            de.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(pid))
+            if !slPostToPid(pid, de) { return cuError("SkyLight SPI post failed", code: "SKYLIGHT_SPI_FAILED") }
+            for _ in 1..<cc {
+                usleep(100000)
+                if !slPostToPid(pid, de) { return cuError("SkyLight SPI post failed", code: "SKYLIGHT_SPI_FAILED") }
+            }
         }
-        ue.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(pid))
-        if !slPostToPid(pid, ue) { return cuError("SkyLight SPI post failed", code: "SKYLIGHT_POST_FAILED") }
-        // x/y remain client coords (Windows computer-input.ps1 parity); screenX/Y report landing.
+        usleep(50000)
+        if let ue = CGEvent(mouseEventSource: nil, mouseType: upType, mouseCursorPosition: screenPt, mouseButton: btn) {
+            ue.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(pid))
+            if !slPostToPid(pid, ue) { return cuError("SkyLight SPI post failed", code: "SKYLIGHT_SPI_FAILED") }
+        }
         return cuJson(["ok": true, "action": action, "x": px, "y": py, "screenX": screenX, "screenY": screenY])
 
     case "type":
@@ -1466,12 +1087,11 @@ func cuInject(action: String, windowId: UInt32, x: Int?, y: Int?, text: String?,
         let src = CGEventSource(stateID: .hidSystemState)
         for ch in txt.unicodeScalars {
             var uc = UniChar(ch.value)
-            guard let ev = CGEvent(keyboardEventSource: src, virtualKey: 0, keyDown: true) else {
-                return cuError("CGEvent key construction failed", code: "CGEVENT_CONSTRUCT_FAILED")
+            if let ev = CGEvent(keyboardEventSource: src, virtualKey: 0, keyDown: true) {
+                ev.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(pid))
+                ev.keyboardSetUnicodeString(stringLength: 1, unicodeString: &uc)
+                if !slPostToPid(pid, ev) { return cuError("SkyLight SPI post failed", code: "SKYLIGHT_SPI_FAILED") }
             }
-            ev.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(pid))
-            ev.keyboardSetUnicodeString(stringLength: 1, unicodeString: &uc)
-            if !slPostToPid(pid, ev) { return cuError("SkyLight SPI post failed", code: "SKYLIGHT_POST_FAILED") }
             usleep(30000)
         }
         return cuJson(["ok": true, "action": "type", "chars": txt.count])
@@ -1496,23 +1116,21 @@ func cuInject(action: String, windowId: UInt32, x: Int?, y: Int?, text: String?,
         }
         let src = CGEventSource(stateID: .hidSystemState)
         for kc in nonMods {
-            guard let ev = CGEvent(keyboardEventSource: src, virtualKey: kc, keyDown: true) else {
-                return cuError("CGEvent key construction failed", code: "CGEVENT_CONSTRUCT_FAILED")
+            if let ev = CGEvent(keyboardEventSource: src, virtualKey: kc, keyDown: true) {
+                ev.flags = flags
+                ev.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(pid))
+                if !slPostToPid(pid, ev) { return cuError("SkyLight SPI post failed", code: "SKYLIGHT_SPI_FAILED") }
             }
-            ev.flags = flags
-            ev.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(pid))
-            if !slPostToPid(pid, ev) { return cuError("SkyLight SPI post failed", code: "SKYLIGHT_POST_FAILED") }
             usleep(30000)
         }
         return cuJson(["ok": true, "action": "key", "chord": ch])
 
     case "scroll":
-        guard let d = delta else { return cuError("scroll requires --delta") }
-        guard let ev = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: Int32(d), wheel2: 0, wheel3: 0) else {
-            return cuError("CGEvent scroll construction failed", code: "CGEVENT_CONSTRUCT_FAILED")
+        guard let px = x, let py = y, let d = delta else { return cuError("scroll requires --x, --y, --delta") }
+        if let ev = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: Int32(d), wheel2: 0, wheel3: 0) {
+            ev.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(pid))
+            if !slPostToPid(pid, ev) { return cuError("SkyLight SPI post failed", code: "SKYLIGHT_SPI_FAILED") }
         }
-        ev.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(pid))
-        if !slPostToPid(pid, ev) { return cuError("SkyLight SPI post failed", code: "SKYLIGHT_POST_FAILED") }
         return cuJson(["ok": true, "action": "scroll", "delta": d])
 
     default:

@@ -37,6 +37,12 @@
 //   - Process lifetime only (companion restart clears all trust). No
 //     persistent cross-session trust.
 //   - Keyed by (sessionId, appToken): trust is per-conversation AND per-app.
+//     A new conversation, or a different app in the same conversation, asks
+//     again.
+//   - Force-interactive carve-out (PROMPT_ALWAYS_TAGS + reL2ShouldPrompt /
+//     executor reL2): computer.danger_detected and
+//     computer.experimental_suggestion (TinyClick G4) NEVER auto-approve under
+//     session trust. v4.1 also keeps computer.foreground_yielded always-prompt.
 //
 // The grant is recorded by the server once the initial task L2 is approved
 // (server.ts). The executor consults it at the top of reL2() and at the

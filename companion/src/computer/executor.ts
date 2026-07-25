@@ -106,8 +106,9 @@ export interface ComputerExecutorDeps {
    * UX-spike 2026-07-23: the WebSocket session id this task belongs to. When
    * present AND sessionTrust reports the (sessionId, app) tuple as already
    * approved, mid-task re-L2 pauses auto-approve (audit logged) instead of
-   * re-asking. The INITIAL task L2 is unaffected — only reL2() consults it.
-   * Absent = every re-L2 asks (unit tests / legacy callers).
+   * re-asking — except force-interactive reasons (danger_detected /
+   * experimental_suggestion; P0-C). The INITIAL task L2 is unaffected — only
+   * reL2() consults it. Absent = every re-L2 asks (unit tests / legacy callers).
    */
   sessionId?: string
   /**
@@ -611,11 +612,18 @@ export async function runComputerTask(
     // "continue". When this session has already approved a task for the same
     // app token, auto-approve the re-L2 (audit logged) and return true WITHOUT
     // surfacing the dialog. The initial L2 is never affected — only this path.
-    // Safety invariants preserved: the self-UI YIELD recovery above may still
-    // continue WITHOUT calling reL2 at all; a real task-induced dialog still
-    // reaches here when session trust is absent (first task in a session, a
-    // different app, or after companion restart).
-    if (deps.sessionId && params.app) {
+    //
+    // P0-C / TinyClick G4 carve-out: session trust must NEVER auto-approve
+    // computer.danger_detected or computer.experimental_suggestion. Those are
+    // content-sensitive / uncalibrated gates that always need fresh human eyes.
+    // Budget / uncross / foreground_yielded / task_induced_dialog still auto-
+    // approve under trust (UX-spike preserved).
+    const FORCE_INTERACTIVE_DANGEROUS = new Set([
+      "computer.danger_detected",
+      "computer.experimental_suggestion",
+    ])
+    const forceInteractive = dangerous.some((d) => FORCE_INTERACTIVE_DANGEROUS.has(d))
+    if (deps.sessionId && params.app && !forceInteractive) {
       const trust = deps.sessionTrust ?? getComputerSessionTrust()
       // v4.1 (Grok v4.1 §D3.1 / Pi v4.1 RESOLVED): split re-L2 tags into
       // silent-eligible vs always-prompt. Previously auto-approved ALL reasons
