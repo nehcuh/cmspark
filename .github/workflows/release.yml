@@ -59,8 +59,42 @@ jobs:
         # package.sh prefers Info-ZIP zip/unzip and falls back to 7-Zip on
         # windows-latest (Git Bash does not reliably ship zip/unzip); its tar
         # fallback chain handles BSD/libarchive tar on macOS/Windows.
+        # P0-D: hard-fails if macOS host/tray or Windows host-scripts-win/ORT missing.
         shell: bash
         run: bash scripts/package.sh ${{ matrix.platform }}
+
+      # P0-D fail-closed content asserts — package.sh already gates at stage time;
+      # these unzip checks catch regressions if staging paths drift.
+      - name: Assert macOS zip has host + tray + scpt
+        if: matrix.platform == 'macos-arm64'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZIP="$(ls dist-package/cmspark-*-macos-arm64.zip | head -1)"
+          echo "Checking ${ZIP}..."
+          unzip -l "${ZIP}" | grep -E 'cmspark-host$'
+          unzip -l "${ZIP}" | grep -E 'cmspark-tray$'
+          unzip -l "${ZIP}" | grep -E 'host-scripts/.*\.scpt$'
+          echo "macOS zip content assert OK"
+
+      - name: Assert windows zip has host-scripts-win + TinyClick/ORT
+        if: matrix.platform == 'windows-x64'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZIP="$(ls dist-package/cmspark-*-windows-x64.zip | head -1)"
+          echo "Checking ${ZIP}..."
+          # 7z or unzip — windows-latest may lack unzip; package.sh already
+          # produced the zip with 7z. Prefer unzip, fall back to 7z l.
+          list_zip() {
+            if command -v unzip >/dev/null 2>&1; then unzip -l "$1"
+            else 7z l "$1"
+            fi
+          }
+          list_zip "${ZIP}" | grep -E 'host-scripts-win/.*\.ps1'
+          list_zip "${ZIP}" | grep -E 'tinyclick-worker\.js'
+          list_zip "${ZIP}" | grep -E 'onnxruntime-node'
+          echo "windows-x64 zip content assert OK"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -94,33 +128,42 @@ jobs:
           body: |
             ## CMspark ${{ github.ref_name }}
 
-            First tagged release. Closes the 2026-07-09 full audit's **P0 + P1**
-            (all 4 Critical + 10 High findings) — see
+            Distributable zips for companion + Chrome extension. See
             [`docs/remediation-plan-2026-07-09.md`](https://github.com/nehcuh/cmspark/blob/main/docs/remediation-plan-2026-07-09.md)
             and [`docs/supply-chain.md`](https://github.com/nehcuh/cmspark/blob/main/docs/supply-chain.md).
 
             ### Downloads
-            Each zip is **self-contained** — it includes the companion, the
-            Chrome extension (`chrome-extension/`, load unpacked), the Node
-            runtime (sha256-verified against nodejs.org), builtin skills, and
-            the platform tray binary. Pick the one for your OS:
+            Each zip is **self-contained** for its platform — companion bundle,
+            Chrome extension (`chrome-extension/`, load unpacked), Node runtime
+            (sha256-verified against nodejs.org), builtin skills, and platform
+            host/tray assets as listed below:
 
-            | File | Platform |
-            |---|---|
-            | `cmspark-v*-macos-arm64.zip` | macOS (Apple Silicon) |
-            | `cmspark-v*-linux-x64.zip` | Linux x64 |
-            | `cmspark-v*-windows-x64.zip` | Windows x64 |
+            | File | Platform | Platform-critical assets |
+            |---|---|---|
+            | `cmspark-v*-macos-arm64.zip` | macOS (Apple Silicon) | `cmspark-host`, `cmspark-tray`, `host-scripts/*.scpt` |
+            | `cmspark-v*-linux-x64.zip` | Linux x64 | systray2 linux binary |
+            | `cmspark-v*-windows-x64.zip` | Windows x64 | `host-scripts-win/*.ps1`, `tinyclick-worker.js`, trimmed `onnxruntime-node` (win32/x64) |
 
-            ### Known limitations (non-blocking, documented)
-            - **WS auth (audit C1)**: origin allowlist closes the web-page
-              vector; the local-process shared-secret handshake is deferred to
-              P2. Don't overstate WS protection in downstream docs.
-            - **Supply chain**: chrome-extension has 71 build-time-only
-              advisories (plasmo/Parcel, not shipped; `npm audit --omit=dev` = 0);
-              companion has 2 moderate (`node-notifier→uuid`, blocked-on-upstream,
-              path unexercised). See `docs/supply-chain.md`.
-            - **Signing**: the bundled Node runtime is sha256-verified; the
-              binary itself is **not** codesigned/notarized (deferred pending
-              certificates). macOS Gatekeeper / Windows SmartScreen may warn.
+            Packaging is **fail-closed** on platform-critical assets (aborts rather
+            than shipping a zip that ENONTs at runtime):
+            - **macos-arm64**: missing `cmspark-host`, `cmspark-tray`, or `host-scripts/*.scpt`
+            - **windows-x64**: missing `host-scripts-win/*.ps1`, `tinyclick-worker.js`,
+              or trimmed `onnxruntime-node` (win32/x64)
+            - **macOS/Linux ORT**: optional soft stage — a missing ORT build does **not**
+              abort the package job (TinyClick local model simply unavailable in that zip)
 
-            Full install steps: project `CLAUDE.md` Quick Start.
+            ### Security notes (accurate as of this release)
+            - **WS auth (audit C1)**: **FIXED** — origin allowlist + shared-secret
+              HMAC handshake (`ws_secret` / challenge–response). Unauthenticated
+              peers cannot drive the agent. Downstream docs must not claim the
+              handshake is unfinished or postponed.
+            - **Supply chain**: chrome-extension build-time advisories (plasmo/Parcel)
+              are not shipped (`npm audit --omit=dev` = 0 on the extension runtime
+              graph where applicable). See `docs/supply-chain.md`.
+            - **Signing limits**: the bundled Node runtime is sha256-verified; app
+              binaries are **not** Developer ID–codesigned / notarized / Authenticode-
+              signed (pending certificates). macOS Gatekeeper / Windows SmartScreen
+              may warn. Ad-hoc signed `cmspark-host` / tray satisfy local TCC needs
+              only — not Gatekeeper distribution trust.
+
+            Full install steps: project `CLAUDE.md` / `Agents.md` Quick Start.

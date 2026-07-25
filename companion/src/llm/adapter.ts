@@ -130,6 +130,79 @@ export function createToolResultMessage(threadId: string, toolCall: any, result:
   }
 }
 
+/** Persisted thread message shape used when rebuilding the OpenAI payload. */
+export type HistoryMessageLike = {
+  role: string
+  content?: string | null
+  tool_calls?: any[]
+}
+
+/**
+ * P0-B: rebuild OpenAI chat messages from persisted thread history.
+ * - Assistant rows with incomplete following tool results are stripped to text-only.
+ * - Unpaired role=tool rows (orphan tool_call_id not in the open set) are skipped
+ *   so legacy corrupt history never produces a schema-invalid next create (400).
+ * Pure function — unit-testable without chatCreate / network.
+ */
+export function rebuildMessagesFromHistory(
+  history: HistoryMessageLike[],
+): OpenAI.Chat.Completions.ChatCompletionMessageParam[] {
+  const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = []
+  const openToolCallIds = new Set<string>()
+
+  for (let i = 0; i < history.length; i++) {
+    const msg = history[i]
+    if (msg.role === "user") {
+      openToolCallIds.clear()
+      messages.push({ role: "user", content: msg.content ?? "" })
+    } else if (msg.role === "assistant") {
+      const tcList = msg.tool_calls || []
+      let validToolCalls = true
+      if (tcList.length > 0) {
+        for (let j = 0; j < tcList.length; j++) {
+          const nextMsg = history[i + 1 + j]
+          if (!nextMsg || nextMsg.role !== "tool") {
+            validToolCalls = false
+            break
+          }
+        }
+      }
+      if (validToolCalls && tcList.length > 0) {
+        openToolCallIds.clear()
+        for (const tc of tcList) {
+          if (tc.id) openToolCallIds.add(tc.id)
+        }
+        messages.push({
+          role: "assistant",
+          content: msg.content || null,
+          tool_calls: tcList.map((tc: any) => ({
+            id: tc.id,
+            type: "function",
+            function: {
+              name: tc.function?.name || tc.name,
+              arguments: tc.function?.arguments || tc.arguments || "{}",
+            },
+          })),
+        } as any)
+      } else {
+        openToolCallIds.clear()
+        messages.push({ role: "assistant", content: msg.content || "(tool call failed)" } as any)
+      }
+    } else if (msg.role === "tool" && msg.tool_calls) {
+      for (const tc of msg.tool_calls) {
+        if (!tc.id || !openToolCallIds.has(tc.id)) continue
+        openToolCallIds.delete(tc.id)
+        messages.push({
+          role: "tool",
+          tool_call_id: tc.id,
+          content: wrapUntrusted(JSON.stringify(tc.result || {}), tc.id, tc.tool_name),
+        } as any)
+      }
+    }
+  }
+  return messages
+}
+
 /**
  * App tab (WP5, design §5) — system-prompt index injection for host_app,
  * mirroring the MCP "auto" index philosophy (discovery via the prompt, no
@@ -280,50 +353,7 @@ ${hostUseRule12}${appIndexSection ? `\n\n${appIndexSection}` : ""}`
     messages.push({ role: "system", content: systemPrompt })
   }
 
-  for (let i = 0; i < history.length; i++) {
-    const msg = history[i]
-    if (msg.role === "user") {
-      messages.push({ role: "user", content: msg.content })
-    } else if (msg.role === "assistant") {
-      const tcList = msg.tool_calls || []
-      // Validate: if assistant has tool_calls, verify the next N messages are tool results
-      // If not, strip the tool_calls to avoid structural errors
-      let validToolCalls = true
-      if (tcList.length > 0) {
-        for (let j = 0; j < tcList.length; j++) {
-          const nextMsg = history[i + 1 + j]
-          if (!nextMsg || nextMsg.role !== "tool") {
-            validToolCalls = false
-            break
-          }
-        }
-      }
-      if (validToolCalls && tcList.length > 0) {
-        messages.push({
-          role: "assistant",
-          content: msg.content || null,
-          tool_calls: tcList.map((tc: any) => ({
-            id: tc.id,
-            type: "function",
-            function: { name: tc.function?.name || tc.name, arguments: tc.function?.arguments || tc.arguments || "{}" },
-          })),
-        } as any)
-      } else {
-        // Strip broken tool_calls — treat as text-only assistant message
-        messages.push({ role: "assistant", content: msg.content || "(tool call failed)" } as any)
-      }
-    } else if (msg.role === "tool" && msg.tool_calls) {
-      for (const tc of msg.tool_calls) {
-        messages.push({
-          role: "tool",
-          tool_call_id: tc.id,
-          // M2: re-wrap stored tool results on replay so prior-turn page content is
-          // also marked <untrusted> on regeneration (tc.tool_name from storage).
-          content: wrapUntrusted(JSON.stringify(tc.result || {}), tc.id, tc.tool_name),
-        } as any)
-      }
-    }
-  }
+  messages.push(...rebuildMessagesFromHistory(history))
 
   // Ensure we don't exceed context window (rough estimate) with turn-safe compaction (P1)
   while (JSON.stringify(messages).length > params.config.context_window * 3 && messages.length > 2) {
@@ -532,8 +562,13 @@ ${hostUseRule12}${appIndexSection ? `\n\n${appIndexSection}` : ""}`
       let shouldStop = false
 
       for (const tc of assistantMsg) {
-        // Abort during tool execution: stop before adding more partial results
-        if (signal?.aborted) break
+        // P0-B: inter-tool abort must roll back via deleteMessagesFrom (same as
+        // mid-tool AbortError), not quiet-break with partial tool tape on disk.
+        if (signal?.aborted) {
+          const err = new Error("aborted")
+          err.name = "AbortError"
+          throw err
+        }
 
         const toolName = tc.function.name
         let params: any = {}
@@ -866,10 +901,14 @@ ${hostUseRule12}${appIndexSection ? `\n\n${appIndexSection}` : ""}`
       }
 
       if (shouldStop) {
-        // Remove the assistant message we pushed (no tool results to pair with it)
-        messages.pop()
-        // Add error as text-only assistant message instead
-        sendToExtension({ type: "chat.done", thread_id: threadId })
+        // P0-B: terminal chat.error already sent — roll back this round's assistant
+        // + any partial tool results on disk so the next turn has no unpaired
+        // tool_calls. Do NOT chat.done-commit a partial stream as complete.
+        if (savedAssistantId) {
+          threadManager.deleteMessagesFrom(threadId, savedAssistantId)
+        } else {
+          messages.pop()
+        }
         return
       }
 

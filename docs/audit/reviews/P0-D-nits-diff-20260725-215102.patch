@@ -1,0 +1,309 @@
+# Dual external review context
+batch: P0-D-nits
+base: HEAD
+time: 20260725-215102
+
+8b70fb8
+
+ M .github/workflows/ci.yml
+ M .github/workflows/release.yml
+ M companion/src/computer/executor.ts
+ M scripts/build-windows-exe.ps1
+ M scripts/package.sh
+ M scripts/tests/test-package-gates.sh
+?? .omx/
+?? companion/src/host-use/darwin/build-host-skylight.sh
+?? companion/src/host-use/darwin/host-skylight-nolibval.entitlements
+?? companion/src/host-use/darwin/host-skylight.entitlements
+?? docs/audit/reviews/P0-C-pi-20260725-135958.md
+?? docs/audit/reviews/P0-D-nits-diff-20260725-215102.patch
+?? docs/decisions/capability-token-brief.md
+?? docs/decisions/capability-token-round1-synthesis.md
+?? docs/decisions/capability-token-threat-model-delta.md
+?? docs/decisions/v1.3/
+
+## Diff (git diff + staged)
+ .github/workflows/ci.yml            |   7 +++
+ .github/workflows/release.yml       |  10 +++-
+ companion/src/computer/executor.ts  |  11 ++--
+ scripts/build-windows-exe.ps1       |   9 +++
+ scripts/package.sh                  |  25 +++++++-
+ scripts/tests/test-package-gates.sh | 113 +++++++++++++++++++++++++++++++++++-
+ 6 files changed, 166 insertions(+), 9 deletions(-)
+
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index 3bc47d8..9af63b5 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -42,6 +42,13 @@ jobs:
+           bash -n scripts/verify-node.sh
+           bash scripts/tests/test-verify-node.sh
+ 
++      - name: Package fail-closed gates (P0-D nits)
++        # Static greps + dynamic negatives (missing host / win scripts / tray /
++        # scpt / tinyclick preconditions). Runs without a full platform package.
++        run: |
++          bash -n scripts/tests/test-package-gates.sh
++          bash scripts/tests/test-package-gates.sh
++
+       - name: Build companion
+         run: |
+           cd companion && npm run build
+diff --git a/.github/workflows/release.yml b/.github/workflows/release.yml
+index 89e9aec..ae58da5 100644
+--- a/.github/workflows/release.yml
++++ b/.github/workflows/release.yml
+@@ -144,9 +144,13 @@ jobs:
+             | `cmspark-v*-linux-x64.zip` | Linux x64 | systray2 linux binary |
+             | `cmspark-v*-windows-x64.zip` | Windows x64 | `host-scripts-win/*.ps1`, `tinyclick-worker.js`, trimmed `onnxruntime-node` (win32/x64) |
+ 
+-            Packaging is **fail-closed**: a missing host binary, tray (macos-arm64),
+-            Windows host scripts, or TinyClick/ORT payload aborts the release job
+-            rather than shipping a zip that ENONTs at runtime.
++            Packaging is **fail-closed** on platform-critical assets (aborts rather
++            than shipping a zip that ENONTs at runtime):
++            - **macos-arm64**: missing `cmspark-host`, `cmspark-tray`, or `host-scripts/*.scpt`
++            - **windows-x64**: missing `host-scripts-win/*.ps1`, `tinyclick-worker.js`,
++              or trimmed `onnxruntime-node` (win32/x64)
++            - **macOS/Linux ORT**: optional soft stage — a missing ORT build does **not**
++              abort the package job (TinyClick local model simply unavailable in that zip)
+ 
+             ### Security notes (accurate as of this release)
+             - **WS auth (audit C1)**: **FIXED** — origin allowlist + shared-secret
+diff --git a/companion/src/computer/executor.ts b/companion/src/computer/executor.ts
+index f7e6c40..89f95e3 100644
+--- a/companion/src/computer/executor.ts
++++ b/companion/src/computer/executor.ts
+@@ -31,6 +31,13 @@
+ // server gate BEFORE this executor runs; re-L2s raised here go through the
+ // injected origin-bound confirmation channel.
+ 
++/** P0-C: reL2 reasons that session-trust must never auto-approve. Module-level
++ *  so we do not re-allocate a Set on every reL2 call (dual-review nit). */
++const FORCE_INTERACTIVE_DANGEROUS = new Set([
++  "computer.danger_detected",
++  "computer.experimental_suggestion",
++])
++
+ import { createHash, randomUUID } from "crypto"
+ import * as fs from "fs"
+ import * as os from "os"
+@@ -617,10 +624,6 @@ export async function runComputerTask(
+     // content-sensitive / uncalibrated gates that always need fresh human eyes.
+     // Budget / uncross / foreground_yielded / task_induced_dialog still auto-
+     // approve under trust (UX-spike preserved).
+-    const FORCE_INTERACTIVE_DANGEROUS = new Set([
+-      "computer.danger_detected",
+-      "computer.experimental_suggestion",
+-    ])
+     const forceInteractive = dangerous.some((d) => FORCE_INTERACTIVE_DANGEROUS.has(d))
+     if (deps.sessionId && params.app && !forceInteractive) {
+       const trust = deps.sessionTrust ?? getComputerSessionTrust()
+diff --git a/scripts/build-windows-exe.ps1 b/scripts/build-windows-exe.ps1
+index aeec5ea..ad298b4 100644
+--- a/scripts/build-windows-exe.ps1
++++ b/scripts/build-windows-exe.ps1
+@@ -227,6 +227,15 @@ Ok "cmspark-agent.exe"
+ Copy-Item "$CompanionDir\dist\tinyclick-worker.js" $StagingDir
+ Ok "tinyclick-worker.js (SEA sidecar)"
+ 
++# TinyClick/ORT provenance manifest (package.sh stages this; SEA path must too)
++$ManifestSrc = "$CompanionDir\models.manifest.json"
++if (Test-Path $ManifestSrc) {
++    Copy-Item $ManifestSrc $StagingDir
++    Ok "models.manifest.json"
++} else {
++    Warn "models.manifest.json not found — TinyClick download/license gate lacks provenance hashes"
++}
++
+ # WASM file for sql.js (loaded at runtime via getSqlWasmPath())
+ $WasmSrc = "$CompanionDir\node_modules\sql.js\dist\sql-wasm.wasm"
+ if (Test-Path $WasmSrc) {
+diff --git a/scripts/package.sh b/scripts/package.sh
+index 264bcb5..5083e1e 100755
+--- a/scripts/package.sh
++++ b/scripts/package.sh
+@@ -105,6 +105,7 @@ else
+   cd "${ROOT_DIR}/chrome-extension"
+   npm run build 2>&1 | tail -1
+ fi
++# Note: macOS host build is [2b/9] immediately below (same major step family as [2/9]).
+ 
+ # --- Step 1b: macOS host binary + scripts (hard-required for macos packages) ---
+ # P0-D: never ship a macOS zip without cmspark-host + precompiled .scpt (and
+@@ -144,6 +145,8 @@ if [[ "${PLATFORM}" == macos-* ]]; then
+ fi
+ 
+ # Cross-platform gate-only: windows host-scripts-win non-empty (no full package).
++# windows-x64 also prechecks TinyClick worker + ORT install (preconditions for
++# the hard-fail staging path later in the full package).
+ if [ "${CMSPARK_PACKAGE_GATE_ONLY:-}" = "1" ] && [[ "${PLATFORM}" == windows-* ]]; then
+   win_src="${ROOT_DIR}/companion/src/host-use/win/scripts"
+   win_count=0
+@@ -154,7 +157,27 @@ if [ "${CMSPARK_PACKAGE_GATE_ONLY:-}" = "1" ] && [[ "${PLATFORM}" == windows-* ]
+     echo "ERROR: host-scripts-win source empty (${win_src})" >&2
+     exit 1
+   fi
+-  echo "GATE-ONLY: windows host-scripts-win has ${win_count} ps1 — exiting 0"
++  if [ "${PLATFORM}" = "windows-x64" ]; then
++    worker_ok=0
++    for _w in \
++      "${ROOT_DIR}/companion/dist/computer/tinyclick-worker.js" \
++      "${ROOT_DIR}/companion/dist/tinyclick-worker.js" \
++      "${ROOT_DIR}/companion/src/computer/tinyclick-worker.ts"
++    do
++      if [ -f "${_w}" ]; then worker_ok=1; break; fi
++    done
++    if [ "${worker_ok}" -eq 0 ]; then
++      echo "ERROR: tinyclick-worker missing (need dist/computer/tinyclick-worker.js or src .ts) — windows-x64 hard-gate precondition" >&2
++      exit 1
++    fi
++    if [ ! -d "${ROOT_DIR}/companion/node_modules/onnxruntime-node" ]; then
++      echo "ERROR: onnxruntime-node not installed — windows-x64 package hard-requires ORT (npm ci in companion/)" >&2
++      exit 1
++    fi
++    echo "GATE-ONLY: windows-x64 host-scripts-win=${win_count} ps1 + tinyclick + ORT preconditions OK — exiting 0"
++  else
++    echo "GATE-ONLY: windows host-scripts-win has ${win_count} ps1 — exiting 0"
++  fi
+   exit 0
+ fi
+ 
+diff --git a/scripts/tests/test-package-gates.sh b/scripts/tests/test-package-gates.sh
+index 11ed0c5..64a09b3 100755
+--- a/scripts/tests/test-package-gates.sh
++++ b/scripts/tests/test-package-gates.sh
+@@ -12,6 +12,7 @@ ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+ PACKAGE_SH="${ROOT}/scripts/package.sh"
+ MAKEFILE="${ROOT}/Makefile"
+ RELEASE_YML="${ROOT}/.github/workflows/release.yml"
++CI_YML="${ROOT}/.github/workflows/ci.yml"
+ PS1="${ROOT}/scripts/build-windows-exe.ps1"
+ 
+ PASS=0
+@@ -171,7 +172,8 @@ OUT_WIN="$(
+ RC_WIN=$?
+ set -e
+ assert_eq 0 "${RC_WIN}" "windows-x64 gate-only should pass when ps1 sources exist"
+-assert_match 'host-scripts-win has' "${OUT_WIN}" "reports ps1 count"
++assert_match 'host-scripts-win' "${OUT_WIN}" "reports host-scripts-win status"
++assert_match 'GATE-ONLY: windows' "${OUT_WIN}" "gate-only success prefix"
+ 
+ # --- Dynamic negative: empty win scripts → exit 1 (simulate via temp rename) -
+ WIN_SCRIPTS="${ROOT}/companion/src/host-use/win/scripts"
+@@ -218,6 +220,115 @@ else
+   fi
+ fi
+ 
++# --- Static: release body qualifies ORT hard-fail as windows-x64 only --------
++echo "[static] release.yml ORT fail-closed is platform-qualified"
++assert_file_has "${RELEASE_YML}" 'windows-x64' \
++  "release body mentions windows-x64 for TinyClick/ORT"
++assert_file_has "${RELEASE_YML}" 'optional soft stage' \
++  "release body notes macOS/Linux ORT is optional soft stage"
++assert_file_has "${CI_YML}" 'test-package-gates' \
++  "ci.yml runs test-package-gates.sh"
++
++# --- Dynamic: missing tray (macos-arm64) -------------------------------------
++TRAY_BIN="${ROOT}/companion/dist/cmspark-tray"
++if [ "$(uname -s)" = "Darwin" ] && [ -f "${TRAY_BIN}" ]; then
++  echo "[dynamic] missing cmspark-tray → exit 1 (macos-arm64)"
++  TRAY_BAK="$(mktemp "${TMPDIR:-/tmp}/cmspark-tray.XXXXXX")"
++  mv "${TRAY_BIN}" "${TRAY_BAK}"
++  set +e
++  OUT_TRAY="$(
++    CMSPARK_SKIP_HOST_BUILD=1 CMSPARK_PACKAGE_GATE_ONLY=1 \
++      bash "${PACKAGE_SH}" macos-arm64 2>&1
++  )"
++  RC_TRAY=$?
++  set -e
++  mv "${TRAY_BAK}" "${TRAY_BIN}"
++  assert_eq 1 "${RC_TRAY}" "missing tray must exit 1"
++  assert_match 'cmspark-tray missing' "${OUT_TRAY}" "error mentions tray"
++else
++  echo "[dynamic] skip tray-missing test (no Darwin tray artifact)"
++fi
++
++# --- Dynamic: missing scpt ---------------------------------------------------
++SCPT_DIR="${ROOT}/companion/dist/host-scripts"
++if [ "$(uname -s)" = "Darwin" ] && ls "${SCPT_DIR}/"*.scpt >/dev/null 2>&1; then
++  echo "[dynamic] missing host-scripts/*.scpt → exit 1"
++  SCPT_BAK="${SCPT_DIR}.bak-p0d-nits"
++  if [ -e "${SCPT_BAK}" ]; then
++    echo "  FAIL: leftover ${SCPT_BAK}" >&2
++    FAIL=$((FAIL + 1))
++  else
++    mv "${SCPT_DIR}" "${SCPT_BAK}"
++    set +e
++    OUT_SCPT="$(
++      CMSPARK_SKIP_HOST_BUILD=1 CMSPARK_PACKAGE_GATE_ONLY=1 \
++        bash "${PACKAGE_SH}" macos-arm64 2>&1
++    )"
++    RC_SCPT=$?
++    set -e
++    mv "${SCPT_BAK}" "${SCPT_DIR}"
++    assert_eq 1 "${RC_SCPT}" "missing scpt must exit 1"
++    assert_match 'scpt missing|host-scripts' "${OUT_SCPT}" "error mentions scpt"
++  fi
++else
++  echo "[dynamic] skip scpt-missing test (no scpt artifacts)"
++fi
++
++# --- Dynamic: windows-x64 tinyclick precondition (rename sources) ------------
++WORKER_CANDIDATES=(
++  "${ROOT}/companion/dist/computer/tinyclick-worker.js"
++  "${ROOT}/companion/dist/tinyclick-worker.js"
++  "${ROOT}/companion/src/computer/tinyclick-worker.ts"
++)
++WORKER_MOVED=""
++WORKER_BAK=""
++for _wc in "${WORKER_CANDIDATES[@]}"; do
++  if [ -f "${_wc}" ]; then
++    WORKER_BAK="$(mktemp "${TMPDIR:-/tmp}/tinyclick-worker.XXXXXX")"
++    mv "${_wc}" "${WORKER_BAK}"
++    WORKER_MOVED="${_wc}"
++    break
++  fi
++done
++if [ -n "${WORKER_MOVED}" ]; then
++  # Hide any remaining candidates so gate sees zero workers.
++  HIDDEN_WORKERS=()
++  for _wc in "${WORKER_CANDIDATES[@]}"; do
++    if [ -f "${_wc}" ]; then
++      _hb="$(mktemp "${TMPDIR:-/tmp}/tinyclick-hide.XXXXXX")"
++      mv "${_wc}" "${_hb}"
++      HIDDEN_WORKERS+=("${_wc}|${_hb}")
++    fi
++  done
++  echo "[dynamic] windows-x64 GATE-ONLY fails without tinyclick-worker"
++  set +e
++  OUT_TC="$(
++    CMSPARK_PACKAGE_GATE_ONLY=1 bash "${PACKAGE_SH}" windows-x64 2>&1
++  )"
++  RC_TC=$?
++  set -e
++  mv "${WORKER_BAK}" "${WORKER_MOVED}"
++  for _pair in "${HIDDEN_WORKERS[@]+"${HIDDEN_WORKERS[@]}"}"; do
++    [ -z "${_pair}" ] && continue
++    _orig="${_pair%%|*}"
++    _bak="${_pair#*|}"
++    mv "${_bak}" "${_orig}"
++  done
++  assert_eq 1 "${RC_TC}" "missing tinyclick-worker must exit 1 on windows-x64 gate"
++  assert_match 'tinyclick-worker missing' "${OUT_TC}" "error mentions tinyclick-worker"
++else
++  echo "[dynamic] skip tinyclick-missing test (no worker artifact/source found)"
++fi
++
++# --- Static: windows-x64 gate-only checks ORT dir + tinyclick ---------------
++echo "[static] package.sh windows-x64 gate-only mentions ORT + tinyclick"
++assert_file_has "${PACKAGE_SH}" 'onnxruntime-node not installed' \
++  "gate-only errors when ORT missing"
++assert_file_has "${PACKAGE_SH}" 'tinyclick-worker missing' \
++  "gate-only errors when tinyclick missing"
++assert_file_has "${PS1}" 'models.manifest.json' \
++  "build-windows-exe.ps1 stages or warns about models.manifest.json"
++
+ echo ""
+ echo "=== Results: ${PASS} passed, ${FAIL} failed ==="
+ if [ "${FAIL}" -ne 0 ]; then

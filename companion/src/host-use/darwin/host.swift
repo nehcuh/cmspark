@@ -651,6 +651,67 @@ func cuActivatePid(_ pid: pid_t) -> Bool {
     return true
 }
 
+// P0-C COMP-1: resolve client-area origin in screen CG points for inject.
+// Companion passes client-relative (x,y) (same space as screenshot `client`);
+// CGEvent posts need screen coordinates. Mirrors the screenshot AX-by-frame
+// matcher (multi-window apps) so title-bar / chrome offsets stay consistent
+// with capture. Pure math: screen = clientOrigin + (x, y) in logical CG points.
+// Fail closed when windowId cannot be resolved via CGWindowList.
+func cuClientOriginScreen(windowId: UInt32) -> CGPoint? {
+    var info: [[String: Any]] = []
+    if let raw = CGWindowListCopyWindowInfo([.optionIncludingWindow], windowId) as? [[String: Any]] {
+        info = raw.filter { ($0[kCGWindowNumber as String] as? UInt32) == windowId }
+        if info.isEmpty { info = raw }
+    } else if let rawAll = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] {
+        info = rawAll.filter { ($0[kCGWindowNumber as String] as? UInt32) == windowId }
+    }
+    guard let first = info.first,
+          let bounds = first[kCGWindowBounds as String] as? [String: CGFloat] else {
+        return nil
+    }
+    let fx = bounds["X"] ?? 0
+    let fy = bounds["Y"] ?? 0
+    let fw = bounds["Width"] ?? 0
+    let fh = bounds["Height"] ?? 0
+    // Default: client origin = CGWindow frame origin (no chrome offset known).
+    var clientOrigin = CGPoint(x: fx, y: fy)
+
+    let pid = cuPidForWindow(windowId)
+    if pid != 0, let appElement = cuAppElementForPid(pid) {
+        var windowsRef: CFTypeRef?
+        AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &windowsRef)
+        if let axWindows = windowsRef as? [AXUIElement] {
+            // Same AX↔CGWindow frame matcher as cuScreenshot (ea3y6n).
+            var bestWin: AXUIElement? = nil
+            var bestDist: CGFloat = .infinity
+            for axWin in axWindows {
+                var posRef: CFTypeRef?; var sizeRef: CFTypeRef?
+                AXUIElementCopyAttributeValue(axWin, kAXPositionAttribute as CFString, &posRef)
+                AXUIElementCopyAttributeValue(axWin, kAXSizeAttribute as CFString, &sizeRef)
+                var pos = CGPoint.zero; var size = CGSize.zero
+                if let p = posRef { AXValueGetValue(p as! AXValue, .cgPoint, &pos) }
+                if let s = sizeRef { AXValueGetValue(s as! AXValue, .cgSize, &size) }
+                let dist = abs(pos.x - fx) + abs(pos.y - fy) + abs(size.width - fw) + abs(size.height - fh)
+                if dist < bestDist {
+                    bestDist = dist
+                    bestWin = axWin
+                }
+            }
+            if let axWin = bestWin {
+                var posRef: CFTypeRef?
+                AXUIElementCopyAttributeValue(axWin, kAXPositionAttribute as CFString, &posRef)
+                var pos = CGPoint.zero
+                if let p = posRef { AXValueGetValue(p as! AXValue, .cgPoint, &pos) }
+                // Screenshot reports client offset as (pos - frame); client (0,0)
+                // in screen space is therefore AX position (when AX matched).
+                // When AX frame equals CGWindow frame, this is just (fx, fy).
+                clientOrigin = pos
+            }
+        }
+    }
+    return clientOrigin
+}
+
 // MARK: - window-list
 
 func cuWindowList(bundleId: String?, windowId: UInt32?, foreground: Bool) -> String {
@@ -1360,6 +1421,14 @@ func cuInject(action: String, windowId: UInt32, x: Int?, y: Int?, text: String?,
     switch action {
     case "click", "double_click", "right_click":
         guard let px = x, let py = y else { return cuError("click requires --x and --y") }
+        // P0-C COMP-1: client → screen via window bounds + client origin offset.
+        // Companion injects client-space coords; CGEvent needs screen CG points.
+        guard let clientOrigin = cuClientOriginScreen(windowId: windowId) else {
+            return cuError("cannot resolve client origin for windowId \(windowId)", code: "HWND_DEAD")
+        }
+        let screenX = clientOrigin.x + CGFloat(px)
+        let screenY = clientOrigin.y + CGFloat(py)
+        let screenPt = CGPoint(x: screenX, y: screenY)
         let cc: Int64 = (action == "double_click") ? 2 : 1
         let isRight = (action == "right_click")
         let btn: CGMouseButton = isRight ? .right : .left
@@ -1367,13 +1436,14 @@ func cuInject(action: String, windowId: UInt32, x: Int?, y: Int?, text: String?,
         // is interpreted as a left-click by some receivers (notably Chrome).
         let downType: CGEventType = isRight ? .rightMouseDown : .leftMouseDown
         let upType: CGEventType = isRight ? .rightMouseUp : .leftMouseUp
-        guard let me = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: CGPoint(x: px, y: py), mouseButton: btn) else {
+        // P0-C: post at screenPt (client→screen), not raw client px/py.
+        guard let me = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: screenPt, mouseButton: btn) else {
             return cuError("CGEvent mouseMoved construction failed", code: "CGEVENT_CONSTRUCT_FAILED")
         }
         me.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(pid))
         if !slPostToPid(pid, me) { return cuError("SkyLight SPI post failed", code: "SKYLIGHT_POST_FAILED") }
         usleep(50000)
-        guard let de = CGEvent(mouseEventSource: nil, mouseType: downType, mouseCursorPosition: CGPoint(x: px, y: py), mouseButton: btn) else {
+        guard let de = CGEvent(mouseEventSource: nil, mouseType: downType, mouseCursorPosition: screenPt, mouseButton: btn) else {
             return cuError("CGEvent mouseDown construction failed", code: "CGEVENT_CONSTRUCT_FAILED")
         }
         de.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(pid))
@@ -1383,12 +1453,13 @@ func cuInject(action: String, windowId: UInt32, x: Int?, y: Int?, text: String?,
             if !slPostToPid(pid, de) { return cuError("SkyLight SPI post failed", code: "SKYLIGHT_POST_FAILED") }
         }
         usleep(50000)
-        guard let ue = CGEvent(mouseEventSource: nil, mouseType: upType, mouseCursorPosition: CGPoint(x: px, y: py), mouseButton: btn) else {
+        guard let ue = CGEvent(mouseEventSource: nil, mouseType: upType, mouseCursorPosition: screenPt, mouseButton: btn) else {
             return cuError("CGEvent mouseUp construction failed", code: "CGEVENT_CONSTRUCT_FAILED")
         }
         ue.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(pid))
         if !slPostToPid(pid, ue) { return cuError("SkyLight SPI post failed", code: "SKYLIGHT_POST_FAILED") }
-        return cuJson(["ok": true, "action": action, "x": px, "y": py])
+        // x/y remain client coords (Windows computer-input.ps1 parity); screenX/Y report landing.
+        return cuJson(["ok": true, "action": action, "x": px, "y": py, "screenX": screenX, "screenY": screenY])
 
     case "type":
         guard let txt = text else { return cuError("type requires --text") }

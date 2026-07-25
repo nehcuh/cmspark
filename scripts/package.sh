@@ -39,29 +39,172 @@ STAGING="${ROOT_DIR}/dist-package/cmspark-${PLATFORM}"
 CACHE_DIR="${ROOT_DIR}/dist-package/.cache"
 ZIP_NAME="cmspark-v${VERSION}-${PLATFORM}.zip"
 
+# Stage platform-trimmed onnxruntime-node (+ onnxruntime-common) next to the
+# bundle. Full npm package is multi-arch (~259MB); we ship only package.json +
+# dist/ + bin/napi-v6/<os>/<arch> (mirrors scripts/build-windows-exe.ps1).
+# Returns 0 on success, 1 if source missing or native payload absent.
+stage_onnxruntime() {
+  local ort_os="$1"   # darwin | win32 | linux
+  local ort_arch="$2" # arm64 | x64
+  local ort_src="${ROOT_DIR}/companion/node_modules/onnxruntime-node"
+  local common_src="${ROOT_DIR}/companion/node_modules/onnxruntime-common"
+  local ort_dest="${STAGING}/node_modules/onnxruntime-node"
+  local common_dest="${STAGING}/node_modules/onnxruntime-common"
+  local native_src="${ort_src}/bin/napi-v6/${ort_os}/${ort_arch}"
+
+  if [ ! -d "${ort_src}" ]; then
+    echo "  WARNING: onnxruntime-node not installed under companion/node_modules" >&2
+    return 1
+  fi
+  if [ ! -d "${native_src}" ]; then
+    echo "  WARNING: onnxruntime-node native payload missing: bin/napi-v6/${ort_os}/${ort_arch}" >&2
+    return 1
+  fi
+
+  mkdir -p "${ort_dest}/bin/napi-v6/${ort_os}/${ort_arch}"
+  cp "${ort_src}/package.json" "${ort_dest}/"
+  cp -R "${ort_src}/dist" "${ort_dest}/dist"
+  cp -R "${native_src}/." "${ort_dest}/bin/napi-v6/${ort_os}/${ort_arch}/"
+  if [ -f "${ort_src}/LICENSE" ]; then cp "${ort_src}/LICENSE" "${ort_dest}/"; fi
+
+  if [ -d "${common_src}" ]; then
+    mkdir -p "${common_dest}"
+    cp "${common_src}/package.json" "${common_dest}/"
+    cp -R "${common_src}/dist" "${common_dest}/dist"
+  else
+    echo "  WARNING: onnxruntime-common missing — onnxruntime-node dist/ needs it at runtime" >&2
+    return 1
+  fi
+
+  local ort_bytes
+  ort_bytes="$(du -sk "${ort_dest}" | awk '{print $1}')"
+  # ~70MB budget for win32/x64; other platforms similar
+  if [ "${ort_bytes}" -gt 72000 ]; then
+    echo "ERROR: staged onnxruntime-node is ${ort_bytes}KB (>70MB budget)" >&2
+    return 1
+  fi
+  echo "  onnxruntime-node ${ort_os}/${ort_arch}: $((ort_bytes / 1024))MB (trimmed)"
+  return 0
+}
+
 echo "=== CMspark Package Builder ==="
 echo "Platform:  ${PLATFORM}"
 echo "Version:   ${VERSION}"
 echo "Output:    dist-package/${ZIP_NAME}"
 echo ""
 
-# --- Step 1: Build ---
-echo "[1/9] Building companion..."
-cd "${ROOT_DIR}/companion"
-npm run build 2>&1 | tail -1
+# --- Step 1: Build (skipped in CMSPARK_PACKAGE_GATE_ONLY test mode) ---
+if [ "${CMSPARK_PACKAGE_GATE_ONLY:-}" = "1" ]; then
+  echo "[1/9] GATE-ONLY mode: skipping companion/extension build"
+else
+  echo "[1/9] Building companion..."
+  cd "${ROOT_DIR}/companion"
+  npm run build 2>&1 | tail -1
 
-echo "[2/9] Building Chrome extension..."
-cd "${ROOT_DIR}/chrome-extension"
-npm run build 2>&1 | tail -1
+  echo "[2/9] Building Chrome extension..."
+  cd "${ROOT_DIR}/chrome-extension"
+  npm run build 2>&1 | tail -1
+fi
+# Note: macOS host build is [2b/9] immediately below (same major step family as [2/9]).
+
+# --- Step 1b: macOS host binary + scripts (hard-required for macos packages) ---
+# P0-D: never ship a macOS zip without cmspark-host + precompiled .scpt (and
+# cmspark-tray on arm64). Soft WARNING was the OPS-2 packaging hole.
+if [[ "${PLATFORM}" == macos-* ]]; then
+  if [ "$(uname -s)" != "Darwin" ]; then
+    echo "ERROR: packaging ${PLATFORM} requires macOS (swiftc/osacompile for cmspark-host)" >&2
+    exit 1
+  fi
+  if [ "${CMSPARK_SKIP_HOST_BUILD:-}" != "1" ]; then
+    echo "[2b/9] Building cmspark-host (npm run build:host)..."
+    cd "${ROOT_DIR}/companion"
+    npm run build:host
+  else
+    echo "[2b/9] Skipping build:host (CMSPARK_SKIP_HOST_BUILD=1 — test-only)"
+  fi
+  if [ ! -f "${ROOT_DIR}/companion/dist/cmspark-host" ]; then
+    echo "ERROR: companion/dist/cmspark-host missing after build:host — macOS package refuses to ship without host binary" >&2
+    exit 1
+  fi
+  scpt_count=0
+  for _scpt in "${ROOT_DIR}/companion/dist/host-scripts/"*.scpt; do
+    if [ -f "${_scpt}" ]; then scpt_count=$((scpt_count + 1)); fi
+  done
+  if [ "${scpt_count}" -eq 0 ]; then
+    echo "ERROR: companion/dist/host-scripts/*.scpt missing — host_read/host_write would ENOENT at runtime" >&2
+    exit 1
+  fi
+  if [ "${PLATFORM}" = "macos-arm64" ] && [ ! -f "${ROOT_DIR}/companion/dist/cmspark-tray" ]; then
+    echo "ERROR: companion/dist/cmspark-tray missing — macos-arm64 package requires Swift tray binary" >&2
+    exit 1
+  fi
+  if [ "${CMSPARK_PACKAGE_GATE_ONLY:-}" = "1" ]; then
+    echo "GATE-ONLY: macOS host/tray/scpt gates passed — exiting 0 before full package"
+    exit 0
+  fi
+fi
+
+# Cross-platform gate-only: windows host-scripts-win non-empty (no full package).
+# windows-x64 also prechecks TinyClick worker + ORT install (preconditions for
+# the hard-fail staging path later in the full package).
+if [ "${CMSPARK_PACKAGE_GATE_ONLY:-}" = "1" ] && [[ "${PLATFORM}" == windows-* ]]; then
+  win_src="${ROOT_DIR}/companion/src/host-use/win/scripts"
+  win_count=0
+  for _ps1 in "${win_src}/"*.ps1; do
+    if [ -f "${_ps1}" ]; then win_count=$((win_count + 1)); fi
+  done
+  if [ "${win_count}" -eq 0 ]; then
+    echo "ERROR: host-scripts-win source empty (${win_src})" >&2
+    exit 1
+  fi
+  if [ "${PLATFORM}" = "windows-x64" ]; then
+    worker_ok=0
+    for _w in \
+      "${ROOT_DIR}/companion/dist/computer/tinyclick-worker.js" \
+      "${ROOT_DIR}/companion/dist/tinyclick-worker.js" \
+      "${ROOT_DIR}/companion/src/computer/tinyclick-worker.ts"
+    do
+      if [ -f "${_w}" ]; then worker_ok=1; break; fi
+    done
+    if [ "${worker_ok}" -eq 0 ]; then
+      echo "ERROR: tinyclick-worker missing (need dist/computer/tinyclick-worker.js or src .ts) — windows-x64 hard-gate precondition" >&2
+      exit 1
+    fi
+    if [ ! -d "${ROOT_DIR}/companion/node_modules/onnxruntime-node" ]; then
+      echo "ERROR: onnxruntime-node not installed — windows-x64 package hard-requires ORT (npm ci in companion/)" >&2
+      exit 1
+    fi
+    echo "GATE-ONLY: windows-x64 host-scripts-win=${win_count} ps1 + tinyclick + ORT preconditions OK — exiting 0"
+  else
+    echo "GATE-ONLY: windows host-scripts-win has ${win_count} ps1 — exiting 0"
+  fi
+  exit 0
+fi
+
+if [ "${CMSPARK_PACKAGE_GATE_ONLY:-}" = "1" ]; then
+  echo "GATE-ONLY: no further gates for ${PLATFORM} — exiting 0"
+  exit 0
+fi
 
 # --- Step 2: Bundle ---
 echo "[3/9] Bundling with esbuild..."
 cd "${ROOT_DIR}/companion"
+# onnxruntime-node is native; keep external and stage a platform-trimmed
+# node_modules copy (mirrors scripts/build-windows-exe.ps1).
 npx --yes esbuild dist/index.js \
   --bundle --platform=node --target=node22 \
   --external:node-notifier --external:systray2 \
   --external:canvas --external:pdfjs-dist \
+  --external:onnxruntime-node \
   --outfile=dist/cmspark-agent.js 2>&1 | tail -1
+
+# TinyClick worker sidecar (eval-loaded at runtime; same trust level as ORT).
+if [ -f dist/computer/tinyclick-worker.js ]; then
+  npx --yes esbuild dist/computer/tinyclick-worker.js \
+    --bundle --platform=node --target=node22 \
+    --external:onnxruntime-node \
+    --outfile=dist/tinyclick-worker.js 2>&1 | tail -1
+fi
 
 # --- Step 3: Stage files ---
 echo "[4/9] Staging distribution files..."
@@ -71,6 +214,11 @@ mkdir -p "${STAGING}"
 
 # Main bundle
 cp companion/dist/cmspark-agent.js "${STAGING}/"
+
+# TinyClick worker sidecar (if built above)
+if [ -f companion/dist/tinyclick-worker.js ]; then
+  cp companion/dist/tinyclick-worker.js "${STAGING}/"
+fi
 
 # WASM
 cp companion/node_modules/sql.js/dist/sql-wasm.wasm "${STAGING}/"
@@ -143,17 +291,34 @@ case "${PLATFORM}" in
     rm -rf "${STAGING}/node_modules/node-notifier/vendor/snoreToast" 2>/dev/null || true
     rm -rf "${STAGING}/node_modules/node-notifier/vendor/notifu" 2>/dev/null || true
     rm -rf "${STAGING}/node_modules/node-notifier/vendor/mac.noindex" 2>/dev/null || true
-    if [ -f companion/dist/cmspark-tray ]; then
+    # Hard-gated above — copy is unconditional fail-closed.
+    cp companion/dist/cmspark-host "${STAGING}/"
+    mkdir -p "${STAGING}/host-scripts"
+    cp companion/dist/host-scripts/*.scpt "${STAGING}/host-scripts/"
+    if [ ! -f "${STAGING}/cmspark-host" ]; then
+      echo "ERROR: failed to stage cmspark-host" >&2
+      exit 1
+    fi
+    # shellcheck disable=SC2012
+    if [ "$(ls -1 "${STAGING}/host-scripts/"*.scpt 2>/dev/null | wc -l | tr -d ' ')" = "0" ]; then
+      echo "ERROR: failed to stage host-scripts/*.scpt" >&2
+      exit 1
+    fi
+    if [ "${PLATFORM}" = "macos-arm64" ]; then
+      cp companion/dist/cmspark-tray "${STAGING}/"
+      if [ ! -f "${STAGING}/cmspark-tray" ]; then
+        echo "ERROR: failed to stage cmspark-tray for macos-arm64" >&2
+        exit 1
+      fi
+    elif [ -f companion/dist/cmspark-tray ]; then
       cp companion/dist/cmspark-tray "${STAGING}/"
     fi
-    # Phase 1 W5-W8: cmspark-host Swift binary + precompiled .scpt scripts.
-    # Without these, host_read/host_write tools ENOENT at runtime.
-    if [ -f companion/dist/cmspark-host ]; then
-      cp companion/dist/cmspark-host "${STAGING}/"
-      mkdir -p "${STAGING}/host-scripts"
-      cp companion/dist/host-scripts/*.scpt "${STAGING}/host-scripts/" 2>/dev/null || true
+    # Platform-trimmed ORT for TinyClick (darwin/<arch>). Soft on non-x64 CI
+    # cross-packs; macOS arm64 local builds typically have the dylib present.
+    if [ "${PLATFORM}" = "macos-arm64" ]; then
+      stage_onnxruntime "darwin" "arm64" || echo "  NOTE: ORT darwin/arm64 not staged — TinyClick local model unavailable in this zip"
     else
-      echo "[package] WARNING: companion/dist/cmspark-host not built — run 'npm run build:host' in companion/ first"
+      stage_onnxruntime "darwin" "x64" || echo "  NOTE: ORT darwin/x64 not staged — TinyClick local model unavailable in this zip"
     fi
     ;;
   windows-*)
@@ -164,6 +329,38 @@ case "${PLATFORM}" in
     if [ "${PLATFORM}" = "windows-arm64" ]; then
       echo "  NOTE: Windows ARM64 has no systray2 binary — will use readline fallback"
     fi
+    # Windows host-use PowerShell scripts — resolveWinScript candidate 0 looks in
+    # <exe-dir>/host-scripts-win/. Empty staging is a hard fail (P0-D).
+    WIN_SCRIPTS_SRC="${ROOT_DIR}/companion/src/host-use/win/scripts"
+    if [ ! -d "${WIN_SCRIPTS_SRC}" ]; then
+      echo "ERROR: ${WIN_SCRIPTS_SRC} missing — host_read/host_write will ENOENT in the package" >&2
+      exit 1
+    fi
+    mkdir -p "${STAGING}/host-scripts-win"
+    # Prefer already-staged dist copy when present; else source tree.
+    if ls "${ROOT_DIR}/companion/dist/host-scripts-win/"*.ps1 >/dev/null 2>&1; then
+      cp "${ROOT_DIR}/companion/dist/host-scripts-win/"*.ps1 "${STAGING}/host-scripts-win/"
+    else
+      cp "${WIN_SCRIPTS_SRC}/"*.ps1 "${STAGING}/host-scripts-win/"
+    fi
+    # shellcheck disable=SC2012
+    win_ps1_count="$(ls -1 "${STAGING}/host-scripts-win/"*.ps1 2>/dev/null | wc -l | tr -d ' ')"
+    if [ "${win_ps1_count}" = "0" ]; then
+      echo "ERROR: host-scripts-win/*.ps1 empty after staging — refusing to ship" >&2
+      exit 1
+    fi
+    echo "  host-scripts-win/: ${win_ps1_count} ps1 scripts"
+    # TinyClick worker + win32/x64 ORT are required on windows-x64.
+    if [ "${PLATFORM}" = "windows-x64" ]; then
+      if [ ! -f "${STAGING}/tinyclick-worker.js" ]; then
+        echo "ERROR: tinyclick-worker.js not staged — build dist/computer/tinyclick-worker.js first" >&2
+        exit 1
+      fi
+      if ! stage_onnxruntime "win32" "x64"; then
+        echo "ERROR: onnxruntime-node win32/x64 staging failed — TinyClick unavailable; refusing windows-x64 ship without ORT" >&2
+        exit 1
+      fi
+    fi
     ;;
   linux-*)
     rm -f "${STAGING}/node_modules/systray2/traybin/tray_darwin_release"
@@ -171,6 +368,11 @@ case "${PLATFORM}" in
     rm -rf "${STAGING}/node_modules/node-notifier/vendor/mac.noindex" 2>/dev/null || true
     rm -rf "${STAGING}/node_modules/node-notifier/vendor/snoreToast" 2>/dev/null || true
     rm -rf "${STAGING}/node_modules/node-notifier/vendor/notifu" 2>/dev/null || true
+    if [ "${PLATFORM}" = "linux-arm64" ]; then
+      stage_onnxruntime "linux" "arm64" || echo "  NOTE: ORT linux/arm64 not staged — TinyClick local model unavailable in this zip"
+    else
+      stage_onnxruntime "linux" "x64" || echo "  NOTE: ORT linux/x64 not staged — TinyClick local model unavailable in this zip"
+    fi
     ;;
 esac
 

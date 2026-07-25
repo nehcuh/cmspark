@@ -1,0 +1,18 @@
+{
+  "batch": "P0-C",
+  "timestamp": "20260725-waive-pi",
+  "claude": {
+    "verdict": "APPROVE_WITH_NITS",
+    "path": "docs/audit/reviews/P0-C-claude-20260725-140515.md"
+  },
+  "pi": {
+    "verdict": "WAIVED_BY_USER",
+    "note": "User instructed not to wait for Pi; proceed with Claude APPROVE_WITH_NITS + internal adversarial pass + host-executed tests 96/96"
+  },
+  "adversarial_pass": true,
+  "both_approve": true,
+  "policy": "pi_waived_user_override_2026-07-25",
+  "host_verify": {
+    "computer-executor.test.ts": "96/96 pass"
+  }
+}

@@ -1336,6 +1336,54 @@ test("executor v4.1: OCR failure in danger-scan latches credential surface (defe
   )
 })
 
+// P0-C COMP-2: session trust must NOT auto-approve content-sensitive / G4 gates.
+// (Also covered by reL2ShouldPrompt / PROMPT_ALWAYS_TAGS in session-trust v4.1.)
+
+test("executor P0-C: session trust does NOT auto-approve computer.danger_detected", async () => {
+  const confirm = scriptedConfirm([false]) // DENY — proves the dialog still surfaces
+  const injector = new RecordingInjector()
+  const trust = new ComputerSessionTrust()
+  trust.grant("sess-1", "win.app.test")
+  // Caution word → regionLevel caution → reL2(computer.danger_detected)
+  const locator = new FakeLocator([{ text: "确认删除", x: 160, y: 208, w: 60, h: 30 }])
+  const deps = makeDeps({
+    confirm: confirm.fn,
+    injector,
+    locator,
+    sessionId: "sess-1",
+    sessionTrust: trust,
+  })
+  const r = await runComputerTask(
+    { task: "t", app: "win.app.test", actions: [{ action: "click", target: "确认删除" }] },
+    deps,
+  )
+  assert.equal(confirm.captured.length, 1, "danger_detected re-L2 must still surface under session trust")
+  assert.deepEqual(confirm.captured[0].details.dangerousApis, ["computer.danger_detected"])
+  assert.equal(r.errorCode, "DANGER_DENIED_BY_USER")
+  assert.equal(injector.clicks.length, 0, "deny → zero inject")
+})
+
+test("executor P0-C: session trust does NOT auto-approve computer.experimental_suggestion (G4)", async () => {
+  const tc = fakeTinyClickLocator()
+  const confirm = scriptedConfirm([false])
+  const injector = new RecordingInjector()
+  const trust = new ComputerSessionTrust()
+  trust.grant("sess-1", "win.app.test")
+  const deps = makeDeps({
+    confirm: confirm.fn,
+    injector,
+    locator: new FakeLocator([]), // L1 miss → TinyClick G4 gate
+    tinyclickLocator: tc.locator,
+    sessionId: "sess-1",
+    sessionTrust: trust,
+  })
+  const r = await runComputerTask({ task: "t", app: "win.app.test", actions: [clickOk] }, deps)
+  assert.equal(confirm.captured.length, 1, "G4 re-L2 must still surface under session trust")
+  assert.deepEqual(confirm.captured[0].details.dangerousApis, ["computer.experimental_suggestion"])
+  assert.equal(r.errorCode, "ELEMENT_NOT_FOUND", "deny → honest degrade")
+  assert.equal(injector.clicks.length, 0, "deny → zero inject")
+})
+
 
 // --- WP2: emergency-stop abort channels (§E.6) --------------------------------
 

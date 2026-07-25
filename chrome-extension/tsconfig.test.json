@@ -23,6 +23,8 @@
     "src/background/page-sanitizer.ts",
     "src/background/image-extract-utils.ts",
     "src/background/dangerous-apis.ts",
+    "src/background/selector-js-literal.ts",
+    "src/background/security-confirmation-payload.ts",
     "src/notebooklm/extractor.ts",
     "src/notebooklm/markdown-builder.ts",
     "src/notebooklm/types.ts",

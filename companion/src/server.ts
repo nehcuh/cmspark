@@ -234,6 +234,21 @@ export function getComputerTaskRegistryForTests(): Map<string, boolean> {
  * the WS seam) — the send alone is guarded by the OPEN check. Returns the
  * ack payload (also used by the dispatch to send the ack).
  */
+/**
+ * P0-B: silently flip every running computer-task abort flag (no WS ack).
+ * Used by chat.abort so Stop also kills host_computer injects without a
+ * separate 急停 and without double-acking computer.task.abort.ack.
+ * Returns the number of flags flipped. Exported for integration tests.
+ */
+export function flipAllComputerTaskAborts(): number {
+  let matched = 0
+  for (const k of computerTaskAbort.keys()) {
+    computerTaskAbort.set(k, true)
+    matched++
+  }
+  return matched
+}
+
 export function handleComputerTaskAbort(
   ws: { readyState: number; send: (data: string) => void },
   msg: { task_id?: unknown },
@@ -241,10 +256,7 @@ export function handleComputerTaskAbort(
   const tid = typeof msg.task_id === "string" ? msg.task_id : ""
   let matched = 0
   if (tid === "*") {
-    for (const k of computerTaskAbort.keys()) {
-      computerTaskAbort.set(k, true)
-      matched++
-    }
+    matched = flipAllComputerTaskAborts()
   } else if (tid && computerTaskAbort.has(tid)) {
     computerTaskAbort.set(tid, true)
     matched = 1
@@ -1525,6 +1537,9 @@ function dispatchToExtension(
 export async function handleSecurityConfirmationResponse(ws: WebSocket, msg: any, sessionId?: string): Promise<void> {
   const confirmationId = String(msg.confirmation_id || "")
   const approved = msg.approved === true
+  // stop_thread: Side Panel may set this (XC-Integration-1 forwards it). No
+  // consumer here yet — UI already chat.aborts on stop. Keep field on the wire
+  // for a future companion-side abort; do not drop it in the extension.
 
   // Validate add_to_whitelist against the domains actually shown in the
   // dialog. Without this check, any loopback WS peer could ship a
@@ -2780,7 +2795,7 @@ function extractMcpError(result: any): string {
 
 /**
  * Broadcast a message to all AUTHENTICATED WebSocket clients (MCP status
- * updates, computer.task.event progress + preview JPEGs).
+ * updates, computer.task.event progress + preview JPEGs, config.updated).
  *
  * X3 (adversary WP2): outbound payloads turned sensitive in WP2 — per-step
  * desktop preview JPEGs ride this channel. The inbound gate (P0-2B) already
@@ -2801,6 +2816,71 @@ export function broadcastToClients(data: any): void {
       }
     }
   }
+}
+
+/**
+ * Redact secrets from a CompanionConfig (or partial) before broadcasting
+ * config.updated over WebSocket. Masks llm/vision api_key and mcp.servers
+ * env/headers *values* while preserving key names so the UI can still list
+ * which env vars / header names are configured.
+ *
+ * SRV-1: callers must applyConfig / persist with the unredacted original.
+ * Exported for pure unit tests (no startServer).
+ */
+export function redactConfigForBroadcast(config: any): any {
+  if (!config || typeof config !== "object") return config
+
+  const redacted: any = { ...config }
+
+  if (config.llm && typeof config.llm === "object") {
+    redacted.llm = {
+      ...config.llm,
+      api_key: config.llm.api_key ? "***" : "",
+    }
+  }
+
+  if (config.vision && typeof config.vision === "object") {
+    redacted.vision = {
+      ...config.vision,
+      api_key: config.vision.api_key ? "***" : "",
+    }
+  }
+
+  if (config.mcp && typeof config.mcp === "object") {
+    const serversIn = config.mcp.servers
+    if (serversIn && typeof serversIn === "object") {
+      const serversOut: Record<string, any> = {}
+      for (const [name, raw] of Object.entries(serversIn as Record<string, any>)) {
+        if (!raw || typeof raw !== "object") {
+          serversOut[name] = raw
+          continue
+        }
+        const server: any = { ...raw }
+        if (server.env && typeof server.env === "object") {
+          const env: Record<string, string> = {}
+          for (const k of Object.keys(server.env)) {
+            env[k] = "***"
+          }
+          server.env = env
+        }
+        if (server.headers && typeof server.headers === "object") {
+          const headers: Record<string, string> = {}
+          for (const k of Object.keys(server.headers)) {
+            headers[k] = "***"
+          }
+          server.headers = headers
+        }
+        serversOut[name] = server
+      }
+      // Shallow-copy mcp so we do not mutate caller's servers map; top-level
+      // ...config already shared the mcp ref until we replace it here.
+      redacted.mcp = { ...config.mcp, servers: serversOut }
+    }
+    // When servers is absent, redacted.mcp already shares config.mcp from the
+    // top-level spread — no secrets to mask on that path.
+  }
+
+  return redacted
 }
 
 /**
@@ -3289,26 +3369,16 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
     logger.info("server.listening", { port })
   })
 
-  // Broadcast config changes to all connected WebSocket clients + apply MCP diff
+  // Broadcast config changes to AUTHENTICATED WebSocket clients only + apply MCP diff.
+  // SRV-1: never fan out to OPEN-but-unauthenticated sockets (handshake window);
+  // redact llm/vision api_key and mcp.servers env/headers values before send.
+  // applyConfig MUST receive the unredacted config (secrets needed for process spawn).
   configEvents.on(CONFIG_CHANGE_EVENT, async (updatedConfig: any) => {
-    const message = JSON.stringify({
+    broadcastToClients({
       type: "config.updated",
-      config: {
-        ...updatedConfig,
-        llm: { ...updatedConfig.llm, api_key: "***" },
-        vision: updatedConfig.vision
-          ? { ...updatedConfig.vision, api_key: updatedConfig.vision.api_key ? "***" : "" }
-          : undefined,
-      },
+      config: redactConfigForBroadcast(updatedConfig),
       source: "companion",
     })
-    for (const client of clients) {
-      try {
-        if (client.readyState === WebSocket.OPEN) {
-          client.send(message)
-        }
-      } catch { /* ignore disconnected */ }
-    }
 
     // Apply MCP diff (start/stop/restart servers based on what changed)
     try {
@@ -3475,6 +3545,16 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
         if (msg.type === "computer.task.abort") {
           handleComputerTaskAbort(ws, msg)
           return
+        }
+
+        // P0-B: chat.abort also stops any running host_computer task so the
+        // user does not need a separate 急停. Silent registry flip only —
+        // no computer.task.abort.ack (avoids double-ack if UI also sends
+        // computer.task.abort). Fall through to handleMessage for AbortController
+        // + chat.aborted. Lives here (not message-router) to avoid a
+        // message-router→server import cycle.
+        if (msg.type === "chat.abort") {
+          flipAllComputerTaskAborts()
         }
 
         // Audit item 3 (gate): bulk history export requires explicit user
