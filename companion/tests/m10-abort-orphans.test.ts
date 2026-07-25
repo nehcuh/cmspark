@@ -167,3 +167,73 @@ test("abort before any streamed content persists nothing extra", async () => {
   assert.equal(msgs.length, 1, `expected only user message, got ${msgs.length}: ${JSON.stringify(msgs.map((m: any) => m.role))}`)
   assert.equal(msgs[0].role, "user")
 })
+
+// P0-B: inter-tool abort (signal already aborted before next tool runs) must
+// rethrow AbortError and roll back via deleteMessagesFrom — not quiet-break
+// leaving a partial assistant+tool tape on disk.
+test("P0-B: inter-tool abort between tools rolls back the round (no partial push)", async () => {
+  mode = "two-tool-calls"
+  const { manager, thread } = makeManager("m10-inter-tool")
+  const controller = new AbortController()
+  let callCount = 0
+  const executeTool = async () => {
+    callCount++
+    // Complete first tool, then abort before the second loop iteration sees signal.
+    if (callCount === 1) {
+      // Schedule abort so the next for-loop check sees signal.aborted.
+      controller.abort()
+      return { success: true, data: { tabs: [] } }
+    }
+    return { success: true, data: {} }
+  }
+
+  await chatCreate(chatParams(manager, thread, controller, executeTool)).catch(() => "aborted")
+
+  const msgs = manager.getMessages(thread.id)
+  assert.equal(
+    msgs.length,
+    1,
+    `expected only user message after inter-tool rollback, got ${msgs.length}: ${JSON.stringify(msgs.map((m: any) => ({ role: m.role, tc: m.tool_calls?.length })))}`,
+  )
+  assert.equal(msgs[0].role, "user")
+  assert.ok(!msgs.some((m: any) => m.role === "assistant" && m.tool_calls?.length), "no dangling tool_calls")
+  assert.ok(!msgs.some((m: any) => m.role === "tool"), "no orphan tool rows")
+})
+
+// P0-B: multi-tool shouldStop (non_recoverable) → deleteMessagesFrom; wire
+// emits chat.error without a subsequent chat.done committing partial stream.
+test("P0-B: multi-tool shouldStop/non_recoverable → deleteMessagesFrom; no chat.done after chat.error", async () => {
+  mode = "two-tool-calls"
+  const { manager, thread } = makeManager("m10-shouldstop")
+  const controller = new AbortController()
+  const wire: any[] = []
+  let callCount = 0
+  const executeTool = async () => {
+    callCount++
+    // First tool fails non_recoverable (classifyError default for unknown errors).
+    if (callCount === 1) {
+      return { success: false, error: "permission denied: cannot access host filesystem" }
+    }
+    return { success: true, data: {} }
+  }
+
+  const params = chatParams(manager, thread, controller, executeTool)
+  params.sendToExtension = (data: any) => { wire.push(data) }
+
+  await chatCreate(params)
+
+  const msgs = manager.getMessages(thread.id)
+  assert.equal(
+    msgs.length,
+    1,
+    `expected only user after shouldStop rollback, got ${msgs.length}: ${JSON.stringify(msgs.map((m: any) => ({ role: m.role, tc: m.tool_calls?.length })))}`,
+  )
+  assert.equal(msgs[0].role, "user")
+  assert.ok(!msgs.some((m: any) => m.role === "assistant" && m.tool_calls?.length), "no dangling tool_calls on disk")
+  assert.ok(!msgs.some((m: any) => m.role === "tool"), "no orphan tool rows on disk")
+
+  const errors = wire.filter((m) => m.type === "chat.error")
+  const dones = wire.filter((m) => m.type === "chat.done")
+  assert.ok(errors.length >= 1, "shouldStop must emit chat.error")
+  assert.equal(dones.length, 0, "terminal chat.error must NOT be followed by chat.done")
+})

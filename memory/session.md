@@ -176,3 +176,9 @@
 - Launched real run for **P0-A** (SEC-1 selector inject, SRV-1 config fanout, confirmation field forward)
 - Reviews land in `docs/audit/reviews/`
 
+## Process lock (2026-07-25)
+
+**All subsequent development** uses: Implement → Internal adversarial → SEPARATE Claude Code + Pi dual review (`scripts/dual-external-review.sh` / workflow `p0-batch-fix`). No skip external dual review after adversarial.
+- P0-A committed: `360de94` on fix/diagnosis-P0-A (also base of fix/diagnosis-P0-B)
+- Next: P0-B Stop/stream/thread lifecycle
+

@@ -16,7 +16,11 @@ import test, { afterEach, beforeEach } from "node:test"
 import assert from "node:assert/strict"
 import { WebSocketServer, WebSocket } from "ws"
 
-import { getComputerTaskRegistryForTests, handleComputerTaskAbort } from "../../src/server.js"
+import {
+  flipAllComputerTaskAborts,
+  getComputerTaskRegistryForTests,
+  handleComputerTaskAbort,
+} from "../../src/server.js"
 
 let wss: WebSocketServer
 let serverWs: WebSocket
@@ -122,4 +126,28 @@ test("F1: WS seam — socket CLOSED at the boundary: abort still takes effect, n
     0,
     "no ack send attempted on a closed socket",
   )
+})
+
+// P0-B: chat.abort path uses flipAllComputerTaskAborts (silent * flip, no ack)
+// so Stop during host_computer also stops injects without a separate 急停.
+test("P0-B: chat.abort silent flip marks ALL registry entries aborted (no ack)", async () => {
+  const registry = getComputerTaskRegistryForTests()
+  registry.set("task-a", false)
+  registry.set("task-b", false)
+  const matched = flipAllComputerTaskAborts()
+  assert.equal(matched, 2)
+  assert.equal(registry.get("task-a"), true)
+  assert.equal(registry.get("task-b"), true)
+  await settle()
+  assert.equal(
+    recv.filter((m) => m.type === "computer.task.abort.ack").length,
+    0,
+    "silent flip must not emit computer.task.abort.ack",
+  )
+})
+
+test("P0-B: chat.abort silent flip on empty registry is a no-op (matched 0)", () => {
+  const registry = getComputerTaskRegistryForTests()
+  assert.equal(registry.size, 0)
+  assert.equal(flipAllComputerTaskAborts(), 0)
 })

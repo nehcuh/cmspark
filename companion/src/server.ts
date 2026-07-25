@@ -234,6 +234,21 @@ export function getComputerTaskRegistryForTests(): Map<string, boolean> {
  * the WS seam) — the send alone is guarded by the OPEN check. Returns the
  * ack payload (also used by the dispatch to send the ack).
  */
+/**
+ * P0-B: silently flip every running computer-task abort flag (no WS ack).
+ * Used by chat.abort so Stop also kills host_computer injects without a
+ * separate 急停 and without double-acking computer.task.abort.ack.
+ * Returns the number of flags flipped. Exported for integration tests.
+ */
+export function flipAllComputerTaskAborts(): number {
+  let matched = 0
+  for (const k of computerTaskAbort.keys()) {
+    computerTaskAbort.set(k, true)
+    matched++
+  }
+  return matched
+}
+
 export function handleComputerTaskAbort(
   ws: { readyState: number; send: (data: string) => void },
   msg: { task_id?: unknown },
@@ -241,10 +256,7 @@ export function handleComputerTaskAbort(
   const tid = typeof msg.task_id === "string" ? msg.task_id : ""
   let matched = 0
   if (tid === "*") {
-    for (const k of computerTaskAbort.keys()) {
-      computerTaskAbort.set(k, true)
-      matched++
-    }
+    matched = flipAllComputerTaskAborts()
   } else if (tid && computerTaskAbort.has(tid)) {
     computerTaskAbort.set(tid, true)
     matched = 1
@@ -3533,6 +3545,16 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
         if (msg.type === "computer.task.abort") {
           handleComputerTaskAbort(ws, msg)
           return
+        }
+
+        // P0-B: chat.abort also stops any running host_computer task so the
+        // user does not need a separate 急停. Silent registry flip only —
+        // no computer.task.abort.ack (avoids double-ack if UI also sends
+        // computer.task.abort). Fall through to handleMessage for AbortController
+        // + chat.aborted. Lives here (not message-router) to avoid a
+        // message-router→server import cycle.
+        if (msg.type === "chat.abort") {
+          flipAllComputerTaskAborts()
         }
 
         // Audit item 3 (gate): bulk history export requires explicit user

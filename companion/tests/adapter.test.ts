@@ -7,6 +7,7 @@ import * as path from "node:path"
 const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-agent-test-adapter-"))
 
 let createToolResultMessage: typeof import("../src/llm/adapter").createToolResultMessage
+let rebuildMessagesFromHistory: typeof import("../src/llm/adapter").rebuildMessagesFromHistory
 let ThreadManager: typeof import("../src/threads/thread-manager").ThreadManager
 let saveConfig: typeof import("../src/config").saveConfig
 let SkillEngine: typeof import("../src/skills/skill-engine").SkillEngine
@@ -21,6 +22,7 @@ before(async () => {
   const skillEngine = await import("../src/skills/skill-engine")
 
   createToolResultMessage = adapter.createToolResultMessage
+  rebuildMessagesFromHistory = adapter.rebuildMessagesFromHistory
   ThreadManager = threadManager.ThreadManager
   saveConfig = config.saveConfig
   SkillEngine = skillEngine.SkillEngine
@@ -231,4 +233,82 @@ test("context builder validates pairing when tool result exists", () => {
   // Should NOT strip — valid pairing
   const shouldNotStrip = !!(assistantMsg.tool_calls && assistantMsg.tool_calls.length > 0 && nextMsg && nextMsg.role === "tool")
   assert.equal(shouldNotStrip, true)
+})
+
+// --- P0-B: rebuildMessagesFromHistory skips unpaired tool rows ---
+
+test("P0-B: rebuildMessagesFromHistory skips orphan tool rows after stripped assistant", () => {
+  // Assistant claims 2 tool_calls but only 1 tool result follows → strip assistant
+  // tool_calls AND skip the partial tool row so OpenAI schema stays valid.
+  const history = [
+    { role: "user", content: "go" },
+    {
+      role: "assistant",
+      content: "calling tools",
+      tool_calls: [
+        { id: "call_A", function: { name: "list_tabs", arguments: "{}" } },
+        { id: "call_B", function: { name: "list_tabs", arguments: "{}" } },
+      ],
+    },
+    {
+      role: "tool",
+      content: "{}",
+      tool_calls: [{ id: "call_A", tool_name: "list_tabs", result: { success: true, data: {} } }],
+    },
+  ]
+
+  const rebuilt = rebuildMessagesFromHistory(history)
+  assert.equal(rebuilt.length, 2, "user + text-only assistant (orphan tool skipped)")
+  assert.equal(rebuilt[0].role, "user")
+  assert.equal(rebuilt[1].role, "assistant")
+  assert.ok(!(rebuilt[1] as any).tool_calls, "stripped assistant has no tool_calls")
+  assert.ok(!rebuilt.some((m) => m.role === "tool"), "no unpaired role=tool in OpenAI payload")
+})
+
+test("P0-B: rebuildMessagesFromHistory skips lone orphan tool with no preceding assistant tool_calls", () => {
+  const history = [
+    { role: "user", content: "hi" },
+    { role: "assistant", content: "hello" },
+    {
+      role: "tool",
+      content: "{}",
+      tool_calls: [{ id: "orphan_1", tool_name: "list_tabs", result: { success: true } }],
+    },
+  ]
+  const rebuilt = rebuildMessagesFromHistory(history)
+  assert.equal(rebuilt.length, 2)
+  assert.ok(!rebuilt.some((m) => m.role === "tool"))
+})
+
+test("P0-B: rebuildMessagesFromHistory keeps fully paired tool rounds", () => {
+  const history = [
+    { role: "user", content: "go" },
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        { id: "call_A", function: { name: "list_tabs", arguments: "{}" } },
+        { id: "call_B", function: { name: "list_tabs", arguments: "{}" } },
+      ],
+    },
+    {
+      role: "tool",
+      content: "{}",
+      tool_calls: [{ id: "call_A", tool_name: "list_tabs", result: { success: true, data: [] } }],
+    },
+    {
+      role: "tool",
+      content: "{}",
+      tool_calls: [{ id: "call_B", tool_name: "list_tabs", result: { success: true, data: [] } }],
+    },
+  ]
+  const rebuilt = rebuildMessagesFromHistory(history)
+  assert.equal(rebuilt.length, 4)
+  assert.equal(rebuilt[0].role, "user")
+  assert.equal(rebuilt[1].role, "assistant")
+  assert.equal((rebuilt[1] as any).tool_calls.length, 2)
+  assert.equal(rebuilt[2].role, "tool")
+  assert.equal((rebuilt[2] as any).tool_call_id, "call_A")
+  assert.equal(rebuilt[3].role, "tool")
+  assert.equal((rebuilt[3] as any).tool_call_id, "call_B")
 })

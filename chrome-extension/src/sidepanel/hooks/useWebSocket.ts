@@ -41,6 +41,20 @@ export function requestInitialSidePanelData(
   return true
 }
 
+/**
+ * P0-B: whether a chat stream event should apply to the active UI thread.
+ * - Missing/empty thread_id → apply (legacy broadcasts, same-thread compat).
+ * - When set, only apply if it matches the currently active thread.
+ * Pure helper for unit tests (stream-thread-gate).
+ */
+export function shouldApplyStreamEvent(
+  msgThreadId: string | undefined | null,
+  activeThreadId: string | null | undefined,
+): boolean {
+  if (msgThreadId == null || msgThreadId === "") return true
+  return msgThreadId === activeThreadId
+}
+
 export function normalizeConfig(config: any): Partial<LLMConfig> {
   if (!config) return {}
   const llm = config.llm || config
@@ -122,6 +136,12 @@ export function useWebSocket() {
   // Keep refs in sync
   activeThreadRef.current = state.activeThreadId
 
+  // P0-B: clear accumulated stream buffer on thread switch so late tokens from
+  // the previous thread cannot reappear via chat.done → ADD_MESSAGE.
+  useEffect(() => {
+    streamingRef.current = ""
+  }, [state.activeThreadId])
+
   useEffect(() => {
     const requestInitialData = () => requestInitialSidePanelData((message) => {
       chrome.runtime.sendMessage(message)
@@ -146,16 +166,21 @@ export function useWebSocket() {
     const messageListener = (msg: any) => {
       switch (msg.type) {
         case "chat.token":
+          // P0-B: ignore stream events for non-active threads
+          if (!shouldApplyStreamEvent(msg.thread_id, activeThreadRef.current)) break
           streamingRef.current = msg.content
           dispatch({ type: "SET_STREAMING", content: msg.content })
           break
 
         case "chat.done": {
+          if (!shouldApplyStreamEvent(msg.thread_id, activeThreadRef.current)) break
           const content = streamingRef.current
           streamingRef.current = ""
           dispatch({ type: "SET_STREAMING", content: "" })
           dispatch({ type: "SET_PROCESSING", isProcessing: false })
-          if (activeThreadRef.current && content) {
+          const doneThreadId =
+            (typeof msg.thread_id === "string" && msg.thread_id) || activeThreadRef.current
+          if (doneThreadId && content) {
             dispatch({
               type: "ADD_MESSAGE",
               message: {
@@ -163,8 +188,8 @@ export function useWebSocket() {
                 // UI id matches what's stored — anchor-based features (per-message export)
                 // then work on the just-received response without a thread reload. Fall back
                 // to a client id only if the companion didn't echo one.
-                id: msg.message_id || `${activeThreadRef.current}_assistant_${Date.now()}`,
-                thread_id: activeThreadRef.current,
+                id: msg.message_id || `${doneThreadId}_assistant_${Date.now()}`,
+                thread_id: doneThreadId,
                 role: "assistant",
                 content,
                 created_at: new Date().toISOString(),
@@ -175,6 +200,7 @@ export function useWebSocket() {
         }
 
         case "chat.aborted":
+          if (!shouldApplyStreamEvent(msg.thread_id, activeThreadRef.current)) break
           streamingRef.current = ""
           dispatch({ type: "SET_STREAMING", content: "" })
           dispatch({ type: "SET_PROCESSING", isProcessing: false })
@@ -208,6 +234,11 @@ export function useWebSocket() {
         }
 
         case "chat.error":
+          // P0-B: gate on thread_id; clear streamingRef so residual tokens are
+          // not later ADD_MESSAGE'd as a completed assistant via chat.done.
+          if (!shouldApplyStreamEvent(msg.thread_id, activeThreadRef.current)) break
+          streamingRef.current = ""
+          dispatch({ type: "SET_STREAMING", content: "" })
           dispatch({ type: "SET_PROCESSING", isProcessing: false })
           dispatch({
             type: "ADD_MESSAGE",
