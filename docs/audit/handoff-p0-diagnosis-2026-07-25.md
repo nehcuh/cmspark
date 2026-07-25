@@ -67,18 +67,13 @@ Design → Implement → Internal adversarial (2 skeptics, fail-closed)
 - Tests: computer-executor **96/96**
 - Residual nits (non-blocking): FORCE_INTERACTIVE set hoist; scroll/drag still no client→screen; docstring tidy
 
-### P0-D — IN PROGRESS (resume here)
+### P0-D — DONE & committed (see git log)
 
-- Branch: `fix/diagnosis-P0-D` @ `c2784ed` (no P0-D code commit yet)
-- Workflow display: **`p0-batch-fix-4`** — was in **Design** when session ended
-- Scope (from diagnosis):
-  1. `package.sh` / Makefile / release: hard-require `build:host` + `cmspark-host`/`cmspark-tray` or fail
-  2. Stage TinyClick/ORT + host-scripts-win **or** explicit feature-cut notes in release body
-  3. Fix `release.yml` body if it still claims WS auth deferred
-- Next actions:
-  1. Check `/workflows` — if `p0-batch-fix-4` still active, resume or re-launch with `args.batch=P0-D`
-  2. Optionally stop zombie **`p0-batch-fix-3`** (P0-C ExternalReview/VerifyBuild leftover; code already committed)
-  3. After dual APPROVE: commit on `fix/diagnosis-P0-D`, then consider PR stack A→B→C→D → main
+- Hard-gate package/release assets (host/tray/scpt, win scripts, TinyClick/ORT on win-x64)
+- Makefile `package-macos: build-host`; release.yml zip asserts + C1 FIXED body
+- Dual: Claude + Pi both APPROVE_WITH_NITS (`P0-D-verdict-20260725-214108.json`)
+- Tests: `scripts/tests/test-package-gates.sh` **33/33**
+- Next: consider push/PR stack P0-A→D; optional nits (wire gate tests into CI; qualify ORT fail-closed in release body for macOS soft path)
 
 ## Unrelated dirty tree (do not mix into P0 commits)
 
