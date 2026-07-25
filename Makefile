@@ -1,5 +1,5 @@
 .PHONY: dev install test build clean load-extension \
-       build-tray tray tray-status tray-rebuild menu-bar \
+       build-tray build-host tray tray-status tray-rebuild menu-bar \
        install-macos install-macos-daemon install-macos-menubar \
        uninstall-macos daemon-status \
        install-linux uninstall-linux \
@@ -53,12 +53,17 @@ clean:
 	rm -rf companion/dist companion/.test-dist
 	rm -rf chrome-extension/build chrome-extension/.test-dist
 
-# ── Swift 托盘 ──
+# ── Swift 托盘 / Host ──
 
 # 编译 Swift 托盘（macOS Apple Silicon）
 build-tray:
 	@echo "Building Swift tray for macOS ARM64..."
 	@cd companion && ./src/tray/build-tray.sh
+
+# 编译 cmspark-host + precompile host-scripts/*.scpt（macOS host-use）
+build-host:
+	@echo "Building cmspark-host + host-scripts..."
+	@cd companion && npm run build:host
 
 # ── 系统托盘 ──
 
@@ -132,8 +137,9 @@ uninstall-windows:
 package: build
 	@bash scripts/package.sh
 
-# 打包 macOS ARM64（含 Swift 托盘 + DMG 安装包）
-package-macos: build build-tray
+# 打包 macOS ARM64（含 Swift 托盘 + cmspark-host + DMG 安装包）
+# build-host is required: package.sh hard-fails without cmspark-host + *.scpt.
+package-macos: build build-tray build-host
 	@bash scripts/package.sh macos-arm64
 	@echo "Building macOS DMG installer..."
 	@bash scripts/create-dmg.sh

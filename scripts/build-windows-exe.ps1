@@ -253,13 +253,17 @@ if (Test-Path $SkillsSrc) {
 # Windows host-use PowerShell scripts (computer-use). resolveWinScript candidate 0
 # looks in <exe-dir>\host-scripts-win\ — without this, packaged host_read/host_write
 # fail with ENOENT and Windows Hello silently downgrades to manual-nonce.
+# P0-D: fail-closed (was Warn) — empty host-scripts-win must not ship.
 $WinScriptsSrc = "$CompanionDir\src\host-use\win\scripts"
-if (Test-Path $WinScriptsSrc) {
-    Copy-Item $WinScriptsSrc "$StagingDir\host-scripts-win" -Recurse -Filter *.ps1
-    Ok "host-scripts-win/ (Windows host-use scripts)"
-} else {
-    Warn "win host-use scripts not found — host_read/host_write will not work in the package"
+if (-not (Test-Path $WinScriptsSrc)) {
+    Fail "win host-use scripts not found at $WinScriptsSrc — host_read/host_write would ENOENT"
 }
+Copy-Item $WinScriptsSrc "$StagingDir\host-scripts-win" -Recurse -Filter *.ps1
+$WinPs1Count = @(Get-ChildItem "$StagingDir\host-scripts-win" -Filter *.ps1 -ErrorAction SilentlyContinue).Count
+if ($WinPs1Count -lt 1) {
+    Fail "host-scripts-win/*.ps1 empty after staging — refusing to ship"
+}
+Ok "host-scripts-win/ ($WinPs1Count Windows host-use scripts)"
 
 # systray2 + its full transitive dependency tree.
 # Module.createRequire(process.execPath) resolves from the exe's directory,
@@ -321,7 +325,8 @@ if (Test-Path $OrtSrc) {
         Fail "onnxruntime-common missing — onnxruntime-node dist/ requires it at runtime"
     }
 } else {
-    Warn "onnxruntime-node not installed — WP5 local model layer unavailable in this package"
+    # P0-D: fail-closed (was Warn). windows-x64 package must ship TinyClick/ORT.
+    Fail "onnxruntime-node not installed — WP5 local model layer required in windows-x64 package"
 }
 
 # THIRD_PARTY_NOTICES must ship with the package (W3 §5.5 MIT notice obligation;
