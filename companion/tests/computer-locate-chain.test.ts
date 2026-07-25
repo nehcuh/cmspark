@@ -34,6 +34,26 @@ function shotAt(path: string, rect = { x: 100, y: 100, width: 640, height: 480 }
   return { hwnd: HWND, rect, client, dpi: 96, path, sha256: "x", black: false, fallbackUsed: false, osrBlackSuspected: false }
 }
 
+// P4 retina variant — 2x backing scale. Default rect/client match shotAt()
+// but with imageWidth/Height = 2x logical and scaleX/Y = 2.
+function shotAtRetina(path: string): CaptureMeta {
+  return {
+    hwnd: HWND,
+    rect: { x: 100, y: 100, width: 640, height: 480 },
+    client: { x: 10, y: 40, width: 620, height: 430 },
+    dpi: 144,
+    imageWidth: 1280,
+    imageHeight: 960,
+    scaleX: 2,
+    scaleY: 2,
+    path,
+    sha256: "x",
+    black: false,
+    fallbackUsed: false,
+    osrBlackSuspected: false,
+  }
+}
+
 function ocrHitAt(x: number, y: number): LocateHit {
   return { x, y, bbox: { x: x - 20, y: y - 10, width: 40, height: 20 }, layer: "ocr", confidence: 0.9, matchedText: "确定" }
 }
@@ -756,4 +776,81 @@ test("P3 D4.3 releaseRaw on superseded restart frame (Grok point 4)", async () =
     released.includes("cap-superseded.png"),
     `expected releaseRaw("cap-superseded.png") in [${released.join(", ")}]`,
   )
+})
+
+// --- P4: imageToClient wiring (retina false-OOB regression) ------------------
+
+test("P4 L1 OCR on retina: image-pixel hit → logical pointClient (no false OOB)", async () => {
+  // Reproduces the WeChat failure: OCR word box at image (1200, 1004) on a
+  // retina (scale=2) capture of a 640x480 logical window.
+  // Pre-P4 formula `ocrHit.x - shot.client.x` = 1004 - 40 = 964 — outside the
+  // 430-tall client height → false OOB.
+  // P4 formula `imageToClient(...)` divides by scale first: 1004/2 - 40 = 462.
+  const released: string[] = []
+  const r = await locateTargetWithChain({
+    target: "确定",
+    hwnd: HWND,
+    shot: shotAtRetina("cap-retina.png"),
+    deps: chainDeps({
+      uia: null,
+      locator: new FakeLocator([{ text: "确定", x: 1200, y: 1004, w: 40, h: 20 }]),
+      capturer: new FakeCapturer() as any,
+    }),
+    trackCapture: async () => shotAtRetina("cap-retina-fresh.png"),
+    releaseRaw: async (p?: string) => { if (p) released.push(p) },
+  })
+  assert.ok(r.hit, "chain produces a hit on retina")
+  // ocrHit center = (1220, 1014) in image space; /2 = (610, 507); client (10, 40).
+  // pointClient = (610 - 10, 507 - 40) = (600, 467).
+  assert.equal(r.pointClient.x, 600)
+  assert.equal(r.pointClient.y, 467, "image-y 1014/2 - client.y 40 = 467 (NOT 974)")
+})
+
+test("P4 L2 TinyClick on retina: image-pixel point → logical pointClient", async () => {
+  // TinyClick's outcome.point is image-pixel space (the model is conditioned
+  // on the retina PNG). P4 wiring must route it through imageToClient too.
+  const tcHitImage = { x: 800, y: 600 } // image-pixel; /2 = (400, 300) logical
+  const tc = new FakeTinyClick({ kind: "hit", point: tcHitImage, tokenIds: [], prompt: "", timings: {} as any })
+  const r = await locateTargetWithChain({
+    target: "anything",
+    hwnd: HWND,
+    shot: shotAtRetina("cap-tc.png"),
+    deps: chainDeps({
+      uia: null,
+      locator: new FakeLocator([]), // L1 misses so chain falls to L2
+      tinyclick: tc,
+    }),
+    trackCapture: async () => shotAtRetina("cap-tc-fresh.png"),
+    releaseRaw: async () => {},
+  })
+  assert.ok(r.hit, "TinyClick layer hits")
+  assert.equal(r.hit.layer, "tinyclick")
+  // image (800, 600) / scale 2 = (400, 300) logical; client (10, 40).
+  // pointClient = (400 - 10, 300 - 40) = (390, 260). Pre-P4 would yield (790, 560).
+  assert.equal(r.pointClient.x, 390)
+  assert.equal(r.pointClient.y, 260, "image-y 600/2 - client.y 40 = 260 (NOT 560)")
+})
+
+test("P4 non-retina regression: scale=1 path produces identical results to pre-P4 legacy formula", async () => {
+  // Sanity: on a non-retina capture (scaleX/Y absent), the new imageToClient
+  // path must agree with the legacy `ocrHit.x - shot.client.x` formula.
+  const released: string[] = []
+  const r = await locateTargetWithChain({
+    target: "确定",
+    hwnd: HWND,
+    shot: shotAt("cap-nonretina.png"),
+    deps: chainDeps({
+      uia: null,
+      locator: new FakeLocator([{ text: "确定", x: 130, y: 170, w: 40, h: 20 }]),
+      capturer: new FakeCapturer() as any,
+    }),
+    trackCapture: async () => shotAt("cap-nonretina-fresh.png"),
+    releaseRaw: async (p?: string) => { if (p) released.push(p) },
+  })
+  assert.ok(r.hit)
+  // FakeLocator.locate returns ocrHitAt(word.x + w/2, word.y + h/2) = (150, 180).
+  // Legacy: 150 - 10 = 140, 180 - 40 = 140.
+  // imageToClient on scale=1: 150/1 - 10 = 140, 180/1 - 40 = 140. Identical.
+  assert.equal(r.pointClient.x, 140)
+  assert.equal(r.pointClient.y, 140)
 })
