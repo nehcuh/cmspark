@@ -1,0 +1,61 @@
+# Grok P3 Review — D4.2 (M8) + D4.3 (locate rect0)
+
+Role: Grok (plan owner). Scope: p3-diff-brief.md vs v4.1 §4.2–§4.3 (+ v4 §4.4 M8).
+Evidence: brief + executor.ts / locate-chain.ts worktree [inspected]. Date: 2026-07-25.
+
+## VERDICT: CONDITIONAL APPROVE
+
+No code until blockers are amended in the brief. Scope stays D4.2+D4.3 only.
+
+---
+
+## Answers 1–7
+
+### 1. Faithful translation?
+**Mostly.** `DRIFT_THRESHOLD_PX=8`, max-axis `rectDriftPx`, `rect0` + abort-before-hit + single restart-or-fail match §4.2/§4.3. D4.1/frozen/CUBox correctly excluded. §4.3 allows live bounds **or** capturer meta after re-shot; brief is meta-only — OK for the real bug (A1 sets `shot=fresh` after UIA→image used pre-fresh rect, locate-chain.ts:317-337). Live `infoForHwnd` per layer not required if executor M8 is late. **But** M8 site and restart bound are not implementer-ready (blockers).
+
+### 2. Single re-capture / action, no inner loop?
+**Agree.** No loop-until-stable (livelock on animated windows). Next action re-checks. `trackCapture` throw → existing `CAPTURE_FAILED`.
+
+### 3. Recursive restart vs in-place?
+**Prefer in-place** flag + continue (clear depth=1, one frame). Recursion OK only if flag is in **args** — not outer-closure (blocker 2).
+
+### 4. L2 TinyClick on restart?
+**Re-run on fresh `shot`.** Model is image-conditioned; do not carry prior point. Restart-from-L0 does this automatically.
+
+### 5. STALE vs LOCATE_DRIFT_EXCEEDED?
+**STALE_SCREENSHOT.** Double-drift = unstable window; same recovery as A1. No new error code.
+
+### 6. Tests — missing?
+1. **L0 A1 class:** convert on rect0, A1 fresh rect >8px → restart, not mixed old-img/new-client pointClient.
+2. **Depth=1 proven** (second drift → STALE, not infinite).
+3. **Executor M8 late:** after locate, before bounds (~868), fresh `infoForHwnd`.
+4. **releaseRaw** on superseded restart frame.
+Existing rectDriftPx / 8-vs-9 / CAPTURE_FAILED-on-throw: good.
+
+### 7. Commit split?
+**1 commit.** Shared constant+helper; avoid half-wired intermediate. e.g. `fix(computer): P3 hwnd drift M8 + locate rect0 (D4.2/D4.3)`.
+
+---
+
+## Blockers
+
+1. **M8 site wrong.** Brief inserts after `infoForHwnd` ~738 before budget — but `shot` is created at ~767; bounds at ~868 [inspected]. Early check is unimplementable / always ~0 post-capture. **Required:** post-locate, fresh `infoForHwnd`, `rectDriftPx(info.rect, shot.rect) > 8` → one `trackCapture`, then bounds. Keep ownership assert at ~738.
+
+2. **`restarted` dies on recursion.** Child `locateTargetWithChain` resets `let restarted=false` → infinite restart if every frame drifts. **Required:** in-place flag, or `args.driftRestarted` checked at entry. Contract remains max one restart per locate call.
+
+---
+
+## Non-blockers
+
+- `staleOnNotFound:true` on restart → not-found as STALE is fine.
+- M8 re-capture without re-locate for explicit coords: matches v4 M8 text; post-resize locate points may be residual-stale.
+- Constant in locate-chain vs coords.ts: no preference.
+
+---
+
+## Path
+
+Claude amends brief §4.2.3 site + §4.3 restart bound → Pi confirm → code. Material redesign only if either blocker is disputed.
+
+*Grok — plan owner. CONDITIONAL APPROVE; two blockers.*

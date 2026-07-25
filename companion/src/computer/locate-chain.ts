@@ -47,6 +47,7 @@ import {
   type UiaLocator,
 } from "./types"
 import type { TinyClickLocator } from "./tinyclick-locator"
+import { rectDriftPx } from "./coords"
 
 export interface LocateChainDeps {
   /** L0 provider. The EXECUTOR decides admission (uiaCapable) — it passes
@@ -97,6 +98,19 @@ export interface ChainLocateResult {
 
 /** UIA↔OCR witness tolerance (px) around the UIA bbox. */
 const WITNESS_TOLERANCE_PX = 8
+
+/**
+ * D4.2 (Grok v4.1 §4.2 / Pi v4.1 RESOLVED): per-action hwnd drift threshold.
+ * If live window bounds (infoForHwnd) vs the cached `shot.rect` differ by more
+ * than this many pixels on any of {x, y, width, height}, the capture is stale
+ * — re-capture before the bounds check instead of blessing an OOB click.
+ *
+ * Matches WITNESS_TOLERANCE_PX (8) on purpose: sub-8 px drift is below the
+ * locate witness tolerance anyway, so the classifier's noise floor already
+ * absorbs it; above 8 px we want a fresh frame. Exported so executor.ts can
+ * import it without re-declaring.
+ */
+export const DRIFT_THRESHOLD_PX = 8
 
 /**
  * X1 (WP3 adversary): witness bbox size caps. The old witness had NO size
@@ -203,6 +217,12 @@ export async function locateTargetWithChain(args: {
   /** Refresh context (post-approval): a not-found re-probe means the target
    *  moved after a human decision — STALE_SCREENSHOT, not ELEMENT_NOT_FOUND. */
   staleOnNotFound?: boolean
+  /** D4.3 (Grok blocker 2 fix / Pi v4.1 RESOLVED): set to true by the
+   *  in-function restart path so the recursive call knows it has already
+   *  used its one restart. Default false. Without this arg, every fresh
+   *  frame that still drifts would trigger another restart → infinite loop
+   *  on animated windows. */
+  driftRestarted?: boolean
 }): Promise<ChainLocateResult> {
   const { target, hwnd, deps, trackCapture, releaseRaw } = args
   const now = deps.now ?? (() => Date.now())
@@ -214,6 +234,34 @@ export async function locateTargetWithChain(args: {
   // oversized bbox) degrades to L1, and the evidence record on that L1 path
   // must still carry WHY the L0 cross-check was not granted.
   let witnessVerdict: WitnessVerdict | undefined
+
+  // D4.3 (Grok v4.1 §4.3 / Pi APPROVED 2026-07-25): snapshot the chain-entry
+  // rect. Before each layer's hit return, re-validate against the CURRENT
+  // shot.rect — if the window moved mid-chain (A1 freshness re-capture inside
+  // L0/L1, or restarted entry from a prior drift), abort the hit and restart
+  // ONCE on a fresh frame. Returning a UIA→image mapping computed against a
+  // stale rect is the (722, 872) OOB class in slow motion.
+  //
+  // Restart loop bound: `restarted` is read from args.driftRestarted so the
+  // recursive call inherits the true state. Closure-scoped reset would
+  // infinite-loop on animated windows (Grok blocker 2).
+  const restarted = args.driftRestarted === true
+  const rect0: RectPx = { ...args.shot.rect }
+
+  const rect0DriftExceeded = (): boolean =>
+    rectDriftPx(shot.rect, rect0) > DRIFT_THRESHOLD_PX
+
+  const restartChainOnce = async (): Promise<CaptureMeta> => {
+    if (restarted) {
+      throw new ComputerError(
+        "STALE_SCREENSHOT",
+        `computer: target "${target}" — window drift exceeded ${DRIFT_THRESHOLD_PX}px twice in one locate call; refusing to inject at unstable coordinates`,
+      )
+    }
+    const fresh = await trackCapture(hwnd)
+    await releaseRaw(shot.path)
+    return fresh
+  }
 
   const notFoundError = (): ComputerError => {
     const why = attempts.map((a) => `${a.layer}:${a.outcome}${a.reason ? `(${a.reason})` : ""}`).join(" → ")
@@ -331,6 +379,25 @@ export async function locateTargetWithChain(args: {
           if (ambiguous) {
             log("computeruse.locate", { layer: "uia", ambiguous: uiaHit.candidates, downgraded: "uncrossverified" })
           }
+          // D4.3: drift re-validate before L0 success return. Pi reminder (a):
+          // on restart, propagate the inner recursive call's witness verdict,
+          // NOT this scope's witnessVerdict — the recursive call computed a
+          // fresh one against the new frame.
+          if (rect0DriftExceeded()) {
+            log("computer.locate.drift_restart", {
+              layer: "uia",
+              rect0,
+              currentRect: shot.rect,
+              driftPx: rectDriftPx(shot.rect, rect0),
+            })
+            const fresh = await restartChainOnce()
+            return locateTargetWithChain({
+              ...args,
+              shot: fresh,
+              staleOnNotFound: true,
+              driftRestarted: true,
+            })
+          }
           return {
             hit,
             pointClient: { x: img.x - shot.client.x, y: img.y - shot.client.y },
@@ -372,6 +439,23 @@ export async function locateTargetWithChain(args: {
           layer: "uia",
           confidence: uiaHit2.confidence,
           matchedText: uiaHit2.name,
+        }
+        // D4.3: drift re-validate AFTER shot = fresh (Pi reminder b: must be
+        // placed after A1 re-capture, else trips spuriously on every A1 path).
+        if (rect0DriftExceeded()) {
+          log("computer.locate.drift_restart", {
+            layer: "uia-reprobe",
+            rect0,
+            currentRect: shot.rect,
+            driftPx: rectDriftPx(shot.rect, rect0),
+          })
+          const fresh2 = await restartChainOnce()
+          return locateTargetWithChain({
+            ...args,
+            shot: fresh2,
+            staleOnNotFound: true,
+            driftRestarted: true,
+          })
         }
         return {
           hit,
@@ -419,6 +503,22 @@ export async function locateTargetWithChain(args: {
       if (diffRatio <= PIXEL_DIFF_THRESHOLD) {
         shot = fresh
         await releaseRaw(locateFrame.path)
+        // D4.3: drift re-validate AFTER shot = fresh (Pi reminder b).
+        if (rect0DriftExceeded()) {
+          log("computer.locate.drift_restart", {
+            layer: "ocr",
+            rect0,
+            currentRect: shot.rect,
+            driftPx: rectDriftPx(shot.rect, rect0),
+          })
+          const fresh2 = await restartChainOnce()
+          return locateTargetWithChain({
+            ...args,
+            shot: fresh2,
+            staleOnNotFound: true,
+            driftRestarted: true,
+          })
+        }
         return {
           hit: ocrHit,
           pointClient: { x: ocrHit.x - shot.client.x, y: ocrHit.y - shot.client.y },
@@ -443,6 +543,22 @@ export async function locateTargetWithChain(args: {
       shot = fresh
       ocrRes = ocr2
       await releaseRaw(locateFrame.path)
+      // D4.3: drift re-validate AFTER shot = fresh (Pi reminder b).
+      if (rect0DriftExceeded()) {
+        log("computer.locate.drift_restart", {
+          layer: "ocr-reprobe",
+          rect0,
+          currentRect: shot.rect,
+          driftPx: rectDriftPx(shot.rect, rect0),
+        })
+        const fresh3 = await restartChainOnce()
+        return locateTargetWithChain({
+          ...args,
+          shot: fresh3,
+          staleOnNotFound: true,
+          driftRestarted: true,
+        })
+      }
       return {
         hit: hit2,
         pointClient: { x: hit2.x - shot.client.x, y: hit2.y - shot.client.y },
@@ -482,6 +598,9 @@ export async function locateTargetWithChain(args: {
       return {
         hit,
         pointClient: { x: outcome.point.x - shot.client.x, y: outcome.point.y - shot.client.y },
+        // D4.3 invariant (Pi reminder c): L2 has no A1 re-capture, so shot is
+        // unchanged since chain entry → rect0 === shot.rect → drift guard
+        // trivially cannot fire. Pin via test (computer-locate-chain-drift).
         ocrRes,
         shot,
         crossverified: false,

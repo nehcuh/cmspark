@@ -38,14 +38,14 @@ import type { CompanionConfig } from "../config"
 import type { SecurityConfirmationDecision, SecurityConfirmationDetails } from "../security-confirmation"
 import { scanDanger, type DangerScan } from "./danger"
 import type { EvidenceFactory, EvidenceSink } from "./evidence"
-import { locateTargetWithChain, type WitnessVerdict } from "./locate-chain"
+import { locateTargetWithChain, DRIFT_THRESHOLD_PX, type WitnessVerdict } from "./locate-chain"
 import type { TinyClickLocator } from "./tinyclick-locator"
 import type { ComputerTaskEvent, PreviewBuilder } from "./preview"
 import { sanitizeComputerCaption } from "./preview"
 import { assertCoordinateAllowed, assertExeNotDrifted, assertHwndOwnedByEntry, normalizeExePath } from "./policy"
 import { exeBasename } from "../apps/guards"
 import { getComputerSessionTrust, reL2ShouldPrompt } from "./session-trust"
-import { maybeAutoscaleImageToClient } from "./coords"
+import { maybeAutoscaleImageToClient, rectDriftPx } from "./coords"
 import {
   ALLOWED_KEY_SET,
   ComputerError,
@@ -857,6 +857,28 @@ export async function runComputerTask(
           uncrossLeft = UNCROSS_VERIFIED_SUB_BUDGET
           reL2ApprovedMidAction = true // X3: approved coordinates are now stale
         }
+      }
+
+      // D4.2 / Grok v4 §4.4 M8 (P3, Grok blocker 1 fix): POST-locate drift
+      // check. A resize / reposition DURING the locate chain (or between
+      // locate-return and bounds) would let a stale `shot.client` bless an
+      // OOB click. Fresh infoForHwnd — the early ownership call at line 738
+      // is too stale by construction. Single re-capture per action; no inner
+      // loop (livelock on animated windows). PointClient came from the
+      // locate chain against the PRE-recapture frame; if drift exceeded, we
+      // do NOT silently re-map — bounds check will fail OOB and the LLM gets
+      // a diagnostic with the new client dims, prompting re-locate on retry
+      // (Grok non-blocker ack: post-resize locate points may be residual-stale).
+      const infoLive = await deps.windows.infoForHwnd(hwnd)
+      if (rectDriftPx(infoLive.rect, shot.rect) > DRIFT_THRESHOLD_PX) {
+        log("computer.coords.drift_recapture", {
+          taskId, seq, hwnd,
+          locateRect: shot.rect,
+          liveRect: infoLive.rect,
+          driftPx: rectDriftPx(infoLive.rect, shot.rect),
+        })
+        shot = await trackCapture(hwnd)
+        shotAt = now()
       }
 
       // Bounds (reject, never clamp — §D.3). v4 Defect 3 (Grok v4 §4.4 M6):

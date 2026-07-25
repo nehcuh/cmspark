@@ -12,7 +12,9 @@ import {
   clientToScreen,
   screenToClient,
   maybeAutoscaleImageToClient,
+  rectDriftPx,
 } from "../src/computer/coords"
+import type { RectPx } from "../src/computer/types"
 
 const RETINA = { imageWidth: 1760, imageHeight: 1280, scaleX: 2, scaleY: 2 }
 const NON_RETINA = { imageWidth: 880, imageHeight: 640, scaleX: 1, scaleY: 1 }
@@ -104,4 +106,55 @@ test("maybeAutoscaleImageToClient: Pi R5 — refuses when swap orientation also 
 test("maybeAutoscaleImageToClient: returns null when client dimensions are zero", () => {
   const r = maybeAutoscaleImageToClient({ x: 100, y: 100 }, RETINA, { x: 0, y: 0, width: 0, height: 0 })
   assert.equal(r, null)
+})
+
+// ---- P3 D4.2: rectDriftPx -------------------------------------------------
+
+test("rectDriftPx: identical rects → 0", () => {
+  const r: RectPx = { x: 10, y: 20, width: 100, height: 200 }
+  assert.equal(rectDriftPx(r, r), 0)
+})
+
+test("rectDriftPx: shifted x → |Δx|", () => {
+  const a: RectPx = { x: 10, y: 20, width: 100, height: 200 }
+  const b: RectPx = { x: 15, y: 20, width: 100, height: 200 }
+  assert.equal(rectDriftPx(a, b), 5)
+})
+
+test("rectDriftPx: shifted y → |Δy|", () => {
+  const a: RectPx = { x: 10, y: 20, width: 100, height: 200 }
+  const b: RectPx = { x: 10, y: 17, width: 100, height: 200 }
+  assert.equal(rectDriftPx(a, b), 3)
+})
+
+test("rectDriftPx: resized width → |Δw|", () => {
+  const a: RectPx = { x: 10, y: 20, width: 100, height: 200 }
+  const b: RectPx = { x: 10, y: 20, width: 120, height: 200 }
+  assert.equal(rectDriftPx(a, b), 20)
+})
+
+test("rectDriftPx: resized height → |Δh|", () => {
+  const a: RectPx = { x: 10, y: 20, width: 100, height: 200 }
+  const b: RectPx = { x: 10, y: 20, width: 100, height: 175 }
+  assert.equal(rectDriftPx(a, b), 25)
+})
+
+test("rectDriftPx: max-axis semantics (mix shift + resize → larger)", () => {
+  // x shifts 5, width grows 30 → max(5, 0, 30, 0) = 30
+  const a: RectPx = { x: 10, y: 20, width: 100, height: 200 }
+  const b: RectPx = { x: 15, y: 20, width: 130, height: 200 }
+  assert.equal(rectDriftPx(a, b), 30)
+})
+
+test("rectDriftPx: negative deltas handled (abs)", () => {
+  // x shrinks by 8 (a.x=10, b.x=2) → |Δx|=8
+  const a: RectPx = { x: 10, y: 20, width: 100, height: 200 }
+  const b: RectPx = { x: 2, y: 20, width: 100, height: 200 }
+  assert.equal(rectDriftPx(a, b), 8)
+})
+
+test("rectDriftPx: symmetric (a,b) === (b,a)", () => {
+  const a: RectPx = { x: 10, y: 20, width: 100, height: 200 }
+  const b: RectPx = { x: 50, y: 80, width: 70, height: 250 }
+  assert.equal(rectDriftPx(a, b), rectDriftPx(b, a))
 })

@@ -152,3 +152,24 @@ export function maybeAutoscaleImageToClient(
 
   return { scaled, reason: "retina-scale" }
 }
+
+/**
+ * D4.2 (Grok v4.1 §4.2 / Pi v4.1 RESOLVED): max-axis drift between two rects.
+ * Returns the largest absolute delta across {x, y, width, height}. Used by
+ * executor's post-locate M8 drift check and by locate-chain's rect0
+ * re-validation guard.
+ *
+ * Max-axis (not sum / euclidean) so the threshold semantics match
+ * WITNESS_TOLERANCE_PX (8) — a single axis crossing 8px is enough to flag,
+ * regardless of what the other three did. Avoids the case where x shifts 5
+ * and y shifts 5 (sum 10, euclidean 7.07) — both readings would mask a real
+ * resize on one axis only.
+ */
+export function rectDriftPx(a: RectPx, b: RectPx): number {
+  return Math.max(
+    Math.abs(a.x - b.x),
+    Math.abs(a.y - b.y),
+    Math.abs(a.width - b.width),
+    Math.abs(a.height - b.height),
+  )
+}

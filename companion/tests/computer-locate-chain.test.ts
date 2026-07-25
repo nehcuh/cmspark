@@ -629,3 +629,131 @@ test("L2 命令透传：click target 原样作为实验层 command（官方配�
   assert.equal(tc.calls[0].command, "确定")
   assert.equal(tc.calls[0].shot.path, "cap-0.png")
 })
+
+// --- P3 D4.3: locate rect0 drift restart ------------------------------------
+
+test("P3 D4.3 L0 A1 drift: fresh frame >8px from rect0 triggers restart (no mixed-rect mapping)", async () => {
+  // L0 UIA hits on the original frame; A1 pixel diff says stable → re-shot for
+  // pixel freshness, BUT the new rect drifted >8px (window moved mid-locate).
+  // Without D4.3 guard, chain would return pointClient computed against the
+  // stale rect — the slow-motion (722,872) class.
+  //
+  // To force L0 A1 path (not just L0 direct return), we disable OCR ( witness
+  // becomes "unavailable" → goes into A1 path instead of disagree-and-fall-through).
+  // FakeUia script needs 2 entries: initial chain (1) + restart recursion (1).
+  // The stable path returns directly without re-probe when diff is stable.
+  const uia = new FakeUia([uiaHit(), uiaHit()])
+  const drifted = shotAt("cap-a1-drift.png", { x: 130, y: 100, width: 640, height: 480 })
+  const stable = shotAt("cap-restart-stable.png", { x: 130, y: 100, width: 640, height: 480 })
+  const released: string[] = []
+  let calls = 0
+  const r = await locateTargetWithChain({
+    target: "确定",
+    hwnd: HWND,
+    shot: shotAt("cap-0.png", { x: 100, y: 100, width: 640, height: 480 }),
+    deps: chainDeps({ uia, ocrAvailable: async () => false }),
+    trackCapture: async () => {
+      calls++
+      if (calls === 1) return drifted
+      return stable
+    },
+    releaseRaw: async (p?: string) => { if (p) released.push(p) },
+  })
+  // Restart fires once; recursive call's L0 produces a hit on the stable frame.
+  assert.ok(r.hit, "chain produces a hit after one L0 A1 restart")
+  assert.equal(r.shot.path, "cap-restart-stable.png", "hit is on the fresh restart frame")
+  // pointClient must be relative to the NEW rect's client, not the original.
+  // uiaHit() screen=(250,280); restart rect.x=130 → img.x=(250-130)*1=120;
+  // default client.x=10 → pointClient.x = 120 - 10 = 110 (NOT 140 which would
+  // be (250-100)-10=140 if computed against the stale rect0).
+  assert.equal(r.pointClient.x, 110, "pointClient computed against fresh rect, not stale rect0")
+})
+
+test("P3 D4.3 L1 OCR A1 drift: fresh frame >8px from rect0 → restart once, then hit", async () => {
+  // No UIA → chain goes to L1 OCR. FakeLocator returns a hit; trackCapture
+  // returns a drifted rect (diff stable path). Drift guard fires once → restart.
+  const stable1 = shotAt("cap-l1-drift.png", { x: 100, y: 125, width: 640, height: 480 })
+  const released: string[] = []
+  let a1Calls = 0
+  const r = await locateTargetWithChain({
+    target: "确定",
+    hwnd: HWND,
+    shot: shotAt("cap-0.png", { x: 100, y: 100, width: 640, height: 480 }),
+    deps: chainDeps({
+      uia: null,
+      locator: new FakeLocator([{ text: "确定", x: 130, y: 170, w: 40, h: 20 }]),
+      capturer: new FakeCapturer() as any,
+    }),
+    trackCapture: async () => {
+      a1Calls++
+      // First A1 capture drifts 25px in y → triggers guard.
+      if (a1Calls === 1) return stable1
+      return stable1 // restart's A1 returns same rect → no second drift
+    },
+    releaseRaw: async (p?: string) => { if (p) released.push(p) },
+  })
+  assert.ok(r.hit, "chain produces a hit after one restart")
+  assert.equal(r.shot.path, "cap-l1-drift.png", "hit is on the fresh frame")
+  assert.ok(released.length >= 1, "superseded frame released")
+})
+
+test("P3 D4.3 depth=1: trackCapture always drifting → STALE_SCREENSHOT (no infinite loop)", async () => {
+  // trackCapture returns a different rect on every call (always >8px drift).
+  // Restart fires once; second drift trips `restarted` check → STALE_SCREENSHOT.
+  let calls = 0
+  const released: string[] = []
+  await assert.rejects(
+    locateTargetWithChain({
+      target: "确定",
+      hwnd: HWND,
+      shot: shotAt("cap-0.png", { x: 100, y: 100, width: 640, height: 480 }),
+      deps: chainDeps({
+        uia: null,
+        locator: new FakeLocator([{ text: "确定", x: 130, y: 170, w: 40, h: 20 }]),
+        capturer: new FakeCapturer() as any,
+      }),
+      trackCapture: async () => {
+        calls++
+        // Every frame moves 20px further in x.
+        return shotAt(`cap-always-${calls}.png`, { x: 100 + calls * 20, y: 100, width: 640, height: 480 })
+      },
+      releaseRaw: async (p?: string) => { if (p) released.push(p) },
+    }),
+    (err: any) => err instanceof ComputerError && err.code === "STALE_SCREENSHOT" && /drift exceeded 8px twice/.test(err.message),
+  )
+  // depth=1 proven: at most 3 captures.
+  //   call 1: initial A1 → drift → guard fires → restartChainOnce
+  //   call 2: restart's trackCapture → returns fresh, recursion enters
+  //   call 3: recursion's A1 → drift again → restarted=true → STALE
+  assert.ok(calls <= 3, `at most 3 trackCapture calls for one restart, got ${calls}`)
+})
+
+test("P3 D4.3 releaseRaw on superseded restart frame (Grok point 4)", async () => {
+  // When drift guard fires after A1 re-capture, the A1's superseded frame must
+  // be released before recursing — otherwise the restart leaks a tracked frame.
+  const drifted = shotAt("cap-superseded.png", { x: 130, y: 100, width: 640, height: 480 })
+  const stable = shotAt("cap-restart-stable.png", { x: 130, y: 100, width: 640, height: 480 })
+  const released: string[] = []
+  let calls = 0
+  await locateTargetWithChain({
+    target: "确定",
+    hwnd: HWND,
+    shot: shotAt("cap-0.png", { x: 100, y: 100, width: 640, height: 480 }),
+    deps: chainDeps({
+      uia: null,
+      locator: new FakeLocator([{ text: "确定", x: 130, y: 170, w: 40, h: 20 }]),
+      capturer: new FakeCapturer() as any,
+    }),
+    trackCapture: async () => {
+      calls++
+      if (calls === 1) return drifted
+      return stable
+    },
+    releaseRaw: async (p?: string) => { if (p) released.push(p) },
+  })
+  // The drifted A1 frame ("cap-superseded.png") must be released by restartChainOnce.
+  assert.ok(
+    released.includes("cap-superseded.png"),
+    `expected releaseRaw("cap-superseded.png") in [${released.join(", ")}]`,
+  )
+})

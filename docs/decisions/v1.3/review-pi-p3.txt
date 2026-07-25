@@ -1,0 +1,144 @@
+# Pi P3 Confirmation — D4.2 (M8) + D4.3 (locate rect0)
+
+Role: Pi (confirmer). Scope: p3-diff-brief.md rev 2 vs Grok v4.1 §4.2/§4.3 +
+v4 §4.4 M8, and review-grok-p3.txt (CONDITIONAL APPROVE, 2 blockers).
+Evidence: brief + executor.ts:720-900 + locate-chain.ts:1-505 [inspected].
+Date: 2026-07-25.
+
+## VERDICT: APPROVE
+
+P3 may start. Both Grok blockers are correctly resolved; scope is tightly
+bounded to D4.2+D4.3; loop invariants are now args-bound and provable.
+
+---
+
+## Numbered responses
+
+### 1. Plan verdict
+APPROVE. The brief is implementer-ready. Site, loop bound, restart invariant,
+error code, and commit split all hold under re-derivation from the actual
+code. No new blockers.
+
+### 2. Scope bounding (D4.2 + D4.3 only)
+Correct. D4.1 stays shipped (commits 10127b2 + d64824f verified in P2 record);
+no backfill. Frozen-contentful detector explicitly deferred to P4+ (§"Out of
+scope"). CUBox daemon-mode lock not touched. The brief even calls out the
+mixed-DPI multi-monitor follow-up as R-only. Scope discipline holds.
+
+### 3. Loop bound on executor M8
+Agree. Single re-capture per action, no inner loop. Brief §4.2.3 makes this
+explicit ("we do NOT loop until drift < threshold — livelock risk"). Next
+action's check catches persistent drift. This matches Grok's ruling 2 and is
+the only safe shape on animated windows.
+
+### 4. Recursive restart with args.driftRestarted — depth=1 proof
+Re-derived from §4.3.1 + §4.3.3 against locate-chain.ts:196-206:
+
+- Outer call: `args.driftRestarted` unset/undefined → `restarted = false`.
+  `rect0` snapshot at chain entry; per-layer guard fires on drift.
+- `restartChainOnce()` checks `restarted` (false on outer) → captures fresh,
+  releases old, recurses with `{...args, shot: fresh, driftRestarted: true}`.
+- Inner call: `args.driftRestarted === true` → `restarted = true` at line
+  one. Any second drift inside the inner call → `restartChainOnce` throws
+  STALE_SCREENSHOT.
+
+Max recursion depth = 1, proven by args-flow alone (no closure state). The
+closure-scoped `let restarted = false` would have reset on each recursive
+entry — Grok blocker 2 is real and the args-bound fix is the correct
+resolution. Agree with the design.
+
+One sharpener for the implementer: the existing `staleOnNotFound?: boolean`
+arg is already in the type; `driftRestarted?: boolean` joins it cleanly.
+Do NOT couple them — a restart-from-drift carries `staleOnNotFound:true`
+cooperatively, but they are independent dimensions.
+
+### 5. STALE_SCREENSHOT for double-drift
+Agree. New LOCATE_DRIFT_EXCEEDED code is unnecessary and would split the
+recovery surface. Double-drift = unstable window; the LLM already knows how
+to recover from STALE (re-shot + retry). No new error code, no new tool
+contract text. Matches Grok ruling 5 verbatim.
+
+### 6. Grok blocker 1 (M8 site) — actually fixed?
+Yes. Re-verified against executor.ts:
+- Line 738: ownership `infoForHwnd` — pre-capture, structurally too early.
+- Line 767: `shot = await trackCapture(hwnd)` — shot created.
+- Line 798-815: locate chain runs; `shot = chain.shot` at 815.
+- Line 868: bounds check.
+
+The patched brief §4.2.3 places the drift check between line 815 and 868
+with a FRESH `infoForHwnd` call (the line-738 result is too stale by
+construction). This is implementer-ready: `trackCapture`, `infoForHwnd`,
+`hwnd`, `taskId`, `seq` are all in scope at that point. No new plumbing.
+
+One implementer note: the comment says pointClient from pre-recapture
+locate is NOT silently re-mapped. This is correct and matches Grok non-
+blocker ack — bounds check will fail OOB on the new client dims, LLM gets
+diagnostic, retries with re-locate. Acceptable.
+
+### 7. Grok blocker 2 (restarted recursion) — actually fixed?
+Yes. See response 4 above. The args.driftRestarted flow is the only
+correct shape; verified no closure-scoped reset in the patched code.
+Release-then-recurse order in `restartChainOnce` is also correct: the
+superseded `shot.path` is released BEFORE the recursive call, so a
+throwing inner call cannot leak the prior frame.
+
+### 8. Commit split — 1 thematic per Grok ruling 7
+Agree. Shared constant + helper across both files; a half-wired intermediate
+(e.g. constant without executor wiring) would be dead code. Single commit
+`fix(computer): P3 hwnd drift M8 + locate rect0 (D4.2/D4.3)`.
+
+### 9. Test plan sufficient?
+Yes — all four Grok-required classes covered:
+1. L0 A1 mixed-rect class (must FAIL on un-patched, PASS on patched) — present.
+2. Depth=1 proof via mock always-drift trackCapture — present.
+3. Executor M8 late site (drive through locate, post-locate infoForHwnd
+   drifts 20px, assert exactly 1 trackCapture between locate and bounds) —
+   present.
+4. releaseRaw on superseded restart frame — present.
+
+Plus boundary cases (8px pass, 9px trip), CAPTURE_FAILED-on-trackCapture-
+throw, scroll/drag/explicit-coord path coverage, OOB-after-recapture
+ack. Sufficient.
+
+### 10. Anything missing that would let a regression slip?
+Three small items, none blocking:
+
+(a) **witnessVerdict survives restart.** On L0 drift-restart, the inner
+    call re-runs the witness; the outer witnessVerdict is discarded
+    naturally. Implementer should confirm the restarted return carries a
+    fresh `witness` field (or none) — not the stale outer verdict. Likely
+    free given the recursion shape, but worth one assertion in the L0 A1
+    test.
+
+(b) **L1 OCR path: same rect0 discipline.** Brief §4.3.2 lists L1 OCR
+    success return at line 422 AND L1 OCR re-probe at line 446. Both
+    return after a `shot = fresh` A1 re-capture at line 417-420 / 437-444.
+    The drift guard fires AFTER that fresh re-capture, so rect0 vs the
+    fresh shot.rect is the right comparison. Implementer: ensure the guard
+    is placed AFTER `shot = fresh` (not before) on these paths, or the A1
+    re-capture itself trips the guard spuriously.
+
+(c) **L2 TinyClick path: no A1 re-capture.** Line 467-491 has no
+    `trackCapture` between chain entry and return. The drift guard here
+    compares the original entry shot.rect to rect0 — trivially equal, so
+    the guard never fires. This is correct behavior (no drift possible
+    without an intervening capture), but the test plan should include one
+    L2 case where the WINDOW moved without chain re-capture to prove the
+    guard still fires when `shot.rect` is mutated externally. (Currently
+    impossible — `shot` is `const`-ish inside the function — but the
+    invariant is worth pinning.)
+
+These are implementer reminders, not blockers. The plan is sound.
+
+---
+
+## New blockers
+None.
+
+## Path
+Claude may execute P3. Single thematic commit per ruling 7. After P3
+lands, the residual P2 conditions (frozen-contentful detector, staleIdCaret
+dead-var) remain queued for P4+; CUBox daemon lock stays dormant until
+daemon mode ships.
+
+*Pi — confirmer. APPROVE.*

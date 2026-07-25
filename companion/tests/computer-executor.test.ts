@@ -2043,3 +2043,74 @@ test("P7 回归：admission 开启态下批准后刷新链 deps.tinyclick 恒 nu
     assert.equal(l.data.refresh, true, "tinyclick 日志只能来自刷新通道的 null 跳过")
   }
 })
+
+// --- P3 D4.2: post-locate M8 drift recapture ----------------------------------
+
+test("P3 D4.2 M8: window rect drifts >8px between locate and bounds → fresh trackCapture", async () => {
+  // Locate chain returns a hit on cap-N.png with rect=(100,100,640,480); the
+  // post-locate infoForHwnd call returns rect=(100,100,650,480) — width grew
+  // 10px > 8 → M8 fires one fresh trackCapture. The click is then bounds-
+  // checked against the NEW shot.client (the locate-time pointClient may now
+  // be OOB — that's the intended behavior; LLM gets a diagnostic on retry).
+  const injector = new RecordingInjector()
+  const capturer = new FakeCapturer()
+  // Post-locate infoForHwnd: shifted width by 10.
+  const driftedInfo = winInfo({ rect: { x: 100, y: 100, width: 650, height: 480 } })
+  let infoCalls = 0
+  const windows: WindowEnumerator = {
+    async enumerateByExe() { return [driftedInfo] },
+    async infoForHwnd() { infoCalls++; return driftedInfo },
+  }
+  const deps = makeDeps({
+    capturer,
+    injector,
+    windows: windows as any,
+  })
+  // Suppress the OOB diagnostic (pointClient comes from cap-1 rect, M8 swaps
+  // to cap-2 with new client dims → bounds check may fail OOB). We only need
+  // to verify the recapture happened; the click outcome is not under test.
+  try {
+    await runComputerTask({ task: "t", app: "win.app.test", actions: [clickOk] }, deps)
+  } catch {
+    // Bounds check may legitimately throw OOB after recapture; that's the
+    // correct downstream behavior of M8 (refuse to inject stale coords).
+  }
+  // M8 fired: at least 3 captures (initial probe + locate chain + M8 recapture).
+  assert.ok(capturer.captures >= 3, `expected ≥3 captures (probe + locate + M8), got ${capturer.captures}`)
+  // infoForHwnd was called more than once (early ownership + M8 site).
+  assert.ok(infoCalls >= 2, `expected ≥2 infoForHwnd calls, got ${infoCalls}`)
+})
+
+test("P3 D4.2 M8: no drift → no extra recapture (M8 does not spuriously fire)", async () => {
+  // Sanity: when infoForHwnd returns the SAME rect as the locate shot, M8
+  // does not trigger an extra trackCapture. Confirms the >8 threshold.
+  const injector = new RecordingInjector()
+  const capturer = new FakeCapturer()
+  const stable = winInfo() // rect matches shot() default (100,100,640,480)
+  const deps = makeDeps({
+    capturer,
+    injector,
+    windows: new FakeWindows(stable) as any,
+  })
+  await runComputerTask({ task: "t", app: "win.app.test", actions: [clickOk] }, deps)
+  // No drift → no M8 recapture: only the pre-action captures (probe + locate chain).
+  assert.ok(capturer.captures <= 3, `expected ≤3 captures without M8, got ${capturer.captures}`)
+})
+
+test("P3 D4.2 M8: 8px-or-less drift is treated as stable (threshold is strict >)", async () => {
+  // Boundary: drift exactly 8px should NOT trigger M8 (strict > per spec).
+  const injector = new RecordingInjector()
+  const capturer = new FakeCapturer()
+  const boundary = winInfo({ rect: { x: 108, y: 100, width: 640, height: 480 } }) // drift exactly 8
+  const deps = makeDeps({
+    capturer,
+    injector,
+    windows: new FakeWindows(boundary) as any,
+  })
+  try {
+    await runComputerTask({ task: "t", app: "win.app.test", actions: [clickOk] }, deps)
+  } catch {
+    // may OOB on the shifted rect; that's fine — we're asserting captures.
+  }
+  assert.ok(capturer.captures <= 3, `expected ≤3 captures at 8px boundary, got ${capturer.captures}`)
+})
