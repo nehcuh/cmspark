@@ -545,6 +545,14 @@ export function createToolExecutor(ws: WebSocket) {
       // WP4: L2 标注截图 + 三段式 caption(best-effort;undefined = 无图降级)。
       let computerL2PreviewImage: string | undefined
       let computerL2PreviewCaption: string | undefined
+      // P5 / Grok v4.1 §3.2 (Pi re-confirm PROCEED 2026-07-24): when the session
+      // already has a live trust grant for this app AND every type.text literal
+      // in the new task was in the previously-approved corpus AND no credential
+      // latch is set AND the grant is not idle-expired, skip the initial L2
+      // dialog and mint the security_token directly. The grant's lastTouchedAt
+      // is refreshed by isTrusted(); corpus does not need re-accumulation (the
+      // skip-eligible task's corpus is by definition a subset of the stored one).
+      let hostComputerTrustSkip = false
       if (hostComputerGated) {
         const { assertCoordinateAllowed } = await import("./computer/policy")
         // Y3 (WP2): the preview text comes from the PURE builder — task text
@@ -577,6 +585,51 @@ export function createToolExecutor(ws: WebSocket) {
             return failC(
               `host_computer refused: session injection rate limit reached (${limiter.countInWindow()}/30 in the last 60s) [RATE_LIMITED] — wait for the window to drain before starting another computer task.`,
             )
+          }
+          // P5 / Grok v4.1 §3.2 (Pi re-confirm PROCEED 2026-07-24 + Pi final
+          // review caveat 1 budget gate 2026-07-24): G1 trust skip gate.
+          // Consult session trust for (sessionId, app); require the new task's
+          // type corpus to be a subset of the prior approved corpus AND the
+          // budget to not exceed the largest previously-approved budget.
+          // isTrusted() already enforces idle expiry (30 min, anchored to last
+          // interactive approve) and credential latch — those need no separate
+          // check here.
+          if (sessionId && finalParams.app) {
+            const { getComputerSessionTrust } = await import("./computer/session-trust")
+            const trust = getComputerSessionTrust()
+            const appToken = String(finalParams.app)
+            const actionsArr = Array.isArray(finalParams.actions) ? finalParams.actions : []
+            const typeCorpus: string[] = []
+            for (const a of actionsArr) {
+              if (a && typeof a === "object" && (a as any).action === "type" && typeof (a as any).text === "string") {
+                typeCorpus.push(String((a as any).text))
+              }
+            }
+            const trusted = trust.isTrusted(sessionId, appToken)
+            const corpusOk = trust.corpusContains(sessionId, appToken, typeCorpus)
+            const maxBudget = trust.maxBudgetSeen(sessionId, appToken)
+            const budgetOk = maxBudget > 0 && budgetN <= maxBudget
+            if (trusted && corpusOk && budgetOk) {
+              hostComputerTrustSkip = true
+              logger.info("computer.session_trust.task_auto_approved", {
+                tool_call_id: toolCallId,
+                thread_id: sessionId,
+                app: appToken,
+                type_corpus_size: typeCorpus.length,
+                budget: budgetN,
+                max_budget_seen: maxBudget,
+              })
+            } else {
+              logger.info("computer.session_trust.skip_missed", {
+                tool_call_id: toolCallId,
+                thread_id: sessionId,
+                app: appToken,
+                trusted,
+                corpus_eligible: corpusOk,
+                budget_eligible: budgetOk,
+                max_budget_seen: maxBudget,
+              })
+            }
           }
           computerPreview = buildComputerL2Preview({
             task: String(finalParams.task || ""),
@@ -707,7 +760,7 @@ export function createToolExecutor(ws: WebSocket) {
       const criticalApis = hostComputerGated ? ["computer.coordinate_injection"] : detectCriticalApis(code)
       const forceConfirm = criticalApis.length > 0
 
-      if (!skipConfirmation || forceConfirm) {
+      if ((!skipConfirmation || forceConfirm) && !hostComputerTrustSkip) {
         // Audit item 2: default-deny. ALL evaluate/osascript_eval calls require
         // interactive confirmation unless whitelisted above. The regex match
         // (safety.dangerousApis) becomes a risk-preview escalation hint shown to
@@ -930,12 +983,34 @@ export function createToolExecutor(ws: WebSocket) {
         // budget exhaustion, dialog-suspected) in THIS session for THIS app
         // will auto-approve. Only reL2() in the executor consults this — the
         // initial L2 above always asks. See computer/session-trust.ts.
+        //
+        // P5 / Grok v4.1 §3.2 (Pi re-confirm PROCEED 2026-07-24): on interactive
+        // approve, ALSO clear the credential latch (user just re-consented with
+        // a fresh preview) AND extend the type corpus with this task's type.text
+        // literals — so a future task with the same-or-subset corpus is eligible
+        // for the G1 trust skip above.
         if (hostComputerGated && finalParams.app) {
           const { getComputerSessionTrust } = await import("./computer/session-trust")
-          getComputerSessionTrust().grant(sessionId, String(finalParams.app))
+          const trust = getComputerSessionTrust()
+          const appToken = String(finalParams.app)
+          trust.grant(sessionId, appToken)
+          trust.clearCredentialLatch(sessionId, appToken)
+          trust.recordBudget(sessionId, appToken, Number(finalParams.budget) || 15)
+          const actionsArr = Array.isArray(finalParams.actions) ? finalParams.actions : []
+          const typeTexts: string[] = []
+          for (const a of actionsArr) {
+            if (a && typeof a === "object" && (a as any).action === "type" && typeof (a as any).text === "string") {
+              typeTexts.push(String((a as any).text))
+            }
+          }
+          if (typeTexts.length > 0) {
+            trust.extendCorpus(sessionId, appToken, typeTexts)
+          }
           logger.info("computer.session_trust.granted", {
             tool_call_id: toolCallId,
-            app: String(finalParams.app),
+            app: appToken,
+            corpus_extended_by: typeTexts.length,
+            budget_recorded: Number(finalParams.budget) || 15,
           })
         }
         if (hostApp) hostAppTier = "l2"
@@ -952,7 +1027,11 @@ export function createToolExecutor(ws: WebSocket) {
       } else {
         // App tab WP3: app_whitelist / thread_trust reasons precede the
         // domain_whitelist fallback (host_app never carries a domain).
-        const autoReason = securityConfig.allow_all_schemes ? "god_mode"
+        // P5 (Pi final-review caveat 3 2026-07-24): hostComputerTrustSkip has
+        // its own audit reason so silent-skip is distinguishable from god-mode
+        // / whitelist in the audit log.
+        const autoReason = hostComputerTrustSkip ? "session_trust_corpus_subset"
+          : securityConfig.allow_all_schemes ? "god_mode"
           : securityConfig.auto_approve_dangerous ? "global_toggle"
           : appWhitelisted ? "app_whitelist"
           : threadTrusted ? "thread_trust"

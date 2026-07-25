@@ -18,7 +18,9 @@ import * as path from "path"
 import * as os from "os"
 import * as fs from "fs"
 import { createHash, randomUUID } from "crypto"
+import { logger } from "../logger"
 import { resolveHostBinary } from "../host-use/darwin/host-bin"
+import { spawnHostBin } from "../host-use/darwin/host-integrity"
 import {
   ComputerError,
   ForegroundProbeBrokenError,
@@ -54,10 +56,11 @@ const DARWIN_OCR_TIMEOUT_MS = 30000
 const DARWIN_INJECT_TIMEOUT_MS = 10000
 
 // ---------------------------------------------------------------------------
-// Helper: parse JSON from stdout, throw typed ComputerError on failure
+// Helper: parse JSON from stdout, throw typed ComputerError on failure.
+// Exported for unit testing the F9 end-to-end failure contract.
 // ---------------------------------------------------------------------------
 
-function parseComputerJson(stdout: string, label: string): Record<string, any> {
+export function parseComputerJson(stdout: string, label: string): Record<string, any> {
   let parsed: unknown
   try {
     parsed = JSON.parse(stdout)
@@ -70,13 +73,81 @@ function parseComputerJson(stdout: string, label: string): Record<string, any> {
   return parsed as Record<string, any>
 }
 
-function checkOk(parsed: Record<string, any>, label: string): void {
+export function checkOk(parsed: Record<string, any>, label: string): void {
   if (parsed.ok !== true) {
     throw new ComputerError(
       parsed.error_code ?? "INVALID_ACTION",
       `${label}: ${parsed.error ?? "unknown error"}`,
     )
   }
+}
+
+/**
+ * P2 (Pi C4): when cmspark-host's screenshot subcommand returns {ok:false},
+ * decide what audit to emit and what ComputerError to throw.
+ *
+ * CAPTURE_FAILED carries operator-only metrics under `capture_degraded`. This
+ * function emits `computer.capture.degraded` to the operator audit channel
+ * BEFORE constructing the typed error, so operators see stdev/identity/size in
+ * logs while the LLM-facing `.message` stays generic (no "degraded, please
+ * activate" coaching that page content could teach the model to request).
+ *
+ * Extracted as a pure function (logger side effect aside) so tests can drive
+ * every failure code without spawning the binary. localSha256 only fills in
+ * when the host omitted sha256 from capture_degraded (older binaries).
+ */
+export function interpretScreenshotFailure(
+  hwnd: number,
+  parsed: Record<string, any>,
+  localSha256: string = "",
+): ComputerError {
+  // `parsed.error_code` is any (host.swift output); preserve any-ness so the
+  // ComputerErrorCode union accepts it, mirroring checkOk's pre-existing pattern.
+  const code = parsed.error_code ?? "INVALID_ACTION"
+  if (code === "CAPTURE_FAILED") {
+    const dg = parsed.capture_degraded && typeof parsed.capture_degraded === "object"
+      ? (parsed.capture_degraded as Record<string, unknown>)
+      : null
+    logger.info("computer.capture.degraded", {
+      windowId: hwnd,
+      reason: (dg?.reason as string) ?? "unknown",
+      stdev: dg?.stdev ?? null,
+      identity: dg?.identity ?? null,
+      sizeBytes: dg?.sizeBytes ?? null,
+      imageWidth: dg?.imageWidth ?? null,
+      imageHeight: dg?.imageHeight ?? null,
+      threshold: dg?.threshold ?? null,
+      prior_present: dg?.prior_present ?? null,
+      sha256: (dg?.sha256 as string) || localSha256 || null,
+    })
+    // P2 C4 (Grok blocker 1) defense-in-depth: NEVER echo parsed.error into the
+    // LLM-facing message, even if a future host regression embeds metrics
+    // there. The .message is hardcoded generic; metrics ride only in .detail
+    // + the audit log. Tests assert this for the real host-shaped payload.
+    return new ComputerError(
+      code,
+      "screenshot: stale or solid capture frame",
+      parsed.capture_degraded ? { capture_degraded: parsed.capture_degraded } : undefined,
+    )
+  }
+  return new ComputerError(
+    code,
+    `screenshot: ${parsed.error ?? "unknown error"}`,
+  )
+}
+
+/**
+ * Combined parse + ok-check for spawnHostBin stdout. Used by every inject
+ * path (click / type / key / scroll / drag) so that the binary's structured
+ * failure codes (SKYLIGHT_SPI_UNAVAILABLE, SKYLIGHT_POST_FAILED,
+ * CGEVENT_CONSTRUCT_FAILED, etc.) surface as typed ComputerError instead
+ * of being silently dropped.
+ *
+ * Exported for F9 contract testing.
+ */
+export function assertInjectOk(stdout: string, label = "inject"): void {
+  const parsed = parseComputerJson(stdout, label)
+  checkOk(parsed, label)
 }
 
 function rethrowDarwinExecError(err: ExecFileException | Error, label: string): never {
@@ -249,18 +320,42 @@ export class MacScreenCapturer implements ScreenCapturer {
       rethrowDarwinExecError(err as ExecFileException | Error, "screenshot")
     }
     const parsed = parseComputerJson(result.stdout, "screenshot")
-    checkOk(parsed, "screenshot")
-
+    // Compute sha256 BEFORE the ok-check so interpretScreenshotFailure can use
+    // it as a fallback when the host's CAPTURE_FAILED payload omits the field
+    // (older binaries). Replaces `checkOk(parsed, "screenshot")`; see P2 Pi C4.
     let sha256 = ""
     try {
       sha256 = createHash("sha256").update(fs.readFileSync(tmpPath)).digest("hex")
-    } catch { /* file not found — error surfaced below */ }
+    } catch { /* file missing or host failed before writing — sha256 stays "" */ }
+    if (parsed.ok !== true) {
+      throw interpretScreenshotFailure(hwnd, parsed, sha256)
+    }
+
+    // v4 Defect 3: plumb real image dimensions + backing scale. Fall back to
+    // rect dims when binary lacks the new fields (older host.swift — bridge
+    // period during canary rollout). scaleX/Y default to 1.0 ONLY when binary
+    // did not report; never silently treat retina as 1x.
+    const rect = parsed.rect ?? { x: 0, y: 0, width: 0, height: 0 }
+    const imageWidth = typeof parsed.imageWidth === "number" ? parsed.imageWidth : rect.width
+    const imageHeight = typeof parsed.imageHeight === "number" ? parsed.imageHeight : rect.height
+    const rectW = rect.width || 0
+    const rectH = rect.height || 0
+    const scaleX = typeof parsed.scaleX === "number"
+      ? parsed.scaleX
+      : (rectW > 0 ? imageWidth / rectW : 1.0)
+    const scaleY = typeof parsed.scaleY === "number"
+      ? parsed.scaleY
+      : (rectH > 0 ? imageHeight / rectH : 1.0)
 
     return {
       hwnd,
-      rect: parsed.rect ?? { x: 0, y: 0, width: 0, height: 0 },
+      rect,
       client: parsed.client ?? { x: 0, y: 0, width: parsed.rect?.width ?? 0, height: parsed.rect?.height ?? 0 },
       dpi: parsed.dpi ?? 72,
+      imageWidth,
+      imageHeight,
+      scaleX,
+      scaleY,
       path: tmpPath,
       sha256,
       black: false,
@@ -495,21 +590,28 @@ export class MacInputInjector implements InputInjector {
   }
 
   async click(hwnd: number, x: number, y: number, kind: ClickKind): Promise<void> {
-    await this.ensureForeground(hwnd)
+    // SkyLight per-PID delivery routes the event to the target window's PID
+    // regardless of frontmost state. ensureForeground is no longer needed
+    // for inject paths and would re-introduce cursor churn.
     const bin = resolveHostBinary()
     const args = ["inject", "--action", kind, "--window-id", String(hwnd),
                   "--x", String(Math.round(x)), "--y", String(Math.round(y)),
                   "--check-occlusion"]
     if (this.estopFlagPath) args.push("--estop-flag", this.estopFlagPath)
+    let stdout: string
     try {
-      await execFileAsync(bin, args, { timeout: DARWIN_INJECT_TIMEOUT_MS })
+      stdout = await spawnHostBin(bin, args, { timeoutMs: DARWIN_INJECT_TIMEOUT_MS })
     } catch (err) {
       rethrowDarwinExecError(err as ExecFileException | Error, "inject")
     }
+    // SkyLight SPI failures (SKYLIGHT_SPI_UNAVAILABLE / SKYLIGHT_POST_FAILED)
+    // are returned as structured JSON `{ok:false, error_code}` by the binary;
+    // surface as typed ComputerError so the LLM sees the failure mode.
+    const parsed = parseComputerJson(stdout, "inject")
+    checkOk(parsed, "inject")
   }
 
   async typeText(hwnd: number, text: string): Promise<void> {
-    await this.ensureForeground(hwnd)
     const normalized = text.normalize("NFKC")
     const graphemes = [...this.segmenter.segment(normalized)].map((s) => s.segment)
 
@@ -521,56 +623,65 @@ export class MacInputInjector implements InputInjector {
                     "--check-secure-input",
                     "--check-onscreen"]
       if (this.estopFlagPath) args.push("--estop-flag", this.estopFlagPath)
+      let stdout: string
       try {
-        await execFileAsync(bin, args, { timeout: 5000 })
+        stdout = await spawnHostBin(bin, args, { timeoutMs: 5000 })
       } catch (err) {
         rethrowDarwinExecError(err as ExecFileException | Error, "inject")
       }
+      const parsed = parseComputerJson(stdout, "inject")
+      checkOk(parsed, "inject")
       await new Promise((r) => setTimeout(r, Math.max(chunk.length * 80, 1)))
     }
   }
 
   async keyChord(hwnd: number, keys: string[]): Promise<void> {
-    await this.ensureForeground(hwnd)
     const bin = resolveHostBinary()
     const args = ["inject", "--action", "key", "--window-id", String(hwnd), "--chord", ...keys]
     if (this.estopFlagPath) args.push("--estop-flag", this.estopFlagPath)
+    let stdout: string
     try {
-      await execFileAsync(bin, args, { timeout: 5000 })
+      stdout = await spawnHostBin(bin, args, { timeoutMs: 5000 })
     } catch (err) {
       rethrowDarwinExecError(err as ExecFileException | Error, "inject")
     }
+    const parsed = parseComputerJson(stdout, "inject")
+    checkOk(parsed, "inject")
   }
 
   async scroll(hwnd: number, x: number, y: number, delta: number): Promise<void> {
-    await this.ensureForeground(hwnd)
     const bin = resolveHostBinary()
+    let stdout: string
     try {
-      await execFileAsync(bin, [
+      stdout = await spawnHostBin(bin, [
         "inject", "--action", "scroll",
         "--window-id", String(hwnd),
         "--x", String(Math.round(x)),
         "--y", String(Math.round(y)),
         "--delta", String(delta),
-      ], { timeout: 5000 })
+      ], { timeoutMs: 5000 })
     } catch (err) {
       rethrowDarwinExecError(err as ExecFileException | Error, "inject")
     }
+    const parsed = parseComputerJson(stdout, "inject")
+    checkOk(parsed, "inject")
   }
 
   async drag(hwnd: number, x: number, y: number, x2: number, y2: number): Promise<void> {
-    await this.ensureForeground(hwnd)
     const bin = resolveHostBinary()
+    let stdout: string
     try {
-      await execFileAsync(bin, [
+      stdout = await spawnHostBin(bin, [
         "inject", "--action", "drag",
         "--window-id", String(hwnd),
         "--x", String(Math.round(x)), "--y", String(Math.round(y)),
         "--x2", String(Math.round(x2)), "--y2", String(Math.round(y2)),
-      ], { timeout: 10000 })
+      ], { timeoutMs: 10000 })
     } catch (err) {
       rethrowDarwinExecError(err as ExecFileException | Error, "inject")
     }
+    const parsed = parseComputerJson(stdout, "inject")
+    checkOk(parsed, "inject")
   }
 
   async probeWindow(hwnd: number): Promise<WindowInfo> {
