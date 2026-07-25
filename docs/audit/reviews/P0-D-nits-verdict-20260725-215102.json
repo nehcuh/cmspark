@@ -1,0 +1,8 @@
+{
+  "batch": "P0-D-nits",
+  "timestamp": "20260725-215102",
+  "claude": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/P0-D-nits-claude-20260725-215102.md" },
+  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/P0-D-nits-pi-20260725-215102.md" },
+  "both_approve": true,
+  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/P0-D-nits-diff-20260725-215102.patch"
+}

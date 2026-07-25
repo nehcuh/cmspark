@@ -83,6 +83,13 @@ import {
   type WindowEnumerator,
 } from "./types"
 
+/** P0-C: reL2 reasons that session-trust must never auto-approve. Module-level
+ *  so we do not re-allocate a Set on every reL2 call (dual-review nit). */
+const FORCE_INTERACTIVE_DANGEROUS = new Set([
+  "computer.danger_detected",
+  "computer.experimental_suggestion",
+])
+
 /** Re-L2 channel (budget / dialog / danger pauses). Origin-bound by construction. */
 export type ComputerConfirmationChannel = (
   details: SecurityConfirmationDetails,
@@ -618,10 +625,6 @@ export async function runComputerTask(
     // content-sensitive / uncalibrated gates that always need fresh human eyes.
     // Budget / uncross / foreground_yielded / task_induced_dialog still auto-
     // approve under trust (UX-spike preserved).
-    const FORCE_INTERACTIVE_DANGEROUS = new Set([
-      "computer.danger_detected",
-      "computer.experimental_suggestion",
-    ])
     const forceInteractive = dangerous.some((d) => FORCE_INTERACTIVE_DANGEROUS.has(d))
     if (deps.sessionId && params.app && !forceInteractive) {
       const trust = deps.sessionTrust ?? getComputerSessionTrust()

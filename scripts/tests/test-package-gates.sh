@@ -12,6 +12,7 @@ ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 PACKAGE_SH="${ROOT}/scripts/package.sh"
 MAKEFILE="${ROOT}/Makefile"
 RELEASE_YML="${ROOT}/.github/workflows/release.yml"
+CI_YML="${ROOT}/.github/workflows/ci.yml"
 PS1="${ROOT}/scripts/build-windows-exe.ps1"
 
 PASS=0
@@ -171,7 +172,8 @@ OUT_WIN="$(
 RC_WIN=$?
 set -e
 assert_eq 0 "${RC_WIN}" "windows-x64 gate-only should pass when ps1 sources exist"
-assert_match 'host-scripts-win has' "${OUT_WIN}" "reports ps1 count"
+assert_match 'host-scripts-win' "${OUT_WIN}" "reports host-scripts-win status"
+assert_match 'GATE-ONLY: windows' "${OUT_WIN}" "gate-only success prefix"
 
 # --- Dynamic negative: empty win scripts → exit 1 (simulate via temp rename) -
 WIN_SCRIPTS="${ROOT}/companion/src/host-use/win/scripts"
@@ -217,6 +219,115 @@ else
     PASS=$((PASS + 1))
   fi
 fi
+
+# --- Static: release body qualifies ORT hard-fail as windows-x64 only --------
+echo "[static] release.yml ORT fail-closed is platform-qualified"
+assert_file_has "${RELEASE_YML}" 'windows-x64' \
+  "release body mentions windows-x64 for TinyClick/ORT"
+assert_file_has "${RELEASE_YML}" 'optional soft stage' \
+  "release body notes macOS/Linux ORT is optional soft stage"
+assert_file_has "${CI_YML}" 'test-package-gates' \
+  "ci.yml runs test-package-gates.sh"
+
+# --- Dynamic: missing tray (macos-arm64) -------------------------------------
+TRAY_BIN="${ROOT}/companion/dist/cmspark-tray"
+if [ "$(uname -s)" = "Darwin" ] && [ -f "${TRAY_BIN}" ]; then
+  echo "[dynamic] missing cmspark-tray → exit 1 (macos-arm64)"
+  TRAY_BAK="$(mktemp "${TMPDIR:-/tmp}/cmspark-tray.XXXXXX")"
+  mv "${TRAY_BIN}" "${TRAY_BAK}"
+  set +e
+  OUT_TRAY="$(
+    CMSPARK_SKIP_HOST_BUILD=1 CMSPARK_PACKAGE_GATE_ONLY=1 \
+      bash "${PACKAGE_SH}" macos-arm64 2>&1
+  )"
+  RC_TRAY=$?
+  set -e
+  mv "${TRAY_BAK}" "${TRAY_BIN}"
+  assert_eq 1 "${RC_TRAY}" "missing tray must exit 1"
+  assert_match 'cmspark-tray missing' "${OUT_TRAY}" "error mentions tray"
+else
+  echo "[dynamic] skip tray-missing test (no Darwin tray artifact)"
+fi
+
+# --- Dynamic: missing scpt ---------------------------------------------------
+SCPT_DIR="${ROOT}/companion/dist/host-scripts"
+if [ "$(uname -s)" = "Darwin" ] && ls "${SCPT_DIR}/"*.scpt >/dev/null 2>&1; then
+  echo "[dynamic] missing host-scripts/*.scpt → exit 1"
+  SCPT_BAK="${SCPT_DIR}.bak-p0d-nits"
+  if [ -e "${SCPT_BAK}" ]; then
+    echo "  FAIL: leftover ${SCPT_BAK}" >&2
+    FAIL=$((FAIL + 1))
+  else
+    mv "${SCPT_DIR}" "${SCPT_BAK}"
+    set +e
+    OUT_SCPT="$(
+      CMSPARK_SKIP_HOST_BUILD=1 CMSPARK_PACKAGE_GATE_ONLY=1 \
+        bash "${PACKAGE_SH}" macos-arm64 2>&1
+    )"
+    RC_SCPT=$?
+    set -e
+    mv "${SCPT_BAK}" "${SCPT_DIR}"
+    assert_eq 1 "${RC_SCPT}" "missing scpt must exit 1"
+    assert_match 'scpt missing|host-scripts' "${OUT_SCPT}" "error mentions scpt"
+  fi
+else
+  echo "[dynamic] skip scpt-missing test (no scpt artifacts)"
+fi
+
+# --- Dynamic: windows-x64 tinyclick precondition (rename sources) ------------
+WORKER_CANDIDATES=(
+  "${ROOT}/companion/dist/computer/tinyclick-worker.js"
+  "${ROOT}/companion/dist/tinyclick-worker.js"
+  "${ROOT}/companion/src/computer/tinyclick-worker.ts"
+)
+WORKER_MOVED=""
+WORKER_BAK=""
+for _wc in "${WORKER_CANDIDATES[@]}"; do
+  if [ -f "${_wc}" ]; then
+    WORKER_BAK="$(mktemp "${TMPDIR:-/tmp}/tinyclick-worker.XXXXXX")"
+    mv "${_wc}" "${WORKER_BAK}"
+    WORKER_MOVED="${_wc}"
+    break
+  fi
+done
+if [ -n "${WORKER_MOVED}" ]; then
+  # Hide any remaining candidates so gate sees zero workers.
+  HIDDEN_WORKERS=()
+  for _wc in "${WORKER_CANDIDATES[@]}"; do
+    if [ -f "${_wc}" ]; then
+      _hb="$(mktemp "${TMPDIR:-/tmp}/tinyclick-hide.XXXXXX")"
+      mv "${_wc}" "${_hb}"
+      HIDDEN_WORKERS+=("${_wc}|${_hb}")
+    fi
+  done
+  echo "[dynamic] windows-x64 GATE-ONLY fails without tinyclick-worker"
+  set +e
+  OUT_TC="$(
+    CMSPARK_PACKAGE_GATE_ONLY=1 bash "${PACKAGE_SH}" windows-x64 2>&1
+  )"
+  RC_TC=$?
+  set -e
+  mv "${WORKER_BAK}" "${WORKER_MOVED}"
+  for _pair in "${HIDDEN_WORKERS[@]+"${HIDDEN_WORKERS[@]}"}"; do
+    [ -z "${_pair}" ] && continue
+    _orig="${_pair%%|*}"
+    _bak="${_pair#*|}"
+    mv "${_bak}" "${_orig}"
+  done
+  assert_eq 1 "${RC_TC}" "missing tinyclick-worker must exit 1 on windows-x64 gate"
+  assert_match 'tinyclick-worker missing' "${OUT_TC}" "error mentions tinyclick-worker"
+else
+  echo "[dynamic] skip tinyclick-missing test (no worker artifact/source found)"
+fi
+
+# --- Static: windows-x64 gate-only checks ORT dir + tinyclick ---------------
+echo "[static] package.sh windows-x64 gate-only mentions ORT + tinyclick"
+assert_file_has "${PACKAGE_SH}" 'onnxruntime-node not installed' \
+  "gate-only errors when ORT missing"
+assert_file_has "${PACKAGE_SH}" 'tinyclick-worker missing' \
+  "gate-only errors when tinyclick missing"
+assert_file_has "${PS1}" 'models.manifest.json' \
+  "build-windows-exe.ps1 stages or warns about models.manifest.json"
 
 echo ""
 echo "=== Results: ${PASS} passed, ${FAIL} failed ==="

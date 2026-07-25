@@ -144,9 +144,13 @@ jobs:
             | `cmspark-v*-linux-x64.zip` | Linux x64 | systray2 linux binary |
             | `cmspark-v*-windows-x64.zip` | Windows x64 | `host-scripts-win/*.ps1`, `tinyclick-worker.js`, trimmed `onnxruntime-node` (win32/x64) |
 
-            Packaging is **fail-closed**: a missing host binary, tray (macos-arm64),
-            Windows host scripts, or TinyClick/ORT payload aborts the release job
-            rather than shipping a zip that ENONTs at runtime.
+            Packaging is **fail-closed** on platform-critical assets (aborts rather
+            than shipping a zip that ENONTs at runtime):
+            - **macos-arm64**: missing `cmspark-host`, `cmspark-tray`, or `host-scripts/*.scpt`
+            - **windows-x64**: missing `host-scripts-win/*.ps1`, `tinyclick-worker.js`,
+              or trimmed `onnxruntime-node` (win32/x64)
+            - **macOS/Linux ORT**: optional soft stage — a missing ORT build does **not**
+              abort the package job (TinyClick local model simply unavailable in that zip)
 
             ### Security notes (accurate as of this release)
             - **WS auth (audit C1)**: **FIXED** — origin allowlist + shared-secret

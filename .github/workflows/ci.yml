@@ -42,6 +42,13 @@ jobs:
           bash -n scripts/verify-node.sh
           bash scripts/tests/test-verify-node.sh
 
+      - name: Package fail-closed gates (P0-D nits)
+        # Static greps + dynamic negatives (missing host / win scripts / tray /
+        # scpt / tinyclick preconditions). Runs without a full platform package.
+        run: |
+          bash -n scripts/tests/test-package-gates.sh
+          bash scripts/tests/test-package-gates.sh
+
       - name: Build companion
         run: |
           cd companion && npm run build

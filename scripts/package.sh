@@ -105,6 +105,7 @@ else
   cd "${ROOT_DIR}/chrome-extension"
   npm run build 2>&1 | tail -1
 fi
+# Note: macOS host build is [2b/9] immediately below (same major step family as [2/9]).
 
 # --- Step 1b: macOS host binary + scripts (hard-required for macos packages) ---
 # P0-D: never ship a macOS zip without cmspark-host + precompiled .scpt (and
@@ -144,6 +145,8 @@ if [[ "${PLATFORM}" == macos-* ]]; then
 fi
 
 # Cross-platform gate-only: windows host-scripts-win non-empty (no full package).
+# windows-x64 also prechecks TinyClick worker + ORT install (preconditions for
+# the hard-fail staging path later in the full package).
 if [ "${CMSPARK_PACKAGE_GATE_ONLY:-}" = "1" ] && [[ "${PLATFORM}" == windows-* ]]; then
   win_src="${ROOT_DIR}/companion/src/host-use/win/scripts"
   win_count=0
@@ -154,7 +157,27 @@ if [ "${CMSPARK_PACKAGE_GATE_ONLY:-}" = "1" ] && [[ "${PLATFORM}" == windows-* ]
     echo "ERROR: host-scripts-win source empty (${win_src})" >&2
     exit 1
   fi
-  echo "GATE-ONLY: windows host-scripts-win has ${win_count} ps1 — exiting 0"
+  if [ "${PLATFORM}" = "windows-x64" ]; then
+    worker_ok=0
+    for _w in \
+      "${ROOT_DIR}/companion/dist/computer/tinyclick-worker.js" \
+      "${ROOT_DIR}/companion/dist/tinyclick-worker.js" \
+      "${ROOT_DIR}/companion/src/computer/tinyclick-worker.ts"
+    do
+      if [ -f "${_w}" ]; then worker_ok=1; break; fi
+    done
+    if [ "${worker_ok}" -eq 0 ]; then
+      echo "ERROR: tinyclick-worker missing (need dist/computer/tinyclick-worker.js or src .ts) — windows-x64 hard-gate precondition" >&2
+      exit 1
+    fi
+    if [ ! -d "${ROOT_DIR}/companion/node_modules/onnxruntime-node" ]; then
+      echo "ERROR: onnxruntime-node not installed — windows-x64 package hard-requires ORT (npm ci in companion/)" >&2
+      exit 1
+    fi
+    echo "GATE-ONLY: windows-x64 host-scripts-win=${win_count} ps1 + tinyclick + ORT preconditions OK — exiting 0"
+  else
+    echo "GATE-ONLY: windows host-scripts-win has ${win_count} ps1 — exiting 0"
+  fi
   exit 0
 fi
 

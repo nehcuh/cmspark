@@ -227,6 +227,15 @@ Ok "cmspark-agent.exe"
 Copy-Item "$CompanionDir\dist\tinyclick-worker.js" $StagingDir
 Ok "tinyclick-worker.js (SEA sidecar)"
 
+# TinyClick/ORT provenance manifest (package.sh stages this; SEA path must too)
+$ManifestSrc = "$CompanionDir\models.manifest.json"
+if (Test-Path $ManifestSrc) {
+    Copy-Item $ManifestSrc $StagingDir
+    Ok "models.manifest.json"
+} else {
+    Warn "models.manifest.json not found — TinyClick download/license gate lacks provenance hashes"
+}
+
 # WASM file for sql.js (loaded at runtime via getSqlWasmPath())
 $WasmSrc = "$CompanionDir\node_modules\sql.js\dist\sql-wasm.wasm"
 if (Test-Path $WasmSrc) {
