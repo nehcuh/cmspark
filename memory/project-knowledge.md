@@ -67,6 +67,14 @@
 - Avoids needing to modify the chat/streaming pipeline to support cross-client routing
 - Files: server.ts `broadcast` fn → message-router.ts broadcasts `quickAction.start` → extension forwards to sidepanel → sidepanel sends `chat.send` through its own WS connection
 
+### P0 batch-fix + 对抗后 Claude/Pi 双外部审（2026-07-25，可复用）
+- Workflow: `.grok/workflows/p0-batch-fix.rhai`；脚本 `scripts/dual-external-review.sh`
+- 链：Design → Implement → 内部对抗(2 skeptics, fail-closed) → **仅对抗通过后** 分别起 `claude -p` 与 `pi -p` → 双 APPROVE/APPROVE_WITH_NITS → build → commit
+- Claude：`--permission-mode acceptEdits` + Read/Grep/Glob/Bash；**不要**用 plan mode（终稿 VERDICT 会吞进 plan 文件 → 脚本判 UNKNOWN）
+- Pi：`-p --no-session -t read,bash`；可能长时间空 stdout 挂起 — 可用户 waive，用 Claude + 对抗 + host 定向测推进，事后补 verdict 文件
+- 产物目录：`docs/audit/reviews/`；批次报告 + claude/pi md + verdict json + patch
+- 诊断 fanout 姐妹流：`.grok/workflows/deep-diagnosis-fanout.rhai`（子系统 10 + 横切 6 + 对抗 16 + 综合）
+
 ### 定点修复: kimi 改动前复审的动态工作流
 - 已沉淀为个人技能 `kimi-gated-fix`(~/.config/skills/kimi-gated-fix/),含可移植的 workflow-template.js
 - 模式: 对已诊断到代码行的 bug,dynamic workflow pipeline(Design 精确 diff → kimi 改动前复审 → 仅 APPROVE 才 Apply → build 验证);主会话再对完整 git diff 做 kimi 终审

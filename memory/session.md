@@ -2,6 +2,14 @@
 
 ## Current Session
 
+### S15 (2026-07-25) [cmspark deep diagnosis fanout + P0-A/B/C fix stack; P0-D mid Design]
+- **诊断 fanout**：33 agents → 5.8/C+（↑1.4）；Critical 0；报告 `docs/audit/diagnosis-fanout-2026-07-25.md`
+- **流程**：`p0-batch-fix.rhai` = Design→Implement→对抗→**独立** Claude+Pi 双审→build。Pi 可空挂；用户可 waive
+- **已 commit（本地未 push）**：`360de94` P0-A · `29db352` P0-B · `c2784ed` P0-C；HEAD 分支 `fix/diagnosis-P0-D`
+- **P0-C 补记**：事后 Pi 亦 APPROVE_WITH_NITS（`P0-C-verdict-20260725-140515.json`）；曾用 waive 推进
+- **下次**：从 P0-D 继续（package/release hard-gate）；见 `docs/audit/handoff-p0-diagnosis-2026-07-25.md`
+- Recorded: yes — project-knowledge 双审流程；PROJECT_CONTEXT handoff S15
+
 ### S14 (2026-07-23) [cmspark macOS computer-use: forceForeground 融合 + bundle 级 TCC codesign 根因定位]
 - 拉远程（`26e29c6` session-trust + `51c959f` forceForeground 融合）— 上个会话的「方案 A」已合：每动作 `activateTarget` 折叠进 `forceForeground(hwnd)` 单一入口，executor FOREGROUND-YIELD 自家 UI 静默重抢用同一函数。
 - **TCC 反复弹窗 regression 根因定位**：用户报"chrome 插件执行过程中反复弹窗提示 CMspark.app 需要截屏权限，实际打开都已经有权限"。诊断：`codesign -dv` 显示 `/Applications/CMspark.app` bundle 级未签名 → macOS 26 Tahoe TCC **按 bundle 级评估**（不是 per-binary），未签名 = 每次启动重新评估 = 反复弹。用户从 DMG 拖 `.app` 覆盖了之前手工重签版，问题又回来。
@@ -135,6 +143,13 @@
 - Recorded: yes — 见 project-knowledge.md「Mermaid 图表渲染的三个坑」+ docs/adr/009
 
 ## In-Flight Tasks (Cross-Session)
+
+### P0-D package/release hard-gates (from 2026-07-25 diagnosis)
+- status: active
+- context: P0-A/B/C committed on stack ending at c2784ed; P0-D workflow p0-batch-fix-4 was mid Design on fix/diagnosis-P0-D
+- next_action: Resume or re-launch p0-batch-fix with batch=P0-D; hard-gate cmspark-host/tray + TinyClick/win scripts notes + fix release.yml WS-auth deferred text; dual review Claude+Pi (waive Pi if hang)
+- resume_doc: docs/audit/handoff-p0-diagnosis-2026-07-25.md
+- updated: 2026-07-25
 
 ### Quick Actions Runtime Verification
 - status: needs-testing
