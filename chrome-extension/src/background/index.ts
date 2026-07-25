@@ -5,6 +5,7 @@ import { WSClient } from "./ws-client"
 import { BrowserBridge } from "./browser-bridge"
 import { KeepAlive } from "./keep-alive"
 import { PageSanitizer, pageSanitizer } from "./page-sanitizer"
+import { buildSecurityConfirmationWsPayload } from "./security-confirmation-payload"
 import { handleNotebooklmExport } from "./notebooklm-handler"
 import { cancelBatch, getActiveBatch, resumeIfPending, startBatch } from "./notebooklm-import-orchestrator"
 import { createNotebook, listNotebooks } from "../notebooklm/notebook-api"
@@ -444,17 +445,11 @@ function setupMessageHandlers() {
       }
 
       case "security.confirmation.response":
-        wsClient.send({
-          type: "security.confirmation.response",
-          confirmation_id: message.confirmation_id,
-          approved: message.approved === true,
-          // Forward the whitelist patterns chosen in the dialog so the companion
-          // can persist them into auto_approved_domains. Dropping this field
-          // (regression) silently makes "add to whitelist" a no-op: the companion
-          // sees an empty array, skips saveConfig, and every future evaluate on
-          // the same domain re-prompts.
-          add_to_whitelist: Array.isArray(message.add_to_whitelist) ? message.add_to_whitelist : [],
-        })
+        // Forward full Side Panel fields: add_to_whitelist, nonce_response,
+        // add_to_thread_whitelist, stop_thread. Companion handleSecurityConfirmationResponse
+        // already consumes these (server.ts ~1481-1515). Dropping them silently
+        // breaks whitelist persistence, nonce challenge, and thread trust.
+        wsClient.send(buildSecurityConfirmationWsPayload(message))
         sendResponse({ ok: true })
         return true
 

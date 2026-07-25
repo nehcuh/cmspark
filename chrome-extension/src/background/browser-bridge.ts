@@ -3,6 +3,10 @@
 import { PageSanitizer, pageSanitizer } from "./page-sanitizer"
 import { fetchImageAsBase64 } from "./image-extract-utils"
 import { detectDangerousApis } from "./dangerous-apis"
+import { selectorJsLiteral } from "./selector-js-literal"
+
+// Re-export for callers / tests that import from browser-bridge.
+export { selectorJsLiteral } from "./selector-js-literal"
 
 interface ToolResult {
   success: boolean
@@ -602,7 +606,9 @@ export class BrowserBridge {
 
   private async getPageHTML(params: Record<string, any>): Promise<ToolResult> {
     const tabId = this.getTabId(params)
-    const selector = params.selector ? `.querySelector('${params.selector}')` : ""
+    // Keep document.querySelector('html') prefix for scriptingExecute bodyHtmlExpr special-case.
+    // Selector must be JSON.stringify'd — never raw-interpolate into Runtime.evaluate.
+    const selector = params.selector ? `.querySelector(${selectorJsLiteral(params.selector)})` : ""
     const expression = `document.querySelector('html')${selector}?.outerHTML?.substring(0, 500000) || ''`
     let html = ""
     let source: "runtime" | "dom" = "runtime"
@@ -962,8 +968,7 @@ export class BrowserBridge {
   // --- Geom helpers ---
 
   private async waitForSelector(tabId: number, selector: string, timeoutMs: number): Promise<void> {
-    const escaped = selector.replace(/'/g, "\\'")
-    const expression = `!!document.querySelector('${escaped}')`
+    const expression = `!!document.querySelector(${selectorJsLiteral(selector)})`
     const start = Date.now()
     while (Date.now() - start < timeoutMs) {
       try {
@@ -980,11 +985,10 @@ export class BrowserBridge {
 
   private async getElementCenter(tabId: number, selector?: string, scrollIntoView = true): Promise<{ x: number; y: number }> {
     if (!selector) return { x: 300, y: 300 }
-    const escapedSelector = selector.replace(/'/g, "\\'")
     const scrollExpr = scrollIntoView
       ? `if(r.bottom<0||r.top>window.innerHeight||r.right<0||r.left>window.innerWidth){el.scrollIntoView({block:'center',inline:'center',behavior:'instant'});r=el.getBoundingClientRect();}`
       : ""
-    const expression = `(()=>{const el=document.querySelector('${escapedSelector}');if(!el)return null;let r=el.getBoundingClientRect();${scrollExpr}return{x:r.x+r.width/2,y:r.y+r.height/2}})()`
+    const expression = `(()=>{const el=document.querySelector(${selectorJsLiteral(selector)});if(!el)return null;let r=el.getBoundingClientRect();${scrollExpr}return{x:r.x+r.width/2,y:r.y+r.height/2}})()`
 
     // Try CDP first
     try {

@@ -1,0 +1,8 @@
+{
+  "batch": "P0-A",
+  "timestamp": "20260725-130727",
+  "claude": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/P0-A-claude-20260725-130727.md" },
+  "pi": { "verdict": "APPROVE", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/P0-A-pi-20260725-130727.md" },
+  "both_approve": true,
+  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/P0-A-diff-20260725-130727.patch"
+}

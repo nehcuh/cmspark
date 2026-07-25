@@ -109,3 +109,28 @@ test("X3: repeated broadcasts across the window — unauthenticated stays at zer
   assert.equal(recvA.length, 5)
   assert.equal(recvB.length, 0, "every broadcast in the window is withheld, not just the first")
 })
+
+// SRV-1: config.updated rides the same authenticated-only fan-out. Pre-fix
+// used the module-level `clients` Set with OPEN-only checks (no auth gate).
+// Payload below is pre-redacted (*** values) on purpose — this case asserts the
+// auth gate only. Secret masking is covered by companion/tests/config-broadcast-redact.test.ts.
+test("SRV-1: config.updated via broadcastToClients reaches auth client only; unauth recv length 0", async () => {
+  broadcastToClients({
+    type: "config.updated",
+    config: {
+      llm: { api_key: "***", model_name: "m" },
+      mcp: {
+        enabled: true,
+        servers: {
+          s: { transport: "stdio", command: "npx", env: { TOKEN: "***" } },
+        },
+      },
+    },
+    source: "companion",
+  })
+  await settle()
+  assert.equal(recvA.length, 1, "authenticated panel receives config.updated")
+  assert.equal(recvA[0]?.type, "config.updated")
+  assert.equal(recvA[0]?.source, "companion")
+  assert.equal(recvB.length, 0, "pre-handshake peer must not receive config.updated")
+})

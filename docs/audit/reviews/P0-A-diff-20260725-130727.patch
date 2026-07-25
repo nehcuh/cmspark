@@ -1,0 +1,325 @@
+# Dual external review context
+batch: P0-A
+base: HEAD
+time: 20260725-130727
+
+fd00f94
+
+ M chrome-extension/src/background/browser-bridge.ts
+ M chrome-extension/src/background/index.ts
+ M chrome-extension/tsconfig.test.json
+ M companion/src/server.ts
+ M companion/tests/integration/computer-broadcast-auth.test.ts
+ M memory/session.md
+?? .grok/
+?? .omx/
+?? audit-report-cmspark-2026-07-25.md
+?? chrome-extension/src/background/security-confirmation-payload.ts
+?? chrome-extension/src/background/selector-js-literal.ts
+?? chrome-extension/tests/security-confirmation-forward.test.ts
+?? chrome-extension/tests/selector-js-literal.test.ts
+?? companion/src/host-use/darwin/build-host-skylight.sh
+?? companion/src/host-use/darwin/host-skylight-nolibval.entitlements
+?? companion/src/host-use/darwin/host-skylight.entitlements
+?? companion/src/host-use/darwin/host-skylight.swift
+?? companion/tests/config-broadcast-redact.test.ts
+?? docs/audit/diagnosis-fanout-2026-07-25-summary.json
+?? docs/audit/diagnosis-fanout-2026-07-25.md
+?? docs/audit/reviews/
+?? docs/decisions/capability-token-brief.md
+?? docs/decisions/capability-token-round1-synthesis.md
+?? docs/decisions/capability-token-threat-model-delta.md
+?? docs/decisions/v1.3/
+?? scripts/dual-external-review.sh
+
+## Diff (git diff + staged)
+ chrome-extension/src/background/browser-bridge.ts  | 14 ++--
+ chrome-extension/src/background/index.ts           | 17 ++--
+ chrome-extension/tsconfig.test.json                |  2 +
+ companion/src/server.ts                            | 92 ++++++++++++++++++----
+ .../integration/computer-broadcast-auth.test.ts    | 25 ++++++
+ memory/session.md                                  | 16 ++++
+ 6 files changed, 133 insertions(+), 33 deletions(-)
+
+diff --git a/chrome-extension/src/background/browser-bridge.ts b/chrome-extension/src/background/browser-bridge.ts
+index d52f863..a405161 100644
+--- a/chrome-extension/src/background/browser-bridge.ts
++++ b/chrome-extension/src/background/browser-bridge.ts
+@@ -3,6 +3,10 @@
+ import { PageSanitizer, pageSanitizer } from "./page-sanitizer"
+ import { fetchImageAsBase64 } from "./image-extract-utils"
+ import { detectDangerousApis } from "./dangerous-apis"
++import { selectorJsLiteral } from "./selector-js-literal"
++
++// Re-export for callers / tests that import from browser-bridge.
++export { selectorJsLiteral } from "./selector-js-literal"
+ 
+ interface ToolResult {
+   success: boolean
+@@ -602,7 +606,9 @@ export class BrowserBridge {
+ 
+   private async getPageHTML(params: Record<string, any>): Promise<ToolResult> {
+     const tabId = this.getTabId(params)
+-    const selector = params.selector ? `.querySelector('${params.selector}')` : ""
++    // Keep document.querySelector('html') prefix for scriptingExecute bodyHtmlExpr special-case.
++    // Selector must be JSON.stringify'd — never raw-interpolate into Runtime.evaluate.
++    const selector = params.selector ? `.querySelector(${selectorJsLiteral(params.selector)})` : ""
+     const expression = `document.querySelector('html')${selector}?.outerHTML?.substring(0, 500000) || ''`
+     let html = ""
+     let source: "runtime" | "dom" = "runtime"
+@@ -962,8 +968,7 @@ export class BrowserBridge {
+   // --- Geom helpers ---
+ 
+   private async waitForSelector(tabId: number, selector: string, timeoutMs: number): Promise<void> {
+-    const escaped = selector.replace(/'/g, "\\'")
+-    const expression = `!!document.querySelector('${escaped}')`
++    const expression = `!!document.querySelector(${selectorJsLiteral(selector)})`
+     const start = Date.now()
+     while (Date.now() - start < timeoutMs) {
+       try {
+@@ -980,11 +985,10 @@ export class BrowserBridge {
+ 
+   private async getElementCenter(tabId: number, selector?: string, scrollIntoView = true): Promise<{ x: number; y: number }> {
+     if (!selector) return { x: 300, y: 300 }
+-    const escapedSelector = selector.replace(/'/g, "\\'")
+     const scrollExpr = scrollIntoView
+       ? `if(r.bottom<0||r.top>window.innerHeight||r.right<0||r.left>window.innerWidth){el.scrollIntoView({block:'center',inline:'center',behavior:'instant'});r=el.getBoundingClientRect();}`
+       : ""
+-    const expression = `(()=>{const el=document.querySelector('${escapedSelector}');if(!el)return null;let r=el.getBoundingClientRect();${scrollExpr}return{x:r.x+r.width/2,y:r.y+r.height/2}})()`
++    const expression = `(()=>{const el=document.querySelector(${selectorJsLiteral(selector)});if(!el)return null;let r=el.getBoundingClientRect();${scrollExpr}return{x:r.x+r.width/2,y:r.y+r.height/2}})()`
+ 
+     // Try CDP first
+     try {
+diff --git a/chrome-extension/src/background/index.ts b/chrome-extension/src/background/index.ts
+index a3b070e..9b02eb7 100644
+--- a/chrome-extension/src/background/index.ts
++++ b/chrome-extension/src/background/index.ts
+@@ -5,6 +5,7 @@ import { WSClient } from "./ws-client"
+ import { BrowserBridge } from "./browser-bridge"
+ import { KeepAlive } from "./keep-alive"
+ import { PageSanitizer, pageSanitizer } from "./page-sanitizer"
++import { buildSecurityConfirmationWsPayload } from "./security-confirmation-payload"
+ import { handleNotebooklmExport } from "./notebooklm-handler"
+ import { cancelBatch, getActiveBatch, resumeIfPending, startBatch } from "./notebooklm-import-orchestrator"
+ import { createNotebook, listNotebooks } from "../notebooklm/notebook-api"
+@@ -444,17 +445,11 @@ function setupMessageHandlers() {
+       }
+ 
+       case "security.confirmation.response":
+-        wsClient.send({
+-          type: "security.confirmation.response",
+-          confirmation_id: message.confirmation_id,
+-          approved: message.approved === true,
+-          // Forward the whitelist patterns chosen in the dialog so the companion
+-          // can persist them into auto_approved_domains. Dropping this field
+-          // (regression) silently makes "add to whitelist" a no-op: the companion
+-          // sees an empty array, skips saveConfig, and every future evaluate on
+-          // the same domain re-prompts.
+-          add_to_whitelist: Array.isArray(message.add_to_whitelist) ? message.add_to_whitelist : [],
+-        })
++        // Forward full Side Panel fields: add_to_whitelist, nonce_response,
++        // add_to_thread_whitelist, stop_thread. Companion handleSecurityConfirmationResponse
++        // already consumes these (server.ts ~1481-1515). Dropping them silently
++        // breaks whitelist persistence, nonce challenge, and thread trust.
++        wsClient.send(buildSecurityConfirmationWsPayload(message))
+         sendResponse({ ok: true })
+         return true
+ 
+diff --git a/chrome-extension/tsconfig.test.json b/chrome-extension/tsconfig.test.json
+index 81b9423..07bd928 100644
+--- a/chrome-extension/tsconfig.test.json
++++ b/chrome-extension/tsconfig.test.json
+@@ -23,6 +23,8 @@
+     "src/background/page-sanitizer.ts",
+     "src/background/image-extract-utils.ts",
+     "src/background/dangerous-apis.ts",
++    "src/background/selector-js-literal.ts",
++    "src/background/security-confirmation-payload.ts",
+     "src/notebooklm/extractor.ts",
+     "src/notebooklm/markdown-builder.ts",
+     "src/notebooklm/types.ts",
+diff --git a/companion/src/server.ts b/companion/src/server.ts
+index fe249d8..c2cc348 100644
+--- a/companion/src/server.ts
++++ b/companion/src/server.ts
+@@ -1446,6 +1446,9 @@ function dispatchToExtension(
+ export async function handleSecurityConfirmationResponse(ws: WebSocket, msg: any, sessionId?: string): Promise<void> {
+   const confirmationId = String(msg.confirmation_id || "")
+   const approved = msg.approved === true
++  // stop_thread: Side Panel may set this (XC-Integration-1 forwards it). No
++  // consumer here yet — UI already chat.aborts on stop. Keep field on the wire
++  // for a future companion-side abort; do not drop it in the extension.
+ 
+   // Validate add_to_whitelist against the domains actually shown in the
+   // dialog. Without this check, any loopback WS peer could ship a
+@@ -2701,7 +2704,7 @@ function extractMcpError(result: any): string {
+ 
+ /**
+  * Broadcast a message to all AUTHENTICATED WebSocket clients (MCP status
+- * updates, computer.task.event progress + preview JPEGs).
++ * updates, computer.task.event progress + preview JPEGs, config.updated).
+  *
+  * X3 (adversary WP2): outbound payloads turned sensitive in WP2 — per-step
+  * desktop preview JPEGs ride this channel. The inbound gate (P0-2B) already
+@@ -2724,6 +2727,71 @@ export function broadcastToClients(data: any): void {
+   }
+ }
+ 
++/**
++ * Redact secrets from a CompanionConfig (or partial) before broadcasting
++ * config.updated over WebSocket. Masks llm/vision api_key and mcp.servers
++ * env/headers *values* while preserving key names so the UI can still list
++ * which env vars / header names are configured.
++ *
++ * SRV-1: callers must applyConfig / persist with the unredacted original.
++ * Exported for pure unit tests (no startServer).
++ */
++export function redactConfigForBroadcast(config: any): any {
++  if (!config || typeof config !== "object") return config
++
++  const redacted: any = { ...config }
++
++  if (config.llm && typeof config.llm === "object") {
++    redacted.llm = {
++      ...config.llm,
++      api_key: config.llm.api_key ? "***" : "",
++    }
++  }
++
++  if (config.vision && typeof config.vision === "object") {
++    redacted.vision = {
++      ...config.vision,
++      api_key: config.vision.api_key ? "***" : "",
++    }
++  }
++
++  if (config.mcp && typeof config.mcp === "object") {
++    const serversIn = config.mcp.servers
++    if (serversIn && typeof serversIn === "object") {
++      const serversOut: Record<string, any> = {}
++      for (const [name, raw] of Object.entries(serversIn as Record<string, any>)) {
++        if (!raw || typeof raw !== "object") {
++          serversOut[name] = raw
++          continue
++        }
++        const server: any = { ...raw }
++        if (server.env && typeof server.env === "object") {
++          const env: Record<string, string> = {}
++          for (const k of Object.keys(server.env)) {
++            env[k] = "***"
++          }
++          server.env = env
++        }
++        if (server.headers && typeof server.headers === "object") {
++          const headers: Record<string, string> = {}
++          for (const k of Object.keys(server.headers)) {
++            headers[k] = "***"
++          }
++          server.headers = headers
++        }
++        serversOut[name] = server
++      }
++      // Shallow-copy mcp so we do not mutate caller's servers map; top-level
++      // ...config already shared the mcp ref until we replace it here.
++      redacted.mcp = { ...config.mcp, servers: serversOut }
++    }
++    // When servers is absent, redacted.mcp already shares config.mcp from the
++    // top-level spread — no secrets to mask on that path.
++  }
++
++  return redacted
++}
++
+ /**
+  * Exported for integration tests (X3): aim broadcastToClients at a test
+  * WebSocketServer and seed wsAuth entries (both states), so the REAL
+@@ -3210,26 +3278,16 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
+     logger.info("server.listening", { port })
+   })
+ 
+-  // Broadcast config changes to all connected WebSocket clients + apply MCP diff
++  // Broadcast config changes to AUTHENTICATED WebSocket clients only + apply MCP diff.
++  // SRV-1: never fan out to OPEN-but-unauthenticated sockets (handshake window);
++  // redact llm/vision api_key and mcp.servers env/headers values before send.
++  // applyConfig MUST receive the unredacted config (secrets needed for process spawn).
+   configEvents.on(CONFIG_CHANGE_EVENT, async (updatedConfig: any) => {
+-    const message = JSON.stringify({
++    broadcastToClients({
+       type: "config.updated",
+-      config: {
+-        ...updatedConfig,
+-        llm: { ...updatedConfig.llm, api_key: "***" },
+-        vision: updatedConfig.vision
+-          ? { ...updatedConfig.vision, api_key: updatedConfig.vision.api_key ? "***" : "" }
+-          : undefined,
+-      },
++      config: redactConfigForBroadcast(updatedConfig),
+       source: "companion",
+     })
+-    for (const client of clients) {
+-      try {
+-        if (client.readyState === WebSocket.OPEN) {
+-          client.send(message)
+-        }
+-      } catch { /* ignore disconnected */ }
+-    }
+ 
+     // Apply MCP diff (start/stop/restart servers based on what changed)
+     try {
+diff --git a/companion/tests/integration/computer-broadcast-auth.test.ts b/companion/tests/integration/computer-broadcast-auth.test.ts
+index 8c7da71..e240d85 100644
+--- a/companion/tests/integration/computer-broadcast-auth.test.ts
++++ b/companion/tests/integration/computer-broadcast-auth.test.ts
+@@ -109,3 +109,28 @@ test("X3: repeated broadcasts across the window — unauthenticated stays at zer
+   assert.equal(recvA.length, 5)
+   assert.equal(recvB.length, 0, "every broadcast in the window is withheld, not just the first")
+ })
++
++// SRV-1: config.updated rides the same authenticated-only fan-out. Pre-fix
++// used the module-level `clients` Set with OPEN-only checks (no auth gate).
++// Payload below is pre-redacted (*** values) on purpose — this case asserts the
++// auth gate only. Secret masking is covered by companion/tests/config-broadcast-redact.test.ts.
++test("SRV-1: config.updated via broadcastToClients reaches auth client only; unauth recv length 0", async () => {
++  broadcastToClients({
++    type: "config.updated",
++    config: {
++      llm: { api_key: "***", model_name: "m" },
++      mcp: {
++        enabled: true,
++        servers: {
++          s: { transport: "stdio", command: "npx", env: { TOKEN: "***" } },
++        },
++      },
++    },
++    source: "companion",
++  })
++  await settle()
++  assert.equal(recvA.length, 1, "authenticated panel receives config.updated")
++  assert.equal(recvA[0]?.type, "config.updated")
++  assert.equal(recvA[0]?.source, "companion")
++  assert.equal(recvB.length, 0, "pre-handshake peer must not receive config.updated")
++})
+diff --git a/memory/session.md b/memory/session.md
+index 922f144..0198e40 100644
+--- a/memory/session.md
++++ b/memory/session.md
+@@ -160,3 +160,19 @@
+ - **关键决策**: AX(NSAccessibility) L0 + OCR(Apple Vision) L1 定位链 / CGEventPost 注入 / screencapture 截图(避免 CGWindowListCreateImage 15.0 废弃) / UNIX socket E-Stop(替代心跳文件) / Keychain SecItemAdd 证据密钥
+ - **待完成**: E2E 真机测试(需要 Screen Recording + Accessibility TCC 权限)
+ - **Recorded**: yes — 见 project-knowledge macOS computer-use 架构决策
++
++## Session 2026-07-25 — deep diagnosis fanout
++
++- Ran workflow `.grok/workflows/deep-diagnosis-fanout.rhai` (33 agents: 10 subsystem + 6 cross-cut + 16 adversarial verify + 1 synth).
++- Report: `docs/audit/diagnosis-fanout-2026-07-25.md` + `audit-report-cmspark-2026-07-25.md`
++- Score: **5.8 / C+** (was 4.4/C on 2026-07-09, +1.4). Critical: 0. Confirmed High: 16.
++- Prior C1–C4 FIXED_VERIFY (WS HMAC auth, history flush, CI no ||true, critical npm).
++- P0 clusters: selector inject (browser-bridge), config.updated unauth fanout, computer session-trust + mac coords, Stop≠computer abort, tool orphans, package host soft-miss.
++
++## Session 2026-07-25 — P0 batch-fix workflow
++
++- Authored `.grok/workflows/p0-batch-fix.rhai` + `scripts/dual-external-review.sh`
++- Gate chain per batch: Design → Implement → Internal adversarial (2 skeptics) → **only if pass** → SEPARATE `claude -p` + `pi -p` dual review → fix loop (max 3) → build verify
++- Launched real run for **P0-A** (SEC-1 selector inject, SRV-1 config fanout, confirmation field forward)
++- Reviews land in `docs/audit/reviews/`
++

@@ -160,3 +160,19 @@
 - **关键决策**: AX(NSAccessibility) L0 + OCR(Apple Vision) L1 定位链 / CGEventPost 注入 / screencapture 截图(避免 CGWindowListCreateImage 15.0 废弃) / UNIX socket E-Stop(替代心跳文件) / Keychain SecItemAdd 证据密钥
 - **待完成**: E2E 真机测试(需要 Screen Recording + Accessibility TCC 权限)
 - **Recorded**: yes — 见 project-knowledge macOS computer-use 架构决策
+
+## Session 2026-07-25 — deep diagnosis fanout
+
+- Ran workflow `.grok/workflows/deep-diagnosis-fanout.rhai` (33 agents: 10 subsystem + 6 cross-cut + 16 adversarial verify + 1 synth).
+- Report: `docs/audit/diagnosis-fanout-2026-07-25.md` + `audit-report-cmspark-2026-07-25.md`
+- Score: **5.8 / C+** (was 4.4/C on 2026-07-09, +1.4). Critical: 0. Confirmed High: 16.
+- Prior C1–C4 FIXED_VERIFY (WS HMAC auth, history flush, CI no ||true, critical npm).
+- P0 clusters: selector inject (browser-bridge), config.updated unauth fanout, computer session-trust + mac coords, Stop≠computer abort, tool orphans, package host soft-miss.
+
+## Session 2026-07-25 — P0 batch-fix workflow
+
+- Authored `.grok/workflows/p0-batch-fix.rhai` + `scripts/dual-external-review.sh`
+- Gate chain per batch: Design → Implement → Internal adversarial (2 skeptics) → **only if pass** → SEPARATE `claude -p` + `pi -p` dual review → fix loop (max 3) → build verify
+- Launched real run for **P0-A** (SEC-1 selector inject, SRV-1 config fanout, confirmation field forward)
+- Reviews land in `docs/audit/reviews/`
+
