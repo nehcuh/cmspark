@@ -1,0 +1,32 @@
+# Pi Review — P4 imageToClient wiring brief
+
+Role: Pi (confirmer). Scope: brief review only — no code yet.
+Date: 2026-07-25.
+
+## VERDICT: APPROVE
+
+Mechanical, well-scoped fix that closes the one-hole P3 left open: the canonical converter `imageToClient` exists in coords.ts but has zero call sites, while locate-chain still uses the scale-blind `ocrHit.x - shot.client.x` legacy formula that false-OOB'd on WeChat retina (image-y 1004 vs logical client 640). The brief correctly identifies all 6 mutation sites, preserves the L0 UIA witness math (image-space, by design), reuses the executor's existing `?? 1` scale-fallback shape, and adds targeted retina tests. No required amendments.
+
+## Question responses
+
+1. **Signature change — yes, correct.** The third parameter was a misnomer: every existing call site (and the only future ones) holds `shot.client`, which is AX-reported **logical** space. Forcing callers to pre-multiply `client.x * sx` to construct an image-space rect would re-open N conversion sites for the same arithmetic — exactly what v4 §4 "single conversion site" forbids. Math is identical (`p.x/sx - client.x ≡ (p.x - client.x*sx)/sx`); only the contract is honest now. APPROVE.
+
+2. **`scalesOf` `?? 1` — correct.** `CaptureMeta.scaleX/scaleY` are declared optional (`types.ts:267-268`) precisely because pre-v4 binaries and non-macOS paths don't populate them. Hard-failing would regress legacy/non-retina paths that work today. The fallback is also consistent with executor.ts:894-898 which already uses the same `?? 1` shape — single behavior across the codebase. The `imageWidth ?? rect.width` shape mirrors executor too. APPROVE.
+
+3. **L0 manual `* sxL` — consistent, not a violation.** The v4 §4 single-conversion-site principle is about **client-logical** mappings (the canonical C space every tool/bounds-check speaks). L0's `img`/`imgBbox` are a different, intentional space: **image-pixel** coordinates fed to `ocrWitnessCheck` so the witness bbox overlaps OCR word boxes (which are image-pixel from Vision). Routing those through `imageToClient` would *break* the witness comparison. The manual `* sxL` is the screen-logical→image transform, conceptually the inverse of `imageToClient`, and is correctly located at the L0 site because UIA returns screen-logical points. Single-conversion-site means "don't re-derive the C↔image mapping in N places" — not "ban all image-space work". APPROVE.
+
+4. **6 sites — exhaustive.** `grep "pointClient" companion/src/computer/locate-chain.ts` returns the structural decl at L80 (interface, not a computation) plus exactly 6 computation sites: 403 (L0 direct), 462 (L0 re-probe), 493 (L1 region crop — the `pointClient0` intermediate, used for region math at 495-496 then returned at 524), 524 (L1 stable return), 564 (L1 relocate return), 600 (L2 TinyClick return). All 6 are listed in the brief's table. Line 493 is technically a locals assignment feeding both the region crop AND the L524 return, so the brief's split into "493 region crop" + "524 stable" is the correct decomposition. APPROVE.
+
+5. **Test coverage — adequate.** Two new retina tests (L1 OCR + L2 TinyClick) directly reproduce the WeChat failure shape (image-y ~1000, client height 640, scale 2 → expected logical ~500) and would demonstrably fail under the legacy formula. The "non-retina matches legacy math" test pins the scale=1 invariant so future refactors can't silently re-break it. Three adapted existing tests are parameter-rename-only — arithmetic unchanged. The only soft spot is no test for the **`scaleX: undefined`** metadata-missing path explicitly, but the non-retina test (scale=1) covers the same arithmetic. APPROVE.
+
+6. **Regression risk — none identified.** PsLocator consumes Vision OCR word boxes produced from `shot.path` (PNG) — always image-pixel space, never logical. TinyClick's `outcome.point` is documented as image-space (the brief's table line 600). UIA's manual `img`/`imgBbox` math (which IS screen→image) stays put. No path returns logical coords through the 6 mutation sites today. The signature change is math-identical, so even the existing `imageToClient` tests (computer-coords.test.ts:22-40) continue to pass — only the parameter name in their comments drifts. APPROVE.
+
+## Required amendments (if any)
+
+None.
+
+## Non-blocking reminders (if any)
+
+- The existing test at `computer-coords.test.ts:35` is named `"subtracts clientImageRect offset"` with a comment about "title-bar offset in image space". After the signature change the parameter is logical-space; the math still yields 94, but the test name/comment becomes semantically stale. Update the test name to `"subtracts client-logical offset"` and adjust the comment to "client-logical y offset (e.g., 56px content start)" while you're there. Cosmetic, not blocking.
+- Consider logging (via the existing `computeruse.locate` channel) when `scalesOf` falls back from `undefined` to `1` on a path where `shot.imageWidth` IS populated — that combination would indicate a metadata half-population bug worth surfacing. Not in scope for P4; flag for a future P5 hardening pass.
+- Single commit as proposed. Suggested message tweak: prefix with the regression class — `fix(computer): P4 wire imageToClient into locate-chain (retina false-OOB)`.

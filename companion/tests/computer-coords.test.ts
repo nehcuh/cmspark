@@ -32,11 +32,31 @@ test("imageToClient: no-op on non-Retina (scale=1)", () => {
   assert.equal(got.y, 200)
 })
 
-test("imageToClient: subtracts clientImageRect offset", () => {
-  // Title-bar offset in image space (e.g., 0,56 → content starts 56px down)
+test("imageToClient: subtracts client-logical offset", () => {
+  // Client-logical y offset (e.g., 56px content start below title bar).
+  // Image-space y=300 on retina scale=2 → logical 150; subtract client.y=56 → 94.
   const got = imageToClient({ x: 200, y: 300 }, RETINA, { x: 0, y: 56, width: 880, height: 584 })
   assert.equal(got.x, 100)
   assert.equal(got.y, 94) // 300/2 - 56 = 94
+})
+
+test("imageToClient: P4 WeChat-failure class — image-y ~1004 on retina client 880x640", () => {
+  // Reproduces the (269.30, 1004.65) outside client rect 880x640 false OOB.
+  // scale=2, client logical (0, 0, 880, 640). Image (1348, 1004) is INSIDE
+  // the retina PNG (1760x1280) but image-y/2 = 502, well inside client 640.
+  const got = imageToClient({ x: 1348, y: 1004 }, RETINA, { x: 0, y: 0, width: 880, height: 640 })
+  assert.equal(got.x, 674) // 1348/2 = 674
+  assert.equal(got.y, 502) // 1004/2 = 502 — INSIDE client (NOT 1004 or 964)
+})
+
+test("imageToClient: non-retina matches legacy math (scale=1 ≡ p.x - client.x)", () => {
+  // Pins the scale=1 invariant: when no retina metadata is present, the new
+  // formula is algebraically identical to the pre-P4 legacy formula.
+  // Any OCR hit on a non-retina display must produce the same pointClient
+  // before and after P4.
+  const got = imageToClient({ x: 200, y: 300 }, NON_RETINA, { x: 10, y: 40, width: 870, height: 600 })
+  assert.equal(got.x, 190) // 200 - 10 = 190 (legacy equivalent)
+  assert.equal(got.y, 260) // 300 - 40 = 260
 })
 
 test("clientToScreen: adds window rect + client offset", () => {

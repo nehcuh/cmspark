@@ -47,26 +47,29 @@ export interface CoordScales {
 /**
  * Image-pixel point → client-logical point.
  *
- * `client` is the client area rectangle expressed in **image** coordinates
- * (i.e., the title-bar offset already scaled to image space). On a typical
- * macOS window with no title-bar-stripping, `client.x` / `client.y` are 0
- * because the SCK `desktopIndependentWindow` filter captures the full window
- * including title bar and the AX-derived client rect starts at the content
- * area below.
+ * `clientLogical` is the client area rectangle in **client-logical** space
+ * (the canonical C space, matching `shot.client` from CaptureMeta). On a
+ * typical macOS window with no title-bar-stripping, `client.x` is 0 and
+ * `client.y` is the title-bar height; AX reports these in logical points.
  *
- * For a point that came from OCR word boxes (S1 image px), this converts to
- * the canonical C space used by the bounds check and the tool schema.
+ * For a point that came from OCR word boxes or TinyClick output (S1 image
+ * px), this converts to the canonical C space used by the bounds check and
+ * the tool schema.
+ *
+ * Math: `p.x / sx - client.x` is equivalent to `(p.x - client.x * sx) / sx`
+ * — we keep the parameter in logical space so callers pass `shot.client`
+ * directly without pre-multiplying.
  */
 export function imageToClient(
   p: PointImage,
   scales: CoordScales,
-  clientImageRect: RectPx,
+  clientLogical: RectPx,
 ): PointClient {
   const sx = scales.scaleX > 0 ? scales.scaleX : 1
   const sy = scales.scaleY > 0 ? scales.scaleY : 1
   return {
-    x: p.x / sx - clientImageRect.x,
-    y: p.y / sy - clientImageRect.y,
+    x: p.x / sx - clientLogical.x,
+    y: p.y / sy - clientLogical.y,
   }
 }
 

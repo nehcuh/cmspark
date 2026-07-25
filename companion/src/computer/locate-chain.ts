@@ -47,7 +47,7 @@ import {
   type UiaLocator,
 } from "./types"
 import type { TinyClickLocator } from "./tinyclick-locator"
-import { rectDriftPx } from "./coords"
+import { rectDriftPx, imageToClient, type CoordScales } from "./coords"
 
 export interface LocateChainDeps {
   /** L0 provider. The EXECUTOR decides admission (uiaCapable) — it passes
@@ -111,6 +111,19 @@ const WITNESS_TOLERANCE_PX = 8
  * import it without re-declaring.
  */
 export const DRIFT_THRESHOLD_PX = 8
+
+/**
+ * P4 (D4.3 follow-up): extract CoordScales from CaptureMeta, falling back to
+ * scale=1 when the v4 retina metadata fields are absent (pre-v4 binaries,
+ * non-macOS paths). Matches executor.ts's `?? 1` shape — single behavior
+ * across the codebase for missing scale metadata.
+ */
+const scalesOf = (s: CaptureMeta): CoordScales => ({
+  imageWidth: s.imageWidth ?? s.rect.width,
+  imageHeight: s.imageHeight ?? s.rect.height,
+  scaleX: s.scaleX ?? 1,
+  scaleY: s.scaleY ?? 1,
+})
 
 /**
  * X1 (WP3 adversary): witness bbox size caps. The old witness had NO size
@@ -400,7 +413,7 @@ export async function locateTargetWithChain(args: {
           }
           return {
             hit,
-            pointClient: { x: img.x - shot.client.x, y: img.y - shot.client.y },
+            pointClient: imageToClient(img, scalesOf(shot), shot.client),
             ocrRes,
             shot,
             crossverified: !ambiguous,
@@ -459,7 +472,7 @@ export async function locateTargetWithChain(args: {
         }
         return {
           hit,
-          pointClient: { x: img2.x - shot.client.x, y: img2.y - shot.client.y },
+          pointClient: imageToClient(img2, scalesOf(shot), shot.client),
           ocrRes,
           shot,
           crossverified: false,
@@ -490,10 +503,12 @@ export async function locateTargetWithChain(args: {
     if (ocrHit) {
       attempts.push({ layer: "ocr", outcome: "hit", confidence: ocrHit.confidence, ms: now() - t0 })
       log("computeruse.locate", { layer: "ocr", hit: true, confidence: ocrHit.confidence, ms: now() - t0 })
-      const pointClient0 = { x: ocrHit.x - shot.client.x, y: ocrHit.y - shot.client.y }
+      // Region crop stays in image-pixel space — capturer.diffRegion operates
+      // on PNGs. Use ocrHit directly (image-pixel) rather than re-deriving
+      // from the logical pointClient.
       const region: RectPx = {
-        x: Math.max(0, pointClient0.x + shot.client.x - REGION_CROP_SIZE / 2),
-        y: Math.max(0, pointClient0.y + shot.client.y - REGION_CROP_SIZE / 2),
+        x: Math.max(0, ocrHit.x - REGION_CROP_SIZE / 2),
+        y: Math.max(0, ocrHit.y - REGION_CROP_SIZE / 2),
         width: REGION_CROP_SIZE,
         height: REGION_CROP_SIZE,
       }
@@ -521,7 +536,7 @@ export async function locateTargetWithChain(args: {
         }
         return {
           hit: ocrHit,
-          pointClient: { x: ocrHit.x - shot.client.x, y: ocrHit.y - shot.client.y },
+          pointClient: imageToClient({ x: ocrHit.x, y: ocrHit.y }, scalesOf(shot), shot.client),
           ocrRes,
           shot,
           crossverified: true,
@@ -561,7 +576,7 @@ export async function locateTargetWithChain(args: {
       }
       return {
         hit: hit2,
-        pointClient: { x: hit2.x - shot.client.x, y: hit2.y - shot.client.y },
+        pointClient: imageToClient({ x: hit2.x, y: hit2.y }, scalesOf(shot), shot.client),
         ocrRes,
         shot,
         crossverified: false,
@@ -597,7 +612,7 @@ export async function locateTargetWithChain(args: {
       }
       return {
         hit,
-        pointClient: { x: outcome.point.x - shot.client.x, y: outcome.point.y - shot.client.y },
+        pointClient: imageToClient(outcome.point, scalesOf(shot), shot.client),
         // D4.3 invariant (Pi reminder c): L2 has no A1 re-capture, so shot is
         // unchanged since chain entry → rect0 === shot.rect → drift guard
         // trivially cannot fire. Pin via test (computer-locate-chain-drift).
