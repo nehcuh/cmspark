@@ -1,0 +1,107 @@
+# Pi Final Review — P3 Implementation (commit dba8915)
+
+Role: Pi (confirmer). Scope: D4.2 + D4.3 final sign-off.
+Date: 2026-07-25.
+
+## VERDICT: APPROVE
+
+Both Grok blockers are correctly resolved at the coded site; my three
+Plan-phase reminders (a/b/c) are honored verbatim in locate-chain.ts and
+executor.ts; all four Grok-required test classes exist and prove the
+right property. `npx tsc --noEmit` is clean; the three relevant suites
+(coords + locate-chain + executor) report 151/151 pass. P3 may ship.
+
+## Blocker resolution (Grok's 2 blockers)
+
+- **B1 — M8 site moved post-locate.** RESOLVED. executor.ts:862-882
+  inserts the drift check AFTER `shot = chain.shot` (line 815) and
+  BEFORE the bounds check (line 884). Uses a FRESH `infoForHwnd` call
+  (not the stale line-738 ownership result). On drift > 8 px, exactly
+  one `trackCapture` recapture; no inner loop. The test "P3 D4.2 M8:
+  window rect drifts >8px ... → fresh trackCapture" drives this path
+  end-to-end and asserts capturer.captures ≥ 3 (probe + locate + M8).
+
+- **B2 — `restarted` recursion bound moved to args.** RESOLVED.
+  locate-chain.ts:218-224 adds `driftRestarted?: boolean` to the args
+  type; line 247 reads `const restarted = args.driftRestarted === true`
+  at function entry. `restartChainOnce` (line 254) throws
+  STALE_SCREENSHOT when `restarted` is already true. The recursive call
+  at lines 394-399 / 452-458 / 514-520 / 554-560 always passes
+  `driftRestarted: true`. No closure-scoped bool — depth = 1 provable
+  by args-flow alone. The depth=1 test forces every trackCapture to
+  drift and asserts STALE plus calls ≤ 3.
+
+## Plan-phase reminders (your 3)
+
+- **(a) L0 restart propagates recursive call's witness.** HONORED.
+  Lines 393-399: the drift-restart path returns
+  `locateTargetWithChain({...args, shot: fresh, staleOnNotFound: true,
+  driftRestarted: true})` directly — the recursive call's return value
+  (including its own `witness` field) propagates verbatim. The outer
+  `witnessVerdict` is never spliced in. Confirmed by inspection; the L0
+  A1 drift test further asserts the hit is on the fresh restart frame.
+
+- **(b) L1 / L0-reprobe guards placed AFTER `shot = fresh`.** HONORED
+  at all three sites:
+  - L0 re-probe: line 421 `shot = fresh` → line 445 guard.
+  - L1 OCR stable: line 504 `shot = fresh` → line 507 guard.
+  - L1 OCR re-probe: line 543 `shot = fresh` → line 547 guard.
+  No spurious trip on A1 paths.
+
+- **(c) L2 TinyClick invariant pinned.** PARTIAL — pinned as an inline
+  comment at lines 601-603 ("L2 has no A1 re-capture → rect0 ===
+  shot.rect → drift guard trivially cannot fire"), but no dedicated
+  runtime test asserts the invariant. The brief allowed either form
+  ("pin via comment" + "pin via test"); the comment pin is sufficient
+  for now and a future regression that introduces an A1 re-capture on
+  L2 would surface via the existing L1 path tests. Non-blocker; flag
+  for P4 if L2 grows a re-capture.
+
+## Test coverage (Grok's 4 required classes)
+
+1. **L0 A1 mixed-rect class** — covered by "P3 D4.3 L0 A1 drift: fresh
+   frame >8px from rect0 triggers restart (no mixed-rect mapping)".
+   Forces the A1 path via `ocrAvailable: async () => false`; asserts
+   `pointClient.x === 110` (computed against fresh rect's client.x),
+   explicitly NOT 140 which would be the stale-rect0 result. This is
+   exactly the (722, 872) slow-motion OOB class Grok named.
+
+2. **Depth=1 proof** — covered by "P3 D4.3 depth=1: trackCapture always
+   drifting → STALE_SCREENSHOT". Asserts STALE_SCREENSHOT with
+   `/drift exceeded 8px twice/`, and `calls ≤ 3` (initial A1 + restart
+   + recursion's A1). Proves the args-bound invariant holds under
+   adversarial drift.
+
+3. **Executor M8 late site** — covered by "P3 D4.2 M8: window rect
+   drifts >8px between locate and bounds → fresh trackCapture". Drives
+   the full executor; post-locate infoForHwnd returns width=650
+   (drift=10); asserts capturer.captures ≥ 3 and infoCalls ≥ 2. Plus
+   two companion tests: no-drift sanity (≤ 3 captures) and 8 px
+   boundary treated as stable (strict >).
+
+4. **releaseRaw on superseded restart frame** — covered by "P3 D4.3
+   releaseRaw on superseded restart frame (Grok point 4)". Asserts
+   `released.includes("cap-superseded.png")` — the A1 frame captured
+   pre-restart is released by `restartChainOnce` before the recursive
+   call, so a throwing inner call cannot leak the prior frame.
+
+Plus: rectDriftPx unit suite (8 cases — identical/shift-x/shift-y/
+resize-w/resize-h/max-axis/negative/symmetric), L1 OCR drift restart,
+8 px boundary, CAPTURE_FAILED-on-trackCapture-throw (covered by
+existing executor catch path).
+
+## New defects / scope creep
+
+None. Diff is +1047 LOC across 9 files, of which ~700 LOC is the brief
++ reviews themselves; production code is +166 LOC (executor +26,
+locate-chain +119, coords +21), exactly within the ~230 LOC estimate.
+No out-of-scope edits to D4.1, frozen-contentful, or CUBox daemon lock.
+
+## Out-of-scope items (deferred, NOT a blocker)
+
+- frozen-contentful detector (Pi P2 condition 1) — P4+.
+- staleIdCaret dead-var cleanup (Pi P2 condition 2) — cosmetic.
+- CUBox daemon-mode lock discipline (Pi P2 condition 3) — dormant
+  until daemon mode ships.
+
+*Pi — confirmer. APPROVE. P3 dba8915 may ship.*
