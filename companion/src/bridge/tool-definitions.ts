@@ -483,6 +483,76 @@ export function getToolDefinitions(): ToolDefinition[] {
     {
       type: "function",
       function: {
+        name: "workspace_list_dir",
+        description:
+          "List files under the thread's DevSec workspace_root (relative paths only). Requires modules.devsec-workspace enabled and workspace_root set on the thread.",
+        parameters: {
+          type: "object",
+          properties: {
+            path: { type: "string", description: "Relative path under workspace_root (default '.')" },
+          },
+          required: [],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "workspace_read_file",
+        description:
+          "Read a text file under the thread's DevSec workspace_root (max ~512KB). Requires modules.devsec-workspace enabled.",
+        parameters: {
+          type: "object",
+          properties: {
+            path: { type: "string", description: "Relative file path under workspace_root" },
+          },
+          required: ["path"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "shell_exec",
+        description:
+          "Run ONE shell command on the companion host (enterprise shell module). Always requires user confirmation (confirm_per_command). Prefer workspace_* tools for reading repo files. Do not use for unauthorized network scanning.",
+        parameters: {
+          type: "object",
+          properties: {
+            command: { type: "string", description: "Single shell command line" },
+            cwd: { type: "string", description: "Optional working directory (absolute). Defaults to process cwd or workspace_root if set." },
+          },
+          required: ["command"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "netsec_port_scan",
+        description:
+          "Enterprise-only TCP connect probe against allowlisted hosts (modules.netsec). Requires non-empty target_allowlist, task authorization on the thread, and user L2 confirmation. Empty allowlist denies all scans.",
+        parameters: {
+          type: "object",
+          properties: {
+            targets: {
+              type: "array",
+              items: { type: "string" },
+              description: "Hostnames or IPv4 addresses to probe (must be in allowlist)",
+            },
+            ports: {
+              type: "array",
+              items: { type: "integer" },
+              description: "Optional port list (default common ports, max 32)",
+            },
+          },
+          required: ["targets"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
         name: "osascript_eval",
         description: "(macOS ONLY — does NOT work on Windows/Linux) Execute JavaScript in a Chrome tab via AppleScript. Only use this as a LAST RESORT when both get_page_text and evaluate fail on restricted pages (e.g. X.com with strict CSP). Prefer get_page_text for reading page content.",
         parameters: {

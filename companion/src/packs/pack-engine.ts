@@ -558,30 +558,4 @@ export function ensureBuiltinPacksInstalled(skillEngine: SkillEngine): string[] 
   return installed
 }
 
-export function setModuleEnabled(
-  moduleId: string,
-  enabled: boolean,
-  by: string = "user",
-): { ok: true; modules: any } | { ok: false; error: string } {
-  const config = getConfig() as any
-  if (!config.modules || typeof config.modules !== "object") {
-    config.modules = {}
-  }
-  const mod = config.modules[moduleId]
-  if (!mod || mod.available !== true) {
-    return { ok: false, error: `module not available: ${moduleId}` }
-  }
-  // Shell/NetSec must not exist as enabled by default; appsec allowed
-  mod.enabled = enabled
-  mod.enabled_at = enabled ? new Date().toISOString() : null
-  mod.enabled_by = enabled ? by : null
-  config.modules[moduleId] = mod
-  saveConfig(config)
-  appendCapabilityAudit({
-    type: enabled ? "module.enable" : "module.disable",
-    module: moduleId,
-    by,
-    at: new Date().toISOString(),
-  })
-  return { ok: true, modules: config.modules }
-}
+export { setModuleEnabled } from "../capability/modules"

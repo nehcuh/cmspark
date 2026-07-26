@@ -1414,7 +1414,7 @@ export async function handleMessage(
       }
     }
     case "modules.set_enabled": {
-      const { setModuleEnabled } = await import("./packs/pack-engine")
+      const { setModuleEnabled } = await import("./capability/modules")
       if (!rest.module || typeof rest.module !== "string") {
         return { type: "error", error: "module required" }
       }
@@ -1424,6 +1424,58 @@ export async function handleMessage(
       const r = setModuleEnabled(rest.module, rest.enabled, rest.by || "user")
       if (!r.ok) return { type: "error", error: r.error }
       return { type: "modules.updated", modules: r.modules }
+    }
+    case "modules.update": {
+      const { updateModuleConfig } = await import("./capability/modules")
+      if (!rest.module || typeof rest.module !== "string") {
+        return { type: "error", error: "module required" }
+      }
+      const r = updateModuleConfig(rest.module as any, rest.patch || {})
+      if (!r.ok) return { type: "error", error: r.error }
+      return { type: "modules.updated", module: r.module, modules: getConfig().modules }
+    }
+    case "workspace.pick": {
+      const result = await pickFolderNative()
+      if (result.error) return { type: "workspace.pick_result", error: result.error }
+      return { type: "workspace.pick_result", path: result.path }
+    }
+    case "workspace.set": {
+      if (!rest.thread_id) return { type: "error", error: "thread_id required" }
+      const { setWorkspaceRoot } = await import("./capability/workspace")
+      const pathVal = typeof rest.path === "string" ? rest.path : ""
+      const r = setWorkspaceRoot(pathVal)
+      if (!r.ok) return { type: "error", error: r.error }
+      const thread = threadManager.get(rest.thread_id)
+      if (!thread) return { type: "error", error: "thread not found" }
+      threadManager.update(rest.thread_id, { workspace_root: r.path } as any)
+      return { type: "workspace.set_result", thread: threadManager.get(rest.thread_id) }
+    }
+    case "netsec.authorize_task": {
+      if (!rest.thread_id) return { type: "error", error: "thread_id required" }
+      if (rest.authorized !== true) {
+        return { type: "error", error: "authorized must be true (user must explicitly confirm)" }
+      }
+      const targets = Array.isArray(rest.targets)
+        ? rest.targets.filter((t: any) => typeof t === "string" && t.trim())
+        : []
+      if (targets.length === 0) return { type: "error", error: "targets required" }
+      const thread = threadManager.get(rest.thread_id)
+      if (!thread) return { type: "error", error: "thread not found" }
+      const auth = {
+        authorized: true as const,
+        targets,
+        at: new Date().toISOString(),
+      }
+      threadManager.update(rest.thread_id, { netsec_task_auth: auth } as any)
+      const { appendCapabilityAudit } = await import("./packs/audit-log")
+      appendCapabilityAudit({
+        type: "netsec.task_auth",
+        targets,
+        by: rest.by || "user",
+        at: auth.at,
+        thread_id: rest.thread_id,
+      })
+      return { type: "netsec.authorized", thread: threadManager.get(rest.thread_id) }
     }
 
     // --- Skill-craft ---

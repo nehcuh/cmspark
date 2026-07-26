@@ -37,6 +37,12 @@ interface Thread {
   mission_pack_snapshot?: ThreadPackSnapshot | null
   /** DevSec workspace root (absolute path). */
   workspace_root?: string | null
+  /** NetSec per-task authorization (user confirmed ownership of targets). */
+  netsec_task_auth?: {
+    authorized: boolean
+    targets: string[]
+    at?: string
+  } | null
 }
 
 // Allowed config_override keys and their expected types

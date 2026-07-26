@@ -212,6 +212,28 @@ const defaultConfig: CompanionConfig = {
       enabled_at: null,
       enabled_by: null,
     },
+    "devsec-workspace": {
+      available: true,
+      enabled: false,
+      enabled_at: null,
+      enabled_by: null,
+    },
+    shell: {
+      available: true,
+      enabled: false,
+      enabled_at: null,
+      enabled_by: null,
+      policy: "confirm_per_command",
+      allowlist_commands: [],
+    },
+    netsec: {
+      available: true,
+      enabled: false,
+      enabled_at: null,
+      enabled_by: null,
+      target_allowlist: [],
+      require_task_auth: true,
+    },
   },
   security: {
     safety_skills_enabled: ["prompt-injection-defense", "jailbreak-detection", "instruction-hierarchy"],
@@ -391,16 +413,14 @@ export function getConfig(): CompanionConfig {
   if (cachedConfig.capability_profile !== "community" && cachedConfig.capability_profile !== "enterprise") {
     cachedConfig.capability_profile = "community"
   }
+  // Inline module defaults (avoid circular import with capability/modules.ts)
   if (!cachedConfig.modules || typeof cachedConfig.modules !== "object") {
-    cachedConfig.modules = {
-      appsec: { available: true, enabled: false, enabled_at: null, enabled_by: null },
-    }
-  } else if (!cachedConfig.modules.appsec) {
-    cachedConfig.modules.appsec = {
-      available: true,
-      enabled: false,
-      enabled_at: null,
-      enabled_by: null,
+    cachedConfig.modules = { ...defaultConfig.modules }
+  } else {
+    for (const id of ["appsec", "devsec-workspace", "shell", "netsec"] as const) {
+      if (!cachedConfig.modules[id]) {
+        cachedConfig.modules[id] = { ...(defaultConfig.modules as any)[id] }
+      }
     }
   }
   // Ensure apps config exists with sane defaults (older config.json may not have

@@ -23,7 +23,16 @@ const SENSITIVE_COOKIE_TOOLS = new Set(["get_cookies", "list_all_cookies", "set_
 // A7.1 (coordinate computer-use): host_computer joins the sensitive set —
 // history.db stores hashes + metadata (layer/confidence/coords/sha256) ONLY,
 // never task text, type.text literals, image bytes, or full-window OCR text.
-const SENSITIVE_CODE_TOOLS = new Set(["evaluate", "osascript_eval", "host_read", "host_write", "host_app", "host_computer"])
+const SENSITIVE_CODE_TOOLS = new Set([
+  "evaluate",
+  "osascript_eval",
+  "host_read",
+  "host_write",
+  "host_app",
+  "host_computer",
+  "shell_exec",
+  "netsec_port_scan",
+])
 
 // MCP namespaced tools (mcp__<server>__<tool>) — audit item C-MCP-2. These flow
 // through the same record path with raw params/result. We treat any tool whose

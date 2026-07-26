@@ -762,6 +762,10 @@ function setupMessageHandlers() {
       case "pack.uninstall":
       case "modules.list":
       case "modules.set_enabled":
+      case "modules.update":
+      case "workspace.pick":
+      case "workspace.set":
+      case "netsec.authorize_task":
       case "history.query":
       case "history.export":
       case "mcp.list":

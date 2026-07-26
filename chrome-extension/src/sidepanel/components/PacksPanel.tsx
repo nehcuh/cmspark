@@ -45,6 +45,23 @@ export function PacksPanel() {
       if (msg?.type === "modules.list" || msg?.type === "modules.updated") {
         if (msg.modules) setModules(msg.modules)
       }
+      if (msg?.type === "workspace.pick_result") {
+        if (msg.path && state.activeThreadId) {
+          chrome.runtime.sendMessage({
+            type: "workspace.set",
+            thread_id: state.activeThreadId,
+            path: msg.path,
+          })
+          setStatus(`工作区: ${msg.path}`)
+        } else if (msg.error) {
+          setStatus(msg.error)
+        }
+        setTimeout(() => setStatus(""), 3000)
+      }
+      if (msg?.type === "workspace.set_result" && msg.thread) {
+        setStatus(`工作区已绑定`)
+        setTimeout(() => setStatus(""), 2500)
+      }
       if (msg?.type === "error" && busy) {
         setStatus(msg.error || "操作失败")
         setBusy(null)
@@ -55,12 +72,38 @@ export function PacksPanel() {
     return () => chrome.runtime.onMessage.removeListener(handler)
   }, [busy])
 
-  const enableAppsec = () => {
+  const enableModule = (mod: string) => {
     setBusy("modules")
-    chrome.runtime.sendMessage({ type: "modules.set_enabled", module: "appsec", enabled: true })
-    setTimeout(refresh, 300)
+    chrome.runtime.sendMessage({ type: "modules.set_enabled", module: mod, enabled: true })
+    setTimeout(refresh, 400)
     setBusy(null)
-    setStatus("已请求启用 AppSec 模块")
+    setStatus(`已请求启用 ${mod}`)
+    setTimeout(() => setStatus(""), 2500)
+  }
+
+  const pickWorkspace = () => {
+    if (!state.activeThreadId) {
+      setStatus("请先选择线程")
+      return
+    }
+    chrome.runtime.sendMessage({ type: "workspace.pick" })
+  }
+
+  const authorizeNetsec = () => {
+    if (!state.activeThreadId) {
+      setStatus("请先选择线程")
+      return
+    }
+    const raw = window.prompt("授权扫描目标（逗号分隔 hostname/IPv4，须在 allowlist 内）")
+    if (!raw) return
+    const targets = raw.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean)
+    chrome.runtime.sendMessage({
+      type: "netsec.authorize_task",
+      thread_id: state.activeThreadId,
+      authorized: true,
+      targets,
+    })
+    setStatus("已提交 NetSec 任务授权")
     setTimeout(() => setStatus(""), 2500)
   }
 
@@ -90,14 +133,24 @@ export function PacksPanel() {
         </button>
       </div>
       {status && <div style={styles.status}>{status}</div>}
-      {modules.appsec && modules.appsec.enabled !== true && (
-        <div style={styles.banner}>
-          AppSec 模块未启用
-          <button type="button" style={styles.primaryBtn} onClick={enableAppsec}>
-            启用
-          </button>
-        </div>
+      {(["appsec", "devsec-workspace", "shell", "netsec"] as const).map((mod) =>
+        modules[mod] && modules[mod].enabled !== true ? (
+          <div key={mod} style={styles.banner}>
+            模块 {mod} 未启用
+            <button type="button" style={styles.primaryBtn} onClick={() => enableModule(mod)}>
+              启用
+            </button>
+          </div>
+        ) : null,
       )}
+      <div style={{ display: "flex", gap: 6, marginBottom: 8, flexWrap: "wrap" }}>
+        <button type="button" style={styles.primaryBtn} onClick={pickWorkspace}>
+          选择工作区
+        </button>
+        <button type="button" style={styles.primaryBtn} onClick={authorizeNetsec}>
+          NetSec 任务授权
+        </button>
+      </div>
       {packs.length === 0 && <div style={styles.empty}>暂无已安装任务包</div>}
       <ul style={styles.list}>
         {packs.map((p) => {
