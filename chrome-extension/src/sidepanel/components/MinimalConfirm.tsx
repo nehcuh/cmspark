@@ -49,9 +49,9 @@ export function MinimalConfirm() {
     <div
       style={{
         marginTop: 8,
-        padding: 8,
-        borderRadius: 6,
-        background: "#3b1f1f",
+        padding: 10,
+        borderRadius: 8,
+        background: "linear-gradient(180deg, #3b1f1f 0%, #2a1515 100%)",
         border: "1px solid #7f1d1d",
         color: "#fca5a5",
         fontSize: 11,
@@ -59,21 +59,21 @@ export function MinimalConfirm() {
       role="alertdialog"
       aria-label={`${label}确认`}
     >
-      <div style={{ fontWeight: 700, marginBottom: 4 }}>
-        ⚠ {label} · {request.tool_name}
+      <div style={{ fontWeight: 700, marginBottom: 4, letterSpacing: "0.01em" }}>
+        {label} · <span style={{ fontFamily: "ui-monospace, monospace" }}>{request.tool_name}</span>
       </div>
-      <div style={{ color: "#d1d5db", marginBottom: 8, fontSize: 10 }}>
+      <div style={{ color: "#d1d5db", marginBottom: 8, fontSize: 10, lineHeight: 1.45 }}>
         {needsNonce
-          ? "此确认需要输入确认码 — 请打开操控台完成。"
-          : "完整预览与白名单在操控台；此处可直接允许/拒绝。"}
+          ? "此确认需要输入确认码 — 请在操控台完成。"
+          : "详细预览与白名单在操控台；此处可快速允许或拒绝。"}
       </div>
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
         <button
           type="button"
           style={{
             ...btn,
-            background: needsNonce ? "#374151" : "#22c55e",
-            color: needsNonce ? "#9aa0a6" : "#052e16",
+            background: needsNonce ? "#374151" : "#16a34a",
+            color: needsNonce ? "#9aa0a6" : "#fff",
             cursor: needsNonce ? "not-allowed" : "pointer",
           }}
           disabled={needsNonce}
@@ -99,10 +99,16 @@ export function MinimalConfirm() {
         </button>
         <button
           type="button"
-          style={{ ...btn, background: "transparent", color: "#93c5fd", border: "none", textDecoration: "underline" }}
+          style={{
+            ...btn,
+            background: "transparent",
+            color: "#93c5fd",
+            border: "1px solid #2a2f3a",
+            fontWeight: 500,
+          }}
           onClick={() => chrome.runtime.sendMessage({ type: "cockpit.open" })}
         >
-          详情 ↗
+          详情
         </button>
       </div>
       <span style={{ display: "none", color }} aria-hidden />
@@ -111,8 +117,8 @@ export function MinimalConfirm() {
 }
 
 const btn: React.CSSProperties = {
-  padding: "4px 10px",
-  borderRadius: 4,
+  padding: "5px 10px",
+  borderRadius: 6,
   border: "none",
   cursor: "pointer",
   fontSize: 11,

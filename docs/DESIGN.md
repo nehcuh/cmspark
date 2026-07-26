@@ -1,22 +1,21 @@
 # CMspark Design System
 
-> 从现有 Side Panel inline styles 提取，作为 UI 一致性的基准
+> Quiet-professional chrome：SVG 图标 + `sidepanel/ui/tokens.ts` 为主；emoji 仅用于消息内容，不用于工具栏。
 
 ## Colors
 
 | Token | Value | Usage |
 |-------|-------|-------|
-| Primary | `#4A90D9` | 按钮、链接、active 状态 |
-| Primary Hover | `#3A7BC8` | 按钮 hover |
-| Error | `#F44336` | 错误提示、危险操作按钮 |
-| Success | `#4CAF50` | 成功状态、连接指示 |
-| Warning | `#FF9800` | 警告、connecting 状态 |
-| Background | `#fff` | 主背景 |
-| Background Alt | `#f5f5f5` | 次级背景、卡片 |
-| Text Primary | `#333` | 正文 |
-| Text Secondary | `#666` | 辅助文字 |
-| Text Muted | `#999` | 禁用/占位 |
-| Border | `#e0e0e0` | 分割线、输入框边框 |
+| Accent | `#2563eb` | 主按钮、active tab |
+| Accent soft | `#dbeafe` / `#e8f0fe` | 选中底、L1 header tint |
+| Error | `#dc2626` | 危险 / 停止 |
+| Success | `#16a34a` | 连接 / LIVE |
+| Warning | `#d97706` | connecting / 注意 |
+| Background | `#ffffff` / `#fafbfc` | 面板主底 / 顶底 chrome |
+| Text | `#111827` / `#4b5563` / `#9ca3af` | 正文 / 次级 / 占位 |
+| Border | `#e5e7eb` | 分割线、输入框 |
+
+Dark (L2 SafetyStrip / Cockpit): bg `#0f1115` / `#141820`, text `#e8eaed`, live `#4ade80`, danger `#f87171`.
 
 ## Typography
 

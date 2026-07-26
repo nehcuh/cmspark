@@ -1,9 +1,10 @@
 // L2 Panel safety strip (UI Mode P1) — TaskChip + mandatory abort + minimal confirm.
-// Full ComputerTaskBar timeline moves to Cockpit; panel never loses abort.
 
 import { useState, useEffect } from "react"
 import { useAgentStore } from "../store/agentStore"
 import { MinimalConfirm } from "./MinimalConfirm"
+import { tokens } from "../ui/tokens"
+import { IconExternal, IconMonitor, IconStop } from "../ui/icons"
 
 const ABORT_ACK_TIMEOUT_MS = 3000
 
@@ -25,10 +26,10 @@ export function SafetyStrip() {
     return () => clearTimeout(t)
   }, [abortSentAt, task, task?.abortAcked])
 
-  // Show strip when L2 chrome needed: active/finished task, or pending confirm, or open affordance
   if (!task && !hasConfirm) return null
 
   const finished = task?.status === "finished"
+  const live = task && !finished
   const progressText =
     task && typeof task.total === "number"
       ? `${task.steps.length}/${task.total}`
@@ -46,13 +47,19 @@ export function SafetyStrip() {
   return (
     <div style={styles.wrap}>
       <div style={styles.chip}>
+        <span style={styles.iconBubble}>
+          <IconMonitor size={14} style={{ color: live ? tokens.darkLive : tokens.darkMuted }} />
+        </span>
         <span style={styles.live}>
-          {task && !finished ? "●" : "○"}{" "}
+          {live && (
+            <span style={styles.liveDot} title="进行中" />
+          )}
           {task?.task ? ellipsize(task.task, 36) : hasConfirm ? "待确认" : "Computer Use"}
         </span>
         {progressText && <span style={styles.meta}>{progressText}</span>}
         {task && !finished && !task.abortAcked && (
           <button type="button" style={styles.abortBtn} onClick={sendAbort} title="急停">
+            <IconStop size={12} />
             急停
           </button>
         )}
@@ -64,11 +71,12 @@ export function SafetyStrip() {
           style={styles.openBtn}
           onClick={() => chrome.runtime.sendMessage({ type: "cockpit.open" })}
         >
-          打开操控台 ↗
+          操控台
+          <IconExternal size={12} />
         </button>
       </div>
       {abortUnconfirmed && task && !task.abortAcked && !finished && (
-        <div style={styles.warn}>急停未确认——可用 Ctrl+Alt+End</div>
+        <div style={styles.warn}>急停未确认 — 可用 Ctrl+Alt+End</div>
       )}
       {hasConfirm && <MinimalConfirm />}
     </div>
@@ -81,12 +89,12 @@ function ellipsize(s: string, n: number): string {
 
 const styles: Record<string, React.CSSProperties> = {
   wrap: {
-    margin: "0 0 0 0",
     padding: "8px 10px",
-    background: "#1a1f2a",
-    borderBottom: "1px solid #2a2f3a",
-    color: "#e8eaed",
+    background: "linear-gradient(180deg, #141820 0%, #0f1115 100%)",
+    borderBottom: `1px solid ${tokens.darkBorder}`,
+    color: tokens.darkText,
     fontSize: 11,
+    fontFamily: tokens.font,
   },
   chip: {
     display: "flex",
@@ -94,34 +102,63 @@ const styles: Record<string, React.CSSProperties> = {
     gap: 8,
     flexWrap: "wrap",
   },
+  iconBubble: {
+    width: 24,
+    height: 24,
+    borderRadius: 6,
+    background: tokens.darkElevated,
+    border: `1px solid ${tokens.darkBorder}`,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
   live: {
-    color: "#4ade80",
+    color: tokens.darkText,
     fontWeight: 600,
     flex: 1,
     minWidth: 0,
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
   },
-  meta: { color: "#9aa0a6", fontSize: 10, flexShrink: 0 },
+  liveDot: {
+    width: 6,
+    height: 6,
+    borderRadius: "50%",
+    background: tokens.darkLive,
+    boxShadow: "0 0 0 3px rgba(74, 222, 128, 0.18)",
+    flexShrink: 0,
+  },
+  meta: { color: tokens.darkMuted, fontSize: 10, flexShrink: 0, fontVariantNumeric: "tabular-nums" },
   abortBtn: {
-    background: "#7f1d1d",
-    color: "#fca5a5",
-    border: "1px solid #991b1b",
-    borderRadius: 4,
-    padding: "3px 8px",
+    background: tokens.darkDangerBg,
+    color: tokens.darkDanger,
+    border: "1px solid #7f1d1d",
+    borderRadius: tokens.radiusSm,
+    padding: "4px 8px",
     cursor: "pointer",
     fontSize: 11,
     fontWeight: 600,
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 4,
   },
   openBtn: {
     background: "transparent",
-    color: "#5b8def",
-    border: "none",
+    color: tokens.darkAccent,
+    border: `1px solid ${tokens.darkBorder}`,
+    borderRadius: tokens.radiusSm,
     cursor: "pointer",
     fontSize: 11,
-    textDecoration: "underline",
-    padding: 0,
+    fontWeight: 500,
+    padding: "4px 8px",
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 4,
   },
   warn: {
     marginTop: 6,
