@@ -371,11 +371,13 @@ export function sanitizeAppEntries(rawEntries: unknown): Record<string, AppEntry
  */
 export function isUserWritablePath(p: string): boolean {
   if (!p || typeof p !== "string") return false
-  const roots = [process.env.LOCALAPPDATA, process.env.APPDATA, process.env.USERPROFILE]
-  const resolved = path.resolve(p).toLowerCase()
-  for (const root of roots) {
+  // Normalize Windows separators so tests (and mixed-input paths) resolve
+  // consistently on POSIX hosts; NTFS case-folding via toLowerCase on both sides.
+  const normalized = p.replace(/\\/g, path.sep)
+  const resolved = path.resolve(normalized).toLowerCase()
+  for (const root of [process.env.LOCALAPPDATA, process.env.APPDATA, process.env.USERPROFILE]) {
     if (!root || typeof root !== "string") continue
-    const rootLower = path.resolve(root).toLowerCase()
+    const rootLower = path.resolve(root.replace(/\\/g, path.sep)).toLowerCase()
     if (resolved === rootLower || resolved.startsWith(rootLower + path.sep)) return true
   }
   return false

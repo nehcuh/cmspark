@@ -78,10 +78,18 @@ describe("pruneOldLogs retention", { concurrency: 1 }, () => {
 
   test("deletes companion date logs older than retention", () => {
     const logsDir = path.join(tempHome, "logs")
-    const oldFile = path.join(logsDir, "companion-2026-06-01.log")
-    const rotatedOld = path.join(logsDir, "companion-2026-06-01.1.log")
-    const recentFile = path.join(logsDir, "companion-2026-07-12.log")
-    const todayFile = path.join(logsDir, `companion-${new Date().toISOString().slice(0, 10)}.log`)
+    // Use relative UTC dates so the test does not rot when calendar moves past hard-coded days.
+    const today = new Date()
+    today.setUTCHours(0, 0, 0, 0)
+    const fmt = (d: Date) => d.toISOString().slice(0, 10)
+    const oldDate = new Date(today)
+    oldDate.setUTCDate(oldDate.getUTCDate() - 20)
+    const recentDate = new Date(today)
+    recentDate.setUTCDate(recentDate.getUTCDate() - 2) // within 7-day retention
+    const oldFile = path.join(logsDir, `companion-${fmt(oldDate)}.log`)
+    const rotatedOld = path.join(logsDir, `companion-${fmt(oldDate)}.1.log`)
+    const recentFile = path.join(logsDir, `companion-${fmt(recentDate)}.log`)
+    const todayFile = path.join(logsDir, `companion-${fmt(today)}.log`)
     fs.writeFileSync(oldFile, "old\n")
     fs.writeFileSync(rotatedOld, "old rotated\n")
     fs.writeFileSync(recentFile, "recent\n")
