@@ -25,9 +25,11 @@ export function useCapabilityMode(
   const tick = useStateTick(5000)
 
   const level = useMemo(() => {
+    const task = state.computerTask
     const input: ModeInput = {
       now: Date.now(),
-      computerTaskStatus: state.computerTask?.status ?? null,
+      computerTaskStatus: task?.status ?? null,
+      computerTaskFinishedAt: task?.finishedAt ?? null,
       pendingConfirmToolNames: state.pendingSecurityConfirmations.map((c) => c.tool_name),
       lastBrowserToolAt: state.lastBrowserToolAt,
       quiescenceMs: DEFAULT_QUIESCENCE_MS,
@@ -36,6 +38,7 @@ export function useCapabilityMode(
     return deriveCapabilityLevel(input)
   }, [
     state.computerTask?.status,
+    state.computerTask?.finishedAt,
     state.pendingSecurityConfirmations,
     state.lastBrowserToolAt,
     state.modePin,
@@ -54,5 +57,8 @@ export function useCapabilityMode(
     }
   }, [level, onEscalate])
 
-  return { level, badgeLabel: levelBadgeLabel(level) }
+  const live =
+    state.computerTask?.status === "running" ||
+    state.computerTask?.status === "paused"
+  return { level, badgeLabel: levelBadgeLabel(level, { live }) }
 }

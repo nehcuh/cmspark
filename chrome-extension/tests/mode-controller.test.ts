@@ -4,12 +4,14 @@ import {
   BROWSER_TOOL_NAMES,
   deriveCapabilityLevel,
   contextBarTabsForLevel,
+  levelBadgeLabel,
   type ModeInput,
 } from "../src/sidepanel/mode/mode-controller"
 
 const base: ModeInput = {
   now: 1_000_000,
   computerTaskStatus: null,
+  computerTaskFinishedAt: null,
   pendingConfirmToolNames: [],
   lastBrowserToolAt: null,
   quiescenceMs: 30_000,
@@ -34,11 +36,35 @@ test("L2 when computer task paused", () => {
   )
 })
 
-test("L2 when finished computer task still within finished grace is NOT automatic — finished drops unless pin/browser", () => {
-  // Terminal finished: no longer elevates to L2 by itself (task end D15).
+test("L2 when finished computer task within quiescence window (D15 hysteresis)", () => {
   assert.equal(
-    deriveCapabilityLevel({ ...base, computerTaskStatus: "finished" }),
+    deriveCapabilityLevel({
+      ...base,
+      computerTaskStatus: "finished",
+      computerTaskFinishedAt: base.now - 5_000,
+    }),
+    "computer",
+  )
+})
+
+test("L0 when finished computer task outside quiescence", () => {
+  assert.equal(
+    deriveCapabilityLevel({
+      ...base,
+      computerTaskStatus: "finished",
+      computerTaskFinishedAt: base.now - 60_000,
+    }),
     "chat",
+  )
+})
+
+test("L1 when pending browser-class confirm (e.g. evaluate)", () => {
+  assert.equal(
+    deriveCapabilityLevel({
+      ...base,
+      pendingConfirmToolNames: ["evaluate"],
+    }),
+    "browser",
   )
 })
 
@@ -119,6 +145,12 @@ test("BROWSER_TOOL_NAMES includes navigate and list_tabs, not host_computer", ()
   assert.equal(BROWSER_TOOL_NAMES.has("navigate"), true)
   assert.equal(BROWSER_TOOL_NAMES.has("list_tabs"), true)
   assert.equal(BROWSER_TOOL_NAMES.has("host_computer"), false)
+})
+
+test("levelBadgeLabel LIVE only for computer when live=true", () => {
+  assert.equal(levelBadgeLabel("computer"), "计算机")
+  assert.equal(levelBadgeLabel("computer", { live: true }), "计算机 · LIVE")
+  assert.equal(levelBadgeLabel("chat", { live: true }), "聊")
 })
 
 test("contextBarTabsForLevel L0", () => {

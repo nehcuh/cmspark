@@ -46,6 +46,8 @@ export type ComputerTaskStatusInput = "running" | "paused" | "finished" | null
 export interface ModeInput {
   now: number
   computerTaskStatus: ComputerTaskStatusInput
+  /** When status is finished, keep L2 until now - finishedAt <= quiescenceMs (D15 stub). */
+  computerTaskFinishedAt: number | null
   pendingConfirmToolNames: string[]
   lastBrowserToolAt: number | null
   quiescenceMs: number
@@ -80,15 +82,23 @@ export function deriveCapabilityLevel(input: ModeInput): CapabilityLevel {
   const taskActive =
     input.computerTaskStatus === "running" ||
     input.computerTaskStatus === "paused"
+  const taskFinishedInWindow =
+    input.computerTaskStatus === "finished" &&
+    input.computerTaskFinishedAt != null &&
+    input.now - input.computerTaskFinishedAt <= input.quiescenceMs
   const confirmComputer = input.pendingConfirmToolNames.some((n) =>
     isComputerClassTool(n),
   )
+  const confirmBrowser = input.pendingConfirmToolNames.some((n) =>
+    isBrowserTool(n),
+  )
 
-  if (taskActive || confirmComputer) {
+  if (taskActive || taskFinishedInWindow || confirmComputer) {
     derived = "computer"
   } else if (
-    input.lastBrowserToolAt != null &&
-    input.now - input.lastBrowserToolAt <= input.quiescenceMs
+    confirmBrowser ||
+    (input.lastBrowserToolAt != null &&
+      input.now - input.lastBrowserToolAt <= input.quiescenceMs)
   ) {
     derived = "browser"
   }
@@ -124,14 +134,17 @@ export function contextBarTabsForLevel(
   }
 }
 
-export function levelBadgeLabel(level: CapabilityLevel): string {
+export function levelBadgeLabel(
+  level: CapabilityLevel,
+  opts?: { live?: boolean },
+): string {
   switch (level) {
     case "chat":
       return "聊"
     case "browser":
       return "网页"
     case "computer":
-      return "计算机"
+      return opts?.live ? "计算机 · LIVE" : "计算机"
   }
 }
 

@@ -107,7 +107,7 @@ function AppContent() {
     }
   }, [appState.autoSkillNames])
 
-  // Capability level (chat / browser / computer) — Task 4 will surface badgeLabel in Header
+  // Capability level (chat / browser / computer) — badge in Header, tabs in BottomBar
   const onEscalate = useCallback((msg: string) => {
     setToast(msg)
     setTimeout(() => setToast(""), 4000)
