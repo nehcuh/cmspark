@@ -1,0 +1,481 @@
+// CMspark Cockpit — L2 Computer Use surface (UI Mode P1)
+// Spec dual-track + confirm elevation. Shares agentStore via useWebSocket broadcast.
+
+import { useEffect, useState, type CSSProperties } from "react"
+import { AgentStoreProvider, useAgentStore } from "../sidepanel/store/agentStore"
+import { useWebSocket } from "../sidepanel/hooks/useWebSocket"
+import { previewImageSafe } from "../sidepanel/utils/computer-utils"
+import type { ComputerStepView, SecurityConfirmationRequest } from "../sidepanel/types"
+
+export function CockpitRoot() {
+  return (
+    <AgentStoreProvider>
+      <CockpitBoot />
+    </AgentStoreProvider>
+  )
+}
+
+function CockpitBoot() {
+  useWebSocket()
+  useEffect(() => {
+    const port = chrome.runtime.connect({ name: "cmspark-cockpit" })
+    return () => {
+      try {
+        port.disconnect()
+      } catch {
+        /* ignore */
+      }
+    }
+  }, [])
+  return <CockpitApp />
+}
+
+function CockpitApp() {
+  // useWebSocket is mounted once in CockpitBoot — only read store here.
+  const { state, dispatch } = useAgentStore()
+  const task = state.computerTask
+  const confirm = state.pendingSecurityConfirmations[0] as SecurityConfirmationRequest | undefined
+  const [text, setText] = useState("")
+  const [abortSentAt, setAbortSentAt] = useState<number | null>(null)
+
+  // Focus window when a new confirm arrives
+  useEffect(() => {
+    if (confirm) {
+      chrome.runtime.sendMessage({ type: "cockpit.focus" })
+    }
+  }, [confirm?.confirmation_id])
+
+  const sendAbort = () => {
+    if (!task) return
+    chrome.runtime.sendMessage({ type: "computer.task.abort", task_id: task.taskId })
+    setAbortSentAt(Date.now())
+  }
+
+  const sendFollowUp = () => {
+    const msg = text.trim()
+    if (!msg || !state.activeThreadId) return
+    chrome.runtime.sendMessage({
+      type: "chat.send",
+      threadId: state.activeThreadId,
+      message: msg,
+      skillIds: state.activeSkillIds,
+    })
+    setText("")
+  }
+
+  const finished = task?.status === "finished"
+  const progressText =
+    task && typeof task.total === "number"
+      ? `${task.steps.length}/${task.total} 步`
+      : task
+        ? `${task.steps.length} 步`
+        : "—"
+
+  const compactMessages = state.messages
+    .filter((m) => m.role === "user" || m.role === "assistant")
+    .slice(-8)
+
+  return (
+    <div style={s.root}>
+      <header style={s.titleBar}>
+        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+          <strong>CMspark Cockpit</strong>
+          <span style={s.liveBadge}>
+            {task && !finished ? "L2 · LIVE" : "L2"}
+          </span>
+          <span style={s.muted}>{state.activeThreadId || "—"}</span>
+          <span style={s.muted}>
+            {state.connectionState === "connected" ? "已连接" : state.connectionState}
+          </span>
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          {task && !finished && (
+            <button type="button" style={s.abortBtn} onClick={sendAbort}>
+              急停
+            </button>
+          )}
+          <button
+            type="button"
+            style={s.ghostBtn}
+            onClick={() => chrome.runtime.sendMessage({ type: "cockpit.close" })}
+            title="关闭窗口不会停止任务"
+          >
+            收起
+          </button>
+        </div>
+      </header>
+
+      {confirm && (
+        <ConfirmElevated
+          request={confirm}
+          threadId={state.activeThreadId}
+          onResolved={(id) =>
+            dispatch({ type: "REMOVE_SECURITY_CONFIRMATION", confirmationId: id })
+          }
+        />
+      )}
+
+      <section style={s.taskDock}>
+        <div style={{ fontSize: 13, marginBottom: 6 }}>
+          {task?.task || (confirm ? "等待确认…" : "等待 Computer Use 任务…")}
+          {task?.app ? ` — ${task.app}` : ""}
+        </div>
+        {task && (
+          <>
+            <div style={s.progressTrack}>
+              <div
+                style={{
+                  ...s.progressFill,
+                  width: `${Math.min(
+                    100,
+                    task.total ? (task.steps.length / task.total) * 100 : 10,
+                  )}%`,
+                }}
+              />
+            </div>
+            <div style={{ display: "flex", gap: 12, fontSize: 10, color: "#9aa0a6" }}>
+              <span>{progressText}</span>
+              {typeof task.budget === "number" && <span>预算 {task.budget}</span>}
+              <span>{task.status}</span>
+              {abortSentAt && !task.abortAcked && <span style={{ color: "#fbbf24" }}>急停已发送…</span>}
+            </div>
+          </>
+        )}
+      </section>
+
+      <div style={s.dual}>
+        <div style={s.track}>
+          <div style={s.trackTitle}>步骤轨</div>
+          {!task || task.steps.length === 0 ? (
+            <div style={s.muted}>暂无步骤</div>
+          ) : (
+            task.steps.map((step, i) => <StepLine key={`${step.seq}-${i}`} step={step} />)
+          )}
+        </div>
+        <div style={s.track}>
+          <div style={s.trackTitle}>对话（精简）</div>
+          {compactMessages.length === 0 ? (
+            <div style={s.muted}>无消息</div>
+          ) : (
+            compactMessages.map((m) => (
+              <div key={m.id} style={{ marginBottom: 6, fontSize: 11, lineHeight: 1.45 }}>
+                <span style={{ color: m.role === "user" ? "#5b8def" : "#a78bfa" }}>
+                  {m.role === "user" ? "U" : "A"}
+                </span>{" "}
+                <span style={{ color: "#d1d5db" }}>
+                  {(m.content || "").slice(0, 280)}
+                  {(m.content || "").length > 280 ? "…" : ""}
+                </span>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+
+      <footer style={s.footer}>
+        <input
+          style={s.input}
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          placeholder={
+            state.activeThreadId
+              ? "任务指令（Cockpit 主指挥）…"
+              : "等待线程同步…"
+          }
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault()
+              sendFollowUp()
+            }
+          }}
+        />
+        <button type="button" style={s.sendBtn} onClick={sendFollowUp} disabled={!text.trim()}>
+          发送
+        </button>
+      </footer>
+    </div>
+  )
+}
+
+function StepLine({ step }: { step: ComputerStepView }) {
+  const show = previewImageSafe(step.previewImage)
+  return (
+    <div style={{ marginBottom: 8, fontFamily: "ui-monospace, monospace", fontSize: 10, color: "#9aa0a6" }}>
+      <div>
+        <span style={{ color: "#4ade80" }}>#{step.seq}</span>{" "}
+        {step.caption || step.action || "—"}
+        {step.layer && <span style={{ marginLeft: 6, color: "#5b8def" }}>{step.layer}</span>}
+      </div>
+      {show && (
+        <img
+          src={`data:image/jpeg;base64,${step.previewImage}`}
+          alt={`step ${step.seq}`}
+          style={{ maxWidth: "100%", maxHeight: 80, marginTop: 4, borderRadius: 4, border: "1px solid #2a2f3a" }}
+        />
+      )}
+    </div>
+  )
+}
+
+function ConfirmElevated({
+  request,
+  threadId,
+  onResolved,
+}: {
+  request: SecurityConfirmationRequest
+  threadId: string | null
+  onResolved: (id: string) => void
+}) {
+  const [whitelistMode, setWhitelistMode] = useState<"none" | "exact" | "wildcard">("none")
+  const [nonceInput, setNonceInput] = useState("")
+  const [imgFailed, setImgFailed] = useState(false)
+  const domain = request.relevant_domains?.[0]
+  const nonceChallenge = request.nonce_challenge
+  const nonceMatches =
+    !nonceChallenge || nonceInput.toUpperCase() === nonceChallenge.toUpperCase()
+  const showImg = !imgFailed && previewImageSafe(request.preview_image)
+
+  // 60s auto-deny
+  useEffect(() => {
+    const t = setTimeout(() => {
+      respond(false)
+    }, request.timeout_ms && request.timeout_ms > 0 ? Math.min(request.timeout_ms, 60_000) : 60_000)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [request.confirmation_id])
+
+  const respond = (approved: boolean, stopThread = false) => {
+    if (approved && nonceChallenge && !nonceMatches) return
+    const addToWhitelist: string[] = []
+    if (approved && domain && whitelistMode !== "none") {
+      addToWhitelist.push(whitelistMode === "wildcard" ? `*.${domain}` : domain)
+    }
+    chrome.runtime.sendMessage({
+      type: "security.confirmation.response",
+      confirmation_id: request.confirmation_id,
+      approved,
+      stop_thread: stopThread,
+      add_to_whitelist: addToWhitelist,
+      nonce_response: approved && nonceChallenge ? nonceInput.toUpperCase() : undefined,
+    })
+    onResolved(request.confirmation_id)
+    if (stopThread && threadId) {
+      chrome.runtime.sendMessage({ type: "chat.abort", threadId })
+    }
+  }
+
+  return (
+    <section style={s.confirmElevated}>
+      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+        <span style={{ color: "#fca5a5", fontWeight: 700 }}>
+          ⚠ 确认抬升 · {request.tool_name}
+        </span>
+        <span style={{ fontSize: 10, color: "#9aa0a6" }}>
+          {request.risk_level || "high"} · 超时自动拒绝
+        </span>
+      </div>
+      <div style={{ display: "flex", gap: 12 }}>
+        {showImg && (
+          <img
+            src={`data:image/jpeg;base64,${request.preview_image}`}
+            alt="标注截图"
+            style={{ width: 160, maxHeight: 100, objectFit: "cover", borderRadius: 6 }}
+            onError={() => setImgFailed(true)}
+          />
+        )}
+        <div style={{ flex: 1, fontSize: 11, color: "#d1d5db" }}>
+          {request.preview_caption && <div style={{ marginBottom: 6 }}>{request.preview_caption}</div>}
+          <pre style={s.codePreview}>
+            {(request.full_preview || request.code_preview || "").slice(0, 1200)}
+          </pre>
+          {domain && (
+            <div style={{ marginTop: 8, fontSize: 10 }}>
+              <label style={{ marginRight: 8 }}>
+                <input
+                  type="radio"
+                  checked={whitelistMode === "none"}
+                  onChange={() => setWhitelistMode("none")}
+                />{" "}
+                不添加白名单
+              </label>
+              <label style={{ marginRight: 8 }}>
+                <input
+                  type="radio"
+                  checked={whitelistMode === "exact"}
+                  onChange={() => setWhitelistMode("exact")}
+                />{" "}
+                {domain}
+              </label>
+              <label>
+                <input
+                  type="radio"
+                  checked={whitelistMode === "wildcard"}
+                  onChange={() => setWhitelistMode("wildcard")}
+                />{" "}
+                *.{domain}
+              </label>
+            </div>
+          )}
+          {nonceChallenge && (
+            <div style={{ marginTop: 8 }}>
+              <div style={{ fontSize: 10, marginBottom: 4 }}>输入确认码（禁止粘贴）：{nonceChallenge}</div>
+              <input
+                value={nonceInput}
+                onChange={(e) => setNonceInput(e.target.value)}
+                onPaste={(e) => e.preventDefault()}
+                style={{ ...s.input, height: 28, fontSize: 14, letterSpacing: 4 }}
+              />
+            </div>
+          )}
+          <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+            <button
+              type="button"
+              style={{ ...s.abortBtn, background: "#22c55e", color: "#052e16", border: "none" }}
+              disabled={!nonceMatches}
+              onClick={() => respond(true)}
+            >
+              允许
+            </button>
+            <button type="button" style={s.ghostBtn} onClick={() => respond(false)}>
+              拒绝
+            </button>
+            <button
+              type="button"
+              style={{ ...s.ghostBtn, color: "#fca5a5", borderColor: "#7f1d1d" }}
+              onClick={() => respond(false, true)}
+            >
+              拒绝并停止
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+const s: Record<string, CSSProperties> = {
+  root: {
+    display: "flex",
+    flexDirection: "column",
+    height: "100vh",
+    background: "#0f1115",
+    color: "#e8eaed",
+    fontFamily: "ui-sans-serif, system-ui, -apple-system, sans-serif",
+    fontSize: 12,
+  },
+  titleBar: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: "10px 12px",
+    borderBottom: "1px solid #2a2f3a",
+    background: "#12151c",
+  },
+  liveBadge: {
+    fontSize: 10,
+    padding: "2px 6px",
+    background: "#1a3a2a",
+    color: "#4ade80",
+    borderRadius: 4,
+    fontWeight: 600,
+  },
+  muted: { color: "#9aa0a6", fontSize: 10 },
+  abortBtn: {
+    background: "#7f1d1d",
+    color: "#fca5a5",
+    border: "1px solid #991b1b",
+    borderRadius: 4,
+    padding: "4px 10px",
+    cursor: "pointer",
+    fontWeight: 600,
+    fontSize: 11,
+  },
+  ghostBtn: {
+    background: "transparent",
+    color: "#9aa0a6",
+    border: "1px solid #2a2f3a",
+    borderRadius: 4,
+    padding: "4px 10px",
+    cursor: "pointer",
+    fontSize: 11,
+  },
+  confirmElevated: {
+    margin: "10px 12px",
+    padding: 12,
+    background: "#2a1515",
+    border: "1px solid #7f1d1d",
+    borderRadius: 8,
+  },
+  taskDock: {
+    margin: "0 12px 10px",
+    padding: 12,
+    background: "#161a22",
+    border: "1px solid #2a2f3a",
+    borderRadius: 8,
+  },
+  progressTrack: {
+    height: 4,
+    background: "#2a2f3a",
+    borderRadius: 2,
+    marginBottom: 6,
+    overflow: "hidden",
+  },
+  progressFill: {
+    height: "100%",
+    background: "#5b8def",
+    borderRadius: 2,
+  },
+  dual: {
+    flex: 1,
+    display: "flex",
+    gap: 10,
+    margin: "0 12px 10px",
+    minHeight: 0,
+    overflow: "hidden",
+  },
+  track: {
+    flex: 1,
+    background: "#161a22",
+    border: "1px solid #2a2f3a",
+    borderRadius: 8,
+    padding: 10,
+    overflow: "auto",
+  },
+  trackTitle: { fontSize: 10, color: "#9aa0a6", marginBottom: 8 },
+  footer: {
+    display: "flex",
+    gap: 8,
+    padding: "10px 12px",
+    borderTop: "1px solid #2a2f3a",
+  },
+  input: {
+    flex: 1,
+    height: 32,
+    borderRadius: 6,
+    border: "1px solid #2a2f3a",
+    background: "#0f1115",
+    color: "#e8eaed",
+    padding: "0 10px",
+    fontSize: 12,
+  },
+  sendBtn: {
+    background: "#5b8def",
+    color: "#fff",
+    border: "none",
+    borderRadius: 6,
+    padding: "0 14px",
+    cursor: "pointer",
+    fontWeight: 600,
+  },
+  codePreview: {
+    maxHeight: 100,
+    overflow: "auto",
+    background: "#0f1115",
+    padding: 8,
+    borderRadius: 4,
+    fontSize: 10,
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-word",
+    margin: 0,
+  },
+}

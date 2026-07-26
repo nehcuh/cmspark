@@ -5,6 +5,7 @@ import { useWebSocket } from "./hooks/useWebSocket"
 import { useCapabilityMode } from "./hooks/useCapabilityMode"
 import { ChatView } from "./components/ChatView"
 import { ComputerTaskBar } from "./components/ComputerTaskBar"
+import { SafetyStrip } from "./components/SafetyStrip"
 import { ThreadList } from "./components/ThreadList"
 import { BottomBar } from "./components/BottomBar"
 import { SettingsSlideout } from "./components/SettingsSlideout"
@@ -113,6 +114,15 @@ function AppContent() {
     setTimeout(() => setToast(""), 4000)
   }, [])
   const { level, badgeLabel } = useCapabilityMode(onEscalate)
+  const isComputer = level === "computer"
+
+  // P1: auto-open Cockpit when entering L2 (openOrFocus is idempotent)
+  useEffect(() => {
+    if (!isComputer) return
+    chrome.runtime.sendMessage({ type: "cockpit.open" }, () => {
+      void chrome.runtime.lastError
+    })
+  }, [isComputer])
 
   return (
     <div style={styles.container}>
@@ -126,13 +136,16 @@ function AppContent() {
         onToggleLogs={() => setShowLogs(!showLogs)}
         onOpenNotebooklmImporter={() => setNbImporterOpen(true)}
       />
+      {isComputer && <SafetyStrip />}
       <ChatView />
-      <ComputerTaskBar />
+      {/* L2: full timeline lives in Cockpit; Panel keeps SafetyStrip only */}
+      {!isComputer && <ComputerTaskBar />}
       <BottomBar capabilityLevel={level} />
-      <InputArea />
+      <InputArea capabilityLevel={level} />
       {showLogs && <LogBar onClose={() => setShowLogs(false)} />}
       <SettingsSlideout />
-      <SecurityConfirmationDialog />
+      {/* L2: full confirm in Cockpit; Panel uses MinimalConfirm in SafetyStrip */}
+      {!isComputer && <SecurityConfirmationDialog />}
       <McpServerForm />
       {craftOpen && <SkillCraftPanel onClose={() => setCraftOpen(false)} />}
       {nbImporterOpen && <NotebooklmImporterPanel onClose={() => setNbImporterOpen(false)} />}
@@ -713,7 +726,7 @@ function Header({ connectionState, capabilityLevel, badgeLabel, onCraft, onToggl
   )
 }
 
-function InputArea() {
+function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityLevel }) {
   const { state, dispatch } = useAgentStore()
   const [text, setText] = useState("")
   const [slashVisible, setSlashVisible] = useState(false)
@@ -723,6 +736,7 @@ function InputArea() {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const sendingRef = useRef(false)
+  const isComputer = capabilityLevel === "computer"
 
   const isStreaming = !!state.streamingContent
   const hasContent = text.trim().length > 0 || selectedFiles.length > 0
@@ -733,6 +747,8 @@ function InputArea() {
   const getPlaceholder = () => {
     if (needsThread) return "请先创建或选择一个线程"
     if (needsConnection) return "等待 companion 连接..."
+    // P1 D12′: Panel is follow-up path while Cockpit is task conductor
+    if (isComputer) return "排队跟进…（主指令请在操控台发送）"
     return "输入指令... (输入 / 调用技能)"
   }
 

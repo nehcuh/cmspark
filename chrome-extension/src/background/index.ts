@@ -15,6 +15,12 @@ import { extractAiChatRunner } from "../notebooklm/ai-chat-extractor"
 import { extractPageLinksRunner } from "../notebooklm/page-link-extractor"
 import { discoverFeed, fetchFeed, fetchMultipleFeeds, parseOpml } from "../notebooklm/rss-parser"
 import { fetchPlaylist, getYouTubeApiKey, parsePlaylistId, setYouTubeApiKey } from "../notebooklm/youtube-api"
+import {
+  closeCockpit,
+  cockpitStatus,
+  focusCockpit,
+  openOrFocusCockpit,
+} from "./cockpit-window"
 
 let wsClient: WSClient
 let browserBridge: BrowserBridge
@@ -219,13 +225,21 @@ function init() {
   keepAlive.start(() => wsClient.checkAndReconnect())
   setupMessageHandlers()
 
-  // Long-lived port from sidepanel — keeps the service worker alive while sidepanel is open
+  // Long-lived ports keep the service worker alive while UI surfaces are open
   chrome.runtime.onConnect.addListener((port) => {
-    if (port.name !== "cmspark-sidepanel") return
-    logToCompanion("info", "extension.sidepanel_port_connected", {})
-    port.onDisconnect.addListener(() => {
-      logToCompanion("info", "extension.sidepanel_port_disconnected", {})
-    })
+    if (port.name === "cmspark-sidepanel") {
+      logToCompanion("info", "extension.sidepanel_port_connected", {})
+      port.onDisconnect.addListener(() => {
+        logToCompanion("info", "extension.sidepanel_port_disconnected", {})
+      })
+      return
+    }
+    if (port.name === "cmspark-cockpit") {
+      logToCompanion("info", "extension.cockpit_port_connected", {})
+      port.onDisconnect.addListener(() => {
+        logToCompanion("info", "extension.cockpit_port_disconnected", {})
+      })
+    }
   })
 }
 
@@ -322,13 +336,25 @@ async function handleCompanionMessage(msg: any) {
     return
   }
 
-  // Forward streaming tokens and other messages to side panel
+  // L2: draw attention to Cockpit when a computer-class confirm arrives
+  if (
+    msg.type === "security.confirmation.request" &&
+    typeof msg.tool_name === "string" &&
+    (msg.tool_name === "host_computer" ||
+      msg.tool_name === "host_app" ||
+      msg.tool_name === "host_read" ||
+      msg.tool_name === "host_write")
+  ) {
+    openOrFocusCockpit().catch(() => {})
+  }
+
+  // Forward streaming tokens and other messages to side panel + cockpit
   chrome.runtime.sendMessage(msg).catch((e: any) => {
     logToCompanion("debug", "extension.sidepanel_forward_failed", {
       message_type: msg?.type || "unknown",
       error: e?.message || String(e),
     })
-    // side panel may not be open — that's fine
+    // side panel / cockpit may not be open — that's fine
   })
 }
 
@@ -738,6 +764,29 @@ function setupMessageHandlers() {
         // Forward to companion
         wsClient.send(message)
         sendResponse({ ok: true })
+        return true
+
+      // UI Mode P1 — L2 Cockpit window lifecycle (does not stop computer tasks)
+      case "cockpit.open": {
+        openOrFocusCockpit()
+          .then((windowId) => sendResponse({ ok: windowId != null, windowId }))
+          .catch((e: any) => sendResponse({ ok: false, error: e?.message || String(e) }))
+        return true
+      }
+      case "cockpit.focus": {
+        focusCockpit()
+          .then((ok) => sendResponse({ ok }))
+          .catch(() => sendResponse({ ok: false }))
+        return true
+      }
+      case "cockpit.close": {
+        closeCockpit()
+          .then(() => sendResponse({ ok: true }))
+          .catch(() => sendResponse({ ok: false }))
+        return true
+      }
+      case "cockpit.status":
+        sendResponse(cockpitStatus())
         return true
 
       default:
