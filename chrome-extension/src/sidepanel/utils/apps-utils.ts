@@ -55,6 +55,24 @@ export function canOfferThreadTrust(toolName: string | undefined, relevantApp: s
 }
 
 /**
+ * Grill Q2 (2026-07-26): host_computer L2 may offer "本会话自动同意同类操作".
+ * Distinct from thread-trust (host_read / host_app) — injection stays critical
+ * and only skips same-class tasks when the user explicitly opts in.
+ */
+export function canOfferComputerSessionTrust(
+  toolName: string | undefined,
+  relevantApp: string | undefined,
+): boolean {
+  if (!relevantApp) return false
+  return toolName === "host_computer"
+}
+
+/** Checkbox sub-copy for computer session auto-approve (≤40 字 main label in App.tsx). */
+export function computerSessionTrustHint(): string {
+  return "不新增输入文字、不扩大动作次数时不再询问；危险/实验操作仍会确认；约 30 分钟无操作或重启后失效"
+}
+
+/**
  * Kind-aware sub-copy for the thread-trust checkbox. The old read-specific
  * 「不影响写操作」 is kept verbatim for host_read; host_app gets launch-scoped
  * wording (the grant covers ONLY L0 no-arg launches of that token).

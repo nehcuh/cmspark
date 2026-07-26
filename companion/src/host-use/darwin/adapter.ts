@@ -333,13 +333,16 @@ export class DarwinHostAdapter implements HostAdapter {
           throw new Error(`writeOne: unknown payload kind "${(payload as any).kind}"`)
       }
       const parsed = parseJsonSafe<Record<string, unknown>>(stdout, "write")
-      const out: WriteResult = {
+      const out: WriteResult & { name?: string; body_preview?: string } = {
         undoable: parsed.undoable === true,
       }
       if (typeof parsed.target_id === "string") {
         // M2: producers return RAW ids — re-encode before validating.
         out.target_id = this.validateTargetId(encodeRawTargetId(parsed.target_id))
       }
+      // G4: create-note re-reads name/body from Notes for success contract.
+      if (typeof parsed.name === "string") out.name = parsed.name
+      if (typeof parsed.body_preview === "string") out.body_preview = parsed.body_preview
       return out
     } catch (err: any) {
       if (err && typeof err === "object" && "stderr" in err && err.stderr) {

@@ -607,39 +607,69 @@ export function createToolExecutor(ws: WebSocket) {
           // interactive approve) and credential latch — those need no separate
           // check here.
           if (sessionId && finalParams.app) {
-            const { getComputerSessionTrust } = await import("./computer/session-trust")
+            const {
+              getComputerSessionTrust,
+              resolveComputerTrustKey,
+              trustKeyAllowsInitialSkip,
+            } = await import("./computer/session-trust")
             const trust = getComputerSessionTrust()
             const appToken = String(finalParams.app)
+            // Grill Q1=C: prefer chat thread for "本会话"; strip inject-only param.
+            const chatThreadId =
+              typeof (finalParams as any).__thread_id === "string"
+                ? String((finalParams as any).__thread_id)
+                : typeof (finalParams as any).thread_id === "string"
+                  ? String((finalParams as any).thread_id)
+                  : undefined
+            const trustKey = resolveComputerTrustKey(chatThreadId, sessionId)
             const actionsArr = Array.isArray(finalParams.actions) ? finalParams.actions : []
+            const actionCount = actionsArr.length
             const typeCorpus: string[] = []
+            let experimentalFlag = false
             for (const a of actionsArr) {
               if (a && typeof a === "object" && (a as any).action === "type" && typeof (a as any).text === "string") {
                 typeCorpus.push(String((a as any).text))
               }
+              if (a && typeof a === "object" && (a as any).experimental === true) experimentalFlag = true
             }
-            const trusted = trust.isTrusted(sessionId, appToken)
-            const corpusOk = trust.corpusContains(sessionId, appToken, typeCorpus)
-            const maxBudget = trust.maxBudgetSeen(sessionId, appToken)
+            // Grill Q2/Q3: initial skip requires explicit opt-in + thread key + corpus/budget/actions.
+            const optIn = trust.hasExplicitOptIn(trustKey, appToken)
+            const keyOk = trustKeyAllowsInitialSkip(trustKey)
+            const trusted = trust.isTrusted(trustKey, appToken)
+            const corpusOk = trust.corpusContains(trustKey, appToken, typeCorpus)
+            const maxBudget = trust.maxBudgetSeen(trustKey, appToken)
             const budgetOk = maxBudget > 0 && budgetN <= maxBudget
-            if (trusted && corpusOk && budgetOk) {
+            const maxActions = trust.maxActionsSeen(trustKey, appToken)
+            const actionsOk = maxActions > 0 && actionCount <= maxActions
+            if (optIn && keyOk && trusted && corpusOk && budgetOk && actionsOk && !experimentalFlag) {
               hostComputerTrustSkip = true
               logger.info("computer.session_trust.task_auto_approved", {
                 tool_call_id: toolCallId,
-                thread_id: sessionId,
+                trust_key: trustKey,
+                chat_thread_id: chatThreadId ?? null,
                 app: appToken,
                 type_corpus_size: typeCorpus.length,
                 budget: budgetN,
                 max_budget_seen: maxBudget,
+                actions: actionCount,
+                max_actions_seen: maxActions,
+                explicit_opt_in: true,
               })
             } else {
               logger.info("computer.session_trust.skip_missed", {
                 tool_call_id: toolCallId,
-                thread_id: sessionId,
+                trust_key: trustKey,
+                chat_thread_id: chatThreadId ?? null,
                 app: appToken,
                 trusted,
+                explicit_opt_in: optIn,
+                key_allows_skip: keyOk,
                 corpus_eligible: corpusOk,
                 budget_eligible: budgetOk,
+                actions_eligible: actionsOk,
+                experimental: experimentalFlag,
                 max_budget_seen: maxBudget,
+                max_actions_seen: maxActions,
               })
             }
           }
@@ -895,10 +925,11 @@ export function createToolExecutor(ws: WebSocket) {
               // App tab WP3: the thread-trust checkbox (relevantApps) is offered
               // ONLY under policy "ai". "manual" must never show it (owner
               // decision 2); "auto" never reaches this dialog.
-              // host_computer: input injection is NEVER thread-trusted — no
-              // checkbox is ever offered (plan §E.3).
+              // host_computer (grill Q2 2026-07-26): offer app token so the
+              // panel can show "本会话自动同意同类操作" (session trust opt-in,
+              // NOT ThreadApprovals / not write-biometric skip).
               relevantApps: hostComputerGated
-                ? []
+                ? (finalParams.app ? [String(finalParams.app)] : [])
                 : hostApp
                   ? (hostApp.policy === "ai" ? [hostApp.token] : [])
                   : (relevantApp ? [relevantApp] : []),
@@ -1002,13 +1033,25 @@ export function createToolExecutor(ws: WebSocket) {
         // literals — so a future task with the same-or-subset corpus is eligible
         // for the G1 trust skip above.
         if (hostComputerGated && finalParams.app) {
-          const { getComputerSessionTrust } = await import("./computer/session-trust")
+          const { getComputerSessionTrust, resolveComputerTrustKey } = await import("./computer/session-trust")
           const trust = getComputerSessionTrust()
           const appToken = String(finalParams.app)
-          trust.grant(sessionId, appToken)
-          trust.clearCredentialLatch(sessionId, appToken)
-          trust.recordBudget(sessionId, appToken, Number(finalParams.budget) || 15)
+          const chatThreadId =
+            typeof (finalParams as any).__thread_id === "string"
+              ? String((finalParams as any).__thread_id)
+              : typeof (finalParams as any).thread_id === "string"
+                ? String((finalParams as any).thread_id)
+                : undefined
+          const trustKey = resolveComputerTrustKey(chatThreadId, sessionId)
+          // Grill Q2: always grant for task-local reL2 silence; explicitOptIn
+          // only when user checked the session auto-approve box.
+          const explicitOptIn = decision.addToSessionTrust === true
+          trust.grant(trustKey, appToken, { explicitOptIn })
+          trust.clearCredentialLatch(trustKey, appToken)
+          const budgetRec = Number(finalParams.budget) || 15
+          trust.recordBudget(trustKey, appToken, budgetRec)
           const actionsArr = Array.isArray(finalParams.actions) ? finalParams.actions : []
+          trust.recordActions(trustKey, appToken, actionsArr.length)
           const typeTexts: string[] = []
           for (const a of actionsArr) {
             if (a && typeof a === "object" && (a as any).action === "type" && typeof (a as any).text === "string") {
@@ -1016,13 +1059,17 @@ export function createToolExecutor(ws: WebSocket) {
             }
           }
           if (typeTexts.length > 0) {
-            trust.extendCorpus(sessionId, appToken, typeTexts)
+            trust.extendCorpus(trustKey, appToken, typeTexts)
           }
           logger.info("computer.session_trust.granted", {
             tool_call_id: toolCallId,
+            trust_key: trustKey,
+            chat_thread_id: chatThreadId ?? null,
             app: appToken,
             corpus_extended_by: typeTexts.length,
-            budget_recorded: Number(finalParams.budget) || 15,
+            budget_recorded: budgetRec,
+            actions_recorded: actionsArr.length,
+            explicit_opt_in: explicitOptIn,
           })
         }
         if (hostApp) hostAppTier = "l2"
@@ -1347,8 +1394,19 @@ export function createToolExecutor(ws: WebSocket) {
           // WP2 (§E.4): computer-task progress events go to every
           // authenticated panel (the owner's own live view).
           broadcast: broadcastToClients,
-          // UX-spike 2026-07-23: session id for per-session re-L2 trust.
-          computerSessionId: sessionId,
+          // Grill Q1: re-L2 trust key = thread:… when chat thread known.
+          computerSessionId: (() => {
+            try {
+              const { resolveComputerTrustKey } = require("./computer/session-trust") as typeof import("./computer/session-trust")
+              const tid =
+                typeof (finalParams as any).__thread_id === "string"
+                  ? String((finalParams as any).__thread_id)
+                  : undefined
+              return resolveComputerTrustKey(tid, sessionId)
+            } catch {
+              return sessionId
+            }
+          })(),
         })
         logToolFinish(toolCallId, toolName, startedAt, result)
         return result
@@ -1607,7 +1665,12 @@ export async function handleSecurityConfirmationResponse(ws: WebSocket, msg: any
   // dedicated audit events and must NOT be lumped into
   // origin_mismatch_or_unknown.
   const nonceResponse = typeof msg.nonce_response === "string" ? msg.nonce_response : undefined
-  const respondResult = securityConfirmations.respondFrom(confirmationId, approved, ws, nonceResponse)
+  // Grill Q2: host_computer session auto-approve checkbox (validated in respondFrom
+  // against relevantApps non-empty).
+  const addToSessionTrust = msg.add_to_session_trust === true
+  const respondResult = securityConfirmations.respondFrom(confirmationId, approved, ws, nonceResponse, {
+    addToSessionTrust,
+  })
   const responded = respondResult.outcome === "resolved"
   if (respondResult.outcome === "unknown" || respondResult.outcome === "origin_mismatch") {
     // Either no such pending entry, or the response arrived on a different
@@ -1914,7 +1977,22 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
         const application = typeof params.application === "string" ? params.application : undefined
         const maxChars = typeof params.max_chars === "number" ? params.max_chars : undefined
         const result = await hostRead({ application, maxChars })
-        return { success: true, data: result }
+        // Grill G5/Q6: Mail read verified when required structured fields non-empty.
+        const { evaluateMailReadVerify } = await import("./host-use/darwin/notes-verify")
+        const v = evaluateMailReadVerify(result)
+        return {
+          success: true,
+          data: {
+            ...result,
+            posted: true,
+            verified: v.verified,
+            ...(v.reason ? { verify_note: v.reason } : {}),
+            // Golden-path friendly summary for LLM (do not invent content).
+            summary: v.verified
+              ? `From: ${result.sender} | Subject: ${result.subject} | Date: ${result.date_received}`
+              : undefined,
+          },
+        }
       } catch (err: any) {
         return { success: false, error: `host_read error: ${err.message || String(err)}` }
       }
@@ -2077,7 +2155,58 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
               : "macos:com.apple.Notes:default:note-default")
         const target = adapter.validateTargetId(syntheticTarget)
         const result = await adapter.writeOne(target, payload)
-        return { success: true, data: { ...result, biometric_nonce: nonce } }
+        // Grill G4: Notes create — posted after writeOne; verified via list-notes
+        // re-read (S-semantic success contract).
+        let verified = false
+        let verifyNote: string | undefined
+        if (!isWin && kind === "create" && typeof params.body === "string") {
+          try {
+            const { evaluateNotesCreateVerify } = await import("./host-use/darwin/notes-verify")
+            let listedIds: string[] = []
+            if (typeof (adapter as any).listReadTargets === "function") {
+              try {
+                const listed = await (adapter as any).listReadTargets("note", { limit: 100 })
+                listedIds = Array.isArray(listed) ? listed.map(String) : []
+              } catch {
+                listedIds = []
+              }
+            }
+            const reReadBody =
+              typeof (result as any).body_preview === "string"
+                ? String((result as any).body_preview)
+                : typeof (result as any).name === "string"
+                  ? String((result as any).name)
+                  : ""
+            const v = evaluateNotesCreateVerify({
+              body: params.body,
+              targetId: result.target_id,
+              reReadBody,
+              listedIds,
+            })
+            verified = v.verified
+            verifyNote = v.reason
+          } catch (ve: any) {
+            verified = false
+            verifyNote = `verify failed: ${ve?.message || String(ve)}`
+          }
+        } else if (kind === "create") {
+          verified = false
+          verifyNote = "semantic re-read not available on this platform/kind"
+        } else {
+          // move: writeOne success only — no path re-read yet (honest: not body-grade verified)
+          verified = false
+          verifyNote = "move: posted only; path re-read not implemented"
+        }
+        return {
+          success: true,
+          data: {
+            ...result,
+            biometric_nonce: nonce,
+            posted: true,
+            verified,
+            ...(verifyNote ? { verify_note: verifyNote } : {}),
+          },
+        }
       } catch (err: any) {
         return { success: false, error: `host_write error: ${err.message || String(err)}` }
       }
@@ -2403,6 +2532,13 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
             total: result.totalActions,
             evidence_dir: result.evidenceDir,
             steps: result.steps,
+            // Grill G1: posted ≠ verified. LLM must not claim "已发送" unless verified_steps cover write steps.
+            posted_steps: result.posted_steps ?? 0,
+            verified_steps: result.verified_steps ?? 0,
+            note:
+              (result.verified_steps ?? 0) < (result.posted_steps ?? 0)
+                ? "Some inject steps posted events but were not semantically verified (posted≠verified)."
+                : undefined,
           },
         }
       } catch (err: any) {

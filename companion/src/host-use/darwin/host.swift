@@ -374,18 +374,24 @@ func appleScriptEscape(_ s: String) -> String {
 }
 
 // runCreateNote: create a new note in Notes.app with given name + body.
-// Returns JSON {"target_id":"macos:com.apple.Notes:default:note-<id>","undoable":true}
+// Returns JSON with target_id + re-read name/body_preview for G4 success contract
+// (grill Q6=A: verified requires body re-read match, not id-list alone).
+// AppleScript returns TAB-separated fields; Swift builds JSON (safe escaping).
 func runCreateNote(name: String, body: String) throws -> String {
     let escName = appleScriptEscape(name)
     let escBody = appleScriptEscape(body)
 
     let source = """
     set outId to ""
+    set outName to ""
+    set outBody to ""
     tell application "Notes"
         set newNote to make new note with properties {name:"\(escName)", body:"\(escBody)"}
         set outId to id of newNote as string
+        set outName to name of newNote as string
+        set outBody to body of newNote as string
     end tell
-    return "{\\"target_id\\":\\"macos:com.apple.Notes:default:note-" & outId & "\\",\\"undoable\\":true}"
+    return outId & "\t" & outName & "\t" & outBody
     """
 
     var error: NSDictionary?
@@ -401,7 +407,23 @@ func runCreateNote(name: String, body: String) throws -> String {
         }
         throw HostError(code: 4, message: "AppleScript error (oserr=\(num)): \(msg)")
     }
-    return result.stringValue ?? "{}"
+    let raw = result.stringValue ?? ""
+    let parts = raw.split(separator: "\t", maxSplits: 2, omittingEmptySubsequences: false).map(String.init)
+    let outId = parts.count > 0 ? parts[0] : ""
+    let outName = parts.count > 1 ? parts[1] : ""
+    var outBody = parts.count > 2 ? parts[2] : ""
+    if outBody.count > 500 {
+        outBody = String(outBody.prefix(500))
+    }
+    // Build JSON via JSONSerialization for safe escaping of name/body.
+    let payload: [String: Any] = [
+        "target_id": "macos:com.apple.Notes:default:note-\(outId)",
+        "undoable": true,
+        "name": outName,
+        "body_preview": outBody,
+    ]
+    let data = try JSONSerialization.data(withJSONObject: payload, options: [])
+    return String(data: data, encoding: .utf8) ?? "{}"
 }
 
 // runMoveFile: move a POSIX file to a POSIX destination via Finder.
@@ -625,6 +647,36 @@ func cuJson(_ dict: [String: Any]) -> String {
 
 // MARK: - helpers
 
+/// kCGWindowNumber is CFNumber; bridge may surface as Int / NSNumber / UInt32.
+func cuWindowNumber(_ w: [String: Any]) -> UInt32 {
+    if let u = w[kCGWindowNumber as String] as? UInt32 { return u }
+    if let i = w[kCGWindowNumber as String] as? Int { return UInt32(truncatingIfNeeded: i) }
+    if let n = w[kCGWindowNumber as String] as? NSNumber { return n.uint32Value }
+    return 0
+}
+
+/// Resolve CGWindowList dict for a windowId. WeChat (and some Electron apps)
+/// return an empty list for `.optionIncludingWindow` even when the id is valid
+/// in `.optionAll` — fall through so screenshot / inject origin don't fail
+/// with "cannot get window info for windowId N" (pgvexn / 2026-07-25).
+func cuWindowInfoDict(windowId: UInt32) -> [String: Any]? {
+    if let raw = CGWindowListCopyWindowInfo([.optionIncludingWindow], windowId) as? [[String: Any]] {
+        if let hit = raw.first(where: { cuWindowNumber($0) == windowId }) { return hit }
+        // Unfiltered single-element IncludingWindow (older macOS quirks)
+        if raw.count == 1, cuWindowNumber(raw[0]) == 0 || cuWindowNumber(raw[0]) == windowId {
+            return raw[0]
+        }
+    }
+    // Prefer on-screen first (cheaper, matches user-visible target)
+    for opts: CGWindowListOption in [[.optionOnScreenOnly], [.optionAll]] {
+        if let rawAll = CGWindowListCopyWindowInfo(opts, kCGNullWindowID) as? [[String: Any]],
+           let hit = rawAll.first(where: { cuWindowNumber($0) == windowId }) {
+            return hit
+        }
+    }
+    return nil
+}
+
 func cuPidForWindow(_ windowId: UInt32) -> pid_t {
     guard let windows = CGWindowListCopyWindowInfo([.optionAll], windowId) as? [[String: Any]],
           let first = windows.first,
@@ -658,14 +710,7 @@ func cuActivatePid(_ pid: pid_t) -> Bool {
 // with capture. Pure math: screen = clientOrigin + (x, y) in logical CG points.
 // Fail closed when windowId cannot be resolved via CGWindowList.
 func cuClientOriginScreen(windowId: UInt32) -> CGPoint? {
-    var info: [[String: Any]] = []
-    if let raw = CGWindowListCopyWindowInfo([.optionIncludingWindow], windowId) as? [[String: Any]] {
-        info = raw.filter { ($0[kCGWindowNumber as String] as? UInt32) == windowId }
-        if info.isEmpty { info = raw }
-    } else if let rawAll = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] {
-        info = rawAll.filter { ($0[kCGWindowNumber as String] as? UInt32) == windowId }
-    }
-    guard let first = info.first,
+    guard let first = cuWindowInfoDict(windowId: windowId),
           let bounds = first[kCGWindowBounds as String] as? [String: CGFloat] else {
         return nil
     }
@@ -729,7 +774,7 @@ func cuWindowList(bundleId: String?, windowId: UInt32?, foreground: Bool) -> Str
     }
     var filtered: [[String: Any]] = []
     for w in windows {
-        let wid = w[kCGWindowNumber as String] as? UInt32 ?? 0
+        let wid = cuWindowNumber(w)
         let owner = w[kCGWindowOwnerName as String] as? String ?? ""
         let name = w[kCGWindowName as String] as? String ?? ""
         let bounds = w[kCGWindowBounds as String] as? [String: CGFloat] ?? [:]
@@ -848,24 +893,14 @@ func cuAXLocate(windowId: UInt32, target: String) -> String {
 // MARK: - screenshot (ScreenCaptureKit)
 
 func cuScreenshot(windowId: UInt32, outputPath: String) -> String {
-    // Use .optionIncludingWindow (not .optionAll) so the result is filtered to
-    // just this windowId. With .optionAll, macOS 26 returns ALL windows and
-    // ignores the windowId arg, so info.first picked the wrong window and
-    // produced a 64x64 rect for a 1058x752 NetEase Music main window
-    // (ea3y6n bug, 2026-07-22). Defense-in-depth: also filter explicitly by
-    // kCGWindowNumber in case macOS ever honors .optionAll + windowId again.
-    var info: [[String: Any]] = []
-    if let raw = CGWindowListCopyWindowInfo([.optionIncludingWindow], windowId) as? [[String: Any]] {
-        info = raw.filter { ($0[kCGWindowNumber as String] as? UInt32) == windowId }
-        if info.isEmpty { info = raw }
-    } else if let rawAll = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] {
-        info = rawAll.filter { ($0[kCGWindowNumber as String] as? UInt32) == windowId }
-    }
-    guard !info.isEmpty else {
+    // Prefer IncludingWindow, but ALWAYS fall back to optionAll filtered by
+    // kCGWindowNumber. WeChat/Electron often return [] for IncludingWindow
+    // while the id is still present in optionAll (pgvexn 2026-07-25).
+    // Never use unfiltered optionAll (ea3y6n: wrong window → 64x64 rect).
+    guard let first = cuWindowInfoDict(windowId: windowId) else {
         return cuError("cannot get window info for windowId \(windowId)")
     }
-    guard let first = info.first,
-          let bounds = first[kCGWindowBounds as String] as? [String: CGFloat] else {
+    guard let bounds = first[kCGWindowBounds as String] as? [String: CGFloat] else {
         return cuError("cannot read window bounds for windowId \(windowId)")
     }
     let rect: [String: CGFloat] = ["x": bounds["X"] ?? 0, "y": bounds["Y"] ?? 0, "width": bounds["Width"] ?? 0, "height": bounds["Height"] ?? 0]
@@ -882,11 +917,18 @@ func cuScreenshot(windowId: UInt32, outputPath: String) -> String {
     // Canary only (dev / A-B rollback): CMSPARK_SCREENSHOT_FORCE_FG=1 restores
     // legacy b0faek activate behavior. Production default = no activate.
     // Distinct from CMSPARK_SKYLIGHT_FORCE_FG (inject path canary, v3).
+    // Diagnostic only when CMSPARK_HOST_DEBUG=1 — unconditional fputs here used
+    // to land in node execFile's stderr and get promoted to user-facing
+    // "screenshot: [host] screenshot no-activate…" non_recoverable errors.
+    if ProcessInfo.processInfo.environment["CMSPARK_HOST_DEBUG"] == "1" {
+        if ProcessInfo.processInfo.environment["CMSPARK_SCREENSHOT_FORCE_FG"] == "1" {
+            fputs("[host] screenshot activate (CMSPARK_SCREENSHOT_FORCE_FG=1 canary)\n", stderr)
+        } else {
+            fputs("[host] screenshot no-activate (Hermes background capture path)\n", stderr)
+        }
+    }
     if ProcessInfo.processInfo.environment["CMSPARK_SCREENSHOT_FORCE_FG"] == "1" {
         cuActivatePid(pid)
-        fputs("[host] screenshot activate (CMSPARK_SCREENSHOT_FORCE_FG=1 canary)\n", stderr)
-    } else {
-        fputs("[host] screenshot no-activate (Hermes background capture path)\n", stderr)
     }
     if let appElement = cuAppElementForPid(pid) {
         var windowsRef: CFTypeRef?
@@ -915,7 +957,12 @@ func cuScreenshot(windowId: UInt32, outputPath: String) -> String {
                     bestWin = axWin
                 }
             }
-            if let axWin = bestWin {
+            // Only trust AX when frame match is tight. WeChat (and multi-window
+            // Electron apps) often expose a different AX window than the
+            // CGWindow we captured; a loose "best" pick produced client
+            // offsets like (-313,-107) 880×640 on a 280×380 CG rect, which
+            // then poisoned inject bounds checks (2026-07-25).
+            if let axWin = bestWin, bestDist < 24 {
                 var posRef: CFTypeRef?; var sizeRef: CFTypeRef?
                 AXUIElementCopyAttributeValue(axWin, kAXPositionAttribute as CFString, &posRef)
                 AXUIElementCopyAttributeValue(axWin, kAXSizeAttribute as CFString, &sizeRef)
@@ -923,7 +970,9 @@ func cuScreenshot(windowId: UInt32, outputPath: String) -> String {
                 if let p = posRef { AXValueGetValue(p as! AXValue, .cgPoint, &pos) }
                 if let s = sizeRef { AXValueGetValue(s as! AXValue, .cgSize, &size) }
                 let fx = rect["x"] ?? 0; let fy = rect["y"] ?? 0
-                client = ["x": pos.x - fx, "y": pos.y - fy, "width": size.width, "height": size.height]
+                if size.width > 0 && size.height > 0 {
+                    client = ["x": pos.x - fx, "y": pos.y - fy, "width": size.width, "height": size.height]
+                }
             }
         }
     }
@@ -940,9 +989,13 @@ func cuScreenshot(windowId: UInt32, outputPath: String) -> String {
     // back: preflight checks THIS process's TCC entry but TCC records the
     // grant against the responsible process up the spawn chain, so the two
     // never line up for an ad-hoc binary → infinite prompt loop.
+    // Capture result must cross Task → caller with a lock. Unsynchronized
+    // `var capturedImage: CGImage?` + concurrent Task write is a data race:
+    // ARC retain on the Task side + main-thread read can leave a half-retained
+    // CGImage that later SIGSEGVs at offset 0x10 inside cuScreenshot (after PNG
+    // write succeeds). Observed 2026-07-25 on all windows (WeChat/Chrome/Settings).
     let semaphore = DispatchSemaphore(value: 0)
-    var capturedImage: CGImage?
-    var captureError: String?
+    let captureBox = CUBox<(image: CGImage?, error: String?)>((nil, nil))
     let hostPid = ProcessInfo.processInfo.processIdentifier
     let hostParentPid = getppid()
 
@@ -950,7 +1003,9 @@ func cuScreenshot(windowId: UInt32, outputPath: String) -> String {
         do {
             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
             guard let targetWindow = content.windows.first(where: { UInt32($0.windowID) == windowId }) else {
-                captureError = "window \(windowId) not found among \(content.windows.count) SCShareableContent windows (pid=\(hostPid) ppid=\(hostParentPid))"
+                captureBox.with {
+                    $0 = (nil, "window \(windowId) not found among \(content.windows.count) SCShareableContent windows (pid=\(hostPid) ppid=\(hostParentPid))")
+                }
                 semaphore.signal()
                 return
             }
@@ -959,22 +1014,64 @@ func cuScreenshot(windowId: UInt32, outputPath: String) -> String {
             config.scalesToFit = false
             config.showsCursor = false
             config.ignoreShadowsSingleWindow = true
+            // SCStreamConfiguration defaults width/height to the *display*
+            // pixel size (e.g. 1920×1080). Without an explicit size,
+            // captureImage returns a full-display buffer even for
+            // desktopIndependentWindow — scaleX/Y then explode (280×380
+            // window → scaleX≈6.86) and click mapping is wrong.
+            // Use the SCWindow frame × backing scale of the screen that
+            // contains the window (fallback: max screen scale, then 2.0).
+            let frame = targetWindow.frame
+            let scale: CGFloat = {
+                let screens = NSScreen.screens
+                if let hit = screens.first(where: { $0.frame.intersects(frame) }) {
+                    return hit.backingScaleFactor
+                }
+                return screens.map(\.backingScaleFactor).max() ?? 2.0
+            }()
+            let outW = max(1, Int((frame.width * scale).rounded()))
+            let outH = max(1, Int((frame.height * scale).rounded()))
+            config.width = outW
+            config.height = outH
             let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
-            capturedImage = image
+            captureBox.with { $0 = (image, nil) }
         } catch let err as NSError {
-            if err.domain == "com.apple.ScreenCaptureKit" && err.code == -38001 {
-                captureError = "ScreenCaptureKit permission denied (pid=\(hostPid) ppid=\(hostParentPid)) — open System Settings → Privacy & Security → Screen Recording and enable the entry for CMspark Agent / node / cmspark-host, then retry"
+            // TCC denial codes observed in the wild:
+            //   -3801  (user message: 用户拒绝了…捕捉的TCC) — macOS 15/26 common
+            //   -38001 — older docs / alternate SCStreamError enum path
+            // Match both; also treat localized "TCC" / "denied" in this domain as denial.
+            let isSckTcc =
+                err.domain == "com.apple.ScreenCaptureKit.SCStreamErrorDomain"
+                || err.domain == "com.apple.ScreenCaptureKit"
+            let isDenialCode = (err.code == -3801 || err.code == -38001)
+            let desc = err.localizedDescription
+            let looksLikeDenial = desc.localizedCaseInsensitiveContains("TCC")
+                || desc.localizedCaseInsensitiveContains("denied")
+                || desc.contains("拒绝")
+            let errMsg: String
+            if isSckTcc && (isDenialCode || looksLikeDenial) {
+                errMsg =
+                    "Screen Recording permission denied (ScreenCaptureKit code=\(err.code), " +
+                    "pid=\(hostPid) ppid=\(hostParentPid)). " +
+                    "Open System Settings → Privacy & Security → Screen Recording, " +
+                    "enable «CMspark» (and/or node / cmspark-host if listed), " +
+                    "then fully quit and relaunch CMspark.app and retry. " +
+                    "Ad-hoc re-sign or reinstall can clear the grant — re-enable if it was on before."
             } else {
-                captureError = "ScreenCaptureKit error: \(err.domain) code=\(err.code) \(err.localizedDescription) (pid=\(hostPid) ppid=\(hostParentPid))"
+                errMsg = "ScreenCaptureKit error: \(err.domain) code=\(err.code) \(desc) (pid=\(hostPid) ppid=\(hostParentPid))"
             }
+            captureBox.with { $0 = (nil, errMsg) }
         } catch {
-            captureError = "screenshot capture failed: \(error.localizedDescription) (pid=\(hostPid) ppid=\(hostParentPid))"
+            captureBox.with {
+                $0 = (nil, "screenshot capture failed: \(error.localizedDescription) (pid=\(hostPid) ppid=\(hostParentPid))")
+            }
         }
         semaphore.signal()
     }
     _ = task
     semaphore.wait()
 
+    let (capturedImage, captureError) = captureBox.with { $0 }
     if let err = captureError {
         return cuError(err, code: "PERMISSION_DENIED")
     }
@@ -1009,10 +1106,14 @@ func cuScreenshot(windowId: UInt32, outputPath: String) -> String {
     // or blank frames instead of returning a frame the LLM will click into
     // blindly. AND-of-conditions when a prior exists (caret-blink frame has
     // low stdev but low identity → must NOT pass); stdev-only when no prior.
+    //
+    // Prior-frame store uses free functions over enum statics (not a
+    // file-level lazy `CUBox` global). Post-SCK first access of that global
+    // SIGSEGV'd @ 0x10 on macOS 26 (2026-07-25); local CUBox + enum statics OK.
     let priorKey = windowId
     let downsample = cuDownsampleToBitmap(image, side: 64)
     let stdev = cuLumaStdev(downsample)
-    let prior = cuPriorCaptureFrameLock.value[priorKey]
+    let prior = cuPriorFrameGet(priorKey)
     var identity = -1.0
     if let p = prior {
         identity = cuIdentity(downsample, p)
@@ -1027,7 +1128,7 @@ func cuScreenshot(windowId: UInt32, outputPath: String) -> String {
     var stale = false
     if sizeGuard || downsampleEmpty {
         stale = true
-    } else if let _ = prior {
+    } else if prior != nil {
         // Prior exists: require BOTH low stdev AND high identity to declare
         // stale (Pi caveat: OR over-flags caret-blink frames).
         stale = (stdev < 1.0 && identity >= 0.99)
@@ -1036,7 +1137,7 @@ func cuScreenshot(windowId: UInt32, outputPath: String) -> String {
         stale = stdev < 1.0
     }
     // Update prior regardless of verdict — next call uses this for identity.
-    cuPriorCaptureFrameLock.value[priorKey] = downsample
+    cuPriorFrameSet(priorKey, downsample)
 
     // Reason taxonomy (operator-only; LLM only sees CAPTURE_FAILED per Pi C4).
     // size_guard wins because a 0-byte / 0-dim frame makes stdev/identity
@@ -1103,39 +1204,78 @@ func cuScreenshot(windowId: UInt32, outputPath: String) -> String {
 
 // MARK: - capture variance classifier helpers (v4.1 Blocker 1)
 
-/// Thread-safe storage for last-frame 64x64 luma bitmap per windowId.
-/// Used by cuScreenshot for the identity check in the variance classifier.
-private let cuPriorCaptureFrameLock = CUBox<[UInt32: [UInt8]]>([:])
+/// Thread-safe last-frame 64×64 luma bitmap per windowId (identity check).
+///
+/// Implemented as free functions over a private enum namespace — NOT a
+/// file-level `private let CUBox<…>([:])`. On macOS 26 + ScreenCaptureKit,
+/// the first access to that lazy global *after* `SCScreenshotManager.captureImage`
+/// completed was crashing with SIGSEGV @ 0x10 (nil receiver) while a *local*
+/// CUBox created before capture worked fine. Function-scoped static storage
+/// via enum avoids that post-SCK global-init footgun.
+private enum CuPriorFrameStore {
+    static var frames: [UInt32: [UInt8]] = [:]
+    static let lock = NSLock()
+}
 
-/// Simple lock-protected box for mutable global state (mirrors swift-tray pattern).
+private func cuPriorFrameGet(_ windowId: UInt32) -> [UInt8]? {
+    CuPriorFrameStore.lock.lock()
+    defer { CuPriorFrameStore.lock.unlock() }
+    return CuPriorFrameStore.frames[windowId]
+}
+
+private func cuPriorFrameSet(_ windowId: UInt32, _ bitmap: [UInt8]) {
+    CuPriorFrameStore.lock.lock()
+    defer { CuPriorFrameStore.lock.unlock() }
+    CuPriorFrameStore.frames[windowId] = bitmap
+}
+
+/// Simple lock-protected box for mutable state that must cross Task → caller
+/// (e.g. ScreenCaptureKit result). Prefer local instances over file-level
+/// lazy globals when used near SCK (see CuPriorFrameStore note).
 private final class CUBox<T> {
-    var value: T
+    private var storage: T
     private let lock = NSLock()
-    init(_ initial: T) { self.value = initial }
+    init(_ initial: T) { self.storage = initial }
+    var value: T {
+        get { lock.lock(); defer { lock.unlock() }; return storage }
+        set { lock.lock(); defer { lock.unlock() }; storage = newValue }
+    }
     func with<R>(_ body: (inout T) -> R) -> R {
         lock.lock(); defer { lock.unlock() }
-        return body(&value)
+        return body(&storage)
     }
 }
 
 /// Downsample a CGImage to a `side`x`side` luma bitmap (0-255 per cell).
 /// Uses average pooling over the source image. Returns empty array on failure.
+///
+/// IMPORTANT: CGContext stores the `data` pointer and uses it later in
+/// `draw`. Swift's `CGContext(data: &array, …)` only keeps the Array buffer
+/// pointer valid for the duration of the *initializer call*, so the subsequent
+/// `ctx.draw` is a use-after-free → SIGSEGV (KERN_INVALID_ADDRESS at 0x10),
+/// after PNG write already succeeded. Bind the buffer with
+/// `withUnsafeMutableBytes` for the whole draw lifetime.
 func cuDownsampleToBitmap(_ image: CGImage, side: Int) -> [UInt8] {
     let w = image.width
     let h = image.height
-    if w <= 0 || h <= 0 { return [] }
+    if w <= 0 || h <= 0 || side <= 0 { return [] }
     let colorSpace = CGColorSpaceCreateDeviceRGB()
     let bytesPerRow = side * 4
     var pixels = [UInt8](repeating: 0, count: side * side * 4)
-    guard let ctx = CGContext(
-        data: &pixels,
-        width: side, height: side,
-        bitsPerComponent: 8, bytesPerRow: bytesPerRow,
-        space: colorSpace,
-        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-    ) else { return [] }
-    ctx.interpolationQuality = .low
-    ctx.draw(image, in: CGRect(x: 0, y: 0, width: side, height: side))
+    let ok = pixels.withUnsafeMutableBytes { rawBuf -> Bool in
+        guard let base = rawBuf.baseAddress else { return false }
+        guard let ctx = CGContext(
+            data: base,
+            width: side, height: side,
+            bitsPerComponent: 8, bytesPerRow: bytesPerRow,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return false }
+        ctx.interpolationQuality = .low
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: side, height: side))
+        return true
+    }
+    if !ok { return [] }
     var luma = [UInt8](repeating: 0, count: side * side)
     for i in 0..<(side * side) {
         let r = Double(pixels[i * 4])

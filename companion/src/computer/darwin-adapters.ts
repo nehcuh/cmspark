@@ -150,9 +150,67 @@ export function assertInjectOk(stdout: string, label = "inject"): void {
   checkOk(parsed, label)
 }
 
+/**
+ * Prefer structured JSON on stdout (host always prints a final JSON line).
+ * Never surface host diagnostic fputs like
+ *   `[host] screenshot no-activate (Hermes background capture path)`
+ * as the user-facing error — those are stderr logs, not failures
+ * (pgvexn / 2026-07-25: non_recoverable polluted with Hermes line).
+ */
 function rethrowDarwinExecError(err: ExecFileException | Error, label: string): never {
-  if (err && typeof err === "object" && "stderr" in err && (err as any).stderr) {
-    throw new ComputerError("INVALID_ACTION", `${label}: ${(err as any).stderr}`)
+  const e = err as ExecFileException & { stdout?: unknown; stderr?: unknown }
+  const asText = (v: unknown): string => {
+    if (typeof v === "string") return v
+    if (Buffer.isBuffer(v)) return v.toString("utf8")
+    return ""
+  }
+  const stdout = asText(e.stdout)
+  const stderrRaw = asText(e.stderr)
+
+  // Extract last JSON object from stdout if present.
+  const jsonLine = stdout
+    .split(/\r?\n/)
+    .map((l: string) => l.trim())
+    .filter((l: string) => l.startsWith("{") && l.endsWith("}"))
+    .pop()
+  if (jsonLine) {
+    try {
+      const parsed = JSON.parse(jsonLine) as { ok?: boolean; error?: string; error_code?: string }
+      if (parsed && parsed.ok === false) {
+        throw new ComputerError(
+          (parsed.error_code as any) || "INVALID_ACTION",
+          `${label}: ${parsed.error ?? "unknown error"}`,
+        )
+      }
+    } catch (inner) {
+      if (inner instanceof ComputerError) throw inner
+      // fall through — not valid host JSON
+    }
+  }
+
+  // Drop pure diagnostic lines from host fputs([host] …).
+  const stderr = stderrRaw
+    .split(/\r?\n/)
+    .map((l: string) => l.trim())
+    .filter((l: string) => l.length > 0 && !/^\[host\]\s/.test(l))
+    .join("\n")
+    .trim()
+
+  if (stderr) {
+    throw new ComputerError("INVALID_ACTION", `${label}: ${stderr}`)
+  }
+  // Node's execFile message for signal deaths is opaque ("Command failed: …").
+  // Surface signal/code when present so operators see SIGSEGV vs TCC denial.
+  // ExecFileException: `code` is null on signal death; `signal` is "SIGSEGV" etc.
+  const exitCode = typeof e.code === "number" ? e.code : undefined
+  const signal = typeof e.signal === "string" && e.signal ? e.signal : undefined
+  if (signal || (exitCode !== undefined && exitCode > 128)) {
+    const sig = signal ?? `signal-${(exitCode ?? 0) - 128}`
+    throw new ComputerError(
+      "CAPTURE_FAILED",
+      `${label}: cmspark-host crashed (${sig}${exitCode !== undefined ? `, exit=${exitCode}` : ""}). ` +
+        `Rebuild/reinstall host if this persists after a codesign change.`,
+    )
   }
   throw new ComputerError("INVALID_ACTION", `${label}: ${err.message}`)
 }
@@ -317,9 +375,33 @@ export class MacScreenCapturer implements ScreenCapturer {
         "--output", tmpPath,
       ], { encoding: "utf-8", timeout: DARWIN_CAPTURE_TIMEOUT_MS })
     } catch (err) {
-      rethrowDarwinExecError(err as ExecFileException | Error, "screenshot")
+      // Prefer structured stdout JSON over stderr log noise (see rethrowDarwinExecError).
+      // NEVER invent ok:true with 0×0 rects — that became OUT_OF_BOUNDS client=0x0
+      // after a real Screen Recording denial (2026-07-25).
+      const e = err as ExecFileException & { stdout?: string }
+      const stdout = typeof e.stdout === "string" ? e.stdout : ""
+      if (stdout.trim()) {
+        try {
+          const recovered = parseComputerJson(stdout, "screenshot")
+          if (recovered.ok === true && fs.existsSync(tmpPath) && fs.statSync(tmpPath).size > 0) {
+            const rw = Number(recovered.rect?.width ?? recovered.client?.width ?? 0)
+            const rh = Number(recovered.rect?.height ?? recovered.client?.height ?? 0)
+            if (rw > 0 && rh > 0) {
+              result = { stdout }
+            } else {
+              rethrowDarwinExecError(err as ExecFileException | Error, "screenshot")
+            }
+          } else {
+            rethrowDarwinExecError(err as ExecFileException | Error, "screenshot")
+          }
+        } catch {
+          rethrowDarwinExecError(err as ExecFileException | Error, "screenshot")
+        }
+      } else {
+        rethrowDarwinExecError(err as ExecFileException | Error, "screenshot")
+      }
     }
-    const parsed = parseComputerJson(result.stdout, "screenshot")
+    const parsed = parseComputerJson(result!.stdout, "screenshot")
     // Compute sha256 BEFORE the ok-check so interpretScreenshotFailure can use
     // it as a fallback when the host's CAPTURE_FAILED payload omits the field
     // (older binaries). Replaces `checkOk(parsed, "screenshot")`; see P2 Pi C4.
@@ -347,10 +429,26 @@ export class MacScreenCapturer implements ScreenCapturer {
       ? parsed.scaleY
       : (rectH > 0 ? imageHeight / rectH : 1.0)
 
+    const client = parsed.client ?? {
+      x: 0,
+      y: 0,
+      width: parsed.rect?.width ?? 0,
+      height: parsed.rect?.height ?? 0,
+    }
+    // Fail closed if capture metadata is empty — never let callers bound-check
+    // against 0×0 (reads as OUT_OF_BOUNDS and hides Screen Recording / capture bugs).
+    if (!(client.width > 0 && client.height > 0) && !(rectW > 0 && rectH > 0)) {
+      throw new ComputerError(
+        "CAPTURE_FAILED",
+        "screenshot: empty client/window rect (0×0) — capture did not produce usable geometry. " +
+          "Check System Settings → Privacy & Security → Screen Recording for CMspark, then quit and relaunch.",
+      )
+    }
+
     return {
       hwnd,
       rect,
-      client: parsed.client ?? { x: 0, y: 0, width: parsed.rect?.width ?? 0, height: parsed.rect?.height ?? 0 },
+      client,
       dpi: parsed.dpi ?? 72,
       imageWidth,
       imageHeight,
@@ -589,10 +687,30 @@ export class MacInputInjector implements InputInjector {
     }
   }
 
+  /**
+   * Agent-owned brief raise before inject — NOT a user duty.
+   *
+   * Product model: user stays in the Chrome side panel to authorize / chat.
+   * After Allow, *we* raise the target for the inject moment. We never ask the
+   * user to "keep WeChat frontmost while authorizing in the plugin" (that is
+   * the 3ffkgl paradox). SkyLight posts by PID, but some apps (WeChat) only
+   * honor keyboard when they are key window — so the agent raises, injects,
+   * and the next side-panel interaction may steal FG again (self-UI recovery
+   * handles that without re-L2). Soft-best-effort: raise failure does not
+   * block inject except hard probe-broken.
+   */
+  private async preferForeground(hwnd: number): Promise<void> {
+    try {
+      await this.ensureForeground(hwnd)
+    } catch (err) {
+      if (err instanceof ForegroundProbeBrokenError) throw err
+    }
+  }
+
   async click(hwnd: number, x: number, y: number, kind: ClickKind): Promise<void> {
-    // SkyLight per-PID delivery routes the event to the target window's PID
-    // regardless of frontmost state. ensureForeground is no longer needed
-    // for inject paths and would re-introduce cursor churn.
+    // Best-effort raise: WeChat needs key-window for reliable hit-testing;
+    // Chrome SkyLight path still works when raise is a no-op / already FG.
+    await this.preferForeground(hwnd)
     const bin = resolveHostBinary()
     const args = ["inject", "--action", kind, "--window-id", String(hwnd),
                   "--x", String(Math.round(x)), "--y", String(Math.round(y)),
@@ -612,6 +730,10 @@ export class MacInputInjector implements InputInjector {
   }
 
   async typeText(hwnd: number, text: string): Promise<void> {
+    // Keyboard delivery requires the target to be key window on WeChat /
+    // several AppKit apps — without raise, type returns ok with zero UI effect
+    // (3ffkgl: dozens of type+enter "success" while input placeholder stayed).
+    await this.preferForeground(hwnd)
     const normalized = text.normalize("NFKC")
     const graphemes = [...this.segmenter.segment(normalized)].map((s) => s.segment)
 
@@ -636,8 +758,18 @@ export class MacInputInjector implements InputInjector {
   }
 
   async keyChord(hwnd: number, keys: string[]): Promise<void> {
+    await this.preferForeground(hwnd)
     const bin = resolveHostBinary()
-    const args = ["inject", "--action", "key", "--window-id", String(hwnd), "--chord", ...keys]
+    // Host argValue("--chord") takes a SINGLE token and splits on comma.
+    // Passing `--chord ctrl enter` only delivers "ctrl" (modifiers with no
+    // non-mod key → silent no-op, still ok:true). Join first.
+    const normalized = keys.map((k) => {
+      const lower = k.toLowerCase()
+      if (lower === "meta" || lower === "command" || lower === "cmd") return "cmd"
+      return lower
+    })
+    const chord = normalized.join(",")
+    const args = ["inject", "--action", "key", "--window-id", String(hwnd), "--chord", chord]
     if (this.estopFlagPath) args.push("--estop-flag", this.estopFlagPath)
     let stdout: string
     try {

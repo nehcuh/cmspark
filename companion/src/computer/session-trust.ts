@@ -36,13 +36,19 @@
 //     module and governs a different gate.
 //   - Process lifetime only (companion restart clears all trust). No
 //     persistent cross-session trust.
-//   - Keyed by (sessionId, appToken): trust is per-conversation AND per-app.
-//     A new conversation, or a different app in the same conversation, asks
-//     again.
+//   - Keyed by (trustKey, appToken). Grill Q1=C (2026-07-26): trustKey is
+//     `thread:<chatThreadId>` when the chat thread is known, else
+//     `ws:<wsSessionId>`. Initial-L2 **skip** is allowed only for thread:
+//     keys (no thread → no silent multi-task trust). Mid-task re-L2 silence
+//     still uses isTrusted() for either key form after an interactive approve.
 //   - Force-interactive carve-out (PROMPT_ALWAYS_TAGS + reL2ShouldPrompt /
 //     executor reL2): computer.danger_detected and
 //     computer.experimental_suggestion (TinyClick G4) NEVER auto-approve under
 //     session trust. v4.1 also keeps computer.foreground_yielded always-prompt.
+//
+//   - Grill Q2 (2026-07-26): grant.explicitOptIn is set only when the user
+//     checks "本会话自动同意同类操作". Without it, mid-task reL2 may still
+//     silent-approve (task-local), but G1 **initial** L2 skip is denied.
 //
 // The grant is recorded by the server once the initial task L2 is approved
 // (server.ts). The executor consults it at the top of reL2() and at the
@@ -50,6 +56,25 @@
 
 /** Idle expiry for grants. After this much inactivity, re-prompt. */
 export const IDLE_EXPIRY_MS = 30 * 60 * 1000 // 30 min (Pi v4.1 D3.4 mandatory default)
+
+/**
+ * Build the outer trust map key (grill Q1=C).
+ * - Prefer chat thread id so "本会话" matches user mental model across WS reconnect.
+ * - Fall back to WS session id when thread is unknown; caller must not initial-skip.
+ */
+export function resolveComputerTrustKey(
+  threadId: string | undefined | null,
+  wsSessionId: string,
+): string {
+  const t = typeof threadId === "string" ? threadId.trim() : ""
+  if (t.length > 0) return `thread:${t}`
+  return `ws:${wsSessionId}`
+}
+
+/** True when this key may participate in G1 multi-task initial-L2 skip. */
+export function trustKeyAllowsInitialSkip(trustKey: string): boolean {
+  return typeof trustKey === "string" && trustKey.startsWith("thread:")
+}
 
 /**
  * Re-L2 tag set that must ALWAYS prompt, even when the session is trusted.
@@ -116,6 +141,12 @@ export function reL2ShouldPrompt(tags: string[]): boolean {
  * budget the user has interactively approved for this (sessionId, appToken).
  * Skip-eligible tasks must have budget ≤ maxBudgetSeen — volume IS its own
  * blast-radius dimension independent of corpus identity.
+ *
+ * `maxActionsSeen` (grill Q3, 2026-07-26): largest actions[] length interactively
+ * approved — skip requires actions.length ≤ maxActionsSeen.
+ *
+ * `explicitOptIn` (grill Q2): true only when user checked session auto-approve.
+ * G1 initial-L2 skip requires this; mid-task reL2 silence does not.
  */
 interface GrantRecord {
   appToken: string
@@ -127,14 +158,27 @@ interface GrantRecord {
   corpus: Set<string>
   /** Largest budget ever interactively approved. P5 (Pi caveat 1, 2026-07-24). */
   maxBudgetSeen: number
+  /** Largest actions[] length interactively approved (grill Q3). */
+  maxActionsSeen: number
+  /** User checked "本会话自动同意同类操作" (grill Q2). */
+  explicitOptIn: boolean
 }
 
-/** Singleton store: sessionId -> Set of trusted app tokens + grant records. */
+export interface ComputerTrustGrantOptions {
+  /** User checked session auto-approve checkbox. OR with existing flag (sticky true). */
+  explicitOptIn?: boolean
+}
+
+/** Singleton store: trustKey -> appToken -> grant records. */
 export class ComputerSessionTrust {
   private trusted = new Map<string, Map<string, GrantRecord>>()
 
-  /** Record that this session approved a task for the given app token. Idempotent. */
-  grant(sessionId: string, appToken: string): void {
+  /**
+   * Record that this trust key approved a task for the given app token.
+   * Idempotent. `sessionId` parameter name kept for call-site compatibility —
+   * pass resolveComputerTrustKey(...) result.
+   */
+  grant(sessionId: string, appToken: string, opts?: ComputerTrustGrantOptions): void {
     if (!sessionId || !appToken) return
     let inner = this.trusted.get(sessionId)
     if (!inner) {
@@ -143,6 +187,8 @@ export class ComputerSessionTrust {
     }
     const now = Date.now()
     const existing = inner.get(appToken)
+    const explicit =
+      opts?.explicitOptIn === true || existing?.explicitOptIn === true
     inner.set(appToken, {
       appToken,
       grantedAt: existing?.grantedAt ?? now,
@@ -150,7 +196,18 @@ export class ComputerSessionTrust {
       credentialSurfaceSeen: existing?.credentialSurfaceSeen ?? false,
       corpus: existing?.corpus ?? new Set<string>(),
       maxBudgetSeen: existing?.maxBudgetSeen ?? 0,
+      maxActionsSeen: existing?.maxActionsSeen ?? 0,
+      explicitOptIn: explicit,
     })
+  }
+
+  /** True when grant has explicit session auto-approve opt-in (and is live). */
+  hasExplicitOptIn(sessionId: string, appToken: string): boolean {
+    const rec = this.record(sessionId, appToken)
+    if (!rec || !rec.explicitOptIn) return false
+    if (Date.now() - rec.lastTouchedAt > IDLE_EXPIRY_MS) return false
+    if (rec.credentialSurfaceSeen) return false
+    return true
   }
 
   /**
@@ -204,6 +261,8 @@ export class ComputerSessionTrust {
       credentialSurfaceSeen: seen === null ? true : (existing?.credentialSurfaceSeen || seen),
       corpus: existing?.corpus ?? new Set<string>(),
       maxBudgetSeen: existing?.maxBudgetSeen ?? 0,
+      maxActionsSeen: existing?.maxActionsSeen ?? 0,
+      explicitOptIn: existing?.explicitOptIn ?? false,
     })
   }
 
@@ -223,12 +282,28 @@ export class ComputerSessionTrust {
   }
 
   /**
+   * Record actions[] length of an interactively-approved task (grill Q3).
+   * Monotonically increasing.
+   */
+  recordActions(sessionId: string, appToken: string, actionCount: number): void {
+    const rec = this.record(sessionId, appToken)
+    if (!rec) return
+    const n = Math.max(0, Math.floor(actionCount))
+    if (n > rec.maxActionsSeen) rec.maxActionsSeen = n
+  }
+
+  /**
    * Returns the largest budget ever interactively approved for this
    * (sessionId, appToken). Returns 0 when no grant exists. Skip gate should
    * treat 0 as "no budget ever approved" → must prompt.
    */
   maxBudgetSeen(sessionId: string, appToken: string): number {
     return this.record(sessionId, appToken)?.maxBudgetSeen ?? 0
+  }
+
+  /** Largest actions[] length ever interactively approved; 0 if none. */
+  maxActionsSeen(sessionId: string, appToken: string): number {
+    return this.record(sessionId, appToken)?.maxActionsSeen ?? 0
   }
 
   /**

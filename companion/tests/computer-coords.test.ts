@@ -90,13 +90,26 @@ test("maybeAutoscaleImageToClient: detects Retina-scale mismatch (unambiguous ca
   assert.equal(r!.scaled.y, 300)
 })
 
-test("maybeAutoscaleImageToClient: user-reported (722,872) class is AMBIGUOUS — refuses autoscale", () => {
-  // The actual user bug: (722, 872) against 880x640 Retina. scaled=(361,436)
-  // in bounds; swapped=(436,361) also in bounds → Pi R5 ambiguous → refuse.
-  // Real fix lives in executor.ts OOB diagnostic (surfaces scale info so the
-  // user/LLM can reason about the mismatch), NOT in autoscale.
+test("maybeAutoscaleImageToClient: (722,872) inside image bounds → Retina autoscale", () => {
+  // Historical user bug class: (722, 872) against 880×640 Retina. With image
+  // dims present (1760×1280), raw is a valid PNG pixel → divide by scale.
+  // (Previously refused as "swap-ambiguous"; that check disabled autoscale on
+  // landscape windows entirely — see WeChat (500,650) vs 1324×640.)
   const r = maybeAutoscaleImageToClient({ x: 722, y: 872 }, RETINA, { x: 0, y: 0, width: 880, height: 640 })
-  assert.equal(r, null, "ambiguous orientation must NOT trigger autoscale")
+  assert.ok(r, "image-contained OOB should autoscale")
+  assert.equal(r!.reason, "retina-scale")
+  assert.equal(r!.scaled.x, 361)
+  assert.equal(r!.scaled.y, 436)
+})
+
+test("maybeAutoscaleImageToClient: WeChat (500,650) on 1324×640 @2x → autoscale", () => {
+  // Live failure 2026-07-25: swap-of-scaled check refused because both
+  // (250,325) and (325,250) fit a wide client. Image containment wins.
+  const scales = { imageWidth: 2648, imageHeight: 1280, scaleX: 2, scaleY: 2 }
+  const r = maybeAutoscaleImageToClient({ x: 500, y: 650 }, scales, { x: 0, y: 0, width: 1324, height: 640 })
+  assert.ok(r)
+  assert.equal(r!.scaled.x, 250)
+  assert.equal(r!.scaled.y, 325)
 })
 
 test("maybeAutoscaleImageToClient: returns null when point already in client", () => {
@@ -115,12 +128,19 @@ test("maybeAutoscaleImageToClient: returns null when scaled point still OOB (tru
   assert.equal(r, null)
 })
 
-test("maybeAutoscaleImageToClient: Pi R5 — refuses when swap orientation also in bounds", () => {
-  // Construct a case where both (x/sx, y/sy) and (y/sy, x/sx) are in C.
-  // Client 880x640, scale 2. Raw (600, 1000): scaled (300, 500) in bounds;
-  // swapped (500, 300) also in bounds → ambiguous, refuse autoscale.
-  const r = maybeAutoscaleImageToClient({ x: 600, y: 1000 }, RETINA, { x: 0, y: 0, width: 880, height: 640 })
+test("maybeAutoscaleImageToClient: Pi R5 — without image dims, refuses swap-ambiguous", () => {
+  // No image dims → weak path: both scaled and swap-scaled fit C → refuse.
+  const noImage = { imageWidth: 0, imageHeight: 0, scaleX: 2, scaleY: 2 }
+  const r = maybeAutoscaleImageToClient({ x: 600, y: 1000 }, noImage, { x: 0, y: 0, width: 880, height: 640 })
   assert.equal(r, null)
+})
+
+test("maybeAutoscaleImageToClient: with image dims, (600,1000) inside image → autoscale", () => {
+  // Same point with RETINA image 1760×1280: 1000 < 1280 → image-contained.
+  const r = maybeAutoscaleImageToClient({ x: 600, y: 1000 }, RETINA, { x: 0, y: 0, width: 880, height: 640 })
+  assert.ok(r)
+  assert.equal(r!.scaled.x, 300)
+  assert.equal(r!.scaled.y, 500)
 })
 
 test("maybeAutoscaleImageToClient: returns null when client dimensions are zero", () => {

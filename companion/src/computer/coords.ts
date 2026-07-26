@@ -117,14 +117,20 @@ export function screenToClient(
  * Detect whether a raw LLM-supplied point is in image-pixel space (S1) rather
  * than client-logical (C). Used by the v4 autoscale compatibility crutch.
  *
- * Heuristic: if the raw point is outside C bounds but `raw / scale` falls
- * inside C bounds, the LLM likely used image pixels. Returns the scaled point
- * when the classification is unique (both orientations cannot be in bounds
- * simultaneously), or null when ambiguous / definitely OOB.
+ * Heuristic (2026-07-25, WeChat (500,650) vs 1324×640 @2x):
+ *   1. raw outside C, raw/scale inside C, and scale > 1
+ *   2. Prefer autoscale when raw lies inside the screenshot image bounds
+ *      (imageWidth × imageHeight). Vision models routinely emit PNG-pixel
+ *      coords on Retina despite the tool schema asking for client-logical —
+ *      image containment is strong evidence of that failure mode.
+ *   3. Without image dims (or raw outside image): only autoscale when the
+ *      *scaled* axis-swap (y/sy, x/sx) is OOB — unambiguous orientation
+ *      (Pi R5). Do NOT use the swap check when image containment holds:
+ *      on landscape windows (WeChat 1324×640, Chrome 1728×1084) both
+ *      (x/s,y/s) and (y/s,x/s) almost always fit, which disabled Retina
+ *      autoscale for the entire class of real clicks.
  *
- * Pi v4.1 caveat (R5): autoscale must NOT trigger on swap (x/y reversed)
- * because that would silently misroute clicks. Only trigger on clear
- * retina-scale mismatch.
+ * Returns the scaled point, or null when still ambiguous / true OOB.
  */
 export function maybeAutoscaleImageToClient(
   raw: PointClient,
@@ -147,9 +153,15 @@ export function maybeAutoscaleImageToClient(
   const scaled: PointClient = { x: raw.x / sx, y: raw.y / sy }
   if (!inClient(scaled)) return null // even scaled is OOB — true OOB, not autoscale
 
-  // Pi R5: ensure the swap orientation is NOT also in bounds. If both
-  // (raw.x/sx, raw.y/sy) and (raw.y/sy, raw.x/sx) land in C, classify as
-  // ambiguous and refuse autoscale.
+  // Strong path: raw is a valid image-pixel coordinate of the capture.
+  const iw = scales.imageWidth
+  const ih = scales.imageHeight
+  if (iw > 0 && ih > 0 && raw.x >= 0 && raw.y >= 0 && raw.x < iw && raw.y < ih) {
+    return { scaled, reason: "retina-scale" }
+  }
+
+  // Weak path (no/unknown image dims, or raw outside image): require the
+  // scaled axis-swap to be OOB so we do not invent a click from pure guesswork.
   const swapped: PointClient = { x: raw.y / sy, y: raw.x / sx }
   if (inClient(swapped)) return null
 

@@ -1,0 +1,8 @@
+{
+  "batch": "batch-B-g4g6",
+  "timestamp": "20260726-102607",
+  "claude": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/batch-B-g4g6-claude-20260726-102607.md" },
+  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/batch-B-g4g6-pi-20260726-102607.md" },
+  "both_approve": true,
+  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/batch-B-g4g6-diff-20260726-102607.patch"
+}

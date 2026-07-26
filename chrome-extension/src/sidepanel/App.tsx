@@ -13,7 +13,12 @@ import { SkillCraftPanel } from "./components/SkillCraftPanel"
 import { NotebooklmImporterPanel } from "./components/NotebooklmImporterPanel"
 import { Modal } from "./components/ui/Modal"
 import { AgentStoreProvider, useAgentStore } from "./store/agentStore"
-import { canOfferThreadTrust, threadTrustHint } from "./utils/apps-utils"
+import {
+  canOfferComputerSessionTrust,
+  canOfferThreadTrust,
+  computerSessionTrustHint,
+  threadTrustHint,
+} from "./utils/apps-utils"
 import { previewImageSafe } from "./utils/computer-utils"
 import type { ConnectionState, SkillMeta, FileAttachment } from "./types"
 
@@ -143,8 +148,10 @@ function SecurityConfirmationDialog() {
   // per call — Q1 ship blocker; the checkbox stays hidden for host_write even
   // when relevant_apps is set.
   const canThreadTrust = canOfferThreadTrust(request?.tool_name, relevantApp)
+  const canSessionTrust = canOfferComputerSessionTrust(request?.tool_name, relevantApp)
   const [whitelistMode, setWhitelistMode] = useState<"none" | "exact" | "wildcard">("none")
   const [threadTrust, setThreadTrust] = useState(false)
+  const [sessionTrust, setSessionTrust] = useState(false)
   // Phase 1 W9: Linux nonce input. User must TYPE the code (no paste).
   const [nonceInput, setNonceInput] = useState("")
   const [pasteBlocked, setPasteBlocked] = useState(false)
@@ -157,6 +164,7 @@ function SecurityConfirmationDialog() {
   useEffect(() => {
     setWhitelistMode("none")
     setThreadTrust(false)
+    setSessionTrust(false)
     setNonceInput("")
     setPasteBlocked(false)
     setPreviewImgFailed(false)
@@ -209,6 +217,8 @@ function SecurityConfirmationDialog() {
       // when allowed (host_read / host_app + user checked the box). Companion
       // validates against relevantApps[0].
       add_to_thread_whitelist: approved && canThreadTrust && threadTrust,
+      // Grill Q2: host_computer session auto-approve (explicit opt-in only).
+      add_to_session_trust: approved && canSessionTrust && sessionTrust,
       // Phase 1 W9 — send typed nonce for Linux biometric tier validation.
       nonce_response: approved && nonceChallenge ? nonceInput.toUpperCase() : undefined,
     })
@@ -217,7 +227,11 @@ function SecurityConfirmationDialog() {
       chrome.runtime.sendMessage({ type: "chat.abort", threadId: state.activeThreadId })
       dispatch({ type: "SET_STREAMING", content: "" })
     }
-    const trustMsg = approved && canThreadTrust && threadTrust ? `（本线程内信任 ${relevantApp}）` : ""
+    const trustMsg = approved && canThreadTrust && threadTrust
+      ? `（本线程内信任 ${relevantApp}）`
+      : approved && canSessionTrust && sessionTrust
+        ? `（本会话自动同意「${relevantApp}」同类操作）`
+        : ""
     const nonceMsg = approved && nonceChallenge ? `（输入确认码 ${nonceChallenge}）` : ""
     dispatch({
       type: "ADD_SECURITY_AUDIT",
@@ -341,6 +355,24 @@ function SecurityConfirmationDialog() {
               信任 <code style={styles.whitelistCode}>{relevantApp}</code>，本线程内不再询问
               <span style={{ color: "#888", fontSize: 11, marginLeft: 4 }}>
                 {threadTrustHint(request?.tool_name)}
+              </span>
+            </span>
+          </label>
+        </div>
+      )}
+      {canSessionTrust && (
+        <div style={{ ...styles.whitelistSection, marginTop: 8 }}>
+          <label style={{ ...styles.whitelistOption, cursor: "pointer" }}>
+            <input
+              type="checkbox"
+              checked={sessionTrust}
+              onChange={(e) => setSessionTrust(e.target.checked)}
+              style={{ marginRight: 6 }}
+            />
+            <span>
+              本会话对「<code style={styles.whitelistCode}>{relevantApp}</code>」同类操作自动同意（不新增字、不扩次数）
+              <span style={{ color: "#888", fontSize: 11, marginLeft: 4, display: "block", marginTop: 2 }}>
+                {computerSessionTrustHint()}
               </span>
             </span>
           </label>

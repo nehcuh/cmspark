@@ -678,6 +678,10 @@ export function classifyError(errorMessage: string, context?: { toolName?: strin
     // the home dir), not bail the whole conversation.
     "eperm",
     "operation not permitted",
+    // Coordinate computer-use: LLM may re-locate / re-read client bounds after
+    // a near-miss or Retina image-pixel vs client-logical mismatch.
+    "outside client rect",
+    "out_of_bounds",
   ]
   if (recoverable.some(p => msg.includes(p))) {
     return "recoverable"
