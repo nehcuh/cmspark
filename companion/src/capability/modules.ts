@@ -111,6 +111,9 @@ export function updateModuleConfig(
   patch: Partial<ModuleState>,
 ): { ok: true; module: ModuleState } | { ok: false; error: string } {
   const config = ensureModulesDefaults(getConfig()) as any
+  if ((moduleId === "netsec" || moduleId === "shell") && config.capability_profile !== "enterprise") {
+    return { ok: false, error: "enterprise_profile_required for shell/netsec config updates" }
+  }
   const mod = config.modules[moduleId]
   if (!mod) return { ok: false, error: `unknown module: ${moduleId}` }
   // never allow enabling via this path
@@ -118,5 +121,11 @@ export function updateModuleConfig(
   Object.assign(mod, safe)
   config.modules[moduleId] = mod
   saveConfig(config)
+  appendCapabilityAudit({
+    type: "module.config_update",
+    module: moduleId,
+    keys: Object.keys(safe),
+    at: new Date().toISOString(),
+  })
   return { ok: true, module: mod }
 }

@@ -97,10 +97,15 @@ export function PacksPanel() {
     const raw = window.prompt("授权扫描目标（逗号分隔 hostname/IPv4，须在 allowlist 内）")
     if (!raw) return
     const targets = raw.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean)
+    const ok = window.confirm(
+      `确认你拥有对这些目标的测试授权？\n${targets.join("\n")}\n\n仅允许 netsec.allowlist 内目标。`,
+    )
+    if (!ok) return
     chrome.runtime.sendMessage({
       type: "netsec.authorize_task",
       thread_id: state.activeThreadId,
       authorized: true,
+      user_gesture: true,
       targets,
     })
     setStatus("已提交 NetSec 任务授权")

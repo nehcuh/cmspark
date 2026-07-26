@@ -6,6 +6,33 @@ import { requireModule } from "./modules"
 
 const MAX_READ_BYTES = 512 * 1024
 const MAX_LIST_ENTRIES = 500
+const PICK_TTL_MS = 5 * 60 * 1000
+
+/** Paths returned by native folder-picker; workspace.set may only bind these. */
+let lastNativePick: { path: string; at: number } | null = null
+
+export function recordNativePick(absPath: string): void {
+  lastNativePick = { path: absPath, at: Date.now() }
+}
+
+export function consumeNativePick(absPath: string): boolean {
+  if (!lastNativePick) return false
+  if (Date.now() - lastNativePick.at > PICK_TTL_MS) {
+    lastNativePick = null
+    return false
+  }
+  let a: string
+  let b: string
+  try {
+    a = fs.realpathSync(absPath)
+    b = fs.realpathSync(lastNativePick.path)
+  } catch {
+    return false
+  }
+  if (a !== b) return false
+  lastNativePick = null
+  return true
+}
 
 export function resolveUnderWorkspace(
   workspaceRoot: string | null | undefined,
@@ -41,6 +68,10 @@ export function resolveUnderWorkspace(
   return { ok: true, abs: targetReal }
 }
 
+/**
+ * Bind workspace_root. Path MUST come from a recent native folder-picker
+ * (recordNativePick → consumeNativePick) — arbitrary WS paths are rejected.
+ */
 export function setWorkspaceRoot(rawPath: string): { ok: true; path: string } | { ok: false; error: string } {
   if (!rawPath || typeof rawPath !== "string") return { ok: false, error: "path required" }
   if (rawPath.includes("\0")) return { ok: false, error: "invalid path" }
@@ -51,6 +82,12 @@ export function setWorkspaceRoot(rawPath: string): { ok: true; path: string } | 
     return { ok: false, error: `path does not exist: ${rawPath}` }
   }
   if (!fs.statSync(abs).isDirectory()) return { ok: false, error: "path is not a directory" }
+  if (!consumeNativePick(abs)) {
+    return {
+      ok: false,
+      error: "workspace path must come from a recent workspace.pick (native folder dialog)",
+    }
+  }
   return { ok: true, path: abs }
 }
 

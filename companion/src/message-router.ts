@@ -1437,7 +1437,16 @@ export async function handleMessage(
     case "workspace.pick": {
       const result = await pickFolderNative()
       if (result.error) return { type: "workspace.pick_result", error: result.error }
-      return { type: "workspace.pick_result", path: result.path }
+      if (!result.path) return { type: "workspace.pick_result", error: "未选择文件夹" }
+      const { recordNativePick } = await import("./capability/workspace")
+      try {
+        const abs = fs.realpathSync(path.resolve(result.path))
+        recordNativePick(abs)
+        return { type: "workspace.pick_result", path: abs }
+      } catch {
+        recordNativePick(result.path)
+        return { type: "workspace.pick_result", path: result.path }
+      }
     }
     case "workspace.set": {
       if (!rest.thread_id) return { type: "error", error: "thread_id required" }
@@ -1455,10 +1464,23 @@ export async function handleMessage(
       if (rest.authorized !== true) {
         return { type: "error", error: "authorized must be true (user must explicitly confirm)" }
       }
+      // Require explicit UI confirmation flag from PacksPanel (user clicked confirm)
+      if (rest.user_gesture !== true) {
+        return {
+          type: "error",
+          error: "user_gesture required — authorization must follow an explicit UI confirmation",
+        }
+      }
       const targets = Array.isArray(rest.targets)
         ? rest.targets.filter((t: any) => typeof t === "string" && t.trim())
         : []
       if (targets.length === 0) return { type: "error", error: "targets required" }
+      const { getModule } = await import("./capability/modules")
+      const { assertTargetsAllowed } = await import("./netsec/scope")
+      const mod = getModule("netsec")
+      const allowlist = mod?.target_allowlist || []
+      const scope = assertTargetsAllowed(targets, allowlist)
+      if (!scope.ok) return { type: "error", error: scope.error }
       const thread = threadManager.get(rest.thread_id)
       if (!thread) return { type: "error", error: "thread not found" }
       const auth = {

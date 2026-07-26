@@ -495,7 +495,14 @@ export function createToolExecutor(ws: WebSocket) {
     const hostComputerGated = toolName === "host_computer" &&
       (os.platform() === "win32" || os.platform() === "darwin")
     if ((L2_GATE_TOOLS.includes(toolName) || hostAppGated || hostComputerGated) && !finalParams.security_token) {
-      const code = String(finalParams.code || finalParams.expression || "")
+      // shell_exec / netsec use command|targets for L2 preview text (not code/expression)
+      const code = String(
+        finalParams.code ||
+          finalParams.expression ||
+          finalParams.command ||
+          (Array.isArray(finalParams.targets) ? finalParams.targets.join(", ") : "") ||
+          "",
+      )
       const lengthCheck = securityPolicy.checkLength(toolName, code)
       if (!lengthCheck.ok) {
         const result = { success: false, error: lengthCheck.error }
@@ -3337,6 +3344,45 @@ export function validateWsMessage(msg: any): WsValidationResult {
     },
     "mcp.set_selection": (m) => {
       if (typeof m.thread_id !== "string" || !m.thread_id) return { valid: false, error: "mcp.set_selection requires thread_id" }
+      return { valid: true }
+    },
+    // Mission Pack / enterprise modules
+    "pack.list": () => ({ valid: true }),
+    "pack.install": (m) => {
+      if (!m.dir && !m.zip_path) return { valid: false, error: "pack.install requires dir or zip_path" }
+      return { valid: true }
+    },
+    "pack.apply": (m) => {
+      if (typeof m.pack_id !== "string" || !m.pack_id) return { valid: false, error: "pack.apply requires pack_id" }
+      if (typeof m.thread_id !== "string" || !m.thread_id) return { valid: false, error: "pack.apply requires thread_id" }
+      return { valid: true }
+    },
+    "pack.uninstall": (m) => {
+      if (typeof m.pack_id !== "string" || !m.pack_id) return { valid: false, error: "pack.uninstall requires pack_id" }
+      return { valid: true }
+    },
+    "modules.list": () => ({ valid: true }),
+    "modules.set_enabled": (m) => {
+      if (typeof m.module !== "string" || !m.module) return { valid: false, error: "modules.set_enabled requires module" }
+      if (typeof m.enabled !== "boolean") return { valid: false, error: "modules.set_enabled requires enabled boolean" }
+      return { valid: true }
+    },
+    "modules.update": (m) => {
+      if (typeof m.module !== "string" || !m.module) return { valid: false, error: "modules.update requires module" }
+      if (!m.patch || typeof m.patch !== "object") return { valid: false, error: "modules.update requires patch object" }
+      return { valid: true }
+    },
+    "workspace.pick": () => ({ valid: true }),
+    "workspace.set": (m) => {
+      if (typeof m.thread_id !== "string" || !m.thread_id) return { valid: false, error: "workspace.set requires thread_id" }
+      if (typeof m.path !== "string" || !m.path) return { valid: false, error: "workspace.set requires path" }
+      return { valid: true }
+    },
+    "netsec.authorize_task": (m) => {
+      if (typeof m.thread_id !== "string" || !m.thread_id) return { valid: false, error: "netsec.authorize_task requires thread_id" }
+      if (m.authorized !== true) return { valid: false, error: "netsec.authorize_task requires authorized:true" }
+      if (m.user_gesture !== true) return { valid: false, error: "netsec.authorize_task requires user_gesture:true" }
+      if (!Array.isArray(m.targets) || m.targets.length === 0) return { valid: false, error: "netsec.authorize_task requires targets[]" }
       return { valid: true }
     },
     "apps.list": () => ({ valid: true }),
