@@ -8,6 +8,7 @@
  * - add_to_whitelist (array)
  * - nonce_response (string, when present)
  * - add_to_thread_whitelist (boolean true only)
+ * - add_to_session_trust (boolean true only — host_computer grill Q2)
  * - stop_thread (boolean true only)
  */
 export function buildSecurityConfirmationWsPayload(message: {
@@ -16,6 +17,7 @@ export function buildSecurityConfirmationWsPayload(message: {
   add_to_whitelist?: unknown
   nonce_response?: unknown
   add_to_thread_whitelist?: unknown
+  add_to_session_trust?: unknown
   stop_thread?: unknown
 }): Record<string, unknown> {
   const payload: Record<string, unknown> = {
@@ -29,6 +31,9 @@ export function buildSecurityConfirmationWsPayload(message: {
   }
   if (message.add_to_thread_whitelist === true) {
     payload.add_to_thread_whitelist = true
+  }
+  if (message.add_to_session_trust === true) {
+    payload.add_to_session_trust = true
   }
   if (message.stop_thread === true) {
     payload.stop_thread = true

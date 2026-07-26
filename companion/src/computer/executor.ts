@@ -43,7 +43,7 @@ import type { TinyClickLocator } from "./tinyclick-locator"
 import type { ComputerTaskEvent, PreviewBuilder } from "./preview"
 import { sanitizeComputerCaption } from "./preview"
 import { assertCoordinateAllowed, assertExeNotDrifted, assertHwndOwnedByEntry, normalizeExePath } from "./policy"
-import { exeBasename } from "../apps/guards"
+import { isCompanionUiOwner } from "./self-ui"
 import { getComputerSessionTrust, reL2ShouldPrompt } from "./session-trust"
 import { maybeAutoscaleImageToClient, rectDriftPx } from "./coords"
 import {
@@ -201,6 +201,10 @@ export interface ComputerStepResult {
   seq: number
   action: string
   ok: boolean
+  /** Grill G1: inject event was posted (≠ semantic success). */
+  posted?: boolean
+  /** Grill G1: effect confirmed (API re-read / pixel crossverify / user ✓). */
+  verified?: boolean
   layer?: string
   confidence?: number
   x?: number
@@ -223,6 +227,10 @@ export interface ComputerTaskResult {
   completedActions: number
   totalActions: number
   steps: ComputerStepResult[]
+  /** Grill G1: steps that posted inject events. */
+  posted_steps?: number
+  /** Grill G1: steps with verified semantic effect. */
+  verified_steps?: number
   error?: string
   errorCode?: string
 }
@@ -462,7 +470,17 @@ export async function runComputerTask(
     if (wins.length === 0) {
       throw new ComputerError("APP_WINDOW_NOT_FOUND", `computer: no visible window for "${entry.display_name}" — is it running?`)
     }
-    wins.sort((a, b) => b.rect.width * b.rect.height - a.rect.width * a.rect.height)
+    // Prefer real UI windows: titled, on-screen, non-menu-strip. WeChat/Electron
+    // expose many empty-name aux layers (500×500 panels, 1728×33 bars); pure
+    // area sort picked those and screenshot failed (pgvexn windowId 3866).
+    const score = (w: { title: string; rect: { x: number; y: number; width: number; height: number } }) => {
+      const area = Math.max(0, w.rect.width) * Math.max(0, w.rect.height)
+      const named = (w.title || "").trim().length > 0 ? 1_000_000_000 : 0
+      const notStrip = w.rect.height >= 80 && w.rect.width >= 80 ? 100_000_000 : 0
+      const onscreen = w.rect.y >= -20 && w.rect.x > -5000 ? 10_000_000 : 0
+      return named + notStrip + onscreen + area
+    }
+    wins.sort((a, b) => score(b) - score(a))
     hwnd = wins[0].hwnd
     targetPid = wins[0].pid
     assertHwndOwnedByEntry(wins[0], entry)
@@ -588,6 +606,9 @@ export async function runComputerTask(
   log("computer.task.started", { taskId, app: entry.token, hwnd, budget })
   // WP4: started 附 budget(任务条「已用/总量」分母)。
   emit({ event: "started", taskId, app: entry.display_name, task: params.task, total: params.actions.length, budget })
+
+  /** Grill Q5: same-text TYPE_NO_EFFECT attempt counts this task (max 1 recovery). */
+  const typeNoEffectCounts = new Map<string, number>()
 
   /** Short human label for the panel live view (never the type text itself). */
   const captionOf = (a: ComputerAction): string => {
@@ -908,6 +929,15 @@ export async function runComputerTask(
           scaleY: shot.scaleY ?? 1,
         }
         const clientLogical = { x: 0, y: 0, width: cw, height: ch }
+        // 0×0 client means capture/metadata failed — do not mislabel as OUT_OF_BOUNDS.
+        if (!(cw > 0 && ch > 0)) {
+          throw new ComputerError(
+            "CAPTURE_FAILED",
+            `computer: client rect is ${cw}x${ch} (unusable) — screenshot geometry missing. ` +
+              `Usually Screen Recording TCC denied or window capture failed; ` +
+              `enable CMspark under System Settings → Privacy & Security → Screen Recording, then relaunch.`,
+          )
+        }
         if (pointClient.x < 0 || pointClient.y < 0 || pointClient.x >= cw || pointClient.y >= ch) {
           const auto = maybeAutoscaleImageToClient(pointClient, scales, clientLogical)
           if (auto) {
@@ -1227,8 +1257,43 @@ export async function runComputerTask(
       }
 
       // Inject (ps1 re-checks IL/desktop/bounds; type re-checks foreground).
+      // Grill Q5=B: type inject failure → TYPE_NO_EFFECT; allow one re-focus
+      // retry of the same text per task (tracked below), then hard-fail.
       if (action.action === "type") {
-        await deps.injector.typeText(hwnd, action.text)
+        const typeKey = action.text
+        const priorFails = typeNoEffectCounts.get(typeKey) ?? 0
+        if (priorFails >= 2) {
+          throw new ComputerError(
+            "TYPE_NO_EFFECT",
+            `computer: type of the same text already failed twice this task — refusing further retries (posted≠verified storm guard)`,
+          )
+        }
+        try {
+          await deps.injector.typeText(hwnd, action.text)
+        } catch (typeErr) {
+          typeNoEffectCounts.set(typeKey, priorFails + 1)
+          if (priorFails === 0) {
+            // First failure: try one preferForeground-style re-raise then retype.
+            try {
+              await deps.injector.forceForeground(hwnd)
+            } catch { /* best-effort */ }
+            try {
+              await deps.injector.typeText(hwnd, action.text)
+              typeNoEffectCounts.set(typeKey, 0) // recovered
+            } catch {
+              typeNoEffectCounts.set(typeKey, 2)
+              throw new ComputerError(
+                "TYPE_NO_EFFECT",
+                `computer: type had no effect after one re-focus retry: ${String((typeErr as Error)?.message ?? typeErr)}`,
+              )
+            }
+          } else {
+            throw new ComputerError(
+              "TYPE_NO_EFFECT",
+              `computer: type had no effect: ${String((typeErr as Error)?.message ?? typeErr)}`,
+            )
+          }
+        }
       } else if (action.action === "key") {
         await deps.injector.keyChord(hwnd, action.keys.map((k) => k.toLowerCase()))
       } else if (action.action === "scroll") {
@@ -1377,10 +1442,21 @@ export async function runComputerTask(
         ...(afterNote !== undefined ? { note: afterNote } : {}),
         durationMs: now() - startedAt,
       })
+      // Grill G1: honest posted/verified. Coordinate injects post events but
+      // cannot claim semantic success without a later verify layer (S-semantic
+      // Notes/Mail uses host_write). type/key → verified:false; click with
+      // pixel-region crossverify → verified:true as best-effort UX signal.
+      const posted = true
+      const verified =
+        action.action === "type" || action.action === "key"
+          ? false
+          : crossverified === true
       steps.push({
         seq,
         action: action.action,
         ok: true,
+        posted,
+        verified,
         layer: hit?.layer,
         confidence: hit?.confidence,
         x: pointClient?.x,
@@ -1446,21 +1522,20 @@ export async function runComputerTask(
           maxZoneRatio,
           maxBlobRatio,
         })
-        // UX-spike 2026-07-23 — FOREGROUND-YIELD self-UI recovery. The common
-        // case behind "every action asks for confirmation" is: the user just
-        // clicked Allow in the sidepanel, so the sidepanel's browser process
-        // briefly became frontmost; the detector then sees a foreign-process
-        // foreground and pauses for a redundant re-L2. When (a) the foreign
-        // foreground is OUR OWN UI host (browser / packaged agent exe) AND
-        // (b) none of the other dialog channels fired (no new top-level
-        // window, no UIA popup, no large pixel change), this is the benign
-        // self-UI yield — silently re-raise the target and continue, skipping
-        // the re-L2. Any other signal = a real dialog; fall through to pause.
+        // UX-spike 2026-07-23 + macOS fix 2026-07-25 — FOREGROUND-YIELD self-UI
+        // recovery. Product model: user authorizes in the Chrome side panel
+        // (Chrome becomes frontmost). That is EXPECTED, not "foreign takeover".
+        // Matching only exeBasename() broke macOS: WindowInfo.exePath is the
+        // bundle id `com.google.Chrome`, and exeBasename → "com", so every
+        // Allow click re-L2'd with "前台被 Chrome 接管" (thread 3ffkgl paradox:
+        // authorize in plugin AND keep WeChat frontmost). isCompanionUiOwner
+        // handles Windows paths + macOS bundle ids.
+        // When (a) FG is our UI host AND (b) no other dialog channel fired,
+        // silently re-raise the target and continue — no re-L2.
         const selfUiBasenames = deps.config.security?.companion_ui_exe_basenames ?? []
         const isSelfUiYield =
           fgYielded &&
-          !!fgOwnerExe &&
-          selfUiBasenames.includes(exeBasename(fgOwnerExe)) &&
+          isCompanionUiOwner(fgOwnerExe, selfUiBasenames) &&
           !newTopLevel &&
           uiaOpened.length === 0 &&
           diffRatio <= DIALOG_DIFF_THRESHOLD &&
@@ -1505,6 +1580,9 @@ export async function runComputerTask(
     completedActions: steps.filter((s) => s.ok).length,
     totalActions: params.actions.length,
     steps,
+    // Grill G1: aggregate honesty for LLM — do not claim all steps verified.
+    posted_steps: steps.filter((s: any) => s.posted === true).length,
+    verified_steps: steps.filter((s: any) => s.verified === true).length,
   }
   await sweepRaws() // normally a no-op — every frame was sealed or released
   try {

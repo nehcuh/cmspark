@@ -94,6 +94,11 @@ export interface SecurityConfirmationDecision {
   confirmationId: string
   approved: boolean
   reason: "approved" | "denied" | "timeout" | "disconnect"
+  /**
+   * Grill Q2 (2026-07-26): user checked "本会话自动同意同类操作" on host_computer L2.
+   * Only meaningful when approved===true. Server uses this for explicitOptIn grant.
+   */
+  addToSessionTrust?: boolean
 }
 
 export interface SecurityConfirmationRequestOptions {
@@ -279,6 +284,7 @@ export class SecurityConfirmationManager {
     approved: boolean,
     sourceWs?: WebSocket,
     nonceResponse?: string,
+    extras?: { addToSessionTrust?: boolean },
   ): ConfirmationRespondResult {
     const pending = this.pending.get(confirmationId)
     if (!pending) return { outcome: "unknown" }
@@ -325,6 +331,11 @@ export class SecurityConfirmationManager {
       confirmationId,
       approved,
       reason: approved ? "approved" : "denied",
+      // Only honor session-trust opt-in when the dialog offered relevantApps
+      // (host_computer) — blocks WS injection of the flag on other tools.
+      ...(approved && extras?.addToSessionTrust === true && pending.relevantApps.length > 0
+        ? { addToSessionTrust: true }
+        : {}),
     })
     return { outcome: "resolved" }
   }

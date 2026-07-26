@@ -668,7 +668,10 @@ func cuClientOriginScreen(windowId: UInt32) -> CGPoint? {
                     bestWin = axWin
                 }
             }
-            if let axWin = bestWin {
+            // LOCKSTEP with host.swift / cuScreenshot: only trust AX when
+            // frame match is tight (bestDist < 24). Loose best-match poisoned
+            // inject coords on WeChat multi-window (2026-07-26 #mvt4t8).
+            if let axWin = bestWin, bestDist < 24 {
                 var posRef: CFTypeRef?
                 AXUIElementCopyAttributeValue(axWin, kAXPositionAttribute as CFString, &posRef)
                 var pos = CGPoint.zero
@@ -817,23 +820,32 @@ func cuAXLocate(windowId: UInt32, target: String) -> String {
 
 func cuScreenshot(windowId: UInt32, outputPath: String) -> String {
     // Use .optionIncludingWindow (not .optionAll) so the result is filtered to
-    // just this windowId. With .optionAll, macOS 26 returns ALL windows and
-    // ignores the windowId arg, so info.first picked the wrong window and
-    // produced a 64x64 rect for a 1058x752 NetEase Music main window
-    // (ea3y6n bug, 2026-07-22). Defense-in-depth: also filter explicitly by
-    // kCGWindowNumber in case macOS ever honors .optionAll + windowId again.
-    var info: [[String: Any]] = []
-    if let raw = CGWindowListCopyWindowInfo([.optionIncludingWindow], windowId) as? [[String: Any]] {
-        info = raw.filter { ($0[kCGWindowNumber as String] as? UInt32) == windowId }
-        if info.isEmpty { info = raw }
-    } else if let rawAll = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] {
-        info = rawAll.filter { ($0[kCGWindowNumber as String] as? UInt32) == windowId }
+    // Prefer IncludingWindow; fall back to optionAll filtered by number.
+    // WeChat returns [] for IncludingWindow while optionAll still has the id
+    // (pgvexn 2026-07-25). Keep filter strict — never unfiltered optionAll.
+    func windowNum(_ w: [String: Any]) -> UInt32 {
+        if let u = w[kCGWindowNumber as String] as? UInt32 { return u }
+        if let i = w[kCGWindowNumber as String] as? Int { return UInt32(truncatingIfNeeded: i) }
+        if let n = w[kCGWindowNumber as String] as? NSNumber { return n.uint32Value }
+        return 0
     }
-    guard !info.isEmpty else {
+    var first: [String: Any]?
+    if let raw = CGWindowListCopyWindowInfo([.optionIncludingWindow], windowId) as? [[String: Any]] {
+        first = raw.first(where: { windowNum($0) == windowId })
+    }
+    if first == nil {
+        for opts: CGWindowListOption in [[.optionOnScreenOnly], [.optionAll]] {
+            if let rawAll = CGWindowListCopyWindowInfo(opts, kCGNullWindowID) as? [[String: Any]],
+               let hit = rawAll.first(where: { windowNum($0) == windowId }) {
+                first = hit
+                break
+            }
+        }
+    }
+    guard let first else {
         return cuError("cannot get window info for windowId \(windowId)")
     }
-    guard let first = info.first,
-          let bounds = first[kCGWindowBounds as String] as? [String: CGFloat] else {
+    guard let bounds = first[kCGWindowBounds as String] as? [String: CGFloat] else {
         return cuError("cannot read window bounds for windowId \(windowId)")
     }
     let rect: [String: CGFloat] = ["x": bounds["X"] ?? 0, "y": bounds["Y"] ?? 0, "width": bounds["Width"] ?? 0, "height": bounds["Height"] ?? 0]
@@ -919,10 +931,24 @@ func cuScreenshot(windowId: UInt32, outputPath: String) -> String {
             let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
             capturedImage = image
         } catch let err as NSError {
-            if err.domain == "com.apple.ScreenCaptureKit" && err.code == -38001 {
-                captureError = "ScreenCaptureKit permission denied (pid=\(hostPid) ppid=\(hostParentPid)) — open System Settings → Privacy & Security → Screen Recording and enable the entry for CMspark Agent / node / cmspark-host, then retry"
+            // See host.swift cuScreenshot — match both -3801 and -38001 TCC denial.
+            let isSckTcc =
+                err.domain == "com.apple.ScreenCaptureKit.SCStreamErrorDomain"
+                || err.domain == "com.apple.ScreenCaptureKit"
+            let isDenialCode = (err.code == -3801 || err.code == -38001)
+            let desc = err.localizedDescription
+            let looksLikeDenial = desc.localizedCaseInsensitiveContains("TCC")
+                || desc.localizedCaseInsensitiveContains("denied")
+                || desc.contains("拒绝")
+            if isSckTcc && (isDenialCode || looksLikeDenial) {
+                captureError =
+                    "Screen Recording permission denied (ScreenCaptureKit code=\(err.code), " +
+                    "pid=\(hostPid) ppid=\(hostParentPid)). " +
+                    "Open System Settings → Privacy & Security → Screen Recording, " +
+                    "enable «CMspark» (and/or node / cmspark-host if listed), " +
+                    "then fully quit and relaunch CMspark.app and retry."
             } else {
-                captureError = "ScreenCaptureKit error: \(err.domain) code=\(err.code) \(err.localizedDescription) (pid=\(hostPid) ppid=\(hostParentPid))"
+                captureError = "ScreenCaptureKit error: \(err.domain) code=\(err.code) \(desc) (pid=\(hostPid) ppid=\(hostParentPid))"
             }
         } catch {
             captureError = "screenshot capture failed: \(error.localizedDescription) (pid=\(hostPid) ppid=\(hostParentPid))"
@@ -1036,13 +1062,12 @@ func cuInject(action: String, windowId: UInt32, x: Int?, y: Int?, text: String?,
     if let flagPath = estopFlag, FileManager.default.fileExists(atPath: flagPath) { return cuError("E-Stop flag present", code: "TASK_ABORTED") }
     let pid = cuPidForWindow(windowId)
     guard pid != 0 else { return cuError("cannot find PID for window", code: "HWND_DEAD") }
-    // SPIKE: SkyLight per-PID posting should reach background windows without
-    // activation. Force-foreground only if explicitly requested via env, so we
-    // can A/B compare behavior. Production will likely drop this entirely.
-    if ProcessInfo.processInfo.environment["CMSPARK_SKYLIGHT_FORCE_FG"] == "1" {
-        cuActivatePid(pid)
+    // LOCKSTEP with host.swift: activate by default (WeChat/NetEase need key
+    // window). CMSPARK_SKYLIGHT_NO_ACTIVATE=1 restores background-only canary.
+    if ProcessInfo.processInfo.environment["CMSPARK_SKYLIGHT_NO_ACTIVATE"] == "1" {
+        fputs("[host-skylight] skipping forceForeground (CMSPARK_SKYLIGHT_NO_ACTIVATE=1)\n", stderr)
     } else {
-        fputs("[host-skylight] skipping forceForeground (SkyLight per-PID path)\n", stderr)
+        _ = cuActivatePid(pid)
     }
 
     switch action {

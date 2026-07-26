@@ -188,11 +188,16 @@ const defaultConfig: CompanionConfig = {
     confirmation_timeout_seconds: 45,
     auto_approve_dangerous: false,
     allow_all_schemes: false,
-    // UX-spike 2026-07-23: browsers CMspark ships a sidepanel for + the
-    // packaged agent exe. Basenames (no .exe), lowercased — matched against
-    // GetForegroundWindow's owner via ProcessName.
+    // UX-spike 2026-07-23: browsers that host the side panel + the agent exe.
+    // Lowercased basenames (no .exe) for Windows ProcessName matching.
+    // macOS also matches via isCompanionUiOwner() against bundle ids
+    // (com.google.Chrome etc.) — do not require the user to keep the target
+    // app frontmost while authorizing in Chrome.
     companion_ui_exe_basenames: [
       "chrome", "msedge", "msedge_proxy", "firefox", "brave", "arc", "opera", "cmspark-agent",
+      // macOS bundle-id last segments / full ids also accepted by isCompanionUiOwner
+      "com.google.chrome", "com.microsoft.edgemac", "org.mozilla.firefox",
+      "company.thebrowser.browser", "com.brave.browser",
     ],
   },
   file_upload: {

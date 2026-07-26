@@ -174,6 +174,8 @@ export type ComputerErrorCode =
   | "UNCROSS_DENIED" // uncrossverified sub-budget re-L2 denied
   | "TYPE_TEXT_NOT_CONFIRMED" // A3: text outside the confirmed corpus
   | "TYPE_TEXT_TOO_LONG" // X4: type text / task corpus beyond MAX_TYPE_TEXT_CHARS
+  | "TYPE_NO_EFFECT" // Grill G1: type inject failed or second same-text type after no effect
+  | "SEND_NO_EFFECT" // Grill G1: send/enter produced no observable effect (reserved)
   | "CAPTURE_FAILED"
   | "INJECT_FAILED"
   | "EVIDENCE_ERROR"

@@ -2,8 +2,10 @@
 
 import { Component, useState, useRef, useCallback, useEffect } from "react"
 import { useWebSocket } from "./hooks/useWebSocket"
+import { useCapabilityMode } from "./hooks/useCapabilityMode"
 import { ChatView } from "./components/ChatView"
 import { ComputerTaskBar } from "./components/ComputerTaskBar"
+import { SafetyStrip } from "./components/SafetyStrip"
 import { ThreadList } from "./components/ThreadList"
 import { BottomBar } from "./components/BottomBar"
 import { SettingsSlideout } from "./components/SettingsSlideout"
@@ -13,9 +15,30 @@ import { SkillCraftPanel } from "./components/SkillCraftPanel"
 import { NotebooklmImporterPanel } from "./components/NotebooklmImporterPanel"
 import { Modal } from "./components/ui/Modal"
 import { AgentStoreProvider, useAgentStore } from "./store/agentStore"
-import { canOfferThreadTrust, threadTrustHint } from "./utils/apps-utils"
+import {
+  canOfferComputerSessionTrust,
+  canOfferThreadTrust,
+  computerSessionTrustHint,
+  threadTrustHint,
+} from "./utils/apps-utils"
 import { previewImageSafe } from "./utils/computer-utils"
-import type { ConnectionState, SkillMeta, FileAttachment } from "./types"
+import type { ConnectionState, CapabilityLevel, SkillMeta, FileAttachment } from "./types"
+import { tokens } from "./ui/tokens"
+import { ModeBadge } from "./ui/ModeBadge"
+import {
+  IconCraft,
+  IconDownload,
+  IconNotebook,
+  IconSave,
+  IconBrain,
+  IconLogs,
+  IconSettings,
+  IconSend,
+  IconStop,
+  IconAttach,
+  IconAlert,
+  IconSpinner,
+} from "./ui/icons"
 
 // Error Boundary — catches rendering errors to prevent white screen
 class ErrorBoundary extends Component<{ children: React.ReactNode }, { error: Error | null }> {
@@ -101,18 +124,44 @@ function AppContent() {
     }
   }, [appState.autoSkillNames])
 
+  // Capability level (chat / browser / computer) — badge in Header, tabs in BottomBar
+  const onEscalate = useCallback((msg: string) => {
+    setToast(msg)
+    setTimeout(() => setToast(""), 4000)
+  }, [])
+  const { level, badgeLabel } = useCapabilityMode(onEscalate)
+  const isComputer = level === "computer"
+
+  // P1: auto-open Cockpit when entering L2 (openOrFocus is idempotent)
+  useEffect(() => {
+    if (!isComputer) return
+    chrome.runtime.sendMessage({ type: "cockpit.open" }, () => {
+      void chrome.runtime.lastError
+    })
+  }, [isComputer])
+
   return (
     <div style={styles.container}>
       <style>{globalCSS}</style>
       {toast && <div style={toastStyles.toast}>{toast}</div>}
-      <Header connectionState={connectionState} onCraft={() => setCraftOpen(true)} onToggleLogs={() => setShowLogs(!showLogs)} onOpenNotebooklmImporter={() => setNbImporterOpen(true)} />
+      <Header
+        connectionState={connectionState}
+        capabilityLevel={level}
+        badgeLabel={badgeLabel}
+        onCraft={() => setCraftOpen(true)}
+        onToggleLogs={() => setShowLogs(!showLogs)}
+        onOpenNotebooklmImporter={() => setNbImporterOpen(true)}
+      />
+      {isComputer && <SafetyStrip />}
       <ChatView />
-      <ComputerTaskBar />
-      <BottomBar />
-      <InputArea />
+      {/* L2: full timeline lives in Cockpit; Panel keeps SafetyStrip only */}
+      {!isComputer && <ComputerTaskBar />}
+      <BottomBar capabilityLevel={level} />
+      <InputArea capabilityLevel={level} />
       {showLogs && <LogBar onClose={() => setShowLogs(false)} />}
       <SettingsSlideout />
-      <SecurityConfirmationDialog />
+      {/* L2: full confirm in Cockpit; Panel uses MinimalConfirm in SafetyStrip */}
+      {!isComputer && <SecurityConfirmationDialog />}
       <McpServerForm />
       {craftOpen && <SkillCraftPanel onClose={() => setCraftOpen(false)} />}
       {nbImporterOpen && <NotebooklmImporterPanel onClose={() => setNbImporterOpen(false)} />}
@@ -143,8 +192,10 @@ function SecurityConfirmationDialog() {
   // per call — Q1 ship blocker; the checkbox stays hidden for host_write even
   // when relevant_apps is set.
   const canThreadTrust = canOfferThreadTrust(request?.tool_name, relevantApp)
+  const canSessionTrust = canOfferComputerSessionTrust(request?.tool_name, relevantApp)
   const [whitelistMode, setWhitelistMode] = useState<"none" | "exact" | "wildcard">("none")
   const [threadTrust, setThreadTrust] = useState(false)
+  const [sessionTrust, setSessionTrust] = useState(false)
   // Phase 1 W9: Linux nonce input. User must TYPE the code (no paste).
   const [nonceInput, setNonceInput] = useState("")
   const [pasteBlocked, setPasteBlocked] = useState(false)
@@ -154,14 +205,11 @@ function SecurityConfirmationDialog() {
 
   // Reset selection whenever the active confirmation changes — otherwise the
   // radio from a previous prompt would bleed into the next one.
-  useEffect(() => {
-    setWhitelistMode("none")
-    setThreadTrust(false)
-    setNonceInput("")
-    setPasteBlocked(false)
-    setPreviewImgFailed(false)
-  }, [request?.confirmation_id])
-
+  //
+  // host_computer session-trust defaults ON (user test 2026-07-26 #wrsihk /
+  // #ykazn8): without it every LLM task-split re-prompts ("反复批准"), and
+  // users never notice the opt-in checkbox. Checking is still explicit —
+  // uncheck before Allow if you want one-shot only. Grill Q2 remains satisfied.
   // H10/M18 (audit): keyboard a11y (focus trap + Escape→deny + aria-modal +
   // focus restore) now lives in the shared <Modal>/useModalDialog primitive.
   // denyRef stays a ref so Escape always calls the latest decide() (whitelist
@@ -169,6 +217,28 @@ function SecurityConfirmationDialog() {
   // "拒绝" — the safe non-destructive default ([0]=拒绝并停止, [1]=拒绝).
   const denyRef = useRef<() => void>(() => {})
   const denyBtnRef = useRef<HTMLButtonElement>(null)
+
+  useEffect(() => {
+    setWhitelistMode("none")
+    setThreadTrust(false)
+    setSessionTrust(canOfferComputerSessionTrust(request?.tool_name, request?.relevant_apps?.[0]))
+    setNonceInput("")
+    setPasteBlocked(false)
+    setPreviewImgFailed(false)
+  }, [request?.confirmation_id])
+
+  // D14: 60s auto-deny for Panel full dialog (L0/L1 path; L2 uses Cockpit ConfirmElevated)
+  useEffect(() => {
+    if (!request) return
+    const ms =
+      request.timeout_ms && request.timeout_ms > 0
+        ? Math.min(request.timeout_ms, 60_000)
+        : 60_000
+    const t = setTimeout(() => {
+      denyRef.current()
+    }, ms)
+    return () => clearTimeout(t)
+  }, [request?.confirmation_id])
 
   if (!request) return null
 
@@ -209,6 +279,8 @@ function SecurityConfirmationDialog() {
       // when allowed (host_read / host_app + user checked the box). Companion
       // validates against relevantApps[0].
       add_to_thread_whitelist: approved && canThreadTrust && threadTrust,
+      // Grill Q2: host_computer session auto-approve (explicit opt-in only).
+      add_to_session_trust: approved && canSessionTrust && sessionTrust,
       // Phase 1 W9 — send typed nonce for Linux biometric tier validation.
       nonce_response: approved && nonceChallenge ? nonceInput.toUpperCase() : undefined,
     })
@@ -217,7 +289,11 @@ function SecurityConfirmationDialog() {
       chrome.runtime.sendMessage({ type: "chat.abort", threadId: state.activeThreadId })
       dispatch({ type: "SET_STREAMING", content: "" })
     }
-    const trustMsg = approved && canThreadTrust && threadTrust ? `（本线程内信任 ${relevantApp}）` : ""
+    const trustMsg = approved && canThreadTrust && threadTrust
+      ? `（本线程内信任 ${relevantApp}）`
+      : approved && canSessionTrust && sessionTrust
+        ? `（本会话自动同意「${relevantApp}」同类操作）`
+        : ""
     const nonceMsg = approved && nonceChallenge ? `（输入确认码 ${nonceChallenge}）` : ""
     dispatch({
       type: "ADD_SECURITY_AUDIT",
@@ -346,6 +422,24 @@ function SecurityConfirmationDialog() {
           </label>
         </div>
       )}
+      {canSessionTrust && (
+        <div style={{ ...styles.whitelistSection, marginTop: 8 }}>
+          <label style={{ ...styles.whitelistOption, cursor: "pointer" }}>
+            <input
+              type="checkbox"
+              checked={sessionTrust}
+              onChange={(e) => setSessionTrust(e.target.checked)}
+              style={{ marginRight: 6 }}
+            />
+            <span>
+              本会话对「<code style={styles.whitelistCode}>{relevantApp}</code>」同类操作自动同意（不新增字、不扩次数）
+              <span style={{ color: "#888", fontSize: 11, marginLeft: 4, display: "block", marginTop: 2 }}>
+                {computerSessionTrustHint()}
+              </span>
+            </span>
+          </label>
+        </div>
+      )}
       {nonceChallenge && (
         <div style={{ ...styles.whitelistSection, marginTop: 8, background: "#FFF3CD", border: "1px solid #FFC107" }}>
           <div style={{ fontWeight: 600, marginBottom: 6 }}>
@@ -457,7 +551,7 @@ function HighlightedCode({ code }: { code: string }) {
   )
 }
 
-function Header({ connectionState, onCraft, onToggleLogs, onOpenNotebooklmImporter }: { connectionState: ConnectionState; onCraft: () => void; onToggleLogs: () => void; onOpenNotebooklmImporter: () => void }) {
+function Header({ connectionState, capabilityLevel, badgeLabel, onCraft, onToggleLogs, onOpenNotebooklmImporter }: { connectionState: ConnectionState; capabilityLevel: CapabilityLevel; badgeLabel: string; onCraft: () => void; onToggleLogs: () => void; onOpenNotebooklmImporter: () => void }) {
   const { state, dispatch } = useAgentStore()
   const hasMessages = state.messages.length > 0 && !!state.activeThreadId
   const [nbState, setNbState] = useState<"idle" | "working" | "warning">("idle")
@@ -545,97 +639,140 @@ function Header({ connectionState, onCraft, onToggleLogs, onOpenNotebooklmImport
   }
 
   return (
-    <div style={styles.header}>
+    <div
+      style={{
+        ...styles.header,
+        ...(capabilityLevel === "browser"
+          ? { background: "#f5f9ff", borderBottomColor: "#dbeafe" }
+          : {}),
+        ...(capabilityLevel === "computer"
+          ? { background: "#f8fafc", borderBottomColor: "#e2e8f0" }
+          : {}),
+      }}
+    >
       <ThreadList />
-      <div style={styles.headerTitle}>CMspark Agent</div>
-      <button
-        style={{
-          ...styles.craftBtn,
-          opacity: hasMessages ? 1 : 0.4,
-          cursor: hasMessages ? "pointer" : "not-allowed",
-        }}
-        disabled={!hasMessages}
-        onClick={onCraft}
-        title={hasMessages ? "提取技能" : "当前线程没有消息"}
-      >
-        🔧
-      </button>
-      <button
-        style={{
-          ...styles.craftBtn,
-          opacity: hasMessages ? 1 : 0.4,
-          cursor: hasMessages ? "pointer" : "not-allowed",
-        }}
-        disabled={!hasMessages}
-        onClick={() => {
-          if (state.activeThreadId) {
-            chrome.runtime.sendMessage({
-              type: "thread.export_obsidian",
-              thread_id: state.activeThreadId,
-              scope: "thread",
-            })
-          }
-        }}
-        title={hasMessages ? "导出整个线程到 Obsidian" : "当前线程没有消息"}
-      >
-        📥
-      </button>
-      <button
-        style={{
-          ...styles.craftBtn,
-        }}
-        onClick={onOpenNotebooklmImporter}
-        title="打开 NotebookLM 导入器（在线批量导入到 NotebookLM）"
-      >
-        📓
-      </button>
-      <button
-        style={{
-          ...styles.craftBtn,
-          ...(nbState === "warning" ? { background: "#FFF3CD" } : {}),
-        }}
-        disabled={nbState === "working"}
-        onClick={runNotebooklmExport}
-        title={nbTooltip}
-      >
-        {nbState === "working" ? "⏳" : nbState === "warning" ? "⚠️" : "💾"}
-      </button>
-      <button
-        style={{
-          ...styles.craftBtn,
-          opacity: hasMessages ? 1 : 0.4,
-          cursor: hasMessages ? "pointer" : "not-allowed",
-        }}
-        disabled={!hasMessages || state.summarizingThreadId === state.activeThreadId}
-        onClick={() => {
-          if (state.activeThreadId) {
-            dispatch({ type: "SET_SUMMARIZING_THREAD", threadId: state.activeThreadId })
-            chrome.runtime.sendMessage({
-              type: "thread.export_obsidian",
-              thread_id: state.activeThreadId,
-              scope: "summary",
-            })
-          }
-        }}
-        title={hasMessages ? "导出整线程摘要到 Obsidian(结构化总结 + 折叠原文)" : "当前线程没有消息"}
-      >
-        {state.summarizingThreadId === state.activeThreadId ? "⏳" : "🧠"}
-      </button>
-      <button onClick={onToggleLogs} style={styles.craftBtn} title="日志">📋</button>
+      <div style={styles.headerTitle}>CMspark</div>
+      <div style={styles.headerActions}>
+        <button
+          type="button"
+          style={{
+            ...styles.iconBtn,
+            opacity: hasMessages ? 1 : 0.35,
+            cursor: hasMessages ? "pointer" : "not-allowed",
+          }}
+          disabled={!hasMessages}
+          onClick={onCraft}
+          title={hasMessages ? "提取技能" : "当前线程没有消息"}
+        >
+          <IconCraft size={15} />
+        </button>
+        <button
+          type="button"
+          style={{
+            ...styles.iconBtn,
+            opacity: hasMessages ? 1 : 0.35,
+            cursor: hasMessages ? "pointer" : "not-allowed",
+          }}
+          disabled={!hasMessages}
+          onClick={() => {
+            if (state.activeThreadId) {
+              chrome.runtime.sendMessage({
+                type: "thread.export_obsidian",
+                thread_id: state.activeThreadId,
+                scope: "thread",
+              })
+            }
+          }}
+          title={hasMessages ? "导出整个线程到 Obsidian" : "当前线程没有消息"}
+        >
+          <IconDownload size={15} />
+        </button>
+        <button
+          type="button"
+          style={styles.iconBtn}
+          onClick={onOpenNotebooklmImporter}
+          title="NotebookLM 导入器"
+        >
+          <IconNotebook size={15} />
+        </button>
+        <button
+          type="button"
+          style={{
+            ...styles.iconBtn,
+            ...(nbState === "warning"
+              ? { background: tokens.warningSoft, borderColor: "#fcd34d", color: tokens.warning }
+              : {}),
+          }}
+          disabled={nbState === "working"}
+          onClick={runNotebooklmExport}
+          title={nbTooltip}
+        >
+          {nbState === "working" ? (
+            <IconSpinner size={15} />
+          ) : nbState === "warning" ? (
+            <IconAlert size={15} />
+          ) : (
+            <IconSave size={15} />
+          )}
+        </button>
+        <button
+          type="button"
+          style={{
+            ...styles.iconBtn,
+            opacity: hasMessages ? 1 : 0.35,
+            cursor: hasMessages ? "pointer" : "not-allowed",
+          }}
+          disabled={!hasMessages || state.summarizingThreadId === state.activeThreadId}
+          onClick={() => {
+            if (state.activeThreadId) {
+              dispatch({ type: "SET_SUMMARIZING_THREAD", threadId: state.activeThreadId })
+              chrome.runtime.sendMessage({
+                type: "thread.export_obsidian",
+                thread_id: state.activeThreadId,
+                scope: "summary",
+              })
+            }
+          }}
+          title={hasMessages ? "导出线程摘要到 Obsidian" : "当前线程没有消息"}
+        >
+          {state.summarizingThreadId === state.activeThreadId ? (
+            <IconSpinner size={15} />
+          ) : (
+            <IconBrain size={15} />
+          )}
+        </button>
+        <button type="button" onClick={onToggleLogs} style={styles.iconBtn} title="日志">
+          <IconLogs size={15} />
+        </button>
+      </div>
+      <ModeBadge level={capabilityLevel} label={badgeLabel} />
       <div
+        title={
+          connectionState === "connected"
+            ? "已连接"
+            : connectionState === "connecting"
+              ? "连接中"
+              : "未连接"
+        }
         style={{
           ...styles.statusDot,
           background:
-            connectionState === "connected" ? "#4CAF50"
-            : connectionState === "connecting" ? "#FFC107"
-            : "#F44336",
+            connectionState === "connected"
+              ? tokens.success
+              : connectionState === "connecting"
+                ? tokens.warning
+                : tokens.danger,
+          boxShadow:
+            connectionState === "connected"
+              ? "0 0 0 3px rgba(22, 163, 74, 0.15)"
+              : "none",
         }}
       />
     </div>
   )
 }
 
-function InputArea() {
+function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityLevel }) {
   const { state, dispatch } = useAgentStore()
   const [text, setText] = useState("")
   const [slashVisible, setSlashVisible] = useState(false)
@@ -645,16 +782,30 @@ function InputArea() {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const sendingRef = useRef(false)
+  const isComputer = capabilityLevel === "computer"
 
   const isStreaming = !!state.streamingContent
   const hasContent = text.trim().length > 0 || selectedFiles.length > 0
-  const canSend = !isStreaming && hasContent && !!state.activeThreadId && state.connectionState === "connected"
+  // D12′ must-fix: hard-gate Panel send while computer task is active (running/paused)
+  const taskActive =
+    isComputer &&
+    !!state.computerTask &&
+    (state.computerTask.status === "running" || state.computerTask.status === "paused")
+  const canSend =
+    !isStreaming &&
+    hasContent &&
+    !!state.activeThreadId &&
+    state.connectionState === "connected" &&
+    !taskActive
   const needsThread = !state.activeThreadId
   const needsConnection = state.connectionState !== "connected"
 
   const getPlaceholder = () => {
     if (needsThread) return "请先创建或选择一个线程"
     if (needsConnection) return "等待 companion 连接..."
+    // P1 D12′: Cockpit is task conductor — Panel cannot interject mid-task
+    if (taskActive) return "任务进行中 — 请在操控台发送指令或先急停"
+    if (isComputer) return "排队跟进…（主指令请在操控台发送）"
     return "输入指令... (输入 / 调用技能)"
   }
 
@@ -742,6 +893,14 @@ function InputArea() {
 
   const handleSend = () => {
     if (!canSend || sendingRef.current) return
+    // Defense in depth: never dual-conduct while L2 task is active
+    if (
+      isComputer &&
+      state.computerTask &&
+      (state.computerTask.status === "running" || state.computerTask.status === "paused")
+    ) {
+      return
+    }
     sendingRef.current = true
     try {
       const trimmed = text.trim()
@@ -947,37 +1106,50 @@ function InputArea() {
         />
         {!isStreaming && (
           <button
+            type="button"
             style={styles.attachBtn}
             onClick={() => fileInputRef.current?.click()}
             disabled={needsThread || needsConnection}
             title="上传文件"
           >
-            {"📎"}
+            <IconAttach size={16} />
           </button>
         )}
         {isStreaming ? (
-          <button
-            style={styles.stopBtn}
-            onClick={handleStop}
-            title="停止生成"
-          >
-            ■
+          <button type="button" style={styles.stopBtn} onClick={handleStop} title="停止生成">
+            <IconStop size={14} />
           </button>
         ) : (
           <button
+            type="button"
             style={{
               ...styles.sendBtn,
-              opacity: canSend ? 1 : 0.4,
+              opacity: canSend ? 1 : 0.45,
               cursor: canSend ? "pointer" : "not-allowed",
             }}
             onClick={handleSend}
             disabled={!canSend}
-            title={needsThread ? "请先创建线程" : needsConnection ? "Companion 未连接" : "发送"}
+            title={
+              needsThread
+                ? "请先创建线程"
+                : needsConnection
+                  ? "Companion 未连接"
+                  : taskActive
+                    ? "任务进行中，请在操控台发送"
+                    : "发送"
+            }
           >
-            ▶
+            <IconSend size={15} />
           </button>
         )}
-        <button style={styles.settingsBtn} onClick={() => dispatch({ type: "TOGGLE_SETTINGS" })} title="设置">⚙</button>
+        <button
+          type="button"
+          style={styles.settingsBtn}
+          onClick={() => dispatch({ type: "TOGGLE_SETTINGS" })}
+          title="设置"
+        >
+          <IconSettings size={15} />
+        </button>
       </div>
     </div>
   )
@@ -1012,17 +1184,19 @@ function DisconnectedBanner({ visible, onRetry }: { visible: boolean; onRetry: (
 
   return (
     <div style={bannerStyles.container}>
-      <div style={bannerStyles.icon}>⚠️</div>
+      <div style={bannerStyles.iconWrap}>
+        <IconAlert size={22} style={{ color: tokens.warning }} />
+      </div>
       <div style={bannerStyles.content}>
         <h3 style={bannerStyles.title}>Companion 未连接</h3>
         <p style={bannerStyles.text}>
           请通过菜单栏启动 Companion，或检查守护进程状态。
         </p>
         <div style={bannerStyles.actions}>
-          <button style={bannerStyles.primaryBtn} onClick={onRetry}>
+          <button type="button" style={bannerStyles.primaryBtn} onClick={onRetry}>
             重新连接
           </button>
-          <button style={bannerStyles.secondaryBtn} onClick={handleOpenLogs}>
+          <button type="button" style={bannerStyles.secondaryBtn} onClick={handleOpenLogs}>
             查看日志
           </button>
         </div>
@@ -1053,24 +1227,47 @@ const styles: Record<string, React.CSSProperties> = {
     display: "flex",
     flexDirection: "column",
     height: "100vh",
-    fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+    fontFamily: tokens.font,
     fontSize: 13,
-    color: "#1a1a1a",
-    background: "#ffffff",
+    color: tokens.text,
+    background: tokens.bgElevated,
   },
   header: {
     display: "flex",
     alignItems: "center",
     gap: 8,
-    padding: "10px 12px",
-    borderBottom: "1px solid #e5e5e5",
-    background: "#fafafa",
+    padding: "8px 10px",
+    borderBottom: `1px solid ${tokens.border}`,
+    background: tokens.bg,
     flexShrink: 0,
   },
   headerTitle: {
     flex: 1,
+    minWidth: 0,
     fontSize: 13,
-    fontWeight: 600,
+    fontWeight: 650,
+    letterSpacing: "-0.01em",
+    color: tokens.text,
+  },
+  headerActions: {
+    display: "flex",
+    alignItems: "center",
+    gap: 3,
+    flexShrink: 0,
+  },
+  iconBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: tokens.radiusSm,
+    border: `1px solid ${tokens.border}`,
+    background: tokens.bgElevated,
+    color: tokens.textSecondary,
+    cursor: "pointer",
+    flexShrink: 0,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 0,
   },
   statusDot: {
     width: 8,
@@ -1079,11 +1276,11 @@ const styles: Record<string, React.CSSProperties> = {
     flexShrink: 0,
   },
   craftBtn: {
-    width: 26,
-    height: 26,
-    borderRadius: 6,
-    border: "1px solid #ddd",
-    background: "#fff",
+    width: 28,
+    height: 28,
+    borderRadius: tokens.radiusSm,
+    border: `1px solid ${tokens.border}`,
+    background: tokens.bgElevated,
     cursor: "pointer",
     fontSize: 13,
     flexShrink: 0,
@@ -1096,31 +1293,35 @@ const styles: Record<string, React.CSSProperties> = {
     display: "flex",
     alignItems: "flex-end",
     gap: 6,
-    padding: "8px 12px",
-    borderTop: "1px solid #eee",
+    padding: "10px 12px",
+    borderTop: `1px solid ${tokens.border}`,
+    background: tokens.bg,
     flexShrink: 0,
     position: "relative" as const,
   },
   textarea: {
     flex: 1,
-    border: "1px solid #ddd",
-    borderRadius: 6,
-    padding: "6px 10px",
+    border: `1px solid ${tokens.borderStrong}`,
+    borderRadius: tokens.radiusMd,
+    padding: "8px 12px",
     fontSize: 13,
     fontFamily: "inherit",
     resize: "none" as const,
     outline: "none",
-    minHeight: 36,
+    minHeight: 38,
     maxHeight: 100,
+    background: tokens.bgElevated,
+    color: tokens.text,
+    boxShadow: tokens.shadowSm,
   },
   attachBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 6,
-    border: "1px solid #ddd",
-    background: "#fff",
+    width: 34,
+    height: 34,
+    borderRadius: tokens.radiusMd,
+    border: `1px solid ${tokens.border}`,
+    background: tokens.bgElevated,
+    color: tokens.textSecondary,
     cursor: "pointer",
-    fontSize: 14,
     flexShrink: 0,
     display: "flex",
     alignItems: "center",
@@ -1128,39 +1329,46 @@ const styles: Record<string, React.CSSProperties> = {
     padding: 0,
   },
   sendBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 6,
+    width: 34,
+    height: 34,
+    borderRadius: tokens.radiusMd,
     border: "none",
-    background: "#4A90D9",
+    background: tokens.accent,
     color: "#fff",
     cursor: "pointer",
-    fontSize: 14,
-    flexShrink: 0,
-  },
-  stopBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 6,
-    border: "none",
-    background: "#F44336",
-    color: "#fff",
-    cursor: "pointer",
-    fontSize: 12,
     flexShrink: 0,
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
+    padding: 0,
+  },
+  stopBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: tokens.radiusMd,
+    border: "none",
+    background: tokens.danger,
+    color: "#fff",
+    cursor: "pointer",
+    flexShrink: 0,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 0,
   },
   settingsBtn: {
-    width: 28,
-    height: 28,
-    borderRadius: 6,
-    border: "1px solid #ddd",
-    background: "#fff",
+    width: 34,
+    height: 34,
+    borderRadius: tokens.radiusMd,
+    border: `1px solid ${tokens.border}`,
+    background: tokens.bgElevated,
+    color: tokens.textSecondary,
     cursor: "pointer",
-    fontSize: 14,
     flexShrink: 0,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 0,
   },
   securityOverlay: {
     position: "absolute" as const,
@@ -1352,9 +1560,18 @@ const logStyles: Record<string, React.CSSProperties> = {
 
 const toastStyles: Record<string, React.CSSProperties> = {
   toast: {
-    position: "fixed" as const, top: 48, left: 8, right: 8,
-    background: "#4A90D9", color: "#fff", padding: "6px 12px",
-    borderRadius: 6, fontSize: 12, zIndex: 300,
+    position: "fixed" as const,
+    top: 52,
+    left: 10,
+    right: 10,
+    background: tokens.text,
+    color: "#fff",
+    padding: "8px 12px",
+    borderRadius: tokens.radiusMd,
+    fontSize: 12,
+    fontWeight: 500,
+    zIndex: 300,
+    boxShadow: tokens.shadowMd,
   },
 }
 
@@ -1362,18 +1579,24 @@ const bannerStyles: Record<string, React.CSSProperties> = {
   container: {
     display: "flex",
     alignItems: "flex-start",
-    gap: 10,
-    padding: "12px 14px",
-    background: "#FFF8E1",
-    borderBottom: "1px solid #FFE082",
+    gap: 12,
+    padding: "14px 14px",
+    background: tokens.warningSoft,
+    borderBottom: "1px solid #fcd34d",
     flexShrink: 0,
-    fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+    fontFamily: tokens.font,
   },
-  icon: {
-    fontSize: 20,
-    lineHeight: 1,
+  iconWrap: {
     flexShrink: 0,
-    marginTop: 2,
+    marginTop: 1,
+    width: 32,
+    height: 32,
+    borderRadius: tokens.radiusMd,
+    background: "#fff",
+    border: "1px solid #fcd34d",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
   },
   content: {
     flex: 1,
@@ -1382,35 +1605,35 @@ const bannerStyles: Record<string, React.CSSProperties> = {
   title: {
     margin: "0 0 4px",
     fontSize: 13,
-    fontWeight: 600,
-    color: "#5D4037",
+    fontWeight: 650,
+    color: tokens.text,
   },
   text: {
     margin: "0 0 10px",
     fontSize: 12,
-    color: "#795548",
-    lineHeight: 1.45,
+    color: tokens.textSecondary,
+    lineHeight: 1.5,
   },
   actions: {
     display: "flex",
     gap: 8,
   },
   primaryBtn: {
-    padding: "5px 12px",
-    borderRadius: 5,
+    padding: "6px 12px",
+    borderRadius: tokens.radiusSm,
     border: "none",
-    background: "#4A90D9",
+    background: tokens.accent,
     color: "#fff",
     cursor: "pointer",
     fontSize: 12,
-    fontWeight: 500,
+    fontWeight: 600,
   },
   secondaryBtn: {
-    padding: "5px 12px",
-    borderRadius: 5,
-    border: "1px solid #ccc",
+    padding: "6px 12px",
+    borderRadius: tokens.radiusSm,
+    border: `1px solid ${tokens.borderStrong}`,
     background: "#fff",
-    color: "#555",
+    color: tokens.textSecondary,
     cursor: "pointer",
     fontSize: 12,
     fontWeight: 500,

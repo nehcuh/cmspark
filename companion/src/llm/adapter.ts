@@ -305,16 +305,13 @@ export async function chatCreate(params: ChatCreateParams) {
    host_read and host_write require user confirmation (L2 gate); writes additionally require Windows Hello verification per call, or a 6-char manually typed code when Hello hardware is unavailable. The first time per thread, ASK the user explicitly before calling — e.g. "这个任务需要读取你的 Outlook 收件箱（只读第一封）。可以吗？". Respect denial; do not retry without user re-prompting.
    NEVER use host_read/host_write for browser-DOM tasks — use get_page_text / evaluate instead.
    NEVER propose these tools speculatively — only when the user's task cannot be accomplished via browser alone.`
-    : `12. macOS ONLY — host_use tools (computer-use, Phase 1 W6):
-   - host_read: read top-1 Mail inbox message. Returns {sender, subject, date_received, body_preview}.
-   - host_write: Phase 1 W6 supports Notes create (kind="create", body=note content; first 80 chars of first line becomes note name) and Finder move (kind="move", source_path=POSIX file path, destination=POSIX folder path). Update/delete require biometric — not yet available, will return error.
-   ONLY propose these tools when the user EXPLICITLY mentions:
-     - Mail / 邮件 / inbox / read email → host_read
-     - Notes / 备忘录 / note / 创建笔记 → host_write create
-     - Finder / 文件 / move file / 归类 → host_write move
-   Both require user confirmation (L2 gate). The first time per thread, ASK the user explicitly before calling — e.g. "这个任务需要读取你的 Mail 收件箱（只读第一封）。可以吗？". Respect denial; do not retry without user re-prompting.
-   NEVER use host_read/host_write for browser-DOM tasks — use get_page_text / evaluate instead. These tools do NOT work on Windows/Linux in Phase 1 (will return explicit error).
-   NEVER propose these tools speculatively — only when the user's task cannot be accomplished via browser alone.`
+    : `12. macOS host_use — prefer SEMANTIC tools over coordinate host_computer (grill 2026-07-26):
+   - host_read: read top-1 Mail inbox. Returns {sender, subject, date_received, body_preview, verified, summary}. Only claim you "read the mail" when verified===true.
+   - host_write: Notes create (kind="create", body=…; first line = title) and Finder move. Returns {posted, verified, target_id}. Only claim "note created" when verified===true (list-notes re-read). Update/delete not available.
+   - host_computer: LAST RESORT pixel/OCR inject. Prefer host_read/host_write for Mail/Notes. Aggregate ALL same-app actions in ONE host_computer call (do not split one user goal into many tasks). Results may have posted=true,verified=false — NEVER say "已发送/已完成" unless verified===true or verified_steps covers the write.
+   ONLY propose host_read/host_write when the user EXPLICITLY mentions Mail/邮件/Notes/备忘录/Finder file move.
+   Both require L2 confirmation. First time per thread, ASK the user before calling. Respect denial.
+   NEVER use host_read/host_write for browser-DOM — use get_page_text/evaluate. NEVER propose speculatively.`
 
   // App tab (WP5, design §5): compact host_app index injected right after
   // Rule 12 — discovery via the system prompt, never a list tool.
@@ -641,6 +638,8 @@ ${hostUseRule12}${appIndexSection ? `\n\n${appIndexSection}` : ""}`
           let toolResult = await executeTool(tc.id, toolName, {
             ...params,
             tabId: params.tabId ?? threadManager.get(threadId)?.pinned_tabs?.[0],
+            // Grill Q1: computer session-trust keys off chat thread, not WS uuid.
+            __thread_id: threadId,
           }, signal)
 
           const durationMs = Date.now() - startTime

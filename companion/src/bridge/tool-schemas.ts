@@ -123,7 +123,8 @@ export const TOOL_ARG_SCHEMAS: Record<string, z.ZodTypeAny> = {
         z.object({
           action: z.literal("key"),
           keys: z.array(z.enum([
-            "ctrl", "alt", "shift", "win",
+            // Modifiers: win/cmd/meta/command all mean ⌘ on macOS (host maps to cmd).
+            "ctrl", "alt", "shift", "win", "cmd", "meta", "command",
             "enter", "escape", "tab", "space", "backspace", "delete",
             "up", "down", "left", "right", "home", "end", "pageup", "pagedown",
             "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12",

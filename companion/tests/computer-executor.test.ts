@@ -1176,6 +1176,35 @@ test("executor UX-spike: sidepanel (chrome.exe) steals foreground -> self-UI re-
   assert.equal(injector.clicks.length, 2, "both actions injected")
 })
 
+test("executor UX-spike: macOS sidepanel (com.google.Chrome) steals FG -> self-UI, NO re-L2", async () => {
+  // Product paradox 3ffkgl: macOS WindowInfo.exePath is the bundle id, not an
+  // exe path. exeBasename("com.google.Chrome") === "com" — old matcher never
+  // treated Chrome as companion UI, so every Allow click re-prompted
+  // "前台被 Chrome 接管" while the user was also told to keep WeChat front.
+  const confirm = scriptedConfirm([false])
+  const injector = new RecordingInjector()
+  injector.foreground = 999999
+  const info = winInfo()
+  const windows: WindowEnumerator = {
+    async enumerateByExe() { return [info] },
+    async infoForHwnd(h: number) {
+      return h === 999999
+        ? winInfo({ hwnd: 999999, exePath: "com.google.Chrome" })
+        : info
+    },
+  }
+  const deps = makeDeps({
+    confirm: confirm.fn,
+    injector,
+    windows,
+    config: testConfig({ companionUiBasenames: ["chrome"] }),
+  })
+  const r = await runComputerTask({ task: "t", app: "win.app.test", actions: [clickOk, clickOk] }, deps)
+  assert.equal(r.success, true, "macOS Chrome bundle id counts as self-UI")
+  assert.equal(confirm.captured.length, 0, "no re-L2 — user stays in side panel")
+  assert.equal(injector.clicks.length, 2)
+})
+
 test("executor UX-spike: self-UI yield WITH a large pixel change still pauses (real dialog)", async () => {
   // The allow-list must NOT mask a real task-induced dialog. When the foreign
   // foreground is chrome.exe BUT a large whole-window change also fired, the

@@ -1,7 +1,7 @@
 // Global state store for the agent
 
 import { createContext, useContext, useReducer, type ReactNode, type Dispatch } from "react"
-import type { ConnectionState, Thread, Message, SkillMeta, OperationRecord, LLMConfig, SendShortcut, SecurityConfirmationRequest, LogEntry, KnowledgeMeta, SkillSelectionMode, SecurityAuditEntry, McpServerMeta, McpSelectionMode, AppEntry, AppPresetStatus, AppEnumerateCandidate, AppAddWarning, ComputerTaskEventView, ComputerTaskState, ComputerModelState, ComputerModelProgress, ComputerModelLicenseDoor } from "../types"
+import type { ConnectionState, Thread, Message, SkillMeta, OperationRecord, LLMConfig, SendShortcut, SecurityConfirmationRequest, LogEntry, KnowledgeMeta, SkillSelectionMode, SecurityAuditEntry, McpServerMeta, McpSelectionMode, AppEntry, AppPresetStatus, AppEnumerateCandidate, AppAddWarning, ComputerTaskEventView, ComputerTaskState, ComputerModelState, ComputerModelProgress, ComputerModelLicenseDoor, CapabilityLevel } from "../types"
 import { reduceComputerTaskEvent } from "../utils/computer-utils"
 
 export interface AgentState {
@@ -71,6 +71,10 @@ export interface AgentState {
   computerModelLicenseDoor: ComputerModelLicenseDoor | null
   /** 最后一条 computer.model.* 错误(family:"computer.model" 路由;LICENSE_DECLINED 等)。 */
   computerModelError: string | null
+  /** UI Mode P0: last browser CDP tool activity timestamp (ms) for L1 quiescence. */
+  lastBrowserToolAt: number | null
+  /** UI Mode P0: user pin; blocks auto-down only (never blocks up). */
+  modePin: CapabilityLevel | null
 }
 
 export type AgentAction =
@@ -125,11 +129,17 @@ export type AgentAction =
   | { type: "SET_APPS_ERROR"; error: string | null }
   | { type: "COMPUTER_TASK_EVENT"; event: ComputerTaskEventView }
   | { type: "COMPUTER_TASK_ABORT_ACK"; taskId: string; matched: number }
+  /** Cockpit/panel hydrate from SW mirror — full snapshot, not incremental event. */
+  | { type: "HYDRATE_COMPUTER_TASK"; task: ComputerTaskState | null }
+  | { type: "HYDRATE_SECURITY_CONFIRMATIONS"; requests: SecurityConfirmationRequest[] }
   | { type: "SET_COMPUTER_COORDINATE_STATE"; enabled: boolean }
   | { type: "SET_COMPUTER_MODEL_STATE"; modelState: ComputerModelState }
   | { type: "SET_COMPUTER_MODEL_PROGRESS"; progress: ComputerModelProgress }
   | { type: "SET_COMPUTER_MODEL_LICENSE_DOOR"; door: ComputerModelLicenseDoor | null }
   | { type: "SET_COMPUTER_MODEL_ERROR"; error: string | null }
+  | { type: "NOTE_BROWSER_TOOL"; at?: number }
+  | { type: "SET_MODE_PIN"; pin: CapabilityLevel | null }
+
 export const initialState: AgentState = {
   connectionState: "disconnected",
   threads: [],
@@ -198,6 +208,8 @@ export const initialState: AgentState = {
   computerModelProgress: null,
   computerModelLicenseDoor: null,
   computerModelError: null,
+  lastBrowserToolAt: null,
+  modePin: null,
 }
 
 export function agentReducer(state: AgentState, action: AgentAction): AgentState {
@@ -230,6 +242,8 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         messages: [],
         streamingContent: "",
         isProcessing: false,
+        lastBrowserToolAt: null,
+        modePin: null,
         pinnedTabIds: activeThread?.pinned_tabs || [],
         activeSkillIds: activeThread?.active_skill_ids || [],
         skillSelectionMode: activeThread?.skill_selection_mode || "auto",
@@ -312,6 +326,8 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         messages: [],
         streamingContent: "",
         isProcessing: false,
+        lastBrowserToolAt: null,
+        modePin: null,
         pinnedTabIds: action.thread.pinned_tabs || [],
       }
     case "REMOVE_THREAD": {
@@ -439,6 +455,13 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       if (t.taskId !== action.taskId && action.taskId !== "*") return state
       return { ...state, computerTask: { ...t, abortAcked: true } }
     }
+    case "HYDRATE_COMPUTER_TASK":
+      return { ...state, computerTask: action.task }
+    case "HYDRATE_SECURITY_CONFIRMATIONS":
+      return {
+        ...state,
+        pendingSecurityConfirmations: Array.isArray(action.requests) ? action.requests : [],
+      }
     case "SET_COMPUTER_COORDINATE_STATE":
       return { ...state, computerCoordinateEnabled: action.enabled }
     case "SET_COMPUTER_MODEL_STATE":
@@ -455,6 +478,10 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       return { ...state, computerModelLicenseDoor: action.door }
     case "SET_COMPUTER_MODEL_ERROR":
       return { ...state, computerModelError: action.error }
+    case "NOTE_BROWSER_TOOL":
+      return { ...state, lastBrowserToolAt: action.at ?? Date.now() }
+    case "SET_MODE_PIN":
+      return { ...state, modePin: action.pin }
     default:
       return state
   }

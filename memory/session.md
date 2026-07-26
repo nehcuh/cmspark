@@ -2,6 +2,19 @@
 
 ## Current Session
 
+### S16 (2026-07-26) [cmspark macOS computer-use live 修复：点击假成功 → 真生效]
+- **用户验收**：#i4x6pm 后模拟点击成功（网易云等）；Mail Exchange 最新信可读
+- **根因链**（真机日志 + host 对照实验）：
+  1. `read-mail` 用 `message 1 of inbox` = **最旧**信（iCloud 2023 welcome），非最新 → 按 30d/365d `date received` 取 max
+  2. session trust 勾选默认关 + `maxActionsSeen=actions.length` → LLM 拆任务反复确认 → 默认勾选 + `max(actions, budget)` 记入
+  3. inject `cuClientOriginScreen` 无 `bestDist<24` 闸 → 微信 AX 错窗 → 点击偏约 (-68,-46)；截图有闸、inject 无闸
+  4. **SkyLight  alone 对微信/网易云静默无效**仍 `ok:true`/`verified:true`（像素噪声）→ **activate + SkyLight + HID(`cghidEventTap`) 双投递**
+- **已改源码（待本 session-end commit）**：`host.swift` / `host-skylight.swift` / `host-integrity.ts`（SHA 钉住）/ `read-mail.applescript` / `darwin-adapters` forceForeground 同 bundle / `server.ts` actions 地板 / extension session-trust 默认勾 / 测试 G1
+- **热部署**：`/Applications/CMspark.app` 的 `cmspark-host` + `cmspark-agent.js` 哈希 + `read-mail.scpt`；daemon 已重启
+- **勿混入 commit**：`docs/decisions/v1.3/*`、`.omx/`、audit patch/err、`tmp-wx-live.png`
+- **下次**：正式 `make package-macos` 重打 DMG（避免只热换 binary 漂移）；pixel `verified` 假阳性可再收紧
+- Recorded: yes — project-knowledge 三条 computer-use 坑
+
 ### S15 (2026-07-25) [cmspark deep diagnosis fanout + P0-A/B/C fix stack; P0-D mid Design]
 - **诊断 fanout**：33 agents → 5.8/C+（↑1.4）；Critical 0；报告 `docs/audit/diagnosis-fanout-2026-07-25.md`
 - **流程**：`p0-batch-fix.rhai` = Design→Implement→对抗→**独立** Claude+Pi 双审→build。Pi 可空挂；用户可 waive

@@ -1,36 +1,75 @@
-// Bottom context bar: Tabs, History, Skills panels
+// Bottom context bar: Tabs, History, Skills panels (mode-split by capability level)
 
-import { useState, useRef, useEffect } from "react"
+import { useState, useRef, useEffect, useMemo, type ComponentType } from "react"
 import { useAgentStore } from "../store/agentStore"
+import { contextBarTabsForLevel } from "../mode/mode-controller"
+import type { CapabilityLevel } from "../types"
 import { KnowledgeSubPanel } from "./KnowledgeSubPanel"
 import { McpPanel } from "./McpPanel"
 import { AppsPanel } from "./AppsPanel"
+import { tokens } from "../ui/tokens"
+import {
+  IconTabs,
+  IconHistory,
+  IconSkills,
+  IconKnowledge,
+  IconMcp,
+  IconApps,
+} from "../ui/icons"
 
 type Panel = "tabs" | "history" | "skills" | "knowledge" | "mcp" | "apps"
 
-export function BottomBar() {
+type TabDef = {
+  id: Panel
+  label: string
+  Icon: ComponentType<{ size?: number }>
+}
+
+const ALL_TABS: TabDef[] = [
+  { id: "tabs", label: "标签", Icon: IconTabs },
+  { id: "history", label: "历史", Icon: IconHistory },
+  { id: "skills", label: "技能", Icon: IconSkills },
+  { id: "knowledge", label: "知识", Icon: IconKnowledge },
+  { id: "mcp", label: "MCP", Icon: IconMcp },
+  { id: "apps", label: "应用", Icon: IconApps },
+]
+
+export function BottomBar({ capabilityLevel }: { capabilityLevel: CapabilityLevel }) {
   const [activePanel, setActivePanel] = useState<Panel | null>(null)
   const { state, dispatch } = useAgentStore()
 
-  const tabs = [
-    { id: "tabs" as const, label: "Tabs", icon: "📎" },
-    { id: "history" as const, label: "Hist", icon: "📋" },
-    { id: "skills" as const, label: "Skills", icon: "🧩" },
-    { id: "knowledge" as const, label: "Know", icon: "📚" },
-    { id: "mcp" as const, label: "MCP", icon: "🔌" },
-    { id: "apps" as const, label: "App", icon: "🚀" },
-  ]
+  const allowedIds = useMemo(
+    () => new Set(contextBarTabsForLevel(capabilityLevel)),
+    [capabilityLevel],
+  )
+  const tabs = useMemo(
+    () => ALL_TABS.filter((t) => allowedIds.has(t.id)),
+    [allowedIds],
+  )
+
+  // Close open panel if it is no longer allowed for the current capability level
+  useEffect(() => {
+    if (activePanel != null && !allowedIds.has(activePanel)) {
+      setActivePanel(null)
+    }
+  }, [activePanel, allowedIds])
 
   return (
     <div style={styles.container}>
       <div style={styles.tabs}>
-        {tabs.map(tab => (
+        {tabs.map(tab => {
+          const active = activePanel === tab.id
+          const Icon = tab.Icon
+          return (
           <button
             key={tab.id}
+            type="button"
             style={{
               ...styles.tabBtn,
-              background: activePanel === tab.id ? "#e8f0fe" : "transparent",
-              color: activePanel === tab.id ? "#4A90D9" : "#666",
+              background: active ? tokens.bgActive : "transparent",
+              color: active ? tokens.accent : tokens.textSecondary,
+              borderColor: active ? "#bfdbfe" : "transparent",
+              boxShadow: active ? tokens.shadowSm : "none",
             }}
             onClick={() => {
             if (activePanel === tab.id) { setActivePanel(null); return }
@@ -57,9 +96,26 @@ export function BottomBar() {
             }
           }}
           >
-            {tab.icon} {tab.label}
+            <Icon size={14} />
+            <span>{tab.label}</span>
           </button>
-        ))}
+          )
+        })}
+        {tabs.length < ALL_TABS.length && (
+          <span
+            title="其他入口在对应能力层级或设置中"
+            style={{
+              marginLeft: 2,
+              fontSize: 10,
+              color: tokens.textMuted,
+              alignSelf: "center",
+              userSelect: "none",
+              letterSpacing: "0.02em",
+            }}
+          >
+            ···
+          </span>
+        )}
       </div>
 
       {activePanel && (
@@ -566,32 +622,42 @@ function matchesSite(pattern: string, hostname: string): boolean {
 
 const styles: Record<string, React.CSSProperties> = {
   container: {
-    borderTop: "1px solid #eee",
+    borderTop: `1px solid ${tokens.border}`,
+    background: tokens.bgElevated,
     flexShrink: 0,
   },
   tabs: {
     display: "flex",
     gap: 4,
-    padding: "4px 12px",
-    borderBottom: "1px solid #f0f0f0",
+    padding: "6px 10px",
+    alignItems: "center",
+    overflowX: "auto",
   },
   tabBtn: {
-    border: "none",
-    borderRadius: 4,
-    padding: "3px 10px",
+    border: "1px solid transparent",
+    borderRadius: tokens.radiusPill,
+    padding: "5px 10px",
     fontSize: 11,
+    fontWeight: 500,
     cursor: "pointer",
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 5,
+    whiteSpace: "nowrap",
+    transition: "background 0.12s ease, color 0.12s ease",
+    fontFamily: tokens.font,
   },
   panel: {
-    borderBottom: "1px solid #eee",
+    borderTop: `1px solid ${tokens.border}`,
+    background: tokens.bgMuted,
     maxHeight: 200,
     overflowY: "auto",
   },
   panelContent: {
-    padding: "8px 12px",
+    padding: "10px 12px",
   },
   emptyText: {
-    color: "#999",
+    color: tokens.textMuted,
     fontSize: 12,
     textAlign: "center",
     padding: 12,

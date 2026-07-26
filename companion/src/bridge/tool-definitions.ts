@@ -554,7 +554,7 @@ export function getToolDefinitions(): ToolDefinition[] {
             app: { type: "string", description: "Whitelisted app token (win.app.<slug> on Windows, mac.app.<slug> on macOS) with coordinateAllowed=true." },
             actions: {
               type: "array",
-              description: "Draft action sequence. click family: {action, x?, y?, target?} — target is an OCR text anchor (e.g. '搜索'); x/y are target-window client-area physical pixels. type: {action:'type', text} — every literal is enumerated in the confirmation dialog and hash-bound. key: {action:'key', keys} — whitelist chord, e.g. ['ctrl','enter'] or ['f5']. scroll: {action:'scroll', x, y, delta} — wheel units, ±1200. drag: {action:'drag', x, y, x2, y2}. wait: {action:'wait', ms<=5000}. screenshot/describe: read-only.",
+              description: "Draft action sequence for ONE host_computer call: aggregate all same-app steps here (do not split one user goal across many host_computer tasks). click family: {action, x?, y?, target?} — target is an OCR text anchor; x/y are client-logical points [0, clientW)×[0, clientH) (NOT PNG pixels; on Retina divide image coords by scale). type: {action:'type', text} — enumerated in confirmation; tool may return posted=true,verified=false — never claim message sent unless verified. key: {action:'key', keys} — whitelist chords (cmd/meta/win ok). scroll/drag/wait/screenshot/describe as documented. Prefer host_write/host_read for Notes/Mail when available.",
               items: { type: "object" },
             },
             budget: { type: "integer", description: "Max injective actions for this task (default 15, max 30). Exhaustion forces a new user confirmation." },
