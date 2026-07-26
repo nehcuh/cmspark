@@ -35,10 +35,16 @@ const EXIT_OK = 0;
 const EXIT_MISMATCH = 1;
 const EXIT_CONFIG_ERROR = 2;
 
-// vendor/LICENSE is the microsoft/Florence-2-base MIT text @5ca5edf5 (same
-// vendored snapshot). Not part of exportVendor in models.manifest.json
-// (schema covers the three code files); pinned here as a constant.
-const LICENSE_SHA256 = "9906940f61b1f0b533fa7d99baf55178b2808fbe113ea51dfbfad8572ccd5f2b";
+// vendor/LICENSE is the microsoft/Florence-2-base MIT text (HuggingFace raw
+// LICENSE; lines are 4-space-prefixed in upstream). Same bytes as:
+//   https://huggingface.co/microsoft/Florence-2-base/raw/main/LICENSE
+// and as committed at fa0ec1f (WP5 T5 vendor). Not part of exportVendor in
+// models.manifest.json (schema covers the three code files); pinned here.
+//
+// History: WI-1.4 originally pinned 9906940f… which never matched the vendored
+// or upstream HF LICENSE bytes (c2cfccb8…); that constant was a registry bug
+// and made CI --strict fail while the three .py files remained correct.
+const LICENSE_SHA256 = "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383";
 
 const VENDOR_FILES = [
   ["configuration", "configuration_florence2.py"],
