@@ -142,7 +142,14 @@ if [ "${RELOCATED}" = "1" ] && [ -n "${HOST_BAK}" ]; then
 fi
 
 assert_eq 1 "${RC}" "missing cmspark-host must exit 1"
-assert_match 'cmspark-host missing' "${OUT}" "error message mentions missing host"
+# On Darwin the host-binary gate fires; on Linux CI package.sh hard-fails earlier
+# with "requires macOS (swiftc/osacompile…)" before the host file check (package.sh:~114).
+if [ "$(uname -s)" = "Darwin" ]; then
+  assert_match 'cmspark-host missing' "${OUT}" "error message mentions missing host"
+else
+  assert_match 'requires macOS|cmspark-host missing' "${OUT}" \
+    "error mentions macOS requirement or missing host"
+fi
 
 # --- Dynamic positive gate-only (when artifacts present) ---------------------
 if [ "$(uname -s)" = "Darwin" ] && [ -f "${HOST_BIN}" ] \

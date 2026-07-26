@@ -6,6 +6,9 @@ import "./_config-router-setup" // MUST be first — pins DATA_DIR before config
 
 import test, { before } from "node:test"
 import * as assert from "node:assert/strict"
+import * as fs from "node:fs"
+import * as os from "node:os"
+import * as path from "node:path"
 
 import { handleAppsMessage, type AppsHandlerDeps } from "../src/apps/handlers"
 import { maxPolicyForEntry, type AppEntry } from "../src/apps/types"
@@ -331,13 +334,31 @@ test("apps.add auto on AUMID → POLICY_CAP_EXCEEDED (AUMID always caps ai)", as
 
 test("apps.add lolbin → lolbin_denied error code", async () => {
   reset()
-  const r: any = await handleAppsMessage(
-    { type: "apps.add", path: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" },
-    {},
-    deps(),
-  )
-  assert.equal(r.type, "error")
-  assert.equal(r.code, "lolbin_denied")
+  // Absolute path required; basename must match a LOLBIN (powershell). On POSIX
+  // C:\… is not absolute, and a path without .exe fails not_an_exe first — use a
+  // real absolute .exe path (file need not exist if realpath is mocked, but
+  // create a temp .exe so fs checks pass on macOS/Linux CI).
+  let lolbinPath: string
+  let cleanup: (() => void) | null = null
+  if (process.platform === "win32") {
+    lolbinPath = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
+  } else {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-lolbin-"))
+    lolbinPath = path.join(dir, "powershell.exe")
+    fs.writeFileSync(lolbinPath, "")
+    cleanup = () => fs.rmSync(dir, { recursive: true, force: true })
+  }
+  try {
+    const r: any = await handleAppsMessage(
+      { type: "apps.add", path: lolbinPath },
+      {},
+      deps(),
+    )
+    assert.equal(r.type, "error")
+    assert.equal(r.code, "lolbin_denied")
+  } finally {
+    cleanup?.()
+  }
 })
 
 test("apps.add kind cli → CLI_PHASE2 typed error (P1 gui only)", async () => {
