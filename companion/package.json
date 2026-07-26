@@ -27,7 +27,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.4",
     "@types/js-yaml": "^4.0.9",
-    "adm-zip": "^0.5.17",
+    "adm-zip": "^0.6.0",
     "gray-matter": "^4.0.3",
     "js-yaml": "^4.2.0",
     "node-notifier": "^10.0.1",
@@ -47,5 +47,8 @@
     "@types/ws": "^8.5.10",
     "tsx": "^4.11.0",
     "typescript": "^5.4.5"
+  },
+  "overrides": {
+    "adm-zip": "^0.6.0"
   }
 }
