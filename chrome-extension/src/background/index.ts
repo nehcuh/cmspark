@@ -336,15 +336,19 @@ async function handleCompanionMessage(msg: any) {
     return
   }
 
-  // L2: draw attention to Cockpit when a computer-class confirm arrives
-  if (
+  // L2: open/focus Cockpit for computer-class confirms or task start
+  // (covers tray-initiated CU when Side Panel is closed — D16)
+  const computerConfirm =
     msg.type === "security.confirmation.request" &&
     typeof msg.tool_name === "string" &&
     (msg.tool_name === "host_computer" ||
       msg.tool_name === "host_app" ||
       msg.tool_name === "host_read" ||
       msg.tool_name === "host_write")
-  ) {
+  const computerTaskStart =
+    msg.type === "computer.task.event" &&
+    (msg.event === "started" || msg.event === "paused")
+  if (computerConfirm || computerTaskStart) {
     openOrFocusCockpit().catch(() => {})
   }
 
