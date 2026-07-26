@@ -611,6 +611,7 @@ export function createToolExecutor(ws: WebSocket) {
               getComputerSessionTrust,
               resolveComputerTrustKey,
               trustKeyAllowsInitialSkip,
+              g1InitialSkipEligible,
             } = await import("./computer/session-trust")
             const trust = getComputerSessionTrust()
             const appToken = String(finalParams.app)
@@ -632,16 +633,20 @@ export function createToolExecutor(ws: WebSocket) {
               }
               if (a && typeof a === "object" && (a as any).experimental === true) experimentalFlag = true
             }
-            // Grill Q2/Q3: initial skip requires explicit opt-in + thread key + corpus/budget/actions.
-            const optIn = trust.hasExplicitOptIn(trustKey, appToken)
-            const keyOk = trustKeyAllowsInitialSkip(trustKey)
-            const trusted = trust.isTrusted(trustKey, appToken)
-            const corpusOk = trust.corpusContains(trustKey, appToken, typeCorpus)
+            // Grill Q2/Q3: single pure gate (g1InitialSkipEligible) — no drift vs tests.
             const maxBudget = trust.maxBudgetSeen(trustKey, appToken)
-            const budgetOk = maxBudget > 0 && budgetN <= maxBudget
             const maxActions = trust.maxActionsSeen(trustKey, appToken)
-            const actionsOk = maxActions > 0 && actionCount <= maxActions
-            if (optIn && keyOk && trusted && corpusOk && budgetOk && actionsOk && !experimentalFlag) {
+            if (
+              g1InitialSkipEligible({
+                trust,
+                trustKey,
+                app: appToken,
+                typeCorpus,
+                budget: budgetN,
+                actionCount,
+                experimental: experimentalFlag,
+              })
+            ) {
               hostComputerTrustSkip = true
               logger.info("computer.session_trust.task_auto_approved", {
                 tool_call_id: toolCallId,
@@ -661,12 +666,12 @@ export function createToolExecutor(ws: WebSocket) {
                 trust_key: trustKey,
                 chat_thread_id: chatThreadId ?? null,
                 app: appToken,
-                trusted,
-                explicit_opt_in: optIn,
-                key_allows_skip: keyOk,
-                corpus_eligible: corpusOk,
-                budget_eligible: budgetOk,
-                actions_eligible: actionsOk,
+                trusted: trust.isTrusted(trustKey, appToken),
+                explicit_opt_in: trust.hasExplicitOptIn(trustKey, appToken),
+                key_allows_skip: trustKeyAllowsInitialSkip(trustKey),
+                corpus_eligible: trust.corpusContains(trustKey, appToken, typeCorpus),
+                budget_eligible: maxBudget > 0 && budgetN <= maxBudget,
+                actions_eligible: maxActions > 0 && actionCount <= maxActions,
                 experimental: experimentalFlag,
                 max_budget_seen: maxBudget,
                 max_actions_seen: maxActions,

@@ -77,6 +77,32 @@ export function trustKeyAllowsInitialSkip(trustKey: string): boolean {
 }
 
 /**
+ * Pure G1 initial-L2 skip composition (grill Q2/Q3). Used by server.ts and tests
+ * so the gate cannot drift between call sites.
+ */
+export function g1InitialSkipEligible(args: {
+  trust: ComputerSessionTrust
+  trustKey: string
+  app: string
+  typeCorpus: string[]
+  budget: number
+  actionCount: number
+  experimental: boolean
+}): boolean {
+  const { trust, trustKey, app, typeCorpus, budget, actionCount, experimental } = args
+  if (experimental) return false
+  if (!trustKeyAllowsInitialSkip(trustKey)) return false
+  if (!trust.hasExplicitOptIn(trustKey, app)) return false
+  if (!trust.isTrusted(trustKey, app)) return false
+  if (!trust.corpusContains(trustKey, app, typeCorpus)) return false
+  const maxBudget = trust.maxBudgetSeen(trustKey, app)
+  if (!(maxBudget > 0 && budget <= maxBudget)) return false
+  const maxActions = trust.maxActionsSeen(trustKey, app)
+  if (!(maxActions > 0 && actionCount <= maxActions)) return false
+  return true
+}
+
+/**
  * Re-L2 tag set that must ALWAYS prompt, even when the session is trusted.
  * Tags come from the `dangerous` array at each reL2() emit site — stable
  * strings like "computer.danger_detected". Narrative reasons (first arg)

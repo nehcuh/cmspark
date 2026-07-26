@@ -4,6 +4,7 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import {
   ComputerSessionTrust,
+  g1InitialSkipEligible,
   resolveComputerTrustKey,
   trustKeyAllowsInitialSkip,
 } from "../src/computer/session-trust"
@@ -53,29 +54,6 @@ test("explicitOptIn is sticky OR across grants", () => {
   t.grant(key, "mac.app.notes") // second approve without box still sticky
   assert.equal(t.hasExplicitOptIn(key, "mac.app.notes"), true)
 })
-
-/** Pure G1 skip composition (mirrors server.ts gate). */
-function g1InitialSkipEligible(args: {
-  trust: ComputerSessionTrust
-  trustKey: string
-  app: string
-  typeCorpus: string[]
-  budget: number
-  actionCount: number
-  experimental: boolean
-}): boolean {
-  const { trust, trustKey, app, typeCorpus, budget, actionCount, experimental } = args
-  if (experimental) return false
-  if (!trustKeyAllowsInitialSkip(trustKey)) return false
-  if (!trust.hasExplicitOptIn(trustKey, app)) return false
-  if (!trust.isTrusted(trustKey, app)) return false
-  if (!trust.corpusContains(trustKey, app, typeCorpus)) return false
-  const maxBudget = trust.maxBudgetSeen(trustKey, app)
-  if (!(maxBudget > 0 && budget <= maxBudget)) return false
-  const maxActions = trust.maxActionsSeen(trustKey, app)
-  if (!(maxActions > 0 && actionCount <= maxActions)) return false
-  return true
-}
 
 test("G1 skip: no explicitOptIn → no skip", () => {
   const t = new ComputerSessionTrust()
