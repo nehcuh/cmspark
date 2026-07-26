@@ -2,6 +2,11 @@
 
 export type ConnectionState = "connected" | "connecting" | "disconnected"
 
+/** UI capability ladder — see docs/superpowers/specs/2026-07-26-ui-three-mode-redesign.md */
+export type CapabilityLevel = "chat" | "browser" | "computer"
+
+export type SurfaceLayout = "panel" | "cockpit"
+
 export type SkillSelectionMode = "auto" | "all" | "manual"
 
 export type McpSelectionMode = "auto" | "all" | "manual"
