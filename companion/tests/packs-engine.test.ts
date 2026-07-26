@@ -147,6 +147,50 @@ test("apply blocked when module disabled", () => {
   clearConfigCache()
 })
 
+test("extractUserAppendPortion and re-apply freezes snapshot", () => {
+  const skillEngine = new SkillEngine()
+  const tm = new ThreadManager()
+  const thread = tm.create("reapply-test")
+  // user append before pack
+  tm.update(thread.id, {
+    config_override: { system_prompt_append: "user rules forever" },
+  })
+  const src = fs.mkdtempSync(path.join(os.tmpdir(), "mini-pack-src3-"))
+  writeMiniPack(src, "mini-pack-3")
+  packEngine.installPackFromDirectory(src, skillEngine, { force: true })
+
+  const a1 = packEngine.applyPack("mini-pack-3", thread.id, tm, skillEngine)
+  assert.equal(a1.ok, true)
+  const t1 = tm.get(thread.id)!
+  const snap1 = JSON.stringify(t1.mission_pack_snapshot)
+  assert.ok(t1.config_override.system_prompt_append.includes("user rules forever"))
+  assert.ok(t1.config_override.system_prompt_append.includes("Mission Pack"))
+
+  const a2 = packEngine.applyPack("mini-pack-3", thread.id, tm, skillEngine)
+  assert.equal(a2.ok, true)
+  const t2 = tm.get(thread.id)!
+  assert.equal(JSON.stringify(t2.mission_pack_snapshot), snap1, "snapshot must freeze on re-apply")
+  assert.ok(t2.config_override.system_prompt_append.includes("user rules forever"))
+
+  const un = packEngine.uninstallPack("mini-pack-3", tm, skillEngine)
+  assert.equal(un.ok, true)
+  const t3 = tm.get(thread.id)!
+  assert.equal(t3.mission_pack_id, null)
+  assert.equal(t3.tool_whitelist, null)
+  // user rules restored from snapshot
+  assert.equal(t3.config_override?.system_prompt_append, "user rules forever")
+})
+
+test("extractUserAppendPortion helper", () => {
+  assert.equal(packEngine.extractUserAppendPortion(null), null)
+  assert.equal(packEngine.extractUserAppendPortion("plain user"), "plain user")
+  assert.equal(
+    packEngine.extractUserAppendPortion("--- Mission Pack ---\nP\n\n--- User ---\nU"),
+    "U",
+  )
+  assert.equal(packEngine.extractUserAppendPortion("--- Mission Pack ---\nonly pack"), null)
+})
+
 test("ensureBuiltinPacksInstalled installs appsec-prd-review when present", () => {
   const skillEngine = new SkillEngine()
   // Point at worktree builtin by ensuring getBuiltinPacksRoot finds it

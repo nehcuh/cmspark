@@ -320,12 +320,26 @@ export function installPackFromZip(
   }
 }
 
-function mergeSystemPromptAppend(existing: string | null | undefined, packAppend: string): string {
+function mergeSystemPromptAppend(userPortion: string | null | undefined, packAppend: string): string {
   const packBlock = `--- Mission Pack ---\n${packAppend}`
-  if (existing && existing.trim()) {
-    return `${packBlock}\n\n--- User ---\n${existing}`
+  if (userPortion && userPortion.trim()) {
+    return `${packBlock}\n\n--- User ---\n${userPortion.trim()}`
   }
   return packBlock
+}
+
+/** Extract user-authored append text from a combined or plain system_prompt_append. */
+export function extractUserAppendPortion(existing: string | null | undefined): string | null {
+  if (!existing || !existing.trim()) return null
+  if (existing.includes("--- User ---")) {
+    const user = existing.split("--- User ---\n").slice(1).join("--- User ---\n").trim()
+    return user || null
+  }
+  if (existing.includes("--- Mission Pack ---")) {
+    // Pack-only block with no user section
+    return null
+  }
+  return existing.trim()
 }
 
 function snapshotFromThread(thread: any): ThreadPackSnapshot {
@@ -359,6 +373,19 @@ function restoreSnapshot(threadManager: ThreadManager, threadId: string, snap: T
   })
 }
 
+/** Configured MCP server ids (intersect pack list with these — §6.4). */
+function configuredMcpServerIds(config: CompanionConfig): Set<string> {
+  const servers = (config as any).mcp?.servers
+  if (!servers || typeof servers !== "object") return new Set()
+  return new Set(Object.keys(servers))
+}
+
+/**
+ * Build the post-apply state in memory without mutating the thread until one applyPackPatch.
+ * - Switching packs: base state = existing mission_pack_snapshot (pre-A), not current post-A thread
+ * - Re-apply same pack: freeze original snapshot; recompute whitelist/append from base
+ * - First apply: snapshot = current thread
+ */
 export function applyPack(
   packId: string,
   threadId: string,
@@ -386,66 +413,68 @@ export function applyPack(
   const thread = threadManager.get(threadId)
   if (!thread) return { ok: false, error: `thread not found: ${threadId}` }
 
-  // If switching packs, restore previous snapshot first
-  if (thread.mission_pack_id && thread.mission_pack_id !== packId && thread.mission_pack_snapshot) {
-    restoreSnapshot(threadManager, threadId, thread.mission_pack_snapshot as ThreadPackSnapshot)
+  // --- Derive base (pre-pack) state without mutating yet ---
+  let baseSnap: ThreadPackSnapshot
+  let freezeSnap: ThreadPackSnapshot
+
+  if (thread.mission_pack_id === packId && thread.mission_pack_snapshot) {
+    // Re-apply same pack: freeze original pre-pack snapshot
+    freezeSnap = thread.mission_pack_snapshot as ThreadPackSnapshot
+    baseSnap = freezeSnap
+  } else if (thread.mission_pack_id && thread.mission_pack_id !== packId && thread.mission_pack_snapshot) {
+    // Switch A→B: base is pre-A snapshot (restore target)
+    freezeSnap = thread.mission_pack_snapshot as ThreadPackSnapshot
+    baseSnap = freezeSnap
+  } else {
+    // First apply (or dirty without snapshot)
+    baseSnap = snapshotFromThread(thread)
+    freezeSnap = baseSnap
   }
 
-  const fresh = threadManager.get(threadId)!
-  const snap = snapshotFromThread(fresh)
-
-  // Re-install namespaced assets from installed dir (idempotent)
-  const skillIds = installAssetsFromValidated(
-    dir,
-    result.manifest,
-    result.skillAbsPaths,
-    result.knowledgeAbsPaths,
-  )
-  skillEngine.refresh()
+  // Install assets (disk only — safe if apply fails later; refresh may show skills early)
+  let skillIds: string[]
+  try {
+    skillIds = installAssetsFromValidated(
+      dir,
+      result.manifest,
+      result.skillAbsPaths,
+      result.knowledgeAbsPaths,
+    )
+    skillEngine.refresh()
+  } catch (e: any) {
+    return { ok: false, error: e?.message || String(e) }
+  }
 
   const whitelist = computeWhitelist(
     result.manifest.tools.mode,
     result.manifest.tools.allow,
     result.manifest.tools.deny,
-    fresh.tool_whitelist,
+    baseSnap.tool_whitelist,
   )
 
-  const existingAppend =
-    typeof fresh.config_override?.system_prompt_append === "string"
-      ? fresh.config_override.system_prompt_append
-      : null
-  // When re-applying same pack, snapshot already captured pre-pack state; for append
-  // use snapshot's system_prompt_append as the "user" part when re-apply
-  const userAppendBase =
-    fresh.mission_pack_id === packId && snap.system_prompt_append !== null
-      ? // re-apply: avoid stacking pack blocks — use snapshot user portion if stored as full string
-        null
-      : existingAppend && !existingAppend.includes("--- Mission Pack ---")
-        ? existingAppend
-        : snap.system_prompt_append && !String(snap.system_prompt_append).includes("--- Mission Pack ---")
-          ? snap.system_prompt_append
-          : existingAppend?.includes("--- User ---")
-            ? existingAppend.split("--- User ---\n").slice(1).join("--- User ---\n")
-            : existingAppend?.includes("--- Mission Pack ---")
-              ? null
-              : existingAppend
-
-  const systemPromptAppend = mergeSystemPromptAppend(userAppendBase, result.manifest.system_prompt_append)
+  // User portion: from base snapshot's append (pre-pack), not live post-pack thread
+  const userPortion = extractUserAppendPortion(baseSnap.system_prompt_append)
+  // Also preserve any user portion if base still has pure user text
+  const systemPromptAppend = mergeSystemPromptAppend(userPortion, result.manifest.system_prompt_append)
 
   const td = result.manifest.thread_defaults || {}
+  const configured = configuredMcpServerIds(config)
+  const mcpIds = (result.manifest.mcp_servers || []).filter((id) => configured.has(id))
 
   try {
+    // Single mutation — S8: failure here leaves thread as before this call
+    // (note: switch case does NOT restore A first, so A remains until this succeeds)
     const updated = threadManager.applyPackPatch(threadId, {
       mission_pack_id: packId,
-      mission_pack_snapshot: snap,
+      mission_pack_snapshot: freezeSnap,
       tool_whitelist: whitelist,
-      active_skill_ids: skillIds.length > 0 ? skillIds : fresh.active_skill_ids,
+      active_skill_ids: skillIds.length > 0 ? skillIds : baseSnap.active_skill_ids,
       skill_selection_mode: td.skill_selection_mode || "manual",
       knowledge_selection_mode: td.knowledge_selection_mode || "manual",
       mcp_selection_mode: td.mcp_selection_mode || "manual",
-      active_mcp_server_ids: result.manifest.mcp_servers || [],
+      active_mcp_server_ids: mcpIds,
       system_prompt_append: systemPromptAppend,
-      workspace_root: opts?.workspace_path ?? fresh.workspace_root ?? null,
+      workspace_root: opts?.workspace_path ?? thread.workspace_root ?? null,
     })
     appendCapabilityAudit({
       type: "pack.apply",

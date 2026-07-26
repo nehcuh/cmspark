@@ -76,7 +76,16 @@ export function appendCapabilityAudit(event: CapabilityAuditEvent, filePath?: st
   rotateIfNeeded(p)
 
   try {
-    fs.appendFileSync(p, line + "\n", { encoding: "utf-8" })
+    // Create with 0o600 on first write (avoid brief world-readable window)
+    if (!fs.existsSync(p)) {
+      fs.writeFileSync(p, "", { encoding: "utf-8", mode: 0o600 })
+    }
+    const fd = fs.openSync(p, "a", 0o600)
+    try {
+      fs.writeSync(fd, line + "\n", null, "utf-8")
+    } finally {
+      fs.closeSync(fd)
+    }
     try {
       fs.chmodSync(p, 0o600)
     } catch {
