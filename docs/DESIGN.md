@@ -54,6 +54,10 @@
 - Connecting: yellow dot `#FF9800`
 - Disconnected: red dot `#F44336`
 
+### Mode badge (P0)
+- L0 `聊` · L1 `网页` · L2 `计算机` / `计算机 · LIVE` — see `sidepanel/mode/mode-controller.ts`
+- L1 header tint `#eef4ff`; BottomBar tabs filtered by capability level
+
 ### Message Bubbles
 - User: white bg, `#4A90D9` border-left
 - Assistant: `#f5f5f5` bg
