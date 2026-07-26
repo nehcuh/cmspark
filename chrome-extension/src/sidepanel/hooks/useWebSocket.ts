@@ -5,6 +5,7 @@ import { useAgentStore } from "../store/agentStore"
 import type { ComputerTaskEventView, LLMConfig } from "../types"
 import { isAppsErrorMessage } from "../utils/apps-utils"
 import { isComputerModelErrorMessage } from "../components/model-switch-logic"
+import { isBrowserTool } from "../mode/mode-controller"
 
 /**
  * Check if an API key is masked (i.e., a placeholder like "***" or "sk-****xyz").
@@ -270,6 +271,9 @@ export function useWebSocket() {
               created_at: new Date().toISOString(),
             },
           })
+          if (typeof msg.tool_name === "string" && isBrowserTool(msg.tool_name)) {
+            dispatch({ type: "NOTE_BROWSER_TOOL" })
+          }
           break
 
         case "tool.result":
@@ -282,6 +286,9 @@ export function useWebSocket() {
               status: msg.result?.success ? "success" : "error",
             },
           })
+          if (typeof msg.tool_name === "string" && isBrowserTool(msg.tool_name)) {
+            dispatch({ type: "NOTE_BROWSER_TOOL" })
+          }
           break
 
         case "tool.vision_start":
