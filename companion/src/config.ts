@@ -152,6 +152,28 @@ export interface CompanionConfig {
    */
   computer?: ComputerConfig
   obsidian?: ObsidianExportConfig
+  /**
+   * Distribution channel: community (CWS-friendly) vs enterprise (local install modules).
+   * Companion is source of truth — extension cannot forge enterprise alone.
+   */
+  capability_profile?: "community" | "enterprise"
+  /**
+   * Enterprise capability modules (opt-in). Shell/NetSec default enabled=false.
+   * See docs/superpowers/specs/2026-07-26-mission-pack-enterprise-design.md
+   */
+  modules?: Record<
+    string,
+    {
+      available: boolean
+      enabled: boolean
+      enabled_at?: string | null
+      enabled_by?: string | null
+      policy?: string
+      target_allowlist?: string[]
+      require_task_auth?: boolean
+      allowlist_commands?: string[]
+    }
+  >
 }
 
 function getEnvApiKey(): string {
@@ -182,6 +204,15 @@ const defaultConfig: CompanionConfig = {
   history_retention_days: 30,
   log_retention_days: 14,
   log_max_file_mb: 10,
+  capability_profile: "community",
+  modules: {
+    appsec: {
+      available: true,
+      enabled: false,
+      enabled_at: null,
+      enabled_by: null,
+    },
+  },
   security: {
     safety_skills_enabled: ["prompt-injection-defense", "jailbreak-detection", "instruction-hierarchy"],
     auto_confirm_same_thread: false,
@@ -261,6 +292,8 @@ export async function initDataDir(): Promise<void> {
     path.join(DATA_DIR, "mcp"),
     path.join(DATA_DIR, "mcp", "logs"),
     path.join(DATA_DIR, "obsidian"),
+    path.join(DATA_DIR, "packs", "installed"),
+    path.join(DATA_DIR, "cache"),
   ]
   for (const dir of dirs) {
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
@@ -353,6 +386,22 @@ export function getConfig(): CompanionConfig {
   // Ensure mcp config exists with sane defaults (older config.json may not have it)
   if (!cachedConfig.mcp) {
     cachedConfig.mcp = { enabled: false, servers: {} }
+  }
+  // Mission Pack / capability modules (older config may lack these)
+  if (cachedConfig.capability_profile !== "community" && cachedConfig.capability_profile !== "enterprise") {
+    cachedConfig.capability_profile = "community"
+  }
+  if (!cachedConfig.modules || typeof cachedConfig.modules !== "object") {
+    cachedConfig.modules = {
+      appsec: { available: true, enabled: false, enabled_at: null, enabled_by: null },
+    }
+  } else if (!cachedConfig.modules.appsec) {
+    cachedConfig.modules.appsec = {
+      available: true,
+      enabled: false,
+      enabled_at: null,
+      enabled_by: null,
+    }
   }
   // Ensure apps config exists with sane defaults (older config.json may not have
   // it), then validate + normalize entries on load: direct config.json edits follow

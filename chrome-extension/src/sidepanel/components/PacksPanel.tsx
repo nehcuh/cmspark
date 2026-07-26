@@ -1,0 +1,180 @@
+// Mission Packs panel: list installed packs and apply to active thread
+
+import { useEffect, useState } from "react"
+import { useAgentStore } from "../store/agentStore"
+import { tokens } from "../ui/tokens"
+
+export type PackListItem = {
+  id: string
+  name: string
+  description?: string
+  version: string
+  channel: string
+  min_capability?: string
+  requires_modules?: string[]
+  apply_blocked?: string | null
+}
+
+export function PacksPanel() {
+  const { state } = useAgentStore()
+  const [packs, setPacks] = useState<PackListItem[]>([])
+  const [modules, setModules] = useState<Record<string, { available?: boolean; enabled?: boolean }>>({})
+  const [status, setStatus] = useState("")
+  const [busy, setBusy] = useState<string | null>(null)
+
+  const refresh = () => {
+    chrome.runtime.sendMessage({ type: "pack.list" })
+    chrome.runtime.sendMessage({ type: "modules.list" })
+  }
+
+  useEffect(() => {
+    refresh()
+    const handler = (msg: any) => {
+      if (msg?.type === "pack.list" && Array.isArray(msg.packs)) {
+        setPacks(msg.packs)
+      }
+      if (msg?.type === "pack.installed" || msg?.type === "pack.uninstalled") {
+        if (Array.isArray(msg.packs)) setPacks(msg.packs)
+        else refresh()
+      }
+      if (msg?.type === "pack.applied") {
+        setStatus("已应用到当前线程")
+        setBusy(null)
+        setTimeout(() => setStatus(""), 2500)
+      }
+      if (msg?.type === "modules.list" || msg?.type === "modules.updated") {
+        if (msg.modules) setModules(msg.modules)
+      }
+      if (msg?.type === "error" && busy) {
+        setStatus(msg.error || "操作失败")
+        setBusy(null)
+        setTimeout(() => setStatus(""), 4000)
+      }
+    }
+    chrome.runtime.onMessage.addListener(handler)
+    return () => chrome.runtime.onMessage.removeListener(handler)
+  }, [busy])
+
+  const enableAppsec = () => {
+    setBusy("modules")
+    chrome.runtime.sendMessage({ type: "modules.set_enabled", module: "appsec", enabled: true })
+    setTimeout(refresh, 300)
+    setBusy(null)
+    setStatus("已请求启用 AppSec 模块")
+    setTimeout(() => setStatus(""), 2500)
+  }
+
+  const applyPack = (packId: string) => {
+    if (!state.activeThreadId) {
+      setStatus("请先选择或创建线程")
+      setTimeout(() => setStatus(""), 2500)
+      return
+    }
+    setBusy(packId)
+    chrome.runtime.sendMessage({
+      type: "pack.apply",
+      pack_id: packId,
+      thread_id: state.activeThreadId,
+    })
+  }
+
+  const activePackId =
+    (state.threads || []).find((t: any) => t.id === state.activeThreadId)?.mission_pack_id || null
+
+  return (
+    <div style={styles.wrap}>
+      <div style={styles.header}>
+        <span style={styles.title}>任务包</span>
+        <button type="button" style={styles.linkBtn} onClick={refresh}>
+          刷新
+        </button>
+      </div>
+      {status && <div style={styles.status}>{status}</div>}
+      {modules.appsec && modules.appsec.enabled !== true && (
+        <div style={styles.banner}>
+          AppSec 模块未启用
+          <button type="button" style={styles.primaryBtn} onClick={enableAppsec}>
+            启用
+          </button>
+        </div>
+      )}
+      {packs.length === 0 && <div style={styles.empty}>暂无已安装任务包</div>}
+      <ul style={styles.list}>
+        {packs.map((p) => {
+          const blocked = p.apply_blocked
+          const isActive = activePackId === p.id
+          return (
+            <li key={p.id} style={styles.item}>
+              <div style={styles.row}>
+                <strong style={styles.name}>
+                  {p.name}
+                  {isActive ? " · 当前" : ""}
+                </strong>
+                <span style={styles.meta}>
+                  {p.channel} · v{p.version}
+                </span>
+              </div>
+              {p.description && <div style={styles.desc}>{p.description}</div>}
+              {blocked && <div style={styles.blocked}>{blocked}</div>}
+              <button
+                type="button"
+                style={styles.primaryBtn}
+                disabled={!!busy || !!blocked}
+                onClick={() => applyPack(p.id)}
+              >
+                {busy === p.id ? "应用中…" : "应用到当前线程"}
+              </button>
+            </li>
+          )
+        })}
+      </ul>
+    </div>
+  )
+}
+
+const styles: Record<string, import("react").CSSProperties> = {
+  wrap: { padding: "8px 10px", fontSize: 12, color: tokens.textPrimary },
+  header: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 },
+  title: { fontWeight: 600, fontSize: 12 },
+  linkBtn: {
+    border: "none",
+    background: "transparent",
+    color: tokens.accent,
+    cursor: "pointer",
+    fontSize: 11,
+  },
+  status: { fontSize: 11, color: tokens.accent, marginBottom: 6 },
+  banner: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 8,
+    padding: "6px 8px",
+    background: "#fff7ed",
+    borderRadius: 6,
+    marginBottom: 8,
+    fontSize: 11,
+  },
+  empty: { color: tokens.textMuted, fontSize: 11, padding: "8px 0" },
+  list: { listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 8 },
+  item: {
+    border: `1px solid ${tokens.border || "#e5e7eb"}`,
+    borderRadius: 8,
+    padding: 8,
+    background: tokens.bgElevated || "#fff",
+  },
+  row: { display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 4 },
+  name: { fontSize: 12 },
+  meta: { fontSize: 10, color: tokens.textMuted },
+  desc: { fontSize: 11, color: tokens.textSecondary, marginBottom: 6 },
+  blocked: { fontSize: 10, color: "#b45309", marginBottom: 6 },
+  primaryBtn: {
+    fontSize: 11,
+    padding: "4px 8px",
+    borderRadius: 6,
+    border: "1px solid #bfdbfe",
+    background: "#eff6ff",
+    color: tokens.accent,
+    cursor: "pointer",
+  },
+}

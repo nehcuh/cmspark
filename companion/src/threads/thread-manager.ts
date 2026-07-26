@@ -5,6 +5,16 @@ import * as path from "path"
 import { getConfigDir } from "../config"
 import { atomicWriteJSON } from "../io"
 
+interface ThreadPackSnapshot {
+  tool_whitelist: string[] | null
+  active_skill_ids: string[]
+  skill_selection_mode?: "auto" | "all" | "manual"
+  knowledge_selection_mode?: "auto" | "all" | "manual"
+  mcp_selection_mode?: "auto" | "all" | "manual"
+  active_mcp_server_ids?: string[]
+  system_prompt_append: string | null
+}
+
 interface Thread {
   id: string
   alias: string
@@ -21,6 +31,12 @@ interface Thread {
   // connected server explicitly. "manual" restricts to active_mcp_server_ids.
   mcp_selection_mode?: "auto" | "all" | "manual"
   active_mcp_server_ids?: string[]
+  /** Mission Pack currently applied (null/undefined = none). */
+  mission_pack_id?: string | null
+  /** Pre-apply snapshot for uninstall/re-apply rollback. */
+  mission_pack_snapshot?: ThreadPackSnapshot | null
+  /** DevSec workspace root (absolute path). */
+  workspace_root?: string | null
 }
 
 // Allowed config_override keys and their expected types
@@ -32,10 +48,12 @@ const ALLOWED_CONFIG_OVERRIDE_KEYS: Record<string, string> = {
   model_name: "string",
   base_url: "string",
   system_prompt: "string",
+  system_prompt_append: "string",
   vision_enabled: "boolean",
 }
 
 const MAX_CONFIG_STRING_LENGTH = 2000
+const MAX_SYSTEM_PROMPT_APPEND_LENGTH = 16 * 1024
 const MAX_CONFIG_NUMBER = 1000000
 
 function validateConfigOverride(config: any): { valid: boolean; error?: string; sanitized: Record<string, any> } {
@@ -67,7 +85,8 @@ function validateConfigOverride(config: any): { valid: boolean; error?: string; 
       if (typeof val !== "string") {
         return { valid: false, error: `Config key ${key} must be a string`, sanitized: {} }
       }
-      if (val.length > MAX_CONFIG_STRING_LENGTH) {
+      const maxLen = key === "system_prompt_append" ? MAX_SYSTEM_PROMPT_APPEND_LENGTH : MAX_CONFIG_STRING_LENGTH
+      if (val.length > maxLen) {
         return { valid: false, error: `Config key ${key} exceeds max length`, sanitized: {} }
       }
       sanitized[key] = val
@@ -325,6 +344,85 @@ export class ThreadManager {
       }
     }
     Object.assign(thread, updates, { updated_at: monotonicTimestamp() })
+    this.saveIndex()
+    return thread
+  }
+
+  /**
+   * Atomic Mission Pack apply/restore: validate then single index mutation.
+   * On validation failure, thread is unchanged.
+   */
+  applyPackPatch(
+    threadId: string,
+    patch: {
+      mission_pack_id: string | null
+      mission_pack_snapshot: ThreadPackSnapshot | null
+      tool_whitelist: string[] | null
+      active_skill_ids: string[]
+      skill_selection_mode?: "auto" | "all" | "manual"
+      knowledge_selection_mode?: "auto" | "all" | "manual"
+      mcp_selection_mode?: "auto" | "all" | "manual"
+      active_mcp_server_ids?: string[]
+      system_prompt_append: string | null
+      workspace_root?: string | null
+    },
+  ): Thread {
+    const thread = this.index.threads.find((t) => t.id === threadId)
+    if (!thread) throw new Error(`Thread not found: ${threadId}`)
+
+    if (!Array.isArray(patch.active_skill_ids) || !patch.active_skill_ids.every((s) => typeof s === "string")) {
+      throw new Error("active_skill_ids must be an array of strings")
+    }
+    if (patch.tool_whitelist !== null) {
+      if (!Array.isArray(patch.tool_whitelist) || !patch.tool_whitelist.every((s) => typeof s === "string")) {
+        throw new Error("tool_whitelist must be null or string[]")
+      }
+    }
+    const validModes = ["auto", "all", "manual"]
+    if (patch.skill_selection_mode !== undefined && !validModes.includes(patch.skill_selection_mode)) {
+      throw new Error(`Invalid skill_selection_mode: ${patch.skill_selection_mode}`)
+    }
+    if (patch.knowledge_selection_mode !== undefined && !validModes.includes(patch.knowledge_selection_mode)) {
+      throw new Error(`Invalid knowledge_selection_mode: ${patch.knowledge_selection_mode}`)
+    }
+    if (patch.mcp_selection_mode !== undefined && !validModes.includes(patch.mcp_selection_mode)) {
+      throw new Error(`Invalid mcp_selection_mode: ${patch.mcp_selection_mode}`)
+    }
+    if (
+      patch.active_mcp_server_ids !== undefined &&
+      (!Array.isArray(patch.active_mcp_server_ids) ||
+        !patch.active_mcp_server_ids.every((id) => typeof id === "string"))
+    ) {
+      throw new Error("active_mcp_server_ids must be an array of strings")
+    }
+
+    const nextOverride = { ...(thread.config_override || {}) }
+    if (patch.system_prompt_append === null) {
+      delete nextOverride.system_prompt_append
+    } else {
+      nextOverride.system_prompt_append = patch.system_prompt_append
+    }
+    const validation = validateConfigOverride(nextOverride)
+    if (!validation.valid) {
+      throw new Error(`Invalid config_override: ${validation.error}`)
+    }
+
+    // Commit only after all validation succeeds
+    thread.mission_pack_id = patch.mission_pack_id
+    thread.mission_pack_snapshot = patch.mission_pack_snapshot
+    thread.tool_whitelist = patch.tool_whitelist
+    thread.active_skill_ids = [...patch.active_skill_ids]
+    if (patch.skill_selection_mode !== undefined) thread.skill_selection_mode = patch.skill_selection_mode
+    if (patch.knowledge_selection_mode !== undefined) {
+      thread.knowledge_selection_mode = patch.knowledge_selection_mode
+    }
+    if (patch.mcp_selection_mode !== undefined) thread.mcp_selection_mode = patch.mcp_selection_mode
+    if (patch.active_mcp_server_ids !== undefined) {
+      thread.active_mcp_server_ids = [...patch.active_mcp_server_ids]
+    }
+    if (patch.workspace_root !== undefined) thread.workspace_root = patch.workspace_root
+    thread.config_override = validation.sanitized
+    thread.updated_at = monotonicTimestamp()
     this.saveIndex()
     return thread
   }

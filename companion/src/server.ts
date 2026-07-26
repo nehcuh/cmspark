@@ -356,6 +356,13 @@ async function initServices() {
   skillEngine = new SkillEngine(getConfig().llm)
   historyStore = new HistoryStore()
   await historyStore.waitReady()
+  // Mission Pack P0: install shipped packs (appsec-prd-review) into DATA_DIR
+  try {
+    const { ensureBuiltinPacksInstalled } = await import("./packs/pack-engine")
+    ensureBuiltinPacksInstalled(skillEngine)
+  } catch (e: any) {
+    logger.warn("packs.builtin_install_failed", { error: e?.message || String(e) })
+  }
 }
 
 // Exported for integration tests (audit item 6).

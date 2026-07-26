@@ -42,6 +42,8 @@ export interface Thread {
   knowledge_selection_mode?: "auto" | "all" | "manual"
   mcp_selection_mode?: McpSelectionMode
   active_mcp_server_ids?: string[]
+  /** Mission Pack currently applied to this thread (null/undefined = none). */
+  mission_pack_id?: string | null
 }
 
 export interface McpToolMeta {

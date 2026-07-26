@@ -1357,6 +1357,75 @@ export async function handleMessage(
       skillEngine.deleteKnowledge(rest.name)
       return { type: "knowledge.deleted", name: rest.name }
 
+    // --- Mission Packs (P0) ---
+    case "pack.list": {
+      const { listInstalledPacks } = await import("./packs/pack-engine")
+      return { type: "pack.list", packs: listInstalledPacks(getConfig()) }
+    }
+    case "pack.install": {
+      const { installPackFromDirectory, installPackFromZip } = await import("./packs/pack-engine")
+      if (rest.zip_path && typeof rest.zip_path === "string") {
+        const r = installPackFromZip(rest.zip_path, skillEngine, { force: !!rest.force })
+        if (!r.ok) return { type: "error", error: r.error }
+        return { type: "pack.installed", id: r.id, packs: (await import("./packs/pack-engine")).listInstalledPacks() }
+      }
+      if (rest.dir && typeof rest.dir === "string") {
+        const r = installPackFromDirectory(rest.dir, skillEngine, { force: !!rest.force })
+        if (!r.ok) return { type: "error", error: r.error }
+        return {
+          type: "pack.installed",
+          id: r.id,
+          packs: (await import("./packs/pack-engine")).listInstalledPacks(),
+        }
+      }
+      return { type: "error", error: "pack.install requires dir or zip_path" }
+    }
+    case "pack.apply": {
+      const { applyPack } = await import("./packs/pack-engine")
+      if (!rest.pack_id || !rest.thread_id) {
+        return { type: "error", error: "pack_id and thread_id required" }
+      }
+      const r = applyPack(rest.pack_id, rest.thread_id, threadManager, skillEngine, {
+        workspace_path: rest.workspace_path,
+      })
+      if (!r.ok) {
+        return { type: "error", error: r.error, code: (r as any).code }
+      }
+      return { type: "pack.applied", thread: r.thread }
+    }
+    case "pack.uninstall": {
+      const { uninstallPack, listInstalledPacks } = await import("./packs/pack-engine")
+      if (!rest.pack_id) return { type: "error", error: "pack_id required" }
+      const r = uninstallPack(rest.pack_id, threadManager, skillEngine)
+      if (!r.ok) return { type: "error", error: r.error }
+      return {
+        type: "pack.uninstalled",
+        pack_id: rest.pack_id,
+        restored_threads: r.restored_threads,
+        packs: listInstalledPacks(),
+      }
+    }
+    case "modules.list": {
+      const config = getConfig()
+      return {
+        type: "modules.list",
+        capability_profile: config.capability_profile || "community",
+        modules: config.modules || {},
+      }
+    }
+    case "modules.set_enabled": {
+      const { setModuleEnabled } = await import("./packs/pack-engine")
+      if (!rest.module || typeof rest.module !== "string") {
+        return { type: "error", error: "module required" }
+      }
+      if (typeof rest.enabled !== "boolean") {
+        return { type: "error", error: "enabled boolean required" }
+      }
+      const r = setModuleEnabled(rest.module, rest.enabled, rest.by || "user")
+      if (!r.ok) return { type: "error", error: r.error }
+      return { type: "modules.updated", modules: r.modules }
+    }
+
     // --- Skill-craft ---
     case "skill.craft": {
       if (!rest.thread_id) return { type: "error", error: "thread_id required" }

@@ -154,11 +154,11 @@ test("levelBadgeLabel LIVE only for computer when live=true", () => {
 })
 
 test("contextBarTabsForLevel L0", () => {
-  assert.deepEqual(contextBarTabsForLevel("chat"), ["skills", "knowledge", "history"])
+  assert.deepEqual(contextBarTabsForLevel("chat"), ["skills", "knowledge", "packs", "history"])
 })
 
 test("contextBarTabsForLevel L1", () => {
-  assert.deepEqual(contextBarTabsForLevel("browser"), ["tabs", "skills"])
+  assert.deepEqual(contextBarTabsForLevel("browser"), ["tabs", "skills", "packs"])
 })
 
 test("contextBarTabsForLevel L2", () => {
