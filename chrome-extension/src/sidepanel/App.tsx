@@ -2,6 +2,7 @@
 
 import { Component, useState, useRef, useCallback, useEffect } from "react"
 import { useWebSocket } from "./hooks/useWebSocket"
+import { useCapabilityMode } from "./hooks/useCapabilityMode"
 import { ChatView } from "./components/ChatView"
 import { ComputerTaskBar } from "./components/ComputerTaskBar"
 import { ThreadList } from "./components/ThreadList"
@@ -105,6 +106,15 @@ function AppContent() {
       setTimeout(() => setToast(""), 4000)
     }
   }, [appState.autoSkillNames])
+
+  // Capability level (chat / browser / computer) — Task 4 will surface badgeLabel in Header
+  const onEscalate = useCallback((msg: string) => {
+    setToast(msg)
+    setTimeout(() => setToast(""), 4000)
+  }, [])
+  const { level, badgeLabel } = useCapabilityMode(onEscalate)
+  void level
+  void badgeLabel
 
   return (
     <div style={styles.container}>
