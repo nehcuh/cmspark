@@ -1056,7 +1056,16 @@ export function createToolExecutor(ws: WebSocket) {
           const budgetRec = Number(finalParams.budget) || 15
           trust.recordBudget(trustKey, appToken, budgetRec)
           const actionsArr = Array.isArray(finalParams.actions) ? finalParams.actions : []
-          trust.recordActions(trustKey, appToken, actionsArr.length)
+          // User test 2026-07-26 (#wrsihk): LLM often task-splits into 1-action
+          // host_computer calls. Recording only actions.length left
+          // maxActionsSeen=1 so the next 2-click task failed actions_eligible
+          // even after explicit opt-in. The L2 preview already gates on
+          // budget — treat approved budget as the actions floor when larger.
+          trust.recordActions(
+            trustKey,
+            appToken,
+            Math.max(actionsArr.length, budgetRec),
+          )
           const typeTexts: string[] = []
           for (const a of actionsArr) {
             if (a && typeof a === "object" && (a as any).action === "type" && typeof (a as any).text === "string") {

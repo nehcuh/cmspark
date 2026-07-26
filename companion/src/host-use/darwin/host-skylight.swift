@@ -668,7 +668,10 @@ func cuClientOriginScreen(windowId: UInt32) -> CGPoint? {
                     bestWin = axWin
                 }
             }
-            if let axWin = bestWin {
+            // LOCKSTEP with host.swift / cuScreenshot: only trust AX when
+            // frame match is tight (bestDist < 24). Loose best-match poisoned
+            // inject coords on WeChat multi-window (2026-07-26 #mvt4t8).
+            if let axWin = bestWin, bestDist < 24 {
                 var posRef: CFTypeRef?
                 AXUIElementCopyAttributeValue(axWin, kAXPositionAttribute as CFString, &posRef)
                 var pos = CGPoint.zero
@@ -1059,13 +1062,12 @@ func cuInject(action: String, windowId: UInt32, x: Int?, y: Int?, text: String?,
     if let flagPath = estopFlag, FileManager.default.fileExists(atPath: flagPath) { return cuError("E-Stop flag present", code: "TASK_ABORTED") }
     let pid = cuPidForWindow(windowId)
     guard pid != 0 else { return cuError("cannot find PID for window", code: "HWND_DEAD") }
-    // SPIKE: SkyLight per-PID posting should reach background windows without
-    // activation. Force-foreground only if explicitly requested via env, so we
-    // can A/B compare behavior. Production will likely drop this entirely.
-    if ProcessInfo.processInfo.environment["CMSPARK_SKYLIGHT_FORCE_FG"] == "1" {
-        cuActivatePid(pid)
+    // LOCKSTEP with host.swift: activate by default (WeChat/NetEase need key
+    // window). CMSPARK_SKYLIGHT_NO_ACTIVATE=1 restores background-only canary.
+    if ProcessInfo.processInfo.environment["CMSPARK_SKYLIGHT_NO_ACTIVATE"] == "1" {
+        fputs("[host-skylight] skipping forceForeground (CMSPARK_SKYLIGHT_NO_ACTIVATE=1)\n", stderr)
     } else {
-        fputs("[host-skylight] skipping forceForeground (SkyLight per-PID path)\n", stderr)
+        _ = cuActivatePid(pid)
     }
 
     switch action {

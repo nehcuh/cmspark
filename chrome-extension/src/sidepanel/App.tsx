@@ -161,10 +161,15 @@ function SecurityConfirmationDialog() {
 
   // Reset selection whenever the active confirmation changes — otherwise the
   // radio from a previous prompt would bleed into the next one.
+  //
+  // host_computer session-trust defaults ON (user test 2026-07-26 #wrsihk /
+  // #ykazn8): without it every LLM task-split re-prompts ("反复批准"), and
+  // users never notice the opt-in checkbox. Checking is still explicit —
+  // uncheck before Allow if you want one-shot only. Grill Q2 remains satisfied.
   useEffect(() => {
     setWhitelistMode("none")
     setThreadTrust(false)
-    setSessionTrust(false)
+    setSessionTrust(canOfferComputerSessionTrust(request?.tool_name, request?.relevant_apps?.[0]))
     setNonceInput("")
     setPasteBlocked(false)
     setPreviewImgFailed(false)

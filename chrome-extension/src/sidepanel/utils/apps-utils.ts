@@ -69,7 +69,8 @@ export function canOfferComputerSessionTrust(
 
 /** Checkbox sub-copy for computer session auto-approve (≤40 字 main label in App.tsx). */
 export function computerSessionTrustHint(): string {
-  return "不新增输入文字、不扩大动作次数时不再询问；危险/实验操作仍会确认；约 30 分钟无操作或重启后失效"
+  // Default ON in App.tsx — hint explains what Allow will cover.
+  return "默认勾选：本对话内同类操作少问；不新增输入文字、不扩大已批预算/次数；危险/实验仍确认；约 30 分钟无操作或重启后失效"
 }
 
 /**

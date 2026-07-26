@@ -53,6 +53,25 @@
 - 修法（PR #65，9315d31）：`Tray.swift` `PairingController.show()` 在 `makeKeyAndOrderFront` 后加 `window.orderFrontRegardless()`（AppKit「即使激活被压制也强制到前台」原语，无 Dock 闪烁）。配套 `SWIFT_TRAY_SHA256` `10a586ea`→`46d866a6`（A8 lock-step）。
 - 教训：① 任何 Swift tray/NSWindow 弹窗：`makeKeyAndOrderFront` 后**必加** `orderFrontRegardless()`，别依赖已弃用的 `activate(ignoringOtherApps:)`。② 诊断"窗口不显示"先分清 **create vs order**——最小 harness + 打印窗口属性（isVisible/isOnActiveSpace/isKeyWindow/frame）是客观证据，别只靠肉眼、别被哈希差异带偏。③ Tray.swift 改动 → `bash companion/src/tray/build-tray.sh` 重编 → 更新 `companion/src/tray/swift-tray-bridge.ts` 的 `SWIFT_TRAY_SHA256`（build-tray.sh 末尾提示 `menu-bar-agent.ts` 是**错的**，常量实际在 `swift-tray-bridge.ts`）。
 
+### macOS computer-use inject：截图坐标与 inject 原点必须同闸（bestDist < 24）（2026-07-26）
+- 现象：前台切换 OK、截图 OK，模拟点击全「成功」但 UI 不变（#mvt4t8 / #32c2b0 / #i4x6pm 前期）。
+- 根因：`cuScreenshot` 仅在 AX↔CG 帧距 `bestDist < 24` 时采用 AX client 原点；`cuClientOriginScreen`（inject）原先**无此闸**，微信多窗口时绑到错误 AX 框 → client(0,0) 屏坐标与 CG 框差约 (-68,-46)，点击整片偏移。
+- 修法：inject 与截图 lockstep 的 `bestDist < 24`；失败则退回 CG 框原点。
+- 教训：凡「截图定标 + 注入」双路径，client 原点算法必须**同一函数/同一门限**，禁止截图严格、inject 宽松。
+
+### SkyLight `SLEventPostToPid` 对微信/网易云可静默无效，仍 ok:true（2026-07-26）
+- 现象：坐标修对后 inject 仍无效；JSON `ok:true`，甚至 `verified:true`（像素微变），用户肉眼零反应（#i4x6pm）。
+- 根因：Approach C 用 SkyLight per-PID 服务 Chrome 后台注入；微信/网易云等 AppKit/Electron **可不消费**该通道且不报错。`slPostToPid` 只证明 SPI 调用返回，不证明 UI 生效。
+- 修法：inject 前 `activate(options: .activateIgnoringOtherApps)`；**SkyLight + HID `CGEvent.post(.cghidEventTap)` 双投递**（`delivery: skylight+hid`）；需 cmspark-host Accessibility（本机 `axTrusted:true`）。
+- 环境：`CMSPARK_SKYLIGHT_NO_ACTIVATE=1` / `CMSPARK_INJECT_NO_HID=1` 可回退 canary。
+- 教训：① 私有 SPI 交付必须有**可观察 ground truth**（TextEdit 正文 / 真实 UI 状态），不能只信 ok JSON。② 像素 verified 不足以证 click 语义成功。③ 热换 `cmspark-host` 必须同步 `CMSPARK_HOST_SHA256`（`host-integrity.ts` + 打包 agent.js），否则 inject 被 integrity 拒。
+
+### Mail `message 1 of inbox` 是最旧不是最新（2026-07-26 #mxz27i）
+- 现象：host_read 永远读到 iCloud 2023 welcome；Exchange 有新信读不到。
+- 根因：AppleScript 统一收件箱 index 1 常为最旧；非按 date 排序。
+- 修法：`messages of inbox whose date received ≥ cutoff`（30d→365d）取 max date；编译 `read-mail.scpt` 与 app `host-scripts` 同步。
+- 教训：Mail 脚本禁止假设 index 顺序 = 时间序；大收件箱用 whose + 近窗，勿全量扫。
+
 ### macOS 26 Tahoe TCC 按 bundle 级签名评估，不是 per-binary（2026-07-23 regression）
 - 现象：DMG 安装的 `CMspark.app` 反复弹 ScreenCapture 授权，即使系统设置里已经显示"已授权"。用户每次启动都要重新点允许。
 - 根因：`create-dmg.sh` 历史上没有 codesign 步骤，DMG 里的 `.app` bundle **整体未签名**。即使内部 binary（`cmspark-host`、`node`）单独签了，macOS 26 Tahoe TCC **按 bundle 级签名评估**，未签名 bundle = 每次启动重新评估授权 = 反复弹窗。用户从 DMG 拖 `.app` 到 `/Applications` 还会**覆盖**之前手工重签的版本，把问题带回来。

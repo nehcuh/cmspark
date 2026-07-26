@@ -909,6 +909,12 @@ export class MacInputInjector implements InputInjector {
     // setTimeout cancelled) returns false → executor falls back to re-L2
     // pause. Previously the `!bid` branch called foregroundHwnd outside the
     // try/catch, letting binary hiccups bubble to fail(INJECT_FAILED).
+    //
+    // User test 2026-07-26 (#wrsihk / #ykazn8): after activate, frontmost
+    // windowId often differs from the task hwnd (WeChat multi-window /
+    // NetEase mini-player) → exact hwnd match reported reraise_failed even
+    // though the target app WAS frontmost and inject would route correctly.
+    // Success = frontmost window belongs to the same bundleId (or exact hwnd).
     try {
       const bid = await this.resolveBundleIdForHwnd(hwnd)
       if (!bid) {
@@ -917,17 +923,36 @@ export class MacInputInjector implements InputInjector {
         const fg = await this.foregroundHwnd()
         return fg !== 0 && fg === hwnd
       }
+      // Escape " for AppleScript string (bundle ids are reverse-DNS; belt).
+      const bidEsc = bid.replace(/\\/g, "\\\\").replace(/"/g, '\\"')
       // bundleId is reverse-DNS (e.g. "com.netease.163music"); we pass it via
       // execFile argv (no shell), so injection-safe.
+      // Dual raise: application activate + System Events set frontmost (some
+      // apps honor only one path on macOS 26 / when Chrome just took key).
+      // System Events is try-wrapped: missing Automation TCC for SE must not
+      // cancel a successful `activate`.
       await execFileAsync("/usr/bin/osascript", [
         "-e",
-        `tell application id "${bid}" to activate`,
-      ], { timeout: 2000 })
+        `tell application id "${bidEsc}" to activate`,
+        "-e",
+        `try`,
+        "-e",
+        `tell application "System Events" to set frontmost of first process whose bundle identifier is "${bidEsc}" to true`,
+        "-e",
+        `end try`,
+      ], { timeout: 3000 })
       // Apple Events activate is async; give WindowServer time to actually
       // raise the target's window before we promise the caller it's frontmost.
-      await new Promise((r) => setTimeout(r, 300))
-      const fg = await this.foregroundHwnd()
-      return fg !== 0 && fg === hwnd
+      // 300ms was too short under Chrome↔WeChat contention (reraise_failed spam).
+      for (const waitMs of [200, 350, 500]) {
+        await new Promise((r) => setTimeout(r, waitMs))
+        const fg = await this.foregroundHwnd()
+        if (fg === 0) continue
+        if (fg === hwnd) return true
+        const fgBid = await this.resolveBundleIdForHwnd(fg)
+        if (fgBid && fgBid === bid) return true
+      }
+      return false
     } catch {
       // osascript spawn failed (Automation TCC not granted, target dead,
       // timeout), OR foregroundHwnd probe broken (binary hiccup) — return

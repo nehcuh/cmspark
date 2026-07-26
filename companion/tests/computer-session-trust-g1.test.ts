@@ -110,3 +110,30 @@ test("G1 skip: full gates pass", () => {
     false,
   )
 })
+
+// server.ts records Math.max(actions.length, budget) so a 1-action approve with
+// budget=15 still covers later multi-action task-splits (#wrsihk / #ykazn8).
+test("G1 skip: actions floor via budget covers LLM task-split growth", () => {
+  const t = new ComputerSessionTrust()
+  const key = resolveComputerTrustKey("wrsihk", "ws")
+  t.grant(key, "mac.app.wechat", { explicitOptIn: true })
+  t.recordBudget(key, "mac.app.wechat", 15)
+  // Simulate server grant path: first task had 1 action, budget 15.
+  t.recordActions(key, "mac.app.wechat", Math.max(1, 15))
+  t.extendCorpus(key, "mac.app.wechat", [])
+  assert.equal(t.maxActionsSeen(key, "mac.app.wechat"), 15)
+  assert.equal(
+    g1InitialSkipEligible({
+      trust: t, trustKey: key, app: "mac.app.wechat",
+      typeCorpus: [], budget: 15, actionCount: 4, experimental: false,
+    }),
+    true,
+  )
+  assert.equal(
+    g1InitialSkipEligible({
+      trust: t, trustKey: key, app: "mac.app.wechat",
+      typeCorpus: [], budget: 15, actionCount: 16, experimental: false,
+    }),
+    false,
+  )
+})

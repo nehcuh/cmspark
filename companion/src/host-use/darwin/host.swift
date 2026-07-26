@@ -698,8 +698,10 @@ func cuAppElementForPid(_ pid: pid_t) -> AXUIElement? {
 func cuActivatePid(_ pid: pid_t) -> Bool {
     guard pid != 0, let app = NSRunningApplication(processIdentifier: pid) else { return false }
     if app.isHidden { app.unhide() }
-    app.activate()
-    usleep(250000) // 0.25s for the window to actually come to front
+    // activateIgnoringOtherApps is required on macOS 14+ when caller is a
+    // background daemon (node → cmspark-host); plain activate() is often a no-op.
+    app.activate(options: [.activateIgnoringOtherApps])
+    usleep(300000) // 0.3s for WindowServer to raise key window
     return true
 }
 
@@ -742,7 +744,14 @@ func cuClientOriginScreen(windowId: UInt32) -> CGPoint? {
                     bestWin = axWin
                 }
             }
-            if let axWin = bestWin {
+            // MUST match cuScreenshot's bestDist < 24 gate. Without it WeChat
+            // (and multi-window Electron) pick a wrong AX frame (e.g. 1324×640
+            // content shell vs 880×640 CGWindow) and clientOrigin drifts by
+            // tens of points — every click lands off-target while inject still
+            // returns ok:true (user report #32c2b0 / #mvt4t8: FG+screenshot OK,
+            // simulated clicks all miss). Live 2026-07-26: origin (336,199) vs
+            // CG (404,245) = delta (-68,-46).
+            if let axWin = bestWin, bestDist < 24 {
                 var posRef: CFTypeRef?
                 AXUIElementCopyAttributeValue(axWin, kAXPositionAttribute as CFString, &posRef)
                 var pos = CGPoint.zero
@@ -1543,19 +1552,48 @@ func cuOCR(imagePath: String, languages: [String]) -> String {
     return cuJson(["ok": true, "language": languages.first ?? "en-US", "words": words])
 }
 
+/// Dual-post an event: SkyLight per-PID (Chrome renderer path) + HID tap
+/// (AppKit / Electron / WeChat / NetEase path). User test #i4x6pm: SkyLight
+/// alone returned ok:true with verified pixel noise but UI never changed.
+/// HID requires Accessibility for cmspark-host; activate first so frontmost
+/// under the cursor is the target.
+@inline(__always)
+func postEventDual(_ event: CGEvent, pid: pid_t, useHid: Bool) -> Bool {
+    // SkyLight path: pin to target PID (may be ignored by WeChat/NetEase).
+    event.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(pid))
+    let skyOk = slPostToPid(pid, event)
+    if useHid {
+        // HID path: clear process pin so the event routes like a real device
+        // event to the frontmost window under the cursor (after activate).
+        event.setIntegerValueField(.eventTargetUnixProcessID, value: 0)
+        event.post(tap: .cghidEventTap)
+    }
+    // Success if either path is available. SkyLight false + HID still ok.
+    return skyOk || useHid
+}
+
 func cuInject(action: String, windowId: UInt32, x: Int?, y: Int?, text: String?, chord: String?, delta: Int?, checkOcclusion: Bool, checkSecureInput: Bool, checkOnscreen: Bool, estopFlag: String?) -> String {
     if checkSecureInput && IsSecureEventInputEnabled() { return cuError("Secure Input active", code: "DESKTOP_DENIED") }
     if let flagPath = estopFlag, FileManager.default.fileExists(atPath: flagPath) { return cuError("E-Stop flag present", code: "TASK_ABORTED") }
     let pid = cuPidForWindow(windowId)
     guard pid != 0 else { return cuError("cannot find PID for window", code: "HWND_DEAD") }
-    // SkyLight per-PID posting reaches background windows without activation.
-    // CMSPARK_SKYLIGHT_FORCE_FG=1 is a CANARY-ONLY A/B knob for diff testing
-    // (does the no-raise path match legacy activate-then-post behavior on the
-    // same target?). Removed in Stage 3 post-canary per Plan v3.
-    if ProcessInfo.processInfo.environment["CMSPARK_SKYLIGHT_FORCE_FG"] == "1" {
-        cuActivatePid(pid)
+    // Always activate before inject. SkyLight per-PID was designed to reach
+    // background Chrome without raise, but WeChat / NetEase / many AppKit apps
+    // ignore non-key-window mouse (product redesign P1; user tests #wrsihk,
+    // #mvt4t8, #32c2b0, #i4x6pm). Companion preferForeground already tries;
+    // host-side activate is required for the HID leg.
+    // CMSPARK_SKYLIGHT_NO_ACTIVATE=1 restores pure-background SkyLight-only.
+    let noActivate = ProcessInfo.processInfo.environment["CMSPARK_SKYLIGHT_NO_ACTIVATE"] == "1"
+    // CMSPARK_INJECT_NO_HID=1 disables HID dual-post (SkyLight-only canary).
+    let useHid = ProcessInfo.processInfo.environment["CMSPARK_INJECT_NO_HID"] != "1" && !noActivate
+    if noActivate {
+        fputs("[host] skipping forceForeground (CMSPARK_SKYLIGHT_NO_ACTIVATE=1)\n", stderr)
     } else {
-        fputs("[host] skipping forceForeground (SkyLight per-PID path)\n", stderr)
+        _ = cuActivatePid(pid)
+    }
+    if useHid && !AXIsProcessTrusted() {
+        fputs("[host] WARNING: cmspark-host is not Accessibility-trusted; " +
+              "HID inject may be dropped. Grant System Settings → Privacy → Accessibility.\n", stderr)
     }
 
     switch action {
@@ -1580,41 +1618,57 @@ func cuInject(action: String, windowId: UInt32, x: Int?, y: Int?, text: String?,
         guard let me = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: screenPt, mouseButton: btn) else {
             return cuError("CGEvent mouseMoved construction failed", code: "CGEVENT_CONSTRUCT_FAILED")
         }
-        me.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(pid))
-        if !slPostToPid(pid, me) { return cuError("SkyLight SPI post failed", code: "SKYLIGHT_POST_FAILED") }
+        if !postEventDual(me, pid: pid, useHid: useHid) {
+            return cuError("event post failed (SkyLight+HID)", code: "SKYLIGHT_POST_FAILED")
+        }
         usleep(50000)
         guard let de = CGEvent(mouseEventSource: nil, mouseType: downType, mouseCursorPosition: screenPt, mouseButton: btn) else {
             return cuError("CGEvent mouseDown construction failed", code: "CGEVENT_CONSTRUCT_FAILED")
         }
-        de.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(pid))
-        if !slPostToPid(pid, de) { return cuError("SkyLight SPI post failed", code: "SKYLIGHT_POST_FAILED") }
+        if !postEventDual(de, pid: pid, useHid: useHid) {
+            return cuError("event post failed (SkyLight+HID)", code: "SKYLIGHT_POST_FAILED")
+        }
         for _ in 1..<cc {
             usleep(100000)
-            if !slPostToPid(pid, de) { return cuError("SkyLight SPI post failed", code: "SKYLIGHT_POST_FAILED") }
+            if !postEventDual(de, pid: pid, useHid: useHid) {
+                return cuError("event post failed (SkyLight+HID)", code: "SKYLIGHT_POST_FAILED")
+            }
         }
         usleep(50000)
         guard let ue = CGEvent(mouseEventSource: nil, mouseType: upType, mouseCursorPosition: screenPt, mouseButton: btn) else {
             return cuError("CGEvent mouseUp construction failed", code: "CGEVENT_CONSTRUCT_FAILED")
         }
-        ue.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(pid))
-        if !slPostToPid(pid, ue) { return cuError("SkyLight SPI post failed", code: "SKYLIGHT_POST_FAILED") }
+        if !postEventDual(ue, pid: pid, useHid: useHid) {
+            return cuError("event post failed (SkyLight+HID)", code: "SKYLIGHT_POST_FAILED")
+        }
         // x/y remain client coords (Windows computer-input.ps1 parity); screenX/Y report landing.
-        return cuJson(["ok": true, "action": action, "x": px, "y": py, "screenX": screenX, "screenY": screenY])
+        return cuJson([
+            "ok": true, "action": action, "x": px, "y": py,
+            "screenX": screenX, "screenY": screenY,
+            "delivery": useHid ? "skylight+hid" : "skylight",
+            "axTrusted": AXIsProcessTrusted(),
+        ])
 
     case "type":
         guard let txt = text else { return cuError("type requires --text") }
         let src = CGEventSource(stateID: .hidSystemState)
         for ch in txt.unicodeScalars {
             var uc = UniChar(ch.value)
-            guard let ev = CGEvent(keyboardEventSource: src, virtualKey: 0, keyDown: true) else {
+            guard let down = CGEvent(keyboardEventSource: src, virtualKey: 0, keyDown: true) else {
                 return cuError("CGEvent key construction failed", code: "CGEVENT_CONSTRUCT_FAILED")
             }
-            ev.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(pid))
-            ev.keyboardSetUnicodeString(stringLength: 1, unicodeString: &uc)
-            if !slPostToPid(pid, ev) { return cuError("SkyLight SPI post failed", code: "SKYLIGHT_POST_FAILED") }
+            down.keyboardSetUnicodeString(stringLength: 1, unicodeString: &uc)
+            if !postEventDual(down, pid: pid, useHid: useHid) {
+                return cuError("event post failed (SkyLight+HID)", code: "SKYLIGHT_POST_FAILED")
+            }
+            guard let up = CGEvent(keyboardEventSource: src, virtualKey: 0, keyDown: false) else {
+                return cuError("CGEvent key construction failed", code: "CGEVENT_CONSTRUCT_FAILED")
+            }
+            up.keyboardSetUnicodeString(stringLength: 1, unicodeString: &uc)
+            _ = postEventDual(up, pid: pid, useHid: useHid)
             usleep(30000)
         }
-        return cuJson(["ok": true, "action": "type", "chars": txt.count])
+        return cuJson(["ok": true, "action": "type", "chars": txt.count, "delivery": useHid ? "skylight+hid" : "skylight"])
 
     case "key":
         guard let ch = chord else { return cuError("key requires --chord") }
@@ -1636,24 +1690,31 @@ func cuInject(action: String, windowId: UInt32, x: Int?, y: Int?, text: String?,
         }
         let src = CGEventSource(stateID: .hidSystemState)
         for kc in nonMods {
-            guard let ev = CGEvent(keyboardEventSource: src, virtualKey: kc, keyDown: true) else {
+            guard let down = CGEvent(keyboardEventSource: src, virtualKey: kc, keyDown: true) else {
                 return cuError("CGEvent key construction failed", code: "CGEVENT_CONSTRUCT_FAILED")
             }
-            ev.flags = flags
-            ev.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(pid))
-            if !slPostToPid(pid, ev) { return cuError("SkyLight SPI post failed", code: "SKYLIGHT_POST_FAILED") }
+            down.flags = flags
+            if !postEventDual(down, pid: pid, useHid: useHid) {
+                return cuError("event post failed (SkyLight+HID)", code: "SKYLIGHT_POST_FAILED")
+            }
+            guard let up = CGEvent(keyboardEventSource: src, virtualKey: kc, keyDown: false) else {
+                return cuError("CGEvent key construction failed", code: "CGEVENT_CONSTRUCT_FAILED")
+            }
+            up.flags = flags
+            _ = postEventDual(up, pid: pid, useHid: useHid)
             usleep(30000)
         }
-        return cuJson(["ok": true, "action": "key", "chord": ch])
+        return cuJson(["ok": true, "action": "key", "chord": ch, "delivery": useHid ? "skylight+hid" : "skylight"])
 
     case "scroll":
         guard let d = delta else { return cuError("scroll requires --delta") }
         guard let ev = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: Int32(d), wheel2: 0, wheel3: 0) else {
             return cuError("CGEvent scroll construction failed", code: "CGEVENT_CONSTRUCT_FAILED")
         }
-        ev.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(pid))
-        if !slPostToPid(pid, ev) { return cuError("SkyLight SPI post failed", code: "SKYLIGHT_POST_FAILED") }
-        return cuJson(["ok": true, "action": "scroll", "delta": d])
+        if !postEventDual(ev, pid: pid, useHid: useHid) {
+            return cuError("event post failed (SkyLight+HID)", code: "SKYLIGHT_POST_FAILED")
+        }
+        return cuJson(["ok": true, "action": "scroll", "delta": d, "delivery": useHid ? "skylight+hid" : "skylight"])
 
     default:
         return cuError("unknown inject action: \(action)")
