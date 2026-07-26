@@ -21,7 +21,7 @@ import {
   threadTrustHint,
 } from "./utils/apps-utils"
 import { previewImageSafe } from "./utils/computer-utils"
-import type { ConnectionState, SkillMeta, FileAttachment } from "./types"
+import type { ConnectionState, CapabilityLevel, SkillMeta, FileAttachment } from "./types"
 
 // Error Boundary — catches rendering errors to prevent white screen
 class ErrorBoundary extends Component<{ children: React.ReactNode }, { error: Error | null }> {
@@ -113,17 +113,22 @@ function AppContent() {
     setTimeout(() => setToast(""), 4000)
   }, [])
   const { level, badgeLabel } = useCapabilityMode(onEscalate)
-  void level
-  void badgeLabel
 
   return (
     <div style={styles.container}>
       <style>{globalCSS}</style>
       {toast && <div style={toastStyles.toast}>{toast}</div>}
-      <Header connectionState={connectionState} onCraft={() => setCraftOpen(true)} onToggleLogs={() => setShowLogs(!showLogs)} onOpenNotebooklmImporter={() => setNbImporterOpen(true)} />
+      <Header
+        connectionState={connectionState}
+        capabilityLevel={level}
+        badgeLabel={badgeLabel}
+        onCraft={() => setCraftOpen(true)}
+        onToggleLogs={() => setShowLogs(!showLogs)}
+        onOpenNotebooklmImporter={() => setNbImporterOpen(true)}
+      />
       <ChatView />
       <ComputerTaskBar />
-      <BottomBar />
+      <BottomBar capabilityLevel={level} />
       <InputArea />
       {showLogs && <LogBar onClose={() => setShowLogs(false)} />}
       <SettingsSlideout />
@@ -504,7 +509,7 @@ function HighlightedCode({ code }: { code: string }) {
   )
 }
 
-function Header({ connectionState, onCraft, onToggleLogs, onOpenNotebooklmImporter }: { connectionState: ConnectionState; onCraft: () => void; onToggleLogs: () => void; onOpenNotebooklmImporter: () => void }) {
+function Header({ connectionState, capabilityLevel, badgeLabel, onCraft, onToggleLogs, onOpenNotebooklmImporter }: { connectionState: ConnectionState; capabilityLevel: CapabilityLevel; badgeLabel: string; onCraft: () => void; onToggleLogs: () => void; onOpenNotebooklmImporter: () => void }) {
   const { state, dispatch } = useAgentStore()
   const hasMessages = state.messages.length > 0 && !!state.activeThreadId
   const [nbState, setNbState] = useState<"idle" | "working" | "warning">("idle")
@@ -592,7 +597,12 @@ function Header({ connectionState, onCraft, onToggleLogs, onOpenNotebooklmImport
   }
 
   return (
-    <div style={styles.header}>
+    <div
+      style={{
+        ...styles.header,
+        ...(capabilityLevel === "browser" ? { background: "#eef4ff" } : {}),
+      }}
+    >
       <ThreadList />
       <div style={styles.headerTitle}>CMspark Agent</div>
       <button
@@ -669,6 +679,27 @@ function Header({ connectionState, onCraft, onToggleLogs, onOpenNotebooklmImport
         {state.summarizingThreadId === state.activeThreadId ? "⏳" : "🧠"}
       </button>
       <button onClick={onToggleLogs} style={styles.craftBtn} title="日志">📋</button>
+      <span
+        role="status"
+        aria-live="polite"
+        title={`能力层级：${badgeLabel}`}
+        style={{
+          fontSize: 10,
+          fontWeight: 600,
+          padding: "2px 6px",
+          borderRadius: 4,
+          background:
+            capabilityLevel === "computer" ? "#1a3a2a"
+            : capabilityLevel === "browser" ? "#dbe8ff"
+            : "#e8e8e4",
+          color:
+            capabilityLevel === "computer" ? "#4ade80"
+            : capabilityLevel === "browser" ? "#1a3a6b"
+            : "#333",
+        }}
+      >
+        {badgeLabel}
+      </span>
       <div
         style={{
           ...styles.statusDot,

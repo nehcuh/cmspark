@@ -1,25 +1,43 @@
-// Bottom context bar: Tabs, History, Skills panels
+// Bottom context bar: Tabs, History, Skills panels (mode-split by capability level)
 
-import { useState, useRef, useEffect } from "react"
+import { useState, useRef, useEffect, useMemo } from "react"
 import { useAgentStore } from "../store/agentStore"
+import { contextBarTabsForLevel } from "../mode/mode-controller"
+import type { CapabilityLevel } from "../types"
 import { KnowledgeSubPanel } from "./KnowledgeSubPanel"
 import { McpPanel } from "./McpPanel"
 import { AppsPanel } from "./AppsPanel"
 
 type Panel = "tabs" | "history" | "skills" | "knowledge" | "mcp" | "apps"
 
-export function BottomBar() {
+const ALL_TABS: { id: Panel; label: string; icon: string }[] = [
+  { id: "tabs", label: "Tabs", icon: "📎" },
+  { id: "history", label: "Hist", icon: "📋" },
+  { id: "skills", label: "Skills", icon: "🧩" },
+  { id: "knowledge", label: "Know", icon: "📚" },
+  { id: "mcp", label: "MCP", icon: "🔌" },
+  { id: "apps", label: "App", icon: "🚀" },
+]
+
+export function BottomBar({ capabilityLevel }: { capabilityLevel: CapabilityLevel }) {
   const [activePanel, setActivePanel] = useState<Panel | null>(null)
   const { state, dispatch } = useAgentStore()
 
-  const tabs = [
-    { id: "tabs" as const, label: "Tabs", icon: "📎" },
-    { id: "history" as const, label: "Hist", icon: "📋" },
-    { id: "skills" as const, label: "Skills", icon: "🧩" },
-    { id: "knowledge" as const, label: "Know", icon: "📚" },
-    { id: "mcp" as const, label: "MCP", icon: "🔌" },
-    { id: "apps" as const, label: "App", icon: "🚀" },
-  ]
+  const allowedIds = useMemo(
+    () => new Set(contextBarTabsForLevel(capabilityLevel)),
+    [capabilityLevel],
+  )
+  const tabs = useMemo(
+    () => ALL_TABS.filter((t) => allowedIds.has(t.id)),
+    [allowedIds],
+  )
+
+  // Close open panel if it is no longer allowed for the current capability level
+  useEffect(() => {
+    if (activePanel != null && !allowedIds.has(activePanel)) {
+      setActivePanel(null)
+    }
+  }, [activePanel, allowedIds])
 
   return (
     <div style={styles.container}>
@@ -60,6 +78,20 @@ export function BottomBar() {
             {tab.icon} {tab.label}
           </button>
         ))}
+        {tabs.length < ALL_TABS.length && (
+          <span
+            title="其他面板在更高能力层级可用"
+            style={{
+              marginLeft: 4,
+              fontSize: 10,
+              color: "#aaa",
+              alignSelf: "center",
+              userSelect: "none",
+            }}
+          >
+            / 更多
+          </span>
+        )}
       </div>
 
       {activePanel && (
