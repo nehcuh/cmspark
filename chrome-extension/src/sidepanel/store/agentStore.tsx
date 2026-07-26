@@ -129,6 +129,9 @@ export type AgentAction =
   | { type: "SET_APPS_ERROR"; error: string | null }
   | { type: "COMPUTER_TASK_EVENT"; event: ComputerTaskEventView }
   | { type: "COMPUTER_TASK_ABORT_ACK"; taskId: string; matched: number }
+  /** Cockpit/panel hydrate from SW mirror — full snapshot, not incremental event. */
+  | { type: "HYDRATE_COMPUTER_TASK"; task: ComputerTaskState | null }
+  | { type: "HYDRATE_SECURITY_CONFIRMATIONS"; requests: SecurityConfirmationRequest[] }
   | { type: "SET_COMPUTER_COORDINATE_STATE"; enabled: boolean }
   | { type: "SET_COMPUTER_MODEL_STATE"; modelState: ComputerModelState }
   | { type: "SET_COMPUTER_MODEL_PROGRESS"; progress: ComputerModelProgress }
@@ -452,6 +455,13 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       if (t.taskId !== action.taskId && action.taskId !== "*") return state
       return { ...state, computerTask: { ...t, abortAcked: true } }
     }
+    case "HYDRATE_COMPUTER_TASK":
+      return { ...state, computerTask: action.task }
+    case "HYDRATE_SECURITY_CONFIRMATIONS":
+      return {
+        ...state,
+        pendingSecurityConfirmations: Array.isArray(action.requests) ? action.requests : [],
+      }
     case "SET_COMPUTER_COORDINATE_STATE":
       return { ...state, computerCoordinateEnabled: action.enabled }
     case "SET_COMPUTER_MODEL_STATE":

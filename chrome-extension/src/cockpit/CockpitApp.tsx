@@ -5,6 +5,12 @@ import { useEffect, useState, type CSSProperties } from "react"
 import { AgentStoreProvider, useAgentStore } from "../sidepanel/store/agentStore"
 import { useWebSocket } from "../sidepanel/hooks/useWebSocket"
 import { previewImageSafe } from "../sidepanel/utils/computer-utils"
+import {
+  canOfferComputerSessionTrust,
+  canOfferThreadTrust,
+  computerSessionTrustHint,
+  threadTrustHint,
+} from "../sidepanel/utils/apps-utils"
 import type { ComputerStepView, SecurityConfirmationRequest } from "../sidepanel/types"
 
 export function CockpitRoot() {
@@ -16,9 +22,23 @@ export function CockpitRoot() {
 }
 
 function CockpitBoot() {
+  const { dispatch } = useAgentStore()
   useWebSocket()
   useEffect(() => {
     const port = chrome.runtime.connect({ name: "cmspark-cockpit" })
+    // Hydrate mid-task open: SW mirror of computerTask + pending confirms
+    chrome.runtime.sendMessage({ type: "cockpit.hydrate" }, (res) => {
+      if (chrome.runtime.lastError || !res?.ok) return
+      if (res.computerTask !== undefined) {
+        dispatch({ type: "HYDRATE_COMPUTER_TASK", task: res.computerTask })
+      }
+      if (Array.isArray(res.pendingConfirmations)) {
+        dispatch({
+          type: "HYDRATE_SECURITY_CONFIRMATIONS",
+          requests: res.pendingConfirmations,
+        })
+      }
+    })
     return () => {
       try {
         port.disconnect()
@@ -26,27 +46,21 @@ function CockpitBoot() {
         /* ignore */
       }
     }
-  }, [])
+  }, [dispatch])
   return <CockpitApp />
 }
 
 function CockpitApp() {
   // useWebSocket is mounted once in CockpitBoot — only read store here.
+  // Confirm focus is background-driven (openOrFocus on host_* confirm) — do not self-focus.
   const { state, dispatch } = useAgentStore()
   const task = state.computerTask
   const confirm = state.pendingSecurityConfirmations[0] as SecurityConfirmationRequest | undefined
   const [text, setText] = useState("")
   const [abortSentAt, setAbortSentAt] = useState<number | null>(null)
 
-  // Focus window when a new confirm arrives
-  useEffect(() => {
-    if (confirm) {
-      chrome.runtime.sendMessage({ type: "cockpit.focus" })
-    }
-  }, [confirm?.confirmation_id])
-
   const sendAbort = () => {
-    if (!task) return
+    if (!task || task.abortAcked) return
     chrome.runtime.sendMessage({ type: "computer.task.abort", task_id: task.taskId })
     setAbortSentAt(Date.now())
   }
@@ -89,7 +103,7 @@ function CockpitApp() {
           </span>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
-          {task && !finished && (
+          {task && !finished && !task.abortAcked && (
             <button type="button" style={s.abortBtn} onClick={sendAbort}>
               急停
             </button>
@@ -228,18 +242,39 @@ function ConfirmElevated({
 }) {
   const [whitelistMode, setWhitelistMode] = useState<"none" | "exact" | "wildcard">("none")
   const [nonceInput, setNonceInput] = useState("")
+  const [pasteBlocked, setPasteBlocked] = useState(false)
   const [imgFailed, setImgFailed] = useState(false)
   const domain = request.relevant_domains?.[0]
+  const relevantApp = request.relevant_apps?.[0]
+  const canThreadTrust = canOfferThreadTrust(request.tool_name, relevantApp)
+  const canSessionTrust = canOfferComputerSessionTrust(request.tool_name, relevantApp)
+  const [threadTrust, setThreadTrust] = useState(false)
+  const [sessionTrust, setSessionTrust] = useState(
+    canOfferComputerSessionTrust(request.tool_name, relevantApp),
+  )
   const nonceChallenge = request.nonce_challenge
   const nonceMatches =
     !nonceChallenge || nonceInput.toUpperCase() === nonceChallenge.toUpperCase()
   const showImg = !imgFailed && previewImageSafe(request.preview_image)
 
-  // 60s auto-deny
   useEffect(() => {
+    setWhitelistMode("none")
+    setThreadTrust(false)
+    setSessionTrust(canOfferComputerSessionTrust(request.tool_name, request.relevant_apps?.[0]))
+    setNonceInput("")
+    setPasteBlocked(false)
+    setImgFailed(false)
+  }, [request.confirmation_id, request.tool_name, request.relevant_apps])
+
+  // 60s auto-deny (D14)
+  useEffect(() => {
+    const ms =
+      request.timeout_ms && request.timeout_ms > 0
+        ? Math.min(request.timeout_ms, 60_000)
+        : 60_000
     const t = setTimeout(() => {
       respond(false)
-    }, request.timeout_ms && request.timeout_ms > 0 ? Math.min(request.timeout_ms, 60_000) : 60_000)
+    }, ms)
     return () => clearTimeout(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [request.confirmation_id])
@@ -256,6 +291,8 @@ function ConfirmElevated({
       approved,
       stop_thread: stopThread,
       add_to_whitelist: addToWhitelist,
+      add_to_thread_whitelist: approved && canThreadTrust && threadTrust,
+      add_to_session_trust: approved && canSessionTrust && sessionTrust,
       nonce_response: approved && nonceChallenge ? nonceInput.toUpperCase() : undefined,
     })
     onResolved(request.confirmation_id)
@@ -316,22 +353,82 @@ function ConfirmElevated({
               </label>
             </div>
           )}
+          {canThreadTrust && relevantApp && (
+            <label style={{ display: "block", marginTop: 8, fontSize: 10 }}>
+              <input
+                type="checkbox"
+                checked={threadTrust}
+                onChange={(e) => setThreadTrust(e.target.checked)}
+              />{" "}
+              本线程信任 {relevantApp} {threadTrustHint(request.tool_name)}
+            </label>
+          )}
+          {canSessionTrust && relevantApp && (
+            <label style={{ display: "block", marginTop: 6, fontSize: 10 }}>
+              <input
+                type="checkbox"
+                checked={sessionTrust}
+                onChange={(e) => setSessionTrust(e.target.checked)}
+              />{" "}
+              本会话自动同意「{relevantApp}」同类操作 {computerSessionTrustHint()}
+            </label>
+          )}
           {nonceChallenge && (
             <div style={{ marginTop: 8 }}>
-              <div style={{ fontSize: 10, marginBottom: 4 }}>输入确认码（禁止粘贴）：{nonceChallenge}</div>
+              <div style={{ fontSize: 10, marginBottom: 4 }}>
+                输入确认码（手动输入，不可粘贴）：{nonceChallenge}
+              </div>
               <input
                 value={nonceInput}
-                onChange={(e) => setNonceInput(e.target.value)}
-                onPaste={(e) => e.preventDefault()}
-                style={{ ...s.input, height: 28, fontSize: 14, letterSpacing: 4 }}
+                maxLength={6}
+                autoComplete="off"
+                spellCheck={false}
+                onChange={(e) => {
+                  setNonceInput(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))
+                  setPasteBlocked(false)
+                }}
+                onPaste={(e) => {
+                  e.preventDefault()
+                  setPasteBlocked(true)
+                }}
+                onContextMenu={(e) => e.preventDefault()}
+                onKeyDown={(e) => {
+                  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "v") {
+                    e.preventDefault()
+                    setPasteBlocked(true)
+                  }
+                  if (e.shiftKey && e.key === "Insert") {
+                    e.preventDefault()
+                    setPasteBlocked(true)
+                  }
+                }}
+                onDrop={(e) => e.preventDefault()}
+                style={{
+                  ...s.input,
+                  height: 28,
+                  fontSize: 14,
+                  letterSpacing: 4,
+                  borderColor: nonceMatches ? "#4ade80" : pasteBlocked ? "#f87171" : "#2a2f3a",
+                }}
               />
+              {pasteBlocked && (
+                <div style={{ color: "#f87171", fontSize: 10, marginTop: 4 }}>
+                  粘贴被禁止 — 请手动输入确认码
+                </div>
+              )}
             </div>
           )}
           <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
             <button
               type="button"
-              style={{ ...s.abortBtn, background: "#22c55e", color: "#052e16", border: "none" }}
-              disabled={!nonceMatches}
+              style={{
+                ...s.abortBtn,
+                background: nonceChallenge && !nonceMatches ? "#374151" : "#22c55e",
+                color: nonceChallenge && !nonceMatches ? "#9aa0a6" : "#052e16",
+                border: "none",
+                cursor: nonceChallenge && !nonceMatches ? "not-allowed" : "pointer",
+              }}
+              disabled={!!nonceChallenge && !nonceMatches}
               onClick={() => respond(true)}
             >
               允许

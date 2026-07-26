@@ -3,6 +3,11 @@
 //
 // Owns chrome.windows lifecycle. Side panel and other pages only send
 // cockpit.open / focus / close / status messages.
+//
+// KNOWN LIMITATION (P1 / dual-review): cockpitWindowId is in-memory only.
+// After MV3 service-worker death the id is lost; the next open may create a
+// second window while the first still exists. P2: persist id in
+// chrome.storage.session or reclaim via windows.getAll + cockpit URL.
 
 /** Plasmo builds `src/tabs/cockpit.tsx` → `tabs/cockpit.html`. */
 export const COCKPIT_PATH = "tabs/cockpit.html"
@@ -12,6 +17,8 @@ export const COCKPIT_DEFAULT_HEIGHT = 560
 
 let cockpitWindowId: number | null = null
 let onRemovedHooked = false
+/** In-flight open — concurrent openOrFocusCockpit callers chain on this promise. */
+let openInFlight: Promise<number | null> | null = null
 
 export function getCockpitWindowId(): number | null {
   return cockpitWindowId
@@ -41,11 +48,7 @@ async function windowExists(id: number): Promise<boolean> {
   }
 }
 
-/**
- * Open cockpit if needed, otherwise focus + drawAttention.
- * Returns the window id, or null on failure.
- */
-export async function openOrFocusCockpit(): Promise<number | null> {
+async function openOrFocusCockpitImpl(): Promise<number | null> {
   ensureOnRemoved()
 
   if (cockpitWindowId != null) {
@@ -81,6 +84,18 @@ export async function openOrFocusCockpit(): Promise<number | null> {
   }
 }
 
+/**
+ * Open cockpit if needed, otherwise focus + drawAttention.
+ * Concurrent callers share one in-flight promise (no duplicate windows).
+ */
+export async function openOrFocusCockpit(): Promise<number | null> {
+  if (openInFlight) return openInFlight
+  openInFlight = openOrFocusCockpitImpl().finally(() => {
+    openInFlight = null
+  })
+  return openInFlight
+}
+
 export async function focusCockpit(): Promise<boolean> {
   if (cockpitWindowId == null) return false
   try {
@@ -114,4 +129,5 @@ export function cockpitStatus(): { open: boolean; windowId: number | null } {
 /** Test helper — reset module state between unit tests. */
 export function _resetCockpitWindowStateForTests(): void {
   cockpitWindowId = null
+  openInFlight = null
 }

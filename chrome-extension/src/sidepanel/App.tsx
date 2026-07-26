@@ -194,6 +194,14 @@ function SecurityConfirmationDialog() {
   // #ykazn8): without it every LLM task-split re-prompts ("反复批准"), and
   // users never notice the opt-in checkbox. Checking is still explicit —
   // uncheck before Allow if you want one-shot only. Grill Q2 remains satisfied.
+  // H10/M18 (audit): keyboard a11y (focus trap + Escape→deny + aria-modal +
+  // focus restore) now lives in the shared <Modal>/useModalDialog primitive.
+  // denyRef stays a ref so Escape always calls the latest decide() (whitelist
+  // radio may have changed since mount); denyBtnRef pins initial focus to
+  // "拒绝" — the safe non-destructive default ([0]=拒绝并停止, [1]=拒绝).
+  const denyRef = useRef<() => void>(() => {})
+  const denyBtnRef = useRef<HTMLButtonElement>(null)
+
   useEffect(() => {
     setWhitelistMode("none")
     setThreadTrust(false)
@@ -203,13 +211,18 @@ function SecurityConfirmationDialog() {
     setPreviewImgFailed(false)
   }, [request?.confirmation_id])
 
-  // H10/M18 (audit): keyboard a11y (focus trap + Escape→deny + aria-modal +
-  // focus restore) now lives in the shared <Modal>/useModalDialog primitive.
-  // denyRef stays a ref so Escape always calls the latest decide() (whitelist
-  // radio may have changed since mount); denyBtnRef pins initial focus to
-  // "拒绝" — the safe non-destructive default ([0]=拒绝并停止, [1]=拒绝).
-  const denyRef = useRef<() => void>(() => {})
-  const denyBtnRef = useRef<HTMLButtonElement>(null)
+  // D14: 60s auto-deny for Panel full dialog (L0/L1 path; L2 uses Cockpit ConfirmElevated)
+  useEffect(() => {
+    if (!request) return
+    const ms =
+      request.timeout_ms && request.timeout_ms > 0
+        ? Math.min(request.timeout_ms, 60_000)
+        : 60_000
+    const t = setTimeout(() => {
+      denyRef.current()
+    }, ms)
+    return () => clearTimeout(t)
+  }, [request?.confirmation_id])
 
   if (!request) return null
 
@@ -740,14 +753,25 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
 
   const isStreaming = !!state.streamingContent
   const hasContent = text.trim().length > 0 || selectedFiles.length > 0
-  const canSend = !isStreaming && hasContent && !!state.activeThreadId && state.connectionState === "connected"
+  // D12′ must-fix: hard-gate Panel send while computer task is active (running/paused)
+  const taskActive =
+    isComputer &&
+    !!state.computerTask &&
+    (state.computerTask.status === "running" || state.computerTask.status === "paused")
+  const canSend =
+    !isStreaming &&
+    hasContent &&
+    !!state.activeThreadId &&
+    state.connectionState === "connected" &&
+    !taskActive
   const needsThread = !state.activeThreadId
   const needsConnection = state.connectionState !== "connected"
 
   const getPlaceholder = () => {
     if (needsThread) return "请先创建或选择一个线程"
     if (needsConnection) return "等待 companion 连接..."
-    // P1 D12′: Panel is follow-up path while Cockpit is task conductor
+    // P1 D12′: Cockpit is task conductor — Panel cannot interject mid-task
+    if (taskActive) return "任务进行中 — 请在操控台发送指令或先急停"
     if (isComputer) return "排队跟进…（主指令请在操控台发送）"
     return "输入指令... (输入 / 调用技能)"
   }
@@ -836,6 +860,14 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
 
   const handleSend = () => {
     if (!canSend || sendingRef.current) return
+    // Defense in depth: never dual-conduct while L2 task is active
+    if (
+      isComputer &&
+      state.computerTask &&
+      (state.computerTask.status === "running" || state.computerTask.status === "paused")
+    ) {
+      return
+    }
     sendingRef.current = true
     try {
       const trimmed = text.trim()

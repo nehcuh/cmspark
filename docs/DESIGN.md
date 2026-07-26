@@ -58,6 +58,11 @@
 - L0 `聊` · L1 `网页` · L2 `计算机` / `计算机 · LIVE` — see `sidepanel/mode/mode-controller.ts`
 - L1 header tint `#eef4ff`; BottomBar tabs filtered by capability level
 
+### Cockpit (P1)
+- Extension popup `tabs/cockpit.html` (~720×560); SW mirror hydrates computer task + pending confirms
+- Panel L2: SafetyStrip (abort + minimal confirm); Panel send hard-gated while task running/paused
+- Known: `cockpitWindowId` is in-memory — SW death may orphan a window until next open (P2)
+
 ### Message Bubbles
 - User: white bg, `#4A90D9` border-left
 - Assistant: `#f5f5f5` bg

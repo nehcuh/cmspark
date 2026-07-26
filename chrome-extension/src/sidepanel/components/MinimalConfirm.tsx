@@ -26,8 +26,11 @@ export function MinimalConfirm() {
 
   const color = riskColor(request.risk_level)
   const label = riskLabel(request.risk_level)
+  // Nonce-gated confirms must use Cockpit (content-split) — Panel cannot type-verify
+  const needsNonce = !!request.nonce_challenge
 
   const respond = (approved: boolean, stopThread = false) => {
+    if (approved && needsNonce) return
     chrome.runtime.sendMessage({
       type: "security.confirmation.response",
       confirmation_id: request.confirmation_id,
@@ -60,12 +63,21 @@ export function MinimalConfirm() {
         ⚠ {label} · {request.tool_name}
       </div>
       <div style={{ color: "#d1d5db", marginBottom: 8, fontSize: 10 }}>
-        完整预览与白名单在操控台；此处可直接允许/拒绝。
+        {needsNonce
+          ? "此确认需要输入确认码 — 请打开操控台完成。"
+          : "完整预览与白名单在操控台；此处可直接允许/拒绝。"}
       </div>
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
         <button
           type="button"
-          style={{ ...btn, background: "#22c55e", color: "#052e16" }}
+          style={{
+            ...btn,
+            background: needsNonce ? "#374151" : "#22c55e",
+            color: needsNonce ? "#9aa0a6" : "#052e16",
+            cursor: needsNonce ? "not-allowed" : "pointer",
+          }}
+          disabled={needsNonce}
+          title={needsNonce ? "请在操控台输入确认码后允许" : "允许"}
           onClick={() => respond(true)}
         >
           允许

@@ -21,6 +21,12 @@ import {
   focusCockpit,
   openOrFocusCockpit,
 } from "./cockpit-window"
+import {
+  getHydrateSnapshot,
+  noteComputerTaskEvent,
+  noteSecurityConfirmationGone,
+  noteSecurityConfirmationRequest,
+} from "./computer-task-mirror"
 
 let wsClient: WSClient
 let browserBridge: BrowserBridge
@@ -336,8 +342,23 @@ async function handleCompanionMessage(msg: any) {
     return
   }
 
+  // Mirror for Cockpit hydrate (separate React tree)
+  if (msg.type === "computer.task.event") {
+    noteComputerTaskEvent(msg)
+  }
+  if (msg.type === "security.confirmation.request") {
+    noteSecurityConfirmationRequest(msg)
+  }
+  if (
+    msg.type === "security.confirmation.resolved" ||
+    msg.type === "security.confirmation.expired"
+  ) {
+    noteSecurityConfirmationGone(msg.confirmation_id)
+  }
+
   // L2: open/focus Cockpit for computer-class confirms or task start
-  // (covers tray-initiated CU when Side Panel is closed — D16)
+  // (covers tray-initiated CU when Side Panel is closed — D16).
+  // Focus is background-driven — Cockpit must not self-focus on every confirm.
   const computerConfirm =
     msg.type === "security.confirmation.request" &&
     typeof msg.tool_name === "string" &&
@@ -479,6 +500,7 @@ function setupMessageHandlers() {
         // add_to_thread_whitelist, stop_thread. Companion handleSecurityConfirmationResponse
         // already consumes these (server.ts ~1481-1515). Dropping them silently
         // breaks whitelist persistence, nonce challenge, and thread trust.
+        noteSecurityConfirmationGone(message.confirmation_id)
         wsClient.send(buildSecurityConfirmationWsPayload(message))
         sendResponse({ ok: true })
         return true
@@ -791,6 +813,11 @@ function setupMessageHandlers() {
       }
       case "cockpit.status":
         sendResponse(cockpitStatus())
+        return true
+
+      case "cockpit.hydrate":
+        // Cockpit boot: return mirrored computer task + pending confirms
+        sendResponse({ ok: true, ...getHydrateSnapshot() })
         return true
 
       default:
