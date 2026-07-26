@@ -144,13 +144,14 @@ test("apps error routing: non-apps errors still fall through to the chat stream"
 
 // --- WP6a Finding 2: platform gating for the add/enumerate UI ---
 
-test("appsPlatformSupported: win32 + unknown (null/undefined) → UI enabled; other platforms → honest 仅 Windows 可用 state", () => {
+test("appsPlatformSupported: win32/darwin + unknown → enabled; linux → 仅 Windows/macOS 可用", () => {
   assert.equal(appsPlatformSupported("win32"), true)
+  // macOS host-use is supported alongside Windows (handlers.ts PLATFORM gate).
+  assert.equal(appsPlatformSupported("darwin"), true)
   // Unknown platform (pre-WP6a companion sent no platform field) must NOT
   // disable the UI — backward compatible default.
   assert.equal(appsPlatformSupported(null), true)
   assert.equal(appsPlatformSupported(undefined), true)
-  assert.equal(appsPlatformSupported("darwin"), false)
   assert.equal(appsPlatformSupported("linux"), false)
 })
 
