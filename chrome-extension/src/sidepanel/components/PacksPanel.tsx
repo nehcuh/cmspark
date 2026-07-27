@@ -191,7 +191,7 @@ export function PacksPanel() {
 }
 
 const styles: Record<string, import("react").CSSProperties> = {
-  wrap: { padding: "8px 10px", fontSize: 12, color: tokens.textPrimary },
+  wrap: { padding: "8px 10px", fontSize: 12, color: tokens.text },
   header: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 },
   title: { fontWeight: 600, fontSize: 12 },
   linkBtn: {
