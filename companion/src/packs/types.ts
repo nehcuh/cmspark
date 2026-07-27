@@ -31,6 +31,11 @@ export interface PackManifest {
   mcp_servers: string[]
   tools: PackTools
   system_prompt_append: string
+  /**
+   * ADR-016: when true, pack apply enables thread.board_mode and structured
+   * collect_handback is required (Fact/Intent JSON). Default undefined = off.
+   */
+  board_mode?: boolean
   thread_defaults?: PackThreadDefaults
   workspace?: { type: "none" | "local_path" }
   author?: string
@@ -79,6 +84,8 @@ export interface PackApplyPatch {
   active_mcp_server_ids?: string[]
   system_prompt_append: string | null
   workspace_root?: string | null
+  /** ADR-016: set when pack.manifest.board_mode is true. */
+  board_mode?: boolean
 }
 
 export const FORBIDDEN_PACK_KEYS = new Set([

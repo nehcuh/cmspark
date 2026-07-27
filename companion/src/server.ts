@@ -1794,6 +1794,7 @@ export function createToolExecutor(ws: WebSocket) {
       "get_worker_status",
       "list_tab_locks",
       "collect_handback",
+      "board_read",
       "wait_workers",
       "worker_cancel",
       "ask_user",
@@ -2478,20 +2479,24 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
       return { success: true, data: { locks: listTabLocks() } }
     }
     case "collect_handback": {
+      // ADR-016 Task 3: board mode / mission_board → structured Fact/Intent merge;
+      // free-form-only rejected with recoverable HANDBACK_MISSING_STRUCTURE.
       const wid = params.worker_id
       if (!wid) return { success: false, error: "worker_id required" }
-      const msgs = threadManager.getMessages(String(wid))
-      const lastAssistant = [...msgs].reverse().find((m) => m.role === "assistant")
-      return {
-        success: true,
-        data: {
-          worker_id: wid,
-          last_assistant: lastAssistant
-            ? { id: lastAssistant.id, content: lastAssistant.content, created_at: lastAssistant.created_at }
-            : null,
-          message_count: msgs.length,
-        },
-      }
+      const callerId = params.__thread_id || params._thread_id || null
+      const { collectWorkerHandback } = await import("./board")
+      return collectWorkerHandback(threadManager, {
+        workerId: String(wid),
+        callerThreadId: callerId ? String(callerId) : null,
+        forceStructured: params.expect_structured === true,
+      })
+    }
+    case "board_read": {
+      // ADR-016 optional read: orchestrator allowlist; workers only if Pack grants
+      const tid = params.__thread_id || params._thread_id
+      if (!tid) return { success: false, error: "board_read requires thread context (__thread_id)" }
+      const { boardReadForTool } = await import("./board")
+      return boardReadForTool(threadManager, String(tid))
     }
     case "wait_workers": {
       // Frozen as poll-only (ADR-015): no async barrier / sleep in tool path.

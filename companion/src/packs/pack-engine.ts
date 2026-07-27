@@ -475,6 +475,8 @@ export function applyPack(
       active_mcp_server_ids: mcpIds,
       system_prompt_append: systemPromptAppend,
       workspace_root: opts?.workspace_path ?? thread.workspace_root ?? null,
+      // ADR-016: enable structured handback when pack declares board_mode
+      board_mode: result.manifest.board_mode === true ? true : undefined,
     })
     appendCapabilityAudit({
       type: "pack.apply",

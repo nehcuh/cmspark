@@ -631,13 +631,31 @@ export function getToolDefinitions(): ToolDefinition[] {
       type: "function",
       function: {
         name: "collect_handback",
-        description: "Read the worker's last assistant message as a typed handback for the orchestrator.",
+        description:
+          "Read the worker's last assistant message as a typed handback for the orchestrator. When board mode is on (host board_mode / mission_board), requires structured Fact/Intent JSON in the worker message; free-form-only returns recoverable HANDBACK_MISSING_STRUCTURE. Successful structured collect merges into the host MissionBoard and returns stamped facts/intents plus last_assistant.",
         parameters: {
           type: "object",
           properties: {
-            worker_id: { type: "string" },
+            worker_id: { type: "string", description: "Worker thread id to collect from" },
+            expect_structured: {
+              type: "boolean",
+              description: "Force structured board parse even if host board_mode is off",
+            },
           },
           required: ["worker_id"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "board_read",
+        description:
+          "Read the host MissionBoard (Fact/Intent/Hint) for this run. Returns trust tier per Fact — never treat llm_asserted as confirmed findings. Orchestrator default; workers only if Pack tool_whitelist grants board_read.",
+        parameters: {
+          type: "object",
+          properties: {},
+          required: [],
         },
       },
     },

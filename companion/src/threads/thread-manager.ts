@@ -415,6 +415,8 @@ export class ThreadManager {
       active_mcp_server_ids?: string[]
       system_prompt_append: string | null
       workspace_root?: string | null
+      /** ADR-016: pack board_mode enable (only set when pack declares it). */
+      board_mode?: boolean
     },
   ): Thread {
     const thread = this.index.threads.find((t) => t.id === threadId)
@@ -471,6 +473,13 @@ export class ThreadManager {
       thread.active_mcp_server_ids = [...patch.active_mcp_server_ids]
     }
     if (patch.workspace_root !== undefined) thread.workspace_root = patch.workspace_root
+    // ADR-016: pack board_mode — only enable when pack declares true; uninstall clears via explicit false
+    if (patch.board_mode !== undefined) {
+      if (typeof patch.board_mode !== "boolean") {
+        throw new Error("board_mode must be a boolean")
+      }
+      thread.board_mode = patch.board_mode
+    }
     thread.config_override = validation.sanitized
     thread.updated_at = monotonicTimestamp()
     this.saveIndex()

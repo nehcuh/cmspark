@@ -28,6 +28,7 @@ export const ORCHESTRATOR_TOOL_ALLOWLIST = [
   "spawn_worker",
   "wait_workers",
   "collect_handback",
+  "board_read",
   "ask_user",
   "list_workers",
   "get_worker_status",

@@ -72,6 +72,24 @@ License:  MIT（TinyClick 论文 Ethics 节： "Florence2 model is available
           under MIT license"）
 
 ${FLORENCE2_MIT_FULL_TEXT}
+
+--------------------------------------------------------------------------------
+3. Cairn (protocol inspiration only — NOT linked, NOT redistributed)
+--------------------------------------------------------------------------------
+Project:  https://github.com/oritera/Cairn
+License:  AGPL-3.0
+Status:   NOT a dependency. NOT vendored. NOT copied.
+
+CMspark MissionBoard (ADR-016) is inspired by high-level protocol ideas from
+Cairn (Fact/Intent/Hint coordination, structured handback, conditional complete,
+stigmergy). Schema types, runtime code, and persistence are reimplemented
+independently for CMspark’s Thread / Mission Pack / multi-agent stack.
+
+See: docs/licenses/cairn-inspiration.md
+     docs/adr/016-mission-board.md §2.7 / Appendix A G14
+
+FORBIDDEN: copying Cairn source files, pasting schema JSON verbatim, or adding
+Cairn as an npm/git dependency.
 `
 
 // --- 许可证门弹窗文案（WI-3.4 computer.model.license_required 的 licenseText） ---

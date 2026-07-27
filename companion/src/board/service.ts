@@ -647,3 +647,249 @@ export async function addHint(
 
 /** Alias used in ADR text. */
 export const ensureBoardDefaults = ensureBoard
+
+// ── collect_handback fold (ADR-016 Task 3) ─────────────────────────────────
+
+export type CollectHandbackLastAssistant = {
+  id: string
+  content: string
+  created_at: string
+} | null
+
+export type CollectHandbackSuccess = {
+  success: true
+  data: {
+    worker_id: string
+    last_assistant: CollectHandbackLastAssistant
+    message_count: number
+    board_mode: boolean
+    /** Present when structured handback was applied. */
+    facts?: Fact[]
+    intents?: Intent[]
+    summary?: string | null
+    complete_proposal?: unknown
+    board?: {
+      fact_count: number
+      intent_count: number
+      open_intent_count: number
+      status: MissionBoard["status"]
+      goal: string | null
+    }
+  }
+}
+
+export type CollectHandbackFailure = {
+  success: false
+  error: string
+  error_code?: string
+  recoverable?: boolean
+  data?: {
+    worker_id: string
+    last_assistant: CollectHandbackLastAssistant
+    message_count: number
+    board_mode: boolean
+  }
+}
+
+export type CollectHandbackResult = CollectHandbackSuccess | CollectHandbackFailure
+
+/**
+ * Whether this host requires structured Fact/Intent handback.
+ * True when board_mode is on, mission_board already present, or pack declared board mode.
+ */
+export function hostRequiresStructuredHandback(host: ThreadLike | null | undefined): boolean {
+  if (!host) return false
+  if (host.board_mode === true) return true
+  if (host.mission_board != null) return true
+  return false
+}
+
+/**
+ * Orchestrator collect_handback path (ADR-016 §2.5.2).
+ * - board mode off: free-text last_assistant only (ADR-015 compat)
+ * - board mode on / mission_board present: parse + merge into host; prose-only → recoverable HANDBACK_MISSING_STRUCTURE
+ */
+export async function collectWorkerHandback(
+  tm: ThreadManager,
+  opts: {
+    workerId: string
+    /** Caller thread (orchestrator); used if worker has no parent. */
+    callerThreadId?: string | null
+    resolveToolCall?: ToolCallResolver
+    auditPath?: string
+    /** Force structured path even if host flags off (tests / expect_structured). */
+    forceStructured?: boolean
+  },
+): Promise<CollectHandbackResult> {
+  const workerId = String(opts.workerId)
+  const worker = tm.get(workerId) as ThreadLike | undefined
+  if (!worker) {
+    return { success: false, error: `worker not found: ${workerId}` }
+  }
+
+  const msgs = tm.getMessages(workerId)
+  const last = [...msgs].reverse().find((m) => m.role === "assistant")
+  const lastAssistant: CollectHandbackLastAssistant = last
+    ? { id: last.id, content: last.content, created_at: last.created_at }
+    : null
+
+  const hostId =
+    resolveBoardHostThreadId(tm, workerId) ||
+    (opts.callerThreadId ? resolveBoardHostThreadId(tm, String(opts.callerThreadId)) : null) ||
+    (worker.parent_thread_id ? String(worker.parent_thread_id) : null)
+
+  const host = hostId ? (tm.get(hostId) as ThreadLike | undefined) : null
+  const boardMode = opts.forceStructured === true || hostRequiresStructuredHandback(host)
+
+  const base = {
+    worker_id: workerId,
+    last_assistant: lastAssistant,
+    message_count: msgs.length,
+    board_mode: boardMode,
+  }
+
+  if (!boardMode) {
+    return { success: true, data: base }
+  }
+
+  if (!hostId || !host || !isBoardHostThread(host)) {
+    return {
+      success: false,
+      error: "cannot resolve board host for structured handback",
+      error_code: "BOARD_HOST_INVALID",
+      recoverable: false,
+      data: base,
+    }
+  }
+
+  // Initialize empty board when structured path is required but board not yet created
+  if (host.mission_board == null) {
+    const init = await ensureBoard(tm, hostId, {
+      force: true,
+      auditPath: opts.auditPath,
+    })
+    if (!init.ok) {
+      return {
+        success: false,
+        error: init.error,
+        error_code: init.error_code || "BOARD_INIT_FAILED",
+        recoverable: true,
+        data: base,
+      }
+    }
+  }
+
+  const rawPayload = lastAssistant?.content ?? null
+  if (rawPayload == null || (typeof rawPayload === "string" && !rawPayload.trim())) {
+    audit(
+      "board.handback_rejected",
+      {
+        thread_id: hostId,
+        worker_id: workerId,
+        error_code: HANDBACK_MISSING_STRUCTURE,
+        error: "handback payload is empty (no assistant message)",
+      },
+      opts.auditPath,
+    )
+    return {
+      success: false,
+      error: "handback payload is empty (no assistant message)",
+      error_code: HANDBACK_MISSING_STRUCTURE,
+      recoverable: true,
+      data: base,
+    }
+  }
+
+  const applied = await applyHandbackPayload(
+    tm,
+    hostId,
+    rawPayload,
+    {
+      actor_type: "worker",
+      worker_id: workerId,
+      thread_id: workerId,
+      orchestrator_run_id: (worker.orchestrator_run_id as string | null | undefined) ?? null,
+      message_id: lastAssistant?.id ?? null,
+      tool_name: "collect_handback",
+    },
+    {
+      resolveToolCall: opts.resolveToolCall,
+      auditPath: opts.auditPath,
+      workerThreadId: workerId,
+    },
+  )
+
+  if (!applied.ok) {
+    return {
+      success: false,
+      error: applied.error,
+      error_code: applied.error_code || HANDBACK_MISSING_STRUCTURE,
+      recoverable: applied.recoverable ?? true,
+      data: base,
+    }
+  }
+
+  // Re-parse for summary / complete_proposal (non-mutating fields not returned by apply)
+  const parsed = parseHandbackPayload(rawPayload)
+  const summary = parsed.ok ? parsed.payload.summary ?? null : null
+  const completeProposal = parsed.ok ? parsed.payload.complete_proposal ?? null : null
+
+  const board = applied.board
+  return {
+    success: true,
+    data: {
+      ...base,
+      facts: applied.added_facts ?? [],
+      intents: applied.added_intents ?? [],
+      summary,
+      complete_proposal: completeProposal,
+      board: {
+        fact_count: board.facts.length,
+        intent_count: board.intents.length,
+        open_intent_count: board.intents.filter((i) => i.status === "open" || i.status === "claimed").length,
+        status: board.status,
+        goal: board.goal,
+      },
+    },
+  }
+}
+
+/**
+ * Read-only board snapshot for orchestrator (and Pack-granted workers).
+ * Always includes trust per Fact; never elevates llm_asserted wording.
+ */
+export function boardReadForTool(
+  tm: ThreadManager,
+  threadId: string,
+): {
+  success: boolean
+  error?: string
+  error_code?: string
+  data?: {
+    board: MissionBoard | null
+    host_thread_id: string | null
+    board_mode: boolean
+  }
+} {
+  const hostId = resolveBoardHostThreadId(tm, threadId)
+  if (!hostId) {
+    return {
+      success: false,
+      error: "cannot resolve board host",
+      error_code: "BOARD_HOST_INVALID",
+    }
+  }
+  const host = tm.get(hostId) as ThreadLike | undefined
+  if (!host) {
+    return { success: false, error: `thread not found: ${hostId}` }
+  }
+  const board = loadBoardFromThread(host)
+  return {
+    success: true,
+    data: {
+      board,
+      host_thread_id: hostId,
+      board_mode: host.board_mode === true || board != null,
+    },
+  }
+}
