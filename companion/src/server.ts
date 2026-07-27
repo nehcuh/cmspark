@@ -35,6 +35,12 @@ import { checkHighRiskExecution, highRiskExecutionDeniedError, isTrustedDomain, 
 import { SecurityConfirmationManager, type SecurityConfirmationDetails, type SecurityConfirmationDecision, DEFAULT_SECURITY_CONFIRMATION_TIMEOUT_MS } from "./security-confirmation"
 import { getTrayInstance } from "./menu-bar-agent"
 import type { TrayConfirmRequest } from "./tray/tray-adapter"
+import {
+  isHudSpikeEnabled,
+  runHudSpikeInProcess,
+  HUD_SPIKE_THREAD_ID,
+  HUD_SPIKE_TASK_ID,
+} from "./hud/spike"
 import { getThreadApprovals } from "./host-use/thread-approvals"
 import { APP_TOKEN_PATTERN, type AppEntry, type AppPolicy } from "./apps/types"
 import { securityPolicy, getTokenSecret } from "./security-policy"
@@ -4637,6 +4643,31 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
   httpServer.on("listening", () => {
     console.log(`[cmspark-agent] Companion started on ws://127.0.0.1:${port}`)
     logger.info("server.listening", { port })
+    // P3a HUD spike: if tray is co-located in this process, run full in-process
+    // open→hydrate→confirm→standby. Dual-process (normal tray + server) is driven
+    // from menu-bar-agent when CMSPARK_HUD_SPIKE=1 on both sides.
+    if (isHudSpikeEnabled()) {
+      console.log("[cmspark-agent] CMSPARK_HUD_SPIKE=1 — waiting for in-process tray or dual-process tray WS")
+      logger.info("hud.spike.enabled", {})
+      setTimeout(() => {
+        void (async () => {
+          const tray = getTrayInstance()
+          if (tray?.openHudAsync) {
+            const result = await runHudSpikeInProcess({
+              tray,
+              securityConfirmations,
+              log: (m, e) => logger.info("hud.spike", { msg: m, ...e }),
+            })
+            logger.info("hud.spike.in_process_result", result as any)
+            console.log("[cmspark-agent] HUD spike (in-process):", result)
+          } else {
+            logger.info("hud.spike.awaiting_tray_client", {
+              note: "No in-process tray; menu-bar dual-process path will open HUD",
+            })
+          }
+        })()
+      }, 2500)
+    }
   })
 
   // Broadcast config changes to AUTHENTICATED WebSocket clients only + apply MCP diff.
@@ -4879,6 +4910,75 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
           if (ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify(msg))
           }
+          return
+        }
+
+        // P3a HUD spike (env-gated dual-process): tray client owns Swift UI;
+        // server owns SecurityConfirmationManager (plan wire ownership).
+        if (msg.type === "hud.spike.start") {
+          if (!isHudSpikeEnabled()) {
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: "hud.spike.error", error: "CMSPARK_HUD_SPIKE is not 1" }))
+            }
+            return
+          }
+          const confirmationId = randomUUID()
+          const timeoutMs = typeof msg.timeout_ms === "number" ? msg.timeout_ms : 45_000
+          logger.info("hud.spike.start", { confirmation_id: confirmationId })
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({
+              type: "hud.spike.show_confirm",
+              id: confirmationId,
+              tool_name: "evaluate",
+              risk_level: "high",
+              summary: "HUD spike confirm — Allow or Deny",
+              timeout_ms: timeoutMs,
+              thread_id: HUD_SPIKE_THREAD_ID,
+              task_id: HUD_SPIKE_TASK_ID,
+            }))
+          }
+          void securityConfirmations.request(
+            () => { /* HUD is elevated surface; no Side Panel push */ },
+            {
+              toolName: "evaluate",
+              dangerousApis: [],
+              code: "/* hud spike */",
+              riskLevel: "high",
+            },
+            undefined,
+            confirmationId,
+          ).then((d) => {
+            logger.info("hud.spike.confirm_terminal", {
+              confirmation_id: confirmationId,
+              approved: d.approved,
+              reason: d.reason,
+            })
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({
+                type: "hud.spike.done",
+                confirmation_id: confirmationId,
+                approved: d.approved,
+                reason: d.reason,
+              }))
+            }
+          })
+          return
+        }
+        if (msg.type === "hud.spike.confirm_response") {
+          if (!isHudSpikeEnabled()) return
+          const id = typeof msg.id === "string" ? msg.id : ""
+          const approved = msg.approved === true
+          if (!id) return
+          const ok = securityConfirmations.respond(id, approved)
+          logger.info("hud.spike.confirm_response", { confirmation_id: id, approved, ok })
+          return
+        }
+        if (msg.type === "hud.spike.abort") {
+          if (!isHudSpikeEnabled()) return
+          logger.info("hud.spike.abort", {
+            thread_id: msg.thread_id,
+            task_id: msg.task_id || HUD_SPIKE_TASK_ID,
+          })
           return
         }
 

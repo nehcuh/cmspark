@@ -476,6 +476,33 @@ func handleCommand(_ cmd: String, json: [String: Any], delegate: TrayDelegate) {
     let id = (json["id"] as? String) ?? ""
     if !id.isEmpty { confirmController.cancel(id: id) }
 
+  // --- P3a Native HUD spike protocol (same binary as tray; lazy NSWindow) ---
+  case "hud.open":
+    let threadId = (json["thread_id"] as? String) ?? ""
+    hudController.open(threadId: threadId)
+
+  case "hud.hydrate":
+    hudController.applyHydrate(json)
+
+  case "hud.confirm.request":
+    // Elevated confirm card on HUD — do NOT use ConfirmController tray popover.
+    hudController.showConfirm(json)
+
+  case "hud.confirm.cancel", "hud.confirm.resolved":
+    let id = (json["id"] as? String) ?? ""
+    hudController.clearConfirm(id: id)
+
+  case "shell.standby":
+    let message = (json["message"] as? String) ?? ""
+    hudController.enterStandby(message: message)
+
+  case "hud.ping":
+    let nonce = (json["nonce"] as? String) ?? ""
+    jsonLine(["type": "hud.pong", "nonce": nonce])
+
+  case "hud.close":
+    hudController.hide(reason: "cmd")
+
   case "quit":
     delegate.shutdown()
     jsonLine(["type": "exit", "code": 0])
@@ -865,6 +892,299 @@ extension ConfirmController: NSWindowDelegate {
 
 // Lazily initialized on first show (main thread, from handleCommand).
 let confirmController = ConfirmController()
+
+// ---------------------------------------------------------------------------
+// HudController — P3a spike native wide L2 surface (same process as tray).
+// Lazy NSWindow; close ≠ quit (N4). Heartbeat only while window visible (N3).
+// ---------------------------------------------------------------------------
+
+class HudController: NSObject {
+  private var window: NSWindow?
+  private var threadId: String = ""
+  private var standbyMessage: String = ""
+  private var isStandby: Bool = false
+  private var pendingConfirmId: String?
+  private var taskRunning: Bool = false
+
+  private var titleField: NSTextField?
+  private var statusField: NSTextField?
+  private var confirmCard: NSStackView?
+  private var confirmToolField: NSTextField?
+  private var confirmSummaryField: NSTextField?
+  private var taskField: NSTextField?
+  private var abortButton: NSButton?
+  private var confirmAllowButton: NSButton?
+  private var confirmDenyButton: NSButton?
+
+  private var heartbeatTimer: Timer?
+
+  func open(threadId: String) {
+    self.threadId = threadId
+    self.isStandby = false
+    self.standbyMessage = ""
+    if window == nil { window = makeWindow() }
+    guard let window = window else { return }
+    titleField?.stringValue = "CMspark 确认台 (spike) · \(threadId.isEmpty ? "—" : threadId)"
+    refreshStatusLine()
+    // HUD may activate for focus (unlike tray ConfirmController which must not steal FG).
+    NSApp.activate(ignoringOtherApps: true)
+    window.center()
+    window.makeKeyAndOrderFront(nil)
+    window.orderFrontRegardless()
+    startHeartbeat()
+    jsonLine(["type": "hud.ready"])
+  }
+
+  func applyHydrate(_ json: [String: Any]) {
+    if let tid = json["thread_id"] as? String, !tid.isEmpty {
+      threadId = tid
+    }
+    let shell = (json["shell"] as? String) ?? "hud"
+    let connection = (json["connection"] as? String) ?? "unknown"
+    if shell == "standby" {
+      isStandby = true
+    } else {
+      isStandby = false
+      standbyMessage = ""
+    }
+
+    // dual_track empty arrays must be a no-op (do not crash)
+    if let dual = json["dual_track"] as? [String: Any] {
+      _ = dual["conclusions"] as? [Any]
+      _ = dual["steps"] as? [Any]
+    }
+
+    if let task = json["task"] as? [String: Any] {
+      let goal = (task["goal"] as? String) ?? ""
+      let status = (task["status"] as? String) ?? "idle"
+      taskRunning = (status == "running")
+      taskField?.stringValue = goal.isEmpty
+        ? "任务: \(status)"
+        : "任务: \(status) — \(goal)"
+    } else {
+      taskRunning = false
+      taskField?.stringValue = "无任务"
+    }
+
+    if let pending = json["pending_confirmations"] as? [[String: Any]], let first = pending.first {
+      showConfirm(first)
+    }
+
+    titleField?.stringValue =
+      "CMspark 确认台 (spike) · \(connection) · \(threadId.isEmpty ? "—" : threadId)"
+    refreshStatusLine()
+    abortButton?.isEnabled = taskRunning
+    applyConfirmVisibility()
+  }
+
+  func showConfirm(_ json: [String: Any]) {
+    let id = (json["id"] as? String) ?? (json["confirmation_id"] as? String) ?? ""
+    guard !id.isEmpty else { return }
+    pendingConfirmId = id
+    isStandby = false
+    let tool = (json["tool_name"] as? String) ?? "unknown"
+    let risk = (json["risk_level"] as? String) ?? ""
+    var summary = (json["summary"] as? String) ?? ""
+    summary = summary.unicodeScalars.filter {
+      $0.value != 0x7F && !($0.value >= 0 && $0.value < 0x20)
+    }.map { String($0) }.joined()
+    confirmToolField?.stringValue = risk.isEmpty ? tool : "\(tool) · \(risk)"
+    confirmSummaryField?.stringValue = String(summary.prefix(2000))
+    applyConfirmVisibility()
+    if window?.isVisible != true {
+      open(threadId: threadId)
+    }
+  }
+
+  func clearConfirm(id: String) {
+    if !id.isEmpty && pendingConfirmId != nil && pendingConfirmId != id { return }
+    pendingConfirmId = nil
+    confirmToolField?.stringValue = ""
+    confirmSummaryField?.stringValue = ""
+    applyConfirmVisibility()
+  }
+
+  func enterStandby(message: String) {
+    isStandby = true
+    standbyMessage = message
+    // N2: hide elevated confirm UI; keep status line
+    pendingConfirmId = nil
+    applyConfirmVisibility()
+    refreshStatusLine()
+  }
+
+  func hide(reason: String) {
+    stopHeartbeat()
+    window?.orderOut(nil)
+    jsonLine(["type": "hud.closed", "reason": reason])
+    // N4: do not terminate NSApplication
+  }
+
+  private func refreshStatusLine() {
+    if isStandby {
+      statusField?.stringValue = standbyMessage.isEmpty
+        ? "任务进行中 — 宽确认台待机"
+        : standbyMessage
+    } else {
+      statusField?.stringValue = "thread: \(threadId.isEmpty ? "—" : threadId) · active shell: hud"
+    }
+  }
+
+  private func applyConfirmVisibility() {
+    let show = pendingConfirmId != nil && !isStandby
+    confirmCard?.isHidden = !show
+    confirmAllowButton?.isEnabled = show
+    confirmDenyButton?.isEnabled = show
+  }
+
+  private func startHeartbeat() {
+    stopHeartbeat()
+    // N3/C-N5: only while HUD window is visible
+    heartbeatTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+      guard let self = self, let win = self.window, win.isVisible else { return }
+      let ts = Int(Date().timeIntervalSince1970 * 1000)
+      jsonLine(["type": "hud.heartbeat", "ts": ts])
+    }
+  }
+
+  private func stopHeartbeat() {
+    heartbeatTimer?.invalidate()
+    heartbeatTimer = nil
+  }
+
+  @objc func allowClicked() {
+    guard let id = pendingConfirmId else { return }
+    jsonLine(["type": "hud.confirm.response", "id": id, "approved": true])
+    pendingConfirmId = nil
+    applyConfirmVisibility()
+  }
+
+  @objc func denyClicked() {
+    guard let id = pendingConfirmId else { return }
+    jsonLine(["type": "hud.confirm.response", "id": id, "approved": false])
+    pendingConfirmId = nil
+    applyConfirmVisibility()
+  }
+
+  @objc func abortClicked() {
+    var payload: [String: Any] = ["type": "hud.abort"]
+    if !threadId.isEmpty { payload["thread_id"] = threadId }
+    payload["task_id"] = "spike"
+    jsonLine(payload)
+  }
+
+  @objc func collapseClicked() {
+    hide(reason: "user")
+  }
+
+  @objc func windowWillClose(_ notification: Notification) {
+    // User red-dot / Cmd+W — close ≠ stop (N4)
+    stopHeartbeat()
+    jsonLine(["type": "hud.closed", "reason": "user"])
+  }
+
+  private func makeWindow() -> NSWindow? {
+    let contentRect = NSRect(x: 0, y: 0, width: 560, height: 360)
+    let style: NSWindow.StyleMask = [.titled, .closable, .miniaturizable, .resizable]
+    let win = NSWindow(contentRect: contentRect, styleMask: style, backing: .buffered, defer: false)
+    win.title = "CMspark 确认台 (spike)"
+    win.isReleasedWhenClosed = false
+    win.minSize = NSSize(width: 480, height: 280)
+    win.delegate = self
+
+    let stack = NSStackView()
+    stack.orientation = .vertical
+    stack.alignment = .leading
+    stack.spacing = 10
+    stack.edgeInsets = NSEdgeInsets(top: 16, left: 18, bottom: 16, right: 18)
+    stack.translatesAutoresizingMaskIntoConstraints = false
+
+    let title = NSTextField(labelWithString: "CMspark 确认台 (spike)")
+    title.font = .boldSystemFont(ofSize: 14)
+    titleField = title
+    stack.addArrangedSubview(title)
+
+    let status = NSTextField(wrappingLabelWithString: "")
+    status.font = .systemFont(ofSize: 12)
+    status.textColor = .secondaryLabelColor
+    statusField = status
+    stack.addArrangedSubview(status)
+
+    // Confirm card
+    let card = NSStackView()
+    card.orientation = .vertical
+    card.alignment = .leading
+    card.spacing = 8
+    card.edgeInsets = NSEdgeInsets(top: 10, left: 10, bottom: 10, right: 10)
+    card.wantsLayer = true
+    card.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+    card.layer?.cornerRadius = 6
+
+    let tool = NSTextField(labelWithString: "")
+    tool.font = .systemFont(ofSize: 13, weight: .medium)
+    confirmToolField = tool
+    card.addArrangedSubview(tool)
+
+    let summary = NSTextField(wrappingLabelWithString: "")
+    summary.font = .systemFont(ofSize: 12)
+    summary.maximumNumberOfLines = 8
+    confirmSummaryField = summary
+    card.addArrangedSubview(summary)
+
+    let confButtons = NSStackView()
+    confButtons.orientation = .horizontal
+    confButtons.spacing = 10
+    let deny = NSButton(title: "拒绝", target: self, action: #selector(denyClicked))
+    let allow = NSButton(title: "允许", target: self, action: #selector(allowClicked))
+    allow.keyEquivalent = "\r"
+    deny.keyEquivalent = "\u{1b}"
+    confButtons.addArrangedSubview(NSView())
+    confButtons.addArrangedSubview(deny)
+    confButtons.addArrangedSubview(allow)
+    confirmAllowButton = allow
+    confirmDenyButton = deny
+    card.addArrangedSubview(confButtons)
+
+    confirmCard = card
+    card.isHidden = true
+    stack.addArrangedSubview(card)
+
+    let task = NSTextField(labelWithString: "无任务")
+    task.font = .systemFont(ofSize: 12)
+    taskField = task
+    stack.addArrangedSubview(task)
+
+    let actions = NSStackView()
+    actions.orientation = .horizontal
+    actions.spacing = 10
+    let abort = NSButton(title: "急停", target: self, action: #selector(abortClicked))
+    abort.isEnabled = false
+    abortButton = abort
+    let collapse = NSButton(title: "收起", target: self, action: #selector(collapseClicked))
+    actions.addArrangedSubview(abort)
+    actions.addArrangedSubview(collapse)
+    actions.addArrangedSubview(NSView())
+    stack.addArrangedSubview(actions)
+
+    win.contentView = stack
+    if let cv = win.contentView {
+      NSLayoutConstraint.activate([
+        stack.topAnchor.constraint(equalTo: cv.topAnchor),
+        stack.bottomAnchor.constraint(equalTo: cv.bottomAnchor),
+        stack.leadingAnchor.constraint(equalTo: cv.leadingAnchor),
+        stack.trailingAnchor.constraint(equalTo: cv.trailingAnchor),
+      ])
+    }
+    return win
+  }
+}
+
+extension HudController: NSWindowDelegate {
+  // windowWillClose is @objc on HudController
+}
+
+// Lazy singleton (main thread, from handleCommand).
+let hudController = HudController()
 
 // ---------------------------------------------------------------------------
 // Entry point

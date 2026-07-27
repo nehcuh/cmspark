@@ -697,6 +697,13 @@ export async function startMenuBarAgent(): Promise<void> {
   // Connect (non-blocking — data arrives via callbacks)
   companionClient.connect().catch(() => {})
 
+  // P3a HUD spike (dual-process): tray owns Swift UI; server owns manager.
+  // Requires CMSPARK_HUD_SPIKE=1 on BOTH tray and companion processes.
+  if (process.env.CMSPARK_HUD_SPIKE === "1") {
+    console.log("[tray] CMSPARK_HUD_SPIKE=1 — scheduling dual-process HUD spike")
+    scheduleHudSpikeDualProcess()
+  }
+
   // Start polling loop
   pollTimer = setInterval(() => {
     pollCompanionStatus().catch((err) => {
@@ -705,6 +712,132 @@ export async function startMenuBarAgent(): Promise<void> {
       }
     })
   }, POLL_INTERVAL_MS)
+}
+
+/**
+ * Dual-process HUD spike: open/hydrate on local Swift tray, then ask companion
+ * for a SecurityConfirmationManager id and race showHudConfirm → respond.
+ */
+function scheduleHudSpikeDualProcess(): void {
+  setTimeout(() => {
+    void runHudSpikeDualProcess().catch((err) => {
+      console.error("[tray] HUD spike failed:", err?.message || err)
+    })
+  }, 3000)
+}
+
+async function runHudSpikeDualProcess(): Promise<void> {
+  const tray = trayInstance
+  if (!tray?.openHudAsync || !tray.hydrateHud || !tray.showHudConfirm) {
+    console.warn("[tray] HUD spike skipped: tray lacks HUD methods (need Swift backend)")
+    return
+  }
+
+  const { buildSpikeHydrate, HUD_SPIKE_THREAD_ID, HUD_SPIKE_TASK_ID } = await import("./hud/spike")
+  const { HudShellRouter } = await import("./hud/shell-router")
+
+  const router = new HudShellRouter({
+    sendToHud: (m) => {
+      if (m && typeof m === "object" && (m as { cmd?: string }).cmd === "shell.standby") {
+        const s = m as { thread_id: string; active_shell: "hud" | "cockpit"; message: string }
+        tray.standbyHud?.(s.thread_id, s.active_shell, s.message)
+      }
+    },
+    sendToCockpit: () => {},
+  })
+  const anyTray = tray as { setShellRouter?: (r: import("./hud/shell-router").HudShellRouter | null) => void; onHudAbort?: (cb: any) => void }
+  anyTray.setShellRouter?.(router)
+  anyTray.onHudAbort?.((ev: { thread_id?: string; task_id?: string }) => {
+    console.log("[tray] hud.abort", ev)
+    companionClient?.sendAppMessage("hud.spike.abort", {
+      thread_id: ev.thread_id || HUD_SPIKE_THREAD_ID,
+      task_id: ev.task_id || HUD_SPIKE_TASK_ID,
+    })
+  })
+
+  console.log("[tray] HUD spike: openHudAsync…")
+  try {
+    await tray.openHudAsync(HUD_SPIKE_THREAD_ID, "spike", 2000)
+  } catch (err: any) {
+    console.error("[tray] HUD spike open failed:", err?.message || err)
+    console.error("[tray] Rebuild Swift tray after Task 4: npm run tray:rebuild (macOS)")
+    return
+  }
+
+  tray.hydrateHud(buildSpikeHydrate("connected"))
+  router.setActiveShell(HUD_SPIKE_THREAD_ID, "hud")
+  console.log("[tray] HUD spike: hydrated")
+
+  // Dual-process confirm via companion WS
+  const client = companionClient
+  if (!client || client.connectionState !== "connected") {
+    console.warn("[tray] companion not connected — UI-only spike (no manager race)")
+    // Local-only confirm so operator can still click Allow/Deny
+    const localId = `local-spike-${Date.now()}`
+    const r = await tray.showHudConfirm({
+      id: localId,
+      toolName: "evaluate",
+      riskLevel: "high",
+      summary: "UI-only spike (companion offline)",
+      timeoutMs: 30_000,
+    })
+    console.log("[tray] local HUD confirm:", r)
+    router.setActiveShell(HUD_SPIKE_THREAD_ID, "cockpit")
+    return
+  }
+
+  await new Promise<void>((resolve) => {
+    let settled = false
+    const finish = () => {
+      if (settled) return
+      settled = true
+      resolve()
+    }
+
+    const onMsg = (msg: any) => {
+      if (!msg || typeof msg !== "object") return
+      if (msg.type === "hud.spike.show_confirm") {
+        const id = String(msg.id || "")
+        if (!id) return
+        console.log("[tray] HUD spike: show confirm", id)
+        void tray.showHudConfirm!({
+          id,
+          toolName: String(msg.tool_name || "evaluate"),
+          riskLevel: String(msg.risk_level || "high"),
+          summary: String(msg.summary || "spike"),
+          timeoutMs: typeof msg.timeout_ms === "number" ? msg.timeout_ms : 45_000,
+        }).then((r) => {
+          client.sendAppMessage("hud.spike.confirm_response", {
+            id: r.id,
+            approved: r.approved,
+          })
+        })
+      }
+      if (msg.type === "hud.spike.done") {
+        console.log("[tray] HUD spike done:", msg)
+        // Standby after manager terminal
+        setTimeout(() => {
+          router.setActiveShell(HUD_SPIKE_THREAD_ID, "cockpit")
+          console.log("[tray] HUD spike: standby → cockpit")
+          finish()
+        }, 500)
+      }
+      if (msg.type === "hud.spike.error") {
+        console.error("[tray] HUD spike error from server:", msg.error)
+        finish()
+      }
+    }
+
+    client.onAppMessage(onMsg)
+    const ok = client.sendAppMessage("hud.spike.start", { timeout_ms: 45_000 })
+    if (!ok) {
+      console.error("[tray] failed to send hud.spike.start")
+      finish()
+      return
+    }
+    // Safety: don't hang menu-bar forever
+    setTimeout(finish, 60_000)
+  })
 }
 
 export async function stopMenuBarAgent(): Promise<void> {

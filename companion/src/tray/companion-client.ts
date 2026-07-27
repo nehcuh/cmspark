@@ -94,6 +94,8 @@ export class CompanionClient {
   private connectedCbs: Array<() => void> = []
   private disconnectedCbs: Array<() => void> = []
   private dataChangedCbs: Array<() => void> = []
+  /** Raw app-level messages (after auth). Used by HUD spike dual-process path. */
+  private appMessageCbs: Array<(msg: any) => void> = []
 
   // Cached data
   private cachedThreads: RecentThreadItem[] = []
@@ -286,6 +288,21 @@ export class CompanionClient {
   onConnected(cb: () => void): void { this.connectedCbs.push(cb) }
   onDisconnected(cb: () => void): void { this.disconnectedCbs.push(cb) }
   onDataChanged(cb: () => void): void { this.dataChangedCbs.push(cb) }
+  onAppMessage(cb: (msg: any) => void): void { this.appMessageCbs.push(cb) }
+
+  /**
+   * Fire-and-forget app message (authenticated). Used by HUD spike to talk to
+   * SecurityConfirmationManager on the server process without a request/response id.
+   */
+  sendAppMessage(type: string, params?: Record<string, any>): boolean {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.authenticated) return false
+    try {
+      this.ws.send(JSON.stringify({ type, ...(params || {}) }))
+      return true
+    } catch {
+      return false
+    }
+  }
 
   // --- Accessors for cached data ---
 
@@ -393,6 +410,13 @@ export class CompanionClient {
       this.fetchQuickActions().then(() => {
         this.dataChangedCbs.forEach(cb => cb())
       }).catch(() => {})
+    }
+
+    // Fan-out remaining app messages (HUD spike dual-process, etc.)
+    if (this.appMessageCbs.length > 0) {
+      for (const cb of this.appMessageCbs) {
+        try { cb(msg) } catch { /* never break message loop */ }
+      }
     }
   }
 
