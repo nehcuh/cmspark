@@ -73,6 +73,20 @@ export interface TrayConfirmResponse {
   approved: boolean
 }
 
+/** P3a HUD elevated confirm request (Swift HUD window; not tray popover). */
+export interface HudConfirmRequest {
+  id: string
+  toolName: string
+  riskLevel: string
+  summary: string
+  timeoutMs: number
+}
+
+export interface HudConfirmResponse {
+  id: string
+  approved: boolean
+}
+
 // ---------------------------------------------------------------------------
 // Unified interface
 // ---------------------------------------------------------------------------
@@ -103,6 +117,21 @@ export interface UnifiedTray {
   showConfirmDialog(req: TrayConfirmRequest): Promise<TrayConfirmResponse>
   /** Notify tray that a confirmation was resolved via another channel (close dialog). */
   cancelConfirm(id: string): void
+  /**
+   * P3a Native HUD spike — optional; only Swift implements for real.
+   * Non-Swift backends may omit (callers use optional chaining).
+   */
+  openHud?(threadId: string, reason?: "spike" | "debug" | "escalate" | "tray"): void
+  openHudAsync?(
+    threadId: string,
+    reason?: "spike" | "debug" | "escalate" | "tray",
+    timeoutMs?: number,
+  ): Promise<void>
+  hydrateHud?(snapshot: import("../hud/protocol").HudHydratePayload): void
+  showHudConfirm?(req: HudConfirmRequest): Promise<HudConfirmResponse>
+  cancelHudConfirm?(id: string): void
+  notifyHudConfirmResolved?(id: string, outcome: string): void
+  standbyHud?(threadId: string, activeShell: "hud" | "cockpit", message: string): void
   stop(): Promise<void>
 }
 

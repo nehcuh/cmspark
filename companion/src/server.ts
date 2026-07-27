@@ -244,6 +244,22 @@ export function applyTabNavigated(tabId: number, url: string): void {
 // securityConfirmations.respond(...) when simulating user approval/denial.
 export const securityConfirmations = new SecurityConfirmationManager()
 
+// N5 (P3a HUD spike): when a confirm becomes terminal, fan-out to tray popover
+// + HUD so multi-surface UI clears. WS origin already gets resolved via pending.send.
+// Spike scope = HUD + tray only; multi-client WS fan-out deferred (dual-review P4).
+// Wire ownership: server owns the manager singleton — do not construct a second manager.
+securityConfirmations.setOnTerminal(({ confirmationId, reason }) => {
+  try {
+    const tray = getTrayInstance()
+    if (!tray) return
+    tray.cancelConfirm(confirmationId)
+    tray.cancelHudConfirm?.(confirmationId)
+    tray.notifyHudConfirmResolved?.(confirmationId, reason)
+  } catch {
+    /* never break confirm resolve path */
+  }
+})
+
 // Audit item 8: tool-name patterns that signal destructive operations. Matching
 // tools bypass the server's trust_level and always require per-call confirmation
 // (manual mode). The patterns cover the common verbs across filesystem / shell /

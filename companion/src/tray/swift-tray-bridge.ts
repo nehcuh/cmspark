@@ -19,7 +19,27 @@ import {
   RecentThreadItem,
   TrayConfirmRequest,
   TrayConfirmResponse,
+  HudConfirmRequest,
+  HudConfirmResponse,
 } from "./tray-adapter"
+import {
+  encodeHudOpen,
+  encodeHudHydrate,
+  encodeHudConfirmRequest,
+  encodeHudConfirmCancel,
+  encodeHudConfirmResolved,
+  encodeShellStandby,
+  isHudReady,
+  isHudHeartbeat,
+  isHudPong,
+  isHudConfirmResponse,
+  isHudAbort,
+  isHudClosed,
+  parseSwiftLine,
+  type HudHydratePayload,
+  type HudConfirmResolvedPayload,
+} from "../hud/protocol"
+import type { HudShellRouter } from "../hud/shell-router"
 
 // ---------------------------------------------------------------------------
 // Binary management
@@ -133,6 +153,29 @@ export class SwiftTrayAdapter implements UnifiedTray {
     resolve: (r: TrayConfirmResponse) => void
     timer: NodeJS.Timeout
   }>()
+
+  /**
+   * P3a HUD elevated confirms (separate from tray popover pendingConfirms).
+   * Resolved by hud.confirm.response, cancelHudConfirm, or self-timeout.
+   */
+  private pendingHudConfirms = new Map<string, {
+    resolve: (r: HudConfirmResponse) => void
+    timer: NodeJS.Timeout
+  }>()
+
+  /** One-shot waiters for openHudAsync → first hud.ready. */
+  private hudReadyWaiters: Array<{
+    resolve: () => void
+    reject: (err: Error) => void
+    timer: NodeJS.Timeout
+  }> = []
+
+  /** Optional N2/N3 shell router (heartbeat / pong). Set from server spike wiring. */
+  private shellRouter: HudShellRouter | null = null
+
+  private hudAbortCallback: ((ev: { thread_id?: string; task_id?: string }) => void) | null = null
+  private hudClosedCallback: ((reason: string) => void) | null = null
+  private hudWindowOpen = false
 
   // Cached state for auto-restart
   private lastStatus: { status: string; wsConnected: boolean; pid: number | null } = {
@@ -267,6 +310,104 @@ export class SwiftTrayAdapter implements UnifiedTray {
     this.send({ cmd: "cancel-confirm", id })
   }
 
+  // --- P3a Native HUD spike ---
+
+  setShellRouter(router: HudShellRouter | null): void {
+    this.shellRouter = router
+  }
+
+  onHudAbort(callback: ((ev: { thread_id?: string; task_id?: string }) => void) | null): void {
+    this.hudAbortCallback = callback
+  }
+
+  onHudClosed(callback: ((reason: string) => void) | null): void {
+    this.hudClosedCallback = callback
+  }
+
+  openHud(threadId: string, reason: "spike" | "debug" | "escalate" | "tray" = "spike"): void {
+    this.send(encodeHudOpen({ thread_id: threadId, reason }))
+  }
+
+  /**
+   * Resolves on first `hud.ready` after send, or rejects after timeoutMs (default 2000).
+   */
+  openHudAsync(
+    threadId: string,
+    reason: "spike" | "debug" | "escalate" | "tray" = "spike",
+    timeoutMs = 2000,
+  ): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      const waiter = {
+        resolve: () => {
+          clearTimeout(waiter.timer)
+          resolve()
+        },
+        reject: (err: Error) => {
+          clearTimeout(waiter.timer)
+          reject(err)
+        },
+        timer: setTimeout(() => {
+          const idx = this.hudReadyWaiters.indexOf(waiter)
+          if (idx >= 0) this.hudReadyWaiters.splice(idx, 1)
+          reject(new Error("hud.ready timeout"))
+        }, timeoutMs),
+      }
+      this.hudReadyWaiters.push(waiter)
+      this.send(encodeHudOpen({ thread_id: threadId, reason }))
+    })
+  }
+
+  hydrateHud(snapshot: HudHydratePayload): void {
+    this.send(encodeHudHydrate(snapshot))
+  }
+
+  showHudConfirm(req: HudConfirmRequest): Promise<HudConfirmResponse> {
+    return new Promise<HudConfirmResponse>((resolve) => {
+      const timer = setTimeout(() => {
+        if (this.pendingHudConfirms.delete(req.id)) {
+          resolve({ id: req.id, approved: false })
+        }
+      }, req.timeoutMs + 1000)
+
+      this.pendingHudConfirms.set(req.id, { resolve, timer })
+      this.send(encodeHudConfirmRequest({
+        id: req.id,
+        tool_name: req.toolName,
+        risk_level: req.riskLevel,
+        summary: req.summary,
+        timeout_ms: req.timeoutMs,
+      }))
+    })
+  }
+
+  cancelHudConfirm(id: string): void {
+    const entry = this.pendingHudConfirms.get(id)
+    if (entry) {
+      clearTimeout(entry.timer)
+      this.pendingHudConfirms.delete(id)
+      entry.resolve({ id, approved: false })
+    }
+    this.send(encodeHudConfirmCancel({ id }))
+  }
+
+  notifyHudConfirmResolved(id: string, outcome: string): void {
+    const allowed: HudConfirmResolvedPayload["outcome"][] = [
+      "approved", "denied", "timeout", "disconnect", "unknown",
+    ]
+    const o = (allowed as string[]).includes(outcome)
+      ? (outcome as HudConfirmResolvedPayload["outcome"])
+      : "unknown"
+    this.send(encodeHudConfirmResolved({ id, outcome: o }))
+  }
+
+  standbyHud(threadId: string, activeShell: "hud" | "cockpit", message: string): void {
+    this.send(encodeShellStandby({
+      thread_id: threadId,
+      active_shell: activeShell,
+      message,
+    }))
+  }
+
   async stop(): Promise<void> {
     this.shuttingDown = true
     this.kill()
@@ -289,12 +430,9 @@ export class SwiftTrayAdapter implements UnifiedTray {
       })
 
       this.reader.on("line", (line) => {
-        let event: any
-        try {
-          event = JSON.parse(line)
-        } catch {
-          return
-        }
+        // Prefer parseSwiftLine so HUD + tray share non-throwing JSON decode.
+        const event = parseSwiftLine(line) as Record<string, unknown> | null
+        if (!event || typeof event !== "object") return
 
         if (event.type === "ready" && !ready) {
           ready = true
@@ -308,7 +446,7 @@ export class SwiftTrayAdapter implements UnifiedTray {
         }
 
         if (event.type === "confirm-response") {
-          // Swift emitted Allow/Deny/timeout. Resolve the matching pending entry.
+          // Swift tray popover: Allow/Deny/timeout.
           const id = typeof event.id === "string" ? event.id : ""
           const approved = event.approved === true
           const entry = id ? this.pendingConfirms.get(id) : undefined
@@ -317,6 +455,54 @@ export class SwiftTrayAdapter implements UnifiedTray {
             this.pendingConfirms.delete(id)
             entry.resolve({ id, approved })
           }
+        }
+
+        // --- P3a HUD inbound ---
+        if (isHudReady(event)) {
+          this.hudWindowOpen = true
+          const waiters = this.hudReadyWaiters.splice(0, this.hudReadyWaiters.length)
+          for (const w of waiters) {
+            clearTimeout(w.timer)
+            w.resolve()
+          }
+        }
+
+        if (isHudHeartbeat(event)) {
+          this.shellRouter?.noteHeartbeat(event.ts)
+        }
+
+        if (isHudPong(event)) {
+          this.shellRouter?.notePong(event.nonce, Date.now())
+        }
+
+        if (isHudConfirmResponse(event)) {
+          const entry = this.pendingHudConfirms.get(event.id)
+          if (entry) {
+            clearTimeout(entry.timer)
+            this.pendingHudConfirms.delete(event.id)
+            entry.resolve({ id: event.id, approved: event.approved })
+          }
+        }
+
+        if (isHudAbort(event)) {
+          try {
+            this.hudAbortCallback?.({
+              thread_id: event.thread_id,
+              task_id: event.task_id,
+            })
+          } catch {
+            /* never break line loop */
+          }
+        }
+
+        if (isHudClosed(event)) {
+          this.hudWindowOpen = false
+          try {
+            this.hudClosedCallback?.(event.reason)
+          } catch {
+            /* never break line loop */
+          }
+          // N4: close ≠ stop — do not kill process
         }
 
         if (event.type === "exit") {
