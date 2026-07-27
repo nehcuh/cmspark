@@ -88,6 +88,35 @@
 - 修法（commit `198bfe9`）：`create-dmg.sh` 在 `cp staging`（Step 3）和 `hdiutil create`（Step 4）之间加 Step 3.5：`codesign --force --deep --sign - --options runtime --entitlements <host.entitlements> "${APP_BUNDLE}"` + `codesign --verify` 硬门（失败 `exit 1`）+ 打印 CDHash/Identifier/flags 便于诊断。所有 step 标签从 `[X/5]` 改成 `[X/6]`。
 - 教训：① **打包脚本必须 codesign 整个 .app bundle**，不能只签内部 binary；TCC 看的是 bundle 级签名。② 诊断"TCC 反复弹已授权权限"先 `codesign -dv --verbose=4 /Applications/CMspark.app` 看 `flags=runtime` 是否在、`CDHash` 是否非空 —— 缺失就是 bundle 未签名。③ 长期解法仍是 Apple Developer ID + notarize（TCC 看 TeamID 不看 cdhash）；短期缓解：DMG 流程必须包含 `codesign --force --deep`。详见 [[tcc-cdhash-vs-activate]]。
 
+### Windows estop：死 PID 留下 ready.json tombstone → 心跳 stale 数天（2026-07-28）
+- 现象：`host_computer` / emergency-stop 报 `heartbeat stale (430532579ms)` 量级（约 5 天），estop 不可用。
+- 根因：`computer-estop.ps1` 写 `%TEMP%/cmspark-computer/estop-ready.json`；helper 进程死掉后 **tombstone 仍在**，TS 侧把旧 ready 当存活、用陈旧 mtime 算心跳。
+- 修法（`96548e1`）：读 ready 时检测 PID 是否存活；死 PID → 清 tombstone；spawn 前再清一次，避免复活后读到旧文件。
+- 教训：凡「文件心跳 / ready 标记」健康检查，**必须**附进程 liveness（PID + kill(0)/OpenProcess），不能只信 mtime；crash 后磁盘 artifact 会伪装成 healthy。
+- Files: `companion/src/computer/estop.ts`, `companion/tests/computer-estop.test.ts`
+
+### Side Panel `t.skills is not iterable`：skill.list 载荷非数组（2026-07-27）
+- 现象：扩展运行时 TypeError `t.skills is not iterable`（store / BottomBar / slash skills）。
+- 根因：`SET_SKILLS` 等路径把 **undefined/非数组** 当数组 spread/iterate；companion `skill.list` 异常或旧协议时 payload 形状漂移。
+- 修法（`0108fd4`）：`Array.isArray` 守卫 + 默认 `[]`（agentStore、useWebSocket、BottomBar、SlashCommandPopover、App）。
+- 教训：跨进程 list 载荷一律 **归一成数组再入 store**；禁止信任 wire 上「一定是 array」。
+
+### BottomBar「更多」被裁切 + 用户加载 dist-package 扩展（2026-07-27）
+- 现象：点「更多」看不到菜单项（像被遮挡/无选项）。
+- 根因链：① 父级 `overflow`/`overflowX:auto` 裁切 absolute 菜单；② InputArea 绘制序盖住菜单；③ **用户加载的是 `dist-package/...` 里的扩展，不是 `chrome-extension/build`** — 本地改 build 不生效。
+- 修法：菜单改 `position:fixed` + 视口定位（`2536320`/`725197f`）；验收前 **重打 Windows 包把扩展同步进 dist-package**（debug.log 被锁时可 stage 到 `dist-package-new`）。
+- 教训：修 UI 前先问/确认 extension 加载路径；packaged 用户路径与 monorepo `build/` 不是同一 artifact。
+
+### Enterprise L2：allowlist/task 授权 ≠ 跳过 forceConfirm（2026-07-27 A+B）
+- 现象：netsec 已 allowlist 仍每 op 弹 L2；用户期望 session 一次允许 / 全局 enterprise god-mode。
+- 根因：`shell_exec` / `netsec_port_scan` 走 `capabilityForceConfirm`；**`auto_approve_dangerous` 与 host session-trust 不自动覆盖 enterprise forceConfirm**。
+- 产品解：
+  - **A** thread-scoped enterprise session trust（per-family `netsec`|`shell`）；idle 30m + hard 8h from last **interactive** grant；auto-approve 不 touch 续期
+  - **B** `security.auto_approve_enterprise_tools`（default false；phrase gate；`FORBIDDEN_PACK_KEYS`）
+- Gate algebra **G1**：`mustInteract = (!skipConfirmation || forceConfirm) && !hostComputerTrustSkip && !enterpriseSkip`
+- 文档：`docs/decisions/v1.3/enterprise-session-trust-godmode-plan-2026-07-27.md`
+- 教训：多层安全「跳过」必须写清代数；allowlist/task auth/L2/forceConfirm/god-mode 不是同一开关。
+
 ## Reusable Patterns
 
 ### Broadcast pattern for cross-client actions
@@ -158,6 +187,16 @@
 - **N9**: macOS native first；Cockpit parity CI 全平台
 - **N10**: DualTrack 右轨 N≤8 + 内滚动，HUD **与** Cockpit 一致
 - **Spike wire 归属**: `SecurityConfirmationManager` + `onTerminal` 在 **`server.ts`**；menu-bar 不建第二 manager；spike fan-out 仅 HUD+tray（WS 多端 deferred）
+- **P3a 进度（2026-07-28）**: Task 1–6 源码在 main；Swift 源码有、SHA256 rebuild 待 macOS；Task 7 实现双评未做
+
+### Enterprise session trust (A) + global enterprise auto-approve (B)（2026-07-27）
+- **Why**: netsec/shell 在 allowlist 后仍每 op L2（`capabilityForceConfirm`）；用户需要 session 级与全局两档缓解，且不冲垮 pack/host 信任边界
+- **A**: `enterprise-session-trust.ts` — thread + family(`netsec`|`shell`)；交互 grant；idle 30m + hard 8h；SafetyStrip revoke；不因 auto-path 续期
+- **B**: `config.security.auto_approve_enterprise_tools` default false；phrase gate；`packs/types` FORBIDDEN
+- **G1**: enterpriseSkip 与 hostComputerTrustSkip 并列；`forceConfirm` 仍可要求交互，除非 A/B 显式 enterpriseSkip
+- **UI**: MinimalConfirm + ConfirmElevated 勾选 A；SettingsSlideout 开关 B
+- **Plan + ship**: `docs/decisions/v1.3/enterprise-session-trust-godmode-plan-2026-07-27.md`；commits `5c3f21b`/`c7924bc` + audit reviews
+- **Tradeoff**: B 是真 god-mode 子集（仅 enterprise tools），故意独立于 `auto_approve_dangerous`，避免误开全局危险自动批
 
 ### Quick Actions: delegation vs direct execution (2026-06-09)
 - **Decision**: Quick actions from tray no longer execute tools directly; instead they create a thread and broadcast to the extension, which starts a normal chat

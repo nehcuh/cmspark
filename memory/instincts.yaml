@@ -36,3 +36,31 @@ instincts:
     source_session: "2026-07-10 4 PR 的 kimi 终审"
     tags: [kimi, code-review, verification, methodology, pushback]
     applications: 4
+
+  - id: layered-skip-algebra-before-ux
+    pattern: "多层安全跳过(allowlist / task auth / forceConfirm / god-mode / session-trust)必须先写清代数再改 UX。cmspark enterprise: allowlist≠跳过 L2; mustInteract = (!skipConfirmation || forceConfirm) && !hostComputerTrustSkip && !enterpriseSkip。新开关独立命名(auto_approve_enterprise_tools vs auto_approve_dangerous), pack-forbidden, 交互 grant 才续期。"
+    confidence: 0.85
+    source_session: "2026-07-27 enterprise A+B netsec UX"
+    tags: [security, gate-algebra, enterprise, confirmation, ux]
+    applications: 1
+
+  - id: health-file-needs-pid-liveness
+    pattern: "文件心跳/ready.json 健康检查必须附进程 liveness(PID alive)。死进程留下的 tombstone 会用陈旧 mtime 伪装 healthy,导致 heartbeat stale 达数天。读 ready 时清死 PID;spawn 前再清。Windows estop ready.json 即此坑。"
+    confidence: 0.9
+    source_session: "2026-07-28 windows estop tombstone"
+    tags: [windows, process, heartbeat, tombstone, estop]
+    applications: 1
+
+  - id: verify-artifact-load-path
+    pattern: "修 UI/扩展前确认用户实际加载路径(dist-package / chrome-extension/build / 已装 .app)。改 monorepo build 对 packaged 用户零效果;验收前重打 package 或明确让用户 reload 正确目录。"
+    confidence: 0.85
+    source_session: "2026-07-27 BottomBar more menu dist-package"
+    tags: [extension, packaging, debugging, load-path]
+    applications: 1
+
+  - id: normalize-list-payloads-at-boundary
+    pattern: "跨进程 list 载荷入 store 前 Array.isArray 归一,默认 []。skill.list 等协议漂移时 undefined 会炸 for-of/spread(t.skills is not iterable)。守卫放 store reducer + wire handler 两侧。"
+    confidence: 0.8
+    source_session: "2026-07-27 skills not iterable"
+    tags: [typescript, store, websocket, defensive]
+    applications: 1

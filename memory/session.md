@@ -2,15 +2,46 @@
 
 ## Current Session
 
+### S19 (2026-07-27→28) [cmspark HUD spike 续 + UI 修 + enterprise A+B + Win package + estop]
+- **Native HUD P3a**：Task 1–6 源码已合 main（protocol/router/onTerminal/Node bridge/Swift HudController/`CMSPARK_HUD_SPIKE=1`）；**未** macOS rebuild SHA256；**未** Task 7 ship note + 实现双评
+- **UI 修**（用户加载 `dist-package` 扩展，非 `chrome-extension/build`）：
+  - BottomBar「更多」：overflow 裁切 + 绘制序 → `position:fixed` + 同步就绪构建（`2536320`/`725197f`）
+  - `t.skills is not iterable`：`SET_SKILLS` 非数组 → `Array.isArray` 守卫全路径（`0108fd4`）
+- **Enterprise netsec UX A+B**（多 agent 对抗 + Pi 门后过夜实现 Phase 1–4）：
+  - **A** thread-scoped enterprise session trust（family: netsec|shell）；idle 30m + hard 8h；交互 grant 才续期
+  - **B** `security.auto_approve_enterprise_tools`（default false；phrase gate；pack-forbidden）
+  - Gate G1：`mustInteract = (!skipConfirmation || forceConfirm) && !hostComputerTrustSkip && !enterpriseSkip`
+  - UI：MinimalConfirm/ConfirmElevated A 勾选；SettingsSlideout B；SafetyStrip revoke chip
+  - 文档：`docs/decisions/v1.3/enterprise-session-trust-godmode-plan-2026-07-27.md` + audit reviews
+- **Windows 打包**：新扩展打入 `dist-package`（debug.log 锁 → 曾 stage 到 `dist-package-new`；用户清理后全量重打）
+- **estop 心跳 stale ~430532579ms**：死 PID 留下 `%TEMP%/cmspark-computer/estop-ready.json` tombstone → 死 PID 清理 + 重生前清 tombstone（`96548e1`）
+- **HEAD**：`96548e1` on `origin/main`（与 remote 同步）
+- **下次**：
+  1. 重启 companion（含 estop fix）+ 加载最新 dist-package 扩展验 A+B UI
+  2. macOS：`build-tray.sh` → 更新 `SWIFT_TRAY_SHA256` → HUD Task 7 ship note + 实现双评
+  3. 可选：P0-D package hard-gates
+- Recorded: yes — estop tombstone / skills guard / more-menu+dist-package / enterprise A+B gate algebra
+
+### S18 (2026-07-27) [cmspark Native HUD P3a spike Task 1–6 source]
+- **Task 1–3,5 DONE**：protocol / router / onTerminal / Node bridge
+- **Task 4 SOURCE DONE**：`Tray.swift` HudController + handleCommand（**未** rebuild SHA256 — 需 macOS）
+- **Task 6 WIRED**：`CMSPARK_HUD_SPIKE=1`
+  - dual-process: menu-bar open/hydrate + WS `hud.spike.*`；server 管 manager
+  - in-process fallback if tray co-located
+  - helpers + tests in `hud/spike.ts`
+- **HEAD**：main ahead ~5（未 push）
+- **下次 macOS**：`bash companion/src/tray/build-tray.sh` → 更新 `SWIFT_TRAY_SHA256` → 双进程 env 真机 checklist → Task 7 ship note
+- Recorded: yes
+
 ### S17 (2026-07-27) [cmspark Side Panel UI 三模收尾 + Companion Native HUD P3 设计/grill/spike plan]
 - **UI 主路径**：P0–P2 + R1–R4 + S1 已落地（content-split、ContextStrip、tokens、meta slash、acceptance）；多批 commit + dual-review 门
 - **P3 Native HUD**：设计 brief Option A（phased）→ dual-review APPROVE_WITH_NITS → **N1–N10 grill lock**（Claude+Pi）→ **P3a spike plan** 写出 → **Task 0 plan dual-review** both APPROVE_WITH_NITS，nits 已折入
 - **权威文档**：
   - Lock: `docs/decisions/v1.3/companion-native-hud-n1n10-lock-2026-07-27.md`
-  - Plan: `docs/superpowers/plans/2026-07-27-companion-native-hud-p3a-spike.md`（从 **Task 1** 起）
+  - Plan: `docs/superpowers/plans/2026-07-27-companion-native-hud-p3a-spike.md`（**Task 1 DONE** → 从 **Task 2** 起）
   - Plan 双评: `docs/audit/reviews/native-hud-p3a-spike-plan-verdict-20260727-181620.json`
-- **HEAD**：`eb8a2cf` on `main`（已 push origin）— `docs(p3a): Native HUD spike plan + Task 0 dual-review gate`
-- **下次（他机 `git pull`）**：实现 spike Task 1→7；**禁止**在 Task 7 实现双评前做 dual-track 截图洪水；wire 归属 **server.ts** 管 manager/`onTerminal`
+- **HEAD**：`5a4d654` on `main`（ahead 1）— protocol module
+- **下次**：实现 spike Task 2→7；**禁止**在 Task 7 实现双评前做 dual-track 截图洪水；wire 归属 **server.ts** 管 manager/`onTerminal`
 - Recorded: yes — project-knowledge N1–N10 架构 + dual-review plan nits 坑
 
 ### S16 (2026-07-26) [cmspark macOS computer-use live 修复：点击假成功 → 真生效]
@@ -170,12 +201,12 @@
 
 ### P3a Companion Native HUD spike (from 2026-07-27)
 - status: active
-- context: N1–N10 LOCKED; spike plan dual-reviewed (Task 0 APPROVE_WITH_NITS, nits folded). UI three-mode path through S1 already on main.
-- next_action: `git pull` → implement plan Task 1 (`companion/src/hud/protocol.ts` + tests) through Task 6 env-gated spike; Task 7 ship note + **implementation** dual-review before any dual-track screenshots
+- context: N1–N10 LOCKED. Tasks 1–6 source on main (`f2ae96f`…`5a4d654` stack + S18/S19). Swift HudController in source; **macOS rebuild SHA256 still pending**. Task 7 ship note + implementation dual-review not done.
+- next_action: On macOS run `bash companion/src/tray/build-tray.sh` → update `SWIFT_TRAY_SHA256` → dual-process `CMSPARK_HUD_SPIKE=1` checklist → Task 7 ship note + **implementation** dual-review before dual-track screenshots
 - resume_doc: `docs/superpowers/plans/2026-07-27-companion-native-hud-p3a-spike.md`
 - product_lock: `docs/decisions/v1.3/companion-native-hud-n1n10-lock-2026-07-27.md`
-- head: `eb8a2cf` origin/main
-- updated: 2026-07-27
+- head: `96548e1` origin/main
+- updated: 2026-07-28
 
 ### P0-D package/release hard-gates (from 2026-07-25 diagnosis)
 - status: active

@@ -173,13 +173,13 @@ type HudAbortEvt = {
 
 ---
 
-### Task 1: Protocol module + unit tests (TDD)
+### Task 1: Protocol module + unit tests (TDD) — **DONE 2026-07-27**
 
 **Files:**
 - Create: `companion/src/hud/protocol.ts`
 - Create: `companion/tests/hud-protocol.test.ts`
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 ```ts
 // companion/tests/hud-protocol.test.ts
@@ -225,7 +225,7 @@ describe("hud protocol", () => {
 })
 ```
 
-- [ ] **Step 2: Run tests — expect FAIL**
+- [x] **Step 2: Run tests — expect FAIL**
 
 ```bash
 cd companion && npm test -- --test-name-pattern="hud protocol"
@@ -233,7 +233,7 @@ cd companion && npm test -- --test-name-pattern="hud protocol"
 
 Expected: module not found / FAIL.
 
-- [ ] **Step 3: Implement minimal `protocol.ts`**
+- [x] **Step 3: Implement minimal `protocol.ts`**
 
 ```ts
 // companion/src/hud/protocol.ts
@@ -319,13 +319,13 @@ export function isHudClosed(ev: unknown): ev is { type: "hud.closed"; reason: st
 }
 ```
 
-- [ ] **Step 4: Run tests — expect PASS**
+- [x] **Step 4: Run tests — expect PASS** — 6/6 (`node --test .test-dist/tests/hud-protocol.test.js`)
 
 ```bash
 cd companion && npm test -- --test-name-pattern="hud protocol"
 ```
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit** — `5a4d654 feat(hud): P3a spike protocol types and parsers`
 
 ```bash
 git add companion/src/hud/protocol.ts companion/tests/hud-protocol.test.ts
@@ -334,13 +334,13 @@ git commit -m "feat(hud): P3a spike protocol types and parsers"
 
 ---
 
-### Task 2: Shell router stub (N2/N3 numbers) + tests
+### Task 2: Shell router stub (N2/N3 numbers) + tests — **DONE 2026-07-27**
 
 **Files:**
 - Create: `companion/src/hud/shell-router.ts`
 - Create: `companion/tests/hud-shell-router.test.ts`
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 ```ts
 // companion/tests/hud-shell-router.test.ts
@@ -380,7 +380,7 @@ describe("HudShellRouter", () => {
 })
 ```
 
-- [ ] **Step 2: Implement `HudShellRouter`**
+- [x] **Step 2: Implement `HudShellRouter`**
 
 ```ts
 // companion/src/hud/shell-router.ts
@@ -458,13 +458,13 @@ export class HudShellRouter {
 }
 ```
 
-- [ ] **Step 3: Run tests — PASS**
+- [x] **Step 3: Run tests — PASS** — 8/8 shell-router + 6/6 protocol (14 total)
 
 ```bash
 cd companion && npm test -- --test-name-pattern="HudShellRouter"
 ```
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit** — `feat(hud): shell router stub with standby and N3 health numbers`
 
 ```bash
 git add companion/src/hud/shell-router.ts companion/tests/hud-shell-router.test.ts
@@ -473,7 +473,7 @@ git commit -m "feat(hud): shell router stub with standby and N3 health numbers"
 
 ---
 
-### Task 3: N5 broadcast-resolved hook on manager (minimal)
+### Task 3: N5 broadcast-resolved hook on manager (minimal) — **DONE 2026-07-27**
 
 **Files:**
 - Modify: `companion/src/security-confirmation.ts`
@@ -481,7 +481,7 @@ git commit -m "feat(hud): shell router stub with standby and N3 health numbers"
 
 **Intent:** When a confirm resolves (respond / respondFrom / timeout), invoke an optional `onTerminal` callback so bridge can fan-out `hud.confirm.resolved` + existing `cancelConfirm`. Do **not** rename wire `unknown`.
 
-- [ ] **Step 1: Write failing test**
+- [x] **Step 1: Write failing test**
 
 ```ts
 it("invokes onTerminal once when respond wins", async () => {
@@ -504,7 +504,7 @@ it("invokes onTerminal once when respond wins", async () => {
 })
 ```
 
-- [ ] **Step 2: Implement `setOnTerminal` / call from resolve paths**
+- [x] **Step 2: Implement `setOnTerminal` / call from resolve paths**
 
 In `SecurityConfirmationManager`:
 
@@ -543,7 +543,7 @@ Wire `finalize` into **every** path that deletes pending and calls `resolve(...)
 
 Late `respond` / `respondFrom` that return `false` / `outcome: "unknown"` must **not** call `finalize` again. Keep wire symbol **`unknown`** — do not invent `already_resolved`.
 
-- [ ] **Step 3: Tests PASS; commit**
+- [x] **Step 3: Tests PASS; commit** — 7/7 broadcast + origin suite green; call sites: respond, respondFrom (+nonce_locked), timeout, rejectAll, rejectForWorker
 
 ```bash
 git add companion/src/security-confirmation.ts companion/tests/security-confirmation-broadcast.test.ts
@@ -552,12 +552,12 @@ git commit -m "feat(security): onTerminal hook for multi-surface confirm fan-out
 
 ---
 
-### Task 4: Swift — lazy HUD window + cmd handlers
+### Task 4: Swift — lazy HUD window + cmd handlers — **SOURCE DONE 2026-07-27** (hash rebuild = macOS)
 
 **Files:**
 - Modify: `companion/src/tray/Tray.swift`
 
-- [ ] **Step 1: Add `HudController` class** (same file as `PairingController` pattern — reuse `isReleasedWhenClosed = false`)
+- [x] **Step 1: Add `HudController` class** (same file as `PairingController` pattern — reuse `isReleasedWhenClosed = false`)
 
 Window contents (spike UI only):
 
@@ -569,7 +569,7 @@ Window contents (spike UI only):
 | Task line | goal + status or "无任务" |
 | Actions | **急停** (always enabled when task running), **收起** (close window ≠ quit) |
 
-- [ ] **Step 2: Extend `handleCommand`**
+- [x] **Step 2: Extend `handleCommand`**
 
 ```swift
 case "hud.open":
@@ -597,7 +597,7 @@ case "hud.close":
   hudController.hide()
 ```
 
-- [ ] **Step 3: Emit events**
+- [x] **Step 3: Emit events** (source)
 
 - On first successful open: `{"type":"hud.ready"}`  
 - Heartbeat timer every **1s** **only while the HUD window is visible** (`isVisible` / order-front). Stop timer on hide/close. Do **not** run a process-lifetime 1s timer in spike. (Optional: also on `NSWindow.didBecomeKeyNotification` to restart if needed.)  
@@ -606,7 +606,7 @@ case "hud.close":
 - User closes window → `{"type":"hud.closed","reason":"user"}` — **do not** terminate `NSApplication`
 - `hud.hydrate` with empty `dual_track.conclusions` / `steps` must be a **no-op** on the rails (do not crash)
 
-- [ ] **Step 4: Build + update hash**
+- [ ] **Step 4: Build + update hash** — **pending macOS** (`bash companion/src/tray/build-tray.sh` + paste SHA256)
 
 ```bash
 # Run from repo root. Prefer the SHA256 printed by the build script itself.
@@ -634,13 +634,14 @@ git commit -m "feat(hud): Swift lazy HUD window and spike protocol handlers"
 
 ---
 
-### Task 5: Node bridge — send/receive HUD messages
+### Task 5: Node bridge — send/receive HUD messages — **DONE 2026-07-27** (Task 4 Swift UI still open)
 
 **Files:**
 - Modify: `companion/src/tray/swift-tray-bridge.ts`
 - Modify: `companion/src/tray/tray-adapter.ts` (interface stubs)
+- Modify: `companion/src/server.ts` (onTerminal wire)
 
-- [ ] **Step 1: Add methods on `SwiftTrayAdapter`**
+- [x] **Step 1: Add methods on `SwiftTrayAdapter`**
 
 ```ts
 openHud(threadId: string, reason: "spike" | "debug" = "spike"): void {
@@ -683,7 +684,7 @@ standbyHud(threadId: string, activeShell: "hud" | "cockpit", message: string): v
 }
 ```
 
-- [ ] **Step 2: Handle stdout lines** in existing line parser:
+- [x] **Step 2: Handle stdout lines** in existing line parser:
 
 ```ts
 case "hud.ready": /* set flag; resolve open waiters if any */
@@ -694,7 +695,7 @@ case "hud.abort": /* forward to actionCallback or dedicated abortCallback */
 case "hud.closed": /* mark window closed; do not kill process */
 ```
 
-- [ ] **Step 3: Wire `onTerminal` in `server.ts` (owner of the manager singleton)**
+- [x] **Step 3: Wire `onTerminal` in `server.ts` (owner of the manager singleton)**
 
 **Wire ownership (locked for spike):**
 
@@ -719,13 +720,13 @@ securityConfirmations.setOnTerminal(({ confirmationId, reason }) => {
 })
 ```
 
-- [ ] **Step 4: Integrity test still green**
+- [x] **Step 4: Integrity test still green** — 3/4 integrity pass; symlink case EPERM on Windows (env), not regression
 
 ```bash
 cd companion && npm test -- --test-name-pattern="integrity|swift-tray"
 ```
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit** — `feat(hud): Node bridge for HUD open/hydrate/confirm/standby`
 
 ```bash
 git add companion/src/tray/swift-tray-bridge.ts companion/src/tray/tray-adapter.ts companion/src/server.ts
@@ -734,14 +735,16 @@ git commit -m "feat(hud): Node bridge for HUD open/hydrate/confirm/standby"
 
 ---
 
-### Task 6: Debug entry + one real confirm round-trip
+### Task 6: Debug entry + one real confirm round-trip — **WIRED 2026-07-27** (manual macOS checklist open)
 
 **Files:**
-- Modify: **`companion/src/server.ts`** (owns manager + onTerminal + confirm race)
-- Optional: `companion/src/menu-bar-agent.ts` / tray menu only if it can **forward** a debug action to server without owning confirms
+- Create: `companion/src/hud/spike.ts`
+- Modify: **`companion/src/server.ts`** (owns manager + onTerminal + confirm race + `hud.spike.*` WS)
+- Modify: `companion/src/menu-bar-agent.ts` (dual-process UI driver)
+- Modify: `companion/src/tray/companion-client.ts` (`sendAppMessage` / `onAppMessage`)
 - Gate: `process.env.CMSPARK_HUD_SPIKE === "1"`
 
-- [ ] **Step 1: Env-gated spike open** (server-side helper, callable from debug menu or CLI log trigger)
+- [x] **Step 1: Env-gated spike open** (server-side helper + dual-process tray driver)
 
 When triggered:
 
@@ -751,15 +754,11 @@ When triggered:
 4. Race: HUD promise vs manager timeout (reuse tray pattern at `server.ts` ~1175–1361)  
 5. First win → `respond`  
 
-- [ ] **Step 2: Abort path**
+- [x] **Step 2: Abort path** — tray `onHudAbort` → `hud.spike.abort` log on server (no real CU task)
 
-On `hud.abort` event: log + call existing computer-task abort helper if a spike task id is registered; else emit WS `computer.task.abort` mock log. Spike may use a **fake running flag** on hydrate without a real CU task.
+- [x] **Step 3: Standby path** — after `hud.spike.done`, menu-bar `setActiveShell(…, "cockpit")` → `shell.standby`
 
-- [ ] **Step 3: Standby path**
-
-Second debug action or auto after 5s: `router.setActiveShell(thread, "cockpit")` → HUD receives `shell.standby` → confirm card hidden, status line shows message.
-
-- [ ] **Step 4: Manual verification checklist** (operator fills)
+- [ ] **Step 4: Manual verification checklist** (operator fills — needs rebuilt Swift binary on macOS)
 
 ```
 [ ] CMSPARK_HUD_SPIKE=1 companion start — tray appears
@@ -776,7 +775,7 @@ Second debug action or auto after 5s: `router.setActiveShell(thread, "cockpit")`
 [ ] Integrity: restart after rebuild with updated SHA256
 ```
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit** — combined with Task 4 source: `feat(hud): Swift lazy HUD + env-gated dual-process spike`
 
 ```bash
 git add companion/src/server.ts companion/src/menu-bar-agent.ts
