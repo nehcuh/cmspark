@@ -28,6 +28,9 @@ export interface EstopFsLike {
   rmSync(p: string, opts?: { force?: boolean }): unknown
 }
 
+/** Optional process liveness probe (injectable for tests). */
+export type EstopProcessAlive = (pid: number) => boolean
+
 export interface EstopReadyFile {
   pid?: number
   hotkeyOk?: boolean
@@ -47,6 +50,8 @@ export interface EstopCheckDeps {
   /** Override the cmspark-computer temp dir (tests). */
   dir?: string
   maxAgeMs?: number
+  /** Return true if the helper PID is still a live process. */
+  isProcessAlive?: EstopProcessAlive
 }
 
 export const ESTOP_HEARTBEAT_MAX_AGE_MS = 3000
@@ -63,11 +68,32 @@ function fsOf(deps: EstopCheckDeps): EstopFsLike {
   return deps.fs ?? (fs as unknown as EstopFsLike)
 }
 
+function defaultIsProcessAlive(pid: number): boolean {
+  if (!Number.isFinite(pid) || pid <= 0) return false
+  try {
+    // signal 0 = existence check; throws ESRCH if gone (Windows too on Node)
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** Remove ready.json tombstone left by a killed helper (finally may not run). */
+export function clearEstopReady(deps: EstopCheckDeps = {}): void {
+  try {
+    fsOf(deps).rmSync(estopReadyPath(deps.dir), { force: true })
+  } catch {
+    /* best-effort */
+  }
+}
+
 /** One-shot readiness check — never throws (a broken helper = NOT ready). */
 export function checkEstopReady(deps: EstopCheckDeps = {}): EstopStatus {
   const f = fsOf(deps)
   const now = deps.now ?? (() => Date.now())
   const maxAge = deps.maxAgeMs ?? ESTOP_HEARTBEAT_MAX_AGE_MS
+  const isAlive = deps.isProcessAlive ?? defaultIsProcessAlive
   let raw: string
   try {
     raw = f.readFileSync(estopReadyPath(deps.dir), "utf8")
@@ -82,6 +108,15 @@ export function checkEstopReady(deps: EstopCheckDeps = {}): EstopStatus {
   }
   if (ready.hotkeyOk !== true) {
     return { ok: false, reason: "estop helper reports hotkey registration failed", ready }
+  }
+  // Dead PID + leftover ready.json (kill -9 / taskkill) is the common "stale
+  // for days" failure mode — surface it explicitly before age math.
+  if (typeof ready.pid === "number" && !isAlive(ready.pid)) {
+    return {
+      ok: false,
+      reason: `estop helper process not running (pid ${ready.pid} dead; ready.json is a tombstone)`,
+      ready,
+    }
   }
   const hb = typeof ready.heartbeat === "number" ? ready.heartbeat : 0
   const age = now() - hb
@@ -115,6 +150,11 @@ export function clearEstopFlag(deps: EstopCheckDeps = {}): void {
 
 /** Production spawn: detached powershell running computer-estop.ps1. */
 export function spawnEstopHelper(scriptPath: string = resolveWinScript("computer-estop.ps1")): void {
+  if (!fs.existsSync(scriptPath)) {
+    // Fail loud into preflight: missing ready file after spawn attempts.
+    console.error(`[estop] computer-estop.ps1 not found: ${scriptPath}`)
+    return
+  }
   const ps = process.env.SystemRoot
     ? path.join(process.env.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
     : "powershell.exe"
@@ -129,7 +169,9 @@ export function spawnEstopHelper(scriptPath: string = resolveWinScript("computer
   // kills the whole daemon (crash.log 2026-07-21). Swallow it here: the
   // preflight's ready-file polling already surfaces "helper never came up" as
   // a fail-closed EMERGENCY_STOP_UNAVAILABLE refusal.
-  child.on("error", () => { /* surfaced via preflight polling — see above */ })
+  child.on("error", (err) => {
+    console.error(`[estop] spawn failed: ${err.message} (script=${scriptPath})`)
+  })
   child.unref()
 }
 
@@ -145,14 +187,21 @@ export interface EnsureEstopDeps extends EstopCheckDeps {
  * Preflight gate: if the helper is not ready, spawn it and poll until its
  * first heartbeat lands. Returns the last status — callers refuse the task
  * on !ok (EMERGENCY_STOP_UNAVAILABLE).
+ *
+ * Critical: a dead helper often leaves estop-ready.json behind (taskkill
+ * skips the ps1 `finally` cleanup). Without clearing that tombstone, spawn
+ * + poll keeps reading the same multi-day-stale heartbeat and never recovers.
  */
 export async function ensureEstopHelper(deps: EnsureEstopDeps = {}): Promise<EstopStatus> {
   const first = checkEstopReady(deps)
   if (first.ok) return first
+  // Drop tombstone / corrupt ready so the next Write-Heartbeat is the only file.
+  clearEstopReady(deps)
   const spawnHelper = deps.spawnHelper ?? (() => spawnEstopHelper())
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)))
-  const attempts = deps.attempts ?? 8
-  const intervalMs = deps.intervalMs ?? 350
+  // ~8 * 350ms ≈ 2.8s was tight when powershell cold-starts Add-Type; give more.
+  const attempts = deps.attempts ?? 20
+  const intervalMs = deps.intervalMs ?? 400
   try {
     spawnHelper()
   } catch {
@@ -163,6 +212,21 @@ export async function ensureEstopHelper(deps: EnsureEstopDeps = {}): Promise<Est
     await sleep(intervalMs)
     last = checkEstopReady(deps)
     if (last.ok) return last
+  }
+  // Last-ditch: one more spawn if still missing (first spawn may have raced
+  // with a dying shell that re-deleted ready.json in its finally).
+  if (!last.ok) {
+    try {
+      clearEstopReady(deps)
+      spawnHelper()
+    } catch {
+      /* ignore */
+    }
+    for (let i = 0; i < 10; i++) {
+      await sleep(intervalMs)
+      last = checkEstopReady(deps)
+      if (last.ok) return last
+    }
   }
   return last
 }

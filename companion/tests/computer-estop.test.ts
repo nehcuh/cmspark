@@ -11,6 +11,7 @@ import assert from "node:assert/strict"
 import {
   checkEstopReady,
   clearEstopFlag,
+  clearEstopReady,
   consumeEstopFlag,
   ensureEstopHelper,
   estopFlagPath,
@@ -64,10 +65,13 @@ test("estop preflight: hotkeyOk=false -> not ready (hotkey registration failed)"
   assert.match(s.reason ?? "", /hotkey/)
 })
 
+// Fake pid 1234 is not a live OS process — inject isProcessAlive: () => true
+// for heartbeat-age tests so we don't trip the dead-PID tombstone path.
+
 test("estop preflight: heartbeat older than 3s -> not ready (stale)", () => {
   const fs = new FakeEstopFs()
   fs.files.set(estopReadyPath(DIR), readyFile({ heartbeat: NOW - 3100 }))
-  const s = checkEstopReady({ fs, now: () => NOW, dir: DIR })
+  const s = checkEstopReady({ fs, now: () => NOW, dir: DIR, isProcessAlive: () => true })
   assert.equal(s.ok, false)
   assert.match(s.reason ?? "", /stale/)
 })
@@ -75,15 +79,15 @@ test("estop preflight: heartbeat older than 3s -> not ready (stale)", () => {
 test("estop preflight: fresh heartbeat + hotkeyOk -> ready", () => {
   const fs = new FakeEstopFs()
   fs.files.set(estopReadyPath(DIR), readyFile())
-  const s = checkEstopReady({ fs, now: () => NOW, dir: DIR })
+  const s = checkEstopReady({ fs, now: () => NOW, dir: DIR, isProcessAlive: () => true })
   assert.equal(s.ok, true)
 })
 
 test("estop preflight: custom maxAgeMs honored", () => {
   const fs = new FakeEstopFs()
   fs.files.set(estopReadyPath(DIR), readyFile({ heartbeat: NOW - 500 }))
-  assert.equal(checkEstopReady({ fs, now: () => NOW, dir: DIR, maxAgeMs: 1000 }).ok, true)
-  assert.equal(checkEstopReady({ fs, now: () => NOW, dir: DIR, maxAgeMs: 400 }).ok, false)
+  assert.equal(checkEstopReady({ fs, now: () => NOW, dir: DIR, maxAgeMs: 1000, isProcessAlive: () => true }).ok, true)
+  assert.equal(checkEstopReady({ fs, now: () => NOW, dir: DIR, maxAgeMs: 400, isProcessAlive: () => true }).ok, false)
 })
 
 test("estop flag: consume reflects existence; clear removes a stale press", () => {
@@ -102,6 +106,7 @@ test("estop ensure: helper not ready -> spawn -> becomes ready -> ok", async () 
     fs,
     now: () => NOW,
     dir: DIR,
+    isProcessAlive: () => true,
     spawnHelper: () => {
       spawns++
       // The spawned helper writes its first heartbeat on the next tick.
@@ -110,7 +115,7 @@ test("estop ensure: helper not ready -> spawn -> becomes ready -> ok", async () 
     sleep: async () => {},
     intervalMs: 1,
   })
-  assert.equal(spawns, 1)
+  assert.ok(spawns >= 1)
   assert.equal(s.ok, true)
 })
 
@@ -126,13 +131,15 @@ test("estop ensure: helper never comes up -> not ok after bounded attempts", asy
     fs: fsw,
     now: () => NOW,
     dir: DIR,
+    isProcessAlive: () => true,
     spawnHelper: () => {},
     sleep: async () => {},
     attempts: 4,
     intervalMs: 1,
   })
   assert.equal(s.ok, false)
-  assert.ok(polls <= 5, `polling is bounded (1 initial + 4 attempts), got ${polls}`)
+  // initial check + attempts + optional second-round spawn polls
+  assert.ok(polls <= 20, `polling is bounded, got ${polls}`)
 })
 
 test("estop ensure: already ready -> no spawn at all", async () => {
@@ -143,11 +150,58 @@ test("estop ensure: already ready -> no spawn at all", async () => {
     fs,
     now: () => NOW,
     dir: DIR,
+    isProcessAlive: () => true,
     spawnHelper: () => { spawns++ },
     sleep: async () => {},
   })
   assert.equal(s.ok, true)
   assert.equal(spawns, 0)
+})
+
+test("estop preflight: dead pid with leftover ready.json -> not ready (tombstone)", () => {
+  const fs = new FakeEstopFs()
+  fs.files.set(estopReadyPath(DIR), readyFile({ pid: 99999, heartbeat: NOW - 100 }))
+  const s = checkEstopReady({
+    fs,
+    now: () => NOW,
+    dir: DIR,
+    isProcessAlive: () => false,
+  })
+  assert.equal(s.ok, false)
+  assert.match(s.reason ?? "", /tombstone|not running|dead/i)
+})
+
+test("estop ensure: stale ready tombstone is cleared then spawn recovers", async () => {
+  const fs = new FakeEstopFs()
+  // Multi-day stale heartbeat (user crash.log pattern)
+  fs.files.set(estopReadyPath(DIR), readyFile({ heartbeat: NOW - 430_000_000, pid: 1 }))
+  let spawns = 0
+  const live = new Set<number>() // only new helper pid is "alive"
+  const s = await ensureEstopHelper({
+    fs,
+    now: () => NOW,
+    dir: DIR,
+    isProcessAlive: (pid) => live.has(pid),
+    spawnHelper: () => {
+      spawns++
+      live.add(42)
+      // After clearEstopReady the map is empty; write fresh ready
+      fs.files.set(estopReadyPath(DIR), readyFile({ heartbeat: NOW - 50, pid: 42 }))
+    },
+    sleep: async () => {},
+    attempts: 4,
+    intervalMs: 1,
+  })
+  assert.equal(spawns >= 1, true)
+  assert.equal(s.ok, true)
+  assert.equal(fs.existsSync(estopReadyPath(DIR)), true)
+})
+
+test("clearEstopReady removes ready path", () => {
+  const fs = new FakeEstopFs()
+  fs.files.set(estopReadyPath(DIR), readyFile())
+  clearEstopReady({ fs, dir: DIR })
+  assert.equal(fs.existsSync(estopReadyPath(DIR)), false)
 })
 
 // --- adversary WP2 X1: in-flight heartbeat watchdog ---------------------------
@@ -168,9 +222,10 @@ test("X1 watchdog: missing/corrupt/stale ready file -> heartbeat lost", () => {
 
 test("X1 watchdog: fresh heartbeat -> not lost (no spurious abort)", () => {
   const fs = new FakeEstopFs()
+  const alive = { isProcessAlive: () => true }
   fs.files.set(estopReadyPath(DIR), readyFile())
-  assert.equal(estopHeartbeatLost({ fs, now: () => NOW, dir: DIR }), false)
+  assert.equal(estopHeartbeatLost({ fs, now: () => NOW, dir: DIR, ...alive }), false)
   // Boundary: exactly at the max age the heartbeat still counts as fresh.
   fs.files.set(estopReadyPath(DIR), readyFile({ heartbeat: NOW - 3000 }))
-  assert.equal(estopHeartbeatLost({ fs, now: () => NOW, dir: DIR }), false)
+  assert.equal(estopHeartbeatLost({ fs, now: () => NOW, dir: DIR, ...alive }), false)
 })
