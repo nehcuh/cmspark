@@ -479,7 +479,10 @@ export function useWebSocket() {
         }
 
         case "thread.list":
-          dispatch({ type: "SET_THREADS", threads: msg.threads })
+          dispatch({
+            type: "SET_THREADS",
+            threads: Array.isArray(msg.threads) ? msg.threads : [],
+          })
           if (msg.threads.length === 0) {
             // Empty state — auto-create a blank thread. Critically, do the UI
             // update optimistically (ADD_THREAD + SET_ACTIVE_THREAD) BEFORE
