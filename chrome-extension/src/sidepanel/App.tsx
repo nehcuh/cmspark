@@ -4,8 +4,8 @@ import { Component, useState, useRef, useCallback, useEffect } from "react"
 import { useWebSocket } from "./hooks/useWebSocket"
 import { useCapabilityMode } from "./hooks/useCapabilityMode"
 import { ChatView } from "./components/ChatView"
-import { ComputerTaskBar } from "./components/ComputerTaskBar"
 import { SafetyStrip } from "./components/SafetyStrip"
+import { ContextStrip } from "./components/ContextStrip"
 import { ThreadList } from "./components/ThreadList"
 import { BottomBar } from "./components/BottomBar"
 import { FleetStrip } from "./components/FleetStrip"
@@ -14,15 +14,7 @@ import { McpServerForm } from "./components/McpServerForm"
 import { SlashCommandPopover } from "./components/SlashCommandPopover"
 import { SkillCraftPanel } from "./components/SkillCraftPanel"
 import { NotebooklmImporterPanel } from "./components/NotebooklmImporterPanel"
-import { Modal } from "./components/ui/Modal"
 import { AgentStoreProvider, useAgentStore } from "./store/agentStore"
-import {
-  canOfferComputerSessionTrust,
-  canOfferThreadTrust,
-  computerSessionTrustHint,
-  threadTrustHint,
-} from "./utils/apps-utils"
-import { previewImageSafe } from "./utils/computer-utils"
 import type { ConnectionState, CapabilityLevel, SkillMeta, FileAttachment } from "./types"
 import { tokens } from "./ui/tokens"
 import { ModeBadge } from "./ui/ModeBadge"
@@ -39,6 +31,7 @@ import {
   IconAttach,
   IconAlert,
   IconSpinner,
+  IconMore,
 } from "./ui/icons"
 
 // Error Boundary — catches rendering errors to prevent white screen
@@ -61,9 +54,9 @@ class ErrorBoundary extends Component<{ children: React.ReactNode }, { error: Er
           fontSize: 13,
           color: "#333",
         }}>
-          <h3 style={{ color: "#F44336", marginBottom: 12 }}>界面渲染错误</h3>
+          <h3 style={{ color: tokens.danger, marginBottom: 12 }}>界面渲染错误</h3>
           <pre style={{
-            background: "#f5f5f5",
+            background: tokens.bgMuted,
             padding: 12,
             borderRadius: 6,
             fontSize: 11,
@@ -80,10 +73,10 @@ class ErrorBoundary extends Component<{ children: React.ReactNode }, { error: Er
             style={{
               marginTop: 12,
               padding: "6px 16px",
-              border: "1px solid #4A90D9",
+              border: `1px solid ${tokens.accent}`,
               borderRadius: 6,
-              background: "#fff",
-              color: "#4A90D9",
+              background: tokens.bgElevated,
+              color: tokens.accent,
               cursor: "pointer",
               fontSize: 12,
             }}
@@ -132,6 +125,8 @@ function AppContent() {
   }, [])
   const { level, badgeLabel } = useCapabilityMode(onEscalate)
   const isComputer = level === "computer"
+  const isBrowser = level === "browser"
+  const hasPendingConfirm = appState.pendingSecurityConfirmations.length > 0
 
   // P1: auto-open Cockpit when entering L2 (openOrFocus is idempotent)
   useEffect(() => {
@@ -152,18 +147,23 @@ function AppContent() {
         onCraft={() => setCraftOpen(true)}
         onToggleLogs={() => setShowLogs(!showLogs)}
         onOpenNotebooklmImporter={() => setNbImporterOpen(true)}
+        onToast={(msg) => {
+          setToast(msg)
+          setTimeout(() => setToast(""), 4000)
+        }}
       />
-      {isComputer && <SafetyStrip />}
+      {/* §4: L1 ContextStrip — current tab + user-only「展开工作区」 */}
+      {isBrowser && <ContextStrip />}
+      {/* P1 content-split: SafetyStrip for L2 task AND any pending confirm (L0/L1 MinimalConfirm) */}
+      {(isComputer || hasPendingConfirm) && <SafetyStrip />}
       <ChatView />
-      {/* L2: full timeline lives in Cockpit; Panel keeps SafetyStrip only */}
-      {!isComputer && <ComputerTaskBar />}
+      {/* P1: ComputerTaskBar relocated — step timeline only in Cockpit */}
       <FleetStrip />
       <BottomBar capabilityLevel={level} />
       <InputArea capabilityLevel={level} />
       {showLogs && <LogBar onClose={() => setShowLogs(false)} />}
       <SettingsSlideout />
-      {/* L2: full confirm in Cockpit; Panel uses MinimalConfirm in SafetyStrip */}
-      {!isComputer && <SecurityConfirmationDialog />}
+      {/* P1 D10′: full confirm dialog removed from Panel — Cockpit ConfirmElevated + MinimalConfirm */}
       <McpServerForm />
       {craftOpen && <SkillCraftPanel onClose={() => setCraftOpen(false)} />}
       {nbImporterOpen && <NotebooklmImporterPanel onClose={() => setNbImporterOpen(false)} />}
@@ -181,406 +181,44 @@ function AppContent() {
   )
 }
 
-function SecurityConfirmationDialog() {
-  const { state, dispatch } = useAgentStore()
-  const request = state.pendingSecurityConfirmations[0]
-
-  const relevantDomain = request?.relevant_domains?.[0]
-  const relevantApp = request?.relevant_apps?.[0]
-  const nonceChallenge = request?.nonce_challenge
-  // Phase 1 W7 + App tab WP4 (W1 follow-up): thread-scoped trust applies to
-  // host_read (read-only lock) AND host_app L0 no-arg launches (owner decision
-  // 2, W7 Blocker-1 "app-launch" exception). Writes always require biometric
-  // per call — Q1 ship blocker; the checkbox stays hidden for host_write even
-  // when relevant_apps is set.
-  const canThreadTrust = canOfferThreadTrust(request?.tool_name, relevantApp)
-  const canSessionTrust = canOfferComputerSessionTrust(request?.tool_name, relevantApp)
-  const [whitelistMode, setWhitelistMode] = useState<"none" | "exact" | "wildcard">("none")
-  const [threadTrust, setThreadTrust] = useState(false)
-  const [sessionTrust, setSessionTrust] = useState(false)
-  // Phase 1 W9: Linux nonce input. User must TYPE the code (no paste).
-  const [nonceInput, setNonceInput] = useState("")
-  const [pasteBlocked, setPasteBlocked] = useState(false)
-  const nonceMatches = !!nonceChallenge && nonceInput.toUpperCase() === nonceChallenge.toUpperCase()
-  // WP4 (WI-3): L2 标注截图渲染失败时静默回退纯文本——确认门永不被图片阻塞。
-  const [previewImgFailed, setPreviewImgFailed] = useState(false)
-
-  // Reset selection whenever the active confirmation changes — otherwise the
-  // radio from a previous prompt would bleed into the next one.
-  //
-  // host_computer session-trust defaults ON (user test 2026-07-26 #wrsihk /
-  // #ykazn8): without it every LLM task-split re-prompts ("反复批准"), and
-  // users never notice the opt-in checkbox. Checking is still explicit —
-  // uncheck before Allow if you want one-shot only. Grill Q2 remains satisfied.
-  // H10/M18 (audit): keyboard a11y (focus trap + Escape→deny + aria-modal +
-  // focus restore) now lives in the shared <Modal>/useModalDialog primitive.
-  // denyRef stays a ref so Escape always calls the latest decide() (whitelist
-  // radio may have changed since mount); denyBtnRef pins initial focus to
-  // "拒绝" — the safe non-destructive default ([0]=拒绝并停止, [1]=拒绝).
-  const denyRef = useRef<() => void>(() => {})
-  const denyBtnRef = useRef<HTMLButtonElement>(null)
-
-  useEffect(() => {
-    setWhitelistMode("none")
-    setThreadTrust(false)
-    setSessionTrust(canOfferComputerSessionTrust(request?.tool_name, request?.relevant_apps?.[0]))
-    setNonceInput("")
-    setPasteBlocked(false)
-    setPreviewImgFailed(false)
-  }, [request?.confirmation_id])
-
-  // D14: 60s auto-deny for Panel full dialog (L0/L1 path; L2 uses Cockpit ConfirmElevated)
-  useEffect(() => {
-    if (!request) return
-    const ms =
-      request.timeout_ms && request.timeout_ms > 0
-        ? Math.min(request.timeout_ms, 60_000)
-        : 60_000
-    const t = setTimeout(() => {
-      denyRef.current()
-    }, ms)
-    return () => clearTimeout(t)
-  }, [request?.confirmation_id])
-
-  if (!request) return null
-
-  const riskLevel = request.risk_level || "high"
-  const riskColor = riskLevel === "low" ? "#FFC107" : riskLevel === "medium" ? "#FF9800" : "#F44336"
-  const riskLabel = riskLevel === "low" ? "低风险" : riskLevel === "medium" ? "中风险" : "高风险"
-  // WP6a (Finding 3): a host_app launch is not a code execution — the dialog
-  // gets launch-appropriate copy (no「高风险 API：未知」scare section when the
-  // dangerous-API list is empty; the code_preview already reads
-  // `Launch app "<display>" (<token>) — no arguments`). host_read/host_write/
-  // evaluate rendering is unchanged.
-  const isAppLaunch = request.tool_name === "host_app"
-  // WP4 (WI-3): 坐标 computer-use 的 L2 对话框——徽标点名操作性质;
-  // full_preview(P1 独立字段)存在时优先于 code_preview 渲染;标注截图过
-  // previewImageSafe 守卫才渲染,渲染失败静默回退纯文本。
-  const isComputerTask = request.tool_name === "host_computer"
-  const dialogLabel = isAppLaunch ? "启动应用确认" : isComputerTask ? "坐标操作确认" : `${riskLabel}操作确认`
-  const showPreviewImage = isComputerTask && !previewImgFailed && previewImageSafe(request.preview_image)
-
-  const decide = (approved: boolean, stopThread = false) => {
-    const addToWhitelist: string[] = []
-    if (approved && relevantDomain && whitelistMode !== "none") {
-      addToWhitelist.push(whitelistMode === "wildcard" ? `*.${relevantDomain}` : relevantDomain)
-    }
-    // Phase 1 W9: when nonceChallenge is set, approval is BLOCKED until user
-    // types the code correctly. The Approve button is disabled; this is a
-    // safety net in case decide() is invoked another way (keyboard shortcut).
-    if (approved && nonceChallenge && !nonceMatches) {
-      return  // silently no-op — button should be disabled anyway
-    }
-    const stopTargetId = request.worker_id || state.activeThreadId
-    chrome.runtime.sendMessage({
-      type: "security.confirmation.response",
-      confirmation_id: request.confirmation_id,
-      approved,
-      stop_thread: stopThread,
-      stop_thread_id: stopThread ? stopTargetId : undefined,
-      add_to_whitelist: addToWhitelist,
-      // Phase 1 W7 (extended by WP4 W1) — only send add_to_thread_whitelist
-      // when allowed (host_read / host_app + user checked the box). Companion
-      // validates against relevantApps[0].
-      add_to_thread_whitelist: approved && canThreadTrust && threadTrust,
-      // Grill Q2: host_computer session auto-approve (explicit opt-in only).
-      add_to_session_trust: approved && canSessionTrust && sessionTrust,
-      // Phase 1 W9 — send typed nonce for Linux biometric tier validation.
-      nonce_response: approved && nonceChallenge ? nonceInput.toUpperCase() : undefined,
-    })
-    dispatch({ type: "REMOVE_SECURITY_CONFIRMATION", confirmationId: request.confirmation_id })
-    if (stopThread && stopTargetId) {
-      // ADR-015: stop owning worker, not necessarily UI-active thread
-      chrome.runtime.sendMessage({
-        type: "chat.abort",
-        threadId: stopTargetId,
-        thread_id: stopTargetId,
-      })
-      if (stopTargetId === state.activeThreadId) {
-        dispatch({ type: "SET_STREAMING", content: "" })
-      }
-    }
-    const trustMsg = approved && canThreadTrust && threadTrust
-      ? `（本线程内信任 ${relevantApp}）`
-      : approved && canSessionTrust && sessionTrust
-        ? `（本会话自动同意「${relevantApp}」同类操作）`
-        : ""
-    const nonceMsg = approved && nonceChallenge ? `（输入确认码 ${nonceChallenge}）` : ""
-    dispatch({
-      type: "ADD_SECURITY_AUDIT",
-      entry: {
-        id: request.confirmation_id,
-        ts: new Date().toISOString(),
-        level: approved ? "warn" : "block",
-        tool_name: request.tool_name,
-        action: approved ? "allowed" : "denied",
-        risk_level: riskLevel,
-        risk_score: request.risk_score || 0,
-        defense_layer: request.defense_layer,
-        message: `${approved ? "允许" : "拒绝"}执行 ${request.tool_name}${addToWhitelist.length ? `（加入白名单：${addToWhitelist.join(", ")}）` : ""}${trustMsg}${nonceMsg}`,
-      },
-    })
-  }
-
-  denyRef.current = () => decide(false)
-
-  return (
-    <Modal
-      open
-      onClose={() => denyRef.current()}
-      backdropDismiss={false}
-      role="dialog"
-      ariaLabel={dialogLabel}
-      overlayStyle={styles.securityOverlay}
-      panelStyle={styles.securityCard}
-      initialFocusRef={denyBtnRef}
-      deps={[request?.confirmation_id]}
-    >
-      <div style={{ ...styles.securityBadge, background: riskColor + "22", color: riskColor }}>
-        {dialogLabel}
-      </div>
-      <h3 style={styles.securityTitle}>
-        {isAppLaunch ? "允许启动此应用吗？" : `允许执行 \`${request.tool_name}\` 吗？`}
-      </h3>
-      {(request.worker_role_label || request.worker_id) && (
-        <p style={{ ...styles.securityText, color: "#b45309", marginTop: 0 }}>
-          来自 worker：
-          <strong>{request.worker_role_label || request.worker_id?.slice(0, 12)}</strong>
-          {typeof request.tab_id === "number" ? ` · tab ${request.tab_id}` : ""}
-          {request.orchestrator_run_id
-            ? ` · run ${request.orchestrator_run_id.slice(0, 8)}…`
-            : ""}
-        </p>
-      )}
-      {(!isAppLaunch || request.dangerous_apis.length > 0) && (
-        <p style={styles.securityText}>
-          检测到高风险 API：{" "}
-          <span style={{ color: "#F44336", fontWeight: 700 }}>
-            {request.dangerous_apis.join(", ") || "未知"}
-          </span>
-          。请确认这段代码符合你的意图后再允许执行。
-        </p>
-      )}
-      {isAppLaunch && (
-        <p style={styles.securityText}>
-          host_app 将启动白名单中的应用（无参数启动）。请确认这是你要启动的应用：
-        </p>
-      )}
-      {request.defense_layer !== undefined && (
-        <div style={styles.defenseLayerHint}>
-          防御层：Layer {request.defense_layer}
-        </div>
-      )}
-      {showPreviewImage && (
-        <div style={styles.computerPreview}>
-          <img
-            src={`data:image/jpeg;base64,${request.preview_image}`}
-            alt="目标窗口标注截图（凭证区已黑化）"
-            style={styles.computerPreviewImg}
-            onError={() => setPreviewImgFailed(true)}
-          />
-          {request.preview_caption && (
-            <div style={styles.computerPreviewCaption}>{request.preview_caption}</div>
-          )}
-        </div>
-      )}
-      {request.full_preview ? (
-        // P1:完整预览文本独立字段——30 动作 + 2000 语料逐条枚举对人完整可见;
-        // 可滚动区(maxHeight + overflow),纯文本 pre-wrap(非代码,不高亮)。
-        <div style={styles.securityFullPreview}>{request.full_preview}</div>
-      ) : (
-        <div style={styles.securityCode}>
-          <HighlightedCode code={request.code_preview || "(无代码预览)"} />
-        </div>
-      )}
-      {relevantDomain && (
-        <div style={styles.whitelistSection}>
-          <div style={styles.whitelistLabel}>添加到自动批准白名单（避免下次再问）：</div>
-          <label style={styles.whitelistOption}>
-            <input
-              type="radio"
-              name={`wl-${request.confirmation_id}`}
-              checked={whitelistMode === "none"}
-              onChange={() => setWhitelistMode("none")}
-            />
-            <span>不添加</span>
-          </label>
-          <label style={styles.whitelistOption}>
-            <input
-              type="radio"
-              name={`wl-${request.confirmation_id}`}
-              checked={whitelistMode === "exact"}
-              onChange={() => setWhitelistMode("exact")}
-            />
-            <span>添加 <code style={styles.whitelistCode}>{relevantDomain}</code>（仅此主机名）</span>
-          </label>
-          <label style={styles.whitelistOption}>
-            <input
-              type="radio"
-              name={`wl-${request.confirmation_id}`}
-              checked={whitelistMode === "wildcard"}
-              onChange={() => setWhitelistMode("wildcard")}
-            />
-            <span>添加 <code style={styles.whitelistCode}>*.{relevantDomain}</code>（含所有子域名）</span>
-          </label>
-        </div>
-      )}
-      {canThreadTrust && (
-        <div style={{ ...styles.whitelistSection, marginTop: 8 }}>
-          <label style={{ ...styles.whitelistOption, cursor: "pointer" }}>
-            <input
-              type="checkbox"
-              checked={threadTrust}
-              onChange={(e) => setThreadTrust(e.target.checked)}
-              style={{ marginRight: 6 }}
-            />
-            <span>
-              信任 <code style={styles.whitelistCode}>{relevantApp}</code>，本线程内不再询问
-              <span style={{ color: "#888", fontSize: 11, marginLeft: 4 }}>
-                {threadTrustHint(request?.tool_name)}
-              </span>
-            </span>
-          </label>
-        </div>
-      )}
-      {canSessionTrust && (
-        <div style={{ ...styles.whitelistSection, marginTop: 8 }}>
-          <label style={{ ...styles.whitelistOption, cursor: "pointer" }}>
-            <input
-              type="checkbox"
-              checked={sessionTrust}
-              onChange={(e) => setSessionTrust(e.target.checked)}
-              style={{ marginRight: 6 }}
-            />
-            <span>
-              本会话对「<code style={styles.whitelistCode}>{relevantApp}</code>」同类操作自动同意（不新增字、不扩次数）
-              <span style={{ color: "#888", fontSize: 11, marginLeft: 4, display: "block", marginTop: 2 }}>
-                {computerSessionTrustHint()}
-              </span>
-            </span>
-          </label>
-        </div>
-      )}
-      {nonceChallenge && (
-        <div style={{ ...styles.whitelistSection, marginTop: 8, background: "#FFF3CD", border: "1px solid #FFC107" }}>
-          <div style={{ fontWeight: 600, marginBottom: 6 }}>
-            🔐 请输入确认码（手动输入，不可粘贴）：
-          </div>
-          <div style={{
-            fontSize: 28, fontWeight: 700, letterSpacing: 8, fontFamily: "monospace",
-            textAlign: "center", padding: "12px 0", background: "#fff", borderRadius: 6,
-            border: "2px dashed #FFC107", userSelect: "none",
-          }}>
-            {nonceChallenge}
-          </div>
-          <input
-            type="text"
-            maxLength={6}
-            value={nonceInput}
-            onChange={(e) => {
-              setNonceInput(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))
-              setPasteBlocked(false)
-            }}
-            onPaste={(e) => {
-              e.preventDefault()
-              setPasteBlocked(true)
-            }}
-            onContextMenu={(e) => e.preventDefault()}
-            onKeyDown={(e) => {
-              // Block Cmd+V / Ctrl+V / Shift+Insert
-              if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "v") {
-                e.preventDefault()
-                setPasteBlocked(true)
-              }
-              if (e.shiftKey && e.key === "Insert") {
-                e.preventDefault()
-                setPasteBlocked(true)
-              }
-            }}
-            onDrop={(e) => e.preventDefault()}
-            placeholder="6 位确认码"
-            style={{
-              width: "100%", marginTop: 8, padding: "10px 12px", fontSize: 18,
-              fontFamily: "monospace", letterSpacing: 4, textAlign: "center",
-              borderRadius: 6, border: `2px solid ${nonceMatches ? "#4CAF50" : pasteBlocked ? "#F44336" : "#FFC107"}`,
-              outline: "none",
-            }}
-            autoComplete="off"
-            spellCheck={false}
-          />
-          {pasteBlocked && (
-            <div style={{ color: "#F44336", fontSize: 12, marginTop: 4 }}>
-              ⛔ 粘贴被禁止 — 请手动输入确认码（Round 2 §2.3 安全要求）
-            </div>
-          )}
-          {!pasteBlocked && !nonceMatches && nonceInput.length > 0 && (
-            <div style={{ color: "#FF9800", fontSize: 12, marginTop: 4 }}>
-              输入与确认码不匹配
-            </div>
-          )}
-          {nonceMatches && (
-            <div style={{ color: "#4CAF50", fontSize: 12, marginTop: 4 }}>
-              ✓ 确认码匹配，可以允许执行
-            </div>
-          )}
-        </div>
-      )}
-      {state.pendingSecurityConfirmations.length > 1 && (
-        <div style={styles.securityQueueHint}>
-          还有 {state.pendingSecurityConfirmations.length - 1} 个确认请求在等待。
-        </div>
-      )}
-      <div style={styles.securityActions}>
-        <button style={styles.denyStopBtn} onClick={() => decide(false, true)} title="拒绝本次操作并停止对话">
-          拒绝并停止对话
-        </button>
-        <button ref={denyBtnRef} style={styles.denyBtn} onClick={() => decide(false)} title="拒绝本次操作">拒绝</button>
-        <button
-          style={{ ...styles.allowBtn, background: nonceChallenge && !nonceMatches ? "#999" : riskColor, cursor: nonceChallenge && !nonceMatches ? "not-allowed" : "pointer" }}
-          onClick={() => decide(true)}
-          disabled={!!nonceChallenge && !nonceMatches}
-          title={nonceChallenge && !nonceMatches ? "请先正确输入确认码" : "允许执行本次操作"}
-        >
-          允许执行
-        </button>
-      </div>
-    </Modal>
-  )
-}
-
-function HighlightedCode({ code }: { code: string }) {
-  const keywords = ["function", "const", "let", "var", "return", "if", "else", "for", "while", "async", "await", "import", "export", "from", "class", "new", "try", "catch", "throw"]
-  const tokens = code.split(/(\b)/)
-  return (
-    <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "inherit", fontSize: "inherit", lineHeight: "inherit" }}>
-      {tokens.map((token, i) => {
-        if (keywords.includes(token)) {
-          return <span key={i} style={{ color: "#4A90D9", fontWeight: 600 }}>{token}</span>
-        }
-        if (/^["'`].*["'`]$/.test(token)) {
-          return <span key={i} style={{ color: "#2E7D32" }}>{token}</span>
-        }
-        if (/^\d+$/.test(token)) {
-          return <span key={i} style={{ color: "#E65100" }}>{token}</span>
-        }
-        if (/^[{}()\[\];,.]$/.test(token)) {
-          return <span key={i} style={{ color: "#999" }}>{token}</span>
-        }
-        return <span key={i}>{token}</span>
-      })}
-    </pre>
-  )
-}
-
-function Header({ connectionState, capabilityLevel, badgeLabel, onCraft, onToggleLogs, onOpenNotebooklmImporter }: { connectionState: ConnectionState; capabilityLevel: CapabilityLevel; badgeLabel: string; onCraft: () => void; onToggleLogs: () => void; onOpenNotebooklmImporter: () => void }) {
+function Header({
+  connectionState,
+  capabilityLevel,
+  badgeLabel,
+  onCraft,
+  onToggleLogs,
+  onOpenNotebooklmImporter,
+  onToast,
+}: {
+  connectionState: ConnectionState
+  capabilityLevel: CapabilityLevel
+  badgeLabel: string
+  onCraft: () => void
+  onToggleLogs: () => void
+  onOpenNotebooklmImporter: () => void
+  onToast?: (msg: string) => void
+}) {
   const { state, dispatch } = useAgentStore()
   const hasMessages = state.messages.length > 0 && !!state.activeThreadId
   const [nbState, setNbState] = useState<"idle" | "working" | "warning">("idle")
   const [nbTooltip, setNbTooltip] = useState<string>("离线导出当前页为 Markdown（拖入 NotebookLM 作为来源）")
+  const [menuOpen, setMenuOpen] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
   // useRef lock is mandatory: React state updates are async, so a rapid second click
   // within the same tick can pass the `nbState === "working"` guard before the first
   // setNbState commits — both fire sendMessage → double download. The ref is synchronous.
   const nbInflightRef = useRef(false)
+
+  useEffect(() => {
+    if (!menuOpen) return
+    const onDoc = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false)
+      }
+    }
+    document.addEventListener("mousedown", onDoc)
+    return () => document.removeEventListener("mousedown", onDoc)
+  }, [menuOpen])
 
   const resetNbIdle = (delay: number, immediate?: boolean) => {
     if (immediate) {
@@ -659,113 +297,23 @@ function Header({ connectionState, capabilityLevel, badgeLabel, onCraft, onToggl
     }
   }
 
+  const closeMenu = () => setMenuOpen(false)
+
   return (
     <div
       style={{
         ...styles.header,
+        // L1 tint: tokens.modeBrowserBg (was ad-hoc #f5f9ff; DESIGN #eef4ff)
         ...(capabilityLevel === "browser"
-          ? { background: "#f5f9ff", borderBottomColor: "#dbeafe" }
+          ? { background: tokens.modeBrowserBg, borderBottomColor: "#bfdbfe" }
           : {}),
         ...(capabilityLevel === "computer"
-          ? { background: "#f8fafc", borderBottomColor: "#e2e8f0" }
+          ? { background: tokens.bgMuted, borderBottomColor: tokens.border }
           : {}),
       }}
     >
       <ThreadList />
       <div style={styles.headerTitle}>CMspark</div>
-      <div style={styles.headerActions}>
-        <button
-          type="button"
-          style={{
-            ...styles.iconBtn,
-            opacity: hasMessages ? 1 : 0.35,
-            cursor: hasMessages ? "pointer" : "not-allowed",
-          }}
-          disabled={!hasMessages}
-          onClick={onCraft}
-          title={hasMessages ? "提取技能" : "当前线程没有消息"}
-        >
-          <IconCraft size={15} />
-        </button>
-        <button
-          type="button"
-          style={{
-            ...styles.iconBtn,
-            opacity: hasMessages ? 1 : 0.35,
-            cursor: hasMessages ? "pointer" : "not-allowed",
-          }}
-          disabled={!hasMessages}
-          onClick={() => {
-            if (state.activeThreadId) {
-              chrome.runtime.sendMessage({
-                type: "thread.export_obsidian",
-                thread_id: state.activeThreadId,
-                scope: "thread",
-              })
-            }
-          }}
-          title={hasMessages ? "导出整个线程到 Obsidian" : "当前线程没有消息"}
-        >
-          <IconDownload size={15} />
-        </button>
-        <button
-          type="button"
-          style={styles.iconBtn}
-          onClick={onOpenNotebooklmImporter}
-          title="NotebookLM 导入器"
-        >
-          <IconNotebook size={15} />
-        </button>
-        <button
-          type="button"
-          style={{
-            ...styles.iconBtn,
-            ...(nbState === "warning"
-              ? { background: tokens.warningSoft, borderColor: "#fcd34d", color: tokens.warning }
-              : {}),
-          }}
-          disabled={nbState === "working"}
-          onClick={runNotebooklmExport}
-          title={nbTooltip}
-        >
-          {nbState === "working" ? (
-            <IconSpinner size={15} />
-          ) : nbState === "warning" ? (
-            <IconAlert size={15} />
-          ) : (
-            <IconSave size={15} />
-          )}
-        </button>
-        <button
-          type="button"
-          style={{
-            ...styles.iconBtn,
-            opacity: hasMessages ? 1 : 0.35,
-            cursor: hasMessages ? "pointer" : "not-allowed",
-          }}
-          disabled={!hasMessages || state.summarizingThreadId === state.activeThreadId}
-          onClick={() => {
-            if (state.activeThreadId) {
-              dispatch({ type: "SET_SUMMARIZING_THREAD", threadId: state.activeThreadId })
-              chrome.runtime.sendMessage({
-                type: "thread.export_obsidian",
-                thread_id: state.activeThreadId,
-                scope: "summary",
-              })
-            }
-          }}
-          title={hasMessages ? "导出线程摘要到 Obsidian" : "当前线程没有消息"}
-        >
-          {state.summarizingThreadId === state.activeThreadId ? (
-            <IconSpinner size={15} />
-          ) : (
-            <IconBrain size={15} />
-          )}
-        </button>
-        <button type="button" onClick={onToggleLogs} style={styles.iconBtn} title="日志">
-          <IconLogs size={15} />
-        </button>
-      </div>
       <ModeBadge level={capabilityLevel} label={badgeLabel} />
       <div
         title={
@@ -789,6 +337,161 @@ function Header({ connectionState, capabilityLevel, badgeLabel, onCraft, onToggl
               : "none",
         }}
       />
+      {/* P0: power actions in ⋯ menu — not permanent icon strip */}
+      <div ref={menuRef} style={{ position: "relative", flexShrink: 0, marginLeft: 2 }}>
+        <button
+          type="button"
+          style={{
+            ...styles.iconBtn,
+            ...(menuOpen || nbState === "warning"
+              ? {
+                  background: nbState === "warning" ? tokens.warningSoft : tokens.bgActive,
+                  borderColor: nbState === "warning" ? "#fcd34d" : "#bfdbfe",
+                }
+              : {}),
+          }}
+          onClick={() => setMenuOpen((v) => !v)}
+          title="更多工具与设置"
+          aria-expanded={menuOpen}
+          aria-haspopup="menu"
+        >
+          {nbState === "working" ? <IconSpinner size={15} /> : <IconMore size={15} />}
+        </button>
+        {menuOpen && (
+          <div style={styles.headerMenu} role="menu">
+            <button
+              type="button"
+              role="menuitem"
+              style={{
+                ...styles.headerMenuItem,
+                opacity: hasMessages ? 1 : 0.45,
+                cursor: hasMessages ? "pointer" : "not-allowed",
+              }}
+              disabled={!hasMessages}
+              onClick={() => {
+                if (!hasMessages) return
+                closeMenu()
+                onCraft()
+              }}
+            >
+              <IconCraft size={14} />
+              <span>提取技能</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              style={{
+                ...styles.headerMenuItem,
+                opacity: hasMessages ? 1 : 0.45,
+                cursor: hasMessages ? "pointer" : "not-allowed",
+              }}
+              disabled={!hasMessages}
+              onClick={() => {
+                if (!hasMessages || !state.activeThreadId) return
+                closeMenu()
+                chrome.runtime.sendMessage({
+                  type: "thread.export_obsidian",
+                  thread_id: state.activeThreadId,
+                  scope: "thread",
+                })
+              }}
+            >
+              <IconDownload size={14} />
+              <span>导出线程 (Obsidian)</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              style={{
+                ...styles.headerMenuItem,
+                opacity: hasMessages ? 1 : 0.45,
+                cursor: hasMessages ? "pointer" : "not-allowed",
+              }}
+              disabled={!hasMessages || state.summarizingThreadId === state.activeThreadId}
+              onClick={() => {
+                if (!hasMessages || !state.activeThreadId) return
+                closeMenu()
+                dispatch({ type: "SET_SUMMARIZING_THREAD", threadId: state.activeThreadId })
+                chrome.runtime.sendMessage({
+                  type: "thread.export_obsidian",
+                  thread_id: state.activeThreadId,
+                  scope: "summary",
+                })
+              }}
+            >
+              <IconBrain size={14} />
+              <span>
+                {state.summarizingThreadId === state.activeThreadId ? "摘要导出中…" : "导出摘要"}
+              </span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              style={styles.headerMenuItem}
+              onClick={() => {
+                closeMenu()
+                onOpenNotebooklmImporter()
+              }}
+            >
+              <IconNotebook size={14} />
+              <span>NotebookLM 导入</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              style={styles.headerMenuItem}
+              disabled={nbState === "working"}
+              title={nbTooltip}
+              onClick={() => {
+                closeMenu()
+                void runNotebooklmExport()
+              }}
+            >
+              {nbState === "warning" ? <IconAlert size={14} /> : <IconSave size={14} />}
+              <span>导出当前页 (NB)</span>
+            </button>
+            <div style={styles.headerMenuDivider} />
+            <button
+              type="button"
+              role="menuitem"
+              style={styles.headerMenuItem}
+              onClick={() => {
+                closeMenu()
+                onToggleLogs()
+              }}
+            >
+              <IconLogs size={14} />
+              <span>日志</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              style={styles.headerMenuItem}
+              onClick={() => {
+                closeMenu()
+                dispatch({ type: "TOGGLE_SETTINGS" })
+              }}
+            >
+              <IconSettings size={14} />
+              <span>设置</span>
+            </button>
+            <div style={styles.headerMenuDivider} />
+            <button
+              type="button"
+              role="menuitem"
+              style={{ ...styles.headerMenuItem, color: tokens.textMuted, fontSize: 11 }}
+              onClick={() => {
+                closeMenu()
+                onToast?.(
+                  "任务包 / 任务板已移至底栏「更多」— 主栏仅保留当前模式高频入口",
+                )
+              }}
+            >
+              <span>关于「更多」面板</span>
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   )
 }
@@ -1056,7 +759,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
   }
 
   return (
-    <div style={{ borderTop: "1px solid #eee", flexShrink: 0, position: "relative" as const }}>
+    <div style={{ borderTop: `1px solid ${tokens.border}`, flexShrink: 0, position: "relative" as const, background: tokens.bg }}>
       <input
         ref={fileInputRef}
         type="file"
@@ -1067,7 +770,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
       />
       {fileError && (
         <div style={{
-          padding: "4px 12px", background: "#FFF3E0", color: "#E65100",
+          padding: "4px 12px", background: tokens.warningSoft, color: tokens.warning,
           fontSize: 11, display: "flex", alignItems: "center", gap: 6,
         }}>
           <span>{fileError}</span>
@@ -1077,15 +780,14 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
       {selectedFiles.length > 0 && (
         <div style={{
           display: "flex", flexWrap: "wrap", gap: 4,
-          padding: "6px 12px 0",
+          padding: "8px 12px 0",
         }}>
           {selectedFiles.map((file, idx) => (
             <span key={idx} style={{
               display: "inline-flex", alignItems: "center", gap: 4,
-              padding: "2px 8px", background: "#f0f4ff", borderRadius: 12,
-              fontSize: 11, color: "#4A90D9", maxWidth: 200,
+              padding: "2px 8px", background: tokens.accentSoft, borderRadius: tokens.radiusPill,
+              fontSize: 11, color: tokens.accentText, maxWidth: 200,
             }}>
-              {/* Text truncates; × is always visible with flexShrink:0 */}
               <span style={{
                 overflow: "hidden", textOverflow: "ellipsis",
                 whiteSpace: "nowrap", minWidth: 0,
@@ -1103,20 +805,64 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
           ))}
         </div>
       )}
+      {/* P2: unified composer capsule — attach + textarea + send inside one surface */}
       <div style={styles.inputArea}>
-        <textarea
-          ref={textareaRef}
+        <div
           style={{
-            ...styles.textarea,
-            background: needsThread || needsConnection ? "#f9f9f9" : "#fff",
+            ...styles.composerCapsule,
+            opacity: needsThread || needsConnection ? 0.85 : 1,
+            background: needsThread || needsConnection ? tokens.bgMuted : tokens.bgElevated,
           }}
-          placeholder={getPlaceholder()}
-          rows={2}
-          value={text}
-          disabled={needsThread || needsConnection}
-          onChange={handleChange}
-          onKeyDown={handleKeyDown}
-        />
+        >
+          {!isStreaming && (
+            <button
+              type="button"
+              style={styles.attachBtn}
+              onClick={() => fileInputRef.current?.click()}
+              disabled={needsThread || needsConnection}
+              title="上传文件"
+            >
+              <IconAttach size={16} />
+            </button>
+          )}
+          <textarea
+            ref={textareaRef}
+            style={styles.textarea}
+            placeholder={getPlaceholder()}
+            rows={2}
+            value={text}
+            disabled={needsThread || needsConnection}
+            onChange={handleChange}
+            onKeyDown={handleKeyDown}
+          />
+          {isStreaming ? (
+            <button type="button" style={styles.stopBtn} onClick={handleStop} title="停止生成">
+              <IconStop size={14} />
+            </button>
+          ) : (
+            <button
+              type="button"
+              style={{
+                ...styles.sendBtn,
+                opacity: canSend ? 1 : 0.45,
+                cursor: canSend ? "pointer" : "not-allowed",
+              }}
+              onClick={handleSend}
+              disabled={!canSend}
+              title={
+                needsThread
+                  ? "请先创建线程"
+                  : needsConnection
+                    ? "Companion 未连接"
+                    : taskActive
+                      ? "任务进行中，请在操控台发送"
+                      : "发送"
+              }
+            >
+              <IconSend size={15} />
+            </button>
+          )}
+        </div>
         <SlashCommandPopover
           skills={state.skills}
           searchText={slashQuery}
@@ -1125,52 +871,6 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
           onSelect={handleSlashSelect}
           onDismiss={() => setSlashVisible(false)}
         />
-        {!isStreaming && (
-          <button
-            type="button"
-            style={styles.attachBtn}
-            onClick={() => fileInputRef.current?.click()}
-            disabled={needsThread || needsConnection}
-            title="上传文件"
-          >
-            <IconAttach size={16} />
-          </button>
-        )}
-        {isStreaming ? (
-          <button type="button" style={styles.stopBtn} onClick={handleStop} title="停止生成">
-            <IconStop size={14} />
-          </button>
-        ) : (
-          <button
-            type="button"
-            style={{
-              ...styles.sendBtn,
-              opacity: canSend ? 1 : 0.45,
-              cursor: canSend ? "pointer" : "not-allowed",
-            }}
-            onClick={handleSend}
-            disabled={!canSend}
-            title={
-              needsThread
-                ? "请先创建线程"
-                : needsConnection
-                  ? "Companion 未连接"
-                  : taskActive
-                    ? "任务进行中，请在操控台发送"
-                    : "发送"
-            }
-          >
-            <IconSend size={15} />
-          </button>
-        )}
-        <button
-          type="button"
-          style={styles.settingsBtn}
-          onClick={() => dispatch({ type: "TOGGLE_SETTINGS" })}
-          title="设置"
-        >
-          <IconSettings size={15} />
-        </button>
       </div>
     </div>
   )
@@ -1241,6 +941,21 @@ const globalCSS = `
     0%, 100% { opacity: 1; }
     50% { opacity: 0; }
   }
+  @keyframes cmspark-dots {
+    0% { width: 0; }
+    100% { width: 20px; }
+  }
+  button, a, [role="button"] {
+    transition: background ${tokens.transitionFast} ease, color ${tokens.transitionFast} ease,
+      border-color ${tokens.transitionFast} ease, opacity ${tokens.transitionFast} ease;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
 `
 
 const styles: Record<string, React.CSSProperties> = {
@@ -1275,6 +990,43 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: "center",
     gap: 3,
     flexShrink: 0,
+  },
+  headerMenu: {
+    position: "absolute",
+    right: 0,
+    top: "calc(100% + 4px)",
+    minWidth: 200,
+    maxHeight: 360,
+    overflowY: "auto",
+    background: tokens.bgElevated,
+    border: `1px solid ${tokens.border}`,
+    borderRadius: tokens.radiusMd,
+    boxShadow: tokens.shadowMd,
+    zIndex: 50,
+    padding: 4,
+    display: "flex",
+    flexDirection: "column",
+    gap: 1,
+  },
+  headerMenuItem: {
+    border: "none",
+    background: "transparent",
+    borderRadius: tokens.radiusSm,
+    padding: "8px 10px",
+    fontSize: 12,
+    cursor: "pointer",
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    color: tokens.text,
+    textAlign: "left" as const,
+    width: "100%",
+    fontFamily: tokens.font,
+  },
+  headerMenuDivider: {
+    height: 1,
+    background: tokens.border,
+    margin: "4px 6px",
   },
   iconBtn: {
     width: 28,
@@ -1312,35 +1064,43 @@ const styles: Record<string, React.CSSProperties> = {
   },
   inputArea: {
     display: "flex",
-    alignItems: "flex-end",
-    gap: 6,
-    padding: "10px 12px",
-    borderTop: `1px solid ${tokens.border}`,
+    flexDirection: "column",
+    padding: "10px 12px 12px",
     background: tokens.bg,
     flexShrink: 0,
     position: "relative" as const,
   },
+  composerCapsule: {
+    display: "flex",
+    alignItems: "flex-end",
+    gap: 4,
+    border: `1px solid ${tokens.borderStrong}`,
+    borderRadius: tokens.radiusLg,
+    padding: "6px 6px 6px 4px",
+    background: tokens.bgElevated,
+    boxShadow: tokens.shadowSm,
+    transition: `border-color ${tokens.transitionFast} ease, box-shadow ${tokens.transitionFast} ease`,
+  },
   textarea: {
     flex: 1,
-    border: `1px solid ${tokens.borderStrong}`,
+    border: "none",
     borderRadius: tokens.radiusMd,
-    padding: "8px 12px",
+    padding: "6px 8px",
     fontSize: 13,
     fontFamily: "inherit",
     resize: "none" as const,
     outline: "none",
-    minHeight: 38,
+    minHeight: 36,
     maxHeight: 100,
-    background: tokens.bgElevated,
+    background: "transparent",
     color: tokens.text,
-    boxShadow: tokens.shadowSm,
   },
   attachBtn: {
-    width: 34,
-    height: 34,
+    width: 32,
+    height: 32,
     borderRadius: tokens.radiusMd,
-    border: `1px solid ${tokens.border}`,
-    background: tokens.bgElevated,
+    border: "none",
+    background: "transparent",
     color: tokens.textSecondary,
     cursor: "pointer",
     flexShrink: 0,
@@ -1350,8 +1110,8 @@ const styles: Record<string, React.CSSProperties> = {
     padding: 0,
   },
   sendBtn: {
-    width: 34,
-    height: 34,
+    width: 32,
+    height: 32,
     borderRadius: tokens.radiusMd,
     border: "none",
     background: tokens.accent,
@@ -1364,8 +1124,8 @@ const styles: Record<string, React.CSSProperties> = {
     padding: 0,
   },
   stopBtn: {
-    width: 34,
-    height: 34,
+    width: 32,
+    height: 32,
     borderRadius: tokens.radiusMd,
     border: "none",
     background: tokens.danger,
@@ -1377,180 +1137,6 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: "center",
     padding: 0,
   },
-  settingsBtn: {
-    width: 34,
-    height: 34,
-    borderRadius: tokens.radiusMd,
-    border: `1px solid ${tokens.border}`,
-    background: tokens.bgElevated,
-    color: tokens.textSecondary,
-    cursor: "pointer",
-    flexShrink: 0,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    padding: 0,
-  },
-  securityOverlay: {
-    position: "absolute" as const,
-    inset: 0,
-    background: "rgba(0,0,0,0.32)",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    padding: 16,
-    zIndex: 120,
-  },
-  securityCard: {
-    width: "100%",
-    maxWidth: 420,
-    background: "#fff",
-    borderRadius: 10,
-    boxShadow: "0 10px 36px rgba(0,0,0,0.22)",
-    padding: 16,
-  },
-  securityBadge: {
-    display: "inline-block",
-    padding: "3px 8px",
-    borderRadius: 999,
-    background: "#FFF4E5",
-    color: "#B26B00",
-    fontSize: 12,
-    fontWeight: 600,
-    marginBottom: 10,
-  },
-  securityTitle: {
-    margin: "0 0 8px",
-    fontSize: 16,
-    lineHeight: 1.35,
-  },
-  securityText: {
-    margin: "0 0 10px",
-    color: "#444",
-    lineHeight: 1.5,
-  },
-  securityCode: {
-    maxHeight: 180,
-    overflow: "auto",
-    whiteSpace: "pre-wrap",
-    wordBreak: "break-word",
-    background: "#f6f8fa",
-    border: "1px solid #e5e7eb",
-    borderRadius: 6,
-    padding: 10,
-    fontSize: 11,
-    lineHeight: 1.45,
-    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
-  },
-  // WP4 (WI-3): full_preview 可滚动区——比 code 区更高,长枚举清单少翻页。
-  securityFullPreview: {
-    maxHeight: 260,
-    overflow: "auto",
-    whiteSpace: "pre-wrap",
-    wordBreak: "break-word",
-    background: "#f6f8fa",
-    border: "1px solid #e5e7eb",
-    borderRadius: 6,
-    padding: 10,
-    fontSize: 11,
-    lineHeight: 1.45,
-    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
-  },
-  // WP4 (WI-3): L2 标注截图块(凭证区已黑化 + 十字线)。
-  computerPreview: {
-    marginBottom: 10,
-  },
-  computerPreviewImg: {
-    display: "block",
-    width: "100%",
-    borderRadius: 6,
-    border: "1px solid #e5e7eb",
-  },
-  computerPreviewCaption: {
-    marginTop: 6,
-    fontSize: 11,
-    color: "#666",
-    lineHeight: 1.5,
-  },
-  securityQueueHint: {
-    marginTop: 8,
-    color: "#666",
-    fontSize: 12,
-  },
-  defenseLayerHint: {
-    marginTop: 6,
-    color: "#888",
-    fontSize: 11,
-    fontStyle: "italic",
-  },
-  whitelistSection: {
-    marginTop: 10,
-    padding: 10,
-    background: "#F5FBFF",
-    border: "1px solid #CFE6F7",
-    borderRadius: 6,
-    display: "flex",
-    flexDirection: "column",
-    gap: 6,
-  },
-  whitelistLabel: {
-    fontSize: 12,
-    fontWeight: 600,
-    color: "#2C5D8F",
-    marginBottom: 2,
-  },
-  whitelistOption: {
-    display: "flex",
-    alignItems: "flex-start",
-    gap: 6,
-    fontSize: 12,
-    color: "#333",
-    cursor: "pointer",
-    lineHeight: 1.4,
-  },
-  whitelistCode: {
-    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
-    background: "#EAF4FB",
-    padding: "1px 4px",
-    borderRadius: 3,
-    fontSize: 11,
-    color: "#1976D2",
-  },
-  securityActions: {
-    display: "flex",
-    justifyContent: "flex-end",
-    gap: 8,
-    marginTop: 14,
-  },
-  denyBtn: {
-    padding: "7px 14px",
-    borderRadius: 6,
-    border: "1px solid #ddd",
-    background: "#fff",
-    color: "#333",
-    cursor: "pointer",
-    fontSize: 13,
-  },
-  denyStopBtn: {
-    padding: "7px 14px",
-    borderRadius: 6,
-    border: "1px solid #F44336",
-    background: "#fff",
-    color: "#F44336",
-    cursor: "pointer",
-    fontSize: 13,
-    fontWeight: 600,
-  },
-  allowBtn: {
-    padding: "7px 14px",
-    borderRadius: 6,
-    border: "none",
-    background: "#D97706",
-    color: "#fff",
-    cursor: "pointer",
-    fontSize: 13,
-    fontWeight: 600,
-  },
 }
 
 function LogBar({ onClose }: { onClose: () => void }) {
@@ -1561,7 +1147,7 @@ function LogBar({ onClose }: { onClose: () => void }) {
       <button onClick={onClose} style={logStyles.closeBtn}>✕</button>
       {logs.map((l, i) => (
         <div key={i} style={logStyles.line}>
-          <span style={{...logStyles.level, color: l.level === "error" ? "#F44336" : l.level === "warn" ? "#FF9800" : "#999"}}>{l.level.toUpperCase().padEnd(5)}</span>
+          <span style={{...logStyles.level, color: l.level === "error" ? tokens.danger : l.level === "warn" ? tokens.warning : tokens.textMuted}}>{l.level.toUpperCase().padEnd(5)}</span>
           <span style={logStyles.source}>{l.source.padEnd(14)}</span>
           <span style={logStyles.event}>{l.event}</span>
         </div>

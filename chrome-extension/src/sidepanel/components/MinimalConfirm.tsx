@@ -1,21 +1,10 @@
-// Panel content-split confirm (UI Mode P1) — tool + risk + allow/deny/stop + multi-agent identity.
+// Panel content-split confirm (UI Mode P1/P2) — tool + risk + allow/deny/stop + multi-agent identity.
 // Heavy preview / nonce / whitelist live in Cockpit ConfirmElevated.
 
 import { useRef } from "react"
 import { useAgentStore } from "../store/agentStore"
 import type { SecurityConfirmationRequest } from "../types"
-
-function riskColor(level?: string): string {
-  if (level === "low") return "#FFC107"
-  if (level === "medium") return "#FF9800"
-  return "#F44336"
-}
-
-function riskLabel(level?: string): string {
-  if (level === "low") return "低风险"
-  if (level === "medium") return "中风险"
-  return "高风险"
-}
+import { tokens, riskColorDark, riskLabel } from "../ui/tokens"
 
 export function MinimalConfirm() {
   const { state, dispatch } = useAgentStore()
@@ -24,7 +13,7 @@ export function MinimalConfirm() {
 
   if (!request) return null
 
-  const color = riskColor(request.risk_level)
+  const color = riskColorDark(request.risk_level)
   const label = riskLabel(request.risk_level)
   // Nonce-gated confirms must use Cockpit (content-split) — Panel cannot type-verify
   const needsNonce = !!request.nonce_challenge
@@ -62,20 +51,22 @@ export function MinimalConfirm() {
       style={{
         marginTop: 8,
         padding: 10,
-        borderRadius: 8,
-        background: "linear-gradient(180deg, #3b1f1f 0%, #2a1515 100%)",
+        borderRadius: tokens.radiusMd,
+        background: `linear-gradient(180deg, ${tokens.darkDangerBg} 0%, #2a1515 100%)`,
         border: "1px solid #7f1d1d",
-        color: "#fca5a5",
+        color: tokens.darkDanger,
         fontSize: 11,
+        fontFamily: tokens.font,
       }}
       role="alertdialog"
       aria-label={`${label}确认`}
     >
-      <div style={{ fontWeight: 700, marginBottom: 4, letterSpacing: "0.01em" }}>
-        {label} · <span style={{ fontFamily: "ui-monospace, monospace" }}>{request.tool_name}</span>
+      <div style={{ fontWeight: 700, marginBottom: 4, letterSpacing: "0.01em", color: color }}>
+        {label} ·{" "}
+        <span style={{ fontFamily: tokens.fontMono, color: tokens.darkText }}>{request.tool_name}</span>
       </div>
       {workerLabel && (
-        <div style={{ fontSize: 10, color: "#fde68a", marginBottom: 4 }}>
+        <div style={{ fontSize: 10, color: tokens.darkWarning, marginBottom: 4 }}>
           来自 <strong>{workerLabel}</strong>
           {typeof request.tab_id === "number" ? ` · tab ${request.tab_id}` : ""}
           {request.orchestrator_run_id
@@ -83,7 +74,7 @@ export function MinimalConfirm() {
             : ""}
         </div>
       )}
-      <div style={{ color: "#d1d5db", marginBottom: 8, fontSize: 10, lineHeight: 1.45 }}>
+      <div style={{ color: tokens.darkMuted, marginBottom: 8, fontSize: 10, lineHeight: 1.45 }}>
         {needsNonce
           ? "此确认需要输入确认码 — 请在确认台完成。"
           : "详细预览与白名单在确认台；此处可快速允许或拒绝。"}
@@ -93,8 +84,8 @@ export function MinimalConfirm() {
           type="button"
           style={{
             ...btn,
-            background: needsNonce ? "#374151" : "#16a34a",
-            color: needsNonce ? "#9aa0a6" : "#fff",
+            background: needsNonce ? "#374151" : tokens.success,
+            color: needsNonce ? tokens.darkMuted : "#fff",
             cursor: needsNonce ? "not-allowed" : "pointer",
           }}
           disabled={needsNonce}
@@ -106,14 +97,19 @@ export function MinimalConfirm() {
         <button
           ref={denyBtnRef}
           type="button"
-          style={{ ...btn, background: "#374151", color: "#e5e7eb" }}
+          style={{ ...btn, background: "#374151", color: tokens.darkText }}
           onClick={() => respond(false)}
         >
           拒绝
         </button>
         <button
           type="button"
-          style={{ ...btn, background: "transparent", color: "#fca5a5", border: "1px solid #7f1d1d" }}
+          style={{
+            ...btn,
+            background: "transparent",
+            color: tokens.darkDanger,
+            border: "1px solid #7f1d1d",
+          }}
           onClick={() => respond(false, true)}
           title={stopTargetId ? `停止 ${stopTargetId.slice(0, 8)}…` : "停止当前线程"}
         >
@@ -124,8 +120,8 @@ export function MinimalConfirm() {
           style={{
             ...btn,
             background: "transparent",
-            color: "#93c5fd",
-            border: "1px solid #2a2f3a",
+            color: tokens.darkAccent,
+            border: `1px solid ${tokens.darkBorder}`,
             fontWeight: 500,
           }}
           onClick={() => chrome.runtime.sendMessage({ type: "cockpit.open" })}
@@ -135,20 +131,21 @@ export function MinimalConfirm() {
         </button>
       </div>
       {state.pendingSecurityConfirmations.length > 1 && (
-        <div style={{ marginTop: 6, fontSize: 10, color: "#fcd34d" }}>
+        <div style={{ marginTop: 6, fontSize: 10, color: tokens.darkWarning }}>
           队列中还有 {state.pendingSecurityConfirmations.length - 1} 条确认
         </div>
       )}
-      <span style={{ display: "none", color }} aria-hidden />
     </div>
   )
 }
 
 const btn: React.CSSProperties = {
   padding: "5px 10px",
-  borderRadius: 6,
+  borderRadius: tokens.radiusSm,
   border: "none",
   cursor: "pointer",
   fontSize: 11,
   fontWeight: 600,
+  fontFamily: tokens.font,
+  transition: `opacity ${tokens.transitionFast} ease`,
 }

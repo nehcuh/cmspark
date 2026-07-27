@@ -12,6 +12,7 @@ import {
   threadTrustHint,
 } from "../sidepanel/utils/apps-utils"
 import type { ComputerStepView, SecurityConfirmationRequest } from "../sidepanel/types"
+import { tokens } from "../sidepanel/ui/tokens"
 
 export function CockpitRoot() {
   return (
@@ -103,9 +104,15 @@ function CockpitApp() {
     <div style={s.root}>
       <header style={s.titleBar}>
         <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-          <strong>CMspark Cockpit</strong>
+          <strong>CMspark 确认台</strong>
           <span style={s.liveBadge}>
-            {task && !finished ? "L2 · LIVE" : "L2"}
+            {task && !finished
+              ? "L2 · LIVE"
+              : task
+                ? "L2"
+                : confirm
+                  ? "确认"
+                  : "工作区"}
           </span>
           <span style={s.muted}>{state.activeThreadId || "—"}</span>
           <span style={s.muted}>
@@ -127,7 +134,16 @@ function CockpitApp() {
           <button
             type="button"
             style={s.ghostBtn}
-            onClick={() => chrome.runtime.sendMessage({ type: "cockpit.close" })}
+            onClick={() => {
+              // P2 close warning: closing does not stop the task — make it explicit when LIVE
+              if (task && !finished) {
+                const ok = window.confirm(
+                  "收起确认台不会停止任务。\n任务将继续在后台运行；可从侧栏 Chip 重新打开。\n\n确定收起？",
+                )
+                if (!ok) return
+              }
+              chrome.runtime.sendMessage({ type: "cockpit.close" })
+            }}
             title="关闭窗口不会停止任务"
           >
             收起
@@ -504,10 +520,9 @@ const s: Record<string, CSSProperties> = {
     display: "flex",
     flexDirection: "column",
     height: "100vh",
-    background: "#0c0e12",
-    color: "#e8eaed",
-    fontFamily:
-      "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, ui-sans-serif, system-ui, sans-serif",
+    background: tokens.darkBg,
+    color: tokens.darkText,
+    fontFamily: tokens.font,
     fontSize: 12,
   },
   titleBar: {
@@ -515,23 +530,23 @@ const s: Record<string, CSSProperties> = {
     justifyContent: "space-between",
     alignItems: "center",
     padding: "11px 14px",
-    borderBottom: "1px solid #232833",
-    background: "linear-gradient(180deg, #151922 0%, #11141b 100%)",
+    borderBottom: `1px solid ${tokens.darkBorder}`,
+    background: `linear-gradient(180deg, ${tokens.darkElevated} 0%, ${tokens.darkBg} 100%)`,
   },
   liveBadge: {
     fontSize: 10,
     padding: "3px 8px",
-    background: "#052e16",
-    color: "#4ade80",
+    background: tokens.modeComputerBg,
+    color: tokens.darkLive,
     borderRadius: 999,
     fontWeight: 650,
     border: "1px solid #14532d",
     letterSpacing: "0.02em",
   },
-  muted: { color: "#8b93a7", fontSize: 10 },
+  muted: { color: tokens.darkMuted, fontSize: 10 },
   abortBtn: {
-    background: "#3b1f1f",
-    color: "#fca5a5",
+    background: tokens.darkDangerBg,
+    color: tokens.darkDanger,
     border: "1px solid #7f1d1d",
     borderRadius: 6,
     padding: "5px 10px",

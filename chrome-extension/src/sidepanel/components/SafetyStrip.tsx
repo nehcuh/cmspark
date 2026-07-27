@@ -1,4 +1,5 @@
-// L2 Panel safety strip (UI Mode P1) — TaskChip + mandatory abort + minimal confirm.
+// Panel safety strip (UI Mode P1) — L2 TaskChip + mandatory abort + minimal confirm.
+// Also hosts L0/L1 pending confirm (content-split: allow/deny here, heavy fields in Cockpit).
 
 import { useState, useEffect } from "react"
 import { useAgentStore } from "../store/agentStore"
@@ -30,6 +31,7 @@ export function SafetyStrip() {
 
   const finished = task?.status === "finished"
   const live = task && !finished
+  const confirmOnly = !task && hasConfirm
   const progressText =
     task && typeof task.total === "number"
       ? `${task.steps.length}/${task.total}`
@@ -48,13 +50,20 @@ export function SafetyStrip() {
     <div style={styles.wrap}>
       <div style={styles.chip}>
         <span style={styles.iconBubble}>
-          <IconMonitor size={14} style={{ color: live ? tokens.darkLive : tokens.darkMuted }} />
+          <IconMonitor
+            size={14}
+            style={{ color: live ? tokens.darkLive : confirmOnly ? tokens.darkDanger : tokens.darkMuted }}
+          />
         </span>
         <span style={styles.live}>
           {live && (
             <span style={styles.liveDot} title="进行中" />
           )}
-          {task?.task ? ellipsize(task.task, 36) : hasConfirm ? "待确认" : "Computer Use"}
+          {task?.task
+            ? ellipsize(task.task, 36)
+            : hasConfirm
+              ? "待确认操作"
+              : "Computer Use"}
         </span>
         {progressText && <span style={styles.meta}>{progressText}</span>}
         {task && !finished && !task.abortAcked && (
@@ -70,7 +79,7 @@ export function SafetyStrip() {
           type="button"
           style={styles.openBtn}
           onClick={() => chrome.runtime.sendMessage({ type: "cockpit.open" })}
-          title="打开确认台（操控台）：完整预览与 Computer Use；关闭窗口不会停止任务"
+          title="打开确认台：完整预览 / 白名单 / 确认码；关闭窗口不会停止任务"
         >
           确认台
           <IconExternal size={12} />
