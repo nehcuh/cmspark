@@ -70,8 +70,9 @@ export function SafetyStrip() {
           type="button"
           style={styles.openBtn}
           onClick={() => chrome.runtime.sendMessage({ type: "cockpit.open" })}
+          title="打开确认台（操控台）：完整预览与 Computer Use；关闭窗口不会停止任务"
         >
-          操控台
+          确认台
           <IconExternal size={12} />
         </button>
       </div>

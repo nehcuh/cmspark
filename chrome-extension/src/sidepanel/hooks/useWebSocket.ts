@@ -599,7 +599,14 @@ export function useWebSocket() {
           break
 
         case "modules.updated":
-          // PacksPanel listens directly; no store field required for P0
+          // PacksPanel listens via chrome.runtime.onMessage; no store field required
+          break
+
+        case "netsec.authorized":
+          // Per-thread task auth — keep store in sync for PacksPanel badges
+          if (msg.thread?.id) {
+            dispatch({ type: "UPSERT_THREAD", thread: msg.thread })
+          }
           break
 
         case "mcp.list":

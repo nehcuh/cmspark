@@ -60,6 +60,7 @@ Dark (L2 SafetyStrip / Cockpit): bg `#0f1115` / `#141820`, text `#e8eaed`, live 
 ### Cockpit (P1)
 - Extension popup `tabs/cockpit.html` (~720×560); SW mirror hydrates computer task + pending confirms
 - Panel L2: SafetyStrip (abort + minimal confirm); Panel send hard-gated while task running/paused
+- UI labels: FleetStrip / SafetyStrip / MinimalConfirm all use **「确认台」** for the same Cockpit window; empty state shows purpose copy — [confirm-center-user-guide.md](confirm-center-user-guide.md)
 - Known: `cockpitWindowId` is in-memory — SW death may orphan a window until next open (P2)
 
 ### Message Bubbles

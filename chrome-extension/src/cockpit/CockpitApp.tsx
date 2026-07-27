@@ -145,9 +145,34 @@ function CockpitApp() {
         />
       )}
 
+      {/* Empty confirm desk: explain purpose so opening 「确认台」 is not confusing */}
+      {!confirm && (!task || finished) && (
+        <section style={s.emptyGuide} role="status">
+          <div style={s.emptyGuideTitle}>当前无待确认操作</div>
+          <p style={s.emptyGuideBody}>
+            这里是<strong>确认台</strong>（高危工具审批 + Computer Use 操控），不是日常聊天或配置页。
+            出现 <code style={s.code}>evaluate</code> / <code style={s.code}>shell_exec</code> /{" "}
+            <code style={s.code}>netsec_port_scan</code> / 桌面操控 / <code style={s.code}>spawn_worker</code>{" "}
+            等请求时，会在此展示完整预览；侧栏红条也可快速允许或拒绝。
+          </p>
+          <p style={s.emptyGuideBody}>
+            NetSec IP 与任务授权请到 Side Panel → <strong>任务包</strong>。
+            关掉本窗<strong>不会</strong>停止已在跑的任务（请用急停）。
+          </p>
+          <p style={s.emptyGuideHint}>
+            说明文档（仓库）：docs/confirm-center-user-guide.md
+          </p>
+        </section>
+      )}
+
       <section style={s.taskDock}>
         <div style={{ fontSize: 13, marginBottom: 6 }}>
-          {task?.task || (confirm ? "等待确认…" : "等待 Computer Use 任务…")}
+          {task?.task ||
+            (confirm
+              ? "等待确认…"
+              : finished
+                ? "上一任务已结束"
+                : "等待 Computer Use 任务…")}
           {task?.app ? ` — ${task.app}` : ""}
         </div>
         {task && (
@@ -530,6 +555,40 @@ const s: Record<string, CSSProperties> = {
     border: "1px solid #7f1d1d",
     borderRadius: 10,
     boxShadow: "0 8px 24px rgba(0,0,0,0.28)",
+  },
+  emptyGuide: {
+    margin: "12px 14px 0",
+    padding: "12px 14px",
+    background: "linear-gradient(180deg, #151a24 0%, #12161e 100%)",
+    border: "1px solid #2a3344",
+    borderRadius: 10,
+    borderLeft: "3px solid #5b8def",
+  },
+  emptyGuideTitle: {
+    fontWeight: 700,
+    fontSize: 13,
+    color: "#e8eaed",
+    marginBottom: 8,
+  },
+  emptyGuideBody: {
+    margin: "0 0 8px",
+    fontSize: 11,
+    lineHeight: 1.55,
+    color: "#9aa0a6",
+  },
+  emptyGuideHint: {
+    margin: 0,
+    fontSize: 10,
+    color: "#6b7280",
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+  },
+  code: {
+    fontSize: 10,
+    padding: "1px 4px",
+    borderRadius: 4,
+    background: "#1e2430",
+    color: "#93c5fd",
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
   },
   taskDock: {
     margin: "0 14px 12px",

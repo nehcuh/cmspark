@@ -627,3 +627,4 @@ UI「应用到当前线程」→ pack.apply { pack_id, thread_id }
 - Pack **禁止**写入 `auto_approve_dangerous` / god-mode 等放宽键。
 - `workspace_root not set` / `module_disabled` 为 **recoverable** 错误，引导用户 UI 操作。
 - 审计日志：`logs/capability-audit.jsonl`（0o600、append、轮转）。
+- **L2 确认 / 确认台（Cockpit）**用户说明见 [confirm-center-user-guide.md](confirm-center-user-guide.md)（与 NetSec 任务授权分层；实现见 `security-confirmation.ts` + 扩展 `MinimalConfirm` / `CockpitApp`）。
