@@ -576,8 +576,44 @@ export function getToolDefinitions(): ToolDefinition[] {
               description: "Optional extra deny list",
             },
             pack_id: { type: "string", description: "Optional mission pack id applied after spawn (role template)" },
+            intent_id: {
+              type: "string",
+              description:
+                "Optional MissionBoard intent id (ADR-016 Stage 3). Worker is bound and intent is claimed on the host board after spawn.",
+            },
           },
           required: [],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "board_claim_intent",
+        description:
+          "Claim an open MissionBoard intent for a worker on the host board (ADR-016 Stage 3). Max 3 intents per worker.",
+        parameters: {
+          type: "object",
+          properties: {
+            intent_id: { type: "string" },
+            worker_id: { type: "string" },
+          },
+          required: ["intent_id", "worker_id"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "board_heartbeat_intent",
+        description:
+          "Renew heartbeat on a claimed intent (worker). Stale claims are reaped by wait_workers.",
+        parameters: {
+          type: "object",
+          properties: {
+            intent_id: { type: "string" },
+          },
+          required: ["intent_id"],
         },
       },
     },

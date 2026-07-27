@@ -26,6 +26,7 @@ export function FleetStrip() {
   const pending = state.pendingSecurityConfirmations.length
   const workerCount = fleet?.worker_count ?? 0
   const lockCount = fleet?.lock_count ?? 0
+  const openIntents = fleet?.open_intent_count ?? 0
   const worst = fleet?.worst_status
 
   useEffect(() => {
@@ -35,8 +36,8 @@ export function FleetStrip() {
     return () => clearInterval(id)
   }, [])
 
-  // Always show thin strip when multi-agent activity or pending confirms
-  const visible = workerCount > 0 || lockCount > 0 || pending > 0 || expanded
+  // Always show thin strip when multi-agent activity, board intents, or pending confirms
+  const visible = workerCount > 0 || lockCount > 0 || openIntents > 0 || pending > 0 || expanded
   if (!visible && !expanded) {
     // Compact always-available entry so user can open fleet even when empty
     return (
@@ -69,8 +70,14 @@ export function FleetStrip() {
           <span style={{ ...styles.dot, background: worstColor(worst) }} />
           <strong style={{ fontSize: 11 }}>舰队</strong>
           <span style={styles.meta}>
-            {workerCount} worker · {lockCount} 锁 · {worstLabel(worst)}
+            {workerCount} worker · {lockCount} 锁
+            {openIntents > 0 ? ` · ${openIntents} intent` : ""} · {worstLabel(worst)}
           </span>
+          {openIntents > 0 && (
+            <span style={{ ...styles.badge, background: "#ca8a04" }} title="未关闭 Intent">
+              {openIntents}
+            </span>
+          )}
           {pending > 0 && (
             <span style={styles.badge} title="待确认操作">
               {pending}

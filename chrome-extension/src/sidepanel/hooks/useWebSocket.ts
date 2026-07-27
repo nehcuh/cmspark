@@ -385,6 +385,8 @@ export function useWebSocket() {
                 locks: Array.isArray(snap.locks) ? snap.locks : [],
                 worker_count: typeof snap.worker_count === "number" ? snap.worker_count : snap.workers.length,
                 lock_count: typeof snap.lock_count === "number" ? snap.lock_count : (snap.locks?.length || 0),
+                open_intent_count:
+                  typeof snap.open_intent_count === "number" ? snap.open_intent_count : 0,
                 worst_status: snap.worst_status || "none",
                 orchestrator_runs: Array.isArray(snap.orchestrator_runs) ? snap.orchestrator_runs : [],
               },
@@ -392,6 +394,10 @@ export function useWebSocket() {
           }
           break
         }
+        case "board.get":
+        case "board.add_hint_result":
+          // BoardPanel listens via sendMessage callback; no store field required
+          break
         case "worker.updated":
           chrome.runtime.sendMessage({ type: "fleet.status" })
           break

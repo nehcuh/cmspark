@@ -264,6 +264,7 @@ export interface FleetSnapshot {
   }>
   worker_count: number
   lock_count: number
+  open_intent_count?: number
   worst_status: "idle" | "paused" | "holding_tabs" | "none"
   orchestrator_runs: string[]
 }

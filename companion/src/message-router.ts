@@ -1406,7 +1406,59 @@ export async function handleMessage(
     // --- Mission Packs (P0) ---
     case "fleet.status": {
       const { buildFleetSnapshot } = await import("./orchestrator/fleet")
+      // Stage 3: reap stale intents on active orchestrator hosts when polling fleet
+      try {
+        const { reapStaleIntents } = await import("./board/intent-claim")
+        for (const t of threadManager.list() as any[]) {
+          if (t.agent_role === "orchestrator" || (t.board_mode && t.agent_role !== "worker")) {
+            await reapStaleIntents(threadManager, t.id)
+          }
+        }
+      } catch {
+        /* ignore */
+      }
       return buildFleetSnapshot(threadManager)
+    }
+    case "board.get": {
+      const tid = typeof rest.thread_id === "string" ? rest.thread_id : null
+      if (!tid) return { type: "error", error: "board.get requires thread_id" }
+      const { readBoard, resolveBoardHostThreadId, boardReadForTool } = await import("./board")
+      const hostId = resolveBoardHostThreadId(threadManager, tid) || tid
+      const toolView = boardReadForTool(threadManager, hostId)
+      const raw = readBoard(threadManager, hostId)
+      return {
+        type: "board.get",
+        thread_id: tid,
+        host_thread_id: hostId,
+        raw_board: raw,
+        board: toolView.data?.board ?? null,
+        open_intent_count: raw
+          ? raw.intents.filter((i) => i.status === "open" || i.status === "claimed").length
+          : 0,
+      }
+    }
+    case "board.add_hint": {
+      const tid = typeof rest.thread_id === "string" ? rest.thread_id : null
+      const text = typeof rest.text === "string" ? rest.text : ""
+      if (!tid) return { type: "error", error: "board.add_hint requires thread_id" }
+      if (!text.trim()) return { type: "error", error: "board.add_hint requires text" }
+      const { addHint, resolveBoardHostThreadId, ensureBoard } = await import("./board")
+      const hostId = resolveBoardHostThreadId(threadManager, tid) || tid
+      const host = threadManager.get(hostId) as any
+      if (host?.board_mode) {
+        await ensureBoard(threadManager, hostId, { force: false })
+      }
+      const r = await addHint(threadManager, hostId, text.trim(), {
+        actor_type: "user",
+        thread_id: hostId,
+      })
+      if (!r.ok) return { type: "error", error: r.error }
+      return {
+        type: "board.add_hint_result",
+        thread_id: tid,
+        host_thread_id: hostId,
+        raw_board: r.board,
+      }
     }
     case "fleet.stop_all": {
       const runId = typeof rest.orchestrator_run_id === "string" ? rest.orchestrator_run_id : null

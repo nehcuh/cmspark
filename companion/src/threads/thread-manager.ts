@@ -56,6 +56,8 @@ interface Thread {
   capability_elevation_level?: string | null
   /** Pause freezes LLM loop + new tool dispatch; leases retained until TTL/cancel. */
   paused?: boolean
+  /** ADR-016 Stage 3: worker bound to host-board intent id. */
+  assigned_intent_id?: string | null
   /**
    * MissionBoard (ADR-016): structured Fact/Intent/Hint run state.
    * null/undefined = no board (board mode off or never initialized).

@@ -771,6 +771,8 @@ function setupMessageHandlers() {
       case "worker.pause":
       case "worker.resume":
       case "tab.force_release":
+      case "board.get":
+      case "board.add_hint":
       case "workspace.pick":
       case "workspace.set":
       case "netsec.authorize_task":

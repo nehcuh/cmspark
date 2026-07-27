@@ -30,6 +30,8 @@ export const ORCHESTRATOR_TOOL_ALLOWLIST = [
   "collect_handback",
   "board_read",
   "board_complete",
+  "board_claim_intent",
+  "board_heartbeat_intent",
   "ask_user",
   "list_workers",
   "get_worker_status",

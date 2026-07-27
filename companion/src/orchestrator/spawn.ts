@@ -75,6 +75,8 @@ export function spawnWorkerThread(
     roleDeny?: string[]
     packId?: string | null
     userConfirmed: boolean
+    /** ADR-016 Stage 3: bind worker to a board intent (claimed after create). */
+    intentId?: string | null
   },
 ): SpawnWorkerResult {
   if (!opts.userConfirmed) {
@@ -126,6 +128,7 @@ export function spawnWorkerThread(
     return { ok: false, error: "effective worker tool_whitelist is empty after HARD_DENY" }
   }
 
+  const intentId = opts.intentId && String(opts.intentId).trim() ? String(opts.intentId).trim() : null
   const worker = tm.create(opts.alias || `worker:${opts.roleLabel || "task"}`)
   tm.update(worker.id, {
     parent_thread_id: opts.parentThreadId,
@@ -134,13 +137,16 @@ export function spawnWorkerThread(
     agent_role: "worker" as AgentRole,
     tool_whitelist: whitelist,
     mission_pack_id: opts.packId ?? null,
+    assigned_intent_id: intentId,
     config_override: {
       ...(worker.config_override || {}),
       system_prompt_append: [
         `You are a worker agent (role=${opts.roleLabel || "worker"}).`,
         `Parent orchestrator thread: ${opts.parentThreadId}.`,
+        intentId
+          ? `You are bound to board intent_id=${intentId}. Explore only that intent; return structured handback (schema_version 1) with facts/intents.`
+          : `When done, summarize results for the orchestrator; do not spawn further workers.`,
         `Always pass explicit numeric tabId for browser tools. Never assume active tab.`,
-        `When done, summarize results for the orchestrator; do not spawn further workers.`,
       ].join(" "),
     },
   } as any)
@@ -154,6 +160,7 @@ export function spawnWorkerThread(
     orchestrator_run_id: runId,
     role_label: opts.roleLabel || "worker",
     tool_whitelist: whitelist,
+    intent_id: intentId,
   })
 
   return { ok: true, worker: full, orchestrator_run_id: runId }

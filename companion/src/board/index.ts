@@ -31,3 +31,13 @@ export {
   type CompleteBoardParams,
   type CanCompleteResult,
 } from "./service"
+export {
+  claimIntent,
+  heartbeatIntent,
+  reapStaleIntents,
+  countOpenIntents,
+  listOpenIntents,
+  MAX_INTENTS_PER_WORKER,
+  intentHeartbeatStaleMs,
+  type ClaimIntentResult,
+} from "./intent-claim"

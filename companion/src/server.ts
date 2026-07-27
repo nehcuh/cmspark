@@ -1836,6 +1836,8 @@ export function createToolExecutor(ws: WebSocket) {
       "collect_handback",
       "board_read",
       "board_complete",
+      "board_claim_intent",
+      "board_heartbeat_intent",
       "wait_workers",
       "worker_cancel",
       "ask_user",
@@ -2431,6 +2433,10 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
         return { success: false, error: "Invalid or expired security token for spawn_worker" }
       }
       const { spawnWorkerThread } = await import("./orchestrator/spawn")
+      const intentId =
+        typeof params.intent_id === "string" && params.intent_id.trim()
+          ? params.intent_id.trim()
+          : null
       const r = spawnWorkerThread(threadManager, {
         parentThreadId: String(parentId),
         roleLabel: params.role_label || params.roleLabel,
@@ -2439,6 +2445,7 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
         roleDeny: Array.isArray(params.tool_deny) ? params.tool_deny : undefined,
         packId: params.pack_id || null,
         userConfirmed: true, // L2 approval above is the sole user-confirm authority
+        intentId,
       })
       if (!r.ok) return { success: false, error: r.error }
       // Optional pack.apply after spawn (role template — never elevates capability_profile / modules)
@@ -2456,6 +2463,25 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
           packApply = { ok: false, error: e?.message || String(e) }
         }
       }
+      // ADR-016 Stage 3: claim intent on host board after worker exists
+      let intentClaim: { ok: boolean; error?: string; intent_id?: string } | null = null
+      if (intentId) {
+        try {
+          const { claimIntent } = await import("./board/intent-claim")
+          const cr = await claimIntent(threadManager, {
+            hostThreadId: String(parentId),
+            intentId,
+            workerThreadId: r.worker.id,
+          })
+          if (!cr.ok) {
+            intentClaim = { ok: false, error: cr.error, intent_id: intentId }
+          } else {
+            intentClaim = { ok: true, intent_id: intentId }
+          }
+        } catch (e: any) {
+          intentClaim = { ok: false, error: e?.message || String(e), intent_id: intentId }
+        }
+      }
       const workerAfter = threadManager.get(r.worker.id)
       return {
         success: true,
@@ -2466,6 +2492,8 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
           agent_role: r.worker.agent_role,
           mission_pack_id: workerAfter?.mission_pack_id ?? params.pack_id ?? null,
           pack_apply: packApply,
+          assigned_intent_id: intentId,
+          intent_claim: intentClaim,
         },
       }
     }
@@ -2566,6 +2594,41 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
       if (!tid) return { success: false, error: "board_read requires thread context (__thread_id)" }
       const { boardReadForTool } = await import("./board")
       return boardReadForTool(threadManager, String(tid))
+    }
+    case "board_claim_intent": {
+      const parentId = params.__thread_id || params._thread_id
+      if (!parentId) return { success: false, error: "board_claim_intent requires host thread" }
+      const intentId = String(params.intent_id || "")
+      const workerId = String(params.worker_id || "")
+      if (!intentId || !workerId) {
+        return { success: false, error: "intent_id and worker_id required" }
+      }
+      const { claimIntent } = await import("./board/intent-claim")
+      const r = await claimIntent(threadManager, {
+        hostThreadId: String(parentId),
+        intentId,
+        workerThreadId: workerId,
+      })
+      if (!r.ok) return { success: false, error: r.error, data: { error_code: r.error_code } }
+      threadManager.update(workerId, { assigned_intent_id: intentId } as any)
+      return { success: true, data: { intent: r.intent } }
+    }
+    case "board_heartbeat_intent": {
+      const workerId = params.__thread_id || params._thread_id
+      if (!workerId) return { success: false, error: "thread required" }
+      const intentId = String(params.intent_id || "")
+      if (!intentId) return { success: false, error: "intent_id required" }
+      const { resolveBoardHostThreadId } = await import("./board")
+      const hostId = resolveBoardHostThreadId(threadManager, String(workerId))
+      if (!hostId) return { success: false, error: "board host not found" }
+      const { heartbeatIntent } = await import("./board/intent-claim")
+      const r = await heartbeatIntent(threadManager, {
+        hostThreadId: hostId,
+        intentId,
+        workerThreadId: String(workerId),
+      })
+      if (!r.ok) return { success: false, error: r.error, data: { error_code: r.error_code } }
+      return { success: true, data: { intent: r.intent } }
     }
     case "board_complete": {
       // ADR-016 G5/G6/G9: L2 + hard canComplete; no LLM self-approve
@@ -2679,6 +2742,19 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
       const parent = parentId ? threadManager.get(String(parentId)) : null
       const runId = params.orchestrator_run_id || (parent as any)?.orchestrator_run_id
       if (!runId) return { success: false, error: "orchestrator_run_id required" }
+      // ADR-016 Stage 3: reap stale claimed intents on host board
+      let intentsReaped = 0
+      let openIntents = 0
+      if (parentId) {
+        try {
+          const { reapStaleIntents, countOpenIntents } = await import("./board/intent-claim")
+          const rr = await reapStaleIntents(threadManager, String(parentId))
+          intentsReaped = rr.reaped
+          openIntents = countOpenIntents(threadManager, String(parentId))
+        } catch {
+          /* ignore */
+        }
+      }
       const { listWorkers } = await import("./orchestrator/spawn")
       const { multiAgentLlmLoopSnapshot } = await import("./orchestrator/llm-loop-gate")
       const workers = listWorkers(threadManager, String(runId))
@@ -2689,11 +2765,14 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
           poll_only: true,
           note: "wait_workers is poll-only (no barrier). Re-call or use HITL; check llm_loops for concurrent worker LLM activity.",
           llm_loops: llm,
+          intents_reaped: intentsReaped,
+          open_intent_count: openIntents,
           workers: workers.map((w: any) => ({
             id: w.id,
             alias: w.alias,
             paused: !!w.paused,
             llm_active: llm.holders.includes(w.id),
+            assigned_intent_id: w.assigned_intent_id || null,
           })),
         },
       }
@@ -4254,6 +4333,15 @@ export function validateWsMessage(msg: any): WsValidationResult {
     },
     "tab.force_release": (m) => {
       if (typeof m.tab_id !== "number") return { valid: false, error: "tab.force_release requires tab_id number" }
+      return { valid: true }
+    },
+    "board.get": (m) => {
+      if (typeof m.thread_id !== "string" || !m.thread_id) return { valid: false, error: "board.get requires thread_id" }
+      return { valid: true }
+    },
+    "board.add_hint": (m) => {
+      if (typeof m.thread_id !== "string" || !m.thread_id) return { valid: false, error: "board.add_hint requires thread_id" }
+      if (typeof m.text !== "string" || !m.text.trim()) return { valid: false, error: "board.add_hint requires text" }
       return { valid: true }
     },
     "workspace.pick": () => ({ valid: true }),

@@ -3,6 +3,7 @@
 import type { ThreadManager } from "../threads/thread-manager"
 import { listTabLocks } from "./tab-lease"
 import { listWorkers } from "./spawn"
+import { countOpenIntents } from "../board/intent-claim"
 
 export interface FleetWorkerView {
   id: string
@@ -27,6 +28,8 @@ export interface FleetSnapshot {
   locks: ReturnType<typeof listTabLocks>
   worker_count: number
   lock_count: number
+  /** ADR-016 Stage 4: sum of open+claimed intents across orchestrator hosts */
+  open_intent_count: number
   worst_status: "idle" | "paused" | "holding_tabs" | "none"
   orchestrator_runs: string[]
 }
@@ -82,6 +85,20 @@ export function buildFleetSnapshot(tm: ThreadManager): FleetSnapshot {
     ),
   ]
 
+  let open_intent_count = 0
+  const seenHosts = new Set<string>()
+  for (const t of all) {
+    if (t.agent_role === "worker") continue
+    if (!t.mission_board && !t.board_mode) continue
+    if (seenHosts.has(t.id)) continue
+    seenHosts.add(t.id)
+    try {
+      open_intent_count += countOpenIntents(tm, t.id)
+    } catch {
+      /* ignore */
+    }
+  }
+
   return {
     type: "fleet.status",
     at: new Date().toISOString(),
@@ -89,6 +106,7 @@ export function buildFleetSnapshot(tm: ThreadManager): FleetSnapshot {
     locks,
     worker_count: views.filter((v) => v.agent_role === "worker").length,
     lock_count: locks.length,
+    open_intent_count,
     worst_status: worst,
     orchestrator_runs: runs,
   }
