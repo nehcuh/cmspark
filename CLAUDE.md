@@ -124,6 +124,7 @@ Chrome Extension (Plasmo + React)  ←→  WebSocket (ws://127.0.0.1:23401)  ←
 - docs/GOAL.md — 项目目标与阶段规划
 - docs/architecture.md — 完整架构文档（§7 Mission Pack）
 - docs/mission-pack-usage.md — 任务包 / 企业模块使用说明
+- docs/confirm-center-user-guide.md — 确认台（Confirm Center / Cockpit）用户说明
 - docs/optimization-roadmap.md — 优化路线图
 - docs/adr/ — 架构决策记录（含 ADR-014）
 
