@@ -336,13 +336,32 @@ export function releaseAllLeasesForThread(holderThreadId: string, reason: string
   return n
 }
 
-export function forceReleaseTab(tabId: number, by: string): LeaseResult {
+/**
+ * Force-release a tab lease.
+ * When `hasPending` is true (CDP / extension tool still in flight), enter
+ * FORCE_RELEASING without FREE — caller must reject pending tools, then call
+ * `completeForceRelease` (or forceRelease again with hasPending=false).
+ */
+export function forceReleaseTab(
+  tabId: number,
+  by: string,
+  opts?: { hasPending?: boolean },
+): LeaseResult & { draining?: boolean } {
   const existing = leases.get(tabId)
   if (!existing) {
     return { ok: true, lease: makeHard(tabId, by) } // no-op free
   }
-  existing.state = "FORCE_RELEASING"
-  leases.set(tabId, existing)
+  if (opts?.hasPending) {
+    existing.state = "FORCE_RELEASING"
+    leases.set(tabId, existing)
+    audit("tab.lease.force_releasing_pending", {
+      tab_id: tabId,
+      holder_thread_id: existing.holderThreadId,
+      by,
+    })
+    return { ok: true, lease: existing, draining: true }
+  }
+  // Instant free path (pending already drained by caller)
   leases.delete(tabId)
   audit("tab.lease.force_released", {
     tab_id: tabId,
@@ -350,6 +369,20 @@ export function forceReleaseTab(tabId: number, by: string): LeaseResult {
     by,
   })
   return { ok: true, lease: existing }
+}
+
+/** Complete a FORCE_RELEASING lease after pending tools are rejected/drained. */
+export function completeForceRelease(tabId: number, reason = "drain_complete"): boolean {
+  const existing = leases.get(tabId)
+  if (!existing) return false
+  if (existing.state !== "FORCE_RELEASING") return false
+  leases.delete(tabId)
+  audit("tab.lease.force_released", {
+    tab_id: tabId,
+    holder_thread_id: existing.holderThreadId,
+    reason,
+  })
+  return true
 }
 
 export function getTabLease(tabId: number): TabLease | null {

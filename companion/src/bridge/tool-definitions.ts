@@ -559,7 +559,7 @@ export function getToolDefinitions(): ToolDefinition[] {
       function: {
         name: "spawn_worker",
         description:
-          "Spawn a child worker Thread under this orchestrator (ADR-015). REQUIRES user_confirmed=true after the user explicitly approved spawning. Workers get a non-empty downgraded tool_whitelist (no shell/netsec/host by default; evaluate allowed under L2). Max 5 workers per run. Always pass explicit tabId in worker browser tools.",
+          "Spawn a child worker Thread under this orchestrator (ADR-015). Triggers interactive L2 Confirm Center approval — do NOT invent user_confirmed. Workers get a non-empty downgraded tool_whitelist (no shell/netsec/host by default; evaluate allowed under L2). Max 5 workers per run. Optional pack_id applies Mission Pack role template after spawn. Always pass explicit tabId in worker browser tools.",
         parameters: {
           type: "object",
           properties: {
@@ -575,13 +575,24 @@ export function getToolDefinitions(): ToolDefinition[] {
               items: { type: "string" },
               description: "Optional extra deny list",
             },
-            pack_id: { type: "string", description: "Optional mission pack id metadata" },
-            user_confirmed: {
-              type: "boolean",
-              description: "Must be true after user approved spawn in the UI/chat",
-            },
+            pack_id: { type: "string", description: "Optional mission pack id applied after spawn (role template)" },
           },
-          required: ["user_confirmed"],
+          required: [],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "ask_user",
+        description:
+          "Ask the user a yes/no question via Confirm Center (ADR-015 binary HITL). User approve = yes, deny = no. Free-text answers are not available yet.",
+        parameters: {
+          type: "object",
+          properties: {
+            question: { type: "string", description: "Question shown to the user in Confirm Center" },
+          },
+          required: ["question"],
         },
       },
     },
@@ -634,7 +645,8 @@ export function getToolDefinitions(): ToolDefinition[] {
       type: "function",
       function: {
         name: "wait_workers",
-        description: "P0: snapshot of workers in this run (no long sleep). Poll as needed.",
+        description:
+          "Poll-only snapshot of workers in this orchestrator_run (ADR-015). Does NOT block/sleep for a barrier — call repeatedly or use HITL. True async barrier is not implemented.",
         parameters: { type: "object", properties: {}, required: [] },
       },
     },

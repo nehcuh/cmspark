@@ -1,6 +1,6 @@
 # ADR-015: Multi-Agent Orchestrator、Dashboard 与 Tab 排他锁
 
-**日期**: 2026-07-27 | **状态**: 已拍板；**P0 内核 + P1 FleetStrip/Confirm Center 实现中**（`feat/multi-agent-p0`）  
+**日期**: 2026-07-27 | **状态**: 已拍板；**P0 内核已落地 + P1 部分交付**（`feat/multi-agent-p0` worktree）  
 **相关**:
 
 | 文档 | 角色 |
@@ -146,7 +146,8 @@
 
 - **正面**：复杂任务可编排；tab 正确性可论证；与 Pack/L2/双层拓扑一致。  
 - **代价**：多 worker 浏览器 mutate 在同 tab 上串行；P0 工作量大（executor / schema / abort 链路）。  
-- **未做**：实现代码；默认 Chrome Store 分发「多 agent 攻击面」SKU。
+- **已做**：P0 内核 + P1 FleetStrip/L2 FIFO/single-flight/llm-loop cap/spawn HITL（见上方进度表）。  
+- **未做**：全量 Dashboard / shared-observer / E2E；默认 Chrome Store 分发「多 agent 攻击面」SKU。
 
 ## 实现入口（供 writing-plan）
 
@@ -157,8 +158,55 @@
 - Extension：`browser-bridge` 去掉 multi-agent 下 active-tab fallback；可选 `tool.abort`  
 - UI：FleetStrip + Cockpit Dashboard  
 
+## 实现进度（worktree `feat/multi-agent-p0`，2026-07-27）
+
+### 已交付（P0 内核 + 部分 P1）
+
+| 项 | 位置 / 备注 |
+|----|-------------|
+| Tab lease Map + 状态机（SOFT 互斥、HELD_PENDING_L2、HARD、FORCE_RELEASING、TTL caps、审计） | `companion/src/orchestrator/tab-lease.ts` |
+| `isToolAllowed` 硬门（L2/dispatch 前） | `createToolExecutor` |
+| `pendingToolCalls.thread_id` + `tabId`；`rejectPendingForThread`；worker_cancel / fleet.stop_all 排水 | `server.ts` / `message-router.ts` |
+| Multi-agent `TAB_ID_REQUIRED`；extension 禁 silent active-tab fallback | executor + BrowserBridge |
+| `spawn_worker` + `WORKER_HARD_DENY` + 非空 whitelist + max 5 workers/run + list/collect/wait(snapshot)/list_tab_locks | `orchestrator/spawn.ts` |
+| **Real spawn HITL**：`spawn_worker` 走 L2 forceConfirm + `security_token`；**禁止** LLM `user_confirmed` 自批 | `server.ts` L2_GATE_TOOLS |
+| 可选 `pack.apply` after spawn（role template；不抬 `capability_profile`） | `executeCompanionTool` spawn case |
+| `list_tabs` lock 元数据；`create_tab` auto HARD-hold；host_computer×Chrome×lease（Q4） | executor |
+| L2 multi-agent 身份字段 + **FIFO admission**（1/run、2/process；`finally` release） | `l2-admission.ts` + `createToolExecutor` |
+| shell_exec / netsec **process single-flight** | `single-flight.ts` |
+| **`max_concurrent_multi_agent_llm_loops=5`** 门控 multi-agent `chat.create` | `llm-loop-gate.ts` + message-router |
+| **Filter LLM tool schemas** by thread `tool_whitelist` | `llm/adapter.ts` |
+| **`ask_user`** binary HITL via L2 Confirm Center | tool def + companion case |
+| **`wait_workers` frozen poll-only**（带 llm_loops 快照；非 barrier） | tool def + companion case |
+| Pending-aware force-release（`FORCE_RELEASING` → reject pending → complete） | `forceReleaseTab` / `completeForceRelease` |
+| Extension BrowserBridge **per-tab serialize queue** | `browser-bridge.ts` `withTabQueue` |
+| FleetStrip + fleet.status/stop_all/pause/resume/force_release；Confirm Center worker/tab/run；Cockpit 舰队计数 | extension UI |
+| Unit tests：lease + L2 admission + single-flight + llm-loop gate + force-release drain | `orchestrator-*.test.ts` |
+
+### 仍开放（按优先级）
+
+| 项 | 说明 |
+|----|------|
+| E2E/integration：lease lock、cancel、stop-all、L2 identity 端到端 | 单元已覆盖内核；WS E2E 待补 |
+| SOFT 排队（替代纯 `TAB_BUSY_CONFIRMING` reject） | P1 optional |
+| `wait_workers` 真 barrier | 当前明确 poll-only |
+| Extension `tool.abort` 深度排水 | force-release 已 reject companion pending；CDP abort 待补 |
+| P2 全量 Dashboard 网格 / lease 图 / audit trail | FleetStrip + Cockpit 计数已有 |
+| P2 shared-observer 只读 lease；受限 auto-spawn | 未做 |
+| `ask_user` 自由文本答案 | 当前 binary approve/deny |
+
+### 关键不变量（实现必须保持）
+
+1. `isToolAllowed` 在 L2 与 dispatch **之前**  
+2. L2 admission acquire 后 **必有** `finally { releaseL2Admission }`  
+3. shell/netsec single-flight acquire 后 **必有** `finally { releaseFlight }`  
+4. multi-agent LLM loop gate acquire 后 **必有** `finally { releaseMultiAgentLlmLoop }`  
+5. Worker whitelist **非空**；spawn **不得**改 `capability_profile` / 启用 modules  
+6. Tab lease 权威在 Companion；extension 队列仅为纵深  
+
 ## 修订记录
 
 | 日期 | 变更 |
 |------|------|
 | 2026-07-27 | 初版：对抗 workflow + Claude/Pi + 用户 Q1–Q5 拍板 |
+| 2026-07-27 | P0 内核 + P1 FleetStrip/L2 FIFO/single-flight/llm-loop cap/spawn HITL/ask_user/tool whitelist filter/pending force-release；更新本进度表 |

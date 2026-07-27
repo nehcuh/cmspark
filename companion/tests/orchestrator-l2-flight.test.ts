@@ -11,6 +11,21 @@ import {
   releaseFlight,
   _resetFlightsForTests,
 } from "../src/orchestrator/single-flight"
+import {
+  tryAcquireMultiAgentLlmLoop,
+  releaseMultiAgentLlmLoop,
+  multiAgentLlmLoopSnapshot,
+  _resetMultiAgentLlmLoopsForTests,
+} from "../src/orchestrator/llm-loop-gate"
+import {
+  forceReleaseTab,
+  completeForceRelease,
+  acquireOrRenewTabLease,
+  getTabLease,
+  _resetTabLeasesForTests,
+} from "../src/orchestrator/tab-lease"
+import { SecurityPolicy } from "../src/security-policy"
+import { ORCHESTRATOR_CAPS } from "../src/orchestrator/constants"
 
 test("L2 admission: process cap 2", async () => {
   _resetL2AdmissionForTests()
@@ -61,4 +76,66 @@ test("netsec and shell flights are independent", () => {
   assert.equal(tryAcquireFlight("netsec_port_scan", "b").ok, true)
   releaseFlight("shell_exec")
   releaseFlight("netsec_port_scan")
+})
+
+test("multi-agent LLM loop gate: process cap", () => {
+  _resetMultiAgentLlmLoopsForTests()
+  const worker = { agent_role: "worker", parent_thread_id: "p", orchestrator_run_id: "r" }
+  const cap = ORCHESTRATOR_CAPS.max_concurrent_multi_agent_llm_loops
+  for (let i = 0; i < cap; i++) {
+    const r = tryAcquireMultiAgentLlmLoop(worker, `w${i}`)
+    assert.equal(r.ok, true, `slot ${i}`)
+  }
+  const blocked = tryAcquireMultiAgentLlmLoop(worker, "w-overflow")
+  assert.equal(blocked.ok, false)
+  if (!blocked.ok) {
+    assert.equal(blocked.cap, cap)
+    assert.match(blocked.error, /MULTI_AGENT_LLM_CAP/)
+  }
+  // normal (non multi-agent) thread still allowed
+  const normal = tryAcquireMultiAgentLlmLoop({ agent_role: "normal" }, "normal-1")
+  assert.equal(normal.ok, true)
+  releaseMultiAgentLlmLoop("w0")
+  const after = tryAcquireMultiAgentLlmLoop(worker, "w-overflow")
+  assert.equal(after.ok, true)
+  for (let i = 1; i < cap; i++) releaseMultiAgentLlmLoop(`w${i}`)
+  releaseMultiAgentLlmLoop("w-overflow")
+  assert.equal(multiAgentLlmLoopSnapshot().active, 0)
+})
+
+test("multi-agent LLM loop gate: re-entrant same thread", () => {
+  _resetMultiAgentLlmLoopsForTests()
+  const worker = { agent_role: "worker", orchestrator_run_id: "r" }
+  assert.equal(tryAcquireMultiAgentLlmLoop(worker, "same").ok, true)
+  assert.equal(tryAcquireMultiAgentLlmLoop(worker, "same").ok, true)
+  assert.equal(multiAgentLlmLoopSnapshot().active, 1)
+  releaseMultiAgentLlmLoop("same")
+  assert.equal(multiAgentLlmLoopSnapshot().active, 0)
+})
+
+test("forceReleaseTab: pending-aware FORCE_RELEASING then complete", () => {
+  _resetTabLeasesForTests()
+  const a = acquireOrRenewTabLease({ tabId: 99, holderThreadId: "w1", needsL2: false })
+  assert.equal(a.ok, true)
+  const drain = forceReleaseTab(99, "user", { hasPending: true })
+  assert.equal(drain.draining, true)
+  assert.equal(getTabLease(99)?.state, "FORCE_RELEASING")
+  assert.equal(completeForceRelease(99), true)
+  assert.equal(getTabLease(99), null)
+})
+
+test("forceReleaseTab: instant free when no pending", () => {
+  _resetTabLeasesForTests()
+  acquireOrRenewTabLease({ tabId: 7, holderThreadId: "w1", needsL2: false })
+  forceReleaseTab(7, "user", { hasPending: false })
+  assert.equal(getTabLease(7), null)
+})
+
+test("bindingPayloadFor: shell/spawn/ask_user non-empty", () => {
+  assert.equal(SecurityPolicy.bindingPayloadFor("shell_exec", { command: "ls" }), "ls")
+  assert.match(
+    SecurityPolicy.bindingPayloadFor("spawn_worker", { role_label: "reviewer", pack_id: "p1" }),
+    /spawn\|reviewer\|p1/,
+  )
+  assert.equal(SecurityPolicy.bindingPayloadFor("ask_user", { question: "Go?" }), "Go?")
 })

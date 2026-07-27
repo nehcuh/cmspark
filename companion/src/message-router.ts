@@ -364,6 +364,19 @@ export async function handleMessage(
         abortControllers.delete(rest.thread_id)
       }
 
+      // ADR-015: cap concurrent multi-agent LLM loops (workers + orchestrators)
+      const threadForLlmCap = services.threadManager.get(rest.thread_id)
+      const { tryAcquireMultiAgentLlmLoop, releaseMultiAgentLlmLoop } = await import("./orchestrator/llm-loop-gate")
+      const loopGate = tryAcquireMultiAgentLlmLoop(threadForLlmCap, rest.thread_id)
+      if (!loopGate.ok) {
+        return {
+          type: "chat.error",
+          thread_id: rest.thread_id,
+          error: loopGate.error,
+          data: { error_code: "MULTI_AGENT_LLM_CAP", active: loopGate.active, cap: loopGate.cap },
+        }
+      }
+
       const controller = new AbortController()
       abortControllers.set(rest.thread_id, controller)
 
@@ -425,6 +438,7 @@ export async function handleMessage(
         }
       } finally {
         abortControllers.delete(rest.thread_id)
+        releaseMultiAgentLlmLoop(rest.thread_id)
       }
       return null // chatCreate handles streaming internally
     }
@@ -1416,15 +1430,40 @@ export async function handleMessage(
     }
     case "tab.force_release": {
       if (typeof rest.tab_id !== "number") return { type: "error", error: "tab_id number required" }
-      const { forceReleaseTab, getTabLease } = await import("./orchestrator/tab-lease")
-      const { rejectPendingForThread } = await import("./server")
+      const { forceReleaseTab, completeForceRelease, getTabLease } = await import("./orchestrator/tab-lease")
+      const { rejectPendingForThread, hasPendingForTab } = await import("./server")
       const before = getTabLease(rest.tab_id)
+      let rejected = 0
+      let draining = false
       if (before) {
-        rejectPendingForThread(before.holderThreadId, `tab.force_release:${rest.tab_id}`, rest.tab_id)
+        const pending = hasPendingForTab(rest.tab_id, before.holderThreadId)
+        if (pending) {
+          // Mark FORCE_RELEASING while in-flight CDP exists, then drain pending.
+          forceReleaseTab(rest.tab_id, rest.by || "user", { hasPending: true })
+          draining = true
+        }
+        rejected = rejectPendingForThread(
+          before.holderThreadId,
+          `tab.force_release:${rest.tab_id}`,
+          rest.tab_id,
+        )
+        // Pending promises resolved; free the lease (complete FORCE_RELEASING or instant free).
+        if (draining) {
+          completeForceRelease(rest.tab_id, "force_release_after_reject")
+        } else {
+          forceReleaseTab(rest.tab_id, rest.by || "user", { hasPending: false })
+        }
+      } else {
+        forceReleaseTab(rest.tab_id, rest.by || "user")
       }
-      forceReleaseTab(rest.tab_id, rest.by || "user")
       const { buildFleetSnapshot } = await import("./orchestrator/fleet")
-      return { type: "tab.force_release_result", tab_id: rest.tab_id, fleet: buildFleetSnapshot(threadManager) }
+      return {
+        type: "tab.force_release_result",
+        tab_id: rest.tab_id,
+        rejected_pending: rejected,
+        was_draining: draining,
+        fleet: buildFleetSnapshot(threadManager),
+      }
     }
     case "pack.list": {
       const { listInstalledPacks } = await import("./packs/pack-engine")

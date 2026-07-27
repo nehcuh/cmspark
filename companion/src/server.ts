@@ -625,6 +625,9 @@ export function createToolExecutor(ws: WebSocket) {
       "host_write",
       "shell_exec",
       "netsec_port_scan",
+      // ADR-015: real HITL — LLM cannot self-approve spawn/ask via user_confirmed flag
+      "spawn_worker",
+      "ask_user",
     ]
     const hostAppGated = toolName === "host_app" && (os.platform() === "win32" || os.platform() === "darwin")
     // Coordinate computer-use (WP1): critical-class — the task-level L2 dialog
@@ -634,12 +637,17 @@ export function createToolExecutor(ws: WebSocket) {
     const hostComputerGated = toolName === "host_computer" &&
       (os.platform() === "win32" || os.platform() === "darwin")
     if ((L2_GATE_TOOLS.includes(toolName) || hostAppGated || hostComputerGated) && !finalParams.security_token) {
-      // shell_exec / netsec use command|targets for L2 preview text (not code/expression)
+      // shell_exec / netsec use command|targets for L2 preview text (not code/expression).
+      // spawn_worker / ask_user use role/question summaries for the Confirm Center.
       const code = String(
         finalParams.code ||
           finalParams.expression ||
           finalParams.command ||
           (Array.isArray(finalParams.targets) ? finalParams.targets.join(", ") : "") ||
+          (toolName === "spawn_worker"
+            ? `Spawn worker role=${finalParams.role_label || finalParams.roleLabel || "worker"} alias=${finalParams.alias || ""} pack=${finalParams.pack_id || "none"} allow=${Array.isArray(finalParams.tool_allow) ? finalParams.tool_allow.join(",") : "default"}`
+            : "") ||
+          (toolName === "ask_user" ? String(finalParams.question || finalParams.prompt || "") : "") ||
           "",
       )
       const lengthCheck = securityPolicy.checkLength(toolName, code)
@@ -966,8 +974,12 @@ export function createToolExecutor(ws: WebSocket) {
       // unconditional (god-mode / auto-approve still get the task dialog).
       // shell_exec / netsec_port_scan: always force interactive confirm (never domain
       // whitelist / god-mode skip) — Mission Pack design §8.3
+      // spawn_worker / ask_user: ADR-015 real HITL (never LLM self-approve)
       const capabilityForceConfirm =
-        toolName === "shell_exec" || toolName === "netsec_port_scan"
+        toolName === "shell_exec" ||
+        toolName === "netsec_port_scan" ||
+        toolName === "spawn_worker" ||
+        toolName === "ask_user"
       const criticalApis = hostComputerGated
         ? ["computer.coordinate_injection"]
         : capabilityForceConfirm
@@ -1680,6 +1692,7 @@ export function createToolExecutor(ws: WebSocket) {
       "collect_handback",
       "wait_workers",
       "worker_cancel",
+      "ask_user",
     ]
     if (COMPANION_TOOLS.includes(toolName)) {
       try {
@@ -2194,12 +2207,17 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
     case "spawn_worker": {
       const parentId = params.__thread_id || params._thread_id || params.parent_thread_id
       if (!parentId) return { success: false, error: "spawn_worker requires parent thread (__thread_id)" }
-      if (params.user_confirmed !== true && params.userConfirmed !== true) {
+      // Real HITL: L2 forceConfirm issues security_token. LLM user_confirmed is NOT trusted.
+      if (!params.security_token) {
         return {
           success: false,
           error:
-            "spawn_worker requires user_confirmed=true — ask the user to approve spawning workers first (ADR-015)",
+            "spawn_worker requires interactive L2 confirmation (security_token). Do not set user_confirmed yourself — the Confirm Center must approve spawn (ADR-015).",
         }
+      }
+      const tokenOk = securityPolicy.validateTokenFor(String(params.security_token), "spawn_worker", params)
+      if (!tokenOk) {
+        return { success: false, error: "Invalid or expired security token for spawn_worker" }
       }
       const { spawnWorkerThread } = await import("./orchestrator/spawn")
       const r = spawnWorkerThread(threadManager, {
@@ -2209,16 +2227,57 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
         roleAllow: Array.isArray(params.tool_allow) ? params.tool_allow : null,
         roleDeny: Array.isArray(params.tool_deny) ? params.tool_deny : undefined,
         packId: params.pack_id || null,
-        userConfirmed: true,
+        userConfirmed: true, // L2 approval above is the sole user-confirm authority
       })
       if (!r.ok) return { success: false, error: r.error }
+      // Optional pack.apply after spawn (role template — never elevates capability_profile / modules)
+      let packApply: { ok: boolean; error?: string } | null = null
+      if (params.pack_id && typeof params.pack_id === "string") {
+        try {
+          const { applyPack } = await import("./packs/pack-engine")
+          if (!skillEngine) {
+            packApply = { ok: false, error: "skillEngine not initialized; worker created with mission_pack_id only" }
+          } else {
+            const ar = applyPack(String(params.pack_id), r.worker.id, threadManager, skillEngine)
+            packApply = ar.ok ? { ok: true } : { ok: false, error: ar.error }
+          }
+        } catch (e: any) {
+          packApply = { ok: false, error: e?.message || String(e) }
+        }
+      }
+      const workerAfter = threadManager.get(r.worker.id)
       return {
         success: true,
         data: {
           worker_id: r.worker.id,
           orchestrator_run_id: r.orchestrator_run_id,
-          tool_whitelist: r.worker.tool_whitelist,
+          tool_whitelist: workerAfter?.tool_whitelist ?? r.worker.tool_whitelist,
           agent_role: r.worker.agent_role,
+          mission_pack_id: workerAfter?.mission_pack_id ?? params.pack_id ?? null,
+          pack_apply: packApply,
+        },
+      }
+    }
+    case "ask_user": {
+      // Binary HITL via L2 Confirm Center (approve = yes, deny = no). Free-text answers are P2.
+      if (!params.security_token) {
+        return {
+          success: false,
+          error: "ask_user requires interactive L2 confirmation (security_token). Present the question; user approves or denies in Confirm Center.",
+        }
+      }
+      const q = String(params.question || params.prompt || "")
+      if (!q.trim()) return { success: false, error: "ask_user requires non-empty question" }
+      const askOk = securityPolicy.validateTokenFor(String(params.security_token), "ask_user", params)
+      if (!askOk) {
+        return { success: false, error: "Invalid or expired security token for ask_user" }
+      }
+      return {
+        success: true,
+        data: {
+          question: q,
+          answer: "approved",
+          note: "User approved in Confirm Center (binary HITL). Free-text ask_user is P2.",
         },
       }
     }
@@ -2278,18 +2337,27 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
       }
     }
     case "wait_workers": {
-      // P0: status snapshot only (no async barrier sleep in tool path)
+      // Frozen as poll-only (ADR-015): no async barrier / sleep in tool path.
       const parentId = params.__thread_id || params._thread_id
       const parent = parentId ? threadManager.get(String(parentId)) : null
       const runId = params.orchestrator_run_id || (parent as any)?.orchestrator_run_id
       if (!runId) return { success: false, error: "orchestrator_run_id required" }
       const { listWorkers } = await import("./orchestrator/spawn")
+      const { multiAgentLlmLoopSnapshot } = await import("./orchestrator/llm-loop-gate")
       const workers = listWorkers(threadManager, String(runId))
+      const llm = multiAgentLlmLoopSnapshot()
       return {
         success: true,
         data: {
-          note: "P0 wait_workers returns snapshot only; poll or use HITL for true barrier",
-          workers: workers.map((w: any) => ({ id: w.id, alias: w.alias, paused: !!w.paused })),
+          poll_only: true,
+          note: "wait_workers is poll-only (no barrier). Re-call or use HITL; check llm_loops for concurrent worker LLM activity.",
+          llm_loops: llm,
+          workers: workers.map((w: any) => ({
+            id: w.id,
+            alias: w.alias,
+            paused: !!w.paused,
+            llm_active: llm.holders.includes(w.id),
+          })),
         },
       }
     }

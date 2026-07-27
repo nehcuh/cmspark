@@ -435,7 +435,14 @@ ${hostUseRule12}${appIndexSection ? `\n\n${appIndexSection}` : ""}`
     { resources: false, prompts: false },
   )
   const mcpMetaTools = getMcpMetaToolDefinitions(metaCapabilities)
-  const tools = [...getToolDefinitions(), ...mcpTools, ...mcpMetaTools]
+  // ADR-015: narrow LLM-visible tool schemas by thread tool_whitelist (null = full surface).
+  // isToolAllowed still hard-gates execution; filtering reduces orchestrator/worker hallucination.
+  let tools: ToolDefinition[] = [...getToolDefinitions(), ...mcpTools, ...mcpMetaTools]
+  const whitelist = thread?.tool_whitelist
+  if (Array.isArray(whitelist)) {
+    const allowed = new Set(whitelist)
+    tools = tools.filter((t) => allowed.has(t.function.name))
+  }
 
   // Tool calling loop
   let round = 0
