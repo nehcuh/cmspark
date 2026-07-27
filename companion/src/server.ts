@@ -659,6 +659,8 @@ export function createToolExecutor(ws: WebSocket) {
       // ADR-015: real HITL — LLM cannot self-approve spawn/ask via user_confirmed flag
       "spawn_worker",
       "ask_user",
+      // ADR-016 G5/G6/G9: board_complete requires Confirm Center + canComplete
+      "board_complete",
     ]
     const hostAppGated = toolName === "host_app" && (os.platform() === "win32" || os.platform() === "darwin")
     // Coordinate computer-use (WP1): critical-class — the task-level L2 dialog
@@ -679,6 +681,9 @@ export function createToolExecutor(ws: WebSocket) {
             ? `Spawn worker role=${finalParams.role_label || finalParams.roleLabel || "worker"} alias=${finalParams.alias || ""} pack=${finalParams.pack_id || "none"} allow=${Array.isArray(finalParams.tool_allow) ? finalParams.tool_allow.join(",") : "default"}`
             : "") ||
           (toolName === "ask_user" ? String(finalParams.question || finalParams.prompt || "") : "") ||
+          (toolName === "board_complete"
+            ? `board_complete empty_complete=${!!finalParams.empty_complete} supporting=${Array.isArray(finalParams.supporting_fact_ids) ? finalParams.supporting_fact_ids.join(",") : ""} residual=${Array.isArray(finalParams.residual_risks) ? finalParams.residual_risks.slice(0, 3).join(" | ") : ""} reason=${finalParams.empty_complete_reason || finalParams.goal_summary || ""}`
+            : "") ||
           "",
       )
       const lengthCheck = securityPolicy.checkLength(toolName, code)
@@ -1005,12 +1010,13 @@ export function createToolExecutor(ws: WebSocket) {
       // unconditional (god-mode / auto-approve still get the task dialog).
       // shell_exec / netsec_port_scan: always force interactive confirm (never domain
       // whitelist / god-mode skip) — Mission Pack design §8.3
-      // spawn_worker / ask_user: ADR-015 real HITL (never LLM self-approve)
+      // spawn_worker / ask_user / board_complete: real HITL (never LLM self-approve)
       const capabilityForceConfirm =
         toolName === "shell_exec" ||
         toolName === "netsec_port_scan" ||
         toolName === "spawn_worker" ||
-        toolName === "ask_user"
+        toolName === "ask_user" ||
+        toolName === "board_complete"
       const criticalApis = hostComputerGated
         ? ["computer.coordinate_injection"]
         : capabilityForceConfirm
@@ -1233,6 +1239,36 @@ export function createToolExecutor(ws: WebSocket) {
                   }
                 : {}
 
+          // ADR-016 G6: board_complete Confirm digest (goal, trust hist, claims, residual, empty flag)
+          let boardCompleteDigestForConfirm: any = undefined
+          if (toolName === "board_complete" && threadManager && actingThreadId) {
+            try {
+              const { readBoard, buildBoardCompleteDigest, resolveBoardHostThreadId } =
+                await import("./board")
+              const hostId =
+                resolveBoardHostThreadId(threadManager, String(actingThreadId)) ||
+                String(actingThreadId)
+              const b = readBoard(threadManager, hostId)
+              if (b) {
+                boardCompleteDigestForConfirm = buildBoardCompleteDigest(b, {
+                  supporting_fact_ids: Array.isArray(finalParams.supporting_fact_ids)
+                    ? finalParams.supporting_fact_ids.map(String)
+                    : [],
+                  residual_risks: Array.isArray(finalParams.residual_risks)
+                    ? finalParams.residual_risks.map(String)
+                    : [],
+                  empty_complete: finalParams.empty_complete === true,
+                  empty_complete_reason:
+                    finalParams.empty_complete_reason != null
+                      ? String(finalParams.empty_complete_reason)
+                      : null,
+                })
+              }
+            } catch {
+              /* digest is best-effort for UI */
+            }
+          }
+
           const wsPromise = securityConfirmations.request(
             (data) => {
               if (ws.readyState === WebSocket.OPEN) {
@@ -1273,6 +1309,10 @@ export function createToolExecutor(ws: WebSocket) {
               ...(computerL2PreviewImage ? { previewImage: computerL2PreviewImage } : {}),
               ...(computerL2PreviewCaption ? { previewCaption: computerL2PreviewCaption } : {}),
               ...multiAgentFields,
+              // ADR-016 G6: attach board_complete digest when available
+              ...(toolName === "board_complete" && boardCompleteDigestForConfirm
+                ? { boardCompleteDigest: boardCompleteDigestForConfirm }
+                : {}),
             },
             // Adversary amendment A1: a confirmation carrying a nonce challenge
             // MUST be origin-bound — otherwise any loopback WS peer could burn
@@ -1795,6 +1835,7 @@ export function createToolExecutor(ws: WebSocket) {
       "list_tab_locks",
       "collect_handback",
       "board_read",
+      "board_complete",
       "wait_workers",
       "worker_cancel",
       "ask_user",
@@ -2185,6 +2226,17 @@ export async function handleSecurityConfirmationResponse(ws: WebSocket, msg: any
       clientStopThreadId
     if (stopTarget) {
       try {
+        // G13: abandon intents before pending reject + lease release
+        let intentsAbandoned = 0
+        try {
+          const { abandonWorkerIntents } = await import("./board")
+          const ab = await abandonWorkerIntents(threadManager, stopTarget, {
+            reason: "stop_thread",
+          })
+          intentsAbandoned = ab.abandoned
+        } catch {
+          /* best-effort */
+        }
         const confirmsRejected = securityConfirmations.rejectForWorker(stopTarget, "denied")
         const rejected = rejectPendingForThread(stopTarget, `stop_thread:${confirmationId}`)
         const { releaseLeasesForThreadPendingAware } = await import("./orchestrator/tab-lease")
@@ -2208,6 +2260,7 @@ export async function handleSecurityConfirmationResponse(ws: WebSocket, msg: any
           leases_released: released,
           confirms_rejected: confirmsRejected,
           leases_drained: drained,
+          intents_abandoned: intentsAbandoned,
         })
       } catch (err: any) {
         logger.warn("security.confirmation.stop_thread_failed", {
@@ -2481,22 +2534,144 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
     case "collect_handback": {
       // ADR-016 Task 3: board mode / mission_board → structured Fact/Intent merge;
       // free-form-only rejected with recoverable HANDBACK_MISSING_STRUCTURE.
+      // G3: wire resolveToolCall from worker/host recorded tool results (fail-closed).
       const wid = params.worker_id
       if (!wid) return { success: false, error: "worker_id required" }
       const callerId = params.__thread_id || params._thread_id || null
-      const { collectWorkerHandback } = await import("./board")
+      const {
+        collectWorkerHandback,
+        resolveToolCallFromThreadMessages,
+        resolveBoardHostThreadId,
+      } = await import("./board")
+      const workerId = String(wid)
+      const hostId =
+        resolveBoardHostThreadId(threadManager, workerId) ||
+        (callerId ? resolveBoardHostThreadId(threadManager, String(callerId)) : null)
+      const resolveToolCall = resolveToolCallFromThreadMessages(
+        threadManager,
+        workerId,
+        hostId,
+      )
       return collectWorkerHandback(threadManager, {
-        workerId: String(wid),
+        workerId,
         callerThreadId: callerId ? String(callerId) : null,
         forceStructured: params.expect_structured === true,
+        resolveToolCall,
       })
     }
     case "board_read": {
       // ADR-016 optional read: orchestrator allowlist; workers only if Pack grants
+      // G4: returns framed model projection + export_summary trust labels
       const tid = params.__thread_id || params._thread_id
       if (!tid) return { success: false, error: "board_read requires thread context (__thread_id)" }
       const { boardReadForTool } = await import("./board")
       return boardReadForTool(threadManager, String(tid))
+    }
+    case "board_complete": {
+      // ADR-016 G5/G6/G9: L2 + hard canComplete; no LLM self-approve
+      const tid = params.__thread_id || params._thread_id
+      if (!tid) return { success: false, error: "board_complete requires thread context (__thread_id)" }
+      const caller = threadManager.get(String(tid)) as any
+      if (!caller) return { success: false, error: `thread not found: ${tid}` }
+      if (caller.agent_role === "worker") {
+        return {
+          success: false,
+          error: "workers cannot call board_complete",
+          error_code: "BOARD_COMPLETE_FORBIDDEN",
+        }
+      }
+      // Strip LLM user_confirmed / forged trust elevation
+      if (params.user_confirmed === true) {
+        return {
+          success: false,
+          error:
+            "board_complete rejects LLM user_confirmed self-approve; Confirm Center must approve (ADR-016 G5)",
+          error_code: "BOARD_COMPLETE_SELF_APPROVE",
+        }
+      }
+      if (!params.security_token) {
+        return {
+          success: false,
+          error:
+            "board_complete requires interactive L2 confirmation (security_token). Do not set user_confirmed yourself — the Confirm Center must approve complete (ADR-016).",
+          error_code: "BOARD_COMPLETE_L2_REQUIRED",
+        }
+      }
+      const tokenOk = securityPolicy.validateTokenFor(
+        String(params.security_token),
+        "board_complete",
+        params,
+      )
+      if (!tokenOk) {
+        return { success: false, error: "Invalid or expired security token for board_complete" }
+      }
+      const {
+        completeBoard,
+        canComplete,
+        readBoard,
+        buildBoardCompleteDigest,
+        resolveBoardHostThreadId,
+      } = await import("./board")
+      const hostId = resolveBoardHostThreadId(threadManager, String(tid)) || String(tid)
+      const board = readBoard(threadManager, hostId)
+      const completeParams = {
+        supporting_fact_ids: Array.isArray(params.supporting_fact_ids)
+          ? params.supporting_fact_ids.map(String)
+          : [],
+        residual_risks: Array.isArray(params.residual_risks)
+          ? params.residual_risks.map(String)
+          : [],
+        goal_summary: params.goal_summary != null ? String(params.goal_summary) : null,
+        empty_complete: params.empty_complete === true,
+        empty_complete_reason:
+          params.empty_complete_reason != null ? String(params.empty_complete_reason) : null,
+      }
+      // Pre-check for digest even on reject
+      if (board) {
+        const pre = canComplete(board, completeParams)
+        if (!pre.ok) {
+          return {
+            success: false,
+            error: pre.error,
+            error_code: pre.error_code,
+            data: { digest: buildBoardCompleteDigest(board, completeParams) },
+          }
+        }
+      }
+      const result = await completeBoard(
+        threadManager,
+        hostId,
+        completeParams,
+        {
+          actor_type: "orchestrator",
+          thread_id: String(tid),
+          orchestrator_run_id: caller.orchestrator_run_id ?? null,
+          tool_name: "board_complete",
+        },
+      )
+      if (!result.ok) {
+        return {
+          success: false,
+          error: result.error,
+          error_code: result.error_code,
+          recoverable: result.recoverable,
+          data: { digest: (result as any).digest },
+        }
+      }
+      return {
+        success: true,
+        data: {
+          status: result.board.status,
+          completed_at: result.board.completed_at,
+          digest: (result as any).digest || (board ? buildBoardCompleteDigest(result.board, completeParams) : null),
+          board: {
+            fact_count: result.board.facts.length,
+            intent_count: result.board.intents.length,
+            goal: result.board.goal,
+            status: result.board.status,
+          },
+        },
+      }
     }
     case "wait_workers": {
       // Frozen as poll-only (ADR-015): no async barrier / sleep in tool path.
@@ -2528,6 +2703,17 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
       if (!wid) return { success: false, error: "worker_id required" }
       const w = threadManager.get(String(wid)) as any
       if (!w) return { success: false, error: `worker not found: ${wid}` }
+      // G13: abandon worker intents on host BEFORE pending reject + lease release
+      let intentsAbandoned = 0
+      try {
+        const { abandonWorkerIntents } = await import("./board")
+        const ab = await abandonWorkerIntents(threadManager, String(wid), {
+          reason: "worker_cancel",
+        })
+        intentsAbandoned = ab.abandoned
+      } catch {
+        /* best-effort board abandon */
+      }
       // GATE2: deny worker-stamped L2 first (mirror stop_thread / fleet.stop_all)
       const confirmsRejected = securityConfirmations.rejectForWorker(String(wid), "denied")
       const rejected = rejectPendingForThread(String(wid), `worker_cancel:${wid}`)
@@ -2548,6 +2734,7 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
         success: true,
         data: {
           worker_id: wid,
+          intents_abandoned: intentsAbandoned,
           rejected_pending: rejected,
           leases_released: released,
           confirms_rejected: confirmsRejected,

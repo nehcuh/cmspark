@@ -16,6 +16,10 @@ export {
   hostRequiresStructuredHandback,
   collectWorkerHandback,
   boardReadForTool,
+  canComplete,
+  completeBoard,
+  abandonWorkerIntents,
+  resolveToolCallFromThreadMessages,
   type BoardActorContext,
   type ToolCallResolver,
   type BoardResult,
@@ -24,4 +28,6 @@ export {
   type CollectHandbackResult,
   type CollectHandbackSuccess,
   type CollectHandbackFailure,
+  type CompleteBoardParams,
+  type CanCompleteResult,
 } from "./service"

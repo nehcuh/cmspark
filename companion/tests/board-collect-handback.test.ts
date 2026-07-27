@@ -141,11 +141,14 @@ test("collect_handback structured JSON merges facts into host board", async () =
   if (!r.success) return
   assert.equal(r.data.board_mode, true)
   assert.equal(r.data.facts?.length, 1)
-  assert.equal(r.data.facts![0].claim, "Login form has no CSRF token")
   assert.equal(r.data.facts![0].trust, "llm_asserted")
+  assert.match(r.data.facts![0].framed_claim, /UNTRUSTED_BOARD_FACT/)
+  assert.match(r.data.facts![0].framed_claim, /Login form has no CSRF token/)
+  assert.match(r.data.facts![0].trust_label, /NOT confirmed/)
   assert.equal(r.data.intents?.length, 1)
   assert.equal(r.data.board?.fact_count, 1)
   assert.equal(r.data.summary, "one finding")
+  assert.ok(r.data.data_not_instruction)
   const board = readBoard(tm, parent.id)!
   assert.equal(board.facts.length, 1)
   assert.equal(board.intents.length, 1)
@@ -183,7 +186,7 @@ test("collect_handback empty assistant when board mode → recoverable missing s
   }
 })
 
-test("board_read returns host board with trust tiers", async () => {
+test("board_read returns framed projection + export trust labels (G4/G12)", async () => {
   const tm = new ThreadManager()
   const parent = tm.create("orch-read")
   tm.update(parent.id, { board_mode: true } as any)
@@ -197,23 +200,93 @@ test("board_read returns host board with trust tiers", async () => {
   assert.equal(read.success, true)
   assert.equal(read.data?.board?.facts.length, 1)
   assert.equal(read.data?.board?.facts[0].trust, "llm_asserted")
+  assert.match(read.data!.board!.facts[0].framed_claim, /UNTRUSTED_BOARD_FACT/)
+  assert.match(read.data!.board!.facts[0].trust_label, /NOT confirmed/)
+  assert.match(read.data!.export_summary, /NOT confirmed/)
+  assert.ok(read.data?.data_not_instruction)
+  assert.equal(read.data?.raw_board?.facts[0].claim, "X-Frame-Options missing")
   assert.equal(read.data?.host_thread_id, parent.id)
   // worker path resolves to parent host
   const fromWorker = boardReadForTool(tm, worker.id)
   assert.equal(fromWorker.success, true)
   assert.equal(fromWorker.data?.host_thread_id, parent.id)
-  assert.equal(fromWorker.data?.board?.facts[0].claim, "X-Frame-Options missing")
+  assert.match(fromWorker.data!.board!.facts[0].framed_claim, /X-Frame-Options missing/)
 })
 
-test("ORCHESTRATOR_TOOL_ALLOWLIST includes board_read and collect_handback", async () => {
+test("ORCHESTRATOR_TOOL_ALLOWLIST includes board_read, board_complete, collect_handback", async () => {
   const { ORCHESTRATOR_TOOL_ALLOWLIST } = await import("../src/orchestrator/constants")
   assert.ok(ORCHESTRATOR_TOOL_ALLOWLIST.includes("collect_handback"))
   assert.ok(ORCHESTRATOR_TOOL_ALLOWLIST.includes("board_read"))
+  assert.ok(ORCHESTRATOR_TOOL_ALLOWLIST.includes("board_complete"))
 })
 
-test("tool definitions expose collect_handback + board_read", async () => {
+test("tool definitions expose collect_handback + board_read + board_complete", async () => {
   const { getToolDefinitions } = await import("../src/bridge/tool-definitions")
   const names = getToolDefinitions().map((t) => t.function.name)
   assert.ok(names.includes("collect_handback"))
   assert.ok(names.includes("board_read"))
+  assert.ok(names.includes("board_complete"))
+})
+
+test("collect_handback is idempotent by worker message_id", async () => {
+  const tm = new ThreadManager()
+  const parent = tm.create("orch-idem")
+  tm.update(parent.id, { board_mode: true } as any)
+  const payload = JSON.stringify({
+    schema_version: 1,
+    facts: [{ claim: "once only" }],
+  })
+  const worker = seedWorker(tm, parent.id, payload)
+  const r1 = await collectWorkerHandback(tm, { workerId: worker.id, callerThreadId: parent.id })
+  assert.equal(r1.success, true)
+  const r2 = await collectWorkerHandback(tm, { workerId: worker.id, callerThreadId: parent.id })
+  assert.equal(r2.success, true)
+  if (r2.success) assert.equal(r2.data.idempotent_replay, true)
+  const board = readBoard(tm, parent.id)!
+  assert.equal(board.facts.length, 1)
+})
+
+test("live resolveToolCall accepts recorded tool_result id on worker", async () => {
+  const tm = new ThreadManager()
+  const parent = tm.create("orch-tv")
+  tm.update(parent.id, { board_mode: true } as any)
+  const worker = tm.create("w-tv")
+  tm.update(worker.id, {
+    agent_role: "worker",
+    parent_thread_id: parent.id,
+    orchestrator_run_id: "run-tv",
+  } as any)
+  // Record a tool result on the worker thread
+  tm.addMessage(worker.id, {
+    role: "tool",
+    content: JSON.stringify({ success: true, data: { header: "DENY" } }),
+    thread_id: worker.id,
+    tool_calls: [{ id: "call_live_1", tool_name: "get_page_text", params: {}, result: { success: true } }],
+  } as any)
+  const payload = JSON.stringify({
+    schema_version: 1,
+    facts: [
+      {
+        claim: "XFO DENY present",
+        trust: "tool_verified",
+        evidence: [{ kind: "tool_result", value: "DENY", tool_call_id: "call_live_1" }],
+      },
+    ],
+  })
+  tm.addMessage(worker.id, { role: "assistant", content: payload, thread_id: worker.id })
+  const { resolveToolCallFromThreadMessages } = await import("../src/board/service")
+  const resolver = resolveToolCallFromThreadMessages(tm, worker.id, parent.id)
+  assert.equal(resolver("call_live_1"), true)
+  assert.equal(resolver("call_missing"), false)
+  const r = await collectWorkerHandback(tm, {
+    workerId: worker.id,
+    callerThreadId: parent.id,
+    resolveToolCall: resolver,
+  })
+  assert.equal(r.success, true)
+  if (r.success) {
+    assert.equal(r.data.facts?.[0].trust, "tool_verified")
+  }
+  const board = readBoard(tm, parent.id)!
+  assert.equal(board.facts[0].trust, "tool_verified")
 })

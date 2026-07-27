@@ -370,6 +370,8 @@ function restoreSnapshot(threadManager: ThreadManager, threadId: string, snap: T
     mcp_selection_mode: snap.mcp_selection_mode as SelectionMode | undefined,
     active_mcp_server_ids: snap.active_mcp_server_ids,
     system_prompt_append: snap.system_prompt_append,
+    // Clear sticky board_mode on uninstall/restore (keep mission_board data)
+    board_mode: false,
   })
 }
 
@@ -475,8 +477,8 @@ export function applyPack(
       active_mcp_server_ids: mcpIds,
       system_prompt_append: systemPromptAppend,
       workspace_root: opts?.workspace_path ?? thread.workspace_root ?? null,
-      // ADR-016: enable structured handback when pack declares board_mode
-      board_mode: result.manifest.board_mode === true ? true : undefined,
+      // ADR-016: explicit true/false so non-board packs clear sticky board_mode
+      board_mode: result.manifest.board_mode === true,
     })
     appendCapabilityAudit({
       type: "pack.apply",
@@ -510,6 +512,7 @@ export function uninstallPack(
           tool_whitelist: null,
           active_skill_ids: (t.active_skill_ids || []).filter((s: string) => !s.startsWith(`pack--${packId}--`)),
           system_prompt_append: null,
+          board_mode: false,
         })
       }
       restored.push(t.id)

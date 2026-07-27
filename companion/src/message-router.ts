@@ -635,6 +635,15 @@ export async function handleMessage(
 
     case "chat.abort": {
       abortThreadChat(rest.thread_id)
+      // ADR-016 G13: abandon worker intents on host BEFORE pending reject + lease release
+      try {
+        const { abandonWorkerIntents } = await import("./board")
+        await abandonWorkerIntents(services.threadManager, rest.thread_id, {
+          reason: "chat.abort",
+        })
+      } catch {
+        /* best-effort */
+      }
       // ADR-015 GATE2: deny worker-stamped L2 confirmations first (frees admission/flight
       // via L2 finally), then reject CDP pending, then pending-aware lease release.
       try {
@@ -1414,6 +1423,17 @@ export async function handleMessage(
       const results: any[] = []
       for (const w of targets) {
         abortThreadChat(w.id)
+        // G13: abandon intents on host before pending reject + lease release
+        let intentsAbandoned = 0
+        try {
+          const { abandonWorkerIntents } = await import("./board")
+          const ab = await abandonWorkerIntents(threadManager, w.id, {
+            reason: "fleet.stop_all",
+          })
+          intentsAbandoned = ab.abandoned
+        } catch {
+          /* best-effort */
+        }
         // GATE2: deny L2 first so admission/flight free via finally; then tools + leases
         const confirmsRejected = securityConfirmations.rejectForWorker(w.id, "denied")
         const rejected = rejectPendingForThread(w.id, `fleet.stop_all:${w.id}`)
@@ -1428,6 +1448,7 @@ export async function handleMessage(
           released,
           confirms_rejected: confirmsRejected,
           leases_drained: drained,
+          intents_abandoned: intentsAbandoned,
         })
       }
       const { buildFleetSnapshot } = await import("./orchestrator/fleet")

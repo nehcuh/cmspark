@@ -94,6 +94,20 @@ export interface SecurityConfirmationDetails {
   orchestratorRunId?: string
   workerRoleLabel?: string
   tabId?: number
+  /**
+   * ADR-016 G6: board_complete Confirm Center digest.
+   * goal, trust histogram, claim previews, residual_risks, empty_complete flag.
+   */
+  boardCompleteDigest?: {
+    goal: string | null
+    trust_histogram: Record<string, number>
+    claim_previews: Array<{ id: string; trust: string; trust_label: string; preview: string }>
+    residual_risks: string[]
+    empty_complete: boolean
+    empty_complete_reason: string | null
+    supporting_fact_ids: string[]
+    status: string
+  }
 }
 
 export interface SecurityConfirmationDecision {
@@ -248,6 +262,10 @@ export class SecurityConfirmationManager {
           : {}),
         ...(typeof details.tabId === "number" && Number.isFinite(details.tabId)
           ? { tab_id: details.tabId }
+          : {}),
+        // ADR-016 G6: board_complete digest (old clients ignore)
+        ...(details.boardCompleteDigest
+          ? { board_complete_digest: details.boardCompleteDigest }
           : {}),
       })
     })
