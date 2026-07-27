@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from "react"
 import { useAgentStore } from "../store/agentStore"
+import { tokens } from "../ui/tokens"
 
 export function KnowledgeSubPanel() {
   const { state, dispatch } = useAgentStore()
@@ -216,9 +217,9 @@ export function KnowledgeSubPanel() {
             key={mode}
             style={{
               ...styles.modeBtn,
-              background: state.knowledgeSelectionMode === mode ? "#4A90D9" : "#fff",
+              background: state.knowledgeSelectionMode === mode ? tokens.accent : "#fff",
               color: state.knowledgeSelectionMode === mode ? "#fff" : "#666",
-              borderColor: state.knowledgeSelectionMode === mode ? "#4A90D9" : "#ddd",
+              borderColor: state.knowledgeSelectionMode === mode ? tokens.accent : "#ddd",
             }}
             onClick={() => handleModeChange(mode)}
             title={mode === "auto" ? "自动匹配当前站点" : mode === "all" ? "注入所有知识索引" : "仅使用勾选知识"}
@@ -273,14 +274,14 @@ export function KnowledgeSubPanel() {
 
       {/* Status feedback */}
       {status && (
-        <div style={{ fontSize: 11, color: "#4A90D9", marginBottom: 8, padding: "2px 4px" }}>
+        <div style={{ fontSize: 11, color: tokens.accent, marginBottom: 8, padding: "2px 4px" }}>
           {status}
         </div>
       )}
       {state.knowledgeImportStatus && (
         <div style={{
           fontSize: 11,
-          color: state.knowledgeImportStatus.ok ? "#4CAF50" : "#F44336",
+          color: state.knowledgeImportStatus.ok ? tokens.success : tokens.danger,
           marginBottom: 8,
           padding: "2px 4px",
         }}>
@@ -338,7 +339,7 @@ export function KnowledgeSubPanel() {
                   </button>
                   {menuOpen === doc.name && (
                     <div style={styles.menuDropdown}>
-                      <button style={{ ...styles.menuItem, color: "#F44336" }} onClick={() => handleDelete(doc.name)}>
+                      <button style={{ ...styles.menuItem, color: tokens.danger }} onClick={() => handleDelete(doc.name)}>
                         删除
                       </button>
                     </div>
@@ -442,7 +443,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 11,
     fontWeight: 600,
     fontFamily: "monospace",
-    color: "#4A90D9",
+    color: tokens.accent,
     marginTop: 8,
     marginBottom: 4,
     paddingBottom: 2,

@@ -5,6 +5,7 @@
 import { useState } from "react"
 import { useAgentStore } from "../store/agentStore"
 import type { McpServerMeta, McpSelectionMode } from "../types"
+import { tokens } from "../ui/tokens"
 
 const STATUS_COLORS: Record<string, string> = {
   connected: "#22c55e",
@@ -140,9 +141,9 @@ export function McpPanel() {
               key={mode}
               style={{
                 ...styles.modeBtn,
-                background: state.mcpSelectionMode === mode ? "#4A90D9" : "#fff",
+                background: state.mcpSelectionMode === mode ? tokens.accent : "#fff",
                 color: state.mcpSelectionMode === mode ? "#fff" : "#666",
-                borderColor: state.mcpSelectionMode === mode ? "#4A90D9" : "#ddd",
+                borderColor: state.mcpSelectionMode === mode ? tokens.accent : "#ddd",
               }}
               onClick={() => handleModeChange(mode)}
               title={modeHints[mode]}
@@ -287,7 +288,7 @@ function ServerCard(props: ServerCardProps) {
           <div style={styles.menuDropdown}>
             <button style={styles.menuItem} onClick={props.onEdit}>✏️ 编辑</button>
             <button
-              style={{ ...styles.menuItem, color: "#F44336" }}
+              style={{ ...styles.menuItem, color: tokens.danger }}
               onClick={props.onDelete}
             >
               🗑️ 删除
@@ -446,7 +447,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   activeToggle: {
     fontSize: 10,
-    color: "#4A90D9",
+    color: tokens.accent,
     display: "flex",
     alignItems: "center",
     cursor: "pointer",
@@ -519,7 +520,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   toolName: {
     fontSize: 11,
-    color: "#4A90D9",
+    color: tokens.accent,
     fontFamily: "ui-monospace, monospace",
   },
   toolDesc: {
@@ -530,10 +531,10 @@ const styles: Record<string, React.CSSProperties> = {
   addBtn: {
     marginTop: 6,
     padding: "8px 12px",
-    border: "1px dashed #4A90D9",
+    border: `1px dashed ${tokens.accent}`,
     borderRadius: 6,
     background: "transparent",
-    color: "#4A90D9",
+    color: tokens.accent,
     cursor: "pointer",
     fontSize: 12,
   },

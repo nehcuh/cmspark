@@ -1,0 +1,1648 @@
+# Dual external review context
+batch: ui-remaining-R1-R4-r2
+base: HEAD
+time: 20260727-172156
+
+b80345d
+
+ M chrome-extension/src/background/cockpit-window.ts
+ M chrome-extension/src/sidepanel/App.tsx
+ M chrome-extension/src/sidepanel/components/AppsPanel.tsx
+ M chrome-extension/src/sidepanel/components/ChatView.tsx
+ D chrome-extension/src/sidepanel/components/ComputerTaskBar.tsx
+ M chrome-extension/src/sidepanel/components/KnowledgeSubPanel.tsx
+ M chrome-extension/src/sidepanel/components/McpPanel.tsx
+ M chrome-extension/src/sidepanel/components/McpServerForm.tsx
+ M chrome-extension/src/sidepanel/components/MinimalConfirm.tsx
+ M chrome-extension/src/sidepanel/components/NotebooklmImporterPanel.tsx
+ M chrome-extension/src/sidepanel/components/SettingsSlideout.tsx
+ M chrome-extension/src/sidepanel/components/SkillCraftPanel.tsx
+ M chrome-extension/src/sidepanel/components/ThreadList.tsx
+ M chrome-extension/src/sidepanel/ui/ModeBadge.tsx
+ M chrome-extension/tests/cockpit-window-logic.test.ts
+?? .grok/workflows/ui-remaining-loop.rhai
+?? docs/audit/reviews/ui-remaining-R1-R4-claude-20260727-171615.md
+?? docs/audit/reviews/ui-remaining-R1-R4-diff-20260727-171615.patch
+?? docs/audit/reviews/ui-remaining-R1-R4-pi-20260727-171615.md
+?? docs/audit/reviews/ui-remaining-R1-R4-r2-diff-20260727-172156.patch
+?? docs/audit/reviews/ui-remaining-R1-R4-verdict-20260727-171615.json
+?? docs/decisions/v1.3/ui-remaining-r1r4-impl-2026-07-27.md
+?? docs/decisions/v1.3/ui-remaining-work-batches-2026-07-27.md
+
+## Diff (git diff + staged)
+ chrome-extension/src/background/cockpit-window.ts  | 122 +++++-
+ chrome-extension/src/sidepanel/App.tsx             |  37 +-
+ .../src/sidepanel/components/AppsPanel.tsx         |  23 +-
+ .../src/sidepanel/components/ChatView.tsx          |  61 ++-
+ .../src/sidepanel/components/ComputerTaskBar.tsx   | 454 ---------------------
+ .../src/sidepanel/components/KnowledgeSubPanel.tsx |  13 +-
+ .../src/sidepanel/components/McpPanel.tsx          |  15 +-
+ .../src/sidepanel/components/McpServerForm.tsx     |   3 +-
+ .../src/sidepanel/components/MinimalConfirm.tsx    | 129 ++++--
+ .../components/NotebooklmImporterPanel.tsx         |   9 +-
+ .../src/sidepanel/components/SettingsSlideout.tsx  |  27 +-
+ .../src/sidepanel/components/SkillCraftPanel.tsx   |   9 +-
+ .../src/sidepanel/components/ThreadList.tsx        |   3 +-
+ chrome-extension/src/sidepanel/ui/ModeBadge.tsx    |  73 +++-
+ .../tests/cockpit-window-logic.test.ts             |  15 +
+ 15 files changed, 424 insertions(+), 569 deletions(-)
+
+diff --git a/chrome-extension/src/background/cockpit-window.ts b/chrome-extension/src/background/cockpit-window.ts
+index f88f1d4..8ef8b60 100644
+--- a/chrome-extension/src/background/cockpit-window.ts
++++ b/chrome-extension/src/background/cockpit-window.ts
+@@ -1,13 +1,11 @@
+-// Cockpit window manager — L2 Computer Use surface (UI Mode P1).
++// Cockpit window manager — L2 Computer Use surface (UI Mode P1 + R1 persist).
+ // Spec: docs/superpowers/specs/2026-07-26-ui-three-mode-redesign.md §3 / §6 P1
+ //
+ // Owns chrome.windows lifecycle. Side panel and other pages only send
+ // cockpit.open / focus / close / status messages.
+ //
+-// KNOWN LIMITATION (P1 / dual-review): cockpitWindowId is in-memory only.
+-// After MV3 service-worker death the id is lost; the next open may create a
+-// second window while the first still exists. P2: persist id in
+-// chrome.storage.session or reclaim via windows.getAll + cockpit URL.
++// R1 (2026-07-27): persist windowId in chrome.storage.session + reclaim via
++// windows.getAll matching cockpit URL after SW death.
+ 
+ /** Plasmo builds `src/tabs/cockpit.tsx` → `tabs/cockpit.html`. */
+ export const COCKPIT_PATH = "tabs/cockpit.html"
+@@ -15,10 +13,14 @@ export const COCKPIT_PATH = "tabs/cockpit.html"
+ export const COCKPIT_DEFAULT_WIDTH = 720
+ export const COCKPIT_DEFAULT_HEIGHT = 560
+ 
++/** Session storage key for surviving MV3 service-worker restarts. */
++export const COCKPIT_SESSION_KEY = "cmspark.cockpitWindowId"
++
+ let cockpitWindowId: number | null = null
+ let onRemovedHooked = false
+ /** In-flight open — concurrent openOrFocusCockpit callers chain on this promise. */
+ let openInFlight: Promise<number | null> | null = null
++let hydrateInFlight: Promise<void> | null = null
+ 
+ export function getCockpitWindowId(): number | null {
+   return cockpitWindowId
+@@ -28,12 +30,47 @@ export function cockpitUrl(): string {
+   return chrome.runtime.getURL(COCKPIT_PATH)
+ }
+ 
++/** Pure: whether a tab URL is our cockpit page (handles query/hash). */
++export function isCockpitTabUrl(tabUrl: string | undefined, expectedBase: string): boolean {
++  if (!tabUrl) return false
++  try {
++    const a = new URL(tabUrl)
++    const b = new URL(expectedBase)
++    return a.origin === b.origin && a.pathname === b.pathname
++  } catch {
++    return tabUrl.split("?")[0].split("#")[0] === expectedBase.split("?")[0].split("#")[0]
++  }
++}
++
++async function persistWindowId(id: number | null): Promise<void> {
++  try {
++    if (id == null) {
++      await chrome.storage.session.remove(COCKPIT_SESSION_KEY)
++    } else {
++      await chrome.storage.session.set({ [COCKPIT_SESSION_KEY]: id })
++    }
++  } catch {
++    // session storage may be unavailable in unit tests without chrome mock
++  }
++}
++
++async function readPersistedWindowId(): Promise<number | null> {
++  try {
++    const got = await chrome.storage.session.get(COCKPIT_SESSION_KEY)
++    const v = got?.[COCKPIT_SESSION_KEY]
++    return typeof v === "number" && Number.isFinite(v) ? v : null
++  } catch {
++    return null
++  }
++}
++
+ function ensureOnRemoved(): void {
+   if (onRemovedHooked) return
+   onRemovedHooked = true
+   chrome.windows.onRemoved.addListener((windowId) => {
+     if (windowId === cockpitWindowId) {
+       cockpitWindowId = null
++      void persistWindowId(null)
+     }
+   })
+ }
+@@ -48,8 +85,60 @@ async function windowExists(id: number): Promise<boolean> {
+   }
+ }
+ 
++/** Find an existing cockpit window by scanning tabs (SW reclaim). */
++export async function reclaimCockpitWindowId(): Promise<number | null> {
++  const expected = cockpitUrl()
++  try {
++    const wins = await chrome.windows.getAll({ populate: true })
++    for (const w of wins) {
++      if (w.id == null) continue
++      const tabs = w.tabs || []
++      for (const t of tabs) {
++        if (isCockpitTabUrl(t.url, expected)) {
++          return w.id
++        }
++      }
++    }
++  } catch {
++    return null
++  }
++  return null
++}
++
++/** Hydrate in-memory id from session storage or live windows. */
++async function hydrateCockpitWindowId(): Promise<void> {
++  if (cockpitWindowId != null) {
++    if (await windowExists(cockpitWindowId)) return
++    cockpitWindowId = null
++    await persistWindowId(null)
++  }
++  const stored = await readPersistedWindowId()
++  if (stored != null && (await windowExists(stored))) {
++    cockpitWindowId = stored
++    return
++  }
++  if (stored != null) {
++    await persistWindowId(null)
++  }
++  const reclaimed = await reclaimCockpitWindowId()
++  if (reclaimed != null) {
++    cockpitWindowId = reclaimed
++    await persistWindowId(reclaimed)
++  }
++}
++
++function ensureHydrated(): Promise<void> {
++  if (!hydrateInFlight) {
++    hydrateInFlight = hydrateCockpitWindowId().finally(() => {
++      hydrateInFlight = null
++    })
++  }
++  return hydrateInFlight
++}
++
+ async function openOrFocusCockpitImpl(): Promise<number | null> {
+   ensureOnRemoved()
++  await ensureHydrated()
+ 
+   if (cockpitWindowId != null) {
+     const ok = await windowExists(cockpitWindowId)
+@@ -62,9 +151,25 @@ async function openOrFocusCockpitImpl(): Promise<number | null> {
+         return cockpitWindowId
+       } catch {
+         cockpitWindowId = null
++        await persistWindowId(null)
+       }
+     } else {
+       cockpitWindowId = null
++      await persistWindowId(null)
++    }
++  }
++
++  // Last chance: reclaim without stored id
++  const reclaimed = await reclaimCockpitWindowId()
++  if (reclaimed != null) {
++    cockpitWindowId = reclaimed
++    await persistWindowId(reclaimed)
++    try {
++      await chrome.windows.update(reclaimed, { focused: true, drawAttention: true })
++      return reclaimed
++    } catch {
++      cockpitWindowId = null
++      await persistWindowId(null)
+     }
+   }
+ 
+@@ -77,9 +182,11 @@ async function openOrFocusCockpitImpl(): Promise<number | null> {
+       focused: true,
+     })
+     cockpitWindowId = win.id ?? null
++    await persistWindowId(cockpitWindowId)
+     return cockpitWindowId
+   } catch {
+     cockpitWindowId = null
++    await persistWindowId(null)
+     return null
+   }
+ }
+@@ -97,6 +204,7 @@ export async function openOrFocusCockpit(): Promise<number | null> {
+ }
+ 
+ export async function focusCockpit(): Promise<boolean> {
++  await ensureHydrated()
+   if (cockpitWindowId == null) return false
+   try {
+     await chrome.windows.update(cockpitWindowId, {
+@@ -106,15 +214,18 @@ export async function focusCockpit(): Promise<boolean> {
+     return true
+   } catch {
+     cockpitWindowId = null
++    await persistWindowId(null)
+     return false
+   }
+ }
+ 
+ /** Close cockpit window if open. Does not abort the computer task. */
+ export async function closeCockpit(): Promise<void> {
++  await ensureHydrated()
+   if (cockpitWindowId == null) return
+   const id = cockpitWindowId
+   cockpitWindowId = null
++  await persistWindowId(null)
+   try {
+     await chrome.windows.remove(id)
+   } catch {
+@@ -130,4 +241,5 @@ export function cockpitStatus(): { open: boolean; windowId: number | null } {
+ export function _resetCockpitWindowStateForTests(): void {
+   cockpitWindowId = null
+   openInFlight = null
++  hydrateInFlight = null
+ }
+diff --git a/chrome-extension/src/sidepanel/App.tsx b/chrome-extension/src/sidepanel/App.tsx
+index 0e09f9d..af538ec 100644
+--- a/chrome-extension/src/sidepanel/App.tsx
++++ b/chrome-extension/src/sidepanel/App.tsx
+@@ -199,6 +199,16 @@ function Header({
+   onToast?: (msg: string) => void
+ }) {
+   const { state, dispatch } = useAgentStore()
++  const pinned = state.modePin === capabilityLevel
++  const togglePin = () => {
++    if (pinned) {
++      dispatch({ type: "SET_MODE_PIN", pin: null })
++      onToast?.("已取消钉住 — 层级可自动降级")
++    } else {
++      dispatch({ type: "SET_MODE_PIN", pin: capabilityLevel })
++      onToast?.(`已钉住「${badgeLabel}」— 阻止自动降级`)
++    }
++  }
+   const hasMessages = state.messages.length > 0 && !!state.activeThreadId
+   const [nbState, setNbState] = useState<"idle" | "working" | "warning">("idle")
+   const [nbTooltip, setNbTooltip] = useState<string>("离线导出当前页为 Markdown（拖入 NotebookLM 作为来源）")
+@@ -308,13 +318,18 @@ function Header({
+           ? { background: tokens.modeBrowserBg, borderBottomColor: "#bfdbfe" }
+           : {}),
+         ...(capabilityLevel === "computer"
+-          ? { background: tokens.bgMuted, borderBottomColor: tokens.border }
++          ? { background: "#ecfdf5", borderBottomColor: "#a7f3d0" }
+           : {}),
+       }}
+     >
+       <ThreadList />
+       <div style={styles.headerTitle}>CMspark</div>
+-      <ModeBadge level={capabilityLevel} label={badgeLabel} />
++      <ModeBadge
++        level={capabilityLevel}
++        label={badgeLabel}
++        pinned={pinned}
++        onTogglePin={togglePin}
++      />
+       <div
+         title={
+           connectionState === "connected"
+@@ -508,6 +523,24 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
+   const sendingRef = useRef(false)
+   const isComputer = capabilityLevel === "computer"
+ 
++  // R4: empty-state suggestion chips fill the composer
++  useEffect(() => {
++    const onFill = (e: Event) => {
++      const detail = (e as CustomEvent<{ text?: string }>).detail
++      if (!detail?.text) return
++      setText(detail.text)
++      requestAnimationFrame(() => {
++        const el = textareaRef.current
++        if (!el) return
++        el.focus()
++        const len = detail.text!.length
++        el.setSelectionRange(len, len)
++      })
++    }
++    window.addEventListener("cmspark:fill-composer", onFill as EventListener)
++    return () => window.removeEventListener("cmspark:fill-composer", onFill as EventListener)
++  }, [])
++
+   const isStreaming = !!state.streamingContent
+   const hasContent = text.trim().length > 0 || selectedFiles.length > 0
+   // D12′ must-fix: hard-gate Panel send while computer task is active (running/paused)
+diff --git a/chrome-extension/src/sidepanel/components/AppsPanel.tsx b/chrome-extension/src/sidepanel/components/AppsPanel.tsx
+index 09fbf0e..5ef8375 100644
+--- a/chrome-extension/src/sidepanel/components/AppsPanel.tsx
++++ b/chrome-extension/src/sidepanel/components/AppsPanel.tsx
+@@ -17,6 +17,7 @@ import {
+   policyBadge,
+ } from "../utils/apps-utils"
+ import { uiaCapableBadge } from "../utils/computer-utils"
++import { tokens } from "../ui/tokens"
+ 
+ export function AppsPanel() {
+   const { state, dispatch } = useAgentStore()
+@@ -211,9 +212,9 @@ export function AppsPanel() {
+           <button
+             style={{
+               ...styles.modeBtn,
+-              background: segment === "apps" ? "#4A90D9" : "#fff",
++              background: segment === "apps" ? tokens.accent : "#fff",
+               color: segment === "apps" ? "#fff" : "#666",
+-              borderColor: segment === "apps" ? "#4A90D9" : "#ddd",
++              borderColor: segment === "apps" ? tokens.accent : "#ddd",
+             }}
+             onClick={() => setSegment("apps")}
+             title="GUI 应用白名单（L0 无参启动）"
+@@ -223,9 +224,9 @@ export function AppsPanel() {
+           <button
+             style={{
+               ...styles.modeBtn,
+-              background: segment === "cli" ? "#4A90D9" : "#fff",
++              background: segment === "cli" ? tokens.accent : "#fff",
+               color: segment === "cli" ? "#fff" : "#666",
+-              borderColor: segment === "cli" ? "#4A90D9" : "#ddd",
++              borderColor: segment === "cli" ? tokens.accent : "#ddd",
+             }}
+             onClick={() => setSegment("cli")}
+             title="结构化 CLI 契约（Phase 2）"
+@@ -319,13 +320,13 @@ export function AppsPanel() {
+         <div style={styles.addArea}>
+           <div style={styles.addTabs}>
+             <button
+-              style={{ ...styles.addTabBtn, borderBottom: addTab === "enumerate" ? "2px solid #4A90D9" : "2px solid transparent" }}
++              style={{ ...styles.addTabBtn, borderBottom: addTab === "enumerate" ? `2px solid ${tokens.accent}` : "2px solid transparent" }}
+               onClick={() => { setAddTab("enumerate"); setPicked(null) }}
+             >
+               从列表选择
+             </button>
+             <button
+-              style={{ ...styles.addTabBtn, borderBottom: addTab === "manual" ? "2px solid #4A90D9" : "2px solid transparent" }}
++              style={{ ...styles.addTabBtn, borderBottom: addTab === "manual" ? `2px solid ${tokens.accent}` : "2px solid transparent" }}
+               onClick={() => { setAddTab("manual"); setPicked(null) }}
+             >
+               手动粘贴路径
+@@ -550,7 +551,7 @@ function AppCard(props: AppCardProps) {
+                   key={p}
+                   style={{
+                     ...styles.menuItem,
+-                    color: disabled ? "#9ca3af" : current ? "#4A90D9" : "#333",
++                    color: disabled ? "#9ca3af" : current ? tokens.accent : "#333",
+                     cursor: disabled ? "not-allowed" : "pointer",
+                   }}
+                   disabled={disabled}
+@@ -585,7 +586,7 @@ function AppCard(props: AppCardProps) {
+             <button
+               style={{
+                 ...styles.menuItem,
+-                color: isPreset ? "#9ca3af" : "#F44336",
++                color: isPreset ? "#9ca3af" : tokens.danger,
+                 borderTop: "1px solid #f3f4f6",
+                 cursor: isPreset ? "not-allowed" : "pointer",
+               }}
+@@ -843,10 +844,10 @@ const styles: Record<string, React.CSSProperties> = {
+   addBtn: {
+     marginTop: 6,
+     padding: "8px 12px",
+-    border: "1px dashed #4A90D9",
++    border: `1px dashed ${tokens.accent}`,
+     borderRadius: 6,
+     background: "transparent",
+-    color: "#4A90D9",
++    color: tokens.accent,
+     cursor: "pointer",
+     fontSize: 12,
+   },
+@@ -957,7 +958,7 @@ const styles: Record<string, React.CSSProperties> = {
+     padding: "6px 10px",
+     border: "none",
+     borderRadius: 4,
+-    background: "#4A90D9",
++    background: tokens.accent,
+     color: "#fff",
+     fontSize: 12,
+     cursor: "pointer",
+diff --git a/chrome-extension/src/sidepanel/components/ChatView.tsx b/chrome-extension/src/sidepanel/components/ChatView.tsx
+index 0ebb52b..933a550 100644
+--- a/chrome-extension/src/sidepanel/components/ChatView.tsx
++++ b/chrome-extension/src/sidepanel/components/ChatView.tsx
+@@ -657,14 +657,42 @@ function MarkdownRenderer({ content, renderMermaid = false }: { content: string;
+   )
+ }
+ 
++function fillComposer(text: string) {
++  window.dispatchEvent(new CustomEvent("cmspark:fill-composer", { detail: { text } }))
++}
++
++function SuggestionChips({ items }: { items: { label: string; fill: string }[] }) {
++  return (
++    <div style={styles.chipRow}>
++      {items.map((it) => (
++        <button
++          key={it.label}
++          type="button"
++          style={styles.suggestChip}
++          onClick={() => fillComposer(it.fill)}
++        >
++          {it.label}
++        </button>
++      ))}
++    </div>
++  )
++}
++
+ function EmptyState({ level }: { level: "chat" | "browser" | "computer" }) {
+   if (level === "browser") {
+     return (
+       <div style={styles.empty}>
+         <div style={styles.emptyTitle}>网页 Agent 已就绪</div>
+         <div style={styles.emptyHint}>
+-          可对当前页提问、总结或让 Agent 操作标签。输入 / 调用技能。
++          可对当前页提问、总结或让 Agent 操作标签。输入 / 调用技能；任务包/任务板在底栏「更多」。
+         </div>
++        <SuggestionChips
++          items={[
++            { label: "总结本页", fill: "请总结当前页面的要点" },
++            { label: "提取关键信息", fill: "请从当前页提取关键信息并列表" },
++            { label: "帮我填表", fill: "请根据页面内容帮我填写当前表单" },
++          ]}
++        />
+       </div>
+     )
+   }
+@@ -682,8 +710,15 @@ function EmptyState({ level }: { level: "chat" | "browser" | "computer" }) {
+     <div style={styles.empty}>
+       <div style={styles.emptyTitle}>开始对话</div>
+       <div style={styles.emptyHint}>
+-        问问题、写文案，或描述你想在浏览器里完成的任务。输入 / 调用技能。
++        问问题、写文案，或描述你想在浏览器里完成的任务。输入 / 调用技能；任务包在底栏「更多」。
+       </div>
++      <SuggestionChips
++        items={[
++          { label: "写一段文案", fill: "请帮我写一段简洁的产品介绍" },
++          { label: "解释概念", fill: "请用通俗的话解释：" },
++          { label: "规划步骤", fill: "请把下面目标拆成可执行步骤：" },
++        ]}
++      />
+     </div>
+   )
+ }
+@@ -791,9 +826,29 @@ const styles: Record<string, React.CSSProperties> = {
+     fontSize: 12,
+     color: tokens.textSecondary,
+     lineHeight: 1.5,
+-    maxWidth: 260,
++    maxWidth: 280,
++    margin: "0 auto 14px",
++  },
++  chipRow: {
++    display: "flex",
++    flexWrap: "wrap",
++    gap: 6,
++    justifyContent: "center",
++    maxWidth: 300,
+     margin: "0 auto",
+   },
++  suggestChip: {
++    border: `1px solid ${tokens.border}`,
++    background: tokens.bgElevated,
++    color: tokens.accentText,
++    borderRadius: tokens.radiusPill,
++    padding: "5px 10px",
++    fontSize: 11,
++    fontWeight: 500,
++    cursor: "pointer",
++    fontFamily: tokens.font,
++    boxShadow: tokens.shadowSm,
++  },
+   userMsg: {
+     display: "flex",
+     justifyContent: "flex-end",
+diff --git a/chrome-extension/src/sidepanel/components/ComputerTaskBar.tsx b/chrome-extension/src/sidepanel/components/ComputerTaskBar.tsx
+deleted file mode 100644
+index 9781a56..0000000
+--- a/chrome-extension/src/sidepanel/components/ComputerTaskBar.tsx
++++ /dev/null
+@@ -1,454 +0,0 @@
+-// WP4 (WI-4): 坐标任务常驻任务条 —— 急停按钮 + 预算进度 + 步骤时间线。
+-//
+-// 纯渲染组件:状态折叠(P4 懒创建/迟到丢弃/时间线截断)全部在 store 的
+-// reduceComputerTaskEvent 纯函数;本组件只管视图与本地 UI 态(展开、计时器、
+-// 图片放大)。
+-//
+-// 急停语义(A1/E5 的面板端):
+-//  - 点击发送 computer.task.abort {task_id}(background 透传 → companion);
+-//  - ack(matched>0)经 COMPUTER_TASK_ABORT_ACK 置 abortAcked →
+-//    「已急停，等待任务退出…」;
+-//  - 3s 无 ack → 黄条提示「急停未确认——可用 Ctrl+Alt+End 热键」。
+-// 完结态(ok/fail + completed/total)保留 5s 后自动隐藏(组件计时;store
+-// 状态保留,下一任务 started 到达时由状态机重置)。
+-
+-import { useEffect, useState } from "react"
+-import { useAgentStore } from "../store/agentStore"
+-import { isValidEvidenceTaskId, previewImageSafe } from "../utils/computer-utils"
+-import { Modal } from "./ui/Modal"
+-import type { ComputerLocateAttemptView, ComputerStepView } from "../types"
+-
+-/** 急停 ack 等待上限——超过仍未确认则提示热键兜底。 */
+-const ABORT_ACK_TIMEOUT_MS = 3000
+-/** 完结态停留时长。 */
+-const FINISHED_LINGER_MS = 5000
+-
+-function layerBadgeStyle(layer?: string): { color: string; bg: string } {
+-  if (layer === "uia") return { color: "#1d4ed8", bg: "#dbeafe" }
+-  if (layer === "ocr") return { color: "#4b5563", bg: "#e5e7eb" }
+-  return { color: "#6b7280", bg: "#f3f4f6" }
+-}
+-
+-function statusLabel(task: { status: string; resyncing: boolean; ok?: boolean }): string {
+-  if (task.status === "running") return task.resyncing ? "进行中（恢复同步）" : "进行中"
+-  if (task.status === "paused") return "已暂停"
+-  return task.ok === false ? "已失败" : "已完成"
+-}
+-
+-function AttemptRow({ a }: { a: ComputerLocateAttemptView }) {
+-  return (
+-    <div style={styles.attemptRow}>
+-      <span style={styles.attemptLayer}>{a.layer ?? "?"}</span>
+-      <span>{a.outcome ?? ""}</span>
+-      {a.reason && <span style={styles.attemptReason}>{a.reason}</span>}
+-      {typeof a.durationMs === "number" && <span style={styles.stepMeta}>{a.durationMs}ms</span>}
+-    </div>
+-  )
+-}
+-
+-function StepRow({ step, onZoom }: { step: ComputerStepView; onZoom: (b64: string) => void }) {
+-  const [attemptsOpen, setAttemptsOpen] = useState(false)
+-  const badge = layerBadgeStyle(step.layer)
+-  const showImage = previewImageSafe(step.previewImage)
+-  return (
+-    <div style={styles.stepRow}>
+-      <div style={styles.stepMain}>
+-        <span style={styles.stepSeq}>#{step.seq}</span>
+-        <span style={styles.stepCaption}>{step.caption ?? step.action ?? ""}</span>
+-        {step.layer && (
+-          <span style={{ ...styles.layerBadge, color: badge.color, background: badge.bg }}>{step.layer}</span>
+-        )}
+-        {typeof step.confidence === "number" && (
+-          <span style={styles.stepMeta}>{Math.round(step.confidence * 100)}%</span>
+-        )}
+-        {typeof step.durationMs === "number" && <span style={styles.stepMeta}>{step.durationMs}ms</span>}
+-        {typeof step.x === "number" && typeof step.y === "number" && (
+-          <span style={styles.stepMeta}>({step.x}, {step.y})</span>
+-        )}
+-        {step.crossverified === false && (
+-          <span style={styles.uncrossBadge} title="本步未经像素交叉复核">未复核</span>
+-        )}
+-        {showImage && (
+-          <img
+-            src={`data:image/jpeg;base64,${step.previewImage}`}
+-            alt={`步骤 ${step.seq} 截图`}
+-            title="点击放大"
+-            style={styles.thumb}
+-            onClick={(e) => {
+-              e.stopPropagation()
+-              onZoom(step.previewImage as string)
+-            }}
+-            // 渲染失败静默隐藏——时间线永不被图片阻塞。
+-            onError={(e) => {
+-              ;(e.currentTarget as HTMLImageElement).style.display = "none"
+-            }}
+-          />
+-        )}
+-        {Array.isArray(step.locateAttempts) && step.locateAttempts.length > 1 && (
+-          <button
+-            type="button"
+-            style={styles.attemptsToggle}
+-            onClick={(e) => {
+-              e.stopPropagation()
+-              setAttemptsOpen(!attemptsOpen)
+-            }}
+-          >
+-            降级详情（{step.locateAttempts.length}）{attemptsOpen ? "▲" : "▼"}
+-          </button>
+-        )}
+-      </div>
+-      {attemptsOpen && step.locateAttempts && (
+-        <div style={styles.attemptsBox}>
+-          {step.locateAttempts.map((a, i) => (
+-            <AttemptRow key={i} a={a} />
+-          ))}
+-        </div>
+-      )}
+-    </div>
+-  )
+-}
+-
+-export function ComputerTaskBar() {
+-  const { state } = useAgentStore()
+-  const task = state.computerTask
+-  const [expanded, setExpanded] = useState(false)
+-  const [abortSentAt, setAbortSentAt] = useState<number | null>(null)
+-  const [abortUnconfirmed, setAbortUnconfirmed] = useState(false)
+-  const [dismissed, setDismissed] = useState(false)
+-  const [zoomImage, setZoomImage] = useState<string | null>(null)
+-
+-  // 任务切换(started 重置/新懒创建)时清空本地 UI 态。
+-  useEffect(() => {
+-    setExpanded(false)
+-    setAbortSentAt(null)
+-    setAbortUnconfirmed(false)
+-    setDismissed(false)
+-    setZoomImage(null)
+-  }, [task?.taskId])
+-
+-  // 急停 3s 无 ack → 未确认提示;ack 到达(task.abortAcked)则撤掉计时。
+-  useEffect(() => {
+-    if (abortSentAt === null || !task || task.abortAcked) return
+-    const t = setTimeout(() => setAbortUnconfirmed(true), ABORT_ACK_TIMEOUT_MS)
+-    return () => clearTimeout(t)
+-  }, [abortSentAt, task, task?.abortAcked])
+-
+-  // 完结态停留 5s 后自动隐藏。
+-  useEffect(() => {
+-    if (!task || task.status !== "finished") return
+-    const elapsed = Date.now() - (task.finishedAt ?? Date.now())
+-    const t = setTimeout(() => setDismissed(true), Math.max(0, FINISHED_LINGER_MS - elapsed))
+-    return () => clearTimeout(t)
+-  }, [task, task?.status, task?.finishedAt])
+-
+-  if (!task || dismissed) return null
+-
+-  const finished = task.status === "finished"
+-  const lastBudgetLeft = [...task.steps].reverse().find((s) => typeof s.budgetLeft === "number")?.budgetLeft
+-  const budgetText =
+-    typeof task.budget === "number" ? `预算 ${task.budget - (lastBudgetLeft ?? task.budget)}/${task.budget}` : null
+-  const progressText =
+-    typeof task.total === "number"
+-      ? `${finished ? `${task.completed ?? 0}/${task.total} 步` : `${task.steps.length}/${task.total} 步`}`
+-      : null
+-
+-  const sendAbort = () => {
+-    chrome.runtime.sendMessage({ type: "computer.task.abort", task_id: task.taskId })
+-    setAbortSentAt(Date.now())
+-    setAbortUnconfirmed(false)
+-  }
+-
+-  return (
+-    <div style={styles.wrap}>
+-      <div
+-        style={styles.bar}
+-        role="button"
+-        tabIndex={0}
+-        title={expanded ? "点击收起步骤时间线" : "点击展开步骤时间线"}
+-        onClick={() => setExpanded(!expanded)}
+-        onKeyDown={(e) => {
+-          if (e.key === "Enter" || e.key === " ") {
+-            e.preventDefault()
+-            setExpanded(!expanded)
+-          }
+-        }}
+-      >
+-        <span
+-          style={{
+-            ...styles.statusDot,
+-            background: finished ? (task.ok === false ? "#F44336" : "#4CAF50") : task.status === "paused" ? "#FFC107" : "#2196F3",
+-          }}
+-        />
+-        <span style={styles.statusLabel}>{statusLabel(task)}</span>
+-        <span style={styles.taskText} title={task.task}>
+-          {task.task ?? "（同步中…）"}
+-          {task.app ? ` — ${task.app}` : ""}
+-        </span>
+-        {progressText && <span style={styles.stepMeta}>{progressText}</span>}
+-        {budgetText && <span style={styles.stepMeta}>{budgetText}</span>}
+-        {!finished && !task.abortAcked && (
+-          <button
+-            type="button"
+-            style={styles.abortBtn}
+-            title="立即中止任务（companion 侧急停通道）"
+-            onClick={(e) => {
+-              e.stopPropagation()
+-              sendAbort()
+-            }}
+-          >
+-            ⏹ 急停
+-          </button>
+-        )}
+-        {!finished && task.abortAcked && <span style={styles.abortAckedText}>已急停，等待任务退出…</span>}
+-        <span style={styles.caret}>{expanded ? "▲" : "▼"}</span>
+-      </div>
+-
+-      {task.status === "paused" && task.pauseReason && (
+-        <div style={styles.pausedBar}>已暂停：{task.pauseReason}</div>
+-      )}
+-      {finished && (
+-        <div style={{ ...styles.finishedBar, background: task.ok === false ? "#FFEBEE" : "#E8F5E9" }}>
+-          <span>
+-            {task.ok === false
+-              ? `任务失败${task.errorCode ? `（${task.errorCode}）` : ""}，完成 ${task.completed ?? 0}/${task.total ?? "?"} 步`
+-              : `任务完成，共 ${task.completed ?? 0}/${task.total ?? "?"} 步`}
+-          </span>
+-          {task.evidenceDir && isValidEvidenceTaskId(task.taskId) && (
+-            <button
+-              type="button"
+-              title="在 companion 机器上打开该任务的证据目录（explorer）"
+-              style={styles.evidenceBtn}
+-              onClick={(e) => {
+-                e.stopPropagation()
+-                chrome.runtime.sendMessage({ type: "computer.evidence.open", task_id: task.taskId })
+-              }}
+-            >
+-              📂 打开证据目录
+-            </button>
+-          )}
+-        </div>
+-      )}
+-      {abortUnconfirmed && !task.abortAcked && !finished && (
+-        <div style={styles.abortWarnBar}>急停未确认——可用 Ctrl+Alt+End 热键</div>
+-      )}
+-
+-      {expanded && (
+-        <div style={styles.timeline}>
+-          {task.steps.length === 0 ? (
+-            <div style={styles.emptySteps}>暂无步骤事件{task.resyncing ? "（面板恢复同步中，started 之前的步骤不可见）" : ""}</div>
+-          ) : (
+-            task.steps.map((s, i) => <StepRow key={`${s.seq}-${i}`} step={s} onZoom={setZoomImage} />)
+-          )}
+-        </div>
+-      )}
+-
+-      <Modal
+-        open={zoomImage !== null}
+-        onClose={() => setZoomImage(null)}
+-        ariaLabel="步骤截图放大查看"
+-        overlayStyle={styles.zoomOverlay}
+-        panelStyle={styles.zoomPanel}
+-      >
+-        {zoomImage && (
+-          <img src={`data:image/jpeg;base64,${zoomImage}`} alt="步骤截图放大" style={styles.zoomImg} />
+-        )}
+-      </Modal>
+-    </div>
+-  )
+-}
+-
+-const styles: Record<string, React.CSSProperties> = {
+-  wrap: {
+-    borderTop: "1px solid #e5e7eb",
+-    background: "#fff",
+-  },
+-  bar: {
+-    display: "flex",
+-    alignItems: "center",
+-    gap: 8,
+-    padding: "6px 10px",
+-    cursor: "pointer",
+-    userSelect: "none",
+-    fontSize: 12,
+-  },
+-  statusDot: {
+-    width: 8,
+-    height: 8,
+-    borderRadius: "50%",
+-    flexShrink: 0,
+-  },
+-  statusLabel: {
+-    fontWeight: 600,
+-    color: "#374151",
+-    flexShrink: 0,
+-  },
+-  taskText: {
+-    flex: 1,
+-    minWidth: 0,
+-    overflow: "hidden",
+-    textOverflow: "ellipsis",
+-    whiteSpace: "nowrap",
+-    color: "#111827",
+-  },
+-  stepMeta: {
+-    color: "#9ca3af",
+-    fontSize: 11,
+-    flexShrink: 0,
+-  },
+-  abortBtn: {
+-    background: "#D32F2F",
+-    color: "#fff",
+-    border: "none",
+-    borderRadius: 6,
+-    padding: "4px 12px",
+-    fontSize: 13,
+-    fontWeight: 700,
+-    cursor: "pointer",
+-    flexShrink: 0,
+-  },
+-  abortAckedText: {
+-    color: "#D32F2F",
+-    fontSize: 12,
+-    fontWeight: 600,
+-    flexShrink: 0,
+-  },
+-  caret: {
+-    color: "#9ca3af",
+-    fontSize: 10,
+-    flexShrink: 0,
+-  },
+-  pausedBar: {
+-    background: "#FFF8E1",
+-    color: "#8D6E00",
+-    fontSize: 12,
+-    padding: "6px 10px",
+-    borderTop: "1px solid #FFECB3",
+-  },
+-  finishedBar: {
+-    fontSize: 12,
+-    padding: "6px 10px",
+-    color: "#374151",
+-    borderTop: "1px solid #e5e7eb",
+-    display: "flex",
+-    alignItems: "center",
+-    gap: 8,
+-  },
+-  evidenceBtn: {
+-    marginLeft: "auto",
+-    fontSize: 11,
+-    color: "#1d4ed8",
+-    background: "#dbeafe",
+-    border: "none",
+-    borderRadius: 4,
+-    padding: "2px 8px",
+-    cursor: "pointer",
+-    flexShrink: 0,
+-  },
+-  abortWarnBar: {
+-    background: "#FFF3CD",
+-    color: "#8D6E00",
+-    fontSize: 12,
+-    padding: "6px 10px",
+-    borderTop: "1px solid #FFC107",
+-  },
+-  timeline: {
+-    maxHeight: 240,
+-    overflow: "auto",
+-    borderTop: "1px solid #f3f4f6",
+-    padding: "4px 10px 8px",
+-  },
+-  emptySteps: {
+-    color: "#9ca3af",
+-    fontSize: 12,
+-    padding: "8px 0",
+-  },
+-  stepRow: {
+-    padding: "3px 0",
+-    borderBottom: "1px solid #f9fafb",
+-  },
+-  stepMain: {
+-    display: "flex",
+-    alignItems: "center",
+-    gap: 6,
+-    fontSize: 12,
+-    flexWrap: "wrap",
+-  },
+-  stepSeq: {
+-    color: "#9ca3af",
+-    fontSize: 11,
+-    minWidth: 26,
+-  },
+-  stepCaption: {
+-    color: "#111827",
+-  },
+-  layerBadge: {
+-    fontSize: 10,
+-    padding: "1px 6px",
+-    borderRadius: 999,
+-    fontWeight: 600,
+-  },
+-  uncrossBadge: {
+-    fontSize: 10,
+-    padding: "1px 6px",
+-    borderRadius: 999,
+-    fontWeight: 600,
+-    color: "#B26B00",
+-    background: "#FFF4E5",
+-  },
+-  thumb: {
+-    width: 56,
+-    borderRadius: 4,
+-    border: "1px solid #e5e7eb",
+-    cursor: "zoom-in",
+-    display: "block",
+-  },
+-  attemptsToggle: {
+-    background: "none",
+-    border: "none",
+-    color: "#6b7280",
+-    fontSize: 11,
+-    cursor: "pointer",
+-    padding: 0,
+-    textDecoration: "underline",
+-  },
+-  attemptsBox: {
+-    margin: "2px 0 2px 32px",
+-    padding: "4px 8px",
+-    background: "#f9fafb",
+-    borderRadius: 4,
+-  },
+-  attemptRow: {
+-    display: "flex",
+-    gap: 8,
+-    fontSize: 11,
+-    color: "#4b5563",
+-    padding: "1px 0",
+-  },
+-  attemptLayer: {
+-    fontWeight: 600,
+-    minWidth: 32,
+-  },
+-  attemptReason: {
+-    color: "#9ca3af",
+-  },
+-  zoomOverlay: {
+-    position: "fixed",
+-    inset: 0,
+-    background: "rgba(0,0,0,0.55)",
+-    display: "flex",
+-    alignItems: "center",
+-    justifyContent: "center",
+-    zIndex: 110,
+-  },
+-  zoomPanel: {
+-    maxWidth: "92%",
+-    maxHeight: "88%",
+-    background: "transparent",
+-  },
+-  zoomImg: {
+-    maxWidth: "100%",
+-    maxHeight: "82vh",
+-    display: "block",
+-    borderRadius: 6,
+-  },
+-}
+diff --git a/chrome-extension/src/sidepanel/components/KnowledgeSubPanel.tsx b/chrome-extension/src/sidepanel/components/KnowledgeSubPanel.tsx
+index 88375fc..66b70d1 100644
+--- a/chrome-extension/src/sidepanel/components/KnowledgeSubPanel.tsx
++++ b/chrome-extension/src/sidepanel/components/KnowledgeSubPanel.tsx
+@@ -2,6 +2,7 @@
+ 
+ import { useState, useRef, useEffect } from "react"
+ import { useAgentStore } from "../store/agentStore"
++import { tokens } from "../ui/tokens"
+ 
+ export function KnowledgeSubPanel() {
+   const { state, dispatch } = useAgentStore()
+@@ -216,9 +217,9 @@ export function KnowledgeSubPanel() {
+             key={mode}
+             style={{
+               ...styles.modeBtn,
+-              background: state.knowledgeSelectionMode === mode ? "#4A90D9" : "#fff",
++              background: state.knowledgeSelectionMode === mode ? tokens.accent : "#fff",
+               color: state.knowledgeSelectionMode === mode ? "#fff" : "#666",
+-              borderColor: state.knowledgeSelectionMode === mode ? "#4A90D9" : "#ddd",
++              borderColor: state.knowledgeSelectionMode === mode ? tokens.accent : "#ddd",
+             }}
+             onClick={() => handleModeChange(mode)}
+             title={mode === "auto" ? "自动匹配当前站点" : mode === "all" ? "注入所有知识索引" : "仅使用勾选知识"}
+@@ -273,14 +274,14 @@ export function KnowledgeSubPanel() {
+ 
+       {/* Status feedback */}
+       {status && (
+-        <div style={{ fontSize: 11, color: "#4A90D9", marginBottom: 8, padding: "2px 4px" }}>
++        <div style={{ fontSize: 11, color: tokens.accent, marginBottom: 8, padding: "2px 4px" }}>
+           {status}
+         </div>
+       )}
+       {state.knowledgeImportStatus && (
+         <div style={{
+           fontSize: 11,
+-          color: state.knowledgeImportStatus.ok ? "#4CAF50" : "#F44336",
++          color: state.knowledgeImportStatus.ok ? tokens.success : tokens.danger,
+           marginBottom: 8,
+           padding: "2px 4px",
+         }}>
+@@ -338,7 +339,7 @@ export function KnowledgeSubPanel() {
+                   </button>
+                   {menuOpen === doc.name && (
+                     <div style={styles.menuDropdown}>
+-                      <button style={{ ...styles.menuItem, color: "#F44336" }} onClick={() => handleDelete(doc.name)}>
++                      <button style={{ ...styles.menuItem, color: tokens.danger }} onClick={() => handleDelete(doc.name)}>
+                         删除
+                       </button>
+                     </div>
+@@ -442,7 +443,7 @@ const styles: Record<string, React.CSSProperties> = {
+     fontSize: 11,
+     fontWeight: 600,
+     fontFamily: "monospace",
+-    color: "#4A90D9",
++    color: tokens.accent,
+     marginTop: 8,
+     marginBottom: 4,
+     paddingBottom: 2,
+diff --git a/chrome-extension/src/sidepanel/components/McpPanel.tsx b/chrome-extension/src/sidepanel/components/McpPanel.tsx
+index e226138..ebfdd51 100644
+--- a/chrome-extension/src/sidepanel/components/McpPanel.tsx
++++ b/chrome-extension/src/sidepanel/components/McpPanel.tsx
+@@ -5,6 +5,7 @@
+ import { useState } from "react"
+ import { useAgentStore } from "../store/agentStore"
+ import type { McpServerMeta, McpSelectionMode } from "../types"
++import { tokens } from "../ui/tokens"
+ 
+ const STATUS_COLORS: Record<string, string> = {
+   connected: "#22c55e",
+@@ -140,9 +141,9 @@ export function McpPanel() {
+               key={mode}
+               style={{
+                 ...styles.modeBtn,
+-                background: state.mcpSelectionMode === mode ? "#4A90D9" : "#fff",
++                background: state.mcpSelectionMode === mode ? tokens.accent : "#fff",
+                 color: state.mcpSelectionMode === mode ? "#fff" : "#666",
+-                borderColor: state.mcpSelectionMode === mode ? "#4A90D9" : "#ddd",
++                borderColor: state.mcpSelectionMode === mode ? tokens.accent : "#ddd",
+               }}
+               onClick={() => handleModeChange(mode)}
+               title={modeHints[mode]}
+@@ -287,7 +288,7 @@ function ServerCard(props: ServerCardProps) {
+           <div style={styles.menuDropdown}>
+             <button style={styles.menuItem} onClick={props.onEdit}>✏️ 编辑</button>
+             <button
+-              style={{ ...styles.menuItem, color: "#F44336" }}
++              style={{ ...styles.menuItem, color: tokens.danger }}
+               onClick={props.onDelete}
+             >
+               🗑️ 删除
+@@ -446,7 +447,7 @@ const styles: Record<string, React.CSSProperties> = {
+   },
+   activeToggle: {
+     fontSize: 10,
+-    color: "#4A90D9",
++    color: tokens.accent,
+     display: "flex",
+     alignItems: "center",
+     cursor: "pointer",
+@@ -519,7 +520,7 @@ const styles: Record<string, React.CSSProperties> = {
+   },
+   toolName: {
+     fontSize: 11,
+-    color: "#4A90D9",
++    color: tokens.accent,
+     fontFamily: "ui-monospace, monospace",
+   },
+   toolDesc: {
+@@ -530,10 +531,10 @@ const styles: Record<string, React.CSSProperties> = {
+   addBtn: {
+     marginTop: 6,
+     padding: "8px 12px",
+-    border: "1px dashed #4A90D9",
++    border: `1px dashed ${tokens.accent}`,
+     borderRadius: 6,
+     background: "transparent",
+-    color: "#4A90D9",
++    color: tokens.accent,
+     cursor: "pointer",
+     fontSize: 12,
+   },
+diff --git a/chrome-extension/src/sidepanel/components/McpServerForm.tsx b/chrome-extension/src/sidepanel/components/McpServerForm.tsx
+index 21a78b3..bedc635 100644
+--- a/chrome-extension/src/sidepanel/components/McpServerForm.tsx
++++ b/chrome-extension/src/sidepanel/components/McpServerForm.tsx
+@@ -13,6 +13,7 @@ import type {
+   McpTrustLevel,
+   McpTransportKind,
+ } from "../types"
++import { tokens } from "../ui/tokens"
+ 
+ interface EnvEntry {
+   key: string
+@@ -605,7 +606,7 @@ const styles: Record<string, React.CSSProperties> = {
+   saveBtn: {
+     padding: "6px 12px",
+     border: "none",
+-    background: "#4A90D9",
++    background: tokens.accent,
+     color: "#fff",
+     borderRadius: 4,
+     cursor: "pointer",
+diff --git a/chrome-extension/src/sidepanel/components/MinimalConfirm.tsx b/chrome-extension/src/sidepanel/components/MinimalConfirm.tsx
+index c72fe53..8ec6b33 100644
+--- a/chrome-extension/src/sidepanel/components/MinimalConfirm.tsx
++++ b/chrome-extension/src/sidepanel/components/MinimalConfirm.tsx
+@@ -1,50 +1,78 @@
+-// Panel content-split confirm (UI Mode P1/P2) — tool + risk + allow/deny/stop + multi-agent identity.
++// Panel content-split confirm (UI Mode P1/P2/R2) — tool + risk + allow/deny/stop + queue chrome.
+ // Heavy preview / nonce / whitelist live in Cockpit ConfirmElevated.
+ 
+-import { useRef } from "react"
++import { useCallback, useEffect, useRef, type CSSProperties } from "react"
+ import { useAgentStore } from "../store/agentStore"
+ import type { SecurityConfirmationRequest } from "../types"
+ import { tokens, riskColorDark, riskLabel } from "../ui/tokens"
+ 
+ export function MinimalConfirm() {
+   const { state, dispatch } = useAgentStore()
+-  const request = state.pendingSecurityConfirmations[0] as SecurityConfirmationRequest | undefined
++  const queue = state.pendingSecurityConfirmations
++  const request = queue[0] as SecurityConfirmationRequest | undefined
+   const denyBtnRef = useRef<HTMLButtonElement>(null)
++  const activeThreadId = state.activeThreadId
++
++  const respond = useCallback(
++    (approved: boolean, stopThread = false) => {
++      if (!request) return
++      const needsNonce = !!request.nonce_challenge
++      if (approved && needsNonce) return
++      const stopTargetId = request.worker_id || activeThreadId
++      chrome.runtime.sendMessage({
++        type: "security.confirmation.response",
++        confirmation_id: request.confirmation_id,
++        approved,
++        stop_thread: stopThread,
++        add_to_whitelist: [],
++        stop_thread_id: stopThread ? stopTargetId : undefined,
++      })
++      dispatch({ type: "REMOVE_SECURITY_CONFIRMATION", confirmationId: request.confirmation_id })
++      if (stopThread && stopTargetId) {
++        chrome.runtime.sendMessage({
++          type: "chat.abort",
++          threadId: stopTargetId,
++          thread_id: stopTargetId,
++        })
++        if (stopTargetId === activeThreadId) {
++          dispatch({ type: "SET_STREAMING", content: "" })
++        }
++      }
++    },
++    [request, activeThreadId, dispatch],
++  )
++
++  // R2: focus deny (safe default) when queue head changes
++  useEffect(() => {
++    if (!request) return
++    const t = requestAnimationFrame(() => denyBtnRef.current?.focus())
++    return () => cancelAnimationFrame(t)
++  }, [request?.confirmation_id])
++
++  // R2: Escape → deny current head
++  useEffect(() => {
++    if (!request) return
++    const onKey = (e: KeyboardEvent) => {
++      if (e.key === "Escape") {
++        e.preventDefault()
++        respond(false)
++      }
++    }
++    window.addEventListener("keydown", onKey)
++    return () => window.removeEventListener("keydown", onKey)
++  }, [request?.confirmation_id, respond])
+ 
+   if (!request) return null
+ 
+   const color = riskColorDark(request.risk_level)
+   const label = riskLabel(request.risk_level)
+-  // Nonce-gated confirms must use Cockpit (content-split) — Panel cannot type-verify
+   const needsNonce = !!request.nonce_challenge
+   const workerLabel =
+     request.worker_role_label ||
+     (request.worker_id ? `worker ${request.worker_id.slice(0, 8)}` : null)
+-  const stopTargetId = request.worker_id || state.activeThreadId
+-
+-  const respond = (approved: boolean, stopThread = false) => {
+-    if (approved && needsNonce) return
+-    chrome.runtime.sendMessage({
+-      type: "security.confirmation.response",
+-      confirmation_id: request.confirmation_id,
+-      approved,
+-      stop_thread: stopThread,
+-      add_to_whitelist: [],
+-      // Prefer stopping the owning worker, not the UI-active thread
+-      stop_thread_id: stopThread ? stopTargetId : undefined,
+-    })
+-    dispatch({ type: "REMOVE_SECURITY_CONFIRMATION", confirmationId: request.confirmation_id })
+-    if (stopThread && stopTargetId) {
+-      chrome.runtime.sendMessage({
+-        type: "chat.abort",
+-        threadId: stopTargetId,
+-        thread_id: stopTargetId,
+-      })
+-      if (stopTargetId === state.activeThreadId) {
+-        dispatch({ type: "SET_STREAMING", content: "" })
+-      }
+-    }
+-  }
++  const stopTargetId = request.worker_id || activeThreadId
++  const queueLen = queue.length
++  const queueTail = queue.slice(1, 4)
+ 
+   return (
+     <div
+@@ -59,11 +87,30 @@ export function MinimalConfirm() {
+         fontFamily: tokens.font,
+       }}
+       role="alertdialog"
+-      aria-label={`${label}确认`}
++      aria-label={`${label}确认 ${queueLen > 1 ? `1/${queueLen}` : ""}`}
++      aria-modal="true"
+     >
+-      <div style={{ fontWeight: 700, marginBottom: 4, letterSpacing: "0.01em", color: color }}>
+-        {label} ·{" "}
+-        <span style={{ fontFamily: tokens.fontMono, color: tokens.darkText }}>{request.tool_name}</span>
++      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4, flexWrap: "wrap" }}>
++        <div style={{ fontWeight: 700, letterSpacing: "0.01em", color: color, flex: 1, minWidth: 0 }}>
++          {label} ·{" "}
++          <span style={{ fontFamily: tokens.fontMono, color: tokens.darkText }}>{request.tool_name}</span>
++        </div>
++        {queueLen > 1 && (
++          <span
++            style={{
++              fontSize: 10,
++              fontWeight: 700,
++              color: tokens.darkWarning,
++              background: tokens.darkWarningBg,
++              padding: "2px 7px",
++              borderRadius: tokens.radiusPill,
++              flexShrink: 0,
++            }}
++            title="确认队列（先处理队首）"
++          >
++            1 / {queueLen}
++          </span>
++        )}
+       </div>
+       {workerLabel && (
+         <div style={{ fontSize: 10, color: tokens.darkWarning, marginBottom: 4 }}>
+@@ -130,16 +177,24 @@ export function MinimalConfirm() {
+           确认台
+         </button>
+       </div>
+-      {state.pendingSecurityConfirmations.length > 1 && (
+-        <div style={{ marginTop: 6, fontSize: 10, color: tokens.darkWarning }}>
+-          队列中还有 {state.pendingSecurityConfirmations.length - 1} 条确认
++      {queueLen > 1 && (
++        <div style={{ marginTop: 8, fontSize: 10, color: tokens.darkWarning, lineHeight: 1.4 }}>
++          队列后续：
++          {queueTail.map((q, i) => (
++            <span key={q.confirmation_id}>
++              {i > 0 ? " · " : " "}
++              <span style={{ fontFamily: tokens.fontMono, color: tokens.darkMuted }}>{q.tool_name}</span>
++            </span>
++          ))}
++          {queueLen > 4 ? ` · +${queueLen - 4}` : ""}
++          <div style={{ marginTop: 2, color: tokens.darkMuted }}>Esc 拒绝当前 · 确认台可看完整预览</div>
+         </div>
+       )}
+     </div>
+   )
+ }
+ 
+-const btn: React.CSSProperties = {
++const btn: CSSProperties = {
+   padding: "5px 10px",
+   borderRadius: tokens.radiusSm,
+   border: "none",
+diff --git a/chrome-extension/src/sidepanel/components/NotebooklmImporterPanel.tsx b/chrome-extension/src/sidepanel/components/NotebooklmImporterPanel.tsx
+index 60e914b..3227b03 100644
+--- a/chrome-extension/src/sidepanel/components/NotebooklmImporterPanel.tsx
++++ b/chrome-extension/src/sidepanel/components/NotebooklmImporterPanel.tsx
+@@ -14,6 +14,7 @@ import type { BatchState, ImportItem, NotebookInfo } from "../../notebooklm/type
+ import type { ExtractedLink } from "../../notebooklm/page-link-extractor"
+ import type { FeedEntry } from "../../notebooklm/rss-parser"
+ import type { YouTubeVideo } from "../../notebooklm/youtube-api"
++import { tokens } from "../ui/tokens"
+ 
+ type TabKey = "urls" | "links" | "rss" | "youtube" | "thread"
+ 
+@@ -626,7 +627,7 @@ export function NotebooklmImporterPanel({ onClose }: Props) {
+                   style={{
+                     ...progressBarStyle,
+                     width: `${progressPct}%`,
+-                    background: failed > 0 && batch.status === "done" ? "#FFA726" : "#4CAF50",
++                    background: failed > 0 && batch.status === "done" ? "#FFA726" : tokens.success,
+                   }}
+                 />
+               </div>
+@@ -637,12 +638,12 @@ export function NotebooklmImporterPanel({ onClose }: Props) {
+                 {batch.items.map((item, idx) => {
+                   const r = batch.results[idx]
+                   const status = !r ? "⏳" : r.ok ? "✓" : "✗"
+-                  const color = !r ? "#999" : r.ok ? "#4CAF50" : "#F44336"
++                  const color = !r ? "#999" : r.ok ? tokens.success : tokens.danger
+                   return (
+                     <div key={idx} style={{ ...itemStyle, borderLeft: `3px solid ${color}` }}>
+                       <span style={{ marginRight: 8 }}>{status}</span>
+                       <span style={{ wordBreak: "break-all", fontSize: 12 }}>
+-                        {item.url || "(text)"} {r?.error && <span style={{ color: "#F44336" }}>— {r.error}</span>}
++                        {item.url || "(text)"} {r?.error && <span style={{ color: tokens.danger }}>— {r.error}</span>}
+                       </span>
+                     </div>
+                   )
+@@ -691,7 +692,7 @@ const primaryBtnStyle: React.CSSProperties = {
+   borderRadius: 4, cursor: "pointer", fontSize: 14, fontWeight: 500, flex: 1,
+ }
+ const dangerBtnStyle: React.CSSProperties = {
+-  padding: "10px 16px", border: "none", background: "#F44336", color: "#fff",
++  padding: "10px 16px", border: "none", background: tokens.danger, color: "#fff",
+   borderRadius: 4, cursor: "pointer", fontSize: 14, fontWeight: 500, flex: 1,
+ }
+ const hintStyle: React.CSSProperties = { fontSize: 11, color: "#999", marginTop: 4 }
+diff --git a/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx b/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx
+index db505d3..b8a90d4 100644
+--- a/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx
++++ b/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx
+@@ -3,6 +3,7 @@
+ import { useState, useEffect } from "react"
+ import { useAgentStore } from "../store/agentStore"
+ import { Modal } from "./ui/Modal"
++import { tokens } from "../ui/tokens"
+ // WP5-I4 实验功能段:组件纯渲染,文案/判定全部来自 logic 纯函数(镜像
+ // companion 单一真源);发送固定 source:"settings"(companion 双层围栏)。
+ import {
+@@ -250,7 +251,7 @@ export function SettingsSlideout() {
+               首次启动 Companion 会在终端打印一段配对密钥。把它粘贴到上方并点「配对」即可建立加密握手——之后所有通信都需要该密钥鉴权，本机其他进程无法再伪造来源驱动 Agent。重新查看密钥：<code>cmspark-agent settings --ws-secret</code>。
+             </div>
+             {wsPairingMsg && (
+-              <div style={{ ...styles.helpText, color: wsPairingMsg.ok ? "#2E7D32" : "#F44336", marginTop: 4 }}>
++              <div style={{ ...styles.helpText, color: wsPairingMsg.ok ? "#2E7D32" : tokens.danger, marginTop: 4 }}>
+                 {wsPairingMsg.text}
+               </div>
+             )}
+@@ -279,7 +280,7 @@ export function SettingsSlideout() {
+               {state.vaultPicker.picking ? "选择中…" : "📂 选择文件夹"}
+             </button>
+             {state.vaultPicker.error && (
+-              <div style={{ ...styles.helpText, color: "#F44336", marginTop: 4 }}>
++              <div style={{ ...styles.helpText, color: tokens.danger, marginTop: 4 }}>
+                 {state.vaultPicker.error}
+               </div>
+             )}
+@@ -298,7 +299,7 @@ export function SettingsSlideout() {
+               刷新 vault 档案
+             </button>
+             {state.obsidianProfileStatus && (
+-              <div style={{ ...styles.helpText, color: state.obsidianProfileStatus.ok ? "#2E7D32" : "#F44336", marginTop: 6 }}>
++              <div style={{ ...styles.helpText, color: state.obsidianProfileStatus.ok ? "#2E7D32" : tokens.danger, marginTop: 6 }}>
+                 {state.obsidianProfileStatus.message}
+               </div>
+             )}
+@@ -468,12 +469,12 @@ export function SettingsSlideout() {
+                     <div key={entry.id} style={{ marginBottom: 6, paddingBottom: 6, borderBottom: "1px solid #eee" }}>
+                       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                         <span style={{
+-                          color: entry.action === "allowed" ? "#4CAF50"
+-                            : entry.action === "denied" ? "#FF9800"
++                          color: entry.action === "allowed" ? tokens.success
++                            : entry.action === "denied" ? tokens.warning
+                             // "changed" risk is level-driven: arming (error) = dark red,
+                             // disarming (info) = green (restoring safety).
+                             : entry.action === "changed" ? (entry.level === "error" ? "#B71C1C" : "#2E7D32")
+-                            : "#F44336",
++                            : tokens.danger,
+                           fontWeight: 600,
+                         }}>
+                           {entry.action === "allowed" ? "允许"
+@@ -539,7 +540,7 @@ export function SettingsSlideout() {
+                   <button
+                     style={{
+                       ...styles.toggleBtn,
+-                      ...(modelEnabled ? { background: "#4A90D9", color: "#fff", borderColor: "#4A90D9" } : {}),
++                      ...(modelEnabled ? { background: tokens.accent, color: "#fff", borderColor: tokens.accent } : {}),
+                     }}
+                     disabled={disabledReason !== null}
+                     onClick={toggle}
+@@ -610,7 +611,7 @@ export function SettingsSlideout() {
+                 </div>
+                 {/* 错误位(family:"computer.model" 路由) */}
+                 {state.computerModelError && (
+-                  <div style={{ ...styles.helpText, color: "#F44336", marginTop: 4 }}>
++                  <div style={{ ...styles.helpText, color: tokens.danger, marginTop: 4 }}>
+                     {state.computerModelError}
+                   </div>
+                 )}
+@@ -954,13 +955,13 @@ export function SettingsSlideout() {
+             {state.testResult && (
+               <span style={{
+                 fontSize: 12,
+-                color: state.testResult.includes("成功") ? "#4CAF50" : "#F44336",
++                color: state.testResult.includes("成功") ? tokens.success : tokens.danger,
+               }}>{state.testResult}</span>
+             )}
+             {state.testVisionResult && (
+               <span style={{
+                 fontSize: 12,
+-                color: state.testVisionResult.includes("成功") ? "#4CAF50" : "#F44336",
++                color: state.testVisionResult.includes("成功") ? tokens.success : tokens.danger,
+               }}>{state.testVisionResult}</span>
+             )}
+           </div>
+@@ -1079,10 +1080,10 @@ const styles: Record<string, React.CSSProperties> = {
+   },
+   testBtn: {
+     padding: "6px 14px",
+-    border: "1px solid #4A90D9",
++    border: `1px solid ${tokens.accent}`,
+     borderRadius: 6,
+     background: "#fff",
+-    color: "#4A90D9",
++    color: tokens.accent,
+     fontSize: 12,
+     cursor: "pointer",
+   },
+@@ -1090,7 +1091,7 @@ const styles: Record<string, React.CSSProperties> = {
+     padding: "6px 20px",
+     border: "none",
+     borderRadius: 6,
+-    background: "#4A90D9",
++    background: tokens.accent,
+     color: "#fff",
+     fontSize: 13,
+     fontWeight: 500,
+diff --git a/chrome-extension/src/sidepanel/components/SkillCraftPanel.tsx b/chrome-extension/src/sidepanel/components/SkillCraftPanel.tsx
+index 7217b2d..ee35fcc 100644
+--- a/chrome-extension/src/sidepanel/components/SkillCraftPanel.tsx
++++ b/chrome-extension/src/sidepanel/components/SkillCraftPanel.tsx
+@@ -3,6 +3,7 @@
+ import { useState, useEffect, useCallback } from "react"
+ import { useAgentStore } from "../store/agentStore"
+ import { Modal } from "./ui/Modal"
++import { tokens } from "../ui/tokens"
+ 
+ interface SkillParameter {
+   name: string
+@@ -314,7 +315,7 @@ const styles: Record<string, React.CSSProperties> = {
+     padding: "6px 14px",
+     borderRadius: 6,
+     border: "none",
+-    background: "#4A90D9",
++    background: tokens.accent,
+     color: "#fff",
+     cursor: "pointer",
+     fontSize: 12,
+@@ -323,9 +324,9 @@ const styles: Record<string, React.CSSProperties> = {
+   secondaryBtn: {
+     padding: "6px 14px",
+     borderRadius: 6,
+-    border: "1px solid #4A90D9",
++    border: `1px solid ${tokens.accent}`,
+     background: "#fff",
+-    color: "#4A90D9",
++    color: tokens.accent,
+     cursor: "pointer",
+     fontSize: 12,
+   },
+@@ -345,7 +346,7 @@ const styles: Record<string, React.CSSProperties> = {
+     width: 32,
+     height: 32,
+     border: "3px solid #e0e0e0",
+-    borderTop: "3px solid #4A90D9",
++    borderTop: `3px solid ${tokens.accent}`,
+     borderRadius: "50%",
+     animation: "cmspark-spin 0.8s linear infinite",
+   },
+diff --git a/chrome-extension/src/sidepanel/components/ThreadList.tsx b/chrome-extension/src/sidepanel/components/ThreadList.tsx
+index a0cdd3c..9094662 100644
+--- a/chrome-extension/src/sidepanel/components/ThreadList.tsx
++++ b/chrome-extension/src/sidepanel/components/ThreadList.tsx
+@@ -2,6 +2,7 @@
+ 
+ import { useState } from "react"
+ import { useAgentStore } from "../store/agentStore"
++import { tokens } from "../ui/tokens"
+ 
+ function generateShortId(): string {
+   const chars = "abcdefghijklmnopqrstuvwxyz0123456789"
+@@ -199,7 +200,7 @@ const styles: Record<string, React.CSSProperties> = {
+     borderBottom: "1px solid #eee",
+   },
+   newBtn: {
+-    background: "#4A90D9",
++    background: tokens.accent,
+     color: "#fff",
+     border: "none",
+     borderRadius: 4,
+diff --git a/chrome-extension/src/sidepanel/ui/ModeBadge.tsx b/chrome-extension/src/sidepanel/ui/ModeBadge.tsx
+index 3a81336..a12cd59 100644
+--- a/chrome-extension/src/sidepanel/ui/ModeBadge.tsx
++++ b/chrome-extension/src/sidepanel/ui/ModeBadge.tsx
+@@ -1,3 +1,4 @@
++import type { CSSProperties } from "react"
+ import type { CapabilityLevel } from "../types"
+ import { tokens } from "./tokens"
+ import { IconChat, IconGlobe, IconMonitor } from "./icons"
+@@ -5,9 +6,13 @@ import { IconChat, IconGlobe, IconMonitor } from "./icons"
+ export function ModeBadge({
+   level,
+   label,
++  pinned,
++  onTogglePin,
+ }: {
+   level: CapabilityLevel
+   label: string
++  pinned?: boolean
++  onTogglePin?: () => void
+ }) {
+   const theme =
+     level === "computer"
+@@ -32,28 +37,54 @@ export function ModeBadge({
+           }
+ 
+   const Icon = theme.Icon
++  const pinTitle = pinned
++    ? `能力层级：${label}（已钉住 — 点击取消钉住，允许自动降级）`
++    : `能力层级：${label}（点击钉住当前层级，阻止自动降级）`
++
++  const style: CSSProperties = {
++    display: "inline-flex",
++    alignItems: "center",
++    gap: 4,
++    fontSize: 11,
++    fontWeight: 600,
++    letterSpacing: "0.01em",
++    padding: "3px 8px 3px 6px",
++    borderRadius: tokens.radiusPill,
++    background: theme.bg,
++    color: theme.color,
++    border: pinned ? `1.5px solid ${tokens.accent}` : theme.border,
++    lineHeight: 1,
++    flexShrink: 0,
++    fontFamily: tokens.font,
++    cursor: onTogglePin ? "pointer" : "default",
++    boxShadow: pinned ? `0 0 0 2px ${tokens.accentSoft}` : "none",
++    transition: `box-shadow ${tokens.transitionFast} ease, border-color ${tokens.transitionFast} ease`,
++  }
++
++  if (onTogglePin) {
++    return (
++      <button
++        type="button"
++        role="status"
++        aria-live="polite"
++        aria-pressed={!!pinned}
++        title={pinTitle}
++        onClick={onTogglePin}
++        style={{ ...style, appearance: "none" as const }}
++      >
++        <Icon size={13} />
++        <span>{label}</span>
++        {pinned && (
++          <span style={{ fontSize: 9, opacity: 0.9 }} aria-hidden>
++            钉
++          </span>
++        )}
++      </button>
++    )
++  }
++
+   return (
+-    <span
+-      role="status"
+-      aria-live="polite"
+-      title={`能力层级：${label}`}
+-      style={{
+-        display: "inline-flex",
+-        alignItems: "center",
+-        gap: 4,
+-        fontSize: 11,
+-        fontWeight: 600,
+-        letterSpacing: "0.01em",
+-        padding: "3px 8px 3px 6px",
+-        borderRadius: tokens.radiusPill,
+-        background: theme.bg,
+-        color: theme.color,
+-        border: theme.border,
+-        lineHeight: 1,
+-        flexShrink: 0,
+-        fontFamily: tokens.font,
+-      }}
+-    >
++    <span role="status" aria-live="polite" title={`能力层级：${label}`} style={style}>
+       <Icon size={13} />
+       <span>{label}</span>
+     </span>
+diff --git a/chrome-extension/tests/cockpit-window-logic.test.ts b/chrome-extension/tests/cockpit-window-logic.test.ts
+index b6827fe..6092516 100644
+--- a/chrome-extension/tests/cockpit-window-logic.test.ts
++++ b/chrome-extension/tests/cockpit-window-logic.test.ts
+@@ -4,6 +4,8 @@ import {
+   COCKPIT_DEFAULT_HEIGHT,
+   COCKPIT_DEFAULT_WIDTH,
+   COCKPIT_PATH,
++  COCKPIT_SESSION_KEY,
++  isCockpitTabUrl,
+ } from "../src/background/cockpit-window"
+ 
+ test("cockpit path matches Plasmo tabs page convention", () => {
+@@ -16,3 +18,16 @@ test("cockpit default window size is usable dual-track canvas", () => {
+   assert.ok(COCKPIT_DEFAULT_WIDTH >= 640)
+   assert.ok(COCKPIT_DEFAULT_HEIGHT >= 480)
+ })
++
++test("session storage key is stable", () => {
++  assert.equal(COCKPIT_SESSION_KEY, "cmspark.cockpitWindowId")
++})
++
++test("isCockpitTabUrl matches base and ignores query/hash", () => {
++  const base = "chrome-extension://abc/tabs/cockpit.html"
++  assert.equal(isCockpitTabUrl(base, base), true)
++  assert.equal(isCockpitTabUrl(base + "?x=1", base), true)
++  assert.equal(isCockpitTabUrl(base + "#frag", base), true)
++  assert.equal(isCockpitTabUrl("chrome-extension://abc/tabs/other.html", base), false)
++  assert.equal(isCockpitTabUrl(undefined, base), false)
++})

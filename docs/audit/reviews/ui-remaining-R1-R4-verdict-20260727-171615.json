@@ -1,0 +1,8 @@
+{
+  "batch": "ui-remaining-R1-R4",
+  "timestamp": "20260727-171615",
+  "claude": { "verdict": "REJECT", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/ui-remaining-R1-R4-claude-20260727-171615.md" },
+  "pi": { "verdict": "REJECT", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/ui-remaining-R1-R4-pi-20260727-171615.md" },
+  "both_approve": false,
+  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/ui-remaining-R1-R4-diff-20260727-171615.patch"
+}

@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react"
 import { useAgentStore } from "../store/agentStore"
 import { Modal } from "./ui/Modal"
+import { tokens } from "../ui/tokens"
 
 interface SkillParameter {
   name: string
@@ -314,7 +315,7 @@ const styles: Record<string, React.CSSProperties> = {
     padding: "6px 14px",
     borderRadius: 6,
     border: "none",
-    background: "#4A90D9",
+    background: tokens.accent,
     color: "#fff",
     cursor: "pointer",
     fontSize: 12,
@@ -323,9 +324,9 @@ const styles: Record<string, React.CSSProperties> = {
   secondaryBtn: {
     padding: "6px 14px",
     borderRadius: 6,
-    border: "1px solid #4A90D9",
+    border: `1px solid ${tokens.accent}`,
     background: "#fff",
-    color: "#4A90D9",
+    color: tokens.accent,
     cursor: "pointer",
     fontSize: 12,
   },
@@ -345,7 +346,7 @@ const styles: Record<string, React.CSSProperties> = {
     width: 32,
     height: 32,
     border: "3px solid #e0e0e0",
-    borderTop: "3px solid #4A90D9",
+    borderTop: `3px solid ${tokens.accent}`,
     borderRadius: "50%",
     animation: "cmspark-spin 0.8s linear infinite",
   },

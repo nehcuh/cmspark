@@ -1,50 +1,78 @@
-// Panel content-split confirm (UI Mode P1/P2) — tool + risk + allow/deny/stop + multi-agent identity.
+// Panel content-split confirm (UI Mode P1/P2/R2) — tool + risk + allow/deny/stop + queue chrome.
 // Heavy preview / nonce / whitelist live in Cockpit ConfirmElevated.
 
-import { useRef } from "react"
+import { useCallback, useEffect, useRef, type CSSProperties } from "react"
 import { useAgentStore } from "../store/agentStore"
 import type { SecurityConfirmationRequest } from "../types"
 import { tokens, riskColorDark, riskLabel } from "../ui/tokens"
 
 export function MinimalConfirm() {
   const { state, dispatch } = useAgentStore()
-  const request = state.pendingSecurityConfirmations[0] as SecurityConfirmationRequest | undefined
+  const queue = state.pendingSecurityConfirmations
+  const request = queue[0] as SecurityConfirmationRequest | undefined
   const denyBtnRef = useRef<HTMLButtonElement>(null)
+  const activeThreadId = state.activeThreadId
+
+  const respond = useCallback(
+    (approved: boolean, stopThread = false) => {
+      if (!request) return
+      const needsNonce = !!request.nonce_challenge
+      if (approved && needsNonce) return
+      const stopTargetId = request.worker_id || activeThreadId
+      chrome.runtime.sendMessage({
+        type: "security.confirmation.response",
+        confirmation_id: request.confirmation_id,
+        approved,
+        stop_thread: stopThread,
+        add_to_whitelist: [],
+        stop_thread_id: stopThread ? stopTargetId : undefined,
+      })
+      dispatch({ type: "REMOVE_SECURITY_CONFIRMATION", confirmationId: request.confirmation_id })
+      if (stopThread && stopTargetId) {
+        chrome.runtime.sendMessage({
+          type: "chat.abort",
+          threadId: stopTargetId,
+          thread_id: stopTargetId,
+        })
+        if (stopTargetId === activeThreadId) {
+          dispatch({ type: "SET_STREAMING", content: "" })
+        }
+      }
+    },
+    [request, activeThreadId, dispatch],
+  )
+
+  // R2: focus deny (safe default) when queue head changes
+  useEffect(() => {
+    if (!request) return
+    const t = requestAnimationFrame(() => denyBtnRef.current?.focus())
+    return () => cancelAnimationFrame(t)
+  }, [request?.confirmation_id])
+
+  // R2: Escape → deny current head
+  useEffect(() => {
+    if (!request) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault()
+        respond(false)
+      }
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [request?.confirmation_id, respond])
 
   if (!request) return null
 
   const color = riskColorDark(request.risk_level)
   const label = riskLabel(request.risk_level)
-  // Nonce-gated confirms must use Cockpit (content-split) — Panel cannot type-verify
   const needsNonce = !!request.nonce_challenge
   const workerLabel =
     request.worker_role_label ||
     (request.worker_id ? `worker ${request.worker_id.slice(0, 8)}` : null)
-  const stopTargetId = request.worker_id || state.activeThreadId
-
-  const respond = (approved: boolean, stopThread = false) => {
-    if (approved && needsNonce) return
-    chrome.runtime.sendMessage({
-      type: "security.confirmation.response",
-      confirmation_id: request.confirmation_id,
-      approved,
-      stop_thread: stopThread,
-      add_to_whitelist: [],
-      // Prefer stopping the owning worker, not the UI-active thread
-      stop_thread_id: stopThread ? stopTargetId : undefined,
-    })
-    dispatch({ type: "REMOVE_SECURITY_CONFIRMATION", confirmationId: request.confirmation_id })
-    if (stopThread && stopTargetId) {
-      chrome.runtime.sendMessage({
-        type: "chat.abort",
-        threadId: stopTargetId,
-        thread_id: stopTargetId,
-      })
-      if (stopTargetId === state.activeThreadId) {
-        dispatch({ type: "SET_STREAMING", content: "" })
-      }
-    }
-  }
+  const stopTargetId = request.worker_id || activeThreadId
+  const queueLen = queue.length
+  const queueTail = queue.slice(1, 4)
 
   return (
     <div
@@ -59,11 +87,30 @@ export function MinimalConfirm() {
         fontFamily: tokens.font,
       }}
       role="alertdialog"
-      aria-label={`${label}确认`}
+      aria-label={`${label}确认 ${queueLen > 1 ? `1/${queueLen}` : ""}`}
+      aria-modal="true"
     >
-      <div style={{ fontWeight: 700, marginBottom: 4, letterSpacing: "0.01em", color: color }}>
-        {label} ·{" "}
-        <span style={{ fontFamily: tokens.fontMono, color: tokens.darkText }}>{request.tool_name}</span>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4, flexWrap: "wrap" }}>
+        <div style={{ fontWeight: 700, letterSpacing: "0.01em", color: color, flex: 1, minWidth: 0 }}>
+          {label} ·{" "}
+          <span style={{ fontFamily: tokens.fontMono, color: tokens.darkText }}>{request.tool_name}</span>
+        </div>
+        {queueLen > 1 && (
+          <span
+            style={{
+              fontSize: 10,
+              fontWeight: 700,
+              color: tokens.darkWarning,
+              background: tokens.darkWarningBg,
+              padding: "2px 7px",
+              borderRadius: tokens.radiusPill,
+              flexShrink: 0,
+            }}
+            title="确认队列（先处理队首）"
+          >
+            1 / {queueLen}
+          </span>
+        )}
       </div>
       {workerLabel && (
         <div style={{ fontSize: 10, color: tokens.darkWarning, marginBottom: 4 }}>
@@ -130,16 +177,24 @@ export function MinimalConfirm() {
           确认台
         </button>
       </div>
-      {state.pendingSecurityConfirmations.length > 1 && (
-        <div style={{ marginTop: 6, fontSize: 10, color: tokens.darkWarning }}>
-          队列中还有 {state.pendingSecurityConfirmations.length - 1} 条确认
+      {queueLen > 1 && (
+        <div style={{ marginTop: 8, fontSize: 10, color: tokens.darkWarning, lineHeight: 1.4 }}>
+          队列后续：
+          {queueTail.map((q, i) => (
+            <span key={q.confirmation_id}>
+              {i > 0 ? " · " : " "}
+              <span style={{ fontFamily: tokens.fontMono, color: tokens.darkMuted }}>{q.tool_name}</span>
+            </span>
+          ))}
+          {queueLen > 4 ? ` · +${queueLen - 4}` : ""}
+          <div style={{ marginTop: 2, color: tokens.darkMuted }}>Esc 拒绝当前 · 确认台可看完整预览</div>
         </div>
       )}
     </div>
   )
 }
 
-const btn: React.CSSProperties = {
+const btn: CSSProperties = {
   padding: "5px 10px",
   borderRadius: tokens.radiusSm,
   border: "none",

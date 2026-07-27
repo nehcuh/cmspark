@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react"
 import { useAgentStore } from "../store/agentStore"
 import { Modal } from "./ui/Modal"
+import { tokens } from "../ui/tokens"
 // WP5-I4 实验功能段:组件纯渲染,文案/判定全部来自 logic 纯函数(镜像
 // companion 单一真源);发送固定 source:"settings"(companion 双层围栏)。
 import {
@@ -228,8 +229,8 @@ export function SettingsSlideout() {
                 fontWeight: 400,
                 padding: "1px 6px",
                 borderRadius: 8,
-                color: wsPaired ? "#2E7D32" : "#B26B00",
-                background: wsPaired ? "#E8F5E9" : "#FFF3E0",
+                color: wsPaired ? tokens.success : "#B26B00",
+                background: wsPaired ? tokens.successSoft : tokens.warningSoft,
               }}>
                 {wsPaired === null ? "检测中…" : wsPaired ? "已配对" : "未配对"}
               </span>
@@ -250,7 +251,7 @@ export function SettingsSlideout() {
               首次启动 Companion 会在终端打印一段配对密钥。把它粘贴到上方并点「配对」即可建立加密握手——之后所有通信都需要该密钥鉴权，本机其他进程无法再伪造来源驱动 Agent。重新查看密钥：<code>cmspark-agent settings --ws-secret</code>。
             </div>
             {wsPairingMsg && (
-              <div style={{ ...styles.helpText, color: wsPairingMsg.ok ? "#2E7D32" : "#F44336", marginTop: 4 }}>
+              <div style={{ ...styles.helpText, color: wsPairingMsg.ok ? tokens.success : tokens.danger, marginTop: 4 }}>
                 {wsPairingMsg.text}
               </div>
             )}
@@ -279,7 +280,7 @@ export function SettingsSlideout() {
               {state.vaultPicker.picking ? "选择中…" : "📂 选择文件夹"}
             </button>
             {state.vaultPicker.error && (
-              <div style={{ ...styles.helpText, color: "#F44336", marginTop: 4 }}>
+              <div style={{ ...styles.helpText, color: tokens.danger, marginTop: 4 }}>
                 {state.vaultPicker.error}
               </div>
             )}
@@ -298,7 +299,7 @@ export function SettingsSlideout() {
               刷新 vault 档案
             </button>
             {state.obsidianProfileStatus && (
-              <div style={{ ...styles.helpText, color: state.obsidianProfileStatus.ok ? "#2E7D32" : "#F44336", marginTop: 6 }}>
+              <div style={{ ...styles.helpText, color: state.obsidianProfileStatus.ok ? tokens.success : tokens.danger, marginTop: 6 }}>
                 {state.obsidianProfileStatus.message}
               </div>
             )}
@@ -408,7 +409,7 @@ export function SettingsSlideout() {
                 style={{ marginTop: 3 }}
               />
               <div>
-                <div style={{ fontWeight: 500, color: "#B71C1C" }}>
+                <div style={{ fontWeight: 500, color: tokens.danger }}>
                   God-mode（允许所有协议）
                   {config.allow_all_schemes === true && (
                     <span style={{
@@ -427,7 +428,7 @@ export function SettingsSlideout() {
 
             {godmodeConfirm && (
               <div style={{ marginTop: 10, padding: 8, background: "#fff", borderRadius: 6, border: "1px solid #E0B4B4" }}>
-                <div style={{ fontSize: 12, color: "#B71C1C", fontWeight: 500, marginBottom: 6 }}>
+                <div style={{ fontSize: 12, color: tokens.danger, fontWeight: 500, marginBottom: 6 }}>
                   请输入「<b>{GODMODE_CONFIRM_PHRASE}</b>」以确认开启 God-mode：
                 </div>
                 <div style={{ display: "flex", gap: 6 }}>
@@ -468,12 +469,12 @@ export function SettingsSlideout() {
                     <div key={entry.id} style={{ marginBottom: 6, paddingBottom: 6, borderBottom: "1px solid #eee" }}>
                       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                         <span style={{
-                          color: entry.action === "allowed" ? "#4CAF50"
-                            : entry.action === "denied" ? "#FF9800"
+                          color: entry.action === "allowed" ? tokens.success
+                            : entry.action === "denied" ? tokens.warning
                             // "changed" risk is level-driven: arming (error) = dark red,
                             // disarming (info) = green (restoring safety).
-                            : entry.action === "changed" ? (entry.level === "error" ? "#B71C1C" : "#2E7D32")
-                            : "#F44336",
+                            : entry.action === "changed" ? (entry.level === "error" ? tokens.danger : tokens.success)
+                            : tokens.danger,
                           fontWeight: 600,
                         }}>
                           {entry.action === "allowed" ? "允许"
@@ -486,7 +487,7 @@ export function SettingsSlideout() {
                       </div>
                       <div style={{
                         color: entry.action === "changed"
-                          ? (entry.level === "error" ? "#B71C1C" : "#2E7D32")
+                          ? (entry.level === "error" ? tokens.danger : tokens.success)
                           : "#888",
                         marginTop: 2,
                         fontWeight: entry.action === "changed" ? 500 : 400,
@@ -539,7 +540,7 @@ export function SettingsSlideout() {
                   <button
                     style={{
                       ...styles.toggleBtn,
-                      ...(modelEnabled ? { background: "#4A90D9", color: "#fff", borderColor: "#4A90D9" } : {}),
+                      ...(modelEnabled ? { background: tokens.accent, color: "#fff", borderColor: tokens.accent } : {}),
                     }}
                     disabled={disabledReason !== null}
                     onClick={toggle}
@@ -563,7 +564,7 @@ export function SettingsSlideout() {
                     ...styles.helpText,
                     marginTop: 6,
                     color:
-                      statusLine.kind === "error" ? "#C62828" : statusLine.kind === "ok" ? "#2E7D32" : "#555",
+                      statusLine.kind === "error" ? "#C62828" : statusLine.kind === "ok" ? tokens.success : "#555",
                   }}
                 >
                   {statusLine.text}
@@ -610,7 +611,7 @@ export function SettingsSlideout() {
                 </div>
                 {/* 错误位(family:"computer.model" 路由) */}
                 {state.computerModelError && (
-                  <div style={{ ...styles.helpText, color: "#F44336", marginTop: 4 }}>
+                  <div style={{ ...styles.helpText, color: tokens.danger, marginTop: 4 }}>
                     {state.computerModelError}
                   </div>
                 )}
@@ -684,7 +685,7 @@ export function SettingsSlideout() {
                 <span style={{
                   fontSize: 10, fontWeight: 500, marginLeft: 6,
                   padding: "1px 6px", borderRadius: 8,
-                  color: "#2E7D32", background: "#E8F5E9",
+                  color: tokens.success, background: tokens.successSoft,
                 }}>
                   ✓ 已配置
                 </span>
@@ -703,7 +704,7 @@ export function SettingsSlideout() {
               </button>
             </div>
             {!config.api_key && state.companionConfig?.api_key_set && (
-              <div style={{ fontSize: 11, color: "#2E7D32", marginTop: 4 }}>
+              <div style={{ fontSize: 11, color: tokens.success, marginTop: 4 }}>
                 ✓ Companion 已保存 API Key 并正常工作。如需更换，请在上方输入新值；留空保存将沿用现有密钥。
               </div>
             )}
@@ -803,7 +804,7 @@ export function SettingsSlideout() {
                     <span style={{
                       fontSize: 10, fontWeight: 500, marginLeft: 6,
                       padding: "1px 6px", borderRadius: 8,
-                      color: "#2E7D32", background: "#E8F5E9",
+                      color: tokens.success, background: tokens.successSoft,
                     }}>
                       ✓ 已配置
                     </span>
@@ -954,13 +955,13 @@ export function SettingsSlideout() {
             {state.testResult && (
               <span style={{
                 fontSize: 12,
-                color: state.testResult.includes("成功") ? "#4CAF50" : "#F44336",
+                color: state.testResult.includes("成功") ? tokens.success : tokens.danger,
               }}>{state.testResult}</span>
             )}
             {state.testVisionResult && (
               <span style={{
                 fontSize: 12,
-                color: state.testVisionResult.includes("成功") ? "#4CAF50" : "#F44336",
+                color: state.testVisionResult.includes("成功") ? tokens.success : tokens.danger,
               }}>{state.testVisionResult}</span>
             )}
           </div>
@@ -1079,10 +1080,10 @@ const styles: Record<string, React.CSSProperties> = {
   },
   testBtn: {
     padding: "6px 14px",
-    border: "1px solid #4A90D9",
+    border: `1px solid ${tokens.accent}`,
     borderRadius: 6,
     background: "#fff",
-    color: "#4A90D9",
+    color: tokens.accent,
     fontSize: 12,
     cursor: "pointer",
   },
@@ -1090,7 +1091,7 @@ const styles: Record<string, React.CSSProperties> = {
     padding: "6px 20px",
     border: "none",
     borderRadius: 6,
-    background: "#4A90D9",
+    background: tokens.accent,
     color: "#fff",
     fontSize: 13,
     fontWeight: 500,

@@ -2,6 +2,7 @@
 
 import { useState } from "react"
 import { useAgentStore } from "../store/agentStore"
+import { tokens } from "../ui/tokens"
 
 function generateShortId(): string {
   const chars = "abcdefghijklmnopqrstuvwxyz0123456789"
@@ -199,7 +200,7 @@ const styles: Record<string, React.CSSProperties> = {
     borderBottom: "1px solid #eee",
   },
   newBtn: {
-    background: "#4A90D9",
+    background: tokens.accent,
     color: "#fff",
     border: "none",
     borderRadius: 4,

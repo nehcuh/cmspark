@@ -157,7 +157,7 @@ function AppContent() {
       {/* P1 content-split: SafetyStrip for L2 task AND any pending confirm (L0/L1 MinimalConfirm) */}
       {(isComputer || hasPendingConfirm) && <SafetyStrip />}
       <ChatView />
-      {/* P1: ComputerTaskBar relocated — step timeline only in Cockpit */}
+      {/* R3: ComputerTaskBar removed — step timeline only in Cockpit dual-track */}
       <FleetStrip />
       <BottomBar capabilityLevel={level} />
       <InputArea capabilityLevel={level} />
@@ -199,6 +199,16 @@ function Header({
   onToast?: (msg: string) => void
 }) {
   const { state, dispatch } = useAgentStore()
+  const pinned = state.modePin === capabilityLevel
+  const togglePin = () => {
+    if (pinned) {
+      dispatch({ type: "SET_MODE_PIN", pin: null })
+      onToast?.("已取消钉住 — 层级可自动降级")
+    } else {
+      dispatch({ type: "SET_MODE_PIN", pin: capabilityLevel })
+      onToast?.(`已钉住「${badgeLabel}」— 阻止自动降级`)
+    }
+  }
   const hasMessages = state.messages.length > 0 && !!state.activeThreadId
   const [nbState, setNbState] = useState<"idle" | "working" | "warning">("idle")
   const [nbTooltip, setNbTooltip] = useState<string>("离线导出当前页为 Markdown（拖入 NotebookLM 作为来源）")
@@ -308,13 +318,18 @@ function Header({
           ? { background: tokens.modeBrowserBg, borderBottomColor: "#bfdbfe" }
           : {}),
         ...(capabilityLevel === "computer"
-          ? { background: tokens.bgMuted, borderBottomColor: tokens.border }
+          ? { background: "#ecfdf5", borderBottomColor: "#a7f3d0" }
           : {}),
       }}
     >
       <ThreadList />
       <div style={styles.headerTitle}>CMspark</div>
-      <ModeBadge level={capabilityLevel} label={badgeLabel} />
+      <ModeBadge
+        level={capabilityLevel}
+        label={badgeLabel}
+        pinned={pinned}
+        onTogglePin={togglePin}
+      />
       <div
         title={
           connectionState === "connected"
@@ -507,6 +522,24 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
   const fileInputRef = useRef<HTMLInputElement>(null)
   const sendingRef = useRef(false)
   const isComputer = capabilityLevel === "computer"
+
+  // R4: empty-state suggestion chips fill the composer
+  useEffect(() => {
+    const onFill = (e: Event) => {
+      const detail = (e as CustomEvent<{ text?: string }>).detail
+      if (!detail?.text) return
+      setText(detail.text)
+      requestAnimationFrame(() => {
+        const el = textareaRef.current
+        if (!el) return
+        el.focus()
+        const len = detail.text!.length
+        el.setSelectionRange(len, len)
+      })
+    }
+    window.addEventListener("cmspark:fill-composer", onFill as EventListener)
+    return () => window.removeEventListener("cmspark:fill-composer", onFill as EventListener)
+  }, [])
 
   const isStreaming = !!state.streamingContent
   const hasContent = text.trim().length > 0 || selectedFiles.length > 0

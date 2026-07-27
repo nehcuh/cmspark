@@ -14,6 +14,7 @@ import type { BatchState, ImportItem, NotebookInfo } from "../../notebooklm/type
 import type { ExtractedLink } from "../../notebooklm/page-link-extractor"
 import type { FeedEntry } from "../../notebooklm/rss-parser"
 import type { YouTubeVideo } from "../../notebooklm/youtube-api"
+import { tokens } from "../ui/tokens"
 
 type TabKey = "urls" | "links" | "rss" | "youtube" | "thread"
 
@@ -626,7 +627,7 @@ export function NotebooklmImporterPanel({ onClose }: Props) {
                   style={{
                     ...progressBarStyle,
                     width: `${progressPct}%`,
-                    background: failed > 0 && batch.status === "done" ? "#FFA726" : "#4CAF50",
+                    background: failed > 0 && batch.status === "done" ? tokens.warning : tokens.success,
                   }}
                 />
               </div>
@@ -637,12 +638,12 @@ export function NotebooklmImporterPanel({ onClose }: Props) {
                 {batch.items.map((item, idx) => {
                   const r = batch.results[idx]
                   const status = !r ? "⏳" : r.ok ? "✓" : "✗"
-                  const color = !r ? "#999" : r.ok ? "#4CAF50" : "#F44336"
+                  const color = !r ? "#999" : r.ok ? tokens.success : tokens.danger
                   return (
                     <div key={idx} style={{ ...itemStyle, borderLeft: `3px solid ${color}` }}>
                       <span style={{ marginRight: 8 }}>{status}</span>
                       <span style={{ wordBreak: "break-all", fontSize: 12 }}>
-                        {item.url || "(text)"} {r?.error && <span style={{ color: "#F44336" }}>— {r.error}</span>}
+                        {item.url || "(text)"} {r?.error && <span style={{ color: tokens.danger }}>— {r.error}</span>}
                       </span>
                     </div>
                   )
@@ -691,12 +692,12 @@ const primaryBtnStyle: React.CSSProperties = {
   borderRadius: 4, cursor: "pointer", fontSize: 14, fontWeight: 500, flex: 1,
 }
 const dangerBtnStyle: React.CSSProperties = {
-  padding: "10px 16px", border: "none", background: "#F44336", color: "#fff",
+  padding: "10px 16px", border: "none", background: tokens.danger, color: "#fff",
   borderRadius: 4, cursor: "pointer", fontSize: 14, fontWeight: 500, flex: 1,
 }
 const hintStyle: React.CSSProperties = { fontSize: 11, color: "#999", marginTop: 4 }
 const errorStyle: React.CSSProperties = {
-  padding: 8, background: "#FFF3CD", border: "1px solid #FFC107",
+  padding: 8, background: tokens.warningSoft, border: "1px solid #FFC107",
   borderRadius: 4, fontSize: 12, marginTop: 4,
 }
 const progressContainerStyle: React.CSSProperties = { width: "100%", height: 8, background: "#eee", borderRadius: 4, overflow: "hidden" }

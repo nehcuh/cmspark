@@ -17,6 +17,7 @@ import {
   policyBadge,
 } from "../utils/apps-utils"
 import { uiaCapableBadge } from "../utils/computer-utils"
+import { tokens } from "../ui/tokens"
 
 export function AppsPanel() {
   const { state, dispatch } = useAgentStore()
@@ -211,9 +212,9 @@ export function AppsPanel() {
           <button
             style={{
               ...styles.modeBtn,
-              background: segment === "apps" ? "#4A90D9" : "#fff",
+              background: segment === "apps" ? tokens.accent : "#fff",
               color: segment === "apps" ? "#fff" : "#666",
-              borderColor: segment === "apps" ? "#4A90D9" : "#ddd",
+              borderColor: segment === "apps" ? tokens.accent : "#ddd",
             }}
             onClick={() => setSegment("apps")}
             title="GUI 应用白名单（L0 无参启动）"
@@ -223,9 +224,9 @@ export function AppsPanel() {
           <button
             style={{
               ...styles.modeBtn,
-              background: segment === "cli" ? "#4A90D9" : "#fff",
+              background: segment === "cli" ? tokens.accent : "#fff",
               color: segment === "cli" ? "#fff" : "#666",
-              borderColor: segment === "cli" ? "#4A90D9" : "#ddd",
+              borderColor: segment === "cli" ? tokens.accent : "#ddd",
             }}
             onClick={() => setSegment("cli")}
             title="结构化 CLI 契约（Phase 2）"
@@ -319,13 +320,13 @@ export function AppsPanel() {
         <div style={styles.addArea}>
           <div style={styles.addTabs}>
             <button
-              style={{ ...styles.addTabBtn, borderBottom: addTab === "enumerate" ? "2px solid #4A90D9" : "2px solid transparent" }}
+              style={{ ...styles.addTabBtn, borderBottom: addTab === "enumerate" ? `2px solid ${tokens.accent}` : "2px solid transparent" }}
               onClick={() => { setAddTab("enumerate"); setPicked(null) }}
             >
               从列表选择
             </button>
             <button
-              style={{ ...styles.addTabBtn, borderBottom: addTab === "manual" ? "2px solid #4A90D9" : "2px solid transparent" }}
+              style={{ ...styles.addTabBtn, borderBottom: addTab === "manual" ? `2px solid ${tokens.accent}` : "2px solid transparent" }}
               onClick={() => { setAddTab("manual"); setPicked(null) }}
             >
               手动粘贴路径
@@ -550,7 +551,7 @@ function AppCard(props: AppCardProps) {
                   key={p}
                   style={{
                     ...styles.menuItem,
-                    color: disabled ? "#9ca3af" : current ? "#4A90D9" : "#333",
+                    color: disabled ? "#9ca3af" : current ? tokens.accent : "#333",
                     cursor: disabled ? "not-allowed" : "pointer",
                   }}
                   disabled={disabled}
@@ -585,7 +586,7 @@ function AppCard(props: AppCardProps) {
             <button
               style={{
                 ...styles.menuItem,
-                color: isPreset ? "#9ca3af" : "#F44336",
+                color: isPreset ? "#9ca3af" : tokens.danger,
                 borderTop: "1px solid #f3f4f6",
                 cursor: isPreset ? "not-allowed" : "pointer",
               }}
@@ -843,10 +844,10 @@ const styles: Record<string, React.CSSProperties> = {
   addBtn: {
     marginTop: 6,
     padding: "8px 12px",
-    border: "1px dashed #4A90D9",
+    border: `1px dashed ${tokens.accent}`,
     borderRadius: 6,
     background: "transparent",
-    color: "#4A90D9",
+    color: tokens.accent,
     cursor: "pointer",
     fontSize: 12,
   },
@@ -957,7 +958,7 @@ const styles: Record<string, React.CSSProperties> = {
     padding: "6px 10px",
     border: "none",
     borderRadius: 4,
-    background: "#4A90D9",
+    background: tokens.accent,
     color: "#fff",
     fontSize: 12,
     cursor: "pointer",

@@ -13,6 +13,7 @@ import type {
   McpTrustLevel,
   McpTransportKind,
 } from "../types"
+import { tokens } from "../ui/tokens"
 
 interface EnvEntry {
   key: string
@@ -605,7 +606,7 @@ const styles: Record<string, React.CSSProperties> = {
   saveBtn: {
     padding: "6px 12px",
     border: "none",
-    background: "#4A90D9",
+    background: tokens.accent,
     color: "#fff",
     borderRadius: 4,
     cursor: "pointer",
