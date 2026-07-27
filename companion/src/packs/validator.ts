@@ -216,6 +216,10 @@ export function validatePackDir(packDir: string): ValidateResult {
     return { ok: false, error: `pack total size exceeds ${MAX_PACK_TOTAL_BYTES} bytes` }
   }
 
+  if (doc.board_mode !== undefined && typeof doc.board_mode !== "boolean") {
+    return { ok: false, error: "board_mode must be a boolean when present" }
+  }
+
   const manifest: PackManifest = {
     schema_version: 1,
     id: doc.id,
@@ -234,6 +238,7 @@ export function validatePackDir(packDir: string): ValidateResult {
       deny,
     },
     system_prompt_append: doc.system_prompt_append,
+    board_mode: doc.board_mode === true ? true : undefined,
     thread_defaults: threadDefaults,
     workspace:
       isPlainObject(doc.workspace) && (doc.workspace.type === "none" || doc.workspace.type === "local_path")

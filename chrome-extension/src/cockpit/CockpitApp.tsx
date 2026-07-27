@@ -89,6 +89,16 @@ function CockpitApp() {
     .filter((m) => m.role === "user" || m.role === "assistant")
     .slice(-8)
 
+  // ADR-015: fleet strip in Cockpit Confirm Center shell
+  useEffect(() => {
+    const tick = () => chrome.runtime.sendMessage({ type: "fleet.status" })
+    tick()
+    const id = setInterval(tick, 5000)
+    return () => clearInterval(id)
+  }, [])
+  const fleet = state.fleet
+  const pendingN = state.pendingSecurityConfirmations.length
+
   return (
     <div style={s.root}>
       <header style={s.titleBar}>
@@ -101,6 +111,12 @@ function CockpitApp() {
           <span style={s.muted}>
             {state.connectionState === "connected" ? "已连接" : state.connectionState}
           </span>
+          {fleet && (
+            <span style={s.muted} title="Fleet">
+              舰队 {fleet.worker_count}w · {fleet.lock_count}锁
+              {pendingN > 0 ? ` · 确认 ${pendingN}` : ""}
+            </span>
+          )}
         </div>
         <div style={{ display: "flex", gap: 8 }}>
           {task && !finished && !task.abortAcked && (
@@ -279,6 +295,11 @@ function ConfirmElevated({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [request.confirmation_id])
 
+  const stopTargetId = request.worker_id || threadId
+  const workerLabel =
+    request.worker_role_label ||
+    (request.worker_id ? `worker ${request.worker_id.slice(0, 8)}` : null)
+
   const respond = (approved: boolean, stopThread = false) => {
     if (approved && nonceChallenge && !nonceMatches) return
     const addToWhitelist: string[] = []
@@ -290,14 +311,15 @@ function ConfirmElevated({
       confirmation_id: request.confirmation_id,
       approved,
       stop_thread: stopThread,
+      stop_thread_id: stopThread ? stopTargetId : undefined,
       add_to_whitelist: addToWhitelist,
       add_to_thread_whitelist: approved && canThreadTrust && threadTrust,
       add_to_session_trust: approved && canSessionTrust && sessionTrust,
       nonce_response: approved && nonceChallenge ? nonceInput.toUpperCase() : undefined,
     })
     onResolved(request.confirmation_id)
-    if (stopThread && threadId) {
-      chrome.runtime.sendMessage({ type: "chat.abort", threadId })
+    if (stopThread && stopTargetId) {
+      chrome.runtime.sendMessage({ type: "chat.abort", threadId: stopTargetId })
     }
   }
 
@@ -306,9 +328,11 @@ function ConfirmElevated({
       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
         <span style={{ color: "#fca5a5", fontWeight: 700 }}>
           ⚠ 确认抬升 · {request.tool_name}
+          {workerLabel ? ` · ${workerLabel}` : ""}
         </span>
         <span style={{ fontSize: 10, color: "#9aa0a6" }}>
           {request.risk_level || "high"} · 超时自动拒绝
+          {typeof request.tab_id === "number" ? ` · tab ${request.tab_id}` : ""}
         </span>
       </div>
       <div style={{ display: "flex", gap: 12 }}>

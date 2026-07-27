@@ -65,6 +65,18 @@ export class SecurityPolicy {
         const { computerBindingPayload } = require("./computer/types") as typeof import("./computer/types")
         return computerBindingPayload(params ?? {})
       }
+      case "shell_exec":
+        return String(params?.command || "")
+      case "netsec_port_scan":
+        return JSON.stringify(params?.targets || [])
+      // ADR-015: multi-agent HITL tools — bind role/question so token is not free-floating
+      case "spawn_worker":
+        return `spawn|${String(params?.role_label || params?.roleLabel || "")}|${String(params?.pack_id || "")}|${String(params?.alias || "")}`
+      case "ask_user":
+        return String(params?.question || params?.prompt || "")
+      // ADR-016: bind complete intent so token cannot be swapped for empty_complete flip
+      case "board_complete":
+        return `board_complete|empty=${params?.empty_complete === true ? "1" : "0"}|ids=${Array.isArray(params?.supporting_fact_ids) ? params.supporting_fact_ids.join(",") : ""}|reason=${String(params?.empty_complete_reason || params?.goal_summary || "")}`
       default:
         return ""
     }

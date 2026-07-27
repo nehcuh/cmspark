@@ -8,6 +8,7 @@ import { KnowledgeSubPanel } from "./KnowledgeSubPanel"
 import { McpPanel } from "./McpPanel"
 import { AppsPanel } from "./AppsPanel"
 import { PacksPanel } from "./PacksPanel"
+import { BoardPanel } from "./BoardPanel"
 import { tokens } from "../ui/tokens"
 import {
   IconTabs,
@@ -18,7 +19,7 @@ import {
   IconApps,
 } from "../ui/icons"
 
-type Panel = "tabs" | "history" | "skills" | "knowledge" | "packs" | "mcp" | "apps"
+type Panel = "tabs" | "history" | "skills" | "knowledge" | "packs" | "board" | "mcp" | "apps"
 
 type TabDef = {
   id: Panel
@@ -32,6 +33,7 @@ const ALL_TABS: TabDef[] = [
   { id: "skills", label: "技能", Icon: IconSkills },
   { id: "knowledge", label: "知识", Icon: IconKnowledge },
   { id: "packs", label: "任务包", Icon: IconSkills },
+  { id: "board", label: "任务板", Icon: IconSkills },
   { id: "mcp", label: "MCP", Icon: IconMcp },
   { id: "apps", label: "应用", Icon: IconApps },
 ]
@@ -131,6 +133,7 @@ export function BottomBar({ capabilityLevel }: { capabilityLevel: CapabilityLeve
           {activePanel === "skills" && <SkillsPanel />}
           {activePanel === "knowledge" && <KnowledgeSubPanel />}
           {activePanel === "packs" && <PacksPanel />}
+          {activePanel === "board" && <BoardPanel />}
           {activePanel === "mcp" && <McpPanel />}
           {activePanel === "apps" && <AppsPanel />}
         </div>

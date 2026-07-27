@@ -85,6 +85,29 @@ test("forwards stop_thread when true; omits otherwise", () => {
   }
 })
 
+test("forwards stop_thread_id only with stop_thread and non-empty string", () => {
+  const withId = buildSecurityConfirmationWsPayload({
+    approved: false,
+    stop_thread: true,
+    stop_thread_id: "worker-abc",
+  })
+  assert.equal(withId.stop_thread, true)
+  assert.equal(withId.stop_thread_id, "worker-abc")
+
+  const noStop = buildSecurityConfirmationWsPayload({
+    stop_thread: false,
+    stop_thread_id: "worker-abc",
+  })
+  assert.equal("stop_thread_id" in noStop, false)
+
+  const emptyId = buildSecurityConfirmationWsPayload({
+    stop_thread: true,
+    stop_thread_id: "",
+  })
+  assert.equal(emptyId.stop_thread, true)
+  assert.equal("stop_thread_id" in emptyId, false)
+})
+
 test("keeps add_to_whitelist alongside nonce and thread flags", () => {
   const payload = buildSecurityConfirmationWsPayload({
     confirmation_id: "c3",
@@ -93,6 +116,7 @@ test("keeps add_to_whitelist alongside nonce and thread flags", () => {
     nonce_response: "ZZ99",
     add_to_thread_whitelist: true,
     stop_thread: true,
+    stop_thread_id: "w1",
   })
   assert.deepEqual(payload, {
     type: "security.confirmation.response",
@@ -102,5 +126,6 @@ test("keeps add_to_whitelist alongside nonce and thread flags", () => {
     nonce_response: "ZZ99",
     add_to_thread_whitelist: true,
     stop_thread: true,
+    stop_thread_id: "w1",
   })
 })

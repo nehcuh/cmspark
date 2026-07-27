@@ -224,22 +224,73 @@
 
 ---
 
-## 10. 相关路径
+## 10. Multi-Agent（编排 / Worker）与任务包
+
+> 设计见 [ADR-015](adr/015-multi-agent-orchestrator-tab-lock.md)。本节说明 **试用时怎么用**，以及与 Mission Pack 的边界。
+
+### 10.1 模型一句话
+
+| 角色 | 是什么 | 不是什么 |
+|------|--------|----------|
+| **Orchestrator** | 窄工具面线程：`spawn_worker` / `wait_workers` / `collect_handback` / `list_workers` / `list_tab_locks` / `ask_user` … | 默认 **不能** 直接浏览器 mutate / shell / netsec / host |
+| **Worker** | 子 Thread（`parent_thread_id` + `orchestrator_run_id`） | 不是独立 swarm runtime |
+| **Mission Pack** | 角色 **模板**（skills + `tool_whitelist` + 提示词） | 不会抬 `capability_profile`，也不会启用 shell/netsec modules |
+
+### 10.2 Spawn 必须显式确认（无 auto-spawn）
+
+- Orchestrator 调用 **`spawn_worker`** 时会出现 **L2 Confirm Center**（与 `evaluate` / `shell_exec` 同类交互确认）。
+- **没有** 自动批量拉起 worker 的路径；LLM 参数里的 `user_confirmed` **不被信任**。
+- 批准后：Companion 创建子线程 → 可选 `pack.apply` 角色模板 → 计算非空 `tool_whitelist`（`parent ∩ pack.allow \ WORKER_HARD_DENY`）。
+- 并发上限（默认）：每 run 最多 **5** worker；进程 multi-agent LLM 环最多 **5**。
+
+### 10.3 Tab 排他锁（操作同一页时）
+
+- 某 worker **持有** tab lease 时，其它 worker 对同一 `tabId` 的读/写工具会得到可恢复错误（如 `TAB_LOCKED` / `TAB_BUSY_CONFIRMING`），**不会**并行进第二确认。
+- 权威在 Companion；扩展侧另有 **per-tab 串行队列**（纵深，防 CDP 竞态）。
+- **shared-observer（只读共享）本阶段不做**——纯读（screenshot / get_page_*）也要 lease。
+- 人为切入 worker 可发 follow-up，**不会**自动偷锁；要 mutate 非己持锁 tab 须 force-release 或等待释放。
+
+### 10.4 与 enterprise / shell / netsec 的关系
+
+- Worker 默认 **硬禁** `shell_exec` / `netsec_port_scan` / `osascript_eval` / `host_*`（见 ADR-015 `WORKER_HARD_DENY`）。
+- Spawn **不得** 改 `capability_profile` 或偷偷启用 modules。
+- 需要 shell/netsec 时仍走本文 [§4](#4-切换到-enterprise并开启-shell) / [§5](#5-开启-netsec端口探测) 的本机 opt-in，且通常在 **非 worker / 升权另确认** 路径；多 agent 下 shell/netsec 另有 process **single-flight**。
+
+### 10.5 Side Panel 操作提示
+
+1. 用自然语言让主线程当编排者（或工具面已收窄为 orchestrator）。
+2. 批准 **spawn** 确认 → Side Panel **FleetStrip** 可见 worker 数量 / 状态徽标。
+3. 浏览器危险操作与 spawn 同一 **Confirm Center**（看清 `worker_id` / `tabId` / run）。
+4. 需要停全部：FleetStrip **stop-all**（abort LLM + 拒 pending + 释放该 run 相关 lease）。
+
+### 10.6 本阶段明确不做
+
+| 项 | 状态 |
+|----|------|
+| auto-spawn / 静默 fan-out | **不做**（仅 explicit L2） |
+| shared-observer 只读并行 | **延期** |
+| 全量 Dashboard 网格 / lease 图 | 部分（FleetStrip + Cockpit 计数） |
+
+---
+
+## 11. 相关路径
 
 | 用途 | 路径 |
 |------|------|
 | Companion 配置（profile / modules） | `~/.cmspark-agent/config.json` |
 | 已安装 Pack | `~/.cmspark-agent/packs/installed/` |
 | 能力启停 / 授权审计 | `~/.cmspark-agent/logs/capability-audit.jsonl` |
-| 线程元数据（含 `workspace_root`） | `~/.cmspark-agent/threads/index.json` |
+| 多 agent / lease / spawn 审计（同 capability 审计流） | `~/.cmspark-agent/logs/capability-audit.jsonl` |
+| 线程元数据（含 `workspace_root`、worker 字段） | `~/.cmspark-agent/threads/index.json` |
 
 ---
 
-## 11. 相关文档
+## 12. 相关文档
 
 | 文档 | 用途 |
 |------|------|
 | [ADR-014](adr/014-mission-pack-enterprise-modules.md) | 为何双通道、为何不做内嵌 PTY |
+| [ADR-015](adr/015-multi-agent-orchestrator-tab-lock.md) | Multi-agent orchestrator、tab lease、spawn HITL |
 | [architecture.md §7](architecture.md) | 模块 / 工具 / 代码落点 |
 | [GOAL.md](GOAL.md) | 产品阶段与 G19 一带目标 |
 )

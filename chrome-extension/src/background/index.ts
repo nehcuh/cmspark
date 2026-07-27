@@ -426,7 +426,10 @@ function setupMessageHandlers() {
       }
 
       case "chat.abort":
-        wsClient.send({ type: "chat.abort", thread_id: message.threadId })
+        wsClient.send({
+          type: "chat.abort",
+          thread_id: message.threadId || message.thread_id,
+        })
         sendResponse({ ok: true })
         return true
 
@@ -763,6 +766,13 @@ function setupMessageHandlers() {
       case "modules.list":
       case "modules.set_enabled":
       case "modules.update":
+      case "fleet.status":
+      case "fleet.stop_all":
+      case "worker.pause":
+      case "worker.resume":
+      case "tab.force_release":
+      case "board.get":
+      case "board.add_hint":
       case "workspace.pick":
       case "workspace.set":
       case "netsec.authorize_task":

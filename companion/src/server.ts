@@ -140,7 +140,62 @@ export const pendingToolCalls = new Map<string, {
   resolve: (value: any) => void
   reject: (reason: any) => void
   timer: NodeJS.Timeout
+  /** ADR-015: bind ownership for worker-cancel + lease expiry drain */
+  thread_id?: string
+  tabId?: number
+  tool_name?: string
 }>()
+
+/** Reject in-flight extension tools owned by a thread (worker-cancel / lease drain). */
+export function rejectPendingForThread(
+  threadId: string,
+  reason: string,
+  tabIdFilter?: number,
+): number {
+  let n = 0
+  for (const [id, pending] of [...pendingToolCalls.entries()]) {
+    if (pending.thread_id !== threadId) continue
+    if (tabIdFilter != null && pending.tabId !== tabIdFilter) continue
+    clearTimeout(pending.timer)
+    pendingToolCalls.delete(id)
+    pending.resolve({ success: false, error: reason })
+    n++
+  }
+  return n
+}
+
+export function hasPendingForTab(tabId: number, holderThreadId: string): boolean {
+  for (const pending of pendingToolCalls.values()) {
+    if (pending.thread_id === holderThreadId && pending.tabId === tabId) return true
+  }
+  return false
+}
+
+export function rejectPendingForTab(
+  tabId: number,
+  holderThreadId: string,
+  reason: string,
+): number {
+  return rejectPendingForThread(holderThreadId, reason, tabId)
+}
+
+// Wire tab-lease sweeps to pending CDP so internal sweepExpired never silent-FREEs in-flight tabs.
+// Lazy import avoids circular init; register once on first executor use as well.
+// hasPendingConfirmation binds soft expire to live Confirm Center (GATE2).
+void import("./orchestrator/tab-lease")
+  .then(({ registerTabLeasePendingHooks }) => {
+    registerTabLeasePendingHooks({
+      hasPendingForTab,
+      rejectPendingForTab,
+      hasPendingConfirmation: (confirmId, holderThreadId) => {
+        if (confirmId && securityConfirmations.isPending(confirmId)) return true
+        return securityConfirmations.hasPendingForWorker(holderThreadId)
+      },
+    })
+  })
+  .catch(() => {
+    /* tests may load before package graph is ready */
+  })
 
 // Cache of tabId → url, used by the evaluate auto-approve gate to resolve the
 // acting domain (so we can decide whether to skip the confirmation dialog).
@@ -414,6 +469,121 @@ export function createToolExecutor(ws: WebSocket) {
       params: summarizeToolParams(finalParams),
     })
 
+    // --- ADR-015 multi-agent gates (before L2 / cookie / dispatch) ---
+    const actingThreadId =
+      typeof (finalParams as any).__thread_id === "string"
+        ? String((finalParams as any).__thread_id)
+        : typeof (finalParams as any)._thread_id === "string"
+          ? String((finalParams as any)._thread_id)
+          : undefined
+    try {
+      const {
+        TAB_LEASE_TOOLS,
+        isMultiAgentThread,
+        anyTabLeaseHeld,
+        acquireOrRenewTabLease,
+        sweepExpired,
+      } = await import("./orchestrator")
+      sweepExpired({ hasPendingForTab })
+      if (actingThreadId && threadManager) {
+        const th = threadManager.get(actingThreadId) as any
+        if (th?.paused) {
+          const result = {
+            success: false,
+            error: `worker_paused:${actingThreadId} — resume before dispatching tools`,
+          }
+          logToolFinish(toolCallId, toolName, startedAt, result)
+          return result
+        }
+        // isToolAllowed hard gate (today's zero call sites was capability theater)
+        if (!threadManager.isToolAllowed(actingThreadId, toolName)) {
+          const result = {
+            success: false,
+            error: `tool_not_allowed:${toolName} — not in thread tool_whitelist`,
+          }
+          logger.warn("security.tool_whitelist_blocked", {
+            tool_call_id: toolCallId,
+            tool_name: toolName,
+            thread_id: actingThreadId,
+          })
+          logToolFinish(toolCallId, toolName, startedAt, result)
+          return result
+        }
+        const multi =
+          isMultiAgentThread(th) || anyTabLeaseHeld()
+        if (TAB_LEASE_TOOLS.has(toolName) && multi && typeof finalParams.tabId !== "number") {
+          const result = {
+            success: false,
+            error: "TAB_ID_REQUIRED: multi-agent mode forbids silent active-tab; pass explicit numeric tabId",
+            data: { error_code: "TAB_ID_REQUIRED" },
+          }
+          logToolFinish(toolCallId, toolName, startedAt, result)
+          return result
+        }
+        if (multi) {
+          // Defense-in-depth for extension screenshot/analyze_image fallback
+          ;(finalParams as any).__require_tab_id = true
+        }
+        // Early exclusive HARD for all tab tools (including evaluate / TAB_L2_TOOLS).
+        // GATE2: auto-approve / domain-whitelist / god-mode must still hold exclusive
+        // lease — previously willEnterL2 skipped HARD and skipConfirmation skipped SOFT.
+        // Interactive L2 path upgrades same-holder HARD → HELD_PENDING_L2 below.
+        if (
+          TAB_LEASE_TOOLS.has(toolName) &&
+          typeof finalParams.tabId === "number" &&
+          actingThreadId
+        ) {
+          const leaseRes = acquireOrRenewTabLease({
+            tabId: finalParams.tabId,
+            holderThreadId: actingThreadId,
+            needsL2: false,
+          })
+          if (!leaseRes.ok) {
+            const result = {
+              success: false,
+              error: leaseRes.error,
+              data: {
+                error_code: leaseRes.error_code,
+                tab_id: leaseRes.tab_id,
+                holder_thread_id: leaseRes.holder_thread_id,
+              },
+            }
+            logToolFinish(toolCallId, toolName, startedAt, result)
+            return result
+          }
+        }
+      }
+      // host_computer vs any tab lease (Q4): block Chrome window ops while tabs leased
+      if (toolName === "host_computer" && anyTabLeaseHeld()) {
+        const blob = JSON.stringify(finalParams || {}).toLowerCase()
+        const chromeHint =
+          blob.includes("chrome") ||
+          blob.includes("chromium") ||
+          blob.includes("google chrome") ||
+          blob.includes("com.google.chrome")
+        if (chromeHint) {
+          const result = {
+            success: false,
+            error:
+              "host_computer blocked on Chrome while tab leases are held — force-release tab leases first (ADR-015 Q4)",
+            data: { error_code: "HOST_CHROME_TAB_LEASE" },
+          }
+          logToolFinish(toolCallId, toolName, startedAt, result)
+          return result
+        }
+      }
+    } catch (gateErr: any) {
+      // Fail closed: never skip multi-agent exclusivity on gate exception (ADR-015)
+      logger.warn("orchestrator.gate_error", { error: gateErr?.message || String(gateErr) })
+      const result = {
+        success: false,
+        error: `ORCHESTRATOR_GATE_ERROR: ${gateErr?.message || String(gateErr)}`,
+        data: { error_code: "ORCHESTRATOR_GATE_ERROR" },
+      }
+      logToolFinish(toolCallId, toolName, startedAt, result)
+      return result
+    }
+
     // Security Pre-flight Checks (P0 - Cookie Trust Domains Gate)
     const COOKIE_TOOLS = ["get_cookies", "set_cookie", "delete_cookie", "list_all_cookies"]
     if (COOKIE_TOOLS.includes(toolName)) {
@@ -486,6 +656,11 @@ export function createToolExecutor(ws: WebSocket) {
       "host_write",
       "shell_exec",
       "netsec_port_scan",
+      // ADR-015: real HITL — LLM cannot self-approve spawn/ask via user_confirmed flag
+      "spawn_worker",
+      "ask_user",
+      // ADR-016 G5/G6/G9: board_complete requires Confirm Center + canComplete
+      "board_complete",
     ]
     const hostAppGated = toolName === "host_app" && (os.platform() === "win32" || os.platform() === "darwin")
     // Coordinate computer-use (WP1): critical-class — the task-level L2 dialog
@@ -495,12 +670,20 @@ export function createToolExecutor(ws: WebSocket) {
     const hostComputerGated = toolName === "host_computer" &&
       (os.platform() === "win32" || os.platform() === "darwin")
     if ((L2_GATE_TOOLS.includes(toolName) || hostAppGated || hostComputerGated) && !finalParams.security_token) {
-      // shell_exec / netsec use command|targets for L2 preview text (not code/expression)
+      // shell_exec / netsec use command|targets for L2 preview text (not code/expression).
+      // spawn_worker / ask_user use role/question summaries for the Confirm Center.
       const code = String(
         finalParams.code ||
           finalParams.expression ||
           finalParams.command ||
           (Array.isArray(finalParams.targets) ? finalParams.targets.join(", ") : "") ||
+          (toolName === "spawn_worker"
+            ? `Spawn worker role=${finalParams.role_label || finalParams.roleLabel || "worker"} alias=${finalParams.alias || ""} pack=${finalParams.pack_id || "none"} allow=${Array.isArray(finalParams.tool_allow) ? finalParams.tool_allow.join(",") : "default"}`
+            : "") ||
+          (toolName === "ask_user" ? String(finalParams.question || finalParams.prompt || "") : "") ||
+          (toolName === "board_complete"
+            ? `board_complete empty_complete=${!!finalParams.empty_complete} supporting=${Array.isArray(finalParams.supporting_fact_ids) ? finalParams.supporting_fact_ids.join(",") : ""} residual=${Array.isArray(finalParams.residual_risks) ? finalParams.residual_risks.slice(0, 3).join(" | ") : ""} reason=${finalParams.empty_complete_reason || finalParams.goal_summary || ""}`
+            : "") ||
           "",
       )
       const lengthCheck = securityPolicy.checkLength(toolName, code)
@@ -827,8 +1010,13 @@ export function createToolExecutor(ws: WebSocket) {
       // unconditional (god-mode / auto-approve still get the task dialog).
       // shell_exec / netsec_port_scan: always force interactive confirm (never domain
       // whitelist / god-mode skip) — Mission Pack design §8.3
+      // spawn_worker / ask_user / board_complete: real HITL (never LLM self-approve)
       const capabilityForceConfirm =
-        toolName === "shell_exec" || toolName === "netsec_port_scan"
+        toolName === "shell_exec" ||
+        toolName === "netsec_port_scan" ||
+        toolName === "spawn_worker" ||
+        toolName === "ask_user" ||
+        toolName === "board_complete"
       const criticalApis = hostComputerGated
         ? ["computer.coordinate_injection"]
         : capabilityForceConfirm
@@ -879,7 +1067,99 @@ export function createToolExecutor(ws: WebSocket) {
             })
           }
         }
-        const decision = await (async () => {
+        // ADR-015 GATE1: order = (optional flight reserve) → L2 admission → SOFT → confirm.
+        // SOFT after admission so softDeadline (= confirm timeout) cannot expire mid-queue.
+        // Flight reserve for shell/netsec so approve is never followed by *_BUSY.
+        const { TAB_L2_TOOLS } = await import("./orchestrator/constants")
+        let tabL2SoftHeld = false
+        let tabL2HardPromoted = false
+        let flightReserved: "shell_exec" | "netsec_port_scan" | null = null
+        const flightOwner = String(actingThreadId || "unknown")
+
+        if (toolName === "shell_exec" || toolName === "netsec_port_scan") {
+          const { tryAcquireFlight, releaseFlight } = await import("./orchestrator/single-flight")
+          const flight = tryAcquireFlight(toolName, flightOwner)
+          if (!flight.ok) {
+            const result = {
+              success: false,
+              error: flight.error,
+              data: {
+                error_code: toolName === "shell_exec" ? "SHELL_BUSY" : "NETSEC_BUSY",
+                holder: flight.holder,
+              },
+            }
+            logToolFinish(toolCallId, toolName, startedAt, result)
+            return result
+          }
+          flightReserved = toolName
+          // releaseFlight referenced only for deny/timeout paths below
+          void releaseFlight
+        }
+
+        let decision: Awaited<ReturnType<typeof securityConfirmations.request>> | undefined
+        try {
+        // L2 FIFO admission FIRST (≤1 per orchestrator_run, ≤2 process-wide)
+        const maForL2 = actingThreadId && threadManager
+          ? (threadManager.get(actingThreadId) as any)
+          : null
+        const { acquireL2Admission, releaseL2Admission } = await import("./orchestrator/l2-admission")
+        const admit = await acquireL2Admission({
+          orchestratorRunId: maForL2?.orchestrator_run_id,
+          threadId: actingThreadId,
+        })
+        if (!admit.ok) {
+          if (flightReserved) {
+            const { releaseFlight } = await import("./orchestrator/single-flight")
+            releaseFlight(flightReserved, flightOwner)
+            flightReserved = null
+          }
+          const result = {
+            success: false,
+            error: admit.error,
+            data: { error_code: "L2_ADMISSION_TIMEOUT" },
+          }
+          logToolFinish(toolCallId, toolName, startedAt, result)
+          return result
+        }
+        const l2AdmitKey = admit.key
+
+        // Exclusive SOFT / HELD_PENDING_L2 after admission (TAB_L2_TOOLS, not evaluate-only)
+        if (
+          TAB_L2_TOOLS.has(toolName) &&
+          typeof finalParams.tabId === "number" &&
+          actingThreadId
+        ) {
+          const { acquireOrRenewTabLease } = await import("./orchestrator")
+          const soft = acquireOrRenewTabLease({
+            tabId: finalParams.tabId,
+            holderThreadId: actingThreadId,
+            needsL2: true,
+            confirmId: toolCallId,
+          })
+          if (!soft.ok) {
+            releaseL2Admission(l2AdmitKey)
+            if (flightReserved) {
+              const { releaseFlight } = await import("./orchestrator/single-flight")
+              releaseFlight(flightReserved, flightOwner)
+              flightReserved = null
+            }
+            const result = {
+              success: false,
+              error: soft.error,
+              data: {
+                error_code: soft.error_code,
+                tab_id: soft.tab_id,
+                holder_thread_id: soft.holder_thread_id,
+              },
+            }
+            logToolFinish(toolCallId, toolName, startedAt, result)
+            return result
+          }
+          tabL2SoftHeld = true
+        }
+
+        try {
+        decision = await (async () => {
           // P0a — pre-generate confirmationId so WS + tray channels share it.
           // Whichever resolves first wins (manager.pending is keyed by id, first
           // responder claims it). See capability-token-round1-synthesis §P0a.
@@ -939,6 +1219,56 @@ export function createToolExecutor(ws: WebSocket) {
             set.add(sharedConfirmId)
           }
 
+          // ADR-015 Confirm Center: stamp multi-agent identity when known
+          const maThread = actingThreadId && threadManager
+            ? (threadManager.get(actingThreadId) as any)
+            : null
+          const multiAgentFields =
+            maThread && (maThread.agent_role === "worker" || maThread.agent_role === "orchestrator" || maThread.parent_thread_id)
+              ? {
+                  workerId: actingThreadId,
+                  parentThreadId: maThread.parent_thread_id || undefined,
+                  orchestratorRunId: maThread.orchestrator_run_id || undefined,
+                  workerRoleLabel: maThread.worker_role_label || maThread.alias || undefined,
+                  tabId: typeof finalParams.tabId === "number" ? finalParams.tabId : undefined,
+                }
+              : actingThreadId
+                ? {
+                    workerId: actingThreadId,
+                    tabId: typeof finalParams.tabId === "number" ? finalParams.tabId : undefined,
+                  }
+                : {}
+
+          // ADR-016 G6: board_complete Confirm digest (goal, trust hist, claims, residual, empty flag)
+          let boardCompleteDigestForConfirm: any = undefined
+          if (toolName === "board_complete" && threadManager && actingThreadId) {
+            try {
+              const { readBoard, buildBoardCompleteDigest, resolveBoardHostThreadId } =
+                await import("./board")
+              const hostId =
+                resolveBoardHostThreadId(threadManager, String(actingThreadId)) ||
+                String(actingThreadId)
+              const b = readBoard(threadManager, hostId)
+              if (b) {
+                boardCompleteDigestForConfirm = buildBoardCompleteDigest(b, {
+                  supporting_fact_ids: Array.isArray(finalParams.supporting_fact_ids)
+                    ? finalParams.supporting_fact_ids.map(String)
+                    : [],
+                  residual_risks: Array.isArray(finalParams.residual_risks)
+                    ? finalParams.residual_risks.map(String)
+                    : [],
+                  empty_complete: finalParams.empty_complete === true,
+                  empty_complete_reason:
+                    finalParams.empty_complete_reason != null
+                      ? String(finalParams.empty_complete_reason)
+                      : null,
+                })
+              }
+            } catch {
+              /* digest is best-effort for UI */
+            }
+          }
+
           const wsPromise = securityConfirmations.request(
             (data) => {
               if (ws.readyState === WebSocket.OPEN) {
@@ -978,6 +1308,11 @@ export function createToolExecutor(ws: WebSocket) {
               // 仅存在时下发;绝不进入工具结果/LLM 上下文——P2 不变量)。
               ...(computerL2PreviewImage ? { previewImage: computerL2PreviewImage } : {}),
               ...(computerL2PreviewCaption ? { previewCaption: computerL2PreviewCaption } : {}),
+              ...multiAgentFields,
+              // ADR-016 G6: attach board_complete digest when available
+              ...(toolName === "board_complete" && boardCompleteDigestForConfirm
+                ? { boardCompleteDigest: boardCompleteDigestForConfirm }
+                : {}),
             },
             // Adversary amendment A1: a confirmation carrying a nonce challenge
             // MUST be origin-bound — otherwise any loopback WS peer could burn
@@ -1026,8 +1361,17 @@ export function createToolExecutor(ws: WebSocket) {
           securityConfirmations.respond(sharedConfirmId, winner.approved)
           return await wsPromise
         })()
-        if (!decision.approved) {
-          const reason = decision.reason === "approved" ? "unavailable" : decision.reason
+        } finally {
+          releaseL2Admission(l2AdmitKey)
+        }
+        if (!decision || !decision.approved) {
+          if (flightReserved) {
+            const { releaseFlight } = await import("./orchestrator/single-flight")
+            releaseFlight(flightReserved, flightOwner)
+            flightReserved = null
+          }
+          const reason =
+            !decision ? "unavailable" : decision.reason === "approved" ? "unavailable" : decision.reason
           const result = {
             success: false,
             error: highRiskExecutionDeniedError(toolName, safety.dangerousApis, reason),
@@ -1053,6 +1397,37 @@ export function createToolExecutor(ws: WebSocket) {
           logToolFinish(toolCallId, toolName, startedAt, result)
           return result
         }
+        if (tabL2SoftHeld && typeof finalParams.tabId === "number" && actingThreadId) {
+          const { hardReacquireAfterConfirm } = await import("./orchestrator")
+          const hard = hardReacquireAfterConfirm({
+            tabId: finalParams.tabId,
+            holderThreadId: actingThreadId,
+            confirmId: toolCallId,
+          })
+          if (!hard.ok) {
+            // SOFT/HELD_PENDING_L2 released in outer finally (!tabL2HardPromoted)
+            if (flightReserved) {
+              const { releaseFlight } = await import("./orchestrator/single-flight")
+              releaseFlight(flightReserved, flightOwner)
+              flightReserved = null
+            }
+            const result = {
+              success: false,
+              error: hard.error,
+              data: {
+                error_code: hard.error_code,
+                tab_id: hard.tab_id,
+                holder_thread_id: hard.holder_thread_id,
+              },
+            }
+            logToolFinish(toolCallId, toolName, startedAt, result)
+            return result
+          }
+          tabL2HardPromoted = true
+        }
+        // Transfer flight ownership to executeCompanionTool (re-entrant same owner).
+        // Clear local flag without releaseFlight so finally does not free it.
+        flightReserved = null
         logger.info("security.confirmation.approved", { tool_call_id: toolCallId, tool_name: toolName })
         // UX-spike 2026-07-23: record per-session re-L2 trust for computer-use.
         // The INITIAL task L2 just gated the whole task; subsequent mid-task
@@ -1125,6 +1500,38 @@ export function createToolExecutor(ws: WebSocket) {
             auto_approve_active: securityConfig.auto_approve_dangerous === true,
             relevant_domain: relevantDomain,
           })
+        }
+        } finally {
+          // Pair tabL2SoftHeld with finally: release SOFT/HELD_PENDING_L2 on any
+          // non-success exit (throw / deny / timeout / hard re-acquire fail).
+          // Successful hard promote sets tabL2HardPromoted and keeps HARD.
+          if (
+            tabL2SoftHeld &&
+            !tabL2HardPromoted &&
+            typeof finalParams.tabId === "number" &&
+            actingThreadId
+          ) {
+            try {
+              const { releaseSoftOrPendingL2 } = await import("./orchestrator")
+              releaseSoftOrPendingL2({
+                tabId: finalParams.tabId,
+                holderThreadId: actingThreadId,
+                confirmId: toolCallId,
+              })
+            } catch {
+              /* best-effort */
+            }
+          }
+          // Exception path: flight still reserved and not transferred to execute → free it.
+          // Deny paths release+null explicitly; approve sets flightReserved=null without release.
+          if (flightReserved) {
+            try {
+              const { releaseFlight } = await import("./orchestrator/single-flight")
+              releaseFlight(flightReserved, flightOwner)
+            } catch {
+              /* best-effort */
+            }
+          }
         }
       } else {
         // App tab WP3: app_whitelist / thread_trust reasons precede the
@@ -1421,6 +1828,19 @@ export function createToolExecutor(ws: WebSocket) {
       "workspace_read_file",
       "shell_exec",
       "netsec_port_scan",
+      // ADR-015 orchestrator
+      "spawn_worker",
+      "list_workers",
+      "get_worker_status",
+      "list_tab_locks",
+      "collect_handback",
+      "board_read",
+      "board_complete",
+      "board_claim_intent",
+      "board_heartbeat_intent",
+      "wait_workers",
+      "worker_cancel",
+      "ask_user",
     ]
     if (COMPANION_TOOLS.includes(toolName)) {
       try {
@@ -1509,6 +1929,22 @@ export function createToolExecutor(ws: WebSocket) {
         // whitelist gate can resolve tabId → hostname on the next call.
         if (toolName === "list_tabs" && result?.success && Array.isArray(result.data)) {
           refreshTabUrlCache(result.data)
+          // ADR-015: surface lease holders so LLMs avoid TAB_LOCKED retry storms
+          try {
+            const { lockMetaForTab } = require("./orchestrator/tab-lease") as typeof import("./orchestrator/tab-lease")
+            result.data = result.data.map((t: any) => {
+              if (!t || typeof t.id !== "number") return t
+              const meta = lockMetaForTab(t.id)
+              return {
+                ...t,
+                locked_by_thread_id: meta.locked_by_thread_id,
+                lease_state: meta.lease_state,
+                lease_expires_at: meta.lease_expires_at,
+              }
+            })
+          } catch {
+            /* ignore enrichment failures */
+          }
         }
         // Synchronize cache after LLM-initiated navigation. A successful
         // navigate/set_tab_url means the cached URL for this tabId is now stale;
@@ -1536,6 +1972,23 @@ export function createToolExecutor(ws: WebSocket) {
           typeof result.data.url === "string"
         ) {
           tabUrlCache.set(result.data.id, result.data.url)
+          // ADR-015: auto HARD-hold new tab for creator to close race window
+          if (actingThreadId) {
+            try {
+              const { autoHoldCreatedTab } = require("./orchestrator/tab-lease") as typeof import("./orchestrator/tab-lease")
+              autoHoldCreatedTab(result.data.id, actingThreadId)
+            } catch {
+              /* ignore */
+            }
+          }
+        }
+        if (toolName === "close_tab" && result?.success === true && typeof finalParams.tabId === "number") {
+          try {
+            const { releaseTabLease } = require("./orchestrator/tab-lease") as typeof import("./orchestrator/tab-lease")
+            releaseTabLease(finalParams.tabId, "close_tab", actingThreadId)
+          } catch {
+            /* ignore */
+          }
         }
         logToolFinish(toolCallId, toolName, startedAt, result)
         resolve(result)
@@ -1547,7 +2000,14 @@ export function createToolExecutor(ws: WebSocket) {
         finishAndResolve(result)
       }, TOOL_EXECUTION_TIMEOUT_MS)
 
-      pendingToolCalls.set(toolCallId, { resolve: finishAndResolve, reject, timer })
+      pendingToolCalls.set(toolCallId, {
+        resolve: finishAndResolve,
+        reject,
+        timer,
+        thread_id: actingThreadId,
+        tabId: typeof finalParams.tabId === "number" ? finalParams.tabId : undefined,
+        tool_name: toolName,
+      })
 
       if (ws.readyState === WebSocket.OPEN) {
         try {
@@ -1651,9 +2111,13 @@ function dispatchToExtension(
 export async function handleSecurityConfirmationResponse(ws: WebSocket, msg: any, sessionId?: string): Promise<void> {
   const confirmationId = String(msg.confirmation_id || "")
   const approved = msg.approved === true
-  // stop_thread: Side Panel may set this (XC-Integration-1 forwards it). No
-  // consumer here yet — UI already chat.aborts on stop. Keep field on the wire
-  // for a future companion-side abort; do not drop it in the extension.
+  // stop_thread: Confirm Center "stop" — deny confirm AND authoritatively
+  // abort+drain the stamped worker (do not rely solely on client chat.abort).
+  const stopThread = msg.stop_thread === true
+  const clientStopThreadId =
+    typeof msg.stop_thread_id === "string" && msg.stop_thread_id.length > 0
+      ? String(msg.stop_thread_id)
+      : undefined
 
   // Validate add_to_whitelist against the domains actually shown in the
   // dialog. Without this check, any loopback WS peer could ship a
@@ -1691,11 +2155,9 @@ export async function handleSecurityConfirmationResponse(ws: WebSocket, msg: any
   // Same anti-injection contract as add_to_whitelist above.
   const rawThreadWhitelist: boolean = msg.add_to_thread_whitelist === true
   const relevantApps = securityConfirmations.getRelevantApps(confirmationId) || []
-  // Capture the tool name BEFORE respondFrom() below deletes the pending
-  // entry — getToolName afterwards would return undefined and the W7/WP3
-  // thread-trust grant would silently never happen (pre-existing bug: the
-  // host_read grant was equally affected; no test covered the composition).
+  // Capture metadata BEFORE respondFrom() deletes the pending entry.
   const confirmationToolName = securityConfirmations.getToolName(confirmationId)
+  const stampedWorkerId = securityConfirmations.getWorkerId(confirmationId)
   let threadWhitelistApp: string | null = null
   if (rawThreadWhitelist && relevantApps.length > 0) {
     // The first (and currently only) relevant app is what the user was shown.
@@ -1724,8 +2186,10 @@ export async function handleSecurityConfirmationResponse(ws: WebSocket, msg: any
   // Grill Q2: host_computer session auto-approve checkbox (validated in respondFrom
   // against relevantApps non-empty).
   const addToSessionTrust = msg.add_to_session_trust === true
-  const respondResult = securityConfirmations.respondFrom(confirmationId, approved, ws, nonceResponse, {
-    addToSessionTrust,
+  // stop_thread always resolves as deny (even if client sent approved:true)
+  const effectiveApproved = stopThread ? false : approved
+  const respondResult = securityConfirmations.respondFrom(confirmationId, effectiveApproved, ws, nonceResponse, {
+    addToSessionTrust: stopThread ? false : addToSessionTrust,
   })
   const responded = respondResult.outcome === "resolved"
   if (respondResult.outcome === "unknown" || respondResult.outcome === "origin_mismatch") {
@@ -1736,6 +2200,7 @@ export async function handleSecurityConfirmationResponse(ws: WebSocket, msg: any
     logger.warn("security.confirmation.origin_mismatch_or_unknown", {
       confirmation_id: confirmationId,
       approved_requested: approved,
+      stop_thread: stopThread,
     })
   } else if (respondResult.outcome === "nonce_retry") {
     // Wrong code typed — entry stays pending; the client got a
@@ -1753,13 +2218,73 @@ export async function handleSecurityConfirmationResponse(ws: WebSocket, msg: any
     })
   }
 
+  // ADR-015 GATE1/GATE2: authoritative stop — abort LLM + reject pending + release leases.
+  // Prefer server-stamped worker_id over client stop_thread_id (anti-wrong-target).
+  // Note: this response already denied the *current* confirmation via respondFrom;
+  // rejectForWorker clears any *other* open confirms for the same worker.
+  if (stopThread && responded) {
+    const stopTarget =
+      (stampedWorkerId && stampedWorkerId.length > 0 ? stampedWorkerId : undefined) ||
+      clientStopThreadId
+    if (stopTarget) {
+      try {
+        // G13: abandon intents before pending reject + lease release
+        let intentsAbandoned = 0
+        try {
+          const { abandonWorkerIntents } = await import("./board")
+          const ab = await abandonWorkerIntents(threadManager, stopTarget, {
+            reason: "stop_thread",
+          })
+          intentsAbandoned = ab.abandoned
+        } catch {
+          /* best-effort */
+        }
+        const confirmsRejected = securityConfirmations.rejectForWorker(stopTarget, "denied")
+        const rejected = rejectPendingForThread(stopTarget, `stop_thread:${confirmationId}`)
+        const { releaseLeasesForThreadPendingAware } = await import("./orchestrator/tab-lease")
+        const { released, drained } = releaseLeasesForThreadPendingAware(
+          stopTarget,
+          `stop_thread:${confirmationId}`,
+          { hasPendingForTab, rejectPendingForTab },
+        )
+        try {
+          const { abortThreadChat } = await import("./message-router")
+          if (typeof abortThreadChat === "function") abortThreadChat(stopTarget)
+        } catch {
+          /* optional if router not loaded */
+        }
+        logger.info("security.confirmation.stop_thread", {
+          confirmation_id: confirmationId,
+          stop_target: stopTarget,
+          stamped_worker_id: stampedWorkerId || null,
+          client_stop_thread_id: clientStopThreadId || null,
+          rejected_pending: rejected,
+          leases_released: released,
+          confirms_rejected: confirmsRejected,
+          leases_drained: drained,
+          intents_abandoned: intentsAbandoned,
+        })
+      } catch (err: any) {
+        logger.warn("security.confirmation.stop_thread_failed", {
+          confirmation_id: confirmationId,
+          stop_target: stopTarget,
+          error: err?.message || String(err),
+        })
+      }
+    } else {
+      logger.warn("security.confirmation.stop_thread_no_target", {
+        confirmation_id: confirmationId,
+      })
+    }
+  }
+
   // Only persist whitelist additions when the confirmation was actually
   // resolved by THIS response. If respondFrom returned false (origin mismatch,
   // unknown id, or already-expired entry), the response is not authoritative —
   // accepting its add_to_whitelist payload would let any loopback WS peer that
   // can guess a confirmation_id poison auto_approved_domains without ever
   // resolving the prompt.
-  if (responded && approved && validPatterns.length > 0) {
+  if (responded && effectiveApproved && validPatterns.length > 0) {
     try {
       const current = getConfig().auto_approved_domains || []
       const seen = new Set(current.map((d: string) => d.toLowerCase()))
@@ -1801,7 +2326,7 @@ export async function handleSecurityConfirmationResponse(ws: WebSocket, msg: any
   // Phase 1 W7 — Record thread-scoped trust when user approved with
   // add_to_thread_whitelist=true. Only for read operations (Q1 blocker:
   // writes always require biometric per call, never thread-trusted).
-  if (responded && approved && threadWhitelistApp) {
+  if (responded && effectiveApproved && threadWhitelistApp) {
     const toolName = confirmationToolName
     if (toolName === "host_read" && sessionId) {
       getThreadApprovals().add(sessionId, threadWhitelistApp, "read")
@@ -1892,6 +2417,410 @@ interface CompanionToolExecOptions {
 
 async function executeCompanionTool(toolName: string, params: any, toolCallId?: string, execOpts?: CompanionToolExecOptions): Promise<any> {
   switch (toolName) {
+    case "spawn_worker": {
+      const parentId = params.__thread_id || params._thread_id || params.parent_thread_id
+      if (!parentId) return { success: false, error: "spawn_worker requires parent thread (__thread_id)" }
+      // Real HITL: L2 forceConfirm issues security_token. LLM user_confirmed is NOT trusted.
+      if (!params.security_token) {
+        return {
+          success: false,
+          error:
+            "spawn_worker requires interactive L2 confirmation (security_token). Do not set user_confirmed yourself — the Confirm Center must approve spawn (ADR-015).",
+        }
+      }
+      const tokenOk = securityPolicy.validateTokenFor(String(params.security_token), "spawn_worker", params)
+      if (!tokenOk) {
+        return { success: false, error: "Invalid or expired security token for spawn_worker" }
+      }
+      const { spawnWorkerThread } = await import("./orchestrator/spawn")
+      const intentId =
+        typeof params.intent_id === "string" && params.intent_id.trim()
+          ? params.intent_id.trim()
+          : null
+      const r = spawnWorkerThread(threadManager, {
+        parentThreadId: String(parentId),
+        roleLabel: params.role_label || params.roleLabel,
+        alias: params.alias,
+        roleAllow: Array.isArray(params.tool_allow) ? params.tool_allow : null,
+        roleDeny: Array.isArray(params.tool_deny) ? params.tool_deny : undefined,
+        packId: params.pack_id || null,
+        userConfirmed: true, // L2 approval above is the sole user-confirm authority
+        intentId,
+      })
+      if (!r.ok) return { success: false, error: r.error }
+      // Optional pack.apply after spawn (role template — never elevates capability_profile / modules)
+      let packApply: { ok: boolean; error?: string } | null = null
+      if (params.pack_id && typeof params.pack_id === "string") {
+        try {
+          const { applyPack } = await import("./packs/pack-engine")
+          if (!skillEngine) {
+            packApply = { ok: false, error: "skillEngine not initialized; worker created with mission_pack_id only" }
+          } else {
+            const ar = applyPack(String(params.pack_id), r.worker.id, threadManager, skillEngine)
+            packApply = ar.ok ? { ok: true } : { ok: false, error: ar.error }
+          }
+        } catch (e: any) {
+          packApply = { ok: false, error: e?.message || String(e) }
+        }
+      }
+      // ADR-016 Stage 3: claim intent on host board after worker exists
+      let intentClaim: { ok: boolean; error?: string; intent_id?: string } | null = null
+      if (intentId) {
+        try {
+          const { claimIntent } = await import("./board/intent-claim")
+          const cr = await claimIntent(threadManager, {
+            hostThreadId: String(parentId),
+            intentId,
+            workerThreadId: r.worker.id,
+          })
+          if (!cr.ok) {
+            intentClaim = { ok: false, error: cr.error, intent_id: intentId }
+          } else {
+            intentClaim = { ok: true, intent_id: intentId }
+          }
+        } catch (e: any) {
+          intentClaim = { ok: false, error: e?.message || String(e), intent_id: intentId }
+        }
+      }
+      const workerAfter = threadManager.get(r.worker.id)
+      return {
+        success: true,
+        data: {
+          worker_id: r.worker.id,
+          orchestrator_run_id: r.orchestrator_run_id,
+          tool_whitelist: workerAfter?.tool_whitelist ?? r.worker.tool_whitelist,
+          agent_role: r.worker.agent_role,
+          mission_pack_id: workerAfter?.mission_pack_id ?? params.pack_id ?? null,
+          pack_apply: packApply,
+          assigned_intent_id: intentId,
+          intent_claim: intentClaim,
+        },
+      }
+    }
+    case "ask_user": {
+      // Binary HITL via L2 Confirm Center (approve = yes, deny = no). Free-text answers are P2.
+      if (!params.security_token) {
+        return {
+          success: false,
+          error: "ask_user requires interactive L2 confirmation (security_token). Present the question; user approves or denies in Confirm Center.",
+        }
+      }
+      const q = String(params.question || params.prompt || "")
+      if (!q.trim()) return { success: false, error: "ask_user requires non-empty question" }
+      const askOk = securityPolicy.validateTokenFor(String(params.security_token), "ask_user", params)
+      if (!askOk) {
+        return { success: false, error: "Invalid or expired security token for ask_user" }
+      }
+      return {
+        success: true,
+        data: {
+          question: q,
+          answer: "approved",
+          note: "User approved in Confirm Center (binary HITL). Free-text ask_user is P2.",
+        },
+      }
+    }
+    case "list_workers": {
+      const parentId = params.__thread_id || params._thread_id
+      const parent = parentId ? threadManager.get(String(parentId)) : null
+      const runId = params.orchestrator_run_id || (parent as any)?.orchestrator_run_id
+      if (!runId) return { success: false, error: "orchestrator_run_id required (spawn workers first)" }
+      const { listWorkers } = await import("./orchestrator/spawn")
+      const workers = listWorkers(threadManager, String(runId)).map((w: any) => ({
+        id: w.id,
+        alias: w.alias,
+        worker_role_label: w.worker_role_label,
+        paused: !!w.paused,
+        tool_whitelist: w.tool_whitelist,
+      }))
+      return { success: true, data: { orchestrator_run_id: runId, workers } }
+    }
+    case "get_worker_status": {
+      const wid = params.worker_id || params.thread_id
+      if (!wid) return { success: false, error: "worker_id required" }
+      const w = threadManager.get(String(wid)) as any
+      if (!w) return { success: false, error: `worker not found: ${wid}` }
+      const { listTabLocks } = await import("./orchestrator/tab-lease")
+      const locks = listTabLocks().filter((l) => l.holder_thread_id === w.id)
+      return {
+        success: true,
+        data: {
+          id: w.id,
+          alias: w.alias,
+          agent_role: w.agent_role,
+          parent_thread_id: w.parent_thread_id,
+          orchestrator_run_id: w.orchestrator_run_id,
+          paused: !!w.paused,
+          tab_locks: locks,
+        },
+      }
+    }
+    case "list_tab_locks": {
+      const { listTabLocks } = await import("./orchestrator/tab-lease")
+      return { success: true, data: { locks: listTabLocks() } }
+    }
+    case "collect_handback": {
+      // ADR-016 Task 3: board mode / mission_board → structured Fact/Intent merge;
+      // free-form-only rejected with recoverable HANDBACK_MISSING_STRUCTURE.
+      // G3: wire resolveToolCall from worker/host recorded tool results (fail-closed).
+      const wid = params.worker_id
+      if (!wid) return { success: false, error: "worker_id required" }
+      const callerId = params.__thread_id || params._thread_id || null
+      const {
+        collectWorkerHandback,
+        resolveToolCallFromThreadMessages,
+        resolveBoardHostThreadId,
+      } = await import("./board")
+      const workerId = String(wid)
+      const hostId =
+        resolveBoardHostThreadId(threadManager, workerId) ||
+        (callerId ? resolveBoardHostThreadId(threadManager, String(callerId)) : null)
+      const resolveToolCall = resolveToolCallFromThreadMessages(
+        threadManager,
+        workerId,
+        hostId,
+      )
+      return collectWorkerHandback(threadManager, {
+        workerId,
+        callerThreadId: callerId ? String(callerId) : null,
+        forceStructured: params.expect_structured === true,
+        resolveToolCall,
+      })
+    }
+    case "board_read": {
+      // ADR-016 optional read: orchestrator allowlist; workers only if Pack grants
+      // G4: returns framed model projection + export_summary trust labels
+      const tid = params.__thread_id || params._thread_id
+      if (!tid) return { success: false, error: "board_read requires thread context (__thread_id)" }
+      const { boardReadForTool } = await import("./board")
+      return boardReadForTool(threadManager, String(tid))
+    }
+    case "board_claim_intent": {
+      const parentId = params.__thread_id || params._thread_id
+      if (!parentId) return { success: false, error: "board_claim_intent requires host thread" }
+      const intentId = String(params.intent_id || "")
+      const workerId = String(params.worker_id || "")
+      if (!intentId || !workerId) {
+        return { success: false, error: "intent_id and worker_id required" }
+      }
+      const { claimIntent } = await import("./board/intent-claim")
+      const r = await claimIntent(threadManager, {
+        hostThreadId: String(parentId),
+        intentId,
+        workerThreadId: workerId,
+      })
+      if (!r.ok) return { success: false, error: r.error, data: { error_code: r.error_code } }
+      threadManager.update(workerId, { assigned_intent_id: intentId } as any)
+      return { success: true, data: { intent: r.intent } }
+    }
+    case "board_heartbeat_intent": {
+      const workerId = params.__thread_id || params._thread_id
+      if (!workerId) return { success: false, error: "thread required" }
+      const intentId = String(params.intent_id || "")
+      if (!intentId) return { success: false, error: "intent_id required" }
+      const { resolveBoardHostThreadId } = await import("./board")
+      const hostId = resolveBoardHostThreadId(threadManager, String(workerId))
+      if (!hostId) return { success: false, error: "board host not found" }
+      const { heartbeatIntent } = await import("./board/intent-claim")
+      const r = await heartbeatIntent(threadManager, {
+        hostThreadId: hostId,
+        intentId,
+        workerThreadId: String(workerId),
+      })
+      if (!r.ok) return { success: false, error: r.error, data: { error_code: r.error_code } }
+      return { success: true, data: { intent: r.intent } }
+    }
+    case "board_complete": {
+      // ADR-016 G5/G6/G9: L2 + hard canComplete; no LLM self-approve
+      const tid = params.__thread_id || params._thread_id
+      if (!tid) return { success: false, error: "board_complete requires thread context (__thread_id)" }
+      const caller = threadManager.get(String(tid)) as any
+      if (!caller) return { success: false, error: `thread not found: ${tid}` }
+      if (caller.agent_role === "worker") {
+        return {
+          success: false,
+          error: "workers cannot call board_complete",
+          error_code: "BOARD_COMPLETE_FORBIDDEN",
+        }
+      }
+      // Strip LLM user_confirmed / forged trust elevation
+      if (params.user_confirmed === true) {
+        return {
+          success: false,
+          error:
+            "board_complete rejects LLM user_confirmed self-approve; Confirm Center must approve (ADR-016 G5)",
+          error_code: "BOARD_COMPLETE_SELF_APPROVE",
+        }
+      }
+      if (!params.security_token) {
+        return {
+          success: false,
+          error:
+            "board_complete requires interactive L2 confirmation (security_token). Do not set user_confirmed yourself — the Confirm Center must approve complete (ADR-016).",
+          error_code: "BOARD_COMPLETE_L2_REQUIRED",
+        }
+      }
+      const tokenOk = securityPolicy.validateTokenFor(
+        String(params.security_token),
+        "board_complete",
+        params,
+      )
+      if (!tokenOk) {
+        return { success: false, error: "Invalid or expired security token for board_complete" }
+      }
+      const {
+        completeBoard,
+        canComplete,
+        readBoard,
+        buildBoardCompleteDigest,
+        resolveBoardHostThreadId,
+      } = await import("./board")
+      const hostId = resolveBoardHostThreadId(threadManager, String(tid)) || String(tid)
+      const board = readBoard(threadManager, hostId)
+      const completeParams = {
+        supporting_fact_ids: Array.isArray(params.supporting_fact_ids)
+          ? params.supporting_fact_ids.map(String)
+          : [],
+        residual_risks: Array.isArray(params.residual_risks)
+          ? params.residual_risks.map(String)
+          : [],
+        goal_summary: params.goal_summary != null ? String(params.goal_summary) : null,
+        empty_complete: params.empty_complete === true,
+        empty_complete_reason:
+          params.empty_complete_reason != null ? String(params.empty_complete_reason) : null,
+      }
+      // Pre-check for digest even on reject
+      if (board) {
+        const pre = canComplete(board, completeParams)
+        if (!pre.ok) {
+          return {
+            success: false,
+            error: pre.error,
+            error_code: pre.error_code,
+            data: { digest: buildBoardCompleteDigest(board, completeParams) },
+          }
+        }
+      }
+      const result = await completeBoard(
+        threadManager,
+        hostId,
+        completeParams,
+        {
+          actor_type: "orchestrator",
+          thread_id: String(tid),
+          orchestrator_run_id: caller.orchestrator_run_id ?? null,
+          tool_name: "board_complete",
+        },
+      )
+      if (!result.ok) {
+        return {
+          success: false,
+          error: result.error,
+          error_code: result.error_code,
+          recoverable: result.recoverable,
+          data: { digest: (result as any).digest },
+        }
+      }
+      return {
+        success: true,
+        data: {
+          status: result.board.status,
+          completed_at: result.board.completed_at,
+          digest: (result as any).digest || (board ? buildBoardCompleteDigest(result.board, completeParams) : null),
+          board: {
+            fact_count: result.board.facts.length,
+            intent_count: result.board.intents.length,
+            goal: result.board.goal,
+            status: result.board.status,
+          },
+        },
+      }
+    }
+    case "wait_workers": {
+      // Frozen as poll-only (ADR-015): no async barrier / sleep in tool path.
+      const parentId = params.__thread_id || params._thread_id
+      const parent = parentId ? threadManager.get(String(parentId)) : null
+      const runId = params.orchestrator_run_id || (parent as any)?.orchestrator_run_id
+      if (!runId) return { success: false, error: "orchestrator_run_id required" }
+      // ADR-016 Stage 3: reap stale claimed intents on host board
+      let intentsReaped = 0
+      let openIntents = 0
+      if (parentId) {
+        try {
+          const { reapStaleIntents, countOpenIntents } = await import("./board/intent-claim")
+          const rr = await reapStaleIntents(threadManager, String(parentId))
+          intentsReaped = rr.reaped
+          openIntents = countOpenIntents(threadManager, String(parentId))
+        } catch {
+          /* ignore */
+        }
+      }
+      const { listWorkers } = await import("./orchestrator/spawn")
+      const { multiAgentLlmLoopSnapshot } = await import("./orchestrator/llm-loop-gate")
+      const workers = listWorkers(threadManager, String(runId))
+      const llm = multiAgentLlmLoopSnapshot()
+      return {
+        success: true,
+        data: {
+          poll_only: true,
+          note: "wait_workers is poll-only (no barrier). Re-call or use HITL; check llm_loops for concurrent worker LLM activity.",
+          llm_loops: llm,
+          intents_reaped: intentsReaped,
+          open_intent_count: openIntents,
+          workers: workers.map((w: any) => ({
+            id: w.id,
+            alias: w.alias,
+            paused: !!w.paused,
+            llm_active: llm.holders.includes(w.id),
+            assigned_intent_id: w.assigned_intent_id || null,
+          })),
+        },
+      }
+    }
+    case "worker_cancel": {
+      const wid = params.worker_id
+      if (!wid) return { success: false, error: "worker_id required" }
+      const w = threadManager.get(String(wid)) as any
+      if (!w) return { success: false, error: `worker not found: ${wid}` }
+      // G13: abandon worker intents on host BEFORE pending reject + lease release
+      let intentsAbandoned = 0
+      try {
+        const { abandonWorkerIntents } = await import("./board")
+        const ab = await abandonWorkerIntents(threadManager, String(wid), {
+          reason: "worker_cancel",
+        })
+        intentsAbandoned = ab.abandoned
+      } catch {
+        /* best-effort board abandon */
+      }
+      // GATE2: deny worker-stamped L2 first (mirror stop_thread / fleet.stop_all)
+      const confirmsRejected = securityConfirmations.rejectForWorker(String(wid), "denied")
+      const rejected = rejectPendingForThread(String(wid), `worker_cancel:${wid}`)
+      const { releaseLeasesForThreadPendingAware } = await import("./orchestrator/tab-lease")
+      const { released, drained } = releaseLeasesForThreadPendingAware(
+        String(wid),
+        "worker_cancel",
+        { hasPendingForTab, rejectPendingForTab },
+      )
+      // Best-effort: message-router abortControllers if registered
+      try {
+        const { abortThreadChat } = await import("./message-router")
+        if (typeof abortThreadChat === "function") abortThreadChat(String(wid))
+      } catch {
+        /* optional */
+      }
+      return {
+        success: true,
+        data: {
+          worker_id: wid,
+          intents_abandoned: intentsAbandoned,
+          rejected_pending: rejected,
+          leases_released: released,
+          confirms_rejected: confirmsRejected,
+          leases_drained: drained,
+        },
+      }
+    }
     case "workspace_list_dir": {
       const { workspaceListDir } = await import("./capability/workspace")
       const tid = params.__thread_id || params._thread_id
@@ -1912,15 +2841,24 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
       } else {
         return { success: false, error: "shell_exec requires L2 security_token confirmation" }
       }
-      const { shellExec } = await import("./capability/shell")
       const tid = params.__thread_id || params._thread_id
-      const thread = tid ? threadManager.get(tid) : null
-      const cwd = params.cwd || thread?.workspace_root || undefined
-      return shellExec({
-        command: params.command,
-        cwd,
-        threadId: tid,
-      })
+      const flightOwner = String(tid || "unknown")
+      const { tryAcquireFlight, releaseFlight } = await import("./orchestrator/single-flight")
+      // Re-entrant OK when L2 path already reserved for this owner
+      const flight = tryAcquireFlight("shell_exec", flightOwner)
+      if (!flight.ok) return { success: false, error: flight.error, data: { error_code: "SHELL_BUSY", holder: flight.holder } }
+      try {
+        const { shellExec } = await import("./capability/shell")
+        const thread = tid ? threadManager.get(tid) : null
+        const cwd = params.cwd || thread?.workspace_root || undefined
+        return await shellExec({
+          command: params.command,
+          cwd,
+          threadId: tid,
+        })
+      } finally {
+        releaseFlight("shell_exec", flightOwner)
+      }
     }
     case "netsec_port_scan": {
       if (params.security_token) {
@@ -1933,15 +2871,25 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
       } else {
         return { success: false, error: "netsec_port_scan requires L2 security_token confirmation" }
       }
-      const { netsecPortScan } = await import("./netsec/scan")
       const tid = params.__thread_id || params._thread_id
-      const thread = tid ? threadManager.get(tid) : null
-      return netsecPortScan({
-        targets: params.targets || [],
-        ports: params.ports,
-        taskAuth: (thread as any)?.netsec_task_auth || null,
-        threadId: tid,
-      })
+      const flightOwner = String(tid || "unknown")
+      const { tryAcquireFlight, releaseFlight } = await import("./orchestrator/single-flight")
+      const flight = tryAcquireFlight("netsec_port_scan", flightOwner)
+      if (!flight.ok) {
+        return { success: false, error: flight.error, data: { error_code: "NETSEC_BUSY", holder: flight.holder } }
+      }
+      try {
+        const { netsecPortScan } = await import("./netsec/scan")
+        const thread = tid ? threadManager.get(tid) : null
+        return await netsecPortScan({
+          targets: params.targets || [],
+          ports: params.ports,
+          taskAuth: (thread as any)?.netsec_task_auth || null,
+          threadId: tid,
+        })
+      } finally {
+        releaseFlight("netsec_port_scan", flightOwner)
+      }
     }
     case "use_skill": {
       const skillName = params.name
@@ -3370,6 +4318,30 @@ export function validateWsMessage(msg: any): WsValidationResult {
     "modules.update": (m) => {
       if (typeof m.module !== "string" || !m.module) return { valid: false, error: "modules.update requires module" }
       if (!m.patch || typeof m.patch !== "object") return { valid: false, error: "modules.update requires patch object" }
+      return { valid: true }
+    },
+    // ADR-015 multi-agent fleet / Confirm Center
+    "fleet.status": () => ({ valid: true }),
+    "fleet.stop_all": () => ({ valid: true }),
+    "worker.pause": (m) => {
+      if (typeof m.worker_id !== "string" || !m.worker_id) return { valid: false, error: "worker.pause requires worker_id" }
+      return { valid: true }
+    },
+    "worker.resume": (m) => {
+      if (typeof m.worker_id !== "string" || !m.worker_id) return { valid: false, error: "worker.resume requires worker_id" }
+      return { valid: true }
+    },
+    "tab.force_release": (m) => {
+      if (typeof m.tab_id !== "number") return { valid: false, error: "tab.force_release requires tab_id number" }
+      return { valid: true }
+    },
+    "board.get": (m) => {
+      if (typeof m.thread_id !== "string" || !m.thread_id) return { valid: false, error: "board.get requires thread_id" }
+      return { valid: true }
+    },
+    "board.add_hint": (m) => {
+      if (typeof m.thread_id !== "string" || !m.thread_id) return { valid: false, error: "board.add_hint requires thread_id" }
+      if (typeof m.text !== "string" || !m.text.trim()) return { valid: false, error: "board.add_hint requires text" }
       return { valid: true }
     },
     "workspace.pick": () => ({ valid: true }),

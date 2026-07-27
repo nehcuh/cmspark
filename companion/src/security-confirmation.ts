@@ -88,6 +88,26 @@ export interface SecurityConfirmationDetails {
    * 不变,修复面刻意收窄;旧扩展忽略本字段即回退截断版 code_preview。
    */
   fullPreview?: string
+  /** ADR-015 multi-agent: acting worker / run identity for Confirm Center */
+  workerId?: string
+  parentThreadId?: string
+  orchestratorRunId?: string
+  workerRoleLabel?: string
+  tabId?: number
+  /**
+   * ADR-016 G6: board_complete Confirm Center digest.
+   * goal, trust histogram, claim previews, residual_risks, empty_complete flag.
+   */
+  boardCompleteDigest?: {
+    goal: string | null
+    trust_histogram: Record<string, number>
+    claim_previews: Array<{ id: string; trust: string; trust_label: string; preview: string }>
+    residual_risks: string[]
+    empty_complete: boolean
+    empty_complete_reason: string | null
+    supporting_fact_ids: string[]
+    status: string
+  }
 }
 
 export interface SecurityConfirmationDecision {
@@ -142,6 +162,8 @@ interface PendingConfirmation {
   nonceChallenge?: string
   /** Consumed manual-nonce attempts for this confirmation (starts at 0). */
   nonceAttempts: number
+  /** ADR-015: stamped worker/thread for authoritative stop_thread drain. */
+  workerId?: string
 }
 
 function codePreview(code: string): string {
@@ -192,6 +214,9 @@ export class SecurityConfirmationManager {
           ? details.nonceChallenge
           : undefined,
         nonceAttempts: 0,
+        workerId: typeof details.workerId === "string" && details.workerId.length > 0
+          ? details.workerId
+          : undefined,
       })
 
       send({
@@ -221,6 +246,26 @@ export class SecurityConfirmationManager {
         // P1: 完整预览文本独立字段,绕过 codePreview 的 1200 截断。
         ...(typeof details.fullPreview === "string" && details.fullPreview
           ? { full_preview: details.fullPreview }
+          : {}),
+        // ADR-015 Confirm Center identity fields (optional; old clients ignore)
+        ...(typeof details.workerId === "string" && details.workerId
+          ? { worker_id: details.workerId }
+          : {}),
+        ...(typeof details.parentThreadId === "string" && details.parentThreadId
+          ? { parent_thread_id: details.parentThreadId }
+          : {}),
+        ...(typeof details.orchestratorRunId === "string" && details.orchestratorRunId
+          ? { orchestrator_run_id: details.orchestratorRunId }
+          : {}),
+        ...(typeof details.workerRoleLabel === "string" && details.workerRoleLabel
+          ? { worker_role_label: details.workerRoleLabel }
+          : {}),
+        ...(typeof details.tabId === "number" && Number.isFinite(details.tabId)
+          ? { tab_id: details.tabId }
+          : {}),
+        // ADR-016 G6: board_complete digest (old clients ignore)
+        ...(details.boardCompleteDigest
+          ? { board_complete_digest: details.boardCompleteDigest }
           : {}),
       })
     })
@@ -253,6 +298,15 @@ export class SecurityConfirmationManager {
    */
   getToolName(confirmationId: string): string | undefined {
     return this.pending.get(confirmationId)?.toolName
+  }
+
+  /**
+   * ADR-015 — Return the worker/thread id stamped when the confirmation was
+   * issued. Used by handleSecurityConfirmationResponse for authoritative
+   * stop_thread abort+drain (prefer server stamp over client stop_thread_id).
+   */
+  getWorkerId(confirmationId: string): string | undefined {
+    return this.pending.get(confirmationId)?.workerId
   }
 
   /**
@@ -384,6 +438,7 @@ export class SecurityConfirmationManager {
     if (ws === undefined) {
       for (const [confirmationId, pending] of this.pending) {
         clearTimeout(pending.timer)
+        pending.send({ type: "security.confirmation.resolved", confirmation_id: confirmationId, approved: false })
         pending.resolve({ confirmationId, approved: false, reason })
       }
       this.pending.clear()
@@ -393,8 +448,62 @@ export class SecurityConfirmationManager {
     for (const [confirmationId, pending] of this.pending) {
       if (pending.originWs !== undefined && pending.originWs !== ws) continue
       clearTimeout(pending.timer)
+      pending.send({ type: "security.confirmation.resolved", confirmation_id: confirmationId, approved: false })
       pending.resolve({ confirmationId, approved: false, reason })
       this.pending.delete(confirmationId)
     }
+  }
+
+  /**
+   * ADR-015 GATE2: deny all pending confirmations stamped with `workerId`.
+   * Called from chat.abort / fleet.stop_all / worker_cancel **before** lease release
+   * so L2 finally can free admission + flight and zombie approve cannot re-HARD.
+   * Emits security.confirmation.resolved (denied) so Confirm Center UI closes.
+   * @returns count of confirmations rejected
+   */
+  rejectForWorker(workerId: string, reason: "denied" | "disconnect" = "denied"): number {
+    if (!workerId) return 0
+    let n = 0
+    for (const [confirmationId, pending] of [...this.pending.entries()]) {
+      if (pending.workerId !== workerId) continue
+      clearTimeout(pending.timer)
+      this.pending.delete(confirmationId)
+      try {
+        pending.send({
+          type: "security.confirmation.resolved",
+          confirmation_id: confirmationId,
+          approved: false,
+        })
+      } catch {
+        /* best-effort UI close */
+      }
+      pending.resolve({ confirmationId, approved: false, reason })
+      n++
+    }
+    return n
+  }
+
+  /** Test/debug: count pending entries (optionally filtered by workerId). */
+  pendingCount(workerId?: string): number {
+    if (workerId === undefined) return this.pending.size
+    let n = 0
+    for (const p of this.pending.values()) {
+      if (p.workerId === workerId) n++
+    }
+    return n
+  }
+
+  /** True if any pending confirmation is stamped with workerId (cancel / soft-expire bind). */
+  hasPendingForWorker(workerId: string): boolean {
+    if (!workerId) return false
+    for (const p of this.pending.values()) {
+      if (p.workerId === workerId) return true
+    }
+    return false
+  }
+
+  /** True if confirmationId is still in the pending map. */
+  isPending(confirmationId: string): boolean {
+    return this.pending.has(confirmationId)
   }
 }

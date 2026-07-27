@@ -4,9 +4,11 @@ import { PageSanitizer, pageSanitizer } from "./page-sanitizer"
 import { fetchImageAsBase64 } from "./image-extract-utils"
 import { detectDangerousApis } from "./dangerous-apis"
 import { selectorJsLiteral } from "./selector-js-literal"
+import { TabQueue, coerceTabId } from "./tab-queue"
 
 // Re-export for callers / tests that import from browser-bridge.
 export { selectorJsLiteral } from "./selector-js-literal"
+export { TabQueue, coerceTabId } from "./tab-queue"
 
 interface ToolResult {
   success: boolean
@@ -22,6 +24,8 @@ type ScriptingResult = chrome.scripting.InjectionResult<any> & { error?: string 
 export class BrowserBridge {
   private attachedTabs: Set<number> = new Set()
   private sanitizer: PageSanitizer
+  /** ADR-015 defense-in-depth: serialize concurrent ops per tabId (see tab-queue.ts). */
+  private tabQueue = new TabQueue()
 
   constructor(sanitizer?: PageSanitizer) {
     this.sanitizer = sanitizer || pageSanitizer
@@ -40,6 +44,11 @@ export class BrowserBridge {
   }
 
   async execute(toolName: string, params: Record<string, any>): Promise<ToolResult> {
+    const tabId = coerceTabId(params?.tabId)
+    return this.tabQueue.run(tabId, () => this.executeInner(toolName, params))
+  }
+
+  private async executeInner(toolName: string, params: Record<string, any>): Promise<ToolResult> {
     try {
       switch (toolName) {
         // Tab tools
@@ -339,6 +348,10 @@ export class BrowserBridge {
   private async screenshot(params: Record<string, any>): Promise<ToolResult> {
     let tabId = params.tabId
     if (!tabId) {
+      // ADR-015: multi-agent forbids silent active-tab fallback
+      if (params.__require_tab_id || params.forbid_active_tab_fallback) {
+        throw new Error("TAB_ID_REQUIRED: explicit tabId required (multi-agent mode)")
+      }
       const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true })
       if (!activeTab?.id) throw new Error("No active tab found")
       tabId = activeTab.id
@@ -382,6 +395,9 @@ export class BrowserBridge {
     }
 
     if (!tabId) {
+      if (params.__require_tab_id || params.forbid_active_tab_fallback) {
+        throw new Error("TAB_ID_REQUIRED: explicit tabId required (multi-agent mode)")
+      }
       const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true })
       if (!activeTab?.id) throw new Error("No active tab found")
       tabId = activeTab.id

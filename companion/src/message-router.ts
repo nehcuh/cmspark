@@ -40,6 +40,18 @@ import type {
 // Per-thread abort controllers for cancelling in-flight LLM requests
 const abortControllers = new Map<string, AbortController>()
 
+/** Abort in-flight LLM for a thread (ADR-015 worker_cancel / chat.abort). */
+export function abortThreadChat(threadId: string): boolean {
+  if (!threadId) return false
+  const controller = abortControllers.get(threadId)
+  if (controller) {
+    controller.abort()
+    abortControllers.delete(threadId)
+    return true
+  }
+  return false
+}
+
 /**
  * Inject (or override) the `name:` field in a knowledge doc's YAML frontmatter.
  * Used by directory import to guarantee each file lands at a unique filename —
@@ -352,6 +364,19 @@ export async function handleMessage(
         abortControllers.delete(rest.thread_id)
       }
 
+      // ADR-015: cap concurrent multi-agent LLM loops (workers + orchestrators)
+      const threadForLlmCap = services.threadManager.get(rest.thread_id)
+      const { tryAcquireMultiAgentLlmLoop, releaseMultiAgentLlmLoop } = await import("./orchestrator/llm-loop-gate")
+      const loopGate = tryAcquireMultiAgentLlmLoop(threadForLlmCap, rest.thread_id)
+      if (!loopGate.ok) {
+        return {
+          type: "chat.error",
+          thread_id: rest.thread_id,
+          error: loopGate.error,
+          data: { error_code: "MULTI_AGENT_LLM_CAP", active: loopGate.active, cap: loopGate.cap },
+        }
+      }
+
       const controller = new AbortController()
       abortControllers.set(rest.thread_id, controller)
 
@@ -413,6 +438,7 @@ export async function handleMessage(
         }
       } finally {
         abortControllers.delete(rest.thread_id)
+        releaseMultiAgentLlmLoop(rest.thread_id)
       }
       return null // chatCreate handles streaming internally
     }
@@ -608,10 +634,30 @@ export async function handleMessage(
     }
 
     case "chat.abort": {
-      const controller = abortControllers.get(rest.thread_id)
-      if (controller) {
-        controller.abort()
-        abortControllers.delete(rest.thread_id)
+      abortThreadChat(rest.thread_id)
+      // ADR-016 G13: abandon worker intents on host BEFORE pending reject + lease release
+      try {
+        const { abandonWorkerIntents } = await import("./board")
+        await abandonWorkerIntents(services.threadManager, rest.thread_id, {
+          reason: "chat.abort",
+        })
+      } catch {
+        /* best-effort */
+      }
+      // ADR-015 GATE2: deny worker-stamped L2 confirmations first (frees admission/flight
+      // via L2 finally), then reject CDP pending, then pending-aware lease release.
+      try {
+        const { rejectPendingForThread, hasPendingForTab, rejectPendingForTab, securityConfirmations } =
+          await import("./server")
+        securityConfirmations.rejectForWorker(rest.thread_id, "denied")
+        rejectPendingForThread(rest.thread_id, `chat.abort:${rest.thread_id}`)
+        const { releaseLeasesForThreadPendingAware } = await import("./orchestrator/tab-lease")
+        releaseLeasesForThreadPendingAware(rest.thread_id, "chat.abort", {
+          hasPendingForTab,
+          rejectPendingForTab,
+        })
+      } catch {
+        /* best-effort */
       }
       return { type: "chat.aborted", thread_id: rest.thread_id }
     }
@@ -1358,6 +1404,158 @@ export async function handleMessage(
       return { type: "knowledge.deleted", name: rest.name }
 
     // --- Mission Packs (P0) ---
+    case "fleet.status": {
+      const { buildFleetSnapshot } = await import("./orchestrator/fleet")
+      // Stage 3: reap stale intents on active orchestrator hosts when polling fleet
+      try {
+        const { reapStaleIntents } = await import("./board/intent-claim")
+        for (const t of threadManager.list() as any[]) {
+          if (t.agent_role === "orchestrator" || (t.board_mode && t.agent_role !== "worker")) {
+            await reapStaleIntents(threadManager, t.id)
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+      return buildFleetSnapshot(threadManager)
+    }
+    case "board.get": {
+      const tid = typeof rest.thread_id === "string" ? rest.thread_id : null
+      if (!tid) return { type: "error", error: "board.get requires thread_id" }
+      const { readBoard, resolveBoardHostThreadId, boardReadForTool } = await import("./board")
+      const hostId = resolveBoardHostThreadId(threadManager, tid) || tid
+      const toolView = boardReadForTool(threadManager, hostId)
+      const raw = readBoard(threadManager, hostId)
+      return {
+        type: "board.get",
+        thread_id: tid,
+        host_thread_id: hostId,
+        raw_board: raw,
+        board: toolView.data?.board ?? null,
+        open_intent_count: raw
+          ? raw.intents.filter((i) => i.status === "open" || i.status === "claimed").length
+          : 0,
+      }
+    }
+    case "board.add_hint": {
+      const tid = typeof rest.thread_id === "string" ? rest.thread_id : null
+      const text = typeof rest.text === "string" ? rest.text : ""
+      if (!tid) return { type: "error", error: "board.add_hint requires thread_id" }
+      if (!text.trim()) return { type: "error", error: "board.add_hint requires text" }
+      const { addHint, resolveBoardHostThreadId, ensureBoard } = await import("./board")
+      const hostId = resolveBoardHostThreadId(threadManager, tid) || tid
+      const host = threadManager.get(hostId) as any
+      if (host?.board_mode) {
+        await ensureBoard(threadManager, hostId, { force: false })
+      }
+      const r = await addHint(threadManager, hostId, text.trim(), {
+        actor_type: "user",
+        thread_id: hostId,
+      })
+      if (!r.ok) return { type: "error", error: r.error }
+      return {
+        type: "board.add_hint_result",
+        thread_id: tid,
+        host_thread_id: hostId,
+        raw_board: r.board,
+      }
+    }
+    case "fleet.stop_all": {
+      const runId = typeof rest.orchestrator_run_id === "string" ? rest.orchestrator_run_id : null
+      const { listWorkers } = await import("./orchestrator/spawn")
+      const { releaseLeasesForThreadPendingAware } = await import("./orchestrator/tab-lease")
+      const { rejectPendingForThread, hasPendingForTab, rejectPendingForTab, securityConfirmations } =
+        await import("./server")
+      let targets: any[] = []
+      if (runId) {
+        targets = listWorkers(threadManager, runId)
+      } else {
+        targets = threadManager.list().filter((t: any) => t.agent_role === "worker")
+      }
+      const results: any[] = []
+      for (const w of targets) {
+        abortThreadChat(w.id)
+        // G13: abandon intents on host before pending reject + lease release
+        let intentsAbandoned = 0
+        try {
+          const { abandonWorkerIntents } = await import("./board")
+          const ab = await abandonWorkerIntents(threadManager, w.id, {
+            reason: "fleet.stop_all",
+          })
+          intentsAbandoned = ab.abandoned
+        } catch {
+          /* best-effort */
+        }
+        // GATE2: deny L2 first so admission/flight free via finally; then tools + leases
+        const confirmsRejected = securityConfirmations.rejectForWorker(w.id, "denied")
+        const rejected = rejectPendingForThread(w.id, `fleet.stop_all:${w.id}`)
+        const { released, drained } = releaseLeasesForThreadPendingAware(w.id, "fleet.stop_all", {
+          hasPendingForTab,
+          rejectPendingForTab,
+        })
+        threadManager.update(w.id, { paused: true } as any)
+        results.push({
+          worker_id: w.id,
+          rejected,
+          released,
+          confirms_rejected: confirmsRejected,
+          leases_drained: drained,
+          intents_abandoned: intentsAbandoned,
+        })
+      }
+      const { buildFleetSnapshot } = await import("./orchestrator/fleet")
+      return { type: "fleet.stop_all_result", results, fleet: buildFleetSnapshot(threadManager) }
+    }
+    case "worker.pause": {
+      if (!rest.worker_id) return { type: "error", error: "worker_id required" }
+      const w = threadManager.update(String(rest.worker_id), { paused: true } as any)
+      if (!w) return { type: "error", error: "worker not found" }
+      abortThreadChat(String(rest.worker_id))
+      return { type: "worker.updated", worker: w }
+    }
+    case "worker.resume": {
+      if (!rest.worker_id) return { type: "error", error: "worker_id required" }
+      const w = threadManager.update(String(rest.worker_id), { paused: false } as any)
+      if (!w) return { type: "error", error: "worker not found" }
+      return { type: "worker.updated", worker: w }
+    }
+    case "tab.force_release": {
+      if (typeof rest.tab_id !== "number") return { type: "error", error: "tab_id number required" }
+      const { forceReleaseTab, completeForceRelease, getTabLease } = await import("./orchestrator/tab-lease")
+      const { rejectPendingForThread, hasPendingForTab } = await import("./server")
+      const before = getTabLease(rest.tab_id)
+      let rejected = 0
+      let draining = false
+      if (before) {
+        const pending = hasPendingForTab(rest.tab_id, before.holderThreadId)
+        if (pending) {
+          // Mark FORCE_RELEASING while in-flight CDP exists, then drain pending.
+          forceReleaseTab(rest.tab_id, rest.by || "user", { hasPending: true })
+          draining = true
+        }
+        rejected = rejectPendingForThread(
+          before.holderThreadId,
+          `tab.force_release:${rest.tab_id}`,
+          rest.tab_id,
+        )
+        // Pending promises resolved; free the lease (complete FORCE_RELEASING or instant free).
+        if (draining) {
+          completeForceRelease(rest.tab_id, "force_release_after_reject")
+        } else {
+          forceReleaseTab(rest.tab_id, rest.by || "user", { hasPending: false })
+        }
+      } else {
+        forceReleaseTab(rest.tab_id, rest.by || "user")
+      }
+      const { buildFleetSnapshot } = await import("./orchestrator/fleet")
+      return {
+        type: "tab.force_release_result",
+        tab_id: rest.tab_id,
+        rejected_pending: rejected,
+        was_draining: draining,
+        fleet: buildFleetSnapshot(threadManager),
+      }
+    }
     case "pack.list": {
       const { listInstalledPacks } = await import("./packs/pack-engine")
       return { type: "pack.list", packs: listInstalledPacks(getConfig()) }

@@ -4,6 +4,7 @@ import * as fs from "fs"
 import * as path from "path"
 import { getConfigDir } from "../config"
 import { atomicWriteJSON } from "../io"
+import type { MissionBoard } from "../board/schema"
 
 interface ThreadPackSnapshot {
   tool_whitelist: string[] | null
@@ -43,6 +44,32 @@ interface Thread {
     targets: string[]
     at?: string
   } | null
+  /** Multi-agent (ADR-015): role of this thread in an orchestrator run. */
+  agent_role?: "normal" | "orchestrator" | "worker"
+  /** Parent orchestrator thread id when agent_role=worker. */
+  parent_thread_id?: string | null
+  /** Shared id for one orchestrator fan-out episode. */
+  orchestrator_run_id?: string | null
+  /** Human-readable worker role label. */
+  worker_role_label?: string | null
+  /** Optional elevation marker (audited grants only). */
+  capability_elevation_level?: string | null
+  /** Pause freezes LLM loop + new tool dispatch; leases retained until TTL/cancel. */
+  paused?: boolean
+  /** ADR-016 Stage 3: worker bound to host-board intent id. */
+  assigned_intent_id?: string | null
+  /**
+   * MissionBoard (ADR-016): structured Fact/Intent/Hint run state.
+   * null/undefined = no board (board mode off or never initialized).
+   * Canonical board lives only on host threads (orchestrator / sole single-thread).
+   * Workers must never persist mission_board.
+   */
+  mission_board?: MissionBoard | null
+  /**
+   * When true, ensureBoardDefaults may initialize mission_board.
+   * Default false/undefined = off (rollback-friendly).
+   */
+  board_mode?: boolean
 }
 
 // Allowed config_override keys and their expected types
@@ -269,6 +296,8 @@ export class ThreadManager {
       knowledge_selection_mode: "auto",
       mcp_selection_mode: "auto",
       active_mcp_server_ids: [],
+      mission_board: null,
+      board_mode: false,
     }
 
     this.index.threads.unshift(thread)
@@ -307,6 +336,13 @@ export class ThreadManager {
     }
     if (thread && !thread.knowledge_selection_mode) {
       thread.knowledge_selection_mode = "auto"
+    }
+    // ADR-016: legacy threads without board fields stay board-off
+    if (thread && thread.mission_board === undefined) {
+      thread.mission_board = null
+    }
+    if (thread && thread.board_mode === undefined) {
+      thread.board_mode = false
     }
     return thread
   }
@@ -349,6 +385,16 @@ export class ThreadManager {
         throw new Error("active_mcp_server_ids must be an array of strings")
       }
     }
+    // ADR-016: workers must never host mission_board
+    if (updates.mission_board !== undefined && updates.mission_board !== null) {
+      const role = updates.agent_role ?? thread.agent_role
+      if (role === "worker") {
+        throw new Error("workers cannot host mission_board (ADR-016)")
+      }
+    }
+    if (updates.board_mode !== undefined && typeof updates.board_mode !== "boolean") {
+      throw new Error("board_mode must be a boolean")
+    }
     Object.assign(thread, updates, { updated_at: monotonicTimestamp() })
     this.saveIndex()
     return thread
@@ -371,6 +417,8 @@ export class ThreadManager {
       active_mcp_server_ids?: string[]
       system_prompt_append: string | null
       workspace_root?: string | null
+      /** ADR-016: pack board_mode enable (only set when pack declares it). */
+      board_mode?: boolean
     },
   ): Thread {
     const thread = this.index.threads.find((t) => t.id === threadId)
@@ -427,6 +475,13 @@ export class ThreadManager {
       thread.active_mcp_server_ids = [...patch.active_mcp_server_ids]
     }
     if (patch.workspace_root !== undefined) thread.workspace_root = patch.workspace_root
+    // ADR-016: pack board_mode — only enable when pack declares true; uninstall clears via explicit false
+    if (patch.board_mode !== undefined) {
+      if (typeof patch.board_mode !== "boolean") {
+        throw new Error("board_mode must be a boolean")
+      }
+      thread.board_mode = patch.board_mode
+    }
     thread.config_override = validation.sanitized
     thread.updated_at = monotonicTimestamp()
     this.saveIndex()
