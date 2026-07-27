@@ -72,7 +72,11 @@ function loadPanelData(id: Panel, activeThreadId: string | null, dispatch: Retur
 export function BottomBar({ capabilityLevel }: { capabilityLevel: CapabilityLevel }) {
   const [activePanel, setActivePanel] = useState<Panel | null>(null)
   const [moreOpen, setMoreOpen] = useState(false)
+  /** Fixed menu position (viewport coords) — avoids overflow clip + InputArea paint order. */
+  const [moreMenuPos, setMoreMenuPos] = useState<{ top: number; left: number; minWidth: number } | null>(null)
   const moreRef = useRef<HTMLDivElement>(null)
+  const moreBtnRef = useRef<HTMLButtonElement>(null)
+  const moreMenuRef = useRef<HTMLDivElement>(null)
   const { state, dispatch } = useAgentStore()
 
   const allowedIds = useMemo(
@@ -120,16 +124,61 @@ export function BottomBar({ capabilityLevel }: { capabilityLevel: CapabilityLeve
     return () => window.removeEventListener("cmspark:open-context-panel", onOpen as EventListener)
   }, [state.activeThreadId, dispatch])
 
-  useEffect(() => {
-    if (!moreOpen) return
-    const onDoc = (e: MouseEvent) => {
-      if (moreRef.current && !moreRef.current.contains(e.target as Node)) {
-        setMoreOpen(false)
-      }
+  const computeMoreMenuPos = (): { top: number; left: number; minWidth: number } | null => {
+    const btn = moreBtnRef.current
+    if (!btn) return null
+    const r = btn.getBoundingClientRect()
+    // Open upward, right-aligned to the button; clamp within viewport.
+    const minWidth = Math.max(160, r.width)
+    const estimatedH = Math.min(240, 12 + overflowTabs.length * 36)
+    let top = r.top - 4 - estimatedH
+    if (top < 8) top = Math.min(r.bottom + 4, window.innerHeight - estimatedH - 8)
+    let left = r.right - minWidth
+    if (left < 8) left = 8
+    if (left + minWidth > window.innerWidth - 8) left = Math.max(8, window.innerWidth - minWidth - 8)
+    return { top, left, minWidth }
+  }
+
+  const updateMoreMenuPos = () => {
+    const pos = computeMoreMenuPos()
+    if (pos) setMoreMenuPos(pos)
+  }
+
+  const toggleMore = () => {
+    if (moreOpen) {
+      setMoreOpen(false)
+      setMoreMenuPos(null)
+      return
     }
+    const pos = computeMoreMenuPos()
+    if (pos) setMoreMenuPos(pos)
+    setMoreOpen(true)
+  }
+
+  useEffect(() => {
+    if (!moreOpen) {
+      setMoreMenuPos(null)
+      return
+    }
+    updateMoreMenuPos()
+    const onDoc = (e: MouseEvent) => {
+      const t = e.target as Node
+      if (moreRef.current?.contains(t)) return
+      if (moreMenuRef.current?.contains(t)) return
+      setMoreOpen(false)
+    }
+    const onReposition = () => updateMoreMenuPos()
     document.addEventListener("mousedown", onDoc)
-    return () => document.removeEventListener("mousedown", onDoc)
-  }, [moreOpen])
+    window.addEventListener("resize", onReposition)
+    // Side panel height changes when chat scrolls — keep menu anchored
+    window.addEventListener("scroll", onReposition, true)
+    return () => {
+      document.removeEventListener("mousedown", onDoc)
+      window.removeEventListener("resize", onReposition)
+      window.removeEventListener("scroll", onReposition, true)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reposition reads overflowTabs.length via closure when open
+  }, [moreOpen, overflowTabs.length])
 
   const openPanel = (id: Panel) => {
     if (activePanel === id) {
@@ -142,11 +191,19 @@ export function BottomBar({ capabilityLevel }: { capabilityLevel: CapabilityLeve
     loadPanelData(id, state.activeThreadId, dispatch)
   }
 
-  // 「更多」菜单向上弹出：必须放在 overflow 滚动容器外，且整条 BottomBar 叠在
-  // InputArea 之上，否则会被 tabs 的 overflow 裁切 / 被下方输入区盖住。
+  // Fixed-position menu: escapes overflow + paints above InputArea (z-index 1000).
   const moreMenuEl =
-    moreOpen && overflowTabs.length > 0 ? (
-      <div style={styles.moreMenu} role="menu">
+    moreOpen && overflowTabs.length > 0 && moreMenuPos ? (
+      <div
+        ref={moreMenuRef}
+        style={{
+          ...styles.moreMenu,
+          top: moreMenuPos.top,
+          left: moreMenuPos.left,
+          minWidth: moreMenuPos.minWidth,
+        }}
+        role="menu"
+      >
         {overflowTabs.map((tab) => {
           const Icon = tab.Icon
           const active = activePanel === tab.id
@@ -175,28 +232,29 @@ export function BottomBar({ capabilityLevel }: { capabilityLevel: CapabilityLeve
   // L2 with no primary tabs and collapsed more: hide entire bar to free vertical space
   if (isL2 && tabs.length === 0 && !activePanel && !moreOpen) {
     return (
-      <div style={{ ...styles.container, ...(moreOpen ? styles.containerRaised : null) }}>
+      <div style={styles.container}>
         <div style={{ ...styles.tabs, justifyContent: "flex-end" }}>
           <div ref={moreRef} style={styles.moreAnchor}>
             <button
+              ref={moreBtnRef}
               type="button"
               style={styles.moreBtn}
               title="更多面板（任务包 / 任务板等）"
               aria-expanded={moreOpen}
-              onClick={() => setMoreOpen((v) => !v)}
+              onClick={toggleMore}
             >
               <IconMore size={14} />
               <span>更多</span>
             </button>
-            {moreMenuEl}
           </div>
         </div>
+        {moreMenuEl}
       </div>
     )
   }
 
   return (
-    <div style={{ ...styles.container, ...(moreOpen ? styles.containerRaised : null) }}>
+    <div style={styles.container}>
       <div style={styles.tabs}>
         <div style={styles.tabsScroll}>
           {tabs.map((tab) => {
@@ -224,6 +282,7 @@ export function BottomBar({ capabilityLevel }: { capabilityLevel: CapabilityLeve
         {overflowTabs.length > 0 && (
           <div ref={moreRef} style={styles.moreAnchor}>
             <button
+              ref={moreBtnRef}
               type="button"
               style={{
                 ...styles.moreBtn,
@@ -237,15 +296,15 @@ export function BottomBar({ capabilityLevel }: { capabilityLevel: CapabilityLeve
               }}
               title="任务包、任务板等低频入口"
               aria-expanded={moreOpen}
-              onClick={() => setMoreOpen((v) => !v)}
+              onClick={toggleMore}
             >
               <IconMore size={14} />
               <span>更多</span>
             </button>
-            {moreMenuEl}
           </div>
         )}
       </div>
+      {moreMenuEl}
 
       {activePanel && (
         <div style={styles.panel}>
@@ -756,23 +815,14 @@ const styles: Record<string, React.CSSProperties> = {
     borderTop: `1px solid ${tokens.border}`,
     background: tokens.bgElevated,
     flexShrink: 0,
-    // Keep bar above InputArea in paint order so upward menus are clickable.
-    position: "relative",
-    zIndex: 2,
-  },
-  /** When menu is open, raise above composer (InputArea has no z-index, paints later). */
-  containerRaised: {
-    zIndex: 60,
   },
   tabs: {
     display: "flex",
     gap: 4,
     padding: "6px 10px",
     alignItems: "center",
-    // Do NOT put overflow on this row — it would clip the upward moreMenu
-    // (overflow-x:auto forces overflow-y to compute to auto, not visible).
   },
-  /** Primary tabs only — horizontal scroll without clipping the more menu. */
+  /** Primary tabs only — horizontal scroll; more button stays outside this box. */
   tabsScroll: {
     display: "flex",
     gap: 4,
@@ -796,7 +846,6 @@ const styles: Record<string, React.CSSProperties> = {
     fontFamily: tokens.font,
   },
   moreAnchor: {
-    position: "relative",
     flexShrink: 0,
     marginLeft: 2,
   },
@@ -815,18 +864,16 @@ const styles: Record<string, React.CSSProperties> = {
     background: "transparent",
     fontFamily: tokens.font,
   },
+  /** Viewport-fixed; top/left/minWidth set per open from button getBoundingClientRect. */
   moreMenu: {
-    position: "absolute",
-    right: 0,
-    bottom: "calc(100% + 4px)",
-    minWidth: 140,
+    position: "fixed",
     maxHeight: 240,
     overflowY: "auto",
     background: tokens.bgElevated,
     border: `1px solid ${tokens.border}`,
     borderRadius: tokens.radiusMd,
     boxShadow: tokens.shadowMd,
-    zIndex: 100,
+    zIndex: 1000,
     padding: 4,
     display: "flex",
     flexDirection: "column",
