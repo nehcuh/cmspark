@@ -22,6 +22,8 @@ type ScriptingResult = chrome.scripting.InjectionResult<any> & { error?: string 
 export class BrowserBridge {
   private attachedTabs: Set<number> = new Set()
   private sanitizer: PageSanitizer
+  /** ADR-015 P2 defense-in-depth: serialize concurrent ops per tabId */
+  private tabQueues: Map<number, Promise<unknown>> = new Map()
 
   constructor(sanitizer?: PageSanitizer) {
     this.sanitizer = sanitizer || pageSanitizer
@@ -39,7 +41,40 @@ export class BrowserBridge {
     }
   }
 
+  private async withTabQueue<T>(tabId: number | undefined, fn: () => Promise<T>): Promise<T> {
+    if (typeof tabId !== "number" || !Number.isFinite(tabId)) {
+      return fn()
+    }
+    const prev = this.tabQueues.get(tabId) || Promise.resolve()
+    let release!: () => void
+    const gate = new Promise<void>((r) => {
+      release = r
+    })
+    const tail = prev.then(() => gate)
+    this.tabQueues.set(tabId, tail.catch(() => {}))
+    await prev.catch(() => {})
+    try {
+      return await fn()
+    } finally {
+      release()
+      if (this.tabQueues.get(tabId) === tail) {
+        this.tabQueues.delete(tabId)
+      }
+    }
+  }
+
   async execute(toolName: string, params: Record<string, any>): Promise<ToolResult> {
+    const tabIdRaw = params?.tabId
+    const tabId =
+      typeof tabIdRaw === "number"
+        ? tabIdRaw
+        : tabIdRaw != null && Number.isFinite(Number(tabIdRaw))
+          ? Number(tabIdRaw)
+          : undefined
+    return this.withTabQueue(tabId, () => this.executeInner(toolName, params))
+  }
+
+  private async executeInner(toolName: string, params: Record<string, any>): Promise<ToolResult> {
     try {
       switch (toolName) {
         // Tab tools

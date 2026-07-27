@@ -1048,7 +1048,36 @@ export function createToolExecutor(ws: WebSocket) {
           }
           tabL2SoftHeld = true
         }
-        const decision = await (async () => {
+        // ADR-015: L2 FIFO admission (≤1 per orchestrator_run, ≤2 process-wide)
+        const maForL2 = actingThreadId && threadManager
+          ? (threadManager.get(actingThreadId) as any)
+          : null
+        const { acquireL2Admission, releaseL2Admission } = await import("./orchestrator/l2-admission")
+        const admit = await acquireL2Admission({
+          orchestratorRunId: maForL2?.orchestrator_run_id,
+          threadId: actingThreadId,
+        })
+        if (!admit.ok) {
+          if (tabL2SoftHeld && typeof finalParams.tabId === "number" && actingThreadId) {
+            const { releaseSoftOrPendingL2 } = await import("./orchestrator")
+            releaseSoftOrPendingL2({
+              tabId: finalParams.tabId,
+              holderThreadId: actingThreadId,
+              confirmId: toolCallId,
+            })
+          }
+          const result = {
+            success: false,
+            error: admit.error,
+            data: { error_code: "L2_ADMISSION_TIMEOUT" },
+          }
+          logToolFinish(toolCallId, toolName, startedAt, result)
+          return result
+        }
+        const l2AdmitKey = admit.key
+        let decision: Awaited<ReturnType<typeof securityConfirmations.request>>
+        try {
+        decision = await (async () => {
           // P0a — pre-generate confirmationId so WS + tray channels share it.
           // Whichever resolves first wins (manager.pending is keyed by id, first
           // responder claims it). See capability-token-round1-synthesis §P0a.
@@ -1216,6 +1245,9 @@ export function createToolExecutor(ws: WebSocket) {
           securityConfirmations.respond(sharedConfirmId, winner.approved)
           return await wsPromise
         })()
+        } finally {
+          releaseL2Admission(l2AdmitKey)
+        }
         if (!decision.approved) {
           if (tabL2SoftHeld && typeof finalParams.tabId === "number" && actingThreadId) {
             const { releaseSoftOrPendingL2 } = await import("./orchestrator")
@@ -2301,15 +2333,22 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
       } else {
         return { success: false, error: "shell_exec requires L2 security_token confirmation" }
       }
-      const { shellExec } = await import("./capability/shell")
       const tid = params.__thread_id || params._thread_id
-      const thread = tid ? threadManager.get(tid) : null
-      const cwd = params.cwd || thread?.workspace_root || undefined
-      return shellExec({
-        command: params.command,
-        cwd,
-        threadId: tid,
-      })
+      const { tryAcquireFlight, releaseFlight } = await import("./orchestrator/single-flight")
+      const flight = tryAcquireFlight("shell_exec", String(tid || "unknown"))
+      if (!flight.ok) return { success: false, error: flight.error, data: { error_code: "SHELL_BUSY", holder: flight.holder } }
+      try {
+        const { shellExec } = await import("./capability/shell")
+        const thread = tid ? threadManager.get(tid) : null
+        const cwd = params.cwd || thread?.workspace_root || undefined
+        return await shellExec({
+          command: params.command,
+          cwd,
+          threadId: tid,
+        })
+      } finally {
+        releaseFlight("shell_exec")
+      }
     }
     case "netsec_port_scan": {
       if (params.security_token) {
@@ -2322,15 +2361,24 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
       } else {
         return { success: false, error: "netsec_port_scan requires L2 security_token confirmation" }
       }
-      const { netsecPortScan } = await import("./netsec/scan")
       const tid = params.__thread_id || params._thread_id
-      const thread = tid ? threadManager.get(tid) : null
-      return netsecPortScan({
-        targets: params.targets || [],
-        ports: params.ports,
-        taskAuth: (thread as any)?.netsec_task_auth || null,
-        threadId: tid,
-      })
+      const { tryAcquireFlight, releaseFlight } = await import("./orchestrator/single-flight")
+      const flight = tryAcquireFlight("netsec_port_scan", String(tid || "unknown"))
+      if (!flight.ok) {
+        return { success: false, error: flight.error, data: { error_code: "NETSEC_BUSY", holder: flight.holder } }
+      }
+      try {
+        const { netsecPortScan } = await import("./netsec/scan")
+        const thread = tid ? threadManager.get(tid) : null
+        return await netsecPortScan({
+          targets: params.targets || [],
+          ports: params.ports,
+          taskAuth: (thread as any)?.netsec_task_auth || null,
+          threadId: tid,
+        })
+      } finally {
+        releaseFlight("netsec_port_scan")
+      }
     }
     case "use_skill": {
       const skillName = params.name

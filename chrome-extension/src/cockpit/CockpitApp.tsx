@@ -89,6 +89,16 @@ function CockpitApp() {
     .filter((m) => m.role === "user" || m.role === "assistant")
     .slice(-8)
 
+  // ADR-015: fleet strip in Cockpit Confirm Center shell
+  useEffect(() => {
+    const tick = () => chrome.runtime.sendMessage({ type: "fleet.status" })
+    tick()
+    const id = setInterval(tick, 5000)
+    return () => clearInterval(id)
+  }, [])
+  const fleet = state.fleet
+  const pendingN = state.pendingSecurityConfirmations.length
+
   return (
     <div style={s.root}>
       <header style={s.titleBar}>
@@ -101,6 +111,12 @@ function CockpitApp() {
           <span style={s.muted}>
             {state.connectionState === "connected" ? "已连接" : state.connectionState}
           </span>
+          {fleet && (
+            <span style={s.muted} title="Fleet">
+              舰队 {fleet.worker_count}w · {fleet.lock_count}锁
+              {pendingN > 0 ? ` · 确认 ${pendingN}` : ""}
+            </span>
+          )}
         </div>
         <div style={{ display: "flex", gap: 8 }}>
           {task && !finished && !task.abortAcked && (
