@@ -665,7 +665,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
   // S1: virtual slash entries for demoted panels (packs/board live under「更多」)
   const slashSkills: SkillMeta[] = [
     ...META_PANEL_SLASH,
-    ...state.skills,
+    ...(Array.isArray(state.skills) ? state.skills : []),
   ]
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {

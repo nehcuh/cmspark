@@ -284,7 +284,9 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
     case "SET_MESSAGES":
       return { ...state, messages: action.messages }
     case "SET_SKILLS":
-      return { ...state, skills: action.skills }
+      // Guard: skill.list / error payloads may omit skills → never leave non-iterable state
+      // (App.tsx spreads state.skills into slashSkills; undefined throws "is not iterable").
+      return { ...state, skills: Array.isArray(action.skills) ? action.skills : [] }
     case "TOGGLE_SKILL":
       return {
         ...state,

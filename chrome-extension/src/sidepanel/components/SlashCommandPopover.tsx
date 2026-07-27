@@ -20,7 +20,7 @@ interface MatchResult {
 }
 
 export function SlashCommandPopover({
-  skills,
+  skills: skillsProp,
   searchText,
   visible,
   anchorEl,
@@ -29,6 +29,8 @@ export function SlashCommandPopover({
 }: SlashCommandPopoverProps) {
   const [highlightedIndex, setHighlightedIndex] = useState(0)
   const popoverRef = useRef<HTMLDivElement>(null)
+  // Defensive: callers may pass undefined if store was poisoned by a bad skill.list
+  const skills = Array.isArray(skillsProp) ? skillsProp : []
 
   const query = searchText.toLowerCase().trim()
 

@@ -586,7 +586,10 @@ export function useWebSocket() {
           break
 
         case "skill.list":
-          dispatch({ type: "SET_SKILLS", skills: msg.skills })
+          dispatch({
+            type: "SET_SKILLS",
+            skills: Array.isArray(msg.skills) ? msg.skills : [],
+          })
           break
 
         case "pack.applied":

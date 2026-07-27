@@ -68,6 +68,17 @@ test("SET_PINNED_TABS updates active thread metadata", () => {
   assert.deepEqual(next.threads.find(t => t.id === "thread-b")?.pinned_tabs, [202, 303])
 })
 
+test("SET_SKILLS coerces non-array to empty list (skill.list missing skills)", () => {
+  const poisoned = agentReducer(initialState, { type: "SET_SKILLS", skills: undefined as any })
+  assert.deepEqual(poisoned.skills, [])
+  const ok = agentReducer(initialState, {
+    type: "SET_SKILLS",
+    skills: [{ name: "browse", description: "d", type: "prompt_template", builtin: true }],
+  })
+  assert.equal(ok.skills.length, 1)
+  assert.equal(ok.skills[0].name, "browse")
+})
+
 test("normalizeConfig flattens companion config and keeps masked API keys out of UI state", () => {
   assert.deepEqual(normalizeConfig({
     llm: {

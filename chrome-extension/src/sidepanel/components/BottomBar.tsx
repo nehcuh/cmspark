@@ -554,7 +554,8 @@ function SkillsPanel() {
   }
 
   // Group skills by site, with current site first
-  const groupedSkills = groupSkillsBySite(state.skills, currentHostname)
+  const skillList = Array.isArray(state.skills) ? state.skills : []
+  const groupedSkills = groupSkillsBySite(skillList, currentHostname)
 
   const modeLabels: Record<string, string> = { auto: "自动", all: "全选", manual: "按需" }
 
@@ -650,7 +651,7 @@ function SkillsPanel() {
         onDragOver={(e) => e.preventDefault()}
         onDrop={handleDrop}
       >
-        {state.skills.length === 0 && (
+        {skillList.length === 0 && (
           <div style={styles.emptyText}>暂无技能，拖拽 .md 文件或点击导入</div>
         )}
       </div>
@@ -776,9 +777,10 @@ function groupBy<T>(arr: T[], key: keyof T): Record<string, T[]> {
 }
 
 function groupSkillsBySite(skills: any[], currentHostname: string): [string, any[]][] {
-  const globalSkills = skills.filter((s) => !s.site)
+  const list = Array.isArray(skills) ? skills : []
+  const globalSkills = list.filter((s) => !s.site)
   const siteGroups = new Map<string, any[]>()
-  for (const skill of skills.filter((s) => s.site)) {
+  for (const skill of list.filter((s) => s.site)) {
     const key = skill.site!
     if (!siteGroups.has(key)) siteGroups.set(key, [])
     siteGroups.get(key)!.push(skill)
