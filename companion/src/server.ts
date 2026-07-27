@@ -356,6 +356,13 @@ async function initServices() {
   skillEngine = new SkillEngine(getConfig().llm)
   historyStore = new HistoryStore()
   await historyStore.waitReady()
+  // Mission Pack P0: install shipped packs (appsec-prd-review) into DATA_DIR
+  try {
+    const { ensureBuiltinPacksInstalled } = await import("./packs/pack-engine")
+    ensureBuiltinPacksInstalled(skillEngine)
+  } catch (e: any) {
+    logger.warn("packs.builtin_install_failed", { error: e?.message || String(e) })
+  }
 }
 
 // Exported for integration tests (audit item 6).
@@ -472,7 +479,14 @@ export function createToolExecutor(ws: WebSocket) {
     // App tab WP3 (adversary 接线警示 ①): host_app joins the L2 gate tool
     // list — on win32 only. Off win32 the gate is skipped entirely so the
     // executor can return the typed platform error without a pointless dialog.
-    const L2_GATE_TOOLS = ["evaluate", "osascript_eval", "host_read", "host_write"]
+    const L2_GATE_TOOLS = [
+      "evaluate",
+      "osascript_eval",
+      "host_read",
+      "host_write",
+      "shell_exec",
+      "netsec_port_scan",
+    ]
     const hostAppGated = toolName === "host_app" && (os.platform() === "win32" || os.platform() === "darwin")
     // Coordinate computer-use (WP1): critical-class — the task-level L2 dialog
     // is shown EVERY task (god-mode / auto-approve do NOT skip it), always
@@ -481,7 +495,14 @@ export function createToolExecutor(ws: WebSocket) {
     const hostComputerGated = toolName === "host_computer" &&
       (os.platform() === "win32" || os.platform() === "darwin")
     if ((L2_GATE_TOOLS.includes(toolName) || hostAppGated || hostComputerGated) && !finalParams.security_token) {
-      const code = String(finalParams.code || finalParams.expression || "")
+      // shell_exec / netsec use command|targets for L2 preview text (not code/expression)
+      const code = String(
+        finalParams.code ||
+          finalParams.expression ||
+          finalParams.command ||
+          (Array.isArray(finalParams.targets) ? finalParams.targets.join(", ") : "") ||
+          "",
+      )
       const lengthCheck = securityPolicy.checkLength(toolName, code)
       if (!lengthCheck.ok) {
         const result = { success: false, error: lengthCheck.error }
@@ -804,7 +825,15 @@ export function createToolExecutor(ws: WebSocket) {
       // Coordinate computer-use: critical-class BY DESIGN (plan §E.3) — the
       // capability itself is the critical surface, so forceConfirm is
       // unconditional (god-mode / auto-approve still get the task dialog).
-      const criticalApis = hostComputerGated ? ["computer.coordinate_injection"] : detectCriticalApis(code)
+      // shell_exec / netsec_port_scan: always force interactive confirm (never domain
+      // whitelist / god-mode skip) — Mission Pack design §8.3
+      const capabilityForceConfirm =
+        toolName === "shell_exec" || toolName === "netsec_port_scan"
+      const criticalApis = hostComputerGated
+        ? ["computer.coordinate_injection"]
+        : capabilityForceConfirm
+          ? [toolName]
+          : detectCriticalApis(code)
       const forceConfirm = criticalApis.length > 0
 
       if ((!skipConfirmation || forceConfirm) && !hostComputerTrustSkip) {
@@ -1380,9 +1409,22 @@ export function createToolExecutor(ws: WebSocket) {
     }
 
     // Companion-side tools (executed locally, not forwarded to extension)
-    const COMPANION_TOOLS = ["osascript_eval", "host_read", "host_write", "host_app", "host_computer", "use_skill", "record_experience"]
+    const COMPANION_TOOLS = [
+      "osascript_eval",
+      "host_read",
+      "host_write",
+      "host_app",
+      "host_computer",
+      "use_skill",
+      "record_experience",
+      "workspace_list_dir",
+      "workspace_read_file",
+      "shell_exec",
+      "netsec_port_scan",
+    ]
     if (COMPANION_TOOLS.includes(toolName)) {
       try {
+        // Thread id already injected by adapter as __thread_id (computer-use precedent)
         const result = await executeCompanionTool(toolName, finalParams, toolCallId, {
           // Executor-internal confirmation channel (Phase 1 W8-windows
           // skip-L2 manual-nonce prompt). Adversary amendment A1: ALWAYS
@@ -1850,6 +1892,57 @@ interface CompanionToolExecOptions {
 
 async function executeCompanionTool(toolName: string, params: any, toolCallId?: string, execOpts?: CompanionToolExecOptions): Promise<any> {
   switch (toolName) {
+    case "workspace_list_dir": {
+      const { workspaceListDir } = await import("./capability/workspace")
+      const tid = params.__thread_id || params._thread_id
+      const thread = tid ? threadManager.get(tid) : null
+      return workspaceListDir(thread?.workspace_root, params.path || ".")
+    }
+    case "workspace_read_file": {
+      const { workspaceReadFile } = await import("./capability/workspace")
+      const tid = params.__thread_id || params._thread_id
+      const thread = tid ? threadManager.get(tid) : null
+      if (!params.path) return { success: false, error: "path required" }
+      return workspaceReadFile(thread?.workspace_root, params.path)
+    }
+    case "shell_exec": {
+      if (params.security_token) {
+        const valid = securityPolicy.validateToken(params.security_token, "shell_exec", params.command || "")
+        if (!valid) return { success: false, error: "Invalid or expired security token for shell_exec" }
+      } else {
+        return { success: false, error: "shell_exec requires L2 security_token confirmation" }
+      }
+      const { shellExec } = await import("./capability/shell")
+      const tid = params.__thread_id || params._thread_id
+      const thread = tid ? threadManager.get(tid) : null
+      const cwd = params.cwd || thread?.workspace_root || undefined
+      return shellExec({
+        command: params.command,
+        cwd,
+        threadId: tid,
+      })
+    }
+    case "netsec_port_scan": {
+      if (params.security_token) {
+        const valid = securityPolicy.validateToken(
+          params.security_token,
+          "netsec_port_scan",
+          JSON.stringify(params.targets || []),
+        )
+        if (!valid) return { success: false, error: "Invalid or expired security token for netsec_port_scan" }
+      } else {
+        return { success: false, error: "netsec_port_scan requires L2 security_token confirmation" }
+      }
+      const { netsecPortScan } = await import("./netsec/scan")
+      const tid = params.__thread_id || params._thread_id
+      const thread = tid ? threadManager.get(tid) : null
+      return netsecPortScan({
+        targets: params.targets || [],
+        ports: params.ports,
+        taskAuth: (thread as any)?.netsec_task_auth || null,
+        threadId: tid,
+      })
+    }
     case "use_skill": {
       const skillName = params.name
       if (!skillName) {
@@ -3251,6 +3344,45 @@ export function validateWsMessage(msg: any): WsValidationResult {
     },
     "mcp.set_selection": (m) => {
       if (typeof m.thread_id !== "string" || !m.thread_id) return { valid: false, error: "mcp.set_selection requires thread_id" }
+      return { valid: true }
+    },
+    // Mission Pack / enterprise modules
+    "pack.list": () => ({ valid: true }),
+    "pack.install": (m) => {
+      if (!m.dir && !m.zip_path) return { valid: false, error: "pack.install requires dir or zip_path" }
+      return { valid: true }
+    },
+    "pack.apply": (m) => {
+      if (typeof m.pack_id !== "string" || !m.pack_id) return { valid: false, error: "pack.apply requires pack_id" }
+      if (typeof m.thread_id !== "string" || !m.thread_id) return { valid: false, error: "pack.apply requires thread_id" }
+      return { valid: true }
+    },
+    "pack.uninstall": (m) => {
+      if (typeof m.pack_id !== "string" || !m.pack_id) return { valid: false, error: "pack.uninstall requires pack_id" }
+      return { valid: true }
+    },
+    "modules.list": () => ({ valid: true }),
+    "modules.set_enabled": (m) => {
+      if (typeof m.module !== "string" || !m.module) return { valid: false, error: "modules.set_enabled requires module" }
+      if (typeof m.enabled !== "boolean") return { valid: false, error: "modules.set_enabled requires enabled boolean" }
+      return { valid: true }
+    },
+    "modules.update": (m) => {
+      if (typeof m.module !== "string" || !m.module) return { valid: false, error: "modules.update requires module" }
+      if (!m.patch || typeof m.patch !== "object") return { valid: false, error: "modules.update requires patch object" }
+      return { valid: true }
+    },
+    "workspace.pick": () => ({ valid: true }),
+    "workspace.set": (m) => {
+      if (typeof m.thread_id !== "string" || !m.thread_id) return { valid: false, error: "workspace.set requires thread_id" }
+      if (typeof m.path !== "string" || !m.path) return { valid: false, error: "workspace.set requires path" }
+      return { valid: true }
+    },
+    "netsec.authorize_task": (m) => {
+      if (typeof m.thread_id !== "string" || !m.thread_id) return { valid: false, error: "netsec.authorize_task requires thread_id" }
+      if (m.authorized !== true) return { valid: false, error: "netsec.authorize_task requires authorized:true" }
+      if (m.user_gesture !== true) return { valid: false, error: "netsec.authorize_task requires user_gesture:true" }
+      if (!Array.isArray(m.targets) || m.targets.length === 0) return { valid: false, error: "netsec.authorize_task requires targets[]" }
       return { valid: true }
     },
     "apps.list": () => ({ valid: true }),

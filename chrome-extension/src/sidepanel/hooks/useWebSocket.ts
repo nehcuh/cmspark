@@ -548,6 +548,19 @@ export function useWebSocket() {
           dispatch({ type: "SET_SKILLS", skills: msg.skills })
           break
 
+        case "pack.applied":
+          // Thread fields updated by companion (mission_pack_id, tool_whitelist, …)
+          if (msg.thread?.id) {
+            dispatch({ type: "UPSERT_THREAD", thread: msg.thread })
+          } else {
+            chrome.runtime.sendMessage({ type: "thread.list" })
+          }
+          break
+
+        case "modules.updated":
+          // PacksPanel listens directly; no store field required for P0
+          break
+
         case "mcp.list":
         case "mcp.servers.updated":
           if (Array.isArray(msg.servers)) {

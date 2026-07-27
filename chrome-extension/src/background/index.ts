@@ -756,6 +756,16 @@ function setupMessageHandlers() {
       case "knowledge.import":
       case "knowledge.import_directory":
       case "knowledge.delete":
+      case "pack.list":
+      case "pack.install":
+      case "pack.apply":
+      case "pack.uninstall":
+      case "modules.list":
+      case "modules.set_enabled":
+      case "modules.update":
+      case "workspace.pick":
+      case "workspace.set":
+      case "netsec.authorize_task":
       case "history.query":
       case "history.export":
       case "mcp.list":

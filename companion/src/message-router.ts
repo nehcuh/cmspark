@@ -1357,6 +1357,165 @@ export async function handleMessage(
       skillEngine.deleteKnowledge(rest.name)
       return { type: "knowledge.deleted", name: rest.name }
 
+    // --- Mission Packs (P0) ---
+    case "pack.list": {
+      const { listInstalledPacks } = await import("./packs/pack-engine")
+      return { type: "pack.list", packs: listInstalledPacks(getConfig()) }
+    }
+    case "pack.install": {
+      const { installPackFromDirectory, installPackFromZip } = await import("./packs/pack-engine")
+      if (rest.zip_path && typeof rest.zip_path === "string") {
+        const r = installPackFromZip(rest.zip_path, skillEngine, { force: !!rest.force })
+        if (!r.ok) return { type: "error", error: r.error }
+        return { type: "pack.installed", id: r.id, packs: (await import("./packs/pack-engine")).listInstalledPacks() }
+      }
+      if (rest.dir && typeof rest.dir === "string") {
+        const r = installPackFromDirectory(rest.dir, skillEngine, { force: !!rest.force })
+        if (!r.ok) return { type: "error", error: r.error }
+        return {
+          type: "pack.installed",
+          id: r.id,
+          packs: (await import("./packs/pack-engine")).listInstalledPacks(),
+        }
+      }
+      return { type: "error", error: "pack.install requires dir or zip_path" }
+    }
+    case "pack.apply": {
+      const { applyPack } = await import("./packs/pack-engine")
+      if (!rest.pack_id || !rest.thread_id) {
+        return { type: "error", error: "pack_id and thread_id required" }
+      }
+      const r = applyPack(rest.pack_id, rest.thread_id, threadManager, skillEngine, {
+        workspace_path: rest.workspace_path,
+      })
+      if (!r.ok) {
+        return { type: "error", error: r.error, code: (r as any).code }
+      }
+      return { type: "pack.applied", thread: r.thread }
+    }
+    case "pack.uninstall": {
+      const { uninstallPack, listInstalledPacks } = await import("./packs/pack-engine")
+      if (!rest.pack_id) return { type: "error", error: "pack_id required" }
+      const r = uninstallPack(rest.pack_id, threadManager, skillEngine)
+      if (!r.ok) return { type: "error", error: r.error }
+      return {
+        type: "pack.uninstalled",
+        pack_id: rest.pack_id,
+        restored_threads: r.restored_threads,
+        packs: listInstalledPacks(),
+      }
+    }
+    case "modules.list": {
+      const config = getConfig()
+      return {
+        type: "modules.list",
+        capability_profile: config.capability_profile || "community",
+        modules: config.modules || {},
+      }
+    }
+    case "modules.set_enabled": {
+      const { setModuleEnabled } = await import("./capability/modules")
+      if (!rest.module || typeof rest.module !== "string") {
+        return { type: "error", error: "module required" }
+      }
+      if (typeof rest.enabled !== "boolean") {
+        return { type: "error", error: "enabled boolean required" }
+      }
+      const r = setModuleEnabled(rest.module, rest.enabled, rest.by || "user")
+      if (!r.ok) return { type: "error", error: r.error }
+      return { type: "modules.updated", modules: r.modules }
+    }
+    case "modules.update": {
+      const { updateModuleConfig } = await import("./capability/modules")
+      if (!rest.module || typeof rest.module !== "string") {
+        return { type: "error", error: "module required" }
+      }
+      const r = updateModuleConfig(rest.module as any, rest.patch || {})
+      if (!r.ok) return { type: "error", error: r.error }
+      return { type: "modules.updated", module: r.module, modules: getConfig().modules }
+    }
+    case "workspace.pick": {
+      // Optional thread_id: pick + bind in one step (avoids UI race / stale set)
+      const result = await pickFolderNative()
+      if (result.error) return { type: "workspace.pick_result", error: result.error }
+      if (!result.path) return { type: "workspace.pick_result", error: "未选择文件夹" }
+      const { recordNativePick, setWorkspaceRoot } = await import("./capability/workspace")
+      let abs = result.path
+      try {
+        abs = fs.realpathSync(path.resolve(result.path))
+      } catch {
+        /* keep result.path */
+      }
+      recordNativePick(abs)
+      if (typeof rest.thread_id === "string" && rest.thread_id) {
+        const thread = threadManager.get(rest.thread_id)
+        if (!thread) {
+          return { type: "workspace.pick_result", path: abs, error: `thread not found: ${rest.thread_id}` }
+        }
+        const bind = setWorkspaceRoot(abs)
+        if (!bind.ok) return { type: "workspace.pick_result", path: abs, error: bind.error }
+        threadManager.update(rest.thread_id, { workspace_root: bind.path } as any)
+        return {
+          type: "workspace.pick_result",
+          path: bind.path,
+          bound: true,
+          thread: threadManager.get(rest.thread_id),
+        }
+      }
+      return { type: "workspace.pick_result", path: abs, bound: false }
+    }
+    case "workspace.set": {
+      if (!rest.thread_id) return { type: "error", error: "thread_id required" }
+      const { setWorkspaceRoot } = await import("./capability/workspace")
+      const pathVal = typeof rest.path === "string" ? rest.path : ""
+      const r = setWorkspaceRoot(pathVal)
+      if (!r.ok) return { type: "error", error: r.error }
+      const thread = threadManager.get(rest.thread_id)
+      if (!thread) return { type: "error", error: "thread not found" }
+      threadManager.update(rest.thread_id, { workspace_root: r.path } as any)
+      return { type: "workspace.set_result", thread: threadManager.get(rest.thread_id) }
+    }
+    case "netsec.authorize_task": {
+      if (!rest.thread_id) return { type: "error", error: "thread_id required" }
+      if (rest.authorized !== true) {
+        return { type: "error", error: "authorized must be true (user must explicitly confirm)" }
+      }
+      // Require explicit UI confirmation flag from PacksPanel (user clicked confirm)
+      if (rest.user_gesture !== true) {
+        return {
+          type: "error",
+          error: "user_gesture required — authorization must follow an explicit UI confirmation",
+        }
+      }
+      const targets = Array.isArray(rest.targets)
+        ? rest.targets.filter((t: any) => typeof t === "string" && t.trim())
+        : []
+      if (targets.length === 0) return { type: "error", error: "targets required" }
+      const { getModule } = await import("./capability/modules")
+      const { assertTargetsAllowed } = await import("./netsec/scope")
+      const mod = getModule("netsec")
+      const allowlist = mod?.target_allowlist || []
+      const scope = assertTargetsAllowed(targets, allowlist)
+      if (!scope.ok) return { type: "error", error: scope.error }
+      const thread = threadManager.get(rest.thread_id)
+      if (!thread) return { type: "error", error: "thread not found" }
+      const auth = {
+        authorized: true as const,
+        targets,
+        at: new Date().toISOString(),
+      }
+      threadManager.update(rest.thread_id, { netsec_task_auth: auth } as any)
+      const { appendCapabilityAudit } = await import("./packs/audit-log")
+      appendCapabilityAudit({
+        type: "netsec.task_auth",
+        targets,
+        by: rest.by || "user",
+        at: auth.at,
+        thread_id: rest.thread_id,
+      })
+      return { type: "netsec.authorized", thread: threadManager.get(rest.thread_id) }
+    }
+
     // --- Skill-craft ---
     case "skill.craft": {
       if (!rest.thread_id) return { type: "error", error: "thread_id required" }

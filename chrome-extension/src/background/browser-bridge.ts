@@ -740,18 +740,208 @@ export class BrowserBridge {
     return { success: true }
   }
 
+  /**
+   * Scroll the page. X/Twitter and many SPAs do NOT scroll `window` — the feed
+   * lives in an overflow:auto container. Blind window.scrollBy / mouseWheel at
+   * (300,300) often reports success while the user sees no movement.
+   * Prefer the largest scrollable element; return before/after so the agent can verify.
+   */
   private async scroll(params: Record<string, any>): Promise<ToolResult> {
     const tabId = this.getTabId(params)
-    const deltaX = params.deltaX || 0
-    const deltaY = params.deltaY || params.amount || 300
+    const deltaX = Number(params.deltaX || 0) || 0
+    const deltaY = Number(params.deltaY ?? params.amount ?? 500) || 500
+    const x = Number(params.x || 400) || 400
+    const y = Number(params.y || 400) || 400
+
+    // Prefer MAIN world so SPA scroll containers (X timeline) are visible/modifiable.
     try {
-      await this.sendCdp(tabId, "Input.dispatchMouseEvent", {
-        type: "mouseWheel", x: params.x || 300, y: params.y || 300, deltaX, deltaY,
+      const injected = await chrome.scripting.executeScript({
+        target: { tabId },
+        world: "MAIN",
+        func: (dx: number, dy: number, wheelX: number, wheelY: number) => {
+          type ScrollReport = {
+            mode: string
+            moved: boolean
+            before: number
+            after: number
+            deltaRequested: number
+            tag?: string
+            testid?: string | null
+            scrollHeight?: number
+            clientHeight?: number
+            windowScrollY?: number
+          }
+
+          const isScrollable = (el: Element): el is HTMLElement => {
+            if (!(el instanceof HTMLElement)) return false
+            const st = getComputedStyle(el)
+            const oy = st.overflowY
+            if (oy !== "auto" && oy !== "scroll" && oy !== "overlay") return false
+            return el.scrollHeight > el.clientHeight + 40 && el.clientHeight > 80
+          }
+
+          const pickScrollable = (): HTMLElement | null => {
+            const prefs = [
+              '[data-testid="primaryColumn"]',
+              'main[role="main"]',
+              '[role="main"]',
+              '[data-testid="cellInnerDiv"]',
+              "div[aria-label*='Timeline']",
+              "section[role='region']",
+            ]
+            for (const sel of prefs) {
+              const el = document.querySelector(sel)
+              if (el && isScrollable(el)) return el
+              // primaryColumn may nest the real scroller
+              if (el) {
+                const nested = Array.from(el.querySelectorAll("*")).find(isScrollable)
+                if (nested) return nested as HTMLElement
+              }
+            }
+            let best: HTMLElement | null = null
+            let bestRoom = 0
+            for (const el of Array.from(document.querySelectorAll("body *"))) {
+              if (!isScrollable(el)) continue
+              const room = el.scrollHeight - el.clientHeight
+              if (room > bestRoom) {
+                bestRoom = room
+                best = el
+              }
+            }
+            return best
+          }
+
+          const winBefore = window.scrollY || document.documentElement.scrollTop || 0
+          const target = pickScrollable()
+
+          if (target) {
+            const before = target.scrollTop
+            target.scrollBy({ left: dx, top: dy, behavior: "auto" })
+            if (Math.abs(target.scrollTop - before) < 2 && dy !== 0) {
+              target.scrollTop = before + dy
+            }
+            // Dispatch wheel at center as well (some React listeners need it)
+            try {
+              const r = target.getBoundingClientRect()
+              const cx = r.left + Math.min(r.width / 2, 200)
+              const cy = r.top + Math.min(r.height / 2, 200)
+              target.dispatchEvent(
+                new WheelEvent("wheel", {
+                  bubbles: true,
+                  cancelable: true,
+                  deltaX: dx,
+                  deltaY: dy,
+                  clientX: cx,
+                  clientY: cy,
+                }),
+              )
+            } catch {
+              /* ignore */
+            }
+            const after = target.scrollTop
+            return {
+              mode: "element",
+              moved: Math.abs(after - before) >= 2,
+              before,
+              after,
+              deltaRequested: dy,
+              tag: target.tagName,
+              testid: target.getAttribute("data-testid"),
+              scrollHeight: target.scrollHeight,
+              clientHeight: target.clientHeight,
+              windowScrollY: winBefore,
+            } satisfies ScrollReport
+          }
+
+          window.scrollBy(dx, dy)
+          // Fallback synthetic wheel on document
+          try {
+            document.dispatchEvent(
+              new WheelEvent("wheel", {
+                bubbles: true,
+                cancelable: true,
+                deltaX: dx,
+                deltaY: dy,
+                clientX: wheelX,
+                clientY: wheelY,
+              }),
+            )
+          } catch {
+            /* ignore */
+          }
+          const winAfter = window.scrollY || document.documentElement.scrollTop || 0
+          return {
+            mode: "window",
+            moved: Math.abs(winAfter - winBefore) >= 2,
+            before: winBefore,
+            after: winAfter,
+            deltaRequested: dy,
+            windowScrollY: winAfter,
+          } satisfies ScrollReport
+        },
+        args: [deltaX, deltaY, x, y],
       })
-    } catch {
-      await this.scriptingExecute(tabId, `window.scrollBy(${deltaX}, ${deltaY})`)
+
+      const data = injected?.[0]?.result as
+        | {
+            mode: string
+            moved: boolean
+            before: number
+            after: number
+            deltaRequested: number
+          }
+        | undefined
+
+      // CDP mouseWheel as additional signal (helps some pages when element scroll failed)
+      if (!data?.moved) {
+        try {
+          await this.sendCdp(tabId, "Input.dispatchMouseEvent", {
+            type: "mouseWheel",
+            x,
+            y,
+            deltaX,
+            deltaY,
+          })
+        } catch {
+          /* ignore */
+        }
+      }
+
+      if (data && data.moved === false) {
+        return {
+          success: true,
+          data: {
+            ...data,
+            warning:
+              "Scroll did not change scrollTop (common on X/Twitter SPA if feed scroller not found). " +
+              "Try press_key PageDown, or evaluate scrolling [data-testid=primaryColumn] / [role=main]. " +
+              "Do NOT claim the page scrolled without re-checking get_page_text.",
+          },
+        }
+      }
+
+      return { success: true, data: data || { mode: "unknown", moved: true } }
+    } catch (e: any) {
+      try {
+        await this.sendCdp(tabId, "Input.dispatchMouseEvent", {
+          type: "mouseWheel",
+          x,
+          y,
+          deltaX,
+          deltaY,
+        })
+      } catch {
+        await this.scriptingExecute(tabId, `window.scrollBy(${deltaX}, ${deltaY})`)
+      }
+      return {
+        success: true,
+        data: {
+          mode: "fallback",
+          moved: null,
+          warning: `Scroll fallback used (${e?.message || e}). Verify with get_page_text.`,
+        },
+      }
     }
-    return { success: true }
   }
 
   private async pressKey(params: Record<string, any>): Promise<ToolResult> {

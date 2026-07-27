@@ -682,6 +682,11 @@ export function classifyError(errorMessage: string, context?: { toolName?: strin
     // a near-miss or Retina image-pixel vs client-logical mismatch.
     "outside client rect",
     "out_of_bounds",
+    // Mission Pack DevSec: missing workspace is user-actionable (pick folder)
+    "workspace_root not set",
+    "pick a folder first",
+    "module_disabled",
+    "workspace path must come from",
   ]
   if (recoverable.some(p => msg.includes(p))) {
     return "recoverable"

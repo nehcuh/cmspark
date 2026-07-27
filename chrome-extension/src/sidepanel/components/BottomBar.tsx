@@ -7,6 +7,7 @@ import type { CapabilityLevel } from "../types"
 import { KnowledgeSubPanel } from "./KnowledgeSubPanel"
 import { McpPanel } from "./McpPanel"
 import { AppsPanel } from "./AppsPanel"
+import { PacksPanel } from "./PacksPanel"
 import { tokens } from "../ui/tokens"
 import {
   IconTabs,
@@ -17,7 +18,7 @@ import {
   IconApps,
 } from "../ui/icons"
 
-type Panel = "tabs" | "history" | "skills" | "knowledge" | "mcp" | "apps"
+type Panel = "tabs" | "history" | "skills" | "knowledge" | "packs" | "mcp" | "apps"
 
 type TabDef = {
   id: Panel
@@ -30,6 +31,7 @@ const ALL_TABS: TabDef[] = [
   { id: "history", label: "历史", Icon: IconHistory },
   { id: "skills", label: "技能", Icon: IconSkills },
   { id: "knowledge", label: "知识", Icon: IconKnowledge },
+  { id: "packs", label: "任务包", Icon: IconSkills },
   { id: "mcp", label: "MCP", Icon: IconMcp },
   { id: "apps", label: "应用", Icon: IconApps },
 ]
@@ -88,6 +90,10 @@ export function BottomBar({ capabilityLevel }: { capabilityLevel: CapabilityLeve
             if (tab.id === "knowledge") {
               chrome.runtime.sendMessage({ type: "knowledge.list" })
             }
+            if (tab.id === "packs") {
+              chrome.runtime.sendMessage({ type: "pack.list" })
+              chrome.runtime.sendMessage({ type: "modules.list" })
+            }
             if (tab.id === "mcp") {
               chrome.runtime.sendMessage({ type: "mcp.list" })
             }
@@ -124,6 +130,7 @@ export function BottomBar({ capabilityLevel }: { capabilityLevel: CapabilityLeve
           {activePanel === "history" && <HistoryPanel />}
           {activePanel === "skills" && <SkillsPanel />}
           {activePanel === "knowledge" && <KnowledgeSubPanel />}
+          {activePanel === "packs" && <PacksPanel />}
           {activePanel === "mcp" && <McpPanel />}
           {activePanel === "apps" && <AppsPanel />}
         </div>

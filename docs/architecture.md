@@ -1,6 +1,6 @@
 # CMspark Browser Agent — 架构文档
 
-> 版本: 2.0.0 | 日期: 2026-06-08 | 状态: 已确认（同步代码库现状）
+> 版本: 2.1.0 | 日期: 2026-07-27 | 状态: 已确认（同步代码库现状；含 Mission Pack PR #77）
 
 ---
 
@@ -73,17 +73,18 @@
     │  │  └────────────────────────────┘  │ │
     │  │                                    │ │
     │  │  Data: ~/.cmspark-agent/          │ │
-    │  │  ├── config.json                  │ │
+    │  │  ├── config.json   (+ capability_profile / modules) │ │
     │  │  ├── skills/          (用户技能)  │ │
     │  │  ├── builtin-skills/  (内置技能)  │ │
     │  │  │   └── security/    (安全技能)  │ │
-    │  │  ├── threads/         (线程数据)  │ │
+    │  │  ├── packs/installed/ (Mission Packs) │ │
+    │  │  ├── threads/         (线程数据 + workspace_root) │ │
     │  │  ├── knowledge/       (知识库)    │ │
     │  │  │   ├── global/      (全局知识)  │ │
     │  │  │   └── sites/       (站点知识)  │ │
     │  │  ├── history.db       (操作历史)  │ │
     │  │  ├── cache/           (缓存)      │ │
-    │  │  └── logs/                        │ │
+    │  │  └── logs/            (+ capability-audit.jsonl) │ │
     │  └──────────────────────────────────┘ │
     └───────────────────────────────────────┘
 ```
@@ -569,3 +570,60 @@ MarkdownRenderer useEffect（renderMermaid=true，仅落定消息）
 - **`htmlLabels:false` mandatory**：默认 `htmlLabels:true` 把节点标签渲成 `<foreignObject>`，被 DOMPurify SVG profile 剥掉 → 节点文字消失。
 - **流式隔离**：mermaid 仅在落定消息渲染（plan A），流式期间 ` ```mermaid ` 当代码块。
 - **加载**：各 diagram 类型为 Parcel 自动 code-split 的懒加载 chunk；core 经 idle/流式双预取，面板秒开。
+
+---
+
+## 7. Mission Pack（任务包）与企业能力模块
+
+> 详见 [ADR-014](adr/014-mission-pack-enterprise-modules.md)。产品结论与完整设计见  
+> `docs/decisions/v1.3/scenario-packs-product-conclusion-2026-07-26.md`、  
+> `docs/superpowers/specs/2026-07-26-mission-pack-enterprise-design.md`。  
+> 使用说明：`docs/mission-pack-usage.md`。
+
+### 7.1 概念
+
+```
+Enterprise Module（config 级 opt-in）
+  appsec | devsec-workspace | shell | netsec
+        │  requires_modules
+        ▼
+Mission Pack（pack.yaml → pack.apply → Thread 字段）
+  skills + knowledge + tool_whitelist + system_prompt_append + snapshot
+```
+
+- **Pack 非 runtime**：不新建执行引擎，只组合已有 SkillEngine / Thread / 工具策略。
+- **双通道**：`capability_profile: community | enterprise`；shell/netsec 启用要求 enterprise。
+
+### 7.2 数据流（apply）
+
+```
+UI「应用到当前线程」→ pack.apply { pack_id, thread_id }
+  → validate installed pack + module gates
+  → 内存从 pre-pack snapshot 计算 whitelist / skills / append
+  → threadManager.applyPackPatch（单次原子写）
+  → capability-audit.jsonl
+```
+
+### 7.3 模块与 Companion 工具
+
+| 模块 | 工具 | 要点 |
+|------|------|------|
+| devsec-workspace | `workspace_list_dir` / `workspace_read_file` | `workspace_root` 仅原生 pick 绑定；路径 containment |
+| shell | `shell_exec` | 单次命令；L2 **forceConfirm**；非交互 PTY |
+| netsec | `netsec_port_scan` | 空 allowlist 拒绝；任务授权 + forceConfirm；TCP connect only |
+| appsec | 内置 Pack `appsec-prd-review` | 威胁建模 + 页面 checklist（浏览器工具 allowlist） |
+
+### 7.4 模块（代码路径）
+
+| 路径 | 职责 |
+|------|------|
+| `companion/src/packs/` | `pack-engine` / `validator` / `audit-log` / builtin packs |
+| `companion/src/capability/` | `modules` / `workspace` / `shell` |
+| `companion/src/netsec/` | `scope`（CIDR/hostname）/ `scan`（TCP 探针） |
+| `chrome-extension/.../PacksPanel.tsx` | 任务包 UI（L0/L1 底栏） |
+
+### 7.5 关键约束
+
+- Pack **禁止**写入 `auto_approve_dangerous` / god-mode 等放宽键。
+- `workspace_root not set` / `module_disabled` 为 **recoverable** 错误，引导用户 UI 操作。
+- 审计日志：`logs/capability-audit.jsonl`（0o600、append、轮转）。

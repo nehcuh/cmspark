@@ -1,0 +1,43 @@
+schema_version: 1
+id: appsec-prd-review
+name: 应用安全审查
+description: 对当前页/PRD 做 STRIDE 威胁建模与页面安全 checklist
+version: 0.1.0
+channel: community
+min_capability: L1
+requires_modules:
+  - appsec
+skills:
+  - ./skills/threat-model-stride.md
+  - ./skills/page-security-audit.md
+knowledge:
+  - ./knowledge/owasp-baseline.md
+mcp_servers: []
+tools:
+  mode: allowlist
+  allow:
+    - list_tabs
+    - navigate
+    - get_page_text
+    - get_page_html
+    - screenshot
+    - use_skill
+  deny:
+    - host_computer
+    - osascript_eval
+system_prompt_append: |
+  你是应用安全审查助手。输出结构化报告：
+  1) 风险列表（严重度/影响/可能性）
+  2) 证据（URL 或页面摘录）
+  3) 修复建议与待办
+  规则：不执行未确认的高危操作；未实际运行的扫描不得声称已完成；优先基于当前打开页面与用户提供的 PRD 文本。
+thread_defaults:
+  skill_selection_mode: manual
+  knowledge_selection_mode: manual
+  mcp_selection_mode: manual
+workspace:
+  type: none
+author: cmspark
+tags:
+  - security
+  - appsec

@@ -295,14 +295,17 @@ export function getToolDefinitions(): ToolDefinition[] {
       type: "function",
       function: {
         name: "scroll",
-        description: "滚动页面",
+        description:
+          "滚动页面。优先滚动最大的 overflow 容器（X/Twitter 等 SPA 不滚动 window）。返回 before/after/moved；若 moved=false 则页面可能未动，不要声称已翻页，应改用 press_key(PageDown) 或对 [role=main]/[data-testid=primaryColumn] evaluate scrollBy，并用 get_page_text 复核。",
         parameters: {
           type: "object",
           properties: {
             tabId: { type: "number" },
             deltaX: { type: "number", description: "水平滚动量" },
-            deltaY: { type: "number", description: "垂直滚动量" },
+            deltaY: { type: "number", description: "垂直滚动量（正数向下）" },
             amount: { type: "number", description: "垂直滚动量（别名）" },
+            x: { type: "number", description: "可选：滚轮事件 clientX，默认 400" },
+            y: { type: "number", description: "可选：滚轮事件 clientY，默认 400" },
           },
           required: ["tabId"],
         },
@@ -477,6 +480,76 @@ export function getToolDefinitions(): ToolDefinition[] {
             name: { type: "string", description: "Skill name to load" },
           },
           required: ["name"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "workspace_list_dir",
+        description:
+          "List files under the thread's DevSec workspace_root (relative paths only). Requires modules.devsec-workspace enabled AND workspace_root already set. If error says workspace_root not set, stop and ask the user to click Side Panel → 任务包 → 「选择工作区」 first — never guess absolute paths.",
+        parameters: {
+          type: "object",
+          properties: {
+            path: { type: "string", description: "Relative path under workspace_root (default '.')" },
+          },
+          required: [],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "workspace_read_file",
+        description:
+          "Read a text file under the thread's DevSec workspace_root (max ~512KB). Requires modules.devsec-workspace enabled.",
+        parameters: {
+          type: "object",
+          properties: {
+            path: { type: "string", description: "Relative file path under workspace_root" },
+          },
+          required: ["path"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "shell_exec",
+        description:
+          "Run ONE shell command on the companion host (enterprise shell module). Always requires user confirmation (confirm_per_command). Prefer workspace_* tools for reading repo files. Do not use for unauthorized network scanning.",
+        parameters: {
+          type: "object",
+          properties: {
+            command: { type: "string", description: "Single shell command line" },
+            cwd: { type: "string", description: "Optional working directory (absolute). Defaults to process cwd or workspace_root if set." },
+          },
+          required: ["command"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "netsec_port_scan",
+        description:
+          "Enterprise-only TCP connect probe against allowlisted hosts (modules.netsec). Requires non-empty target_allowlist, task authorization on the thread, and user L2 confirmation. Empty allowlist denies all scans.",
+        parameters: {
+          type: "object",
+          properties: {
+            targets: {
+              type: "array",
+              items: { type: "string" },
+              description: "Hostnames or IPv4 addresses to probe (must be in allowlist)",
+            },
+            ports: {
+              type: "array",
+              items: { type: "integer" },
+              description: "Optional port list (default common ports, max 32)",
+            },
+          },
+          required: ["targets"],
         },
       },
     },

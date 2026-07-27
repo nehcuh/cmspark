@@ -1,6 +1,6 @@
 # CMspark Browser Agent — 项目目标
 
-> 版本: 1.2.0 | 日期: 2026-06-08 | 当前阶段：安全稳定化 MVP（核心已完成）→ 功能扩展中
+> 版本: 1.3.0 | 日期: 2026-07-27 | 当前阶段：安全稳定化 MVP（核心已完成）→ 功能扩展中
 
 ---
 
@@ -30,6 +30,19 @@
 - **安全（特权页面）**：`securityLevel:'strict'` + `htmlLabels:false`（纯 SVG）→ DOMPurify SVG profile 二次过；不可信 LLM 输出的 SVG 双层净化。
 - **体验**：仅落定消息渲染（流式当代码块）+ 响应式缩放 + 点击新标签页开全尺寸（320px 窄面板可读性兜底）+ 懒加载双预取（面板秒开、首图不 stall）+ 坏语法回退。
 - 详见 [ADR-009](adr/009-mermaid-rendering.md)。
+
+---
+
+## 已交付功能扩展：Mission Pack 任务包 + 企业能力模块（2026-07-26，PR #77）
+
+在「浏览器 Agent」之上增加**可安装场景组合层**与**企业本地 opt-in 高危能力**（非 Chrome 商店默认能力）：
+
+- **Mission Pack**：`pack.yaml` 组合 skills / knowledge / tool 白名单 / system_prompt_append → 一键应用到 Thread（非新 runtime）。
+- **内置 AppSec Pack**：`appsec-prd-review`（威胁建模 + 页面安全 checklist）。
+- **企业模块（默认关闭）**：`devsec-workspace`（本机目录 list/read）、`shell_exec`（单次受控命令）、`netsec_port_scan`（TCP 探测 + allowlist + 任务授权）。
+- **双通道**：`capability_profile: community | enterprise`；shell/netsec 启用需 enterprise。
+- **UI**：Side Panel 底栏「任务包」；工作区须原生「选择工作区」绑定。
+- 使用说明：[mission-pack-usage.md](mission-pack-usage.md)；决策：[ADR-014](adr/014-mission-pack-enterprise-modules.md)。
 
 ---
 
@@ -192,6 +205,12 @@ Agent 可以在用户授权下对任意标签页执行全部 26 种工具操作�
 - `thread.update`: 线程元数据更新 (pinned_tabs, alias)
 - `autoAliasThread()`: LLM 自动生成线程短标题
 
+### G19. Mission Pack / 企业场景能力 ✅ 已实现（PR #77）
+
+- Pack 平台：install / apply / uninstall + snapshot 回滚 + capability 审计日志
+- 企业模块 opt-in：workspace / shell_exec / netsec（community 默认不开放 shell/netsec）
+- 明确 **非目标**（本阶段）：交互式 PTY、捆绑 nmap、CWS 默认扫描能力
+
 ---
 
 ## 架构约束
@@ -202,7 +221,7 @@ Agent 可以在用户授权下对任意标签页执行全部 26 种工具操作�
 | **A2. 职责分离** | Extension 只做浏览器操作，LLM 推理和状态管理在 Companion |
 | **A3. Manifest V3** | Service Worker 后台，Alarm keep-alive，全部权限预声明 |
 | **A4. CLI 部署** | `cmspark-agent start/stop/status`，固定端口 23401 |
-| **A5. 数据目录** | `~/.cmspark-agent/`（config.json, skills/, threads/, history.db, logs/, cache/, knowledge/） |
+| **A5. 数据目录** | `~/.cmspark-agent/`（config.json, skills/, packs/, threads/, history.db, logs/, cache/, knowledge/） |
 | **A6. 通信协议** | WebSocket + OpenAI-compatible streaming，异步 tool 回路（Promise bridge） |
 
 ---

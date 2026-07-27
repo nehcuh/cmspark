@@ -73,6 +73,24 @@ export const TOOL_ARG_SCHEMAS: Record<string, z.ZodTypeAny> = {
     security_token: z.string().optional(),
   }),
 
+  // --- DevSec / Shell / NetSec (Mission Pack enterprise modules) ---
+  workspace_list_dir: z.object({
+    path: z.string().optional(),
+  }),
+  workspace_read_file: z.object({
+    path: z.string().min(1),
+  }),
+  shell_exec: z.object({
+    command: z.string().min(1).max(8000),
+    cwd: z.string().optional(),
+    security_token: z.string().optional(),
+  }),
+  netsec_port_scan: z.object({
+    targets: z.array(z.string().min(1)).min(1).max(16),
+    ports: z.array(z.number().int().min(1).max(65535)).max(32).optional(),
+    security_token: z.string().optional(),
+  }),
+
   // --- macOS osascript (high-risk: arbitrary AppleScript on the host) ---
   osascript_eval: z.object({
     expression: z.string().min(1),

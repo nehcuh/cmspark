@@ -117,6 +117,7 @@ export type ContextBarTabId =
   | "history"
   | "skills"
   | "knowledge"
+  | "packs"
   | "mcp"
   | "apps"
 
@@ -126,9 +127,9 @@ export function contextBarTabsForLevel(
 ): ContextBarTabId[] {
   switch (level) {
     case "chat":
-      return ["skills", "knowledge", "history"]
+      return ["skills", "knowledge", "packs", "history"]
     case "browser":
-      return ["tabs", "skills"]
+      return ["tabs", "skills", "packs"]
     case "computer":
       return ["tabs", "apps", "mcp"]
   }

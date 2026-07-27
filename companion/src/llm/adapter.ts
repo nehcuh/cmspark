@@ -340,7 +340,25 @@ ${hostUseRule12}${appIndexSection ? `\n\n${appIndexSection}` : ""}`
     .map(s => `## Safety Guard: ${s.name}\n${s.content}`)
     .join("\n\n")
 
-  const systemPrompt = [basePrompt, skillPrompt, safetyGuardContent].filter(Boolean).join("\n\n")
+  // Mission Pack / user system_prompt_append (config_override) — after skills, before safety guards
+  const threadForPrompt = threadManager.get(threadId)
+  const systemPromptAppend =
+    typeof threadForPrompt?.config_override?.system_prompt_append === "string"
+      ? threadForPrompt.config_override.system_prompt_append
+      : ""
+  const overrideSystemPrompt =
+    typeof threadForPrompt?.config_override?.system_prompt === "string"
+      ? threadForPrompt.config_override.system_prompt
+      : ""
+
+  const systemPrompt = [
+    overrideSystemPrompt || basePrompt,
+    skillPrompt,
+    systemPromptAppend,
+    safetyGuardContent,
+  ]
+    .filter(Boolean)
+    .join("\n\n")
 
   // Build messages array
   const history = threadManager.getMessages(threadId)
