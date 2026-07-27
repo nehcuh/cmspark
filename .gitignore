@@ -45,3 +45,16 @@ companion/sql-wasm.wasm
 # Claude Code local state
 .claude/
 .tmp/
+
+# Local agent / session tooling
+.omx/
+.superpowers/
+.grok/sessions/
+
+# Dual-review stderr dumps (keep .md reviews; drop .err)
+docs/audit/reviews/*.err
+
+# Scratch / temp captures
+tmp-*.png
+tmp-*.jpg
+*.tmp.png
