@@ -488,8 +488,8 @@ function ConfirmElevated({
               type="button"
               style={{
                 ...s.abortBtn,
-                background: nonceChallenge && !nonceMatches ? "#374151" : "#22c55e",
-                color: nonceChallenge && !nonceMatches ? "#9aa0a6" : "#052e16",
+                background: nonceChallenge && !nonceMatches ? "#374151" : tokens.success,
+                color: nonceChallenge && !nonceMatches ? tokens.darkMuted : "#052e16",
                 border: "none",
                 cursor: nonceChallenge && !nonceMatches ? "not-allowed" : "pointer",
               }}

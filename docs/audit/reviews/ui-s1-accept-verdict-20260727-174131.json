@@ -1,0 +1,8 @@
+{
+  "batch": "ui-s1-accept",
+  "timestamp": "20260727-174131",
+  "claude": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/ui-s1-accept-claude-20260727-174131.md" },
+  "pi": { "verdict": "APPROVE", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/ui-s1-accept-pi-20260727-174131.md" },
+  "both_approve": true,
+  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/ui-s1-accept-diff-20260727-174131.patch"
+}

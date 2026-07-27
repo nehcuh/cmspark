@@ -34,6 +34,34 @@ import {
   IconMore,
 } from "./ui/icons"
 
+/** Slash meta commands that open BottomBar panels (S1 discoverability). */
+const META_PANEL_SLASH: SkillMeta[] = [
+  {
+    name: "packs",
+    description: "打开任务包面板（底栏「更多」）",
+    type: "prompt_template",
+    builtin: true,
+    tags: ["meta-panel"],
+    site: "packs",
+  },
+  {
+    name: "board",
+    description: "打开任务板面板（底栏「更多」）",
+    type: "prompt_template",
+    builtin: true,
+    tags: ["meta-panel"],
+    site: "board",
+  },
+  {
+    name: "mcp",
+    description: "打开 MCP 面板",
+    type: "prompt_template",
+    builtin: true,
+    tags: ["meta-panel"],
+    site: "mcp",
+  },
+]
+
 // Error Boundary — catches rendering errors to prevent white screen
 class ErrorBoundary extends Component<{ children: React.ReactNode }, { error: Error | null }> {
   constructor(props: any) {
@@ -607,6 +635,18 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
     const slashIdx = beforeCursor.lastIndexOf("/")
     if (slashIdx === -1) return
 
+    // S1: meta panel openers — clear the slash token and open BottomBar panel
+    if (skill.tags?.includes("meta-panel") && skill.site) {
+      const afterCursor = text.substring(cursorPos)
+      const newText = (text.substring(0, slashIdx) + afterCursor).replace(/\s+$/, " ").trimStart()
+      setText(newText)
+      setSlashVisible(false)
+      window.dispatchEvent(
+        new CustomEvent("cmspark:open-context-panel", { detail: { panel: skill.site } }),
+      )
+      return
+    }
+
     // Replace from "/" to cursor with "/skill-name "
     const afterCursor = text.substring(cursorPos)
     const newText = text.substring(0, slashIdx) + "/" + skill.name + " " + afterCursor
@@ -621,6 +661,12 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
       textarea.setSelectionRange(newCursorPos, newCursorPos)
     }, 0)
   }
+
+  // S1: virtual slash entries for demoted panels (packs/board live under「更多」)
+  const slashSkills: SkillMeta[] = [
+    ...META_PANEL_SLASH,
+    ...state.skills,
+  ]
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // If popover is open and navigating/selecting, let the popover handle it
@@ -897,7 +943,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
           )}
         </div>
         <SlashCommandPopover
-          skills={state.skills}
+          skills={slashSkills}
           searchText={slashQuery}
           visible={slashVisible}
           anchorEl={textareaRef.current}

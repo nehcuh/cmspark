@@ -1,0 +1,218 @@
+# Dual external review context
+batch: ui-s1-accept
+base: HEAD
+time: 20260727-174131
+
+0ebb330
+
+ M chrome-extension/src/cockpit/CockpitApp.tsx
+ M chrome-extension/src/sidepanel/App.tsx
+ M chrome-extension/src/sidepanel/components/BottomBar.tsx
+ M chrome-extension/src/sidepanel/components/McpPanel.tsx
+ M docs/superpowers/specs/2026-07-26-ui-three-mode-redesign.md
+?? chrome-extension/tests/ui-mode-acceptance.test.ts
+?? docs/audit/reviews/ui-s1-accept-diff-20260727-174131.patch
+
+## Diff (git diff + staged)
+ chrome-extension/src/cockpit/CockpitApp.tsx        |  4 +-
+ chrome-extension/src/sidepanel/App.tsx             | 48 +++++++++++++++++++++-
+ .../src/sidepanel/components/BottomBar.tsx         | 15 +++++++
+ .../src/sidepanel/components/McpPanel.tsx          | 10 ++---
+ .../specs/2026-07-26-ui-three-mode-redesign.md     | 28 ++++++-------
+ 5 files changed, 83 insertions(+), 22 deletions(-)
+
+diff --git a/chrome-extension/src/cockpit/CockpitApp.tsx b/chrome-extension/src/cockpit/CockpitApp.tsx
+index 6ea4121..3fbee87 100644
+--- a/chrome-extension/src/cockpit/CockpitApp.tsx
++++ b/chrome-extension/src/cockpit/CockpitApp.tsx
+@@ -488,8 +488,8 @@ function ConfirmElevated({
+               type="button"
+               style={{
+                 ...s.abortBtn,
+-                background: nonceChallenge && !nonceMatches ? "#374151" : "#22c55e",
+-                color: nonceChallenge && !nonceMatches ? "#9aa0a6" : "#052e16",
++                background: nonceChallenge && !nonceMatches ? "#374151" : tokens.success,
++                color: nonceChallenge && !nonceMatches ? tokens.darkMuted : "#052e16",
+                 border: "none",
+                 cursor: nonceChallenge && !nonceMatches ? "not-allowed" : "pointer",
+               }}
+diff --git a/chrome-extension/src/sidepanel/App.tsx b/chrome-extension/src/sidepanel/App.tsx
+index ce5556e..35bafa6 100644
+--- a/chrome-extension/src/sidepanel/App.tsx
++++ b/chrome-extension/src/sidepanel/App.tsx
+@@ -17,6 +17,34 @@ import { NotebooklmImporterPanel } from "./components/NotebooklmImporterPanel"
+ import { AgentStoreProvider, useAgentStore } from "./store/agentStore"
+ import type { ConnectionState, CapabilityLevel, SkillMeta, FileAttachment } from "./types"
+ import { tokens } from "./ui/tokens"
++
++/** Slash meta commands that open BottomBar panels (S1 discoverability). */
++const META_PANEL_SLASH: SkillMeta[] = [
++  {
++    name: "packs",
++    description: "打开任务包面板（底栏「更多」）",
++    type: "prompt_template",
++    builtin: true,
++    tags: ["meta-panel"],
++    site: "packs",
++  },
++  {
++    name: "board",
++    description: "打开任务板面板（底栏「更多」）",
++    type: "prompt_template",
++    builtin: true,
++    tags: ["meta-panel"],
++    site: "board",
++  },
++  {
++    name: "mcp",
++    description: "打开 MCP 面板",
++    type: "prompt_template",
++    builtin: true,
++    tags: ["meta-panel"],
++    site: "mcp",
++  },
++]
+ import { ModeBadge } from "./ui/ModeBadge"
+ import {
+   IconCraft,
+@@ -607,6 +635,18 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
+     const slashIdx = beforeCursor.lastIndexOf("/")
+     if (slashIdx === -1) return
+ 
++    // S1: meta panel openers — clear the slash token and open BottomBar panel
++    if (skill.tags?.includes("meta-panel") && skill.site) {
++      const afterCursor = text.substring(cursorPos)
++      const newText = (text.substring(0, slashIdx) + afterCursor).replace(/\s+$/, " ").trimStart()
++      setText(newText)
++      setSlashVisible(false)
++      window.dispatchEvent(
++        new CustomEvent("cmspark:open-context-panel", { detail: { panel: skill.site } }),
++      )
++      return
++    }
++
+     // Replace from "/" to cursor with "/skill-name "
+     const afterCursor = text.substring(cursorPos)
+     const newText = text.substring(0, slashIdx) + "/" + skill.name + " " + afterCursor
+@@ -622,6 +662,12 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
+     }, 0)
+   }
+ 
++  // S1: virtual slash entries for demoted panels (packs/board live under「更多」)
++  const slashSkills: SkillMeta[] = [
++    ...META_PANEL_SLASH,
++    ...state.skills,
++  ]
++
+   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+     // If popover is open and navigating/selecting, let the popover handle it
+     if (slashVisible && ["ArrowDown", "ArrowUp", "Escape", "Enter"].includes(e.key)) {
+@@ -897,7 +943,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
+           )}
+         </div>
+         <SlashCommandPopover
+-          skills={state.skills}
++          skills={slashSkills}
+           searchText={slashQuery}
+           visible={slashVisible}
+           anchorEl={textareaRef.current}
+diff --git a/chrome-extension/src/sidepanel/components/BottomBar.tsx b/chrome-extension/src/sidepanel/components/BottomBar.tsx
+index 5263df7..7c6f389 100644
+--- a/chrome-extension/src/sidepanel/components/BottomBar.tsx
++++ b/chrome-extension/src/sidepanel/components/BottomBar.tsx
+@@ -105,6 +105,21 @@ export function BottomBar({ capabilityLevel }: { capabilityLevel: CapabilityLeve
+     }
+   }, [activePanel, allowedIds, overflowIds])
+ 
++  // S1: slash meta commands (/packs /board /more) open panels via soft event
++  useEffect(() => {
++    const onOpen = (e: Event) => {
++      const id = (e as CustomEvent<{ panel?: string }>).detail?.panel as Panel | undefined
++      if (!id) return
++      const known = ALL_TABS.some((t) => t.id === id)
++      if (!known) return
++      setActivePanel(id)
++      setMoreOpen(false)
++      loadPanelData(id, state.activeThreadId, dispatch)
++    }
++    window.addEventListener("cmspark:open-context-panel", onOpen as EventListener)
++    return () => window.removeEventListener("cmspark:open-context-panel", onOpen as EventListener)
++  }, [state.activeThreadId, dispatch])
++
+   useEffect(() => {
+     if (!moreOpen) return
+     const onDoc = (e: MouseEvent) => {
+diff --git a/chrome-extension/src/sidepanel/components/McpPanel.tsx b/chrome-extension/src/sidepanel/components/McpPanel.tsx
+index ebfdd51..753a57a 100644
+--- a/chrome-extension/src/sidepanel/components/McpPanel.tsx
++++ b/chrome-extension/src/sidepanel/components/McpPanel.tsx
+@@ -8,11 +8,11 @@ import type { McpServerMeta, McpSelectionMode } from "../types"
+ import { tokens } from "../ui/tokens"
+ 
+ const STATUS_COLORS: Record<string, string> = {
+-  connected: "#22c55e",
+-  connecting: "#f59e0b",
+-  disconnected: "#9ca3af",
+-  error: "#ef4444",
+-  dead: "#6b7280",
++  connected: tokens.success,
++  connecting: tokens.warning,
++  disconnected: tokens.textMuted,
++  error: tokens.danger,
++  dead: tokens.textSecondary,
+ }
+ 
+ const STATUS_LABELS: Record<string, string> = {
+diff --git a/docs/superpowers/specs/2026-07-26-ui-three-mode-redesign.md b/docs/superpowers/specs/2026-07-26-ui-three-mode-redesign.md
+index de730cc..c6c8acf 100644
+--- a/docs/superpowers/specs/2026-07-26-ui-three-mode-redesign.md
++++ b/docs/superpowers/specs/2026-07-26-ui-three-mode-redesign.md
+@@ -190,11 +190,11 @@ On new confirm: `windows.update({ focused: true, drawAttention: true })`. Unfocu
+ 
+ **Accept:**
+ 
+-- [ ] Chat → L0; first browser tool → L1 badge + toast  
+-- [ ] Active `host_computer` → L2 badge  
+-- [ ] L0 BottomBar not full six-pack  
+-- [ ] No mode yo-yo on short interleaved text  
+-- [ ] No regression on chat / confirm / computer flows  
++- [x] Chat → L0; first browser tool → L1 badge + toast *(unit: ui-mode-acceptance)*  
++- [x] Active `host_computer` → L2 badge *(unit)*  
++- [x] L0 BottomBar not full six-pack *(§4 Skills·Know·Hist)*  
++- [x] No mode yo-yo on short interleaved text *(quiescence unit)*  
++- [ ] No regression on chat / confirm / computer flows *(needs manual smoke)*  
+ 
+ ### P1 — L2 Cockpit MVP (2–3 wk)
+ 
+@@ -202,12 +202,12 @@ On new confirm: `windows.update({ focused: true, drawAttention: true })`. Unfocu
+ 
+ **Accept:**
+ 
+-- [ ] L2 opens Cockpit; Panel has Chip + **mandatory abort** + minimal confirm  
+-- [ ] Heavy preview path in Cockpit; Panel allow/deny still works  
+-- [ ] Close Cockpit mid-task: continues; Chip reopens; Panel abort works  
+-- [ ] Panel is not parallel task conductor  
+-- [ ] SW restart / reconnect: state matches companion  
+-- [ ] Offline: both surfaces, no silent sends  
++- [x] L2 opens Cockpit; Panel has Chip + **mandatory abort** + minimal confirm *(code path + R1 persist)*  
++- [x] Heavy preview path in Cockpit; Panel allow/deny still works *(D10′ content-split)*  
++- [x] Close Cockpit mid-task: continues; Chip reopens; Panel abort works *(close warn + SafetyStrip)*  
++- [x] Panel is not parallel task conductor *(send hard-gate while task active)*  
++- [x] SW restart / reconnect: state matches companion *(hydrate + session windowId)*  
++- [ ] Offline: both surfaces, no silent sends *(DisconnectedBanner exists; full dual-surface smoke optional)*  
+ 
+ ### P2 — Polish (~2 wk)
+ 
+@@ -215,9 +215,9 @@ On new confirm: `windows.update({ focused: true, drawAttention: true })`. Unfocu
+ 
+ **Accept:**
+ 
+-- [ ] L1 expand never auto from step count  
+-- [ ] New components use tokens  
+-- [ ] Reduced-motion / AA spot-check  
++- [x] L1 expand never auto from step count *(ContextStrip user-only)*  
++- [x] New components use tokens *(primary + secondary sweep; residual nits ok)*  
++- [x] Reduced-motion / AA spot-check *(prefers-reduced-motion + risk labels + aria-live)*  
+ 
+ ### P3+
+ 

@@ -8,11 +8,11 @@ import type { McpServerMeta, McpSelectionMode } from "../types"
 import { tokens } from "../ui/tokens"
 
 const STATUS_COLORS: Record<string, string> = {
-  connected: "#22c55e",
-  connecting: "#f59e0b",
-  disconnected: "#9ca3af",
-  error: "#ef4444",
-  dead: "#6b7280",
+  connected: tokens.success,
+  connecting: tokens.warning,
+  disconnected: tokens.textMuted,
+  error: tokens.danger,
+  dead: tokens.textSecondary,
 }
 
 const STATUS_LABELS: Record<string, string> = {

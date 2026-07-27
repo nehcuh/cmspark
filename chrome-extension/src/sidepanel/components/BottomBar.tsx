@@ -105,6 +105,21 @@ export function BottomBar({ capabilityLevel }: { capabilityLevel: CapabilityLeve
     }
   }, [activePanel, allowedIds, overflowIds])
 
+  // S1: slash meta commands (/packs /board /mcp) open panels via soft event
+  useEffect(() => {
+    const onOpen = (e: Event) => {
+      const id = (e as CustomEvent<{ panel?: string }>).detail?.panel as Panel | undefined
+      if (!id) return
+      const known = ALL_TABS.some((t) => t.id === id)
+      if (!known) return
+      setActivePanel(id)
+      setMoreOpen(false)
+      loadPanelData(id, state.activeThreadId, dispatch)
+    }
+    window.addEventListener("cmspark:open-context-panel", onOpen as EventListener)
+    return () => window.removeEventListener("cmspark:open-context-panel", onOpen as EventListener)
+  }, [state.activeThreadId, dispatch])
+
   useEffect(() => {
     if (!moreOpen) return
     const onDoc = (e: MouseEvent) => {

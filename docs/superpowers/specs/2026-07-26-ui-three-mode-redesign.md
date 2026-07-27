@@ -190,11 +190,11 @@ On new confirm: `windows.update({ focused: true, drawAttention: true })`. Unfocu
 
 **Accept:**
 
-- [ ] Chat → L0; first browser tool → L1 badge + toast  
-- [ ] Active `host_computer` → L2 badge  
-- [ ] L0 BottomBar not full six-pack  
-- [ ] No mode yo-yo on short interleaved text  
-- [ ] No regression on chat / confirm / computer flows  
+- [x] Chat → L0; first browser tool → L1 badge + toast *(unit: ui-mode-acceptance)*  
+- [x] Active `host_computer` → L2 badge *(unit)*  
+- [x] L0 BottomBar not full six-pack *(§4 Skills·Know·Hist)*  
+- [x] No mode yo-yo on short interleaved text *(quiescence unit)*  
+- [ ] No regression on chat / confirm / computer flows *(needs manual smoke)*  
 
 ### P1 — L2 Cockpit MVP (2–3 wk)
 
@@ -202,12 +202,12 @@ On new confirm: `windows.update({ focused: true, drawAttention: true })`. Unfocu
 
 **Accept:**
 
-- [ ] L2 opens Cockpit; Panel has Chip + **mandatory abort** + minimal confirm  
-- [ ] Heavy preview path in Cockpit; Panel allow/deny still works  
-- [ ] Close Cockpit mid-task: continues; Chip reopens; Panel abort works  
-- [ ] Panel is not parallel task conductor  
-- [ ] SW restart / reconnect: state matches companion  
-- [ ] Offline: both surfaces, no silent sends  
+- [x] L2 opens Cockpit; Panel has Chip + **mandatory abort** + minimal confirm *(code path + R1 persist)*  
+- [x] Heavy preview path in Cockpit; Panel allow/deny still works *(D10′ content-split)*  
+- [x] Close Cockpit mid-task: continues; Chip reopens; Panel abort works *(close warn + SafetyStrip)*  
+- [x] Panel is not parallel task conductor *(send hard-gate while task active)*  
+- [x] SW restart / reconnect: state matches companion *(hydrate + session windowId)*  
+- [ ] Offline: both surfaces, no silent sends *(DisconnectedBanner exists; full dual-surface smoke optional)*  
 
 ### P2 — Polish (~2 wk)
 
@@ -215,9 +215,9 @@ On new confirm: `windows.update({ focused: true, drawAttention: true })`. Unfocu
 
 **Accept:**
 
-- [ ] L1 expand never auto from step count  
-- [ ] New components use tokens  
-- [ ] Reduced-motion / AA spot-check  
+- [x] L1 expand never auto from step count *(ContextStrip user-only)*  
+- [x] New components use tokens *(primary + secondary sweep; residual nits ok)*  
+- [x] Reduced-motion / AA spot-check *(prefers-reduced-motion + risk labels + aria-live)*  
 
 ### P3+
 
