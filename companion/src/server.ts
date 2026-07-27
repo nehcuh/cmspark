@@ -41,6 +41,16 @@ import {
   HUD_SPIKE_THREAD_ID,
   HUD_SPIKE_TASK_ID,
 } from "./hud/spike"
+import {
+  enterpriseSessionTrust,
+  resolveEnterpriseTrustKey,
+  familyOfTool,
+  netsecScopeFingerprint,
+  type EnterpriseToolFamily,
+} from "./capability/enterprise-session-trust"
+import { checkNetsecScope } from "./netsec/scope"
+import { checkShellScope } from "./capability/shell"
+import { getModule, isModuleEnabled } from "./capability/modules"
 import { getThreadApprovals } from "./host-use/thread-approvals"
 import { APP_TOKEN_PATTERN, type AppEntry, type AppPolicy } from "./apps/types"
 import { securityPolicy, getTokenSecret } from "./security-policy"
@@ -1030,8 +1040,9 @@ export function createToolExecutor(ws: WebSocket) {
       // Coordinate computer-use: critical-class BY DESIGN (plan §E.3) — the
       // capability itself is the critical surface, so forceConfirm is
       // unconditional (god-mode / auto-approve still get the task dialog).
-      // shell_exec / netsec_port_scan: always force interactive confirm (never domain
-      // whitelist / god-mode skip) — Mission Pack design §8.3
+      // shell_exec / netsec_port_scan: force interactive confirm unless Plan A/B
+      // enterprise skip (scope ∩ first). God-mode / auto_approve_dangerous alone
+      // still do NOT skip these (ADR-014 + enterprise plan G1).
       // spawn_worker / ask_user / board_complete: real HITL (never LLM self-approve)
       const capabilityForceConfirm =
         toolName === "shell_exec" ||
@@ -1046,7 +1057,64 @@ export function createToolExecutor(ws: WebSocket) {
           : detectCriticalApis(code)
       const forceConfirm = criticalApis.length > 0
 
-      if ((!skipConfirmation || forceConfirm) && !hostComputerTrustSkip) {
+      // Plan A/B: enterprise L2 skip for shell/netsec only (G1–G5)
+      let enterpriseSkip = false
+      let enterpriseSkipReason: "enterprise_global" | "enterprise_session" | null = null
+      let enterpriseFamily: EnterpriseToolFamily | null = familyOfTool(toolName)
+      let enterpriseScopeFingerprint: string | undefined
+      if (enterpriseFamily) {
+        if (enterpriseFamily === "netsec") {
+          const mod = getModule("netsec")
+          const thread = actingThreadId ? threadManager.get(actingThreadId) : null
+          const scope = checkNetsecScope({
+            targets: Array.isArray(finalParams.targets) ? finalParams.targets.map(String) : [],
+            allowlist: mod?.target_allowlist || [],
+            requireTaskAuth: mod?.require_task_auth !== false,
+            taskAuth: (thread as any)?.netsec_task_auth || null,
+            moduleEnabled: isModuleEnabled("netsec"),
+          })
+          if (!scope.ok) {
+            return {
+              success: false,
+              error: scope.error,
+              data: { error_code: "NETSEC_SCOPE_DENIED" },
+            }
+          }
+          enterpriseScopeFingerprint = netsecScopeFingerprint(
+            scope.allowlist,
+            (thread as any)?.netsec_task_auth?.targets,
+          )
+        } else {
+          const scope = checkShellScope(String(finalParams.command || ""))
+          if (!scope.ok) {
+            return {
+              success: false,
+              error: scope.error,
+              data: { error_code: "SHELL_SCOPE_DENIED" },
+            }
+          }
+        }
+        const sec = securityConfig
+        const trustKey = resolveEnterpriseTrustKey(actingThreadId)
+        if (sec?.auto_approve_enterprise_tools === true) {
+          enterpriseSkip = true
+          enterpriseSkipReason = "enterprise_global"
+        } else if (
+          trustKey &&
+          enterpriseSessionTrust.isActive(
+            trustKey,
+            enterpriseFamily,
+            Date.now(),
+            enterpriseFamily === "netsec" ? enterpriseScopeFingerprint : null,
+          )
+        ) {
+          enterpriseSkip = true
+          enterpriseSkipReason = "enterprise_session"
+        }
+      }
+
+      // G1: enterpriseSkip is sibling of hostComputerTrustSkip — do not only clear forceConfirm
+      if ((!skipConfirmation || forceConfirm) && !hostComputerTrustSkip && !enterpriseSkip) {
         // Audit item 2: default-deny. ALL evaluate/osascript_eval calls require
         // interactive confirmation unless whitelisted above. The regex match
         // (safety.dangerousApis) becomes a risk-preview escalation hint shown to
@@ -1321,6 +1389,11 @@ export function createToolExecutor(ws: WebSocket) {
                   : (relevantApp ? [relevantApp] : []),
               criticalApis,
               ...(forceConfirm ? { riskLevel: "high" as const, autoConfirmEligible: false } : {}),
+              // Plan A: offer enterprise session trust when B is off and tool is shell/netsec
+              ...(enterpriseFamily &&
+              securityConfig.auto_approve_enterprise_tools !== true
+                ? { offerEnterpriseSessionTrust: true }
+                : {}),
               ...(winL2NonceChallenge ? { nonceChallenge: winL2NonceChallenge } : {}),
               // P1 (WP4): computer 类确认的完整预览文本走独立字段,绕过
               // code_preview 的 CODE_PREVIEW_LIMIT=1200 截断(30 动作 + 2000
@@ -1513,6 +1586,27 @@ export function createToolExecutor(ws: WebSocket) {
           })
         }
         if (hostApp) hostAppTier = "l2"
+        // Plan A: record enterprise session grant when user checked the box (per-family G3)
+        if (
+          decision?.approved &&
+          decision.addToEnterpriseSessionTrust === true &&
+          enterpriseFamily
+        ) {
+          const ek = resolveEnterpriseTrustKey(actingThreadId)
+          if (ek) {
+            enterpriseSessionTrust.grant(ek, [enterpriseFamily], {
+              scopeFingerprint:
+                enterpriseFamily === "netsec" ? enterpriseScopeFingerprint : undefined,
+            })
+            logger.info("security.enterprise_session_trust.granted", {
+              tool_call_id: toolCallId,
+              tool_name: toolName,
+              family: enterpriseFamily,
+              trust_key: ek,
+              thread_id: actingThreadId ?? null,
+            })
+          }
+        }
         if (forceConfirm) {
           logger.info("security.critical_capability_confirmed", {
             tool_call_id: toolCallId,
@@ -1520,6 +1614,7 @@ export function createToolExecutor(ws: WebSocket) {
             critical_apis: criticalApis,
             god_mode_active: securityConfig.allow_all_schemes === true,
             auto_approve_active: securityConfig.auto_approve_dangerous === true,
+            enterprise_auto_approve: securityConfig.auto_approve_enterprise_tools === true,
             relevant_domain: relevantDomain,
           })
         }
@@ -1555,6 +1650,21 @@ export function createToolExecutor(ws: WebSocket) {
             }
           }
         }
+      } else if (enterpriseSkip) {
+        logger.info("security.enterprise_auto_approved", {
+          tool_call_id: toolCallId,
+          tool: toolName,
+          reason: enterpriseSkipReason,
+          thread_id: actingThreadId ?? null,
+          targets:
+            enterpriseFamily === "netsec" && Array.isArray(finalParams.targets)
+              ? finalParams.targets.map(String)
+              : undefined,
+          command_prefix:
+            enterpriseFamily === "shell"
+              ? String(finalParams.command || "").slice(0, 64)
+              : undefined,
+        })
       } else {
         // App tab WP3: app_whitelist / thread_trust reasons precede the
         // domain_whitelist fallback (host_app never carries a domain).
@@ -2208,10 +2318,12 @@ export async function handleSecurityConfirmationResponse(ws: WebSocket, msg: any
   // Grill Q2: host_computer session auto-approve checkbox (validated in respondFrom
   // against relevantApps non-empty).
   const addToSessionTrust = msg.add_to_session_trust === true
+  const addToEnterpriseSessionTrust = msg.add_to_enterprise_session_trust === true
   // stop_thread always resolves as deny (even if client sent approved:true)
   const effectiveApproved = stopThread ? false : approved
   const respondResult = securityConfirmations.respondFrom(confirmationId, effectiveApproved, ws, nonceResponse, {
     addToSessionTrust: stopThread ? false : addToSessionTrust,
+    addToEnterpriseSessionTrust: stopThread ? false : addToEnterpriseSessionTrust,
   })
   const responded = respondResult.outcome === "resolved"
   if (respondResult.outcome === "unknown" || respondResult.outcome === "origin_mismatch") {

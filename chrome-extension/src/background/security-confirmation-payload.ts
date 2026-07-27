@@ -9,6 +9,7 @@
  * - nonce_response (string, when present)
  * - add_to_thread_whitelist (boolean true only)
  * - add_to_session_trust (boolean true only — host_computer grill Q2)
+ * - add_to_enterprise_session_trust (boolean true only — Plan A shell/netsec)
  * - stop_thread (boolean true only)
  * - stop_thread_id (string, when stop_thread and non-empty string)
  */
@@ -19,6 +20,7 @@ export function buildSecurityConfirmationWsPayload(message: {
   nonce_response?: unknown
   add_to_thread_whitelist?: unknown
   add_to_session_trust?: unknown
+  add_to_enterprise_session_trust?: unknown
   stop_thread?: unknown
   stop_thread_id?: unknown
 }): Record<string, unknown> {
@@ -36,6 +38,9 @@ export function buildSecurityConfirmationWsPayload(message: {
   }
   if (message.add_to_session_trust === true) {
     payload.add_to_session_trust = true
+  }
+  if (message.add_to_enterprise_session_trust === true) {
+    payload.add_to_enterprise_session_trust = true
   }
   if (message.stop_thread === true) {
     payload.stop_thread = true

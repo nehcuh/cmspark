@@ -144,7 +144,9 @@
 
 ### 5.3 扫描时
 
-- Agent 调用 **`netsec_port_scan`** 时再过一次 **L2 确认**（侧栏红条或 [确认台](confirm-center-user-guide.md)）。
+- Agent 调用 **`netsec_port_scan`** 时默认再过一次 **L2 确认**（侧栏红条或 [确认台](confirm-center-user-guide.md)）。
+- **本线程企业信任（Plan A）**：在 L2 红条勾选「本线程内自动批准同类（netsec）」后，同线程、范围内后续扫描可跳过 L2（30 分钟无人工批准 / 最长 8 小时 / Companion 重启后失效）。**仅 netsec family**，不放开 shell。
+- **全局企业自动批准（Plan B）**：设置 → 安全 →「全局自动批准企业高危工具」+ 短语确认；仍受 allowlist / 任务授权约束；**不会**被 God-mode /「自动批准危险操作」单独跳过 shell/netsec。
 - 实现仅为 **TCP connect 探针**，不是完整 nmap。
 - **仅用于你有权测试的目标**。
 
@@ -159,7 +161,7 @@
 1. 正常用 **community**：先开 `appsec`、`devsec-workspace`，验证任务包 + 工作区。  
 2. 需要 shell / netsec 时：停 Companion → 改 `capability_profile` + allowlist → **重启** → 面板启用模块。  
 3. NetSec 再走「任务授权」→ 让 Agent 扫描。  
-4. 每条高危工具仍会弹 **L2**；企业档也不会被 god-mode 静默跳过 shell/netsec 确认。
+4. 默认每条高危工具仍弹 **L2**；**god-mode / 自动批准危险操作不会**静默跳过 shell/netsec。需要少点确认时：用 **Plan A**（本线程勾选）或 **Plan B**（设置全局企业自动批准），且始终受白名单/任务授权约束。
 
 ---
 

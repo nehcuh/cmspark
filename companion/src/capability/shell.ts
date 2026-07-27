@@ -26,6 +26,18 @@ export function commandAllowedByPolicy(command: string): { ok: true } | { ok: fa
   return { ok: true }
 }
 
+/**
+ * Pure pre-L2 / pre-exec scope check for shell_exec (Plan A/B G2).
+ */
+export function checkShellScope(command: string): { ok: true } | { ok: false; error: string } {
+  const gate = requireModule("shell")
+  if (!gate.ok) return gate
+  const cmd = (command || "").trim()
+  if (!cmd) return { ok: false, error: "command required" }
+  if (cmd.length > 8000) return { ok: false, error: "command too long" }
+  return commandAllowedByPolicy(cmd)
+}
+
 export async function shellExec(opts: {
   command: string
   cwd?: string | null

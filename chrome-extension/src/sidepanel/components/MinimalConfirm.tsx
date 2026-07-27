@@ -1,7 +1,8 @@
 // Panel content-split confirm (UI Mode P1/P2/R2) — tool + risk + allow/deny/stop + queue chrome.
 // Heavy preview / nonce / whitelist live in Cockpit ConfirmElevated.
+// Plan A: enterprise session-trust checkbox for shell/netsec when offered.
 
-import { useCallback, useEffect, useRef, type CSSProperties } from "react"
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react"
 import { useAgentStore } from "../store/agentStore"
 import type { SecurityConfirmationRequest } from "../types"
 import { tokens, riskColorDark, riskLabel } from "../ui/tokens"
@@ -12,6 +13,12 @@ export function MinimalConfirm() {
   const request = queue[0] as SecurityConfirmationRequest | undefined
   const denyBtnRef = useRef<HTMLButtonElement>(null)
   const activeThreadId = state.activeThreadId
+  const [enterpriseTrust, setEnterpriseTrust] = useState(false)
+
+  // Reset checkbox when queue head changes
+  useEffect(() => {
+    setEnterpriseTrust(false)
+  }, [request?.confirmation_id])
 
   const respond = useCallback(
     (approved: boolean, stopThread = false) => {
@@ -26,6 +33,10 @@ export function MinimalConfirm() {
         stop_thread: stopThread,
         add_to_whitelist: [],
         stop_thread_id: stopThread ? stopTargetId : undefined,
+        add_to_enterprise_session_trust:
+          approved && !stopThread && enterpriseTrust && request.offer_enterprise_session_trust === true
+            ? true
+            : undefined,
       })
       dispatch({ type: "REMOVE_SECURITY_CONFIRMATION", confirmationId: request.confirmation_id })
       if (stopThread && stopTargetId) {
@@ -39,7 +50,7 @@ export function MinimalConfirm() {
         }
       }
     },
-    [request, activeThreadId, dispatch],
+    [request, activeThreadId, dispatch, enterpriseTrust],
   )
 
   // R2: focus deny (safe default) when queue head changes
@@ -73,6 +84,13 @@ export function MinimalConfirm() {
   const stopTargetId = request.worker_id || activeThreadId
   const queueLen = queue.length
   const queueTail = queue.slice(1, 4)
+  const offerEnterprise = request.offer_enterprise_session_trust === true && !needsNonce
+  const familyLabel =
+    request.tool_name === "netsec_port_scan"
+      ? "netsec 扫描"
+      : request.tool_name === "shell_exec"
+        ? "shell 命令"
+        : "同类企业工具"
 
   return (
     <div
@@ -126,6 +144,33 @@ export function MinimalConfirm() {
           ? "此确认需要输入确认码 — 请在确认台完成。"
           : "详细预览与白名单在确认台；此处可快速允许或拒绝。"}
       </div>
+      {offerEnterprise && (
+        <label
+          style={{
+            display: "flex",
+            alignItems: "flex-start",
+            gap: 6,
+            marginBottom: 8,
+            fontSize: 10,
+            color: tokens.darkText,
+            cursor: "pointer",
+            lineHeight: 1.4,
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={enterpriseTrust}
+            onChange={(e) => setEnterpriseTrust(e.target.checked)}
+            style={{ marginTop: 2 }}
+          />
+          <span>
+            <strong>本线程内自动批准同类（{familyLabel}）</strong>
+            <span style={{ color: tokens.darkMuted, display: "block" }}>
+              仍受白名单/任务授权约束；30 分钟无人工批准或最长 8 小时或 Companion 重启后失效。默认不勾选。
+            </span>
+          </span>
+        </label>
+      )}
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
         <button
           type="button"

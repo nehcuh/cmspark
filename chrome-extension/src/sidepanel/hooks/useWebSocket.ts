@@ -81,6 +81,12 @@ export function normalizeConfig(config: any): Partial<LLMConfig> {
   if (config.security && typeof config.security.auto_approve_dangerous === "boolean") {
     normalized.auto_approve_dangerous = config.security.auto_approve_dangerous
   }
+  if (config.security && typeof config.security.auto_approve_enterprise_tools === "boolean") {
+    normalized.auto_approve_enterprise_tools = config.security.auto_approve_enterprise_tools
+  }
+  if (typeof config.auto_approve_enterprise_tools === "boolean") {
+    normalized.auto_approve_enterprise_tools = config.auto_approve_enterprise_tools
+  }
   // Security: flatten nested config.security.allow_all_schemes (GOD-MODE) → LLMConfig.allow_all_schemes
   if (config.security && typeof config.security.allow_all_schemes === "boolean") {
     normalized.allow_all_schemes = config.security.allow_all_schemes
@@ -366,6 +372,7 @@ export function useWebSocket() {
               orchestrator_run_id: typeof msg.orchestrator_run_id === "string" ? msg.orchestrator_run_id : undefined,
               worker_role_label: typeof msg.worker_role_label === "string" ? msg.worker_role_label : undefined,
               tab_id: typeof msg.tab_id === "number" ? msg.tab_id : undefined,
+              offer_enterprise_session_trust: msg.offer_enterprise_session_trust === true,
             },
           })
           // Refresh fleet strip when confirms arrive (pending badge + worker map)

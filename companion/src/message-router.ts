@@ -166,7 +166,11 @@ export async function handleMessage(
       // current security block (deepMerge fills the partner field from current config).
       if (cfg.security && typeof cfg.security === "object") {
         normalized.security = { ...cfg.security }
-      } else if (cfg.auto_approve_dangerous !== undefined || cfg.allow_all_schemes !== undefined) {
+      } else if (
+        cfg.auto_approve_dangerous !== undefined ||
+        cfg.allow_all_schemes !== undefined ||
+        cfg.auto_approve_enterprise_tools !== undefined
+      ) {
         const current = getConfig()
         normalized.security = { ...(current.security || {}) }
         if (cfg.auto_approve_dangerous !== undefined) {
@@ -174,6 +178,9 @@ export async function handleMessage(
         }
         if (cfg.allow_all_schemes !== undefined) {
           normalized.security.allow_all_schemes = !!cfg.allow_all_schemes
+        }
+        if (cfg.auto_approve_enterprise_tools !== undefined) {
+          normalized.security.auto_approve_enterprise_tools = !!cfg.auto_approve_enterprise_tools
         }
       }
       // Vision config: normalize flat vision_* fields into nested vision object
@@ -1712,6 +1719,41 @@ export async function handleMessage(
         thread_id: rest.thread_id,
       })
       return { type: "netsec.authorized", thread: threadManager.get(rest.thread_id) }
+    }
+
+    case "enterprise.session_trust.status": {
+      const { enterpriseSessionTrust, resolveEnterpriseTrustKey } = await import(
+        "./capability/enterprise-session-trust"
+      )
+      const key = resolveEnterpriseTrustKey(rest.thread_id)
+      if (!key) return { type: "enterprise.session_trust.status", trust_key: null, grant: null }
+      const g = enterpriseSessionTrust.getGrant(key)
+      if (!g) return { type: "enterprise.session_trust.status", trust_key: key, grant: null }
+      const now = Date.now()
+      return {
+        type: "enterprise.session_trust.status",
+        trust_key: key,
+        grant: {
+          families: g.families,
+          remaining_netsec_ms: enterpriseSessionTrust.remainingMs(key, "netsec", now),
+          remaining_shell_ms: enterpriseSessionTrust.remainingMs(key, "shell", now),
+          granted_at: g.grantedAt,
+          last_interactive_at: g.lastInteractiveAt,
+        },
+      }
+    }
+    case "enterprise.session_trust.revoke": {
+      const { enterpriseSessionTrust, resolveEnterpriseTrustKey } = await import(
+        "./capability/enterprise-session-trust"
+      )
+      const key = resolveEnterpriseTrustKey(rest.thread_id)
+      if (!key) return { type: "error", error: "thread_id required" }
+      if (rest.family === "netsec" || rest.family === "shell") {
+        enterpriseSessionTrust.revokeFamily(key, rest.family)
+      } else {
+        enterpriseSessionTrust.revoke(key)
+      }
+      return { type: "enterprise.session_trust.revoked", trust_key: key, family: rest.family || "all" }
     }
 
     // --- Skill-craft ---

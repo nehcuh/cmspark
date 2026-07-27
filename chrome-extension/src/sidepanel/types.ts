@@ -157,7 +157,13 @@ export interface LLMConfig {
   // confirmation gate (Layer 2). Strictly stronger than auto_approve_dangerous (L2 only).
   // Flattened from companion config `security.allow_all_schemes`. Default false.
   // UI enable requires a typed confirmation phrase (PR-B); gated behind PR-0 WS auth.
+  // NOTE: does NOT skip shell_exec / netsec_port_scan forceConfirm (use auto_approve_enterprise_tools).
   allow_all_schemes?: boolean
+  /**
+   * Plan B: skip L2 for shell_exec / netsec_port_scan after scope gates.
+   * Flattened from security.auto_approve_enterprise_tools.
+   */
+  auto_approve_enterprise_tools?: boolean
   // Vision model fields (flattened for UI convenience)
   vision_enabled?: boolean
   vision_api_key?: string
@@ -237,6 +243,10 @@ export interface SecurityConfirmationRequest {
   parent_thread_id?: string
   orchestrator_run_id?: string
   worker_role_label?: string
+  /**
+   * Plan A: companion offered enterprise session-trust checkbox for shell/netsec.
+   */
+  offer_enterprise_session_trust?: boolean
   tab_id?: number
 }
 

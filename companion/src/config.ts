@@ -47,6 +47,14 @@ export interface SecurityConfig {
    */
   allow_all_schemes: boolean
   /**
+   * Plan B: skip interactive L2 for shell_exec / netsec_port_scan only after
+   * module + allowlist/task-auth (or shell policy) scope passes. Does NOT skip
+   * spawn_worker, host_computer critical, MCP critical, or evaluate critical APIs.
+   * Default false.
+   */
+  /** Plan B — optional for deepMerge; default false in DEFAULT_CONFIG. */
+  auto_approve_enterprise_tools?: boolean
+  /**
    * Basenames (no extension, lowercased) of the companion's OWN UI host
    * processes — the browser that renders the sidepanel, plus the packaged
    * companion binary. When the computer-use FOREGROUND-YIELD detector finds
@@ -241,6 +249,7 @@ const defaultConfig: CompanionConfig = {
     confirmation_timeout_seconds: 45,
     auto_approve_dangerous: false,
     allow_all_schemes: false,
+    auto_approve_enterprise_tools: false,
     // UX-spike 2026-07-23: browsers that host the side panel + the agent exe.
     // Lowercased basenames (no .exe) for Windows ProcessName matching.
     // macOS also matches via isCompanionUiOwner() against bundle ids
@@ -782,6 +791,11 @@ export function saveConfig(config: Partial<CompanionConfig>): CompanionConfig {
   // (§6.1.5 / §6.2). Strictly stronger than auto_approve_dangerous.
   if (config.security?.allow_all_schemes === true) {
     console.warn("[cmspark-agent] WARNING: security.allow_all_schemes (GOD-MODE) is enabled — bypasses the URL-scheme hard-block (any non-http(s) scheme, e.g. javascript:/data:/about:/file:/chrome:) AND the confirmation gate for NON-critical dangerous tool calls / untrusted-domain navigation. CRITICAL exfil/escape APIs (fetch/eval/Function/...) and analyze_image fetch STILL require confirmation (§6.1.5/§6.2). A prompt-injected agent can drive the browser to any scheme and run non-critical dangerous code with no human check. Use only for fully-trusted, supervised workflows.")
+  }
+  if (config.security?.auto_approve_enterprise_tools === true) {
+    console.warn(
+      "[cmspark-agent] WARNING: security.auto_approve_enterprise_tools is enabled — shell_exec / netsec_port_scan skip interactive L2 when module+allowlist/task-auth (or shell policy) pass. spawn_worker / host_computer critical / MCP critical still require confirmation. Use only for trusted enterprise lab workflows.",
+    )
   }
   // ── H5 invariant: saveConfig is SYNCHRONOUS by design ──────────────────
   // The read-modify-write below (getConfig → deepMerge → atomicWriteJSON) has

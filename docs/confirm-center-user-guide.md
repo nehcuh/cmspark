@@ -90,9 +90,11 @@ Companion 在下列工具**真正执行前**会排队确认（列表以代码 `L
 | **能力 opt-in** | `capability_profile=enterprise`、启用 `netsec` / `shell` | 本机**允许这类能力** | 配置 / 任务包面板 |
 | **范围 / 归属** | NetSec `target_allowlist`、**任务授权**（按线程） | **允许扫谁** + **本线程声明有权测** | 任务包 · NetSec 卡片（或 config） |
 | **本次执行 L2** | 确认台 / 侧栏红条 | **这一枪真的执行** | 确认台 / 精简条 |
+| **L2 如何跳过（可选）** | **Plan A** 本线程企业信任；**Plan B** `auto_approve_enterprise_tools` | 范围内自动批准 shell/netsec L2（审计） | 红条勾选 / 设置→安全 |
 
 - 配置与任务授权：**偏「我允许这类事 / 这些目标」**。  
-- 确认台 L2：**偏「这一次我同意 Agent 现在就做」**（防 prompt 注入静默扩权）。
+- 确认台 L2：**偏「这一次我同意 Agent 现在就做」**（防 prompt 注入静默扩权）。  
+- **A/B 不是** allowlist 的替代；空名单仍全拒。God-mode /「自动批准危险操作」**单独**仍不会跳过 shell/netsec。
 
 NetSec 完整路径示例见 [mission-pack-usage.md §5](mission-pack-usage.md#5-开启-netsec端口探测)。
 

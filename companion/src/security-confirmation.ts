@@ -41,6 +41,8 @@ export interface SecurityConfirmationDetails {
   riskLevel?: 'low' | 'medium' | 'high'
   autoConfirmEligible?: boolean
   defenseLayer?: number
+  /** Plan A: offer enterprise session-trust checkbox on this confirm. */
+  offerEnterpriseSessionTrust?: boolean
   /**
    * CRITICAL dangerous APIs (never-auto-approved subset, §6.2). When non-empty,
    * the confirmation was force-shown even under god-mode / auto-approve / domain
@@ -119,6 +121,11 @@ export interface SecurityConfirmationDecision {
    * Only meaningful when approved===true. Server uses this for explicitOptIn grant.
    */
   addToSessionTrust?: boolean
+  /**
+   * Plan A: user checked enterprise session trust on shell/netsec L2.
+   * Only honored when pending.enterpriseSessionTrustOffered (anti-injection G5).
+   */
+  addToEnterpriseSessionTrust?: boolean
 }
 
 export interface SecurityConfirmationRequestOptions {
@@ -164,6 +171,11 @@ interface PendingConfirmation {
   nonceAttempts: number
   /** ADR-015: stamped worker/thread for authoritative stop_thread drain. */
   workerId?: string
+  /**
+   * Plan A G5: true only when companion offered the enterprise session-trust
+   * checkbox for this confirmation (shell_exec / netsec_port_scan).
+   */
+  enterpriseSessionTrustOffered?: boolean
 }
 
 function codePreview(code: string): string {
@@ -265,6 +277,7 @@ export class SecurityConfirmationManager {
         workerId: typeof details.workerId === "string" && details.workerId.length > 0
           ? details.workerId
           : undefined,
+        enterpriseSessionTrustOffered: details.offerEnterpriseSessionTrust === true,
       })
 
       send({
@@ -314,6 +327,10 @@ export class SecurityConfirmationManager {
         // ADR-016 G6: board_complete digest (old clients ignore)
         ...(details.boardCompleteDigest
           ? { board_complete_digest: details.boardCompleteDigest }
+          : {}),
+        // Plan A: offer enterprise session-trust checkbox (shell/netsec only)
+        ...(details.offerEnterpriseSessionTrust === true
+          ? { offer_enterprise_session_trust: true }
           : {}),
       })
     })
@@ -386,7 +403,7 @@ export class SecurityConfirmationManager {
     approved: boolean,
     sourceWs?: WebSocket,
     nonceResponse?: string,
-    extras?: { addToSessionTrust?: boolean },
+    extras?: { addToSessionTrust?: boolean; addToEnterpriseSessionTrust?: boolean },
   ): ConfirmationRespondResult {
     const pending = this.pending.get(confirmationId)
     if (!pending) return { outcome: "unknown" }
@@ -439,6 +456,13 @@ export class SecurityConfirmationManager {
       // (host_computer) — blocks WS injection of the flag on other tools.
       ...(approved && extras?.addToSessionTrust === true && pending.relevantApps.length > 0
         ? { addToSessionTrust: true }
+        : {}),
+      // Plan A G5: only when this confirm offered enterprise checkbox + shell/netsec tool
+      ...(approved &&
+      extras?.addToEnterpriseSessionTrust === true &&
+      pending.enterpriseSessionTrustOffered === true &&
+      (pending.toolName === "shell_exec" || pending.toolName === "netsec_port_scan")
+        ? { addToEnterpriseSessionTrust: true }
         : {}),
     }
     pending.resolve(decision)

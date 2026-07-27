@@ -91,6 +91,7 @@ export interface PackApplyPatch {
 export const FORBIDDEN_PACK_KEYS = new Set([
   "auto_approve_dangerous",
   "allow_all_schemes",
+  "auto_approve_enterprise_tools",
   "auto_approved_domains",
   "trusted_domains",
   "god_mode",

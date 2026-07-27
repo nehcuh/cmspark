@@ -97,3 +97,61 @@ export function assertTargetsAllowed(
   }
   return { ok: true }
 }
+
+export type NetsecTaskAuthLike = {
+  authorized?: boolean
+  targets?: string[]
+} | null | undefined
+
+/**
+ * Pure pre-L2 / pre-exec scope check for netsec_port_scan (Plan A/B G2).
+ * Mirrors netsecPortScan gate order without performing probes.
+ */
+export function checkNetsecScope(opts: {
+  targets: string[]
+  allowlist: ScopeRule[]
+  requireTaskAuth: boolean
+  taskAuth?: NetsecTaskAuthLike
+  moduleEnabled: boolean
+}): { ok: true; targets: string[]; allowlist: string[] } | { ok: false; error: string } {
+  if (!opts.moduleEnabled) {
+    return {
+      ok: false,
+      error: "module_disabled:netsec — enable in settings (modules.set_enabled) before use",
+    }
+  }
+  const allowlist = opts.allowlist || []
+  if (allowlist.length === 0) {
+    return {
+      ok: false,
+      error: "netsec.target_allowlist is empty — configure allowlist before scanning",
+    }
+  }
+  const targets = (opts.targets || []).map((t) => String(t).trim()).filter(Boolean)
+  if (targets.length === 0) return { ok: false, error: "targets required" }
+  if (targets.length > 16) return { ok: false, error: "max 16 targets per scan" }
+
+  const scope = assertTargetsAllowed(targets, allowlist)
+  if (!scope.ok) return { ok: false, error: scope.error }
+
+  if (opts.requireTaskAuth) {
+    const auth = opts.taskAuth
+    if (!auth || auth.authorized !== true) {
+      return {
+        ok: false,
+        error:
+          "task authorization required — set netsec_task_auth on thread (user must confirm ownership of targets)",
+      }
+    }
+    const authTargets = new Set((auth.targets || []).map((t) => String(t).toLowerCase()))
+    for (const t of targets) {
+      if (!authTargets.has(t.toLowerCase())) {
+        return {
+          ok: false,
+          error: `target ${t} not included in netsec_task_auth.targets`,
+        }
+      }
+    }
+  }
+  return { ok: true, targets, allowlist }
+}

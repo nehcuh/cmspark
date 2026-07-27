@@ -41,6 +41,11 @@ export function SettingsSlideout() {
   const [godmodeConfirm, setGodmodeConfirm] = useState(false)
   const [godmodePhrase, setGodmodePhrase] = useState("")
   const [godmodeMsg, setGodmodeMsg] = useState<string | null>(null)
+  // Plan B enterprise auto-approve phrase gate
+  const [entBConfirm, setEntBConfirm] = useState(false)
+  const [entBPhrase, setEntBPhrase] = useState("")
+  const [entBMsg, setEntBMsg] = useState<string | null>(null)
+  const ENT_B_PHRASE = "我了解风险"
   // WP5-I4 实验区:删除模型两步确认按钮的待命态(非 store——纯组件内 UI 态)。
   const [modelDeleteArmed, setModelDeleteArmed] = useState(false)
 
@@ -113,6 +118,30 @@ export function SettingsSlideout() {
 
   const handleAutoApproveDangerousChange = (checked: boolean) => {
     dispatch({ type: "SET_CONFIG", config: { auto_approve_dangerous: checked } })
+  }
+
+  const handleEnterpriseAutoApproveToggle = (checked: boolean) => {
+    if (!checked) {
+      dispatch({ type: "SET_CONFIG", config: { auto_approve_enterprise_tools: false } })
+      setEntBConfirm(false)
+      setEntBPhrase("")
+      setEntBMsg(null)
+      return
+    }
+    setEntBConfirm(true)
+    setEntBPhrase("")
+    setEntBMsg(null)
+  }
+
+  const handleEnterpriseAutoApproveConfirm = () => {
+    if (entBPhrase.trim() !== ENT_B_PHRASE) {
+      setEntBMsg(`请输入「${ENT_B_PHRASE}」`)
+      return
+    }
+    dispatch({ type: "SET_CONFIG", config: { auto_approve_enterprise_tools: true } })
+    setEntBConfirm(false)
+    setEntBPhrase("")
+    setEntBMsg(null)
   }
 
   // PR-B God-mode (security.allow_all_schemes). Bypasses BOTH layers — strictly
@@ -393,10 +422,74 @@ export function SettingsSlideout() {
               <div>
                 <div style={{ fontWeight: 500 }}>自动批准所有危险操作</div>
                 <div style={{ fontSize: 11, color: "#B26B00", marginTop: 2 }}>
-                  ⚠ 跳过所有 evaluate / navigate 等高危操作确认弹窗。仅供长期无人值守的可信工作流使用；任何被注入的恶意指令也将不再被拦截。
+                  ⚠ 跳过 evaluate / navigate 等网页类 L2 确认。<b>不含</b> shell_exec / netsec_port_scan（企业 forceConfirm；请用下方「全局自动批准企业高危工具」）。
+                  仅供长期无人值守的可信工作流使用。
                 </div>
               </div>
             </label>
+          </div>
+
+          {/* Plan B: enterprise shell/netsec L2 skip under scope */}
+          <div style={{ ...styles.field, padding: 10, borderRadius: 8, background: "#FFF8F0", border: "1px solid #F0D0A0" }}>
+            <label style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer", fontSize: 13 }}>
+              <input
+                type="checkbox"
+                checked={config.auto_approve_enterprise_tools === true}
+                onChange={(e) => handleEnterpriseAutoApproveToggle(e.target.checked)}
+                style={{ marginTop: 3 }}
+              />
+              <div>
+                <div style={{ fontWeight: 500, color: "#B26B00" }}>
+                  全局自动批准企业高危工具（shell / netsec）
+                  {config.auto_approve_enterprise_tools === true && (
+                    <span style={{
+                      fontSize: 10, fontWeight: 600, marginLeft: 6, padding: "1px 6px",
+                      borderRadius: 8, color: "#fff", background: "#C62828",
+                    }}>已启用</span>
+                  )}
+                </div>
+                <div style={{ fontSize: 11, color: "#8a5a00", marginTop: 4, lineHeight: 1.5 }}>
+                  仍受模块启用、目标白名单、任务授权（netsec）/ shell 策略约束。
+                  <b>不跳过</b> spawn_worker、桌面操控、MCP 关键能力。靶场渗透可用；默认关闭。
+                </div>
+                <div style={{ fontSize: 10, color: "#666", marginTop: 6, fontFamily: "monospace" }}>
+                  | 开关 | 网页 evaluate | shell/netsec |{"\n"}
+                  | 自动批准危险 | 可跳过 | 仍确认 |{"\n"}
+                  | God-mode | 可跳过 | 仍确认 |{"\n"}
+                  | 本开关(B) | 不变 | 可跳过(有范围) |
+                </div>
+              </div>
+            </label>
+            {entBConfirm && (
+              <div style={{ marginTop: 10, padding: 8, background: "#fff", borderRadius: 6, border: "1px solid #E0C090" }}>
+                <div style={{ fontSize: 12, color: "#B26B00", fontWeight: 500, marginBottom: 6 }}>
+                  请输入「<b>{ENT_B_PHRASE}</b>」以确认开启：
+                </div>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <input
+                    style={{ ...styles.input, flex: 1 }}
+                    type="text"
+                    value={entBPhrase}
+                    onChange={(e) => { setEntBPhrase(e.target.value); setEntBMsg(null) }}
+                    placeholder={ENT_B_PHRASE}
+                    autoComplete="off"
+                    spellCheck={false}
+                    autoFocus
+                  />
+                  <button
+                    style={{ ...styles.toggleBtn, color: "#fff", background: "#C62828", borderColor: "#C62828" }}
+                    onClick={handleEnterpriseAutoApproveConfirm}
+                  >确认开启</button>
+                  <button
+                    style={styles.toggleBtn}
+                    onClick={() => { setEntBConfirm(false); setEntBPhrase(""); setEntBMsg(null) }}
+                  >取消</button>
+                </div>
+                {entBMsg && (
+                  <div style={{ fontSize: 11, color: "#C62828", marginTop: 4 }}>{entBMsg}</div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* PR-B God-mode (security.allow_all_schemes) — bypasses BOTH layers. */}
@@ -419,9 +512,9 @@ export function SettingsSlideout() {
                   )}
                 </div>
                 <div style={{ fontSize: 11, color: "#C62828", marginTop: 4, lineHeight: 1.5 }}>
-                  ☠ <b>最高风险</b>：同时绕过协议硬阻断（L1）与高危确认门（L2）——比「自动批准危险操作」更强。
-                  关闭协议保护后，<b>prompt 注入</b>即可执行 <code>data:</code> 脚本、打开 <code>chrome://</code> 特权页、读取 <code>file:</code> 本地文件。
-                  仅在你完全信任的机器上，为你完全信任的工作流启用。
+                  ☠ <b>最高风险</b>：绕过协议硬阻断（L1）与部分 L2——比「自动批准危险操作」更强。
+                  <b>不含</b> shell_exec / netsec_port_scan 企业 forceConfirm（除非另开「全局自动批准企业高危工具」）。
+                  关闭协议保护后，<b>prompt 注入</b>即可执行 <code>data:</code> 脚本、打开 <code>chrome://</code> 特权页。
                 </div>
               </div>
             </label>
