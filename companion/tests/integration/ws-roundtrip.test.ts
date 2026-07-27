@@ -171,7 +171,14 @@ test("WS roundtrip: tool.execute dispatched to client and tool.result resolves t
   // Executor promise resolves with the result
   const result = await resultPromise
   assert.equal(result.success, true)
-  assert.deepEqual(result.data, [{ id: 1, url: "https://example.com" }])
+  // ADR-015: list_tabs is enriched with lock metadata (null when free)
+  assert.equal(Array.isArray(result.data), true)
+  assert.equal(result.data.length, 1)
+  assert.equal(result.data[0].id, 1)
+  assert.equal(result.data[0].url, "https://example.com")
+  assert.equal(result.data[0].locked_by_thread_id, null)
+  assert.equal(result.data[0].lease_state, null)
+  assert.equal(result.data[0].lease_expires_at, null)
 
   // Pending entry cleared after resolve (no leak)
   assert.equal(pendingToolCalls.has(toolCallId), false, "pendingToolCalls must be cleared after resolve")

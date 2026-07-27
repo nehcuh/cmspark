@@ -10,6 +10,7 @@
  * - add_to_thread_whitelist (boolean true only)
  * - add_to_session_trust (boolean true only — host_computer grill Q2)
  * - stop_thread (boolean true only)
+ * - stop_thread_id (string, when stop_thread and non-empty string)
  */
 export function buildSecurityConfirmationWsPayload(message: {
   confirmation_id?: unknown
@@ -19,6 +20,7 @@ export function buildSecurityConfirmationWsPayload(message: {
   add_to_thread_whitelist?: unknown
   add_to_session_trust?: unknown
   stop_thread?: unknown
+  stop_thread_id?: unknown
 }): Record<string, unknown> {
   const payload: Record<string, unknown> = {
     type: "security.confirmation.response",
@@ -37,6 +39,9 @@ export function buildSecurityConfirmationWsPayload(message: {
   }
   if (message.stop_thread === true) {
     payload.stop_thread = true
+    if (typeof message.stop_thread_id === "string" && message.stop_thread_id.length > 0) {
+      payload.stop_thread_id = message.stop_thread_id
+    }
   }
   return payload
 }

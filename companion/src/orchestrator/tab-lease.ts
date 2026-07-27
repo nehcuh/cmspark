@@ -3,6 +3,7 @@
 
 import { ORCHESTRATOR_CAPS } from "./constants"
 import { appendCapabilityAudit } from "../packs/audit-log"
+import { DEFAULT_SECURITY_CONFIRMATION_TIMEOUT_MS } from "../security-confirmation"
 
 export type LeaseState =
   | "FREE"
@@ -21,6 +22,8 @@ export interface TabLease {
   hardMaxDeadline: number
   idleDeadline: number
   softDeadline?: number
+  /** When state entered FORCE_RELEASING (for bounded GC). */
+  forceReleasingAt?: number
 }
 
 export type LeaseErrorCode =
@@ -35,6 +38,33 @@ export type LeaseResult =
   | { ok: false; error_code: LeaseErrorCode; tab_id?: number; holder_thread_id?: string; error: string }
 
 const leases = new Map<number, TabLease>()
+
+/**
+ * Soft exclusivity covers confirm only (L2 admission is acquired *before* SOFT).
+ * Align with Confirm Center timeout so SOFT cannot expire mid-dialog under the
+ * preferred order: admission → SOFT → confirm.
+ */
+export const SOFT_LEASE_MS = DEFAULT_SECURITY_CONFIRMATION_TIMEOUT_MS
+
+/** Max age of FORCE_RELEASING before forced free (bounded GC). */
+export const FORCE_RELEASING_GC_MS = 30_000
+
+type PendingHooks = {
+  hasPendingForTab: (tabId: number, holderThreadId: string) => boolean
+  /** Reject CDP pending for tab/holder; return count rejected. */
+  rejectPendingForTab?: (tabId: number, holderThreadId: string, reason: string) => number
+}
+
+/** Module-level pending hooks so *every* sweepExpired path respects in-flight CDP. */
+let pendingHooks: PendingHooks | null = null
+
+/**
+ * Register pending-tool predicates once from server bootstrap.
+ * Required: all internal sweepExpired calls must never FREE a tab while CDP is in flight.
+ */
+export function registerTabLeasePendingHooks(hooks: PendingHooks): void {
+  pendingHooks = hooks
+}
 
 function now(): number {
   return Date.now()
@@ -52,13 +82,62 @@ function audit(type: string, extra: Record<string, unknown>): void {
   }
 }
 
-/** Drop expired HARD/SOFT leases when no pending tools (caller enforces pending). */
+function resolveHasPending(
+  tabId: number,
+  holderThreadId: string,
+  opts?: { hasPendingForTab?: (tabId: number, holderThreadId: string) => boolean },
+): boolean {
+  const fn = opts?.hasPendingForTab ?? pendingHooks?.hasPendingForTab
+  if (!fn) return false
+  try {
+    return !!fn(tabId, holderThreadId)
+  } catch {
+    // Fail closed: treat as pending so we never silent-FREE under uncertainty
+    return true
+  }
+}
+
+function drainPendingAndFree(
+  tabId: number,
+  lease: TabLease,
+  reason: string,
+): void {
+  const rejector = pendingHooks?.rejectPendingForTab
+  let rejected = 0
+  if (rejector) {
+    try {
+      rejected = rejector(tabId, lease.holderThreadId, reason) || 0
+    } catch {
+      /* best-effort */
+    }
+  }
+  leases.delete(tabId)
+  audit("tab.lease.force_released", {
+    tab_id: tabId,
+    holder_thread_id: lease.holderThreadId,
+    reason,
+    rejected_pending: rejected,
+  })
+}
+
+/**
+ * Drop expired HARD/SOFT leases when no pending tools.
+ * Always consults module-level hasPendingForTab (or opts override).
+ * Never silent-FREE while CDP pending — reject pending + free, or FORCE_RELEASING + GC.
+ */
 export function sweepExpired(opts?: {
   hasPendingForTab?: (tabId: number, holderThreadId: string) => boolean
 }): void {
   const t = now()
   for (const [tabId, lease] of [...leases.entries()]) {
-    if (lease.state === "FORCE_RELEASING") continue
+    if (lease.state === "FORCE_RELEASING") {
+      const since = lease.forceReleasingAt ?? lease.renewedAt
+      if (t > since + FORCE_RELEASING_GC_MS) {
+        // Bounded GC: reject any residual pending and free so peers are not stuck forever
+        drainPendingAndFree(tabId, lease, "force_releasing_gc")
+      }
+      continue
+    }
     if (lease.state === "SOFT_RESERVED" && lease.softDeadline && t > lease.softDeadline) {
       leases.delete(tabId)
       audit("tab.lease.soft_expired", { tab_id: tabId, holder_thread_id: lease.holderThreadId })
@@ -67,14 +146,23 @@ export function sweepExpired(opts?: {
     if (lease.state === "HARD_HELD" || lease.state === "HELD_PENDING_L2") {
       const idleOrHard = t > lease.idleDeadline || t > lease.hardMaxDeadline
       if (!idleOrHard) continue
-      if (opts?.hasPendingForTab?.(tabId, lease.holderThreadId)) {
-        // ADR: do not free while in-flight — mark FORCE_RELEASING
-        lease.state = "FORCE_RELEASING"
-        leases.set(tabId, lease)
-        audit("tab.lease.expire_blocked_pending", {
-          tab_id: tabId,
-          holder_thread_id: lease.holderThreadId,
-        })
+      if (resolveHasPending(tabId, lease.holderThreadId, opts)) {
+        // TTL path with in-flight CDP: reject pending + free (or short FORCE_RELEASING if rejector absent)
+        if (pendingHooks?.rejectPendingForTab) {
+          drainPendingAndFree(
+            tabId,
+            lease,
+            t > lease.hardMaxDeadline ? "hard_max_pending_drain" : "idle_ttl_pending_drain",
+          )
+        } else {
+          lease.state = "FORCE_RELEASING"
+          lease.forceReleasingAt = t
+          leases.set(tabId, lease)
+          audit("tab.lease.expire_blocked_pending", {
+            tab_id: tabId,
+            holder_thread_id: lease.holderThreadId,
+          })
+        }
         continue
       }
       leases.delete(tabId)
@@ -111,6 +199,7 @@ function makeHard(tabId: number, holderThreadId: string, base?: Partial<TabLease
     idleDeadline: t + ORCHESTRATOR_CAPS.idle_ttl_ms,
     confirmId: undefined,
     softDeadline: undefined,
+    forceReleasingAt: undefined,
   }
 }
 
@@ -123,6 +212,8 @@ export function acquireOrRenewTabLease(opts: {
   holderThreadId: string
   needsL2: boolean
   confirmId?: string
+  /** Override soft TTL (ms from now). Default SOFT_LEASE_MS (= confirm timeout). */
+  softTtlMs?: number
 }): LeaseResult {
   sweepExpired()
   const { tabId, holderThreadId, needsL2, confirmId } = opts
@@ -151,6 +242,7 @@ export function acquireOrRenewTabLease(opts: {
     }
     if (needsL2) {
       const t = now()
+      const softMs = opts.softTtlMs ?? SOFT_LEASE_MS
       const lease: TabLease = {
         tabId,
         state: "SOFT_RESERVED",
@@ -160,7 +252,7 @@ export function acquireOrRenewTabLease(opts: {
         renewedAt: t,
         hardMaxDeadline: t + ORCHESTRATOR_CAPS.hard_max_lease_ms,
         idleDeadline: t + ORCHESTRATOR_CAPS.idle_ttl_ms,
-        softDeadline: t + 45_000,
+        softDeadline: t + softMs,
       }
       leases.set(tabId, lease)
       audit("tab.lease.soft_reserved", { tab_id: tabId, holder_thread_id: holderThreadId, confirm_id: confirmId })
@@ -198,7 +290,9 @@ export function acquireOrRenewTabLease(opts: {
   if (existing.state === "SOFT_RESERVED") {
     if (needsL2) {
       // still waiting confirm — renew soft deadline lightly
+      const softMs = opts.softTtlMs ?? SOFT_LEASE_MS
       existing.renewedAt = now()
+      existing.softDeadline = now() + softMs
       if (confirmId) existing.confirmId = confirmId
       leases.set(tabId, existing)
       return { ok: true, lease: existing }
@@ -353,6 +447,7 @@ export function forceReleaseTab(
   }
   if (opts?.hasPending) {
     existing.state = "FORCE_RELEASING"
+    existing.forceReleasingAt = now()
     leases.set(tabId, existing)
     audit("tab.lease.force_releasing_pending", {
       tab_id: tabId,
@@ -428,6 +523,7 @@ export function autoHoldCreatedTab(tabId: number, holderThreadId: string): Lease
 /** Test-only / process reset. */
 export function _resetTabLeasesForTests(): void {
   leases.clear()
+  pendingHooks = null
 }
 
 export function lockMetaForTab(tabId: number): {

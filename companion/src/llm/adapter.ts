@@ -660,9 +660,25 @@ ${hostUseRule12}${appIndexSection ? `\n\n${appIndexSection}` : ""}`
         const startTime = Date.now()
 
         try {
+          // ADR-015 GATE1: never silently inject pinned_tabs for multi-agent or
+          // tab-lease tools — that defeats TAB_ID_REQUIRED and exclusive leases.
+          let resolvedTabId = params.tabId
+          if (resolvedTabId == null) {
+            try {
+              const { TAB_LEASE_TOOLS, isMultiAgentThread } = await import("../orchestrator")
+              const th = threadManager.get(threadId)
+              const multi = isMultiAgentThread(th as any)
+              if (!multi && !TAB_LEASE_TOOLS.has(toolName)) {
+                resolvedTabId = th?.pinned_tabs?.[0]
+              }
+            } catch {
+              // Fallback only when orchestrator module unavailable (tests)
+              resolvedTabId = threadManager.get(threadId)?.pinned_tabs?.[0]
+            }
+          }
           let toolResult = await executeTool(tc.id, toolName, {
             ...params,
-            tabId: params.tabId ?? threadManager.get(threadId)?.pinned_tabs?.[0],
+            tabId: resolvedTabId,
             // Grill Q1: computer session-trust keys off chat thread, not WS uuid.
             __thread_id: threadId,
           }, signal)

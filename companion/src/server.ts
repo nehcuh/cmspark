@@ -171,6 +171,27 @@ export function hasPendingForTab(tabId: number, holderThreadId: string): boolean
   return false
 }
 
+export function rejectPendingForTab(
+  tabId: number,
+  holderThreadId: string,
+  reason: string,
+): number {
+  return rejectPendingForThread(holderThreadId, reason, tabId)
+}
+
+// Wire tab-lease sweeps to pending CDP so internal sweepExpired never silent-FREEs in-flight tabs.
+// Lazy import avoids circular init; register once on first executor use as well.
+void import("./orchestrator/tab-lease")
+  .then(({ registerTabLeasePendingHooks }) => {
+    registerTabLeasePendingHooks({
+      hasPendingForTab,
+      rejectPendingForTab,
+    })
+  })
+  .catch(() => {
+    /* tests may load before package graph is ready */
+  })
+
 // Cache of tabId → url, used by the evaluate auto-approve gate to resolve the
 // acting domain (so we can decide whether to skip the confirmation dialog).
 // Populated from list_tabs results AND — critically — kept current by the
@@ -550,7 +571,15 @@ export function createToolExecutor(ws: WebSocket) {
         }
       }
     } catch (gateErr: any) {
+      // Fail closed: never skip multi-agent exclusivity on gate exception (ADR-015)
       logger.warn("orchestrator.gate_error", { error: gateErr?.message || String(gateErr) })
+      const result = {
+        success: false,
+        error: `ORCHESTRATOR_GATE_ERROR: ${gateErr?.message || String(gateErr)}`,
+        data: { error_code: "ORCHESTRATOR_GATE_ERROR" },
+      }
+      logToolFinish(toolCallId, toolName, startedAt, result)
+      return result
     }
 
     // Security Pre-flight Checks (P0 - Cookie Trust Domains Gate)
@@ -1030,11 +1059,65 @@ export function createToolExecutor(ws: WebSocket) {
             })
           }
         }
-        // ADR-015: exclusive SOFT_RESERVED (or HELD_PENDING_L2) for tab L2 tools
-        // before user confirm — mutual exclusion so user never approves a doomed op.
+        // ADR-015 GATE1: order = (optional flight reserve) → L2 admission → SOFT → confirm.
+        // SOFT after admission so softDeadline (= confirm timeout) cannot expire mid-queue.
+        // Flight reserve for shell/netsec so approve is never followed by *_BUSY.
+        const { TAB_L2_TOOLS } = await import("./orchestrator/constants")
         let tabL2SoftHeld = false
+        let tabL2HardPromoted = false
+        let flightReserved: "shell_exec" | "netsec_port_scan" | null = null
+        const flightOwner = String(actingThreadId || "unknown")
+
+        if (toolName === "shell_exec" || toolName === "netsec_port_scan") {
+          const { tryAcquireFlight, releaseFlight } = await import("./orchestrator/single-flight")
+          const flight = tryAcquireFlight(toolName, flightOwner)
+          if (!flight.ok) {
+            const result = {
+              success: false,
+              error: flight.error,
+              data: {
+                error_code: toolName === "shell_exec" ? "SHELL_BUSY" : "NETSEC_BUSY",
+                holder: flight.holder,
+              },
+            }
+            logToolFinish(toolCallId, toolName, startedAt, result)
+            return result
+          }
+          flightReserved = toolName
+          // releaseFlight referenced only for deny/timeout paths below
+          void releaseFlight
+        }
+
+        let decision: Awaited<ReturnType<typeof securityConfirmations.request>> | undefined
+        try {
+        // L2 FIFO admission FIRST (≤1 per orchestrator_run, ≤2 process-wide)
+        const maForL2 = actingThreadId && threadManager
+          ? (threadManager.get(actingThreadId) as any)
+          : null
+        const { acquireL2Admission, releaseL2Admission } = await import("./orchestrator/l2-admission")
+        const admit = await acquireL2Admission({
+          orchestratorRunId: maForL2?.orchestrator_run_id,
+          threadId: actingThreadId,
+        })
+        if (!admit.ok) {
+          if (flightReserved) {
+            const { releaseFlight } = await import("./orchestrator/single-flight")
+            releaseFlight(flightReserved, flightOwner)
+            flightReserved = null
+          }
+          const result = {
+            success: false,
+            error: admit.error,
+            data: { error_code: "L2_ADMISSION_TIMEOUT" },
+          }
+          logToolFinish(toolCallId, toolName, startedAt, result)
+          return result
+        }
+        const l2AdmitKey = admit.key
+
+        // Exclusive SOFT / HELD_PENDING_L2 after admission (TAB_L2_TOOLS, not evaluate-only)
         if (
-          toolName === "evaluate" &&
+          TAB_L2_TOOLS.has(toolName) &&
           typeof finalParams.tabId === "number" &&
           actingThreadId
         ) {
@@ -1046,6 +1129,12 @@ export function createToolExecutor(ws: WebSocket) {
             confirmId: toolCallId,
           })
           if (!soft.ok) {
+            releaseL2Admission(l2AdmitKey)
+            if (flightReserved) {
+              const { releaseFlight } = await import("./orchestrator/single-flight")
+              releaseFlight(flightReserved, flightOwner)
+              flightReserved = null
+            }
             const result = {
               success: false,
               error: soft.error,
@@ -1060,34 +1149,7 @@ export function createToolExecutor(ws: WebSocket) {
           }
           tabL2SoftHeld = true
         }
-        // ADR-015: L2 FIFO admission (≤1 per orchestrator_run, ≤2 process-wide)
-        const maForL2 = actingThreadId && threadManager
-          ? (threadManager.get(actingThreadId) as any)
-          : null
-        const { acquireL2Admission, releaseL2Admission } = await import("./orchestrator/l2-admission")
-        const admit = await acquireL2Admission({
-          orchestratorRunId: maForL2?.orchestrator_run_id,
-          threadId: actingThreadId,
-        })
-        if (!admit.ok) {
-          if (tabL2SoftHeld && typeof finalParams.tabId === "number" && actingThreadId) {
-            const { releaseSoftOrPendingL2 } = await import("./orchestrator")
-            releaseSoftOrPendingL2({
-              tabId: finalParams.tabId,
-              holderThreadId: actingThreadId,
-              confirmId: toolCallId,
-            })
-          }
-          const result = {
-            success: false,
-            error: admit.error,
-            data: { error_code: "L2_ADMISSION_TIMEOUT" },
-          }
-          logToolFinish(toolCallId, toolName, startedAt, result)
-          return result
-        }
-        const l2AdmitKey = admit.key
-        let decision: Awaited<ReturnType<typeof securityConfirmations.request>>
+
         try {
         decision = await (async () => {
           // P0a — pre-generate confirmationId so WS + tray channels share it.
@@ -1260,16 +1322,14 @@ export function createToolExecutor(ws: WebSocket) {
         } finally {
           releaseL2Admission(l2AdmitKey)
         }
-        if (!decision.approved) {
-          if (tabL2SoftHeld && typeof finalParams.tabId === "number" && actingThreadId) {
-            const { releaseSoftOrPendingL2 } = await import("./orchestrator")
-            releaseSoftOrPendingL2({
-              tabId: finalParams.tabId,
-              holderThreadId: actingThreadId,
-              confirmId: toolCallId,
-            })
+        if (!decision || !decision.approved) {
+          if (flightReserved) {
+            const { releaseFlight } = await import("./orchestrator/single-flight")
+            releaseFlight(flightReserved, flightOwner)
+            flightReserved = null
           }
-          const reason = decision.reason === "approved" ? "unavailable" : decision.reason
+          const reason =
+            !decision ? "unavailable" : decision.reason === "approved" ? "unavailable" : decision.reason
           const result = {
             success: false,
             error: highRiskExecutionDeniedError(toolName, safety.dangerousApis, reason),
@@ -1303,6 +1363,12 @@ export function createToolExecutor(ws: WebSocket) {
             confirmId: toolCallId,
           })
           if (!hard.ok) {
+            // SOFT/HELD_PENDING_L2 released in outer finally (!tabL2HardPromoted)
+            if (flightReserved) {
+              const { releaseFlight } = await import("./orchestrator/single-flight")
+              releaseFlight(flightReserved, flightOwner)
+              flightReserved = null
+            }
             const result = {
               success: false,
               error: hard.error,
@@ -1315,7 +1381,11 @@ export function createToolExecutor(ws: WebSocket) {
             logToolFinish(toolCallId, toolName, startedAt, result)
             return result
           }
+          tabL2HardPromoted = true
         }
+        // Transfer flight ownership to executeCompanionTool (re-entrant same owner).
+        // Clear local flag without releaseFlight so finally does not free it.
+        flightReserved = null
         logger.info("security.confirmation.approved", { tool_call_id: toolCallId, tool_name: toolName })
         // UX-spike 2026-07-23: record per-session re-L2 trust for computer-use.
         // The INITIAL task L2 just gated the whole task; subsequent mid-task
@@ -1388,6 +1458,38 @@ export function createToolExecutor(ws: WebSocket) {
             auto_approve_active: securityConfig.auto_approve_dangerous === true,
             relevant_domain: relevantDomain,
           })
+        }
+        } finally {
+          // Pair tabL2SoftHeld with finally: release SOFT/HELD_PENDING_L2 on any
+          // non-success exit (throw / deny / timeout / hard re-acquire fail).
+          // Successful hard promote sets tabL2HardPromoted and keeps HARD.
+          if (
+            tabL2SoftHeld &&
+            !tabL2HardPromoted &&
+            typeof finalParams.tabId === "number" &&
+            actingThreadId
+          ) {
+            try {
+              const { releaseSoftOrPendingL2 } = await import("./orchestrator")
+              releaseSoftOrPendingL2({
+                tabId: finalParams.tabId,
+                holderThreadId: actingThreadId,
+                confirmId: toolCallId,
+              })
+            } catch {
+              /* best-effort */
+            }
+          }
+          // Exception path: flight still reserved and not transferred to execute → free it.
+          // Deny paths release+null explicitly; approve sets flightReserved=null without release.
+          if (flightReserved) {
+            try {
+              const { releaseFlight } = await import("./orchestrator/single-flight")
+              releaseFlight(flightReserved, flightOwner)
+            } catch {
+              /* best-effort */
+            }
+          }
         }
       } else {
         // App tab WP3: app_whitelist / thread_trust reasons precede the
@@ -1963,9 +2065,13 @@ function dispatchToExtension(
 export async function handleSecurityConfirmationResponse(ws: WebSocket, msg: any, sessionId?: string): Promise<void> {
   const confirmationId = String(msg.confirmation_id || "")
   const approved = msg.approved === true
-  // stop_thread: Side Panel may set this (XC-Integration-1 forwards it). No
-  // consumer here yet — UI already chat.aborts on stop. Keep field on the wire
-  // for a future companion-side abort; do not drop it in the extension.
+  // stop_thread: Confirm Center "stop" — deny confirm AND authoritatively
+  // abort+drain the stamped worker (do not rely solely on client chat.abort).
+  const stopThread = msg.stop_thread === true
+  const clientStopThreadId =
+    typeof msg.stop_thread_id === "string" && msg.stop_thread_id.length > 0
+      ? String(msg.stop_thread_id)
+      : undefined
 
   // Validate add_to_whitelist against the domains actually shown in the
   // dialog. Without this check, any loopback WS peer could ship a
@@ -2003,11 +2109,9 @@ export async function handleSecurityConfirmationResponse(ws: WebSocket, msg: any
   // Same anti-injection contract as add_to_whitelist above.
   const rawThreadWhitelist: boolean = msg.add_to_thread_whitelist === true
   const relevantApps = securityConfirmations.getRelevantApps(confirmationId) || []
-  // Capture the tool name BEFORE respondFrom() below deletes the pending
-  // entry — getToolName afterwards would return undefined and the W7/WP3
-  // thread-trust grant would silently never happen (pre-existing bug: the
-  // host_read grant was equally affected; no test covered the composition).
+  // Capture metadata BEFORE respondFrom() deletes the pending entry.
   const confirmationToolName = securityConfirmations.getToolName(confirmationId)
+  const stampedWorkerId = securityConfirmations.getWorkerId(confirmationId)
   let threadWhitelistApp: string | null = null
   if (rawThreadWhitelist && relevantApps.length > 0) {
     // The first (and currently only) relevant app is what the user was shown.
@@ -2036,8 +2140,10 @@ export async function handleSecurityConfirmationResponse(ws: WebSocket, msg: any
   // Grill Q2: host_computer session auto-approve checkbox (validated in respondFrom
   // against relevantApps non-empty).
   const addToSessionTrust = msg.add_to_session_trust === true
-  const respondResult = securityConfirmations.respondFrom(confirmationId, approved, ws, nonceResponse, {
-    addToSessionTrust,
+  // stop_thread always resolves as deny (even if client sent approved:true)
+  const effectiveApproved = stopThread ? false : approved
+  const respondResult = securityConfirmations.respondFrom(confirmationId, effectiveApproved, ws, nonceResponse, {
+    addToSessionTrust: stopThread ? false : addToSessionTrust,
   })
   const responded = respondResult.outcome === "resolved"
   if (respondResult.outcome === "unknown" || respondResult.outcome === "origin_mismatch") {
@@ -2048,6 +2154,7 @@ export async function handleSecurityConfirmationResponse(ws: WebSocket, msg: any
     logger.warn("security.confirmation.origin_mismatch_or_unknown", {
       confirmation_id: confirmationId,
       approved_requested: approved,
+      stop_thread: stopThread,
     })
   } else if (respondResult.outcome === "nonce_retry") {
     // Wrong code typed — entry stays pending; the client got a
@@ -2065,13 +2172,52 @@ export async function handleSecurityConfirmationResponse(ws: WebSocket, msg: any
     })
   }
 
+  // ADR-015 GATE1: authoritative stop — abort LLM + reject pending + release leases.
+  // Prefer server-stamped worker_id over client stop_thread_id (anti-wrong-target).
+  if (stopThread && responded) {
+    const stopTarget =
+      (stampedWorkerId && stampedWorkerId.length > 0 ? stampedWorkerId : undefined) ||
+      clientStopThreadId
+    if (stopTarget) {
+      try {
+        const rejected = rejectPendingForThread(stopTarget, `stop_thread:${confirmationId}`)
+        const { releaseAllLeasesForThread } = await import("./orchestrator/tab-lease")
+        const released = releaseAllLeasesForThread(stopTarget, `stop_thread:${confirmationId}`)
+        try {
+          const { abortThreadChat } = await import("./message-router")
+          if (typeof abortThreadChat === "function") abortThreadChat(stopTarget)
+        } catch {
+          /* optional if router not loaded */
+        }
+        logger.info("security.confirmation.stop_thread", {
+          confirmation_id: confirmationId,
+          stop_target: stopTarget,
+          stamped_worker_id: stampedWorkerId || null,
+          client_stop_thread_id: clientStopThreadId || null,
+          rejected_pending: rejected,
+          leases_released: released,
+        })
+      } catch (err: any) {
+        logger.warn("security.confirmation.stop_thread_failed", {
+          confirmation_id: confirmationId,
+          stop_target: stopTarget,
+          error: err?.message || String(err),
+        })
+      }
+    } else {
+      logger.warn("security.confirmation.stop_thread_no_target", {
+        confirmation_id: confirmationId,
+      })
+    }
+  }
+
   // Only persist whitelist additions when the confirmation was actually
   // resolved by THIS response. If respondFrom returned false (origin mismatch,
   // unknown id, or already-expired entry), the response is not authoritative —
   // accepting its add_to_whitelist payload would let any loopback WS peer that
   // can guess a confirmation_id poison auto_approved_domains without ever
   // resolving the prompt.
-  if (responded && approved && validPatterns.length > 0) {
+  if (responded && effectiveApproved && validPatterns.length > 0) {
     try {
       const current = getConfig().auto_approved_domains || []
       const seen = new Set(current.map((d: string) => d.toLowerCase()))
@@ -2113,7 +2259,7 @@ export async function handleSecurityConfirmationResponse(ws: WebSocket, msg: any
   // Phase 1 W7 — Record thread-scoped trust when user approved with
   // add_to_thread_whitelist=true. Only for read operations (Q1 blocker:
   // writes always require biometric per call, never thread-trusted).
-  if (responded && approved && threadWhitelistApp) {
+  if (responded && effectiveApproved && threadWhitelistApp) {
     const toolName = confirmationToolName
     if (toolName === "host_read" && sessionId) {
       getThreadApprovals().add(sessionId, threadWhitelistApp, "read")
@@ -2402,8 +2548,10 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
         return { success: false, error: "shell_exec requires L2 security_token confirmation" }
       }
       const tid = params.__thread_id || params._thread_id
+      const flightOwner = String(tid || "unknown")
       const { tryAcquireFlight, releaseFlight } = await import("./orchestrator/single-flight")
-      const flight = tryAcquireFlight("shell_exec", String(tid || "unknown"))
+      // Re-entrant OK when L2 path already reserved for this owner
+      const flight = tryAcquireFlight("shell_exec", flightOwner)
       if (!flight.ok) return { success: false, error: flight.error, data: { error_code: "SHELL_BUSY", holder: flight.holder } }
       try {
         const { shellExec } = await import("./capability/shell")
@@ -2415,7 +2563,7 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
           threadId: tid,
         })
       } finally {
-        releaseFlight("shell_exec")
+        releaseFlight("shell_exec", flightOwner)
       }
     }
     case "netsec_port_scan": {
@@ -2430,8 +2578,9 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
         return { success: false, error: "netsec_port_scan requires L2 security_token confirmation" }
       }
       const tid = params.__thread_id || params._thread_id
+      const flightOwner = String(tid || "unknown")
       const { tryAcquireFlight, releaseFlight } = await import("./orchestrator/single-flight")
-      const flight = tryAcquireFlight("netsec_port_scan", String(tid || "unknown"))
+      const flight = tryAcquireFlight("netsec_port_scan", flightOwner)
       if (!flight.ok) {
         return { success: false, error: flight.error, data: { error_code: "NETSEC_BUSY", holder: flight.holder } }
       }
@@ -2445,7 +2594,7 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
           threadId: tid,
         })
       } finally {
-        releaseFlight("netsec_port_scan")
+        releaseFlight("netsec_port_scan", flightOwner)
       }
     }
     case "use_skill": {

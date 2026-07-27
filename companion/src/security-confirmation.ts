@@ -148,6 +148,8 @@ interface PendingConfirmation {
   nonceChallenge?: string
   /** Consumed manual-nonce attempts for this confirmation (starts at 0). */
   nonceAttempts: number
+  /** ADR-015: stamped worker/thread for authoritative stop_thread drain. */
+  workerId?: string
 }
 
 function codePreview(code: string): string {
@@ -198,6 +200,9 @@ export class SecurityConfirmationManager {
           ? details.nonceChallenge
           : undefined,
         nonceAttempts: 0,
+        workerId: typeof details.workerId === "string" && details.workerId.length > 0
+          ? details.workerId
+          : undefined,
       })
 
       send({
@@ -275,6 +280,15 @@ export class SecurityConfirmationManager {
    */
   getToolName(confirmationId: string): string | undefined {
     return this.pending.get(confirmationId)?.toolName
+  }
+
+  /**
+   * ADR-015 — Return the worker/thread id stamped when the confirmation was
+   * issued. Used by handleSecurityConfirmationResponse for authoritative
+   * stop_thread abort+drain (prefer server stamp over client stop_thread_id).
+   */
+  getWorkerId(confirmationId: string): string | undefined {
+    return this.pending.get(confirmationId)?.workerId
   }
 
   /**

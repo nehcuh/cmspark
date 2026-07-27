@@ -48,8 +48,10 @@ export function buildFleetSnapshot(tm: ThreadManager): FleetSnapshot {
   const views: FleetWorkerView[] = workers.map((w) => {
     const wLocks = locksByHolder.get(w.id) || []
     let status: FleetWorkerView["status"] = "idle"
-    if (w.paused) status = "paused"
-    else if (wLocks.length > 0) status = "holding_tabs"
+    // ADR: pause keeps leases — prefer holding_tabs so operators still see exclusive holds
+    // (and can force-release). paused alone only when no locks remain.
+    if (wLocks.length > 0) status = "holding_tabs"
+    else if (w.paused) status = "paused"
     return {
       id: w.id,
       alias: w.alias,

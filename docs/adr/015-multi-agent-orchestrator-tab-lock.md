@@ -119,6 +119,10 @@
 - 保持 `originWs` + `respondFrom`；**禁止** Dashboard 广播 approve。
 - `shell_exec` / `netsec_port_scan`：每调用 L2 + **process-wide single-flight**；spawn **不得**改 `capability_profile` / 启用 modules。
 - 审计：Companion `AuditWriter` 盖章（spawn / L2 / lease / elevation / HITL / force-release）。
+- **L2 admission 顺序**：`acquireL2Admission` → SOFT（tab L2 tools）→ Confirm → hard re-acquire；admission 在 `finally` 释放。SOFT 在 admission 之后获取，`softDeadline` = confirm timeout，避免排队时 SOFT 过期。
+- **L2 admission 队列语义（scan-skip FIFO，非严格 HOL）**：等待者按到达顺序排列，但 `tryDequeue` 扫描队列并放行**当前** `canAdmit` 的每一位 waiter（在 process/run cap 下可 multi-admit）。队首若仅因 per-run cap=1 被挡，**不会**阻塞后续不同 run 的 waiter。文档表述为「当前可准入 waiters 中的 FIFO」，勿声称严格 head-of-line。
+- **shell/netsec single-flight**：在展示 L2 之前 reserve flight；deny/timeout 释放；approve 保留至 execute（同 owner re-entrant），避免用户白点后 `*_BUSY`。
+- **Confirm stop**：companion 消费 `stop_thread` + `stop_thread_id`；优先服务端 stamped `worker_id` 做 abort + reject pending + release leases（UI `chat.abort` 为冗余 best-effort）。
 
 ### 5. Dashboard UX
 

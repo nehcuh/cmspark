@@ -5,11 +5,14 @@ import {
   hardReacquireAfterConfirm,
   releaseSoftOrPendingL2,
   releaseAllLeasesForThread,
+  releaseTabLease,
   listTabLocks,
   _resetTabLeasesForTests,
   getTabLease,
+  registerTabLeasePendingHooks,
+  sweepExpired,
 } from "../src/orchestrator/tab-lease"
-import { computeWorkerWhitelist, WORKER_HARD_DENY } from "../src/orchestrator"
+import { computeWorkerWhitelist, WORKER_HARD_DENY, buildFleetSnapshot } from "../src/orchestrator"
 
 function reset() {
   _resetTabLeasesForTests()
@@ -99,4 +102,75 @@ test("computeWorkerWhitelist strips HARD_DENY but keeps evaluate", () => {
   assert.ok(!wl.includes("shell_exec"))
   assert.ok(!wl.includes("host_computer"))
   assert.equal(WORKER_HARD_DENY.has("evaluate"), false)
+})
+
+test("softDeadline defaults to confirm timeout (~45s)", () => {
+  reset()
+  const before = Date.now()
+  const a = acquireOrRenewTabLease({
+    tabId: 50,
+    holderThreadId: "w1",
+    needsL2: true,
+    confirmId: "c",
+  })
+  assert.equal(a.ok, true)
+  if (a.ok) {
+    const soft = a.lease.softDeadline!
+    // SOFT_LEASE_MS = 45000
+    assert.ok(soft >= before + 40_000 && soft <= before + 50_000, `softDeadline=${soft}`)
+  }
+})
+
+test("hard re-acquire fail leaves soft for releaseSoftOrPendingL2", () => {
+  reset()
+  acquireOrRenewTabLease({ tabId: 51, holderThreadId: "w1", needsL2: true, confirmId: "c" })
+  // Steal: force free and give to other holder
+  releaseTabLease(51, "steal")
+  acquireOrRenewTabLease({ tabId: 51, holderThreadId: "w2", needsL2: false })
+  const hard = hardReacquireAfterConfirm({ tabId: 51, holderThreadId: "w1", confirmId: "c" })
+  assert.equal(hard.ok, false)
+  if (!hard.ok) assert.equal(hard.error_code, "TAB_LOCKED")
+  // w1 has no soft left (tab held by w2)
+  releaseSoftOrPendingL2({ tabId: 51, holderThreadId: "w1" })
+  assert.equal(getTabLease(51)?.holderThreadId, "w2")
+})
+
+test("sweepExpired with pending hook drains instead of silent FREE", () => {
+  reset()
+  let rejected = 0
+  registerTabLeasePendingHooks({
+    hasPendingForTab: () => true,
+    rejectPendingForTab: () => {
+      rejected++
+      return 1
+    },
+  })
+  const a = acquireOrRenewTabLease({ tabId: 60, holderThreadId: "w1", needsL2: false })
+  assert.equal(a.ok, true)
+  // Force idle expiry
+  const lease = getTabLease(60)!
+  ;(lease as any).idleDeadline = Date.now() - 1
+  sweepExpired()
+  assert.equal(getTabLease(60), null, "pending path should drain+free")
+  assert.ok(rejected >= 1)
+})
+
+test("fleet prefers holding_tabs over paused when locks present", () => {
+  reset()
+  acquireOrRenewTabLease({ tabId: 70, holderThreadId: "worker-1", needsL2: false })
+  const tm = {
+    list: () => [
+      {
+        id: "worker-1",
+        alias: "w",
+        agent_role: "worker",
+        paused: true,
+        parent_thread_id: "p",
+        orchestrator_run_id: "r",
+      },
+    ],
+  }
+  const snap = buildFleetSnapshot(tm as any)
+  assert.equal(snap.workers[0].status, "holding_tabs")
+  assert.equal(snap.worst_status, "holding_tabs")
 })

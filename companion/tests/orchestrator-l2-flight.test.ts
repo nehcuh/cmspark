@@ -9,6 +9,7 @@ import {
 import {
   tryAcquireFlight,
   releaseFlight,
+  isFlightBusy,
   _resetFlightsForTests,
 } from "../src/orchestrator/single-flight"
 import {
@@ -138,4 +139,49 @@ test("bindingPayloadFor: shell/spawn/ask_user non-empty", () => {
     /spawn\|reviewer\|p1/,
   )
   assert.equal(SecurityPolicy.bindingPayloadFor("ask_user", { question: "Go?" }), "Go?")
+})
+
+test("L2 tryDequeue multi-admits two eligible waiters under process cap", async () => {
+  _resetL2AdmissionForTests()
+  // Fill process cap (2)
+  const a = await acquireL2Admission({ orchestratorRunId: "r1", threadId: "t1" })
+  const b = await acquireL2Admission({ orchestratorRunId: "r2", threadId: "t2" })
+  assert.equal(a.ok, true)
+  assert.equal(b.ok, true)
+  // Queue two different runs
+  const p3 = acquireL2Admission({ orchestratorRunId: "r3", threadId: "t3" })
+  const p4 = acquireL2Admission({ orchestratorRunId: "r4", threadId: "t4" })
+  assert.equal(l2AdmissionSnapshot().queue_len, 2)
+  // Free both slots — multi-admit should admit both waiters without a second release
+  if (a.ok) releaseL2Admission(a.key)
+  if (b.ok) releaseL2Admission(b.key)
+  const c = await p3
+  const d = await p4
+  assert.equal(c.ok, true)
+  assert.equal(d.ok, true)
+  assert.equal(l2AdmissionSnapshot().active_global, 2)
+  if (c.ok) releaseL2Admission(c.key)
+  if (d.ok) releaseL2Admission(d.key)
+})
+
+test("shell flight re-entrant same owner; other owner BUSY", () => {
+  _resetFlightsForTests()
+  assert.equal(tryAcquireFlight("shell_exec", "w1").ok, true)
+  assert.equal(tryAcquireFlight("shell_exec", "w1").ok, true) // re-entrant L2→execute
+  assert.equal(tryAcquireFlight("shell_exec", "w2").ok, false)
+  releaseFlight("shell_exec", "w2") // wrong owner must not free
+  assert.equal(tryAcquireFlight("shell_exec", "w2").ok, false)
+  releaseFlight("shell_exec", "w1")
+  assert.equal(tryAcquireFlight("shell_exec", "w2").ok, true)
+  releaseFlight("shell_exec", "w2")
+})
+
+test("isFlightBusy probe", () => {
+  _resetFlightsForTests()
+  assert.equal(isFlightBusy("shell_exec").busy, false)
+  tryAcquireFlight("shell_exec", "w1")
+  const b = isFlightBusy("shell_exec")
+  assert.equal(b.busy, true)
+  if (b.busy) assert.equal(b.holder, "w1")
+  releaseFlight("shell_exec", "w1")
 })

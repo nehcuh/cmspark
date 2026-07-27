@@ -1,5 +1,12 @@
 // L2 confirmation admission control — ADR-015 §3.5 / §4
-// max_active_l2_per_run=1, max_active_l2_process=2; FIFO wait with timeout.
+// max_active_l2_per_run=1, max_active_l2_process=2.
+//
+// Queue discipline is **scan-skip FIFO** (not strict head-of-line):
+// waiters are ordered by arrival, but tryDequeue walks the queue and admits
+// every waiter that currently `canAdmit` under process/run caps. A head waiter
+// blocked only by per-run cap=1 does **not** block a later different-run waiter.
+// Throughput-positive under multi-run contention; document as "FIFO among
+// currently admissible waiters" — do not claim pure HOL.
 
 import { ORCHESTRATOR_CAPS } from "./constants"
 
@@ -13,7 +20,8 @@ const activeByRun = new Map<string, number>()
 let activeGlobal = 0
 const queue: Waiter[] = []
 
-const ADMISSION_TIMEOUT_MS = 60_000
+/** Max wait in queue before L2_ADMISSION_TIMEOUT (must stay ≤ soft path budget when SOFT is taken after admission). */
+export const ADMISSION_TIMEOUT_MS = 60_000
 
 function runKey(orchestratorRunId: string | null | undefined, threadId: string | null | undefined): string {
   if (orchestratorRunId) return `run:${orchestratorRunId}`
@@ -28,17 +36,26 @@ function canAdmit(key: string): boolean {
   return true
 }
 
+/**
+ * Admit every currently-eligible waiter under process/run caps.
+ * Scan-skip: skips head waiters that fail canAdmit so later runs can proceed.
+ * Multi-admit: continues until no further waiter can take a slot (fixes
+ * under-use when process cap frees more than one slot at once).
+ */
 function tryDequeue(): void {
-  // scan queue for first waiter that can admit
-  for (let i = 0; i < queue.length; i++) {
+  let i = 0
+  while (i < queue.length) {
     const w = queue[i]
-    if (!canAdmit(w.runId)) continue
+    if (!canAdmit(w.runId)) {
+      i++
+      continue
+    }
     queue.splice(i, 1)
     clearTimeout(w.timer)
     activeGlobal++
     activeByRun.set(w.runId, (activeByRun.get(w.runId) || 0) + 1)
     w.resolve(true)
-    return
+    // next element shifted into i — do not increment
   }
 }
 
@@ -75,6 +92,10 @@ export async function acquireL2Admission(opts: {
 
 export function releaseL2Admission(key: string): void {
   const n = activeByRun.get(key) || 0
+  if (n <= 0) {
+    // Re-entrancy guard: double-release must not under-count / over-dequeue
+    return
+  }
   if (n <= 1) activeByRun.delete(key)
   else activeByRun.set(key, n - 1)
   if (activeGlobal > 0) activeGlobal--
