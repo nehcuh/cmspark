@@ -136,7 +136,8 @@
 |------|------|
 | **P0** | Lease Map + 状态机（含 SOFT 互斥、`HELD_PENDING_L2`）；`isToolAllowed` 硬门；`pendingToolCalls.thread_id`；禁 active-tab 绕过；spawn+确认+Pack 降权；窄 orchestrator；数值 cap；worker-cancel；`list_tabs` 锁元数据 + `list_tab_locks`；`create_tab` auto-hold；最小 FleetStrip；审计；host_computer×Chrome×lease 门禁 |
 | **P1** | Confirm Center 完整身份与 FIFO；HITL pause/force-release UX；shell/netsec single-flight；可选 SOFT 排队（替代纯拒绝） |
-| **P2** | 全量 Dashboard；shared-observer 只读；Extension per-tab 队列；受限 auto-spawn |
+| **P2** | 全量 Dashboard；Extension per-tab 队列（纵深） |
+| **Deferred（明确不做于本阶段）** | **shared-observer 只读 lease**（P0/P1 仍全量排他，含纯读）；**受限 auto-spawn**（spawn **仅** L2 Confirm Center 显式批准，LLM 不得自批 / 无静默 fan-out） |
 
 ## 否决
 
@@ -151,7 +152,8 @@
 - **正面**：复杂任务可编排；tab 正确性可论证；与 Pack/L2/双层拓扑一致。  
 - **代价**：多 worker 浏览器 mutate 在同 tab 上串行；P0 工作量大（executor / schema / abort 链路）。  
 - **已做**：P0 内核 + P1 FleetStrip/L2 FIFO/single-flight/llm-loop cap/spawn HITL（见上方进度表）。  
-- **未做**：全量 Dashboard / shared-observer / E2E；默认 Chrome Store 分发「多 agent 攻击面」SKU。
+- **未做**：全量 Dashboard 网格 / E2E；默认 Chrome Store 分发「多 agent 攻击面」SKU。  
+- **明确延期**：shared-observer 只读模式；auto-spawn（保持 explicit HITL only）。
 
 ## 实现入口（供 writing-plan）
 
@@ -183,9 +185,17 @@
 | **`ask_user`** binary HITL via L2 Confirm Center | tool def + companion case |
 | **`wait_workers` frozen poll-only**（带 llm_loops 快照；非 barrier） | tool def + companion case |
 | Pending-aware force-release（`FORCE_RELEASING` → reject pending → complete） | `forceReleaseTab` / `completeForceRelease` |
-| Extension BrowserBridge **per-tab serialize queue** | `browser-bridge.ts` `withTabQueue` |
+| Extension BrowserBridge **per-tab serialize queue** | `chrome-extension/src/background/tab-queue.ts`（`TabQueue`）+ `browser-bridge.ts` `execute` 入口；单测 `tests/tab-queue.test.ts` |
 | FleetStrip + fleet.status/stop_all/pause/resume/force_release；Confirm Center worker/tab/run；Cockpit 舰队计数 | extension UI |
 | Unit tests：lease + L2 admission + single-flight + llm-loop gate + force-release drain | `orchestrator-*.test.ts` |
+| Spawn **explicit HITL only**（无 auto-spawn） | `spawn_worker` 必过 L2 `security_token`；`user_confirmed` 不被信任；`spawnWorkerThread` 要求 `userConfirmed` |
+
+### 明确延期（Deferred — 本阶段不实现）
+
+| 项 | 决定 | 理由 |
+|----|------|------|
+| **shared-observer 只读 lease** | **Defer** | 保持 P0 不变量：tab-targeted **读+写**一律排他。共享只读会引入 observer vs mutate 双轨状态机与绕过面；待产品有「扫描 worker 旁观 mutate worker」真实需求再开 ADR 修订。 |
+| **受限 auto-spawn** | **Defer / 不做** | 当前与目标均为 **explicit only**：每次 `spawn_worker` 走 Confirm Center。不引入 opt-in 静默 fan-out；即使未来做，也须限制非高危 Pack 且仍受并发 cap。 |
 
 ### 仍开放（按优先级）
 
@@ -196,7 +206,6 @@
 | `wait_workers` 真 barrier | 当前明确 poll-only |
 | Extension `tool.abort` 深度排水 | force-release 已 reject companion pending；CDP abort 待补 |
 | P2 全量 Dashboard 网格 / lease 图 / audit trail | FleetStrip + Cockpit 计数已有 |
-| P2 shared-observer 只读 lease；受限 auto-spawn | 未做 |
 | `ask_user` 自由文本答案 | 当前 binary approve/deny |
 
 ### 关键不变量（实现必须保持）
@@ -214,3 +223,4 @@
 |------|------|
 | 2026-07-27 | 初版：对抗 workflow + Claude/Pi + 用户 Q1–Q5 拍板 |
 | 2026-07-27 | P0 内核 + P1 FleetStrip/L2 FIFO/single-flight/llm-loop cap/spawn HITL/ask_user/tool whitelist filter/pending force-release；更新本进度表 |
+| 2026-07-27 | P2 polish：extension `TabQueue` 可测化；**shared-observer / auto-spawn 标为 Deferred**；用法见 mission-pack-usage § Multi-Agent |
