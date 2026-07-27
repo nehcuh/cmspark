@@ -295,14 +295,17 @@ export function getToolDefinitions(): ToolDefinition[] {
       type: "function",
       function: {
         name: "scroll",
-        description: "滚动页面",
+        description:
+          "滚动页面。优先滚动最大的 overflow 容器（X/Twitter 等 SPA 不滚动 window）。返回 before/after/moved；若 moved=false 则页面可能未动，不要声称已翻页，应改用 press_key(PageDown) 或对 [role=main]/[data-testid=primaryColumn] evaluate scrollBy，并用 get_page_text 复核。",
         parameters: {
           type: "object",
           properties: {
             tabId: { type: "number" },
             deltaX: { type: "number", description: "水平滚动量" },
-            deltaY: { type: "number", description: "垂直滚动量" },
+            deltaY: { type: "number", description: "垂直滚动量（正数向下）" },
             amount: { type: "number", description: "垂直滚动量（别名）" },
+            x: { type: "number", description: "可选：滚轮事件 clientX，默认 400" },
+            y: { type: "number", description: "可选：滚轮事件 clientY，默认 400" },
           },
           required: ["tabId"],
         },
