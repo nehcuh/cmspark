@@ -1,7 +1,7 @@
 // Global state store for the agent
 
 import { createContext, useContext, useReducer, type ReactNode, type Dispatch } from "react"
-import type { ConnectionState, Thread, Message, SkillMeta, OperationRecord, LLMConfig, SendShortcut, SecurityConfirmationRequest, LogEntry, KnowledgeMeta, SkillSelectionMode, SecurityAuditEntry, McpServerMeta, McpSelectionMode, AppEntry, AppPresetStatus, AppEnumerateCandidate, AppAddWarning, ComputerTaskEventView, ComputerTaskState, ComputerModelState, ComputerModelProgress, ComputerModelLicenseDoor, CapabilityLevel } from "../types"
+import type { ConnectionState, Thread, Message, SkillMeta, OperationRecord, LLMConfig, SendShortcut, SecurityConfirmationRequest, LogEntry, KnowledgeMeta, SkillSelectionMode, SecurityAuditEntry, McpServerMeta, McpSelectionMode, AppEntry, AppPresetStatus, AppEnumerateCandidate, AppAddWarning, ComputerTaskEventView, ComputerTaskState, ComputerModelState, ComputerModelProgress, ComputerModelLicenseDoor, CapabilityLevel, FleetSnapshot } from "../types"
 import { reduceComputerTaskEvent } from "../utils/computer-utils"
 
 export interface AgentState {
@@ -75,6 +75,8 @@ export interface AgentState {
   lastBrowserToolAt: number | null
   /** UI Mode P0: user pin; blocks auto-down only (never blocks up). */
   modePin: CapabilityLevel | null
+  /** ADR-015 FleetStrip — null until first fleet.status */
+  fleet: FleetSnapshot | null
 }
 
 export type AgentAction =
@@ -139,6 +141,7 @@ export type AgentAction =
   | { type: "SET_COMPUTER_MODEL_ERROR"; error: string | null }
   | { type: "NOTE_BROWSER_TOOL"; at?: number }
   | { type: "SET_MODE_PIN"; pin: CapabilityLevel | null }
+  | { type: "SET_FLEET"; fleet: FleetSnapshot | null }
 
 export const initialState: AgentState = {
   connectionState: "disconnected",
@@ -210,6 +213,7 @@ export const initialState: AgentState = {
   computerModelError: null,
   lastBrowserToolAt: null,
   modePin: null,
+  fleet: null,
 }
 
 export function agentReducer(state: AgentState, action: AgentAction): AgentState {
@@ -482,6 +486,8 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       return { ...state, lastBrowserToolAt: action.at ?? Date.now() }
     case "SET_MODE_PIN":
       return { ...state, modePin: action.pin }
+    case "SET_FLEET":
+      return { ...state, fleet: action.fleet }
     default:
       return state
   }

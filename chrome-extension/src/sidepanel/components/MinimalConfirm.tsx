@@ -1,4 +1,4 @@
-// Panel content-split confirm (UI Mode P1) — tool + risk + allow/deny/stop only.
+// Panel content-split confirm (UI Mode P1) — tool + risk + allow/deny/stop + multi-agent identity.
 // Heavy preview / nonce / whitelist live in Cockpit ConfirmElevated.
 
 import { useRef } from "react"
@@ -28,6 +28,10 @@ export function MinimalConfirm() {
   const label = riskLabel(request.risk_level)
   // Nonce-gated confirms must use Cockpit (content-split) — Panel cannot type-verify
   const needsNonce = !!request.nonce_challenge
+  const workerLabel =
+    request.worker_role_label ||
+    (request.worker_id ? `worker ${request.worker_id.slice(0, 8)}` : null)
+  const stopTargetId = request.worker_id || state.activeThreadId
 
   const respond = (approved: boolean, stopThread = false) => {
     if (approved && needsNonce) return
@@ -37,11 +41,19 @@ export function MinimalConfirm() {
       approved,
       stop_thread: stopThread,
       add_to_whitelist: [],
+      // Prefer stopping the owning worker, not the UI-active thread
+      stop_thread_id: stopThread ? stopTargetId : undefined,
     })
     dispatch({ type: "REMOVE_SECURITY_CONFIRMATION", confirmationId: request.confirmation_id })
-    if (stopThread) {
-      chrome.runtime.sendMessage({ type: "chat.abort", threadId: state.activeThreadId })
-      dispatch({ type: "SET_STREAMING", content: "" })
+    if (stopThread && stopTargetId) {
+      chrome.runtime.sendMessage({
+        type: "chat.abort",
+        threadId: stopTargetId,
+        thread_id: stopTargetId,
+      })
+      if (stopTargetId === state.activeThreadId) {
+        dispatch({ type: "SET_STREAMING", content: "" })
+      }
     }
   }
 
@@ -62,6 +74,15 @@ export function MinimalConfirm() {
       <div style={{ fontWeight: 700, marginBottom: 4, letterSpacing: "0.01em" }}>
         {label} · <span style={{ fontFamily: "ui-monospace, monospace" }}>{request.tool_name}</span>
       </div>
+      {workerLabel && (
+        <div style={{ fontSize: 10, color: "#fde68a", marginBottom: 4 }}>
+          来自 <strong>{workerLabel}</strong>
+          {typeof request.tab_id === "number" ? ` · tab ${request.tab_id}` : ""}
+          {request.orchestrator_run_id
+            ? ` · run ${request.orchestrator_run_id.slice(0, 8)}…`
+            : ""}
+        </div>
+      )}
       <div style={{ color: "#d1d5db", marginBottom: 8, fontSize: 10, lineHeight: 1.45 }}>
         {needsNonce
           ? "此确认需要输入确认码 — 请在操控台完成。"
@@ -94,6 +115,7 @@ export function MinimalConfirm() {
           type="button"
           style={{ ...btn, background: "transparent", color: "#fca5a5", border: "1px solid #7f1d1d" }}
           onClick={() => respond(false, true)}
+          title={stopTargetId ? `停止 ${stopTargetId.slice(0, 8)}…` : "停止当前线程"}
         >
           拒绝并停止
         </button>
@@ -111,6 +133,11 @@ export function MinimalConfirm() {
           详情
         </button>
       </div>
+      {state.pendingSecurityConfirmations.length > 1 && (
+        <div style={{ marginTop: 6, fontSize: 10, color: "#fcd34d" }}>
+          队列中还有 {state.pendingSecurityConfirmations.length - 1} 条确认
+        </div>
+      )}
       <span style={{ display: "none", color }} aria-hidden />
     </div>
   )

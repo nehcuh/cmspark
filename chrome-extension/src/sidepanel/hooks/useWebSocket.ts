@@ -360,8 +360,40 @@ export function useWebSocket() {
               preview_image: typeof msg.preview_image === "string" ? msg.preview_image : undefined,
               preview_caption: typeof msg.preview_caption === "string" ? msg.preview_caption : undefined,
               full_preview: typeof msg.full_preview === "string" ? msg.full_preview : undefined,
+              // ADR-015 multi-agent Confirm Center
+              worker_id: typeof msg.worker_id === "string" ? msg.worker_id : undefined,
+              parent_thread_id: typeof msg.parent_thread_id === "string" ? msg.parent_thread_id : undefined,
+              orchestrator_run_id: typeof msg.orchestrator_run_id === "string" ? msg.orchestrator_run_id : undefined,
+              worker_role_label: typeof msg.worker_role_label === "string" ? msg.worker_role_label : undefined,
+              tab_id: typeof msg.tab_id === "number" ? msg.tab_id : undefined,
             },
           })
+          // Refresh fleet strip when confirms arrive (pending badge + worker map)
+          chrome.runtime.sendMessage({ type: "fleet.status" })
+          break
+
+        case "fleet.status":
+        case "fleet.stop_all_result":
+        case "tab.force_release_result": {
+          const snap = msg.type === "fleet.status" ? msg : msg.fleet
+          if (snap && Array.isArray(snap.workers)) {
+            dispatch({
+              type: "SET_FLEET",
+              fleet: {
+                at: snap.at,
+                workers: snap.workers,
+                locks: Array.isArray(snap.locks) ? snap.locks : [],
+                worker_count: typeof snap.worker_count === "number" ? snap.worker_count : snap.workers.length,
+                lock_count: typeof snap.lock_count === "number" ? snap.lock_count : (snap.locks?.length || 0),
+                worst_status: snap.worst_status || "none",
+                orchestrator_runs: Array.isArray(snap.orchestrator_runs) ? snap.orchestrator_runs : [],
+              },
+            })
+          }
+          break
+        }
+        case "worker.updated":
+          chrome.runtime.sendMessage({ type: "fleet.status" })
           break
 
         case "security.confirmation.resolved":

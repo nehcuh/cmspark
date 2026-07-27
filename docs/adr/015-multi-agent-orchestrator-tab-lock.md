@@ -1,6 +1,6 @@
 # ADR-015: Multi-Agent Orchestrator、Dashboard 与 Tab 排他锁
 
-**日期**: 2026-07-27 | **状态**: 已拍板（设计锁定；**未实现**）  
+**日期**: 2026-07-27 | **状态**: 已拍板；**P0 内核 + P1 FleetStrip/Confirm Center 实现中**（`feat/multi-agent-p0`）  
 **相关**:
 
 | 文档 | 角色 |

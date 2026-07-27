@@ -1375,6 +1375,57 @@ export async function handleMessage(
       return { type: "knowledge.deleted", name: rest.name }
 
     // --- Mission Packs (P0) ---
+    case "fleet.status": {
+      const { buildFleetSnapshot } = await import("./orchestrator/fleet")
+      return buildFleetSnapshot(threadManager)
+    }
+    case "fleet.stop_all": {
+      const runId = typeof rest.orchestrator_run_id === "string" ? rest.orchestrator_run_id : null
+      const { listWorkers } = await import("./orchestrator/spawn")
+      const { releaseAllLeasesForThread } = await import("./orchestrator/tab-lease")
+      const { rejectPendingForThread } = await import("./server")
+      let targets: any[] = []
+      if (runId) {
+        targets = listWorkers(threadManager, runId)
+      } else {
+        targets = threadManager.list().filter((t: any) => t.agent_role === "worker")
+      }
+      const results: any[] = []
+      for (const w of targets) {
+        abortThreadChat(w.id)
+        const rejected = rejectPendingForThread(w.id, `fleet.stop_all:${w.id}`)
+        const released = releaseAllLeasesForThread(w.id, "fleet.stop_all")
+        threadManager.update(w.id, { paused: true } as any)
+        results.push({ worker_id: w.id, rejected, released })
+      }
+      const { buildFleetSnapshot } = await import("./orchestrator/fleet")
+      return { type: "fleet.stop_all_result", results, fleet: buildFleetSnapshot(threadManager) }
+    }
+    case "worker.pause": {
+      if (!rest.worker_id) return { type: "error", error: "worker_id required" }
+      const w = threadManager.update(String(rest.worker_id), { paused: true } as any)
+      if (!w) return { type: "error", error: "worker not found" }
+      abortThreadChat(String(rest.worker_id))
+      return { type: "worker.updated", worker: w }
+    }
+    case "worker.resume": {
+      if (!rest.worker_id) return { type: "error", error: "worker_id required" }
+      const w = threadManager.update(String(rest.worker_id), { paused: false } as any)
+      if (!w) return { type: "error", error: "worker not found" }
+      return { type: "worker.updated", worker: w }
+    }
+    case "tab.force_release": {
+      if (typeof rest.tab_id !== "number") return { type: "error", error: "tab_id number required" }
+      const { forceReleaseTab, getTabLease } = await import("./orchestrator/tab-lease")
+      const { rejectPendingForThread } = await import("./server")
+      const before = getTabLease(rest.tab_id)
+      if (before) {
+        rejectPendingForThread(before.holderThreadId, `tab.force_release:${rest.tab_id}`, rest.tab_id)
+      }
+      forceReleaseTab(rest.tab_id, rest.by || "user")
+      const { buildFleetSnapshot } = await import("./orchestrator/fleet")
+      return { type: "tab.force_release_result", tab_id: rest.tab_id, fleet: buildFleetSnapshot(threadManager) }
+    }
     case "pack.list": {
       const { listInstalledPacks } = await import("./packs/pack-engine")
       return { type: "pack.list", packs: listInstalledPacks(getConfig()) }

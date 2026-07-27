@@ -46,6 +46,12 @@ export interface Thread {
   mission_pack_id?: string | null
   /** DevSec workspace absolute path (set via 任务包 → 选择工作区). */
   workspace_root?: string | null
+  /** ADR-015 multi-agent */
+  agent_role?: "normal" | "orchestrator" | "worker"
+  parent_thread_id?: string | null
+  orchestrator_run_id?: string | null
+  worker_role_label?: string | null
+  paused?: boolean
 }
 
 export interface McpToolMeta {
@@ -226,6 +232,40 @@ export interface SecurityConfirmationRequest {
    * 存在时优先于 code_preview 渲染为可滚动区。
    */
   full_preview?: string
+  /** ADR-015 multi-agent Confirm Center identity */
+  worker_id?: string
+  parent_thread_id?: string
+  orchestrator_run_id?: string
+  worker_role_label?: string
+  tab_id?: number
+}
+
+/** ADR-015 FleetStrip snapshot from companion fleet.status */
+export interface FleetWorkerView {
+  id: string
+  alias: string
+  worker_role_label?: string | null
+  parent_thread_id?: string | null
+  orchestrator_run_id?: string | null
+  agent_role?: string
+  paused: boolean
+  status: "idle" | "paused" | "holding_tabs" | "unknown"
+  tab_locks: Array<{ tab_id: number; state: string; lease_expires_at: number }>
+}
+
+export interface FleetSnapshot {
+  at?: string
+  workers: FleetWorkerView[]
+  locks: Array<{
+    tab_id: number
+    state: string
+    holder_thread_id: string
+    lease_expires_at: number
+  }>
+  worker_count: number
+  lock_count: number
+  worst_status: "idle" | "paused" | "holding_tabs" | "none"
+  orchestrator_runs: string[]
 }
 
 export interface ToolCall {

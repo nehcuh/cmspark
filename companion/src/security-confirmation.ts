@@ -88,6 +88,12 @@ export interface SecurityConfirmationDetails {
    * 不变,修复面刻意收窄;旧扩展忽略本字段即回退截断版 code_preview。
    */
   fullPreview?: string
+  /** ADR-015 multi-agent: acting worker / run identity for Confirm Center */
+  workerId?: string
+  parentThreadId?: string
+  orchestratorRunId?: string
+  workerRoleLabel?: string
+  tabId?: number
 }
 
 export interface SecurityConfirmationDecision {
@@ -221,6 +227,22 @@ export class SecurityConfirmationManager {
         // P1: 完整预览文本独立字段,绕过 codePreview 的 1200 截断。
         ...(typeof details.fullPreview === "string" && details.fullPreview
           ? { full_preview: details.fullPreview }
+          : {}),
+        // ADR-015 Confirm Center identity fields (optional; old clients ignore)
+        ...(typeof details.workerId === "string" && details.workerId
+          ? { worker_id: details.workerId }
+          : {}),
+        ...(typeof details.parentThreadId === "string" && details.parentThreadId
+          ? { parent_thread_id: details.parentThreadId }
+          : {}),
+        ...(typeof details.orchestratorRunId === "string" && details.orchestratorRunId
+          ? { orchestrator_run_id: details.orchestratorRunId }
+          : {}),
+        ...(typeof details.workerRoleLabel === "string" && details.workerRoleLabel
+          ? { worker_role_label: details.workerRoleLabel }
+          : {}),
+        ...(typeof details.tabId === "number" && Number.isFinite(details.tabId)
+          ? { tab_id: details.tabId }
           : {}),
       })
     })

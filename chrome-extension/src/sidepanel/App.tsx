@@ -8,6 +8,7 @@ import { ComputerTaskBar } from "./components/ComputerTaskBar"
 import { SafetyStrip } from "./components/SafetyStrip"
 import { ThreadList } from "./components/ThreadList"
 import { BottomBar } from "./components/BottomBar"
+import { FleetStrip } from "./components/FleetStrip"
 import { SettingsSlideout } from "./components/SettingsSlideout"
 import { McpServerForm } from "./components/McpServerForm"
 import { SlashCommandPopover } from "./components/SlashCommandPopover"
@@ -156,6 +157,7 @@ function AppContent() {
       <ChatView />
       {/* L2: full timeline lives in Cockpit; Panel keeps SafetyStrip only */}
       {!isComputer && <ComputerTaskBar />}
+      <FleetStrip />
       <BottomBar capabilityLevel={level} />
       <InputArea capabilityLevel={level} />
       {showLogs && <LogBar onClose={() => setShowLogs(false)} />}
@@ -269,11 +271,13 @@ function SecurityConfirmationDialog() {
     if (approved && nonceChallenge && !nonceMatches) {
       return  // silently no-op — button should be disabled anyway
     }
+    const stopTargetId = request.worker_id || state.activeThreadId
     chrome.runtime.sendMessage({
       type: "security.confirmation.response",
       confirmation_id: request.confirmation_id,
       approved,
       stop_thread: stopThread,
+      stop_thread_id: stopThread ? stopTargetId : undefined,
       add_to_whitelist: addToWhitelist,
       // Phase 1 W7 (extended by WP4 W1) — only send add_to_thread_whitelist
       // when allowed (host_read / host_app + user checked the box). Companion
@@ -285,9 +289,16 @@ function SecurityConfirmationDialog() {
       nonce_response: approved && nonceChallenge ? nonceInput.toUpperCase() : undefined,
     })
     dispatch({ type: "REMOVE_SECURITY_CONFIRMATION", confirmationId: request.confirmation_id })
-    if (stopThread) {
-      chrome.runtime.sendMessage({ type: "chat.abort", threadId: state.activeThreadId })
-      dispatch({ type: "SET_STREAMING", content: "" })
+    if (stopThread && stopTargetId) {
+      // ADR-015: stop owning worker, not necessarily UI-active thread
+      chrome.runtime.sendMessage({
+        type: "chat.abort",
+        threadId: stopTargetId,
+        thread_id: stopTargetId,
+      })
+      if (stopTargetId === state.activeThreadId) {
+        dispatch({ type: "SET_STREAMING", content: "" })
+      }
     }
     const trustMsg = approved && canThreadTrust && threadTrust
       ? `（本线程内信任 ${relevantApp}）`
@@ -331,6 +342,16 @@ function SecurityConfirmationDialog() {
       <h3 style={styles.securityTitle}>
         {isAppLaunch ? "允许启动此应用吗？" : `允许执行 \`${request.tool_name}\` 吗？`}
       </h3>
+      {(request.worker_role_label || request.worker_id) && (
+        <p style={{ ...styles.securityText, color: "#b45309", marginTop: 0 }}>
+          来自 worker：
+          <strong>{request.worker_role_label || request.worker_id?.slice(0, 12)}</strong>
+          {typeof request.tab_id === "number" ? ` · tab ${request.tab_id}` : ""}
+          {request.orchestrator_run_id
+            ? ` · run ${request.orchestrator_run_id.slice(0, 8)}…`
+            : ""}
+        </p>
+      )}
       {(!isAppLaunch || request.dangerous_apis.length > 0) && (
         <p style={styles.securityText}>
           检测到高风险 API：{" "}

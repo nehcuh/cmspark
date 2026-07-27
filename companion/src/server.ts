@@ -1108,6 +1108,26 @@ export function createToolExecutor(ws: WebSocket) {
             set.add(sharedConfirmId)
           }
 
+          // ADR-015 Confirm Center: stamp multi-agent identity when known
+          const maThread = actingThreadId && threadManager
+            ? (threadManager.get(actingThreadId) as any)
+            : null
+          const multiAgentFields =
+            maThread && (maThread.agent_role === "worker" || maThread.agent_role === "orchestrator" || maThread.parent_thread_id)
+              ? {
+                  workerId: actingThreadId,
+                  parentThreadId: maThread.parent_thread_id || undefined,
+                  orchestratorRunId: maThread.orchestrator_run_id || undefined,
+                  workerRoleLabel: maThread.worker_role_label || maThread.alias || undefined,
+                  tabId: typeof finalParams.tabId === "number" ? finalParams.tabId : undefined,
+                }
+              : actingThreadId
+                ? {
+                    workerId: actingThreadId,
+                    tabId: typeof finalParams.tabId === "number" ? finalParams.tabId : undefined,
+                  }
+                : {}
+
           const wsPromise = securityConfirmations.request(
             (data) => {
               if (ws.readyState === WebSocket.OPEN) {
@@ -1147,6 +1167,7 @@ export function createToolExecutor(ws: WebSocket) {
               // 仅存在时下发;绝不进入工具结果/LLM 上下文——P2 不变量)。
               ...(computerL2PreviewImage ? { previewImage: computerL2PreviewImage } : {}),
               ...(computerL2PreviewCaption ? { previewCaption: computerL2PreviewCaption } : {}),
+              ...multiAgentFields,
             },
             // Adversary amendment A1: a confirmation carrying a nonce challenge
             // MUST be origin-bound — otherwise any loopback WS peer could burn
@@ -3738,6 +3759,21 @@ export function validateWsMessage(msg: any): WsValidationResult {
     "modules.update": (m) => {
       if (typeof m.module !== "string" || !m.module) return { valid: false, error: "modules.update requires module" }
       if (!m.patch || typeof m.patch !== "object") return { valid: false, error: "modules.update requires patch object" }
+      return { valid: true }
+    },
+    // ADR-015 multi-agent fleet / Confirm Center
+    "fleet.status": () => ({ valid: true }),
+    "fleet.stop_all": () => ({ valid: true }),
+    "worker.pause": (m) => {
+      if (typeof m.worker_id !== "string" || !m.worker_id) return { valid: false, error: "worker.pause requires worker_id" }
+      return { valid: true }
+    },
+    "worker.resume": (m) => {
+      if (typeof m.worker_id !== "string" || !m.worker_id) return { valid: false, error: "worker.resume requires worker_id" }
+      return { valid: true }
+    },
+    "tab.force_release": (m) => {
+      if (typeof m.tab_id !== "number") return { valid: false, error: "tab.force_release requires tab_id number" }
       return { valid: true }
     },
     "workspace.pick": () => ({ valid: true }),
