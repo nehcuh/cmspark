@@ -1,0 +1,8 @@
+{
+  "batch": "native-hud-brief",
+  "timestamp": "20260727-175147",
+  "claude": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/native-hud-brief-claude-20260727-175147.md" },
+  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/native-hud-brief-pi-20260727-175147.md" },
+  "both_approve": true,
+  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/native-hud-brief-diff-20260727-175147.patch"
+}

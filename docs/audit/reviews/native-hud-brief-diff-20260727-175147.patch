@@ -1,0 +1,12 @@
+# Dual external review context
+batch: native-hud-brief
+base: HEAD
+time: 20260727-175147
+
+761b2d3
+
+?? docs/audit/reviews/native-hud-brief-diff-20260727-175147.patch
+?? docs/decisions/v1.3/companion-native-hud-brief-2026-07-27.md
+
+## Diff (git diff + staged)
+
