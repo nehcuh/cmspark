@@ -142,12 +142,42 @@ export function BottomBar({ capabilityLevel }: { capabilityLevel: CapabilityLeve
     loadPanelData(id, state.activeThreadId, dispatch)
   }
 
+  // 「更多」菜单向上弹出：必须放在 overflow 滚动容器外，且整条 BottomBar 叠在
+  // InputArea 之上，否则会被 tabs 的 overflow 裁切 / 被下方输入区盖住。
+  const moreMenuEl =
+    moreOpen && overflowTabs.length > 0 ? (
+      <div style={styles.moreMenu} role="menu">
+        {overflowTabs.map((tab) => {
+          const Icon = tab.Icon
+          const active = activePanel === tab.id
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              role="menuitem"
+              style={{
+                ...styles.moreItem,
+                ...(active ? { background: tokens.bgActive, color: tokens.accent } : {}),
+              }}
+              onClick={() => openPanel(tab.id)}
+            >
+              <Icon size={14} />
+              <span>{tab.label}</span>
+            </button>
+          )
+        })}
+      </div>
+    ) : null
+
+  const moreBtnActive =
+    moreOpen || (activePanel != null && !allowedIds.has(activePanel))
+
   // L2 with no primary tabs and collapsed more: hide entire bar to free vertical space
   if (isL2 && tabs.length === 0 && !activePanel && !moreOpen) {
     return (
-      <div style={styles.container}>
+      <div style={{ ...styles.container, ...(moreOpen ? styles.containerRaised : null) }}>
         <div style={{ ...styles.tabs, justifyContent: "flex-end" }}>
-          <div ref={moreRef} style={{ position: "relative" }}>
+          <div ref={moreRef} style={styles.moreAnchor}>
             <button
               type="button"
               style={styles.moreBtn}
@@ -158,25 +188,7 @@ export function BottomBar({ capabilityLevel }: { capabilityLevel: CapabilityLeve
               <IconMore size={14} />
               <span>更多</span>
             </button>
-            {moreOpen && (
-              <div style={styles.moreMenu} role="menu">
-                {overflowTabs.map((tab) => {
-                  const Icon = tab.Icon
-                  return (
-                    <button
-                      key={tab.id}
-                      type="button"
-                      role="menuitem"
-                      style={styles.moreItem}
-                      onClick={() => openPanel(tab.id)}
-                    >
-                      <Icon size={14} />
-                      <span>{tab.label}</span>
-                    </button>
-                  )
-                })}
-              </div>
-            )}
+            {moreMenuEl}
           </div>
         </div>
       </div>
@@ -184,36 +196,38 @@ export function BottomBar({ capabilityLevel }: { capabilityLevel: CapabilityLeve
   }
 
   return (
-    <div style={styles.container}>
+    <div style={{ ...styles.container, ...(moreOpen ? styles.containerRaised : null) }}>
       <div style={styles.tabs}>
-        {tabs.map(tab => {
-          const active = activePanel === tab.id
-          const Icon = tab.Icon
-          return (
-          <button
-            key={tab.id}
-            type="button"
-            style={{
-              ...styles.tabBtn,
-              background: active ? tokens.bgActive : "transparent",
-              color: active ? tokens.accent : tokens.textSecondary,
-              borderColor: active ? "#bfdbfe" : "transparent",
-              boxShadow: active ? tokens.shadowSm : "none",
-            }}
-            onClick={() => openPanel(tab.id)}
-          >
-            <Icon size={14} />
-            <span>{tab.label}</span>
-          </button>
-          )
-        })}
+        <div style={styles.tabsScroll}>
+          {tabs.map((tab) => {
+            const active = activePanel === tab.id
+            const Icon = tab.Icon
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                style={{
+                  ...styles.tabBtn,
+                  background: active ? tokens.bgActive : "transparent",
+                  color: active ? tokens.accent : tokens.textSecondary,
+                  borderColor: active ? "#bfdbfe" : "transparent",
+                  boxShadow: active ? tokens.shadowSm : "none",
+                }}
+                onClick={() => openPanel(tab.id)}
+              >
+                <Icon size={14} />
+                <span>{tab.label}</span>
+              </button>
+            )
+          })}
+        </div>
         {overflowTabs.length > 0 && (
-          <div ref={moreRef} style={{ position: "relative", marginLeft: 2 }}>
+          <div ref={moreRef} style={styles.moreAnchor}>
             <button
               type="button"
               style={{
                 ...styles.moreBtn,
-                ...(moreOpen || (activePanel != null && !allowedIds.has(activePanel))
+                ...(moreBtnActive
                   ? {
                       background: tokens.bgActive,
                       color: tokens.accent,
@@ -228,31 +242,7 @@ export function BottomBar({ capabilityLevel }: { capabilityLevel: CapabilityLeve
               <IconMore size={14} />
               <span>更多</span>
             </button>
-            {moreOpen && (
-              <div style={styles.moreMenu} role="menu">
-                {overflowTabs.map((tab) => {
-                  const Icon = tab.Icon
-                  const active = activePanel === tab.id
-                  return (
-                    <button
-                      key={tab.id}
-                      type="button"
-                      role="menuitem"
-                      style={{
-                        ...styles.moreItem,
-                        ...(active
-                          ? { background: tokens.bgActive, color: tokens.accent }
-                          : {}),
-                      }}
-                      onClick={() => openPanel(tab.id)}
-                    >
-                      <Icon size={14} />
-                      <span>{tab.label}</span>
-                    </button>
-                  )
-                })}
-              </div>
-            )}
+            {moreMenuEl}
           </div>
         )}
       </div>
@@ -766,12 +756,29 @@ const styles: Record<string, React.CSSProperties> = {
     borderTop: `1px solid ${tokens.border}`,
     background: tokens.bgElevated,
     flexShrink: 0,
+    // Keep bar above InputArea in paint order so upward menus are clickable.
+    position: "relative",
+    zIndex: 2,
+  },
+  /** When menu is open, raise above composer (InputArea has no z-index, paints later). */
+  containerRaised: {
+    zIndex: 60,
   },
   tabs: {
     display: "flex",
     gap: 4,
     padding: "6px 10px",
     alignItems: "center",
+    // Do NOT put overflow on this row — it would clip the upward moreMenu
+    // (overflow-x:auto forces overflow-y to compute to auto, not visible).
+  },
+  /** Primary tabs only — horizontal scroll without clipping the more menu. */
+  tabsScroll: {
+    display: "flex",
+    gap: 4,
+    alignItems: "center",
+    flex: 1,
+    minWidth: 0,
     overflowX: "auto",
   },
   tabBtn: {
@@ -787,6 +794,11 @@ const styles: Record<string, React.CSSProperties> = {
     whiteSpace: "nowrap",
     transition: "background 0.12s ease, color 0.12s ease",
     fontFamily: tokens.font,
+  },
+  moreAnchor: {
+    position: "relative",
+    flexShrink: 0,
+    marginLeft: 2,
   },
   moreBtn: {
     border: "1px solid transparent",
@@ -814,7 +826,7 @@ const styles: Record<string, React.CSSProperties> = {
     border: `1px solid ${tokens.border}`,
     borderRadius: tokens.radiusMd,
     boxShadow: tokens.shadowMd,
-    zIndex: 40,
+    zIndex: 100,
     padding: 4,
     display: "flex",
     flexDirection: "column",
