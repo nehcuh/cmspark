@@ -32,6 +32,7 @@ export type LeaseErrorCode =
   | "TAB_ID_REQUIRED"
   | "TAB_LEASE_CAP"
   | "TAB_FORCE_RELEASING"
+  | "POST_CONFIRM_CANCELLED"
 
 export type LeaseResult =
   | { ok: true; lease: TabLease }
@@ -41,10 +42,11 @@ const leases = new Map<number, TabLease>()
 
 /**
  * Soft exclusivity covers confirm only (L2 admission is acquired *before* SOFT).
- * Align with Confirm Center timeout so SOFT cannot expire mid-dialog under the
- * preferred order: admission → SOFT → confirm.
+ * Base = Confirm Center timeout; +skew so SOFT cannot expire mid-dialog when the
+ * soft clock starts slightly before securityConfirmations.request's timer.
  */
-export const SOFT_LEASE_MS = DEFAULT_SECURITY_CONFIRMATION_TIMEOUT_MS
+export const SOFT_LEASE_SKEW_MS = 2_000
+export const SOFT_LEASE_MS = DEFAULT_SECURITY_CONFIRMATION_TIMEOUT_MS + SOFT_LEASE_SKEW_MS
 
 /** Max age of FORCE_RELEASING before forced free (bounded GC). */
 export const FORCE_RELEASING_GC_MS = 30_000
@@ -53,6 +55,11 @@ type PendingHooks = {
   hasPendingForTab: (tabId: number, holderThreadId: string) => boolean
   /** Reject CDP pending for tab/holder; return count rejected. */
   rejectPendingForTab?: (tabId: number, holderThreadId: string, reason: string) => number
+  /**
+   * Optional: true if Confirm Center still has a live dialog for this soft hold.
+   * Prefer confirmId match; fall back to holderThreadId worker stamp.
+   */
+  hasPendingConfirmation?: (confirmId: string | undefined, holderThreadId: string) => boolean
 }
 
 /** Module-level pending hooks so *every* sweepExpired path respects in-flight CDP. */
@@ -64,6 +71,11 @@ let pendingHooks: PendingHooks | null = null
  */
 export function registerTabLeasePendingHooks(hooks: PendingHooks): void {
   pendingHooks = hooks
+}
+
+/** True when production hooks have been registered (tests re-register after reset). */
+export function tabLeasePendingHooksRegistered(): boolean {
+  return pendingHooks != null
 }
 
 function now(): number {
@@ -88,7 +100,9 @@ function resolveHasPending(
   opts?: { hasPendingForTab?: (tabId: number, holderThreadId: string) => boolean },
 ): boolean {
   const fn = opts?.hasPendingForTab ?? pendingHooks?.hasPendingForTab
-  if (!fn) return false
+  // Fail-closed when hooks unregistered: treat as pending so cold-start / test
+  // reset without re-register never silent-FREEs under in-flight CDP.
+  if (!fn) return true
   try {
     return !!fn(tabId, holderThreadId)
   } catch {
@@ -139,11 +153,37 @@ export function sweepExpired(opts?: {
       continue
     }
     if (lease.state === "SOFT_RESERVED" && lease.softDeadline && t > lease.softDeadline) {
+      // Bind soft expire to live Confirm Center (confirmId and/or worker stamp).
+      // Do not FREE mid-dialog if a matching confirmation is still pending.
+      if (pendingHooks?.hasPendingConfirmation) {
+        try {
+          if (pendingHooks.hasPendingConfirmation(lease.confirmId, lease.holderThreadId)) {
+            lease.softDeadline = t + SOFT_LEASE_SKEW_MS
+            leases.set(tabId, lease)
+            continue
+          }
+        } catch {
+          // Fail closed: keep soft while confirmation probe is uncertain
+          lease.softDeadline = t + SOFT_LEASE_SKEW_MS
+          leases.set(tabId, lease)
+          continue
+        }
+      }
       leases.delete(tabId)
       audit("tab.lease.soft_expired", { tab_id: tabId, holder_thread_id: lease.holderThreadId })
       continue
     }
     if (lease.state === "HARD_HELD" || lease.state === "HELD_PENDING_L2") {
+      // HELD_PENDING_L2: freeze idle expiry for confirm duration (soft-style cover)
+      if (lease.state === "HELD_PENDING_L2") {
+        const coverUntil = t + DEFAULT_SECURITY_CONFIRMATION_TIMEOUT_MS + SOFT_LEASE_SKEW_MS
+        if (lease.idleDeadline < coverUntil) {
+          lease.idleDeadline = coverUntil
+          leases.set(tabId, lease)
+        }
+        // Only hard_max can expire HELD_PENDING_L2 while confirm is open
+        if (t <= lease.hardMaxDeadline) continue
+      }
       const idleOrHard = t > lease.idleDeadline || t > lease.hardMaxDeadline
       if (!idleOrHard) continue
       if (resolveHasPending(tabId, lease.holderThreadId, opts)) {
@@ -305,10 +345,13 @@ export function acquireOrRenewTabLease(opts: {
 
   if (existing.state === "HARD_HELD" || existing.state === "HELD_PENDING_L2") {
     if (needsL2) {
+      const t = now()
       existing.state = "HELD_PENDING_L2"
       existing.confirmId = confirmId
-      existing.renewedAt = now()
-      // do not advance idle while pending L2
+      existing.renewedAt = t
+      // Time cover for confirm duration: freeze idle so mid-dialog TTL cannot FREE
+      const cover = t + DEFAULT_SECURITY_CONFIRMATION_TIMEOUT_MS + SOFT_LEASE_SKEW_MS
+      if (existing.idleDeadline < cover) existing.idleDeadline = cover
       leases.set(tabId, existing)
       audit("tab.lease.held_pending_l2", { tab_id: tabId, holder_thread_id: holderThreadId })
       return { ok: true, lease: existing }
@@ -331,7 +374,11 @@ export function acquireOrRenewTabLease(opts: {
   }
 }
 
-/** After L2 approve: promote SOFT/HELD_PENDING_L2 → HARD_HELD for holder. */
+/**
+ * After L2 approve: promote SOFT/HELD_PENDING_L2 → HARD_HELD for holder.
+ * GATE2: never re-HARD a FREE tab after cancel (no free-path steal).
+ * Missing lease → POST_CONFIRM_CANCELLED (zombie approve / cancel race).
+ */
 export function hardReacquireAfterConfirm(opts: {
   tabId: number
   holderThreadId: string
@@ -340,11 +387,14 @@ export function hardReacquireAfterConfirm(opts: {
   sweepExpired()
   const existing = leases.get(opts.tabId)
   if (!existing) {
-    return acquireOrRenewTabLease({
-      tabId: opts.tabId,
-      holderThreadId: opts.holderThreadId,
-      needsL2: false,
-    })
+    // Cancel / soft expire / force-release already freed the tab — refuse promote.
+    return {
+      ok: false,
+      error_code: "POST_CONFIRM_CANCELLED",
+      tab_id: opts.tabId,
+      error:
+        "POST_CONFIRM_CANCELLED: tab lease gone after confirm (cancel/stop/expire); refusing free-path hard promote",
+    }
   }
   if (existing.holderThreadId !== opts.holderThreadId) {
     return {
@@ -418,6 +468,10 @@ export function releaseTabLease(tabId: number, reason: string, holderThreadId?: 
   return true
 }
 
+/**
+ * Release all leases for a holder. Prefer `releaseLeasesForThreadPendingAware`
+ * on cancel paths when CDP may still be in flight.
+ */
 export function releaseAllLeasesForThread(holderThreadId: string, reason: string): number {
   let n = 0
   for (const [tabId, lease] of [...leases.entries()]) {
@@ -428,6 +482,54 @@ export function releaseAllLeasesForThread(holderThreadId: string, reason: string
     }
   }
   return n
+}
+
+/**
+ * Cancel-path lease release: for each held tab with in-flight CDP,
+ * FORCE_RELEASING → reject pending → completeForceRelease; otherwise instant free.
+ * Call after rejectForWorker so L2 confirm is already denied.
+ */
+export function releaseLeasesForThreadPendingAware(
+  holderThreadId: string,
+  reason: string,
+  hooks?: {
+    hasPendingForTab?: (tabId: number, holderThreadId: string) => boolean
+    rejectPendingForTab?: (tabId: number, holderThreadId: string, reason: string) => number
+  },
+): { released: number; drained: number } {
+  let released = 0
+  let drained = 0
+  for (const [tabId, lease] of [...leases.entries()]) {
+    if (lease.holderThreadId !== holderThreadId) continue
+    const hasPending = resolveHasPending(tabId, holderThreadId, {
+      hasPendingForTab: hooks?.hasPendingForTab,
+    })
+    if (hasPending) {
+      lease.state = "FORCE_RELEASING"
+      lease.forceReleasingAt = now()
+      leases.set(tabId, lease)
+      const rejector = hooks?.rejectPendingForTab ?? pendingHooks?.rejectPendingForTab
+      if (rejector) {
+        try {
+          rejector(tabId, holderThreadId, reason)
+        } catch {
+          /* best-effort */
+        }
+      }
+      completeForceRelease(tabId, reason)
+      drained++
+      released++
+    } else {
+      leases.delete(tabId)
+      released++
+      audit("tab.lease.released", {
+        tab_id: tabId,
+        holder_thread_id: holderThreadId,
+        reason,
+      })
+    }
+  }
+  return { released, drained }
 }
 
 /**

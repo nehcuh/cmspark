@@ -420,6 +420,7 @@ export class SecurityConfirmationManager {
     if (ws === undefined) {
       for (const [confirmationId, pending] of this.pending) {
         clearTimeout(pending.timer)
+        pending.send({ type: "security.confirmation.resolved", confirmation_id: confirmationId, approved: false })
         pending.resolve({ confirmationId, approved: false, reason })
       }
       this.pending.clear()
@@ -429,8 +430,62 @@ export class SecurityConfirmationManager {
     for (const [confirmationId, pending] of this.pending) {
       if (pending.originWs !== undefined && pending.originWs !== ws) continue
       clearTimeout(pending.timer)
+      pending.send({ type: "security.confirmation.resolved", confirmation_id: confirmationId, approved: false })
       pending.resolve({ confirmationId, approved: false, reason })
       this.pending.delete(confirmationId)
     }
+  }
+
+  /**
+   * ADR-015 GATE2: deny all pending confirmations stamped with `workerId`.
+   * Called from chat.abort / fleet.stop_all / worker_cancel **before** lease release
+   * so L2 finally can free admission + flight and zombie approve cannot re-HARD.
+   * Emits security.confirmation.resolved (denied) so Confirm Center UI closes.
+   * @returns count of confirmations rejected
+   */
+  rejectForWorker(workerId: string, reason: "denied" | "disconnect" = "denied"): number {
+    if (!workerId) return 0
+    let n = 0
+    for (const [confirmationId, pending] of [...this.pending.entries()]) {
+      if (pending.workerId !== workerId) continue
+      clearTimeout(pending.timer)
+      this.pending.delete(confirmationId)
+      try {
+        pending.send({
+          type: "security.confirmation.resolved",
+          confirmation_id: confirmationId,
+          approved: false,
+        })
+      } catch {
+        /* best-effort UI close */
+      }
+      pending.resolve({ confirmationId, approved: false, reason })
+      n++
+    }
+    return n
+  }
+
+  /** Test/debug: count pending entries (optionally filtered by workerId). */
+  pendingCount(workerId?: string): number {
+    if (workerId === undefined) return this.pending.size
+    let n = 0
+    for (const p of this.pending.values()) {
+      if (p.workerId === workerId) n++
+    }
+    return n
+  }
+
+  /** True if any pending confirmation is stamped with workerId (cancel / soft-expire bind). */
+  hasPendingForWorker(workerId: string): boolean {
+    if (!workerId) return false
+    for (const p of this.pending.values()) {
+      if (p.workerId === workerId) return true
+    }
+    return false
+  }
+
+  /** True if confirmationId is still in the pending map. */
+  isPending(confirmationId: string): boolean {
+    return this.pending.has(confirmationId)
   }
 }

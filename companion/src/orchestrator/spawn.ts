@@ -83,8 +83,19 @@ export function spawnWorkerThread(
   const parent = tm.get(opts.parentThreadId) as any
   if (!parent) return { ok: false, error: `parent thread not found: ${opts.parentThreadId}` }
 
+  // Capture capability whitelist BEFORE orchestrator promotion.
+  // Promotion writes ORCHESTRATOR_TOOL_ALLOWLIST onto null-parent threads; workers must
+  // still be computed from the pre-promotion surface (null → roleAllow fully minus HARD_DENY).
+  // ADR-015: effective = (parent ∩ role.allow) \ HARD_DENY with parent null → role.allow.
+  const parentCapabilityWhitelist: string[] | null =
+    parent.tool_whitelist === null
+      ? null
+      : Array.isArray(parent.tool_whitelist)
+        ? [...parent.tool_whitelist]
+        : null
+
   const runId = ensureOrchestratorRunId(parent)
-  // Promote parent to orchestrator if needed
+  // Promote parent to orchestrator if needed (orchestrator surface only — not worker input)
   if (parent.agent_role !== "orchestrator") {
     tm.update(opts.parentThreadId, {
       agent_role: "orchestrator" as AgentRole,
@@ -106,9 +117,8 @@ export function spawnWorkerThread(
     }
   }
 
-  const refreshedParent = tm.get(opts.parentThreadId) as any
   const whitelist = computeWorkerWhitelist({
-    parentWhitelist: refreshedParent?.tool_whitelist ?? null,
+    parentWhitelist: parentCapabilityWhitelist,
     roleAllow: opts.roleAllow ?? null,
     roleDeny: opts.roleDeny,
   })

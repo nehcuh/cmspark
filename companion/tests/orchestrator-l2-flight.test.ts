@@ -10,6 +10,7 @@ import {
   tryAcquireFlight,
   releaseFlight,
   isFlightBusy,
+  flightSnapshot,
   _resetFlightsForTests,
 } from "../src/orchestrator/single-flight"
 import {
@@ -23,8 +24,11 @@ import {
   completeForceRelease,
   acquireOrRenewTabLease,
   getTabLease,
+  hardReacquireAfterConfirm,
+  releaseLeasesForThreadPendingAware,
   _resetTabLeasesForTests,
 } from "../src/orchestrator/tab-lease"
+import { SecurityConfirmationManager } from "../src/security-confirmation"
 import { SecurityPolicy } from "../src/security-policy"
 import { ORCHESTRATOR_CAPS } from "../src/orchestrator/constants"
 
@@ -184,4 +188,101 @@ test("isFlightBusy probe", () => {
   assert.equal(b.busy, true)
   if (b.busy) assert.equal(b.holder, "w1")
   releaseFlight("shell_exec", "w1")
+})
+
+/**
+ * GATE2: stop_all / cancel mid-confirm — rejectForWorker settles L2, frees admission+flight
+ * via the same finally pattern as production; zombie approve cannot re-HARD FREE tab.
+ */
+test("GATE2: rejectForWorker mid-confirm clears admission; zombie approve no-op", async () => {
+  _resetL2AdmissionForTests()
+  _resetFlightsForTests()
+  _resetTabLeasesForTests()
+
+  const mgr = new SecurityConfirmationManager(60_000)
+  const workerId = "worker-cancel-me"
+  let resolvedApproved: boolean | undefined
+
+  // Simulate L2 path: admission + SOFT + flight + pending confirm
+  const admit = await acquireL2Admission({ orchestratorRunId: "run-x", threadId: workerId })
+  assert.equal(admit.ok, true)
+  assert.equal(tryAcquireFlight("shell_exec", workerId).ok, true)
+  const soft = acquireOrRenewTabLease({
+    tabId: 5,
+    holderThreadId: workerId,
+    needsL2: true,
+    confirmId: "tool-call-1",
+  })
+  assert.equal(soft.ok, true)
+
+  const confirmPromise = mgr
+    .request(
+      () => {
+        /* sink */
+      },
+      {
+        toolName: "evaluate",
+        dangerousApis: [],
+        code: "1+1",
+        workerId,
+        tabId: 5,
+      },
+    )
+    .then((d) => {
+      resolvedApproved = d.approved
+      return d
+    })
+
+  assert.equal(mgr.pendingCount(workerId), 1)
+  assert.equal(l2AdmissionSnapshot().active_global, 1)
+  assert.equal(isFlightBusy("shell_exec").busy, true)
+
+  // Cancel path order: rejectForWorker → pending tools → pending-aware lease release
+  const n = mgr.rejectForWorker(workerId, "denied")
+  assert.equal(n, 1)
+  assert.equal(mgr.pendingCount(workerId), 0)
+
+  const decision = await confirmPromise
+  assert.equal(decision.approved, false)
+  assert.equal(resolvedApproved, false)
+
+  // Production L2 finally after request settles
+  if (admit.ok) releaseL2Admission(admit.key)
+  releaseFlight("shell_exec", workerId)
+  releaseLeasesForThreadPendingAware(workerId, "fleet.stop_all")
+
+  assert.equal(l2AdmissionSnapshot().active_global, 0)
+  assert.deepEqual(flightSnapshot(), {})
+  assert.equal(getTabLease(5), null)
+
+  // Zombie approve path: hard reacquire on FREE → POST_CONFIRM_CANCELLED
+  const zombie = hardReacquireAfterConfirm({
+    tabId: 5,
+    holderThreadId: workerId,
+    confirmId: "tool-call-1",
+  })
+  assert.equal(zombie.ok, false)
+  if (!zombie.ok) assert.equal(zombie.error_code, "POST_CONFIRM_CANCELLED")
+  // Peer exclusivity: free tab can be taken by peer after cancel drain
+  const peer = acquireOrRenewTabLease({ tabId: 5, holderThreadId: "worker-peer", needsL2: false })
+  assert.equal(peer.ok, true)
+})
+
+test("GATE2: respond after rejectForWorker is unknown (zombie approve no-op)", async () => {
+  const mgr = new SecurityConfirmationManager(60_000)
+  let confirmId = ""
+  const p = mgr.request(
+    (data: any) => {
+      if (data?.type === "security.confirmation.request") confirmId = data.confirmation_id
+    },
+    { toolName: "evaluate", dangerousApis: [], code: "x", workerId: "w-z" },
+  )
+  // Allow request to register
+  await Promise.resolve()
+  assert.ok(confirmId)
+  assert.equal(mgr.rejectForWorker("w-z", "denied"), 1)
+  await p
+  // Zombie client approve after cancel
+  const r = mgr.respondFrom(confirmId, true)
+  assert.equal(r.outcome, "unknown")
 })

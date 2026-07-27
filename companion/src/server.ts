@@ -181,11 +181,16 @@ export function rejectPendingForTab(
 
 // Wire tab-lease sweeps to pending CDP so internal sweepExpired never silent-FREEs in-flight tabs.
 // Lazy import avoids circular init; register once on first executor use as well.
+// hasPendingConfirmation binds soft expire to live Confirm Center (GATE2).
 void import("./orchestrator/tab-lease")
   .then(({ registerTabLeasePendingHooks }) => {
     registerTabLeasePendingHooks({
       hasPendingForTab,
       rejectPendingForTab,
+      hasPendingConfirmation: (confirmId, holderThreadId) => {
+        if (confirmId && securityConfirmations.isPending(confirmId)) return true
+        return securityConfirmations.hasPendingForWorker(holderThreadId)
+      },
     })
   })
   .catch(() => {
@@ -474,7 +479,6 @@ export function createToolExecutor(ws: WebSocket) {
     try {
       const {
         TAB_LEASE_TOOLS,
-        TAB_L2_TOOLS,
         isMultiAgentThread,
         anyTabLeaseHeld,
         acquireOrRenewTabLease,
@@ -520,34 +524,32 @@ export function createToolExecutor(ws: WebSocket) {
           // Defense-in-depth for extension screenshot/analyze_image fallback
           ;(finalParams as any).__require_tab_id = true
         }
-        // Early exclusive soft/hard for tab tools that do NOT enter L2 (or already have token)
+        // Early exclusive HARD for all tab tools (including evaluate / TAB_L2_TOOLS).
+        // GATE2: auto-approve / domain-whitelist / god-mode must still hold exclusive
+        // lease — previously willEnterL2 skipped HARD and skipConfirmation skipped SOFT.
+        // Interactive L2 path upgrades same-holder HARD → HELD_PENDING_L2 below.
         if (
           TAB_LEASE_TOOLS.has(toolName) &&
           typeof finalParams.tabId === "number" &&
           actingThreadId
         ) {
-          const willEnterL2 =
-            TAB_L2_TOOLS.has(toolName) && !finalParams.security_token
-          // Non-L2 path: take HARD now. L2 path: SOFT taken inside L2 block below.
-          if (!willEnterL2) {
-            const leaseRes = acquireOrRenewTabLease({
-              tabId: finalParams.tabId,
-              holderThreadId: actingThreadId,
-              needsL2: false,
-            })
-            if (!leaseRes.ok) {
-              const result = {
-                success: false,
-                error: leaseRes.error,
-                data: {
-                  error_code: leaseRes.error_code,
-                  tab_id: leaseRes.tab_id,
-                  holder_thread_id: leaseRes.holder_thread_id,
-                },
-              }
-              logToolFinish(toolCallId, toolName, startedAt, result)
-              return result
+          const leaseRes = acquireOrRenewTabLease({
+            tabId: finalParams.tabId,
+            holderThreadId: actingThreadId,
+            needsL2: false,
+          })
+          if (!leaseRes.ok) {
+            const result = {
+              success: false,
+              error: leaseRes.error,
+              data: {
+                error_code: leaseRes.error_code,
+                tab_id: leaseRes.tab_id,
+                holder_thread_id: leaseRes.holder_thread_id,
+              },
             }
+            logToolFinish(toolCallId, toolName, startedAt, result)
+            return result
           }
         }
       }
@@ -2172,17 +2174,24 @@ export async function handleSecurityConfirmationResponse(ws: WebSocket, msg: any
     })
   }
 
-  // ADR-015 GATE1: authoritative stop — abort LLM + reject pending + release leases.
+  // ADR-015 GATE1/GATE2: authoritative stop — abort LLM + reject pending + release leases.
   // Prefer server-stamped worker_id over client stop_thread_id (anti-wrong-target).
+  // Note: this response already denied the *current* confirmation via respondFrom;
+  // rejectForWorker clears any *other* open confirms for the same worker.
   if (stopThread && responded) {
     const stopTarget =
       (stampedWorkerId && stampedWorkerId.length > 0 ? stampedWorkerId : undefined) ||
       clientStopThreadId
     if (stopTarget) {
       try {
+        const confirmsRejected = securityConfirmations.rejectForWorker(stopTarget, "denied")
         const rejected = rejectPendingForThread(stopTarget, `stop_thread:${confirmationId}`)
-        const { releaseAllLeasesForThread } = await import("./orchestrator/tab-lease")
-        const released = releaseAllLeasesForThread(stopTarget, `stop_thread:${confirmationId}`)
+        const { releaseLeasesForThreadPendingAware } = await import("./orchestrator/tab-lease")
+        const { released, drained } = releaseLeasesForThreadPendingAware(
+          stopTarget,
+          `stop_thread:${confirmationId}`,
+          { hasPendingForTab, rejectPendingForTab },
+        )
         try {
           const { abortThreadChat } = await import("./message-router")
           if (typeof abortThreadChat === "function") abortThreadChat(stopTarget)
@@ -2196,6 +2205,8 @@ export async function handleSecurityConfirmationResponse(ws: WebSocket, msg: any
           client_stop_thread_id: clientStopThreadId || null,
           rejected_pending: rejected,
           leases_released: released,
+          confirms_rejected: confirmsRejected,
+          leases_drained: drained,
         })
       } catch (err: any) {
         logger.warn("security.confirmation.stop_thread_failed", {
@@ -2512,9 +2523,15 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
       if (!wid) return { success: false, error: "worker_id required" }
       const w = threadManager.get(String(wid)) as any
       if (!w) return { success: false, error: `worker not found: ${wid}` }
+      // GATE2: deny worker-stamped L2 first (mirror stop_thread / fleet.stop_all)
+      const confirmsRejected = securityConfirmations.rejectForWorker(String(wid), "denied")
       const rejected = rejectPendingForThread(String(wid), `worker_cancel:${wid}`)
-      const { releaseAllLeasesForThread } = await import("./orchestrator/tab-lease")
-      const released = releaseAllLeasesForThread(String(wid), "worker_cancel")
+      const { releaseLeasesForThreadPendingAware } = await import("./orchestrator/tab-lease")
+      const { released, drained } = releaseLeasesForThreadPendingAware(
+        String(wid),
+        "worker_cancel",
+        { hasPendingForTab, rejectPendingForTab },
+      )
       // Best-effort: message-router abortControllers if registered
       try {
         const { abortThreadChat } = await import("./message-router")
@@ -2524,7 +2541,13 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
       }
       return {
         success: true,
-        data: { worker_id: wid, rejected_pending: rejected, leases_released: released },
+        data: {
+          worker_id: wid,
+          rejected_pending: rejected,
+          leases_released: released,
+          confirms_rejected: confirmsRejected,
+          leases_drained: drained,
+        },
       }
     }
     case "workspace_list_dir": {

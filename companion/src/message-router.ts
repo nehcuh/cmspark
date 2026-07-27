@@ -635,12 +635,18 @@ export async function handleMessage(
 
     case "chat.abort": {
       abortThreadChat(rest.thread_id)
-      // ADR-015: also drain pending tools + tab leases for this thread
+      // ADR-015 GATE2: deny worker-stamped L2 confirmations first (frees admission/flight
+      // via L2 finally), then reject CDP pending, then pending-aware lease release.
       try {
-        const { rejectPendingForThread } = await import("./server")
+        const { rejectPendingForThread, hasPendingForTab, rejectPendingForTab, securityConfirmations } =
+          await import("./server")
+        securityConfirmations.rejectForWorker(rest.thread_id, "denied")
         rejectPendingForThread(rest.thread_id, `chat.abort:${rest.thread_id}`)
-        const { releaseAllLeasesForThread } = await import("./orchestrator/tab-lease")
-        releaseAllLeasesForThread(rest.thread_id, "chat.abort")
+        const { releaseLeasesForThreadPendingAware } = await import("./orchestrator/tab-lease")
+        releaseLeasesForThreadPendingAware(rest.thread_id, "chat.abort", {
+          hasPendingForTab,
+          rejectPendingForTab,
+        })
       } catch {
         /* best-effort */
       }
@@ -1396,8 +1402,9 @@ export async function handleMessage(
     case "fleet.stop_all": {
       const runId = typeof rest.orchestrator_run_id === "string" ? rest.orchestrator_run_id : null
       const { listWorkers } = await import("./orchestrator/spawn")
-      const { releaseAllLeasesForThread } = await import("./orchestrator/tab-lease")
-      const { rejectPendingForThread } = await import("./server")
+      const { releaseLeasesForThreadPendingAware } = await import("./orchestrator/tab-lease")
+      const { rejectPendingForThread, hasPendingForTab, rejectPendingForTab, securityConfirmations } =
+        await import("./server")
       let targets: any[] = []
       if (runId) {
         targets = listWorkers(threadManager, runId)
@@ -1407,10 +1414,21 @@ export async function handleMessage(
       const results: any[] = []
       for (const w of targets) {
         abortThreadChat(w.id)
+        // GATE2: deny L2 first so admission/flight free via finally; then tools + leases
+        const confirmsRejected = securityConfirmations.rejectForWorker(w.id, "denied")
         const rejected = rejectPendingForThread(w.id, `fleet.stop_all:${w.id}`)
-        const released = releaseAllLeasesForThread(w.id, "fleet.stop_all")
+        const { released, drained } = releaseLeasesForThreadPendingAware(w.id, "fleet.stop_all", {
+          hasPendingForTab,
+          rejectPendingForTab,
+        })
         threadManager.update(w.id, { paused: true } as any)
-        results.push({ worker_id: w.id, rejected, released })
+        results.push({
+          worker_id: w.id,
+          rejected,
+          released,
+          confirms_rejected: confirmsRejected,
+          leases_drained: drained,
+        })
       }
       const { buildFleetSnapshot } = await import("./orchestrator/fleet")
       return { type: "fleet.stop_all_result", results, fleet: buildFleetSnapshot(threadManager) }

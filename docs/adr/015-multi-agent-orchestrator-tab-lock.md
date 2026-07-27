@@ -92,11 +92,12 @@
 
 #### 3.4 取消与 HITL（Q5）
 
-- **Cancel worker**：AbortController（LLM）+ reject 该 `thread_id` 的 pending + 释放其全部 tab lease。  
-  → 要求 `pendingToolCalls` **绑定 `thread_id`（及 tabId）**——P0，不可放 P1。
+- **Cancel worker**（`worker_cancel` / `fleet.stop_all` / `chat.abort`）：**先** deny 该 worker 盖章的 L2 确认（`rejectForWorker`，关闭 Confirm Center、释放 admission/flight），**再** reject 该 `thread_id` 的 pending tools，**再** pending-aware 释放 tab lease（有 CDP in-flight 时 `FORCE_RELEASING` → reject → `completeForceRelease`）。  
+  → 要求 `pendingToolCalls` **绑定 `thread_id`（及 tabId）**——P0，不可放 P1。  
+  → 禁止 cancel 后 zombie approve **re-HARD FREE tab**（`hardReacquireAfterConfirm` → `POST_CONFIRM_CANCELLED`）。
+- **Pause ≠ Cancel**：`worker.pause` **只**中止 LLM / 冻结新 dispatch；**保留** tab leases、打开的 L2 确认与 pending tools（直至 TTL / resume / 显式 cancel）。Pause **不是** stop；要清确认与锁请用 cancel / stop_all / Confirm Center stop。
 - **HITL enter**：切换 `activeThreadId`，**可**发用户消息 follow-up；**不**转移 lease。  
   人要 mutate 非己持锁 tab：先 force-release 或等释放。
-- **Pause**：冻结该 worker LLM 与新 dispatch；lease 保留至 TTL/resume/cancel。
 
 #### 3.5 并发与 TTL 数值（Q3：最多 5）
 
@@ -119,7 +120,8 @@
 - 保持 `originWs` + `respondFrom`；**禁止** Dashboard 广播 approve。
 - `shell_exec` / `netsec_port_scan`：每调用 L2 + **process-wide single-flight**；spawn **不得**改 `capability_profile` / 启用 modules。
 - 审计：Companion `AuditWriter` 盖章（spawn / L2 / lease / elevation / HITL / force-release）。
-- **L2 admission 顺序**：`acquireL2Admission` → SOFT（tab L2 tools）→ Confirm → hard re-acquire；admission 在 `finally` 释放。SOFT 在 admission 之后获取，`softDeadline` = confirm timeout，避免排队时 SOFT 过期。
+- **L2 admission 顺序**：`acquireL2Admission` → SOFT / HELD_PENDING_L2（tab L2 tools）→ Confirm → hard re-acquire；admission 在 `finally` 释放。SOFT 在 admission 之后获取；`softDeadline` = confirm timeout + skew（≥剩余确认窗口），并可绑定 pending confirmation / worker 盖章，避免 mid-dialog 过期。`evaluate` 等 `TAB_L2_TOOLS` **即使 auto-approve** 也必须先拿 exclusive HARD lease。
+- **HELD_PENDING_L2**：已 HARD 的 holder 再进 L2 时冻结 idle（confirm 时长覆盖），硬顶仍受 `hard_max_lease_ms` 约束。
 - **L2 admission 队列语义（scan-skip FIFO，非严格 HOL）**：等待者按到达顺序排列，但 `tryDequeue` 扫描队列并放行**当前** `canAdmit` 的每一位 waiter（在 process/run cap 下可 multi-admit）。队首若仅因 per-run cap=1 被挡，**不会**阻塞后续不同 run 的 waiter。文档表述为「当前可准入 waiters 中的 FIFO」，勿声称严格 head-of-line。
 - **shell/netsec single-flight**：在展示 L2 之前 reserve flight；deny/timeout 释放；approve 保留至 execute（同 owner re-entrant），避免用户白点后 `*_BUSY`。
 - **Confirm stop**：companion 消费 `stop_thread` + `stop_thread_id`；优先服务端 stamped `worker_id` 做 abort + reject pending + release leases（UI `chat.abort` 为冗余 best-effort）。
