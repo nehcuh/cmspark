@@ -1,0 +1,8 @@
+{
+  "batch": "native-hud-n1n10-grill",
+  "timestamp": "20260727-180012",
+  "claude": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/native-hud-n1n10-grill-claude-20260727-180012.md" },
+  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/native-hud-n1n10-grill-pi-20260727-180012.md" },
+  "both_approve": true,
+  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/native-hud-n1n10-grill-diff-20260727-180012.patch"
+}

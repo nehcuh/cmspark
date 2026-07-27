@@ -140,20 +140,23 @@ Grow Tray.swift pairing-style UI into a large popover HUD.
 | **Extension Cockpit** | L2 **fallback** when native down | Same IA as HUD; may share protocol |
 | **Tray** | Always-on entry / pairing / optional quick-confirm | Not a dual-track surface |
 
-### 5.2 New / extended decisions (proposed IDs)
+### 5.2 Decisions N1–N10 — **LOCKED** (dual grill 2026-07-27)
 
-| ID | Proposal | Notes |
-|----|----------|--------|
-| **N1** | **Native HUD is an optional capability of Companion**, not of the Chrome extension | Binary lives beside tray (macOS); started by menu-bar-agent |
-| **N2** | **One active L2 shell at a time** (native **or** extension cockpit) | Avoid two full dual-tracks; allow MinimalConfirm everywhere |
-| **N3** | **Shell selection policy**: prefer native if process healthy + last user preference; else extension | User setting: `hud.shell = auto \| native \| extension` |
-| **N4** | **Close HUD ≠ stop task** (same as D11′) | Managed warning when LIVE |
-| **N5** | **Confirm response single-writer**: Companion accepts first valid response (Panel / tray / HUD / cockpit); others get `already_resolved` | Critical for races |
-| **N6** | **Input ownership**: when L2 task active and HUD focused → HUD is conductor; Panel remains follow-up queue | Aligns D12′ |
-| **N7** | **Tray “打开确认台”** opens preferred shell (native first if auto) | Replaces chrome-only open path |
-| **N8** | **No silent shell switch** during active LIVE task | Switch only on next escalate or user setting change when idle |
-| **N9** | **macOS first**; Linux/Windows document degraded path in same brief | See §8 |
-| **N10** | **HUD does not host L0 chat history as primary** | Dual-track **right rail only**: fixed-height, non-scrolling pane of last **N≤8** assistant/user **conclusions** (match Cockpit slice). **No** full chat viewport / infinite scroll in P3a (anti scope-creep) |
+> **Source of truth:** [`companion-native-hud-n1n10-lock-2026-07-27.md`](companion-native-hud-n1n10-lock-2026-07-27.md)  
+> Claude + Pi grill: both `APPROVE_WITH_NITS` → synthesis locked all ten for P3a spike planning.
+
+| ID | Locked law (summary) |
+|----|----------------------|
+| **N1** | One Companion-spawned **Swift binary** = tray + HUD; single SHA256 gate (rename, don’t duplicate) |
+| **N2** | One **wide** shell per thread (`activeShell`); loser gets **`shell.standby` (NEW)**; MinimalConfirm **Panel-only** |
+| **N3** | `hud.shell = auto\|native\|extension` (**P3a**); health = PID + heartbeat ≤3s + ping ≤400ms; **cold start never blocks** open |
+| **N4** | Close ≠ stop; no wide shell → Panel MinimalConfirm + toast; no auto-reopen |
+| **N5** | Single-writer **already** in manager; wire outcome stays **`unknown`**; **broadcast resolved is NEW** |
+| **N6** | Conductor = **active shell** (server-enforced); Panel `chat.send` always queued during LIVE |
+| **N7** | Tray「打开确认台」→ N3 selector; **amends D16** where native ships |
+| **N8** | No silent switch except **death/health-fail** (toast + fallback) or user setting change |
+| **N9** | macOS first; **Cockpit parity CI** on all platforms blocks HUD merge |
+| **N10** | Dual-track right rail **N≤8 + internal scroll** on **HUD and Cockpit** (amends Cockpit IA §5) |
 
 ### 5.3 Relationship to Extension Cockpit
 

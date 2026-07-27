@@ -1,0 +1,11 @@
+# Dual external review context
+batch: native-hud-n1n10-grill
+base: HEAD
+time: 20260727-180012
+
+353d86e
+
+?? docs/audit/reviews/native-hud-n1n10-grill-diff-20260727-180012.patch
+
+## Diff (git diff + staged)
+
