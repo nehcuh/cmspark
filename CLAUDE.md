@@ -24,7 +24,7 @@ CMspark — 浏览器内 AI Agent。通过 Chrome Side Panel 与用户交互，�
 
 双层拓扑：Chrome Extension (Plasmo + React) ↔ WebSocket ↔ Companion (Node.js + TypeScript)
 
-当前阶段：安全稳定化 MVP → 功能扩展中。Side Panel 驱动 Companion/浏览器、线程持久化、tool 调用闭环、安全确认机制已基本完成；正在扩展 Knowledge 系统、Skill Crafting、Daemon 模式、System Tray 等功能。**Obsidian 对话导出已交付**（单条/整 thread 📥 + 🧠 NotebookLM 摘要；vault 档案 + wikilinks/模板，详见 [ADR-008](docs/adr/008-obsidian-export.md)，PR #5）。**Side Panel Mermaid 图表渲染已交付**（流程图/时序图/gantt 等全类型；CSP-safe 客户端直跑 + 纵深防御净化 + 响应式点击放大，详见 [ADR-009](docs/adr/009-mermaid-rendering.md)，PR #9）。
+当前阶段：安全稳定化 MVP → 功能扩展中。Side Panel 驱动 Companion/浏览器、线程持久化、tool 调用闭环、安全确认机制已基本完成；正在扩展 Knowledge 系统、Skill Crafting、Daemon 模式、System Tray 等功能。**Obsidian 对话导出已交付**（单条/整 thread 📥 + 🧠 NotebookLM 摘要；vault 档案 + wikilinks/模板，详见 [ADR-008](docs/adr/008-obsidian-export.md)，PR #5）。**Side Panel Mermaid 图表渲染已交付**（流程图/时序图/gantt 等全类型；CSP-safe 客户端直跑 + 纵深防御净化 + 响应式点击放大，详见 [ADR-009](docs/adr/009-mermaid-rendering.md)，PR #9）。**Mission Pack 任务包 + 企业模块已实现**（AppSec Pack、workspace 读写、shell_exec、netsec 探测；community/enterprise 双通道；详见 [ADR-014](docs/adr/014-mission-pack-enterprise-modules.md)、[使用说明](docs/mission-pack-usage.md)，PR #77）。
 
 ## Quick Start
 
@@ -103,6 +103,11 @@ Chrome Extension (Plasmo + React)  ←→  WebSocket (ws://127.0.0.1:23401)  ←
   - **密钥流向**：launcher（`menu-bar-agent.ts`）读 `ws_secret` → 经 stdin JSON `{cmd:"show-pairing-window",secret,paired}` 推给 Swift 二进制（`Tray.swift` PairingController）。**密钥只走这条 stdin 管道，从不落日志**。
   - **`.paired` 契约（跨进程，必须保持 lock-step）**：companion 在首次 `auth.ok` 时由 `ws-auth.markPaired()` 幂等写 `~/.cmspark-agent/.paired`（0o600，best-effort 不阻塞鉴权）；launcher 的 `tray/pairing.ts hasPaired()` 读它判断是否停止自动弹窗。两侧文件名/目录必须一致（皆基于 `DATA_DIR`/`getConfigDir()`）—— 任一方改名都会让自动弹窗永远停不下来。
   - **Swift 二进制完整性**：改 `Tray.swift` 后必须 `bash companion/src/tray/build-tray.sh` 重编译，并把输出的 SHA256 更新到 `swift-tray-bridge.ts` 的 `SWIFT_TRAY_SHA256`（launcher 启动时校验哈希，不匹配则自动重编）。
+- **A9. Mission Pack + 企业模块**（2026-07-26，详见 [ADR-014](docs/adr/014-mission-pack-enterprise-modules.md)、[使用说明](docs/mission-pack-usage.md)，PR #77）— 场景任务包与企业 opt-in 能力：
+  - **Pack**：`pack.yaml` → apply 到 Thread（skills/knowledge/tool_whitelist/`system_prompt_append`/snapshot）；非新 runtime。
+  - **Modules**：`appsec` / `devsec-workspace` / `shell` / `netsec`；默认 enabled=false；shell/netsec 需 `capability_profile=enterprise`。
+  - **工具**：`workspace_*`（须先「选择工作区」）、`shell_exec`（单次 + L2 forceConfirm）、`netsec_port_scan`（allowlist + 任务授权 + L2）。
+  - **UI**：Side Panel 底栏「任务包」；审计 `logs/capability-audit.jsonl`。
 
 ## Common Issues
 
@@ -112,13 +117,15 @@ Chrome Extension (Plasmo + React)  ←→  WebSocket (ws://127.0.0.1:23401)  ←
 - Extension 加载失败: 确认 `chrome-extension/build/chrome-mv3-prod/` 存在（需先运行 `npm run build`）
 - Tray 不显示: 检查 Swift 编译产物（macOS）或 systray2 安装（Linux）
 - PDF 扫描件渲染不可用: `canvas` native 模块缺失时不影响文本 PDF 解析，扫描件会优雅降级输出提示。打包分发时需包含 `canvas` 二进制（macOS/Linux/Windows 均有预编译）
+- `workspace_root not set` / 任务包相关: Side Panel → **任务包** → **选择工作区** 绑定本机目录后再用 `workspace_*`；AppSec 审查不需要工作区。详见 [docs/mission-pack-usage.md](docs/mission-pack-usage.md)
 
 ## Related Docs
 
 - docs/GOAL.md — 项目目标与阶段规划
-- docs/architecture.md — 完整架构文档
+- docs/architecture.md — 完整架构文档（§7 Mission Pack）
+- docs/mission-pack-usage.md — 任务包 / 企业模块使用说明
 - docs/optimization-roadmap.md — 优化路线图
-- docs/adr/ — 架构决策记录
+- docs/adr/ — 架构决策记录（含 ADR-014）
 
 ### Tech Stack
 
