@@ -2,7 +2,10 @@
 
 import { useState, useRef, useEffect, useMemo, type ComponentType } from "react"
 import { useAgentStore } from "../store/agentStore"
-import { contextBarTabsForLevel } from "../mode/mode-controller"
+import {
+  contextBarTabsForLevel,
+  contextBarOverflowTabsForLevel,
+} from "../mode/mode-controller"
 import type { CapabilityLevel } from "../types"
 import { KnowledgeSubPanel } from "./KnowledgeSubPanel"
 import { McpPanel } from "./McpPanel"
@@ -17,6 +20,7 @@ import {
   IconKnowledge,
   IconMcp,
   IconApps,
+  IconMore,
 } from "../ui/icons"
 
 type Panel = "tabs" | "history" | "skills" | "knowledge" | "packs" | "board" | "mcp" | "apps"
@@ -38,25 +42,131 @@ const ALL_TABS: TabDef[] = [
   { id: "apps", label: "应用", Icon: IconApps },
 ]
 
+function loadPanelData(id: Panel, activeThreadId: string | null, dispatch: ReturnType<typeof useAgentStore>["dispatch"]) {
+  if (id === "tabs") {
+    chrome.tabs.query({}, (tabs) => {
+      dispatch({ type: "SET_TAB_LIST", tabs })
+    })
+  }
+  if (id === "history") {
+    chrome.runtime.sendMessage({ type: "history.query", limit: 50, thread_id: activeThreadId })
+  }
+  if (id === "skills") {
+    chrome.runtime.sendMessage({ type: "skill.list" })
+  }
+  if (id === "knowledge") {
+    chrome.runtime.sendMessage({ type: "knowledge.list" })
+  }
+  if (id === "packs") {
+    chrome.runtime.sendMessage({ type: "pack.list" })
+    chrome.runtime.sendMessage({ type: "modules.list" })
+  }
+  if (id === "mcp") {
+    chrome.runtime.sendMessage({ type: "mcp.list" })
+  }
+  if (id === "apps") {
+    chrome.runtime.sendMessage({ type: "apps.list" })
+  }
+}
+
 export function BottomBar({ capabilityLevel }: { capabilityLevel: CapabilityLevel }) {
   const [activePanel, setActivePanel] = useState<Panel | null>(null)
+  const [moreOpen, setMoreOpen] = useState(false)
+  const moreRef = useRef<HTMLDivElement>(null)
   const { state, dispatch } = useAgentStore()
 
   const allowedIds = useMemo(
     () => new Set(contextBarTabsForLevel(capabilityLevel)),
     [capabilityLevel],
   )
+  const overflowIds = useMemo(
+    () => contextBarOverflowTabsForLevel(capabilityLevel),
+    [capabilityLevel],
+  )
   const tabs = useMemo(
     () => ALL_TABS.filter((t) => allowedIds.has(t.id)),
     [allowedIds],
   )
+  const overflowTabs = useMemo(
+    () => ALL_TABS.filter((t) => overflowIds.includes(t.id)),
+    [overflowIds],
+  )
 
-  // Close open panel if it is no longer allowed for the current capability level
+  // L2 Panel: no permanent ContextBar (Cockpit owns power tools). Overflow still
+  // available only if user needs packs/board edge access — keep a thin more menu.
+  const isL2 = capabilityLevel === "computer"
+
+  // Close open panel if it is no longer primary or overflow for this level
   useEffect(() => {
-    if (activePanel != null && !allowedIds.has(activePanel)) {
+    if (activePanel == null) return
+    if (!allowedIds.has(activePanel) && !overflowIds.includes(activePanel)) {
       setActivePanel(null)
+      setMoreOpen(false)
     }
-  }, [activePanel, allowedIds])
+  }, [activePanel, allowedIds, overflowIds])
+
+  useEffect(() => {
+    if (!moreOpen) return
+    const onDoc = (e: MouseEvent) => {
+      if (moreRef.current && !moreRef.current.contains(e.target as Node)) {
+        setMoreOpen(false)
+      }
+    }
+    document.addEventListener("mousedown", onDoc)
+    return () => document.removeEventListener("mousedown", onDoc)
+  }, [moreOpen])
+
+  const openPanel = (id: Panel) => {
+    if (activePanel === id) {
+      setActivePanel(null)
+      setMoreOpen(false)
+      return
+    }
+    setActivePanel(id)
+    setMoreOpen(false)
+    loadPanelData(id, state.activeThreadId, dispatch)
+  }
+
+  // L2 with no primary tabs and collapsed more: hide entire bar to free vertical space
+  if (isL2 && tabs.length === 0 && !activePanel && !moreOpen) {
+    return (
+      <div style={styles.container}>
+        <div style={{ ...styles.tabs, justifyContent: "flex-end" }}>
+          <div ref={moreRef} style={{ position: "relative" }}>
+            <button
+              type="button"
+              style={styles.moreBtn}
+              title="更多面板（任务包 / 任务板等）"
+              aria-expanded={moreOpen}
+              onClick={() => setMoreOpen((v) => !v)}
+            >
+              <IconMore size={14} />
+              <span>更多</span>
+            </button>
+            {moreOpen && (
+              <div style={styles.moreMenu} role="menu">
+                {overflowTabs.map((tab) => {
+                  const Icon = tab.Icon
+                  return (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      role="menuitem"
+                      style={styles.moreItem}
+                      onClick={() => openPanel(tab.id)}
+                    >
+                      <Icon size={14} />
+                      <span>{tab.label}</span>
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div style={styles.container}>
@@ -75,54 +185,60 @@ export function BottomBar({ capabilityLevel }: { capabilityLevel: CapabilityLeve
               borderColor: active ? "#bfdbfe" : "transparent",
               boxShadow: active ? tokens.shadowSm : "none",
             }}
-            onClick={() => {
-            if (activePanel === tab.id) { setActivePanel(null); return }
-            setActivePanel(tab.id)
-            if (tab.id === "tabs") {
-              chrome.tabs.query({}, (tabs) => {
-                dispatch({ type: "SET_TAB_LIST", tabs })
-              })
-            }
-            if (tab.id === "history") {
-              chrome.runtime.sendMessage({ type: "history.query", limit: 50, thread_id: state.activeThreadId })
-            }
-            if (tab.id === "skills") {
-              chrome.runtime.sendMessage({ type: "skill.list" })
-            }
-            if (tab.id === "knowledge") {
-              chrome.runtime.sendMessage({ type: "knowledge.list" })
-            }
-            if (tab.id === "packs") {
-              chrome.runtime.sendMessage({ type: "pack.list" })
-              chrome.runtime.sendMessage({ type: "modules.list" })
-            }
-            if (tab.id === "mcp") {
-              chrome.runtime.sendMessage({ type: "mcp.list" })
-            }
-            if (tab.id === "apps") {
-              chrome.runtime.sendMessage({ type: "apps.list" })
-            }
-          }}
+            onClick={() => openPanel(tab.id)}
           >
             <Icon size={14} />
             <span>{tab.label}</span>
           </button>
           )
         })}
-        {tabs.length < ALL_TABS.length && (
-          <span
-            title="其他入口在对应能力层级或设置中"
-            style={{
-              marginLeft: 2,
-              fontSize: 10,
-              color: tokens.textMuted,
-              alignSelf: "center",
-              userSelect: "none",
-              letterSpacing: "0.02em",
-            }}
-          >
-            ···
-          </span>
+        {overflowTabs.length > 0 && (
+          <div ref={moreRef} style={{ position: "relative", marginLeft: 2 }}>
+            <button
+              type="button"
+              style={{
+                ...styles.moreBtn,
+                ...(moreOpen || (activePanel != null && !allowedIds.has(activePanel))
+                  ? {
+                      background: tokens.bgActive,
+                      color: tokens.accent,
+                      borderColor: "#bfdbfe",
+                    }
+                  : {}),
+              }}
+              title="任务包、任务板等低频入口"
+              aria-expanded={moreOpen}
+              onClick={() => setMoreOpen((v) => !v)}
+            >
+              <IconMore size={14} />
+              <span>更多</span>
+            </button>
+            {moreOpen && (
+              <div style={styles.moreMenu} role="menu">
+                {overflowTabs.map((tab) => {
+                  const Icon = tab.Icon
+                  const active = activePanel === tab.id
+                  return (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      role="menuitem"
+                      style={{
+                        ...styles.moreItem,
+                        ...(active
+                          ? { background: tokens.bgActive, color: tokens.accent }
+                          : {}),
+                      }}
+                      onClick={() => openPanel(tab.id)}
+                    >
+                      <Icon size={14} />
+                      <span>{tab.label}</span>
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+          </div>
         )}
       </div>
 
@@ -197,7 +313,7 @@ function HistoryPanel() {
           <div style={styles.groupHeader}>#{threadId}</div>
           {ops.map(op => (
             <div key={op.id} style={styles.historyRow}>
-              <span style={{ color: op.success ? "#4CAF50" : "#F44336" }}>
+              <span style={{ color: op.success ? tokens.success : tokens.danger }}>
                 {op.success ? "✓" : "✗"}
               </span>
               <span style={{ flex: 1, marginLeft: 6, fontFamily: "monospace", fontSize: 11 }}>
@@ -387,9 +503,9 @@ function SkillsPanel() {
             key={mode}
             style={{
               ...styles.modeBtn,
-              background: state.skillSelectionMode === mode ? "#4A90D9" : "#fff",
-              color: state.skillSelectionMode === mode ? "#fff" : "#666",
-              borderColor: state.skillSelectionMode === mode ? "#4A90D9" : "#ddd",
+              background: state.skillSelectionMode === mode ? tokens.accent : tokens.bgElevated,
+              color: state.skillSelectionMode === mode ? "#fff" : tokens.textSecondary,
+              borderColor: state.skillSelectionMode === mode ? tokens.accent : tokens.border,
             }}
             onClick={() => handleModeChange(mode)}
             title={mode === "auto" ? "自动匹配当前站点和消息" : mode === "all" ? "注入所有技能索引" : "仅使用勾选技能"}
@@ -526,7 +642,7 @@ function SkillsPanel() {
                   {menuOpen === skill.name && (
                     <div style={styles.menuDropdown}>
                       <button style={styles.menuItem} onClick={() => handleExport(skill.name)}>📤 导出</button>
-                      <button style={{ ...styles.menuItem, color: "#F44336" }} onClick={() => handleDelete(skill.name)}>🗑️ 删除</button>
+                      <button style={{ ...styles.menuItem, color: tokens.danger }} onClick={() => handleDelete(skill.name)}>删除</button>
                     </div>
                   )}
                 </div>
@@ -657,6 +773,53 @@ const styles: Record<string, React.CSSProperties> = {
     transition: "background 0.12s ease, color 0.12s ease",
     fontFamily: tokens.font,
   },
+  moreBtn: {
+    border: "1px solid transparent",
+    borderRadius: tokens.radiusPill,
+    padding: "5px 10px",
+    fontSize: 11,
+    fontWeight: 500,
+    cursor: "pointer",
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 4,
+    whiteSpace: "nowrap",
+    color: tokens.textSecondary,
+    background: "transparent",
+    fontFamily: tokens.font,
+  },
+  moreMenu: {
+    position: "absolute",
+    right: 0,
+    bottom: "calc(100% + 4px)",
+    minWidth: 140,
+    maxHeight: 240,
+    overflowY: "auto",
+    background: tokens.bgElevated,
+    border: `1px solid ${tokens.border}`,
+    borderRadius: tokens.radiusMd,
+    boxShadow: tokens.shadowMd,
+    zIndex: 40,
+    padding: 4,
+    display: "flex",
+    flexDirection: "column",
+    gap: 2,
+  },
+  moreItem: {
+    border: "none",
+    background: "transparent",
+    borderRadius: tokens.radiusSm,
+    padding: "8px 10px",
+    fontSize: 12,
+    cursor: "pointer",
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    color: tokens.text,
+    textAlign: "left",
+    width: "100%",
+    fontFamily: tokens.font,
+  },
   panel: {
     borderTop: `1px solid ${tokens.border}`,
     background: tokens.bgMuted,
@@ -693,8 +856,8 @@ const styles: Record<string, React.CSSProperties> = {
   groupHeader: {
     fontSize: 11,
     fontWeight: 600,
-    fontFamily: "monospace",
-    color: "#4A90D9",
+    fontFamily: tokens.fontMono,
+    color: tokens.accent,
     marginBottom: 2,
   },
   historyRow: {
@@ -706,12 +869,12 @@ const styles: Record<string, React.CSSProperties> = {
     display: "flex",
     alignItems: "center",
     padding: "6px 0",
-    borderBottom: "1px solid #f5f5f5",
+    borderBottom: `1px solid ${tokens.bgMuted}`,
   },
   badge: {
     fontSize: 10,
-    background: "#e0e0e0",
-    color: "#666",
+    background: tokens.bgMuted,
+    color: tokens.textSecondary,
     padding: "1px 6px",
     borderRadius: 3,
   },
@@ -721,9 +884,9 @@ const styles: Record<string, React.CSSProperties> = {
     marginBottom: 8,
   },
   skillToolbarBtn: {
-    border: "1px solid #ddd",
+    border: `1px solid ${tokens.border}`,
     borderRadius: 4,
-    background: "#fff",
+    background: tokens.bgElevated,
     padding: "3px 10px",
     fontSize: 11,
     cursor: "pointer",

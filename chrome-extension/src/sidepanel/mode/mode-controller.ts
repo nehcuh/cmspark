@@ -121,18 +121,41 @@ export type ContextBarTabId =
   | "mcp"
   | "apps"
 
-/** Mode-split context bar (spec D5 / P0). */
+/**
+ * Mode-split context bar (spec D5 / §4 / P0 IA cut 2026-07-27).
+ * L0 Skills·Know·Hist · L1 Tabs·Skills · L2 Panel empty (Cockpit owns Tabs·Apps·MCP).
+ * packs/board/mcp/apps demoted from permanent chrome — BottomBar overflow / `/` / settings.
+ */
 export function contextBarTabsForLevel(
   level: CapabilityLevel,
 ): ContextBarTabId[] {
   switch (level) {
     case "chat":
-      return ["skills", "knowledge", "packs", "board", "history"]
+      return ["skills", "knowledge", "history"]
     case "browser":
-      return ["tabs", "skills", "packs", "board"]
+      return ["tabs", "skills"]
     case "computer":
-      return ["tabs", "apps", "mcp", "board"]
+      return []
   }
+}
+
+/** Secondary panels reachable via BottomBar overflow (not permanent tabs). */
+export function contextBarOverflowTabsForLevel(
+  level: CapabilityLevel,
+): ContextBarTabId[] {
+  const primary = new Set(contextBarTabsForLevel(level))
+  // Prefer product-useful demotions; keep stable order
+  const candidates: ContextBarTabId[] = [
+    "packs",
+    "board",
+    "knowledge",
+    "history",
+    "tabs",
+    "skills",
+    "mcp",
+    "apps",
+  ]
+  return candidates.filter((id) => !primary.has(id))
 }
 
 export function levelBadgeLabel(

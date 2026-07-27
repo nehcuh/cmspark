@@ -1,0 +1,8 @@
+{
+  "batch": "ui-ux-depth",
+  "timestamp": "20260727-163105",
+  "claude": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/ui-ux-depth-claude-20260727-163105.md" },
+  "pi": { "verdict": "APPROVE", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/ui-ux-depth-pi-20260727-163105.md" },
+  "both_approve": true,
+  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/ui-ux-depth-diff-20260727-163105.patch"
+}

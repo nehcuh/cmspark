@@ -36,20 +36,11 @@ export function FleetStrip() {
     return () => clearInterval(id)
   }, [])
 
-  // Always show thin strip when multi-agent activity, board intents, or pending confirms
+  // P0 IA cut: hide idle single-agent chrome (no permanent 「舰队」pixel tax).
+  // Show only when multi-agent activity, locks, board intents, pending confirms, or user expanded.
   const visible = workerCount > 0 || lockCount > 0 || openIntents > 0 || pending > 0 || expanded
-  if (!visible && !expanded) {
-    // Compact always-available entry so user can open fleet even when empty
-    return (
-      <div style={styles.stripIdle}>
-        <button type="button" style={styles.link} onClick={() => {
-          setExpanded(true)
-          chrome.runtime.sendMessage({ type: "fleet.status" })
-        }}>
-          舰队
-        </button>
-      </div>
-    )
+  if (!visible) {
+    return null
   }
 
   const stopAll = () => {
@@ -209,12 +200,6 @@ export function FleetStrip() {
 
 const styles: Record<string, React.CSSProperties> = {
   wrap: { borderTop: `1px solid ${tokens.border || "#e5e7eb"}`, background: tokens.bgElevated || "#fafafa" },
-  stripIdle: {
-    display: "flex",
-    justifyContent: "flex-end",
-    padding: "2px 8px",
-    borderTop: `1px solid ${tokens.border || "#eee"}`,
-  },
   strip: {
     display: "flex",
     alignItems: "center",

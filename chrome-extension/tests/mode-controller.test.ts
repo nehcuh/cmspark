@@ -4,6 +4,7 @@ import {
   BROWSER_TOOL_NAMES,
   deriveCapabilityLevel,
   contextBarTabsForLevel,
+  contextBarOverflowTabsForLevel,
   levelBadgeLabel,
   type ModeInput,
 } from "../src/sidepanel/mode/mode-controller"
@@ -157,16 +158,24 @@ test("contextBarTabsForLevel L0", () => {
   assert.deepEqual(contextBarTabsForLevel("chat"), [
     "skills",
     "knowledge",
-    "packs",
-    "board",
     "history",
   ])
 })
 
 test("contextBarTabsForLevel L1", () => {
-  assert.deepEqual(contextBarTabsForLevel("browser"), ["tabs", "skills", "packs", "board"])
+  assert.deepEqual(contextBarTabsForLevel("browser"), ["tabs", "skills"])
 })
 
 test("contextBarTabsForLevel L2", () => {
-  assert.deepEqual(contextBarTabsForLevel("computer"), ["tabs", "apps", "mcp", "board"])
+  // Panel empty — Cockpit owns Tabs·Apps·MCP (P0 IA cut)
+  assert.deepEqual(contextBarTabsForLevel("computer"), [])
+})
+
+test("contextBarOverflowTabsForLevel excludes primary and includes packs/board", () => {
+  const l0 = contextBarOverflowTabsForLevel("chat")
+  assert.ok(l0.includes("packs") && l0.includes("board"))
+  assert.ok(!l0.includes("skills") && !l0.includes("knowledge") && !l0.includes("history"))
+  const l1 = contextBarOverflowTabsForLevel("browser")
+  assert.ok(l1.includes("packs") && l1.includes("board") && l1.includes("history"))
+  assert.ok(!l1.includes("tabs") && !l1.includes("skills"))
 })
