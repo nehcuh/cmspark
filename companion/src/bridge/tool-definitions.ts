@@ -553,6 +553,106 @@ export function getToolDefinitions(): ToolDefinition[] {
         },
       },
     },
+    // --- Multi-agent orchestrator (ADR-015 P0) ---
+    {
+      type: "function",
+      function: {
+        name: "spawn_worker",
+        description:
+          "Spawn a child worker Thread under this orchestrator (ADR-015). REQUIRES user_confirmed=true after the user explicitly approved spawning. Workers get a non-empty downgraded tool_whitelist (no shell/netsec/host by default; evaluate allowed under L2). Max 5 workers per run. Always pass explicit tabId in worker browser tools.",
+        parameters: {
+          type: "object",
+          properties: {
+            role_label: { type: "string", description: "Short role label e.g. appsec-reviewer" },
+            alias: { type: "string", description: "Thread alias for the worker" },
+            tool_allow: {
+              type: "array",
+              items: { type: "string" },
+              description: "Optional allowlist of tools for the worker role (intersected with parent + HARD_DENY)",
+            },
+            tool_deny: {
+              type: "array",
+              items: { type: "string" },
+              description: "Optional extra deny list",
+            },
+            pack_id: { type: "string", description: "Optional mission pack id metadata" },
+            user_confirmed: {
+              type: "boolean",
+              description: "Must be true after user approved spawn in the UI/chat",
+            },
+          },
+          required: ["user_confirmed"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "list_workers",
+        description: "List worker threads for the current orchestrator_run.",
+        parameters: { type: "object", properties: {}, required: [] },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "get_worker_status",
+        description: "Get status and tab locks held by a worker thread.",
+        parameters: {
+          type: "object",
+          properties: {
+            worker_id: { type: "string", description: "Worker thread id" },
+          },
+          required: ["worker_id"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "list_tab_locks",
+        description:
+          "List process-wide exclusive tab leases (tab_id, holder_thread_id, state, lease_expires_at). Use to avoid TAB_LOCKED conflicts.",
+        parameters: { type: "object", properties: {}, required: [] },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "collect_handback",
+        description: "Read the worker's last assistant message as a typed handback for the orchestrator.",
+        parameters: {
+          type: "object",
+          properties: {
+            worker_id: { type: "string" },
+          },
+          required: ["worker_id"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "wait_workers",
+        description: "P0: snapshot of workers in this run (no long sleep). Poll as needed.",
+        parameters: { type: "object", properties: {}, required: [] },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "worker_cancel",
+        description:
+          "Cancel a worker: abort LLM, reject its pending browser tools, release all tab leases it holds.",
+        parameters: {
+          type: "object",
+          properties: {
+            worker_id: { type: "string" },
+          },
+          required: ["worker_id"],
+        },
+      },
+    },
     {
       type: "function",
       function: {

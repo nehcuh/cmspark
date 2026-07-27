@@ -40,6 +40,18 @@ import type {
 // Per-thread abort controllers for cancelling in-flight LLM requests
 const abortControllers = new Map<string, AbortController>()
 
+/** Abort in-flight LLM for a thread (ADR-015 worker_cancel / chat.abort). */
+export function abortThreadChat(threadId: string): boolean {
+  if (!threadId) return false
+  const controller = abortControllers.get(threadId)
+  if (controller) {
+    controller.abort()
+    abortControllers.delete(threadId)
+    return true
+  }
+  return false
+}
+
 /**
  * Inject (or override) the `name:` field in a knowledge doc's YAML frontmatter.
  * Used by directory import to guarantee each file lands at a unique filename —
@@ -608,10 +620,15 @@ export async function handleMessage(
     }
 
     case "chat.abort": {
-      const controller = abortControllers.get(rest.thread_id)
-      if (controller) {
-        controller.abort()
-        abortControllers.delete(rest.thread_id)
+      abortThreadChat(rest.thread_id)
+      // ADR-015: also drain pending tools + tab leases for this thread
+      try {
+        const { rejectPendingForThread } = await import("./server")
+        rejectPendingForThread(rest.thread_id, `chat.abort:${rest.thread_id}`)
+        const { releaseAllLeasesForThread } = await import("./orchestrator/tab-lease")
+        releaseAllLeasesForThread(rest.thread_id, "chat.abort")
+      } catch {
+        /* best-effort */
       }
       return { type: "chat.aborted", thread_id: rest.thread_id }
     }

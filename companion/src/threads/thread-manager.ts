@@ -43,6 +43,18 @@ interface Thread {
     targets: string[]
     at?: string
   } | null
+  /** Multi-agent (ADR-015): role of this thread in an orchestrator run. */
+  agent_role?: "normal" | "orchestrator" | "worker"
+  /** Parent orchestrator thread id when agent_role=worker. */
+  parent_thread_id?: string | null
+  /** Shared id for one orchestrator fan-out episode. */
+  orchestrator_run_id?: string | null
+  /** Human-readable worker role label. */
+  worker_role_label?: string | null
+  /** Optional elevation marker (audited grants only). */
+  capability_elevation_level?: string | null
+  /** Pause freezes LLM loop + new tool dispatch; leases retained until TTL/cancel. */
+  paused?: boolean
 }
 
 // Allowed config_override keys and their expected types

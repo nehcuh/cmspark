@@ -339,6 +339,10 @@ export class BrowserBridge {
   private async screenshot(params: Record<string, any>): Promise<ToolResult> {
     let tabId = params.tabId
     if (!tabId) {
+      // ADR-015: multi-agent forbids silent active-tab fallback
+      if (params.__require_tab_id || params.forbid_active_tab_fallback) {
+        throw new Error("TAB_ID_REQUIRED: explicit tabId required (multi-agent mode)")
+      }
       const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true })
       if (!activeTab?.id) throw new Error("No active tab found")
       tabId = activeTab.id
@@ -382,6 +386,9 @@ export class BrowserBridge {
     }
 
     if (!tabId) {
+      if (params.__require_tab_id || params.forbid_active_tab_fallback) {
+        throw new Error("TAB_ID_REQUIRED: explicit tabId required (multi-agent mode)")
+      }
       const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true })
       if (!activeTab?.id) throw new Error("No active tab found")
       tabId = activeTab.id
