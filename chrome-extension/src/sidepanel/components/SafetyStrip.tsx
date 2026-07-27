@@ -15,6 +15,11 @@ export function SafetyStrip() {
   const hasConfirm = state.pendingSecurityConfirmations.length > 0
   const [abortSentAt, setAbortSentAt] = useState<number | null>(null)
   const [abortUnconfirmed, setAbortUnconfirmed] = useState(false)
+  const [entTrust, setEntTrust] = useState<{
+    families: string[]
+    remaining_netsec_ms: number
+    remaining_shell_ms: number
+  } | null>(null)
 
   useEffect(() => {
     setAbortSentAt(null)
@@ -27,7 +32,40 @@ export function SafetyStrip() {
     return () => clearTimeout(t)
   }, [abortSentAt, task, task?.abortAcked])
 
-  if (!task && !hasConfirm) return null
+  // Plan A G8: poll enterprise session trust status for active thread
+  useEffect(() => {
+    const tid = state.activeThreadId
+    if (!tid) {
+      setEntTrust(null)
+      return
+    }
+    const pull = () => {
+      chrome.runtime.sendMessage(
+        { type: "enterprise.session_trust.status", thread_id: tid },
+        (resp: any) => {
+          if (chrome.runtime.lastError || !resp?.grant) {
+            setEntTrust(null)
+            return
+          }
+          setEntTrust({
+            families: resp.grant.families || [],
+            remaining_netsec_ms: resp.grant.remaining_netsec_ms || 0,
+            remaining_shell_ms: resp.grant.remaining_shell_ms || 0,
+          })
+        },
+      )
+    }
+    pull()
+    const iv = setInterval(pull, 15_000)
+    return () => clearInterval(iv)
+  }, [state.activeThreadId, hasConfirm])
+
+  const entActive =
+    entTrust &&
+    ((entTrust.remaining_netsec_ms > 0 && entTrust.families.includes("netsec")) ||
+      (entTrust.remaining_shell_ms > 0 && entTrust.families.includes("shell")))
+
+  if (!task && !hasConfirm && !entActive) return null
 
   const finished = task?.status === "finished"
   const live = task && !finished
@@ -88,6 +126,33 @@ export function SafetyStrip() {
       {abortUnconfirmed && task && !task.abortAcked && !finished && (
         <div style={styles.warn}>急停未确认 — 可用 Ctrl+Alt+End</div>
       )}
+      {entActive && entTrust && (
+        <div style={styles.entChip}>
+          <span>
+            企业信任中
+            {entTrust.remaining_netsec_ms > 0 && entTrust.families.includes("netsec")
+              ? ` · netsec ~${Math.ceil(entTrust.remaining_netsec_ms / 60000)}m`
+              : ""}
+            {entTrust.remaining_shell_ms > 0 && entTrust.families.includes("shell")
+              ? ` · shell ~${Math.ceil(entTrust.remaining_shell_ms / 60000)}m`
+              : ""}
+          </span>
+          <button
+            type="button"
+            style={styles.entRevoke}
+            onClick={() => {
+              const tid = state.activeThreadId
+              if (!tid) return
+              chrome.runtime.sendMessage(
+                { type: "enterprise.session_trust.revoke", thread_id: tid },
+                () => setEntTrust(null),
+              )
+            }}
+          >
+            撤销
+          </button>
+        </div>
+      )}
       {hasConfirm && <MinimalConfirm />}
     </div>
   )
@@ -104,6 +169,28 @@ const styles: Record<string, React.CSSProperties> = {
     borderBottom: `1px solid ${tokens.darkBorder}`,
     color: tokens.darkText,
     fontSize: 11,
+    fontFamily: tokens.font,
+  },
+  entChip: {
+    marginTop: 6,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+    padding: "5px 8px",
+    borderRadius: tokens.radiusSm,
+    background: tokens.darkWarningBg,
+    color: tokens.darkWarning,
+    fontSize: 10,
+  },
+  entRevoke: {
+    border: `1px solid ${tokens.darkBorder}`,
+    background: "transparent",
+    color: tokens.darkText,
+    borderRadius: tokens.radiusSm,
+    padding: "2px 8px",
+    fontSize: 10,
+    cursor: "pointer",
     fontFamily: tokens.font,
   },
   chip: {

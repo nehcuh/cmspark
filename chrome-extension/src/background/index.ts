@@ -771,6 +771,8 @@ function setupMessageHandlers() {
       case "workspace.pick":
       case "workspace.set":
       case "netsec.authorize_task":
+      case "enterprise.session_trust.status":
+      case "enterprise.session_trust.revoke":
       case "history.query":
       case "history.export":
       case "mcp.list":

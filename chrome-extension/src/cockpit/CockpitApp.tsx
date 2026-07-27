@@ -305,10 +305,12 @@ function ConfirmElevated({
   const relevantApp = request.relevant_apps?.[0]
   const canThreadTrust = canOfferThreadTrust(request.tool_name, relevantApp)
   const canSessionTrust = canOfferComputerSessionTrust(request.tool_name, relevantApp)
+  const canEnterpriseTrust = request.offer_enterprise_session_trust === true
   const [threadTrust, setThreadTrust] = useState(false)
   const [sessionTrust, setSessionTrust] = useState(
     canOfferComputerSessionTrust(request.tool_name, relevantApp),
   )
+  const [enterpriseTrust, setEnterpriseTrust] = useState(false)
   const nonceChallenge = request.nonce_challenge
   const nonceMatches =
     !nonceChallenge || nonceInput.toUpperCase() === nonceChallenge.toUpperCase()
@@ -318,10 +320,11 @@ function ConfirmElevated({
     setWhitelistMode("none")
     setThreadTrust(false)
     setSessionTrust(canOfferComputerSessionTrust(request.tool_name, request.relevant_apps?.[0]))
+    setEnterpriseTrust(false)
     setNonceInput("")
     setPasteBlocked(false)
     setImgFailed(false)
-  }, [request.confirmation_id, request.tool_name, request.relevant_apps])
+  }, [request.confirmation_id, request.tool_name, request.relevant_apps, request.offer_enterprise_session_trust])
 
   // 60s auto-deny (D14)
   useEffect(() => {
@@ -356,6 +359,8 @@ function ConfirmElevated({
       add_to_whitelist: addToWhitelist,
       add_to_thread_whitelist: approved && canThreadTrust && threadTrust,
       add_to_session_trust: approved && canSessionTrust && sessionTrust,
+      add_to_enterprise_session_trust:
+        approved && !stopThread && canEnterpriseTrust && enterpriseTrust ? true : undefined,
       nonce_response: approved && nonceChallenge ? nonceInput.toUpperCase() : undefined,
     })
     onResolved(request.confirmation_id)
@@ -436,6 +441,22 @@ function ConfirmElevated({
                 onChange={(e) => setSessionTrust(e.target.checked)}
               />{" "}
               本会话自动同意「{relevantApp}」同类操作 {computerSessionTrustHint()}
+            </label>
+          )}
+          {canEnterpriseTrust && (
+            <label style={{ display: "block", marginTop: 6, fontSize: 10 }}>
+              <input
+                type="checkbox"
+                checked={enterpriseTrust}
+                onChange={(e) => setEnterpriseTrust(e.target.checked)}
+              />{" "}
+              本线程内自动批准同类（
+              {request.tool_name === "netsec_port_scan"
+                ? "netsec"
+                : request.tool_name === "shell_exec"
+                  ? "shell"
+                  : "企业工具"}
+              ）— 仍受白名单/任务授权；30 分钟无人工批准或最长 8 小时失效
             </label>
           )}
           {nonceChallenge && (
