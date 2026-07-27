@@ -4,9 +4,11 @@
 
 ## Colors
 
+Canonical source: `chrome-extension/src/sidepanel/ui/tokens.ts` (+ `riskColor` / `statusColor` helpers).
+
 | Token | Value | Usage |
 |-------|-------|-------|
-| Accent | `#2563eb` | 主按钮、active tab |
+| Accent | `#2563eb` | 主按钮、active tab、user bubble |
 | Accent soft | `#dbeafe` / `#e8f0fe` | 选中底、L1 header tint |
 | Error | `#dc2626` | 危险 / 停止 |
 | Success | `#16a34a` | 连接 / LIVE |
@@ -15,7 +17,9 @@
 | Text | `#111827` / `#4b5563` / `#9ca3af` | 正文 / 次级 / 占位 |
 | Border | `#e5e7eb` | 分割线、输入框 |
 
-Dark (L2 SafetyStrip / Cockpit): bg `#0f1115` / `#141820`, text `#e8eaed`, live `#4ade80`, danger `#f87171`.
+Dark (L2 SafetyStrip / Cockpit): bg `#0f1115`, elevated `#161a22`, text `#e8eaed`, live `#4ade80`, danger `#f87171`, **warning `#fbbf24`**.
+
+**P2 rule:** do not introduce Material hexes (`#4A90D9`, `#F44336`, …). Prefer `tokens.*`. Secondary panels (Settings/MCP/Apps) may still carry legacy hex — migrate monotonically.
 
 ## Typography
 
@@ -55,35 +59,40 @@ Dark (L2 SafetyStrip / Cockpit): bg `#0f1115` / `#141820`, text `#e8eaed`, live 
 
 ### Mode badge (P0)
 - L0 `聊` · L1 `网页` · L2 `计算机` / `计算机 · LIVE` — see `sidepanel/mode/mode-controller.ts`
-- L1 header tint `#eef4ff`; BottomBar tabs filtered by capability level
+- L1 header tint: `tokens.modeBrowserBg` (`#dbeafe`); BottomBar tabs filtered by capability level
+- ContextBar (§4 / P0 IA cut 2026-07-27): L0 Skills·Know·Hist · L1 Tabs·Skills · L2 Panel empty; packs/board/mcp/apps via BottomBar「更多」
+- Header: ThreadList + title + ModeBadge + connection + ⋯ menu (Craft/export/NB/logs/settings) — no permanent power-icon strip
+- FleetStrip: hidden when idle single-agent; show only multi-worker / locks / intents / pending confirms
 
 ### Cockpit (P1)
 - Extension popup `tabs/cockpit.html` (~720×560); SW mirror hydrates computer task + pending confirms
 - Panel L2: SafetyStrip (abort + minimal confirm); Panel send hard-gated while task running/paused
+- **P1 content-split (D10′):** Panel full security modal removed; *any* pending confirm → SafetyStrip MinimalConfirm + Cockpit ConfirmElevated (background opens Cockpit on every `security.confirmation.request`)
+- **L1 ContextStrip:** current tab chip + user-only「展开工作区」(D9′ — never auto from step count)
+- **ComputerTaskBar:** removed from Panel — step timeline only in Cockpit dual-track
 - UI labels: FleetStrip / SafetyStrip / MinimalConfirm all use **「确认台」** for the same Cockpit window; empty state shows purpose copy — [confirm-center-user-guide.md](confirm-center-user-guide.md)
 - Known: `cockpitWindowId` is in-memory — SW death may orphan a window until next open (P2)
 
-### Message Bubbles
-- User: white bg, `#4A90D9` border-left
-- Assistant: `#f5f5f5` bg
-- Error: `#F44336` text on light red bg
+### Message Bubbles (P2)
+- User: `tokens.userBubbleBg` (`#2563eb`) white text
+- Assistant: `tokens.assistantBubbleBg` (`#f3f4f6`)
+- Empty: mode-aware L0/L1/L2 copy (see ChatView `EmptyState`)
 
 ### Tool Call Card
-- Border: `#e0e0e0`
-- Running state: yellow indicator
-- Success: `#4CAF50` checkmark
-- Error: `#F44336` cross
+- Border / status via `statusColor()`
+- No emoji status chrome (✓ / ! / …)
 
 ### Buttons
-- Primary: `#4A90D9` bg, white text, `6px 16px` padding, `6px` radius
-- Secondary: white bg, `#4A90D9` border+text
-- Danger: `#F44336` bg, white text
+- Primary: `tokens.accent` bg, white text
+- Danger: `tokens.danger`
 
-### Input
-- Border: `1px solid #e0e0e0`
-- Focus border: `#4A90D9`
-- Padding: `8px 12px`
-- Radius: `6px`
+### Input / Composer (P2)
+- Unified capsule: attach + textarea + send inside one bordered surface
+- Radius: `tokens.radiusLg` (12px)
+- Settings live in Header ⋯ (not composer)
+
+### Motion
+- Transitions ≤200ms; `prefers-reduced-motion` disables animations
 
 ---
 

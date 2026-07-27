@@ -3,11 +3,13 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type { CSSProperties } from "react"
 import { useAgentStore } from "../store/agentStore"
+import { useCapabilityMode } from "../hooks/useCapabilityMode"
 import { marked } from "marked"
 import markedKatex from "marked-katex-extension"
 import DOMPurify from "dompurify"
 import { renderMermaidBlocks, prefetchMermaid } from "./mermaid"
 import { extractComputerCardData } from "../utils/computer-utils"
+import { tokens, statusColor } from "../ui/tokens"
 // KaTeX stylesheet — bundled by Plasmo; needed for math glyph fonts/layout.
 import "katex/dist/katex.min.css"
 
@@ -42,7 +44,9 @@ export function ChatView() {
   const lastMessageCountRef = useRef(messages.length)
   const pinnedRef = useRef(true)
 
-  // Show processing label only when there is an active request
+  const { level } = useCapabilityMode()
+
+  // Show processing label only when there is an active request (no emoji chrome)
   const processingLabel = (() => {
     if (streamingContent) return null
     if (!isProcessing) return null
@@ -51,10 +55,10 @@ export function ChatView() {
       const running = last.tool_calls.filter((tc: any) => tc.status === "running")
       if (running.length > 0) {
         const names = running.map((tc: any) => tc.tool_name).join(", ")
-        return `⚙️ 执行中: ${names}`
+        return `执行中: ${names}`
       }
     }
-    return "🤔 思考中"
+    return "思考中"
   })()
 
   // Auto-scroll to bottom when new messages arrive or streaming updates.
@@ -148,7 +152,7 @@ export function ChatView() {
   return (
     <div style={styles.container} ref={containerRef} onScroll={handleScroll}>
       {messages.length === 0 && !streamingContent && !processingLabel && (
-        <div style={styles.empty}>输入指令开始与 CMspark Agent 对话</div>
+        <EmptyState level={level} />
       )}
       {messages.map(msg => (
         <MessageRow
@@ -265,13 +269,13 @@ const MessageRow = memo(function MessageRow({
             />
             <div style={styles.editActions}>
               <button
-                style={{ ...styles.editBtn, background: "#fff", color: "#666", border: "1px solid #ddd" }}
+                style={{ ...styles.editBtn, background: tokens.bgElevated, color: tokens.textSecondary, border: `1px solid ${tokens.border}` }}
                 onClick={() => { setIsEditing(false); setEditingText("") }}
               >
                 取消
               </button>
               <button
-                style={{ ...styles.editBtn, background: "#4A90D9", color: "#fff", border: "none" }}
+                style={{ ...styles.editBtn, background: tokens.accent, color: "#fff", border: "none" }}
                 onClick={() => { onRegenerate(msg.id, editingText); setIsEditing(false); setEditingText("") }}
               >
                 重新生成
@@ -380,29 +384,31 @@ function ToolCallCard({ tc }: { tc: any }) {
   return (
     <div style={{
       ...styles.toolCard,
-      borderColor: tc.status === "error" ? "#F44336" : tc.status === "success" ? "#4CAF50" : "#ddd",
+      borderColor: statusColor(tc.status === "success" ? "success" : tc.status),
       cursor: hasResult && isLongResult ? "pointer" : "default",
     }} onClick={() => { if (hasResult && isLongResult) setExpanded(!expanded) }}>
       <div style={styles.toolHeader}>
-        <span>{tc.status === "running" ? "⏳" : tc.status === "success" ? "✅" : tc.status === "error" ? "❌" : "⏸"}</span>
+        <span style={{ color: statusColor(tc.status === "success" ? "success" : tc.status), fontSize: 10 }}>
+          {tc.status === "running" ? "…" : tc.status === "success" ? "✓" : tc.status === "error" ? "!" : "–"}
+        </span>
         <span style={styles.toolName}>{tc.tool_name}</span>
         {/* Vision status badge */}
         {isVisionTool && tc.vision_status === "analyzing" && (
-          <span style={{ fontSize: 10, color: "#4A90D9", marginLeft: 8 }}>Analyzing...</span>
+          <span style={{ fontSize: 10, color: tokens.accent, marginLeft: 8 }}>Analyzing…</span>
         )}
         {isVisionTool && tc.vision_status === "done" && (
-          <span style={{ fontSize: 10, color: "#4CAF50", marginLeft: 8 }}>
+          <span style={{ fontSize: 10, color: tokens.success, marginLeft: 8 }}>
             Vision {tc.vision_latency_ms ? `${(tc.vision_latency_ms / 1000).toFixed(1)}s` : ""}
           </span>
         )}
         {isVisionTool && tc.vision_status === "cached" && (
-          <span style={{ fontSize: 10, color: "#9E9E9E", marginLeft: 8 }}>Vision cached</span>
+          <span style={{ fontSize: 10, color: tokens.textMuted, marginLeft: 8 }}>Vision cached</span>
         )}
         {isVisionTool && tc.vision_status === "error" && (
-          <span style={{ fontSize: 10, color: "#FF9800", marginLeft: 8 }}>Vision failed</span>
+          <span style={{ fontSize: 10, color: tokens.warning, marginLeft: 8 }}>Vision failed</span>
         )}
         {hasResult && isLongResult && (
-          <span style={{ marginLeft: "auto", fontSize: 10, color: "#999" }}>{expanded ? "收起 ▲" : "展开 ▼"}</span>
+          <span style={{ marginLeft: "auto", fontSize: 10, color: tokens.textMuted }}>{expanded ? "收起" : "展开"}</span>
         )}
       </div>
       {/* Expandable vision description */}
@@ -410,13 +416,13 @@ function ToolCallCard({ tc }: { tc: any }) {
         <div style={{
           marginTop: 6,
           padding: "6px 10px",
-          background: "#f0f7ff",
+          background: tokens.accentSoft,
           borderRadius: 4,
-          borderLeft: "3px solid #4A90D9",
+          borderLeft: `3px solid ${tokens.accent}`,
         }}>
           <div style={{
             fontSize: 11,
-            color: "#333",
+            color: tokens.text,
             lineHeight: 1.4,
             maxHeight: visionExpanded ? "none" : "3em",
             overflow: "hidden",
@@ -427,9 +433,9 @@ function ToolCallCard({ tc }: { tc: any }) {
           {visionDescription.length > 100 && (
             <button
               onClick={(e) => { e.stopPropagation(); setVisionExpanded(!visionExpanded) }}
-              style={{ fontSize: 10, color: "#4A90D9", background: "none", border: "none", cursor: "pointer", padding: "2px 0", marginTop: 2 }}
+              style={{ fontSize: 10, color: tokens.accent, background: "none", border: "none", cursor: "pointer", padding: "2px 0", marginTop: 2 }}
             >
-              {visionExpanded ? "收起 ▲" : "展开全部 ▼"}
+              {visionExpanded ? "收起" : "展开全部"}
             </button>
           )}
         </div>
@@ -439,11 +445,11 @@ function ToolCallCard({ tc }: { tc: any }) {
           style={{
             marginTop: 6,
             padding: "6px 10px",
-            background: computerFailed ? "#FFF5F5" : "#F0F7FF",
+            background: computerFailed ? tokens.dangerSoft : tokens.accentSoft,
             borderRadius: 4,
-            borderLeft: `3px solid ${computerFailed ? "#F44336" : "#4A90D9"}`,
+            borderLeft: `3px solid ${computerFailed ? tokens.danger : tokens.accent}`,
             fontSize: 11,
-            color: "#333",
+            color: tokens.text,
             display: "flex",
             alignItems: "center",
             gap: 8,
@@ -454,12 +460,12 @@ function ToolCallCard({ tc }: { tc: any }) {
             坐标任务：完成 {computerCard.completed ?? "?"}/{computerCard.total ?? "?"} 步
           </span>
           {computerFailed && computerCard.errorCode && (
-            <span style={{ color: "#F44336", fontWeight: 700 }}>{computerCard.errorCode}</span>
+            <span style={{ color: tokens.danger, fontWeight: 700 }}>{computerCard.errorCode}</span>
           )}
           {computerCard.canOpenEvidence && (
             <button
               type="button"
-              title="在 companion 机器上打开该任务的证据目录（explorer）"
+              title="在 companion 机器上打开该任务的证据目录"
               onClick={(e) => {
                 e.stopPropagation()
                 chrome.runtime.sendMessage({ type: "computer.evidence.open", task_id: computerCard.taskId })
@@ -467,21 +473,30 @@ function ToolCallCard({ tc }: { tc: any }) {
               style={{
                 marginLeft: "auto",
                 fontSize: 11,
-                color: "#1d4ed8",
-                background: "#dbeafe",
+                color: tokens.accentText,
+                background: tokens.accentSoft,
                 border: "none",
                 borderRadius: 4,
                 padding: "2px 8px",
                 cursor: "pointer",
               }}
             >
-              📂 打开证据目录
+              打开证据目录
             </button>
           )}
         </div>
       )}
       {hasResult && (
-        <pre style={{...styles.toolResult, background: "#f5f5f5", padding: "8px 12px", borderRadius: 4, fontSize: 11, fontFamily: "'SF Mono', 'Fira Code', monospace", maxHeight: expanded ? 300 : 80, overflow: "auto"}}>
+        <pre style={{
+          ...styles.toolResult,
+          background: tokens.bgMuted,
+          padding: "8px 12px",
+          borderRadius: 4,
+          fontSize: 11,
+          fontFamily: tokens.fontMono,
+          maxHeight: expanded ? 300 : 80,
+          overflow: "auto",
+        }}>
           <code>{expanded ? resultStr : resultStr.substring(0, TOOL_RESULT_PREVIEW) + (isLongResult ? " ..." : "")}</code>
         </pre>
       )}
@@ -642,26 +657,57 @@ function MarkdownRenderer({ content, renderMermaid = false }: { content: string;
   )
 }
 
+function EmptyState({ level }: { level: "chat" | "browser" | "computer" }) {
+  if (level === "browser") {
+    return (
+      <div style={styles.empty}>
+        <div style={styles.emptyTitle}>网页 Agent 已就绪</div>
+        <div style={styles.emptyHint}>
+          可对当前页提问、总结或让 Agent 操作标签。输入 / 调用技能。
+        </div>
+      </div>
+    )
+  }
+  if (level === "computer") {
+    return (
+      <div style={styles.empty}>
+        <div style={styles.emptyTitle}>Computer Use 进行中</div>
+        <div style={styles.emptyHint}>
+          完整步骤与确认在确认台；此处可排队跟进消息。
+        </div>
+      </div>
+    )
+  }
+  return (
+    <div style={styles.empty}>
+      <div style={styles.emptyTitle}>开始对话</div>
+      <div style={styles.emptyHint}>
+        问问题、写文案，或描述你想在浏览器里完成的任务。输入 / 调用技能。
+      </div>
+    </div>
+  )
+}
+
 const markdownCSS = `
   .markdown-body h1, .markdown-body h2, .markdown-body h3 {
     margin: 10px 0 4px 0;
     font-weight: 600;
     line-height: 1.3;
   }
-  .markdown-body h1 { font-size: 16px; border-bottom: 1px solid #e0e0e0; padding-bottom: 4px; }
+  .markdown-body h1 { font-size: 16px; border-bottom: 1px solid ${tokens.border}; padding-bottom: 4px; }
   .markdown-body h2 { font-size: 14px; }
   .markdown-body h3 { font-size: 13px; }
   .markdown-body p { margin: 4px 0; line-height: 1.5; }
   .markdown-body ul, .markdown-body ol { margin: 4px 0; padding-left: 18px; }
   .markdown-body li { margin: 2px 0; }
-  .markdown-body a { color: #4A90D9; text-decoration: none; }
+  .markdown-body a { color: ${tokens.accent}; text-decoration: none; }
   .markdown-body strong { font-weight: 600; }
   .markdown-body blockquote {
     margin: 6px 0;
     padding: 4px 10px;
-    border-left: 3px solid #4A90D9;
-    background: #f5f7fa;
-    color: #555;
+    border-left: 3px solid ${tokens.accent};
+    background: ${tokens.bgMuted};
+    color: ${tokens.textSecondary};
   }
   .markdown-body table {
     border-collapse: collapse;
@@ -670,21 +716,21 @@ const markdownCSS = `
     font-size: 12px;
   }
   .markdown-body th, .markdown-body td {
-    border: 1px solid #ddd;
+    border: 1px solid ${tokens.border};
     padding: 4px 8px;
     text-align: left;
   }
-  .markdown-body th { background: #f5f5f5; font-weight: 600; }
-  .markdown-body hr { border: none; border-top: 1px solid #e0e0e0; margin: 10px 0; }
+  .markdown-body th { background: ${tokens.bgMuted}; font-weight: 600; }
+  .markdown-body hr { border: none; border-top: 1px solid ${tokens.border}; margin: 10px 0; }
   .markdown-body code {
-    background: #f0f0f0;
+    background: ${tokens.bgMuted};
     padding: 1px 4px;
     border-radius: 3px;
     font-size: 11px;
-    font-family: 'SF Mono', 'Menlo', 'Monaco', monospace;
+    font-family: ${tokens.fontMono};
   }
   .markdown-body pre {
-    background: #f5f5f5;
+    background: ${tokens.bgMuted};
     padding: 8px 10px;
     border-radius: 6px;
     overflow-x: auto;
@@ -725,12 +771,28 @@ const styles: Record<string, React.CSSProperties> = {
     flex: 1,
     overflowY: "auto",
     padding: "12px",
+    background: tokens.bgElevated,
   },
   empty: {
-    color: "#999",
+    color: tokens.textMuted,
     textAlign: "center",
-    paddingTop: 40,
+    padding: "48px 20px 24px",
     fontSize: 13,
+    fontFamily: tokens.font,
+  },
+  emptyTitle: {
+    fontSize: 15,
+    fontWeight: 650,
+    color: tokens.text,
+    marginBottom: 8,
+    letterSpacing: "-0.01em",
+  },
+  emptyHint: {
+    fontSize: 12,
+    color: tokens.textSecondary,
+    lineHeight: 1.5,
+    maxWidth: 260,
+    margin: "0 auto",
   },
   userMsg: {
     display: "flex",
@@ -749,26 +811,27 @@ const styles: Record<string, React.CSSProperties> = {
     width: "fit-content" as const,
   },
   userBubble: {
-    background: "#4A90D9",
-    color: "#fff",
+    background: tokens.userBubbleBg,
+    color: tokens.userBubbleText,
     borderRadius: "12px 12px 4px 12px",
     padding: "8px 12px",
     wordBreak: "break-word" as const,
     whiteSpace: "pre-wrap",
   },
   agentBubble: {
-    background: "#f0f0f0",
+    background: tokens.assistantBubbleBg,
+    color: tokens.assistantBubbleText,
     borderRadius: "12px 12px 12px 4px",
     padding: "8px 12px",
     wordBreak: "break-word" as const,
   },
   statusBubble: {
-    background: "#e8f0fe",
+    background: tokens.accentSoft,
     borderRadius: "12px 12px 12px 4px",
     padding: "8px 12px",
     maxWidth: "85%",
     fontSize: 12,
-    color: "#4A90D9",
+    color: tokens.accentText,
     fontStyle: "italic" as const,
     display: "flex",
     alignItems: "center",
@@ -785,7 +848,7 @@ const styles: Record<string, React.CSSProperties> = {
     gap: 4,
     marginTop: 4,
     padding: "3px 6px",
-    background: "#f0f0f0",
+    background: tokens.bgMuted,
     borderRadius: 6,
   },
   editWrap: {
@@ -796,8 +859,8 @@ const styles: Record<string, React.CSSProperties> = {
   },
   editTextarea: {
     width: "100%",
-    border: "1px solid #4A90D9",
-    borderRadius: 8,
+    border: `1px solid ${tokens.accent}`,
+    borderRadius: tokens.radiusLg,
     padding: "8px 12px",
     fontSize: 13,
     fontFamily: "inherit",
@@ -821,17 +884,17 @@ const styles: Record<string, React.CSSProperties> = {
     background: "none",
     border: "none",
     fontSize: 12,
-    color: "#666",
+    color: tokens.textSecondary,
     cursor: "pointer",
     padding: "2px 6px",
     borderRadius: 4,
     lineHeight: 1,
-    transition: "background 0.15s ease",
+    transition: `background ${tokens.transitionFast} ease`,
   },
   expandBtn: {
     background: "none",
     border: "none",
-    color: "#4A90D9",
+    color: tokens.accent,
     cursor: "pointer",
     fontSize: 12,
     padding: "4px 0",
@@ -840,10 +903,10 @@ const styles: Record<string, React.CSSProperties> = {
   },
   toolCard: {
     marginTop: 8,
-    border: "1px solid #ddd",
-    borderRadius: 6,
+    border: `1px solid ${tokens.border}`,
+    borderRadius: tokens.radiusMd,
     padding: 8,
-    background: "#fafafa",
+    background: tokens.bg,
     fontSize: 12,
   },
   toolHeader: {
@@ -854,7 +917,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   toolName: {
     fontWeight: 600,
-    fontFamily: "monospace",
+    fontFamily: tokens.fontMono,
   },
   toolResult: {
     margin: 0,
