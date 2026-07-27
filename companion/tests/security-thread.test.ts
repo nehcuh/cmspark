@@ -249,6 +249,17 @@ test("classifyError MCP EPERM (.Trash TCC denial) is recoverable", () => {
 test("classifyError 'timeout waiting for selector' is recoverable", () => {
   assert.equal(classifyError("timeout waiting for selector '#btn'"), "recoverable")
 })
+
+test("classifyError workspace_root not set is recoverable (Mission Pack DevSec)", () => {
+  assert.equal(
+    classifyError(
+      "workspace_root not set on thread — pick a folder first. Ask the user to open Side Panel → 任务包 → 「选择工作区」",
+      { toolName: "workspace_list_dir" },
+    ),
+    "recoverable",
+  )
+  assert.equal(classifyError("module_disabled:devsec-workspace"), "recoverable")
+})
 test("logger redacts sensitive keys recursively", () => {
   const redacted = redactLogData({
     api_key: "sk-secret",

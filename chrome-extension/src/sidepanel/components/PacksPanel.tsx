@@ -1,6 +1,6 @@
 // Mission Packs panel: list installed packs and apply to active thread
 
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useAgentStore } from "../store/agentStore"
 import { tokens } from "../ui/tokens"
 
@@ -16,11 +16,16 @@ export type PackListItem = {
 }
 
 export function PacksPanel() {
-  const { state } = useAgentStore()
+  const { state, dispatch } = useAgentStore()
   const [packs, setPacks] = useState<PackListItem[]>([])
   const [modules, setModules] = useState<Record<string, { available?: boolean; enabled?: boolean }>>({})
   const [status, setStatus] = useState("")
   const [busy, setBusy] = useState<string | null>(null)
+  const activeThreadRef = useRef(state.activeThreadId)
+  activeThreadRef.current = state.activeThreadId
+
+  const activeThread = (state.threads || []).find((t: any) => t.id === state.activeThreadId)
+  const workspaceRoot = (activeThread as any)?.workspace_root as string | undefined
 
   const refresh = () => {
     chrome.runtime.sendMessage({ type: "pack.list" })
@@ -46,21 +51,28 @@ export function PacksPanel() {
         if (msg.modules) setModules(msg.modules)
       }
       if (msg?.type === "workspace.pick_result") {
-        if (msg.path && state.activeThreadId) {
-          chrome.runtime.sendMessage({
-            type: "workspace.set",
-            thread_id: state.activeThreadId,
-            path: msg.path,
-          })
-          setStatus(`工作区: ${msg.path}`)
-        } else if (msg.error) {
+        if (msg.error && !msg.bound) {
           setStatus(msg.error)
+        } else if (msg.path) {
+          setStatus(msg.bound ? `工作区已绑定: ${msg.path}` : `已选择: ${msg.path}（绑定中…）`)
+          // One-shot pick already bound when thread_id was sent; still UPSERT if thread returned
+          if (msg.thread?.id) {
+            dispatch({ type: "UPSERT_THREAD", thread: msg.thread })
+          } else if (!msg.bound && activeThreadRef.current) {
+            // Fallback: separate set (path must still be consumable from pick token)
+            chrome.runtime.sendMessage({
+              type: "workspace.set",
+              thread_id: activeThreadRef.current,
+              path: msg.path,
+            })
+          }
         }
-        setTimeout(() => setStatus(""), 3000)
+        setTimeout(() => setStatus(""), 5000)
       }
       if (msg?.type === "workspace.set_result" && msg.thread) {
-        setStatus(`工作区已绑定`)
-        setTimeout(() => setStatus(""), 2500)
+        dispatch({ type: "UPSERT_THREAD", thread: msg.thread })
+        setStatus(`工作区已绑定: ${msg.thread.workspace_root || ""}`)
+        setTimeout(() => setStatus(""), 4000)
       }
       if (msg?.type === "error" && busy) {
         setStatus(msg.error || "操作失败")
@@ -70,7 +82,7 @@ export function PacksPanel() {
     }
     chrome.runtime.onMessage.addListener(handler)
     return () => chrome.runtime.onMessage.removeListener(handler)
-  }, [busy])
+  }, [busy, dispatch])
 
   const enableModule = (mod: string) => {
     setBusy("modules")
@@ -86,7 +98,11 @@ export function PacksPanel() {
       setStatus("请先选择线程")
       return
     }
-    chrome.runtime.sendMessage({ type: "workspace.pick" })
+    // Pass thread_id so companion pick+bind atomically
+    chrome.runtime.sendMessage({
+      type: "workspace.pick",
+      thread_id: state.activeThreadId,
+    })
   }
 
   const authorizeNetsec = () => {
@@ -148,13 +164,20 @@ export function PacksPanel() {
           </div>
         ) : null,
       )}
-      <div style={{ display: "flex", gap: 6, marginBottom: 8, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: 6, marginBottom: 8, flexWrap: "wrap", alignItems: "center" }}>
         <button type="button" style={styles.primaryBtn} onClick={pickWorkspace}>
           选择工作区
         </button>
         <button type="button" style={styles.primaryBtn} onClick={authorizeNetsec}>
           NetSec 任务授权
         </button>
+      </div>
+      <div style={styles.wsHint}>
+        {workspaceRoot ? (
+          <>当前工作区: <code style={{ fontSize: 10 }}>{workspaceRoot}</code></>
+        ) : (
+          <>当前线程未绑定工作区 — 使用 <code>workspace_*</code> 工具前请先点「选择工作区」</>
+        )}
       </div>
       {packs.length === 0 && <div style={styles.empty}>暂无已安装任务包</div>}
       <ul style={styles.list}>
@@ -234,5 +257,11 @@ const styles: Record<string, import("react").CSSProperties> = {
     background: "#eff6ff",
     color: tokens.accent,
     cursor: "pointer",
+  },
+  wsHint: {
+    fontSize: 10,
+    color: tokens.textMuted,
+    marginBottom: 8,
+    lineHeight: 1.4,
   },
 }

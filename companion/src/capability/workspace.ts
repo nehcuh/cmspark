@@ -39,7 +39,13 @@ export function resolveUnderWorkspace(
   relPath: string,
 ): { ok: true; abs: string } | { ok: false; error: string } {
   if (!workspaceRoot || typeof workspaceRoot !== "string") {
-    return { ok: false, error: "workspace_root not set on thread — pick a folder first" }
+    return {
+      ok: false,
+      error:
+        "workspace_root not set on thread — pick a folder first. " +
+        "Ask the user to open Side Panel → 任务包 → 「选择工作区」 (native folder dialog), " +
+        "then retry workspace_list_dir / workspace_read_file. Do not invent paths.",
+    }
   }
   let rootReal: string
   try {

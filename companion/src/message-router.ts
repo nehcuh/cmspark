@@ -1435,18 +1435,34 @@ export async function handleMessage(
       return { type: "modules.updated", module: r.module, modules: getConfig().modules }
     }
     case "workspace.pick": {
+      // Optional thread_id: pick + bind in one step (avoids UI race / stale set)
       const result = await pickFolderNative()
       if (result.error) return { type: "workspace.pick_result", error: result.error }
       if (!result.path) return { type: "workspace.pick_result", error: "未选择文件夹" }
-      const { recordNativePick } = await import("./capability/workspace")
+      const { recordNativePick, setWorkspaceRoot } = await import("./capability/workspace")
+      let abs = result.path
       try {
-        const abs = fs.realpathSync(path.resolve(result.path))
-        recordNativePick(abs)
-        return { type: "workspace.pick_result", path: abs }
+        abs = fs.realpathSync(path.resolve(result.path))
       } catch {
-        recordNativePick(result.path)
-        return { type: "workspace.pick_result", path: result.path }
+        /* keep result.path */
       }
+      recordNativePick(abs)
+      if (typeof rest.thread_id === "string" && rest.thread_id) {
+        const thread = threadManager.get(rest.thread_id)
+        if (!thread) {
+          return { type: "workspace.pick_result", path: abs, error: `thread not found: ${rest.thread_id}` }
+        }
+        const bind = setWorkspaceRoot(abs)
+        if (!bind.ok) return { type: "workspace.pick_result", path: abs, error: bind.error }
+        threadManager.update(rest.thread_id, { workspace_root: bind.path } as any)
+        return {
+          type: "workspace.pick_result",
+          path: bind.path,
+          bound: true,
+          thread: threadManager.get(rest.thread_id),
+        }
+      }
+      return { type: "workspace.pick_result", path: abs, bound: false }
     }
     case "workspace.set": {
       if (!rest.thread_id) return { type: "error", error: "thread_id required" }

@@ -485,7 +485,7 @@ export function getToolDefinitions(): ToolDefinition[] {
       function: {
         name: "workspace_list_dir",
         description:
-          "List files under the thread's DevSec workspace_root (relative paths only). Requires modules.devsec-workspace enabled and workspace_root set on the thread.",
+          "List files under the thread's DevSec workspace_root (relative paths only). Requires modules.devsec-workspace enabled AND workspace_root already set. If error says workspace_root not set, stop and ask the user to click Side Panel → 任务包 → 「选择工作区」 first — never guess absolute paths.",
         parameters: {
           type: "object",
           properties: {
