@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.automation.apple-events</key>
+    <true/>
+    <!--
+      SPIKE B (library validation A/B — Grok hypothesis):
+      Apple library validation allows loading Apple-signed dylibs. SkyLight
+      is Apple-signed. So dlopen should succeed even with validation ON.
+      If this binary resolves SLEventPostToPid=true, we can ship WITHOUT
+      the disable-library-validation flip and avoid the S-P0-2 regression.
+      Compare against host-skylight.entitlements (flip=true).
+    -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <false/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <false/>
+    <key>com.apple.security.cs.allow-jit</key>
+    <false/>
+</dict>
+</plist>
