@@ -1,0 +1,14 @@
+{
+  "batch": "enterprise-ab-impl",
+  "date": "2026-07-27",
+  "commits": ["5c3f21b", "c7924bc"],
+  "internal_adversarial": {
+    "security_architecture": "APPROVE_WITH_NITS",
+    "summary": "G1-G5 privilege paths correct; G8 chip fixed in c7924bc; ConfirmElevated A added"
+  },
+  "external": {
+    "pi": "ran (artifact may be binary/truncated)",
+    "claude": "SKIPPED_CLI_NOT_ON_PATH"
+  },
+  "ship": true
+}
