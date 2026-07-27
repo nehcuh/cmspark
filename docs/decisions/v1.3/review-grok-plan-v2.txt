@@ -1,0 +1,104 @@
+I'll route this review request, then read Plan v2 and the adversary findings side by side against the cited code.Routing suggested a code-review skill; this is a plan-doc review, so I'll read Plan v2, the adversary findings, and the cited source directly.Checking the cited source files for env-name consistency, plist floor, integrity pattern, and error-surfacing paths.Confirming a critical path mismatch: inject error handling and whether the integrity gate actually covers computer-use.# Plan v2 Review — Approach C-minus
+
+**Verdict: MODIFY BEFORE IMPLEMENTATION**
+
+Adversary N1–N8 are largely absorbed in plan text. Three implementation-path errors would make a literal F1–F7 implementation ship a false failure contract and an integrity gate that misses inject. Fix those in the plan (a few paragraphs), then implement.
+
+---
+
+## Q1 — 8 findings addressed?
+
+| ID | Status | Where |
+|---|---|---|
+| N1 | Addressed | Tahoe-only ship: plan:11, :34, :47–49 |
+| N2 | Addressed | F6 removed: plan:8–9, :182–188, :58 |
+| N3 | Addressed (weakened) | git-diff assert + D8: plan:12, :203–206, :52 |
+| N4 | Addressed | known limitation + D7: plan:16, :51, :251 |
+| N5 | Addressed | Stage 3 comms: plan:13, :252, :275–279 |
+| N6 | Addressed | via N1: plan:11 |
+| N7 | Addressed | F7 first + auto-rewrite: plan:12, :313–318 |
+| N8 | Addressed | G2 T1–T4: plan:14, :228–235 |
+
+**Residual holes (plan-level, not adversary-r1):**
+
+1. **F5 path is wrong.** Plan cites `companion/src/host-use/darwin/darwin-adapters.ts:497-546` (plan:176). That file does not exist. Real inject/`ensureForeground` lives at `companion/src/computer/darwin-adapters.ts:497-559`.
+2. **Integrity gate misses computer-use spawn.** F4 wraps only `defaultDarwinRunner` in `host-use/darwin/adapter.ts:138-144` (plan:139–174). Computer inject uses raw `execFileAsync` after `resolveHostBinary()` (`computer/darwin-adapters.ts:499-505`) and never calls `defaultDarwinRunner` (only consumer is `host-use` adapter itself).
+3. **`SKYLIGHT_SPI_FAILED` is not surfaced today.** Host prints JSON then always `exit(0)` (`host.swift:493-494`; spike same at `host-skylight.swift:562-563`). Inject never parses stdout / `ok` (`computer/darwin-adapters.ts:504-508`). SPI failure would look like success.
+4. **TCC recovery bundle ID wrong.** Plan uses `com.cmspark.cmspark-host` (plan:252, :279); plist is `com.cmspark.host` (`host-Info.plist:5-6`).
+
+---
+
+## Q2 — Hard error without F6?
+
+**Policy:** Acceptable for permanent unavailability (unsupported OS / SPI removed). Matches adversary’s “no fallback” option (adversary:405–414). D6 keeps a future L2 HID path if Tahoe transient rates force it (plan:50, :188).
+
+**Availability:** Yes, pure hard-error can regress availability on **transient** SPI failure on supported OSes—no retry. That trade-off is intentional and defensible for v1.3 **if** failures are near-zero on Tahoe.
+
+**Contract is not sufficient as implemented:**
+
+- Plan claims companion surfaces `error_code` for LLM messaging (plan:186–187).
+- Inject path collapses failures to spawn errors only; structured `cuError` with `error_code` (`host.swift:517-520`) never reaches `ComputerError` with that code.
+- `rethrowDarwinExecError` always uses `INVALID_ACTION` (`computer/darwin-adapters.ts:82-86`).
+- Message “requires Tahoe 26.5+” is wrong for Tahoe users with transient SPI failure.
+
+**Must add during plan fix / implementation:** after inject, `parseComputerJson` + `checkOk` (or equivalent) so `SKYLIGHT_SPI_FAILED` becomes a typed `ComputerError`, with copy branched on OS vs generic SPI failure.
+
+---
+
+## Q3 — F7 first + auto-rewrite: git-diff sound?
+
+**Order is mechanically sound for N7** (plan:315–318): build script exists before integrity gate; F1 rebuild rewrites constant.
+
+**Yes, local build dirties git.** F7 in-place sed/perl on `host-integrity.ts` (plan:198–201) means every `build-host.sh` run mutates a tracked source file. Developer must commit that constant with any intentional host rebuild—or stash/discard accidental rebuilds. Tray today only *prints* the hash (`build-tray.sh:71-72`); auto-rewrite is better for forgetfulness, worse for dirty trees.
+
+**CI tension (N3 residual):** `companion/dist/` is gitignored (`.gitignore:13`); binary is not the oracle. “CI runs `build-host.sh` + asserts `host-integrity.ts` updated” (plan:203–206) conflicts with non-reproducible codesign (plan:206, adversary:433–437): CI rebuild may produce a different SHA than the developer’s committed constant. During implementation, CI should be either:
+
+- **(A)** “if `host.swift`/`host.entitlements` change → `host-integrity.ts` must also change in the PR” (no CI rebuild of SHA equality), or  
+- **(B)** CI rebuild only checks post-build `hash(binary) === constant` in *that* workspace (not equality to developer’s machine).
+
+Do **not** require developer SHA == CI SHA until D8.
+
+---
+
+## Q4 — N5 Stage 3 user-comms?
+
+**Covered:** release notes, side-panel banner, DMG README, `tccutil` recovery (plan:275–279).
+
+**Gaps:**
+
+- Wrong bundle ID (above) → recovery command fails.
+- No **first-failure in-agent path**: when Accessibility is denied after upgrade, `security-check` already has a clear string (`computer/darwin-adapters.ts:218-221`)—plan should wire Stage 3 banner / recovery to that failure path, not only release notes.
+- No tray / system-notification channel (optional).
+- No “Settings → Accessibility → re-enable cmspark-host” GUI steps for non-CLI users.
+
+Adequate for a one-time expected re-prompt if bundle ID + first-inject banner are fixed. Not complete for stuck-grant recovery UX.
+
+---
+
+## Q5 — New concerns
+
+| Concern | Result |
+|---|---|
+| `CMSPARK_ALLOW_HOST_BIN_OVERRIDE=1` spelling | **Consistent** with `host-bin.ts:18-28` and plan:133–147, :147 |
+| Tahoe 26.5+ vs `LSMinimumSystemVersion=14.4` | **Collides with product claim, not install.** Host plist floor is 14.4 (`host-Info.plist:17-18`); app bundle is 12.0 (`scripts/macos/Info.plist:31-32`). Raising host to 26.5 would block **all** host features (mail, biometric, etc.) on Sonoma/Sequoia. **Do not raise plist for v1.3.** Keep 14.4; gate computer-use via SPI feature-detect + hard error. Document that floor ≠ computer-use support floor. |
+| Auto-rewrite vs DMG writability | **Misplaced for packaged installs.** Rewrite targets source `host-integrity.ts` at **build** time (plan:198); constant is baked into companion JS. Production DMG does not need to rewrite it. Source tree must be writable at build (normal). |
+| F5 wrong path / integrity misses inject / silent SPI success / wrong TCC ID | **New, high** — see Q1 |
+
+---
+
+## Q6 — Verdict
+
+### **MODIFY BEFORE IMPLEMENTATION**
+
+Required plan patches (block start):
+
+1. **F5 path** → `companion/src/computer/darwin-adapters.ts` inject sites (~497–559); drop `ensureForeground` only there.
+2. **F4 scope** → integrity must cover computer-use spawn (shared helper used by both `defaultDarwinRunner` and `computer/darwin-adapters`, or check inside `resolveHostBinary` / a single spawn wrapper).
+3. **Failure contract** → inject must parse stdout `{ok, error_code}` and throw typed `ComputerError("SKYLIGHT_SPI_FAILED", …)`; LLM copy must not always say “upgrade to Tahoe.”
+4. **TCC recovery** → `tccutil reset Accessibility com.cmspark.host` (match `host-Info.plist:6`).
+5. **CI SHA** → choose (A) or (B) above; do not claim cross-machine SHA equality.
+6. **Plist** → explicitly keep `LSMinimumSystemVersion=14.4`; document support matrix (host apps vs SkyLight inject).
+
+**Conditional during implementation (after patches):** CGEvent nil → `CGEVENT_CONSTRUCT_FAILED` (plan:70); Stage 3 remove `CMSPARK_SKYLIGHT_FORCE_FG` (plan:72–73, :238); auto-rewrite fail-closed on sed miss (plan:201); G1 Chrome step load-bearing (plan:225); partial-sequence recovery docs (plan:250); developer note that `build-host.sh` dirties `host-integrity.ts`.
+
+**Not reject / not re-research.** C-minus shape, N2 removal, Tahoe-only claim, F7-first order, and honest G2 tests are sound.

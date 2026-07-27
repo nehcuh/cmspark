@@ -1,0 +1,147 @@
+# Batch 2 Correctness P0s — Grok Review Round 2 (Amendments)
+
+Reviewed against live code after Round 1 amendments (B1, C2, C3, C5, C7 fixed;
+C1/C4/C6 accepted as-is). Evidence: static inspection of
+`message-router.ts`, `history/store.ts`, `swift-tray-bridge.ts`,
+`tests/single/files.test.ts`; `npx tsc --noEmit` clean [executed];
+history/export-related tests green [executed]; suite still 1714/1733 with the
+same 3 pre-existing failures (apps-config NTFS, lolbin, log-rotation).
+
+Overall: **All Round 1 Blocker# Batch 2 Round 2 — Ship
+
+Full write-up: `docs/decisions/v1.3/review-grok-batch2-round2.txt`
+
+**Verification [executed]:** `tsc --noEmit` clean; history/export-related tests pass; suite still **1714/1733** with the same 3 pre-existing failures.
+
+---
+
+## Blockers
+
+**None.**
+
+B1 is fixed in code (`await historyStore.exportJSON(rest)`) and the async mock makes a future missing-await fail `deepEqual`.
+
+---
+
+## Concerns
+
+**None that block merge.** Optional nits only (mock payload shape vs real `OperationRecord[]`, optional `activeInstance = null` in `close()`, R1 Map-growth / tray-failed log).
+
+---
+
+## Ship verdict
+
+| Item | Status |
+|------|--------|
+| B1 await | Resolved |
+| C2 1s debounce | Resolved |
+| C3 static handlers | Resolved (pattern correct) |
+| C5 cancel resolves | Resolved (semantics correct) |
+| C7 comments | Resolved |
+| C1 / C4 / C6 | Accepted as noted |
+
+**Ship Batch 2.**
+
+---
+
+## Answers
+
+### 1. C3 static gate
+
+**Keep the static flag + `activeInstance`.** Your reasoning is right: latest instance wins, production singleton is unchanged, `close()` already flushes that instance. Unregister-on-close is more bug-prone (need re-arm on next construct) and not better for the production shape.
+
+Optional polish only: clear `activeInstance` when `close()` closes the current one. Harmless today (`flushNow` on a drained closed store is a no-op).
+
+### 2. C5 resolve semantics
+
+**`{ id, approved: false }` is correct.** Do not add a `cancelled` sentinel now.
+
+Cancel-due-to-other-channel is operationally a deny for the tray channel; the race winner is always WS (or tray if tray won first). No production path branches on user-deny vs cancel. A sentinel would churn types for zero callers. If you want metrics later, log at the `server.ts` cancel call site instead.
+
+### 3. Anything else?
+
+**Nothing that re-opens Round 1.** Residual nits are opportunistic. Frame C-P0-1 in the PR as “serialization primitive landed,” not “race fixed.”
+ore.activeInstance?.flushNow()` → latest live store.
+- After instance #1 `close()` flushes, then #2 is constructed, #2 is `activeInstance` and receives the final flush. Good.
+
+Why not prefer unregister-in-close as the primary design:
+
+- `process.once` listeners are harder to remove cleanly without storing the exact function refs; re-registering on every construct reintroduces the original leak under test churn.
+- Static install-once + pointer indirection is the standard “singleton resource, multi-instance tests” pattern.
+- `close()` already calls `flushNow()` for the instance being closed, so durability does not depend on the process handlers for the normal test lifecycle.
+
+Optional polish (nit, not a concern):
+
+```ts
+close(): void {
+  this.flushNow()
+  if (HistoryStore.activeInstance === this) {
+    HistoryStore.activeInstance = null
+  }
+  // ...
+}
+```
+
+That avoids a closed instance remaining as the shutdown target until the next ctor. Harmless today (`flushNow` on a closed store with `pendingSinceFlush === 0` is a no-op), but clearer ownership. Do not unregister process handlers on close unless you also re-arm them on next construct — that path is more bug-prone than the static gate.
+
+### 2. C5 resolve semantics: `approved: false` vs `cancelled: true`
+
+**`{ id, approved: false }` is the right choice. Do not introduce a cancelled sentinel now.**
+
+Reasons:
+
+1. **Current consumers.** `server.ts` races tray vs WS. When WS wins, it calls `cancelConfirm` and returns the WS decision; nobody further awaits `trayPromise`. The cancel resolve is purely anti-hang for future direct `await trayPromise`.
+2. **Semantic fit.** Cancel-due-to-other-channel is operationally a deny for the tray channel: the dialog should close, no approve side effects, and any late Swift reply is already dropped because the map entry was deleted first. That matches timeout and user-deny as fail-closed for that channel.
+3. **Cost of a sentinel.** A distinct `cancelled: true` (or `reason: "cancelled"`) requires typing changes on `TrayConfirmResponse`, adapter surface, and every consumer that currently treats the response as binary. No production path needs to branch on “user deny vs cancel” today; the race winner is always the other channel.
+4. **Double-settle safety.** Order is delete map → resolve false → send cancel-confirm. Late `confirm-response` from Swift sees no entry. No double-resolve into `SecurityConfirmationManager` because cancel only settles the *tray* Promise, not the manager.
+
+If you ever need metrics (“how often did Side Panel win vs tray?”), log at the cancel call site in `server.ts` (`security.confirmation.tray_cancelled_after_ws_win`) rather than expanding the response type.
+
+### 3. Anything else missed before declaring Batch 2 done?
+
+**Nothing that re-opens Round 1.** Residual optional nits only:
+
+1. **Mock payload shape ≠ real API** (`files.test.ts`): mock `exportJSON` returns `{ operations: [] }`, real `exportJSON` returns `OperationRecord[]`. The await-regression is still caught (Promise ≠ expected object). For fidelity, mock could return `async () => []` and assert `deepEqual(response.data, [])`. Pre-existing shape drift, not introduced by amendments — fix opportunistically.
+2. **`close()` vs `activeInstance`** — optional clear as above.
+3. **R1 nit: `withThreadLock` Map growth** — still optional; clear entry on thread delete when you next touch that path.
+4. **R1 nit: tray-failed log line** on C-P0-7 catch — still nice for observability; not required for ship.
+5. **Pre-existing suite failures** (3) are out of Batch 2 scope; do not treat as Batch 2 regressions.
+
+C-P0-5/6/7 semantics from Round 1 still hold; cancel-now-resolves does not change race winner logic or Swift stale-reply drop.
+
+---
+
+## Per-item scorecard (final)
+
+| ID | Verdict | Notes |
+|----|---------|--------|
+| C-P0-5 | **Ship** | Unchanged from R1 |
+| C-P0-6 | **Ship** | Unchanged; C5 resolve makes composition safer |
+| C-P0-7 | **Ship** | Unchanged; null fallthrough + defensive catch OK |
+| C-P0-1 | **Ship with caveat** | Primitive only — document as such in PR |
+| C-P0-2 | **Ship** | 1s debounce + fixed comments + handler gate |
+| C-P0-3 | **Ship** | Migration runner OK |
+| C-P0-4 | **Ship** | ready/waitReady OK |
+| B1 API regression | **Ship** | await + async mock regression guard |
+
+---
+
+## Merge recommendation
+
+**Ship Batch 2.**
+
+No blockers. No must-fix concerns. Answer Q1/Q2 as above; optional nits can ride along or wait for Batch 2.1.
+
+PR description checklist (recommended wording):
+
+- C-P0-1: “serialization primitive landed” (not “thread race fixed”)
+- C-P0-2: debounced history flush 1s / threshold 10; SIGKILL loss window documented; graceful flush retained
+- history.export: await exportJSON (R1 B1)
+- tray cancelConfirm: resolve deny to prevent hung Promise (R1 C5)
+- HistoryStore: single process-level flush handlers (R1 C3)
+
+Verification snapshot [executed]:
+
+- `npx tsc --noEmit` — clean
+- history / files / threads-history targeted tests — pass
+- full suite — 1714 pass / 3 fail (pre-existing, unchanged)

@@ -1,0 +1,41 @@
+# Plan v2 Review — Prompt
+
+## Context
+
+Approach C-minus (SkyLight primitive swap, no daemon, no library-validation flip) Plan brief has been revised to v2 incorporating adversary round 1 feedback. The 8 adversary findings were:
+
+- N1 (HIGH, Sonoma/Sequoia unverified) → ship claim downgraded to Tahoe 26.5+ only
+- N2 (HIGH, HID fallback re-opens cursor steal) → F6 HID fallback REMOVED entirely
+- N3 (MEDIUM, CI SHA oracle theatrical) → narrowed to git-diff assertion; deterministic codesign deferred to v1.4 D8
+- N4 (MEDIUM, multi-monitor coords) → known limitation for v1.3; D7 window-relative coords in v1.4
+- N5 (HIGH, TCC grant burn on rename) → Stage 3 user-comms added (release notes, banner, recovery instructions)
+- N6 (HIGH, Sonoma hardware assumption) → resolved by N1 downgrade
+- N7 (MEDIUM, stale-SHA window F1→F7) → implementation reordered: F7 lands FIRST with auto-SHA-rewrite
+- N8 (MEDIUM, theatrical TOCTOU test) → G2 rewritten to honest hash-mismatch + mock inode tests
+
+Plus Q-adv-1..5 answers incorporated.
+
+## Plan location
+
+`/Users/huchen/Projects/cmspark/docs/decisions/v1.3/plan-approach-c-minus.md`
+
+## Review task
+
+Read the Plan v2 and the adversary review (`/Users/huchen/Projects/cmspark/docs/decisions/v1.3/adversary-approach-c-plan-round1.txt`). Verify:
+
+**Q1**: Were all 8 adversary findings addressed? Any residual hole?
+
+**Q2**: With F6 (HID fallback) removed, is the failure contract (`SKYLIGHT_SPI_FAILED` → hard error → LLM surfaces) sufficient? Or does this create an availability regression (users on supported OSes hit transient SPI failure with no recovery)?
+
+**Q3**: Is the implementation order (F7 first with auto-SHA-rewrite) mechanically sound? Specifically — does auto-rewriting `host-integrity.ts`'s `CMSPARK_HOST_SHA256` constant via sed/perl in-place during build create a git-diff problem (developer runs build locally → constant changes → must commit before push)?
+
+**Q4**: Does the Stage 3 ship comms plan for TCC grant burn (N5) adequately cover the user experience? Any channel missing (e.g. in-agent onboarding flow)?
+
+**Q5**: Has the Plan introduced any NEW concerns that weren't in adversary round 1? Specifically check:
+- The `CMSPARK_ALLOW_HOST_BIN_OVERRIDE=1` escape hatch — is the env name spelled consistently with `host-bin.ts:22-30`?
+- The "Tahoe 26.5+ only" ship claim — does this collide with `host-Info.plist`'s `LSMinimumSystemVersion=14.4`? Should the plist floor be raised?
+- The auto-rewrite of `host-integrity.ts` — does this require the file to be writable at build time? In a DMG packaged install, the file is in `Contents/Resources/` which may not be writable.
+
+**Q6**: Verdict: PROCEED TO IMPLEMENTATION / MODIFY BEFORE IMPLEMENTATION / REJECT / RE-RESEARCH. If PROCEED, list any conditional fixes that must happen DURING implementation (not blocking start).
+
+Keep response under 1500 words. Cite file:line for every claim.

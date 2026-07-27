@@ -1,0 +1,89 @@
+I'll validate the diagnosis against the repo and upstream sources (Hermes/cua-driver, open-computer-use, Apple APIs) and push back where claims oversimplify or miss context.Routing picked code-review; this is architecture-diagnosis validation, so I'll research the claims against source and Apple APIs instead.## Validation
+
+### Correct
+
+| Claim | Verdict |
+|---|---|
+| cmSpark injects via `CGEvent.post(tap: .cghidEventTap)` and warps the shared cursor | **Correct** — `host.swift:923–934` posts move/down/up to HID; `darwin-adapters` enforces `ensureForeground` before every inject. `[inspected]` |
+| Global HID + frontmost routing is why forceForeground exists | **Correct** — side-panel Allow → Chrome frontmost → coord+frontmost misroute is the documented failure mode. |
+| Hermes/`cua-driver` uses SkyLight `SLEventPostToPid` + `SLPSPostEventRecordTo` (focus-without-raise), not pure public HID | **Correct** — cua blog + `platform-macos` input module. |
+| OCU prefers AX actions and uses `postToPid` for targeted coords; global HID is opt-in | **Correct** — `AXPress`/`AXConfirm` first; `OPEN_COMPUTER_USE_ALLOW_GLOBAL_POINTER_FALLBACKS=1` for `.cghidEventTap`. |
+| Per-PID post does not move the system cursor | **Correct** for both `postToPid` and `SLEventPostToPid` (vs HID). |
+
+### Wrong or overstated
+
+**1. “`postToPid` ≡ `SLEventPostToPid` (same property)” — wrong.**  
+cua’s own write-up: public `CGEvent.postToPid` is **no cursor warp** and fine for many AppKit apps / **keyboard**, but **Chromium mouse** is filtered at the renderer IPC boundary unless the event arrives on the SkyLight trust path. SkyLight is not a cosmetic rename; it is a different delivery channel. Keyboard: public `postToPid` is enough.
+
+**2. “Foreground never required with per-PID” — oversimplified.**  
+Full stack for background Chromium is: focus-without-raise (`SLPSPostEventRecordTo`) + trusted mouse path + often a **(−1,−1) primer click** for user-activation — not “just postToPid.” Canvas/games/Blender still require real HID + brief frontmost; cua documents this as an explicit contract break.
+
+**3. “Smoothness gap is fundamentally the wrong primitive” — partially wrong.**  
+Primitive choice **forces** the raise/activate path and **causes** cursor steal. Latency also comes from:
+
+- double raise: TS `forceForeground` (osascript + ~300 ms) **and** `cuActivatePid` inside every `inject`
+- `execFile("cmspark-host")` per action (10–50 ms+)
+- 30 ms/char type throttle; 50 ms between mouse phases
+- probe spawns (`window-list`) before inject
+
+Swap primitive, keep fork-per-action + real cursor + no AX element actions → still feels choppy.
+
+**4. Repo inconsistency.**  
+`darwin-adapters.ts` header says “CGEventPostToPid”; implementation is HID tap + `eventTargetUnixProcessID` (hint, not per-PID delivery). Stale comment; table should not treat cmSpark as already on `postToPid`.
+
+**5. Internal cua contradiction (flag for design).**  
+Blog: SkyLight **bypasses** `IOHIDPostEvent`. `mouse.rs` comments say it goes **through** an IOHID-related path for activity tickle. Treat “no cursor, pid-scoped, Chromium-trusted” as operational truth; exact kernel hop as imperfectly reverse-engineered.
+
+### Table corrections
+
+| Dimension | Fix |
+|---|---|
+| OCU injection | AXPerform first; `postToPid` for coord/type; HID only if env override — not “always postToPid.” |
+| Hermes injection | SkyLight + **AX element_index primary**; pixel SkyLight is fallback; canvas → HID raise. |
+| Foreground | Per-PID removes *raise for hit-test routing* on many apps; AppKit-active / Chromium primer still matter. |
+| Software cursor | OCU yes (feel); Hermes no (real cursor idle) — different product aesthetics. |
+
+---
+
+## Q&A (short)
+
+1. **Bypass HID?** Operationally yes for SkyLight (no shared-cursor update). Public `postToPid` is also not global HID, but **not** Chromium-equivalent for mouse. Community reports Ventura-era mouse `postToPid` flakiness.
+
+2. **AX-first:** Works well on AppKit/system UIs; weak on games, pure canvas, sparse Electron (Notion/Feishu). Hermes: AX index primary, coords via SkyLight, HID raise for canvas filters. OCU: secondary actions via AX; coord path is `postToPid`.
+
+3. **SkyLight + Developer ID:** Outside App Store, private SPI is common (yabai/cua). Notarization ≠ private-API audit. Risks: **OS point-release breakage**, symbol removal, support cost — not notarization block. Still need Accessibility TCC; cdhash/TCC reset pain remains.
+
+4. **activate vs postToPid:** Background-policy parent no-op applies to **`NSRunningApplication.activate` / LaunchServices**, not to posting events. Caller need not be frontmost; needs Accessibility (PostEvent class). `postToPid` does **not** inherit the activate subprocess bug.
+
+5. **Missed options:**  
+   - Public `postToPid` + focus-without-raise spike **before** SkyLight  
+   - Long-lived host (or inject daemon) — kill fork tax without changing primitive  
+   - AX element actions as primary address space (cmSpark uses AX as locator only)  
+   - `privateState` source: does **not** fix cursor/frontmost  
+   - IOHID private interfaces: similar SPI risk, less community recipe than SkyLight  
+
+6. **Smoothness factors (ranked):**  
+   (1) cursor steal + Space/frontmost churn, (2) activate/settle latency, (3) process model, (4) type/mouse sleeps, (5) software-cursor *illusion*. Primitive is necessary but not sufficient.
+
+---
+
+## Risks
+
+- Public-only `postToPid` looks green on TextEdit, fails Chrome web content — **must** gate design on Chromium fixture.  
+- SkyLight: no API stability; plan runtime `dlsym` + capability probe + HID fallback.  
+- Focus-without-raise is a second SPI surface (`SLPSPostEventRecordTo`); incomplete port still “needs raise.”  
+- Canvas HID fallback reintroduces foreground for a class of apps — product contract must say so.  
+- Right-click on Chromium web content remains broken on non-HID paths (cua known limit).  
+- TCC/codesign saga is orthogonal; new binary still burns cdhash on rebuild.
+
+---
+
+## Recommendation
+
+**Proceed to solution-design, but reframe the diagnosis:**
+
+> Root cause is **global HID injection + frontmost-coupled routing**, which **necessitates** the forceForeground/TCC detour. The smoothness gap is that stack **plus** fork-per-action and missing AX-primary dispatch — not the single line `post(tap:)`.
+
+**Design order:** (1) long-lived inject process, (2) public `postToPid` + measure Chrome/AppKit/canvas, (3) add SkyLight only if Chrome fails, (4) AX element actions as first-class rung, (5) optional software cursor for UX. Do **not** design as “drop-in SLEventPostToPid and ship.”
+
+**Sources:** trycua [Inside macOS window internals](https://github.com/trycua/cua/blob/main/blog/inside-macos-window-internals.md); cua `input/mod.rs` / `mouse.rs`; Hermes computer-use docs; QwenLM `InputSimulation.swift` / `ComputerUseService.swift`; Apple `CGEvent.postToPid`; cmSpark `host.swift` / `darwin-adapters.ts`.

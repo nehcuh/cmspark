@@ -1,0 +1,175 @@
+===========================================================================
+REVIEW: Pi-Sub — Computer-Use Primitive Research (cmSpark vs Hermes vs QwenLM)
+Date: 2026-07-24  |  Reviewer: Pi-sub (3-way consensus: Claude + Grok + Pi)
+===========================================================================
+
+Bottom line up front: the diagnosis is **partially correct but oversimplified
+in three load-bearing ways**, and one of its core comparative claims about
+`CGEvent.postToPid` is technically wrong. Proceed to solution-design only
+after the brief's "open-computer-use uses postToPid for the same effect"
+claim is corrected — that claim is the basis of half the comparison table
+and it doesn't survive contact with the cua blog post or Apple's own docs.
+
+The real question isn't "is SkyLight the right primitive." It's "do we have
+the distribution and engineering budget to chase a private-framework approach
+that the cua team themselves describes as 'I found this by grepping symbol
+exports and crashing in informative ways.'" Very different decision shape.
+
+
+VALIDATION
+----------
+
+Q1 (SLEventPostToPid bypasses HID tap?): **Correct.** cua blog (Apr 2026,
+github.com/trycua/cua/blob/main/blog/inside-macos-window-internals.md) is
+authoritative. `SLEventPostToPid` routes through an auth-signed SkyLight
+channel that bypasses `IOHIDPostEvent` entirely. User's cursor does not move.
+
+Q1b (CGEvent.postToPid achieves same property?): **WRONG. This is the biggest
+bug in the brief.** The brief's table claims open-computer-use uses
+`CGEvent.postToPid` "for the same effect" as SkyLight. cua's author tried
+exactly this and it fails on Chromium. Direct quote: "Next attempt:
+`CGEvent.postToPid`. Same event, but delivered to a specific process instead
+of the global HID stream. No cursor warp. Works great. Works great on
+everything except Chrome." Chrome's renderer-IPC filter rejects events that
+don't carry the HID pipeline's telemetry (`mouseEventSubtype` byte,
+`clickState` counter, window-local coord stamp from a private SPI). For an
+agent harness whose entire reason to exist is driving Chrome via CDP +
+sidepanel, the public-API per-PID path is broken by design. Independent
+sources corroborate: Stack Overflow #47560084 ("does not work, nothing sent
+to the other process"), r/swift "postToPID method doesn't work correctly."
+
+Q2 (AX-first trade-off?): **Correct in direction, underspecified.** AXPress
+works great for AppKit/SwiftUI. Hermes itself documents the limitation in
+the same blog: "Canvas apps (Blender GHOST, Unity, games) filter per-pid
+routes entirely. Their event loops only accept events from `cghidEventTap`
+with a leading `mouseMoved`, which means they need a brief frontmost
+activation." So even Hermes falls back to *exactly the foreground-steal
+pattern cmSpark currently uses* for canvas/WebGL/non-AX. cmSpark already
+has TinyClick (L2) + coordinate fallback — the L0 AX path is where the work
+is, not the primitive.
+
+Q3 (SkyLight private API risk for Developer ID): **Real but bounded.**
+App Store Guideline 2.5.1 forbids private APIs outright via automated scans.
+Developer ID + notarize is *less* restrictive — the static scan flags
+private-API *linkage*, but `dlopen`+`dlsym` on `/System/Library/...` is
+runtime symbol lookup, not link-time dependency, which historically passes
+notarization. yabai (open-source tiling WM) has shipped this pattern for
+years outside the App Store without notarization rejection. The real cost
+isn't rejection — it's **lifecycle**: SkyLight symbols are versionless and
+Apple has broken them silently in 10.15, 11.x, and on Apple Silicon
+(arm64e pointer-auth changes). Each macOS point release becomes a
+re-validation burden. cua-driver's own blog: "Half of it doesn't even
+appear in any Apple header."
+
+Q4 (cmSpark subprocess gotcha applies to postToPid?): **No, that's the
+point.** The `NSRunningApplication.activate()` no-op is a *foreground-state
+policy* issue (background-policy parent → child can't get
+`.regularWindow`/`.regular` activation). `postToPid` and
+`SLEventPostToPid` do not touch activation policy — they bypass WindowServer's
+focus routing entirely. So if postToPid worked in Chrome, the entire
+forceForeground saga would evaporate. That's the *real* appeal of the
+per-PID path, and the brief undersells it.
+
+Q5 (4th option?): The brief missed the **actually-viable middle path**:
+stay on `CGEvent.post(tap: .cghidEventTap)` but adopt the *yabai
+focus-without-raise pattern* — `SLPSPostEventRecordTo` flips AppKit-active
+state without `SLPSSetFrontProcessWithOptions` (raise). That alone gets you
+foreground-equivalence for non-Chrome apps without the cursor warp on
+non-target apps. It's *less risky* than `SLEventPostToPid` (single SkyLight
+call, well-trodden by yabai) and avoids the Chrome-renderer-SPI chain
+entirely. Combined with an AX-first click path (`AXUIElementDoDefaultAction`
+for clickable AX nodes), you can probably defer SkyLight entirely for v1.3.
+
+Q6 (is smoothness actually the primitive?): **This is the right question
+and the answer is NO.** Demo-smoothness has three factors in order of
+perceived impact: (a) **software cursor overlay** — open-computer-use's
+bezier-spring NSWindow is a visual illusion that *hides* the 30ms/char +
+usleep latencies; cmSpark has none; (b) **MCP server / in-process calls**
+vs cmSpark's `execFile("cmspark-host")` per-action (10-50ms fork overhead
+× N actions/turn = a full second of dead time per task); (c) **interruptible
+API** (streaming cancel vs our execFile timeout). The primitive swap is
+maybe 15% of perceived smoothness. The other 85% is engineering debt
+we can pay down without touching SkyLight.
+
+
+RISKS FLAGGED
+-------------
+
+1. **Wrong primitive won't fix Chrome.** If we adopt `CGEvent.postToPid`
+   (public) thinking it's "the same property," we'll discover Chrome still
+   drops clicks and have to redo the work with SkyLight anyway. The brief
+   implies they're equivalent. They are not.
+
+2. **SkyLight on macOS 26 (Tahoe) is unverified by cua.** cua-driver
+   requires macOS 14+ (Sonoma). Our users are on 14/15/26. The arm64e
+   PAC + Tahoe sandbox changes are exactly where SkyLight symbols rot.
+   That's a research spike, not a port.
+
+3. **Distribution lifecycle cost is recurring, not one-time.** Every
+   point release of macOS becomes a "does SkyLight still export this
+   symbol with this signature" exercise. We don't have a release
+   engineering team. cua does (and they auto-update weekly).
+
+4. **AX-first path needs `_AXObserverAddNotificationAndCheckRemote`.**
+   Per cua blog, Electron apps' AX trees pause when occluded unless you
+   call this *private SPI*. Notion/Feishu/VS Code/Slack/Discord are all
+   Electron. cmSpark's L0 AX path will silently return stale trees for
+   occluded windows. This is the SAME private-API risk as SkyLight but
+   in a different framework. The brief doesn't mention it.
+
+5. **The "no fork overhead" gain is the highest-ROI win and is
+   completely orthogonal to the primitive decision.** Moving host.swift
+   into a long-lived daemon (stdio JSON protocol, like tray) buys more
+   perceived smoothness than any primitive swap. Don't entangle them.
+
+
+RECOMMENDATION
+--------------
+
+**Re-research one thing before solution-design, then proceed on a
+two-track plan.**
+
+The one thing to verify: does `CGEvent.postToPid` (public, no SkyLight)
+actually drive Chrome reliably on macOS 15+? cua says no. Open-computer-use
+(QwenLM) appears to lean on AX-first and only falls back to coordinate
+injection. If we're going AX-first anyway, the per-PID primitive decision
+becomes secondary — AXPress doesn't go through HID at all.
+
+Two-track plan:
+  - **Track A (low-risk, high-ROI):** AX-first click path
+    (`AXUIElementCopyAttributeValue` + `AXUIElementDoDefaultAction` with
+    coordinate fallback for canvas), daemon-ize cmspark-host, add software
+    cursor overlay. None of this needs SkyLight. Pays 70% of the
+    smoothness gap.
+  - **Track B (research spike, gated):** SkyLight `SLEventPostToPid` +
+    `SLPSPostEventRecordTo` for the *specific* case of Chrome-renderer
+    clicks that AX can't reach and that global HID tap misroutes. Defer
+    until Track A is shipped and we have measured residual gap.
+
+Don't ship Track B as the v1.3 plan. It's a v1.4 spike at earliest, and
+only if Track A leaves a Chrome-specific gap that's actually painful.
+
+
+SOURCES
+-------
+
+- cua blog (authoritative on SLEventPostToPid + SkyLight mechanics +
+  postToPid-Chrome failure + (-1,-1) primer click + Electron AX SPI):
+  https://github.com/trycua/cua/blob/main/blog/inside-macos-window-internals.md
+- Apple CGEvent.postToPid docs (no bypass claim, no foreground requirement
+  stated):
+  https://developer.apple.com/documentation/coregraphics/cgevent/posttopid(_:)
+- SO "Swift: forward keystrokes to a different process" (postToPid fails
+  in practice):
+  https://stackoverflow.com/questions/47560084/swift-forward-keystrokes-to-a-different-process
+- yabai focus-without-raise reference implementation:
+  https://github.com/koekeishiya/yabai (window_manager_focus_window_without_raise)
+- Apple Resolving common notarization issues (private API linkage scan):
+  https://developer.apple.com/documentation/security/resolving-common-notarization-issues
+- cmSpark code validated:
+  /Users/huchen/Projects/cmspark/companion/src/host-use/darwin/host.swift
+    :549-558 (cuActivatePid), :908-989 (cuInject, CGEvent.post to .cghidEventTap)
+  /Users/huchen/Projects/cmspark/companion/src/computer/darwin-adapters.ts
+    :471-499 (ensureForeground), :646-689 (forceForeground via osascript)
+  /Users/huchen/Projects/cmspark/docs/decisions/2026-07-23-foreground-raise-synthesis.md
+===========================================================================

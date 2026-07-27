@@ -1,0 +1,126 @@
+I'll route the request and locate the Batch 1 Security P0 fix brief so we can review each S-P0 fix independently.Routing matched autopilot (wrong for a brief review). Overriding: read the Batch 1 brief and verify residual issues against the implemented code.Verifying each fix against the implementation and tests for residual holes.Checking one more residual: whether `loadConfig` re-applies filters, and whether host-bin throw is unit-tested.**Routing override:** `omx/autopilot` is wrong for a focused security brief review. Review protocol applied against brief + live code + residual probes.
+
+---
+
+# Batch 1 Security P0 — Round 2 Review
+
+**Overall: APPROVE WITH AMENDMENTS**
+
+Direction is correct on all five. None of the fixes re-open round-1 tray issues. Residual holes remain; a few brief claims don’t match code. Ship after mandatory amendments below; others can track as P1.
+
+---
+
+## S-P0-1 — `CMSPARK_HOST_BIN` → **APPROVE WITH AMENDMENTS**
+
+**Verdict on open Q (throw vs warn):** Keep **throw**. Silent ignore is the original footgun. Fail-closed when an override is present-but-unauthorized is correct; crash surfaces misconfig before a wrong binary is used.
+
+### Findings
+1. **[residual / security]** Dual-env still bypassable by the same class of attacker. `launchctl setenv CMSPARK_ALLOW_HOST_BIN_OVERRIDE 1` + `CMSPARK_HOST_BIN=/tmp/evil` still returns `/tmp/evil` [executed]. Diagnosis asked for **unconditional refuse + `SecStaticCodeCheckValidity`**. Opt-in env is weaker; local session env control defeats it.
+2. **[test gap]** Brief claims “clears flag, verifies fallback.” Actual test (`host-use-darwin-adapter.test.ts:403–419`) only exercises the **both-set happy path**. No assert that missing `ALLOW=1` throws; no unit test of `resolveHostBinary()` directly.
+3. **[regression]** Throw on unauthorized override can fail first `host_read` if a stale `CMSPARK_HOST_BIN` is in the user environment — acceptable fail-closed, but document in release notes / TROUBLESHOOTING.
+
+### Amendments
+- **A1 (must):** Unit test: `HOST_BIN` set, `ALLOW` unset → throws; both set → path returned; neither → candidate search.
+- **A2 (should / P1):** Hard-disable override when packaged SEA (or refuse unless binary path is under known build tree). Codesign check remains the diagnosis-complete fix.
+
+---
+
+## S-P0-2 — Tray TOCTOU → **APPROVE WITH AMENDMENTS**
+
+Auto-rebuild-only-on-missing + hard fail on hash mismatch is the right policy change. Core improvement is real.
+
+### Findings
+1. **[residual / security]** Still **not** same-fd exec. `checkIntegrity` closes the fd in `finally`, then `spawn(pre.realpath)`. Residual window: hash → close → path spawn. In-place rewrite of **same inode** after hash is not caught by inode/dev recheck.
+2. **[brief ≠ code]** Open Q / prose claim post-spawn uses `/proc/<pid>/exe`, `lsof`, or `proc_pidpath`. Code is only `fs.statSync(realpath)` on the **path** (`statInodeDev`). Path re-stat is weak theater vs process image identity.
+3. **[test gap]** No unit tests for: hash mismatch throws (no rebuild), missing binary calls `build()`, restart refuses on integrity fail. Manual steps in brief are not regression-locked.
+4. **[regression]** Dev loop: rebuild tray without updating `SWIFT_TRAY_SHA256` now hard-fails (intentional). Ensure `build-tray.sh` documents the constant update path (already partially in error string).
+
+### Amendments
+- **A3 (must):** Correct brief/docs to match path-based post-stat; don’t claim `proc_pidpath`/lsof.
+- **A4 (should):** Prefer keep fd open and spawn via `/dev/fd/N` (or document residual TOCTOU as accepted with inode check only).
+- **A5 (must):** Unit-test `checkIntegrity` fail path + “missing → rebuild, mismatch → throw” with fs mocks — no need to simulate a real race.
+- **Open Q:** Don’t drop pre-spawn hash. Drop or demote path-only post-stat unless you re-stat the **running** image; as written it only catches rename-swap, not same-inode rewrite.
+
+---
+
+## S-P0-3 — page-sanitizer → **APPROVE WITH AMENDMENTS**
+
+The three named vectors are fixed and tested [executed: nested-scr stripped; slash-onerror stripped; data:svg stripped]. Residual bypasses remain.
+
+### Findings
+1. **[residual / security]** Protocol strip is prefix-strict after the quote. **Leading whitespace / tab before `javascript:` / `data:` still bypasses** [executed]:
+   - `href=" javascript:alert(1)"` → unchanged, no threat
+   - `href="\tjavascript:…"` → same  
+   Fix: allow `\s*` after `=["']` before protocol.
+2. **[residual]** HTML-entity / split protocol not handled: `javascript&#58;`, `java&#115;cript:` [executed]. Lower priority if consumers don’t entity-decode before use; still a classic filter gap.
+3. **[residual]** Null byte in tag name: `<scr\0ipt>…` survives [executed]. Browsers/LLM reassembly risk.
+4. **[open Q — srcdoc]** Full `srcdoc` strip is **not** required for the three P0 vectors. Full pipeline already scrubs nested `<script>` / `on*` / `javascript:` **inside** attribute text via global regex (srcdoc-onerror / srcdoc-js cleaned in probe). Leaving non-`javascript`/`data` srcdoc is OK; document accidental attribute-body scrubbing as brittle, not a guarantee.
+5. **[test gap]** Tests cover only the three happy bypasses. No cases for leading-space protocol, entity protocol, null-byte tags.
+
+### Amendments
+- **A6 (must):** Allow optional whitespace after `=` / quotes before `(?:javascript|data):`.
+- **A7 (should):** Null-byte strip or reject in tag names; entity-decoded protocol as P1.
+- **Open Q:** Do **not** blanket-strip all `srcdoc`; keep protocol list + pipeline. Optionally strip `srcdoc` entirely if threat model is “never trust HTML attributes to LLM.”
+
+---
+
+## S-P0-4 — Wildcard bare-TLD → **APPROVE WITH AMENDMENTS**
+
+Apex-collapse kept per ADR-007 is a justified diagnosis update. `saveConfig` filter is the right gate for UI/WS paths.
+
+### Findings
+1. **[residual / security]** Single-label `*.TLD` is already rejected by `!rest.includes(".")` — `PUBLIC_SUFFIXES` is mostly redundant for one-label TLDs. **Multi-label public suffixes still accepted:** `*.github.io`, `*.appspot.com`, `*.vercel.app`, `*.pages.dev`, `*.s3.amazonaws.com` all `{ok:true}` [executed] → platform-wide auto-approve / cookie trust.
+2. **[residual]** `loadConfigFile` does **not** filter. Hand-edited `config.json` with `*` / `*.com` still honored at runtime (brief intentional; warn text even says “edit config.json manually to override”). Diagnosis wanted config sanitizer on the load path too.
+3. **[test]** `trusted_domains` + `auto_approved_domains` filter covered in `files.test.ts` / `security-thread.test.ts` [inspected]. Good. No test that multi-label eTLD wildcards are rejected (because they aren’t).
+4. **[open Q — hardcoded PSL]** Acceptable for P0 **if** multi-label eTLD residual is explicit P1. Full `publicsuffix-list` package is not a ship blocker, but the current set does not buy much beyond the no-dot rule + ~15 compound suffixes.
+
+### Amendments
+- **A8 (must):** Document residual: multi-tenant / eTLD+1 wildcards (`*.github.io`, etc.) still valid; track P1 list or package.
+- **A9 (should):** Filter on **load** as well as save (or strip known-dangerous on `getConfig` cache fill) so hand-edit can’t re-open global bypass without a loud migration.
+- **A10 (nice):** Expand compound PUBLIC_SUFFIXES with top multi-tenant suffixes, or switch to PSL package.
+- **Open Q:** Hardcoded set OK for P0; do not block on npm package. Do block on claiming “bare-TLD closed” without multi-label caveat.
+
+---
+
+## S-P0-5 — HMAC timing → **APPROVE WITH AMENDMENTS**
+
+Structural fix is right: AND-together comparisons, hash code before compare, single-use delete on success.
+
+### Findings
+1. **[residual / low]** Custom `timingSafeEqual` early-returns on length → leaks length. For `codeHash` (fixed 16 hex) and HMAC form, low value. For `toolName` / `threadId`, small oracle. Acceptable if documented; pad only if you want purity.
+2. **[hygiene]** Prefer `crypto.timingSafeEqual` on equal-length `Buffer`s (used elsewhere in repo: `ws-auth.ts`, `settings-web.ts`) over a hand-rolled loop.
+3. **[dead check]** For un-tampered Map entries, `token` is the Map key and equals `_sign(payload)` → `sigOk` is always true on hit. Real remaining oracles are field/TTL/length paths after Map hit (attacker already holds a live token).
+4. **[test gap]** Existing functional tests pass; no new assertion for “all mismatch paths return false without consuming on field mismatch” beyond existing cases. Timing properties untestable unit-wise — OK.
+5. **[open Q — pad]** Not required for ship. Length leak on fixed-width hashes is noise. Don’t pad unless threat model includes local high-resolution timing against stolen tokens.
+
+### Amendments
+- **A11 (should):** Switch to `crypto.timingSafeEqual` with explicit equal-length guard (same semantics, less DIY risk).
+- **A12 (nice):** Comment that Map-miss early return is inherent and that sig re-check is integrity-of-Map only.
+- **Open Q:** Length leak acceptable; no fixed-width pad required for P0.
+
+---
+
+## Batch summary
+
+| Fix | Verdict | Must before ship |
+|-----|---------|------------------|
+| S-P0-1 | **AWA** | A1 test deny path |
+| S-P0-2 | **AWA** | A3 brief accuracy, A5 unit tests |
+| S-P0-3 | **AWA** | A6 whitespace before protocol |
+| S-P0-4 | **AWA** | A8 document multi-label residual |
+| S-P0-5 | **AWA** | none blocking (A11 preferred) |
+
+**Do not REJECT** — all five close their named P0s.  
+**Do not plain APPROVE** — residual dual-env, path-only TOCTOU, protocol whitespace bypass, and multi-label wildcards are real.
+
+### Answers to open questions (short)
+| Q | Answer |
+|---|--------|
+| S-P0-1 throw vs warn | **Throw** |
+| S-P0-2 drop post-spawn recheck? | Drop path-only theater **or** re-stat running image; keep pre-spawn hash |
+| S-P0-3 strip all srcdoc? | **No** — keep protocol + pipeline; don’t rely on attr-body accident |
+| S-P0-4 npm PSL now? | **No** — P1; document multi-label eTLD residual |
+| S-P0-5 pad fixed-width? | **No** for P0 |
+
+### Pre-existing failures
+Appendix accepted as out of scope if still green for Batch-1-touched tests after A1/A5/A6.

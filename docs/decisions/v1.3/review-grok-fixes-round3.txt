@@ -1,0 +1,17 @@
+I'll route the request and locate the Round 2 amendment docs and the A1/A3/A5/A6/A8/A11/A12 changes to verify.Locating Round 2 amendment docs and the must-fix/should-fix implementation evidence.Found the Batch 1 Security P0 docs. Reading the brief, Round 2 amendments, and prior review notes.Verifying each claimed amendment against the live code and tests.Probing residual A3/A8 doc accuracy and A11 byte-length edge case.## Verdict: **FURTHER AMENDMENTS**
+
+Must/should status: **A1 ✓ · A5 ✓ · A6 ✓ · A12 ✓ · A11 ~ · A3 ~ · A8 ✗**
+
+---
+
+### Findings
+
+1. **A8 residual doc is false post-A10.** `validateWildcardPattern` docstring still claims `*.github.io` / `*.appspot.com` / `*.vercel.app` / `*.pages.dev` / `*.herokuapp.com` / `*.s3.amazonaws.com` “all pass validation.” A10 partial + test reject them `[executed]`. Real residual e.g. `*.azurewebsites.net`, `*.cloudfront.net`, `*.firebaseapp.com`, `*.web.app` still `{ok:true}`. Update residual examples to match code.
+
+2. **A3 incomplete in brief body.** A3 paragraph is correct (`fs.statSync(pre.realpath)`), but Fix 2 lead-in still says post-spawn recheck “re-`fstat` the spawned child's **proc-info path**” — contradicts A3 and `statInodeDev`. Strike/fix that clause.
+
+3. **A11 missing `try/catch`.** Wrapper uses string-length guard then `crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b))`. Equal JS length + unequal UTF-8 bytes → `RangeError` `[executed]`, not `false`. `ws-auth.ts` catches; this wrapper does not. Add try/catch (or compare equal-length Buffers after encoding).
+
+---
+
+Ship after #1–#3. No re-open of P1-deferred set.

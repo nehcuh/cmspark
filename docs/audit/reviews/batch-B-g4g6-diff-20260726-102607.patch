@@ -1,0 +1,1857 @@
+# Dual external review context
+batch: batch-B-g4g6
+base: HEAD
+time: 20260726-102607
+
+5863a0a
+
+ M chrome-extension/src/background/security-confirmation-payload.ts
+ M chrome-extension/src/sidepanel/App.tsx
+ M chrome-extension/src/sidepanel/utils/apps-utils.ts
+ M companion/src/bridge/tool-definitions.ts
+ M companion/src/bridge/tool-schemas.ts
+ M companion/src/computer/coords.ts
+ M companion/src/computer/darwin-adapters.ts
+ M companion/src/computer/executor.ts
+ M companion/src/computer/session-trust.ts
+ M companion/src/computer/types.ts
+ M companion/src/config.ts
+ M companion/src/host-use/darwin/host-integrity.ts
+ M companion/src/host-use/darwin/host-skylight.swift
+ M companion/src/host-use/darwin/host.swift
+ M companion/src/llm/adapter.ts
+ M companion/src/security-confirmation.ts
+ M companion/src/security.ts
+ M companion/src/server.ts
+ M companion/tests/computer-coords.test.ts
+ M companion/tests/computer-executor.test.ts
+?? .omx/
+?? companion/src/computer/self-ui.ts
+?? companion/src/host-use/darwin/build-host-skylight.sh
+?? companion/src/host-use/darwin/host-skylight-nolibval.entitlements
+?? companion/src/host-use/darwin/host-skylight.entitlements
+?? companion/src/host-use/darwin/notes-verify.ts
+?? companion/tests/computer-self-ui.test.ts
+?? companion/tests/computer-session-trust-g1.test.ts
+?? companion/tests/notes-verify.test.ts
+?? docs/audit/reviews/batch-A-g1g3-claude-20260726-101129.md
+?? docs/audit/reviews/batch-A-g1g3-diff-20260726-101129.patch
+?? docs/audit/reviews/batch-A-g1g3-pi-20260726-101129.md
+?? docs/audit/reviews/batch-A-g1g3-verdict-20260726-101129.json
+?? docs/audit/reviews/batch-B-g4g6-diff-20260726-102607.patch
+?? docs/audit/reviews/batch-a-computer-g1g3-prompt.md
+?? docs/audit/reviews/batch-b-computer-g4g6-prompt.md
+?? docs/audit/reviews/computer-use-grill-claude-20260726-094112.md
+?? docs/audit/reviews/computer-use-grill-claude-20260726-094112.md.err
+?? docs/audit/reviews/computer-use-grill-pi-20260726-094112.md
+?? docs/audit/reviews/computer-use-grill-pi-20260726-094112.md.err
+?? docs/audit/reviews/computer-use-product-redesign-claude-20260725-235744.md
+?? docs/audit/reviews/computer-use-product-redesign-claude-20260725-235744.md.err
+?? docs/audit/reviews/computer-use-product-redesign-pi-20260725-235744.md
+?? docs/audit/reviews/computer-use-product-redesign-pi-20260725-235744.md.err
+?? docs/audit/reviews/computer-use-product-redesign-prompt-2026-07-25.md
+?? docs/decisions/capability-token-brief.md
+?? docs/decisions/capability-token-round1-synthesis.md
+?? docs/decisions/capability-token-threat-model-delta.md
+?? docs/decisions/v1.3/adversary-approach-c-plan-round1.txt
+?? docs/decisions/v1.3/adversary-approach-c-round1.txt
+?? docs/decisions/v1.3/batch1-amendments-round2-response.md
+?? docs/decisions/v1.3/batch1-amendments-round3-response.md
+?? docs/decisions/v1.3/batch1-security-p0-brief.md
+?? docs/decisions/v1.3/computer-use-batch-a-impl-2026-07-26.md
+?? docs/decisions/v1.3/computer-use-batch-b-impl-2026-07-26.md
+?? docs/decisions/v1.3/computer-use-g7-keyboard-experiment-plan-2026-07-26.md
+?? docs/decisions/v1.3/computer-use-grill-locked-2026-07-26.md
+?? docs/decisions/v1.3/computer-use-grill-questions-2026-07-26.md
+?? docs/decisions/v1.3/computer-use-product-redesign-brief-2026-07-25.md
+?? docs/decisions/v1.3/computer-use-product-redesign-synthesis-2026-07-25.md
+?? docs/decisions/v1.3/diagnosis-synthesis.md
+?? docs/decisions/v1.3/handoff-grok-pi-v4-brief.md
+?? docs/decisions/v1.3/p0a-tray-fix-brief.md
+?? docs/decisions/v1.3/plan-approach-c-minus.md
+?? docs/decisions/v1.3/review-claude-code-approach-c-final.txt
+?? docs/decisions/v1.3/review-claude-code-merged-diff-v3.txt
+?? docs/decisions/v1.3/review-claude-code-plan-v2.txt
+?? docs/decisions/v1.3/review-claude-code-spike-fixes.txt
+?? docs/decisions/v1.3/review-grok-approach-c-final.txt
+?? docs/decisions/v1.3/review-grok-batch2-round1.txt
+?? docs/decisions/v1.3/review-grok-batch2-round2.txt
+?? docs/decisions/v1.3/review-grok-computeruse-research.txt
+?? docs/decisions/v1.3/review-grok-fixes-round1.txt
+?? docs/decisions/v1.3/review-grok-fixes-round2.txt
+?? docs/decisions/v1.3/review-grok-fixes-round3.txt
+?? docs/decisions/v1.3/review-grok-fixes-round4.txt
+?? docs/decisions/v1.3/review-grok-plan-v2.txt
+?? docs/decisions/v1.3/review-grok-spike-fixes.txt
+?? docs/decisions/v1.3/review-pi-plan-v4-1.txt
+?? docs/decisions/v1.3/review-pi-plan-v4.txt
+?? docs/decisions/v1.3/review-pi-sub-computeruse-research.txt
+?? docs/decisions/v1.3/review-prompt-plan-v2.txt
+?? docs/decisions/v1.3/review-prompt-spike-fixes.txt
+?? docs/decisions/v1.3/spike-daemon-threat-model.md
+?? docs/decisions/v1.3/spike-skylight-tahoe-results.md
+?? tmp-wx-live.png
+
+## Diff (git diff + staged)
+ .../background/security-confirmation-payload.ts    |   5 +
+ chrome-extension/src/sidepanel/App.tsx             |  36 +++-
+ chrome-extension/src/sidepanel/utils/apps-utils.ts |  18 ++
+ companion/src/bridge/tool-definitions.ts           |   2 +-
+ companion/src/bridge/tool-schemas.ts               |   3 +-
+ companion/src/computer/coords.ts                   |  32 ++-
+ companion/src/computer/darwin-adapters.ts          | 150 ++++++++++++-
+ companion/src/computer/executor.ts                 | 108 ++++++++--
+ companion/src/computer/session-trust.ts            |  87 +++++++-
+ companion/src/computer/types.ts                    |   2 +
+ companion/src/config.ts                            |  11 +-
+ companion/src/host-use/darwin/host-integrity.ts    |   2 +-
+ companion/src/host-use/darwin/host-skylight.swift  |  55 +++--
+ companion/src/host-use/darwin/host.swift           | 234 ++++++++++++++++-----
+ companion/src/llm/adapter.ts                       |  19 +-
+ companion/src/security-confirmation.ts             |  11 +
+ companion/src/security.ts                          |   4 +
+ companion/src/server.ts                            | 166 +++++++++++++--
+ companion/tests/computer-coords.test.ts            |  42 +++-
+ companion/tests/computer-executor.test.ts          |  29 +++
+ 20 files changed, 852 insertions(+), 164 deletions(-)
+
+diff --git a/chrome-extension/src/background/security-confirmation-payload.ts b/chrome-extension/src/background/security-confirmation-payload.ts
+index 97627b8..295cd57 100644
+--- a/chrome-extension/src/background/security-confirmation-payload.ts
++++ b/chrome-extension/src/background/security-confirmation-payload.ts
+@@ -8,6 +8,7 @@
+  * - add_to_whitelist (array)
+  * - nonce_response (string, when present)
+  * - add_to_thread_whitelist (boolean true only)
++ * - add_to_session_trust (boolean true only — host_computer grill Q2)
+  * - stop_thread (boolean true only)
+  */
+ export function buildSecurityConfirmationWsPayload(message: {
+@@ -16,6 +17,7 @@ export function buildSecurityConfirmationWsPayload(message: {
+   add_to_whitelist?: unknown
+   nonce_response?: unknown
+   add_to_thread_whitelist?: unknown
++  add_to_session_trust?: unknown
+   stop_thread?: unknown
+ }): Record<string, unknown> {
+   const payload: Record<string, unknown> = {
+@@ -30,6 +32,9 @@ export function buildSecurityConfirmationWsPayload(message: {
+   if (message.add_to_thread_whitelist === true) {
+     payload.add_to_thread_whitelist = true
+   }
++  if (message.add_to_session_trust === true) {
++    payload.add_to_session_trust = true
++  }
+   if (message.stop_thread === true) {
+     payload.stop_thread = true
+   }
+diff --git a/chrome-extension/src/sidepanel/App.tsx b/chrome-extension/src/sidepanel/App.tsx
+index de1e04d..a64f84c 100644
+--- a/chrome-extension/src/sidepanel/App.tsx
++++ b/chrome-extension/src/sidepanel/App.tsx
+@@ -13,7 +13,12 @@ import { SkillCraftPanel } from "./components/SkillCraftPanel"
+ import { NotebooklmImporterPanel } from "./components/NotebooklmImporterPanel"
+ import { Modal } from "./components/ui/Modal"
+ import { AgentStoreProvider, useAgentStore } from "./store/agentStore"
+-import { canOfferThreadTrust, threadTrustHint } from "./utils/apps-utils"
++import {
++  canOfferComputerSessionTrust,
++  canOfferThreadTrust,
++  computerSessionTrustHint,
++  threadTrustHint,
++} from "./utils/apps-utils"
+ import { previewImageSafe } from "./utils/computer-utils"
+ import type { ConnectionState, SkillMeta, FileAttachment } from "./types"
+ 
+@@ -143,8 +148,10 @@ function SecurityConfirmationDialog() {
+   // per call — Q1 ship blocker; the checkbox stays hidden for host_write even
+   // when relevant_apps is set.
+   const canThreadTrust = canOfferThreadTrust(request?.tool_name, relevantApp)
++  const canSessionTrust = canOfferComputerSessionTrust(request?.tool_name, relevantApp)
+   const [whitelistMode, setWhitelistMode] = useState<"none" | "exact" | "wildcard">("none")
+   const [threadTrust, setThreadTrust] = useState(false)
++  const [sessionTrust, setSessionTrust] = useState(false)
+   // Phase 1 W9: Linux nonce input. User must TYPE the code (no paste).
+   const [nonceInput, setNonceInput] = useState("")
+   const [pasteBlocked, setPasteBlocked] = useState(false)
+@@ -157,6 +164,7 @@ function SecurityConfirmationDialog() {
+   useEffect(() => {
+     setWhitelistMode("none")
+     setThreadTrust(false)
++    setSessionTrust(false)
+     setNonceInput("")
+     setPasteBlocked(false)
+     setPreviewImgFailed(false)
+@@ -209,6 +217,8 @@ function SecurityConfirmationDialog() {
+       // when allowed (host_read / host_app + user checked the box). Companion
+       // validates against relevantApps[0].
+       add_to_thread_whitelist: approved && canThreadTrust && threadTrust,
++      // Grill Q2: host_computer session auto-approve (explicit opt-in only).
++      add_to_session_trust: approved && canSessionTrust && sessionTrust,
+       // Phase 1 W9 — send typed nonce for Linux biometric tier validation.
+       nonce_response: approved && nonceChallenge ? nonceInput.toUpperCase() : undefined,
+     })
+@@ -217,7 +227,11 @@ function SecurityConfirmationDialog() {
+       chrome.runtime.sendMessage({ type: "chat.abort", threadId: state.activeThreadId })
+       dispatch({ type: "SET_STREAMING", content: "" })
+     }
+-    const trustMsg = approved && canThreadTrust && threadTrust ? `（本线程内信任 ${relevantApp}）` : ""
++    const trustMsg = approved && canThreadTrust && threadTrust
++      ? `（本线程内信任 ${relevantApp}）`
++      : approved && canSessionTrust && sessionTrust
++        ? `（本会话自动同意「${relevantApp}」同类操作）`
++        : ""
+     const nonceMsg = approved && nonceChallenge ? `（输入确认码 ${nonceChallenge}）` : ""
+     dispatch({
+       type: "ADD_SECURITY_AUDIT",
+@@ -346,6 +360,24 @@ function SecurityConfirmationDialog() {
+           </label>
+         </div>
+       )}
++      {canSessionTrust && (
++        <div style={{ ...styles.whitelistSection, marginTop: 8 }}>
++          <label style={{ ...styles.whitelistOption, cursor: "pointer" }}>
++            <input
++              type="checkbox"
++              checked={sessionTrust}
++              onChange={(e) => setSessionTrust(e.target.checked)}
++              style={{ marginRight: 6 }}
++            />
++            <span>
++              本会话对「<code style={styles.whitelistCode}>{relevantApp}</code>」同类操作自动同意（不新增字、不扩次数）
++              <span style={{ color: "#888", fontSize: 11, marginLeft: 4, display: "block", marginTop: 2 }}>
++                {computerSessionTrustHint()}
++              </span>
++            </span>
++          </label>
++        </div>
++      )}
+       {nonceChallenge && (
+         <div style={{ ...styles.whitelistSection, marginTop: 8, background: "#FFF3CD", border: "1px solid #FFC107" }}>
+           <div style={{ fontWeight: 600, marginBottom: 6 }}>
+diff --git a/chrome-extension/src/sidepanel/utils/apps-utils.ts b/chrome-extension/src/sidepanel/utils/apps-utils.ts
+index 2c6c949..df1ee80 100644
+--- a/chrome-extension/src/sidepanel/utils/apps-utils.ts
++++ b/chrome-extension/src/sidepanel/utils/apps-utils.ts
+@@ -54,6 +54,24 @@ export function canOfferThreadTrust(toolName: string | undefined, relevantApp: s
+   return toolName === "host_read" || toolName === "host_app"
+ }
+ 
++/**
++ * Grill Q2 (2026-07-26): host_computer L2 may offer "本会话自动同意同类操作".
++ * Distinct from thread-trust (host_read / host_app) — injection stays critical
++ * and only skips same-class tasks when the user explicitly opts in.
++ */
++export function canOfferComputerSessionTrust(
++  toolName: string | undefined,
++  relevantApp: string | undefined,
++): boolean {
++  if (!relevantApp) return false
++  return toolName === "host_computer"
++}
++
++/** Checkbox sub-copy for computer session auto-approve (≤40 字 main label in App.tsx). */
++export function computerSessionTrustHint(): string {
++  return "不新增输入文字、不扩大动作次数时不再询问；危险/实验操作仍会确认；约 30 分钟无操作或重启后失效"
++}
++
+ /**
+  * Kind-aware sub-copy for the thread-trust checkbox. The old read-specific
+  * 「不影响写操作」 is kept verbatim for host_read; host_app gets launch-scoped
+diff --git a/companion/src/bridge/tool-definitions.ts b/companion/src/bridge/tool-definitions.ts
+index 21b08ff..ddf5f5d 100644
+--- a/companion/src/bridge/tool-definitions.ts
++++ b/companion/src/bridge/tool-definitions.ts
+@@ -554,7 +554,7 @@ export function getToolDefinitions(): ToolDefinition[] {
+             app: { type: "string", description: "Whitelisted app token (win.app.<slug> on Windows, mac.app.<slug> on macOS) with coordinateAllowed=true." },
+             actions: {
+               type: "array",
+-              description: "Draft action sequence. click family: {action, x?, y?, target?} — target is an OCR text anchor (e.g. '搜索'); x/y are target-window client-area physical pixels. type: {action:'type', text} — every literal is enumerated in the confirmation dialog and hash-bound. key: {action:'key', keys} — whitelist chord, e.g. ['ctrl','enter'] or ['f5']. scroll: {action:'scroll', x, y, delta} — wheel units, ±1200. drag: {action:'drag', x, y, x2, y2}. wait: {action:'wait', ms<=5000}. screenshot/describe: read-only.",
++              description: "Draft action sequence for ONE host_computer call: aggregate all same-app steps here (do not split one user goal across many host_computer tasks). click family: {action, x?, y?, target?} — target is an OCR text anchor; x/y are client-logical points [0, clientW)×[0, clientH) (NOT PNG pixels; on Retina divide image coords by scale). type: {action:'type', text} — enumerated in confirmation; tool may return posted=true,verified=false — never claim message sent unless verified. key: {action:'key', keys} — whitelist chords (cmd/meta/win ok). scroll/drag/wait/screenshot/describe as documented. Prefer host_write/host_read for Notes/Mail when available.",
+               items: { type: "object" },
+             },
+             budget: { type: "integer", description: "Max injective actions for this task (default 15, max 30). Exhaustion forces a new user confirmation." },
+diff --git a/companion/src/bridge/tool-schemas.ts b/companion/src/bridge/tool-schemas.ts
+index 6840674..c271e77 100644
+--- a/companion/src/bridge/tool-schemas.ts
++++ b/companion/src/bridge/tool-schemas.ts
+@@ -123,7 +123,8 @@ export const TOOL_ARG_SCHEMAS: Record<string, z.ZodTypeAny> = {
+         z.object({
+           action: z.literal("key"),
+           keys: z.array(z.enum([
+-            "ctrl", "alt", "shift", "win",
++            // Modifiers: win/cmd/meta/command all mean ⌘ on macOS (host maps to cmd).
++            "ctrl", "alt", "shift", "win", "cmd", "meta", "command",
+             "enter", "escape", "tab", "space", "backspace", "delete",
+             "up", "down", "left", "right", "home", "end", "pageup", "pagedown",
+             "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12",
+diff --git a/companion/src/computer/coords.ts b/companion/src/computer/coords.ts
+index 303f88f..fb6c128 100644
+--- a/companion/src/computer/coords.ts
++++ b/companion/src/computer/coords.ts
+@@ -117,14 +117,20 @@ export function screenToClient(
+  * Detect whether a raw LLM-supplied point is in image-pixel space (S1) rather
+  * than client-logical (C). Used by the v4 autoscale compatibility crutch.
+  *
+- * Heuristic: if the raw point is outside C bounds but `raw / scale` falls
+- * inside C bounds, the LLM likely used image pixels. Returns the scaled point
+- * when the classification is unique (both orientations cannot be in bounds
+- * simultaneously), or null when ambiguous / definitely OOB.
++ * Heuristic (2026-07-25, WeChat (500,650) vs 1324×640 @2x):
++ *   1. raw outside C, raw/scale inside C, and scale > 1
++ *   2. Prefer autoscale when raw lies inside the screenshot image bounds
++ *      (imageWidth × imageHeight). Vision models routinely emit PNG-pixel
++ *      coords on Retina despite the tool schema asking for client-logical —
++ *      image containment is strong evidence of that failure mode.
++ *   3. Without image dims (or raw outside image): only autoscale when the
++ *      *scaled* axis-swap (y/sy, x/sx) is OOB — unambiguous orientation
++ *      (Pi R5). Do NOT use the swap check when image containment holds:
++ *      on landscape windows (WeChat 1324×640, Chrome 1728×1084) both
++ *      (x/s,y/s) and (y/s,x/s) almost always fit, which disabled Retina
++ *      autoscale for the entire class of real clicks.
+  *
+- * Pi v4.1 caveat (R5): autoscale must NOT trigger on swap (x/y reversed)
+- * because that would silently misroute clicks. Only trigger on clear
+- * retina-scale mismatch.
++ * Returns the scaled point, or null when still ambiguous / true OOB.
+  */
+ export function maybeAutoscaleImageToClient(
+   raw: PointClient,
+@@ -147,9 +153,15 @@ export function maybeAutoscaleImageToClient(
+   const scaled: PointClient = { x: raw.x / sx, y: raw.y / sy }
+   if (!inClient(scaled)) return null // even scaled is OOB — true OOB, not autoscale
+ 
+-  // Pi R5: ensure the swap orientation is NOT also in bounds. If both
+-  // (raw.x/sx, raw.y/sy) and (raw.y/sy, raw.x/sx) land in C, classify as
+-  // ambiguous and refuse autoscale.
++  // Strong path: raw is a valid image-pixel coordinate of the capture.
++  const iw = scales.imageWidth
++  const ih = scales.imageHeight
++  if (iw > 0 && ih > 0 && raw.x >= 0 && raw.y >= 0 && raw.x < iw && raw.y < ih) {
++    return { scaled, reason: "retina-scale" }
++  }
++
++  // Weak path (no/unknown image dims, or raw outside image): require the
++  // scaled axis-swap to be OOB so we do not invent a click from pure guesswork.
+   const swapped: PointClient = { x: raw.y / sy, y: raw.x / sx }
+   if (inClient(swapped)) return null
+ 
+diff --git a/companion/src/computer/darwin-adapters.ts b/companion/src/computer/darwin-adapters.ts
+index bcc7e23..90d1cdf 100644
+--- a/companion/src/computer/darwin-adapters.ts
++++ b/companion/src/computer/darwin-adapters.ts
+@@ -150,9 +150,67 @@ export function assertInjectOk(stdout: string, label = "inject"): void {
+   checkOk(parsed, label)
+ }
+ 
++/**
++ * Prefer structured JSON on stdout (host always prints a final JSON line).
++ * Never surface host diagnostic fputs like
++ *   `[host] screenshot no-activate (Hermes background capture path)`
++ * as the user-facing error — those are stderr logs, not failures
++ * (pgvexn / 2026-07-25: non_recoverable polluted with Hermes line).
++ */
+ function rethrowDarwinExecError(err: ExecFileException | Error, label: string): never {
+-  if (err && typeof err === "object" && "stderr" in err && (err as any).stderr) {
+-    throw new ComputerError("INVALID_ACTION", `${label}: ${(err as any).stderr}`)
++  const e = err as ExecFileException & { stdout?: unknown; stderr?: unknown }
++  const asText = (v: unknown): string => {
++    if (typeof v === "string") return v
++    if (Buffer.isBuffer(v)) return v.toString("utf8")
++    return ""
++  }
++  const stdout = asText(e.stdout)
++  const stderrRaw = asText(e.stderr)
++
++  // Extract last JSON object from stdout if present.
++  const jsonLine = stdout
++    .split(/\r?\n/)
++    .map((l: string) => l.trim())
++    .filter((l: string) => l.startsWith("{") && l.endsWith("}"))
++    .pop()
++  if (jsonLine) {
++    try {
++      const parsed = JSON.parse(jsonLine) as { ok?: boolean; error?: string; error_code?: string }
++      if (parsed && parsed.ok === false) {
++        throw new ComputerError(
++          (parsed.error_code as any) || "INVALID_ACTION",
++          `${label}: ${parsed.error ?? "unknown error"}`,
++        )
++      }
++    } catch (inner) {
++      if (inner instanceof ComputerError) throw inner
++      // fall through — not valid host JSON
++    }
++  }
++
++  // Drop pure diagnostic lines from host fputs([host] …).
++  const stderr = stderrRaw
++    .split(/\r?\n/)
++    .map((l: string) => l.trim())
++    .filter((l: string) => l.length > 0 && !/^\[host\]\s/.test(l))
++    .join("\n")
++    .trim()
++
++  if (stderr) {
++    throw new ComputerError("INVALID_ACTION", `${label}: ${stderr}`)
++  }
++  // Node's execFile message for signal deaths is opaque ("Command failed: …").
++  // Surface signal/code when present so operators see SIGSEGV vs TCC denial.
++  // ExecFileException: `code` is null on signal death; `signal` is "SIGSEGV" etc.
++  const exitCode = typeof e.code === "number" ? e.code : undefined
++  const signal = typeof e.signal === "string" && e.signal ? e.signal : undefined
++  if (signal || (exitCode !== undefined && exitCode > 128)) {
++    const sig = signal ?? `signal-${(exitCode ?? 0) - 128}`
++    throw new ComputerError(
++      "CAPTURE_FAILED",
++      `${label}: cmspark-host crashed (${sig}${exitCode !== undefined ? `, exit=${exitCode}` : ""}). ` +
++        `Rebuild/reinstall host if this persists after a codesign change.`,
++    )
+   }
+   throw new ComputerError("INVALID_ACTION", `${label}: ${err.message}`)
+ }
+@@ -317,9 +375,33 @@ export class MacScreenCapturer implements ScreenCapturer {
+         "--output", tmpPath,
+       ], { encoding: "utf-8", timeout: DARWIN_CAPTURE_TIMEOUT_MS })
+     } catch (err) {
+-      rethrowDarwinExecError(err as ExecFileException | Error, "screenshot")
++      // Prefer structured stdout JSON over stderr log noise (see rethrowDarwinExecError).
++      // NEVER invent ok:true with 0×0 rects — that became OUT_OF_BOUNDS client=0x0
++      // after a real Screen Recording denial (2026-07-25).
++      const e = err as ExecFileException & { stdout?: string }
++      const stdout = typeof e.stdout === "string" ? e.stdout : ""
++      if (stdout.trim()) {
++        try {
++          const recovered = parseComputerJson(stdout, "screenshot")
++          if (recovered.ok === true && fs.existsSync(tmpPath) && fs.statSync(tmpPath).size > 0) {
++            const rw = Number(recovered.rect?.width ?? recovered.client?.width ?? 0)
++            const rh = Number(recovered.rect?.height ?? recovered.client?.height ?? 0)
++            if (rw > 0 && rh > 0) {
++              result = { stdout }
++            } else {
++              rethrowDarwinExecError(err as ExecFileException | Error, "screenshot")
++            }
++          } else {
++            rethrowDarwinExecError(err as ExecFileException | Error, "screenshot")
++          }
++        } catch {
++          rethrowDarwinExecError(err as ExecFileException | Error, "screenshot")
++        }
++      } else {
++        rethrowDarwinExecError(err as ExecFileException | Error, "screenshot")
++      }
+     }
+-    const parsed = parseComputerJson(result.stdout, "screenshot")
++    const parsed = parseComputerJson(result!.stdout, "screenshot")
+     // Compute sha256 BEFORE the ok-check so interpretScreenshotFailure can use
+     // it as a fallback when the host's CAPTURE_FAILED payload omits the field
+     // (older binaries). Replaces `checkOk(parsed, "screenshot")`; see P2 Pi C4.
+@@ -347,10 +429,26 @@ export class MacScreenCapturer implements ScreenCapturer {
+       ? parsed.scaleY
+       : (rectH > 0 ? imageHeight / rectH : 1.0)
+ 
++    const client = parsed.client ?? {
++      x: 0,
++      y: 0,
++      width: parsed.rect?.width ?? 0,
++      height: parsed.rect?.height ?? 0,
++    }
++    // Fail closed if capture metadata is empty — never let callers bound-check
++    // against 0×0 (reads as OUT_OF_BOUNDS and hides Screen Recording / capture bugs).
++    if (!(client.width > 0 && client.height > 0) && !(rectW > 0 && rectH > 0)) {
++      throw new ComputerError(
++        "CAPTURE_FAILED",
++        "screenshot: empty client/window rect (0×0) — capture did not produce usable geometry. " +
++          "Check System Settings → Privacy & Security → Screen Recording for CMspark, then quit and relaunch.",
++      )
++    }
++
+     return {
+       hwnd,
+       rect,
+-      client: parsed.client ?? { x: 0, y: 0, width: parsed.rect?.width ?? 0, height: parsed.rect?.height ?? 0 },
++      client,
+       dpi: parsed.dpi ?? 72,
+       imageWidth,
+       imageHeight,
+@@ -589,10 +687,30 @@ export class MacInputInjector implements InputInjector {
+     }
+   }
+ 
++  /**
++   * Agent-owned brief raise before inject — NOT a user duty.
++   *
++   * Product model: user stays in the Chrome side panel to authorize / chat.
++   * After Allow, *we* raise the target for the inject moment. We never ask the
++   * user to "keep WeChat frontmost while authorizing in the plugin" (that is
++   * the 3ffkgl paradox). SkyLight posts by PID, but some apps (WeChat) only
++   * honor keyboard when they are key window — so the agent raises, injects,
++   * and the next side-panel interaction may steal FG again (self-UI recovery
++   * handles that without re-L2). Soft-best-effort: raise failure does not
++   * block inject except hard probe-broken.
++   */
++  private async preferForeground(hwnd: number): Promise<void> {
++    try {
++      await this.ensureForeground(hwnd)
++    } catch (err) {
++      if (err instanceof ForegroundProbeBrokenError) throw err
++    }
++  }
++
+   async click(hwnd: number, x: number, y: number, kind: ClickKind): Promise<void> {
+-    // SkyLight per-PID delivery routes the event to the target window's PID
+-    // regardless of frontmost state. ensureForeground is no longer needed
+-    // for inject paths and would re-introduce cursor churn.
++    // Best-effort raise: WeChat needs key-window for reliable hit-testing;
++    // Chrome SkyLight path still works when raise is a no-op / already FG.
++    await this.preferForeground(hwnd)
+     const bin = resolveHostBinary()
+     const args = ["inject", "--action", kind, "--window-id", String(hwnd),
+                   "--x", String(Math.round(x)), "--y", String(Math.round(y)),
+@@ -612,6 +730,10 @@ export class MacInputInjector implements InputInjector {
+   }
+ 
+   async typeText(hwnd: number, text: string): Promise<void> {
++    // Keyboard delivery requires the target to be key window on WeChat /
++    // several AppKit apps — without raise, type returns ok with zero UI effect
++    // (3ffkgl: dozens of type+enter "success" while input placeholder stayed).
++    await this.preferForeground(hwnd)
+     const normalized = text.normalize("NFKC")
+     const graphemes = [...this.segmenter.segment(normalized)].map((s) => s.segment)
+ 
+@@ -636,8 +758,18 @@ export class MacInputInjector implements InputInjector {
+   }
+ 
+   async keyChord(hwnd: number, keys: string[]): Promise<void> {
++    await this.preferForeground(hwnd)
+     const bin = resolveHostBinary()
+-    const args = ["inject", "--action", "key", "--window-id", String(hwnd), "--chord", ...keys]
++    // Host argValue("--chord") takes a SINGLE token and splits on comma.
++    // Passing `--chord ctrl enter` only delivers "ctrl" (modifiers with no
++    // non-mod key → silent no-op, still ok:true). Join first.
++    const normalized = keys.map((k) => {
++      const lower = k.toLowerCase()
++      if (lower === "meta" || lower === "command" || lower === "cmd") return "cmd"
++      return lower
++    })
++    const chord = normalized.join(",")
++    const args = ["inject", "--action", "key", "--window-id", String(hwnd), "--chord", chord]
+     if (this.estopFlagPath) args.push("--estop-flag", this.estopFlagPath)
+     let stdout: string
+     try {
+diff --git a/companion/src/computer/executor.ts b/companion/src/computer/executor.ts
+index d633674..25c5f2b 100644
+--- a/companion/src/computer/executor.ts
++++ b/companion/src/computer/executor.ts
+@@ -43,7 +43,7 @@ import type { TinyClickLocator } from "./tinyclick-locator"
+ import type { ComputerTaskEvent, PreviewBuilder } from "./preview"
+ import { sanitizeComputerCaption } from "./preview"
+ import { assertCoordinateAllowed, assertExeNotDrifted, assertHwndOwnedByEntry, normalizeExePath } from "./policy"
+-import { exeBasename } from "../apps/guards"
++import { isCompanionUiOwner } from "./self-ui"
+ import { getComputerSessionTrust, reL2ShouldPrompt } from "./session-trust"
+ import { maybeAutoscaleImageToClient, rectDriftPx } from "./coords"
+ import {
+@@ -201,6 +201,10 @@ export interface ComputerStepResult {
+   seq: number
+   action: string
+   ok: boolean
++  /** Grill G1: inject event was posted (≠ semantic success). */
++  posted?: boolean
++  /** Grill G1: effect confirmed (API re-read / pixel crossverify / user ✓). */
++  verified?: boolean
+   layer?: string
+   confidence?: number
+   x?: number
+@@ -223,6 +227,10 @@ export interface ComputerTaskResult {
+   completedActions: number
+   totalActions: number
+   steps: ComputerStepResult[]
++  /** Grill G1: steps that posted inject events. */
++  posted_steps?: number
++  /** Grill G1: steps with verified semantic effect. */
++  verified_steps?: number
+   error?: string
+   errorCode?: string
+ }
+@@ -462,7 +470,17 @@ export async function runComputerTask(
+     if (wins.length === 0) {
+       throw new ComputerError("APP_WINDOW_NOT_FOUND", `computer: no visible window for "${entry.display_name}" — is it running?`)
+     }
+-    wins.sort((a, b) => b.rect.width * b.rect.height - a.rect.width * a.rect.height)
++    // Prefer real UI windows: titled, on-screen, non-menu-strip. WeChat/Electron
++    // expose many empty-name aux layers (500×500 panels, 1728×33 bars); pure
++    // area sort picked those and screenshot failed (pgvexn windowId 3866).
++    const score = (w: { title: string; rect: { x: number; y: number; width: number; height: number } }) => {
++      const area = Math.max(0, w.rect.width) * Math.max(0, w.rect.height)
++      const named = (w.title || "").trim().length > 0 ? 1_000_000_000 : 0
++      const notStrip = w.rect.height >= 80 && w.rect.width >= 80 ? 100_000_000 : 0
++      const onscreen = w.rect.y >= -20 && w.rect.x > -5000 ? 10_000_000 : 0
++      return named + notStrip + onscreen + area
++    }
++    wins.sort((a, b) => score(b) - score(a))
+     hwnd = wins[0].hwnd
+     targetPid = wins[0].pid
+     assertHwndOwnedByEntry(wins[0], entry)
+@@ -589,6 +607,9 @@ export async function runComputerTask(
+   // WP4: started 附 budget(任务条「已用/总量」分母)。
+   emit({ event: "started", taskId, app: entry.display_name, task: params.task, total: params.actions.length, budget })
+ 
++  /** Grill Q5: same-text TYPE_NO_EFFECT attempt counts this task (max 1 recovery). */
++  const typeNoEffectCounts = new Map<string, number>()
++
+   /** Short human label for the panel live view (never the type text itself). */
+   const captionOf = (a: ComputerAction): string => {
+     switch (a.action) {
+@@ -908,6 +929,15 @@ export async function runComputerTask(
+           scaleY: shot.scaleY ?? 1,
+         }
+         const clientLogical = { x: 0, y: 0, width: cw, height: ch }
++        // 0×0 client means capture/metadata failed — do not mislabel as OUT_OF_BOUNDS.
++        if (!(cw > 0 && ch > 0)) {
++          throw new ComputerError(
++            "CAPTURE_FAILED",
++            `computer: client rect is ${cw}x${ch} (unusable) — screenshot geometry missing. ` +
++              `Usually Screen Recording TCC denied or window capture failed; ` +
++              `enable CMspark under System Settings → Privacy & Security → Screen Recording, then relaunch.`,
++          )
++        }
+         if (pointClient.x < 0 || pointClient.y < 0 || pointClient.x >= cw || pointClient.y >= ch) {
+           const auto = maybeAutoscaleImageToClient(pointClient, scales, clientLogical)
+           if (auto) {
+@@ -1227,8 +1257,43 @@ export async function runComputerTask(
+       }
+ 
+       // Inject (ps1 re-checks IL/desktop/bounds; type re-checks foreground).
++      // Grill Q5=B: type inject failure → TYPE_NO_EFFECT; allow one re-focus
++      // retry of the same text per task (tracked below), then hard-fail.
+       if (action.action === "type") {
+-        await deps.injector.typeText(hwnd, action.text)
++        const typeKey = action.text
++        const priorFails = typeNoEffectCounts.get(typeKey) ?? 0
++        if (priorFails >= 2) {
++          throw new ComputerError(
++            "TYPE_NO_EFFECT",
++            `computer: type of the same text already failed twice this task — refusing further retries (posted≠verified storm guard)`,
++          )
++        }
++        try {
++          await deps.injector.typeText(hwnd, action.text)
++        } catch (typeErr) {
++          typeNoEffectCounts.set(typeKey, priorFails + 1)
++          if (priorFails === 0) {
++            // First failure: try one preferForeground-style re-raise then retype.
++            try {
++              await deps.injector.forceForeground(hwnd)
++            } catch { /* best-effort */ }
++            try {
++              await deps.injector.typeText(hwnd, action.text)
++              typeNoEffectCounts.set(typeKey, 0) // recovered
++            } catch {
++              typeNoEffectCounts.set(typeKey, 2)
++              throw new ComputerError(
++                "TYPE_NO_EFFECT",
++                `computer: type had no effect after one re-focus retry: ${String((typeErr as Error)?.message ?? typeErr)}`,
++              )
++            }
++          } else {
++            throw new ComputerError(
++              "TYPE_NO_EFFECT",
++              `computer: type had no effect: ${String((typeErr as Error)?.message ?? typeErr)}`,
++            )
++          }
++        }
+       } else if (action.action === "key") {
+         await deps.injector.keyChord(hwnd, action.keys.map((k) => k.toLowerCase()))
+       } else if (action.action === "scroll") {
+@@ -1377,10 +1442,21 @@ export async function runComputerTask(
+         ...(afterNote !== undefined ? { note: afterNote } : {}),
+         durationMs: now() - startedAt,
+       })
++      // Grill G1: honest posted/verified. Coordinate injects post events but
++      // cannot claim semantic success without a later verify layer (S-semantic
++      // Notes/Mail uses host_write). type/key → verified:false; click with
++      // pixel-region crossverify → verified:true as best-effort UX signal.
++      const posted = true
++      const verified =
++        action.action === "type" || action.action === "key"
++          ? false
++          : crossverified === true
+       steps.push({
+         seq,
+         action: action.action,
+         ok: true,
++        posted,
++        verified,
+         layer: hit?.layer,
+         confidence: hit?.confidence,
+         x: pointClient?.x,
+@@ -1446,21 +1522,20 @@ export async function runComputerTask(
+           maxZoneRatio,
+           maxBlobRatio,
+         })
+-        // UX-spike 2026-07-23 — FOREGROUND-YIELD self-UI recovery. The common
+-        // case behind "every action asks for confirmation" is: the user just
+-        // clicked Allow in the sidepanel, so the sidepanel's browser process
+-        // briefly became frontmost; the detector then sees a foreign-process
+-        // foreground and pauses for a redundant re-L2. When (a) the foreign
+-        // foreground is OUR OWN UI host (browser / packaged agent exe) AND
+-        // (b) none of the other dialog channels fired (no new top-level
+-        // window, no UIA popup, no large pixel change), this is the benign
+-        // self-UI yield — silently re-raise the target and continue, skipping
+-        // the re-L2. Any other signal = a real dialog; fall through to pause.
++        // UX-spike 2026-07-23 + macOS fix 2026-07-25 — FOREGROUND-YIELD self-UI
++        // recovery. Product model: user authorizes in the Chrome side panel
++        // (Chrome becomes frontmost). That is EXPECTED, not "foreign takeover".
++        // Matching only exeBasename() broke macOS: WindowInfo.exePath is the
++        // bundle id `com.google.Chrome`, and exeBasename → "com", so every
++        // Allow click re-L2'd with "前台被 Chrome 接管" (thread 3ffkgl paradox:
++        // authorize in plugin AND keep WeChat frontmost). isCompanionUiOwner
++        // handles Windows paths + macOS bundle ids.
++        // When (a) FG is our UI host AND (b) no other dialog channel fired,
++        // silently re-raise the target and continue — no re-L2.
+         const selfUiBasenames = deps.config.security?.companion_ui_exe_basenames ?? []
+         const isSelfUiYield =
+           fgYielded &&
+-          !!fgOwnerExe &&
+-          selfUiBasenames.includes(exeBasename(fgOwnerExe)) &&
++          isCompanionUiOwner(fgOwnerExe, selfUiBasenames) &&
+           !newTopLevel &&
+           uiaOpened.length === 0 &&
+           diffRatio <= DIALOG_DIFF_THRESHOLD &&
+@@ -1505,6 +1580,9 @@ export async function runComputerTask(
+     completedActions: steps.filter((s) => s.ok).length,
+     totalActions: params.actions.length,
+     steps,
++    // Grill G1: aggregate honesty for LLM — do not claim all steps verified.
++    posted_steps: steps.filter((s: any) => s.posted === true).length,
++    verified_steps: steps.filter((s: any) => s.verified === true).length,
+   }
+   await sweepRaws() // normally a no-op — every frame was sealed or released
+   try {
+diff --git a/companion/src/computer/session-trust.ts b/companion/src/computer/session-trust.ts
+index 45a1ebe..351315f 100644
+--- a/companion/src/computer/session-trust.ts
++++ b/companion/src/computer/session-trust.ts
+@@ -36,14 +36,20 @@
+ //     module and governs a different gate.
+ //   - Process lifetime only (companion restart clears all trust). No
+ //     persistent cross-session trust.
+-//   - Keyed by (sessionId, appToken): trust is per-conversation AND per-app.
+-//     A new conversation, or a different app in the same conversation, asks
+-//     again.
++//   - Keyed by (trustKey, appToken). Grill Q1=C (2026-07-26): trustKey is
++//     `thread:<chatThreadId>` when the chat thread is known, else
++//     `ws:<wsSessionId>`. Initial-L2 **skip** is allowed only for thread:
++//     keys (no thread → no silent multi-task trust). Mid-task re-L2 silence
++//     still uses isTrusted() for either key form after an interactive approve.
+ //   - Force-interactive carve-out (PROMPT_ALWAYS_TAGS + reL2ShouldPrompt /
+ //     executor reL2): computer.danger_detected and
+ //     computer.experimental_suggestion (TinyClick G4) NEVER auto-approve under
+ //     session trust. v4.1 also keeps computer.foreground_yielded always-prompt.
+ //
++//   - Grill Q2 (2026-07-26): grant.explicitOptIn is set only when the user
++//     checks "本会话自动同意同类操作". Without it, mid-task reL2 may still
++//     silent-approve (task-local), but G1 **initial** L2 skip is denied.
++//
+ // The grant is recorded by the server once the initial task L2 is approved
+ // (server.ts). The executor consults it at the top of reL2() and at the
+ // initial-L2 gate (server.ts:465-470, :823-940).
+@@ -51,6 +57,25 @@
+ /** Idle expiry for grants. After this much inactivity, re-prompt. */
+ export const IDLE_EXPIRY_MS = 30 * 60 * 1000 // 30 min (Pi v4.1 D3.4 mandatory default)
+ 
++/**
++ * Build the outer trust map key (grill Q1=C).
++ * - Prefer chat thread id so "本会话" matches user mental model across WS reconnect.
++ * - Fall back to WS session id when thread is unknown; caller must not initial-skip.
++ */
++export function resolveComputerTrustKey(
++  threadId: string | undefined | null,
++  wsSessionId: string,
++): string {
++  const t = typeof threadId === "string" ? threadId.trim() : ""
++  if (t.length > 0) return `thread:${t}`
++  return `ws:${wsSessionId}`
++}
++
++/** True when this key may participate in G1 multi-task initial-L2 skip. */
++export function trustKeyAllowsInitialSkip(trustKey: string): boolean {
++  return typeof trustKey === "string" && trustKey.startsWith("thread:")
++}
++
+ /**
+  * Re-L2 tag set that must ALWAYS prompt, even when the session is trusted.
+  * Tags come from the `dangerous` array at each reL2() emit site — stable
+@@ -116,6 +141,12 @@ export function reL2ShouldPrompt(tags: string[]): boolean {
+  * budget the user has interactively approved for this (sessionId, appToken).
+  * Skip-eligible tasks must have budget ≤ maxBudgetSeen — volume IS its own
+  * blast-radius dimension independent of corpus identity.
++ *
++ * `maxActionsSeen` (grill Q3, 2026-07-26): largest actions[] length interactively
++ * approved — skip requires actions.length ≤ maxActionsSeen.
++ *
++ * `explicitOptIn` (grill Q2): true only when user checked session auto-approve.
++ * G1 initial-L2 skip requires this; mid-task reL2 silence does not.
+  */
+ interface GrantRecord {
+   appToken: string
+@@ -127,14 +158,27 @@ interface GrantRecord {
+   corpus: Set<string>
+   /** Largest budget ever interactively approved. P5 (Pi caveat 1, 2026-07-24). */
+   maxBudgetSeen: number
++  /** Largest actions[] length interactively approved (grill Q3). */
++  maxActionsSeen: number
++  /** User checked "本会话自动同意同类操作" (grill Q2). */
++  explicitOptIn: boolean
++}
++
++export interface ComputerTrustGrantOptions {
++  /** User checked session auto-approve checkbox. OR with existing flag (sticky true). */
++  explicitOptIn?: boolean
+ }
+ 
+-/** Singleton store: sessionId -> Set of trusted app tokens + grant records. */
++/** Singleton store: trustKey -> appToken -> grant records. */
+ export class ComputerSessionTrust {
+   private trusted = new Map<string, Map<string, GrantRecord>>()
+ 
+-  /** Record that this session approved a task for the given app token. Idempotent. */
+-  grant(sessionId: string, appToken: string): void {
++  /**
++   * Record that this trust key approved a task for the given app token.
++   * Idempotent. `sessionId` parameter name kept for call-site compatibility —
++   * pass resolveComputerTrustKey(...) result.
++   */
++  grant(sessionId: string, appToken: string, opts?: ComputerTrustGrantOptions): void {
+     if (!sessionId || !appToken) return
+     let inner = this.trusted.get(sessionId)
+     if (!inner) {
+@@ -143,6 +187,8 @@ export class ComputerSessionTrust {
+     }
+     const now = Date.now()
+     const existing = inner.get(appToken)
++    const explicit =
++      opts?.explicitOptIn === true || existing?.explicitOptIn === true
+     inner.set(appToken, {
+       appToken,
+       grantedAt: existing?.grantedAt ?? now,
+@@ -150,9 +196,20 @@ export class ComputerSessionTrust {
+       credentialSurfaceSeen: existing?.credentialSurfaceSeen ?? false,
+       corpus: existing?.corpus ?? new Set<string>(),
+       maxBudgetSeen: existing?.maxBudgetSeen ?? 0,
++      maxActionsSeen: existing?.maxActionsSeen ?? 0,
++      explicitOptIn: explicit,
+     })
+   }
+ 
++  /** True when grant has explicit session auto-approve opt-in (and is live). */
++  hasExplicitOptIn(sessionId: string, appToken: string): boolean {
++    const rec = this.record(sessionId, appToken)
++    if (!rec || !rec.explicitOptIn) return false
++    if (Date.now() - rec.lastTouchedAt > IDLE_EXPIRY_MS) return false
++    if (rec.credentialSurfaceSeen) return false
++    return true
++  }
++
+   /**
+    * True when this session has already approved a task for the app token AND
+    * the grant has not been idle-expired AND the credential latch is not set.
+@@ -204,6 +261,8 @@ export class ComputerSessionTrust {
+       credentialSurfaceSeen: seen === null ? true : (existing?.credentialSurfaceSeen || seen),
+       corpus: existing?.corpus ?? new Set<string>(),
+       maxBudgetSeen: existing?.maxBudgetSeen ?? 0,
++      maxActionsSeen: existing?.maxActionsSeen ?? 0,
++      explicitOptIn: existing?.explicitOptIn ?? false,
+     })
+   }
+ 
+@@ -222,6 +281,17 @@ export class ComputerSessionTrust {
+     if (b > rec.maxBudgetSeen) rec.maxBudgetSeen = b
+   }
+ 
++  /**
++   * Record actions[] length of an interactively-approved task (grill Q3).
++   * Monotonically increasing.
++   */
++  recordActions(sessionId: string, appToken: string, actionCount: number): void {
++    const rec = this.record(sessionId, appToken)
++    if (!rec) return
++    const n = Math.max(0, Math.floor(actionCount))
++    if (n > rec.maxActionsSeen) rec.maxActionsSeen = n
++  }
++
+   /**
+    * Returns the largest budget ever interactively approved for this
+    * (sessionId, appToken). Returns 0 when no grant exists. Skip gate should
+@@ -231,6 +301,11 @@ export class ComputerSessionTrust {
+     return this.record(sessionId, appToken)?.maxBudgetSeen ?? 0
+   }
+ 
++  /** Largest actions[] length ever interactively approved; 0 if none. */
++  maxActionsSeen(sessionId: string, appToken: string): number {
++    return this.record(sessionId, appToken)?.maxActionsSeen ?? 0
++  }
++
+   /**
+    * Clear the credential latch for this (sessionId, appToken). Called by the
+    * server after a successful INTERACTIVE initial-L2 approve — the user has
+diff --git a/companion/src/computer/types.ts b/companion/src/computer/types.ts
+index cfcdce7..4a44b20 100644
+--- a/companion/src/computer/types.ts
++++ b/companion/src/computer/types.ts
+@@ -174,6 +174,8 @@ export type ComputerErrorCode =
+   | "UNCROSS_DENIED" // uncrossverified sub-budget re-L2 denied
+   | "TYPE_TEXT_NOT_CONFIRMED" // A3: text outside the confirmed corpus
+   | "TYPE_TEXT_TOO_LONG" // X4: type text / task corpus beyond MAX_TYPE_TEXT_CHARS
++  | "TYPE_NO_EFFECT" // Grill G1: type inject failed or second same-text type after no effect
++  | "SEND_NO_EFFECT" // Grill G1: send/enter produced no observable effect (reserved)
+   | "CAPTURE_FAILED"
+   | "INJECT_FAILED"
+   | "EVIDENCE_ERROR"
+diff --git a/companion/src/config.ts b/companion/src/config.ts
+index d32e0b8..79ad237 100644
+--- a/companion/src/config.ts
++++ b/companion/src/config.ts
+@@ -188,11 +188,16 @@ const defaultConfig: CompanionConfig = {
+     confirmation_timeout_seconds: 45,
+     auto_approve_dangerous: false,
+     allow_all_schemes: false,
+-    // UX-spike 2026-07-23: browsers CMspark ships a sidepanel for + the
+-    // packaged agent exe. Basenames (no .exe), lowercased — matched against
+-    // GetForegroundWindow's owner via ProcessName.
++    // UX-spike 2026-07-23: browsers that host the side panel + the agent exe.
++    // Lowercased basenames (no .exe) for Windows ProcessName matching.
++    // macOS also matches via isCompanionUiOwner() against bundle ids
++    // (com.google.Chrome etc.) — do not require the user to keep the target
++    // app frontmost while authorizing in Chrome.
+     companion_ui_exe_basenames: [
+       "chrome", "msedge", "msedge_proxy", "firefox", "brave", "arc", "opera", "cmspark-agent",
++      // macOS bundle-id last segments / full ids also accepted by isCompanionUiOwner
++      "com.google.chrome", "com.microsoft.edgemac", "org.mozilla.firefox",
++      "company.thebrowser.browser", "com.brave.browser",
+     ],
+   },
+   file_upload: {
+diff --git a/companion/src/host-use/darwin/host-integrity.ts b/companion/src/host-use/darwin/host-integrity.ts
+index 971566c..faf2d20 100644
+--- a/companion/src/host-use/darwin/host-integrity.ts
++++ b/companion/src/host-use/darwin/host-integrity.ts
+@@ -37,7 +37,7 @@ export interface HostIntegrityCheck {
+  * PROD-TIME NOTE: DMG installs ship with this constant pre-baked into the
+  * bundled companion JS. End users never run build-host.sh.
+  */
+-export const CMSPARK_HOST_SHA256 = "8473498be11d46dd3d07a74ef5a599937b32d40e3eb8f34b09f2aab8a72771d5"
++export const CMSPARK_HOST_SHA256 = "5e2dc878d35b0738d6e23fc85835edc7b77ef9f6ea5db92b4a726cd6a3e16692"
+ 
+ /**
+  * Hash the binary at binPath via an open fd (avoids path-substitution race
+diff --git a/companion/src/host-use/darwin/host-skylight.swift b/companion/src/host-use/darwin/host-skylight.swift
+index aba8adb..d1d0390 100644
+--- a/companion/src/host-use/darwin/host-skylight.swift
++++ b/companion/src/host-use/darwin/host-skylight.swift
+@@ -817,23 +817,32 @@ func cuAXLocate(windowId: UInt32, target: String) -> String {
+ 
+ func cuScreenshot(windowId: UInt32, outputPath: String) -> String {
+     // Use .optionIncludingWindow (not .optionAll) so the result is filtered to
+-    // just this windowId. With .optionAll, macOS 26 returns ALL windows and
+-    // ignores the windowId arg, so info.first picked the wrong window and
+-    // produced a 64x64 rect for a 1058x752 NetEase Music main window
+-    // (ea3y6n bug, 2026-07-22). Defense-in-depth: also filter explicitly by
+-    // kCGWindowNumber in case macOS ever honors .optionAll + windowId again.
+-    var info: [[String: Any]] = []
++    // Prefer IncludingWindow; fall back to optionAll filtered by number.
++    // WeChat returns [] for IncludingWindow while optionAll still has the id
++    // (pgvexn 2026-07-25). Keep filter strict — never unfiltered optionAll.
++    func windowNum(_ w: [String: Any]) -> UInt32 {
++        if let u = w[kCGWindowNumber as String] as? UInt32 { return u }
++        if let i = w[kCGWindowNumber as String] as? Int { return UInt32(truncatingIfNeeded: i) }
++        if let n = w[kCGWindowNumber as String] as? NSNumber { return n.uint32Value }
++        return 0
++    }
++    var first: [String: Any]?
+     if let raw = CGWindowListCopyWindowInfo([.optionIncludingWindow], windowId) as? [[String: Any]] {
+-        info = raw.filter { ($0[kCGWindowNumber as String] as? UInt32) == windowId }
+-        if info.isEmpty { info = raw }
+-    } else if let rawAll = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] {
+-        info = rawAll.filter { ($0[kCGWindowNumber as String] as? UInt32) == windowId }
++        first = raw.first(where: { windowNum($0) == windowId })
+     }
+-    guard !info.isEmpty else {
++    if first == nil {
++        for opts: CGWindowListOption in [[.optionOnScreenOnly], [.optionAll]] {
++            if let rawAll = CGWindowListCopyWindowInfo(opts, kCGNullWindowID) as? [[String: Any]],
++               let hit = rawAll.first(where: { windowNum($0) == windowId }) {
++                first = hit
++                break
++            }
++        }
++    }
++    guard let first else {
+         return cuError("cannot get window info for windowId \(windowId)")
+     }
+-    guard let first = info.first,
+-          let bounds = first[kCGWindowBounds as String] as? [String: CGFloat] else {
++    guard let bounds = first[kCGWindowBounds as String] as? [String: CGFloat] else {
+         return cuError("cannot read window bounds for windowId \(windowId)")
+     }
+     let rect: [String: CGFloat] = ["x": bounds["X"] ?? 0, "y": bounds["Y"] ?? 0, "width": bounds["Width"] ?? 0, "height": bounds["Height"] ?? 0]
+@@ -919,10 +928,24 @@ func cuScreenshot(windowId: UInt32, outputPath: String) -> String {
+             let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
+             capturedImage = image
+         } catch let err as NSError {
+-            if err.domain == "com.apple.ScreenCaptureKit" && err.code == -38001 {
+-                captureError = "ScreenCaptureKit permission denied (pid=\(hostPid) ppid=\(hostParentPid)) — open System Settings → Privacy & Security → Screen Recording and enable the entry for CMspark Agent / node / cmspark-host, then retry"
++            // See host.swift cuScreenshot — match both -3801 and -38001 TCC denial.
++            let isSckTcc =
++                err.domain == "com.apple.ScreenCaptureKit.SCStreamErrorDomain"
++                || err.domain == "com.apple.ScreenCaptureKit"
++            let isDenialCode = (err.code == -3801 || err.code == -38001)
++            let desc = err.localizedDescription
++            let looksLikeDenial = desc.localizedCaseInsensitiveContains("TCC")
++                || desc.localizedCaseInsensitiveContains("denied")
++                || desc.contains("拒绝")
++            if isSckTcc && (isDenialCode || looksLikeDenial) {
++                captureError =
++                    "Screen Recording permission denied (ScreenCaptureKit code=\(err.code), " +
++                    "pid=\(hostPid) ppid=\(hostParentPid)). " +
++                    "Open System Settings → Privacy & Security → Screen Recording, " +
++                    "enable «CMspark» (and/or node / cmspark-host if listed), " +
++                    "then fully quit and relaunch CMspark.app and retry."
+             } else {
+-                captureError = "ScreenCaptureKit error: \(err.domain) code=\(err.code) \(err.localizedDescription) (pid=\(hostPid) ppid=\(hostParentPid))"
++                captureError = "ScreenCaptureKit error: \(err.domain) code=\(err.code) \(desc) (pid=\(hostPid) ppid=\(hostParentPid))"
+             }
+         } catch {
+             captureError = "screenshot capture failed: \(error.localizedDescription) (pid=\(hostPid) ppid=\(hostParentPid))"
+diff --git a/companion/src/host-use/darwin/host.swift b/companion/src/host-use/darwin/host.swift
+index 8af9e72..c4a8cb7 100644
+--- a/companion/src/host-use/darwin/host.swift
++++ b/companion/src/host-use/darwin/host.swift
+@@ -625,6 +625,36 @@ func cuJson(_ dict: [String: Any]) -> String {
+ 
+ // MARK: - helpers
+ 
++/// kCGWindowNumber is CFNumber; bridge may surface as Int / NSNumber / UInt32.
++func cuWindowNumber(_ w: [String: Any]) -> UInt32 {
++    if let u = w[kCGWindowNumber as String] as? UInt32 { return u }
++    if let i = w[kCGWindowNumber as String] as? Int { return UInt32(truncatingIfNeeded: i) }
++    if let n = w[kCGWindowNumber as String] as? NSNumber { return n.uint32Value }
++    return 0
++}
++
++/// Resolve CGWindowList dict for a windowId. WeChat (and some Electron apps)
++/// return an empty list for `.optionIncludingWindow` even when the id is valid
++/// in `.optionAll` — fall through so screenshot / inject origin don't fail
++/// with "cannot get window info for windowId N" (pgvexn / 2026-07-25).
++func cuWindowInfoDict(windowId: UInt32) -> [String: Any]? {
++    if let raw = CGWindowListCopyWindowInfo([.optionIncludingWindow], windowId) as? [[String: Any]] {
++        if let hit = raw.first(where: { cuWindowNumber($0) == windowId }) { return hit }
++        // Unfiltered single-element IncludingWindow (older macOS quirks)
++        if raw.count == 1, cuWindowNumber(raw[0]) == 0 || cuWindowNumber(raw[0]) == windowId {
++            return raw[0]
++        }
++    }
++    // Prefer on-screen first (cheaper, matches user-visible target)
++    for opts: CGWindowListOption in [[.optionOnScreenOnly], [.optionAll]] {
++        if let rawAll = CGWindowListCopyWindowInfo(opts, kCGNullWindowID) as? [[String: Any]],
++           let hit = rawAll.first(where: { cuWindowNumber($0) == windowId }) {
++            return hit
++        }
++    }
++    return nil
++}
++
+ func cuPidForWindow(_ windowId: UInt32) -> pid_t {
+     guard let windows = CGWindowListCopyWindowInfo([.optionAll], windowId) as? [[String: Any]],
+           let first = windows.first,
+@@ -658,14 +688,7 @@ func cuActivatePid(_ pid: pid_t) -> Bool {
+ // with capture. Pure math: screen = clientOrigin + (x, y) in logical CG points.
+ // Fail closed when windowId cannot be resolved via CGWindowList.
+ func cuClientOriginScreen(windowId: UInt32) -> CGPoint? {
+-    var info: [[String: Any]] = []
+-    if let raw = CGWindowListCopyWindowInfo([.optionIncludingWindow], windowId) as? [[String: Any]] {
+-        info = raw.filter { ($0[kCGWindowNumber as String] as? UInt32) == windowId }
+-        if info.isEmpty { info = raw }
+-    } else if let rawAll = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] {
+-        info = rawAll.filter { ($0[kCGWindowNumber as String] as? UInt32) == windowId }
+-    }
+-    guard let first = info.first,
++    guard let first = cuWindowInfoDict(windowId: windowId),
+           let bounds = first[kCGWindowBounds as String] as? [String: CGFloat] else {
+         return nil
+     }
+@@ -729,7 +752,7 @@ func cuWindowList(bundleId: String?, windowId: UInt32?, foreground: Bool) -> Str
+     }
+     var filtered: [[String: Any]] = []
+     for w in windows {
+-        let wid = w[kCGWindowNumber as String] as? UInt32 ?? 0
++        let wid = cuWindowNumber(w)
+         let owner = w[kCGWindowOwnerName as String] as? String ?? ""
+         let name = w[kCGWindowName as String] as? String ?? ""
+         let bounds = w[kCGWindowBounds as String] as? [String: CGFloat] ?? [:]
+@@ -848,24 +871,14 @@ func cuAXLocate(windowId: UInt32, target: String) -> String {
+ // MARK: - screenshot (ScreenCaptureKit)
+ 
+ func cuScreenshot(windowId: UInt32, outputPath: String) -> String {
+-    // Use .optionIncludingWindow (not .optionAll) so the result is filtered to
+-    // just this windowId. With .optionAll, macOS 26 returns ALL windows and
+-    // ignores the windowId arg, so info.first picked the wrong window and
+-    // produced a 64x64 rect for a 1058x752 NetEase Music main window
+-    // (ea3y6n bug, 2026-07-22). Defense-in-depth: also filter explicitly by
+-    // kCGWindowNumber in case macOS ever honors .optionAll + windowId again.
+-    var info: [[String: Any]] = []
+-    if let raw = CGWindowListCopyWindowInfo([.optionIncludingWindow], windowId) as? [[String: Any]] {
+-        info = raw.filter { ($0[kCGWindowNumber as String] as? UInt32) == windowId }
+-        if info.isEmpty { info = raw }
+-    } else if let rawAll = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] {
+-        info = rawAll.filter { ($0[kCGWindowNumber as String] as? UInt32) == windowId }
+-    }
+-    guard !info.isEmpty else {
++    // Prefer IncludingWindow, but ALWAYS fall back to optionAll filtered by
++    // kCGWindowNumber. WeChat/Electron often return [] for IncludingWindow
++    // while the id is still present in optionAll (pgvexn 2026-07-25).
++    // Never use unfiltered optionAll (ea3y6n: wrong window → 64x64 rect).
++    guard let first = cuWindowInfoDict(windowId: windowId) else {
+         return cuError("cannot get window info for windowId \(windowId)")
+     }
+-    guard let first = info.first,
+-          let bounds = first[kCGWindowBounds as String] as? [String: CGFloat] else {
++    guard let bounds = first[kCGWindowBounds as String] as? [String: CGFloat] else {
+         return cuError("cannot read window bounds for windowId \(windowId)")
+     }
+     let rect: [String: CGFloat] = ["x": bounds["X"] ?? 0, "y": bounds["Y"] ?? 0, "width": bounds["Width"] ?? 0, "height": bounds["Height"] ?? 0]
+@@ -882,11 +895,18 @@ func cuScreenshot(windowId: UInt32, outputPath: String) -> String {
+     // Canary only (dev / A-B rollback): CMSPARK_SCREENSHOT_FORCE_FG=1 restores
+     // legacy b0faek activate behavior. Production default = no activate.
+     // Distinct from CMSPARK_SKYLIGHT_FORCE_FG (inject path canary, v3).
++    // Diagnostic only when CMSPARK_HOST_DEBUG=1 — unconditional fputs here used
++    // to land in node execFile's stderr and get promoted to user-facing
++    // "screenshot: [host] screenshot no-activate…" non_recoverable errors.
++    if ProcessInfo.processInfo.environment["CMSPARK_HOST_DEBUG"] == "1" {
++        if ProcessInfo.processInfo.environment["CMSPARK_SCREENSHOT_FORCE_FG"] == "1" {
++            fputs("[host] screenshot activate (CMSPARK_SCREENSHOT_FORCE_FG=1 canary)\n", stderr)
++        } else {
++            fputs("[host] screenshot no-activate (Hermes background capture path)\n", stderr)
++        }
++    }
+     if ProcessInfo.processInfo.environment["CMSPARK_SCREENSHOT_FORCE_FG"] == "1" {
+         cuActivatePid(pid)
+-        fputs("[host] screenshot activate (CMSPARK_SCREENSHOT_FORCE_FG=1 canary)\n", stderr)
+-    } else {
+-        fputs("[host] screenshot no-activate (Hermes background capture path)\n", stderr)
+     }
+     if let appElement = cuAppElementForPid(pid) {
+         var windowsRef: CFTypeRef?
+@@ -915,7 +935,12 @@ func cuScreenshot(windowId: UInt32, outputPath: String) -> String {
+                     bestWin = axWin
+                 }
+             }
+-            if let axWin = bestWin {
++            // Only trust AX when frame match is tight. WeChat (and multi-window
++            // Electron apps) often expose a different AX window than the
++            // CGWindow we captured; a loose "best" pick produced client
++            // offsets like (-313,-107) 880×640 on a 280×380 CG rect, which
++            // then poisoned inject bounds checks (2026-07-25).
++            if let axWin = bestWin, bestDist < 24 {
+                 var posRef: CFTypeRef?; var sizeRef: CFTypeRef?
+                 AXUIElementCopyAttributeValue(axWin, kAXPositionAttribute as CFString, &posRef)
+                 AXUIElementCopyAttributeValue(axWin, kAXSizeAttribute as CFString, &sizeRef)
+@@ -923,7 +948,9 @@ func cuScreenshot(windowId: UInt32, outputPath: String) -> String {
+                 if let p = posRef { AXValueGetValue(p as! AXValue, .cgPoint, &pos) }
+                 if let s = sizeRef { AXValueGetValue(s as! AXValue, .cgSize, &size) }
+                 let fx = rect["x"] ?? 0; let fy = rect["y"] ?? 0
+-                client = ["x": pos.x - fx, "y": pos.y - fy, "width": size.width, "height": size.height]
++                if size.width > 0 && size.height > 0 {
++                    client = ["x": pos.x - fx, "y": pos.y - fy, "width": size.width, "height": size.height]
++                }
+             }
+         }
+     }
+@@ -940,9 +967,13 @@ func cuScreenshot(windowId: UInt32, outputPath: String) -> String {
+     // back: preflight checks THIS process's TCC entry but TCC records the
+     // grant against the responsible process up the spawn chain, so the two
+     // never line up for an ad-hoc binary → infinite prompt loop.
++    // Capture result must cross Task → caller with a lock. Unsynchronized
++    // `var capturedImage: CGImage?` + concurrent Task write is a data race:
++    // ARC retain on the Task side + main-thread read can leave a half-retained
++    // CGImage that later SIGSEGVs at offset 0x10 inside cuScreenshot (after PNG
++    // write succeeds). Observed 2026-07-25 on all windows (WeChat/Chrome/Settings).
+     let semaphore = DispatchSemaphore(value: 0)
+-    var capturedImage: CGImage?
+-    var captureError: String?
++    let captureBox = CUBox<(image: CGImage?, error: String?)>((nil, nil))
+     let hostPid = ProcessInfo.processInfo.processIdentifier
+     let hostParentPid = getppid()
+ 
+@@ -950,7 +981,9 @@ func cuScreenshot(windowId: UInt32, outputPath: String) -> String {
+         do {
+             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
+             guard let targetWindow = content.windows.first(where: { UInt32($0.windowID) == windowId }) else {
+-                captureError = "window \(windowId) not found among \(content.windows.count) SCShareableContent windows (pid=\(hostPid) ppid=\(hostParentPid))"
++                captureBox.with {
++                    $0 = (nil, "window \(windowId) not found among \(content.windows.count) SCShareableContent windows (pid=\(hostPid) ppid=\(hostParentPid))")
++                }
+                 semaphore.signal()
+                 return
+             }
+@@ -959,22 +992,64 @@ func cuScreenshot(windowId: UInt32, outputPath: String) -> String {
+             config.scalesToFit = false
+             config.showsCursor = false
+             config.ignoreShadowsSingleWindow = true
++            // SCStreamConfiguration defaults width/height to the *display*
++            // pixel size (e.g. 1920×1080). Without an explicit size,
++            // captureImage returns a full-display buffer even for
++            // desktopIndependentWindow — scaleX/Y then explode (280×380
++            // window → scaleX≈6.86) and click mapping is wrong.
++            // Use the SCWindow frame × backing scale of the screen that
++            // contains the window (fallback: max screen scale, then 2.0).
++            let frame = targetWindow.frame
++            let scale: CGFloat = {
++                let screens = NSScreen.screens
++                if let hit = screens.first(where: { $0.frame.intersects(frame) }) {
++                    return hit.backingScaleFactor
++                }
++                return screens.map(\.backingScaleFactor).max() ?? 2.0
++            }()
++            let outW = max(1, Int((frame.width * scale).rounded()))
++            let outH = max(1, Int((frame.height * scale).rounded()))
++            config.width = outW
++            config.height = outH
+             let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
+-            capturedImage = image
++            captureBox.with { $0 = (image, nil) }
+         } catch let err as NSError {
+-            if err.domain == "com.apple.ScreenCaptureKit" && err.code == -38001 {
+-                captureError = "ScreenCaptureKit permission denied (pid=\(hostPid) ppid=\(hostParentPid)) — open System Settings → Privacy & Security → Screen Recording and enable the entry for CMspark Agent / node / cmspark-host, then retry"
++            // TCC denial codes observed in the wild:
++            //   -3801  (user message: 用户拒绝了…捕捉的TCC) — macOS 15/26 common
++            //   -38001 — older docs / alternate SCStreamError enum path
++            // Match both; also treat localized "TCC" / "denied" in this domain as denial.
++            let isSckTcc =
++                err.domain == "com.apple.ScreenCaptureKit.SCStreamErrorDomain"
++                || err.domain == "com.apple.ScreenCaptureKit"
++            let isDenialCode = (err.code == -3801 || err.code == -38001)
++            let desc = err.localizedDescription
++            let looksLikeDenial = desc.localizedCaseInsensitiveContains("TCC")
++                || desc.localizedCaseInsensitiveContains("denied")
++                || desc.contains("拒绝")
++            let errMsg: String
++            if isSckTcc && (isDenialCode || looksLikeDenial) {
++                errMsg =
++                    "Screen Recording permission denied (ScreenCaptureKit code=\(err.code), " +
++                    "pid=\(hostPid) ppid=\(hostParentPid)). " +
++                    "Open System Settings → Privacy & Security → Screen Recording, " +
++                    "enable «CMspark» (and/or node / cmspark-host if listed), " +
++                    "then fully quit and relaunch CMspark.app and retry. " +
++                    "Ad-hoc re-sign or reinstall can clear the grant — re-enable if it was on before."
+             } else {
+-                captureError = "ScreenCaptureKit error: \(err.domain) code=\(err.code) \(err.localizedDescription) (pid=\(hostPid) ppid=\(hostParentPid))"
++                errMsg = "ScreenCaptureKit error: \(err.domain) code=\(err.code) \(desc) (pid=\(hostPid) ppid=\(hostParentPid))"
+             }
++            captureBox.with { $0 = (nil, errMsg) }
+         } catch {
+-            captureError = "screenshot capture failed: \(error.localizedDescription) (pid=\(hostPid) ppid=\(hostParentPid))"
++            captureBox.with {
++                $0 = (nil, "screenshot capture failed: \(error.localizedDescription) (pid=\(hostPid) ppid=\(hostParentPid))")
++            }
+         }
+         semaphore.signal()
+     }
+     _ = task
+     semaphore.wait()
+ 
++    let (capturedImage, captureError) = captureBox.with { $0 }
+     if let err = captureError {
+         return cuError(err, code: "PERMISSION_DENIED")
+     }
+@@ -1009,10 +1084,14 @@ func cuScreenshot(windowId: UInt32, outputPath: String) -> String {
+     // or blank frames instead of returning a frame the LLM will click into
+     // blindly. AND-of-conditions when a prior exists (caret-blink frame has
+     // low stdev but low identity → must NOT pass); stdev-only when no prior.
++    //
++    // Prior-frame store uses free functions over enum statics (not a
++    // file-level lazy `CUBox` global). Post-SCK first access of that global
++    // SIGSEGV'd @ 0x10 on macOS 26 (2026-07-25); local CUBox + enum statics OK.
+     let priorKey = windowId
+     let downsample = cuDownsampleToBitmap(image, side: 64)
+     let stdev = cuLumaStdev(downsample)
+-    let prior = cuPriorCaptureFrameLock.value[priorKey]
++    let prior = cuPriorFrameGet(priorKey)
+     var identity = -1.0
+     if let p = prior {
+         identity = cuIdentity(downsample, p)
+@@ -1027,7 +1106,7 @@ func cuScreenshot(windowId: UInt32, outputPath: String) -> String {
+     var stale = false
+     if sizeGuard || downsampleEmpty {
+         stale = true
+-    } else if let _ = prior {
++    } else if prior != nil {
+         // Prior exists: require BOTH low stdev AND high identity to declare
+         // stale (Pi caveat: OR over-flags caret-blink frames).
+         stale = (stdev < 1.0 && identity >= 0.99)
+@@ -1036,7 +1115,7 @@ func cuScreenshot(windowId: UInt32, outputPath: String) -> String {
+         stale = stdev < 1.0
+     }
+     // Update prior regardless of verdict — next call uses this for identity.
+-    cuPriorCaptureFrameLock.value[priorKey] = downsample
++    cuPriorFrameSet(priorKey, downsample)
+ 
+     // Reason taxonomy (operator-only; LLM only sees CAPTURE_FAILED per Pi C4).
+     // size_guard wins because a 0-byte / 0-dim frame makes stdev/identity
+@@ -1103,39 +1182,78 @@ func cuScreenshot(windowId: UInt32, outputPath: String) -> String {
+ 
+ // MARK: - capture variance classifier helpers (v4.1 Blocker 1)
+ 
+-/// Thread-safe storage for last-frame 64x64 luma bitmap per windowId.
+-/// Used by cuScreenshot for the identity check in the variance classifier.
+-private let cuPriorCaptureFrameLock = CUBox<[UInt32: [UInt8]]>([:])
++/// Thread-safe last-frame 64×64 luma bitmap per windowId (identity check).
++///
++/// Implemented as free functions over a private enum namespace — NOT a
++/// file-level `private let CUBox<…>([:])`. On macOS 26 + ScreenCaptureKit,
++/// the first access to that lazy global *after* `SCScreenshotManager.captureImage`
++/// completed was crashing with SIGSEGV @ 0x10 (nil receiver) while a *local*
++/// CUBox created before capture worked fine. Function-scoped static storage
++/// via enum avoids that post-SCK global-init footgun.
++private enum CuPriorFrameStore {
++    static var frames: [UInt32: [UInt8]] = [:]
++    static let lock = NSLock()
++}
++
++private func cuPriorFrameGet(_ windowId: UInt32) -> [UInt8]? {
++    CuPriorFrameStore.lock.lock()
++    defer { CuPriorFrameStore.lock.unlock() }
++    return CuPriorFrameStore.frames[windowId]
++}
+ 
+-/// Simple lock-protected box for mutable global state (mirrors swift-tray pattern).
++private func cuPriorFrameSet(_ windowId: UInt32, _ bitmap: [UInt8]) {
++    CuPriorFrameStore.lock.lock()
++    defer { CuPriorFrameStore.lock.unlock() }
++    CuPriorFrameStore.frames[windowId] = bitmap
++}
++
++/// Simple lock-protected box for mutable state that must cross Task → caller
++/// (e.g. ScreenCaptureKit result). Prefer local instances over file-level
++/// lazy globals when used near SCK (see CuPriorFrameStore note).
+ private final class CUBox<T> {
+-    var value: T
++    private var storage: T
+     private let lock = NSLock()
+-    init(_ initial: T) { self.value = initial }
++    init(_ initial: T) { self.storage = initial }
++    var value: T {
++        get { lock.lock(); defer { lock.unlock() }; return storage }
++        set { lock.lock(); defer { lock.unlock() }; storage = newValue }
++    }
+     func with<R>(_ body: (inout T) -> R) -> R {
+         lock.lock(); defer { lock.unlock() }
+-        return body(&value)
++        return body(&storage)
+     }
+ }
+ 
+ /// Downsample a CGImage to a `side`x`side` luma bitmap (0-255 per cell).
+ /// Uses average pooling over the source image. Returns empty array on failure.
++///
++/// IMPORTANT: CGContext stores the `data` pointer and uses it later in
++/// `draw`. Swift's `CGContext(data: &array, …)` only keeps the Array buffer
++/// pointer valid for the duration of the *initializer call*, so the subsequent
++/// `ctx.draw` is a use-after-free → SIGSEGV (KERN_INVALID_ADDRESS at 0x10),
++/// after PNG write already succeeded. Bind the buffer with
++/// `withUnsafeMutableBytes` for the whole draw lifetime.
+ func cuDownsampleToBitmap(_ image: CGImage, side: Int) -> [UInt8] {
+     let w = image.width
+     let h = image.height
+-    if w <= 0 || h <= 0 { return [] }
++    if w <= 0 || h <= 0 || side <= 0 { return [] }
+     let colorSpace = CGColorSpaceCreateDeviceRGB()
+     let bytesPerRow = side * 4
+     var pixels = [UInt8](repeating: 0, count: side * side * 4)
+-    guard let ctx = CGContext(
+-        data: &pixels,
+-        width: side, height: side,
+-        bitsPerComponent: 8, bytesPerRow: bytesPerRow,
+-        space: colorSpace,
+-        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+-    ) else { return [] }
+-    ctx.interpolationQuality = .low
+-    ctx.draw(image, in: CGRect(x: 0, y: 0, width: side, height: side))
++    let ok = pixels.withUnsafeMutableBytes { rawBuf -> Bool in
++        guard let base = rawBuf.baseAddress else { return false }
++        guard let ctx = CGContext(
++            data: base,
++            width: side, height: side,
++            bitsPerComponent: 8, bytesPerRow: bytesPerRow,
++            space: colorSpace,
++            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
++        ) else { return false }
++        ctx.interpolationQuality = .low
++        ctx.draw(image, in: CGRect(x: 0, y: 0, width: side, height: side))
++        return true
++    }
++    if !ok { return [] }
+     var luma = [UInt8](repeating: 0, count: side * side)
+     for i in 0..<(side * side) {
+         let r = Double(pixels[i * 4])
+diff --git a/companion/src/llm/adapter.ts b/companion/src/llm/adapter.ts
+index 5d3a120..f41ac69 100644
+--- a/companion/src/llm/adapter.ts
++++ b/companion/src/llm/adapter.ts
+@@ -305,16 +305,13 @@ export async function chatCreate(params: ChatCreateParams) {
+    host_read and host_write require user confirmation (L2 gate); writes additionally require Windows Hello verification per call, or a 6-char manually typed code when Hello hardware is unavailable. The first time per thread, ASK the user explicitly before calling — e.g. "这个任务需要读取你的 Outlook 收件箱（只读第一封）。可以吗？". Respect denial; do not retry without user re-prompting.
+    NEVER use host_read/host_write for browser-DOM tasks — use get_page_text / evaluate instead.
+    NEVER propose these tools speculatively — only when the user's task cannot be accomplished via browser alone.`
+-    : `12. macOS ONLY — host_use tools (computer-use, Phase 1 W6):
+-   - host_read: read top-1 Mail inbox message. Returns {sender, subject, date_received, body_preview}.
+-   - host_write: Phase 1 W6 supports Notes create (kind="create", body=note content; first 80 chars of first line becomes note name) and Finder move (kind="move", source_path=POSIX file path, destination=POSIX folder path). Update/delete require biometric — not yet available, will return error.
+-   ONLY propose these tools when the user EXPLICITLY mentions:
+-     - Mail / 邮件 / inbox / read email → host_read
+-     - Notes / 备忘录 / note / 创建笔记 → host_write create
+-     - Finder / 文件 / move file / 归类 → host_write move
+-   Both require user confirmation (L2 gate). The first time per thread, ASK the user explicitly before calling — e.g. "这个任务需要读取你的 Mail 收件箱（只读第一封）。可以吗？". Respect denial; do not retry without user re-prompting.
+-   NEVER use host_read/host_write for browser-DOM tasks — use get_page_text / evaluate instead. These tools do NOT work on Windows/Linux in Phase 1 (will return explicit error).
+-   NEVER propose these tools speculatively — only when the user's task cannot be accomplished via browser alone.`
++    : `12. macOS host_use — prefer SEMANTIC tools over coordinate host_computer (grill 2026-07-26):
++   - host_read: read top-1 Mail inbox. Returns {sender, subject, date_received, body_preview, verified, summary}. Only claim you "read the mail" when verified===true.
++   - host_write: Notes create (kind="create", body=…; first line = title) and Finder move. Returns {posted, verified, target_id}. Only claim "note created" when verified===true (list-notes re-read). Update/delete not available.
++   - host_computer: LAST RESORT pixel/OCR inject. Prefer host_read/host_write for Mail/Notes. Aggregate ALL same-app actions in ONE host_computer call (do not split one user goal into many tasks). Results may have posted=true,verified=false — NEVER say "已发送/已完成" unless verified===true or verified_steps covers the write.
++   ONLY propose host_read/host_write when the user EXPLICITLY mentions Mail/邮件/Notes/备忘录/Finder file move.
++   Both require L2 confirmation. First time per thread, ASK the user before calling. Respect denial.
++   NEVER use host_read/host_write for browser-DOM — use get_page_text/evaluate. NEVER propose speculatively.`
+ 
+   // App tab (WP5, design §5): compact host_app index injected right after
+   // Rule 12 — discovery via the system prompt, never a list tool.
+@@ -641,6 +638,8 @@ ${hostUseRule12}${appIndexSection ? `\n\n${appIndexSection}` : ""}`
+           let toolResult = await executeTool(tc.id, toolName, {
+             ...params,
+             tabId: params.tabId ?? threadManager.get(threadId)?.pinned_tabs?.[0],
++            // Grill Q1: computer session-trust keys off chat thread, not WS uuid.
++            __thread_id: threadId,
+           }, signal)
+ 
+           const durationMs = Date.now() - startTime
+diff --git a/companion/src/security-confirmation.ts b/companion/src/security-confirmation.ts
+index a1e3794..617a0dd 100644
+--- a/companion/src/security-confirmation.ts
++++ b/companion/src/security-confirmation.ts
+@@ -94,6 +94,11 @@ export interface SecurityConfirmationDecision {
+   confirmationId: string
+   approved: boolean
+   reason: "approved" | "denied" | "timeout" | "disconnect"
++  /**
++   * Grill Q2 (2026-07-26): user checked "本会话自动同意同类操作" on host_computer L2.
++   * Only meaningful when approved===true. Server uses this for explicitOptIn grant.
++   */
++  addToSessionTrust?: boolean
+ }
+ 
+ export interface SecurityConfirmationRequestOptions {
+@@ -279,6 +284,7 @@ export class SecurityConfirmationManager {
+     approved: boolean,
+     sourceWs?: WebSocket,
+     nonceResponse?: string,
++    extras?: { addToSessionTrust?: boolean },
+   ): ConfirmationRespondResult {
+     const pending = this.pending.get(confirmationId)
+     if (!pending) return { outcome: "unknown" }
+@@ -325,6 +331,11 @@ export class SecurityConfirmationManager {
+       confirmationId,
+       approved,
+       reason: approved ? "approved" : "denied",
++      // Only honor session-trust opt-in when the dialog offered relevantApps
++      // (host_computer) — blocks WS injection of the flag on other tools.
++      ...(approved && extras?.addToSessionTrust === true && pending.relevantApps.length > 0
++        ? { addToSessionTrust: true }
++        : {}),
+     })
+     return { outcome: "resolved" }
+   }
+diff --git a/companion/src/security.ts b/companion/src/security.ts
+index 946d284..00faaa2 100644
+--- a/companion/src/security.ts
++++ b/companion/src/security.ts
+@@ -678,6 +678,10 @@ export function classifyError(errorMessage: string, context?: { toolName?: strin
+     // the home dir), not bail the whole conversation.
+     "eperm",
+     "operation not permitted",
++    // Coordinate computer-use: LLM may re-locate / re-read client bounds after
++    // a near-miss or Retina image-pixel vs client-logical mismatch.
++    "outside client rect",
++    "out_of_bounds",
+   ]
+   if (recoverable.some(p => msg.includes(p))) {
+     return "recoverable"
+diff --git a/companion/src/server.ts b/companion/src/server.ts
+index 9f26431..70c065a 100644
+--- a/companion/src/server.ts
++++ b/companion/src/server.ts
+@@ -607,39 +607,69 @@ export function createToolExecutor(ws: WebSocket) {
+           // interactive approve) and credential latch — those need no separate
+           // check here.
+           if (sessionId && finalParams.app) {
+-            const { getComputerSessionTrust } = await import("./computer/session-trust")
++            const {
++              getComputerSessionTrust,
++              resolveComputerTrustKey,
++              trustKeyAllowsInitialSkip,
++            } = await import("./computer/session-trust")
+             const trust = getComputerSessionTrust()
+             const appToken = String(finalParams.app)
++            // Grill Q1=C: prefer chat thread for "本会话"; strip inject-only param.
++            const chatThreadId =
++              typeof (finalParams as any).__thread_id === "string"
++                ? String((finalParams as any).__thread_id)
++                : typeof (finalParams as any).thread_id === "string"
++                  ? String((finalParams as any).thread_id)
++                  : undefined
++            const trustKey = resolveComputerTrustKey(chatThreadId, sessionId)
+             const actionsArr = Array.isArray(finalParams.actions) ? finalParams.actions : []
++            const actionCount = actionsArr.length
+             const typeCorpus: string[] = []
++            let experimentalFlag = false
+             for (const a of actionsArr) {
+               if (a && typeof a === "object" && (a as any).action === "type" && typeof (a as any).text === "string") {
+                 typeCorpus.push(String((a as any).text))
+               }
++              if (a && typeof a === "object" && (a as any).experimental === true) experimentalFlag = true
+             }
+-            const trusted = trust.isTrusted(sessionId, appToken)
+-            const corpusOk = trust.corpusContains(sessionId, appToken, typeCorpus)
+-            const maxBudget = trust.maxBudgetSeen(sessionId, appToken)
++            // Grill Q2/Q3: initial skip requires explicit opt-in + thread key + corpus/budget/actions.
++            const optIn = trust.hasExplicitOptIn(trustKey, appToken)
++            const keyOk = trustKeyAllowsInitialSkip(trustKey)
++            const trusted = trust.isTrusted(trustKey, appToken)
++            const corpusOk = trust.corpusContains(trustKey, appToken, typeCorpus)
++            const maxBudget = trust.maxBudgetSeen(trustKey, appToken)
+             const budgetOk = maxBudget > 0 && budgetN <= maxBudget
+-            if (trusted && corpusOk && budgetOk) {
++            const maxActions = trust.maxActionsSeen(trustKey, appToken)
++            const actionsOk = maxActions > 0 && actionCount <= maxActions
++            if (optIn && keyOk && trusted && corpusOk && budgetOk && actionsOk && !experimentalFlag) {
+               hostComputerTrustSkip = true
+               logger.info("computer.session_trust.task_auto_approved", {
+                 tool_call_id: toolCallId,
+-                thread_id: sessionId,
++                trust_key: trustKey,
++                chat_thread_id: chatThreadId ?? null,
+                 app: appToken,
+                 type_corpus_size: typeCorpus.length,
+                 budget: budgetN,
+                 max_budget_seen: maxBudget,
++                actions: actionCount,
++                max_actions_seen: maxActions,
++                explicit_opt_in: true,
+               })
+             } else {
+               logger.info("computer.session_trust.skip_missed", {
+                 tool_call_id: toolCallId,
+-                thread_id: sessionId,
++                trust_key: trustKey,
++                chat_thread_id: chatThreadId ?? null,
+                 app: appToken,
+                 trusted,
++                explicit_opt_in: optIn,
++                key_allows_skip: keyOk,
+                 corpus_eligible: corpusOk,
+                 budget_eligible: budgetOk,
++                actions_eligible: actionsOk,
++                experimental: experimentalFlag,
+                 max_budget_seen: maxBudget,
++                max_actions_seen: maxActions,
+               })
+             }
+           }
+@@ -895,10 +925,11 @@ export function createToolExecutor(ws: WebSocket) {
+               // App tab WP3: the thread-trust checkbox (relevantApps) is offered
+               // ONLY under policy "ai". "manual" must never show it (owner
+               // decision 2); "auto" never reaches this dialog.
+-              // host_computer: input injection is NEVER thread-trusted — no
+-              // checkbox is ever offered (plan §E.3).
++              // host_computer (grill Q2 2026-07-26): offer app token so the
++              // panel can show "本会话自动同意同类操作" (session trust opt-in,
++              // NOT ThreadApprovals / not write-biometric skip).
+               relevantApps: hostComputerGated
+-                ? []
++                ? (finalParams.app ? [String(finalParams.app)] : [])
+                 : hostApp
+                   ? (hostApp.policy === "ai" ? [hostApp.token] : [])
+                   : (relevantApp ? [relevantApp] : []),
+@@ -1002,13 +1033,25 @@ export function createToolExecutor(ws: WebSocket) {
+         // literals — so a future task with the same-or-subset corpus is eligible
+         // for the G1 trust skip above.
+         if (hostComputerGated && finalParams.app) {
+-          const { getComputerSessionTrust } = await import("./computer/session-trust")
++          const { getComputerSessionTrust, resolveComputerTrustKey } = await import("./computer/session-trust")
+           const trust = getComputerSessionTrust()
+           const appToken = String(finalParams.app)
+-          trust.grant(sessionId, appToken)
+-          trust.clearCredentialLatch(sessionId, appToken)
+-          trust.recordBudget(sessionId, appToken, Number(finalParams.budget) || 15)
++          const chatThreadId =
++            typeof (finalParams as any).__thread_id === "string"
++              ? String((finalParams as any).__thread_id)
++              : typeof (finalParams as any).thread_id === "string"
++                ? String((finalParams as any).thread_id)
++                : undefined
++          const trustKey = resolveComputerTrustKey(chatThreadId, sessionId)
++          // Grill Q2: always grant for task-local reL2 silence; explicitOptIn
++          // only when user checked the session auto-approve box.
++          const explicitOptIn = decision.addToSessionTrust === true
++          trust.grant(trustKey, appToken, { explicitOptIn })
++          trust.clearCredentialLatch(trustKey, appToken)
++          const budgetRec = Number(finalParams.budget) || 15
++          trust.recordBudget(trustKey, appToken, budgetRec)
+           const actionsArr = Array.isArray(finalParams.actions) ? finalParams.actions : []
++          trust.recordActions(trustKey, appToken, actionsArr.length)
+           const typeTexts: string[] = []
+           for (const a of actionsArr) {
+             if (a && typeof a === "object" && (a as any).action === "type" && typeof (a as any).text === "string") {
+@@ -1016,13 +1059,17 @@ export function createToolExecutor(ws: WebSocket) {
+             }
+           }
+           if (typeTexts.length > 0) {
+-            trust.extendCorpus(sessionId, appToken, typeTexts)
++            trust.extendCorpus(trustKey, appToken, typeTexts)
+           }
+           logger.info("computer.session_trust.granted", {
+             tool_call_id: toolCallId,
++            trust_key: trustKey,
++            chat_thread_id: chatThreadId ?? null,
+             app: appToken,
+             corpus_extended_by: typeTexts.length,
+-            budget_recorded: Number(finalParams.budget) || 15,
++            budget_recorded: budgetRec,
++            actions_recorded: actionsArr.length,
++            explicit_opt_in: explicitOptIn,
+           })
+         }
+         if (hostApp) hostAppTier = "l2"
+@@ -1347,8 +1394,19 @@ export function createToolExecutor(ws: WebSocket) {
+           // WP2 (§E.4): computer-task progress events go to every
+           // authenticated panel (the owner's own live view).
+           broadcast: broadcastToClients,
+-          // UX-spike 2026-07-23: session id for per-session re-L2 trust.
+-          computerSessionId: sessionId,
++          // Grill Q1: re-L2 trust key = thread:… when chat thread known.
++          computerSessionId: (() => {
++            try {
++              const { resolveComputerTrustKey } = require("./computer/session-trust") as typeof import("./computer/session-trust")
++              const tid =
++                typeof (finalParams as any).__thread_id === "string"
++                  ? String((finalParams as any).__thread_id)
++                  : undefined
++              return resolveComputerTrustKey(tid, sessionId)
++            } catch {
++              return sessionId
++            }
++          })(),
+         })
+         logToolFinish(toolCallId, toolName, startedAt, result)
+         return result
+@@ -1607,7 +1665,12 @@ export async function handleSecurityConfirmationResponse(ws: WebSocket, msg: any
+   // dedicated audit events and must NOT be lumped into
+   // origin_mismatch_or_unknown.
+   const nonceResponse = typeof msg.nonce_response === "string" ? msg.nonce_response : undefined
+-  const respondResult = securityConfirmations.respondFrom(confirmationId, approved, ws, nonceResponse)
++  // Grill Q2: host_computer session auto-approve checkbox (validated in respondFrom
++  // against relevantApps non-empty).
++  const addToSessionTrust = msg.add_to_session_trust === true
++  const respondResult = securityConfirmations.respondFrom(confirmationId, approved, ws, nonceResponse, {
++    addToSessionTrust,
++  })
+   const responded = respondResult.outcome === "resolved"
+   if (respondResult.outcome === "unknown" || respondResult.outcome === "origin_mismatch") {
+     // Either no such pending entry, or the response arrived on a different
+@@ -1914,7 +1977,22 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?:
+         const application = typeof params.application === "string" ? params.application : undefined
+         const maxChars = typeof params.max_chars === "number" ? params.max_chars : undefined
+         const result = await hostRead({ application, maxChars })
+-        return { success: true, data: result }
++        // Grill G5/Q6: Mail read verified when required structured fields non-empty.
++        const { evaluateMailReadVerify } = await import("./host-use/darwin/notes-verify")
++        const v = evaluateMailReadVerify(result)
++        return {
++          success: true,
++          data: {
++            ...result,
++            posted: true,
++            verified: v.verified,
++            ...(v.reason ? { verify_note: v.reason } : {}),
++            // Golden-path friendly summary for LLM (do not invent content).
++            summary: v.verified
++              ? `From: ${result.sender} | Subject: ${result.subject} | Date: ${result.date_received}`
++              : undefined,
++          },
++        }
+       } catch (err: any) {
+         return { success: false, error: `host_read error: ${err.message || String(err)}` }
+       }
+@@ -2077,7 +2155,46 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?:
+               : "macos:com.apple.Notes:default:note-default")
+         const target = adapter.validateTargetId(syntheticTarget)
+         const result = await adapter.writeOne(target, payload)
+-        return { success: true, data: { ...result, biometric_nonce: nonce } }
++        // Grill G4: Notes create — posted after writeOne; verified via list-notes
++        // re-read (S-semantic success contract).
++        let verified = false
++        let verifyNote: string | undefined
++        if (!isWin && kind === "create" && typeof params.body === "string") {
++          try {
++            const { evaluateNotesCreateVerify } = await import("./host-use/darwin/notes-verify")
++            let listedIds: string[] = []
++            if (typeof (adapter as any).listReadTargets === "function") {
++              const listed = await (adapter as any).listReadTargets("note", { limit: 100 })
++              listedIds = Array.isArray(listed) ? listed.map(String) : []
++            }
++            const v = evaluateNotesCreateVerify({
++              body: params.body,
++              targetId: result.target_id,
++              listedIds,
++            })
++            verified = v.verified
++            verifyNote = v.reason
++          } catch (ve: any) {
++            verified = false
++            verifyNote = `verify failed: ${ve?.message || String(ve)}`
++          }
++        } else if (kind === "create") {
++          verified = false
++          verifyNote = "semantic re-read not available on this platform/kind"
++        } else {
++          // move: writeOne success → treat as verified for path ops (no read-back yet)
++          verified = true
++        }
++        return {
++          success: true,
++          data: {
++            ...result,
++            biometric_nonce: nonce,
++            posted: true,
++            verified,
++            ...(verifyNote ? { verify_note: verifyNote } : {}),
++          },
++        }
+       } catch (err: any) {
+         return { success: false, error: `host_write error: ${err.message || String(err)}` }
+       }
+@@ -2403,6 +2520,13 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?:
+             total: result.totalActions,
+             evidence_dir: result.evidenceDir,
+             steps: result.steps,
++            // Grill G1: posted ≠ verified. LLM must not claim "已发送" unless verified_steps cover write steps.
++            posted_steps: result.posted_steps ?? 0,
++            verified_steps: result.verified_steps ?? 0,
++            note:
++              (result.verified_steps ?? 0) < (result.posted_steps ?? 0)
++                ? "Some inject steps posted events but were not semantically verified (posted≠verified)."
++                : undefined,
+           },
+         }
+       } catch (err: any) {
+diff --git a/companion/tests/computer-coords.test.ts b/companion/tests/computer-coords.test.ts
+index 5ef7723..809b6f9 100644
+--- a/companion/tests/computer-coords.test.ts
++++ b/companion/tests/computer-coords.test.ts
+@@ -90,13 +90,26 @@ test("maybeAutoscaleImageToClient: detects Retina-scale mismatch (unambiguous ca
+   assert.equal(r!.scaled.y, 300)
+ })
+ 
+-test("maybeAutoscaleImageToClient: user-reported (722,872) class is AMBIGUOUS — refuses autoscale", () => {
+-  // The actual user bug: (722, 872) against 880x640 Retina. scaled=(361,436)
+-  // in bounds; swapped=(436,361) also in bounds → Pi R5 ambiguous → refuse.
+-  // Real fix lives in executor.ts OOB diagnostic (surfaces scale info so the
+-  // user/LLM can reason about the mismatch), NOT in autoscale.
++test("maybeAutoscaleImageToClient: (722,872) inside image bounds → Retina autoscale", () => {
++  // Historical user bug class: (722, 872) against 880×640 Retina. With image
++  // dims present (1760×1280), raw is a valid PNG pixel → divide by scale.
++  // (Previously refused as "swap-ambiguous"; that check disabled autoscale on
++  // landscape windows entirely — see WeChat (500,650) vs 1324×640.)
+   const r = maybeAutoscaleImageToClient({ x: 722, y: 872 }, RETINA, { x: 0, y: 0, width: 880, height: 640 })
+-  assert.equal(r, null, "ambiguous orientation must NOT trigger autoscale")
++  assert.ok(r, "image-contained OOB should autoscale")
++  assert.equal(r!.reason, "retina-scale")
++  assert.equal(r!.scaled.x, 361)
++  assert.equal(r!.scaled.y, 436)
++})
++
++test("maybeAutoscaleImageToClient: WeChat (500,650) on 1324×640 @2x → autoscale", () => {
++  // Live failure 2026-07-25: swap-of-scaled check refused because both
++  // (250,325) and (325,250) fit a wide client. Image containment wins.
++  const scales = { imageWidth: 2648, imageHeight: 1280, scaleX: 2, scaleY: 2 }
++  const r = maybeAutoscaleImageToClient({ x: 500, y: 650 }, scales, { x: 0, y: 0, width: 1324, height: 640 })
++  assert.ok(r)
++  assert.equal(r!.scaled.x, 250)
++  assert.equal(r!.scaled.y, 325)
+ })
+ 
+ test("maybeAutoscaleImageToClient: returns null when point already in client", () => {
+@@ -115,14 +128,21 @@ test("maybeAutoscaleImageToClient: returns null when scaled point still OOB (tru
+   assert.equal(r, null)
+ })
+ 
+-test("maybeAutoscaleImageToClient: Pi R5 — refuses when swap orientation also in bounds", () => {
+-  // Construct a case where both (x/sx, y/sy) and (y/sy, x/sx) are in C.
+-  // Client 880x640, scale 2. Raw (600, 1000): scaled (300, 500) in bounds;
+-  // swapped (500, 300) also in bounds → ambiguous, refuse autoscale.
+-  const r = maybeAutoscaleImageToClient({ x: 600, y: 1000 }, RETINA, { x: 0, y: 0, width: 880, height: 640 })
++test("maybeAutoscaleImageToClient: Pi R5 — without image dims, refuses swap-ambiguous", () => {
++  // No image dims → weak path: both scaled and swap-scaled fit C → refuse.
++  const noImage = { imageWidth: 0, imageHeight: 0, scaleX: 2, scaleY: 2 }
++  const r = maybeAutoscaleImageToClient({ x: 600, y: 1000 }, noImage, { x: 0, y: 0, width: 880, height: 640 })
+   assert.equal(r, null)
+ })
+ 
++test("maybeAutoscaleImageToClient: with image dims, (600,1000) inside image → autoscale", () => {
++  // Same point with RETINA image 1760×1280: 1000 < 1280 → image-contained.
++  const r = maybeAutoscaleImageToClient({ x: 600, y: 1000 }, RETINA, { x: 0, y: 0, width: 880, height: 640 })
++  assert.ok(r)
++  assert.equal(r!.scaled.x, 300)
++  assert.equal(r!.scaled.y, 500)
++})
++
+ test("maybeAutoscaleImageToClient: returns null when client dimensions are zero", () => {
+   const r = maybeAutoscaleImageToClient({ x: 100, y: 100 }, RETINA, { x: 0, y: 0, width: 0, height: 0 })
+   assert.equal(r, null)
+diff --git a/companion/tests/computer-executor.test.ts b/companion/tests/computer-executor.test.ts
+index 4015b7d..54e0803 100644
+--- a/companion/tests/computer-executor.test.ts
++++ b/companion/tests/computer-executor.test.ts
+@@ -1176,6 +1176,35 @@ test("executor UX-spike: sidepanel (chrome.exe) steals foreground -> self-UI re-
+   assert.equal(injector.clicks.length, 2, "both actions injected")
+ })
+ 
++test("executor UX-spike: macOS sidepanel (com.google.Chrome) steals FG -> self-UI, NO re-L2", async () => {
++  // Product paradox 3ffkgl: macOS WindowInfo.exePath is the bundle id, not an
++  // exe path. exeBasename("com.google.Chrome") === "com" — old matcher never
++  // treated Chrome as companion UI, so every Allow click re-prompted
++  // "前台被 Chrome 接管" while the user was also told to keep WeChat front.
++  const confirm = scriptedConfirm([false])
++  const injector = new RecordingInjector()
++  injector.foreground = 999999
++  const info = winInfo()
++  const windows: WindowEnumerator = {
++    async enumerateByExe() { return [info] },
++    async infoForHwnd(h: number) {
++      return h === 999999
++        ? winInfo({ hwnd: 999999, exePath: "com.google.Chrome" })
++        : info
++    },
++  }
++  const deps = makeDeps({
++    confirm: confirm.fn,
++    injector,
++    windows,
++    config: testConfig({ companionUiBasenames: ["chrome"] }),
++  })
++  const r = await runComputerTask({ task: "t", app: "win.app.test", actions: [clickOk, clickOk] }, deps)
++  assert.equal(r.success, true, "macOS Chrome bundle id counts as self-UI")
++  assert.equal(confirm.captured.length, 0, "no re-L2 — user stays in side panel")
++  assert.equal(injector.clicks.length, 2)
++})
++
+ test("executor UX-spike: self-UI yield WITH a large pixel change still pauses (real dialog)", async () => {
+   // The allow-list must NOT mask a real task-induced dialog. When the foreign
+   // foreground is chrome.exe BUT a large whole-window change also fired, the

@@ -1,0 +1,21 @@
+I'll route this review request and locate the Swift tray focus-preservation changes.Routing matched `omx/autopilot` (autonomous multi-phase loop) — unsuitable for a focused code review. Using the review skill and locating the focus-preservation changes plus Q1–Q6.Routing override: `omx/autopilot` is wrong for a focused review. Inspecting the Tray.swift focus-preservation diff and related changes.**APPROVE WITH AMENDMENTS**
+
+Core fix is right: drop `NSApp.activate`, use `NSPanel` + `.nonactivatingPanel`, keep `makeKeyAndOrderFront` + `orderFrontRegardless`. That matches AppKit’s non-activating panel pattern and matches the stated TextEdit frontmost check. Race wiring (shared id, tray vs WS, cancel on WS win, privileged `respond` on tray win) is coherent and fail-closed.
+
+### Amendments
+1. **Comment wrong on `becomesKeyOnlyIfNeeded = false`** — that does *not* mean “never steal key”; it means the panel becomes key when ordered front (good for Esc/Return). Frontmost *process* is preserved by `.nonactivatingPanel`, not this flag. Fix the comment.
+2. **Set `panel.level = .floating`** (or `.statusBar`) so the confirm stays above the target app’s normal windows after `orderFrontRegardless`; optional but recommended for reliability.
+3. **Summary “sanitize” is aspirational** — comment claims strip control chars; only server-side 800-char truncate exists. Strip `\u0000-\u001F` in Swift or drop the claim.
+4. **`respond()` is now production** — docs say “never call from request-handling.” Either rename to something like `respondFromTrustedLocalChannel` or document tray as the only production caller (stdin + `SWIFT_TRAY_SHA256`).
+
+### Q1–Q6
+| Q | Verdict |
+|---|---|
+| **Q1** | **Yes.** `.nonactivatingPanel` + no `NSApp.activate` is the correct “visible + key, not frontmost app” recipe. `becomesKeyOnlyIfNeeded` is secondary (see A1). |
+| **Q2** | **Yes for mouse.** Button actions on non-activating panels fire without activating the owner (palette pattern). Key equivalents work because the panel is key; frontmost app for CGEvent stays the target. Worth one post-click osascript check after Allow. |
+| **Q3** | **Acceptable.** Tray is a local single-instance child; stdin not remote; binary hash-gated. Not a WS peer. Residual risk = compromised local tray binary (same class as any host helper). Prefer named trusted API (A4). |
+| **Q4** | **No material leak.** WS win → `cancelConfirm` clears timer/map + IPC; Swift `cancel` nils `pendingId` before `close` so `windowWillClose` doesn’t double-emit. Tray adapter `timeoutMs+1000` backstop. Late Swift response after delete is ignored. |
+| **Q5** | **Sound.** Nonce needs Side Panel paste-block UI; excluding tray when `winL2NonceChallenge` is set is correct. |
+| **Q6** | **Deny is correct.** Red-close = user rejected; silent cancel would leave manager/Side Panel pending until timeout. `pendingId` guard prevents double-emit vs Allow/Deny/cancel. |
+
+Ship after A1 (comment) + A3; A2/A4 can follow-up. No reject on focus preservation.

@@ -1,0 +1,317 @@
+Adversary Review — Approach C (Full SkyLight per-PID Computer-Use Swap)
+=======================================================================
+Date: 2026-07-24
+Reviewer: independent adversary (Claude Code, round 1)
+Spec under review: /tmp/approach-c-spec.md
+Base commit: origin/main fd00f94 (post v1.3 Batch 1 + Batch 2)
+
+Verdict (TL;DR): RE-RESEARCH before Plan. Approach C is not free — it
+reverses a security posture already shipped in v1.3 Batch 1 (library
+validation hardened-runtime flag must flip), and it depends on an SPI
+stack that yabai/cua are visibly chasing across point releases (issue
+#1503 is a Sonoma-specific SkyLight selector crash; yabai issues #2634,
+#2638, #2707 show Tahoe 26 / 26.2 breakage of related SkyLight calls).
+The software-cursor + daemon + AX-first overlays are all doable but
+each adds a fresh attack surface on top of the TOCTOU-hardened
+per-action spawn model that the swift-tray-bridge.ts S-P0-2 fix just
+established. There is exactly one Blocker that is empirically
+answerable in ≤2 days; resolve it before Plan.
+
+================================================================
+1. BLOCKERS (must fix before Plan phase)
+================================================================
+
+B1. Library validation must flip from false→true; reopens v1.3 Batch 1 surface.
+---------------------------------------------------------------------------
+Failure scenario:
+  host.entitlements currently sets `com.apple.security.cs.disable-library-validation = false`
+  (file://companion/src/host-use/darwin/host.entitlements). Approach C §1 requires
+  `dlopen("/System/Library/PrivateFrameworks/SkyLight.framework", RTLD_LAZY)`
+  followed by `dlsym(handle, "SLEventPostToPid")` and `dlsym(handle, "SLPSPostEventRecordTo")`.
+  SkyLight is signed by Apple (Team ID `苹果公司 / not cmSpark's Developer ID`).
+  Under hardened runtime, dyld3 library validation rejects any unsigned or
+  differently-signed dylib unless the entitlement is true OR an explicit
+  load-trust exception exists. The cua blog explicitly references loading
+  SkyLight symbols, and so does yabai — both ship with
+  `disable-library-validation=true`.
+
+Evidence:
+  - Apple docs: https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.security.cs.disable-library-validation
+    "Library validation normally ensures loaded libraries are signed by Apple
+     or the same Team ID as the main executable."
+  - Apple notarization guidance (Resolving Common Notarization Issues) explicitly
+    warns: "Don't disable library validation for executables that don't host
+    plug-ins because library validation protects them from loading untrusted code."
+  - Real-world attack pattern: AFINE blog "Breaking Hardened Runtime: The 0-Day
+    Microsoft Delivered to macOS" — disable-library-validation was the load
+    primitive exploited in the .NET MAUI escape. (We are not Microsoft, but
+    we'd be opting into the same posture.)
+  - In-repo: companion/src/host-use/darwin/host.entitlements:7-8 explicitly
+    ships with the entitlement OFF; the comment block justifies this by saying
+    nothing loads third-party frameworks. Approach C breaks that justification.
+
+Why it's a blocker:
+  v1.3 Batch 1 (S-P0-2 TOCTOU hardening in swift-tray-bridge.ts) was specifically
+  about preventing a substituted binary from reaching the privileged respond()
+  path. Disabling library validation while expanding the daemon's IPC surface
+  (item #5 in spec) is a regression in the same threat model: an attacker who
+  can plant a dylib in any path DYLD will search (or who can exploit a separate
+  path-traversal bug to write into the bundle) now gets a signed, privileged
+  process to call into it. Codesign seal no longer catches the substitution
+  because dylib load is outside the seal's static check.
+
+Minimum spike to de-risk (≤2 days):
+  Build two `host.swift` variants — one with `disable-library-validation=true`,
+  one with a manual `SecStaticCodeCheckValidity`-gated `dlopen` whitelist that
+  loads only SkyLight by absolute path. Run `codesign --verify --verbose=4` and
+  submit both to notarization (`xcrun notarize-app`). Compare notarization
+  tickets and Gatekeeper behavior on a clean Sonoma VM. If notarization rejects
+  the disable-library-validation variant OR the whitelist variant crashes
+  SkyLight load under hardened runtime, the approach is dead.
+
+---------------------------------------------------------------------------
+B2. SPI stability on the exact OS versions we target is provably broken upstream.
+---------------------------------------------------------------------------
+Failure scenario:
+  Spec targets macOS 14.4 / 15 / 26. SkyLight SPI is empirically unstable
+  across this range:
+  - cua issue #1503 (closed but documents the failure mode): "cua-driver crashes
+    on macOS 14 (Sonoma) — unrecognized selector SLSEventAuthenticationMessage."
+    Same selector family as SLEventPostToPid. The crash was on Sonoma — the
+    floor of our deployment target.
+  - yabai issues #2634 / #2638 / #2707: yabai scripting addition (uses the
+    same SkyLight private framework family) is broken on macOS 26 (Tahoe),
+    broke again on 26.2 beta, and remains broken as recently as the search
+    snapshot.
+  - yabai is the canary in this coal mine — full-time maintainer, multiple
+    macOS betas chased per cycle. cmSpark is not a full-time window manager.
+
+Evidence:
+  - https://github.com/trycua/cua/issues/1503 (closed: "unrecognized selector
+    SLSEventAuthenticationMessage" on Sonoma)
+  - https://github.com/asmvik/yabai/issues/2634 (macOS 26 scripting addition
+    not working)
+  - https://github.com/asmvik/yabai/issues/2707 ("Yabai not working after
+    Tahoe 26.2 update") — breakage recurs across minor point releases
+  - cua release notes v0.8.3–v0.12.3: macOS SPI fix entries are absent from
+    the public changelog (they exist internally per Hermes docs: "ships fixes
+    regularly, e.g. v0.1.6 fixed a Safari window-focus bug") — meaning the
+    published crate is NOT a one-click substitute.
+
+Why it's a blocker:
+  Spec section "Recovery path" only says "force HID fallback." But the recovery
+  needs three properties: (a) detect the SPI break at runtime, (b) NOT silently
+  corrupt user state (e.g. click lands on wrong window because SLPSPostEventRecordTo
+  flipped focus to a zombie app), (c) NOT require an app update for every
+  minor macOS point release. None of these are in the spec. cua's experience
+  is that they ARE needed — v0.1.6 was a patch release for one app-specific
+  focus bug. cmSpark does not have a cua-style auto-update channel; our
+  users are drag-installing a DMG.
+
+Minimum spike to de-risk (≤2 days, shared with B1 spike):
+  Add `dlsym` null-checks + `@_silgen_name` probe at daemon start; log the
+  SkyLight Mach-O version triplet (e.g. 243.4.1) and selector availability.
+  Run on Sonoma 14.4 / 14.7 / 15.3 / 15.5 / 26.0 / 26.2 (we need all six
+  because we ship to all six). Produce a matrix of "SLEventPostToPid present
+  + functional" per OS. If the matrix shows ANY row with symbol present but
+  crashing on first call, the spec's "force HID fallback" recovery is
+  insufficient — we need a feature-detection gate, not an exception handler.
+
+---------------------------------------------------------------------------
+B3. Long-lived host daemon invalidates v1.3 Batch 1 TOCTOU hardening.
+---------------------------------------------------------------------------
+Failure scenario:
+  swift-tray-bridge.ts checkIntegrity() opens an fd, hashes from the fd,
+  spawns via realpath, then post-spawn re-fstats to catch inode/dev drift.
+  This works ONLY because the binary is short-lived per call. Approach C
+  item #5 ("long-lived host daemon") breaks the model: a single integrity
+  check at daemon-start covers the next N hours of IPC. An attacker who
+  can substitute the binary AFTER start (or who controls any IPC message
+  that causes the daemon to re-load a plugin path) has a permanent
+  privileged foothold for the session lifetime.
+
+Evidence:
+  - companion/src/tray/swift-tray-bridge.ts:42-185 — the entire S-P0-2
+    hardening narrative explicitly assumes fresh-spawn-per-call ("spawn via
+    realpath, then post-spawn re-stat").
+  - The daemon IPC contract is unspecified: spec lists "stdin/stdout JSON
+    lines or Unix domain socket" as alternatives with no threat model.
+    A Unix domain socket without SCM_CREDENTIALS + peer-PID validation
+    is a local priv-esc: any user-level process can connect and inject
+    `inject --action click --window-id <victim>`.
+  - Approve/deny side-channel: the tray already has a `respond()` path
+    that bypasses originWs on SecurityConfirmationManager (per the S-P0-2
+    comment). A daemon with the same surface × 24h uptime is a much bigger
+    target than a per-action spawn.
+
+Why it's a blocker:
+  v1.3 Batch 1 security posture assumed a per-action spawn. The whole
+  reason we accepted per-action fork overhead (10-50ms × N) was to keep
+  the privileged binary short-lived. Approach C reverses that trade
+  silently. The spec must either (a) re-derive the threat model and prove
+  the daemon is still S-P0-2 compliant, or (b) accept that we are
+  shipping a permanently-running privileged process and add explicit
+  per-call integrity re-validation (re-stat the binary on every IPC).
+
+Minimum spike (≤1 day):
+  Write a one-page addendum to S-P0-2 threat model for the daemon case.
+  Concrete: for each IPC message, list which file the daemon reads, which
+  PID/PID-set it injects into, and whether re-validation is required.
+  If the table has any row where "trust the caller" is the answer, the
+  daemon is a non-starter and we keep per-action spawn.
+
+================================================================
+2. CONCERNS (should fix, won't block)
+================================================================
+
+C1. Chrome right-click remains occasionally broken.
+   Spec explicitly accepts this per cua blog: "Pure web content is stuck
+   on left-click" — AX right-click on web content is not addressable,
+   and the (-1,-1) decoy click workaround only fixes left-click user
+   activation. For a v1 ship, "occasionally broken" on the dominant
+   browser is a UX cliff. Recommendation: gate this in policy.ts as a
+   known-limitation surface in the side-panel preview, not a silent
+   regression. (Not a blocker — cua ships it and survives.)
+
+C2. Fallback detection contract is hand-wavy.
+   Spec says "TBD: allowlist? probe?" for HID fallback. The cua blog
+   explicitly enumerates: "Canvas apps (Blender GHOST, Unity, games)
+   filter per-pid routes entirely and require frontmost activation with
+   a leading mouseMoved event from cghidEventTap." This is not a probe
+   — it is a hard enumeration. Vendor the cua list as a per-bundle-id
+   table; probes are too slow and AX tree has no signal for "this app
+   is canvas-driven." Recommend: hardcode the table, log unknown apps,
+   add manual override via config.json. (Not a blocker — cua's table
+   is short.)
+
+C3. Software cursor overlay vs screen recording / screen share.
+   NSWindow with `.nonactivatingPanel` + `.floating` — under
+   SCShareableContent, overlay windows appear in capture streams by
+   default unless excluded via SCContentFilter listApplicationIDs to
+   exclude cmSpark's bundle id. Spec is silent on this. Concerns:
+   Zoom/Meet/Slack calls will see a fake cursor moving independently
+   of the user's real one; screen recordings for QA / demos will
+   capture fake cursor + real cursor simultaneously. Recommendation:
+   add SCContentFilter exclusion for cmSpark bundle id on the overlay
+   window's owning process. (Not a blocker — cua has the same issue
+   and presumably ships it; but it's user-visible confusion, not
+   silent breakage.)
+
+C4. AX-first is not free.
+   AX tree walks in host.swift cuAXProbe cap at 5000 nodes. cuAXLocate
+   caps at depth 50. For real apps (Slack, Notion, Figma) this is
+   often insufficient — locating a specific button by name requires
+   BFS through hundreds of windows × thousands of nodes per window.
+   cua explicitly says they use "a private AX SPI for sparse
+   accessibility trees" — that is NOT the public AXUIElement API.
+   cmSpark would have to either (a) ship the public API and accept
+   AXProbe's false-negative rate, or (b) reverse-engineer the same
+   private AX SPI that cua uses (same notarization/library-validation
+   exposure as B1). (Not a blocker — the AX-first mandate can be
+   scoped to "use AX when cuAXLocate returns a hit, otherwise fall
+   through to SLEventPostToPid".)
+
+C5. Piggyback on cua-driver.
+   MIT-licensed, exists at libs/cua-driver/rust/. Vendoring saves
+   reimplementing the SPI surface BUT: (a) Rust daemon adds ~10MB
+   to DMG and introduces a second privileged binary (now we have
+   cmspark-host AND cua-driver), multiplying the S-P0-2 surface;
+   (b) update lag — we adopt cua's fixes on their schedule, not
+   ours; (c) their public crate docs explicitly omit macOS SPI
+   fixes from the changelog, so we cannot pin to a version and
+   trust stability. Recommendation: do NOT vendor; reimplement the
+   narrow SLEventPostToPid / SLPSPostEventRecordTo callsite only,
+   keep binary surface unchanged. (Not a blocker — but if Approach
+   C proceeds, vendor-vs-reimplement is a real fork.)
+
+================================================================
+3. OPEN QUESTIONS (need empirical answers)
+================================================================
+
+Q1. Does SLEventPostToPid survive on Sonoma 14.4 (the floor of our
+    deployment target)? cua issue #1503 documents an SkyLight selector
+    crash on Sonoma — was that selector a sibling of PostToPid?
+    Spike B1 will answer this.
+
+Q2. Notarization: does Apple reject a binary that dlopens SkyLight
+    under hardened runtime with disable-library-validation=true?
+    yabai ships outside App Store so they bypass this; we are in
+    the same distribution model, but we should verify before Plan.
+
+Q3. Daemon IPC: does the long-lived process inherit Accessibility
+    trust across a SIGSTOP/resume, or does macOS 15+ invalidate
+    the trust on certain lifecycle events? Spec is silent.
+
+Q4. Recovery UX: when SLEventPostToPid returns NULL or crashes
+    on a new macOS release, what does the user see? Silent fallback
+    to HID cursor-hijack would be a regression from current
+    behavior (current code at least surfaces HWND_DEAD).
+
+Q5. Chrome decoy click (-1,-1): does this still work after Chrome
+    130+ which tightened user-activation gates? cua blog is dated;
+    the workaround may have already decayed.
+
+Q6. Multi-display: software cursor overlay coordinate space — does
+    NSWindow .floating respect display bounds correctly when the
+    target window is on a secondary display with different DPI?
+    Spec is silent.
+
+Q7. Test infrastructure: how do we write a regression test for
+    "click works on Chrome"? cmSpark has zero macOS GUI test
+    fixtures (host.swift has no XCTest target). cua has a
+    test-matrix doc at libs/cua-driver/docs/test-matrix.md — we
+    would need to replicate at least a subset.
+
+================================================================
+4. VERDICT
+================================================================
+
+RE-RESEARCH before Plan. Not because the approach is wrong, but
+because the spec assumes three properties that are empirically
+falsifiable in ≤2 days:
+
+  1. SkyLight SPI is stable on macOS 14.4 / 15.x / 26.x  → B1+B2 spike.
+  2. dlopen+library validation passes notarization           → B1 spike.
+  3. Long-lived daemon preserves S-P0-2 posture             → B3 addendum.
+
+If all three resolve in favor of Approach C, proceed to
+Grok+Claude Code final review. If any one fails, the spec needs
+revision. Specifically: if B2 shows Sonoma 14.4 fails, we have
+to either bump our deployment target (currently LSMinimumSystemVersion
+= 14.4 per host-Info.plist) or stay on CGEvent.post(.cghidEventTap)
+and adopt only the AX-first + software cursor pieces (Approach C
+minus item #1).
+
+Do NOT proceed directly to Plan. The Plan would inherit B1/B2/B3
+as silent assumptions, and v1.3 Batch 1's security posture would
+be quietly reverted by the library-validation flip.
+
+================================================================
+5. MINIMUM SPIKE (≤2 days, ordered by ROI)
+================================================================
+
+Day 1 — Build matrix spike:
+  - Fork host.swift into host-skylight.swift.
+  - Replace cuInject's .cghidEventTap with dlopen(SkyLight) +
+    dlsym(SLEventPostToPid) + dlsym(SLPSPostEventRecordTo).
+  - Set entitlement disable-library-validation=true on this variant.
+  - Build on Sonoma 14.4, Sequoia 15.5, Tahoe 26.2.
+  - For each OS: notarize, install via DMG, run a single click on
+    TextEdit + Chrome + Safari. Record: (a) does the symbol resolve?
+    (b) does the click land on the target pid? (c) does notarization
+    ticket come back clean?
+
+Day 2 — Daemon threat-model addendum:
+  - One-page markdown extending S-P0-2 to the daemon case.
+  - Per-IPC-message: file touched, pid-set touched, re-validation
+    required (yes/no).
+  - If any row is "trust the caller" — daemon is dead, keep
+    per-action spawn with the SkyLight swap.
+
+Total: 2 engineer-days. Output: pass/fail matrix + threat-model
+addendum. Decision gate: all three OS rows pass AND daemon addendum
+has zero "trust the caller" rows ⇒ proceed to final review.
+Otherwise ⇒ revise spec (most likely: drop daemon, keep daemon's
+IPC perf optimization as a deferred Phase 2; keep per-action spawn;
+accept that we pay 10-50ms × N fork overhead which is already the
+status quo).

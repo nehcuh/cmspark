@@ -1,0 +1,88 @@
+# Spike Fixes Review — Claude Code (2026-07-24)
+
+Re-review of `host-skylight.swift` + threat model + A/B result after the prior 3-blocker PROCEED conditions.
+
+## 1. Spike correctness — fixes applied
+
+**Q1: All 7 fixes are correctly implemented. No residual silent-failure paths.**
+
+**(1) Null-safe dlsym — PASS.** `host-skylight.swift:48-64` now guards `dlopen` (line 48) and `dlsym` (line 55, `if let sym = dlsym(...)`) before `unsafeBitCast`. The previous `unsafeBitCast(NULL, ...)` → `.some(fn@0x0)` crash path is closed. The `else` branch (lines 58-61) emits a stderr diagnostic so a future OS that drops `SLEventPostToPid` produces an observable failure, not a mystery segfault.
+
+**(2) Failure propagation — PASS.** All 7 swap sites now thread the `Bool`:
+- `host-skylight.swift:1003` (mouseMoved), `:1008` (down), `:1011` (double-click extra), `:1017` (up), `:1029` (type per-char), `:1058` (key chord), `:1068` (scroll).
+- Each returns `cuError("SkyLight SPI post failed", code: "SKYLIGHT_SPI_FAILED")` on `false`.
+- Plus the dispatch-level fail-fast at `:537-540` — `cuResolveSkyLight()` returning false short-circuits before `cuInject` is even called, with the same `SKYLIGHT_SPI_FAILED` code. This is the right shape: companion's TS adapter sees one well-known error code whether the SPI was missing at resolve-time or post-time and can fall back to HID uniformly.
+
+**(3) Dead variable removed — PASS.** `slPostEventRecordToFn` is gone. The declaration-site note at `host-skylight.swift:36-40` correctly documents *why* it was removed and the conditions under which it would need to come back (verified signature + named call site) — not just deleted.
+
+**(4) RTLD_GLOBAL → RTLD_LOCAL — PASS.** `host-skylight.swift:48` uses `RTLD_LAZY | RTLD_LOCAL`. The inline comment (lines 46-47) explains the rationale. Tighter boundary, correct for a single-shot CLI.
+
+**(5) Right-click mouseType — PASS.** `host-skylight.swift:995-1000`:
+```
+let isRight = (action == "right_click")
+let btn: CGMouseButton = isRight ? .right : .left
+let downType: CGEventType = isRight ? .rightMouseDown : .leftMouseDown
+let upType: CGEventType   = isRight ? .rightMouseUp   : .leftMouseUp
+```
+Both the `mouseButton` field AND the `mouseType` now track the physical button — this was the bug. Chrome (and some other receivers) key off `mouseType` and would have interpreted the old `.leftMouseDown + btn=.right` as a left click. The inline comment at `:997-998` correctly documents this.
+
+**Residual concern — partial state on mid-sequence failure.** If, say, `slPostToPid` returns `false` on the `up` event at line 1017 (after `mouseMoved` and `down` already posted successfully), the click sequence is left half-delivered (window thinks the button is still pressed). This is the *inherent* cost of fail-fast and is the right call for v1.3 — a half-click is observable (cursor stuck, mouse buttons swapped) and the user can recover by clicking manually; a silent no-op is worse. Worth a Plan-phase note that the LLM may need an "unclick" recovery tool call. Not a blocker.
+
+## 2. A/B result — sufficient evidence to ship without flip?
+
+**Q2: Sufficient to ship without flip *on Tahoe*. Not sufficient to declare the libval flip dead across the v1.3 support floor — coupled to the Sonoma data point.**
+
+**What the A/B proves (Tahoe 26.5.2):** both `flip=true` and `flip=false` binaries resolve `SLEventPostToPid` non-null (`spike-skylight-tahoe-results.md:14-21`). Grok's hypothesis (Apple library validation permits Apple-signed dylibs; SkyLight is Apple-signed) is empirically confirmed on this OS. The `host-skylight-nolibval.entitlements` (lines 15-16) is the correct production shape — `disable-library-validation=false`, plus `allow-unsigned-executable-memory=false` and `allow-jit=false` preserved (lines 17-20). No S-P0-2 regression for the library-load defense.
+
+**What the A/B does *not* prove:**
+- **Sonoma 14.x / Sequoia 15.x behavior.** Library validation policy is a kernel + dyld invariant that has shifted between major macOS releases. The cua issue #1503 Sonoma crash cited in `spike-skylight-tahoe-results.md:46` concerns a *sibling* SkyLight selector. It is plausible (not certain) that on Sonoma, SkyLight fails to load entirely without the flip — in which case `cuResolveSkyLight()` returns false, the dispatch fail-fast fires, and the companion must fall back to HID (which is the Chrome-broken path Approach C was meant to fix). The A/B does not bound this risk.
+- **Whether `disable-library-validation=false` survives future OS updates.** Apple has been progressively tightening library validation policy (e.g. amfi `get-out-of-my-way` deprecation). A 26.5 success does not project to 27.x.
+
+**Corner cases I would still test before merge:**
+1. **Sonoma 14.4 manual smoke** — the existing 30-min user gate from the prior review (`spike-skylight-tahoe-results.md:50-52`, option (a)). This is now *doubly* load-bearing: it covers both the SPI-resolution question AND the libval-flip question. PROCEED-blocking.
+2. **Sequoia 15.5 smoke** — if a Sequoia machine is available, same 30-min cost, closes both unknowns for one more OS generation.
+3. **Cold-cache re-resolve** — `skyLightResolved` is set true on the first call (`host-skylight.swift:44`) even if the dlopen failed. In a long-lived test harness (not production, which is per-spawn) a transient dlopen failure could persist across calls. Not relevant for production; flag only.
+4. **dlsym-after-fork** — not relevant for the per-spawn model; would matter if a daemon variant is ever revived.
+
+## 3. Threat model correctness
+
+**Q3: The corrected S-P0-2 asymmetry table is accurate. Verified against the codebase.**
+
+`spike-daemon-threat-model.md:11-14` now correctly distinguishes:
+- **`cmspark-tray`**: S-P0-2 enforced via `checkIntegrity()` (fd-open, sha256, inode+dev capture, post-spawn re-stat) at `swift-tray-bridge.ts:70-97` + post-spawn re-stat at `:179-184`. Hash mismatch refuses spawn (`:163-172`), never auto-rebuilds. ✅ matches doc claim.
+- **`cmspark-host`**: `host-bin.ts:10-59` is **path resolution only** — `CMSPARK_HOST_BIN` override lockdown (S-P0-1, lines 22-30) plus a candidate-list search (lines 42-58). No hash check, no fd-open, no inode/dev capture. Spawn at `adapter.ts:138-144` (`defaultDarwinRunner`) is bare `execFileAsync(bin, args, {encoding, timeout})` — confirmed, no integrity check. ✅ matches doc claim.
+
+The doc's "both paths share three properties" list (lines 16-20) is accurate: fresh spawn per call, argv-only input, hardened runtime + library validation (tray today, host pending — now confirmed by the A/B).
+
+The framing at lines 22-24 ("For `cmspark-host`: the spawn path has no integrity check today (pre-SkyLight). The addition of `disable-library-validation` ... removes a defense layer") correctly identifies the regression. Since the A/B resolves it (flip not required, libval preserved), the explicit `(a) mirror checkIntegrity OR (b) explicitly accept no S-P0-2` decision in line 24 is now mostly moot for the libval question — but **still relevant as a standalone gap**: even with libval ON, `dist/cmspark-host` has no spawn-side integrity check, unlike its sibling `cmspark-tray`. That asymmetry should be addressed (see Q4).
+
+## 4. Remaining Plan-phase readiness
+
+**Q4 — blockers vs deferrable.**
+
+**Plan prerequisite (gates ship, not Plan-entry):**
+- **Host spawn-path integrity check** — mirror `swift-tray-bridge.ts:70-184` into `adapter.ts:138-144` (or a wrapping `defaultDarwinRunner`). This is *not* a Plan-entry blocker (the design space is clear, the implementation is mechanical), but it IS a ship blocker — the threat-model doc itself calls it out at line 24 and the corrected asymmetry table makes the gap undeniable. Recommend: PROCEED to Plan with this explicitly listed as a Plan-deliverable, not a pre-Plan spike item.
+- **Sonoma 14.4 smoke** — still a 30-min user gate before *ship*, not before *Plan-entry*. The data point bounds both the SPI-stability claim and the libval-flip claim. Recommend: parallel-track with Plan; do not serialize before Plan.
+- **Chrome real-click lab** — still a user-pending gate before *merge*, not before *Plan-entry*. The whole point of Approach C is the Chrome auth-signed delivery claim; until a real Chrome click lands, the headline value is unverified. The doc honestly flags this at `spike-skylight-tahoe-results.md:60-65`.
+
+**Plan-phase design questions still open:**
+- Failure surface for partial-sequence delivery (Section 1 residual concern) — should `cuInject` expose a `state` field so the LLM can detect a half-click and recover?
+- Whether the host spawn-side checkIntegrity should use a separate `CMSPARK_HOST_SHA256` constant (parallel to `SWIFT_TRAY_SHA256`) and how the rebuild flow keeps both in sync. (The build-host-skylight.sh prints the SHA at line 108 — good hook for CI to capture and update the constant.)
+
+## Verdict
+
+### Blockers before ship (not before Plan)
+1. **Sonoma 14.4 smoke test** — user runs `./dist/cmspark-host-skylight-nolibval inject` on a Sonoma Mac; record result in `spike-skylight-tahoe-results.md`. Closes both the SPI-stability and libval-flip unknowns.
+2. **Chrome real-click lab** — user runs the click-test procedure from `spike-skylight-tahoe-results.md:66-89` against `chrome://settings`; confirms the headline auth-signed delivery claim.
+3. **Host spawn-path integrity** — Plan-deliverable: add `checkIntegrity()` + post-spawn re-stat to `adapter.ts:138-144`, mirroring `swift-tray-bridge.ts:70-184`. Define `CMSPARK_HOST_SHA256` constant.
+
+### Concerns (should fix DURING Plan, not blocking)
+- Failure-surface contract for partial mouse sequences (stuck-button recovery).
+- Production rename: `cmspark-host-skylight-nolibval` is a spike name. Plan should rename to `cmspark-host` (replacing the current production binary) once the swap lands, and update `host-bin.ts` candidate list accordingly.
+- `skyLightResolved = true` set before dlopen (line 44) — fine for per-spawn, but if a daemon variant is ever revived this becomes a sticky-failure bug. Add a code comment to make the assumption explicit.
+- `build-host-skylight.sh` only emits a SHA hint (line 108); no CI hook to update `CMSPARK_HOST_SHA256` constant. Plan should add a CI assertion that the constant matches the freshly built binary.
+
+### Approval
+**PROCEED to [RIPER: Plan]** for Approach C-minus. All 3 prior blockers are resolved at the spike level (null-safe dlsym, failure propagation, threat-model correction). The libval flip is empirically unnecessary on Tahoe (Grok hypothesis confirmed). The 3 ship blockers above are empirical (Sonoma, Chrome lab) or mechanical (host integrity check) — none require further design research. The core C-minus call (ship the primitive swap, drop the daemon) is reaffirmed.
+
+(~1400 words.)

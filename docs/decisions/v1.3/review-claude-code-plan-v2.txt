@@ -1,0 +1,303 @@
+Review — Approach C-minus Plan v2
+=================================
+Date: 2026-07-24
+Reviewer: independent reviewer (Claude Code, plan v2)
+Plan: /Users/huchen/Projects/cmspark/docs/decisions/v1.3/plan-approach-c-minus.md
+Adversary r1: /Users/huchen/Projects/cmspark/docs/decisions/v1.3/adversary-approach-c-plan-round1.txt
+
+TL;DR — PROCEED TO IMPLEMENTATION with two conditional fixes that
+MUST land during Stage 1 (before canary): (i) raise host-Info.plist
+LSMinimumSystemVersion from 14.4 to 26.5 (Q5b), (ii) split the
+CMSPARK_ALLOW_HOST_BIN_OVERRIDE env into two separate variables so
+path-override and integrity-bypass cannot collide (Q5c). The eight
+adversary findings are correctly absorbed; F7 auto-rewrite is sound
+for dev but unsafe for DMG installs (Q3c). No residual blocker.
+
+================================================================
+1. Q1 — Were all 8 adversary findings addressed? Residual holes?
+================================================================
+
+All eight are addressed at the spec level.
+
+  N1 (Sonoma/Sequoia unverified) — addressed. plan:11, plan:34-35
+  ("In scope (v1.3 ship, Tahoe 26.5+ only)"), plan:48-49 (D5 defers
+  Sonoma/Sequoia to v1.4). Risk-register row plan:247 now scopes the
+  claim. Consistent across §2, §4, §8.
+
+  N2 (HID fallback re-opens cursor steal) — addressed. plan:9 removes
+  F6; plan:182-188 spells out the hard-error contract; plan:58 adds
+  O3 ("never"). No argv flag, no transparent retry.
+
+  N3 (CI SHA oracle theatrical) — partially addressed. plan:202-206
+  narrows the CI assertion to "git diff includes host-integrity.ts in
+  the same commit as the binary rebuild" and explicitly defers byte-
+  reproducibility to D8. This is honest. Residual hole below in Q3.
+
+  N4 (multi-monitor coords) — addressed as known limitation.
+  plan:50-51 (D7), plan:251 risk row. Acceptable for v1.3.
+
+  N5 (TCC grant burn on rename) — addressed. plan:275-279 (release
+  notes, banner, DMG README, tccutil reset recovery). See Q4 for
+  whether the channel mix is sufficient.
+
+  N6 (Sonoma hardware assumption) — folded into N1.
+
+  N7 (stale-SHA window F1→F7) — addressed by reordering: plan:313-321
+  puts F7 first, with auto-rewrite closing the window permanently.
+  Mechanical soundness reviewed in Q3 below.
+
+  N8 (theatrical TOCTOU test) — addressed. plan:228-235 rewrites G2
+  as four honest tests: T1 happy path, T2 hash mismatch (the load-
+  bearing one), T3 env-gate bypass, T4 mock-based inode mismatch.
+
+No residual hole from r1. Three NEW concerns introduced by the v2
+shape itself — see Q5.
+
+================================================================
+2. Q2 — Is the SKYLIGHT_SPI_FAILED hard-error contract sufficient?
+================================================================
+
+Sufficient for v1.3 Tahoe-only scope; minor residual risk.
+
+Strengths:
+  - The contract is clean: binary dispatch-level fail-fast
+    (host-skylight.swift:537-538) → SKYLIGHT_SPI_FAILED → companion
+    error_code → LLM surfaces upgrade prompt (plan:186).
+  - No silent retry means no cursor-steal regression — adversary N2
+    is genuinely closed.
+  - v1.4 D6 (plan:51, plan:285) reserves the L2-gated HID fallback
+    if real-world SPI failure rates demand it. Honest defer, not
+    permanent loss.
+
+Availability regression check:
+  - Supported OS (Tahoe 26.5+): the only documented SPI failure
+    mode is future macOS removing the symbol. Risk row plan:249
+    covers this; runtime feature-detect is correct.
+  - Transient failures (e.g. window closed between resolve and
+    post): host-skylight.swift:1003-1068 surface SKYLIGHT_SPI_FAILED
+    for both "symbol gone" and "post returned false" — but
+    slPostToPid returns true even if the PID is dead (it just calls
+    the C function). The current contract conflates "SPI missing"
+    with "post failed". LLM will surface a generic "upgrade macOS"
+    message even for transient "window gone" cases. Minor LLM-UX
+    papercut, not a correctness bug. Flag for v1.4 D2 (AX-first)
+    or a separate error code in v1.3 implementation.
+
+Recommendation: PROCEED. Optional refinement during implementation:
+distinguish SKYLIGHT_SPI_UNAVAILABLE (dispatch-level resolve fail)
+from SKYLIGHT_POST_FAILED (per-call slPostToPid false). Same hard-
+error contract, better LLM hint.
+
+================================================================
+3. Q3 — Is F7 auto-SHA-rewrite mechanically sound?
+================================================================
+
+Sound in dev. Two real edge cases the Plan does not address.
+
+Mechanism (plan:194-201):
+  build-host.sh step 4 = sed/perl in-place edit on the line
+  `export const CMSPARK_HOST_SHA256 = "..."`. If regex fails to
+  match, build fails.
+
+Q3a — git-diff problem (developer workflow):
+  YES, this is a real friction. After every local rebuild,
+  host-integrity.ts has a working-tree diff. The developer must
+  commit (or stash) before pushing. This is the SAME shape as
+  companion/src/tray/swift-tray-bridge.ts:29 (SWIFT_TRAY_SHA256 is
+  hand-maintained today, no auto-rewrite). For tray, the team
+  accepts manual bump; for host, F7 automates it but creates the
+  opposite problem: noisy working tree.
+
+  Recommendation: add a one-line note in F7: "host-integrity.ts
+  is a generated artifact — commit the SHA change in the same
+  commit as any binary-affecting change. CI gate enforces this."
+  No code change required.
+
+Q3b — regex miss when constant moves:
+  Mitigated. Plan:201 says "if the regex fails to match, the build
+  fails — developer must reconcile manually." This is correct fail-
+  fast behavior. The regex should be anchored on the literal
+  constant name `CMSPARK_HOST_SHA256` (not the placeholder string
+  `<% AUTO_UPDATED_BY_BUILD %>`, which only exists on first
+  bootstrap). Recommend the implementation use perl with capture:
+    perl -i -pe 's/(CMSPARK_HOST_SHA256\s*=\s*")[^"]*"/$1$ENV{HASH}"/'
+  This is robust to whitespace changes.
+
+Q3c — DMG / read-only install (CRITICAL):
+  UNSOUND as specified. In a DMG install, the companion ships as
+  a pre-built artifact (electron/pkg snapshot). The binary at
+  Contents/Resources/cmspark-host is signed at packaging time and
+  the host-integrity.ts constant is BAKED INTO the bundled JS.
+  End users never run build-host.sh. So the auto-rewrite is a
+  dev-time mechanism only — which is exactly what F7 intends.
+
+  But the plan does not say this. The plan reads as if build-host.sh
+  runs at every install. Add explicit scoping in F7: "Auto-rewrite
+  is a DEVELOPER-TIME step. Packaged DMG installs ship with the
+  constant already baked in by the release-engineering build."
+
+  A separate concern: the F3 placeholder `<% AUTO_UPDATED_BY_BUILD %>`
+  (plan:134) is a string literal. If the very first build runs
+  before the constant is ever populated, the check compares against
+  that placeholder string. Mitigation: F7 step 4 must run on first
+  build too, which it does. OK.
+
+================================================================
+4. Q4 — Stage 3 TCC comms adequate?
+================================================================
+
+Adequate but missing one channel: in-agent first-run detection.
+
+What the plan covers (plan:275-279):
+  - Release notes
+  - Side-panel banner on first v1.3 launch
+  - DMG README
+  - tccutil reset recovery doc
+
+What is missing:
+  - **In-agent detection of the actual TCC denial.** When v1.3
+    first runs and the user has NOT yet re-granted Accessibility,
+    SkyLight SPI calls will silently no-op (the binary returns
+    ok:true but nothing clicks). host-skylight.swift:535-536
+    comment explicitly notes this: "every post inside cuInject
+    silently no-op. Caller (companion) sees SKYLIGHT_SPI_FAILED
+    error_code". But the binary today does NOT detect TCC denial —
+    slPostToPid returns true even when the event was dropped.
+    Result: user clicks, nothing happens, no error surfaces.
+
+  The plan should add: a Stage 3 bullet for AXIsProcessTrusted
+    check on binary startup (host-skylight.swift lacks this today).
+    On first v1.3 launch with stale TCC, the binary should emit
+    a structured "TCC_RENEWAL_REQUIRED" diagnostic that the
+    companion surfaces as a banner with a "Open System Settings"
+    deep link. This closes the loop the static comms cannot.
+
+  This is implementation-level detail — does not need to block
+  Plan approval, but should be added to F1's bullet list as
+  "Optional hardening: AXIsProcessTrusted startup probe".
+
+================================================================
+5. Q5 — NEW concerns introduced by v2?
+================================================================
+
+---------------------------------------------------------------
+5a — CMSPARK_ALLOW_HOST_BIN_OVERRIDE env name consistency
+---------------------------------------------------------------
+
+CONSISTENT. plan:147 (CMSPARK_ALLOW_HOST_BIN_OVERRIDE !== "1")
+matches host-bin.ts:23 exactly. Spelling, casing, value all
+aligned.
+
+---------------------------------------------------------------
+5b — Tahoe 26.5+ claim vs host-Info.plist LSMinimumSystemVersion=14.4
+---------------------------------------------------------------
+
+COLLISION. This is a real blocker for the ship claim.
+
+  host-Info.plist:17-18 declares LSMinimumSystemVersion=14.4.
+  macOS will happily launch the binary on Sonoma 14.4. dlopen
+  succeeds (SkyLight.framework exists on Sonoma). But
+  dlsym(SLEventPostToPid) on Sonoma 14.4 is unverified (spike-
+  skylight-tahoe-results.md:44-52 NOT TESTED) and cua issue #1503
+  reports crashes on the SLSEventAuthenticationMessage selector
+  family for Sonoma.
+
+  Result: on Sonoma 14.4, the binary launches, cuResolveSkyLight
+  likely returns false, every inject returns SKYLIGHT_SPI_FAILED,
+  and the user sees "This action requires macOS Tahoe 26.5 or
+  newer" — but the OS let them install and launch the binary.
+
+  This is misleading and creates a "ship claim vs launchable OS"
+  gap. The plan claim "Tahoe 26.5+ only" is correct policy; the
+  plist floor is wrong enforcement.
+
+  Fix: raise host-Info.plist LSMinimumSystemVersion to "26.5".
+  macOS will refuse to launch on Sonoma/Sequoia, giving an honest
+  "this app requires macOS 26.5 or newer" gate at first launch
+  instead of a misleading post-launch SKYLIGHT_SPI_FAILED storm.
+
+  This MUST land in Stage 1 implementation, not deferred.
+
+---------------------------------------------------------------
+5c — CMSPARK_ALLOW_HOST_BIN_OVERRIDE dual meaning (foot-gun)
+---------------------------------------------------------------
+
+REAL foot-gun. The plan:137 + plan:147 reuses the same env for
+two semantically distinct purposes:
+
+  Purpose A (existing, host-bin.ts:22-30): allow CMSPARK_HOST_BIN
+    path override (test injects mock binary path).
+  Purpose B (new, plan F3): skip integrity hash check entirely.
+
+  A developer who sets CMSPARK_ALLOW_HOST_BIN_OVERRIDE=1 to point
+  at a mock binary for tests (purpose A) now ALSO silently
+  disables the integrity check (purpose B) for the same process.
+  If that test process ever accidentally spawns the real binary
+  (e.g. integration test cleanup bug), no integrity gate fires.
+
+  The threat model difference matters: purpose A is "I vouch for
+  a different path"; purpose B is "I waive the hash check". These
+  are independent consent scopes, mirroring the Q-adv-1 reasoning
+  the plan already accepted for cursor-steal consent.
+
+  Fix: introduce a separate env, e.g. CMSPARK_SKIP_HOST_INTEGRITY=1,
+  for purpose B. host-bin.ts:22-30 stays as-is for purpose A.
+  Document both as dev-only.
+
+  Not a blocker for Plan start — can land as the first hunk of
+  F4 implementation.
+
+---------------------------------------------------------------
+5d — F4 in adversary r1 vs Plan v2 F4
+---------------------------------------------------------------
+
+The plan renamed the F-numbers from r1. r1's F4 was
+"host-bin.ts SHA constant" with perf concerns (re-hash on every
+resolveHostBinary call). Plan v2's F4 is the adapter wrapper.
+The perf concern from r1 (10MB SHA per inject) is moot because
+v2 puts the check in the spawn wrapper (adapter.ts:138-144),
+called once per action — not in path resolution. Resolved
+correctly by the module boundary change.
+
+================================================================
+6. Q6 — VERDICT
+================================================================
+
+PROCEED TO IMPLEMENTATION.
+
+Conditional fixes that MUST land during Stage 1 (before canary):
+
+  (i) host-Info.plist: raise LSMinimumSystemVersion 14.4 → 26.5.
+      Without this, the "Tahoe 26.5+ only" claim is unenforced
+      and Sonoma/Sequoia users get misleading SKYLIGHT_SPI_FAILED
+      storms instead of an honest launch-time refusal. (Q5b)
+
+  (ii) Split CMSPARK_ALLOW_HOST_BIN_OVERRIDE into two envs:
+       keep the existing one for path override (host-bin.ts:22-30),
+       introduce CMSPARK_SKIP_HOST_INTEGRITY=1 for the integrity-
+       check bypass (plan F3/F4). (Q5c)
+
+Recommended (non-blocking) refinements:
+
+  (iii) F7 add a one-line note: "host-integrity.ts is a generated
+        artifact — commit the SHA change in the same commit as
+        any binary-affecting change." (Q3a)
+
+  (iv) F7 add explicit DEV-TIME scoping: "Auto-rewrite runs at
+       developer-build time. Packaged DMG installs ship with the
+       constant pre-baked." (Q3c)
+
+  (v) F1 add Optional hardening bullet: "AXIsProcessTrusted
+      startup probe → emit TCC_RENEWAL_REQUIRED diagnostic that
+      companion surfaces as banner with deep link." Closes the
+      Stage 3 comms loop. (Q4)
+
+  (vi) Distinguish SKYLIGHT_SPI_UNAVAILABLE (resolve failed) from
+       SKYLIGHT_POST_FAILED (slPostToPid returned false) for
+       better LLM hints. (Q2)
+
+With (i) and (ii) in place, this Plan is ready to enter Stage 1
+implementation. The reordering (F7 first) is the right structural
+call and closes N7 permanently. Recommend Grok + Claude Code
+final review on the merged diff after F1-F7 land, per the
+existing grok_review_every_fix policy.

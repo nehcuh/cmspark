@@ -1,0 +1,103 @@
+I'll review the spike fixes against the actual code and docs. Routing first, then reading the modified files and the spawn-path references.Routing selected a review skill; I'll follow that workflow while answering your five questions from the actual source.Next I'll verify the seven inject swap sites, mouseType handling, and the host spawn path against the threat-model claims.Checking one residual silent path and whether the threat-model "prerequisite" wording still matches the no-flip finding.# Spike Fixes Review — Approach C-minus
+
+**Verdict: PROCEED to Plan** (conditional ship gates during Plan/implementation, not before drafting the plan)
+
+Evidence levels: claims below are **[inspected]** unless noted.
+
+---
+
+## Q1 — Are the 7 fixes correctly implemented?
+
+| # | Fix | Status | Evidence |
+|---|-----|--------|----------|
+| 1 | Null-safe dlsym | **OK** | `if let sym = dlsym(...)` before cast (`host-skylight.swift:55-61`) |
+| 2 | Failure propagation | **OK** | Dispatch fail-fast (`:537-540`); 7 inject sites return `SKYLIGHT_SPI_FAILED` (`:1003`, `:1008`, `:1011`, `:1017`, `:1029`, `:1058`, `:1068`) |
+| 3 | Dead `slPostEventRecordToFn` | **OK** | Removed; deferred note at `:36-40` |
+| 4 | `RTLD_LOCAL` | **OK** | `:46-48` |
+| 5 | Right-click mouseType | **OK** | `isRight` → `.right` / `.rightMouseDown` / `.rightMouseUp` (`:995-1000`) |
+| 6 | Threat model S-P0-2 asymmetry | **OK** | See Q3 |
+| 7 | A/B nolibval production shape | **OK** | `host-skylight-nolibval.entitlements:15-16`; build A/B (`build-host-skylight.sh:111-116`) |
+
+**Residuals (not blockers for Plan entry):**
+
+1. **CGEvent construction nil → still `ok: true`.** If `CGEvent(...)` fails, the `if let` skips the post but click/type/key/scroll still return success (`:1001-1019`, `:1026-1032`, `:1055-1061`, `:1066-1070`). Pre-existing pattern; not introduced by the 7 fixes. Optional Plan hardening: fail if no event was constructed when one was required.
+
+2. **`slPostToPid` cannot detect delivery.** It only checks fn + event non-nil, then calls void SPI (`:69-72`). Correct for the API; real landing remains a manual lab gate.
+
+3. **Stale spike commentary** still claims B1 needs libval flip (`:22-24`). Docs still show old A/B output with `SLPSPostEventRecordTo` + `RTLD_GLOBAL` (`spike-skylight-tahoe-results.md:32-40`). Cleanup during Plan, not a code defect.
+
+No residual wrong mouseType branch for `right_click`. Double-click correctly stays left.
+
+---
+
+## Q2 — Is A/B resolve=true sufficient to ship without the flip?
+
+**Sufficient for the library-validation claim on Tahoe; not sufficient alone to ship the feature.**
+
+- A/B shows **dlopen + dlsym** succeed with flip false under hardened runtime (`spike-skylight-tahoe-results.md:12-27`, `host-skylight-nolibval.entitlements:15-16`). That is the right test for “do we need `disable-library-validation`?” on this OS.
+- Grok hypothesis holds for **Apple-signed SkyLight on Tahoe 26.5.2**. Production target = nolibval shape.
+
+**Corners that still need more than resolve=true:**
+
+| Corner | Why it matters |
+|--------|----------------|
+| **Sonoma 14.x** | cua #1503 is a *selector/crash* class, not libval. Resolve on Tahoe does not predict Sonoma. Doc already flags this (`spike-skylight-tahoe-results.md:44-52`). |
+| **Delivery ≠ resolve** | Real click / Chrome auth-signed acceptance **not tested** (`:59-61` in same doc). |
+| **Developer ID vs ad-hoc** | Lab used ad-hoc codesign (`build-host-skylight.sh:93-98`). Low risk for Apple dylibs, but production signing should re-smoke once. |
+| **OS upgrades** | SPI is private; re-run A/B on major macOS bumps (keep dual-variant build). |
+
+**Recommendation:** Ship **without** the flip. Do **not** treat resolve-only as end-to-end proof of C-minus.
+
+---
+
+## Q3 — Does the corrected threat model match the codebase?
+
+**Yes.**
+
+| Claim | Code |
+|-------|------|
+| Tray has S-P0-2 | `checkIntegrity` + post-spawn inode/dev (`swift-tray-bridge.ts:42-57`, `:70-97`, `:162-184`) |
+| host-bin = path only (S-P0-1) | Override lockdown + candidate search; **no** hash/inode (`host-bin.ts:10-59`) |
+| Host spawn bare | `execFileAsync(bin, args, …)` only (`adapter.ts:138-144`) |
+
+No host SHA256 constant under `host-use/` (only evidence/screenshot hashes). Extra bare `execFile` also exists in `darwin/index.ts` (read-mail paths) — same asymmetry, slightly broader than the table’s single cite, but the table’s core claim is accurate.
+
+**Wording nit:** threat model L102 still says host integrity is “Plan-phase prerequisite **if the library validation flip lands**.” With flip **not** landing, that sentence should be updated: host S-P0-2 remains **pre-existing debt**, not a new regression from SkyLight. Preferred still: mirror tray integrity in Plan.
+
+---
+
+## Q4 — Remaining blockers before Plan?
+
+| Item | Before Plan entry? | Before ship/merge? |
+|------|--------------------|--------------------|
+| **Host spawn integrity** (mirror tray) | **No** — not required to *write* Plan; pre-existing with no flip | **Yes as Plan deliverable** if host becomes higher privilege via SkyLight; preferred (a) in threat model L24 |
+| **Sonoma 14.4 manual smoke** | **No** for Plan drafting | **Yes before production ship** (~30 min user gate). Doc L52 “block Plan-phase” is overly strict once Plan = design work; block *merge/ship* instead |
+| **Chrome real-click lab** | **No** for Plan drafting | **Yes before merge** — load-bearing claim for Approach C (`spike-skylight-tahoe-results.md:61`) |
+
+Daemon (B3) is decided: C-minus, no long-lived host daemon (`spike-daemon-threat-model.md:98`).
+
+---
+
+## Q5 — Verdict
+
+### **PROCEED to [RIPER: Plan]**
+
+No re-research of the primitive or the no-flip library-validation decision on Tahoe.
+
+### Conditional work **during Plan** (not before Plan starts)
+
+1. **Production path = nolibval** — merge SkyLight into `host.swift` / `host.entitlements` with `disable-library-validation=false`; drop flip variant from production (keep A/B build as regression harness optional).
+2. **Host spawn integrity** — Plan work item: port `checkIntegrity`-class hash + realpath + post-spawn re-stat from `swift-tray-bridge.ts:42-185` into host spawn (`adapter.ts` + `index.ts` if still used). Prefer ship-with, not “after v1.3.”
+3. **User gates before merge/ship** — Sonoma (and ideally Sequoia) SPI resolve + non-crash smoke; Chrome real-click lab (TextEdit/Safari first, then Chrome).
+4. **Doc hygiene** — refresh stale B1 comments (`host-skylight.swift:22-24`), tahoe log lines (removed SPI / `RTLD_GLOBAL`), threat model L102 flip-conditional wording.
+5. **Optional inject hardening** — fail when required `CGEvent` construction returns nil instead of `ok: true`.
+
+### Not required before Plan
+
+- Re-running libval A/B on Tahoe (already done).
+- Implementing host integrity *before* Plan text exists.
+- Sonoma/Chrome labs as Plan *entry* blockers (they remain **ship/merge** blockers).
+
+---
+
+**One-line summary:** Code fixes land cleanly; no-flip is justified for Tahoe libval; threat model asymmetry is real; **PROCEED to Plan** with host integrity + Sonoma/Chrome as in-Plan ship gates.

@@ -1,0 +1,47 @@
+# Spike Fixes Review — Prompt
+
+## Context
+
+Following the Grok + Claude Code final review of Approach C-minus (which both PROCEED'd conditional on fixing 3 blockers + concerns), the following spike changes were made:
+
+**Files modified**:
+- `companion/src/host-use/darwin/host-skylight.swift` — fixes
+- `companion/src/host-use/darwin/host-skylight-nolibval.entitlements` — NEW, no-flip variant
+- `companion/src/host-use/darwin/build-host-skylight.sh` — A/B build (compiles once, links twice)
+- `docs/decisions/v1.3/spike-daemon-threat-model.md` — corrected S-P0-2 asymmetry
+- `docs/decisions/v1.3/spike-skylight-tahoe-results.md` — A/B result documented
+
+**Fixes applied** (per Claude Code + Grok final reviews):
+
+1. **Null-safe dlsym** — `unsafeBitCast(dlsym(...))` without null check could produce `.some(fn@0x0)` and crash on first call. Fixed: guard `if let sym = dlsym(...)` before cast.
+
+2. **Failure propagation** — 7 swap sites at `host-skylight.swift` inject paths discarded `slPostToPid` Bool with `_ =`. Fixed: each now `if !slPostToPid(...) { return cuError("SkyLight SPI post failed", code: "SKYLIGHT_SPI_FAILED") }`. Also fail-fast at the dispatch level if `cuResolveSkyLight()` returns false.
+
+3. **Dead variable removed** — `slPostEventRecordToFn` was resolved but never called, and signature was likely wrong (yabai/cua treat as event-record SPI, not `(pid_t, CGEvent?)`). Removed. Documented at declaration site as deferred work.
+
+4. **RTLD_GLOBAL → RTLD_LOCAL** — single-shot CLI doesn't need symbol leakage. Tighter.
+
+5. **Right-click mouseType fix** — was using `.leftMouseDown/.leftMouseUp` even when `btn == .right`. Now uses `.rightMouseDown/.rightMouseUp` when `action == "right_click"`. Critical for non-Chrome targets too.
+
+6. **Threat model corrected** — line 9 falsely claimed S-P0-2 was "mirrored at host-bin.ts". host-bin.ts only does path resolution (S-P0-1); spawn at adapter.ts:138-144 is bare execFile with no integrity check. Rewritten with explicit table showing asymmetric coverage (tray has S-P0-2, host does not).
+
+7. **Library validation A/B result (NEW FINDING)** — Built two binary variants: flip=true and flip=false. Both resolve `SLEventPostToPid=true` on Tahoe 26.5.2. **Confirms Grok's hypothesis**: Apple library validation allows loading Apple-signed dylibs, SkyLight is Apple-signed, so flip is NOT required. Production target is `cmspark-host-skylight-nolibval` shape — preserves full v1.3 Batch 1 hardened-runtime + library-validation lockdown, no S-P0-2 regression.
+
+## Review task
+
+Read the actual files (paths above) and answer:
+
+**Q1**: Are the 7 fixes correctly implemented? Any residual silent-failure paths, null-safety gaps, or wrong mouseType branches?
+
+**Q2**: Is the A/B test result (`SLEventPostToPid` resolves under both flip=true and flip=false) sufficient evidence to ship without the flip? Or is there a corner case (e.g. SkyLight dlopen only fails on Sonoma but works on Tahoe regardless) that requires more testing?
+
+**Q3**: Does the corrected threat model (S-P0-2 asymmetry between tray and host) accurately reflect the codebase? Read `companion/src/host-use/darwin/host-bin.ts` and `companion/src/host-use/darwin/adapter.ts:138-144` to confirm.
+
+**Q4**: Any remaining blockers before entering [RIPER: Plan] phase for Approach C-minus? Specifically:
+- Is host spawn-path integrity check (mirroring `swift-tray-bridge.ts:42-185`) a Plan prerequisite or can it be deferred?
+- Sonoma 14.4 manual smoke — still a 30-min user gate before ship?
+- Chrome real-click lab — still a user-pending gate before merge?
+
+**Q5**: Verdict: PROCEED to Plan / REJECT / RE-RESEARCH. If PROCEED, list any conditional fixes that must happen DURING Plan (not before).
+
+Keep response under 1500 words. Cite file:line for every claim.

@@ -1,0 +1,222 @@
+I'll review the Batch 2 correctness fixes against the code and the five stress-test questions. Routing first, then reading the implementation.Override: this is a review of already-landed fixes, not implement-then-review. Reading the changed code and tests directly.Reading the critical paths in detail for race conditions and semantic gaps.Found a possible missing `await` on `exportJSON`. Checking that call site and a few other race edges.# Batch 2 Correctness P0s — Grok Review
+
+Reviewed against live code in `companion/src/{server,history/store,threads/thread-manager,tray/*}.ts` / `Tray.swift`, the new tests, and the diagnosis text. SHA256 matches: binary `ab183edf…903` ≡ `SWIFT_TRAY_SHA256`. C-P0 unit tests pass (pre-existing lolbin / log-retention failures remain).
+
+Overall: **C-P0-5/6/7 and history migration/init are solid. One real merge blocker from the async history API. C-P0-1 is intentional infrastructure, not a closed bug.**
+
+---
+
+## Blockers (must fix before merge)
+
+### B1. `history.export` lost the `await` on `exportJSON`
+
+```1487:1491:companion/src/message-router.ts
+    case "history.export":
+      return {
+        type: "history.exported",
+        data: historyStore.exportJSON(rest),
+      }
+```
+
+`exportJSON` is now `async` and returns `Promise<OperationRecord[]>`. Without `await`, the WS payload becomes:
+
+```json
+{ "type": "history.exported", "data": {} }
+```
+
+(`JSON.stringify` on a Promise yields `{}`.) This is a silent production regression on an already security-gated path (`server.ts` confirms, then falls through to `handleMessage`).
+
+`history.query` was updated correctly (`await historyStore.query`). The unit test still passes because the mock is sync:
+
+```41:45:companion/tests/single/files.test.ts
+const mockHistoryStore = {
+  query: () => [],
+  exportJSON: () => ({ operations: [] }),
+  record: () => 0,
+} as any
+```
+
+**Fix:**
+
+```ts
+data: await historyStore.exportJSON(rest),
+```
+
+Plus either a real-store integration test or a mock that returns a Promise so the await is enforced.
+
+`tsc --noEmit` is clean because the router return type is effectively untyped — static analysis will not catch this.
+
+---
+
+## Concerns (should fix, won’t block)
+
+### C1. C-P0-1 lock is dead code in production
+
+`withThreadLock` / `withIndexLock` exist and are unit-tested, but **zero production call sites** use them. `addMessage` / `update` / `create` / `delete` are unchanged.
+
+Your analysis is correct for pure sync RMW under Node: one turn of the event loop cannot interleave two `readFileSync → mutate → atomicWrite` sequences. The original diagnosis overstated the single-call race.
+
+Real residual risk is only compound async sequences (read → `await` → write based on a stale snapshot). Today’s hot paths mostly re-read inside `addMessage`, so appends stay safe. Fork is fully sync. The open gap is future compound ops that forget the lock.
+
+**Recommendation:** keep the primitive; either (a) document that C-P0-1 is “mitigation API, not applied fix,” or (b) wrap one real compound path (e.g. any future fork/LLM pipeline that mutates across awaits) so the lock isn’t ornamental. Do **not** force every sync method async “for defense in depth” — cost/churn without payoff under the single-thread model.
+
+### C2. C-P0-2: durability window deliberately widened
+
+Old code flushed every `record()` (comment still says “flushes on every call” in `save()` — stale). New code can lose up to 5s / 9 records on SIGKILL/OOM.
+
+For a **redacted history log** (not thread truth), that trade-off is acceptable. Threads still use atomic JSON writes. Graceful shutdown path is covered (`SIGTERM`/`SIGINT`/`beforeExit`/`close()`).
+
+Prefer:
+
+| Knob | Suggestion |
+|------|------------|
+| Interval | **1s** (or 2s) — still amortizes export cost under burst, tighter loss window |
+| Threshold | Keep 10 or lower to 5 |
+| Critical ops | Optional `record(op, { durable: true })` → immediate `flushNow()` for high-sensitivity tools if you ever need it |
+
+Do not invent fsync theater for sql.js-over-tmp+rename unless history becomes a compliance audit log.
+
+### C3. `process.once` flush handlers leak per `HistoryStore` instance
+
+Every constructor registers `SIGTERM`/`SIGINT`/`beforeExit` handlers and never removes them. Production (one store) is fine; tests construct many stores → handler pile-up and retained instances.
+
+**Suggestion:** register handlers once at module/singleton level, or unregister in `close()`.
+
+### C4. C-P0-7 `.catch(() => null)` is mostly defensive today
+
+`SwiftTrayAdapter.showConfirmDialog` **never rejects** — only resolves (response or self-timeout). On Swift crash, `handleCrash()` does **not** reject pending confirms; they hang until the backstop timer resolves `{approved: false}`.
+
+So the diagnosed “rejection strands wsPromise” path is real for a rejecting adapter / future change, but not the current crash path. Crash currently fail-closes via tray deny after `timeoutMs+1s`, which then `respond(false)` — Side Panel can still be open and get force-denied. Acceptable fail-closed; worth a log line when tray catch fires so it’s observable.
+
+### C5. `cancelConfirm` does not resolve the Promise
+
+```254:261:companion/src/tray/swift-tray-bridge.ts
+  cancelConfirm(id: string): void {
+    const entry = this.pendingConfirms.get(id)
+    if (!entry) return
+    clearTimeout(entry.timer)
+    this.pendingConfirms.delete(id)
+    this.send({ cmd: "cancel-confirm", id })
+  }
+```
+
+After cancel, `trayPromise` stays forever-pending (timer cleared, no `resolve`). Safe for current `Promise.race` (WS side already settled when cancel is used), but any future `await trayPromise` after cancel will hang.
+
+**Suggestion:** `entry.resolve({ id, approved: false })` or a distinct cancelled sentinel after delete. Makes C-P0-6/7 composition safer.
+
+### C6. C-P0-3 migration is v1-only scaffolding
+
+Correct shape (`user_version`, idempotent, existing DBs: table already present → IF NOT EXISTS no-op → bump to 1). No transactional migration wrapper (sql.js limitation). Fine for now; document that future ALTER steps must be carefully ordered and that a failed mid-migration leaves user_version unbumped only if you stop before the PRAGMA (currently version bump is after all statements of that step — good).
+
+### C7. Stale comment in `save()`
+
+Still claims “record() now flushes on every call” — contradicts C-P0-2. Confusing for the next reader.
+
+---
+
+## Nitpicks (optional)
+
+1. **`withThreadLock` Map growth** — entries never deleted after thread delete. Bound by thread count; low priority. Clear on `delete(threadId)`.
+2. **C-P0-2 tests** prove debounce well (pre-flush reader sees 0). Nice.
+3. **Tray preempt UI** reuses the window without close → no `windowWillClose` double-path on preempt. Good design.
+4. **`systray2`/`readline`** `showConfirmDialog` is a never-settling Promise. Race still works because WS timeout wins; document that tray confirm is macOS-Swift-only.
+5. Brief’s pseudo-code for C-P0-7 used `filter(Boolean)` on the race array; implementation correctly races both when tray is present and early-returns when not — prefer the real code.
+
+---
+
+## Answers to the five questions
+
+### 1. Debounce vs crash (C-P0-2)
+
+**Trade-off is acceptable for history**, not for threads. History is observability with redaction; threads are user truth and already atomic.
+
+You **did** extend the loss window vs per-row flush. That is intentional perf work, not a correctness regression vs “inconsistent state” (inconsistent half-written files were the old tmp+rename concern; that remains fixed). SIGKILL loss ≤5s is fine if documented.
+
+Practical tweak: **1s debounce + threshold 5–10**, keep graceful flush. Skip a durability flag unless history becomes compliance-critical.
+
+### 2. Mutex not wrapping sync methods (C-P0-1)
+
+**Right call.** Forcing `addMessage` etc. async for “defense in depth” is noise: Node won’t interleave pure sync RMW. The original multi-client lost-message claim for single `addMessage` is overstated.
+
+What you should do instead:
+
+- Keep `withThreadLock` / `withIndexLock` as the contract for compound async.
+- Grep/audit for read→await→write on thread files and wrap those.
+- Do not pretend C-P0-1 is “fixed” in the changelog if zero call sites use the lock — call it “serialization primitive landed.”
+
+### 3. WeakMap + cancel vs stale Swift reply (C-P0-6)
+
+**Safe with current bridge.**
+
+- `cancelConfirm` deletes from `pendingConfirms` first.
+- Late `confirm-response` lines hit `pendingConfirms.get(id) === undefined` and are dropped — no stale approve after cancel.
+- WS-first win path: `cancelConfirm` after race; tray promise abandoned (see C5).
+- Disconnect: `rejectAll` then `cancelConfirm`; race takes WS deny.
+
+Edge case if Swift emits Allow in the same IPC tick as cancel: whichever Node processes first wins; either approve lands before cancel (user intent honored) or cancel drops the reply (fail-closed). No double-resolve into `SecurityConfirmationManager` because `respond` / `rejectAll` both delete pending.
+
+WeakMap choice is correct for GC.
+
+### 4. Null-winner semantics (C-P0-7)
+
+**Correct: fall through to WS, do not retry tray.**
+
+- Tray is a convenience parallel channel; Side Panel is the reliable path.
+- Instant retry on IPC/crash often fails again (dead process / broken pipe).
+- Retry would race a half-dead dialog and complicate cancel bookkeeping.
+
+Optional polish: log `security.confirmation.tray_failed` on catch; rely on WS for the rest. One retry only makes sense after a successful tray restart event, not inline in the race.
+
+Note: current Swift adapter rarely hits this catch (see C4); the fix is still the right contract for a rejecting future adapter.
+
+### 5. `cleanup()` at top of `show()` — double-emit? (C-P0-5)
+
+**Safe. No double-emit of the prior id under normal paths.**
+
+Order is:
+
+1. If `pendingId` set → single `emitResponse(prev, false)`
+2. `cleanup()` (invalidate timers, `pendingId = nil`)
+3. Install new id / timers
+
+Prior paths that already emitted (`allow`/`deny`/`timeout`/`windowWillClose`) call `cleanup()` first, so `pendingId` is nil when the next `show` runs → no second deny.
+
+`cancel` clears `pendingId` then `window?.close()` → `windowWillClose` sees nil → no emit. Preempt reuses the window (no close) → no will-close double path.
+
+Window-fail branch: deny new id + cleanup — correct; no orphan timers.
+
+The only “double signal” is intentional: preemption denies the **prior** request once, then schedules the **new** one. Companion must treat a second `confirm-response` for an already-resolved id as no-op (bridge already does via `pendingConfirms`).
+
+---
+
+## Per-item scorecard
+
+| ID | Verdict | Notes |
+|----|---------|--------|
+| C-P0-5 | **Ship** | Ordering fix is correct; SHA updated; double-emit analysis holds |
+| C-P0-6 | **Ship** | WeakMap + close cancel is right; stale IPC safe |
+| C-P0-7 | **Ship** | Null fallthrough correct; catch mostly defensive today |
+| C-P0-1 | **Ship with caveat** | Primitive good; not applied to production paths; diagnosis partly overstated |
+| C-P0-2 | **Ship with tweak** | Debounce OK for history; consider 1s; fix stale comments; process handler leak |
+| C-P0-3 | **Ship** | user_version runner correct for existing DBs |
+| C-P0-4 | **Ship** | `await ready` + `waitReady` + init-race test solid |
+| **API regression** | **Block** | `history.export` missing `await exportJSON` |
+
+---
+
+## Merge recommendation
+
+**Do not merge until B1 is fixed and covered by a test that would fail without the await.**
+
+After B1: merge is reasonable. Treat C1–C5 as follow-ups in the same PR if cheap, else a short Batch 2.1. No need to re-litigate C-P0-5/6/7 semantics unless you change cancel to resolve the promise (recommended).
+
+**Suggested fix patch (B1 only):**
+
+```ts
+// message-router.ts
+case "history.export":
+  return {
+    type: "history.exported",
+    data: await historyStore.exportJSON(rest),
+  }
+```

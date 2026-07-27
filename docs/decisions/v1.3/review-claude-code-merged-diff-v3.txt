@@ -1,0 +1,308 @@
+================================================================
+REVIEW: Claude Code — Approach C-minus merged diff (Plan v3)
+================================================================
+
+Reviewer: Claude Code (adversary in serial workflow)
+Date:    2026-07-24
+Scope:   7 files / 436 lines merged diff, FINAL review before G1
+         manual lab (Tahoe click lab: TextEdit → Safari → Chrome)
+Prior:   review-claude-code-plan-v2.txt (2 conditional fixes accepted)
+
+================================================================
+VERDICT: PROCEED
+================================================================
+
+Production readiness: GREEN. Both prior conditions (Q5b/Q5c) landed
+as specified. No blockers identified. 3 findings, all NIT severity
+(can be addressed post-G1, none warrant holding the manual lab).
+
+================================================================
+SUMMARY
+================================================================
+
+The 7-file diff correctly implements the Approach C-minus swap:
+  - SkyLight SPI resolved via dlopen+dlsym with null-safe cast guard
+    (host.swift:50-72), fail-fast at dispatch (host.swift:544-547)
+    returning SKYLIGHT_SPI_UNAVAILABLE before any CGEvent is built.
+  - 3 distinct error codes partition failure modes cleanly
+    (host.swift:1010,1013,1019,1022,1029 etc.):
+      * SKYLIGHT_SPI_UNAVAILABLE — resolve failed, no SPI on this OS
+      * SKYLIGHT_POST_FAILED     — per-call post returned false
+      * CGEVENT_CONSTRUCT_FAILED — CGEvent constructor nil
+  - assertInjectOk() helper (darwin-adapters.ts:93-96) composes
+    parseComputerJson + checkOk; exported for F9 contract tests;
+    adopted by all 5 inject methods (click/type/key/scroll/drag).
+  - host-integrity.ts S-P0-2 spawn guard mirrors swift-tray-bridge.ts
+    pattern (open fd → sha256 → realpath spawn → post-spawn re-stat).
+  - CMSPARK_SKIP_HOST_INTEGRITY=1 bypass (Q5c) is a separate env
+    from CMSPARK_ALLOW_HOST_BIN_OVERRIDE; consent scopes cannot
+    collide (host-integrity.ts:118).
+  - build-host.sh step 5 auto-rewrites CMSPARK_HOST_SHA256 via perl
+    in-place edit with fail-closed grep verification (build-host.sh:103-110).
+    Empirically verified: perl quoting correct, grep assertion catches
+    rename/regex drift.
+  - drag() falls into cuInject default → INVALID_ACTION; documented
+    as Stage 3 cleanup (host.swift cuInject switch has no "drag" case).
+  - CMSPARK_SKYLIGHT_FORCE_FG=1 canary A/B knob preserved; non-canary
+    path emits "[host] skipping forceForeground" log (host.swift:996).
+
+Prior conditional fixes — VERIFIED LANDED:
+  (i)  Q5b (runtime feature-detect): cuResolveSkyLight() at
+       host.swift:544 returns false on Sonoma/Sequoia →
+       SKYLIGHT_SPI_UNAVAILABLE surfaces cleanly. Plist floor stays
+       14.4 per Grok dispute (computer-use gated by SPI detect;
+       mail/notes/biometric still work on older macOS).
+  (ii) Q5c (env split): host-integrity.ts:118 reads
+       CMSPARK_SKIP_HOST_INTEGRITY only; host-bin.ts path-override
+       env is independent. Confirmed via grep — no collision.
+
+Test status (executed):
+  - host-use-darwin-integrity.test.ts: 5 unit tests PASS + 2
+    integration tests SKIP (binary absent in worktree, expected
+    for review environment). T1 (hash mismatch → throw) PASS.
+  - computer-darwin-inject-contract.test.ts: 8/8 F9 contract
+    tests PASS. Covers all 3 typed error codes + 2 fallback paths.
+  - tsc -p tsconfig.test.json --noEmit: clean.
+
+================================================================
+FINDINGS
+================================================================
+
+---------------------------------------------------------------
+F1 [NIT] Post-spawn TOCTOU check is forensic-only for one-shot CLI
+---------------------------------------------------------------
+File: companion/src/host-use/darwin/host-integrity.ts:143-150
+
+spawnHostBin's post-spawn inode/dev comparison runs AFTER
+execFileAsync resolves — i.e. AFTER cmspark-host has already
+executed and returned its stdout. If substitution happened
+between the pre-spawn hash check and execve, the substitute
+binary already ran with the privileges of the spawning process.
+
+Contrast with swift-tray-bridge.ts:182 — there `this.kill()`
+terminates the long-running tray daemon post-detection, which
+is preventive (the daemon would otherwise keep running). For
+a one-shot CLI, there is no "keep running" state to abort.
+
+The PROTECTION is the pre-spawn hash check (catches
+pre-existing substitution). The post-spawn re-stat is a
+forensic tripwire only — surfaces the attack for logging but
+cannot prevent the substitute from having executed.
+
+Prompt explicitly required mirroring the swift-tray pattern,
+so this is not a deviation. Documenting the asymmetry so
+future reviewers don't over-trust the post-spawn guard.
+
+Recommended fix (optional, post-G1):
+  Add a one-line comment to host-integrity.ts:143-150 noting
+  that the post-spawn re-stat is forensic for one-shot CLI
+  (substitute already executed); preventive layer is the
+  pre-spawn hash check. Mirrors swift-tray-bridge.ts:176-184
+  pattern by policy, not by protective equivalence.
+
+Severity rationale: not BLOCKER because (a) prompt required
+the mirror, (b) pre-spawn hash check is the load-bearing
+defense and IS preventive, (c) no regression vs. v1.3 Batch 1.
+
+---------------------------------------------------------------
+F2 [NIT] ComputerErrorCode union missing SKYLIGHT_* / CGEVENT_*
+---------------------------------------------------------------
+File: companion/src/computer/types.ts:151-185
+
+The union type ComputerErrorCode does not include
+SKYLIGHT_SPI_UNAVAILABLE, SKYLIGHT_POST_FAILED, or
+CGEVENT_CONSTRUCT_FAILED. The binary emits these codes;
+assertInjectOk constructs `new ComputerError(parsed.error_code
+?? "INVALID_ACTION", ...)` (darwin-adapters.ts:78).
+
+This compiles only because parsed is typed Record<string, any>
+— `parsed.error_code` is `any`, bypassing the union check at
+the constructor boundary. Runtime is fine (tests pass; the
+.code field is a plain string on the wire). But:
+
+  - A typo in a future error code (e.g. SKYLIGHT_SPI_UNAVAILBLE)
+    passes typecheck silently.
+  - exhaustive switch statements over ComputerErrorCode won't
+    include the SkyLight codes — if executor.ts ever adds a
+    switch (err.code), it will hit `default` instead of a
+    dedicated branch.
+
+Recommended fix (post-G1):
+  Add the 3 codes to ComputerErrorCode union:
+    | "SKYLIGHT_SPI_UNAVAILABLE"
+    | "SKYLIGHT_POST_FAILED"
+    | "CGEVENT_CONSTRUCT_FAILED"
+  Tests already pass; this is pure type-safety hardening.
+
+Severity rationale: NIT because runtime contract is correct,
+only static type discipline is weakened. No production
+behavior change.
+
+---------------------------------------------------------------
+F3 [NIT] ensureForeground / forceForeground / foregroundHwnd retained
+---------------------------------------------------------------
+File: companion/src/computer/darwin-adapters.ts:487-511, 613-676
+
+Plan v3 item #5 (your brief) states: "forceForeground removed:
+All 5 inject methods drop await this.ensureForeground(hwnd)".
+Verified: inject methods (click/type/key/scroll/drag) no
+longer call ensureForeground. Correct.
+
+BUT the methods themselves are retained on the class:
+  - ensureForeground (private, lines 487-511) — now unused
+    internally (no call sites in darwin-adapters.ts)
+  - forceForeground (public, lines 678-726) — called from
+    executor.ts:1363 self-UI-yield path (still load-bearing)
+  - foregroundHwnd (public, lines 613-676) — called by
+    ensureForeground AND by forceForeground AND by executor's
+    diagnostic probe
+
+ensureForeground is now effectively dead code on macOS. Its
+only remaining purpose is the docstring at line 469-486
+documenting the b0faek/psl8ci bug history. Stage 3 cleanup
+list (your brief item #4) should add "remove ensureForeground
+method" alongside "remove CMSPARK_SKYLIGHT_FORCE_FG" and
+"handle drag() in cuInject".
+
+Not a regression — the code is harmless. But it suggests
+ensureForeground was intended to be removed and wasn't.
+
+Recommended fix (post-G1, Stage 3 cleanup):
+  Add to Stage 3 list:
+    - Remove MacInputInjector.ensureForeground (dead after
+      SkyLight swap; forceForeground stays for executor
+      self-UI-yield recovery path)
+    - Remove CMSPARK_SKYLIGHT_FORCE_FG env knob + cuActivatePid
+      call site in host.swift:993-997
+    - Handle "drag" case in cuInject (currently default →
+      INVALID_ACTION; either implement or short-circuit at
+      adapter layer with a clearer NOT_SUPPORTED code)
+
+Severity rationale: NIT because no behavior defect — just
+cruft accumulation that Stage 3 already targets.
+
+================================================================
+QUESTION ANSWERS
+================================================================
+
+---------------------------------------------------------------
+Q1: Are the 3 distinct error codes correctly partitioned?
+---------------------------------------------------------------
+YES. The partition is semantically correct:
+
+  SKYLIGHT_SPI_UNAVAILABLE — dlopen/dlsym failed ONCE per
+    process; binary cannot post any events on this OS.
+    LLM action: surface upgrade prompt to user.
+
+  SKYLIGHT_POST_FAILED — SPI resolved but a specific post
+    returned false. Indicates per-event delivery failure
+    (target PID dead mid-batch, render process crash, etc.).
+    LLM action: retry with fresh window-list lookup.
+
+  CGEVENT_CONSTRUCT_FAILED — CGEvent constructor returned
+    nil. Indicates resource exhaustion or invalid coords
+    (negative large ints, etc.). LLM action: abort —
+    coordinates likely malformed.
+
+Collapsing SKYLIGHT_POST_FAILED and CGEVENT_CONSTRUCT_FAILED
+would lose actionable signal: post failure suggests retry,
+construct failure suggests malformed input. The split is
+worth the 2 extra tokens in the error_code string.
+
+The fail-fast at dispatch (host.swift:544) ensures
+SKYLIGHT_SPI_UNAVAILABLE returns before any CGEvent
+construction — so the per-call codes can NEVER be emitted
+when SPI is unavailable. Clean state partition.
+
+---------------------------------------------------------------
+Q2: Does assertInjectOk() introduce silent failure modes?
+---------------------------------------------------------------
+NO. Comparing against the previous inline pattern
+(parseComputerJson + checkOk at each call site):
+
+  - assertInjectOk is a strict composition of the same two
+    helpers, in the same order, with the same label propagation.
+    Test "F9: parseComputerJson + checkOk compose to same
+    behavior as assertInjectOk" (computer-darwin-inject-contract.test.ts:100-112)
+    pins this equivalence.
+  - The label argument defaults to "inject" if omitted — same
+    default the inline pattern used implicitly.
+  - No try/catch swallowing — rethrows ComputerError verbatim.
+
+The only behavioral difference is the binary's stdout now
+gets parsed even on nominally-successful spawns. The previous
+inline pattern in some inject methods (e.g. click() pre-swap)
+also parsed + checked; this is just factored out. No silent
+failure introduced.
+
+---------------------------------------------------------------
+Q3: TOCTOU gap in spawnHostBin vs swift-tray-bridge.ts?
+---------------------------------------------------------------
+NO new gap; same design as swift-tray-bridge.ts. See F1 above
+for the forensic-vs-preventive asymmetry documentation suggestion.
+
+The implementation correctly mirrors:
+  - open fd → sha256 from fd (not path) — closes stat/read race
+  - spawn via realpath (pre.realpath, not bin) — closes
+    path-substitution TOCTOU between hash and exec
+  - post-spawn re-stat — surfaces substitution during the
+    hash→execve window
+
+No additional gap introduced. The hash check covers the
+"binary was substituted before we looked" case; the realpath
+spawn covers the "symlink swap between hash and exec" case;
+the post-stat covers the "substitution during execve" case
+(forensic only).
+
+---------------------------------------------------------------
+Q4: Is the Stage 3 cleanup list complete?
+---------------------------------------------------------------
+MOSTLY. The brief lists: remove CMSPARK_SKYLIGHT_FORCE_FG,
+handle drag() default-case. Add:
+
+  (a) Remove MacInputInjector.ensureForeground (F3 above) —
+      now dead internal code on macOS.
+  (b) Decide on cuActivatePid fate — host.swift:625-631 is
+      still called from cuScreenshot (line 797) for the
+      occlusion-free capture path. SkyLight removed its
+      inject-path caller but screenshot still wants the
+      target raised. KEEP cuActivatePid; just remove the
+      CMSPARK_SKYLIGHT_FORCE_FG gate around its inject-path
+      call site.
+  (c) The "Note: SLPSPostEventRecordTo removed" comment
+      block at host.swift:44-48 — remove or move to a
+      separate ARCHITECTURE_DECISIONS.md; currently clutters
+      the global var declarations.
+
+These are non-blocking cleanup items; Stage 3 has time to
+pick them up post-canary.
+
+---------------------------------------------------------------
+Q5: Production readiness verdict
+---------------------------------------------------------------
+PROCEED.
+
+The merged diff correctly implements Plan v3 as reviewed.
+Both prior conditional fixes (Q5b runtime feature-detect,
+Q5c env split) landed as specified. 3 NIT findings, none
+warranting hold:
+
+  F1 — TOCTOU forensic-only for one-shot CLI: documented
+       asymmetry, not a defect (mirror required by prompt).
+  F2 — ComputerErrorCode union missing 3 codes: runtime
+       correct, typecheck passes via `any` bypass; pure
+       type-safety hardening, post-G1.
+  F3 — ensureForeground retained as dead code: Stage 3
+       cleanup item, no behavior defect.
+
+Tests: 13/13 relevant tests pass (5 integrity unit + 8 F9
+contract). 2 integration tests skip (binary absent in
+review worktree — expected). tsc clean.
+
+Recommendation: clear for G1 manual lab (Tahoe click test).
+Findings F1-F3 can land as a single cleanup PR after canary
+completes, alongside the existing Stage 3 list.
+
+================================================================
+END OF REVIEW
+================================================================

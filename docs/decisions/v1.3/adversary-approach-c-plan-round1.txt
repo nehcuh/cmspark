@@ -1,0 +1,624 @@
+Adversary Review — Approach C-minus Plan (round 1)
+==================================================
+Date: 2026-07-24
+Reviewer: independent adversary (Claude Code, plan-round1)
+Plan under review: /Users/huchen/Projects/cmspark/docs/decisions/v1.3/plan-approach-c-minus.md
+Plan status: Draft v1
+Prior adversary: /Users/huchen/Projects/cmspark/docs/decisions/v1.3/adversary-approach-c-round1.txt
+                          (RE-RESEARCH verdict — resolved by spike-daemon-threat-model.md + spike-skylight-tahoe-results.md)
+
+TL;DR — MODIFY BEFORE REVIEW.
+The plan is sound on the headline decision (SkyLight swap, no daemon, no
+library-validation flip) and correctly absorbs every prior-blocker resolution.
+But it introduces three NEW concerns the predecessor rounds never had to
+grapple with because they are emergent from the C-minus shape itself:
+
+  (a) HID fallback re-opens the cursor-steal / frontmost-coupling threat
+      that Approach C was created to eliminate, and the plan proposes no
+      policy gate around it (Q-adv-1 is a real hole, not over-engineered).
+  (b) The `--primitive hid|skylight` argv flag is a downgrade attack
+      surface (Q-adv-3 is real and the plan's current mitigation is null).
+  (c) The SHA-constant sync (F7 CI assertion) is theatrical as written —
+      CI does not rebuild the binary, so a stale constant is undetectable.
+
+Two more substantive issues: the implementation order silently ships a
+non-functional binary between F1 and F7; and the rename (S5) silently
+burns every existing user's Accessibility grant on first run.
+
+None of these are "re-research" or "reject" — they are plan-phase fixes,
+each one to three paragraphs of additional spec. With the changes in
+section 3 below, this is PROCEED.
+
+================================================================
+1. SECTION-BY-SECTION CRITIQUE
+================================================================
+
+---------------------------------------------------------------
+1. Goal
+---------------------------------------------------------------
+Accurate. The three observable defects (Chrome renderer reject,
+cursor steal, frontmost coupling) are correctly attributed to
+.cghidEventTap. The claim "the user's real cursor does not move" is
+empirically verified by the spike doc (B2 PASS on Tahoe 26.5.2 only —
+Sonoma/Sequoia remain unverified, see blocker N1 below).
+
+Minor: "frontmost state, regardless of frontmost" is asserted as
+fact but the spike results doc explicitly lists "Real click landing
+on TextEdit/Safari/Chrome" as item #1 under "What was NOT tested".
+The goal paragraph should hedge this with "per cua's documented
+behavior; not yet reproduced in our lab".
+
+---------------------------------------------------------------
+2. Scope
+---------------------------------------------------------------
+The C-minus shape is correct: drop the daemon (D3), drop software
+cursor (D1), drop AX-first (D2). The threat-model addendum
+(spike-daemon-threat-model.md) makes D3 the only defensible choice.
+
+The deferred-forever list (O1, O2) is well-drawn:
+  - O1 (never load non-Apple dylibs) is the load-bearing reason C-minus
+    can keep disable-library-validation=false. Good.
+  - O2 (never bypass SkyLight auth signing) is tautologically true.
+
+Concern: "D4: SLPSPostEventRecordTo focus-without-raise SPI. May be
+necessary for some background Chromium configurations. Deferred until
+a documented failure case appears." — but the spike source
+(host-skylight.swift:36-40) explicitly removed this SPI as dead code
+with the comment "if a focus-without-raise step becomes necessary
+for background Chrome, it must be re-resolved with a verified
+signature and a named call site — not dead code." The plan and the
+spike disagree on whether this is "deferred" or "deleted-and-revisit-
+from-scratch". Reconcile in section 3.
+
+---------------------------------------------------------------
+3. File-by-file changes
+---------------------------------------------------------------
+
+F1 (host.swift merge). The 7 swap sites and the dispatch-level fail-
+fast are correctly enumerated. The CMSPARK_SKYLIGHT_FORCE_FG env gate
+is described as "kept as A/B knob for diff testing in canary; default
+off". This is fine for canary but see Q-adv-4 — leaving it in
+production is an attack surface (launchctl setenv).
+
+F2 (entitlements). Correctly false, matches
+host-skylight-nolibval.entitlements. Good. Verified against
+spike-skylight-tahoe-results.md:14-22 A/B.
+
+F3 (adapter.ts:138-144 integrity gate). Mirrors swift-tray-bridge
+structure faithfully. The throw message is good — points the developer
+at CMSPARK_HOST_SHA256. Concern: F3 lives in a NEW module
+host-integrity.ts (per "Integrity helpers live in a new
+host-integrity.ts"), but the example code shows checkHostIntegrity
+and statInodeDev being used directly inside defaultDarwinRunner. The
+module boundary is hand-waved — does adapter.ts re-export them, or
+does the runner import? Trivial but unspecified.
+
+F4 (host-bin.ts SHA constant). "Update resolveHostBinary() to verify
+candidate hash during path resolution (fail-fast at config time, not
+spawn time — but spawn-time check in F3 is the authoritative gate)."
+This is suspicious: resolveHostBinary is called frequently; if it
+re-hashes the binary on every call, that's ~10MB SHA256 per inject
+call. spike-skylight-tahoe-results.md:7 says binary is 260128 bytes —
+small enough that re-hash is fine, but the design should cache the
+result keyed by {path, mtimeMs, size}. As written, F4 is a perf
+foot-gun. Also: resolveHostBinary currently returns the dev fallback
+path even when the file doesn't exist (host-bin.ts:58) — what happens
+when the SHA check runs against a non-existent path? Throw or skip?
+
+F5 (raise policy). The table is correct: drop ensureForeground for
+click/type/key/scroll under SkyLight; keep for HID fallback. But the
+HID-fallback row is implemented via F6's retry wrapper, and F6 only
+catches SKYLIGHT_SPI_FAILED — it does NOT catch ensureForeground
+failures. So if SkyLight works but the action legitimately needs
+foreground (e.g. canvas app per adversary-round1 C2), there's no
+detection. The plan accepts this as a known limitation. OK.
+
+F6 (HID fallback). THIS IS THE BIGGEST HOLE. See Q-adv-1, Q-adv-3,
+and new blocker N2 below. The retry wrapper spawns a SECOND process
+after SPI failure, this time with --primitive hid + forceForeground.
+Two issues:
+  (a) The wrapper is in TS, but the binary still needs to know which
+      primitive to use. The plan says "Toggle via --primitive
+      hid|skylight argv flag" but does not specify where this flag is
+      set — darwin-adapters.ts:500 currently builds args inline; the
+      plan does not show the new arg-building code.
+  (b) Force-foreground + HID tap = full cursor steal. The plan does
+      NOT gate this behind any confirmation tier; it just retries
+      silently with logging. Adversary-round1 B3 explicitly worried
+      about "any local process can connect and inject --action click
+      --window-id <victim>" — the daemon was rejected for this
+      reason. The HID fallback has the SAME property (delivers to
+      any frontmost window the attacker raises) without any IPC.
+
+F7 (build script). The CI assertion "assert dist/cmspark-host.sha256
+matches CMSPARK_HOST_SHA256 in host-bin.ts" sounds good but is
+theatrical as written. See new blocker N3 — CI does not rebuild the
+binary, so a stale constant passes CI; a developer-rebuilt binary
+fails CI in a way indistinguishable from tampering.
+
+F8 (acceptance criteria). G3's TOCTOU test is theatrical as written.
+See Q-adv-7 — there is no portable way to substitute a binary
+between two syscall reads in pure Node without instrumenting the
+binary itself. The test as described cannot exist.
+
+---------------------------------------------------------------
+4. Risk register
+---------------------------------------------------------------
+The first four rows are well-formed. The "TS raise drop breaks multi-
+monitor click coords" row is mentioned-but-not-mitigated — see N4
+below. The "disable-library-validation=false fails on Sequoia 15.x"
+row is honest about being untested — flag for the G1 sweep.
+
+Missing rows:
+  - "TCC permission lost on rename" (S5/F5 rename burns cdhash-based
+    Accessibility grant — see N5).
+  - "HID fallback silently re-enables cursor steal" (Q-adv-1).
+  - "argv --primitive hid bypasses SkyLight" (Q-adv-3).
+  - "Developer forgets to bump SHA constant, CI cannot detect" (N3).
+  - "User has only Tahoe lab — Sonoma 14.4 ship claim unverifiable"
+    (spike-skylight-tahoe-results.md:44-52 explicitly flags this).
+
+---------------------------------------------------------------
+5. Rollout strategy
+---------------------------------------------------------------
+Stage 1 → 2 → 3 is correct in spirit. The "user runs Sonoma smoke +
+Chrome click lab on their dev Mac" assumption is the load-bearing
+ship gate — and the spike results doc explicitly says only Tahoe
+26.5.2 is available locally. If the user only has Tahoe hardware,
+this is a blocker for the v1.3 ship claim "Sonoma 14.4 supported".
+See N6.
+
+Stage 3 (Ship) line "Replace dist/cmspark-host with SkyLight variant"
+silently collides with N5 — every existing user's Accessibility grant
+is keyed on the OLD binary's cdhash. First launch of the new binary
+triggers a fresh TCC prompt. This needs to be in the rollout plan
+explicitly with user-comms.
+
+---------------------------------------------------------------
+6. Open design questions for adversary
+---------------------------------------------------------------
+See section 2 — all five are real except Q-adv-5 (post-spawn re-stat
+is sufficient; full content hash is over-engineering).
+
+---------------------------------------------------------------
+7. Implementation order
+---------------------------------------------------------------
+Strict serial is good. BUT the order has a silent failure window:
+
+  Step 2: F3 (adapter integrity check) lands. CMSPARK_HOST_SHA256 is
+          set to the EXISTING dist/cmspark-host hash.
+  Step 3: F1 (host.swift merge) lands. dist/cmspark-host is rebuilt
+          with the SkyLight variant.
+
+Between step 2 merge and step 3 merge, the SHA constant matches the
+OLD binary. After step 3, the SHA constant is STALE — every spawn
+fails IntegrityFailed until step 4 (F4 host-bin.ts update). The
+plan does not say "update CMSPARK_HOST_SHA256 in the same commit as
+F1". This is mechanical but must be explicit. See N7.
+
+Worse: if F7 (build script) lands AFTER F1, there is no canonical
+build script during the F1-F6 window — developers must manually
+build and re-hash. The plan says build-host-skylight.sh "becomes
+dev-only A/B regression tool" but it is currently the ONLY thing
+that knows how to build the SkyLight variant. Step 5 (F7) should
+move before step 3 (F1).
+
+---------------------------------------------------------------
+8. Success criteria
+---------------------------------------------------------------
+"User runs G1 (Sonoma smoke) and G2 (Chrome click lab) successfully"
+— this is the load-bearing ship gate and is conditional on hardware
+the plan does not guarantee access to. Tighten.
+
+================================================================
+2. ANSWERS TO Q-adv-1 through Q-adv-5
+================================================================
+
+---------------------------------------------------------------
+Q-adv-1: HID fallback as security regression
+---------------------------------------------------------------
+REAL. NOT over-engineered. The plan currently specifies no policy
+gate around HID fallback. Adversary-round1 B3 (the daemon blocker)
+was rejected for exactly this property: "any user-level process can
+connect and inject --action click --window-id <victim_window>".
+The HID fallback has the SAME property because forceForeground +
+.cghidEventTap delivers to whatever is visually frontmost — and a
+compromised companion can stage the frontmost window (e.g. wait
+until a password prompt appears, then trigger the HID retry).
+
+Correct answer: gate HID fallback behind L2 confirmation. The
+SKYLIGHT_SPI_FAILED error code becomes a SECURITY-TIER-RAISE event,
+not a transparent retry. Concretely:
+  - SkyLight success → no prompt (per current plan).
+  - SkyLight failure → HID retry requires explicit user approval
+    in the side panel ("Agent's primary click path failed; allow
+    legacy cursor-stealing click?"). Reason: the fallback's threat
+    surface is categorically different from the primary path.
+
+Plan needs to change. Add a row to F5's table:
+  | HID retry path | NEW TIER | L2 confirm — forceForeground +
+  |               |          | cursor steal changes blast radius |
+And update F6's wrapper to call into SecurityConfirmationManager
+before the HID retry.
+
+There is a subtle counter-argument: the user's PRIMARY action
+already got L2 confirmation (it's a click). Does the retry need
+re-confirmation? YES, because the retry has different side effects
+(cursor moves, window raises) that the user did not originally
+consent to. The original consent was "click without disturbing my
+desktop"; the retry is "click and disturb my desktop". Those are
+different consent scopes.
+
+---------------------------------------------------------------
+Q-adv-2: SHA constant drift recovery
+---------------------------------------------------------------
+REAL but lower severity than Q-adv-1. Failure mode: developer
+rebuilds binary, forgets to bump CMSPARK_HOST_SHA256, every spawn
+throws IntegrityFailed. Production is hard-down.
+
+The plan's recovery "throw with a hint" is the correct FIRST line.
+But the threat-model doc (spike-daemon-threat-model.md S-P0-2 note)
+explicitly says: "Hash mismatch is NOT auto-rebuilt — that's a
+suspicious signal and must be surfaced to the operator". So the
+plan inherits this correctly.
+
+But: there's no operator-visible channel beyond the throw. In
+production (packaged DMG), the throw fires inside a Node companion
+that has no terminal — the user sees "Action failed" in the side
+panel and that's it. The plan should specify that IntegrityFailed
+errors are surfaced in the side panel as a one-time recovery prompt
+with two options: "Download fresh copy" and "Open issue template".
+See N3.
+
+Also: the dev-vs-prod distinction matters. In dev, the dev built
+the binary and forgot to bump the constant — auto-rebuild IS the
+right recovery. In prod, never auto-rebuild. The plan should
+distinguish via CMSPARK_ALLOW_HOST_BIN_OVERRIDE or NODE_ENV check.
+This mirrors host-bin.ts:22-30's pattern. Apply the same shape
+here.
+
+---------------------------------------------------------------
+Q-adv-3: --primitive hid|skylight as attack surface
+---------------------------------------------------------------
+REAL and currently UNADDRESSED in the plan. The argv flag is
+necessary for F6 (HID retry needs to tell the binary which path to
+take), but a compromised companion can simply send --primitive hid
+on the first call, bypassing SkyLight entirely. The threat-model
+doc's T1 row applies: any local process can construct the argv.
+
+Correct answer: do NOT honor --primitive hid from companion in
+production. Two implementation choices:
+
+  (a) Remove the argv flag entirely. The binary always tries
+      SkyLight first and falls back to HID internally on SPI
+      failure. The companion's F6 retry wrapper becomes redundant.
+      PRO: no attack surface. CON: the binary makes the policy
+      decision, not the TS layer — harder to test, harder to add
+      the Q-adv-1 confirmation gate.
+
+  (b) Keep the argv flag but require CMSPARK_ALLOW_HID_OVERRIDE=1
+      for it to be honored. Mirror host-bin.ts:22-30's pattern
+      exactly. Production never sets the env; dev/tests set it.
+
+Recommendation: (b). It preserves the TS-layer policy decision
+(required for Q-adv-1's L2 confirmation gate) while closing the
+attack surface.
+
+Plan needs to change. F6 must specify the env gate.
+
+---------------------------------------------------------------
+Q-adv-4: CMSPARK_SKYLIGHT_FORCE_FG env gate
+---------------------------------------------------------------
+REAL but lower severity. launchctl setenv is a user-mode operation
+requiring no special privilege. An attacker who can run launchctl
+can already do worse (e.g. substitute the binary entirely if they
+have write access). So this env gate does not expand the attack
+surface meaningfully — it's already inside the trust boundary.
+
+HOWEVER: the plan proposes keeping it "as A/B knob for diff testing
+in canary". Once canary is done, there is NO reason to keep it. The
+env gate adds complexity (cuActivatePid has a branch that is dead
+in production) and confuses future readers.
+
+Correct answer: remove CMSPARK_SKYLIGHT_FORCE_FG in Stage 3 (Ship).
+The plan should explicitly say "F1 lands with the env gate; Stage 3
+removes it as the final step before tagging". This is mechanical and
+the answer to Q-adv-4 is "yes, remove it post-canary" — not "leave
+it as a permanent A/B knob".
+
+Plan needs to change. Add a Stage 3 sub-bullet: remove the env gate
+from host.swift before tagging the release.
+
+---------------------------------------------------------------
+Q-adv-5: post-spawn inode/dev re-stat sufficiency
+---------------------------------------------------------------
+OVER-ENGINEERED. The threat-model doc (spike-daemon-threat-model.md
+T2 row) explicitly considered mmap + content hash and concluded
+"trust startup" is the residual for the daemon case. For per-action
+spawn, inode+dev is sufficient because:
+
+  - The race window is microseconds (between fstat pre-spawn and
+    fstat post-spawn). Attacker would need to:
+    (1) read the SHA constant
+    (2) craft a malicious binary with the SAME first-N-blocks hash
+        (impossible for SHA256 in microseconds)
+    (3) substitute via copyfile + rename preserving inode (only
+        works on certain APFS configs and only if the attacker has
+        write access to the binary path — at which point they could
+        just substitute permanently and bypass the spawn-time check
+        by waiting for the next process restart).
+
+  - The post-spawn re-stat catches the realistic race: attacker
+    substitutes the file between hash-compute and execve. Inode
+    change is the strongest signal here because rename(2) on APFS
+    DOES change inode unless clonefile is used — and clonefile
+    preserves inode but requires both source and destination to be
+    on the same APFS volume and the source to already exist with
+    attacker's hash, which is the SHA-preimage problem.
+
+The plan is correct. Do NOT add full content hash post-spawn. The
+swift-tray-bridge pattern this plan mirrors has shipped in
+production for v1.3 Batch 1 without reported TOCTOU bypass; the
+same pattern is sufficient here.
+
+Plan does NOT need to change for Q-adv-5.
+
+================================================================
+3. NEW BLOCKERS (each with severity)
+================================================================
+
+---------------------------------------------------------------
+N1 — Sonoma 14.4 / Sequoia 15.x SPI stability unverified
+       Severity: HIGH (blocker for v1.3 ship claim)
+---------------------------------------------------------------
+The plan's section 8 success criteria requires "Tahoe + Sequoia +
+Sonoma 14.4 is the v1.3 contract". But spike-skylight-tahoe-results.md
+:44-52 explicitly says only Tahoe 26.5.2 was tested; Sonoma and
+Sequoia are "NOT TESTED — single-machine lab". The G1 acceptance
+gate says "On a Sonoma 14.4 Mac" — but does not address what
+happens if the user has no Sonoma hardware.
+
+This is the SAME unresolved spike blocker that adversary-round1
+flagged as B2. The plan defers it to Stage 2 (canary) without
+asking whether the user can actually perform it.
+
+Fix: either (a) confirm in Plan-stage that user has Sonoma 14.4
+hardware or VM availability, OR (b) downgrade the v1.3 ship claim
+to "Tahoe 26.5+ only; Sonoma/Sequoia support is best-effort and
+falls back to HID", OR (c) accept HID fallback as the Sonoma path
+with Q-adv-1's L2 gate.
+
+---------------------------------------------------------------
+N2 — HID fallback re-introduces Approach C's headline regression
+       Severity: HIGH
+---------------------------------------------------------------
+See Q-adv-1 answer. F6's silent retry with forceForeground + HID
+tap is exactly the cursor-steal / frontmost-coupling behavior
+Approach C was created to eliminate. The plan's risk register
+does not even list this row.
+
+Fix: gate F6's HID retry behind L2 confirmation (per Q-adv-1
+answer) OR remove the HID fallback entirely and let SKYLIGHT_SPI_FAILED
+be a hard error (acceptable if N1 is resolved — Sonoma/Sequoia are
+verified or unsupported).
+
+The "no fallback" option has a real benefit: it preserves the
+threat model unconditionally. The cost is that some users on broken
+installs lose computer-use until they upgrade macOS. Given the
+plan's explicit "fail-fast error code SKYLIGHT_SPI_FAILED" already
+exists, the LLM can surface a clear error to the user — this is
+defensible.
+
+Strong recommendation: REMOVE F6 entirely for v1.3 ship. Add it
+back in v1.4 with the L2 gate if real-world SPI failure rates
+demand it.
+
+---------------------------------------------------------------
+N3 — SHA constant sync is not enforced by CI
+       Severity: MEDIUM
+---------------------------------------------------------------
+F7 step 4 says "CI step: assert dist/cmspark-host.sha256 matches
+CMSPARK_HOST_SHA256 in host-bin.ts. Mismatch = either binary was
+rebuilt (developer forgot to bump constant) or build is
+non-reproducible."
+
+This is theatrical. The plan does not specify:
+  (a) WHEN CI rebuilds the binary. If CI does not run
+      build-host.sh, dist/cmspark-host.sha256 does not exist as a
+      CI artifact — only the committed constant is checked, which
+      is trivially equal to itself.
+  (b) HOW CI knows the "right" SHA. There is no oracle. If the
+      developer forgets to bump, both files agree on the stale
+      value and CI passes.
+  (c) What happens on reproducibility drift (swiftc version
+      differences, codesign timestamp variance). Real-world
+      codesign output is NOT byte-reproducible across machines
+      because of the CodeDirectory's hash blob including a
+      timestamp.
+
+Fix: CI must run build-host.sh fresh, capture the resulting SHA,
+and compare against host-bin.ts's constant. This requires the
+build to be reproducible — which requires either (i) pinning
+swiftc version, (ii) re-signing with --timestamp=none, or
+(iii) hashing the binary BEFORE codesign (which defeats the
+purpose because codesign changes the on-disk bytes).
+
+Pragmatic fix: hash the MACH-O binary only, excluding the
+CodeSignature section. There is precedent: iOS app reproducibility
+projects use `codesign -d --blob-all` extraction + content
+hash of the remaining Mach-O. This is non-trivial work and should
+either be in the Plan or explicitly deferred to v1.4.
+
+Without this, the F7 CI assertion is security theater.
+
+---------------------------------------------------------------
+N4 — Multi-monitor click coords unaddressed
+       Severity: MEDIUM
+---------------------------------------------------------------
+Risk register row "TS raise drop breaks multi-monitor click coords"
+is mentioned but the mitigation column says only "Acceptance
+criterion: G2 includes a multi-monitor click target." This is
+saying "the test will check it" without saying "what we do if it
+breaks".
+
+Concrete failure mode: with ensureForeground dropped, SkyLight
+posts the event to the target PID with the (x, y) coordinate
+passed in. If the target window is on a secondary display with
+different DPI scaling, the (100, 30) coordinate may land on the
+wrong monitor — or outside any window at all.
+
+The plan should specify one of:
+  (a) Coordinate normalization: darwin-adapters.ts:500 must pass
+      display-aware coordinates (use CGGetDisplaysWithPoint to
+      validate before inject).
+  (b) Window-relative coordinates: switch to (window_id,
+      offset_x, offset_y) and let the binary translate to global
+      via _getWindowRect.
+  (c) Document as a known limitation with a workaround: "multi-
+      monitor clicks require the target window to be on the
+      primary display; agent should warn before clicking secondary
+      displays".
+
+Pick one. The current "test will catch it" framing is not a
+mitigation.
+
+---------------------------------------------------------------
+N5 — Production rename burns existing TCC grants
+       Severity: HIGH (user-visible regression)
+---------------------------------------------------------------
+S5 says: "Production rename — cmspark-host-skylight-nolibval →
+cmspark-host". But there is no "cmspark-host-skylight-nolibval" in
+production today — that name is the SPIKE binary. The actual
+production binary is named "cmspark-host" (host-bin.ts:43-47).
+The rename description is BACKWARDS.
+
+What the plan presumably means: keep the production name
+"cmspark-host" and replace its contents with the SkyLight variant.
+That is correct — but it has a subtle consequence: TCC permissions
+are keyed on the binary's CODESIGN cdhash. Even though the FILE
+NAME is unchanged, the cdhash changes when the contents change,
+which means macOS sees it as a new binary and revokes the
+Accessibility grant (per the user's own memory note:
+tcc_cdhash_vs_activate.md — "cmspark-host binary 改一次就要
+tccutil reset").
+
+Every existing user upgrading to v1.3 will see a fresh TCC prompt
+on first inject. The plan does not address this.
+
+Fix: Stage 3 (Ship) must include user-comms ("After updating
+cmSpark, you will be prompted again for Accessibility permission
+— this is expected because the helper binary was updated") in:
+  - The DMG installer README
+  - The side-panel onboarding banner
+  - The release notes
+
+Also: tccutil reset com.cmspark.cmspark-host (or whatever the
+bundle ID is) should be documented as the recovery path for users
+who see "stuck" prompts.
+
+This is not a blocker for the PLAN — but it MUST be in the
+rollout strategy. Currently absent.
+
+---------------------------------------------------------------
+N6 — Stage 2 canary assumes Sonoma hardware user may not have
+       Severity: HIGH (mirrors N1)
+---------------------------------------------------------------
+Already covered under N1. Listing separately because the plan
+structure has the same blind spot in section 5 (Rollout) and
+section 8 (Success criteria). Both must be reconciled.
+
+---------------------------------------------------------------
+N7 — Implementation order has stale-SHA window between F1 and F7
+       Severity: MEDIUM
+---------------------------------------------------------------
+Section 7's strict serial order:
+
+  1. F2 + F4 (entitlements + SHA constant)
+  2. F3 (adapter integrity check)
+  3. F1 (host.swift merge)
+  4. F6 + F5 (HID fallback + raise policy)
+  5. F7 (build script)
+  6. F8 (unit tests)
+
+If F4's CMSPARK_HOST_SHA256 is set to the EXISTING production
+binary's hash in step 1, then step 3 (F1 merge) rebuilds the
+binary with SkyLight code — the SHA changes — and step 2's
+integrity check now FAILS for every spawn until F4 is updated.
+
+The plan does not say "F4's SHA constant must be re-captured in
+the same commit as F1". The grok_review_every_fix memory (each
+commit must pass review) implies small thematic commits, but a
+single F1 commit that leaves the SHA stale will break the next
+developer's local spawn.
+
+Fix: reorder. Either:
+  (a) F1 + F4 + F7 land in ONE commit (binary rebuild + constant
+      update + build script update are atomic).
+  (b) F7 (build script) lands BEFORE F1, and the build script
+      auto-updates the constant on every build.
+
+Recommendation: (b). It's strictly better — removes the human-
+forgetfulness failure mode entirely.
+
+---------------------------------------------------------------
+N8 — F8 TOCTOU unit test cannot be implemented as described
+       Severity: MEDIUM (theatrical test)
+---------------------------------------------------------------
+G3 says: "Spawns against a binary that's substituted between hash
+and exec → asserts TOCTOU caught".
+
+There is no portable way to substitute a file between two Node.js
+fs.openSync calls in a unit test. Options:
+  (a) Mock fs.openSync and fs.execFileAsync to simulate the race.
+      But then the test is testing the mock, not the implementation.
+  (b) Use a real subprocess that does the substitution — requires
+      precise timing, flaky on CI.
+  (c) Inject a hook into checkHostIntegrity that fires a callback
+      between hash and exec — production code never has this hook.
+
+The honest test is: "given a binary whose SHA does not match the
+constant, checkHostIntegrity returns ok=false". This is testable
+and meaningful. The TOCTOU-specific test ("substituted between
+hash and exec") is aspirational and probably cannot be implemented
+without race-condition machinery that is itself bug-prone.
+
+Fix: rewrite G3 to be honest. Two tests:
+  (a) Hash mismatch → ok=false (the load-bearing assertion).
+  (b) Inode/dev change between pre- and post-stat → throws (test
+      by injecting a mock statInodeDev that returns different
+      values on second call).
+
+Do NOT promise a TOCTOU race test that cannot exist.
+
+================================================================
+4. VERDICT
+================================================================
+
+MODIFY BEFORE REVIEW.
+
+The plan is structurally correct — the C-minus shape is right, the
+threat-model absorption is right, the file-by-file changes are
+mostly right. But it has:
+
+  - One security regression (N2: HID fallback re-opens cursor steal)
+    that needs an L2 confirmation gate OR removal of F6.
+  - One attack surface (Q-adv-3: --primitive hid argv) that needs
+    an env-gate mirroring host-bin.ts:22-30.
+  - One ship-blocker (N1/N6: Sonoma/Sequoia unverified) that needs
+    hardware confirmation or claim downgrade.
+  - One user-visible regression (N5: TCC grant burn on rename) that
+    needs rollout comms.
+  - Three plan-spec gaps (N3: CI oracle, N7: stale-SHA window,
+    N8: theatrical TOCTOU test) that need tightening.
+
+Each of these is a paragraph or two of additional Plan text. None
+require new research. Once addressed, this should clear final
+review (Grok + Claude Code) and proceed to Stage 2 canary.
+
+If N1 cannot be resolved (no Sonoma hardware available), the plan
+must either drop Sonoma from the v1.3 contract or accept HID
+fallback as the Sonoma path (with N2's L2 gate applied — making
+N2 a blocker after all).
+
+Do NOT proceed to Stage 2 (canary) without resolving N1 + N2.
+N3-N8 can be parallel-tracked during implementation.

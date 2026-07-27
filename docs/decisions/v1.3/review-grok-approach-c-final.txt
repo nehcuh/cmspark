@@ -1,0 +1,150 @@
+I'll run the routing step, then read the background chain and the SkyLight spike code so the C-minus verdict is grounded in the actual design and spike.Routing suggested grill-me (design interview), which doesn't fit a design-confirmation gate with fixed evaluation criteria — proceeding as a design review with the background chain and spike code.Checking one more load-bearing gap: whether the TS layer still forces foreground even if Swift skips it, and whether `dlsym` null-handling is correct.# Approach C-minus — Final Review (Grok)
+
+**Scope**: design-confirmation gate before Plan. Evidence: spike sources, adversary round 1, daemon threat model, prior research consensus, and live inspection of production inject/TS paths.  
+**Override note**: routing suggested `grill-me` (interview skill); unsuitable for a fixed-criteria design gate — reviewing against the four evaluation axes instead.
+
+---
+
+## 1. Spike correctness
+
+**Mostly sound as a de-risk fork; not ship-ready as a production primitive.**
+
+### dlopen / dlsym / cast
+
+`host-skylight.swift:37–53` uses the right absolute path (`…/SkyLight.framework/SkyLight`), lazy load, and C-convention cast for `SLEventPostToPid(pid_t, CGEvent?)`. That matches the operational model from the cua blog and prior research: auth-signed per-PID delivery, not public `postToPid`.
+
+**Defect**: `dlsym` results are `unsafeBitCast`’d without a null check (`:47–49`). In Swift, a null symbol cast to a non-optional function type and stored in an optional almost always becomes `.some(fn@0)`, so `slPostEventToPidFn != nil` can lie and the first call crashes. Correct pattern:
+
+```swift
+if let sym = dlsym(handle, "SLEventPostToPid") {
+  slPostEventToPidFn = unsafeBitCast(sym, to: …)
+}
+```
+
+`SLPSPostEventRecordTo` is resolved (`:34, 48–49`) but **never called**, and the cast signature is almost certainly wrong (yabai/cua treat it as an event-*record* SPI, not `(pid_t, CGEvent?)`). Dead + mis-typed is fine for a resolution probe; it is **not** “full Chrome stack” support. Research consensus was explicit: background Chromium often needs focus-without-raise (`SLPSPostEventRecordTo`) + trusted mouse path + sometimes a (−1,−1) primer — not bare `SLEventPostToPid`.
+
+### Swap-site coverage
+
+Production `host.swift` has **7** `.post(tap: .cghidEventTap)` callsites in `cuInject` (move / down / double-down / up / type / key / scroll — `:924–982`). The fork replaces all of them with `slPostToPid` (`host-skylight.swift:984–1042`). The query’s “4 sites” undercounts; coverage of the real inject surface is complete.
+
+Pre-existing inject bugs are **copied**, not introduced:
+
+| Issue | Lines | Impact |
+|---|---|---|
+| `right_click` uses `.leftMouseDown` / `.leftMouseUp` | `:987, 993` | Right-click reliability on all targets, not only Chrome |
+| Key path posts only keyDown | `:1032–1035` | Sticky modifiers / incomplete chords |
+| `drag` action absent | N/A | Unchanged gap vs `darwin-adapters.ts:561` |
+
+### Force-FG A/B
+
+`CMSPARK_SKYLIGHT_FORCE_FG == "1"` gating of `cuActivatePid` (`:972–976`) is the right A/B knob **inside the host binary**.
+
+**Design hole Plan will hit**: TypeScript still force-raises on every inject. `darwin-adapters.ts:497–546` calls `ensureForeground(hwnd)` before click/type/key/scroll. Even with Swift default-off activate, the product still steals frontmost via osascript/`forceForeground`. C-minus cannot claim “no forceForeground smoothness win” until Plan specifies when TS `ensureForeground` is dropped or made conditional (e.g. canvas-only HID fallback).
+
+### Entitlements
+
+`host-skylight.entitlements` shape is right for a spike: flip only `disable-library-validation`, keep `allow-jit` / `allow-unsigned-executable-memory` false, keep Apple Events. No extra SkyLight entitlement exists.
+
+**Open empirical question**: Apple library validation **allows Apple-signed** dylibs. SkyLight is Apple-signed. The spike proves flip is *accepted by codesign*, not that flip is *required for load*. Plan should A/B `disable-library-validation=false` first; only flip if dlopen fails under hardened runtime. yabai/cua ship the flip for broader reasons (scripting addition / plugin load) that may not apply to a single absolute-path `dlopen`.
+
+---
+
+## 2. C-minus call (drop daemon)
+
+**Agree: drop the daemon for v1.3.**
+
+`spike-daemon-threat-model.md` T1–T3 correctly show that socket auth, re-hash, and `mprotect` all collapse to “trust X.” Persistent SkyLight capability is a categorical blast-radius change (invisible clicks into password UI / banking / other agents). Per-action `execFile` is the only posture that preserves short-lived privilege without inventing a new trust boundary.
+
+**Push-back (missed mitigation, still not enough to ship daemon):** T1 could use *FD-passing only* (companion creates the socketpair, daemon inherits the peer FD, never binds/listens). That removes “any local process connects,” but still trusts companion + process memory for hours. Does not change C-minus for v1.3; relevant only if UX later forces C-plus.
+
+**Fork tax ~10–50 ms × N**: Acceptable for v1.3. Research ranked perceived choppiness as (1) cursor/frontmost churn, (2) activate/settle, (3) process model. Keeping spawn tax while fixing the primitive is coherent. Do **not** re-attempt daemon in Plan unless user testing shows latency is the dominant complaint *after* primitive + TS raise removal.
+
+**Critical factual correction (agree with Claude Code peer review):** threat model line 9 claims S-P0-2 is “mirrored … at `host-bin.ts`.” **False.** `host-bin.ts` is path resolution + S-P0-1 override lockdown only. Spawns in `adapter.ts` / `darwin-adapters.ts` are bare `execFile` — no hash, no inode re-stat. So “C-minus preserves full S-P0-2” is true for **tray**, not for **cmspark-host**. The entitlement flip therefore removes a hardened-runtime layer **without** a spawn-integrity backstop on the host path. That is a real regression framing error, not a reason to add a daemon.
+
+---
+
+## 3. Open risks before Plan
+
+### Sonoma / Sequoia
+
+**Do not block Plan on a full 6-OS matrix; do lock the support contract in Plan inputs.**
+
+- Floor today: `host-Info.plist` `LSMinimumSystemVersion=14.4`.
+- Empirical: Tahoe 26.5.2 symbol resolve + no crash on first inject call only.
+- cua #1503 is a *sibling* selector crash on Sonoma; yabai Tahoe issues are mostly scripting-addition, not proof `SLEventPostToPid` is dead on Sequoia.
+
+**Acceptable product shape:** ship C-minus with **runtime feature-detect** (`dlsym` null-safe + first-call HID fallback), not “Tahoe-only binary” while still advertising 14.4. Raising the floor to 15/26 without product buy-in is a separate decision. A single Sonoma smoke run remains high value (30 min) and should gate *ship*, not necessarily Plan drafting.
+
+### Library validation / what S-P0-2 actually was
+
+| Control | Protects against | C-minus impact |
+|---|---|---|
+| **S-P0-2** (`checkIntegrity` on tray) | Binary rename-swap TOCTOU between hash and exec | **Unchanged** if no daemon |
+| **Library validation ON** | Loading non-Apple / non-same-TeamID code into process | **Weakened if flip required** |
+| **Host spawn integrity** | Substituted `cmspark-host` | **Already missing** — must add if validation flips |
+
+Compensating hardening if flip stays: absolute-path-only `dlopen`; `RTLD_LOCAL`; post-`dlopen` refuse any other load path; keep JIT/unsigned-exec off; **add host `checkIntegrity` + pinned SHA** on every inject spawn; never load user-controlled plugin paths. Prefer proving flip unnecessary.
+
+### Chrome right-click
+
+**Acceptable as a documented limit**, matching cua. Not acceptable as a silent wrong event type (left down/up with `.right` button). Fix mouseType mapping in Plan; surface remaining Chromium web-content right-click failures in policy/UI as known limitation.
+
+### Still unvalidated load-bearing claim
+
+Symbol resolve ≠ “Chrome renderer accepts the click.” Manual TextEdit/Safari/Chrome lab (user-pending) is the real go/no-go for the *primitive*, not for writing the Plan skeleton. Plan may start, but **merge/ship** of the swap must wait on Chrome left-click green.
+
+---
+
+## 4. Plan-phase readiness
+
+**Not yet specific enough for a cold implementer.** Missing design locks:
+
+1. **Failure / fallback contract** — today every caller does `_ = slPostToPid(...)` and still returns `ok: true` (`:984–1044`). SPI fail = silent success. Plan needs: error codes, when HID+raise is used (canvas), when to fail closed.
+2. **Raise policy across TS + Swift** — who calls `ensureForeground` / `cuActivatePid` after SkyLight; canvas exception path.
+3. **OS matrix + feature gate** — 14.4 floor vs runtime probe; whether `SLPSPostEventRecordTo` is in v1.3 or deferred.
+4. **Integrity story for host binary** if library validation flips.
+5. **AX-first** — orthogonal for Chrome coords; load-bearing for AppKit smoothness. Sequence as P1 with explicit app classes, not “whenever.”
+
+---
+
+## Verdict
+
+### Blockers (must fix before Plan *implementation* starts; design locks may be written first)
+
+1. **Silent SPI success** — fail inject when resolve/post fails; define HID fallback or hard error (`host-skylight.swift:58–62, 984–1044`).
+2. **Null-safe `dlsym`** — never `unsafeBitCast` a null symbol (`:47–49`).
+3. **Host integrity gap** — either implement spawn-side `checkIntegrity` for `cmspark-host` (mirror tray) **or** rewrite threat model to admit host has no S-P0-2 and treat library-validation flip as sole residual control (`host-bin.ts` / `adapter.ts` / threat model `:9`).
+4. **Raise-path product design** — document TS `ensureForeground` fate; otherwise Plan implements a no-op smoothness change.
+
+### Concerns (should fix in Plan, not re-open approach)
+
+- Wire or drop `SLPSPostEventRecordTo`; fix signature before use.
+- Prefer `RTLD_LOCAL` (`:41`).
+- Prefer keep library validation ON; flip only if A/B fails.
+- Fix `right_click` mouseTypes; document Chromium right-click limit in policy UI.
+- Sonoma smoke before *ship*; runtime gate for older OS.
+- Chrome left-click lab before *merge* of production swap.
+- Correct threat-model “mirrored at host-bin” claim.
+
+### Approval
+
+**PROCEED to Plan** on Approach C-minus (SkyLight swap **without** daemon).  
+**Not** REJECT — direction is right.  
+**Not** full RE-RESEARCH — B1/B3 answered; B2 partial; remaining work is contract + lab, not a new approach tree.
+
+Do **not** re-open long-lived host daemon in v1.3 Plan.
+
+### Required modifications before Plan implementation (concrete)
+
+| # | Change |
+|---|---|
+| 1 | `host-skylight.swift:47–49` — null-check `dlsym` before cast; log true availability. |
+| 2 | `host-skylight.swift:58–62` + inject callers — on false, `cuError(..., code: "SKYLIGHT_SPI_FAILED")`; never `ok:true` on no-op. |
+| 3 | `host-skylight.swift:987–994` — use `.rightMouseDown` / `.rightMouseUp` when `action == "right_click"`. |
+| 4 | `host-skylight.swift:34, 48–49` — remove dead `slPostEventRecordToFn` **or** add correct signature + call in a named “focus-without-raise” step with lab evidence. |
+| 5 | `host-skylight.swift:41` — `RTLD_LAZY \| RTLD_LOCAL`. |
+| 6 | `spike-daemon-threat-model.md:9` — delete false host-bin S-P0-2 mirror; add host-spawn integrity row. |
+| 7 | Plan brief (new) — TS `ensureForeground` policy, HID fallback matrix, OS feature-detect, optional host `checkIntegrity` + SHA pin, Chrome lab acceptance criteria. |
+| 8 | Entitlements A/B — try production seal with `disable-library-validation=false` first; document result in spike results. |
+
+**Bottom line:** C-minus is the correct subset of Approach C. Ship primitive swap + keep per-action spawn; fix silent failure, null `dlsym`, host integrity honesty, and dual raise-path design before coding. Daemon stays deferred. Software cursor stays v1.4. Chrome click + Sonoma smoke remain empirical gates on merge/ship, not excuses to invent a new approach.

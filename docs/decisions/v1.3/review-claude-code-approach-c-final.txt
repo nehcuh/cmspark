@@ -1,0 +1,71 @@
+I have what I need. One material discrepancy surfaced: the threat-model doc claims S-P0-2 is "mirrored at host-bin.ts," but `host-bin.ts` only does path resolution — the spawn path at `adapter.ts:138-144` has no integrity check. Writing the verdict now.
+
+---
+
+# Approach C-minus — Final Review (Claude Code)
+
+## 1. Spike correctness
+
+**The fork is technically sound.** `host-skylight.swift:32-62` implements the standard SkyLight SPI pattern correctly:
+
+- `dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight", RTLD_LAZY | RTLD_GLOBAL)` — path is correct (note the inner `SkyLight` binary, not just the `.framework` dir; bare framework path fails).
+- `unsafeBitCast(dlsym(...), to: (@convention(c) (pid_t, CGEvent?) -> Void).self)` — signature matches SkyLight's `void SLEventPostToPid(pid_t, CGEventRef)`. CGEventRef ↔ CGEvent? Swift bridge is correct.
+- Idempotent resolve (`skyLightResolved` guard at `host-skylight.swift:38`) — fine for per-spawn since each spawn is a fresh process anyway, but harmless.
+
+**Swap-site coverage**: the review query says "4 swap sites" — actually there are **7** in `host.swift` (`mouseMoved`, `leftMouseDown`, double-click extra `leftMouseDown`, `leftMouseUp`, `type`, `key chord`, `scroll`), and all 7 are covered in the fork (`host-skylight.swift:984, 989, 990, 994, 1006, 1033, 1042`). No regression.
+
+**Force-FG A/B**: `CMSPARK_SKYLIGHT_FORCE_FG=1` env gating on `cuActivatePid` (`host-skylight.swift:972-976`) is the right pattern. Default-off means the spike tests the SkyLight-only path; setting the env reproduces the legacy activate-then-post path for diff testing. ✅
+
+**Entitlements shape**: `host-skylight.entitlements` is correct. No additional entitlements needed for SkyLight specifically — `disable-library-validation` is the only load-bearing flip. `allow-unsigned-executable-memory=false` + `allow-jit=false` correctly preserved.
+
+## 2. C-minus call
+
+**Daemon drop is correct.** `spike-daemon-threat-model.md` T1/T2/T3 analysis is sound: every row reduces to "trust X" under every considered mitigation, and the daemon converts a stateless tool into a persistent privileged service. Categorical blast-radius change, not incremental. Per-action spawn is the right call.
+
+**Fork tax (~10-50ms × N)** is acceptable for v1.3 ship — for a 10-action sequence that's 100-500ms cumulative, which is noticeable but smaller than the smoothness gap the swap is meant to close.
+
+**BUT** — the threat model has one factual error that changes the framing. Line 9 claims:
+
+> "S-P0-2 TOCTOU hardening at `swift-tray-bridge.ts:42-185` (and mirrored for the host binary at `host-bin.ts`)"
+
+This is **wrong**. `host-bin.ts` only does path resolution (S-P0-1's `CMSPARK_HOST_BIN` override lockdown). The actual spawn path at `adapter.ts:138-144` (`defaultDarwinRunner`) is a bare `execFileAsync` — **no hash check, no inode/dev re-stat, no TOCTOU hardening whatsoever**. So for `cmspark-host` specifically, S-P0-2 was *never applied*. The threat model's "we keep full S-P0-2 TOCTOU posture" claim is overstated for the host-use path.
+
+This doesn't change the C-minus verdict (per-action spawn is still strictly better than daemon), but it *does* change the library-validation regression analysis: the entitlement flip removes the **only** defense layer that existed between an attacker who can write `dist/cmspark-host` and a privileged process with Accessibility + Automation + Screen Capture + (now) SkyLight. That deserves explicit acknowledgment in the threat model.
+
+## 3. Open risks before Plan
+
+**Sonoma/Sequoia gap**: cua issue #1503 is a crash on `SLSEventAuthenticationMessage` — a *sibling* selector, not `SLEventPostToPid` itself. yabai #2634/#2638/#2707 are Tahoe-only and concern the scripting-addition SPI surface, not raw event posting. So the cited evidence is concerning but not a slam-dunk blocker. **Recommendation**: accept "Tahoe + Sequoia" as the v1.3 floor pending one manual Sonoma 14.4 test (30 min of user time). If Sonoma fails, gate via feature-detect at runtime, not LSMinimumSystemVersion bump.
+
+**Library validation regression**: what v1.3 Batch 1 was protecting against was DYLD-style injection — an attacker plants a dylib in `DYLD_INSERT_LIBRARIES` or a searched path and the binary loads it under hardened runtime. With the flip, that defense is gone, AND there's no S-P0-2 spawn-side integrity check to compensate. Mitigation: add the missing `checkIntegrity()` to the host spawn path (see Required modifications #1). This is cheap (mirror `swift-tray-bridge.ts:70-97`) and closes the gap the threat model thinks is already closed.
+
+**Chrome right-click**: acceptable as documented. cua ships with the same limit.
+
+## 4. Plan-phase readiness
+
+Design is specific enough for a different engineer to implement without further design questions, with one exception: the silent-failure contract. Today `slPostToPid` returns Bool (`host-skylight.swift:58-62`) but every caller discards it with `_ = `, and `cuInject` returns `{"ok":true,...}` even when the SPI failed. If `dlsym` returns null on a future OS, the LLM sees success and the click silently no-ops. Plan-phase must specify the failure surface.
+
+## Verdict
+
+### Blockers (must fix before Plan)
+1. **Silent failure on SPI unavailable** — propagate `slPostToPid` returning `false` to `cuInject` returning `{"ok":false,"error_code":"SKYLIGHT_SPI_FAILED"}` so the companion can fall back to HID or surface to the LLM.
+2. **S-P0-2 gap for host binary** — threat model doc claims integrity check exists at `host-bin.ts`; it doesn't. Either add it (mirror `swift-tray-bridge.ts:70-184` into the spawn path at `adapter.ts:138-144`) or explicitly document that `cmspark-host` runs without S-P0-2 and re-derive the library-validation regression in that light.
+3. **Sonoma/Sequoia data point** — user runs `cmspark-host-skylight inject` on at least one Sonoma 14.4 Mac before Plan. 30 min; unblocks cross-OS scoping decision.
+
+### Concerns (should fix)
+- `slPostEventRecordToFn` (`host-skylight.swift:34, 48-49`) is resolved but never read — dead variable. Either wire it up or remove.
+- `RTLD_GLOBAL` at `host-skylight.swift:41` is unnecessary for a one-shot CLI; `RTLD_LOCAL` is tighter (no symbol leakage into subsequently loaded dylibs).
+- "AX-first dispatch is orthogonal, can land before or after" — true in principle but undersells the dependency. For canvas apps (Blender/games) AX-first is load-bearing; for Chrome it is not. Plan should sequence AX-first as a P1 follow-up, not just "whenever."
+- Threat model doc should be corrected: line 9's "mirrored for the host binary" claim is false as of this commit.
+
+### Approval
+**PROCEED to Plan**, conditional on the 3 blockers above being addressed in the spike + docs. The core C-minus call is correct: ship the primitive swap, drop the daemon. The daemon threat model is the strongest artifact in the chain; the library-validation regression is real but compensable; Sonoma is the only empirical unknown and it's a 30-minute test.
+
+### Required modifications to the spike (concrete)
+1. `companion/src/host-use/darwin/host-skylight.swift:58-62` — change `slPostToPid` to thread failure; update callers at lines 984, 989, 990, 994, 1006, 1033, 1042 to fail-fast on `false` with `cuError("SkyLight SPI post failed", code: "SKYLIGHT_SPI_FAILED")`.
+2. `companion/src/host-use/darwin/host-bin.ts` (entire file) OR `companion/src/host-use/darwin/adapter.ts:138-144` — add `checkIntegrity()` + post-spawn inode/dev re-stat mirroring `swift-tray-bridge.ts:70-184`. Update `SWIFT_HOST_SHA256` constant and bump on every rebuild.
+3. `docs/decisions/v1.3/spike-daemon-threat-model.md:9` — correct the "mirrored for the host binary" claim, OR add a row to T1-T3 acknowledging that for the host-use path the spawn-side integrity check is absent in v1.3 Batch 1.
+4. `docs/decisions/v1.3/spike-skylight-tahoe-results.md` — add Sonoma 14.4 test row (user runs after this review).
+5. `companion/src/host-use/darwin/host-skylight.swift:34, 48-49` — remove `slPostEventRecordToFn` dead variable, or document why it's resolved.
+6. `companion/src/host-use/darwin/host-skylight.swift:41` — flip `RTLD_GLOBAL` to `RTLD_LOCAL`.
+
+(~1150 words.)

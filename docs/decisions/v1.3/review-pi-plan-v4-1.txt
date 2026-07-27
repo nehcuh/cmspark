@@ -1,0 +1,288 @@
+VERDICT: CONDITIONAL APPROVE (v4.1) — Claude may proceed P2+ under the
+5 constraints below. P5 (session grant at initial L2 gate) still gated
+on Pi sign-off post-implementation; deferred until then.
+
+Author: Pi (3-way review pattern, second pass)
+Date: 2026-07-24
+Reviewing: docs/decisions/v1.3/plan-approach-c-minus-v4-1-grok.md (29 lines)
+           against review-pi-plan-v4.txt (2 blockers + 4 non-blocking)
+
+All file:line citations VERIFIED against the cited files in the
+approach-c-minus-skylight worktree (not trusted from the plan).
+
+================================================================================
+ITEM-BY-ITEM RESOLUTION
+================================================================================
+
+------------------------------------------------------------
+BLOCKER 1 (Q2) — screenshot variance classifier (D2.1–D2.3)
+------------------------------------------------------------
+RESOLVED-WITH-CAVEAT.
+
+The patch addresses all three sub-requirements:
+  - D2.1 (threshold + site + error): classifier = "luma stdev < 1.0
+    OR ≥99% identity vs prior same-windowId at 64x64 downsample"
+    [v4.1 §"Blocker 1 — capture fail-closed"]. Site = cuScreenshot
+    next to SHA256 (~host.swift:914). Error = CAPTURE_FAILED hard
+    fail (not soft "degraded").
+  - D2.2 (LLM surface contract): v4.1 states operators-only audit
+    event `computer.capture.degraded`; LLM sees CAPTURE_FAILED.
+  - D2.3 (R1 mitigation chain): R1 rewritten to depend on the
+    classifier — verified in plan §7 R1.
+
+Self-UI raise (Pi's last paragraph of Q2 in v4 review): v4.1 states
+"after-diff uses window buffer (desktopIndependentWindow) → skip-
+raise is safe; no diffRatio relaxation". This is correct because
+host.swift:875 already uses SCContentFilter(desktopIndependentWindow:)
+so the after-capture IS the target's backing store regardless of
+frontmost. Pi's concern about diff channels was that they operate
+on the target window buffer, not screen composite — that is already
+the case today (executor.ts:1165 calls capturer.diff on shot.path,
+which is the per-window PNG written at host.swift:911-915).
+
+CAVEAT (Claude must honor): the luma threshold must be OR'd with the
+identity check (Grok's "OR" is correct), AND must be combined with a
+zero-byte / zero-dimension guard — a captured PNG that fails to write
+or is 0x0 must also fail-closed, since stdev-of-empty is undefined.
+This is implementation detail not in the plan; Claude MUST add a
+size-and-bytes guard alongside the luma/identity classifier.
+
+------------------------------------------------------------
+BLOCKER 2 (Q3) — initial L2 session skip hardening (D3.1–D3.4)
+------------------------------------------------------------
+RESOLVED (D3.1, D3.3, D3.4) + RESOLVED-WITH-CAVEAT (D3.2).
+
+  - D3.1 (reL2ShouldPrompt as code): RESOLVED.
+    v4.1 names the predicate `reL2ShouldPrompt(tags)` in
+    session-trust.ts with unknown-tag fail-closed. Call site
+    executor.ts:617-622 verified — current code unconditionally
+    returns true on trust.isTrusted (executor.ts:619-622), so the
+    split is mandatory and the location is correct.
+
+  - D3.2 (credentialSurfaceSeen latch): RESOLVED-WITH-CAVEAT.
+    v4.1 says "from after-frame OCR → next initial L2 cannot skip".
+    The OCR pipeline this depends on EXISTS:
+      * cuOCR (host.swift:972-993) using Vision.VNRecognizeTextRequest
+      * locator.ocr() call sites: executor.ts:693, :880, :1016, :1060,
+        :1212 (after-frame OCR is at :1212)
+      * scanDanger → credentialRects already used at executor.ts:893
+        for hard-deny type/key in credential context.
+    So the data source is real and battle-tested. BUT the latch
+    needs explicit handling for OCR-unavailable path — executor.ts
+    :1213-1218 already shows the convention: "after frame dropped
+    (OCR unavailable)" is fail-closed drop. If OCR fails on a frame
+    that contained credentials, credentialSurfaceSeen CANNOT be
+    set true (we don't know what was there) → safest behavior is
+    fail-closed to "credential surface ASSUMED present" → next
+    initial L2 prompts. Caveat for Claude: when afterOcr === null,
+    set credentialSurfaceSeen = true (defensive), do NOT silently
+    skip the latch.
+
+  - D3.3 (verify server.ts:2078+ is NOT a second L2 gate):
+    RESOLVED.
+    Pi independently verified:
+      * server.ts:466-470 — hostComputerGated predicate definition
+        (L2_GATE_TOOLS list + hostComputerGated branch). VERIFIED.
+      * server.ts:823-940 — L2 gate body, includes audit
+        "computer.session_trust.granted" at :933-940. VERIFIED.
+      * server.ts:2078 — `case "host_computer":` block. This is
+        POST-TOKEN execution (validateTokenFor at :2082-2091),
+        the single-task invariant gate at :2107-2114, then action
+        dispatch. It does NOT consult ComputerSessionTrust and
+        does NOT re-show an L2 dialog. Grok's claim CONFIRMED.
+      * No second L2 gate exists at or near :2078.
+
+  - D3.4 (idle expiry 30 min, mandatory not nice-to-have):
+    RESOLVED.
+    v4.1 §D3.4: "Idle expiry mandatory, default 30 min (overrides
+    v4 'nice-to-have')". This overrides the v4 §3.3 TTL row that
+    said "optional". v4.1 explicitly wins.
+
+------------------------------------------------------------
+NON-BLOCKING (4 items from v4 review)
+------------------------------------------------------------
+
+V9 (AX-first preference for locate): RESOLVED. v4.1 lists V9.
+
+V10 (capture metadata truth): RESOLVED. v4.1 lists V10.
+
+D-Q4-M1 (scaleX AND scaleY separately): RESOLVED. v4.1 §"Non-blocking"
+explicitly states "scaleX + scaleY separately".
+
+D-Q4-M8 (8px drift threshold): RESOLVED. v4.1 §"Non-blocking":
+"drift 8px". Matches WITNESS_TOLERANCE_PX (locate-chain.ts:99).
+
+D-Q4-locate (shot.rect re-validation in locate-chain): RESOLVED.
+v4.1 §"Non-blocking": "locate-chain shot.rect re-validate".
+
+================================================================================
+SCRUTINY: 6 SPECIFIC POINTS
+================================================================================
+
+(1) Luma stdev < 1.0 threshold — empirically defensible?
+    PARTIALLY. The threshold is reasonable for the failure class it
+    targets (SCK returning a fully black frame for an occluded
+    background window). Concerns:
+      - False positive: a terminal showing a solid black background
+        with a blinking caret has high stdev (caret pixels are
+        bright) — false positive risk is LOW for terminals.
+      - False positive: an image viewer showing a full-screen white
+        or black photo. Stdev = 0 → wrongly classified stale.
+        Mitigation: the OR with the 99% identity check does NOT
+        help here because a freshly-launched image viewer has no
+        prior capture to compare against. AND-OR logic must be:
+        fail-closed ONLY when BOTH (stdev < 1.0) AND (identity
+        with prior same-windowId ≥ 99%); if there is no prior, fall
+        back to (stdev < 1.0) AND (window reports non-trivial
+        bounds). Claude must implement the no-prior case correctly.
+      - Recommendation: combine as "(stdev < 1.0) AND (no-prior OR
+        identity_with_prior ≥ 99%)" — i.e. both conditions
+        informational, fail-closed when the simpler test triggers
+        without contradicting evidence. OR (Grok's wording) is too
+        permissive: a stale frame with caret blink could miss the
+        stdev test but match identity.
+
+    CAVEAT (Claude must honor): use AND-of-conditions when a prior
+    exists; use stdev-only when no prior exists. Document the
+    decision in code.
+
+(2) 64x64 downsample for identity check — resolution sufficient?
+    YES, with caveat. A 64x64 grid on a 1440x900 capture = ~22x14
+    pixel cells. This catches:
+      - Window-level changes (any window movement, resize, occlusion
+        change): YES — at least one cell flips.
+      - Caret blink: A single 1-2px caret line falls within ONE cell;
+        flipping that cell changes 1/4096 cells = 0.024% — WELL below
+        the 99% identity threshold (i.e. identity = 99.976%). So
+        caret blink does NOT trigger a false "stale" classification.
+      - Hover state transitions: typically change a button-sized
+        region (~30x15 px) = at least one cell. Triggers correctly.
+    False-negative rate for typical UI animations: < 1%.
+    Caveat: the 99% identity threshold means "at most 1% of cells
+    changed" = "at most 40 cells of 4096 changed". That is generous.
+    Claude should consider tighter (e.g. 99.9% = max 4 cells) once
+    canary data exists. For v4.1 ship, 99% is acceptable.
+
+(3) reL2ShouldPrompt(tags) unknown-tag fail-closed — strict enough?
+    YES. Unknown-tag fail-closed means "prompt" (the safe default).
+    Test for tag exhaustiveness: Claude MUST add a unit test that
+    enumerates every reason string used in `reL2(...)` call sites
+    (today: budget_exhausted, uncrossverified_exceeded, self_ui_yield,
+    dialog_suspected, danger_detected, experimental_suggestion,
+    foreground_yielded-non-self-ui — verify against actual call
+    sites at executor.ts:636+). The unit test must assert that
+    every emitted reason is classified as silent or prompt-always,
+    never unknown. A CI run with a new reason that the predicate
+    doesn't know about must FAIL the suite, not silently pass.
+
+    CAVEAT (Claude must honor): implement the test as
+    `for reason of ALL_REASONS: expect(classification).toBeDefined()`
+    against a hardcoded ALL_REASONS array updated when adding a
+    reason. Do NOT rely on type-level exhaustiveness — TypeScript
+    doesn't enforce this at the emit site.
+
+(4) credentialSurfaceSeen latch source — reliable?
+    SEE D3.2 above. Pipeline exists and is reliable (Vision OCR
+    is the same path that already gates the hard-deny at
+    executor.ts:893). Reliability is sufficient for a safety latch
+    because the failure mode is fail-closed drop (executor.ts:1213-
+    1218). The CAVEAT for Claude: when afterOcr === null, set the
+    latch to TRUE (defensive) — do not silently skip the latch on
+    OCR failure.
+
+(5) 30 min idle expiry — threat-modeled or round number?
+    ROUND NUMBER with weak threat-model backing. 30 min is a UX
+    compromise, not derived from a specific threat. Threat axes:
+      - Shoulder-surfing during stepped-away session: 5-10 min
+        would be tighter (screen lock default on macOS is 5 min).
+      - Prompt-injection window after user left: bounded by
+        session-trust grant lifetime; 30 min is generous.
+      - Cost of false re-prompt after idle: low (one extra click).
+    Verdict: 30 min is acceptable; tighter (10-15 min) would be
+    defensible. NOT a blocker — Claude may ship 30 min default
+    but should make it configurable (already implied by "default").
+
+(6) Gate verification (D3.3) — Grok's claim that server.ts:2078 is
+    NOT a second L2 gate.
+    INDEPENDENTLY VERIFIED BY PI. See D3.3 above.
+    server.ts:2078 is the `case "host_computer":` block in the
+    post-token-execute switch. It validates the security token at
+    :2082-2091 and the single-task invariant at :2107-2114. It does
+    NOT consult ComputerSessionTrust and does NOT show a dialog.
+    Grok's claim is correct. T2 silent-skip design has no hole from
+    a missed gate.
+
+================================================================================
+FINAL VERDICT
+================================================================================
+
+CONDITIONAL APPROVE.
+
+Grok's v4.1 patch resolves both blockers and all 4 non-blocking items
+to a level where Claude may begin coding. The remaining concerns are
+implementation-level caveats (size/bytes guard, AND-vs-OR semantics
+when no prior, OCR-failure defensiveness, exhaustiveness unit test)
+that Claude must honor — they do NOT require another Grok round.
+
+================================================================================
+CONSTRAINTS CLAUDE MUST HONOR (per phase)
+================================================================================
+
+P2 (capture fail-closed classifier):
+  C1. Add a size-and-bytes guard alongside the luma/identity
+      classifier (0-byte PNG or 0x0 image → CAPTURE_FAILED).
+  C2. AND-of-conditions when a prior same-windowId capture exists:
+      fail-closed ONLY when BOTH (stdev < 1.0) AND (identity ≥ 99%).
+      When no prior exists, fall back to stdev-only.
+  C3. The 99% identity threshold may be tightened to 99.9% post-
+      canary once data exists. Ship 99% in v4.1.
+  C4. LLM-visible error = CAPTURE_FAILED only; "degraded" goes to
+      operator audit (`computer.capture.degraded`) — never the
+      model surface.
+
+P3 (locate / scale):
+  C5. Return scaleX AND scaleY separately (not a single
+      backingScale) in capture JSON.
+  C6. Drift threshold = 8px (matches WITNESS_TOLERANCE_PX).
+  C7. Re-validate shot.rect hasn't changed mid-locate-chain.
+
+P4 (reL2 reason predicate):
+  C8. Implement reL2ShouldPrompt(tags) in session-trust.ts with
+      unknown tags → prompt (fail-closed to safe).
+  C9. Add unit test enumerating EVERY reason string used in
+      reL2(...) call sites; CI must fail if a new reason is
+      emitted without classification.
+  C10. Idle expiry = 30 min default, configurable. Reset trust
+       on idle expiry, audit `computer.session_trust.idle_expired`.
+
+P5 (initial L2 session skip at gate):
+  C11. credentialSurfaceSeen latch MUST be set to TRUE on
+       afterOcr === null (defensive), not silently skipped.
+  C12. P5 is gated on Pi re-confirm AFTER P2-P4 land and tests
+       pass. Claude may NOT merge P5 to a release branch without
+       Pi sign-off on the integrated diff.
+
+================================================================================
+SCOPE VERIFICATION (carried over from v4 review)
+================================================================================
+
+  [verified] Plist 14.4 — host-Info.plist not modified by plan.
+  [verified] Phase 1 5-tool exclusions — not in plan touch list.
+  [verified] S-P0-2 spawn guard — host-integrity.ts SHA rewrite
+            path preserved (Plan §2.5).
+  [verified] 3 inject error codes — host.swift:984-988 unchanged;
+            types.ts unchanged.
+  [verified] multi_agent_advisor_pattern — Pi reviewed v4, now v4.1.
+
+================================================================================
+Summary for Claude (the implementer)
+================================================================================
+
+You are CLEARED to start P2 immediately. Continue through P3, P4 in
+order. STOP before P5 (session grant at the initial L2 gate) and
+request Pi re-confirm on the integrated diff.
+
+Per-phase constraints C1-C12 above are mandatory. Document each in
+the commit message or PR description.
+
+*End of Pi v4.1 review. Hand off to Claude for P2-P4 implementation.*
