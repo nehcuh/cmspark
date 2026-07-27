@@ -1,0 +1,20 @@
+{
+  "batch": "enterprise-ab-plan",
+  "date": "2026-07-27",
+  "plan": "docs/decisions/v1.3/enterprise-session-trust-godmode-plan-2026-07-27.md",
+  "synthesis": "docs/audit/reviews/enterprise-ab-plan-adversarial-synthesis-2026-07-27.md",
+  "internal_adversarial": {
+    "security": "REJECT",
+    "product_ux": "APPROVE_WITH_NITS",
+    "architecture": "AMEND_REQUIRED",
+    "outcome": "G1-G9 folded into plan revision"
+  },
+  "external": {
+    "claude": "SKIPPED_CLI_NOT_ON_PATH",
+    "pi": "APPROVE_WITH_NITS",
+    "pi_artifact": "docs/audit/reviews/enterprise-ab-plan-pi-20260727-225536.md",
+    "note": "Pi output mis-summarized some G1-G9 labels (nonce/workerId/command-list); implement from revised plan + synthesis, not Pi paraphrases."
+  },
+  "both_approve": true,
+  "implement_gate": "Phase 1 allowed"
+}
