@@ -1,0 +1,46 @@
+# Dual external review context
+batch: native-hud-p3a-spike-plan
+base: HEAD
+time: 20260727-181620
+
+ae90e2a
+
+ M docs/decisions/v1.3/companion-native-hud-brief-2026-07-27.md
+ M docs/decisions/v1.3/companion-native-hud-n1n10-lock-2026-07-27.md
+?? docs/audit/reviews/native-hud-p3a-spike-plan-diff-20260727-181620.patch
+?? docs/audit/reviews/native-hud-p3a-spike-plan-prompt-2026-07-27.md
+?? docs/superpowers/plans/2026-07-27-companion-native-hud-p3a-spike.md
+
+## Diff (git diff + staged)
+ docs/decisions/v1.3/companion-native-hud-brief-2026-07-27.md      | 2 +-
+ docs/decisions/v1.3/companion-native-hud-n1n10-lock-2026-07-27.md | 4 ++--
+ 2 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/docs/decisions/v1.3/companion-native-hud-brief-2026-07-27.md b/docs/decisions/v1.3/companion-native-hud-brief-2026-07-27.md
+index 0f8149b..ef8fcb2 100644
+--- a/docs/decisions/v1.3/companion-native-hud-brief-2026-07-27.md
++++ b/docs/decisions/v1.3/companion-native-hud-brief-2026-07-27.md
+@@ -358,7 +358,7 @@ Threat note: native HUD **reduces** “evil extension UI” risk but **raises**
+ 1. **This brief** (review artifact).  
+ 2. Dual external review (Claude + Pi) → synthesis.  
+ 3. Optional grill / ADR-0xx if N1–N10 lock.  
+-4. Spike plan (Swift window + hydrate + one confirm).  
++4. Spike plan (Swift window + hydrate + one confirm) → [`docs/superpowers/plans/2026-07-27-companion-native-hud-p3a-spike.md`](../../superpowers/plans/2026-07-27-companion-native-hud-p3a-spike.md).  
+ 5. Implementation only after dual-review **APPROVE / APPROVE_WITH_NITS**.
+ 
+ ---
+diff --git a/docs/decisions/v1.3/companion-native-hud-n1n10-lock-2026-07-27.md b/docs/decisions/v1.3/companion-native-hud-n1n10-lock-2026-07-27.md
+index 888008e..e3a0e9f 100644
+--- a/docs/decisions/v1.3/companion-native-hud-n1n10-lock-2026-07-27.md
++++ b/docs/decisions/v1.3/companion-native-hud-n1n10-lock-2026-07-27.md
+@@ -264,8 +264,8 @@ Before writing production HUD code:
+ - [x] Dual grill APPROVE_WITH_NITS  
+ - [x] N1–N10 locked with operational defaults  
+ - [ ] Owner sign-off (optional formal ack)  
+-- [ ] Spike plan: one binary, hydrate, one confirm round-trip, abort, standby message stub  
+-- [ ] Spike dual-review before dual-track screenshot flood path  
++- [x] Spike plan: one binary, hydrate, one confirm round-trip, abort, standby message stub → `docs/superpowers/plans/2026-07-27-companion-native-hud-p3a-spike.md`  
++- [ ] Spike dual-review before dual-track screenshot flood path (plan Task 0 + impl Task 7)  
+ 
+ ---
+ 

@@ -358,7 +358,7 @@ Threat note: native HUD **reduces** “evil extension UI” risk but **raises** 
 1. **This brief** (review artifact).  
 2. Dual external review (Claude + Pi) → synthesis.  
 3. Optional grill / ADR-0xx if N1–N10 lock.  
-4. Spike plan (Swift window + hydrate + one confirm).  
+4. Spike plan (Swift window + hydrate + one confirm) → [`docs/superpowers/plans/2026-07-27-companion-native-hud-p3a-spike.md`](../../superpowers/plans/2026-07-27-companion-native-hud-p3a-spike.md).  
 5. Implementation only after dual-review **APPROVE / APPROVE_WITH_NITS**.
 
 ---

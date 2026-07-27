@@ -1,0 +1,8 @@
+{
+  "batch": "native-hud-p3a-spike-plan",
+  "timestamp": "20260727-181620",
+  "claude": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/native-hud-p3a-spike-plan-claude-20260727-181620.md" },
+  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/native-hud-p3a-spike-plan-pi-20260727-181620.md" },
+  "both_approve": true,
+  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/native-hud-p3a-spike-plan-diff-20260727-181620.patch"
+}
