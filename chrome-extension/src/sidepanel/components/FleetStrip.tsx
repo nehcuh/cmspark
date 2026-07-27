@@ -97,7 +97,7 @@ export function FleetStrip() {
           type="button"
           style={styles.link}
           onClick={() => chrome.runtime.sendMessage({ type: "cockpit.open" })}
-          title="打开操控台 Confirm Center"
+          title="打开确认台：高危操作审批 + Computer Use（空窗表示当前无待确认）"
         >
           确认台
         </button>

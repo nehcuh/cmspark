@@ -294,10 +294,21 @@ const defaultConfig: CompanionConfig = {
 }
 
 let cachedConfig: CompanionConfig | null = null
+/** mtimeMs of config.json when cache was loaded — hand-edits invalidate cache */
+let cachedConfigMtimeMs: number | null = null
 
 /** Clear the in-memory config cache. Intended for tests only. */
 export function clearConfigCache(): void {
   cachedConfig = null
+  cachedConfigMtimeMs = null
+}
+
+function configFileMtimeMs(): number | null {
+  try {
+    return fs.statSync(path.join(DATA_DIR, "config.json")).mtimeMs
+  } catch {
+    return null
+  }
 }
 
 export async function initDataDir(): Promise<void> {
@@ -380,6 +391,15 @@ function loadConfigFile(configPath: string): CompanionConfig {
 }
 
 export function getConfig(): CompanionConfig {
+  // Hand-edits to ~/.cmspark-agent/config.json (e.g. netsec.target_allowlist)
+  // must take effect without a full process restart — reload when mtime changes.
+  if (cachedConfig) {
+    const mtime = configFileMtimeMs()
+    if (mtime != null && cachedConfigMtimeMs != null && mtime !== cachedConfigMtimeMs) {
+      cachedConfig = null
+      cachedConfigMtimeMs = null
+    }
+  }
   if (cachedConfig) {
     // Refresh env var ONLY if no user-provided key exists
     if (getEnvApiKey() && !isUserProvidedApiKey(cachedConfig.llm.api_key)) {
@@ -390,6 +410,7 @@ export function getConfig(): CompanionConfig {
   const configPath = path.join(DATA_DIR, "config.json")
   try {
     cachedConfig = loadConfigFile(configPath)
+    cachedConfigMtimeMs = configFileMtimeMs()
   } catch (err: any) {
     // Corrupt config: preserve it for inspection + log loudly, then use defaults so the
     // companion still starts. Previously this was a silent reset that wiped keys/domains.
@@ -399,6 +420,7 @@ export function getConfig(): CompanionConfig {
     )
     try { fs.renameSync(configPath, backup) } catch { /* best-effort preservation */ }
     cachedConfig = structuredClone(defaultConfig)
+    cachedConfigMtimeMs = configFileMtimeMs()
   }
   // Environment variable takes priority ONLY when no user-provided key exists.
   // If the file has a user-provided API key (non-empty, not masked), respect it.
@@ -545,6 +567,7 @@ export function replaceMcpServers(servers: McpConfig["servers"]): CompanionConfi
   }
   atomicWriteJSON(configPath, toSave)
   cachedConfig = updated
+  cachedConfigMtimeMs = configFileMtimeMs()
   configEvents.emit(CONFIG_CHANGE_EVENT, updated)
   return updated
 }
@@ -586,6 +609,7 @@ export function replaceAppsEntries(entries: AppsConfig["entries"]): CompanionCon
   }
   atomicWriteJSON(configPath, toSave)
   cachedConfig = updated
+  cachedConfigMtimeMs = configFileMtimeMs()
   configEvents.emit(CONFIG_CHANGE_EVENT, updated)
   return updated
 }
@@ -612,6 +636,7 @@ export function setComputerCoordinateEnabled(enabled: boolean): CompanionConfig 
   }
   atomicWriteJSON(configPath, toSave)
   cachedConfig = updated
+  cachedConfigMtimeMs = configFileMtimeMs()
   configEvents.emit(CONFIG_CHANGE_EVENT, updated)
   return updated
 }
@@ -646,6 +671,7 @@ export function setComputerModelFields(
   }
   atomicWriteJSON(configPath, toSave)
   cachedConfig = updated
+  cachedConfigMtimeMs = configFileMtimeMs()
   configEvents.emit(CONFIG_CHANGE_EVENT, updated)
   return updated
 }
@@ -804,6 +830,7 @@ export function saveConfig(config: Partial<CompanionConfig>): CompanionConfig {
   // internally — merged from PR #13.)
   atomicWriteJSON(configPath, toSave)
   cachedConfig = updated
+  cachedConfigMtimeMs = configFileMtimeMs()
   configEvents.emit(CONFIG_CHANGE_EVENT, updated)
   return updated
 }

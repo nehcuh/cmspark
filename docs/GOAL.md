@@ -42,7 +42,7 @@
 - **企业模块（默认关闭）**：`devsec-workspace`（本机目录 list/read）、`shell_exec`（单次受控命令）、`netsec_port_scan`（TCP 探测 + allowlist + 任务授权）。
 - **双通道**：`capability_profile: community | enterprise`；shell/netsec 启用需 enterprise。
 - **UI**：Side Panel 底栏「任务包」；工作区须原生「选择工作区」绑定。
-- 使用说明：[mission-pack-usage.md](mission-pack-usage.md)；决策：[ADR-014](adr/014-mission-pack-enterprise-modules.md)。
+- 使用说明：[mission-pack-usage.md](mission-pack-usage.md)；确认台 / L2：[confirm-center-user-guide.md](confirm-center-user-guide.md)；决策：[ADR-014](adr/014-mission-pack-enterprise-modules.md)。
 
 ---
 

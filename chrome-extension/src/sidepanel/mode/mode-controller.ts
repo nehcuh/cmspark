@@ -86,12 +86,11 @@ export function deriveCapabilityLevel(input: ModeInput): CapabilityLevel {
     input.computerTaskStatus === "finished" &&
     input.computerTaskFinishedAt != null &&
     input.now - input.computerTaskFinishedAt <= input.quiescenceMs
-  const confirmComputer = input.pendingConfirmToolNames.some((n) =>
-    isComputerClassTool(n),
-  )
-  const confirmBrowser = input.pendingConfirmToolNames.some((n) =>
-    isBrowserTool(n),
-  )
+  const pendingNames = Array.isArray(input.pendingConfirmToolNames)
+    ? input.pendingConfirmToolNames
+    : []
+  const confirmComputer = pendingNames.some((n) => isComputerClassTool(n))
+  const confirmBrowser = pendingNames.some((n) => isBrowserTool(n))
 
   if (taskActive || taskFinishedInWindow || confirmComputer) {
     derived = "computer"

@@ -85,8 +85,8 @@ export function MinimalConfirm() {
       )}
       <div style={{ color: "#d1d5db", marginBottom: 8, fontSize: 10, lineHeight: 1.45 }}>
         {needsNonce
-          ? "此确认需要输入确认码 — 请在操控台完成。"
-          : "详细预览与白名单在操控台；此处可快速允许或拒绝。"}
+          ? "此确认需要输入确认码 — 请在确认台完成。"
+          : "详细预览与白名单在确认台；此处可快速允许或拒绝。"}
       </div>
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
         <button
@@ -98,7 +98,7 @@ export function MinimalConfirm() {
             cursor: needsNonce ? "not-allowed" : "pointer",
           }}
           disabled={needsNonce}
-          title={needsNonce ? "请在操控台输入确认码后允许" : "允许"}
+          title={needsNonce ? "请在确认台输入确认码后允许" : "允许"}
           onClick={() => respond(true)}
         >
           允许
@@ -129,8 +129,9 @@ export function MinimalConfirm() {
             fontWeight: 500,
           }}
           onClick={() => chrome.runtime.sendMessage({ type: "cockpit.open" })}
+          title="打开确认台查看完整预览"
         >
-          详情
+          确认台
         </button>
       </div>
       {state.pendingSecurityConfirmations.length > 1 && (

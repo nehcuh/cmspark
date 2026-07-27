@@ -30,7 +30,9 @@ export function useCapabilityMode(
       now: Date.now(),
       computerTaskStatus: task?.status ?? null,
       computerTaskFinishedAt: task?.finishedAt ?? null,
-      pendingConfirmToolNames: state.pendingSecurityConfirmations.map((c) => c.tool_name),
+      pendingConfirmToolNames: Array.isArray(state.pendingSecurityConfirmations)
+        ? state.pendingSecurityConfirmations.map((c) => c.tool_name)
+        : [],
       lastBrowserToolAt: state.lastBrowserToolAt,
       quiescenceMs: DEFAULT_QUIESCENCE_MS,
       modePin: state.modePin,

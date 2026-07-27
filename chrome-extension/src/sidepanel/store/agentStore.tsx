@@ -223,12 +223,14 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
     case "SET_THREADS": {
       // Keep active thread if it's still in the list; otherwise stay null so that
       // the upcoming thread.created (fresh blank thread) can be auto-selected.
-      const activeExists = action.threads.some(t => t.id === state.activeThreadId)
+      // Guard: companion/WS may omit threads (or send non-array) — never crash Side Panel.
+      const threads = Array.isArray(action.threads) ? action.threads : []
+      const activeExists = threads.some(t => t.id === state.activeThreadId)
       const nextActiveThreadId = activeExists ? state.activeThreadId : null
-      const nextActiveThread = action.threads.find(t => t.id === nextActiveThreadId)
+      const nextActiveThread = threads.find(t => t.id === nextActiveThreadId)
       return {
         ...state,
-        threads: action.threads,
+        threads,
         activeThreadId: nextActiveThreadId,
         pinnedTabIds: nextActiveThread?.pinned_tabs || [],
         activeSkillIds: nextActiveThread?.active_skill_ids || [],
@@ -239,7 +241,8 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       }
     }
     case "SET_ACTIVE_THREAD": {
-      const activeThread = state.threads.find(t => t.id === action.threadId)
+      const threads = Array.isArray(state.threads) ? state.threads : []
+      const activeThread = threads.find(t => t.id === action.threadId)
       return {
         ...state,
         activeThreadId: action.threadId,
@@ -412,21 +415,24 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
     case "SET_PROCESSING":
       return { ...state, isProcessing: action.isProcessing }
     case "SET_MCP_SERVERS":
-      return { ...state, mcpServers: action.servers }
+      return { ...state, mcpServers: Array.isArray(action.servers) ? action.servers : [] }
     case "UPDATE_MCP_SERVER_STATUS": {
-      const exists = state.mcpServers.some(s => s.name === action.server.name)
+      const prev = Array.isArray(state.mcpServers) ? state.mcpServers : []
+      const exists = prev.some(s => s.name === action.server.name)
       const servers = exists
-        ? state.mcpServers.map(s => s.name === action.server.name ? action.server : s)
-        : [...state.mcpServers, action.server]
+        ? prev.map(s => s.name === action.server.name ? action.server : s)
+        : [...prev, action.server]
       return { ...state, mcpServers: servers }
     }
-    case "TOGGLE_MCP_SERVER":
+    case "TOGGLE_MCP_SERVER": {
+      const ids = Array.isArray(state.activeMcpServerIds) ? state.activeMcpServerIds : []
       return {
         ...state,
-        activeMcpServerIds: state.activeMcpServerIds.includes(action.serverName)
-          ? state.activeMcpServerIds.filter(id => id !== action.serverName)
-          : [...state.activeMcpServerIds, action.serverName],
+        activeMcpServerIds: ids.includes(action.serverName)
+          ? ids.filter(id => id !== action.serverName)
+          : [...ids, action.serverName],
       }
+    }
     case "SET_MCP_SELECTION_MODE":
       return { ...state, mcpSelectionMode: action.mode }
     case "OPEN_MCP_SERVER_FORM":

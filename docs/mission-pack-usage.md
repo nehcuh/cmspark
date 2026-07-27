@@ -1,7 +1,8 @@
 # Mission Pack（任务包）使用说明
 
 > 面向试用 / 验收 / 本机开启企业能力。  
-> 设计决策见 [ADR-014](adr/014-mission-pack-enterprise-modules.md)；架构总览见 [architecture.md §7](architecture.md)。
+> 设计决策见 [ADR-014](adr/014-mission-pack-enterprise-modules.md)；架构总览见 [architecture.md §7](architecture.md)。  
+> **高危工具弹窗 /「确认台」按钮**：见 [confirm-center-user-guide.md](confirm-center-user-guide.md)（与任务授权、L2 确认分层说明）。
 
 ---
 
@@ -116,7 +117,7 @@
 
 ### 5.1 配置 allowlist（扫描前必做）
 
-在 `config.json` 中配置，例如：
+**推荐：任务包面板 → NetSec 扫描目标**（模块启用后）：可视化添加/删除 IP（实时写入 Companion）。也可用 `config.json` 预置：
 
 ```json
 "netsec": {
@@ -131,18 +132,19 @@
 |------|------|
 | **空 `target_allowlist`** | **禁止一切扫描**（默认安全姿态） |
 | 支持形式 | IPv4、CIDR、hostname、`*.suffix` 通配 |
-| 保存后 | **重启 Companion** |
+| 面板修改 | 实时生效；手改文件依赖 Companion 重载 / mtime 热加载 |
 
 ### 5.2 启用模块 + 任务授权
 
-1. 任务包面板启用 **`netsec`**（或 config 中 `enabled: true` 后重启）。
-2. **选中当前线程**，点 **「NetSec 任务授权」**。
-3. 按提示输入目标（逗号分隔 hostname/IPv4，**必须是 allowlist 的子集**）。
-4. 在确认框中确认「拥有测试授权」文案（需要用户手势 `user_gesture`）。
+1. 任务包面板启用 **`netsec`**（或 config 中 `enabled: true`）。
+2. **选中当前线程**，在 NetSec 卡片添加目标，或勾选后 **「授权所选 → 本线程」**（可勾选「添加后立即授权」）。
+3. 确认「拥有测试授权」文案（需要用户手势 `user_gesture`）。
+
+> 任务授权 ≠ 确认台 L2：前者声明「本线程可扫这些目标」，后者是 Agent **真正调用** `netsec_port_scan` 时的执行审批。见 [确认台说明 §5](confirm-center-user-guide.md#5-和配置类授权不是同一件事)。
 
 ### 5.3 扫描时
 
-- Agent 调用 **`netsec_port_scan`** 时再过一次 **L2 确认**。
+- Agent 调用 **`netsec_port_scan`** 时再过一次 **L2 确认**（侧栏红条或 [确认台](confirm-center-user-guide.md)）。
 - 实现仅为 **TCP connect 探针**，不是完整 nmap。
 - **仅用于你有权测试的目标**。
 
@@ -219,7 +221,7 @@
 | 已改 config 仍像 community | Companion 未重启 / 改错文件 / JSON 解析失败回退默认 | 确认路径 `~/.cmspark-agent/config.json`；重启；看 Companion 日志是否报 config 损坏 |
 | Pack「应用到当前线程」按钮灰掉 | `apply_blocked`：缺模块，或 enterprise Pack 在 community | 先开齐 `requires_modules`；企业 Pack 需 enterprise profile |
 | `workspace_*` 报 workspace_root | 当前线程未绑定目录 | 选中线程 → **选择工作区** |
-| NetSec 授权后仍扫不了 | allowlist 为空，或目标不在 list / 未 L2 | 配 `target_allowlist` 并重启；授权目标 ⊆ list；批准 L2 |
+| NetSec 授权后仍扫不了 | allowlist 为空，或目标不在 list / 未 L2 | 任务包里补 allowlist + 任务授权；**再在确认台/红条批准 L2**（见 [确认台说明](confirm-center-user-guide.md)） |
 | 面板提示「已请求启用 …」但横幅还在 | 后端拒绝（常见 enterprise_profile_required）或未刷新 | 查 profile；点「刷新」；必要时看 `capability-audit.jsonl` |
 
 ---
@@ -238,7 +240,7 @@
 
 ### 10.2 Spawn 必须显式确认（无 auto-spawn）
 
-- Orchestrator 调用 **`spawn_worker`** 时会出现 **L2 Confirm Center**（与 `evaluate` / `shell_exec` 同类交互确认）。
+- Orchestrator 调用 **`spawn_worker`** 时会出现 **L2 确认**（侧栏红条或 FleetStrip **「确认台」**；与 `evaluate` / `shell_exec` 同类）。详见 [confirm-center-user-guide.md](confirm-center-user-guide.md)。
 - **没有** 自动批量拉起 worker 的路径；LLM 参数里的 `user_confirmed` **不被信任**。
 - 批准后：Companion 创建子线程 → 可选 `pack.apply` 角色模板 → 计算非空 `tool_whitelist`（`parent ∩ pack.allow \ WORKER_HARD_DENY`）。
 - 并发上限（默认）：每 run 最多 **5** worker；进程 multi-agent LLM 环最多 **5**。
@@ -259,9 +261,9 @@
 ### 10.5 Side Panel 操作提示
 
 1. 用自然语言让主线程当编排者（或工具面已收窄为 orchestrator）。
-2. 批准 **spawn** 确认 → Side Panel **FleetStrip** 可见 worker 数量 / 状态徽标。
-3. 浏览器危险操作与 spawn 同一 **Confirm Center**（看清 `worker_id` / `tabId` / run）。
-4. 需要停全部：FleetStrip **stop-all**（abort LLM + 拒 pending + 释放该 run 相关 lease）。
+2. 批准 **spawn** 确认（红条或 **确认台**）→ FleetStrip 可见 worker 数量 / 状态徽标。
+3. 浏览器危险操作与 spawn 走**同一套 L2 确认**（看清 `worker_id` / `tabId` / run）。
+4. 需要停全部：FleetStrip **全停**（abort LLM + 拒 pending + 释放该 run 相关 lease）。
 
 ### 10.6 本阶段明确不做
 
@@ -289,6 +291,7 @@
 
 | 文档 | 用途 |
 |------|------|
+| [confirm-center-user-guide.md](confirm-center-user-guide.md) | **确认台 / L2 确认**用户说明（与任务授权分层） |
 | [ADR-014](adr/014-mission-pack-enterprise-modules.md) | 为何双通道、为何不做内嵌 PTY |
 | [ADR-015](adr/015-multi-agent-orchestrator-tab-lock.md) | Multi-agent orchestrator、tab lease、spawn HITL |
 | [architecture.md §7](architecture.md) | 模块 / 工具 / 代码落点 |

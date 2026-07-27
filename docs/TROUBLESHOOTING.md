@@ -82,6 +82,31 @@ server 没连上或没声明 `tools` capability。先解决上面的连接问题
 
 只有声明了 `resources` 能力的 server 才支持 `mcp_list_resources`。filesystem / brave-search 等 tools-only server 应该使用 `mcp__<server>__<tool>` 形式的 namespaced 工具。如果 LLM 仍反复误用，检查 server 是否已正常连接；连接正常时 meta tools 会按 capability 动态暴露。
 
+## 确认台 / L2 安全确认
+
+> 完整说明见 [confirm-center-user-guide.md](./confirm-center-user-guide.md)。
+
+### 点了「确认台」却是空的 / 不知道干什么
+
+确认台（Cockpit）是**高危操作审批 + Computer Use 操控**的宽窗，不是配置页。  
+没有待确认、也没有桌面任务时，空窗是正常的。配置 IP / 开模块请去 **任务包**，不要找确认台。
+
+### 已经做了 NetSec 任务授权，扫描仍要再确认
+
+**预期行为。** 任务授权 = 本线程声明有权测这些目标；真正 `netsec_port_scan` 时仍走 **L2 确认台/红条**（执行闸）。两层都过才能扫。
+
+### 侧栏显示「请在操控台输入确认码」
+
+该确认带 nonce，侧栏不能点「允许」。打开 **确认台 / 操控台**，**手动输入**确认码（不可粘贴）。
+
+### 关掉确认台后 Computer Use 还在跑
+
+**预期行为。** 关窗 ≠ 停任务。要用侧栏或宽窗上的 **急停**，或确认时的「拒绝并停止」。
+
+### 确认弹一下就失败 / 超时
+
+未在约 45s 内处理会过期并拒绝 tool。有红条或 FleetStrip 待确认数字时优先处理。
+
 ## Extension 相关
 
 ### "No tab with id 303" 错误
