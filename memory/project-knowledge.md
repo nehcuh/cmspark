@@ -53,6 +53,16 @@
 - 修法（PR #65，9315d31）：`Tray.swift` `PairingController.show()` 在 `makeKeyAndOrderFront` 后加 `window.orderFrontRegardless()`（AppKit「即使激活被压制也强制到前台」原语，无 Dock 闪烁）。配套 `SWIFT_TRAY_SHA256` `10a586ea`→`46d866a6`（A8 lock-step）。
 - 教训：① 任何 Swift tray/NSWindow 弹窗：`makeKeyAndOrderFront` 后**必加** `orderFrontRegardless()`，别依赖已弃用的 `activate(ignoringOtherApps:)`。② 诊断"窗口不显示"先分清 **create vs order**——最小 harness + 打印窗口属性（isVisible/isOnActiveSpace/isKeyWindow/frame）是客观证据，别只靠肉眼、别被哈希差异带偏。③ Tray.swift 改动 → `bash companion/src/tray/build-tray.sh` 重编 → 更新 `companion/src/tray/swift-tray-bridge.ts` 的 `SWIFT_TRAY_SHA256`（build-tray.sh 末尾提示 `menu-bar-agent.ts` 是**错的**，常量实际在 `swift-tray-bridge.ts`）。
 
+### Swift tray SHA256：hash mismatch 禁止自动 rebuild（S-P0-2，Native HUD 继承）
+- 改 `Tray.swift` 后必须 `bash companion/src/tray/build-tray.sh`，把 digest 写入 `swift-tray-bridge.ts` 的 `SWIFT_TRAY_SHA256`
+- **Hash mismatch ≠ 缺失 binary**：缺失可 dev rebuild；mismatch 视为可疑，拒绝 spawn、不静默 rebuild（防 TOCTOU / 篡改证据被覆盖）
+- HUD 与 tray 同一 binary 时，所有 HUD 改动都触发同一 hash 更新路径
+
+### Confirm multi-surface：晚到响应 wire 保持 `unknown`，勿发明 `already_resolved`（2026-07-27）
+- `SecurityConfirmationManager.respond` / `respondFrom` 删除 pending 后晚到调用返回既有 **`unknown`** 语义
+- Brief/plan 散文可说 “already resolved”，**wire symbol 不改名**（旧扩展兼容 + N5 lock）
+- 多 surface 清理靠 **NEW** fan-out（`onTerminal` → cancel tray + cancel HUD + resolved 通知），不是改 outcome 枚举
+
 ### macOS computer-use inject：截图坐标与 inject 原点必须同闸（bestDist < 24）（2026-07-26）
 - 现象：前台切换 OK、截图 OK，模拟点击全「成功」但 UI 不变（#mvt4t8 / #32c2b0 / #i4x6pm 前期）。
 - 根因：`cuScreenshot` 仅在 AX↔CG 帧距 `bestDist < 24` 时采用 AX client 原点；`cuClientOriginScreen`（inject）原先**无此闸**，微信多窗口时绑到错误 AX 框 → client(0,0) 屏坐标与 CG 框差约 (-68,-46)，点击整片偏移。
@@ -91,8 +101,15 @@
 - 链：Design → Implement → 内部对抗(2 skeptics, fail-closed) → **仅对抗通过后** 分别起 `claude -p` 与 `pi -p` → 双 APPROVE/APPROVE_WITH_NITS → build → commit
 - Claude：`--permission-mode acceptEdits` + Read/Grep/Glob/Bash；**不要**用 plan mode（终稿 VERDICT 会吞进 plan 文件 → 脚本判 UNKNOWN）
 - Pi：`-p --no-session -t read,bash`；可能长时间空 stdout 挂起 — 可用户 waive，用 Claude + 对抗 + host 定向测推进，事后补 verdict 文件
+- **Pi 机读行**：提示词要求最终一行 **英文** `VERDICT: APPROVE|APPROVE_WITH_NITS|REJECT`（中文「审查结论」易被脚本漏匹配 → UNKNOWN）
 - 产物目录：`docs/audit/reviews/`；批次报告 + claude/pi md + verdict json + patch
 - 诊断 fanout 姐妹流：`.grok/workflows/deep-diagnosis-fanout.rhai`（子系统 10 + 横切 6 + 对抗 16 + 综合）
+- **设计/plan 也可用同一脚本做 Task 0 门**（例：`native-hud-p3a-spike-plan`）；APPROVE_WITH_NITS 后 nits **必须折入文档再写代码**
+
+### Grill + lock doc 再写 plan（Native HUD N1–N10，2026-07-27）
+- 顺序：product brief → dual-review → **grill N1–N10**（双独立 agent 强制 LOCK|AMEND|OPEN）→ lock 文档 → spike plan → plan dual-review → 才允许代码
+- 数值分歧取折中并写进 lock（例：heartbeat Claude 2s vs Pi 3s → **3s**；ping 250 vs 500 → **400ms**）
+- Spike 与 production 分层：spike 证明 open/hydrate/confirm/abort/standby；截图 dual-track 单独门禁
 
 ### 定点修复: kimi 改动前复审的动态工作流
 - 已沉淀为个人技能 `kimi-gated-fix`(~/.config/skills/kimi-gated-fix/),含可移植的 workflow-template.js
@@ -127,6 +144,20 @@
 - 教训：JS 单线程下，**全同步**的 read-modify-write 天然原子，不存在交错竞态——只有 caller「读 → await → 用陈旧快照写」才有竞态。审计/评审提"竞态"时先确认是否有 await 间隙，别为不存在的竞态加锁（cargo-cult）。kimi 终审也独立验证了所有 caller无 await 间隙，确认非 bug。
 
 ## Architecture Decisions
+
+### Companion Native HUD N1–N10（2026-07-27 LOCK，P3a 前）
+- **Source of truth**: `docs/decisions/v1.3/companion-native-hud-n1n10-lock-2026-07-27.md`
+- **N1**: 一个 Companion 拉起的 Swift 二进制 = tray + HUD 窗；单一 SHA256 gate（可改常量名，不拆第二 gate）
+- **N2**: 每 thread 一个 wide shell；败者收 **`shell.standby`（NEW）**；MinimalConfirm 只在 Panel
+- **N3**: `hud.shell` auto|native|extension；healthy = PID + heartbeat ≤**3s** + ping ≤**400ms**；冷启动不挡 open
+- **N4**: 关窗 ≠ 停任务/改 CapabilityLevel；无 wide shell → Panel MinimalConfirm + toast
+- **N5**: 既有 single-writer；wire 晚到结果仍为 **`unknown`**（禁止改名 `already_resolved`）；**broadcast resolved 是 NEW**
+- **N6**: Conductor = active wide shell，服务端强制；LIVE 时 Panel send 排队
+- **N7**: Tray「打开确认台」走 N3（修正 D16 where native ships）
+- **N8**: 禁止静默切换，除 death/health-fail（toast+fallback）或用户改设置
+- **N9**: macOS native first；Cockpit parity CI 全平台
+- **N10**: DualTrack 右轨 N≤8 + 内滚动，HUD **与** Cockpit 一致
+- **Spike wire 归属**: `SecurityConfirmationManager` + `onTerminal` 在 **`server.ts`**；menu-bar 不建第二 manager；spike fan-out 仅 HUD+tray（WS 多端 deferred）
 
 ### Quick Actions: delegation vs direct execution (2026-06-09)
 - **Decision**: Quick actions from tray no longer execute tools directly; instead they create a thread and broadcast to the extension, which starts a normal chat

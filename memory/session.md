@@ -2,6 +2,17 @@
 
 ## Current Session
 
+### S17 (2026-07-27) [cmspark Side Panel UI 三模收尾 + Companion Native HUD P3 设计/grill/spike plan]
+- **UI 主路径**：P0–P2 + R1–R4 + S1 已落地（content-split、ContextStrip、tokens、meta slash、acceptance）；多批 commit + dual-review 门
+- **P3 Native HUD**：设计 brief Option A（phased）→ dual-review APPROVE_WITH_NITS → **N1–N10 grill lock**（Claude+Pi）→ **P3a spike plan** 写出 → **Task 0 plan dual-review** both APPROVE_WITH_NITS，nits 已折入
+- **权威文档**：
+  - Lock: `docs/decisions/v1.3/companion-native-hud-n1n10-lock-2026-07-27.md`
+  - Plan: `docs/superpowers/plans/2026-07-27-companion-native-hud-p3a-spike.md`（从 **Task 1** 起）
+  - Plan 双评: `docs/audit/reviews/native-hud-p3a-spike-plan-verdict-20260727-181620.json`
+- **HEAD**：`eb8a2cf` on `main`（已 push origin）— `docs(p3a): Native HUD spike plan + Task 0 dual-review gate`
+- **下次（他机 `git pull`）**：实现 spike Task 1→7；**禁止**在 Task 7 实现双评前做 dual-track 截图洪水；wire 归属 **server.ts** 管 manager/`onTerminal`
+- Recorded: yes — project-knowledge N1–N10 架构 + dual-review plan nits 坑
+
 ### S16 (2026-07-26) [cmspark macOS computer-use live 修复：点击假成功 → 真生效]
 - **用户验收**：#i4x6pm 后模拟点击成功（网易云等）；Mail Exchange 最新信可读
 - **根因链**（真机日志 + host 对照实验）：
@@ -156,6 +167,15 @@
 - Recorded: yes — 见 project-knowledge.md「Mermaid 图表渲染的三个坑」+ docs/adr/009
 
 ## In-Flight Tasks (Cross-Session)
+
+### P3a Companion Native HUD spike (from 2026-07-27)
+- status: active
+- context: N1–N10 LOCKED; spike plan dual-reviewed (Task 0 APPROVE_WITH_NITS, nits folded). UI three-mode path through S1 already on main.
+- next_action: `git pull` → implement plan Task 1 (`companion/src/hud/protocol.ts` + tests) through Task 6 env-gated spike; Task 7 ship note + **implementation** dual-review before any dual-track screenshots
+- resume_doc: `docs/superpowers/plans/2026-07-27-companion-native-hud-p3a-spike.md`
+- product_lock: `docs/decisions/v1.3/companion-native-hud-n1n10-lock-2026-07-27.md`
+- head: `eb8a2cf` origin/main
+- updated: 2026-07-27
 
 ### P0-D package/release hard-gates (from 2026-07-25 diagnosis)
 - status: active

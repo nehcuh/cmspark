@@ -3,21 +3,21 @@
 ## Session Handoff
 
 <!-- handoff:start -->
-### 2026-07-26 (session-end S16 — computer-use 点击真生效 + Mail 最新信)
-- **用户验收**：模拟点击已成功（#i4x6pm 后）；Exchange/最新 Mail 可读。
-- **根因/修**（已热部署到 `/Applications/CMspark.app`，源码本 session commit）：
-  1. inject 原点闸 `bestDist<24`（与截图 lockstep）
-  2. **SkyLight + HID 双投递** + inject 前 activate；`CMSPARK_HOST_SHA256` 钉住新 host
-  3. read-mail 按 date 取最新；session-trust 默认勾选 + actions 地板=max(actions,budget)
-  4. forceForeground 同 bundleId 视为成功
-- **HEAD 期望 commit**：`fix(computer): dual HID inject + mail newest + session-trust defaults`
-- **下次**：
-  1. `make package-macos` 正式重打 DMG（整包 node_modules + host + agent，避免长期热补丁漂移）
-  2. 可选：收紧 click `verified`（像素噪声假阳性）
-  3. session-trust 扩展若仍未默认勾选 → 确认用户加载的是新 build 的 sidepanel
-- **勿混入**：`docs/decisions/v1.3/`、`.omx/`、audit `*.patch`/`*.err`、`tmp-wx-live.png`
+### 2026-07-27 (session-end S17 — UI 三模 + Native HUD P3 grill + P3a spike plan Task 0)
+- **UI**：Side Panel 三模 P0–P2 + R1–R4 + S1 已在 main（content-split / ContextStrip / tokens / meta slash）。
+- **Native HUD 产品锁 N1–N10**（Claude+Pi grill）：`docs/decisions/v1.3/companion-native-hud-n1n10-lock-2026-07-27.md`
+  - 一 Swift binary=tray+HUD；`shell.standby`；N3 心跳 3s / ping 400ms；N5 wire 仍为 `unknown` + broadcast NEW；关窗≠停任务；macOS first。
+- **P3a spike plan**（Task 0 双评过，nits 已折入）：`docs/superpowers/plans/2026-07-27-companion-native-hud-p3a-spike.md`
+  - 范围：open/hydrate/一 confirm RT/abort/standby stub；**无** dual-track 截图。
+  - Wire：`server.ts` 拥有 manager + `onTerminal`；spike fan-out 仅 HUD+tray。
+- **HEAD**：`eb8a2cf` on `origin/main` — `docs(p3a): Native HUD spike plan + Task 0 dual-review gate`
+- **下次他机**：
+  1. `git pull origin main`
+  2. 从 plan **Task 1** 起实现（protocol → router → onTerminal → Swift HUD → bridge → `CMSPARK_HUD_SPIKE=1`）
+  3. Task 7 实现双评通过后再碰截图路径
+- **勿做**：默认把用户 shell 切到 native；改 wire 为 `already_resolved`；hash mismatch 自动 rebuild tray
 
-### 2026-07-25 (session-end S15 — deep diagnosis fanout + P0-A/B/C landed; P0-D mid-flight)
-- 诊断 fanout 5.8/C+；P0-A/B/C 已 commit；P0-D 发布 hard-gate 仍开放。
-- 双审流程：`p0-batch-fix.rhai` + `scripts/dual-external-review.sh`
+### 2026-07-26 (session-end S16 — computer-use 点击真生效 + Mail 最新信)
+- 用户验收点击真生效；SkyLight+HID 双投递；Mail 按 date 取最新；session-trust 默认勾选。
+- 下次可选：`make package-macos` 正式重打 DMG；收紧 click `verified` 假阳性。
 <!-- handoff:end -->
