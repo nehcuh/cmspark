@@ -172,10 +172,52 @@ function codePreview(code: string): string {
   return `${trimmed.slice(0, CODE_PREVIEW_LIMIT)}\n…`
 }
 
+/** N5 fan-out payload — fired once when a pending confirmation becomes terminal. */
+export type SecurityConfirmationTerminalEvent = {
+  confirmationId: string
+  approved: boolean
+  reason: SecurityConfirmationDecision["reason"]
+}
+
+export type SecurityConfirmationTerminalListener = (
+  event: SecurityConfirmationTerminalEvent,
+) => void
+
 export class SecurityConfirmationManager {
   private pending = new Map<string, PendingConfirmation>()
+  /**
+   * N5: optional multi-surface fan-out hook (HUD stdin, tray cancelConfirm, …).
+   * Invoked exactly once per confirmation that reaches a terminal decision.
+   * Late respond / respondFrom (`unknown`) do not call this.
+   */
+  private onTerminal: SecurityConfirmationTerminalListener | null = null
 
   constructor(private timeoutMs = DEFAULT_SECURITY_CONFIRMATION_TIMEOUT_MS) {}
+
+  /**
+   * Register (or clear with null) the N5 terminal fan-out listener.
+   * Listener errors are swallowed — resolve path must never throw.
+   */
+  setOnTerminal(cb: SecurityConfirmationTerminalListener | null): void {
+    this.onTerminal = cb
+  }
+
+  /**
+   * Fire onTerminal once after pending has been deleted and resolve is about to run.
+   * Never re-enter from late respond paths (those never reach here).
+   */
+  private fireTerminal(decision: SecurityConfirmationDecision): void {
+    if (!this.onTerminal) return
+    try {
+      this.onTerminal({
+        confirmationId: decision.confirmationId,
+        approved: decision.approved,
+        reason: decision.reason,
+      })
+    } catch {
+      /* never break resolve path */
+    }
+  }
 
   request(
     send: (data: any) => void,
@@ -195,7 +237,13 @@ export class SecurityConfirmationManager {
       const timer = setTimeout(() => {
         this.pending.delete(confirmationId)
         send({ type: "security.confirmation.expired", confirmation_id: confirmationId })
-        resolve({ confirmationId, approved: false, reason: "timeout" })
+        const decision: SecurityConfirmationDecision = {
+          confirmationId,
+          approved: false,
+          reason: "timeout",
+        }
+        resolve(decision)
+        this.fireTerminal(decision)
       }, this.timeoutMs)
 
       this.pending.set(confirmationId, {
@@ -362,11 +410,13 @@ export class SecurityConfirmationManager {
           clearTimeout(pending.timer)
           this.pending.delete(confirmationId)
           pending.send({ type: "security.confirmation.resolved", confirmation_id: confirmationId, approved: false })
-          pending.resolve({
+          const decision: SecurityConfirmationDecision = {
             confirmationId,
             approved: false,
             reason: "denied",
-          })
+          }
+          pending.resolve(decision)
+          this.fireTerminal(decision)
           return { outcome: "nonce_locked", attemptsLeft: 0 }
         }
         pending.send({
@@ -381,7 +431,7 @@ export class SecurityConfirmationManager {
     clearTimeout(pending.timer)
     this.pending.delete(confirmationId)
     pending.send({ type: "security.confirmation.resolved", confirmation_id: confirmationId, approved })
-    pending.resolve({
+    const decision: SecurityConfirmationDecision = {
       confirmationId,
       approved,
       reason: approved ? "approved" : "denied",
@@ -390,7 +440,9 @@ export class SecurityConfirmationManager {
       ...(approved && extras?.addToSessionTrust === true && pending.relevantApps.length > 0
         ? { addToSessionTrust: true }
         : {}),
-    })
+    }
+    pending.resolve(decision)
+    this.fireTerminal(decision)
     return { outcome: "resolved" }
   }
 
@@ -419,11 +471,13 @@ export class SecurityConfirmationManager {
     clearTimeout(pending.timer)
     this.pending.delete(confirmationId)
     pending.send({ type: "security.confirmation.resolved", confirmation_id: confirmationId, approved })
-    pending.resolve({
+    const decision: SecurityConfirmationDecision = {
       confirmationId,
       approved,
       reason: approved ? "approved" : "denied",
-    })
+    }
+    pending.resolve(decision)
+    this.fireTerminal(decision)
     return true
   }
 
@@ -439,7 +493,13 @@ export class SecurityConfirmationManager {
       for (const [confirmationId, pending] of this.pending) {
         clearTimeout(pending.timer)
         pending.send({ type: "security.confirmation.resolved", confirmation_id: confirmationId, approved: false })
-        pending.resolve({ confirmationId, approved: false, reason })
+        const decision: SecurityConfirmationDecision = {
+          confirmationId,
+          approved: false,
+          reason,
+        }
+        pending.resolve(decision)
+        this.fireTerminal(decision)
       }
       this.pending.clear()
       return
@@ -449,7 +509,13 @@ export class SecurityConfirmationManager {
       if (pending.originWs !== undefined && pending.originWs !== ws) continue
       clearTimeout(pending.timer)
       pending.send({ type: "security.confirmation.resolved", confirmation_id: confirmationId, approved: false })
-      pending.resolve({ confirmationId, approved: false, reason })
+      const decision: SecurityConfirmationDecision = {
+        confirmationId,
+        approved: false,
+        reason,
+      }
+      pending.resolve(decision)
+      this.fireTerminal(decision)
       this.pending.delete(confirmationId)
     }
   }
@@ -477,7 +543,13 @@ export class SecurityConfirmationManager {
       } catch {
         /* best-effort UI close */
       }
-      pending.resolve({ confirmationId, approved: false, reason })
+      const decision: SecurityConfirmationDecision = {
+        confirmationId,
+        approved: false,
+        reason,
+      }
+      pending.resolve(decision)
+      this.fireTerminal(decision)
       n++
     }
     return n
