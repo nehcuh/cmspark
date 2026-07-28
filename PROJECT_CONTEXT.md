@@ -3,20 +3,21 @@
 ## Session Handoff
 
 <!-- handoff:start -->
-### 2026-07-28 (session-end S19 — full wrap)
-- **HEAD**：`821acf4` on `origin/main`（clean）
-- **用户验收**：Windows `host_computer` estop preflight **成功**
-- **本会话交付摘要**：
-  - Native HUD P3a Task 1–6 源码（Swift SHA256 rebuild / Task 7 双评仍 pending）
-  - BottomBar「更多」fixed；skills 非数组守卫
-  - Enterprise A+B（session trust + `auto_approve_enterprise_tools`）
-  - Win estop：tombstone（`96548e1`）+ **no detached spawn**（`7c7611b`）+ SEA 热覆盖部署
-- **运行中**：`dist-package-new\cmspark-windows-x64\cmspark-agent.exe` + `host-scripts-win/`
+### 2026-07-28 ~17:06 (S20 — docs reorg Phase1–4 → PR #80)
+- **HEAD**：`074f483` on `origin/main`（docs reorg merge）；本地另有 **未提交** site-knowledge hostname WIP
+- **本会话交付**：
+  - Fanout 体检 + `docs/docs-reorg-plan-2026-07-28.md`
+  - Phase1–4：README 能力矩阵、`docs/README.md`、四用户指南、ADR-017/018、`docs/archive/2026-07/`
+  - Dual-review p1/p2/p4 both approve；p3 Pi + adversarial 收口（Claude 429）
+  - **PR #80 已合 main**
+- **关键入口**：`docs/README.md` · `docs/audit/reviews/docs-reorg-phase1-4-final-report.md`
 - **下次**：
-  1. macOS `build-tray.sh` → `SWIFT_TRAY_SHA256` → HUD Task 7 ship note + 实现双评
-  2. 可选：无 debug.log 锁时全量 Windows package；P0-D hard-gates
-- **勿做**：Task 7 前 dual-track 截图；estop 改回 `detached:true`；hash mismatch 自动 rebuild tray
+  1. site-knowledge hostname 单独 PR（勿混 docs）
+  2. HUD Task 7：macOS `build-tray.sh` → SHA256 → 实现双评
+  3. 可选：Claude 额度后补 p3 内容审
+- **勿做**：把 site-knowledge 代码塞进 docs commit；归档时动 decision 锁路径
 
-### 2026-07-27 (S18 — Native HUD P3a Task 1–6 source)
-- Task 1–6 源码；Swift 未 rebuild SHA256；Task 7 未做。plan：`docs/superpowers/plans/2026-07-27-companion-native-hud-p3a-spike.md`
+### 2026-07-28 (S19 — HUD / enterprise / Win estop wrap)
+- HEAD 曾为 `821acf4`；Win estop 用户验收；HUD Task 1–6 源码、Task 7 仍 pending
+- 下次仍以 macOS tray rebuild + Task 7 双评为主路径（见 in-flight P3a）
 <!-- handoff:end -->

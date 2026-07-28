@@ -58,6 +58,23 @@
 - **Hash mismatch ≠ 缺失 binary**：缺失可 dev rebuild；mismatch 视为可疑，拒绝 spawn、不静默 rebuild（防 TOCTOU / 篡改证据被覆盖）
 - HUD 与 tray 同一 binary 时，所有 HUD 改动都触发同一 hash 更新路径
 
+### Grok Rhai workflow：`fn` 不捕获外层 `let`（2026-07-28 docs reorg）
+- 现象：`docs-reorg-phase12` 在 Phase1 外审门崩溃：`Variable not found: root` / 同类对 `output_schema`
+- 根因：Rhai 函数**不捕获**外层局部变量；`run_external(...)` 内写 `root` 或 `external_schema` 会在**调用时**才炸（canned smoke 可能过、真跑 fail）
+- 修法：① 参数显式传入（`repo_root`）；② schema **在 fn 内**字面构造；③ 或**内联** dual-review agent 调用（phase34 采用）
+- 相关：`.grok/workflows/docs-reorg-phase12.rhai` → continue / phase34
+
+### Dual-review Claude 429 ≠ 内容 REJECT（2026-07-28 p3）
+- `scripts/dual-external-review.sh` 对空/失败输出会映射 VERDICT；Claude 全文 `API Error 429` 额度时脚本仍落 `REJECT`
+- **勿把 429 当文档/代码否决**；应用 Pi（或 adversarial）+ 额度后复跑 Claude；verdict json 应注明 `infra_429`
+- 同日 Kimi 也可能 403 usage limit — 双审工具链要有配额/替代审查者预案
+
+### Computer Use 文档：全局开关勿写成「侧栏生物识别一键开」（2026-07-28）
+- 0.3.0 用户实用路径：`~/.cmspark-agent/config.json` 的 `computer.coordinateEnabled`
+- Companion 有 `computer.set_enabled`（可生物识别），但 **Side Panel/托盘未接线**；Apps「坐标操作」只读 `computer.get_state`
+- 用户指南/ADR-017 必须诚实写 UI 债；checklist 不能要求「面板拨开全局」
+- Files: `docs/computer-use-user-guide.md`, `docs/adr/017-computer-use.md`, `companion/src/computer/handlers.ts`
+
 ### Confirm multi-surface：晚到响应 wire 保持 `unknown`，勿发明 `already_resolved`（2026-07-27）
 - `SecurityConfirmationManager.respond` / `respondFrom` 删除 pending 后晚到调用返回既有 **`unknown`** 语义
 - Brief/plan 散文可说 “already resolved”，**wire symbol 不改名**（旧扩展兼容 + N5 lock）
@@ -142,6 +159,13 @@
 - 产物目录：`docs/audit/reviews/`；批次报告 + claude/pi md + verdict json + patch
 - 诊断 fanout 姐妹流：`.grok/workflows/deep-diagnosis-fanout.rhai`（子系统 10 + 横切 6 + 对抗 16 + 综合）
 - **设计/plan 也可用同一脚本做 Task 0 门**（例：`native-hud-p3a-spike-plan`）；APPROVE_WITH_NITS 后 nits **必须折入文档再写代码**
+
+### Docs reorg Phase1–4 门控编排（2026-07-28，已合 PR #80）
+- 计划：`docs/docs-reorg-plan-2026-07-28.md`；终报：`docs/audit/reviews/docs-reorg-phase1-4-final-report.md`
+- Workflows：`.grok/workflows/docs-reorg-phase12.rhai` / `…-continue.rhai` / `…-phase34.rhai`
+- 门：实现 → 内部对抗 → **Claude+Pi**（`dual-external-review.sh`）→ nits → 归档 `git mv`（禁首轮 `rm`）
+- 恢复套路：workflow 代理断流/Rhai 炸 → **手工**跑 dual-review + 本地 adversarial；Claude 429 → 信 Pi + adversarial，额度后再补 Claude
+- 归档锁：勿动 `decisions/coordinate-computer-use-plan.md`、`host-adapter-interface.md`、HUD N1–N10 lock、`superpowers/`
 
 ### Grill + lock doc 再写 plan（Native HUD N1–N10，2026-07-27）
 - 顺序：product brief → dual-review → **grill N1–N10**（双独立 agent 强制 LOCK|AMEND|OPEN）→ lock 文档 → spike plan → plan dual-review → 才允许代码

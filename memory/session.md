@@ -2,6 +2,15 @@
 
 ## Current Session
 
+### S20 (2026-07-28 17:06~) [cmspark 文档重梳 Phase1–4 → PR #80 合 main]
+- **交付**：docs reorg 全链路 — fanout 体检 → 计划 → Phase1–2 纠错+README 入口 → Phase3 四用户指南+ADR-017/018 → Phase4 archive → dual-review 收口 → **PR #80 已合 `origin/main`**（`074f483`）
+- **关键文档**：`docs/README.md` 导航；`computer-use` / `host-and-apps` / `notebooklm` / `multi-agent` 用户指南；`docs/archive/2026-07/`
+- **门控**：p1/p2/p4 Claude+Pi both approve；p3 Pi APPROVE + Claude 429 infra + adversarial 修 CU 全局开关诚实路径（config.json，非侧栏一键）
+- **Workflow 坑**：Rhai `fn` 不捕获外层变量；Grok 代理断流需手工 dual-review
+- **未提交 WIP**（工作区）：site-knowledge hostname（companion/extension + 相关 audit reviews）
+- **下次**：① 可选 site-knowledge 单独 PR；② HUD Task 7（macOS tray rebuild + 双评）；③ Claude 额度恢复后可选补 p3 内容审
+- Recorded: yes — project-knowledge Rhai/dual-review/CU 文档路径 + docs reorg pattern
+
 ### S19 (2026-07-27→28) [cmspark HUD spike 续 + UI 修 + enterprise A+B + Win package + estop]
 - **Native HUD P3a**：Task 1–6 源码已合 main（protocol/router/onTerminal/Node bridge/Swift HudController/`CMSPARK_HUD_SPIKE=1`）；**未** macOS rebuild SHA256；**未** Task 7 ship note + 实现双评
 - **UI 修**（用户加载 `dist-package` 扩展，非 `chrome-extension/build`）：
@@ -204,19 +213,25 @@
 
 ### P3a Companion Native HUD spike (from 2026-07-27)
 - status: active
-- context: N1–N10 LOCKED. Tasks 1–6 source on main. Swift HudController in source; **macOS rebuild SHA256 still pending**. Task 7 ship note + implementation dual-review not done. S19 also shipped enterprise A+B + Windows estop (tombstone + no-detached) user-verified.
+- context: N1–N10 LOCKED. Tasks 1–6 source on main. Swift HudController in source; **macOS rebuild SHA256 still pending**. Task 7 ship note + implementation dual-review not done. Docs reorg PR #80 landed 2026-07-28; does not unblock HUD Task 7.
 - next_action: On macOS run `bash companion/src/tray/build-tray.sh` → update `SWIFT_TRAY_SHA256` → dual-process `CMSPARK_HUD_SPIKE=1` checklist → Task 7 ship note + **implementation** dual-review before dual-track screenshots
 - resume_doc: `docs/superpowers/plans/2026-07-27-companion-native-hud-p3a-spike.md`
 - product_lock: `docs/decisions/v1.3/companion-native-hud-n1n10-lock-2026-07-27.md`
-- head: `821acf4` origin/main
+- head: `074f483` origin/main
+- updated: 2026-07-28
+
+### Site-knowledge hostname WIP (from 2026-07-28, uncommitted)
+- status: active
+- context: companion site-matcher/skill-engine/server/message-router + extension active-tab-hostname + tests + dual-review artifacts under docs/audit/reviews/site-knowledge-* — **not** in PR #80
+- next_action: Separate commit/PR after clean status on main; do not mix with docs archive
 - updated: 2026-07-28
 
 ### P0-D package/release hard-gates (from 2026-07-25 diagnosis)
 - status: active
-- context: P0-A/B/C committed on stack ending at c2784ed; P0-D workflow p0-batch-fix-4 was mid Design on fix/diagnosis-P0-D
-- next_action: Resume or re-launch p0-batch-fix with batch=P0-D; hard-gate cmspark-host/tray + TinyClick/win scripts notes + fix release.yml WS-auth deferred text; dual review Claude+Pi (waive Pi if hang)
+- context: P0-A/B/C historically fixed; packaging hard-gates largely in CI/package.sh by later work — re-verify against current main before large P0-D batch
+- next_action: Spot-check package.sh fail-closed + release.yml notes; open residual items only
 - resume_doc: docs/audit/handoff-p0-diagnosis-2026-07-25.md
-- updated: 2026-07-25
+- updated: 2026-07-28
 
 ### Quick Actions Runtime Verification
 - status: needs-testing
