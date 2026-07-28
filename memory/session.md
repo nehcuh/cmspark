@@ -19,7 +19,7 @@
   2. **`spawn({detached:true})` 致 powershell -File 立刻 exit 1、无 ready.json**（`7c7611b`）→ 非 detached 隐藏子进程
   3. **用户验收成功**（host_computer 可通过 estop preflight）
 - **部署**：SEA 热覆盖 `dist-package-new` + `dist-package` 的 `cmspark-agent.exe` + `host-scripts-win/`（全量 build 仍可能被 debug.log 锁打断）
-- **HEAD**：`7c7611b` on `origin/main`
+- **HEAD**：`821acf4` on `origin/main`（含用户验收 memory flush）
 - **下次**：
   1. macOS：`build-tray.sh` → 更新 `SWIFT_TRAY_SHA256` → HUD Task 7 ship note + 实现双评
   2. 可选：P0-D package hard-gates；Windows 全量 package 在无 debug.log 锁时重打
@@ -204,11 +204,11 @@
 
 ### P3a Companion Native HUD spike (from 2026-07-27)
 - status: active
-- context: N1–N10 LOCKED. Tasks 1–6 source on main (`f2ae96f`…`5a4d654` stack + S18/S19). Swift HudController in source; **macOS rebuild SHA256 still pending**. Task 7 ship note + implementation dual-review not done.
+- context: N1–N10 LOCKED. Tasks 1–6 source on main. Swift HudController in source; **macOS rebuild SHA256 still pending**. Task 7 ship note + implementation dual-review not done. S19 also shipped enterprise A+B + Windows estop (tombstone + no-detached) user-verified.
 - next_action: On macOS run `bash companion/src/tray/build-tray.sh` → update `SWIFT_TRAY_SHA256` → dual-process `CMSPARK_HUD_SPIKE=1` checklist → Task 7 ship note + **implementation** dual-review before dual-track screenshots
 - resume_doc: `docs/superpowers/plans/2026-07-27-companion-native-hud-p3a-spike.md`
 - product_lock: `docs/decisions/v1.3/companion-native-hud-n1n10-lock-2026-07-27.md`
-- head: `96548e1` origin/main
+- head: `821acf4` origin/main
 - updated: 2026-07-28
 
 ### P0-D package/release hard-gates (from 2026-07-25 diagnosis)
