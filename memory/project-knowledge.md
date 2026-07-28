@@ -160,6 +160,18 @@
 - 诊断 fanout 姐妹流：`.grok/workflows/deep-diagnosis-fanout.rhai`（子系统 10 + 横切 6 + 对抗 16 + 综合）
 - **设计/plan 也可用同一脚本做 Task 0 门**（例：`native-hud-p3a-spike-plan`）；APPROVE_WITH_NITS 后 nits **必须折入文档再写代码**
 
+### Tab lease 仅 multi-agent：单 agent 多 tab 勿 HARD lease（2026-07-28 PR #81）
+- 现象：普通聊天 / AppSec 打开第 3 个 tab 命中 `max_tabs_leased_per_worker=2` → 硬失败
+- 修法：`server.ts` early HARD + SOFT + `create_tab` autoHold **仅** `isMultiAgentThread || anyTabLeaseHeld()`；lease 错误进 `classifyError` recoverable
+- 教训：ADR-015 排他锁是 **worker 编排** 工具，不能默认套在所有 CDP 线程上
+- Files: `server.ts`, `tab-lease.ts`, `security.ts`
+
+### Site knowledge 自动注入必须扩展发 hostname（2026-07-28 PR #81）
+- Companion 早已 `resolveKnowledgeIdsForThread(..., hostname)`，但扩展 chat 不带 hostname → `getBySite` 永空
+- 扩展：`getActiveTabHostname()` 只传 hostname（不传完整 URL）；chat.create/regenerate/file.upload/quickAction
+- Companion：`normalizeHostname` case-insensitive；hostname **只**用于选 knowledge，不是 trust 门
+- Files: `active-tab-hostname.ts`, `message-router.ts`, `site-matcher.ts`
+
 ### Docs reorg Phase1–4 门控编排（2026-07-28，已合 PR #80）
 - 计划：`docs/docs-reorg-plan-2026-07-28.md`；终报：`docs/audit/reviews/docs-reorg-phase1-4-final-report.md`
 - Workflows：`.grok/workflows/docs-reorg-phase12.rhai` / `…-continue.rhai` / `…-phase34.rhai`

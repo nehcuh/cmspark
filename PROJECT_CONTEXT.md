@@ -3,21 +3,22 @@
 ## Session Handoff
 
 <!-- handoff:start -->
-### 2026-07-28 ~17:06 (S20 — docs reorg Phase1–4 → PR #80)
-- **HEAD**：`074f483` on `origin/main`（docs reorg merge）；本地另有 **未提交** site-knowledge hostname WIP
-- **本会话交付**：
-  - Fanout 体检 + `docs/docs-reorg-plan-2026-07-28.md`
-  - Phase1–4：README 能力矩阵、`docs/README.md`、四用户指南、ADR-017/018、`docs/archive/2026-07/`
-  - Dual-review p1/p2/p4 both approve；p3 Pi + adversarial 收口（Claude 429）
-  - **PR #80 已合 main**
-- **关键入口**：`docs/README.md` · `docs/audit/reviews/docs-reorg-phase1-4-final-report.md`
+### 2026-07-28 ~17:39 (S21 — site-knowledge #81 + HUD Task7 #82)
+- **HEAD**：`d3a977f` on `origin/main`（工作区干净）
+- **本会话续交付**：
+  - **PR #81** site_knowledge：active-tab hostname wire + case-insensitive match + skills/knowledge 分离 + tab lease multi-only
+  - **PR #82** HUD P3a Task 7：tray rebuild SHA `5929b53c…`、ship note、Claude+Pi impl dual-review both_ok
+  - 更早同日：**PR #80** docs reorg Phase1–4
+- **关键入口**：
+  - `docs/README.md` · `docs/decisions/v1.3/companion-native-hud-p3a-spike-ship-note-2026-07-28.md`
+  - dual-review：`docs/audit/reviews/native-hud-p3a-impl-verdict-20260728-172207.json`
 - **下次**：
-  1. site-knowledge hostname 单独 PR（勿混 docs）
-  2. HUD Task 7：macOS `build-tray.sh` → SHA256 → 实现双评
-  3. 可选：Claude 额度后补 p3 内容审
-- **勿做**：把 site-knowledge 代码塞进 docs commit；归档时动 decision 锁路径
+  1. 可选 `CMSPARK_HUD_SPIKE=1` 双进程完整 checklist
+  2. P3a-full（ConfirmElevated 对等）— **禁止**先上双轨截图洪水
+  3. P0-D 包装 hard-gate 残余 spot-check
+- **勿做**：hash mismatch 自动 rebuild tray；Task 7 已过仍开 dual-track 截图
 
-### 2026-07-28 (S19 — HUD / enterprise / Win estop wrap)
-- HEAD 曾为 `821acf4`；Win estop 用户验收；HUD Task 1–6 源码、Task 7 仍 pending
-- 下次仍以 macOS tray rebuild + Task 7 双评为主路径（见 in-flight P3a）
+### 2026-07-28 ~17:06 (S20 — docs reorg PR #80)
+- Docs Phase1–4 合 main；Rhai/dual-review/CU 开启路径文档坑已记 project-knowledge
+- site-knowledge / HUD Task7 在 S21 已清
 <!-- handoff:end -->

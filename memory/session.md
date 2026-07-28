@@ -2,13 +2,20 @@
 
 ## Current Session
 
+### S21 (2026-07-28 ~17:39) [cmspark site-knowledge PR#81 + HUD Task7 PR#82 合 main]
+- **PR #81** `fix/site-knowledge-hostname`：扩展发 active-tab **hostname only**；companion case-insensitive matchSite；knowledge/skills 分离；tab lease **仅 multi-agent**（单 agent 多 tab 不再 TAB_LEASE_CAP）；Claude+Pi 计划门后实现 → **已合 main** `c7baea3`
+- **PR #82** HUD P3a **Task 7**：`build-tray.sh` 钉 `SWIFT_TRAY_SHA256=5929b53c…`；ship note `companion-native-hud-p3a-spike-ship-note-2026-07-28.md`；stdin smoke open/close；impl dual-review Claude APPROVE_WITH_NITS + Pi APPROVE → **已合 main** `d3a977f`
+- **双轨截图仍 NO-GO**；nits（onTerminal 冗余 fan-out、spike abort 仅 log）推迟
+- **HEAD**：`d3a977f` origin/main；工作区干净
+- **下次**：① 可选 `CMSPARK_HUD_SPIKE=1` 双进程完整 checklist；② P3a-full（ConfirmElevated 对等，勿先上双轨截图）；③ P0-D 残余 spot-check
+- Recorded: yes — tab-lease multi-only + site hostname wire；HUD Task7 ship 路径
+
 ### S20 (2026-07-28 17:06~) [cmspark 文档重梳 Phase1–4 → PR #80 合 main]
 - **交付**：docs reorg 全链路 — fanout 体检 → 计划 → Phase1–2 纠错+README 入口 → Phase3 四用户指南+ADR-017/018 → Phase4 archive → dual-review 收口 → **PR #80 已合 `origin/main`**（`074f483`）
 - **关键文档**：`docs/README.md` 导航；`computer-use` / `host-and-apps` / `notebooklm` / `multi-agent` 用户指南；`docs/archive/2026-07/`
 - **门控**：p1/p2/p4 Claude+Pi both approve；p3 Pi APPROVE + Claude 429 infra + adversarial 修 CU 全局开关诚实路径（config.json，非侧栏一键）
 - **Workflow 坑**：Rhai `fn` 不捕获外层变量；Grok 代理断流需手工 dual-review
-- **未提交 WIP**（工作区）：site-knowledge hostname（companion/extension + 相关 audit reviews）
-- **下次**：① 可选 site-knowledge 单独 PR；② HUD Task 7（macOS tray rebuild + 双评）；③ Claude 额度恢复后可选补 p3 内容审
+- **后续 S21 已清**：site-knowledge / HUD Task7 均已合 main
 - Recorded: yes — project-knowledge Rhai/dual-review/CU 文档路径 + docs reorg pattern
 
 ### S19 (2026-07-27→28) [cmspark HUD spike 续 + UI 修 + enterprise A+B + Win package + estop]
@@ -211,19 +218,13 @@
 
 ## In-Flight Tasks (Cross-Session)
 
-### P3a Companion Native HUD spike (from 2026-07-27)
-- status: active
-- context: N1–N10 LOCKED. Tasks 1–6 source on main. Swift HudController in source; **macOS rebuild SHA256 still pending**. Task 7 ship note + implementation dual-review not done. Docs reorg PR #80 landed 2026-07-28; does not unblock HUD Task 7.
-- next_action: On macOS run `bash companion/src/tray/build-tray.sh` → update `SWIFT_TRAY_SHA256` → dual-process `CMSPARK_HUD_SPIKE=1` checklist → Task 7 ship note + **implementation** dual-review before dual-track screenshots
-- resume_doc: `docs/superpowers/plans/2026-07-27-companion-native-hud-p3a-spike.md`
+### P3a Companion Native HUD — post-spike (from 2026-07-27 / closed Task7 2026-07-28)
+- status: active (optional operator + P3a-full)
+- context: Task 1–7 on main (`d3a977f`). SHA `5929b53c…` pinned. Ship note + impl dual-review both_ok. Dual-track screenshots **NO-GO**. Full dual-process checklist still optional.
+- next_action: Optional `CMSPARK_HUD_SPIKE=1` dual-process confirm Allow/Deny/急停/standby; then P3a-full design (ConfirmElevated parity) — **no** screenshot flood
+- resume_doc: `docs/decisions/v1.3/companion-native-hud-p3a-spike-ship-note-2026-07-28.md`
 - product_lock: `docs/decisions/v1.3/companion-native-hud-n1n10-lock-2026-07-27.md`
-- head: `074f483` origin/main
-- updated: 2026-07-28
-
-### Site-knowledge hostname WIP (from 2026-07-28, uncommitted)
-- status: active
-- context: companion site-matcher/skill-engine/server/message-router + extension active-tab-hostname + tests + dual-review artifacts under docs/audit/reviews/site-knowledge-* — **not** in PR #80
-- next_action: Separate commit/PR after clean status on main; do not mix with docs archive
+- head: `d3a977f` origin/main
 - updated: 2026-07-28
 
 ### P0-D package/release hard-gates (from 2026-07-25 diagnosis)
