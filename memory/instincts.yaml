@@ -49,7 +49,7 @@ instincts:
     confidence: 0.9
     source_session: "2026-07-28 windows estop tombstone"
     tags: [windows, process, heartbeat, tombstone, estop]
-    applications: 1
+    applications: 2
 
   - id: verify-artifact-load-path
     pattern: "修 UI/扩展前确认用户实际加载路径(dist-package / chrome-extension/build / 已装 .app)。改 monorepo build 对 packaged 用户零效果;验收前重打 package 或明确让用户 reload 正确目录。"
@@ -63,4 +63,11 @@ instincts:
     confidence: 0.8
     source_session: "2026-07-27 skills not iterable"
     tags: [typescript, store, websocket, defensive]
+    applications: 1
+
+  - id: win-ps1-no-detached-spawn
+    pattern: "Windows 上 Node spawn(powershell, [-File ps1], {detached:true, stdio:ignore}) 常立刻 exit 1 且无副作用。常驻 helper(如 computer-estop.ps1) 用 detached:false + windowsHide + unref，或 Start-Process。先做 2s ready 文件 harness 再怀疑心跳解析。"
+    confidence: 0.95
+    source_session: "2026-07-28 windows estop detached spawn user-verified"
+    tags: [windows, powershell, spawn, estop, process]
     applications: 1

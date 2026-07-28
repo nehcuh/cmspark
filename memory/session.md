@@ -14,13 +14,16 @@
   - UI：MinimalConfirm/ConfirmElevated A 勾选；SettingsSlideout B；SafetyStrip revoke chip
   - 文档：`docs/decisions/v1.3/enterprise-session-trust-godmode-plan-2026-07-27.md` + audit reviews
 - **Windows 打包**：新扩展打入 `dist-package`（debug.log 锁 → 曾 stage 到 `dist-package-new`；用户清理后全量重打）
-- **estop 心跳 stale ~430532579ms**：死 PID 留下 `%TEMP%/cmspark-computer/estop-ready.json` tombstone → 死 PID 清理 + 重生前清 tombstone（`96548e1`）
-- **HEAD**：`96548e1` on `origin/main`（与 remote 同步）
+- **estop**：
+  1. 死 PID tombstone / 陈旧心跳（`96548e1`）
+  2. **`spawn({detached:true})` 致 powershell -File 立刻 exit 1、无 ready.json**（`7c7611b`）→ 非 detached 隐藏子进程
+  3. **用户验收成功**（host_computer 可通过 estop preflight）
+- **部署**：SEA 热覆盖 `dist-package-new` + `dist-package` 的 `cmspark-agent.exe` + `host-scripts-win/`（全量 build 仍可能被 debug.log 锁打断）
+- **HEAD**：`7c7611b` on `origin/main`
 - **下次**：
-  1. 重启 companion（含 estop fix）+ 加载最新 dist-package 扩展验 A+B UI
-  2. macOS：`build-tray.sh` → 更新 `SWIFT_TRAY_SHA256` → HUD Task 7 ship note + 实现双评
-  3. 可选：P0-D package hard-gates
-- Recorded: yes — estop tombstone / skills guard / more-menu+dist-package / enterprise A+B gate algebra
+  1. macOS：`build-tray.sh` → 更新 `SWIFT_TRAY_SHA256` → HUD Task 7 ship note + 实现双评
+  2. 可选：P0-D package hard-gates；Windows 全量 package 在无 debug.log 锁时重打
+- Recorded: yes — estop tombstone + detached spawn / skills guard / more-menu+dist-package / enterprise A+B
 
 ### S18 (2026-07-27) [cmspark Native HUD P3a spike Task 1–6 source]
 - **Task 1–3,5 DONE**：protocol / router / onTerminal / Node bridge

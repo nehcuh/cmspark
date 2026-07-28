@@ -95,6 +95,14 @@
 - 教训：凡「文件心跳 / ready 标记」健康检查，**必须**附进程 liveness（PID + kill(0)/OpenProcess），不能只信 mtime；crash 后磁盘 artifact 会伪装成 healthy。
 - Files: `companion/src/computer/estop.ts`, `companion/tests/computer-estop.test.ts`
 
+### Windows estop：Node `spawn({detached:true})` 让 powershell -File 秒退（2026-07-28，用户验收）
+- 现象：tombstone 修完后仍 `estop helper ready file missing (helper not running)`；ensure 轮询 ~8s 失败。
+- 根因复现：`spawn(powershell, [-File computer-estop.ps1], { detached: true, stdio: 'ignore', windowsHide: true })` → **exit 1、无 ready.json**；同脚本 `detached: false` 或 `Start-Process` 正常写心跳。
+- 修法（`7c7611b`）：`spawnEstopHelper` 改 `detached: false`（helper 与 companion 共生命周期 + `unref` 不挡事件循环）；脚本缺失时把路径并入 refusal reason。
+- 部署：全量 `build-windows-exe.ps1` 可能被 `dist-package/**/debug.log` 锁失败 → 可热覆盖 `cmspark-agent.exe` + 确保旁置 `host-scripts-win/`。
+- 教训：Windows 上「后台常驻 ps1」**不要**想当然 `detached:true`；先最小 harness 比只改 ready 解析快。
+- 用户验收：host_computer 过 estop preflight 成功。
+
 ### Side Panel `t.skills is not iterable`：skill.list 载荷非数组（2026-07-27）
 - 现象：扩展运行时 TypeError `t.skills is not iterable`（store / BottomBar / slash skills）。
 - 根因：`SET_SKILLS` 等路径把 **undefined/非数组** 当数组 spread/iterate；companion `skill.list` 异常或旧协议时 payload 形状漂移。
