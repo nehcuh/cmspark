@@ -2,8 +2,8 @@
 
 ## 前提
 
-- Node.js >= 20
-- Chrome 浏览器
+- **Node.js ≥ 20**（与 README / CI / TESTING 一致；推荐 `nvm`）
+- Chrome 浏览器（Manifest V3）
 - npm
 
 ## 快速开始
@@ -23,6 +23,7 @@ cd chrome-extension && npm run dev
 ```
 
 或使用一键命令：
+
 ```bash
 make dev
 ```
@@ -30,34 +31,61 @@ make dev
 ## 运行测试
 
 ```bash
+# 全部
 make test
+
+# 分端
+npm --prefix companion test
+npm --prefix chrome-extension test
+
+# Companion 单文件（先 tsc 再 node --test）
+cd companion && npx tsc -p tsconfig.test.json \
+  && node --test .test-dist/tests/security-thread.test.js
 ```
+
+测试地图与领域分组见 **[docs/TESTING.md](docs/TESTING.md)**（含 computer / host-use / orchestrator / board / mcp 等）。
 
 ## 项目结构
 
 ```
 cmspark/
-├── chrome-extension/    # Chrome Extension (Plasmo + React)
+├── chrome-extension/           # Plasmo + React (MV3)
 │   ├── src/
-│   │   ├── sidepanel/   # Side Panel UI
-│   │   ├── background/  # Service Worker (CDP, tabs, WebSocket client)
-│   │   └── popup/       # 工具栏弹窗
-│   └── tests/           # Extension 测试
-├── companion/           # Companion CLI (Node.js + TypeScript)
+│   │   ├── sidepanel/          # Side Panel UI（Chat / Packs / Board / Apps / MCP / NotebookLM…）
+│   │   ├── background/         # Service Worker：CDP、WS、NotebookLM 编排、Cockpit 窗
+│   │   ├── cockpit/            # Confirm Center 宽窗
+│   │   ├── notebooklm/         # NotebookLM 抽取 / RSS / YouTube 等
+│   │   ├── tabs/               # cockpit.html 入口
+│   │   └── popup/
+│   └── tests/
+├── companion/                  # cmspark-agent (Node.js + TypeScript)
 │   ├── src/
-│   │   ├── server.ts    # WebSocket 服务器
-│   │   ├── llm/         # LLM 适配器
-│   │   ├── skills/      # 技能引擎
-│   │   ├── threads/     # 线程管理
-│   │   ├── bridge/      # 工具定义与调度
-│   │   └── history/     # SQLite 操作历史
-│   └── tests/           # Companion 测试
-└── docs/                # 项目文档
-    ├── GOAL.md
-    ├── architecture.md
-    ├── DESIGN.md
-    ├── TESTING.md
-    └── adr/             # 架构决策记录
+│   │   ├── server.ts           # WS 服务器 + tool 调度
+│   │   ├── message-router.ts
+│   │   ├── llm/                # 适配器 / 抽取 / vision
+│   │   ├── bridge/             # tool-definitions / schemas / tab-resolver
+│   │   ├── skills/ · threads/ · history/
+│   │   ├── security*.ts        # L2 确认 · 策略 · HMAC token
+│   │   ├── mcp/                # MCP client / manager / aggregator
+│   │   ├── computer/           # Computer Use（坐标 · session-trust · estop）
+│   │   ├── host-use/           # Host 读写 · 平台 adapter（darwin/win/linux）
+│   │   ├── apps/               # 应用白名单 · 启动 · 生物识别门
+│   │   ├── orchestrator/       # Multi-agent：spawn · tab-lease · fleet
+│   │   ├── board/              # Mission Board
+│   │   ├── packs/              # Mission Pack 引擎 + builtin
+│   │   ├── capability/ · netsec/
+│   │   ├── obsidian/ · tray/ · hud/ · daemon.ts
+│   │   └── …
+│   └── tests/                  # node:test（见 docs/TESTING.md）
+└── docs/                       # 文档（导航：docs/README.md）
+    ├── README.md
+    ├── architecture.md · GOAL.md · DESIGN.md · TESTING.md
+    ├── mcp.md · mission-pack-usage.md · confirm-center-user-guide.md
+    ├── computer-use-user-guide.md · host-and-apps.md
+    ├── notebooklm-user-guide.md · multi-agent-user-guide.md
+    ├── adr/                    # 001–018+
+    ├── superpowers/            # 进行中 specs/plans
+    └── decisions/              # 过程稿（非唯一规范；被代码引用的勿盲删）
 ```
 
 ## 常用命令
@@ -77,6 +105,25 @@ cmspark/
 - 提交信息用中文描述变更内容
 - 功能变更前先补测试
 - 重构前确保现有测试通过
+- **产品版本**以 companion / chrome-extension `package.json` 为准（文档写 0.3.0 时勿回退叙事）
+
+## 文档 Checklist（功能 PR 合并前）
+
+见 [docs-reorg-plan §7](docs/docs-reorg-plan-2026-07-28.md)：
+
+- [ ] **用户可见？** → 根 [README.md](README.md) 能力矩阵或 FAQ 是否需要一行？
+- [ ] **有操作步骤？** → 用户指南（`docs/*-user-guide.md` / `mcp.md` / `mission-pack-usage.md` 等）或 [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)？
+- [ ] **架构边界变了？** → [architecture.md](docs/architecture.md) / 新或改 ADR？
+- [ ] **安全模型变了？** → ADR-006/007/010/017/018 等？
+- [ ] **新增测试？** → [TESTING.md](docs/TESTING.md) 地图是否点名？
+- [ ] **关闭了 RFC/decision？** → 状态戳记 + 计划归档（`docs/archive/`，Phase 4）？
+- [ ] **导航？** → [docs/README.md](docs/README.md) 表是否要加一行？
+
+约定：
+
+- 新用户可见能力 → README 矩阵 +1 行 + 用户指南或「见 ADR」。
+- 架构决策 → `docs/adr/`；过程对抗评审 → `docs/decisions/`，**禁止**当唯一规范。
+- 功能 shipped → 更新 ADR 状态（Proposed → Accepted → Implemented）。
 
 ## 安全 Checklist
 
@@ -129,4 +176,4 @@ systray2 包含跨平台的预编译 Go 二进制文件（`traybin/` 目录）�
 
 ---
 
-更多信息见 `docs/`。
+更多信息见 **[docs/README.md](docs/README.md)** · 供应链 [docs/supply-chain.md](docs/supply-chain.md)。

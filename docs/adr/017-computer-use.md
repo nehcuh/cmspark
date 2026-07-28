@@ -1,0 +1,48 @@
+# ADR-017: Computer Use（坐标桌面操控）
+
+**日期**: 2026-07-28  
+**状态**: **Implemented / Accepted**（产品 0.3.0；平台：macOS / Windows 主路径）  
+**用户指南**: [computer-use-user-guide.md](../computer-use-user-guide.md)  
+**相关**: [confirm-center-user-guide.md](../confirm-center-user-guide.md) · [ADR-018](018-host-use.md) · [ADR-015](015-multi-agent-orchestrator-tab-lock.md)
+
+> **过程史（非唯一规范）**：设计与对抗评审长文在 `docs/decisions/coordinate-computer-use-*.md`、`macos-computer-use-implementation-plan.md` 等。现行行为以本 ADR + 代码 `companion/src/computer/` 为准。
+
+---
+
+## Context
+
+浏览器 CDP 无法覆盖「本机 GUI 应用窗口内」的点击与键入。需要在 **默认关闭**、**可审计**、**可急停** 的前提下提供坐标级 computer-use，并与 Apps 白名单、L2 确认台、Multi-Agent tab lease 共存。
+
+---
+
+## Decision
+
+1. **工具入口**：`host_computer`（任务描述 + app token + actions[] + budget）。  
+2. **双开关 fail-closed**：  
+   - 全局 `computer.coordinateEnabled`（默认 false）。**0.3.0 用户实用路径**：写 `config.json`；Companion 有 `computer.set_enabled`（可走生物识别），但扩展/托盘 **尚未** 暴露拨开关 UI（Apps 面板只读镜像）。  
+   - 每应用 `AppEntry.coordinateAllowed`（vault/浏览器/终端/钱包/LOLBIN **结构排除**，永远不可开）。  
+3. **任务级 L2 强制**：枚举 task、app、全部 type 文本、预算；**god-mode / auto_approve 永不跳过**任务级 L2。  
+4. **Session-trust**（`computer/session-trust` G1）：进程内、按 thread（优先，initial-skip 仅 `thread:` key）/ ws + app；可抑制部分 mid-task re-L2；**显式 opt-in** 且 corpus ⊆ 已批、budget/actions ≤ 已见上限、未过期、无凭据闩时，可跳过 **同线程同 App 后续任务的 initial L2**；danger / experimental / foreground_yielded **始终 prompt**；~30min 自上次交互批准空闲过期；Companion 重启清空。  
+5. **硬拒**：支付/转账/购买/验证码终确、凭据上下文键入、任务自弹对话框代点等。  
+6. **UI**：Confirm Center / Cockpit 步骤轨 + 急停；关窗不停任务。  
+7. **Multi-agent**：Worker `WORKER_HARD_DENY` 含 `host_computer`；存在 tab lease 时禁止对 Chrome 窗坐标注入。  
+8. **证据 / 模型**：evidence 目录与 TinyClick 等定位链路为实现细节；实验性 model 管线在设置中 opt-in。  
+9. **全局开关 UI 债**：把 `computer.set_enabled` 接到 Side Panel/托盘是产品债，不是「已交付一键开启」。
+
+---
+
+## Consequences
+
+- **正向**：桌面 GUI 自动化成为一等能力且默认关；确认台成为操控面。  
+- **负向**：权限与平台适配成本高；Linux 非一等；用户须理解「双开关 + 任务级 L2（god-mode 不跳过；session-trust 条件放宽后续同类）」；全局开启尚依赖配置文件。  
+- **维护**：改开关语义或硬拒列表须同步用户指南 + 本 ADR；过程稿路径仅作历史。
+
+---
+
+## Code map
+
+| 路径 | 职责 |
+|------|------|
+| `companion/src/computer/` | policy、executor、session-trust、estop、evidence、adapters、TinyClick… |
+| `companion/src/bridge/tool-definitions.ts` | `host_computer` schema |
+| `chrome-extension/.../CockpitApp.tsx` · `SafetyStrip` · `AppsPanel` | 确认台 / 急停 / 开关镜像 |

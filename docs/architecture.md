@@ -1,12 +1,14 @@
 # CMspark Browser Agent — 架构文档
 
-> 版本: 2.1.0 | 日期: 2026-07-27 | 状态: 已确认（同步代码库现状；含 Mission Pack PR #77）
+> 版本: 2.2.0 | 日期: 2026-07-28 | 状态: 已确认（同步 0.3.0：MCP / Computer·Host Use / Orchestrator·Board / Packs）
 
 ---
 
 ## 1. 技术架构
 
 ### 1.1 系统拓扑
+
+三面协作：**浏览器面**（CDP）· **Companion 核心**（LLM / 安全 / 编排）· **桌面宿主面**（Host / Computer / Apps，opt-in）。
 
 ```
 ┌──────────────────────────────────────────┐
@@ -15,78 +17,29 @@
 │  │        CMspark Browser Agent        │ │
 │  │  ┌───────────┐  ┌────────────────┐  │ │
 │  │  │ Side Panel │  │ Service Worker │  │ │
-│  │  │ (Plasmo +  │  │ (background.js)│  │ │
-│  │  │  React)    │  │                │  │ │
-│  │  │            │  │ - WS client    │  │ │
-│  │  │ - 聊天 UI  │  │ - CDP manager  │  │ │
-│  │  │ - Thread管理│  │ - Tab manager  │  │ │
-│  │  │ - Skill浏览 │  │ - Cookie ops   │  │ │
-│  │  │ - 历史查看  │  │ - Keep-alive   │  │ │
+│  │  │ + Cockpit  │  │ - WS / CDP     │  │ │
+│  │  │ + Board/   │  │ - NotebookLM   │  │ │
+│  │  │   Packs/   │  │ - Keep-alive   │  │ │
+│  │  │   Apps/MCP │  │                │  │ │
 │  │  └──────┬─────┘  └───────┬────────┘  │ │
-│  │         │                │            │ │
-│  │         └───┬────────────┘            │ │
-│  │             │ chrome.runtime           │ │
-│  │             │ + shared state          │ │
-│  └─────────────┼─────────────────────────┘ │
-│                │ WebSocket                  │
-│                │ ws://127.0.0.1:23401      │
-└────────────────┼──────────────────────────┘
-                 │
-    ┌────────────┼──────────────────────────┐
-    │            ▼                           │
-    │  ┌──────────────────────────────────┐ │
-    │  │    cmspark-agent (Companion)     │ │
-    │  │    Node.js / TypeScript          │ │
-    │  │                                  │ │
-    │  │  ┌──────────┐ ┌───────────────┐  │ │
-    │  │  │ WS Server│ │ LLM Adapter   │  │ │
-    │  │  │          │ │               │  │ │
-    │  │  │ - 连接管理│ │ - OpenAI SDK  │  │ │
-    │  │  │ - 消息路由│ │ - Streaming   │  │ │
-    │  │  │ - Ping/Pong│ │ - Tool calling│  │ │
-    │  │  └────┬─────┘ └───────┬───────┘  │ │
-    │  │       │               │          │ │
-    │  │  ┌────┴───────────────┴───────┐  │ │
-    │  │  │       Core Engine          │  │ │
-    │  │  │                            │  │ │
-    │  │  │  ┌──────────────────────┐  │  │ │
-    │  │  │  │   Thread Manager     │  │  │ │
-    │  │  │  │   (消息历史, 隔离)    │  │  │ │
-    │  │  │  └──────────────────────┘  │  │ │
-    │  │  │  ┌──────────────────────┐  │  │ │
-    │  │  │  │   Skill Engine       │  │  │ │
-    │  │  │  │   (加载, 注入, 管理)  │  │  │ │
-    │  │  │  └──────────────────────┘  │  │ │
-    │  │  │  ┌──────────────────────┐  │  │ │
-    │  │  │  │   Tool Dispatcher    │  │  │ │
-    │  │  │  │   (路由, 执行, 错误)  │  │  │ │
-    │  │  │  └──────────────────────┘  │  │ │
-    │  │  │  ┌──────────────────────┐  │  │ │
-    │  │  │  │   Security Engine    │  │  │ │
-    │  │  │  │   (确认队列/信任域/   │  │  │ │
-    │  │  │  │    域白名单/HMAC token)│  │  │ │
-    │  │  │  └──────────────────────┘  │  │ │
-    │  │  │  ┌──────────────────────┐  │  │ │
-    │  │  │  │   History Store      │  │  │ │
-    │  │  │  │   (sql.js / SQLite)  │  │  │ │
-    │  │  │  └──────────────────────┘  │  │ │
-    │  │  └────────────────────────────┘  │ │
-    │  │                                    │ │
-    │  │  Data: ~/.cmspark-agent/          │ │
-    │  │  ├── config.json   (+ capability_profile / modules) │ │
-    │  │  ├── skills/          (用户技能)  │ │
-    │  │  ├── builtin-skills/  (内置技能)  │ │
-    │  │  │   └── security/    (安全技能)  │ │
-    │  │  ├── packs/installed/ (Mission Packs) │ │
-    │  │  ├── threads/         (线程数据 + workspace_root) │ │
-    │  │  ├── knowledge/       (知识库)    │ │
-    │  │  │   ├── global/      (全局知识)  │ │
-    │  │  │   └── sites/       (站点知识)  │ │
-    │  │  ├── history.db       (操作历史)  │ │
-    │  │  ├── cache/           (缓存)      │ │
-    │  │  └── logs/            (+ capability-audit.jsonl) │ │
-    │  └──────────────────────────────────┘ │
-    └───────────────────────────────────────┘
+│  │         └────────┬───────┘            │ │
+│  └──────────────────┼────────────────────┘ │
+│                     │ WebSocket            │
+│                     │ ws://127.0.0.1:23401 │
+└─────────────────────┼──────────────────────┘
+                      │
+         ┌────────────▼──────────────────────────────┐
+         │     cmspark-agent (Companion, Node.js)    │
+         │  Thread · Skill · LLM · Security(L2)      │
+         │  MCP · Packs · Orchestrator · Board       │
+         │  computer/ · host-use/ · apps/ · netsec/  │
+         │  tray/daemon · ~/.cmspark-agent/          │
+         └─────┬───────────────────┬─────────────────┘
+               │                   │
+               ▼                   ▼
+        MCP servers          桌面宿主面（opt-in）
+        (stdio/HTTP)         host_read/write/app
+                             host_computer · OS adapters
 ```
 
 ### 1.2 技术栈
@@ -209,7 +162,7 @@ CMspark 的安全模型是**单层、默认拒绝、human-in-the-loop** 的—�
 - `respondFrom` 必须先于 `saveConfig` 完成，且白名单持久化以 `responded === true` 为前提——防非权威响应污染
 - `tabId` 在 tool executor 入口规范化为 number——防字符串 tabId 让 cache 更新静默跳过
 
-**Extension 侧补充**：`page-sanitizer` 在内容进入 LLM context 前做 ~11 模式 prompt-injection 过滤；`security-token.ts` 管理 evaluate 调用的 HMAC token 颁发。
+**Extension 侧补充**：`page-sanitizer` 在内容进入 LLM context 前做 ~11 模式 prompt-injection 过滤。**HMAC `security_token` 颁发与校验在 Companion**（`security-policy.ts` + `SecurityConfirmationManager`），扩展只转发确认请求/响应，不本地发 token。
 
 **残留风险**（已记录，待后续迭代）：
 
@@ -392,7 +345,7 @@ Side Panel
 ### 4.1 项目仓库
 
 ```
-cmsspark/
+cmspark/
 ├── chrome-extension/                # Extension (Plasmo + React)
 │   ├── plasmo.config.ts
 │   ├── src/
@@ -400,96 +353,100 @@ cmsspark/
 │   │   │   ├── index.tsx            # 主入口
 │   │   │   ├── App.tsx              # 根组件
 │   │   │   ├── components/
-│   │   │   │   ├── ChatView.tsx     # 聊天视图
-│   │   │   │   ├── ThreadList.tsx   # 线程列表（可折叠）
-│   │   │   │   ├── ConnectionStatus.tsx # 连接状态指示
-│   │   │   │   ├── InputArea.tsx    # 输入区域 + 发送按钮
+│   │   │   │   ├── ChatView.tsx     # 聊天视图（含输入区）
+│   │   │   │   ├── ThreadList.tsx   # 线程列表
 │   │   │   │   ├── BottomBar.tsx    # 底部上下文栏
-│   │   │   │   ├── KnowledgeSubPanel.tsx # 知识库子面板
-│   │   │   │   ├── SkillCraftPanel.tsx   # Skill 创建面板
-│   │   │   │   ├── SlashCommandPopover.tsx # 斜杠命令弹出框
-│   │   │   │   └── SettingsSlideout.tsx  # 设置滑出面板
+│   │   │   │   ├── SafetyStrip.tsx  # 安全/确认条
+│   │   │   │   ├── MinimalConfirm.tsx
+│   │   │   │   ├── ContextStrip.tsx
+│   │   │   │   ├── FleetStrip.tsx   # 多 Agent 舰队条
+│   │   │   │   ├── BoardPanel.tsx   # Mission Board（ADR-016）
+│   │   │   │   ├── PacksPanel.tsx   # Mission Pack
+│   │   │   │   ├── McpPanel.tsx / McpServerForm.tsx
+│   │   │   │   ├── AppsPanel.tsx
+│   │   │   │   ├── KnowledgeSubPanel.tsx
+│   │   │   │   ├── SkillCraftPanel.tsx
+│   │   │   │   ├── NotebooklmImporterPanel.tsx
+│   │   │   │   ├── SlashCommandPopover.tsx
+│   │   │   │   ├── SettingsSlideout.tsx
+│   │   │   │   └── mermaid.ts       # Mermaid 渲染（ADR-009）
 │   │   │   ├── hooks/
 │   │   │   │   └── useWebSocket.ts  # WS 连接管理
 │   │   │   ├── store/
 │   │   │   │   └── agentStore.tsx   # 全局状态 (useReducer + Context)
-│   │   │   └── types.ts            # 类型定义
+│   │   │   ├── mode/
+│   │   │   │   └── mode-controller.ts
+│   │   │   └── types.ts
 │   │   ├── background/
 │   │   │   ├── index.ts             # Service Worker 入口
-│   │   │   ├── ws-client.ts         # WebSocket 客户端
+│   │   │   ├── ws-client.ts         # WebSocket 客户端（含 auth HMAC）
 │   │   │   ├── browser-bridge.ts    # CDP/tabs/cookies 操作
-│   │   │   ├── page-sanitizer.ts    # 页面内容清洗
-│   │   │   ├── security-token.ts    # 安全令牌管理
-│   │   │   └── keep-alive.ts        # Alarm keep-alive
+│   │   │   ├── page-sanitizer.ts    # 页面内容清洗（prompt-injection）
+│   │   │   ├── security-confirmation-payload.ts
+│   │   │   ├── cockpit-window.ts    # Confirm Center / Cockpit 窗口
+│   │   │   ├── notebooklm-handler.ts / notebooklm-import-orchestrator.ts
+│   │   │   ├── keep-alive.ts
+│   │   │   └── …
+│   │   ├── cockpit/
+│   │   │   └── CockpitApp.tsx       # 确认台 UI
+│   │   ├── notebooklm/              # NotebookLM 导入（ADR-011–013）
+│   │   ├── tabs/
+│   │   │   └── cockpit.tsx
 │   │   ├── popup/
-│   │   │   └── index.tsx            # Popup 页面（连接状态）
+│   │   │   └── index.tsx
 │   │   └── utils/
-│   │       ├── config.ts            # 配置管理
-│   │       └── permissions.ts       # 权限检查
+│   │       ├── config.ts
+│   │       └── permissions.ts
 │   └── assets/
-│       └── icons/
 │
 ├── companion/                        # cmspark-agent (Node.js CLI)
 │   ├── package.json
 │   ├── tsconfig.json
 │   ├── src/
-│   │   ├── index.ts                 # CLI 入口 (start/stop/status/daemon)
-│   │   ├── server.ts                # WebSocket 服务器
-│   │   ├── server/
-│   │   │   ├── log-helpers.ts       # 日志辅助
-│   │   │   └── tool-executor.ts     # Tool 执行逻辑
+│   │   ├── index.ts                 # CLI 入口 (start/stop/status/daemon/tray…)
+│   │   ├── server.ts                # WebSocket 服务器 + tool 执行调度
 │   │   ├── message-router.ts        # 消息路由（核心调度）
-│   │   ├── llm/
-│   │   │   └── adapter.ts           # LLM 适配器（OpenAI SDK + streaming + tool calling）
-│   │   ├── bridge/
-│   │   │   ├── tool-definitions.ts  # 30+ 种工具 schema 定义
-│   │   │   └── tab-resolver.ts      # 标签页解析
-│   │   ├── skills/
-│   │   │   ├── skill-engine.ts      # Skill 加载/匹配/注入
-│   │   │   ├── skill-craft.ts       # 从对话提取 Skill
-│   │   │   ├── semantic-match.ts    # TF-IDF 语义匹配
-│   │   │   ├── site-matcher.ts      # 站点知识匹配
-│   │   │   └── content-sanitizer.ts # 内容清洗
-│   │   ├── threads/
-│   │   │   └── thread-manager.ts    # 线程 CRUD + context 构建
-│   │   ├── history/
-│   │   │   └── store.ts             # sql.js 操作历史
-│   │   ├── security.ts              # 危险 API 检测 + 域名匹配 (matchDomain/isTrustedDomain/isAutoApprovedDomain)
-│   │   ├── security-policy.ts       # 令牌安全策略 (HMAC + constant-time)
-│   │   ├── security-confirmation.ts # 安全确认队列 (45s 超时 + origin 绑定 + relevantDomains 跟踪)
-│   │   ├── security/                # (历史: risk-engine/privilege-manager/page-scanner 三层在 2026-06-16 审计后删除 — 见 ADR-006 演进说明)
-│   │   ├── tray/                    # 系统托盘
-│   │   │   ├── tray-adapter.ts      # 统一托盘接口
-│   │   │   ├── swift-tray-bridge.ts # macOS Swift NSStatusBar
-│   │   │   ├── systray2-bridge.ts   # systray2 跨平台桥接
-│   │   │   ├── readline-tray.ts     # CLI readline 降级方案
-│   │   │   ├── companion-client.ts  # 托盘 → Companion 通信
-│   │   │   ├── Tray.swift           # Swift 原生托盘
-│   │   │   └── build-tray.sh        # Swift 编译脚本
-│   │   ├── daemon.ts                # Daemon 模式管理
-│   │   ├── menu-bar-agent.ts        # 菜单栏 Agent 交互
-│   │   ├── platform.ts              # 平台检测
-│   │   ├── logger.ts                # 日志基础设施
-│   │   ├── config.ts                # 配置管理
-│   │   └── types/
-│   │       └── sql.js.d.ts          # sql.js 类型定义
-│   └── builtin-skills/              # 内置 skills
-│       ├── writing-skills.md
-│       ├── grill-me.md
-│       ├── browse.md
-│       ├── dynamic-workflow.md
-│       └── security/                # 安全技能
-│           ├── prompt-injection-defense.md
-│           ├── jailbreak-detection.md
-│           └── instruction-hierarchy.md
+│   │   ├── llm/                     # adapter / llm-extract / vision / text-sanitize
+│   │   ├── bridge/                  # tool-definitions / tool-schemas / tab-resolver
+│   │   ├── skills/                  # skill-engine / skill-craft / semantic-match / site-matcher
+│   │   ├── threads/                 # thread-manager + markdown/summary-export
+│   │   ├── history/store.ts         # sql.js 操作历史
+│   │   ├── security.ts              # 危险 API + matchDomain / trusted / auto_approved
+│   │   ├── security-policy.ts       # HMAC security_token 颁发 + constant-time 校验
+│   │   ├── security-confirmation.ts # L2 确认队列 (~45s + origin 绑定)
+│   │   ├── ws-auth.ts               # WS 配对 / handshake
+│   │   ├── mcp/                     # MCP client/manager/aggregator/transport
+│   │   ├── computer/                # Computer Use（opt-in 桌面操控）
+│   │   ├── host-use/                # Host 读写 / 平台 adapter（darwin/win/linux）
+│   │   ├── apps/                    # 应用枚举 / 启动 / 生物识别门
+│   │   ├── orchestrator/            # Multi-agent：spawn / tab-lease / fleet / L2
+│   │   ├── board/                   # Mission Board（ADR-016）schema + mutate
+│   │   ├── packs/                   # Mission Pack 引擎 + builtin appsec
+│   │   ├── capability/              # enterprise modules / shell / workspace
+│   │   ├── netsec/                  # 端口探测 scope + scan
+│   │   ├── obsidian/                # vault 档案 / 索引 / 模板 / folder-picker
+│   │   ├── hud/                     # HUD 协议 / shell-router（实验）
+│   │   ├── tray/                    # Swift NSStatusBar / systray2 / readline + pairing
+│   │   ├── daemon.ts / menu-bar-agent.ts / platform.ts / config.ts / logger.ts
+│   │   └── …
+│   ├── tests/                       # node:test 套件（见 docs/TESTING.md）
+│   └── builtin-skills/
+│       ├── writing-skills.md / grill-me.md / browse.md / dynamic-workflow.md
+│       └── security/                # prompt-injection / jailbreak / instruction-hierarchy
 │
 └── docs/                             # 项目文档
     ├── architecture.md               # 本文档
     ├── GOAL.md                       # 项目目标与阶段规划
-    ├── optimization-roadmap.md       # 优化路线图
-    ├── adr/                          # 架构决策记录
-    └── requirements/                 # 需求文档
+    ├── TESTING.md                    # 测试地图
+    ├── mcp.md / mission-pack-usage.md / confirm-center-user-guide.md
+    ├── computer-use-user-guide.md / host-and-apps.md
+    ├── notebooklm-user-guide.md / multi-agent-user-guide.md
+    ├── adr/                          # 架构决策记录（001–018+）
+    └── …
 ```
+
+
+> **注**：原设计中的 `risk-engine` / `privilege-manager` / `page-scanner` 与 extension 侧 `security-token.ts` **均不存在**于当前树；HMAC 令牌在 companion `security-policy.ts`。详见 §1.5 与 [ADR-006](adr/006-layered-defense.md)。
 
 ---
 
@@ -628,3 +585,107 @@ UI「应用到当前线程」→ pack.apply { pack_id, thread_id }
 - `workspace_root not set` / `module_disabled` 为 **recoverable** 错误，引导用户 UI 操作。
 - 审计日志：`logs/capability-audit.jsonl`（0o600、append、轮转）。
 - **L2 确认 / 确认台（Cockpit）**用户说明见 [confirm-center-user-guide.md](confirm-center-user-guide.md)（与 NetSec 任务授权分层；实现见 `security-confirmation.ts` + 扩展 `MinimalConfirm` / `CockpitApp`）。
+
+---
+
+## 8. MCP（Model Context Protocol）
+
+> 用户配置与排错：[mcp.md](mcp.md)。
+
+### 8.1 角色
+
+Companion 作为 **MCP 客户端/聚合器**，把外部 server 的 tools（及按能力暴露的 resources/prompts）并入 LLM tool 面：
+
+- 工具命名：`mcp__<server>__<tool>`
+- 传输：stdio / HTTP（见 `companion/src/mcp/transport.ts`）
+- 信任级别：`manual` / `first-use` / `trusted`（确认缓存 `confirm-cache.ts`）
+- 每线程 server 选择：`auto` / `all` / `manual`
+
+### 8.2 模块
+
+| 路径 | 职责 |
+|------|------|
+| `companion/src/mcp/` | client · manager · aggregator · transport · types |
+| `chrome-extension/.../McpPanel.tsx` · `McpServerForm.tsx` | Side Panel 配置 UI |
+| `bridge/tool-definitions.ts` | `getMcpMetaToolDefinitions`（按 server 能力动态暴露） |
+
+配置权威：`~/.cmspark-agent/config.json` 的 `mcp` 段。MCP **不**绕过 Companion 安全策略；危险 MCP 工具仍可走确认策略（见 mcp.md）。
+
+---
+
+## 9. Computer Use · Host Use · Apps
+
+> 用户指南：[computer-use-user-guide.md](computer-use-user-guide.md) · [host-and-apps.md](host-and-apps.md)  
+> ADR：[017](adr/017-computer-use.md) · [018](adr/018-host-use.md)
+
+### 9.1 分层
+
+| 层 | 工具 / 配置 | 门 |
+|----|-------------|-----|
+| Apps 白名单 | `host_app` · `apps.enabled` · AppEntry | 每应用 policy；面板只读全局开关 |
+| Host 语义 API | `host_read` · `host_write` | L2；写操作生物识别/nonce；opaque TargetId |
+| Computer 坐标 | `host_computer` · `computer.coordinateEnabled` · `coordinateAllowed` | 双开关 + 任务级 L2：**god-mode / auto_approve 永不跳过**；session-trust 可抑 mid-task re-L2，且（显式 opt-in + corpus/预算/actions/thread key）可跳过同线程同 App 后续任务的 **initial L2**；danger / experimental / foreground_yielded **始终 prompt** |
+
+桌面面由 Companion 调 OS 适配器（darwin Swift/AppleScript、win PowerShell/UIA 等），**不是** Extension CDP。
+
+### 9.2 模块
+
+| 路径 | 职责 |
+|------|------|
+| `companion/src/computer/` | policy · executor · session-trust · estop · evidence · adapters · TinyClick |
+| `companion/src/host-use/` | HostAdapter · 平台 adapter · blacklist · nonce |
+| `companion/src/apps/` | 枚举 · 启动 · guards · biometric-gate |
+| Extension Cockpit / AppsPanel / SafetyStrip | 确认台步骤轨 · 急停 · 开关镜像 |
+
+### 9.3 关键不变量
+
+- 默认 deny：坐标与 Apps 总开关均为 false 时整类失败。  
+- Vault/浏览器/终端等 **结构排除** 坐标。  
+- Worker 默认 `WORKER_HARD_DENY` 含全部 `host_*`。  
+- 过程设计稿在 `docs/decisions/`，**非**运行时唯一规范。
+
+---
+
+## 10. Multi-Agent Orchestrator 与 Mission Board
+
+> 用户指南：[multi-agent-user-guide.md](multi-agent-user-guide.md)  
+> ADR：[015](adr/015-multi-agent-orchestrator-tab-lock.md) · [016](adr/016-mission-board.md)
+
+### 10.1 Orchestrator
+
+- Worker = **子 Thread**（非独立 swarm runtime）。  
+- Orchestrator **窄工具面**：`spawn_worker` / `wait_workers` / `collect_handback` / `list_*` / `ask_user` / `board_*`。  
+- Spawn **仅** L2 HITL；`ORCHESTRATOR_CAPS`（默认 max 5 workers 等）见 `orchestrator/constants.ts`。  
+- **Tab lease**：`tab-lease.ts` 进程级排他；TAB_LEASE_TOOLS 含读写页工具；扩展 per-tab 队列纵深防御。
+
+### 10.2 Mission Board（P0）
+
+- Thread 字段 `mission_board`：origin / goal / facts / intents / hints / status。  
+- `board_read` · `board_complete`（L2 + canComplete）· intent claim/heartbeat。  
+- board 模式下 `collect_handback` 结构化校验。  
+- UI：`BoardPanel.tsx` · FleetStrip。
+
+### 10.3 模块
+
+| 路径 | 职责 |
+|------|------|
+| `companion/src/orchestrator/` | spawn · tab-lease · fleet · l2-admission · single-flight · constants |
+| `companion/src/board/` | schema · service · intent-claim |
+| Extension `FleetStrip` · `BoardPanel` · Cockpit | 舰队状态 · 板 · 确认身份 |
+
+与 Skill `sub_agent` / `tool_chain` schema **正交**，勿混淆。
+
+---
+
+## 11. 工具分类速查（0.3.0）
+
+| 类别 | 示例 | 执行位置 |
+|------|------|----------|
+| 浏览器 CDP | `list_tabs` · `click` · `evaluate` · cookies… | Extension background |
+| Companion 本地 | `use_skill` · `record_experience` · `osascript_eval` | Companion |
+| 企业 / Pack | `workspace_*` · `shell_exec` · `netsec_port_scan` | Companion |
+| Host / Computer | `host_read` · `host_write` · `host_app` · `host_computer` | Companion + OS |
+| 编排 / Board | `spawn_worker` · `board_read` · `list_tab_locks`… | Companion |
+| MCP | `mcp__…` · meta resources/prompts | Companion → MCP server |
+
+具体 schema：`bridge/tool-definitions.ts` · `tool-schemas.ts`。数量随 MCP/模块动态变化，**不以固定 N 计数**。

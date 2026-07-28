@@ -5,7 +5,7 @@ I've completed my review of the design brief. Let me record the verdict.
 ### Verified against real code
 
 - **Patch freshness**: confirmed via `git status` — three untracked files (the brief, the patch stub, my review file). Patch file (`native-hud-brief-diff-20260727-175147.patch`) is a stub pointing at the untracked set; not stale.
-- **Upstream links resolve** (`docs/menu-bar-service/design-final.md`, `companion/src/tray/tray-adapter.ts`, `chrome-extension/src/cockpit/CockpitApp.tsx`, `docs/confirm-center-user-guide.md`, `docs/superpowers/specs/2026-07-26-ui-three-mode-redesign.md`).
+- **Upstream links resolve** (`docs/archive/2026-07/proposals/menu-bar-service/design-final.md` [archived 2026-07], `companion/src/tray/tray-adapter.ts`, `chrome-extension/src/cockpit/CockpitApp.tsx`, `docs/confirm-center-user-guide.md`, `docs/superpowers/specs/2026-07-26-ui-three-mode-redesign.md`).
 - **Three-mode D8/D10′/D11′/D12′/D14/D16** citations match the spec (spec §2.2 lines 42-50).
 - **Cockpit IA vertical order** in brief §6.1 (TitleBar → ConfirmElevated → TaskDock → DualTrack → Composer) matches `CockpitApp.tsx:103-269`.
 - **Tray adapter `TrayConfirmRequest`** (brief §1.1, §7) matches `companion/src/tray/tray-adapter.ts:58-74` and `swift-tray-bridge.ts:227-252`.
@@ -29,7 +29,7 @@ I've completed my review of the design brief. Let me record the verdict.
 
 7. **Screenshot sink rule (§9 line 272)** — "Same redaction rules as today" doesn't say whether Companion-side or extension-side redaction applies. HUD is a new screenshot consumer over IPC; the brief should specify that Companion remains the redaction gate (extension rules don't help when pixels never traverse the extension).
 
-8. **`docs/menu-bar-service/design-final.md` upstream** is dated 2026-06-07 (pre-three-mode redesign). Still accurate context, but worth flagging that some assumptions may have shifted; consider noting "may need refresh" in the upstream row.
+8. **`docs/archive/2026-07/proposals/menu-bar-service/design-final.md` upstream** (was `docs/menu-bar-service/…`; archived 2026-07) is dated 2026-06-07 (pre-three-mode redesign). Still accurate context, but worth flagging that some assumptions may have shifted; consider noting "may need refresh" in the upstream row.
 
 9. **HUD crash + follow-up queue (§12 metric only)** — "Crash of HUD during LIVE < 1% sessions; task continues" is the right target, but no cleanup story: when HUD dies mid-confirm, who calls `cancelConfirm` for the HUD-side promise? The tray bridge handles this with a self-timeout (`swift-tray-bridge.ts:233-237`); HUD needs an equivalent backstop.
 

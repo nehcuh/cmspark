@@ -8,16 +8,22 @@
 
 CMspark Browser Agent 是一套浏览器自动化 Agent 系统，通过 Chrome 侧边栏（Side Panel）与用户交互，借助 Chrome DevTools Protocol (CDP) 操控浏览器，并通过本地 Companion 进程管理 LLM 调用、对话状态和技能系统。
 
-### 核心能力
+### 核心能力（分层）
 
-| 能力 | 说明 |
-|------|------|
-| 🌐 **浏览器操控** | 标签页管理、页面读取、元素交互、表单填写、截图、文件上传/下载等 23 种工具 |
-| 💬 **自然语言驱动** | 输入指令即可让 Agent 自动分析页面、执行操作、汇总结果 |
-| 🧵 **多线程隔离** | 多条对话线程并行，消息历史和 LLM 配置相互独立 |
-| 🍪 **Cookie/SSO 管理** | 信任域配置下安全读取 Cookie，支持跨系统免登录操作 |
-| 🛠️ **技能系统** | 将常用操作流程保存为可复用的 Skill（Markdown + YAML 格式） |
-| 📝 **操作历史** | 全量 tool-call 记录，支持按线程分组、搜索和导出 |
+工具面随模块与 MCP 动态扩展，**不以固定「N 种工具」计数**。分类见 [architecture.md](docs/architecture.md)（浏览器 CDP · Companion/Host · MCP · 编排/Board）。
+
+| 层级 | 能力 | 说明 | 文档 |
+|------|------|------|------|
+| **核心** | 浏览器 CDP 操控 | 标签页、页面读取、点击/填表、截图、导航、下载等 | 本页 [使用指南](#使用指南) |
+| **核心** | 自然语言 · 多线程 · Skills · Knowledge · 历史 | Side Panel 驱动；线程隔离；Markdown+YAML Skills；知识注入 System Prompt；SQLite 操作史 | 本页 [Skills](#技能系统skills) · [Knowledge](#知识库knowledge) |
+| **核心** | Cookie 信任域 | `trusted_domains` 门控 cookie 读写，支持 SSO 场景 | 本页 [Cookie 信任域](#cookie-信任域) · [ADR-005](docs/adr/005-cookie-trust-domain-security.md) |
+| **核心** | 安全确认 / Confirm Center | L2 高危确认、域白名单、`auto_approve`、Cockpit 审批/急停 | [confirm-center-user-guide](docs/confirm-center-user-guide.md) |
+| **已交付** | MCP | 外接 stdio/HTTP MCP server，工具名 `mcp__<server>__<tool>` | [mcp.md](docs/mcp.md) |
+| **已交付** | Mission Pack / 企业模块 | 任务包装配线程；`appsec` / workspace / shell / netsec（后两者需 enterprise） | [mission-pack-usage](docs/mission-pack-usage.md) |
+| **已交付** | Obsidian 导出 · Mermaid · NotebookLM | 📥/🧠 导出；` ```mermaid ` 渲染；NotebookLM 导入 | [ADR-008](docs/adr/008-obsidian-export.md) · [009](docs/adr/009-mermaid-rendering.md) · [notebooklm-user-guide](docs/notebooklm-user-guide.md) |
+| **已交付** | Multi-Agent 内核 · Mission Board（P0） | Orchestrator + tab 锁 + worker；黑板 `board_*` | [multi-agent-user-guide](docs/multi-agent-user-guide.md) · [ADR-015](docs/adr/015-multi-agent-orchestrator-tab-lock.md) · [016](docs/adr/016-mission-board.md) |
+| **进阶 / opt-in** | Computer Use · Host Use · Apps | 桌面操控、宿主读写/应用白名单；平台相关、默认关、走确认台 | [computer-use-user-guide](docs/computer-use-user-guide.md) · [host-and-apps](docs/host-and-apps.md) · [confirm-center](docs/confirm-center-user-guide.md) |
+| **运维** | Daemon · 托盘 · 配对 | launchd/systemd/任务计划；macOS Swift 托盘 + 配对码；开机自启 | 本页 [后台常驻服务](#后台常驻服务跨平台) |
 
 ### 系统拓扑
 
@@ -58,17 +64,29 @@ CMspark Browser Agent 是一套浏览器自动化 Agent 系统，通过 Chrome �
 ## 目录
 
 - [项目简介](#项目简介)
+  - [核心能力（分层）](#核心能力分层)
+  - [系统拓扑](#系统拓扑)
 - [安装](#安装)
 - [使用指南](#使用指南)
   - [快速开始](#快速开始)
   - [浏览器操作示例](#浏览器操作示例)
   - [多线程使用](#多线程使用)
-  - [技能系统](#技能系统)
+  - [技能系统（Skills）](#技能系统skills)
+  - [知识库（Knowledge）](#知识库knowledge)
+  - [安全与确认](#安全与确认)
+  - [MCP](#mcp)
+  - [任务包与企业模块](#任务包与企业模块)
+  - [导出与导入](#导出与导入)
+  - [桌面与宿主操控](#桌面与宿主操控)
+  - [多 Agent 与任务板](#多-agent-与任务板)
+  - [文件上传](#文件上传)
 - [配置说明](#配置说明)
+- [后台常驻服务（跨平台）](#后台常驻服务跨平台)
 - [开发](#开发)
 - [项目结构](#项目结构)
 - [常见问题](#常见问题)
 - [技术栈](#技术栈)
+- [相关文档](#相关文档)
 
 ---
 
@@ -76,7 +94,7 @@ CMspark Browser Agent 是一套浏览器自动化 Agent 系统，通过 Chrome �
 
 ### 环境要求
 
-- **Node.js** ≥ 18（推荐使用 `nvm` 管理）
+- **Node.js** ≥ 20（推荐使用 `nvm` 管理；与 CONTRIBUTING / CI 对齐）
 - **Chrome / Edge** 浏览器（支持 Manifest V3 扩展）
 - **LLM API Key**（默认支持 DeepSeek，也可配置其他 OpenAI-compatible 服务）
 
@@ -210,9 +228,9 @@ type: prompt_template
 ```
 
 **Skill 类型**：
-- `prompt_template`：操作步骤描述，LLM 按步骤执行（最常用）
-- `tool_chain`：预定义工具调用序列
-- `sub_agent`：嵌套 Agent 子任务
+- `prompt_template`：操作步骤描述，LLM 按步骤执行（最常用、生产路径）
+- `tool_chain`：**schema / 实验性** — 预定义工具调用序列；勿与 multi-agent **Orchestrator** 混淆
+- `sub_agent`：**schema / 实验性** — Skill 嵌套子任务；真实多 worker 编排见 [ADR-015](docs/adr/015-multi-agent-orchestrator-tab-lock.md) 与下文 [多 Agent 与任务板](#多-agent-与任务板)
 
 **注入机制**：
 - 自动模式：根据用户输入语义匹配相关 Skill，低于 20 分相似度不触发
@@ -250,7 +268,7 @@ Knowledge 是**背景资料注入机制**，告诉 AI「需要了解什么」。
 
 **两种知识类型**：
 - `domain_knowledge`：全局知识，不绑定网站（如 API 文档、编码规范）
-- `site_knowledge`：绑定特定域名，访问该网站时自动激活
+- `site_knowledge`：绑定特定域名；在**自动**模式下，当前活动标签页域名匹配时自动注入
 
 **知识文档格式**：
 
@@ -273,28 +291,138 @@ type: domain_knowledge
 name: jira-guide
 description: 公司 Jira 使用规范
 type: site_knowledge
-site: jira.company.com
+site: jira.company.com   # 或 *.company.com（含子域 + apex）
 ---
 所有 Bug 任务需标 Priority: P1/P2。
 Sprint 周期两周，每周一开始。
 提交前需关联 Confluence 文档链接。
 ```
 
-**三种注入模式**（在 Knowledge 面板顶部切换）：
-- **自动**：勾选的知识 ∪ 当前 URL 匹配的站点知识（推荐）
-- **全选**：所有知识文档全部注入（上下文大，适合文档研读场景）
+**三种注入模式**（在「知识」面板顶部切换，按线程保存）：
+- **自动**（默认，推荐）：手动勾选的知识 ∪ **当前活动标签页 hostname 匹配的 `site_knowledge`**
+- **全选**：所有知识文档全部注入（上下文大，适合文档研读）
 - **按需**：只用手动勾选（✓）的文档
 
-**导入方式**（Knowledge 面板）：
-- 「导入文件」→ 选择本地 `.md` 文件
-- 「导入 URL」→ 输入 Markdown 文件的网络地址（如 GitHub raw 链接）
+#### 站点知识如何自动匹配
 
-知识文档存储于 `~/.cmspark-agent/knowledge/`，每篇内容超过 ~2000 字符会被截断，建议只保留关键信息。
+1. **文档侧**：frontmatter 必须同时具备  
+   - `type: site_knowledge`  
+   - `site: example.com` 或 `site: *.example.com`  
+2. **对话侧**：每次发消息 / 重新生成 / 上传文件时，扩展把**当前活动标签**的 hostname 一并带给 Companion（仅 hostname，不传完整 URL，避免 query/token 进协议）。  
+3. **匹配规则**（`site-matcher`，大小写不敏感）：  
+   - 精确：`site: github.com` ↔ 标签 `github.com`  
+   - 通配：`site: *.github.com` ↔ `api.github.com`、`www.github.com`，以及 apex `github.com`  
+   - 不会误匹配：`*.github.com` **不**匹配 `evilgithub.com`（按域名边界比较）  
+4. **不会自动带上站点知识的情况**：  
+   - 活动页不是 `http(s)`（如 `chrome://`、扩展页、`about:blank`）  
+   - 知识模式为「按需」且未勾选该文档  
+   - 文档缺少 `type: site_knowledge` 或 `site` 字段（例如 Obsidian vault 导入的 `goal`/`task` 笔记属于知识库，但不会按域名自动挂载）  
+5. **安全边界**：hostname **只用于选哪篇知识注入 prompt**，不参与 cookie 信任域 / evaluate 白名单等安全门禁；cookie 工具仍要求目标域在 `trusted_domains` 中。
+
+也可让 Agent 调用 `record_experience`（`target: "site"`, `domain: "…"`）把操作经验记成站点知识，下次打开同站时在自动模式下可再次注入。
+
+**导入方式**（「知识」面板）：
+- 「导入文件」→ 选择本地 `.md` 等文件  
+- 「导入文件夹」→ Companion 原生选目录（适合 Obsidian vault，有数量/大小上限）  
+- 「导入 URL」→ Markdown 网络地址（如 GitHub raw 链接）  
+
+**存储路径**：
+
+```
+~/.cmspark-agent/knowledge/
+├── global/     # 全局 / 未绑定 site 的文档（含多数 vault 导入）
+└── sites/      # 带 site 字段导入时的站点知识
+```
+
+每篇过长内容会截断或按查询做片段检索，建议单篇只保留关键信息。
+
+**与「技能」面板的边界**：Skills 列表只含流程类 skill（`prompt_template` 等）；`knowledge/` 下的笔记（含 vault 的 goal/task 等）只出现在「知识」面板，不会混进「技能」。
 
 **典型使用场景**：
-1. **内部系统操作**：把系统的 URL 结构、登录方式写成 `site_knowledge`，绑定到该系统域名
-2. **研发助手**：把团队编码规范、架构说明导入为 `domain_knowledge`
-3. **产品调研**：把竞品资料导入，让 AI 在浏览竞品时自动了解对比维度
+1. **内部系统操作**：把 URL 结构、登录方式写成 `site_knowledge`，绑定系统域名；打开该站再聊天即自动带上  
+2. **研发助手**：团队规范、架构说明导入为 `domain_knowledge`  
+3. **产品调研**：竞品资料按域名拆成多篇 `site_knowledge`，浏览对应站时自动对齐上下文  
+
+---
+
+### 安全与确认
+
+高危工具（如 `evaluate`、`osascript_eval`、部分 navigate/create_tab、Computer Use / shell / netsec 等）**默认不静默执行**：
+
+1. Companion 的 `SecurityConfirmationManager` 排队（约 **45s** 超时）  
+2. Side Panel 弹层 **或** **确认台（Confirm Center / Cockpit）** 人机审批  
+3. 批准后颁发 HMAC `security_token` 才真正执行  
+
+| 机制 | 作用 |
+|------|------|
+| `trusted_domains` | Cookie 工具信任域（与自动批准无关） |
+| `auto_approved_domains` | 跳过部分工具的重复确认（精确 / `*.suffix` / `*`） |
+| `security.auto_approve_dangerous` | 全局 kill-switch（无人值守；默认关） |
+| Cockpit | 宽屏审批、Computer Use 步骤轨与急停 |
+
+详见 [confirm-center-user-guide](docs/confirm-center-user-guide.md)、[ADR-007](docs/adr/007-domain-whitelist-auto-approve.md)。
+
+---
+
+### MCP
+
+本地 Companion 可接入 [Model Context Protocol](https://modelcontextprotocol.io/) server（stdio 或 HTTP），把外部工具暴露给 LLM，命名形如 `mcp__<server>__<tool>`。支持 Resources / Prompts（按 server 能力动态暴露）、每线程 server 选择（`auto` / `all` / `manual`）、信任级别（`manual` / `first-use` / `trusted`）。
+
+配置写在 `~/.cmspark-agent/config.json` 的 `mcp` 段；Side Panel **MCP 面板**与之同步。示例与排错见 **[docs/mcp.md](docs/mcp.md)**。
+
+---
+
+### 任务包与企业模块
+
+**Mission Pack** 把 skills、knowledge、`tool_whitelist`、`system_prompt_append` 等装配到当前线程（不是新 runtime）。**Module** 是安装级 opt-in：`appsec`、`devsec-workspace`（community 可开）、`shell` / `netsec`（需 `capability_profile: "enterprise"`）。
+
+Side Panel 底栏 → **任务包**：启用模块、选择工作区、NetSec 任务授权、应用 Pack。`workspace_*` 须先绑定本机目录；`shell_exec` / `netsec_port_scan` 另走 L2 确认与审计（`logs/capability-audit.jsonl`）。
+
+完整步骤与排错：[mission-pack-usage](docs/mission-pack-usage.md) · 设计 [ADR-014](docs/adr/014-mission-pack-enterprise-modules.md)。
+
+---
+
+### 导出与导入
+
+| 能力 | 做什么 | 文档 |
+|------|--------|------|
+| **Obsidian 导出** | 单条 📥 / 整 thread / 🧠 NotebookLM 风格摘要 → 浏览器 Blob 下载（不写宿主盘）；可选 vault 档案 + wikilinks/模板 | [ADR-008](docs/adr/008-obsidian-export.md) |
+| **Mermaid** | 落定消息中 ` ```mermaid ` 块 → SVG（CSP-safe + DOMPurify） | [ADR-009](docs/adr/009-mermaid-rendering.md) |
+| **NotebookLM 导入** | Side Panel 导入器（URL/链接/RSS/YouTube/线程）+ 离线当前页 MD；需已登录 NotebookLM | [notebooklm-user-guide](docs/notebooklm-user-guide.md) · [ADR-011–013](docs/adr/011-notebooklm-import.md) |
+| **Vault → Knowledge** | 「知识」面板导入文件夹（Obsidian vault 等）→ `knowledge/global` 或 `sites/` | 本页 [知识库](#知识库knowledge) |
+
+---
+
+### 桌面与宿主操控
+
+**进阶 / opt-in**，平台相关，默认关闭；高危步骤进 **确认台**（急停、session-trust 见用户指南）。
+
+| 面 | 说明 | 文档 |
+|----|------|------|
+| **Computer Use** | `host_computer`：白名单窗口坐标键鼠；双开关 + 任务级 L2；Cockpit 急停 | [computer-use-user-guide](docs/computer-use-user-guide.md) · [ADR-017](docs/adr/017-computer-use.md) · [confirm-center](docs/confirm-center-user-guide.md) |
+| **Host Use / Apps** | `host_read` / `host_write` / `host_app`：宿主读写、应用白名单 launch | [host-and-apps](docs/host-and-apps.md) · [ADR-018](docs/adr/018-host-use.md) |
+
+商店默认不把无自由 shell / 全桌面操控做成静默能力；企业侧与模块门见任务包文档。
+
+---
+
+### 多 Agent 与任务板
+
+- **Orchestrator + Worker**（[ADR-015](docs/adr/015-multi-agent-orchestrator-tab-lock.md)）：主线程编排、`spawn_worker`（必 L2）、**tab 排他锁**。与 Skill 类型 `sub_agent` **不是同一机制**。  
+- **Mission Board（P0）**（[ADR-016](docs/adr/016-mission-board.md)）：结构化 Fact / Intent / Hint；`board_read` / `board_complete` + Side Panel `BoardPanel`。  
+- 用户指南：[multi-agent-user-guide](docs/multi-agent-user-guide.md)；任务包交叉见 [mission-pack-usage §10](docs/mission-pack-usage.md#10-multi-agent编排-worker与任务包)。
+
+---
+
+### 文件上传
+
+Agent 可通过浏览器工具向页面 **file input** 提交本地文件（CDP `DOM.setFileInputFiles` 路径），覆盖常见网页上传框。
+
+- **聊天附件**：Side Panel 支持上传 PDF / Office / 文本等，解析后进入对话上下文（扫描件 PDF 依赖 `canvas` 原生模块，缺失时优雅降级提示）。  
+- **页面上传**：指令如「把这份文件上传到表单」时，Agent 定位 input 并挂载路径。  
+- **NotebookLM 等场景**：导入管线也会复用文件/下载路径，见 [ADR-011](docs/adr/011-notebooklm-import.md)。
+
+路径与权限仍受本机沙箱与安全确认策略约束；勿对不可信站点自动上传敏感文件。
 
 ---
 
@@ -306,13 +434,19 @@ Companion 的数据存储在用户主目录下的 `~/.cmspark-agent/`：
 
 ```
 ~/.cmspark-agent/
-├── config.json          # LLM 全局配置
-├── skills/              # 用户自定义技能
-├── builtin-skills/      # 内置技能
-├── knowledge/           # 知识文档（自动注入 System Prompt）
-├── threads/             # 线程数据（消息历史）
-├── history.db           # 操作历史（SQLite）
-└── logs/                # 运行日志
+├── config.json              # LLM / MCP / modules / capability_profile 等
+├── .paired                  # 扩展已配对标记（托盘停止自动弹配对码）
+├── skills/                  # 用户自定义技能
+├── builtin-skills/          # 内置技能（含 security/ 等）
+├── knowledge/               # 知识文档（注入 System Prompt）
+│   ├── global/              # 全局 / 未绑定域名
+│   └── sites/               # 站点知识（site_knowledge）
+├── packs/                   # 已安装 Mission Pack（若有）
+├── threads/                 # 线程数据（消息历史 + workspace_root 等）
+├── history.db               # 操作历史（SQLite）
+├── obsidian/                # vault 档案 / 索引 / 模板缓存（mode 0o600）
+├── cache/                   # 运行时缓存
+└── logs/                    # 运行日志（含 capability-audit.jsonl）
 ```
 
 ### Cookie 信任域
@@ -334,9 +468,9 @@ CMspark 支持将 Companion 注册为系统后台服务，实现开机自启、�
 
 | 平台 | 服务机制 | 菜单栏/托盘 | 安装命令 |
 |------|----------|-------------|----------|
-| **macOS** | `launchd` | node-notifier 通知 + readline 菜单 | `make install-macos` |
+| **macOS** | `launchd` | **Swift NSStatusBar** 原生托盘 + 配对码窗口；通知走系统通知 | `make install-macos` |
 | **Windows** | 任务计划程序 | 系统托盘 (systray2) | `make install-windows` |
-| **Linux** | `systemd --user` | node-notifier + readline 菜单 | `make install-linux` |
+| **Linux** | `systemd --user` | systray2（可用时）或 node-notifier + readline 降级菜单 | `make install-linux` |
 
 ### 特性
 
@@ -351,6 +485,7 @@ CMspark 支持将 Companion 注册为系统后台服务，实现开机自启、�
   - 📝 **提取页面数据** — 提取主要内容区域（article/main）
   - 📋 **总结页面** — 通过 LLM 一句话总结页面内容
   - 💬 **新建对话** — 快速创建新线程
+  - 🔑 **显示配对码** — 展示 WebSocket 配对密钥（macOS 原生窗口；扩展首次连接前可自动弹一次）
 - **向后兼容**：仍可直接运行 `cmspark-agent start` 作为前台进程
 
 ---
@@ -374,6 +509,12 @@ make install-macos
 make menu-bar
 # 或双击 ~/Applications/CMspark Agent.app
 ```
+
+macOS 托盘为 **Swift NSStatusBar** 原生实现（`companion/src/tray/Tray.swift`，经 `swift-tray-bridge` 启动）：
+
+- 状态色点 + 右键菜单（启停 Companion、设置、快捷操作）
+- **配对码窗口**：扩展尚未配对时（`~/.cmspark-agent/.paired` 不存在）可自动弹一次；菜单项「🔑 显示配对码」可随时重显；支持复制密钥 / 复制并打开 Chrome 扩展页
+- 密钥仅经 launcher → Swift stdin 管道传递，不落日志
 
 #### 常用命令
 
@@ -563,8 +704,8 @@ make package
 ```bash
 make package-macos
 # 产出：
-#   dist-package/CMspark-v0.2.0-macOS.dmg   ← 安装包
-#   dist-package/cmspark-v0.2.0-macos-arm64.zip  ← 原始压缩包
+#   dist-package/CMspark-v0.3.0-macOS.dmg   ← 安装包
+#   dist-package/cmspark-v0.3.0-macos-arm64.zip  ← 原始压缩包
 ```
 
 Windows 打包流程：
@@ -632,10 +773,13 @@ cmspark/
 │   ├── builtin-skills/        # 内置技能
 │   └── package.json
 │
-├── docs/                       # 项目文档
+├── docs/                       # 项目文档（导航见 docs/README.md）
+│   ├── README.md               # 文档索引：用户 / 架构 / ADR / 工程 / 进行中
 │   ├── architecture.md         # 架构文档
 │   ├── GOAL.md                 # 项目目标
-│   └── requirements/           # 需求文档
+│   ├── mcp.md · mission-pack-usage.md · confirm-center-user-guide.md
+│   ├── adr/                    # 架构决策记录 001–018…
+│   └── …                       # superpowers/、decisions/、audit/ 等（见 docs/README）
 │
 ├── scripts/
 │   ├── build-windows-exe.ps1   # Windows exe 构建脚本（Node.js SEA）
@@ -656,7 +800,7 @@ cmspark/
 | 端口被占用 | 执行 `pkill -f "dist/index.js"` 后重启 Companion |
 | `config.json` 损坏 | 删除 `~/.cmspark-agent/config.json` 后重启 Companion |
 | LLM 返回 "No tab with id" | LLM 幻觉了不存在的 tabId，属于可恢复错误，Agent 会自动调用 `list_tabs` 重试 |
-| evaluate 等高危操作被阻断 | 当前阶段安全策略默认阻断高危 JS 执行，等待用户确认机制完成后开放 |
+| evaluate 等高危操作被阻断 | **已交付 L2 确认**：`evaluate` / `osascript_eval` 等强制走 `SecurityConfirmationManager`（约 45s 超时）→ Side Panel / **Confirm Center（Cockpit）** 人机确认；批准后颁发 HMAC `security_token` 才执行。可将域名加入 `auto_approved_domains` 跳过重复确认，或（无人值守）打开全局 `security.auto_approve_dangerous`。详见 [confirm-center-user-guide](docs/confirm-center-user-guide.md) |
 
 ---
 
@@ -677,12 +821,17 @@ cmspark/
 
 ## 相关文档
 
-- [`docs/architecture.md`](docs/architecture.md) — 完整架构文档
-- [`docs/GOAL.md`](docs/GOAL.md) — 项目目标与阶段规划
-- [`docs/DESIGN.md`](docs/DESIGN.md) — 设计系统规范
-- [`CLAUDE.md`](CLAUDE.md) — 项目级上下文与快速参考
-- [`CONTRIBUTING.md`](CONTRIBUTING.md) — 贡献指南
+完整分类导航见 **[`docs/README.md`](docs/README.md)**。常用入口：
+
+| 类别 | 文档 |
+|------|------|
+| **用户** | [confirm-center](docs/confirm-center-user-guide.md) · [mcp.md](docs/mcp.md) · [mission-pack-usage](docs/mission-pack-usage.md) · [computer-use](docs/computer-use-user-guide.md) · [host-and-apps](docs/host-and-apps.md) · [notebooklm](docs/notebooklm-user-guide.md) · [multi-agent](docs/multi-agent-user-guide.md) · [TROUBLESHOOTING](docs/TROUBLESHOOTING.md) |
+| **架构 / 目标** | [architecture.md](docs/architecture.md) · [GOAL.md](docs/GOAL.md) · [DESIGN.md](docs/DESIGN.md) |
+| **ADR** | [docs/adr/](docs/adr/)（001–018；安全 005–007/010，导出 008/009，NLM 011–013，Pack 014，Multi-agent 015，Board 016，CU 017，Host 018） |
+| **工程** | [TESTING.md](docs/TESTING.md) · [supply-chain.md](docs/supply-chain.md) · [CONTRIBUTING.md](CONTRIBUTING.md) |
+| **过程稿（非规范）** | [decisions/](docs/decisions/)（CU/host 长文等；现行见用户指南 + ADR-017/018） |
+| **Agent 上下文** | [CLAUDE.md](CLAUDE.md) · [Agents.md](Agents.md) |
 
 ---
 
-> **当前阶段**：安全稳定化 MVP — Side Panel 可靠驱动 Companion 和浏览器，线程状态闭环持久化，tool 调用结果进入后续 LLM 上下文，高风险执行默认阻断。
+> **当前阶段（0.3.0）**：安全稳定化 **MVP 已稳定**（Side Panel ↔ Companion ↔ 浏览器闭环、线程持久化、L2 确认/Confirm Center）。**已交付扩展**：Obsidian 导出、Mermaid 渲染、Mission Pack / 企业模块、MCP、NotebookLM 导入、Mission Board（P0）、Multi-Agent 编排内核等。**进阶 / opt-in**（平台相关、默认关闭或需确认）：Computer Use、Host Use / Apps、多 Agent 调度增强。文档导航：[`docs/README.md`](docs/README.md) · [architecture.md](docs/architecture.md)。

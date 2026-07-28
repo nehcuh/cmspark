@@ -1,0 +1,8 @@
+{
+  "batch": "docs-reorg-p2",
+  "timestamp": "20260728-125948",
+  "claude": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/docs-reorg-p2-claude-20260728-125948.md" },
+  "pi": { "verdict": "APPROVE", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/docs-reorg-p2-pi-20260728-125948.md" },
+  "both_approve": true,
+  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/docs-reorg-p2-diff-20260728-125948.patch"
+}

@@ -121,12 +121,19 @@ Chrome Extension (Plasmo + React)  ←→  WebSocket (ws://127.0.0.1:23401)  ←
 
 ## Related Docs
 
+- docs/README.md — 文档导航（用户 / 架构 / ADR / 工程 / 归档）
 - docs/GOAL.md — 项目目标与阶段规划
-- docs/architecture.md — 完整架构文档（§7 Mission Pack）
+- docs/architecture.md — 完整架构文档（§7 Packs · §8–11 MCP/CU·Host·Apps/Orchestrator·Board）
 - docs/mission-pack-usage.md — 任务包 / 企业模块使用说明
 - docs/confirm-center-user-guide.md — 确认台（Confirm Center / Cockpit）用户说明
-- docs/optimization-roadmap.md — 优化路线图
-- docs/adr/ — 架构决策记录（含 ADR-014）
+- docs/mcp.md — MCP 配置与排错
+- docs/computer-use-user-guide.md — Computer Use 启用 / 急停 / 限制
+- docs/host-and-apps.md — Host 读写与 Apps 白名单
+- docs/notebooklm-user-guide.md — NotebookLM 导入
+- docs/multi-agent-user-guide.md — spawn_worker / tab 锁 / Mission Board
+- docs/TROUBLESHOOTING.md — 常见故障
+- docs/archive/2026-07/ — 过程件归档（proposals / roadmaps / rfcs / audits）
+- docs/adr/ — 架构决策记录（含 ADR-014 / 015–016 multi-agent·board / 017 Computer Use / 018 Host Use）
 
 ### Tech Stack
 

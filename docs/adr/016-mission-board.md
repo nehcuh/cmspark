@@ -1,7 +1,7 @@
 # ADR-016: MissionBoard（任务黑板）— 结构化 Fact / Intent / Hint 协调层
 
 **日期**: 2026-07-27  
-**状态**: **Accepted**（决策门禁 must_fix 已写入；**仍尚未实现产品代码** — Task 2/3 须遵守附录 A 硬门）  
+**状态**: **Implemented (P0)** — `companion/src/board/`（schema / `mutateMissionBoard` / intent-claim）+ `board_read` / `board_complete`（及 handback 结构化合并）+ Side Panel `BoardPanel`；附录 A 硬门为实现约束。阶段 3+（Intent 抢占调度、图 UI 等）仍按 §5 后置。决策正文保持锁定。  
 **相关**:
 
 | 文档 | 角色 |
@@ -52,11 +52,13 @@ CMspark 已具备：
 - 单线程即可先用「真板」；多 agent Intent claim 后置。  
 - community 路径不引入新高危默认工具。
 
-### 1.4 决策门禁
+### 1.4 决策门禁与实现状态
 
-本 ADR 为 **阶段 0 交付物**（见 §5）。**must_fix 未写入本 ADR 之前，不得合入 MissionBoard 产品代码。**  
-当前：**must_fix 已并入**（见附录 A）；**Task 2/3 可开工**，但实现必须逐项满足附录 A 硬门，否则视为未过门。  
-实现顺序与综合计划一致：`ADR 锁决策 → schema + handback 硬校验 + Pack 文案同一切片`，拒绝「无校验假板」与「先堆工具再验证场景」。
+本 ADR 为 **阶段 0 交付物**（见 §5）；附录 A 硬门已并入并作为实现验收清单。
+
+**P0 已落地（与代码一致）**：`companion/src/board/`（`schema.ts` / `service.ts` / `intent-claim.ts`）、Thread `mission_board` 字段、`mutateMissionBoard` 序列化写路径、board mode 下 `collect_handback` 结构校验、`board_read` / `board_complete`（L2 + `canComplete`）、审计 `board.*`、Side Panel `BoardPanel.tsx`。
+
+**仍后置**：阶段 3 Intent 抢占 / heartbeat 全量、阶段 4 图可视化与大 Dashboard、阶段 5 AppSec Pack v2 深化。实现须持续满足附录 A；偏离须修订本 ADR。
 
 ---
 
@@ -570,11 +572,11 @@ Cairn Complete   →  board_complete + L2 HITL + canComplete（非模型自批�
 **阶段 1 成功标准**：
 
 - [x] ADR-016 合入 docs（Accepted + 附录 A）  
-- [ ] 单测绿：schema + handback 拒散文 + trust 写路径 + canComplete  
-- [ ] 一次 AppSec 对话后 `thread.mission_board.facts.length ≥ 1` **或** 审计的 `empty_complete`  
-- [ ] 导出/summary 路径含 trust labels（可测）  
-- [ ] 无 AGPL 依赖；无新高危默认工具；notices + inspiration 文档存在  
-- [ ] 与 ADR-015 tab lease / L2 无回归  
+- [x] P0 产品代码：`board/` + `board_*` 工具 + `BoardPanel` + handback 结构化合并  
+- [x] 单测：`board-schema` / `board-service` / `board-collect-handback` / `board-complete` / `board-intent-claim` 等  
+- [ ] 导出/summary 路径含 trust labels（可测）— 持续加强  
+- [x] 无 AGPL 依赖；无新高危默认工具；notices + inspiration 文档存在  
+- [x] 与 ADR-015 tab lease / L2 同栈（orchestrator allowlist 闭集）  
 
 ### 阶段 2 — 测量门 ≈ 3–7 天（可与 1 尾部重叠）
 
@@ -606,7 +608,7 @@ Cairn Complete   →  board_complete + L2 HITL + canComplete（非模型自批�
 2. **Task 2** — Schema + `thread.mission_board` + `mutateMissionBoard` + 单测（合法/非法 Fact、trust reject、空 goal、`tool_verified` id 解析）  
 3. **Task 3** — `collect_handback` 结构校验 + 审计 + AppSec Pack 轻改 + `board_complete`/`canComplete` + 手工 1 页验证  
 
-**当前状态**：Task 1 文档 + 门禁修订完成；**Task 2/3 未开工产品代码**（实现时附录 A 为验收清单）。
+**当前状态**：**P0 Implemented** — Task 1（ADR + 门禁）与 Task 2/3（schema / mutate / handback / complete / 单测 + BoardPanel）已落地；阶段 2 测量门与阶段 3+ 仍开放。附录 A 为持续验收清单。
 
 ---
 
@@ -656,6 +658,7 @@ Cairn Complete   →  board_complete + L2 HITL + canComplete（非模型自批�
 |------|------|
 | 2026-07-27 | **Proposed** 初版：依据 cairn brief + Claude/Pi 评审 + **PRIMARY** synthesis 锁定 §2.3、schema 草案、fold handback、complete=L2、阶段计划 |
 | 2026-07-27 | **Accepted**：并入决策门 must_fix（MF-1…5 + Pi 硬门）— trust 写路径 REJECT、tool_verified 硬要求、host=orchestrator、Path A 闭集、AGPL 控制、cancel 链顺序、canComplete、Confirm digest、mutate 序列化、注入 delimiter、complete_proposal 非变异、导出 trust、附录 A；配套 notices + inspiration 文档 |
+| 2026-07-28 | **Implemented (P0)**：状态戳记与代码对齐（`board/`、`board_*`、`BoardPanel`）；决策 §2 与附录 A 不变 |
 
 ---
 
