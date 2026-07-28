@@ -556,11 +556,16 @@ export function createToolExecutor(ws: WebSocket) {
           // Defense-in-depth for extension screenshot/analyze_image fallback
           ;(finalParams as any).__require_tab_id = true
         }
-        // Early exclusive HARD for all tab tools (including evaluate / TAB_L2_TOOLS).
+        // Early exclusive HARD for tab tools — multi-agent only (ADR-015).
+        // Normal single-agent chats must not take per-worker tab leases: browse /
+        // AppSec often opens many tabs and max_tabs_leased_per_worker=2 would
+        // hard-fail as non_recoverable (thread 1gfd6t). When any multi-agent
+        // lease is already held, multi is true so exclusivity still covers peers.
         // GATE2: auto-approve / domain-whitelist / god-mode must still hold exclusive
         // lease — previously willEnterL2 skipped HARD and skipConfirmation skipped SOFT.
         // Interactive L2 path upgrades same-holder HARD → HELD_PENDING_L2 below.
         if (
+          multi &&
           TAB_LEASE_TOOLS.has(toolName) &&
           typeof finalParams.tabId === "number" &&
           actingThreadId
@@ -1213,39 +1218,49 @@ export function createToolExecutor(ws: WebSocket) {
         }
         const l2AdmitKey = admit.key
 
-        // Exclusive SOFT / HELD_PENDING_L2 after admission (TAB_L2_TOOLS, not evaluate-only)
-        if (
-          TAB_L2_TOOLS.has(toolName) &&
-          typeof finalParams.tabId === "number" &&
-          actingThreadId
-        ) {
-          const { acquireOrRenewTabLease } = await import("./orchestrator")
-          const soft = acquireOrRenewTabLease({
-            tabId: finalParams.tabId,
-            holderThreadId: actingThreadId,
-            needsL2: true,
-            confirmId: toolCallId,
-          })
-          if (!soft.ok) {
-            releaseL2Admission(l2AdmitKey)
-            if (flightReserved) {
-              const { releaseFlight } = await import("./orchestrator/single-flight")
-              releaseFlight(flightReserved, flightOwner)
-              flightReserved = null
+        // Exclusive SOFT / HELD_PENDING_L2 after admission (TAB_L2_TOOLS) — multi-agent only.
+        // Normal single-agent evaluate still goes through Confirm / L2 admission without
+        // taking a tab lease (see early HARD gate above).
+        {
+          const {
+            isMultiAgentThread: isMaThread,
+            anyTabLeaseHeld: anyLeaseHeld,
+            acquireOrRenewTabLease,
+          } = await import("./orchestrator")
+          const multiForSoft = isMaThread(maForL2) || anyLeaseHeld()
+          if (
+            multiForSoft &&
+            TAB_L2_TOOLS.has(toolName) &&
+            typeof finalParams.tabId === "number" &&
+            actingThreadId
+          ) {
+            const soft = acquireOrRenewTabLease({
+              tabId: finalParams.tabId,
+              holderThreadId: actingThreadId,
+              needsL2: true,
+              confirmId: toolCallId,
+            })
+            if (!soft.ok) {
+              releaseL2Admission(l2AdmitKey)
+              if (flightReserved) {
+                const { releaseFlight } = await import("./orchestrator/single-flight")
+                releaseFlight(flightReserved, flightOwner)
+                flightReserved = null
+              }
+              const result = {
+                success: false,
+                error: soft.error,
+                data: {
+                  error_code: soft.error_code,
+                  tab_id: soft.tab_id,
+                  holder_thread_id: soft.holder_thread_id,
+                },
+              }
+              logToolFinish(toolCallId, toolName, startedAt, result)
+              return result
             }
-            const result = {
-              success: false,
-              error: soft.error,
-              data: {
-                error_code: soft.error_code,
-                tab_id: soft.tab_id,
-                holder_thread_id: soft.holder_thread_id,
-              },
-            }
-            logToolFinish(toolCallId, toolName, startedAt, result)
-            return result
+            tabL2SoftHeld = true
           }
-          tabL2SoftHeld = true
         }
 
         try {
@@ -2104,11 +2119,20 @@ export function createToolExecutor(ws: WebSocket) {
           typeof result.data.url === "string"
         ) {
           tabUrlCache.set(result.data.id, result.data.url)
-          // ADR-015: auto HARD-hold new tab for creator to close race window
+          // ADR-015: auto HARD-hold new tab for multi-agent creators only.
+          // Normal single-agent create_tab must not consume the per-worker lease
+          // budget (max 2) — AppSec / multi-tab browse open many tabs.
           if (actingThreadId) {
             try {
-              const { autoHoldCreatedTab } = require("./orchestrator/tab-lease") as typeof import("./orchestrator/tab-lease")
-              autoHoldCreatedTab(result.data.id, actingThreadId)
+              const {
+                autoHoldCreatedTab,
+                anyTabLeaseHeld,
+              } = require("./orchestrator/tab-lease") as typeof import("./orchestrator/tab-lease")
+              const { isMultiAgentThread } = require("./orchestrator") as typeof import("./orchestrator")
+              const th = threadManager?.get(actingThreadId) as any
+              if (isMultiAgentThread(th) || anyTabLeaseHeld()) {
+                autoHoldCreatedTab(result.data.id, actingThreadId)
+              }
             } catch {
               /* ignore */
             }
@@ -4252,6 +4276,9 @@ export function validateWsMessage(msg: any): WsValidationResult {
       if (typeof m.thread_id !== "string" || !m.thread_id) return { valid: false, error: "chat.create requires thread_id" }
       if (typeof m.message !== "string") return { valid: false, error: "chat.create requires message string" }
       if (m.skill_ids !== undefined && !Array.isArray(m.skill_ids)) return { valid: false, error: "skill_ids must be an array" }
+      // Optional site-knowledge context (not a security gate)
+      if (m.hostname !== undefined && typeof m.hostname !== "string") return { valid: false, error: "hostname must be a string" }
+      if (m.url !== undefined && typeof m.url !== "string") return { valid: false, error: "url must be a string" }
       return { valid: true }
     },
     "chat.abort": (m) => {
@@ -4262,6 +4289,8 @@ export function validateWsMessage(msg: any): WsValidationResult {
       if (typeof m.thread_id !== "string" || !m.thread_id) return { valid: false, error: "chat.regenerate requires thread_id" }
       if (typeof m.message_id !== "string" || !m.message_id) return { valid: false, error: "chat.regenerate requires message_id" }
       if (m.message !== undefined && typeof m.message !== "string") return { valid: false, error: "chat.regenerate message must be a string" }
+      if (m.hostname !== undefined && typeof m.hostname !== "string") return { valid: false, error: "hostname must be a string" }
+      if (m.url !== undefined && typeof m.url !== "string") return { valid: false, error: "url must be a string" }
       return { valid: true }
     },
     "thread.create": (m) => {
@@ -4393,6 +4422,8 @@ export function validateWsMessage(msg: any): WsValidationResult {
         if (typeof f.name !== "string" || typeof f.type !== "string" || typeof f.content !== "string") return { valid: false, error: "文件字段均为 string 类型" }
       }
       if (m.message !== undefined && typeof m.message !== "string") return { valid: false, error: "message 必须为字符串" }
+      if (m.hostname !== undefined && typeof m.hostname !== "string") return { valid: false, error: "hostname must be a string" }
+      if (m.url !== undefined && typeof m.url !== "string") return { valid: false, error: "url must be a string" }
       return { valid: true }
     },
     "file.query_chunks": (m) => {

@@ -260,6 +260,18 @@ test("classifyError workspace_root not set is recoverable (Mission Pack DevSec)"
   )
   assert.equal(classifyError("module_disabled:devsec-workspace"), "recoverable")
 })
+
+test("classifyError TAB_LEASE_CAP is recoverable so agent can close_tab and retry", () => {
+  assert.equal(
+    classifyError(
+      "TAB_LEASE_CAP: worker already holds 2 tab leases (tabs [10, 11]). close_tab one of those tabs before leasing tab 12",
+      { toolName: "get_page_text" },
+    ),
+    "recoverable",
+  )
+  assert.equal(classifyError("worker already holds 2 tab leases"), "recoverable")
+  assert.equal(classifyError("process tab lease cap 10 reached"), "recoverable")
+})
 test("logger redacts sensitive keys recursively", () => {
   const redacted = redactLogData({
     api_key: "sk-secret",

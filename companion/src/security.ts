@@ -687,6 +687,14 @@ export function classifyError(errorMessage: string, context?: { toolName?: strin
     "pick a folder first",
     "module_disabled",
     "workspace path must come from",
+    // ADR-015 tab lease: LLM can close_tab / list_tab_locks and retry (not fatal)
+    "tab_lease_cap",
+    "already holds",
+    "tab lease cap",
+    "tab_locked",
+    "tab_busy_confirming",
+    "tab_force_releasing",
+    "tab_id_required",
   ]
   if (recoverable.some(p => msg.includes(p))) {
     return "recoverable"

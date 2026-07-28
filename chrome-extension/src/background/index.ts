@@ -27,6 +27,7 @@ import {
   noteSecurityConfirmationGone,
   noteSecurityConfirmationRequest,
 } from "./computer-task-mirror"
+import { getActiveTabHostname } from "./active-tab-hostname"
 
 let wsClient: WSClient
 let browserBridge: BrowserBridge
@@ -288,10 +289,20 @@ async function handleCompanionMessage(msg: any) {
       // quick action still works even when the sidepanel is closed.
       const { thread_id, prompt } = msg
       if (thread_id && prompt) {
-        wsClient.send({
-          type: "chat.create",
-          thread_id,
-          message: prompt,
+        // Quick action with sidepanel closed: still pass active-tab hostname for site knowledge.
+        getActiveTabHostname().then((hostname) => {
+          wsClient.send({
+            type: "chat.create",
+            thread_id,
+            message: prompt,
+            ...(hostname ? { hostname } : {}),
+          })
+        }).catch(() => {
+          wsClient.send({
+            type: "chat.create",
+            thread_id,
+            message: prompt,
+          })
         })
       }
       logToCompanion("debug", "extension.quickaction_fallback_to_background", { actionId: msg.actionId })
@@ -392,31 +403,55 @@ function setupMessageHandlers() {
       case "chat.send": {
         // Config is kept in sync with companion via config.set / config.updated.
         // The companion uses its global config; no per-request override is needed.
-        const sent = wsClient.send({
-          type: "chat.create",
-          thread_id: message.threadId,
-          message: message.message,
-          skill_ids: message.skillIds,
+        // hostname: site_knowledge auto-load only (not a trust/cookie gate). Dual-review 2026-07-28.
+        getActiveTabHostname().then((hostname) => {
+          const sent = wsClient.send({
+            type: "chat.create",
+            thread_id: message.threadId,
+            message: message.message,
+            skill_ids: message.skillIds,
+            ...(hostname ? { hostname } : {}),
+          })
+          if (!sent) {
+            chrome.runtime.sendMessage({ type: "error", error: "Companion 未连接，请检查 Companion 是否已启动" })
+          }
+          sendResponse({ ok: sent })
+        }).catch(() => {
+          const sent = wsClient.send({
+            type: "chat.create",
+            thread_id: message.threadId,
+            message: message.message,
+            skill_ids: message.skillIds,
+          })
+          sendResponse({ ok: sent })
         })
-        if (!sent) {
-          chrome.runtime.sendMessage({ type: "error", error: "Companion 未连接，请检查 Companion 是否已启动" })
-        }
-        sendResponse({ ok: sent })
         return true
       }
 
       case "file.upload": {
-        const sent = wsClient.send({
-          type: "file.upload",
-          thread_id: message.threadId,
-          files: message.files,
-          message: message.message || "",
-          skill_ids: message.skillIds || [],
+        getActiveTabHostname().then((hostname) => {
+          const sent = wsClient.send({
+            type: "file.upload",
+            thread_id: message.threadId,
+            files: message.files,
+            message: message.message || "",
+            skill_ids: message.skillIds || [],
+            ...(hostname ? { hostname } : {}),
+          })
+          if (!sent) {
+            chrome.runtime.sendMessage({ type: "error", error: "Companion 未连接，请检查 Companion 是否已启动" })
+          }
+          sendResponse({ ok: sent })
+        }).catch(() => {
+          const sent = wsClient.send({
+            type: "file.upload",
+            thread_id: message.threadId,
+            files: message.files,
+            message: message.message || "",
+            skill_ids: message.skillIds || [],
+          })
+          sendResponse({ ok: sent })
         })
-        if (!sent) {
-          chrome.runtime.sendMessage({ type: "error", error: "Companion 未连接，请检查 Companion 是否已启动" })
-        }
-        sendResponse({ ok: sent })
         return true
       }
 
@@ -429,16 +464,27 @@ function setupMessageHandlers() {
         return true
 
       case "chat.regenerate": {
-        const sent = wsClient.send({
-          type: "chat.regenerate",
-          thread_id: message.thread_id,
-          message_id: message.message_id,
-          message: message.message,
+        getActiveTabHostname().then((hostname) => {
+          const sent = wsClient.send({
+            type: "chat.regenerate",
+            thread_id: message.thread_id,
+            message_id: message.message_id,
+            message: message.message,
+            ...(hostname ? { hostname } : {}),
+          })
+          if (!sent) {
+            chrome.runtime.sendMessage({ type: "error", error: "Companion 未连接，无法重新生成" })
+          }
+          sendResponse({ ok: sent })
+        }).catch(() => {
+          const sent = wsClient.send({
+            type: "chat.regenerate",
+            thread_id: message.thread_id,
+            message_id: message.message_id,
+            message: message.message,
+          })
+          sendResponse({ ok: sent })
         })
-        if (!sent) {
-          chrome.runtime.sendMessage({ type: "error", error: "Companion 未连接，无法重新生成" })
-        }
-        sendResponse({ ok: sent })
         return true
       }
 
