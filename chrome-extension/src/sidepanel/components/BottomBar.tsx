@@ -899,7 +899,9 @@ const styles: Record<string, React.CSSProperties> = {
   panel: {
     borderTop: `1px solid ${tokens.border}`,
     background: tokens.bgMuted,
-    maxHeight: 200,
+    // Apps「添加应用」needs room for search + policy + short list; 200px buried
+    // the policy row under an unfiltered candidate list (direct pick looked dead).
+    maxHeight: 320,
     overflowY: "auto",
   },
   panelContent: {

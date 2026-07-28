@@ -179,6 +179,33 @@ export function useWebSocket() {
           dispatch({ type: "SET_STREAMING", content: msg.content })
           break
 
+        case "chat.user": {
+          // SW rebroadcast of user turns from any surface (panel / Cockpit).
+          // Companion never echoes the user message; multi-tree stores need this.
+          if (!shouldApplyStreamEvent(msg.thread_id, activeThreadRef.current)) break
+          const content = typeof msg.content === "string" ? msg.content : ""
+          if (!content.trim()) break
+          const threadId =
+            (typeof msg.thread_id === "string" && msg.thread_id) || activeThreadRef.current || ""
+          const id =
+            (typeof msg.message_id === "string" && msg.message_id) ||
+            `${threadId}_user_${Date.now()}`
+          dispatch({ type: "SET_PROCESSING", isProcessing: true })
+          dispatch({
+            type: "ADD_MESSAGE",
+            message: {
+              id,
+              thread_id: threadId,
+              role: "user",
+              content,
+              created_at:
+                (typeof msg.created_at === "string" && msg.created_at) ||
+                new Date().toISOString(),
+            },
+          })
+          break
+        }
+
         case "chat.done": {
           if (!shouldApplyStreamEvent(msg.thread_id, activeThreadRef.current)) break
           const content = streamingRef.current

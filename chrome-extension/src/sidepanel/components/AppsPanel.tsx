@@ -13,7 +13,9 @@ import {
   appsPlatformSupported,
   autoEligible,
   appWarnReasons,
+  candidateKey,
   ellipsizePath,
+  isSameCandidate,
   policyBadge,
 } from "../utils/apps-utils"
 import { uiaCapableBadge } from "../utils/computer-utils"
@@ -345,15 +347,58 @@ export function AppsPanel() {
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
+              {/*
+                Policy + selected chip ABOVE the list (not below).
+                BottomBar panel maxHeight is ~200px and the candidate list alone
+                is up to 160px — putting policy under a full unfiltered list
+                buried the "选中成功" UI off-screen, so direct picks looked dead
+                until search shrank the list. Keep selection feedback always in
+                the first paint of the add area.
+              */}
+              {picked && (
+                <div style={styles.pickedBanner}>
+                  <span style={{ flex: 1, minWidth: 0 }}>
+                    已选 <strong>{picked.name}</strong>
+                  </span>
+                  <button
+                    type="button"
+                    style={styles.pickedClearBtn}
+                    onClick={() => setPicked(null)}
+                    title="取消选择"
+                  >
+                    取消
+                  </button>
+                </div>
+              )}
+              {picked && (
+                <PolicyPicker
+                  addPolicy={addPolicy}
+                  setAddPolicy={setAddPolicy}
+                  autoDisabled={!!picked.aumid}
+                  title={`添加「${picked.name}」，选择策略：`}
+                  onSubmit={handleSubmitAdd}
+                />
+              )}
               {state.appCandidates === null && (
                 <div style={styles.emptyMini}>正在枚举本机应用（运行中进程 + 开始菜单）…</div>
               )}
               {state.appCandidates !== null && filteredCandidates.length === 0 && (
                 <div style={styles.emptyMini}>无匹配候选</div>
               )}
-              <div style={styles.candidateList}>
+              <div
+                style={{
+                  ...styles.candidateList,
+                  // Shrink list when a pick is active so policy/submit stay visible.
+                  maxHeight: picked ? 88 : 160,
+                }}
+              >
                 {filteredCandidates.map((c, i) => (
-                  <CandidateRow key={`${c.name}-${i}`} candidate={c} onPick={() => handlePickCandidate(c)} />
+                  <CandidateRow
+                    key={candidateKey(c, i)}
+                    candidate={c}
+                    selected={isSameCandidate(c, picked)}
+                    onPick={() => handlePickCandidate(c)}
+                  />
                 ))}
               </div>
             </>
@@ -378,54 +423,15 @@ export function AppsPanel() {
               <div style={styles.manualHint}>
                 ⚠ 手动粘贴路径属于「manual-paste」来源（可能被他人诱导粘贴），添加时会记录来源并展示警告。
               </div>
-            </div>
-          )}
-
-          {/* Policy radio — shown once there's something to submit */}
-          {((addTab === "enumerate" && picked) || (addTab === "manual" && manualPath.trim())) && (
-            <div style={styles.policyRow}>
-              <div style={styles.policyRowTitle}>
-                {addTab === "enumerate" && picked
-                  ? `添加「${picked.name}」，选择策略：`
-                  : "选择策略："}
-              </div>
-              {(["manual", "ai", "auto"] as const).map((p) => {
-                const badge = policyBadge(p)
-                // AUMID candidates never carry a signer record — always capped
-                // at "ai" (maxPolicyForEntry). exe candidates are probed
-                // server-side; the backend denies/clamps with POLICY_CAP_EXCEEDED.
-                const autoDisabled =
-                  p === "auto" && addTab === "enumerate" && !!picked?.aumid
-                return (
-                  <label
-                    key={p}
-                    style={{ ...styles.policyOption, opacity: autoDisabled ? 0.45 : 1 }}
-                    title={
-                      autoDisabled
-                        ? "UWP 应用没有签名记录，最高只能设为「AI 判断」"
-                        : badge.title
-                    }
-                  >
-                    <input
-                      type="radio"
-                      name="apps-add-policy"
-                      checked={addPolicy === p}
-                      disabled={autoDisabled}
-                      onChange={() => setAddPolicy(p)}
-                      style={{ marginRight: 4 }}
-                    />
-                    <span style={{ ...styles.policyBadgeMini, color: badge.color, background: badge.bg }}>
-                      {badge.label}
-                    </span>
-                  </label>
-                )
-              })}
-              {addPolicy === "auto" && (
-                <div style={styles.autoBioHint}>「全自动(仅启动免确认)」需要 Windows Hello（或确认码）验证一次。</div>
+              {manualPath.trim() && (
+                <PolicyPicker
+                  addPolicy={addPolicy}
+                  setAddPolicy={setAddPolicy}
+                  autoDisabled={false}
+                  title="选择策略："
+                  onSubmit={handleSubmitAdd}
+                />
               )}
-              <button style={styles.submitBtn} onClick={handleSubmitAdd}>
-                添加
-              </button>
             </div>
           )}
         </div>
@@ -605,13 +611,88 @@ function AppCard(props: AppCardProps) {
 
 // --- Enumerate candidate row ---
 
-function CandidateRow({ candidate, onPick }: { candidate: AppEnumerateCandidate; onPick: () => void }) {
+function PolicyPicker({
+  addPolicy,
+  setAddPolicy,
+  autoDisabled,
+  title,
+  onSubmit,
+}: {
+  addPolicy: AppPolicy
+  setAddPolicy: (p: AppPolicy) => void
+  autoDisabled: boolean
+  title: string
+  onSubmit: () => void
+}) {
+  return (
+    <div style={styles.policyRow}>
+      <div style={styles.policyRowTitle}>{title}</div>
+      {(["manual", "ai", "auto"] as const).map((p) => {
+        const badge = policyBadge(p)
+        // AUMID candidates never carry a signer record — always capped at "ai".
+        const disabled = p === "auto" && autoDisabled
+        return (
+          <label
+            key={p}
+            style={{ ...styles.policyOption, opacity: disabled ? 0.45 : 1 }}
+            title={
+              disabled
+                ? "UWP 应用没有签名记录，最高只能设为「AI 判断」"
+                : badge.title
+            }
+          >
+            <input
+              type="radio"
+              name="apps-add-policy"
+              checked={addPolicy === p}
+              disabled={disabled}
+              onChange={() => setAddPolicy(p)}
+              style={{ marginRight: 4 }}
+            />
+            <span style={{ ...styles.policyBadgeMini, color: badge.color, background: badge.bg }}>
+              {badge.label}
+            </span>
+          </label>
+        )
+      })}
+      {addPolicy === "auto" && (
+        <div style={styles.autoBioHint}>「全自动(仅启动免确认)」需要 Windows Hello（或确认码）验证一次。</div>
+      )}
+      <button type="button" style={styles.submitBtn} onClick={onSubmit}>
+        添加
+      </button>
+    </div>
+  )
+}
+
+function CandidateRow({
+  candidate,
+  selected,
+  onPick,
+}: {
+  candidate: AppEnumerateCandidate
+  selected: boolean
+  onPick: () => void
+}) {
   const c = candidate
   return (
     <button
-      style={{ ...styles.candidateRow, opacity: c.blocked ? 0.5 : 1, cursor: c.blocked ? "not-allowed" : "pointer" }}
+      type="button"
+      style={{
+        ...styles.candidateRow,
+        opacity: c.blocked ? 0.5 : 1,
+        cursor: c.blocked ? "not-allowed" : "pointer",
+        ...(selected
+          ? {
+              borderColor: tokens.accent,
+              background: "#eff6ff",
+              boxShadow: `inset 0 0 0 1px ${tokens.accent}`,
+            }
+          : {}),
+      }}
       disabled={c.blocked}
       onClick={onPick}
+      aria-pressed={selected}
       title={
         c.blocked
           ? "系统工具（lolbin），禁止添加"
@@ -619,7 +700,10 @@ function CandidateRow({ candidate, onPick }: { candidate: AppEnumerateCandidate;
       }
     >
       <span style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
-        <span style={{ fontSize: 12, fontWeight: 500 }}>{c.name}</span>
+        <span style={{ fontSize: 12, fontWeight: 500 }}>
+          {selected ? "✓ " : ""}
+          {c.name}
+        </span>
         {c.vault_token && (
           <span style={styles.warnBadge} title={`属于 vault 名单应用（${c.vault_token}）`}>⚠ vault</span>
         )}
@@ -913,6 +997,27 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 4,
     background: "#fafafa",
     padding: "4px 6px",
+  },
+  pickedBanner: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    padding: "6px 8px",
+    borderRadius: 4,
+    background: "#eff6ff",
+    border: `1px solid ${tokens.accent}`,
+    fontSize: 12,
+    color: "#1e3a5f",
+  },
+  pickedClearBtn: {
+    border: "1px solid #bfdbfe",
+    background: "#fff",
+    borderRadius: 4,
+    fontSize: 11,
+    color: "#2563eb",
+    cursor: "pointer",
+    padding: "2px 8px",
+    flexShrink: 0,
   },
   candidatePath: {
     display: "block",

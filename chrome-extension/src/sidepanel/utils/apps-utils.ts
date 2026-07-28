@@ -2,7 +2,24 @@
 // can exercise them without mounting React components (sidepanel-state.test.ts
 // precedent: reducer + hook helpers are tested as pure functions).
 
-import type { AppEntry, AppPolicy } from "../types"
+import type { AppEntry, AppEnumerateCandidate, AppPolicy } from "../types"
+
+/** Stable-ish identity for list keys (path/aumid/bundle preferred). */
+export function candidateKey(c: AppEnumerateCandidate, index: number): string {
+  return c.path || c.aumid || c.bundleId || `${c.name}-${index}`
+}
+
+/** Selection compare for enumerate pick highlight / policy banner. */
+export function isSameCandidate(
+  a: AppEnumerateCandidate | null | undefined,
+  b: AppEnumerateCandidate | null | undefined,
+): boolean {
+  if (!a || !b) return false
+  if (a.path && b.path) return a.path === b.path
+  if (a.aumid && b.aumid) return a.aumid === b.aumid
+  if (a.bundleId && b.bundleId) return a.bundleId === b.bundleId
+  return a.name === b.name && a.source === b.source
+}
 
 /**
  * Apps error routing (WP6a, WP4+WP5 review Finding 1). The companion tags

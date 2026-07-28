@@ -103,6 +103,26 @@ test("normalizeConfig flattens companion config and keeps masked API keys out of
   })
 })
 
+test("ADD_MESSAGE dedupes by message id (optimistic panel + SW chat.user echo)", () => {
+  const msg = {
+    id: "thread-a_user_1",
+    thread_id: "thread-a",
+    role: "user" as const,
+    content: "from cockpit",
+    created_at: "2026-07-28T00:00:00.000Z",
+  }
+  const once = agentReducer(initialState, { type: "ADD_MESSAGE", message: msg })
+  assert.equal(once.messages.length, 1)
+  const twice = agentReducer(once, { type: "ADD_MESSAGE", message: { ...msg, content: "dup" } })
+  assert.equal(twice.messages.length, 1)
+  assert.equal(twice.messages[0].content, "from cockpit")
+  const other = agentReducer(twice, {
+    type: "ADD_MESSAGE",
+    message: { ...msg, id: "thread-a_user_2", content: "second" },
+  })
+  assert.equal(other.messages.length, 2)
+})
+
 test("security confirmation requests are queued and removable", () => {
   const request = {
     confirmation_id: "confirm-1",

@@ -260,6 +260,11 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       }
     }
     case "ADD_MESSAGE":
+      // Dedup by id: Side Panel optimistic add + SW `chat.user` broadcast (Cockpit
+      // / multi-surface) must not double-append the same user turn.
+      if (state.messages.some((m) => m.id === action.message.id)) {
+        return state
+      }
       return { ...state, messages: [...state.messages, action.message] }
     case "UPDATE_MESSAGE":
       return {

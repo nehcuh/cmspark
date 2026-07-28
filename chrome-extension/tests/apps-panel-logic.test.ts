@@ -10,8 +10,10 @@ import {
   autoEligible,
   appWarnReasons,
   canOfferThreadTrust,
+  candidateKey,
   ellipsizePath,
   isAppsErrorMessage,
+  isSameCandidate,
   policyBadge,
   threadTrustHint,
 } from "../src/sidepanel/utils/apps-utils"
@@ -140,6 +142,33 @@ test("apps error routing: non-apps errors still fall through to the chat stream"
   // set — pinning the exact gap the family tag fixes (only pre-WP6a
   // companions can emit this shape).
   assert.equal(isAppsErrorMessage({ code: "duplicate_app" }), false)
+})
+
+// --- Enumerate pick identity (direct-select UX; policy must not require search) ---
+
+test("isSameCandidate / candidateKey: path/aumid/bundle identity, not list index", () => {
+  const a = {
+    name: "Chrome",
+    source: "running" as const,
+    path: "C:\\Program Files\\Google\\Chrome\\chrome.exe",
+    blocked: false,
+  }
+  const b = { ...a, name: "Google Chrome" }
+  assert.equal(isSameCandidate(a, b), true)
+  assert.equal(isSameCandidate(a, { ...a, path: "C:\\other.exe" }), false)
+  assert.equal(
+    isSameCandidate(
+      { name: "Calc", source: "startapps", aumid: "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App", blocked: false },
+      { name: "Calculator", source: "running", aumid: "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App", blocked: false },
+    ),
+    true,
+  )
+  assert.equal(isSameCandidate(a, null), false)
+  assert.equal(candidateKey(a, 0), a.path)
+  assert.equal(
+    candidateKey({ name: "X", source: "running", blocked: false }, 3),
+    "X-3",
+  )
 })
 
 // --- WP6a Finding 2: platform gating for the add/enumerate UI ---

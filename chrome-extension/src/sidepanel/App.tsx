@@ -745,17 +745,21 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
           },
         })
       } else {
+        // Same clientMessageId as SW `chat.user` echo so ADD_MESSAGE dedupes
+        // when both optimistic local append and multi-surface broadcast land.
+        const clientMessageId = `${state.activeThreadId}_user_${Date.now()}`
         chrome.runtime.sendMessage({
           type: "chat.send",
           threadId: state.activeThreadId,
           message: trimmed,
           skillIds,
+          clientMessageId,
         })
         dispatch({ type: "SET_PROCESSING", isProcessing: true })
         dispatch({
           type: "ADD_MESSAGE",
           message: {
-            id: `${state.activeThreadId}_${Date.now()}`,
+            id: clientMessageId,
             thread_id: state.activeThreadId!,
             role: "user",
             content: trimmed,

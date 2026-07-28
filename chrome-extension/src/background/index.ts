@@ -404,6 +404,29 @@ function setupMessageHandlers() {
         // Config is kept in sync with companion via config.set / config.updated.
         // The companion uses its global config; no per-request override is needed.
         // hostname: site_knowledge auto-load only (not a trust/cookie gate). Dual-review 2026-07-28.
+        //
+        // Echo user turn to all UI surfaces (Side Panel + Cockpit). Companion does
+        // not rebroadcast the user message; each React tree has its own store, so
+        // Cockpit-only optimistic ADD would never appear in the panel history.
+        const threadId = message.threadId as string | undefined
+        const userText = typeof message.message === "string" ? message.message : ""
+        const clientMessageId =
+          (typeof message.clientMessageId === "string" && message.clientMessageId) ||
+          (threadId ? `${threadId}_user_${Date.now()}` : `user_${Date.now()}`)
+        const echoUser = (sent: boolean) => {
+          if (!sent || !threadId || !userText.trim()) return
+          chrome.runtime
+            .sendMessage({
+              type: "chat.user",
+              thread_id: threadId,
+              message_id: clientMessageId,
+              content: userText,
+              created_at: new Date().toISOString(),
+            })
+            .catch(() => {
+              /* panel/cockpit may be closed */
+            })
+        }
         getActiveTabHostname().then((hostname) => {
           const sent = wsClient.send({
             type: "chat.create",
@@ -414,6 +437,8 @@ function setupMessageHandlers() {
           })
           if (!sent) {
             chrome.runtime.sendMessage({ type: "error", error: "Companion 未连接，请检查 Companion 是否已启动" })
+          } else {
+            echoUser(true)
           }
           sendResponse({ ok: sent })
         }).catch(() => {
@@ -423,6 +448,7 @@ function setupMessageHandlers() {
             message: message.message,
             skill_ids: message.skillIds,
           })
+          if (sent) echoUser(true)
           sendResponse({ ok: sent })
         })
         return true
