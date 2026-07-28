@@ -230,7 +230,8 @@
 
 ## 10. Multi-Agent（编排 / Worker）与任务包
 
-> 设计见 [ADR-015](adr/015-multi-agent-orchestrator-tab-lock.md)。本节说明 **试用时怎么用**，以及与 Mission Pack 的边界。
+> **主用户指南**：[multi-agent-user-guide.md](multi-agent-user-guide.md)（spawn / tab 锁 / Board / 上限与硬禁）。  
+> 设计见 [ADR-015](adr/015-multi-agent-orchestrator-tab-lock.md) · [ADR-016](adr/016-mission-board.md)。本节说明 **试用时怎么用**，以及与 Mission Pack 的边界。
 
 ### 10.1 模型一句话
 
@@ -294,8 +295,10 @@
 | 文档 | 用途 |
 |------|------|
 | [confirm-center-user-guide.md](confirm-center-user-guide.md) | **确认台 / L2 确认**用户说明（与任务授权分层） |
+| [multi-agent-user-guide.md](multi-agent-user-guide.md) | **Multi-Agent / Board 主用户指南**（spawn、tab 锁、上限；与本文 §10 交叉） |
 | [ADR-014](adr/014-mission-pack-enterprise-modules.md) | 为何双通道、为何不做内嵌 PTY |
 | [ADR-015](adr/015-multi-agent-orchestrator-tab-lock.md) | Multi-agent orchestrator、tab lease、spawn HITL |
+| [ADR-016](adr/016-mission-board.md) | Mission Board 工具与 UI |
 | [architecture.md §7](architecture.md) | 模块 / 工具 / 代码落点 |
 | [GOAL.md](GOAL.md) | 产品阶段与 G19 一带目标 |
 )

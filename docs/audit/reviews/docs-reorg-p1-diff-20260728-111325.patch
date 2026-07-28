@@ -1,0 +1,1529 @@
+# Dual external review context
+batch: docs-reorg-p1
+base: HEAD
+time: 20260728-111325
+
+231fb4b
+
+ M README.md
+ M chrome-extension/src/background/index.ts
+ M companion/src/message-router.ts
+ M companion/src/orchestrator/tab-lease.ts
+ M companion/src/security.ts
+ M companion/src/server.ts
+ M companion/src/skills/site-matcher.ts
+ M companion/src/skills/skill-engine.ts
+ M companion/tests/orchestrator-tab-lease.test.ts
+ M companion/tests/security-thread.test.ts
+ M companion/tests/site-matcher.test.ts
+ M companion/tests/skill-engine.test.ts
+ M docs/GOAL.md
+ M docs/TESTING.md
+ M docs/adr/016-mission-board.md
+ M docs/architecture.md
+?? .grok/workflows/docs-reorg-phase12-continue.rhai
+?? .grok/workflows/docs-reorg-phase12.rhai
+?? chrome-extension/src/background/active-tab-hostname.ts
+?? chrome-extension/tests/active-tab-hostname.test.ts
+?? docs/audit/diagnosis-fanout-2026-07-28.md
+?? docs/audit/reviews/docs-reorg-p1-diff-20260728-111325.patch
+?? docs/audit/reviews/site-knowledge-hostname-fix-claude-20260728.md
+?? docs/audit/reviews/site-knowledge-hostname-fix-pi-20260728.md
+?? docs/audit/reviews/site-knowledge-hostname-fix-plan-2026-07-28.md
+?? docs/audit/reviews/site-knowledge-hostname-fix-verdict-20260728.md
+?? docs/docs-reorg-plan-2026-07-28.md
+
+## Diff (git diff + staged)
+ README.md                                      |  78 ++++++++----
+ chrome-extension/src/background/index.ts       | 110 ++++++++++++-----
+ companion/src/message-router.ts                |  47 +++++++-
+ companion/src/orchestrator/tab-lease.ts        |  18 ++-
+ companion/src/security.ts                      |   8 ++
+ companion/src/server.ts                        | 101 ++++++++++------
+ companion/src/skills/site-matcher.ts           |  25 +++-
+ companion/src/skills/skill-engine.ts           |  83 +++++++++----
+ companion/tests/orchestrator-tab-lease.test.ts |  16 +++
+ companion/tests/security-thread.test.ts        |  12 ++
+ companion/tests/site-matcher.test.ts           |  15 ++-
+ companion/tests/skill-engine.test.ts           |  36 ++++++
+ docs/GOAL.md                                   |  19 +--
+ docs/TESTING.md                                | 160 ++++++++++++++++++++-----
+ docs/adr/016-mission-board.md                  |  25 ++--
+ docs/architecture.md                           | 141 +++++++++++-----------
+ 16 files changed, 654 insertions(+), 240 deletions(-)
+
+diff --git a/README.md b/README.md
+index 9967de7..9cb8cdd 100644
+--- a/README.md
++++ b/README.md
+@@ -76,7 +76,7 @@ CMspark Browser Agent 是一套浏览器自动化 Agent 系统，通过 Chrome 
+ 
+ ### 环境要求
+ 
+-- **Node.js** ≥ 18（推荐使用 `nvm` 管理）
++- **Node.js** ≥ 20（推荐使用 `nvm` 管理；与 CONTRIBUTING / CI 对齐）
+ - **Chrome / Edge** 浏览器（支持 Manifest V3 扩展）
+ - **LLM API Key**（默认支持 DeepSeek，也可配置其他 OpenAI-compatible 服务）
+ 
+@@ -250,7 +250,7 @@ Knowledge 是**背景资料注入机制**，告诉 AI「需要了解什么」。
+ 
+ **两种知识类型**：
+ - `domain_knowledge`：全局知识，不绑定网站（如 API 文档、编码规范）
+-- `site_knowledge`：绑定特定域名，访问该网站时自动激活
++- `site_knowledge`：绑定特定域名；在**自动**模式下，当前活动标签页域名匹配时自动注入
+ 
+ **知识文档格式**：
+ 
+@@ -273,28 +273,57 @@ type: domain_knowledge
+ name: jira-guide
+ description: 公司 Jira 使用规范
+ type: site_knowledge
+-site: jira.company.com
++site: jira.company.com   # 或 *.company.com（含子域 + apex）
+ ---
+ 所有 Bug 任务需标 Priority: P1/P2。
+ Sprint 周期两周，每周一开始。
+ 提交前需关联 Confluence 文档链接。
+ ```
+ 
+-**三种注入模式**（在 Knowledge 面板顶部切换）：
+-- **自动**：勾选的知识 ∪ 当前 URL 匹配的站点知识（推荐）
+-- **全选**：所有知识文档全部注入（上下文大，适合文档研读场景）
++**三种注入模式**（在「知识」面板顶部切换，按线程保存）：
++- **自动**（默认，推荐）：手动勾选的知识 ∪ **当前活动标签页 hostname 匹配的 `site_knowledge`**
++- **全选**：所有知识文档全部注入（上下文大，适合文档研读）
+ - **按需**：只用手动勾选（✓）的文档
+ 
+-**导入方式**（Knowledge 面板）：
+-- 「导入文件」→ 选择本地 `.md` 文件
+-- 「导入 URL」→ 输入 Markdown 文件的网络地址（如 GitHub raw 链接）
++#### 站点知识如何自动匹配
+ 
+-知识文档存储于 `~/.cmspark-agent/knowledge/`，每篇内容超过 ~2000 字符会被截断，建议只保留关键信息。
++1. **文档侧**：frontmatter 必须同时具备  
++   - `type: site_knowledge`  
++   - `site: example.com` 或 `site: *.example.com`  
++2. **对话侧**：每次发消息 / 重新生成 / 上传文件时，扩展把**当前活动标签**的 hostname 一并带给 Companion（仅 hostname，不传完整 URL，避免 query/token 进协议）。  
++3. **匹配规则**（`site-matcher`，大小写不敏感）：  
++   - 精确：`site: github.com` ↔ 标签 `github.com`  
++   - 通配：`site: *.github.com` ↔ `api.github.com`、`www.github.com`，以及 apex `github.com`  
++   - 不会误匹配：`*.github.com` **不**匹配 `evilgithub.com`（按域名边界比较）  
++4. **不会自动带上站点知识的情况**：  
++   - 活动页不是 `http(s)`（如 `chrome://`、扩展页、`about:blank`）  
++   - 知识模式为「按需」且未勾选该文档  
++   - 文档缺少 `type: site_knowledge` 或 `site` 字段（例如 Obsidian vault 导入的 `goal`/`task` 笔记属于知识库，但不会按域名自动挂载）  
++5. **安全边界**：hostname **只用于选哪篇知识注入 prompt**，不参与 cookie 信任域 / evaluate 白名单等安全门禁；cookie 工具仍要求目标域在 `trusted_domains` 中。
++
++也可让 Agent 调用 `record_experience`（`target: "site"`, `domain: "…"`）把操作经验记成站点知识，下次打开同站时在自动模式下可再次注入。
++
++**导入方式**（「知识」面板）：
++- 「导入文件」→ 选择本地 `.md` 等文件  
++- 「导入文件夹」→ Companion 原生选目录（适合 Obsidian vault，有数量/大小上限）  
++- 「导入 URL」→ Markdown 网络地址（如 GitHub raw 链接）  
++
++**存储路径**：
++
++```
++~/.cmspark-agent/knowledge/
++├── global/     # 全局 / 未绑定 site 的文档（含多数 vault 导入）
++└── sites/      # 带 site 字段导入时的站点知识
++```
++
++每篇过长内容会截断或按查询做片段检索，建议单篇只保留关键信息。
++
++**与「技能」面板的边界**：Skills 列表只含流程类 skill（`prompt_template` 等）；`knowledge/` 下的笔记（含 vault 的 goal/task 等）只出现在「知识」面板，不会混进「技能」。
+ 
+ **典型使用场景**：
+-1. **内部系统操作**：把系统的 URL 结构、登录方式写成 `site_knowledge`，绑定到该系统域名
+-2. **研发助手**：把团队编码规范、架构说明导入为 `domain_knowledge`
+-3. **产品调研**：把竞品资料导入，让 AI 在浏览竞品时自动了解对比维度
++1. **内部系统操作**：把 URL 结构、登录方式写成 `site_knowledge`，绑定系统域名；打开该站再聊天即自动带上  
++2. **研发助手**：团队规范、架构说明导入为 `domain_knowledge`  
++3. **产品调研**：竞品资料按域名拆成多篇 `site_knowledge`，浏览对应站时自动对齐上下文  
+ 
+ ---
+ 
+@@ -309,7 +338,9 @@ Companion 的数据存储在用户主目录下的 `~/.cmspark-agent/`：
+ ├── config.json          # LLM 全局配置
+ ├── skills/              # 用户自定义技能
+ ├── builtin-skills/      # 内置技能
+-├── knowledge/           # 知识文档（自动注入 System Prompt）
++├── knowledge/           # 知识文档（注入 System Prompt）
++│   ├── global/          # 全局 / 未绑定域名
++│   └── sites/           # 站点知识（site_knowledge）
+ ├── threads/             # 线程数据（消息历史）
+ ├── history.db           # 操作历史（SQLite）
+ └── logs/                # 运行日志
+@@ -334,9 +365,9 @@ CMspark 支持将 Companion 注册为系统后台服务，实现开机自启、
+ 
+ | 平台 | 服务机制 | 菜单栏/托盘 | 安装命令 |
+ |------|----------|-------------|----------|
+-| **macOS** | `launchd` | node-notifier 通知 + readline 菜单 | `make install-macos` |
++| **macOS** | `launchd` | **Swift NSStatusBar** 原生托盘 + 配对码窗口；通知走系统通知 | `make install-macos` |
+ | **Windows** | 任务计划程序 | 系统托盘 (systray2) | `make install-windows` |
+-| **Linux** | `systemd --user` | node-notifier + readline 菜单 | `make install-linux` |
++| **Linux** | `systemd --user` | systray2（可用时）或 node-notifier + readline 降级菜单 | `make install-linux` |
+ 
+ ### 特性
+ 
+@@ -351,6 +382,7 @@ CMspark 支持将 Companion 注册为系统后台服务，实现开机自启、
+   - 📝 **提取页面数据** — 提取主要内容区域（article/main）
+   - 📋 **总结页面** — 通过 LLM 一句话总结页面内容
+   - 💬 **新建对话** — 快速创建新线程
++  - 🔑 **显示配对码** — 展示 WebSocket 配对密钥（macOS 原生窗口；扩展首次连接前可自动弹一次）
+ - **向后兼容**：仍可直接运行 `cmspark-agent start` 作为前台进程
+ 
+ ---
+@@ -375,6 +407,12 @@ make menu-bar
+ # 或双击 ~/Applications/CMspark Agent.app
+ ```
+ 
++macOS 托盘为 **Swift NSStatusBar** 原生实现（`companion/src/tray/Tray.swift`，经 `swift-tray-bridge` 启动）：
++
++- 状态色点 + 右键菜单（启停 Companion、设置、快捷操作）
++- **配对码窗口**：扩展尚未配对时（`~/.cmspark-agent/.paired` 不存在）可自动弹一次；菜单项「🔑 显示配对码」可随时重显；支持复制密钥 / 复制并打开 Chrome 扩展页
++- 密钥仅经 launcher → Swift stdin 管道传递，不落日志
++
+ #### 常用命令
+ 
+ ```bash
+@@ -563,8 +601,8 @@ make package
+ ```bash
+ make package-macos
+ # 产出：
+-#   dist-package/CMspark-v0.2.0-macOS.dmg   ← 安装包
+-#   dist-package/cmspark-v0.2.0-macos-arm64.zip  ← 原始压缩包
++#   dist-package/CMspark-v0.3.0-macOS.dmg   ← 安装包
++#   dist-package/cmspark-v0.3.0-macos-arm64.zip  ← 原始压缩包
+ ```
+ 
+ Windows 打包流程：
+@@ -656,7 +694,7 @@ cmspark/
+ | 端口被占用 | 执行 `pkill -f "dist/index.js"` 后重启 Companion |
+ | `config.json` 损坏 | 删除 `~/.cmspark-agent/config.json` 后重启 Companion |
+ | LLM 返回 "No tab with id" | LLM 幻觉了不存在的 tabId，属于可恢复错误，Agent 会自动调用 `list_tabs` 重试 |
+-| evaluate 等高危操作被阻断 | 当前阶段安全策略默认阻断高危 JS 执行，等待用户确认机制完成后开放 |
++| evaluate 等高危操作被阻断 | **已交付 L2 确认**：`evaluate` / `osascript_eval` 等强制走 `SecurityConfirmationManager`（约 45s 超时）→ Side Panel / **Confirm Center（Cockpit）** 人机确认；批准后颁发 HMAC `security_token` 才执行。可将域名加入 `auto_approved_domains` 跳过重复确认，或（无人值守）打开全局 `security.auto_approve_dangerous`。详见 [confirm-center-user-guide](docs/confirm-center-user-guide.md) |
+ 
+ ---
+ 
+@@ -685,4 +723,4 @@ cmspark/
+ 
+ ---
+ 
+-> **当前阶段**：安全稳定化 MVP — Side Panel 可靠驱动 Companion 和浏览器，线程状态闭环持久化，tool 调用结果进入后续 LLM 上下文，高风险执行默认阻断。
++> **当前阶段（0.3.0）**：安全稳定化 **MVP 已稳定**（Side Panel ↔ Companion ↔ 浏览器闭环、线程持久化、L2 确认/Confirm Center）。**已交付扩展**：Obsidian 导出、Mermaid 渲染、Mission Pack / 企业模块、MCP、NotebookLM 导入、Mission Board（P0）、Multi-Agent 编排内核等。**进阶 / opt-in**（平台相关、默认关闭或需确认）：Computer Use、Host Use / Apps、多 Agent 调度增强。导航见 [`docs/`](docs/) 与 [architecture.md](docs/architecture.md)。
+diff --git a/chrome-extension/src/background/index.ts b/chrome-extension/src/background/index.ts
+index 9fa6603..ba5c174 100644
+--- a/chrome-extension/src/background/index.ts
++++ b/chrome-extension/src/background/index.ts
+@@ -27,6 +27,7 @@ import {
+   noteSecurityConfirmationGone,
+   noteSecurityConfirmationRequest,
+ } from "./computer-task-mirror"
++import { getActiveTabHostname } from "./active-tab-hostname"
+ 
+ let wsClient: WSClient
+ let browserBridge: BrowserBridge
+@@ -288,10 +289,20 @@ async function handleCompanionMessage(msg: any) {
+       // quick action still works even when the sidepanel is closed.
+       const { thread_id, prompt } = msg
+       if (thread_id && prompt) {
+-        wsClient.send({
+-          type: "chat.create",
+-          thread_id,
+-          message: prompt,
++        // Quick action with sidepanel closed: still pass active-tab hostname for site knowledge.
++        getActiveTabHostname().then((hostname) => {
++          wsClient.send({
++            type: "chat.create",
++            thread_id,
++            message: prompt,
++            ...(hostname ? { hostname } : {}),
++          })
++        }).catch(() => {
++          wsClient.send({
++            type: "chat.create",
++            thread_id,
++            message: prompt,
++          })
+         })
+       }
+       logToCompanion("debug", "extension.quickaction_fallback_to_background", { actionId: msg.actionId })
+@@ -392,31 +403,55 @@ function setupMessageHandlers() {
+       case "chat.send": {
+         // Config is kept in sync with companion via config.set / config.updated.
+         // The companion uses its global config; no per-request override is needed.
+-        const sent = wsClient.send({
+-          type: "chat.create",
+-          thread_id: message.threadId,
+-          message: message.message,
+-          skill_ids: message.skillIds,
++        // hostname: site_knowledge auto-load only (not a trust/cookie gate). Dual-review 2026-07-28.
++        getActiveTabHostname().then((hostname) => {
++          const sent = wsClient.send({
++            type: "chat.create",
++            thread_id: message.threadId,
++            message: message.message,
++            skill_ids: message.skillIds,
++            ...(hostname ? { hostname } : {}),
++          })
++          if (!sent) {
++            chrome.runtime.sendMessage({ type: "error", error: "Companion 未连接，请检查 Companion 是否已启动" })
++          }
++          sendResponse({ ok: sent })
++        }).catch(() => {
++          const sent = wsClient.send({
++            type: "chat.create",
++            thread_id: message.threadId,
++            message: message.message,
++            skill_ids: message.skillIds,
++          })
++          sendResponse({ ok: sent })
+         })
+-        if (!sent) {
+-          chrome.runtime.sendMessage({ type: "error", error: "Companion 未连接，请检查 Companion 是否已启动" })
+-        }
+-        sendResponse({ ok: sent })
+         return true
+       }
+ 
+       case "file.upload": {
+-        const sent = wsClient.send({
+-          type: "file.upload",
+-          thread_id: message.threadId,
+-          files: message.files,
+-          message: message.message || "",
+-          skill_ids: message.skillIds || [],
++        getActiveTabHostname().then((hostname) => {
++          const sent = wsClient.send({
++            type: "file.upload",
++            thread_id: message.threadId,
++            files: message.files,
++            message: message.message || "",
++            skill_ids: message.skillIds || [],
++            ...(hostname ? { hostname } : {}),
++          })
++          if (!sent) {
++            chrome.runtime.sendMessage({ type: "error", error: "Companion 未连接，请检查 Companion 是否已启动" })
++          }
++          sendResponse({ ok: sent })
++        }).catch(() => {
++          const sent = wsClient.send({
++            type: "file.upload",
++            thread_id: message.threadId,
++            files: message.files,
++            message: message.message || "",
++            skill_ids: message.skillIds || [],
++          })
++          sendResponse({ ok: sent })
+         })
+-        if (!sent) {
+-          chrome.runtime.sendMessage({ type: "error", error: "Companion 未连接，请检查 Companion 是否已启动" })
+-        }
+-        sendResponse({ ok: sent })
+         return true
+       }
+ 
+@@ -429,16 +464,27 @@ function setupMessageHandlers() {
+         return true
+ 
+       case "chat.regenerate": {
+-        const sent = wsClient.send({
+-          type: "chat.regenerate",
+-          thread_id: message.thread_id,
+-          message_id: message.message_id,
+-          message: message.message,
++        getActiveTabHostname().then((hostname) => {
++          const sent = wsClient.send({
++            type: "chat.regenerate",
++            thread_id: message.thread_id,
++            message_id: message.message_id,
++            message: message.message,
++            ...(hostname ? { hostname } : {}),
++          })
++          if (!sent) {
++            chrome.runtime.sendMessage({ type: "error", error: "Companion 未连接，无法重新生成" })
++          }
++          sendResponse({ ok: sent })
++        }).catch(() => {
++          const sent = wsClient.send({
++            type: "chat.regenerate",
++            thread_id: message.thread_id,
++            message_id: message.message_id,
++            message: message.message,
++          })
++          sendResponse({ ok: sent })
+         })
+-        if (!sent) {
+-          chrome.runtime.sendMessage({ type: "error", error: "Companion 未连接，无法重新生成" })
+-        }
+-        sendResponse({ ok: sent })
+         return true
+       }
+ 
+diff --git a/companion/src/message-router.ts b/companion/src/message-router.ts
+index 11073d0..52592c8 100644
+--- a/companion/src/message-router.ts
++++ b/companion/src/message-router.ts
+@@ -13,6 +13,7 @@ import { buildVaultIndex, saveIndex, loadCachedIndex, queryRelatedNotes } from "
+ import { detectTemplates, saveTemplates, loadCachedTemplates, pickTemplate } from "./obsidian/vault-templates"
+ import { pickFolderNative } from "./obsidian/folder-picker"
+ import type { SkillEngine } from "./skills/skill-engine"
++import { normalizeHostname } from "./skills/site-matcher"
+ import type { HistoryStore } from "./history/store"
+ import { getConfig, saveConfig, replaceMcpServers, setMcpEnabled, isMaskedApiKey } from "./config"
+ import { chatCreate, generateThreadTitle } from "./llm/adapter"
+@@ -37,6 +38,26 @@ import type {
+   McpServerMeta,
+ } from "./mcp/types"
+ 
++/**
++ * Chat-path hostname for site_knowledge selection only.
++ * Prefer extension-sent hostname; optional url fallback (legacy / other clients).
++ * Never throws on bad url (Claude review L2).
++ */
++function normalizeChatHostname(hostname?: unknown, url?: unknown): string | undefined {
++  if (typeof hostname === "string") {
++    const n = normalizeHostname(hostname)
++    if (n) return n
++  }
++  if (typeof url === "string" && url) {
++    try {
++      return normalizeHostname(new URL(url).hostname)
++    } catch {
++      return undefined
++    }
++  }
++  return undefined
++}
++
+ // Per-thread abort controllers for cancelling in-flight LLM requests
+ const abortControllers = new Map<string, AbortController>()
+ 
+@@ -394,7 +415,8 @@ export async function handleMessage(
+         const knowledgeMode = thread?.knowledge_selection_mode || "auto"
+ 
+         // Resolve skill IDs based on mode
+-        const currentHostname = rest.hostname || (rest.url ? new URL(rest.url).hostname : undefined)
++        // hostname: site_knowledge auto-load only (extension SW sets it; not a trust gate)
++        const currentHostname = normalizeChatHostname(rest.hostname, rest.url)
+         const resolvedSkillIds = await services.skillEngine.resolveSkillIdsForThread(
+           rest.thread_id,
+           skillMode,
+@@ -563,12 +585,29 @@ export async function handleMessage(
+           }
+         }
+ 
++        // Same skill/knowledge auto-load as chat.create (include site knowledge when hostname set)
++        const skillMode = threadForConfig?.skill_selection_mode || "auto"
++        const knowledgeMode = threadForConfig?.knowledge_selection_mode || "auto"
++        const uploadHostname = normalizeChatHostname(rest.hostname, rest.url)
++        const resolvedSkillIds = await services.skillEngine.resolveSkillIdsForThread(
++          thread_id,
++          skillMode,
++          userMessage,
++          uploadHostname,
++        )
++        const resolvedKnowledgeIds = services.skillEngine.resolveKnowledgeIdsForThread(
++          thread_id,
++          knowledgeMode,
++          uploadHostname,
++        )
++        const allSkillIds = [...new Set([...resolvedSkillIds, ...(rest.skill_ids || [])])]
++
+         await chatCreate({
+           threadId: thread_id,
+           message: userMessage,
+           fileContents: finalFileContents,
+-          skillIds: rest.skill_ids || [],
+-          knowledgeIds: [],
++          skillIds: allSkillIds,
++          knowledgeIds: resolvedKnowledgeIds,
+           config: effectiveLLMConfig,
+           threadManager: services.threadManager,
+           skillEngine: services.skillEngine,
+@@ -746,7 +785,7 @@ export async function handleMessage(
+         const knowledgeMode = thread?.knowledge_selection_mode || "auto"
+ 
+         // Resolve skill IDs based on mode
+-        const currentHostname = rest.hostname || (rest.url ? new URL(rest.url).hostname : undefined)
++        const currentHostname = normalizeChatHostname(rest.hostname, rest.url)
+         const resolvedSkillIds = await services.skillEngine.resolveSkillIdsForThread(
+           thread_id,
+           skillMode,
+diff --git a/companion/src/orchestrator/tab-lease.ts b/companion/src/orchestrator/tab-lease.ts
+index 74ace39..5ab0134 100644
+--- a/companion/src/orchestrator/tab-lease.ts
++++ b/companion/src/orchestrator/tab-lease.ts
+@@ -223,6 +223,14 @@ function countLeasesForHolder(holderThreadId: string): number {
+   return n
+ }
+ 
++function heldTabIdsForHolder(holderThreadId: string): number[] {
++  const ids: number[] = []
++  for (const l of leases.values()) {
++    if (l.holderThreadId === holderThreadId && l.state !== "FREE") ids.push(l.tabId)
++  }
++  return ids.sort((a, b) => a - b)
++}
++
+ function activeLeaseCount(): number {
+   return leases.size
+ }
+@@ -265,11 +273,15 @@ export function acquireOrRenewTabLease(opts: {
+ 
+   if (!existing) {
+     if (countLeasesForHolder(holderThreadId) >= ORCHESTRATOR_CAPS.max_tabs_leased_per_worker) {
++      const held = heldTabIdsForHolder(holderThreadId)
+       return {
+         ok: false,
+         error_code: "TAB_LEASE_CAP",
+         tab_id: tabId,
+-        error: `worker already holds ${ORCHESTRATOR_CAPS.max_tabs_leased_per_worker} tab leases`,
++        holder_thread_id: holderThreadId,
++        error:
++          `TAB_LEASE_CAP: worker already holds ${ORCHESTRATOR_CAPS.max_tabs_leased_per_worker} tab leases ` +
++          `(tabs [${held.join(", ")}]). close_tab one of those tabs (or list_tab_locks) before leasing tab ${tabId}`,
+       }
+     }
+     if (activeLeaseCount() >= ORCHESTRATOR_CAPS.max_tabs_leased_process) {
+@@ -277,7 +289,9 @@ export function acquireOrRenewTabLease(opts: {
+         ok: false,
+         error_code: "TAB_LEASE_CAP",
+         tab_id: tabId,
+-        error: `process tab lease cap ${ORCHESTRATOR_CAPS.max_tabs_leased_process} reached`,
++        error:
++          `TAB_LEASE_CAP: process tab lease cap ${ORCHESTRATOR_CAPS.max_tabs_leased_process} reached — ` +
++          `close unused tabs or force-release a lease before leasing tab ${tabId}`,
+       }
+     }
+     if (needsL2) {
+diff --git a/companion/src/security.ts b/companion/src/security.ts
+index 4587bda..d683508 100644
+--- a/companion/src/security.ts
++++ b/companion/src/security.ts
+@@ -687,6 +687,14 @@ export function classifyError(errorMessage: string, context?: { toolName?: strin
+     "pick a folder first",
+     "module_disabled",
+     "workspace path must come from",
++    // ADR-015 tab lease: LLM can close_tab / list_tab_locks and retry (not fatal)
++    "tab_lease_cap",
++    "already holds",
++    "tab lease cap",
++    "tab_locked",
++    "tab_busy_confirming",
++    "tab_force_releasing",
++    "tab_id_required",
+   ]
+   if (recoverable.some(p => msg.includes(p))) {
+     return "recoverable"
+diff --git a/companion/src/server.ts b/companion/src/server.ts
+index 2405692..baa13b5 100644
+--- a/companion/src/server.ts
++++ b/companion/src/server.ts
+@@ -556,11 +556,16 @@ export function createToolExecutor(ws: WebSocket) {
+           // Defense-in-depth for extension screenshot/analyze_image fallback
+           ;(finalParams as any).__require_tab_id = true
+         }
+-        // Early exclusive HARD for all tab tools (including evaluate / TAB_L2_TOOLS).
++        // Early exclusive HARD for tab tools — multi-agent only (ADR-015).
++        // Normal single-agent chats must not take per-worker tab leases: browse /
++        // AppSec often opens many tabs and max_tabs_leased_per_worker=2 would
++        // hard-fail as non_recoverable (thread 1gfd6t). When any multi-agent
++        // lease is already held, multi is true so exclusivity still covers peers.
+         // GATE2: auto-approve / domain-whitelist / god-mode must still hold exclusive
+         // lease — previously willEnterL2 skipped HARD and skipConfirmation skipped SOFT.
+         // Interactive L2 path upgrades same-holder HARD → HELD_PENDING_L2 below.
+         if (
++          multi &&
+           TAB_LEASE_TOOLS.has(toolName) &&
+           typeof finalParams.tabId === "number" &&
+           actingThreadId
+@@ -1213,39 +1218,49 @@ export function createToolExecutor(ws: WebSocket) {
+         }
+         const l2AdmitKey = admit.key
+ 
+-        // Exclusive SOFT / HELD_PENDING_L2 after admission (TAB_L2_TOOLS, not evaluate-only)
+-        if (
+-          TAB_L2_TOOLS.has(toolName) &&
+-          typeof finalParams.tabId === "number" &&
+-          actingThreadId
+-        ) {
+-          const { acquireOrRenewTabLease } = await import("./orchestrator")
+-          const soft = acquireOrRenewTabLease({
+-            tabId: finalParams.tabId,
+-            holderThreadId: actingThreadId,
+-            needsL2: true,
+-            confirmId: toolCallId,
+-          })
+-          if (!soft.ok) {
+-            releaseL2Admission(l2AdmitKey)
+-            if (flightReserved) {
+-              const { releaseFlight } = await import("./orchestrator/single-flight")
+-              releaseFlight(flightReserved, flightOwner)
+-              flightReserved = null
+-            }
+-            const result = {
+-              success: false,
+-              error: soft.error,
+-              data: {
+-                error_code: soft.error_code,
+-                tab_id: soft.tab_id,
+-                holder_thread_id: soft.holder_thread_id,
+-              },
++        // Exclusive SOFT / HELD_PENDING_L2 after admission (TAB_L2_TOOLS) — multi-agent only.
++        // Normal single-agent evaluate still goes through Confirm / L2 admission without
++        // taking a tab lease (see early HARD gate above).
++        {
++          const {
++            isMultiAgentThread: isMaThread,
++            anyTabLeaseHeld: anyLeaseHeld,
++            acquireOrRenewTabLease,
++          } = await import("./orchestrator")
++          const multiForSoft = isMaThread(maForL2) || anyLeaseHeld()
++          if (
++            multiForSoft &&
++            TAB_L2_TOOLS.has(toolName) &&
++            typeof finalParams.tabId === "number" &&
++            actingThreadId
++          ) {
++            const soft = acquireOrRenewTabLease({
++              tabId: finalParams.tabId,
++              holderThreadId: actingThreadId,
++              needsL2: true,
++              confirmId: toolCallId,
++            })
++            if (!soft.ok) {
++              releaseL2Admission(l2AdmitKey)
++              if (flightReserved) {
++                const { releaseFlight } = await import("./orchestrator/single-flight")
++                releaseFlight(flightReserved, flightOwner)
++                flightReserved = null
++              }
++              const result = {
++                success: false,
++                error: soft.error,
++                data: {
++                  error_code: soft.error_code,
++                  tab_id: soft.tab_id,
++                  holder_thread_id: soft.holder_thread_id,
++                },
++              }
++              logToolFinish(toolCallId, toolName, startedAt, result)
++              return result
+             }
+-            logToolFinish(toolCallId, toolName, startedAt, result)
+-            return result
++            tabL2SoftHeld = true
+           }
+-          tabL2SoftHeld = true
+         }
+ 
+         try {
+@@ -2104,11 +2119,20 @@ export function createToolExecutor(ws: WebSocket) {
+           typeof result.data.url === "string"
+         ) {
+           tabUrlCache.set(result.data.id, result.data.url)
+-          // ADR-015: auto HARD-hold new tab for creator to close race window
++          // ADR-015: auto HARD-hold new tab for multi-agent creators only.
++          // Normal single-agent create_tab must not consume the per-worker lease
++          // budget (max 2) — AppSec / multi-tab browse open many tabs.
+           if (actingThreadId) {
+             try {
+-              const { autoHoldCreatedTab } = require("./orchestrator/tab-lease") as typeof import("./orchestrator/tab-lease")
+-              autoHoldCreatedTab(result.data.id, actingThreadId)
++              const {
++                autoHoldCreatedTab,
++                anyTabLeaseHeld,
++              } = require("./orchestrator/tab-lease") as typeof import("./orchestrator/tab-lease")
++              const { isMultiAgentThread } = require("./orchestrator") as typeof import("./orchestrator")
++              const th = threadManager?.get(actingThreadId) as any
++              if (isMultiAgentThread(th) || anyTabLeaseHeld()) {
++                autoHoldCreatedTab(result.data.id, actingThreadId)
++              }
+             } catch {
+               /* ignore */
+             }
+@@ -4252,6 +4276,9 @@ export function validateWsMessage(msg: any): WsValidationResult {
+       if (typeof m.thread_id !== "string" || !m.thread_id) return { valid: false, error: "chat.create requires thread_id" }
+       if (typeof m.message !== "string") return { valid: false, error: "chat.create requires message string" }
+       if (m.skill_ids !== undefined && !Array.isArray(m.skill_ids)) return { valid: false, error: "skill_ids must be an array" }
++      // Optional site-knowledge context (not a security gate)
++      if (m.hostname !== undefined && typeof m.hostname !== "string") return { valid: false, error: "hostname must be a string" }
++      if (m.url !== undefined && typeof m.url !== "string") return { valid: false, error: "url must be a string" }
+       return { valid: true }
+     },
+     "chat.abort": (m) => {
+@@ -4262,6 +4289,8 @@ export function validateWsMessage(msg: any): WsValidationResult {
+       if (typeof m.thread_id !== "string" || !m.thread_id) return { valid: false, error: "chat.regenerate requires thread_id" }
+       if (typeof m.message_id !== "string" || !m.message_id) return { valid: false, error: "chat.regenerate requires message_id" }
+       if (m.message !== undefined && typeof m.message !== "string") return { valid: false, error: "chat.regenerate message must be a string" }
++      if (m.hostname !== undefined && typeof m.hostname !== "string") return { valid: false, error: "hostname must be a string" }
++      if (m.url !== undefined && typeof m.url !== "string") return { valid: false, error: "url must be a string" }
+       return { valid: true }
+     },
+     "thread.create": (m) => {
+@@ -4393,6 +4422,8 @@ export function validateWsMessage(msg: any): WsValidationResult {
+         if (typeof f.name !== "string" || typeof f.type !== "string" || typeof f.content !== "string") return { valid: false, error: "文件字段均为 string 类型" }
+       }
+       if (m.message !== undefined && typeof m.message !== "string") return { valid: false, error: "message 必须为字符串" }
++      if (m.hostname !== undefined && typeof m.hostname !== "string") return { valid: false, error: "hostname must be a string" }
++      if (m.url !== undefined && typeof m.url !== "string") return { valid: false, error: "url must be a string" }
+       return { valid: true }
+     },
+     "file.query_chunks": (m) => {
+diff --git a/companion/src/skills/site-matcher.ts b/companion/src/skills/site-matcher.ts
+index c7b0eec..0d5081f 100644
+--- a/companion/src/skills/site-matcher.ts
++++ b/companion/src/skills/site-matcher.ts
+@@ -1,5 +1,15 @@
+ // Site matcher — wildcard hostname matching for knowledge docs
+ 
++/**
++ * Normalize a hostname for DNS-style comparison (RFC 4343: case-insensitive).
++ * Trim, lowercase, strip trailing dots. Empty → undefined.
++ */
++export function normalizeHostname(h?: string | null): string | undefined {
++  if (h == null || typeof h !== "string") return undefined
++  const n = h.trim().toLowerCase().replace(/\.+$/, "")
++  return n || undefined
++}
++
+ /**
+  * Match a site pattern against a hostname.
+  *
+@@ -11,16 +21,23 @@
+  * Uses a domain-boundary check (`.suffix`), NOT a bare `endsWith(suffix)` — otherwise
+  * `*.github.com` would wrongly match `evilgithub.com` (suffix collision, no dot boundary).
+  * Apex match is consistent with the security matchDomain (ADR-007).
++ *
++ * Both pattern and hostname are normalized (case-insensitive) before compare.
+  */
+ export function matchSite(pattern: string, hostname: string): boolean {
++  const p = normalizeHostname(pattern)
++  const h = normalizeHostname(hostname)
++  if (!p || !h) return false
++
+   // Exact match
+-  if (pattern === hostname) return true
++  if (p === h) return true
+ 
+   // Wildcard match: *.github.com matches api.github.com (subdomain) and github.com (apex),
+   // but NOT evilgithub.com (no dot boundary).
+-  if (pattern.startsWith("*.")) {
+-    const suffix = pattern.slice(2)
+-    return hostname === suffix || hostname.endsWith("." + suffix)
++  if (p.startsWith("*.")) {
++    const suffix = p.slice(2)
++    if (!suffix) return false
++    return h === suffix || h.endsWith("." + suffix)
+   }
+ 
+   return false
+diff --git a/companion/src/skills/skill-engine.ts b/companion/src/skills/skill-engine.ts
+index 002936f..8e554fa 100644
+--- a/companion/src/skills/skill-engine.ts
++++ b/companion/src/skills/skill-engine.ts
+@@ -83,10 +83,36 @@ export class SkillEngine {
+     this.rebuildKnowledgeChunks()
+   }
+ 
++  /**
++   * Knowledge vs skill separation.
++   * Knowledge docs live under knowledge/{global,sites}/ and may use Obsidian
++   * frontmatter types (goal/task/meeting/…) — not only site_knowledge /
++   * domain_knowledge. Classifying by path (plus classic knowledge types for
++   * legacy files under skills/) keeps Skills panel free of vault notes.
++   */
++  private isUnderKnowledgeDir(sourceFile: string): boolean {
++    try {
++      const src = path.resolve(sourceFile)
++      const root = path.resolve(this.knowledgeDir)
++      return src === root || src.startsWith(root + path.sep)
++    } catch {
++      return false
++    }
++  }
++
++  private isKnowledgeDoc(skill: Pick<Skill, "type" | "source_file">): boolean {
++    if (this.isUnderKnowledgeDir(skill.source_file)) return true
++    return skill.type === "site_knowledge" || skill.type === "domain_knowledge"
++  }
++
++  private isSkillDoc(skill: Pick<Skill, "type" | "source_file">): boolean {
++    return !this.isKnowledgeDoc(skill)
++  }
++
+   private rebuildKnowledgeChunks(): void {
+     this.knowledgeChunks.clear()
+     for (const skill of this.skillsCache) {
+-      if (skill.type !== "site_knowledge" && skill.type !== "domain_knowledge") continue
++      if (!this.isKnowledgeDoc(skill)) continue
+       const chunked = chunkFile(skill.name, skill.content, KNOWLEDGE_SEARCH_THRESHOLD_TOKENS)
+       // Only store chunks if the doc is actually large enough to need splitting
+       if (chunked.chunks.length > 1 || chunked.totalTokens > KNOWLEDGE_SEARCH_THRESHOLD_TOKENS) {
+@@ -186,7 +212,7 @@ export class SkillEngine {
+ 
+   list(): SkillMeta[] {
+     return this.skillsCache
+-      .filter(s => s.type !== "site_knowledge" && s.type !== "domain_knowledge")
++      .filter(s => this.isSkillDoc(s))
+       .map(s => ({
+         name: s.name,
+         description: s.description,
+@@ -322,9 +348,11 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
+   async matchSkills(message: string): Promise<Array<{ name: string; confidence: number }>> {
+     const queryTokens = tokenize(message)
+     const queryVec = tokensToVec(queryTokens)
++    // Only match real skills — vault/knowledge notes must not rank into skill auto-match
++    const skillPool = this.skillsCache.filter(s => this.isSkillDoc(s))
+ 
+     const results: Array<{ name: string; confidence: number }> = []
+-    for (const skill of this.skillsCache.values()) {
++    for (const skill of skillPool) {
+       const skillText = `${skill.name} ${skill.description || ""} ${(skill.tags || []).join(" ")}`
+       const skillTokens = tokenize(skillText)
+       const skillVec = tokensToVec(skillTokens)
+@@ -343,7 +371,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
+     }
+ 
+     // Low confidence → LLM semantic re-ranking (precise)
+-    const candidates = this.skillsCache.filter(s => {
++    const candidates = skillPool.filter(s => {
+       const skillText = `${s.name} ${s.description || ""} ${(s.tags || []).join(" ")}`
+       const skillTokens = tokenize(skillText)
+       const skillVec = tokensToVec(skillTokens)
+@@ -359,7 +387,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
+ 
+   /** Resolve skill IDs for a thread based on the selection mode.
+    * - auto: active ∪ matchSkills(message) ∪ getBySite(hostname)
+-   * - all: all non-site_knowledge/domain_knowledge skills
++   * - all: all skill docs (excludes knowledge/ vault notes)
+    * - manual: active only */
+   async resolveSkillIdsForThread(
+     threadId: string,
+@@ -370,32 +398,36 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
+     const resolvedMode = mode || "auto"
+ 
+     if (resolvedMode === "manual") {
+-      return this.getActiveForThread(threadId).map(s => s.name)
++      return this.getActiveForThread(threadId)
++        .filter(s => this.isSkillDoc(s))
++        .map(s => s.name)
+     }
+ 
+     if (resolvedMode === "all") {
+       return this.skillsCache
+-        .filter(s => s.type !== "site_knowledge" && s.type !== "domain_knowledge")
++        .filter(s => this.isSkillDoc(s))
+         .map(s => s.name)
+     }
+ 
+     // auto mode (default)
+-    const active = this.getActiveForThread(threadId).map(s => s.name)
++    const active = this.getActiveForThread(threadId)
++      .filter(s => this.isSkillDoc(s))
++      .map(s => s.name)
+     const matched = message ? (await this.matchSkills(message)).map(m => m.name) : []
++    // getBySite returns site_knowledge experience skills (legacy under skills/ or knowledge/)
+     const site = hostname ? this.getBySite(hostname).map(s => s.name) : []
+     return [...new Set([...active, ...matched, ...site])]
+   }
+ 
+-  /** Get active knowledge (site_knowledge/domain_knowledge) for a thread.
+-   * Reads from thread's active_skill_ids that match knowledge types. */
++  /** Get active knowledge docs for a thread (knowledge/ tree + classic knowledge types). */
+   getActiveKnowledgeForThread(threadId: string): Skill[] {
+     const active = this.getActiveForThread(threadId)
+-    return active.filter(s => s.type === "site_knowledge" || s.type === "domain_knowledge")
++    return active.filter(s => this.isKnowledgeDoc(s))
+   }
+ 
+   /** Resolve knowledge IDs for a thread based on the selection mode.
+    * - auto: activeKnowledge ∪ getBySite(hostname)  (union, deduped)
+-   * - all: all site_knowledge / domain_knowledge names
++   * - all: all knowledge docs
+    * - manual: activeKnowledge only (pure user selection) */
+   resolveKnowledgeIdsForThread(
+     threadId: string,
+@@ -410,7 +442,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
+ 
+     if (resolvedMode === "all") {
+       return this.skillsCache
+-        .filter(s => s.type === "site_knowledge" || s.type === "domain_knowledge")
++        .filter(s => this.isKnowledgeDoc(s))
+         .map(s => s.name)
+     }
+ 
+@@ -448,8 +480,8 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
+       parts.push(`## Safety Guard: ${s.name}\n${s.content}`)
+     }
+ 
+-    const promptSkills = skills.filter(s => s.type !== "site_knowledge" && s.type !== "domain_knowledge")
+-    const experienceSkills = skills.filter(s => s.type === "site_knowledge" || s.type === "domain_knowledge")
++    const promptSkills = skills.filter(s => this.isSkillDoc(s))
++    const experienceSkills = skills.filter(s => this.isKnowledgeDoc(s))
+ 
+     // Experience skills: inject entry summaries directly (no use_skill needed)
+     for (const s of experienceSkills) {
+@@ -470,12 +502,16 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
+       // Inject only the specified knowledge docs
+       for (const k of knowledgeToInject) {
+         if (injectedNames.has(k.name)) continue
+-        // Skip non-knowledge types
+-        if (k.type !== "site_knowledge" && k.type !== "domain_knowledge") continue
++        if (!this.isKnowledgeDoc(k)) continue
+         const summary = this.getEntriesSummary(k.name) || this.getKnowledgeSummary(k, query)
+         if (summary) {
+           injectedNames.add(k.name)
+-          const label = k.type === "site_knowledge" ? `Site: ${k.site || k.name}` : `Domain: ${k.name}`
++          const label =
++            k.type === "site_knowledge"
++              ? `Site: ${k.site || k.name}`
++              : k.type === "domain_knowledge"
++                ? `Domain: ${k.name}`
++                : `Knowledge: ${k.name}`
+           parts.push(`## ${label}\n${summary}`)
+         }
+       }
+@@ -519,10 +555,9 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
+   /** Get all global knowledge docs from knowledge/global/ directory. */
+   private getGlobalKnowledge(): Skill[] {
+     return this.skillsCache.filter(s => {
+-      if (s.type !== "site_knowledge" && s.type !== "domain_knowledge") return false
+-      // Global knowledge: no site field, or stored in knowledge/global/
+-      if (!s.site) return true
+-      return false
++      if (!this.isKnowledgeDoc(s)) return false
++      // Global knowledge: no site field (site-scoped lives under knowledge/sites/ or has site:)
++      return !s.site
+     })
+   }
+ 
+@@ -877,7 +912,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
+ 
+   listKnowledge(): SkillMeta[] {
+     return this.skillsCache
+-      .filter(s => s.type === "site_knowledge" || s.type === "domain_knowledge")
++      .filter(s => this.isKnowledgeDoc(s))
+       .map(s => ({
+         name: s.name,
+         description: s.description,
+@@ -995,7 +1030,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
+     const skill = this.get(name)
+     if (!skill) throw new Error(`Knowledge not found: ${name}`)
+     if (skill.builtin) throw new Error(`Cannot delete builtin knowledge: ${name}`)
+-    if (skill.type !== "site_knowledge" && skill.type !== "domain_knowledge") {
++    if (!this.isKnowledgeDoc(skill)) {
+       throw new Error(`'${name}' is not a knowledge doc`)
+     }
+ 
+diff --git a/companion/tests/orchestrator-tab-lease.test.ts b/companion/tests/orchestrator-tab-lease.test.ts
+index 392deeb..b6ba52b 100644
+--- a/companion/tests/orchestrator-tab-lease.test.ts
++++ b/companion/tests/orchestrator-tab-lease.test.ts
+@@ -88,6 +88,22 @@ test("same holder can renew HARD", () => {
+   assert.equal(r.ok, true)
+ })
+ 
++test("TAB_LEASE_CAP lists held tabs and recovery hint", () => {
++  reset()
++  acquireOrRenewTabLease({ tabId: 10, holderThreadId: "w1", needsL2: false })
++  acquireOrRenewTabLease({ tabId: 11, holderThreadId: "w1", needsL2: false })
++  const r = acquireOrRenewTabLease({ tabId: 12, holderThreadId: "w1", needsL2: false })
++  assert.equal(r.ok, false)
++  if (!r.ok) {
++    assert.equal(r.error_code, "TAB_LEASE_CAP")
++    assert.equal(r.holder_thread_id, "w1")
++    assert.match(r.error, /TAB_LEASE_CAP/)
++    assert.match(r.error, /10/)
++    assert.match(r.error, /11/)
++    assert.match(r.error, /close_tab/)
++  }
++})
++
+ test("releaseAllLeasesForThread frees all", () => {
+   reset()
+   acquireOrRenewTabLease({ tabId: 10, holderThreadId: "w1", needsL2: false })
+diff --git a/companion/tests/security-thread.test.ts b/companion/tests/security-thread.test.ts
+index 4f8e650..a9661e2 100644
+--- a/companion/tests/security-thread.test.ts
++++ b/companion/tests/security-thread.test.ts
+@@ -260,6 +260,18 @@ test("classifyError workspace_root not set is recoverable (Mission Pack DevSec)"
+   )
+   assert.equal(classifyError("module_disabled:devsec-workspace"), "recoverable")
+ })
++
++test("classifyError TAB_LEASE_CAP is recoverable so agent can close_tab and retry", () => {
++  assert.equal(
++    classifyError(
++      "TAB_LEASE_CAP: worker already holds 2 tab leases (tabs [10, 11]). close_tab one of those tabs before leasing tab 12",
++      { toolName: "get_page_text" },
++    ),
++    "recoverable",
++  )
++  assert.equal(classifyError("worker already holds 2 tab leases"), "recoverable")
++  assert.equal(classifyError("process tab lease cap 10 reached"), "recoverable")
++})
+ test("logger redacts sensitive keys recursively", () => {
+   const redacted = redactLogData({
+     api_key: "sk-secret",
+diff --git a/companion/tests/site-matcher.test.ts b/companion/tests/site-matcher.test.ts
+index 48cf221..a80e0e3 100644
+--- a/companion/tests/site-matcher.test.ts
++++ b/companion/tests/site-matcher.test.ts
+@@ -1,13 +1,26 @@
+ import test from "node:test"
+ import assert from "node:assert/strict"
+ 
+-import { matchSite } from "../src/skills/site-matcher"
++import { matchSite, normalizeHostname } from "../src/skills/site-matcher"
++
++test("normalizeHostname lowercases and strips trailing dots", () => {
++  assert.equal(normalizeHostname("GitHub.com"), "github.com")
++  assert.equal(normalizeHostname("example.com."), "example.com")
++  assert.equal(normalizeHostname("  "), undefined)
++  assert.equal(normalizeHostname(null), undefined)
++})
+ 
+ test("exact match: same hostname matches", () => {
+   assert.equal(matchSite("github.com", "github.com"), true)
+   assert.equal(matchSite("example.com", "example.com"), true)
+ })
+ 
++test("case-insensitive: Example.com matches site pattern example.com", () => {
++  // Dual-review L1 / N1 — URL bar casing must not break site_knowledge auto-load
++  assert.equal(matchSite("example.com", "Example.com"), true)
++  assert.equal(matchSite("*.GitHub.com", "API.github.com"), true)
++})
++
+ test("exact match: different hostname does not match", () => {
+   assert.equal(matchSite("github.com", "gitlab.com"), false)
+   assert.equal(matchSite("github.com", "api.github.com"), false)
+diff --git a/companion/tests/skill-engine.test.ts b/companion/tests/skill-engine.test.ts
+index 34016c8..6195466 100644
+--- a/companion/tests/skill-engine.test.ts
++++ b/companion/tests/skill-engine.test.ts
+@@ -513,3 +513,39 @@ test("knowledge docs loaded from knowledge/ directory", () => {
+   assert.ok(knowledge, "knowledge doc should be loaded from knowledge/ dir")
+   assert.equal(knowledge?.type, "domain_knowledge")
+ })
++
++test("Obsidian vault types under knowledge/ must not leak into skill.list (Skills vs Know)", () => {
++  // Repro: vault notes keep frontmatter type: goal/task/meeting — old list()
++  // only filtered site_knowledge|domain_knowledge, so Skills panel filled with Know.
++  const knowledgeDir = path.join(getConfigDir(), "knowledge")
++  fs.mkdirSync(path.join(knowledgeDir, "global"), { recursive: true })
++  writeSkillFile(path.join(knowledgeDir, "global"), "vault-goal.md", {
++    name: "2026 weight goal",
++    description: "vault note",
++    type: "goal",
++  }, "# Goal")
++  writeSkillFile(path.join(knowledgeDir, "global"), "vault-task.md", {
++    name: "inbox task",
++    description: "vault task",
++    type: "task",
++  }, "# Task")
++
++  const skillsDir = path.join(getConfigDir(), "skills")
++  fs.mkdirSync(skillsDir, { recursive: true })
++  writeSkillFile(skillsDir, "real-skill.md", {
++    name: "real-skill",
++    description: "a real agent skill",
++    type: "prompt_template",
++  }, "# Skill")
++
++  const engine = new SkillEngine()
++  const skillNames = engine.list().map((s) => s.name)
++  const knowledgeNames = engine.listKnowledge().map((s) => s.name)
++
++  assert.ok(skillNames.includes("real-skill"), "real skills stay in skill.list")
++  assert.ok(!skillNames.includes("2026 weight goal"), "goal note must not appear in Skills")
++  assert.ok(!skillNames.includes("inbox task"), "task note must not appear in Skills")
++  assert.ok(knowledgeNames.includes("2026 weight goal"), "goal note belongs in listKnowledge")
++  assert.ok(knowledgeNames.includes("inbox task"), "task note belongs in listKnowledge")
++  assert.ok(!knowledgeNames.includes("real-skill"), "skills must not appear in knowledge list")
++})
+diff --git a/docs/GOAL.md b/docs/GOAL.md
+index 2d27b99..f042d79 100644
+--- a/docs/GOAL.md
++++ b/docs/GOAL.md
+@@ -114,13 +114,18 @@ Agent 可以在用户授权下对任意标签页执行全部 26 种工具操作
+ 
+ ### G8. 安全护栏
+ 
+-- **evaluate/osascript 安全**: 高风险代码在确认队列完成前默认执行前阻断
+-- **Cookie 信任域**: 通配符域名匹配（`*.company.com`），域内自由操作，域外阻断或进入确认流程
+-- **错误分级**: 可恢复（自动重试上限3次）→ 不可恢复（暂停提示用户）→ 安全（硬阻断）
+-- **用户中断**: Stop 按钮随时终止 Agent 执行
+-- **多层安全架构**: risk-engine 风险评分 + privilege-manager 三级特权 (readonly/standard/advanced) + security-confirmation 确认队列
+-- **越狱检测**: LLM streaming 输出实时检测越狱模式
+-- **安全内置技能**: prompt-injection-defense, jailbreak-detection, instruction-hierarchy
++当前生效的是**多门独立门禁**（非已删除的 risk-engine / privilege-manager 三层设计，见 [ADR-006](adr/006-layered-defense.md) 演进说明）：
++
++- **Cookie 信任域**（`trusted_domains`）：通配符匹配（`*.company.com`）；`get_cookies` / `set_cookie` / `delete_cookie` / `list_all_cookies` 域外阻断
++- **L2 确认队列**（`SecurityConfirmationManager`，约 45s 超时）：`evaluate` / `osascript_eval` 等**默认阻断**，经 Side Panel / Confirm Center（Cockpit）人机确认后，由 companion `security-policy` 颁发 HMAC `security_token`（constant-time 校验）才执行；`checkHighRiskExecution` 正则仅作风险预览升级，不单独 gate
++- **导航 URL 门**：非 `http(s)` scheme 直接阻断；hostname 不在 `trusted_domains` ∪ `auto_approved_domains` 时强制确认
++- **域白名单 + 全局自动批准**（[ADR-007](adr/007-domain-whitelist-auto-approve.md)）：`auto_approved_domains`（独立于信任域）跳过工具确认；`security.auto_approve_dangerous` 全局 kill-switch（默认 false，无人值守用）。`osascript_eval` **不走**域白名单，仅全局开关可放行
++- **分级特权 / God Mode**（[ADR-010](adr/010-tiered-privilege-godmode.md)）：会话级信任与能力分层，与 L2 / 企业模块协同，**不是**旧 privilege-manager 三级枚举
++- **Extension 侧**：`page-sanitizer` 在内容进入 LLM context 前做 prompt-injection 过滤
++- **错误分级**：可恢复（自动重试上限 3 次）→ 不可恢复（暂停提示用户）→ 安全（硬阻断）
++- **用户中断**：Stop 按钮随时终止 Agent 执行
++- **越狱检测**：LLM streaming 输出实时检测越狱模式
++- **安全内置技能**：prompt-injection-defense, jailbreak-detection, instruction-hierarchy
+ 
+ ### G9. Side Panel 原生体验
+ 
+diff --git a/docs/TESTING.md b/docs/TESTING.md
+index 1bd66b7..0750ea2 100644
+--- a/docs/TESTING.md
++++ b/docs/TESTING.md
+@@ -1,63 +1,163 @@
+ # TESTING
+ 
++> 与产品 **0.3.0** 对齐。框架均为 Node 内置 `node:test` + `node:assert/strict`（无 Jest/Vitest）。
++
+ ## 测试架构
+ 
+-| 端 | 测试框架 | 测试目录 | 运行命令 |
+-|----|---------|---------|---------|
+-| Companion | `node:test` (内置) | `companion/tests/` | `npm --prefix companion test` |
+-| Extension | `node:test` (内置) | `chrome-extension/tests/` | `npm --prefix chrome-extension test` |
++| 端 | 测试框架 | 测试目录 | 规模（约） | 运行命令 |
++|----|---------|---------|-----------|---------|
++| Companion | `node:test` | `companion/tests/`（含 `security/`、`integration/` 子目录） | **120+** `*.test.ts` | `npm --prefix companion test` |
++| Extension | `node:test` | `chrome-extension/tests/` | **~25** 纯逻辑测试 | `npm --prefix chrome-extension test` |
+ 
+-Companion 测试编译配置：`companion/tsconfig.test.json`（rootDir: `.`，outDir: `.test-dist`）
++- Companion 编译：`companion/tsconfig.test.json`（`outDir: .test-dist`）
++- Extension 编译：`chrome-extension/tsconfig.test.json`
++- Companion 的 `test` 脚本会排除 `_*.test.js` 辅助文件，并将 `settings-web.test.js` 单独串行跑（避免端口争用）
+ 
+ ## 运行测试
+ 
+ ```bash
++# 全部（Makefile）
++make test
++
+ # Companion（全部）
+ npm --prefix companion test
+ 
+-# Companion（单个文件）
+-cd companion && npx tsc -p tsconfig.test.json && node --test .test-dist/tests/adapter.test.js
++# Companion（单文件：先 tsc 再 node --test）
++cd companion && npx tsc -p tsconfig.test.json \
++  && node --test .test-dist/tests/security-thread.test.js
++
++# 子目录示例（编译产物路径镜像源码树）
++cd companion && npx tsc -p tsconfig.test.json \
++  && node --test .test-dist/tests/security/*.test.js
++cd companion && npx tsc -p tsconfig.test.json \
++  && node --test .test-dist/tests/integration/*.test.js
+ 
+ # Extension
+ npm --prefix chrome-extension test
+ ```
+ 
+-## 测试结构
++要求 **Node.js ≥ 20**（与 CONTRIBUTING / CI 一致）。
+ 
+-```
+-companion/tests/
+-├── security-thread.test.ts   # 安全策略 + 线程状态 + 日志（17 用例）
+-├── adapter.test.ts           # LLM 适配器 context 构建 + tool result 链接（10 用例）
+-├── skill-engine.test.ts      # 技能加载/激活/导入/导出（21 用例）
+-└── server.test.ts            # 消息路由 + 安全预检 + 辅助函数（15 用例）
+-
+-chrome-extension/tests/
+-└── sidepanel-state.test.ts   # Reducer + 初始化请求 + 未知 action（6 用例）
+-```
++## Companion 测试地图
++
++路径均相对 `companion/tests/`。文件名随实现演进；下列按**领域**分组，便于找回归入口。
++
++### 安全与确认 / 策略
++
++| 区域 | 代表文件 |
++|------|----------|
++| 线程 + 安全策略回归 | `security-thread.test.ts` |
++| L2 确认队列 / origin / 广播 | `security-confirmation-origin.test.ts`, `security-confirmation-broadcast.test.ts` |
++| 策略 HMAC / token（`security/`） | `security/security-policy.test.ts`（该目录目前仅此文件；`security/*.test.js` 示例只覆盖 policy） |
++| 门禁与 evaluate token（`integration/`） | `integration/security-gates.test.ts`, `integration/evaluate-token.test.ts` |
++| 配置路由安全 | `message-router-config-security.test.ts` |
++| 越狱扫描 / 不可信标记 | `llm-stream-jailbreak-scan.test.ts`, `m2-untrusted-marker.test.ts` |
++| 内容清洗 | `content-sanitizer.test.ts`, `text-sanitize.test.ts` |
++| 会话信任 / 企业信任 | `session-trust-v4.test.ts`, `enterprise-session-trust.test.ts` |
++| App 启动门（`integration/`） | `integration/app-launch-gate.test.ts` |
++
++### 集成 / WS / 守护
++
++| 区域 | 代表文件 |
++|------|----------|
++| WS 鉴权握手 / origin | `integration/ws-auth-handshake.test.ts`, `integration/ws-origin-handshake.test.ts`, `ws-auth-paired-marker.test.ts`, `ws-origin.test.ts` |
++| 往返与锁 | `integration/ws-roundtrip.test.ts`, `integration/server-lock.test.ts` |
++| Daemon CLI | `integration/daemon-cli.test.ts`, `daemon.test.ts` |
++| 健康检查 | `healthz.test.ts` |
++| 崩溃 / abort 孤儿 | `crash-handlers.test.ts`, `m10-abort-orphans.test.ts` |
++| 托盘配对 / Swift 完整性 | `tray-pairing.test.ts`, `swift-tray-integrity.test.ts` |
++
++### Computer Use
++
++大量 `computer-*.test.ts`：policy、executor、session-trust、estop、evidence、preview、coords、danger、rate-limit、self-ui、locate-chain、UIA、Windows adapters、Darwin 注入/前台/降级 capture，以及 TinyClick（tokenizer / preprocess / locator / runtime / session / golden-eval）与 model 管线（manifest / download / admission / license / handlers / states）。
++
++### Host Use / Apps
++
++| 区域 | 代表文件 |
++|------|----------|
++| Host 黑名单 / adapter / nonce / Hello | `host-use-blacklist.test.ts`, `host-use-darwin-*.test.ts`, `host-use-win-*.test.ts`, `host-use-linux-nonce.test.ts` |
++| Apps | `apps-*.test.ts`（handlers / launch / guards / biometric-gate / config / …） |
++
++### Mission Pack / Capability / Netsec
++
++| 区域 | 代表文件 |
++|------|----------|
++| Pack 引擎 / 校验 / 审计 | `packs-engine.test.ts`, `packs-validator.test.ts`, `packs-audit-log.test.ts`, `thread-pack-patch.test.ts` |
++| Workspace / shell·netsec 能力 | `capability-workspace.test.ts`, `capability-shell-netsec.test.ts` |
++| Netsec scope | `netsec-scope.test.ts` |
++
++### Mission Board / Orchestrator
++
++| 区域 | 代表文件 |
++|------|----------|
++| Board schema / service / handback / complete / intent | `board-schema.test.ts`, `board-service.test.ts`, `board-collect-handback.test.ts`, `board-complete.test.ts`, `board-intent-claim.test.ts` |
++| 多 Agent | `orchestrator-tab-lease.test.ts`, `orchestrator-l2-flight.test.ts` |
++
++### MCP
++
++| 区域 | 代表文件 |
++|------|----------|
++| 管理器 / 确认缓存 / 错误提示 | `mcp.test.ts`, `mcp-manager.test.ts`, `mcp-confirm-cache.test.ts`, `mcp-error-hints.test.ts` |
++| 能力门（`integration/`） | `integration/mcp-capability-gate.test.ts`, `integration/mcp-meta-tool-gate.test.ts` |
++
++### Obsidian / 导出 / 线程 / LLM / Skills
++
++| 区域 | 代表文件 |
++|------|----------|
++| Vault 档案 / 索引 / 模板 | `vault-profiler.test.ts`, `vault-index.test.ts`, `vault-templates.test.ts` |
++| 导出合成 / 摘要 | `obsidian-export-compose.test.ts`, `obsidian-summary-compose.test.ts`, `markdown-export.test.ts`, `summary-export.test.ts`, `message-router-summary.test.ts` |
++| 线程 / 历史 | `thread-manager-lock.test.ts`, `threads-history.test.ts`, `history.test.ts` |
++| LLM adapter | `adapter.test.ts`, `adapter-recovery.test.ts`, `adapter-usage.test.ts` |
++| Skills | `skill-engine.test.ts`, `skills.test.ts`, `site-matcher.test.ts` |
++| Bridge / schemas | `bridge.test.ts`, `tool-schemas.test.ts` |
++| 配置 / 日志 | `config.test.ts`, `config-broadcast-redact.test.ts`, `logger-redact.test.ts`, `log-rotation.test.ts` |
++| 文件解析 | `file-parser.test.ts` |
++| HUD（实验） | `hud-protocol.test.ts`, `hud-shell-router.test.ts`, `hud-spike.test.ts` |
++| 设置 Web | `settings-web.test.ts`（串行） |
++
++> **已删除/不存在**：历史上文档曾引用的 `server.test.ts` — **无此文件**；服务端行为覆盖分散在 `security/`（policy）、`integration/`（WS/门禁/MCP gate）、`message-router-*`、`bridge` 等领域测试中。
++
++## Extension 测试地图
++
++路径相对 `chrome-extension/tests/`。**只测纯逻辑**（reducer、工具函数、选择器解析），不挂载 React 组件树。
++
++| 区域 | 代表文件 |
++|------|----------|
++| Side Panel 状态 | `sidepanel-state.test.ts`, `sidepanel-state-security.test.ts`, `stream-thread-gate.test.ts` |
++| 模式 / UI 契约 | `mode-controller.test.ts`, `ui-mode-acceptance.test.ts`, `tokens-helpers.test.ts` |
++| 安全确认转发 / sanitizer | `security-confirmation-forward.test.ts`, `page-sanitizer.test.ts`, `dangerous-apis.test.ts` |
++| Tab / 活动 hostname | `tab-queue.test.ts`, `active-tab-hostname.test.ts` |
++| Context / 模型切换 | `context-strip-logic.test.ts`, `model-switch-logic.test.ts` |
++| Computer 镜像状态 | `computer-task-state.test.ts`, `computer-model-state.test.ts` |
++| Cockpit / Apps 面板逻辑 | `cockpit-window-logic.test.ts`, `apps-panel-logic.test.ts` |
++| NotebookLM | `notebooklm-extractor.test.ts`, `notebooklm-markdown-builder.test.ts`, `notebooklm-selectors.test.ts`, `notebooklm-v12-modules.test.ts` |
++| 其它 | `background-notifications.test.ts`, `image-extract-utils.test.ts`, `selector-js-literal.test.ts`, `use-modal-dialog.test.ts` |
+ 
+ ## 新增测试
+ 
+ ### Companion
+ 
+-1. 在 `companion/tests/` 创建 `your-module.test.ts`
+-2. 使用 `node:test` 的 `test()` 和 `node:assert/strict` 的 `assert`
+-3. 如果需要临时目录，参考 `adapter.test.ts` 的 `fs.mkdtempSync` 模式
+-4. 通过 `await import("../src/your-module")` 动态导入源码
+-5. `before` 中设置 `process.env.HOME = tempHome`，`after` 中 `fs.rmSync(tempHome)`
++1. 在 `companion/tests/`（或 `security/`、`integration/`）创建 `your-module.test.ts`
++2. 使用 `node:test` 的 `test()` / `describe()` 与 `node:assert/strict`
++3. 需要临时目录时参考既有 `fs.mkdtempSync` + `process.env.HOME` 模式（见 adapter / security 套件）
++4. 动态 `import("../src/…")` 加载源码（编译后路径由 tsc 映射）
++5. 共享 setup 可用 `_*-setup.ts`（不会被 `node --test` 主 glob 直接当用例跑）
+ 
+ ### Extension
+ 
+ 1. 在 `chrome-extension/tests/` 创建测试文件
+-2. 测试纯函数（reducer、工具函数），不测试 React 组件
+-3. 如需测试 store，导入 `agentStore` 的 reducer 和 initialState
++2. 只测纯函数与可注入依赖的逻辑；不测完整 React 渲染
++3. Store 相关导入 `agentStore` 的 reducer / initialState
+ 
+ ## 测试原则
+ 
+-- **纯函数优先**：优先测试可独立调用的函数（如 `classifyError`、`createToolResultMessage`）
+-- **边界覆盖**：happy-path + 空输入 + 非法输入 + 边界值
+-- **不测 UI**：React 组件不在此处测试，通过 QA 技能手动验证
+-- **不测外部 API**：LLM 调用通过 mock 或跳过
++- **纯函数优先**：可独立调用的函数（分类错误、序列化、schema 校验、坐标换算）
++- **边界覆盖**：happy-path + 空/非法输入 + 超时/拒绝路径
++- **安全路径必测**：L2 token、白名单、trust 盖章、能力门、WS auth
++- **不测 UI 外观**：React 组件视觉靠手工 / QA
++- **不测真实外部 LLM API**：adapter 测 context 组装与恢复逻辑；外部调用 mock 或跳过
++- **不测未声明的 E2E 浏览器**：CDP 真浏览器 E2E 不在默认 `npm test` 内
+ 
+ ---
+ 
+-*Phase 1 测试补全于 2026-05-29。*
++*文档重梳 Phase 1（2026-07-28）：按 0.3.0 代码树重写测试地图；移除过时 `server.test.ts` 引用。*
+diff --git a/docs/adr/016-mission-board.md b/docs/adr/016-mission-board.md
+index 7ff3c78..8659ee4 100644
+--- a/docs/adr/016-mission-board.md
++++ b/docs/adr/016-mission-board.md
+@@ -1,7 +1,7 @@
+ # ADR-016: MissionBoard（任务黑板）— 结构化 Fact / Intent / Hint 协调层
+ 
+ **日期**: 2026-07-27  
+-**状态**: **Accepted**（决策门禁 must_fix 已写入；**仍尚未实现产品代码** — Task 2/3 须遵守附录 A 硬门）  
++**状态**: **Implemented (P0)** — `companion/src/board/`（schema / `mutateMissionBoard` / intent-claim）+ `board_read` / `board_complete`（及 handback 结构化合并）+ Side Panel `BoardPanel`；附录 A 硬门为实现约束。阶段 3+（Intent 抢占调度、图 UI 等）仍按 §5 后置。决策正文保持锁定。  
+ **相关**:
+ 
+ | 文档 | 角色 |
+@@ -52,11 +52,13 @@ CMspark 已具备：
+ - 单线程即可先用「真板」；多 agent Intent claim 后置。  
+ - community 路径不引入新高危默认工具。
+ 
+-### 1.4 决策门禁
++### 1.4 决策门禁与实现状态
+ 
+-本 ADR 为 **阶段 0 交付物**（见 §5）。**must_fix 未写入本 ADR 之前，不得合入 MissionBoard 产品代码。**  
+-当前：**must_fix 已并入**（见附录 A）；**Task 2/3 可开工**，但实现必须逐项满足附录 A 硬门，否则视为未过门。  
+-实现顺序与综合计划一致：`ADR 锁决策 → schema + handback 硬校验 + Pack 文案同一切片`，拒绝「无校验假板」与「先堆工具再验证场景」。
++本 ADR 为 **阶段 0 交付物**（见 §5）；附录 A 硬门已并入并作为实现验收清单。
++
++**P0 已落地（与代码一致）**：`companion/src/board/`（`schema.ts` / `service.ts` / `intent-claim.ts`）、Thread `mission_board` 字段、`mutateMissionBoard` 序列化写路径、board mode 下 `collect_handback` 结构校验、`board_read` / `board_complete`（L2 + `canComplete`）、审计 `board.*`、Side Panel `BoardPanel.tsx`。
++
++**仍后置**：阶段 3 Intent 抢占 / heartbeat 全量、阶段 4 图可视化与大 Dashboard、阶段 5 AppSec Pack v2 深化。实现须持续满足附录 A；偏离须修订本 ADR。
+ 
+ ---
+ 
+@@ -570,11 +572,11 @@ Cairn Complete   →  board_complete + L2 HITL + canComplete（非模型自批
+ **阶段 1 成功标准**：
+ 
+ - [x] ADR-016 合入 docs（Accepted + 附录 A）  
+-- [ ] 单测绿：schema + handback 拒散文 + trust 写路径 + canComplete  
+-- [ ] 一次 AppSec 对话后 `thread.mission_board.facts.length ≥ 1` **或** 审计的 `empty_complete`  
+-- [ ] 导出/summary 路径含 trust labels（可测）  
+-- [ ] 无 AGPL 依赖；无新高危默认工具；notices + inspiration 文档存在  
+-- [ ] 与 ADR-015 tab lease / L2 无回归  
++- [x] P0 产品代码：`board/` + `board_*` 工具 + `BoardPanel` + handback 结构化合并  
++- [x] 单测：`board-schema` / `board-service` / `board-collect-handback` / `board-complete` / `board-intent-claim` 等  
++- [ ] 导出/summary 路径含 trust labels（可测）— 持续加强  
++- [x] 无 AGPL 依赖；无新高危默认工具；notices + inspiration 文档存在  
++- [x] 与 ADR-015 tab lease / L2 同栈（orchestrator allowlist 闭集）  
+ 
+ ### 阶段 2 — 测量门 ≈ 3–7 天（可与 1 尾部重叠）
+ 
+@@ -606,7 +608,7 @@ Cairn Complete   →  board_complete + L2 HITL + canComplete（非模型自批
+ 2. **Task 2** — Schema + `thread.mission_board` + `mutateMissionBoard` + 单测（合法/非法 Fact、trust reject、空 goal、`tool_verified` id 解析）  
+ 3. **Task 3** — `collect_handback` 结构校验 + 审计 + AppSec Pack 轻改 + `board_complete`/`canComplete` + 手工 1 页验证  
+ 
+-**当前状态**：Task 1 文档 + 门禁修订完成；**Task 2/3 未开工产品代码**（实现时附录 A 为验收清单）。
++**当前状态**：**P0 Implemented** — Task 1（ADR + 门禁）与 Task 2/3（schema / mutate / handback / complete / 单测 + BoardPanel）已落地；阶段 2 测量门与阶段 3+ 仍开放。附录 A 为持续验收清单。
+ 
+ ---
+ 
+@@ -656,6 +658,7 @@ Cairn Complete   →  board_complete + L2 HITL + canComplete（非模型自批
+ |------|------|
+ | 2026-07-27 | **Proposed** 初版：依据 cairn brief + Claude/Pi 评审 + **PRIMARY** synthesis 锁定 §2.3、schema 草案、fold handback、complete=L2、阶段计划 |
+ | 2026-07-27 | **Accepted**：并入决策门 must_fix（MF-1…5 + Pi 硬门）— trust 写路径 REJECT、tool_verified 硬要求、host=orchestrator、Path A 闭集、AGPL 控制、cancel 链顺序、canComplete、Confirm digest、mutate 序列化、注入 delimiter、complete_proposal 非变异、导出 trust、附录 A；配套 notices + inspiration 文档 |
++| 2026-07-28 | **Implemented (P0)**：状态戳记与代码对齐（`board/`、`board_*`、`BoardPanel`）；决策 §2 与附录 A 不变 |
+ 
+ ---
+ 
+diff --git a/docs/architecture.md b/docs/architecture.md
+index 7b59be2..43b6b56 100644
+--- a/docs/architecture.md
++++ b/docs/architecture.md
+@@ -209,7 +209,7 @@ CMspark 的安全模型是**单层、默认拒绝、human-in-the-loop** 的—
+ - `respondFrom` 必须先于 `saveConfig` 完成，且白名单持久化以 `responded === true` 为前提——防非权威响应污染
+ - `tabId` 在 tool executor 入口规范化为 number——防字符串 tabId 让 cache 更新静默跳过
+ 
+-**Extension 侧补充**：`page-sanitizer` 在内容进入 LLM context 前做 ~11 模式 prompt-injection 过滤；`security-token.ts` 管理 evaluate 调用的 HMAC token 颁发。
++**Extension 侧补充**：`page-sanitizer` 在内容进入 LLM context 前做 ~11 模式 prompt-injection 过滤。**HMAC `security_token` 颁发与校验在 Companion**（`security-policy.ts` + `SecurityConfirmationManager`），扩展只转发确认请求/响应，不本地发 token。
+ 
+ **残留风险**（已记录，待后续迭代）：
+ 
+@@ -392,7 +392,7 @@ Side Panel
+ ### 4.1 项目仓库
+ 
+ ```
+-cmsspark/
++cmspark/
+ ├── chrome-extension/                # Extension (Plasmo + React)
+ │   ├── plasmo.config.ts
+ │   ├── src/
+@@ -400,97 +400,98 @@ cmsspark/
+ │   │   │   ├── index.tsx            # 主入口
+ │   │   │   ├── App.tsx              # 根组件
+ │   │   │   ├── components/
+-│   │   │   │   ├── ChatView.tsx     # 聊天视图
+-│   │   │   │   ├── ThreadList.tsx   # 线程列表（可折叠）
+-│   │   │   │   ├── ConnectionStatus.tsx # 连接状态指示
+-│   │   │   │   ├── InputArea.tsx    # 输入区域 + 发送按钮
++│   │   │   │   ├── ChatView.tsx     # 聊天视图（含输入区）
++│   │   │   │   ├── ThreadList.tsx   # 线程列表
+ │   │   │   │   ├── BottomBar.tsx    # 底部上下文栏
+-│   │   │   │   ├── KnowledgeSubPanel.tsx # 知识库子面板
+-│   │   │   │   ├── SkillCraftPanel.tsx   # Skill 创建面板
+-│   │   │   │   ├── SlashCommandPopover.tsx # 斜杠命令弹出框
+-│   │   │   │   └── SettingsSlideout.tsx  # 设置滑出面板
++│   │   │   │   ├── SafetyStrip.tsx  # 安全/确认条
++│   │   │   │   ├── MinimalConfirm.tsx
++│   │   │   │   ├── ContextStrip.tsx
++│   │   │   │   ├── FleetStrip.tsx   # 多 Agent 舰队条
++│   │   │   │   ├── BoardPanel.tsx   # Mission Board（ADR-016）
++│   │   │   │   ├── PacksPanel.tsx   # Mission Pack
++│   │   │   │   ├── McpPanel.tsx / McpServerForm.tsx
++│   │   │   │   ├── AppsPanel.tsx
++│   │   │   │   ├── KnowledgeSubPanel.tsx
++│   │   │   │   ├── SkillCraftPanel.tsx
++│   │   │   │   ├── NotebooklmImporterPanel.tsx
++│   │   │   │   ├── SlashCommandPopover.tsx
++│   │   │   │   ├── SettingsSlideout.tsx
++│   │   │   │   └── mermaid.ts       # Mermaid 渲染（ADR-009）
+ │   │   │   ├── hooks/
+ │   │   │   │   └── useWebSocket.ts  # WS 连接管理
+ │   │   │   ├── store/
+ │   │   │   │   └── agentStore.tsx   # 全局状态 (useReducer + Context)
+-│   │   │   └── types.ts            # 类型定义
++│   │   │   ├── mode/
++│   │   │   │   └── mode-controller.ts
++│   │   │   └── types.ts
+ │   │   ├── background/
+ │   │   │   ├── index.ts             # Service Worker 入口
+-│   │   │   ├── ws-client.ts         # WebSocket 客户端
++│   │   │   ├── ws-client.ts         # WebSocket 客户端（含 auth HMAC）
+ │   │   │   ├── browser-bridge.ts    # CDP/tabs/cookies 操作
+-│   │   │   ├── page-sanitizer.ts    # 页面内容清洗
+-│   │   │   ├── security-token.ts    # 安全令牌管理
+-│   │   │   └── keep-alive.ts        # Alarm keep-alive
++│   │   │   ├── page-sanitizer.ts    # 页面内容清洗（prompt-injection）
++│   │   │   ├── security-confirmation-payload.ts
++│   │   │   ├── cockpit-window.ts    # Confirm Center / Cockpit 窗口
++│   │   │   ├── notebooklm-handler.ts / notebooklm-import-orchestrator.ts
++│   │   │   ├── keep-alive.ts
++│   │   │   └── …
++│   │   ├── cockpit/
++│   │   │   └── CockpitApp.tsx       # 确认台 UI
++│   │   ├── notebooklm/              # NotebookLM 导入（ADR-011–013）
++│   │   ├── tabs/
++│   │   │   └── cockpit.tsx
+ │   │   ├── popup/
+-│   │   │   └── index.tsx            # Popup 页面（连接状态）
++│   │   │   └── index.tsx
+ │   │   └── utils/
+-│   │       ├── config.ts            # 配置管理
+-│   │       └── permissions.ts       # 权限检查
++│   │       ├── config.ts
++│   │       └── permissions.ts
+ │   └── assets/
+-│       └── icons/
+ │
+ ├── companion/                        # cmspark-agent (Node.js CLI)
+ │   ├── package.json
+ │   ├── tsconfig.json
+ │   ├── src/
+-│   │   ├── index.ts                 # CLI 入口 (start/stop/status/daemon)
+-│   │   ├── server.ts                # WebSocket 服务器
+-│   │   ├── server/
+-│   │   │   ├── log-helpers.ts       # 日志辅助
+-│   │   │   └── tool-executor.ts     # Tool 执行逻辑
++│   │   ├── index.ts                 # CLI 入口 (start/stop/status/daemon/tray…)
++│   │   ├── server.ts                # WebSocket 服务器 + tool 执行调度
+ │   │   ├── message-router.ts        # 消息路由（核心调度）
+-│   │   ├── llm/
+-│   │   │   └── adapter.ts           # LLM 适配器（OpenAI SDK + streaming + tool calling）
+-│   │   ├── bridge/
+-│   │   │   ├── tool-definitions.ts  # 30+ 种工具 schema 定义
+-│   │   │   └── tab-resolver.ts      # 标签页解析
+-│   │   ├── skills/
+-│   │   │   ├── skill-engine.ts      # Skill 加载/匹配/注入
+-│   │   │   ├── skill-craft.ts       # 从对话提取 Skill
+-│   │   │   ├── semantic-match.ts    # TF-IDF 语义匹配
+-│   │   │   ├── site-matcher.ts      # 站点知识匹配
+-│   │   │   └── content-sanitizer.ts # 内容清洗
+-│   │   ├── threads/
+-│   │   │   └── thread-manager.ts    # 线程 CRUD + context 构建
+-│   │   ├── history/
+-│   │   │   └── store.ts             # sql.js 操作历史
+-│   │   ├── security.ts              # 危险 API 检测 + 域名匹配 (matchDomain/isTrustedDomain/isAutoApprovedDomain)
+-│   │   ├── security-policy.ts       # 令牌安全策略 (HMAC + constant-time)
+-│   │   ├── security-confirmation.ts # 安全确认队列 (45s 超时 + origin 绑定 + relevantDomains 跟踪)
+-│   │   ├── security/                # (历史: risk-engine/privilege-manager/page-scanner 三层在 2026-06-16 审计后删除 — 见 ADR-006 演进说明)
+-│   │   ├── tray/                    # 系统托盘
+-│   │   │   ├── tray-adapter.ts      # 统一托盘接口
+-│   │   │   ├── swift-tray-bridge.ts # macOS Swift NSStatusBar
+-│   │   │   ├── systray2-bridge.ts   # systray2 跨平台桥接
+-│   │   │   ├── readline-tray.ts     # CLI readline 降级方案
+-│   │   │   ├── companion-client.ts  # 托盘 → Companion 通信
+-│   │   │   ├── Tray.swift           # Swift 原生托盘
+-│   │   │   └── build-tray.sh        # Swift 编译脚本
+-│   │   ├── daemon.ts                # Daemon 模式管理
+-│   │   ├── menu-bar-agent.ts        # 菜单栏 Agent 交互
+-│   │   ├── platform.ts              # 平台检测
+-│   │   ├── logger.ts                # 日志基础设施
+-│   │   ├── config.ts                # 配置管理
+-│   │   └── types/
+-│   │       └── sql.js.d.ts          # sql.js 类型定义
+-│   └── builtin-skills/              # 内置 skills
+-│       ├── writing-skills.md
+-│       ├── grill-me.md
+-│       ├── browse.md
+-│       ├── dynamic-workflow.md
+-│       └── security/                # 安全技能
+-│           ├── prompt-injection-defense.md
+-│           ├── jailbreak-detection.md
+-│           └── instruction-hierarchy.md
++│   │   ├── llm/                     # adapter / llm-extract / vision / text-sanitize
++│   │   ├── bridge/                  # tool-definitions / tool-schemas / tab-resolver
++│   │   ├── skills/                  # skill-engine / skill-craft / semantic-match / site-matcher
++│   │   ├── threads/                 # thread-manager + markdown/summary-export
++│   │   ├── history/store.ts         # sql.js 操作历史
++│   │   ├── security.ts              # 危险 API + matchDomain / trusted / auto_approved
++│   │   ├── security-policy.ts       # HMAC security_token 颁发 + constant-time 校验
++│   │   ├── security-confirmation.ts # L2 确认队列 (~45s + origin 绑定)
++│   │   ├── ws-auth.ts               # WS 配对 / handshake
++│   │   ├── mcp/                     # MCP client/manager/aggregator/transport
++│   │   ├── computer/                # Computer Use（opt-in 桌面操控）
++│   │   ├── host-use/                # Host 读写 / 平台 adapter（darwin/win/linux）
++│   │   ├── apps/                    # 应用枚举 / 启动 / 生物识别门
++│   │   ├── orchestrator/            # Multi-agent：spawn / tab-lease / fleet / L2
++│   │   ├── board/                   # Mission Board（ADR-016）schema + mutate
++│   │   ├── packs/                   # Mission Pack 引擎 + builtin appsec
++│   │   ├── capability/              # enterprise modules / shell / workspace
++│   │   ├── netsec/                  # 端口探测 scope + scan
++│   │   ├── obsidian/                # vault 档案 / 索引 / 模板 / folder-picker
++│   │   ├── hud/                     # HUD 协议 / shell-router（实验）
++│   │   ├── tray/                    # Swift NSStatusBar / systray2 / readline + pairing
++│   │   ├── daemon.ts / menu-bar-agent.ts / platform.ts / config.ts / logger.ts
++│   │   └── …
++│   ├── tests/                       # node:test 套件（见 docs/TESTING.md）
++│   └── builtin-skills/
++│       ├── writing-skills.md / grill-me.md / browse.md / dynamic-workflow.md
++│       └── security/                # prompt-injection / jailbreak / instruction-hierarchy
+ │
+ └── docs/                             # 项目文档
+     ├── architecture.md               # 本文档
+     ├── GOAL.md                       # 项目目标与阶段规划
+-    ├── optimization-roadmap.md       # 优化路线图
+-    ├── adr/                          # 架构决策记录
+-    └── requirements/                 # 需求文档
++    ├── TESTING.md                    # 测试地图
++    ├── mcp.md / mission-pack-usage.md / confirm-center-user-guide.md
++    ├── adr/                          # 架构决策记录（001–016+）
++    └── …
+ ```
+ 
++> **注**：原设计中的 `risk-engine` / `privilege-manager` / `page-scanner` 与 extension 侧 `security-token.ts` **均不存在**于当前树；HMAC 令牌在 companion `security-policy.ts`。详见 §1.5 与 [ADR-006](adr/006-layered-defense.md)。
++
+ ---
+ 
+ ## 5. Obsidian 对话导出

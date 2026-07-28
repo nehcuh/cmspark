@@ -1,0 +1,25 @@
+{
+  "batch": "docs-reorg-p3",
+  "timestamp": "20260728-135229",
+  "claude": {
+    "verdict": "REJECT",
+    "exit_code": 1,
+    "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/docs-reorg-p3-claude-20260728-135229.md"
+  },
+  "pi": {
+    "verdict": "APPROVE",
+    "exit_code": 0,
+    "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/docs-reorg-p3-pi-20260728-135229.md"
+  },
+  "both_approve": false,
+  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/docs-reorg-p3-diff-20260728-135229.patch",
+  "closeout": {
+    "date": "2026-07-28",
+    "claude_reject_kind": "infra_429_quota",
+    "pi": "APPROVE",
+    "adversarial_blocking_fixed": true,
+    "content_gate": "Pi APPROVE + adversarial fix + local verify",
+    "closeout_doc": "docs/audit/reviews/docs-reorg-p3-closeout-2026-07-28.md",
+    "claude_retry_after_cst": "2026-07-28T15:56:26"
+  }
+}

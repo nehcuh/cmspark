@@ -1,6 +1,6 @@
 # CMspark Browser Agent — 项目目标
 
-> 版本: 1.3.0 | 日期: 2026-07-27 | 当前阶段：安全稳定化 MVP（核心已完成）→ 功能扩展中
+> 版本: 1.4.0 | 日期: 2026-07-28 | 当前阶段：安全稳定化 MVP（核心已完成）→ 功能扩展中（产品 0.3.0）
 
 ---
 
@@ -43,6 +43,41 @@
 - **双通道**：`capability_profile: community | enterprise`；shell/netsec 启用需 enterprise。
 - **UI**：Side Panel 底栏「任务包」；工作区须原生「选择工作区」绑定。
 - 使用说明：[mission-pack-usage.md](mission-pack-usage.md)；确认台 / L2：[confirm-center-user-guide.md](confirm-center-user-guide.md)；决策：[ADR-014](adr/014-mission-pack-enterprise-modules.md)。
+
+---
+
+## 已交付功能扩展：MCP 外接工具（0.3.0）
+
+- Companion 作为 MCP 客户端：stdio / HTTP server，工具名 `mcp__<server>__<tool>`。
+- Resources / Prompts 按 server 能力动态暴露；每线程 server 选择与信任级别（manual / first-use / trusted）。
+- Side Panel **MCP 面板**与 `config.json` 的 `mcp` 段同步。
+- 使用说明：[mcp.md](mcp.md)；架构：[architecture.md §8](architecture.md)。
+
+---
+
+## 已交付功能扩展：Computer Use / Host Use / Apps（0.3.0，opt-in）
+
+- **Computer Use**（`host_computer`）：白名单应用窗口坐标键鼠；全局 `computer.coordinateEnabled` + 每应用 `coordinateAllowed` 双开关；任务级 L2 不受 god-mode / auto_approve 跳过；session-trust 可抑 mid-task re-L2，且（显式 opt-in + corpus/预算/actions）可跳过同线程同 App 后续任务 initial L2；danger/experimental/foreground_yielded 始终 prompt；Cockpit 急停。
+- **Host Use**（`host_read` / `host_write`）：Mail/Outlook 等读、Notes/受限 move 等写；写操作生物识别/nonce；opaque TargetId。
+- **Apps**（`host_app`）：用户白名单应用无参 launch；per-app policy（auto/ai/manual）。
+- 平台：macOS / Windows 主路径；Linux 部分 pending。
+- 用户指南：[computer-use-user-guide.md](computer-use-user-guide.md) · [host-and-apps.md](host-and-apps.md)；决策：[ADR-017](adr/017-computer-use.md) · [ADR-018](adr/018-host-use.md)。
+
+---
+
+## 已交付功能扩展：Multi-Agent 编排 + Mission Board（P0，0.3.0）
+
+- **Orchestrator / Worker**：子线程模型；`spawn_worker` 仅 L2；tab 排他 lease；默认 max 5 workers；Worker 硬禁 host/shell/netsec。
+- **Mission Board**：Fact / Intent / Hint 结构化板；`board_read` / `board_complete`；Side Panel `BoardPanel` + FleetStrip。
+- 用户指南：[multi-agent-user-guide.md](multi-agent-user-guide.md)；任务包交叉：[mission-pack-usage §10](mission-pack-usage.md#10-multi-agent编排-worker与任务包)；决策：[ADR-015](adr/015-multi-agent-orchestrator-tab-lock.md) · [ADR-016](adr/016-mission-board.md)。
+
+---
+
+## 已交付功能扩展：NotebookLM 导入（ADR-011–013）
+
+- Side Panel：**NotebookLM 导入器**（URLs / 页面链接 / RSS / YouTube / Thread）+ **离线导出当前页 Markdown**。
+- 在线路径以扩展 DOM 自动化为主（需已登录 NotebookLM）；结果落入用户 Google NotebookLM notebook。
+- 用户指南：[notebooklm-user-guide.md](notebooklm-user-guide.md)；决策：[ADR-011](adr/011-notebooklm-import.md) · [012](adr/012-notebooklm-importer-online.md) · [013](adr/013-notebooklm-importer-v12.md)。
 
 ---
 
@@ -114,13 +149,18 @@ Agent 可以在用户授权下对任意标签页执行全部 26 种工具操作�
 
 ### G8. 安全护栏
 
-- **evaluate/osascript 安全**: 高风险代码在确认队列完成前默认执行前阻断
-- **Cookie 信任域**: 通配符域名匹配（`*.company.com`），域内自由操作，域外阻断或进入确认流程
-- **错误分级**: 可恢复（自动重试上限3次）→ 不可恢复（暂停提示用户）→ 安全（硬阻断）
-- **用户中断**: Stop 按钮随时终止 Agent 执行
-- **多层安全架构**: risk-engine 风险评分 + privilege-manager 三级特权 (readonly/standard/advanced) + security-confirmation 确认队列
-- **越狱检测**: LLM streaming 输出实时检测越狱模式
-- **安全内置技能**: prompt-injection-defense, jailbreak-detection, instruction-hierarchy
+当前生效的是**多门独立门禁**（非已删除的 risk-engine / privilege-manager 三层设计，见 [ADR-006](adr/006-layered-defense.md) 演进说明）：
+
+- **Cookie 信任域**（`trusted_domains`）：通配符匹配（`*.company.com`）；`get_cookies` / `set_cookie` / `delete_cookie` / `list_all_cookies` 域外阻断
+- **L2 确认队列**（`SecurityConfirmationManager`，约 45s 超时）：`evaluate` / `osascript_eval` 等**默认阻断**，经 Side Panel / Confirm Center（Cockpit）人机确认后，由 companion `security-policy` 颁发 HMAC `security_token`（constant-time 校验）才执行；`checkHighRiskExecution` 正则仅作风险预览升级，不单独 gate
+- **导航 URL 门**：非 `http(s)` scheme 直接阻断；hostname 不在 `trusted_domains` ∪ `auto_approved_domains` 时强制确认
+- **域白名单 + 全局自动批准**（[ADR-007](adr/007-domain-whitelist-auto-approve.md)）：`auto_approved_domains`（独立于信任域）跳过工具确认；`security.auto_approve_dangerous` 全局 kill-switch（默认 false，无人值守用）。`osascript_eval` **不走**域白名单，仅全局开关可放行
+- **分级特权 / God Mode**（[ADR-010](adr/010-tiered-privilege-godmode.md)）：会话级信任与能力分层，与 L2 / 企业模块协同，**不是**旧 privilege-manager 三级枚举
+- **Extension 侧**：`page-sanitizer` 在内容进入 LLM context 前做 prompt-injection 过滤
+- **错误分级**：可恢复（自动重试上限 3 次）→ 不可恢复（暂停提示用户）→ 安全（硬阻断）
+- **用户中断**：Stop 按钮随时终止 Agent 执行
+- **越狱检测**：LLM streaming 输出实时检测越狱模式
+- **安全内置技能**：prompt-injection-defense, jailbreak-detection, instruction-hierarchy
 
 ### G9. Side Panel 原生体验
 
@@ -210,6 +250,10 @@ Agent 可以在用户授权下对任意标签页执行全部 26 种工具操作�
 - Pack 平台：install / apply / uninstall + snapshot 回滚 + capability 审计日志
 - 企业模块 opt-in：workspace / shell_exec / netsec（community 默认不开放 shell/netsec）
 - 明确 **非目标**（本阶段）：交互式 PTY、捆绑 nmap、CWS 默认扫描能力
+
+### G20. MCP / Computer·Host Use / Multi-Agent·Board / NotebookLM ✅ 已实现（0.3.0）
+
+- 见上文对应「已交付功能扩展」节；用户文档已入 `docs/*-user-guide.md` 与 `docs/README.md` 导航。
 
 ---
 
