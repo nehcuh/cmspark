@@ -148,18 +148,36 @@ export function clearEstopFlag(deps: EstopCheckDeps = {}): void {
   }
 }
 
-/** Production spawn: detached powershell running computer-estop.ps1. */
+/** Last spawn diagnostic (script missing / spawn error) for ensureEstopHelper reason. */
+let lastSpawnDiag: string | undefined
+
+export function getLastEstopSpawnDiag(): string | undefined {
+  return lastSpawnDiag
+}
+
+/**
+ * Production spawn: powershell running computer-estop.ps1.
+ *
+ * Windows note: `detached: true` makes `powershell -File computer-estop.ps1`
+ * exit immediately (code 1) with no ready.json — verified 2026-07-28. Keep the
+ * helper as a normal child (stdio ignored, windowsHide) so Add-Type + the
+ * heartbeat loop actually run. unref() still lets the event loop idle; helper
+ * lifetime tracks the companion process (desired for kill-switch co-lifetime).
+ */
 export function spawnEstopHelper(scriptPath: string = resolveWinScript("computer-estop.ps1")): void {
+  lastSpawnDiag = undefined
   if (!fs.existsSync(scriptPath)) {
-    // Fail loud into preflight: missing ready file after spawn attempts.
-    console.error(`[estop] computer-estop.ps1 not found: ${scriptPath}`)
+    // Packaged SEA without host-scripts-win/ next to the exe is the common
+    // "ready file missing" root cause — surface the path, not only ENOENT later.
+    lastSpawnDiag = `computer-estop.ps1 not found at ${scriptPath} (stage host-scripts-win next to cmspark-agent.exe)`
+    console.error(`[estop] ${lastSpawnDiag}`)
     return
   }
   const ps = process.env.SystemRoot
     ? path.join(process.env.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
     : "powershell.exe"
   const child = spawn(ps, ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptPath], {
-    detached: true,
+    detached: false,
     stdio: "ignore",
     windowsHide: true,
   })
@@ -170,7 +188,8 @@ export function spawnEstopHelper(scriptPath: string = resolveWinScript("computer
   // preflight's ready-file polling already surfaces "helper never came up" as
   // a fail-closed EMERGENCY_STOP_UNAVAILABLE refusal.
   child.on("error", (err) => {
-    console.error(`[estop] spawn failed: ${err.message} (script=${scriptPath})`)
+    lastSpawnDiag = `spawn failed: ${err.message} (script=${scriptPath})`
+    console.error(`[estop] ${lastSpawnDiag}`)
   })
   child.unref()
 }
@@ -227,6 +246,10 @@ export async function ensureEstopHelper(deps: EnsureEstopDeps = {}): Promise<Est
       last = checkEstopReady(deps)
       if (last.ok) return last
     }
+  }
+  // Attach spawn diag so "script not found" is not masked as ready-file-missing.
+  if (!last.ok && lastSpawnDiag) {
+    return { ...last, reason: `${last.reason ?? "estop helper not ready"}; ${lastSpawnDiag}` }
   }
   return last
 }
