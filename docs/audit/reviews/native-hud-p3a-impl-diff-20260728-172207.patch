@@ -1,0 +1,74 @@
+# Dual external review context
+batch: native-hud-p3a-impl
+base: HEAD
+time: 20260728-172207
+
+014dd53
+
+ M companion/src/tray/swift-tray-bridge.ts
+ M docs/decisions/v1.3/companion-native-hud-n1n10-lock-2026-07-27.md
+ M docs/superpowers/plans/2026-07-27-companion-native-hud-p3a-spike.md
+?? docs/audit/reviews/native-hud-p3a-impl-diff-20260728-172207.patch
+?? docs/decisions/v1.3/companion-native-hud-p3a-spike-ship-note-2026-07-28.md
+
+## Diff (git diff + staged)
+ companion/src/tray/swift-tray-bridge.ts                             | 3 ++-
+ docs/decisions/v1.3/companion-native-hud-n1n10-lock-2026-07-27.md   | 4 +++-
+ docs/superpowers/plans/2026-07-27-companion-native-hud-p3a-spike.md | 6 +++---
+ 3 files changed, 8 insertions(+), 5 deletions(-)
+
+diff --git a/companion/src/tray/swift-tray-bridge.ts b/companion/src/tray/swift-tray-bridge.ts
+index 3b158d9..1f5f53a 100644
+--- a/companion/src/tray/swift-tray-bridge.ts
++++ b/companion/src/tray/swift-tray-bridge.ts
+@@ -46,7 +46,8 @@ import type { HudShellRouter } from "../hud/shell-router"
+ // ---------------------------------------------------------------------------
+ 
+ /** Expected SHA256 of the Swift tray binary (update via build-tray.sh) */
+-const SWIFT_TRAY_SHA256 = "ab183edff34ae211e569a871284fd32d1f389541b038317cba6b78238e499030"
++// Updated 2026-07-28 after P3a HUD source rebuild (HudController in Tray.swift)
++const SWIFT_TRAY_SHA256 = "5929b53c5828c4c27f80cc32f4a93183c1be4933f34807a259c24575197c7af8"
+ 
+ function getSwiftTrayBinPath(): string {
+   const { getSwiftTrayPath } = require("../paths")
+diff --git a/docs/decisions/v1.3/companion-native-hud-n1n10-lock-2026-07-27.md b/docs/decisions/v1.3/companion-native-hud-n1n10-lock-2026-07-27.md
+index d5d128d..d4feadb 100644
+--- a/docs/decisions/v1.3/companion-native-hud-n1n10-lock-2026-07-27.md
++++ b/docs/decisions/v1.3/companion-native-hud-n1n10-lock-2026-07-27.md
+@@ -266,7 +266,9 @@ Before writing production HUD code:
+ - [ ] Owner sign-off (optional formal ack)  
+ - [x] Spike plan: one binary, hydrate, one confirm round-trip, abort, standby message stub → `docs/superpowers/plans/2026-07-27-companion-native-hud-p3a-spike.md`  
+ - [x] Spike **plan** dual-review (Task 0): Claude+Pi both `APPROVE_WITH_NITS` · `native-hud-p3a-spike-plan-verdict-20260727-181620.json` · nits folded into plan  
+-- [ ] Spike **implementation** dual-review (plan Task 7) before dual-track screenshot flood path  
++- [x] Spike **implementation** ship note → `companion-native-hud-p3a-spike-ship-note-2026-07-28.md` (rebuild SHA256 pinned; unit gates green; dual-process checklist partial)  
++- [ ] Spike **implementation** dual-review (plan Task 7 Claude+Pi) before dual-track screenshot flood path — attach `docs/audit/reviews/native-hud-p3a-impl-*`  
++
+ 
+ ---
+ 
+diff --git a/docs/superpowers/plans/2026-07-27-companion-native-hud-p3a-spike.md b/docs/superpowers/plans/2026-07-27-companion-native-hud-p3a-spike.md
+index de29f80..efdf7a5 100644
+--- a/docs/superpowers/plans/2026-07-27-companion-native-hud-p3a-spike.md
++++ b/docs/superpowers/plans/2026-07-27-companion-native-hud-p3a-spike.md
+@@ -606,7 +606,7 @@ case "hud.close":
+ - User closes window → `{"type":"hud.closed","reason":"user"}` — **do not** terminate `NSApplication`
+ - `hud.hydrate` with empty `dual_track.conclusions` / `steps` must be a **no-op** on the rails (do not crash)
+ 
+-- [ ] **Step 4: Build + update hash** — **pending macOS** (`bash companion/src/tray/build-tray.sh` + paste SHA256)
++- [x] **Step 4: Build + update hash** — **DONE 2026-07-28** (`5929b53c…` in `swift-tray-bridge.ts`)
+ 
+ ```bash
+ # Run from repo root. Prefer the SHA256 printed by the build script itself.
+@@ -787,10 +787,10 @@ git commit -m "feat(hud): env-gated spike entry for open/hydrate/confirm/abort"
+ ### Task 7: Ship note + dual-review of **implementation** (not screenshots)
+ 
+ **Files:**
+-- Create: `docs/decisions/v1.3/companion-native-hud-p3a-spike-ship-note-2026-07-27.md`
++- Create: `docs/decisions/v1.3/companion-native-hud-p3a-spike-ship-note-2026-07-28.md`
+ - Update: `docs/decisions/v1.3/companion-native-hud-n1n10-lock-2026-07-27.md` checklist (mark spike plan + spike dual-review)
+ 
+-- [ ] **Step 1: Write ship note** with:
++- [x] **Step 1: Write ship note** with:
+ 
+   - What was proven (S1–S7)  
+   - Measured open latency  

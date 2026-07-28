@@ -606,7 +606,7 @@ case "hud.close":
 - User closes window → `{"type":"hud.closed","reason":"user"}` — **do not** terminate `NSApplication`
 - `hud.hydrate` with empty `dual_track.conclusions` / `steps` must be a **no-op** on the rails (do not crash)
 
-- [ ] **Step 4: Build + update hash** — **pending macOS** (`bash companion/src/tray/build-tray.sh` + paste SHA256)
+- [x] **Step 4: Build + update hash** — **DONE 2026-07-28** (`5929b53c…` in `swift-tray-bridge.ts`)
 
 ```bash
 # Run from repo root. Prefer the SHA256 printed by the build script itself.
@@ -787,10 +787,10 @@ git commit -m "feat(hud): env-gated spike entry for open/hydrate/confirm/abort"
 ### Task 7: Ship note + dual-review of **implementation** (not screenshots)
 
 **Files:**
-- Create: `docs/decisions/v1.3/companion-native-hud-p3a-spike-ship-note-2026-07-27.md`
+- Create: `docs/decisions/v1.3/companion-native-hud-p3a-spike-ship-note-2026-07-28.md`
 - Update: `docs/decisions/v1.3/companion-native-hud-n1n10-lock-2026-07-27.md` checklist (mark spike plan + spike dual-review)
 
-- [ ] **Step 1: Write ship note** with:
+- [x] **Step 1: Write ship note** with:
 
   - What was proven (S1–S7)  
   - Measured open latency  
@@ -798,13 +798,13 @@ git commit -m "feat(hud): env-gated spike entry for open/hydrate/confirm/abort"
   - Go / No-go for **P3a-full** (ConfirmElevated parity + dual-track)  
   - Explicit: screenshot path only if go  
 
-- [ ] **Step 2: Dual-review implementation** (Claude + Pi) against N1–N10 + this plan
+- [x] **Step 2: Dual-review implementation** (Claude + Pi) against N1–N10 + this plan — **2026-07-28 both_ok** (`native-hud-p3a-impl-verdict-20260728-172207.json`)
 
 Prompt focus: race safety, one binary, close≠stop, unknown wire, no scope creep.
 
-- [ ] **Step 3: If APPROVE_WITH_NITS**, fix only spike-critical nits; defer dual-track.
+- [x] **Step 3: If APPROVE_WITH_NITS**, fix only spike-critical nits; defer dual-track. — nits non-blocking (redundant onTerminal fan-out, abort log-only); deferred.
 
-- [ ] **Step 4: Commit docs**
+- [x] **Step 4: Commit docs** — see PR / commit after Task 7
 
 ```bash
 git add docs/decisions/v1.3/companion-native-hud-p3a-spike-ship-note-2026-07-27.md \
