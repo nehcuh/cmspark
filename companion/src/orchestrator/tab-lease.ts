@@ -223,6 +223,14 @@ function countLeasesForHolder(holderThreadId: string): number {
   return n
 }
 
+function heldTabIdsForHolder(holderThreadId: string): number[] {
+  const ids: number[] = []
+  for (const l of leases.values()) {
+    if (l.holderThreadId === holderThreadId && l.state !== "FREE") ids.push(l.tabId)
+  }
+  return ids.sort((a, b) => a - b)
+}
+
 function activeLeaseCount(): number {
   return leases.size
 }
@@ -265,11 +273,15 @@ export function acquireOrRenewTabLease(opts: {
 
   if (!existing) {
     if (countLeasesForHolder(holderThreadId) >= ORCHESTRATOR_CAPS.max_tabs_leased_per_worker) {
+      const held = heldTabIdsForHolder(holderThreadId)
       return {
         ok: false,
         error_code: "TAB_LEASE_CAP",
         tab_id: tabId,
-        error: `worker already holds ${ORCHESTRATOR_CAPS.max_tabs_leased_per_worker} tab leases`,
+        holder_thread_id: holderThreadId,
+        error:
+          `TAB_LEASE_CAP: worker already holds ${ORCHESTRATOR_CAPS.max_tabs_leased_per_worker} tab leases ` +
+          `(tabs [${held.join(", ")}]). close_tab one of those tabs (or list_tab_locks) before leasing tab ${tabId}`,
       }
     }
     if (activeLeaseCount() >= ORCHESTRATOR_CAPS.max_tabs_leased_process) {
@@ -277,7 +289,9 @@ export function acquireOrRenewTabLease(opts: {
         ok: false,
         error_code: "TAB_LEASE_CAP",
         tab_id: tabId,
-        error: `process tab lease cap ${ORCHESTRATOR_CAPS.max_tabs_leased_process} reached`,
+        error:
+          `TAB_LEASE_CAP: process tab lease cap ${ORCHESTRATOR_CAPS.max_tabs_leased_process} reached — ` +
+          `close unused tabs or force-release a lease before leasing tab ${tabId}`,
       }
     }
     if (needsL2) {

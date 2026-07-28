@@ -513,3 +513,39 @@ test("knowledge docs loaded from knowledge/ directory", () => {
   assert.ok(knowledge, "knowledge doc should be loaded from knowledge/ dir")
   assert.equal(knowledge?.type, "domain_knowledge")
 })
+
+test("Obsidian vault types under knowledge/ must not leak into skill.list (Skills vs Know)", () => {
+  // Repro: vault notes keep frontmatter type: goal/task/meeting — old list()
+  // only filtered site_knowledge|domain_knowledge, so Skills panel filled with Know.
+  const knowledgeDir = path.join(getConfigDir(), "knowledge")
+  fs.mkdirSync(path.join(knowledgeDir, "global"), { recursive: true })
+  writeSkillFile(path.join(knowledgeDir, "global"), "vault-goal.md", {
+    name: "2026 weight goal",
+    description: "vault note",
+    type: "goal",
+  }, "# Goal")
+  writeSkillFile(path.join(knowledgeDir, "global"), "vault-task.md", {
+    name: "inbox task",
+    description: "vault task",
+    type: "task",
+  }, "# Task")
+
+  const skillsDir = path.join(getConfigDir(), "skills")
+  fs.mkdirSync(skillsDir, { recursive: true })
+  writeSkillFile(skillsDir, "real-skill.md", {
+    name: "real-skill",
+    description: "a real agent skill",
+    type: "prompt_template",
+  }, "# Skill")
+
+  const engine = new SkillEngine()
+  const skillNames = engine.list().map((s) => s.name)
+  const knowledgeNames = engine.listKnowledge().map((s) => s.name)
+
+  assert.ok(skillNames.includes("real-skill"), "real skills stay in skill.list")
+  assert.ok(!skillNames.includes("2026 weight goal"), "goal note must not appear in Skills")
+  assert.ok(!skillNames.includes("inbox task"), "task note must not appear in Skills")
+  assert.ok(knowledgeNames.includes("2026 weight goal"), "goal note belongs in listKnowledge")
+  assert.ok(knowledgeNames.includes("inbox task"), "task note belongs in listKnowledge")
+  assert.ok(!knowledgeNames.includes("real-skill"), "skills must not appear in knowledge list")
+})

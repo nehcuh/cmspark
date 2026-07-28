@@ -1,11 +1,24 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 
-import { matchSite } from "../src/skills/site-matcher"
+import { matchSite, normalizeHostname } from "../src/skills/site-matcher"
+
+test("normalizeHostname lowercases and strips trailing dots", () => {
+  assert.equal(normalizeHostname("GitHub.com"), "github.com")
+  assert.equal(normalizeHostname("example.com."), "example.com")
+  assert.equal(normalizeHostname("  "), undefined)
+  assert.equal(normalizeHostname(null), undefined)
+})
 
 test("exact match: same hostname matches", () => {
   assert.equal(matchSite("github.com", "github.com"), true)
   assert.equal(matchSite("example.com", "example.com"), true)
+})
+
+test("case-insensitive: Example.com matches site pattern example.com", () => {
+  // Dual-review L1 / N1 — URL bar casing must not break site_knowledge auto-load
+  assert.equal(matchSite("example.com", "Example.com"), true)
+  assert.equal(matchSite("*.GitHub.com", "API.github.com"), true)
 })
 
 test("exact match: different hostname does not match", () => {

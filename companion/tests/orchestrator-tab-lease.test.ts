@@ -88,6 +88,22 @@ test("same holder can renew HARD", () => {
   assert.equal(r.ok, true)
 })
 
+test("TAB_LEASE_CAP lists held tabs and recovery hint", () => {
+  reset()
+  acquireOrRenewTabLease({ tabId: 10, holderThreadId: "w1", needsL2: false })
+  acquireOrRenewTabLease({ tabId: 11, holderThreadId: "w1", needsL2: false })
+  const r = acquireOrRenewTabLease({ tabId: 12, holderThreadId: "w1", needsL2: false })
+  assert.equal(r.ok, false)
+  if (!r.ok) {
+    assert.equal(r.error_code, "TAB_LEASE_CAP")
+    assert.equal(r.holder_thread_id, "w1")
+    assert.match(r.error, /TAB_LEASE_CAP/)
+    assert.match(r.error, /10/)
+    assert.match(r.error, /11/)
+    assert.match(r.error, /close_tab/)
+  }
+})
+
 test("releaseAllLeasesForThread frees all", () => {
   reset()
   acquireOrRenewTabLease({ tabId: 10, holderThreadId: "w1", needsL2: false })

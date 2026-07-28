@@ -13,6 +13,7 @@ import { buildVaultIndex, saveIndex, loadCachedIndex, queryRelatedNotes } from "
 import { detectTemplates, saveTemplates, loadCachedTemplates, pickTemplate } from "./obsidian/vault-templates"
 import { pickFolderNative } from "./obsidian/folder-picker"
 import type { SkillEngine } from "./skills/skill-engine"
+import { normalizeHostname } from "./skills/site-matcher"
 import type { HistoryStore } from "./history/store"
 import { getConfig, saveConfig, replaceMcpServers, setMcpEnabled, isMaskedApiKey } from "./config"
 import { chatCreate, generateThreadTitle } from "./llm/adapter"
@@ -36,6 +37,26 @@ import type {
   McpServerConfig,
   McpServerMeta,
 } from "./mcp/types"
+
+/**
+ * Chat-path hostname for site_knowledge selection only.
+ * Prefer extension-sent hostname; optional url fallback (legacy / other clients).
+ * Never throws on bad url (Claude review L2).
+ */
+function normalizeChatHostname(hostname?: unknown, url?: unknown): string | undefined {
+  if (typeof hostname === "string") {
+    const n = normalizeHostname(hostname)
+    if (n) return n
+  }
+  if (typeof url === "string" && url) {
+    try {
+      return normalizeHostname(new URL(url).hostname)
+    } catch {
+      return undefined
+    }
+  }
+  return undefined
+}
 
 // Per-thread abort controllers for cancelling in-flight LLM requests
 const abortControllers = new Map<string, AbortController>()
@@ -394,7 +415,8 @@ export async function handleMessage(
         const knowledgeMode = thread?.knowledge_selection_mode || "auto"
 
         // Resolve skill IDs based on mode
-        const currentHostname = rest.hostname || (rest.url ? new URL(rest.url).hostname : undefined)
+        // hostname: site_knowledge auto-load only (extension SW sets it; not a trust gate)
+        const currentHostname = normalizeChatHostname(rest.hostname, rest.url)
         const resolvedSkillIds = await services.skillEngine.resolveSkillIdsForThread(
           rest.thread_id,
           skillMode,
@@ -563,12 +585,29 @@ export async function handleMessage(
           }
         }
 
+        // Same skill/knowledge auto-load as chat.create (include site knowledge when hostname set)
+        const skillMode = threadForConfig?.skill_selection_mode || "auto"
+        const knowledgeMode = threadForConfig?.knowledge_selection_mode || "auto"
+        const uploadHostname = normalizeChatHostname(rest.hostname, rest.url)
+        const resolvedSkillIds = await services.skillEngine.resolveSkillIdsForThread(
+          thread_id,
+          skillMode,
+          userMessage,
+          uploadHostname,
+        )
+        const resolvedKnowledgeIds = services.skillEngine.resolveKnowledgeIdsForThread(
+          thread_id,
+          knowledgeMode,
+          uploadHostname,
+        )
+        const allSkillIds = [...new Set([...resolvedSkillIds, ...(rest.skill_ids || [])])]
+
         await chatCreate({
           threadId: thread_id,
           message: userMessage,
           fileContents: finalFileContents,
-          skillIds: rest.skill_ids || [],
-          knowledgeIds: [],
+          skillIds: allSkillIds,
+          knowledgeIds: resolvedKnowledgeIds,
           config: effectiveLLMConfig,
           threadManager: services.threadManager,
           skillEngine: services.skillEngine,
@@ -746,7 +785,7 @@ export async function handleMessage(
         const knowledgeMode = thread?.knowledge_selection_mode || "auto"
 
         // Resolve skill IDs based on mode
-        const currentHostname = rest.hostname || (rest.url ? new URL(rest.url).hostname : undefined)
+        const currentHostname = normalizeChatHostname(rest.hostname, rest.url)
         const resolvedSkillIds = await services.skillEngine.resolveSkillIdsForThread(
           thread_id,
           skillMode,

@@ -83,10 +83,36 @@ export class SkillEngine {
     this.rebuildKnowledgeChunks()
   }
 
+  /**
+   * Knowledge vs skill separation.
+   * Knowledge docs live under knowledge/{global,sites}/ and may use Obsidian
+   * frontmatter types (goal/task/meeting/…) — not only site_knowledge /
+   * domain_knowledge. Classifying by path (plus classic knowledge types for
+   * legacy files under skills/) keeps Skills panel free of vault notes.
+   */
+  private isUnderKnowledgeDir(sourceFile: string): boolean {
+    try {
+      const src = path.resolve(sourceFile)
+      const root = path.resolve(this.knowledgeDir)
+      return src === root || src.startsWith(root + path.sep)
+    } catch {
+      return false
+    }
+  }
+
+  private isKnowledgeDoc(skill: Pick<Skill, "type" | "source_file">): boolean {
+    if (this.isUnderKnowledgeDir(skill.source_file)) return true
+    return skill.type === "site_knowledge" || skill.type === "domain_knowledge"
+  }
+
+  private isSkillDoc(skill: Pick<Skill, "type" | "source_file">): boolean {
+    return !this.isKnowledgeDoc(skill)
+  }
+
   private rebuildKnowledgeChunks(): void {
     this.knowledgeChunks.clear()
     for (const skill of this.skillsCache) {
-      if (skill.type !== "site_knowledge" && skill.type !== "domain_knowledge") continue
+      if (!this.isKnowledgeDoc(skill)) continue
       const chunked = chunkFile(skill.name, skill.content, KNOWLEDGE_SEARCH_THRESHOLD_TOKENS)
       // Only store chunks if the doc is actually large enough to need splitting
       if (chunked.chunks.length > 1 || chunked.totalTokens > KNOWLEDGE_SEARCH_THRESHOLD_TOKENS) {
@@ -186,7 +212,7 @@ export class SkillEngine {
 
   list(): SkillMeta[] {
     return this.skillsCache
-      .filter(s => s.type !== "site_knowledge" && s.type !== "domain_knowledge")
+      .filter(s => this.isSkillDoc(s))
       .map(s => ({
         name: s.name,
         description: s.description,
@@ -322,9 +348,11 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
   async matchSkills(message: string): Promise<Array<{ name: string; confidence: number }>> {
     const queryTokens = tokenize(message)
     const queryVec = tokensToVec(queryTokens)
+    // Only match real skills — vault/knowledge notes must not rank into skill auto-match
+    const skillPool = this.skillsCache.filter(s => this.isSkillDoc(s))
 
     const results: Array<{ name: string; confidence: number }> = []
-    for (const skill of this.skillsCache.values()) {
+    for (const skill of skillPool) {
       const skillText = `${skill.name} ${skill.description || ""} ${(skill.tags || []).join(" ")}`
       const skillTokens = tokenize(skillText)
       const skillVec = tokensToVec(skillTokens)
@@ -343,7 +371,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
     }
 
     // Low confidence → LLM semantic re-ranking (precise)
-    const candidates = this.skillsCache.filter(s => {
+    const candidates = skillPool.filter(s => {
       const skillText = `${s.name} ${s.description || ""} ${(s.tags || []).join(" ")}`
       const skillTokens = tokenize(skillText)
       const skillVec = tokensToVec(skillTokens)
@@ -359,7 +387,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
 
   /** Resolve skill IDs for a thread based on the selection mode.
    * - auto: active ∪ matchSkills(message) ∪ getBySite(hostname)
-   * - all: all non-site_knowledge/domain_knowledge skills
+   * - all: all skill docs (excludes knowledge/ vault notes)
    * - manual: active only */
   async resolveSkillIdsForThread(
     threadId: string,
@@ -370,32 +398,36 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
     const resolvedMode = mode || "auto"
 
     if (resolvedMode === "manual") {
-      return this.getActiveForThread(threadId).map(s => s.name)
+      return this.getActiveForThread(threadId)
+        .filter(s => this.isSkillDoc(s))
+        .map(s => s.name)
     }
 
     if (resolvedMode === "all") {
       return this.skillsCache
-        .filter(s => s.type !== "site_knowledge" && s.type !== "domain_knowledge")
+        .filter(s => this.isSkillDoc(s))
         .map(s => s.name)
     }
 
     // auto mode (default)
-    const active = this.getActiveForThread(threadId).map(s => s.name)
+    const active = this.getActiveForThread(threadId)
+      .filter(s => this.isSkillDoc(s))
+      .map(s => s.name)
     const matched = message ? (await this.matchSkills(message)).map(m => m.name) : []
+    // getBySite returns site_knowledge experience skills (legacy under skills/ or knowledge/)
     const site = hostname ? this.getBySite(hostname).map(s => s.name) : []
     return [...new Set([...active, ...matched, ...site])]
   }
 
-  /** Get active knowledge (site_knowledge/domain_knowledge) for a thread.
-   * Reads from thread's active_skill_ids that match knowledge types. */
+  /** Get active knowledge docs for a thread (knowledge/ tree + classic knowledge types). */
   getActiveKnowledgeForThread(threadId: string): Skill[] {
     const active = this.getActiveForThread(threadId)
-    return active.filter(s => s.type === "site_knowledge" || s.type === "domain_knowledge")
+    return active.filter(s => this.isKnowledgeDoc(s))
   }
 
   /** Resolve knowledge IDs for a thread based on the selection mode.
    * - auto: activeKnowledge ∪ getBySite(hostname)  (union, deduped)
-   * - all: all site_knowledge / domain_knowledge names
+   * - all: all knowledge docs
    * - manual: activeKnowledge only (pure user selection) */
   resolveKnowledgeIdsForThread(
     threadId: string,
@@ -410,7 +442,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
 
     if (resolvedMode === "all") {
       return this.skillsCache
-        .filter(s => s.type === "site_knowledge" || s.type === "domain_knowledge")
+        .filter(s => this.isKnowledgeDoc(s))
         .map(s => s.name)
     }
 
@@ -448,8 +480,8 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
       parts.push(`## Safety Guard: ${s.name}\n${s.content}`)
     }
 
-    const promptSkills = skills.filter(s => s.type !== "site_knowledge" && s.type !== "domain_knowledge")
-    const experienceSkills = skills.filter(s => s.type === "site_knowledge" || s.type === "domain_knowledge")
+    const promptSkills = skills.filter(s => this.isSkillDoc(s))
+    const experienceSkills = skills.filter(s => this.isKnowledgeDoc(s))
 
     // Experience skills: inject entry summaries directly (no use_skill needed)
     for (const s of experienceSkills) {
@@ -470,12 +502,16 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
       // Inject only the specified knowledge docs
       for (const k of knowledgeToInject) {
         if (injectedNames.has(k.name)) continue
-        // Skip non-knowledge types
-        if (k.type !== "site_knowledge" && k.type !== "domain_knowledge") continue
+        if (!this.isKnowledgeDoc(k)) continue
         const summary = this.getEntriesSummary(k.name) || this.getKnowledgeSummary(k, query)
         if (summary) {
           injectedNames.add(k.name)
-          const label = k.type === "site_knowledge" ? `Site: ${k.site || k.name}` : `Domain: ${k.name}`
+          const label =
+            k.type === "site_knowledge"
+              ? `Site: ${k.site || k.name}`
+              : k.type === "domain_knowledge"
+                ? `Domain: ${k.name}`
+                : `Knowledge: ${k.name}`
           parts.push(`## ${label}\n${summary}`)
         }
       }
@@ -519,10 +555,9 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
   /** Get all global knowledge docs from knowledge/global/ directory. */
   private getGlobalKnowledge(): Skill[] {
     return this.skillsCache.filter(s => {
-      if (s.type !== "site_knowledge" && s.type !== "domain_knowledge") return false
-      // Global knowledge: no site field, or stored in knowledge/global/
-      if (!s.site) return true
-      return false
+      if (!this.isKnowledgeDoc(s)) return false
+      // Global knowledge: no site field (site-scoped lives under knowledge/sites/ or has site:)
+      return !s.site
     })
   }
 
@@ -877,7 +912,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
 
   listKnowledge(): SkillMeta[] {
     return this.skillsCache
-      .filter(s => s.type === "site_knowledge" || s.type === "domain_knowledge")
+      .filter(s => this.isKnowledgeDoc(s))
       .map(s => ({
         name: s.name,
         description: s.description,
@@ -995,7 +1030,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
     const skill = this.get(name)
     if (!skill) throw new Error(`Knowledge not found: ${name}`)
     if (skill.builtin) throw new Error(`Cannot delete builtin knowledge: ${name}`)
-    if (skill.type !== "site_knowledge" && skill.type !== "domain_knowledge") {
+    if (!this.isKnowledgeDoc(skill)) {
       throw new Error(`'${name}' is not a knowledge doc`)
     }
 
