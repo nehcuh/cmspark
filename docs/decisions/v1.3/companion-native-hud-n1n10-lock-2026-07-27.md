@@ -266,7 +266,9 @@ Before writing production HUD code:
 - [ ] Owner sign-off (optional formal ack)  
 - [x] Spike plan: one binary, hydrate, one confirm round-trip, abort, standby message stub → `docs/superpowers/plans/2026-07-27-companion-native-hud-p3a-spike.md`  
 - [x] Spike **plan** dual-review (Task 0): Claude+Pi both `APPROVE_WITH_NITS` · `native-hud-p3a-spike-plan-verdict-20260727-181620.json` · nits folded into plan  
-- [ ] Spike **implementation** dual-review (plan Task 7) before dual-track screenshot flood path  
+- [x] Spike **implementation** ship note → `companion-native-hud-p3a-spike-ship-note-2026-07-28.md` (rebuild SHA256 pinned; unit gates green; dual-process checklist partial)  
+- [x] Spike **implementation** dual-review (plan Task 7): Claude `APPROVE_WITH_NITS` + Pi `APPROVE` · `docs/audit/reviews/native-hud-p3a-impl-verdict-20260728-172207.json` · nits non-blocking (deferred)
+
 
 ---
 

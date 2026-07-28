@@ -1,0 +1,8 @@
+{
+  "batch": "native-hud-p3a-impl",
+  "timestamp": "20260728-172207",
+  "claude": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/native-hud-p3a-impl-claude-20260728-172207.md" },
+  "pi": { "verdict": "APPROVE", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/native-hud-p3a-impl-pi-20260728-172207.md" },
+  "both_approve": true,
+  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/native-hud-p3a-impl-diff-20260728-172207.patch"
+}
