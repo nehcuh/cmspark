@@ -687,6 +687,16 @@ export function classifyError(errorMessage: string, context?: { toolName?: strin
     "pick a folder first",
     "module_disabled",
     "workspace path must come from",
+    // Filesystem missing path (Node raw: "ENOENT: no such file or directory, stat …").
+    // Note: "not found" above does NOT match "no such file" — they are different
+    // English. Without these, workspace_read_file / MCP filesystem on a missing
+    // path kills the whole turn as chat.error "不可恢复错误" (thread n2486l).
+    "enoent",
+    "no such file",
+    "file not found",
+    // workspace_read_file on a directory (agent path typo) — list_dir and retry
+    "not a file",
+    "path is not a directory",
     // ADR-015 tab lease: LLM can close_tab / list_tab_locks and retry (not fatal)
     "tab_lease_cap",
     "already holds",

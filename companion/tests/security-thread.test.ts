@@ -261,6 +261,29 @@ test("classifyError workspace_root not set is recoverable (Mission Pack DevSec)"
   assert.equal(classifyError("module_disabled:devsec-workspace"), "recoverable")
 })
 
+test("classifyError ENOENT / no such file is recoverable (workspace missing path)", () => {
+  // Regression n2486l: workspace_read_file on a non-existent path returned
+  // raw Node "ENOENT: no such file or directory, stat '…'" which defaulted to
+  // non_recoverable → chat.error "不可恢复错误" and killed the turn.
+  // "not found" does NOT match "no such file" — keep both explicit.
+  assert.equal(
+    classifyError(
+      "ENOENT: no such file or directory, stat '/Users/huchen/Downloads/tmp/test.txt'",
+      { toolName: "workspace_read_file" },
+    ),
+    "recoverable",
+  )
+  assert.equal(classifyError("no such file or directory"), "recoverable")
+  assert.equal(classifyError("ENOENT"), "recoverable")
+  assert.equal(
+    classifyError(
+      "file not found: test.txt (list the directory with workspace_list_dir and pick an existing path)",
+      { toolName: "workspace_read_file" },
+    ),
+    "recoverable",
+  )
+})
+
 test("classifyError osascript missing url/expression is recoverable (not chat-killing)", () => {
   // Regression l74du8: LLM often omitted url; runtime error was default non_recoverable
   // → "不可恢复错误: url and expression required" and the whole turn stopped.

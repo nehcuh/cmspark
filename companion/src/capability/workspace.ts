@@ -136,6 +136,15 @@ export function workspaceReadFile(
   if (!resolved.ok) return { success: false, error: resolved.error }
 
   try {
+    if (!fs.existsSync(resolved.abs)) {
+      // Agent-friendly message (matches classifyError recoverable "file not found" /
+      // "not found") — avoid raw Node "ENOENT: no such file or directory, stat …"
+      // which used to kill the turn as non_recoverable (thread n2486l).
+      return {
+        success: false,
+        error: `file not found: ${relPath || "."} (list the directory with workspace_list_dir and pick an existing path)`,
+      }
+    }
     const st = fs.statSync(resolved.abs)
     if (!st.isFile()) return { success: false, error: "not a file" }
     if (st.size > MAX_READ_BYTES) {
@@ -158,6 +167,13 @@ export function workspaceReadFile(
       },
     }
   } catch (e: any) {
+    const code = e?.code as string | undefined
+    if (code === "ENOENT") {
+      return {
+        success: false,
+        error: `file not found: ${relPath || "."} (list the directory with workspace_list_dir and pick an existing path)`,
+      }
+    }
     return { success: false, error: e?.message || String(e) }
   }
 }

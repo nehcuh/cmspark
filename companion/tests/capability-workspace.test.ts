@@ -53,6 +53,17 @@ test("list and read under workspace", () => {
   assert.equal(read.data.content, "content-a")
 })
 
+test("read missing file returns agent-friendly error (not raw ENOENT)", () => {
+  // Regression n2486l: missing path used to surface Node's
+  // "ENOENT: no such file or directory, stat …" and kill the chat turn.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "wsroot-miss-"))
+  const read = workspace.workspaceReadFile(root, "test.txt")
+  assert.equal(read.success, false)
+  assert.match(read.error || "", /file not found/i)
+  assert.doesNotMatch(read.error || "", /ENOENT/i)
+  assert.doesNotMatch(read.error || "", /, stat /i)
+})
+
 test("module gate blocks when disabled", () => {
   saveConfig({
     modules: {
