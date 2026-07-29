@@ -191,6 +191,34 @@ export function BottomBar({ capabilityLevel }: { capabilityLevel: CapabilityLeve
     loadPanelData(id, state.activeThreadId, dispatch)
   }
 
+  const closePanel = () => {
+    setActivePanel(null)
+    setMoreOpen(false)
+    setMoreMenuPos(null)
+  }
+
+  // Esc collapses any open context panel (overflow or primary) without hunting the tab.
+  useEffect(() => {
+    if (!activePanel) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return
+      // Don't steal Esc from inputs that use it for clear/cancel
+      const tag = (e.target as HTMLElement | null)?.tagName
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return
+      e.preventDefault()
+      closePanel()
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [activePanel])
+
+  const activeTabDef = activePanel
+    ? ALL_TABS.find((t) => t.id === activePanel) ?? null
+    : null
+  /** Overflow panel open → promote a temporary tab so user can click once to collapse. */
+  const overflowActiveTab =
+    activePanel && overflowIds.includes(activePanel) ? activeTabDef : null
+
   // Fixed-position menu: escapes overflow + paints above InputArea (z-index 1000).
   const moreMenuEl =
     moreOpen && overflowTabs.length > 0 && moreMenuPos ? (
@@ -204,6 +232,25 @@ export function BottomBar({ capabilityLevel }: { capabilityLevel: CapabilityLeve
         }}
         role="menu"
       >
+        {activePanel && (
+          <button
+            type="button"
+            role="menuitem"
+            style={{
+              ...styles.moreItem,
+              color: tokens.textSecondary,
+              borderBottom: `1px solid ${tokens.border}`,
+              borderRadius: 0,
+              marginBottom: 2,
+              paddingBottom: 10,
+            }}
+            onClick={closePanel}
+          >
+            <span aria-hidden>⌃</span>
+            <span>收起面板</span>
+            <span style={{ marginLeft: "auto", fontSize: 10, opacity: 0.7 }}>Esc</span>
+          </button>
+        )}
         {overflowTabs.map((tab) => {
           const Icon = tab.Icon
           const active = activePanel === tab.id
@@ -220,6 +267,7 @@ export function BottomBar({ capabilityLevel }: { capabilityLevel: CapabilityLeve
             >
               <Icon size={14} />
               <span>{tab.label}</span>
+              {active && <span style={{ marginLeft: "auto", fontSize: 10 }}>收起</span>}
             </button>
           )
         })}
@@ -229,33 +277,9 @@ export function BottomBar({ capabilityLevel }: { capabilityLevel: CapabilityLeve
   const moreBtnActive =
     moreOpen || (activePanel != null && !allowedIds.has(activePanel))
 
-  // L2 with no primary tabs and collapsed more: hide entire bar to free vertical space
-  if (isL2 && tabs.length === 0 && !activePanel && !moreOpen) {
-    return (
-      <div style={styles.container}>
-        <div style={{ ...styles.tabs, justifyContent: "flex-end" }}>
-          <div ref={moreRef} style={styles.moreAnchor}>
-            <button
-              ref={moreBtnRef}
-              type="button"
-              style={styles.moreBtn}
-              title="更多面板（任务包 / 任务板等）"
-              aria-expanded={moreOpen}
-              onClick={toggleMore}
-            >
-              <IconMore size={14} />
-              <span>更多</span>
-            </button>
-          </div>
-        </div>
-        {moreMenuEl}
-      </div>
-    )
-  }
-
-  return (
-    <div style={styles.container}>
-      <div style={styles.tabs}>
+  const renderTabBar = (opts: { justifyEnd?: boolean } = {}) => (
+    <div style={{ ...styles.tabs, ...(opts.justifyEnd ? { justifyContent: "flex-end" } : {}) }}>
+      {!opts.justifyEnd && (
         <div style={styles.tabsScroll}>
           {tabs.map((tab) => {
             const active = activePanel === tab.id
@@ -278,36 +302,93 @@ export function BottomBar({ capabilityLevel }: { capabilityLevel: CapabilityLeve
               </button>
             )
           })}
+          {/* Overflow panel: show as a real tab so collapse = one click (same as primary tabs) */}
+          {overflowActiveTab && (() => {
+            const Icon = overflowActiveTab.Icon
+            return (
+              <button
+                key={`overflow-active-${overflowActiveTab.id}`}
+                type="button"
+                style={{
+                  ...styles.tabBtn,
+                  background: tokens.bgActive,
+                  color: tokens.accent,
+                  borderColor: "#bfdbfe",
+                  boxShadow: tokens.shadowSm,
+                }}
+                title={`收起「${overflowActiveTab.label}」`}
+                onClick={() => openPanel(overflowActiveTab.id)}
+              >
+                <Icon size={14} />
+                <span>{overflowActiveTab.label}</span>
+                <span style={styles.tabCloseHint} aria-hidden>
+                  ×
+                </span>
+              </button>
+            )
+          })()}
         </div>
-        {overflowTabs.length > 0 && (
-          <div ref={moreRef} style={styles.moreAnchor}>
-            <button
-              ref={moreBtnRef}
-              type="button"
-              style={{
-                ...styles.moreBtn,
-                ...(moreBtnActive
-                  ? {
-                      background: tokens.bgActive,
-                      color: tokens.accent,
-                      borderColor: "#bfdbfe",
-                    }
-                  : {}),
-              }}
-              title="任务包、任务板等低频入口"
-              aria-expanded={moreOpen}
-              onClick={toggleMore}
-            >
-              <IconMore size={14} />
-              <span>更多</span>
-            </button>
-          </div>
-        )}
+      )}
+      {overflowTabs.length > 0 && (
+        <div ref={moreRef} style={styles.moreAnchor}>
+          <button
+            ref={moreBtnRef}
+            type="button"
+            style={{
+              ...styles.moreBtn,
+              ...(moreBtnActive
+                ? {
+                    background: tokens.bgActive,
+                    color: tokens.accent,
+                    borderColor: "#bfdbfe",
+                  }
+                : {}),
+            }}
+            title={
+              overflowActiveTab
+                ? `更多面板（当前：${overflowActiveTab.label}）。点左侧标签或 Esc 可收起`
+                : "任务包、任务板等低频入口"
+            }
+            aria-expanded={moreOpen}
+            onClick={toggleMore}
+          >
+            <IconMore size={14} />
+            <span>更多</span>
+          </button>
+        </div>
+      )}
+    </div>
+  )
+
+  // L2 with no primary tabs and collapsed more: hide entire bar to free vertical space
+  if (isL2 && tabs.length === 0 && !activePanel && !moreOpen) {
+    return (
+      <div style={styles.container}>
+        {renderTabBar({ justifyEnd: true })}
+        {moreMenuEl}
       </div>
+    )
+  }
+
+  return (
+    <div style={styles.container}>
+      {renderTabBar()}
       {moreMenuEl}
 
       {activePanel && (
         <div style={styles.panel}>
+          <div style={styles.panelHeader}>
+            <span style={styles.panelTitle}>{activeTabDef?.label ?? activePanel}</span>
+            <button
+              type="button"
+              style={styles.panelCloseBtn}
+              title="收起面板 (Esc)"
+              aria-label="收起面板"
+              onClick={closePanel}
+            >
+              收起
+            </button>
+          </div>
           {activePanel === "tabs" && <TabsPanel />}
           {activePanel === "history" && <HistoryPanel />}
           {activePanel === "skills" && <SkillsPanel />}
@@ -636,7 +717,7 @@ function SkillsPanel() {
           <input
             style={styles.urlImportInput}
             type="text"
-            placeholder="~/.config/skills/slash-evaluate"
+            placeholder="~/.claude/skills/datayes-api-search 或绝对路径"
             value={pathInput}
             onChange={(e) => setPathInput(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && handlePathImport()}
@@ -903,6 +984,43 @@ const styles: Record<string, React.CSSProperties> = {
     // the policy row under an unfiltered candidate list (direct pick looked dead).
     maxHeight: 320,
     overflowY: "auto",
+  },
+  /** Sticky chrome so「收起」stays visible while scrolling long panels (skills / packs). */
+  panelHeader: {
+    position: "sticky",
+    top: 0,
+    zIndex: 2,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+    padding: "6px 12px",
+    background: tokens.bgElevated,
+    borderBottom: `1px solid ${tokens.border}`,
+  },
+  panelTitle: {
+    fontSize: 12,
+    fontWeight: 600,
+    color: tokens.text,
+    fontFamily: tokens.font,
+  },
+  panelCloseBtn: {
+    border: `1px solid ${tokens.border}`,
+    borderRadius: tokens.radiusPill,
+    background: tokens.bgMuted,
+    color: tokens.textSecondary,
+    fontSize: 11,
+    fontWeight: 500,
+    padding: "3px 10px",
+    cursor: "pointer",
+    fontFamily: tokens.font,
+    flexShrink: 0,
+  },
+  tabCloseHint: {
+    fontSize: 13,
+    lineHeight: 1,
+    opacity: 0.65,
+    marginLeft: 2,
   },
   panelContent: {
     padding: "10px 12px",
