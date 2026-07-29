@@ -6,9 +6,22 @@ import * as fs from "fs"
 import * as path from "path"
 import { getModule, requireModule } from "./modules"
 import { appendCapabilityAudit } from "../packs/audit-log"
+import { getUserEnvVars } from "../user-env"
 
 const MAX_OUTPUT = 200_000
 const DEFAULT_TIMEOUT_MS = 60_000
+
+/**
+ * Child env for shell_exec (ADR-019).
+ * Merge order: process.env → user_env → force CMSPARK_SHELL (cannot be overridden by user).
+ */
+export function buildChildEnv(): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    ...getUserEnvVars(),
+    CMSPARK_SHELL: "1",
+  }
+}
 
 export function commandAllowedByPolicy(command: string): { ok: true } | { ok: false; error: string } {
   const mod = getModule("shell")
@@ -74,7 +87,7 @@ export async function shellExec(opts: {
     const child = spawn(command, {
       shell: true,
       cwd,
-      env: { ...process.env, CMSPARK_SHELL: "1" },
+      env: buildChildEnv(),
     })
 
     let stdout = ""

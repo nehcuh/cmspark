@@ -1,0 +1,1556 @@
+# Dual external review context
+batch: user-env-g2
+base: a6eed4088f6bff2d2de3b26da89e29a5c9c94511
+time: 20260729-143732
+
+b4c8460
+
+?? .grok/workflows/user-env-with-gates.rhai
+?? docs/audit/reviews/user-env-g1-claude-20260729-141517.md
+?? docs/audit/reviews/user-env-g1-diff-20260729-141517.patch
+?? docs/audit/reviews/user-env-g1-pi-20260729-141517.md
+?? docs/audit/reviews/user-env-g1-verdict-20260729-141517.json
+?? docs/audit/reviews/user-env-g2-claude-20260729-143215.md
+?? docs/audit/reviews/user-env-g2-diff-20260729-143215.patch
+?? docs/audit/reviews/user-env-g2-diff-20260729-143732.patch
+
+## Diff (git diff + staged)
+ chrome-extension/src/background/index.ts           |   4 +
+ .../src/sidepanel/components/SettingsSlideout.tsx  |   8 +
+ .../src/sidepanel/components/UserEnvSection.tsx    | 321 ++++++++++++++++++++
+ .../src/sidepanel/hooks/useWebSocket.ts            |  27 ++
+ .../src/sidepanel/store/agentStore.tsx             |  24 +-
+ chrome-extension/src/sidepanel/types.ts            |  21 ++
+ .../src/sidepanel/utils/user-env-utils.ts          |  86 ++++++
+ chrome-extension/tests/sidepanel-state.test.ts     |   5 +-
+ chrome-extension/tests/user-env-utils.test.ts      | 102 +++++++
+ chrome-extension/tsconfig.test.json                |   1 +
+ companion/src/capability/shell.ts                  |  15 +-
+ companion/src/mcp/transport.ts                     |  14 +-
+ companion/src/message-router.ts                    |  59 ++++
+ companion/src/user-env.ts                          | 332 +++++++++++++++++++++
+ companion/tests/user-env.test.ts                   | 272 +++++++++++++++++
+ 15 files changed, 1283 insertions(+), 8 deletions(-)
+
+diff --git a/chrome-extension/src/background/index.ts b/chrome-extension/src/background/index.ts
+index 1ed6933..3dc38db 100644
+--- a/chrome-extension/src/background/index.ts
++++ b/chrome-extension/src/background/index.ts
+@@ -854,6 +854,10 @@ function setupMessageHandlers() {
+       case "mcp.delete":
+       case "mcp.toggle_server":
+       case "mcp.set_selection":
++      // ADR-019 user-env / Secrets (auth-gated companion handlers; never store values here)
++      case "user_env.list":
++      case "user_env.set":
++      case "user_env.delete":
+       case "apps.list":
+       case "apps.enumerate":
+       case "apps.add":
+diff --git a/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx b/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx
+index 438aa61..d74900c 100644
+--- a/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx
++++ b/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx
+@@ -4,6 +4,7 @@ import { useState, useEffect } from "react"
+ import { useAgentStore } from "../store/agentStore"
+ import { Modal } from "./ui/Modal"
+ import { tokens } from "../ui/tokens"
++import { UserEnvSection } from "./UserEnvSection"
+ // WP5-I4 实验功能段:组件纯渲染,文案/判定全部来自 logic 纯函数(镜像
+ // companion 单一真源);发送固定 source:"settings"(companion 双层围栏)。
+ import {
+@@ -286,6 +287,13 @@ export function SettingsSlideout() {
+             )}
+           </div>
+ 
++          <div style={styles.divider} />
++
++          {/* --- User env / Secrets (ADR-019) — independent of bottom config Save --- */}
++          <UserEnvSection />
++
++          <div style={styles.divider} />
++
+           {/* --- Obsidian Export --- */}
+           <div style={styles.sectionTitle}>Obsidian 导出</div>
+           <div style={styles.field}>
+diff --git a/chrome-extension/src/sidepanel/components/UserEnvSection.tsx b/chrome-extension/src/sidepanel/components/UserEnvSection.tsx
+new file mode 100644
+index 0000000..fa3c8e4
+--- /dev/null
++++ b/chrome-extension/src/sidepanel/components/UserEnvSection.tsx
+@@ -0,0 +1,321 @@
++// ADR-019 Settings section: 环境变量（Secrets）
++// Companion is the sole source of truth. UI only shows names + mask (*** / 已配置).
++// Each row saves independently via user_env.set — not the bottom config Save.
++
++import { useEffect, useState, type CSSProperties } from "react"
++import { useAgentStore } from "../store/agentStore"
++import { tokens } from "../ui/tokens"
++import {
++  USER_ENV_MASK,
++  USER_ENV_NAME_CHIPS,
++  validateUserEnvKeyName,
++} from "../utils/user-env-utils"
++
++const fieldStyle: CSSProperties = { marginBottom: 16 }
++const labelStyle: CSSProperties = {
++  display: "block",
++  fontSize: 12,
++  fontWeight: 500,
++  color: "#333",
++  marginBottom: 4,
++}
++const inputStyle: CSSProperties = {
++  width: "100%",
++  padding: "6px 10px",
++  border: "1px solid #ddd",
++  borderRadius: 6,
++  fontSize: 13,
++  fontFamily: "monospace",
++  outline: "none",
++  boxSizing: "border-box",
++}
++const helpStyle: CSSProperties = {
++  marginTop: 6,
++  fontSize: 11,
++  color: "#777",
++  lineHeight: 1.4,
++}
++const btnStyle: CSSProperties = {
++  padding: "4px 10px",
++  border: "1px solid #ddd",
++  borderRadius: 6,
++  background: "#fff",
++  fontSize: 11,
++  cursor: "pointer",
++  whiteSpace: "nowrap",
++}
++const primaryBtnStyle: CSSProperties = {
++  ...btnStyle,
++  border: "none",
++  background: tokens.accent,
++  color: "#fff",
++  fontWeight: 500,
++}
++const sectionTitleStyle: CSSProperties = {
++  fontSize: 14,
++  fontWeight: 700,
++  color: "#333",
++  marginBottom: 12,
++  marginTop: 8,
++  paddingBottom: 6,
++  borderBottom: "1px solid #eee",
++}
++const chipStyle: CSSProperties = {
++  fontSize: 11,
++  padding: "2px 8px",
++  borderRadius: 12,
++  border: `1px solid ${tokens.accent}`,
++  color: tokens.accent,
++  background: "#fff",
++  cursor: "pointer",
++}
++
++export function UserEnvSection() {
++  const { state, dispatch } = useAgentStore()
++  const connected = state.connectionState === "connected"
++  const keys = state.userEnv?.keys ?? []
++
++  const [newName, setNewName] = useState("")
++  const [newValue, setNewValue] = useState("")
++  const [updateValues, setUpdateValues] = useState<Record<string, string>>({})
++  const [localError, setLocalError] = useState<string | null>(null)
++  const [busy, setBusy] = useState(false)
++
++  // Refresh redacted list whenever settings opens while connected.
++  useEffect(() => {
++    if (!state.settingsOpen || !connected) return
++    chrome.runtime.sendMessage({ type: "user_env.list" })
++  }, [state.settingsOpen, connected])
++
++  // Clear draft values when companion confirms an update (never re-show plaintext).
++  useEffect(() => {
++    if (state.userEnvStatus === "已保存") {
++      setNewValue("")
++      setUpdateValues({})
++      setBusy(false)
++    }
++  }, [state.userEnvStatus, state.userEnv?.updated_at, state.userEnv?.count])
++
++  useEffect(() => {
++    if (state.userEnvError) setBusy(false)
++  }, [state.userEnvError])
++
++  const disabled = !connected || busy
++
++  const clearFeedback = () => {
++    setLocalError(null)
++    dispatch({ type: "SET_USER_ENV_ERROR", error: null })
++    dispatch({ type: "SET_USER_ENV_STATUS", status: null })
++  }
++
++  const handleAdd = () => {
++    clearFeedback()
++    const nameErr = validateUserEnvKeyName(newName)
++    if (nameErr) {
++      setLocalError(nameErr)
++      return
++    }
++    // Empty string is a legal value (ADR R6); only reject if user left value as mask-only placeholder by mistake is N/A for new.
++    const name = newName.trim()
++    setBusy(true)
++    chrome.runtime.sendMessage({
++      type: "user_env.set",
++      vars: { [name]: newValue },
++    })
++    setNewName("")
++    // newValue cleared on user_env.updated (never keep plaintext in React state longer than needed)
++    setNewValue("")
++  }
++
++  const handleUpdate = (name: string) => {
++    clearFeedback()
++    if (!(name in updateValues)) {
++      setLocalError("请输入新值后再保存")
++      return
++    }
++    const value = updateValues[name]
++    // "***" means unchanged (companion ignores); treat as no-op in UI.
++    if (value === USER_ENV_MASK) {
++      setLocalError("请输入新值（*** 表示未改动）")
++      return
++    }
++    // Empty string is a legal value (ADR R6); only delete goes through user_env.delete.
++    setBusy(true)
++    chrome.runtime.sendMessage({
++      type: "user_env.set",
++      vars: { [name]: value },
++    })
++  }
++
++  const handleDelete = (name: string) => {
++    clearFeedback()
++    if (!confirm(`确定删除环境变量「${name}」？`)) return
++    setBusy(true)
++    chrome.runtime.sendMessage({
++      type: "user_env.delete",
++      keys: [name],
++    })
++  }
++
++  const fillChip = (chip: string) => {
++    setNewName(chip)
++    clearFeedback()
++  }
++
++  const feedbackError = localError || state.userEnvError
++  const feedbackOk = !feedbackError && state.userEnvStatus
++
++  return (
++    <>
++      <div style={sectionTitleStyle}>环境变量（Secrets）</div>
++      <div style={{ ...fieldStyle, opacity: connected ? 1 : 0.55, pointerEvents: connected ? "auto" : "none" }}>
++        <div style={helpStyle}>
++          用于 skill 与 shell 命令（如 <code>DATAYES_TOKEN</code>）。仅保存在本机 Companion，
++          <b>不会发送给大模型</b>。设置后列表只显示「已配置」，永不回显明文。
++        </div>
++
++        {!connected && (
++          <div style={{ ...helpStyle, color: tokens.danger, marginTop: 8 }}>
++            未连接 Companion，无法管理环境变量。请先配对并启动 Companion。
++          </div>
++        )}
++
++        {/* Existing keys */}
++        {keys.length > 0 && (
++          <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 10 }}>
++            {keys.map((entry) => (
++              <div
++                key={entry.name}
++                style={{
++                  padding: 10,
++                  borderRadius: 8,
++                  border: "1px solid #eee",
++                  background: "#fafafa",
++                }}
++              >
++                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
++                  <code style={{ fontSize: 12, fontWeight: 600, flex: 1 }}>{entry.name}</code>
++                  <span
++                    style={{
++                      fontSize: 10,
++                      fontWeight: 500,
++                      padding: "1px 6px",
++                      borderRadius: 8,
++                      color: tokens.success,
++                      background: tokens.successSoft,
++                    }}
++                  >
++                    ● 已配置
++                  </span>
++                  <span style={{ fontSize: 11, color: "#999", fontFamily: "monospace" }}>
++                    {entry.masked || USER_ENV_MASK}
++                  </span>
++                </div>
++                <div style={{ display: "flex", gap: 6 }}>
++                  <input
++                    style={{ ...inputStyle, flex: 1 }}
++                    type="password"
++                    autoComplete="off"
++                    spellCheck={false}
++                    disabled={disabled}
++                    value={updateValues[entry.name] ?? ""}
++                    onChange={(e) =>
++                      setUpdateValues((prev) => ({ ...prev, [entry.name]: e.target.value }))
++                    }
++                    placeholder="输入新值以更新（不会显示原值）"
++                  />
++                  <button
++                    style={primaryBtnStyle}
++                    disabled={
++                      disabled
++                      || !(entry.name in updateValues)
++                      || updateValues[entry.name] === USER_ENV_MASK
++                    }
++                    onClick={() => handleUpdate(entry.name)}
++                    title="保存此变量"
++                  >
++                    保存
++                  </button>
++                  <button
++                    style={{ ...btnStyle, color: tokens.danger, borderColor: "#f0c0c0" }}
++                    disabled={disabled}
++                    onClick={() => handleDelete(entry.name)}
++                  >
++                    删除
++                  </button>
++                </div>
++              </div>
++            ))}
++          </div>
++        )}
++
++        {connected && keys.length === 0 && state.userEnv && (
++          <div style={{ ...helpStyle, marginTop: 10 }}>暂无环境变量。可在下方添加（例如 DATAYES_TOKEN）。</div>
++        )}
++
++        {/* Add row */}
++        <div style={{ marginTop: 14 }}>
++          <label style={labelStyle}>添加变量</label>
++          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
++            {USER_ENV_NAME_CHIPS.map((chip) => (
++              <button
++                key={chip}
++                type="button"
++                style={chipStyle}
++                disabled={disabled}
++                onClick={() => fillChip(chip)}
++                title={`填入变量名 ${chip}`}
++              >
++                {chip}
++              </button>
++            ))}
++          </div>
++          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
++            <input
++              style={inputStyle}
++              type="text"
++              autoComplete="off"
++              spellCheck={false}
++              disabled={disabled}
++              value={newName}
++              onChange={(e) => {
++                setNewName(e.target.value)
++                clearFeedback()
++              }}
++              placeholder="变量名，如 DATAYES_TOKEN"
++            />
++            <input
++              style={inputStyle}
++              type="password"
++              autoComplete="off"
++              spellCheck={false}
++              disabled={disabled}
++              value={newValue}
++              onChange={(e) => {
++                setNewValue(e.target.value)
++                clearFeedback()
++              }}
++              placeholder="密钥值（password 输入，保存后不回显）"
++            />
++            <div style={{ display: "flex", justifyContent: "flex-end" }}>
++              <button
++                style={primaryBtnStyle}
++                disabled={disabled || !newName.trim()}
++                onClick={handleAdd}
++              >
++                添加并保存
++              </button>
++            </div>
++          </div>
++        </div>
++
++        {feedbackError && (
++          <div style={{ ...helpStyle, color: tokens.danger, marginTop: 8 }}>{feedbackError}</div>
++        )}
++        {feedbackOk && (
++          <div style={{ ...helpStyle, color: tokens.success, marginTop: 8 }}>✓ {state.userEnvStatus}</div>
++        )}
++      </div>
++    </>
++  )
++}
+diff --git a/chrome-extension/src/sidepanel/hooks/useWebSocket.ts b/chrome-extension/src/sidepanel/hooks/useWebSocket.ts
+index ebc6ab1..2c8ae30 100644
+--- a/chrome-extension/src/sidepanel/hooks/useWebSocket.ts
++++ b/chrome-extension/src/sidepanel/hooks/useWebSocket.ts
+@@ -6,6 +6,7 @@ import type { ComputerTaskEventView, LLMConfig } from "../types"
+ import { isAppsErrorMessage } from "../utils/apps-utils"
+ import { isComputerModelErrorMessage } from "../components/model-switch-logic"
+ import { isBrowserTool } from "../mode/mode-controller"
++import { isUserEnvErrorMessage, mapUserEnvError, normalizeUserEnvPublic } from "../utils/user-env-utils"
+ 
+ /**
+  * Check if an API key is masked (i.e., a placeholder like "***" or "sk-****xyz").
+@@ -39,6 +40,8 @@ export function requestInitialSidePanelData(
+   sendMessage({ type: "knowledge.list" })
+   sendMessage({ type: "config.get" })
+   sendMessage({ type: "mcp.list" })
++  // ADR-019: redacted secrets snapshot (auth required; no plaintext).
++  sendMessage({ type: "user_env.list" })
+   return true
+ }
+ 
+@@ -653,6 +656,19 @@ export function useWebSocket() {
+           }
+           break
+ 
++        // ADR-019 user-env: list response + set/delete reply + multi-client broadcast
++        // all use the same redacted shape. set/delete success is deliberately
++        // `user_env.updated` (not a distinct ack) — companion message-router PR-1.
++        case "user_env.list":
++        case "user_env.updated": {
++          const pub = normalizeUserEnvPublic(msg)
++          dispatch({ type: "SET_USER_ENV", userEnv: pub })
++          if (msg.type === "user_env.updated") {
++            dispatch({ type: "SET_USER_ENV_STATUS", status: "已保存" })
++          }
++          break
++        }
++
+         // App tab (WP4) — apps.list response and apps.updated broadcasts
+         // (mutations broadcast to all clients; the requester's response also
+         // carries warnings/added — update state from both, keep warnings).
+@@ -887,6 +903,17 @@ export function useWebSocket() {
+             dispatch({ type: "SET_APPS_ERROR", error: msg.error || "Unknown apps error" })
+             break
+           }
++          // ADR-019: user_env.* failures stay in Settings Secrets section (not chat).
++          if (isUserEnvErrorMessage(msg)) {
++            const code = typeof msg.error_code === "string" ? msg.error_code
++              : typeof msg.code === "string" ? msg.code
++              : undefined
++            dispatch({
++              type: "SET_USER_ENV_ERROR",
++              error: mapUserEnvError(code, typeof msg.error === "string" ? msg.error : null),
++            })
++            break
++          }
+           dispatch({
+             type: "ADD_MESSAGE",
+             message: {
+diff --git a/chrome-extension/src/sidepanel/store/agentStore.tsx b/chrome-extension/src/sidepanel/store/agentStore.tsx
+index 31ee57e..dd885ce 100644
+--- a/chrome-extension/src/sidepanel/store/agentStore.tsx
++++ b/chrome-extension/src/sidepanel/store/agentStore.tsx
+@@ -1,7 +1,7 @@
+ // Global state store for the agent
+ 
+ import { createContext, useContext, useReducer, type ReactNode, type Dispatch } from "react"
+-import type { ConnectionState, Thread, Message, SkillMeta, OperationRecord, LLMConfig, SendShortcut, SecurityConfirmationRequest, LogEntry, KnowledgeMeta, SkillSelectionMode, SecurityAuditEntry, McpServerMeta, McpSelectionMode, AppEntry, AppPresetStatus, AppEnumerateCandidate, AppAddWarning, ComputerTaskEventView, ComputerTaskState, ComputerModelState, ComputerModelProgress, ComputerModelLicenseDoor, CapabilityLevel, FleetSnapshot } from "../types"
++import type { ConnectionState, Thread, Message, SkillMeta, OperationRecord, LLMConfig, SendShortcut, SecurityConfirmationRequest, LogEntry, KnowledgeMeta, SkillSelectionMode, SecurityAuditEntry, McpServerMeta, McpSelectionMode, AppEntry, AppPresetStatus, AppEnumerateCandidate, AppAddWarning, ComputerTaskEventView, ComputerTaskState, ComputerModelState, ComputerModelProgress, ComputerModelLicenseDoor, CapabilityLevel, FleetSnapshot, UserEnvPublic } from "../types"
+ import { reduceComputerTaskEvent } from "../utils/computer-utils"
+ 
+ export interface AgentState {
+@@ -77,6 +77,12 @@ export interface AgentState {
+   modePin: CapabilityLevel | null
+   /** ADR-015 FleetStrip — null until first fleet.status */
+   fleet: FleetSnapshot | null
++  /** ADR-019 user-env public snapshot (keys + mask only; null until first list/updated). */
++  userEnv: UserEnvPublic | null
++  /** ADR-019 last user_env.* error (Chinese-mapped), shown in Settings Secrets section. */
++  userEnvError: string | null
++  /** ADR-019 last success status line for Secrets section (e.g. 已保存). */
++  userEnvStatus: string | null
+ }
+ 
+ export type AgentAction =
+@@ -142,6 +148,9 @@ export type AgentAction =
+   | { type: "NOTE_BROWSER_TOOL"; at?: number }
+   | { type: "SET_MODE_PIN"; pin: CapabilityLevel | null }
+   | { type: "SET_FLEET"; fleet: FleetSnapshot | null }
++  | { type: "SET_USER_ENV"; userEnv: UserEnvPublic }
++  | { type: "SET_USER_ENV_ERROR"; error: string | null }
++  | { type: "SET_USER_ENV_STATUS"; status: string | null }
+ 
+ export const initialState: AgentState = {
+   connectionState: "disconnected",
+@@ -214,6 +223,9 @@ export const initialState: AgentState = {
+   lastBrowserToolAt: null,
+   modePin: null,
+   fleet: null,
++  userEnv: null,
++  userEnvError: null,
++  userEnvStatus: null,
+ }
+ 
+ export function agentReducer(state: AgentState, action: AgentAction): AgentState {
+@@ -501,6 +513,16 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
+       return { ...state, modePin: action.pin }
+     case "SET_FLEET":
+       return { ...state, fleet: action.fleet }
++    case "SET_USER_ENV":
++      return {
++        ...state,
++        userEnv: action.userEnv,
++        userEnvError: null,
++      }
++    case "SET_USER_ENV_ERROR":
++      return { ...state, userEnvError: action.error, userEnvStatus: action.error ? null : state.userEnvStatus }
++    case "SET_USER_ENV_STATUS":
++      return { ...state, userEnvStatus: action.status, userEnvError: action.status ? null : state.userEnvError }
+     default:
+       return state
+   }
+diff --git a/chrome-extension/src/sidepanel/types.ts b/chrome-extension/src/sidepanel/types.ts
+index 39952cd..dcb689c 100644
+--- a/chrome-extension/src/sidepanel/types.ts
++++ b/chrome-extension/src/sidepanel/types.ts
+@@ -279,6 +279,27 @@ export interface FleetSnapshot {
+   orchestrator_runs: string[]
+ }
+ 
++/** ADR-019 user-env public snapshot (never carries plaintext values). */
++export interface UserEnvKeyEntry {
++  name: string
++  /** Always "***" when the key is configured (presence = set). */
++  masked: string
++}
++
++export interface UserEnvPublic {
++  keys: UserEnvKeyEntry[]
++  count: number
++  updated_at?: string
++}
++
++export type UserEnvErrorCode =
++  | "INVALID_KEY"
++  | "RESERVED_KEY"
++  | "VALUE_TOO_LONG"
++  | "TOO_MANY_KEYS"
++  | "IO_ERROR"
++  | "INVALID_PAYLOAD"
++
+ export interface ToolCall {
+   id: string
+   tool_name: string
+diff --git a/chrome-extension/src/sidepanel/utils/user-env-utils.ts b/chrome-extension/src/sidepanel/utils/user-env-utils.ts
+new file mode 100644
+index 0000000..3a6a63a
+--- /dev/null
++++ b/chrome-extension/src/sidepanel/utils/user-env-utils.ts
+@@ -0,0 +1,86 @@
++// ADR-019 user-env / Secrets — pure helpers for Side Panel settings UI.
++// Mirror companion rules for client-side validation + Chinese error mapping.
++
++import type { UserEnvErrorCode, UserEnvKeyEntry, UserEnvPublic } from "../types"
++
++/** POSIX-style env name (aligned with companion USER_ENV_KEY_RE). */
++export const USER_ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/
++
++/** Mask placeholder; clients send this to mean "unchanged". */
++export const USER_ENV_MASK = "***"
++
++/** Optional name chips for common skill secrets (name only — never values). */
++export const USER_ENV_NAME_CHIPS = ["DATAYES_TOKEN"] as const
++
++/** Companion error_code → Chinese label for settings inline feedback. */
++const USER_ENV_ERROR_ZH: Record<UserEnvErrorCode, string> = {
++  INVALID_KEY: "变量名无效（需字母/下划线开头，仅含字母数字下划线）",
++  RESERVED_KEY: "该变量名为系统保留（如 PATH / CMSPARK_*），不可设置",
++  VALUE_TOO_LONG: "值过长（单值上限 16KiB）",
++  TOO_MANY_KEYS: "条目数已达上限（最多 64 个）",
++  IO_ERROR: "本机读写失败，请检查 Companion 数据目录权限",
++  INVALID_PAYLOAD: "请求格式无效",
++}
++
++const USER_ENV_ERROR_CODES: ReadonlySet<string> = new Set(Object.keys(USER_ENV_ERROR_ZH))
++
++/**
++ * Route companion `type:"error"` to the Secrets settings section instead of chat.
++ * Prefer family:"user_env" (future-proof); fall back to known error_code set.
++ */
++export function isUserEnvErrorMessage(msg: {
++  family?: unknown
++  error_code?: unknown
++  code?: unknown
++}): boolean {
++  if (!msg || typeof msg !== "object") return false
++  if (msg.family === "user_env") return true
++  const code = typeof msg.error_code === "string" ? msg.error_code
++    : typeof msg.code === "string" ? msg.code
++    : null
++  return code != null && USER_ENV_ERROR_CODES.has(code)
++}
++
++/** Map error_code (or raw error string) to Chinese UI text. */
++export function mapUserEnvError(
++  errorCode: string | undefined | null,
++  fallbackError?: string | null,
++): string {
++  if (errorCode && errorCode in USER_ENV_ERROR_ZH) {
++    return USER_ENV_ERROR_ZH[errorCode as UserEnvErrorCode]
++  }
++  if (fallbackError && typeof fallbackError === "string" && fallbackError.trim()) {
++    return fallbackError
++  }
++  return "环境变量操作失败"
++}
++
++/** Local key validation before sending user_env.set / delete. */
++export function validateUserEnvKeyName(name: string): string | null {
++  const trimmed = name.trim()
++  if (!trimmed) return "请输入变量名"
++  if (!USER_ENV_KEY_RE.test(trimmed)) {
++    return USER_ENV_ERROR_ZH.INVALID_KEY
++  }
++  if (trimmed.startsWith("CMSPARK_")) {
++    return USER_ENV_ERROR_ZH.RESERVED_KEY
++  }
++  return null
++}
++
++/** Normalize list/updated payload into a safe public snapshot (no values). */
++export function normalizeUserEnvPublic(msg: unknown): UserEnvPublic {
++  const m = msg && typeof msg === "object" ? (msg as Record<string, unknown>) : {}
++  const rawKeys = Array.isArray(m.keys) ? m.keys : []
++  const keys: UserEnvKeyEntry[] = []
++  for (const item of rawKeys) {
++    if (!item || typeof item !== "object") continue
++    const row = item as Record<string, unknown>
++    if (typeof row.name !== "string" || !row.name) continue
++    // Force mask — never trust a value field if a buggy companion sent one.
++    keys.push({ name: row.name, masked: USER_ENV_MASK })
++  }
++  const count = typeof m.count === "number" && Number.isFinite(m.count) ? m.count : keys.length
++  const updated_at = typeof m.updated_at === "string" ? m.updated_at : undefined
++  return { keys, count, ...(updated_at ? { updated_at } : {}) }
++}
+diff --git a/chrome-extension/tests/sidepanel-state.test.ts b/chrome-extension/tests/sidepanel-state.test.ts
+index 85b2267..ea0ecc9 100644
+--- a/chrome-extension/tests/sidepanel-state.test.ts
++++ b/chrome-extension/tests/sidepanel-state.test.ts
+@@ -147,8 +147,8 @@ test("initial side panel sync requests threads, skills, knowledge, config, and m
+   const sent: object[] = []
+   const initializedRef = { current: false }
+ 
+-  // Production requestInitialSidePanelData (useWebSocket.ts) sends 5 messages
+-  // on connect: threads, skills, knowledge, config, and the MCP server list.
++  // Production requestInitialSidePanelData (useWebSocket.ts) sends 6 messages
++  // on connect: threads, skills, knowledge, config, MCP server list, user_env list.
+   // Keep these in lock-step — a new initial-sync message means updating this
+   // expected array. The CI extension `npm test` step now catches such drift.
+   const expected = [
+@@ -157,6 +157,7 @@ test("initial side panel sync requests threads, skills, knowledge, config, and m
+     { type: "knowledge.list" },
+     { type: "config.get" },
+     { type: "mcp.list" },
++    { type: "user_env.list" },
+   ]
+ 
+   assert.equal(requestInitialSidePanelData((message) => sent.push(message), initializedRef), true)
+diff --git a/chrome-extension/tests/user-env-utils.test.ts b/chrome-extension/tests/user-env-utils.test.ts
+new file mode 100644
+index 0000000..100e5fd
+--- /dev/null
++++ b/chrome-extension/tests/user-env-utils.test.ts
+@@ -0,0 +1,102 @@
++// ADR-019 PR-2: user-env helpers + store snapshot wiring
++
++import test from "node:test"
++import assert from "node:assert/strict"
++import {
++  USER_ENV_MASK,
++  isUserEnvErrorMessage,
++  mapUserEnvError,
++  normalizeUserEnvPublic,
++  validateUserEnvKeyName,
++} from "../src/sidepanel/utils/user-env-utils"
++import { agentReducer, initialState } from "../src/sidepanel/store/agentStore"
++import { requestInitialSidePanelData } from "../src/sidepanel/hooks/useWebSocket"
++
++test("validateUserEnvKeyName accepts POSIX names", () => {
++  assert.equal(validateUserEnvKeyName("DATAYES_TOKEN"), null)
++  assert.equal(validateUserEnvKeyName("_private"), null)
++  assert.equal(validateUserEnvKeyName("A1"), null)
++})
++
++test("validateUserEnvKeyName rejects invalid / reserved names", () => {
++  assert.match(validateUserEnvKeyName("") || "", /变量名/)
++  assert.match(validateUserEnvKeyName("1BAD") || "", /无效/)
++  assert.match(validateUserEnvKeyName("has-dash") || "", /无效/)
++  assert.match(validateUserEnvKeyName("CMSPARK_SHELL") || "", /保留/)
++})
++
++test("mapUserEnvError maps known codes to Chinese", () => {
++  assert.match(mapUserEnvError("INVALID_KEY"), /变量名/)
++  assert.match(mapUserEnvError("RESERVED_KEY"), /保留/)
++  assert.match(mapUserEnvError("VALUE_TOO_LONG"), /过长/)
++  assert.match(mapUserEnvError("TOO_MANY_KEYS"), /上限/)
++  assert.match(mapUserEnvError("IO_ERROR"), /读写/)
++  assert.equal(mapUserEnvError(undefined, "自定义错误"), "自定义错误")
++  assert.equal(mapUserEnvError("UNKNOWN"), "环境变量操作失败")
++})
++
++test("isUserEnvErrorMessage routes by family or error_code", () => {
++  assert.equal(isUserEnvErrorMessage({ family: "user_env" }), true)
++  assert.equal(isUserEnvErrorMessage({ error_code: "RESERVED_KEY" }), true)
++  assert.equal(isUserEnvErrorMessage({ code: "TOO_MANY_KEYS" }), true)
++  assert.equal(isUserEnvErrorMessage({ error_code: "BIOMETRIC_DENIED" }), false)
++  assert.equal(isUserEnvErrorMessage({}), false)
++})
++
++test("normalizeUserEnvPublic strips any value field and forces mask", () => {
++  const pub = normalizeUserEnvPublic({
++    keys: [
++      { name: "DATAYES_TOKEN", masked: "***", value: "SHOULD_NEVER_LEAK" },
++      { name: "OK", masked: "xxx" },
++      { name: "", masked: "***" },
++      null,
++    ],
++    count: 2,
++    updated_at: "2026-07-29T00:00:00.000Z",
++  })
++  assert.equal(pub.keys.length, 2)
++  assert.equal(pub.keys[0].name, "DATAYES_TOKEN")
++  assert.equal(pub.keys[0].masked, USER_ENV_MASK)
++  assert.equal(pub.keys[1].masked, USER_ENV_MASK)
++  // Ensure we did not pass through a plaintext value property
++  assert.equal("value" in (pub.keys[0] as object), false)
++  assert.equal(pub.count, 2)
++  assert.equal(pub.updated_at, "2026-07-29T00:00:00.000Z")
++})
++
++test("SET_USER_ENV stores public snapshot and clears error", () => {
++  const withErr = agentReducer(initialState, {
++    type: "SET_USER_ENV_ERROR",
++    error: "保留名",
++  })
++  assert.equal(withErr.userEnvError, "保留名")
++  const next = agentReducer(withErr, {
++    type: "SET_USER_ENV",
++    userEnv: {
++      keys: [{ name: "DATAYES_TOKEN", masked: "***" }],
++      count: 1,
++    },
++  })
++  assert.equal(next.userEnv?.count, 1)
++  assert.equal(next.userEnv?.keys[0].name, "DATAYES_TOKEN")
++  assert.equal(next.userEnvError, null)
++})
++
++test("SET_USER_ENV_STATUS and SET_USER_ENV_ERROR are mutually exclusive feedback", () => {
++  const ok = agentReducer(initialState, { type: "SET_USER_ENV_STATUS", status: "已保存" })
++  assert.equal(ok.userEnvStatus, "已保存")
++  assert.equal(ok.userEnvError, null)
++  const err = agentReducer(ok, { type: "SET_USER_ENV_ERROR", error: "IO" })
++  assert.equal(err.userEnvError, "IO")
++  assert.equal(err.userEnvStatus, null)
++})
++
++test("requestInitialSidePanelData requests user_env.list", () => {
++  const sent: object[] = []
++  const ref = { current: false }
++  const ok = requestInitialSidePanelData((m) => sent.push(m), ref)
++  assert.equal(ok, true)
++  assert.ok(sent.some((m: any) => m.type === "user_env.list"))
++  // second call is no-op
++  assert.equal(requestInitialSidePanelData((m) => sent.push(m), ref), false)
++})
+diff --git a/chrome-extension/tsconfig.test.json b/chrome-extension/tsconfig.test.json
+index 35d00e4..735341e 100644
+--- a/chrome-extension/tsconfig.test.json
++++ b/chrome-extension/tsconfig.test.json
+@@ -18,6 +18,7 @@
+     "src/sidepanel/store/agentStore.tsx",
+     "src/sidepanel/hooks/useWebSocket.ts",
+     "src/sidepanel/utils/apps-utils.ts",
++    "src/sidepanel/utils/user-env-utils.ts",
+     "src/sidepanel/utils/computer-utils.ts",
+     "src/sidepanel/components/model-switch-logic.ts",
+     "src/background/page-sanitizer.ts",
+diff --git a/companion/src/capability/shell.ts b/companion/src/capability/shell.ts
+index 123f988..fa9540a 100644
+--- a/companion/src/capability/shell.ts
++++ b/companion/src/capability/shell.ts
+@@ -6,10 +6,23 @@ import * as fs from "fs"
+ import * as path from "path"
+ import { getModule, requireModule } from "./modules"
+ import { appendCapabilityAudit } from "../packs/audit-log"
++import { getUserEnvVars } from "../user-env"
+ 
+ const MAX_OUTPUT = 200_000
+ const DEFAULT_TIMEOUT_MS = 60_000
+ 
++/**
++ * Child env for shell_exec (ADR-019).
++ * Merge order: process.env → user_env → force CMSPARK_SHELL (cannot be overridden by user).
++ */
++export function buildChildEnv(): NodeJS.ProcessEnv {
++  return {
++    ...process.env,
++    ...getUserEnvVars(),
++    CMSPARK_SHELL: "1",
++  }
++}
++
+ export function commandAllowedByPolicy(command: string): { ok: true } | { ok: false; error: string } {
+   const mod = getModule("shell")
+   if (!mod) return { ok: false, error: "shell module missing" }
+@@ -74,7 +87,7 @@ export async function shellExec(opts: {
+     const child = spawn(command, {
+       shell: true,
+       cwd,
+-      env: { ...process.env, CMSPARK_SHELL: "1" },
++      env: buildChildEnv(),
+     })
+ 
+     let stdout = ""
+diff --git a/companion/src/mcp/transport.ts b/companion/src/mcp/transport.ts
+index 023c2f2..791751b 100644
+--- a/companion/src/mcp/transport.ts
++++ b/companion/src/mcp/transport.ts
+@@ -13,6 +13,7 @@ import path from "node:path"
+ import os from "node:os"
+ import fs from "node:fs"
+ import { logger } from "../logger.js"
++import { getUserEnvVars } from "../user-env.js"
+ import type { McpServerConfig } from "./types.js"
+ 
+ export interface TransportExtras {
+@@ -140,13 +141,18 @@ export function buildSpawnPath(): string {
+ 
+ export function createTransport(config: McpServerConfig, extras?: TransportExtras): Transport {
+   if (config.transport === "stdio") {
+-    // Always enrich PATH — spawn() uses process.env.PATH, which may be missing
+-    // the nvm/homebrew dirs when companion is launched as a daemon or GUI app.
+-    const env: Record<string, string> = { ...process.env } as Record<string, string>
++    // Merge order (ADR-019 §6.2):
++    //   process.env → user_env → buildSpawnPath() (PATH harden) → config.env
++    // config.env is highest among optional layers. When config.env.PATH is set
++    // it overrides buildSpawnPath() verbatim (not merged/augmented).
++    const env: Record<string, string> = {
++      ...process.env,
++      ...getUserEnvVars(),
++    } as Record<string, string>
+     env.PATH = buildSpawnPath()
+     if (config.env) {
+       Object.assign(env, config.env)
+-      // If the user overrode PATH in config.env, respect their value verbatim.
++      // Explicit PATH in per-server config wins over buildSpawnPath().
+       if (config.env.PATH) env.PATH = config.env.PATH
+     }
+ 
+diff --git a/companion/src/message-router.ts b/companion/src/message-router.ts
+index 98c2c9c..24bffa9 100644
+--- a/companion/src/message-router.ts
++++ b/companion/src/message-router.ts
+@@ -29,6 +29,13 @@ import { logger } from "./logger"
+ import { handleAppsMessage } from "./apps/handlers"
+ import { handleComputerMessage } from "./computer/handlers"
+ import { handleComputerModelMessage } from "./computer/model-handlers"
++import {
++  buildUserEnvPublic,
++  deleteUserEnvKeys,
++  loadUserEnv,
++  redactUserEnvVarsForLog,
++  setUserEnvVars,
++} from "./user-env"
+ import type {
+   SecurityConfirmationDecision,
+   SecurityConfirmationDetails,
+@@ -953,6 +960,58 @@ export async function handleMessage(
+       skillEngine.refresh()
+       return { type: "skill.list", skills: skillEngine.list() }
+ 
++    // --- User env / secrets (ADR-019) — independent of config.json ---
++    // set/delete success response type is deliberately `user_env.updated` (same
++    // snapshot as the multi-client broadcast) — not a distinct ack. Extension UI
++    // (PR-2) must dispatch on `user_env.updated` for both direct reply + broadcast.
++    case "user_env.list": {
++      // Outbound only via buildUserEnvPublic (R2 / S8)
++      const pub = buildUserEnvPublic(loadUserEnv())
++      return { type: "user_env.list", ...pub }
++    }
++    case "user_env.set": {
++      const vars = rest.vars
++      if (!vars || typeof vars !== "object" || Array.isArray(vars)) {
++        return { type: "error", error: "vars object required", error_code: "INVALID_PAYLOAD" }
++      }
++      const varsObj = vars as Record<string, unknown>
++      // R1 / S3: never log plaintext values
++      logger.info("user_env.set", {
++        keys: Object.keys(varsObj),
++        vars: redactUserEnvVarsForLog(varsObj),
++      })
++      const r = setUserEnvVars(varsObj)
++      if (!r.ok) {
++        return { type: "error", error: r.error, error_code: r.error_code }
++      }
++      const payload = { type: "user_env.updated" as const, ...r.public }
++      try {
++        session?.broadcast?.(payload)
++      } catch {
++        /* best-effort */
++      }
++      return payload
++    }
++    case "user_env.delete": {
++      const keys = rest.keys
++      if (!Array.isArray(keys)) {
++        return { type: "error", error: "keys array required", error_code: "INVALID_PAYLOAD" }
++      }
++      const safeKeys = keys.filter((k: unknown): k is string => typeof k === "string")
++      logger.info("user_env.delete", { keys: safeKeys })
++      const r = deleteUserEnvKeys(safeKeys)
++      if (!r.ok) {
++        return { type: "error", error: r.error, error_code: r.error_code }
++      }
++      const payload = { type: "user_env.updated" as const, ...r.public }
++      try {
++        session?.broadcast?.(payload)
++      } catch {
++        /* best-effort */
++      }
++      return payload
++    }
++
+     // --- MCP servers ---
+     case "mcp.list": {
+       return { type: "mcp.list", servers: getMcpManager().listServers() }
+diff --git a/companion/src/user-env.ts b/companion/src/user-env.ts
+new file mode 100644
+index 0000000..7e2c44f
+--- /dev/null
++++ b/companion/src/user-env.ts
+@@ -0,0 +1,332 @@
++// User environment variables / secrets (ADR-019).
++//
++// Companion is the sole source of truth: ~/.cmspark-agent/user-env.json (0o600).
++// Injected only into shell_exec / MCP stdio child processes — never into LLM
++// context or outbound WS plaintext. Outbound snapshots MUST go through
++// buildUserEnvPublic() only (R2).
++
++import * as fs from "fs"
++import * as path from "path"
++import { DATA_DIR } from "./config"
++import { atomicWriteJSON } from "./io"
++
++export const USER_ENV_VERSION = 1
++
++/** POSIX-style env name (skill conventions). */
++export const USER_ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/
++
++/** Max single value length (16 KiB). */
++export const USER_ENV_VALUE_MAX = 16_384
++
++/** Max number of keys. */
++export const USER_ENV_MAX_KEYS = 64
++
++/** Mask placeholder for listed secrets; clients send this to mean "unchanged". */
++export const USER_ENV_MASK = "***"
++
++export const USER_ENV_FILE_NAME = "user-env.json"
++
++export type UserEnvErrorCode =
++  | "INVALID_KEY"
++  | "RESERVED_KEY"
++  | "VALUE_TOO_LONG"
++  | "TOO_MANY_KEYS"
++  | "IO_ERROR"
++  | "INVALID_PAYLOAD"
++
++export interface UserEnvFile {
++  version: number
++  /** ISO timestamp of last successful write */
++  updated_at?: string
++  vars: Record<string, string>
++}
++
++export interface UserEnvPublic {
++  keys: Array<{
++    name: string
++    /**
++     * Always the constant USER_ENV_MASK ("***") when the key is configured.
++     * Not a partial redaction of the value — presence of the entry means set.
++     */
++    masked: typeof USER_ENV_MASK
++  }>
++  count: number
++  updated_at?: string
++}
++
++export type UserEnvResult =
++  | { ok: true; public: UserEnvPublic }
++  | { ok: false; error_code: UserEnvErrorCode; error: string }
++
++/**
++ * Denylist built from:
++ * 1. ADR-019 baseline integrity / loader keys
++ * 2. companion/src `process.env.*` scan (non-CMSPARK; CMSPARK_* blocked by prefix)
++ *
++ * Do NOT invent env names that code never reads (e.g. WS_SECRET).
++ */
++export const USER_ENV_DENYLIST: ReadonlySet<string> = new Set([
++  // OS / shell integrity (baseline)
++  "PATH",
++  "HOME",
++  "USER",
++  "LOGNAME",
++  "SHELL",
++  "TMPDIR",
++  "TEMP",
++  "TMP",
++  // Dynamic loaders (baseline)
++  "LD_PRELOAD",
++  "LD_LIBRARY_PATH",
++  "DYLD_INSERT_LIBRARIES",
++  "DYLD_LIBRARY_PATH",
++  // Node / Electron (baseline + scan NODE_ENV)
++  "NODE_OPTIONS",
++  "NODE_PATH",
++  "ELECTRON_RUN_AS_NODE",
++  "NODE_ENV",
++  // OpenSSL / Python (baseline)
++  "OPENSSL_CONF",
++  "PYTHONHOME",
++  "PYTHONPATH",
++  "PYTHONSTARTUP",
++  // From companion process.env scan (non-CMSPARK_*)
++  "APPDATA",
++  "LOCALAPPDATA",
++  "USERPROFILE",
++  "ProgramData",
++  "ProgramFiles",
++  "SystemRoot",
++  "windir",
++  "NVM_DIR",
++  "WAYLAND_DISPLAY",
++  // Companion LLM key (config.ts reads process.env.DEEPSEEK_API_KEY). Deny so
++  // shell_exec / MCP children cannot inherit the companion's API credential
++  // via user-env injection (even if the host process itself already has it).
++  "DEEPSEEK_API_KEY",
++])
++
++/** All CMSPARK_* keys are reserved (prefix ban, ADR §4.3). */
++export function isCmsparkPrefixKey(name: string): boolean {
++  return name.startsWith("CMSPARK_")
++}
++
++export function isReservedUserEnvKey(name: string): boolean {
++  return isCmsparkPrefixKey(name) || USER_ENV_DENYLIST.has(name)
++}
++
++export function userEnvFilePath(dataDir: string = DATA_DIR): string {
++  return path.join(dataDir, USER_ENV_FILE_NAME)
++}
++
++function emptyFile(): UserEnvFile {
++  return { version: USER_ENV_VERSION, vars: {} }
++}
++
++let cache: UserEnvFile | null = null
++
++/** Test / reload helper. */
++export function clearUserEnvCache(): void {
++  cache = null
++}
++
++/**
++ * Unique outbound constructor — handlers and broadcast MUST use this (R2 / S8).
++ * Never includes plaintext values.
++ */
++export function buildUserEnvPublic(file: UserEnvFile): UserEnvPublic {
++  const names = Object.keys(file.vars || {}).sort()
++  return {
++    keys: names.map((name) => ({ name, masked: USER_ENV_MASK })),
++    count: names.length,
++    updated_at: file.updated_at,
++  }
++}
++
++function normalizeLoaded(raw: unknown): UserEnvFile | null {
++  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null
++  const obj = raw as Record<string, unknown>
++  const varsRaw = obj.vars
++  if (!varsRaw || typeof varsRaw !== "object" || Array.isArray(varsRaw)) return null
++  const vars: Record<string, string> = {}
++  for (const [k, v] of Object.entries(varsRaw as Record<string, unknown>)) {
++    if (typeof k !== "string" || typeof v !== "string") continue
++    vars[k] = v
++  }
++  const version = typeof obj.version === "number" ? obj.version : USER_ENV_VERSION
++  const updated_at = typeof obj.updated_at === "string" ? obj.updated_at : undefined
++  return { version, updated_at, vars }
++}
++
++/**
++ * Load from disk (or cache). On missing file → empty. On corrupt/IO → empty
++ * for read paths used by injection (see getUserEnvVars / S9).
++ */
++export function loadUserEnv(opts?: { forceReload?: boolean }): UserEnvFile {
++  if (cache && !opts?.forceReload) return cache
++  const filePath = userEnvFilePath()
++  try {
++    if (!fs.existsSync(filePath)) {
++      cache = emptyFile()
++      return cache
++    }
++    const text = fs.readFileSync(filePath, "utf-8")
++    const parsed = JSON.parse(text) as unknown
++    const normalized = normalizeLoaded(parsed)
++    if (!normalized) {
++      cache = emptyFile()
++      return cache
++    }
++    cache = normalized
++    return cache
++  } catch {
++    cache = emptyFile()
++    return cache
++  }
++}
++
++/**
++ * Vars for child-process merge. On IO/parse failure returns {} (S9) — never
++ * throws, never blocks shell/MCP spawn.
++ */
++export function getUserEnvVars(): Record<string, string> {
++  try {
++    const file = loadUserEnv()
++    return { ...(file.vars || {}) }
++  } catch {
++    return {}
++  }
++}
++
++function validateKey(name: string): UserEnvResult | null {
++  if (!USER_ENV_KEY_RE.test(name)) {
++    return {
++      ok: false,
++      error_code: "INVALID_KEY",
++      error: `Invalid key "${name}": must match ${USER_ENV_KEY_RE}`,
++    }
++  }
++  if (isReservedUserEnvKey(name)) {
++    return {
++      ok: false,
++      error_code: "RESERVED_KEY",
++      error: `Reserved key "${name}" cannot be set (denylist or CMSPARK_* prefix)`,
++    }
++  }
++  return null
++}
++
++function persist(file: UserEnvFile): UserEnvResult {
++  try {
++    const toWrite: UserEnvFile = {
++      version: USER_ENV_VERSION,
++      updated_at: new Date().toISOString(),
++      vars: file.vars,
++    }
++    atomicWriteJSON(userEnvFilePath(), toWrite, 0o600)
++    cache = toWrite
++    return { ok: true, public: buildUserEnvPublic(toWrite) }
++  } catch (err: any) {
++    return {
++      ok: false,
++      error_code: "IO_ERROR",
++      error: err?.message || String(err),
++    }
++  }
++}
++
++/**
++ * Set / update vars. Empty string is a legal value (R6) — not delete.
++ * Value === "***" means unchanged (ignored), same as api_key convention.
++ */
++export function setUserEnvVars(input: Record<string, unknown>): UserEnvResult {
++  if (!input || typeof input !== "object" || Array.isArray(input)) {
++    return { ok: false, error_code: "INVALID_PAYLOAD", error: "vars object required" }
++  }
++
++  const current = loadUserEnv()
++  const nextVars: Record<string, string> = { ...current.vars }
++  let anyChange = false
++
++  for (const [rawKey, rawVal] of Object.entries(input)) {
++    const keyErr = validateKey(rawKey)
++    if (keyErr) return keyErr
++
++    if (typeof rawVal !== "string") {
++      return {
++        ok: false,
++        error_code: "INVALID_PAYLOAD",
++        error: `Value for "${rawKey}" must be a string`,
++      }
++    }
++    // Masked sentinel → leave existing value (or skip if new)
++    if (rawVal === USER_ENV_MASK) {
++      continue
++    }
++    if (rawVal.length > USER_ENV_VALUE_MAX) {
++      return {
++        ok: false,
++        error_code: "VALUE_TOO_LONG",
++        error: `Value for "${rawKey}" exceeds ${USER_ENV_VALUE_MAX} bytes`,
++      }
++    }
++    nextVars[rawKey] = rawVal
++    anyChange = true
++  }
++
++  if (Object.keys(nextVars).length > USER_ENV_MAX_KEYS) {
++    return {
++      ok: false,
++      error_code: "TOO_MANY_KEYS",
++      error: `Too many keys (max ${USER_ENV_MAX_KEYS})`,
++    }
++  }
++
++  if (!anyChange) {
++    // No-op (all masked or empty patch) — still return public snapshot
++    return { ok: true, public: buildUserEnvPublic(current) }
++  }
++
++  return persist({ version: USER_ENV_VERSION, vars: nextVars })
++}
++
++/** Delete keys. Unknown keys are ignored. */
++export function deleteUserEnvKeys(keys: string[]): UserEnvResult {
++  if (!Array.isArray(keys)) {
++    return { ok: false, error_code: "INVALID_PAYLOAD", error: "keys array required" }
++  }
++
++  const current = loadUserEnv()
++  const nextVars: Record<string, string> = { ...current.vars }
++  let anyChange = false
++
++  for (const raw of keys) {
++    if (typeof raw !== "string" || !raw) continue
++    // Allow delete of any stored key (including if denylist grew later)
++    if (Object.prototype.hasOwnProperty.call(nextVars, raw)) {
++      delete nextVars[raw]
++      anyChange = true
++    }
++  }
++
++  if (!anyChange) {
++    return { ok: true, public: buildUserEnvPublic(current) }
++  }
++
++  return persist({ version: USER_ENV_VERSION, vars: nextVars })
++}
++
++/**
++ * Redact a vars map for logging/audit — values always masked (R1 / S3).
++ * Safe to pass to logger.info / appendCapabilityAudit.
++ */
++export function redactUserEnvVarsForLog(
++  vars: Record<string, unknown> | undefined | null,
++): Record<string, string> {
++  if (!vars || typeof vars !== "object") return {}
++  const out: Record<string, string> = {}
++  for (const k of Object.keys(vars)) {
++    out[k] = USER_ENV_MASK
++  }
++  return out
++}
+diff --git a/companion/tests/user-env.test.ts b/companion/tests/user-env.test.ts
+new file mode 100644
+index 0000000..a220f51
+--- /dev/null
++++ b/companion/tests/user-env.test.ts
+@@ -0,0 +1,272 @@
++// ADR-019 user-env secrets — load/save, denylist, redact, shell merge, MCP inject
++
++import test, { after, before, describe } from "node:test"
++import assert from "node:assert/strict"
++import * as fs from "node:fs"
++import * as os from "node:os"
++import * as path from "node:path"
++
++const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-user-env-"))
++process.env.CMSPARK_DATA_DIR = tempHome
++process.env.HOME = tempHome
++
++let userEnv: typeof import("../src/user-env")
++let shell: typeof import("../src/capability/shell")
++let initDataDir: typeof import("../src/config").initDataDir
++
++before(async () => {
++  const cfg = await import("../src/config")
++  initDataDir = cfg.initDataDir
++  await initDataDir()
++  userEnv = await import("../src/user-env")
++  shell = await import("../src/capability/shell")
++})
++
++after(() => {
++  fs.rmSync(tempHome, { recursive: true, force: true })
++})
++
++function resetFile() {
++  userEnv.clearUserEnvCache()
++  const p = userEnv.userEnvFilePath()
++  try {
++    fs.rmSync(p)
++  } catch {
++    /* ignore */
++  }
++  for (const f of fs.readdirSync(tempHome)) {
++    if (f.startsWith("user-env.json")) {
++      try {
++        fs.rmSync(path.join(tempHome, f))
++      } catch {
++        /* ignore */
++      }
++    }
++  }
++  userEnv.clearUserEnvCache()
++}
++
++describe("user-env key validation", { concurrency: 1 }, () => {
++  test("accepts POSIX-style keys", () => {
++    resetFile()
++    const r = userEnv.setUserEnvVars({ DATAYES_TOKEN: "tok-1", _PRIVATE: "x" })
++    assert.equal(r.ok, true)
++    if (!r.ok) return
++    assert.equal(r.public.count, 2)
++    assert.deepEqual(
++      r.public.keys.map((k) => k.name).sort(),
++      ["DATAYES_TOKEN", "_PRIVATE"].sort(),
++    )
++    assert.ok(r.public.keys.every((k) => k.masked === "***"))
++  })
++
++  test("rejects invalid keys", () => {
++    resetFile()
++    for (const bad of ["1ABC", "has-dash", "has.dot", "has space", ""]) {
++      const r = userEnv.setUserEnvVars({ [bad]: "v" })
++      assert.equal(r.ok, false)
++      if (r.ok) continue
++      assert.equal(r.error_code, "INVALID_KEY")
++    }
++  })
++
++  test("rejects denylist keys (PATH, LD_PRELOAD, HOME)", () => {
++    resetFile()
++    for (const key of ["PATH", "LD_PRELOAD", "HOME", "NODE_OPTIONS", "PYTHONPATH"]) {
++      const r = userEnv.setUserEnvVars({ [key]: "evil" })
++      assert.equal(r.ok, false, key)
++      if (r.ok) continue
++      assert.equal(r.error_code, "RESERVED_KEY", key)
++    }
++  })
++
++  test("rejects all CMSPARK_* prefix keys", () => {
++    resetFile()
++    for (const key of ["CMSPARK_SHELL", "CMSPARK_DATA_DIR", "CMSPARK_SECURITY_SECRET", "CMSPARK_FOO"]) {
++      const r = userEnv.setUserEnvVars({ [key]: "x" })
++      assert.equal(r.ok, false, key)
++      if (r.ok) continue
++      assert.equal(r.error_code, "RESERVED_KEY", key)
++    }
++  })
++
++  test("rejects value longer than 16KiB", () => {
++    resetFile()
++    const big = "x".repeat(userEnv.USER_ENV_VALUE_MAX + 1)
++    const r = userEnv.setUserEnvVars({ BIG: big })
++    assert.equal(r.ok, false)
++    if (!r.ok) assert.equal(r.error_code, "VALUE_TOO_LONG")
++  })
++
++  test("rejects more than 64 keys", () => {
++    resetFile()
++    const many: Record<string, string> = {}
++    for (let i = 0; i < userEnv.USER_ENV_MAX_KEYS + 1; i++) {
++      many[`K${i}`] = "v"
++    }
++    const r = userEnv.setUserEnvVars(many)
++    assert.equal(r.ok, false)
++    if (!r.ok) assert.equal(r.error_code, "TOO_MANY_KEYS")
++  })
++})
++
++describe("user-env set/delete semantics", { concurrency: 1 }, () => {
++  test("empty string is a legal value, not delete (R6)", () => {
++    resetFile()
++    let r = userEnv.setUserEnvVars({ EMPTY: "" })
++    assert.equal(r.ok, true)
++    assert.equal(userEnv.getUserEnvVars().EMPTY, "")
++    r = userEnv.deleteUserEnvKeys(["EMPTY"])
++    assert.equal(r.ok, true)
++    assert.equal(userEnv.getUserEnvVars().EMPTY, undefined)
++  })
++
++  test("value *** is ignored (unchanged)", () => {
++    resetFile()
++    userEnv.setUserEnvVars({ TOKEN: "real-secret" })
++    const r = userEnv.setUserEnvVars({ TOKEN: "***", OTHER: "ok" })
++    assert.equal(r.ok, true)
++    const vars = userEnv.getUserEnvVars()
++    assert.equal(vars.TOKEN, "real-secret")
++    assert.equal(vars.OTHER, "ok")
++  })
++
++  test("buildUserEnvPublic never includes plaintext (S1/S8)", () => {
++    resetFile()
++    userEnv.setUserEnvVars({ SECRET: "super-secret-value" })
++    const pub = userEnv.buildUserEnvPublic(userEnv.loadUserEnv())
++    const json = JSON.stringify(pub)
++    assert.equal(json.includes("super-secret-value"), false)
++    assert.equal(pub.keys[0].masked, "***")
++    assert.equal(pub.count, 1)
++  })
++
++  test("redactUserEnvVarsForLog masks all values (R1)", () => {
++    const redacted = userEnv.redactUserEnvVarsForLog({ A: "secret", B: "other" })
++    assert.deepEqual(redacted, { A: "***", B: "***" })
++  })
++
++  test("persists with 0o600 and atomic file under DATA_DIR", () => {
++    resetFile()
++    const r = userEnv.setUserEnvVars({ DATAYES_TOKEN: "persist-me" })
++    assert.equal(r.ok, true)
++    const p = userEnv.userEnvFilePath()
++    assert.ok(fs.existsSync(p))
++    const st = fs.statSync(p)
++    // mode bits: on Windows may not support full chmod; check best-effort on posix
++    if (process.platform !== "win32") {
++      assert.equal(st.mode & 0o777, 0o600)
++    }
++    const raw = JSON.parse(fs.readFileSync(p, "utf-8"))
++    assert.equal(raw.version, 1)
++    assert.equal(raw.vars.DATAYES_TOKEN, "persist-me")
++    assert.ok(typeof raw.updated_at === "string")
++  })
++
++  test("survives reload via cache clear", () => {
++    resetFile()
++    userEnv.setUserEnvVars({ KEEP: "after-restart" })
++    userEnv.clearUserEnvCache()
++    assert.equal(userEnv.getUserEnvVars().KEEP, "after-restart")
++  })
++})
++
++describe("user-env corrupt / S9", { concurrency: 1 }, () => {
++  test("getUserEnvVars returns {} on corrupt JSON (S9)", () => {
++    resetFile()
++    const p = userEnv.userEnvFilePath()
++    fs.writeFileSync(p, "{not-json!!!", { mode: 0o600 })
++    userEnv.clearUserEnvCache()
++    assert.deepEqual(userEnv.getUserEnvVars(), {})
++  })
++
++  test("getUserEnvVars returns {} on invalid schema", () => {
++    resetFile()
++    const p = userEnv.userEnvFilePath()
++    fs.writeFileSync(p, JSON.stringify({ version: 1, vars: "nope" }), { mode: 0o600 })
++    userEnv.clearUserEnvCache()
++    assert.deepEqual(userEnv.getUserEnvVars(), {})
++  })
++})
++
++describe("buildChildEnv merge order", { concurrency: 1 }, () => {
++  test("user env overrides process.env; CMSPARK_SHELL forced last", () => {
++    resetFile()
++    const prev = process.env.DATAYES_TOKEN
++    process.env.DATAYES_TOKEN = "from-os"
++    try {
++      const denied = userEnv.setUserEnvVars({ CMSPARK_SHELL: "nope" })
++      assert.equal(denied.ok, false)
++      const r = userEnv.setUserEnvVars({ DATAYES_TOKEN: "from-user" })
++      assert.equal(r.ok, true)
++      assert.equal(userEnv.getUserEnvVars().DATAYES_TOKEN, "from-user")
++
++      const env = shell.buildChildEnv()
++      assert.equal(env.DATAYES_TOKEN, "from-user", "user_env overrides process.env")
++      assert.equal(env.CMSPARK_SHELL, "1", "forced after user_env merge")
++    } finally {
++      if (prev === undefined) delete process.env.DATAYES_TOKEN
++      else process.env.DATAYES_TOKEN = prev
++    }
++  })
++
++  test("user cannot override CMSPARK_SHELL via file tampering", () => {
++    resetFile()
++    // Simulate a hand-edited file that sneaks CMSPARK_SHELL (denylist is write-time only)
++    const p = userEnv.userEnvFilePath()
++    fs.writeFileSync(
++      p,
++      JSON.stringify({
++        version: 1,
++        vars: { CMSPARK_SHELL: "0", MY_TOKEN: "t" },
++      }),
++      { mode: 0o600 },
++    )
++    userEnv.clearUserEnvCache()
++    const env = shell.buildChildEnv()
++    assert.equal(env.MY_TOKEN, "t")
++    assert.equal(env.CMSPARK_SHELL, "1", "forced after user_env merge")
++  })
++})
++
++describe("shell_exec receives user env", { concurrency: 1 }, () => {
++  test("printenv sees DATAYES_TOKEN from user-env", async () => {
++    // Enable shell module via config
++    const { saveConfig, clearConfigCache } = await import("../src/config")
++    saveConfig({
++      capability_profile: "enterprise",
++      modules: {
++        shell: { available: true, enabled: true, policy: "confirm_per_command" },
++      },
++    } as any)
++    clearConfigCache()
++
++    resetFile()
++    userEnv.setUserEnvVars({ DATAYES_TOKEN: "shell-inject-probe-xyz" })
++
++    const r = await shell.shellExec({ command: "printenv DATAYES_TOKEN" })
++    assert.equal(r.success, true)
++    assert.match(r.data?.stdout || "", /shell-inject-probe-xyz/)
++  })
++})
++
++describe("MCP transport merges user env", { concurrency: 1 }, () => {
++  test("stdio env includes user_env before config.env", () => {
++    resetFile()
++    userEnv.setUserEnvVars({ DATAYES_TOKEN: "mcp-user", SHARED: "from-user" })
++    // Dynamic require after DATA_DIR pin (same pattern as mcp.test.ts)
++    const { createTransport, buildSpawnPath } = require("../src/mcp/transport")
++    const transport = createTransport({
++      transport: "stdio",
++      command: "echo",
++      enabled: true,
++      trust_level: "first-use",
++      env: { SHARED: "from-server", EXTRA: "1" },
++    })
++    const params = (transport as any)._serverParams
++    assert.equal(params.env.DATAYES_TOKEN, "mcp-user")
++    assert.equal(params.env.SHARED, "from-server", "server.env wins over user_env")
++    assert.equal(params.env.EXTRA, "1")
++    assert.equal(params.env.PATH, buildSpawnPath())
++  })
++})

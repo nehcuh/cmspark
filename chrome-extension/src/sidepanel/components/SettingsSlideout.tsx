@@ -4,6 +4,7 @@ import { useState, useEffect } from "react"
 import { useAgentStore } from "../store/agentStore"
 import { Modal } from "./ui/Modal"
 import { tokens } from "../ui/tokens"
+import { UserEnvSection } from "./UserEnvSection"
 // WP5-I4 实验功能段:组件纯渲染,文案/判定全部来自 logic 纯函数(镜像
 // companion 单一真源);发送固定 source:"settings"(companion 双层围栏)。
 import {
@@ -285,6 +286,13 @@ export function SettingsSlideout() {
               </div>
             )}
           </div>
+
+          <div style={styles.divider} />
+
+          {/* --- User env / Secrets (ADR-019) — independent of bottom config Save --- */}
+          <UserEnvSection />
+
+          <div style={styles.divider} />
 
           {/* --- Obsidian Export --- */}
           <div style={styles.sectionTitle}>Obsidian 导出</div>

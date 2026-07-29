@@ -6,6 +6,7 @@ import type { ComputerTaskEventView, LLMConfig } from "../types"
 import { isAppsErrorMessage } from "../utils/apps-utils"
 import { isComputerModelErrorMessage } from "../components/model-switch-logic"
 import { isBrowserTool } from "../mode/mode-controller"
+import { isUserEnvErrorMessage, mapUserEnvError, normalizeUserEnvPublic } from "../utils/user-env-utils"
 
 /**
  * Check if an API key is masked (i.e., a placeholder like "***" or "sk-****xyz").
@@ -39,6 +40,8 @@ export function requestInitialSidePanelData(
   sendMessage({ type: "knowledge.list" })
   sendMessage({ type: "config.get" })
   sendMessage({ type: "mcp.list" })
+  // ADR-019: redacted secrets snapshot (auth required; no plaintext).
+  sendMessage({ type: "user_env.list" })
   return true
 }
 
@@ -653,6 +656,19 @@ export function useWebSocket() {
           }
           break
 
+        // ADR-019 user-env: list response + set/delete reply + multi-client broadcast
+        // all use the same redacted shape. set/delete success is deliberately
+        // `user_env.updated` (not a distinct ack) — companion message-router PR-1.
+        case "user_env.list":
+        case "user_env.updated": {
+          const pub = normalizeUserEnvPublic(msg)
+          dispatch({ type: "SET_USER_ENV", userEnv: pub })
+          if (msg.type === "user_env.updated") {
+            dispatch({ type: "SET_USER_ENV_STATUS", status: "已保存" })
+          }
+          break
+        }
+
         // App tab (WP4) — apps.list response and apps.updated broadcasts
         // (mutations broadcast to all clients; the requester's response also
         // carries warnings/added — update state from both, keep warnings).
@@ -885,6 +901,17 @@ export function useWebSocket() {
           // the legacy code set as fallback (isAppsErrorMessage).
           if (isAppsErrorMessage(msg)) {
             dispatch({ type: "SET_APPS_ERROR", error: msg.error || "Unknown apps error" })
+            break
+          }
+          // ADR-019: user_env.* failures stay in Settings Secrets section (not chat).
+          if (isUserEnvErrorMessage(msg)) {
+            const code = typeof msg.error_code === "string" ? msg.error_code
+              : typeof msg.code === "string" ? msg.code
+              : undefined
+            dispatch({
+              type: "SET_USER_ENV_ERROR",
+              error: mapUserEnvError(code, typeof msg.error === "string" ? msg.error : null),
+            })
             break
           }
           dispatch({

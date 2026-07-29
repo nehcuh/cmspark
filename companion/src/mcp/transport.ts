@@ -13,6 +13,7 @@ import path from "node:path"
 import os from "node:os"
 import fs from "node:fs"
 import { logger } from "../logger.js"
+import { getUserEnvVars } from "../user-env.js"
 import type { McpServerConfig } from "./types.js"
 
 export interface TransportExtras {
@@ -140,13 +141,18 @@ export function buildSpawnPath(): string {
 
 export function createTransport(config: McpServerConfig, extras?: TransportExtras): Transport {
   if (config.transport === "stdio") {
-    // Always enrich PATH — spawn() uses process.env.PATH, which may be missing
-    // the nvm/homebrew dirs when companion is launched as a daemon or GUI app.
-    const env: Record<string, string> = { ...process.env } as Record<string, string>
+    // Merge order (ADR-019 §6.2):
+    //   process.env → user_env → buildSpawnPath() (PATH harden) → config.env
+    // config.env is highest among optional layers. When config.env.PATH is set
+    // it overrides buildSpawnPath() verbatim (not merged/augmented).
+    const env: Record<string, string> = {
+      ...process.env,
+      ...getUserEnvVars(),
+    } as Record<string, string>
     env.PATH = buildSpawnPath()
     if (config.env) {
       Object.assign(env, config.env)
-      // If the user overrode PATH in config.env, respect their value verbatim.
+      // Explicit PATH in per-server config wins over buildSpawnPath().
       if (config.env.PATH) env.PATH = config.env.PATH
     }
 
