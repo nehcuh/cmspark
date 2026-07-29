@@ -2,16 +2,21 @@
 
 ## Current Session
 
-### S22 (2026-07-29) [ADR-020 后续工作三件套：计划 + P1 盘点 + PR/dual-review 门禁]
-- **触发**：用户确认「根据洞察文档后续工作需更新」后要求「都做吧」
-- **交付（未 commit）**：
-  1. `docs/optimization-plan-post-adr-020.md` — 排序权威 A–E（supersede post-v0.3.0）
-  2. `docs/audit/p1-security-open-items-2026-07-29.md` — P1 四条全 OPEN + 锚点
-  3. `.github/pull_request_template.md` + dual-review checklist + `scripts/dual-external-review.sh` 注入 ADR-020
+### S22 (2026-07-29) [ADR-020 后续工作 + P1 盘点/门禁 + P1-1 实现 PR #85]
+- **触发**：洞察文档（ADR-020）是否驱动后续工作 → 用户「都做吧」→ commit/push → session-end
+- **交付已合 origin/main `8d0cc2e`**：
+  1. `docs/optimization-plan-post-adr-020.md` — **排序权威** A–E（supersede post-v0.3.0）
+  2. `docs/audit/p1-security-open-items-2026-07-29.md` — P1 四条锚点盘点
+  3. `.github/pull_request_template.md` + dual-review capability checklist + `scripts/dual-external-review.sh` 注入
   4. 导航：docs/README · CONTRIBUTING · ADR-020 落点 · 旧 plan 页眉 · diagnosis P1 指针
-- **P1 结论**：god-mode step-up / MCP originWs / evaluate 二次 sanitize / shell:true 均 OPEN；M1 tabUrlCache 与 healthz 已落地勿重开
-- **下次**：按 §B 实现 P1-1→P1-4；或用户要求则 commit 本批 docs
-- Recorded: yes
+- **P1-1 实现（分支 `fix/diagnosis-P1-1` / PR #85，CI 绿，未合 main）**：
+  - companion `config.set` false→true 危险 flag 需 `confirmation_phrase` = `我了解风险`（`security-arm.ts`）
+  - 覆盖：`allow_all_schemes` / `auto_approve_dangerous` / `auto_approve_enterprise_tools`
+  - UI Settings + background 透传 phrase；21 tests；batch report + dual-review artifacts
+  - 盘点表：**P1-1 FIXED**；**P1-2/3/4 仍 OPEN**
+- **HEAD**：`origin/main` = `8d0cc2e`；工作分支 tip `9f09c5c`（P1-1）
+- **下次**：① 合 PR #85；② P1-2 originWs → P1-3 evaluate → P1-4 shell；③ HUD 可选 checklist / P3a-full
+- Recorded: yes — UI 短语≠companion 门；ADR-020 backlog 坐标系
 
 ### S21 (2026-07-28 ~17:39) [cmspark site-knowledge PR#81 + HUD Task7 PR#82 合 main]
 - **PR #81** `fix/site-knowledge-hostname`：扩展发 active-tab **hostname only**；companion case-insensitive matchSite；knowledge/skills 分离；tab lease **仅 multi-agent**（单 agent 多 tab 不再 TAB_LEASE_CAP）；Claude+Pi 计划门后实现 → **已合 main** `c7baea3`
@@ -229,21 +234,27 @@
 
 ## In-Flight Tasks (Cross-Session)
 
+### ADR-020 Trust P1 residual security (from 2026-07-28 diagnosis / S22)
+- status: active
+- context: Plan + inventory on main (`8d0cc2e`). **P1-1 FIXED** on PR #85 (`fix/diagnosis-P1-1`, CI success). **P1-2 originWs / P1-3 evaluate integrity / P1-4 shell structure** still OPEN.
+- next_action: Merge #85 if ready; then P1-2 (MCP+navigate default originWs) → P1-3 → P1-4 per optimization-plan §B
+- resume_doc: `docs/optimization-plan-post-adr-020.md` · `docs/audit/p1-security-open-items-2026-07-29.md` · PR https://github.com/nehcuh/cmspark/pull/85
+- updated: 2026-07-29
+
 ### P3a Companion Native HUD — post-spike (from 2026-07-27 / closed Task7 2026-07-28)
 - status: active (optional operator + P3a-full)
-- context: Task 1–7 on main (`d3a977f`). SHA `5929b53c…` pinned. Ship note + impl dual-review both_ok. Dual-track screenshots **NO-GO**. Full dual-process checklist still optional.
-- next_action: Optional `CMSPARK_HUD_SPIKE=1` dual-process confirm Allow/Deny/急停/standby; then P3a-full design (ConfirmElevated parity) — **no** screenshot flood
+- context: Task 1–7 on main. SHA `5929b53c…` pinned. Dual-track screenshots **NO-GO**.
+- next_action: Optional `CMSPARK_HUD_SPIKE=1` dual-process checklist; then P3a-full (ConfirmElevated parity) — **no** screenshot flood
 - resume_doc: `docs/decisions/v1.3/companion-native-hud-p3a-spike-ship-note-2026-07-28.md`
 - product_lock: `docs/decisions/v1.3/companion-native-hud-n1n10-lock-2026-07-27.md`
-- head: `d3a977f` origin/main
-- updated: 2026-07-28
+- updated: 2026-07-29
 
 ### P0-D package/release hard-gates (from 2026-07-25 diagnosis)
 - status: active
-- context: P0-A/B/C historically fixed; packaging hard-gates largely in CI/package.sh by later work — re-verify against current main before large P0-D batch
-- next_action: Spot-check package.sh fail-closed + release.yml notes; open residual items only
+- context: Packaging hard-gates largely in CI; residual spot-check only
+- next_action: Spot-check package.sh fail-closed + release.yml notes if packaging changes
 - resume_doc: docs/audit/handoff-p0-diagnosis-2026-07-25.md
-- updated: 2026-07-28
+- updated: 2026-07-29
 
 ### Quick Actions Runtime Verification
 - status: needs-testing

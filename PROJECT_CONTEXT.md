@@ -3,22 +3,22 @@
 ## Session Handoff
 
 <!-- handoff:start -->
-### 2026-07-28 ~17:39 (S21 — site-knowledge #81 + HUD Task7 #82)
-- **HEAD**：`d3a977f` on `origin/main`（工作区干净）
-- **本会话续交付**：
-  - **PR #81** site_knowledge：active-tab hostname wire + case-insensitive match + skills/knowledge 分离 + tab lease multi-only
-  - **PR #82** HUD P3a Task 7：tray rebuild SHA `5929b53c…`、ship note、Claude+Pi impl dual-review both_ok
-  - 更早同日：**PR #80** docs reorg Phase1–4
-- **关键入口**：
-  - `docs/README.md` · `docs/decisions/v1.3/companion-native-hud-p3a-spike-ship-note-2026-07-28.md`
-  - dual-review：`docs/audit/reviews/native-hud-p3a-impl-verdict-20260728-172207.json`
+### 2026-07-29 (S22 — ADR-020 backlog + P1 inventory + P1-1 PR #85)
+- **origin/main**：`8d0cc2e` — ADR-020 后续计划 / P1 盘点 / PR template / dual-review 能力清单
+- **开放 PR #85** `fix/diagnosis-P1-1` @ `9f09c5c` — **P1-1 god-mode companion step-up**（CI success，未合）
+  - `confirmation_phrase` = `我了解风险`（`companion/src/security-arm.ts`）
+  - flags: allow_all_schemes / auto_approve_dangerous / auto_approve_enterprise_tools（false→true only）
+- **P1 状态**：1 FIXED · 2/3/4 OPEN（originWs · evaluate sanitize · shell:true）
+- **权威文档**：
+  - `docs/optimization-plan-post-adr-020.md`（排序）
+  - `docs/audit/p1-security-open-items-2026-07-29.md`
+  - `docs/adr/020-capability-model-three-axes.md`
 - **下次**：
-  1. 可选 `CMSPARK_HUD_SPIKE=1` 双进程完整 checklist
-  2. P3a-full（ConfirmElevated 对等）— **禁止**先上双轨截图洪水
-  3. P0-D 包装 hard-gate 残余 spot-check
-- **勿做**：hash mismatch 自动 rebuild tray；Task 7 已过仍开 dual-track 截图
+  1. 合 PR #85（若 review OK）
+  2. P1-2 → P1-3 → P1-4（plan §B）
+  3. 可选 HUD dual-process checklist / P3a-full（禁双轨截图洪水）
+- **勿做**：UI phrase 当唯一 god-mode 门；无 Pack 替代加一级 Side Panel 入口
 
-### 2026-07-28 ~17:06 (S20 — docs reorg PR #80)
-- Docs Phase1–4 合 main；Rhai/dual-review/CU 开启路径文档坑已记 project-knowledge
-- site-knowledge / HUD Task7 在 S21 已清
+### 2026-07-28 ~17:39 (S21 — site-knowledge #81 + HUD Task7 #82)
+- PR #81/#82 已合 main；docs reorg #80 同日；HUD Task7 SHA 钉住；双轨截图 NO-GO
 <!-- handoff:end -->

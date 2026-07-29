@@ -2,6 +2,14 @@
 
 ## Technical Pitfalls
 
+### God-mode / 危险 flag：UI 短语 ≠ companion 门（P1-1，2026-07-29）
+- 现象：Settings 武装 `allow_all_schemes` 需输入 phrase，但 `config.set` 经任意已鉴权 WS 可直接布尔 `true` → UI 剧场
+- 修法（Design A / PR #85）：companion 对 **false→true** 的 `allow_all_schemes` / `auto_approve_dangerous` / `auto_approve_enterprise_tools` 要求 top-level `confirmation_phrase` 匹配 `SECURITY_ARM_CONFIRM_PHRASE`（`我了解风险`，`companion/src/security-arm.ts`）；缺/错 → 整条 config.set 拒绝 + `security.arm_rejected`；对 → 持久化 + `security.flag_armed`
+- 消武与「已 true 再 save」无需 phrase；`config.json` 带外编辑仍走 ADR-010 路径
+- 扩展：Settings 武装路径经 background 透传 phrase，不能只改 store 布尔
+- 测试：`companion/tests/message-router-config-security.test.ts`
+- 教训：凡「危险全局开关」，**权威门在 companion**；UI phrase 只是入口。同类后续（P1-2 originWs 等）同样勿只信客户端
+
 ### CMspark config: env var must not override user-provided API key
 - `DEEPSEEK_API_KEY` environment variable used to take unconditional priority in both `getConfig()` and `saveConfig()`, causing UI-set keys to be overwritten and then saved as empty strings
 - Fix: only fall back to env var when no user-provided (non-masked, non-env) key exists; persist user-provided keys to disk; mask only when the saved value equals the env var
@@ -143,6 +151,14 @@
 - 教训：多层安全「跳过」必须写清代数；allowlist/task auth/L2/forceConfirm/god-mode 不是同一开关。
 
 ## Reusable Patterns
+
+### ADR-020 后 backlog 必须换坐标系（2026-07-29）
+- 本体：`docs/adr/020-capability-model-three-axes.md`（Surface / Composition / Autonomy；Trust 横切）
+- **排序权威**：`docs/optimization-plan-post-adr-020.md`（A 治理 → B Trust P1 → C Pack-first → D L2 → E Autonomy）
+- 旧 `docs/optimization-plan-post-v0.3.0.md` 仅考古，**勿**再按 §6 开任务
+- 新场景默认 **Pack + skill/MCP**；禁止裸「中层 Agent」；PR 填能力声明（`.github/pull_request_template.md`）
+- dual-review 自动附：`docs/audit/reviews/_templates/dual-review-capability-checklist.md`（`scripts/dual-external-review.sh`）
+- 安全残余盘点模板：先写 `docs/audit/p1-*-open-items-*.md`（OPEN/FIXED + 文件锚点）再改代码
 
 ### Broadcast pattern for cross-client actions
 - When tray triggers an action that should execute in the Chrome extension, companion creates the entity then **broadcasts** a start message to ALL WebSocket clients
