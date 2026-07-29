@@ -39,6 +39,15 @@ CMspark 通过本地 Companion 接入 [Model Context Protocol (MCP)](https://mod
 
 ### filesystem（官方文件系统 server）
 
+**默认策略**：若 `args` 只有 package 名、没有允许目录，且未配置 `roots`，companion 会在启动时自动注入**当前用户主目录**（`os.homedir()`）：
+
+| 平台 | 主目录示例（写入 args） | roots URI 示例 |
+|------|-------------------------|----------------|
+| Windows | `C:/Users/HuChen`（正斜杠） | `file:///C:/Users/HuChen` |
+| macOS / Linux | `/Users/you` | `file:///Users/you` |
+
+推荐完整配置（可多目录）：
+
 ```json
 "mcp": {
   "enabled": true,
@@ -49,22 +58,24 @@ CMspark 通过本地 Companion 接入 [Model Context Protocol (MCP)](https://mod
       "args": [
         "-y",
         "@modelcontextprotocol/server-filesystem",
-        "/Users/you",
-        "/Users/you/Downloads",
-        "/private/tmp"
+        "C:/Users/you"
       ],
       "enabled": true,
       "trust_level": "trusted",
-      "cwd": "/Users/you"
+      "cwd": "C:/Users/you",
+      "roots": [{ "uri": "file:///C:/Users/you", "name": "home" }]
     }
   }
 }
 ```
 
+macOS 示例：`args` 末尾用 `"/Users/you"`，`cwd` 同理。
+
 关键点：
 - `args` 里的路径才是 filesystem server **真正允许访问的目录**；`cwd` 只是 npx 进程启动目录。
 - 所有路径**必须真实存在**，否则 server 会启动失败。
 - 想放开多个目录，就在 `args` 里加多个路径参数。
+- Windows 路径建议正斜杠（`C:/Users/...`），与 companion `normalizeArgsForPlatform` 一致。
 
 ### brave-search
 

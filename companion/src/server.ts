@@ -59,6 +59,10 @@ import { acquireLock, releaseLock, isProcessRunning, readPidFile, cleanupPidFile
 import { getLockFilePath, getPidFilePath } from "./config"
 import { getMcpManager, getMcpConfirmCache, isMcpNamespaced } from "./mcp"
 import {
+  OSASCRIPT_MACOS_ONLY_ERROR,
+  shouldL2GateOsascript,
+} from "./bridge/tool-definitions"
+import {
   getOrCreateSharedSecret,
   consumeSecretFreshlyGenerated,
   consumeSecretPersistFailed,
@@ -706,6 +710,14 @@ export function createToolExecutor(ws: WebSocket) {
     // or darwin the gate is skipped so the executor returns the typed platform error.
     const hostComputerGated = toolName === "host_computer" &&
       (os.platform() === "win32" || os.platform() === "darwin")
+    // P0 platform filter: osascript_eval is macOS-only. Fail before L2 confirmation
+    // so Windows/Linux never show a pointless confirm dialog (same idea as hostAppGated
+    // skipping off-platform). Defense-in-depth still remains in executeCompanionTool.
+    if (toolName === "osascript_eval" && !shouldL2GateOsascript(os.platform())) {
+      const result = { success: false, error: OSASCRIPT_MACOS_ONLY_ERROR }
+      logToolFinish(toolCallId, toolName, startedAt, result)
+      return result
+    }
     if ((L2_GATE_TOOLS.includes(toolName) || hostAppGated || hostComputerGated) && !finalParams.security_token) {
       // shell_exec / netsec use command|targets for L2 preview text (not code/expression).
       // spawn_worker / ask_user use role/question summaries for the Confirm Center.
@@ -3161,8 +3173,8 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
       if (!lengthCheck.ok) {
         return { success: false, error: lengthCheck.error }
       }
-      if (os.platform() !== "darwin") {
-        return { success: false, error: "osascript_eval is macOS-only. Use get_page_text with tabId instead (cross-platform)." }
+      if (!shouldL2GateOsascript(os.platform())) {
+        return { success: false, error: OSASCRIPT_MACOS_ONLY_ERROR }
       }
       // Use execFile with -e arguments and argv passing to avoid string injection (P0).
       // CAPABILITY INVARIANT (§6.2): this template ONLY runs `execute t javascript

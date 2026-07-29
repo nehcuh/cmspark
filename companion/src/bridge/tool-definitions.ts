@@ -91,7 +91,42 @@ function isValidToolDefinition(tool: unknown): tool is ToolDefinition {
   return true
 }
 
-export function getToolDefinitions(): ToolDefinition[] {
+/** macOS-only error string — must keep "macos-only" for classifyError recoverability. */
+export const OSASCRIPT_MACOS_ONLY_ERROR =
+  "osascript_eval is macOS-only. Use get_page_text with tabId instead (cross-platform)."
+
+/** Whether osascript_eval is exposed to the LLM (tool schema) on this platform. */
+export function shouldExposeOsascript(platform: NodeJS.Platform = process.platform): boolean {
+  return platform === "darwin"
+}
+
+/** Whether osascript_eval enters the L2 confirmation gate (darwin only). */
+export function shouldL2GateOsascript(platform: NodeJS.Platform = process.platform): boolean {
+  return platform === "darwin"
+}
+
+/**
+ * Full native tool catalog (all platforms). Used by pack validation, getToolDefinition,
+ * and any caller that needs the global name set — not the LLM-visible filtered set.
+ */
+export function getAllToolDefinitions(): ToolDefinition[] {
+  if (!cachedAllToolDefinitions) {
+    cachedAllToolDefinitions = buildAllToolDefinitions()
+  }
+  return cachedAllToolDefinitions
+}
+
+/**
+ * LLM-visible tools for the given platform (default: process.platform).
+ * On non-darwin, `osascript_eval` is omitted so models cannot call a dead tool.
+ */
+export function getToolDefinitions(platform: NodeJS.Platform = process.platform): ToolDefinition[] {
+  const all = getAllToolDefinitions()
+  if (shouldExposeOsascript(platform)) return all
+  return all.filter((t) => t.function.name !== "osascript_eval")
+}
+
+function buildAllToolDefinitions(): ToolDefinition[] {
   const tools: ToolDefinition[] = [
     // --- Tab tools ---
     {
@@ -947,9 +982,8 @@ export function getMcpMetaToolDefinitions(capabilities: {
   return tools
 }
 
-// FIXED [HIGH]: Cache tool definitions to avoid O(n) re-validation on every getToolDefinition call
-// Previously, getToolDefinition called getToolDefinitions() which re-validated all tools
-const cachedToolDefinitions = getToolDefinitions()
+// FIXED [HIGH]: Cache full catalog once; platform filter is O(n) over the cache only.
+let cachedAllToolDefinitions: ToolDefinition[] | null = null
 
 /** Error thrown when tool definitions fail to load */
 export class ToolDefinitionError extends Error {
@@ -959,12 +993,10 @@ export class ToolDefinitionError extends Error {
   }
 }
 
-/** Get a tool definition by name */
+/** Get a tool definition by name (full catalog — includes macOS-only tools). */
 export function getToolDefinition(name: string): ToolDefinition {
   try {
-    // FIXED [HIGH]: Use cached tool definitions instead of re-fetching and re-validating
-    // This changes from O(n) validation overhead per call to O(1) lookup
-    const tool = cachedToolDefinitions.find(t => t.function.name === name)
+    const tool = getAllToolDefinitions().find((t) => t.function.name === name)
     if (!tool) {
       throw new ToolDefinitionError(`Tool '${name}' not found`, name)
     }

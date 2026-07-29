@@ -4,7 +4,14 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import { resolveTargetTab } from "../src/bridge/tab-resolver.js"
-import { getToolDefinitions, getMcpMetaToolDefinitions } from "../src/bridge/tool-definitions.js"
+import {
+  getToolDefinitions,
+  getAllToolDefinitions,
+  getMcpMetaToolDefinitions,
+  shouldExposeOsascript,
+  shouldL2GateOsascript,
+  OSASCRIPT_MACOS_ONLY_ERROR,
+} from "../src/bridge/tool-definitions.js"
 
 test("tab-resolver: explicit returns explicit tabId when valid", () => {
   const tab = (id: number, url: string, title: string, active = false, index = 0) => ({
@@ -347,12 +354,27 @@ test("tool-definitions: includes cookie tools", () => {
 })
 
 test("tool-definitions: includes companion direct tools", () => {
-  const tools = getToolDefinitions()
-  const toolNames = tools.map((t: any) => t.function.name)
+  // Full catalog always has osascript; LLM-visible set is platform-filtered.
+  const allNames = getAllToolDefinitions().map((t: any) => t.function.name)
+  assert.ok(allNames.includes("use_skill"))
+  assert.ok(allNames.includes("osascript_eval"))
+  assert.ok(allNames.includes("record_experience"))
 
-  assert.ok(toolNames.includes("use_skill"))
-  assert.ok(toolNames.includes("osascript_eval"))
-  assert.ok(toolNames.includes("record_experience"))
+  const darwinNames = getToolDefinitions("darwin").map((t: any) => t.function.name)
+  assert.ok(darwinNames.includes("osascript_eval"))
+
+  const winNames = getToolDefinitions("win32").map((t: any) => t.function.name)
+  assert.ok(!winNames.includes("osascript_eval"), "win32 must hide osascript_eval from LLM")
+  const linuxNames = getToolDefinitions("linux").map((t: any) => t.function.name)
+  assert.ok(!linuxNames.includes("osascript_eval"))
+})
+
+test("tool-definitions: platform helpers for osascript", () => {
+  assert.equal(shouldExposeOsascript("darwin"), true)
+  assert.equal(shouldExposeOsascript("win32"), false)
+  assert.equal(shouldL2GateOsascript("darwin"), true)
+  assert.equal(shouldL2GateOsascript("win32"), false)
+  assert.match(OSASCRIPT_MACOS_ONLY_ERROR, /macos-only/i)
 })
 
 test("tool-definitions: each tool has required OpenAI function-calling format", () => {

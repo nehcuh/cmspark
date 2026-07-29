@@ -1,7 +1,7 @@
 import * as fs from "fs"
 import * as path from "path"
 import * as yaml from "js-yaml"
-import { getToolDefinitions } from "../bridge/tool-definitions"
+import { getAllToolDefinitions } from "../bridge/tool-definitions"
 import {
   FORBIDDEN_PACK_KEYS,
   MAX_PACK_FILE_BYTES,
@@ -20,7 +20,8 @@ const VALID_TOOL_MODES = new Set(["allowlist", "intersect", "unchanged"])
 const VALID_SEL = new Set(["auto", "all", "manual"])
 
 function knownToolNames(): Set<string> {
-  return new Set(getToolDefinitions().map((t) => t.function.name))
+  // Full catalog (includes osascript_eval) so pack validation is platform-stable.
+  return new Set(getAllToolDefinitions().map((t) => t.function.name))
 }
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {

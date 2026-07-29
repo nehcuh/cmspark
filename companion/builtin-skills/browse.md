@@ -33,25 +33,25 @@ You have access to a Chrome browser through the CMspark Browser Agent. You can:
 
 **If `get_page_text` returns empty/null:**
 - The extension's cross-platform fallback (ISOLATED world scripting via `chrome.scripting`) handles CSP-restricted pages on ALL platforms
-- **macOS bonus:** `osascript_eval(url, expression)` uses AppleScript's Chrome automation — bypasses ALL restrictions
-- **Windows/Linux/ChromeOS:** Try `get_page_html(tabId)` or `screenshot(tabId)` as alternatives
+- **All platforms:** Try `get_page_html(tabId)`, `evaluate(tabId, code)`, or `screenshot(tabId)` next
+- **macOS only (last resort):** `osascript_eval` exists only on darwin; it is **not available** on Windows/Linux and must never be called there
 
 **Content extraction on restricted pages, by platform:**
 
-| Platform | Primary | Fallback 1 | Fallback 2 (macOS) |
-|----------|---------|------------|---------------------|
-| All | CDP `Runtime.evaluate` | `chrome.scripting` ISOLATED world | — |
-| macOS | Same as above | Same as above | `osascript_eval` (AppleScript JS) |
+| Platform | Primary | Fallback 1 | Fallback 2 |
+|----------|---------|------------|------------|
+| Windows / Linux | CDP `Runtime.evaluate` / `get_page_text` | `chrome.scripting` / `get_page_html` / `evaluate` | `screenshot` |
+| macOS | Same as above | Same as above | `osascript_eval` (AppleScript JS) — LAST RESORT only |
 
-**Example flow:**
+**Example flow (cross-platform):**
 ```
 1. list_tabs
 2. navigate(tabId, "https://example.com/inbox")
 3. wait_for(tabId, { network_idle: true, settle_ms: 3000 })
 4. text = get_page_text(tabId)
 5. if text is empty:
-     → get_page_html(tabId)  # cross-platform fallback
-     → OR osascript_eval(url="https://example.com/inbox", expression="document.body.innerText.substring(0, 5000)")  # macOS only
+     → get_page_html(tabId)
+     → OR evaluate(tabId, "document.body.innerText.substring(0, 5000)")
 6. Analyze extracted content
 ```
 **Example flow for checking email:**
@@ -60,7 +60,7 @@ You have access to a Chrome browser through the CMspark Browser Agent. You can:
 2. navigate(tabId, "https://mail.example.com/inbox")
 3. wait_for(tabId, { network_idle: true, settle_ms: 3000 })
 4. text = get_page_text(tabId)
-5. if text is empty → osascript_eval(url="https://mail.example.com/inbox", expression="document.body?.innerText?.substring(0, 10000) || 'empty'")
+5. if text is empty → evaluate(tabId, "document.body?.innerText?.substring(0, 10000) || 'empty'")
 6. Read the text/output to identify email list items, unread counts, etc.
 ```
 

@@ -24,6 +24,7 @@ import { chunkFile, searchChunks } from "./file-chunker"
 import { craftSkill, craftSkillToMarkdown } from "./skills/skill-craft"
 import { checkHighRiskExecution } from "./security"
 import { securityPolicy } from "./security-policy"
+import { OSASCRIPT_MACOS_ONLY_ERROR } from "./bridge/tool-definitions"
 import { getMcpManager } from "./mcp"
 import { logger } from "./logger"
 import { handleAppsMessage } from "./apps/handlers"
@@ -2014,6 +2015,15 @@ export async function handleMessage(
     // in server.ts. The AppleScript is built with static -e arguments and argv passing — no
     // string replacement of user input into the script body.
     case "osascript_eval": {
+      // Absolute first: platform fail-closed before param/security noise (P0).
+      if (os.platform() !== "darwin") {
+        return {
+          type: "tool.result",
+          id: msg.id,
+          success: false,
+          error: OSASCRIPT_MACOS_ONLY_ERROR,
+        }
+      }
       const r = rest as { url?: string; expression?: string; code?: string }
       const pageUrl = typeof r.url === "string" ? r.url : ""
       const jsExpr =

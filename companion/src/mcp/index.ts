@@ -1,4 +1,11 @@
 // MCP module — public entry point.
+export {
+  mcpHomeDir,
+  mcpHomeFileUri,
+  ensureFilesystemAllowlist,
+  defaultFilesystemServerConfig,
+  MCP_FILESYSTEM_PACKAGE,
+} from "./filesystem-home.js"
 //
 // Re-exports the singleton manager, confirm cache, types, and the namespaced-tool helper
 // used by the router. Importers should prefer `import { getMcpManager } from "../mcp"`.

@@ -294,9 +294,12 @@ export function McpServerForm() {
                   style={styles.input}
                   value={args}
                   onChange={(e) => setArgs(e.target.value)}
-                  placeholder="-y @modelcontextprotocol/server-filesystem /tmp/foo"
+                  placeholder="-y @modelcontextprotocol/server-filesystem C:/Users/You"
                 />
-                <div style={styles.hint}>包含空格的参数请用双引号包裹，如：-c "console.log('hi')"</div>
+                <div style={styles.hint}>
+                  filesystem 必须带允许目录：Windows 用主目录如 <code>C:/Users/你</code>；macOS 用{" "}
+                  <code>/Users/你</code>。缺省时 companion 会自动补主目录。含空格参数请用双引号。
+                </div>
               </div>
               <div style={styles.field}>
                 <label style={styles.label}>环境变量（可选）</label>

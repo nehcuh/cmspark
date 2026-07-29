@@ -23,6 +23,7 @@ import {
   type McpServerMeta,
   type McpToolRoute,
 } from "./types.js"
+import { ensureFilesystemAllowlist } from "./filesystem-home.js"
 
 const SLIDING_WINDOW_MS = 5 * 60 * 1000
 const RESTART_BACKOFF_EXTRA_JITTER_MS = 200
@@ -448,7 +449,12 @@ function sanitizeMcpConfig(raw: McpConfig | undefined | null): McpConfig {
       logger.warn("mcp.config.server_invalid", { name, reason })
       continue
     }
-    servers[name] = normalizeServerConfig(value as McpServerConfig)
+    // Normalize declared capabilities, then inject platform home for incomplete
+    // filesystem servers (args without allow-dirs → empty tool list on Windows/macOS).
+    servers[name] = ensureFilesystemAllowlist(
+      name,
+      normalizeServerConfig(value as McpServerConfig),
+    )
   }
   return { enabled, servers }
 }
