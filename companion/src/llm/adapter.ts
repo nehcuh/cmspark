@@ -140,6 +140,10 @@ export type HistoryMessageLike = {
 /**
  * P0-B: rebuild OpenAI chat messages from persisted thread history.
  * - Assistant rows with incomplete following tool results are stripped to text-only.
+ * - Pairing is by tool_call id (not mere role adjacency): a delayed/out-of-order
+ *   tool result whose id belongs to an earlier interrupted call must not "satisfy"
+ *   a later assistant's tool_calls — that yields OpenAI 400
+ *   "insufficient tool messages following tool_calls message".
  * - Unpaired role=tool rows (orphan tool_call_id not in the open set) are skipped
  *   so legacy corrupt history never produces a schema-invalid next create (400).
  * Pure function — unit-testable without chatCreate / network.
@@ -157,14 +161,22 @@ export function rebuildMessagesFromHistory(
       messages.push({ role: "user", content: msg.content ?? "" })
     } else if (msg.role === "assistant") {
       const tcList = msg.tool_calls || []
-      let validToolCalls = true
+      let validToolCalls = false
       if (tcList.length > 0) {
-        for (let j = 0; j < tcList.length; j++) {
-          const nextMsg = history[i + 1 + j]
-          if (!nextMsg || nextMsg.role !== "tool") {
-            validToolCalls = false
-            break
+        // Every tool_call must have a matching id in the immediate following
+        // contiguous tool-message block. Role-only adjacency is not enough:
+        // interrupted shell_exec can append a late result under a newer assistant.
+        const neededIds = tcList.map((tc: any) => tc.id).filter(Boolean) as string[]
+        if (neededIds.length === tcList.length) {
+          const blockIds = new Set<string>()
+          let k = i + 1
+          while (k < history.length && history[k].role === "tool") {
+            for (const tc of history[k].tool_calls || []) {
+              if (tc.id) blockIds.add(tc.id)
+            }
+            k++
           }
+          validToolCalls = neededIds.every((id) => blockIds.has(id))
         }
       }
       if (validToolCalls && tcList.length > 0) {
