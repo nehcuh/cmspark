@@ -12,6 +12,44 @@ export const USER_ENV_MASK = "***"
 /** Optional name chips for common skill secrets (name only — never values). */
 export const USER_ENV_NAME_CHIPS = ["DATAYES_TOKEN"] as const
 
+/**
+ * Client-side denylist mirror of companion USER_ENV_DENYLIST (ADR-019 §4.3).
+ * Companion is still authoritative; this only avoids a useless WS round-trip.
+ * Keep in lock-step when companion denylist changes.
+ */
+export const USER_ENV_DENYLIST: ReadonlySet<string> = new Set([
+  "PATH",
+  "HOME",
+  "USER",
+  "LOGNAME",
+  "SHELL",
+  "TMPDIR",
+  "TEMP",
+  "TMP",
+  "LD_PRELOAD",
+  "LD_LIBRARY_PATH",
+  "DYLD_INSERT_LIBRARIES",
+  "DYLD_LIBRARY_PATH",
+  "NODE_OPTIONS",
+  "NODE_PATH",
+  "ELECTRON_RUN_AS_NODE",
+  "NODE_ENV",
+  "OPENSSL_CONF",
+  "PYTHONHOME",
+  "PYTHONPATH",
+  "PYTHONSTARTUP",
+  "APPDATA",
+  "LOCALAPPDATA",
+  "USERPROFILE",
+  "ProgramData",
+  "ProgramFiles",
+  "SystemRoot",
+  "windir",
+  "NVM_DIR",
+  "WAYLAND_DISPLAY",
+  "DEEPSEEK_API_KEY",
+])
+
 /** Companion error_code → Chinese label for settings inline feedback. */
 const USER_ENV_ERROR_ZH: Record<UserEnvErrorCode, string> = {
   INVALID_KEY: "变量名无效（需字母/下划线开头，仅含字母数字下划线）",
@@ -26,7 +64,7 @@ const USER_ENV_ERROR_CODES: ReadonlySet<string> = new Set(Object.keys(USER_ENV_E
 
 /**
  * Route companion `type:"error"` to the Secrets settings section instead of chat.
- * Prefer family:"user_env" (future-proof); fall back to known error_code set.
+ * Prefer family:"user_env"; fall back to known error_code set.
  */
 export function isUserEnvErrorMessage(msg: {
   family?: unknown
@@ -62,7 +100,7 @@ export function validateUserEnvKeyName(name: string): string | null {
   if (!USER_ENV_KEY_RE.test(trimmed)) {
     return USER_ENV_ERROR_ZH.INVALID_KEY
   }
-  if (trimmed.startsWith("CMSPARK_")) {
+  if (trimmed.startsWith("CMSPARK_") || USER_ENV_DENYLIST.has(trimmed)) {
     return USER_ENV_ERROR_ZH.RESERVED_KEY
   }
   return null

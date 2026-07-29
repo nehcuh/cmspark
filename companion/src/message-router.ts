@@ -972,7 +972,12 @@ export async function handleMessage(
     case "user_env.set": {
       const vars = rest.vars
       if (!vars || typeof vars !== "object" || Array.isArray(vars)) {
-        return { type: "error", error: "vars object required", error_code: "INVALID_PAYLOAD" }
+        return {
+          type: "error",
+          family: "user_env",
+          error: "vars object required",
+          error_code: "INVALID_PAYLOAD",
+        }
       }
       const varsObj = vars as Record<string, unknown>
       // R1 / S3: never log plaintext values
@@ -982,7 +987,12 @@ export async function handleMessage(
       })
       const r = setUserEnvVars(varsObj)
       if (!r.ok) {
-        return { type: "error", error: r.error, error_code: r.error_code }
+        return {
+          type: "error",
+          family: "user_env",
+          error: r.error,
+          error_code: r.error_code,
+        }
       }
       const payload = { type: "user_env.updated" as const, ...r.public }
       try {
@@ -995,13 +1005,23 @@ export async function handleMessage(
     case "user_env.delete": {
       const keys = rest.keys
       if (!Array.isArray(keys)) {
-        return { type: "error", error: "keys array required", error_code: "INVALID_PAYLOAD" }
+        return {
+          type: "error",
+          family: "user_env",
+          error: "keys array required",
+          error_code: "INVALID_PAYLOAD",
+        }
       }
       const safeKeys = keys.filter((k: unknown): k is string => typeof k === "string")
       logger.info("user_env.delete", { keys: safeKeys })
       const r = deleteUserEnvKeys(safeKeys)
       if (!r.ok) {
-        return { type: "error", error: r.error, error_code: r.error_code }
+        return {
+          type: "error",
+          family: "user_env",
+          error: r.error,
+          error_code: r.error_code,
+        }
       }
       const payload = { type: "user_env.updated" as const, ...r.public }
       try {

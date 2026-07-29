@@ -23,6 +23,9 @@ test("validateUserEnvKeyName rejects invalid / reserved names", () => {
   assert.match(validateUserEnvKeyName("1BAD") || "", /无效/)
   assert.match(validateUserEnvKeyName("has-dash") || "", /无效/)
   assert.match(validateUserEnvKeyName("CMSPARK_SHELL") || "", /保留/)
+  assert.match(validateUserEnvKeyName("PATH") || "", /保留/)
+  assert.match(validateUserEnvKeyName("LD_PRELOAD") || "", /保留/)
+  assert.match(validateUserEnvKeyName("DEEPSEEK_API_KEY") || "", /保留/)
 })
 
 test("mapUserEnvError maps known codes to Chinese", () => {

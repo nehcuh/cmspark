@@ -119,17 +119,17 @@ File presence: `user-env.ts`, shell inject (`buildChildEnv` + `getUserEnvVars`),
 
 ---
 
-## 6. Remaining debt / nits (non-blocking)
+## 6. Remaining debt / nits
 
-From Gate2 dual review (not required for ship):
+Gate2 dual-review nits **addressed in follow-up commit** (after this ship-note base):
 
-1. Error responses for `user_env.set`/`delete` omit `family: "user_env"` (extension falls back to `error_code` set — works today).
-2. `handleAdd` clears draft name/value before companion ack; server reject loses typed input. Also `handleAdd` does not guard literal `"***"` the way `handleUpdate` does (silent no-op + “已保存” UX).
-3. Extension pre-validates only `CMSPARK_*`, not full denylist (companion still rejects).
-4. Update-save disabled when value is `***` without tooltip explaining sentinel.
-5. Delete uses `window.confirm` (inconsistent with modal style).
-6. Optional docs follow-ups from ADR §9 PR-3: `docs/user-env.md` / mission-pack mention / Claude.md Common Issues one-liner (partially covered by this ship note + ADR).
-7. Future: Keychain, stdout redaction, skill `required_env` prompts (ADR §11).
+1. ~~Error responses omit `family: "user_env"`~~ → fixed in message-router  
+2. ~~`handleAdd` clears draft before ack / no `***` guard~~ → clear only on 已保存; reject `***` as new value  
+3. ~~Extension denylist only `CMSPARK_*`~~ → full client denylist mirror  
+4. ~~Update-save no tooltip for `***`~~ → `title` explains sentinel  
+5. ~~Delete `window.confirm`~~ → Modal alertdialog  
+6. ~~docs/user-env.md / Claude.md Common Issues~~ → added  
+7. Future (still deferred): Keychain, stdout redaction, skill `required_env` prompts (ADR §11).
 
 ---
 

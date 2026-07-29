@@ -5,6 +5,7 @@
 import { useEffect, useState, type CSSProperties } from "react"
 import { useAgentStore } from "../store/agentStore"
 import { tokens } from "../ui/tokens"
+import { Modal } from "./ui/Modal"
 import {
   USER_ENV_MASK,
   USER_ENV_NAME_CHIPS,
@@ -70,6 +71,25 @@ const chipStyle: CSSProperties = {
   cursor: "pointer",
 }
 
+const overlayStyle: CSSProperties = {
+  position: "fixed",
+  inset: 0,
+  background: "rgba(0,0,0,0.35)",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  zIndex: 10050,
+  padding: 16,
+}
+const panelStyle: CSSProperties = {
+  width: "100%",
+  maxWidth: 320,
+  background: "#fff",
+  borderRadius: 10,
+  padding: 16,
+  boxShadow: "0 8px 28px rgba(0,0,0,0.18)",
+}
+
 export function UserEnvSection() {
   const { state, dispatch } = useAgentStore()
   const connected = state.connectionState === "connected"
@@ -80,6 +100,7 @@ export function UserEnvSection() {
   const [updateValues, setUpdateValues] = useState<Record<string, string>>({})
   const [localError, setLocalError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
 
   // Refresh redacted list whenever settings opens while connected.
   useEffect(() => {
@@ -87,12 +108,15 @@ export function UserEnvSection() {
     chrome.runtime.sendMessage({ type: "user_env.list" })
   }, [state.settingsOpen, connected])
 
-  // Clear draft values when companion confirms an update (never re-show plaintext).
+  // Clear draft values only after companion confirms success (never re-show plaintext).
+  // Keep drafts on reject so the user can correct without retyping the name/value.
   useEffect(() => {
     if (state.userEnvStatus === "已保存") {
+      setNewName("")
       setNewValue("")
       setUpdateValues({})
       setBusy(false)
+      setDeleteTarget(null)
     }
   }, [state.userEnvStatus, state.userEnv?.updated_at, state.userEnv?.count])
 
@@ -115,16 +139,19 @@ export function UserEnvSection() {
       setLocalError(nameErr)
       return
     }
-    // Empty string is a legal value (ADR R6); only reject if user left value as mask-only placeholder by mistake is N/A for new.
+    // "***" is the unchanged sentinel for updates — not a legal new value (avoids silent no-op UX).
+    if (newValue === USER_ENV_MASK) {
+      setLocalError("请输入真实密钥值（*** 仅表示已配置项未改动，不可作为新值）")
+      return
+    }
+    // Empty string is a legal value (ADR R6); only delete goes through user_env.delete.
     const name = newName.trim()
     setBusy(true)
     chrome.runtime.sendMessage({
       type: "user_env.set",
       vars: { [name]: newValue },
     })
-    setNewName("")
-    // newValue cleared on user_env.updated (never keep plaintext in React state longer than needed)
-    setNewValue("")
+    // Do NOT clear drafts until ack — Gate2 nit: keep input on server reject.
   }
 
   const handleUpdate = (name: string) => {
@@ -139,7 +166,6 @@ export function UserEnvSection() {
       setLocalError("请输入新值（*** 表示未改动）")
       return
     }
-    // Empty string is a legal value (ADR R6); only delete goes through user_env.delete.
     setBusy(true)
     chrome.runtime.sendMessage({
       type: "user_env.set",
@@ -147,9 +173,14 @@ export function UserEnvSection() {
     })
   }
 
-  const handleDelete = (name: string) => {
+  const requestDelete = (name: string) => {
     clearFeedback()
-    if (!confirm(`确定删除环境变量「${name}」？`)) return
+    setDeleteTarget(name)
+  }
+
+  const confirmDelete = () => {
+    if (!deleteTarget) return
+    const name = deleteTarget
     setBusy(true)
     chrome.runtime.sendMessage({
       type: "user_env.delete",
@@ -164,6 +195,13 @@ export function UserEnvSection() {
 
   const feedbackError = localError || state.userEnvError
   const feedbackOk = !feedbackError && state.userEnvStatus
+  const updateSaveTitle = (name: string) => {
+    if (!(name in updateValues)) return "请先输入新值"
+    if (updateValues[name] === USER_ENV_MASK) {
+      return "*** 表示未改动，请输入新值后再保存"
+    }
+    return "保存此变量"
+  }
 
   return (
     <>
@@ -232,14 +270,14 @@ export function UserEnvSection() {
                       || updateValues[entry.name] === USER_ENV_MASK
                     }
                     onClick={() => handleUpdate(entry.name)}
-                    title="保存此变量"
+                    title={updateSaveTitle(entry.name)}
                   >
                     保存
                   </button>
                   <button
                     style={{ ...btnStyle, color: tokens.danger, borderColor: "#f0c0c0" }}
                     disabled={disabled}
-                    onClick={() => handleDelete(entry.name)}
+                    onClick={() => requestDelete(entry.name)}
                   >
                     删除
                   </button>
@@ -316,6 +354,41 @@ export function UserEnvSection() {
           <div style={{ ...helpStyle, color: tokens.success, marginTop: 8 }}>✓ {state.userEnvStatus}</div>
         )}
       </div>
+
+      <Modal
+        open={deleteTarget != null}
+        onClose={() => {
+          if (!busy) setDeleteTarget(null)
+        }}
+        role="alertdialog"
+        ariaLabel="确认删除环境变量"
+        backdropDismiss={!busy}
+        overlayStyle={overlayStyle}
+        panelStyle={panelStyle}
+      >
+        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>删除环境变量？</div>
+        <div style={{ fontSize: 12, color: "#555", lineHeight: 1.5, marginBottom: 14 }}>
+          将永久删除 <code>{deleteTarget}</code>。子进程将无法再读取该密钥，且无法从 UI 恢复明文。
+        </div>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+          <button
+            type="button"
+            style={btnStyle}
+            disabled={busy}
+            onClick={() => setDeleteTarget(null)}
+          >
+            取消
+          </button>
+          <button
+            type="button"
+            style={{ ...primaryBtnStyle, background: tokens.danger }}
+            disabled={busy}
+            onClick={confirmDelete}
+          >
+            确认删除
+          </button>
+        </div>
+      </Modal>
     </>
   )
 }
