@@ -13,6 +13,7 @@ import path from "node:path"
 import os from "node:os"
 import fs from "node:fs"
 import { logger } from "../logger.js"
+import { getUserEnvVars } from "../user-env.js"
 import type { McpServerConfig } from "./types.js"
 
 export interface TransportExtras {
@@ -140,9 +141,12 @@ export function buildSpawnPath(): string {
 
 export function createTransport(config: McpServerConfig, extras?: TransportExtras): Transport {
   if (config.transport === "stdio") {
-    // Always enrich PATH — spawn() uses process.env.PATH, which may be missing
-    // the nvm/homebrew dirs when companion is launched as a daemon or GUI app.
-    const env: Record<string, string> = { ...process.env } as Record<string, string>
+    // Merge: process.env → user_env (ADR-019) → PATH harden → per-server config.env
+    // (server.env highest among optional layers; PATH override remains verbatim).
+    const env: Record<string, string> = {
+      ...process.env,
+      ...getUserEnvVars(),
+    } as Record<string, string>
     env.PATH = buildSpawnPath()
     if (config.env) {
       Object.assign(env, config.env)
