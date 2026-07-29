@@ -44,8 +44,11 @@ export interface UserEnvFile {
 export interface UserEnvPublic {
   keys: Array<{
     name: string
-    /** Always "***" when listed (key is configured). */
-    masked: string
+    /**
+     * Always the constant USER_ENV_MASK ("***") when the key is configured.
+     * Not a partial redaction of the value — presence of the entry means set.
+     */
+    masked: typeof USER_ENV_MASK
   }>
   count: number
   updated_at?: string
@@ -97,6 +100,9 @@ export const USER_ENV_DENYLIST: ReadonlySet<string> = new Set([
   "windir",
   "NVM_DIR",
   "WAYLAND_DISPLAY",
+  // Companion LLM key (config.ts reads process.env.DEEPSEEK_API_KEY). Deny so
+  // shell_exec / MCP children cannot inherit the companion's API credential
+  // via user-env injection (even if the host process itself already has it).
   "DEEPSEEK_API_KEY",
 ])
 

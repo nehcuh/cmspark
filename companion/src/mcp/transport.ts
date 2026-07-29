@@ -141,8 +141,10 @@ export function buildSpawnPath(): string {
 
 export function createTransport(config: McpServerConfig, extras?: TransportExtras): Transport {
   if (config.transport === "stdio") {
-    // Merge: process.env → user_env (ADR-019) → PATH harden → per-server config.env
-    // (server.env highest among optional layers; PATH override remains verbatim).
+    // Merge order (ADR-019 §6.2):
+    //   process.env → user_env → buildSpawnPath() (PATH harden) → config.env
+    // config.env is highest among optional layers. When config.env.PATH is set
+    // it overrides buildSpawnPath() verbatim (not merged/augmented).
     const env: Record<string, string> = {
       ...process.env,
       ...getUserEnvVars(),
@@ -150,7 +152,7 @@ export function createTransport(config: McpServerConfig, extras?: TransportExtra
     env.PATH = buildSpawnPath()
     if (config.env) {
       Object.assign(env, config.env)
-      // If the user overrode PATH in config.env, respect their value verbatim.
+      // Explicit PATH in per-server config wins over buildSpawnPath().
       if (config.env.PATH) env.PATH = config.env.PATH
     }
 

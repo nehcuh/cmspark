@@ -961,6 +961,9 @@ export async function handleMessage(
       return { type: "skill.list", skills: skillEngine.list() }
 
     // --- User env / secrets (ADR-019) — independent of config.json ---
+    // set/delete success response type is deliberately `user_env.updated` (same
+    // snapshot as the multi-client broadcast) — not a distinct ack. Extension UI
+    // (PR-2) must dispatch on `user_env.updated` for both direct reply + broadcast.
     case "user_env.list": {
       // Outbound only via buildUserEnvPublic (R2 / S8)
       const pub = buildUserEnvPublic(loadUserEnv())
@@ -971,12 +974,13 @@ export async function handleMessage(
       if (!vars || typeof vars !== "object" || Array.isArray(vars)) {
         return { type: "error", error: "vars object required", error_code: "INVALID_PAYLOAD" }
       }
+      const varsObj = vars as Record<string, unknown>
       // R1 / S3: never log plaintext values
       logger.info("user_env.set", {
-        keys: Object.keys(vars as object),
-        vars: redactUserEnvVarsForLog(vars as Record<string, unknown>),
+        keys: Object.keys(varsObj),
+        vars: redactUserEnvVarsForLog(varsObj),
       })
-      const r = setUserEnvVars(vars as Record<string, unknown>)
+      const r = setUserEnvVars(varsObj)
       if (!r.ok) {
         return { type: "error", error: r.error, error_code: r.error_code }
       }
