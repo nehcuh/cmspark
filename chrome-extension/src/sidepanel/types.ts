@@ -279,6 +279,27 @@ export interface FleetSnapshot {
   orchestrator_runs: string[]
 }
 
+/** ADR-019 user-env public snapshot (never carries plaintext values). */
+export interface UserEnvKeyEntry {
+  name: string
+  /** Always "***" when the key is configured (presence = set). */
+  masked: string
+}
+
+export interface UserEnvPublic {
+  keys: UserEnvKeyEntry[]
+  count: number
+  updated_at?: string
+}
+
+export type UserEnvErrorCode =
+  | "INVALID_KEY"
+  | "RESERVED_KEY"
+  | "VALUE_TOO_LONG"
+  | "TOO_MANY_KEYS"
+  | "IO_ERROR"
+  | "INVALID_PAYLOAD"
+
 export interface ToolCall {
   id: string
   tool_name: string

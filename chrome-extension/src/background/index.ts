@@ -854,6 +854,10 @@ function setupMessageHandlers() {
       case "mcp.delete":
       case "mcp.toggle_server":
       case "mcp.set_selection":
+      // ADR-019 user-env / Secrets (auth-gated companion handlers; never store values here)
+      case "user_env.list":
+      case "user_env.set":
+      case "user_env.delete":
       case "apps.list":
       case "apps.enumerate":
       case "apps.add":

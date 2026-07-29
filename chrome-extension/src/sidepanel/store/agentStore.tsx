@@ -1,7 +1,7 @@
 // Global state store for the agent
 
 import { createContext, useContext, useReducer, type ReactNode, type Dispatch } from "react"
-import type { ConnectionState, Thread, Message, SkillMeta, OperationRecord, LLMConfig, SendShortcut, SecurityConfirmationRequest, LogEntry, KnowledgeMeta, SkillSelectionMode, SecurityAuditEntry, McpServerMeta, McpSelectionMode, AppEntry, AppPresetStatus, AppEnumerateCandidate, AppAddWarning, ComputerTaskEventView, ComputerTaskState, ComputerModelState, ComputerModelProgress, ComputerModelLicenseDoor, CapabilityLevel, FleetSnapshot } from "../types"
+import type { ConnectionState, Thread, Message, SkillMeta, OperationRecord, LLMConfig, SendShortcut, SecurityConfirmationRequest, LogEntry, KnowledgeMeta, SkillSelectionMode, SecurityAuditEntry, McpServerMeta, McpSelectionMode, AppEntry, AppPresetStatus, AppEnumerateCandidate, AppAddWarning, ComputerTaskEventView, ComputerTaskState, ComputerModelState, ComputerModelProgress, ComputerModelLicenseDoor, CapabilityLevel, FleetSnapshot, UserEnvPublic } from "../types"
 import { reduceComputerTaskEvent } from "../utils/computer-utils"
 
 export interface AgentState {
@@ -77,6 +77,12 @@ export interface AgentState {
   modePin: CapabilityLevel | null
   /** ADR-015 FleetStrip — null until first fleet.status */
   fleet: FleetSnapshot | null
+  /** ADR-019 user-env public snapshot (keys + mask only; null until first list/updated). */
+  userEnv: UserEnvPublic | null
+  /** ADR-019 last user_env.* error (Chinese-mapped), shown in Settings Secrets section. */
+  userEnvError: string | null
+  /** ADR-019 last success status line for Secrets section (e.g. 已保存). */
+  userEnvStatus: string | null
 }
 
 export type AgentAction =
@@ -142,6 +148,9 @@ export type AgentAction =
   | { type: "NOTE_BROWSER_TOOL"; at?: number }
   | { type: "SET_MODE_PIN"; pin: CapabilityLevel | null }
   | { type: "SET_FLEET"; fleet: FleetSnapshot | null }
+  | { type: "SET_USER_ENV"; userEnv: UserEnvPublic }
+  | { type: "SET_USER_ENV_ERROR"; error: string | null }
+  | { type: "SET_USER_ENV_STATUS"; status: string | null }
 
 export const initialState: AgentState = {
   connectionState: "disconnected",
@@ -214,6 +223,9 @@ export const initialState: AgentState = {
   lastBrowserToolAt: null,
   modePin: null,
   fleet: null,
+  userEnv: null,
+  userEnvError: null,
+  userEnvStatus: null,
 }
 
 export function agentReducer(state: AgentState, action: AgentAction): AgentState {
@@ -501,6 +513,16 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       return { ...state, modePin: action.pin }
     case "SET_FLEET":
       return { ...state, fleet: action.fleet }
+    case "SET_USER_ENV":
+      return {
+        ...state,
+        userEnv: action.userEnv,
+        userEnvError: null,
+      }
+    case "SET_USER_ENV_ERROR":
+      return { ...state, userEnvError: action.error, userEnvStatus: action.error ? null : state.userEnvStatus }
+    case "SET_USER_ENV_STATUS":
+      return { ...state, userEnvStatus: action.status, userEnvError: action.status ? null : state.userEnvError }
     default:
       return state
   }
