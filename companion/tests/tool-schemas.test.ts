@@ -138,14 +138,35 @@ test("get_cookies: requires domain string", () => {
 
 test("osascript_eval: rejects non-string expression", () => {
   assert.throws(
-    () => parseToolArgs("osascript_eval", { expression: 42 }),
+    () => parseToolArgs("osascript_eval", { url: "example.com", expression: 42 }),
     /expression/i,
   )
 })
 
-test("osascript_eval: accepts string expression", () => {
-  const out = parseToolArgs("osascript_eval", { expression: 'display dialog "hi"' })
-  assert.equal(out.expression, 'display dialog "hi"')
+test("osascript_eval: accepts expression-only (url resolved at runtime from tab cache)", () => {
+  // LLMs often omit url; adapter injects tabId; server resolves via tabUrlCache.
+  // Schema must NOT reject expression-only or we reintroduce chat-killing failures
+  // before runtime recovery can run.
+  const out = parseToolArgs("osascript_eval", { expression: "document.title" })
+  assert.equal(out.expression, "document.title")
+  assert.equal(out.url, undefined)
+})
+
+test("osascript_eval: accepts url + expression", () => {
+  const out = parseToolArgs("osascript_eval", {
+    url: "example.com",
+    expression: "document.title",
+  })
+  assert.equal(out.url, "example.com")
+  assert.equal(out.expression, "document.title")
+})
+
+test("osascript_eval: maps evaluate-style code alias to expression", () => {
+  const out = parseToolArgs("osascript_eval", {
+    url: "example.com",
+    code: "document.title",
+  })
+  assert.equal(out.expression, "document.title")
 })
 
 // =============================================================================

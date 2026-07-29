@@ -760,12 +760,23 @@ export function getToolDefinitions(): ToolDefinition[] {
       type: "function",
       function: {
         name: "osascript_eval",
-        description: "(macOS ONLY — does NOT work on Windows/Linux) Execute JavaScript in a Chrome tab via AppleScript. Only use this as a LAST RESORT when both get_page_text and evaluate fail on restricted pages (e.g. X.com with strict CSP). Prefer get_page_text for reading page content.",
+        description:
+          "(macOS ONLY — does NOT work on Windows/Linux) Execute JavaScript in a Chrome tab via AppleScript. " +
+          "Only use as LAST RESORT when both get_page_text and evaluate fail on restricted pages (e.g. X.com CSP). " +
+          "Prefer get_page_text / evaluate. BOTH url and expression are REQUIRED — " +
+          "url is a fragment used to find the Chrome tab (not optional); omitting url fails the call.",
         parameters: {
           type: "object",
           properties: {
-            url: { type: "string", description: "URL fragment to match the Chrome tab (e.g. 'zhihu.com' matches 'https://www.zhihu.com/hot')" },
-            expression: { type: "string", description: "JavaScript expression to execute in the page context" },
+            url: {
+              type: "string",
+              description:
+                "REQUIRED. URL fragment to match the Chrome tab (e.g. 'zhihu.com' matches 'https://www.zhihu.com/hot'). Not a tabId.",
+            },
+            expression: {
+              type: "string",
+              description: "REQUIRED. JavaScript expression to execute in the page context (not 'code')",
+            },
           },
           required: ["url", "expression"],
         },

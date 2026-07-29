@@ -3092,9 +3092,54 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
       }
     }
     case "osascript_eval": {
-      const { url: pageUrl, expression: jsExpr } = params
-      if (!pageUrl || !jsExpr) {
-        return { success: false, error: "url and expression required" }
+      // Normalize evaluate-style aliases + resolve missing url from tabId / tabUrlCache.
+      // LLMs routinely call osascript_eval with only {expression} (see history t9rh1o).
+      // Adapter injects pinned tabId; we map that (or any recent cached tab) to a URL
+      // fragment so the AppleScript tab-matcher can find the tab.
+      let pageUrl = typeof params.url === "string" ? params.url.trim() : ""
+      let jsExpr =
+        (typeof params.expression === "string" && params.expression) ||
+        (typeof params.code === "string" && params.code) ||
+        ""
+      if (!pageUrl && typeof params.tabId === "number") {
+        pageUrl = getCachedTabUrl(params.tabId) || ""
+        if (pageUrl) {
+          logger.info("osascript_eval.url_resolved_from_tabId", {
+            tab_id: params.tabId,
+            url_prefix: pageUrl.slice(0, 80),
+          })
+        }
+      }
+      if (!pageUrl && tabUrlCache.size > 0) {
+        // Last-resort: most recently cached tab (Map insertion order). Prefer https tabs.
+        let fallback = ""
+        for (const u of tabUrlCache.values()) {
+          if (typeof u === "string" && u.startsWith("http")) fallback = u
+        }
+        if (fallback) {
+          pageUrl = fallback
+          logger.info("osascript_eval.url_resolved_from_cache_fallback", {
+            url_prefix: pageUrl.slice(0, 80),
+            cache_size: tabUrlCache.size,
+          })
+        }
+      }
+      if (!jsExpr) {
+        return {
+          success: false,
+          error:
+            "osascript_eval requires expression (JS to run in the Chrome tab). " +
+            "Optional: url fragment (e.g. 'example.com') or tabId from list_tabs.",
+        }
+      }
+      if (!pageUrl) {
+        return {
+          success: false,
+          error:
+            "osascript_eval: no url and no tab URL in cache. " +
+            "Call list_tabs first, then pass url (fragment matching the tab) or tabId. " +
+            "Example: {url: 'example.com', expression: 'document.title'}",
+        }
       }
       // Validate security token instead of boolean flag
       if (params.security_token) {

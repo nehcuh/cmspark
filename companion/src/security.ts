@@ -695,6 +695,16 @@ export function classifyError(errorMessage: string, context?: { toolName?: strin
     "tab_busy_confirming",
     "tab_force_releasing",
     "tab_id_required",
+    // Missing / malformed tool args: LLM should re-call with correct shape
+    // (was default non_recoverable → chat.error "不可恢复错误: url and expression required")
+    "url and expression required",
+    "requires url and expression",
+    "requires expression",
+    "no url and no tab url",
+    "missing required",
+    "required parameters",
+    "tabid not in url cache",
+    "not in url cache",
   ]
   if (recoverable.some(p => msg.includes(p))) {
     return "recoverable"

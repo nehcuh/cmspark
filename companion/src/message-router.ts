@@ -1935,9 +1935,23 @@ export async function handleMessage(
     // in server.ts. The AppleScript is built with static -e arguments and argv passing — no
     // string replacement of user input into the script body.
     case "osascript_eval": {
-      const { url: pageUrl, expression: jsExpr } = rest as { url: string; expression: string }
+      const r = rest as { url?: string; expression?: string; code?: string }
+      const pageUrl = typeof r.url === "string" ? r.url : ""
+      const jsExpr =
+        (typeof r.expression === "string" && r.expression) ||
+        (typeof r.code === "string" && r.code) ||
+        ""
       if (!pageUrl || !jsExpr) {
-        return { type: "tool.result", id: msg.id, success: false, error: "url and expression required" }
+        return {
+          type: "tool.result",
+          id: msg.id,
+          success: false,
+          error:
+            "osascript_eval requires url and expression. " +
+            "url = fragment matching the Chrome tab (e.g. 'zhihu.com'); " +
+            "expression = JS to run in that tab. " +
+            `Got url=${pageUrl ? "set" : "missing"}, expression=${jsExpr ? "set" : "missing"}.`,
+        }
       }
       // Security check runs regardless of session availability
       if (rest.security_token) {

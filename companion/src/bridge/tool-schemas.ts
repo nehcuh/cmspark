@@ -91,11 +91,30 @@ export const TOOL_ARG_SCHEMAS: Record<string, z.ZodTypeAny> = {
     security_token: z.string().optional(),
   }),
 
-  // --- macOS osascript (high-risk: arbitrary AppleScript on the host) ---
-  osascript_eval: z.object({
-    expression: z.string().min(1),
-    security_token: z.string().optional(),
-  }),
+  // --- macOS osascript (high-risk: JS in a Chrome tab via AppleScript) ---
+  // Expression is required. url is preferred but optional at the schema boundary:
+  // the LLM frequently omits it (history: l74du8 / t9rh1o — only {expression}).
+  // Adapter injects pinned tabId after parse; executeCompanionTool then resolves
+  // tabId → URL via tabUrlCache. Rejecting missing url here would race that
+  // injection and reintroduce chat-killing failures when god-mode auto-approves.
+  // Also map evaluate-style `code` → `expression`.
+  osascript_eval: z.preprocess(
+    (raw) => {
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw
+      const o = { ...(raw as Record<string, unknown>) }
+      if ((o.expression == null || o.expression === "") && typeof o.code === "string") {
+        o.expression = o.code
+      }
+      return o
+    },
+    z.object({
+      url: z.string().min(1).optional(),
+      expression: z.string().min(1),
+      code: z.string().optional(),
+      tabId: tabIdSchema.optional(),
+      security_token: z.string().optional(),
+    }),
+  ),
 
   // --- macOS host_read (Phase 0 computer-use: read Mail inbox top-1) ---
   host_read: z.object({

@@ -261,6 +261,22 @@ test("classifyError workspace_root not set is recoverable (Mission Pack DevSec)"
   assert.equal(classifyError("module_disabled:devsec-workspace"), "recoverable")
 })
 
+test("classifyError osascript missing url/expression is recoverable (not chat-killing)", () => {
+  // Regression l74du8: LLM often omitted url; runtime error was default non_recoverable
+  // → "不可恢复错误: url and expression required" and the whole turn stopped.
+  assert.equal(
+    classifyError("url and expression required", { toolName: "osascript_eval" }),
+    "recoverable",
+  )
+  assert.equal(
+    classifyError(
+      "osascript_eval requires url and expression. url = fragment matching the Chrome tab (e.g. 'zhihu.com'); expression = JS to run in that tab. Got url=missing, expression=set.",
+      { toolName: "osascript_eval" },
+    ),
+    "recoverable",
+  )
+})
+
 test("classifyError TAB_LEASE_CAP is recoverable so agent can close_tab and retry", () => {
   assert.equal(
     classifyError(
