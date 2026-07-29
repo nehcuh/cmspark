@@ -829,28 +829,56 @@ test("skill-engine: importSkillFolder rejects zip without SKILL.md", async () =>
   )
 })
 
-test("skill-engine: importSkillFromPath rejects path traversal", async () => {
+test("skill-engine: importSkillFromPath rejects non-directory / missing path", async () => {
   resetMockDirs()
   process.env.HOME = tempHome
-  
-  const { SkillEngine } = await import("../src/skills/skill-engine")
-  const engine = new SkillEngine()
-  assert.throws(
-    () => engine.importSkillFromPath("/etc/passwd"),
-    /Path traversal not allowed/,
-  )
-})
 
-test("skill-engine: importSkillFromPath rejects non-existent directory", async () => {
-  resetMockDirs()
-  process.env.HOME = tempHome
-  
   const { SkillEngine } = await import("../src/skills/skill-engine")
   const engine = new SkillEngine()
+  // File, not a directory
+  const filePath = path.join(tempHome, "not-a-dir.txt")
+  fs.writeFileSync(filePath, "x")
+  assert.throws(() => engine.importSkillFromPath(filePath), /Directory not found/)
   assert.throws(
     () => engine.importSkillFromPath(path.join(mockConfigDir, "nonexistent")),
     /Directory not found/,
   )
+})
+
+test("skill-engine: importSkillFromPath imports from outside config dir (e.g. ~/.claude/skills)", async () => {
+  // Regression: path import used to require source ⊆ getConfigDir(), so UI
+  // import of ~/.claude/skills/foo failed with "Path traversal not allowed".
+  resetMockDirs()
+  process.env.HOME = tempHome
+
+  const externalRoot = path.join(tempHome, ".claude", "skills", "datayes-api-search")
+  fs.mkdirSync(path.join(externalRoot, "references"), { recursive: true })
+  fs.writeFileSync(
+    path.join(externalRoot, "SKILL.md"),
+    "---\nname: datayes-api-search\ndescription: Datayes API skill\ntype: prompt_template\n---\n\n# Body\n",
+  )
+  fs.writeFileSync(path.join(externalRoot, "references", "api.md"), "# ref\n")
+
+  const { SkillEngine } = await import("../src/skills/skill-engine")
+  const engine = new SkillEngine()
+  // tilde form (UI path) and absolute form both work
+  engine.importSkillFromPath("~/.claude/skills/datayes-api-search")
+
+  const dest = path.join(skillsDir, "datayes-api-search")
+  assert.ok(fs.existsSync(path.join(dest, "SKILL.md")))
+  assert.ok(fs.existsSync(path.join(dest, "references", "api.md")))
+  assert.ok(engine.get("datayes-api-search"), "skill listed after import")
+})
+
+test("skill-engine: importSkillFromPath rejects directory without SKILL.md", async () => {
+  resetMockDirs()
+  process.env.HOME = tempHome
+  const empty = path.join(tempHome, "empty-skill")
+  fs.mkdirSync(empty, { recursive: true })
+
+  const { SkillEngine } = await import("../src/skills/skill-engine")
+  const engine = new SkillEngine()
+  assert.throws(() => engine.importSkillFromPath(empty), /No SKILL.md found/)
 })
 
 test("skill-engine: empty skills directory loads without error", async () => {
