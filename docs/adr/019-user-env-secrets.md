@@ -1,6 +1,7 @@
 # ADR-019: 用户环境变量 / Secrets 管理器（User Env）
 
-**日期**: 2026-07-29 | **状态**: 已确认（人类 2026-07-29；按 workflow `user-env-with-gates` 实现，节点双评审）  
+**日期**: 2026-07-29 | **状态**: **已交付**（2026-07-29；Gate1+Gate2 双评审均 APPROVE_WITH_NITS；ship note: `docs/audit/reviews/user-env-ship-note.md`；分支 `feat/user-env-secrets`）  
+
 **动机对话**: `#pjlgfh`（Datayes skills 安装后，因缺 `DATAYES_TOKEN` 被迫在聊天中粘贴 token）  
 **相关**: ADR-001（双层拓扑）、ADR-006（分层防御）、MCP `env`（stdio 子进程先例）、`shell_exec`（capability/shell.ts）  
 **评审产物**: `.omx/artifacts/ask-claude-adr019-user-env-review-*.md` · `.omx/artifacts/ask-pi-adr019-user-env-review-*.md`

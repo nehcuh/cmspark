@@ -1,0 +1,8 @@
+{
+  "batch": "user-env-g1",
+  "timestamp": "20260729-141517",
+  "claude": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "docs/audit/reviews/user-env-g1-claude-20260729-141517.md" },
+  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "docs/audit/reviews/user-env-g1-pi-20260729-141517.md" },
+  "both_approve": true,
+  "diff_path": "docs/audit/reviews/user-env-g1-diff-20260729-141517.patch"
+}

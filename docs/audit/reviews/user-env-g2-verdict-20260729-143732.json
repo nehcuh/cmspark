@@ -1,0 +1,8 @@
+{
+  "batch": "user-env-g2",
+  "timestamp": "20260729-143732",
+  "claude": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark-wt-user-env/docs/audit/reviews/user-env-g2-claude-20260729-143732.md" },
+  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark-wt-user-env/docs/audit/reviews/user-env-g2-pi-20260729-143732.md" },
+  "both_approve": true,
+  "diff_path": "/Users/huchen/Projects/cmspark-wt-user-env/docs/audit/reviews/user-env-g2-diff-20260729-143732.patch"
+}
