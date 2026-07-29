@@ -1,0 +1,13 @@
+# Dual external review context
+batch: capability-model-ontology
+base: HEAD
+time: 20260729-162716
+
+f5588f3
+
+?? docs/audit/reviews/capability-model-dual-review-prompt-2026-07-29.md
+?? docs/audit/reviews/capability-model-ontology-diff-20260729-162716.patch
+?? docs/decisions/capability-model-three-axes-brief-2026-07-29.md
+
+## Diff (git diff + staged)
+

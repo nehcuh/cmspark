@@ -4,6 +4,18 @@
 > 设计决策见 [ADR-014](adr/014-mission-pack-enterprise-modules.md)；架构总览见 [architecture.md §7](architecture.md)。  
 > **高危工具弹窗 /「确认台」按钮**：见 [confirm-center-user-guide.md](confirm-center-user-guide.md)（与任务授权、L2 确认分层说明）。
 
+### 能力坐标
+
+| 轴 | 本指南位置 |
+|----|------------|
+| **Surface** | Pack **不改变**拓扑：浏览器场景多在 **L1**（如 AppSec）；`shell` / `netsec` / workspace 属更深本机能力，走对应门禁（确认台） |
+| **Composition** | **主叠加路径** — 把 skills + knowledge + tool 白名单 + 提示词一次装到线程；**不是**新 Agent runtime |
+| **Autonomy** | 可与 multi-worker 交叉（§10）；Pack **不能**抬 `capability_profile`、不能静默开 shell/netsec |
+| **Channel** | `community` vs `enterprise`（安装级，扩展不可伪造） |
+| **规范** | [ADR-020](adr/020-capability-model-three-axes.md) · [ADR-014](adr/014-mission-pack-enterprise-modules.md) |
+
+**怎么理解「高级场景」：** 黑盒 / AppSec 类 = 多半是 **L1 + 本 Pack 配方**；不是必须打开 Computer Use（L2）。需要本机命令或端口探测时，才是 enterprise 模块 + 确认台。
+
 ---
 
 ## 0. 先读：两档能力与四个模块
@@ -40,6 +52,9 @@
 ---
 
 ## 2. AppSec 审查（community 可用）
+
+> **坐标**：典型 **L1 网页 + 本 Pack（组合面）** — 黑盒 / 威胁建模 checklist，**不需要** Computer Use（L2）。
+
 
 1. 在任务包面板，若出现 **「模块 appsec 未启用」**，点 **「启用」**。
 2. 选中要工作的**线程**。
@@ -231,15 +246,16 @@
 ## 10. Multi-Agent（编排 / Worker）与任务包
 
 > **主用户指南**：[multi-agent-user-guide.md](multi-agent-user-guide.md)（spawn / tab 锁 / Board / 上限与硬禁）。  
-> 设计见 [ADR-015](adr/015-multi-agent-orchestrator-tab-lock.md) · [ADR-016](adr/016-mission-board.md)。本节说明 **试用时怎么用**，以及与 Mission Pack 的边界。
+> 设计见 [ADR-015](adr/015-multi-agent-orchestrator-tab-lock.md) · [ADR-016](adr/016-mission-board.md)。本节说明 **试用时怎么用**，以及与 Mission Pack 的边界。  
+> **坐标**：本节在 [ADR-020](adr/020-capability-model-three-axes.md) 上属 **Autonomy**；Worker 默认 **L1 网页**；Pack 仍是 **Composition 模板**，不是第二套 Agent。
 
 ### 10.1 模型一句话
 
 | 角色 | 是什么 | 不是什么 |
 |------|--------|----------|
 | **Orchestrator** | 窄工具面线程：`spawn_worker` / `wait_workers` / `collect_handback` / `list_workers` / `list_tab_locks` / `ask_user` … | 默认 **不能** 直接浏览器 mutate / shell / netsec / host |
-| **Worker** | 子 Thread（`parent_thread_id` + `orchestrator_run_id`） | 不是独立 swarm runtime |
-| **Mission Pack** | 角色 **模板**（skills + `tool_whitelist` + 提示词） | 不会抬 `capability_profile`，也不会启用 shell/netsec modules |
+| **Worker** | 子 Thread（`parent_thread_id` + `orchestrator_run_id`）；工具面多在 **L1** | 不是独立 swarm / 深层桌面 runtime（硬禁 host/shell/netsec） |
+| **Mission Pack** | 角色 **模板**（skills + `tool_whitelist` + 提示词）= **组合面** | 不会抬 `capability_profile`，也不会启用 shell/netsec modules |
 
 ### 10.2 Spawn 必须显式确认（无 auto-spawn）
 
@@ -296,6 +312,7 @@
 |------|------|
 | [confirm-center-user-guide.md](confirm-center-user-guide.md) | **确认台 / L2 确认**用户说明（与任务授权分层） |
 | [multi-agent-user-guide.md](multi-agent-user-guide.md) | **Multi-Agent / Board 主用户指南**（spawn、tab 锁、上限；与本文 §10 交叉） |
+| [ADR-020](adr/020-capability-model-three-axes.md) | 能力三轴：Pack = Composition；Worker = Autonomy×L1 |
 | [ADR-014](adr/014-mission-pack-enterprise-modules.md) | 为何双通道、为何不做内嵌 PTY |
 | [ADR-015](adr/015-multi-agent-orchestrator-tab-lock.md) | Multi-agent orchestrator、tab lease、spawn HITL |
 | [ADR-016](adr/016-mission-board.md) | Mission Board 工具与 UI |

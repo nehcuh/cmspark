@@ -2,6 +2,17 @@
 
 CMspark 通过本地 Companion 接入 [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server，把外部工具（filesystem、brave-search、pentest-ai 等）暴露给 LLM。
 
+### 能力坐标
+
+| 轴 | 本指南位置 |
+|----|------------|
+| **Surface** | **不单独构成** L0/L1/L2；MCP 工具挂在当前线程的 tool 面，实际 blast radius 取决于工具本身（读文件 / 调 API / 其它） |
+| **Composition** | **组合面原语** — 外部工具总线（`mcp__<server>__<tool>`），可与 Skill / Pack / user-env 一起装配到任意对话 |
+| **Autonomy** | 仍在同一 LLM tool-loop；多 worker 场景下 MCP 是否可用受 worker 白名单约束 |
+| **规范** | [ADR-020](adr/020-capability-model-three-axes.md) · 密钥注入见 [user-env](user-env.md) · 场景配方见 [任务包](mission-pack-usage.md) |
+
+> MCP **不是**「中层 Agent」或新 runtime，只是把外部能力**组合**进现有 Agent。高级投研类 skill 常与 MCP/API + [user-env Secrets](user-env.md) 一起用，多数时间停在 **L0 聊**，只有真的调用浏览器 tool 时才进入 **L1 网页**。
+
 ## 支持能力
 
 | 能力 | 状态 | 说明 |

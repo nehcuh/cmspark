@@ -109,7 +109,7 @@ cmspark/
 
 ## 文档 Checklist（功能 PR 合并前）
 
-见 [docs-reorg-plan §7](docs/docs-reorg-plan-2026-07-28.md)：
+见 [docs-reorg-plan §7](docs/docs-reorg-plan-2026-07-28.md) 与 **[ADR-020 能力三轴](docs/adr/020-capability-model-three-axes.md)**：
 
 - [ ] **用户可见？** → 根 [README.md](README.md) 能力矩阵或 FAQ 是否需要一行？
 - [ ] **有操作步骤？** → 用户指南（`docs/*-user-guide.md` / `mcp.md` / `mission-pack-usage.md` 等）或 [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)？
@@ -118,10 +118,23 @@ cmspark/
 - [ ] **新增测试？** → [TESTING.md](docs/TESTING.md) 地图是否点名？
 - [ ] **关闭了 RFC/decision？** → 状态戳记 + 计划归档（`docs/archive/`，Phase 4）？
 - [ ] **导航？** → [docs/README.md](docs/README.md) 表是否要加一行？
+- [ ] **能力声明（ADR-020）** → PR 描述或 pack 注释中写明：
+
+```text
+Surface:      L0 | L1 | L2
+L2-classes:   host_computer | host_read | host_write | host_app | shell | netsec | (none)
+Compose:      skill | knowledge | mcp-server | pack | user-env | none
+Autonomy:     single | multi-worker | board
+Trust:        <gate>
+Channel:      community | enterprise
+```
+
+反模式（应拒绝或改设计）：无 Pack 替代却加 Side Panel 一级入口；重复确认方言；发明新 runtime；实验定位器当写路径成功依赖。架构文档 **禁止** 裸写「中层 Agent」（写「组合面 / Composition」）。
 
 约定：
 
-- 新用户可见能力 → README 矩阵 +1 行 + 用户指南或「见 ADR」。
+- 新用户可见能力 → README 矩阵 +1 行（按 Surface/组合面/Autonomy 归类）+ 用户指南或「见 ADR」。
+- **新场景优先 Pack**（+ skill/MCP），不要默认新面板 / 新 Agent 类型。
 - 架构决策 → `docs/adr/`；过程对抗评审 → `docs/decisions/`，**禁止**当唯一规范。
 - 功能 shipped → 更新 ADR 状态（Proposed → Accepted → Implemented）。
 

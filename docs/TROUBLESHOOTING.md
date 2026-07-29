@@ -2,6 +2,9 @@
 
 常见问题速查。
 
+> **文档地图**：[docs/README.md](README.md) · 能力分层见 [ADR-020](adr/020-capability-model-three-axes.md)（L0 聊 / L1 网页 / 组合面 Pack·MCP / L2 桌面）。  
+> 按场景查指南：确认台 · MCP · 任务包 · Computer Use · Host/Apps · Multi-Agent · user-env — 均在文档导航「用户指南」表。
+
 ## Companion 相关
 
 ### "config.json corrupted"

@@ -5,14 +5,24 @@
 > **决策**：[ADR-015](adr/015-multi-agent-orchestrator-tab-lock.md) · [ADR-016](adr/016-mission-board.md)  
 > **任务包交叉**：[mission-pack-usage.md §10](mission-pack-usage.md#10-multi-agent编排-worker与任务包) · **确认台**：[confirm-center-user-guide.md](confirm-center-user-guide.md)
 
+### 能力坐标
+
+| 轴 | 本指南位置 |
+|----|------------|
+| **Surface** | Worker 默认在 **L1 网页**（浏览器工具）；**硬禁** L2 类 `host_*` / shell / netsec — **高自主度 ≠ 更深桌面** |
+| **Composition** | Pack 只作 worker **角色模板**（白名单 + skills），不新开 runtime |
+| **Autonomy** | **本指南主轴** — 单线程 → multi-worker + tab lease → Mission Board（Fact/Intent/Hint） |
+| **Trust** | `spawn_worker` **必须** L2 HITL；无 auto-spawn / 静默 fan-out |
+| **规范** | [ADR-020](adr/020-capability-model-three-axes.md) · [ADR-015](adr/015-multi-agent-orchestrator-tab-lock.md) · [ADR-016](adr/016-mission-board.md) |
+
 ---
 
 ## 1. 一句话
 
 复杂任务可由 **Orchestrator（编排线程）** 经你确认后 **`spawn_worker`** 拉起多个 **Worker（子线程）**；同一 Chrome **tab 同时只能被一个 holder 操作**（tab lease）。  
-**Mission Board** 是线程上的结构化黑板（Fact / Intent / Hint），避免「散文 handback 幻觉扫完」。
+**Mission Board** 是线程上的结构化黑板（Fact / Intent / Hint），避免「散文 handback 幻觉扫完」——它属于 **自主度 / 协作**，不是 Skill/MCP 那种组合原语。
 
-这与 Skill 类型里的实验性 **`sub_agent`** **不是同一机制**。
+这与 GOAL 里实验性 **Type C Skill / `sub_agent`** 设想、以及「再装一个深层 Agent」**不是同一机制**：这里是 **同一 Companion 上的编排 + 子线程**。
 
 ---
 
@@ -21,8 +31,8 @@
 | 角色 | 是什么 | 默认工具面 |
 |------|--------|------------|
 | **Orchestrator** | 窄工具面主线程 | `spawn_worker` · `wait_workers` · `collect_handback` · `list_workers` · `get_worker_status` · `list_tab_locks` · `ask_user` · `board_*` 等 |
-| **Worker** | 子 Thread（`parent_thread_id` + `orchestrator_run_id`） | 浏览器工具等（受 whitelist）；**硬禁** shell/netsec/host_* / osascript |
-| **Mission Pack** | 角色 **模板**（skills + whitelist + 提示词） | **不**抬 `capability_profile`，**不**偷偷开 shell/netsec |
+| **Worker** | 子 Thread（`parent_thread_id` + `orchestrator_run_id`） | 浏览器 **L1** 工具等（受 whitelist）；**硬禁** shell/netsec/host_* / osascript（**L2 不交给 worker**） |
+| **Mission Pack** | 角色 **模板**（skills + whitelist + 提示词） | **组合面**配方；**不**抬 `capability_profile`，**不**偷偷开 shell/netsec |
 
 Orchestrator **默认不能**直接 mutate 浏览器 / shell / host；执行细节交给 Worker。
 
@@ -127,6 +137,7 @@ FleetStrip：worker 数量、状态、**全停**（abort LLM + 拒 pending + 释
 
 | 文档 | 用途 |
 |------|------|
+| [ADR-020](adr/020-capability-model-three-axes.md) | Autonomy 轴；Worker≠深层 Agent |
 | [ADR-015](adr/015-multi-agent-orchestrator-tab-lock.md) | Orchestrator / tab lock |
 | [ADR-016](adr/016-mission-board.md) | Board 契约 |
 | [mission-pack-usage.md](mission-pack-usage.md) | Pack 与 §10 交叉 |
@@ -135,4 +146,4 @@ FleetStrip：worker 数量、状态、**全停**（abort LLM + 拒 pending + 释
 
 ---
 
-*文档版本：2026-07-28 · 与 `orchestrator/*` · `board/*` · ORCHESTRATOR_CAPS 对齐。*
+*文档版本：2026-07-29 · 对齐 ADR-020 能力坐标 · 与 `orchestrator/*` · `board/*` · ORCHESTRATOR_CAPS 一致。*

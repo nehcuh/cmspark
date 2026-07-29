@@ -1,12 +1,22 @@
 # CMspark Browser Agent — 项目目标
 
-> 版本: 1.4.0 | 日期: 2026-07-28 | 当前阶段：安全稳定化 MVP（核心已完成）→ 功能扩展中（产品 0.3.0）
+> 版本: 1.5.0 | 日期: 2026-07-29 | 当前阶段：安全稳定化 MVP（核心已完成）→ 功能扩展中（产品 0.3.0）
 
 ---
 
 ## 定位
 
 一个**浏览器内的 AI Agent**，通过 Chrome Side Panel 与用户交互，通过 CDP/Chrome APIs 操作浏览器，通过本地 Companion 进程管理 LLM 调用、对话状态和技能系统。
+
+**能力本体（2026-07-29）** — 规范见 **[ADR-020](adr/020-capability-model-three-axes.md)**：
+
+| 轴 | 含义 | 默认/扩展 |
+|----|------|-----------|
+| **Surface** | L0 聊 → L1 网页 → L2 宿主 | 默认 L0/L1；L2 opt-in |
+| **Composition** | Skill · Knowledge · MCP · Pack · user-env | 场景叠加主路径（Pack-first）；**不是**「中层 Agent」 |
+| **Autonomy** | 单线程 → multi-worker → Board | 编排增强 ≠ 更深作用面 |
+
+一句话：默认浏览器内 Agent；场景靠 Pack 叠加；桌面/企业更深作用面需显式开启与更严门禁。
 
 ---
 
@@ -198,23 +208,26 @@ Agent 可以在用户授权下对任意标签页执行全部 26 种工具操作�
 
 ## 稳定化后的扩展目标
 
-### G10. 统一认证 SSO 自动复用
+> 轴标注（ADR-020）：**S**=Surface · **C**=Composition · **A**=Autonomy。已实现项保留 ✅，便于对照 deferred。
+
+### G10. 统一认证 SSO 自动复用 — *deferred* · **S:L1 + C**
 
 企业内多个系统使用同一认证平台时，Agent 能自动发现已有 session，跨系统免登录操作。Agent 自动检测信任域内 cookie 并匹配 SSO 映射。
 
-### G11. Type B Skills（工具链/流程）
+### G11. Type B Skills（工具链/流程） — *deferred* · **C + A**
 
 参数化的操作序列，按步执行，条件分支，错误处理。用户可录制操作自动生成 skill，复用时填写参数即可重放。
 
-### G12. Type C Skills（子 Agent）
+### G12. Type C Skills（子 Agent） — *deferred* · **C（≠ 已交付 worker 编排）**
 
-独立上下文的子 Agent，并发上限 3，超时 120s。默认继承父线程权限可降级。结果摘要返回主 Agent。
+独立上下文的子 Agent skill 形态，并发上限 3，超时 120s。默认继承父线程权限可降级。结果摘要返回主 Agent。  
+**注意**：Multi-Agent Orchestrator / `spawn_worker`（ADR-015）**已交付**，但是 **Autonomy 平面**的线程编排，**不等于**本条「Type C Skill」产品形状；二者勿混为一谈。
 
-### G13. "保存对话为 Skill" ✅ 已实现
+### G13. "保存对话为 Skill" ✅ 已实现 · **C**
 
 从对话历史中提取可复用操作序列 → LLM 辅助参数化 → 生成 skill 文件 → 用户确认/调整 → 测试运行 → 保存。由 `writing-skills` 内置 skill 提供方法论支持。已实现为 `skill-craft.ts` + `SkillCraftPanel.tsx`。
 
-### G14. 操作历史重放
+### G14. 操作历史重放 — *deferred* · **A**
 
 从历史记录中选择操作点，从该点重新执行。
 

@@ -59,6 +59,7 @@ Dark (L2 SafetyStrip / Cockpit): bg `#0f1115`, elevated `#161a22`, text `#e8eaed
 
 ### Mode badge (P0)
 - L0 `聊` · L1 `网页` · L2 `计算机` / `计算机 · LIVE` — see `sidepanel/mode/mode-controller.ts`
+- **Ontology:** product L0/L1/L2 = Surface axis = UI `CapabilityLevel` `chat|browser|computer` — [ADR-020](adr/020-capability-model-three-axes.md)
 - L1 header tint: `tokens.modeBrowserBg` (`#dbeafe`); BottomBar tabs filtered by capability level
 - ContextBar (§4 / P0 IA cut 2026-07-27): L0 Skills·Know·Hist · L1 Tabs·Skills · L2 Panel empty; packs/board/mcp/apps via BottomBar「更多」
 - Header: ThreadList + title + ModeBadge + connection + ⋯ menu (Craft/export/NB/logs/settings) — no permanent power-icon strip

@@ -4,6 +4,15 @@
 > **产品版本**：0.3.0  
 > **决策（工程向）**：[ADR-011](adr/011-notebooklm-import.md) · [ADR-012](adr/012-notebooklm-importer-online.md) · [ADR-013](adr/013-notebooklm-importer-v12.md)
 
+### 能力坐标
+
+| 轴 | 本指南位置 |
+|----|------------|
+| **Surface** | 用户操作多在浏览器上下文；**不**走 Companion LLM tool-loop，也**不是** L2 桌面能力 |
+| **Composition** | **否** — 导出/导入类 **产品特性**，不是 Skill/MCP/Pack 装配原语（见 [ADR-020](adr/020-capability-model-three-axes.md) § Composition 边界） |
+| **Autonomy** | 不参与 multi-worker / Board |
+| **相近能力** | 对话笔记导出见 [ADR-008 Obsidian](adr/008-obsidian-export.md)；图表渲染见 [ADR-009 Mermaid](adr/009-mermaid-rendering.md) |
+
 ---
 
 ## 1. 一句话
@@ -13,7 +22,7 @@ CMspark 提供两条互补路径：
 1. **在线批量导入（推荐）**：Side Panel 打开 **NotebookLM 导入器**，把 URL / 链接 / RSS / YouTube / 当前对话等送进你账号下的 NotebookLM notebook。  
 2. **离线 Markdown**：把**当前页**抽成 `.md` 下载，你再手动拖入 NotebookLM。
 
-导入主要在 **扩展侧**完成（DOM / 页面脚本 + Background 编排），**不**依赖 Companion 调 LLM。你需要 **已在 Chrome 登录 Google / NotebookLM**。
+导入主要在 **扩展侧**完成（DOM / 页面脚本 + Background 编排），**不**依赖 Companion 调 LLM，也**不是**「再开一层 Agent」。你需要 **已在 Chrome 登录 Google / NotebookLM**。
 
 ---
 

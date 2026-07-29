@@ -1,6 +1,36 @@
 # CMspark Browser Agent — 架构文档
 
-> 版本: 2.2.0 | 日期: 2026-07-28 | 状态: 已确认（同步 0.3.0：MCP / Computer·Host Use / Orchestrator·Board / Packs）
+> 版本: 2.3.0 | 日期: 2026-07-29 | 状态: 已确认（同步 0.3.0 + **[ADR-020](adr/020-capability-model-three-axes.md) 能力三轴**）
+
+---
+
+## 0. 能力模型（三轴 · 规范摘要）
+
+> 完整决策与声明清单：[ADR-020](adr/020-capability-model-three-axes.md)。本节只摘要，避免与 ADR 分叉时以 ADR 为准。
+
+CMspark **不是**多套 Agent runtime，而是 **一个** Companion tool-loop，能力落在三根正交轴上：
+
+| 轴 | 名称 | 内容 |
+|----|------|------|
+| **A Surface** | 作用面 | **L0 聊**（无 CDP tool）→ **L1 网页**（CDP/tabs/cookies）→ **L2 宿主**（CU / Host / Apps / 企业 shell·netsec，opt-in） |
+| **B Composition** | 组合面 | Skill · Knowledge · MCP · Pack · user-env · modules — **装配**，不是「中层 Agent」 |
+| **C Autonomy** | 自主度 | 单线程 → multi-worker + tab lease → Mission Board（Board **只**归本轴） |
+
+**横切标签**：Trust（随 Surface 单调变严；session-trust 见 ADR-017）· Channel（`community` | `enterprise`）。
+
+**产品标签别名**：L0/L1/L2 ≡ UI `CapabilityLevel`：`chat` | `browser` | `computer`。
+
+**叠加纪律**：新场景优先 **Pack**（+ skill/MCP）；禁止 Pack 写全局 auto_approve/god-mode；禁止无 Pack 替代就加一级 Side Panel 入口。
+
+```text
+  Composition: Skill · Knowledge · MCP · Pack · user-env
+        │
+   L0 ──▶ L1 ──▶ L2 (opt-in)
+        │
+  Autonomy: loop → workers → board
+```
+
+用户故事线「主体 → 浅层 → 中层(组合) → 深层」与上表映射见 ADR-020 §2。高级场景（黑盒 Pack、投研 Skill/MCP）多为 **组合复用**，不必默认 L2。
 
 ---
 

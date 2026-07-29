@@ -1,0 +1,8 @@
+{
+  "batch": "capability-model-ontology",
+  "timestamp": "20260729-162716",
+  "claude": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/capability-model-ontology-claude-20260729-162716.md" },
+  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/capability-model-ontology-pi-20260729-162716.md" },
+  "both_approve": true,
+  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/capability-model-ontology-diff-20260729-162716.patch"
+}

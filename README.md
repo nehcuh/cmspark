@@ -1,6 +1,6 @@
 # CMspark Browser Agent
 
-> 浏览器内的 AI Agent — 用自然语言驱动浏览器，完成网页操作、数据提取、跨系统任务等自动化工作。
+> 浏览器内的 AI Agent — **默认**用自然语言做网页问答与页内操控；**按需**叠加 Skills / Knowledge / MCP / 任务包；**opt-in** 进入桌面 Computer Use 与企业模块。
 
 ---
 
@@ -8,22 +8,48 @@
 
 CMspark Browser Agent 是一套浏览器自动化 Agent 系统，通过 Chrome 侧边栏（Side Panel）与用户交互，借助 Chrome DevTools Protocol (CDP) 操控浏览器，并通过本地 Companion 进程管理 LLM 调用、对话状态和技能系统。
 
-### 核心能力（分层）
+### 能力模型（三轴）
 
-工具面随模块与 MCP 动态扩展，**不以固定「N 种工具」计数**。分类见 [architecture.md](docs/architecture.md)（浏览器 CDP · Companion/Host · MCP · 编排/Board）。
+完整规范见 **[ADR-020](docs/adr/020-capability-model-three-axes.md)** · [architecture.md](docs/architecture.md)。工具面随模块与 MCP 动态扩展，**不以固定「N 种工具」计数**。
 
-| 层级 | 能力 | 说明 | 文档 |
+**定位：** 默认浏览器内 Agent（对话 → 页内操控）→ 场景靠 **Mission Pack** 叠加（不是新 runtime）→ 桌面 / 企业能力 **opt-in**。
+
+用户可记一条由表及里的故事线，并与架构轴对齐：
+
+| 故事线 | 架构归属 | 含义 |
+|--------|----------|------|
+| **主体** | Surface **L0** 聊 | 网页问答、写作、规划；不发起浏览器 tool |
+| **浅层** | Surface **L1** 网页 | 页签、导航、点击/填表、截图、cookie 信任域等 |
+| **中层** | **组合面**（Composition）— *不是*「中层 Agent」 | Skill · Knowledge · MCP · Pack · user-env：装配到任意 Surface |
+| **深层** | Surface **L2** 计算机 | Computer Use / Host / Apps / 企业 shell·netsec + 前述组合 |
+
+```text
+  Composition: Skill · Knowledge · MCP · Pack · user-env
+        │              挂到任意作用面
+   L0 聊 ──▶ L1 网页 ──▶ L2 宿主（opt-in）
+        │
+  Autonomy: 单线程 ──▶ multi-worker ──▶ Mission Board
+  Trust: 随 Surface 变严；Pack 不得放宽全局 auto_approve / god-mode
+```
+
+**高级场景多为「组合复用」**：例如 AppSec/黑盒 checklist ≈ L1 + Pack；Datayes 类投研 ≈ L0 + Skill/MCP（仅在真正调浏览器 tool 时进入 L1）——不必默认上 L2。
+
+### 已交付能力（按作用面）
+
+| 归属 | 能力 | 说明 | 文档 |
 |------|------|------|------|
-| **核心** | 浏览器 CDP 操控 | 标签页、页面读取、点击/填表、截图、导航、下载等 | 本页 [使用指南](#使用指南) |
-| **核心** | 自然语言 · 多线程 · Skills · Knowledge · 历史 | Side Panel 驱动；线程隔离；Markdown+YAML Skills；知识注入 System Prompt；SQLite 操作史 | 本页 [Skills](#技能系统skills) · [Knowledge](#知识库knowledge) |
-| **核心** | Cookie 信任域 | `trusted_domains` 门控 cookie 读写，支持 SSO 场景 | 本页 [Cookie 信任域](#cookie-信任域) · [ADR-005](docs/adr/005-cookie-trust-domain-security.md) |
-| **核心** | 安全确认 / Confirm Center | L2 高危确认、域白名单、`auto_approve`、Cockpit 审批/急停 | [confirm-center-user-guide](docs/confirm-center-user-guide.md) |
-| **已交付** | MCP | 外接 stdio/HTTP MCP server，工具名 `mcp__<server>__<tool>` | [mcp.md](docs/mcp.md) |
-| **已交付** | Mission Pack / 企业模块 | 任务包装配线程；`appsec` / workspace / shell / netsec（后两者需 enterprise） | [mission-pack-usage](docs/mission-pack-usage.md) |
-| **已交付** | Obsidian 导出 · Mermaid · NotebookLM | 📥/🧠 导出；` ```mermaid ` 渲染；NotebookLM 导入 | [ADR-008](docs/adr/008-obsidian-export.md) · [009](docs/adr/009-mermaid-rendering.md) · [notebooklm-user-guide](docs/notebooklm-user-guide.md) |
-| **已交付** | Multi-Agent 内核 · Mission Board（P0） | Orchestrator + tab 锁 + worker；黑板 `board_*` | [multi-agent-user-guide](docs/multi-agent-user-guide.md) · [ADR-015](docs/adr/015-multi-agent-orchestrator-tab-lock.md) · [016](docs/adr/016-mission-board.md) |
-| **进阶 / opt-in** | Computer Use · Host Use · Apps | 桌面操控、宿主读写/应用白名单；平台相关、默认关、走确认台 | [computer-use-user-guide](docs/computer-use-user-guide.md) · [host-and-apps](docs/host-and-apps.md) · [confirm-center](docs/confirm-center-user-guide.md) |
-| **运维** | Daemon · 托盘 · 配对 | launchd/systemd/任务计划；macOS Swift 托盘 + 配对码；开机自启 | 本页 [后台常驻服务](#后台常驻服务跨平台) |
+| **L0 · 主体** | 自然语言 · 多线程 · 历史 | Side Panel 驱动；线程隔离；SQLite 操作史 | 本页 [使用指南](#使用指南) |
+| **L0 产品特性** | Obsidian 导出 · Mermaid · NotebookLM | 导出/渲染/导入（**非**组合原语） | [ADR-008](docs/adr/008-obsidian-export.md) · [009](docs/adr/009-mermaid-rendering.md) · [notebooklm-user-guide](docs/notebooklm-user-guide.md) |
+| **L1 · 浅层** | 浏览器 CDP 操控 | 标签页、页面读写、点击/填表、截图、导航等 | 本页 [浏览器操作示例](#浏览器操作示例) |
+| **L1** | Cookie 信任域 | `trusted_domains` 门控 cookie；SSO 场景基础 | [Cookie 信任域](#cookie-信任域) · [ADR-005](docs/adr/005-cookie-trust-domain-security.md) |
+| **组合面** | Skills · Knowledge | Markdown+YAML Skills；知识注入 System Prompt | [Skills](#技能系统skills) · [Knowledge](#知识库knowledge) |
+| **组合面** | MCP | 外接 stdio/HTTP server，`mcp__<server>__<tool>` | [mcp.md](docs/mcp.md) |
+| **组合面** | Mission Pack / 企业模块 | 任务包装配线程；appsec / workspace / shell / netsec | [mission-pack-usage](docs/mission-pack-usage.md) |
+| **组合面** | 用户环境变量（Secrets） | shell/MCP 子进程密钥，不进聊天粘贴 | [user-env](docs/user-env.md) · [ADR-019](docs/adr/019-user-env-secrets.md) |
+| **横切** | 安全确认 / Confirm Center | 高危确认、域白名单、Cockpit 审批/急停 | [confirm-center-user-guide](docs/confirm-center-user-guide.md) |
+| **Autonomy** | Multi-Agent · Mission Board（P0） | Orchestrator + tab 锁；黑板 `board_*` | [multi-agent-user-guide](docs/multi-agent-user-guide.md) |
+| **L2 · 深层 / opt-in** | Computer Use · Host Use · Apps | 桌面操控、宿主读写/应用白名单；平台相关、默认关 | [computer-use-user-guide](docs/computer-use-user-guide.md) · [host-and-apps](docs/host-and-apps.md) |
+| **运维** | Daemon · 托盘 · 配对 | 开机自启；macOS 托盘 + 配对码 | 本页 [后台常驻服务](#后台常驻服务跨平台) |
 
 ### 系统拓扑
 
@@ -64,7 +90,8 @@ CMspark Browser Agent 是一套浏览器自动化 Agent 系统，通过 Chrome �
 ## 目录
 
 - [项目简介](#项目简介)
-  - [核心能力（分层）](#核心能力分层)
+  - [能力模型（三轴）](#能力模型三轴)
+  - [已交付能力（按作用面）](#已交付能力按作用面)
   - [系统拓扑](#系统拓扑)
 - [安装](#安装)
 - [使用指南](#使用指南)
@@ -826,7 +853,7 @@ cmspark/
 | 类别 | 文档 |
 |------|------|
 | **用户** | [confirm-center](docs/confirm-center-user-guide.md) · [mcp.md](docs/mcp.md) · [mission-pack-usage](docs/mission-pack-usage.md) · [computer-use](docs/computer-use-user-guide.md) · [host-and-apps](docs/host-and-apps.md) · [notebooklm](docs/notebooklm-user-guide.md) · [multi-agent](docs/multi-agent-user-guide.md) · [TROUBLESHOOTING](docs/TROUBLESHOOTING.md) |
-| **架构 / 目标** | [architecture.md](docs/architecture.md) · [GOAL.md](docs/GOAL.md) · [DESIGN.md](docs/DESIGN.md) |
+| **架构 / 目标** | [architecture.md](docs/architecture.md) · [GOAL.md](docs/GOAL.md) · [DESIGN.md](docs/DESIGN.md) · **[ADR-020 能力三轴](docs/adr/020-capability-model-three-axes.md)** |
 | **ADR** | [docs/adr/](docs/adr/)（001–018；安全 005–007/010，导出 008/009，NLM 011–013，Pack 014，Multi-agent 015，Board 016，CU 017，Host 018） |
 | **工程** | [TESTING.md](docs/TESTING.md) · [supply-chain.md](docs/supply-chain.md) · [CONTRIBUTING.md](CONTRIBUTING.md) |
 | **过程稿（非规范）** | [decisions/](docs/decisions/)（CU/host 长文等；现行见用户指南 + ADR-017/018） |
@@ -834,4 +861,4 @@ cmspark/
 
 ---
 
-> **当前阶段（0.3.0）**：安全稳定化 **MVP 已稳定**（Side Panel ↔ Companion ↔ 浏览器闭环、线程持久化、L2 确认/Confirm Center）。**已交付扩展**：Obsidian 导出、Mermaid 渲染、Mission Pack / 企业模块、MCP、NotebookLM 导入、Mission Board（P0）、Multi-Agent 编排内核等。**进阶 / opt-in**（平台相关、默认关闭或需确认）：Computer Use、Host Use / Apps、多 Agent 调度增强。文档导航：[`docs/README.md`](docs/README.md) · [architecture.md](docs/architecture.md)。
+> **当前阶段（0.3.0）**：安全稳定化 **MVP 已稳定**（Side Panel ↔ Companion ↔ 浏览器闭环、线程持久化、确认台）。能力按 **[ADR-020](docs/adr/020-capability-model-three-axes.md)** 三轴组织：**L0 聊 / L1 网页 / 组合面（Skill·MCP·Pack…）/ L2 宿主 opt-in / 编排 Autonomy**。文档导航：[`docs/README.md`](docs/README.md) · [architecture.md](docs/architecture.md)。

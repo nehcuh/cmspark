@@ -7,24 +7,27 @@
 
 ## 用户指南
 
-| 文档 | 说明 |
-|------|------|
-| [../README.md](../README.md) | 安装、能力矩阵、快速用、配置与托盘 |
-| [confirm-center-user-guide.md](confirm-center-user-guide.md) | 确认台 / Cockpit、L2 审批、Computer Use 操控台 |
-| [mcp.md](mcp.md) | MCP server 配置、信任级别、Resources/Prompts、排错 |
-| [mission-pack-usage.md](mission-pack-usage.md) | 任务包、企业模块、workspace/shell/netsec |
-| [computer-use-user-guide.md](computer-use-user-guide.md) | Computer Use：启用、急停、session-trust、平台与限制 |
-| [host-and-apps.md](host-and-apps.md) | Host 读写、Apps 白名单、生物识别边界 |
-| [notebooklm-user-guide.md](notebooklm-user-guide.md) | NotebookLM 导入器入口、权限、导入结果 |
-| [multi-agent-user-guide.md](multi-agent-user-guide.md) | spawn_worker、tab 锁、Mission Board、上限 |
-| [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | 常见故障速查 |
+> 能力分层（**Surface / Composition / Autonomy**）见 [ADR-020](adr/020-capability-model-three-axes.md)。下表「坐标」帮助选对文档：高级场景多为 **组合面** 复用，不必默认上 L2 桌面。
 
-### 导出 / 图表（ADR 即用户向说明）
+| 文档 | 坐标（摘要） | 说明 |
+|------|----------------|------|
+| [../README.md](../README.md) | 全景 | 安装、三轴能力矩阵、快速用、配置与托盘 |
+| [confirm-center-user-guide.md](confirm-center-user-guide.md) | **横切 Trust UI**（L1/L2） | 确认台 / Cockpit、高危审批、CU 操控台 |
+| [mcp.md](mcp.md) | **Composition** | MCP server、信任级别、Resources/Prompts、排错 |
+| [user-env.md](user-env.md) | **Composition**（密钥） | skill / shell / MCP 子进程 Secrets（如 Datayes） |
+| [mission-pack-usage.md](mission-pack-usage.md) | **Composition**（+ 企业 Channel） | 任务包、模块、workspace/shell/netsec |
+| [computer-use-user-guide.md](computer-use-user-guide.md) | **Surface L2** | 坐标桌面、急停、session-trust、平台限制 |
+| [host-and-apps.md](host-and-apps.md) | **Surface L2**（语义 Host） | Host 读写、Apps 白名单、生物识别边界 |
+| [multi-agent-user-guide.md](multi-agent-user-guide.md) | **Autonomy**（Worker≈L1） | spawn_worker、tab 锁、Mission Board、上限 |
+| [notebooklm-user-guide.md](notebooklm-user-guide.md) | **产品特性**（非组合原语） | NotebookLM 导入器、权限、结果 |
+| [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | — | 常见故障速查 |
 
-| 能力 | 文档 |
-|------|------|
-| **Obsidian 导出** | [ADR-008](adr/008-obsidian-export.md) |
-| **Mermaid 渲染** | [ADR-009](adr/009-mermaid-rendering.md) |
+### 导出 / 图表（产品特性 · ADR 即用户向说明）
+
+| 能力 | 坐标 | 文档 |
+|------|------|------|
+| **Obsidian 导出** | 产品特性（聊天面导出） | [ADR-008](adr/008-obsidian-export.md) |
+| **Mermaid 渲染** | 产品特性（消息渲染） | [ADR-009](adr/009-mermaid-rendering.md) |
 
 ---
 
@@ -33,8 +36,9 @@
 | 文档 | 说明 |
 |------|------|
 | [architecture.md](architecture.md) | 活架构：双层拓扑 + 桌面面、MCP/CU/Host/编排/Board/Packs |
-| [GOAL.md](GOAL.md) | 项目目标与阶段（与 0.3.0 对齐） |
-| [DESIGN.md](DESIGN.md) | UI / 设计 token 约定 |
+| **[ADR-020 能力三轴](adr/020-capability-model-three-axes.md)** | **Surface · Composition · Autonomy** 本体（能力叠加与防「杂」纪律） |
+| [GOAL.md](GOAL.md) | 项目目标与阶段（与 0.3.0 对齐；扩展目标带轴标注） |
+| [DESIGN.md](DESIGN.md) | UI / 设计 token 约定；Mode badge = Surface |
 | [security-design-tiered-gates-2026-07-11.md](security-design-tiered-gates-2026-07-11.md) | 分层门禁设计说明 |
 
 ---
@@ -61,8 +65,10 @@
 | 016 | Mission Board（P0 Implemented） | [016](adr/016-mission-board.md) |
 | 017 | Computer Use（Implemented） | [017](adr/017-computer-use.md) |
 | 018 | Host Use / Apps（Implemented） | [018](adr/018-host-use.md) |
+| 019 | User-env secrets（shell/MCP） | [019](adr/019-user-env-secrets.md) |
+| **020** | **Capability model · three axes** | [020](adr/020-capability-model-three-axes.md) |
 
-拟议后续：UI 三模式 + Cockpit（019）、Knowledge 系统（020）等 — 见 reorg 计划。
+过程件：UI 三模式 / Cockpit 以 `docs/superpowers/specs/` 与 [DESIGN.md](DESIGN.md) 为准（**勿**再记「拟议 ADR-019 UI」——019 已是 user-env）。
 
 ---
 

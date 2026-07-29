@@ -5,6 +5,16 @@
 > **接口史（非唯一规范）**：[decisions/host-adapter-interface.md](decisions/host-adapter-interface.md)  
 > **坐标桌面**：[computer-use-user-guide.md](computer-use-user-guide.md) · **确认台**：[confirm-center-user-guide.md](confirm-center-user-guide.md)
 
+### 能力坐标
+
+| 轴 | 本指南位置 |
+|----|------------|
+| **Surface** | **L2 宿主面**（与 Computer Use 同属桌面侧，但走**语义 API**，不是坐标键鼠） |
+| **Composition** | Apps 白名单 / 每应用策略是配置，不是 Pack；可与 Skill 提示「先 host_read 再总结」组合 |
+| **Autonomy** | 单线程为主；Worker **硬禁** `host_*`（见 [multi-agent](multi-agent-user-guide.md)） |
+| **Trust** | 读/写/启动各有 L2 或策略门；写路径常含生物识别/nonce（平台相关） |
+| **规范** | [ADR-020](adr/020-capability-model-three-axes.md) · [ADR-018](adr/018-host-use.md) |
+
 ---
 
 ## 1. 一句话
@@ -14,9 +24,9 @@
 | **Host 读** | `host_read` | 从本机邮件等应用读结构化内容（如收件箱顶条预览） |
 | **Host 写** | `host_write` | 受控写：如建笔记、受限目录内移动文件 |
 | **App 启动** | `host_app` | 启动你**亲自加白**的应用（仅无参 `launch`） |
-| **Computer Use** | `host_computer` | 对已授权坐标的窗口做键鼠（见专用指南） |
+| **Computer Use** | `host_computer` | 对已授权坐标的窗口做键鼠（见 [Computer Use](computer-use-user-guide.md)） |
 
-这些都是 **opt-in / 高危门**，不是浏览器 CDP 工具的默认扩展。
+这些都是 **L2 / opt-in / 高危门**，**不是**浏览器 **L1** CDP 工具的默认扩展。能网页内完成的，优先 L1；有语义 Host API 时，优先本指南，再考虑坐标 Computer Use。
 
 ---
 
@@ -91,14 +101,14 @@ HostAdapter 使用 **不透明 TargetId**（list 结果再回传），Companion 
 
 ## 5. 与 Computer Use / workspace / shell 的分工
 
-| 需求 | 优先工具 |
-|------|----------|
-| 浏览器页面 | CDP 工具 |
-| 本机**工作区目录** list/read | `workspace_*`（任务包 · 先选工作区） |
-| 受控 shell | `shell_exec`（enterprise 模块 + L2） |
-| 邮件/笔记/受限文件移动 | `host_read` / `host_write` |
-| 打开某个已白名单 App | `host_app` |
-| 在 App 窗口里点点点 | `host_computer` |
+| 需求 | 作用面 | 优先工具 |
+|------|--------|----------|
+| 浏览器页面 | **L1** | CDP 工具 |
+| 本机**工作区目录** list/read | 本机模块（任务包） | `workspace_*`（先选工作区） |
+| 受控 shell | 企业模块 + 确认台 | `shell_exec` |
+| 邮件/笔记/受限文件移动 | **L2** 语义 Host | `host_read` / `host_write` |
+| 打开某个已白名单 App | **L2** | `host_app` |
+| 在 App 窗口里点点点 | **L2** 坐标 | `host_computer` |
 
 ---
 
@@ -106,6 +116,7 @@ HostAdapter 使用 **不透明 TargetId**（list 结果再回传），Companion 
 
 | 文档 | 用途 |
 |------|------|
+| [ADR-020](adr/020-capability-model-three-axes.md) | L2 Surface 与能力选型 |
 | [ADR-018](adr/018-host-use.md) | Host Use 决策摘要 |
 | [ADR-017](adr/017-computer-use.md) | Computer Use |
 | [confirm-center-user-guide.md](confirm-center-user-guide.md) | L2 / 确认码 |
@@ -114,4 +125,4 @@ HostAdapter 使用 **不透明 TargetId**（list 结果再回传），Companion 
 
 ---
 
-*文档版本：2026-07-28 · 与 `host-use/` · `apps/` · tool-definitions 对齐。*
+*文档版本：2026-07-29 · 对齐 ADR-020 · 与 `host-use/` · `apps/` · tool-definitions 一致。*

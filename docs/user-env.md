@@ -4,9 +4,19 @@
 
 供 skill / `shell_exec` / MCP stdio 子进程使用的本机密钥。**不会**进入大模型上下文。
 
+### 能力坐标
+
+| 轴 | 本指南位置 |
+|----|------------|
+| **Surface** | 不单独占 L0/L1/L2；密钥给 **子进程**（shell / MCP），不是浏览器 CDP |
+| **Composition** | **组合面原语** — 与 [Skill](../README.md#技能系统skills) / [MCP](mcp.md) / [任务包·shell](mission-pack-usage.md) 配套；投研类 Datayes skill 的典型依赖 |
+| **Autonomy** | 与编排无关 |
+| **Trust** | **不**替代 `shell_exec` 的 L2 确认；批准后的命令仍可能读到 env |
+| **规范** | [ADR-020](adr/020-capability-model-three-axes.md) · [ADR-019](adr/019-user-env-secrets.md) |
+
 ## 何时需要
 
-第三方 skill（如 Datayes）要求 `DATAYES_TOKEN` 等环境变量，而 Companion 由 daemon/tray 启动时通常拿不到终端里的 `export`。
+第三方 skill（如 Datayes）要求 `DATAYES_TOKEN` 等环境变量，而 Companion 由 daemon/tray 启动时通常拿不到终端里的 `export`。这属于 **组合面** 配置，不是「开启深层桌面 Agent」。
 
 ## 配置步骤
 

@@ -2,7 +2,16 @@
 
 > **面向使用者**：解释 Side Panel 上的「确认台 / 操控台」是什么、何时用、与其它确认层有何区别。  
 > **设计依据**：[UI 三模式 redesign](superpowers/specs/2026-07-26-ui-three-mode-redesign.md) · [ADR-015](adr/015-multi-agent-orchestrator-tab-lock.md) · [安全分层](security-design-tiered-gates-2026-07-11.md)  
-> **相关能力**：[任务包 / NetSec](mission-pack-usage.md)
+> **相关能力**：[任务包 / NetSec](mission-pack-usage.md) · [Computer Use](computer-use-user-guide.md) · [Multi-Agent](multi-agent-user-guide.md)
+
+### 能力坐标
+
+| 轴 | 本指南位置 |
+|----|------------|
+| **Surface** | **横切全部作用面**的信任 UI：L0 基本不碰；**L1** 高危浏览器 tool / 导航域确认；**L2** 桌面 CU、host、shell/netsec 等强制人机审批 |
+| **Composition** | 不装配能力；Pack **不能**用确认台绕过或关闭全局门禁 |
+| **Autonomy** | 多 worker 时 FleetStrip 汇总待确认；spawn 等仍走同一确认台 |
+| **规范** | [ADR-020 能力三轴](adr/020-capability-model-three-axes.md) · 模式徽章 L0/L1/L2 = UI `聊` / `网页` / `计算机` |
 
 ---
 
@@ -11,9 +20,9 @@
 **确认台不是日常聊天窗口**，而是：
 
 1. **高危操作的人机审批台**（Agent 要执行危险 tool 之前，必须你点允许）；  
-2. **Computer Use（桌面操控）的宽屏操控台**（步骤轨、急停、完整预览）。
+2. **Computer Use（桌面 L2）的宽屏操控台**（步骤轨、急停、完整预览）。
 
-普通问答、写文案、不触发高危工具时，**不必**打开确认台。
+普通 **L0 聊**（问答、写文案、不触发高危工具）时，**不必**打开确认台。侧栏模式徽章升到 **网页 / 计算机** 且出现红条或 FleetStrip 提示时，再打开即可。
 
 ---
 
@@ -157,6 +166,7 @@ NetSec 完整路径示例见 [mission-pack-usage.md §5](mission-pack-usage.md#5
 
 | 主题 | 文档 |
 |------|------|
+| 能力三轴 / Trust 横切 | [ADR-020](adr/020-capability-model-three-axes.md) |
 | Panel vs Cockpit 内容切分 | [ui-three-mode-redesign §5](superpowers/specs/2026-07-26-ui-three-mode-redesign.md) |
 | 多 Agent Confirm Center 契约 | [ADR-015](adr/015-multi-agent-orchestrator-tab-lock.md) |
 | board_complete 与确认 | [ADR-016](adr/016-mission-board.md) |
@@ -165,4 +175,4 @@ NetSec 完整路径示例见 [mission-pack-usage.md §5](mission-pack-usage.md#5
 
 ---
 
-*文档版本：2026-07-27 · 与 UI 文案「确认台 / 操控台」混用现状对齐；后续若统一按钮文案，请同步改 §2。*
+*文档版本：2026-07-29 · 对齐 ADR-020 · 与 UI 文案「确认台 / 操控台」混用现状一致；后续若统一按钮文案，请同步改 §2。*

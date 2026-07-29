@@ -2,15 +2,25 @@
 
 > **面向使用者**：如何开启桌面坐标操控、确认台里怎么批/急停、session-trust 是什么、平台与限制。  
 > **产品版本**：0.3.0 · **决策摘要**：[ADR-017](adr/017-computer-use.md)  
-> **确认台 UI**：[confirm-center-user-guide.md](confirm-center-user-guide.md)  
+> **确认台 UI**：[confirm-center-user-guide.md](confirm-center-user-guide.md) · **Host / Apps**：[host-and-apps.md](host-and-apps.md)  
 > **过程史（非规范）**：[decisions/coordinate-computer-use-plan.md](decisions/coordinate-computer-use-plan.md)
+
+### 能力坐标
+
+| 轴 | 本指南位置 |
+|----|------------|
+| **Surface** | **L2 计算机**（桌面宿主面）— 比浏览器 L1 更深、blast radius 更大；进行中任务以 **确认台 / Cockpit** 为主操控面 |
+| **Composition** | 可叠加 Skill/Pack 提示词，但 **不能**用 Pack 关掉任务级确认；实验定位层不得当作写路径成功依赖 |
+| **Autonomy** | 通常单线程任务；与 multi-worker **正交**（Worker 硬禁 host_*） |
+| **Trust** | 双开关 + **任务级 L2**；god-mode / auto_approve **永不**跳过；session-trust 有条件抑后续 initial L2（§5） |
+| **规范** | [ADR-020](adr/020-capability-model-three-axes.md) · [ADR-017](adr/017-computer-use.md) |
 
 ---
 
 ## 1. 一句话
 
 **Computer Use** 让 Agent 在你**已白名单的应用窗口**上做键鼠坐标操作（点击、键入、滚动等），工具名主要是 **`host_computer`**。  
-默认 **关闭**；开启后仍是 **双开关 + 任务级 L2**（**god-mode / auto_approve 永不跳过** 任务确认），不是「打开就全自动接管桌面」。同线程同 App 下，若你勾选 session-trust 且 corpus/预算等条件满足，**后续任务**的初始 L2 可能被静默跳过（见 §5）。
+这是能力模型里的 **深层 / L2 作用面**（不是「再装一种 Agent」）。默认 **关闭**；开启后仍是 **双开关 + 任务级 L2**（**god-mode / auto_approve 永不跳过** 任务确认），不是「打开就全自动接管桌面」。同线程同 App 下，若你勾选 session-trust 且 corpus/预算等条件满足，**后续任务**的初始 L2 可能被静默跳过（见 §5）。
 
 ---
 
@@ -18,9 +28,10 @@
 
 | 适合 | 不适合 / 请改用其它能力 |
 |------|-------------------------|
-| 需要点桌面 GUI（播放器、办公窗、本机应用）且无结构化 API | 浏览器内页面 → 用 CDP 工具（`click` / `type` / …） |
-| 用户明确要求「在某某 App 里点一下」 | 读邮件/写笔记等有 `host_read` / `host_write` 路径时，优先那些 |
-| 短任务、动作预算可控 | 支付/转账/验证码最终确认、密码框键入 — **硬拒绝** |
+| 需要点桌面 GUI（播放器、办公窗、本机应用）且无结构化 API | **浏览器内**页面 → **L1** CDP 工具（`click` / `type` / …），不必上 Computer Use |
+| 用户明确要求「在某某 App 里点一下」 | 读邮件/写笔记等有 `host_read` / `host_write` 时，优先 [Host Use](host-and-apps.md)（同属 L2，但语义 API 更稳） |
+| 短任务、动作预算可控 | 仅网页黑盒 / 投研数据拉取 → [任务包](mission-pack-usage.md) / [MCP](mcp.md)（**组合面**，多在 L0/L1） |
+| | 支付/转账/验证码最终确认、密码框键入 — **硬拒绝** |
 
 ---
 
@@ -114,6 +125,7 @@ Computer Use 与其它高危工具共用 [确认台](confirm-center-user-guide.m
 
 | 文档 | 用途 |
 |------|------|
+| [ADR-020](adr/020-capability-model-three-axes.md) | L2 Surface；与组合面/L1 的边界 |
 | [confirm-center-user-guide.md](confirm-center-user-guide.md) | 确认台 / 急停 / L2 分层 |
 | [host-and-apps.md](host-and-apps.md) | 应用白名单、`host_read`/`host_write`/`host_app` |
 | [ADR-017](adr/017-computer-use.md) | 架构决策摘要 |
@@ -122,4 +134,4 @@ Computer Use 与其它高危工具共用 [确认台](confirm-center-user-guide.m
 
 ---
 
-*文档版本：2026-07-28 · 与 companion `computer/*` + 扩展 Cockpit/AppsPanel 行为对齐。*
+*文档版本：2026-07-29 · 对齐 ADR-020 · 与 companion `computer/*` + 扩展 Cockpit/AppsPanel 行为一致。*
