@@ -47,7 +47,7 @@ import type { HudShellRouter } from "../hud/shell-router"
 
 /** Expected SHA256 of the Swift tray binary (update via build-tray.sh) */
 // Updated 2026-07-28 after P3a HUD source rebuild (HudController in Tray.swift)
-const SWIFT_TRAY_SHA256 = "5929b53c5828c4c27f80cc32f4a93183c1be4933f34807a259c24575197c7af8"
+const SWIFT_TRAY_SHA256 = "ebd1ee4a6ba5d05840c23716368aec8b67a79905466e8a9fc4a26c8c38b589c7"
 
 function getSwiftTrayBinPath(): string {
   const { getSwiftTrayPath } = require("../paths")

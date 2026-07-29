@@ -374,8 +374,20 @@ func startStdinReader(delegate: TrayDelegate) {
   let fh = FileHandle.standardInput
   var buffer = Data()
 
+  // IMPORTANT: In readabilityHandler, empty `availableData` means EOF (pipe closed).
+  // Do NOT call `availableData` a second time after draining a line — a second empty
+  // read is normal between messages and must NOT clear the handler. The previous
+  // `if buffer.isEmpty && handle.availableData.isEmpty { handler = nil }` pattern
+  // silently disabled stdin after the first complete command (e.g. "update"), so
+  // later "show-pairing-window" / "show-confirm" never arrived and UI appeared dead.
   fh.readabilityHandler = { handle in
-    buffer.append(handle.availableData)
+    let chunk = handle.availableData
+    if chunk.isEmpty {
+      // EOF from parent (Node tray launcher exited)
+      fh.readabilityHandler = nil
+      return
+    }
+    buffer.append(chunk)
 
     while let newlineRange = buffer.range(of: Data([0x0A])) {
       let lineData = buffer.subdata(in: 0..<newlineRange.lowerBound)
@@ -393,11 +405,6 @@ func startStdinReader(delegate: TrayDelegate) {
       DispatchQueue.main.async {
         handleCommand(cmd, json: json, delegate: delegate)
       }
-    }
-
-    // Detect EOF
-    if buffer.isEmpty && handle.availableData.isEmpty {
-      fh.readabilityHandler = nil
     }
   }
 }
@@ -519,7 +526,7 @@ func handleCommand(_ cmd: String, json: [String: Any], delegate: TrayDelegate) {
 // auto-pushed by the launcher on first run / while unpaired.
 // ---------------------------------------------------------------------------
 
-class PairingController: NSObject {
+class PairingController: NSObject, NSWindowDelegate {
   // One reusable window for the process lifetime (isReleasedWhenClosed = false). For a
   // long-lived tray app this is cheaper than rebuilding the view tree on each show and
   // avoids flicker; re-show just refreshes the secret text + hint. No retain cycle:
@@ -538,17 +545,30 @@ class PairingController: NSObject {
     hintField?.stringValue = paired
       ? "（扩展曾配对过；如需在另一台设备上配对，可再次复制这串码。）"
       : "（尚未配对：复制下面这串码，粘贴进 Chrome 扩展即可完成配对。）"
-    // .accessory apps must explicitly steal focus for a window to come to front.
-    NSApp.activate(ignoringOtherApps: true)
+    // Menu-bar apps run as .accessory; on macOS 14+ activate(ignoringOtherApps:)
+    // is a no-op and a plain NSWindow often stays invisible behind the frontmost app.
+    // Temporarily promote to .regular, float the window onto the active Space, then
+    // restore .accessory when the window closes (windowWillClose).
+    NSApp.setActivationPolicy(.regular)
+    if #available(macOS 14.0, *) {
+      NSApp.activate()
+    } else {
+      NSApp.activate(ignoringOtherApps: true)
+    }
+    window.level = .floating
+    window.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary, .transient]
     window.center()
     window.makeKeyAndOrderFront(nil)
-    // On macOS 14+ the deprecated activate(ignoringOtherApps:) no longer reliably
-    // brings an accessory app's window to front (the window is created + isVisible,
-    // but often stays behind / never becomes key), so a freshly-launched or
-    // background-only-descended tray shows nothing when "显示配对码" is clicked.
-    // orderFrontRegardless() forces ordering to the front even when activation is
-    // suppressed — the documented primitive for exactly this case.
     window.orderFrontRegardless()
+  }
+
+  func windowWillClose(_ notification: Notification) {
+    // Drop floating level and return to menu-bar agent policy so we don't steal
+    // Dock space after the user dismisses the pairing window.
+    if let window = notification.object as? NSWindow {
+      window.level = .normal
+    }
+    NSApp.setActivationPolicy(.accessory)
   }
 
   private func makeWindow() -> NSWindow? {
@@ -557,6 +577,7 @@ class PairingController: NSObject {
     let win = NSWindow(contentRect: contentRect, styleMask: style, backing: .buffered, defer: false)
     win.title = "🔑 CMspark 配对码"
     win.isReleasedWhenClosed = false
+    win.delegate = self
     win.minSize = NSSize(width: 420, height: 260)
 
     let stack = NSStackView()

@@ -360,11 +360,25 @@ function copyToClipboard(text: string): boolean {
   }
 }
 
-/** Show the pairing code: native window (Swift) or clipboard+notify (other backends). */
+/** Append a line to tray-debug.log (stdout is often discarded for packaged tray). */
+function trayDebugLog(message: string): void {
+  try {
+    const logPath = path.join(getConfigDir(), "tray-debug.log")
+    fs.appendFileSync(logPath, `[${new Date().toISOString()}] ${message}\n`)
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Show the pairing code: native window (Swift) + clipboard/notify always as backup. */
 function showPairingCode(): void {
   const secret = readPairingSecret(getConfigDir())
+  trayDebugLog(
+    `showPairingCode secretLen=${secret.length} backend=${activeBackend} hasTray=${!!trayInstance}`,
+  )
   console.log("[pairing] showPairingCode called, secret length:", secret.length, "backend:", activeBackend)
   if (!secret) {
+    trayDebugLog("showPairingCode: no secret")
     console.log("[pairing] No secret available, showing notification")
     safeNotify({
       title: "🔑 CMspark 配对码",
@@ -373,17 +387,33 @@ function showPairingCode(): void {
     })
     return
   }
+
+  // Always copy to clipboard first so the user gets a usable secret even if the
+  // native window fails to front on macOS 14+ accessory apps (or stdin is stuck).
+  // Notification must NEVER include the secret itself (lock-screen visible).
+  const copied = copyToClipboard(secret)
+  trayDebugLog(`showPairingCode: clipboardCopied=${copied}`)
+
   if (activeBackend === "swift" && trayInstance) {
-    console.log("[pairing] Using Swift native window")
-    trayInstance.showPairingWindow(secret, hasPaired(getConfigDir()))
+    console.log("[pairing] Using Swift native window (+ clipboard backup)")
+    try {
+      trayInstance.showPairingWindow(secret, hasPaired(getConfigDir()))
+    } catch (err: any) {
+      trayDebugLog(`showPairingCode: showPairingWindow threw ${err?.message || err}`)
+      console.error("[pairing] showPairingWindow error:", err)
+    }
+    safeNotify({
+      title: "🔑 CMspark 配对码",
+      message: copied
+        ? `配对窗口已打开；配对码也已复制到剪贴板。请粘贴到 ${PAIRING_TARGET_LABEL}。`
+        : `配对窗口已打开。请粘贴到 ${PAIRING_TARGET_LABEL}（剪贴板复制失败时可在窗口中选中复制）。`,
+      timeout: 8,
+    })
     return
   }
-  // Non-Swift fallback: copy to clipboard + notify. The secret is NEVER placed in the
-  // (persisted, lock-screen-visible) notification — if no clipboard tool is available
-  // we guide the user to the Settings page rather than leak the key.
+
+  // Non-Swift fallback: clipboard + notify only.
   console.log("[pairing] Using non-Swift fallback (clipboard + notify)")
-  const copied = copyToClipboard(secret)
-  console.log("[pairing] copyToClipboard result:", copied)
   safeNotify({
     title: "🔑 CMspark 配对码",
     message: copied
@@ -391,7 +421,6 @@ function showPairingCode(): void {
       : "未检测到剪贴板工具（请安装 xclip/xsel），无法自动复制。请通过菜单 →「设置」打开设置页查看配对码。",
     timeout: 10,
   })
-  console.log("[pairing] safeNotify called")
 }
 
 // ---------------------------------------------------------------------------
