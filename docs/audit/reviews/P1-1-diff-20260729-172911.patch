@@ -1,0 +1,632 @@
+# Dual external review context
+batch: P1-1
+base: HEAD
+time: 20260729-172911
+
+ff8a896
+
+ M chrome-extension/src/background/index.ts
+ M chrome-extension/src/sidepanel/components/SettingsSlideout.tsx
+ M companion/src/message-router.ts
+ M companion/tests/message-router-config-security.test.ts
+ M docs/adr/010-tiered-privilege-godmode.md
+ M docs/audit/p1-security-open-items-2026-07-29.md
+?? companion/src/security-arm.ts
+?? docs/audit/reviews/P1-1-diff-20260729-172911.patch
+
+## Diff (git diff + staged)
+ chrome-extension/src/background/index.ts           |   9 +-
+ .../src/sidepanel/components/SettingsSlideout.tsx  |  99 ++++++++-
+ companion/src/message-router.ts                    |  38 ++++
+ .../tests/message-router-config-security.test.ts   | 227 ++++++++++++++++++---
+ docs/adr/010-tiered-privilege-godmode.md           |   2 +
+ docs/audit/p1-security-open-items-2026-07-29.md    |  15 +-
+ 6 files changed, 349 insertions(+), 41 deletions(-)
+
+diff --git a/chrome-extension/src/background/index.ts b/chrome-extension/src/background/index.ts
+index 3dc38db..71e1e96 100644
+--- a/chrome-extension/src/background/index.ts
++++ b/chrome-extension/src/background/index.ts
+@@ -517,8 +517,15 @@ function setupMessageHandlers() {
+       case "config.set":
+         // Persist locally so settings survive SW restarts, then forward to companion
+         // so it becomes the global source of truth.
++        // P1-1: pass through confirmation_phrase (top-level) for security flag arm step-up.
+         saveExtensionConfig(message.config || {})
+-        wsClient.send({ type: "config.set", config: message.config })
++        wsClient.send({
++          type: "config.set",
++          config: message.config,
++          ...(typeof message.confirmation_phrase === "string"
++            ? { confirmation_phrase: message.confirmation_phrase }
++            : {}),
++        })
+         sendResponse({ ok: true })
+         return true
+ 
+diff --git a/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx b/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx
+index d74900c..d1322f1 100644
+--- a/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx
++++ b/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx
+@@ -16,10 +16,10 @@ import {
+   modelSwitchRunningNote,
+ } from "./model-switch-logic"
+ 
+-// PR-B: typed-confirmation phrase required to arm God-mode. Deliberately high
+-// friction — God-mode is the max-risk toggle (bypasses both security layers).
+-// A prompt-injected instruction cannot type into this settings panel, so the
+-// phrase gate exists to prevent *accidental* arming, not to resist a human.
++// P1-1 / PR-B: typed-confirmation phrase for arming dangerous security flags.
++// Lock-step with companion/src/security-arm.ts SECURITY_ARM_CONFIRM_PHRASE —
++// companion rejects false→true without this top-level confirmation_phrase.
++// UI phrase alone is theater; arm path must forward phrase on config.set.
+ const GODMODE_CONFIRM_PHRASE = "我了解风险"
+ 
+ const SAFETY_SKILLS = [
+@@ -46,7 +46,12 @@ export function SettingsSlideout() {
+   const [entBConfirm, setEntBConfirm] = useState(false)
+   const [entBPhrase, setEntBPhrase] = useState("")
+   const [entBMsg, setEntBMsg] = useState<string | null>(null)
++  // Same literal as GODMODE_CONFIRM_PHRASE / companion SECURITY_ARM_CONFIRM_PHRASE
+   const ENT_B_PHRASE = "我了解风险"
++  // auto_approve_dangerous phrase gate (P1-1 — companion requires step-up on arm)
++  const [autoDangerConfirm, setAutoDangerConfirm] = useState(false)
++  const [autoDangerPhrase, setAutoDangerPhrase] = useState("")
++  const [autoDangerMsg, setAutoDangerMsg] = useState<string | null>(null)
+   // WP5-I4 实验区:删除模型两步确认按钮的待命态(非 store——纯组件内 UI 态)。
+   const [modelDeleteArmed, setModelDeleteArmed] = useState(false)
+ 
+@@ -56,10 +61,16 @@ export function SettingsSlideout() {
+     if (!state.settingsOpen) return
+     // Reset stale pairing feedback + re-check stored-secret presence each open.
+     setWsPairingMsg(null)
+-    // Reset any stale God-mode confirmation panel from a previous open.
++    // Reset any stale security arm confirmation panels from a previous open.
+     setGodmodeConfirm(false)
+     setGodmodePhrase("")
+     setGodmodeMsg(null)
++    setEntBConfirm(false)
++    setEntBPhrase("")
++    setEntBMsg(null)
++    setAutoDangerConfirm(false)
++    setAutoDangerPhrase("")
++    setAutoDangerMsg(null)
+     // WP5-I4 实验区:打开设置页拉一次模型状态(后续由 state 广播驱动,
+     // 无乐观更新);清掉上次打开残留的错误与删除待命态。
+     setModelDeleteArmed(false)
+@@ -117,13 +128,51 @@ export function SettingsSlideout() {
+     dispatch({ type: "SET_CONFIG", config: { auto_approved_domains } })
+   }
+ 
++  // P1-1: arm paths send focused config.set + confirmation_phrase so companion
++  // step-up is not UI theater. Disarm needs no phrase. handleSave re-sends
++  // already-true flags without phrase (transition-only gate).
++  const sendSecurityFlagConfig = (
++    partial: Record<string, boolean>,
++    confirmation_phrase?: string,
++  ) => {
++    chrome.runtime.sendMessage({
++      type: "config.set",
++      config: partial,
++      ...(confirmation_phrase != null ? { confirmation_phrase } : {}),
++    })
++  }
++
+   const handleAutoApproveDangerousChange = (checked: boolean) => {
+-    dispatch({ type: "SET_CONFIG", config: { auto_approve_dangerous: checked } })
++    if (!checked) {
++      dispatch({ type: "SET_CONFIG", config: { auto_approve_dangerous: false } })
++      sendSecurityFlagConfig({ auto_approve_dangerous: false })
++      setAutoDangerConfirm(false)
++      setAutoDangerPhrase("")
++      setAutoDangerMsg(null)
++      return
++    }
++    setAutoDangerConfirm(true)
++    setAutoDangerPhrase("")
++    setAutoDangerMsg(null)
++  }
++
++  const handleAutoApproveDangerousConfirm = () => {
++    if (autoDangerPhrase.trim() !== GODMODE_CONFIRM_PHRASE) {
++      setAutoDangerMsg(`请输入「${GODMODE_CONFIRM_PHRASE}」`)
++      return
++    }
++    const phrase = autoDangerPhrase.trim()
++    dispatch({ type: "SET_CONFIG", config: { auto_approve_dangerous: true } })
++    sendSecurityFlagConfig({ auto_approve_dangerous: true }, phrase)
++    setAutoDangerConfirm(false)
++    setAutoDangerPhrase("")
++    setAutoDangerMsg(null)
+   }
+ 
+   const handleEnterpriseAutoApproveToggle = (checked: boolean) => {
+     if (!checked) {
+       dispatch({ type: "SET_CONFIG", config: { auto_approve_enterprise_tools: false } })
++      sendSecurityFlagConfig({ auto_approve_enterprise_tools: false })
+       setEntBConfirm(false)
+       setEntBPhrase("")
+       setEntBMsg(null)
+@@ -139,7 +188,9 @@ export function SettingsSlideout() {
+       setEntBMsg(`请输入「${ENT_B_PHRASE}」`)
+       return
+     }
++    const phrase = entBPhrase.trim()
+     dispatch({ type: "SET_CONFIG", config: { auto_approve_enterprise_tools: true } })
++    sendSecurityFlagConfig({ auto_approve_enterprise_tools: true }, phrase)
+     setEntBConfirm(false)
+     setEntBPhrase("")
+     setEntBMsg(null)
+@@ -157,8 +208,9 @@ export function SettingsSlideout() {
+       setGodmodeMsg(null)
+       return
+     }
+-    // Disarming is safe — flip immediately + audit.
++    // Disarming is safe — flip immediately + audit + companion config.set (no phrase).
+     dispatch({ type: "SET_CONFIG", config: { allow_all_schemes: false } })
++    sendSecurityFlagConfig({ allow_all_schemes: false })
+     dispatch({
+       type: "ADD_SECURITY_AUDIT",
+       entry: {
+@@ -180,7 +232,10 @@ export function SettingsSlideout() {
+       setGodmodeMsg(`确认短语不匹配，请输入「${GODMODE_CONFIRM_PHRASE}」`)
+       return
+     }
++    const phrase = godmodePhrase.trim()
+     dispatch({ type: "SET_CONFIG", config: { allow_all_schemes: true } })
++    // P1-1: companion requires confirmation_phrase on false→true (not theater).
++    sendSecurityFlagConfig({ allow_all_schemes: true }, phrase)
+     dispatch({
+       type: "ADD_SECURITY_AUDIT",
+       entry: {
+@@ -435,6 +490,36 @@ export function SettingsSlideout() {
+                 </div>
+               </div>
+             </label>
++            {autoDangerConfirm && (
++              <div style={{ marginTop: 10, padding: 8, background: "#fff", borderRadius: 6, border: "1px solid #E0C090" }}>
++                <div style={{ fontSize: 12, color: "#B26B00", fontWeight: 500, marginBottom: 6 }}>
++                  请输入「<b>{GODMODE_CONFIRM_PHRASE}</b>」以确认开启：
++                </div>
++                <div style={{ display: "flex", gap: 6 }}>
++                  <input
++                    style={{ ...styles.input, flex: 1 }}
++                    type="text"
++                    value={autoDangerPhrase}
++                    onChange={(e) => { setAutoDangerPhrase(e.target.value); setAutoDangerMsg(null) }}
++                    placeholder={GODMODE_CONFIRM_PHRASE}
++                    autoComplete="off"
++                    spellCheck={false}
++                    autoFocus
++                  />
++                  <button
++                    style={{ ...styles.toggleBtn, color: "#fff", background: "#C62828", borderColor: "#C62828" }}
++                    onClick={handleAutoApproveDangerousConfirm}
++                  >确认开启</button>
++                  <button
++                    style={styles.toggleBtn}
++                    onClick={() => { setAutoDangerConfirm(false); setAutoDangerPhrase(""); setAutoDangerMsg(null) }}
++                  >取消</button>
++                </div>
++                {autoDangerMsg && (
++                  <div style={{ fontSize: 11, color: "#C62828", marginTop: 4 }}>{autoDangerMsg}</div>
++                )}
++              </div>
++            )}
+           </div>
+ 
+           {/* Plan B: enterprise shell/netsec L2 skip under scope */}
+diff --git a/companion/src/message-router.ts b/companion/src/message-router.ts
+index 081f38c..3ad5076 100644
+--- a/companion/src/message-router.ts
++++ b/companion/src/message-router.ts
+@@ -23,6 +23,12 @@ import { analyzeImage } from "./llm/vision-pipeline"
+ import { chunkFile, searchChunks } from "./file-chunker"
+ import { craftSkill, craftSkillToMarkdown } from "./skills/skill-craft"
+ import { checkHighRiskExecution } from "./security"
++import {
++  findArmingSecurityFlags,
++  isValidSecurityArmPhrase,
++  securityArmRejectedError,
++  type SecurityArmFlag,
++} from "./security-arm"
+ import { securityPolicy } from "./security-policy"
+ import { getMcpManager } from "./mcp"
+ import { logger } from "./logger"
+@@ -211,6 +217,32 @@ export async function handleMessage(
+           normalized.security.auto_approve_enterprise_tools = !!cfg.auto_approve_enterprise_tools
+         }
+       }
++      // P1-1 Trust step-up: false→true for dangerous security flags requires
++      // top-level confirmation_phrase (Design A). Gate both flat and nested paths.
++      // Disarm and already-true resend (handleSave snapshot) need no phrase.
++      // Does not touch CU L2 / shell forceConfirm invariants (server.ts).
++      let armingFlags: SecurityArmFlag[] = []
++      if (normalized.security) {
++        const currentSec = getConfig().security || {}
++        armingFlags = findArmingSecurityFlags(
++          normalized.security as Record<string, unknown>,
++          currentSec as unknown as Record<string, unknown>,
++        )
++        if (armingFlags.length > 0) {
++          if (!isValidSecurityArmPhrase(rest.confirmation_phrase)) {
++            const reason =
++              rest.confirmation_phrase == null || rest.confirmation_phrase === ""
++                ? "missing_phrase"
++                : "wrong_phrase"
++            logger.warn("security.arm_rejected", {
++              flags: armingFlags,
++              reason,
++              source: "ws_config_set",
++            })
++            return { type: "error", error: securityArmRejectedError(armingFlags) }
++          }
++        }
++      }
+       // Vision config: normalize flat vision_* fields into nested vision object
+       if (cfg.vision) {
+         normalized.vision = { ...cfg.vision }
+@@ -236,6 +268,12 @@ export async function handleMessage(
+         if (cfg.file_upload_vision !== undefined) normalized.file_upload.enable_vision_analysis = !!cfg.file_upload_vision
+       }
+       const updated = saveConfig(normalized)
++      if (armingFlags.length > 0) {
++        logger.warn("security.flag_armed", {
++          flags: armingFlags,
++          source: "ws_phrase_confirmed",
++        })
++      }
+       return {
+         type: "config.updated",
+         config: {
+diff --git a/companion/tests/message-router-config-security.test.ts b/companion/tests/message-router-config-security.test.ts
+index 2691c72..9c68a83 100644
+--- a/companion/tests/message-router-config-security.test.ts
++++ b/companion/tests/message-router-config-security.test.ts
+@@ -1,4 +1,5 @@
+-// PR-B: config.set must re-nest flattened security fields the extension UI sends.
++// PR-B + P1-1: config.set re-nests flattened security fields; arming false→true
++// requires top-level confirmation_phrase (companion step-up).
+ //
+ // The extension's LLMConfig flattens `security.allow_all_schemes` (GOD-MODE) and
+ // `security.auto_approve_dangerous` to the top level (see chrome-extension
+@@ -7,54 +8,107 @@
+ // these under `security.*` before saveConfig, otherwise the god-mode UI toggle is a
+ // no-op (allow_all_schemes is silently dropped and never reaches the L1/L2 gates).
+ //
+-// This test exercises the routing → saveConfig path directly with the flattened shape.
++// P1-1: arm without phrase fails; arm with correct phrase succeeds + audit;
++// wrong phrase fails; disarm without phrase ok; already-true resend ok.
+ 
+ import "./_config-router-setup" // MUST be first — pins DATA_DIR before config import.
+ 
+ import test, { before } from "node:test"
+ import * as assert from "node:assert/strict"
++import * as fs from "node:fs"
++import * as path from "node:path"
+ 
+ let handleMessage: typeof import("../src/message-router").handleMessage
+ let getConfig: typeof import("../src/config").getConfig
+ let saveConfig: typeof import("../src/config").saveConfig
+ let replaceMcpServers: typeof import("../src/config").replaceMcpServers
+ let initDataDir: typeof import("../src/config").initDataDir
++let SECURITY_ARM_CONFIRM_PHRASE: typeof import("../src/security-arm").SECURITY_ARM_CONFIRM_PHRASE
++let getConfigDir: typeof import("../src/config").getConfigDir
+ 
+ before(async () => {
+   const mr = await import("../src/message-router")
+   const cfg = await import("../src/config")
++  const arm = await import("../src/security-arm")
+   handleMessage = mr.handleMessage
+   getConfig = cfg.getConfig
+   saveConfig = cfg.saveConfig
+   replaceMcpServers = cfg.replaceMcpServers
+   initDataDir = cfg.initDataDir
++  getConfigDir = cfg.getConfigDir
++  SECURITY_ARM_CONFIRM_PHRASE = arm.SECURITY_ARM_CONFIRM_PHRASE
+   await initDataDir()
+   // Start from a clean, god-mode-off baseline so each assertion is unambiguous.
+-  saveConfig({ security: { ...getConfig().security, auto_approve_dangerous: false, allow_all_schemes: false } })
++  saveConfig({
++    security: {
++      ...getConfig().security,
++      auto_approve_dangerous: false,
++      allow_all_schemes: false,
++      auto_approve_enterprise_tools: false,
++    },
++  })
+ })
+ 
+-async function postConfigSet(config: Record<string, unknown>) {
+-  return handleMessage({ type: "config.set", config } as any, {} as any)
++async function postConfigSet(
++  config: Record<string, unknown>,
++  extra?: { confirmation_phrase?: string },
++) {
++  return handleMessage(
++    { type: "config.set", config, ...extra } as any,
++    {} as any,
++  )
+ }
+ 
+-test("config.set: flat allow_all_schemes=true is nested under security.*", async () => {
+-  // Simulate the extension UI posting a flattened config with god-mode armed.
+-  const r: any = await postConfigSet({ allow_all_schemes: true })
++function resetSecurityFlags(overrides: Record<string, boolean> = {}) {
++  saveConfig({
++    security: {
++      ...getConfig().security,
++      auto_approve_dangerous: false,
++      allow_all_schemes: false,
++      auto_approve_enterprise_tools: false,
++      ...overrides,
++    },
++  })
++}
++
++function readTodayLog(): string {
++  const day = new Date().toISOString().slice(0, 10)
++  const p = path.join(getConfigDir(), "logs", `companion-${day}.log`)
++  try {
++    return fs.readFileSync(p, "utf8")
++  } catch {
++    return ""
++  }
++}
++
++// --- Nesting (with phrase where arming) ---
++
++test("config.set: flat allow_all_schemes=true with correct phrase nests under security.*", async () => {
++  resetSecurityFlags()
++  const r: any = await postConfigSet(
++    { allow_all_schemes: true },
++    { confirmation_phrase: SECURITY_ARM_CONFIRM_PHRASE },
++  )
+   assert.equal(r.type, "config.updated")
+   assert.equal(getConfig().security.allow_all_schemes, true, "god-mode must persist to security.allow_all_schemes")
+ })
+ 
+-test("config.set: flat allow_all_schemes=false disarms god-mode", async () => {
+-  saveConfig({ security: { ...getConfig().security, auto_approve_dangerous: false, allow_all_schemes: true } })
++test("config.set: flat allow_all_schemes=false disarms god-mode without phrase", async () => {
++  resetSecurityFlags({ allow_all_schemes: true })
+   assert.equal(getConfig().security.allow_all_schemes, true)
+-  await postConfigSet({ allow_all_schemes: false })
++  const r: any = await postConfigSet({ allow_all_schemes: false })
++  assert.equal(r.type, "config.updated")
+   assert.equal(getConfig().security.allow_all_schemes, false, "flat false must disarm god-mode")
+ })
+ 
+-test("config.set: both flat allow_all_schemes + auto_approve_dangerous nest together", async () => {
++test("config.set: both flat allow_all_schemes + auto_approve_dangerous nest together with one phrase", async () => {
++  resetSecurityFlags()
+   // handleSave posts the entire LLMConfig at once — both flattened security fields
+   // arrive in the same message. Both must land in security.* without clobbering each other.
+-  const r: any = await postConfigSet({ allow_all_schemes: true, auto_approve_dangerous: true })
++  const r: any = await postConfigSet(
++    { allow_all_schemes: true, auto_approve_dangerous: true },
++    { confirmation_phrase: SECURITY_ARM_CONFIRM_PHRASE },
++  )
+   assert.equal(r.type, "config.updated")
+   const sec = getConfig().security
+   assert.equal(sec.allow_all_schemes, true, "allow_all_schemes must nest alongside auto_approve_dangerous")
+@@ -62,27 +116,154 @@ test("config.set: both flat allow_all_schemes + auto_approve_dangerous nest toge
+ })
+ 
+ test("config.set: arming god-mode alone does not wipe the existing auto_approve_dangerous value", async () => {
+-  // deepMerge contract: a flattened god-mode toggle must preserve the partner security
+-  // field's current value (it spreads current.security before applying the new key).
+-  saveConfig({ security: { ...getConfig().security, auto_approve_dangerous: true, allow_all_schemes: false } })
+-  await postConfigSet({ allow_all_schemes: true })
++  resetSecurityFlags({ auto_approve_dangerous: true, allow_all_schemes: false })
++  await postConfigSet(
++    { allow_all_schemes: true },
++    { confirmation_phrase: SECURITY_ARM_CONFIRM_PHRASE },
++  )
+   const sec = getConfig().security
+   assert.equal(sec.allow_all_schemes, true)
+   assert.equal(sec.auto_approve_dangerous, true, "partner field preserved when only allow_all_schemes sent")
+ })
+ 
+-test("config.set: nested security object still passes through (direct security.allow_all_schemes)", async () => {
+-  // Non-UI callers (e.g. config.json migration / settings-cli) may send a nested
+-  // security object. That path must keep working unchanged, AND must preserve the
+-  // partner field (auto_approve_dangerous) via deepMerge.
+-  saveConfig({ security: { ...getConfig().security, auto_approve_dangerous: true, allow_all_schemes: false } })
+-  const r: any = await postConfigSet({ security: { allow_all_schemes: true } })
++test("config.set: nested security object with phrase arms and preserves partner field", async () => {
++  resetSecurityFlags({ auto_approve_dangerous: true, allow_all_schemes: false })
++  const r: any = await postConfigSet(
++    { security: { allow_all_schemes: true } },
++    { confirmation_phrase: SECURITY_ARM_CONFIRM_PHRASE },
++  )
+   assert.equal(r.type, "config.updated")
+   const sec = getConfig().security
+   assert.equal(sec.allow_all_schemes, true)
+   assert.equal(sec.auto_approve_dangerous, true, "nested path must also preserve partner field via deepMerge")
+ })
+ 
++// --- P1-1 step-up gate ---
++
++test("P1-1: config.set arm allow_all_schemes without phrase → error, stays false", async () => {
++  resetSecurityFlags()
++  const r: any = await postConfigSet({ allow_all_schemes: true })
++  assert.equal(r.type, "error")
++  assert.match(String(r.error), /confirmation_phrase|allow_all_schemes/)
++  assert.equal(getConfig().security.allow_all_schemes, false)
++  assert.ok(readTodayLog().includes("security.arm_rejected") || readTodayLog().includes("arm_rejected"))
++})
++
++test("P1-1: config.set arm allow_all_schemes with correct phrase → success + audit", async () => {
++  resetSecurityFlags()
++  const r: any = await postConfigSet(
++    { allow_all_schemes: true },
++    { confirmation_phrase: SECURITY_ARM_CONFIRM_PHRASE },
++  )
++  assert.equal(r.type, "config.updated")
++  assert.equal(getConfig().security.allow_all_schemes, true)
++  const log = readTodayLog()
++  assert.ok(log.includes("flag_armed") || log.includes("security.flag_armed"), "must audit flag_armed")
++  assert.ok(log.includes("ws_phrase_confirmed"), "audit source ws_phrase_confirmed")
++})
++
++test("P1-1: config.set arm with wrong phrase → error, no persist", async () => {
++  resetSecurityFlags()
++  const r: any = await postConfigSet(
++    { allow_all_schemes: true },
++    { confirmation_phrase: "wrong phrase" },
++  )
++  assert.equal(r.type, "error")
++  assert.equal(getConfig().security.allow_all_schemes, false)
++})
++
++test("P1-1: config.set disarm allow_all_schemes true→false without phrase → success", async () => {
++  resetSecurityFlags({ allow_all_schemes: true })
++  const r: any = await postConfigSet({ allow_all_schemes: false })
++  assert.equal(r.type, "config.updated")
++  assert.equal(getConfig().security.allow_all_schemes, false)
++})
++
++test("P1-1: arm/disarm matrix for auto_approve_dangerous", async () => {
++  resetSecurityFlags()
++  const noPhrase: any = await postConfigSet({ auto_approve_dangerous: true })
++  assert.equal(noPhrase.type, "error")
++  assert.equal(getConfig().security.auto_approve_dangerous, false)
++
++  const wrong: any = await postConfigSet(
++    { auto_approve_dangerous: true },
++    { confirmation_phrase: "nope" },
++  )
++  assert.equal(wrong.type, "error")
++  assert.equal(getConfig().security.auto_approve_dangerous, false)
++
++  const ok: any = await postConfigSet(
++    { auto_approve_dangerous: true },
++    { confirmation_phrase: SECURITY_ARM_CONFIRM_PHRASE },
++  )
++  assert.equal(ok.type, "config.updated")
++  assert.equal(getConfig().security.auto_approve_dangerous, true)
++
++  const disarm: any = await postConfigSet({ auto_approve_dangerous: false })
++  assert.equal(disarm.type, "config.updated")
++  assert.equal(getConfig().security.auto_approve_dangerous, false)
++})
++
++test("P1-1: arm/disarm matrix for auto_approve_enterprise_tools", async () => {
++  resetSecurityFlags()
++  const noPhrase: any = await postConfigSet({ auto_approve_enterprise_tools: true })
++  assert.equal(noPhrase.type, "error")
++  assert.equal(getConfig().security.auto_approve_enterprise_tools, false)
++
++  const ok: any = await postConfigSet(
++    { auto_approve_enterprise_tools: true },
++    { confirmation_phrase: SECURITY_ARM_CONFIRM_PHRASE },
++  )
++  assert.equal(ok.type, "config.updated")
++  assert.equal(getConfig().security.auto_approve_enterprise_tools, true)
++
++  const disarm: any = await postConfigSet({ auto_approve_enterprise_tools: false })
++  assert.equal(disarm.type, "config.updated")
++  assert.equal(getConfig().security.auto_approve_enterprise_tools, false)
++})
++
++test("P1-1: nested security.allow_all_schemes true without phrase → reject", async () => {
++  resetSecurityFlags()
++  const r: any = await postConfigSet({ security: { allow_all_schemes: true } })
++  assert.equal(r.type, "error")
++  assert.equal(getConfig().security.allow_all_schemes, false)
++})
++
++test("P1-1: already-true resend without phrase → success (Save snapshot)", async () => {
++  resetSecurityFlags({ allow_all_schemes: true, auto_approve_dangerous: true })
++  const r: any = await postConfigSet({
++    allow_all_schemes: true,
++    auto_approve_dangerous: true,
++    model_name: "save-snapshot-model",
++  })
++  assert.equal(r.type, "config.updated")
++  assert.equal(getConfig().security.allow_all_schemes, true)
++  assert.equal(getConfig().security.auto_approve_dangerous, true)
++  assert.equal(getConfig().llm.model_name, "save-snapshot-model")
++})
++
++test("P1-1: arm two flags one message + one correct phrase → both true; partner fields preserved", async () => {
++  resetSecurityFlags({ auto_approve_enterprise_tools: false })
++  // Seed partner that must survive
++  saveConfig({
++    security: {
++      ...getConfig().security,
++      auto_approve_enterprise_tools: false,
++      // leave a non-arm key untouched via deepMerge on nested isn't applicable;
++      // flat path spreads current.security
++    },
++  })
++  const r: any = await postConfigSet(
++    { allow_all_schemes: true, auto_approve_dangerous: true },
++    { confirmation_phrase: SECURITY_ARM_CONFIRM_PHRASE },
++  )
++  assert.equal(r.type, "config.updated")
++  const sec = getConfig().security
++  assert.equal(sec.allow_all_schemes, true)
++  assert.equal(sec.auto_approve_dangerous, true)
++  assert.equal(sec.auto_approve_enterprise_tools, false, "untouched partner stays false")
++})
++
+ // --- audit L1: prototype-pollution value check removal + key guard remains ---
+ 
+ test("config.set: string value 'prototype' is allowed (value is not a pollution key)", async () => {
+diff --git a/docs/adr/010-tiered-privilege-godmode.md b/docs/adr/010-tiered-privilege-godmode.md
+index d4f6dbb..7893922 100644
+--- a/docs/adr/010-tiered-privilege-godmode.md
++++ b/docs/adr/010-tiered-privilege-godmode.md
+@@ -59,6 +59,8 @@ PR-0（commit `aeef21e`，PR #35）实现 **challenge-response HMAC-SHA256 握
+ 
+ UI 启用刻意做成**高摩擦**：勾选不直接生效，必须键入确认短语——防止误开启。一个 prompt 注入的指令无法在设置面板里键入，故短语门针对的是「误操作」而非「对抗人」。
+ 
++**P1-1 companion step-up（Trust）**：仅 UI 短语不够。`config.set` 对 `security.allow_all_schemes` / `auto_approve_dangerous` / `auto_approve_enterprise_tools` 的 **false→true** 必须在消息顶层附带 `confirmation_phrase` 且与 `SECURITY_ARM_CONFIRM_PHRASE`（`companion/src/security-arm.ts`，与 UI 同字面量）一致，否则整条写入被拒并记 `security.arm_rejected`。武装成功记 `security.flag_armed`（`source: ws_phrase_confirmed`）。true→false 消武与已为 true 的全量 Save 重发**不**要求 phrase。God-mode 本身仍**不**跳过 CU 任务级 L2 / shell·netsec `forceConfirm`（见 ADR-020 Trust；企业 Plan B 另开 `auto_approve_enterprise_tools`）。
++
+ ### 方式 B：直接编辑 config.json（无需 UI / 适合无头/远程场景）
+ 
+ ```jsonc
+diff --git a/docs/audit/p1-security-open-items-2026-07-29.md b/docs/audit/p1-security-open-items-2026-07-29.md
+index bf5a8da..6a152f4 100644
+--- a/docs/audit/p1-security-open-items-2026-07-29.md
++++ b/docs/audit/p1-security-open-items-2026-07-29.md
+@@ -12,12 +12,12 @@
+ 
+ | ID | 标题 | 状态 | 严重度（诊断） | 轴 |
+ |----|------|------|----------------|-----|
+-| **P1-1** | god-mode / 危险 flag companion step-up | **OPEN** | High | Trust × Surface |
++| **P1-1** | god-mode / 危险 flag companion step-up | **FIXED** | High | Trust × Surface |
+ | **P1-2** | MCP（及部分 L2）确认统一 `originWs` | **OPEN**（部分路径已绑） | Medium | Trust · multi-peer |
+ | **P1-3** | evaluate 批准后代码完整性（勿再改写） | **OPEN** | Medium | Trust · L1 完整性 |
+ | **P1-4** | shell_exec 策略收紧（`shell:true` + 前缀） | **OPEN**（有缓解） | Medium | Surface L2 · enterprise |
+ 
+-四条均 **未闭环**。缓解存在（UI 短语、enterprise L2 forceConfirm、shell allowlist 可选），但诊断原意的 companion 硬门 / 绑定一致性 / 批准后不改写 / 结构上弱于完整 shell 策略 **仍成立**。
++P1-1 **已 FIXED**（companion phrase step-up）。P1-2/3/4 仍 **未闭环**。缓解存在（UI 短语+companion 门、enterprise L2 forceConfirm、shell allowlist 可选），但绑定一致性 / 批准后不改写 / 结构上弱于完整 shell 策略 **仍成立**。
+ 
+ ---
+ 
+@@ -38,19 +38,14 @@
+ 
+ ### 结论
+ 
+-**OPEN**。任意已鉴权 WS peer（不仅是 Settings UI）可 `config.set` 武装全局放宽。  
+-**目标形态（建议）**：companion 对「布尔 0→1 的危险 flag」要求：
+-
+-1. 与 UI 相同的 phrase（或一次性 step-up token / 二次确认消息族），或  
+-2. 拒绝经 `config.set` 武装、仅允许专用 `security.arm_*` 消息 + origin 绑定。  
+-
+-消武（true→false）可保持宽松。
++**FIXED**（P1-1 Design A，2026-07-29）。`config.set` 对 `allow_all_schemes` / `auto_approve_dangerous` / `auto_approve_enterprise_tools` 的 **false→true** 要求 top-level `confirmation_phrase` 匹配 `SECURITY_ARM_CONFIRM_PHRASE`（`我了解风险`，`companion/src/security-arm.ts`）。缺失/错误 → 整条 `config.set` 拒绝 + `security.arm_rejected`；正确 → 持久化 + `security.flag_armed`（`ws_phrase_confirmed`）。消武与已武装 resend（Settings 全量 Save）无需 phrase。Settings UI 武装路径经 background 透传 phrase（非剧场）。`config.json` 带外编辑仍为 ADR-010 路径。CU 任务 L2 / shell·netsec forceConfirm 未改。
+ 
+ ### 测试建议
+ 
+ - 集成：鉴权后 `config.set({ allow_all_schemes: true })` **无** phrase → 拒绝或保持 false。  
+ - UI 路径：phrase 正确 → 成功并有 audit。  
+-- 负例：phrase 错误 → 不持久化。
++- 负例：phrase 错误 → 不持久化。  
++- 覆盖：`companion/tests/message-router-config-security.test.ts`（P1-1 矩阵）。
+ 
+ ---
+ 

@@ -23,6 +23,12 @@ import { analyzeImage } from "./llm/vision-pipeline"
 import { chunkFile, searchChunks } from "./file-chunker"
 import { craftSkill, craftSkillToMarkdown } from "./skills/skill-craft"
 import { checkHighRiskExecution } from "./security"
+import {
+  findArmingSecurityFlags,
+  isValidSecurityArmPhrase,
+  securityArmRejectedError,
+  type SecurityArmFlag,
+} from "./security-arm"
 import { securityPolicy } from "./security-policy"
 import { OSASCRIPT_MACOS_ONLY_ERROR } from "./bridge/tool-definitions"
 import { getMcpManager } from "./mcp"
@@ -212,6 +218,32 @@ export async function handleMessage(
           normalized.security.auto_approve_enterprise_tools = !!cfg.auto_approve_enterprise_tools
         }
       }
+      // P1-1 Trust step-up: false→true for dangerous security flags requires
+      // top-level confirmation_phrase (Design A). Gate both flat and nested paths.
+      // Disarm and already-true resend (handleSave snapshot) need no phrase.
+      // Does not touch CU L2 / shell forceConfirm invariants (server.ts).
+      let armingFlags: SecurityArmFlag[] = []
+      if (normalized.security) {
+        const currentSec = getConfig().security || {}
+        armingFlags = findArmingSecurityFlags(
+          normalized.security as Record<string, unknown>,
+          currentSec as unknown as Record<string, unknown>,
+        )
+        if (armingFlags.length > 0) {
+          if (!isValidSecurityArmPhrase(rest.confirmation_phrase)) {
+            const reason =
+              rest.confirmation_phrase == null || rest.confirmation_phrase === ""
+                ? "missing_phrase"
+                : "wrong_phrase"
+            logger.warn("security.arm_rejected", {
+              flags: armingFlags,
+              reason,
+              source: "ws_config_set",
+            })
+            return { type: "error", error: securityArmRejectedError(armingFlags) }
+          }
+        }
+      }
       // Vision config: normalize flat vision_* fields into nested vision object
       if (cfg.vision) {
         normalized.vision = { ...cfg.vision }
@@ -237,6 +269,12 @@ export async function handleMessage(
         if (cfg.file_upload_vision !== undefined) normalized.file_upload.enable_vision_analysis = !!cfg.file_upload_vision
       }
       const updated = saveConfig(normalized)
+      if (armingFlags.length > 0) {
+        logger.warn("security.flag_armed", {
+          flags: armingFlags,
+          source: "ws_phrase_confirmed",
+        })
+      }
       return {
         type: "config.updated",
         config: {

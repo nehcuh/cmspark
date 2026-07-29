@@ -517,8 +517,18 @@ function setupMessageHandlers() {
       case "config.set":
         // Persist locally so settings survive SW restarts, then forward to companion
         // so it becomes the global source of truth.
+        // P1-1: pass through non-empty confirmation_phrase for security flag arm step-up.
+        // Empty string is omitted (companion rejects empty as missing_phrase anyway).
         saveExtensionConfig(message.config || {})
-        wsClient.send({ type: "config.set", config: message.config })
+        const armPhrase =
+          typeof message.confirmation_phrase === "string"
+            ? message.confirmation_phrase.trim()
+            : ""
+        wsClient.send({
+          type: "config.set",
+          config: message.config,
+          ...(armPhrase ? { confirmation_phrase: armPhrase } : {}),
+        })
         sendResponse({ ok: true })
         return true
 

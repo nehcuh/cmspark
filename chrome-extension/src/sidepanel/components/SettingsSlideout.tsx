@@ -16,10 +16,10 @@ import {
   modelSwitchRunningNote,
 } from "./model-switch-logic"
 
-// PR-B: typed-confirmation phrase required to arm God-mode. Deliberately high
-// friction — God-mode is the max-risk toggle (bypasses both security layers).
-// A prompt-injected instruction cannot type into this settings panel, so the
-// phrase gate exists to prevent *accidental* arming, not to resist a human.
+// P1-1 / PR-B: typed-confirmation phrase for arming dangerous security flags.
+// Lock-step with companion/src/security-arm.ts SECURITY_ARM_CONFIRM_PHRASE —
+// companion rejects false→true without this top-level confirmation_phrase.
+// UI phrase alone is theater; arm path must forward phrase on config.set.
 const GODMODE_CONFIRM_PHRASE = "我了解风险"
 
 const SAFETY_SKILLS = [
@@ -46,7 +46,12 @@ export function SettingsSlideout() {
   const [entBConfirm, setEntBConfirm] = useState(false)
   const [entBPhrase, setEntBPhrase] = useState("")
   const [entBMsg, setEntBMsg] = useState<string | null>(null)
-  const ENT_B_PHRASE = "我了解风险"
+  // Alias of GODMODE_CONFIRM_PHRASE (companion SECURITY_ARM_CONFIRM_PHRASE) — one literal in this file.
+  const ENT_B_PHRASE = GODMODE_CONFIRM_PHRASE
+  // auto_approve_dangerous phrase gate (P1-1 — companion requires step-up on arm)
+  const [autoDangerConfirm, setAutoDangerConfirm] = useState(false)
+  const [autoDangerPhrase, setAutoDangerPhrase] = useState("")
+  const [autoDangerMsg, setAutoDangerMsg] = useState<string | null>(null)
   // WP5-I4 实验区:删除模型两步确认按钮的待命态(非 store——纯组件内 UI 态)。
   const [modelDeleteArmed, setModelDeleteArmed] = useState(false)
 
@@ -56,10 +61,16 @@ export function SettingsSlideout() {
     if (!state.settingsOpen) return
     // Reset stale pairing feedback + re-check stored-secret presence each open.
     setWsPairingMsg(null)
-    // Reset any stale God-mode confirmation panel from a previous open.
+    // Reset any stale security arm confirmation panels from a previous open.
     setGodmodeConfirm(false)
     setGodmodePhrase("")
     setGodmodeMsg(null)
+    setEntBConfirm(false)
+    setEntBPhrase("")
+    setEntBMsg(null)
+    setAutoDangerConfirm(false)
+    setAutoDangerPhrase("")
+    setAutoDangerMsg(null)
     // WP5-I4 实验区:打开设置页拉一次模型状态(后续由 state 广播驱动,
     // 无乐观更新);清掉上次打开残留的错误与删除待命态。
     setModelDeleteArmed(false)
@@ -117,13 +128,51 @@ export function SettingsSlideout() {
     dispatch({ type: "SET_CONFIG", config: { auto_approved_domains } })
   }
 
+  // P1-1: arm paths send focused config.set + confirmation_phrase so companion
+  // step-up is not UI theater. Disarm needs no phrase. handleSave re-sends
+  // already-true flags without phrase (transition-only gate).
+  const sendSecurityFlagConfig = (
+    partial: Record<string, boolean>,
+    confirmation_phrase?: string,
+  ) => {
+    chrome.runtime.sendMessage({
+      type: "config.set",
+      config: partial,
+      ...(confirmation_phrase != null ? { confirmation_phrase } : {}),
+    })
+  }
+
   const handleAutoApproveDangerousChange = (checked: boolean) => {
-    dispatch({ type: "SET_CONFIG", config: { auto_approve_dangerous: checked } })
+    if (!checked) {
+      dispatch({ type: "SET_CONFIG", config: { auto_approve_dangerous: false } })
+      sendSecurityFlagConfig({ auto_approve_dangerous: false })
+      setAutoDangerConfirm(false)
+      setAutoDangerPhrase("")
+      setAutoDangerMsg(null)
+      return
+    }
+    setAutoDangerConfirm(true)
+    setAutoDangerPhrase("")
+    setAutoDangerMsg(null)
+  }
+
+  const handleAutoApproveDangerousConfirm = () => {
+    if (autoDangerPhrase.trim() !== GODMODE_CONFIRM_PHRASE) {
+      setAutoDangerMsg(`请输入「${GODMODE_CONFIRM_PHRASE}」`)
+      return
+    }
+    const phrase = autoDangerPhrase.trim()
+    dispatch({ type: "SET_CONFIG", config: { auto_approve_dangerous: true } })
+    sendSecurityFlagConfig({ auto_approve_dangerous: true }, phrase)
+    setAutoDangerConfirm(false)
+    setAutoDangerPhrase("")
+    setAutoDangerMsg(null)
   }
 
   const handleEnterpriseAutoApproveToggle = (checked: boolean) => {
     if (!checked) {
       dispatch({ type: "SET_CONFIG", config: { auto_approve_enterprise_tools: false } })
+      sendSecurityFlagConfig({ auto_approve_enterprise_tools: false })
       setEntBConfirm(false)
       setEntBPhrase("")
       setEntBMsg(null)
@@ -139,7 +188,9 @@ export function SettingsSlideout() {
       setEntBMsg(`请输入「${ENT_B_PHRASE}」`)
       return
     }
+    const phrase = entBPhrase.trim()
     dispatch({ type: "SET_CONFIG", config: { auto_approve_enterprise_tools: true } })
+    sendSecurityFlagConfig({ auto_approve_enterprise_tools: true }, phrase)
     setEntBConfirm(false)
     setEntBPhrase("")
     setEntBMsg(null)
@@ -157,8 +208,9 @@ export function SettingsSlideout() {
       setGodmodeMsg(null)
       return
     }
-    // Disarming is safe — flip immediately + audit.
+    // Disarming is safe — flip immediately + audit + companion config.set (no phrase).
     dispatch({ type: "SET_CONFIG", config: { allow_all_schemes: false } })
+    sendSecurityFlagConfig({ allow_all_schemes: false })
     dispatch({
       type: "ADD_SECURITY_AUDIT",
       entry: {
@@ -180,7 +232,10 @@ export function SettingsSlideout() {
       setGodmodeMsg(`确认短语不匹配，请输入「${GODMODE_CONFIRM_PHRASE}」`)
       return
     }
+    const phrase = godmodePhrase.trim()
     dispatch({ type: "SET_CONFIG", config: { allow_all_schemes: true } })
+    // P1-1: companion requires confirmation_phrase on false→true (not theater).
+    sendSecurityFlagConfig({ allow_all_schemes: true }, phrase)
     dispatch({
       type: "ADD_SECURITY_AUDIT",
       entry: {
@@ -435,6 +490,36 @@ export function SettingsSlideout() {
                 </div>
               </div>
             </label>
+            {autoDangerConfirm && (
+              <div style={{ marginTop: 10, padding: 8, background: "#fff", borderRadius: 6, border: "1px solid #E0C090" }}>
+                <div style={{ fontSize: 12, color: "#B26B00", fontWeight: 500, marginBottom: 6 }}>
+                  请输入「<b>{GODMODE_CONFIRM_PHRASE}</b>」以确认开启：
+                </div>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <input
+                    style={{ ...styles.input, flex: 1 }}
+                    type="text"
+                    value={autoDangerPhrase}
+                    onChange={(e) => { setAutoDangerPhrase(e.target.value); setAutoDangerMsg(null) }}
+                    placeholder={GODMODE_CONFIRM_PHRASE}
+                    autoComplete="off"
+                    spellCheck={false}
+                    autoFocus
+                  />
+                  <button
+                    style={{ ...styles.toggleBtn, color: "#fff", background: "#C62828", borderColor: "#C62828" }}
+                    onClick={handleAutoApproveDangerousConfirm}
+                  >确认开启</button>
+                  <button
+                    style={styles.toggleBtn}
+                    onClick={() => { setAutoDangerConfirm(false); setAutoDangerPhrase(""); setAutoDangerMsg(null) }}
+                  >取消</button>
+                </div>
+                {autoDangerMsg && (
+                  <div style={{ fontSize: 11, color: "#C62828", marginTop: 4 }}>{autoDangerMsg}</div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Plan B: enterprise shell/netsec L2 skip under scope */}

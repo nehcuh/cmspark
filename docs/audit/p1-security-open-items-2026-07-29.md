@@ -12,12 +12,12 @@
 
 | ID | 标题 | 状态 | 严重度（诊断） | 轴 |
 |----|------|------|----------------|-----|
-| **P1-1** | god-mode / 危险 flag companion step-up | **OPEN** | High | Trust × Surface |
+| **P1-1** | god-mode / 危险 flag companion step-up | **FIXED** | High | Trust × Surface |
 | **P1-2** | MCP（及部分 L2）确认统一 `originWs` | **OPEN**（部分路径已绑） | Medium | Trust · multi-peer |
 | **P1-3** | evaluate 批准后代码完整性（勿再改写） | **OPEN** | Medium | Trust · L1 完整性 |
 | **P1-4** | shell_exec 策略收紧（`shell:true` + 前缀） | **OPEN**（有缓解） | Medium | Surface L2 · enterprise |
 
-四条均 **未闭环**。缓解存在（UI 短语、enterprise L2 forceConfirm、shell allowlist 可选），但诊断原意的 companion 硬门 / 绑定一致性 / 批准后不改写 / 结构上弱于完整 shell 策略 **仍成立**。
+P1-1 **已 FIXED**（companion phrase step-up）。P1-2/3/4 仍 **未闭环**。缓解存在（UI 短语+companion 门、enterprise L2 forceConfirm、shell allowlist 可选），但绑定一致性 / 批准后不改写 / 结构上弱于完整 shell 策略 **仍成立**。
 
 ---
 
@@ -38,19 +38,14 @@
 
 ### 结论
 
-**OPEN**。任意已鉴权 WS peer（不仅是 Settings UI）可 `config.set` 武装全局放宽。  
-**目标形态（建议）**：companion 对「布尔 0→1 的危险 flag」要求：
-
-1. 与 UI 相同的 phrase（或一次性 step-up token / 二次确认消息族），或  
-2. 拒绝经 `config.set` 武装、仅允许专用 `security.arm_*` 消息 + origin 绑定。  
-
-消武（true→false）可保持宽松。
+**FIXED**（P1-1 Design A，2026-07-29）。`config.set` 对 `allow_all_schemes` / `auto_approve_dangerous` / `auto_approve_enterprise_tools` 的 **false→true** 要求 top-level `confirmation_phrase` 匹配 `SECURITY_ARM_CONFIRM_PHRASE`（`我了解风险`，`companion/src/security-arm.ts`）。缺失/错误 → 整条 `config.set` 拒绝 + `security.arm_rejected`；正确 → 持久化 + `security.flag_armed`（`ws_phrase_confirmed`）。消武与已武装 resend（Settings 全量 Save）无需 phrase。Settings UI 武装路径经 background 透传 phrase（非剧场）。`config.json` 带外编辑仍为 ADR-010 路径。CU 任务 L2 / shell·netsec forceConfirm 未改。
 
 ### 测试建议
 
 - 集成：鉴权后 `config.set({ allow_all_schemes: true })` **无** phrase → 拒绝或保持 false。  
 - UI 路径：phrase 正确 → 成功并有 audit。  
-- 负例：phrase 错误 → 不持久化。
+- 负例：phrase 错误 → 不持久化。  
+- 覆盖：`companion/tests/message-router-config-security.test.ts`（P1-1 矩阵）。
 
 ---
 

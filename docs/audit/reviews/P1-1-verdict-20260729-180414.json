@@ -1,0 +1,8 @@
+{
+  "batch": "P1-1",
+  "timestamp": "20260729-180414",
+  "claude": { "verdict": "UNKNOWN", "exit_code": 1, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/P1-1-claude-20260729-180414.md" },
+  "pi": { "verdict": "UNKNOWN", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/P1-1-pi-20260729-180414.md" },
+  "both_approve": false,
+  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/P1-1-diff-20260729-180414.patch"
+}
