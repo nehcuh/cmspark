@@ -111,6 +111,7 @@ Chrome Extension (Plasmo + React)  ←→  WebSocket (ws://127.0.0.1:23401)  ←
 
 ## Common Issues
 
+- Skill 需要 `DATAYES_TOKEN` 等密钥：Side Panel → **设置 → 环境变量（Secrets）** 配置（见 [docs/user-env.md](docs/user-env.md) / [ADR-019](docs/adr/019-user-env-secrets.md)），勿在聊天粘贴
 - `config.json corrupted`: `rm ~/.cmspark-agent/config.json` 后重启
 - `No tab with id`: LLM 幻觉 tabId，安全策略标记为可恢复，LLM 会自动调用 `list_tabs` 重试
 - Companion 端口占用: `npx cmspark-agent daemon stop` 或 `pkill -f "dist/index.js"` 后重启
