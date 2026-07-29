@@ -107,6 +107,13 @@ cmspark/
 - 重构前确保现有测试通过
 - **产品版本**以 companion / chrome-extension `package.json` 为准（文档写 0.3.0 时勿回退叙事）
 
+## PR 模板
+
+打开 PR 时使用 [`.github/pull_request_template.md`](.github/pull_request_template.md)（含 **能力声明** 块）。  
+后续工作排序见 **[docs/optimization-plan-post-adr-020.md](docs/optimization-plan-post-adr-020.md)**；安全 P1 盘点见 [docs/audit/p1-security-open-items-2026-07-29.md](docs/audit/p1-security-open-items-2026-07-29.md)。
+
+dual-review（`scripts/dual-external-review.sh`）会自动附带 [capability checklist](docs/audit/reviews/_templates/dual-review-capability-checklist.md)。
+
 ## 文档 Checklist（功能 PR 合并前）
 
 见 [docs-reorg-plan §7](docs/docs-reorg-plan-2026-07-28.md) 与 **[ADR-020 能力三轴](docs/adr/020-capability-model-three-axes.md)**：

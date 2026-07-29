@@ -193,6 +193,8 @@ Overall          ███████░░░  6.9  B-
 3. evaluate 批准后路径的完整性（避免再改写已批准源）。
 4. shell_exec 策略收紧（避免仅靠 `shell:true` + 前缀）。
 
+> **2026-07-29 盘点**：四条在 main 上仍为 **OPEN**（含文件锚点）→ [p1-security-open-items-2026-07-29.md](p1-security-open-items-2026-07-29.md)；排期 → [optimization-plan-post-adr-020.md](../optimization-plan-post-adr-020.md) §B。
+
 ### P2 — 工程卫生
 
 1. 浏览器级 smoke e2e（至少：连 Companion → 一发消息 → 一工具 → 确认弹窗）。

@@ -54,7 +54,21 @@ fi
   git diff --cached 2>/dev/null || true
 } >"$DIFF_FILE"
 
-REVIEW_SYSTEM=$'You are an independent senior code reviewer. Read the prompt file and the attached git diff.\n\nRules:\n1. Inspect real code/diff — do not rubber-stamp. Use Read/Bash tools on the repo.\n2. Look for: incomplete fixes, security regressions, missing tests, wrong file:line, over-claiming.\n3. Your FINAL response line MUST be EXACTLY one of these three strings (nothing after it):\nVERDICT: APPROVE\nVERDICT: APPROVE_WITH_NITS\nVERDICT: REJECT\n4. If REJECT, list concrete blocking issues with file:line BEFORE the VERDICT line.\n5. If APPROVE_WITH_NITS, list non-blocking nits only BEFORE the VERDICT line.\n6. Do not put the verdict only in a plan file — print it in the main stdout response.\n'
+REVIEW_SYSTEM=$'You are an independent senior code reviewer. Read the prompt file and the attached git diff.\n\nRules:\n1. Inspect real code/diff — do not rubber-stamp. Use Read/Bash tools on the repo.\n2. Look for: incomplete fixes, security regressions, missing tests, wrong file:line, over-claiming.\n3. Apply ADR-020 capability checks (Surface / Composition / Autonomy; Pack-first; no bare \"中层 Agent\"; trust monotonicity; originWs on new confirms). Checklist path: docs/audit/reviews/_templates/dual-review-capability-checklist.md\n4. Your FINAL response line MUST be EXACTLY one of these three strings (nothing after it):\nVERDICT: APPROVE\nVERDICT: APPROVE_WITH_NITS\nVERDICT: REJECT\n5. If REJECT, list concrete blocking issues with file:line BEFORE the VERDICT line.\n6. If APPROVE_WITH_NITS, list non-blocking nits only BEFORE the VERDICT line.\n7. Do not put the verdict only in a plan file — print it in the main stdout response.\n'
+
+CAPABILITY_CHECKLIST="$ROOT/docs/audit/reviews/_templates/dual-review-capability-checklist.md"
+CAPABILITY_SECTION=""
+if [[ -f "$CAPABILITY_CHECKLIST" ]]; then
+  CAPABILITY_SECTION=$(cat <<EOF
+
+## ADR-020 capability checklist (mandatory for product/security diffs)
+
+Read and apply: $CAPABILITY_CHECKLIST
+
+If the implementer prompt lacks a Surface/Compose/Autonomy/Trust/Channel declaration and the diff is not pure docs/test/refactor, call it out (blocking when tools/gates/primary UI are added).
+EOF
+)
+fi
 
 # Build per-agent prompt body
 BODY=$(cat "$PROMPT_FILE")
@@ -66,6 +80,7 @@ $BATCH
 
 ## Review task (from implementer / adversarial stage)
 $BODY
+$CAPABILITY_SECTION
 
 ## Current git diff file path (read it with tools)
 $DIFF_FILE

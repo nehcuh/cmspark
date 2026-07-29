@@ -1,7 +1,11 @@
 # CMspark 后续优化计划（v0.3.0 发布后）
 
+> ⚠️ **排序权威已迁移（2026-07-29）**  
+> 新工作优先级请看 **[`optimization-plan-post-adr-020.md`](optimization-plan-post-adr-020.md)**（ADR-020 三轴 + 07-28 诊断 + P1 盘点）。  
+> 本文档保留为 **v0.3.0 发布后 P2/P3 闭环考古**（M6–M20、PR #49–#60 等勾选历史）；**勿再按本文 §6 顺序开新任务**。
+
 > **日期**: 2026-07-11 · **基线**: [`audit-report-cmspark-2026-07-09.md`](../audit-report-cmspark-2026-07-09.md)（55 findings，总分 4.4/C）· **来源**: [`remediation-plan-2026-07-09.md`](remediation-plan-2026-07-09.md)（P0–P4 分阶段）
-> **状态**: P0+P1 已闭环并发布 v0.3.0；本文档为发布后的 **P2/P3/P4 + 技术债** 推进计划。
+> **状态**: **Superseded for prioritization** · 正文仍为发布后的 **P2/P3/P4 + 技术债** 历史记录（P0+P1 已闭环并发布 v0.3.0）。
 
 ---
 

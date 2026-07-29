@@ -2,6 +2,17 @@
 
 ## Current Session
 
+### S22 (2026-07-29) [ADR-020 后续工作三件套：计划 + P1 盘点 + PR/dual-review 门禁]
+- **触发**：用户确认「根据洞察文档后续工作需更新」后要求「都做吧」
+- **交付（未 commit）**：
+  1. `docs/optimization-plan-post-adr-020.md` — 排序权威 A–E（supersede post-v0.3.0）
+  2. `docs/audit/p1-security-open-items-2026-07-29.md` — P1 四条全 OPEN + 锚点
+  3. `.github/pull_request_template.md` + dual-review checklist + `scripts/dual-external-review.sh` 注入 ADR-020
+  4. 导航：docs/README · CONTRIBUTING · ADR-020 落点 · 旧 plan 页眉 · diagnosis P1 指针
+- **P1 结论**：god-mode step-up / MCP originWs / evaluate 二次 sanitize / shell:true 均 OPEN；M1 tabUrlCache 与 healthz 已落地勿重开
+- **下次**：按 §B 实现 P1-1→P1-4；或用户要求则 commit 本批 docs
+- Recorded: yes
+
 ### S21 (2026-07-28 ~17:39) [cmspark site-knowledge PR#81 + HUD Task7 PR#82 合 main]
 - **PR #81** `fix/site-knowledge-hostname`：扩展发 active-tab **hostname only**；companion case-insensitive matchSite；knowledge/skills 分离；tab lease **仅 multi-agent**（单 agent 多 tab 不再 TAB_LEASE_CAP）；Claude+Pi 计划门后实现 → **已合 main** `c7baea3`
 - **PR #82** HUD P3a **Task 7**：`build-tray.sh` 钉 `SWIFT_TRAY_SHA256=5929b53c…`；ship note `companion-native-hud-p3a-spike-ship-note-2026-07-28.md`；stdin smoke open/close；impl dual-review Claude APPROVE_WITH_NITS + Pi APPROVE → **已合 main** `d3a977f`

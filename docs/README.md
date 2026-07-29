@@ -79,7 +79,19 @@
 | [TESTING.md](TESTING.md) | 测试地图与命令（companion + extension） |
 | [supply-chain.md](supply-chain.md) | 供应链审计姿态与 CI 门槛 |
 | [../CONTRIBUTING.md](../CONTRIBUTING.md) | 贡献、搭建、目录树、文档 checklist |
+| [../.github/pull_request_template.md](../.github/pull_request_template.md) | PR 模板（含 ADR-020 能力声明） |
 | [licenses/cairn-inspiration.md](licenses/cairn-inspiration.md) | Mission Board / Cairn 灵感与 AGPL 边界说明 |
+
+---
+
+## 后续工作（Active backlog）
+
+| 文档 | 说明 |
+|------|------|
+| **[optimization-plan-post-adr-020.md](optimization-plan-post-adr-020.md)** | **排序权威**：A–E 骨架（治理 / Trust P1 / Composition / L2 / Autonomy） |
+| [audit/p1-security-open-items-2026-07-29.md](audit/p1-security-open-items-2026-07-29.md) | 07-28 诊断 P1 四条代码盘点（god-mode / originWs / evaluate / shell） |
+| [audit/reviews/_templates/dual-review-capability-checklist.md](audit/reviews/_templates/dual-review-capability-checklist.md) | dual-review 能力声明检查清单 |
+| [optimization-plan-post-v0.3.0.md](optimization-plan-post-v0.3.0.md) | 历史：v0.3.0 后 P2/P3 闭环考古（**勿再作排序权威**） |
 
 ---
 

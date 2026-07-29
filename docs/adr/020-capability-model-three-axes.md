@@ -206,6 +206,8 @@ Channel:      community | enterprise
 | DESIGN.md | Mode badge = Surface |
 | CONTRIBUTING | 声明清单 |
 | docs/README.md | ADR-020 导航；修正过时「拟议 019 UI」 |
+| [optimization-plan-post-adr-020.md](../optimization-plan-post-adr-020.md) | 后续工作排序权威（A–E） |
+| PR template / dual-review checklist | `.github/pull_request_template.md` · `docs/audit/reviews/_templates/dual-review-capability-checklist.md` |
 
 ---
 
