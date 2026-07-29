@@ -813,17 +813,39 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
     this.refresh()
   }
 
+  /**
+   * Import a skill folder from an absolute path on the local machine.
+   * Source may be anywhere the companion process can read (e.g. ~/.claude/skills/foo,
+   * Downloads, a project tree). Destination is always ~/.cmspark-agent/skills/<name>/
+   * via importSkillFiles — source is never executed in-place.
+   *
+   * Previously this wrongly required source ⊆ getConfigDir(), which made the
+   * Skills-panel "import path" feature reject every realistic source
+   * (~/.claude/skills/…, ~/Downloads/…) with "Path traversal not allowed".
+   */
   importSkillFromPath(dirPath: string): void {
-    // Resolve and validate path stays within config directory (P0)
     if (typeof dirPath !== "string" || dirPath.includes("\0")) {
       throw new Error("Invalid directory path")
     }
-    const resolved = path.resolve(dirPath.replace(/^~/, os.homedir()))
-    const configDir = path.resolve(getConfigDir())
-    // Ensure resolved path is under config directory (prevent path traversal)
-    if (!resolved.startsWith(configDir + path.sep) && resolved !== configDir) {
-      throw new Error(`Path traversal not allowed: ${dirPath}`)
+    const trimmed = dirPath.trim()
+    if (!trimmed) throw new Error("Invalid directory path")
+
+    // Expand ~/… and bare ~ (UI placeholder shows ~/.claude/skills/…)
+    let expanded = trimmed
+    if (expanded === "~") {
+      expanded = os.homedir()
+    } else if (expanded.startsWith("~/") || expanded.startsWith("~" + path.sep)) {
+      expanded = path.join(os.homedir(), expanded.slice(2))
     }
+
+    let resolved: string
+    try {
+      // realpath rejects missing paths and collapses symlinks (no TOCTOU sneak-out)
+      resolved = fs.realpathSync(path.resolve(expanded))
+    } catch {
+      throw new Error(`Directory not found: ${dirPath}`)
+    }
+
     const stat = fs.statSync(resolved, { throwIfNoEntry: false })
     if (!stat || !stat.isDirectory()) {
       throw new Error(`Directory not found: ${dirPath}`)
@@ -834,7 +856,21 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
       throw new Error(`No SKILL.md found in: ${dirPath}`)
     }
 
+    // Defense in depth: refuse a few always-sensitive roots (not a full sandbox —
+    // shell_exec already has broader FS access; this is import-only read + copy).
+    const blocked = [
+      path.resolve("/"),
+      path.resolve("/etc"),
+      path.resolve("/System"),
+      path.resolve("/private/etc"),
+    ]
+    if (blocked.some((b) => resolved === b)) {
+      throw new Error(`Refusing to import from system path: ${dirPath}`)
+    }
+
     const files = this.readDirectoryFiles(resolved)
+    // Strip a leading "<folder>/" prefix if files were nested (shouldn't for
+    // flat skill dirs); importSkillFiles expects SKILL.md at top or …/SKILL.md.
     this.importSkillFiles(files)
   }
 

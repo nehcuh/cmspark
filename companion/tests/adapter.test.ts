@@ -312,3 +312,107 @@ test("P0-B: rebuildMessagesFromHistory keeps fully paired tool rounds", () => {
   assert.equal(rebuilt[3].role, "tool")
   assert.equal((rebuilt[3] as any).tool_call_id, "call_B")
 })
+
+// Real thread mhwofh: user interrupted mid-shell_exec; a late timeout result for an
+// earlier call_id landed immediately after a newer assistant's tool_calls. Role-only
+// adjacency treated that as paired → OpenAI 400 "insufficient tool messages".
+test("P0-B: rebuildMessagesFromHistory rejects adjacent tool with mismatched tool_call id", () => {
+  const history = [
+    { role: "user", content: "install deps" },
+    {
+      role: "assistant",
+      content: "",
+      tool_calls: [
+        { id: "call_old", function: { name: "shell_exec", arguments: '{"cmd":"pip install x"}' } },
+      ],
+    },
+    // user interrupts before tool result
+    { role: "user", content: "use uv instead" },
+    {
+      role: "assistant",
+      content: "ok, using uv",
+      tool_calls: [
+        { id: "call_new", function: { name: "shell_exec", arguments: '{"cmd":"uv venv"}' } },
+      ],
+    },
+    // late result for the interrupted call — wrong id for call_new
+    {
+      role: "tool",
+      content: "{}",
+      tool_calls: [{
+        id: "call_old",
+        tool_name: "shell_exec",
+        result: { success: true, data: { timed_out: true, signal: "SIGKILL" } },
+      }],
+    },
+    { role: "user", content: "continue" },
+    // actual result for call_new arrives after the next user message
+    {
+      role: "tool",
+      content: "{}",
+      tool_calls: [{
+        id: "call_new",
+        tool_name: "shell_exec",
+        result: { success: true, data: { exit_code: 0 } },
+      }],
+    },
+    { role: "assistant", content: "done, need token" },
+    { role: "user", content: "here is token" },
+  ]
+
+  const rebuilt = rebuildMessagesFromHistory(history)
+
+  // No assistant may carry tool_calls without matching tool rows immediately after.
+  for (let i = 0; i < rebuilt.length; i++) {
+    const m = rebuilt[i] as any
+    if (m.role === "assistant" && m.tool_calls?.length) {
+      const ids = m.tool_calls.map((tc: any) => tc.id)
+      const following: string[] = []
+      for (let j = i + 1; j < rebuilt.length; j++) {
+        const n = rebuilt[j] as any
+        if (n.role !== "tool") break
+        following.push(n.tool_call_id)
+      }
+      for (const id of ids) {
+        assert.ok(following.includes(id), `tool_call ${id} must have a following tool message`)
+      }
+    }
+  }
+
+  // The interrupted + mismatched rounds strip to text; final text assistant + users remain.
+  assert.ok(!rebuilt.some((m) => m.role === "tool"), "mismatched/late tools must not be emitted")
+  const asstWithTc = rebuilt.filter((m: any) => m.role === "assistant" && m.tool_calls?.length)
+  assert.equal(asstWithTc.length, 0, "no assistant tool_calls without paired results")
+  assert.equal(rebuilt[rebuilt.length - 1].role, "user")
+  assert.equal((rebuilt[rebuilt.length - 1] as any).content, "here is token")
+})
+
+test("P0-B: rebuildMessagesFromHistory accepts reordered ids inside contiguous tool block", () => {
+  const history = [
+    { role: "user", content: "go" },
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        { id: "call_A", function: { name: "list_tabs", arguments: "{}" } },
+        { id: "call_B", function: { name: "get_page_text", arguments: "{}" } },
+      ],
+    },
+    // results arrive B then A — still a complete contiguous block covering both ids
+    {
+      role: "tool",
+      content: "{}",
+      tool_calls: [{ id: "call_B", tool_name: "get_page_text", result: { success: true } }],
+    },
+    {
+      role: "tool",
+      content: "{}",
+      tool_calls: [{ id: "call_A", tool_name: "list_tabs", result: { success: true } }],
+    },
+  ]
+  const rebuilt = rebuildMessagesFromHistory(history)
+  assert.equal(rebuilt.length, 4)
+  assert.equal((rebuilt[1] as any).tool_calls.length, 2)
+  assert.equal(rebuilt[2].role, "tool")
+  assert.equal(rebuilt[3].role, "tool")
+})
