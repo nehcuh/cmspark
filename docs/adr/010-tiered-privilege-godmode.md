@@ -59,6 +59,8 @@ PR-0（commit `aeef21e`，PR #35）实现 **challenge-response HMAC-SHA256 握�
 
 UI 启用刻意做成**高摩擦**：勾选不直接生效，必须键入确认短语——防止误开启。一个 prompt 注入的指令无法在设置面板里键入，故短语门针对的是「误操作」而非「对抗人」。
 
+**P1-1 companion step-up（Trust）**：仅 UI 短语不够。`config.set` 对 `security.allow_all_schemes` / `auto_approve_dangerous` / `auto_approve_enterprise_tools` 的 **false→true** 必须在消息顶层附带 `confirmation_phrase` 且与 `SECURITY_ARM_CONFIRM_PHRASE`（`companion/src/security-arm.ts`，与 UI 同字面量）一致，否则整条写入被拒并记 `security.arm_rejected`。武装成功记 `security.flag_armed`（`source: ws_phrase_confirmed`）。true→false 消武与已为 true 的全量 Save 重发**不**要求 phrase。God-mode 本身仍**不**跳过 CU 任务级 L2 / shell·netsec `forceConfirm`（见 ADR-020 Trust；企业 Plan B 另开 `auto_approve_enterprise_tools`）。
+
 ### 方式 B：直接编辑 config.json（无需 UI / 适合无头/远程场景）
 
 ```jsonc
