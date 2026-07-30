@@ -380,8 +380,13 @@ test("message-router: osascript_eval blocks dangerous code", async () => {
 
   assert.equal(response.type, "tool.result")
   assert.equal(response.success, false)
-  assert.ok(response.error?.includes("Security Block"))
-  assert.deepEqual(response.data.dangerous_apis_found, ["fetch"])
+  // non-darwin: absolute first platform reject (before high-risk Security Block)
+  if (process.platform !== "darwin") {
+    assert.match(response.error || "", /macos-only/i)
+  } else {
+    assert.ok(response.error?.includes("Security Block"))
+    assert.deepEqual(response.data.dangerous_apis_found, ["fetch"])
+  }
 })
 
 test("message-router: chat.abort cancels in-flight request", async () => {
@@ -736,7 +741,7 @@ test("security: dangerous API patterns cover sessionStorage", () => {
 test("integration: message-router respects security policy for osascript_eval", async () => {
   const threadManager = new ThreadManager()
 
-  // Dangerous code should be blocked
+  // Dangerous code should be blocked (or platform-fail on non-darwin before policy scan)
   const response = await handleMessage(
     {
       type: "osascript_eval",
@@ -749,7 +754,11 @@ test("integration: message-router respects security policy for osascript_eval", 
 
   assert.equal(response.type, "tool.result")
   assert.equal(response.success, false)
-  assert.ok(response.error?.includes("Security Block"))
+  if (process.platform !== "darwin") {
+    assert.match(response.error || "", /macos-only/i)
+  } else {
+    assert.ok(response.error?.includes("Security Block"))
+  }
 })
 
 test("integration: thread isolation prevents cross-thread skill leakage", async () => {
