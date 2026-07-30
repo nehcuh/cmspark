@@ -53,6 +53,85 @@ test("shell_exec runs when enabled", async () => {
   assert.match(r.data?.stdout || "", /hello-cmspark/)
 })
 
+// --- P1-4 / P1a: allowlist metachar structure tighten ---
+
+function enableShellAllowlist(cmds: string[]) {
+  saveConfig({
+    capability_profile: "enterprise",
+    modules: {
+      shell: {
+        available: true,
+        enabled: true,
+        policy: "allowlist",
+        allowlist_commands: cmds,
+      },
+    },
+  } as any)
+  clearConfigCache()
+}
+
+test("P1a allowlist: benign allowlisted command succeeds", async () => {
+  enableShellAllowlist(["echo"])
+  const r = await shell.shellExec({ command: "echo hello-allowlist" })
+  assert.equal(r.success, true)
+  assert.match(r.data?.stdout || "", /hello-allowlist/)
+})
+
+test("P1a allowlist: prefix + '; rm' rejected (metachar, no side effect)", async () => {
+  enableShellAllowlist(["echo"])
+  const marker = path.join(tempHome, "p14-should-not-exist")
+  const r = await shell.shellExec({
+    command: `echo hi; rm -rf ${marker}; touch ${marker}`,
+  })
+  assert.equal(r.success, false)
+  assert.match(r.error || "", /metacharacter/i)
+  assert.equal(fs.existsSync(marker), false, "metachar chain must not run")
+})
+
+test("P1a allowlist: rejects && | $() backticks redirects newlines under prefix", async () => {
+  enableShellAllowlist(["echo"])
+  const cases = [
+    "echo a && echo b",
+    "echo a | cat",
+    "echo $(uname)",
+    "echo `uname`",
+    "echo hi > /tmp/x",
+    "echo hi < /tmp/x",
+    "echo a\necho b",
+    "echo a\recho b",
+  ]
+  for (const cmd of cases) {
+    const r = shell.commandAllowedByPolicy(cmd)
+    assert.equal(r.ok, false, `expected metachar reject for: ${JSON.stringify(cmd)}`)
+    assert.match((r as { error: string }).error, /metacharacter/i)
+    // Same gate via checkShellScope (server SHELL_SCOPE_DENIED path)
+    const scope = shell.checkShellScope(cmd)
+    assert.equal(scope.ok, false)
+  }
+})
+
+test("P1a allowlist: non-prefix still denied with not-in-allowlist", async () => {
+  enableShellAllowlist(["echo"])
+  const r = shell.commandAllowedByPolicy("uname -a")
+  assert.equal(r.ok, false)
+  assert.match((r as { error: string }).error, /not in allowlist/)
+})
+
+test("P1a confirm_per_command: metachar ban is allowlist-only (policy layer)", async () => {
+  saveConfig({
+    capability_profile: "enterprise",
+    modules: {
+      shell: { available: true, enabled: true, policy: "confirm_per_command" },
+    },
+  } as any)
+  clearConfigCache()
+  // Policy layer allows chaining; L2 forceConfirm still required on execute path (unchanged)
+  const r = shell.commandAllowedByPolicy("echo a; echo b")
+  assert.equal(r.ok, true)
+  assert.equal(shell.hasShellAllowlistMetachar("echo a; echo b"), true)
+  assert.equal(shell.hasShellAllowlistMetachar("echo hello"), false)
+})
+
 test("netsec denied when allowlist empty", async () => {
   saveConfig({
     capability_profile: "enterprise",

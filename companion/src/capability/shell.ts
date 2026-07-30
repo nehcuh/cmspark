@@ -23,11 +23,31 @@ export function buildChildEnv(): NodeJS.ProcessEnv {
   }
 }
 
+/**
+ * Shell metacharacters that enable chaining/injection under spawn(..., { shell: true }).
+ * Used only when modules.shell.policy === "allowlist" (P1a structure tighten).
+ * P1b may move to shell:false + file/args; residual $VAR expansion remains until then.
+ */
+const SHELL_ALLOWLIST_METACHAR_RE = /[;|&`$()<>\n\r]/
+
+/** True if command contains shell metacharacters banned under allowlist policy. */
+export function hasShellAllowlistMetachar(command: string): boolean {
+  return SHELL_ALLOWLIST_METACHAR_RE.test(command)
+}
+
 export function commandAllowedByPolicy(command: string): { ok: true } | { ok: false; error: string } {
   const mod = getModule("shell")
   if (!mod) return { ok: false, error: "shell module missing" }
   const policy = mod.policy || "confirm_per_command"
   if (policy === "allowlist") {
+    // Reject metachar bypasses before prefix match (e.g. "echo ok; rm …")
+    if (hasShellAllowlistMetachar(command)) {
+      return {
+        ok: false,
+        error:
+          "shell policy=allowlist rejects shell metacharacters (;|&`$()<> newlines); use a single allowlisted command or policy=confirm_per_command",
+      }
+    }
     const list = mod.allowlist_commands || []
     if (list.length === 0) {
       return { ok: false, error: "shell policy=allowlist but allowlist_commands is empty" }

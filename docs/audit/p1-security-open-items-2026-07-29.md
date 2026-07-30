@@ -15,9 +15,9 @@
 | **P1-1** | god-mode / 危险 flag companion step-up | **FIXED** | High | Trust × Surface |
 | **P1-2** | MCP（及部分 L2）确认统一 `originWs` | **FIXED** | Medium | Trust · multi-peer |
 | **P1-3** | evaluate 批准后代码完整性（勿再改写） | **FIXED** (2026-07-30, Option A) | Medium | Trust · L1 完整性 |
-| **P1-4** | shell_exec 策略收紧（`shell:true` + 前缀） | **OPEN**（有缓解） | Medium | Surface L2 · enterprise |
+| **P1-4** | shell_exec 策略收紧（`shell:true` + 前缀） | **FIXED（P1a）** | Medium | Surface L2 · enterprise |
 
-P1-1 / P1-2 / P1-3 **已 FIXED**。P1-4 仍 **未闭环**（#88）。P1b shell argv 为残余。
+P1-1 / P1-2 / P1-3 / **P1-4 P1a** 均 **FIXED**。P1b shell argv 为残余。
 
 ---
 
@@ -125,12 +125,8 @@ evaluate/shell 条件绑与 god-mode 不在本批范围。
 
 ### 结论
 
-**OPEN（有缓解）**。产品门（enterprise、L2、模块开关）降低暴露面，但 **执行模型仍是整串 shell**。  
-**目标形态（分阶段）**：
-
-1. **P1a**：allowlist 模式禁止 metachar（`;|&`$()` 等）或强制 argv 数组 API。  
-2. **P1b**：默认 `shell: false` + `spawn(file, args)`；需要 shell 语法时显式 flag + 更严确认。  
-3. 保持：god-mode **不得**静默跳过 shell L2（已有 forceConfirm 语义，回归锁住）。
+**FIXED（P1a，2026-07-30）**。`policy=allowlist` 时在 `commandAllowedByPolicy` **前缀匹配之前**拒绝 shell metachar（`;|&`$()<>` 与换行）；`checkShellScope` 与 `shellExec` 共用该门。`confirm_per_command` 仍允许 metachar（L2 确认路径）。`spawn(..., { shell: true })`、forceConfirm / god-mode 不静默跳过 shell L2 **未改**。  
+**残余 P1b**：`shell: false` + argv；brace/glob/`$VAR` 等更细边界（见 dual-review nits）。
 
 ---
 
