@@ -2,6 +2,16 @@
 
 ## Current Session
 
+### S23 (2026-07-30) [Windows 适配 pull/review + P1-1 rebase push + backlog 对齐]
+- **Windows 适配**：他机工作已在 `origin/main` `fd2d4a1`（osascript 非 darwin 过滤 + MCP filesystem home）；本地 main ff；**评审** P0 实质过、P1 `browser_download` 未做、MCP 整 home 是 trust trade-off
+- **P1-1 分支**：`fix/diagnosis-P1-1` rebase onto main（含 Windows）→ force-with-lease push；**PR #85** OPEN / MERGEABLE；CI 在 force push 后重跑
+- **Backlog 文档更新（本分支未 commit）**：
+  - `docs/optimization-plan-post-adr-020.md`：P1-1 FIXED(PR#85)、Windows P0 记入 §0、执行序下一枪 P1-2
+  - `docs/audit/p1-security-open-items-2026-07-29.md`：基线/顺序注「合 main 前」
+- **剩余代码优先序**：① 合 #85 → ② **P1-2 originWs** → ③ P1-3 evaluate → ④ P1-4 shell；并行可选 Windows browser_download / HUD / Pack 场景
+- **HEAD**：工作分支 tip 仍为 P1-1 tip + 上述 doc dirty；`origin/main` = `fd2d4a1`
+- Recorded: yes
+
 ### S22 (2026-07-29) [ADR-020 后续工作 + P1 盘点/门禁 + P1-1 实现 PR #85]
 - **触发**：洞察文档（ADR-020）是否驱动后续工作 → 用户「都做吧」→ commit/push → session-end
 - **交付已合 origin/main `8d0cc2e`**：
@@ -9,13 +19,13 @@
   2. `docs/audit/p1-security-open-items-2026-07-29.md` — P1 四条锚点盘点
   3. `.github/pull_request_template.md` + dual-review capability checklist + `scripts/dual-external-review.sh` 注入
   4. 导航：docs/README · CONTRIBUTING · ADR-020 落点 · 旧 plan 页眉 · diagnosis P1 指针
-- **P1-1 实现（分支 `fix/diagnosis-P1-1` / PR #85，CI 绿，未合 main）**：
+- **P1-1 实现（分支 `fix/diagnosis-P1-1` / PR #85，未合 main）**：
   - companion `config.set` false→true 危险 flag 需 `confirmation_phrase` = `我了解风险`（`security-arm.ts`）
   - 覆盖：`allow_all_schemes` / `auto_approve_dangerous` / `auto_approve_enterprise_tools`
   - UI Settings + background 透传 phrase；21 tests；batch report + dual-review artifacts
   - 盘点表：**P1-1 FIXED**；**P1-2/3/4 仍 OPEN**
-- **HEAD**：`origin/main` = `8d0cc2e`；工作分支 tip `9f09c5c`（P1-1）
-- **下次**：① 合 PR #85；② P1-2 originWs → P1-3 evaluate → P1-4 shell；③ HUD 可选 checklist / P3a-full
+- **HEAD（S22 末）**：`origin/main` = `8d0cc2e`；工作分支 tip `9f09c5c`（P1-1）— **S23 已 rebase 到含 Windows 的 main**
+- **下次（S22 写）**：① 合 PR #85；② P1-2 originWs → P1-3 evaluate → P1-4 shell；③ HUD 可选 checklist / P3a-full
 - Recorded: yes — UI 短语≠companion 门；ADR-020 backlog 坐标系
 
 ### S21 (2026-07-28 ~17:39) [cmspark site-knowledge PR#81 + HUD Task7 PR#82 合 main]

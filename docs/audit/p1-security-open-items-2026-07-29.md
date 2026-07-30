@@ -1,7 +1,7 @@
 # P1 安全残余盘点（相对 2026-07-28 诊断）
 
-> **日期**: 2026-07-29  
-> **基线 HEAD**: 当前 `main`（盘点时含 ADR-020 文档采用 `e669314` 一带）  
+> **日期**: 2026-07-29（**2026-07-30 复核**：P1-1 代码在 PR #85，尚未合 `main`）  
+> **基线 HEAD**: 本文件随 `fix/diagnosis-P1-1`；`main` @ Windows P0 `fd2d4a1` 时盘点表仍以 **合 PR 前** 的 main 为准（main 上 P1-1 仍 OPEN）  
 > **来源**: [diagnosis-fanout-2026-07-28.md](diagnosis-fanout-2026-07-28.md) § Prioritized Action Plan **P1**  
 > **本体**: [ADR-020](../adr/020-capability-model-three-axes.md) Trust 横切 + Surface 单调  
 > **证据级别**: `[inspected]` 源码路径；**未**做端到端攻击复现
@@ -143,8 +143,8 @@ L2/MCP 确认常不绑 `originWs`，多 peer 下其他 loopback WS 可响应确�
 
 ## 建议实施顺序
 
-1. **P1-1** god-mode step-up — 最高 blast radius，对齐 ADR-020 Trust  
-2. **P1-2** originWs 默认绑定 — 局部、可测、MCP+navigate 一并收  
+1. **P1-1** god-mode step-up — **FIXED on PR #85**；下一动作 = **合入 main + CI 绿**  
+2. **P1-2** originWs 默认绑定 — 局部、可测、MCP+navigate 一并收（**当前下一枪代码**）  
 3. **P1-3** evaluate 完整性 — 行为变更需双端协调 + 测  
 4. **P1-4** shell 结构收紧 — 设计权衡，enterprise 范围，可 RFC 后做  
 
@@ -152,4 +152,4 @@ L2/MCP 确认常不绑 `originWs`，多 peer 下其他 loopback WS 可响应确�
 
 ---
 
-*盘点完成 2026-07-29 · 代码变更后请更新本表 Status 列。*
+*盘点完成 2026-07-29 · 2026-07-30：对齐 PR #85 / Windows P0；合 main 后请把本文件 Status 同步进 main 并刷新 §0 基线 HEAD。*

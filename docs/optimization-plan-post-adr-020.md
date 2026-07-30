@@ -11,7 +11,7 @@
 
 ---
 
-## 0. 当前状态（截至 2026-07-29）
+## 0. 当前状态（截至 2026-07-30）
 
 | 维度 | 状态 |
 |------|------|
@@ -19,7 +19,8 @@
 | **能力本体** | ADR-020 Accepted；README / architecture / GOAL / DESIGN / 用户指南坐标已同步 |
 | **文档重梳** | 07-28 P0 事实错误 + 导航 + 用户指南 + Phase4 归档：**已合 main**（PR #80 一带） |
 | **代码安全（07-25 High 簇）** | 选择器注入、config 预鉴权、CU session-trust 旁路、stream 线程、Stop≠abort、package host 等：**FIXED** |
-| **开放 High/Med 安全** | 见 §B / P1 盘点四条：**均 OPEN** |
+| **开放 High/Med 安全** | 见 §B / P1 盘点：**P1-1 FIXED（PR #85，合 main 后生效）**；**P1-2/3/4 仍 OPEN** |
+| **Windows 平台 P0** | **已合 main** `fd2d4a1`：osascript 非 darwin 过滤 + L2 前 early-reject；MCP filesystem 缺 allow-dir 时注入 home。**P1 `browser_download` 未做**（见 plan） |
 | **工程 backlog 旧文件** | post-v0.3.0 plan **过时**（未含 Pack/CU/Multi-agent/ADR-020）→ 本文 supersede |
 
 ### 一句话定位（做事准则）
@@ -72,7 +73,7 @@ E  Autonomy       仅 defer 表内；spawn 保持 L2 HITL
 
 | 顺序 | ID | 工作 | 状态 | 工时感 |
 |------|-----|------|------|--------|
-| 1 | **P1-1** | companion 对 god-mode / auto_approve* **0→1** 做 phrase 或专用 arm 消息（UI 剧场不够） | OPEN | 0.5–1d |
+| 1 | **P1-1** | companion 对 god-mode / auto_approve* **0→1** 做 phrase 或专用 arm 消息（UI 剧场不够） | **FIXED**（PR #85 `fix/diagnosis-P1-1`；合 main 后闭环） | 0.5–1d |
 | 2 | **P1-2** | MCP + navigate（及缺绑的 L2）默认 `originWs`；双 peer 回归测 | OPEN | 0.5d |
 | 3 | **P1-3** | evaluate：批准后 **不**二次改写已绑定 code（extension 或 companion 单点净化） | OPEN | 0.5–1d |
 | 4 | **P1-4** | shell_exec：收紧 allowlist metachar / 中期 argv 化；锁 god-mode 不静默跳过 shell L2 | OPEN | 1–2d（含设计） |
@@ -85,7 +86,7 @@ E  Autonomy       仅 defer 表内；spawn 保持 L2 HITL
 |-------|------|------|
 | M1 tabUrlCache | 导航刷新 | ✅ 已落地 |
 | M2 输入侧 untrusted 标记 | tool 结果包络 | 🔶 未在本盘点强制；可挂 C 或 defer |
-| M3 osascript 范围化 | 二次确认 | 🔶 部分 L2 已在；精确范围化未单独立项 |
+| M3 osascript 范围化 | 二次确认 | 🔶 部分 L2 已在；**另：07-29 Windows P0** non-darwin 工具表过滤 + L2 前 reject（`fd2d4a1`）— 非「范围化二次确认」但降低误调 |
 | M4 analyze_image 门 | vision | 🔶 保留为可选 follow-up |
 | M5 cookie 扩展 enforce | 扩展端 | 🔶 可选 follow-up |
 | L12 healthz | `/healthz` | ✅ 已落地 |
@@ -150,10 +151,10 @@ E  Autonomy       仅 defer 表内；spawn 保持 L2 HITL
 
 ## 2. 推荐执行序（价值 × 风险 × 依赖）
 
-1. **A 收尾**（本批文档/模板）→ 合并后所有 PR 走声明  
-2. **B P1-1 → P1-2 → P1-3 → P1-4**  
+1. **A 收尾**（本批文档/模板）→ ✅；所有 PR 走能力声明  
+2. **合 PR #85**（P1-1）→ **B 下一枪 P1-2 → P1-3 → P1-4**  
 3. **C** 有明确业务场景时 Pack-first 交付（与 B 可并行，但 **不得**用新一级 UI 绕过）  
-4. **D** L2 真机 / HUD full 按用户痛点  
+4. **D** L2 真机 / HUD full 按用户痛点；Windows **P1 browser_download**（spike 门）按痛点  
 5. **E** 仅当有明确编排缺口且 dual-review 批准 defer 表内项  
 6. **F** 插入发布前硬缺口（e2e / Node 对齐）
 
@@ -183,6 +184,7 @@ E  Autonomy       仅 defer 表内；spawn 保持 L2 HITL
 | 日期 | 变更 |
 |------|------|
 | 2026-07-29 | 初版：ADR-020 后统一 backlog；P1 四条盘点；PR template + dual-review 能力清单；supersede post-v0.3.0 排序权威 |
+| 2026-07-30 | P1-1 → FIXED（PR #85 pending merge）；main 已合 Windows 平台 P0（osascript 过滤 + MCP home）；下一优先 P1-2；执行序更新 |
 
 ---
 
