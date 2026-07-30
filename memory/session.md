@@ -248,12 +248,12 @@
 
 ## In-Flight Tasks (Cross-Session)
 
-### ADR-020 Trust P1 residual security (from 2026-07-28 diagnosis / S22)
-- status: active
-- context: Plan + inventory on main (`8d0cc2e`). **P1-1 FIXED** on PR #85 (`fix/diagnosis-P1-1`, CI success). **P1-2 originWs / P1-3 evaluate integrity / P1-4 shell structure** still OPEN.
-- next_action: Merge #85 if ready; then P1-2 (MCP+navigate default originWs) → P1-3 → P1-4 per optimization-plan §B
-- resume_doc: `docs/optimization-plan-post-adr-020.md` · `docs/audit/p1-security-open-items-2026-07-29.md` · PR https://github.com/nehcuh/cmspark/pull/85
-- updated: 2026-07-29
+### ADR-020 Trust P1 residual security (from 2026-07-28 diagnosis / S22–S23)
+- status: **mostly done** (P1a 四条 + browser_download 已合 main 2026-07-30)
+- context: #85–#90 MERGED. 残余：**P1-4 P1b** argv；MCP home 收窄；Windows G3 真机
+- next_action: 可选 P1b / MCP allowlist 收窄 / G3 真机；或 HUD/CU/Pack
+- resume_doc: `docs/optimization-plan-post-adr-020.md` · `docs/audit/p1-security-open-items-2026-07-29.md`
+- updated: 2026-07-30
 
 ### P3a Companion Native HUD — post-spike (from 2026-07-27 / closed Task7 2026-07-28)
 - status: active (optional operator + P3a-full)
@@ -261,7 +261,7 @@
 - next_action: Optional `CMSPARK_HUD_SPIKE=1` dual-process checklist; then P3a-full (ConfirmElevated parity) — **no** screenshot flood
 - resume_doc: `docs/decisions/v1.3/companion-native-hud-p3a-spike-ship-note-2026-07-28.md`
 - product_lock: `docs/decisions/v1.3/companion-native-hud-n1n10-lock-2026-07-27.md`
-- updated: 2026-07-29
+- updated: 2026-07-30
 
 ### P0-D package/release hard-gates (from 2026-07-25 diagnosis)
 - status: active
