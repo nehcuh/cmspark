@@ -54,6 +54,10 @@ test("ensureFilesystemAllowlist is idempotent when path present", () => {
   }
   const again = ensureFilesystemAllowlist("filesystem", withPath, "win32", "C:\\Users\\HuChen") as McpStdioServerConfig
   assert.deepEqual(again.args, withPath.args)
+  // Must not invent cwd — would make requiresRestart true on every applyConfig
+  // (trust_level-only soft update) and hang CI on real spawn.
+  assert.equal(again.cwd, undefined)
+  assert.deepEqual(again, withPath)
 })
 
 test("ensureFilesystemAllowlist respects existing roots", () => {
