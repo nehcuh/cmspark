@@ -2,15 +2,19 @@
 
 ## Current Session
 
-### S23 (2026-07-30) [Windows 适配 pull/review + P1-1 rebase push + backlog 对齐]
-- **Windows 适配**：他机工作已在 `origin/main` `fd2d4a1`（osascript 非 darwin 过滤 + MCP filesystem home）；本地 main ff；**评审** P0 实质过、P1 `browser_download` 未做、MCP 整 home 是 trust trade-off
-- **P1-1 分支**：`fix/diagnosis-P1-1` rebase onto main（含 Windows）→ force-with-lease push；**PR #85** OPEN / MERGEABLE；CI 在 force push 后重跑
-- **Backlog 文档更新（本分支未 commit）**：
-  - `docs/optimization-plan-post-adr-020.md`：P1-1 FIXED(PR#85)、Windows P0 记入 §0、执行序下一枪 P1-2
-  - `docs/audit/p1-security-open-items-2026-07-29.md`：基线/顺序注「合 main 前」
-- **剩余代码优先序**：① 合 #85 → ② **P1-2 originWs** → ③ P1-3 evaluate → ④ P1-4 shell；并行可选 Windows browser_download / HUD / Pack 场景
-- **HEAD**：工作分支 tip 仍为 P1-1 tip + 上述 doc dirty；`origin/main` = `fd2d4a1`
-- Recorded: yes
+### S23 (2026-07-30) [Trust P1 四条 + browser_download + CI 诊断 全合 main]
+- **起点**：他机 Windows P0 已在 `fd2d4a1`（osascript 过滤 + MCP home）；评审后 P0 过、`browser_download` 未做
+- **Trust §B（workflow + Claude/Pi）** 全部 **MERGED**：
+  - #90 CI 修（cwd 假 restart 挂死 + osascript 平台测）
+  - #85 P1-1 god-mode companion phrase
+  - #86 P1-2 originWs
+  - #87 P1-3 evaluate 批准后原码（tsc `allowed === false`）
+  - #88 P1-4 shell allowlist metachar P1a
+- **#89 browser_download P1.0 MERGED**：chrome.downloads + text/selector + Downloads 沙箱 + BUSY + 双审
+- **CI 诊断**：6h cancel ≠ 测试 fail；`mcp-manager` soft trust 测暴露 sanitize 副作用；Linux 测须认 early-reject
+- **main tip**：`2315ec2` Merge #88（确认时）
+- **下次**：① main 上刷新 `optimization-plan-post-adr-020` §B 全 FIXED；② P1b argv / MCP home 收窄 / Windows G3 真机；③ HUD/CU/Pack 按痛点
+- Recorded: yes — cwd hang、dual-review 禁全量 test、TS 联合收窄、批 PR cherry-pick CI 修
 
 ### S22 (2026-07-29) [ADR-020 后续工作 + P1 盘点/门禁 + P1-1 实现 PR #85]
 - **触发**：洞察文档（ADR-020）是否驱动后续工作 → 用户「都做吧」→ commit/push → session-end

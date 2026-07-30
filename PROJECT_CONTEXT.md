@@ -3,22 +3,23 @@
 ## Session Handoff
 
 <!-- handoff:start -->
-### 2026-07-29 (S22 — ADR-020 backlog + P1 inventory + P1-1 PR #85)
-- **origin/main**：`8d0cc2e` — ADR-020 后续计划 / P1 盘点 / PR template / dual-review 能力清单
-- **开放 PR #85** `fix/diagnosis-P1-1` @ `9f09c5c` — **P1-1 god-mode companion step-up**（CI success，未合）
-  - `confirmation_phrase` = `我了解风险`（`companion/src/security-arm.ts`）
-  - flags: allow_all_schemes / auto_approve_dangerous / auto_approve_enterprise_tools（false→true only）
-- **P1 状态**：1 FIXED · 2/3/4 OPEN（originWs · evaluate sanitize · shell:true）
-- **权威文档**：
-  - `docs/optimization-plan-post-adr-020.md`（排序）
-  - `docs/audit/p1-security-open-items-2026-07-29.md`
-  - `docs/adr/020-capability-model-three-axes.md`
+### 2026-07-30 (S23 — Trust P1 + browser_download 全合 main)
+- **origin/main tip**：含 Merge #88 / #87 / #86 / #89 / #85 / #90（Trust §B P1a 四条 + browser_download P1.0 + CI hang 修）
+- **已交付（本会话）**：
+  - P1-1 god-mode companion phrase（#85）
+  - P1-2 MCP/navigate `originWs`（#86）
+  - P1-3 evaluate 批准后原码执行（#87）
+  - P1-4 shell allowlist metachar P1a（#88）
+  - browser_download：`chrome.downloads` + text + Downloads 沙箱（#89）
+  - CI：`ensureFilesystemAllowlist` 勿 cwd-only 注入（#90）+ non-darwin osascript 测分叉
+- **权威文档**：`docs/optimization-plan-post-adr-020.md`（排序）；`docs/audit/p1-security-open-items-2026-07-29.md`（随 PR 已 FIXED 四条）
 - **下次**：
-  1. 合 PR #85（若 review OK）
-  2. P1-2 → P1-3 → P1-4（plan §B）
-  3. 可选 HUD dual-process checklist / P3a-full（禁双轨截图洪水）
-- **勿做**：UI phrase 当唯一 god-mode 门；无 Pack 替代加一级 Side Panel 入口
+  1. 可选：main 上再扫一遍优化计划 §0/§B 与盘点一致
+  2. P1-4 **P1b** argv；MCP 默认 allow 收窄（勿整 home）
+  3. Windows **G3 真机**：可见「下载」→ Downloads 路径
+  4. HUD P3a-full / CU / Pack — 按痛点，勿抢 Trust 残余
+- **勿做**：UI phrase 当唯一 god-mode 门；dual-review 跑 companion 全量 `npm test`；无 Pack 替代加一级 Side Panel 入口
 
-### 2026-07-28 ~17:39 (S21 — site-knowledge #81 + HUD Task7 #82)
-- PR #81/#82 已合 main；docs reorg #80 同日；HUD Task7 SHA 钉住；双轨截图 NO-GO
+### 2026-07-29 (S22 — ADR-020 backlog + P1 inventory + P1-1 PR #85)
+- 计划/盘点/PR template 已合；P1-1 实现当会话仅 PR，**S23 已合 main**
 <!-- handoff:end -->

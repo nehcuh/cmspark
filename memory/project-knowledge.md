@@ -4,11 +4,28 @@
 
 ### God-mode / 危险 flag：UI 短语 ≠ companion 门（P1-1，2026-07-29）
 - 现象：Settings 武装 `allow_all_schemes` 需输入 phrase，但 `config.set` 经任意已鉴权 WS 可直接布尔 `true` → UI 剧场
-- 修法（Design A / PR #85）：companion 对 **false→true** 的 `allow_all_schemes` / `auto_approve_dangerous` / `auto_approve_enterprise_tools` 要求 top-level `confirmation_phrase` 匹配 `SECURITY_ARM_CONFIRM_PHRASE`（`我了解风险`，`companion/src/security-arm.ts`）；缺/错 → 整条 config.set 拒绝 + `security.arm_rejected`；对 → 持久化 + `security.flag_armed`
+- 修法（Design A / PR #85 **已合 main**）：companion 对 **false→true** 的 `allow_all_schemes` / `auto_approve_dangerous` / `auto_approve_enterprise_tools` 要求 top-level `confirmation_phrase` 匹配 `SECURITY_ARM_CONFIRM_PHRASE`（`我了解风险`，`companion/src/security-arm.ts`）；缺/错 → 整条 config.set 拒绝 + `security.arm_rejected`；对 → 持久化 + `security.flag_armed`
 - 消武与「已 true 再 save」无需 phrase；`config.json` 带外编辑仍走 ADR-010 路径
 - 扩展：Settings 武装路径经 background 透传 phrase，不能只改 store 布尔
 - 测试：`companion/tests/message-router-config-security.test.ts`
 - 教训：凡「危险全局开关」，**权威门在 companion**；UI phrase 只是入口。同类后续（P1-2 originWs 等）同样勿只信客户端
+
+### MCP ensureFilesystemAllowlist 注入 cwd → applyConfig 假 restart 挂 CI（2026-07-30）
+- 现象：PR 在 Ubuntu CI 上 `npm test` 跑到 ~1300+ 后 **6h GHA cancel**；本地 `mcp-manager` soft-only trust_level 测失败且进程不退出
+- 根因：`ensureFilesystemAllowlist` 在 **已有 allow-dir** 时仍补 `cwd: homedir()` → 每次 `sanitizeMcpConfig` 改 cwd → `requiresRestart` true → stop/start 假路径 + open handles
+- 修法（PR #90）：有 `hasDir || hasRoots` 时 **原样返回**，勿 cwd-only mutation；回归测 deep-equal
+- 连锁：Linux 上 3 个 osascript 测仍期望 `Security Block`，但 message-router **先** early-reject `macos-only` → 须平台分叉断言（同批 test fix）
+- 教训：sanitize **幂等且不改语义无关字段**；否则 soft update 变 hard restart。CI cancel 先看是否 **hang 非 fail**
+
+### Dual-review Claude 勿跑 companion 全量 npm test（2026-07-30）
+- 现象：`dual-external-review.sh` 中 Claude 起 `npm test` → 挂数十分钟 / 与 CI 争 runner
+- 修法：review prompt 写死 **禁止 full suite**；仅 Read/Grep + 定向 `node --test` 子集；实现者已绿的矩阵可引用
+- 教训：外部审是 **diff 审**，不是再跑一次 CI
+
+### TS 判别联合：`!x.allowed` 可能不收窄（2026-07-30 P1-3）
+- 现象：`EvaluateExecutionDecision` 有 `allowed: false` + `error`，但 `if (!decision.allowed) decision.error` → CI `tsc` TS2339
+- 修法：`if (decision.allowed === false)` 后再读 `error`
+- 教训：boolean 判别联合用 **严格相等**，勿依赖 negation 收窄
 
 ### CMspark config: env var must not override user-provided API key
 - `DEEPSEEK_API_KEY` environment variable used to take unconditional priority in both `getConfig()` and `saveConfig()`, causing UI-set keys to be overwritten and then saved as empty strings
@@ -175,6 +192,13 @@
 - 产物目录：`docs/audit/reviews/`；批次报告 + claude/pi md + verdict json + patch
 - 诊断 fanout 姐妹流：`.grok/workflows/deep-diagnosis-fanout.rhai`（子系统 10 + 横切 6 + 对抗 16 + 综合）
 - **设计/plan 也可用同一脚本做 Task 0 门**（例：`native-hud-p3a-spike-plan`）；APPROVE_WITH_NITS 后 nits **必须折入文档再写代码**
+
+### Trust P1 批 + browser_download：独立 PR + 共享 CI 修 cherry-pick（2026-07-30）
+- Workflows：`.grok/workflows/p1-security-batch-fix.rhai`（P1-1…4）；`browser-download-p1-with-gates.rhai`（spike 门 + 实现 + 双审）
+- **独立分支** 基于 main，勿叠 PR；合入顺序 #90 CI 修 → Trust/功能 → 冲突几乎都在 `p1-security-open-items` 摘要表
+- 摘要表冲突：两边 **FIXED 取并集**；文首「下一枪」跟 main 实际状态改
+- CI 根因修（cwd / osascript 平台测）**先 cherry-pick 到所有开放 PR** 再等绿，否则 6 条 PR 全红
+- browser_download：PRIMARY `chrome.downloads`；Downloads 沙箱；`DOWNLOAD_BUSY` 在 TabQueue 前；`download` 别名在 companion 入口规范化
 
 ### Tab lease 仅 multi-agent：单 agent 多 tab 勿 HARD lease（2026-07-28 PR #81）
 - 现象：普通聊天 / AppSec 打开第 3 个 tab 命中 `max_tabs_leased_per_worker=2` → 硬失败
