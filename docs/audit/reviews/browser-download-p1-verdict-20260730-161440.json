@@ -1,0 +1,8 @@
+{
+  "batch": "browser-download-p1",
+  "timestamp": "20260730-161440",
+  "claude": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/browser-download-p1-claude-20260730-161440.md" },
+  "pi": { "verdict": "REJECT", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/browser-download-p1-pi-20260730-161440.md" },
+  "both_approve": false,
+  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/browser-download-p1-diff-20260730-161440.patch"
+}

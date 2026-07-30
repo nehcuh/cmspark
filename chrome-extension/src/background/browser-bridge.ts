@@ -5,10 +5,14 @@ import { fetchImageAsBase64 } from "./image-extract-utils"
 import { detectDangerousApis } from "./dangerous-apis"
 import { selectorJsLiteral } from "./selector-js-literal"
 import { TabQueue, coerceTabId } from "./tab-queue"
+import { runBrowserDownload } from "./browser-download-handler"
+import { runWithDownloadBusyBeforeQueue } from "./download-busy-entry"
 
 // Re-export for callers / tests that import from browser-bridge.
 export { selectorJsLiteral } from "./selector-js-literal"
 export { TabQueue, coerceTabId } from "./tab-queue"
+export { buildFindByTextExpression } from "./find-element-by-text"
+export { runWithDownloadBusyBeforeQueue, isBrowserDownloadToolName } from "./download-busy-entry"
 
 interface ToolResult {
   success: boolean
@@ -26,6 +30,8 @@ export class BrowserBridge {
   private sanitizer: PageSanitizer
   /** ADR-015 defense-in-depth: serialize concurrent ops per tabId (see tab-queue.ts). */
   private tabQueue = new TabQueue()
+  /** D13: same-tab browser_download mutual exclusion (reject, do not queue). */
+  downloadBusyTabs: Set<number> = new Set()
 
   constructor(sanitizer?: PageSanitizer) {
     this.sanitizer = sanitizer || pageSanitizer
@@ -45,7 +51,16 @@ export class BrowserBridge {
 
   async execute(toolName: string, params: Record<string, any>): Promise<ToolResult> {
     const tabId = coerceTabId(params?.tabId)
-    return this.tabQueue.run(tabId, () => this.executeInner(toolName, params))
+    // D13 / BD-D13: production busy-before-TabQueue lives in runWithDownloadBusyBeforeQueue
+    // (unit-tested). Concurrent same-tab browser_download rejects DOWNLOAD_BUSY, not queue.
+    return runWithDownloadBusyBeforeQueue({
+      toolName,
+      params,
+      tabId,
+      downloadBusyTabs: this.downloadBusyTabs,
+      tabQueueRun: (id, fn) => this.tabQueue.run(id, fn),
+      executeInner: (name, p) => this.executeInner(name, p),
+    })
   }
 
   private async executeInner(toolName: string, params: Record<string, any>): Promise<ToolResult> {
@@ -102,8 +117,9 @@ export class BrowserBridge {
           return await this.evaluate(params)
         case "upload_file":
           return await this.uploadFile(params)
-        case "download":
-          return await this.download(params)
+        case "browser_download":
+        case "download": // alias → browser_download (D18)
+          return await this.browserDownload(params)
 
         // Cookie tools
         case "get_cookies":
@@ -1126,13 +1142,13 @@ export class BrowserBridge {
     }
   }
 
+  private async browserDownload(params: Record<string, any>): Promise<ToolResult> {
+    return runBrowserDownload(this as any, params)
+  }
+
+  /** @deprecated D18 — use browser_download */
   private async download(params: Record<string, any>): Promise<ToolResult> {
-    const tabId = this.getTabId(params)
-    await this.sendCdp(tabId, "Browser.setDownloadBehavior", {
-      behavior: "allow",
-      downloadPath: params.downloadPath || "",
-    })
-    return { success: true }
+    return this.browserDownload(params)
   }
 
   // --- Cookie tools ---
