@@ -420,6 +420,29 @@ test("manual trust + non-critical → still confirms (manual always prompts)", a
   assert.equal((await rp).success, true)
 })
 
+// P1-2: MCP tool confirm must bind originWs. Existing suite uses privileged
+// respond() (bypasses origin) — this case uses respondFrom(rogue) then
+// respondFrom(serverSideWs) so missing originWs at the call site would FAIL.
+test("P1-2: MCP manual confirm — respondFrom(rogue) origin_mismatch then origin approve", async () => {
+  const ns = await injectServer("fs", "manual", [{ name: "read_file", inputSchema: { type: "object", properties: {} } }])
+  const executeTool = createToolExecutor(serverSideWs)
+  const confp = expectClientMessage("security.confirmation.request")
+  const rp = executeTool("tc_p12_mcp_origin", ns("read_file"), { path: "/tmp/origin-bind" })
+  const conf = await confp
+  const cid = String(conf.confirmation_id)
+
+  const rogueWs = { __mockWsLabel: "mcp-rogue-peer" } as unknown as WebSocket
+  assert.equal(
+    securityConfirmations.respondFrom(cid, true, rogueWs).outcome,
+    "origin_mismatch",
+    "non-origin peer must not approve MCP tool confirm",
+  )
+
+  // Origin socket (createToolExecutor's ws) approves via respondFrom — not privileged respond().
+  assert.equal(securityConfirmations.respondFrom(cid, true, serverSideWs).outcome, "resolved")
+  assert.equal((await rp).success, true)
+})
+
 test("god-mode ON + critical MCP → STILL confirms (gate is god-mode-unaware)", async () => {
   saveConfig({ security: { ...getConfig().security, allow_all_schemes: true, auto_approve_dangerous: true } })
   const ns = await injectServer("fs", "trusted", [{ name: "write_file", inputSchema: { type: "object", properties: {} } }])

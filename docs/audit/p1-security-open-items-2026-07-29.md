@@ -1,7 +1,7 @@
 # P1 安全残余盘点（相对 2026-07-28 诊断）
 
 > **日期**: 2026-07-29（**2026-07-30 复核**：P1-1 代码在 PR #85，尚未合 `main`）  
-> **基线 HEAD**: 本文件随 `fix/diagnosis-P1-1`；`main` @ Windows P0 `fd2d4a1` 时盘点表仍以 **合 PR 前** 的 main 为准（main 上 P1-1 仍 OPEN）  
+> **基线 HEAD**: 本文件随 `fix/diagnosis-P1-2` rebase onto main（含 #85/#89/#90）
 > **来源**: [diagnosis-fanout-2026-07-28.md](diagnosis-fanout-2026-07-28.md) § Prioritized Action Plan **P1**  
 > **本体**: [ADR-020](../adr/020-capability-model-three-axes.md) Trust 横切 + Surface 单调  
 > **证据级别**: `[inspected]` 源码路径；**未**做端到端攻击复现
@@ -13,11 +13,11 @@
 | ID | 标题 | 状态 | 严重度（诊断） | 轴 |
 |----|------|------|----------------|-----|
 | **P1-1** | god-mode / 危险 flag companion step-up | **FIXED** | High | Trust × Surface |
-| **P1-2** | MCP（及部分 L2）确认统一 `originWs` | **OPEN**（部分路径已绑） | Medium | Trust · multi-peer |
+| **P1-2** | MCP（及部分 L2）确认统一 `originWs` | **FIXED** | Medium | Trust · multi-peer |
 | **P1-3** | evaluate 批准后代码完整性（勿再改写） | **OPEN** | Medium | Trust · L1 完整性 |
 | **P1-4** | shell_exec 策略收紧（`shell:true` + 前缀） | **OPEN**（有缓解） | Medium | Surface L2 · enterprise |
 
-P1-1 **已 FIXED**（companion phrase step-up）。P1-2/3/4 仍 **未闭环**。缓解存在（UI 短语+companion 门、enterprise L2 forceConfirm、shell allowlist 可选），但绑定一致性 / 批准后不改写 / 结构上弱于完整 shell 策略 **仍成立**。
+P1-1 / P1-2 **已 FIXED**。P1-3/4 仍 **未闭环**（并行 PR）。缓解存在；批准后不改写 / shell 结构 **仍成立**。
 
 ---
 
@@ -62,17 +62,17 @@ L2/MCP 确认常不绑 `originWs`，多 peer 下其他 loopback WS 可响应确�
 | host_computer / Win nonce L2 | **有**（条件绑） | `server.ts` ~1427–1433 |
 | host 写路径 / biometric 等 | **有** | ~1999–2009、~5196–5204 |
 | tray 部分 | privileged / 旁路 origin 有文档 | ~1469、`swift-tray-bridge` 注释 |
-| **MCP tool confirm** | **无** | `server.ts` ~3905–3918 `request(...)` 无第三参 |
-| **MCP meta confirm** | **无** | ~4089–4098 |
-| **navigate URL L2** | **无** | ~1805–1816 |
-| **通用 L2 门（evaluate 等）** | 仅 nonce / host_computer 时绑 | ~1433 |
+| **MCP tool confirm** | **有** `{ originWs: ws }` | `server.ts` `executeMcpTool` request 第三参 |
+| **MCP meta confirm** | **有** `{ originWs: ws }` | `server.ts` `executeMcpMetaTool` request 第三参 |
+| **navigate URL L2** | **有** `{ originWs: ws }` | `server.ts` URL gate ~navigate request |
+| **通用 L2 门（evaluate 等）** | 仅 nonce / host_computer 时绑 | ~1433（**未**在本批改写） |
 
 `SecurityConfirmationManager` 支持 origin 绑定与拒绝错 peer：`security-confirmation.ts` ~388–411、~510–533。
 
 ### 结论
 
-**OPEN（部分）**。Computer / 部分 host 已 origin-bound；**MCP 与 navigate URL 确认仍为广播式**。  
-**目标形态**：凡 `securityConfirmations.request` 且存在请求方 `ws`，默认 `{ originWs: ws }`；tray 应答走已有 privileged path；补双客户端回归测。
+**FIXED**（2026-07-30 P1-2）。MCP tool / MCP meta / navigate URL L2 在存在请求方 `ws` 时绑定 `originWs`；tray 仍走 privileged `respond()`；双 peer 回归：`security-confirmation-origin.test.ts`、`security-gates.test.ts`、`mcp-capability-gate.test.ts`。  
+evaluate/shell 条件绑与 god-mode 不在本批范围。
 
 ---
 

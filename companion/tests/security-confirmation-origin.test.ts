@@ -161,6 +161,81 @@ test("[C-SRV-1] rejectAll('disconnect') with no ws filter rejects everything (ba
   assert.equal(d2.reason, "disconnect")
 })
 
+// --- P1-2: navigate + MCP-style toolNames also origin-bind --------------------
+// Manager already enforces origin on any request with originWs; these cases
+// lock the toolName surface that server.ts now binds (navigate / MCP tool /
+// MCP meta). Without originWs at the call site, rogue respondFrom would resolve.
+
+test("[P1-2] navigate originWs: rogue respondFrom → origin_mismatch; origin resolves; privileged respond() still works", async () => {
+  const sent: any[] = []
+  const manager = new SecurityConfirmationManager(60_000)
+  const originWs = mockWs("nav-origin")
+  const rogueWs = mockWs("nav-rogue")
+
+  const pending = manager.request(
+    (msg) => sent.push(msg),
+    {
+      toolName: "navigate",
+      dangerousApis: [],
+      code: "navigate(https://evil.example.com/)",
+      relevantDomains: ["evil.example.com"],
+    },
+    { originWs },
+  )
+  const confirmationId = sent[0].confirmation_id
+  assert.equal(sent[0].tool_name, "navigate")
+
+  assert.equal(
+    manager.respondFrom(confirmationId, true, rogueWs).outcome,
+    "origin_mismatch",
+    "rogue peer must not approve navigate L2",
+  )
+  assert.equal(sent.some((m) => m.type === "security.confirmation.resolved"), false)
+
+  assert.equal(manager.respondFrom(confirmationId, true, originWs).outcome, "resolved")
+  const decision = await pending
+  assert.equal(decision.approved, true)
+  assert.equal(decision.reason, "approved")
+})
+
+test("[P1-2] mcp-style tool originWs: rogue mismatch then origin approve; privileged respond() bypass still intact", async () => {
+  const sent: any[] = []
+  const manager = new SecurityConfirmationManager(60_000)
+  const originWs = mockWs("mcp-origin")
+  const rogueWs = mockWs("mcp-rogue")
+
+  // MCP tools are named "mcp__<server>__<tool>" at the executor boundary.
+  const pending = manager.request(
+    (msg) => sent.push(msg),
+    {
+      toolName: "mcp__fs__write_file",
+      dangerousApis: ["file-write"],
+      code: '{"path":"/tmp/x"}',
+      riskLevel: "high",
+      criticalApis: ["file-write"],
+      autoConfirmEligible: false,
+    },
+    { originWs },
+  )
+  const confirmationId = sent[0].confirmation_id
+
+  assert.equal(manager.respondFrom(confirmationId, true, rogueWs).outcome, "origin_mismatch")
+  assert.equal(manager.respondFrom(confirmationId, true, originWs).outcome, "resolved")
+  assert.equal((await pending).approved, true)
+
+  // Privileged tray path: request another MCP-style confirm and resolve via
+  // respond() without a source ws (bypasses origin check).
+  const sent2: any[] = []
+  const pending2 = manager.request(
+    (msg) => sent2.push(msg),
+    { toolName: "mcp_read_resource", dangerousApis: ["resource-read"], code: "{}" },
+    { originWs: mockWs("mcp-meta-origin") },
+  )
+  const id2 = sent2[0].confirmation_id
+  assert.equal(manager.respond(id2, true), true, "privileged respond() must still resolve origin-bound MCP meta")
+  assert.equal((await pending2).approved, true)
+})
+
 test("[backward compat] request() without originWs still works; any socket may respond", async () => {
   const manager = new SecurityConfirmationManager(60_000)
   const ws = mockWs("bc-no-origin")

@@ -310,6 +310,72 @@ test("item 12: navigate to untrusted domain triggers confirmation", async () => 
   assert.match(result.error!, /denied|unavailable|timeout/)
 })
 
+// P1-2: navigate URL L2 must bind originWs to the requesting socket.
+// Without { originWs: ws } at the call site, respondFrom(rogue) would approve.
+// Existing tests use privileged respond() which bypasses origin — this case
+// deliberately uses respondFrom with a distinct sourceWs.
+test("P1-2: navigate untrusted — respondFrom(non-origin) origin_mismatch; origin approve succeeds", async () => {
+  const executeTool = createToolExecutor(serverSideWs)
+  const confirmationPromise = expectClientMessage("security.confirmation.request")
+
+  const resultPromise = executeTool("tc_nav_origin_bind", "navigate", {
+    tabId: 1,
+    url: "https://rogue-peer.example.com/x",
+  })
+
+  const confirmation = await confirmationPromise
+  assert.equal(confirmation.tool_name, "navigate")
+  const cid = String(confirmation.confirmation_id)
+
+  const rogueWs = { __mockWsLabel: "rogue-side-panel" } as unknown as WebSocket
+  const rogue = securityConfirmations.respondFrom(cid, true, rogueWs)
+  assert.equal(rogue.outcome, "origin_mismatch", "non-origin peer must not approve navigate L2")
+
+  // Pending still open — origin socket (serverSideWs used by createToolExecutor) may approve.
+  const origin = securityConfirmations.respondFrom(cid, true, serverSideWs)
+  assert.equal(origin.outcome, "resolved")
+
+  // Approved navigate proceeds: extension receives tool.execute; reply with success.
+  const executeMsg = await expectClientMessage("tool.execute")
+  assert.equal(executeMsg.tool_name, "navigate")
+  clientSideWs.send(JSON.stringify({
+    type: "tool.result",
+    tool_call_id: "tc_nav_origin_bind",
+    result: { success: true },
+  }))
+
+  const result = await resultPromise
+  assert.equal(result.success, true, "origin-approved navigate must succeed")
+})
+
+test("P1-2: navigate untrusted — handleSecurityConfirmationResponse from non-origin does not approve", async () => {
+  const executeTool = createToolExecutor(serverSideWs)
+  const confirmationPromise = expectClientMessage("security.confirmation.request")
+
+  const resultPromise = executeTool("tc_nav_hscr_mismatch", "navigate", {
+    tabId: 1,
+    url: "https://other-panel.example.com/y",
+  })
+
+  const confirmation = await confirmationPromise
+  const cid = String(confirmation.confirmation_id)
+  const rogueWs = { __mockWsLabel: "hscr-rogue" } as unknown as WebSocket
+
+  // Production path: inbound security.confirmation.response is routed with the
+  // responding socket. A different peer must leave the confirmation pending.
+  await handleSecurityConfirmationResponse(rogueWs, {
+    type: "security.confirmation.response",
+    confirmation_id: cid,
+    approved: true,
+  })
+
+  // Still pending — deny from the true origin to finish cleanly.
+  const denied = securityConfirmations.respondFrom(cid, false, serverSideWs)
+  assert.equal(denied.outcome, "resolved")
+  const result = await resultPromise
+  assert.equal(result.success, false)
+})
+
 test("item 12: navigate to chrome:// scheme is blocked outright (no confirmation)", async () => {
   const executeTool = createToolExecutor(serverSideWs)
   const result = await executeTool("tc_nav_chrome", "navigate", {
