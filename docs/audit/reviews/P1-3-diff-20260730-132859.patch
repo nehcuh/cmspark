@@ -1,0 +1,138 @@
+# Dual external review context
+batch: P1-3
+base: HEAD
+time: 20260730-132859
+
+fd2d4a1
+
+ M chrome-extension/src/background/browser-bridge.ts
+ M chrome-extension/tests/node-shims.d.ts
+ M chrome-extension/tsconfig.test.json
+ M docs/audit/p1-security-open-items-2026-07-29.md
+?? .grok/workflows/p1-security-batch-fix.rhai
+?? chrome-extension/src/background/evaluate-code-policy.ts
+?? chrome-extension/tests/evaluate-code-integrity.test.ts
+?? docs/audit/reviews/P1-3-claude-20260730-132355.md
+?? docs/audit/reviews/P1-3-diff-20260730-132355.patch
+?? docs/audit/reviews/P1-3-diff-20260730-132859.patch
+?? scratch/_decode_git_obj.mjs
+
+## Diff (git diff + staged)
+ chrome-extension/src/background/browser-bridge.ts | 18 ++++++++++++------
+ chrome-extension/tests/node-shims.d.ts            |  1 +
+ chrome-extension/tsconfig.test.json               |  1 +
+ docs/audit/p1-security-open-items-2026-07-29.md   | 13 ++++++++-----
+ 4 files changed, 22 insertions(+), 11 deletions(-)
+
+diff --git a/chrome-extension/src/background/browser-bridge.ts b/chrome-extension/src/background/browser-bridge.ts
+index f85bb2f..6616ce8 100644
+--- a/chrome-extension/src/background/browser-bridge.ts
++++ b/chrome-extension/src/background/browser-bridge.ts
+@@ -2,13 +2,14 @@
+ 
+ import { PageSanitizer, pageSanitizer } from "./page-sanitizer"
+ import { fetchImageAsBase64 } from "./image-extract-utils"
+-import { detectDangerousApis } from "./dangerous-apis"
+ import { selectorJsLiteral } from "./selector-js-literal"
+ import { TabQueue, coerceTabId } from "./tab-queue"
++import { resolveEvaluateExecution } from "./evaluate-code-policy"
+ 
+ // Re-export for callers / tests that import from browser-bridge.
+ export { selectorJsLiteral } from "./selector-js-literal"
+ export { TabQueue, coerceTabId } from "./tab-queue"
++export { resolveEvaluateExecution } from "./evaluate-code-policy"
+ 
+ interface ToolResult {
+   success: boolean
+@@ -1071,9 +1072,13 @@ export class BrowserBridge {
+     const tabId = this.getTabId(params)
+     if (!params.code) throw new Error("code is required")
+ 
+-    // Sanitize code before dangerous API detection
+-    const sanitizedCodeResult = this.sanitizer.sanitizeText(params.code)
+-    const codeToExecute = sanitizedCodeResult.sanitized
++    // P1-3: approved evaluate must execute the code bound by security_token /
++    // shown at L2 — never post-approval sanitizeText rewrite (Option A).
++    // Companion issues token on original code; unapproved path never bare-runs.
++    const decision = resolveEvaluateExecution(params)
++    if (!decision.allowed) {
++      return { success: false, error: decision.error }
++    }
+ 
+     // ADVISORY ONLY (audit H9): detectDangerousApis annotates the result with
+     // statically-matchable risky tokens. It does NOT gate execution — the
+@@ -1082,7 +1087,8 @@ export class BrowserBridge {
+     // `risk_pattern_matches` (not `has_dangerous_apis`) so an empty result is
+     // not mistaken for a safety verdict: regex cannot resolve runtime dispatch
+     // like window["ev"+"al"](...), so absence of matches ≠ safe.
+-    const matches = detectDangerousApis(codeToExecute)
++    const matches = decision.risk_pattern_matches
++    const codeToExecute = decision.code
+ 
+     const result = await this.safeEvaluate(tabId, codeToExecute)
+ 
+@@ -1092,7 +1098,7 @@ export class BrowserBridge {
+         result: result.result?.value,
+         type: result.result?.type,
+         risk_pattern_matches: matches.length > 0 ? matches : undefined,
+-        threats_removed: sanitizedCodeResult.threatsRemoved.length > 0 ? sanitizedCodeResult.threatsRemoved : undefined,
++        // P1-3: no threats_removed on approved evaluate — source was not mutated.
+         exception: result.exceptionDetails ? {
+           text: result.exceptionDetails.text,
+           line: result.exceptionDetails.lineNumber,
+diff --git a/chrome-extension/tests/node-shims.d.ts b/chrome-extension/tests/node-shims.d.ts
+index 414e15f..3b56eeb 100644
+--- a/chrome-extension/tests/node-shims.d.ts
++++ b/chrome-extension/tests/node-shims.d.ts
+@@ -8,6 +8,7 @@ declare module "node:assert/strict" {
+   interface Assert {
+     equal(actual: unknown, expected: unknown, message?: string): void
+     deepEqual(actual: unknown, expected: unknown, message?: string): void
++    notStrictEqual(actual: unknown, expected: unknown, message?: string): void
+     ok(value: unknown, message?: string): void
+     match(actual: string, expected: RegExp, message?: string): void
+   }
+diff --git a/chrome-extension/tsconfig.test.json b/chrome-extension/tsconfig.test.json
+index 735341e..6c62df5 100644
+--- a/chrome-extension/tsconfig.test.json
++++ b/chrome-extension/tsconfig.test.json
+@@ -24,6 +24,7 @@
+     "src/background/page-sanitizer.ts",
+     "src/background/image-extract-utils.ts",
+     "src/background/dangerous-apis.ts",
++    "src/background/evaluate-code-policy.ts",
+     "src/background/selector-js-literal.ts",
+     "src/background/security-confirmation-payload.ts",
+     "src/background/tab-queue.ts",
+diff --git a/docs/audit/p1-security-open-items-2026-07-29.md b/docs/audit/p1-security-open-items-2026-07-29.md
+index bf5a8da..4949214 100644
+--- a/docs/audit/p1-security-open-items-2026-07-29.md
++++ b/docs/audit/p1-security-open-items-2026-07-29.md
+@@ -14,7 +14,7 @@
+ |----|------|------|----------------|-----|
+ | **P1-1** | god-mode / 危险 flag companion step-up | **OPEN** | High | Trust × Surface |
+ | **P1-2** | MCP（及部分 L2）确认统一 `originWs` | **OPEN**（部分路径已绑） | Medium | Trust · multi-peer |
+-| **P1-3** | evaluate 批准后代码完整性（勿再改写） | **OPEN** | Medium | Trust · L1 完整性 |
++| **P1-3** | evaluate 批准后代码完整性（勿再改写） | **FIXED** (2026-07-30, Option A) | Medium | Trust · L1 完整性 |
+ | **P1-4** | shell_exec 策略收紧（`shell:true` + 前缀） | **OPEN**（有缓解） | Medium | Surface L2 · enterprise |
+ 
+ 四条均 **未闭环**。缓解存在（UI 短语、enterprise L2 forceConfirm、shell allowlist 可选），但诊断原意的 companion 硬门 / 绑定一致性 / 批准后不改写 / 结构上弱于完整 shell 策略 **仍成立**。
+@@ -97,11 +97,14 @@ L2/MCP 确认常不绑 `originWs`，多 peer 下其他 loopback WS 可响应确
+ 
+ ### 结论
+ 
+-**OPEN**。批准语义应对 **用户确认的那份 `code` 字节** 执行；injection 过滤应在 **确认预览之前** 完成，或批准路径跳过改写（仅 advisory 标注）。  
+-**目标形态（择一）**：
++**FIXED（Option A，2026-07-30）**。extension `resolveEvaluateExecution` + `browser-bridge.evaluate`：
+ 
+-- **A（推荐）**：extension 在 `security_token` 已验证路径上 **原样** `safeEvaluate(tabId, params.code)`；sanitizer 仅用于无 token 的防御或预览。  
+-- **B**：companion 在确认前 sanitizer 一次，token 绑定 **净化后** 码，extension 禁止二次净化。
++- `security_token` 非空 → **原样** `safeEvaluate(tabId, String(params.code))`；`detectDangerousApis` 仅 advisory；成功 payload **不**带 `threats_removed`。  
++- token 缺失/空串 → `success: false`，**绝不**裸跑。  
++- companion token 绑定仍为原始 `code`（`bindingPayloadFor` / `issueTokenFor`）— **未改** companion。  
++- `get_page_text` / `PageSanitizer.sanitizeText` 页面路径不变。
++
++锚点：`chrome-extension/src/background/evaluate-code-policy.ts`、`browser-bridge.ts` evaluate；测：`tests/evaluate-code-integrity.test.ts`。
+ 
+ ### 测试建议
+ 
