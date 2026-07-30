@@ -1,0 +1,293 @@
+# Dual external review context
+batch: P1-2
+base: HEAD
+time: 20260730-100117
+
+fd2d4a1
+
+ M companion/src/server.ts
+ M companion/tests/integration/mcp-capability-gate.test.ts
+ M companion/tests/integration/security-gates.test.ts
+ M companion/tests/security-confirmation-origin.test.ts
+ M docs/audit/p1-security-open-items-2026-07-29.md
+?? .grok/workflows/p1-security-batch-fix.rhai
+?? docs/audit/reviews/P1-2-claude-20260730-095553.md
+?? docs/audit/reviews/P1-2-diff-20260730-095553.patch
+?? docs/audit/reviews/P1-2-diff-20260730-100117.patch
+?? docs/audit/reviews/P1-2-pi-20260730-095553.md
+?? scratch/_decode_git_obj.mjs
+
+## Diff (git diff + staged)
+ companion/src/server.ts                            |  7 ++
+ .../tests/integration/mcp-capability-gate.test.ts  | 23 +++++++
+ companion/tests/integration/security-gates.test.ts | 66 +++++++++++++++++++
+ .../tests/security-confirmation-origin.test.ts     | 75 ++++++++++++++++++++++
+ docs/audit/p1-security-open-items-2026-07-29.md    | 14 ++--
+ 5 files changed, 178 insertions(+), 7 deletions(-)
+
+diff --git a/companion/src/server.ts b/companion/src/server.ts
+index c224026..fe04619 100644
+--- a/companion/src/server.ts
++++ b/companion/src/server.ts
+@@ -1825,6 +1825,9 @@ export function createToolExecutor(ws: WebSocket) {
+             code: `navigate(${rawUrl})`,
+             relevantDomains: [host],
+           },
++          // Trust multi-peer (P1-2): bind URL L2 to the requesting socket so
++          // another loopback Side Panel cannot cross-approve navigate.
++          { originWs: ws },
+         )
+         if (!decision.approved) {
+           const reason = decision.reason === "approved" ? "unavailable" : decision.reason
+@@ -3927,6 +3930,8 @@ async function executeMcpTool(
+         riskLevel: "medium",
+         ...(forceMcpConfirm ? { criticalApis: mcpCaps, riskLevel: "high" as const, autoConfirmEligible: false } : {}),
+       },
++      // Trust multi-peer (P1-2): MCP tool confirm bound to requesting socket.
++      { originWs: ws },
+     )
+     if (!decision.approved) {
+       const reason = decision.reason === "approved" ? "unavailable" : decision.reason
+@@ -4107,6 +4112,8 @@ async function executeMcpMetaTool(
+         riskLevel: forceMetaConfirm ? "high" : "medium",
+         ...(forceMetaConfirm ? { criticalApis: [metaCap], autoConfirmEligible: false } : {}),
+       },
++      // Trust multi-peer (P1-2): MCP meta confirm bound to requesting socket.
++      { originWs: ws },
+     )
+     if (!decision.approved) {
+       const reason = decision.reason === "approved" ? "unavailable" : decision.reason
+diff --git a/companion/tests/integration/mcp-capability-gate.test.ts b/companion/tests/integration/mcp-capability-gate.test.ts
+index 20895fb..26ed181 100644
+--- a/companion/tests/integration/mcp-capability-gate.test.ts
++++ b/companion/tests/integration/mcp-capability-gate.test.ts
+@@ -420,6 +420,29 @@ test("manual trust + non-critical → still confirms (manual always prompts)", a
+   assert.equal((await rp).success, true)
+ })
+ 
++// P1-2: MCP tool confirm must bind originWs. Existing suite uses privileged
++// respond() (bypasses origin) — this case uses respondFrom(rogue) then
++// respondFrom(serverSideWs) so missing originWs at the call site would FAIL.
++test("P1-2: MCP manual confirm — respondFrom(rogue) origin_mismatch then origin approve", async () => {
++  const ns = await injectServer("fs", "manual", [{ name: "read_file", inputSchema: { type: "object", properties: {} } }])
++  const executeTool = createToolExecutor(serverSideWs)
++  const confp = expectClientMessage("security.confirmation.request")
++  const rp = executeTool("tc_p12_mcp_origin", ns("read_file"), { path: "/tmp/origin-bind" })
++  const conf = await confp
++  const cid = String(conf.confirmation_id)
++
++  const rogueWs = { __mockWsLabel: "mcp-rogue-peer" } as unknown as WebSocket
++  assert.equal(
++    securityConfirmations.respondFrom(cid, true, rogueWs).outcome,
++    "origin_mismatch",
++    "non-origin peer must not approve MCP tool confirm",
++  )
++
++  // Origin socket (createToolExecutor's ws) approves via respondFrom — not privileged respond().
++  assert.equal(securityConfirmations.respondFrom(cid, true, serverSideWs).outcome, "resolved")
++  assert.equal((await rp).success, true)
++})
++
+ test("god-mode ON + critical MCP → STILL confirms (gate is god-mode-unaware)", async () => {
+   saveConfig({ security: { ...getConfig().security, allow_all_schemes: true, auto_approve_dangerous: true } })
+   const ns = await injectServer("fs", "trusted", [{ name: "write_file", inputSchema: { type: "object", properties: {} } }])
+diff --git a/companion/tests/integration/security-gates.test.ts b/companion/tests/integration/security-gates.test.ts
+index e4e135c..f52702e 100644
+--- a/companion/tests/integration/security-gates.test.ts
++++ b/companion/tests/integration/security-gates.test.ts
+@@ -310,6 +310,72 @@ test("item 12: navigate to untrusted domain triggers confirmation", async () =>
+   assert.match(result.error!, /denied|unavailable|timeout/)
+ })
+ 
++// P1-2: navigate URL L2 must bind originWs to the requesting socket.
++// Without { originWs: ws } at the call site, respondFrom(rogue) would approve.
++// Existing tests use privileged respond() which bypasses origin — this case
++// deliberately uses respondFrom with a distinct sourceWs.
++test("P1-2: navigate untrusted — respondFrom(non-origin) origin_mismatch; origin approve succeeds", async () => {
++  const executeTool = createToolExecutor(serverSideWs)
++  const confirmationPromise = expectClientMessage("security.confirmation.request")
++
++  const resultPromise = executeTool("tc_nav_origin_bind", "navigate", {
++    tabId: 1,
++    url: "https://rogue-peer.example.com/x",
++  })
++
++  const confirmation = await confirmationPromise
++  assert.equal(confirmation.tool_name, "navigate")
++  const cid = String(confirmation.confirmation_id)
++
++  const rogueWs = { __mockWsLabel: "rogue-side-panel" } as unknown as WebSocket
++  const rogue = securityConfirmations.respondFrom(cid, true, rogueWs)
++  assert.equal(rogue.outcome, "origin_mismatch", "non-origin peer must not approve navigate L2")
++
++  // Pending still open — origin socket (serverSideWs used by createToolExecutor) may approve.
++  const origin = securityConfirmations.respondFrom(cid, true, serverSideWs)
++  assert.equal(origin.outcome, "resolved")
++
++  // Approved navigate proceeds: extension receives tool.execute; reply with success.
++  const executeMsg = await expectClientMessage("tool.execute")
++  assert.equal(executeMsg.tool_name, "navigate")
++  clientSideWs.send(JSON.stringify({
++    type: "tool.result",
++    tool_call_id: "tc_nav_origin_bind",
++    result: { success: true },
++  }))
++
++  const result = await resultPromise
++  assert.equal(result.success, true, "origin-approved navigate must succeed")
++})
++
++test("P1-2: navigate untrusted — handleSecurityConfirmationResponse from non-origin does not approve", async () => {
++  const executeTool = createToolExecutor(serverSideWs)
++  const confirmationPromise = expectClientMessage("security.confirmation.request")
++
++  const resultPromise = executeTool("tc_nav_hscr_mismatch", "navigate", {
++    tabId: 1,
++    url: "https://other-panel.example.com/y",
++  })
++
++  const confirmation = await confirmationPromise
++  const cid = String(confirmation.confirmation_id)
++  const rogueWs = { __mockWsLabel: "hscr-rogue" } as unknown as WebSocket
++
++  // Production path: inbound security.confirmation.response is routed with the
++  // responding socket. A different peer must leave the confirmation pending.
++  await handleSecurityConfirmationResponse(rogueWs, {
++    type: "security.confirmation.response",
++    confirmation_id: cid,
++    approved: true,
++  })
++
++  // Still pending — deny from the true origin to finish cleanly.
++  const denied = securityConfirmations.respondFrom(cid, false, serverSideWs)
++  assert.equal(denied.outcome, "resolved")
++  const result = await resultPromise
++  assert.equal(result.success, false)
++})
++
+ test("item 12: navigate to chrome:// scheme is blocked outright (no confirmation)", async () => {
+   const executeTool = createToolExecutor(serverSideWs)
+   const result = await executeTool("tc_nav_chrome", "navigate", {
+diff --git a/companion/tests/security-confirmation-origin.test.ts b/companion/tests/security-confirmation-origin.test.ts
+index d7dfce2..cc18ee9 100644
+--- a/companion/tests/security-confirmation-origin.test.ts
++++ b/companion/tests/security-confirmation-origin.test.ts
+@@ -161,6 +161,81 @@ test("[C-SRV-1] rejectAll('disconnect') with no ws filter rejects everything (ba
+   assert.equal(d2.reason, "disconnect")
+ })
+ 
++// --- P1-2: navigate + MCP-style toolNames also origin-bind --------------------
++// Manager already enforces origin on any request with originWs; these cases
++// lock the toolName surface that server.ts now binds (navigate / MCP tool /
++// MCP meta). Without originWs at the call site, rogue respondFrom would resolve.
++
++test("[P1-2] navigate originWs: rogue respondFrom → origin_mismatch; origin resolves; privileged respond() still works", async () => {
++  const sent: any[] = []
++  const manager = new SecurityConfirmationManager(60_000)
++  const originWs = mockWs("nav-origin")
++  const rogueWs = mockWs("nav-rogue")
++
++  const pending = manager.request(
++    (msg) => sent.push(msg),
++    {
++      toolName: "navigate",
++      dangerousApis: [],
++      code: "navigate(https://evil.example.com/)",
++      relevantDomains: ["evil.example.com"],
++    },
++    { originWs },
++  )
++  const confirmationId = sent[0].confirmation_id
++  assert.equal(sent[0].tool_name, "navigate")
++
++  assert.equal(
++    manager.respondFrom(confirmationId, true, rogueWs).outcome,
++    "origin_mismatch",
++    "rogue peer must not approve navigate L2",
++  )
++  assert.equal(sent.some((m) => m.type === "security.confirmation.resolved"), false)
++
++  assert.equal(manager.respondFrom(confirmationId, true, originWs).outcome, "resolved")
++  const decision = await pending
++  assert.equal(decision.approved, true)
++  assert.equal(decision.reason, "approved")
++})
++
++test("[P1-2] mcp-style tool originWs: rogue mismatch then origin approve; privileged respond() bypass still intact", async () => {
++  const sent: any[] = []
++  const manager = new SecurityConfirmationManager(60_000)
++  const originWs = mockWs("mcp-origin")
++  const rogueWs = mockWs("mcp-rogue")
++
++  // MCP tools are named "mcp__<server>__<tool>" at the executor boundary.
++  const pending = manager.request(
++    (msg) => sent.push(msg),
++    {
++      toolName: "mcp__fs__write_file",
++      dangerousApis: ["file-write"],
++      code: '{"path":"/tmp/x"}',
++      riskLevel: "high",
++      criticalApis: ["file-write"],
++      autoConfirmEligible: false,
++    },
++    { originWs },
++  )
++  const confirmationId = sent[0].confirmation_id
++
++  assert.equal(manager.respondFrom(confirmationId, true, rogueWs).outcome, "origin_mismatch")
++  assert.equal(manager.respondFrom(confirmationId, true, originWs).outcome, "resolved")
++  assert.equal((await pending).approved, true)
++
++  // Privileged tray path: request another MCP-style confirm and resolve via
++  // respond() without a source ws (bypasses origin check).
++  const sent2: any[] = []
++  const pending2 = manager.request(
++    (msg) => sent2.push(msg),
++    { toolName: "mcp_read_resource", dangerousApis: ["resource-read"], code: "{}" },
++    { originWs: mockWs("mcp-meta-origin") },
++  )
++  const id2 = sent2[0].confirmation_id
++  assert.equal(manager.respond(id2, true), true, "privileged respond() must still resolve origin-bound MCP meta")
++  assert.equal((await pending2).approved, true)
++})
++
+ test("[backward compat] request() without originWs still works; any socket may respond", async () => {
+   const manager = new SecurityConfirmationManager(60_000)
+   const ws = mockWs("bc-no-origin")
+diff --git a/docs/audit/p1-security-open-items-2026-07-29.md b/docs/audit/p1-security-open-items-2026-07-29.md
+index bf5a8da..791ea9a 100644
+--- a/docs/audit/p1-security-open-items-2026-07-29.md
++++ b/docs/audit/p1-security-open-items-2026-07-29.md
+@@ -13,7 +13,7 @@
+ | ID | 标题 | 状态 | 严重度（诊断） | 轴 |
+ |----|------|------|----------------|-----|
+ | **P1-1** | god-mode / 危险 flag companion step-up | **OPEN** | High | Trust × Surface |
+-| **P1-2** | MCP（及部分 L2）确认统一 `originWs` | **OPEN**（部分路径已绑） | Medium | Trust · multi-peer |
++| **P1-2** | MCP（及部分 L2）确认统一 `originWs` | **FIXED** | Medium | Trust · multi-peer |
+ | **P1-3** | evaluate 批准后代码完整性（勿再改写） | **OPEN** | Medium | Trust · L1 完整性 |
+ | **P1-4** | shell_exec 策略收紧（`shell:true` + 前缀） | **OPEN**（有缓解） | Medium | Surface L2 · enterprise |
+ 
+@@ -67,17 +67,17 @@ L2/MCP 确认常不绑 `originWs`，多 peer 下其他 loopback WS 可响应确
+ | host_computer / Win nonce L2 | **有**（条件绑） | `server.ts` ~1427–1433 |
+ | host 写路径 / biometric 等 | **有** | ~1999–2009、~5196–5204 |
+ | tray 部分 | privileged / 旁路 origin 有文档 | ~1469、`swift-tray-bridge` 注释 |
+-| **MCP tool confirm** | **无** | `server.ts` ~3905–3918 `request(...)` 无第三参 |
+-| **MCP meta confirm** | **无** | ~4089–4098 |
+-| **navigate URL L2** | **无** | ~1805–1816 |
+-| **通用 L2 门（evaluate 等）** | 仅 nonce / host_computer 时绑 | ~1433 |
++| **MCP tool confirm** | **有** `{ originWs: ws }` | `server.ts` `executeMcpTool` request 第三参 |
++| **MCP meta confirm** | **有** `{ originWs: ws }` | `server.ts` `executeMcpMetaTool` request 第三参 |
++| **navigate URL L2** | **有** `{ originWs: ws }` | `server.ts` URL gate ~navigate request |
++| **通用 L2 门（evaluate 等）** | 仅 nonce / host_computer 时绑 | ~1433（**未**在本批改写） |
+ 
+ `SecurityConfirmationManager` 支持 origin 绑定与拒绝错 peer：`security-confirmation.ts` ~388–411、~510–533。
+ 
+ ### 结论
+ 
+-**OPEN（部分）**。Computer / 部分 host 已 origin-bound；**MCP 与 navigate URL 确认仍为广播式**。  
+-**目标形态**：凡 `securityConfirmations.request` 且存在请求方 `ws`，默认 `{ originWs: ws }`；tray 应答走已有 privileged path；补双客户端回归测。
++**FIXED**（2026-07-30 P1-2）。MCP tool / MCP meta / navigate URL L2 在存在请求方 `ws` 时绑定 `originWs`；tray 仍走 privileged `respond()`；双 peer 回归：`security-confirmation-origin.test.ts`、`security-gates.test.ts`、`mcp-capability-gate.test.ts`。  
++evaluate/shell 条件绑与 god-mode 不在本批范围。
+ 
+ ---
+ 

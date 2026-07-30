@@ -1882,6 +1882,9 @@ export function createToolExecutor(ws: WebSocket) {
             code: `navigate(${rawUrl})`,
             relevantDomains: [host],
           },
+          // Trust multi-peer (P1-2): bind URL L2 to the requesting socket so
+          // another loopback Side Panel cannot cross-approve navigate.
+          { originWs: ws },
         )
         if (!decision.approved) {
           const reason = decision.reason === "approved" ? "unavailable" : decision.reason
@@ -3985,6 +3988,8 @@ async function executeMcpTool(
         riskLevel: "medium",
         ...(forceMcpConfirm ? { criticalApis: mcpCaps, riskLevel: "high" as const, autoConfirmEligible: false } : {}),
       },
+      // Trust multi-peer (P1-2): MCP tool confirm bound to requesting socket.
+      { originWs: ws },
     )
     if (!decision.approved) {
       const reason = decision.reason === "approved" ? "unavailable" : decision.reason
@@ -4165,6 +4170,8 @@ async function executeMcpMetaTool(
         riskLevel: forceMetaConfirm ? "high" : "medium",
         ...(forceMetaConfirm ? { criticalApis: [metaCap], autoConfirmEligible: false } : {}),
       },
+      // Trust multi-peer (P1-2): MCP meta confirm bound to requesting socket.
+      { originWs: ws },
     )
     if (!decision.approved) {
       const reason = decision.reason === "approved" ? "unavailable" : decision.reason
