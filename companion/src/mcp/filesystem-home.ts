@@ -74,10 +74,10 @@ export function ensureFilesystemAllowlist(
   const hasRoots = Array.isArray(cfg.roots) && cfg.roots.length > 0
 
   if (hasDir || hasRoots) {
-    // Still ensure cwd defaults to home when missing (harmless for already-set paths)
-    if (!cfg.cwd) {
-      return { ...cfg, cwd: home }
-    }
+    // Do NOT inject cwd-only here: sanitize runs on every applyConfig, and a
+    // synthetic cwd change makes requiresRestart() true → stop/start even when
+    // the user only flipped trust_level (CI hung on real spawn after that).
+    // allow-dirs/roots already define the sandbox; cwd is just the npx process dir.
     return cfg
   }
 
