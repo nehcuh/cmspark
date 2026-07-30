@@ -14,10 +14,10 @@
 |----|------|------|----------------|-----|
 | **P1-1** | god-mode / 危险 flag companion step-up | **FIXED** | High | Trust × Surface |
 | **P1-2** | MCP（及部分 L2）确认统一 `originWs` | **FIXED** | Medium | Trust · multi-peer |
-| **P1-3** | evaluate 批准后代码完整性（勿再改写） | **OPEN** | Medium | Trust · L1 完整性 |
+| **P1-3** | evaluate 批准后代码完整性（勿再改写） | **FIXED** (2026-07-30, Option A) | Medium | Trust · L1 完整性 |
 | **P1-4** | shell_exec 策略收紧（`shell:true` + 前缀） | **OPEN**（有缓解） | Medium | Surface L2 · enterprise |
 
-P1-1 / P1-2 **已 FIXED**。P1-3/4 仍 **未闭环**（并行 PR）。缓解存在；批准后不改写 / shell 结构 **仍成立**。
+P1-1 / P1-2 / P1-3 **已 FIXED**。P1-4 仍 **未闭环**（#88）。P1b shell argv 为残余。
 
 ---
 
@@ -92,11 +92,14 @@ evaluate/shell 条件绑与 god-mode 不在本批范围。
 
 ### 结论
 
-**OPEN**。批准语义应对 **用户确认的那份 `code` 字节** 执行；injection 过滤应在 **确认预览之前** 完成，或批准路径跳过改写（仅 advisory 标注）。  
-**目标形态（择一）**：
+**FIXED（Option A，2026-07-30）**。extension `resolveEvaluateExecution` + `browser-bridge.evaluate`：
 
-- **A（推荐）**：extension 在 `security_token` 已验证路径上 **原样** `safeEvaluate(tabId, params.code)`；sanitizer 仅用于无 token 的防御或预览。  
-- **B**：companion 在确认前 sanitizer 一次，token 绑定 **净化后** 码，extension 禁止二次净化。
+- `security_token` 非空 → **原样** `safeEvaluate(tabId, String(params.code))`；`detectDangerousApis` 仅 advisory；成功 payload **不**带 `threats_removed`。  
+- token 缺失/空串 → `success: false`，**绝不**裸跑。  
+- companion token 绑定仍为原始 `code`（`bindingPayloadFor` / `issueTokenFor`）— **未改** companion。  
+- `get_page_text` / `PageSanitizer.sanitizeText` 页面路径不变。
+
+锚点：`chrome-extension/src/background/evaluate-code-policy.ts`、`browser-bridge.ts` evaluate；测：`tests/evaluate-code-integrity.test.ts`。
 
 ### 测试建议
 

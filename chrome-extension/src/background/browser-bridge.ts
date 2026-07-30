@@ -2,17 +2,18 @@
 
 import { PageSanitizer, pageSanitizer } from "./page-sanitizer"
 import { fetchImageAsBase64 } from "./image-extract-utils"
-import { detectDangerousApis } from "./dangerous-apis"
 import { selectorJsLiteral } from "./selector-js-literal"
 import { TabQueue, coerceTabId } from "./tab-queue"
 import { runBrowserDownload } from "./browser-download-handler"
 import { runWithDownloadBusyBeforeQueue } from "./download-busy-entry"
+import { resolveEvaluateExecution } from "./evaluate-code-policy"
 
 // Re-export for callers / tests that import from browser-bridge.
 export { selectorJsLiteral } from "./selector-js-literal"
 export { TabQueue, coerceTabId } from "./tab-queue"
 export { buildFindByTextExpression } from "./find-element-by-text"
 export { runWithDownloadBusyBeforeQueue, isBrowserDownloadToolName } from "./download-busy-entry"
+export { resolveEvaluateExecution } from "./evaluate-code-policy"
 
 interface ToolResult {
   success: boolean
@@ -1087,9 +1088,14 @@ export class BrowserBridge {
     const tabId = this.getTabId(params)
     if (!params.code) throw new Error("code is required")
 
-    // Sanitize code before dangerous API detection
-    const sanitizedCodeResult = this.sanitizer.sanitizeText(params.code)
-    const codeToExecute = sanitizedCodeResult.sanitized
+    // P1-3: approved evaluate must execute the code bound by security_token /
+    // shown at L2 — never post-approval sanitizeText rewrite (Option A).
+    // Companion issues token on original code; unapproved path never bare-runs.
+    const decision = resolveEvaluateExecution(params)
+    // Use `=== false` so TS narrows EvaluateExecutionDecision union.
+    if (decision.allowed === false) {
+      return { success: false, error: decision.error }
+    }
 
     // ADVISORY ONLY (audit H9): detectDangerousApis annotates the result with
     // statically-matchable risky tokens. It does NOT gate execution — the
@@ -1098,7 +1104,8 @@ export class BrowserBridge {
     // `risk_pattern_matches` (not `has_dangerous_apis`) so an empty result is
     // not mistaken for a safety verdict: regex cannot resolve runtime dispatch
     // like window["ev"+"al"](...), so absence of matches ≠ safe.
-    const matches = detectDangerousApis(codeToExecute)
+    const matches = decision.risk_pattern_matches
+    const codeToExecute = decision.code
 
     const result = await this.safeEvaluate(tabId, codeToExecute)
 
@@ -1108,7 +1115,7 @@ export class BrowserBridge {
         result: result.result?.value,
         type: result.result?.type,
         risk_pattern_matches: matches.length > 0 ? matches : undefined,
-        threats_removed: sanitizedCodeResult.threatsRemoved.length > 0 ? sanitizedCodeResult.threatsRemoved : undefined,
+        // P1-3: no threats_removed on approved evaluate — source was not mutated.
         exception: result.exceptionDetails ? {
           text: result.exceptionDetails.text,
           line: result.exceptionDetails.lineNumber,

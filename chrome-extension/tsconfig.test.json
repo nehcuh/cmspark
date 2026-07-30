@@ -24,6 +24,7 @@
     "src/background/page-sanitizer.ts",
     "src/background/image-extract-utils.ts",
     "src/background/dangerous-apis.ts",
+    "src/background/evaluate-code-policy.ts",
     "src/background/selector-js-literal.ts",
     "src/background/security-confirmation-payload.ts",
     "src/background/tab-queue.ts",
