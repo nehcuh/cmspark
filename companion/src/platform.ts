@@ -294,3 +294,14 @@ export function getServiceConfigPath(): string {
       return ""
   }
 }
+
+// ---------------------------------------------------------------------------
+// P1.0 browser_download — re-export path sandbox helpers (plan §1.3)
+// ---------------------------------------------------------------------------
+export {
+  getUserDownloadsDir,
+  isWithinRoot,
+  assertDownloadPathAllowed,
+  prepareBrowserDownloadParams,
+  PathEscapeError,
+} from "./path-sandbox"

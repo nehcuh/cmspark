@@ -60,6 +60,7 @@ export const TAB_LEASE_TOOLS = new Set([
   "drag_and_drop",
   "wait_for",
   "evaluate",
+  "browser_download",
 ])
 
 /** Tools that need L2 and interact with a tab (SOFT_RESERVED path). */

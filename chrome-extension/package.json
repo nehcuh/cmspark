@@ -52,7 +52,8 @@
       "sidePanel",
       "cookies",
       "scripting",
-      "notifications"
+      "notifications",
+      "downloads"
     ]
   }
 }

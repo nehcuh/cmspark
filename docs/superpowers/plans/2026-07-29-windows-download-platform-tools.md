@@ -5,7 +5,7 @@
 | **Title** | Windows browser download UX + platform tool filtering |
 | **Author** | TBD |
 | **Date** | 2026-07-29 |
-| **Status** | **P0 shipped 2026-07-29** (Pi APPROVE_WITH_NITS) · **P1 provisional pending transport spike** |
+| **Status** | **P0 shipped 2026-07-29** (Pi APPROVE_WITH_NITS) · **P1.0 round 3 2026-07-30** (BD-D13 production busy-entry + BD-ALIAS createToolExecutor sandbox tests; unit tests green; G3 manual deferred) |
 | **Related** | ADR-007 · ADR-014 · ADR-015 · ADR-017 · ADR-018 · **ADR-020** · sprint T6.4 · production thread `c7tlnl` |
 | **Repo plan path** | `docs/superpowers/plans/2026-07-29-windows-download-platform-tools.md` |
 | **Revision** | R1 — 2026-07-29 staff design review (all open issues addressed) |
@@ -21,7 +21,7 @@ Windows（及一切非 Darwin）用户在「从网页下载 Skill 到本机 Down
 | Phase | 状态 | 说明 |
 |-------|------|------|
 | **P0** | **Approve for PR-1 now** | schema 过滤 + L2 前 early-reject + CI 测试分叉；与 transport 无关 |
-| **P1** | **Provisional — spike-gated** | 须先完成 §1.0 传输层 spike；默认优先 `chrome.downloads`；text 定位为 P1.0 **必选**（闭合 c7tlnl） |
+| **P1** | **P1.0 round 3 adversarial fixed** (2026-07-30) | Alias→sandbox via createToolExecutor tests; busy-before-TabQueue extracted+unit-tested production entry; G3 manual pending live Chrome |
 | **P2** | Optional polish | 独立 `click({text})` 若已在 P1 以共享 finder 交付，P2 仅 prompt/browse 收尾 |
 
 增量交付：

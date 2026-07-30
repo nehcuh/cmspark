@@ -73,6 +73,23 @@ export const TOOL_ARG_SCHEMAS: Record<string, z.ZodTypeAny> = {
     security_token: z.string().optional(),
   }),
 
+  // --- browser_download (P1.0: click/text → chrome.downloads complete) ---
+  // At least one of selector|text required (refine). downloadPath optional; companion
+  // re-validates with assertDownloadPathAllowed (LLM path never trusted raw).
+  browser_download: z
+    .object({
+      tabId: tabIdSchema,
+      selector: z.string().min(1).optional(),
+      text: z.string().min(1).optional(),
+      exact: z.boolean().optional(),
+      downloadPath: z.string().min(1).optional(),
+      filenameHint: z.string().min(1).optional(),
+      timeoutMs: z.number().int().min(1000).max(120000).optional(),
+    })
+    .refine((v) => !!(v.selector || v.text), {
+      message: "browser_download requires selector and/or text",
+    }),
+
   // --- DevSec / Shell / NetSec (Mission Pack enterprise modules) ---
   workspace_list_dir: z.object({
     path: z.string().optional(),
@@ -232,16 +249,6 @@ const GENERIC_FALLBACK = z.record(z.unknown())
 
 // ---------------------------------------------------------------------------
 // JSON Schema → zod converter (C-MCP-1).
-//
-// Hand-rolled to avoid pulling `ajv` or `json-schema-to-zod`. Only handles
-// the subset MCP servers typically declare:
-//   - type: object (top-level) with properties + required
-//   - primitive property types: string | number | integer | boolean
-//   - arrays (items: { type: ... })
-//   - additionalProperties (boolean only; objects/schemas ignored → passthrough)
-// Anything unrecognized degrades to z.unknown() — fail-open on the unknown
-// field rather than blocking legitimate MCP calls. Required-ness still gates
-// at the object level.
 // ---------------------------------------------------------------------------
 
 function jsonSchemaPrimitiveToZod(node: any): z.ZodTypeAny {
@@ -267,9 +274,6 @@ function jsonSchemaPrimitiveToZod(node: any): z.ZodTypeAny {
     case "null":
       return z.null()
     default:
-      // Unknown / unsupported type (e.g. oneOf/anyOf/$ref). Degrade to unknown
-      // so we don't block legitimate MCP traffic; the caller is responsible for
-      // the actual subprocess call.
       return z.unknown()
   }
 }
@@ -284,8 +288,6 @@ function jsonSchemaObjectToZod(node: any): z.ZodTypeAny {
   const requiredSet = new Set(requiredList)
 
   if (!props || Object.keys(props).length === 0) {
-    // No declared properties — accept any record. Many MCP tools legitimately
-    // have empty schemas (no args).
     return z.record(z.unknown())
   }
 
@@ -295,24 +297,16 @@ function jsonSchemaObjectToZod(node: any): z.ZodTypeAny {
     shape[key] = requiredSet.has(key) ? fieldSchema : fieldSchema.optional()
   }
 
-  // additionalProperties: false → strict; otherwise (true/undefined/object)
-  // passthrough extra keys — MCP servers often accept arbitrary kwargs.
   const additional = node.additionalProperties
   const base = z.object(shape)
   if (additional === false) return base.strict()
   return base.passthrough()
 }
 
-/**
- * Convert an MCP inputSchema (JSON Schema) into a zod schema. Top-level
- * non-object schemas or malformed nodes fall back to GENERIC_FALLBACK.
- */
 function mcpInputSchemaToZod(schema: Record<string, any> | undefined): z.ZodTypeAny {
   if (!schema || typeof schema !== "object") return GENERIC_FALLBACK
   const t = typeof schema.type === "string" ? schema.type : "object"
   if (t !== "object") {
-    // MCP inputSchema is conventionally an object; anything else is unusual.
-    // Degrade to GENERIC_FALLBACK to avoid blocking.
     return GENERIC_FALLBACK
   }
   return jsonSchemaObjectToZod(schema)
@@ -324,9 +318,6 @@ function schemaForTool(toolName: string): z.ZodTypeAny {
     if (inputSchema) {
       return mcpInputSchemaToZod(inputSchema)
     }
-    // Schema not cached yet — server may not have sent tools/list, or the
-    // tool was excluded by audit item 9's injection scan. Fall back but make
-    // the gap observable so we can detect the silent-acceptance regression.
     logger.warn("tool_schemas.mcp_schema_missing", {
       tool_name: toolName,
       fallback: "z.record(z.unknown())",
@@ -361,8 +352,6 @@ export function tryParseToolArgs(
   if (result.success) {
     return { ok: true, args: result.data as Record<string, any> }
   }
-  // Flatten zod's nested issue tree into a single readable string. The LLM
-  // will see this in the tool_result error and can self-correct.
   const formatted = result.error.issues
     .map((i: any) => {
       const path = i.path.length > 0 ? i.path.join(".") : "(root)"

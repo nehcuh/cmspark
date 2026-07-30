@@ -62,6 +62,7 @@ import {
   OSASCRIPT_MACOS_ONLY_ERROR,
   shouldL2GateOsascript,
 } from "./bridge/tool-definitions"
+import { prepareBrowserDownloadParams } from "./path-sandbox"
 import {
   getOrCreateSharedSecret,
   consumeSecretFreshlyGenerated,
@@ -77,6 +78,17 @@ const MAX_WS_MESSAGE_SIZE = 10 * 1024 * 1024 // 10MB
 const PORT = 23401
 // Exported for integration tests (audit item 6). Production reads the const directly.
 export const TOOL_EXECUTION_TIMEOUT_MS = 15000
+/** browser_download may wait up to 120s; companion WS timeout must not undercut extension. */
+export const BROWSER_DOWNLOAD_MAX_TIMEOUT_MS = 120_000
+export function resolveToolDispatchTimeoutMs(toolName: string, params?: any): number {
+  if (toolName === "browser_download") {
+    const t = typeof params?.timeoutMs === "number" && Number.isFinite(params.timeoutMs)
+      ? Math.floor(params.timeoutMs)
+      : 60_000
+    return Math.min(BROWSER_DOWNLOAD_MAX_TIMEOUT_MS + 5_000, Math.max(TOOL_EXECUTION_TIMEOUT_MS, t + 5_000))
+  }
+  return TOOL_EXECUTION_TIMEOUT_MS
+}
 
 /**
  * P0-2 (audit C1): only chrome-extension:// origins may open a WebSocket to the companion.
@@ -466,6 +478,12 @@ export function createToolExecutor(ws: WebSocket) {
   mcpSessionByWs.set(ws, sessionId)
   return async (toolCallId: string, toolName: string, params: any, signal?: AbortSignal): Promise<{ success: boolean; data?: any; error?: string }> => {
     let finalParams = params || {}
+    // P1.0 D18 / BD-ALIAS: normalize legacy "download" → browser_download so path sandbox,
+    // worker deny, TAB_LEASE, and dispatch timeout all apply. Never forward unsandboxed
+    // downloadPath via the extension alias path.
+    if (toolName === "download") {
+      toolName = "browser_download"
+    }
     // Phase 1 W8 bugfix: STRIP any LLM-provided security_token before L2 gate.
     // The token field is in zod schema (kept for forward-compat / audit), but
     // LLMs sometimes hallucinate or replay stale tokens, skipping the L2 gate
@@ -661,6 +679,45 @@ export function createToolExecutor(ws: WebSocket) {
         logToolFinish(toolCallId, toolName, startedAt, result)
         return result
       }
+    }
+
+    // P1.0 browser_download: path sandbox + worker path policy BEFORE extension dispatch.
+    // auto_approve_dangerous must NOT relax this (roots stay Downloads-only). No L2 for default Downloads.
+    if (toolName === "browser_download") {
+      let isWorker = false
+      if (actingThreadId && threadManager) {
+        try {
+          const th = threadManager.get(actingThreadId) as any
+          isWorker = th?.agent_role === "worker"
+        } catch { /* ignore */ }
+      }
+      const prepared = prepareBrowserDownloadParams({ params: finalParams, isWorker })
+      if (!prepared.ok) {
+        const result = {
+          success: false,
+          error: prepared.error,
+          data: prepared.data || { error_code: prepared.error_code },
+        }
+        logger.warn(
+          prepared.error_code === "PATH_ESCAPE"
+            ? "browser_download.path_escape"
+            : prepared.error_code === "WORKER_PATH_DENIED"
+              ? "browser_download.worker_path_denied"
+              : "browser_download.rejected",
+          { tool_call_id: toolCallId, error_code: prepared.error_code, is_worker: isWorker },
+        )
+        logToolFinish(toolCallId, toolName, startedAt, result)
+        return result
+      }
+      finalParams = prepared.params
+      logger.info("browser_download.start", {
+        tool_call_id: toolCallId,
+        tabId: finalParams.tabId,
+        path_root: prepared.downloadPath,
+        has_text: !!finalParams.text,
+        has_selector: !!finalParams.selector,
+        is_worker: isWorker,
+      })
     }
 
     // L2 confirmation gate (evaluate / osascript_eval / host_read). Each of
@@ -2161,12 +2218,13 @@ export function createToolExecutor(ws: WebSocket) {
         logToolFinish(toolCallId, toolName, startedAt, result)
         resolve(result)
       }
+      const dispatchTimeoutMs = resolveToolDispatchTimeoutMs(toolName, finalParams)
       const timer = setTimeout(() => {
         pendingToolCalls.delete(toolCallId)
-        const result = { success: false, error: `Tool execution timeout (${TOOL_EXECUTION_TIMEOUT_MS}ms): ${toolName}` }
-        logger.warn("tool.timeout", { tool_call_id: toolCallId, tool_name: toolName, timeout_ms: TOOL_EXECUTION_TIMEOUT_MS })
+        const result = { success: false, error: `Tool execution timeout (${dispatchTimeoutMs}ms): ${toolName}` }
+        logger.warn("tool.timeout", { tool_call_id: toolCallId, tool_name: toolName, timeout_ms: dispatchTimeoutMs })
         finishAndResolve(result)
-      }, TOOL_EXECUTION_TIMEOUT_MS)
+      }, dispatchTimeoutMs)
 
       pendingToolCalls.set(toolCallId, {
         resolve: finishAndResolve,

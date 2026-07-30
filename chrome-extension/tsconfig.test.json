@@ -27,6 +27,11 @@
     "src/background/selector-js-literal.ts",
     "src/background/security-confirmation-payload.ts",
     "src/background/tab-queue.ts",
+    "src/background/find-element-by-text.ts",
+    "src/background/download-waiter.ts",
+    "src/background/browser-download-handler.ts",
+    "src/background/download-busy-entry.ts",
+
     "src/notebooklm/extractor.ts",
     "src/notebooklm/markdown-builder.ts",
     "src/notebooklm/types.ts",
