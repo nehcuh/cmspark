@@ -201,8 +201,13 @@ test("high-risk execution is blocked before osascript_eval can run", async () =>
 
   assert.equal(response.type, "tool.result")
   assert.equal(response.success, false)
-  assert.match(response.error, /Security Block/)
-  assert.deepEqual(response.data.dangerous_apis_found, ["document.cookie"])
+  // non-darwin: platform early-reject before high-risk scan (P0 osascript filter)
+  if (process.platform !== "darwin") {
+    assert.match(response.error, /macos-only/i)
+  } else {
+    assert.match(response.error, /Security Block/)
+    assert.deepEqual(response.data.dangerous_apis_found, ["document.cookie"])
+  }
 })
 
 test("security block errors are classified as security stops", () => {
