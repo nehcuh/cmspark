@@ -1,10 +1,11 @@
-// Settings slideout panel for LLM configuration
+// Settings slideout panel for LLM configuration + NetSec (migrated from 场景 panel)
 
 import { useState, useEffect } from "react"
 import { useAgentStore } from "../store/agentStore"
 import { Modal } from "./ui/Modal"
 import { tokens } from "../ui/tokens"
 import { UserEnvSection } from "./UserEnvSection"
+import { NetSecSettingsSection } from "./NetSecSettingsSection"
 // WP5-I4 实验功能段:组件纯渲染,文案/判定全部来自 logic 纯函数(镜像
 // companion 单一真源);发送固定 source:"settings"(companion 双层围栏)。
 import {
@@ -426,8 +427,13 @@ export function SettingsSlideout() {
             </ul>
             <div style={{ ...styles.helpText, marginTop: 8 }}>
               安装技能请用 <strong>Skills → 导入 ZIP / 文件夹</strong>，不要点「应用安全审查 → 用于本对话」。
+              网络扫描目标与本对话授权见下方「网络扫描」。
             </div>
           </div>
+
+          <div style={styles.divider} />
+
+          <NetSecSettingsSection />
 
           <div style={styles.divider} />
 
