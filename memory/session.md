@@ -2,6 +2,16 @@
 
 ## Current Session
 
+### S26 (2026-07-31 ~17:30) [场景可配 + 侧栏 UX + 技能扫描 + DMG]
+- **合 main**：#93 场景 P0 UX；#94 用户场景（system prompt / skill_refs / MCP + AI suggest）；#95 知识批量删除 + 技能模式勾选语义 + StatusRail 顶栏 polish
+- **用户场景 Composition**：`origin:user` pack；apply 默认 `tools.unchanged` + manual skills/MCP；✨ AI 推荐 allowlist-only；另存为我的；保存并用于本对话
+- **侧栏**：知识筛选/批量删除；auto/all 禁勾选 + 说明；顶栏玻璃 brand + 连接 pill
+- **技能扫描优化** PR #96（OPEN，CI 绿）：disk fingerprint `ensureFresh` + Skills/Knowledge **↻ 刷新** + 开面板 `skill.refresh`
+- **打包**：清 `/Applications/CMspark.app`；`make package-macos` → `dist-package/CMspark-v0.3.0-macOS.dmg`（ORT 超预算未打入 TinyClick）
+- **耗电 FAQ**：#91 log.event 回声环已断；正常 MV3 偶发重连 ≠ 旧 bug
+- **下次**：① **Merge #96**；② 用户重装 DMG + 重载扩展验收场景编辑/技能刷新；③ 可选 fs.watch debounce
+- Recorded: yes — skill fingerprint；log.event 耗电路径
+
 ### S25 (2026-07-31) [UIUX Gemini breath 合 main + 场景 UX PR #93]
 - **UIUX v2 + Gemini breath G1–G4**：**#92 已 squash 合 main** `6a6ed73`；本地重编 `CMspark-v0.3.0-macOS.dmg`，清理 `/Applications/CMspark.app`
 - **用户痛点**：装技能（#r21pj2）误 apply AppSec → `tool_not_allowed` 不可恢复；「任务包」页 NetSec/AppSec 认知混乱；无退出；god-mode 无效误解

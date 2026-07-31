@@ -2,6 +2,19 @@
 
 ## Technical Pitfalls
 
+### 技能扫描：非「仅启动一次」，但 skill.list 曾只读内存（2026-07-31）
+- 现象：用户/Agent 拷文件进 `~/.cmspark-agent/skills` 或外部落盘后，Skills 列表/自动匹配像「没装上」；体感「只有 Companion 启动才扫」
+- 根因：audit item 10 去掉了每次 `skill.list` 的全量 `refresh()`（防 4 目录同步扫盘卡 UI）；API 导入路径会 refresh，**外部写盘不通知**
+- 修法（PR #96 `feat/skill-disk-refresh`）：`computeDiskFingerprint`（path|mtime|size）+ `ensureFresh`/`refreshIfStale` 挂在 list/get/match/resolve/listKnowledge；磁盘变才 full re-parse；UI 打开 Skills → `skill.refresh` + **↻ 刷新**
+- 教训：缓存失效要覆盖 **带外写盘**；别恢复「每次 list 全量 refresh」；force 路径用独立 `skill.refresh`
+
+### log.event 回声环 → 通宵耗电（已修 #91，2026-07-31）
+- 现象：插件 ↔ Companion「频繁连接」、系统异常耗电、日志可达数十 GB
+- 根因：**非**单纯重连风暴，而是 `log.event` echo：Companion echo → Side Panel 关闭导致 sendMessage 失败 → `sidepanel_forward_failed` 再 logToCompanion → 死循环
+- 防线（main 已含）：server **不** echo log.event 给发送方；扩展 **永不** 把 forward failure 回传 Companion（`log-forward-policy.ts`）；入站 token bucket ~10/s（`log-event-gate.ts`）；未配对抑制 reconnect storm；`chrome.alarms` 退避
+- 自查：空闲 CPU 近 0；`~/.cmspark-agent/logs` 无海量 `sidepanel_forward_failed`；扩展与 Companion 须同为 #91 后构建
+- 教训：可观测性路径也要 **anti-echo**；扩展本地 fan-out 日志即可，勿依赖 companion 回推
+
 ### 场景（Mission Pack）白名单 ≠ God-mode / 确认开关（2026-07-31）
 - 现象：用户开了 `auto_approve_dangerous` + `allow_all_schemes`，仍报 `tool_not_allowed:workspace_list_dir — not in thread tool_whitelist`；装技能线程被套 AppSec 后无法 list 本机目录
 - 根因：`thread.tool_whitelist`（Pack apply 收窄）在 `createToolExecutor` **硬门**，先于 L2 确认；god-mode 只跳过确认，**不**打开白名单外工具
