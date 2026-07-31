@@ -1,6 +1,6 @@
 // Knowledge sub-panel: browse global and site knowledge docs
 
-import { useState, useRef, useEffect } from "react"
+import { useState, useRef, useEffect, useMemo } from "react"
 import { useAgentStore } from "../store/agentStore"
 import { tokens } from "../ui/tokens"
 
@@ -11,6 +11,11 @@ export function KnowledgeSubPanel() {
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
   const [currentHostname, setCurrentHostname] = useState<string>("")
   const [status, setStatus] = useState<string>("")
+  /** Filter list when many docs */
+  const [query, setQuery] = useState("")
+  /** Bulk-delete mode: checkboxes select docs to remove (not inject) */
+  const [manageMode, setManageMode] = useState(false)
+  const [selectedForDelete, setSelectedForDelete] = useState<Set<string>>(new Set())
   const menuRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -63,6 +68,50 @@ export function KnowledgeSubPanel() {
       chrome.runtime.sendMessage({ type: "knowledge.delete", name })
     }
     setMenuOpen(null)
+  }
+
+  const exitManageMode = () => {
+    setManageMode(false)
+    setSelectedForDelete(new Set())
+  }
+
+  const toggleDeleteSelect = (name: string) => {
+    setSelectedForDelete((prev) => {
+      const next = new Set(prev)
+      if (next.has(name)) next.delete(name)
+      else next.add(name)
+      return next
+    })
+  }
+
+  const handleBulkDelete = () => {
+    const names = Array.from(selectedForDelete)
+    if (names.length === 0) {
+      showStatus("请先勾选要删除的文档")
+      return
+    }
+    if (
+      !confirm(
+        `确定删除选中的 ${names.length} 篇知识文档？\n（内置文档会跳过）\n此操作不可恢复。`,
+      )
+    ) {
+      return
+    }
+    let skippedBuiltin = 0
+    let queued = 0
+    for (const name of names) {
+      const doc = state.knowledgeDocs.find((d) => d.name === name)
+      if (doc?.builtin) {
+        skippedBuiltin += 1
+        continue
+      }
+      chrome.runtime.sendMessage({ type: "knowledge.delete", name })
+      queued += 1
+    }
+    const parts = [`已请求删除 ${queued} 篇`]
+    if (skippedBuiltin > 0) parts.push(`跳过内置 ${skippedBuiltin}`)
+    showStatus(parts.join(" · "))
+    exitManageMode()
   }
 
   const handleImportFiles = (files: FileList | null) => {
@@ -203,10 +252,31 @@ export function KnowledgeSubPanel() {
     chrome.runtime.sendMessage({ type: "knowledge.import_directory" })
   }
 
+  const filteredDocs = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    if (!q) return state.knowledgeDocs
+    return state.knowledgeDocs.filter((d) => {
+      const bag = [d.name, d.description || "", d.site || ""].join(" ").toLowerCase()
+      return bag.includes(q)
+    })
+  }, [state.knowledgeDocs, query])
+
   // Group knowledge docs by site, with current site first
-  const groupedDocs = groupKnowledgeBySite(state.knowledgeDocs, currentHostname)
+  const groupedDocs = groupKnowledgeBySite(filteredDocs, currentHostname)
 
   const modeLabels: Record<string, string> = { auto: "自动", all: "全选", manual: "按需" }
+  const selectionMode = state.knowledgeSelectionMode || "auto"
+  const isManual = selectionMode === "manual"
+  const deletableFiltered = filteredDocs.filter((d) => !d.builtin)
+  const allFilteredSelected =
+    deletableFiltered.length > 0 && deletableFiltered.every((d) => selectedForDelete.has(d.name))
+
+  const modeHint =
+    selectionMode === "auto"
+      ? "自动：按当前站点匹配知识，列表勾选不生效。"
+      : selectionMode === "all"
+        ? "全选：注入全部知识索引，无需（也无法）单独勾选。"
+        : "按需：仅勾选的知识会参与本对话。"
 
   return (
     <div style={styles.panelContent}>
@@ -217,9 +287,9 @@ export function KnowledgeSubPanel() {
             key={mode}
             style={{
               ...styles.modeBtn,
-              background: state.knowledgeSelectionMode === mode ? tokens.accent : "#fff",
-              color: state.knowledgeSelectionMode === mode ? "#fff" : "#666",
-              borderColor: state.knowledgeSelectionMode === mode ? tokens.accent : "#ddd",
+              background: selectionMode === mode ? tokens.accent : tokens.bgElevated,
+              color: selectionMode === mode ? "#fff" : tokens.textSecondary,
+              borderColor: selectionMode === mode ? tokens.accent : tokens.border,
             }}
             onClick={() => handleModeChange(mode)}
             title={mode === "auto" ? "自动匹配当前站点" : mode === "all" ? "注入所有知识索引" : "仅使用勾选知识"}
@@ -228,6 +298,75 @@ export function KnowledgeSubPanel() {
           </button>
         ))}
       </div>
+      <div style={styles.modeHint}>{modeHint}</div>
+
+      {/* Search + manage */}
+      <div style={styles.searchRow}>
+        <input
+          style={styles.searchInput}
+          type="search"
+          placeholder="筛选知识（名称 / 描述 / 站点）"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          aria-label="筛选知识文档"
+        />
+        <button
+          type="button"
+          style={{
+            ...styles.toolbarBtn,
+            ...(manageMode
+              ? { background: tokens.dangerSoft, borderColor: "rgba(220,38,38,0.35)", color: tokens.danger }
+              : {}),
+          }}
+          onClick={() => (manageMode ? exitManageMode() : setManageMode(true))}
+          title={manageMode ? "退出批量管理" : "批量勾选并删除知识"}
+        >
+          {manageMode ? "完成" : "批量删除"}
+        </button>
+      </div>
+
+      {manageMode && (
+        <div style={styles.bulkBar}>
+          <button
+            type="button"
+            style={styles.toolbarBtn}
+            onClick={() => {
+              if (allFilteredSelected) {
+                setSelectedForDelete((prev) => {
+                  const next = new Set(prev)
+                  for (const d of deletableFiltered) next.delete(d.name)
+                  return next
+                })
+              } else {
+                setSelectedForDelete((prev) => {
+                  const next = new Set(prev)
+                  for (const d of deletableFiltered) next.add(d.name)
+                  return next
+                })
+              }
+            }}
+            disabled={deletableFiltered.length === 0}
+          >
+            {allFilteredSelected ? "取消全选筛选结果" : "全选筛选结果"}
+          </button>
+          <button
+            type="button"
+            style={{
+              ...styles.toolbarBtn,
+              background: selectedForDelete.size ? tokens.dangerSoft : tokens.bgElevated,
+              color: selectedForDelete.size ? tokens.danger : tokens.textMuted,
+              borderColor: selectedForDelete.size ? "rgba(220,38,38,0.35)" : tokens.border,
+            }}
+            disabled={selectedForDelete.size === 0}
+            onClick={handleBulkDelete}
+          >
+            删除选中 ({selectedForDelete.size})
+          </button>
+          <span style={styles.bulkMeta}>
+            显示 {filteredDocs.length}/{state.knowledgeDocs.length}
+          </span>
+        </div>
+      )}
 
       {/* Import toolbar */}
       <div style={styles.toolbar}>
@@ -292,67 +431,113 @@ export function KnowledgeSubPanel() {
       {/* Grouped knowledge list */}
       {groupedDocs.map(([groupName, docs]) => (
         <div key={groupName}>
-          <div style={styles.sectionHeader}>{groupName}</div>
-          {docs.map((doc) => (
-            <div key={doc.name} style={{
-              ...styles.docRow,
-              background: state.activeKnowledgeIds.includes(doc.name) ? "#e8f0fe" : "transparent",
-              opacity: state.knowledgeSelectionMode === "all" ? 0.6 : 1,
-            }}>
-              <input
-                type="checkbox"
-                checked={state.activeKnowledgeIds.includes(doc.name)}
-                disabled={state.knowledgeSelectionMode === "all"}
-                onChange={() => {
-                  const activeKnowledgeIds = state.activeKnowledgeIds.includes(doc.name)
-                    ? state.activeKnowledgeIds.filter((id) => id !== doc.name)
-                    : [...state.activeKnowledgeIds, doc.name]
-                  dispatch({ type: "TOGGLE_KNOWLEDGE", knowledgeId: doc.name })
-                  if (state.activeThreadId) {
-                    chrome.runtime.sendMessage({
-                      type: "thread.update",
-                      threadId: state.activeThreadId,
-                      updates: { active_knowledge_ids: activeKnowledgeIds },
-                    })
-                  }
-                }}
-                style={{ marginRight: 8 }}
-              />
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 12, fontWeight: 500, display: "flex", alignItems: "center", gap: 4 }}>
-                  {doc.name}
-                  {doc.site && <span style={styles.siteBadge}>{doc.site}</span>}
-                </div>
-                <div style={{ fontSize: 11, color: "#666", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {doc.description}
-                </div>
-              </div>
-              {doc.builtin && <span style={styles.badge}>内置</span>}
-              {!doc.builtin && (
-                <div style={{ position: "relative" }} ref={menuOpen === doc.name ? menuRef : undefined}>
-                  <button
-                    style={styles.menuBtn}
-                    onClick={() => setMenuOpen(menuOpen === doc.name ? null : doc.name)}
-                    title="更多操作"
+          <div style={styles.sectionHeader}>
+            <span>{groupName}</span>
+            <span style={styles.sectionCount}>{docs.length}</span>
+          </div>
+          {docs.map((doc) => {
+            const active = state.activeKnowledgeIds.includes(doc.name)
+            const rowBg = manageMode
+              ? selectedForDelete.has(doc.name)
+                ? tokens.dangerSoft
+                : "transparent"
+              : isManual && active
+                ? tokens.bgActive
+                : "transparent"
+            return (
+              <div key={doc.name} style={{ ...styles.docRow, background: rowBg }}>
+                {manageMode ? (
+                  <input
+                    type="checkbox"
+                    checked={selectedForDelete.has(doc.name)}
+                    disabled={!!doc.builtin}
+                    title={doc.builtin ? "内置文档不可删除" : "勾选以批量删除"}
+                    onChange={() => toggleDeleteSelect(doc.name)}
+                    style={{ marginRight: 8, flexShrink: 0 }}
+                  />
+                ) : isManual ? (
+                  <input
+                    type="checkbox"
+                    checked={active}
+                    onChange={() => {
+                      const activeKnowledgeIds = active
+                        ? state.activeKnowledgeIds.filter((id) => id !== doc.name)
+                        : [...state.activeKnowledgeIds, doc.name]
+                      dispatch({ type: "TOGGLE_KNOWLEDGE", knowledgeId: doc.name })
+                      if (state.activeThreadId) {
+                        chrome.runtime.sendMessage({
+                          type: "thread.update",
+                          threadId: state.activeThreadId,
+                          updates: { active_knowledge_ids: activeKnowledgeIds },
+                        })
+                      }
+                    }}
+                    style={{ marginRight: 8, flexShrink: 0 }}
+                    title="勾选后参与本对话"
+                  />
+                ) : (
+                  <span
+                    style={styles.modeGlyph}
+                    title={
+                      selectionMode === "all"
+                        ? "全选模式：全部参与索引"
+                        : "自动模式：由站点匹配决定"
+                    }
+                    aria-hidden
                   >
-                    ···
-                  </button>
-                  {menuOpen === doc.name && (
-                    <div style={styles.menuDropdown}>
-                      <button style={{ ...styles.menuItem, color: tokens.danger }} onClick={() => handleDelete(doc.name)}>
-                        删除
-                      </button>
-                    </div>
-                  )}
+                    {selectionMode === "all" ? "◎" : "◇"}
+                  </span>
+                )}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 12, fontWeight: 500, display: "flex", alignItems: "center", gap: 4 }}>
+                    {doc.name}
+                    {doc.site && <span style={styles.siteBadge}>{doc.site}</span>}
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 11,
+                      color: tokens.textSecondary,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {doc.description}
+                  </div>
                 </div>
-              )}
-            </div>
-          ))}
+                {doc.builtin && <span style={styles.badge}>内置</span>}
+                {!doc.builtin && !manageMode && (
+                  <div style={{ position: "relative" }} ref={menuOpen === doc.name ? menuRef : undefined}>
+                    <button
+                      style={styles.menuBtn}
+                      onClick={() => setMenuOpen(menuOpen === doc.name ? null : doc.name)}
+                      title="更多操作"
+                    >
+                      ···
+                    </button>
+                    {menuOpen === doc.name && (
+                      <div style={styles.menuDropdown}>
+                        <button
+                          style={{ ...styles.menuItem, color: tokens.danger }}
+                          onClick={() => handleDelete(doc.name)}
+                        >
+                          删除
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )
+          })}
         </div>
       ))}
 
       {state.knowledgeDocs.length === 0 && (
         <div style={styles.emptyText}>暂无知识文档</div>
+      )}
+      {state.knowledgeDocs.length > 0 && filteredDocs.length === 0 && (
+        <div style={styles.emptyText}>无匹配「{query}」的知识</div>
       )}
     </div>
   )
@@ -398,32 +583,76 @@ const styles: Record<string, React.CSSProperties> = {
   modeSwitcher: {
     display: "flex",
     gap: 0,
-    marginBottom: 8,
-    borderRadius: 4,
+    marginBottom: 6,
+    borderRadius: tokens.radiusSm,
     overflow: "hidden",
-    border: "1px solid #ddd",
+    border: `1px solid ${tokens.borderStrong}`,
   },
   modeBtn: {
     flex: 1,
     border: "none",
-    borderRight: "1px solid #ddd",
-    padding: "4px 0",
+    borderRight: `1px solid ${tokens.border}`,
+    padding: "5px 0",
     fontSize: 11,
     cursor: "pointer",
-    background: "#fff",
+    background: tokens.bgElevated,
+    fontFamily: tokens.font,
+  },
+  modeHint: {
+    fontSize: 10,
+    color: tokens.textMuted,
+    lineHeight: 1.4,
+    marginBottom: 8,
+  },
+  searchRow: {
+    display: "flex",
+    gap: 6,
+    marginBottom: 6,
+    alignItems: "center",
+  },
+  searchInput: {
+    flex: 1,
+    minWidth: 0,
+    border: `1px solid ${tokens.borderStrong}`,
+    borderRadius: tokens.radiusSm,
+    padding: "5px 8px",
+    fontSize: 11,
+    fontFamily: tokens.font,
+    background: tokens.bgElevated,
+    color: tokens.text,
+    outline: "none",
+  },
+  bulkBar: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: 6,
+    alignItems: "center",
+    marginBottom: 8,
+    padding: "6px 8px",
+    background: tokens.bgMuted,
+    borderRadius: tokens.radiusMd,
+    border: `1px solid ${tokens.border}`,
+  },
+  bulkMeta: {
+    fontSize: 10,
+    color: tokens.textMuted,
+    marginLeft: "auto",
   },
   toolbar: {
     display: "flex",
     gap: 6,
     marginBottom: 8,
+    flexWrap: "wrap",
   },
   toolbarBtn: {
-    border: "1px solid #ddd",
-    borderRadius: 4,
-    background: "#fff",
-    padding: "3px 10px",
+    border: `1px solid ${tokens.borderStrong}`,
+    borderRadius: tokens.radiusSm,
+    background: tokens.bgElevated,
+    padding: "4px 10px",
     fontSize: 11,
     cursor: "pointer",
+    fontFamily: tokens.font,
+    color: tokens.text,
   },
   urlImportRow: {
     display: "flex",
@@ -432,25 +661,36 @@ const styles: Record<string, React.CSSProperties> = {
   },
   urlImportInput: {
     flex: 1,
-    border: "1px solid #ddd",
-    borderRadius: 4,
+    border: `1px solid ${tokens.borderStrong}`,
+    borderRadius: tokens.radiusSm,
     padding: "4px 8px",
     fontSize: 11,
-    fontFamily: "monospace",
+    fontFamily: tokens.fontMono,
     outline: "none",
+    background: tokens.bgElevated,
+    color: tokens.text,
   },
   sectionHeader: {
     fontSize: 11,
     fontWeight: 600,
-    fontFamily: "monospace",
-    color: tokens.accent,
+    fontFamily: tokens.fontMono,
+    color: tokens.accentText,
     marginTop: 8,
     marginBottom: 4,
     paddingBottom: 2,
-    borderBottom: "1px solid #f0f0f0",
+    borderBottom: `1px solid ${tokens.border}`,
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  sectionCount: {
+    fontSize: 10,
+    fontWeight: 500,
+    color: tokens.textMuted,
+    fontFamily: tokens.font,
   },
   emptyText: {
-    color: "#999",
+    color: tokens.textMuted,
     fontSize: 12,
     textAlign: "center",
     padding: 12,
@@ -459,21 +699,30 @@ const styles: Record<string, React.CSSProperties> = {
     display: "flex",
     alignItems: "center",
     padding: "6px 0",
-    borderBottom: "1px solid #f5f5f5",
+    borderBottom: `1px solid ${tokens.border}`,
     gap: 8,
+    borderRadius: tokens.radiusSm,
+  },
+  modeGlyph: {
+    width: 16,
+    textAlign: "center",
+    color: tokens.textMuted,
+    fontSize: 11,
+    flexShrink: 0,
+    marginRight: 4,
   },
   badge: {
     fontSize: 10,
-    background: "#e0e0e0",
-    color: "#666",
+    background: tokens.bgMuted,
+    color: tokens.textSecondary,
     padding: "1px 6px",
     borderRadius: 3,
     flexShrink: 0,
   },
   siteBadge: {
     fontSize: 9,
-    background: "#e3f2fd",
-    color: "#1976d2",
+    background: tokens.accentSoft,
+    color: tokens.accentText,
     padding: "0px 4px",
     borderRadius: 3,
     fontWeight: 400,
