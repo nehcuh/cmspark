@@ -2,7 +2,7 @@
 // Single-slot priority: Confirm > L2 Safety+急停 > Fleet > L1 Context.
 // Hard cap ≤80px; 急停 never buried when L2 task active.
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, type CSSProperties } from "react"
 import { useAgentStore } from "../store/agentStore"
 import type { CapabilityLevel } from "../types"
 import { tokens } from "../ui/tokens"
@@ -56,54 +56,58 @@ export function FocusBand({
 
   if (slot.primary === "empty") return null
 
-  const darkChrome =
-    slot.primary === "confirm" ||
-    slot.primary === "l2_safety" ||
-    slot.secondaryAbort
+  // G3: floating card chrome — soft confirm surface vs elevated L2/fleet/context
+  const cardTone: "confirm" | "dark" | "light" =
+    slot.primary === "confirm"
+      ? "confirm"
+      : slot.primary === "l2_safety" || slot.secondaryAbort
+        ? "dark"
+        : "light"
+
+  const cardStyle =
+    cardTone === "confirm"
+      ? styles.cardConfirm
+      : cardTone === "dark"
+        ? styles.cardDark
+        : styles.cardLight
 
   return (
-    <div
-      style={{
-        ...styles.wrap,
-        background: darkChrome ? tokens.darkBg : "transparent",
-        borderBottom: darkChrome
-          ? `1px solid ${tokens.darkBorder}`
-          : `1px solid ${tokens.border}`,
-      }}
-      data-focus-band
-      data-primary={slot.primary}
-      role="region"
-      aria-label="焦点条"
-    >
-      {slot.secondaryAbort && (
-        <AbortSecondaryLine taskId={task!.taskId} taskLabel={task?.task} />
-      )}
-      {slot.primary === "confirm" && (
-        <div style={styles.primary}>
-          {/* Confirm owns allow/deny; secondaryAbort keeps 急停 visible under L2. */}
-          <MinimalConfirm compact />
-        </div>
-      )}
-      {slot.primary === "l2_safety" && (
-        <div style={styles.primary}>
-          <SafetyStrip compact />
-        </div>
-      )}
-      {slot.primary === "fleet" && (
-        <div style={styles.primary}>
-          <FleetStrip focusBand />
-        </div>
-      )}
-      {slot.primary === "l1_context" && (
-        <div style={styles.primary}>
-          <ContextStrip compact />
-        </div>
-      )}
-      {slot.secondaryContext && slot.primary === "confirm" && (
-        <div style={styles.secondaryContext}>
-          <ContextStrip compact secondary />
-        </div>
-      )}
+    <div style={styles.outer} data-focus-band data-primary={slot.primary}>
+      <div
+        style={cardStyle}
+        role="region"
+        aria-label="焦点条"
+      >
+        {slot.secondaryAbort && (
+          <AbortSecondaryLine taskId={task!.taskId} taskLabel={task?.task} />
+        )}
+        {slot.primary === "confirm" && (
+          <div style={styles.primary}>
+            {/* Confirm owns allow/deny; secondaryAbort keeps 急停 visible under L2. */}
+            <MinimalConfirm compact />
+          </div>
+        )}
+        {slot.primary === "l2_safety" && (
+          <div style={styles.primary}>
+            <SafetyStrip compact />
+          </div>
+        )}
+        {slot.primary === "fleet" && (
+          <div style={styles.primary}>
+            <FleetStrip focusBand />
+          </div>
+        )}
+        {slot.primary === "l1_context" && (
+          <div style={styles.primary}>
+            <ContextStrip compact />
+          </div>
+        )}
+        {slot.secondaryContext && slot.primary === "confirm" && (
+          <div style={styles.secondaryContext}>
+            <ContextStrip compact secondary />
+          </div>
+        )}
+      </div>
     </div>
   )
 }
@@ -153,13 +157,36 @@ function ellipsize(s: string, n: number): string {
   return s.length <= n ? s : s.slice(0, n - 1) + "…"
 }
 
-const styles: Record<string, React.CSSProperties> = {
-  wrap: {
-    maxHeight: FOCUS_BAND_MAX_PX,
-    overflow: "hidden",
+/** Shared floating card shell (G3 inset ≤80px). */
+const cardShell: CSSProperties = {
+  maxHeight: FOCUS_BAND_MAX_PX,
+  overflow: "hidden",
+  display: "flex",
+  flexDirection: "column",
+  borderRadius: 16,
+  boxShadow: tokens.shadowMd,
+}
+
+const styles: Record<string, CSSProperties> = {
+  /** Inset so card floats (G3); content still ≤ FOCUS_BAND_MAX_PX */
+  outer: {
     flexShrink: 0,
-    display: "flex",
-    flexDirection: "column",
+    padding: "6px 10px 0",
+  },
+  cardConfirm: {
+    ...cardShell,
+    background: tokens.dangerSurface,
+    border: "1px solid rgba(220, 38, 38, 0.28)",
+  },
+  cardDark: {
+    ...cardShell,
+    background: tokens.darkElevated,
+    border: `1px solid ${tokens.darkBorder}`,
+  },
+  cardLight: {
+    ...cardShell,
+    background: tokens.bgElevated,
+    border: `1px solid ${tokens.borderStrong}`,
   },
   primary: {
     flexShrink: 0,
@@ -173,7 +200,7 @@ const styles: Record<string, React.CSSProperties> = {
     height: FOCUS_BAND_SECONDARY_MAX_PX,
     maxHeight: FOCUS_BAND_SECONDARY_MAX_PX,
     padding: "0 10px",
-    background: tokens.darkElevated,
+    background: tokens.darkBg,
     borderBottom: `1px solid ${tokens.darkBorder}`,
     fontFamily: tokens.font,
     fontSize: 11,

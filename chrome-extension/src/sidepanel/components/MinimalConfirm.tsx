@@ -92,7 +92,7 @@ export function MinimalConfirm({ compact = false }: { compact?: boolean } = {}) 
         ? "shell 命令"
         : "同类企业工具"
 
-  // FocusBand compact: single primary row (tool + actions) to fit ≤56–80px budget.
+  // FocusBand compact (G3): soft danger surface — high-contrast actions, not solid red bar.
   if (compact) {
     return (
       <div
@@ -101,10 +101,9 @@ export function MinimalConfirm({ compact = false }: { compact?: boolean } = {}) 
           alignItems: "center",
           gap: 6,
           flexWrap: "nowrap",
-          padding: "6px 10px",
-          background: `linear-gradient(180deg, ${tokens.darkDangerBg} 0%, #2a1515 100%)`,
-          borderBottom: "1px solid #7f1d1d",
-          color: tokens.darkDanger,
+          padding: "8px 10px",
+          background: "transparent",
+          color: tokens.danger,
           fontSize: 11,
           fontFamily: tokens.font,
           minHeight: 40,
@@ -119,7 +118,7 @@ export function MinimalConfirm({ compact = false }: { compact?: boolean } = {}) 
           style={{
             fontWeight: 700,
             letterSpacing: "0.01em",
-            color: color,
+            color: tokens.danger,
             flex: 1,
             minWidth: 0,
             overflow: "hidden",
@@ -134,7 +133,7 @@ export function MinimalConfirm({ compact = false }: { compact?: boolean } = {}) 
           }
         >
           {label} ·{" "}
-          <span style={{ fontFamily: tokens.fontMono, color: tokens.darkText }}>
+          <span style={{ fontFamily: tokens.fontMono, color: tokens.text }}>
             {request.tool_name}
           </span>
           {queueLen > 1 && (
@@ -143,7 +142,7 @@ export function MinimalConfirm({ compact = false }: { compact?: boolean } = {}) 
                 marginLeft: 6,
                 fontSize: 10,
                 fontWeight: 700,
-                color: tokens.darkWarning,
+                color: tokens.warning,
               }}
               title="确认队列（先处理队首）"
             >
@@ -155,8 +154,8 @@ export function MinimalConfirm({ compact = false }: { compact?: boolean } = {}) 
           type="button"
           style={{
             ...btnCompact,
-            background: needsNonce ? "#374151" : tokens.success,
-            color: needsNonce ? tokens.darkMuted : "#fff",
+            background: needsNonce ? tokens.bgMuted : tokens.success,
+            color: needsNonce ? tokens.textMuted : "#fff",
             cursor: needsNonce ? "not-allowed" : "pointer",
           }}
           disabled={needsNonce}
@@ -168,7 +167,12 @@ export function MinimalConfirm({ compact = false }: { compact?: boolean } = {}) 
         <button
           ref={denyBtnRef}
           type="button"
-          style={{ ...btnCompact, background: "#374151", color: tokens.darkText }}
+          style={{
+            ...btnCompact,
+            background: tokens.bgElevated,
+            color: tokens.text,
+            border: `1px solid ${tokens.borderStrong}`,
+          }}
           onClick={() => respond(false)}
         >
           拒绝
@@ -178,8 +182,8 @@ export function MinimalConfirm({ compact = false }: { compact?: boolean } = {}) 
           style={{
             ...btnCompact,
             background: "transparent",
-            color: tokens.darkDanger,
-            border: "1px solid #7f1d1d",
+            color: tokens.danger,
+            border: "1px solid rgba(220, 38, 38, 0.35)",
           }}
           onClick={() => respond(false, true)}
           title={stopTargetId ? `停止 ${stopTargetId.slice(0, 8)}…` : "停止当前线程"}
@@ -191,8 +195,8 @@ export function MinimalConfirm({ compact = false }: { compact?: boolean } = {}) 
           style={{
             ...btnCompact,
             background: "transparent",
-            color: tokens.darkAccent,
-            border: `1px solid ${tokens.darkBorder}`,
+            color: tokens.accentText,
+            border: `1px solid ${tokens.borderStrong}`,
             fontWeight: 500,
           }}
           onClick={() => chrome.runtime.sendMessage({ type: "cockpit.open" })}

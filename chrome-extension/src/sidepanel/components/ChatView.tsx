@@ -398,7 +398,8 @@ function ToolCallCard({ tc }: { tc: any }) {
     <div
       style={{
         ...styles.toolCard,
-        borderColor: statusTone,
+        // G3: status via left hairline only — not a full-border cage
+        borderLeftColor: statusTone,
         cursor: hasResult && isLongResult ? "pointer" : "default",
       }}
       onClick={() => {
@@ -1030,12 +1031,14 @@ const styles: Record<string, React.CSSProperties> = {
     marginTop: 4,
     fontWeight: 500,
   },
+  // G3: elevated card + 2px left accent hairline (status overrides color)
   toolCard: {
     marginTop: 8,
     border: `1px solid ${tokens.border}`,
+    borderLeft: `2px solid ${tokens.accent}`,
     borderRadius: tokens.radiusMd,
     padding: "8px 10px",
-    background: "rgba(255,255,255,0.92)",
+    background: tokens.bgElevated,
     fontSize: 11,
     boxShadow: tokens.shadowSm,
   },
