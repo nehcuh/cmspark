@@ -75,7 +75,7 @@ export function BoardPanel() {
         </button>
       </div>
       {err && <div style={s.err}>{err}</div>}
-      {!board && !err && <div style={s.empty}>未启用 board_mode 或板为空 — 应用 AppSec 任务包后初始化</div>}
+      {!board && !err && <div style={s.empty}>未启用 board_mode 或板为空 — 应用 AppSec 场景后初始化</div>}
       {board && (
         <>
           <div style={s.meta}>

@@ -1,0 +1,8 @@
+{
+  "batch": "mission-pack-ux-redesign",
+  "timestamp": "20260731-150125",
+  "claude": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/mission-pack-ux-redesign-claude-20260731-150125.md" },
+  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/mission-pack-ux-redesign-pi-20260731-150125.md" },
+  "both_approve": true,
+  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/mission-pack-ux-redesign-diff-20260731-150125.patch"
+}

@@ -734,7 +734,7 @@ function EmptyState({ level }: { level: "chat" | "browser" | "computer" }) {
           items={[
             { label: "总结本页", fill: "请总结当前页面的要点" },
             { label: "装配", action: "compose", primary: true },
-            { label: "任务包", action: "packs" },
+            { label: "场景", action: "packs" },
           ]}
         />
       </div>
@@ -764,7 +764,7 @@ function EmptyState({ level }: { level: "chat" | "browser" | "computer" }) {
         items={[
           { label: "总结本页", fill: "请总结当前页面的要点" },
           { label: "装配", action: "compose", primary: true },
-          { label: "任务包", action: "packs" },
+          { label: "场景", action: "packs" },
         ]}
       />
     </div>

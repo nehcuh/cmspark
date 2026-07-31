@@ -2,6 +2,17 @@
 
 ## Current Session
 
+### S25 (2026-07-31) [UIUX Gemini breath 合 main + 场景 UX PR #93]
+- **UIUX v2 + Gemini breath G1–G4**：**#92 已 squash 合 main** `6a6ed73`；本地重编 `CMspark-v0.3.0-macOS.dmg`，清理 `/Applications/CMspark.app`
+- **用户痛点**：装技能（#r21pj2）误 apply AppSec → `tool_not_allowed` 不可恢复；「任务包」页 NetSec/AppSec 认知混乱；无退出；god-mode 无效误解
+- **产品**：对抗设计 + Claude/Pi **双审 APPROVE_WITH_NITS** → SoT `2026-07-31-mission-pack-ux-redesign.md`；用户文案 **任务包→场景**
+- **PR #93** `feat/scene-ux-p0`（OPEN，CI 跑中）：
+  - P0：unapply、confirm-on-apply、状态条、recoverable 白名单、user_gesture、Skills 分流
+  - P1：清除工作区、NetSec 折叠→**迁设置**、Skills 安装指引
+  - P1.5：设置「三道门」说明 + pack.yaml `ui.*` 文案
+- **下次**：① CI 绿 **merge #93**；② 用户重启 Companion/重载扩展验收 #r21pj2 退出场景；③ 可选：对话内 unapply 一键按钮
+- Recorded: yes — 场景 whitelist ≠ god-mode；NetSec 迁设置；pack apply 用户手势
+
 ### S23 (2026-07-30) [Trust P1 四条 + browser_download + CI 诊断 全合 main]
 - **起点**：他机 Windows P0 已在 `fd2d4a1`（osascript 过滤 + MCP home）；评审后 P0 过、`browser_download` 未做
 - **Trust §B（workflow + Claude/Pi）** 全部 **MERGED**：

@@ -350,7 +350,7 @@ export function StatusRail({
               onClick={() => {
                 closeMenu()
                 onToast?.(
-                  "任务包 / 任务板已移至底栏「更多」— 主栏仅保留当前模式高频入口",
+                  "场景 / 任务板已移至底栏「更多」— 主栏仅保留当前模式高频入口",
                 )
               }}
             >

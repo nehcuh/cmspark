@@ -260,7 +260,7 @@ function BottomBarStrip({ capabilityLevel }: { capabilityLevel: CapabilityLevel 
             title={
               overflowActiveTab
                 ? `更多面板（当前：${overflowActiveTab.label}）。点左侧标签或 Esc 可收起`
-                : "任务包、任务板等低频入口"
+                : "场景、任务板等低频入口"
             }
             aria-expanded={moreOpen}
             onClick={toggleMore}

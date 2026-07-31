@@ -67,6 +67,11 @@ thread_defaults:
   mcp_selection_mode: manual
 workspace:
   type: none
+# Product UX copy (scene apply modal / card) — Chinese, end-user facing
+ui:
+  suitable_for: 对当前网页/PRD 做威胁建模与安全 checklist；只读浏览与截图。
+  unsuitable_for: 安装技能、读写本机项目、需要全部浏览器工具或脚本执行。
+  tools_summary_zh: 列出标签、打开页面、读取页面文字/HTML、截图、使用技能
 author: cmspark
 tags:
   - security

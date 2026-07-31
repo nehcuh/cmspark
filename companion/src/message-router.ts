@@ -1743,6 +1743,14 @@ export async function handleMessage(
       return { type: "error", error: "pack.install requires dir or zip_path" }
     }
     case "pack.apply": {
+      // UI-only path: require user_gesture so LLM/tool channels cannot self-apply.
+      if (rest.user_gesture !== true) {
+        return {
+          type: "error",
+          error: "pack.apply requires user_gesture:true (apply only from Side Panel)",
+          code: "user_gesture_required",
+        }
+      }
       const { applyPack } = await import("./packs/pack-engine")
       if (!rest.pack_id || !rest.thread_id) {
         return { type: "error", error: "pack_id and thread_id required" }
@@ -1754,6 +1762,23 @@ export async function handleMessage(
         return { type: "error", error: r.error, code: (r as any).code }
       }
       return { type: "pack.applied", thread: r.thread }
+    }
+    case "pack.unapply": {
+      // UI-only RPC — never an LLM tool (see product SoT §14.1).
+      if (rest.user_gesture !== true) {
+        return {
+          type: "error",
+          error: "pack.unapply requires user_gesture:true",
+          code: "user_gesture_required",
+        }
+      }
+      if (!rest.thread_id || typeof rest.thread_id !== "string") {
+        return { type: "error", error: "pack.unapply requires thread_id" }
+      }
+      const { unapplyPack } = await import("./packs/pack-engine")
+      const r = unapplyPack(rest.thread_id, threadManager)
+      if (!r.ok) return { type: "error", error: r.error, code: (r as any).code }
+      return { type: "pack.unapplied", thread: r.thread }
     }
     case "pack.uninstall": {
       const { uninstallPack, listInstalledPacks } = await import("./packs/pack-engine")
@@ -1836,6 +1861,23 @@ export async function handleMessage(
       if (!thread) return { type: "error", error: "thread not found" }
       threadManager.update(rest.thread_id, { workspace_root: r.path } as any)
       return { type: "workspace.set_result", thread: threadManager.get(rest.thread_id) }
+    }
+    case "workspace.clear": {
+      // UI-only: unbind workspace from thread (does not delete files).
+      if (!rest.thread_id || typeof rest.thread_id !== "string") {
+        return { type: "error", error: "workspace.clear requires thread_id" }
+      }
+      if (rest.user_gesture !== true) {
+        return {
+          type: "error",
+          error: "workspace.clear requires user_gesture:true",
+          code: "user_gesture_required",
+        }
+      }
+      const thread = threadManager.get(rest.thread_id)
+      if (!thread) return { type: "error", error: "thread not found" }
+      threadManager.update(rest.thread_id, { workspace_root: null } as any)
+      return { type: "workspace.clear_result", thread: threadManager.get(rest.thread_id) }
     }
     case "netsec.authorize_task": {
       if (!rest.thread_id) return { type: "error", error: "thread_id required" }

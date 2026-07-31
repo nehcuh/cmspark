@@ -1,0 +1,51 @@
+# Dual external review context
+batch: mission-pack-ux-redesign
+base: HEAD
+time: 20260731-150125
+
+6a6ed73
+
+ M PROJECT_CONTEXT.md
+?? .grok/hooks/
+?? .grok/rules/
+?? docs/audit/reviews/gemini-visual-comparison-diff-20260731-131512.patch
+?? docs/audit/reviews/log-event-echo-loop-impl-diff-20260731-093639.patch
+?? docs/audit/reviews/log-event-echo-loop-rca-diff-20260731-091807.patch
+?? docs/audit/reviews/mission-pack-ux-redesign-diff-20260731-150125.patch
+?? docs/audit/reviews/mission-pack-ux-redesign-dual-review-prompt-2026-07-31.md
+?? docs/audit/reviews/sidepanel-uiux-v2-diff-20260731-095551.patch
+?? docs/superpowers/specs/2026-07-31-mission-pack-ux-redesign.md
+
+## Diff (git diff + staged)
+ PROJECT_CONTEXT.md | 18 ++++++++++++++++++
+ 1 file changed, 18 insertions(+)
+
+diff --git a/PROJECT_CONTEXT.md b/PROJECT_CONTEXT.md
+index dc324dc..5097fa3 100644
+--- a/PROJECT_CONTEXT.md
++++ b/PROJECT_CONTEXT.md
+@@ -3,6 +3,24 @@
+ ## Session Handoff
+ 
+ <!-- handoff:start -->
++### 2026-07-31 (S24 — VibeSOP Sprint1 dogfood 落地)
++- **目的**：在 cmspark 上跑最新 VibeSOP 黄金 aha 路径，便于后续路由/记忆洞察
++- **已做**：
++  1. `uv tool install --reinstall` 本地 vibesop-py（含 `vibe instinct pending|accept|dismiss|stats`）
++  2. `vibe build claude-code` → 项目 `.claude/` + `~/.claude`；`vibe build grok-build` → 项目 `.grok/` + `~/.grok`
++  3. `.vibe/config.toml` 已 `analytics.enabled = true`（保持）
++  4. dogfood 修复：末层 `levenshtein` 虚高 conf 也会入 pending（见 vibesop-py routing_pending）
++- **验证**：nonsense query → pending 出现 → dismiss → outcome 计数增加
++- **日常洞察命令**（在 cmspark 根目录）：
++  ```bash
++  vibe instinct stats
++  vibe instinct pending
++  vibe instinct accept <id>   # 或 dismiss
++  vibe route "<真实意图>" -y
++  ```
++- **注意**：每日最多 3 条 pending；dismiss 后同 query+skill 24h 抑制；restart Claude Code / Grok 以加载新 hooks
++- **下次**：观察 14 天 accept/dismiss 与 outcome 密度；勿用 probe query 污染 production 路由偏好（dismiss 已写负反馈）
++
+ ### 2026-07-30 (S23 — Trust P1 + browser_download 全合 main)
+ - **origin/main tip**：含 Merge #88 / #87 / #86 / #89 / #85 / #90（Trust §B P1a 四条 + browser_download P1.0 + CI hang 修）
+ - **已交付（本会话）**：

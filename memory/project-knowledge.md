@@ -2,6 +2,15 @@
 
 ## Technical Pitfalls
 
+### 场景（Mission Pack）白名单 ≠ God-mode / 确认开关（2026-07-31）
+- 现象：用户开了 `auto_approve_dangerous` + `allow_all_schemes`，仍报 `tool_not_allowed:workspace_list_dir — not in thread tool_whitelist`；装技能线程被套 AppSec 后无法 list 本机目录
+- 根因：`thread.tool_whitelist`（Pack apply 收窄）在 `createToolExecutor` **硬门**，先于 L2 确认；god-mode 只跳过确认，**不**打开白名单外工具
+- 产品：入口改名 **「场景」**；`pack.unapply` 退出恢复 snapshot；`tool_not_allowed` 人话 + **recoverable** + `suggested_action: unapply_pack`；apply/unapply 需 `user_gesture:true`（禁 LLM 自 apply）
+- 装技能主路径：**Skills → 导入 ZIP/文件夹**，勿 apply「应用安全审查」
+- NetSec allowlist / 本对话授权已迁 **设置 → 网络扫描**，勿与场景模板混在同一页主叙事
+- PR #93 `feat/scene-ux-p0`；SoT `docs/superpowers/specs/2026-07-31-mission-pack-ux-redesign.md`
+- 教训：凡「危险全局开关」与「线程场景表面」分层教学；错误串禁开发者 jargon 且勿默认 non_recoverable
+
 ### God-mode / 危险 flag：UI 短语 ≠ companion 门（P1-1，2026-07-29）
 - 现象：Settings 武装 `allow_all_schemes` 需输入 phrase，但 `config.set` 经任意已鉴权 WS 可直接布尔 `true` → UI 剧场
 - 修法（Design A / PR #85 **已合 main**）：companion 对 **false→true** 的 `allow_all_schemes` / `auto_approve_dangerous` / `auto_approve_enterprise_tools` 要求 top-level `confirmation_phrase` 匹配 `SECURITY_ARM_CONFIRM_PHRASE`（`我了解风险`，`companion/src/security-arm.ts`）；缺/错 → 整条 config.set 拒绝 + `security.arm_rejected`；对 → 持久化 + `security.flag_armed`

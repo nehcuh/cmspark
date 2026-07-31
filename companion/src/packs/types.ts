@@ -40,6 +40,12 @@ export interface PackManifest {
   workspace?: { type: "none" | "local_path" }
   author?: string
   tags?: string[]
+  /** Optional UX copy for scene apply modal (product SoT). */
+  ui?: {
+    suitable_for?: string
+    unsuitable_for?: string
+    tools_summary_zh?: string
+  }
 }
 
 export interface ThreadPackSnapshot {
@@ -62,6 +68,9 @@ export interface PackListItem {
   requires_modules: string[]
   apply_blocked?: string | null
   installed_path: string
+  suitable_for?: string
+  unsuitable_for?: string
+  tools_summary_zh?: string
 }
 
 export type ValidateResult =

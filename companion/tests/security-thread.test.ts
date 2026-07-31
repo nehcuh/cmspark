@@ -238,6 +238,19 @@ test("classifyError 'permission denied: camera' is non_recoverable", () => {
   assert.equal(classifyError("permission denied: camera access"), "non_recoverable")
 })
 
+test("classifyError scene tool_not_allowed is recoverable", () => {
+  assert.equal(
+    classifyError("当前场景不允许「列出工作区文件」。可退出场景后重试，或改用场景内允许的工具。", {
+      toolName: "workspace_list_dir",
+    }),
+    "recoverable",
+  )
+  assert.equal(
+    classifyError("tool_not_allowed:workspace_list_dir — not in thread tool_whitelist"),
+    "recoverable",
+  )
+})
+
 test("classifyError MCP EPERM (.Trash TCC denial) is recoverable", () => {
   // Repro: directory_tree on /Users/huchen hits macOS TCC at ~/.Trash. Upstream
   // MCP server-filesystem surfaces this as "EPERM: operation not permitted,

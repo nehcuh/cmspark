@@ -175,6 +175,7 @@ export function listInstalledPacks(cfg?: CompanionConfig): PackListItem[] {
       })
       continue
     }
+    const ui = v.manifest.ui
     items.push({
       id: v.manifest.id,
       name: v.manifest.name,
@@ -185,6 +186,9 @@ export function listInstalledPacks(cfg?: CompanionConfig): PackListItem[] {
       requires_modules: v.manifest.requires_modules,
       apply_blocked: computeApplyBlocked(v.manifest, config),
       installed_path: dir,
+      suitable_for: typeof ui?.suitable_for === "string" ? ui.suitable_for : undefined,
+      unsuitable_for: typeof ui?.unsuitable_for === "string" ? ui.unsuitable_for : undefined,
+      tools_summary_zh: typeof ui?.tools_summary_zh === "string" ? ui.tools_summary_zh : undefined,
     })
   }
   return items.sort((a, b) => a.id.localeCompare(b.id))
@@ -482,6 +486,48 @@ export function applyPack(
     })
     appendCapabilityAudit({
       type: "pack.apply",
+      pack_id: packId,
+      thread_id: threadId,
+      at: new Date().toISOString(),
+    })
+    return { ok: true, thread: updated }
+  } catch (e: any) {
+    return { ok: false, error: e?.message || String(e) }
+  }
+}
+
+/**
+ * Exit scene on one thread: restore pre-pack snapshot (or clear pack fields).
+ * Does NOT clear workspace_root. UI-only RPC — never LLM tool.
+ */
+export function unapplyPack(
+  threadId: string,
+  threadManager: ThreadManager,
+): { ok: true; thread: any } | { ok: false; error: string; code?: string } {
+  const thread = threadManager.get(threadId)
+  if (!thread) return { ok: false, error: `thread not found: ${threadId}`, code: "thread_not_found" }
+  if (!thread.mission_pack_id) {
+    return { ok: true, thread } // idempotent
+  }
+  const packId = thread.mission_pack_id
+  try {
+    if (thread.mission_pack_snapshot) {
+      restoreSnapshot(threadManager, threadId, thread.mission_pack_snapshot as ThreadPackSnapshot)
+    } else {
+      threadManager.applyPackPatch(threadId, {
+        mission_pack_id: null,
+        mission_pack_snapshot: null,
+        tool_whitelist: null,
+        active_skill_ids: (thread.active_skill_ids || []).filter(
+          (s: string) => !s.startsWith(`pack--${packId}--`),
+        ),
+        system_prompt_append: null,
+        board_mode: false,
+      })
+    }
+    const updated = threadManager.get(threadId)
+    appendCapabilityAudit({
+      type: "pack.unapply",
       pack_id: packId,
       thread_id: threadId,
       at: new Date().toISOString(),
