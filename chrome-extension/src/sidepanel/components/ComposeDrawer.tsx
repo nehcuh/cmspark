@@ -1,6 +1,7 @@
 // 装配 drawer — full Composition section UI (UIUX v2 PR6 / §4.5).
 // Opens Host panels; Board / Fleet / multi-worker are Autonomy — never listed.
 // Focus trap via Modal; landfill one-surface rule enforced by parent.
+// G4: MD3-ish sheet (radiusSheet + soft scrim) + settings-list groups.
 
 import { useRef, type CSSProperties, type ComponentType, type RefObject } from "react"
 import {
@@ -142,10 +143,16 @@ function SectionGroup({
         {COMPOSE_GROUP_LABELS[group]}
       </h3>
       <ul style={styles.list} role="list">
-        {sections.map((section) => {
+        {sections.map((section, index) => {
           const Icon = SECTION_ICONS[section.id]
           return (
-            <li key={section.id} style={styles.listItem}>
+            <li
+              key={section.id}
+              style={{
+                ...styles.listItem,
+                borderTop: index > 0 ? `1px solid ${tokens.border}` : undefined,
+              }}
+            >
               <button
                 ref={section.id === firstSectionId ? firstBtnRef : undefined}
                 type="button"
@@ -182,19 +189,19 @@ const styles: Record<string, CSSProperties> = {
     position: "fixed",
     inset: 0,
     zIndex: 250,
-    background: "rgba(15, 23, 42, 0.28)",
+    background: tokens.scrim,
     display: "flex",
     flexDirection: "column",
     justifyContent: "flex-end",
   },
   sheet: {
     background: tokens.bgElevated,
-    borderTopLeftRadius: tokens.radiusLg,
-    borderTopRightRadius: tokens.radiusLg,
-    boxShadow: tokens.shadowMd,
+    borderTopLeftRadius: tokens.radiusSheet,
+    borderTopRightRadius: tokens.radiusSheet,
+    boxShadow: tokens.shadowLg,
     maxHeight: "78vh",
     overflowY: "auto",
-    padding: "8px 0 14px",
+    padding: "10px 0 18px",
     fontFamily: tokens.font,
     width: "100%",
   },
@@ -203,20 +210,20 @@ const styles: Record<string, CSSProperties> = {
     height: 4,
     borderRadius: tokens.radiusPill,
     background: tokens.borderStrong,
-    margin: "4px auto 10px",
+    margin: "2px auto 12px",
   },
   header: {
     display: "flex",
     alignItems: "flex-start",
     justifyContent: "space-between",
     gap: 8,
-    padding: "0 14px 8px",
+    padding: "0 16px 10px",
   },
   title: {
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: 650,
     color: tokens.text,
-    letterSpacing: "-0.01em",
+    letterSpacing: "-0.02em",
   },
   subtitle: {
     fontSize: 11,
@@ -225,10 +232,10 @@ const styles: Record<string, CSSProperties> = {
     lineHeight: 1.4,
   },
   closeBtn: {
-    width: 28,
-    height: 28,
+    width: 30,
+    height: 30,
     border: `1px solid ${tokens.border}`,
-    borderRadius: tokens.radiusSm,
+    borderRadius: tokens.radiusMd,
     background: tokens.bgMuted,
     color: tokens.textSecondary,
     cursor: "pointer",
@@ -241,34 +248,40 @@ const styles: Record<string, CSSProperties> = {
   },
   surfaceChip: {
     display: "inline-flex",
-    margin: "0 14px 8px",
-    padding: "2px 8px",
+    margin: "0 16px 10px",
+    padding: "3px 10px",
     borderRadius: tokens.radiusPill,
-    background: tokens.bgMuted,
-    color: tokens.textSecondary,
+    background: tokens.accentSoft,
+    color: tokens.accentText,
     fontSize: 10,
     fontWeight: 600,
     letterSpacing: "0.02em",
   },
   group: {
     margin: 0,
-    padding: "0 0 4px",
+    padding: "0 0 10px",
   },
   groupLabel: {
-    margin: "6px 14px 4px",
+    margin: "4px 16px 6px",
     fontSize: 10,
     fontWeight: 650,
     color: tokens.textMuted,
     textTransform: "uppercase" as const,
     letterSpacing: "0.06em",
   },
+  /** G4: one elevated settings card per group (not a grid of caged buttons) */
   list: {
     listStyle: "none",
-    margin: 0,
-    padding: "0 8px",
+    margin: "0 12px",
+    padding: 4,
+    background: tokens.bg,
+    border: `1px solid ${tokens.border}`,
+    borderRadius: tokens.radiusLg,
+    boxShadow: tokens.shadowSm,
+    overflow: "hidden",
   },
   listItem: {
-    margin: "0 0 4px",
+    margin: 0,
   },
   sectionBtn: {
     display: "flex",
@@ -277,18 +290,18 @@ const styles: Record<string, CSSProperties> = {
     gap: 10,
     width: "100%",
     textAlign: "left",
-    border: `1px solid ${tokens.border}`,
+    border: "none",
     borderRadius: tokens.radiusMd,
-    background: tokens.bg,
-    padding: "8px 10px",
+    background: "transparent",
+    padding: "10px 10px",
     cursor: "pointer",
     fontFamily: tokens.font,
-    transition: `background ${tokens.transitionFast} ease, border-color ${tokens.transitionFast} ease`,
+    transition: `background ${tokens.transitionFast} ease`,
   },
   iconWrap: {
-    width: 28,
-    height: 28,
-    borderRadius: tokens.radiusSm,
+    width: 32,
+    height: 32,
+    borderRadius: tokens.radiusMd,
     background: tokens.accentSoft,
     color: tokens.accentText,
     display: "flex",
@@ -301,7 +314,7 @@ const styles: Record<string, CSSProperties> = {
     minWidth: 0,
     display: "flex",
     flexDirection: "column",
-    gap: 1,
+    gap: 2,
   },
   sectionTitleRow: {
     display: "flex",
@@ -330,7 +343,7 @@ const styles: Record<string, CSSProperties> = {
     lineHeight: 1.3,
   },
   footNote: {
-    margin: "10px 14px 0",
+    margin: "4px 16px 0",
     fontSize: 10,
     color: tokens.textMuted,
     lineHeight: 1.4,

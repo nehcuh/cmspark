@@ -107,6 +107,10 @@ test("semantic role hexes match Quiet Premium + G1 breath tokens", () => {
   // G1 shape scale for hero surfaces
   assert.equal(tokens.radiusComposer, 18)
   assert.equal(tokens.radiusBubble, 18)
+  // G4 sheet / menu / scrim
+  assert.equal(tokens.radiusSheet, 20)
+  assert.equal(tokens.radiusMenu, 14)
+  assert.ok(tokens.scrim.includes("15, 23, 42"))
   assert.ok(tokens.dangerSurface.includes("220, 38, 38"))
   assert.ok(tokens.modeBrowserLine)
   assert.ok(tokens.modeComputerLine)

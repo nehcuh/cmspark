@@ -75,6 +75,10 @@ export const tokens = {
   radiusLg: 12,
   radiusComposer: 18,
   radiusBubble: 18,
+  /** Bottom sheet / 装配 drawer top corners (G4) */
+  radiusSheet: 20,
+  /** Popup menus (StatusRail ⋯ / panel ⋮) — match elevated chrome */
+  radiusMenu: 14,
   radiusPill: 999,
 
   // Soft, diffuse elevation (less “card cage”)
@@ -84,6 +88,9 @@ export const tokens = {
   shadowLg:
     "0 14px 36px rgba(15, 23, 42, 0.10), 0 2px 6px rgba(15, 23, 42, 0.035)",
   shadowFocus: "0 0 0 3px rgba(79, 70, 229, 0.16)",
+
+  /** Modal / drawer scrim (G4 Gemini breath — softer than pure black 40%) */
+  scrim: "rgba(15, 23, 42, 0.28)",
 } as const
 
 export type Tokens = typeof tokens
