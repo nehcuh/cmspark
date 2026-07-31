@@ -38,8 +38,49 @@ export function extractPathCandidate(errMsg: string, params: any): string | null
 }
 
 /**
+ * file:// URI for MCP roots (encode each path segment; keep leading /).
+ * POSIX: file:///Users/you/foo%20bar
+ */
+export function pathToFileUri(absPath: string): string {
+  const resolved = path.resolve(absPath)
+  if (process.platform === "win32") {
+    const normalized = resolved.replace(/\\/g, "/")
+    const withSlash = normalized.startsWith("/") ? normalized : `/${normalized}`
+    // Encode each segment except drive colon handling: /C:/Users → file:///C:/Users
+    const parts = withSlash.split("/")
+    const encoded = parts
+      .map((seg, i) => {
+        if (i === 0) return ""
+        // Windows drive letter segment "C:"
+        if (/^[A-Za-z]:$/.test(seg)) return seg
+        return encodeURIComponent(seg)
+      })
+      .join("/")
+    return `file://${encoded.startsWith("/") ? "" : "/"}${encoded}`
+  }
+  const abs = resolved.startsWith("/") ? resolved : `/${resolved}`
+  const encoded = abs
+    .split("/")
+    .map((seg, i) => (i === 0 ? "" : encodeURIComponent(seg)))
+    .join("/")
+  return `file://${encoded}`
+}
+
+/** Sensitive home-relative prefixes (matched case-insensitively). */
+export const SENSITIVE_HOME_PREFIXES = [
+  ".ssh",
+  ".gnupg",
+  "library/keychains",
+  "library/mail",
+  ".aws",
+  ".config/gcloud",
+  ".config/gh",
+  ".kube",
+]
+
+/**
  * Directory we would add to allowlist (parent of file, or path itself if dir).
- * Must resolve under home.
+ * Must resolve under home, not equal to home itself, not under sensitive prefixes.
  */
 export function resolveAllowDirToOffer(
   candidatePath: string,
@@ -70,7 +111,7 @@ export function resolveAllowDirToOffer(
     if (fs.existsSync(abs) && fs.statSync(abs).isFile()) {
       dir = path.dirname(abs)
     } else if (!fs.existsSync(abs)) {
-      // walk up until existing directory
+      // walk up until existing directory — stop before promoting whole home
       let cur = abs
       for (let i = 0; i < 8; i++) {
         const parent = path.dirname(cur)
@@ -100,11 +141,20 @@ export function resolveAllowDirToOffer(
       error: "for safety, only directories under your home folder can be added dynamically",
     }
   }
-  // Block sensitive home subtrees
-  const blocked = [".ssh", ".gnupg", "Library/Keychains", "Library/Mail", ".aws", ".config/gcloud"]
-  const norm = rel.replace(/\\/g, "/")
-  for (const b of blocked) {
-    if (norm === b || norm.startsWith(b + "/")) {
+  // Refuse adding home itself (would look like "open whole disk" under home)
+  if (rel === "" || rel === ".") {
+    return {
+      ok: false,
+      error:
+        "refusing to add the entire home directory as an allow-dir; create a project folder first (ensure_project_dir) or pick a specific subdirectory",
+    }
+  }
+
+  // Block sensitive home subtrees (case-insensitive for APFS)
+  const norm = rel.replace(/\\/g, "/").toLowerCase()
+  for (const b of SENSITIVE_HOME_PREFIXES) {
+    const bl = b.toLowerCase()
+    if (norm === bl || norm.startsWith(bl + "/")) {
       return { ok: false, error: `refusing to allow sensitive path under ~/${b}` }
     }
   }
@@ -120,10 +170,45 @@ export function isParentMissingMcpError(errMsg: string): boolean {
   return /parent directory does not exist/i.test(errMsg || "")
 }
 
-function looksLikeFilesystemServer(name: string, cfg: McpStdioServerConfig): boolean {
+/** Write-like MCP tools that benefit from "create parent" guidance. */
+export function isWriteLikeMcpTool(toolName: string): boolean {
+  return /write|create|mkdir|move|copy|edit|append|delete|remove|unlink|rename|put|save/i.test(
+    toolName || "",
+  )
+}
+
+export function looksLikeFilesystemServer(name: string, cfg: McpStdioServerConfig): boolean {
   if (name === "filesystem") return true
   const args = cfg.args ?? []
   return args.some((a) => a === MCP_FILESYSTEM_PACKAGE || /server-filesystem/.test(a))
+}
+
+/**
+ * Pre-flight: can we offer allow-dir expand for this denial?
+ * Call before L2 so we never prompt for non-filesystem servers.
+ */
+export function canOfferAllowDirExpand(opts: {
+  serverName: string
+  rawErr: string
+  params: any
+}):
+  | { offer: true; dir: string }
+  | { offer: false; reason: string } {
+  if (!isAccessDeniedMcpError(opts.rawErr)) {
+    return { offer: false, reason: "not_access_denied" }
+  }
+  const config = getConfig()
+  const existing = config.mcp?.servers?.[opts.serverName]
+  if (!existing) return { offer: false, reason: "server_not_found" }
+  if (existing.transport !== "stdio") return { offer: false, reason: "not_stdio" }
+  if (!looksLikeFilesystemServer(opts.serverName, existing)) {
+    return { offer: false, reason: "not_filesystem_server" }
+  }
+  const candidate = extractPathCandidate(opts.rawErr, opts.params)
+  if (!candidate) return { offer: false, reason: "no_path" }
+  const offered = resolveAllowDirToOffer(candidate)
+  if (!offered.ok) return { offer: false, reason: offered.error }
+  return { offer: true, dir: offered.dir }
 }
 
 /**
@@ -159,14 +244,13 @@ export async function addFilesystemAllowDir(
     args.push(offered.dir)
   }
 
+  const rootUri = pathToFileUri(offered.dir)
   const next: McpStdioServerConfig = {
     ...existing,
     args,
     roots: [
       ...((existing.roots || []).filter((r) => r && typeof r.uri === "string") as any[]),
-      ...(already
-        ? []
-        : [{ uri: `file://${offered.dir.startsWith("/") ? "" : "/"}${offered.dir}`, name: path.basename(offered.dir) }]),
+      ...(already ? [] : [{ uri: rootUri, name: path.basename(offered.dir) }]),
     ],
   }
 

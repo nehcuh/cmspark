@@ -79,8 +79,17 @@ test("parent directory missing suggests create_directory stepwise (thread 6zhrh6
     { path: "/Users/huchen/中国量子计算_report/chapters" },
   )
   assert.match(out, /parent directory does not exist/i)
-  assert.match(out, /create parent|create_directory/i)
-  assert.match(out, /workspace_root|home/i)
+  assert.match(out, /create parent|create_directory|ensure_project_dir/i)
+})
+
+test("ENOENT on read tool does not push mkdir guidance", () => {
+  const out = enhanceMcpError(
+    "ENOENT: no such file or directory",
+    { serverName: "filesystem", toolName: "read_text_file" },
+    { path: "/Users/huchen/missing.txt" },
+  )
+  assert.match(out, /not found|Underlying/i)
+  assert.doesNotMatch(out, /create parent folders first with create_directory/)
 })
 
 test("allowlist denial points user to MCP panel (not god-mode)", () => {

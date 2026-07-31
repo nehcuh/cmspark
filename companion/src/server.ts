@@ -4180,37 +4180,33 @@ async function tryExpandFilesystemAllowDirOnDenial(opts: {
   toolName: string
   ws: WebSocket
 }): Promise<{ retried: boolean; ok?: boolean; error?: string }> {
-  const {
-    isAccessDeniedMcpError,
-    extractPathCandidate,
-    resolveAllowDirToOffer,
-    addFilesystemAllowDir,
-  } = await import("./mcp/allow-dir-expand")
-  if (!isAccessDeniedMcpError(opts.rawErr)) return { retried: false }
+  const { canOfferAllowDirExpand, addFilesystemAllowDir } = await import("./mcp/allow-dir-expand")
 
-  const candidate = extractPathCandidate(opts.rawErr, opts.params)
-  if (!candidate) return { retried: false }
-  const offered = resolveAllowDirToOffer(candidate)
-  if (!offered.ok) {
-    return {
-      retried: true,
-      ok: false,
-      error: `MCP path access denied and cannot auto-expand allow-dir: ${offered.error}. Underlying: ${opts.rawErr}`,
-    }
+  // Pre-check filesystem server + home path BEFORE L2 (Pi nit: no misleading prompt)
+  const pre = canOfferAllowDirExpand({
+    serverName: opts.route.serverName,
+    rawErr: opts.rawErr,
+    params: opts.params,
+  })
+  if (!pre.offer) {
+    // Not applicable — leave original error; do not claim we retried
+    return { retried: false }
   }
 
   if (opts.ws.readyState !== WebSocket.OPEN) {
     return {
       retried: true,
       ok: false,
-      error: `MCP path denied (${offered.dir}); extension disconnected — cannot ask to expand allowlist. Open Side Panel → MCP to add the path manually.`,
+      error:
+        `MCP path denied (${pre.dir}); extension disconnected — cannot ask to expand allowlist. ` +
+        `Open Side Panel → MCP to add the path manually. Underlying: ${opts.rawErr}`,
     }
   }
 
   logger.info("mcp.allow_dir.propose", {
     server: opts.route.serverName,
     tool: opts.route.toolName,
-    dir: offered.dir,
+    dir: pre.dir,
   })
 
   const decision = await securityConfirmations.request(
@@ -4220,7 +4216,9 @@ async function tryExpandFilesystemAllowDirOnDenial(opts: {
     {
       toolName: opts.toolName,
       dangerousApis: ["mcp-allow-dir-expand"],
-      code: `允许 MCP「${opts.route.serverName}」访问目录：\n${offered.dir}\n\n仅加入你主目录下的该路径，不会开放整盘。拒绝则保持当前 allowlist。`,
+      code:
+        `允许 MCP filesystem 访问目录：\n${pre.dir}\n\n` +
+        `仅把该子目录加入 allowlist（须在你的主目录下，不是整盘）。拒绝则保持当前配置。`,
       riskLevel: "medium",
       autoConfirmEligible: false,
       criticalApis: ["mcp-allow-dir-expand"],
@@ -4229,19 +4227,24 @@ async function tryExpandFilesystemAllowDirOnDenial(opts: {
   )
 
   if (!decision.approved) {
-    logger.info("mcp.allow_dir.denied", { dir: offered.dir, reason: decision.reason })
+    logger.info("mcp.allow_dir.denied", { dir: pre.dir, reason: decision.reason })
     return {
       retried: true,
       ok: false,
-      error: `User declined adding MCP allow-dir ${offered.dir}. Access denied. Underlying: ${opts.rawErr}`,
+      error:
+        `User declined adding MCP allow-dir ${pre.dir}. Access denied. Underlying: ${opts.rawErr}`,
     }
   }
 
-  const added = await addFilesystemAllowDir(opts.route.serverName, offered.dir)
+  const added = await addFilesystemAllowDir(opts.route.serverName, pre.dir)
   if (!added.ok) {
-    return { retried: true, ok: false, error: `Failed to expand allow-dir: ${added.error}` }
+    return {
+      retried: true,
+      ok: false,
+      error: `Failed to expand allow-dir: ${added.error}. Underlying: ${opts.rawErr}`,
+    }
   }
-  logger.info("mcp.allow_dir.added", { server: opts.route.serverName, dir: offered.dir })
+  logger.info("mcp.allow_dir.added", { server: opts.route.serverName, dir: pre.dir })
   return { retried: true, ok: true }
 }
 
@@ -4285,18 +4288,27 @@ export function enhanceMcpError(
   }
   // Official filesystem server: create nested path without parents (thread 6zhrh6).
   // Keep tokens "parent directory" / "does not exist" for classifyError recoverability.
+  // Write-like tools get mkdir guidance; read tools get "path missing / list parent" (Pi nit 5).
   if (/parent directory does not exist/i.test(rawErr) || /ENOENT/i.test(rawErr)) {
     const pathHint =
       params && typeof params === "object"
         ? String((params as any).path || (params as any).parent || "")
         : ""
     const pathPart = pathHint ? ` (path: ${pathHint})` : ""
+    const writeLike = /write|create|mkdir|move|copy|edit|append|delete|remove|unlink|rename|put|save/i.test(
+      route.toolName || "",
+    )
+    if (writeLike || /parent directory does not exist/i.test(rawErr)) {
+      return (
+        `MCP filesystem path missing parent${pathPart}. ` +
+        `parent directory does not exist — call ensure_project_dir first, or create_directory ` +
+        `on each missing segment under an allowed root, then retry the write. ` +
+        `Do not invent paths outside MCP allow-dirs. Underlying: ${rawErr}`
+      )
+    }
     return (
-      `MCP filesystem path missing parent${pathPart}. ` +
-      `parent directory does not exist — create parent folders first with create_directory ` +
-      `on each missing segment (or one level at a time under an allowed root like $HOME / workspace), ` +
-      `then retry the write. Prefer a project folder under the user home or the thread workspace_root ` +
-      `if set. Do not invent paths outside MCP allow-dirs. Underlying: ${rawErr}`
+      `MCP filesystem path not found${pathPart}. ` +
+      `List the parent directory or correct the path, then retry. Underlying: ${rawErr}`
     )
   }
   // Path outside allowlist — user may need MCP panel allow-dir (not god-mode).
