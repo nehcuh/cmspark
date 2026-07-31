@@ -117,8 +117,29 @@
 
 ---
 
-## 9. 变更日志
+## 9. 后台调研 workflow 回写（完成后）
+
+**Run**: `au4dch-ux-wave123` / `wf_019fb93408a37633b26fdd438a2f4840`（~5m48s）  
+**产物**: [au4dch-ux-wave123-research-synth.json](./au4dch-ux-wave123-research-synth.json)
+
+| 字段 | workflow 结论 | 与已实现对照 |
+|------|---------------|--------------|
+| `ready_to_implement` | **true** | 实现已完成并 push |
+| `pty_deferred` | **true** | 一致（SH-B 未做） |
+| `priority_order` | W1 ST/SH-A → W2 DL | 一致 |
+| must-fix: progress unicast + tail cap | 要求 | **已做**（B2 `sendOrigin` + 2KiB tail） |
+| must-fix: Downloads-root only | 要求 | **已做**（B1 `isPathUnderDownloads`） |
+| must-fix: windowsHide 不改 L2 | 要求 | **已做** |
+| must-fix: ST-1 + streaming | 要求 commit/clear streaming | **部分**：running 时不隐藏 label（M1）；未强制 clear streamingContent 本体（可残留 streaming 气泡 + 执行中双显） |
+| ST-4/5 Fleet 重 UI | 排除 Wave1–2 | 仅做了 **轻量 ST-5** label（与 synth「Exclude ST-4/5」略宽一点，可接受） |
+
+**结论**：workflow 与已合分支 **无 scope 冲突**；不必因 research 结果返工。可选 follow-up：tool.start 时 clear/commit streamingContent（synth 更严一档）。
+
+---
+
+## 10. 变更日志
 
 | 日期 | 变更 |
 |------|------|
 | 2026-08-01 | Wave1–2 实现 + 对抗修复 + 本总结；分支 `5423888` 已 push；Pi/Claude 外部评审 infra waive，对抗 PASS 作门 |
+| 2026-08-01 | 挂接 workflow synth 回写；对照表确认与实现一致、无强制返工 |
