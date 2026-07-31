@@ -4642,6 +4642,47 @@ export function validateWsMessage(msg: any): WsValidationResult {
       if (typeof m.pack_id !== "string" || !m.pack_id) return { valid: false, error: "pack.uninstall requires pack_id" }
       return { valid: true }
     },
+    "pack.get": (m) => {
+      if (typeof m.pack_id !== "string" || !m.pack_id) return { valid: false, error: "pack.get requires pack_id" }
+      return { valid: true }
+    },
+    "pack.save_user": (m) => {
+      if (typeof m.name !== "string" || !m.name.trim()) {
+        return { valid: false, error: "pack.save_user requires name" }
+      }
+      if (typeof m.system_prompt_append !== "string" || !m.system_prompt_append.trim()) {
+        return { valid: false, error: "pack.save_user requires system_prompt_append" }
+      }
+      if (m.user_gesture !== true) {
+        return { valid: false, error: "pack.save_user requires user_gesture:true (Side Panel only)" }
+      }
+      return { valid: true }
+    },
+    "pack.delete_user": (m) => {
+      if (typeof m.pack_id !== "string" || !m.pack_id) {
+        return { valid: false, error: "pack.delete_user requires pack_id" }
+      }
+      if (m.user_gesture !== true) {
+        return { valid: false, error: "pack.delete_user requires user_gesture:true" }
+      }
+      return { valid: true }
+    },
+    "pack.suggest_config": (m) => {
+      if (m.user_gesture !== true) {
+        return { valid: false, error: "pack.suggest_config requires user_gesture:true" }
+      }
+      const hasBrief = typeof m.brief === "string" && m.brief.trim().length > 0
+      const hasName = typeof m.name === "string" && m.name.trim().length > 0
+      const hasPrompt =
+        typeof m.system_prompt_append === "string" && m.system_prompt_append.trim().length > 0
+      if (!hasBrief && !hasName && !hasPrompt) {
+        return {
+          valid: false,
+          error: "pack.suggest_config requires brief, name, or system_prompt_append",
+        }
+      }
+      return { valid: true }
+    },
     "modules.list": () => ({ valid: true }),
     "modules.set_enabled": (m) => {
       if (typeof m.module !== "string" || !m.module) return { valid: false, error: "modules.set_enabled requires module" }

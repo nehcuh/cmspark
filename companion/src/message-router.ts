@@ -1792,6 +1792,147 @@ export async function handleMessage(
         packs: listInstalledPacks(),
       }
     }
+    case "pack.get": {
+      const { getPackDetail } = await import("./packs/pack-engine")
+      if (!rest.pack_id || typeof rest.pack_id !== "string") {
+        return { type: "error", error: "pack.get requires pack_id" }
+      }
+      const r = getPackDetail(rest.pack_id, skillEngine)
+      if (!r.ok) return { type: "error", error: r.error }
+      return { type: "pack.get", pack: r.pack }
+    }
+    case "pack.save_user": {
+      // UI-only: user-authored scene templates (system prompt + skills + MCP)
+      if (rest.user_gesture !== true) {
+        return {
+          type: "error",
+          error: "pack.save_user requires user_gesture:true (Side Panel only)",
+          code: "user_gesture_required",
+        }
+      }
+      const { saveUserPack, applyPack } = await import("./packs/pack-engine")
+      const r = saveUserPack(
+        {
+          id: typeof rest.id === "string" ? rest.id : undefined,
+          name: typeof rest.name === "string" ? rest.name : "",
+          description: typeof rest.description === "string" ? rest.description : undefined,
+          system_prompt_append:
+            typeof rest.system_prompt_append === "string" ? rest.system_prompt_append : "",
+          skill_ids: Array.isArray(rest.skill_ids) ? rest.skill_ids : [],
+          mcp_server_ids: Array.isArray(rest.mcp_server_ids) ? rest.mcp_server_ids : [],
+          suitable_for: typeof rest.suitable_for === "string" ? rest.suitable_for : undefined,
+          unsuitable_for: typeof rest.unsuitable_for === "string" ? rest.unsuitable_for : undefined,
+          tools_summary_zh: typeof rest.tools_summary_zh === "string" ? rest.tools_summary_zh : undefined,
+        },
+        skillEngine,
+      )
+      if (!r.ok) return { type: "error", error: r.error, code: (r as any).code }
+
+      // Optional: save then apply to current thread (P1)
+      const applyThreadId =
+        typeof rest.apply_thread_id === "string" && rest.apply_thread_id.trim()
+          ? rest.apply_thread_id.trim()
+          : null
+      if (applyThreadId) {
+        const ar = applyPack(r.id, applyThreadId, threadManager, skillEngine)
+        if (!ar.ok) {
+          return {
+            type: "pack.saved_user",
+            id: r.id,
+            packs: r.packs,
+            apply_error: ar.error,
+            apply_code: (ar as any).code,
+          }
+        }
+        return {
+          type: "pack.saved_user",
+          id: r.id,
+          packs: r.packs,
+          applied: true,
+          thread: ar.thread,
+        }
+      }
+      return { type: "pack.saved_user", id: r.id, packs: r.packs }
+    }
+    case "pack.delete_user": {
+      if (rest.user_gesture !== true) {
+        return {
+          type: "error",
+          error: "pack.delete_user requires user_gesture:true",
+          code: "user_gesture_required",
+        }
+      }
+      if (!rest.pack_id || typeof rest.pack_id !== "string") {
+        return { type: "error", error: "pack.delete_user requires pack_id" }
+      }
+      const { deleteUserPack } = await import("./packs/pack-engine")
+      const r = deleteUserPack(rest.pack_id, threadManager, skillEngine)
+      if (!r.ok) return { type: "error", error: r.error, code: (r as any).code }
+      return {
+        type: "pack.deleted_user",
+        pack_id: rest.pack_id,
+        restored_threads: r.restored_threads,
+        packs: r.packs,
+      }
+    }
+    case "pack.suggest_config": {
+      // UI-only suggestion — does NOT write packs; user must confirm + save.
+      if (rest.user_gesture !== true) {
+        return {
+          type: "error",
+          error: "pack.suggest_config requires user_gesture:true",
+          code: "user_gesture_required",
+        }
+      }
+      const { suggestSceneConfig } = await import("./packs/suggest-scene")
+      const { getConfig } = await import("./config")
+      const cfg = getConfig()
+      const skillsMeta = skillEngine.list().map((s) => ({
+        name: s.name,
+        description: s.description,
+        tags: s.tags,
+      }))
+      let mcpMeta: Array<{ name: string; description?: string }> = []
+      try {
+        const { getMcpManager } = await import("./mcp/manager")
+        mcpMeta = getMcpManager()
+          .listServers()
+          .map((s: any) => ({
+            name: s.name,
+            description:
+              typeof s.config?.description === "string"
+                ? s.config.description
+                : typeof s.description === "string"
+                  ? s.description
+                  : undefined,
+          }))
+      } catch {
+        // Fall back to configured server keys only
+        const servers = (cfg as any).mcp?.servers
+        if (servers && typeof servers === "object") {
+          mcpMeta = Object.keys(servers).map((name) => ({ name }))
+        }
+      }
+      const llm =
+        cfg.llm?.base_url && cfg.llm?.model_name
+          ? {
+              base_url: cfg.llm.base_url,
+              api_key: cfg.llm.api_key || "",
+              model_name: cfg.llm.model_name,
+              temperature: typeof cfg.llm.temperature === "number" ? cfg.llm.temperature : 0.3,
+            }
+          : null
+      const suggestion = await suggestSceneConfig({
+        brief: typeof rest.brief === "string" ? rest.brief : "",
+        name: typeof rest.name === "string" ? rest.name : undefined,
+        existingPrompt:
+          typeof rest.system_prompt_append === "string" ? rest.system_prompt_append : undefined,
+        skills: skillsMeta,
+        mcp: mcpMeta,
+        llm,
+      })
+      return { type: "pack.suggest_config", suggestion }
+    }
     case "modules.list": {
       const config = getConfig()
       return {

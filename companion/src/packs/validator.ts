@@ -143,10 +143,25 @@ export function validatePackDir(packDir: string): ValidateResult {
   if ("error" in requires) return { ok: false, error: requires.error }
   const skills = asStringArray(doc.skills, "skills")
   if ("error" in skills) return { ok: false, error: skills.error }
+  const skillRefs = asStringArray(doc.skill_refs, "skill_refs")
+  if ("error" in skillRefs) return { ok: false, error: skillRefs.error }
+  for (const ref of skillRefs) {
+    if (!ref.trim() || ref.includes("/") || ref.includes("\\") || ref.includes("..")) {
+      return { ok: false, error: `invalid skill_refs entry: ${ref}` }
+    }
+  }
   const knowledge = asStringArray(doc.knowledge, "knowledge")
   if ("error" in knowledge) return { ok: false, error: knowledge.error }
   const mcpServers = asStringArray(doc.mcp_servers, "mcp_servers")
   if ("error" in mcpServers) return { ok: false, error: mcpServers.error }
+
+  let origin: PackManifest["origin"] | undefined
+  if (doc.origin !== undefined) {
+    if (doc.origin !== "builtin" && doc.origin !== "installed" && doc.origin !== "user") {
+      return { ok: false, error: "origin must be builtin|installed|user when present" }
+    }
+    origin = doc.origin
+  }
 
   if (!isPlainObject(doc.tools)) {
     return { ok: false, error: "tools is required" }
@@ -231,6 +246,7 @@ export function validatePackDir(packDir: string): ValidateResult {
     min_capability: doc.min_capability as PackManifest["min_capability"],
     requires_modules: requires,
     skills,
+    skill_refs: skillRefs.length > 0 || doc.skill_refs !== undefined ? skillRefs : undefined,
     knowledge,
     mcp_servers: mcpServers,
     tools: {
@@ -247,6 +263,7 @@ export function validatePackDir(packDir: string): ValidateResult {
         : undefined,
     author: typeof doc.author === "string" ? doc.author : undefined,
     tags: Array.isArray(doc.tags) && doc.tags.every((t) => typeof t === "string") ? (doc.tags as string[]) : undefined,
+    origin,
     ui:
       isPlainObject(doc.ui)
         ? {

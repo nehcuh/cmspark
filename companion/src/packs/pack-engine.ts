@@ -11,12 +11,17 @@ import { appendCapabilityAudit } from "./audit-log"
 import { validatePackDir } from "./validator"
 import {
   MAX_PACK_TOTAL_BYTES,
+  MAX_SYSTEM_PROMPT_APPEND,
   MAX_ZIP_ENTRIES,
+  PACK_ID_RE,
+  type PackDetail,
   type PackListItem,
   type PackManifest,
+  type PackOrigin,
   type SelectionMode,
   type ThreadPackSnapshot,
   type ToolsMode,
+  type UserPackSaveInput,
 } from "./types"
 
 function packsInstalledDir(): string {
@@ -176,6 +181,7 @@ export function listInstalledPacks(cfg?: CompanionConfig): PackListItem[] {
       continue
     }
     const ui = v.manifest.ui
+    const origin = resolvePackOrigin(v.manifest)
     items.push({
       id: v.manifest.id,
       name: v.manifest.name,
@@ -189,9 +195,277 @@ export function listInstalledPacks(cfg?: CompanionConfig): PackListItem[] {
       suitable_for: typeof ui?.suitable_for === "string" ? ui.suitable_for : undefined,
       unsuitable_for: typeof ui?.unsuitable_for === "string" ? ui.unsuitable_for : undefined,
       tools_summary_zh: typeof ui?.tools_summary_zh === "string" ? ui.tools_summary_zh : undefined,
+      origin,
+      skill_refs: v.manifest.skill_refs,
+      mcp_servers: v.manifest.mcp_servers,
+      editable: origin === "user",
     })
   }
   return items.sort((a, b) => a.id.localeCompare(b.id))
+}
+
+function resolvePackOrigin(manifest: PackManifest): PackOrigin {
+  if (manifest.origin === "user" || manifest.origin === "builtin" || manifest.origin === "installed") {
+    return manifest.origin
+  }
+  // Heuristic: ids we ship under packs/builtin
+  if (manifest.id === "appsec-prd-review" || manifest.author === "cmspark") return "builtin"
+  return "installed"
+}
+
+export function getPackDetail(
+  packId: string,
+  skillEngine?: SkillEngine,
+): { ok: true; pack: PackDetail } | { ok: false; error: string } {
+  if (!packId || typeof packId !== "string") return { ok: false, error: "pack_id required" }
+  const { result } = readInstalledManifest(packId)
+  if (!result.ok) return { ok: false, error: result.error }
+  const m = result.manifest
+  const origin = resolvePackOrigin(m)
+  const ui = m.ui
+  const nsPrefix = `pack--${m.id}--`
+  let installedSkillIds: string[] = []
+  if (skillEngine) {
+    installedSkillIds = skillEngine
+      .list()
+      .map((s) => s.name)
+      .filter((n) => n.startsWith(nsPrefix))
+  } else {
+    // Best-effort from disk without SkillEngine
+    try {
+      const dir = skillsDir()
+      if (fs.existsSync(dir)) {
+        installedSkillIds = fs
+          .readdirSync(dir)
+          .filter((f) => f.startsWith(nsPrefix) && f.endsWith(".md"))
+          .map((f) => f.replace(/\.md$/, ""))
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  return {
+    ok: true,
+    pack: {
+      id: m.id,
+      name: m.name,
+      description: m.description,
+      version: m.version,
+      channel: m.channel,
+      origin,
+      editable: origin === "user",
+      system_prompt_append: m.system_prompt_append,
+      skill_refs: Array.isArray(m.skill_refs) ? [...m.skill_refs] : [],
+      mcp_servers: Array.isArray(m.mcp_servers) ? [...m.mcp_servers] : [],
+      skills: Array.isArray(m.skills) ? [...m.skills] : [],
+      installed_skill_ids: installedSkillIds,
+      requires_modules: Array.isArray(m.requires_modules) ? [...m.requires_modules] : [],
+      tools: {
+        mode: m.tools.mode,
+        allow: [...(m.tools.allow || [])],
+        deny: [...(m.tools.deny || [])],
+      },
+      suitable_for: ui?.suitable_for,
+      unsuitable_for: ui?.unsuitable_for,
+      tools_summary_zh: ui?.tools_summary_zh,
+    },
+  }
+}
+
+function slugifyPackName(name: string): string {
+  const ascii = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40)
+  if (ascii) return ascii
+  // CJK / non-ascii names: stable short hash so PACK_ID_RE still matches
+  let h = 0
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0
+  return `scene-${h.toString(36).slice(0, 8)}`
+}
+
+function allocateUserPackId(preferred?: string, name?: string): string {
+  const base =
+    preferred && PACK_ID_RE.test(preferred)
+      ? preferred
+      : `user-${slugifyPackName(name || "scene")}`
+  let id = base.startsWith("user-") || preferred ? base : `user-${base}`
+  if (!PACK_ID_RE.test(id)) id = `user-scene-${Date.now().toString(36)}`
+  if (!fs.existsSync(path.join(packsInstalledDir(), id))) return id
+  for (let i = 2; i < 1000; i++) {
+    const candidate = `${id}-${i}`.slice(0, 64)
+    if (PACK_ID_RE.test(candidate) && !fs.existsSync(path.join(packsInstalledDir(), candidate))) {
+      return candidate
+    }
+  }
+  return `user-scene-${Date.now().toString(36)}`
+}
+
+/**
+ * Create or update a user-authored scene template (origin:user).
+ * Does not overwrite builtin/installed packs. UI-only — require user_gesture at RPC layer.
+ */
+export function saveUserPack(
+  input: UserPackSaveInput,
+  skillEngine: SkillEngine,
+): { ok: true; id: string; packs: PackListItem[] } | { ok: false; error: string; code?: string } {
+  ensurePackDirs()
+  const name = typeof input.name === "string" ? input.name.trim() : ""
+  if (!name) return { ok: false, error: "name is required", code: "invalid_input" }
+
+  const append =
+    typeof input.system_prompt_append === "string" ? input.system_prompt_append.trim() : ""
+  if (!append) {
+    return { ok: false, error: "system_prompt_append is required", code: "invalid_input" }
+  }
+  if (append.length > MAX_SYSTEM_PROMPT_APPEND) {
+    return {
+      ok: false,
+      error: `system_prompt_append exceeds ${MAX_SYSTEM_PROMPT_APPEND} chars`,
+      code: "invalid_input",
+    }
+  }
+
+  const skillIds = Array.isArray(input.skill_ids)
+    ? input.skill_ids.filter((s) => typeof s === "string" && s.trim()).map((s) => s.trim())
+    : []
+  for (const s of skillIds) {
+    if (s.includes("/") || s.includes("\\") || s.includes("..")) {
+      return { ok: false, error: `invalid skill id: ${s}`, code: "invalid_input" }
+    }
+  }
+  const mcpIds = Array.isArray(input.mcp_server_ids)
+    ? input.mcp_server_ids.filter((s) => typeof s === "string" && s.trim()).map((s) => s.trim())
+    : []
+
+  const existingId = typeof input.id === "string" && input.id.trim() ? input.id.trim() : undefined
+  let packId: string
+  if (existingId) {
+    if (!PACK_ID_RE.test(existingId)) {
+      return { ok: false, error: `invalid pack id: ${existingId}`, code: "invalid_input" }
+    }
+    const dest = path.join(packsInstalledDir(), existingId)
+    if (fs.existsSync(dest)) {
+      const { result } = readInstalledManifest(existingId)
+      if (!result.ok) return { ok: false, error: result.error }
+      if (resolvePackOrigin(result.manifest) !== "user") {
+        return {
+          ok: false,
+          error: "cannot overwrite non-user scene; create a new one or use 另存为 later",
+          code: "not_user_pack",
+        }
+      }
+      packId = existingId
+    } else {
+      packId = existingId.startsWith("user-") ? existingId : allocateUserPackId(existingId, name)
+    }
+  } else {
+    packId = allocateUserPackId(undefined, name)
+  }
+
+  const description =
+    typeof input.description === "string" && input.description.trim()
+      ? input.description.trim()
+      : undefined
+
+  const manifestDoc: Record<string, unknown> = {
+    schema_version: 1,
+    id: packId,
+    name,
+    description,
+    version: "0.1.0",
+    channel: "community",
+    min_capability: "L0",
+    requires_modules: [],
+    origin: "user",
+    skills: [],
+    skill_refs: skillIds,
+    knowledge: [],
+    mcp_servers: mcpIds,
+    tools: {
+      mode: "unchanged",
+      allow: [],
+      deny: [],
+    },
+    system_prompt_append: append,
+    thread_defaults: {
+      skill_selection_mode: "manual",
+      knowledge_selection_mode: "manual",
+      mcp_selection_mode: "manual",
+    },
+    workspace: { type: "none" },
+    author: "user",
+    tags: ["user-scene"],
+    ui: {
+      suitable_for:
+        typeof input.suitable_for === "string" && input.suitable_for.trim()
+          ? input.suitable_for.trim()
+          : description || `用户场景：${name}`,
+      unsuitable_for:
+        typeof input.unsuitable_for === "string" && input.unsuitable_for.trim()
+          ? input.unsuitable_for.trim()
+          : "需要强制收窄工具面的专业模板（请用内置场景）",
+      tools_summary_zh:
+        typeof input.tools_summary_zh === "string" && input.tools_summary_zh.trim()
+          ? input.tools_summary_zh.trim()
+          : "不额外限制工具；优先使用本场景勾选的技能与 MCP",
+    },
+  }
+
+  const tmp = path.join(getConfigDir(), "cache", `user-pack-${Date.now()}`)
+  try {
+    fs.mkdirSync(tmp, { recursive: true, mode: 0o700 })
+    const yamlBody = yaml.dump(manifestDoc, { lineWidth: -1, noRefs: true })
+    fs.writeFileSync(path.join(tmp, "pack.yaml"), yamlBody, { mode: 0o600 })
+
+    const v = validatePackDir(tmp)
+    if (!v.ok) return { ok: false, error: v.error, code: "validation_failed" }
+
+    const dest = path.join(packsInstalledDir(), packId)
+    if (fs.existsSync(dest)) fs.rmSync(dest, { recursive: true, force: true })
+    fs.renameSync(tmp, dest)
+
+    skillEngine.refresh()
+    appendCapabilityAudit({
+      type: "pack.save_user",
+      pack_id: packId,
+      at: new Date().toISOString(),
+    })
+    return { ok: true, id: packId, packs: listInstalledPacks() }
+  } catch (e: any) {
+    try {
+      fs.rmSync(tmp, { recursive: true, force: true })
+    } catch {
+      /* ignore */
+    }
+    return { ok: false, error: e?.message || String(e) }
+  }
+}
+
+/**
+ * Delete a user-authored scene. Builtin/installed packs must use pack.uninstall.
+ */
+export function deleteUserPack(
+  packId: string,
+  threadManager: ThreadManager,
+  skillEngine: SkillEngine,
+): { ok: true; restored_threads: string[]; packs: PackListItem[] } | { ok: false; error: string; code?: string } {
+  if (!packId) return { ok: false, error: "pack_id required", code: "invalid_input" }
+  const dest = path.join(packsInstalledDir(), packId)
+  if (!fs.existsSync(dest)) return { ok: false, error: `pack not installed: ${packId}`, code: "not_found" }
+  const { result } = readInstalledManifest(packId)
+  if (!result.ok) return { ok: false, error: result.error }
+  if (resolvePackOrigin(result.manifest) !== "user") {
+    return {
+      ok: false,
+      error: "only user-authored scenes can be deleted via pack.delete_user",
+      code: "not_user_pack",
+    }
+  }
+  const un = uninstallPack(packId, threadManager, skillEngine)
+  if (!un.ok) return un
+  return { ok: true, restored_threads: un.restored_threads, packs: listInstalledPacks() }
 }
 
 function computeApplyBlocked(manifest: PackManifest, config: CompanionConfig): string | null {
@@ -467,6 +741,17 @@ export function applyPack(
   const configured = configuredMcpServerIds(config)
   const mcpIds = (result.manifest.mcp_servers || []).filter((id) => configured.has(id))
 
+  // skill_refs: global skill names already on disk (user scenes). Filter missing.
+  // When skill_refs is present (even []), prefer refs ∪ pack-local over pre-pack snapshot.
+  let activeSkillIds: string[]
+  if (result.manifest.skill_refs !== undefined) {
+    const known = new Set(skillEngine.list().map((s) => s.name))
+    const refs = result.manifest.skill_refs.filter((id) => known.has(id))
+    activeSkillIds = [...new Set([...skillIds, ...refs])]
+  } else {
+    activeSkillIds = skillIds.length > 0 ? skillIds : baseSnap.active_skill_ids
+  }
+
   try {
     // Single mutation — S8: failure here leaves thread as before this call
     // (note: switch case does NOT restore A first, so A remains until this succeeds)
@@ -474,7 +759,7 @@ export function applyPack(
       mission_pack_id: packId,
       mission_pack_snapshot: freezeSnap,
       tool_whitelist: whitelist,
-      active_skill_ids: skillIds.length > 0 ? skillIds : baseSnap.active_skill_ids,
+      active_skill_ids: activeSkillIds,
       skill_selection_mode: td.skill_selection_mode || "manual",
       knowledge_selection_mode: td.knowledge_selection_mode || "manual",
       mcp_selection_mode: td.mcp_selection_mode || "manual",
