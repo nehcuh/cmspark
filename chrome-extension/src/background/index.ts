@@ -855,6 +855,7 @@ function setupMessageHandlers() {
       case "obsidian.pick_vault_folder":
       case "obsidian.refresh_profile":
       case "skill.list":
+      case "skill.refresh":
       case "skill.craft":
       case "skill.activate":
       case "skill.deactivate":

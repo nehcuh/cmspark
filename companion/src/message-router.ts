@@ -988,16 +988,15 @@ export async function handleMessage(
 
     // --- Skills ---
     case "skill.list":
-      // Read from in-memory cache. Mutating handlers (skill.import / skill.delete /
-      // skill.craft / etc.) already call skillEngine.refresh() after mutation, so the
-      // cache is always fresh w.r.t. API changes. Removing the refresh here avoids a
-      // synchronous 4-directory filesystem re-scan on every Skills-tab click and every
-      // sidepanel reconnect (audit item 10). For external file edits, use skill.refresh.
+      // list() → ensureFresh(): cheap mtime/size fingerprint; full re-parse only when
+      // disk changed (external drops). API mutations already refresh() (audit item 10).
+      // Force full rescan: skill.refresh.
       return { type: "skill.list", skills: skillEngine.list() }
 
     case "skill.refresh":
+      // Force full re-scan (ignore fingerprint) — Skills panel 「刷新」
       skillEngine.refresh()
-      return { type: "skill.list", skills: skillEngine.list() }
+      return { type: "skill.list", skills: skillEngine.list(), refreshed: true }
 
     // --- User env / secrets (ADR-019) — independent of config.json ---
     // set/delete success response type is deliberately `user_env.updated` (same
@@ -1386,7 +1385,7 @@ export async function handleMessage(
 
     // --- Knowledge ---
     case "knowledge.list":
-      skillEngine.refresh()
+      // listKnowledge() → ensureFresh() (same fingerprint path as skills)
       return { type: "knowledge.list", docs: skillEngine.listKnowledge() }
     case "knowledge.import": {
       if (rest.file) {

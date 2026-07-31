@@ -61,6 +61,12 @@ export class SkillEngine {
   private threadSkillMap: Map<string, string[]> = new Map() // threadId → skill names
   private llmConfig?: LlmConfig
   private knowledgeChunks: Map<string, FileChunk[]> = new Map()
+  /**
+   * Cheap disk fingerprint (path|mtimeMs|size lines, sorted).
+   * Used by refreshIfStale() so external drops into skills/ are picked up without
+   * re-parsing every skill.list click when nothing changed (audit item 10).
+   */
+  private diskFingerprint: string | null = null
 
   constructor(llmConfig?: LlmConfig) {
     this.skillsDir = path.join(getConfigDir(), "skills")
@@ -68,6 +74,74 @@ export class SkillEngine {
     this.knowledgeDir = path.join(getConfigDir(), "knowledge")
     this.llmConfig = llmConfig
     this.refresh()
+  }
+
+  /** Roots watched for external skill/knowledge file changes. */
+  private scanRoots(): string[] {
+    return [
+      this.skillsDir,
+      this.builtinDir,
+      path.join(this.knowledgeDir, "global"),
+      path.join(this.knowledgeDir, "sites"),
+    ]
+  }
+
+  /**
+   * Build a stable fingerprint of skill-relevant files under scan roots.
+   * Only stats metadata — no file content reads. Missing dirs contribute nothing.
+   */
+  computeDiskFingerprint(): string {
+    const lines: string[] = []
+    const walk = (dir: string, depth: number) => {
+      if (depth > 6) return
+      let entries: fs.Dirent[]
+      try {
+        entries = fs.readdirSync(dir, { withFileTypes: true })
+      } catch {
+        return
+      }
+      // Stable order
+      entries.sort((a, b) => a.name.localeCompare(b.name))
+      for (const ent of entries) {
+        if (ent.name.startsWith(".")) continue
+        const full = path.join(dir, ent.name)
+        if (ent.isDirectory()) {
+          walk(full, depth + 1)
+          continue
+        }
+        if (!ent.isFile()) continue
+        // Skills: .md / SKILL.md; knowledge: same
+        if (!ent.name.endsWith(".md") && !ent.name.endsWith(".markdown")) continue
+        try {
+          const st = fs.statSync(full)
+          lines.push(`${full}|${st.mtimeMs}|${st.size}`)
+        } catch {
+          /* race: file removed mid-walk */
+        }
+      }
+    }
+    for (const root of this.scanRoots()) {
+      walk(root, 0)
+    }
+    return lines.join("\n")
+  }
+
+  /**
+   * Re-scan filesystem only when mtime/size fingerprint changed.
+   * @returns true if a full refresh ran
+   */
+  refreshIfStale(): boolean {
+    const fp = this.computeDiskFingerprint()
+    if (this.diskFingerprint !== null && fp === this.diskFingerprint) {
+      return false
+    }
+    this.refresh()
+    return true
+  }
+
+  /** Ensure cache matches disk before list/match (no-op if fingerprint unchanged). */
+  ensureFresh(): void {
+    this.refreshIfStale()
   }
 
   refresh(): void {
@@ -81,6 +155,8 @@ export class SkillEngine {
     this.loadFromDir(path.join(this.knowledgeDir, "sites"), false)
     // Pre-chunk large knowledge docs for RAG
     this.rebuildKnowledgeChunks()
+    // Capture fingerprint after load so API mutations + disk drops stay in sync
+    this.diskFingerprint = this.computeDiskFingerprint()
   }
 
   /**
@@ -211,6 +287,7 @@ export class SkillEngine {
   }
 
   list(): SkillMeta[] {
+    this.ensureFresh()
     return this.skillsCache
       .filter(s => this.isSkillDoc(s))
       .map(s => ({
@@ -228,6 +305,7 @@ export class SkillEngine {
   }
 
   get(name: string): Skill | undefined {
+    this.ensureFresh()
     return this.skillsCache.find(s => s.name === name)
   }
 
@@ -346,6 +424,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
    * - High confidence (>= 70%): TF-IDF fast path (millisecond-level)
    * - Low confidence (< 70%): LLM semantic re-ranking (precise, one-shot) */
   async matchSkills(message: string): Promise<Array<{ name: string; confidence: number }>> {
+    this.ensureFresh()
     const queryTokens = tokenize(message)
     const queryVec = tokensToVec(queryTokens)
     // Only match real skills — vault/knowledge notes must not rank into skill auto-match
@@ -395,6 +474,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
     message?: string,
     hostname?: string,
   ): Promise<string[]> {
+    this.ensureFresh()
     const resolvedMode = mode || "auto"
 
     if (resolvedMode === "manual") {
@@ -434,6 +514,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
     mode?: "auto" | "all" | "manual",
     hostname?: string,
   ): string[] {
+    this.ensureFresh()
     const resolvedMode = mode || "auto"
 
     if (resolvedMode === "manual") {
@@ -947,6 +1028,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
   // --- Knowledge management (operates on knowledge/ directory) ---
 
   listKnowledge(): SkillMeta[] {
+    this.ensureFresh()
     return this.skillsCache
       .filter(s => this.isKnowledgeDoc(s))
       .map(s => ({

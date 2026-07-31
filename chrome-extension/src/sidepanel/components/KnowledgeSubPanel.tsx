@@ -312,6 +312,19 @@ export function KnowledgeSubPanel() {
         />
         <button
           type="button"
+          style={styles.toolbarBtn}
+          onClick={() => {
+            // Force skill-engine rescan (knowledge shares the same cache)
+            chrome.runtime.sendMessage({ type: "skill.refresh" })
+            chrome.runtime.sendMessage({ type: "knowledge.list" })
+            showStatus("已重新扫描知识库")
+          }}
+          title="重新扫描知识目录（含外部文件变更）"
+        >
+          ↻ 刷新
+        </button>
+        <button
+          type="button"
           style={{
             ...styles.toolbarBtn,
             ...(manageMode

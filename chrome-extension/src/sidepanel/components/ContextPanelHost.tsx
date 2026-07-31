@@ -90,7 +90,9 @@ export function loadPanelData(
     chrome.runtime.sendMessage({ type: "history.query", limit: 50, thread_id: activeThreadId })
   }
   if (id === "skills") {
-    chrome.runtime.sendMessage({ type: "skill.list" })
+    // Force rescan when opening Skills — picks up Finder drops / external edits
+    // even if mtime fingerprint was edge-case stale; cheap after ensureFresh path.
+    chrome.runtime.sendMessage({ type: "skill.refresh" })
   }
   if (id === "knowledge") {
     chrome.runtime.sendMessage({ type: "knowledge.list" })
@@ -553,6 +555,13 @@ function SkillsPanel() {
       </div>
 
       <div style={styles.skillToolbar}>
+        <button
+          style={styles.skillToolbarBtn}
+          onClick={() => chrome.runtime.sendMessage({ type: "skill.refresh" })}
+          title="重新扫描技能目录（含 ~/.cmspark-agent/skills 外部变更）"
+        >
+          ↻ 刷新
+        </button>
         <button
           style={styles.skillToolbarBtn}
           onClick={() => fileInputRef.current?.click()}
