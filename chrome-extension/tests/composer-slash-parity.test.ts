@@ -84,14 +84,15 @@ test("§4.5 装配 sections are Composition only — no board", () => {
   assert.ok(COMPOSE_SECTIONS.every((s) => s.titleZh && s.group))
 })
 
-test("§4.4 composer chips by level (≤3, no Abort)", () => {
+test("G2 / Q1 composer chips: L0 one 装配 only; L1 ≤3; no Abort", () => {
   const l0 = composerChipsForLevel("chat")
-  assert.ok(l0.length <= 3)
+  assert.equal(l0.length, 1)
   assert.deepEqual(
     l0.map((c) => c.id),
-    ["compose", "skills", "knowledge"],
+    ["compose"],
   )
   assert.equal(l0[0].action.kind, "compose")
+  assert.equal(l0[0].primary, true)
 
   const l1 = composerChipsForLevel("browser")
   assert.ok(l1.length <= 3)
@@ -115,9 +116,9 @@ test("§4.4 composer chips by level (≤3, no Abort)", () => {
   assert.ok(!l2.some((c) => c.id === "abort"))
 })
 
-test("§4.4 mode-aware placeholders", () => {
-  assert.match(composerPlaceholder("chat"), /装配/)
-  assert.match(composerPlaceholder("browser"), /网页/)
+test("G2 mode-aware placeholders (short, human)", () => {
+  assert.match(composerPlaceholder("chat"), /问任何问题/)
+  assert.match(composerPlaceholder("browser"), /网页任务/)
   assert.match(composerPlaceholder("computer"), /确认台/)
 })
 

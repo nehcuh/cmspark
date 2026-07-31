@@ -34,11 +34,10 @@ test("PR5: Host registry still owns all panel ids (SoT independent of strip)", (
   }
 })
 
-test("PR5: chips + 装配 + slash remain discoverability when strip off", () => {
+test("PR5+G2: 装配/slash discoverability when strip off (L0 = one soft chip)", () => {
+  // Gemini-breath Q1: L0 keeps one 装配 chip; Skills/Know via drawer or /
   const l0 = composerChipsForLevel("chat").map((c) => c.id)
-  assert.ok(l0.includes("compose"), "L0 needs 装配 chip")
-  assert.ok(l0.includes("skills"))
-  assert.ok(l0.includes("knowledge"))
+  assert.deepEqual(l0, ["compose"], "L0: soft 装配 only")
 
   const l1 = composerChipsForLevel("browser").map((c) => c.id)
   assert.ok(l1.includes("compose"))
@@ -48,13 +47,16 @@ test("PR5: chips + 装配 + slash remain discoverability when strip off", () => 
   assert.ok(l2.includes("cockpit"))
   assert.ok(l2.includes("compose"))
 
+  // Packs/MCP still reachable via 装配 sections + slash (not L0 chip row)
   assert.ok(COMPOSE_SECTIONS.some((s) => s.panelId === "packs"))
   assert.ok(COMPOSE_SECTIONS.some((s) => s.panelId === "mcp"))
+  assert.ok(COMPOSE_SECTIONS.some((s) => s.panelId === "skills"))
   assert.ok(COMPOSE_SECTIONS.every((s) => s.panelId !== "board"))
 
   const slashNames = new Set(META_PANEL_SLASH.map((e) => e.name))
   assert.ok(slashNames.has("packs"))
   assert.ok(slashNames.has("mcp"))
+  assert.ok(slashNames.has("skills"))
   assert.ok(slashNames.has("装配"))
   assert.ok(slashNames.has("board"))
 })

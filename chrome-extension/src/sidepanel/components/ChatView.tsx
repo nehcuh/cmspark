@@ -722,18 +722,18 @@ function SuggestionChips({ items }: { items: SuggestItem[] }) {
 }
 
 function EmptyState({ level }: { level: "chat" | "browser" | "computer" }) {
+  // Gemini-breath G2: editorial empty — one title, one line, ≤3 soft suggestions.
   if (level === "browser") {
     return (
       <div style={styles.empty} data-testid="empty-state-browser">
-        <div style={styles.emptyTitle}>网页 Agent 已就绪</div>
-        <div style={styles.emptyHint}>
-          可对当前页提问、总结或让 Agent 操作标签。输入 / 或点「装配」打开组合能力。
-        </div>
+        <div style={styles.emptyKicker}>网页</div>
+        <div style={styles.emptyTitle}>要对这页做什么？</div>
+        <div style={styles.emptyHint}>总结、提问，或让 Agent 操作当前标签。</div>
         <SuggestionChips
           items={[
             { label: "总结本页", fill: "请总结当前页面的要点" },
             { label: "装配", action: "compose", primary: true },
-            { label: "/packs", action: "packs" },
+            { label: "任务包", action: "packs" },
           ]}
         />
       </div>
@@ -742,17 +742,12 @@ function EmptyState({ level }: { level: "chat" | "browser" | "computer" }) {
   if (level === "computer") {
     return (
       <div style={styles.empty} data-testid="empty-state-computer">
-        <div style={styles.emptyTitle}>Computer Use 进行中</div>
-        <div style={styles.emptyHint}>
-          完整步骤与确认在确认台；此处可排队跟进消息。装配用于组合能力，任务板请用 /board。
-        </div>
+        <div style={styles.emptyKicker}>计算机</div>
+        <div style={styles.emptyTitle}>任务在确认台进行</div>
+        <div style={styles.emptyHint}>此处可排队跟进；步骤与确认请用确认台。</div>
         <SuggestionChips
           items={[
-            {
-              label: "确认台",
-              action: "cockpit",
-              primary: true,
-            },
+            { label: "确认台", action: "cockpit", primary: true },
             { label: "装配", action: "compose" },
           ]}
         />
@@ -761,15 +756,14 @@ function EmptyState({ level }: { level: "chat" | "browser" | "computer" }) {
   }
   return (
     <div style={styles.empty} data-testid="empty-state-chat">
-      <div style={styles.emptyTitle}>今天想聊什么？</div>
-      <div style={styles.emptyHint}>
-        问问题、写文案，或描述浏览器任务。快捷：总结本页 · 装配 · /packs
-      </div>
+      <div style={styles.emptyKicker}>CMspark</div>
+      <div style={styles.emptyTitle}>有什么可以帮你？</div>
+      <div style={styles.emptyHint}>问问题、写文案，或描述浏览器任务。</div>
       <SuggestionChips
         items={[
           { label: "总结本页", fill: "请总结当前页面的要点" },
           { label: "装配", action: "compose", primary: true },
-          { label: "/packs", action: "packs" },
+          { label: "任务包", action: "packs" },
         ]}
       />
     </div>
@@ -864,23 +858,32 @@ const styles: Record<string, React.CSSProperties> = {
   empty: {
     color: tokens.textMuted,
     textAlign: "center",
-    padding: "48px 18px 24px",
+    padding: "56px 20px 28px",
     fontSize: 13,
     fontFamily: tokens.font,
   },
+  emptyKicker: {
+    fontSize: 11,
+    fontWeight: 600,
+    letterSpacing: "0.06em",
+    textTransform: "uppercase" as const,
+    color: tokens.textMuted,
+    marginBottom: 10,
+  },
   emptyTitle: {
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: 700,
     color: tokens.text,
     marginBottom: 8,
-    letterSpacing: "-0.03em",
+    letterSpacing: "-0.035em",
+    lineHeight: 1.25,
   },
   emptyHint: {
-    fontSize: 12,
+    fontSize: 13,
     color: tokens.textSecondary,
     lineHeight: 1.55,
-    maxWidth: 268,
-    margin: "0 auto 16px",
+    maxWidth: 260,
+    margin: "0 auto 20px",
   },
   chipRow: {
     display: "flex",

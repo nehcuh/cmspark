@@ -271,8 +271,9 @@ export type ComposerChip = {
 }
 
 /**
- * Mode-aware chips under composer (§4.4). Max 3; 装配 always present except
- * when 确认台 claims a slot on L2 (装配 still included — total 2).
+ * Mode-aware chips under composer.
+ * Gemini-breath G2 / dual-review Q1: L0 = **one soft 装配 chip only**
+ * (Skills/Know via 装配 drawer or `/`). L1 ≤3; L2 = 确认台 + 装配.
  * Abort never appears here.
  */
 export function composerChipsForLevel(level: CapabilityLevel): ComposerChip[] {
@@ -280,8 +281,6 @@ export function composerChipsForLevel(level: CapabilityLevel): ComposerChip[] {
     case "chat":
       return [
         { id: "compose", label: "装配", action: { kind: "compose" }, primary: true },
-        { id: "skills", label: "Skills", action: { kind: "panel", panelId: "skills" } },
-        { id: "knowledge", label: "Know", action: { kind: "panel", panelId: "knowledge" } },
       ]
     case "browser":
       return [
@@ -301,15 +300,15 @@ export function composerChipsForLevel(level: CapabilityLevel): ComposerChip[] {
   }
 }
 
-/** Mode-aware composer placeholder (§4.4). */
+/** Mode-aware composer placeholder (Gemini-breath G2: short, human). */
 export function composerPlaceholder(level: CapabilityLevel): string {
   switch (level) {
     case "chat":
-      return "问点什么，或 / 装配"
+      return "问任何问题，或描述网页任务…"
     case "browser":
-      return "描述网页任务…"
+      return "描述网页任务，或继续提问…"
     case "computer":
-      return "排队跟进…（conductor 在确认台）"
+      return "排队跟进…（任务指挥在确认台）"
   }
 }
 
