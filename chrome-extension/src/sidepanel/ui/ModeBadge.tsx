@@ -44,11 +44,11 @@ export function ModeBadge({
   const style: CSSProperties = {
     display: "inline-flex",
     alignItems: "center",
-    gap: 4,
+    gap: 5,
     fontSize: 11,
-    fontWeight: 600,
-    letterSpacing: "0.01em",
-    padding: "3px 8px 3px 6px",
+    fontWeight: 650,
+    letterSpacing: "0.02em",
+    padding: "4px 10px 4px 7px",
     borderRadius: tokens.radiusPill,
     background: theme.bg,
     color: theme.color,
@@ -57,7 +57,9 @@ export function ModeBadge({
     flexShrink: 0,
     fontFamily: tokens.font,
     cursor: onTogglePin ? "pointer" : "default",
-    boxShadow: pinned ? `0 0 0 2px ${tokens.accentSoft}` : "none",
+    boxShadow: pinned
+      ? `0 0 0 3px ${tokens.accentSoft}`
+      : "0 1px 2px rgba(15, 23, 42, 0.04)",
     transition: `box-shadow ${tokens.transitionFast} ease, border-color ${tokens.transitionFast} ease`,
   }
 

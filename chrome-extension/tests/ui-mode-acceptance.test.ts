@@ -113,7 +113,7 @@ test("§8 residual: risk labels not color-only (text exists)", () => {
   assert.equal(riskLabel("low"), "低风险")
 })
 
-test("§8 residual: quiet-professional accent not Material blue", () => {
-  assert.equal(tokens.accent, "#2563eb")
+test("§8 residual: quiet-premium accent not Material blue", () => {
+  assert.equal(tokens.accent, "#4f46e5")
   assert.ok(tokens.darkWarning)
 })

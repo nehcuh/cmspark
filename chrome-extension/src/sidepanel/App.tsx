@@ -789,9 +789,31 @@ const globalCSS = `
     0% { width: 0; }
     100% { width: 20px; }
   }
+  html, body, #root {
+    background: ${tokens.bg};
+  }
+  ::selection {
+    background: ${tokens.accentSoft};
+    color: ${tokens.accentText};
+  }
+  /* Thin, quiet scrollbar */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(15, 23, 42, 0.18) transparent;
+  }
+  *::-webkit-scrollbar { width: 6px; height: 6px; }
+  *::-webkit-scrollbar-thumb {
+    background: rgba(15, 23, 42, 0.16);
+    border-radius: 999px;
+  }
+  *::-webkit-scrollbar-track { background: transparent; }
   button, a, [role="button"] {
     transition: background ${tokens.transitionFast} ease, color ${tokens.transitionFast} ease,
-      border-color ${tokens.transitionFast} ease, opacity ${tokens.transitionFast} ease;
+      border-color ${tokens.transitionFast} ease, opacity ${tokens.transitionFast} ease,
+      box-shadow ${tokens.transitionFast} ease, transform ${tokens.transitionFast} ease;
+  }
+  button:active:not(:disabled) {
+    transform: scale(0.98);
   }
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after {
@@ -799,6 +821,7 @@ const globalCSS = `
       animation-iteration-count: 1 !important;
       transition-duration: 0.01ms !important;
     }
+    button:active:not(:disabled) { transform: none; }
   }
 `
 
@@ -810,13 +833,17 @@ const styles: Record<string, React.CSSProperties> = {
     fontFamily: tokens.font,
     fontSize: 13,
     color: tokens.text,
-    background: tokens.bgElevated,
+    background: `linear-gradient(180deg, ${tokens.bg} 0%, #e8ecf3 100%)`,
+    WebkitFontSmoothing: "antialiased",
   },
   inputArea: {
     display: "flex",
     flexDirection: "column",
-    padding: "10px 12px 12px",
-    background: tokens.bg,
+    padding: "10px 12px 14px",
+    background: "rgba(255, 255, 255, 0.55)",
+    backdropFilter: "blur(10px)",
+    WebkitBackdropFilter: "blur(10px)",
+    borderTop: `1px solid ${tokens.border}`,
     flexShrink: 0,
     position: "relative" as const,
   },
@@ -825,29 +852,30 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: "flex-end",
     gap: 4,
     border: `1px solid ${tokens.borderStrong}`,
-    borderRadius: tokens.radiusLg,
-    padding: "6px 6px 6px 4px",
+    borderRadius: 14,
+    padding: "8px 8px 8px 6px",
     background: tokens.bgElevated,
-    boxShadow: tokens.shadowSm,
+    boxShadow: `${tokens.shadowMd}, 0 0 0 1px rgba(255,255,255,0.7) inset`,
     transition: `border-color ${tokens.transitionFast} ease, box-shadow ${tokens.transitionFast} ease`,
   },
   textarea: {
     flex: 1,
     border: "none",
     borderRadius: tokens.radiusMd,
-    padding: "6px 8px",
+    padding: "8px 8px",
     fontSize: 13,
     fontFamily: "inherit",
     resize: "none" as const,
     outline: "none",
-    minHeight: 36,
+    minHeight: 40,
     maxHeight: 100,
     background: "transparent",
     color: tokens.text,
+    lineHeight: 1.45,
   },
   attachBtn: {
-    width: 32,
-    height: 32,
+    width: 34,
+    height: 34,
     borderRadius: tokens.radiusMd,
     border: "none",
     background: "transparent",
@@ -860,11 +888,11 @@ const styles: Record<string, React.CSSProperties> = {
     padding: 0,
   },
   sendBtn: {
-    width: 32,
-    height: 32,
+    width: 34,
+    height: 34,
     borderRadius: tokens.radiusMd,
     border: "none",
-    background: tokens.accent,
+    background: `linear-gradient(145deg, ${tokens.accent} 0%, ${tokens.accentHover} 100%)`,
     color: "#fff",
     cursor: "pointer",
     flexShrink: 0,
@@ -872,10 +900,11 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: "center",
     justifyContent: "center",
     padding: 0,
+    boxShadow: "0 2px 8px rgba(79, 70, 229, 0.35)",
   },
   stopBtn: {
-    width: 32,
-    height: 32,
+    width: 34,
+    height: 34,
     borderRadius: tokens.radiusMd,
     border: "none",
     background: tokens.danger,
@@ -886,6 +915,7 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: "center",
     justifyContent: "center",
     padding: 0,
+    boxShadow: "0 2px 8px rgba(220, 38, 38, 0.28)",
   },
 }
 
