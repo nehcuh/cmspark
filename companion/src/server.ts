@@ -4678,6 +4678,15 @@ export function validateWsMessage(msg: any): WsValidationResult {
       return { valid: true }
     },
     "workspace.pick": () => ({ valid: true }),
+    "workspace.clear": (m) => {
+      if (typeof m.thread_id !== "string" || !m.thread_id) {
+        return { valid: false, error: "workspace.clear requires thread_id" }
+      }
+      if (m.user_gesture !== true) {
+        return { valid: false, error: "workspace.clear requires user_gesture:true" }
+      }
+      return { valid: true }
+    },
     "workspace.set": (m) => {
       if (typeof m.thread_id !== "string" || !m.thread_id) return { valid: false, error: "workspace.set requires thread_id" }
       if (typeof m.path !== "string" || !m.path) return { valid: false, error: "workspace.set requires path" }

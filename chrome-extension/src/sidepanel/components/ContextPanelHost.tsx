@@ -512,6 +512,28 @@ function SkillsPanel() {
         ))}
       </div>
 
+      <div
+        style={{
+          fontSize: 10,
+          color: tokens.textSecondary,
+          lineHeight: 1.4,
+          marginBottom: 8,
+          padding: "6px 8px",
+          background: tokens.accentSoft,
+          borderRadius: tokens.radiusSm,
+          border: `1px solid ${tokens.border}`,
+        }}
+      >
+        <strong style={{ color: tokens.accentText }}>安装技能（推荐）</strong>
+        <div style={{ marginTop: 3 }}>
+          GitHub 仓库：下载 ZIP → <strong>导入 ZIP</strong>；或解压后用{" "}
+          <strong>导入文件夹</strong>。单文件 skill 用「导入」.md。
+        </div>
+        <div style={{ marginTop: 3, color: tokens.textMuted }}>
+          勿用「场景」里的「应用安全审查」装技能 — 那会限制本对话工具。
+        </div>
+      </div>
+
       <div style={styles.skillToolbar}>
         <button
           style={styles.skillToolbarBtn}

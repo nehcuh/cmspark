@@ -57,6 +57,8 @@ export function PacksPanel() {
   const [selectedAuth, setSelectedAuth] = useState<Set<string>>(new Set())
   const [authorizeAlso, setAuthorizeAlso] = useState(true)
   const [confirmPack, setConfirmPack] = useState<PackListItem | null>(null)
+  /** NetSec settings collapsed by default (P1 noise reduction). */
+  const [netsecOpen, setNetsecOpen] = useState(false)
   const activeThreadRef = useRef(state.activeThreadId)
   activeThreadRef.current = state.activeThreadId
 
@@ -136,6 +138,10 @@ export function PacksPanel() {
       if (msg?.type === "workspace.set_result" && msg.thread) {
         dispatch({ type: "UPSERT_THREAD", thread: msg.thread })
         flash(`工作区已绑定: ${msg.thread.workspace_root || ""}`, 4000)
+      }
+      if (msg?.type === "workspace.clear_result" && msg.thread) {
+        dispatch({ type: "UPSERT_THREAD", thread: msg.thread })
+        flash("已清除工作区绑定", 2500)
       }
       if (msg?.type === "error") {
         flash(msg.error || "操作失败", 5000)
@@ -326,6 +332,23 @@ export function PacksPanel() {
     })
   }
 
+  const clearWorkspace = () => {
+    if (!state.activeThreadId) {
+      flash("请先选择对话")
+      return
+    }
+    if (!workspaceRoot) {
+      flash("当前未绑定工作区")
+      return
+    }
+    setBusy("ws-clear")
+    chrome.runtime.sendMessage({
+      type: "workspace.clear",
+      thread_id: state.activeThreadId,
+      user_gesture: true,
+    })
+  }
+
   const openSkills = () => {
     host?.openPanelForce("skills")
   }
@@ -386,6 +409,17 @@ export function PacksPanel() {
             <button type="button" style={styles.secondaryBtn} onClick={pickWorkspace} disabled={!!busy}>
               {workspaceRoot ? "更换工作区" : "选择工作区"}
             </button>
+            {workspaceRoot ? (
+              <button
+                type="button"
+                style={styles.secondaryBtn}
+                onClick={clearWorkspace}
+                disabled={!!busy}
+                title="仅解除绑定，不删除磁盘文件"
+              >
+                {busy === "ws-clear" ? "清除中…" : "清除工作区"}
+              </button>
+            ) : null}
           </div>
         </div>
       </section>
@@ -464,10 +498,26 @@ export function PacksPanel() {
         )}
       </section>
 
-      {/* Zone: NetSec */}
+      {/* Zone: NetSec — collapsed by default (P1) */}
       {netsecEnabled && (
         <section style={styles.zone}>
-          <div style={styles.zoneTitle}>网络扫描设置</div>
+          <button
+            type="button"
+            style={styles.foldBtn}
+            onClick={() => setNetsecOpen((v) => !v)}
+            aria-expanded={netsecOpen}
+          >
+            <span style={styles.zoneTitleInline}>网络扫描设置</span>
+            <span style={styles.foldChevron}>{netsecOpen ? "收起" : "展开"}</span>
+          </button>
+          {!netsecOpen && (
+            <div style={styles.hint}>
+              {allowlist.length
+                ? `已配置 ${allowlist.length} 个允许目标 · 本对话${authTargets.length ? `已授权 ${authTargets.length}` : "未授权"}`
+                : "未配置允许目标 — 展开后添加"}
+            </div>
+          )}
+          {netsecOpen && (
           <div style={styles.netsecCard}>
             <div style={styles.netsecHint}>
               维护「允许扫描的目标」（写入 Companion）。真正扫描前还需对本对话授权。
@@ -561,6 +611,7 @@ export function PacksPanel() {
               <div style={styles.authHint}>本对话尚未授权扫描 — 勾选目标后点「授权所选」</div>
             )}
           </div>
+          )}
         </section>
       )}
 
@@ -640,6 +691,25 @@ const styles: Record<string, import("react").CSSProperties> = {
     textTransform: "uppercase",
     marginBottom: 6,
   },
+  zoneTitleInline: {
+    fontSize: 10,
+    fontWeight: 650,
+    color: tokens.textMuted,
+    letterSpacing: "0.04em",
+    textTransform: "uppercase",
+  },
+  foldBtn: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    width: "100%",
+    border: "none",
+    background: "transparent",
+    padding: "0 0 4px",
+    cursor: "pointer",
+    fontFamily: tokens.font,
+  },
+  foldChevron: { fontSize: 10, color: tokens.accent, fontWeight: 600 },
   stateCard: {
     border: `1px solid ${tokens.border}`,
     borderRadius: tokens.radiusMd,

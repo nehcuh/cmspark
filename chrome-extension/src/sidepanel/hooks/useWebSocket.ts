@@ -626,10 +626,12 @@ export function useWebSocket() {
 
         case "pack.applied":
         case "pack.unapplied":
-          // Thread fields updated by companion (mission_pack_id, tool_whitelist, …)
+        case "workspace.clear_result":
+        case "workspace.set_result":
+          // Thread fields updated by companion (mission_pack_id, workspace_root, …)
           if (msg.thread?.id) {
             dispatch({ type: "UPSERT_THREAD", thread: msg.thread })
-          } else {
+          } else if (msg.type !== "workspace.set_result" && msg.type !== "workspace.clear_result") {
             chrome.runtime.sendMessage({ type: "thread.list" })
           }
           break

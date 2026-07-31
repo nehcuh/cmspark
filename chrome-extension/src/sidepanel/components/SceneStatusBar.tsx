@@ -38,6 +38,15 @@ export function SceneStatusBar() {
     })
   }
 
+  const clearWorkspace = () => {
+    if (!state.activeThreadId || !workspaceRoot) return
+    chrome.runtime.sendMessage({
+      type: "workspace.clear",
+      thread_id: state.activeThreadId,
+      user_gesture: true,
+    })
+  }
+
   const openScenes = () => {
     host?.openPanelForce("packs")
   }
@@ -55,8 +64,11 @@ export function SceneStatusBar() {
         </span>
       ) : null}
       {workspaceRoot ? (
-        <span style={styles.ws} title={workspaceRoot}>
-          工作区：{workspaceBasename(workspaceRoot)}
+        <span style={styles.chip} title={workspaceRoot}>
+          <span style={styles.ws}>工作区：{workspaceBasename(workspaceRoot)}</span>
+          <button type="button" style={styles.exitBtn} onClick={clearWorkspace} title="解除本对话工作区绑定（不删文件）">
+            清除
+          </button>
         </span>
       ) : null}
     </div>

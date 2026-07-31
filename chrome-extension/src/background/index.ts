@@ -885,6 +885,7 @@ function setupMessageHandlers() {
       case "board.add_hint":
       case "workspace.pick":
       case "workspace.set":
+      case "workspace.clear":
       case "netsec.authorize_task":
       case "enterprise.session_trust.status":
       case "enterprise.session_trust.revoke":

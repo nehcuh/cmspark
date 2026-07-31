@@ -1862,6 +1862,23 @@ export async function handleMessage(
       threadManager.update(rest.thread_id, { workspace_root: r.path } as any)
       return { type: "workspace.set_result", thread: threadManager.get(rest.thread_id) }
     }
+    case "workspace.clear": {
+      // UI-only: unbind workspace from thread (does not delete files).
+      if (!rest.thread_id || typeof rest.thread_id !== "string") {
+        return { type: "error", error: "workspace.clear requires thread_id" }
+      }
+      if (rest.user_gesture !== true) {
+        return {
+          type: "error",
+          error: "workspace.clear requires user_gesture:true",
+          code: "user_gesture_required",
+        }
+      }
+      const thread = threadManager.get(rest.thread_id)
+      if (!thread) return { type: "error", error: "thread not found" }
+      threadManager.update(rest.thread_id, { workspace_root: null } as any)
+      return { type: "workspace.clear_result", thread: threadManager.get(rest.thread_id) }
+    }
     case "netsec.authorize_task": {
       if (!rest.thread_id) return { type: "error", error: "thread_id required" }
       if (rest.authorized !== true) {
