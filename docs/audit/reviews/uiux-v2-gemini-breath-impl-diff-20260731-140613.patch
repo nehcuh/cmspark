@@ -1,0 +1,1803 @@
+# Dual external review context
+batch: uiux-v2-gemini-breath-impl
+base: 0cfa7a4
+time: 20260731-140613
+
+f74e6e5
+
+ M PROJECT_CONTEXT.md
+?? .grok/hooks/
+?? .grok/rules/
+?? docs/audit/reviews/gemini-visual-comparison-diff-20260731-131512.patch
+?? docs/audit/reviews/log-event-echo-loop-impl-diff-20260731-093639.patch
+?? docs/audit/reviews/log-event-echo-loop-rca-diff-20260731-091807.patch
+?? docs/audit/reviews/sidepanel-uiux-v2-diff-20260731-095551.patch
+?? docs/audit/reviews/uiux-v2-gemini-breath-impl-diff-20260731-140613.patch
+?? docs/audit/reviews/uiux-v2-gemini-breath-impl-dual-review-prompt-2026-07-31.md
+
+## Diff (git diff + staged)
+ PROJECT_CONTEXT.md                                 |  18 +++
+ chrome-extension/src/sidepanel/App.tsx             |  26 ++--
+ .../src/sidepanel/components/AppsPanel.tsx         |  21 +--
+ .../src/sidepanel/components/ChatView.tsx          |  68 ++++-----
+ .../src/sidepanel/components/ComposeDrawer.tsx     |  77 ++++++-----
+ .../src/sidepanel/components/ContextPanelHost.tsx  |  15 +-
+ .../src/sidepanel/components/FocusBand.tsx         | 135 ++++++++++--------
+ .../src/sidepanel/components/KnowledgeSubPanel.tsx |  17 ++-
+ .../src/sidepanel/components/McpPanel.tsx          |  16 ++-
+ .../src/sidepanel/components/MinimalConfirm.tsx    |  34 +++--
+ .../src/sidepanel/components/StatusRail.tsx        |  41 +++---
+ .../src/sidepanel/composer/meta-slash.ts           |  15 +-
+ chrome-extension/src/sidepanel/ui/tokens.ts        |  49 ++++---
+ .../tests/bottom-bar-strip-flag.test.ts            |  10 +-
+ .../tests/composer-slash-parity.test.ts            |  13 +-
+ chrome-extension/tests/tokens-helpers.test.ts      |  16 ++-
+ .../reviews/uiux-v2-PR-G1-pi-20260731-132354.md    |  46 +++++++
+ .../reviews/uiux-v2-PR-G2-pi-20260731-134226.md    | 109 +++++++++++++++
+ .../reviews/uiux-v2-PR-G3-pi-20260731-134817.md    |  79 +++++++++++
+ docs/audit/reviews/uiux-v2-PR-G3-review-prompt.md  |  72 ++++++++++
+ .../reviews/uiux-v2-PR-G4-pi-20260731-140223.md    | 153 +++++++++++++++++++++
+ docs/audit/reviews/uiux-v2-PR-G4-review-prompt.md  |  67 +++++++++
+ 22 files changed, 871 insertions(+), 226 deletions(-)
+
+diff --git a/PROJECT_CONTEXT.md b/PROJECT_CONTEXT.md
+index dc324dc..5097fa3 100644
+--- a/PROJECT_CONTEXT.md
++++ b/PROJECT_CONTEXT.md
+@@ -3,6 +3,24 @@
+ ## Session Handoff
+ 
+ <!-- handoff:start -->
++### 2026-07-31 (S24 — VibeSOP Sprint1 dogfood 落地)
++- **目的**：在 cmspark 上跑最新 VibeSOP 黄金 aha 路径，便于后续路由/记忆洞察
++- **已做**：
++  1. `uv tool install --reinstall` 本地 vibesop-py（含 `vibe instinct pending|accept|dismiss|stats`）
++  2. `vibe build claude-code` → 项目 `.claude/` + `~/.claude`；`vibe build grok-build` → 项目 `.grok/` + `~/.grok`
++  3. `.vibe/config.toml` 已 `analytics.enabled = true`（保持）
++  4. dogfood 修复：末层 `levenshtein` 虚高 conf 也会入 pending（见 vibesop-py routing_pending）
++- **验证**：nonsense query → pending 出现 → dismiss → outcome 计数增加
++- **日常洞察命令**（在 cmspark 根目录）：
++  ```bash
++  vibe instinct stats
++  vibe instinct pending
++  vibe instinct accept <id>   # 或 dismiss
++  vibe route "<真实意图>" -y
++  ```
++- **注意**：每日最多 3 条 pending；dismiss 后同 query+skill 24h 抑制；restart Claude Code / Grok 以加载新 hooks
++- **下次**：观察 14 天 accept/dismiss 与 outcome 密度；勿用 probe query 污染 production 路由偏好（dismiss 已写负反馈）
++
+ ### 2026-07-30 (S23 — Trust P1 + browser_download 全合 main)
+ - **origin/main tip**：含 Merge #88 / #87 / #86 / #89 / #85 / #90（Trust §B P1a 四条 + browser_download P1.0 + CI hang 修）
+ - **已交付（本会话）**：
+diff --git a/chrome-extension/src/sidepanel/App.tsx b/chrome-extension/src/sidepanel/App.tsx
+index e06f8c0..a49793d 100644
+--- a/chrome-extension/src/sidepanel/App.tsx
++++ b/chrome-extension/src/sidepanel/App.tsx
+@@ -833,16 +833,16 @@ const styles: Record<string, React.CSSProperties> = {
+     fontFamily: tokens.font,
+     fontSize: 13,
+     color: tokens.text,
+-    background: `linear-gradient(180deg, ${tokens.bg} 0%, #e8ecf3 100%)`,
++    background: `linear-gradient(180deg, ${tokens.bg} 0%, #eef0f6 100%)`,
+     WebkitFontSmoothing: "antialiased",
+   },
+   inputArea: {
+     display: "flex",
+     flexDirection: "column",
+-    padding: "10px 12px 14px",
+-    background: "rgba(255, 255, 255, 0.55)",
+-    backdropFilter: "blur(10px)",
+-    WebkitBackdropFilter: "blur(10px)",
++    padding: "12px 14px 16px",
++    background: "rgba(255, 255, 255, 0.62)",
++    backdropFilter: "blur(14px)",
++    WebkitBackdropFilter: "blur(14px)",
+     borderTop: `1px solid ${tokens.border}`,
+     flexShrink: 0,
+     position: "relative" as const,
+@@ -850,12 +850,12 @@ const styles: Record<string, React.CSSProperties> = {
+   composerCapsule: {
+     display: "flex",
+     alignItems: "flex-end",
+-    gap: 4,
++    gap: 6,
+     border: `1px solid ${tokens.borderStrong}`,
+-    borderRadius: 14,
+-    padding: "8px 8px 8px 6px",
++    borderRadius: tokens.radiusComposer,
++    padding: "10px 10px 10px 8px",
+     background: tokens.bgElevated,
+-    boxShadow: `${tokens.shadowMd}, 0 0 0 1px rgba(255,255,255,0.7) inset`,
++    boxShadow: `${tokens.shadowMd}, 0 0 0 1px rgba(255,255,255,0.8) inset`,
+     transition: `border-color ${tokens.transitionFast} ease, box-shadow ${tokens.transitionFast} ease`,
+   },
+   textarea: {
+@@ -863,15 +863,15 @@ const styles: Record<string, React.CSSProperties> = {
+     border: "none",
+     borderRadius: tokens.radiusMd,
+     padding: "8px 8px",
+-    fontSize: 13,
++    fontSize: 14,
+     fontFamily: "inherit",
+     resize: "none" as const,
+     outline: "none",
+-    minHeight: 40,
+-    maxHeight: 100,
++    minHeight: 44,
++    maxHeight: 120,
+     background: "transparent",
+     color: tokens.text,
+-    lineHeight: 1.45,
++    lineHeight: 1.5,
+   },
+   attachBtn: {
+     width: 34,
+diff --git a/chrome-extension/src/sidepanel/components/AppsPanel.tsx b/chrome-extension/src/sidepanel/components/AppsPanel.tsx
+index 47086d6..2f44d68 100644
+--- a/chrome-extension/src/sidepanel/components/AppsPanel.tsx
++++ b/chrome-extension/src/sidepanel/components/AppsPanel.tsx
+@@ -903,27 +903,32 @@ const styles: Record<string, React.CSSProperties> = {
+     right: 0,
+     top: "100%",
+     zIndex: 10,
+-    background: "#fff",
+-    border: "1px solid #e5e7eb",
+-    borderRadius: 4,
+-    boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
++    background: tokens.bgElevated,
++    border: `1px solid ${tokens.borderStrong}`,
++    borderRadius: tokens.radiusMenu,
++    boxShadow: tokens.shadowLg,
+     minWidth: 180,
++    padding: 4,
++    overflow: "hidden",
+   },
+   menuSectionTitle: {
+     fontSize: 10,
+-    color: "#9ca3af",
+-    padding: "4px 10px 0",
++    color: tokens.textMuted,
++    padding: "6px 12px 2px",
++    fontFamily: tokens.font,
+   },
+   menuItem: {
+     display: "block",
+     width: "100%",
+-    padding: "6px 10px",
++    padding: "8px 12px",
+     border: "none",
++    borderRadius: tokens.radiusMd,
+     background: "transparent",
+     cursor: "pointer",
+     fontSize: 12,
+     textAlign: "left",
+-    color: "#333",
++    color: tokens.text,
++    fontFamily: tokens.font,
+   },
+   addBtn: {
+     marginTop: 6,
+diff --git a/chrome-extension/src/sidepanel/components/ChatView.tsx b/chrome-extension/src/sidepanel/components/ChatView.tsx
+index 11c6726..1bb8b2c 100644
+--- a/chrome-extension/src/sidepanel/components/ChatView.tsx
++++ b/chrome-extension/src/sidepanel/components/ChatView.tsx
+@@ -398,7 +398,8 @@ function ToolCallCard({ tc }: { tc: any }) {
+     <div
+       style={{
+         ...styles.toolCard,
+-        borderColor: statusTone,
++        // G3: status via left hairline only — not a full-border cage
++        borderLeftColor: statusTone,
+         cursor: hasResult && isLongResult ? "pointer" : "default",
+       }}
+       onClick={() => {
+@@ -722,18 +723,18 @@ function SuggestionChips({ items }: { items: SuggestItem[] }) {
+ }
+ 
+ function EmptyState({ level }: { level: "chat" | "browser" | "computer" }) {
++  // Gemini-breath G2: editorial empty — one title, one line, ≤3 soft suggestions.
+   if (level === "browser") {
+     return (
+       <div style={styles.empty} data-testid="empty-state-browser">
+-        <div style={styles.emptyTitle}>网页 Agent 已就绪</div>
+-        <div style={styles.emptyHint}>
+-          可对当前页提问、总结或让 Agent 操作标签。输入 / 或点「装配」打开组合能力。
+-        </div>
++        <div style={styles.emptyKicker}>网页</div>
++        <div style={styles.emptyTitle}>要对这页做什么？</div>
++        <div style={styles.emptyHint}>总结、提问，或让 Agent 操作当前标签。</div>
+         <SuggestionChips
+           items={[
+             { label: "总结本页", fill: "请总结当前页面的要点" },
+             { label: "装配", action: "compose", primary: true },
+-            { label: "/packs", action: "packs" },
++            { label: "任务包", action: "packs" },
+           ]}
+         />
+       </div>
+@@ -742,17 +743,12 @@ function EmptyState({ level }: { level: "chat" | "browser" | "computer" }) {
+   if (level === "computer") {
+     return (
+       <div style={styles.empty} data-testid="empty-state-computer">
+-        <div style={styles.emptyTitle}>Computer Use 进行中</div>
+-        <div style={styles.emptyHint}>
+-          完整步骤与确认在确认台；此处可排队跟进消息。装配用于组合能力，任务板请用 /board。
+-        </div>
++        <div style={styles.emptyKicker}>计算机</div>
++        <div style={styles.emptyTitle}>任务在确认台进行</div>
++        <div style={styles.emptyHint}>此处可排队跟进。步骤与确认请用确认台。</div>
+         <SuggestionChips
+           items={[
+-            {
+-              label: "确认台",
+-              action: "cockpit",
+-              primary: true,
+-            },
++            { label: "确认台", action: "cockpit", primary: true },
+             { label: "装配", action: "compose" },
+           ]}
+         />
+@@ -761,15 +757,14 @@ function EmptyState({ level }: { level: "chat" | "browser" | "computer" }) {
+   }
+   return (
+     <div style={styles.empty} data-testid="empty-state-chat">
+-      <div style={styles.emptyTitle}>今天想聊什么？</div>
+-      <div style={styles.emptyHint}>
+-        问问题、写文案，或描述浏览器任务。快捷：总结本页 · 装配 · /packs
+-      </div>
++      <div style={styles.emptyKicker}>CMspark</div>
++      <div style={styles.emptyTitle}>有什么可以帮你？</div>
++      <div style={styles.emptyHint}>问问题、写文案，或描述浏览器任务。</div>
+       <SuggestionChips
+         items={[
+           { label: "总结本页", fill: "请总结当前页面的要点" },
+           { label: "装配", action: "compose", primary: true },
+-          { label: "/packs", action: "packs" },
++          { label: "任务包", action: "packs" },
+         ]}
+       />
+     </div>
+@@ -864,23 +859,32 @@ const styles: Record<string, React.CSSProperties> = {
+   empty: {
+     color: tokens.textMuted,
+     textAlign: "center",
+-    padding: "48px 18px 24px",
++    padding: "56px 20px 28px",
+     fontSize: 13,
+     fontFamily: tokens.font,
+   },
++  emptyKicker: {
++    fontSize: 11,
++    fontWeight: 600,
++    letterSpacing: "0.06em",
++    textTransform: "uppercase" as const,
++    color: tokens.textMuted,
++    marginBottom: 10,
++  },
+   emptyTitle: {
+-    fontSize: 16,
++    fontSize: 18,
+     fontWeight: 700,
+     color: tokens.text,
+     marginBottom: 8,
+-    letterSpacing: "-0.03em",
++    letterSpacing: "-0.035em",
++    lineHeight: 1.25,
+   },
+   emptyHint: {
+-    fontSize: 12,
++    fontSize: 13,
+     color: tokens.textSecondary,
+     lineHeight: 1.55,
+-    maxWidth: 268,
+-    margin: "0 auto 16px",
++    maxWidth: 260,
++    margin: "0 auto 20px",
+   },
+   chipRow: {
+     display: "flex",
+@@ -928,18 +932,18 @@ const styles: Record<string, React.CSSProperties> = {
+   userBubble: {
+     background: `linear-gradient(145deg, ${tokens.userBubbleBg} 0%, ${tokens.accentHover} 100%)`,
+     color: tokens.userBubbleText,
+-    borderRadius: "16px 16px 4px 16px",
++    borderRadius: `${tokens.radiusBubble}px ${tokens.radiusBubble}px 4px ${tokens.radiusBubble}px`,
+     padding: "9px 13px",
+     fontSize: 13,
+     lineHeight: 1.5,
+     wordBreak: "break-word" as const,
+     whiteSpace: "pre-wrap",
+-    boxShadow: "0 2px 10px rgba(79, 70, 229, 0.22)",
++    boxShadow: "0 2px 10px rgba(79, 70, 229, 0.20)",
+   },
+   agentBubble: {
+     background: tokens.assistantBubbleBg,
+     color: tokens.assistantBubbleText,
+-    borderRadius: "16px 16px 16px 4px",
++    borderRadius: `${tokens.radiusBubble}px ${tokens.radiusBubble}px ${tokens.radiusBubble}px 4px`,
+     padding: "9px 13px",
+     fontSize: 13,
+     lineHeight: 1.5,
+@@ -949,7 +953,7 @@ const styles: Record<string, React.CSSProperties> = {
+   },
+   statusBubble: {
+     background: tokens.accentSoft,
+-    borderRadius: "14px 14px 14px 4px",
++    borderRadius: `${tokens.radiusBubble}px ${tokens.radiusBubble}px ${tokens.radiusBubble}px 4px`,
+     padding: "8px 12px",
+     maxWidth: "88%",
+     fontSize: 12,
+@@ -1027,12 +1031,14 @@ const styles: Record<string, React.CSSProperties> = {
+     marginTop: 4,
+     fontWeight: 500,
+   },
++  // G3: elevated card + 2px left accent hairline (status overrides color)
+   toolCard: {
+     marginTop: 8,
+     border: `1px solid ${tokens.border}`,
++    borderLeft: `2px solid ${tokens.accent}`,
+     borderRadius: tokens.radiusMd,
+     padding: "8px 10px",
+-    background: "rgba(255,255,255,0.92)",
++    background: tokens.bgElevated,
+     fontSize: 11,
+     boxShadow: tokens.shadowSm,
+   },
+diff --git a/chrome-extension/src/sidepanel/components/ComposeDrawer.tsx b/chrome-extension/src/sidepanel/components/ComposeDrawer.tsx
+index 8af7c95..d6cf6dc 100644
+--- a/chrome-extension/src/sidepanel/components/ComposeDrawer.tsx
++++ b/chrome-extension/src/sidepanel/components/ComposeDrawer.tsx
+@@ -1,6 +1,7 @@
+ // 装配 drawer — full Composition section UI (UIUX v2 PR6 / §4.5).
+ // Opens Host panels; Board / Fleet / multi-worker are Autonomy — never listed.
+ // Focus trap via Modal; landfill one-surface rule enforced by parent.
++// G4: MD3-ish sheet (radiusSheet + soft scrim) + settings-list groups.
+ 
+ import { useRef, type CSSProperties, type ComponentType, type RefObject } from "react"
+ import {
+@@ -142,10 +143,16 @@ function SectionGroup({
+         {COMPOSE_GROUP_LABELS[group]}
+       </h3>
+       <ul style={styles.list} role="list">
+-        {sections.map((section) => {
++        {sections.map((section, index) => {
+           const Icon = SECTION_ICONS[section.id]
+           return (
+-            <li key={section.id} style={styles.listItem}>
++            <li
++              key={section.id}
++              style={{
++                ...styles.listItem,
++                borderTop: index > 0 ? `1px solid ${tokens.border}` : undefined,
++              }}
++            >
+               <button
+                 ref={section.id === firstSectionId ? firstBtnRef : undefined}
+                 type="button"
+@@ -182,19 +189,19 @@ const styles: Record<string, CSSProperties> = {
+     position: "fixed",
+     inset: 0,
+     zIndex: 250,
+-    background: "rgba(15, 23, 42, 0.28)",
++    background: tokens.scrim,
+     display: "flex",
+     flexDirection: "column",
+     justifyContent: "flex-end",
+   },
+   sheet: {
+     background: tokens.bgElevated,
+-    borderTopLeftRadius: tokens.radiusLg,
+-    borderTopRightRadius: tokens.radiusLg,
+-    boxShadow: tokens.shadowMd,
++    borderTopLeftRadius: tokens.radiusSheet,
++    borderTopRightRadius: tokens.radiusSheet,
++    boxShadow: tokens.shadowLg,
+     maxHeight: "78vh",
+     overflowY: "auto",
+-    padding: "8px 0 14px",
++    padding: "10px 0 18px",
+     fontFamily: tokens.font,
+     width: "100%",
+   },
+@@ -203,20 +210,20 @@ const styles: Record<string, CSSProperties> = {
+     height: 4,
+     borderRadius: tokens.radiusPill,
+     background: tokens.borderStrong,
+-    margin: "4px auto 10px",
++    margin: "2px auto 12px",
+   },
+   header: {
+     display: "flex",
+     alignItems: "flex-start",
+     justifyContent: "space-between",
+     gap: 8,
+-    padding: "0 14px 8px",
++    padding: "0 16px 10px",
+   },
+   title: {
+-    fontSize: 15,
++    fontSize: 16,
+     fontWeight: 650,
+     color: tokens.text,
+-    letterSpacing: "-0.01em",
++    letterSpacing: "-0.02em",
+   },
+   subtitle: {
+     fontSize: 11,
+@@ -225,10 +232,10 @@ const styles: Record<string, CSSProperties> = {
+     lineHeight: 1.4,
+   },
+   closeBtn: {
+-    width: 28,
+-    height: 28,
++    width: 30,
++    height: 30,
+     border: `1px solid ${tokens.border}`,
+-    borderRadius: tokens.radiusSm,
++    borderRadius: tokens.radiusMd,
+     background: tokens.bgMuted,
+     color: tokens.textSecondary,
+     cursor: "pointer",
+@@ -241,34 +248,40 @@ const styles: Record<string, CSSProperties> = {
+   },
+   surfaceChip: {
+     display: "inline-flex",
+-    margin: "0 14px 8px",
+-    padding: "2px 8px",
++    margin: "0 16px 10px",
++    padding: "3px 10px",
+     borderRadius: tokens.radiusPill,
+-    background: tokens.bgMuted,
+-    color: tokens.textSecondary,
++    background: tokens.accentSoft,
++    color: tokens.accentText,
+     fontSize: 10,
+     fontWeight: 600,
+     letterSpacing: "0.02em",
+   },
+   group: {
+     margin: 0,
+-    padding: "0 0 4px",
++    padding: "0 0 10px",
+   },
+   groupLabel: {
+-    margin: "6px 14px 4px",
++    margin: "4px 16px 6px",
+     fontSize: 10,
+     fontWeight: 650,
+     color: tokens.textMuted,
+     textTransform: "uppercase" as const,
+     letterSpacing: "0.06em",
+   },
++  /** G4: one elevated settings card per group (not a grid of caged buttons) */
+   list: {
+     listStyle: "none",
+-    margin: 0,
+-    padding: "0 8px",
++    margin: "0 12px",
++    padding: 4,
++    background: tokens.bg,
++    border: `1px solid ${tokens.border}`,
++    borderRadius: tokens.radiusLg,
++    boxShadow: tokens.shadowSm,
++    overflow: "hidden",
+   },
+   listItem: {
+-    margin: "0 0 4px",
++    margin: 0,
+   },
+   sectionBtn: {
+     display: "flex",
+@@ -277,18 +290,18 @@ const styles: Record<string, CSSProperties> = {
+     gap: 10,
+     width: "100%",
+     textAlign: "left",
+-    border: `1px solid ${tokens.border}`,
++    border: "none",
+     borderRadius: tokens.radiusMd,
+-    background: tokens.bg,
+-    padding: "8px 10px",
++    background: "transparent",
++    padding: "10px 10px",
+     cursor: "pointer",
+     fontFamily: tokens.font,
+-    transition: `background ${tokens.transitionFast} ease, border-color ${tokens.transitionFast} ease`,
++    transition: `background ${tokens.transitionFast} ease`,
+   },
+   iconWrap: {
+-    width: 28,
+-    height: 28,
+-    borderRadius: tokens.radiusSm,
++    width: 32,
++    height: 32,
++    borderRadius: tokens.radiusMd,
+     background: tokens.accentSoft,
+     color: tokens.accentText,
+     display: "flex",
+@@ -301,7 +314,7 @@ const styles: Record<string, CSSProperties> = {
+     minWidth: 0,
+     display: "flex",
+     flexDirection: "column",
+-    gap: 1,
++    gap: 2,
+   },
+   sectionTitleRow: {
+     display: "flex",
+@@ -330,7 +343,7 @@ const styles: Record<string, CSSProperties> = {
+     lineHeight: 1.3,
+   },
+   footNote: {
+-    margin: "10px 14px 0",
++    margin: "4px 16px 0",
+     fontSize: 10,
+     color: tokens.textMuted,
+     lineHeight: 1.4,
+diff --git a/chrome-extension/src/sidepanel/components/ContextPanelHost.tsx b/chrome-extension/src/sidepanel/components/ContextPanelHost.tsx
+index 454e701..ae33456 100644
+--- a/chrome-extension/src/sidepanel/components/ContextPanelHost.tsx
++++ b/chrome-extension/src/sidepanel/components/ContextPanelHost.tsx
+@@ -925,22 +925,27 @@ const styles: Record<string, React.CSSProperties> = {
+     right: 0,
+     top: "100%",
+     background: tokens.bgElevated,
+-    border: `1px solid ${tokens.border}`,
+-    borderRadius: tokens.radiusMd,
+-    boxShadow: tokens.shadowMd,
++    border: `1px solid ${tokens.borderStrong}`,
++    borderRadius: tokens.radiusMenu,
++    boxShadow: tokens.shadowLg,
+     zIndex: 10,
+     overflow: "hidden",
++    padding: 4,
++    minWidth: 120,
+   },
+   menuItem: {
+     display: "block",
+     width: "100%",
+     border: "none",
+-    background: tokens.bgElevated,
+-    padding: "6px 14px",
++    background: "transparent",
++    borderRadius: tokens.radiusMd,
++    padding: "8px 12px",
+     fontSize: 12,
+     cursor: "pointer",
+     textAlign: "left" as const,
+     whiteSpace: "nowrap" as const,
++    color: tokens.text,
++    fontFamily: tokens.font,
+   },
+   modeSwitcher: {
+     display: "flex",
+diff --git a/chrome-extension/src/sidepanel/components/FocusBand.tsx b/chrome-extension/src/sidepanel/components/FocusBand.tsx
+index 19a46d8..c54a299 100644
+--- a/chrome-extension/src/sidepanel/components/FocusBand.tsx
++++ b/chrome-extension/src/sidepanel/components/FocusBand.tsx
+@@ -2,7 +2,7 @@
+ // Single-slot priority: Confirm > L2 Safety+急停 > Fleet > L1 Context.
+ // Hard cap ≤80px; 急停 never buried when L2 task active.
+ 
+-import { useState, useEffect } from "react"
++import { useState, useEffect, type CSSProperties } from "react"
+ import { useAgentStore } from "../store/agentStore"
+ import type { CapabilityLevel } from "../types"
+ import { tokens } from "../ui/tokens"
+@@ -56,54 +56,58 @@ export function FocusBand({
+ 
+   if (slot.primary === "empty") return null
+ 
+-  const darkChrome =
+-    slot.primary === "confirm" ||
+-    slot.primary === "l2_safety" ||
+-    slot.secondaryAbort
++  // G3: floating card chrome — soft confirm surface vs elevated L2/fleet/context
++  const cardTone: "confirm" | "dark" | "light" =
++    slot.primary === "confirm"
++      ? "confirm"
++      : slot.primary === "l2_safety" || slot.secondaryAbort
++        ? "dark"
++        : "light"
++
++  const cardStyle =
++    cardTone === "confirm"
++      ? styles.cardConfirm
++      : cardTone === "dark"
++        ? styles.cardDark
++        : styles.cardLight
+ 
+   return (
+-    <div
+-      style={{
+-        ...styles.wrap,
+-        background: darkChrome ? tokens.darkBg : "transparent",
+-        borderBottom: darkChrome
+-          ? `1px solid ${tokens.darkBorder}`
+-          : `1px solid ${tokens.border}`,
+-      }}
+-      data-focus-band
+-      data-primary={slot.primary}
+-      role="region"
+-      aria-label="焦点条"
+-    >
+-      {slot.secondaryAbort && (
+-        <AbortSecondaryLine taskId={task!.taskId} taskLabel={task?.task} />
+-      )}
+-      {slot.primary === "confirm" && (
+-        <div style={styles.primary}>
+-          {/* Confirm owns allow/deny; secondaryAbort keeps 急停 visible under L2. */}
+-          <MinimalConfirm compact />
+-        </div>
+-      )}
+-      {slot.primary === "l2_safety" && (
+-        <div style={styles.primary}>
+-          <SafetyStrip compact />
+-        </div>
+-      )}
+-      {slot.primary === "fleet" && (
+-        <div style={styles.primary}>
+-          <FleetStrip focusBand />
+-        </div>
+-      )}
+-      {slot.primary === "l1_context" && (
+-        <div style={styles.primary}>
+-          <ContextStrip compact />
+-        </div>
+-      )}
+-      {slot.secondaryContext && slot.primary === "confirm" && (
+-        <div style={styles.secondaryContext}>
+-          <ContextStrip compact secondary />
+-        </div>
+-      )}
++    <div style={styles.outer} data-focus-band data-primary={slot.primary}>
++      <div
++        style={cardStyle}
++        role="region"
++        aria-label="焦点条"
++      >
++        {slot.secondaryAbort && (
++          <AbortSecondaryLine taskId={task!.taskId} taskLabel={task?.task} />
++        )}
++        {slot.primary === "confirm" && (
++          <div style={styles.primary}>
++            {/* Confirm owns allow/deny; secondaryAbort keeps 急停 visible under L2. */}
++            <MinimalConfirm compact />
++          </div>
++        )}
++        {slot.primary === "l2_safety" && (
++          <div style={styles.primary}>
++            <SafetyStrip compact />
++          </div>
++        )}
++        {slot.primary === "fleet" && (
++          <div style={styles.primary}>
++            <FleetStrip focusBand />
++          </div>
++        )}
++        {slot.primary === "l1_context" && (
++          <div style={styles.primary}>
++            <ContextStrip compact />
++          </div>
++        )}
++        {slot.secondaryContext && slot.primary === "confirm" && (
++          <div style={styles.secondaryContext}>
++            <ContextStrip compact secondary />
++          </div>
++        )}
++      </div>
+     </div>
+   )
+ }
+@@ -153,13 +157,36 @@ function ellipsize(s: string, n: number): string {
+   return s.length <= n ? s : s.slice(0, n - 1) + "…"
+ }
+ 
+-const styles: Record<string, React.CSSProperties> = {
+-  wrap: {
+-    maxHeight: FOCUS_BAND_MAX_PX,
+-    overflow: "hidden",
++/** Shared floating card shell (G3 inset ≤80px). */
++const cardShell: CSSProperties = {
++  maxHeight: FOCUS_BAND_MAX_PX,
++  overflow: "hidden",
++  display: "flex",
++  flexDirection: "column",
++  borderRadius: 16,
++  boxShadow: tokens.shadowMd,
++}
++
++const styles: Record<string, CSSProperties> = {
++  /** Inset so card floats (G3); content still ≤ FOCUS_BAND_MAX_PX */
++  outer: {
+     flexShrink: 0,
+-    display: "flex",
+-    flexDirection: "column",
++    padding: "6px 10px 0",
++  },
++  cardConfirm: {
++    ...cardShell,
++    background: tokens.dangerSurface,
++    border: "1px solid rgba(220, 38, 38, 0.28)",
++  },
++  cardDark: {
++    ...cardShell,
++    background: tokens.darkElevated,
++    border: `1px solid ${tokens.darkBorder}`,
++  },
++  cardLight: {
++    ...cardShell,
++    background: tokens.bgElevated,
++    border: `1px solid ${tokens.borderStrong}`,
+   },
+   primary: {
+     flexShrink: 0,
+@@ -173,7 +200,7 @@ const styles: Record<string, React.CSSProperties> = {
+     height: FOCUS_BAND_SECONDARY_MAX_PX,
+     maxHeight: FOCUS_BAND_SECONDARY_MAX_PX,
+     padding: "0 10px",
+-    background: tokens.darkElevated,
++    background: tokens.darkBg,
+     borderBottom: `1px solid ${tokens.darkBorder}`,
+     fontFamily: tokens.font,
+     fontSize: 11,
+diff --git a/chrome-extension/src/sidepanel/components/KnowledgeSubPanel.tsx b/chrome-extension/src/sidepanel/components/KnowledgeSubPanel.tsx
+index 66b70d1..e50e08d 100644
+--- a/chrome-extension/src/sidepanel/components/KnowledgeSubPanel.tsx
++++ b/chrome-extension/src/sidepanel/components/KnowledgeSubPanel.tsx
+@@ -490,22 +490,27 @@ const styles: Record<string, React.CSSProperties> = {
+     position: "absolute",
+     right: 0,
+     top: "100%",
+-    background: "#fff",
+-    border: "1px solid #e0e0e0",
+-    borderRadius: 6,
+-    boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
++    background: tokens.bgElevated,
++    border: `1px solid ${tokens.borderStrong}`,
++    borderRadius: tokens.radiusMenu,
++    boxShadow: tokens.shadowLg,
+     zIndex: 10,
+     overflow: "hidden",
++    padding: 4,
++    minWidth: 120,
+   },
+   menuItem: {
+     display: "block",
+     width: "100%",
+     border: "none",
+-    background: "#fff",
+-    padding: "6px 14px",
++    background: "transparent",
++    borderRadius: tokens.radiusMd,
++    padding: "8px 12px",
+     fontSize: 12,
+     cursor: "pointer",
+     textAlign: "left" as const,
+     whiteSpace: "nowrap" as const,
++    color: tokens.text,
++    fontFamily: tokens.font,
+   },
+ }
+diff --git a/chrome-extension/src/sidepanel/components/McpPanel.tsx b/chrome-extension/src/sidepanel/components/McpPanel.tsx
+index 753a57a..7d6276e 100644
+--- a/chrome-extension/src/sidepanel/components/McpPanel.tsx
++++ b/chrome-extension/src/sidepanel/components/McpPanel.tsx
+@@ -474,22 +474,26 @@ const styles: Record<string, React.CSSProperties> = {
+     right: 0,
+     top: "100%",
+     zIndex: 10,
+-    background: "#fff",
+-    border: "1px solid #e5e7eb",
+-    borderRadius: 4,
+-    boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
++    background: tokens.bgElevated,
++    border: `1px solid ${tokens.borderStrong}`,
++    borderRadius: tokens.radiusMenu,
++    boxShadow: tokens.shadowLg,
+     minWidth: 100,
++    padding: 4,
++    overflow: "hidden",
+   },
+   menuItem: {
+     display: "block",
+     width: "100%",
+-    padding: "6px 10px",
++    padding: "8px 12px",
+     border: "none",
++    borderRadius: tokens.radiusMd,
+     background: "transparent",
+     cursor: "pointer",
+     fontSize: 12,
+     textAlign: "left",
+-    color: "#333",
++    color: tokens.text,
++    fontFamily: tokens.font,
+   },
+   cardExpanded: {
+     marginTop: 8,
+diff --git a/chrome-extension/src/sidepanel/components/MinimalConfirm.tsx b/chrome-extension/src/sidepanel/components/MinimalConfirm.tsx
+index b026688..d0d962b 100644
+--- a/chrome-extension/src/sidepanel/components/MinimalConfirm.tsx
++++ b/chrome-extension/src/sidepanel/components/MinimalConfirm.tsx
+@@ -92,7 +92,7 @@ export function MinimalConfirm({ compact = false }: { compact?: boolean } = {})
+         ? "shell 命令"
+         : "同类企业工具"
+ 
+-  // FocusBand compact: single primary row (tool + actions) to fit ≤56–80px budget.
++  // FocusBand compact (G3): soft danger surface — high-contrast actions, not solid red bar.
+   if (compact) {
+     return (
+       <div
+@@ -101,10 +101,9 @@ export function MinimalConfirm({ compact = false }: { compact?: boolean } = {})
+           alignItems: "center",
+           gap: 6,
+           flexWrap: "nowrap",
+-          padding: "6px 10px",
+-          background: `linear-gradient(180deg, ${tokens.darkDangerBg} 0%, #2a1515 100%)`,
+-          borderBottom: "1px solid #7f1d1d",
+-          color: tokens.darkDanger,
++          padding: "8px 10px",
++          background: "transparent",
++          color: tokens.danger,
+           fontSize: 11,
+           fontFamily: tokens.font,
+           minHeight: 40,
+@@ -119,7 +118,7 @@ export function MinimalConfirm({ compact = false }: { compact?: boolean } = {})
+           style={{
+             fontWeight: 700,
+             letterSpacing: "0.01em",
+-            color: color,
++            color: tokens.danger,
+             flex: 1,
+             minWidth: 0,
+             overflow: "hidden",
+@@ -134,7 +133,7 @@ export function MinimalConfirm({ compact = false }: { compact?: boolean } = {})
+           }
+         >
+           {label} ·{" "}
+-          <span style={{ fontFamily: tokens.fontMono, color: tokens.darkText }}>
++          <span style={{ fontFamily: tokens.fontMono, color: tokens.text }}>
+             {request.tool_name}
+           </span>
+           {queueLen > 1 && (
+@@ -143,7 +142,7 @@ export function MinimalConfirm({ compact = false }: { compact?: boolean } = {})
+                 marginLeft: 6,
+                 fontSize: 10,
+                 fontWeight: 700,
+-                color: tokens.darkWarning,
++                color: tokens.warning,
+               }}
+               title="确认队列（先处理队首）"
+             >
+@@ -155,8 +154,8 @@ export function MinimalConfirm({ compact = false }: { compact?: boolean } = {})
+           type="button"
+           style={{
+             ...btnCompact,
+-            background: needsNonce ? "#374151" : tokens.success,
+-            color: needsNonce ? tokens.darkMuted : "#fff",
++            background: needsNonce ? tokens.bgMuted : tokens.success,
++            color: needsNonce ? tokens.textMuted : "#fff",
+             cursor: needsNonce ? "not-allowed" : "pointer",
+           }}
+           disabled={needsNonce}
+@@ -168,7 +167,12 @@ export function MinimalConfirm({ compact = false }: { compact?: boolean } = {})
+         <button
+           ref={denyBtnRef}
+           type="button"
+-          style={{ ...btnCompact, background: "#374151", color: tokens.darkText }}
++          style={{
++            ...btnCompact,
++            background: tokens.bgElevated,
++            color: tokens.text,
++            border: `1px solid ${tokens.borderStrong}`,
++          }}
+           onClick={() => respond(false)}
+         >
+           拒绝
+@@ -178,8 +182,8 @@ export function MinimalConfirm({ compact = false }: { compact?: boolean } = {})
+           style={{
+             ...btnCompact,
+             background: "transparent",
+-            color: tokens.darkDanger,
+-            border: "1px solid #7f1d1d",
++            color: tokens.danger,
++            border: "1px solid rgba(220, 38, 38, 0.35)",
+           }}
+           onClick={() => respond(false, true)}
+           title={stopTargetId ? `停止 ${stopTargetId.slice(0, 8)}…` : "停止当前线程"}
+@@ -191,8 +195,8 @@ export function MinimalConfirm({ compact = false }: { compact?: boolean } = {})
+           style={{
+             ...btnCompact,
+             background: "transparent",
+-            color: tokens.darkAccent,
+-            border: `1px solid ${tokens.darkBorder}`,
++            color: tokens.accentText,
++            border: `1px solid ${tokens.borderStrong}`,
+             fontWeight: 500,
+           }}
+           onClick={() => chrome.runtime.sendMessage({ type: "cockpit.open" })}
+diff --git a/chrome-extension/src/sidepanel/components/StatusRail.tsx b/chrome-extension/src/sidepanel/components/StatusRail.tsx
+index b9c407d..9343ba6 100644
+--- a/chrome-extension/src/sidepanel/components/StatusRail.tsx
++++ b/chrome-extension/src/sidepanel/components/StatusRail.tsx
+@@ -162,17 +162,22 @@ export function StatusRail({
+   const closeMenu = () => setMenuOpen(false)
+   const connLabel = connectionLabel(connectionState)
+ 
++  // G1: no full-rail mode fill — badge carries mode; L1/L2 get a 3px accent line only.
++  const modeLine =
++    capabilityLevel === "browser"
++      ? tokens.modeBrowserLine
++      : capabilityLevel === "computer"
++        ? tokens.modeComputerLine
++        : null
++
+   return (
+     <div
+       role="banner"
+       aria-label="状态栏"
+       style={{
+         ...railStyles.rail,
+-        ...(capabilityLevel === "browser"
+-          ? { background: tokens.modeBrowserBg, borderBottomColor: "#bfdbfe" }
+-          : {}),
+-        ...(capabilityLevel === "computer"
+-          ? { background: "#ecfdf5", borderBottomColor: "#a7f3d0" }
++        ...(modeLine
++          ? { boxShadow: `inset 0 -3px 0 ${modeLine}, 0 1px 0 rgba(255,255,255,0.85) inset` }
+           : {}),
+       }}
+     >
+@@ -359,23 +364,23 @@ const railStyles: Record<string, CSSProperties> = {
+   rail: {
+     display: "flex",
+     alignItems: "center",
+-    gap: 8,
+-    padding: "10px 12px",
++    gap: 6,
++    padding: "6px 10px",
+     borderBottom: `1px solid ${tokens.border}`,
+-    background: "rgba(255, 255, 255, 0.78)",
+-    backdropFilter: "saturate(1.4) blur(12px)",
+-    WebkitBackdropFilter: "saturate(1.4) blur(12px)",
++    background: "rgba(255, 255, 255, 0.72)",
++    backdropFilter: "saturate(1.35) blur(14px)",
++    WebkitBackdropFilter: "saturate(1.35) blur(14px)",
+     flexShrink: 0,
+-    minHeight: 44,
+-    boxShadow: "0 1px 0 rgba(255,255,255,0.8) inset",
++    minHeight: 40,
++    boxShadow: "0 1px 0 rgba(255,255,255,0.85) inset",
+   },
+   title: {
+     flex: 1,
+     minWidth: 0,
+-    fontSize: 13,
+-    fontWeight: 700,
+-    letterSpacing: "-0.03em",
+-    color: tokens.text,
++    fontSize: 12.5,
++    fontWeight: 600,
++    letterSpacing: "-0.02em",
++    color: tokens.textSecondary,
+   },
+   menu: {
+     position: "absolute",
+@@ -384,9 +389,9 @@ const railStyles: Record<string, CSSProperties> = {
+     minWidth: 212,
+     maxHeight: 360,
+     overflowY: "auto",
+-    background: "rgba(255, 255, 255, 0.96)",
++    background: tokens.bgElevated,
+     border: `1px solid ${tokens.borderStrong}`,
+-    borderRadius: tokens.radiusLg,
++    borderRadius: tokens.radiusMenu,
+     boxShadow: tokens.shadowLg,
+     zIndex: 50,
+     padding: 6,
+diff --git a/chrome-extension/src/sidepanel/composer/meta-slash.ts b/chrome-extension/src/sidepanel/composer/meta-slash.ts
+index 497593e..f2edff9 100644
+--- a/chrome-extension/src/sidepanel/composer/meta-slash.ts
++++ b/chrome-extension/src/sidepanel/composer/meta-slash.ts
+@@ -271,8 +271,9 @@ export type ComposerChip = {
+ }
+ 
+ /**
+- * Mode-aware chips under composer (§4.4). Max 3; 装配 always present except
+- * when 确认台 claims a slot on L2 (装配 still included — total 2).
++ * Mode-aware chips under composer.
++ * Gemini-breath G2 / dual-review Q1: L0 = **one soft 装配 chip only**
++ * (Skills/Know via 装配 drawer or `/`). L1 ≤3; L2 = 确认台 + 装配.
+  * Abort never appears here.
+  */
+ export function composerChipsForLevel(level: CapabilityLevel): ComposerChip[] {
+@@ -280,8 +281,6 @@ export function composerChipsForLevel(level: CapabilityLevel): ComposerChip[] {
+     case "chat":
+       return [
+         { id: "compose", label: "装配", action: { kind: "compose" }, primary: true },
+-        { id: "skills", label: "Skills", action: { kind: "panel", panelId: "skills" } },
+-        { id: "knowledge", label: "Know", action: { kind: "panel", panelId: "knowledge" } },
+       ]
+     case "browser":
+       return [
+@@ -301,15 +300,15 @@ export function composerChipsForLevel(level: CapabilityLevel): ComposerChip[] {
+   }
+ }
+ 
+-/** Mode-aware composer placeholder (§4.4). */
++/** Mode-aware composer placeholder (Gemini-breath G2: short, human). */
+ export function composerPlaceholder(level: CapabilityLevel): string {
+   switch (level) {
+     case "chat":
+-      return "问点什么，或 / 装配"
++      return "问任何问题，或描述网页任务…"
+     case "browser":
+-      return "描述网页任务…"
++      return "描述网页任务，或继续提问…"
+     case "computer":
+-      return "排队跟进…（conductor 在确认台）"
++      return "排队跟进…（任务指挥在确认台）"
+   }
+ }
+ 
+diff --git a/chrome-extension/src/sidepanel/ui/tokens.ts b/chrome-extension/src/sidepanel/ui/tokens.ts
+index 054d6f4..6d8f52a 100644
+--- a/chrome-extension/src/sidepanel/ui/tokens.ts
++++ b/chrome-extension/src/sidepanel/ui/tokens.ts
+@@ -1,25 +1,25 @@
+-// Shared visual tokens — Quiet Premium shell (UIUX v2 visual pass).
+-// Soft slate canvas, indigo accent, layered shadows, hairline borders.
+-// No Material Design hexes (#4A90D9 / #F44336 / …).
++// Shared visual tokens — Quiet Premium + Gemini breath (PR-G1).
++// Airier canvas, indigo accent, soft shadows; composer/bubble shape scale.
++// No Material Design status hexes (#4A90D9 / #F44336 / #4CAF50 …).
+ 
+ export const tokens = {
+   font:
+     "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif",
+   fontMono: "ui-monospace, 'SF Mono', Menlo, Consolas, monospace",
+ 
+-  // Light surface — cool slate, not flat gray
+-  bg: "#f0f2f6",
++  // Light surface — airier tonal canvas (Gemini-breath G1)
++  bg: "#f5f6fa",
+   bgElevated: "#ffffff",
+-  bgMuted: "#e8ebf0",
+-  bgHover: "#e4e8ef",
+-  bgActive: "#e8eefc",
+-  border: "rgba(15, 23, 42, 0.08)",
+-  borderStrong: "rgba(15, 23, 42, 0.12)",
++  bgMuted: "#eef0f5",
++  bgHover: "#e8ebf2",
++  bgActive: "#eef2ff",
++  border: "rgba(15, 23, 42, 0.07)",
++  borderStrong: "rgba(15, 23, 42, 0.10)",
+   text: "#0f172a",
+   textSecondary: "#475569",
+   textMuted: "#94a3b8",
+ 
+-  // Indigo accent — calmer / more “product” than pure blue
++  // Indigo accent — spark, not full-bleed rails
+   accent: "#4f46e5",
+   accentSoft: "#eef2ff",
+   accentText: "#3730a3",
+@@ -31,14 +31,19 @@ export const tokens = {
+   warningSoft: "#fffbeb",
+   danger: "#dc2626",
+   dangerSoft: "#fef2f2",
++  /** Soft confirm / FocusBand tint (G3; defined early for one SoT) */
++  dangerSurface: "rgba(220, 38, 38, 0.08)",
+ 
+-  // Mode chips
++  // Mode chips (badge only — no full-rail fill on L0/L1)
+   modeChatBg: "#f1f5f9",
+   modeChatText: "#334155",
+   modeBrowserBg: "#eef2ff",
+   modeBrowserText: "#3730a3",
+   modeComputerBg: "#052e16",
+   modeComputerText: "#6ee7b7",
++  /** 3–4px accent line under StatusRail when L1/L2 (not full tint fill) */
++  modeBrowserLine: "rgba(79, 70, 229, 0.35)",
++  modeComputerLine: "rgba(52, 211, 153, 0.45)",
+ 
+   // Dark surface (L2 / Cockpit)
+   darkBg: "#0b0d12",
+@@ -64,18 +69,28 @@ export const tokens = {
+   transitionFast: "150ms",
+   transition: "220ms",
+ 
++  // Shape: base 6/8/12; hero surfaces use composer/bubble scale (G1)
+   radiusSm: 6,
+   radiusMd: 8,
+   radiusLg: 12,
++  radiusComposer: 18,
++  radiusBubble: 18,
++  /** Bottom sheet / 装配 drawer top corners (G4) */
++  radiusSheet: 20,
++  /** Popup menus (StatusRail ⋯ / panel ⋮) — match elevated chrome */
++  radiusMenu: 14,
+   radiusPill: 999,
+ 
+-  // Layered shadows (premium depth without heaviness)
+-  shadowSm: "0 1px 2px rgba(15, 23, 42, 0.04), 0 1px 1px rgba(15, 23, 42, 0.03)",
++  // Soft, diffuse elevation (less “card cage”)
++  shadowSm: "0 1px 2px rgba(15, 23, 42, 0.035), 0 1px 1px rgba(15, 23, 42, 0.025)",
+   shadowMd:
+-    "0 4px 16px rgba(15, 23, 42, 0.08), 0 1px 3px rgba(15, 23, 42, 0.04)",
++    "0 4px 18px rgba(15, 23, 42, 0.07), 0 1px 3px rgba(15, 23, 42, 0.035)",
+   shadowLg:
+-    "0 12px 32px rgba(15, 23, 42, 0.12), 0 2px 6px rgba(15, 23, 42, 0.04)",
+-  shadowFocus: "0 0 0 3px rgba(79, 70, 229, 0.18)",
++    "0 14px 36px rgba(15, 23, 42, 0.10), 0 2px 6px rgba(15, 23, 42, 0.035)",
++  shadowFocus: "0 0 0 3px rgba(79, 70, 229, 0.16)",
++
++  /** Modal / drawer scrim (G4 Gemini breath — softer than pure black 40%) */
++  scrim: "rgba(15, 23, 42, 0.28)",
+ } as const
+ 
+ export type Tokens = typeof tokens
+diff --git a/chrome-extension/tests/bottom-bar-strip-flag.test.ts b/chrome-extension/tests/bottom-bar-strip-flag.test.ts
+index e244df4..06c67d2 100644
+--- a/chrome-extension/tests/bottom-bar-strip-flag.test.ts
++++ b/chrome-extension/tests/bottom-bar-strip-flag.test.ts
+@@ -34,11 +34,10 @@ test("PR5: Host registry still owns all panel ids (SoT independent of strip)", (
+   }
+ })
+ 
+-test("PR5: chips + 装配 + slash remain discoverability when strip off", () => {
++test("PR5+G2: 装配/slash discoverability when strip off (L0 = one soft chip)", () => {
++  // Gemini-breath Q1: L0 keeps one 装配 chip; Skills/Know via drawer or /
+   const l0 = composerChipsForLevel("chat").map((c) => c.id)
+-  assert.ok(l0.includes("compose"), "L0 needs 装配 chip")
+-  assert.ok(l0.includes("skills"))
+-  assert.ok(l0.includes("knowledge"))
++  assert.deepEqual(l0, ["compose"], "L0: soft 装配 only")
+ 
+   const l1 = composerChipsForLevel("browser").map((c) => c.id)
+   assert.ok(l1.includes("compose"))
+@@ -48,13 +47,16 @@ test("PR5: chips + 装配 + slash remain discoverability when strip off", () =>
+   assert.ok(l2.includes("cockpit"))
+   assert.ok(l2.includes("compose"))
+ 
++  // Packs/MCP still reachable via 装配 sections + slash (not L0 chip row)
+   assert.ok(COMPOSE_SECTIONS.some((s) => s.panelId === "packs"))
+   assert.ok(COMPOSE_SECTIONS.some((s) => s.panelId === "mcp"))
++  assert.ok(COMPOSE_SECTIONS.some((s) => s.panelId === "skills"))
+   assert.ok(COMPOSE_SECTIONS.every((s) => s.panelId !== "board"))
+ 
+   const slashNames = new Set(META_PANEL_SLASH.map((e) => e.name))
+   assert.ok(slashNames.has("packs"))
+   assert.ok(slashNames.has("mcp"))
++  assert.ok(slashNames.has("skills"))
+   assert.ok(slashNames.has("装配"))
+   assert.ok(slashNames.has("board"))
+ })
+diff --git a/chrome-extension/tests/composer-slash-parity.test.ts b/chrome-extension/tests/composer-slash-parity.test.ts
+index 95a1978..ccfe14f 100644
+--- a/chrome-extension/tests/composer-slash-parity.test.ts
++++ b/chrome-extension/tests/composer-slash-parity.test.ts
+@@ -84,14 +84,15 @@ test("§4.5 装配 sections are Composition only — no board", () => {
+   assert.ok(COMPOSE_SECTIONS.every((s) => s.titleZh && s.group))
+ })
+ 
+-test("§4.4 composer chips by level (≤3, no Abort)", () => {
++test("G2 / Q1 composer chips: L0 one 装配 only; L1 ≤3; no Abort", () => {
+   const l0 = composerChipsForLevel("chat")
+-  assert.ok(l0.length <= 3)
++  assert.equal(l0.length, 1)
+   assert.deepEqual(
+     l0.map((c) => c.id),
+-    ["compose", "skills", "knowledge"],
++    ["compose"],
+   )
+   assert.equal(l0[0].action.kind, "compose")
++  assert.equal(l0[0].primary, true)
+ 
+   const l1 = composerChipsForLevel("browser")
+   assert.ok(l1.length <= 3)
+@@ -115,9 +116,9 @@ test("§4.4 composer chips by level (≤3, no Abort)", () => {
+   assert.ok(!l2.some((c) => c.id === "abort"))
+ })
+ 
+-test("§4.4 mode-aware placeholders", () => {
+-  assert.match(composerPlaceholder("chat"), /装配/)
+-  assert.match(composerPlaceholder("browser"), /网页/)
++test("G2 mode-aware placeholders (short, human)", () => {
++  assert.match(composerPlaceholder("chat"), /问任何问题/)
++  assert.match(composerPlaceholder("browser"), /网页任务/)
+   assert.match(composerPlaceholder("computer"), /确认台/)
+ })
+ 
+diff --git a/chrome-extension/tests/tokens-helpers.test.ts b/chrome-extension/tests/tokens-helpers.test.ts
+index 70cc65b..6c3ea0d 100644
+--- a/chrome-extension/tests/tokens-helpers.test.ts
++++ b/chrome-extension/tests/tokens-helpers.test.ts
+@@ -81,9 +81,9 @@ test("radius SoT is 6/8/12 (UIUX v2)", () => {
+   assert.equal(tokens.radiusPill, 999)
+ })
+ 
+-test("semantic role hexes match Quiet Premium tokens", () => {
+-  // surface.canvas / elevated
+-  assert.equal(tokens.bg, "#f0f2f6")
++test("semantic role hexes match Quiet Premium + G1 breath tokens", () => {
++  // surface.canvas / elevated (G1 airier canvas)
++  assert.equal(tokens.bg, "#f5f6fa")
+   assert.equal(tokens.bgElevated, "#ffffff")
+   assert.equal(tokens.darkBg, "#0b0d12")
+   assert.equal(tokens.darkElevated, "#141820")
+@@ -104,4 +104,14 @@ test("semantic role hexes match Quiet Premium tokens", () => {
+   assert.equal(tokens.darkAccent, "#818cf8")
+   assert.ok(tokens.shadowFocus)
+   assert.ok(tokens.shadowLg)
++  // G1 shape scale for hero surfaces
++  assert.equal(tokens.radiusComposer, 18)
++  assert.equal(tokens.radiusBubble, 18)
++  // G4 sheet / menu / scrim
++  assert.equal(tokens.radiusSheet, 20)
++  assert.equal(tokens.radiusMenu, 14)
++  assert.ok(tokens.scrim.includes("15, 23, 42"))
++  assert.ok(tokens.dangerSurface.includes("220, 38, 38"))
++  assert.ok(tokens.modeBrowserLine)
++  assert.ok(tokens.modeComputerLine)
+ })
+diff --git a/docs/audit/reviews/uiux-v2-PR-G1-pi-20260731-132354.md b/docs/audit/reviews/uiux-v2-PR-G1-pi-20260731-132354.md
+new file mode 100644
+index 0000000..1964361
+--- /dev/null
++++ b/docs/audit/reviews/uiux-v2-PR-G1-pi-20260731-132354.md
+@@ -0,0 +1,46 @@
++## PR-G1 Review — Gemini Breath Surfaces
++
++### Scope conformance against spec §8 PR-G1
++
++**1) Token deltas** (§5.4)
++- `bg: "#f5f6fa"` ✅ — airier canvas, spec `#f5f6fa`
++- `radiusComposer: 18` ✅ — spec range 18–20
++- `radiusBubble: 18` ✅ — spec 18
++- Shadows softened ✅ — all rgba alphas reduced (e.g. shadowSm `0.04→0.035`, shadowMd `0.08→0.07`)
++- `dangerSurface: "rgba(220,38,38,0.08)"` ✅ — defined early per spec comment
++- `modeBrowserLine` / `modeComputerLine` ✅
++
++**2) StatusRail** (§5.4–5.5)
++- `minHeight: 44→40` ✅, `gap: 8→6`, `padding: 10px 12px→6px 10px` ✅ — thinner
++- L0: no mode background fill — `modeLine` is `null` for `"chat"` capability → no boxShadow override ✅
++- L1/L2: accent line only via `inset 0 -3px 0 ${modeLine}` ✅ — replaces old `background: tokens.modeBrowserBg` / `"#ecfdf5"`
++- Title: `fontWeight: 700→600`, `fontSize: 13→12.5`, `color: tokens.text→tokens.textSecondary` ✅ — demoted per spec
++
++**3) Composer** (§5.4)
++- `borderRadius: tokens.radiusComposer` (18) replaces hardcoded `14` ✅
++- ChatView bubbles use `tokens.radiusBubble` for user/agent/status bubbles ✅
++
++### Rejection criteria — all pass
++
++| Criterion | Status |
++|-----------|--------|
++| BottomBar deleted? | ❌ Not touched |
++| FocusBand logic rewritten? | ❌ Not touched (presentation change is G3, not G1) |
++| 装配 IA changed? | ❌ Not touched |
++| Material status hexes? | ❌ `danger`=`#dc2626`, `success`=`#059669`, `warning`=`#d97706` — Tailwind-class functional, **not** Material `#4CAF50`/`#F44336`/`#FF9800` |
++| ADR-020 violated? | ❌ Mode badges intact; three-mode model preserved; no capability-model changes |
++
++### Alignment with principles
++
++- **P-G5** (accent as spark): `modeBrowserLine` is `rgba(79,70,229,0.35)` — subdued, no full-rail tint ✅
++- **KD5** (keep indigo): `accent: "#4f46e5"` unchanged ✅
++- **A5** (no Material status-dot hex): `connectionColor` uses functional tokens, never Material palettes ✅
++
++### Nits (non-blocking)
++
++- `dangerSurface` comment says "(G3; defined early for one SoT)" — acceptable, spec explicitly blesses early token definition
++- `modeBrowserLine` / `modeComputerLine` tokens are used only in StatusRail currently — fine, they anchor the G1 contract
++
++---
++
++VERDICT: APPROVE
+diff --git a/docs/audit/reviews/uiux-v2-PR-G2-pi-20260731-134226.md b/docs/audit/reviews/uiux-v2-PR-G2-pi-20260731-134226.md
+new file mode 100644
+index 0000000..9495c9c
+--- /dev/null
++++ b/docs/audit/reviews/uiux-v2-PR-G2-pi-20260731-134226.md
+@@ -0,0 +1,109 @@
++---
++
++## PR-G2 Review — "Gemini-breath Empty + Composer Hero"
++
++**Reviewer:** Pi  
++**Date:** 2026-07-31  
++**Scope:** Local diff on `feat/uiux-v2-shell` (5 files, +59/-54)  
++**Spec:** `docs/superpowers/specs/2026-07-31-gemini-inspired-visual-comparison.md` PR-G2
++
++---
++
++### 1. REJECT Gates — all pass ✅
++
++| Gate | Result |
++|------|--------|
++| **Skills/Know on L0 chip row?** | **No.** `composerChipsForLevel("chat")` returns only `[{ id: "compose" }]`. Skills and Know are removed from L0; reachable via 装配 drawer (`COMPOSE_SECTIONS`) and `/skills`, `/knowledge` slash. |
++| **装配 missing on L0?** | **No.** `"compose"` is the sole chip on L0, with `primary: true`. |
++| **ADR-020 / Board under 装配 broken?** | **No.** `COMPOSE_SECTIONS` excludes `"board"` — verified by `composeSectionsExcludeBoard()`. Board is accessible only via `/board` slash (Host). No "中层 Agent" string found in codebase. |
++
++---
++
++### 2. Spec trace
++
++#### 2.1 L0 chip row (Q1 — "one soft 装配 chip only") ✅
++
++```typescript
++// meta-slash.ts:281-283
++case "chat":
++  return [
++    { id: "compose", label: "装配", action: { kind: "compose" }, primary: true },
++  ]
++```
++
++Former `Skills`/`Know` chips removed. `ComposerChips.tsx` renders exactly what `composerChipsForLevel` returns — no extra injection. Tests assert `deepEqual(["compose"])`.
++
++#### 2.2 Editorial EmptyState L0/L1/L2 ✅
++
++| Level | Kicker | Title | Hint | Chips |
++|-------|--------|-------|------|-------|
++| L0 (chat) | `CMspark` | 有什么可以帮你？ | 问问题、写文案，或描述浏览器任务。 | 总结本页 · 装配 · 任务包 (3) |
++| L1 (browser) | `网页` | 要对这页做什么？ | 总结、提问，或让 Agent 操作当前标签。 | 总结本页 · 装配 · 任务包 (3) |
++| L2 (computer) | `计算机` | 任务在确认台进行 | 此处可排队跟进；步骤与确认请用确认台。 | 确认台 · 装配 (2) |
++
++All three follow the pattern: **kicker → title → hint → ≤3 suggestion chips**. Matches spec §5.5 editorial model (H1 + 1 line + ≤3 suggestions). New `emptyKicker` style: 11px uppercase, 600 weight, muted. Title bumped to 18px / 700. Hint to 13px / 1.55 line-height. Padding increased to `56px 20px 28px`.
++
++Former `/packs` chip labels changed to human-readable `任务包`. Chips still wire to the same actions (`fill`, `compose`, `cockpit`, `packs` panel).
++
++#### 2.3 Composer hero ✅
++
++| Property | Before | After | Delta |
++|----------|--------|-------|-------|
++| `inputArea` padding | `10px 12px 14px` | `12px 14px 16px` | +air |
++| `inputArea` bg/blur | `0.58` / `12px` | `0.62` / `14px` | slightly glassier |
++| `composerCapsule` gap | 4 | 6 | breather |
++| `composerCapsule` padding | `8px 8px 8px 6px` | `10px 10px 10px 8px` | larger |
++| `composerCapsule` inset ring opacity | `0.75` | `0.8` | subtle |
++| `textarea` fontSize | 13 | 14 | +readability |
++| `textarea` minHeight | 40 | 44 | +height |
++| `textarea` maxHeight | 100 | 120 | +expansion |
++| `textarea` lineHeight | 1.45 | 1.5 | +breath |
++
++Radius stays at `tokens.radiusComposer` (unchanged in this diff — likely 18 from PR-G1). Good.
++
++#### 2.4 Placeholders ✅
++
++| Level | Before | After |
++|-------|--------|-------|
++| chat | `问点什么，或 / 装配` | `问任何问题，或描述网页任务…` |
++| browser | `描述网页任务…` | `描述网页任务，或继续提问…` |
++| computer | `排队跟进…（conductor 在确认台）` | `排队跟进…（任务指挥在确认台）` |
++
++Short, human, consistent with editorial tone. "conductor" → "任务指挥" is an editorial improvement.
++
++---
++
++### 3. Test coverage ✅
++
++**`composer-slash-parity.test.ts`:**
++- `G2 / Q1 composer chips`: asserts L0 length=1, `["compose"]`, `primary: true`; L1 `["compose","tabs","workspace"]`; L2 `["cockpit","compose"]`; no Abort in any level
++- `G2 mode-aware placeholders`: asserts `/问任何问题/`, `/网页任务/`, `/确认台/`
++- `§4.5 装配 sections`: asserts `composeSectionsExcludeBoard()`, no `board` panelId, all expected sections present
++
++**`bottom-bar-strip-flag.test.ts`:**
++- `PR5+G2`: asserts L0 `deepEqual(["compose"])`, L1 has `compose`+`tabs`, L2 has `cockpit`+`compose`; verifies Packs/MCP/Skills reachable via 装配 sections + slash; verifies Board NOT in 装配 sections
++
++---
++
++### 4. Completeness vs PR-G2 scope
++
++| PR-G2 scope item | Status |
++|------------------|--------|
++| Editorial empty L0/L1/L2 | ✅ |
++| L0 chips — one 装配 only | ✅ (per Q1 resolution) |
++| Composer radius/padding/placeholder | ✅ |
++| Tests updated | ✅ |
++
++N/A for this PR: FocusBand floating (G3), tool cards (G3), 装配 drawer polish (G4). Token deltas (G1) already in baseline.
++
++---
++
++### 5. Nits (none blocking)
++
++1. **L2 `emptyHint` semicolon**: `此处可排队跟进；步骤与确认请用确认台。` — the ASCII `;` in Chinese text is unconventional. Use full-width `；` (U+FF1B). Ultra-minor editorial polish.
++
++---
++
++### VERDICT: **APPROVE**
++
++No blocking issues. All three REJECT gates pass. L0 chips correctly reduced to one soft 装配 chip. Empty state is editorial across all three levels. Composer receives meaningful padding/type/placeholder uplift. Tests are updated and aligned. ADR-020 and Board/装配 ontology guard intact.
+diff --git a/docs/audit/reviews/uiux-v2-PR-G3-pi-20260731-134817.md b/docs/audit/reviews/uiux-v2-PR-G3-pi-20260731-134817.md
+new file mode 100644
+index 0000000..a815958
+--- /dev/null
++++ b/docs/audit/reviews/uiux-v2-PR-G3-pi-20260731-134817.md
+@@ -0,0 +1,79 @@
++## Summary
++
++PR-G3 implements the FocusBand floating card + tool card hairline accent from the Gemini-inspired visual direction (§5, §8). The diff converts the full-bleed dark-danger FocusBand into an inset floating card with three tonal variants (confirm / dark / light), swaps the compact MinimalConfirm from a solid dark-gradient background onto a transparent layer over `dangerSurface`, and recasts tool cards from full-border-color cages into elevated cards with a 2px left status accent. All five rejection gates pass. One nit on the 停止 button's reduced border opacity.
++
++## Spec trace (G3)
++
++| Spec requirement | Implementation | Status |
++|---|---|---|
++| FocusBand floating card, inset 8–10px horizontal | `outer { padding: "6px 10px 0" }` — 10px horizontal inset ✅ | OK |
++| `border-radius: 16`, `shadowMd` | `cardShell { borderRadius: 16, boxShadow: tokens.shadowMd }` ✅ | OK |
++| Confirm soft surface — `tokens.dangerSurface`, NOT solid red bar | `cardConfirm { background: tokens.dangerSurface }` = `rgba(220,38,38,0.08)` ✅ | OK |
++| Compact MinimalConfirm: high-contrast actions | 允许/拒绝/停止/确认台 all have explicit bg/border/color; no text-only danger ✅ | OK |
++| Tool card hairline — 2px left accent, no full-border cage | `toolCard` base: `border: 1px solid border` + `borderLeft: 2px solid accent`; inline override: `borderLeftColor: statusTone` only ✅ | OK |
++| 急停 still visible when L2+confirm | `secondaryAbort` rendering path preserved; `AbortSecondaryLine` with `darkDangerBg` / `darkDanger` button retained ✅ | OK |
++| Priority table unchanged | `focus-band-priority.ts` git diff empty ✅ | OK |
++| Non-compact MinimalConfirm unchanged | Full path still uses `darkDangerBg` gradient + dark-tone tokens ✅ | OK |
++| ≤80px hard cap preserved | `cardShell { maxHeight: FOCUS_BAND_MAX_PX }` = 80 ✅ | OK |
++
++## Safety / 急停
++
++**PASS.** The secondaryAbort path is rendered before the primary slot inside the card:
++
++```tsx
++{slot.secondaryAbort && (
++  <AbortSecondaryLine taskId={task!.taskId} taskLabel={task?.task} />
++)}
++```
++
++`AbortSecondaryLine` renders a prominent button with `background: tokens.darkDangerBg`, `color: tokens.darkDanger`, and `border: 1px solid #7f1d1d`. The abort line itself uses `background: tokens.darkBg` — the same dark treatment as before. When L2 is active and confirm fires, the `resolveFocusBandSlot` function (unchanged) returns `secondaryAbort: true`, so the 急停 line appears as a dark secondary row inside the floating card. The dark abort bar inside the soft-tinted confirm card provides strong visual contrast — the 急停 is not buried.
++
++One subtlety: the `secondaryContext` background changed from `tokens.darkElevated` to `tokens.darkBg`. This is the L1 context line under confirm (mutually exclusive with secondaryAbort per the priority machine, so it never competes with 急停). The change is cosmetic and does not affect safety.
++
++## Tool cards
++
++**PASS.** The diff replaces the `borderColor: statusTone` inline override (which colored all four sides) with `borderLeftColor: statusTone`:
++
++```tsx
++// Before: full-border cage
++style={{ ...styles.toolCard, borderColor: statusTone }}
++
++// After: left hairline only
++style={{ ...styles.toolCard, borderLeftColor: statusTone }}
++```
++
++The base `toolCard` style provides the elevated white card with a 2px left accent:
++
++```tsx
++toolCard: {
++  border: `1px solid ${tokens.border}`,         // hairline all sides
++  borderLeft: `2px solid ${tokens.accent}`,       // 2px left accent (overridden by status)
++  borderRadius: tokens.radiusMd,
++  background: tokens.bgElevated,                  // was rgba(255,255,255,0.92)
++  boxShadow: tokens.shadowSm,
++}
++```
++
++Status color arrives only via `borderLeftColor`, creating exactly the "hairline left accent" pattern specified in P-G3 and §5.5.
++
++## Blocking
++
++None. All five rejection gates pass:
++
++| Gate | Verdict | Evidence |
++|---|---|---|
++| Full-bleed solid danger bar | PASS | `cardConfirm` uses `dangerSurface` (8% opacity red tint), not `darkDangerBg` gradient |
++| 急停 buried | PASS | `secondaryAbort` path renders `AbortSecondaryLine` with dark-danger styling |
++| Priority machine rewritten | PASS | `focus-band-priority.ts` unchanged (git diff empty) |
++| Tool status full-border cage | PASS | `borderLeftColor: statusTone` replaces `borderColor: statusTone` |
++| Soft confirm low-contrast | PASS | Buttons have explicit bg/border/color pairs; 允许 = white on green, 拒绝 = dark text on white, 停止 = red text + border |
++
++## Nits
++
++1. **停止 button border opacity reduced from solid to 35%.** Old: `border: 1px solid #7f1d1d`. New: `border: 1px solid rgba(220, 38, 38, 0.35)`. On the `dangerSurface` background (near-white with 8% red tint), the 35% red border is still visible but softer. This remains clearly tappable (red text + outline), but verify in a real L2+confirm scenario that the 停止 action doesn't visually recede too far next to the high-contrast 允许 (white-on-green) button.
++
++2. **Label text contrast shift.** The compact confirm label now uses `color: tokens.danger (#dc2626)` on the transparent/dangerSurface background. On the old dark gradient, the label used `color: tokens.darkDanger (#f87171)` — lighter red on dark. The new `#dc2626` on near-white has ~4.3:1 contrast ratio (WCAG AA for normal text is 4.5:1; AA for large text is 3:1). At 11px/700 weight this is marginal but acceptable for this context — worth a visual check in the rendered panel.
++
++3. **`font` token reference in MinimalConfirm compact.** The original code used `fontFamily: tokens.font` — this is preserved. No regression.
++
++VERDICT: APPROVE_WITH_NITS
+diff --git a/docs/audit/reviews/uiux-v2-PR-G3-review-prompt.md b/docs/audit/reviews/uiux-v2-PR-G3-review-prompt.md
+new file mode 100644
+index 0000000..4f20ff0
+--- /dev/null
++++ b/docs/audit/reviews/uiux-v2-PR-G3-review-prompt.md
+@@ -0,0 +1,72 @@
++# Dual/Pi external review: PR-G3 — FocusBand floating + tool cards
++
++**Batch:** `uiux-v2-PR-G3`  
++**Stage:** Implementation review (visual only; FocusBand priority machine must be unchanged)  
++**Date:** 2026-07-31  
++**Branch:** `feat/uiux-v2-shell`
++
++## Capability declaration
++
++```text
++Surface:      n/a (presentation of existing FocusBand / tool cards)
++L2-classes:   (none new)
++Compose:      none
++Autonomy:     n/a
++Trust:        soft confirm must NOT bury 急停; notice-rate on shell/netsec/host_computer
++Channel:      n/a
++```
++
++## Spec
++
++Primary: `docs/superpowers/specs/2026-07-31-gemini-inspired-visual-comparison.md` §5 FocusBand + Tool cards, §8 PR-G3
++
++### PR-G3 must deliver
++
++1. **FocusBand floating card** — inset 8–10px horizontal, `border-radius: 16`, `shadowMd`; not full-bleed warning bar  
++2. **Confirm soft surface** — `tokens.dangerSurface` / soft tint, **not** solid red bar; actions high-contrast  
++3. **Tool card hairline** — white elevated, **2px left accent** (status color), no heavy full-border cage  
++4. **Safety watch** — 急停 still visible when L2+confirm; priority table unchanged; ≤80px hard cap preserved  
++
++### Must NOT change
++
++- `resolveFocusBandSlot` priority (Confirm > L2+急停 > Fleet > L1)  
++- ADR-020 IA / 装配 / Board  
++- Non-compact MinimalConfirm (Cockpit / chat embedded dark confirm) logic  
++
++## Files in scope (expect)
++
++- `chrome-extension/src/sidepanel/components/FocusBand.tsx`
++- `chrome-extension/src/sidepanel/components/MinimalConfirm.tsx` (compact path only)
++- `chrome-extension/src/sidepanel/components/ChatView.tsx` (toolCard style)
++- `tokens.dangerSurface` already in SoT from G1 — do not invent a second danger soft token
++
++## Rejection gates (any fail → REJECT)
++
++| Gate | Fail if |
++|------|---------|
++| Full-bleed solid danger bar remains for FocusBand confirm | solid `darkDangerBg` gradient as outer band |
++| 急停 buried when L2 task active + confirm | secondaryAbort path removed or hidden |
++| Priority machine rewritten | `focus-band-priority.ts` logic changes |
++| Tool status only color-on-full-border cage | `borderColor: statusTone` on all four sides without left hairline |
++| Soft confirm = low-contrast text-only danger | actions not clearly tappable / contrast lost |
++
++## Your job
++
++Read the working tree diff for the three components above. Verify against gates. Comment on:
++
++1. Floating card geometry vs 80px budget  
++2. Compact MinimalConfirm on light soft surface (button contrast)  
++3. Tool card left hairline + status override  
++4. Nits only if non-blocking  
++
++## Output format
++
++```markdown
++## Summary
++## Spec trace (G3)
++## Safety / 急停
++## Tool cards
++## Blocking
++## Nits
++VERDICT: APPROVE|APPROVE_WITH_NITS|REJECT
++```
+diff --git a/docs/audit/reviews/uiux-v2-PR-G4-pi-20260731-140223.md b/docs/audit/reviews/uiux-v2-PR-G4-pi-20260731-140223.md
+new file mode 100644
+index 0000000..3ce9ce0
+--- /dev/null
++++ b/docs/audit/reviews/uiux-v2-PR-G4-pi-20260731-140223.md
+@@ -0,0 +1,153 @@
++# Pi external review: PR-G4 — 装配 / menus polish
++
++| Field | Value |
++|-------|-------|
++| Reviewer | Pi (independent) |
++| Batch | `uiux-v2-PR-G4` |
++| Date | 2026-07-31 14:02 UTC |
++| Branch | `feat/uiux-v2-shell` |
++| Files reviewed | 8 (7 source + 1 test) |
++
++---
++
++## Summary
++
++PR-G4 delivers exactly what it promises: a cleaner, MD3-adjacent 装配 drawer with soft scrim, larger sheet radius, settings-list section groups (one elevated card per group with hairline dividers), and tokenised menus across all popup surfaces. No raw hex or radius-4 Material leftovers remain. Board exclusion is intact with defensive guard + footer note + `composeSectionsExcludeBoard()` unchanged. All 4 rejection gates pass. 3 non‑blocking nits noted.
++
++---
++
++## Spec trace (G4)
++
++> Required: `docs/superpowers/specs/2026-07-31-gemini-inspired-visual-comparison.md` §5 装配 drawer, §8 PR-G4
++
++### G4.1 — Drawer scrim
++
++| Criterion | Status | Evidence |
++|-----------|--------|----------|
++| Soft `rgba(15,23,42,0.28)` via token SoT | ✅ PASS | `tokens.scrim = "rgba(15, 23, 42, 0.28)"` (tokens.ts:93) |
++| Applied to ComposeDrawer backdrop | ✅ PASS | `background: tokens.scrim` (ComposeDrawer.tsx:193) |
++| Test asserts scrim includes `"15, 23, 42"` | ✅ PASS | tokens-helpers.test.ts:115 |
++
++### G4.2 — Sheet radius
++
++| Criterion | Status | Evidence |
++|-----------|--------|----------|
++| `radiusSheet ~20` token | ✅ PASS | `tokens.radiusSheet: 20` (tokens.ts:79) |
++| Applied to sheet top corners | ✅ PASS | `borderTopLeftRadius: tokens.radiusSheet`, `borderTopRightRadius: tokens.radiusSheet` (ComposeDrawer.tsx:196-197) |
++| Elevated shadow (not shadowMd) | ✅ PASS | `boxShadow: tokens.shadowLg` (ComposeDrawer.tsx:198) |
++| Test asserts radiusSheet === 20 | ✅ PASS | tokens-helpers.test.ts:113 |
++
++### G4.3 — Section list MD3 (settings-list groups)
++
++| Criterion | Status | Evidence |
++|-----------|--------|----------|
++| One elevated card per group (not individual button cages) | ✅ PASS | `list` style: `background: tokens.bg`, `border: 1px solid tokens.border`, `borderRadius: tokens.radiusLg`, `boxShadow: tokens.shadowSm`, `overflow: "hidden"` (ComposeDrawer.tsx:254-261) |
++| Hairline dividers between items within card | ✅ PASS | `borderTop: index > 0 ? 1px solid tokens.border : undefined` (ComposeDrawer.tsx:152) |
++| Section buttons borderless (no individual cages) | ✅ PASS | `border: "none"`, `background: "transparent"` (ComposeDrawer.tsx:293-294) — was `border: 1px solid tokens.border`, `background: tokens.bg` and `margin: 0 0 4px` per item |
++| Group padding/spacing consistent | ✅ PASS | `list` `margin: "0 12px"`, `padding: 4`; `listItem` `margin: 0`; `sectionBtn` `padding: "10px 10px"` — clean settings-list layout |
++
++**Before/after comparison — correct transformation:**
++
++```
++BEFORE (button grid cages):           AFTER (MD3 settings-list):
++┌ group label ─────────────┐          ┌ group label ─────────────┐
++│ ┌─ [icon] Skills  ────┐ │          │ ┌──────────────────────┐ │
++│ └─────────────────────┘ │          │ │ [icon] Skills  ────  │ │
++│ ┌─ [icon] Knowledge  ─┐ │          │ │────────────────────  │ │
++│ └─────────────────────┘ │          │ │ [icon] Knowledge  ── │ │
++│   …                     │          │ └──────────────────────┘ │
++└──────────────────────────┘          └──────────────────────────┘
++  (each button = independent card)      (one card, hairline dividers)
++```
++
++### G4.4 — Menu radius/shadow match
++
++| Surface | Old | New | Token |
++|---------|-----|-----|-------|
++| StatusRail ⋯ menu | `radiusLg` (12), `rgba(255,255,255,0.96)` | `radiusMenu` (14), `bgElevated`, `shadowLg` | ✅ shared |
++| ContextPanelHost ⋮ menu | `radiusMd` (8), `border`, `shadowMd` | `radiusMenu` (14), `borderStrong`, `shadowLg` | ✅ shared |
++| KnowledgeSubPanel ⋮ menu | `#fff`, `#e0e0e0`, radius 6, `0 2px 8px rgba(0,0,0,0.1)` | `bgElevated`, `borderStrong`, `radiusMenu` (14), `shadowLg` | ✅ shared |
++| AppsPanel ⋮ menu | `#fff`, `#e5e7eb`, radius 4, `0 2px 8px rgba(0,0,0,0.1)` | `bgElevated`, `borderStrong`, `radiusMenu` (14), `shadowLg` | ✅ shared |
++| McpPanel ⋮ menu | `#fff`, `#e5e7eb`, radius 4, `0 2px 8px rgba(0,0,0,0.1)` | `bgElevated`, `borderStrong`, `radiusMenu` (14), `shadowLg` | ✅ shared |
++
++All menus also gained:
++- `padding: 4` (internal spacing)
++- Menuitem `borderRadius: tokens.radiusMd` (hover/focus clip)
++- Explicit `fontFamily: tokens.font`
++- `color: tokens.text` (was `#333` in some)
++
++Test asserts `radiusMenu === 14` at tokens-helpers.test.ts:114. ✅
++
++---
++
++## 装配 IA safety
++
++### Board exclusion verification
++
++| Check | Result |
++|-------|--------|
++| `COMPOSE_SECTIONS` array contains NO `board` entry | ✅ — `meta-slash.ts:171`: skills, knowledge, packs, mcp, apps, history only |
++| Drawer guard: `if (section.panelId === "board") return` | ✅ — ComposeDrawer.tsx:66 |
++| Footer note: "任务板 / 编排不在装配内 — 使用 /board 或 ⋯「编排」" | ✅ — ComposeDrawer.tsx:117 |
++| `composeSectionsExcludeBoard()` returns `true` | ✅ — meta-slash.ts:351: `COMPOSE_SECTIONS.every((s) => s.panelId !== "board" && s.id !== ("board" as ComposeSectionId))` |
++| No board panel opened from drawer at runtime | ✅ — guard before `onOpenSection` |
++
++### ADR-020 copy
++
++- `composeAttachLine()` unchanged
++- `surfaceLxLabel()` unchanged
++- Attach line rendered per section: `{attachLine}` in SectionGroup
++- No "中层 Agent" copy introduced
++
++### Modal / focus trap
++
++- `Modal` component still wraps the drawer (unchanged wiring)
++- `backdropDismiss`, `initialFocusRef`, `ariaLabel` all preserved
++- FocusBand / Host panel open wiring: untouched
++
++---
++
++## Rejection gates
++
++| Gate | Fail condition | Result |
++|------|---------------|--------|
++| Board under 装配 | board section or panel open from drawer | ✅ PASS — guard + footer + no board in COMPOSE_SECTIONS |
++| Scrim hard black | pure black high-alpha overlay | ✅ PASS — `rgba(15,23,42,0.28)` |
++| Section buttons still each fully caged | every row has independent full border card with gaps like button grid | ✅ PASS — one card per group, hairline dividers, borderless items |
++| Menus still raw gray hex cages | Apps/Mcp/Knowledge menus still `#e5e7eb` / radius 4 | ✅ PASS — all 5 menus use `tokens.borderStrong`, `tokens.radiusMenu` (14), `tokens.shadowLg` |
++
++**All 4 gates: PASS. No rejections.**
++
++---
++
++## Nits
++
++### N1 (non-blocking) — StatusRail menu loses frosted transparency
++
++StatusRail ⋯ popup `background` changed from `rgba(255, 255, 255, 0.96)` to `tokens.bgElevated` (`#ffffff`). The old value had a whisper of translucency consistent with the frosted rail aesthetic. The new opaque white is still consistent with MD3 elevated surfaces and matches all other menus, but is technically a contrast with the rail's frosted design language.
++
++**Severity:** Visual-only; no correctness impact. The popup is a detached surface, not part of the rail itself, so full opacity is defensible.
++
++### N2 (non-blocking) — surfaceChip accent tone change
++
++The "Surface L0 聊" chip in ComposeDrawer changed from `bgMuted`/`textSecondary` (muted gray palette) to `accentSoft`/`accentText` (indigo palette). This shifts the chip from neutral chrome to brand-colored. Within P-G5 ("Accent as spark") this is a small decorated element, not a full-bleed header, so it remains in-bounds. Worth noting as intentional — reviewers should confirm it doesn't visually compete with the section list.
++
++**Severity:** Visual-only; matches P-G5 spirit; no functional impact.
++
++### N3 (non-blocking) — No hover state on section list items
++
++The new borderless `sectionBtn` has `background: "transparent"` with `transition: background 150ms ease`, but no explicit `:hover` background rule in the style object. (If hover is handled via a CSS class or `onMouseEnter`/`onMouseLeave` not in this diff — or is deferred — that's fine, but worth noting for interactive polish.)
++
++**Severity:** UX polish; users may expect a hover highlight on tappable rows inside an elevated card. Not blocking for this visual pass.
++
++---
++
++## Blocking
++
++**None.**
++
++All 4 spec deliverables verified. All 4 rejection gates pass. Board IA safety intact. No raw hex/radius regressions. Token SoT is the single source of truth across all in-scope files.
++
++---
++
++VERDICT: APPROVE
+diff --git a/docs/audit/reviews/uiux-v2-PR-G4-review-prompt.md b/docs/audit/reviews/uiux-v2-PR-G4-review-prompt.md
+new file mode 100644
+index 0000000..d72766b
+--- /dev/null
++++ b/docs/audit/reviews/uiux-v2-PR-G4-review-prompt.md
+@@ -0,0 +1,67 @@
++# Pi external review: PR-G4 — 装配 / menus polish
++
++**Batch:** `uiux-v2-PR-G4`  
++**Stage:** Implementation review (visual only)  
++**Date:** 2026-07-31  
++**Branch:** `feat/uiux-v2-shell`
++
++## Capability declaration
++
++```text
++Surface:      n/a (presentation of 装配 drawer + popup menus)
++L2-classes:   (none)
++Compose:      unchanged — still Composition-only sections (no Board)
++Autonomy:     n/a
++Trust:        n/a
++Channel:      n/a
++```
++
++## Spec
++
++`docs/superpowers/specs/2026-07-31-gemini-inspired-visual-comparison.md` §5 装配 drawer, §8 PR-G4
++
++### PR-G4 must deliver
++
++1. **Drawer scrim** — soft `rgba(15,23,42,0.28)` via token SoT  
++2. **Sheet radius** — larger top corners (radiusSheet ~20), elevated shadow  
++3. **Section list MD3** — settings-list groups (one card + hairline dividers), not button grid cages  
++4. **Menu radius/shadow match** — StatusRail ⋯ + panel ⋮ menus use shared radiusMenu + shadowLg + tokens (no raw `#e5e7eb` / radius 4 Material leftovers in scope)
++
++### Must NOT change
++
++- `COMPOSE_SECTIONS` / Board exclusion  
++- ADR-020 copy / attach line semantics  
++- Modal focus trap behavior  
++- FocusBand / Host panel open wiring  
++
++## Rejection gates
++
++| Gate | Fail if |
++|------|---------|
++| Board under 装配 | board section or panel open from drawer |
++| Scrim hard black | pure black high-alpha overlay |
++| Section buttons still each fully caged | every row has independent full border card with gaps like button grid |
++| Menus still raw gray hex cages | Apps/Mcp/Knowledge menus still `#e5e7eb` / radius 4 |
++
++## Files in scope
++
++- `chrome-extension/src/sidepanel/ui/tokens.ts`
++- `chrome-extension/src/sidepanel/components/ComposeDrawer.tsx`
++- `chrome-extension/src/sidepanel/components/StatusRail.tsx` (menu shell)
++- `chrome-extension/src/sidepanel/components/ContextPanelHost.tsx` (menu)
++- `chrome-extension/src/sidepanel/components/KnowledgeSubPanel.tsx` (menu)
++- `chrome-extension/src/sidepanel/components/AppsPanel.tsx` (menu)
++- `chrome-extension/src/sidepanel/components/McpPanel.tsx` (menu)
++- `chrome-extension/tests/tokens-helpers.test.ts`
++
++## Output format
++
++```markdown
++## Summary
++## Spec trace (G4)
++## 装配 IA safety
++## Menus
++## Blocking
++## Nits
++VERDICT: APPROVE|APPROVE_WITH_NITS|REJECT
++```
