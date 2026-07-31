@@ -3,6 +3,7 @@
 import * as fs from "fs"
 import * as path from "path"
 import { requireModule } from "./modules"
+import { WORKSPACE_ROOT_NOT_SET_ERROR } from "./user-gate-copy"
 
 const MAX_READ_BYTES = 512 * 1024
 const MAX_LIST_ENTRIES = 500
@@ -41,10 +42,7 @@ export function resolveUnderWorkspace(
   if (!workspaceRoot || typeof workspaceRoot !== "string") {
     return {
       ok: false,
-      error:
-        "workspace_root not set on thread — pick a folder first. " +
-        "Ask the user to open Side Panel → 场景 → 「选择工作区」 (native folder dialog), " +
-        "then retry workspace_list_dir / workspace_read_file. Do not invent paths.",
+      error: WORKSPACE_ROOT_NOT_SET_ERROR,
     }
   }
   let rootReal: string

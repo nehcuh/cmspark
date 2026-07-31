@@ -370,10 +370,29 @@ function CollapsibleMarkdown({ content, maxPreview, renderMermaid = false }: { c
   )
 }
 
+function toolResultUserHint(result: any): string | null {
+  if (!result || result.success !== false) return null
+  const err = typeof result.error === "string" ? result.error : ""
+  const dataHint =
+    typeof result.data?.user_hint_zh === "string" ? result.data.user_hint_zh : ""
+  if (/workspace_root not set|需要先绑定工作区|pick a folder first/i.test(err)) {
+    return "需要先绑定工作区：侧栏「场景」→「选择工作区」。God-mode 不会跳过这一步。"
+  }
+  if (/tool_not_allowed|当前场景不允许|可退出场景/i.test(err)) {
+    return "当前场景限制了该工具：侧栏「场景」→「退出场景」后再试。God-mode 无效于此。"
+  }
+  if (dataHint) return dataHint
+  // First line of multi-line Chinese errors
+  const first = err.split("\n").find((l: string) => l.trim() && !l.trim().startsWith("["))
+  if (first && /[\u4e00-\u9fff]/.test(first) && first.length < 120) return first.trim()
+  return null
+}
+
 function ToolCallCard({ tc }: { tc: any }) {
   const [expanded, setExpanded] = useState(false)
   const [visionExpanded, setVisionExpanded] = useState(false)
   const hasResult = tc.result && !tc.error
+  const userHint = hasResult ? toolResultUserHint(tc.result) : null
   // Avoid stringifying huge objects on every render; cap preview stringification
   const resultStr = hasResult ? JSON.stringify(tc.result, null, 2) : ""
   const isLongResult = resultStr.length > TOOL_RESULT_PREVIEW
@@ -501,6 +520,20 @@ function ToolCallCard({ tc }: { tc: any }) {
               打开证据目录
             </button>
           )}
+        </div>
+      )}
+      {userHint && (
+        <div
+          style={{
+            ...styles.toolInset,
+            background: tokens.warningSoft,
+            borderLeftColor: tokens.warning,
+            fontSize: 11,
+            lineHeight: 1.45,
+            color: tokens.text,
+          }}
+        >
+          {userHint}
         </div>
       )}
       {hasResult && (

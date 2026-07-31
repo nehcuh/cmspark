@@ -880,21 +880,15 @@ ${hostUseRule12}${appIndexSection ? `\n\n${appIndexSection}` : ""}`
               error: toolResult.error,
             })
 
-            if (errorLevel === "security") {
+            if (errorLevel === "security" || errorLevel === "non_recoverable") {
               shouldStop = true
+              const { formatChatErrorLine } = await import("../capability/user-gate-copy")
               sendToExtension({
                 type: "chat.error",
                 thread_id: threadId,
-                error: `安全阻断: ${toolResult.error}`,
-              })
-              break
-            }
-            if (errorLevel === "non_recoverable") {
-              shouldStop = true
-              sendToExtension({
-                type: "chat.error",
-                thread_id: threadId,
-                error: `不可恢复错误: ${toolResult.error}`,
+                error: formatChatErrorLine(errorLevel, toolResult.error || ""),
+                error_level: errorLevel,
+                suggested_action: (toolResult as any)?.data?.suggested_action,
               })
               break
             }

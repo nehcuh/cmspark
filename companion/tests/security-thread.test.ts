@@ -271,7 +271,7 @@ test("classifyError 'timeout waiting for selector' is recoverable", () => {
 test("classifyError workspace_root not set is recoverable (Mission Pack DevSec)", () => {
   assert.equal(
     classifyError(
-      "workspace_root not set on thread — pick a folder first. Ask the user to open Side Panel → 任务包 → 「选择工作区」",
+      "需要先绑定工作区，才能读写本机文件夹。\n下一步：打开侧栏「场景」→ 点「选择工作区」\n[workspace_root not set — pick a folder first]",
       { toolName: "workspace_list_dir" },
     ),
     "recoverable",
@@ -291,6 +291,23 @@ test("classifyError MCP parent directory / allowlist path is recoverable", () =>
     classifyError("Access denied - path outside allowed directories: /etc"),
     "recoverable",
   )
+})
+
+test("formatChatErrorLine softens workspace / scene gates (not 安全阻断)", async () => {
+  const { formatChatErrorLine, WORKSPACE_ROOT_NOT_SET_ERROR } = await import(
+    "../src/capability/user-gate-copy"
+  )
+  const w = formatChatErrorLine("non_recoverable", WORKSPACE_ROOT_NOT_SET_ERROR)
+  assert.ok(w.includes("绑定工作区") || w.includes("选择工作区"))
+  assert.ok(!w.includes("安全阻断"))
+  assert.ok(!w.startsWith("不可恢复"))
+
+  const s = formatChatErrorLine(
+    "security",
+    "当前场景不允许「工作区列表」。可退出场景后重试。 [tool_not_allowed]",
+  )
+  assert.ok(s.includes("场景") || s.includes("退出"))
+  assert.ok(!s.startsWith("安全阻断:"))
 })
 
 test("classifyError ENOENT / no such file is recoverable (workspace missing path)", () => {

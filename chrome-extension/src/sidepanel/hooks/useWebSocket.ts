@@ -8,6 +8,7 @@ import { isComputerModelErrorMessage } from "../components/model-switch-logic"
 import { isBrowserTool } from "../mode/mode-controller"
 import { isUserEnvErrorMessage, mapUserEnvError, normalizeUserEnvPublic } from "../utils/user-env-utils"
 import { normalizeInboundLogEvent } from "../log-event-normalize"
+import { humanizeSidepanelGateError } from "../utils/gate-error-copy"
 
 /**
  * Check if an API key is masked (i.e., a placeholder like "***" or "sk-****xyz").
@@ -272,16 +273,22 @@ export function useWebSocket() {
           streamingRef.current = ""
           dispatch({ type: "SET_STREAMING", content: "" })
           dispatch({ type: "SET_PROCESSING", isProcessing: false })
-          dispatch({
-            type: "ADD_MESSAGE",
-            message: {
-              id: `${activeThreadRef.current}_error_${Date.now()}`,
-              thread_id: activeThreadRef.current || "",
-              role: "assistant",
-              content: `❌ ${msg.error}`,
-              created_at: new Date().toISOString(),
-            },
-          })
+          {
+            // Soften god-mode-orthogonal gates (workspace / scene) — never show
+            // raw "安全阻断/不可恢复" for setup steps the user can fix in UI.
+            const raw = typeof msg.error === "string" ? msg.error : "出错了"
+            const friendly = humanizeSidepanelGateError(raw)
+            dispatch({
+              type: "ADD_MESSAGE",
+              message: {
+                id: `${activeThreadRef.current}_error_${Date.now()}`,
+                thread_id: activeThreadRef.current || "",
+                role: "assistant",
+                content: friendly,
+                created_at: new Date().toISOString(),
+              },
+            })
+          }
           break
 
         case "tool.start":
