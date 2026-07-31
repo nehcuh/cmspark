@@ -328,16 +328,43 @@ test("extractUserAppendPortion helper", () => {
   assert.equal(packEngine.extractUserAppendPortion("--- Mission Pack ---\nonly pack"), null)
 })
 
-test("ensureBuiltinPacksInstalled installs appsec-prd-review when present", () => {
+test("ensureBuiltinPacksInstalled installs appsec + netsec scene packs when present", () => {
   const skillEngine = new SkillEngine()
   // Point at worktree builtin by ensuring getBuiltinPacksRoot finds it
   const installed = packEngine.ensureBuiltinPacksInstalled(skillEngine)
   // may be empty if path resolution fails in test cwd — still must not throw
   assert.ok(Array.isArray(installed))
   const list = packEngine.listInstalledPacks()
-  // If builtin path resolved, expect appsec
+  // If builtin path resolved, expect appsec + netsec-port-survey
   const builtinRoot = packEngine.getBuiltinPacksRoot()
   if (fs.existsSync(path.join(builtinRoot, "appsec-prd-review", "pack.yaml"))) {
     assert.ok(list.some((p) => p.id === "appsec-prd-review") || installed.includes("appsec-prd-review"))
   }
+  if (fs.existsSync(path.join(builtinRoot, "netsec-port-survey", "pack.yaml"))) {
+    assert.ok(
+      list.some((p) => p.id === "netsec-port-survey") || installed.includes("netsec-port-survey"),
+      "builtin netsec-port-survey should install",
+    )
+    const item = list.find((p) => p.id === "netsec-port-survey")
+    if (item) {
+      assert.equal(item.channel, "enterprise")
+      assert.ok(item.requires_modules?.includes("netsec"))
+      assert.equal(item.origin === "builtin" || item.editable === false, true)
+    }
+  }
+})
+
+test("netsec-port-survey pack.yaml validates and requires netsec module", async () => {
+  const builtinRoot = packEngine.getBuiltinPacksRoot()
+  const dir = path.join(builtinRoot, "netsec-port-survey")
+  if (!fs.existsSync(path.join(dir, "pack.yaml"))) return // skip if not on disk in env
+  const { validatePackDir } = await import("../src/packs/validator")
+  const v = validatePackDir(dir)
+  assert.equal(v.ok, true, v.ok ? "" : (v as { error: string }).error)
+  if (!v.ok) return
+  assert.equal(v.manifest.id, "netsec-port-survey")
+  assert.equal(v.manifest.channel, "enterprise")
+  assert.deepEqual(v.manifest.requires_modules, ["netsec"])
+  assert.ok(v.manifest.tools.allow.includes("netsec_port_scan"))
+  assert.ok(v.manifest.tools.deny.includes("shell_exec"))
 })
