@@ -8,16 +8,30 @@ import {
   type ComposeSection,
 } from "../composer/meta-slash"
 import type { ContextPanelId } from "./ContextPanelHost"
+import type { CapabilityLevel } from "../types"
 import { tokens } from "../ui/tokens"
+
+const SURFACE_LX: Record<CapabilityLevel, string> = {
+  chat: "L0 聊",
+  browser: "L1 网页",
+  computer: "L2 计算机",
+}
 
 export type ComposeDrawerProps = {
   open: boolean
   onClose: () => void
   /** Open Host panel and close drawer. */
   onOpenSection: (panelId: ContextPanelId) => void
+  /** Current Surface level for §4.5 “挂到 … Surface Lx” copy (Pi nit). */
+  capabilityLevel?: CapabilityLevel
 }
 
-export function ComposeDrawer({ open, onClose, onOpenSection }: ComposeDrawerProps) {
+export function ComposeDrawer({
+  open,
+  onClose,
+  onOpenSection,
+  capabilityLevel = "chat",
+}: ComposeDrawerProps) {
   const sheetRef = useRef<HTMLDivElement>(null)
   const firstBtnRef = useRef<HTMLButtonElement>(null)
 
@@ -68,7 +82,9 @@ export function ComposeDrawer({ open, onClose, onOpenSection }: ComposeDrawerPro
         <div style={styles.header}>
           <div>
             <div style={styles.title}>装配</div>
-            <div style={styles.subtitle}>组合能力 · 挂到当前线程 · Surface</div>
+            <div style={styles.subtitle}>
+              组合能力 · 挂到当前线程 · Surface {SURFACE_LX[capabilityLevel]}
+            </div>
           </div>
           <button
             type="button"

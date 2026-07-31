@@ -700,6 +700,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
       <ComposeDrawer
         open={composeOpen}
         onClose={closeCompose}
+        capabilityLevel={capabilityLevel}
         onOpenSection={(panelId) => {
           setComposeOpen(false)
           dispatch({ type: "SET_SETTINGS_OPEN", open: false })
