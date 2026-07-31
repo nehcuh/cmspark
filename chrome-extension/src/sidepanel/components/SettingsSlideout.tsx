@@ -397,6 +397,40 @@ export function SettingsSlideout() {
             )}
           </div>
 
+          {/* --- How permissions work (Mission Pack UX P1.5) --- */}
+          <div style={styles.sectionTitle}>场景 · 本机能力 · 确认开关</div>
+          <div style={styles.field}>
+            <div style={styles.helpText}>
+              三道门互不替代，请勿混淆：
+            </div>
+            <ul
+              style={{
+                margin: "6px 0 0",
+                paddingLeft: 18,
+                fontSize: 12,
+                color: tokens.textSecondary,
+                lineHeight: 1.5,
+              }}
+            >
+              <li>
+                <strong>场景</strong>（侧栏「场景」）：本对话用什么模板；可能
+                <em>限制</em>可用工具。可随时「退出场景」。
+              </li>
+              <li>
+                <strong>本机能力</strong>（场景页折叠区）：是否允许工作区读写 / 扫描 / 命令等电源。
+              </li>
+              <li>
+                <strong>确认开关</strong>（下方安全设置）：危险操作要不要弹窗确认；
+                <em>不会</em>放开场景已关掉的工具。
+              </li>
+            </ul>
+            <div style={{ ...styles.helpText, marginTop: 8 }}>
+              安装技能请用 <strong>Skills → 导入 ZIP / 文件夹</strong>，不要点「应用安全审查 → 用于本对话」。
+            </div>
+          </div>
+
+          <div style={styles.divider} />
+
           {/* --- Security Settings --- */}
           <div style={styles.sectionTitle}>安全设置</div>
 

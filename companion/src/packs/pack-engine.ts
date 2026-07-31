@@ -175,6 +175,7 @@ export function listInstalledPacks(cfg?: CompanionConfig): PackListItem[] {
       })
       continue
     }
+    const ui = v.manifest.ui
     items.push({
       id: v.manifest.id,
       name: v.manifest.name,
@@ -185,6 +186,9 @@ export function listInstalledPacks(cfg?: CompanionConfig): PackListItem[] {
       requires_modules: v.manifest.requires_modules,
       apply_blocked: computeApplyBlocked(v.manifest, config),
       installed_path: dir,
+      suitable_for: typeof ui?.suitable_for === "string" ? ui.suitable_for : undefined,
+      unsuitable_for: typeof ui?.unsuitable_for === "string" ? ui.unsuitable_for : undefined,
+      tools_summary_zh: typeof ui?.tools_summary_zh === "string" ? ui.tools_summary_zh : undefined,
     })
   }
   return items.sort((a, b) => a.id.localeCompare(b.id))

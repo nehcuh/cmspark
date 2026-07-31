@@ -247,6 +247,15 @@ export function validatePackDir(packDir: string): ValidateResult {
         : undefined,
     author: typeof doc.author === "string" ? doc.author : undefined,
     tags: Array.isArray(doc.tags) && doc.tags.every((t) => typeof t === "string") ? (doc.tags as string[]) : undefined,
+    ui:
+      isPlainObject(doc.ui)
+        ? {
+            suitable_for: typeof doc.ui.suitable_for === "string" ? doc.ui.suitable_for : undefined,
+            unsuitable_for: typeof doc.ui.unsuitable_for === "string" ? doc.ui.unsuitable_for : undefined,
+            tools_summary_zh:
+              typeof doc.ui.tools_summary_zh === "string" ? doc.ui.tools_summary_zh : undefined,
+          }
+        : undefined,
   }
 
   return { ok: true, manifest, skillAbsPaths, knowledgeAbsPaths }

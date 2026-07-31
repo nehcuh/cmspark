@@ -16,6 +16,9 @@ export type PackListItem = {
   min_capability?: string
   requires_modules?: string[]
   apply_blocked?: string | null
+  suitable_for?: string
+  unsuitable_for?: string
+  tools_summary_zh?: string
 }
 
 type ModuleStateView = {
@@ -36,8 +39,15 @@ function looksLikeAllowlistEntry(raw: string): boolean {
   return /^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?$/.test(t)
 }
 
-/** P0 hardcopy for AppSec only (§8 / §14.1). */
+/** Prefer pack.yaml ui.*; AppSec hardcopy fallback if installed pack lacks ui. */
 function sceneCopy(p: PackListItem): { suitable: string; unsuitable: string; tools: string } | null {
+  if (p.suitable_for || p.unsuitable_for || p.tools_summary_zh) {
+    return {
+      suitable: p.suitable_for || p.description || "",
+      unsuitable: p.unsuitable_for || "",
+      tools: p.tools_summary_zh || "",
+    }
+  }
   if (p.id !== "appsec-prd-review") return null
   return {
     suitable: "对当前网页/PRD 做威胁建模与安全 checklist；只读浏览与截图。",
