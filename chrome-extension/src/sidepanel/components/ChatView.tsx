@@ -661,7 +661,11 @@ function fillComposer(text: string) {
   window.dispatchEvent(new CustomEvent("cmspark:fill-composer", { detail: { text } }))
 }
 
-function SuggestionChips({ items }: { items: { label: string; fill: string }[] }) {
+type SuggestItem =
+  | { label: string; fill: string }
+  | { label: string; action: "compose" | "packs" }
+
+function SuggestionChips({ items }: { items: SuggestItem[] }) {
   return (
     <div style={styles.chipRow}>
       {items.map((it) => (
@@ -669,7 +673,21 @@ function SuggestionChips({ items }: { items: { label: string; fill: string }[] }
           key={it.label}
           type="button"
           style={styles.suggestChip}
-          onClick={() => fillComposer(it.fill)}
+          onClick={() => {
+            if ("action" in it) {
+              if (it.action === "compose") {
+                window.dispatchEvent(new CustomEvent("cmspark:open-compose"))
+                return
+              }
+              if (it.action === "packs") {
+                window.dispatchEvent(
+                  new CustomEvent("cmspark:open-context-panel", { detail: { panel: "packs" } }),
+                )
+              }
+              return
+            }
+            fillComposer(it.fill)
+          }}
         >
           {it.label}
         </button>
@@ -684,13 +702,13 @@ function EmptyState({ level }: { level: "chat" | "browser" | "computer" }) {
       <div style={styles.empty}>
         <div style={styles.emptyTitle}>网页 Agent 已就绪</div>
         <div style={styles.emptyHint}>
-          可对当前页提问、总结或让 Agent 操作标签。输入 / 调用技能；任务包/任务板在底栏「更多」。
+          可对当前页提问、总结或让 Agent 操作标签。输入 / 或点「装配」打开组合能力。
         </div>
         <SuggestionChips
           items={[
             { label: "总结本页", fill: "请总结当前页面的要点" },
-            { label: "提取关键信息", fill: "请从当前页提取关键信息并列表" },
-            { label: "帮我填表", fill: "请根据页面内容帮我填写当前表单" },
+            { label: "装配", action: "compose" },
+            { label: "/packs", action: "packs" },
           ]}
         />
       </div>
@@ -708,15 +726,15 @@ function EmptyState({ level }: { level: "chat" | "browser" | "computer" }) {
   }
   return (
     <div style={styles.empty}>
-      <div style={styles.emptyTitle}>开始对话</div>
+      <div style={styles.emptyTitle}>今天想聊什么？</div>
       <div style={styles.emptyHint}>
-        问问题、写文案，或描述你想在浏览器里完成的任务。输入 / 调用技能；任务包在底栏「更多」。
+        问问题、写文案，或描述浏览器任务。快捷：总结本页 · 装配 · /packs
       </div>
       <SuggestionChips
         items={[
-          { label: "写一段文案", fill: "请帮我写一段简洁的产品介绍" },
-          { label: "解释概念", fill: "请用通俗的话解释：" },
-          { label: "规划步骤", fill: "请把下面目标拆成可执行步骤：" },
+          { label: "总结本页", fill: "请总结当前页面的要点" },
+          { label: "装配", action: "compose" },
+          { label: "/packs", action: "packs" },
         ]}
       />
     </div>

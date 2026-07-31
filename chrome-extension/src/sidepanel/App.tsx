@@ -8,6 +8,7 @@ import { BottomBar } from "./components/BottomBar"
 import {
   ContextPanelHost,
   ContextPanelHostProvider,
+  useContextPanelHost,
 } from "./components/ContextPanelHost"
 import { FocusBand } from "./components/FocusBand"
 import { SettingsSlideout } from "./components/SettingsSlideout"
@@ -16,8 +17,16 @@ import { SlashCommandPopover } from "./components/SlashCommandPopover"
 import { SkillCraftPanel } from "./components/SkillCraftPanel"
 import { NotebooklmImporterPanel } from "./components/NotebooklmImporterPanel"
 import { StatusRail } from "./components/StatusRail"
+import { ComposerChips } from "./components/ComposerChips"
+import { ComposeDrawer } from "./components/ComposeDrawer"
 import { AgentStoreProvider, useAgentStore } from "./store/agentStore"
 import type { CapabilityLevel, SkillMeta, FileAttachment } from "./types"
+import {
+  META_PANEL_SLASH,
+  composerPlaceholder,
+  resolveMetaSlash,
+  type ComposerChipAction,
+} from "./composer/meta-slash"
 import { tokens } from "./ui/tokens"
 import {
   IconSend,
@@ -25,34 +34,6 @@ import {
   IconAttach,
   IconAlert,
 } from "./ui/icons"
-
-/** Slash meta commands that open BottomBar panels (S1 discoverability). */
-const META_PANEL_SLASH: SkillMeta[] = [
-  {
-    name: "packs",
-    description: "打开任务包面板（底栏「更多」）",
-    type: "prompt_template",
-    builtin: true,
-    tags: ["meta-panel"],
-    site: "packs",
-  },
-  {
-    name: "board",
-    description: "打开任务板面板（底栏「更多」）",
-    type: "prompt_template",
-    builtin: true,
-    tags: ["meta-panel"],
-    site: "board",
-  },
-  {
-    name: "mcp",
-    description: "打开 MCP 面板",
-    type: "prompt_template",
-    builtin: true,
-    tags: ["meta-panel"],
-    site: "mcp",
-  },
-]
 
 // Error Boundary — catches rendering errors to prevent white screen
 class ErrorBoundary extends Component<{ children: React.ReactNode }, { error: Error | null }> {
@@ -211,15 +192,54 @@ function AppContent() {
 
 function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityLevel }) {
   const { state, dispatch } = useAgentStore()
+  const { openPanelForce, closePanel, activePanel } = useContextPanelHost()
   const [text, setText] = useState("")
   const [slashVisible, setSlashVisible] = useState(false)
   const [slashQuery, setSlashQuery] = useState("")
   const [selectedFiles, setSelectedFiles] = useState<FileAttachment[]>([])
   const [fileError, setFileError] = useState("")
+  const [composeOpen, setComposeOpen] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const sendingRef = useRef(false)
   const isComputer = capabilityLevel === "computer"
+
+  const openCompose = useCallback(() => {
+    // Landfill: only one secondary surface (drawer | Host | settings)
+    closePanel()
+    dispatch({ type: "SET_SETTINGS_OPEN", open: false })
+    setComposeOpen(true)
+  }, [closePanel, dispatch])
+
+  const closeCompose = useCallback(() => {
+    setComposeOpen(false)
+  }, [])
+
+  const handleChipAction = useCallback(
+    (action: ComposerChipAction) => {
+      if (action.kind === "compose") {
+        openCompose()
+        return
+      }
+      if (action.kind === "cockpit") {
+        setComposeOpen(false)
+        chrome.runtime.sendMessage({ type: "cockpit.open" }, () => {
+          void chrome.runtime.lastError
+        })
+        return
+      }
+      // panel
+      setComposeOpen(false)
+      dispatch({ type: "SET_SETTINGS_OPEN", open: false })
+      openPanelForce(action.panelId)
+    },
+    [openCompose, openPanelForce, dispatch],
+  )
+
+  // Host open → dismiss 装配 (landfill)
+  useEffect(() => {
+    if (activePanel) setComposeOpen(false)
+  }, [activePanel])
 
   // R4: empty-state suggestion chips fill the composer
   useEffect(() => {
@@ -238,6 +258,27 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
     window.addEventListener("cmspark:fill-composer", onFill as EventListener)
     return () => window.removeEventListener("cmspark:fill-composer", onFill as EventListener)
   }, [])
+
+  // Empty state / external: open 装配 drawer
+  useEffect(() => {
+    const onOpen = () => openCompose()
+    window.addEventListener("cmspark:open-compose", onOpen)
+    return () => window.removeEventListener("cmspark:open-compose", onOpen)
+  }, [openCompose])
+
+  // Optional Cmd/Ctrl+K → 装配 (§6.2)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || (e.key !== "k" && e.key !== "K")) return
+      const tag = (e.target as HTMLElement | null)?.tagName
+      // Allow even from textarea — primary IA entry
+      if (tag === "INPUT" && (e.target as HTMLInputElement).type === "password") return
+      e.preventDefault()
+      openCompose()
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [openCompose])
 
   const isStreaming = !!state.streamingContent
   const hasContent = text.trim().length > 0 || selectedFiles.length > 0
@@ -259,9 +300,8 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
     if (needsThread) return "请先创建或选择一个线程"
     if (needsConnection) return "等待 companion 连接..."
     // P1 D12′: Cockpit is task conductor — Panel cannot interject mid-task
-    if (taskActive) return "任务进行中 — 请在操控台发送指令或先急停"
-    if (isComputer) return "排队跟进…（主指令请在操控台发送）"
-    return "输入指令... (输入 / 调用技能)"
+    if (taskActive) return "任务进行中 — 请在确认台发送指令或先急停"
+    return composerPlaceholder(capabilityLevel)
   }
 
   // Detect slash command: check if cursor is after a "/" at start or after space
@@ -294,6 +334,13 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
     detectSlash(newValue, e.target.selectionStart || 0)
   }
 
+  const clearSlashToken = (slashIdx: number, cursorPos: number) => {
+    const afterCursor = text.substring(cursorPos)
+    const newText = (text.substring(0, slashIdx) + afterCursor).replace(/\s+$/, " ").trimStart()
+    setText(newText)
+    setSlashVisible(false)
+  }
+
   const handleSlashSelect = (skill: SkillMeta) => {
     const textarea = textareaRef.current
     if (!textarea) return
@@ -305,15 +352,39 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
     const slashIdx = beforeCursor.lastIndexOf("/")
     if (slashIdx === -1) return
 
-    // S1: meta panel openers — clear the slash token and open BottomBar panel
-    if (skill.tags?.includes("meta-panel") && skill.site) {
-      const afterCursor = text.substring(cursorPos)
-      const newText = (text.substring(0, slashIdx) + afterCursor).replace(/\s+$/, " ").trimStart()
-      setText(newText)
-      setSlashVisible(false)
-      window.dispatchEvent(
-        new CustomEvent("cmspark:open-context-panel", { detail: { panel: skill.site } }),
-      )
+    // PR4 §4.8: meta slash parity (Host / 装配 / settings / 确认台)
+    const meta = resolveMetaSlash(skill)
+    if (meta) {
+      clearSlashToken(slashIdx, cursorPos)
+      if (meta.metaKind === "compose") {
+        openCompose()
+        return
+      }
+      if (meta.metaKind === "settings") {
+        setComposeOpen(false)
+        closePanel()
+        dispatch({ type: "SET_SETTINGS_OPEN", open: true })
+        return
+      }
+      if (meta.metaKind === "cockpit") {
+        setComposeOpen(false)
+        chrome.runtime.sendMessage({ type: "cockpit.open" }, () => {
+          void chrome.runtime.lastError
+        })
+        return
+      }
+      if (meta.metaKind === "panel" && meta.panelId) {
+        setComposeOpen(false)
+        dispatch({ type: "SET_SETTINGS_OPEN", open: false })
+        openPanelForce(meta.panelId)
+        return
+      }
+      // Legacy site-based open
+      if (skill.site) {
+        window.dispatchEvent(
+          new CustomEvent("cmspark:open-context-panel", { detail: { panel: skill.site } }),
+        )
+      }
       return
     }
 
@@ -332,7 +403,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
     }, 0)
   }
 
-  // S1: virtual slash entries for demoted panels (packs/board live under「更多」)
+  // §4.8 virtual slash entries + real skills
   const slashSkills: SkillMeta[] = [
     ...META_PANEL_SLASH,
     ...(Array.isArray(state.skills) ? state.skills : []),
@@ -558,8 +629,9 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
           ))}
         </div>
       )}
-      {/* P2: unified composer capsule — attach + textarea + send inside one surface */}
+      {/* PR4: ComposerDock chips + capsule; 装配 drawer is portal-like fixed sheet */}
       <div style={styles.inputArea}>
+        <ComposerChips capabilityLevel={capabilityLevel} onAction={handleChipAction} />
         <div
           style={{
             ...styles.composerCapsule,
@@ -608,7 +680,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
                   : needsConnection
                     ? "Companion 未连接"
                     : taskActive
-                      ? "任务进行中，请在操控台发送"
+                      ? "任务进行中，请在确认台发送"
                       : "发送"
               }
             >
@@ -625,6 +697,15 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
           onDismiss={() => setSlashVisible(false)}
         />
       </div>
+      <ComposeDrawer
+        open={composeOpen}
+        onClose={closeCompose}
+        onOpenSection={(panelId) => {
+          setComposeOpen(false)
+          dispatch({ type: "SET_SETTINGS_OPEN", open: false })
+          openPanelForce(panelId)
+        }}
+      />
     </div>
   )
 }

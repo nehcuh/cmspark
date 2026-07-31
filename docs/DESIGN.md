@@ -72,7 +72,10 @@ Helpers: `connectionColor` / `connectionLabel` / `connectionDotShadow` in `token
 - L0 `聊` · L1 `网页` · L2 `计算机` / `计算机 · LIVE` — see `sidepanel/mode/mode-controller.ts`
 - **Ontology:** product L0/L1/L2 = Surface axis = UI `CapabilityLevel` `chat|browser|computer` — [ADR-020](adr/020-capability-model-three-axes.md)
 - L1 header tint: `tokens.modeBrowserBg` (`#dbeafe`); BottomBar tabs filtered by capability level
-- ContextBar (§4 / P0 IA cut 2026-07-27): L0 Skills·Know·Hist · L1 Tabs·Skills · L2 Panel empty; packs/board/mcp/apps via BottomBar「更多」
+- ContextBar strip (legacy until PR5): L0 Skills·Know·Hist · L1 Tabs·Skills · L2 empty; overflow「更多」still present
+- **ComposerDock chips** (UIUX v2 PR4 §4.4): L0 装配·Skills·Know · L1 装配·Tabs·工作区 · L2 确认台·装配 — open Host / 装配 drawer; **no Abort next to Send**
+- **装配 P0** bottom-sheet section list → Host (`skills`/`knowledge`/`packs`/`mcp`/`apps`/`history`); Board is Autonomy (`/board` only)
+- **Slash parity** (§4.8): `/skills` `/knowledge` `/history` `/tabs` `/packs` `/mcp` `/apps` `/board` `/settings` `/cockpit` `/装配`
 - **StatusRail** (ex-Header): ThreadList + title + ModeBadge (pin-on-badge) + connection (token colors) + ⋯ menu (Craft/export/NB/logs/settings) — no permanent power-icon strip
 - **FocusBand** (UIUX v2 §4.3): single slot Confirm > L2 Safety+急停 > Fleet > L1 Context; hard cap ≤80px; 急停 never buried under L2 task
 - FleetStrip: hidden when idle single-agent; show only multi-worker / locks / intents (**not** pending confirms — those are MinimalConfirm / FocusBand)
@@ -99,10 +102,11 @@ Helpers: `connectionColor` / `connectionLabel` / `connectionDotShadow` in `token
 - Primary: `tokens.accent` bg, white text
 - Danger: `tokens.danger`
 
-### Input / Composer (P2)
+### Input / Composer (P2 + PR4)
 - Unified capsule: attach + textarea + send inside one bordered surface
 - Radius: `tokens.radiusLg` (12px)
-- Settings live in StatusRail ⋯ (not composer)
+- Mode chips row above capsule (see ComposerDock chips above); 装配 via chip / `/装配` / Cmd+K
+- Settings live in StatusRail ⋯ or `/settings` (not in 装配 Board path)
 
 ### Motion
 - Transitions ≤200ms; `prefers-reduced-motion` disables animations
