@@ -744,7 +744,7 @@ function EmptyState({ level }: { level: "chat" | "browser" | "computer" }) {
       <div style={styles.empty} data-testid="empty-state-computer">
         <div style={styles.emptyKicker}>计算机</div>
         <div style={styles.emptyTitle}>任务在确认台进行</div>
-        <div style={styles.emptyHint}>此处可排队跟进；步骤与确认请用确认台。</div>
+        <div style={styles.emptyHint}>此处可排队跟进。步骤与确认请用确认台。</div>
         <SuggestionChips
           items={[
             { label: "确认台", action: "cockpit", primary: true },
