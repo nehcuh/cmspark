@@ -485,6 +485,14 @@ function SkillsPanel() {
   const groupedSkills = groupSkillsBySite(skillList, currentHostname)
 
   const modeLabels: Record<string, string> = { auto: "自动", all: "全选", manual: "按需" }
+  const skillMode = state.skillSelectionMode || "auto"
+  const skillManual = skillMode === "manual"
+  const skillModeHint =
+    skillMode === "auto"
+      ? "自动：按站点/消息匹配技能，列表勾选不生效（未勾选 ≠ 不会调用）。"
+      : skillMode === "all"
+        ? "全选：全部技能参与索引，无需单独勾选。"
+        : "按需：仅勾选的技能会参与本对话。"
 
   return (
     <div style={styles.panelContent}>
@@ -494,9 +502,9 @@ function SkillsPanel() {
             key={mode}
             style={{
               ...styles.modeBtn,
-              background: state.skillSelectionMode === mode ? tokens.accent : tokens.bgElevated,
-              color: state.skillSelectionMode === mode ? "#fff" : tokens.textSecondary,
-              borderColor: state.skillSelectionMode === mode ? tokens.accent : tokens.border,
+              background: skillMode === mode ? tokens.accent : tokens.bgElevated,
+              color: skillMode === mode ? "#fff" : tokens.textSecondary,
+              borderColor: skillMode === mode ? tokens.accent : tokens.border,
             }}
             onClick={() => handleModeChange(mode)}
             title={
@@ -510,6 +518,16 @@ function SkillsPanel() {
             {modeLabels[mode]}
           </button>
         ))}
+      </div>
+      <div
+        style={{
+          fontSize: 10,
+          color: tokens.textMuted,
+          lineHeight: 1.4,
+          marginBottom: 8,
+        }}
+      >
+        {skillModeHint}
       </div>
 
       <div
@@ -630,91 +648,112 @@ function SkillsPanel() {
       {groupedSkills.map(([groupName, skills]) => (
         <div key={groupName}>
           <div style={styles.groupHeader}>{groupName}</div>
-          {skills.map((skill) => (
-            <div
-              key={skill.name}
-              style={{
-                ...styles.skillRow,
-                background: state.activeSkillIds.includes(skill.name)
-                  ? tokens.bgActive
-                  : "transparent",
-                opacity: state.skillSelectionMode === "all" ? 0.6 : 1,
-              }}
-            >
-              <input
-                type="checkbox"
-                checked={state.activeSkillIds.includes(skill.name)}
-                disabled={state.skillSelectionMode === "all"}
-                onChange={() => {
-                  const activeSkillIds = state.activeSkillIds.includes(skill.name)
-                    ? state.activeSkillIds.filter((id) => id !== skill.name)
-                    : [...state.activeSkillIds, skill.name]
-                  dispatch({ type: "TOGGLE_SKILL", skillId: skill.name })
-                  if (state.activeThreadId) {
-                    chrome.runtime.sendMessage({
-                      type: "thread.update",
-                      threadId: state.activeThreadId,
-                      updates: { active_skill_ids: activeSkillIds },
-                    })
-                  }
+          {skills.map((skill) => {
+            const active = state.activeSkillIds.includes(skill.name)
+            return (
+              <div
+                key={skill.name}
+                style={{
+                  ...styles.skillRow,
+                  background: skillManual && active ? tokens.bgActive : "transparent",
                 }}
-                style={{ marginRight: 8 }}
-              />
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div
-                  style={{
-                    fontSize: 12,
-                    fontWeight: 500,
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 4,
-                  }}
-                >
-                  {skill.name}
-                  {skill.site && <span style={styles.siteBadge}>{skill.site}</span>}
-                </div>
-                <div
-                  style={{
-                    fontSize: 11,
-                    color: tokens.textSecondary,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {skill.description}
-                </div>
-              </div>
-              {skill.builtin && <span style={styles.badge}>内置</span>}
-              {!skill.builtin && (
-                <div
-                  style={{ position: "relative" }}
-                  ref={menuOpen === skill.name ? menuRef : undefined}
-                >
-                  <button
-                    style={styles.menuBtn}
-                    onClick={() => setMenuOpen(menuOpen === skill.name ? null : skill.name)}
-                    title="更多操作"
+              >
+                {skillManual ? (
+                  <input
+                    type="checkbox"
+                    checked={active}
+                    onChange={() => {
+                      const activeSkillIds = active
+                        ? state.activeSkillIds.filter((id) => id !== skill.name)
+                        : [...state.activeSkillIds, skill.name]
+                      dispatch({ type: "TOGGLE_SKILL", skillId: skill.name })
+                      if (state.activeThreadId) {
+                        chrome.runtime.sendMessage({
+                          type: "thread.update",
+                          threadId: state.activeThreadId,
+                          updates: { active_skill_ids: activeSkillIds },
+                        })
+                      }
+                    }}
+                    style={{ marginRight: 8, flexShrink: 0 }}
+                    title="勾选后参与本对话"
+                  />
+                ) : (
+                  <span
+                    style={{
+                      width: 16,
+                      textAlign: "center",
+                      color: tokens.textMuted,
+                      fontSize: 11,
+                      flexShrink: 0,
+                      marginRight: 4,
+                    }}
+                    title={
+                      skillMode === "all"
+                        ? "全选模式：全部参与索引"
+                        : "自动模式：由匹配决定，与勾选无关"
+                    }
+                    aria-hidden
                   >
-                    ···
-                  </button>
-                  {menuOpen === skill.name && (
-                    <div style={styles.menuDropdown}>
-                      <button style={styles.menuItem} onClick={() => handleExport(skill.name)}>
-                        📤 导出
-                      </button>
-                      <button
-                        style={{ ...styles.menuItem, color: tokens.danger }}
-                        onClick={() => handleDelete(skill.name)}
-                      >
-                        删除
-                      </button>
-                    </div>
-                  )}
+                    {skillMode === "all" ? "◎" : "◇"}
+                  </span>
+                )}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div
+                    style={{
+                      fontSize: 12,
+                      fontWeight: 500,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 4,
+                    }}
+                  >
+                    {skill.name}
+                    {skill.site && <span style={styles.siteBadge}>{skill.site}</span>}
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 11,
+                      color: tokens.textSecondary,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {skill.description}
+                  </div>
                 </div>
-              )}
-            </div>
-          ))}
+                {skill.builtin && <span style={styles.badge}>内置</span>}
+                {!skill.builtin && (
+                  <div
+                    style={{ position: "relative" }}
+                    ref={menuOpen === skill.name ? menuRef : undefined}
+                  >
+                    <button
+                      style={styles.menuBtn}
+                      onClick={() => setMenuOpen(menuOpen === skill.name ? null : skill.name)}
+                      title="更多操作"
+                    >
+                      ···
+                    </button>
+                    {menuOpen === skill.name && (
+                      <div style={styles.menuDropdown}>
+                        <button style={styles.menuItem} onClick={() => handleExport(skill.name)}>
+                          📤 导出
+                        </button>
+                        <button
+                          style={{ ...styles.menuItem, color: tokens.danger }}
+                          onClick={() => handleDelete(skill.name)}
+                        >
+                          删除
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )
+          })}
         </div>
       ))}
     </div>

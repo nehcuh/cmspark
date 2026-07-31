@@ -108,10 +108,11 @@ export function McpPanel() {
 
   const modeLabels: Record<string, string> = { auto: "自动", all: "全部", manual: "按需" }
   const modeHints: Record<string, string> = {
-    auto: "索引注入 system prompt，LLM 按需调用",
-    all: "所有 server 的 tools 直接给 LLM",
-    manual: "仅勾选的 server 暴露工具",
+    auto: "索引注入 system prompt，LLM 按需调用（无需勾选「当前」）",
+    all: "所有已启用 server 的 tools 直接给 LLM（无需勾选「当前」）",
+    manual: "仅勾选「当前」的 server 暴露工具",
   }
+  const mcpMode = state.mcpSelectionMode || "auto"
 
   return (
     <div style={styles.panelContent}>
@@ -141,9 +142,9 @@ export function McpPanel() {
               key={mode}
               style={{
                 ...styles.modeBtn,
-                background: state.mcpSelectionMode === mode ? tokens.accent : "#fff",
-                color: state.mcpSelectionMode === mode ? "#fff" : "#666",
-                borderColor: state.mcpSelectionMode === mode ? tokens.accent : "#ddd",
+                background: mcpMode === mode ? tokens.accent : tokens.bgElevated,
+                color: mcpMode === mode ? "#fff" : tokens.textSecondary,
+                borderColor: mcpMode === mode ? tokens.accent : tokens.border,
               }}
               onClick={() => handleModeChange(mode)}
               title={modeHints[mode]}
@@ -158,6 +159,9 @@ export function McpPanel() {
           >
             ↻
           </button>
+        </div>
+        <div style={{ fontSize: 10, color: tokens.textMuted, lineHeight: 1.4, marginBottom: 6 }}>
+          {modeHints[mcpMode]}
         </div>
 
         {/* Server list */}

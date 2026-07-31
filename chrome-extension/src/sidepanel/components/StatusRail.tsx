@@ -177,12 +177,20 @@ export function StatusRail({
       style={{
         ...railStyles.rail,
         ...(modeLine
-          ? { boxShadow: `inset 0 -3px 0 ${modeLine}, 0 1px 0 rgba(255,255,255,0.85) inset` }
-          : {}),
+          ? {
+              boxShadow: `inset 0 -2.5px 0 ${modeLine}, 0 1px 0 rgba(255,255,255,0.9) inset, ${tokens.shadowSm}`,
+            }
+          : { boxShadow: `0 1px 0 rgba(255,255,255,0.9) inset, ${tokens.shadowSm}` }),
       }}
     >
       <ThreadList />
-      <div style={railStyles.title}>CMspark</div>
+      <div style={railStyles.brand}>
+        <span style={railStyles.brandMark} aria-hidden>
+          ◆
+        </span>
+        <span style={railStyles.brandText}>CMspark</span>
+      </div>
+      <div style={railStyles.spacer} />
       <ModeBadge
         level={capabilityLevel}
         label={badgeLabel}
@@ -193,14 +201,19 @@ export function StatusRail({
         role="status"
         aria-label={connLabel}
         title={connLabel}
-        style={{
-          ...railStyles.statusDot,
-          background: connectionColor(connectionState),
-          boxShadow: connectionDotShadow(connectionState),
-        }}
-      />
+        style={railStyles.connPill}
+      >
+        <span
+          style={{
+            ...railStyles.statusDot,
+            background: connectionColor(connectionState),
+            boxShadow: connectionDotShadow(connectionState),
+          }}
+        />
+        <span style={railStyles.connLabel}>{connLabel}</span>
+      </div>
       {/* Power actions in ⋯ menu — not permanent icon strip */}
-      <div ref={menuRef} style={{ position: "relative", flexShrink: 0, marginLeft: 2 }}>
+      <div ref={menuRef} style={{ position: "relative", flexShrink: 0 }}>
         <button
           type="button"
           style={{
@@ -212,6 +225,7 @@ export function StatusRail({
                     nbState === "warning"
                       ? "rgba(217, 119, 6, 0.45)"
                       : tokens.modeBrowserLine,
+                  color: tokens.accentText,
                 }
               : {}),
           }}
@@ -367,35 +381,80 @@ const railStyles: Record<string, CSSProperties> = {
   rail: {
     display: "flex",
     alignItems: "center",
-    gap: 6,
-    padding: "6px 10px",
+    gap: 8,
+    padding: "8px 12px",
     borderBottom: `1px solid ${tokens.border}`,
-    background: "rgba(255, 255, 255, 0.72)",
-    backdropFilter: "saturate(1.35) blur(14px)",
-    WebkitBackdropFilter: "saturate(1.35) blur(14px)",
+    // Soft glass — match Gemini-breath composer / bottom chrome
+    background: "linear-gradient(180deg, rgba(255,255,255,0.88) 0%, rgba(245,246,250,0.78) 100%)",
+    backdropFilter: "saturate(1.4) blur(16px)",
+    WebkitBackdropFilter: "saturate(1.4) blur(16px)",
     flexShrink: 0,
-    minHeight: 40,
-    boxShadow: "0 1px 0 rgba(255,255,255,0.85) inset",
+    minHeight: 44,
   },
-  title: {
-    flex: 1,
+  brand: {
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
     minWidth: 0,
-    fontSize: 12.5,
-    fontWeight: 600,
-    letterSpacing: "-0.02em",
+    flexShrink: 1,
+  },
+  brandMark: {
+    width: 18,
+    height: 18,
+    borderRadius: 6,
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontSize: 9,
+    color: tokens.accent,
+    background: tokens.accentSoft,
+    border: `1px solid rgba(79, 70, 229, 0.18)`,
+    flexShrink: 0,
+    lineHeight: 1,
+  },
+  brandText: {
+    fontSize: 13,
+    fontWeight: 650,
+    letterSpacing: "-0.03em",
+    color: tokens.text,
+    whiteSpace: "nowrap" as const,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+  },
+  spacer: {
+    flex: 1,
+    minWidth: 4,
+  },
+  connPill: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 5,
+    padding: "3px 8px 3px 6px",
+    borderRadius: tokens.radiusPill,
+    background: "rgba(255,255,255,0.72)",
+    border: `1px solid ${tokens.border}`,
+    flexShrink: 0,
+    maxWidth: 88,
+  },
+  connLabel: {
+    fontSize: 10,
+    fontWeight: 550,
     color: tokens.textSecondary,
+    letterSpacing: "-0.01em",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap" as const,
   },
   menu: {
     position: "absolute",
     right: 0,
-    top: "calc(100% + 6px)",
-    minWidth: 212,
+    top: "calc(100% + 8px)",
+    minWidth: 220,
     maxHeight: 360,
     overflowY: "auto",
-    // Frosted to match StatusRail glass language (dual-review nit restore)
-    background: "rgba(255, 255, 255, 0.96)",
-    backdropFilter: "saturate(1.25) blur(12px)",
-    WebkitBackdropFilter: "saturate(1.25) blur(12px)",
+    background: "rgba(255, 255, 255, 0.97)",
+    backdropFilter: "saturate(1.3) blur(14px)",
+    WebkitBackdropFilter: "saturate(1.3) blur(14px)",
     border: `1px solid ${tokens.borderStrong}`,
     borderRadius: tokens.radiusMenu,
     boxShadow: tokens.shadowLg,
@@ -427,11 +486,11 @@ const railStyles: Record<string, CSSProperties> = {
     margin: "5px 8px",
   },
   iconBtn: {
-    width: 30,
-    height: 30,
+    width: 32,
+    height: 32,
     borderRadius: tokens.radiusMd,
     border: `1px solid ${tokens.border}`,
-    background: tokens.bgElevated,
+    background: "rgba(255,255,255,0.85)",
     color: tokens.textSecondary,
     cursor: "pointer",
     flexShrink: 0,
@@ -440,6 +499,7 @@ const railStyles: Record<string, CSSProperties> = {
     justifyContent: "center",
     padding: 0,
     boxShadow: tokens.shadowSm,
+    transition: `background ${tokens.transitionFast}, border-color ${tokens.transitionFast}`,
   },
   statusDot: {
     width: 7,

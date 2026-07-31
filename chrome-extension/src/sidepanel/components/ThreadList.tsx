@@ -75,7 +75,14 @@ export function ThreadList() {
 
   return (
     <div style={{ position: "relative" }}>
-      <button style={styles.hamburger} onClick={() => setOpen(!open)} title="线程列表">
+      <button
+        type="button"
+        style={styles.hamburger}
+        onClick={() => setOpen(!open)}
+        title="线程列表"
+        aria-label="线程列表"
+        aria-expanded={open}
+      >
         ☰
       </button>
 
@@ -165,12 +172,22 @@ export function ThreadList() {
 
 const styles: Record<string, React.CSSProperties> = {
   hamburger: {
-    background: "none",
-    border: "none",
-    fontSize: 18,
+    width: 32,
+    height: 32,
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    background: "rgba(255,255,255,0.85)",
+    border: `1px solid ${tokens.border}`,
+    borderRadius: tokens.radiusMd,
+    fontSize: 15,
     cursor: "pointer",
-    padding: "2px 4px",
+    padding: 0,
     lineHeight: 1,
+    color: tokens.textSecondary,
+    boxShadow: tokens.shadowSm,
+    flexShrink: 0,
+    fontFamily: tokens.font,
   },
   backdrop: {
     position: "fixed",
