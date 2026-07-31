@@ -61,6 +61,51 @@ function resetSkillsDir() {
   fs.mkdirSync(skillsDir, { recursive: true })
 }
 
+// --- Disk fingerprint / refreshIfStale ---
+
+test("refreshIfStale is no-op when disk unchanged; picks up external file drops", () => {
+  resetSkillsDir()
+  const skillsDir = path.join(getConfigDir(), "skills")
+  writeSkillFile(skillsDir, "fp-a.md", {
+    name: "fp-a",
+    description: "first",
+    type: "prompt_template",
+  }, "# A\n")
+
+  const engine = new SkillEngine()
+  assert.ok(engine.list().some((s) => s.name === "fp-a"))
+  // Unchanged disk → no full rescan needed
+  assert.equal(engine.refreshIfStale(), false)
+
+  // External drop (simulate Finder copy without going through skill.import)
+  writeSkillFile(skillsDir, "fp-b.md", {
+    name: "fp-b",
+    description: "external",
+    type: "prompt_template",
+  }, "# B\n")
+
+  assert.equal(engine.refreshIfStale(), true)
+  const names = engine.list().map((s) => s.name)
+  assert.ok(names.includes("fp-a"))
+  assert.ok(names.includes("fp-b"), "external skill must appear after fingerprint change")
+
+  // list() itself ensureFresh — second list without change stays stable
+  assert.equal(engine.refreshIfStale(), false)
+})
+
+test("list() sees external skill without explicit refresh", () => {
+  resetSkillsDir()
+  const skillsDir = path.join(getConfigDir(), "skills")
+  const engine = new SkillEngine()
+  writeSkillFile(skillsDir, "late-drop.md", {
+    name: "late-drop",
+    description: "added after construct",
+    type: "prompt_template",
+  }, "# Late\n")
+  // No engine.refresh() — only list()
+  assert.ok(engine.list().some((s) => s.name === "late-drop"))
+})
+
 // --- Skill loading tests ---
 
 test("loads flat .md skill file from skills directory", () => {
