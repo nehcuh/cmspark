@@ -121,6 +121,9 @@ export class BrowserBridge {
         case "browser_download":
         case "download": // alias → browser_download (D18)
           return await this.browserDownload(params)
+        case "downloads_find":
+        case "downloads.find": // alias
+          return await this.downloadsFind(params)
 
         // Cookie tools
         case "get_cookies":
@@ -1151,6 +1154,12 @@ export class BrowserBridge {
 
   private async browserDownload(params: Record<string, any>): Promise<ToolResult> {
     return runBrowserDownload(this as any, params)
+  }
+
+  /** #au4dch DL-1: read-only search of completed chrome.downloads items. */
+  private async downloadsFind(params: Record<string, any>): Promise<ToolResult> {
+    const { runDownloadsFind } = await import("./downloads-find")
+    return runDownloadsFind(params)
   }
 
   /** @deprecated D18 — use browser_download */

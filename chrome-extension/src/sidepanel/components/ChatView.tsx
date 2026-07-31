@@ -46,26 +46,51 @@ const TOOL_RESULT_PREVIEW = 200
 
 export function ChatView() {
   const { state, dispatch } = useAgentStore()
-  const { messages, streamingContent, activeThreadId, isProcessing, sendShortcut } = state
+  const { messages, streamingContent, activeThreadId, isProcessing, sendShortcut, fleet } = state
   const containerRef = useRef<HTMLDivElement>(null)
   const lastMessageCountRef = useRef(messages.length)
   const pinnedRef = useRef(true)
 
   const { level } = useCapabilityMode()
 
-  // Show processing label only when there is an active request (no emoji chrome)
+  // Show processing label when request active OR any tool still running
+  // (#au4dch ST-1: live tools are role=tool messages from tool.start, not only
+  // last assistant.tool_calls — old logic looked "finished" during long shell).
   const processingLabel = (() => {
-    if (streamingContent) return null
-    if (!isProcessing) return null
-    const last = messages[messages.length - 1]
-    if (last?.role === "assistant" && last.tool_calls) {
-      const running = last.tool_calls.filter((tc: any) => tc.status === "running")
-      if (running.length > 0) {
-        const names = running.map((tc: any) => tc.tool_name).join(", ")
-        return `执行中: ${names}`
+    const runningTools: { name: string; elapsed?: number }[] = []
+    // Scan recent messages (newest first) for running tool_calls
+    for (let i = messages.length - 1; i >= 0 && i >= messages.length - 40; i--) {
+      const m = messages[i]
+      for (const tc of m?.tool_calls || []) {
+        if (tc?.status === "running") {
+          runningTools.push({
+            name: tc.tool_name || "tool",
+            elapsed: typeof tc.progress_elapsed_ms === "number" ? tc.progress_elapsed_ms : undefined,
+          })
+        }
       }
     }
-    return "思考中"
+    const fleetWorkers = fleet?.worker_count ?? 0
+    const fleetBit =
+      fleetWorkers > 0 ? ` · 舰队 ${fleetWorkers} worker` : ""
+    // #au4dch M1: do NOT hide label when streamingContent is set — tools often
+    // run after assistant text; streaming gate previously made UI look idle.
+    if (runningTools.length > 0) {
+      const parts = runningTools.slice(0, 3).map((t) => {
+        if (t.elapsed != null && t.elapsed >= 1000) {
+          return `${t.name} ${Math.floor(t.elapsed / 1000)}s`
+        }
+        return t.name
+      })
+      return `执行中: ${parts.join(", ")}${fleetBit}`
+    }
+    if (streamingContent) return null
+    if (!isProcessing) {
+      // ST-5: orchestrator may chat.done while workers still run
+      if (fleetWorkers > 0) return `舰队运行中 · ${fleetWorkers} worker`
+      return null
+    }
+    return `思考中${fleetBit}`
   })()
 
   // Auto-scroll to bottom when new messages arrive or streaming updates.
@@ -181,7 +206,7 @@ export function ChatView() {
           </div>
         </div>
       )}
-      {processingLabel && !streamingContent && (
+      {processingLabel && (
         <div style={styles.agentMsg}>
           <div style={styles.statusBubble}>
             {processingLabel}
@@ -413,6 +438,16 @@ function ToolCallCard({ tc }: { tc: any }) {
   const statusGlyph =
     tc.status === "running" ? "…" : tc.status === "success" ? "✓" : tc.status === "error" ? "!" : "–"
 
+  // #au4dch ST-3: live progress from tool.progress
+  const progressElapsed =
+    typeof tc.progress_elapsed_ms === "number" ? tc.progress_elapsed_ms : null
+  const progressOut =
+    typeof tc.progress_stdout_tail === "string" ? tc.progress_stdout_tail : ""
+  const progressErr =
+    typeof tc.progress_stderr_tail === "string" ? tc.progress_stderr_tail : ""
+  const showLiveProgress =
+    tc.status === "running" && (progressElapsed != null || progressOut || progressErr)
+
   return (
     <div
       style={{
@@ -454,7 +489,33 @@ function ToolCallCard({ tc }: { tc: any }) {
         {hasResult && isLongResult && (
           <span style={styles.toolExpandHint}>{expanded ? "收起" : "展开"}</span>
         )}
+        {showLiveProgress && progressElapsed != null && (
+          <span style={styles.toolMeta} data-testid="tool-progress-elapsed">
+            {Math.floor(progressElapsed / 1000)}s
+          </span>
+        )}
       </div>
+      {showLiveProgress && (progressOut || progressErr) && (
+        <pre
+          style={{
+            margin: "6px 0 0",
+            padding: "6px 8px",
+            fontSize: 10,
+            lineHeight: 1.35,
+            maxHeight: 96,
+            overflow: "auto",
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+            background: "rgba(0,0,0,0.25)",
+            borderRadius: 4,
+            color: tokens.textMuted,
+          }}
+          data-testid="tool-progress-tail"
+        >
+          {progressErr ? `[stderr]\n${progressErr}\n` : ""}
+          {progressOut || ""}
+        </pre>
+      )}
       {hasVisionDescription && (
         <div style={styles.toolInset}>
           <div

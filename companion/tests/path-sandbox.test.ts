@@ -252,6 +252,20 @@ test("prepareBrowserDownloadParams: selector and text both empty → reject", ()
   assert.equal(r.error_code, "SELECTOR_OR_TEXT_REQUIRED")
 })
 
+test("prepareBrowserDownloadParams: prefer_existing + filenameHint without selector ok", () => {
+  const r = prepareBrowserDownloadParams({
+    params: { tabId: 1, filenameHint: "pkg.tgz", prefer_existing: true },
+    isWorker: false,
+    roots: ROOTS,
+    fsOps: mockFs({}),
+    homedir: () => USER,
+    env: process.platform === "win32" ? { USERPROFILE: USER } : {},
+  })
+  assert.equal(r.ok, true)
+  if (!r.ok) return
+  assert.equal(r.params.filenameHint, "pkg.tgz")
+})
+
 test("prepareBrowserDownloadParams: timeoutMs clamped to 120s max", () => {
   const r = prepareBrowserDownloadParams({
     params: { tabId: 1, text: "dl", timeoutMs: 999_999 },

@@ -84,10 +84,34 @@ export const TOOL_ARG_SCHEMAS: Record<string, z.ZodTypeAny> = {
       exact: z.boolean().optional(),
       downloadPath: z.string().min(1).optional(),
       filenameHint: z.string().min(1).optional(),
+      urlContains: z.string().min(1).optional(),
+      /** When true (default), reuse complete chrome.downloads match before clicking. */
+      prefer_existing: z.boolean().optional(),
+      force_redownload: z.boolean().optional(),
       timeoutMs: z.number().int().min(1000).max(120000).optional(),
     })
-    .refine((v) => !!(v.selector || v.text), {
-      message: "browser_download requires selector and/or text",
+    .refine(
+      (v) => {
+        if (v.selector || v.text) return true
+        const force = v.force_redownload === true
+        const prefer = v.prefer_existing !== false && !force
+        return prefer && !!(v.filenameHint || v.urlContains)
+      },
+      {
+        message:
+          "browser_download requires selector and/or text (or prefer_existing with filenameHint/urlContains)",
+      },
+    ),
+
+  // #au4dch DL-1: read-only existing downloads lookup
+  downloads_find: z
+    .object({
+      filenameHint: z.string().min(1).optional(),
+      urlContains: z.string().min(1).optional(),
+      limit: z.number().int().min(1).max(20).optional(),
+    })
+    .refine((v) => !!(v.filenameHint || v.urlContains), {
+      message: "downloads_find requires filenameHint and/or urlContains",
     }),
 
   // --- DevSec / Shell / NetSec (Mission Pack enterprise modules) ---

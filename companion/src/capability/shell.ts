@@ -1,5 +1,6 @@
 // Shell capability — confirm_per_command one-shot exec (no free interactive PTY by default)
 // Spec S10: default per-command confirmation via L2 security_token gate.
+// #au4dch SH-A: windowsHide on win32 + optional onProgress for tool.progress tails.
 
 import { spawn } from "child_process"
 import * as fs from "fs"
@@ -10,6 +11,9 @@ import { getUserEnvVars } from "../user-env"
 
 const MAX_OUTPUT = 200_000
 const DEFAULT_TIMEOUT_MS = 60_000
+/** Max chars of each stream sent on each progress tick (WS payload hygiene). */
+export const PROGRESS_TAIL_CHARS = 2_000
+const PROGRESS_INTERVAL_MS = 750
 
 /**
  * Child env for shell_exec (ADR-019).
@@ -71,11 +75,45 @@ export function checkShellScope(command: string): { ok: true } | { ok: false; er
   return commandAllowedByPolicy(cmd)
 }
 
+/** Last N characters of s (for progress tails). */
+export function tailChars(s: string, n: number = PROGRESS_TAIL_CHARS): string {
+  if (!s) return ""
+  if (s.length <= n) return s
+  return s.slice(s.length - n)
+}
+
+export type ShellProgress = {
+  elapsed_ms: number
+  stdout_tail: string
+  stderr_tail: string
+}
+
+/**
+ * Options for Node spawn of shell_exec children.
+ * windowsHide: true on win32 so approved one-shots do not flash an empty console
+ * (#au4dch black-window pain). Harmless no-op on non-win platforms.
+ */
+export function shellSpawnOptions(cwd: string, env: NodeJS.ProcessEnv): {
+  shell: true
+  cwd: string
+  env: NodeJS.ProcessEnv
+  windowsHide: boolean
+} {
+  return {
+    shell: true,
+    cwd,
+    env,
+    windowsHide: true,
+  }
+}
+
 export async function shellExec(opts: {
   command: string
   cwd?: string | null
   threadId?: string
   timeoutMs?: number
+  /** Optional live progress for Side Panel tool.progress (not audited). */
+  onProgress?: (p: ShellProgress) => void
 }): Promise<{ success: boolean; data?: any; error?: string }> {
   const gate = requireModule("shell")
   if (!gate.ok) return { success: false, error: gate.error }
@@ -104,15 +142,28 @@ export async function shellExec(opts: {
 
   return new Promise((resolve) => {
     // Use shell: true for one-shot; confirmation already happened at L2
-    const child = spawn(command, {
-      shell: true,
-      cwd,
-      env: buildChildEnv(),
-    })
+    const child = spawn(command, shellSpawnOptions(cwd, buildChildEnv()))
 
     let stdout = ""
     let stderr = ""
     let killed = false
+    let lastProgressAt = 0
+
+    const emitProgress = (force = false) => {
+      if (!opts.onProgress) return
+      const now = Date.now()
+      if (!force && now - lastProgressAt < PROGRESS_INTERVAL_MS) return
+      lastProgressAt = now
+      try {
+        opts.onProgress({
+          elapsed_ms: now - started,
+          stdout_tail: tailChars(stdout),
+          stderr_tail: tailChars(stderr),
+        })
+      } catch {
+        /* UI best-effort */
+      }
+    }
 
     const timer = setTimeout(() => {
       killed = true
@@ -123,15 +174,26 @@ export async function shellExec(opts: {
       }
     }, timeoutMs)
 
+    const progressTimer = opts.onProgress
+      ? setInterval(() => emitProgress(true), PROGRESS_INTERVAL_MS)
+      : null
+
     child.stdout?.on("data", (d: Buffer) => {
       if (stdout.length < MAX_OUTPUT) stdout += d.toString("utf-8")
+      emitProgress(false)
     })
     child.stderr?.on("data", (d: Buffer) => {
       if (stderr.length < MAX_OUTPUT) stderr += d.toString("utf-8")
+      emitProgress(false)
     })
+
+    const cleanupProgress = () => {
+      if (progressTimer) clearInterval(progressTimer)
+    }
 
     child.on("error", (err) => {
       clearTimeout(timer)
+      cleanupProgress()
       appendCapabilityAudit({
         type: "shell.command",
         thread_id: opts.threadId,
@@ -144,6 +206,8 @@ export async function shellExec(opts: {
 
     child.on("close", (code, signal) => {
       clearTimeout(timer)
+      cleanupProgress()
+      emitProgress(true)
       const exitCode = killed ? -1 : code ?? -1
       appendCapabilityAudit({
         type: "shell.command",

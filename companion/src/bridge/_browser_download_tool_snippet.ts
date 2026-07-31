@@ -1,11 +1,11 @@
-// Source-of-truth for the browser_download ToolDefinition object (P1.0).
+// Source-of-truth for the browser_download ToolDefinition object (P1.0 + #au4dch DL).
 
 export const BROWSER_DOWNLOAD_TOOL = {
   type: "function" as const,
   function: {
     name: "browser_download",
     description:
-      "Click a download control on a page (CSS selector and/or visible text such as 下载) and wait until the browser finishes saving the file into the user Downloads folder (or a sandboxed subpath). Prefer this over osascript_eval / shell curl for authenticated downloads. Returns absolute path, filename, and bytes. Concurrent downloads on the same tab are rejected (DOWNLOAD_BUSY).",
+      "Click a download control on a page (CSS selector and/or visible text such as 下载) and wait until the browser finishes saving the file into the user Downloads folder (or a sandboxed subpath). Prefer this over osascript_eval / shell curl for authenticated downloads. Returns absolute path, filename, and bytes. Concurrent downloads on the same tab are rejected (DOWNLOAD_BUSY). When filenameHint (or urlContains) is set, prefer_existing defaults to true: reuses an already-complete chrome.downloads item instead of clicking again (set force_redownload=true to force a new download). Prefer calling downloads_find first when the user may already have the file.",
     parameters: {
       type: "object",
       properties: {
@@ -30,7 +30,21 @@ export const BROWSER_DOWNLOAD_TOOL = {
         },
         filenameHint: {
           type: "string",
-          description: "Optional filename substring to match the completed download item",
+          description:
+            "Filename substring to match completed download (also used for prefer_existing cache).",
+        },
+        urlContains: {
+          type: "string",
+          description: "Optional URL substring for prefer_existing / matching completed items",
+        },
+        prefer_existing: {
+          type: "boolean",
+          description:
+            "If true (default when filenameHint/urlContains set), return existing complete download without clicking. Set false or force_redownload to always click.",
+        },
+        force_redownload: {
+          type: "boolean",
+          description: "If true, skip cache and always click/wait for a new download",
         },
         timeoutMs: {
           type: "number",
@@ -38,6 +52,34 @@ export const BROWSER_DOWNLOAD_TOOL = {
         },
       },
       required: ["tabId"] as string[],
+    },
+  },
+}
+
+/** #au4dch DL-1 — read-only find before download. */
+export const DOWNLOADS_FIND_TOOL = {
+  type: "function" as const,
+  function: {
+    name: "downloads_find",
+    description:
+      "Search the browser's completed Downloads for an existing file by filenameHint and/or urlContains. Use BEFORE browser_download or shell curl when the user may already have the package (e.g. release tar.gz). Returns paths of complete existing items only (read-only).",
+    parameters: {
+      type: "object",
+      properties: {
+        filenameHint: {
+          type: "string",
+          description: "Substring of filename or full path (e.g. black-cat-v1.1.0.tar.gz)",
+        },
+        urlContains: {
+          type: "string",
+          description: "Optional substring of the download URL",
+        },
+        limit: {
+          type: "number",
+          description: "Max matches (default 5, max 20)",
+        },
+      },
+      required: [] as string[],
     },
   },
 }

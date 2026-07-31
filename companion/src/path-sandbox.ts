@@ -203,7 +203,22 @@ export function prepareBrowserDownloadParams(opts: {
   const selector =
     typeof raw.selector === "string" && raw.selector.trim() ? raw.selector.trim() : undefined
   const text = typeof raw.text === "string" && raw.text.trim() ? raw.text.trim() : undefined
-  if (!selector && !text) {
+  const filenameHint =
+    typeof raw.filenameHint === "string" && raw.filenameHint.trim()
+      ? raw.filenameHint.trim()
+      : undefined
+  const urlContains =
+    typeof raw.urlContains === "string" && raw.urlContains.trim()
+      ? raw.urlContains.trim()
+      : undefined
+  const forceRedownload = raw.force_redownload === true || raw.forceRedownload === true
+  // #au4dch DL-2: prefer_existing may short-circuit without selector/text when a hint exists.
+  const preferExisting =
+    !forceRedownload &&
+    raw.prefer_existing !== false &&
+    raw.preferExisting !== false &&
+    !!(filenameHint || urlContains)
+  if (!selector && !text && !preferExisting) {
     return {
       ok: false,
       error: "browser_download requires selector and/or text (at least one)",

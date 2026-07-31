@@ -500,6 +500,10 @@ export function createToolExecutor(ws: WebSocket) {
   mcpSessionByWs.set(ws, sessionId)
   return async (toolCallId: string, toolName: string, params: any, signal?: AbortSignal): Promise<{ success: boolean; data?: any; error?: string }> => {
     let finalParams = params || {}
+    // #au4dch DL-1: normalize dotted alias → downloads_find
+    if (toolName === "downloads.find") {
+      toolName = "downloads_find"
+    }
     // P1.0 D18 / BD-ALIAS: normalize legacy "download" → browser_download so path sandbox,
     // worker deny, TAB_LEASE, and dispatch timeout all apply. Never forward unsandboxed
     // downloadPath via the extension alias path.
@@ -2126,6 +2130,16 @@ export function createToolExecutor(ws: WebSocket) {
           // WP2 (§E.4): computer-task progress events go to every
           // authenticated panel (the owner's own live view).
           broadcast: broadcastToClients,
+          // #au4dch B2: shell tool.progress tails stay on origin socket only
+          sendOrigin: (data) => {
+            if (ws.readyState === WebSocket.OPEN) {
+              try {
+                ws.send(JSON.stringify(data))
+              } catch {
+                /* best-effort */
+              }
+            }
+          },
           // Grill Q1: re-L2 trust key = thread:… when chat thread known.
           computerSessionId: (() => {
             try {
@@ -2676,6 +2690,11 @@ interface CompanionToolExecOptions {
   /** WP2 (§E.4): broadcast channel for computer-task progress events. */
   broadcast?: (data: any) => void
   /**
+   * #au4dch B2: unicast to the origin tool-executor socket only (same as tool.start).
+   * Must NOT use broadcast for shell stdout/stderr tails (secrets on multi-client).
+   */
+  sendOrigin?: (data: any) => void
+  /**
    * UX-spike 2026-07-23: the WS session id for computer-use per-session re-L2
    * trust. Forwarded from the createToolExecutor closure (where sessionId
    * lives) into runComputerTask deps; absent = every re-L2 asks.
@@ -3159,6 +3178,24 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
           command: params.command,
           cwd,
           threadId: tid,
+          onProgress: (p) => {
+            // #au4dch ST-2 / SH-A2 / B2: live tails unicast to origin only
+            // (never broadcast — tails may contain secrets). Old clients ignore type.
+            if (!toolCallId) return
+            try {
+              execOpts?.sendOrigin?.({
+                type: "tool.progress",
+                thread_id: tid || null,
+                tool_call_id: toolCallId,
+                tool_name: "shell_exec",
+                elapsed_ms: p.elapsed_ms,
+                stdout_tail: p.stdout_tail,
+                stderr_tail: p.stderr_tail,
+              })
+            } catch {
+              /* best-effort */
+            }
+          },
         })
       } finally {
         releaseFlight("shell_exec", flightOwner)
