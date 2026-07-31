@@ -25,9 +25,12 @@
 2. Worktree 实现 Wave1（ST+SH-A）+ Wave2（DL）  
 3. 内部对抗 → **FAIL**（B1 path 过宽、B2 progress broadcast、M1 streaming 门）  
 4. 修复 → 对抗复验 → **PASS**  
-5. Pi 评审（并行 / 产出见同目录 `au4dch-ux-wave123-pi-*.md`）  
+5. 外部评审：  
+   - **内部对抗复验 B1/B2/M1 → PASS**（权威门）  
+   - **Pi**：CLI 两次仅输出 tool_call 骨架、无终态 VERDICT（机读失败 / 已知 hang 类问题）→ **waive**，记录于 `au4dch-ux-wave123-pi-*.md` 残片  
+   - **Claude Code**：本机 `Not logged in · Please run /login` → **waive**  
 6. 单测：companion schema/path-sandbox/shell；extension downloads-find（全绿）  
-7. **未 merge main**（按要求 worktree 隔离）
+7. **已 push 分支** `origin/feat/au4dch-ux-wave123`；**未 merge main**
 
 ---
 
@@ -118,4 +121,4 @@
 
 | 日期 | 变更 |
 |------|------|
-| 2026-08-01 | Wave1–2 实现 + 对抗修复 + 本总结；分支未合 main |
+| 2026-08-01 | Wave1–2 实现 + 对抗修复 + 本总结；分支 `5423888` 已 push；Pi/Claude 外部评审 infra waive，对抗 PASS 作门 |

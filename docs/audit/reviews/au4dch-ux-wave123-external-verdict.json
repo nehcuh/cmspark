@@ -1,0 +1,32 @@
+{
+  "batch": "au4dch-ux-wave123",
+  "commit": "5423888",
+  "branch": "feat/au4dch-ux-wave123",
+  "date": "2026-08-01",
+  "internal_adversarial": {
+    "round1": "FAIL",
+    "blocking": ["B1_downloads_path", "B2_progress_broadcast", "M1_streaming_label"],
+    "round2_reverify": "PASS",
+    "authority": "subagent adversarial re-verify B1/B2/M1"
+  },
+  "pi": {
+    "status": "WAIVED_INFRA",
+    "reason": "pi -p emitted tool_call XML only; no VERDICT line (known hang/empty-stdout class)",
+    "artifacts": [
+      "docs/audit/reviews/au4dch-ux-wave123-pi-20260801-013504.md",
+      "docs/audit/reviews/au4dch-ux-wave123-pi-rerun-20260801-013600.md"
+    ]
+  },
+  "claude": {
+    "status": "WAIVED_INFRA",
+    "reason": "claude CLI: Not logged in · Please run /login"
+  },
+  "tests_executed": {
+    "companion_targeted": "pass (schema + path-sandbox + shell-progress)",
+    "extension_downloads_find": "pass (10)",
+    "extension_tsc": "pass"
+  },
+  "ship_decision": "READY_FOR_PR",
+  "merge_to_main": false,
+  "notes": "User required worktree isolation; open PR for human merge. Full PTY epic deferred."
+}
