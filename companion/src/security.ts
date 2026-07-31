@@ -720,6 +720,15 @@ export function classifyError(errorMessage: string, context?: { toolName?: strin
     "required parameters",
     "tabid not in url cache",
     "not in url cache",
+    // MCP filesystem path / allowlist — agent can mkdir parent or ask user to expand allow-dirs
+    // (was non_recoverable "不可恢复错误" for Parent directory does not exist — thread 6zhrh6)
+    "parent directory does not exist",
+    "does not exist",
+    "access denied",
+    "not allowed",
+    "allowed director", // "allowed directories" / "allowed directory"
+    "outside allowed",
+    "path is outside",
   ]
   if (recoverable.some(p => msg.includes(p))) {
     return "recoverable"

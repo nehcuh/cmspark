@@ -4084,8 +4084,13 @@ async function executeMcpTool(
       success: !result?.isError,
     })
     if (result?.isError) {
+      // Same enhancement path as thrown errors — isError used to kill the turn as
+      // non_recoverable "不可恢复错误" with bare English (e.g. Parent directory does not exist).
       const errMsg = extractMcpError(result)
-      return { success: false, error: `MCP ${route.serverName}/${route.toolName} returned error: ${errMsg}` }
+      return {
+        success: false,
+        error: enhanceMcpError(`MCP ${route.serverName}/${route.toolName} returned error: ${errMsg}`, route, params),
+      }
     }
     return { success: true, data: result?.content ?? result }
   } catch (err: any) {
@@ -4145,6 +4150,34 @@ export function enhanceMcpError(
   // Capability-gating error — caller is asking for something the server doesn't support.
   if (/does not advertise/i.test(rawErr)) {
     return `${rawErr} Use a different tool that the server actually exposes.`
+  }
+  // Official filesystem server: create nested path without parents (thread 6zhrh6).
+  // Keep tokens "parent directory" / "does not exist" for classifyError recoverability.
+  if (/parent directory does not exist/i.test(rawErr) || /ENOENT/i.test(rawErr)) {
+    const pathHint =
+      params && typeof params === "object"
+        ? String((params as any).path || (params as any).parent || "")
+        : ""
+    const pathPart = pathHint ? ` (path: ${pathHint})` : ""
+    return (
+      `MCP filesystem path missing parent${pathPart}. ` +
+      `parent directory does not exist — create parent folders first with create_directory ` +
+      `on each missing segment (or one level at a time under an allowed root like $HOME / workspace), ` +
+      `then retry the write. Prefer a project folder under the user home or the thread workspace_root ` +
+      `if set. Do not invent paths outside MCP allow-dirs. Underlying: ${rawErr}`
+    )
+  }
+  // Path outside allowlist — user may need MCP panel allow-dir (not god-mode).
+  if (
+    /access denied|not allowed|outside|allowed director/i.test(rawErr) ||
+    /path.*not.*within/i.test(rawErr)
+  ) {
+    return (
+      `MCP ${route.serverName} denied path access (not in allowlist or roots). ` +
+      `Ask the user to open Side Panel → MCP → edit filesystem server → add the parent directory ` +
+      `to allow paths (or use a path under already-allowed roots such as home). ` +
+      `God-mode does not expand MCP allow-dirs. Underlying: ${rawErr}`
+    )
   }
   // Fallback — keep the original but prefix with context so the LLM knows which
   // server/tool produced it (multi-server setups would otherwise be ambiguous).
