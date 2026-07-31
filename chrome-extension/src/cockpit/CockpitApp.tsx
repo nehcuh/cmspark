@@ -1,5 +1,6 @@
 // CMspark Cockpit — L2 Computer Use surface (UI Mode P1)
 // Spec dual-track + confirm elevation. Shares agentStore via useWebSocket broadcast.
+// UIUX v2 PR7: StatusRail grammar aligned with Panel (mode · connection tokens · type scale).
 
 import { useEffect, useState, type CSSProperties } from "react"
 import { AgentStoreProvider, useAgentStore } from "../sidepanel/store/agentStore"
@@ -11,8 +12,18 @@ import {
   computerSessionTrustHint,
   threadTrustHint,
 } from "../sidepanel/utils/apps-utils"
-import type { ComputerStepView, SecurityConfirmationRequest } from "../sidepanel/types"
-import { tokens } from "../sidepanel/ui/tokens"
+import type {
+  ComputerStepView,
+  ConnectionState,
+  SecurityConfirmationRequest,
+} from "../sidepanel/types"
+import {
+  tokens,
+  connectionColorDark,
+  connectionLabel,
+  connectionDotShadowDark,
+} from "../sidepanel/ui/tokens"
+import { cockpitModeBadgeLabel } from "./cockpit-status"
 
 export function CockpitRoot() {
   return (
@@ -114,24 +125,46 @@ function CockpitApp() {
   }, [])
   const fleet = state.fleet
   const pendingN = state.pendingSecurityConfirmations.length
+  const connState = (state.connectionState || "disconnected") as ConnectionState
+  const connLabel = connectionLabel(connState)
+  const live = !!(task && !finished)
+  const modeBadgeLabel = cockpitModeBadgeLabel({ live, hasTask: !!task, hasConfirm: !!confirm })
 
   return (
     <div style={s.root}>
-      <header style={s.titleBar}>
-        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-          <strong>CMspark 确认台</strong>
-          <span style={s.liveBadge}>
-            {task && !finished
-              ? "L2 · LIVE"
-              : task
-                ? "L2"
-                : confirm
-                  ? "确认"
-                  : "工作区"}
+      <style>{cockpitGlobalCSS}</style>
+      {/* PR7 StatusRail: mode badge + connection (dark status tokens) + thread — matches Panel grammar */}
+      <header style={s.titleBar} role="banner" aria-label="确认台状态栏">
+        <div style={s.railLeft}>
+          <strong style={s.railTitle}>CMspark 确认台</strong>
+          <span
+            role="status"
+            aria-live="polite"
+            title={`能力层级：${modeBadgeLabel}`}
+            style={{
+              ...s.liveBadge,
+              ...(live ? s.liveBadgePulse : {}),
+            }}
+          >
+            {modeBadgeLabel}
           </span>
-          <span style={s.muted}>{state.activeThreadId || "—"}</span>
-          <span style={s.muted}>
-            {state.connectionState === "connected" ? "已连接" : state.connectionState}
+          <div
+            role="status"
+            aria-label={connLabel}
+            title={connLabel}
+            style={s.connCluster}
+          >
+            <span
+              style={{
+                ...s.statusDot,
+                background: connectionColorDark(connState),
+                boxShadow: connectionDotShadowDark(connState),
+              }}
+            />
+            <span style={s.connLabel}>{connLabel}</span>
+          </div>
+          <span style={s.muted} title="当前线程">
+            {state.activeThreadId || "—"}
           </span>
           {fleet && (
             <span style={s.muted} title="Fleet">
@@ -140,7 +173,7 @@ function CockpitApp() {
             </span>
           )}
         </div>
-        <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
           {task && !finished && !task.abortAcked && (
             <button type="button" style={s.abortBtn} onClick={sendAbort}>
               急停
@@ -219,11 +252,13 @@ function CockpitApp() {
                 }}
               />
             </div>
-            <div style={{ display: "flex", gap: 12, fontSize: 10, color: "#9aa0a6" }}>
+            <div style={{ display: "flex", gap: 12, fontSize: 11, color: tokens.darkMuted }}>
               <span>{progressText}</span>
               {typeof task.budget === "number" && <span>预算 {task.budget}</span>}
               <span>{task.status}</span>
-              {abortSentAt && !task.abortAcked && <span style={{ color: "#fbbf24" }}>急停已发送…</span>}
+              {abortSentAt && !task.abortAcked && (
+                <span style={{ color: tokens.darkWarning }}>急停已发送…</span>
+              )}
             </div>
           </>
         )}
@@ -245,10 +280,14 @@ function CockpitApp() {
           ) : (
             compactMessages.map((m) => (
               <div key={m.id} style={{ marginBottom: 6, fontSize: 11, lineHeight: 1.45 }}>
-                <span style={{ color: m.role === "user" ? "#5b8def" : "#a78bfa" }}>
+                <span
+                  style={{
+                    color: m.role === "user" ? tokens.darkAccent : "#a78bfa",
+                  }}
+                >
                   {m.role === "user" ? "U" : "A"}
                 </span>{" "}
-                <span style={{ color: "#d1d5db" }}>
+                <span style={{ color: tokens.darkText }}>
                   {(m.content || "").slice(0, 280)}
                   {(m.content || "").length > 280 ? "…" : ""}
                 </span>
@@ -286,17 +325,32 @@ function CockpitApp() {
 function StepLine({ step }: { step: ComputerStepView }) {
   const show = previewImageSafe(step.previewImage)
   return (
-    <div style={{ marginBottom: 8, fontFamily: "ui-monospace, monospace", fontSize: 10, color: "#9aa0a6" }}>
+    <div
+      style={{
+        marginBottom: 8,
+        fontFamily: tokens.fontMono,
+        fontSize: 11,
+        color: tokens.darkMuted,
+      }}
+    >
       <div>
-        <span style={{ color: "#4ade80" }}>#{step.seq}</span>{" "}
+        <span style={{ color: tokens.darkLive }}>#{step.seq}</span>{" "}
         {step.caption || step.action || "—"}
-        {step.layer && <span style={{ marginLeft: 6, color: "#5b8def" }}>{step.layer}</span>}
+        {step.layer && (
+          <span style={{ marginLeft: 6, color: tokens.darkAccent }}>{step.layer}</span>
+        )}
       </div>
       {show && (
         <img
           src={`data:image/jpeg;base64,${step.previewImage}`}
           alt={`step ${step.seq}`}
-          style={{ maxWidth: "100%", maxHeight: 80, marginTop: 4, borderRadius: 4, border: "1px solid #2a2f3a" }}
+          style={{
+            maxWidth: "100%",
+            maxHeight: 80,
+            marginTop: 4,
+            borderRadius: tokens.radiusSm,
+            border: `1px solid ${tokens.darkBorder}`,
+          }}
         />
       )}
     </div>
@@ -387,11 +441,11 @@ function ConfirmElevated({
   return (
     <section style={s.confirmElevated}>
       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
-        <span style={{ color: "#fca5a5", fontWeight: 700 }}>
-          ⚠ 确认抬升 · {request.tool_name}
+        <span style={{ color: tokens.darkDanger, fontWeight: 700 }}>
+          确认抬升 · {request.tool_name}
           {workerLabel ? ` · ${workerLabel}` : ""}
         </span>
-        <span style={{ fontSize: 10, color: "#9aa0a6" }}>
+        <span style={{ fontSize: 11, color: tokens.darkMuted }}>
           {request.risk_level || "high"} · 超时自动拒绝
           {typeof request.tab_id === "number" ? ` · tab ${request.tab_id}` : ""}
         </span>
@@ -401,11 +455,16 @@ function ConfirmElevated({
           <img
             src={`data:image/jpeg;base64,${request.preview_image}`}
             alt="标注截图"
-            style={{ width: 160, maxHeight: 100, objectFit: "cover", borderRadius: 6 }}
+            style={{
+              width: 160,
+              maxHeight: 100,
+              objectFit: "cover",
+              borderRadius: tokens.radiusSm,
+            }}
             onError={() => setImgFailed(true)}
           />
         )}
-        <div style={{ flex: 1, fontSize: 11, color: "#d1d5db" }}>
+        <div style={{ flex: 1, fontSize: 11, color: tokens.darkText }}>
           {request.preview_caption && <div style={{ marginBottom: 6 }}>{request.preview_caption}</div>}
           <pre style={s.codePreview}>
             {(request.full_preview || request.code_preview || "").slice(0, 1200)}
@@ -509,11 +568,15 @@ function ConfirmElevated({
                   height: 28,
                   fontSize: 14,
                   letterSpacing: 4,
-                  borderColor: nonceMatches ? "#4ade80" : pasteBlocked ? "#f87171" : "#2a2f3a",
+                  borderColor: nonceMatches
+                    ? tokens.darkLive
+                    : pasteBlocked
+                      ? tokens.darkDanger
+                      : tokens.darkBorder,
                 }}
               />
               {pasteBlocked && (
-                <div style={{ color: "#f87171", fontSize: 10, marginTop: 4 }}>
+                <div style={{ color: tokens.darkDanger, fontSize: 11, marginTop: 4 }}>
                   粘贴被禁止 — 请手动输入确认码
                 </div>
               )}
@@ -525,7 +588,7 @@ function ConfirmElevated({
               style={{
                 ...s.abortBtn,
                 background: nonceChallenge && !nonceMatches ? "#374151" : tokens.success,
-                color: nonceChallenge && !nonceMatches ? tokens.darkMuted : "#052e16",
+                color: nonceChallenge && !nonceMatches ? tokens.darkMuted : tokens.modeComputerBg,
                 border: "none",
                 cursor: nonceChallenge && !nonceMatches ? "not-allowed" : "pointer",
               }}
@@ -539,7 +602,11 @@ function ConfirmElevated({
             </button>
             <button
               type="button"
-              style={{ ...s.ghostBtn, color: "#fca5a5", borderColor: "#7f1d1d" }}
+              style={{
+                ...s.ghostBtn,
+                color: tokens.darkDanger,
+                borderColor: tokens.darkDangerBg,
+              }}
               onClick={() => respond(false, true)}
             >
               拒绝并停止
@@ -550,6 +617,25 @@ function ConfirmElevated({
     </section>
   )
 }
+
+/** Motion + reduced-motion — honors prefers-reduced-motion (v2-P2). */
+const cockpitGlobalCSS = `
+  @keyframes cmspark-cockpit-live-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.72; }
+  }
+  button, a, [role="button"] {
+    transition: background ${tokens.transitionFast} ease, color ${tokens.transitionFast} ease,
+      border-color ${tokens.transitionFast} ease, opacity ${tokens.transitionFast} ease;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+`
 
 const s: Record<string, CSSProperties> = {
   root: {
@@ -565,100 +651,140 @@ const s: Record<string, CSSProperties> = {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "center",
-    padding: "11px 14px",
+    gap: 12,
+    padding: "10px 14px",
+    minHeight: 44,
     borderBottom: `1px solid ${tokens.darkBorder}`,
     background: `linear-gradient(180deg, ${tokens.darkElevated} 0%, ${tokens.darkBg} 100%)`,
+    flexShrink: 0,
+  },
+  railLeft: {
+    display: "flex",
+    gap: 10,
+    alignItems: "center",
+    minWidth: 0,
+    flexWrap: "wrap" as const,
+  },
+  railTitle: {
+    fontSize: 13,
+    fontWeight: 650,
+    letterSpacing: "-0.01em",
+    color: tokens.darkText,
   },
   liveBadge: {
-    fontSize: 10,
+    fontSize: 11,
     padding: "3px 8px",
     background: tokens.modeComputerBg,
-    color: tokens.darkLive,
-    borderRadius: 999,
-    fontWeight: 650,
+    color: tokens.modeComputerText,
+    borderRadius: tokens.radiusPill,
+    fontWeight: 600,
     border: "1px solid #14532d",
     letterSpacing: "0.02em",
+    lineHeight: 1,
+    flexShrink: 0,
   },
-  muted: { color: tokens.darkMuted, fontSize: 10 },
+  liveBadgePulse: {
+    animation: "cmspark-cockpit-live-pulse 1.6s ease-in-out infinite",
+  },
+  connCluster: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
+    flexShrink: 0,
+  },
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: "50%",
+    flexShrink: 0,
+  },
+  connLabel: {
+    fontSize: 11,
+    color: tokens.darkMuted,
+    fontWeight: 500,
+  },
+  muted: { color: tokens.darkMuted, fontSize: 11 },
   abortBtn: {
     background: tokens.darkDangerBg,
     color: tokens.darkDanger,
     border: "1px solid #7f1d1d",
-    borderRadius: 6,
+    borderRadius: tokens.radiusSm,
     padding: "5px 10px",
     cursor: "pointer",
     fontWeight: 600,
-    fontSize: 11,
+    fontSize: 12,
+    fontFamily: tokens.font,
   },
   ghostBtn: {
     background: "transparent",
-    color: "#9aa0a6",
-    border: "1px solid #2a2f3a",
-    borderRadius: 6,
+    color: tokens.darkMuted,
+    border: `1px solid ${tokens.darkBorder}`,
+    borderRadius: tokens.radiusSm,
     padding: "5px 10px",
     cursor: "pointer",
-    fontSize: 11,
+    fontSize: 12,
+    fontFamily: tokens.font,
   },
   confirmElevated: {
     margin: "12px 14px",
     padding: 14,
     background: "linear-gradient(180deg, #2f1818 0%, #241414 100%)",
     border: "1px solid #7f1d1d",
-    borderRadius: 10,
+    borderRadius: tokens.radiusLg,
     boxShadow: "0 8px 24px rgba(0,0,0,0.28)",
   },
   emptyGuide: {
     margin: "12px 14px 0",
     padding: "12px 14px",
     background: "linear-gradient(180deg, #151a24 0%, #12161e 100%)",
-    border: "1px solid #2a3344",
-    borderRadius: 10,
-    borderLeft: "3px solid #5b8def",
+    border: `1px solid ${tokens.darkBorder}`,
+    borderRadius: tokens.radiusLg,
+    borderLeft: `3px solid ${tokens.darkAccent}`,
   },
   emptyGuideTitle: {
     fontWeight: 700,
     fontSize: 13,
-    color: "#e8eaed",
+    color: tokens.darkText,
     marginBottom: 8,
   },
   emptyGuideBody: {
     margin: "0 0 8px",
-    fontSize: 11,
+    fontSize: 12,
     lineHeight: 1.55,
-    color: "#9aa0a6",
+    color: tokens.darkMuted,
   },
   emptyGuideHint: {
     margin: 0,
-    fontSize: 10,
-    color: "#6b7280",
-    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+    fontSize: 11,
+    color: tokens.darkMuted,
+    fontFamily: tokens.fontMono,
   },
   code: {
-    fontSize: 10,
+    fontSize: 11,
     padding: "1px 4px",
-    borderRadius: 4,
-    background: "#1e2430",
-    color: "#93c5fd",
-    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+    borderRadius: tokens.radiusSm,
+    background: tokens.darkElevated,
+    color: tokens.darkAccent,
+    fontFamily: tokens.fontMono,
   },
   taskDock: {
     margin: "0 14px 12px",
     padding: 14,
-    background: "#141820",
-    border: "1px solid #232833",
-    borderRadius: 10,
+    background: tokens.darkElevated,
+    border: `1px solid ${tokens.darkBorder}`,
+    borderRadius: tokens.radiusLg,
   },
   progressTrack: {
     height: 5,
-    background: "#232833",
-    borderRadius: 999,
+    background: tokens.darkBorder,
+    borderRadius: tokens.radiusPill,
     marginBottom: 8,
     overflow: "hidden",
   },
   progressFill: {
     height: "100%",
-    background: "linear-gradient(90deg, #3b82f6, #60a5fa)",
-    borderRadius: 999,
+    background: `linear-gradient(90deg, ${tokens.accent}, ${tokens.darkAccent})`,
+    borderRadius: tokens.radiusPill,
   },
   dual: {
     flex: 1,
@@ -670,15 +796,15 @@ const s: Record<string, CSSProperties> = {
   },
   track: {
     flex: 1,
-    background: "#141820",
-    border: "1px solid #232833",
-    borderRadius: 10,
+    background: tokens.darkElevated,
+    border: `1px solid ${tokens.darkBorder}`,
+    borderRadius: tokens.radiusLg,
     padding: 12,
     overflow: "auto",
   },
   trackTitle: {
-    fontSize: 10,
-    color: "#8b93a7",
+    fontSize: 11,
+    color: tokens.darkMuted,
     marginBottom: 10,
     fontWeight: 600,
     letterSpacing: "0.04em",
@@ -688,38 +814,40 @@ const s: Record<string, CSSProperties> = {
     display: "flex",
     gap: 8,
     padding: "12px 14px",
-    borderTop: "1px solid #232833",
-    background: "#11141b",
+    borderTop: `1px solid ${tokens.darkBorder}`,
+    background: tokens.darkBg,
   },
   input: {
     flex: 1,
     height: 36,
-    borderRadius: 8,
-    border: "1px solid #2a2f3a",
-    background: "#0c0e12",
-    color: "#e8eaed",
+    borderRadius: tokens.radiusMd,
+    border: `1px solid ${tokens.darkBorder}`,
+    background: tokens.darkBg,
+    color: tokens.darkText,
     padding: "0 12px",
     fontSize: 12,
+    fontFamily: tokens.font,
   },
   sendBtn: {
-    background: "#2563eb",
+    background: tokens.accent,
     color: "#fff",
     border: "none",
-    borderRadius: 8,
+    borderRadius: tokens.radiusMd,
     padding: "0 16px",
     cursor: "pointer",
     fontWeight: 600,
+    fontFamily: tokens.font,
   },
   codePreview: {
     maxHeight: 100,
     overflow: "auto",
-    background: "#0c0e12",
+    background: tokens.darkBg,
     padding: 10,
-    borderRadius: 6,
-    fontSize: 10,
+    borderRadius: tokens.radiusSm,
+    fontSize: 11,
     whiteSpace: "pre-wrap",
     wordBreak: "break-word",
     margin: 0,
-    border: "1px solid #232833",
+    border: `1px solid ${tokens.darkBorder}`,
   },
 }

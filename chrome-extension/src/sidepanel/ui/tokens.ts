@@ -121,3 +121,19 @@ export function connectionDotShadow(state: ConnectionStatus): string {
   if (state === "connected") return "0 0 0 3px rgba(22, 163, 74, 0.15)"
   return "none"
 }
+
+/**
+ * Connection colors for dark surfaces (Cockpit title bar / L2 chrome).
+ * Same grammar as light `connectionColor` — status.live / warn / danger dark roles.
+ */
+export function connectionColorDark(state: ConnectionStatus): string {
+  if (state === "connected") return tokens.darkLive
+  if (state === "connecting") return tokens.darkWarning
+  return tokens.darkDanger
+}
+
+/** Soft glow under connected dot on dark (rgba of tokens.darkLive #4ade80). */
+export function connectionDotShadowDark(state: ConnectionStatus): string {
+  if (state === "connected") return "0 0 0 3px rgba(74, 222, 128, 0.2)"
+  return "none"
+}
