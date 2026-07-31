@@ -7,6 +7,7 @@ import { isAppsErrorMessage } from "../utils/apps-utils"
 import { isComputerModelErrorMessage } from "../components/model-switch-logic"
 import { isBrowserTool } from "../mode/mode-controller"
 import { isUserEnvErrorMessage, mapUserEnvError, normalizeUserEnvPublic } from "../utils/user-env-utils"
+import { normalizeInboundLogEvent } from "../log-event-normalize"
 
 /**
  * Check if an API key is masked (i.e., a placeholder like "***" or "sk-****xyz").
@@ -254,18 +255,12 @@ export function useWebSocket() {
           break
 
         case "log.event": {
-          const log = msg.data
-          if (log && log.level !== "debug") {
-            dispatch({
-              type: "ADD_LOG",
-              entry: {
-                ts: msg.ts || log.ts || new Date().toISOString(),
-                level: log.level || "info",
-                source: log.source || "unknown",
-                event: log.event || "unknown",
-                data: log.data || {},
-              },
-            })
+          // Wire shape is top-level { source, level, event, data } (see
+          // buildLogEventPayload). Old code wrongly read msg.data.level → live
+          // log showed "unknown" (dual-review log-event-echo-loop-impl nit).
+          const entry = normalizeInboundLogEvent(msg)
+          if (entry) {
+            dispatch({ type: "ADD_LOG", entry })
           }
           break
         }

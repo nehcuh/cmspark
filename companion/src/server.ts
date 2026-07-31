@@ -72,6 +72,7 @@ import {
   markPaired,
   AUTH_TIMEOUT_MS,
 } from "./ws-auth"
+import { allowInboundLogEvent } from "./log-event-gate"
 
 const MAX_WS_MESSAGE_SIZE = 10 * 1024 * 1024 // 10MB
 
@@ -5168,13 +5169,19 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
         }
 
         if (msg.type === "log.event") {
+          // Rate-limit per connection (backstop; primary loop break is extension
+          // not re-logging forward failures + no echo below).
+          if (!allowInboundLogEvent(ws)) {
+            return
+          }
           const eventName = typeof msg.event === "string" && msg.event ? msg.event : "extension.event"
           const source = typeof msg.source === "string" && msg.source ? msg.source : "extension"
           logger.log(safeLogLevel(msg.level), eventName, msg.data && typeof msg.data === "object" ? msg.data : {}, source)
-          // Forward to sidepanel for live log display
-          if (ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify(msg))
-          }
+          // Do NOT echo log.event back to the sender. Echo + extension
+          // sidepanel_forward_failed → logToCompanion formed a tight WS loop
+          // when Side Panel/Cockpit were closed (tens of GB, dual-end CPU).
+          // Live log UI: extension fans out its own logs locally via
+          // chrome.runtime.sendMessage in logToCompanion (see background/index.ts).
           return
         }
 

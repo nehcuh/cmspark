@@ -28,6 +28,11 @@ import {
   noteSecurityConfirmationRequest,
 } from "./computer-task-mirror"
 import { getActiveTabHostname } from "./active-tab-hostname"
+import {
+  buildLogEventPayload,
+  forwardFailureConsoleLevel,
+  shouldReportForwardFailureToCompanion,
+} from "./log-forward-policy"
 
 let wsClient: WSClient
 let browserBridge: BrowserBridge
@@ -161,11 +166,22 @@ const NOTIFICATION_ID = "cmspark-companion-disconnected"
 const DISCONNECT_DEBOUNCE_MS = 3000
 let disconnectNotificationTimer: ReturnType<typeof setTimeout> | null = null
 let lastNotifiedState: "connected" | "disconnected" | null = null
+/** Once-per-session warn for sidepanel_forward_failed (then console.debug). */
+let sidepanelForwardFailedWarned = false
 
 function logToCompanion(level: LogLevel, event: string, data: Record<string, unknown> = {}) {
   try {
+    const payload = buildLogEventPayload(level, event, data)
+    // Local fan-out so Side Panel / Cockpit live log works WITHOUT companion
+    // echo-to-sender (echo was half of the log.event tight loop — dual-review
+    // log-event-echo-loop-rca). Best-effort; no receivers is fine.
+    try {
+      chrome.runtime.sendMessage(payload).catch(() => {})
+    } catch {
+      /* no UI listeners */
+    }
     if (wsClient?.getState() === "connected") {
-      wsClient.send({ type: "log.event", source: "extension", level, event, data })
+      wsClient.send(payload)
     }
   } catch {
     // Logging must never affect extension behavior.
@@ -379,13 +395,29 @@ async function handleCompanionMessage(msg: any) {
     openOrFocusCockpit().catch(() => {})
   }
 
-  // Forward streaming tokens and other messages to side panel + cockpit
+  // Forward streaming tokens and other messages to side panel + cockpit.
+  // CRITICAL: on failure do NOT logToCompanion — that + companion log.event
+  // echo-to-sender formed a tight localhost WS loop when no UI listeners
+  // (Side Panel/Cockpit closed). See dual-review log-event-echo-loop-rca.
   chrome.runtime.sendMessage(msg).catch((e: any) => {
-    logToCompanion("debug", "extension.sidepanel_forward_failed", {
-      message_type: msg?.type || "unknown",
-      error: e?.message || String(e),
-    })
-    // side panel / cockpit may not be open — that's fine
+    const type = typeof msg?.type === "string" ? msg.type : "unknown"
+    if (shouldReportForwardFailureToCompanion(type)) {
+      // Intentionally unreachable today (policy always false). Kept so a
+      // future opt-in cannot forget the loop hazard without touching policy.
+      logToCompanion("debug", "extension.sidepanel_forward_failed", {
+        message_type: type,
+        error: e?.message || String(e),
+      })
+      return
+    }
+    const { level, nextWarned } = forwardFailureConsoleLevel(sidepanelForwardFailedWarned)
+    sidepanelForwardFailedWarned = nextWarned
+    const err = e?.message || String(e)
+    if (level === "warn") {
+      console.warn("[cmspark] sidepanel_forward_failed (once/session)", type, err)
+    } else {
+      console.debug("[cmspark] sidepanel_forward_failed", type, err)
+    }
   })
 }
 
