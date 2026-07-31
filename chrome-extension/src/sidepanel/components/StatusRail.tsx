@@ -162,17 +162,22 @@ export function StatusRail({
   const closeMenu = () => setMenuOpen(false)
   const connLabel = connectionLabel(connectionState)
 
+  // G1: no full-rail mode fill — badge carries mode; L1/L2 get a 3px accent line only.
+  const modeLine =
+    capabilityLevel === "browser"
+      ? tokens.modeBrowserLine
+      : capabilityLevel === "computer"
+        ? tokens.modeComputerLine
+        : null
+
   return (
     <div
       role="banner"
       aria-label="状态栏"
       style={{
         ...railStyles.rail,
-        ...(capabilityLevel === "browser"
-          ? { background: tokens.modeBrowserBg, borderBottomColor: "#bfdbfe" }
-          : {}),
-        ...(capabilityLevel === "computer"
-          ? { background: "#ecfdf5", borderBottomColor: "#a7f3d0" }
+        ...(modeLine
+          ? { boxShadow: `inset 0 -3px 0 ${modeLine}, 0 1px 0 rgba(255,255,255,0.85) inset` }
           : {}),
       }}
     >
@@ -359,23 +364,23 @@ const railStyles: Record<string, CSSProperties> = {
   rail: {
     display: "flex",
     alignItems: "center",
-    gap: 8,
-    padding: "10px 12px",
+    gap: 6,
+    padding: "6px 10px",
     borderBottom: `1px solid ${tokens.border}`,
-    background: "rgba(255, 255, 255, 0.78)",
-    backdropFilter: "saturate(1.4) blur(12px)",
-    WebkitBackdropFilter: "saturate(1.4) blur(12px)",
+    background: "rgba(255, 255, 255, 0.72)",
+    backdropFilter: "saturate(1.35) blur(14px)",
+    WebkitBackdropFilter: "saturate(1.35) blur(14px)",
     flexShrink: 0,
-    minHeight: 44,
-    boxShadow: "0 1px 0 rgba(255,255,255,0.8) inset",
+    minHeight: 40,
+    boxShadow: "0 1px 0 rgba(255,255,255,0.85) inset",
   },
   title: {
     flex: 1,
     minWidth: 0,
-    fontSize: 13,
-    fontWeight: 700,
-    letterSpacing: "-0.03em",
-    color: tokens.text,
+    fontSize: 12.5,
+    fontWeight: 600,
+    letterSpacing: "-0.02em",
+    color: tokens.textSecondary,
   },
   menu: {
     position: "absolute",

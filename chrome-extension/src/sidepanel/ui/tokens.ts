@@ -1,25 +1,25 @@
-// Shared visual tokens — Quiet Premium shell (UIUX v2 visual pass).
-// Soft slate canvas, indigo accent, layered shadows, hairline borders.
-// No Material Design hexes (#4A90D9 / #F44336 / …).
+// Shared visual tokens — Quiet Premium + Gemini breath (PR-G1).
+// Airier canvas, indigo accent, soft shadows; composer/bubble shape scale.
+// No Material Design status hexes (#4A90D9 / #F44336 / #4CAF50 …).
 
 export const tokens = {
   font:
     "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif",
   fontMono: "ui-monospace, 'SF Mono', Menlo, Consolas, monospace",
 
-  // Light surface — cool slate, not flat gray
-  bg: "#f0f2f6",
+  // Light surface — airier tonal canvas (Gemini-breath G1)
+  bg: "#f5f6fa",
   bgElevated: "#ffffff",
-  bgMuted: "#e8ebf0",
-  bgHover: "#e4e8ef",
-  bgActive: "#e8eefc",
-  border: "rgba(15, 23, 42, 0.08)",
-  borderStrong: "rgba(15, 23, 42, 0.12)",
+  bgMuted: "#eef0f5",
+  bgHover: "#e8ebf2",
+  bgActive: "#eef2ff",
+  border: "rgba(15, 23, 42, 0.07)",
+  borderStrong: "rgba(15, 23, 42, 0.10)",
   text: "#0f172a",
   textSecondary: "#475569",
   textMuted: "#94a3b8",
 
-  // Indigo accent — calmer / more “product” than pure blue
+  // Indigo accent — spark, not full-bleed rails
   accent: "#4f46e5",
   accentSoft: "#eef2ff",
   accentText: "#3730a3",
@@ -31,14 +31,19 @@ export const tokens = {
   warningSoft: "#fffbeb",
   danger: "#dc2626",
   dangerSoft: "#fef2f2",
+  /** Soft confirm / FocusBand tint (G3; defined early for one SoT) */
+  dangerSurface: "rgba(220, 38, 38, 0.08)",
 
-  // Mode chips
+  // Mode chips (badge only — no full-rail fill on L0/L1)
   modeChatBg: "#f1f5f9",
   modeChatText: "#334155",
   modeBrowserBg: "#eef2ff",
   modeBrowserText: "#3730a3",
   modeComputerBg: "#052e16",
   modeComputerText: "#6ee7b7",
+  /** 3–4px accent line under StatusRail when L1/L2 (not full tint fill) */
+  modeBrowserLine: "rgba(79, 70, 229, 0.35)",
+  modeComputerLine: "rgba(52, 211, 153, 0.45)",
 
   // Dark surface (L2 / Cockpit)
   darkBg: "#0b0d12",
@@ -64,18 +69,21 @@ export const tokens = {
   transitionFast: "150ms",
   transition: "220ms",
 
+  // Shape: base 6/8/12; hero surfaces use composer/bubble scale (G1)
   radiusSm: 6,
   radiusMd: 8,
   radiusLg: 12,
+  radiusComposer: 18,
+  radiusBubble: 18,
   radiusPill: 999,
 
-  // Layered shadows (premium depth without heaviness)
-  shadowSm: "0 1px 2px rgba(15, 23, 42, 0.04), 0 1px 1px rgba(15, 23, 42, 0.03)",
+  // Soft, diffuse elevation (less “card cage”)
+  shadowSm: "0 1px 2px rgba(15, 23, 42, 0.035), 0 1px 1px rgba(15, 23, 42, 0.025)",
   shadowMd:
-    "0 4px 16px rgba(15, 23, 42, 0.08), 0 1px 3px rgba(15, 23, 42, 0.04)",
+    "0 4px 18px rgba(15, 23, 42, 0.07), 0 1px 3px rgba(15, 23, 42, 0.035)",
   shadowLg:
-    "0 12px 32px rgba(15, 23, 42, 0.12), 0 2px 6px rgba(15, 23, 42, 0.04)",
-  shadowFocus: "0 0 0 3px rgba(79, 70, 229, 0.18)",
+    "0 14px 36px rgba(15, 23, 42, 0.10), 0 2px 6px rgba(15, 23, 42, 0.035)",
+  shadowFocus: "0 0 0 3px rgba(79, 70, 229, 0.16)",
 } as const
 
 export type Tokens = typeof tokens
