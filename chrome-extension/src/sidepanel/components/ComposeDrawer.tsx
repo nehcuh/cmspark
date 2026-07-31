@@ -1,20 +1,44 @@
-// 装配 P0 — bottom-sheet section list (Composition plane only).
-// Full section UIs land in P1; entry + Host open is P0 (UIUX v2 §4.5 / K9).
-// Board / Fleet / multi-worker are Autonomy — never listed here.
+// 装配 drawer — full Composition section UI (UIUX v2 PR6 / §4.5).
+// Opens Host panels; Board / Fleet / multi-worker are Autonomy — never listed.
+// Focus trap via Modal; landfill one-surface rule enforced by parent.
 
-import { useEffect, useRef, type CSSProperties } from "react"
+import { useRef, type CSSProperties, type ComponentType, type RefObject } from "react"
 import {
+  COMPOSE_GROUP_LABELS,
   COMPOSE_SECTIONS,
+  composeAttachLine,
+  composeSectionGroups,
+  composeSectionsInGroup,
+  surfaceLxLabel,
   type ComposeSection,
+  type ComposeSectionGroup,
+  type ComposeSectionId,
 } from "../composer/meta-slash"
 import type { ContextPanelId } from "./ContextPanelHost"
 import type { CapabilityLevel } from "../types"
 import { tokens } from "../ui/tokens"
+import { Modal } from "./ui/Modal"
+import {
+  IconApps,
+  IconChevronRight,
+  IconClose,
+  IconHistory,
+  IconKnowledge,
+  IconMcp,
+  IconPacks,
+  IconSkills,
+  type IconProps,
+} from "../ui/icons"
 
-const SURFACE_LX: Record<CapabilityLevel, string> = {
-  chat: "L0 聊",
-  browser: "L1 网页",
-  computer: "L2 计算机",
+const FIRST_SECTION_ID: ComposeSectionId = COMPOSE_SECTIONS[0]?.id ?? "skills"
+
+const SECTION_ICONS: Record<ComposeSection["id"], ComponentType<IconProps>> = {
+  skills: IconSkills,
+  knowledge: IconKnowledge,
+  packs: IconPacks,
+  mcp: IconMcp,
+  apps: IconApps,
+  history: IconHistory,
 }
 
 export type ComposeDrawerProps = {
@@ -22,7 +46,7 @@ export type ComposeDrawerProps = {
   onClose: () => void
   /** Open Host panel and close drawer. */
   onOpenSection: (panelId: ContextPanelId) => void
-  /** Current Surface level for §4.5 “挂到 … Surface Lx” copy (Pi nit). */
+  /** Current Surface level for §4.5 “挂到 … Surface Lx” copy. */
   capabilityLevel?: CapabilityLevel
 }
 
@@ -32,58 +56,34 @@ export function ComposeDrawer({
   onOpenSection,
   capabilityLevel = "chat",
 }: ComposeDrawerProps) {
-  const sheetRef = useRef<HTMLDivElement>(null)
   const firstBtnRef = useRef<HTMLButtonElement>(null)
-
-  // Esc peels 装配 (priority stack §4.9 layer 2)
-  useEffect(() => {
-    if (!open) return
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault()
-        e.stopPropagation()
-        onClose()
-      }
-    }
-    window.addEventListener("keydown", onKey, true)
-    return () => window.removeEventListener("keydown", onKey, true)
-  }, [open, onClose])
-
-  // Focus first section for a11y
-  useEffect(() => {
-    if (!open) return
-    const t = requestAnimationFrame(() => firstBtnRef.current?.focus())
-    return () => cancelAnimationFrame(t)
-  }, [open])
-
-  if (!open) return null
+  const attachLine = composeAttachLine(capabilityLevel)
+  const groups = composeSectionGroups()
 
   const handleSection = (section: ComposeSection) => {
+    // Defense: never open Autonomy surfaces from 装配
+    if (section.panelId === "board") return
     onOpenSection(section.panelId)
   }
 
   return (
-    <div
-      style={styles.backdrop}
-      role="presentation"
-      data-testid="compose-drawer"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose()
-      }}
+    <Modal
+      open={open}
+      onClose={onClose}
+      role="dialog"
+      ariaLabel="装配"
+      backdropDismiss
+      initialFocusRef={firstBtnRef as RefObject<HTMLElement>}
+      overlayStyle={styles.backdrop}
+      panelStyle={styles.sheet}
     >
-      <div
-        ref={sheetRef}
-        style={styles.sheet}
-        role="dialog"
-        aria-modal="true"
-        aria-label="装配"
-      >
+      <div data-testid="compose-drawer">
         <div style={styles.handle} aria-hidden />
         <div style={styles.header}>
-          <div>
+          <div style={{ minWidth: 0 }}>
             <div style={styles.title}>装配</div>
             <div style={styles.subtitle}>
-              组合能力 · 挂到当前线程 · Surface {SURFACE_LX[capabilityLevel]}
+              组合能力 · {attachLine}
             </div>
           </div>
           <button
@@ -91,33 +91,91 @@ export function ComposeDrawer({
             style={styles.closeBtn}
             onClick={onClose}
             aria-label="关闭装配"
+            data-testid="compose-drawer-close"
           >
-            关闭
+            <IconClose size={14} />
           </button>
         </div>
-        <ul style={styles.list} role="list">
-          {COMPOSE_SECTIONS.map((section, i) => (
-            <li key={section.id} style={styles.listItem}>
-              <button
-                ref={i === 0 ? firstBtnRef : undefined}
-                type="button"
-                style={styles.sectionBtn}
-                onClick={() => handleSection(section)}
-                data-testid={`compose-section-${section.id}`}
-              >
-                <span style={styles.sectionLabel}>{section.label}</span>
-                <span style={styles.sectionHint}>{section.hint}</span>
-              </button>
-            </li>
-          ))}
-        </ul>
-        <p style={styles.footNote}>
+
+        <div style={styles.surfaceChip} aria-hidden>
+          Surface {surfaceLxLabel(capabilityLevel)}
+        </div>
+
+        {groups.map((group) => (
+          <SectionGroup
+            key={group}
+            group={group}
+            firstSectionId={FIRST_SECTION_ID}
+            firstBtnRef={firstBtnRef}
+            onOpen={handleSection}
+            attachLine={attachLine}
+          />
+        ))}
+
+        <p style={styles.footNote} data-testid="compose-autonomy-note">
           任务板 / 编排不在装配内 — 使用 /board 或 ⋯「编排」
         </p>
       </div>
-    </div>
+    </Modal>
   )
 }
+
+function SectionGroup({
+  group,
+  firstSectionId,
+  firstBtnRef,
+  onOpen,
+  attachLine,
+}: {
+  group: ComposeSectionGroup
+  firstSectionId: ComposeSectionId
+  firstBtnRef: RefObject<HTMLButtonElement>
+  onOpen: (section: ComposeSection) => void
+  attachLine: string
+}) {
+  const sections = composeSectionsInGroup(group)
+  if (sections.length === 0) return null
+
+  return (
+    <section style={styles.group} aria-labelledby={`compose-group-${group}`}>
+      <h3 id={`compose-group-${group}`} style={styles.groupLabel}>
+        {COMPOSE_GROUP_LABELS[group]}
+      </h3>
+      <ul style={styles.list} role="list">
+        {sections.map((section) => {
+          const Icon = SECTION_ICONS[section.id]
+          return (
+            <li key={section.id} style={styles.listItem}>
+              <button
+                ref={section.id === firstSectionId ? firstBtnRef : undefined}
+                type="button"
+                style={styles.sectionBtn}
+                onClick={() => onOpen(section)}
+                data-testid={`compose-section-${section.id}`}
+              >
+                <span style={styles.iconWrap} aria-hidden>
+                  <Icon size={16} />
+                </span>
+                <span style={styles.sectionBody}>
+                  <span style={styles.sectionTitleRow}>
+                    <span style={styles.sectionTitleZh}>{section.titleZh}</span>
+                    <span style={styles.sectionLabelEn}>{section.label}</span>
+                  </span>
+                  <span style={styles.sectionHint}>{section.hint}</span>
+                  <span style={styles.attachLine}>{attachLine}</span>
+                </span>
+                <IconChevronRight size={14} style={{ color: tokens.textMuted, flexShrink: 0 }} />
+              </button>
+            </li>
+          )
+        })}
+      </ul>
+    </section>
+  )
+}
+
+// Re-export for tests that import section list from drawer path (if any).
+export { COMPOSE_SECTIONS }
 
 const styles: Record<string, CSSProperties> = {
   backdrop: {
@@ -134,10 +192,11 @@ const styles: Record<string, CSSProperties> = {
     borderTopLeftRadius: tokens.radiusLg,
     borderTopRightRadius: tokens.radiusLg,
     boxShadow: tokens.shadowMd,
-    maxHeight: "70vh",
+    maxHeight: "78vh",
     overflowY: "auto",
-    padding: "8px 0 12px",
+    padding: "8px 0 14px",
     fontFamily: tokens.font,
+    width: "100%",
   },
   handle: {
     width: 36,
@@ -151,64 +210,127 @@ const styles: Record<string, CSSProperties> = {
     alignItems: "flex-start",
     justifyContent: "space-between",
     gap: 8,
-    padding: "0 14px 10px",
-    borderBottom: `1px solid ${tokens.border}`,
+    padding: "0 14px 8px",
   },
   title: {
     fontSize: 15,
     fontWeight: 650,
     color: tokens.text,
+    letterSpacing: "-0.01em",
   },
   subtitle: {
     fontSize: 11,
     color: tokens.textSecondary,
-    marginTop: 2,
+    marginTop: 3,
+    lineHeight: 1.4,
   },
   closeBtn: {
+    width: 28,
+    height: 28,
     border: `1px solid ${tokens.border}`,
-    borderRadius: tokens.radiusPill,
+    borderRadius: tokens.radiusSm,
     background: tokens.bgMuted,
     color: tokens.textSecondary,
-    fontSize: 11,
-    fontWeight: 500,
-    padding: "4px 10px",
     cursor: "pointer",
     fontFamily: tokens.font,
     flexShrink: 0,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 0,
+  },
+  surfaceChip: {
+    display: "inline-flex",
+    margin: "0 14px 8px",
+    padding: "2px 8px",
+    borderRadius: tokens.radiusPill,
+    background: tokens.bgMuted,
+    color: tokens.textSecondary,
+    fontSize: 10,
+    fontWeight: 600,
+    letterSpacing: "0.02em",
+  },
+  group: {
+    margin: 0,
+    padding: "0 0 4px",
+  },
+  groupLabel: {
+    margin: "6px 14px 4px",
+    fontSize: 10,
+    fontWeight: 650,
+    color: tokens.textMuted,
+    textTransform: "uppercase" as const,
+    letterSpacing: "0.06em",
   },
   list: {
     listStyle: "none",
     margin: 0,
-    padding: "6px 8px",
+    padding: "0 8px",
   },
   listItem: {
-    margin: 0,
+    margin: "0 0 4px",
   },
   sectionBtn: {
     display: "flex",
-    flexDirection: "column",
-    alignItems: "flex-start",
-    gap: 2,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
     width: "100%",
     textAlign: "left",
-    border: "none",
+    border: `1px solid ${tokens.border}`,
     borderRadius: tokens.radiusMd,
-    background: "transparent",
-    padding: "10px 10px",
+    background: tokens.bg,
+    padding: "8px 10px",
     cursor: "pointer",
     fontFamily: tokens.font,
+    transition: `background ${tokens.transitionFast} ease, border-color ${tokens.transitionFast} ease`,
   },
-  sectionLabel: {
+  iconWrap: {
+    width: 28,
+    height: 28,
+    borderRadius: tokens.radiusSm,
+    background: tokens.accentSoft,
+    color: tokens.accentText,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+  sectionBody: {
+    flex: 1,
+    minWidth: 0,
+    display: "flex",
+    flexDirection: "column",
+    gap: 1,
+  },
+  sectionTitleRow: {
+    display: "flex",
+    alignItems: "baseline",
+    gap: 6,
+  },
+  sectionTitleZh: {
     fontSize: 13,
     fontWeight: 600,
     color: tokens.text,
   },
+  sectionLabelEn: {
+    fontSize: 10,
+    fontWeight: 500,
+    color: tokens.textMuted,
+  },
   sectionHint: {
     fontSize: 11,
     color: tokens.textSecondary,
+    lineHeight: 1.35,
+  },
+  attachLine: {
+    fontSize: 10,
+    color: tokens.accentText,
+    marginTop: 1,
+    lineHeight: 1.3,
   },
   footNote: {
-    margin: "4px 14px 0",
+    margin: "10px 14px 0",
     fontSize: 10,
     color: tokens.textMuted,
     lineHeight: 1.4,

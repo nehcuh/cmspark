@@ -10,6 +10,13 @@ import DOMPurify from "dompurify"
 import { renderMermaidBlocks, prefetchMermaid } from "./mermaid"
 import { extractComputerCardData } from "../utils/computer-utils"
 import { tokens, statusColor } from "../ui/tokens"
+import {
+  IconBranch,
+  IconCopy,
+  IconDownload,
+  IconEdit,
+  IconRefresh,
+} from "../ui/icons"
 // KaTeX stylesheet — bundled by Plasmo; needed for math glyph fonts/layout.
 import "katex/dist/katex.min.css"
 
@@ -298,28 +305,30 @@ const MessageRow = memo(function MessageRow({
               ...styles.actionBar,
               alignSelf: isUser ? "flex-end" : "flex-start",
             }}>
-              <button style={styles.actionBtn} onClick={() => handleCopy(msg.content || "")} title="复制">
-                📋
+              <button type="button" style={styles.actionBtn} onClick={() => handleCopy(msg.content || "")} title="复制" aria-label="复制">
+                <IconCopy size={13} />
               </button>
               {isUser && (
                 <button
+                  type="button"
                   style={styles.actionBtn}
                   onClick={() => { setIsEditing(true); setEditingText(msg.content || "") }}
                   title="编辑并重新生成"
+                  aria-label="编辑并重新生成"
                 >
-                  ✏️
+                  <IconEdit size={13} />
                 </button>
               )}
               {!isUser && (
-                <button style={styles.actionBtn} onClick={() => onRegenerate(msg.id)} title="重新生成">
-                  🔄
+                <button type="button" style={styles.actionBtn} onClick={() => onRegenerate(msg.id)} title="重新生成" aria-label="重新生成">
+                  <IconRefresh size={13} />
                 </button>
               )}
-              <button style={styles.actionBtn} onClick={() => onFork(msg.id)} title="创建分支">
-                🔀
+              <button type="button" style={styles.actionBtn} onClick={() => onFork(msg.id)} title="创建分支" aria-label="创建分支">
+                <IconBranch size={13} />
               </button>
-              <button style={styles.actionBtn} onClick={() => onExport(msg.id)} title="导出此条到 Obsidian">
-                📥
+              <button type="button" style={styles.actionBtn} onClick={() => onExport(msg.id)} title="导出此条到 Obsidian" aria-label="导出到 Obsidian">
+                <IconDownload size={13} />
               </button>
             </div>
           </>
@@ -381,59 +390,73 @@ function ToolCallCard({ tc }: { tc: any }) {
   const computerCard = isComputerTask ? extractComputerCardData(tc.result) : null
   const computerFailed = computerCard !== null && (computerCard.failed || tc.status === "error")
 
+  const statusTone = statusColor(tc.status === "success" ? "success" : tc.status)
+  const statusGlyph =
+    tc.status === "running" ? "…" : tc.status === "success" ? "✓" : tc.status === "error" ? "!" : "–"
+
   return (
-    <div style={{
-      ...styles.toolCard,
-      borderColor: statusColor(tc.status === "success" ? "success" : tc.status),
-      cursor: hasResult && isLongResult ? "pointer" : "default",
-    }} onClick={() => { if (hasResult && isLongResult) setExpanded(!expanded) }}>
+    <div
+      style={{
+        ...styles.toolCard,
+        borderColor: statusTone,
+        cursor: hasResult && isLongResult ? "pointer" : "default",
+      }}
+      onClick={() => {
+        if (hasResult && isLongResult) setExpanded(!expanded)
+      }}
+      data-testid="tool-call-card"
+    >
       <div style={styles.toolHeader}>
-        <span style={{ color: statusColor(tc.status === "success" ? "success" : tc.status), fontSize: 10 }}>
-          {tc.status === "running" ? "…" : tc.status === "success" ? "✓" : tc.status === "error" ? "!" : "–"}
+        <span
+          style={{
+            ...styles.toolStatusGlyph,
+            color: statusTone,
+          }}
+          aria-label={tc.status || "unknown"}
+        >
+          {statusGlyph}
         </span>
         <span style={styles.toolName}>{tc.tool_name}</span>
-        {/* Vision status badge */}
         {isVisionTool && tc.vision_status === "analyzing" && (
-          <span style={{ fontSize: 10, color: tokens.accent, marginLeft: 8 }}>Analyzing…</span>
+          <span style={styles.toolMeta}>Analyzing…</span>
         )}
         {isVisionTool && tc.vision_status === "done" && (
-          <span style={{ fontSize: 10, color: tokens.success, marginLeft: 8 }}>
+          <span style={styles.toolMeta}>
             Vision {tc.vision_latency_ms ? `${(tc.vision_latency_ms / 1000).toFixed(1)}s` : ""}
           </span>
         )}
         {isVisionTool && tc.vision_status === "cached" && (
-          <span style={{ fontSize: 10, color: tokens.textMuted, marginLeft: 8 }}>Vision cached</span>
+          <span style={{ ...styles.toolMeta, color: tokens.textMuted }}>Vision cached</span>
         )}
         {isVisionTool && tc.vision_status === "error" && (
-          <span style={{ fontSize: 10, color: tokens.warning, marginLeft: 8 }}>Vision failed</span>
+          <span style={{ ...styles.toolMeta, color: tokens.warning }}>Vision failed</span>
         )}
         {hasResult && isLongResult && (
-          <span style={{ marginLeft: "auto", fontSize: 10, color: tokens.textMuted }}>{expanded ? "收起" : "展开"}</span>
+          <span style={styles.toolExpandHint}>{expanded ? "收起" : "展开"}</span>
         )}
       </div>
-      {/* Expandable vision description */}
       {hasVisionDescription && (
-        <div style={{
-          marginTop: 6,
-          padding: "6px 10px",
-          background: tokens.accentSoft,
-          borderRadius: 4,
-          borderLeft: `3px solid ${tokens.accent}`,
-        }}>
-          <div style={{
-            fontSize: 11,
-            color: tokens.text,
-            lineHeight: 1.4,
-            maxHeight: visionExpanded ? "none" : "3em",
-            overflow: "hidden",
-            whiteSpace: "pre-wrap",
-          }}>
+        <div style={styles.toolInset}>
+          <div
+            style={{
+              fontSize: 11,
+              color: tokens.text,
+              lineHeight: 1.35,
+              maxHeight: visionExpanded ? "none" : "2.7em",
+              overflow: "hidden",
+              whiteSpace: "pre-wrap",
+            }}
+          >
             {visionDescription}
           </div>
           {visionDescription.length > 100 && (
             <button
-              onClick={(e) => { e.stopPropagation(); setVisionExpanded(!visionExpanded) }}
-              style={{ fontSize: 10, color: tokens.accent, background: "none", border: "none", cursor: "pointer", padding: "2px 0", marginTop: 2 }}
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation()
+                setVisionExpanded(!visionExpanded)
+              }}
+              style={styles.toolLinkBtn}
             >
               {visionExpanded ? "收起" : "展开全部"}
             </button>
@@ -443,16 +466,12 @@ function ToolCallCard({ tc }: { tc: any }) {
       {computerCard && (
         <div
           style={{
-            marginTop: 6,
-            padding: "6px 10px",
+            ...styles.toolInset,
             background: computerFailed ? tokens.dangerSoft : tokens.accentSoft,
-            borderRadius: 4,
-            borderLeft: `3px solid ${computerFailed ? tokens.danger : tokens.accent}`,
-            fontSize: 11,
-            color: tokens.text,
+            borderLeftColor: computerFailed ? tokens.danger : tokens.accent,
             display: "flex",
             alignItems: "center",
-            gap: 8,
+            gap: 6,
             flexWrap: "wrap",
           }}
         >
@@ -471,14 +490,11 @@ function ToolCallCard({ tc }: { tc: any }) {
                 chrome.runtime.sendMessage({ type: "computer.evidence.open", task_id: computerCard.taskId })
               }}
               style={{
+                ...styles.toolLinkBtn,
                 marginLeft: "auto",
-                fontSize: 11,
-                color: tokens.accentText,
-                background: tokens.accentSoft,
-                border: "none",
-                borderRadius: 4,
-                padding: "2px 8px",
-                cursor: "pointer",
+                padding: "1px 6px",
+                borderRadius: tokens.radiusSm,
+                background: tokens.bgElevated,
               }}
             >
               打开证据目录
@@ -487,17 +503,17 @@ function ToolCallCard({ tc }: { tc: any }) {
         </div>
       )}
       {hasResult && (
-        <pre style={{
-          ...styles.toolResult,
-          background: tokens.bgMuted,
-          padding: "8px 12px",
-          borderRadius: 4,
-          fontSize: 11,
-          fontFamily: tokens.fontMono,
-          maxHeight: expanded ? 300 : 80,
-          overflow: "auto",
-        }}>
-          <code>{expanded ? resultStr : resultStr.substring(0, TOOL_RESULT_PREVIEW) + (isLongResult ? " ..." : "")}</code>
+        <pre
+          style={{
+            ...styles.toolResult,
+            maxHeight: expanded ? 240 : 64,
+          }}
+        >
+          <code>
+            {expanded
+              ? resultStr
+              : resultStr.substring(0, TOOL_RESULT_PREVIEW) + (isLongResult ? " ..." : "")}
+          </code>
         </pre>
       )}
     </div>
@@ -509,7 +525,7 @@ function Cursor() {
     display: "inline-block",
     width: 1,
     height: 14,
-    background: "#333",
+    background: tokens.text,
     marginLeft: 2,
     animation: "blink 1s infinite",
   }} />
@@ -662,8 +678,8 @@ function fillComposer(text: string) {
 }
 
 type SuggestItem =
-  | { label: string; fill: string }
-  | { label: string; action: "compose" | "packs" }
+  | { label: string; fill: string; primary?: boolean }
+  | { label: string; action: "compose" | "packs" | "cockpit"; primary?: boolean }
 
 function SuggestionChips({ items }: { items: SuggestItem[] }) {
   return (
@@ -672,7 +688,10 @@ function SuggestionChips({ items }: { items: SuggestItem[] }) {
         <button
           key={it.label}
           type="button"
-          style={styles.suggestChip}
+          style={{
+            ...styles.suggestChip,
+            ...(it.primary ? styles.suggestChipPrimary : null),
+          }}
           onClick={() => {
             if ("action" in it) {
               if (it.action === "compose") {
@@ -683,6 +702,12 @@ function SuggestionChips({ items }: { items: SuggestItem[] }) {
                 window.dispatchEvent(
                   new CustomEvent("cmspark:open-context-panel", { detail: { panel: "packs" } }),
                 )
+                return
+              }
+              if (it.action === "cockpit") {
+                chrome.runtime.sendMessage({ type: "cockpit.open" }, () => {
+                  void chrome.runtime.lastError
+                })
               }
               return
             }
@@ -699,7 +724,7 @@ function SuggestionChips({ items }: { items: SuggestItem[] }) {
 function EmptyState({ level }: { level: "chat" | "browser" | "computer" }) {
   if (level === "browser") {
     return (
-      <div style={styles.empty}>
+      <div style={styles.empty} data-testid="empty-state-browser">
         <div style={styles.emptyTitle}>网页 Agent 已就绪</div>
         <div style={styles.emptyHint}>
           可对当前页提问、总结或让 Agent 操作标签。输入 / 或点「装配」打开组合能力。
@@ -707,7 +732,7 @@ function EmptyState({ level }: { level: "chat" | "browser" | "computer" }) {
         <SuggestionChips
           items={[
             { label: "总结本页", fill: "请总结当前页面的要点" },
-            { label: "装配", action: "compose" },
+            { label: "装配", action: "compose", primary: true },
             { label: "/packs", action: "packs" },
           ]}
         />
@@ -716,16 +741,26 @@ function EmptyState({ level }: { level: "chat" | "browser" | "computer" }) {
   }
   if (level === "computer") {
     return (
-      <div style={styles.empty}>
+      <div style={styles.empty} data-testid="empty-state-computer">
         <div style={styles.emptyTitle}>Computer Use 进行中</div>
         <div style={styles.emptyHint}>
-          完整步骤与确认在确认台；此处可排队跟进消息。
+          完整步骤与确认在确认台；此处可排队跟进消息。装配用于组合能力，任务板请用 /board。
         </div>
+        <SuggestionChips
+          items={[
+            {
+              label: "确认台",
+              action: "cockpit",
+              primary: true,
+            },
+            { label: "装配", action: "compose" },
+          ]}
+        />
       </div>
     )
   }
   return (
-    <div style={styles.empty}>
+    <div style={styles.empty} data-testid="empty-state-chat">
       <div style={styles.emptyTitle}>今天想聊什么？</div>
       <div style={styles.emptyHint}>
         问问题、写文案，或描述浏览器任务。快捷：总结本页 · 装配 · /packs
@@ -733,7 +768,7 @@ function EmptyState({ level }: { level: "chat" | "browser" | "computer" }) {
       <SuggestionChips
         items={[
           { label: "总结本页", fill: "请总结当前页面的要点" },
-          { label: "装配", action: "compose" },
+          { label: "装配", action: "compose", primary: true },
           { label: "/packs", action: "packs" },
         ]}
       />
@@ -823,13 +858,13 @@ const styles: Record<string, React.CSSProperties> = {
   container: {
     flex: 1,
     overflowY: "auto",
-    padding: "12px",
+    padding: "10px 12px",
     background: tokens.bgElevated,
   },
   empty: {
     color: tokens.textMuted,
     textAlign: "center",
-    padding: "48px 20px 24px",
+    padding: "40px 16px 20px",
     fontSize: 13,
     fontFamily: tokens.font,
   },
@@ -837,7 +872,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 15,
     fontWeight: 650,
     color: tokens.text,
-    marginBottom: 8,
+    marginBottom: 6,
     letterSpacing: "-0.01em",
   },
   emptyHint: {
@@ -845,7 +880,7 @@ const styles: Record<string, React.CSSProperties> = {
     color: tokens.textSecondary,
     lineHeight: 1.5,
     maxWidth: 280,
-    margin: "0 auto 14px",
+    margin: "0 auto 12px",
   },
   chipRow: {
     display: "flex",
@@ -860,49 +895,59 @@ const styles: Record<string, React.CSSProperties> = {
     background: tokens.bgElevated,
     color: tokens.accentText,
     borderRadius: tokens.radiusPill,
-    padding: "5px 10px",
+    padding: "4px 10px",
     fontSize: 11,
     fontWeight: 500,
     cursor: "pointer",
     fontFamily: tokens.font,
     boxShadow: tokens.shadowSm,
   },
+  suggestChipPrimary: {
+    borderColor: tokens.accentSoft,
+    background: tokens.accentSoft,
+    color: tokens.accentText,
+    fontWeight: 600,
+  },
   userMsg: {
     display: "flex",
     justifyContent: "flex-end",
-    marginBottom: 10,
+    marginBottom: 8,
   },
   agentMsg: {
     display: "flex",
     justifyContent: "flex-start",
-    marginBottom: 10,
+    marginBottom: 8,
   },
   messageCol: {
     display: "flex",
     flexDirection: "column",
-    maxWidth: "85%",
+    maxWidth: "88%",
     width: "fit-content" as const,
   },
   userBubble: {
     background: tokens.userBubbleBg,
     color: tokens.userBubbleText,
-    borderRadius: "12px 12px 4px 12px",
-    padding: "8px 12px",
+    borderRadius: `${tokens.radiusLg}px ${tokens.radiusLg}px ${tokens.radiusSm}px ${tokens.radiusLg}px`,
+    padding: "7px 11px",
+    fontSize: 13,
+    lineHeight: 1.45,
     wordBreak: "break-word" as const,
     whiteSpace: "pre-wrap",
   },
   agentBubble: {
     background: tokens.assistantBubbleBg,
     color: tokens.assistantBubbleText,
-    borderRadius: "12px 12px 12px 4px",
-    padding: "8px 12px",
+    borderRadius: `${tokens.radiusLg}px ${tokens.radiusLg}px ${tokens.radiusLg}px ${tokens.radiusSm}px`,
+    padding: "7px 11px",
+    fontSize: 13,
+    lineHeight: 1.45,
     wordBreak: "break-word" as const,
   },
   statusBubble: {
     background: tokens.accentSoft,
-    borderRadius: "12px 12px 12px 4px",
-    padding: "8px 12px",
-    maxWidth: "85%",
+    borderRadius: `${tokens.radiusLg}px ${tokens.radiusLg}px ${tokens.radiusLg}px ${tokens.radiusSm}px`,
+    padding: "6px 10px",
+    maxWidth: "88%",
     fontSize: 12,
     color: tokens.accentText,
     fontStyle: "italic" as const,
@@ -918,11 +963,11 @@ const styles: Record<string, React.CSSProperties> = {
   },
   actionBar: {
     display: "flex",
-    gap: 4,
-    marginTop: 4,
-    padding: "3px 6px",
+    gap: 2,
+    marginTop: 3,
+    padding: "2px 4px",
     background: tokens.bgMuted,
-    borderRadius: 6,
+    borderRadius: tokens.radiusSm,
   },
   editWrap: {
     display: "flex",
@@ -949,7 +994,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   editBtn: {
     padding: "6px 12px",
-    borderRadius: 6,
+    borderRadius: tokens.radiusSm,
     fontSize: 12,
     cursor: "pointer",
   },
@@ -959,10 +1004,13 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 12,
     color: tokens.textSecondary,
     cursor: "pointer",
-    padding: "2px 6px",
-    borderRadius: 4,
+    padding: "3px 5px",
+    borderRadius: tokens.radiusSm,
     lineHeight: 1,
-    transition: `background ${tokens.transitionFast} ease`,
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    transition: `background ${tokens.transitionFast} ease, color ${tokens.transitionFast} ease`,
   },
   expandBtn: {
     background: "none",
@@ -975,30 +1023,71 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 500,
   },
   toolCard: {
-    marginTop: 8,
+    marginTop: 6,
     border: `1px solid ${tokens.border}`,
-    borderRadius: tokens.radiusMd,
-    padding: 8,
-    background: tokens.bg,
-    fontSize: 12,
+    borderRadius: tokens.radiusSm,
+    padding: "6px 8px",
+    background: tokens.bgElevated,
+    fontSize: 11,
   },
   toolHeader: {
     display: "flex",
     alignItems: "center",
-    gap: 6,
-    marginBottom: 4,
+    gap: 5,
+    marginBottom: 0,
+    minHeight: 18,
+  },
+  toolStatusGlyph: {
+    fontSize: 10,
+    fontWeight: 700,
+    width: 12,
+    textAlign: "center" as const,
+    flexShrink: 0,
   },
   toolName: {
     fontWeight: 600,
     fontFamily: tokens.fontMono,
+    fontSize: 11,
+    color: tokens.text,
+  },
+  toolMeta: {
+    fontSize: 10,
+    color: tokens.accent,
+    marginLeft: 4,
+  },
+  toolExpandHint: {
+    marginLeft: "auto",
+    fontSize: 10,
+    color: tokens.textMuted,
+    flexShrink: 0,
+  },
+  toolInset: {
+    marginTop: 5,
+    padding: "5px 8px",
+    background: tokens.accentSoft,
+    borderRadius: tokens.radiusSm,
+    borderLeft: `2px solid ${tokens.accent}`,
+    fontSize: 11,
+    color: tokens.text,
+  },
+  toolLinkBtn: {
+    fontSize: 10,
+    color: tokens.accent,
+    background: "none",
+    border: "none",
+    cursor: "pointer",
+    padding: "2px 0",
+    marginTop: 1,
+    fontFamily: tokens.font,
   },
   toolResult: {
-    margin: 0,
-    fontSize: 11,
-    maxHeight: 200,
+    margin: "5px 0 0",
+    fontSize: 10,
+    lineHeight: 1.35,
     overflowY: "auto",
-    background: "#fff",
-    padding: 6,
-    borderRadius: 4,
+    background: tokens.bgMuted,
+    padding: "5px 8px",
+    borderRadius: tokens.radiusSm,
+    fontFamily: tokens.fontMono,
   },
 }

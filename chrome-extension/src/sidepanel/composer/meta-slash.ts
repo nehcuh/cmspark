@@ -136,8 +136,8 @@ export const SLASH_PANEL_COMMANDS: ReadonlyArray<{
 }))
 
 /**
- * Composition sections for 装配 P0 bottom-sheet (ADR-020 Axis B).
- * Board is Autonomy — never listed here.
+ * Composition sections for 装配 drawer (ADR-020 Axis B).
+ * Board is Autonomy — never listed here (PR6 / K3).
  */
 export type ComposeSectionId =
   | "skills"
@@ -147,12 +147,25 @@ export type ComposeSectionId =
   | "apps"
   | "history"
 
+/** Visual group in full 装配 drawer (PR6). */
+export type ComposeSectionGroup = "capability" | "connect" | "record"
+
 export type ComposeSection = {
   id: ComposeSectionId
   /** Host panel opened on tap. */
   panelId: ContextPanelId
+  /** Short English id label (chip-style). */
   label: string
+  /** Product title (ZH) for dense section cards. */
+  titleZh: string
   hint: string
+  group: ComposeSectionGroup
+}
+
+export const COMPOSE_GROUP_LABELS: Record<ComposeSectionGroup, string> = {
+  capability: "能力",
+  connect: "连接与任务",
+  record: "记录",
 }
 
 export const COMPOSE_SECTIONS: ComposeSection[] = [
@@ -160,39 +173,88 @@ export const COMPOSE_SECTIONS: ComposeSection[] = [
     id: "skills",
     panelId: "skills",
     label: "Skills",
-    hint: "激活 / 导入技能 · 挂到当前线程",
+    titleZh: "技能",
+    hint: "激活 / 导入 / Craft",
+    group: "capability",
   },
   {
     id: "knowledge",
     panelId: "knowledge",
     label: "Knowledge",
+    titleZh: "知识",
     hint: "站点 / 全局知识",
+    group: "capability",
   },
   {
     id: "packs",
     panelId: "packs",
     label: "Packs",
+    titleZh: "任务包",
     hint: "任务包与工作区",
+    group: "connect",
   },
   {
     id: "mcp",
     panelId: "mcp",
     label: "MCP",
+    titleZh: "MCP",
     hint: "外部工具服务器",
+    group: "connect",
   },
   {
     id: "apps",
     panelId: "apps",
     label: "Apps",
+    titleZh: "应用",
     hint: "宿主应用白名单（密钥见设置）",
+    group: "connect",
   },
   {
     id: "history",
     panelId: "history",
     label: "History",
+    titleZh: "历史",
     hint: "本线程操作历史",
+    group: "record",
   },
 ]
+
+/** Surface axis label for §4.5 attach-target copy. */
+export function surfaceLxLabel(level: CapabilityLevel): string {
+  switch (level) {
+    case "chat":
+      return "L0 聊"
+    case "browser":
+      return "L1 网页"
+    case "computer":
+      return "L2 计算机"
+  }
+}
+
+/**
+ * Per-section attach target (§4.5): Composition attaches to current thread + Surface.
+ * Shown on every 装配 section so Composition ≠ deeper agent / Autonomy.
+ */
+export function composeAttachLine(level: CapabilityLevel): string {
+  return `挂到当前线程 · Surface ${surfaceLxLabel(level)}`
+}
+
+/** Ordered groups present in COMPOSE_SECTIONS (stable UI order). */
+export function composeSectionGroups(): ComposeSectionGroup[] {
+  const seen = new Set<ComposeSectionGroup>()
+  const order: ComposeSectionGroup[] = []
+  for (const s of COMPOSE_SECTIONS) {
+    if (!seen.has(s.group)) {
+      seen.add(s.group)
+      order.push(s.group)
+    }
+  }
+  return order
+}
+
+export function composeSectionsInGroup(group: ComposeSectionGroup): ComposeSection[] {
+  return COMPOSE_SECTIONS.filter((s) => s.group === group)
+}
 
 /** ComposerDock chip action. */
 export type ComposerChipAction =

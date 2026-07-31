@@ -80,6 +80,8 @@ test("§4.5 装配 sections are Composition only — no board", () => {
   for (const need of ["skills", "knowledge", "packs", "mcp", "apps", "history"] as const) {
     assert.ok(ids.includes(need), `装配 missing ${need}`)
   }
+  // PR6 full cards still Composition-only
+  assert.ok(COMPOSE_SECTIONS.every((s) => s.titleZh && s.group))
 })
 
 test("§4.4 composer chips by level (≤3, no Abort)", () => {
