@@ -409,6 +409,27 @@
   {
     "type": "function",
     "function": {
+      "name": "ensure_project_dir",
+      "description": "Create a session project folder for reports/docs BEFORE writing files via MCP filesystem. Prefer when the user wants deliverables saved on disk. If the thread has workspace_root, creates under that workspace; otherwise creates under ~/CMspark-projects/<name>/. Returns absolute path. Use create_directory only for extra subfolders under this path. Do NOT invent nested paths without calling this first.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Project folder name (e.g. 中国量子计算_report). Path separators stripped."
+          },
+          "prefer": {
+            "type": "string",
+            "description": "auto (default) | workspace | home — where to place the folder"
+          }
+        },
+        "required": ["name"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
       "name": "shell_exec",
       "description": "Run ONE shell command on the companion host (enterprise shell module). Always requires user confirmation (confirm_per_command). Prefer workspace_* tools for reading repo files. Do not use for unauthorized network scanning.",
       "parameters": {

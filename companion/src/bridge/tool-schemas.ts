@@ -97,6 +97,10 @@ export const TOOL_ARG_SCHEMAS: Record<string, z.ZodTypeAny> = {
   workspace_read_file: z.object({
     path: z.string().min(1),
   }),
+  ensure_project_dir: z.object({
+    name: z.string().min(1).max(120),
+    prefer: z.enum(["auto", "workspace", "home"]).optional(),
+  }),
   shell_exec: z.object({
     command: z.string().min(1).max(8000),
     cwd: z.string().optional(),
