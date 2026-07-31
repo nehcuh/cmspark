@@ -7,6 +7,10 @@ import { useAgentStore } from "../store/agentStore"
 import type { SecurityConfirmationRequest } from "../types"
 import { tokens, riskColorDark, riskLabel } from "../ui/tokens"
 
+/** Darker red ink for compact confirm on soft dangerSurface (~WCAG AA at 11px). */
+const COMPACT_DANGER_INK = "#b91c1c"
+const COMPACT_DANGER_BORDER = "#991b1b"
+
 export function MinimalConfirm({ compact = false }: { compact?: boolean } = {}) {
   const { state, dispatch } = useAgentStore()
   const queue = state.pendingSecurityConfirmations
@@ -93,6 +97,7 @@ export function MinimalConfirm({ compact = false }: { compact?: boolean } = {}) 
         : "同类企业工具"
 
   // FocusBand compact (G3): soft danger surface — high-contrast actions, not solid red bar.
+  // Dual-review nits: darker risk text (≥AA on tint), solid 停止 outline.
   if (compact) {
     return (
       <div
@@ -101,9 +106,9 @@ export function MinimalConfirm({ compact = false }: { compact?: boolean } = {}) 
           alignItems: "center",
           gap: 6,
           flexWrap: "nowrap",
-          padding: "8px 10px",
+          padding: "6px 10px",
           background: "transparent",
-          color: tokens.danger,
+          color: COMPACT_DANGER_INK,
           fontSize: 11,
           fontFamily: tokens.font,
           minHeight: 40,
@@ -118,7 +123,7 @@ export function MinimalConfirm({ compact = false }: { compact?: boolean } = {}) 
           style={{
             fontWeight: 700,
             letterSpacing: "0.01em",
-            color: tokens.danger,
+            color: COMPACT_DANGER_INK,
             flex: 1,
             minWidth: 0,
             overflow: "hidden",
@@ -181,9 +186,9 @@ export function MinimalConfirm({ compact = false }: { compact?: boolean } = {}) 
           type="button"
           style={{
             ...btnCompact,
-            background: "transparent",
-            color: tokens.danger,
-            border: "1px solid rgba(220, 38, 38, 0.35)",
+            background: tokens.dangerSoft,
+            color: COMPACT_DANGER_INK,
+            border: `1px solid ${COMPACT_DANGER_BORDER}`,
           }}
           onClick={() => respond(false, true)}
           title={stopTargetId ? `停止 ${stopTargetId.slice(0, 8)}…` : "停止当前线程"}

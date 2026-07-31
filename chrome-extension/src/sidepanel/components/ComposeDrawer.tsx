@@ -3,7 +3,13 @@
 // Focus trap via Modal; landfill one-surface rule enforced by parent.
 // G4: MD3-ish sheet (radiusSheet + soft scrim) + settings-list groups.
 
-import { useRef, type CSSProperties, type ComponentType, type RefObject } from "react"
+import {
+  useRef,
+  useState,
+  type CSSProperties,
+  type ComponentType,
+  type RefObject,
+} from "react"
 import {
   COMPOSE_GROUP_LABELS,
   COMPOSE_SECTIONS,
@@ -153,31 +159,64 @@ function SectionGroup({
                 borderTop: index > 0 ? `1px solid ${tokens.border}` : undefined,
               }}
             >
-              <button
-                ref={section.id === firstSectionId ? firstBtnRef : undefined}
-                type="button"
-                style={styles.sectionBtn}
-                onClick={() => onOpen(section)}
-                data-testid={`compose-section-${section.id}`}
-              >
-                <span style={styles.iconWrap} aria-hidden>
-                  <Icon size={16} />
-                </span>
-                <span style={styles.sectionBody}>
-                  <span style={styles.sectionTitleRow}>
-                    <span style={styles.sectionTitleZh}>{section.titleZh}</span>
-                    <span style={styles.sectionLabelEn}>{section.label}</span>
-                  </span>
-                  <span style={styles.sectionHint}>{section.hint}</span>
-                  <span style={styles.attachLine}>{attachLine}</span>
-                </span>
-                <IconChevronRight size={14} style={{ color: tokens.textMuted, flexShrink: 0 }} />
-              </button>
+              <SectionRowButton
+                section={section}
+                Icon={Icon}
+                attachLine={attachLine}
+                buttonRef={section.id === firstSectionId ? firstBtnRef : undefined}
+                onOpen={onOpen}
+              />
             </li>
           )
         })}
       </ul>
     </section>
+  )
+}
+
+/** Settings-list row with hover (inline styles cannot use :hover). */
+function SectionRowButton({
+  section,
+  Icon,
+  attachLine,
+  buttonRef,
+  onOpen,
+}: {
+  section: ComposeSection
+  Icon: ComponentType<IconProps>
+  attachLine: string
+  buttonRef?: RefObject<HTMLButtonElement>
+  onOpen: (section: ComposeSection) => void
+}) {
+  const [hovered, setHovered] = useState(false)
+  return (
+    <button
+      ref={buttonRef}
+      type="button"
+      style={{
+        ...styles.sectionBtn,
+        background: hovered ? tokens.bgHover : "transparent",
+      }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      onFocus={() => setHovered(true)}
+      onBlur={() => setHovered(false)}
+      onClick={() => onOpen(section)}
+      data-testid={`compose-section-${section.id}`}
+    >
+      <span style={styles.iconWrap} aria-hidden>
+        <Icon size={16} />
+      </span>
+      <span style={styles.sectionBody}>
+        <span style={styles.sectionTitleRow}>
+          <span style={styles.sectionTitleZh}>{section.titleZh}</span>
+          <span style={styles.sectionLabelEn}>{section.label}</span>
+        </span>
+        <span style={styles.sectionHint}>{section.hint}</span>
+        <span style={styles.attachLine}>{attachLine}</span>
+      </span>
+      <IconChevronRight size={14} style={{ color: tokens.textMuted, flexShrink: 0 }} />
+    </button>
   )
 }
 

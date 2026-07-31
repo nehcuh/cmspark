@@ -168,10 +168,13 @@ const cardShell: CSSProperties = {
 }
 
 const styles: Record<string, CSSProperties> = {
-  /** Inset so card floats (G3); content still ≤ FOCUS_BAND_MAX_PX */
+  /**
+   * Horizontal float only (G3). Keep vertical pad minimal so outer+card
+   * footprint stays near FOCUS_BAND_MAX_PX (dual-review footprint nit).
+   */
   outer: {
     flexShrink: 0,
-    padding: "6px 10px 0",
+    padding: "2px 10px 0",
   },
   cardConfirm: {
     ...cardShell,

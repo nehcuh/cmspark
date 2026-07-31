@@ -208,7 +208,10 @@ export function StatusRail({
             ...(menuOpen || nbState === "warning"
               ? {
                   background: nbState === "warning" ? tokens.warningSoft : tokens.bgActive,
-                  borderColor: nbState === "warning" ? "#fcd34d" : "#bfdbfe",
+                  borderColor:
+                    nbState === "warning"
+                      ? "rgba(217, 119, 6, 0.45)"
+                      : tokens.modeBrowserLine,
                 }
               : {}),
           }}
@@ -389,7 +392,10 @@ const railStyles: Record<string, CSSProperties> = {
     minWidth: 212,
     maxHeight: 360,
     overflowY: "auto",
-    background: tokens.bgElevated,
+    // Frosted to match StatusRail glass language (dual-review nit restore)
+    background: "rgba(255, 255, 255, 0.96)",
+    backdropFilter: "saturate(1.25) blur(12px)",
+    WebkitBackdropFilter: "saturate(1.25) blur(12px)",
     border: `1px solid ${tokens.borderStrong}`,
     borderRadius: tokens.radiusMenu,
     boxShadow: tokens.shadowLg,
