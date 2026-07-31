@@ -572,12 +572,12 @@ export function createToolExecutor(ws: WebSocket) {
           return result
         }
         // isToolAllowed hard gate (Mission Pack / scene tool surface)
+        // Orthogonal to god-mode / auto_approve (ADR-014 + scene UX SoT).
         if (!threadManager.isToolAllowed(actingThreadId, toolName)) {
           const packId = typeof th?.mission_pack_id === "string" ? th.mission_pack_id : null
           const toolLabel = toolDisplayNameZh(toolName)
-          const sceneHint = packId
-            ? `当前场景不允许「${toolLabel}」。可退出场景后重试，或改用场景内允许的工具。`
-            : `当前对话不允许「${toolLabel}」（工具白名单）。`
+          const { sceneToolNotAllowedError } = await import("./capability/user-gate-copy")
+          const sceneHint = sceneToolNotAllowedError(toolLabel, packId)
           const result = {
             success: false,
             error: sceneHint,
@@ -587,6 +587,7 @@ export function createToolExecutor(ws: WebSocket) {
               tool_name: toolName,
               mission_pack_id: packId,
               suggested_action: packId ? "unapply_pack" : "check_tool_whitelist",
+              user_hint_zh: sceneHint.split("\n")[0],
             },
           }
           logger.warn("security.tool_whitelist_blocked", {

@@ -424,10 +424,15 @@ export function SettingsSlideout() {
                 <strong>确认开关</strong>（下方安全设置）：危险操作要不要弹窗确认；
                 <em>不会</em>放开场景已关掉的工具。
               </li>
+              <li>
+                <strong>工作区</strong>（场景页「选择工作区」）：本机读写的场地绑定；
+                God-mode / 自动批准<strong>都不会</strong>代替选文件夹。
+              </li>
             </ul>
             <div style={{ ...styles.helpText, marginTop: 8 }}>
               安装技能请用 <strong>Skills → 导入 ZIP / 文件夹</strong>，不要点「应用安全审查 → 用于本对话」。
               网络扫描目标与本对话授权见下方「网络扫描」。
+              若工具提示「需要先绑定工作区」，请去场景页选文件夹，而不是再开 God-mode。
             </div>
           </div>
 
