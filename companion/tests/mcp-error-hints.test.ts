@@ -71,3 +71,33 @@ test("unknown error is prefixed with the server/tool context for unambiguous att
     "must include server/tool so multi-server setups can attribute the failure")
   assert.match(out, /something completely unexpected happened/)
 })
+
+test("parent directory missing suggests create_directory stepwise (thread 6zhrh6)", () => {
+  const out = enhanceMcpError(
+    "MCP filesystem/create_directory returned error: Parent directory does not exist: /Users/huchen/中国量子计算_report",
+    { serverName: "filesystem", toolName: "create_directory" },
+    { path: "/Users/huchen/中国量子计算_report/chapters" },
+  )
+  assert.match(out, /parent directory does not exist/i)
+  assert.match(out, /create parent|create_directory|ensure_project_dir/i)
+})
+
+test("ENOENT on read tool does not push mkdir guidance", () => {
+  const out = enhanceMcpError(
+    "ENOENT: no such file or directory",
+    { serverName: "filesystem", toolName: "read_text_file" },
+    { path: "/Users/huchen/missing.txt" },
+  )
+  assert.match(out, /not found|Underlying/i)
+  assert.doesNotMatch(out, /create parent folders first with create_directory/)
+})
+
+test("allowlist denial points user to MCP panel (not god-mode)", () => {
+  const out = enhanceMcpError(
+    "Access denied - path outside allowed directories: /secret",
+    { serverName: "filesystem", toolName: "write_file" },
+    { path: "/secret/x" },
+  )
+  assert.match(out, /allowlist|allow paths|MCP panel/i)
+  assert.match(out, /god-mode/i)
+})

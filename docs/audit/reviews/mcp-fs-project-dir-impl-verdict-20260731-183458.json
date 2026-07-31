@@ -1,0 +1,11 @@
+{
+  "batch": "mcp-fs-project-dir-impl",
+  "pr": 99,
+  "branch": "fix/mcp-fs-path-ux",
+  "mode": "pi-only",
+  "pi": "APPROVE_WITH_NITS",
+  "claude": null,
+  "artifact": "docs/audit/reviews/mcp-fs-project-dir-impl-pi-20260731-183458.md",
+  "diff": "docs/audit/reviews/mcp-fs-project-dir-impl-diff-20260731-183458.patch",
+  "time": "2026-07-31T10:40:28Z"
+}

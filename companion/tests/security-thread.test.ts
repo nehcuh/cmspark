@@ -279,6 +279,20 @@ test("classifyError workspace_root not set is recoverable (Mission Pack DevSec)"
   assert.equal(classifyError("module_disabled:devsec-workspace"), "recoverable")
 })
 
+test("classifyError MCP parent directory / allowlist path is recoverable", () => {
+  assert.equal(
+    classifyError(
+      "MCP filesystem/create_directory returned error: Parent directory does not exist: /Users/huchen/foo",
+      { toolName: "mcp__filesystem__create_directory" },
+    ),
+    "recoverable",
+  )
+  assert.equal(
+    classifyError("Access denied - path outside allowed directories: /etc"),
+    "recoverable",
+  )
+})
+
 test("classifyError ENOENT / no such file is recoverable (workspace missing path)", () => {
   // Regression n2486l: workspace_read_file on a non-existent path returned
   // raw Node "ENOENT: no such file or directory, stat '…'" which defaulted to

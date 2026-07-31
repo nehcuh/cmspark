@@ -7,6 +7,7 @@ function toolDisplayNameZh(toolName: string): string {
   const map: Record<string, string> = {
     workspace_list_dir: "列出工作区文件",
     workspace_read_file: "读取工作区文件",
+    ensure_project_dir: "创建会话项目目录",
     evaluate: "在页面执行脚本",
     shell_exec: "执行本机命令",
     netsec_port_scan: "端口扫描",
@@ -2079,6 +2080,7 @@ export function createToolExecutor(ws: WebSocket) {
       "record_experience",
       "workspace_list_dir",
       "workspace_read_file",
+      "ensure_project_dir",
       "shell_exec",
       "netsec_port_scan",
       // ADR-015 orchestrator
@@ -3099,6 +3101,42 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
       if (!params.path) return { success: false, error: "path required" }
       return workspaceReadFile(thread?.workspace_root, params.path)
     }
+    case "ensure_project_dir": {
+      const { ensureProjectDir } = await import("./capability/project-dir")
+      const tid = params.__thread_id || params._thread_id
+      const thread = tid ? threadManager.get(tid) : null
+      const name = typeof params.name === "string" ? params.name : ""
+      if (!name.trim()) return { success: false, error: "name required" }
+      const prefer =
+        params.prefer === "workspace" || params.prefer === "home" || params.prefer === "auto"
+          ? params.prefer
+          : "auto"
+      const r = ensureProjectDir({
+        name,
+        workspaceRoot: (thread as any)?.workspace_root ?? null,
+        prefer,
+      })
+      if (!r.ok) {
+        return {
+          success: false,
+          error: r.error,
+          data: { error_code: "PROJECT_DIR_FAILED", suggested_action: "pick_workspace_or_retry" },
+        }
+      }
+      return {
+        success: true,
+        data: {
+          path: r.path,
+          created: r.created,
+          source: r.source,
+          base: r.base,
+          relative: r.relative,
+          hint:
+            "Write files under this path with MCP filesystem (create_directory for subfolders if needed). " +
+            "If MCP reports Access denied, the user can approve adding this directory to allowlist.",
+        },
+      }
+    }
     case "shell_exec": {
       if (params.security_token) {
         const valid = securityPolicy.validateToken(params.security_token, "shell_exec", params.command || "")
@@ -4072,40 +4110,142 @@ async function executeMcpTool(
   }
 
   const callStartedAt = Date.now()
-  try {
-    const result = await manager.callTool(route, params || {}, signal)
-    const durationMs = Date.now() - callStartedAt
-    broadcastToClients({
-      type: "mcp.tool_call_finished",
-      serverName: route.serverName,
-      toolName: route.toolName,
-      namespacedName: toolName,
-      durationMs,
-      success: !result?.isError,
-    })
-    if (result?.isError) {
-      const errMsg = extractMcpError(result)
-      return { success: false, error: `MCP ${route.serverName}/${route.toolName} returned error: ${errMsg}` }
+  const runOnce = async (): Promise<{ success: boolean; data?: any; error?: string; rawErr?: string }> => {
+    try {
+      const result = await manager.callTool(route, params || {}, signal)
+      if (result?.isError) {
+        const errMsg = extractMcpError(result)
+        return {
+          success: false,
+          rawErr: errMsg,
+          error: enhanceMcpError(
+            `MCP ${route.serverName}/${route.toolName} returned error: ${errMsg}`,
+            route,
+            params,
+          ),
+        }
+      }
+      return { success: true, data: result?.content ?? result }
+    } catch (err: any) {
+      const rawErr = err?.message || String(err)
+      return { success: false, rawErr, error: enhanceMcpError(rawErr, route, params) }
     }
-    return { success: true, data: result?.content ?? result }
-  } catch (err: any) {
-    // Audit item 18: surface actionable hints so the LLM can self-correct
-    // instead of blindly retrying with identical args. Also emit the
-    // tool_call_finished notification with success:false so the UI flags the
-    // failed call (previously only the success path emitted it).
-    const durationMs = Date.now() - callStartedAt
-    broadcastToClients({
-      type: "mcp.tool_call_finished",
-      serverName: route.serverName,
-      toolName: route.toolName,
-      namespacedName: toolName,
-      durationMs,
-      success: false,
-      error: err?.message || String(err),
-    })
-    const rawErr = err?.message || String(err)
-    return { success: false, error: enhanceMcpError(rawErr, route, params) }
   }
+
+  let outcome = await runOnce()
+  const durationMs = Date.now() - callStartedAt
+
+  // P2: access denied under home → L2 offer to add allow-dir, then one retry
+  if (!outcome.success && outcome.rawErr) {
+    const expanded = await tryExpandFilesystemAllowDirOnDenial({
+      route,
+      params,
+      rawErr: outcome.rawErr,
+      toolName,
+      ws,
+    })
+    if (expanded.retried) {
+      if (expanded.ok) {
+        outcome = await runOnce()
+      } else if (expanded.error) {
+        outcome = {
+          success: false,
+          error: enhanceMcpError(expanded.error, route, params),
+        }
+      }
+    }
+  }
+
+  broadcastToClients({
+    type: "mcp.tool_call_finished",
+    serverName: route.serverName,
+    toolName: route.toolName,
+    namespacedName: toolName,
+    durationMs: Date.now() - callStartedAt,
+    success: !!outcome.success,
+    ...(outcome.success ? {} : { error: outcome.error }),
+  })
+  if (outcome.success) return { success: true, data: outcome.data }
+  return { success: false, error: outcome.error || "MCP call failed" }
+}
+
+/**
+ * When MCP filesystem denies a path under the user home, ask the user (L2) whether
+ * to add that directory to the server's allowlist, then hot-reload + signal retry.
+ */
+async function tryExpandFilesystemAllowDirOnDenial(opts: {
+  route: { serverName: string; toolName: string }
+  params: any
+  rawErr: string
+  toolName: string
+  ws: WebSocket
+}): Promise<{ retried: boolean; ok?: boolean; error?: string }> {
+  const { canOfferAllowDirExpand, addFilesystemAllowDir } = await import("./mcp/allow-dir-expand")
+
+  // Pre-check filesystem server + home path BEFORE L2 (Pi nit: no misleading prompt)
+  const pre = canOfferAllowDirExpand({
+    serverName: opts.route.serverName,
+    rawErr: opts.rawErr,
+    params: opts.params,
+  })
+  if (!pre.offer) {
+    // Not applicable — leave original error; do not claim we retried
+    return { retried: false }
+  }
+
+  if (opts.ws.readyState !== WebSocket.OPEN) {
+    return {
+      retried: true,
+      ok: false,
+      error:
+        `MCP path denied (${pre.dir}); extension disconnected — cannot ask to expand allowlist. ` +
+        `Open Side Panel → MCP to add the path manually. Underlying: ${opts.rawErr}`,
+    }
+  }
+
+  logger.info("mcp.allow_dir.propose", {
+    server: opts.route.serverName,
+    tool: opts.route.toolName,
+    dir: pre.dir,
+  })
+
+  const decision = await securityConfirmations.request(
+    (data) => {
+      if (opts.ws.readyState === WebSocket.OPEN) opts.ws.send(JSON.stringify(data))
+    },
+    {
+      toolName: opts.toolName,
+      dangerousApis: ["mcp-allow-dir-expand"],
+      code:
+        `允许 MCP filesystem 访问目录：\n${pre.dir}\n\n` +
+        `仅把该子目录加入 allowlist（须在你的主目录下，不是整盘）。拒绝则保持当前配置。`,
+      riskLevel: "medium",
+      autoConfirmEligible: false,
+      criticalApis: ["mcp-allow-dir-expand"],
+    },
+    { originWs: opts.ws },
+  )
+
+  if (!decision.approved) {
+    logger.info("mcp.allow_dir.denied", { dir: pre.dir, reason: decision.reason })
+    return {
+      retried: true,
+      ok: false,
+      error:
+        `User declined adding MCP allow-dir ${pre.dir}. Access denied. Underlying: ${opts.rawErr}`,
+    }
+  }
+
+  const added = await addFilesystemAllowDir(opts.route.serverName, pre.dir)
+  if (!added.ok) {
+    return {
+      retried: true,
+      ok: false,
+      error: `Failed to expand allow-dir: ${added.error}. Underlying: ${opts.rawErr}`,
+    }
+  }
+  logger.info("mcp.allow_dir.added", { server: opts.route.serverName, dir: pre.dir })
+  return { retried: true, ok: true }
 }
 
 /**
@@ -4145,6 +4285,43 @@ export function enhanceMcpError(
   // Capability-gating error — caller is asking for something the server doesn't support.
   if (/does not advertise/i.test(rawErr)) {
     return `${rawErr} Use a different tool that the server actually exposes.`
+  }
+  // Official filesystem server: create nested path without parents (thread 6zhrh6).
+  // Keep tokens "parent directory" / "does not exist" for classifyError recoverability.
+  // Write-like tools get mkdir guidance; read tools get "path missing / list parent" (Pi nit 5).
+  if (/parent directory does not exist/i.test(rawErr) || /ENOENT/i.test(rawErr)) {
+    const pathHint =
+      params && typeof params === "object"
+        ? String((params as any).path || (params as any).parent || "")
+        : ""
+    const pathPart = pathHint ? ` (path: ${pathHint})` : ""
+    const writeLike = /write|create|mkdir|move|copy|edit|append|delete|remove|unlink|rename|put|save/i.test(
+      route.toolName || "",
+    )
+    if (writeLike || /parent directory does not exist/i.test(rawErr)) {
+      return (
+        `MCP filesystem path missing parent${pathPart}. ` +
+        `parent directory does not exist — call ensure_project_dir first, or create_directory ` +
+        `on each missing segment under an allowed root, then retry the write. ` +
+        `Do not invent paths outside MCP allow-dirs. Underlying: ${rawErr}`
+      )
+    }
+    return (
+      `MCP filesystem path not found${pathPart}. ` +
+      `List the parent directory or correct the path, then retry. Underlying: ${rawErr}`
+    )
+  }
+  // Path outside allowlist — user may need MCP panel allow-dir (not god-mode).
+  if (
+    /access denied|not allowed|outside|allowed director/i.test(rawErr) ||
+    /path.*not.*within/i.test(rawErr)
+  ) {
+    return (
+      `MCP ${route.serverName} denied path access (not in allowlist or roots). ` +
+      `Ask the user to open Side Panel → MCP → edit filesystem server → add the parent directory ` +
+      `to allow paths (or use a path under already-allowed roots such as home). ` +
+      `God-mode does not expand MCP allow-dirs. Underlying: ${rawErr}`
+    )
   }
   // Fallback — keep the original but prefix with context so the LLM knows which
   // server/tool produced it (multi-server setups would otherwise be ambiguous).
