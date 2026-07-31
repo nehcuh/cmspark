@@ -209,7 +209,13 @@ function resolvePackOrigin(manifest: PackManifest): PackOrigin {
     return manifest.origin
   }
   // Heuristic: ids we ship under packs/builtin
-  if (manifest.id === "appsec-prd-review" || manifest.author === "cmspark") return "builtin"
+  if (
+    manifest.id === "appsec-prd-review" ||
+    manifest.id === "netsec-port-survey" ||
+    manifest.author === "cmspark"
+  ) {
+    return "builtin"
+  }
   return "installed"
 }
 
