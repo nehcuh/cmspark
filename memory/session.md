@@ -2,6 +2,15 @@
 
 ## Current Session
 
+### S27 (2026-08-01) [#au4dch 三痛点 → UX 优化方向文档]
+- **触发**：会话 #au4dch（装 Black-cat + 渗透）复盘三点：重复下载 / 侧栏像结束 / 黑窗无输出
+- **证据**：~190× shell_exec、0× spawn_worker、最长 ~135s 超时；processingLabel 看错 tool 消息结构；shell 无 windowsHide / 无 progress；网页 PTY 仅有规格
+- **交付**：`docs/optimization-plan-au4dch-ux-shell-download.md`（DL/ST/SH 两轨 + Wave 0–4）
+- **挂接**：主 plan post-adr-020 §C/D/E + 执行序；`docs/README` 后续工作表
+- **默认下一枪**：Wave 1（windowsHide + processingLabel + tool.progress）→ Wave 2 下载去重 → Wave 3 舰队态 → Wave 4 PTY epic
+- **下次**：用户确认后实现 Wave 1；勿把 PTY 与止血混 PR
+- Recorded: yes — au4dch UX 子轨
+
 ### S26 (2026-07-31 ~17:30) [场景可配 + 侧栏 UX + 技能扫描 + DMG]
 - **合 main**：#93 场景 P0 UX；#94 用户场景（system prompt / skill_refs / MCP + AI suggest）；#95 知识批量删除 + 技能模式勾选语义 + StatusRail 顶栏 polish
 - **用户场景 Composition**：`origin:user` pack；apply 默认 `tools.unchanged` + manual skills/MCP；✨ AI 推荐 allowlist-only；另存为我的；保存并用于本对话

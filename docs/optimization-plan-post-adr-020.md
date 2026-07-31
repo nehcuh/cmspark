@@ -20,8 +20,10 @@
 | **文档重梳** | 07-28 P0 事实错误 + 导航 + 用户指南 + Phase4 归档：**已合 main**（PR #80 一带） |
 | **代码安全（07-25 High 簇）** | 选择器注入、config 预鉴权、CU session-trust 旁路、stream 线程、Stop≠abort、package host 等：**FIXED** |
 | **开放 High/Med 安全** | 见 §B / P1 盘点：**P1-1 FIXED（PR #85，合 main 后生效）**；**P1-2/3/4 仍 OPEN** |
-| **Windows 平台 P0** | **已合 main** `fd2d4a1`：osascript 非 darwin 过滤 + L2 前 early-reject；MCP filesystem 缺 allow-dir 时注入 home。**P1 `browser_download` 未做**（见 plan） |
+| **Windows 平台 P0** | **已合 main** `fd2d4a1`：osascript 非 darwin 过滤 + L2 前 early-reject；MCP filesystem 缺 allow-dir 时注入 home |
+| **browser_download P1.0** | **已合 main**（PR #89）：chrome.downloads + Downloads 沙箱 + BUSY；**去重 / prefer_existing 见 UX 子轨** |
 | **工程 backlog 旧文件** | post-v0.3.0 plan **过时**（未含 Pack/CU/Multi-agent/ADR-020）→ 本文 supersede |
+| **#au4dch UX 子轨** | [optimization-plan-au4dch-ux-shell-download.md](optimization-plan-au4dch-ux-shell-download.md) — 下载去重 · 长 tool 运行态 · shell 黑窗/PTY（**不**取代本文 A–E） |
 
 ### 一句话定位（做事准则）
 
@@ -105,6 +107,7 @@ E  Autonomy       仅 defer 表内；spawn 保持 L2 HITL
 | G10 SSO 自动复用 | deferred | S:L1 + C |
 | G11 Type B 工具链 skill | deferred | C + A；勿与新 runtime 混淆 |
 | G13 skill-craft | ✅ | 已实现 |
+| **下载去重 / prefer_existing** | 🔶 UX 子轨 Wave 2 | [#au4dch DL-*](optimization-plan-au4dch-ux-shell-download.md)：`downloads.find` + `browser_download` 复用已有 Downloads |
 
 每个 Pack/模块 PR 必须填 **能力声明**（PR template）。
 
@@ -119,6 +122,8 @@ E  Autonomy       仅 defer 表内；spawn 保持 L2 HITL
 | Native HUD P3a spike | Task 1–7 源码/ship note 已合 | 可选：env 真机 checklist；**P3a-full** ConfirmElevated 对等 — 仍是 L2 **通道**，非第二 runtime |
 | 双轨截图洪水 | **NO-GO** | 直至明确设计 + dual-review |
 | codesign / notarize / Authenticode | 🔶 长杆 | 发布体验；不阻塞 B/C |
+| **Shell one-shot 止血**（windowsHide + progress） | 🔶 UX 子轨 Wave 1 | [#au4dch 计划 SH-A*](optimization-plan-au4dch-ux-shell-download.md) — **不**等于交互 PTY |
+| **网页 Shell（node-pty + Cockpit xterm）** | 🔶 epic Wave 4 | 规格已有；独立 dual-review；禁止塞进 Side Panel 半成品 |
 
 ---
 
@@ -132,6 +137,7 @@ E  Autonomy       仅 defer 表内；spawn 保持 L2 HITL
 | shared-observer / auto-spawn / 真 wait_workers / 自由文本 ask_user | deferred | ADR-015/020 |
 | G12 Type C Skill | deferred | **≠** 已交付 worker 编排；单独设计前不做 |
 | G14 历史重放 | deferred | A |
+| **长 tool / 舰队运行态可见** | 🔶 UX 子轨 Wave 1+3 | [#au4dch ST-*](optimization-plan-au4dch-ux-shell-download.md)：processingLabel 修复、`tool.progress`、主线程「舰队运行中」 |
 
 ---
 
@@ -152,11 +158,17 @@ E  Autonomy       仅 defer 表内；spawn 保持 L2 HITL
 ## 2. 推荐执行序（价值 × 风险 × 依赖）
 
 1. **A 收尾**（本批文档/模板）→ ✅；所有 PR 走能力声明  
-2. **合 PR #85**（P1-1）→ **B 下一枪 P1-2 → P1-3 → P1-4**  
-3. **C** 有明确业务场景时 Pack-first 交付（与 B 可并行，但 **不得**用新一级 UI 绕过）  
-4. **D** L2 真机 / HUD full 按用户痛点；Windows **P1 browser_download**（spike 门）按痛点  
-5. **E** 仅当有明确编排缺口且 dual-review 批准 defer 表内项  
-6. **F** 插入发布前硬缺口（e2e / Node 对齐）
+2. **B Trust**：P1 四条多数已合 main（以盘点文档为准）；残留 argv / 回归测按盘点收尾  
+3. **#au4dch UX 子轨**（用户痛点，可与 B 残留并行，**不改 L2 语义**）：  
+   - Wave 1：shell `windowsHide` + 运行态/`tool.progress`  
+   - Wave 2：下载 find / prefer_existing  
+   - Wave 3：舰队主线程运行态  
+   - Wave 4：网页 PTY epic（**单独** dual-review）  
+   细节 → [optimization-plan-au4dch-ux-shell-download.md](optimization-plan-au4dch-ux-shell-download.md)  
+4. **C** 有明确业务场景时 Pack-first 交付（与 B 可并行，但 **不得**用新一级 UI 绕过）  
+5. **D** L2 真机 / HUD full 按用户痛点；Shell 交互终端归 Wave 4 而非「顺手做」  
+6. **E** 仅当有明确编排缺口且 dual-review 批准 defer 表内项（ST-5 属于可见性增强，**不是** auto-spawn）  
+7. **F** 插入发布前硬缺口（e2e / Node 对齐）
 
 **方法论**：worktree → 实现 → 对抗 → `scripts/dual-external-review.sh` → CI 绿 → merge。危险 flag / 确认绑定 / shell 变更 **禁止 waive** 无用户明示。
 
@@ -185,6 +197,7 @@ E  Autonomy       仅 defer 表内；spawn 保持 L2 HITL
 |------|------|
 | 2026-07-29 | 初版：ADR-020 后统一 backlog；P1 四条盘点；PR template + dual-review 能力清单；supersede post-v0.3.0 排序权威 |
 | 2026-07-30 | P1-1 → FIXED（PR #85 pending merge）；main 已合 Windows 平台 P0（osascript 过滤 + MCP home）；下一优先 P1-2；执行序更新 |
+| 2026-08-01 | 挂接 [#au4dch UX 子轨](optimization-plan-au4dch-ux-shell-download.md)（下载去重 · 运行态 · shell 黑窗/PTY）；更正 browser_download P1.0 已合；执行序插入 Wave 1–4 |
 
 ---
 

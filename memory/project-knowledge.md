@@ -215,6 +215,12 @@
 - 诊断 fanout 姐妹流：`.grok/workflows/deep-diagnosis-fanout.rhai`（子系统 10 + 横切 6 + 对抗 16 + 综合）
 - **设计/plan 也可用同一脚本做 Task 0 门**（例：`native-hud-p3a-spike-plan`）；APPROVE_WITH_NITS 后 nits **必须折入文档再写代码**
 
+### #au4dch UX 子轨：下载去重 · 运行态 · Shell 两轨（2026-08-01）
+- 会话证据：单线程长 `shell_exec`（非 spawn_worker）也会被用户感知为「卡住/已结束」；`processingLabel` 只看 last assistant.tool_calls，与 `tool.start`→`role:tool` 结构错位
+- shell 黑窗：`capability/shell.ts` spawn 未 `windowsHide`；stdout 仅 close 后回传 — 先止血（A）再 PTY epic（B），禁止混 PR / 禁止塞 Side Panel 半成品终端
+- 下载：`download-waiter` 故意忽略 pre-existing complete → 需 `downloads.find` / `prefer_existing`，不是再加强制 click
+- 文档：`docs/optimization-plan-au4dch-ux-shell-download.md`（挂 post-adr-020 执行序，不取代 A–E 权威）
+
 ### Trust P1 批 + browser_download：独立 PR + 共享 CI 修 cherry-pick（2026-07-30）
 - Workflows：`.grok/workflows/p1-security-batch-fix.rhai`（P1-1…4）；`browser-download-p1-with-gates.rhai`（spike 门 + 实现 + 双审）
 - **独立分支** 基于 main，勿叠 PR；合入顺序 #90 CI 修 → Trust/功能 → 冲突几乎都在 `p1-security-open-items` 摘要表
