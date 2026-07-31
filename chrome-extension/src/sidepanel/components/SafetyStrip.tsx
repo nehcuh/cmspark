@@ -129,8 +129,10 @@ export function SafetyStrip({ compact = false }: { compact?: boolean } = {}) {
             <IconExternal size={11} />
           </button>
         </div>
-        {/* Compact FocusBand primary = l2_safety only when no pending confirm;
-            if confirm sneaks in, keep MiniConfirm compact so 急停 row above still fits budget. */}
+        {/* Defensive only: FocusBand priority (§4.3) should open compact
+            SafetyStrip only for primary=l2_safety (no pending confirm). If
+            hasConfirm is true here, render MiniConfirm so 急停 row still fits
+            the 80px budget — not the normal Confirm path (that is FocusBand P0). */}
         {hasConfirm && <MinimalConfirm compact />}
       </div>
     )
