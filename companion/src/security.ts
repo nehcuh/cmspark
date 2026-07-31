@@ -687,6 +687,11 @@ export function classifyError(errorMessage: string, context?: { toolName?: strin
     "pick a folder first",
     "module_disabled",
     "workspace path must come from",
+    // Scene (Mission Pack) tool surface — exit scene or use allowed tools
+    "tool_not_allowed",
+    "not in thread tool_whitelist",
+    "当前场景不允许",
+    "可退出场景后重试",
     // Filesystem missing path (Node raw: "ENOENT: no such file or directory, stat …").
     // Note: "not found" above does NOT match "no such file" — they are different
     // English. Without these, workspace_read_file / MCP filesystem on a missing

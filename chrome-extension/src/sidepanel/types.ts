@@ -44,7 +44,7 @@ export interface Thread {
   active_mcp_server_ids?: string[]
   /** Mission Pack currently applied to this thread (null/undefined = none). */
   mission_pack_id?: string | null
-  /** DevSec workspace absolute path (set via 任务包 → 选择工作区). */
+  /** DevSec workspace absolute path (set via 场景 → 选择工作区). */
   workspace_root?: string | null
   /** ADR-015 multi-agent */
   agent_role?: "normal" | "orchestrator" | "worker"

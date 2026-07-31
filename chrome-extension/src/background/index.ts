@@ -871,6 +871,7 @@ function setupMessageHandlers() {
       case "pack.list":
       case "pack.install":
       case "pack.apply":
+      case "pack.unapply":
       case "pack.uninstall":
       case "modules.list":
       case "modules.set_enabled":

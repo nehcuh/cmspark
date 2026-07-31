@@ -11,6 +11,7 @@ import {
   useContextPanelHost,
 } from "./components/ContextPanelHost"
 import { FocusBand } from "./components/FocusBand"
+import { SceneStatusBar } from "./components/SceneStatusBar"
 import { SettingsSlideout } from "./components/SettingsSlideout"
 import { McpServerForm } from "./components/McpServerForm"
 import { SlashCommandPopover } from "./components/SlashCommandPopover"
@@ -156,6 +157,8 @@ function AppContent() {
       />
       {/* UIUX v2 §4.3 FocusBand: Confirm > L2 Safety+急停 > Fleet > L1 Context; ≤80px */}
       <FocusBand capabilityLevel={level} />
+      {/* Scene / workspace status — Mission Pack UX redesign P0 */}
+      <SceneStatusBar />
       <ChatView />
       {/* R3: ComputerTaskBar removed — step timeline only in Cockpit dual-track */}
       {/* UIUX v2 §4.7 M3/PR5: permanent BottomBar strip behind ui.bottomBarStrip (default off). Host is SoT. */}

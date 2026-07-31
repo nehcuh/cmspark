@@ -2,6 +2,26 @@
 
 import { WebSocketServer, WebSocket } from "ws"
 
+/** User-facing tool labels for scene whitelist errors (product SoT §14.1). */
+function toolDisplayNameZh(toolName: string): string {
+  const map: Record<string, string> = {
+    workspace_list_dir: "列出工作区文件",
+    workspace_read_file: "读取工作区文件",
+    evaluate: "在页面执行脚本",
+    shell_exec: "执行本机命令",
+    netsec_port_scan: "端口扫描",
+    host_computer: "电脑操控",
+    host_read: "读取本机应用数据",
+    host_write: "写入本机应用数据",
+    host_app: "启动本机应用",
+    navigate: "打开网页",
+    screenshot: "截图",
+    get_page_text: "读取页面文字",
+    get_page_html: "读取页面 HTML",
+  }
+  return map[toolName] || `工具「${toolName}」`
+}
+
 // Phase 1 W7 — resolve app token from host_read/host_write params for
 // thread-scoped trust + relevantApps in confirmation dialog.
 // Phase 1 W8-windows: platform-aware defaults (win32 uses win.* tokens).
@@ -550,16 +570,29 @@ export function createToolExecutor(ws: WebSocket) {
           logToolFinish(toolCallId, toolName, startedAt, result)
           return result
         }
-        // isToolAllowed hard gate (today's zero call sites was capability theater)
+        // isToolAllowed hard gate (Mission Pack / scene tool surface)
         if (!threadManager.isToolAllowed(actingThreadId, toolName)) {
+          const packId = typeof th?.mission_pack_id === "string" ? th.mission_pack_id : null
+          const toolLabel = toolDisplayNameZh(toolName)
+          const sceneHint = packId
+            ? `当前场景不允许「${toolLabel}」。可退出场景后重试，或改用场景内允许的工具。`
+            : `当前对话不允许「${toolLabel}」（工具白名单）。`
           const result = {
             success: false,
-            error: `tool_not_allowed:${toolName} — not in thread tool_whitelist`,
+            error: sceneHint,
+            data: {
+              error_code: "tool_not_allowed",
+              error_level: "recoverable" as const,
+              tool_name: toolName,
+              mission_pack_id: packId,
+              suggested_action: packId ? "unapply_pack" : "check_tool_whitelist",
+            },
           }
           logger.warn("security.tool_whitelist_blocked", {
             tool_call_id: toolCallId,
             tool_name: toolName,
             thread_id: actingThreadId,
+            mission_pack_id: packId,
           })
           logToolFinish(toolCallId, toolName, startedAt, result)
           return result
@@ -4591,6 +4624,18 @@ export function validateWsMessage(msg: any): WsValidationResult {
     "pack.apply": (m) => {
       if (typeof m.pack_id !== "string" || !m.pack_id) return { valid: false, error: "pack.apply requires pack_id" }
       if (typeof m.thread_id !== "string" || !m.thread_id) return { valid: false, error: "pack.apply requires thread_id" }
+      if (m.user_gesture !== true) {
+        return { valid: false, error: "pack.apply requires user_gesture:true (Side Panel only)" }
+      }
+      return { valid: true }
+    },
+    "pack.unapply": (m) => {
+      if (typeof m.thread_id !== "string" || !m.thread_id) {
+        return { valid: false, error: "pack.unapply requires thread_id" }
+      }
+      if (m.user_gesture !== true) {
+        return { valid: false, error: "pack.unapply requires user_gesture:true (Side Panel only)" }
+      }
       return { valid: true }
     },
     "pack.uninstall": (m) => {

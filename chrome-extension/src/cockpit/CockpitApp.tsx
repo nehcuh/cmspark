@@ -220,7 +220,7 @@ function CockpitApp() {
             等请求时，会在此展示完整预览；侧栏红条也可快速允许或拒绝。
           </p>
           <p style={s.emptyGuideBody}>
-            NetSec IP 与任务授权请到 Side Panel → <strong>任务包</strong>。
+            NetSec IP 与任务授权请到 Side Panel → <strong>场景</strong>。
             关掉本窗<strong>不会</strong>停止已在跑的任务（请用急停）。
           </p>
           <p style={s.emptyGuideHint}>

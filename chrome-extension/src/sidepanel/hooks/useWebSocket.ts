@@ -625,6 +625,7 @@ export function useWebSocket() {
           break
 
         case "pack.applied":
+        case "pack.unapplied":
           // Thread fields updated by companion (mission_pack_id, tool_whitelist, …)
           if (msg.thread?.id) {
             dispatch({ type: "UPSERT_THREAD", thread: msg.thread })

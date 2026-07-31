@@ -58,7 +58,7 @@ export const CONTEXT_PANEL_TABS: ContextPanelTabDef[] = [
   { id: "history", label: "历史", Icon: IconHistory },
   { id: "skills", label: "技能", Icon: IconSkills },
   { id: "knowledge", label: "知识", Icon: IconKnowledge },
-  { id: "packs", label: "任务包", Icon: IconSkills },
+  { id: "packs", label: "场景", Icon: IconSkills },
   { id: "board", label: "任务板", Icon: IconSkills },
   { id: "mcp", label: "MCP", Icon: IconMcp },
   { id: "apps", label: "应用", Icon: IconApps },

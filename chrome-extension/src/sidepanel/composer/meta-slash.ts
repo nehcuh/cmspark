@@ -62,7 +62,7 @@ export const META_PANEL_SLASH: MetaSlashEntry[] = [
   },
   {
     name: "packs",
-    description: "打开任务包面板",
+    description: "打开场景面板（场景模板 / 工作区）",
     type: "prompt_template",
     builtin: true,
     tags: ["meta-panel", "meta-slash"],
@@ -189,8 +189,8 @@ export const COMPOSE_SECTIONS: ComposeSection[] = [
     id: "packs",
     panelId: "packs",
     label: "Packs",
-    titleZh: "任务包",
-    hint: "任务包与工作区",
+    titleZh: "场景",
+    hint: "场景模板与工作区",
     group: "connect",
   },
   {

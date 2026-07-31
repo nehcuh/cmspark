@@ -108,6 +108,33 @@ test("install dir + list + apply allowlist + uninstall restores snapshot", () =>
   assert.equal(t3.tool_whitelist, null)
 })
 
+test("unapplyPack restores snapshot without clearing workspace_root", () => {
+  const skillEngine = new SkillEngine()
+  const tm = new ThreadManager()
+  const thread = tm.create("unapply-test")
+  const src = fs.mkdtempSync(path.join(os.tmpdir(), "mini-pack-unapply-"))
+  writeMiniPack(src, "mini-pack-unapply")
+  packEngine.installPackFromDirectory(src, skillEngine, { force: true })
+
+  const applied = packEngine.applyPack("mini-pack-unapply", thread.id, tm, skillEngine, {
+    workspace_path: "/tmp/ws-keep",
+  })
+  assert.equal(applied.ok, true)
+  assert.equal(tm.get(thread.id)!.mission_pack_id, "mini-pack-unapply")
+  assert.deepEqual(tm.get(thread.id)!.tool_whitelist, ["list_tabs", "get_page_html"])
+  assert.equal(tm.get(thread.id)!.workspace_root, "/tmp/ws-keep")
+
+  const u = packEngine.unapplyPack(thread.id, tm)
+  assert.equal(u.ok, true)
+  const t2 = tm.get(thread.id)!
+  assert.equal(t2.mission_pack_id, null)
+  assert.equal(t2.tool_whitelist, null)
+  // workspace is orthogonal to scene — unapply must not clear it
+  assert.equal(t2.workspace_root, "/tmp/ws-keep")
+
+  packEngine.uninstallPack("mini-pack-unapply", tm, skillEngine)
+})
+
 test("intersect with null whitelist degrades to allowlist", () => {
   assert.deepEqual(
     packEngine.computeWhitelist("intersect", ["list_tabs", "navigate"], ["navigate"], null),

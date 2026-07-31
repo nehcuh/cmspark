@@ -43,7 +43,7 @@ export function resolveUnderWorkspace(
       ok: false,
       error:
         "workspace_root not set on thread — pick a folder first. " +
-        "Ask the user to open Side Panel → 任务包 → 「选择工作区」 (native folder dialog), " +
+        "Ask the user to open Side Panel → 场景 → 「选择工作区」 (native folder dialog), " +
         "then retry workspace_list_dir / workspace_read_file. Do not invent paths.",
     }
   }
