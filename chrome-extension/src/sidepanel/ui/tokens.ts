@@ -100,3 +100,24 @@ export function statusColor(status?: string): string {
   if (status === "running" || status === "paused") return tokens.warning
   return tokens.textMuted
 }
+
+/** WS connection state — StatusRail / popup dots. Never Material #4CAF50/#FF9800/#F44336. */
+export type ConnectionStatus = "connected" | "connecting" | "disconnected"
+
+export function connectionColor(state: ConnectionStatus): string {
+  if (state === "connected") return tokens.success
+  if (state === "connecting") return tokens.warning
+  return tokens.danger
+}
+
+export function connectionLabel(state: ConnectionStatus): string {
+  if (state === "connected") return "已连接"
+  if (state === "connecting") return "连接中"
+  return "未连接"
+}
+
+/** Soft glow under connected dot (rgba of tokens.success #16a34a). */
+export function connectionDotShadow(state: ConnectionStatus): string {
+  if (state === "connected") return "0 0 0 3px rgba(22, 163, 74, 0.15)"
+  return "none"
+}

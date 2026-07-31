@@ -44,25 +44,36 @@ Dark (L2 SafetyStrip / Cockpit): bg `#0f1115`, elevated `#161a22`, text `#e8eaed
 
 ## Border Radius
 
-| Token | Value |
-|-------|-------|
-| sm | `4px` |
-| md | `6px` |
-| lg | `8px` |
+**Source of truth:** `tokens.radiusSm/Md/Lg` in `sidepanel/ui/tokens.ts` (UIUX v2).
+
+| Token | Value | Usage |
+|-------|-------|--------|
+| sm | `6px` | chips, icon buttons, menu items |
+| md | `8px` | menus, inputs, cards |
+| lg | `12px` | composer capsule, elevated surfaces |
+| pill | `999` | ModeBadge |
+
+Do not invent other radii for Panel chrome.
 
 ## Components Quick Reference
 
 ### Connection Status
-- Connected: green dot `#4CAF50`
-- Connecting: yellow dot `#FF9800`
-- Disconnected: red dot `#F44336`
+Helpers: `connectionColor` / `connectionLabel` / `connectionDotShadow` in `tokens.ts`.
+
+| State | Color token | Label |
+|-------|-------------|--------|
+| Connected | `tokens.success` (`#16a34a`) | 已连接 |
+| Connecting | `tokens.warning` (`#d97706`) | 连接中 |
+| Disconnected | `tokens.danger` (`#dc2626`) | 未连接 |
+
+**Forbidden:** Material `#4CAF50` / `#FF9800` / `#F44336` on status dots. Offline recovery uses `DisconnectedBanner` + toast only — **no `alert()`** on reconnect path.
 
 ### Mode badge (P0)
 - L0 `聊` · L1 `网页` · L2 `计算机` / `计算机 · LIVE` — see `sidepanel/mode/mode-controller.ts`
 - **Ontology:** product L0/L1/L2 = Surface axis = UI `CapabilityLevel` `chat|browser|computer` — [ADR-020](adr/020-capability-model-three-axes.md)
 - L1 header tint: `tokens.modeBrowserBg` (`#dbeafe`); BottomBar tabs filtered by capability level
 - ContextBar (§4 / P0 IA cut 2026-07-27): L0 Skills·Know·Hist · L1 Tabs·Skills · L2 Panel empty; packs/board/mcp/apps via BottomBar「更多」
-- Header: ThreadList + title + ModeBadge + connection + ⋯ menu (Craft/export/NB/logs/settings) — no permanent power-icon strip
+- **StatusRail** (ex-Header): ThreadList + title + ModeBadge (pin-on-badge) + connection (token colors) + ⋯ menu (Craft/export/NB/logs/settings) — no permanent power-icon strip
 - FleetStrip: hidden when idle single-agent; show only multi-worker / locks / intents / pending confirms
 
 ### Cockpit (P1)
@@ -90,7 +101,7 @@ Dark (L2 SafetyStrip / Cockpit): bg `#0f1115`, elevated `#161a22`, text `#e8eaed
 ### Input / Composer (P2)
 - Unified capsule: attach + textarea + send inside one bordered surface
 - Radius: `tokens.radiusLg` (12px)
-- Settings live in Header ⋯ (not composer)
+- Settings live in StatusRail ⋯ (not composer)
 
 ### Motion
 - Transitions ≤200ms; `prefers-reduced-motion` disables animations
