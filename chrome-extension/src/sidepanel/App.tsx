@@ -7,6 +7,10 @@ import { ChatView } from "./components/ChatView"
 import { SafetyStrip } from "./components/SafetyStrip"
 import { ContextStrip } from "./components/ContextStrip"
 import { BottomBar } from "./components/BottomBar"
+import {
+  ContextPanelHost,
+  ContextPanelHostProvider,
+} from "./components/ContextPanelHost"
 import { FleetStrip } from "./components/FleetStrip"
 import { SettingsSlideout } from "./components/SettingsSlideout"
 import { McpServerForm } from "./components/McpServerForm"
@@ -159,6 +163,7 @@ function AppContent() {
   }, [isComputer])
 
   return (
+    <ContextPanelHostProvider capabilityLevel={level}>
     <div style={styles.container}>
       <style>{globalCSS}</style>
       {toast && <div style={toastStyles.toast}>{toast}</div>}
@@ -178,7 +183,9 @@ function AppContent() {
       <ChatView />
       {/* R3: ComputerTaskBar removed — step timeline only in Cockpit dual-track */}
       <FleetStrip />
+      {/* UIUX v2 §4.7 M1: strip chrome + Host body (SoT for panels); strip stays until PR5 */}
       <BottomBar capabilityLevel={level} />
+      <ContextPanelHost />
       <InputArea capabilityLevel={level} />
       {showLogs && <LogBar onClose={() => setShowLogs(false)} />}
       <SettingsSlideout />
@@ -205,6 +212,7 @@ function AppContent() {
         }}
       />
     </div>
+    </ContextPanelHostProvider>
   )
 }
 
