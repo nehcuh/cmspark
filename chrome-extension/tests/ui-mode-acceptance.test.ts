@@ -13,6 +13,7 @@ import {
 } from "../src/sidepanel/mode/mode-controller"
 import { isCockpitTabUrl, COCKPIT_SESSION_KEY } from "../src/background/cockpit-window"
 import { tokens, riskLabel } from "../src/sidepanel/ui/tokens"
+import { ui } from "../src/sidepanel/ui/flags"
 
 const base: ModeInput = {
   now: 1_000_000,
@@ -47,10 +48,15 @@ test("§8 P0: host_computer task → L2", () => {
   assert.equal(levelBadgeLabel("computer", { live: true }), "计算机 · LIVE")
 })
 
-test("§8 P0: L0 BottomBar not six-pack (exactly Skills·Know·Hist)", () => {
+test("§8 P0: L0 context tabs not six-pack (exactly Skills·Know·Hist; strip legacy)", () => {
+  // Tab *sets* remain documented for mode-controller; permanent strip is PR5-gated.
   const tabs = contextBarTabsForLevel("chat")
   assert.deepEqual(tabs, ["skills", "knowledge", "history"])
   assert.ok(tabs.length <= 3)
+})
+
+test("UIUX v2 PR5: permanent BottomBar strip flag default off", () => {
+  assert.equal(ui.bottomBarStrip, false)
 })
 
 test("§8 P0: short interleaved text does not yo-yo (quiescence holds L1)", () => {

@@ -28,6 +28,7 @@ import {
   type ComposerChipAction,
 } from "./composer/meta-slash"
 import { tokens } from "./ui/tokens"
+import { ui } from "./ui/flags"
 import {
   IconSend,
   IconStop,
@@ -119,7 +120,7 @@ function AppContent() {
     }
   }, [appState.autoSkillNames])
 
-  // Capability level (chat / browser / computer) — StatusRail badge, BottomBar tabs
+  // Capability level (chat / browser / computer) — StatusRail badge, chips / FocusBand
   const onEscalate = useCallback((msg: string) => {
     setToast(msg)
     setTimeout(() => setToast(""), 4000)
@@ -157,8 +158,8 @@ function AppContent() {
       <FocusBand capabilityLevel={level} />
       <ChatView />
       {/* R3: ComputerTaskBar removed — step timeline only in Cockpit dual-track */}
-      {/* UIUX v2 §4.7 M1: strip chrome + Host body (SoT for panels); strip stays until PR5 */}
-      <BottomBar capabilityLevel={level} />
+      {/* UIUX v2 §4.7 M3/PR5: permanent BottomBar strip behind ui.bottomBarStrip (default off). Host is SoT. */}
+      {ui.bottomBarStrip ? <BottomBar capabilityLevel={level} /> : null}
       <ContextPanelHost />
       <InputArea capabilityLevel={level} />
       {showLogs && <LogBar onClose={() => setShowLogs(false)} />}

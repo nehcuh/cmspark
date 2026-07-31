@@ -1,6 +1,6 @@
 // ContextPanelHost — single owner of context panel state, loaders, mounts,
-// and cmspark:open-context-panel (UIUX v2 §4.7 M1). BottomBar strip remains
-// thin chrome that calls this Host API; strip delete is PR5.
+// and cmspark:open-context-panel (UIUX v2 §4.7 M1). Host is SoT for panels.
+// PR5: permanent BottomBar tab strip gated by ui.bottomBarStrip (default false).
 
 import {
   createContext,
@@ -228,8 +228,8 @@ export function ContextPanelHostProvider({
 // ── Panel body mount ───────────────────────────────────────────────────────
 
 /**
- * Renders the open context panel body (header + body). Place under BottomBar
- * strip so layout matches pre-extract chrome.
+ * Renders the open context panel body (header + body). Place above ComposerDock
+ * (strip optional via ui.bottomBarStrip; Host is SoT regardless).
  */
 export function ContextPanelHost() {
   const { activePanel, closePanel } = useContextPanelHost()

@@ -1,6 +1,7 @@
 // Bottom context bar: mode-filtered tab strip + overflow「更多」.
 // UIUX v2 §4.7 M1: panel state / loaders / mounts live in ContextPanelHost.
-// This file is thin chrome that calls Host API. Strip delete is PR5 (not here).
+// PR5 / §4.7 M3: strip chrome gated by ui.bottomBarStrip (default false).
+// Host remains SoT; re-enable flag only for smoke/rollback. M4 deletes strip later.
 
 import { useState, useRef, useEffect, useMemo } from "react"
 import {
@@ -13,10 +14,18 @@ import {
   useContextPanelHost,
   type ContextPanelId,
 } from "./ContextPanelHost"
+import { ui } from "../ui/flags"
 import { tokens } from "../ui/tokens"
 import { IconMore } from "../ui/icons"
 
 export function BottomBar({ capabilityLevel }: { capabilityLevel: CapabilityLevel }) {
+  // §4.7 M3: hide permanent tab row when flag off — Host / chips / 装配 stay SoT.
+  if (!ui.bottomBarStrip) return null
+
+  return <BottomBarStrip capabilityLevel={capabilityLevel} />
+}
+
+function BottomBarStrip({ capabilityLevel }: { capabilityLevel: CapabilityLevel }) {
   const { activePanel, openPanel, closePanel } = useContextPanelHost()
   const [moreOpen, setMoreOpen] = useState(false)
   /** Fixed menu position (viewport coords) — avoids overflow clip + InputArea paint order. */
