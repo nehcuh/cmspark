@@ -21,6 +21,7 @@
     "src/sidepanel/utils/user-env-utils.ts",
     "src/sidepanel/utils/computer-utils.ts",
     "src/sidepanel/components/model-switch-logic.ts",
+    "src/sidepanel/components/focus-band-priority.ts",
     "src/background/page-sanitizer.ts",
     "src/background/image-extract-utils.ts",
     "src/background/dangerous-apis.ts",
@@ -46,6 +47,8 @@
     "src/notebooklm/cdp-fetch-interceptor.ts",
     "src/notebooklm/rpc-client.ts",
     "src/sidepanel/hooks/useModalDialog.ts",
+    "src/sidepanel/ui/tokens.ts",
+    "src/cockpit/cockpit-status.ts",
     "tests/**/*.ts"
   ],
   "exclude": ["node_modules", "build", ".plasmo", ".test-dist"]

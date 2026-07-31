@@ -36,7 +36,14 @@ export function formatTabHost(url?: string | null): string | null {
   }
 }
 
-export function ContextStrip() {
+export function ContextStrip({
+  compact = false,
+  secondary = false,
+}: {
+  compact?: boolean
+  /** One-line secondary under FocusBand confirm (≤24px). */
+  secondary?: boolean
+} = {}) {
   const { state } = useAgentStore()
   const [activeTab, setActiveTab] = useState<chrome.tabs.Tab | null>(null)
 
@@ -82,6 +89,39 @@ export function ContextStrip() {
   const pinned =
     fromList?.id != null && state.pinnedTabIds.includes(fromList.id)
 
+  if (secondary || compact) {
+    return (
+      <div
+        style={secondary ? styles.wrapSecondary : styles.wrapCompact}
+        role="region"
+        aria-label="当前网页上下文"
+      >
+        <span style={styles.iconBubbleCompact} aria-hidden>
+          <IconGlobe size={12} style={{ color: tokens.accentText }} />
+        </span>
+        <span
+          style={styles.titleCompact}
+          title={fromList?.title || fromList?.url || undefined}
+        >
+          {label}
+          {pinned && <span style={styles.pin}>钉</span>}
+          {host && !secondary ? (
+            <span style={styles.hostInline}> · {host}</span>
+          ) : null}
+        </span>
+        <button
+          type="button"
+          style={styles.expandBtnCompact}
+          title="展开工作区（用户主动；不会自动弹出）"
+          onClick={() => chrome.runtime.sendMessage({ type: "cockpit.open" })}
+        >
+          展开
+          <IconExternal size={11} />
+        </button>
+      </div>
+    )
+  }
+
   return (
     <div style={styles.wrap} role="region" aria-label="当前网页上下文">
       <span style={styles.iconBubble} aria-hidden>
@@ -120,6 +160,74 @@ const styles: Record<string, React.CSSProperties> = {
     borderBottom: "1px solid #bfdbfe",
     fontFamily: tokens.font,
     flexShrink: 0,
+  },
+  wrapCompact: {
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+    padding: "4px 10px",
+    background: tokens.modeBrowserBg,
+    fontFamily: tokens.font,
+    flexShrink: 0,
+    minHeight: 32,
+    maxHeight: 40,
+    overflow: "hidden",
+  },
+  wrapSecondary: {
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+    padding: "0 10px",
+    height: 24,
+    maxHeight: 24,
+    background: tokens.modeBrowserBg,
+    fontFamily: tokens.font,
+    flexShrink: 0,
+    overflow: "hidden",
+  },
+  iconBubbleCompact: {
+    width: 18,
+    height: 18,
+    borderRadius: tokens.radiusSm,
+    background: tokens.bgElevated,
+    border: "1px solid #bfdbfe",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+  titleCompact: {
+    flex: 1,
+    minWidth: 0,
+    fontSize: 11,
+    fontWeight: 600,
+    color: tokens.text,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+    display: "flex",
+    alignItems: "center",
+    gap: 4,
+  },
+  hostInline: {
+    fontSize: 10,
+    fontWeight: 400,
+    color: tokens.textMuted,
+  },
+  expandBtnCompact: {
+    flexShrink: 0,
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 3,
+    border: "1px solid #bfdbfe",
+    background: tokens.bgElevated,
+    color: tokens.accentText,
+    borderRadius: tokens.radiusSm,
+    padding: "2px 6px",
+    fontSize: 10,
+    fontWeight: 600,
+    cursor: "pointer",
+    fontFamily: tokens.font,
   },
   iconBubble: {
     width: 22,

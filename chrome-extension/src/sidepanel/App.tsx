@@ -4,63 +4,37 @@ import { Component, useState, useRef, useCallback, useEffect } from "react"
 import { useWebSocket } from "./hooks/useWebSocket"
 import { useCapabilityMode } from "./hooks/useCapabilityMode"
 import { ChatView } from "./components/ChatView"
-import { SafetyStrip } from "./components/SafetyStrip"
-import { ContextStrip } from "./components/ContextStrip"
-import { ThreadList } from "./components/ThreadList"
 import { BottomBar } from "./components/BottomBar"
-import { FleetStrip } from "./components/FleetStrip"
+import {
+  ContextPanelHost,
+  ContextPanelHostProvider,
+  useContextPanelHost,
+} from "./components/ContextPanelHost"
+import { FocusBand } from "./components/FocusBand"
 import { SettingsSlideout } from "./components/SettingsSlideout"
 import { McpServerForm } from "./components/McpServerForm"
 import { SlashCommandPopover } from "./components/SlashCommandPopover"
 import { SkillCraftPanel } from "./components/SkillCraftPanel"
 import { NotebooklmImporterPanel } from "./components/NotebooklmImporterPanel"
+import { StatusRail } from "./components/StatusRail"
+import { ComposerChips } from "./components/ComposerChips"
+import { ComposeDrawer } from "./components/ComposeDrawer"
 import { AgentStoreProvider, useAgentStore } from "./store/agentStore"
-import type { ConnectionState, CapabilityLevel, SkillMeta, FileAttachment } from "./types"
-import { tokens } from "./ui/tokens"
-import { ModeBadge } from "./ui/ModeBadge"
+import type { CapabilityLevel, SkillMeta, FileAttachment } from "./types"
 import {
-  IconCraft,
-  IconDownload,
-  IconNotebook,
-  IconSave,
-  IconBrain,
-  IconLogs,
-  IconSettings,
+  META_PANEL_SLASH,
+  composerPlaceholder,
+  resolveMetaSlash,
+  type ComposerChipAction,
+} from "./composer/meta-slash"
+import { tokens } from "./ui/tokens"
+import { ui } from "./ui/flags"
+import {
   IconSend,
   IconStop,
   IconAttach,
   IconAlert,
-  IconSpinner,
-  IconMore,
 } from "./ui/icons"
-
-/** Slash meta commands that open BottomBar panels (S1 discoverability). */
-const META_PANEL_SLASH: SkillMeta[] = [
-  {
-    name: "packs",
-    description: "打开任务包面板（底栏「更多」）",
-    type: "prompt_template",
-    builtin: true,
-    tags: ["meta-panel"],
-    site: "packs",
-  },
-  {
-    name: "board",
-    description: "打开任务板面板（底栏「更多」）",
-    type: "prompt_template",
-    builtin: true,
-    tags: ["meta-panel"],
-    site: "board",
-  },
-  {
-    name: "mcp",
-    description: "打开 MCP 面板",
-    type: "prompt_template",
-    builtin: true,
-    tags: ["meta-panel"],
-    site: "mcp",
-  },
-]
 
 // Error Boundary — catches rendering errors to prevent white screen
 class ErrorBoundary extends Component<{ children: React.ReactNode }, { error: Error | null }> {
@@ -146,15 +120,17 @@ function AppContent() {
     }
   }, [appState.autoSkillNames])
 
-  // Capability level (chat / browser / computer) — badge in Header, tabs in BottomBar
+  // Capability level (chat / browser / computer) — StatusRail badge, chips / FocusBand
   const onEscalate = useCallback((msg: string) => {
+    setToast(msg)
+    setTimeout(() => setToast(""), 4000)
+  }, [])
+  const showToast = useCallback((msg: string) => {
     setToast(msg)
     setTimeout(() => setToast(""), 4000)
   }, [])
   const { level, badgeLabel } = useCapabilityMode(onEscalate)
   const isComputer = level === "computer"
-  const isBrowser = level === "browser"
-  const hasPendingConfirm = appState.pendingSecurityConfirmations.length > 0
 
   // P1: auto-open Cockpit when entering L2 (openOrFocus is idempotent)
   useEffect(() => {
@@ -165,29 +141,26 @@ function AppContent() {
   }, [isComputer])
 
   return (
+    <ContextPanelHostProvider capabilityLevel={level}>
     <div style={styles.container}>
       <style>{globalCSS}</style>
       {toast && <div style={toastStyles.toast}>{toast}</div>}
-      <Header
+      <StatusRail
         connectionState={connectionState}
         capabilityLevel={level}
         badgeLabel={badgeLabel}
         onCraft={() => setCraftOpen(true)}
         onToggleLogs={() => setShowLogs(!showLogs)}
         onOpenNotebooklmImporter={() => setNbImporterOpen(true)}
-        onToast={(msg) => {
-          setToast(msg)
-          setTimeout(() => setToast(""), 4000)
-        }}
+        onToast={showToast}
       />
-      {/* §4: L1 ContextStrip — current tab + user-only「展开工作区」 */}
-      {isBrowser && <ContextStrip />}
-      {/* P1 content-split: SafetyStrip for L2 task AND any pending confirm (L0/L1 MinimalConfirm) */}
-      {(isComputer || hasPendingConfirm) && <SafetyStrip />}
+      {/* UIUX v2 §4.3 FocusBand: Confirm > L2 Safety+急停 > Fleet > L1 Context; ≤80px */}
+      <FocusBand capabilityLevel={level} />
       <ChatView />
       {/* R3: ComputerTaskBar removed — step timeline only in Cockpit dual-track */}
-      <FleetStrip />
-      <BottomBar capabilityLevel={level} />
+      {/* UIUX v2 §4.7 M3/PR5: permanent BottomBar strip behind ui.bottomBarStrip (default off). Host is SoT. */}
+      {ui.bottomBarStrip ? <BottomBar capabilityLevel={level} /> : null}
+      <ContextPanelHost />
       <InputArea capabilityLevel={level} />
       {showLogs && <LogBar onClose={() => setShowLogs(false)} />}
       <SettingsSlideout />
@@ -195,361 +168,79 @@ function AppContent() {
       <McpServerForm />
       {craftOpen && <SkillCraftPanel onClose={() => setCraftOpen(false)} />}
       {nbImporterOpen && <NotebooklmImporterPanel onClose={() => setNbImporterOpen(false)} />}
-      <DisconnectedBanner visible={connectionState === "disconnected"} onRetry={() => {
-        chrome.runtime.sendMessage({ type: "getStatus" }, (response) => {
-          if (chrome.runtime.lastError) return
-          if (response?.connectionState === "disconnected") {
-            // Trigger a manual reconnect attempt by reloading the extension context
-            // or prompting the user to wait for auto-reconnect
-            alert("正在尝试重新连接...\n如果 Companion 已启动，连接将自动恢复。")
-          }
-        })
-      }} />
-    </div>
-  )
-}
-
-function Header({
-  connectionState,
-  capabilityLevel,
-  badgeLabel,
-  onCraft,
-  onToggleLogs,
-  onOpenNotebooklmImporter,
-  onToast,
-}: {
-  connectionState: ConnectionState
-  capabilityLevel: CapabilityLevel
-  badgeLabel: string
-  onCraft: () => void
-  onToggleLogs: () => void
-  onOpenNotebooklmImporter: () => void
-  onToast?: (msg: string) => void
-}) {
-  const { state, dispatch } = useAgentStore()
-  const pinned = state.modePin === capabilityLevel
-  const togglePin = () => {
-    if (pinned) {
-      dispatch({ type: "SET_MODE_PIN", pin: null })
-      onToast?.("已取消钉住 — 层级可自动降级")
-    } else {
-      dispatch({ type: "SET_MODE_PIN", pin: capabilityLevel })
-      onToast?.(`已钉住「${badgeLabel}」— 阻止自动降级`)
-    }
-  }
-  const hasMessages = state.messages.length > 0 && !!state.activeThreadId
-  const [nbState, setNbState] = useState<"idle" | "working" | "warning">("idle")
-  const [nbTooltip, setNbTooltip] = useState<string>("离线导出当前页为 Markdown（拖入 NotebookLM 作为来源）")
-  const [menuOpen, setMenuOpen] = useState(false)
-  const menuRef = useRef<HTMLDivElement>(null)
-  // useRef lock is mandatory: React state updates are async, so a rapid second click
-  // within the same tick can pass the `nbState === "working"` guard before the first
-  // setNbState commits — both fire sendMessage → double download. The ref is synchronous.
-  const nbInflightRef = useRef(false)
-
-  useEffect(() => {
-    if (!menuOpen) return
-    const onDoc = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setMenuOpen(false)
-      }
-    }
-    document.addEventListener("mousedown", onDoc)
-    return () => document.removeEventListener("mousedown", onDoc)
-  }, [menuOpen])
-
-  const resetNbIdle = (delay: number, immediate?: boolean) => {
-    if (immediate) {
-      setNbState("idle")
-      setNbTooltip("离线导出当前页为 Markdown（拖入 NotebookLM 作为来源）")
-      nbInflightRef.current = false
-      return
-    }
-    setTimeout(() => {
-      setNbState("idle")
-      setNbTooltip("离线导出当前页为 Markdown（拖入 NotebookLM 作为来源）")
-      nbInflightRef.current = false
-    }, delay)
-  }
-
-  const runNotebooklmExport = async () => {
-    if (nbInflightRef.current) return
-    nbInflightRef.current = true
-    setNbState("working")
-    setNbTooltip("正在抽取页面内容…")
-
-    // Race against a 30s timeout: if the service worker is killed mid-extraction
-    // (MV3 lifecycle), the sendMessage promise may never resolve. Without this,
-    // the button stays disabled forever. (Phase 4 review catch.)
-    const timeout = new Promise<{ _timeout: true }>(resolve => setTimeout(() => resolve({ _timeout: true }), 30_000))
-
-    type ExportResponse = { ok?: boolean; content?: string; filename?: string; truncated?: boolean; error?: string }
-    type RaceResult = ExportResponse | { _timeout: true } | undefined
-
-    try {
-      const res = (await Promise.race<RaceResult>([
-        chrome.runtime.sendMessage({ type: "page.import_notebooklm" }) as Promise<ExportResponse>,
-        timeout,
-      ])) as RaceResult
-
-      if (res && typeof res === "object" && "_timeout" in res) {
-        setNbState("warning")
-        setNbTooltip("导出超时（30s）— service worker 可能被挂起，请重试")
-        resetNbIdle(6000)
-        return
-      }
-
-      // After the timeout early-return, res is narrowed to ExportResponse | undefined.
-      const r = res as ExportResponse | undefined
-      if (r && r.ok && r.content) {
-        const blob = new Blob([new TextEncoder().encode(r.content)], { type: "text/markdown" })
-        const url = URL.createObjectURL(blob)
-        const a = document.createElement("a")
-        a.href = url
-        a.download = r.filename || "notebooklm-export.md"
-        // Append-then-click-then-remove: some Chrome contexts silently ignore .click()
-        // on a detached anchor. (Phase 4 review catch.)
-        document.body.appendChild(a)
-        a.click()
-        a.remove()
-        // Delay revoke — Chrome may not have started the download yet at click() return.
-        setTimeout(() => URL.revokeObjectURL(url), 1000)
-        if (r.truncated) {
-          setNbState("warning")
-          setNbTooltip("已导出（内容超过 200k 字符，已截断）")
-          resetNbIdle(6000)
-        } else {
-          setNbTooltip("已导出 ✓")
-          resetNbIdle(2500)
-        }
-      } else {
-        const err = (r && r.error) || "导出失败"
-        setNbState("warning")
-        setNbTooltip(err)
-        resetNbIdle(6000)
-      }
-    } catch (e: any) {
-      setNbState("warning")
-      setNbTooltip(`导出失败: ${e?.message || String(e)}`)
-      resetNbIdle(6000)
-    }
-  }
-
-  const closeMenu = () => setMenuOpen(false)
-
-  return (
-    <div
-      style={{
-        ...styles.header,
-        // L1 tint: tokens.modeBrowserBg (was ad-hoc #f5f9ff; DESIGN #eef4ff)
-        ...(capabilityLevel === "browser"
-          ? { background: tokens.modeBrowserBg, borderBottomColor: "#bfdbfe" }
-          : {}),
-        ...(capabilityLevel === "computer"
-          ? { background: "#ecfdf5", borderBottomColor: "#a7f3d0" }
-          : {}),
-      }}
-    >
-      <ThreadList />
-      <div style={styles.headerTitle}>CMspark</div>
-      <ModeBadge
-        level={capabilityLevel}
-        label={badgeLabel}
-        pinned={pinned}
-        onTogglePin={togglePin}
-      />
-      <div
-        title={
-          connectionState === "connected"
-            ? "已连接"
-            : connectionState === "connecting"
-              ? "连接中"
-              : "未连接"
-        }
-        style={{
-          ...styles.statusDot,
-          background:
-            connectionState === "connected"
-              ? tokens.success
-              : connectionState === "connecting"
-                ? tokens.warning
-                : tokens.danger,
-          boxShadow:
-            connectionState === "connected"
-              ? "0 0 0 3px rgba(22, 163, 74, 0.15)"
-              : "none",
+      <DisconnectedBanner
+        visible={connectionState === "disconnected"}
+        onRetry={() => {
+          // Probe status only — auto-reconnect is owned by background ws-client.
+          // Feedback stays in-banner / toast; never alert() (UIUX v2-P0).
+          chrome.runtime.sendMessage({ type: "getStatus" }, (response) => {
+            if (chrome.runtime.lastError) {
+              showToast("无法联系扩展后台，请刷新 Side Panel 后重试")
+              return
+            }
+            if (response?.connectionState === "connected") {
+              showToast("已连接 Companion")
+              return
+            }
+            showToast("正在尝试重新连接…若 Companion 已启动将自动恢复")
+          })
         }}
       />
-      {/* P0: power actions in ⋯ menu — not permanent icon strip */}
-      <div ref={menuRef} style={{ position: "relative", flexShrink: 0, marginLeft: 2 }}>
-        <button
-          type="button"
-          style={{
-            ...styles.iconBtn,
-            ...(menuOpen || nbState === "warning"
-              ? {
-                  background: nbState === "warning" ? tokens.warningSoft : tokens.bgActive,
-                  borderColor: nbState === "warning" ? "#fcd34d" : "#bfdbfe",
-                }
-              : {}),
-          }}
-          onClick={() => setMenuOpen((v) => !v)}
-          title="更多工具与设置"
-          aria-expanded={menuOpen}
-          aria-haspopup="menu"
-        >
-          {nbState === "working" ? <IconSpinner size={15} /> : <IconMore size={15} />}
-        </button>
-        {menuOpen && (
-          <div style={styles.headerMenu} role="menu">
-            <button
-              type="button"
-              role="menuitem"
-              style={{
-                ...styles.headerMenuItem,
-                opacity: hasMessages ? 1 : 0.45,
-                cursor: hasMessages ? "pointer" : "not-allowed",
-              }}
-              disabled={!hasMessages}
-              onClick={() => {
-                if (!hasMessages) return
-                closeMenu()
-                onCraft()
-              }}
-            >
-              <IconCraft size={14} />
-              <span>提取技能</span>
-            </button>
-            <button
-              type="button"
-              role="menuitem"
-              style={{
-                ...styles.headerMenuItem,
-                opacity: hasMessages ? 1 : 0.45,
-                cursor: hasMessages ? "pointer" : "not-allowed",
-              }}
-              disabled={!hasMessages}
-              onClick={() => {
-                if (!hasMessages || !state.activeThreadId) return
-                closeMenu()
-                chrome.runtime.sendMessage({
-                  type: "thread.export_obsidian",
-                  thread_id: state.activeThreadId,
-                  scope: "thread",
-                })
-              }}
-            >
-              <IconDownload size={14} />
-              <span>导出线程 (Obsidian)</span>
-            </button>
-            <button
-              type="button"
-              role="menuitem"
-              style={{
-                ...styles.headerMenuItem,
-                opacity: hasMessages ? 1 : 0.45,
-                cursor: hasMessages ? "pointer" : "not-allowed",
-              }}
-              disabled={!hasMessages || state.summarizingThreadId === state.activeThreadId}
-              onClick={() => {
-                if (!hasMessages || !state.activeThreadId) return
-                closeMenu()
-                dispatch({ type: "SET_SUMMARIZING_THREAD", threadId: state.activeThreadId })
-                chrome.runtime.sendMessage({
-                  type: "thread.export_obsidian",
-                  thread_id: state.activeThreadId,
-                  scope: "summary",
-                })
-              }}
-            >
-              <IconBrain size={14} />
-              <span>
-                {state.summarizingThreadId === state.activeThreadId ? "摘要导出中…" : "导出摘要"}
-              </span>
-            </button>
-            <button
-              type="button"
-              role="menuitem"
-              style={styles.headerMenuItem}
-              onClick={() => {
-                closeMenu()
-                onOpenNotebooklmImporter()
-              }}
-            >
-              <IconNotebook size={14} />
-              <span>NotebookLM 导入</span>
-            </button>
-            <button
-              type="button"
-              role="menuitem"
-              style={styles.headerMenuItem}
-              disabled={nbState === "working"}
-              title={nbTooltip}
-              onClick={() => {
-                closeMenu()
-                void runNotebooklmExport()
-              }}
-            >
-              {nbState === "warning" ? <IconAlert size={14} /> : <IconSave size={14} />}
-              <span>导出当前页 (NB)</span>
-            </button>
-            <div style={styles.headerMenuDivider} />
-            <button
-              type="button"
-              role="menuitem"
-              style={styles.headerMenuItem}
-              onClick={() => {
-                closeMenu()
-                onToggleLogs()
-              }}
-            >
-              <IconLogs size={14} />
-              <span>日志</span>
-            </button>
-            <button
-              type="button"
-              role="menuitem"
-              style={styles.headerMenuItem}
-              onClick={() => {
-                closeMenu()
-                dispatch({ type: "TOGGLE_SETTINGS" })
-              }}
-            >
-              <IconSettings size={14} />
-              <span>设置</span>
-            </button>
-            <div style={styles.headerMenuDivider} />
-            <button
-              type="button"
-              role="menuitem"
-              style={{ ...styles.headerMenuItem, color: tokens.textMuted, fontSize: 11 }}
-              onClick={() => {
-                closeMenu()
-                onToast?.(
-                  "任务包 / 任务板已移至底栏「更多」— 主栏仅保留当前模式高频入口",
-                )
-              }}
-            >
-              <span>关于「更多」面板</span>
-            </button>
-          </div>
-        )}
-      </div>
     </div>
+    </ContextPanelHostProvider>
   )
 }
 
 function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityLevel }) {
   const { state, dispatch } = useAgentStore()
+  const { openPanelForce, closePanel, activePanel } = useContextPanelHost()
   const [text, setText] = useState("")
   const [slashVisible, setSlashVisible] = useState(false)
   const [slashQuery, setSlashQuery] = useState("")
   const [selectedFiles, setSelectedFiles] = useState<FileAttachment[]>([])
   const [fileError, setFileError] = useState("")
+  const [composeOpen, setComposeOpen] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const sendingRef = useRef(false)
   const isComputer = capabilityLevel === "computer"
+
+  const openCompose = useCallback(() => {
+    // Landfill: only one secondary surface (drawer | Host | settings)
+    closePanel()
+    dispatch({ type: "SET_SETTINGS_OPEN", open: false })
+    setComposeOpen(true)
+  }, [closePanel, dispatch])
+
+  const closeCompose = useCallback(() => {
+    setComposeOpen(false)
+  }, [])
+
+  const handleChipAction = useCallback(
+    (action: ComposerChipAction) => {
+      if (action.kind === "compose") {
+        openCompose()
+        return
+      }
+      if (action.kind === "cockpit") {
+        setComposeOpen(false)
+        chrome.runtime.sendMessage({ type: "cockpit.open" }, () => {
+          void chrome.runtime.lastError
+        })
+        return
+      }
+      // panel
+      setComposeOpen(false)
+      dispatch({ type: "SET_SETTINGS_OPEN", open: false })
+      openPanelForce(action.panelId)
+    },
+    [openCompose, openPanelForce, dispatch],
+  )
+
+  // Host open → dismiss 装配 (landfill)
+  useEffect(() => {
+    if (activePanel) setComposeOpen(false)
+  }, [activePanel])
 
   // R4: empty-state suggestion chips fill the composer
   useEffect(() => {
@@ -568,6 +259,27 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
     window.addEventListener("cmspark:fill-composer", onFill as EventListener)
     return () => window.removeEventListener("cmspark:fill-composer", onFill as EventListener)
   }, [])
+
+  // Empty state / external: open 装配 drawer
+  useEffect(() => {
+    const onOpen = () => openCompose()
+    window.addEventListener("cmspark:open-compose", onOpen)
+    return () => window.removeEventListener("cmspark:open-compose", onOpen)
+  }, [openCompose])
+
+  // Optional Cmd/Ctrl+K → 装配 (§6.2)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || (e.key !== "k" && e.key !== "K")) return
+      const tag = (e.target as HTMLElement | null)?.tagName
+      // Allow even from textarea — primary IA entry
+      if (tag === "INPUT" && (e.target as HTMLInputElement).type === "password") return
+      e.preventDefault()
+      openCompose()
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [openCompose])
 
   const isStreaming = !!state.streamingContent
   const hasContent = text.trim().length > 0 || selectedFiles.length > 0
@@ -589,9 +301,8 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
     if (needsThread) return "请先创建或选择一个线程"
     if (needsConnection) return "等待 companion 连接..."
     // P1 D12′: Cockpit is task conductor — Panel cannot interject mid-task
-    if (taskActive) return "任务进行中 — 请在操控台发送指令或先急停"
-    if (isComputer) return "排队跟进…（主指令请在操控台发送）"
-    return "输入指令... (输入 / 调用技能)"
+    if (taskActive) return "任务进行中 — 请在确认台发送指令或先急停"
+    return composerPlaceholder(capabilityLevel)
   }
 
   // Detect slash command: check if cursor is after a "/" at start or after space
@@ -624,6 +335,13 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
     detectSlash(newValue, e.target.selectionStart || 0)
   }
 
+  const clearSlashToken = (slashIdx: number, cursorPos: number) => {
+    const afterCursor = text.substring(cursorPos)
+    const newText = (text.substring(0, slashIdx) + afterCursor).replace(/\s+$/, " ").trimStart()
+    setText(newText)
+    setSlashVisible(false)
+  }
+
   const handleSlashSelect = (skill: SkillMeta) => {
     const textarea = textareaRef.current
     if (!textarea) return
@@ -635,15 +353,39 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
     const slashIdx = beforeCursor.lastIndexOf("/")
     if (slashIdx === -1) return
 
-    // S1: meta panel openers — clear the slash token and open BottomBar panel
-    if (skill.tags?.includes("meta-panel") && skill.site) {
-      const afterCursor = text.substring(cursorPos)
-      const newText = (text.substring(0, slashIdx) + afterCursor).replace(/\s+$/, " ").trimStart()
-      setText(newText)
-      setSlashVisible(false)
-      window.dispatchEvent(
-        new CustomEvent("cmspark:open-context-panel", { detail: { panel: skill.site } }),
-      )
+    // PR4 §4.8: meta slash parity (Host / 装配 / settings / 确认台)
+    const meta = resolveMetaSlash(skill)
+    if (meta) {
+      clearSlashToken(slashIdx, cursorPos)
+      if (meta.metaKind === "compose") {
+        openCompose()
+        return
+      }
+      if (meta.metaKind === "settings") {
+        setComposeOpen(false)
+        closePanel()
+        dispatch({ type: "SET_SETTINGS_OPEN", open: true })
+        return
+      }
+      if (meta.metaKind === "cockpit") {
+        setComposeOpen(false)
+        chrome.runtime.sendMessage({ type: "cockpit.open" }, () => {
+          void chrome.runtime.lastError
+        })
+        return
+      }
+      if (meta.metaKind === "panel" && meta.panelId) {
+        setComposeOpen(false)
+        dispatch({ type: "SET_SETTINGS_OPEN", open: false })
+        openPanelForce(meta.panelId)
+        return
+      }
+      // Legacy site-based open
+      if (skill.site) {
+        window.dispatchEvent(
+          new CustomEvent("cmspark:open-context-panel", { detail: { panel: skill.site } }),
+        )
+      }
       return
     }
 
@@ -662,7 +404,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
     }, 0)
   }
 
-  // S1: virtual slash entries for demoted panels (packs/board live under「更多」)
+  // §4.8 virtual slash entries + real skills
   const slashSkills: SkillMeta[] = [
     ...META_PANEL_SLASH,
     ...(Array.isArray(state.skills) ? state.skills : []),
@@ -888,8 +630,9 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
           ))}
         </div>
       )}
-      {/* P2: unified composer capsule — attach + textarea + send inside one surface */}
+      {/* PR4: ComposerDock chips + capsule; 装配 drawer is portal-like fixed sheet */}
       <div style={styles.inputArea}>
+        <ComposerChips capabilityLevel={capabilityLevel} onAction={handleChipAction} />
         <div
           style={{
             ...styles.composerCapsule,
@@ -938,7 +681,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
                   : needsConnection
                     ? "Companion 未连接"
                     : taskActive
-                      ? "任务进行中，请在操控台发送"
+                      ? "任务进行中，请在确认台发送"
                       : "发送"
               }
             >
@@ -955,39 +698,56 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
           onDismiss={() => setSlashVisible(false)}
         />
       </div>
+      <ComposeDrawer
+        open={composeOpen}
+        onClose={closeCompose}
+        capabilityLevel={capabilityLevel}
+        onOpenSection={(panelId) => {
+          setComposeOpen(false)
+          dispatch({ type: "SET_SETTINGS_OPEN", open: false })
+          openPanelForce(panelId)
+        }}
+      />
     </div>
   )
 }
 
 function DisconnectedBanner({ visible, onRetry }: { visible: boolean; onRetry: () => void }) {
+  const [hint, setHint] = useState("")
+
+  useEffect(() => {
+    if (!visible) setHint("")
+  }, [visible])
+
   if (!visible) return null
 
+  const logsPath = "~/.cmspark-agent/logs/"
+
   const handleOpenLogs = () => {
-    // Try to open logs directory via native messaging or show instructions
-    const logsPath = "~/.cmspark-agent/logs/"
+    // Prefer native host; otherwise surface path in-banner (no alert — offline hygiene).
     if (typeof chrome !== "undefined" && chrome.runtime?.sendNativeMessage) {
-      // Attempt to open via a native host if available; otherwise fallback
       try {
         chrome.runtime.sendNativeMessage(
           "com.cmspark.agent",
           { action: "open_directory", path: logsPath },
-          (response) => {
+          () => {
             if (chrome.runtime.lastError) {
-              // Native host not available — show fallback
-              alert(`请手动打开日志目录：\n${logsPath}`)
+              setHint(`请手动打开日志目录：${logsPath}`)
+              return
             }
-          }
+            setHint("已请求打开日志目录")
+          },
         )
+        return
       } catch {
-        alert(`请手动打开日志目录：\n${logsPath}`)
+        // fall through
       }
-    } else {
-      alert(`请手动打开日志目录：\n${logsPath}`)
     }
+    setHint(`请手动打开日志目录：${logsPath}`)
   }
 
   return (
-    <div style={bannerStyles.container}>
+    <div style={bannerStyles.container} role="alert">
       <div style={bannerStyles.iconWrap}>
         <IconAlert size={22} style={{ color: tokens.warning }} />
       </div>
@@ -996,6 +756,7 @@ function DisconnectedBanner({ visible, onRetry }: { visible: boolean; onRetry: (
         <p style={bannerStyles.text}>
           请通过菜单栏启动 Companion，或检查守护进程状态。
         </p>
+        {hint ? <p style={bannerStyles.hint}>{hint}</p> : null}
         <div style={bannerStyles.actions}>
           <button type="button" style={bannerStyles.primaryBtn} onClick={onRetry}>
             重新连接
@@ -1028,9 +789,31 @@ const globalCSS = `
     0% { width: 0; }
     100% { width: 20px; }
   }
+  html, body, #root {
+    background: ${tokens.bg};
+  }
+  ::selection {
+    background: ${tokens.accentSoft};
+    color: ${tokens.accentText};
+  }
+  /* Thin, quiet scrollbar */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(15, 23, 42, 0.18) transparent;
+  }
+  *::-webkit-scrollbar { width: 6px; height: 6px; }
+  *::-webkit-scrollbar-thumb {
+    background: rgba(15, 23, 42, 0.16);
+    border-radius: 999px;
+  }
+  *::-webkit-scrollbar-track { background: transparent; }
   button, a, [role="button"] {
     transition: background ${tokens.transitionFast} ease, color ${tokens.transitionFast} ease,
-      border-color ${tokens.transitionFast} ease, opacity ${tokens.transitionFast} ease;
+      border-color ${tokens.transitionFast} ease, opacity ${tokens.transitionFast} ease,
+      box-shadow ${tokens.transitionFast} ease, transform ${tokens.transitionFast} ease;
+  }
+  button:active:not(:disabled) {
+    transform: scale(0.98);
   }
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after {
@@ -1038,6 +821,7 @@ const globalCSS = `
       animation-iteration-count: 1 !important;
       transition-duration: 0.01ms !important;
     }
+    button:active:not(:disabled) { transform: none; }
   }
 `
 
@@ -1049,138 +833,49 @@ const styles: Record<string, React.CSSProperties> = {
     fontFamily: tokens.font,
     fontSize: 13,
     color: tokens.text,
-    background: tokens.bgElevated,
-  },
-  header: {
-    display: "flex",
-    alignItems: "center",
-    gap: 8,
-    padding: "8px 10px",
-    borderBottom: `1px solid ${tokens.border}`,
-    background: tokens.bg,
-    flexShrink: 0,
-  },
-  headerTitle: {
-    flex: 1,
-    minWidth: 0,
-    fontSize: 13,
-    fontWeight: 650,
-    letterSpacing: "-0.01em",
-    color: tokens.text,
-  },
-  headerActions: {
-    display: "flex",
-    alignItems: "center",
-    gap: 3,
-    flexShrink: 0,
-  },
-  headerMenu: {
-    position: "absolute",
-    right: 0,
-    top: "calc(100% + 4px)",
-    minWidth: 200,
-    maxHeight: 360,
-    overflowY: "auto",
-    background: tokens.bgElevated,
-    border: `1px solid ${tokens.border}`,
-    borderRadius: tokens.radiusMd,
-    boxShadow: tokens.shadowMd,
-    zIndex: 50,
-    padding: 4,
-    display: "flex",
-    flexDirection: "column",
-    gap: 1,
-  },
-  headerMenuItem: {
-    border: "none",
-    background: "transparent",
-    borderRadius: tokens.radiusSm,
-    padding: "8px 10px",
-    fontSize: 12,
-    cursor: "pointer",
-    display: "flex",
-    alignItems: "center",
-    gap: 8,
-    color: tokens.text,
-    textAlign: "left" as const,
-    width: "100%",
-    fontFamily: tokens.font,
-  },
-  headerMenuDivider: {
-    height: 1,
-    background: tokens.border,
-    margin: "4px 6px",
-  },
-  iconBtn: {
-    width: 28,
-    height: 28,
-    borderRadius: tokens.radiusSm,
-    border: `1px solid ${tokens.border}`,
-    background: tokens.bgElevated,
-    color: tokens.textSecondary,
-    cursor: "pointer",
-    flexShrink: 0,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    padding: 0,
-  },
-  statusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: "50%",
-    flexShrink: 0,
-  },
-  craftBtn: {
-    width: 28,
-    height: 28,
-    borderRadius: tokens.radiusSm,
-    border: `1px solid ${tokens.border}`,
-    background: tokens.bgElevated,
-    cursor: "pointer",
-    fontSize: 13,
-    flexShrink: 0,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    padding: 0,
+    background: `linear-gradient(180deg, ${tokens.bg} 0%, #eef0f6 100%)`,
+    WebkitFontSmoothing: "antialiased",
   },
   inputArea: {
     display: "flex",
     flexDirection: "column",
-    padding: "10px 12px 12px",
-    background: tokens.bg,
+    padding: "12px 14px 16px",
+    background: "rgba(255, 255, 255, 0.62)",
+    backdropFilter: "blur(14px)",
+    WebkitBackdropFilter: "blur(14px)",
+    borderTop: `1px solid ${tokens.border}`,
     flexShrink: 0,
     position: "relative" as const,
   },
   composerCapsule: {
     display: "flex",
     alignItems: "flex-end",
-    gap: 4,
+    gap: 6,
     border: `1px solid ${tokens.borderStrong}`,
-    borderRadius: tokens.radiusLg,
-    padding: "6px 6px 6px 4px",
+    borderRadius: tokens.radiusComposer,
+    padding: "10px 10px 10px 8px",
     background: tokens.bgElevated,
-    boxShadow: tokens.shadowSm,
+    boxShadow: `${tokens.shadowMd}, 0 0 0 1px rgba(255,255,255,0.8) inset`,
     transition: `border-color ${tokens.transitionFast} ease, box-shadow ${tokens.transitionFast} ease`,
   },
   textarea: {
     flex: 1,
     border: "none",
     borderRadius: tokens.radiusMd,
-    padding: "6px 8px",
-    fontSize: 13,
+    padding: "8px 8px",
+    fontSize: 14,
     fontFamily: "inherit",
     resize: "none" as const,
     outline: "none",
-    minHeight: 36,
-    maxHeight: 100,
+    minHeight: 44,
+    maxHeight: 120,
     background: "transparent",
     color: tokens.text,
+    lineHeight: 1.5,
   },
   attachBtn: {
-    width: 32,
-    height: 32,
+    width: 34,
+    height: 34,
     borderRadius: tokens.radiusMd,
     border: "none",
     background: "transparent",
@@ -1193,11 +888,11 @@ const styles: Record<string, React.CSSProperties> = {
     padding: 0,
   },
   sendBtn: {
-    width: 32,
-    height: 32,
+    width: 34,
+    height: 34,
     borderRadius: tokens.radiusMd,
     border: "none",
-    background: tokens.accent,
+    background: `linear-gradient(145deg, ${tokens.accent} 0%, ${tokens.accentHover} 100%)`,
     color: "#fff",
     cursor: "pointer",
     flexShrink: 0,
@@ -1205,10 +900,11 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: "center",
     justifyContent: "center",
     padding: 0,
+    boxShadow: "0 2px 8px rgba(79, 70, 229, 0.35)",
   },
   stopBtn: {
-    width: 32,
-    height: 32,
+    width: 34,
+    height: 34,
     borderRadius: tokens.radiusMd,
     border: "none",
     background: tokens.danger,
@@ -1219,6 +915,7 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: "center",
     justifyContent: "center",
     padding: 0,
+    boxShadow: "0 2px 8px rgba(220, 38, 38, 0.28)",
   },
 }
 
@@ -1303,6 +1000,13 @@ const bannerStyles: Record<string, React.CSSProperties> = {
     fontSize: 12,
     color: tokens.textSecondary,
     lineHeight: 1.5,
+  },
+  hint: {
+    margin: "0 0 10px",
+    fontSize: 11,
+    color: tokens.textSecondary,
+    lineHeight: 1.45,
+    wordBreak: "break-all" as const,
   },
   actions: {
     display: "flex",

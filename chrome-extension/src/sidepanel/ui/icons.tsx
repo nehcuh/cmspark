@@ -1,7 +1,7 @@
 // Lightweight stroke icons (16×16 default). currentColor for theming.
 import type { CSSProperties, ReactNode } from "react"
 
-type IconProps = {
+export type IconProps = {
   size?: number
   style?: CSSProperties
   className?: string
@@ -261,6 +261,73 @@ export function IconMore(p: IconProps) {
       <circle cx="6" cy="12" r="1.2" fill="currentColor" stroke="none" />
       <circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none" />
       <circle cx="18" cy="12" r="1.2" fill="currentColor" stroke="none" />
+    </Svg>
+  )
+}
+
+export function IconClose(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="M6 6l12 12" />
+      <path d="M18 6L6 18" />
+    </Svg>
+  )
+}
+
+export function IconChevronRight(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="M9 6l6 6-6 6" />
+    </Svg>
+  )
+}
+
+/** Mission packs / workspace bundle. */
+export function IconPacks(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="M4 8l8-4 8 4v9a1 1 0 01-1 1H5a1 1 0 01-1-1V8z" />
+      <path d="M12 4v17" />
+      <path d="M4 8l8 4 8-4" />
+    </Svg>
+  )
+}
+
+export function IconCopy(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <rect x="8" y="8" width="11" height="11" rx="1.5" />
+      <path d="M6 15H5a1 1 0 01-1-1V5a1 1 0 011-1h9a1 1 0 011 1v1" />
+    </Svg>
+  )
+}
+
+export function IconRefresh(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="M20 12a8 8 0 10-2.3 5.5" />
+      <path d="M20 6v6h-6" />
+    </Svg>
+  )
+}
+
+export function IconBranch(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <circle cx="6" cy="6" r="2" />
+      <circle cx="6" cy="18" r="2" />
+      <circle cx="18" cy="12" r="2" />
+      <path d="M6 8v8" />
+      <path d="M6 12h8a2 2 0 002-2V8" />
+    </Svg>
+  )
+}
+
+export function IconEdit(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="M4 20h4l10-10-4-4L4 16v4z" />
+      <path d="M13 7l4 4" />
     </Svg>
   )
 }

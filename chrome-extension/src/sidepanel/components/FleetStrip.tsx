@@ -1,9 +1,11 @@
-// ADR-015 P1 — Side Panel FleetStrip (~320px): counts, worst status, pending badge, stop-all, expand fleet panel
+// ADR-015 P1 — Side Panel FleetStrip (~320px): counts, worst status, stop-all, expand fleet panel
+// UIUX v2 §4.3: pending confirms do NOT force visibility (owned by FocusBand MinimalConfirm).
 
 import { useEffect, useState } from "react"
 import { useAgentStore } from "../store/agentStore"
 import { tokens } from "../ui/tokens"
 import type { FleetWorkerView } from "../types"
+import { fleetStripShouldShow } from "./focus-band-priority"
 
 function worstColor(status: string | undefined): string {
   if (status === "holding_tabs") return "#f59e0b"
@@ -19,7 +21,12 @@ function worstLabel(status: string | undefined): string {
   return "无舰队"
 }
 
-export function FleetStrip() {
+export function FleetStrip({
+  focusBand = false,
+}: {
+  /** When true: 1-line summary only; expand → Cockpit (FocusBand ≤80px hard cap). */
+  focusBand?: boolean
+} = {}) {
   const { state, dispatch } = useAgentStore()
   const [expanded, setExpanded] = useState(false)
   const fleet = state.fleet
@@ -36,9 +43,14 @@ export function FleetStrip() {
     return () => clearInterval(id)
   }, [])
 
-  // P0 IA cut: hide idle single-agent chrome (no permanent 「舰队」pixel tax).
-  // Show only when multi-agent activity, locks, board intents, pending confirms, or user expanded.
-  const visible = workerCount > 0 || lockCount > 0 || openIntents > 0 || pending > 0 || expanded
+  // §4.3 rule 2: pending confirms do NOT force Fleet chrome (MinimalConfirm owns them).
+  // Show only multi-agent activity / locks / board intents / user-expanded (standalone).
+  const visible = fleetStripShouldShow({
+    workerCount,
+    lockCount,
+    openIntents,
+    expanded: focusBand ? false : expanded,
+  })
   if (!visible) {
     return null
   }
@@ -54,10 +66,19 @@ export function FleetStrip() {
     setExpanded(false)
   }
 
+  const onMainClick = () => {
+    if (focusBand) {
+      // Expand → Autonomy / Cockpit — never a third bar inside FocusBand.
+      chrome.runtime.sendMessage({ type: "cockpit.open" })
+      return
+    }
+    setExpanded((e) => !e)
+  }
+
   return (
-    <div style={styles.wrap}>
-      <div style={styles.strip}>
-        <button type="button" style={styles.mainBtn} onClick={() => setExpanded((e) => !e)}>
+    <div style={focusBand ? styles.wrapFocus : styles.wrap}>
+      <div style={focusBand ? styles.stripFocus : styles.strip}>
+        <button type="button" style={styles.mainBtn} onClick={onMainClick}>
           <span style={{ ...styles.dot, background: worstColor(worst) }} />
           <strong style={{ fontSize: 11 }}>舰队</strong>
           <span style={styles.meta}>
@@ -69,7 +90,8 @@ export function FleetStrip() {
               {openIntents}
             </span>
           )}
-          {pending > 0 && (
+          {/* Pending badge is informational only — does not gate strip visibility. */}
+          {!focusBand && pending > 0 && (
             <span style={styles.badge} title="待确认操作">
               {pending}
             </span>
@@ -94,7 +116,7 @@ export function FleetStrip() {
         </button>
       </div>
 
-      {expanded && (
+      {!focusBand && expanded && (
         <div style={styles.panel}>
           <div style={styles.panelHead}>
             <span>Workers & Tab 锁</span>
@@ -200,12 +222,26 @@ export function FleetStrip() {
 
 const styles: Record<string, React.CSSProperties> = {
   wrap: { borderTop: `1px solid ${tokens.border || "#e5e7eb"}`, background: tokens.bgElevated || "#fafafa" },
+  wrapFocus: {
+    background: tokens.bgElevated || "#fafafa",
+    maxHeight: 40,
+    overflow: "hidden",
+  },
   strip: {
     display: "flex",
     alignItems: "center",
     gap: 6,
     padding: "4px 8px",
     fontSize: 11,
+  },
+  stripFocus: {
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+    padding: "4px 8px",
+    fontSize: 11,
+    minHeight: 28,
+    maxHeight: 40,
   },
   mainBtn: {
     flex: 1,

@@ -7,7 +7,11 @@ import { useAgentStore } from "../store/agentStore"
 import type { SecurityConfirmationRequest } from "../types"
 import { tokens, riskColorDark, riskLabel } from "../ui/tokens"
 
-export function MinimalConfirm() {
+/** Darker red ink for compact confirm on soft dangerSurface (~WCAG AA at 11px). */
+const COMPACT_DANGER_INK = "#b91c1c"
+const COMPACT_DANGER_BORDER = "#991b1b"
+
+export function MinimalConfirm({ compact = false }: { compact?: boolean } = {}) {
   const { state, dispatch } = useAgentStore()
   const queue = state.pendingSecurityConfirmations
   const request = queue[0] as SecurityConfirmationRequest | undefined
@@ -91,6 +95,123 @@ export function MinimalConfirm() {
       : request.tool_name === "shell_exec"
         ? "shell 命令"
         : "同类企业工具"
+
+  // FocusBand compact (G3): soft danger surface — high-contrast actions, not solid red bar.
+  // Dual-review nits: darker risk text (≥AA on tint), solid 停止 outline.
+  if (compact) {
+    return (
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          flexWrap: "nowrap",
+          padding: "6px 10px",
+          background: "transparent",
+          color: COMPACT_DANGER_INK,
+          fontSize: 11,
+          fontFamily: tokens.font,
+          minHeight: 40,
+          maxHeight: 56,
+          overflow: "hidden",
+        }}
+        role="alertdialog"
+        aria-label={`${label}确认 ${queueLen > 1 ? `1/${queueLen}` : ""}`}
+        aria-modal="true"
+      >
+        <div
+          style={{
+            fontWeight: 700,
+            letterSpacing: "0.01em",
+            color: COMPACT_DANGER_INK,
+            flex: 1,
+            minWidth: 0,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            fontSize: 11,
+          }}
+          title={
+            workerLabel
+              ? `${label} · ${request.tool_name} · ${workerLabel}`
+              : `${label} · ${request.tool_name}`
+          }
+        >
+          {label} ·{" "}
+          <span style={{ fontFamily: tokens.fontMono, color: tokens.text }}>
+            {request.tool_name}
+          </span>
+          {queueLen > 1 && (
+            <span
+              style={{
+                marginLeft: 6,
+                fontSize: 10,
+                fontWeight: 700,
+                color: tokens.warning,
+              }}
+              title="确认队列（先处理队首）"
+            >
+              1/{queueLen}
+            </span>
+          )}
+        </div>
+        <button
+          type="button"
+          style={{
+            ...btnCompact,
+            background: needsNonce ? tokens.bgMuted : tokens.success,
+            color: needsNonce ? tokens.textMuted : "#fff",
+            cursor: needsNonce ? "not-allowed" : "pointer",
+          }}
+          disabled={needsNonce}
+          title={needsNonce ? "请在确认台输入确认码后允许" : "允许"}
+          onClick={() => respond(true)}
+        >
+          允许
+        </button>
+        <button
+          ref={denyBtnRef}
+          type="button"
+          style={{
+            ...btnCompact,
+            background: tokens.bgElevated,
+            color: tokens.text,
+            border: `1px solid ${tokens.borderStrong}`,
+          }}
+          onClick={() => respond(false)}
+        >
+          拒绝
+        </button>
+        <button
+          type="button"
+          style={{
+            ...btnCompact,
+            background: tokens.dangerSoft,
+            color: COMPACT_DANGER_INK,
+            border: `1px solid ${COMPACT_DANGER_BORDER}`,
+          }}
+          onClick={() => respond(false, true)}
+          title={stopTargetId ? `停止 ${stopTargetId.slice(0, 8)}…` : "停止当前线程"}
+        >
+          停止
+        </button>
+        <button
+          type="button"
+          style={{
+            ...btnCompact,
+            background: "transparent",
+            color: tokens.accentText,
+            border: `1px solid ${tokens.borderStrong}`,
+            fontWeight: 500,
+          }}
+          onClick={() => chrome.runtime.sendMessage({ type: "cockpit.open" })}
+          title="打开确认台查看完整预览"
+        >
+          确认台
+        </button>
+      </div>
+    )
+  }
 
   return (
     <div
@@ -247,5 +368,18 @@ const btn: CSSProperties = {
   fontSize: 11,
   fontWeight: 600,
   fontFamily: tokens.font,
+  transition: `opacity ${tokens.transitionFast} ease`,
+}
+
+/** FocusBand single-row hit targets (min ~28px height for thumb-ish denser chrome). */
+const btnCompact: CSSProperties = {
+  padding: "4px 8px",
+  borderRadius: tokens.radiusSm,
+  border: "none",
+  cursor: "pointer",
+  fontSize: 11,
+  fontWeight: 600,
+  fontFamily: tokens.font,
+  flexShrink: 0,
   transition: `opacity ${tokens.transitionFast} ease`,
 }

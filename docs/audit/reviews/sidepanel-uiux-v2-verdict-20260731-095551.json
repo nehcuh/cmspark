@@ -1,0 +1,8 @@
+{
+  "batch": "sidepanel-uiux-v2",
+  "timestamp": "20260731-095551",
+  "claude": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/sidepanel-uiux-v2-claude-20260731-095551.md" },
+  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/sidepanel-uiux-v2-pi-20260731-095551.md" },
+  "both_approve": true,
+  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/sidepanel-uiux-v2-diff-20260731-095551.patch"
+}
