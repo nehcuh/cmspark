@@ -7,7 +7,7 @@ import { useAgentStore } from "../store/agentStore"
 import type { SecurityConfirmationRequest } from "../types"
 import { tokens, riskColorDark, riskLabel } from "../ui/tokens"
 
-export function MinimalConfirm() {
+export function MinimalConfirm({ compact = false }: { compact?: boolean } = {}) {
   const { state, dispatch } = useAgentStore()
   const queue = state.pendingSecurityConfirmations
   const request = queue[0] as SecurityConfirmationRequest | undefined
@@ -91,6 +91,118 @@ export function MinimalConfirm() {
       : request.tool_name === "shell_exec"
         ? "shell 命令"
         : "同类企业工具"
+
+  // FocusBand compact: single primary row (tool + actions) to fit ≤56–80px budget.
+  if (compact) {
+    return (
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          flexWrap: "nowrap",
+          padding: "6px 10px",
+          background: `linear-gradient(180deg, ${tokens.darkDangerBg} 0%, #2a1515 100%)`,
+          borderBottom: "1px solid #7f1d1d",
+          color: tokens.darkDanger,
+          fontSize: 11,
+          fontFamily: tokens.font,
+          minHeight: 40,
+          maxHeight: 56,
+          overflow: "hidden",
+        }}
+        role="alertdialog"
+        aria-label={`${label}确认 ${queueLen > 1 ? `1/${queueLen}` : ""}`}
+        aria-modal="true"
+      >
+        <div
+          style={{
+            fontWeight: 700,
+            letterSpacing: "0.01em",
+            color: color,
+            flex: 1,
+            minWidth: 0,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            fontSize: 11,
+          }}
+          title={
+            workerLabel
+              ? `${label} · ${request.tool_name} · ${workerLabel}`
+              : `${label} · ${request.tool_name}`
+          }
+        >
+          {label} ·{" "}
+          <span style={{ fontFamily: tokens.fontMono, color: tokens.darkText }}>
+            {request.tool_name}
+          </span>
+          {queueLen > 1 && (
+            <span
+              style={{
+                marginLeft: 6,
+                fontSize: 10,
+                fontWeight: 700,
+                color: tokens.darkWarning,
+              }}
+              title="确认队列（先处理队首）"
+            >
+              1/{queueLen}
+            </span>
+          )}
+        </div>
+        <button
+          type="button"
+          style={{
+            ...btnCompact,
+            background: needsNonce ? "#374151" : tokens.success,
+            color: needsNonce ? tokens.darkMuted : "#fff",
+            cursor: needsNonce ? "not-allowed" : "pointer",
+          }}
+          disabled={needsNonce}
+          title={needsNonce ? "请在确认台输入确认码后允许" : "允许"}
+          onClick={() => respond(true)}
+        >
+          允许
+        </button>
+        <button
+          ref={denyBtnRef}
+          type="button"
+          style={{ ...btnCompact, background: "#374151", color: tokens.darkText }}
+          onClick={() => respond(false)}
+        >
+          拒绝
+        </button>
+        <button
+          type="button"
+          style={{
+            ...btnCompact,
+            background: "transparent",
+            color: tokens.darkDanger,
+            border: "1px solid #7f1d1d",
+          }}
+          onClick={() => respond(false, true)}
+          title={stopTargetId ? `停止 ${stopTargetId.slice(0, 8)}…` : "停止当前线程"}
+        >
+          停止
+        </button>
+        <button
+          type="button"
+          style={{
+            ...btnCompact,
+            background: "transparent",
+            color: tokens.darkAccent,
+            border: `1px solid ${tokens.darkBorder}`,
+            fontWeight: 500,
+          }}
+          onClick={() => chrome.runtime.sendMessage({ type: "cockpit.open" })}
+          title="打开确认台查看完整预览"
+        >
+          确认台
+        </button>
+      </div>
+    )
+  }
 
   return (
     <div
@@ -247,5 +359,18 @@ const btn: CSSProperties = {
   fontSize: 11,
   fontWeight: 600,
   fontFamily: tokens.font,
+  transition: `opacity ${tokens.transitionFast} ease`,
+}
+
+/** FocusBand single-row hit targets (min ~28px height for thumb-ish denser chrome). */
+const btnCompact: CSSProperties = {
+  padding: "4px 8px",
+  borderRadius: tokens.radiusSm,
+  border: "none",
+  cursor: "pointer",
+  fontSize: 11,
+  fontWeight: 600,
+  fontFamily: tokens.font,
+  flexShrink: 0,
   transition: `opacity ${tokens.transitionFast} ease`,
 }

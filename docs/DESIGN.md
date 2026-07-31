@@ -74,7 +74,8 @@ Helpers: `connectionColor` / `connectionLabel` / `connectionDotShadow` in `token
 - L1 header tint: `tokens.modeBrowserBg` (`#dbeafe`); BottomBar tabs filtered by capability level
 - ContextBar (§4 / P0 IA cut 2026-07-27): L0 Skills·Know·Hist · L1 Tabs·Skills · L2 Panel empty; packs/board/mcp/apps via BottomBar「更多」
 - **StatusRail** (ex-Header): ThreadList + title + ModeBadge (pin-on-badge) + connection (token colors) + ⋯ menu (Craft/export/NB/logs/settings) — no permanent power-icon strip
-- FleetStrip: hidden when idle single-agent; show only multi-worker / locks / intents / pending confirms
+- **FocusBand** (UIUX v2 §4.3): single slot Confirm > L2 Safety+急停 > Fleet > L1 Context; hard cap ≤80px; 急停 never buried under L2 task
+- FleetStrip: hidden when idle single-agent; show only multi-worker / locks / intents (**not** pending confirms — those are MinimalConfirm / FocusBand)
 
 ### Cockpit (P1)
 - Extension popup `tabs/cockpit.html` (~720×560); SW mirror hydrates computer task + pending confirms

@@ -9,7 +9,7 @@ import { IconExternal, IconMonitor, IconStop } from "../ui/icons"
 
 const ABORT_ACK_TIMEOUT_MS = 3000
 
-export function SafetyStrip() {
+export function SafetyStrip({ compact = false }: { compact?: boolean } = {}) {
   const { state } = useAgentStore()
   const task = state.computerTask
   const hasConfirm = state.pendingSecurityConfirmations.length > 0
@@ -82,6 +82,58 @@ export function SafetyStrip() {
     chrome.runtime.sendMessage({ type: "computer.task.abort", task_id: task.taskId })
     setAbortSentAt(Date.now())
     setAbortUnconfirmed(false)
+  }
+
+  // FocusBand compact: single TaskChip + 急停 row (confirm path owned by FocusBand P0).
+  if (compact) {
+    return (
+      <div style={styles.wrapCompact}>
+        <div style={styles.chipCompact}>
+          <span style={styles.iconBubbleCompact}>
+            <IconMonitor
+              size={12}
+              style={{
+                color: live
+                  ? tokens.darkLive
+                  : confirmOnly
+                    ? tokens.darkDanger
+                    : tokens.darkMuted,
+              }}
+            />
+          </span>
+          <span style={styles.live}>
+            {live && <span style={styles.liveDot} title="进行中" />}
+            {task?.task
+              ? ellipsize(task.task, 28)
+              : hasConfirm
+                ? "待确认操作"
+                : "Computer Use"}
+          </span>
+          {progressText && <span style={styles.meta}>{progressText}</span>}
+          {task && !finished && !task.abortAcked && (
+            <button type="button" style={styles.abortBtnCompact} onClick={sendAbort} title="急停">
+              <IconStop size={11} />
+              急停
+            </button>
+          )}
+          {task?.abortAcked && !finished && (
+            <span style={styles.meta}>已急停…</span>
+          )}
+          <button
+            type="button"
+            style={styles.openBtnCompact}
+            onClick={() => chrome.runtime.sendMessage({ type: "cockpit.open" })}
+            title="打开确认台：完整预览 / 白名单 / 确认码；关闭窗口不会停止任务"
+          >
+            确认台
+            <IconExternal size={11} />
+          </button>
+        </div>
+        {/* Compact FocusBand primary = l2_safety only when no pending confirm;
+            if confirm sneaks in, keep MiniConfirm compact so 急停 row above still fits budget. */}
+        {hasConfirm && <MinimalConfirm compact />}
+      </div>
+    )
   }
 
   return (
@@ -170,6 +222,61 @@ const styles: Record<string, React.CSSProperties> = {
     color: tokens.darkText,
     fontSize: 11,
     fontFamily: tokens.font,
+  },
+  wrapCompact: {
+    padding: "4px 10px",
+    background: "linear-gradient(180deg, #141820 0%, #0f1115 100%)",
+    color: tokens.darkText,
+    fontSize: 11,
+    fontFamily: tokens.font,
+    maxHeight: 56,
+    overflow: "hidden",
+  },
+  chipCompact: {
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+    flexWrap: "nowrap",
+    minHeight: 28,
+  },
+  iconBubbleCompact: {
+    width: 20,
+    height: 20,
+    borderRadius: tokens.radiusSm,
+    background: tokens.darkElevated,
+    border: `1px solid ${tokens.darkBorder}`,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+  abortBtnCompact: {
+    background: tokens.darkDangerBg,
+    color: tokens.darkDanger,
+    border: "1px solid #7f1d1d",
+    borderRadius: tokens.radiusSm,
+    padding: "2px 8px",
+    cursor: "pointer",
+    fontSize: 10,
+    fontWeight: 700,
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 3,
+    flexShrink: 0,
+  },
+  openBtnCompact: {
+    background: "transparent",
+    color: tokens.darkAccent,
+    border: `1px solid ${tokens.darkBorder}`,
+    borderRadius: tokens.radiusSm,
+    cursor: "pointer",
+    fontSize: 10,
+    fontWeight: 500,
+    padding: "2px 6px",
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 3,
+    flexShrink: 0,
   },
   entChip: {
     marginTop: 6,

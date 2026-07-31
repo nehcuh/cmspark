@@ -4,14 +4,12 @@ import { Component, useState, useRef, useCallback, useEffect } from "react"
 import { useWebSocket } from "./hooks/useWebSocket"
 import { useCapabilityMode } from "./hooks/useCapabilityMode"
 import { ChatView } from "./components/ChatView"
-import { SafetyStrip } from "./components/SafetyStrip"
-import { ContextStrip } from "./components/ContextStrip"
 import { BottomBar } from "./components/BottomBar"
 import {
   ContextPanelHost,
   ContextPanelHostProvider,
 } from "./components/ContextPanelHost"
-import { FleetStrip } from "./components/FleetStrip"
+import { FocusBand } from "./components/FocusBand"
 import { SettingsSlideout } from "./components/SettingsSlideout"
 import { McpServerForm } from "./components/McpServerForm"
 import { SlashCommandPopover } from "./components/SlashCommandPopover"
@@ -151,8 +149,6 @@ function AppContent() {
   }, [])
   const { level, badgeLabel } = useCapabilityMode(onEscalate)
   const isComputer = level === "computer"
-  const isBrowser = level === "browser"
-  const hasPendingConfirm = appState.pendingSecurityConfirmations.length > 0
 
   // P1: auto-open Cockpit when entering L2 (openOrFocus is idempotent)
   useEffect(() => {
@@ -176,13 +172,10 @@ function AppContent() {
         onOpenNotebooklmImporter={() => setNbImporterOpen(true)}
         onToast={showToast}
       />
-      {/* §4: L1 ContextStrip — current tab + user-only「展开工作区」 */}
-      {isBrowser && <ContextStrip />}
-      {/* P1 content-split: SafetyStrip for L2 task AND any pending confirm (L0/L1 MinimalConfirm) */}
-      {(isComputer || hasPendingConfirm) && <SafetyStrip />}
+      {/* UIUX v2 §4.3 FocusBand: Confirm > L2 Safety+急停 > Fleet > L1 Context; ≤80px */}
+      <FocusBand capabilityLevel={level} />
       <ChatView />
       {/* R3: ComputerTaskBar removed — step timeline only in Cockpit dual-track */}
-      <FleetStrip />
       {/* UIUX v2 §4.7 M1: strip chrome + Host body (SoT for panels); strip stays until PR5 */}
       <BottomBar capabilityLevel={level} />
       <ContextPanelHost />
