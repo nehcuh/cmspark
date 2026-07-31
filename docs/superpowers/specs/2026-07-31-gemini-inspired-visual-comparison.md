@@ -1,0 +1,373 @@
+# Gemini Side Panel vs CMspark — Visual Language Comparison & Direction
+
+| Field | Value |
+|-------|--------|
+| Status | **Dual-reviewed APPROVE_WITH_NITS** (Claude + Pi 2026-07-31; nits folded) |
+| Date | 2026-07-31 |
+| Type | Visual / IA presentation only — **no capability model change** |
+| Baseline | UIUX v2 Quiet Agent Shell ([sidepanel-uiux-redesign](2026-07-31-sidepanel-uiux-redesign.md)) + Quiet Premium pass (`dec31b8`) |
+| Reference | Google **Gemini in Chrome** native Side Panel (2026 product; not third-party clones) |
+| Sources | [Chrome Gemini 3 blog](https://blog.google/products-and-platforms/products/chrome/gemini-3-auto-browse/), Chrome support “Use Gemini in Chrome”, public product coverage (MacRumors / TechRadar), Material Design 3 surface language |
+
+---
+
+## 1. Purpose
+
+Users report: after UIUX v2 IA work, the panel is **more usable** and **somewhat prettier**, but still lacks the **premium / “official product”** feel of Gemini’s side panel.
+
+This doc:
+
+1. Distills what makes Gemini’s panel feel high-end.  
+2. Contrasts it with CMspark today (post-v2 + indigo premium pass).  
+3. Proposes a **Gemini-inspired visual direction** that **does not** reopen ADR-020 or three-mode product locks.  
+4. Gives an implementable PR slice and acceptance criteria for dual-review.
+
+**Out of scope:** cloning Gemini branding/trademark assets; adding auto-browse; changing confirm content-split; deleting Composition/装配.
+
+---
+
+## 2. What we studied (Gemini in Chrome)
+
+### 2.1 Product shell
+
+- **Native Chrome Side Panel** — same family as Bookmarks / History, not a “popup app in a box”.  
+- **Single toolbar affordance** (Gemini icon) → panel opens.  
+- Framed as **always-available co-pilot beside the page**, multitasking without tab juggling.  
+- Page context is **consumed by the model**, not primarily **shown as chrome strips**.
+
+### 2.2 Visual grammar (observed / industry synthesis)
+
+Gemini’s premium feel is less “more gradients” and more **restraint + Material 3 tonal elevation**:
+
+| Trait | Gemini-like pattern |
+|-------|---------------------|
+| **Chrome weight** | Near-zero permanent tool bars; chat + composer dominate |
+| **Surfaces** | Soft tonal layers (elevated white / subtle tint), not hard gray slabs |
+| **Corners** | Large continuous radii on composer + bubbles (**observed** ~16–24px product language; industry / MD3-adjacent, not Gemini-exclusive) |
+| **Borders** | Hairline or none; separation via **tone**, not 1px `#e5e7eb` cages |
+| **Typography** | Generous line-height, strong empty-state title, muted secondary |
+| **Accent** | Brand color as **sparks** (avatar, send, selection) — not full-width colored headers |
+| **Density** | Low: fewer simultaneous chips/rows; progressive reveal |
+| **Empty state** | Editorial: headline + short help + 2–3 suggestions |
+| **Motion** | Soft, short; no aggressive scale spam |
+
+### 2.3 Interaction grammar (relevant to “高级感”)
+
+- Context is **implicit** until needed.  
+- Power features live behind **one entry** or natural language, not a permanent strip.  
+- Sensitive agent actions (auto browse) use **calm confirm pauses**, not scare-chrome stacking.
+
+---
+
+## 3. CMspark today (honest audit)
+
+### 3.1 Strengths (keep)
+
+| Asset | Why keep |
+|-------|----------|
+| ADR-020 L0/L1/L2 + 装配 | Product differentiation; Gemini is “assistant”, we are “agent + composition + trust” |
+| Content-split confirm + 确认台 | Required for high-blast tools |
+| ContextPanelHost + chips/`/` | Better than six-tab landfill |
+| Quiet Premium tokens | Indigo `#4f46e5`, cool slate canvas, frosted rail — good base |
+
+### 3.2 Gaps vs Gemini (why it still feels “工具感”)
+
+| Gap | Symptom in CMspark |
+|-----|-------------------|
+| **Chrome stacking** | StatusRail + FocusBand + chips + composer = 3–4 visual bands even on L0 |
+| **Engineering borders** | Many 1px cages around chips, tool cards, bubbles |
+| **Mode chrome weight** | Mode badge + connection + thread compete with brand |
+| **Empty state** | Still “setup tips” density, not editorial calm |
+| **Composer not hero** | Chips row competes with input; send is strong but field is crowded |
+| **Tool cards** | Look like log panels, not soft “activity” cards |
+| **Identity** | Wordmark “CMspark” competes; no single quiet brand mark |
+
+**Important:** Some chrome is **capability-real** (L2 急停, confirm). Gemini can stay empty because it is not a multi-surface agent cockpit. We must **hide weight until Surface escalates**, not delete safety.
+
+---
+
+## 4. Side-by-side model
+
+### 4.1 L0 idle (most important first impression)
+
+```text
+GEMINI-LIKE                          CMS PARK TODAY (simplified)
+┌─────────────────────┐              ┌─────────────────────┐
+│  ·  Gemini      ⋯  │              │ thr · CMspark ·徽 ··⋯│  ← denser
+├─────────────────────┤              ├─────────────────────┤
+│                     │              │                     │
+│     Large greeting  │              │   Title + hints     │
+│     short subtitle  │              │   3 chips           │
+│     2 soft chips    │              │                     │
+│                     │              │                     │
+│                     │              │                     │
+├─────────────────────┤              ├ chips 装配 Skills.. ┤  ← extra band
+│  [     Ask…    ➤ ] │              │  [ attach | … | ➤ ] │
+└─────────────────────┘              └─────────────────────┘
+```
+
+**Target L0 for us:** closer to left column — **one soft top, editorial empty, hero composer; chips collapsed**.
+
+### 4.2 L1 / confirm (must stay capable)
+
+Gemini rarely shows risk UI. We **must** show MinimalConfirm + optional context.
+
+**Target:** FocusBand as **floating card** (inset, radius 16, shadow), not full-bleed warning bar; page context as **one line under rail** or inside composer meta, not a second permanent strip when idle.
+
+### 4.3 L2
+
+Gemini auto-browse uses pause-for-confirm. We already have 确认台.
+
+**Target:** Panel stays **minimal safety** (急停 + chip); **no extra ornament** on dark strip — cleaner type, more padding, less meta noise.
+
+---
+
+## 5. Design direction: “Gemini breath, CMspark bones”
+
+### 5.1 North star
+
+> **Look like a calm Google-grade side panel; behave like a trust-aware browser agent.**
+
+Tagline for implementers: **Breath ≠ feature cut.**
+
+### 5.2 Principles (P-G1 … P-G7)
+
+| ID | Principle | Gemini borrow | CMspark constraint |
+|----|-----------|---------------|--------------------|
+| P-G1 | **Chat is the product** | Large center void | L0 ChatStream height ≥60% (stricter than v2 55%) |
+| P-G2 | **Progressive chrome** | Empty until needed | FocusBand only when non-empty priority ≠ idle |
+| P-G3 | **Tonal, not caged** | MD3 surfaces | Prefer bg elevation + shadow; borders `rgba` only |
+| P-G4 | **One hero input** | Big rounded field | Composer radius ≥16; chips **collapsed by default on L0** |
+| P-G5 | **Accent as spark** | Logo / send | No full-width mode-colored rails on L0; mode tint ≤4px accent line or badge only |
+| P-G6 | **Editorial empty** | Greeting | Single H1 + 1 line + ≤3 suggestions |
+| P-G7 | **Safety without panic** | Calm confirm | FocusBand floating; 急停 always available when L2; never bury under decoration |
+
+### 5.3 Non-goals
+
+- Gemini multicolor logo / “G” trademark styling  
+- Removing 装配, Packs, MCP, Board  
+- Removing Mode badge or connection status (can **visually demote**)  
+- Full dark theme for entire panel in this pass  
+- Changing confirm semantics (Allow/Deny/timeout)
+
+### 5.4 Token direction (delta on Quiet Premium)
+
+| Role | Current (approx) | Gemini-inspired target |
+|------|------------------|------------------------|
+| Canvas | `#f0f2f6` cool slate | Keep or slightly **lighter / airier** tonal (`#f5f6fa`) for more breathing room (not “Google brand white”) |
+| Elevated | white | white + **softer** shadowLg |
+| Accent | indigo `#4f46e5` | Keep indigo (brand); optional **subtle dual-stop** on send only |
+| Radius composer | 14 | **18–20** |
+| Radius bubbles | 16 | **18** |
+| StatusRail | frosted | **More transparent / thinner** (min-height 40, less padding) |
+| L0 mode rail tint | optional full bg | **Remove full-bg tint on L0**; badge only |
+
+### 5.5 Component targets
+
+#### StatusRail
+
+- Height ↓, title weight medium (not shouty), connection as **textless** soft dot with tooltip  
+- Thread control: icon-first or compact chevron  
+- ⋯ remains single overflow  
+
+#### Empty state (L0)
+
+```text
+        CMspark
+   有什么我可以帮你的？
+
+  总结本页 · 随便问问 · 装配
+```
+
+(Copy TBD Chinese tone — calm, not feature laundry list.)
+
+#### Composer
+
+- Single elevated pill; attach/send inside  
+- **L0:** chips hidden behind `＋` or first focus; **L1+:** show ≤3 chips  
+- Placeholder: short, human (“问任何问题，或描述网页任务…”)
+
+#### FocusBand
+
+- Inset 8–10px horizontal; `border-radius: 16`; `shadowMd`  
+- Confirm primary: soft danger **tint surface** (implement with explicit token, e.g. `rgba(220,38,38,0.08)` / `surface.dangerSoft`), **not** solid red bar  
+- L2 急停: high contrast but compact icon+label  
+- **Safety watch:** softening confirm must not reduce notice-rate on host_computer / shell / netsec — PR-G3 Pi gate must check; 急停 contrast never reduced
+
+#### Tool cards
+
+- White elevated, left **accent hairline** (2px), no heavy mono log look  
+- Collapse by default  
+
+#### 装配 drawer
+
+- Already bottom sheet — increase radius, scrim softer (`rgba(15,23,42,0.28)`), section cards more “settings list” than buttons grid  
+
+---
+
+## 6. Wireframes (target)
+
+### 6.1 L0 — Gemini breath
+
+```text
+┌──────────────────────────────────┐
+│  ≡  CMspark              ●  ⋯   │  thin rail
+│                                  │
+│                                  │
+│         有什么可以帮你？          │
+│      总结页面 · 装配 · 提问       │
+│                                  │
+│                                  │
+│                                  │
+│  [装配]                          │  ← always one soft chip (Q1); Skills/Know hidden
+│  ┌────────────────────────────┐  │
+│  │  ＋  问任何问题…        ➤ │  │  hero composer (＋ may expand more chips later)
+│  └────────────────────────────┘  │
+└──────────────────────────────────┘
+```
+
+**After empty state dismisses:** the soft **装配** chip remains on the composer dock (not only in empty suggestions).
+
+### 6.2 L1 + confirm — capable but calm
+
+```text
+┌──────────────────────────────────┐
+│  ≡  CMspark   [网页]     ●  ⋯   │
+│  ┌────────────────────────────┐  │
+│  │ ⚠ evaluate · 允许  拒绝   │  │  floating FocusBand
+│  │ github.com · 展开工作区    │  │  secondary line
+│  └────────────────────────────┘  │
+│  (chat…)                         │
+│  ┌────────────────────────────┐  │
+│  │ 装配  Tabs  工作区          │  │  chips only when L1+
+│  │  ＋  描述网页任务…      ➤ │  │
+│  └────────────────────────────┘  │
+└──────────────────────────────────┘
+```
+
+---
+
+## 7. Migration vs UIUX v2
+
+| v2 decision | This direction |
+|-------------|----------------|
+| StatusRail | **Keep**, demote density |
+| FocusBand state machine | **Keep priority table**, change **presentation** to floating card |
+| ContextPanelHost | Unchanged |
+| bottomBarStrip default false | Unchanged |
+| 装配 Composition-only | Unchanged |
+| Quiet Premium indigo | **Keep**, tune radii/surfaces toward MD3 breath |
+
+This is **Visual Pass B (Gemini breath)**, not UIUX v3 product rewrite.
+
+---
+
+## 8. PR plan (implementation later)
+
+### PR-G1 — Surfaces & type (low risk)
+
+- Token deltas: canvas, radius composer 18, shadow system  
+- StatusRail thinner; L0 no full mode background fill  
+- Global selection / scrollbar already partially done — align  
+
+### PR-G2 — Empty + composer hero
+
+- Editorial empty L0/L1/L2  
+- L0 chips behind `＋` disclosure  
+- Composer radius/padding/placeholder  
+
+### PR-G3 — FocusBand floating + tool cards
+
+- Inset card presentation  
+- Tool card hairline accent  
+- Confirm soft surface  
+
+### PR-G4 — 装配 / menus polish
+
+- Drawer scrim + section list MD3  
+- Menu radius/shadow match  
+
+**Ship order:** G1 → G2 → G3 → G4. Each PR Pi-gated if continuing AgentTeam.
+
+---
+
+## 9. Acceptance (manual)
+
+| # | Criterion |
+|---|-----------|
+| A1 | L0: ≤2 permanent chrome bands (rail + composer dock). **≤1 soft 装配 chip** always on dock (≠ full chip “row”). Skills/Know hidden until 装配 open or L1+. |
+| A2 | Empty state: one title, one subtitle line, ≤3 suggestions |
+| A3 | Composer visually dominant (larger radius, more padding than rail) |
+| A4 | FocusBand never full-bleed solid danger; 急停 still visible on L2+confirm |
+| A5 | No Material **status-dot** hex regression (`#4CAF50` etc.); accent stays indigo family (e.g. `#4f46e5`) |
+| A6 | ADR-020 copy: no「中层 Agent」; Board not under 装配 |
+| A7 | Side-by-side screenshot vs Gemini optional for design review — not pixel-match |
+
+---
+
+## 10. Key decisions
+
+| ID | Decision | Rationale |
+|----|----------|-----------|
+| KD1 | Inspire from Gemini **breath**, not clone brand | Legal + product identity |
+| KD2 | Demote L0 chrome; keep capability chrome on escalate | Matches agent vs assistant |
+| KD3 | Floating FocusBand | Safety without panic aesthetic |
+| KD4 | L0 chips collapsed | Biggest single “Gemini-like” delta |
+| KD5 | Keep indigo, not multicolor Google logo | Brand continuity from Quiet Premium |
+| KD6 | No ADR-020 / D10′ reopening | Dual-review gate |
+
+---
+
+## 11. Open questions
+
+| # | Question | Default |
+|---|----------|---------|
+| Q1 | L0 chips: `＋` disclosure vs always one “装配” chip? | **One soft 装配 chip** + hide Skills/Know until open (compromise discoverability) |
+| Q2 | Wordmark “CMspark” vs monogram mark? | Keep wordmark, reduce weight |
+| Q3 | Match Gemini light-only or offer dark panel later? | Light-only this pass |
+
+---
+
+## 12. Risks
+
+| Risk | Mitigation |
+|------|------------|
+| Over-minimal → users can’t find Packs | Keep 装配 entry always on L0 (Q1 default); `/packs` in empty suggestions |
+| Floating FocusBand breaks 80px budget | Cap card height; secondary line ellipsis |
+| Soft confirm → lower L2 notice-rate | PR-G3 Pi gate; soft tint + high-contrast 急停; never low-contrast text-only danger |
+| “Looks like Gemini” brand risk | No Gemini assets; indigo monochrome accents only |
+| Scope creep into product rewrite | PR-G* visual only; Host/FocusBand logic unchanged |
+
+---
+
+## 13. Dual-review ask
+
+Reviewers should answer:
+
+1. Is the Gemini synthesis accurate enough for engineering?  
+2. Are KD1–KD6 safe vs ADR-020 / three-mode?  
+3. Is L0 chip collapse (KD4 / Q1) acceptable discoverability trade-off?  
+4. Is PR-G1…G4 sized sanely?  
+5. Any **blocking** visual or product issue before implementation?
+
+---
+
+## 14. Dual-review log
+
+| Reviewer | Verdict | Artifact |
+|----------|---------|----------|
+| Claude | APPROVE_WITH_NITS | `docs/audit/reviews/gemini-visual-comparison-claude-20260731-131512.md` |
+| Pi | APPROVE_WITH_NITS | `docs/audit/reviews/gemini-visual-comparison-pi-20260731-131512.md` |
+
+Nits folded: §6.1 wireframe vs Q1 装配 chip; soft-confirm notice-rate risk; A1/A5 wording; observed radii; canvas phrasing.
+
+## 15. References
+
+- Google Chrome blog: Gemini 3 / side panel / auto browse (2026)  
+- Chrome Help: Use Gemini in Chrome  
+- UIUX v2 redesign SoT + Quiet Premium commit  
+- Material Design 3: tonal surfaces, shape scale (**industry-adjacent**, not Gemini-unique / not a hard dependency)
+
+---
+
+*Design SoT ready for PR-G1 implementation when user says go.*
