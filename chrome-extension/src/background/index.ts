@@ -873,6 +873,10 @@ function setupMessageHandlers() {
       case "pack.apply":
       case "pack.unapply":
       case "pack.uninstall":
+      case "pack.get":
+      case "pack.save_user":
+      case "pack.delete_user":
+      case "pack.suggest_config":
       case "modules.list":
       case "modules.set_enabled":
       case "modules.update":

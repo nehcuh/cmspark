@@ -108,6 +108,116 @@ test("install dir + list + apply allowlist + uninstall restores snapshot", () =>
   assert.equal(t3.tool_whitelist, null)
 })
 
+test("saveUserPack + apply uses skill_refs and mcp_servers (tools unchanged)", () => {
+  const skillEngine = new SkillEngine()
+  // Seed a global skill the user scene can ref
+  const skillsRoot = path.join(getConfigDir(), "skills")
+  fs.mkdirSync(skillsRoot, { recursive: true })
+  fs.writeFileSync(
+    path.join(skillsRoot, "demo-research.md"),
+    `---\nname: demo-research\ndescription: research helper\ntype: prompt_template\n---\n\n# Research\n`,
+  )
+  skillEngine.refresh()
+
+  const cfg = getConfig()
+  saveConfig({
+    mcp: {
+      enabled: true,
+      servers: {
+        "fake-fs": { command: "echo", args: [], enabled: true },
+      },
+    },
+  } as any)
+  clearConfigCache()
+
+  const saved = packEngine.saveUserPack(
+    {
+      name: "投研助手",
+      description: "用户自定义场景",
+      system_prompt_append: "你是投研助手，优先用已勾选技能。",
+      skill_ids: ["demo-research", "missing-skill"],
+      mcp_server_ids: ["fake-fs", "not-configured"],
+    },
+    skillEngine,
+  )
+  assert.equal(saved.ok, true)
+  if (!saved.ok) return
+  assert.ok(saved.id.startsWith("user-"))
+
+  const detail = packEngine.getPackDetail(saved.id)
+  assert.equal(detail.ok, true)
+  if (!detail.ok) return
+  assert.equal(detail.pack.origin, "user")
+  assert.equal(detail.pack.editable, true)
+  assert.deepEqual(detail.pack.skill_refs, ["demo-research", "missing-skill"])
+  assert.ok(detail.pack.system_prompt_append.includes("投研助手"))
+
+  const tm = new ThreadManager()
+  const thread = tm.create("user-scene-apply")
+  const beforeSkills = [...(thread.active_skill_ids || [])]
+  const applied = packEngine.applyPack(saved.id, thread.id, tm, skillEngine)
+  assert.equal(applied.ok, true)
+  if (!applied.ok) return
+  const t2 = tm.get(thread.id)!
+  assert.equal(t2.mission_pack_id, saved.id)
+  // tools.mode unchanged → whitelist stays null
+  assert.equal(t2.tool_whitelist, null)
+  assert.deepEqual(t2.active_skill_ids, ["demo-research"]) // missing filtered
+  assert.deepEqual(t2.active_mcp_server_ids, ["fake-fs"])
+  assert.equal(t2.mcp_selection_mode, "manual")
+  assert.equal(t2.skill_selection_mode, "manual")
+  assert.ok(t2.config_override?.system_prompt_append?.includes("投研助手"))
+  // pre-pack skills should not leak when skill_refs present
+  assert.ok(!t2.active_skill_ids.includes("browse") || beforeSkills.includes("demo-research"))
+
+  // cannot overwrite with non-user save targeting builtin-style: update same user pack
+  const updated = packEngine.saveUserPack(
+    {
+      id: saved.id,
+      name: "投研助手 v2",
+      system_prompt_append: "更新后的 prompt",
+      skill_ids: ["demo-research"],
+      mcp_server_ids: [],
+    },
+    skillEngine,
+  )
+  assert.equal(updated.ok, true)
+
+  const del = packEngine.deleteUserPack(saved.id, tm, skillEngine)
+  assert.equal(del.ok, true)
+  const t3 = tm.get(thread.id)!
+  assert.equal(t3.mission_pack_id, null)
+
+  // restore config modules bit for other tests
+  saveConfig({ modules: cfg.modules, mcp: cfg.mcp } as any)
+  clearConfigCache()
+})
+
+test("deleteUserPack rejects non-user packs", () => {
+  const skillEngine = new SkillEngine()
+  const tm = new ThreadManager()
+  const src = fs.mkdtempSync(path.join(os.tmpdir(), "mini-pack-nuser-"))
+  writeMiniPack(src, "mini-pack-not-user")
+  packEngine.installPackFromDirectory(src, skillEngine, { force: true })
+  const del = packEngine.deleteUserPack("mini-pack-not-user", tm, skillEngine)
+  assert.equal(del.ok, false)
+  if (del.ok) return
+  assert.equal(del.code, "not_user_pack")
+})
+
+test("getPackDetail includes installed_skill_ids for clone", () => {
+  const skillEngine = new SkillEngine()
+  const src = fs.mkdtempSync(path.join(os.tmpdir(), "mini-pack-detail-"))
+  writeMiniPack(src, "mini-pack-detail")
+  packEngine.installPackFromDirectory(src, skillEngine, { force: true })
+  skillEngine.refresh()
+  const d = packEngine.getPackDetail("mini-pack-detail", skillEngine)
+  assert.equal(d.ok, true)
+  if (!d.ok) return
+  assert.ok((d.pack.installed_skill_ids || []).some((id) => id.startsWith("pack--mini-pack-detail--")))
+  assert.equal(d.pack.editable, false)
+})
+
 test("unapplyPack restores snapshot without clearing workspace_root", () => {
   const skillEngine = new SkillEngine()
   const tm = new ThreadManager()
