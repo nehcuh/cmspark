@@ -3,21 +3,24 @@
 ## Session Handoff
 
 <!-- handoff:start -->
-### 2026-07-31 (S26 — 用户场景 + 侧栏 UX + 技能扫描 + DMG)
-- **main tip（已合）**：`df468d6` = #95；含 #93 场景 UX、#94 用户场景、#95 侧栏 polish
+### 2026-08-02 (S31 — soft-fail estop + OCR describe + DMG)
+- **Branch tip**：`fix/macos-tcc-product-identity` @ `e156e78`（未合 main）
+- **main 已有**：PR #103 TCC 产品身份（`MacOS/CMspark` / `com.cmspark.agent`）
 - **本会话交付**：
-  - #93/#94/#95 全合 main；用户场景可配 system prompt / skills / MCP + AI suggest + 另存为/保存并应用
-  - 知识批量删除、技能 auto|all|manual 勾选语义、StatusRail 顶栏呼吸感
-  - **PR #96** OPEN CI 绿：`feat/skill-disk-refresh` — disk fingerprint + Skills 刷新
-  - 清 `/Applications/CMspark.app` + 重打 `dist-package/CMspark-v0.3.0-macOS.dmg`
-  - 确认 #91 log.event 回声环仍断（耗电 FAQ）
+  - tray/Aqua 拥有 estop；soft-fail CGEventTap（socket 保活，热键 DEGRADED）
+  - spatial `describe` OCR + 禁止 shell Vision 旁路；Pi APPROVE_WITH_NITS
+  - `make package-macos` → `dist-package/CMspark-v0.3.0-macOS.dmg`（CDHash `dae88680…`）
+  - 已 ditto `/Applications/CMspark.app`；SOCKET_LIVE 验证
+  - ship note：`docs/superpowers/plans/2026-08-02-macos-dmg-ship-note.md`
+- **关键发现**：CLI tap OK ≠ LS/`open -a` tap OK（ad-hoc TCC 归因）
 - **下次**：
-  1. **Merge #96** → 再打 DMG 或热更 companion
-  2. 验收：新建场景、批量删知识、外部拷 skill 后 list/匹配
-  3. 可选：fs.watch；ORT 体积预算若要 TinyClick
-- **分支**：`feat/skill-disk-refresh` tip `c54dd3a`
+  1. Side Panel `host_computer` 确认台真机一轮
+  2. PR 合 main（含 soft-fail + describe + 后续 tray 提交）
+  3. 分发用**新** DMG；旧 08-01 21:51 包无 soft-fail/spatial describe
+- **Workflows**：`.grok/workflows/tray-estop-cu-fix.rhai` · `estop-tap-degraded-cu-fix.rhai` · `ocr-describe-enhance.rhai`
 
-### 2026-07-31 (S25 — UIUX breath 合 main + 场景 UX PR #93)
-- #92 UIUX breath 合 main；#93 场景 rename/unapply 产品 SoT + 实现（S26 已合）
-- 教训：场景 whitelist ≠ god-mode；装技能走 Skills 导入
+### 2026-08-01 (S30 — host_computer 阻塞 handoff)
+- 阻塞：estop code 4 / -3801；CLI 成功 vs daemon 失败
+- HANDOFF：`docs/superpowers/plans/2026-08-01-macos-tcc-estop-BLOCKED-HANDOFF.md`
+- S31 已 soft-fail 缓解 preflight；热键/ad-hoc TCC 仍开放
 <!-- handoff:end -->

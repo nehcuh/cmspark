@@ -2,15 +2,25 @@
 
 ## Current Session
 
+### S31 (2026-08-01~02) [tray-estop → soft-fail → OCR describe → DMG 分发]
+- **从 S30 阻塞续**：tray/Aqua 拥有 estop；Pi+Claude **APPROVE_WITH_NITS**；真机仍 CGEventTap fail under LS
+- **根因探针**：CLI/Python Process estop **SOCKET_LIVE**；`open -a` 路径 tapCreate nil（TCC 归因差异）
+- **soft-fail（`0bf4da4`）**：tap 失败不退进程 → socket 保活；`ensureEstopHelper` ok；热键 DEGRADED
+- **#k47c0u**：CU 通后 describe 糊行 → agent shell Vision；**spatial describe（`41d4354`）** + Pi APPROVE_WITH_NITS
+- **分发**：`make package-macos` → `CMspark-v0.3.0-macOS.dmg`（含 soft-fail+OCR）；ship note `e156e78`；已 ditto `/Applications`
+- **旧 21:51 DMG 不含上述修**；别人用旧包仍会 code 4 / 糊 OCR
+- **分支**：`fix/macos-tcc-product-identity` tip `e156e78`（**尚未**再合 main）
+- **下次**：① Side Panel 真机确认台一轮；② PR 合 main；③ 可选 Developer ID / UI 暴露 hotkey DEGRADED
+- Recorded: yes — LS vs CLI TCC；soft-fail；describe 版式
+
 ### S30 (2026-08-01 傍晚) [host_computer 真机阻塞 · 用户先撤]
 - **用户错误**：`estop helper exited at startup (code 4)`；日志亦有 SCK `-3801`
 - **已合 main**：PR #103 TCC 产品身份 + Qwen WIP
 - **未合 main**：`2c1437f` host Contents 解析 + estop stderr/重试（已装进 /Applications）
 - **矛盾**：CLI 对 `MacOS/CMspark` estop/截图/点击 **成功**；Side Panel `host_computer` **仍失败**
 - **HANDOFF**：`docs/superpowers/plans/2026-08-01-macos-tcc-estop-BLOCKED-HANDOFF.md`
-- **下次**：读 `computer.estop.spawn` / `early_exit` 日志 → 修 daemon 路径 TCC；再 PR 合 main
+- **状态**：S31 已 soft-fail 缓解 preflight；完整 CU DoD 仍开放
 - Recorded: yes — 用户先退出，阻塞已落盘
-
 ### S29 (2026-08-01) [macOS TCC 产品身份 · 对抗验证计划]
 - **触发**：外 App 截图 -3801；用户否决「勾选 node」——只应见 CMspark.app
 - **根因**：bash 主入口 + SCK 在 `cmspark-host`（`com.cmspark.host`）与 App 身份分裂
@@ -302,13 +312,19 @@
 
 ## In-Flight Tasks (Cross-Session)
 
+### macOS TCC product identity + host_computer unblock (S29–S31)
+- status: **active** (code landed on branch; DMG rebuilt; main PR pending)
+- context: PR #103 on main (identity). Branch `fix/macos-tcc-product-identity` tip `e156e78`: tray estop, soft-fail tap, spatial describe, ship note + DMG 2026-08-02
+- next_action: User Side Panel host_computer smoke → open PR merge to main; optional Developer ID / DEGRADED UI
+- resume_doc: `docs/superpowers/plans/2026-08-01-macos-tcc-estop-BLOCKED-HANDOFF.md` · `docs/superpowers/plans/2026-08-02-macos-dmg-ship-note.md`
+- updated: 2026-08-02
+
 ### ADR-020 Trust P1 residual security (from 2026-07-28 diagnosis / S22–S23)
 - status: **mostly done** (P1a 四条 + browser_download 已合 main 2026-07-30)
 - context: #85–#90 MERGED. 残余：**P1-4 P1b** argv；MCP home 收窄；Windows G3 真机
 - next_action: 可选 P1b / MCP allowlist 收窄 / G3 真机；或 HUD/CU/Pack
 - resume_doc: `docs/optimization-plan-post-adr-020.md` · `docs/audit/p1-security-open-items-2026-07-29.md`
 - updated: 2026-07-30
-
 ### P3a Companion Native HUD — post-spike (from 2026-07-27 / closed Task7 2026-07-28)
 - status: active (optional operator + P3a-full)
 - context: Task 1–7 on main. SHA `5929b53c…` pinned. Dual-track screenshots **NO-GO**.
