@@ -215,6 +215,12 @@
 - 诊断 fanout 姐妹流：`.grok/workflows/deep-diagnosis-fanout.rhai`（子系统 10 + 横切 6 + 对抗 16 + 综合）
 - **设计/plan 也可用同一脚本做 Task 0 门**（例：`native-hud-p3a-spike-plan`）；APPROVE_WITH_NITS 后 nits **必须折入文档再写代码**
 
+### Agent 安装外部 Skill 场景 backlog（2026-08-01）
+- 用户意图：Chrome 插件驱动下载 skill 包 → 配置给 **CMspark** 使用（非 Claude `~/.claude/skills`、非仓库 `skills/`）
+- 落点必须是 `~/.cmspark-agent/skills`（`getConfigDir()/skills`）；UI 导入已支持；**LLM 无一等 skill_install tool**（`skill.import*` 仅 WS/UI）
+- #au4dch 失败模式：装到项目 `skills/` 或只解压 Downloads → 面板看不到
+- 文档：`docs/optimization-plan-agent-skill-install.md`（挂 Composition backlog）
+
 ### #au4dch UX 子轨：下载去重 · 运行态 · Shell 两轨（2026-08-01）
 - 会话证据：单线程长 `shell_exec`（非 spawn_worker）也会被用户感知为「卡住/已结束」；`processingLabel` 只看 last assistant.tool_calls，与 `tool.start`→`role:tool` 结构错位
 - shell 黑窗：`capability/shell.ts` spawn 未 `windowsHide`；stdout 仅 close 后回传 — 先止血（A）再 PTY epic（B），禁止混 PR / 禁止塞 Side Panel 半成品终端
