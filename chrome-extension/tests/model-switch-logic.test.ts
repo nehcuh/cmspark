@@ -148,7 +148,8 @@ test("错误路由守卫:仅 family=computer.model 命中(不用共享 code)", (
 // --- 镜像文案互锁(companion computer-model-states.test.ts 姊妹面) ---
 
 test("镜像互锁:P2 layerSemantics / runningNote / 熔断词表关键短语", () => {
-  assert.ok(MODEL_SWITCH_COPY.layerSemantics.includes("当前任务结束后生效"))
+  // Qwen3-VL 文案：任务粒度切换说明在 switchRunningNote；layerSemantics 描述模型与急停。
+  assert.ok(MODEL_SWITCH_COPY.layerSemantics.includes("Qwen3-VL"))
   assert.ok(MODEL_SWITCH_COPY.layerSemantics.includes("Ctrl+Alt+End"))
   assert.ok(MODEL_SWITCH_COPY.switchRunningNote.includes("当前任务结束后生效"))
   assert.ok(MODEL_SWITCH_COPY.switchRunningNote.includes("Ctrl+Alt+End"))
