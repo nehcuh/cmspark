@@ -9,8 +9,11 @@
 - **计划**：`docs/superpowers/plans/2026-08-01-macos-tcc-product-identity-impl.md`（Tasks 0–8）
 - **对抗合成**：`docs/audit/reviews/macos-tcc-product-identity-adversary-synthesis-20260801.md`
 - **方案 D**：`MacOS/CMspark` = host Mach-O；身份 `com.cmspark.agent`；resolve 优先主二进制；文案禁 node/host
-- **下次**：执行 plan Task 1→7；**无 DoD 真机证据不得宣称完成**；P1=Developer ID + XPC
-- Recorded: yes — 计划完成；实现未开
+- **双审**：Claude+Pi **both APPROVE_WITH_NITS** → 执行方式一 Subagent-Driven
+- **实现分支** `fix/macos-tcc-product-identity`：Tasks 0–6 完成；`make package-macos` 产出新 DMG
+  - MacOS/CMspark = Mach-O `com.cmspark.agent`；Resources/cmspark-host → symlink；文案无 node/host 引导
+- **Task 7 未完**：需用户安装新 DMG、只勾 CMspark、外 App 截图验收
+- Recorded: yes — 代码+包就绪；真机 DoD 等人
 
 ### S28 (2026-08-01) [Qwen3-VL 实验层 · 产品设计与文档收束]
 - **范围**：TinyClick → Qwen3-VL 产品化；用户旅程 + 大陆下载 + 预检；多路对抗 + Pi/Claude/Kimi
