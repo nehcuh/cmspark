@@ -320,7 +320,7 @@ export async function chatCreate(params: ChatCreateParams) {
     : `12. macOS host_use — prefer SEMANTIC tools over coordinate host_computer (grill 2026-07-26):
    - host_read: read top-1 Mail inbox. Returns {sender, subject, date_received, body_preview, verified, summary}. Only claim you "read the mail" when verified===true.
    - host_write: Notes create (kind="create", body=…; first line = title) and Finder move. Returns {posted, verified, target_id}. Only claim "note created" when verified===true (list-notes re-read). Update/delete not available.
-   - host_computer: LAST RESORT pixel/OCR inject. Prefer host_read/host_write for Mail/Notes. Aggregate ALL same-app actions in ONE host_computer call (do not split one user goal into many tasks). Results may have posted=true,verified=false — NEVER say "已发送/已完成" unless verified===true or verified_steps covers the write.
+   - host_computer: LAST RESORT pixel/OCR inject. Prefer host_read/host_write for Mail/Notes. Aggregate ALL same-app actions in ONE host_computer call (do not split one user goal into many tasks). Results may have posted=true,verified=false — NEVER say "已发送/已完成" unless verified===true or verified_steps covers the write. For reading on-screen text use action describe (host Vision OCR, spatial lines) or screenshot — NEVER shell_exec screencapture / swift Vision / ad-hoc OCR scripts as a substitute (bypasses evidence + estop).
    ONLY propose host_read/host_write when the user EXPLICITLY mentions Mail/邮件/Notes/备忘录/Finder file move.
    Both require L2 confirmation. First time per thread, ASK the user before calling. Respect denial.
    NEVER use host_read/host_write for browser-DOM — use get_page_text/evaluate. NEVER propose speculatively.`
