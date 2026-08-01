@@ -201,22 +201,108 @@ try {
 # ---------------------------------------------------------------------------
 Step 5 6 "Staging distribution package: $StagingDir"
 
-if (Test-Path $DistDir) {
-    # Use cmd rmdir first — more tolerant of locked files (e.g. debug.log held
-    # by a previous companion process or the Windows Search Indexer).
-    cmd /c "rmdir /s /q `"$DistDir`"" 2>$null
-    if (Test-Path $DistDir) {
-        # Fallback: remove file-by-file, skip locked ones with a warning.
-        Get-ChildItem $DistDir -Recurse -File | ForEach-Object {
-            try { Remove-Item $_.FullName -Force -ErrorAction Stop }
-            catch { Write-Host "  ! skipped locked file: $($_.Name)" -ForegroundColor DarkYellow }
-        }
-        Get-ChildItem $DistDir -Recurse -Directory | Sort-Object FullName -Descending | ForEach-Object {
-            try { Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue } catch {}
+function Stop-ProcessesUsingPath([string]$root) {
+    # Best-effort: stop processes whose ExecutablePath lives under $root
+    # (typical: a still-running cmspark-agent.exe from the last package build).
+    if (-not $root -or -not (Test-Path $root)) { return }
+    $rootFull = [System.IO.Path]::GetFullPath($root).TrimEnd('\')
+    Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | ForEach-Object {
+        $ep = $_.ExecutablePath
+        if (-not $ep) { return }
+        try {
+            $epFull = [System.IO.Path]::GetFullPath($ep)
+        } catch { return }
+        if ($epFull.StartsWith($rootFull, [System.StringComparison]::OrdinalIgnoreCase)) {
+            Write-Host "  Stopping process holding package path: pid=$($_.ProcessId) $($_.Name)" -ForegroundColor DarkYellow
+            try {
+                Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop
+            } catch {
+                Write-Host "  ! could not stop pid $($_.ProcessId): $($_.Exception.Message)" -ForegroundColor DarkYellow
+            }
         }
     }
-    Ok "Cleaned previous dist-package"
+    Start-Sleep -Milliseconds 400
 }
+
+function Remove-TreeBestEffort([string]$path) {
+    # Must not throw under $ErrorActionPreference=Stop: cmd rmdir writes to
+    # stderr when a file is locked, and that used to abort the whole build
+    # before the per-file fallback ran.
+    if (-not (Test-Path $path)) { return $true }
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        Stop-ProcessesUsingPath $path
+        cmd /c "rmdir /s /q `"$path`"" 2>$null | Out-Null
+        if (-not (Test-Path $path)) { return $true }
+
+        Get-ChildItem $path -Recurse -Force -ErrorAction SilentlyContinue -File | ForEach-Object {
+            try { Remove-Item $_.FullName -Force -ErrorAction Stop }
+            catch { Write-Host "  ! skipped locked file: $($_.FullName)" -ForegroundColor DarkYellow }
+        }
+        Get-ChildItem $path -Recurse -Force -ErrorAction SilentlyContinue -Directory |
+            Sort-Object { $_.FullName.Length } -Descending |
+            ForEach-Object {
+                try { Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue } catch {}
+            }
+        try { Remove-Item $path -Force -Recurse -ErrorAction SilentlyContinue } catch {}
+        if (-not (Test-Path $path)) { return $true }
+
+        # Last resort: rename aside so we can stage into a clean path.
+        $bak = "$path.old." + (Get-Date -Format "yyyyMMddHHmmss")
+        try {
+            Rename-Item -LiteralPath $path -NewName (Split-Path $bak -Leaf) -ErrorAction Stop
+            Warn "Could not delete locked tree; moved aside to: $bak"
+            Write-Host "  Close any Explorer window / still-running cmspark-agent from that folder, then delete the .old.* folder later." -ForegroundColor DarkYellow
+            return $true
+        } catch {
+            return $false
+        }
+    } finally {
+        $ErrorActionPreference = $prevEap
+    }
+}
+
+# Clean staging tree. Prefer not aborting on lock:
+# - Often the folder itself is locked as some process CWD (e.g. companion
+#   last cwd = dist-package\cmspark-windows-x64) while remaining *writable*.
+# - In that case empty-and-reuse is enough; rmdir failure must not kill the build.
+if (Test-Path $StagingDir) {
+    $cleaned = Remove-TreeBestEffort $StagingDir
+    if (-not $cleaned -and (Test-Path $StagingDir)) {
+        $writable = $false
+        try {
+            $probe = Join-Path $StagingDir ".cmspark-build-write-probe"
+            "ok" | Set-Content -LiteralPath $probe -ErrorAction Stop
+            Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
+            $writable = $true
+        } catch {
+            $writable = $false
+        }
+        if ($writable) {
+            Warn "Staging dir is locked for delete (likely a process CWD) but still writable — reusing it."
+            Write-Host "  Tip: close Explorer / stop cmspark-agent launched from this folder to allow full cleanup next time." -ForegroundColor DarkYellow
+        } else {
+            Fail @"
+Cannot clear or write staging directory (locked by another process):
+  $StagingDir
+
+Fix:
+  1. Stop Companion / tray if launched from dist-package (Task Manager: cmspark-agent.exe)
+  2. Close Explorer windows open inside that folder
+  3. Close terminals whose cwd is that folder (common after shell_exec from package path)
+  4. Pause antivirus scan of the folder if needed
+  5. Re-run .\build-package.bat
+"@
+        }
+    } else {
+        Ok "Cleaned previous staging package"
+    }
+} else {
+    Ok "No previous staging package"
+}
+# Ensure parent + staging exist (reused if locked empty)
+New-Item -ItemType Directory -Force $DistDir | Out-Null
 New-Item -ItemType Directory -Force $StagingDir | Out-Null
 
 # Core exe

@@ -257,7 +257,7 @@ export class SysTray2Adapter implements UnifiedTray {
     items.push(SEP)
     this.seqMap.push({ type: "status" })
 
-    push("退出", { type: "quit" })
+    push("退出（停止服务）", { type: "quit" })
 
     return {
       icon: getIcon(this.status),
