@@ -1,0 +1,38 @@
+﻿You are an independent senior code reviewer for CMspark PR #100 (feat/au4dch-ux-wave123) at C:/Users/HuChen/Projects/cmspark-wt-au4dch.
+
+## Context
+Overnight UX work for session #au4dch. Base: origin/main. Tip ~1b25a2a.
+
+Shipped (NOT full interactive PTY):
+1. downloads_find + browser_download prefer_existing (Downloads-only filter, URL query redact)
+2. processingLabel / tool.progress (run status; origin-unicast progress)
+3. shell_exec windowsHide + progress tails
+
+## Required steps
+1. Run bash: git log origin/main..HEAD --oneline; git diff origin/main...HEAD --stat
+2. Read real code files listed below with Read tool
+3. Apply ADR-020 capability checks
+
+Files to read:
+- companion/src/capability/shell.ts
+- companion/src/server.ts (search shell_exec onProgress sendOrigin)
+- chrome-extension/src/background/downloads-find.ts
+- chrome-extension/src/background/browser-download-handler.ts
+- chrome-extension/src/sidepanel/components/ChatView.tsx
+- chrome-extension/src/sidepanel/hooks/useWebSocket.ts
+- docs/audit/reviews/au4dch-ux-wave123-final-report.md
+
+## Axes
+Correctness, security (path leak, progress broadcast secrets, L2), UX vs pain, tests, docs honesty.
+
+## Output (Chinese body OK)
+### 总评
+### 优点
+### 问题 (Blocking / Major / Nit with file paths)
+### 测试与文档
+### 建议后续
+
+FINAL LINE EXACTLY one of:
+VERDICT: APPROVE
+VERDICT: APPROVE_WITH_NITS
+VERDICT: REJECT

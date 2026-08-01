@@ -308,6 +308,10 @@ export interface ToolCall {
   status: "pending" | "running" | "success" | "error"
   vision_status?: "analyzing" | "done" | "cached" | "error"
   vision_latency_ms?: number
+  /** #au4dch ST-2: live tool.progress fields (not persisted). */
+  progress_elapsed_ms?: number
+  progress_stdout_tail?: string
+  progress_stderr_tail?: string
 }
 
 export interface ToolResult {

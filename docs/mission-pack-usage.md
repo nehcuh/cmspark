@@ -131,6 +131,8 @@
 1. Agent 调用工具 **`shell_exec`** 时，会出现 **L2 安全确认**（含命令预览）。
 2. 你批准后，Companion 执行**单次**命令（非交互会话）。
 3. Side Panel **没有**内嵌交互式终端（刻意用 tool card，不做自由 PTY）。
+4. **#au4dch 止血（0.3.x）**：Windows 上 one-shot 子进程使用 `windowsHide`（避免空黑窗）；执行中 tool 卡可显示 `tool.progress` 输出尾与秒数。交互式网页 Shell（Cockpit PTY）仍为后续 epic，**本版未交付**。
+5. **下载去重**：优先 `downloads_find` / `browser_download` 的 `prefer_existing`（仅复用 **Downloads** 目录下已完成项），避免重复点击下载。
 
 ### 4.4 在 community 下点「启用 shell」会怎样？
 

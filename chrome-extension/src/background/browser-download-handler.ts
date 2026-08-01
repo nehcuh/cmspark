@@ -13,6 +13,7 @@ import {
   createDownloadWaiter,
   type DownloadCompleteInfo,
 } from "./download-waiter"
+import { findPreferredExistingDownload, redactDownloadUrl } from "./downloads-find"
 
 export interface BrowserDownloadBridge {
   getTabId(params: Record<string, any>): number
@@ -39,13 +40,6 @@ export async function runBrowserDownload(
       : undefined
   const text =
     typeof params.text === "string" && params.text.trim() ? params.text.trim() : undefined
-  if (!selector && !text) {
-    return {
-      success: false,
-      error: "ELEMENT_NOT_FOUND: browser_download requires selector and/or text",
-      data: { error_code: "SELECTOR_OR_TEXT_REQUIRED" },
-    }
-  }
 
   const downloadPath = typeof params.downloadPath === "string" ? params.downloadPath : ""
   if (downloadPath && (/^\\\\/.test(downloadPath) || /^\/\/[^/]/.test(downloadPath))) {
@@ -53,6 +47,68 @@ export async function runBrowserDownload(
       success: false,
       error: `PATH_ESCAPE: download path not allowed (UNC): ${downloadPath}`,
       data: { error_code: "PATH_ESCAPE" },
+    }
+  }
+
+  let timeoutMs = 60_000
+  if (typeof params.timeoutMs === "number" && Number.isFinite(params.timeoutMs)) {
+    timeoutMs = Math.min(120_000, Math.max(1_000, Math.floor(params.timeoutMs)))
+  }
+  const exact = params.exact === true
+  const filenameHint =
+    typeof params.filenameHint === "string" && params.filenameHint.trim()
+      ? params.filenameHint.trim()
+      : undefined
+  const urlContains =
+    typeof params.urlContains === "string" && params.urlContains.trim()
+      ? params.urlContains.trim()
+      : undefined
+  // #au4dch DL-2: default prefer_existing=true when a hint is present; force_redownload wins.
+  const forceRedownload = params.force_redownload === true || params.forceRedownload === true
+  const preferExisting =
+    !forceRedownload &&
+    params.prefer_existing !== false &&
+    params.preferExisting !== false &&
+    !!(filenameHint || urlContains)
+
+  if (preferExisting) {
+    try {
+      const hit = await findPreferredExistingDownload({
+        filenameHint,
+        urlContains,
+        limit: 1,
+        __downloadsApi: params.__downloadsApi,
+      })
+      if (hit) {
+        return {
+          success: true,
+          data: {
+            path: hit.path,
+            filename: hit.filename,
+            bytes: hit.bytes,
+            state: "completed",
+            url: hit.url,
+            transport: "downloads_cache",
+            source: "cache",
+            download_id: hit.id,
+            note: "Reused existing complete download (prefer_existing). Set force_redownload=true to click again.",
+          },
+        }
+      }
+    } catch {
+      /* fall through to click path */
+    }
+  }
+
+  if (!selector && !text) {
+    return {
+      success: false,
+      error: preferExisting
+        ? "ELEMENT_NOT_FOUND: no existing download matched filenameHint/urlContains; provide selector and/or text to download"
+        : "ELEMENT_NOT_FOUND: browser_download requires selector and/or text",
+      data: {
+        error_code: preferExisting ? "CACHE_MISS_NEEDS_ELEMENT" : "SELECTOR_OR_TEXT_REQUIRED",
+      },
     }
   }
 
@@ -67,16 +123,6 @@ export async function runBrowserDownload(
     }
     bridge.downloadBusyTabs.add(tabId)
   }
-
-  let timeoutMs = 60_000
-  if (typeof params.timeoutMs === "number" && Number.isFinite(params.timeoutMs)) {
-    timeoutMs = Math.min(120_000, Math.max(1_000, Math.floor(params.timeoutMs)))
-  }
-  const exact = params.exact === true
-  const filenameHint =
-    typeof params.filenameHint === "string" && params.filenameHint.trim()
-      ? params.filenameHint.trim()
-      : undefined
 
   let behaviorSet = false
   let waiter: ReturnType<typeof createDownloadWaiter> | null = null
@@ -218,8 +264,10 @@ export async function runBrowserDownload(
         filename: base,
         bytes: info.fileSize ?? info.totalBytes ?? 0,
         state: "completed",
-        url: info.url || "",
+        // Kimi Major: redact query/hash on live download path too (presigned URLs)
+        url: redactDownloadUrl(info.url || ""),
         transport: "downloads",
+        source: "download",
       },
     }
   } catch (e: any) {

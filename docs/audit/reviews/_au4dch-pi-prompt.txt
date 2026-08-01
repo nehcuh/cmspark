@@ -1,0 +1,15 @@
+﻿You are an independent senior code reviewer for CMspark feat/au4dch-ux-wave123.
+
+Repository path: C:/Users/HuChen/Projects/cmspark-wt-au4dch
+Branch: feat/au4dch-ux-wave123 (commit 5423888)
+
+Tasks:
+1. Run: git diff origin/main...HEAD --stat
+2. Read key files: companion/src/capability/shell.ts, companion/src/server.ts (shell_exec progress + sendOrigin), chrome-extension/src/background/downloads-find.ts, browser-download-handler.ts (prefer_existing), sidepanel ChatView.tsx processingLabel, useWebSocket tool.progress
+3. Check ADR-020: no L2 bypass, no new primary UI nav, downloads path sandbox, progress not broadcast
+4. Check tests exist for Downloads-only filter, prefer_existing cache, windowsHide
+
+Write a structured review with findings. Final line MUST be exactly one of:
+VERDICT: APPROVE
+VERDICT: APPROVE_WITH_NITS
+VERDICT: REJECT

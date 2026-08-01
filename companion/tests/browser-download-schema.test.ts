@@ -45,6 +45,30 @@ test("browser_download: both empty rejected", () => {
   assert.match(r.error, /selector|text/i)
 })
 
+test("browser_download: prefer_existing + filenameHint without selector ok", () => {
+  const out = parseToolArgs("browser_download", {
+    tabId: 1,
+    filenameHint: "black-cat-v1.1.0.tar.gz",
+    prefer_existing: true,
+  })
+  assert.equal(out.filenameHint, "black-cat-v1.1.0.tar.gz")
+})
+
+test("downloads_find is in tool catalog", () => {
+  const names = getAllToolDefinitions().map((t) => t.function.name)
+  assert.ok(names.includes("downloads_find"), "catalog must include downloads_find")
+})
+
+test("downloads_find: requires hint", () => {
+  const r = tryParseToolArgs("downloads_find", {})
+  assert.equal(r.ok, false)
+})
+
+test("downloads_find: filenameHint ok", () => {
+  const out = parseToolArgs("downloads_find", { filenameHint: "pkg.tgz" })
+  assert.equal(out.filenameHint, "pkg.tgz")
+})
+
 test("browser_download: missing tabId rejected", () => {
   assert.throws(() => parseToolArgs("browser_download", { text: "下载" }), /tabId/i)
 })

@@ -29,6 +29,8 @@ export const BROWSER_TOOL_NAMES: ReadonlySet<string> = new Set([
   "delete_cookie",
   "list_all_cookies",
   "set_tab_url",
+  "browser_download",
+  "downloads_find",
 ])
 
 /** Desktop-class tools that elevate to L2 via confirm queue even without live task. */

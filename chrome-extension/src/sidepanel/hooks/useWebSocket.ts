@@ -329,6 +329,28 @@ export function useWebSocket() {
           }
           break
 
+        case "tool.progress": {
+          // #au4dch ST-2: optional live tails; ignore if not for active thread
+          if (!shouldApplyStreamEvent(msg.thread_id, activeThreadRef.current)) break
+          const id = typeof msg.tool_call_id === "string" ? msg.tool_call_id : ""
+          if (!id) break
+          dispatch({
+            type: "UPDATE_TOOL_CALL",
+            messageId: id,
+            toolCallId: id,
+            updates: {
+              progress_elapsed_ms:
+                typeof msg.elapsed_ms === "number" ? msg.elapsed_ms : undefined,
+              progress_stdout_tail:
+                typeof msg.stdout_tail === "string" ? msg.stdout_tail : undefined,
+              progress_stderr_tail:
+                typeof msg.stderr_tail === "string" ? msg.stderr_tail : undefined,
+            },
+          })
+          // Keep busy only while a matching tool is still running (N1 race after chat.done)
+          break
+        }
+
         case "tool.vision_start":
           dispatch({
             type: "UPDATE_TOOL_CALL",

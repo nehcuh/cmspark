@@ -59,10 +59,10 @@
 
 | ID | 工作 | 轴 | 状态 |
 |----|------|-----|------|
-| **DL-1** | 工具 `downloads.find`（或等价）：按 `filenameHint` / URL 子串 / 可选 regex 查 **complete + exists** 项，返回 path/size/endTime（只读） | L1 Surface | OPEN |
-| **DL-2** | `browser_download` 增加 `prefer_existing?: true`（默认 true 或文档推荐 true）：命中则跳过点击，返回 `source: "cache"` | L1 | OPEN |
-| **DL-3** | Skill / browse 提示：装包、取 release 前先 find | Composition | OPEN |
-| **DL-4** | `force_redownload` + 同名不同大小/mtime 时提示冲突 | L1 | OPEN（可跟 DL-2） |
+| **DL-1** | 工具 `downloads_find`：按 `filenameHint` / URL 子串查 **complete + exists** 项，**仅 Downloads 根内路径**，返回 path/size/endTime（只读；URL 去 query） | L1 Surface | **SHIPPED** `feat/au4dch-ux-wave123` |
+| **DL-2** | `browser_download.prefer_existing`（默认 true when hint）：命中则跳过点击，返回 `source: "cache"`；`force_redownload` 强制点击 | L1 | **SHIPPED** |
+| **DL-3** | Skill / browse 提示：装包、取 release 前先 find | Composition | OPEN（tool 描述已写 prefer） |
+| **DL-4** | 同名不同大小/mtime 时提示冲突 | L1 | OPEN |
 
 **安全边界**  
 - 仅 Chrome Downloads API 可见项 + 既有 Downloads 沙箱路径；**禁止**任意盘符枚举。  
@@ -90,12 +90,12 @@
 
 | ID | 工作 | 轴 | 状态 |
 |----|------|-----|------|
-| **ST-1** | 修活跃态：扫描最近消息中 `status===running` 的 tool；文案 `执行中: shell_exec · 23s`；有 running tool 时输入区保持「忙」语义 | UI | OPEN |
-| **ST-2** | WS `tool.progress`（或 `tool.delta`）：`tool_call_id` + elapsed_ms + stdout/stderr tail（截断）+ 可选 phase | 协议 | OPEN |
-| **ST-3** | ToolCallCard 订阅 progress：滚动 tail、超时倒计时、`timed_out` 预告 | UI | OPEN |
-| **ST-4** | FocusBand / 顶栏「本线程活跃任务」：running tools 计数 + 最坏耗时 | UI | OPEN |
-| **ST-5** | Orchestrator 有未完成 worker 时：主线程常驻「舰队运行中 · N」并链到 FleetStrip / Cockpit | Autonomy | OPEN |
-| **ST-6** | （可选）`wait_workers` blocking 模式：timeout + abort，**仍须** L2 策略不静默 | Autonomy | deferred |
+| **ST-1** | 修活跃态：扫描最近消息中 `status===running` 的 tool；**不因 streamingContent 隐藏**；文案 `执行中: shell_exec 23s` | UI | **SHIPPED** |
+| **ST-2** | WS `tool.progress`：`tool_call_id` + elapsed_ms + stdout/stderr tail；**origin unicast only**（禁 broadcast） | 协议 | **SHIPPED** |
+| **ST-3** | ToolCallCard 订阅 progress：tail + 秒数 | UI | **SHIPPED** |
+| **ST-4** | FocusBand / 顶栏「本线程活跃任务」 | UI | OPEN |
+| **ST-5** | 有 fleet workers 时 label 附带「舰队 N worker」 | Autonomy | **SHIPPED**（轻量） |
+| **ST-6** | （可选）`wait_workers` blocking 模式 | Autonomy | deferred |
 
 **不做**  
 - 不为「像卡住」发明第二 Agent runtime。  
@@ -124,10 +124,10 @@
 
 | ID | 工作 | 状态 |
 |----|------|------|
-| **SH-A1** | `shell_exec`：`windowsHide: true`（win32）；darwin/linux 无黑窗则 no-op | OPEN |
-| **SH-A2** | 与 ST-2 共用 progress：chunk 截断写入 tail（MAX 与现有 200k 总 cap 协调） | OPEN |
-| **SH-A3** | ToolCallCard `shell_exec` 专用展开：exit_code / duration / stdout·stderr 预览 | OPEN |
-| **SH-A4** | 文档：`mission-pack-usage` 明确「黑窗 = 已知缺陷 → A1 修复；交互终端 = 轨 B」 | OPEN |
+| **SH-A1** | `shell_exec`：`windowsHide: true` | **SHIPPED** |
+| **SH-A2** | 与 ST-2 共用 progress：chunk 截断 tail + 750ms interval | **SHIPPED** |
+| **SH-A3** | ToolCallCard live progress tail（通用 tool 卡） | **SHIPPED** |
+| **SH-A4** | 文档：`mission-pack-usage` 黑窗止血 + PTY 未交付 | **SHIPPED** |
 
 #### 轨 B — 网页 Shell epic（原 PR-F / design §C.shell）
 
@@ -246,3 +246,4 @@ Wave 4  网页 Shell epic
 | 日期 | 变更 |
 |------|------|
 | 2026-08-01 | 初版：#au4dch 三痛点 → DL / ST / SH 两轨；Wave 0–4；挂接 ADR-020 主 plan |
+| 2026-08-01 | Wave1–2 实现于 `feat/au4dch-ux-wave123`；对抗 B1 Downloads 过滤、B2 progress unicast、M1 streaming 门修复；PTY 仍 deferred |

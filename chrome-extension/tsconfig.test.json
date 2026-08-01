@@ -31,6 +31,7 @@
     "src/background/tab-queue.ts",
     "src/background/find-element-by-text.ts",
     "src/background/download-waiter.ts",
+    "src/background/downloads-find.ts",
     "src/background/browser-download-handler.ts",
     "src/background/download-busy-entry.ts",
 
