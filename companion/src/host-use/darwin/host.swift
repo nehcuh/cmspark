@@ -80,10 +80,12 @@ func slPostToPid(_ pid: pid_t, _ event: CGEvent?) -> Bool {
     return true
 }
 
-// cmspark-host: minimal macOS binary that loads a precompiled .scpt and runs
-// it in-process via NSAppleScript. The binary is the TCC-attribution anchor:
-// the Automation permission dialog should name "cmspark-host", not osascript
-// nor any parent process. See docs/decisions/computer-use-round2-synthesis.md.
+// CMspark host binary (product identity: CMspark / com.cmspark.agent).
+// Loads a precompiled .scpt and runs it in-process via NSAppleScript so the
+// Automation permission dialog names «CMspark», not osascript or any parent
+// process (never attribute UX to node). See docs/decisions/computer-use-round2-
+// synthesis.md and macos-tcc-product-identity design (Scheme D: Contents/MacOS/
+// CMspark is this Mach-O; default launch starts the tray agent).
 //
 // Subcommands (Phase 1 W5–W8):
 //   - read-mail                        — read top-1 Mail inbox (Phase 0 path, retained)
@@ -94,6 +96,7 @@ func slPostToPid(_ pid: pid_t, _ event: CGEvent?) -> Bool {
 //   - read-message --target <TargetId> — read Mail message by stable id (W5)
 //   - create-note / move-file          — writes (W6; biometric tier in W8)
 //   - biometric-verify                 — Touch ID via LAContext (W8)
+//   - tray / launch / (no args)        — start tray agent and exit
 //
 // The list-mail and read-message paths reuse findScript() + executeAndReturnError()
 // for precompiled .scpt files. read-message constructs an AppleScript source
@@ -107,13 +110,27 @@ struct HostError: Error {
     let message: String
 }
 
+/// Candidate directories for host-scripts (.scpt). Covers:
+/// - flat/dev: sibling host-scripts next to the binary
+/// - packaged Scheme D: Contents/MacOS/CMspark → Contents/Resources/host-scripts
+/// - staging: ../host-scripts relative to the binary
+func hostScriptsDirs() -> [URL] {
+    let execURL = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
+    let execDir = execURL.deletingLastPathComponent()
+    return [
+        execDir.appendingPathComponent("host-scripts", isDirectory: true),
+        execDir.deletingLastPathComponent()
+            .appendingPathComponent("Resources/host-scripts", isDirectory: true),
+        execDir.appendingPathComponent("../host-scripts", isDirectory: true).standardizedFileURL,
+    ]
+}
+
 func findScript(_ name: String) -> URL? {
-    let execURL = URL(fileURLWithPath: CommandLine.arguments[0])
-    let scriptsDir = execURL.deletingLastPathComponent()
-        .appendingPathComponent("host-scripts", isDirectory: true)
-    for candidate in [name + ".scpt", name] {
-        let url = scriptsDir.appendingPathComponent(candidate)
-        if FileManager.default.fileExists(atPath: url.path) { return url }
+    for scriptsDir in hostScriptsDirs() {
+        for candidate in [name + ".scpt", name] {
+            let url = scriptsDir.appendingPathComponent(candidate)
+            if FileManager.default.fileExists(atPath: url.path) { return url }
+        }
     }
     return nil
 }
@@ -122,7 +139,7 @@ func runCompiledScript(_ name: String) throws -> String {
     guard let scptURL = findScript(name) else {
         throw HostError(
             code: 3,
-            message: "\(name).scpt not found next to cmspark-host executable"
+            message: "\(name).scpt not found in host-scripts (next to CMspark or Contents/Resources)"
         )
     }
     var initError: NSDictionary?
@@ -462,28 +479,57 @@ func runMoveFile(sourcePath: String, destPath: String) throws -> String {
     return result.stringValue ?? "{}"
 }
 
+// MARK: - Default tray launch (Scheme D product entry)
+
+/// Resolve Resources/{node,cmspark-agent.js} relative to this executable and
+/// start the tray agent. Used when the user double-clicks CMspark.app (no args)
+/// or when first arg is `tray` / `launch`.
+///
+/// DR-N4: spawn via `/usr/bin/arch -arm64` to match the old bash launcher and
+/// avoid Rosetta node on Apple Silicon.
+func launchAgentTrayAndExit() -> Never {
+    let execDir = URL(fileURLWithPath: CommandLine.arguments[0])
+        .standardizedFileURL.deletingLastPathComponent()
+    let resources = execDir.deletingLastPathComponent().appendingPathComponent("Resources")
+    let candidates: [(node: URL, agent: URL)] = [
+        (resources.appendingPathComponent("node"),
+         resources.appendingPathComponent("cmspark-agent.js")),
+        (execDir.appendingPathComponent("node"),
+         execDir.appendingPathComponent("cmspark-agent.js")),
+    ]
+    guard let pair = candidates.first(where: {
+        FileManager.default.isExecutableFile(atPath: $0.node.path)
+            && FileManager.default.fileExists(atPath: $0.agent.path)
+    }) else {
+        fputs("CMspark: cannot find node + cmspark-agent.js (expected under Contents/Resources)\n", stderr)
+        exit(2)
+    }
+    let proc = Process()
+    // DR-N4: match old bash launcher arch -arm64
+    proc.executableURL = URL(fileURLWithPath: "/usr/bin/arch")
+    proc.arguments = ["-arm64", pair.node.path, pair.agent.path, "tray"]
+    proc.environment = ProcessInfo.processInfo.environment
+    do {
+        try proc.run()
+        proc.waitUntilExit()
+        exit(proc.terminationStatus)
+    } catch {
+        fputs("CMspark: failed to start agent: \(error)\n", stderr)
+        exit(2)
+    }
+}
+
 // MARK: - Entry point
 
 let argv = CommandLine.arguments
-guard argv.count >= 2 else {
-    let usage = """
-        usage: cmspark-host <subcommand> [options]
-          read-mail                            — read top-1 Mail inbox (body capped at 500 chars script-side)
-          list-mail                            — list inbox TargetIds (fixed top-100, script-side)
-          read-message --target <TargetId>     — read message by stable id
-          list-notes                           — list notes TargetIds (fixed top-100)
-          list-files                           — list Documents folder TargetIds (fixed top-100)
-          create-note --name N [--body B]      — create a new Note (Phase 1 W6, biometric in W8)
-          move-file --source P --destination D — move file via Finder (Phase 1 W6, biometric in W8)
-          biometric-verify --nonce N [--reason R] — Touch ID verification (Phase 1 W8)
-          estop --socket-path P [--flag-path F]  — long-running emergency-stop helper (WP3)
-
-        """
-    FileHandle.standardError.write(usage.data(using: .utf8)!)
-    exit(2)
+let args = Array(argv.dropFirst())
+// Product: double-click CMspark.app → tray agent, never leave user at CLI usage.
+// Subcommands (screenshot, inject, estop, …) keep working when first arg is set.
+if args.isEmpty || args[0] == "tray" || args[0] == "launch" {
+    launchAgentTrayAndExit()
 }
 
-let subcommand = argv[1]
+let subcommand = args[0]
 do {
     let out: String
     switch subcommand {
@@ -1060,12 +1106,9 @@ func cuScreenshot(windowId: UInt32, outputPath: String) -> String {
             let errMsg: String
             if isSckTcc && (isDenialCode || looksLikeDenial) {
                 errMsg =
-                    "Screen Recording permission denied (ScreenCaptureKit code=\(err.code), " +
-                    "pid=\(hostPid) ppid=\(hostParentPid)). " +
-                    "Open System Settings → Privacy & Security → Screen Recording, " +
-                    "enable «CMspark» (and/or node / cmspark-host if listed), " +
-                    "then fully quit and relaunch CMspark.app and retry. " +
-                    "Ad-hoc re-sign or reinstall can clear the grant — re-enable if it was on before."
+                    "Screen Recording permission denied (ScreenCaptureKit code=\(err.code)). " +
+                    "Open System Settings → Privacy & Security → Screen Recording, enable «CMspark», " +
+                    "then fully quit CMspark and reopen. If you just reinstalled/updated, turn the switch off and on again."
             } else {
                 errMsg = "ScreenCaptureKit error: \(err.domain) code=\(err.code) \(desc) (pid=\(hostPid) ppid=\(hostParentPid))"
             }
@@ -1555,7 +1598,7 @@ func cuOCR(imagePath: String, languages: [String]) -> String {
 /// Dual-post an event: SkyLight per-PID (Chrome renderer path) + HID tap
 /// (AppKit / Electron / WeChat / NetEase path). User test #i4x6pm: SkyLight
 /// alone returned ok:true with verified pixel noise but UI never changed.
-/// HID requires Accessibility for cmspark-host; activate first so frontmost
+/// HID requires Accessibility for CMspark; activate first so frontmost
 /// under the cursor is the target.
 @inline(__always)
 func postEventDual(_ event: CGEvent, pid: pid_t, useHid: Bool) -> Bool {
@@ -1592,8 +1635,8 @@ func cuInject(action: String, windowId: UInt32, x: Int?, y: Int?, text: String?,
         _ = cuActivatePid(pid)
     }
     if useHid && !AXIsProcessTrusted() {
-        fputs("[host] WARNING: cmspark-host is not Accessibility-trusted; " +
-              "HID inject may be dropped. Grant System Settings → Privacy → Accessibility.\n", stderr)
+        fputs("[host] WARNING: CMspark is not Accessibility-trusted; " +
+              "HID inject may be dropped. Grant System Settings → Privacy & Security → Accessibility.\n", stderr)
     }
 
     switch action {
@@ -1914,7 +1957,7 @@ func runEstop(socketPath: String, flagPath: String) throws -> Never {
         close(serverFD)
         throw HostError(
             code: 4,
-            message: "estop: CGEventTap creation failed — grant Accessibility permission to cmspark-host (System Settings → Privacy & Security → Accessibility)"
+            message: "estop: CGEventTap creation failed — grant Accessibility permission to CMspark (System Settings → Privacy & Security → Accessibility)"
         )
     }
     gEstopTap = tap

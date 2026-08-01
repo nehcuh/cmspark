@@ -37,7 +37,7 @@ export interface HostIntegrityCheck {
  * PROD-TIME NOTE: DMG installs ship with this constant pre-baked into the
  * bundled companion JS. End users never run build-host.sh.
  */
-export const CMSPARK_HOST_SHA256 = "88ca16bcba782ca2595eb6ae375c1f7dfbe1ac3a1f632ac40971733049ed27f6"
+export const CMSPARK_HOST_SHA256 = "07107459864bafd2902c8a07a083c918ede0221593ad3540499d6ed39f216e83"
 
 /**
  * Hash the binary at binPath via an open fd (avoids path-substitution race
