@@ -260,7 +260,8 @@ func buildMenu(target: AnyObject?, action: Selector?) -> NSMenu {
   menu.addItem(NSMenuItem.separator())
 
   // -- Quit --
-  let quitItem = NSMenuItem(title: "❌ 退出", action: action, keyEquivalent: "q")
+  // Quit tears down Companion daemon as well (menu-bar-agent stopCompanion force)
+  let quitItem = NSMenuItem(title: "❌ 退出（停止服务）", action: action, keyEquivalent: "q")
   quitItem.target = target
   quitItem.tag = MenuTag.quit.rawValue
   menu.addItem(quitItem)

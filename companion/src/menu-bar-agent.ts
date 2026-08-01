@@ -427,13 +427,22 @@ function showPairingCode(): void {
 // Menu actions
 // ---------------------------------------------------------------------------
 
-async function startCompanion(): Promise<void> {
+/**
+ * Start Companion daemon (detached).
+ * @param quiet  tray auto-start path: no "already running" toast; failures still notify
+ */
+async function startCompanion(opts?: { quiet?: boolean }): Promise<void> {
+  const quiet = opts?.quiet === true
   if (state.companionStatus === "running") {
-    safeNotify({ title: "CMspark Agent", message: "Companion 已在运行中 ✅", timeout: 3 })
+    if (!quiet) {
+      safeNotify({ title: "CMspark Agent", message: "Companion 已在运行中 ✅", timeout: 3 })
+    }
     return
   }
 
-  safeNotify({ title: "CMspark Agent", message: "正在启动 Companion...", timeout: 3 })
+  if (!quiet) {
+    safeNotify({ title: "CMspark Agent", message: "正在启动 Companion...", timeout: 3 })
+  }
   state.companionStatus = "unknown"
   if (trayInstance) trayInstance.updateStatus("unknown", false, state.pid)
 
@@ -451,27 +460,58 @@ async function startCompanion(): Promise<void> {
     for (const delay of [1000, 2500, 4500, 7000]) {
       setTimeout(() => pollCompanionStatus().catch(() => {}), delay)
     }
+    if (quiet) {
+      console.log("[tray] Auto-started Companion daemon")
+    }
   } catch (err: any) {
     safeNotify({ title: "CMspark Agent", message: `启动失败 ❌: ${err.message}`, timeout: 5 })
   }
 }
 
-async function stopCompanion(): Promise<void> {
-  if (state.companionStatus !== "running") {
-    safeNotify({ title: "CMspark Agent", message: "Companion 未在运行", timeout: 3 })
+/**
+ * Stop Companion via `daemon stop`.
+ * @param force  always run stop (quit path) even if tray thinks status is stopped
+ * @param quiet  suppress toasts (quit path)
+ */
+async function stopCompanion(opts?: { force?: boolean; quiet?: boolean }): Promise<void> {
+  const force = opts?.force === true
+  const quiet = opts?.quiet === true
+
+  if (!force && state.companionStatus !== "running") {
+    if (!quiet) {
+      safeNotify({ title: "CMspark Agent", message: "Companion 未在运行", timeout: 3 })
+    }
     return
   }
 
-  safeNotify({ title: "CMspark Agent", message: "正在停止 Companion...", timeout: 3 })
+  if (!quiet) {
+    safeNotify({ title: "CMspark Agent", message: "正在停止 Companion...", timeout: 3 })
+  }
 
   try {
     const { getSelfSpawnArgs } = require("./paths")
     const { execPath, args } = getSelfSpawnArgs(["daemon", "stop"])
     child_process.execFileSync(execPath, args, { timeout: 15000 })
-    safeNotify({ title: "CMspark Agent", message: "Companion 已停止 ⏹️", timeout: 3 })
-    setTimeout(() => pollCompanionStatus(), 1000)
+    if (!quiet) {
+      safeNotify({ title: "CMspark Agent", message: "Companion 已停止 ⏹️", timeout: 3 })
+    } else {
+      console.log("[tray] Companion daemon stopped (force/quiet)")
+    }
+    // Refresh status after intentional stop (skip if we are about to exit tray)
+    if (!force || !quiet) {
+      setTimeout(() => pollCompanionStatus(), 1000)
+    } else {
+      state.companionStatus = "stopped"
+      state.pid = null
+      state.wsConnected = false
+    }
   } catch (err: any) {
-    safeNotify({ title: "CMspark Agent", message: `停止失败 ❌: ${err.message}`, timeout: 5 })
+    // force+quiet (quit): still try to exit tray; log only
+    if (quiet) {
+      console.warn("[tray] daemon stop error:", err?.message || err)
+    } else {
+      safeNotify({ title: "CMspark Agent", message: `停止失败 ❌: ${err.message}`, timeout: 5 })
+    }
   }
 }
 
@@ -622,6 +662,8 @@ async function handleAction(action: TrayMenuAction): Promise<void> {
       }
       break
     case "quit":
+      // Product: 退出 tray = 停掉 Companion 守护进程及本 tray 进程（不再留下孤儿 node/exe）
+      await stopCompanion({ force: true, quiet: true })
       await stopMenuBarAgent()
       process.exit(0)
       break
@@ -741,6 +783,31 @@ export async function startMenuBarAgent(): Promise<void> {
       }
     })
   }, POLL_INTERVAL_MS)
+
+  // Product: tray launch always ensures Companion is up — no separate "启动" required.
+  if (state.companionStatus !== "running") {
+    console.log("[tray] Companion not running — auto-starting daemon")
+    await startCompanion({ quiet: true })
+  } else {
+    console.log("[tray] Companion already running — skip auto-start")
+  }
+
+  // Ctrl+C / taskkill graceful path: stop daemon with tray
+  if (!(global as any).__cmsparkTraySignalBound) {
+    ;(global as any).__cmsparkTraySignalBound = true
+    const onSignal = () => {
+      console.log("[tray] signal received — stopping Companion + tray")
+      stopCompanion({ force: true, quiet: true })
+        .catch(() => {})
+        .finally(() => {
+          stopMenuBarAgent()
+            .catch(() => {})
+            .finally(() => process.exit(0))
+        })
+    }
+    process.on("SIGINT", onSignal)
+    process.on("SIGTERM", onSignal)
+  }
 }
 
 /**

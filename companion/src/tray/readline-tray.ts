@@ -138,7 +138,7 @@ export class ReadlineTrayAdapter implements UnifiedTray {
     console.log(`[${idx++}] 打开日志目录`)
     console.log(`[${idx++}] 打开 Chrome`)
     console.log(`[${idx++}] 显示配对码`)
-    console.log(`[${idx}] 退出`)
+    console.log(`[${idx}] 退出（停止服务）`)
 
     console.log("")
     process.stdout.write("请选择操作: ")
