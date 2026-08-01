@@ -159,6 +159,17 @@ python connect /tmp/cmspark-estop.sock → SOCKET_LIVE
 
 ### Still open (do not claim full CU DoD)
 1. Hotkey still degraded under LS until Accessibility/Input Monitoring covers ad-hoc LS identity (or Developer ID)
-2. Re-verify Side Panel `host_computer` screenshot + click end-to-end on device
-3. Pi nits: log DEGRADED on daemon-fallback success path; surface degraded hotkey in UI; clean dead code4 retry
-4. PR remaining branch commits (post-#103) to main when device CU path green enough
+2. Side Panel `host_computer` one-shot in UI (confirm + screenshot + click) — agent cannot click the confirm dialog for the user
+3. Pi/Claude nits: log DEGRADED on daemon-fallback success path; surface degraded hotkey in UI; clean dead code4 retry
+4. PR branch to main when user confirms Side Panel path
+
+### Post-commit verify 2026-08-01 22:20 (`0bf4da4` on branch)
+| Check | Result |
+|-------|--------|
+| Commit + push | `0bf4da4` → `origin/fix/macos-tcc-product-identity` |
+| `ensureEstopHelper()` | `{ ok: true }` [executed] |
+| `estopHeartbeatLost()` | `false` [executed] |
+| companion log | `computer.estop.connected` owner=preexisting (14:06, 14:17 UTC) |
+| product binary screenshot Finder wid=22310 | `ok:true` PNG 1840×872 [executed] |
+| hotkey | still DEGRADED under LS |
+| Side Panel E2E | **user action** — open extension, approve host_computer, confirm no estop code 4 |
