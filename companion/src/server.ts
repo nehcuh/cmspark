@@ -3855,7 +3855,25 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
               },
               uiaProber: new MacAxProber(),
               uiaWatcherFactory: (t, opts) => startMacAxWindowWatcher(t, opts),
-              tinyclickLocator: null,  // WP5 not supported on macOS
+              // Qwen3-VL works on macOS (MPS/CPU via Python transformers)
+              tinyclickLocator: await (async () => {
+                try {
+                  const { resolveModelAdmissionSafe } = await import("./computer/model-admission")
+                  const { computerModelSession } = await import("./computer/model-handlers")
+                  const adm = await resolveModelAdmissionSafe({
+                    config: getConfig().computer,
+                    holder: computerModelSession,
+                    deps: {
+                      broadcast: (m) => { try { execOpts?.broadcast?.(m) } catch { /* best-effort */ } },
+                      log: (event, payload) => logger.info(event, { tool_call_id: toolCallId, ...payload }),
+                      stillEnabled: () => getConfig().computer?.modelEnabled === true,
+                    },
+                  })
+                  return adm.locator
+                } catch {
+                  return null
+                }
+              })(),
               onUiaVerdict: (token, verdict, probedAt) => {
                 const wb = writeBackUiaVerdict(token, verdict, probedAt)
                 logger.info("computer.uia.writeback", { tool_call_id: toolCallId, token, applied: wb.applied, reason: wb.reason })
@@ -4760,6 +4778,26 @@ export function validateWsMessage(msg: any): WsValidationResult {
     },
     "computer.model.delete": (m) => {
       if (m.source !== "settings") return { valid: false, error: 'computer.model.delete requires source:"settings" (settings-page only)' }
+      return { valid: true }
+    },
+    "computer.model.set_variant": (m) => {
+      if (m.source !== "settings") return { valid: false, error: 'computer.model.set_variant requires source:"settings" (settings-page only)' }
+      if (m.variant !== "2b" && m.variant !== "4b" && m.variant !== "8b") {
+        return { valid: false, error: 'computer.model.set_variant requires variant:"2b"|"4b"|"8b"' }
+      }
+      return { valid: true }
+    },
+    "computer.model.set_download_source": (m) => {
+      if (m.source !== "settings") {
+        return { valid: false, error: 'computer.model.set_download_source requires source:"settings" (settings-page only)' }
+      }
+      const ds = m.downloadSource
+      if (ds !== "auto" && ds !== "huggingface" && ds !== "hf-mirror" && ds !== "modelscope") {
+        return {
+          valid: false,
+          error: 'computer.model.set_download_source requires downloadSource:"auto"|"huggingface"|"hf-mirror"|"modelscope"',
+        }
+      }
       return { valid: true }
     },
     "tool.result": (m) => {

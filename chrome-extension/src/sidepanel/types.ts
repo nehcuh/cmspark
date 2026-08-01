@@ -554,6 +554,41 @@ export interface ComputerModelState {
    *  downloading=下载中 / disabled=熔断停用 */
   modelStatus: string
   variant: string
+  /** qwen3-vl family metadata (optional for older companions) */
+  modelFamily?: string
+  resourceTip?: string
+  downloadGb?: number
+  minRamGb?: number
+  minVramGb?: number
+  availableVariants?: string[]
+  /** auto | huggingface | hf-mirror | modelscope */
+  downloadSource?: string
+  downloadSourceResolved?: string
+  downloadSourceReason?: string
+  recommendedVariant?: string
+  readinessSummary?: string
+  nextSteps?: string[]
+  canDownload?: boolean
+  canEnable?: boolean
+  preflight?: {
+    readinessSummary?: string
+    nextSteps?: string[]
+    canDownload?: boolean
+    canEnable?: boolean
+    recommendedVariant?: string
+    downloadSourceResolved?: string
+    downloadSourceReason?: string
+    installCommands?: string[]
+    hardware?: {
+      totalRamGb?: number
+      freeDiskGb?: number | null
+      accelerator?: string
+      vramGb?: number | null
+      notes?: string[]
+    }
+    deps?: Record<string, boolean | string | undefined>
+    variantFit?: string
+  }
   sizeBytes?: number
   /** I1 词表 reason(model-file-missing 等;MODEL_STATE_MESSAGES 消费) */
   error?: string

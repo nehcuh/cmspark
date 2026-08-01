@@ -46,7 +46,15 @@ import {
   type ScreenCapturer,
   type UiaLocator,
 } from "./types"
-import type { TinyClickLocator } from "./tinyclick-locator"
+/** L2 experimental locator surface (Qwen3-VL; historical dep name tinyclick). */
+export type ExperimentalLocateOutcome =
+  | { kind: "hit"; point: { x: number; y: number }; ms?: number; raw?: string }
+  | { kind: "skipped"; reason: string }
+  | { kind: "error"; reason: string }
+
+export type ExperimentalLocator = {
+  locate(args: { command: string; shot: CaptureMeta }): Promise<ExperimentalLocateOutcome>
+}
 import { rectDriftPx, imageToClient, type CoordScales } from "./coords"
 
 export interface LocateChainDeps {
@@ -69,7 +77,8 @@ export interface LocateChainDeps {
    * 懒建，P3-c/M7）。null/缺省 = 层未启用 → skipped model-disabled（行为与
    * 旧 stub 等价，仅 reason 文案变化）。Pick 结构型以便测试注入 fake。
    */
-  tinyclick?: Pick<TinyClickLocator, "locate"> | null
+  /** Experimental L2 locator (Qwen3-VL). Name kept for historical deps wiring. */
+  tinyclick?: ExperimentalLocator | null
   log?: (event: string, data: Record<string, unknown>) => void
   now?: () => number
 }
@@ -589,46 +598,37 @@ export async function locateTargetWithChain(args: {
     log("computeruse.locate", { layer: "ocr", hit: false, reason: "ocr-not-found", ms: now() - t0 })
   }
 
-  // ---- L2: TinyClick 实验层（WP5 I3 实装；降级日志/locateAttempts 格式不变） -----
-  // admission 由 executor 决定（deps.tinyclick 非 null = 开关开 + 模型 ready +
-  // 无熔断）。层内包线拒绝/坍缩抑制/推理故障均为 skipped|error + 结构化
-  // reason，链继续走向 L3——实验层任何故障不改变既有降级序与错误类型。
+  // ---- L2: Qwen3-VL 实验层（deps.tinyclick 槽位名历史保留） -----------------
+  // admission 由 executor 决定（deps.tinyclick 非 null = 开关开 + 模型 ready）。
   if (deps.tinyclick) {
     const t0 = now()
     const outcome = await deps.tinyclick.locate({ command: target, shot })
     if (outcome.kind === "hit") {
-      attempts.push({ layer: "tinyclick", outcome: "hit", ms: now() - t0 })
-      // G3：命中日志不携带 confidence（校准前无上屏数值），字段结构与既有
-      // 层日志一致（layer/hit/ms）。
-      log("computeruse.locate", { layer: "tinyclick", hit: true, ms: now() - t0 })
+      attempts.push({ layer: "qwen-vl", outcome: "hit", ms: now() - t0 })
+      log("computeruse.locate", { layer: "qwen-vl", hit: true, ms: now() - t0 })
       const hit: LocateHit = {
         x: outcome.point.x,
         y: outcome.point.y,
-        // 点定位模型不产出框——零尺寸 bbox 如实记录（win-adapters:521 同款缺省形）。
         bbox: { x: outcome.point.x, y: outcome.point.y, width: 0, height: 0 },
-        layer: "tinyclick",
-        matchedText: "", // 实验层无锚文本概念，留空不伪造
-        // confidence 结构性缺省（G3，types.ts LocateHit 注释）
+        layer: "qwen-vl",
+        matchedText: "",
       }
       return {
         hit,
         pointClient: imageToClient(outcome.point, scalesOf(shot), shot.client),
-        // D4.3 invariant (Pi reminder c): L2 has no A1 re-capture, so shot is
-        // unchanged since chain entry → rect0 === shot.rect → drift guard
-        // trivially cannot fire. Pin via test (computer-locate-chain-drift).
         ocrRes,
         shot,
         crossverified: false,
-        uncrossverified: true, // 实验层建议吃 A1.3 子预算（plan:458）
+        uncrossverified: true,
         attempts,
         experimental: true,
       }
     }
-    attempts.push({ layer: "tinyclick", outcome: outcome.kind, reason: outcome.reason, ms: now() - t0 })
-    log("computeruse.locate", { layer: "tinyclick", hit: false, reason: outcome.reason, ms: now() - t0 })
+    attempts.push({ layer: "qwen-vl", outcome: outcome.kind, reason: outcome.reason, ms: now() - t0 })
+    log("computeruse.locate", { layer: "qwen-vl", hit: false, reason: outcome.reason, ms: now() - t0 })
   } else {
-    attempts.push({ layer: "tinyclick", outcome: "skipped", reason: "model-disabled", ms: 0 })
-    log("computeruse.locate", { layer: "tinyclick", hit: false, reason: "model-disabled" })
+    attempts.push({ layer: "qwen-vl", outcome: "skipped", reason: "model-disabled", ms: 0 })
+    log("computeruse.locate", { layer: "qwen-vl", hit: false, reason: "model-disabled" })
   }
 
   // ---- L3: cloud（WP6 honest stub，不动） ---------------------------------------

@@ -94,42 +94,34 @@ Cairn as an npm/git dependency.
 
 // --- 许可证门弹窗文案（WI-3.4 computer.model.license_required 的 licenseText） ---
 
-export const LICENSE_DOOR_TEXT = `【实验功能许可确认】TinyClick 本地视觉定位模型
+export const LICENSE_DOOR_TEXT = `【实验功能许可确认】Qwen3-VL 本地视觉定位模型
 
-一、许可证（双引来源：原始 LICENSE 文件 + 论文 Ethics 节）
+一、许可证与来源
 
-TinyClick 模型以 MIT 许可证发布：
-- 原始 LICENSE 文件：「MIT License — ${SAMSUNG_COPYRIGHT_LINE}」
-- 论文 Ethics 节（arXiv:2410.11871）明示：
-  "We have made our model checkpoint and code accessible under the MIT license"
-- 底座模型 microsoft/Florence-2-base 同为 MIT：
-  "Florence2 model is available under MIT license"
-（MIT 全文随分发物收录于 THIRD_PARTY_NOTICES。）
+本实验层默认使用阿里通义开源的 Qwen3-VL Instruct 权重（Hugging Face）：
+- Qwen/Qwen3-VL-2B-Instruct（默认）
+- Qwen/Qwen3-VL-4B-Instruct
+- Qwen/Qwen3-VL-8B-Instruct
+权重许可以各模型卡与 Qwen 许可条款为准（通常允许研究与商业使用，
+请以 Hugging Face 页面最新 LICENSE 为准）。下载即表示你接受上游许可。
 
-二、研究品免责声明（论文 Limitations / Ethics 要点）
+二、能力与限制（诚实披露）
 
-- 本模型是研究工件，在新应用上的准确率可能显著下降。
-- 论文建议仅在受控环境中测试："test the model only on emulator …
-  controlled environment"。
-- 风险敏感应用应严格避免："risk-sensitive application … strictly avoided"。
-- 训练数据集的许可证措辞为 "explicitly allow research use"——商用再分发
-  余量未闭合；本功能仅以用户显式下载方式提供转换工件，介意者请拒绝。
+- 本层用于「截屏 + 自然语言 → 建议点击坐标」，支持中文指令。
+- 输出未校准：坐标可能完全错误；任何注入前必经确认台人工确认。
+- 本机推理依赖 Python 3 + transformers/torch（或兼容后端）；首次下载体积约
+  4.5GB（2B）/ 8GB（4B）/ 16GB（8B），并占用相应内存或显存。
+- 资源不足时会极慢或 OOM——设置页会提示各变体建议内存/显存。
 
-三、本项目实测披露（S-3 golden 冻结数据，2026-07-20）
+三、本项目补充条款
 
-- 中文命令命中率 13.3%（含巧合成分）——本层仅限英文短命令。
-- 真实桌面 / 设置窗口 case 0/5 未命中（Wilson 上界 29.9%）。
-- 4 核 CPU 端到端延迟 2.8–3.3 秒。
-- 本层为「可选实验层」：默认关闭；拒绝或关闭后，定位兜底仍为
-  UIA / OCR / 用户框选，不受影响。
-
-四、本项目补充条款
-
+- 本层默认关闭；开启后为可选实验层。
+- 模型建议点仅作候选；UIA / OCR / 用户框选仍为默认定位路径。
+- 拒绝本许可则本实验层永久跳过（复位 = 手改 config.json）。
+- 启用本层不降低其他安全门（任务级 L2、急停、白名单等）。
 - 模型输出仅作为坐标解析候选，任何点击执行前必经 L2 人工确认。
-- 模型文件 sha256 钉死、每次加载前复验；完整性校验证明下载字节与登记字节一致，
-  但不证明镜像字节与 Samsung 原始权重一致（权重无字节级第二源）。
 
-接受后将开始下载模型文件（约 705MB，磁盘预算可配）。
+接受后将按当前选择的变体从 Hugging Face 下载模型。
 拒绝则本实验层永久跳过，其余定位层不受影响。`
 
 // --- 文本版本绑定哈希（WP5-I4 P1） -------------------------------------------------

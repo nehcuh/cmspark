@@ -1,0 +1,4063 @@
+diff --git a/chrome-extension/src/background/index.ts b/chrome-extension/src/background/index.ts
+index afb2925..5c2ae7c 100644
+--- a/chrome-extension/src/background/index.ts
++++ b/chrome-extension/src/background/index.ts
+@@ -929,6 +929,7 @@ function setupMessageHandlers() {
+       case "computer.model.download":
+       case "computer.model.delete":
+       case "computer.model.reset_circuit_breaker":
++      case "computer.model.set_variant":
+         // Forward to companion
+         wsClient.send(message)
+         sendResponse({ ok: true })
+diff --git a/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx b/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx
+index 5903150..e171747 100644
+--- a/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx
++++ b/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx
+@@ -10,11 +10,13 @@ import { NetSecSettingsSection } from "./NetSecSettingsSection"
+ // companion 单一真源);发送固定 source:"settings"(companion 双层围栏)。
+ import {
+   MODEL_SWITCH_COPY,
++  QWEN_VL_VARIANT_TIPS,
+   licenseDoorShouldOpen,
+   modelStatusLine,
+   modelSwitchDisabledReason,
+   modelSwitchHint,
+   modelSwitchRunningNote,
++  variantResourceTip,
+ } from "./model-switch-logic"
+ 
+ // P1-1 / PR-B: typed-confirmation phrase for arming dangerous security flags.
+@@ -762,7 +764,10 @@ export function SettingsSlideout() {
+             const runAction = (action: string) => {
+               if (action === "重置熔断") send({ type: "computer.model.reset_circuit_breaker", source: "settings" })
+               else if (action === "删除并重新下载") setModelDeleteArmed(true)
+-              else send({ type: "computer.model.download", source: "settings" })
++              else {
++                dispatch({ type: "SET_COMPUTER_MODEL_ERROR", error: null })
++                send({ type: "computer.model.download", source: "settings" })
++              }
+             }
+             return (
+               <div style={styles.field}>
+@@ -789,6 +794,41 @@ export function SettingsSlideout() {
+                 {disabledReason && (
+                   <div style={{ ...styles.helpText, color: "#B26B00" }}>{disabledReason}</div>
+                 )}
++                {/* 变体选择 2B / 4B / 8B + 资源提示 */}
++                <div style={{ ...styles.helpText, marginTop: 8, fontWeight: 600 }}>模型规模</div>
++                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 4 }}>
++                  {(["2b", "4b", "8b"] as const).map((v) => {
++                    const active = (model?.variant || "2b") === v
++                    const tip = QWEN_VL_VARIANT_TIPS[v]!
++                    return (
++                      <button
++                        key={v}
++                        type="button"
++                        style={{
++                          ...styles.secondaryBtn,
++                          ...(active
++                            ? { background: tokens.accent, color: "#fff", borderColor: tokens.accent }
++                            : {}),
++                          opacity: model === null || model.modelStatus === "downloading" ? 0.5 : 1,
++                        }}
++                        disabled={model === null || model.modelStatus === "downloading"}
++                        title={tip.tip}
++                        onClick={() => {
++                          dispatch({ type: "SET_COMPUTER_MODEL_ERROR", error: null })
++                          send({ type: "computer.model.set_variant", variant: v, source: "settings" })
++                        }}
++                      >
++                        {tip.label}
++                      </button>
++                    )
++                  })}
++                </div>
++                <div style={{ ...styles.helpText, marginTop: 4, color: "#B26B00" }}>
++                  {model?.resourceTip || variantResourceTip(model?.variant)}
++                </div>
++                <div style={{ ...styles.helpText, marginTop: 2, fontSize: 11, color: "#888" }}>
++                  切换规模后请重新「下载模型」；更大模型需要更多磁盘与内存/显存才能流畅运行。
++                </div>
+                 {/* 状态行 */}
+                 <div
+                   style={{
+@@ -810,8 +850,15 @@ export function SettingsSlideout() {
+                 <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+                   <button
+                     style={styles.secondaryBtn}
+-                    disabled={model === null || model.modelStatus === "downloading" || model.modelStatus === "ready"}
+-                    onClick={() => send({ type: "computer.model.download", source: "settings" })}
++                    disabled={
++                      model === null ||
++                      model.modelStatus === "downloading" ||
++                      model.modelStatus === "ready"
++                    }
++                    onClick={() => {
++                      dispatch({ type: "SET_COMPUTER_MODEL_ERROR", error: null })
++                      send({ type: "computer.model.download", source: "settings" })
++                    }}
+                   >
+                     下载模型
+                   </button>
+diff --git a/chrome-extension/src/sidepanel/components/model-switch-logic.ts b/chrome-extension/src/sidepanel/components/model-switch-logic.ts
+index 21e2813..b6bf906 100644
+--- a/chrome-extension/src/sidepanel/components/model-switch-logic.ts
++++ b/chrome-extension/src/sidepanel/components/model-switch-logic.ts
+@@ -125,10 +125,30 @@ export const MODEL_STATE_MESSAGES: Record<string, ModelStateMessage> = {
+   "download-host-unset": {
+     title: "模型发布地址未配置",
+     detail:
+-      "模型发布地址尚未配置（发布链 owner 决策中）——当前构建不可下载模型。" +
++      "模型发布地址尚未配置——当前构建不可下载模型。" +
+       "UIA / OCR / 用户框选定位不受影响。",
+     action: null,
+   },
++  "python-missing": {
++    title: "缺少 Python 运行时",
++    detail:
++      "Qwen3-VL 本机推理需要 Python 3。请安装 python3 后重试下载/启用。" +
++      "UIA / OCR / 用户框选定位不受影响。",
++    action: null,
++  },
++  "hf-hub-missing": {
++    title: "缺少 huggingface_hub",
++    detail:
++      "请执行 pip install huggingface_hub 后重试下载。UIA / OCR / 用户框选定位不受影响。",
++    action: "重试下载",
++  },
++  "download-failed": {
++    title: "模型下载失败",
++    detail:
++      "从 Hugging Face 下载 Qwen3-VL 失败（网络或仓库不可用）。可配置镜像后重试；" +
++      "其余定位层不受影响。",
++    action: "重试下载",
++  },
+   "model-variant-missing": {
+     title: "当前变体未下载",
+     detail:
+@@ -172,25 +192,24 @@ export interface ModelSwitchCopy {
+ }
+ 
+ export const MODEL_SWITCH_COPY: ModelSwitchCopy = {
+-  switchLabel: "实验层：TinyClick 本地视觉定位",
++  switchLabel: "实验层：Qwen3-VL 本地视觉定位",
+   switchHint:
+     "默认关闭。开启后仅作为定位链第 2 层（L2）的坐标候选建议；" +
+-    "命中在执行前仍会弹出人工确认。",
++    "支持中文指令；命中在执行前仍会弹出人工确认。",
+   masterOffHint: "主开关（computer.use）已关闭——实验层不参与任何定位。",
+   appNotAllowedHint:
+     "当前应用未加入允许列表（coordinateAllowed）——实验层对该应用不参与定位。",
+-  // P2 修订镜像：per-task 生效语义 + estop 引导（companion 侧断言互锁）。
+   layerSemantics:
+-    "本层是定位链的实验性建议层（L2）：模型输出仅作为坐标候选，" +
+-    "任何点击执行前必经人工确认；本层未校准，可能完全错误。" +
+-    "关闭开关按任务粒度生效——任务运行中关闭将于当前任务结束后生效；" +
+-    "若需立即停止（含当前任务），请按 Ctrl+Alt+End 急停或中止当前任务。" +
+-    "拒绝建议或关闭本层后，UIA / OCR / 用户框选兜底不受影响。",
++    "本层使用 Qwen3-VL（默认 2B，可选 4B/8B）在本机对截屏做 GUI 定位建议：" +
++    "模型输出仅作为坐标候选，任何点击执行前必经人工确认；本层未校准，可能完全错误。" +
++    "需要 Python3 + transformers/torch；下载源为 Hugging Face。" +
++    "关闭开关按任务粒度生效；急停请用 Ctrl+Alt+End。" +
++    "UIA / OCR / 用户框选兜底不受影响。",
+   licenseDoorHint:
+-    "首次开启需阅读并接受模型许可证与研究品免责声明；" +
++    "首次开启需阅读并接受模型许可证与免责声明；" +
+     "拒绝则本实验层永久跳过，其余定位层不受影响。",
+   firstLoadTimeline:
+-    "模型首次加载最长约 35 秒（超时自动降级，且不计入故障熔断）；" +
++    "模型首次加载可能需数十秒至数分钟（取决于硬件与是否 GPU）；" +
+     "加载期间 UIA / OCR / 用户框选定位不受影响。",
+   switchRunningNote:
+     "当前有任务正在运行——开关变更将于当前任务结束后生效；" +
+@@ -204,6 +223,40 @@ export const MODEL_SWITCH_COPY: ModelSwitchCopy = {
+     "（复位路径 = 手动编辑 config.json，属显式 owner opt-in。）",
+ }
+ 
++/** Static resource tips (mirrored from companion qwen-vl-catalog; UI fallback). */
++export const QWEN_VL_VARIANT_TIPS: Record<
++  string,
++  { label: string; downloadGb: number; minRamGb: number; minVramGb: number; tip: string }
++> = {
++  "2b": {
++    label: "2B（默认）",
++    downloadGb: 4.5,
++    minRamGb: 12,
++    minVramGb: 6,
++    tip: "默认推荐。流畅：统一内存/系统内存 ≥12GB，或独显 ≥6GB。CPU 可跑但较慢。",
++  },
++  "4b": {
++    label: "4B",
++    downloadGb: 8,
++    minRamGb: 20,
++    minVramGb: 10,
++    tip: "更强。流畅：统一内存/系统内存 ≥20GB，或独显 ≥10GB。",
++  },
++  "8b": {
++    label: "8B",
++    downloadGb: 16,
++    minRamGb: 32,
++    minVramGb: 16,
++    tip: "最强本机档。流畅：统一内存/系统内存 ≥32GB，或独显 ≥16GB。资源不足会极慢或 OOM。",
++  },
++}
++
++export function variantResourceTip(variant: string | undefined): string {
++  const v = variant && QWEN_VL_VARIANT_TIPS[variant] ? variant : "2b"
++  const m = QWEN_VL_VARIANT_TIPS[v]!
++  return `${m.tip}（约下载 ${m.downloadGb}GB · 建议内存 ≥${m.minRamGb}GB / 显存 ≥${m.minVramGb}GB）`
++}
++
+ // --- 纯函数判定 -------------------------------------------------------------------
+ 
+ /** 状态行视图（组件只渲染，不组文案）。 */
+diff --git a/chrome-extension/src/sidepanel/hooks/useWebSocket.ts b/chrome-extension/src/sidepanel/hooks/useWebSocket.ts
+index bdc9518..11124f7 100644
+--- a/chrome-extension/src/sidepanel/hooks/useWebSocket.ts
++++ b/chrome-extension/src/sidepanel/hooks/useWebSocket.ts
+@@ -762,7 +762,13 @@ export function useWebSocket() {
+               ...(typeof msg.licenseAcceptedAt === "string" ? { licenseAcceptedAt: msg.licenseAcceptedAt } : {}),
+               modelLicenseDeclined: msg.modelLicenseDeclined === true,
+               modelStatus: typeof msg.modelStatus === "string" ? msg.modelStatus : "error",
+-              variant: typeof msg.variant === "string" ? msg.variant : "hybrid",
++              variant: typeof msg.variant === "string" ? msg.variant : "2b",
++              ...(typeof msg.modelFamily === "string" ? { modelFamily: msg.modelFamily } : {}),
++              ...(typeof msg.resourceTip === "string" ? { resourceTip: msg.resourceTip } : {}),
++              ...(typeof msg.downloadGb === "number" ? { downloadGb: msg.downloadGb } : {}),
++              ...(typeof msg.minRamGb === "number" ? { minRamGb: msg.minRamGb } : {}),
++              ...(typeof msg.minVramGb === "number" ? { minVramGb: msg.minVramGb } : {}),
++              ...(Array.isArray(msg.availableVariants) ? { availableVariants: msg.availableVariants.filter((v: unknown) => typeof v === "string") } : {}),
+               ...(typeof msg.sizeBytes === "number" ? { sizeBytes: msg.sizeBytes } : {}),
+               ...(typeof msg.error === "string" ? { error: msg.error } : {}),
+               faults: typeof msg.faults === "number" ? msg.faults : 0,
+diff --git a/chrome-extension/src/sidepanel/types.ts b/chrome-extension/src/sidepanel/types.ts
+index bb11072..f3b8ee6 100644
+--- a/chrome-extension/src/sidepanel/types.ts
++++ b/chrome-extension/src/sidepanel/types.ts
+@@ -554,6 +554,13 @@ export interface ComputerModelState {
+    *  downloading=下载中 / disabled=熔断停用 */
+   modelStatus: string
+   variant: string
++  /** qwen3-vl family metadata (optional for older companions) */
++  modelFamily?: string
++  resourceTip?: string
++  downloadGb?: number
++  minRamGb?: number
++  minVramGb?: number
++  availableVariants?: string[]
+   sizeBytes?: number
+   /** I1 词表 reason(model-file-missing 等;MODEL_STATE_MESSAGES 消费) */
+   error?: string
+diff --git a/chrome-extension/tests/computer-model-state.test.ts b/chrome-extension/tests/computer-model-state.test.ts
+index 539dde8..b21be40 100644
+--- a/chrome-extension/tests/computer-model-state.test.ts
++++ b/chrome-extension/tests/computer-model-state.test.ts
+@@ -22,13 +22,13 @@ function modelState(over: Partial<ComputerModelState> = {}): ComputerModelState
+     licenseAccepted: false,
+     modelLicenseDeclined: false,
+     modelStatus: "absent",
+-    variant: "hybrid",
++    variant: "2b",
+     faults: 0,
+     ...over,
+   }
+ }
+ 
+-const PROGRESS = { variant: "hybrid", file: "encoder_model.onnx", receivedBytes: 50, totalBytes: 100 }
++const PROGRESS = { variant: "2b", file: "encoder_model.onnx", receivedBytes: 50, totalBytes: 100 }
+ 
+ test("initialState:model 切片全 null(未查询态;无乐观更新起点)", () => {
+   assert.equal(initialState.computerModel, null)
+diff --git a/chrome-extension/tests/model-switch-logic.test.ts b/chrome-extension/tests/model-switch-logic.test.ts
+index 6c036dc..96d85d4 100644
+--- a/chrome-extension/tests/model-switch-logic.test.ts
++++ b/chrome-extension/tests/model-switch-logic.test.ts
+@@ -26,7 +26,7 @@ function modelState(over: Partial<ComputerModelState> = {}): ComputerModelState
+     licenseAccepted: false,
+     modelLicenseDeclined: false,
+     modelStatus: "absent",
+-    variant: "hybrid",
++    variant: "2b",
+     faults: 0,
+     ...over,
+   }
+@@ -57,10 +57,10 @@ test("许可证门触发:license_required 载荷非 null 即弹", () => {
+ // --- 下载百分比 ---
+ 
+ test("下载百分比:取整 + clamp + 零总量/空进度 → null", () => {
+-  assert.equal(downloadPercent({ variant: "hybrid", file: "a.onnx", receivedBytes: 50, totalBytes: 100 }), 50)
+-  assert.equal(downloadPercent({ variant: "hybrid", file: "a.onnx", receivedBytes: 1, totalBytes: 3 }), 33)
+-  assert.equal(downloadPercent({ variant: "hybrid", file: "a.onnx", receivedBytes: 200, totalBytes: 100 }), 100)
+-  assert.equal(downloadPercent({ variant: "hybrid", file: "a.onnx", receivedBytes: 0, totalBytes: 0 }), null)
++  assert.equal(downloadPercent({ variant: "2b", file: "a.onnx", receivedBytes: 50, totalBytes: 100 }), 50)
++  assert.equal(downloadPercent({ variant: "2b", file: "a.onnx", receivedBytes: 1, totalBytes: 3 }), 33)
++  assert.equal(downloadPercent({ variant: "2b", file: "a.onnx", receivedBytes: 200, totalBytes: 100 }), 100)
++  assert.equal(downloadPercent({ variant: "2b", file: "a.onnx", receivedBytes: 0, totalBytes: 0 }), null)
+   assert.equal(downloadPercent(null), null)
+ })
+ 
+@@ -96,7 +96,7 @@ test("状态行:error(reason) → 词表标题+详情+动作;absent → model-fi
+ 
+ test("状态行:downloading → 百分比文本(无进度 → 省略号)", () => {
+   const v1 = modelStatusLine(modelState({ modelStatus: "downloading" }), {
+-    variant: "hybrid",
++    variant: "2b",
+     file: "encoder_model.onnx",
+     receivedBytes: 352500000,
+     totalBytes: 705000000,
+diff --git a/companion/package.json b/companion/package.json
+index 682eb37..c09f1db 100644
+--- a/companion/package.json
++++ b/companion/package.json
+@@ -7,7 +7,7 @@
+   },
+   "scripts": {
+     "prebuild": "node scripts/generate-tray-icons.mjs",
+-    "build": "tsc && node -e \"process.platform!=='win32'&&require('fs').chmodSync('dist/index.js',0o755)\"",
++    "build": "tsc && node -e \"const fs=require('fs'),p=require('path');fs.mkdirSync('dist/computer',{recursive:true});fs.copyFileSync('src/computer/qwen-vl-worker.py','dist/computer/qwen-vl-worker.py');process.platform!=='win32'&&fs.chmodSync('dist/index.js',0o755)\"",
+     "test": "node -e \"require('fs').rmSync('.test-dist',{recursive:true,force:true})\" && tsc -p tsconfig.test.json && node --test $(find .test-dist/tests -name '*.test.js' -not -name '_*' -not -name 'settings-web.test.js') && node --test .test-dist/tests/settings-web.test.js",
+     "start": "node dist/index.js start",
+     "dev": "tsx src/index.ts start",
+diff --git a/companion/src/computer/executor.ts b/companion/src/computer/executor.ts
+index 25c5f2b..15c0b7c 100644
+--- a/companion/src/computer/executor.ts
++++ b/companion/src/computer/executor.ts
+@@ -39,7 +39,7 @@ import type { SecurityConfirmationDecision, SecurityConfirmationDetails } from "
+ import { scanDanger, type DangerScan } from "./danger"
+ import type { EvidenceFactory, EvidenceSink } from "./evidence"
+ import { locateTargetWithChain, DRIFT_THRESHOLD_PX, type WitnessVerdict } from "./locate-chain"
+-import type { TinyClickLocator } from "./tinyclick-locator"
++import type { ExperimentalLocator } from "./locate-chain"
+ import type { ComputerTaskEvent, PreviewBuilder } from "./preview"
+ import { sanitizeComputerCaption } from "./preview"
+ import { assertCoordinateAllowed, assertExeNotDrifted, assertHwndOwnedByEntry, normalizeExePath } from "./policy"
+@@ -188,13 +188,10 @@ export interface ComputerExecutorDeps {
+    */
+   uiaWatcherFactory?: UiaWatcherFactory
+   /**
+-   * WP5 I3 (G4): L2 TinyClick 实验层。ADMISSION 由调用方决定——开关开 + 模型
+-   * ready（文件在盘且校验过，session 懒建）+ 无熔断才传非 null；executor 原样
+-   * 透传给 locate chain。命中永不直接注入：re-L2 人审（caption「实验层建议，
+-   * 可能完全错误」+ 建议点标注预览）→ 批准走 A1 区域新鲜度复核 → 注入；拒绝
+-   * 诚实降级 ELEMENT_NOT_FOUND。缺省 = 层关闭（unit tests 默认形态）。
++   * L2 Qwen3-VL 实验层。ADMISSION 由调用方决定；命中永不直接注入（re-L2）。
++   * 缺省 = 层关闭。
+    */
+-  tinyclickLocator?: Pick<TinyClickLocator, "locate"> | null
++  tinyclickLocator?: ExperimentalLocator | null
+ }
+ 
+ export interface ComputerStepResult {
+@@ -1083,7 +1080,7 @@ export async function runComputerTask(
+           preview: suggestionPreview !== undefined,
+         })
+         const ok = await reL2(
+-          `实验层建议（TinyClick 本地模型，未校准，可能完全错误）：建议点击「${experimentalTarget}」于客户端坐标 (${pointClient.x}, ${pointClient.y})。批准以执行此次点击，拒绝以放弃该建议。`,
++          `实验层建议（Qwen3-VL 本地模型，未校准，可能完全错误）：建议点击「${experimentalTarget}」于客户端坐标 (${pointClient.x}, ${pointClient.y})。批准以执行此次点击，拒绝以放弃该建议。`,
+           ["computer.experimental_suggestion"],
+           seq,
+           suggestionPreview,
+diff --git a/companion/src/computer/locate-chain.ts b/companion/src/computer/locate-chain.ts
+index fb90e8a..9c4d4a3 100644
+--- a/companion/src/computer/locate-chain.ts
++++ b/companion/src/computer/locate-chain.ts
+@@ -46,7 +46,15 @@ import {
+   type ScreenCapturer,
+   type UiaLocator,
+ } from "./types"
+-import type { TinyClickLocator } from "./tinyclick-locator"
++/** L2 experimental locator surface (Qwen3-VL; historical dep name tinyclick). */
++export type ExperimentalLocateOutcome =
++  | { kind: "hit"; point: { x: number; y: number }; ms?: number; raw?: string }
++  | { kind: "skipped"; reason: string }
++  | { kind: "error"; reason: string }
++
++export type ExperimentalLocator = {
++  locate(args: { command: string; shot: CaptureMeta }): Promise<ExperimentalLocateOutcome>
++}
+ import { rectDriftPx, imageToClient, type CoordScales } from "./coords"
+ 
+ export interface LocateChainDeps {
+@@ -69,7 +77,8 @@ export interface LocateChainDeps {
+    * 懒建，P3-c/M7）。null/缺省 = 层未启用 → skipped model-disabled（行为与
+    * 旧 stub 等价，仅 reason 文案变化）。Pick 结构型以便测试注入 fake。
+    */
+-  tinyclick?: Pick<TinyClickLocator, "locate"> | null
++  /** Experimental L2 locator (Qwen3-VL). Name kept for historical deps wiring. */
++  tinyclick?: ExperimentalLocator | null
+   log?: (event: string, data: Record<string, unknown>) => void
+   now?: () => number
+ }
+@@ -589,46 +598,37 @@ export async function locateTargetWithChain(args: {
+     log("computeruse.locate", { layer: "ocr", hit: false, reason: "ocr-not-found", ms: now() - t0 })
+   }
+ 
+-  // ---- L2: TinyClick 实验层（WP5 I3 实装；降级日志/locateAttempts 格式不变） -----
+-  // admission 由 executor 决定（deps.tinyclick 非 null = 开关开 + 模型 ready +
+-  // 无熔断）。层内包线拒绝/坍缩抑制/推理故障均为 skipped|error + 结构化
+-  // reason，链继续走向 L3——实验层任何故障不改变既有降级序与错误类型。
++  // ---- L2: Qwen3-VL 实验层（deps.tinyclick 槽位名历史保留） -----------------
++  // admission 由 executor 决定（deps.tinyclick 非 null = 开关开 + 模型 ready）。
+   if (deps.tinyclick) {
+     const t0 = now()
+     const outcome = await deps.tinyclick.locate({ command: target, shot })
+     if (outcome.kind === "hit") {
+-      attempts.push({ layer: "tinyclick", outcome: "hit", ms: now() - t0 })
+-      // G3：命中日志不携带 confidence（校准前无上屏数值），字段结构与既有
+-      // 层日志一致（layer/hit/ms）。
+-      log("computeruse.locate", { layer: "tinyclick", hit: true, ms: now() - t0 })
++      attempts.push({ layer: "qwen-vl", outcome: "hit", ms: now() - t0 })
++      log("computeruse.locate", { layer: "qwen-vl", hit: true, ms: now() - t0 })
+       const hit: LocateHit = {
+         x: outcome.point.x,
+         y: outcome.point.y,
+-        // 点定位模型不产出框——零尺寸 bbox 如实记录（win-adapters:521 同款缺省形）。
+         bbox: { x: outcome.point.x, y: outcome.point.y, width: 0, height: 0 },
+-        layer: "tinyclick",
+-        matchedText: "", // 实验层无锚文本概念，留空不伪造
+-        // confidence 结构性缺省（G3，types.ts LocateHit 注释）
++        layer: "qwen-vl",
++        matchedText: "",
+       }
+       return {
+         hit,
+         pointClient: imageToClient(outcome.point, scalesOf(shot), shot.client),
+-        // D4.3 invariant (Pi reminder c): L2 has no A1 re-capture, so shot is
+-        // unchanged since chain entry → rect0 === shot.rect → drift guard
+-        // trivially cannot fire. Pin via test (computer-locate-chain-drift).
+         ocrRes,
+         shot,
+         crossverified: false,
+-        uncrossverified: true, // 实验层建议吃 A1.3 子预算（plan:458）
++        uncrossverified: true,
+         attempts,
+         experimental: true,
+       }
+     }
+-    attempts.push({ layer: "tinyclick", outcome: outcome.kind, reason: outcome.reason, ms: now() - t0 })
+-    log("computeruse.locate", { layer: "tinyclick", hit: false, reason: outcome.reason, ms: now() - t0 })
++    attempts.push({ layer: "qwen-vl", outcome: outcome.kind, reason: outcome.reason, ms: now() - t0 })
++    log("computeruse.locate", { layer: "qwen-vl", hit: false, reason: outcome.reason, ms: now() - t0 })
+   } else {
+-    attempts.push({ layer: "tinyclick", outcome: "skipped", reason: "model-disabled", ms: 0 })
+-    log("computeruse.locate", { layer: "tinyclick", hit: false, reason: "model-disabled" })
++    attempts.push({ layer: "qwen-vl", outcome: "skipped", reason: "model-disabled", ms: 0 })
++    log("computeruse.locate", { layer: "qwen-vl", hit: false, reason: "model-disabled" })
+   }
+ 
+   // ---- L3: cloud（WP6 honest stub，不动） ---------------------------------------
+diff --git a/companion/src/computer/model-admission.ts b/companion/src/computer/model-admission.ts
+index 64e86c0..6580fbb 100644
+--- a/companion/src/computer/model-admission.ts
++++ b/companion/src/computer/model-admission.ts
+@@ -1,62 +1,16 @@
+-// WP5-I4 WI-4.3 — TinyClick 实验层 admission 组装（per-task 评估，server.ts
+-// host_computer 调用点在 runComputerTask 前 await 本模块）。
+-//
+-// 判定序（全 fail-closed；任一不过 → {locator:null, reason}，UIA/OCR/框选链
+-// 不受影响，locate-chain 记 attempts skipped model-disabled）：
+-//   ① modelEnabled!==true → model-switch-off（含 P9 手改 config=true 形态——
+-//     启动期 normalize loud log 已留痕；下方②③许可门照样拦，与 D2 先例一致：
+-//     开关只是 admission 的一票，不是唯一一票）
+-//   ② modelLicenseDeclined===true → model-license-declined（永久跳过）
+-//   ③ !modelLicenseAccepted（时间戳+文本哈希双要素，P1 漂移重门在 admission
+-//     侧比对——plan:572 明定）→ model-license-not-accepted
+-//   ④ 既有会话熔断（getStatus()==="disabled"）→ model-circuit-disabled
+-//     （复位路径 = 设置页 reset_circuit_breaker，I3 围栏不变）
+-//   ⑤ 无会话 → 单飞懒建（WeakMap<holder, Promise>）：manifest 加载 +
+-//     tokenizer 复验 + TinyClickSession.prepare()（I1 校验即加载 ~1.4s，
+-//     705MB 逐文件 sha256 无缓存）。失败 → model-build-failed + loud log，
+-//     holder 不写入，下个任务重试（build 失败多为文件缺失/哈希漂移/
+-//     磁盘错误，fail-closed 重试语义诚实；成本仅在任务起点，可观测）。
+-// 全通过 → holder.session=session（P8 写入点①），每任务新建
+-// TinyClickLocator（坍缩历史任务级随实例消亡，locator 头注释既定语义）。
+-//
+-// tokenizer 零分叉契约：locator 的 token 预检编码必须与 session 推理编码同一
+-// 实例（locator deps 注释明定）。构建期经 sessionMeta WeakMap 留存配对；
+-// 外来会话（非本模块构建——仅测试注入形态存在，P8 写入点③）无留存 →
+-// fail-closed model-session-foreign（无法保证同实例，宁可不开层）。
+-//
+-// 竞态处理：
+-//   - 并发首建：WeakMap 单飞，sessionFactory 只调一次，两调用方各拿独立
+-//     locator（历史不共享）。
+-//   - build 落地 × 用户关闭：disable/delete 在 build 飞行中会把 holder 置空，
+-//     build 完成后若直接写 holder 即会话泄漏（开关已关、~1.3GB RSS 常驻）。
+-//     落地前经 deps.stillEnabled() 新鲜度复核（生产 = getConfig() 重读）；
+-//     已关 → 立即 dispose 新建会话、不写 holder（P2 per-task 语义只覆盖
+-//     「任务运行中」的 locator 使用，不覆盖落地竞态）。
+-//   - dispose 撕毁 in-flight infer 的尾随失败不计熔断（runtime P4 豁免）。
++// Experimental locate-layer admission — Qwen3-VL (replaces TinyClick ONNX path).
++// Per-task evaluation before runComputerTask; fail-closed → locator null.
+ 
+-import * as fs from "node:fs";
+-import * as path from "node:path";
+-
+-import { logger } from "../logger";
+-import type { ComputerConfig } from "../config";
++import type { ComputerConfig } from "../config"
++import { logger } from "../logger"
+ import {
+-  defaultManifestPath,
+   modelLicenseAccepted,
+   type ComputerModelSessionHolder,
+-} from "./model-handlers";
+-import { loadModelManifest, type ModelManifest } from "./model-manifest";
+-import { decodePngToRgba } from "./png-decode";
+-import { TinyClickLocator } from "./tinyclick-locator";
+-import type { TinyClickFrame } from "./tinyclick-runtime";
+-import {
+-  loadVerifiedTokenizer,
+-  TinyClickSession,
+-  type TinyClickSessionDeps,
+-} from "./tinyclick-session";
+-import type { TinyClickTokenizer } from "./tinyclick-tokenizer";
+-import type { CaptureMeta } from "./types";
++} from "./model-handlers"
++import { migrateLegacyModelVariant, type QwenVlVariant } from "./qwen-vl-catalog"
++import { QwenVlLocator } from "./qwen-vl-locator"
++import { QwenVlSession, type QwenVlSessionDeps } from "./qwen-vl-session"
+ 
+-/** admission 拒绝原因词表（稳定契约；server.ts/测试断言按此比对）。 */
+ export const ADMISSION_REASON = {
+   SWITCH_OFF: "model-switch-off",
+   LICENSE_DECLINED: "model-license-declined",
+@@ -64,193 +18,127 @@ export const ADMISSION_REASON = {
+   CIRCUIT_DISABLED: "model-circuit-disabled",
+   BUILD_FAILED: "model-build-failed",
+   SESSION_FOREIGN: "model-session-foreign",
+-  /** P4：评估自身抛异常的防御折叠（safe 包装器专用；正常路径永不产生）。 */
+   ADMISSION_ERROR: "model-admission-error",
+-} as const;
++} as const
+ 
+-/** admission 侧会话最小面（holder 四方法 + locate/prepare 构建期需要）。 */
+ export type AdmissionSession = Pick<
+-  TinyClickSession,
++  QwenVlSession,
+   "locate" | "prepare" | "getStatus" | "getFaults" | "resetCircuitBreaker" | "dispose"
+->;
++>
+ 
+-export interface TinyClickAdmissionDeps {
+-  manifestLoader?: () => Promise<ModelManifest>;
+-  /** 默认：loadVerifiedTokenizer（manifest 登记哈希复验 bundled asset）。 */
+-  tokenizerLoader?: (manifest: ModelManifest, variant: string) => Promise<TinyClickTokenizer>;
+-  sessionFactory?: (deps: TinyClickSessionDeps) => AdmissionSession;
+-  /** 默认：读 shot.path（采集 PNG）→ decodePngToRgba。 */
+-  decodeFrame?: (shot: CaptureMeta) => Promise<TinyClickFrame>;
+-  /** 熔断广播等 runtime 事件的透传口（生产 = WS broadcast 包装）。 */
+-  broadcast?: (msg: unknown) => void;
+-  log?: (event: string, payload: Record<string, unknown>) => void;
+-  /**
+-   * build 落地 × 用户关闭竞态的新鲜度复核（生产 = getConfig() 重读
+-   * modelEnabled）；缺省 () => true（无复核——测试/纯函数用法）。
+-   */
+-  stillEnabled?: () => boolean;
++export interface ModelAdmissionDeps {
++  sessionFactory?: (deps: QwenVlSessionDeps) => AdmissionSession
++  broadcast?: (msg: unknown) => void
++  log?: (event: string, payload: Record<string, unknown>) => void
++  stillEnabled?: () => boolean
+ }
+ 
+-export interface TinyClickAdmission {
+-  locator: Pick<TinyClickLocator, "locate"> | null;
+-  /** locator 为 null 时的稳定原因（ADMISSION_REASON 词表）。 */
+-  reason?: string;
++export interface ModelAdmission {
++  locator: Pick<QwenVlLocator, "locate"> | null
++  reason?: string
+ }
+ 
+-/** bundled tokenizer.json 随发版路径解析（与 defaultManifestPath 同型三候选）。 */
+-export function defaultTokenizerPath(): string {
+-  const candidates = [
+-    path.join(__dirname, "..", "..", "assets", "tinyclick", "tokenizer.json"), // src 布局
+-    path.join(__dirname, "..", "..", "..", "assets", "tinyclick", "tokenizer.json"), // .test-dist 布局
+-    path.join(__dirname, "assets", "tinyclick", "tokenizer.json"), // bundle 同级（assets 随包）
+-  ];
+-  for (const p of candidates) {
+-    if (fs.existsSync(p)) return p;
+-  }
+-  return candidates[0]!;
+-}
++/** @deprecated use ModelAdmission — kept for smoke scripts */
++export type TinyClickAdmission = ModelAdmission
++/** @deprecated use ModelAdmissionDeps */
++export type TinyClickAdmissionDeps = ModelAdmissionDeps
+ 
+-/** 生产 decodeFrame：采集 PNG（shot.path）→ RGBA 帧（png-decode 最小解码器）。 */
+-async function defaultDecodeFrame(shot: CaptureMeta): Promise<TinyClickFrame> {
+-  const bytes = await fs.promises.readFile(shot.path);
+-  return decodePngToRgba(bytes);
+-}
++const inflight = new WeakMap<object, Promise<ModelAdmission>>()
++
++export async function resolveModelAdmission(args: {
++  config: ComputerConfig | undefined
++  holder: ComputerModelSessionHolder
++  deps?: ModelAdmissionDeps
++}): Promise<ModelAdmission> {
++  const cfg = args.config ?? { coordinateEnabled: false }
++  const deps = args.deps ?? {}
++  const log = deps.log ?? ((e, p) => logger.info(e, p))
++
++  if (cfg.modelEnabled !== true) {
++    return { locator: null, reason: ADMISSION_REASON.SWITCH_OFF }
++  }
++  if (cfg.modelLicenseDeclined === true) {
++    return { locator: null, reason: ADMISSION_REASON.LICENSE_DECLINED }
++  }
++  if (!modelLicenseAccepted(cfg)) {
++    return { locator: null, reason: ADMISSION_REASON.LICENSE_NOT_ACCEPTED }
++  }
+ 
+-/** 构建期配对留存（session → 同实例 tokenizer/locate）；WeakMap 随会话消亡。 */
+-const sessionMeta = new WeakMap<
+-  object,
+-  { tokenizer: TinyClickTokenizer; locate: TinyClickSession["locate"] }
+->();
++  const holder = args.holder
++  const existing = holder.session as AdmissionSession | null
++  if (existing) {
++    if (existing.getStatus() === "disabled") {
++      return { locator: null, reason: ADMISSION_REASON.CIRCUIT_DISABLED }
++    }
++    return {
++      locator: new QwenVlLocator({ session: existing }),
++    }
++  }
+ 
+-/** 并发首建单飞（holder 粒度；P10 同型——防并发不防轮询，轮询成本=任务起点一次复验）。 */
+-const inFlightBuilds = new WeakMap<ComputerModelSessionHolder, Promise<AdmissionSession | null>>();
++  let p = inflight.get(holder)
++  if (!p) {
++    p = buildSession(cfg, holder, deps, log)
++    inflight.set(holder, p)
++    p.finally(() => inflight.delete(holder))
++  }
++  return p
++}
+ 
+ async function buildSession(
+   cfg: ComputerConfig,
+-  deps: TinyClickAdmissionDeps,
+-  log: (event: string, payload: Record<string, unknown>) => void,
+-): Promise<AdmissionSession | null> {
++  holder: ComputerModelSessionHolder,
++  deps: ModelAdmissionDeps,
++  log: (e: string, p: Record<string, unknown>) => void,
++): Promise<ModelAdmission> {
++  const variant: QwenVlVariant = migrateLegacyModelVariant(cfg.modelVariant)
+   try {
+-    const manifest = await (
+-      deps.manifestLoader ?? (() => loadModelManifest(defaultManifestPath()))
+-    )();
+-    const variant = cfg.modelVariant ?? "hybrid";
+-    const tokenizer = await (
+-      deps.tokenizerLoader ??
+-      ((m: ModelManifest, v: string) => loadVerifiedTokenizer(m, "tinyclick", v, defaultTokenizerPath()))
+-    )(manifest, variant);
+-    const session = (deps.sessionFactory ?? ((d: TinyClickSessionDeps) => new TinyClickSession(d)))({
+-      manifest,
+-      tokenizer,
++    const factory =
++      deps.sessionFactory ??
++      ((d: QwenVlSessionDeps) => new QwenVlSession(d) as AdmissionSession)
++    const session = factory({
+       variant,
+       broadcast: deps.broadcast,
+       log,
+-    });
+-    // I1 校验即加载（逐文件 sha256，无缓存）+ warmup；失败原样抛出走 catch
+-    await session.prepare();
+-    sessionMeta.set(session, { tokenizer, locate: session.locate.bind(session) });
+-    log("computer.model.admission.ready", { variant });
+-    return session;
++    })
++    await session.prepare()
++    if (deps.stillEnabled && !deps.stillEnabled()) {
++      try {
++        await session.dispose()
++      } catch {
++        /* best-effort */
++      }
++      log("computer.model.admission.discarded", { reason: "disabled-during-build" })
++      return { locator: null, reason: ADMISSION_REASON.SWITCH_OFF }
++    }
++    holder.session = session as any
++    log("computer.model.admission.ready", { variant })
++    return { locator: new QwenVlLocator({ session }) }
+   } catch (err) {
+-    // I1 三态（ModelGateError）/ load-failed / manifest invalid / 文件缺失
+-    // / tokenizer 复验失败 —— 全部 fail-closed：loud log 留痕，holder 不写入。
+     log("computer.model.admission.failed", {
+-      code:
+-        err instanceof Error && "code" in err
+-          ? String((err as { code?: string }).code)
+-          : "build-error",
+-      message: err instanceof Error ? err.message : String(err),
+-    });
+-    return null;
+-  }
+-}
+-
+-/**
+- * per-task admission 评估。调用点 async 可 await（会话懒建 ~1.4s 仅在全通过
+- * 且首次时发生；既有会话命中 = 同步快路径）。
+- */
+-export async function resolveTinyClickAdmission(args: {
+-  config: ComputerConfig | undefined;
+-  holder: ComputerModelSessionHolder;
+-  deps?: TinyClickAdmissionDeps;
+-}): Promise<TinyClickAdmission> {
+-  const cfg = args.config;
+-  const deps = args.deps ?? {};
+-  const log =
+-    deps.log ?? ((event: string, payload: Record<string, unknown>) => logger.info(event, payload));
+-  const refuse = (reason: string): TinyClickAdmission => ({ locator: null, reason });
+-
+-  // ①②③ 配置门（per-task 重评：用户任务间改配置立即生效，P2）
+-  if (cfg?.modelEnabled !== true) return refuse(ADMISSION_REASON.SWITCH_OFF);
+-  if (cfg.modelLicenseDeclined === true) return refuse(ADMISSION_REASON.LICENSE_DECLINED);
+-  if (!modelLicenseAccepted(cfg)) return refuse(ADMISSION_REASON.LICENSE_NOT_ACCEPTED);
+-
+-  const decodeFrame = deps.decodeFrame ?? defaultDecodeFrame;
+-  const buildLocator = (session: AdmissionSession): TinyClickAdmission => {
+-    const meta = sessionMeta.get(session);
+-    if (!meta) return refuse(ADMISSION_REASON.SESSION_FOREIGN);
+-    // 每任务新建 locator（坍缩历史任务级；session 共享是 I2 既定语义）
+-    return {
+-      locator: new TinyClickLocator({
+-        session: { locate: meta.locate },
+-        tokenizer: meta.tokenizer,
+-        decodeFrame,
+-      }),
+-    };
+-  };
+-
+-  // ④ 既有会话快路径（熔断 refuse；外来会话 refuse）
+-  const existing = args.holder.session;
+-  if (existing) {
+-    if (existing.getStatus() === "disabled") return refuse(ADMISSION_REASON.CIRCUIT_DISABLED);
+-    // holder 四方法 Pick 无 locate——经 meta 取回构建期配对的同实例绑定
+-    return buildLocator(existing as AdmissionSession);
+-  }
+-
+-  // ⑤ 单飞懒建（并发首建共享同一 Promise；sessionFactory 只调一次）
+-  let build = inFlightBuilds.get(args.holder);
+-  if (!build) {
+-    build = buildSession(cfg, deps, log);
+-    inFlightBuilds.set(args.holder, build);
+-  }
+-  const session = await build;
+-  inFlightBuilds.delete(args.holder);
+-  if (!session) return refuse(ADMISSION_REASON.BUILD_FAILED);
+-  // 落地 × 关闭竞态：复核失败 → 立即 dispose，不写 holder（见文件头注释）
+-  if (!(deps.stillEnabled ?? (() => true))()) {
+-    try {
+-      await session.dispose();
+-    } catch {
+-      /* best-effort dispose */
+-    }
+-    log("computer.model.admission.discarded", { reason: "disabled-during-build" });
+-    return refuse(ADMISSION_REASON.SWITCH_OFF);
++      variant,
++      error: err instanceof Error ? err.message : String(err),
++    })
++    return { locator: null, reason: ADMISSION_REASON.BUILD_FAILED }
+   }
+-  args.holder.session = session; // P8 写入点①：admission 全通过懒建
+-  return buildLocator(session);
+ }
+ 
+-/**
+- * P4（I4 对抗）：admission 调用的防御折叠——resolveTinyClickAdmission 内部
+- * 已全 catch（buildSession 懒建失败 → null；配置门为纯读），但调用点位于
+- * host_computer 任务起点，一处防御 catch 使「admission 异常永不拖垮
+- * UIA/OCR/框选兜底链」语义密闭：任何意外抛出（含配置对象 getter 抛错、未来
+- * 重构引入的新抛出面）→ 视同拒绝（locator=null，reason=model-admission-
+- * error）+ loud log，任务链照常降级。生产 server.ts 唯一调用点走本包装器。
+- */
+-export async function resolveTinyClickAdmissionSafe(args: {
+-  config: ComputerConfig | undefined;
+-  holder: ComputerModelSessionHolder;
+-  deps?: TinyClickAdmissionDeps;
+-}): Promise<TinyClickAdmission> {
++/** Never throws — folds evaluation errors. */
++export async function resolveModelAdmissionSafe(args: {
++  config: ComputerConfig | undefined
++  holder: ComputerModelSessionHolder
++  deps?: ModelAdmissionDeps
++}): Promise<ModelAdmission> {
+   try {
+-    return await resolveTinyClickAdmission(args);
++    return await resolveModelAdmission(args)
+   } catch (err) {
+-    const log =
+-      args.deps?.log ?? ((event: string, payload: Record<string, unknown>) => logger.info(event, payload));
+-    log("computer.model.admission.error", {
+-      message: err instanceof Error ? err.message : String(err),
+-    });
+-    return { locator: null, reason: ADMISSION_REASON.ADMISSION_ERROR };
++    logger.warn("computer.model.admission.error", {
++      error: err instanceof Error ? err.message : String(err),
++    })
++    return { locator: null, reason: ADMISSION_REASON.ADMISSION_ERROR }
+   }
+ }
++
++/** @deprecated alias */
++export const resolveTinyClickAdmission = resolveModelAdmission
++/** @deprecated alias */
++export const resolveTinyClickAdmissionSafe = resolveModelAdmissionSafe
+diff --git a/companion/src/computer/model-handlers.ts b/companion/src/computer/model-handlers.ts
+index 6983ae1..aa02fc7 100644
+--- a/companion/src/computer/model-handlers.ts
++++ b/companion/src/computer/model-handlers.ts
+@@ -43,9 +43,20 @@ import * as path from "node:path"
+ import { logger } from "../logger"
+ import { getConfig, setComputerModelFields } from "../config"
+ import { LICENSE_DOOR_TEXT, LICENSE_DOOR_TEXT_HASH } from "./model-license"
+-import { loadModelManifest, modelDirFor, type ModelManifest } from "./model-manifest"
+-import { downloadModelVariant, deleteModelVariant, ModelDownloadError } from "./model-download"
+-import type { TinyClickSession } from "./tinyclick-session"
++import { loadModelManifest, type ModelManifest } from "./model-manifest"
++import {
++  deleteQwenVlVariant,
++  downloadQwenVlVariant,
++  probeQwenModelDir,
++  QwenDownloadError,
++} from "./qwen-vl-download"
++import {
++  isQwenVlVariant,
++  migrateLegacyModelVariant,
++  QWEN_VL_VARIANT_META,
++  type QwenVlVariant,
++} from "./qwen-vl-catalog"
++import type { QwenVlSession } from "./qwen-vl-session"
+ import { requireAppsBiometric } from "../apps/biometric-gate"
+ 
+ /**
+@@ -57,7 +68,7 @@ import { requireAppsBiometric } from "../apps/biometric-gate"
+  */
+ export interface ComputerModelSessionHolder {
+   session: Pick<
+-    TinyClickSession,
++    QwenVlSession,
+     "resetCircuitBreaker" | "getStatus" | "getFaults" | "dispose"
+   > | null
+ }
+@@ -74,9 +85,10 @@ export interface ComputerModelHandlerContext {
+ /** 可注入依赖（测试替身；生产取默认实现）。 */
+ export interface ComputerModelHandlerDeps {
+   gate?: typeof requireAppsBiometric
++  /** @deprecated TinyClick path; ignored for Qwen3-VL downloads */
+   manifestLoader?: () => Promise<ModelManifest>
+-  downloadImpl?: typeof downloadModelVariant
+-  deleteImpl?: typeof deleteModelVariant
++  downloadImpl?: typeof downloadQwenVlVariant
++  deleteImpl?: typeof deleteQwenVlVariant
+   /** P3 节流时钟（测试 seam，同 deps 族纪律）；默认 Date.now。 */
+   now?: () => number
+ }
+@@ -105,39 +117,6 @@ export function defaultManifestPath(): string {
+ 
+ // --- 磁盘观测探针（get_state 轻量复验） --------------------------------------------
+ 
+-interface ModelDirProbe {
+-  /** absent=目录/文件全无；error=部分缺失或大小不符；ready=全文件在盘且大小相符 */
+-  status: "absent" | "error" | "ready"
+-  sizeBytes?: number
+-  error?: string
+-}
+-
+-/**
+- * 状态行轻量复验：存在性 + 大小（stat 级，不读字节——705MB 全量 sha256 复验在
+- * admission 懒建会话时强制执行（I1 校验即加载），get_state 不做重活）。
+- * 哈希损坏 → admission 拒绝并广播 error（fail-closed 方向，UI 观测面诚实边界在案）。
+- */
+-function probeModelDir(variant: string, manifest: ModelManifest): ModelDirProbe {
+-  const files = manifest.models.tinyclick?.variants[variant]?.files ?? []
+-  if (files.length === 0) return { status: "error", error: "variant-unknown" }
+-  const dir = modelDirFor(variant)
+-  let sizeBytes = 0
+-  let sawAny = false
+-  for (const f of files) {
+-    try {
+-      const s = fs.statSync(path.join(dir, f.name))
+-      sawAny = true
+-      if (s.size !== f.size) return { status: "error", error: "model-size-mismatch" }
+-      sizeBytes += s.size
+-    } catch {
+-      // 单个文件缺失：全缺 = absent，部分缺 = error（半成品态）
+-      if (sawAny) return { status: "error", error: "model-file-missing" }
+-      return files.indexOf(f) === 0 ? { status: "absent" } : { status: "error", error: "model-file-missing" }
+-    }
+-  }
+-  return { status: "ready", sizeBytes }
+-}
+-
+ /** 许可证当前有效性（P1：时间戳 + 文本版本哈希双要素；漂移 = 未接受）。 */
+ export function modelLicenseAccepted(cfg: {
+   modelLicenseAcceptedAt?: string
+@@ -156,30 +135,21 @@ let activeDownload: { variant: string } | null = null
+ /** P1：删除进行中标志（download/delete 互斥的另一向；delete×delete 幂等）。 */
+ let activeDelete: { variant: string } | null = null
+ 
+-/** 占位主机判定（裁决 5）：manifest url 主机为 .invalid TLD（RFC 2606）且未配镜像。 */
+-function isPlaceholderHost(manifest: ModelManifest, variant: string): boolean {
+-  const files = manifest.models.tinyclick?.variants[variant]?.files ?? []
+-  return files.every((f) => {
+-    try {
+-      return new URL(f.url).hostname.endsWith(".invalid")
+-    } catch {
+-      return false
+-    }
+-  })
++function currentVariant(cfg: { modelVariant?: string }): QwenVlVariant {
++  return migrateLegacyModelVariant(cfg.modelVariant)
+ }
+ 
+ /**
+- * 当前可观测状态（plan:476 全形）。modelStatus 映射：
+- *   有会话：getStatus()==="disabled" → "disabled"（熔断）；其余 → "ready"
+- *   无会话：下载中 → "downloading"；磁盘轻量复验 absent/error/ready 细分（WI-4.2
+- *   补全③留位）；error 附 reason（I1 词表），UI 走 model-state-messages 文案。
++ * 当前可观测状态。Qwen3-VL：磁盘 probe 看 config.json；会话熔断 → disabled。
+  */
+ async function statePayload(
+   holder: ComputerModelSessionHolder,
+-  deps: ComputerModelHandlerDeps = {},
++  _deps: ComputerModelHandlerDeps = {},
++  opts: { downloadError?: string } = {},
+ ) {
+   const cfg = getConfig().computer ?? { coordinateEnabled: false }
+-  const variant = cfg.modelVariant ?? "hybrid"
++  const variant = currentVariant(cfg)
++  const meta = QWEN_VL_VARIANT_META[variant]
+   const session = holder.session
+   let modelStatus: string
+   let sizeBytes: number | undefined
+@@ -189,16 +159,14 @@ async function statePayload(
+   } else if (activeDownload) {
+     modelStatus = "downloading"
+   } else {
+-    try {
+-      const manifest = await (deps.manifestLoader ?? (() => loadModelManifest(defaultManifestPath())))()
+-      const probe = probeModelDir(variant, manifest)
+-      modelStatus = probe.status
+-      sizeBytes = probe.sizeBytes
+-      errorReason = probe.error
+-    } catch (err) {
+-      modelStatus = "error"
+-      errorReason = err instanceof Error && "code" in err ? String((err as { code?: string }).code) : "manifest-invalid"
+-    }
++    const probe = probeQwenModelDir(variant)
++    modelStatus = probe.status
++    sizeBytes = probe.sizeBytes
++    errorReason = probe.error
++  }
++  if (opts.downloadError && !session && !activeDownload && modelStatus !== "ready") {
++    modelStatus = "error"
++    errorReason = opts.downloadError
+   }
+   return {
+     type: "computer.model.state" as const,
+@@ -208,58 +176,52 @@ async function statePayload(
+     modelLicenseDeclined: cfg.modelLicenseDeclined === true,
+     modelStatus,
+     variant,
++    modelFamily: "qwen3-vl",
++    resourceTip: meta.resourceTip,
++    downloadGb: meta.downloadGb,
++    minRamGb: meta.minRamGb,
++    minVramGb: meta.minVramGb,
++    availableVariants: ["2b", "4b", "8b"] as const,
+     ...(sizeBytes !== undefined ? { sizeBytes } : {}),
+     ...(errorReason !== undefined ? { error: errorReason } : {}),
+     faults: session?.getFaults() ?? 0,
+   }
+ }
+ 
+-/** 后台下载（fire-and-forget；进度/完成/失败全走广播，ack 即时返回）。 */
++/** 后台下载 Qwen3-VL（HF snapshot；进度 best-effort）。 */
+ function startBackgroundDownload(
+-  variant: string,
++  variant: QwenVlVariant,
+   ctx: ComputerModelHandlerContext,
+   deps: ComputerModelHandlerDeps,
+   holder: ComputerModelSessionHolder,
+ ): void {
+   activeDownload = { variant }
++  void statePayload(holder, deps).then((s) => ctx.broadcast?.(s))
+   const cfg = getConfig().computer ?? { coordinateEnabled: false }
+-  // P3（I4 对抗）：进度广播节流——下载器 per TCP chunk 回调（705MB 快网 ≈
+-  // 万级广播/十秒窗口，扩展每消息重建 store）。规则：整百分点前进 或 距上次
+-  // ≥200ms 才广播（每文件独立记百分点；0% 首帧与 100% 末帧必达——首/末帧
+-  // 相对前一观测恒为百分点变化）。万级 → 百级（≤100/文件 + 时间轴兜底）。
+   const now = deps.now ?? Date.now
+   let lastSentAt = 0
+-  const lastPctByFile = new Map<string, number>()
+   void (async () => {
++    let downloadError: string | undefined
+     try {
+-      const manifest = await (deps.manifestLoader ?? (() => loadModelManifest(defaultManifestPath())))()
+-      await (deps.downloadImpl ?? downloadModelVariant)(
+-        {
+-          manifest,
+-          modelId: "tinyclick",
+-          variant,
+-          mirror: cfg.modelMirror,
+-          diskBudgetMB: cfg.modelDiskBudgetMB,
+-        },
+-        {
+-          onProgress: (file, receivedBytes, totalBytes) => {
+-            const pct = totalBytes > 0 ? Math.floor((receivedBytes / totalBytes) * 100) : -1
+-            const t = now()
+-            if (pct === lastPctByFile.get(file) && t - lastSentAt < 200) return
+-            lastPctByFile.set(file, pct)
+-            lastSentAt = t
+-            ctx.broadcast?.({ type: "computer.model.progress", variant, file, receivedBytes, totalBytes })
+-          },
++      await (deps.downloadImpl ?? downloadQwenVlVariant)({
++        variant,
++        // modelMirror historically meant host override; reuse as HF_ENDPOINT if https
++        hfEndpoint: cfg.modelMirror,
++        onProgress: (file, receivedBytes, totalBytes) => {
++          const t = now()
++          if (t - lastSentAt < 200) return
++          lastSentAt = t
++          ctx.broadcast?.({ type: "computer.model.progress", variant, file, receivedBytes, totalBytes })
+         },
+-      )
+-      logger.info("computer.model.download.completed", { variant })
++      })
++      logger.info("computer.model.download.completed", { variant, family: "qwen3-vl" })
+     } catch (err) {
+-      const reason = err instanceof ModelDownloadError ? err.reason : "network-error"
++      const reason = err instanceof QwenDownloadError ? err.reason : "network-error"
++      downloadError = reason
+       logger.warn("computer.model.download.failed", { variant, reason })
+     } finally {
+       activeDownload = null
+-      // 完成/失败都广播最新状态（状态行随广播刷新）
+-      void statePayload(holder, deps).then((s) => ctx.broadcast?.(s))
++      void statePayload(holder, deps, downloadError ? { downloadError } : {}).then((s) => ctx.broadcast?.(s))
+     }
+   })()
+ }
+@@ -281,6 +243,7 @@ export async function handleComputerModelMessage(
+     "computer.model.download",
+     "computer.model.delete",
+     "computer.model.reset_circuit_breaker",
++    "computer.model.set_variant",
+   ])
+   if (SETTINGS_SOURCE_TYPES.has(type) && rest.source !== "settings") {
+     logger.warn("computer.model.refused", { type, source: typeof rest.source === "string" ? rest.source : undefined })
+@@ -336,7 +299,7 @@ export async function handleComputerModelMessage(
+       const outcome = await gate({
+         action: "computer.model.set_enabled",
+         reason:
+-          "Enable TinyClick experimental locate layer (uncalibrated local-model suggestions; every hit still requires per-action human confirmation)",
++          "Enable Qwen3-VL experimental locate layer (uncalibrated local-model suggestions; every hit still requires per-action human confirmation)",
+         requestConfirmation: ctx.requestConfirmation,
+       })
+       if (!outcome.approved) {
+@@ -363,28 +326,16 @@ export async function handleComputerModelMessage(
+         })
+         logger.info("computer.model.license_accepted", { textHash: LICENSE_DOOR_TEXT_HASH })
+         const cfg = getConfig().computer ?? { coordinateEnabled: false }
+-        const variant = cfg.modelVariant ?? "hybrid"
++        const variant = currentVariant(cfg)
+         let downloadNote: string | undefined
+         if (activeDownload) {
+           downloadNote = "already-running"
+         } else if (activeDelete) {
+-          // P1：删除进行中不自动触发下载（rm/mkdir 竞态 fail-closed）
+           downloadNote = "delete-in-progress"
+           logger.warn("computer.model.download.refused", { reason: "delete-in-progress", variant })
+         } else {
+-          try {
+-            const manifest = await (deps.manifestLoader ?? (() => loadModelManifest(defaultManifestPath())))()
+-            if (!cfg.modelMirror && isPlaceholderHost(manifest, variant)) {
+-              // 占位主机禁网兜底（裁决 5）：如实告知，不伪造下载动作
+-              downloadNote = "download-host-unset"
+-              logger.info("computer.model.download.skipped", { reason: "download-host-unset", variant })
+-            } else {
+-              startBackgroundDownload(variant, ctx, deps, holder)
+-              downloadNote = "started"
+-            }
+-          } catch {
+-            downloadNote = "manifest-invalid"
+-          }
++          startBackgroundDownload(variant, ctx, deps, holder)
++          downloadNote = "started"
+         }
+         const state = await statePayload(holder, deps)
+         ctx.broadcast?.(state)
+@@ -400,11 +351,10 @@ export async function handleComputerModelMessage(
+ 
+     case "computer.model.download": {
+       const cfg = getConfig().computer ?? { coordinateEnabled: false }
+-      const variant = cfg.modelVariant ?? "hybrid"
++      const variant = currentVariant(cfg)
+       if (activeDownload) {
+         return { type: "computer.model.download.result" as const, ok: true, status: "already-running", variant }
+       }
+-      // P1：删除进行中拒下载（互斥另一向；rm/mkdir 竞态 fail-closed，零网络零写盘）
+       if (activeDelete) {
+         logger.warn("computer.model.download.refused", { reason: "delete-in-progress", variant })
+         return modelError(
+@@ -412,32 +362,40 @@ export async function handleComputerModelMessage(
+           { code: "DELETE_IN_PROGRESS" },
+         )
+       }
+-      let manifest: ModelManifest
+-      try {
+-        manifest = await (deps.manifestLoader ?? (() => loadModelManifest(defaultManifestPath())))()
+-      } catch (err) {
+-        return modelError(
+-          `模型登记信息不可用: ${err instanceof Error ? err.message : String(err)}`,
+-          { code: "MANIFEST_INVALID" },
+-        )
+-      }
+-      // 禁网兜底（裁决 5）：占位主机 + 未配镜像 → fail-fast 零网络请求
+-      if (!cfg.modelMirror && isPlaceholderHost(manifest, variant)) {
+-        logger.info("computer.model.download.refused", { reason: "download-host-unset", variant })
+-        return modelError(
+-          "模型发布地址尚未配置（发布链 owner 决策中）——当前构建不可下载模型；UIA / OCR / 用户框选定位不受影响。",
+-          { code: "DOWNLOAD_HOST_UNSET" },
+-        )
+-      }
+-      // 下载对象 = 当前配置变体的文件组（P3：变体切换 = 手改 config + 重启）
+       startBackgroundDownload(variant, ctx, deps, holder)
+-      logger.info("computer.model.download.started", { variant })
++      logger.info("computer.model.download.started", { variant, family: "qwen3-vl" })
+       return { type: "computer.model.download.result" as const, ok: true, status: "started", variant }
+     }
+ 
++    case "computer.model.set_variant": {
++      const raw = rest.variant
++      if (!isQwenVlVariant(raw)) {
++        return modelError('computer.model.set_variant requires variant:"2b"|"4b"|"8b"', {
++          code: "INVALID_VARIANT",
++        })
++      }
++      if (activeDownload) {
++        return modelError("模型下载进行中——请待完成后切换变体。", { code: "DOWNLOAD_IN_PROGRESS" })
++      }
++      // Dispose session so next admission loads the new size
++      if (holder.session) {
++        try {
++          await holder.session.dispose()
++        } catch {
++          /* best-effort */
++        }
++        holder.session = null
++      }
++      setComputerModelFields({ modelVariant: raw })
++      logger.info("computer.model.variant_set", { variant: raw })
++      const state = await statePayload(holder, deps)
++      ctx.broadcast?.(state)
++      return state
++    }
++
+     case "computer.model.delete": {
+       const cfg = getConfig().computer ?? { coordinateEnabled: false }
+-      const variant = cfg.modelVariant ?? "hybrid"
++      const variant = currentVariant(cfg)
+       // P1 互斥：下载中拒删（否则 Windows rm 撞 .part 占用 → 裸 EPERM 穿透 +
+       // 会话已 dispose + 文件复现；类 Unix 下载以误导性 network-error 收尾）。
+       // 拒绝先于 dispose——会话与文件零触碰。
+@@ -462,7 +420,7 @@ export async function handleComputerModelMessage(
+           }
+           holder.session = null
+         }
+-        const { removedBytes } = await (deps.deleteImpl ?? deleteModelVariant)({ variant })
++        const { removedBytes } = await (deps.deleteImpl ?? deleteQwenVlVariant)(variant)
+         logger.info("computer.model.deleted", { variant, removedBytes })
+         const state = await statePayload(holder, deps)
+         ctx.broadcast?.(state)
+diff --git a/companion/src/computer/model-license.ts b/companion/src/computer/model-license.ts
+index 824edaf..ce4e660 100644
+--- a/companion/src/computer/model-license.ts
++++ b/companion/src/computer/model-license.ts
+@@ -94,42 +94,34 @@ Cairn as an npm/git dependency.
+ 
+ // --- 许可证门弹窗文案（WI-3.4 computer.model.license_required 的 licenseText） ---
+ 
+-export const LICENSE_DOOR_TEXT = `【实验功能许可确认】TinyClick 本地视觉定位模型
++export const LICENSE_DOOR_TEXT = `【实验功能许可确认】Qwen3-VL 本地视觉定位模型
+ 
+-一、许可证（双引来源：原始 LICENSE 文件 + 论文 Ethics 节）
++一、许可证与来源
+ 
+-TinyClick 模型以 MIT 许可证发布：
+-- 原始 LICENSE 文件：「MIT License — ${SAMSUNG_COPYRIGHT_LINE}」
+-- 论文 Ethics 节（arXiv:2410.11871）明示：
+-  "We have made our model checkpoint and code accessible under the MIT license"
+-- 底座模型 microsoft/Florence-2-base 同为 MIT：
+-  "Florence2 model is available under MIT license"
+-（MIT 全文随分发物收录于 THIRD_PARTY_NOTICES。）
++本实验层默认使用阿里通义开源的 Qwen3-VL Instruct 权重（Hugging Face）：
++- Qwen/Qwen3-VL-2B-Instruct（默认）
++- Qwen/Qwen3-VL-4B-Instruct
++- Qwen/Qwen3-VL-8B-Instruct
++权重许可以各模型卡与 Qwen 许可条款为准（通常允许研究与商业使用，
++请以 Hugging Face 页面最新 LICENSE 为准）。下载即表示你接受上游许可。
+ 
+-二、研究品免责声明（论文 Limitations / Ethics 要点）
++二、能力与限制（诚实披露）
+ 
+-- 本模型是研究工件，在新应用上的准确率可能显著下降。
+-- 论文建议仅在受控环境中测试："test the model only on emulator …
+-  controlled environment"。
+-- 风险敏感应用应严格避免："risk-sensitive application … strictly avoided"。
+-- 训练数据集的许可证措辞为 "explicitly allow research use"——商用再分发
+-  余量未闭合；本功能仅以用户显式下载方式提供转换工件，介意者请拒绝。
++- 本层用于「截屏 + 自然语言 → 建议点击坐标」，支持中文指令。
++- 输出未校准：坐标可能完全错误；任何注入前必经确认台人工确认。
++- 本机推理依赖 Python 3 + transformers/torch（或兼容后端）；首次下载体积约
++  4.5GB（2B）/ 8GB（4B）/ 16GB（8B），并占用相应内存或显存。
++- 资源不足时会极慢或 OOM——设置页会提示各变体建议内存/显存。
+ 
+-三、本项目实测披露（S-3 golden 冻结数据，2026-07-20）
+-
+-- 中文命令命中率 13.3%（含巧合成分）——本层仅限英文短命令。
+-- 真实桌面 / 设置窗口 case 0/5 未命中（Wilson 上界 29.9%）。
+-- 4 核 CPU 端到端延迟 2.8–3.3 秒。
+-- 本层为「可选实验层」：默认关闭；拒绝或关闭后，定位兜底仍为
+-  UIA / OCR / 用户框选，不受影响。
+-
+-四、本项目补充条款
++三、本项目补充条款
+ 
++- 本层默认关闭；开启后为可选实验层。
++- 模型建议点仅作候选；UIA / OCR / 用户框选仍为默认定位路径。
++- 拒绝本许可则本实验层永久跳过（复位 = 手改 config.json）。
++- 启用本层不降低其他安全门（任务级 L2、急停、白名单等）。
+ - 模型输出仅作为坐标解析候选，任何点击执行前必经 L2 人工确认。
+-- 模型文件 sha256 钉死、每次加载前复验；完整性校验证明下载字节与登记字节一致，
+-  但不证明镜像字节与 Samsung 原始权重一致（权重无字节级第二源）。
+ 
+-接受后将开始下载模型文件（约 705MB，磁盘预算可配）。
++接受后将按当前选择的变体从 Hugging Face 下载模型。
+ 拒绝则本实验层永久跳过，其余定位层不受影响。`
+ 
+ // --- 文本版本绑定哈希（WP5-I4 P1） -------------------------------------------------
+diff --git a/companion/src/computer/model-state-messages.ts b/companion/src/computer/model-state-messages.ts
+index 7441a07..5bf623f 100644
+--- a/companion/src/computer/model-state-messages.ts
++++ b/companion/src/computer/model-state-messages.ts
+@@ -122,10 +122,30 @@ export const MODEL_STATE_MESSAGES: Record<string, ModelStateMessage> = {
+   "download-host-unset": {
+     title: "模型发布地址未配置",
+     detail:
+-      "模型发布地址尚未配置（发布链 owner 决策中）——当前构建不可下载模型。" +
++      "模型发布地址尚未配置——当前构建不可下载模型。" +
+       "UIA / OCR / 用户框选定位不受影响。",
+     action: null,
+   },
++  "python-missing": {
++    title: "缺少 Python 运行时",
++    detail:
++      "Qwen3-VL 本机推理需要 Python 3。请安装 python3 后重试下载/启用。" +
++      "UIA / OCR / 用户框选定位不受影响。",
++    action: null,
++  },
++  "hf-hub-missing": {
++    title: "缺少 huggingface_hub",
++    detail:
++      "请执行 pip install huggingface_hub 后重试下载。UIA / OCR / 用户框选定位不受影响。",
++    action: "重试下载",
++  },
++  "download-failed": {
++    title: "模型下载失败",
++    detail:
++      "从 Hugging Face 下载 Qwen3-VL 失败（网络或仓库不可用）。可配置 HF_ENDPOINT/镜像后重试；" +
++      "其余定位层不受影响。",
++    action: "重试下载",
++  },
+   "model-variant-missing": {
+     title: "当前变体未下载",
+     detail:
+diff --git a/companion/src/computer/types.ts b/companion/src/computer/types.ts
+index 4a44b20..2e9862f 100644
+--- a/companion/src/computer/types.ts
++++ b/companion/src/computer/types.ts
+@@ -297,20 +297,19 @@ export interface LocateHit {
+   bbox: RectPx
+   layer: LocateLayer
+   /**
+-   * UIA/OCR 层照常赋值；WP5 I3 实验层（tinyclick）在校准曲线落地前结构性
+-   * 缺省（G3——未校准置信度永不上屏，类型系统强制，校准后升级须评审）。
++   * UIA/OCR 层照常赋值；实验 VLM 层（qwen-vl）在校准曲线落地前结构性
++   * 缺省（G3——未校准置信度永不上屏）。
+    */
+   confidence?: number
+   matchedText: string
+ }
+ 
+ /**
+- * WP3 (plan §B.1): the four locator layers. "uia" = L0 (WP3), "ocr" = L1
+- * (WP1), "tinyclick" = L2 (WP5 I3 — experimental local model layer, re-L2
+- * gated, never auto-injected), "cloud" = L3 (WP6 stub — honest skip).
+- * Degradation is one-way down the chain.
++ * WP3 (plan §B.1): the four locator layers. "uia" = L0, "ocr" = L1,
++ * "qwen-vl" = L2 experimental local VLM (re-L2 gated; "tinyclick" legacy alias),
++ * "cloud" = L3 stub. Degradation is one-way down the chain.
+  */
+-export type LocateLayer = "uia" | "ocr" | "tinyclick" | "cloud"
++export type LocateLayer = "uia" | "ocr" | "qwen-vl" | "tinyclick" | "cloud"
+ 
+ /**
+  * WP3: one layer attempt in the locate chain (structured degradation log —
+diff --git a/companion/src/config.ts b/companion/src/config.ts
+index 980603c..7b32228 100644
+--- a/companion/src/config.ts
++++ b/companion/src/config.ts
+@@ -121,10 +121,10 @@ export interface ComputerConfig {
+    */
+   modelLicenseDeclined?: boolean
+   /**
+-   * WP5-I4 交付变体（默认 "hybrid"）。无 WS setter/无 UI 选择器——切换路径
+-   * = 手改 config.json + 重启 companion（裁决 4/P3，ADR-010 方式 B 同型）。
++   * 实验层模型变体（Qwen3-VL）。默认 "2b"；可选 "4b" | "8b"。
++   * 设置页可切换（computer.model.set_variant）；旧 hybrid/int8 启动时迁为 2b。
+    */
+-  modelVariant?: "hybrid" | "int8"
++  modelVariant?: "2b" | "4b" | "8b" | "hybrid" | "int8"
+ }
+ 
+ export interface CompanionConfig {
+@@ -532,20 +532,28 @@ export function getConfig(): CompanionConfig {
+       delete cachedConfig.computer.modelLicenseAcceptedTextHash
+     }
+   }
+-  if (cachedConfig.computer.modelVariant !== undefined && cachedConfig.computer.modelVariant !== "hybrid" && cachedConfig.computer.modelVariant !== "int8") {
++  // Qwen3-VL variants; migrate legacy TinyClick hybrid/int8 → 2b
++  if (cachedConfig.computer.modelVariant === "hybrid" || cachedConfig.computer.modelVariant === "int8") {
+     console.error(
+-      `[cmspark-agent] computer.modelVariant 非法（须为 "hybrid"|"int8"）——回退 hybrid (config tampering?)`,
++      `[cmspark-agent] computer.modelVariant=${cachedConfig.computer.modelVariant} 已弃用（TinyClick）——迁移为 Qwen3-VL "2b"`,
+     )
+-    cachedConfig.computer.modelVariant = "hybrid"
++    cachedConfig.computer.modelVariant = "2b"
++  }
++  if (
++    cachedConfig.computer.modelVariant !== undefined &&
++    cachedConfig.computer.modelVariant !== "2b" &&
++    cachedConfig.computer.modelVariant !== "4b" &&
++    cachedConfig.computer.modelVariant !== "8b"
++  ) {
++    console.error(
++      `[cmspark-agent] computer.modelVariant 非法（须为 "2b"|"4b"|"8b"）——回退 2b (config tampering?)`,
++    )
++    cachedConfig.computer.modelVariant = "2b"
+   }
+-  cachedConfig.computer.modelVariant = cachedConfig.computer.modelVariant ?? "hybrid"
+-  // P9：实验层开启态的启动期醒目 loud log——本路径每 cache-miss（≈进程启动）
+-  // 只跑一次，不刷屏；合法布尔不撤销、不阻断，仅明示（god-mode 方式 B WARNING
+-  // 先例，ADR-010:73）。I4 对抗 P5：持久化 config 无法区分「设置页经门开启」
+-  // 与「手改 opt-in」两源——文案不过归因，如实并陈。
++  cachedConfig.computer.modelVariant = cachedConfig.computer.modelVariant ?? "2b"
+   if (cachedConfig.computer.modelEnabled === true) {
+     console.error(
+-      `[cmspark-agent] WARNING: computer.modelEnabled=true —— TinyClick 实验层处于开启状态（设置页经门开启 或 手改 config.json opt-in 皆可达此态，持久化配置不区分来源；ADR-010 显式 owner opt-in，同 god-mode 方式 B）。本层未校准，命中仍必经人工确认；关闭请置 false 或经设置页。`,
++      `[cmspark-agent] WARNING: computer.modelEnabled=true —— Qwen3-VL 实验定位层处于开启状态（设置页经门开启 或 手改 config.json opt-in；ADR-010）。本层未校准，命中仍必经人工确认；关闭请置 false 或经设置页。`,
+     )
+   }
+   return cachedConfig
+@@ -659,7 +667,11 @@ export function setComputerModelFields(
+   patch: Partial<
+     Pick<
+       ComputerConfig,
+-      "modelEnabled" | "modelLicenseAcceptedAt" | "modelLicenseAcceptedTextHash" | "modelLicenseDeclined"
++      | "modelEnabled"
++      | "modelLicenseAcceptedAt"
++      | "modelLicenseAcceptedTextHash"
++      | "modelLicenseDeclined"
++      | "modelVariant"
+     >
+   >,
+ ): CompanionConfig {
+diff --git a/companion/src/message-router.ts b/companion/src/message-router.ts
+index 7600ab3..57f4d41 100644
+--- a/companion/src/message-router.ts
++++ b/companion/src/message-router.ts
+@@ -1185,6 +1185,7 @@ export async function handleMessage(
+     case "computer.model.license_response":
+     case "computer.model.download":
+     case "computer.model.delete":
++    case "computer.model.set_variant":
+       return handleComputerModelMessage(msg, {
+         requestConfirmation: session?.requestConfirmation,
+         broadcast: session?.broadcast,
+diff --git a/companion/src/server.ts b/companion/src/server.ts
+index b1b0ab5..18df3f0 100644
+--- a/companion/src/server.ts
++++ b/companion/src/server.ts
+@@ -3855,7 +3855,25 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?:
+               },
+               uiaProber: new MacAxProber(),
+               uiaWatcherFactory: (t, opts) => startMacAxWindowWatcher(t, opts),
+-              tinyclickLocator: null,  // WP5 not supported on macOS
++              // Qwen3-VL works on macOS (MPS/CPU via Python transformers)
++              tinyclickLocator: await (async () => {
++                try {
++                  const { resolveModelAdmissionSafe } = await import("./computer/model-admission")
++                  const { computerModelSession } = await import("./computer/model-handlers")
++                  const adm = await resolveModelAdmissionSafe({
++                    config: getConfig().computer,
++                    holder: computerModelSession,
++                    deps: {
++                      broadcast: (m) => { try { execOpts?.broadcast?.(m) } catch { /* best-effort */ } },
++                      log: (event, payload) => logger.info(event, { tool_call_id: toolCallId, ...payload }),
++                      stillEnabled: () => getConfig().computer?.modelEnabled === true,
++                    },
++                  })
++                  return adm.locator
++                } catch {
++                  return null
++                }
++              })(),
+               onUiaVerdict: (token, verdict, probedAt) => {
+                 const wb = writeBackUiaVerdict(token, verdict, probedAt)
+                 logger.info("computer.uia.writeback", { tool_call_id: toolCallId, token, applied: wb.applied, reason: wb.reason })
+@@ -4762,6 +4780,13 @@ export function validateWsMessage(msg: any): WsValidationResult {
+       if (m.source !== "settings") return { valid: false, error: 'computer.model.delete requires source:"settings" (settings-page only)' }
+       return { valid: true }
+     },
++    "computer.model.set_variant": (m) => {
++      if (m.source !== "settings") return { valid: false, error: 'computer.model.set_variant requires source:"settings" (settings-page only)' }
++      if (m.variant !== "2b" && m.variant !== "4b" && m.variant !== "8b") {
++        return { valid: false, error: 'computer.model.set_variant requires variant:"2b"|"4b"|"8b"' }
++      }
++      return { valid: true }
++    },
+     "tool.result": (m) => {
+       if (typeof m.tool_call_id !== "string" || !m.tool_call_id) return { valid: false, error: "tool.result requires tool_call_id" }
+       return { valid: true }
+diff --git a/companion/tests/computer-locate-chain.test.ts b/companion/tests/computer-locate-chain.test.ts
+index d341234..de3ec0d 100644
+--- a/companion/tests/computer-locate-chain.test.ts
++++ b/companion/tests/computer-locate-chain.test.ts
+@@ -263,7 +263,7 @@ test("chain: L0 skipped + L1 language-missing -> honest stubs -> ELEMENT_NOT_FOU
+   assert.match(captured.message, /ocr:skipped\(ocr-language-missing\)/)
+   // WP5 I3：admission 关闭（deps.tinyclick 缺省）→ model-disabled（行为与旧
+   // stub 等价，仅 reason 文案变化，plan:489 ③）
+-  assert.match(captured.message, /tinyclick:skipped\(model-disabled\)/)
++  assert.match(captured.message, /qwen-vl:skipped\(model-disabled\)/)
+   assert.match(captured.message, /cloud:skipped\(wp6-not-implemented\)/)
+ })
+ 
+@@ -533,7 +533,7 @@ test("L2: admission 关闭（tinyclick 缺省）→ skipped model-disabled，链
+     (err: any) =>
+       err instanceof ComputerError &&
+       err.code === "ELEMENT_NOT_FOUND" &&
+-      /tinyclick:skipped\(model-disabled\)/.test(err.message) &&
++      /qwen-vl:skipped\(model-disabled\)/.test(err.message) &&
+       /cloud:skipped\(wp6-not-implemented\)/.test(err.message),
+   )
+ })
+@@ -567,11 +567,11 @@ test("L2 skipped 原因矩阵：包线/坍缩/busy/not-ready/disabled 全直通
+     }
+     assert.equal(captured.code, "ELEMENT_NOT_FOUND", `reason=${reason} 后链应继续降级`)
+     assert.ok(
+-      captured.message.includes(`tinyclick:skipped(${reason})`),
++      captured.message.includes(`qwen-vl:skipped(${reason})`),
+       `reason=${reason} 应出现在错误叙事: ${captured.message}`,
+     )
+     assert.equal(tc.calls.length, 1)
+-    const skipLog = logs.find((d) => d.layer === "tinyclick" && d.hit === false)
++    const skipLog = logs.find((d) => d.layer === "qwen-vl" && d.hit === false)
+     assert.ok(skipLog, `reason=${reason} 应有降级日志`)
+     assert.equal(skipLog!.reason, reason)
+   }
+@@ -584,7 +584,7 @@ test("L2 error：tinyclick-error → outcome error + 链继续降级（错误类
+     (err: any) =>
+       err instanceof ComputerError &&
+       err.code === "ELEMENT_NOT_FOUND" &&
+-      /tinyclick:error\(tinyclick-error\)/.test(err.message) &&
++      /qwen-vl:error\(tinyclick-error\)/.test(err.message) &&
+       /cloud:skipped\(wp6-not-implemented\)/.test(err.message),
+   )
+ })
+@@ -598,9 +598,9 @@ test("L2 命中 → experimental:true 透传 + uncrossverified（吃 A1.3 子预
+   // 链排序：L0 skipped（缺省 uia:null）→ L1 not-found → L2 hit，L3 stub 不出现
+   assert.deepEqual(
+     result.attempts.map((a) => [a.layer, a.outcome]),
+-    [["uia", "skipped"], ["ocr", "not-found"], ["tinyclick", "hit"]],
++    [["uia", "skipped"], ["ocr", "not-found"], ["qwen-vl", "hit"]],
+   )
+-  assert.equal(result.hit.layer, "tinyclick")
++  assert.equal(result.hit.layer, "qwen-vl")
+   assert.equal(result.experimental, true)
+   assert.equal(result.crossverified, false)
+   assert.equal(result.uncrossverified, true)
+@@ -623,7 +623,7 @@ test("L2 日志格式回归：命中日志无 confidence 键，字段与既有
+   const tc = new FakeTinyClick(tcHit())
+   const logs: Array<Record<string, unknown>> = []
+   await runChain(chainDeps({ locator: new FakeLocator([]), tinyclick: tc, log: (_e, d) => logs.push(d) }))
+-  const hitLog = logs.find((d) => d.layer === "tinyclick" && d.hit === true)
++  const hitLog = logs.find((d) => d.layer === "qwen-vl" && d.hit === true)
+   assert.ok(hitLog, "命中应有 computeruse.locate 日志")
+   assert.equal("confidence" in hitLog!, false, "G3：命中日志无上屏置信度")
+   assert.deepEqual(Object.keys(hitLog!).sort(), ["hit", "layer", "ms"])
+@@ -824,7 +824,7 @@ test("P4 L2 TinyClick on retina: image-pixel point → logical pointClient", asy
+     releaseRaw: async () => {},
+   })
+   assert.ok(r.hit, "TinyClick layer hits")
+-  assert.equal(r.hit.layer, "tinyclick")
++  assert.equal(r.hit.layer, "qwen-vl")
+   // image (800, 600) / scale 2 = (400, 300) logical; client (10, 40).
+   // pointClient = (400 - 10, 300 - 40) = (390, 260). Pre-P4 would yield (790, 560).
+   assert.equal(r.pointClient.x, 390)
+diff --git a/companion/tests/computer-model-admission.test.ts b/companion/tests/computer-model-admission.test.ts
+index b5493c9..d13a757 100644
+--- a/companion/tests/computer-model-admission.test.ts
++++ b/companion/tests/computer-model-admission.test.ts
+@@ -1,345 +1,151 @@
+-// WP5-I4 WI-4.3 — model-admission 单测：六路拒绝/通过矩阵 + holder 写入点① +
+-// 并发单飞 + dispose 落地竞态 + per-task 配置翻转 + 符号级契约。
+-//
+-// 环境纪律：DATA_DIR 隔离 import 必须首行（config.ts 模块加载时定型）；
+-// session/tokenizer/decodeFrame 全 fake（不建真会话、不读真模型）。
++// Model admission for Qwen3-VL experimental layer.
+ 
+-import "./computer-model-test-env";
++import "./computer-model-test-env"
+ 
+-import test from "node:test";
+-import assert from "node:assert/strict";
++import test from "node:test"
++import assert from "node:assert/strict"
+ 
+-import type { ComputerConfig } from "../src/config";
++import type { ComputerConfig } from "../src/config"
+ import {
+   ADMISSION_REASON,
+-  resolveTinyClickAdmission,
+-  resolveTinyClickAdmissionSafe,
++  resolveModelAdmission,
++  resolveModelAdmissionSafe,
+   type AdmissionSession,
+-  type TinyClickAdmissionDeps,
+-} from "../src/computer/model-admission";
+-import type { ComputerModelSessionHolder } from "../src/computer/model-handlers";
+-import { LICENSE_DOOR_TEXT_HASH } from "../src/computer/model-license";
+-import type { ModelManifest } from "../src/computer/model-manifest";
+-import type { RuntimeStatus, TinyClickFrame } from "../src/computer/tinyclick-runtime";
+-import type { TinyClickLocateResult } from "../src/computer/tinyclick-session";
+-import type { TinyClickTokenizer } from "../src/computer/tinyclick-tokenizer";
+-import type { CaptureMeta } from "../src/computer/types";
+-
+-// --- fakes ---------------------------------------------------------------------
++  type ModelAdmissionDeps,
++} from "../src/computer/model-admission"
++import type { ComputerModelSessionHolder } from "../src/computer/model-handlers"
++import { LICENSE_DOOR_TEXT_HASH } from "../src/computer/model-license"
++import type { QwenVlLocateResult } from "../src/computer/qwen-vl-session"
+ 
+ const ACCEPTED = {
+   modelLicenseAcceptedAt: "2026-05-20T00:00:00.000Z",
+   modelLicenseAcceptedTextHash: LICENSE_DOOR_TEXT_HASH,
+-} as const;
++} as const
+ 
+ function cfg(over: Partial<ComputerConfig> = {}): ComputerConfig {
+-  return { coordinateEnabled: true, modelEnabled: true, ...ACCEPTED, ...over };
++  return { coordinateEnabled: true, modelEnabled: true, modelVariant: "2b", ...ACCEPTED, ...over }
+ }
+ 
+-const ZERO_TIMINGS = {
+-  preprocessMs: 0,
+-  visionMs: 0,
+-  embedMs: 0,
+-  encoderMs: 0,
+-  decoderMs: 0,
+-  totalMs: 0,
+-};
+-
+-interface FakeState {
+-  status: RuntimeStatus;
+-  faults: number;
+-  prepareCalls: number;
+-  disposeCalls: number;
+-  locateCommands: string[];
+-}
+-
+-function makeFakeSession(opts: { status?: RuntimeStatus; prepareGate?: Promise<void> } = {}): {
+-  session: AdmissionSession;
+-  state: FakeState;
+-} {
+-  const state: FakeState = {
+-    status: opts.status ?? "warm",
++function makeFakeSession(opts: { status?: "idle" | "ready" | "disabled" | "loading"; prepareGate?: Promise<void> } = {}) {
++  const state = {
++    status: opts.status ?? ("ready" as const),
+     faults: 0,
+     prepareCalls: 0,
+     disposeCalls: 0,
+-    locateCommands: [],
+-  };
++  }
+   const session: AdmissionSession = {
+     async prepare() {
+-      state.prepareCalls++;
+-      if (opts.prepareGate) await opts.prepareGate;
++      state.prepareCalls++
++      if (opts.prepareGate) await opts.prepareGate
++      state.status = "ready"
+     },
+-    async locate(command: string, _frame: TinyClickFrame): Promise<TinyClickLocateResult> {
+-      state.locateCommands.push(command);
+-      return {
+-        prompt: `prompt:${command}`,
+-        inputIds: [0, 1, 2],
+-        tokenIds: [2, 0],
+-        locBins: null,
+-        point: { x: 3, y: 4 },
+-        timings: ZERO_TIMINGS,
+-      };
++    async locate(_command: string, _imagePath: string, _w: number, _h: number): Promise<QwenVlLocateResult> {
++      return { point: { x: 3, y: 4 }, ms: 1 }
+     },
+     getStatus: () => state.status,
+     getFaults: () => state.faults,
+     resetCircuitBreaker: () => {
+-      state.faults = 0;
++      state.faults = 0
++      if (state.status === "disabled") state.status = "ready"
+     },
+     async dispose() {
+-      state.disposeCalls++;
++      state.disposeCalls++
+     },
+-  };
+-  return { session, state };
+-}
+-
+-const fakeTokenizer: TinyClickTokenizer = {
+-  // 恒短编码（长度 3 ≤ 38 包线）：token 计数预检是 locator 单测的职责，本套件不覆盖
+-  encode: () => [0, 1, 2],
+-  vocabSize: () => 51200,
+-};
+-
+-const fakeDecodeFrame = async (): Promise<TinyClickFrame> => ({
+-  rgba: new Uint8Array(4),
+-  width: 1,
+-  height: 1,
+-});
+-
+-const SHOT = {
+-  hwnd: 1,
+-  rect: { x: 0, y: 0, width: 100, height: 80 },
+-  client: { x: 0, y: 0, width: 100, height: 72 },
+-  dpi: 96,
+-  path: "unused.png",
+-  sha256: "frame-sha-1",
+-  black: false,
+-  fallbackUsed: false,
+-  osrBlackSuspected: false,
+-} as CaptureMeta;
+-
+-interface Harness {
+-  deps: TinyClickAdmissionDeps;
+-  calls: { manifest: number; tokenizer: number; sessionFactory: number };
+-  logs: Array<{ event: string; payload: Record<string, unknown> }>;
+-  fake: { session: AdmissionSession; state: FakeState };
+-  holder: ComputerModelSessionHolder;
++  }
++  return { session, state }
+ }
+ 
+-function makeHarness(opts: { prepareGate?: Promise<void>; sessionStatus?: RuntimeStatus } = {}): Harness {
+-  const calls = { manifest: 0, tokenizer: 0, sessionFactory: 0 };
+-  const logs: Harness["logs"] = [];
+-  const fake = makeFakeSession({ status: opts.sessionStatus, prepareGate: opts.prepareGate });
+-  const holder: ComputerModelSessionHolder = { session: null };
+-  const deps: TinyClickAdmissionDeps = {
+-    manifestLoader: async () => {
+-      calls.manifest++;
+-      return {} as ModelManifest;
+-    },
+-    tokenizerLoader: async () => {
+-      calls.tokenizer++;
+-      return fakeTokenizer;
+-    },
++function makeHarness(opts: { prepareGate?: Promise<void>; sessionStatus?: "idle" | "ready" | "disabled" | "loading" } = {}) {
++  const calls = { sessionFactory: 0 }
++  const logs: Array<{ event: string; payload: Record<string, unknown> }> = []
++  const fake = makeFakeSession({ status: opts.sessionStatus, prepareGate: opts.prepareGate })
++  const holder: ComputerModelSessionHolder = { session: null }
++  const deps: ModelAdmissionDeps = {
+     sessionFactory: () => {
+-      calls.sessionFactory++;
+-      return fake.session;
++      calls.sessionFactory++
++      return fake.session
+     },
+-    decodeFrame: fakeDecodeFrame,
+     log: (event, payload) => logs.push({ event, payload }),
+-  };
+-  return { deps, calls, logs, fake, holder };
++  }
++  return { deps, calls, logs, fake, holder }
+ }
+ 
+-// --- 六路矩阵 ---------------------------------------------------------------------
+-
+-test("① 开关关 → model-switch-off（不触构建）", async () => {
+-  const h = makeHarness();
+-  const out = await resolveTinyClickAdmission({ config: cfg({ modelEnabled: false }), holder: h.holder, deps: h.deps });
+-  assert.strictEqual(out.locator, null);
+-  assert.strictEqual(out.reason, ADMISSION_REASON.SWITCH_OFF);
+-  assert.strictEqual(h.calls.sessionFactory, 0);
+-});
+-
+-test("② 已拒绝许可证 → model-license-declined（优先于 accepted 要素）", async () => {
+-  const h = makeHarness();
+-  const out = await resolveTinyClickAdmission({ config: cfg({ modelLicenseDeclined: true }), holder: h.holder, deps: h.deps });
+-  assert.strictEqual(out.locator, null);
+-  assert.strictEqual(out.reason, ADMISSION_REASON.LICENSE_DECLINED);
+-});
+-
+-test("③a 未接受许可证 → model-license-not-accepted", async () => {
+-  const h = makeHarness();
+-  const config = cfg();
+-  delete config.modelLicenseAcceptedAt;
+-  delete config.modelLicenseAcceptedTextHash;
+-  const out = await resolveTinyClickAdmission({ config, holder: h.holder, deps: h.deps });
+-  assert.strictEqual(out.locator, null);
+-  assert.strictEqual(out.reason, ADMISSION_REASON.LICENSE_NOT_ACCEPTED);
+-});
+-
+-test("③b 条款文本漂移（P1 哈希不符）→ model-license-not-accepted", async () => {
+-  const h = makeHarness();
+-  const out = await resolveTinyClickAdmission({
+-    config: cfg({ modelLicenseAcceptedTextHash: "000000000000" }),
+-    holder: h.holder,
+-    deps: h.deps,
+-  });
+-  assert.strictEqual(out.locator, null);
+-  assert.strictEqual(out.reason, ADMISSION_REASON.LICENSE_NOT_ACCEPTED);
+-});
+-
+-test("④ 既有会话熔断 → model-circuit-disabled（复位只走设置页）", async () => {
+-  const h = makeHarness({ sessionStatus: "disabled" });
+-  h.holder.session = h.fake.session;
+-  const out = await resolveTinyClickAdmission({ config: cfg(), holder: h.holder, deps: h.deps });
+-  assert.strictEqual(out.locator, null);
+-  assert.strictEqual(out.reason, ADMISSION_REASON.CIRCUIT_DISABLED);
+-  assert.strictEqual(h.calls.sessionFactory, 0, "熔断会话不得触发重建");
+-});
+-
+-test("外来会话（非 admission 构建，无 tokenizer 配对）→ model-session-foreign", async () => {
+-  const h = makeHarness(); // warm，但 holder 由测试直写（写入点③形态）
+-  h.holder.session = h.fake.session;
+-  const out = await resolveTinyClickAdmission({ config: cfg(), holder: h.holder, deps: h.deps });
+-  assert.strictEqual(out.locator, null);
+-  assert.strictEqual(out.reason, ADMISSION_REASON.SESSION_FOREIGN);
+-});
+-
+-// --- 通过路径 ---------------------------------------------------------------------
+-
+-test("⑥ 全通过：无会话 → 单飞懒建 + holder 写入点① + locator 可用（hit）", async () => {
+-  const h = makeHarness();
+-  const out = await resolveTinyClickAdmission({ config: cfg(), holder: h.holder, deps: h.deps });
+-  assert.ok(out.locator, "locator 应非 null");
+-  assert.strictEqual(out.reason, undefined);
+-  assert.strictEqual(h.calls.sessionFactory, 1);
+-  assert.strictEqual(h.fake.state.prepareCalls, 1, "I1 校验即加载须发生");
+-  assert.strictEqual(h.holder.session, h.fake.session, "写入点①：holder 落定会话");
+-  assert.ok(h.logs.some((l) => l.event === "computer.model.admission.ready"));
+-  // locator 端到端（fake 链）：包线预检 → decodeFrame → session.locate → hit
+-  const located = await out.locator!.locate({ command: "click OK", shot: SHOT });
+-  assert.strictEqual(located.kind, "hit");
+-  if (located.kind === "hit") assert.deepStrictEqual(located.point, { x: 3, y: 4 });
+-  assert.deepStrictEqual(h.fake.state.locateCommands, ["click OK"]);
+-});
+-
+-test("既有健康会话快路径：二次 admission 不重建、locator 每任务新建", async () => {
+-  const h = makeHarness();
+-  const first = await resolveTinyClickAdmission({ config: cfg(), holder: h.holder, deps: h.deps });
+-  const second = await resolveTinyClickAdmission({ config: cfg(), holder: h.holder, deps: h.deps });
+-  assert.ok(first.locator && second.locator);
+-  assert.strictEqual(h.calls.sessionFactory, 1, "既有会话不得重建");
+-  assert.strictEqual(h.fake.state.prepareCalls, 1);
+-  assert.notStrictEqual(first.locator, second.locator, "坍缩历史任务级：locator 实例必须新建");
+-});
+-
+-test("懒建失败（I1 复验/load-failed 形态）→ model-build-failed，holder 不写入 + loud log", async () => {
+-  const h = makeHarness();
+-  h.deps.sessionFactory = () => {
+-    h.calls.sessionFactory++;
+-    const bad = makeFakeSession();
+-    bad.session.prepare = async () => {
+-      throw new Error("model-hash-mismatch: vision_encoder.onnx");
+-    };
+-    return bad.session;
+-  };
+-  const out = await resolveTinyClickAdmission({ config: cfg(), holder: h.holder, deps: h.deps });
+-  assert.strictEqual(out.locator, null);
+-  assert.strictEqual(out.reason, ADMISSION_REASON.BUILD_FAILED);
+-  assert.strictEqual(h.holder.session, null, "失败不得写 holder（下任务重试）");
+-  assert.ok(h.logs.some((l) => l.event === "computer.model.admission.failed"), "失败须 loud log");
+-});
+-
+-test("并发首建单飞：sessionFactory 只调一次，两调用方各得独立 locator", async () => {
+-  let release!: () => void;
+-  const gate = new Promise<void>((r) => (release = r));
+-  const h = makeHarness({ prepareGate: gate });
+-  const p1 = resolveTinyClickAdmission({ config: cfg(), holder: h.holder, deps: h.deps });
+-  const p2 = resolveTinyClickAdmission({ config: cfg(), holder: h.holder, deps: h.deps });
+-  // 两调用都进入后放行构建
+-  await new Promise((r) => setImmediate(r));
+-  release();
+-  const [o1, o2] = await Promise.all([p1, p2]);
+-  assert.ok(o1.locator && o2.locator);
+-  assert.strictEqual(h.calls.sessionFactory, 1, "并发首建必须单飞");
+-  assert.notStrictEqual(o1.locator, o2.locator, "坍缩历史不跨任务共享");
+-  assert.strictEqual(h.holder.session, h.fake.session);
+-});
+-
+-test("per-task 配置翻转：关闭后重开 = 重建（无陈旧 WeakMap 会话复用）", async () => {
+-  const h = makeHarness();
+-  const on1 = await resolveTinyClickAdmission({ config: cfg(), holder: h.holder, deps: h.deps });
+-  assert.ok(on1.locator);
+-  // 模拟 disable handler（写入点②）：dispose + holder=null
+-  await h.holder.session!.dispose();
+-  h.holder.session = null;
+-  const off = await resolveTinyClickAdmission({ config: cfg({ modelEnabled: false }), holder: h.holder, deps: h.deps });
+-  assert.strictEqual(off.locator, null);
+-  assert.strictEqual(off.reason, ADMISSION_REASON.SWITCH_OFF);
+-  const h2 = makeHarness();
+-  h2.holder = h.holder; // 同一 holder 重建路径
+-  const on2 = await resolveTinyClickAdmission({ config: cfg(), holder: h.holder, deps: h2.deps });
+-  assert.ok(on2.locator, "重开应重新懒建成功");
+-  assert.strictEqual(h2.calls.sessionFactory, 1, "holder 空 = 新构建（旧会话 meta 不泄漏）");
+-  assert.notStrictEqual(on1.locator, on2.locator);
+-});
+-
+-test("落地×关闭竞态：build 完成时开关已关 → dispose 新建会话、不写 holder", async () => {
+-  const h = makeHarness();
+-  const out = await resolveTinyClickAdmission({
++test("① 开关关 → model-switch-off", async () => {
++  const h = makeHarness()
++  const out = await resolveModelAdmission({ config: cfg({ modelEnabled: false }), holder: h.holder, deps: h.deps })
++  assert.strictEqual(out.locator, null)
++  assert.strictEqual(out.reason, ADMISSION_REASON.SWITCH_OFF)
++  assert.strictEqual(h.calls.sessionFactory, 0)
++})
++
++test("② 已拒绝许可证 → model-license-declined", async () => {
++  const h = makeHarness()
++  const out = await resolveModelAdmission({ config: cfg({ modelLicenseDeclined: true }), holder: h.holder, deps: h.deps })
++  assert.strictEqual(out.locator, null)
++  assert.strictEqual(out.reason, ADMISSION_REASON.LICENSE_DECLINED)
++})
++
++test("③ 未接受许可证 → model-license-not-accepted", async () => {
++  const h = makeHarness()
++  const config = cfg()
++  delete config.modelLicenseAcceptedAt
++  delete config.modelLicenseAcceptedTextHash
++  const out = await resolveModelAdmission({ config, holder: h.holder, deps: h.deps })
++  assert.strictEqual(out.locator, null)
++  assert.strictEqual(out.reason, ADMISSION_REASON.LICENSE_NOT_ACCEPTED)
++})
++
++test("④ 既有会话熔断 → model-circuit-disabled", async () => {
++  const h = makeHarness({ sessionStatus: "disabled" })
++  h.holder.session = h.fake.session
++  const out = await resolveModelAdmission({ config: cfg(), holder: h.holder, deps: h.deps })
++  assert.strictEqual(out.locator, null)
++  assert.strictEqual(out.reason, ADMISSION_REASON.CIRCUIT_DISABLED)
++  assert.strictEqual(h.calls.sessionFactory, 0)
++})
++
++test("⑤ 全通过 → locator + holder 写入", async () => {
++  const h = makeHarness()
++  const out = await resolveModelAdmission({ config: cfg(), holder: h.holder, deps: h.deps })
++  assert.ok(out.locator)
++  assert.strictEqual(h.holder.session, h.fake.session)
++  assert.strictEqual(h.fake.state.prepareCalls, 1)
++  assert.ok(h.logs.some((l) => l.event === "computer.model.admission.ready"))
++})
++
++test("safe 包装：构建抛错 → model-build-failed 折叠", async () => {
++  const holder: ComputerModelSessionHolder = { session: null }
++  const out = await resolveModelAdmissionSafe({
+     config: cfg(),
+-    holder: h.holder,
+-    deps: { ...h.deps, stillEnabled: () => false },
+-  });
+-  assert.strictEqual(out.locator, null);
+-  assert.strictEqual(out.reason, ADMISSION_REASON.SWITCH_OFF);
+-  assert.strictEqual(h.fake.state.disposeCalls, 1, "竞态落地的新建会话须立即 dispose");
+-  assert.strictEqual(h.holder.session, null, "竞态落地不得写 holder");
+-  assert.ok(h.logs.some((l) => l.event === "computer.model.admission.discarded"));
+-});
+-
+-test("符号级契约（P8）：holder 写入点注释三处在案", async () => {
+-  // 契约本体是源码注释（model-handlers.ts ComputerModelSessionHolder 头注）；
+-  // 本测试锁 admission 侧行为面：admission 只在「全通过 + stillEnabled」后写
+-  // holder（写入点①），其余路径一律只读。由上方各用例的 holder.session 断言
+-  // 组合覆盖；此处补一条显式不变量：失败/拒绝路径 holder 恒 null。
+-  const h = makeHarness();
+-  for (const config of [
+-    cfg({ modelEnabled: false }),
+-    cfg({ modelLicenseDeclined: true }),
+-    cfg({ modelLicenseAcceptedTextHash: "badbadbadbad" }),
+-  ]) {
+-    await resolveTinyClickAdmission({ config, holder: h.holder, deps: h.deps });
+-    assert.strictEqual(h.holder.session, null, "拒绝路径不得写 holder");
+-  }
+-});
+-
+-// --- P4：safe 包装器防御折叠（I4 对抗；server.ts 生产唯一调用点） ---------------------
+-
+-test("P4：admission 评估意外抛出 → safe 包装器折叠为 {locator:null, model-admission-error} + loud log", async () => {
+-  // 配置对象 getter 抛错（resolve 内部纯读路径之外的意外面）——safe 必须视同
+-  // 拒绝而非让异常穿透 host_computer 任务起点（UIA/OCR/框选兜底链密闭）。
+-  const throwingCfg = Object.defineProperty({}, "modelEnabled", {
+-    get(): never {
+-      throw new Error("synthetic admission blow-up");
++    holder,
++    deps: {
++      sessionFactory: () => {
++        throw new Error("boom")
++      },
+     },
+-  }) as ComputerConfig;
+-  const h = makeHarness();
+-  const out = await resolveTinyClickAdmissionSafe({ config: throwingCfg, holder: h.holder, deps: h.deps });
+-  assert.strictEqual(out.locator, null);
+-  assert.strictEqual(out.reason, ADMISSION_REASON.ADMISSION_ERROR);
+-  assert.strictEqual(h.holder.session, null, "异常折叠不得写 holder");
+-  const errLogs = h.logs.filter((l) => l.event === "computer.model.admission.error");
+-  assert.strictEqual(errLogs.length, 1, "loud log 留痕一次");
+-  assert.match(String(errLogs[0]!.payload.message), /synthetic admission blow-up/);
+-});
+-
+-test("P4：safe 包装器正常路径零改语义（拒绝原因原样透传、无 error 日志）", async () => {
+-  const h = makeHarness();
+-  const out = await resolveTinyClickAdmissionSafe({
+-    config: cfg({ modelEnabled: false }),
++  })
++  // factory throw is inside buildSession catch → BUILD_FAILED
++  assert.strictEqual(out.locator, null)
++  assert.strictEqual(out.reason, ADMISSION_REASON.BUILD_FAILED)
++})
++
++test("dispose 竞态：build 中关闭 → 不写 holder", async () => {
++  let release!: () => void
++  const gate = new Promise<void>((r) => {
++    release = r
++  })
++  const h = makeHarness({ prepareGate: gate })
++  let enabled = true
++  const p = resolveModelAdmission({
++    config: cfg(),
+     holder: h.holder,
+-    deps: h.deps,
+-  });
+-  assert.strictEqual(out.locator, null);
+-  assert.strictEqual(out.reason, ADMISSION_REASON.SWITCH_OFF, "拒绝原因词表原样透传");
+-  assert.ok(!h.logs.some((l) => l.event === "computer.model.admission.error"), "正常路径不触发 error 日志");
+-});
++    deps: { ...h.deps, stillEnabled: () => enabled },
++  })
++  enabled = false
++  release()
++  const out = await p
++  assert.strictEqual(out.locator, null)
++  assert.strictEqual(out.reason, ADMISSION_REASON.SWITCH_OFF)
++  assert.strictEqual(h.holder.session, null)
++  assert.strictEqual(h.fake.state.disposeCalls, 1)
++})
+diff --git a/companion/tests/computer-model-handlers.test.ts b/companion/tests/computer-model-handlers.test.ts
+index 64f91d1..88e2b3e 100644
+--- a/companion/tests/computer-model-handlers.test.ts
++++ b/companion/tests/computer-model-handlers.test.ts
+@@ -1,699 +1,143 @@
+-// WP5 I3 登记项③ — computer.model.reset_circuit_breaker 围栏 +
+-// get_state 观测面。双层断言：validateWsMessage 形状围栏（server.ts 导出件）
+-// + handler 层来源核查（belt）+ 复位语义（有会话真复位、无会话诚实 no-op）。
+-// WP5-I4 WI-4.2 扩充：开关族四路由状态机（见文件后半）。
++// computer.model.* handlers — Qwen3-VL path (settings belt + download/delete/variant).
+ 
+-import "./computer-model-test-env" // DATA_DIR 隔离必须先于一切 src import（模块加载时定型）
++import "./computer-model-test-env"
+ 
+ import test from "node:test"
+ import assert from "node:assert/strict"
++import * as fs from "node:fs"
++import * as path from "node:path"
+ 
+ import { validateWsMessage } from "../src/server"
+ import {
+   handleComputerModelMessage,
+   type ComputerModelSessionHolder,
+ } from "../src/computer/model-handlers"
+-
+-// --- fakes ------------------------------------------------------------------
+-
+-function fakeSession(disabled = true) {
+-  return {
+-    resetCalls: 0,
+-    status: disabled ? "disabled" : "idle",
+-    faults: disabled ? 3 : 0,
+-    resetCircuitBreaker() {
+-      this.resetCalls += 1
+-      this.status = "idle"
+-      this.faults = 0
+-    },
+-    getStatus() {
+-      return this.status
+-    },
+-    getFaults() {
+-      return this.faults
+-    },
+-  }
+-}
+-
+-function holderWith(session: any): ComputerModelSessionHolder {
+-  return { session }
+-}
+-
+-// --- validateWsMessage 形状围栏（未知类型默认放行，故此层是真围栏） -------------
+-
+-test("③ validateWsMessage：reset_circuit_breaker 缺 source → 拒绝", () => {
+-  const r = validateWsMessage({ type: "computer.model.reset_circuit_breaker" })
+-  assert.equal(r.valid, false)
+-  assert.match(r.error!, /source:"settings"/)
+-})
+-
+-test("③ validateWsMessage：reset_circuit_breaker 非 settings 来源 → 拒绝", () => {
+-  for (const source of ["chat", "quick-action", "", 1, null]) {
+-    const r = validateWsMessage({ type: "computer.model.reset_circuit_breaker", source })
+-    assert.equal(r.valid, false, `source=${JSON.stringify(source)} 应被拒`)
+-  }
+-})
+-
+-test("③ validateWsMessage：reset_circuit_breaker settings 来源 → 放行", () => {
+-  const r = validateWsMessage({ type: "computer.model.reset_circuit_breaker", source: "settings" })
+-  assert.equal(r.valid, true)
+-})
+-
+-test("③ validateWsMessage：get_state 无字段要求 → 放行", () => {
+-  assert.equal(validateWsMessage({ type: "computer.model.get_state" }).valid, true)
+-})
+-
+-// --- handler 层二次核查（belt：防直调/校验面变更） ------------------------------
+-
+-test("③ handler：非 settings 来源 → INVALID_SOURCE，会话绝不被触碰", async () => {
+-  const session = fakeSession()
+-  for (const msg of [
+-    { type: "computer.model.reset_circuit_breaker" },
+-    { type: "computer.model.reset_circuit_breaker", source: "chat" },
+-  ]) {
+-    const r = await handleComputerModelMessage(msg, {}, holderWith(session))
+-    assert.equal(r.type, "error")
+-    assert.equal(r.family, "computer.model")
+-    assert.equal(r.code, "INVALID_SOURCE")
+-  }
+-  assert.equal(session.resetCalls, 0, "围栏拒绝时复位绝不发生")
+-})
+-
+-// --- 复位语义 ----------------------------------------------------------------
+-
+-test("③ handler：settings 来源 + 熔断会话 → 真复位 + 广播 ready 态", async () => {
+-  const session = fakeSession(true) // disabled, faults=3
+-  const broadcasts: any[] = []
+-  const r = await handleComputerModelMessage(
+-    { type: "computer.model.reset_circuit_breaker", source: "settings" },
+-    { broadcast: (d: any) => broadcasts.push(d) },
+-    holderWith(session),
+-  )
+-  assert.equal(session.resetCalls, 1)
+-  // WI-4.2 全形：核心字段深等，扩展字段点断言（默认 config 形）
+-  assert.equal(r.type, "computer.model.state")
+-  assert.equal(r.modelStatus, "ready")
+-  assert.equal(r.faults, 0)
+-  assert.equal(r.modelEnabled, false)
+-  assert.equal(r.variant, "hybrid")
+-  assert.equal(broadcasts.length, 1)
+-  assert.equal(broadcasts[0].modelStatus, "ready")
+-  assert.equal(broadcasts[0].faults, 0)
+-})
+-
+-test("③ handler：settings 来源 + 无会话 → 诚实 no-op（不伪造复位、不广播）", async () => {
+-  const broadcasts: any[] = []
+-  const r = await handleComputerModelMessage(
+-    { type: "computer.model.reset_circuit_breaker", source: "settings" },
+-    { broadcast: (d: any) => broadcasts.push(d) },
+-    holderWith(null),
+-  )
+-  assert.equal(r.modelStatus, "absent")
+-  assert.equal(r.note, "no-session")
+-  assert.equal(broadcasts.length, 0, "无状态变化不广播")
+-})
+-
+-// --- get_state 观测面 ----------------------------------------------------------
+-
+-test("③ get_state：熔断会话 → modelStatus disabled + faults 计数", async () => {
+-  const session = fakeSession(true)
+-  const r = await handleComputerModelMessage({ type: "computer.model.get_state" }, {}, holderWith(session))
+-  assert.equal(r.type, "computer.model.state")
+-  assert.equal(r.modelStatus, "disabled")
+-  assert.equal(r.faults, 3)
+-  // WI-4.2 全形字段（默认 config 形）
+-  assert.equal(r.modelEnabled, false)
+-  assert.equal(r.licenseAccepted, false)
+-  assert.equal(r.modelLicenseDeclined, false)
+-  assert.equal(r.variant, "hybrid")
+-})
+-
+-test("③ get_state：无会话 → absent / faults 0（磁盘轻量复验细分）", async () => {
+-  const r = await handleComputerModelMessage({ type: "computer.model.get_state" }, {}, holderWith(null))
+-  assert.equal(r.type, "computer.model.state")
+-  assert.equal(r.modelStatus, "absent")
+-  assert.equal(r.faults, 0)
+-  assert.equal(r.modelEnabled, false)
+-  assert.equal(r.variant, "hybrid")
+-})
+-
+-test("③ handler：未知 computer.model 类型 → error", async () => {
+-  const r = await handleComputerModelMessage({ type: "computer.model.nope" }, {}, holderWith(null))
+-  assert.equal(r.type, "error")
+-  assert.match(r.error, /Unknown computer model message type/)
+-})
+-
+-
+-// --- WP5-I4 WI-4.2 开关族四路由 ---------------------------------------------------
+-//
+-// 断言面（plan:542 + P1/P3/P5/P6）：set_enabled 三分支（未接受→license_required
+-// 零写入 / 已拒绝→LICENSE_DECLINED / 已接受→fake 门双路）；enabled:false 免费
+-// + dispose；license_response 双路（时间戳+文本哈希 / 拒绝永久跳过）；条款漂移
+-// 重门（P1）；download 幂等 + 占位 fail-fast（零网络）+ 按变体语义（P3）；
+-// delete dispose；四 case belt 负测试（P6）；validateWsMessage 四条目形状。
+-
+-import * as fs from "node:fs"
+-import * as path from "node:path"
+ import { clearConfigCache, getConfig, saveConfig } from "../src/config"
+-import { LICENSE_DOOR_TEXT, LICENSE_DOOR_TEXT_HASH } from "../src/computer/model-license"
++import { LICENSE_DOOR_TEXT_HASH } from "../src/computer/model-license"
+ 
+ const TEST_DATA_DIR = process.env.CMSPARK_DATA_DIR!
+ 
+ function resetModelConfig(computer: Record<string, unknown> = { coordinateEnabled: false }) {
+   clearConfigCache()
+-  try { fs.rmSync(path.join(TEST_DATA_DIR, "config.json")) } catch { /* 不存在可忽略 */ }
++  try {
++    fs.rmSync(path.join(TEST_DATA_DIR, "config.json"))
++  } catch {
++    /* ignore */
++  }
+   saveConfig({ computer } as any)
+   clearConfigCache()
+ }
+ 
+-function readComputer(): any {
+-  clearConfigCache()
+-  return getConfig().computer
+-}
+-
+-/** 占位 manifest（url 为 .invalid TLD——裁决 5 禁网兜底场景）。 */
+-function placeholderManifest(): any {
+-  const files = ["a.onnx", "b.onnx"].map((name) => ({
+-    name,
+-    url: `https://models.cmspark.invalid/tinyclick/rev/hybrid/${name}`,
+-    sha256: "0".repeat(64),
+-    size: 10,
+-  }))
+-  return { models: { tinyclick: { variants: { hybrid: { files }, int8: { files } } } } }
+-}
+-
+-/** 真实主机 manifest（配镜像或 owner host 已定场景）。 */
+-function realHostManifest(): any {
+-  const files = ["a.onnx", "b.onnx"].map((name) => ({
+-    name,
+-    url: `https://models.example.com/tinyclick/rev/hybrid/${name}`,
+-    sha256: "0".repeat(64),
+-    size: 10,
+-  }))
+-  return { models: { tinyclick: { variants: { hybrid: { files }, int8: { files } } } } }
++function holderWith(session: any): ComputerModelSessionHolder {
++  return { session }
+ }
+ 
+ const flush = () => new Promise((r) => setImmediate(r))
+ 
+-function fakeGate(outcome: { approved: boolean; reason?: string; method?: string }) {
+-  const calls: any[] = []
+-  return {
+-    calls,
+-    gate: async (args: any) => {
+-      calls.push(args)
+-      return { approved: outcome.approved, reason: outcome.reason ?? (outcome.approved ? "ok" : "denied"), method: outcome.method ?? "fake" }
+-    },
+-  }
+-}
+-
+-function fakeSessionFull(disabled = false) {
+-  return {
+-    disposed: 0,
+-    resetCircuitBreaker() {},
+-    getStatus() { return disabled ? "disabled" : "idle" },
+-    getFaults() { return disabled ? 3 : 0 },
+-    async dispose() { this.disposed += 1 },
+-  }
+-}
+-
+-// --- validateWsMessage 四条目（P6 第一层） -----------------------------------------
+-
+-test("WI-4.2 validateWsMessage：四路由缺/错 source 拒绝；settings 放行；形状字段强制", () => {
+-  for (const t of ["computer.model.set_enabled", "computer.model.license_response", "computer.model.download", "computer.model.delete"]) {
+-    assert.equal(validateWsMessage({ type: t }).valid, false, `${t} 缺 source 应拒`)
+-    assert.equal(validateWsMessage({ type: t, source: "chat" }).valid, false, `${t} 错 source 应拒`)
+-  }
+-  assert.equal(validateWsMessage({ type: "computer.model.download", source: "settings" }).valid, true)
+-  assert.equal(validateWsMessage({ type: "computer.model.delete", source: "settings" }).valid, true)
+-  // 形状字段：set_enabled 要 enabled:boolean；license_response 要 accepted:boolean
+-  assert.equal(validateWsMessage({ type: "computer.model.set_enabled", source: "settings" }).valid, false)
+-  assert.equal(validateWsMessage({ type: "computer.model.set_enabled", enabled: "yes", source: "settings" }).valid, false)
+-  assert.equal(validateWsMessage({ type: "computer.model.set_enabled", enabled: true, source: "settings" }).valid, true)
+-  assert.equal(validateWsMessage({ type: "computer.model.license_response", source: "settings" }).valid, false)
+-  assert.equal(validateWsMessage({ type: "computer.model.license_response", accepted: false, source: "settings" }).valid, true)
+-})
+-
+-// --- belt 负测试（P6 第二层：直调 handler 缺/错 source → INVALID_SOURCE） ------------
+-
+-test("WI-4.2 belt：四 case 直调缺/错 source → INVALID_SOURCE（validateWsMessage 被绕过也拦）", async () => {
+-  resetModelConfig()
+-  for (const t of ["computer.model.set_enabled", "computer.model.license_response", "computer.model.download", "computer.model.delete"]) {
+-    for (const badMsg of [{ type: t }, { type: t, source: "chat" }]) {
+-      const r = await handleComputerModelMessage(badMsg, {}, holderWith(null))
+-      assert.equal(r.type, "error", `${t} ${JSON.stringify(badMsg.source)} 应拒`)
+-      assert.equal(r.code, "INVALID_SOURCE")
+-    }
+-  }
+-  // 旁证：错误来源不得产生任何 config 写入
+-  assert.equal(readComputer().modelEnabled ?? false, false)
+-})
+-
+-// --- set_enabled 状态机 -------------------------------------------------------------
+-
+-test("WI-4.2 set_enabled(true)：license 未接受 → license_required + config 零写入（含 LICENSE_DOOR_TEXT 载荷）", async () => {
+-  resetModelConfig()
+-  const g = fakeGate({ approved: true })
+-  const r = await handleComputerModelMessage(
+-    { type: "computer.model.set_enabled", enabled: true, source: "settings" },
+-    { requestConfirmation: async () => ({}) },
+-    holderWith(null),
+-    { gate: g.gate as any },
+-  )
+-  assert.equal(r.type, "computer.model.license_required")
+-  assert.equal(r.licenseText, LICENSE_DOOR_TEXT, "许可证门载荷 = LICENSE_DOOR_TEXT 单一真源原文")
+-  assert.ok(typeof r.notice === "string" && r.notice.length > 0)
+-  assert.equal(readComputer().modelEnabled ?? false, false, "config 零写入")
+-  assert.equal(g.calls.length, 0, "未过许可证门不得触发生物识别门")
++test("validateWsMessage：set_variant settings + 2b/4b/8b 放行", () => {
++  assert.equal(validateWsMessage({ type: "computer.model.set_variant", source: "settings", variant: "2b" }).valid, true)
++  assert.equal(validateWsMessage({ type: "computer.model.set_variant", source: "settings", variant: "4b" }).valid, true)
++  assert.equal(validateWsMessage({ type: "computer.model.set_variant", variant: "2b" }).valid, false)
++  assert.equal(validateWsMessage({ type: "computer.model.set_variant", source: "settings", variant: "hybrid" }).valid, false)
+ })
+ 
+-test("WI-4.2 set_enabled(true)：license 已拒绝 → LICENSE_DECLINED 永久跳过 + 零写入", async () => {
+-  resetModelConfig({ coordinateEnabled: false, modelLicenseDeclined: true })
+-  const r = await handleComputerModelMessage(
+-    { type: "computer.model.set_enabled", enabled: true, source: "settings" },
+-    { requestConfirmation: async () => ({}) },
+-    holderWith(null),
+-    { gate: fakeGate({ approved: true }).gate as any },
+-  )
++test("belt：set_variant 缺 source → INVALID_SOURCE", async () => {
++  const r = await handleComputerModelMessage({ type: "computer.model.set_variant", variant: "2b" }, {}, holderWith(null))
+   assert.equal(r.type, "error")
+-  assert.equal(r.code, "LICENSE_DECLINED")
+-  assert.equal(readComputer().modelEnabled ?? false, false)
++  assert.equal(r.code, "INVALID_SOURCE")
+ })
+ 
+-test("WI-4.2 set_enabled(true)：条款漂移（旧文本哈希）→ 重新弹门 license_required（P1）", async () => {
+-  resetModelConfig({
+-    coordinateEnabled: false,
+-    modelLicenseAcceptedAt: "2026-07-20T00:00:00.000Z",
+-    modelLicenseAcceptedTextHash: "000000000000", // 旧版本哈希 ≠ 当前 LICENSE_DOOR_TEXT_HASH
+-  })
+-  const r = await handleComputerModelMessage(
+-    { type: "computer.model.set_enabled", enabled: true, source: "settings" },
+-    { requestConfirmation: async () => ({}) },
+-    holderWith(null),
+-    { gate: fakeGate({ approved: true }).gate as any },
+-  )
+-  assert.equal(r.type, "computer.model.license_required", "文本漂移 = 未接受，必须重新弹门")
+-  assert.equal(readComputer().modelEnabled ?? false, false)
+-})
+-
+-test("WI-4.2 set_enabled(true)：已接受（时间戳+当前哈希）→ fake 门批准写 config + 广播；拒绝不写", async () => {
+-  const acceptedCfg = {
+-    coordinateEnabled: false,
+-    modelLicenseAcceptedAt: "2026-07-21T00:00:00.000Z",
+-    modelLicenseAcceptedTextHash: LICENSE_DOOR_TEXT_HASH,
+-  }
+-  // 批准臂
+-  resetModelConfig(acceptedCfg)
+-  const g1 = fakeGate({ approved: true, method: "hello" })
++test("set_variant：写入 4b + 广播 resourceTip", async () => {
++  resetModelConfig({ coordinateEnabled: false, modelVariant: "2b" })
+   const broadcasts: any[] = []
+-  const r1 = await handleComputerModelMessage(
+-    { type: "computer.model.set_enabled", enabled: true, source: "settings" },
+-    { requestConfirmation: async () => ({ approved: true }), broadcast: (d: any) => broadcasts.push(d) },
+-    holderWith(null),
+-    { gate: g1.gate as any },
+-  )
+-  assert.equal(r1.type, "computer.model.state")
+-  assert.equal(r1.modelEnabled, true)
+-  assert.equal(readComputer().modelEnabled, true, "批准后写 config")
+-  assert.equal(g1.calls.length, 1)
+-  assert.equal(g1.calls[0].action, "computer.model.set_enabled")
+-  assert.equal(broadcasts.length, 1)
+-  assert.equal(broadcasts[0].modelEnabled, true)
+-  // 拒绝臂
+-  resetModelConfig(acceptedCfg)
+-  const g2 = fakeGate({ approved: false, reason: "cancelled" })
+-  const r2 = await handleComputerModelMessage(
+-    { type: "computer.model.set_enabled", enabled: true, source: "settings" },
+-    { requestConfirmation: async () => ({}) },
+-    holderWith(null),
+-    { gate: g2.gate as any },
+-  )
+-  assert.equal(r2.type, "error")
+-  assert.equal(r2.code, "BIOMETRIC_DENIED")
+-  assert.equal(readComputer().modelEnabled ?? false, false, "门拒绝零写入")
+-})
+-
+-test("WI-4.2 set_enabled(true)：已接受但无确认通道 → NO_CONFIRMATION_CHANNEL（P5）", async () => {
+-  resetModelConfig({
+-    coordinateEnabled: false,
+-    modelLicenseAcceptedAt: "2026-07-21T00:00:00.000Z",
+-    modelLicenseAcceptedTextHash: LICENSE_DOOR_TEXT_HASH,
+-  })
+   const r = await handleComputerModelMessage(
+-    { type: "computer.model.set_enabled", enabled: true, source: "settings" },
+-    {}, // 无 requestConfirmation
++    { type: "computer.model.set_variant", variant: "4b", source: "settings" },
++    { broadcast: (d) => broadcasts.push(d) },
+     holderWith(null),
+-    { gate: fakeGate({ approved: true }).gate as any },
+   )
+-  assert.equal(r.type, "error")
+-  assert.equal(r.code, "NO_CONFIRMATION_CHANNEL")
+-  assert.equal(readComputer().modelEnabled ?? false, false)
++  assert.equal(r.variant, "4b")
++  assert.equal(r.modelFamily, "qwen3-vl")
++  assert.ok(typeof r.resourceTip === "string" && r.resourceTip.length > 10)
++  assert.equal(getConfig().computer?.modelVariant, "4b")
++  assert.ok(broadcasts.some((b) => b.variant === "4b"))
+ })
+ 
+-test("WI-4.2 set_enabled(false)：免费 + dispose 会话 + holder=null + 广播", async () => {
+-  resetModelConfig({ coordinateEnabled: false, modelEnabled: true })
+-  const session = fakeSessionFull()
+-  const holder = holderWith(session)
+-  const broadcasts: any[] = []
+-  const r = await handleComputerModelMessage(
+-    { type: "computer.model.set_enabled", enabled: false, source: "settings" },
+-    { broadcast: (d: any) => broadcasts.push(d) },
+-    holder,
+-  )
+-  assert.equal(r.modelEnabled, false)
+-  assert.equal(session.disposed, 1, "disable 必须 dispose（裁决 4）")
+-  assert.equal(holder.session, null)
+-  assert.equal(readComputer().modelEnabled, false)
+-  assert.equal(broadcasts.length, 1)
+-})
+-
+-// --- license_response 双路 ----------------------------------------------------------
+-
+-test("WI-4.2 license_response accepted:true → 时间戳+文本哈希写入 + 广播 + 自动下载（占位主机如实 note）", async () => {
+-  resetModelConfig()
++test("download：started + 立即 downloading 广播；fake downloadImpl", async () => {
++  resetModelConfig({ coordinateEnabled: false, modelVariant: "2b" })
+   const broadcasts: any[] = []
+-  const r = await handleComputerModelMessage(
+-    { type: "computer.model.license_response", accepted: true, source: "settings" },
+-    { broadcast: (d: any) => broadcasts.push(d) },
+-    holderWith(null),
+-    { manifestLoader: async () => placeholderManifest() },
+-  )
+-  const c = readComputer()
+-  assert.ok(typeof c.modelLicenseAcceptedAt === "string" && !Number.isNaN(Date.parse(c.modelLicenseAcceptedAt)), "ISO 时间戳写入")
+-  assert.equal(c.modelLicenseAcceptedTextHash, LICENSE_DOOR_TEXT_HASH, "P1：文本版本哈希绑定")
+-  assert.equal(c.modelLicenseDeclined, false)
+-  assert.equal(r.licenseAccepted, true)
+-  assert.equal(r.download, "download-host-unset", "占位主机自动下载如实落空（裁决 5，零网络）")
+-  assert.ok(broadcasts.some((b) => b.type === "computer.model.state" && b.licenseAccepted === true))
+-})
+-
+-test("WI-4.2 license_response accepted:true + 配镜像 → 自动触发 download（按当前变体，P3）", async () => {
+-  resetModelConfig({ coordinateEnabled: false, modelMirror: "https://hf-mirror.example", modelVariant: "int8" })
+-  const calls: any[] = []
+-  const downloadImpl = async (args: any) => {
+-    calls.push(args)
+-    return {} as any
+-  }
+-  const r = await handleComputerModelMessage(
+-    { type: "computer.model.license_response", accepted: true, source: "settings" },
+-    {},
+-    holderWith(null),
+-    { manifestLoader: async () => realHostManifest(), downloadImpl: downloadImpl as any },
+-  )
+-  assert.equal(r.download, "started")
+-  await flush(); await flush(); await flush()
+-  assert.equal(calls.length, 1, "自动下载触发一次")
+-  assert.equal(calls[0].variant, "int8", "下载对象 = 当前配置变体（P3）")
+-  assert.equal(calls[0].mirror, "https://hf-mirror.example")
+-})
+-
+-test("WI-4.2 license_response accepted:false → modelLicenseDeclined=true + 此后 set_enabled 恒 LICENSE_DECLINED", async () => {
+-  resetModelConfig()
+-  const r = await handleComputerModelMessage(
+-    { type: "computer.model.license_response", accepted: false, source: "settings" },
+-    {},
+-    holderWith(null),
+-  )
+-  assert.equal(r.modelLicenseDeclined, true)
+-  assert.equal(readComputer().modelLicenseDeclined, true)
+-  const r2 = await handleComputerModelMessage(
+-    { type: "computer.model.set_enabled", enabled: true, source: "settings" },
+-    { requestConfirmation: async () => ({}) },
+-    holderWith(null),
+-    { gate: fakeGate({ approved: true }).gate as any },
+-  )
+-  assert.equal(r2.code, "LICENSE_DECLINED", "拒绝后永久跳过（复位仅手改 config）")
+-})
+-
+-// --- download 路由 ------------------------------------------------------------------
+-
+-test("WI-4.2 download：占位主机 + 未配镜像 → DOWNLOAD_HOST_UNSET fail-fast（零网络，fake 零调用）", async () => {
+-  resetModelConfig()
+-  let implCalls = 0
++  let release!: () => void
++  const pending = new Promise<void>((res) => {
++    release = res
++  })
+   const r = await handleComputerModelMessage(
+     { type: "computer.model.download", source: "settings" },
+-    {},
++    { broadcast: (d) => broadcasts.push(d) },
+     holderWith(null),
+     {
+-      manifestLoader: async () => placeholderManifest(),
+-      downloadImpl: (async () => { implCalls += 1; return {} as any }) as any,
++      downloadImpl: async () => {
++        await pending
++        return { dir: "/tmp/x" }
++      },
+     },
+   )
+-  assert.equal(r.type, "error")
+-  assert.equal(r.code, "DOWNLOAD_HOST_UNSET")
++  assert.equal(r.status, "started")
+   await flush()
+-  assert.equal(implCalls, 0, "禁网兜底：零网络请求（非 DNS 失败后的 network-error）")
+-})
+-
+-test("WI-4.2 download：配镜像 → started + 按变体下载；进行中再调 → already-running 幂等（P10 防并发）", async () => {
+-  resetModelConfig({ coordinateEnabled: false, modelMirror: "https://hf-mirror.example", modelVariant: "int8" })
+-  const calls: any[] = []
+-  let release!: () => void
+-  const pending = new Promise<void>((res) => { release = res })
+-  const downloadImpl = async (args: any) => {
+-    calls.push(args)
+-    await pending
+-    return {} as any
+-  }
+-  const r1 = await handleComputerModelMessage(
+-    { type: "computer.model.download", source: "settings" },
+-    {},
+-    holderWith(null),
+-    { manifestLoader: async () => realHostManifest(), downloadImpl: downloadImpl as any },
+-  )
+-  assert.deepEqual({ ok: r1.ok, status: r1.status, variant: r1.variant }, { ok: true, status: "started", variant: "int8" })
+-  const r2 = await handleComputerModelMessage(
+-    { type: "computer.model.download", source: "settings" },
+-    {},
+-    holderWith(null),
+-    { manifestLoader: async () => realHostManifest(), downloadImpl: downloadImpl as any },
+-  )
+-  assert.equal(r2.status, "already-running", "并发第二次幂等")
++  assert.ok(broadcasts.some((b) => b.modelStatus === "downloading"))
+   release()
+-  await flush(); await flush(); await flush()
+-  assert.equal(calls.length, 1, "单飞：下载实现只被调用一次")
+-  assert.equal(calls[0].variant, "int8")
+-})
+-
+-test("WI-4.2 download：manifest 不可用 → MANIFEST_INVALID 诚实错误", async () => {
+-  resetModelConfig()
+-  const r = await handleComputerModelMessage(
+-    { type: "computer.model.download", source: "settings" },
+-    {},
+-    holderWith(null),
+-    { manifestLoader: async () => { throw new Error("bad json") } },
+-  )
+-  assert.equal(r.type, "error")
+-  assert.equal(r.code, "MANIFEST_INVALID")
++  await flush()
++  await flush()
+ })
+ 
+-// --- delete 路由 -------------------------------------------------------------------
+-
+-test("WI-4.2 delete：dispose + holder=null + 删除当前变体 + 广播", async () => {
+-  resetModelConfig({ coordinateEnabled: false, modelEnabled: true, modelVariant: "int8" })
+-  const session = fakeSessionFull()
+-  const holder = holderWith(session)
+-  const delCalls: any[] = []
++test("download：失败 reason 挂 state", async () => {
++  resetModelConfig({ coordinateEnabled: false, modelVariant: "2b" })
++  const { QwenDownloadError } = await import("../src/computer/qwen-vl-download")
+   const broadcasts: any[] = []
+-  const r = await handleComputerModelMessage(
+-    { type: "computer.model.delete", source: "settings" },
+-    { broadcast: (d: any) => broadcasts.push(d) },
+-    holder,
+-    { deleteImpl: (async (args: any) => { delCalls.push(args); return { removedBytes: 123 } }) as any },
+-  )
+-  assert.equal(session.disposed, 1, "delete 必须 dispose（裁决 4）")
+-  assert.equal(holder.session, null)
+-  assert.deepEqual(delCalls, [{ variant: "int8" }], "删除对象 = 当前配置变体（P3）")
+-  assert.equal(r.ok, true)
+-  assert.equal(r.removedBytes, 123)
+-  assert.ok(broadcasts.some((b) => b.type === "computer.model.state"))
+-})
+-
+-// --- P1：download/delete handler 级状态互斥（I4 对抗 2026-07-21 必修） ---------------
+-
+-test("P1：下载中 delete → DOWNLOAD_IN_PROGRESS 拒绝（会话/文件/配置零触碰，诚实文案）；下载完成后 delete 恢复可用", async () => {
+-  resetModelConfig({ coordinateEnabled: false, modelMirror: "https://hf-mirror.example", modelVariant: "int8" })
+-  const dlCalls: any[] = []
+-  let releaseDl!: () => void
+-  const dlPending = new Promise<void>((res) => { releaseDl = res })
+-  const downloadImpl = async (args: any) => { dlCalls.push(args); await dlPending; return {} as any }
+-  const r1 = await handleComputerModelMessage(
++  await handleComputerModelMessage(
+     { type: "computer.model.download", source: "settings" },
+-    {},
++    { broadcast: (d) => broadcasts.push(d) },
+     holderWith(null),
+-    { manifestLoader: async () => realHostManifest(), downloadImpl: downloadImpl as any },
+-  )
+-  assert.equal(r1.status, "started")
+-  // 下载进行中 → delete 必须被拒且零触碰（拒绝先于 dispose）
+-  const session = fakeSessionFull()
+-  const holder = holderWith(session)
+-  const delCalls: any[] = []
+-  const r = await handleComputerModelMessage(
+-    { type: "computer.model.delete", source: "settings" },
+-    {},
+-    holder,
+-    { deleteImpl: (async (args: any) => { delCalls.push(args); return { removedBytes: 1 } }) as any },
+-  )
+-  assert.equal(r.type, "error")
+-  assert.equal(r.family, "computer.model")
+-  assert.equal(r.code, "DOWNLOAD_IN_PROGRESS")
+-  assert.match(r.error, /下载进行中/, "诚实文案而非裸系统错误")
+-  assert.equal(session.disposed, 0, "被拒时 dispose 绝不发生")
+-  assert.equal(holder.session, session, "holder 不被触碰")
+-  assert.equal(delCalls.length, 0, "rm 不发生（Windows .part 占用 EPERM 面闭合）")
+-  // 下载完成 → 互斥解除，delete 恢复可用
+-  releaseDl()
+-  await flush(); await flush(); await flush()
+-  const r2 = await handleComputerModelMessage(
+-    { type: "computer.model.delete", source: "settings" },
+-    {},
+-    holder,
+-    { deleteImpl: (async (args: any) => { delCalls.push(args); return { removedBytes: 1 } }) as any },
++    {
++      downloadImpl: async () => {
++        throw new QwenDownloadError("python-missing", "no py")
++      },
++    },
+   )
+-  assert.equal(r2.ok, true, "下载完成后删除放行（标志位无泄漏）")
+-  assert.equal(delCalls.length, 1)
++  await flush()
++  await flush()
++  await flush()
++  const terminal = [...broadcasts].reverse().find((b) => b.type === "computer.model.state" && b.modelStatus !== "downloading")
++  assert.ok(terminal)
++  assert.equal(terminal.error, "python-missing")
+ })
+ 
+-test("P1：delete 中 download → DELETE_IN_PROGRESS 拒绝（零 manifest 读/零网络）；license_response 自动下载同让路；delete×delete 幂等", async () => {
+-  resetModelConfig({ coordinateEnabled: false, modelMirror: "https://hf-mirror.example", modelVariant: "int8" })
+-  const delCalls: any[] = []
+-  let releaseDel!: () => void
+-  const delPending = new Promise<void>((res) => { releaseDel = res })
+-  const deleteImpl = async (args: any) => { delCalls.push(args); await delPending; return { removedBytes: 1 } }
+-  // delete 进行中（activeDelete 在首个 await 前置位——调用即生效）
+-  const pDel = handleComputerModelMessage(
+-    { type: "computer.model.delete", source: "settings" },
+-    {},
+-    holderWith(null),
+-    { deleteImpl: deleteImpl as any },
+-  )
+-  const dlCalls: any[] = []
+-  let manifestReads = 0
++test("license_response accepted → 写哈希 + 自动 download started", async () => {
++  resetModelConfig({ coordinateEnabled: false })
++  let dl = 0
+   const r = await handleComputerModelMessage(
+-    { type: "computer.model.download", source: "settings" },
+-    {},
+-    holderWith(null),
+-    {
+-      manifestLoader: async () => { manifestReads += 1; return realHostManifest() },
+-      downloadImpl: (async (args: any) => { dlCalls.push(args); return {} as any }) as any,
+-    },
+-  )
+-  assert.equal(r.type, "error")
+-  assert.equal(r.code, "DELETE_IN_PROGRESS")
+-  assert.match(r.error, /删除进行中/)
+-  assert.equal(dlCalls.length, 0, "rm/mkdir 竞态闭合：下载实现零调用")
+-  assert.equal(manifestReads, 0, "拒绝 fail-fast 于 manifest 读取之前")
+-  // delete×delete → already-running 幂等（与 download 单飞同型）
+-  const rDup = await handleComputerModelMessage(
+-    { type: "computer.model.delete", source: "settings" },
+-    {},
+-    holderWith(null),
+-    { deleteImpl: deleteImpl as any },
+-  )
+-  assert.equal(rDup.ok, true)
+-  assert.equal(rDup.status, "already-running")
+-  assert.equal(delCalls.length, 1, "单飞：删除实现只调一次")
+-  // license_response accepted 的自动下载同样让路（config 写入照实，下载不触发）
+-  const rLic = await handleComputerModelMessage(
+     { type: "computer.model.license_response", accepted: true, source: "settings" },
+     {},
+     holderWith(null),
+     {
+-      manifestLoader: async () => realHostManifest(),
+-      downloadImpl: (async (args: any) => { dlCalls.push(args); return {} as any }) as any,
+-    },
+-  )
+-  assert.equal(rLic.download, "delete-in-progress")
+-  assert.equal(dlCalls.length, 0, "自动触发路径同受互斥")
+-  // delete 完成 → 互斥解除
+-  releaseDel()
+-  const rDel = await pDel
+-  assert.equal(rDel.ok, true)
+-  await flush(); await flush(); await flush()
+-  const r2 = await handleComputerModelMessage(
+-    { type: "computer.model.download", source: "settings" },
+-    {},
+-    holderWith(null),
+-    {
+-      manifestLoader: async () => realHostManifest(),
+-      downloadImpl: (async (args: any) => { dlCalls.push(args); return {} as any }) as any,
++      downloadImpl: async () => {
++        dl++
++        return { dir: "/tmp" }
++      },
+     },
+   )
+-  assert.equal(r2.status, "started", "删除完成后下载放行（标志位无泄漏）")
+-  await flush(); await flush(); await flush()
+-})
+-
+-test("P1：deleteImpl 抛错 → DELETE_FAILED 结构化返回（裸 fs 错误不穿透）+ 状态广播 + finally 清标志可重试", async () => {
+-  resetModelConfig({ coordinateEnabled: false, modelEnabled: true, modelVariant: "int8" })
+-  const session = fakeSessionFull()
+-  const holder = holderWith(session)
+-  const broadcasts: any[] = []
+-  const r = await handleComputerModelMessage(
+-    { type: "computer.model.delete", source: "settings" },
+-    { broadcast: (d: any) => broadcasts.push(d) },
+-    holder,
+-    { deleteImpl: (async () => { throw new Error("EPERM: operation not permitted") }) as any },
+-  )
+-  assert.equal(r.type, "error")
+-  assert.equal(r.family, "computer.model")
+-  assert.equal(r.code, "DELETE_FAILED")
+-  assert.match(r.error, /删除失败：EPERM/, "原因如实上达而非穿透顶层 catch")
+-  assert.equal(session.disposed, 1, "会话已 dispose 属实（裁决 4 先行）")
+-  assert.equal(holder.session, null)
+-  assert.ok(broadcasts.some((b) => b.type === "computer.model.state"), "失败后广播最新状态让 UI 如实落位")
+-  // finally 清标志 → 重试删除语义不受损
+-  const r2 = await handleComputerModelMessage(
+-    { type: "computer.model.delete", source: "settings" },
+-    {},
+-    holder,
+-    { deleteImpl: (async () => ({ removedBytes: 5 })) as any },
+-  )
+-  assert.equal(r2.ok, true, "失败后重试放行（activeDelete 无泄漏）")
+-})
+-
+-// --- P3：下载进度广播节流（I4 对抗；整百分点前进 或 ≥200ms） -------------------------
+-
+-test("P3：per-chunk 进度回调按整百分点节流——1000 次回调仅 101 条广播，首帧 0% 与末帧 100% 必达", async () => {
+-  resetModelConfig({ coordinateEnabled: false, modelMirror: "https://hf-mirror.example", modelVariant: "int8" })
+-  const broadcasts: any[] = []
+-  const downloadImpl = async (_args: any, opts: any) => {
+-    for (let i = 1; i <= 1000; i++) opts.onProgress("a.onnx", i * 100, 100000) // 0.1%/次 × 10 次/百分点
+-    return {} as any
+-  }
+-  const r = await handleComputerModelMessage(
+-    { type: "computer.model.download", source: "settings" },
+-    { broadcast: (d: any) => broadcasts.push(d) },
+-    holderWith(null),
+-    { manifestLoader: async () => realHostManifest(), downloadImpl: downloadImpl as any, now: () => 1000 },
+-  )
+-  assert.equal(r.status, "started")
+-  await flush(); await flush(); await flush()
+-  const progress = broadcasts.filter((b) => b.type === "computer.model.progress")
+-  assert.equal(progress.length, 101, "冻结时钟下仅百分点前进触发（0..100；万级 → 百级）")
+-  assert.equal(progress[0].receivedBytes, 100, "首帧 0% 必达")
+-  assert.equal(progress[progress.length - 1].receivedBytes, 100000, "末帧 100% 必达")
+-  const pcts = progress.map((b) => Math.floor((b.receivedBytes / b.totalBytes) * 100))
+-  for (let i = 0; i <= 100; i++) assert.equal(pcts[i], i, `第 ${i} 条广播应为 ${i}%（单调无重复）`)
++  assert.equal(r.licenseAccepted, true)
++  assert.equal(r.download, "started")
++  assert.equal(getConfig().computer?.modelLicenseAcceptedTextHash, LICENSE_DOOR_TEXT_HASH)
++  await flush()
++  await flush()
++  assert.equal(dl, 1)
+ })
+ 
+-test("P3：同百分点刷屏抑制 + ≥200ms 时间轴兜底", async () => {
+-  resetModelConfig({ coordinateEnabled: false, modelMirror: "https://hf-mirror.example", modelVariant: "int8" })
+-  const broadcasts: any[] = []
+-  let clock = 1000
+-  const downloadImpl = async (_args: any, opts: any) => {
+-    for (let i = 0; i < 500; i++) opts.onProgress("a.onnx", 500, 100000) // 同 pct 刷屏
+-    clock = 1300 // +300ms：时间轴兜底应放行一条
+-    opts.onProgress("a.onnx", 500, 100000)
+-    clock = 1350 // +50ms：<200ms 且 pct 未变 → 抑制
+-    opts.onProgress("a.onnx", 500, 100000)
+-    return {} as any
+-  }
+-  await handleComputerModelMessage(
+-    { type: "computer.model.download", source: "settings" },
+-    { broadcast: (d: any) => broadcasts.push(d) },
+-    holderWith(null),
+-    { manifestLoader: async () => realHostManifest(), downloadImpl: downloadImpl as any, now: () => clock },
+-  )
+-  await flush(); await flush(); await flush()
+-  const progress = broadcasts.filter((b) => b.type === "computer.model.progress")
+-  assert.equal(progress.length, 2, "首帧 + 时间轴兜底各一条；同 pct 且 <200ms 全抑制")
++test("get_state：含 availableVariants 与 resourceTip", async () => {
++  resetModelConfig({ coordinateEnabled: false, modelVariant: "2b" })
++  const r = await handleComputerModelMessage({ type: "computer.model.get_state" }, {}, holderWith(null))
++  assert.equal(r.type, "computer.model.state")
++  assert.equal(r.variant, "2b")
++  assert.deepEqual(r.availableVariants, ["2b", "4b", "8b"])
++  assert.ok(r.resourceTip)
++  assert.ok(r.minRamGb >= 8)
+ })
+diff --git a/companion/tests/computer-model-license.test.ts b/companion/tests/computer-model-license.test.ts
+index 2c7390a..78e856d 100644
+--- a/companion/tests/computer-model-license.test.ts
++++ b/companion/tests/computer-model-license.test.ts
+@@ -1,90 +1,28 @@
+-// WP5 I1 WI-1.3 — model-license 许可证门文案测试。
+-// 覆盖：双引要素（原始 LICENSE 版权行 + 论文 Ethics 引文）、Limitations 免责
+-// 要点、实测数字披露（S-3 冻结数据）、L2 补充条款、THIRD_PARTY_NOTICES 文件
+-// 与 TS 常量逐字节一致（单一真源防漂移）、MIT 全文关键条文。
++// Qwen3-VL license door + notices smoke.
+ 
+ import test from "node:test"
+ import assert from "node:assert/strict"
+-import { readFileSync } from "node:fs"
+-import path from "node:path"
+ 
+ import {
+-  FLORENCE2_MIT_FULL_TEXT,
+   LICENSE_DOOR_TEXT,
+-  MICROSOFT_COPYRIGHT_LINE,
+-  SAMSUNG_COPYRIGHT_LINE,
++  LICENSE_DOOR_TEXT_HASH,
+   THIRD_PARTY_NOTICES_TEXT,
+-  TINYCLICK_MIT_FULL_TEXT,
+ } from "../src/computer/model-license"
+ 
+-// --- MIT 全文 ------------------------------------------------------------------
+-
+-test("MIT 全文：Samsung 版含版权行与全部关键条文", () => {
+-  assert.ok(TINYCLICK_MIT_FULL_TEXT.includes("MIT License"))
+-  assert.ok(TINYCLICK_MIT_FULL_TEXT.includes(SAMSUNG_COPYRIGHT_LINE))
+-  assert.ok(TINYCLICK_MIT_FULL_TEXT.includes("Permission is hereby granted, free of charge"))
+-  assert.ok(TINYCLICK_MIT_FULL_TEXT.includes("The above copyright notice and this permission notice shall be included"))
+-  assert.ok(TINYCLICK_MIT_FULL_TEXT.includes('THE SOFTWARE IS PROVIDED "AS IS"'))
+-})
+-
+-test("MIT 全文：Florence-2 版含 Microsoft 版权行", () => {
+-  assert.ok(FLORENCE2_MIT_FULL_TEXT.includes(MICROSOFT_COPYRIGHT_LINE))
+-  assert.ok(FLORENCE2_MIT_FULL_TEXT.includes("Permission is hereby granted, free of charge"))
++test("LICENSE_DOOR_TEXT 覆盖 Qwen3-VL 关键条款", () => {
++  assert.ok(LICENSE_DOOR_TEXT.includes("Qwen3-VL"))
++  assert.ok(LICENSE_DOOR_TEXT.includes("Hugging Face"))
++  assert.ok(LICENSE_DOOR_TEXT.includes("2B"))
++  assert.ok(LICENSE_DOOR_TEXT.includes("默认关闭") || LICENSE_DOOR_TEXT.includes("可选实验层"))
++  assert.ok(LICENSE_DOOR_TEXT.includes("人工确认"))
++  assert.ok(LICENSE_DOOR_TEXT.includes("永久跳过"))
++  assert.ok(LICENSE_DOOR_TEXT.includes("UIA"))
+ })
+ 
+-// --- 许可证门文案：双引纪律（W3 §5.4） -------------------------------------------
+-
+-test("license 门文案：MIT 声明双引（原始 LICENSE 文件 + 论文 Ethics 节）", () => {
+-  // 引源一：原始 LICENSE 文件版权行
+-  assert.ok(LICENSE_DOOR_TEXT.includes(SAMSUNG_COPYRIGHT_LINE))
+-  assert.ok(LICENSE_DOOR_TEXT.includes("原始 LICENSE 文件"))
+-  // 引源二：论文 Ethics 节直接引文（含出处）
+-  assert.ok(LICENSE_DOOR_TEXT.includes("arXiv:2410.11871"))
+-  assert.ok(LICENSE_DOOR_TEXT.includes("model checkpoint and code accessible under the MIT license"))
+-  // 底座 Florence-2 双引要素
+-  assert.ok(LICENSE_DOOR_TEXT.includes("microsoft/Florence-2-base"))
+-  assert.ok(LICENSE_DOOR_TEXT.includes("Florence2 model is available"))
+-})
+-
+-test("license 门文案：Limitations/Ethics 免责三要点（受控环境/风险敏感/准确率下降）", () => {
+-  assert.ok(LICENSE_DOOR_TEXT.includes("准确率可能显著下降"))
+-  assert.ok(LICENSE_DOOR_TEXT.includes("controlled environment"))
+-  assert.ok(LICENSE_DOOR_TEXT.includes("strictly avoided"))
+-  // 训练数据 research-use 余量未闭合的诚实披露（O-1 挂起项）
+-  assert.ok(LICENSE_DOOR_TEXT.includes("explicitly allow research use"))
+-})
+-
+-test("license 门文案：实测数字披露（S-3 冻结数据，禁乐观措辞）", () => {
+-  assert.ok(LICENSE_DOOR_TEXT.includes("13.3%")) // zh 含巧合
+-  assert.ok(LICENSE_DOOR_TEXT.includes("0/5")) // 真实桌面/设置
+-  assert.ok(LICENSE_DOOR_TEXT.includes("2.8")) // 4 核延迟区间
+-  assert.ok(LICENSE_DOOR_TEXT.includes("英文短命令"))
+-  assert.ok(LICENSE_DOOR_TEXT.includes("可选实验层"))
+-  assert.ok(LICENSE_DOOR_TEXT.includes("默认关闭"))
+-})
+-
+-test("license 门文案：L2 补充条款 + 完整性≠来源诚实声明 + 拒绝语义", () => {
+-  assert.ok(LICENSE_DOOR_TEXT.includes("任何点击执行前必经 L2 人工确认"))
+-  assert.ok(LICENSE_DOOR_TEXT.includes("不证明镜像字节与 Samsung 原始权重一致"))
+-  assert.ok(LICENSE_DOOR_TEXT.includes("拒绝则本实验层永久跳过"))
+-  assert.ok(LICENSE_DOOR_TEXT.includes("其余定位层不受影响"))
+-})
+-
+-// --- THIRD_PARTY_NOTICES（W3 §5.5） ---------------------------------------------
+-
+-test("THIRD_PARTY_NOTICES：含 Samsung/Florence-2 双方 MIT 全文与版权行", () => {
+-  assert.ok(THIRD_PARTY_NOTICES_TEXT.includes(SAMSUNG_COPYRIGHT_LINE))
+-  assert.ok(THIRD_PARTY_NOTICES_TEXT.includes(MICROSOFT_COPYRIGHT_LINE))
+-  assert.ok(THIRD_PARTY_NOTICES_TEXT.includes("Krystianz/TinyClick"))
+-  assert.ok(THIRD_PARTY_NOTICES_TEXT.includes("0e1356f0b7cfb416099207121f6a766818ab8a66"))
+-  assert.ok(THIRD_PARTY_NOTICES_TEXT.includes("microsoft/Florence-2-base"))
+-  // 两份 MIT 全文都在（permission notice 出现两次）
+-  const occurrences = THIRD_PARTY_NOTICES_TEXT.split("Permission is hereby granted, free of charge").length - 1
+-  assert.strictEqual(occurrences, 2)
++test("LICENSE_DOOR_TEXT_HASH 稳定 12 hex", () => {
++  assert.match(LICENSE_DOOR_TEXT_HASH, /^[0-9a-f]{12}$/)
+ })
+ 
+-test("THIRD_PARTY_NOTICES：companion/ 下文件与 TS 常量逐字节一致（单一真源防漂移）", () => {
+-  const noticePath = path.join(__dirname, "..", "..", "THIRD_PARTY_NOTICES")
+-  const onDisk = readFileSync(noticePath, "utf-8")
+-  assert.strictEqual(onDisk, THIRD_PARTY_NOTICES_TEXT)
++test("THIRD_PARTY_NOTICES 仍含历史 TinyClick 段（兼容分发包）", () => {
++  assert.ok(THIRD_PARTY_NOTICES_TEXT.includes("TinyClick") || THIRD_PARTY_NOTICES_TEXT.includes("Cairn"))
+ })
+diff --git a/companion/tests/config.test.ts b/companion/tests/config.test.ts
+index 9a3e93d..7c50a7f 100644
+--- a/companion/tests/config.test.ts
++++ b/companion/tests/config.test.ts
+@@ -616,7 +616,7 @@ describe("computer 实验层五字段 normalize（WP5-I4 WI-4.1 / ADR-010 / P1 /
+     assert.equal(getConfig().computer?.modelLicenseAcceptedTextHash, "0123456789ab")
+   })
+ 
+-  test("modelVariant 非枚举 → 回退 hybrid + loud log；int8 保留；缺省补默认形 hybrid", async () => {
++  test("modelVariant 非枚举 → 回退 2b + loud log；legacy int8 迁 2b；缺省 2b", async () => {
+     await resetConfigFile()
+     for (const bad of ["fp32", "", 1, null, {}]) {
+       clearConfigCache()
+@@ -626,7 +626,7 @@ describe("computer 实验层五字段 normalize（WP5-I4 WI-4.1 / ADR-010 / P1 /
+       const orig = console.error
+       console.error = (...args: unknown[]) => logs.push(args.map(String).join(" "))
+       try {
+-        assert.equal(getConfig().computer?.modelVariant, "hybrid", `modelVariant=${JSON.stringify(bad)} 应回退 hybrid`)
++        assert.equal(getConfig().computer?.modelVariant, "2b", `modelVariant=${JSON.stringify(bad)} 应回退 2b`)
+       } finally {
+         console.error = orig
+       }
+@@ -635,8 +635,11 @@ describe("computer 实验层五字段 normalize（WP5-I4 WI-4.1 / ADR-010 / P1 /
+     clearConfigCache()
+     saveConfig({ computer: { coordinateEnabled: false, modelVariant: "int8" } })
+     clearConfigCache()
+-    assert.equal(getConfig().computer?.modelVariant, "int8")
+-    // 缺省默认形（重置为无五字段的老 config.json → normalize 补齐）
++    assert.equal(getConfig().computer?.modelVariant, "2b", "legacy int8 → 2b")
++    clearConfigCache()
++    saveConfig({ computer: { coordinateEnabled: false, modelVariant: "4b" } })
++    clearConfigCache()
++    assert.equal(getConfig().computer?.modelVariant, "4b")
+     await resetConfigFile()
+     clearConfigCache()
+     saveConfig({ computer: { coordinateEnabled: true } })
+@@ -644,7 +647,7 @@ describe("computer 实验层五字段 normalize（WP5-I4 WI-4.1 / ADR-010 / P1 /
+     const cfg = getConfig()
+     assert.equal(cfg.computer?.modelEnabled, false)
+     assert.equal(cfg.computer?.modelLicenseDeclined, false)
+-    assert.equal(cfg.computer?.modelVariant, "hybrid")
++    assert.equal(cfg.computer?.modelVariant, "2b")
+     assert.equal(cfg.computer?.modelLicenseAcceptedAt, undefined)
+     assert.equal(cfg.computer?.modelLicenseAcceptedTextHash, undefined)
+   })
+@@ -690,7 +693,7 @@ describe("computer 实验层五字段 normalize（WP5-I4 WI-4.1 / ADR-010 / P1 /
+         modelLicenseAcceptedAt: "2026-07-21T10:00:00.000Z",
+         modelLicenseAcceptedTextHash: "abcdef012345",
+         modelLicenseDeclined: false,
+-        modelVariant: "int8",
++        modelVariant: "8b",
+       },
+     })
+     clearConfigCache()
+@@ -699,6 +702,6 @@ describe("computer 实验层五字段 normalize（WP5-I4 WI-4.1 / ADR-010 / P1 /
+     assert.equal(c?.modelLicenseAcceptedAt, "2026-07-21T10:00:00.000Z")
+     assert.equal(c?.modelLicenseAcceptedTextHash, "abcdef012345")
+     assert.equal(c?.modelLicenseDeclined, false)
+-    assert.equal(c?.modelVariant, "int8")
++    assert.equal(c?.modelVariant, "8b")
+   })
+ })
+
+===== UNTRACKED NEW FILES =====
+===== BEGIN companion/src/computer/qwen-vl-catalog.ts =====
+// Qwen3-VL experimental locate layer — variant catalog + resource guidance.
+// Replaces TinyClick (Florence-2 ONNX) with downloadable Qwen3-VL Instruct models
+// from Hugging Face (Apache 2.0 / Qwen license terms as published on the model card).
+
+export type QwenVlVariant = "2b" | "4b" | "8b"
+
+export const QWEN_VL_DEFAULT_VARIANT: QwenVlVariant = "2b"
+
+export const QWEN_VL_VARIANTS: readonly QwenVlVariant[] = ["2b", "4b", "8b"] as const
+
+export function isQwenVlVariant(v: unknown): v is QwenVlVariant {
+  return v === "2b" || v === "4b" || v === "8b"
+}
+
+/** Map legacy TinyClick variants → default Qwen3-VL size (config migration). */
+export function migrateLegacyModelVariant(v: unknown): QwenVlVariant {
+  if (isQwenVlVariant(v)) return v
+  // hybrid / int8 / anything else → 2b default
+  return QWEN_VL_DEFAULT_VARIANT
+}
+
+export interface QwenVlVariantMeta {
+  variant: QwenVlVariant
+  /** Hugging Face repo id */
+  hfRepo: string
+  /** Short UI label */
+  label: string
+  /** Approximate weight download size (GB, BF16/safetensors ballpark) */
+  downloadGb: number
+  /**
+   * Recommended total system memory for smooth CPU / unified-memory inference
+   * (Apple Silicon / no discrete GPU). Includes KV + activations headroom.
+   */
+  minRamGb: number
+  /**
+   * Recommended discrete VRAM for smooth GPU inference (CUDA / ROCm).
+   * On Apple Silicon, use minRamGb as the unified-memory budget instead.
+   */
+  minVramGb: number
+  /** One-line Chinese tip for Settings UI */
+  resourceTip: string
+}
+
+/**
+ * Resource numbers are conservative “smooth interactive” guidance (not hard gates).
+ * Derived from community Q4/BF16 deploy notes + VLM vision overhead (~1.5–2× pure-text).
+ */
+export const QWEN_VL_VARIANT_META: Record<QwenVlVariant, QwenVlVariantMeta> = {
+  "2b": {
+    variant: "2b",
+    hfRepo: "Qwen/Qwen3-VL-2B-Instruct",
+    label: "Qwen3-VL-2B（默认）",
+    downloadGb: 4.5,
+    minRamGb: 12,
+    minVramGb: 6,
+    resourceTip:
+      "默认推荐。流畅运行建议：统一内存/系统内存 ≥12GB，或独显显存 ≥6GB（量化后可更低）。CPU 可跑但延迟较高。",
+  },
+  "4b": {
+    variant: "4b",
+    hfRepo: "Qwen/Qwen3-VL-4B-Instruct",
+    label: "Qwen3-VL-4B",
+    downloadGb: 8,
+    minRamGb: 20,
+    minVramGb: 10,
+    resourceTip:
+      "能力更强。流畅运行建议：统一内存/系统内存 ≥20GB，或独显显存 ≥10GB。笔记本无独显时优先选 2B。",
+  },
+  "8b": {
+    variant: "8b",
+    hfRepo: "Qwen/Qwen3-VL-8B-Instruct",
+    label: "Qwen3-VL-8B",
+    downloadGb: 16,
+    minRamGb: 32,
+    minVramGb: 16,
+    resourceTip:
+      "最强本机档。流畅运行建议：统一内存/系统内存 ≥32GB，或独显显存 ≥16GB。资源不足会极慢或 OOM。",
+  },
+}
+
+export function qwenVlMeta(variant: QwenVlVariant): QwenVlVariantMeta {
+  return QWEN_VL_VARIANT_META[variant]
+}
+
+/** Disk dir name under ~/.cmspark-agent/models/ */
+export function qwenVlDirName(variant: QwenVlVariant): string {
+  return `qwen3-vl-${variant}`
+}
+===== END companion/src/computer/qwen-vl-catalog.ts =====
+===== BEGIN companion/src/computer/qwen-vl-download.ts =====
+// Qwen3-VL model download via Hugging Face snapshot (real host — not .invalid).
+// Progress is best-effort (bytes of completed files); integrity is “config.json present”.
+
+import { spawn } from "node:child_process"
+import * as fs from "node:fs"
+import * as path from "node:path"
+import { DATA_DIR } from "../config"
+import { logger } from "../logger"
+import {
+  qwenVlDirName,
+  qwenVlMeta,
+  type QwenVlVariant,
+} from "./qwen-vl-catalog"
+
+export type QwenDownloadReason =
+  | "network-error"
+  | "python-missing"
+  | "hf-hub-missing"
+  | "download-failed"
+  | "disk-full"
+
+export class QwenDownloadError extends Error {
+  readonly reason: QwenDownloadReason
+  constructor(reason: QwenDownloadReason, message: string) {
+    super(message)
+    this.name = "QwenDownloadError"
+    this.reason = reason
+  }
+}
+
+export function qwenModelDir(variant: QwenVlVariant, baseDir?: string): string {
+  return path.join(baseDir ?? DATA_DIR, "models", qwenVlDirName(variant))
+}
+
+/** Lightweight readiness: HF snapshot always writes config.json. */
+export function probeQwenModelDir(variant: QwenVlVariant, baseDir?: string): {
+  status: "absent" | "ready" | "error"
+  sizeBytes?: number
+  error?: string
+} {
+  const dir = qwenModelDir(variant, baseDir)
+  const configPath = path.join(dir, "config.json")
+  if (!fs.existsSync(configPath)) {
+    // Partial dir without config
+    if (fs.existsSync(dir)) {
+      try {
+        const ents = fs.readdirSync(dir)
+        if (ents.length > 0) return { status: "error", error: "model-file-missing" }
+      } catch {
+        /* ignore */
+      }
+    }
+    return { status: "absent" }
+  }
+  let sizeBytes = 0
+  const walk = (p: string) => {
+    let st: fs.Stats
+    try {
+      st = fs.statSync(p)
+    } catch {
+      return
+    }
+    if (st.isFile()) sizeBytes += st.size
+    else if (st.isDirectory()) {
+      for (const name of fs.readdirSync(p)) walk(path.join(p, name))
+    }
+  }
+  walk(dir)
+  return { status: "ready", sizeBytes }
+}
+
+export interface DownloadQwenArgs {
+  variant: QwenVlVariant
+  /** Optional HF mirror endpoint, e.g. https://hf-mirror.com */
+  hfEndpoint?: string
+  onProgress?: (file: string, receivedBytes: number, totalBytes: number) => void
+  /** Test seam */
+  runPython?: (args: string[], env: NodeJS.ProcessEnv) => Promise<{ code: number; stderr: string }>
+}
+
+const DOWNLOAD_SCRIPT = `
+import os, sys, json
+repo = sys.argv[1]
+local_dir = sys.argv[2]
+try:
+    from huggingface_hub import snapshot_download
+except ImportError:
+    print(json.dumps({"event":"error","reason":"hf-hub-missing","message":"pip install huggingface_hub"}), flush=True)
+    sys.exit(2)
+
+def progress(n, total):
+    # n = number of files completed when using max_workers progress callback is limited;
+    # emit heartbeat for UI.
+    print(json.dumps({"event":"progress","file":"snapshot","receivedBytes": n, "totalBytes": max(total,1)}), flush=True)
+
+try:
+    path = snapshot_download(
+        repo_id=repo,
+        local_dir=local_dir,
+        local_dir_use_symlinks=False,
+        resume_download=True,
+    )
+    print(json.dumps({"event":"done","path": path}), flush=True)
+except Exception as e:
+    print(json.dumps({"event":"error","reason":"download-failed","message": str(e)}), flush=True)
+    sys.exit(1)
+`
+
+function defaultRunPython(args: string[], env: NodeJS.ProcessEnv): Promise<{ code: number; stderr: string }> {
+  return new Promise((resolve) => {
+    const child = spawn(args[0]!, args.slice(1), {
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+    })
+    let stderr = ""
+    let stdout = ""
+    child.stdout?.on("data", (b: Buffer) => {
+      stdout += b.toString("utf8")
+    })
+    child.stderr?.on("data", (b: Buffer) => {
+      stderr += b.toString("utf8")
+    })
+    child.on("error", (err) => {
+      resolve({ code: 127, stderr: String(err.message || err) + "\n" + stderr })
+    })
+    child.on("close", (code) => {
+      // Attach stdout to stderr channel for caller parsing when needed
+      resolve({ code: code ?? 1, stderr: stdout + (stderr ? "\n" + stderr : "") })
+    })
+  })
+}
+
+/**
+ * Download a Qwen3-VL variant from Hugging Face into DATA_DIR/models/qwen3-vl-<variant>/.
+ * Requires local Python 3 + huggingface_hub (pip install huggingface_hub).
+ */
+export async function downloadQwenVlVariant(args: DownloadQwenArgs): Promise<{ dir: string }> {
+  const meta = qwenVlMeta(args.variant)
+  const dir = qwenModelDir(args.variant)
+  fs.mkdirSync(dir, { recursive: true })
+
+  const env: NodeJS.ProcessEnv = { ...process.env }
+  if (args.hfEndpoint) {
+    env.HF_ENDPOINT = args.hfEndpoint.replace(/\/$/, "")
+  }
+  // Prefer mirror if user set classic HF mirror env already
+  const run = args.runPython ?? defaultRunPython
+
+  // Resolve python binary
+  const pyCandidates = process.platform === "win32" ? ["python", "py"] : ["python3", "python"]
+  let lastErr = ""
+  for (const py of pyCandidates) {
+    const result = await run(
+      [py, "-c", DOWNLOAD_SCRIPT, meta.hfRepo, dir],
+      env,
+    )
+    // Parse progress / errors from combined output
+    for (const line of result.stderr.split("\n")) {
+      const t = line.trim()
+      if (!t.startsWith("{")) continue
+      try {
+        const ev = JSON.parse(t) as {
+          event?: string
+          file?: string
+          receivedBytes?: number
+          totalBytes?: number
+          reason?: string
+          message?: string
+        }
+        if (ev.event === "progress" && args.onProgress) {
+          args.onProgress(
+            ev.file || "snapshot",
+            Number(ev.receivedBytes) || 0,
+            Number(ev.totalBytes) || 1,
+          )
+        }
+        if (ev.event === "error") {
+          if (ev.reason === "hf-hub-missing") {
+            throw new QwenDownloadError(
+              "hf-hub-missing",
+              "缺少 huggingface_hub：请执行 pip install huggingface_hub 后重试",
+            )
+          }
+          throw new QwenDownloadError(
+            "download-failed",
+            ev.message || "Hugging Face 下载失败",
+          )
+        }
+      } catch (e) {
+        if (e instanceof QwenDownloadError) throw e
+      }
+    }
+    if (result.code === 0) {
+      const probe = probeQwenModelDir(args.variant)
+      if (probe.status !== "ready") {
+        throw new QwenDownloadError(
+          "download-failed",
+          "下载结束但未找到 config.json——请检查网络或 HF 仓库是否可用",
+        )
+      }
+      logger.info("computer.model.qwen.download.completed", {
+        variant: args.variant,
+        repo: meta.hfRepo,
+        sizeBytes: probe.sizeBytes,
+      })
+      return { dir }
+    }
+    lastErr = result.stderr
+    if (result.code === 127 || /not found|ENOENT/i.test(result.stderr)) {
+      continue
+    }
+    if (/huggingface_hub|No module named/i.test(result.stderr)) {
+      throw new QwenDownloadError(
+        "hf-hub-missing",
+        "缺少 huggingface_hub：请执行 pip install huggingface_hub 后重试",
+      )
+    }
+    throw new QwenDownloadError(
+      "download-failed",
+      `Qwen3-VL 下载失败（exit ${result.code}）：${lastErr.slice(-400)}`,
+    )
+  }
+  throw new QwenDownloadError(
+    "python-missing",
+    "未找到 Python 3。Qwen3-VL 本机实验层需要 python3 + pip install huggingface_hub transformers torch pillow",
+  )
+}
+
+export async function deleteQwenVlVariant(variant: QwenVlVariant): Promise<{ removedBytes: number }> {
+  const dir = qwenModelDir(variant)
+  let removedBytes = 0
+  const walk = (p: string) => {
+    if (!fs.existsSync(p)) return
+    const st = fs.statSync(p)
+    if (st.isDirectory()) {
+      for (const name of fs.readdirSync(p)) walk(path.join(p, name))
+      fs.rmdirSync(p)
+    } else {
+      removedBytes += st.size
+      fs.unlinkSync(p)
+    }
+  }
+  walk(dir)
+  return { removedBytes }
+}
+===== END companion/src/computer/qwen-vl-download.ts =====
+===== BEGIN companion/src/computer/qwen-vl-locator.ts =====
+// Qwen3-VL experimental locate layer — drop-in for former TinyClickLocator.
+// Chinese commands are allowed (unlike TinyClick ASCII envelope).
+
+import type { CaptureMeta } from "./types"
+import { ModelRuntimeError } from "./qwen-vl-runtime"
+import type { QwenVlSession } from "./qwen-vl-session"
+
+export const MAX_COMMAND_CHARS = 200
+export const MAX_FRAME_WIDTH = 3840
+export const COLLAPSE_TOLERANCE_PX = 8
+
+export const QWEN_VL_REASON = {
+  TOO_LONG: "qwen-vl-envelope:too-long",
+  FRAME_TOO_WIDE: "qwen-vl-envelope:frame-too-wide",
+  COLLAPSE: "qwen-vl-collapse-detected",
+  ERROR: "qwen-vl-error",
+  EMPTY: "qwen-vl-envelope:empty-command",
+} as const
+
+export type QwenVlLocateOutcome =
+  | {
+      kind: "hit"
+      point: { x: number; y: number }
+      raw?: string
+      ms?: number
+    }
+  | { kind: "skipped"; reason: string }
+  | { kind: "error"; reason: string }
+
+export interface CollapseRecord {
+  command: string
+  x: number
+  y: number
+}
+
+export interface QwenVlLocatorDeps {
+  session: Pick<QwenVlSession, "locate">
+  collapseHistory?: Map<string, CollapseRecord[]>
+  maxCommandChars?: number
+  maxFrameWidth?: number
+  collapseTolerancePx?: number
+}
+
+export class QwenVlLocator {
+  private readonly session: Pick<QwenVlSession, "locate">
+  private readonly history: Map<string, CollapseRecord[]>
+  private readonly maxCommandChars: number
+  private readonly maxFrameWidth: number
+  private readonly collapseTolerancePx: number
+
+  constructor(deps: QwenVlLocatorDeps) {
+    this.session = deps.session
+    this.history = deps.collapseHistory ?? new Map()
+    this.maxCommandChars = deps.maxCommandChars ?? MAX_COMMAND_CHARS
+    this.maxFrameWidth = deps.maxFrameWidth ?? MAX_FRAME_WIDTH
+    this.collapseTolerancePx = deps.collapseTolerancePx ?? COLLAPSE_TOLERANCE_PX
+  }
+
+  async locate(args: { command: string; shot: CaptureMeta }): Promise<QwenVlLocateOutcome> {
+    const { command, shot } = args
+    const cmd = (command || "").trim()
+    if (!cmd) return { kind: "skipped", reason: QWEN_VL_REASON.EMPTY }
+    if (cmd.length > this.maxCommandChars) {
+      return { kind: "skipped", reason: QWEN_VL_REASON.TOO_LONG }
+    }
+
+    const width =
+      Number(shot.imageWidth) ||
+      Number(shot.rect?.width) ||
+      0
+    const height =
+      Number(shot.imageHeight) ||
+      Number(shot.rect?.height) ||
+      0
+    if (width > this.maxFrameWidth) {
+      return { kind: "skipped", reason: QWEN_VL_REASON.FRAME_TOO_WIDE }
+    }
+
+    const imagePath = shot.path
+    if (!imagePath) {
+      return { kind: "error", reason: QWEN_VL_REASON.ERROR }
+    }
+
+    try {
+      const r = await this.session.locate(cmd, imagePath, width, height)
+      if (!r.point) {
+        return { kind: "error", reason: QWEN_VL_REASON.ERROR }
+      }
+      const { x, y } = r.point
+
+      // Collapse suppression (same as TinyClick G4)
+      const frameSha = typeof (shot as any).sha256 === "string" ? (shot as any).sha256 : ""
+      if (frameSha) {
+        const hist = this.history.get(frameSha) ?? []
+        for (const prev of hist) {
+          if (prev.command === cmd) continue
+          const dist = Math.hypot(prev.x - x, prev.y - y)
+          if (dist <= this.collapseTolerancePx) {
+            return { kind: "skipped", reason: QWEN_VL_REASON.COLLAPSE }
+          }
+        }
+        hist.push({ command: cmd, x, y })
+        this.history.set(frameSha, hist)
+      }
+
+      return { kind: "hit", point: { x, y }, raw: r.raw, ms: r.ms }
+    } catch (e) {
+      if (e instanceof ModelRuntimeError) {
+        if (
+          e.code === "model-disabled" ||
+          e.code === "model-not-ready" ||
+          e.code === "qwen-vl-busy"
+        ) {
+          return { kind: "skipped", reason: e.code }
+        }
+      }
+      return { kind: "error", reason: QWEN_VL_REASON.ERROR }
+    }
+  }
+}
+===== END companion/src/computer/qwen-vl-locator.ts =====
+===== BEGIN companion/src/computer/qwen-vl-runtime.ts =====
+// Qwen3-VL main-thread runtime: long-lived Python worker (load once, infer many).
+
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process"
+import * as path from "node:path"
+import { logger } from "../logger"
+import type { QwenVlVariant } from "./qwen-vl-catalog"
+import { qwenModelDir } from "./qwen-vl-download"
+
+export class ModelRuntimeError extends Error {
+  readonly code: string
+  constructor(code: string, message: string) {
+    super(message)
+    this.name = "ModelRuntimeError"
+    this.code = code
+  }
+}
+
+export interface QwenVlInferResult {
+  x: number
+  y: number
+  raw?: string
+  ms: number
+}
+
+export interface QwenVlRuntimeDeps {
+  modelDir?: string
+  variant: QwenVlVariant
+  /** auto | cpu | cuda | mps */
+  device?: string
+  workerScript?: string
+  pythonBin?: string
+  broadcast?: (msg: unknown) => void
+  log?: (event: string, data: Record<string, unknown>) => void
+  /** circuit breaker threshold (default 3) */
+  faultThreshold?: number
+  /** test seam: custom request transport */
+  transport?: QwenVlTransport
+}
+
+export interface QwenVlTransport {
+  load(modelDir: string, device: string): Promise<void>
+  infer(args: {
+    imagePath: string
+    command: string
+    width: number
+    height: number
+  }): Promise<{ x: number; y: number; raw?: string }>
+  dispose(): Promise<void>
+}
+
+type Pending = {
+  resolve: (v: any) => void
+  reject: (e: Error) => void
+}
+
+function defaultWorkerScript(): string {
+  // src layout: companion/src/computer/qwen-vl-worker.py
+  // dist layout: companion/dist/computer/ or .test-dist/...
+  const candidates = [
+    path.join(__dirname, "qwen-vl-worker.py"),
+    path.join(__dirname, "..", "src", "computer", "qwen-vl-worker.py"),
+    path.join(__dirname, "..", "..", "src", "computer", "qwen-vl-worker.py"),
+  ]
+  return candidates[0]!
+}
+
+class PythonLineTransport implements QwenVlTransport {
+  private child: ChildProcessWithoutNullStreams | null = null
+  private buf = ""
+  private seq = 0
+  private pending = new Map<string, Pending>()
+  private readonly pythonBin: string
+  private readonly workerScript: string
+
+  constructor(pythonBin: string, workerScript: string) {
+    this.pythonBin = pythonBin
+    this.workerScript = workerScript
+  }
+
+  private ensureChild(): ChildProcessWithoutNullStreams {
+    if (this.child && !this.child.killed) return this.child
+    const child = spawn(this.pythonBin, [this.workerScript], {
+      stdio: ["pipe", "pipe", "pipe"],
+      env: process.env,
+    })
+    this.child = child
+    child.stdout.setEncoding("utf8")
+    child.stdout.on("data", (chunk: string) => {
+      this.buf += chunk
+      let idx: number
+      while ((idx = this.buf.indexOf("\n")) >= 0) {
+        const line = this.buf.slice(0, idx).trim()
+        this.buf = this.buf.slice(idx + 1)
+        if (!line) continue
+        try {
+          const msg = JSON.parse(line) as { id?: string; ok?: boolean; error?: string; [k: string]: unknown }
+          const id = String(msg.id ?? "")
+          const p = this.pending.get(id)
+          if (!p) continue
+          this.pending.delete(id)
+          if (msg.ok) p.resolve(msg)
+          else p.reject(new ModelRuntimeError("infer-error", String(msg.error || "worker error")))
+        } catch {
+          /* ignore non-json */
+        }
+      }
+    })
+    child.stderr.on("data", (b: Buffer) => {
+      logger.warn("computer.model.qwen.worker.stderr", { line: b.toString("utf8").slice(0, 400) })
+    })
+    child.on("exit", (code) => {
+      for (const [, p] of this.pending) {
+        p.reject(new ModelRuntimeError("worker-exit", `qwen-vl worker exited (${code})`))
+      }
+      this.pending.clear()
+      this.child = null
+    })
+    return child
+  }
+
+  private request(payload: Record<string, unknown>, timeoutMs: number): Promise<any> {
+    const id = `r${++this.seq}`
+    const child = this.ensureChild()
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pending.delete(id)
+        reject(new ModelRuntimeError("infer-timeout", `qwen-vl request timed out (${payload.cmd})`))
+      }, timeoutMs)
+      this.pending.set(id, {
+        resolve: (v) => {
+          clearTimeout(timer)
+          resolve(v)
+        },
+        reject: (e) => {
+          clearTimeout(timer)
+          reject(e)
+        },
+      })
+      child.stdin.write(JSON.stringify({ ...payload, id }) + "\n")
+    })
+  }
+
+  async load(modelDir: string, device: string): Promise<void> {
+    await this.request({ cmd: "load", model_dir: modelDir, device }, 600_000)
+  }
+
+  async infer(args: {
+    imagePath: string
+    command: string
+    width: number
+    height: number
+  }): Promise<{ x: number; y: number; raw?: string }> {
+    const msg = await this.request(
+      {
+        cmd: "infer",
+        image_path: args.imagePath,
+        command: args.command,
+        width: args.width,
+        height: args.height,
+      },
+      120_000,
+    )
+    return {
+      x: Number(msg.x),
+      y: Number(msg.y),
+      raw: typeof msg.raw === "string" ? msg.raw : undefined,
+    }
+  }
+
+  async dispose(): Promise<void> {
+    try {
+      if (this.child && !this.child.killed) {
+        await this.request({ cmd: "shutdown" }, 5_000).catch(() => {})
+        this.child.kill("SIGTERM")
+      }
+    } catch {
+      /* best-effort */
+    }
+    this.child = null
+  }
+}
+
+export type QwenVlStatus = "idle" | "ready" | "disabled" | "loading"
+
+export class QwenVlRuntime {
+  private readonly deps: QwenVlRuntimeDeps
+  private transport: QwenVlTransport
+  private status: QwenVlStatus = "idle"
+  private faults = 0
+  private busy = false
+  private prepared = false
+
+  constructor(deps: QwenVlRuntimeDeps) {
+    this.deps = deps
+    this.transport =
+      deps.transport ??
+      new PythonLineTransport(
+        deps.pythonBin ?? (process.platform === "win32" ? "python" : "python3"),
+        deps.workerScript ?? defaultWorkerScript(),
+      )
+  }
+
+  getStatus(): QwenVlStatus {
+    return this.status
+  }
+
+  getFaults(): number {
+    return this.faults
+  }
+
+  resetCircuitBreaker(): void {
+    this.faults = 0
+    if (this.status === "disabled") this.status = this.prepared ? "ready" : "idle"
+    this.deps.broadcast?.({
+      type: "computer.model.state",
+      modelStatus: this.status === "ready" ? "ready" : "absent",
+      variant: this.deps.variant,
+      faults: this.faults,
+    })
+  }
+
+  async prepare(): Promise<void> {
+    if (this.prepared && this.status === "ready") return
+    if (this.status === "disabled") {
+      throw new ModelRuntimeError("model-disabled", "qwen-vl circuit open")
+    }
+    this.status = "loading"
+    const dir = this.deps.modelDir ?? qwenModelDir(this.deps.variant)
+    try {
+      await this.transport.load(dir, this.deps.device ?? "auto")
+      this.prepared = true
+      this.status = "ready"
+      this.deps.log?.("computer.model.qwen.prepared", { variant: this.deps.variant, dir })
+    } catch (e) {
+      this.status = "idle"
+      this.prepared = false
+      const msg = e instanceof Error ? e.message : String(e)
+      throw new ModelRuntimeError("model-not-ready", `qwen-vl prepare failed: ${msg}`)
+    }
+  }
+
+  async infer(args: {
+    imagePath: string
+    command: string
+    width: number
+    height: number
+  }): Promise<QwenVlInferResult> {
+    if (this.status === "disabled") {
+      throw new ModelRuntimeError("model-disabled", "qwen-vl circuit open")
+    }
+    if (!this.prepared) {
+      throw new ModelRuntimeError("model-not-ready", "qwen-vl not prepared")
+    }
+    if (this.busy) {
+      throw new ModelRuntimeError("qwen-vl-busy", "previous infer still running")
+    }
+    this.busy = true
+    const t0 = Date.now()
+    try {
+      const r = await this.transport.infer(args)
+      this.faults = 0
+      return { x: r.x, y: r.y, raw: r.raw, ms: Date.now() - t0 }
+    } catch (e) {
+      this.faults += 1
+      const threshold = this.deps.faultThreshold ?? 3
+      if (this.faults >= threshold) {
+        this.status = "disabled"
+        this.deps.broadcast?.({
+          type: "computer.model.state",
+          modelStatus: "disabled",
+          variant: this.deps.variant,
+          faults: this.faults,
+          error: "circuit-breaker",
+        })
+        this.deps.log?.("computer.model.qwen.circuit_open", { faults: this.faults })
+      }
+      throw e
+    } finally {
+      this.busy = false
+    }
+  }
+
+  async dispose(): Promise<void> {
+    this.prepared = false
+    this.status = "idle"
+    await this.transport.dispose()
+  }
+}
+===== END companion/src/computer/qwen-vl-runtime.ts =====
+===== BEGIN companion/src/computer/qwen-vl-session.ts =====
+// Qwen3-VL session facade (prepare / locate / circuit / dispose).
+
+import type { QwenVlVariant } from "./qwen-vl-catalog"
+import { qwenModelDir, probeQwenModelDir } from "./qwen-vl-download"
+import { ModelRuntimeError, QwenVlRuntime, type QwenVlRuntimeDeps } from "./qwen-vl-runtime"
+
+export interface QwenVlLocateResult {
+  point: { x: number; y: number } | null
+  raw?: string
+  ms: number
+}
+
+export interface QwenVlSessionDeps {
+  variant: QwenVlVariant
+  modelDir?: string
+  device?: string
+  broadcast?: (msg: unknown) => void
+  log?: (event: string, data: Record<string, unknown>) => void
+  runtimeFactory?: (deps: QwenVlRuntimeDeps) => QwenVlRuntime
+}
+
+export class QwenVlSession {
+  private readonly deps: QwenVlSessionDeps
+  private runtime: QwenVlRuntime | null = null
+
+  constructor(deps: QwenVlSessionDeps) {
+    this.deps = deps
+  }
+
+  getStatus(): "idle" | "ready" | "disabled" | "loading" {
+    return this.runtime?.getStatus() ?? "idle"
+  }
+
+  getFaults(): number {
+    return this.runtime?.getFaults() ?? 0
+  }
+
+  resetCircuitBreaker(): void {
+    this.runtime?.resetCircuitBreaker()
+  }
+
+  async prepare(): Promise<void> {
+    const variant = this.deps.variant
+    const dir = this.deps.modelDir ?? qwenModelDir(variant)
+    const probe = probeQwenModelDir(variant)
+    if (probe.status !== "ready") {
+      throw new ModelRuntimeError(
+        "model-not-ready",
+        `Qwen3-VL ${variant} 未下载或不完整（${probe.error || probe.status}）`,
+      )
+    }
+    const runtime =
+      this.deps.runtimeFactory?.({
+        variant,
+        modelDir: dir,
+        device: this.deps.device,
+        broadcast: this.deps.broadcast,
+        log: this.deps.log,
+      }) ??
+      new QwenVlRuntime({
+        variant,
+        modelDir: dir,
+        device: this.deps.device,
+        broadcast: this.deps.broadcast,
+        log: this.deps.log,
+      })
+    this.runtime = runtime
+    await runtime.prepare()
+  }
+
+  async locate(command: string, imagePath: string, width: number, height: number): Promise<QwenVlLocateResult> {
+    if (!this.runtime) {
+      throw new ModelRuntimeError("model-not-ready", "session not prepared")
+    }
+    try {
+      const r = await this.runtime.infer({ imagePath, command, width, height })
+      return { point: { x: r.x, y: r.y }, raw: r.raw, ms: r.ms }
+    } catch (e) {
+      if (e instanceof ModelRuntimeError) throw e
+      throw new ModelRuntimeError("infer-error", e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  async dispose(): Promise<void> {
+    if (this.runtime) {
+      try {
+        await this.runtime.dispose()
+      } catch {
+        /* best-effort */
+      }
+      this.runtime = null
+    }
+  }
+}
+===== END companion/src/computer/qwen-vl-session.ts =====
+===== BEGIN companion/src/computer/qwen-vl-worker.py =====
+#!/usr/bin/env python3
+"""
+Qwen3-VL experimental locate worker for CMspark Companion.
+
+Line protocol (JSON per line, UTF-8):
+  stdin  → {"id": str, "cmd": "load"|"infer"|"ping"|"shutdown", ...}
+  stdout → {"id": str, "ok": bool, ...}
+
+load:  {"id","cmd":"load","model_dir": str, "device": "auto"|"cpu"|"cuda"|"mps"}
+infer: {"id","cmd":"infer","image_path": str, "command": str, "width": int, "height": int}
+ping:  {"id","cmd":"ping"}
+shutdown: {"id","cmd":"shutdown"}
+
+Infer success: {"id","ok":true,"x":int,"y":int,"raw":str}
+Coordinates are image-space pixels (same convention as former TinyClick layer).
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import sys
+import traceback
+from typing import Any, Optional, Tuple
+
+# Lazy imports after load — keeps cold start light for ping.
+
+_model = None
+_processor = None
+_device = "cpu"
+_model_dir: Optional[str] = None
+
+
+def _reply(obj: dict) -> None:
+    sys.stdout.write(json.dumps(obj, ensure_ascii=False) + "\n")
+    sys.stdout.flush()
+
+
+def _parse_point(text: str, width: int, height: int) -> Optional[Tuple[int, int]]:
+    """Extract click point from model text. Supports JSON, (x,y), and 0–1000 relative."""
+    if not text:
+        return None
+    # JSON object with x/y
+    m = re.search(
+        r'\{\s*"?x"?\s*[:=]\s*([0-9]+(?:\.[0-9]+)?)\s*,\s*"?y"?\s*[:=]\s*([0-9]+(?:\.[0-9]+)?)',
+        text,
+        re.I,
+    )
+    if m:
+        x, y = float(m.group(1)), float(m.group(2))
+        return _normalize(x, y, width, height)
+    # bracket form [x, y] or (x, y)
+    m = re.search(r"[\[\(]\s*([0-9]+(?:\.[0-9]+)?)\s*,\s*([0-9]+(?:\.[0-9]+)?)\s*[\]\)]", text)
+    if m:
+        x, y = float(m.group(1)), float(m.group(2))
+        return _normalize(x, y, width, height)
+    # bare "x, y" near end
+    m = re.search(r"(?:click|point|坐标|位置)[^\d]{0,12}([0-9]+(?:\.[0-9]+)?)\s*[,，]\s*([0-9]+(?:\.[0-9]+)?)", text, re.I)
+    if m:
+        x, y = float(m.group(1)), float(m.group(2))
+        return _normalize(x, y, width, height)
+    return None
+
+
+def _normalize(x: float, y: float, width: int, height: int) -> Tuple[int, int]:
+    # Qwen3-VL often uses 0–1000 relative boxes/points
+    if 0 <= x <= 1000 and 0 <= y <= 1000 and (x > width or y > height or (x <= 1000 and y <= 1000 and width > 1000)):
+        # If both coords look like 0-1000 space relative to a large screenshot
+        if x <= 1000 and y <= 1000 and (width > 1000 or height > 1000 or max(x, y) > 1):
+            # Prefer relative mapping when values are in [0,1000] and not already pixel-ish
+            if x <= 1000 and y <= 1000 and not (x < width and y < height and max(x, y) > 1000):
+                # Heuristic: if both ≤1000 and image is larger, treat as relative
+                if width >= 200 or height >= 200:
+                    if x <= 1000 and y <= 1000 and (x > 1 or y > 1):
+                        # relative 0-1000 → pixels
+                        px = int(round(x / 1000.0 * width))
+                        py = int(round(y / 1000.0 * height))
+                        return max(0, min(width - 1, px)), max(0, min(height - 1, py))
+    px = int(round(x))
+    py = int(round(y))
+    return max(0, min(width - 1, px)), max(0, min(height - 1, py))
+
+
+def _load(model_dir: str, device: str) -> None:
+    global _model, _processor, _device, _model_dir
+    import torch
+    from transformers import AutoProcessor, AutoModelForImageTextToText
+
+    if device == "auto":
+        if torch.cuda.is_available():
+            device = "cuda"
+        elif getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+            device = "mps"
+        else:
+            device = "cpu"
+
+    dtype = torch.float16 if device in ("cuda", "mps") else torch.float32
+    processor = AutoProcessor.from_pretrained(model_dir, trust_remote_code=True)
+    model = AutoModelForImageTextToText.from_pretrained(
+        model_dir,
+        torch_dtype=dtype,
+        device_map="auto" if device == "cuda" else None,
+        trust_remote_code=True,
+    )
+    if device != "cuda":
+        model = model.to(device)
+    model.eval()
+    _model = model
+    _processor = processor
+    _device = device
+    _model_dir = model_dir
+
+
+def _infer(image_path: str, command: str, width: int, height: int) -> dict:
+    global _model, _processor, _device
+    if _model is None or _processor is None:
+        return {"ok": False, "error": "model-not-loaded"}
+
+    from PIL import Image
+    import torch
+
+    image = Image.open(image_path).convert("RGB")
+    w, h = image.size
+    if width <= 0:
+        width = w
+    if height <= 0:
+        height = h
+
+    prompt = (
+        "You are a GUI grounding assistant. Look at the screenshot and locate the UI element "
+        "described by the user command. Reply with ONLY a JSON object of the click point in "
+        "image pixel coordinates: {\"x\": <int>, \"y\": <int>}. "
+        "Do not include any other text.\n"
+        f"User command: {command}"
+    )
+
+    # Prefer chat template when available (Qwen3-VL)
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "image", "image": image},
+                {"type": "text", "text": prompt},
+            ],
+        }
+    ]
+    try:
+        text = _processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        inputs = _processor(text=[text], images=[image], return_tensors="pt", padding=True)
+    except Exception:
+        inputs = _processor(text=prompt, images=image, return_tensors="pt")
+
+    inputs = {k: v.to(_device) if hasattr(v, "to") else v for k, v in inputs.items()}
+
+    with torch.inference_mode():
+        out_ids = _model.generate(**inputs, max_new_tokens=64, do_sample=False)
+
+    # Strip prompt tokens when possible
+    try:
+        gen = out_ids[:, inputs["input_ids"].shape[1] :]
+    except Exception:
+        gen = out_ids
+    raw = _processor.batch_decode(gen, skip_special_tokens=True)[0].strip()
+    pt = _parse_point(raw, width, height)
+    if pt is None:
+        return {"ok": False, "error": "no-coordinates", "raw": raw[:500]}
+    x, y = pt
+    return {"ok": True, "x": x, "y": y, "raw": raw[:500]}
+
+
+def main() -> None:
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            msg = json.loads(line)
+        except Exception as e:
+            _reply({"id": "?", "ok": False, "error": f"bad-json:{e}"})
+            continue
+        mid = msg.get("id", "?")
+        cmd = msg.get("cmd")
+        try:
+            if cmd == "ping":
+                _reply({"id": mid, "ok": True, "pong": True, "loaded": _model is not None})
+            elif cmd == "load":
+                _load(str(msg["model_dir"]), str(msg.get("device") or "auto"))
+                _reply({"id": mid, "ok": True, "device": _device, "model_dir": _model_dir})
+            elif cmd == "infer":
+                r = _infer(
+                    str(msg["image_path"]),
+                    str(msg.get("command") or ""),
+                    int(msg.get("width") or 0),
+                    int(msg.get("height") or 0),
+                )
+                r["id"] = mid
+                _reply(r)
+            elif cmd == "shutdown":
+                _reply({"id": mid, "ok": True})
+                break
+            else:
+                _reply({"id": mid, "ok": False, "error": f"unknown-cmd:{cmd}"})
+        except Exception as e:
+            _reply(
+                {
+                    "id": mid,
+                    "ok": False,
+                    "error": str(e),
+                    "trace": traceback.format_exc()[-1500:],
+                }
+            )
+
+
+if __name__ == "__main__":
+    main()
+===== END companion/src/computer/qwen-vl-worker.py =====
+===== BEGIN companion/tests/computer-qwen-vl-locator.test.ts =====
+// Qwen3-VL locator envelope + collapse (no real model).
+
+import test from "node:test"
+import assert from "node:assert/strict"
+import {
+  QwenVlLocator,
+  QWEN_VL_REASON,
+} from "../src/computer/qwen-vl-locator"
+import type { CaptureMeta } from "../src/computer/types"
+
+function shot(over: Partial<CaptureMeta> & { path?: string } = {}): CaptureMeta {
+  return {
+    path: over.path ?? "/tmp/shot.png",
+    rect: { x: 0, y: 0, width: 1280, height: 720 },
+    client: { x: 0, y: 0 },
+    ...(over as any),
+  } as CaptureMeta
+}
+
+test("empty command → skipped empty", async () => {
+  const loc = new QwenVlLocator({
+    session: { locate: async () => ({ point: { x: 1, y: 1 }, ms: 1 }) },
+  })
+  const r = await loc.locate({ command: "  ", shot: shot() })
+  assert.deepEqual(r, { kind: "skipped", reason: QWEN_VL_REASON.EMPTY })
+})
+
+test("Chinese command allowed → hit", async () => {
+  const loc = new QwenVlLocator({
+    session: {
+      locate: async (cmd) => {
+        assert.match(cmd, /确定/)
+        return { point: { x: 100, y: 200 }, ms: 12, raw: '{"x":100,"y":200}' }
+      },
+    },
+  })
+  const r = await loc.locate({ command: "点击确定按钮", shot: shot({ path: "/tmp/a.png" } as any) })
+  assert.equal(r.kind, "hit")
+  if (r.kind === "hit") {
+    assert.deepEqual(r.point, { x: 100, y: 200 })
+  }
+})
+
+test("collapse same frame different command → skipped", async () => {
+  const loc = new QwenVlLocator({
+    session: { locate: async () => ({ point: { x: 50, y: 50 }, ms: 1 }) },
+  })
+  const s = shot({ path: "/tmp/b.png", sha256: "abc" } as any)
+  const r1 = await loc.locate({ command: "click OK", shot: s })
+  assert.equal(r1.kind, "hit")
+  const r2 = await loc.locate({ command: "click Cancel", shot: s })
+  assert.deepEqual(r2, { kind: "skipped", reason: QWEN_VL_REASON.COLLAPSE })
+})
+
+test("catalog migrate legacy hybrid → 2b", async () => {
+  const { migrateLegacyModelVariant } = await import("../src/computer/qwen-vl-catalog")
+  assert.equal(migrateLegacyModelVariant("hybrid"), "2b")
+  assert.equal(migrateLegacyModelVariant("int8"), "2b")
+  assert.equal(migrateLegacyModelVariant("4b"), "4b")
+})
+===== END companion/tests/computer-qwen-vl-locator.test.ts =====

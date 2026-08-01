@@ -122,9 +122,37 @@ export const MODEL_STATE_MESSAGES: Record<string, ModelStateMessage> = {
   "download-host-unset": {
     title: "模型发布地址未配置",
     detail:
-      "模型发布地址尚未配置（发布链 owner 决策中）——当前构建不可下载模型。" +
+      "模型发布地址尚未配置——当前构建不可下载模型。" +
       "UIA / OCR / 用户框选定位不受影响。",
     action: null,
+  },
+  "python-missing": {
+    title: "缺少 Python 运行时",
+    detail:
+      "Qwen3-VL 本机推理需要 Python 3。请安装 python3 后重试下载/启用。" +
+      "UIA / OCR / 用户框选定位不受影响。",
+    action: null,
+  },
+  "hf-hub-missing": {
+    title: "缺少 huggingface_hub",
+    detail:
+      "请执行 pip install huggingface_hub 后重试下载。中国大陆可改用下载源「魔搭 ModelScope」并 pip install modelscope。" +
+      "UIA / OCR / 用户框选定位不受影响。",
+    action: "重试下载",
+  },
+  "modelscope-missing": {
+    title: "缺少 modelscope",
+    detail:
+      "当前下载源为 ModelScope，请执行 pip install modelscope 后重试。" +
+      "也可改选 HF 镜像并安装 huggingface_hub。UIA / OCR / 用户框选定位不受影响。",
+    action: "重试下载",
+  },
+  "download-failed": {
+    title: "模型下载失败",
+    detail:
+      "从 Hugging Face 下载 Qwen3-VL 失败（网络或仓库不可用）。可配置 HF_ENDPOINT/镜像后重试；" +
+      "其余定位层不受影响。",
+    action: "重试下载",
   },
   "model-variant-missing": {
     title: "当前变体未下载",

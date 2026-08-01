@@ -22,13 +22,13 @@ function modelState(over: Partial<ComputerModelState> = {}): ComputerModelState 
     licenseAccepted: false,
     modelLicenseDeclined: false,
     modelStatus: "absent",
-    variant: "hybrid",
+    variant: "2b",
     faults: 0,
     ...over,
   }
 }
 
-const PROGRESS = { variant: "hybrid", file: "encoder_model.onnx", receivedBytes: 50, totalBytes: 100 }
+const PROGRESS = { variant: "2b", file: "encoder_model.onnx", receivedBytes: 50, totalBytes: 100 }
 
 test("initialState:model 切片全 null(未查询态;无乐观更新起点)", () => {
   assert.equal(initialState.computerModel, null)

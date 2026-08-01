@@ -39,7 +39,7 @@ import type { SecurityConfirmationDecision, SecurityConfirmationDetails } from "
 import { scanDanger, type DangerScan } from "./danger"
 import type { EvidenceFactory, EvidenceSink } from "./evidence"
 import { locateTargetWithChain, DRIFT_THRESHOLD_PX, type WitnessVerdict } from "./locate-chain"
-import type { TinyClickLocator } from "./tinyclick-locator"
+import type { ExperimentalLocator } from "./locate-chain"
 import type { ComputerTaskEvent, PreviewBuilder } from "./preview"
 import { sanitizeComputerCaption } from "./preview"
 import { assertCoordinateAllowed, assertExeNotDrifted, assertHwndOwnedByEntry, normalizeExePath } from "./policy"
@@ -188,13 +188,10 @@ export interface ComputerExecutorDeps {
    */
   uiaWatcherFactory?: UiaWatcherFactory
   /**
-   * WP5 I3 (G4): L2 TinyClick 实验层。ADMISSION 由调用方决定——开关开 + 模型
-   * ready（文件在盘且校验过，session 懒建）+ 无熔断才传非 null；executor 原样
-   * 透传给 locate chain。命中永不直接注入：re-L2 人审（caption「实验层建议，
-   * 可能完全错误」+ 建议点标注预览）→ 批准走 A1 区域新鲜度复核 → 注入；拒绝
-   * 诚实降级 ELEMENT_NOT_FOUND。缺省 = 层关闭（unit tests 默认形态）。
+   * L2 Qwen3-VL 实验层。ADMISSION 由调用方决定；命中永不直接注入（re-L2）。
+   * 缺省 = 层关闭。
    */
-  tinyclickLocator?: Pick<TinyClickLocator, "locate"> | null
+  tinyclickLocator?: ExperimentalLocator | null
 }
 
 export interface ComputerStepResult {
@@ -1083,7 +1080,7 @@ export async function runComputerTask(
           preview: suggestionPreview !== undefined,
         })
         const ok = await reL2(
-          `实验层建议（TinyClick 本地模型，未校准，可能完全错误）：建议点击「${experimentalTarget}」于客户端坐标 (${pointClient.x}, ${pointClient.y})。批准以执行此次点击，拒绝以放弃该建议。`,
+          `实验层建议（Qwen3-VL 本地模型，未校准，可能完全错误）：建议点击「${experimentalTarget}」于客户端坐标 (${pointClient.x}, ${pointClient.y})。批准以执行此次点击，拒绝以放弃该建议。`,
           ["computer.experimental_suggestion"],
           seq,
           suggestionPreview,

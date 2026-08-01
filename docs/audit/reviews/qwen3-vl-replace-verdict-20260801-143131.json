@@ -1,0 +1,52 @@
+{
+  "batch": "qwen3-vl-replace",
+  "timestamp": "20260801-143131",
+  "prompt": "docs/audit/reviews/qwen3-vl-replace-dual-review-prompt-20260801.md",
+  "diff": "docs/audit/reviews/qwen3-vl-replace-diff-20260801-143131.patch",
+  "reviewers": {
+    "pi": {
+      "artifact": "docs/audit/reviews/qwen3-vl-replace-pi-20260801-143131.md",
+      "verdict": "APPROVE_WITH_CHANGES",
+      "confidence": 86
+    },
+    "claude": {
+      "artifact": "docs/audit/reviews/qwen3-vl-replace-claude-20260801-143131.md",
+      "verdict": "APPROVE_WITH_NITS",
+      "confidence": 82
+    }
+  },
+  "synthesis": {
+    "verdict": "APPROVE_WITH_CHANGES",
+    "rule": "stricter lane wins; Pi APPROVE_WITH_CHANGES + Claude APPROVE_WITH_NITS → APPROVE_WITH_CHANGES",
+    "blocking_union": [
+      {
+        "id": "B1",
+        "source": "pi",
+        "title": "Python spawn missing error handler can crash companion",
+        "where": "companion/src/computer/qwen-vl-runtime.ts PythonLineTransport.ensureChild",
+        "severity": "spawn ENOENT without child.on('error') → unhandled error event kills process"
+      },
+      {
+        "id": "B2",
+        "source": "pi (claude as high nit)",
+        "title": "Coordinate 0–1000 heuristic mis-scales absolute pixel answers on wide screens",
+        "where": "companion/src/computer/qwen-vl-worker.py _normalize",
+        "severity": "e.g. (640,360) on 1280×720 remapped incorrectly"
+      },
+      {
+        "id": "B3",
+        "source": "pi",
+        "title": "Extension mirror-interlock test red + companion MODEL_SWITCH_COPY still TinyClick",
+        "where": "chrome-extension/tests/model-switch-logic.test.ts; companion/src/computer/model-state-messages.ts"
+      }
+    ],
+    "shared_nits": [
+      "download progress for HF snapshot is non-functional / decorative",
+      "modelDiskBudgetMB not enforced on Qwen download path",
+      "executor denial attempt still layer:tinyclick while hits are qwen-vl",
+      "handlers/admission test coverage heavily thinned vs I4 safety matrix",
+      "no unit tests for runtime/session/download/worker",
+      "trust_remote_code + no sha256 pin is supply-chain trust change"
+    ]
+  }
+}
