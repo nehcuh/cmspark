@@ -1,0 +1,21 @@
+{
+  "batch": "estop-tap-degraded",
+  "timestamp": "20260801-220643",
+  "reviewers": ["pi", "claude"],
+  "skipped": ["kimi"],
+  "pi": {
+    "verdict": "APPROVE_WITH_NITS",
+    "path": "docs/audit/reviews/estop-tap-degraded-pi-20260801-220643.md"
+  },
+  "claude": {
+    "verdict": "APPROVE_WITH_NITS",
+    "path": "docs/audit/reviews/estop-tap-degraded-claude-20260801-220643.md"
+  },
+  "both_approve": true,
+  "blocking": [],
+  "device": {
+    "socket_live_after_reinstall": true,
+    "hotkey": "DEGRADED under LS",
+    "full_cu_dod": false
+  }
+}

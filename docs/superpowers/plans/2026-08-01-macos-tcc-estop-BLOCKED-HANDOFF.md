@@ -123,3 +123,42 @@ estop: CGEventTap creation failed — grant Accessibility permission to CMspark
 - Compare `codesign` CDHash of running binary vs TCC entry  
 - Consider Input Monitoring grant  
 - Consider Developer ID (stop ad-hoc CDHash churn)
+
+---
+
+## Update 2026-08-01 late night — soft-fail CGEventTap (socket stays live)
+
+### Root cause (executed probe)
+| Launch path | Result |
+|-------------|--------|
+| CLI / Python Process / nohup same binary | SOCKET_LIVE + tap OK |
+| `open -a CMspark.app` / tray-owned child | tapCreate nil; previously **exit code 4** → dead socket |
+| CLI `security-check` | `axTrusted:true` |
+| LS-launched estop | `axTrustedBefore=false` (TCC attribution differs for ad-hoc LS vs direct exec) |
+
+### Code change
+- `host.swift` `runEstop`: try `listenOnly` then `defaultTap`; on double-nil **do not exit** — keep UNIX socket + `CFRunLoopRun`, log `hotkey DEGRADED`
+- Fail-closed for Computer Use = **socket proof-of-life**, not global hotkey
+- Workflow: `.grok/workflows/estop-tap-degraded-cu-fix.rhai`
+- Local install: rebuilt host → `/Applications/CMspark.app/Contents/MacOS/CMspark` + deep ad-hoc resign (new CDHash)
+
+### Device evidence after reinstall
+```
+estop-tray.log:
+estop: CGEventTap unavailable — hotkey DEGRADED; socket proof-of-life still active.
+axTrustedBefore=false axTrustedNow=false. ... (legacy code-4 path removed)
+
+ps: CMspark → CMspark estop --socket-path /tmp/cmspark-estop.sock (living)
+python connect /tmp/cmspark-estop.sock → SOCKET_LIVE
+```
+
+### Reviews (Pi + Claude; Kimi skipped per user)
+- Pi: **APPROVE_WITH_NITS** — `docs/audit/reviews/estop-tap-degraded-pi-20260801-220643.md`
+- Claude: **APPROVE_WITH_NITS** — `docs/audit/reviews/estop-tap-degraded-claude-20260801-220643.md`
+- Gate: **both non-REJECT** → soft-fail may ship; nits tracked as follow-up (dead code4 retry, surface DEGRADED in UI, log on daemon path)
+
+### Still open (do not claim full CU DoD)
+1. Hotkey still degraded under LS until Accessibility/Input Monitoring covers ad-hoc LS identity (or Developer ID)
+2. Re-verify Side Panel `host_computer` screenshot + click end-to-end on device
+3. Pi nits: log DEGRADED on daemon-fallback success path; surface degraded hotkey in UI; clean dead code4 retry
+4. PR remaining branch commits (post-#103) to main when device CU path green enough

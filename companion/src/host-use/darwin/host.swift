@@ -1907,9 +1907,16 @@ func cuEvidenceSeal(inputPath: String, outputPath: String) -> String {
 //   - on hotkey press: write the estop flag file (JSON {"timestamp": ms})
 //     and push an "estop" event line to every connected socket
 //
-// TCC: CGEventTap creation requires Accessibility (Input Monitoring) trust
-// for THIS binary. tapCreate returning nil = not trusted → exit with a clear
-// stderr message so the companion's preflight fails closed fast.
+// TCC: CGEventTap hotkey requires Accessibility (and often Input Monitoring)
+// for THIS binary when launched via LaunchServices. Device evidence 2026-08:
+// CLI / non-LS spawn of the same ad-hoc CDHash can create the tap while
+// `open -a CMspark.app` / tray-spawned child fails with nil tapCreate even
+// when AXIsProcessTrusted() is true for a CLI `security-check`.
+//
+// Fail-closed for Computer Use is the UNIX socket proof-of-life (companion
+// holds a connection). The global hotkey is best-effort: if tapCreate fails
+// we keep the helper alive (hotkey degraded) so host_computer is not
+// hard-blocked on LS/TCC quirks. User can still stop via tray / Side Panel.
 
 final class EstopContext {
     let flagPath: String
@@ -2007,36 +2014,61 @@ func runEstop(socketPath: String, flagPath: String) throws -> Never {
         }
     }
 
-    // 2. CGEventTap hotkey: Ctrl+Shift+Alt+Cmd+E
-    // tapCreate fails SILENTLY (returns nil) when the binary is not
-    // TCC-trusted — it never prompts on its own. Request trust explicitly so
-    // the user gets the system "would like to control this computer" dialog
-    // and a landing spot in the Accessibility list instead of a dead helper.
-    if !AXIsProcessTrusted() {
+    // 2. CGEventTap hotkey: Ctrl+Shift+Alt+Cmd+E (best-effort)
+    // tapCreate fails SILENTLY (returns nil) when TCC denies the tap.
+    // Request trust explicitly so the user may get the system dialog and a
+    // landing spot in Accessibility / Input Monitoring.
+    let axTrustedBefore = AXIsProcessTrusted()
+    if !axTrustedBefore {
         let promptOpts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         _ = AXIsProcessTrustedWithOptions(promptOpts)
     }
     let mask = CGEventMask(1 << CGEventType.keyDown.rawValue)
-    guard let tap = CGEvent.tapCreate(
+    // Prefer listenOnly: we never modify events (callback always passes through).
+    // Some LaunchServices/TCC contexts reject defaultTap while listenOnly works.
+    var tap = CGEvent.tapCreate(
         tap: .cgSessionEventTap,
         place: .headInsertEventTap,
-        options: .defaultTap,
+        options: .listenOnly,
         eventsOfInterest: mask,
         callback: estopEventTapCallback,
         userInfo: nil
-    ) else {
-        close(serverFD)
-        throw HostError(
-            code: 4,
-            message: "estop: CGEventTap creation failed — grant Accessibility permission to CMspark (System Settings → Privacy & Security → Accessibility)"
+    )
+    var tapMode = "listenOnly"
+    if tap == nil {
+        tap = CGEvent.tapCreate(
+            tap: .cgSessionEventTap,
+            place: .headInsertEventTap,
+            options: .defaultTap,
+            eventsOfInterest: mask,
+            callback: estopEventTapCallback,
+            userInfo: nil
+        )
+        tapMode = "defaultTap"
+    }
+    if let tap = tap {
+        gEstopTap = tap
+        let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+        CFRunLoopAddSource(CFRunLoopGetCurrent(), source, .commonModes)
+        CGEvent.tapEnable(tap: tap, enable: true)
+        fputs(
+            "estop: hotkey armed (Ctrl+Shift+Alt+Cmd+E) mode=\(tapMode) axTrusted=\(AXIsProcessTrusted())\n",
+            stderr
+        )
+    } else {
+        // Do NOT exit — socket proof-of-life is the CU fail-closed channel.
+        // Hotkey degraded until user re-grants Accessibility/Input Monitoring
+        // for this ad-hoc CDHash (or we ship Developer ID).
+        fputs(
+            "estop: CGEventTap unavailable — hotkey DEGRADED; socket proof-of-life still active. " +
+            "axTrustedBefore=\(axTrustedBefore) axTrustedNow=\(AXIsProcessTrusted()). " +
+            "Grant System Settings → Privacy & Security → Accessibility (and Input Monitoring) " +
+            "to CMspark, fully quit and relaunch. (legacy code-4 path removed)\n",
+            stderr
         )
     }
-    gEstopTap = tap
-    let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-    CFRunLoopAddSource(CFRunLoopGetCurrent(), source, .commonModes)
-    CGEvent.tapEnable(tap: tap, enable: true)
 
-    // 3. Live until killed (companion spawns us non-detached; we die with it)
+    // 3. Live until killed (companion / tray owns lifecycle; we die with parent)
     CFRunLoopRun()
     exit(0)  // unreachable — satisfies Never
 }
