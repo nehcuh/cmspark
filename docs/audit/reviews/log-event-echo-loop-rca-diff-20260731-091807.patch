@@ -1,0 +1,12 @@
+# Dual external review context
+batch: log-event-echo-loop-rca
+base: HEAD
+time: 20260731-091807
+
+d77afa5
+
+?? docs/audit/reviews/log-event-echo-loop-rca-diff-20260731-091807.patch
+?? docs/audit/reviews/log-event-echo-loop-rca-prompt-2026-07-31.md
+
+## Diff (git diff + staged)
+

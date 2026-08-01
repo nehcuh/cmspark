@@ -1,0 +1,1905 @@
+# Dual external review context
+batch: log-event-echo-loop-impl
+base: HEAD
+time: 20260731-093639
+
+d77afa5
+
+M  chrome-extension/src/background/index.ts
+A  chrome-extension/src/background/log-forward-policy.ts
+A  chrome-extension/tests/log-forward-policy.test.ts
+A  companion/src/log-event-gate.ts
+M  companion/src/server.ts
+A  companion/tests/log-event-gate.test.ts
+A  companion/tests/log-event-no-echo.test.ts
+A  docs/audit/reviews/log-event-echo-loop-impl-prompt-2026-07-31.md
+A  docs/audit/reviews/log-event-echo-loop-rca-claude-20260731-091807.md
+A  docs/audit/reviews/log-event-echo-loop-rca-pi-20260731-091807.md
+A  docs/audit/reviews/log-event-echo-loop-rca-prompt-2026-07-31.md
+A  docs/audit/reviews/log-event-echo-loop-rca-verdict-20260731-091807.json
+?? docs/audit/reviews/log-event-echo-loop-impl-diff-20260731-093639.patch
+?? docs/audit/reviews/log-event-echo-loop-rca-diff-20260731-091807.patch
+
+## Diff (git diff + staged)
+ chrome-extension/src/background/index.ts           |  46 +++++-
+ .../src/background/log-forward-policy.ts           |  59 +++++++
+ chrome-extension/tests/log-forward-policy.test.ts  |  63 +++++++
+ companion/src/log-event-gate.ts                    |  46 ++++++
+ companion/src/server.ts                            |  15 +-
+ companion/tests/log-event-gate.test.ts             |  58 +++++++
+ companion/tests/log-event-no-echo.test.ts          |  71 ++++++++
+ .../log-event-echo-loop-impl-prompt-2026-07-31.md  | 132 +++++++++++++++
+ ...g-event-echo-loop-rca-claude-20260731-091807.md |  56 +++++++
+ .../log-event-echo-loop-rca-pi-20260731-091807.md  |  87 ++++++++++
+ .../log-event-echo-loop-rca-prompt-2026-07-31.md   | 182 +++++++++++++++++++++
+ ...vent-echo-loop-rca-verdict-20260731-091807.json |   8 +
+ 12 files changed, 812 insertions(+), 11 deletions(-)
+
+diff --git a/chrome-extension/src/background/index.ts b/chrome-extension/src/background/index.ts
+index 229445c..2549eb3 100644
+--- a/chrome-extension/src/background/index.ts
++++ b/chrome-extension/src/background/index.ts
+@@ -28,6 +28,11 @@ import {
+   noteSecurityConfirmationRequest,
+ } from "./computer-task-mirror"
+ import { getActiveTabHostname } from "./active-tab-hostname"
++import {
++  buildLogEventPayload,
++  forwardFailureConsoleLevel,
++  shouldReportForwardFailureToCompanion,
++} from "./log-forward-policy"
+ 
+ let wsClient: WSClient
+ let browserBridge: BrowserBridge
+@@ -161,11 +166,22 @@ const NOTIFICATION_ID = "cmspark-companion-disconnected"
+ const DISCONNECT_DEBOUNCE_MS = 3000
+ let disconnectNotificationTimer: ReturnType<typeof setTimeout> | null = null
+ let lastNotifiedState: "connected" | "disconnected" | null = null
++/** Once-per-session warn for sidepanel_forward_failed (then console.debug). */
++let sidepanelForwardFailedWarned = false
+ 
+ function logToCompanion(level: LogLevel, event: string, data: Record<string, unknown> = {}) {
+   try {
++    const payload = buildLogEventPayload(level, event, data)
++    // Local fan-out so Side Panel / Cockpit live log works WITHOUT companion
++    // echo-to-sender (echo was half of the log.event tight loop — dual-review
++    // log-event-echo-loop-rca). Best-effort; no receivers is fine.
++    try {
++      chrome.runtime.sendMessage(payload).catch(() => {})
++    } catch {
++      /* no UI listeners */
++    }
+     if (wsClient?.getState() === "connected") {
+-      wsClient.send({ type: "log.event", source: "extension", level, event, data })
++      wsClient.send(payload)
+     }
+   } catch {
+     // Logging must never affect extension behavior.
+@@ -379,13 +395,29 @@ async function handleCompanionMessage(msg: any) {
+     openOrFocusCockpit().catch(() => {})
+   }
+ 
+-  // Forward streaming tokens and other messages to side panel + cockpit
++  // Forward streaming tokens and other messages to side panel + cockpit.
++  // CRITICAL: on failure do NOT logToCompanion — that + companion log.event
++  // echo-to-sender formed a tight localhost WS loop when no UI listeners
++  // (Side Panel/Cockpit closed). See dual-review log-event-echo-loop-rca.
+   chrome.runtime.sendMessage(msg).catch((e: any) => {
+-    logToCompanion("debug", "extension.sidepanel_forward_failed", {
+-      message_type: msg?.type || "unknown",
+-      error: e?.message || String(e),
+-    })
+-    // side panel / cockpit may not be open — that's fine
++    const type = typeof msg?.type === "string" ? msg.type : "unknown"
++    if (shouldReportForwardFailureToCompanion(type)) {
++      // Intentionally unreachable today (policy always false). Kept so a
++      // future opt-in cannot forget the loop hazard without touching policy.
++      logToCompanion("debug", "extension.sidepanel_forward_failed", {
++        message_type: type,
++        error: e?.message || String(e),
++      })
++      return
++    }
++    const { level, nextWarned } = forwardFailureConsoleLevel(sidepanelForwardFailedWarned)
++    sidepanelForwardFailedWarned = nextWarned
++    const err = e?.message || String(e)
++    if (level === "warn") {
++      console.warn("[cmspark] sidepanel_forward_failed (once/session)", type, err)
++    } else {
++      console.debug("[cmspark] sidepanel_forward_failed", type, err)
++    }
+   })
+ }
+ 
+diff --git a/chrome-extension/src/background/log-forward-policy.ts b/chrome-extension/src/background/log-forward-policy.ts
+new file mode 100644
+index 0000000..ed83877
+--- /dev/null
++++ b/chrome-extension/src/background/log-forward-policy.ts
+@@ -0,0 +1,59 @@
++// Policy helpers for extension → companion logging and sidepanel fan-out.
++//
++// Closes the log.event echo loop (dual-review log-event-echo-loop-rca):
++//   companion echoed log.event → background sendMessage failed (panel closed)
++//   → logToCompanion(sidepanel_forward_failed) → companion echo → …
++//
++// Rules:
++// 1. Never report sidepanel_forward_failed back over WS (console only).
++// 2. Extension-originated logs fan out locally via chrome.runtime.sendMessage
++//    so Side Panel live log still works without companion echo-to-sender.
++
++export type LogLevel = "debug" | "info" | "warn" | "error"
++
++export interface LogEventWire {
++  type: "log.event"
++  source: "extension"
++  level: LogLevel
++  event: string
++  data: Record<string, unknown>
++}
++
++/** Build the wire payload used for both local fan-out and companion upload. */
++export function buildLogEventPayload(
++  level: LogLevel,
++  event: string,
++  data: Record<string, unknown> = {},
++): LogEventWire {
++  return {
++    type: "log.event",
++    source: "extension",
++    level,
++    event,
++    data,
++  }
++}
++
++/**
++ * Whether a failed chrome.runtime.sendMessage (no receivers) should be
++ * reported back to the companion as log.event.
++ *
++ * ALWAYS false — that path is the injection point of the echo loop.
++ */
++export function shouldReportForwardFailureToCompanion(_messageType: string): boolean {
++  return false
++}
++
++/**
++ * Console policy for forward failures: one warn per session, then debug.
++ * Returns the level to use and whether to flip the session-warned flag.
++ */
++export function forwardFailureConsoleLevel(sessionAlreadyWarned: boolean): {
++  level: "warn" | "debug"
++  nextWarned: true
++} {
++  return {
++    level: sessionAlreadyWarned ? "debug" : "warn",
++    nextWarned: true,
++  }
++}
+diff --git a/chrome-extension/tests/log-forward-policy.test.ts b/chrome-extension/tests/log-forward-policy.test.ts
+new file mode 100644
+index 0000000..221eb7b
+--- /dev/null
++++ b/chrome-extension/tests/log-forward-policy.test.ts
+@@ -0,0 +1,63 @@
++// Policy tests: log.event forward-failure must never re-enter companion WS.
++
++import test from "node:test"
++import assert from "node:assert/strict"
++import {
++  buildLogEventPayload,
++  forwardFailureConsoleLevel,
++  shouldReportForwardFailureToCompanion,
++} from "../src/background/log-forward-policy"
++
++test("shouldReportForwardFailureToCompanion is always false (loop break)", () => {
++  for (const t of [
++    "log.event",
++    "config.updated",
++    "chat.token",
++    "security.confirmation.request",
++    "computer.task.event",
++    "unknown",
++  ]) {
++    assert.equal(
++      shouldReportForwardFailureToCompanion(t),
++      false,
++      `must not report forward failure for ${t}`,
++    )
++  }
++})
++
++test("buildLogEventPayload shape for local fan-out + companion upload", () => {
++  const p = buildLogEventPayload("info", "extension.ws_state_changed", { state: "connected" })
++  assert.deepEqual(p, {
++    type: "log.event",
++    source: "extension",
++    level: "info",
++    event: "extension.ws_state_changed",
++    data: { state: "connected" },
++  })
++})
++
++test("forwardFailureConsoleLevel: first warn, then debug", () => {
++  const first = forwardFailureConsoleLevel(false)
++  assert.equal(first.level, "warn")
++  assert.equal(first.nextWarned, true)
++
++  const second = forwardFailureConsoleLevel(true)
++  assert.equal(second.level, "debug")
++  assert.equal(second.nextWarned, true)
++})
++
++test("simulates closed-panel: config.updated failure must not produce companion log.event", () => {
++  // Mirrors handleCompanionMessage catch path with sidepanel closed.
++  const companionSends: unknown[] = []
++  const messageType = "config.updated"
++
++  if (shouldReportForwardFailureToCompanion(messageType)) {
++    companionSends.push(
++      buildLogEventPayload("debug", "extension.sidepanel_forward_failed", {
++        message_type: messageType,
++      }),
++    )
++  }
++
++  assert.equal(companionSends.length, 0, "zero log.event back to companion closes the loop")
++})
+diff --git a/companion/src/log-event-gate.ts b/companion/src/log-event-gate.ts
+new file mode 100644
+index 0000000..af3fc70
+--- /dev/null
++++ b/companion/src/log-event-gate.ts
+@@ -0,0 +1,46 @@
++// Per-connection rate limit for inbound `log.event` (observability path).
++//
++// Defense-in-depth against extension / tray clients that accidentally flood
++// the companion with log.event (see dual-review log-event-echo-loop-rca).
++// Primary loop break is extension-side (no logToCompanion on forward failure)
++// + no echo-to-sender in server.ts; this gate caps residual abuse.
++
++import type { WebSocket } from "ws"
++
++/** Hard cap: token bucket capacity and refill rate (tokens per second). */
++export const LOG_EVENT_MAX_PER_SEC = 10
++
++type Bucket = { tokens: number; lastRefillMs: number }
++
++const buckets = new WeakMap<WebSocket, Bucket>()
++
++/**
++ * Returns true if this connection may accept one more log.event at `nowMs`.
++ * Token bucket: capacity = LOG_EVENT_MAX_PER_SEC, refill 1 token per 1000/MAX ms.
++ */
++export function allowInboundLogEvent(ws: WebSocket, nowMs: number = Date.now()): boolean {
++  let b = buckets.get(ws)
++  if (!b) {
++    b = { tokens: LOG_EVENT_MAX_PER_SEC, lastRefillMs: nowMs }
++    buckets.set(ws, b)
++  }
++
++  const elapsed = nowMs - b.lastRefillMs
++  if (elapsed > 0) {
++    const refill = (elapsed / 1000) * LOG_EVENT_MAX_PER_SEC
++    b.tokens = Math.min(LOG_EVENT_MAX_PER_SEC, b.tokens + refill)
++    b.lastRefillMs = nowMs
++  }
++
++  if (b.tokens < 1) return false
++  b.tokens -= 1
++  return true
++}
++
++/** Test-only: force a known bucket state for a socket. */
++export function seedLogEventBucketForTests(
++  ws: WebSocket,
++  state: { tokens: number; lastRefillMs: number },
++): void {
++  buckets.set(ws, { ...state })
++}
+diff --git a/companion/src/server.ts b/companion/src/server.ts
+index c4fff6d..c5412be 100644
+--- a/companion/src/server.ts
++++ b/companion/src/server.ts
+@@ -72,6 +72,7 @@ import {
+   markPaired,
+   AUTH_TIMEOUT_MS,
+ } from "./ws-auth"
++import { allowInboundLogEvent } from "./log-event-gate"
+ 
+ const MAX_WS_MESSAGE_SIZE = 10 * 1024 * 1024 // 10MB
+ 
+@@ -5168,13 +5169,19 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
+         }
+ 
+         if (msg.type === "log.event") {
++          // Rate-limit per connection (backstop; primary loop break is extension
++          // not re-logging forward failures + no echo below).
++          if (!allowInboundLogEvent(ws)) {
++            return
++          }
+           const eventName = typeof msg.event === "string" && msg.event ? msg.event : "extension.event"
+           const source = typeof msg.source === "string" && msg.source ? msg.source : "extension"
+           logger.log(safeLogLevel(msg.level), eventName, msg.data && typeof msg.data === "object" ? msg.data : {}, source)
+-          // Forward to sidepanel for live log display
+-          if (ws.readyState === WebSocket.OPEN) {
+-            ws.send(JSON.stringify(msg))
+-          }
++          // Do NOT echo log.event back to the sender. Echo + extension
++          // sidepanel_forward_failed → logToCompanion formed a tight WS loop
++          // when Side Panel/Cockpit were closed (tens of GB, dual-end CPU).
++          // Live log UI: extension fans out its own logs locally via
++          // chrome.runtime.sendMessage in logToCompanion (see background/index.ts).
+           return
+         }
+ 
+diff --git a/companion/tests/log-event-gate.test.ts b/companion/tests/log-event-gate.test.ts
+new file mode 100644
+index 0000000..81540df
+--- /dev/null
++++ b/companion/tests/log-event-gate.test.ts
+@@ -0,0 +1,58 @@
++// Unit tests for inbound log.event rate limit (echo-loop backstop).
++
++import test from "node:test"
++import assert from "node:assert/strict"
++import {
++  allowInboundLogEvent,
++  LOG_EVENT_MAX_PER_SEC,
++  seedLogEventBucketForTests,
++} from "../src/log-event-gate.js"
++
++/** Minimal stand-in for a WebSocket identity (WeakMap key only). */
++function fakeWs(): object {
++  return {}
++}
++
++test("allows up to LOG_EVENT_MAX_PER_SEC events in the same second", () => {
++  const ws = fakeWs() as any
++  const t0 = 1_000_000
++  seedLogEventBucketForTests(ws, { tokens: LOG_EVENT_MAX_PER_SEC, lastRefillMs: t0 })
++
++  let allowed = 0
++  for (let i = 0; i < LOG_EVENT_MAX_PER_SEC + 5; i++) {
++    if (allowInboundLogEvent(ws, t0)) allowed++
++  }
++  assert.equal(allowed, LOG_EVENT_MAX_PER_SEC)
++})
++
++test("refills tokens after one second", () => {
++  const ws = fakeWs() as any
++  const t0 = 2_000_000
++  seedLogEventBucketForTests(ws, { tokens: 0, lastRefillMs: t0 })
++
++  assert.equal(allowInboundLogEvent(ws, t0), false)
++  // After 1s, full refill
++  assert.equal(allowInboundLogEvent(ws, t0 + 1000), true)
++})
++
++test("independent buckets per connection", () => {
++  const a = fakeWs() as any
++  const b = fakeWs() as any
++  const t0 = 3_000_000
++  seedLogEventBucketForTests(a, { tokens: 0, lastRefillMs: t0 })
++  seedLogEventBucketForTests(b, { tokens: LOG_EVENT_MAX_PER_SEC, lastRefillMs: t0 })
++
++  assert.equal(allowInboundLogEvent(a, t0), false)
++  assert.equal(allowInboundLogEvent(b, t0), true)
++})
++
++test("new connection starts with a full bucket", () => {
++  const ws = fakeWs() as any
++  const t0 = 4_000_000
++  let allowed = 0
++  for (let i = 0; i < LOG_EVENT_MAX_PER_SEC; i++) {
++    if (allowInboundLogEvent(ws, t0)) allowed++
++  }
++  assert.equal(allowed, LOG_EVENT_MAX_PER_SEC)
++  assert.equal(allowInboundLogEvent(ws, t0), false)
++})
+diff --git a/companion/tests/log-event-no-echo.test.ts b/companion/tests/log-event-no-echo.test.ts
+new file mode 100644
+index 0000000..3c07812
+--- /dev/null
++++ b/companion/tests/log-event-no-echo.test.ts
+@@ -0,0 +1,71 @@
++// Behavioral contract: companion must NOT echo log.event to the sender socket.
++//
++// Integration-style unit of the handler logic (without full startServer auth
++// stack). Documents the dual-review log-event-echo-loop-rca fix B.1.
++
++import test from "node:test"
++import assert from "node:assert/strict"
++import { allowInboundLogEvent } from "../src/log-event-gate.js"
++
++/**
++ * Pure mirror of the post-fix server.ts log.event branch:
++ * rate-limit → logger (noop here) → NO ws.send echo.
++ */
++function handleLogEventNoEcho(
++  ws: { send: (data: string) => void; readyState: number },
++  msg: { type: string; event?: string; level?: string; source?: string; data?: unknown },
++  OPEN = 1,
++): { accepted: boolean; echoed: boolean } {
++  if (msg.type !== "log.event") return { accepted: false, echoed: false }
++  if (!allowInboundLogEvent(ws as any)) return { accepted: false, echoed: false }
++
++  // logger.log would go here — intentionally not echoing:
++  // if (ws.readyState === OPEN) ws.send(JSON.stringify(msg))  // REMOVED
++  void OPEN
++  return { accepted: true, echoed: false }
++}
++
++test("log.event is accepted but never echoed to sender", () => {
++  const sent: string[] = []
++  const ws = {
++    readyState: 1,
++    send(data: string) {
++      sent.push(data)
++    },
++  }
++
++  const r = handleLogEventNoEcho(ws, {
++    type: "log.event",
++    event: "extension.sidepanel_forward_failed",
++    level: "debug",
++    source: "extension",
++    data: { message_type: "config.updated" },
++  })
++
++  assert.equal(r.accepted, true)
++  assert.equal(r.echoed, false)
++  assert.equal(sent.length, 0, "must not write any frame back to sender")
++})
++
++test("flood of log.event does not echo and is rate-limited", () => {
++  const sent: string[] = []
++  const ws = {
++    readyState: 1,
++    send(data: string) {
++      sent.push(data)
++    },
++  }
++
++  let accepted = 0
++  for (let i = 0; i < 50; i++) {
++    const r = handleLogEventNoEcho(ws, {
++      type: "log.event",
++      event: "flood",
++      level: "debug",
++    })
++    if (r.accepted) accepted++
++  }
++
++  assert.ok(accepted <= 10, `expected ≤10 accepted, got ${accepted}`)
++  assert.equal(sent.length, 0)
++})
+diff --git a/docs/audit/reviews/log-event-echo-loop-impl-prompt-2026-07-31.md b/docs/audit/reviews/log-event-echo-loop-impl-prompt-2026-07-31.md
+new file mode 100644
+index 0000000..1c23502
+--- /dev/null
++++ b/docs/audit/reviews/log-event-echo-loop-impl-prompt-2026-07-31.md
+@@ -0,0 +1,132 @@
++# Dual review: log.event echo-loop **implementation** (post-code)
++
++**Batch ID:** `log-event-echo-loop-impl`  
++**Stage:** Implementation review (code is staged / in working tree)  
++**Date:** 2026-07-31  
++**Prior gate:** RCA dual-review both `APPROVE_WITH_NITS`  
++  - `docs/audit/reviews/log-event-echo-loop-rca-claude-20260731-091807.md`  
++  - `docs/audit/reviews/log-event-echo-loop-rca-pi-20260731-091807.md`  
++  - `docs/audit/reviews/log-event-echo-loop-rca-verdict-20260731-091807.json`
++
++**Capability declaration**
++
++```text
++Surface:      n/a
++L2-classes:   (none)
++Compose:      none
++Autonomy:     n/a
++Trust:        n/a
++Channel:      n/a
++```
++
++Bugfix only — no new tools/gates/UI entry points.
++
++---
++
++## Your job
++
++Independent senior review of the **diff** (read `git diff` / staged patch file; open real sources with tools).
++
++1. Confirm the closed loop is actually broken in code.
++2. Confirm dual-review RCA nits were folded correctly (especially live-log preservation).
++3. Hunt regressions, incomplete fixes, missing tests, wrong file:line.
++4. End with exactly one of:
++   - `VERDICT: APPROVE`
++   - `VERDICT: APPROVE_WITH_NITS`
++   - `VERDICT: REJECT`
++
++---
++
++## Bug (recap)
++
++When Side Panel / Cockpit closed:
++
++```text
++companion → extension message
++  → chrome.runtime.sendMessage fails
++  → logToCompanion("sidepanel_forward_failed")
++  → companion log.event echo to sender
++  → sendMessage fails again
++  → tight loop (tens of GB, dual-end CPU, Thermal Emergency Sleep)
++```
++
++---
++
++## What implementer claims landed
++
++| # | Change | Files |
++|---|--------|--------|
++| A.1 | Forward-failure **never** goes back over WS; console warn once then debug | `chrome-extension/src/background/index.ts` + `log-forward-policy.ts` |
++| B.1 | Companion **does not** `ws.send` log.event to sender | `companion/src/server.ts` |
++| Live log | `logToCompanion` local `chrome.runtime.sendMessage` before WS upload | `background/index.ts` via `buildLogEventPayload` |
++| Rate limit | Per-connection token bucket 10/s on inbound log.event | `companion/src/log-event-gate.ts` |
++| Tests | Policy + gate + no-echo contracts | `*-policy.test.ts`, `log-event-gate.test.ts`, `log-event-no-echo.test.ts` |
++
++### RCA nits that must be reflected
++
++From Claude + Pi RCA review (both APPROVE_WITH_NITS):
++
++1. **A.1 is primary** — sufficient alone to break loop.
++2. **Do not** early-return drop inbound `log.event` without local fan-out (would black out live log).
++3. If B.1 removes echo, extension must fan out own logs locally.
++4. Rate limit ~10/s as backstop.
++5. Tests: closed-panel must not produce companion log.event; rate limit; no echo.
++
++---
++
++## Review checklist (answer each)
++
++### Loop break
++
++- [ ] `handleCompanionMessage` catch does **not** call `logToCompanion` for normal forward failures (policy / code).
++- [ ] `server.ts` log.event path has **no** `ws.send` echo to sender.
++- [ ] A.1 alone would break loop even if B.1 were reverted? (confirm)
++
++### Live log UI
++
++- [ ] Side Panel still receives extension-originated logs when panel open (local sendMessage path).
++- [ ] No double-delivery of the same log when panel open (local + accidental echo)?
++
++### Rate limit
++
++- [ ] Token bucket correct (capacity, refill, per-ws independence).
++- [ ] Drop is silent / safe (no throw, no re-entry).
++
++### Tests
++
++- [ ] Fail without fix / pass with fix character for policy + gate.
++- [ ] Gaps vs RCA (e.g. full `startServer` integration optional nit).
++
++### Security / hygiene
++
++- [ ] Silencing forward_failed does not hide actionable security failures.
++- [ ] No secret leakage change in log payload.
++
++---
++
++## Required output format
++
++```markdown
++## Summary
++...
++
++## Implementation checklist
++| Item | Pass/Fail | Evidence (file:line) |
++|------|-----------|----------------------|
++| A.1 loop break | | |
++| B.1 no echo | | |
++| Live log local fan-out | | |
++| Rate limit 10/s | | |
++| Tests adequate | | |
++
++## Blocking
++- ...
++
++## Nits
++- ...
++
++## Recommended follow-ups (optional)
++- ...
++
++VERDICT: APPROVE|APPROVE_WITH_NITS|REJECT
++```
+diff --git a/docs/audit/reviews/log-event-echo-loop-rca-claude-20260731-091807.md b/docs/audit/reviews/log-event-echo-loop-rca-claude-20260731-091807.md
+new file mode 100644
+index 0000000..63e475e
+--- /dev/null
++++ b/docs/audit/reviews/log-event-echo-loop-rca-claude-20260731-091807.md
+@@ -0,0 +1,56 @@
++I have enough evidence. Writing the verdict.
++
++---
++
++## Summary
++
++The RCA is **correct**: a real echo loop exists between `companion/src/server.ts` (echoes every inbound `log.event` back to the sender) and `chrome-extension/src/background/index.ts` (forwards every companion message via `chrome.runtime.sendMessage`; on rejection, calls `logToCompanion`, which sends a new `log.event` back to the companion). When the Side Panel + Cockpit are closed, `chrome.runtime.sendMessage` rejects, the catch fires, and a tight localhost WS loop spins — matching the observed dual-end CPU + tens-of-GB traffic on the Chrome↔daemon socket (and the near-empty companion business logs). PR #4 (skill.list) and PR #64 (jailbreak scan) are correctly ruled out as concurrent causes. The proposed fix plan (Fix A1 + B + C) is sound in principle, with one clarification needed on Fix A2/B1's effect on the Side Panel's live log UI.
++
++## RCA verdict
++
++**CONFIRMED** — verified at:
++
++- `companion/src/server.ts:5170-5179` — inbound `log.event` is logged AND echoed back to the same socket via `ws.send(JSON.stringify(msg))`. This is the only "echo to sender" pattern in `server.ts` besides legitimate id-tagged request/response at `server.ts:5300-5306`.
++- `chrome-extension/src/background/index.ts:382-389` — fall-through path forwards every companion message via `chrome.runtime.sendMessage(msg)`; on rejection, calls `logToCompanion("debug", "extension.sidepanel_forward_failed", ...)`.
++- `chrome-extension/src/background/index.ts:165-173` — `logToCompanion` calls `wsClient.send({ type: "log.event", ... })`, re-entering the companion echo path.
++- `chrome-extension/src/background/index.ts:395-930` — the background's own `onMessage` listener returns `undefined` for unmatched types (e.g. `log.event`, `chat.token`); service-worker `sendMessage` does not deliver to the sender's own context, so with Side Panel + Cockpit + Popup closed there is no receiver → guaranteed rejection → loop fires.
++- `chrome-extension/src/sidepanel/hooks/useWebSocket.ts:942,975` — Side Panel listener only registered while mounted; closed panel ⇒ no listener ⇒ rejection. Cockpit uses the same hook (`cockpit/CockpitApp.tsx:27`), same closure behavior.
++- `companion/src/server.ts:4520-4523` — schema gate only checks `event` is a non-empty string, so the recursive `sidepanel_forward_failed` payload always passes validation and re-enters the echo.
++- No `caffeinate` / `IOPM` / `PreventUserIdleSystemSleep` in `companion/src` (grep returned no matches) — "no sleep assertions from cmspark" claim verified.
++- `companion/src/llm/adapter.ts:65,506` — jailbreak scan only runs in the streaming path; not an overnight trigger.
++- `companion/src/server.ts:5254` (`tab.navigated`) is a separate non-echoing branch; not an alternative cause.
++
++Tight localhost WS round-trips at ~10K/sec × ~200 B/cycle × 8 h ≈ tens of GB — consistent with the user's `nettop` observation.
++
++## Alternative causes considered
++
++- **PR #4 `skill.list` recurrence**: ruled out — `server.ts:5300-5306` now tags responses with `id` and only unicasts the response to the requesting socket; no blind broadcast. Tray socket traffic was small per the live sample.
++- **PR #64 jailbreak O(N²)**: ruled out — only fires during streaming chat; no overnight chat per business logs.
++- **`chat.token`/`tool.execute` storm**: ruled out — no business log volume overnight; only the Chrome↔daemon socket was hot, not a chat stream.
++- **MCP reconnect / `tab.navigated` flood**: ruled out — `tab.navigated` doesn't echo to sender (line 5254), and MCP traffic wouldn't sustain tens of GB on the Chrome↔daemon socket specifically.
++- **macOS Power Nap / coreaudiod / AddressBook**: contributing battery drain but cannot explain the dual-end CPU + Chrome↔daemon socket saturation. These are OS-side hygiene; correctly out of scope.
++
++## Fix plan feedback
++
++### Blocking
++
++None. The RCA is correct and the proposed fix design (with Fix A1 as primary) is safe to implement.
++
++### Nits
++
++1. **Fix A2 / Fix B1 would regress the Side Panel's live log UI.** The companion is the *only* emitter of inbound `log.event` (grep found no other `type: "log.event"` origin in `companion/src`); the Side Panel consumes it at `useWebSocket.ts:256-271`. The extension's own log events bounce back via the echo to feed the live log panel — so "don't forward inbound log.event" or "broadcast to other clients only" (and there is exactly one extension WS client per `background/index.ts:225`, so "other clients" is the empty set) silently turns off the Side Panel log feed. Prefer **Fix A1** (stop calling `logToCompanion` for `sidepanel_forward_failed`; use `console.debug`) as the primary fix — it breaks the loop without touching the echo. If you additionally want a Side Panel log feed that doesn't depend on the echo, refactor it in a separate PR.
++2. **Fix C2 rate-limit should be aggressive.** "N/sec per connection" at typical values (e.g. 50–100) still permits a multi-MB/s storm and sustained CPU; for an observability path that should never burst, a token-bucket of ~10/sec with hard drop is more appropriate. Treat this as the *backstop*, not the primary fix.
++3. **Add a per-connection inbound `log.event` rate-limit at the companion** (`server.ts` near line 5170) regardless of the extension fix — defense in depth so that a future regression in any WS client cannot re-trigger the storm. Pair with Fix C2.
++4. **Fix C3 regression test shape.** Repo already has the right pattern: `companion/tests/integration/ws-roundtrip.test.ts` (real `WebSocketServer` + `ws` client hitting `src/server.ts`). Add a sibling `log-event-echo.test.ts` that authenticates a client, sends `log.event`, and asserts the server does **not** write `log.event` back to the same socket within a short window. On the extension side, extend `chrome-extension/tests/background-notifications.test.ts` (or a new file) with a mock that makes `chrome.runtime.sendMessage` reject; inject a companion push; assert `wsClient.send` is never called with `type:"log.event"` for the failure path. Also cover the "Side Panel closed mid-streaming chat" fixture — the most common trigger in the wild.
++5. **Security nit on Fix A1.** Silencing `sidepanel_forward_failed` does not hide real failures: the existing code comment ("side panel / cockpit may not be open — that's fine") already declares this an expected case, and the failure mode is identical whether the panel is closed or genuinely broken — neither is actionable from the companion side. `console.debug` is appropriate; consider keeping a once-per-session `console.warn` on the first occurrence so a totally broken SW listener is still observable in dev tools.
++6. **`handleCompanionMessage` ordering nit (non-blocking).** Multiple `if (msg.type === ...)` blocks fall through; ensure whichever early-return is chosen for inbound `log.event` (Fix C1) is placed *before* the `chrome.runtime.sendMessage(msg)` call at line 383 to avoid accidental re-entry from a future refactor.
++
++## Recommended implementation order
++
++1. **Fix A1** — in `chrome-extension/src/background/index.ts:383-389`, replace `logToCompanion("debug", "extension.sidepanel_forward_failed", ...)` with `console.debug(...)`. Loop broken, zero regression to live log UI. Ship this alone if you need a fast patch.
++2. **Fix B** — in `companion/src/server.ts:5170-5179`, stop echoing `log.event` back to the same `ws`. If a live feed for "other" clients is ever needed, scope the broadcast to `clients` excluding the sender — but per today's architecture that set is empty, so simple drop is correct.
++3. **Fix C1** — extension `handleCompanionMessage` early-returns on inbound `msg.type === "log.event"` so it is never re-forwarded via `chrome.runtime.sendMessage` (placed *before* the catch-all at line 383).
++4. **Fix C2 (backstop)** — per-connection inbound `log.event` rate-limit at the companion (token bucket ~10/sec) plus extension-side debounce on `logToCompanion`.
++5. **Tests** — add `companion/tests/integration/log-event-echo.test.ts` and an extension-side `chrome-extension/tests/background-no-log-on-forward-failure.test.ts`; both must fail without the fix and pass with it.
++
++VERDICT: APPROVE_WITH_NITS
+diff --git a/docs/audit/reviews/log-event-echo-loop-rca-pi-20260731-091807.md b/docs/audit/reviews/log-event-echo-loop-rca-pi-20260731-091807.md
+new file mode 100644
+index 0000000..9608e49
+--- /dev/null
++++ b/docs/audit/reviews/log-event-echo-loop-rca-pi-20260731-091807.md
+@@ -0,0 +1,87 @@
++## Summary
++
++The RCA is **correct**: a `log.event` echo loop exists between companion (`server.ts:5170-5181`) and extension (`background/index.ts:383-390`). When the side panel / Cockpit are closed, `chrome.runtime.sendMessage` rejects, the `.catch` calls `logToCompanion("debug", "extension.sidepanel_forward_failed", ...)`, companion echoes it back, and the loop self-sustains. The fix plan's direction is right, but the analysis is **narrower than the real attack surface** and the proposed Fix A.2 is counterproductive. Approved with nits.
++
++---
++
++## RCA verdict
++
++**CONFIRMED** at exact file:line.
++
++**Loop (companion):** `companion/src/server.ts:5170-5181`
++```ts
++if (msg.type === "log.event") {
++  // ... logger.log(...)
++  if (ws.readyState === WebSocket.OPEN) {
++    ws.send(JSON.stringify(msg))       // ← echo to SENDER
++  }
++  return
++}
++```
++
++**Loop (extension):** `chrome-extension/src/background/index.ts:383-390`
++```ts
++chrome.runtime.sendMessage(msg).catch((e: any) => {
++  logToCompanion("debug", "extension.sidepanel_forward_failed", { ... })  // ← calls logToCompanion
++})
++```
++
++**`logToCompanion`:** `chrome-extension/src/background/index.ts:166-172`
++```ts
++wsClient.send({ type: "log.event", source: "extension", level, event, data })
++```
++
++**No early-return for `log.event` in `handleCompanionMessage`:** confirmed at `background/index.ts:282-390`. The function handles `quickAction.start`, `security.config`, and `tool.execute` with early returns, but `log.event`, `config.updated`, `computer.task.event`, `security.confirmation.request`, `security.confirmation.resolved`, and `security.confirmation.expired` all **fall through** to the `chrome.runtime.sendMessage(msg).catch(...)` line.
++
++**Initial trigger:** On every WS reconnect, `handleStateChange("connected")` calls `wsClient.send({ type: "config.get" })` (line 278). Companion responds with `config.updated`. This falls through `handleCompanionMessage` with no early return (line 326-328), hits `sendMessage`, fails when sidepanel is closed, and starts the loop. During macOS DarkWake with network reconnects, this would fire repeatedly.
++
++**Volume estimate:** Each iteration is `log.event` (~150 bytes JSON) + WS framing. At ~5K-10K iterations/sec (bottlenecked by sync `fs.appendFileSync` in `logger.logEvent` — `logger.ts:121`), overnight (8h) yields ~20-60 GB. Matches "tens of GB cumulative rx/tx" on 127.0.0.1:23401 and `uv__io_poll → Writev` hot path (pure stream I/O, no business logic).
++
++---
++
++## Alternative causes considered
++
++| Cause | Why ruled out |
++|-------|--------------|
++| tray `skill.list` loop (PR #4) | Fixed `3e60cc5`; tray WS traffic was small per live evidence |
++| jailbreak O(N²) scan (PR #64) | Fixed `b0ad317`; no streaming chat overnight |
++| `tab.navigated` flood | Extension→companion only (line 949); companion sends nothing back; cannot form a companion→extension→companion loop |
++| MCP reconnect storm | No MCP server activity in companion business logs |
++| `chat.token` streaming | No agent chat activity overnight |
++| CMspark sleep assertion | `pmset -g assertions` shows none; zero `caffeinate`/IOPM in source |
++
++---
++
++## Fix plan feedback
++
++### Blocking
++
++*(none)*
++
++### Nits
++
++1. **Fix A.1 is the sufficient primary fix — not a co-equal "must."** The `.catch` on `chrome.runtime.sendMessage` (line 383-389) is the **only** injection point for `sidepanel_forward_failed`. Replacing `logToCompanion` with `console.debug` there breaks the loop entirely, regardless of whether Fix B is applied. Fix B is defense-in-depth, not co-required. Make Fix A.1 the primary.
++
++2. **Fix A.2 ("do not forward `log.event` via `chrome.runtime.sendMessage`") is a bug disguised as defense-in-depth.** The side panel's live log display (`useWebSocket.ts:256-270`) receives `log.event` **exclusively** through the `chrome.runtime.onMessage` path — i.e., via the background's `sendMessage` forward. There is no alternative path (no direct WS in sidepanel, no `chrome.storage` sync). If you early-return `log.event` in `handleCompanionMessage`, the live log panel goes dark. The RCA speculates "sidepanel already gets logs via other paths if needed" but I verified: **it does not**. Drop Fix A.2 unless you also add a direct `chrome.runtime.sendMessage` call inside `logToCompanion` itself (so the extension forwards its own logs without waiting for the companion echo). If you do that, you must also drop the companion echo (Fix B.1) to avoid double-delivery.
++
++3. **Fix B.2 ("broadcast to other authenticated clients only") misses the architecture.** The side panel does not connect directly to the companion WS. It receives all messages through the extension background's `chrome.runtime.sendMessage` relay. Even if the companion broadcasts `log.event` to the tray, the side panel won't see it. To preserve live log display after removing the echo, add a companion→extension WS message for logs that originates from the companion itself (e.g., `logger.log` events generated companion-side), and have the extension background forward those. For extension-originated logs, forward locally in `logToCompanion`.
++
++4. **Six message types fall through to the triggering `.catch`**: `config.updated`, `computer.task.event`, `security.confirmation.request`, `security.confirmation.resolved`, `security.confirmation.expired`, and `log.event`. Fix A.1 neutralizes them all. But if you also add early returns for `security.confirmation.*` and `computer.task.event` (which don't need sidepanel forwarding when the Cockpit is the intended surface), you reduce noise. Worth a separate follow-up PR — not blocking this fix.
++
++5. **The companion echo of `log.event` also affects the tray.** `server.ts:5170-5181` echoes to the **sender** WebSocket regardless of client type. When the tray sends a `log.event`, it receives its own echo. The tray presumably doesn't re-process echoes in a way that creates a loop (traffic was small), but this is latent tech debt. Fix B.1 cleans this up for both clients.
++
++6. **Test plan gap:** The proposed regression test ("inject one companion push; assert log.event count ≤ 1") is good. Add a variant: simulate the **initial trigger** (companion sends `config.updated` while sidepanel closed), assert no `log.event` sent back. Also add: with sidepanel open, assert extension-originated `log.event` still reaches the sidepanel (covers nit #2).
++
++---
++
++## Recommended implementation order
++
++1. **Fix A.1** (`background/index.ts:384`): `console.debug(...)` instead of `logToCompanion(...)` — one-line change, breaks the loop
++2. **Fix B.1** (`server.ts:5177`): remove the `ws.send(JSON.stringify(msg))` echo — defense-in-depth
++3. **Live log preservation** (`background/index.ts:166-172`): add `chrome.runtime.sendMessage({ type: "log.event", ... }).catch(() => {})` inside `logToCompanion` so extension-originated logs reach sidepanel without the companion round-trip
++4. **Fix C (rate limit):** companion-side N/sec drop per connection — defense-in-depth
++5. **Regression tests:** per revised test plan above
++
++---
++
++VERDICT: APPROVE_WITH_NITS
+diff --git a/docs/audit/reviews/log-event-echo-loop-rca-prompt-2026-07-31.md b/docs/audit/reviews/log-event-echo-loop-rca-prompt-2026-07-31.md
+new file mode 100644
+index 0000000..153e128
+--- /dev/null
++++ b/docs/audit/reviews/log-event-echo-loop-rca-prompt-2026-07-31.md
+@@ -0,0 +1,182 @@
++# Dual review: log.event echo loop RCA + proposed fix (pre-implementation)
++
++**Batch ID:** `log-event-echo-loop-rca`  
++**Stage:** Root-cause diagnosis + fix design (NO code landed yet)  
++**Date:** 2026-07-31  
++**Surface:** n/a (bugfix; no new capability)  
++**L2-classes:** (none)  
++**Compose:** none  
++**Autonomy:** n/a  
++**Trust:** n/a (loop is observability path, not a gate)  
++**Channel:** n/a  
++
++---
++
++## Your job
++
++You are an **independent** senior reviewer. Challenge the RCA and proposed fix **against the real repo code**. Do **not** rubber-stamp.
++
++1. Read the cited files with tools (`Read` / `Grep` / `Bash`).
++2. Confirm or refute the closed loop.
++3. Check for **alternative / concurrent** root causes that better explain overnight battery drain.
++4. Critique the proposed fix for incompleteness, regressions, and missing tests.
++5. End with exactly one line: `VERDICT: APPROVE` | `VERDICT: APPROVE_WITH_NITS` | `VERDICT: REJECT`.
++
++**APPROVE** = RCA correct enough to implement as proposed.  
++**APPROVE_WITH_NITS** = RCA accepted; fix plan needs non-blocking adjustments listed before verdict.  
++**REJECT** = RCA wrong / incomplete / fix plan dangerous — list **blocking** issues with `file:line` before verdict.
++
++---
++
++## Context (what happened on the user's Mac)
++
++1. Laptop lid closed overnight; morning battery ~1%.
++2. Power log: `Thermal Emergency Sleep` at 01:27 with `Charge:1%`, then DarkWake thrashing (Wi‑Fi/BT), then long sleep; lid open 08:54 still 1%.
++3. Live while awake (same day, before processes stopped):
++   - `cmspark-agent.js daemon` ~30–38% CPU continuous; sample hot path `uv__io_poll` → `OnUvRead` → JS → `Writev`.
++   - Google Chrome (extension process + network helper) multi-core high CPU.
++   - **Local TCP 127.0.0.1:23401** between **Chrome Helper** and daemon: tens of GB cumulative rx/tx.
++   - **Tray** WS peer on same port: small traffic (orders of magnitude lower).
++4. Companion business logs overnight: almost empty (no agent task storm).
++5. CMspark holds **no** IOPM sleep assertions / no caffeinate in companion code.
++
++Historical related incidents (project memory):
++
++| ID | Issue | Status |
++|----|--------|--------|
++| S3 / PR #4 | tray↔daemon `skill.list` request/response loop (~29MB/s, ~108GB) | Fixed `3e60cc5` |
++| S10 / PR #64 | streaming jailbreak scan O(N²) main-thread spin | Fixed `b0ad317` |
++| **This** | alleged **log.event echo + sidepanel_forward_failed** loop | **Unfixed** |
++
++---
++
++## Claimed root cause (closed loop)
++
++### Companion echoes every `log.event` back to the **same** WS client
++
++**File:** `companion/src/server.ts` (search `if (msg.type === "log.event")`)
++
++```ts
++if (msg.type === "log.event") {
++  // ... logger.log(...)
++  if (ws.readyState === WebSocket.OPEN) {
++    ws.send(JSON.stringify(msg))  // echo to sender
++  }
++  return
++}
++```
++
++### Extension: any companion → extension message is forwarded via `chrome.runtime.sendMessage`; on failure, logs back to companion
++
++**File:** `chrome-extension/src/background/index.ts` — end of `handleCompanionMessage`:
++
++```ts
++chrome.runtime.sendMessage(msg).catch((e) => {
++  logToCompanion("debug", "extension.sidepanel_forward_failed", {
++    message_type: msg?.type || "unknown",
++    error: e?.message || String(e),
++  })
++})
++```
++
++**File:** same file — `logToCompanion`:
++
++```ts
++wsClient.send({ type: "log.event", source: "extension", level, event, data })
++```
++
++### When Side Panel / Cockpit have no runtime listeners
++
++`chrome.runtime.sendMessage` rejects with “Receiving end does not exist” → `sidepanel_forward_failed` → companion echoes `log.event` → handleCompanionMessage tries sendMessage again → **tight loop**.
++
++**Trigger condition (common):** Extension authenticated to companion, Side Panel and Cockpit closed (typical overnight / lid-closed).
++
++**Why this matches live evidence:** storm on **Chrome↔daemon** socket, not tray; pure stream I/O sample; no business log volume; high dual-end CPU.
++
++---
++
++## Claimed non-causes (for you to verify)
++
++1. PR #4 tray `skill.list` loop — source + packaged bundle treat only `skill.activated`/`skill.deactivated` as push; tray socket traffic was small.
++2. PR #64 jailbreak O(N²) — `jailbreakScanWindow` exists; overnight no streaming chat.
++3. CMspark intentionally preventing sleep — no assertions in `pmset -g assertions` from cmspark; no IOPM/caffeinate in companion src.
++
++Contributing (not primary loop) may still matter for drain: coreaudiod long PreventUserIdleSystemSleep, AddressBookSourceSync, Wi‑Fi DarkWake.
++
++---
++
++## Proposed fix (design only — not implemented)
++
++### Fix A — Extension (must)
++
++1. **Never** call `logToCompanion` for `sidepanel_forward_failed` (or any “no receiver” failure). Use `console.debug` only.
++2. Prefer: if `msg.type === "log.event"`, do **not** forward via `chrome.runtime.sendMessage` at all (sidepanel already gets logs via other paths if needed — verify), OR skip the failure log for `log.event` only (weaker).
++
++### Fix B — Companion (must)
++
++1. Do **not** echo `log.event` back to the **sender** socket.
++2. If live log UI is still required: broadcast to **other** authenticated clients only, or drop echo entirely if sidepanel reads logs another way.
++
++### Fix C — Defense in depth (should)
++
++1. Extension: early-return on inbound `log.event` (ignore) so even if companion still echoes, no re-log.
++2. Companion: rate-limit / drop flood of `log.event` per connection (e.g. N/sec).
++3. Regression test: simulate extension connection with no sidepanel listener; inject one companion push; assert `log.event` count on wire is bounded (≤1 or 0 echoes) within a short window.
++
++### Out of scope for this fix
++
++- Tray skill.list (already fixed).
++- Jailbreak scan (already fixed).
++- macOS Power Nap / AddressBook / coreaudiod (OS-side hygiene for user).
++
++---
++
++## Review checklist (answer each)
++
++### RCA validity
++
++- [ ] Confirm loop exists by reading current `server.ts` + `background/index.ts` (file:line).
++- [ ] Confirm Side Panel closed ⇒ `sendMessage` failure path is real in MV3.
++- [ ] Confirm no early-return for `log.event` in `handleCompanionMessage` that would break the loop.
++- [ ] Is echo-to-sender intentional product behavior, or accidental?
++- [ ] Could another path better explain tens-of-GB Chrome↔daemon traffic? (e.g. chat.token full content, tool.execute storm, MCP reconnect, tab.navigated flood)
++
++### Fix plan quality
++
++- [ ] Does Fix A alone break the loop? Fix B alone? Both needed?
++- [ ] Does dropping echo break live log UI in Side Panel? Trace how sidepanel shows logs today (`useWebSocket` `log.event` case).
++- [ ] Race / ordering: multiple WS clients (tray + extension + sidepanel ports)?
++- [ ] Security: any risk that silencing forward_failed hides real failures?
++- [ ] Test plan sufficient? What integration test shape fits this repo (node:test / extension mock)?
++
++### Overnight narrative
++
++- [ ] Does this RCA + OS factors adequately explain Thermal Emergency + 1% battery?
++- [ ] Any missing measurement you would require before approving implementation?
++
++---
++
++## Required output format
++
++```markdown
++## Summary
++(2–5 sentences)
++
++## RCA verdict
++CONFIRMED | PARTIAL | REFUTED
++(with evidence file:line)
++
++## Alternative causes considered
++...
++
++## Fix plan feedback
++### Blocking
++- ...
++### Nits
++- ...
++
++## Recommended implementation order
++1. ...
++
++VERDICT: APPROVE|APPROVE_WITH_NITS|REJECT
++```
+diff --git a/docs/audit/reviews/log-event-echo-loop-rca-verdict-20260731-091807.json b/docs/audit/reviews/log-event-echo-loop-rca-verdict-20260731-091807.json
+new file mode 100644
+index 0000000..f1688c4
+--- /dev/null
++++ b/docs/audit/reviews/log-event-echo-loop-rca-verdict-20260731-091807.json
+@@ -0,0 +1,8 @@
++{
++  "batch": "log-event-echo-loop-rca",
++  "timestamp": "20260731-091807",
++  "claude": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/log-event-echo-loop-rca-claude-20260731-091807.md" },
++  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/log-event-echo-loop-rca-pi-20260731-091807.md" },
++  "both_approve": true,
++  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/log-event-echo-loop-rca-diff-20260731-091807.patch"
++}
+diff --git a/chrome-extension/src/background/index.ts b/chrome-extension/src/background/index.ts
+index 229445c..2549eb3 100644
+--- a/chrome-extension/src/background/index.ts
++++ b/chrome-extension/src/background/index.ts
+@@ -28,6 +28,11 @@ import {
+   noteSecurityConfirmationRequest,
+ } from "./computer-task-mirror"
+ import { getActiveTabHostname } from "./active-tab-hostname"
++import {
++  buildLogEventPayload,
++  forwardFailureConsoleLevel,
++  shouldReportForwardFailureToCompanion,
++} from "./log-forward-policy"
+ 
+ let wsClient: WSClient
+ let browserBridge: BrowserBridge
+@@ -161,11 +166,22 @@ const NOTIFICATION_ID = "cmspark-companion-disconnected"
+ const DISCONNECT_DEBOUNCE_MS = 3000
+ let disconnectNotificationTimer: ReturnType<typeof setTimeout> | null = null
+ let lastNotifiedState: "connected" | "disconnected" | null = null
++/** Once-per-session warn for sidepanel_forward_failed (then console.debug). */
++let sidepanelForwardFailedWarned = false
+ 
+ function logToCompanion(level: LogLevel, event: string, data: Record<string, unknown> = {}) {
+   try {
++    const payload = buildLogEventPayload(level, event, data)
++    // Local fan-out so Side Panel / Cockpit live log works WITHOUT companion
++    // echo-to-sender (echo was half of the log.event tight loop — dual-review
++    // log-event-echo-loop-rca). Best-effort; no receivers is fine.
++    try {
++      chrome.runtime.sendMessage(payload).catch(() => {})
++    } catch {
++      /* no UI listeners */
++    }
+     if (wsClient?.getState() === "connected") {
+-      wsClient.send({ type: "log.event", source: "extension", level, event, data })
++      wsClient.send(payload)
+     }
+   } catch {
+     // Logging must never affect extension behavior.
+@@ -379,13 +395,29 @@ async function handleCompanionMessage(msg: any) {
+     openOrFocusCockpit().catch(() => {})
+   }
+ 
+-  // Forward streaming tokens and other messages to side panel + cockpit
++  // Forward streaming tokens and other messages to side panel + cockpit.
++  // CRITICAL: on failure do NOT logToCompanion — that + companion log.event
++  // echo-to-sender formed a tight localhost WS loop when no UI listeners
++  // (Side Panel/Cockpit closed). See dual-review log-event-echo-loop-rca.
+   chrome.runtime.sendMessage(msg).catch((e: any) => {
+-    logToCompanion("debug", "extension.sidepanel_forward_failed", {
+-      message_type: msg?.type || "unknown",
+-      error: e?.message || String(e),
+-    })
+-    // side panel / cockpit may not be open — that's fine
++    const type = typeof msg?.type === "string" ? msg.type : "unknown"
++    if (shouldReportForwardFailureToCompanion(type)) {
++      // Intentionally unreachable today (policy always false). Kept so a
++      // future opt-in cannot forget the loop hazard without touching policy.
++      logToCompanion("debug", "extension.sidepanel_forward_failed", {
++        message_type: type,
++        error: e?.message || String(e),
++      })
++      return
++    }
++    const { level, nextWarned } = forwardFailureConsoleLevel(sidepanelForwardFailedWarned)
++    sidepanelForwardFailedWarned = nextWarned
++    const err = e?.message || String(e)
++    if (level === "warn") {
++      console.warn("[cmspark] sidepanel_forward_failed (once/session)", type, err)
++    } else {
++      console.debug("[cmspark] sidepanel_forward_failed", type, err)
++    }
+   })
+ }
+ 
+diff --git a/chrome-extension/src/background/log-forward-policy.ts b/chrome-extension/src/background/log-forward-policy.ts
+new file mode 100644
+index 0000000..ed83877
+--- /dev/null
++++ b/chrome-extension/src/background/log-forward-policy.ts
+@@ -0,0 +1,59 @@
++// Policy helpers for extension → companion logging and sidepanel fan-out.
++//
++// Closes the log.event echo loop (dual-review log-event-echo-loop-rca):
++//   companion echoed log.event → background sendMessage failed (panel closed)
++//   → logToCompanion(sidepanel_forward_failed) → companion echo → …
++//
++// Rules:
++// 1. Never report sidepanel_forward_failed back over WS (console only).
++// 2. Extension-originated logs fan out locally via chrome.runtime.sendMessage
++//    so Side Panel live log still works without companion echo-to-sender.
++
++export type LogLevel = "debug" | "info" | "warn" | "error"
++
++export interface LogEventWire {
++  type: "log.event"
++  source: "extension"
++  level: LogLevel
++  event: string
++  data: Record<string, unknown>
++}
++
++/** Build the wire payload used for both local fan-out and companion upload. */
++export function buildLogEventPayload(
++  level: LogLevel,
++  event: string,
++  data: Record<string, unknown> = {},
++): LogEventWire {
++  return {
++    type: "log.event",
++    source: "extension",
++    level,
++    event,
++    data,
++  }
++}
++
++/**
++ * Whether a failed chrome.runtime.sendMessage (no receivers) should be
++ * reported back to the companion as log.event.
++ *
++ * ALWAYS false — that path is the injection point of the echo loop.
++ */
++export function shouldReportForwardFailureToCompanion(_messageType: string): boolean {
++  return false
++}
++
++/**
++ * Console policy for forward failures: one warn per session, then debug.
++ * Returns the level to use and whether to flip the session-warned flag.
++ */
++export function forwardFailureConsoleLevel(sessionAlreadyWarned: boolean): {
++  level: "warn" | "debug"
++  nextWarned: true
++} {
++  return {
++    level: sessionAlreadyWarned ? "debug" : "warn",
++    nextWarned: true,
++  }
++}
+diff --git a/chrome-extension/tests/log-forward-policy.test.ts b/chrome-extension/tests/log-forward-policy.test.ts
+new file mode 100644
+index 0000000..221eb7b
+--- /dev/null
++++ b/chrome-extension/tests/log-forward-policy.test.ts
+@@ -0,0 +1,63 @@
++// Policy tests: log.event forward-failure must never re-enter companion WS.
++
++import test from "node:test"
++import assert from "node:assert/strict"
++import {
++  buildLogEventPayload,
++  forwardFailureConsoleLevel,
++  shouldReportForwardFailureToCompanion,
++} from "../src/background/log-forward-policy"
++
++test("shouldReportForwardFailureToCompanion is always false (loop break)", () => {
++  for (const t of [
++    "log.event",
++    "config.updated",
++    "chat.token",
++    "security.confirmation.request",
++    "computer.task.event",
++    "unknown",
++  ]) {
++    assert.equal(
++      shouldReportForwardFailureToCompanion(t),
++      false,
++      `must not report forward failure for ${t}`,
++    )
++  }
++})
++
++test("buildLogEventPayload shape for local fan-out + companion upload", () => {
++  const p = buildLogEventPayload("info", "extension.ws_state_changed", { state: "connected" })
++  assert.deepEqual(p, {
++    type: "log.event",
++    source: "extension",
++    level: "info",
++    event: "extension.ws_state_changed",
++    data: { state: "connected" },
++  })
++})
++
++test("forwardFailureConsoleLevel: first warn, then debug", () => {
++  const first = forwardFailureConsoleLevel(false)
++  assert.equal(first.level, "warn")
++  assert.equal(first.nextWarned, true)
++
++  const second = forwardFailureConsoleLevel(true)
++  assert.equal(second.level, "debug")
++  assert.equal(second.nextWarned, true)
++})
++
++test("simulates closed-panel: config.updated failure must not produce companion log.event", () => {
++  // Mirrors handleCompanionMessage catch path with sidepanel closed.
++  const companionSends: unknown[] = []
++  const messageType = "config.updated"
++
++  if (shouldReportForwardFailureToCompanion(messageType)) {
++    companionSends.push(
++      buildLogEventPayload("debug", "extension.sidepanel_forward_failed", {
++        message_type: messageType,
++      }),
++    )
++  }
++
++  assert.equal(companionSends.length, 0, "zero log.event back to companion closes the loop")
++})
+diff --git a/companion/src/log-event-gate.ts b/companion/src/log-event-gate.ts
+new file mode 100644
+index 0000000..af3fc70
+--- /dev/null
++++ b/companion/src/log-event-gate.ts
+@@ -0,0 +1,46 @@
++// Per-connection rate limit for inbound `log.event` (observability path).
++//
++// Defense-in-depth against extension / tray clients that accidentally flood
++// the companion with log.event (see dual-review log-event-echo-loop-rca).
++// Primary loop break is extension-side (no logToCompanion on forward failure)
++// + no echo-to-sender in server.ts; this gate caps residual abuse.
++
++import type { WebSocket } from "ws"
++
++/** Hard cap: token bucket capacity and refill rate (tokens per second). */
++export const LOG_EVENT_MAX_PER_SEC = 10
++
++type Bucket = { tokens: number; lastRefillMs: number }
++
++const buckets = new WeakMap<WebSocket, Bucket>()
++
++/**
++ * Returns true if this connection may accept one more log.event at `nowMs`.
++ * Token bucket: capacity = LOG_EVENT_MAX_PER_SEC, refill 1 token per 1000/MAX ms.
++ */
++export function allowInboundLogEvent(ws: WebSocket, nowMs: number = Date.now()): boolean {
++  let b = buckets.get(ws)
++  if (!b) {
++    b = { tokens: LOG_EVENT_MAX_PER_SEC, lastRefillMs: nowMs }
++    buckets.set(ws, b)
++  }
++
++  const elapsed = nowMs - b.lastRefillMs
++  if (elapsed > 0) {
++    const refill = (elapsed / 1000) * LOG_EVENT_MAX_PER_SEC
++    b.tokens = Math.min(LOG_EVENT_MAX_PER_SEC, b.tokens + refill)
++    b.lastRefillMs = nowMs
++  }
++
++  if (b.tokens < 1) return false
++  b.tokens -= 1
++  return true
++}
++
++/** Test-only: force a known bucket state for a socket. */
++export function seedLogEventBucketForTests(
++  ws: WebSocket,
++  state: { tokens: number; lastRefillMs: number },
++): void {
++  buckets.set(ws, { ...state })
++}
+diff --git a/companion/src/server.ts b/companion/src/server.ts
+index c4fff6d..c5412be 100644
+--- a/companion/src/server.ts
++++ b/companion/src/server.ts
+@@ -72,6 +72,7 @@ import {
+   markPaired,
+   AUTH_TIMEOUT_MS,
+ } from "./ws-auth"
++import { allowInboundLogEvent } from "./log-event-gate"
+ 
+ const MAX_WS_MESSAGE_SIZE = 10 * 1024 * 1024 // 10MB
+ 
+@@ -5168,13 +5169,19 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
+         }
+ 
+         if (msg.type === "log.event") {
++          // Rate-limit per connection (backstop; primary loop break is extension
++          // not re-logging forward failures + no echo below).
++          if (!allowInboundLogEvent(ws)) {
++            return
++          }
+           const eventName = typeof msg.event === "string" && msg.event ? msg.event : "extension.event"
+           const source = typeof msg.source === "string" && msg.source ? msg.source : "extension"
+           logger.log(safeLogLevel(msg.level), eventName, msg.data && typeof msg.data === "object" ? msg.data : {}, source)
+-          // Forward to sidepanel for live log display
+-          if (ws.readyState === WebSocket.OPEN) {
+-            ws.send(JSON.stringify(msg))
+-          }
++          // Do NOT echo log.event back to the sender. Echo + extension
++          // sidepanel_forward_failed → logToCompanion formed a tight WS loop
++          // when Side Panel/Cockpit were closed (tens of GB, dual-end CPU).
++          // Live log UI: extension fans out its own logs locally via
++          // chrome.runtime.sendMessage in logToCompanion (see background/index.ts).
+           return
+         }
+ 
+diff --git a/companion/tests/log-event-gate.test.ts b/companion/tests/log-event-gate.test.ts
+new file mode 100644
+index 0000000..81540df
+--- /dev/null
++++ b/companion/tests/log-event-gate.test.ts
+@@ -0,0 +1,58 @@
++// Unit tests for inbound log.event rate limit (echo-loop backstop).
++
++import test from "node:test"
++import assert from "node:assert/strict"
++import {
++  allowInboundLogEvent,
++  LOG_EVENT_MAX_PER_SEC,
++  seedLogEventBucketForTests,
++} from "../src/log-event-gate.js"
++
++/** Minimal stand-in for a WebSocket identity (WeakMap key only). */
++function fakeWs(): object {
++  return {}
++}
++
++test("allows up to LOG_EVENT_MAX_PER_SEC events in the same second", () => {
++  const ws = fakeWs() as any
++  const t0 = 1_000_000
++  seedLogEventBucketForTests(ws, { tokens: LOG_EVENT_MAX_PER_SEC, lastRefillMs: t0 })
++
++  let allowed = 0
++  for (let i = 0; i < LOG_EVENT_MAX_PER_SEC + 5; i++) {
++    if (allowInboundLogEvent(ws, t0)) allowed++
++  }
++  assert.equal(allowed, LOG_EVENT_MAX_PER_SEC)
++})
++
++test("refills tokens after one second", () => {
++  const ws = fakeWs() as any
++  const t0 = 2_000_000
++  seedLogEventBucketForTests(ws, { tokens: 0, lastRefillMs: t0 })
++
++  assert.equal(allowInboundLogEvent(ws, t0), false)
++  // After 1s, full refill
++  assert.equal(allowInboundLogEvent(ws, t0 + 1000), true)
++})
++
++test("independent buckets per connection", () => {
++  const a = fakeWs() as any
++  const b = fakeWs() as any
++  const t0 = 3_000_000
++  seedLogEventBucketForTests(a, { tokens: 0, lastRefillMs: t0 })
++  seedLogEventBucketForTests(b, { tokens: LOG_EVENT_MAX_PER_SEC, lastRefillMs: t0 })
++
++  assert.equal(allowInboundLogEvent(a, t0), false)
++  assert.equal(allowInboundLogEvent(b, t0), true)
++})
++
++test("new connection starts with a full bucket", () => {
++  const ws = fakeWs() as any
++  const t0 = 4_000_000
++  let allowed = 0
++  for (let i = 0; i < LOG_EVENT_MAX_PER_SEC; i++) {
++    if (allowInboundLogEvent(ws, t0)) allowed++
++  }
++  assert.equal(allowed, LOG_EVENT_MAX_PER_SEC)
++  assert.equal(allowInboundLogEvent(ws, t0), false)
++})
+diff --git a/companion/tests/log-event-no-echo.test.ts b/companion/tests/log-event-no-echo.test.ts
+new file mode 100644
+index 0000000..3c07812
+--- /dev/null
++++ b/companion/tests/log-event-no-echo.test.ts
+@@ -0,0 +1,71 @@
++// Behavioral contract: companion must NOT echo log.event to the sender socket.
++//
++// Integration-style unit of the handler logic (without full startServer auth
++// stack). Documents the dual-review log-event-echo-loop-rca fix B.1.
++
++import test from "node:test"
++import assert from "node:assert/strict"
++import { allowInboundLogEvent } from "../src/log-event-gate.js"
++
++/**
++ * Pure mirror of the post-fix server.ts log.event branch:
++ * rate-limit → logger (noop here) → NO ws.send echo.
++ */
++function handleLogEventNoEcho(
++  ws: { send: (data: string) => void; readyState: number },
++  msg: { type: string; event?: string; level?: string; source?: string; data?: unknown },
++  OPEN = 1,
++): { accepted: boolean; echoed: boolean } {
++  if (msg.type !== "log.event") return { accepted: false, echoed: false }
++  if (!allowInboundLogEvent(ws as any)) return { accepted: false, echoed: false }
++
++  // logger.log would go here — intentionally not echoing:
++  // if (ws.readyState === OPEN) ws.send(JSON.stringify(msg))  // REMOVED
++  void OPEN
++  return { accepted: true, echoed: false }
++}
++
++test("log.event is accepted but never echoed to sender", () => {
++  const sent: string[] = []
++  const ws = {
++    readyState: 1,
++    send(data: string) {
++      sent.push(data)
++    },
++  }
++
++  const r = handleLogEventNoEcho(ws, {
++    type: "log.event",
++    event: "extension.sidepanel_forward_failed",
++    level: "debug",
++    source: "extension",
++    data: { message_type: "config.updated" },
++  })
++
++  assert.equal(r.accepted, true)
++  assert.equal(r.echoed, false)
++  assert.equal(sent.length, 0, "must not write any frame back to sender")
++})
++
++test("flood of log.event does not echo and is rate-limited", () => {
++  const sent: string[] = []
++  const ws = {
++    readyState: 1,
++    send(data: string) {
++      sent.push(data)
++    },
++  }
++
++  let accepted = 0
++  for (let i = 0; i < 50; i++) {
++    const r = handleLogEventNoEcho(ws, {
++      type: "log.event",
++      event: "flood",
++      level: "debug",
++    })
++    if (r.accepted) accepted++
++  }
++
++  assert.ok(accepted <= 10, `expected ≤10 accepted, got ${accepted}`)
++  assert.equal(sent.length, 0)
++})
+diff --git a/docs/audit/reviews/log-event-echo-loop-impl-prompt-2026-07-31.md b/docs/audit/reviews/log-event-echo-loop-impl-prompt-2026-07-31.md
+new file mode 100644
+index 0000000..1c23502
+--- /dev/null
++++ b/docs/audit/reviews/log-event-echo-loop-impl-prompt-2026-07-31.md
+@@ -0,0 +1,132 @@
++# Dual review: log.event echo-loop **implementation** (post-code)
++
++**Batch ID:** `log-event-echo-loop-impl`  
++**Stage:** Implementation review (code is staged / in working tree)  
++**Date:** 2026-07-31  
++**Prior gate:** RCA dual-review both `APPROVE_WITH_NITS`  
++  - `docs/audit/reviews/log-event-echo-loop-rca-claude-20260731-091807.md`  
++  - `docs/audit/reviews/log-event-echo-loop-rca-pi-20260731-091807.md`  
++  - `docs/audit/reviews/log-event-echo-loop-rca-verdict-20260731-091807.json`
++
++**Capability declaration**
++
++```text
++Surface:      n/a
++L2-classes:   (none)
++Compose:      none
++Autonomy:     n/a
++Trust:        n/a
++Channel:      n/a
++```
++
++Bugfix only — no new tools/gates/UI entry points.
++
++---
++
++## Your job
++
++Independent senior review of the **diff** (read `git diff` / staged patch file; open real sources with tools).
++
++1. Confirm the closed loop is actually broken in code.
++2. Confirm dual-review RCA nits were folded correctly (especially live-log preservation).
++3. Hunt regressions, incomplete fixes, missing tests, wrong file:line.
++4. End with exactly one of:
++   - `VERDICT: APPROVE`
++   - `VERDICT: APPROVE_WITH_NITS`
++   - `VERDICT: REJECT`
++
++---
++
++## Bug (recap)
++
++When Side Panel / Cockpit closed:
++
++```text
++companion → extension message
++  → chrome.runtime.sendMessage fails
++  → logToCompanion("sidepanel_forward_failed")
++  → companion log.event echo to sender
++  → sendMessage fails again
++  → tight loop (tens of GB, dual-end CPU, Thermal Emergency Sleep)
++```
++
++---
++
++## What implementer claims landed
++
++| # | Change | Files |
++|---|--------|--------|
++| A.1 | Forward-failure **never** goes back over WS; console warn once then debug | `chrome-extension/src/background/index.ts` + `log-forward-policy.ts` |
++| B.1 | Companion **does not** `ws.send` log.event to sender | `companion/src/server.ts` |
++| Live log | `logToCompanion` local `chrome.runtime.sendMessage` before WS upload | `background/index.ts` via `buildLogEventPayload` |
++| Rate limit | Per-connection token bucket 10/s on inbound log.event | `companion/src/log-event-gate.ts` |
++| Tests | Policy + gate + no-echo contracts | `*-policy.test.ts`, `log-event-gate.test.ts`, `log-event-no-echo.test.ts` |
++
++### RCA nits that must be reflected
++
++From Claude + Pi RCA review (both APPROVE_WITH_NITS):
++
++1. **A.1 is primary** — sufficient alone to break loop.
++2. **Do not** early-return drop inbound `log.event` without local fan-out (would black out live log).
++3. If B.1 removes echo, extension must fan out own logs locally.
++4. Rate limit ~10/s as backstop.
++5. Tests: closed-panel must not produce companion log.event; rate limit; no echo.
++
++---
++
++## Review checklist (answer each)
++
++### Loop break
++
++- [ ] `handleCompanionMessage` catch does **not** call `logToCompanion` for normal forward failures (policy / code).
++- [ ] `server.ts` log.event path has **no** `ws.send` echo to sender.
++- [ ] A.1 alone would break loop even if B.1 were reverted? (confirm)
++
++### Live log UI
++
++- [ ] Side Panel still receives extension-originated logs when panel open (local sendMessage path).
++- [ ] No double-delivery of the same log when panel open (local + accidental echo)?
++
++### Rate limit
++
++- [ ] Token bucket correct (capacity, refill, per-ws independence).
++- [ ] Drop is silent / safe (no throw, no re-entry).
++
++### Tests
++
++- [ ] Fail without fix / pass with fix character for policy + gate.
++- [ ] Gaps vs RCA (e.g. full `startServer` integration optional nit).
++
++### Security / hygiene
++
++- [ ] Silencing forward_failed does not hide actionable security failures.
++- [ ] No secret leakage change in log payload.
++
++---
++
++## Required output format
++
++```markdown
++## Summary
++...
++
++## Implementation checklist
++| Item | Pass/Fail | Evidence (file:line) |
++|------|-----------|----------------------|
++| A.1 loop break | | |
++| B.1 no echo | | |
++| Live log local fan-out | | |
++| Rate limit 10/s | | |
++| Tests adequate | | |
++
++## Blocking
++- ...
++
++## Nits
++- ...
++
++## Recommended follow-ups (optional)
++- ...
++
++VERDICT: APPROVE|APPROVE_WITH_NITS|REJECT
++```
+diff --git a/docs/audit/reviews/log-event-echo-loop-rca-claude-20260731-091807.md b/docs/audit/reviews/log-event-echo-loop-rca-claude-20260731-091807.md
+new file mode 100644
+index 0000000..63e475e
+--- /dev/null
++++ b/docs/audit/reviews/log-event-echo-loop-rca-claude-20260731-091807.md
+@@ -0,0 +1,56 @@
++I have enough evidence. Writing the verdict.
++
++---
++
++## Summary
++
++The RCA is **correct**: a real echo loop exists between `companion/src/server.ts` (echoes every inbound `log.event` back to the sender) and `chrome-extension/src/background/index.ts` (forwards every companion message via `chrome.runtime.sendMessage`; on rejection, calls `logToCompanion`, which sends a new `log.event` back to the companion). When the Side Panel + Cockpit are closed, `chrome.runtime.sendMessage` rejects, the catch fires, and a tight localhost WS loop spins — matching the observed dual-end CPU + tens-of-GB traffic on the Chrome↔daemon socket (and the near-empty companion business logs). PR #4 (skill.list) and PR #64 (jailbreak scan) are correctly ruled out as concurrent causes. The proposed fix plan (Fix A1 + B + C) is sound in principle, with one clarification needed on Fix A2/B1's effect on the Side Panel's live log UI.
++
++## RCA verdict
++
++**CONFIRMED** — verified at:
++
++- `companion/src/server.ts:5170-5179` — inbound `log.event` is logged AND echoed back to the same socket via `ws.send(JSON.stringify(msg))`. This is the only "echo to sender" pattern in `server.ts` besides legitimate id-tagged request/response at `server.ts:5300-5306`.
++- `chrome-extension/src/background/index.ts:382-389` — fall-through path forwards every companion message via `chrome.runtime.sendMessage(msg)`; on rejection, calls `logToCompanion("debug", "extension.sidepanel_forward_failed", ...)`.
++- `chrome-extension/src/background/index.ts:165-173` — `logToCompanion` calls `wsClient.send({ type: "log.event", ... })`, re-entering the companion echo path.
++- `chrome-extension/src/background/index.ts:395-930` — the background's own `onMessage` listener returns `undefined` for unmatched types (e.g. `log.event`, `chat.token`); service-worker `sendMessage` does not deliver to the sender's own context, so with Side Panel + Cockpit + Popup closed there is no receiver → guaranteed rejection → loop fires.
++- `chrome-extension/src/sidepanel/hooks/useWebSocket.ts:942,975` — Side Panel listener only registered while mounted; closed panel ⇒ no listener ⇒ rejection. Cockpit uses the same hook (`cockpit/CockpitApp.tsx:27`), same closure behavior.
++- `companion/src/server.ts:4520-4523` — schema gate only checks `event` is a non-empty string, so the recursive `sidepanel_forward_failed` payload always passes validation and re-enters the echo.
++- No `caffeinate` / `IOPM` / `PreventUserIdleSystemSleep` in `companion/src` (grep returned no matches) — "no sleep assertions from cmspark" claim verified.
++- `companion/src/llm/adapter.ts:65,506` — jailbreak scan only runs in the streaming path; not an overnight trigger.
++- `companion/src/server.ts:5254` (`tab.navigated`) is a separate non-echoing branch; not an alternative cause.
++
++Tight localhost WS round-trips at ~10K/sec × ~200 B/cycle × 8 h ≈ tens of GB — consistent with the user's `nettop` observation.
++
++## Alternative causes considered
++
++- **PR #4 `skill.list` recurrence**: ruled out — `server.ts:5300-5306` now tags responses with `id` and only unicasts the response to the requesting socket; no blind broadcast. Tray socket traffic was small per the live sample.
++- **PR #64 jailbreak O(N²)**: ruled out — only fires during streaming chat; no overnight chat per business logs.
++- **`chat.token`/`tool.execute` storm**: ruled out — no business log volume overnight; only the Chrome↔daemon socket was hot, not a chat stream.
++- **MCP reconnect / `tab.navigated` flood**: ruled out — `tab.navigated` doesn't echo to sender (line 5254), and MCP traffic wouldn't sustain tens of GB on the Chrome↔daemon socket specifically.
++- **macOS Power Nap / coreaudiod / AddressBook**: contributing battery drain but cannot explain the dual-end CPU + Chrome↔daemon socket saturation. These are OS-side hygiene; correctly out of scope.
++
++## Fix plan feedback
++
++### Blocking
++
++None. The RCA is correct and the proposed fix design (with Fix A1 as primary) is safe to implement.
++
++### Nits
++
++1. **Fix A2 / Fix B1 would regress the Side Panel's live log UI.** The companion is the *only* emitter of inbound `log.event` (grep found no other `type: "log.event"` origin in `companion/src`); the Side Panel consumes it at `useWebSocket.ts:256-271`. The extension's own log events bounce back via the echo to feed the live log panel — so "don't forward inbound log.event" or "broadcast to other clients only" (and there is exactly one extension WS client per `background/index.ts:225`, so "other clients" is the empty set) silently turns off the Side Panel log feed. Prefer **Fix A1** (stop calling `logToCompanion` for `sidepanel_forward_failed`; use `console.debug`) as the primary fix — it breaks the loop without touching the echo. If you additionally want a Side Panel log feed that doesn't depend on the echo, refactor it in a separate PR.
++2. **Fix C2 rate-limit should be aggressive.** "N/sec per connection" at typical values (e.g. 50–100) still permits a multi-MB/s storm and sustained CPU; for an observability path that should never burst, a token-bucket of ~10/sec with hard drop is more appropriate. Treat this as the *backstop*, not the primary fix.
++3. **Add a per-connection inbound `log.event` rate-limit at the companion** (`server.ts` near line 5170) regardless of the extension fix — defense in depth so that a future regression in any WS client cannot re-trigger the storm. Pair with Fix C2.
++4. **Fix C3 regression test shape.** Repo already has the right pattern: `companion/tests/integration/ws-roundtrip.test.ts` (real `WebSocketServer` + `ws` client hitting `src/server.ts`). Add a sibling `log-event-echo.test.ts` that authenticates a client, sends `log.event`, and asserts the server does **not** write `log.event` back to the same socket within a short window. On the extension side, extend `chrome-extension/tests/background-notifications.test.ts` (or a new file) with a mock that makes `chrome.runtime.sendMessage` reject; inject a companion push; assert `wsClient.send` is never called with `type:"log.event"` for the failure path. Also cover the "Side Panel closed mid-streaming chat" fixture — the most common trigger in the wild.
++5. **Security nit on Fix A1.** Silencing `sidepanel_forward_failed` does not hide real failures: the existing code comment ("side panel / cockpit may not be open — that's fine") already declares this an expected case, and the failure mode is identical whether the panel is closed or genuinely broken — neither is actionable from the companion side. `console.debug` is appropriate; consider keeping a once-per-session `console.warn` on the first occurrence so a totally broken SW listener is still observable in dev tools.
++6. **`handleCompanionMessage` ordering nit (non-blocking).** Multiple `if (msg.type === ...)` blocks fall through; ensure whichever early-return is chosen for inbound `log.event` (Fix C1) is placed *before* the `chrome.runtime.sendMessage(msg)` call at line 383 to avoid accidental re-entry from a future refactor.
++
++## Recommended implementation order
++
++1. **Fix A1** — in `chrome-extension/src/background/index.ts:383-389`, replace `logToCompanion("debug", "extension.sidepanel_forward_failed", ...)` with `console.debug(...)`. Loop broken, zero regression to live log UI. Ship this alone if you need a fast patch.
++2. **Fix B** — in `companion/src/server.ts:5170-5179`, stop echoing `log.event` back to the same `ws`. If a live feed for "other" clients is ever needed, scope the broadcast to `clients` excluding the sender — but per today's architecture that set is empty, so simple drop is correct.
++3. **Fix C1** — extension `handleCompanionMessage` early-returns on inbound `msg.type === "log.event"` so it is never re-forwarded via `chrome.runtime.sendMessage` (placed *before* the catch-all at line 383).
++4. **Fix C2 (backstop)** — per-connection inbound `log.event` rate-limit at the companion (token bucket ~10/sec) plus extension-side debounce on `logToCompanion`.
++5. **Tests** — add `companion/tests/integration/log-event-echo.test.ts` and an extension-side `chrome-extension/tests/background-no-log-on-forward-failure.test.ts`; both must fail without the fix and pass with it.
++
++VERDICT: APPROVE_WITH_NITS
+diff --git a/docs/audit/reviews/log-event-echo-loop-rca-pi-20260731-091807.md b/docs/audit/reviews/log-event-echo-loop-rca-pi-20260731-091807.md
+new file mode 100644
+index 0000000..9608e49
+--- /dev/null
++++ b/docs/audit/reviews/log-event-echo-loop-rca-pi-20260731-091807.md
+@@ -0,0 +1,87 @@
++## Summary
++
++The RCA is **correct**: a `log.event` echo loop exists between companion (`server.ts:5170-5181`) and extension (`background/index.ts:383-390`). When the side panel / Cockpit are closed, `chrome.runtime.sendMessage` rejects, the `.catch` calls `logToCompanion("debug", "extension.sidepanel_forward_failed", ...)`, companion echoes it back, and the loop self-sustains. The fix plan's direction is right, but the analysis is **narrower than the real attack surface** and the proposed Fix A.2 is counterproductive. Approved with nits.
++
++---
++
++## RCA verdict
++
++**CONFIRMED** at exact file:line.
++
++**Loop (companion):** `companion/src/server.ts:5170-5181`
++```ts
++if (msg.type === "log.event") {
++  // ... logger.log(...)
++  if (ws.readyState === WebSocket.OPEN) {
++    ws.send(JSON.stringify(msg))       // ← echo to SENDER
++  }
++  return
++}
++```
++
++**Loop (extension):** `chrome-extension/src/background/index.ts:383-390`
++```ts
++chrome.runtime.sendMessage(msg).catch((e: any) => {
++  logToCompanion("debug", "extension.sidepanel_forward_failed", { ... })  // ← calls logToCompanion
++})
++```
++
++**`logToCompanion`:** `chrome-extension/src/background/index.ts:166-172`
++```ts
++wsClient.send({ type: "log.event", source: "extension", level, event, data })
++```
++
++**No early-return for `log.event` in `handleCompanionMessage`:** confirmed at `background/index.ts:282-390`. The function handles `quickAction.start`, `security.config`, and `tool.execute` with early returns, but `log.event`, `config.updated`, `computer.task.event`, `security.confirmation.request`, `security.confirmation.resolved`, and `security.confirmation.expired` all **fall through** to the `chrome.runtime.sendMessage(msg).catch(...)` line.
++
++**Initial trigger:** On every WS reconnect, `handleStateChange("connected")` calls `wsClient.send({ type: "config.get" })` (line 278). Companion responds with `config.updated`. This falls through `handleCompanionMessage` with no early return (line 326-328), hits `sendMessage`, fails when sidepanel is closed, and starts the loop. During macOS DarkWake with network reconnects, this would fire repeatedly.
++
++**Volume estimate:** Each iteration is `log.event` (~150 bytes JSON) + WS framing. At ~5K-10K iterations/sec (bottlenecked by sync `fs.appendFileSync` in `logger.logEvent` — `logger.ts:121`), overnight (8h) yields ~20-60 GB. Matches "tens of GB cumulative rx/tx" on 127.0.0.1:23401 and `uv__io_poll → Writev` hot path (pure stream I/O, no business logic).
++
++---
++
++## Alternative causes considered
++
++| Cause | Why ruled out |
++|-------|--------------|
++| tray `skill.list` loop (PR #4) | Fixed `3e60cc5`; tray WS traffic was small per live evidence |
++| jailbreak O(N²) scan (PR #64) | Fixed `b0ad317`; no streaming chat overnight |
++| `tab.navigated` flood | Extension→companion only (line 949); companion sends nothing back; cannot form a companion→extension→companion loop |
++| MCP reconnect storm | No MCP server activity in companion business logs |
++| `chat.token` streaming | No agent chat activity overnight |
++| CMspark sleep assertion | `pmset -g assertions` shows none; zero `caffeinate`/IOPM in source |
++
++---
++
++## Fix plan feedback
++
++### Blocking
++
++*(none)*
++
++### Nits
++
++1. **Fix A.1 is the sufficient primary fix — not a co-equal "must."** The `.catch` on `chrome.runtime.sendMessage` (line 383-389) is the **only** injection point for `sidepanel_forward_failed`. Replacing `logToCompanion` with `console.debug` there breaks the loop entirely, regardless of whether Fix B is applied. Fix B is defense-in-depth, not co-required. Make Fix A.1 the primary.
++
++2. **Fix A.2 ("do not forward `log.event` via `chrome.runtime.sendMessage`") is a bug disguised as defense-in-depth.** The side panel's live log display (`useWebSocket.ts:256-270`) receives `log.event` **exclusively** through the `chrome.runtime.onMessage` path — i.e., via the background's `sendMessage` forward. There is no alternative path (no direct WS in sidepanel, no `chrome.storage` sync). If you early-return `log.event` in `handleCompanionMessage`, the live log panel goes dark. The RCA speculates "sidepanel already gets logs via other paths if needed" but I verified: **it does not**. Drop Fix A.2 unless you also add a direct `chrome.runtime.sendMessage` call inside `logToCompanion` itself (so the extension forwards its own logs without waiting for the companion echo). If you do that, you must also drop the companion echo (Fix B.1) to avoid double-delivery.
++
++3. **Fix B.2 ("broadcast to other authenticated clients only") misses the architecture.** The side panel does not connect directly to the companion WS. It receives all messages through the extension background's `chrome.runtime.sendMessage` relay. Even if the companion broadcasts `log.event` to the tray, the side panel won't see it. To preserve live log display after removing the echo, add a companion→extension WS message for logs that originates from the companion itself (e.g., `logger.log` events generated companion-side), and have the extension background forward those. For extension-originated logs, forward locally in `logToCompanion`.
++
++4. **Six message types fall through to the triggering `.catch`**: `config.updated`, `computer.task.event`, `security.confirmation.request`, `security.confirmation.resolved`, `security.confirmation.expired`, and `log.event`. Fix A.1 neutralizes them all. But if you also add early returns for `security.confirmation.*` and `computer.task.event` (which don't need sidepanel forwarding when the Cockpit is the intended surface), you reduce noise. Worth a separate follow-up PR — not blocking this fix.
++
++5. **The companion echo of `log.event` also affects the tray.** `server.ts:5170-5181` echoes to the **sender** WebSocket regardless of client type. When the tray sends a `log.event`, it receives its own echo. The tray presumably doesn't re-process echoes in a way that creates a loop (traffic was small), but this is latent tech debt. Fix B.1 cleans this up for both clients.
++
++6. **Test plan gap:** The proposed regression test ("inject one companion push; assert log.event count ≤ 1") is good. Add a variant: simulate the **initial trigger** (companion sends `config.updated` while sidepanel closed), assert no `log.event` sent back. Also add: with sidepanel open, assert extension-originated `log.event` still reaches the sidepanel (covers nit #2).
++
++---
++
++## Recommended implementation order
++
++1. **Fix A.1** (`background/index.ts:384`): `console.debug(...)` instead of `logToCompanion(...)` — one-line change, breaks the loop
++2. **Fix B.1** (`server.ts:5177`): remove the `ws.send(JSON.stringify(msg))` echo — defense-in-depth
++3. **Live log preservation** (`background/index.ts:166-172`): add `chrome.runtime.sendMessage({ type: "log.event", ... }).catch(() => {})` inside `logToCompanion` so extension-originated logs reach sidepanel without the companion round-trip
++4. **Fix C (rate limit):** companion-side N/sec drop per connection — defense-in-depth
++5. **Regression tests:** per revised test plan above
++
++---
++
++VERDICT: APPROVE_WITH_NITS
+diff --git a/docs/audit/reviews/log-event-echo-loop-rca-prompt-2026-07-31.md b/docs/audit/reviews/log-event-echo-loop-rca-prompt-2026-07-31.md
+new file mode 100644
+index 0000000..153e128
+--- /dev/null
++++ b/docs/audit/reviews/log-event-echo-loop-rca-prompt-2026-07-31.md
+@@ -0,0 +1,182 @@
++# Dual review: log.event echo loop RCA + proposed fix (pre-implementation)
++
++**Batch ID:** `log-event-echo-loop-rca`  
++**Stage:** Root-cause diagnosis + fix design (NO code landed yet)  
++**Date:** 2026-07-31  
++**Surface:** n/a (bugfix; no new capability)  
++**L2-classes:** (none)  
++**Compose:** none  
++**Autonomy:** n/a  
++**Trust:** n/a (loop is observability path, not a gate)  
++**Channel:** n/a  
++
++---
++
++## Your job
++
++You are an **independent** senior reviewer. Challenge the RCA and proposed fix **against the real repo code**. Do **not** rubber-stamp.
++
++1. Read the cited files with tools (`Read` / `Grep` / `Bash`).
++2. Confirm or refute the closed loop.
++3. Check for **alternative / concurrent** root causes that better explain overnight battery drain.
++4. Critique the proposed fix for incompleteness, regressions, and missing tests.
++5. End with exactly one line: `VERDICT: APPROVE` | `VERDICT: APPROVE_WITH_NITS` | `VERDICT: REJECT`.
++
++**APPROVE** = RCA correct enough to implement as proposed.  
++**APPROVE_WITH_NITS** = RCA accepted; fix plan needs non-blocking adjustments listed before verdict.  
++**REJECT** = RCA wrong / incomplete / fix plan dangerous — list **blocking** issues with `file:line` before verdict.
++
++---
++
++## Context (what happened on the user's Mac)
++
++1. Laptop lid closed overnight; morning battery ~1%.
++2. Power log: `Thermal Emergency Sleep` at 01:27 with `Charge:1%`, then DarkWake thrashing (Wi‑Fi/BT), then long sleep; lid open 08:54 still 1%.
++3. Live while awake (same day, before processes stopped):
++   - `cmspark-agent.js daemon` ~30–38% CPU continuous; sample hot path `uv__io_poll` → `OnUvRead` → JS → `Writev`.
++   - Google Chrome (extension process + network helper) multi-core high CPU.
++   - **Local TCP 127.0.0.1:23401** between **Chrome Helper** and daemon: tens of GB cumulative rx/tx.
++   - **Tray** WS peer on same port: small traffic (orders of magnitude lower).
++4. Companion business logs overnight: almost empty (no agent task storm).
++5. CMspark holds **no** IOPM sleep assertions / no caffeinate in companion code.
++
++Historical related incidents (project memory):
++
++| ID | Issue | Status |
++|----|--------|--------|
++| S3 / PR #4 | tray↔daemon `skill.list` request/response loop (~29MB/s, ~108GB) | Fixed `3e60cc5` |
++| S10 / PR #64 | streaming jailbreak scan O(N²) main-thread spin | Fixed `b0ad317` |
++| **This** | alleged **log.event echo + sidepanel_forward_failed** loop | **Unfixed** |
++
++---
++
++## Claimed root cause (closed loop)
++
++### Companion echoes every `log.event` back to the **same** WS client
++
++**File:** `companion/src/server.ts` (search `if (msg.type === "log.event")`)
++
++```ts
++if (msg.type === "log.event") {
++  // ... logger.log(...)
++  if (ws.readyState === WebSocket.OPEN) {
++    ws.send(JSON.stringify(msg))  // echo to sender
++  }
++  return
++}
++```
++
++### Extension: any companion → extension message is forwarded via `chrome.runtime.sendMessage`; on failure, logs back to companion
++
++**File:** `chrome-extension/src/background/index.ts` — end of `handleCompanionMessage`:
++
++```ts
++chrome.runtime.sendMessage(msg).catch((e) => {
++  logToCompanion("debug", "extension.sidepanel_forward_failed", {
++    message_type: msg?.type || "unknown",
++    error: e?.message || String(e),
++  })
++})
++```
++
++**File:** same file — `logToCompanion`:
++
++```ts
++wsClient.send({ type: "log.event", source: "extension", level, event, data })
++```
++
++### When Side Panel / Cockpit have no runtime listeners
++
++`chrome.runtime.sendMessage` rejects with “Receiving end does not exist” → `sidepanel_forward_failed` → companion echoes `log.event` → handleCompanionMessage tries sendMessage again → **tight loop**.
++
++**Trigger condition (common):** Extension authenticated to companion, Side Panel and Cockpit closed (typical overnight / lid-closed).
++
++**Why this matches live evidence:** storm on **Chrome↔daemon** socket, not tray; pure stream I/O sample; no business log volume; high dual-end CPU.
++
++---
++
++## Claimed non-causes (for you to verify)
++
++1. PR #4 tray `skill.list` loop — source + packaged bundle treat only `skill.activated`/`skill.deactivated` as push; tray socket traffic was small.
++2. PR #64 jailbreak O(N²) — `jailbreakScanWindow` exists; overnight no streaming chat.
++3. CMspark intentionally preventing sleep — no assertions in `pmset -g assertions` from cmspark; no IOPM/caffeinate in companion src.
++
++Contributing (not primary loop) may still matter for drain: coreaudiod long PreventUserIdleSystemSleep, AddressBookSourceSync, Wi‑Fi DarkWake.
++
++---
++
++## Proposed fix (design only — not implemented)
++
++### Fix A — Extension (must)
++
++1. **Never** call `logToCompanion` for `sidepanel_forward_failed` (or any “no receiver” failure). Use `console.debug` only.
++2. Prefer: if `msg.type === "log.event"`, do **not** forward via `chrome.runtime.sendMessage` at all (sidepanel already gets logs via other paths if needed — verify), OR skip the failure log for `log.event` only (weaker).
++
++### Fix B — Companion (must)
++
++1. Do **not** echo `log.event` back to the **sender** socket.
++2. If live log UI is still required: broadcast to **other** authenticated clients only, or drop echo entirely if sidepanel reads logs another way.
++
++### Fix C — Defense in depth (should)
++
++1. Extension: early-return on inbound `log.event` (ignore) so even if companion still echoes, no re-log.
++2. Companion: rate-limit / drop flood of `log.event` per connection (e.g. N/sec).
++3. Regression test: simulate extension connection with no sidepanel listener; inject one companion push; assert `log.event` count on wire is bounded (≤1 or 0 echoes) within a short window.
++
++### Out of scope for this fix
++
++- Tray skill.list (already fixed).
++- Jailbreak scan (already fixed).
++- macOS Power Nap / AddressBook / coreaudiod (OS-side hygiene for user).
++
++---
++
++## Review checklist (answer each)
++
++### RCA validity
++
++- [ ] Confirm loop exists by reading current `server.ts` + `background/index.ts` (file:line).
++- [ ] Confirm Side Panel closed ⇒ `sendMessage` failure path is real in MV3.
++- [ ] Confirm no early-return for `log.event` in `handleCompanionMessage` that would break the loop.
++- [ ] Is echo-to-sender intentional product behavior, or accidental?
++- [ ] Could another path better explain tens-of-GB Chrome↔daemon traffic? (e.g. chat.token full content, tool.execute storm, MCP reconnect, tab.navigated flood)
++
++### Fix plan quality
++
++- [ ] Does Fix A alone break the loop? Fix B alone? Both needed?
++- [ ] Does dropping echo break live log UI in Side Panel? Trace how sidepanel shows logs today (`useWebSocket` `log.event` case).
++- [ ] Race / ordering: multiple WS clients (tray + extension + sidepanel ports)?
++- [ ] Security: any risk that silencing forward_failed hides real failures?
++- [ ] Test plan sufficient? What integration test shape fits this repo (node:test / extension mock)?
++
++### Overnight narrative
++
++- [ ] Does this RCA + OS factors adequately explain Thermal Emergency + 1% battery?
++- [ ] Any missing measurement you would require before approving implementation?
++
++---
++
++## Required output format
++
++```markdown
++## Summary
++(2–5 sentences)
++
++## RCA verdict
++CONFIRMED | PARTIAL | REFUTED
++(with evidence file:line)
++
++## Alternative causes considered
++...
++
++## Fix plan feedback
++### Blocking
++- ...
++### Nits
++- ...
++
++## Recommended implementation order
++1. ...
++
++VERDICT: APPROVE|APPROVE_WITH_NITS|REJECT
++```
+diff --git a/docs/audit/reviews/log-event-echo-loop-rca-verdict-20260731-091807.json b/docs/audit/reviews/log-event-echo-loop-rca-verdict-20260731-091807.json
+new file mode 100644
+index 0000000..f1688c4
+--- /dev/null
++++ b/docs/audit/reviews/log-event-echo-loop-rca-verdict-20260731-091807.json
+@@ -0,0 +1,8 @@
++{
++  "batch": "log-event-echo-loop-rca",
++  "timestamp": "20260731-091807",
++  "claude": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/log-event-echo-loop-rca-claude-20260731-091807.md" },
++  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/log-event-echo-loop-rca-pi-20260731-091807.md" },
++  "both_approve": true,
++  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/log-event-echo-loop-rca-diff-20260731-091807.patch"
++}

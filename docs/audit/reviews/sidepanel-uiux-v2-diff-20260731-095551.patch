@@ -1,0 +1,2548 @@
+# Dual external review context
+batch: sidepanel-uiux-v2
+base: HEAD
+time: 20260731-095551
+
+1235624
+
+A  docs/audit/reviews/sidepanel-uiux-v2-adversarial-A-2026-07-31.md
+A  docs/audit/reviews/sidepanel-uiux-v2-adversarial-B-2026-07-31.md
+A  docs/audit/reviews/sidepanel-uiux-v2-dual-review-prompt-2026-07-31.md
+A  docs/superpowers/specs/2026-07-31-sidepanel-uiux-redesign.md
+?? docs/audit/reviews/log-event-echo-loop-impl-diff-20260731-093639.patch
+?? docs/audit/reviews/log-event-echo-loop-rca-diff-20260731-091807.patch
+?? docs/audit/reviews/sidepanel-uiux-v2-diff-20260731-095551.patch
+
+## Diff (git diff + staged)
+ .../sidepanel-uiux-v2-adversarial-A-2026-07-31.md  | 262 ++++++++++
+ .../sidepanel-uiux-v2-adversarial-B-2026-07-31.md  | 383 +++++++++++++++
+ ...epanel-uiux-v2-dual-review-prompt-2026-07-31.md |  57 +++
+ .../specs/2026-07-31-sidepanel-uiux-redesign.md    | 537 +++++++++++++++++++++
+ 4 files changed, 1239 insertions(+)
+
+diff --git a/docs/audit/reviews/sidepanel-uiux-v2-adversarial-A-2026-07-31.md b/docs/audit/reviews/sidepanel-uiux-v2-adversarial-A-2026-07-31.md
+new file mode 100644
+index 0000000..e0f1413
+--- /dev/null
++++ b/docs/audit/reviews/sidepanel-uiux-v2-adversarial-A-2026-07-31.md
+@@ -0,0 +1,262 @@
++# Adversarial UX/Product Critique — Side Panel UI/UX Redesign v2
++
++| Field | Value |
++|-------|--------|
++| Doc under review | `docs/superpowers/specs/2026-07-31-sidepanel-uiux-redesign.md` |
++| Critic role | Independent adversarial UX/product (stress-test, not rubber-stamp) |
++| Date | 2026-07-31 |
++| Comparators | ADR-020 (accepted), three-mode redesign 2026-07-26 (D1–D16), `docs/DESIGN.md`, `chrome-extension/src/sidepanel/App.tsx` |
++
++---
++
++## Verdict: MAJOR_REVISE
++
++Direction is right: collapse strip stack, make Composition legible as「装配」, keep Surface L0/L1/L2 + content-split confirm, no new runtime. **Do not implement as written.** Ontology slip (Board inside Composition plane), height-budget self-contradiction, BottomBar migration under-specified against a ~1k-line panel host, and acceptance criteria that claim more than they measure would ship a quieter shell with broken discoverability and ADR-020 narrative debt.
++
++Not **BLOCK**: no fourth axis, no「中层 Agent」product fork, D10′ content-split preserved, L1 expand remains user-only. Fix the issues below, then dual-review again.
++
++---
++
++## Blocking issues (must fix)
++
++### B1. Board is Autonomy — not a section of「装配」(Composition)
++
++**Evidence**
++
++- Spec §4.5 lists **Board** as section 6 of **装配 Drawer (Composition plane)** with Skills / Knowledge / Packs / MCP.
++- ADR-020 Axis C: *「Board 仅归属 Autonomy（协调状态，不是 Skill/MCP 式组合原语）」*; Axis B enumerates Skill · Knowledge · MCP · user-env · Pack · modules — **Board is not Composition**.
++- Spec §0/§2.1 claim hard ADR-020 fidelity and forbid bare「中层 Agent」; stuffing Autonomy into a Composition-branded drawer reintroduces the *same* mental-model error under a prettier label: “everything secondary lives in 装配.”
++
++**Why blocking**
++
++This is not copy nit. Implementers will wire Board next to Pack/MCP, docs will say「组合能力」, and the next feature will ask “why not put spawn / fleet config in 装配 too?” Ontology wash.
++
++**Required fix**
++
++- Remove Board from the Composition drawer section list.
++- Place Board under Autonomy chrome: FocusBand FleetStrip expand, StatusRail when multi-worker active, and/or Cockpit — consistent with Q4 default and ADR-015/016.
++- If a single entry point is required for discovery when idle, use `/board` + ⋯ only, labeled **编排 / 自主度**, never under 装配.
++
++### B2. FocusBand stacking vs ≥55% ChatStream — acceptance is gamed
++
++**Evidence**
++
++- §4.1 / P7: ChatStream ≥55% viewport height at L0 is an **acceptance metric**.
++- §4.3 allows simultaneous FocusBand rows: L1 ContextStrip (36px) + Confirm (~56px); separately L2 task (~48px) + multi-worker Fleet (~40px). Rule only bans “Context + **full fleet**,” not Context + Confirm or Confirm + Fleet.
++- §5.5 wireframe explicitly stacks **two** FocusBand rows (tab + evaluate confirm).
++- §8 v2-P0 Accept measures only: *「L0: ChatStream height ≥55% … at 640px」* — the empty chrome path, not the worst product path.
++
++**Back-of-envelope at 640px panel height** `[assumed]`
++
++| Stack | Approx chrome | Chat ratio |
++|-------|---------------|------------|
++| L0 idle (StatusRail 48 + Composer+chips ~110) | ~158 | ~75% — easy |
++| L1 + pending confirm (48+36+56+110) | ~250 | ~61% |
++| L2 task + confirm + fleet + composer (48+56+48+40+120) | ~312 | **~51% — fails 55%** |
++
++**Required fix**
++
++- Define a **single FocusBand slot** with strict priority (e.g. Confirm > L2 Safety > Fleet summary > L1 Context), max **one** primary row + optional 1-line secondary, or hard max height (e.g. 56–64px) with overflow into Cockpit/popover.
++- Acceptance must include **worst-case** heights: L1+confirm, L2+confirm, multi-worker+confirm — not only L0 idle.
++- Either drop absolute 55% for non-L0 or lower chrome caps so the number is real.
++
++### B3. BottomBar retirement has no migration map for the actual host
++
++**Evidence**
++
++- Spec K2/§4.1: retire permanent BottomBar tab strip; chips + `/` + 装配 drawer.
++- Code: `BottomBar.tsx` is not “tabs only” — it hosts panel openers, overflow「更多」, Skills/Know/Packs/Board/MCP/Apps bodies, `cmspark:open-context-panel` listeners, and data loaders (`pack.list`, `modules.list`, …). `App.tsx` vertical order is Header → ContextStrip → SafetyStrip → ChatView → FleetStrip → **BottomBar** → InputArea.
++- Slash meta today (`META_PANEL_SLASH` in `App.tsx`) only opens **packs / board / mcp** — not skills, knowledge, history, tabs, apps. Spec claims “`/` parity” and “≤2 clicks to MCP/Pack” without inventorying current gaps.
++- §13 mentions soft-deprecate behind flag; **§12 PR plan has no flag, no dual-path, no panel-host extraction PR**.
++
++**Why blocking**
++
++Killing the tab row without extracting panel host = either (a) dead panels mid-PR, or (b) chips that open nothing, or (c) a giant PR that rewrites BottomBar in place while claiming “shell only.” Three-mode D5 already demoted packs/board/mcp to overflow + `/`; v2 goes further without a replace-before-remove plan.
++
++**Required fix**
++
++Add an explicit migration sequence **before** “no permanent BottomBar” acceptance:
++
++1. Extract `ContextPanelHost` (panel registry + open API) from BottomBar.
++2. Achieve real `/` parity matrix (every former primary + overflow id).
++3. Ship chips → same open API.
++4. Then remove tab strip (optional flag one release).
++5. Only then mount 装配 drawer as browsing shell over the same host.
++
++PR2 must not be “delete BottomBar”; it must be “host extract + strip remove.”
++
++---
++
++## Major issues
++
++### M1. Three-mode D1–D16 “locked” claim soft-reopens D5 implementation without a decision ID
++
++- Three-mode §4 **fixed vertical order** includes permanent **ContextBar** (mode-split 2–3 entries). P0 acceptance literally required mode-filtered BottomBar, not its absence.
++- v2 §2.2: *“does not reopen those product forks”* while K2 retires the permanent tab strip entirely.
++- Spirit of D5 (command-first + mode-split) is compatible; **implementation contract** is not.
++
++**Fix:** Add **K2′ / D5′** (or amend note): “ContextBar permanent tabs → mode-aware chips ≤3 + `/` + 装配; D5 intent preserved.” Reference three-mode §4 as superseded for chrome only. Dual-review should treat this as an intentional IA delta, not silent scope creep.
++
++### M2. L2 Composer chips reintroduce power chrome three-mode removed from Panel
++
++- §4.4 L2 chips: **确认台 · Abort link**.
++- Three-mode §4: L2 ContextBar **minimal / hidden**; abort lives on SafetyStrip (D10′); Cockpit is conductor (D12′).
++- Abort beside composer (near Send) risks **P1.3 / §1.3 “destructive never next to Send”** and duplicates SafetyStrip.
++
++**Fix:** L2 chips empty or single「确认台」opener; Abort only in FocusBand Safety row (mandatory, large hit target). No second Abort in dock.
++
++### M3. `alert()` acceptance overclaims; hygiene scope is incoherent
++
++- §6.1 / §8 / §14: offline uses banner; *“Zero `alert()` in extension UI paths.”*
++- Code: offline path in `App.tsx` DisconnectedBanner retry uses `alert()`; **many more** remain (`NotebooklmImporterPanel`, `BottomBar` skill folder, `ThreadList` title, log path copy, etc.).
++- v2-P0 deliver only kills offline `alert()` — success metric claims zero everywhere.
++
++**Fix:** Split metrics:
++
++- P0: no `alert()` on **connection/offline/reconnect** paths.
++- P1+: replace remaining `alert()` with toast/banner grammar (inventory table).
++- Do not claim zero-global until inventory is closed.
++
++### M4. Modal / overlay hierarchy still undefined after adding 装配
++
++- §0 pain: secondary panels “slide under” chat without clear modal hierarchy.
++- v2 adds 装配 drawer but does not specify z-index / focus trap order vs SettingsSlideout, SkillCraft, NotebookLM importer, McpServerForm, LogBar, Thread popover, slash popover, Fleet expand.
++- §6.2 Esc “priority stack” is named but not ordered.
++
++**Fix:** One table: layer name → open triggers → exclusivity (single vs stack) → Esc closes which → focus return. Rule: only one full-height overlay at a time; slash popover subordinate to drawer.
++
++### M5. 装配 drawer is over-stuffed for 320px; Q1 default may erase chat
++
++- Six accordion/tabs (Skills…Board) in 320px; bottom sheet default (Q1) covers ChatStream — the surface P7 tried to protect.
++- Apps + user-env lumped (§4.5 §5) — different trust stories (Host apps vs secrets ADR-019).
++- Packs omit **modules** / `capability_profile` (code `modules.list` with packs) — enterprise path invisible.
++- Craft lives in ⋯ **and** Skills section — OK if documented; else double IA.
++
++**Fix:**
++
++- Cap drawer to Composition only: Skills · Knowledge · Packs(+modules) · MCP · user-env; Apps as Host subsection or Cockpit-heavy.
++- Prefer **height-capped bottom sheet** (~45–50% panel) or right overlay with dimmed chat still partially visible; document first-run discoverability of `/装配`.
++- Resolve Q1 in-doc before PR4; do not leave implementer default as product decision.
++
++### M6. Missing states matrix is promised then empty
++
++- §5.3 demands default·hover·active·disabled·loading·empty·error for chrome components — **no filled matrix**.
++- Three-mode §6 already listed Loading / Empty / Error / Offline / Confirm / Follow-up queue — v2 does not carry them into shell components.
++- Gaps vs real product:
++
++| State | Spec coverage |
++|-------|----------------|
++| Streaming / tool-running | Thin (ToolCard denser) — no StatusRail “busy” |
++| Offline + pending confirm | Unspecified (disable send vs allow deny?) |
++| Reconnecting | Tooltip only |
++| First-run / unpaired (`.paired`) | Not in empty state |
++| L2 send hard-gate (D12′) | Placeholder only; no disabled Send visual |
++| Confirm timeout (D14) | Not in FocusBand grammar |
++| Pin mode (D3) | Buried in ⋯ menu only |
++| Multi-worker + L1 tab context | Q4 open; collision with B2 |
++| SW death / orphan Cockpit | Out of scope silence — OK if explicit |
++| Enterprise modules disabled | Not in Packs section |
++
++**Fix:** Fill §5.3 for StatusRail, FocusBand, ComposerDock, MinimalConfirm at minimum; add a “states” subsection under §6 with offline×confirm and L2 hard-gate.
++
++### M7. Visual system incomplete and conflicts DESIGN.md
++
++- §5.2 radius **6/8/12 only**; DESIGN.md radius table is **4/6/8**, while Composer already uses `radiusLg` 12 — SoT conflict.
++- DESIGN.md Connection Status still documents Material `#4CAF50/#FF9800/#F44336`; v2 migrates — good, but **must patch DESIGN.md in PR1**, not “later P2.”
++- Token roles miss existing semantics: `userBubbleBg`, `assistantBubbleBg`, `modeBrowserBg`, risk helpers, accent soft — implementers will invent hex again.
++- Dark tokens listed for “Cockpit/L2 strip” while K6 defers Panel dark — OK, but StatusRail at L2 LIVE on light panel + dark Safety is two visual systems; say how ModeBadge LIVE reads on light StatusRail.
++
++**Fix:** One SoT pass: either extend DESIGN.md radius to include 12 and drop 4, or keep 4 for icons; list full semantic roles v2 will touch; PR1 acceptance includes DESIGN.md connection section rewrite.
++
++### M8. PR plan realism / ordering
++
++| Issue | Detail |
++|-------|--------|
++| P0 = PR1+2+3 in 1–1.5 wk | Optimistic given App.tsx monolith + BottomBar host extract |
++| PR2 deps PR1 only | Host extract should be its own PR; chips without host = half-ship |
++| PR3 parallel to PR2 | FocusBand merge independent OK, but P0 accept needs both |
++| PR5 visual deps only PR1 | Can polish bubbles while chips/drawer thrash layout — waste |
++| PR4 装配 after PR2 | Correct only if PR2 extracted host |
++| No rollback / flag | §13 flag not in §12 |
++| No test plan | No unit for open-panel parity; no measure script for 55% height |
++| Cockpit PR6 last | Fine, but “no regression content-split” in P0 needs manual checklist |
++
++**Fix:** Reorder: PR1 StatusRail+tokens+offline → PR2 **PanelHost extract** (BottomBar still present) → PR3 chips + `/` parity + flag to hide tab strip → PR4 FocusBand → PR5 drawer → PR6 visual → PR7 Cockpit. Timebox P0 to PR1–3 with honest 2–3 wk if host extract is real.
++
++### M9. Research / toolchain section dilutes the product doc
++
++- §1.1 is meta (Grok `$design`, OMX, Brad Frost talks). Fine in appendix; weak as §1 of a shipping IA spec.
++- Risks dual-review energy spent on philosophy tables (P1–P7) that mostly restate three-mode + ADR-020.
++
++**Fix:** Move §1.1–1.2 to appendix; open with pain audit (§3) + locked constraints (§2).
++
++---
++
++## Minor / nits
++
++1. **§4.1 “three zones” then lists A–D four zones** — rename “four zones” or fold chips into ChatStream footer.
++2. **§4.2 Menu dumps Craft / export / NB / logs / pin** — discoverability still uneven; no IA for which stay ⋯ vs `/`.
++3. **§4.4 “Hist”** is not Composition; fine on chips, but don’t later drag History into 装配.
++4. **§5.4 empty shortcuts “总结本页”** may imply L1 browser action from L0 empty — clarify “paste/summarize selection as text” vs tool call (ADR-020 L0: no CDP tools).
++5. **Cmd+K (Q2)** conflicts with Chrome/OS in some locales; default Yes is risky — prefer `/` only until tested.
++6. **§7 “合盖耗电”** out-of-scope one-liner is good; ensure no new WS heartbeat from StatusRail polish.
++7. **Emoji residual** — §0 complains; §5.4 empty state still Chinese-only (good) but auto-skill toast in App still uses 🤖 — out of P0 scope if called out.
++8. **Success “3 users 10-min first-run”** — no task script (find Pack, allow confirm, open Cockpit).
++9. **§2.1 UI mapping “L2 Required conductor”** — matches D8/D12′; good. Panel “Safety chip + abort + minimal confirm” must stay when drawer open (drawer must not cover Abort).
++10. **Copy「确认台」** — aligned with DESIGN.md / user guide; keep single brand (spec does).
++11. **Fleet “only multi-agent active”** — matches current FleetStrip intent; ensure idle hide remains acceptance.
++12. **Pin in ⋯ only** — three-mode D3 pin is power-user; consider long-press mode badge (future), not P0.
++
++---
++
++## What is strong
++
++1. **Correct problem framing (§0, §3)** — strip stack + BottomBar landfill + Material residue is code-true (`App.tsx` order; residual `alert`/Material in DESIGN.md).
++2. **Hard non-goals and K1** — refuses fourth axis, thread rewrite, full App rewrite, Panel full dark in P0; protects shipped three-mode product forks at the *ontology* level even when chrome changes.
++3. **Composition naming「装配」** — directly answers ADR-020 “中层 Agent” failure mode; alternatives table correctly rejects Pack-as-Surface and confirm-back-to-modal.
++4. **Content-split preserved** — Cockpit remains 确认台; Panel MinimalConfirm in FocusBand; D10′ not reopened.
++5. **Command-first direction** — extends D5/S1 instead of inventing a sixth bottom icon row.
++6. **Quiet Agent Shell thesis** — consistent with DESIGN.md quiet-professional; token migration of connection colors is overdue and concrete.
++7. **Phased acceptance skeleton** — measurable ChatStream ratio (if fixed per B2), no permanent tab row, copy ban on「中层 Agent」are the right *kinds* of checks.
++8. **Offline / recovery grammar intent (P5)** — right product instinct; needs scoped delivery (M3).
++
++---
++
++## Concrete rewrite suggestions (section IDs)
++
++| Section | Rewrite action |
++|---------|----------------|
++| **§1** | Demote toolchain to Appendix A; lead with constraints + pain. |
++| **§2.2** | Add explicit **D5′ / K2′**: permanent ContextBar tabs superseded by chips + `/` + drawer; list what stays locked (D1–D4, D9′–D16). |
++| **§4.1** | Four zones; add **max chrome budget** table (px) per level + multi-agent. |
++| **§4.3** | **Single-slot FocusBand** priority enum; delete dual-row wireframe or mark as invalid; max height hard cap. |
++| **§4.4** | L2 chips: drop Abort; empty or 确认台 only. Document chip → `openPanel(id)` API. |
++| **§4.5** | Composition-only sections; **remove Board**; split Apps vs user-env; add Packs+modules; axis label footer: “挂到当前线程 / Surface — 非更深层 Agent.” |
++| **§4.5b (new)** | Autonomy entry points: FleetStrip / `/board` / Cockpit — not 装配. |
++| **§5.2–5.3** | Sync radius/type with DESIGN.md; full token role list; **fill** states matrix for 4 shell components. |
++| **§5.5** | Redraw L1+confirm as **one** FocusBand row (tab chip collapsed when confirm active, or confirm replaces context). |
++| **§6.1** | Add offline×confirm, L2 hard-gate Send, first-run unpaired, confirm timeout. |
++| **§6.2** | Ordered Esc stack table. |
++| **§6.4 (new)** | Overlay exclusivity + z-index. |
++| **§8** | Worst-case height accepts; `alert()` scoped; `/` parity checklist (tabs, skills, knowledge, history, packs, board, mcp, apps). |
++| **§11** | Close Q1/Q4 with defaults that respect B1/B2; re-open only if user research contradicts. |
++| **§12** | Insert **PanelHost extract PR**; flag for tab-strip removal; tests; reorder visual after IA stable; honest calendar. |
++| **§13** | “Don’t cover Abort with drawer”; “Don’t put Board under 装配.” |
++| **§14** | Align metrics with scoped P0; first-run script 3 tasks. |
++
++### Minimal “unblock implement” checklist
++
++- [ ] Board out of 装配; Autonomy placement written  
++- [ ] FocusBand single-slot + worst-case height accept  
++- [ ] BottomBar → PanelHost migration sequence in §12  
++- [ ] `/` parity matrix (current code gaps closed on paper)  
++- [ ] `alert()` metric scoped  
++- [ ] D5′ recorded as intentional lock update  
++- [ ] DESIGN.md connection Material hex deleted in same PR as tokens  
++- [ ] Esc/overlay stack table  
++
++Until then: **MAJOR_REVISE** — strong shell concept, unsafe to code as the source of truth.
++
++---
++
++*Critic evidence levels: code paths and ADR quotes `[inspected]`; height arithmetic `[assumed]` from stated px caps; no user study run.*
+diff --git a/docs/audit/reviews/sidepanel-uiux-v2-adversarial-B-2026-07-31.md b/docs/audit/reviews/sidepanel-uiux-v2-adversarial-B-2026-07-31.md
+new file mode 100644
+index 0000000..5089f3d
+--- /dev/null
++++ b/docs/audit/reviews/sidepanel-uiux-v2-adversarial-B-2026-07-31.md
+@@ -0,0 +1,383 @@
++# Adversarial Review B — Side Panel UI/UX Redesign v2  
++## Interaction & Implementation Risk (not brand aesthetics)
++
++| Field | Value |
++|-------|--------|
++| **Verdict** | **MAJOR_REVISE** |
++| Date | 2026-07-31 |
++| Spec | [`docs/superpowers/specs/2026-07-31-sidepanel-uiux-redesign.md`](../../superpowers/specs/2026-07-31-sidepanel-uiux-redesign.md) |
++| Critic focus | Task success after BottomBar removal · discoverability · FocusBand priority · metrics · PR sequencing · landfill re-entry |
++| Code cross-check | `BottomBar.tsx`, `App.tsx`, `mode-controller.ts`, `SafetyStrip.tsx`, `MinimalConfirm.tsx`, `FleetStrip.tsx`, `docs/confirm-center-user-guide.md`, `docs/mission-pack-usage.md` |
++| Evidence tags | `[inspected]` static code · `[spec]` design claims · `[assumed]` unproven product behavior |
++
++---
++
++## Verdict: MAJOR_REVISE
++
++Direction (quiet shell, chat height, command-first Composition, keep D10′ content-split) is sound and consistent with ADR-020 / three-mode locks. **Do not ship PR2 “retire BottomBar” as written.** The draft under-specifies the **panel host** that replaces BottomBar, leaves a **P0→P1 discoverability hole** for Packs/MCP/workspace, and treats FocusBand priority as prose rather than a hard state machine. Those are shippability defects, not polish nits.
++
++Not **BLOCK**: ontology, confirm content-split, Cockpit, and mode derivation are correctly frozen. Not **APPROVE** / **MINOR**: without the must-change list below, implementers will either regress task paths or re-grow strip stack under a new name.
++
++---
++
++## Blocking
++
++*(Issues that must be resolved in the design doc before dual-review sign-off and before any PR that removes BottomBar. Not “stop the entire redesign.”)*
++
++### B1. BottomBar is the panel **host**, not only a tab strip — PR2 has nowhere to render Packs/MCP/Skills
++
++**Reality today `[inspected]`:** `BottomBar.tsx` owns:
++
++1. Primary + overflow tab chrome  
++2. `activePanel` state and panel body (`PacksPanel`, `McpPanel`, `SkillsPanel`, …)  
++3. `loadPanelData()` side effects (`pack.list`, `mcp.list`, …)  
++4. The only listener for `cmspark:open-context-panel` (slash meta path in `App.tsx` `META_PANEL_SLASH` → `CustomEvent`)
++
++**Spec claim `[spec]`:** §4.1 / K2 / PR2 retire permanent BottomBar; chips + `/` parity; 装配 drawer only in PR4.
++
++**Gap:** PR2 says “Keep panel openers for Skills/Know/… via chips” but does **not** name a replacement host component, max height, close semantics, or where slash events land if BottomBar unmounts. If BottomBar is deleted without a host:
++
++| Task | Path breaks? |
++|------|----------------|
++| Chat | No (ChatView independent) |
++| Confirm dangerous tool | No (`SafetyStrip` / `MinimalConfirm` independent) |
++| L2 abort | No (`SafetyStrip` abort / OS hotkey) |
++| Open packs / workspace pick | **Yes** — `PacksPanel` only mounted under BottomBar |
++| MCP list / add server flow | **Yes** — `McpPanel` + form wiring via that tree |
++| Slash `/packs` `/mcp` `/board` | **Yes** — event listener dies with BottomBar |
++
++**Required before dual-review:** Specify explicitly for P0:
++
++- `ContextPanelHost` (name free) that mounts the same panel components, driven by chips + slash + later drawer  
++- Lifecycle: open / Esc close / loadPanelData parity  
++- Soft-flag: BottomBar strip off, host on — or **do not land PR2 until host ships in the same PR**
++
++Without this, “retire BottomBar” is not a refactor; it is an incomplete feature amputation.
++
++---
++
++### B2. P0 acceptance “Pack/MCP ≤ 2 clicks” is false under the chip tables
++
++**Chip tables `[spec]` §4.4:**
++
++| Level | Chips (≤3) | Packs? | MCP? |
++|-------|------------|--------|------|
++| L0 | Skills · Know · Hist | ❌ | ❌ |
++| L1 | Tabs · Skills · 工作区 | ❌ | ❌ |
++| L2 | 确认台 · Abort link | ❌ | ❌ |
++
++**P0 deliverables `[spec]` §8:** StatusRail, remove BottomBar, chips + `/` parity, FocusBand — **no 装配 drawer** (P1).
++
++**Today `[inspected]`:** Packs/MCP/Board are overflow under「更多」— still **clickable without memorizing `/packs`**. Docs (`mission-pack-usage.md` §1) teach “底栏 … 任务包”.
++
++**After P0 as written:**
++
++- Mouse-only / non-command users lose the **visible** Pack/MCP entry until P1 drawer  
++- “≤ 2 clicks from chat” (`§14`) only holds if an unlabeled overflow chip or permanent「装配」button is in P0 — neither is in the P0 accept list  
++- `/` is **not a click**; it is a command vocabulary regression for the same population that already struggles with 功能杂
++
++**Required:** Either:
++
++1. **Pull a minimal 装配 entry into P0** (single button → bottom sheet with section list; content can be thin), **or**  
++2. **Demote P0 scope:** keep BottomBar overflow (or a single「更多」) until drawer ships; measure chat height with overflow collapsed, **or**  
++3. Rewrite metrics: “≤ 2 clicks **or** one `/` command from palette with discoverable labels in empty state”
++
++Ship order “kill strip first, discoverability later” will produce support load and doc thrash (`mission-pack-usage`, confirm-center cross-links).
++
++---
++
++### B3. FocusBand “priority” is not a conflict-safe state machine; L2 abort must not be demoted
++
++**Today stacking `[inspected]` (`App.tsx`):**
++
++```text
++Header
++ContextStrip?          // L1
++SafetyStrip?           // L2 task OR any pending confirm (includes MinimalConfirm + 急停)
++ChatView
++FleetStrip             // visible when workers|locks|intents|pending|expanded
++BottomBar
++InputArea
++```
++
++Critical cases already co-occur:
++
++1. **L2 task running + pending confirm** — `SafetyStrip` shows TaskChip + **急停** + `MinimalConfirm` (enterprise trust row possible).  
++2. **Any pending confirm** — `FleetStrip` treats `pending > 0` as visible (`FleetStrip.tsx` L41), so **Confirm chrome + Fleet strip stack** even for single-agent.  
++3. **Multi-worker + confirm + L2** — three chrome families compete for vertical space.
++
++**Spec `[spec]` §4.3:**
++
++- “0–2 rows”  
++- “Confirm elevates over task chrome”  
++- “Fleet never stacks *below* Confirm as a second full bar — merge into one FocusBand with internal priority”  
++- Table still lists separate max heights for Confirm (~56), L2 (~48), Fleet (~40)
++
++**Unanswered (must write as ordered rules):**
++
++| # | Scenario | Must remain one-gesture | Spec answer today |
++|---|----------|-------------------------|-------------------|
++| 1 | L2 + confirm | **急停** + allow/deny | “Confirm elevates” can be read as **hiding** task/abort row |
++| 2 | Confirm + fleet pending | Deny vs stop-all vs open 确认台 | Not ordered |
++| 3 | L1 ContextStrip + confirm | Tab chip + MinimalConfirm | Wireframe shows **two** FocusBand rows — contradicts “0–2” under load |
++| 4 | Esc | MinimalConfirm: Esc → **deny** (`MinimalConfirm.tsx`); BottomBar: Esc → close panel; drawer/palette will add more | §6.2 “priority stack” lists drawer/palette/popover only — **omits confirm deny** |
++
++**Three-mode lock D10′ `[inspected]`:** Panel L2 = TaskChip + **mandatory abort** + minimal confirm. FocusBand merge **must not** reinterpret “confirm elevates” as “abort optional.”
++
++**Required in spec:**
++
++```text
++FocusBand priority (hard):
++  P0  MinimalConfirm (queue head) — always full row when pending
++  P0  L2 Abort control — always visible when computerTask active & not finished
++      (may share the confirm row as a trailing control; must not require expand)
++  P1  L2 TaskChip / progress (may compress when confirm present)
++  P2  Enterprise trust chip (may fold under confirm)
++  P3  ContextStrip (L1) — hide or collapse to single tab chip when P0 active
++  P4  Fleet compact — suppress when pending==0 && workers==0; when pending>0
++      do NOT open a second bar: badge on confirm row or 确认台 affordance only
++Esc stack (hard):
++  1. slash popover close
++  2. 装配 / thread popover / drawer close
++  3. context panel host close
++  4. MinimalConfirm deny (only if no higher overlay)
++  Never: Esc closes drawer AND denies in one keypress without defined order
++```
++
++Wireframe §5.5 showing two FocusBand rows under L1+confirm must be reconciled with max-height budget or acceptance will fail at L1+evaluate.
++
++---
++
++## Major
++
++### M1. L2 Composer chips place “Abort” next to Send — contradicts own density / safety rules
++
++**Spec `[spec]`:**
++
++- §1.3: “destructive actions never next to Send”  
++- §4.4 L2 chips: `确认台 · Abort link`
++
++**Reality `[inspected]`:** Abort already lives in `SafetyStrip` (correct elevation, dark surface, away from composer). Duplicating Abort as a chip **above** the textarea re-introduces mis-tap risk and dual affordances (chip vs 急停 vs Ctrl+Alt+End).
++
++**Fix:** L2 chips = `确认台` only (or “打开确认台”); **never** Abort in ComposerDock. Keep Abort exclusively in FocusBand Safety row.
++
++---
++
++### M2. Slash “parity” is incomplete even today — retiring BottomBar amplifies it
++
++**Today `[inspected]` `META_PANEL_SLASH`:** only `packs`, `board`, `mcp`.  
++Not meta-slash: skills, knowledge, history, tabs, apps. Those rely on **visible** BottomBar primary tabs at L0/L1.
++
++**P0 chips** restore L0 Skills/Know/Hist and L1 Tabs/Skills — good.  
++**Apps**, full **Board** browse, **MCP server add**, **Pack module enable + workspace.pick** remain:
++
++- command-only until drawer, or  
++- orphaned if slash listener/host missing (B1)
++
++**Fix:** Expand meta slash table in the same PR as host (`/skills` `/knowledge` `/history` `/tabs` `/apps` `/board` `/packs` `/mcp` `/装配`), and update copy that still says “底栏「更多」”.
++
++---
++
++### M3. PR sequencing creates a product regression window and merge conflict magnet
++
++| PR | Hazard |
++|----|--------|
++| PR2 before PR4 | Composition discoverability cliff (B2) |
++| PR2 + PR3 both touch `App.tsx` shell | Parallel deps on PR1 only → conflict / double rewrite of layout |
++| PR2 without host | Broken slash + no panels (B1) |
++| “Soft-deprecate flag” in §13 | If flag leaves **strip + chips**, density is **worse** than today — landfill during migration |
++| PR5 visual pass independent of FocusBand | Easy to polish bubbles while safety stack still broken |
++
++**Fix sequencing (recommended):**
++
++1. **PR1** StatusRail + offline banner (no structural IA cut)  
++2. **PR2a** `ContextPanelHost` + move slash listener + optional collapse of tab *strip only* behind flag (panels still open)  
++3. **PR2b / PR3** FocusBand merge with hard priority tests  
++4. **PR2c** Remove permanent tab row only when chips + 装配 **entry** exist  
++5. **PR4** Full 装配 sections  
++6. Visual / Cockpit as planned  
++
++Acceptance for “no permanent BottomBar” must be **gated on host + one Composition entry**, not on strip deletion alone.
++
++---
++
++### M4. Acceptance metrics are partly unmeasurable / over-scoped
++
++| Metric | Problem |
++|--------|---------|
++| ChatStream ≥55% at 640px L0 | Measurable with DevTools; **must define chrome set** (empty FocusBand, chips only, no drawer, no logs). Good for L0 only — silent on L1+confirm where users most need chat. |
++| Pack/MCP ≤2 clicks | Fails under P0 chip tables (B2); no instrumentation |
++| Zero `alert()` in extension UI | Spec P0 only kills offline `alert` in `App.tsx` L204. **Many remain** `[inspected]`: BottomBar skill import, ThreadList, NotebooklmImporterPanel, logs path prompts. Claiming “zero alert()” without inventory is false marketing. |
++| 10-min first-run / 3 users | Aspirational; not a gate |
++| “No regression: confirm content-split, L2 Cockpit open, abort” | Checkbox only — no scenario list or test file pointers |
++
++**Fix:**
++
++- Split metrics: **L0 height** (gate) vs **L1+confirm height floor** (e.g. ChatStream ≥35% or FocusBand max px)  
++- `alert()` inventory: P0 = connection/reconnect paths; track remaining as P1 debt table  
++- Manual regression script (10 bullets): allow/deny/nonce-redirect, L2 abort ack timeout, fleet stop-all, `/packs` workspace pick, MCP list, Esc stack  
++
++---
++
++### M5. FleetStrip visibility rule fights FocusBand merge
++
++**Today `[inspected]`:** `visible = workerCount > 0 \|\| lockCount > 0 \|\| openIntents > 0 \|\| pending > 0 \|\| expanded`.
++
++Any security confirm forces Fleet chrome even with zero workers — **confirmed landfill residual** from multi-agent work. Spec Q4 defaults “FocusBand when multi-agent” but does not **delete** `pending > 0` from Fleet visibility.
++
++**Fix:** Spec must say: remove `pending > 0` from FleetStrip show condition; pending is owned by MinimalConfirm / 确认台. Keep stop-all only when `workerCount > 0`.
++
++---
++
++### M6. Docs and user-facing contracts lag the IA cut
++
++User guides still teach BottomBar:
++
++- `mission-pack-usage.md` §1: 底栏「任务包」  
++- `confirm-center-user-guide.md`: FleetStrip / SafetyStrip naming (OK if components rename carefully)  
++- `META_PANEL_SLASH` descriptions: “底栏「更多」”  
++- Claude.md / Agents.md common issues: Side Panel → **任务包**
++
++**Fix:** P0/P1 PR checklist must include doc delta for pack/MCP/workspace paths; otherwise dual-review “no product contradiction” fails in the field even if ADR-020 holds.
++
++---
++
++### M7. 装配 drawer can re-introduce 320px landfill under a new label
++
++**Risk vectors `[spec]` + code:**
++
++- Six sections (Skills / Knowledge / Packs / MCP / Apps·user-env / Board) in a bottom sheet ≈ old BottomBar + more  
++- `BottomBar` panel already uses `maxHeight: 320` with sticky header — comment admits Apps form was unusable at 200px; drawer will fight ChatStream ≥55% the moment it opens (acceptable if **modal** and chat height metric is idle-only — **state that**)  
++- Chip overflow → drawer encourages growing chip count past 3  
++- Soft-flag dual path (strip + chips + drawer) = three Composition UIs  
++- Empty-state intent chips + ContextChips +「装配」button + StatusRail ⋯ = chrome creep at L0  
++
++**Guardrails to write into §4.5 / acceptance:**
++
++- Drawer open: ChatStream metric **waived**; idle L0 metric applies only when drawer closed  
++- Max **one** secondary surface at a time (drawer **or** context panel host **or** settings — not stacked)  
++- Board section hidden unless multi-worker active **or** user pin (spec says this; make it a test)  
++- No second permanent tab row inside drawer (accordion or single section list, not 6 icon tabs mimicking BottomBar)  
++
++---
++
++## Minor
++
++### m1. Offline hygiene is good; incomplete relative to “structured recovery”
++
++Replacing reconnect `alert()` with banner is correct (P5). Spec should also name: disable send while disconnected (partially true via connection state), and stop using `window.confirm` for fleet stop-all without a quiet in-panel confirm (still `window.confirm` in `FleetStrip.tsx` L47) — same “breaks in-extension tone” class.
++
++### m2. Connection tokens already partially migrated
++
++`App.tsx` Header status dot already uses `tokens.success|warning|danger` `[inspected]`, not Material `#4CAF50`. Pain audit §3 overstates “Material dots in code paths” for the main Header; residual hex may live in FleetStrip (`#f59e0b`, `#34d399`) and L2 header tints. Scope PR1 to **inventory residual hex**, not “migrate Header from Material.”
++
++### m3. Cmd+K / Q2 unresolved under real Chrome OS shortcuts
++
++Side panel focus + Chrome reserved keys: default “Yes if no conflict” is fine, but P0 should not block on Cmd+K. Prefer `/` + 装配 button only until spike.
++
++### m4. Mode badge `aria-live` and 44×32 confirm targets
++
++Good a11y goals; MinimalConfirm layout is already dense — specify whether hit-target growth is allowed to exceed ~56px FocusBand budget (tension with height metric).
++
++### m5. Pin mode buried in ⋯ menu
++
++Today pin is on ModeBadge in Header. Spec §4.2 puts pin in Menu (⋯). That is a **discoverability regression** for power users who pin L1 during long browser work. Prefer keep pin on badge (current).
++
++### m6. “工作区” chip at L1
++
++Workspace bind lives inside `PacksPanel` (`workspace.pick`) `[inspected]`. L1 chip「工作区」implies a first-class panel; without defining whether it opens Packs section, a stub, or Settings, implementers will invent a fourth panel.
++
++---
++
++## Strengths
++
++1. **Correct freeze of product forks** — ADR-020 axes, D1–D16, D10′ content-split, no confirm modal back into 320px, Pack cannot relax globals. Avoids the usual redesign temptation to re-litigate mode ontology.  
++2. **Honest pain audit** — vertical strip stack is real; `App.tsx` order matches the diagram; offline `alert()` is real.  
++3. **Composition naming「装配」** — makes axis B legible without a fake fourth Surface; aligns with mission-pack / MCP as attach-to-thread, not “deeper agent.”  
++4. **Chat height as acceptance metric** — rare and useful; forces thrift better than aesthetic review alone.  
++5. **Slash already exists (S1)** — `META_PANEL_SLASH` + `cmspark:open-context-panel` is the right extension point; redesign builds on shipped infrastructure rather than inventing a second command system.  
++6. **Confirm-center contract respected** — dual-track, nonce only in Cockpit, close Cockpit ≠ stop task; user guide promises can remain true if FocusBand keeps abort + minimal allow/deny.  
++7. **Phased PR intent** — shell before visual; Cockpit polish last — right risk order *if* Composition entry is not deferred past strip removal (see M3).  
++8. **Non-goals** — no HUD redesign, no thread rewrite, no full App rewrite — bounds blast radius.
++
++---
++
++## Must-change list before dual-review
++
++Spec edits required in `2026-07-31-sidepanel-uiux-redesign.md` (or a locked delta) before Claude+Pi dual-review:
++
++1. **§4 / PR2 — Panel host contract**  
++   - Name host component; ownership of `activePanel`, `loadPanelData`, slash event  
++   - Rule: BottomBar **strip** may die only when host is live in the same release train  
++
++2. **§8 P0 — Composition entry**  
++   - Add P0 accept: permanent or composer-adjacent「装配」control that lists Packs / MCP / Skills / … (can open host sections before full drawer polish)  
++   - Or explicitly keep overflow「更多」until P1 and drop “no permanent BottomBar” from P0  
++
++3. **§4.3 — FocusBand state machine**  
++   - Paste hard priority + Esc stack from B3  
++   - Explicit: L2 **急停** always visible with active task; not demoted by confirm  
++   - Explicit: Fleet does not show solely because `pending > 0`  
++
++4. **§4.4 — Remove Abort from L2 chips**  
++   - Align with “destructive never next to Send”  
++
++5. **§12 — Resequence PRs**  
++   - Host → FocusBand priority → strip removal → full drawer  
++   - Forbid soft-flag dual chrome (strip+chips) for more than a behind-flag dev build  
++
++6. **§14 — Metrics honesty**  
++   - L0 height gate with fixed chrome matrix  
++   - L1+confirm height floor or FocusBand max px  
++   - `alert()` scope = inventory, not blanket zero  
++   - Manual regression script for confirm / abort / packs workspace / slash  
++
++7. **§4.5 — Landfill guards**  
++   - One secondary surface at a time  
++   - Drawer open waives chat-height metric  
++   - Board section gated  
++   - No 6-tab BottomBar clone inside drawer  
++
++8. **Docs delta checklist**  
++   - `mission-pack-usage.md`, slash descriptions, troubleshooting “任务包” path  
++
++9. **§4.2 — Keep mode pin on badge** (or justify regression)  
++
++10. **§4.4 L1「工作区」chip** — define exact open target (Packs/workspace subsection)
++
++---
++
++## Task-success matrix (post-BottomBar, if must-changes land)
++
++| User task | Survives P0? | Condition |
++|-----------|--------------|-----------|
++| Chat L0 | ✅ | StatusRail + ChatStream + Composer only |
++| Confirm dangerous tool (allow/deny) | ✅ | FocusBand MinimalConfirm; Esc deny ordered |
++| Confirm with nonce / whitelist | ✅ | Still Cockpit only (unchanged) |
++| L2 abort | ✅ | FocusBand 急停 mandatory; not composer chip |
++| Open packs + select workspace | ⚠️ → ✅ | **Needs host + 装配 or retained 更多** (B1/B2) |
++| Use MCP panel | ⚠️ → ✅ | Same |
++| Multi-agent stop-all | ✅ | Fleet only when workers>0; not on every confirm |
++| Find skills without `/` | ✅ | L0 chips if host opens SkillsPanel |
++
++---
++
++## Code anchors (absolute)
++
++| Concern | Path |
++|---------|------|
++| Shell stack | `/Users/huchen/Projects/cmspark/chrome-extension/src/sidepanel/App.tsx` (~L167–198, META_PANEL_SLASH ~L37–63, slash open ~L638–647, offline alert ~L204) |
++| Panel host + slash listener | `/Users/huchen/Projects/cmspark/chrome-extension/src/sidepanel/components/BottomBar.tsx` (~L72–125, L378–400) |
++| Level / overflow IA | `/Users/huchen/Projects/cmspark/chrome-extension/src/sidepanel/mode/mode-controller.ts` (`contextBarTabsForLevel`, `contextBarOverflowTabsForLevel`) |
++| L2 abort + confirm | `/Users/huchen/Projects/cmspark/chrome-extension/src/sidepanel/components/SafetyStrip.tsx`, `MinimalConfirm.tsx` |
++| Fleet show-on-pending | `/Users/huchen/Projects/cmspark/chrome-extension/src/sidepanel/components/FleetStrip.tsx` (~L39–44) |
++| Confirm UX promises | `/Users/huchen/Projects/cmspark/docs/confirm-center-user-guide.md` |
++| Packs entry docs | `/Users/huchen/Projects/cmspark/docs/mission-pack-usage.md` §1 |
++
++---
++
++## Bottom line
++
++Redesign v2 correctly aims at strip thrift and Composition legibility. **Interaction risk is concentrated in the cut that removes BottomBar before a host + discoverable 装配 path exist, and in an underspecified FocusBand that can violate D10′ abort guarantees under confirm+fleet load.** Fix those in the draft, resequence PRs, and dual-review can proceed; aesthetic token work can wait.
++
++**Verdict: MAJOR_REVISE** — not a product strategy reject; a shippability gate on IA migration mechanics.
+diff --git a/docs/audit/reviews/sidepanel-uiux-v2-dual-review-prompt-2026-07-31.md b/docs/audit/reviews/sidepanel-uiux-v2-dual-review-prompt-2026-07-31.md
+new file mode 100644
+index 0000000..1d27876
+--- /dev/null
++++ b/docs/audit/reviews/sidepanel-uiux-v2-dual-review-prompt-2026-07-31.md
+@@ -0,0 +1,57 @@
++# Dual external review: Side Panel UI/UX Redesign v2
++
++**Batch:** `sidepanel-uiux-v2`  
++**Stage:** Design SoT after adversarial revision  
++**Date:** 2026-07-31  
++
++## Capability declaration
++
++```text
++Surface:      L0 | L1 | L2  (UI presentation only — no new surface tools)
++L2-classes:   (none new)
++Compose:      skill | knowledge | mcp-server | pack | user-env  (IA: 装配 drawer)
++Autonomy:     board stays Autonomy chrome (not 装配)
++Trust:        existing gates; content-split D10′ preserved
++Channel:      n/a
++```
++
++## Documents to read (tools)
++
++1. **Primary:** `docs/superpowers/specs/2026-07-31-sidepanel-uiux-redesign.md` (full)
++2. **Adversarial A:** `docs/audit/reviews/sidepanel-uiux-v2-adversarial-A-2026-07-31.md`
++3. **Adversarial B:** `docs/audit/reviews/sidepanel-uiux-v2-adversarial-B-2026-07-31.md`
++4. **Ontology:** `docs/adr/020-capability-model-three-axes.md` (§1–3)
++5. **Prior IA:** `docs/superpowers/specs/2026-07-26-ui-three-mode-redesign.md` (§1–5, D1–D16)
++6. Optional: `docs/DESIGN.md` tokens
++
++## Context
++
++- Three-mode L0/L1/L2 + Cockpit **already shipped**; this v2 is **shell/IA/visual** refinement after user feedback (ugly + inconvenient).
++- Two independent adversarial critics both returned **MAJOR_REVISE**; author revised for: Board out of 装配, ContextPanelHost replace-before-remove, FocusBand hard state machine + 急停, P0 装配 entry, slash parity, Esc stack, honest height metrics, PR resequence.
++- Research: agent UX principles (transparency, agency, progressive disclosure, status-first) + quiet-professional tokens.
++
++## Your job
++
++Independent senior design/product review. Challenge the **revised** design for:
++
++1. ADR-020 fidelity (Composition vs Autonomy; no 中层 Agent)  
++2. Whether adversarial blocking issues are actually closed  
++3. Shippability of PR plan / FocusBand / Host migration  
++4. Residual product risk in 320px panel  
++5. Completeness for engineers to implement without guessing  
++
++## Output format
++
++```markdown
++## Summary
++## ADR-020 / three-mode fit
++## Adversarial closure check
++| Issue | Closed? | Evidence |
++## Residual risks
++## Blocking
++## Nits
++VERDICT: APPROVE|APPROVE_WITH_NITS|REJECT
++```
++
++If REJECT: list concrete blocking gaps with section IDs.  
++If APPROVE_WITH_NITS: nits only; design is implementable.
+diff --git a/docs/superpowers/specs/2026-07-31-sidepanel-uiux-redesign.md b/docs/superpowers/specs/2026-07-31-sidepanel-uiux-redesign.md
+new file mode 100644
+index 0000000..8969789
+--- /dev/null
++++ b/docs/superpowers/specs/2026-07-31-sidepanel-uiux-redesign.md
+@@ -0,0 +1,537 @@
++# CMspark Side Panel UI/UX Redesign v2 — Quiet Agent Shell
++
++| Field | Value |
++|-------|--------|
++| Status | **Revised after adversarial A+B (MAJOR_REVISE → ready dual-review)** |
++| Date | 2026-07-31 |
++| Adversarial | `docs/audit/reviews/sidepanel-uiux-v2-adversarial-A-2026-07-31.md` · `…-B-…` |
++| Surfaces | Chrome Side Panel (~320px) · Extension Cockpit · (Native HUD out of scope) |
++| Supersedes / extends | [2026-07-26 three-mode redesign](2026-07-26-ui-three-mode-redesign.md) (IA already landed P0–P2) |
++| Ontology | [ADR-020](../../adr/020-capability-model-three-axes.md) Surface × Composition × Autonomy |
++| Tokens | [docs/DESIGN.md](../../DESIGN.md) · `sidepanel/ui/tokens.ts` |
++
++---
++
++## 0. Why this doc exists
++
++Three-mode (L0/L1/L2) and Cockpit content-split **shipped**, but daily feel remains:
++
++1. **Visually noisy** — mixed radius/hex, dense chrome, emoji residual, half-migrated Material status dots.  
++2. **Interactively expensive** — vertical stack of Header → ContextStrip → SafetyStrip → Chat → FleetStrip → BottomBar → Composer squeezes the message stream; secondary panels still “slide under” chat without a clear modal hierarchy.  
++3. **Ontology not legible** — users still experience “功能杂”：Skill / Pack / MCP / Board live in BottomBar overflow without a **Composition vs Surface** story.
++
++This redesign **does not** invent a fourth capability axis or a second agent runtime. It **refines presentation and interaction** so ADR-020 reads as product, not only as architecture.
++
++---
++
++## 1. Research synthesis — community design skills & philosophies
++
++### 1.1 Skills / workflows available in this toolchain
++
++| Source | Skill / pattern | Use here |
++|--------|-----------------|----------|
++| Grok Build | `$design` write→review loop | Design-doc quality gate |
++| OMX | `$design` (repo DESIGN.md SoT); `$visual-ralph` for pixel implement | Post-approval visual lock |
++| Mattpocock | `design-an-interface` (multi-option interfaces) | Optional API-shape exploration |
++| Community (2026) | Semantic design systems + agent skills/MCP for UI codegen | Tokens + component contracts for AI implementers |
++| Brad Frost / Chromatic | **Agentic design systems** — examples, states, constraints for agents | Component matrix with empty/loading/error/disabled |
++
++**Deprecation note:** `omx-frontend-ui-ux` is a shim → use design + visual-ralph, not that skill.
++
++### 1.2 Agent UX principles (2025–2026 consensus)
++
++Synthesized from agent-UI writing (transparency / control / status / recovery), progressive delegation, and side-panel density practice:
++
++| # | Principle | Product implication for CMspark |
++|---|-----------|----------------------------------|
++| P1 | **Transparency** | Tool steps, risk, and “why confirm” always visible at the right surface (Panel minimal / Cockpit elevated — keep D10′). |
++| P2 | **Human agency** | Abort always one gesture; pin level; never silent L2; Pack cannot relax globals (ADR-020). |
++| P3 | **Progressive disclosure** | L0 chat-first; composition tools behind `/` + one “装配” entry; power chrome only when Surface needs it. |
++| P4 | **Status is first-class** | Connection + mode + task + confirm queue in a **single status rail**, not 4 strips. |
++| P5 | **Structured recovery** | Offline / tool error / confirm timeout → same toast+banner grammar; no `alert()`. |
++| P6 | **Semantic system** | Tokens carry *intent* (`surface.chat`, `risk.high`) not just hex — for humans and future AI implementers. |
++| P7 | **Density budget** | Side Panel: ChatStream height targets — **L0 idle ≥55%**; **worst-case (L2+confirm) ≥40%** of panel; FocusBand hard-capped (see §4.3). |
++
++### 1.3 Side-panel specific patterns
++
++- **One primary scroll region** (chat); secondary content = drawer / overlay / separate window (Cockpit).  
++- **Command palette** (`/`) for low-frequency IA (already S1) — expand to full “装配中心” rather than more BottomBar tabs.  
++- **Thumb zone**: composer + primary actions bottom-fixed; destructive actions never next to Send.  
++- **Confirmation elevation**: keep content-split; never re-introduce full security modal into 320px panel.
++
++---
++
++## 2. Product constraints (locked)
++
++### 2.1 From ADR-020 (non-negotiable)
++
++```text
++Surface:      L0 聊 | L1 网页 | L2 计算机
++Composition:  Skill · Knowledge · MCP · Pack · user-env
++Autonomy:     single loop → multi-worker → Board
++Trust:        rises with Surface; Pack cannot relax globals
++```
++
++UI mapping (unchanged):
++
++| Surface | Panel | Cockpit |
++|---------|-------|---------|
++| L0 | Default home | Closed |
++| L1 | Chat + context; user「展开工作区」 | Optional light workspace |
++| L2 | Safety chip + abort + minimal confirm | Required conductor |
++
++**Forbidden in copy/UI:** bare「中层 Agent」. Use「装配 / 组合能力」.
++
++### 2.2 From three-mode redesign (keep, with one intentional chrome delta)
++
++D1–D16 remain in force for product semantics (mode ontology, hysteresis, content-split, L1 user-only expand, tray L2 → Cockpit, etc.).
++
++**Intentional IA delta (D5′ / K2′)** — supersedes three-mode §4 *implementation* of permanent ContextBar / BottomBar tab row only:
++
++> Mode-split permanent tabs → **≤3 mode-aware chips + `/` + 装配 entry + shared ContextPanelHost**.  
++> D5 *intent* (command-first, low-freq via settings/`/`) is preserved; the permanent tab strip is not.
++
++Dual-review should treat D5′ as an explicit product IA change, not silent scope creep.
++
++### 2.3 Explicit non-goals
++
++- Redesign Companion native HUD (P3a spike separate).  
++- New capability modules or confirm dialects.  
++- Thread model rewrite.  
++- Full App.tsx rewrite in one PR — shell extraction only.  
++- Dark mode for entire Panel in v2-P0 (tokens prepared; optional v2-P2).
++
++---
++
++## 3. Current pain audit (code-grounded)
++
++| Area | Today | Pain |
++|------|-------|------|
++| Vertical chrome | Header + ContextStrip + SafetyStrip + FleetStrip + BottomBar + Composer | Chat squeezed; cognitive “strip stack” |
++| BottomBar | Mode-filtered tabs + overflow | Still feels like landfill when「更多」opened |
++| Header | Thread + badge + connection + ⋯ menu | ⋯ hides Craft / export / NB / logs / settings — discoverability uneven |
++| Status | Badge + connection + toasts + banners | No unified grammar |
++| Visual | tokens.ts exists; residual Material dots (`#4CAF50`) in docs/code paths | Inconsistent “quiet-professional” |
++| Composition | Skills/Know/Pack/MCP/Apps as panels | No mental model vs Surface badge |
++| Offline | `alert()` reconnect path in App.tsx | Breaks in-extension tone |
++| Live log | Fixed field normalize (2026-07-31) | Still a power feature in ⋯ |
++
++---
++
++## 4. Target information architecture
++
++### 4.1 Panel shell — three zones only
++
++```text
++┌─────────────────────────────────────┐
++│  A. StatusRail (fixed, ~40–48px)    │  mode · connection · thread · menu
++├─────────────────────────────────────┤
++│  B. FocusBand (0–2 rows, collapsible)│  L1 context | L2 safety | confirm mini
++│     (never both Context + full fleet)│  Fleet → only multi-agent active
++├─────────────────────────────────────┤
++│  C. ChatStream (flex 1, primary)    │  ≥55% height L0 target
++├─────────────────────────────────────┤
++│  D. ComposerDock (fixed)            │  / palette · attach · input · send
++│     + optional slim ContextChips    │  NOT a second BottomBar
++└─────────────────────────────────────┘
++```
++
++**BottomBar permanent tab strip is retired only after host extraction** (see §4.7 migration). Replacement surfaces:
++
++1. **ContextPanelHost** — single owner of panel bodies + data loaders + `cmspark:open-context-panel` (extracted from BottomBar; **not optional**).  
++2. **Context chips** under composer (mode-aware, max 3 primary) → open Host.  
++3. **`/` command palette** with **full parity matrix** (§4.8) → open Host.  
++4. **「装配」entry (P0 minimum)** — one button/chip opens bottom sheet *section list*; full section UIs can land in P1 but **entry is P0** so Pack/MCP stay discoverable without memorizing slash.  
++5. Board is **not** under 装配 — see §4.5 / Autonomy.
++
++### 4.2 StatusRail (Zone A)
++
++| Element | Behavior |
++|---------|----------|
++| Mode badge | L0 `聊` / L1 `网页` / L2 `计算机·LIVE` — `aria-live="polite"` |
++| Connection | Dot + text tooltip (connected / reconnecting / offline) — **tokens only** |
++| Thread | Title + switcher (compact ThreadList popover) |
++| Menu (⋯) | Settings, secrets, export, Craft, NotebookLM, logs, pin mode |
++
++### 4.3 FocusBand (Zone B) — hard state machine (not soft prose)
++
++**Single slot.** Max **one primary row** (≤56px) + optional **one secondary line** (≤24px). Total FocusBand ≤ **80px**. Overflow actions open Cockpit or popover — never a third bar.
++
++| Priority (highest wins primary) | Content | Abort visible? |
++|----------------------------------|---------|----------------|
++| P0 Confirm pending | MinimalConfirm (tool + risk + Allow/Deny/Stop) | Stop in confirm row |
++| P1 L2 task active (no confirm) | TaskChip + **急停** (mandatory) | **Yes — always in primary when L2** |
++| P2 Multi-worker / locks / intents | Fleet summary (1 line); expand → Autonomy panel / Cockpit | — |
++| P3 L1 context | tab chip +「展开工作区」 | — |
++| P4 idle | empty | — |
++
++**Hard rules:**
++
++1. **Confirm does not bury 急停.** When L2 task **and** confirm: primary = MinimalConfirm that **includes** Abort/Stop control (or primary=Confirm + secondary line with 急停 always visible). Violating D10′ is a bug.  
++2. Fleet never claims primary over Confirm or L2 Safety.  
++3. L1 Context yields to Confirm.  
++4. No dual full-height ContextStrip + SafetyStrip + FleetStrip stack.
++
++### 4.4 ComposerDock (Zone D)
++
++```text
++[ / 装配 ]  [chips: Skills·Tabs·…] 
++┌──────────────────────────────────┐
++│  attach │  textarea…        │ ➤ │
++└──────────────────────────────────┘
++```
++
++| Level | Placeholder | Chips (≤3) + fixed |
++|-------|-------------|---------------------|
++| L0 | 问点什么，或 / 装配 | **装配** · Skills · Know |
++| L1 | 描述网页任务… | **装配** · Tabs · 工作区 |
++| L2 | 排队跟进…（conductor 在确认台） | **确认台** · **装配** · (no Abort here) |
++
++**Abort never lives next to Send** (§1.3 thumb zone). L2 急停 stays in FocusBand / Safety only.
++
++Send shortcut respects settings (Enter / Cmd+Enter).
++
++### 4.5 装配 Drawer (Composition plane only)
++
++**Name:** 装配（not「工具」or「中层」）  
++**Open via:** `/装配` · Composer **装配** chip · empty-state link · (P0) same entry opens thin section list even before full P1 chrome  
++
++**Composition sections only** (ADR-020 Axis B):
++
++1. **Skills** — activate/craft  
++2. **Knowledge** — site/global  
++3. **Packs** — mission packs  
++4. **MCP** — servers  
++5. **Apps / user-env** — host apps + secrets (enterprise-aware copy)  
++
++**Not in 装配 (Autonomy — Axis C):**
++
++- **Board / Fleet / multi-worker** → FocusBand fleet summary, StatusRail when active, Cockpit, `/board`, ⋯「编排」. Never labeled as 组合/装配.
++
++Each Composition section shows **attach target**: “挂到当前线程 · Surface Lx” so Composition ≠ deeper agent.
++
++**Landfill guards:** only one secondary surface open at a time (drawer **or** ContextPanelHost body **or** Settings). Opening one closes the other.
++
++### 4.6 Cockpit (confirm center) — keep, polish only
++
++- Keep dual-track + ConfirmElevated.  
++- Visual: align StatusRail grammar (L2 · LIVE, connection).  
++- No new primary chrome; fix spacing/type scale to match Panel tokens.
++
++### 4.7 ContextPanelHost + BottomBar migration (blocking for implementers)
++
++Today `BottomBar.tsx` is not “tabs only” — it owns `activePanel`, panel mounts, `loadPanelData`, and `cmspark:open-context-panel`.
++
++**Replace-before-remove sequence (mandatory):**
++
++| Step | Deliverable | BottomBar strip |
++|------|-------------|-----------------|
++| M1 | Extract **ContextPanelHost** (registry + open/close + loaders + event listener) | Keep strip |
++| M2 | Chips + `/` + 装配 entry all call Host API; **slash parity matrix complete** (§4.8) | Keep strip optional |
++| M3 | Flag `ui.bottomBarStrip=false` hides tab row only | Host remains |
++| M4 | Delete strip chrome after one release / acceptance | Host only |
++
++**PR2 must not delete BottomBar** without M1 in the same or prior PR.
++
++### 4.8 Slash / open-panel parity matrix
++
++| Target | `/` command | Chip / 装配 | Host panel id |
++|--------|-------------|-------------|---------------|
++| Skills | `/skills` | L0 chip / 装配 | `skills` |
++| Knowledge | `/knowledge` | L0 / 装配 | `knowledge` |
++| History | `/history` | 装配 or Hist chip | `history` |
++| Tabs | `/tabs` | L1 chip | `tabs` |
++| Packs | `/packs` | **装配** (P0) | `packs` |
++| MCP | `/mcp` | **装配** (P0) | `mcp` |
++| Apps | `/apps` | 装配 | `apps` |
++| Board | `/board` | ⋯ 编排 / fleet (not 装配) | `board` |
++| Settings | `/settings` or ⋯ | ⋯ | settings slideout |
++| 确认台 | `/cockpit` | L2 chip | opens cockpit window |
++
++Empty state L0 lists: 总结本页 · **装配** · `/packs` as visible hints (not slash-only).
++
++### 4.9 Esc / overlay priority stack
++
++Highest → lowest (Esc peels one layer):
++
++1. Open modal dialogs (McpServerForm, craft, notebooklm)  
++2. ContextPanelHost body / 装配 drawer  
++3. Thread popover / slash palette  
++4. (Confirm is **not** dismissed by Esc → must Allow/Deny/timeout — safety)
++
++---
++
++
++## 5. Visual system v2
++
++### 5.1 Design thesis
++
++**Quiet Agent Shell** — one accent, soft neutrals, geometry over emoji, mode tint subtle (not neon). Density over decoration.
++
++### 5.2 Token roles (extend `tokens.ts` / DESIGN.md)
++
++| Role | Light | Dark (Cockpit/L2 strip) |
++|------|-------|-------------------------|
++| `surface.canvas` | `#fafbfc` | `#0f1115` |
++| `surface.elevated` | `#ffffff` | `#161a22` |
++| `text.primary` | `#111827` | `#e8eaed` |
++| `text.secondary` | `#4b5563` | `#9aa0a6` |
++| `border.subtle` | `#e5e7eb` | `#2a2f3a` |
++| `accent.primary` | `#2563eb` | `#5b8def` |
++| `status.live` | `#16a34a` | `#4ade80` |
++| `status.warn` | `#d97706` | `#fbbf24` |
++| `status.danger` | `#dc2626` | `#f87171` |
++| `mode.l0` | gray chip | — |
++| `mode.l1` | blue soft chip | — |
++| `mode.l2` | green-on-dark chip | LIVE pulse |
++
++**Migrate:** connection colors from Material `#4CAF50/#FF9800/#F44336` → status tokens.  
++**Radius:** 6/8/12 only. **Type:** 11/12/13/15. **Motion:** ≤200ms + `prefers-reduced-motion`.
++
++### 5.3 Component states matrix (agentic DS)
++
++Every chrome component documents: **default · hover · active · disabled · loading · empty · error**.
++
++Priority polish list: StatusRail, ModeBadge, MessageBubble, ToolCard, MinimalConfirm, Composer, 装配 Drawer, ThreadPopover.
++
++### 5.4 Wireframe (L0)
++
++```text
++┌─ StatusRail ──────────────────────────┐
++│ [聊]  ·  已连接  │ 今日笔记…  ▾  │ ⋯ │
++├───────────────────────────────────────┤
++│                                       │
++│   Empty: 今天想聊什么？                 │
++│   快捷: 总结本页 · /装配 · 导入        │
++│                                       │
++│   (messages…)                         │
++│                                       │
++├───────────────────────────────────────┤
++│  芯片: Skills  Know  Hist              │
++│  ┌──────────────────────────── [➤] ┐  │
++│  │  消息…                           │  │
++│  └──────────────────────────────────┘  │
++└───────────────────────────────────────┘
++```
++
++### 5.5 Wireframe (L1 + confirm)
++
++```text
++┌─ StatusRail [网页] 已连接 ─────────────┐
++├─ FocusBand (single):                  │
++│  ⚠ evaluate · 允许 拒绝  ── tab·展开↗ │  ← confirm primary; context secondary line
++│  ChatStream (tool cards denser)       │
++├─ chips: 装配  Tabs  工作区 ───────────┤
++│  Composer                             │
++└───────────────────────────────────────┘
++```
++
++---
++
++## 6. Interaction redesign
++
++### 6.1 Primary flows
++
++| Flow | v2 behavior |
++|------|-------------|
++| First open | L0 empty state with 3 intent chips (not 6 icons) |
++| Start browser work | First browser tool → L1 badge + soft toast; ContextStrip appears |
++| Confirm | MinimalConfirm in FocusBand; Cockpit elevated for heavy preview |
++| L2 start | Cockpit open/focus; Panel Safety strip; composer queue mode |
++| Composition | `/` or 装配 drawer — never force leave chat to “find MCP” |
++| Offline | Banner + disable send; **no `alert()` on reconnect path** (v2-P0 scope; other alerts migrate monotonically) |
++| Errors | Tool card inline + optional toast; severity color + text |
++
++### 6.2 Keyboard
++
++| Key | Action |
++|-----|--------|
++| `/` | Open palette (when input empty or after space rules existing) |
++| Esc | Close drawer / palette / thread popover (priority stack) |
++| Cmd/Ctrl+K | Optional alias to 装配 (if not conflict) |
++| Enter / Cmd+Enter | Send per settings |
++
++### 6.3 Accessibility
++
++- Focus trap in 装配 drawer and thread popover.  
++- Confirm buttons min 44×32 hit target.  
++- Risk never color-only (label + icon geometry).  
++- Screen reader: mode changes via `aria-live`.
++
++---
++
++## 7. Mapping: user pain → design response
++
++| User complaint | Response |
++|----------------|----------|
++| 太丑 | Quiet tokens + kill Material dots + consistent radius/type + message density |
++| 不方便 | Kill BottomBar strip; chat-first height; 装配 drawer + `/`; StatusRail merge |
++| 功能杂 | Composition drawer labeled 装配; Surface badge only three words |
++| 确认吓人/乱 | Keep content-split; FocusBand priority; Cockpit = 确认台 branding consistency |
++| 合盖耗电 (related) | Out of UI scope — separate WS fix landed; UI must not add idle timers that spam WS |
++
++---
++
++## 8. Phasing & acceptance
++
++### v2-P0 — Host extract + StatusRail + FocusBand (1.5–2 wk)
++
++**Deliver:** StatusRail; **ContextPanelHost extract**; FocusBand state machine; Context chips + **装配 P0 entry** (section list); slash parity matrix; connection token colors; offline banner without `alert()`.
++
++**Accept:**
++
++- [ ] L0 idle: ChatStream height ≥55% at 640px panel height.  
++- [ ] L1+confirm and L2+confirm: ChatStream ≥40%; FocusBand ≤80px; **急停 visible whenever L2 task active**.  
++- [ ] ContextPanelHost opens packs/MCP/skills/… from chips, `/`, and 装配 entry.  
++- [ ] Pack/MCP reachable in ≤2 clicks **or** 1 visible 装配 entry + 1 section tap (no slash memorization required).  
++- [ ] BottomBar **strip** may still exist behind flag; Host is SoT for panels.  
++- [ ] Offline reconnect path: no `alert()`.  
++- [ ] Mode badge + connection use tokens in touched code.  
++- [ ] No regression: D10′ content-split, L2 Cockpit open, abort.
++
++### v2-P1 — Retire strip + full 装配 drawer + visual pass (1–1.5 wk)
++
++**Deliver:** Hide/remove BottomBar tab strip; full 装配 sections UI; ToolCard/MessageBubble density; empty states; Board under Autonomy chrome only.
++
++**Accept:**
++
++- [ ] No permanent BottomBar tab row (flag default off).  
++- [ ] 装配 opens full Composition sections; Board **not** inside 装配.  
++- [ ] Copy never says「中层 Agent」.  
++- [ ] WCAG AA spot-check primary text.
++
++### v2-P2 — Cockpit + density polish (~1 wk)
++
++**Deliver:** Cockpit StatusRail alignment; FocusBand motion; DESIGN.md semantic roles fully listed; remaining Material hex purge in Panel chrome.
++
++**Accept:**
++
++- [ ] Cockpit + Panel status grammar match.  
++- [ ] `prefers-reduced-motion` honored.  
++- [ ] DESIGN.md + tokens.ts in sync (radius 6/8/12; connection status tokens).
++
++---
++
++## 9. Key Decisions
++
++| ID | Decision | Rationale |
++|----|----------|-----------|
++| K1 | Keep ADR-020 / three-mode locks | Avoid product fork; fix presentation |
++| K2 / D5′ | Retire permanent BottomBar **strip after** ContextPanelHost | Replace-before-remove; reclaim height |
++| K3 | Composition = 「装配」 only (no Board) | ADR-020 Axis B; Board = Autonomy |
++| K4 | StatusRail + FocusBand **state machine** | Hard priority; 急停 never buried |
++| K5 | Quiet Agent Shell tokens | Consistent quiet-professional; AI-implementable semantics |
++| K6 | No full Panel dark mode in P0 | Scope control; Cockpit already dark for L2 |
++| K7 | Cockpit remains 确认台 | Existing user guide / branding |
++| K8 | Abort never adjacent to Send | Thumb-zone / mis-tap safety |
++| K9 | 装配 entry in P0 | Avoid slash-only discoverability cliff |
++
++---
++
++## 10. Alternatives considered
++
++| Alternative | Why not |
++|-------------|---------|
++| Full Figma redesign then rewrite | Slow; ontology already coded — polish shell first |
++| Single “Work mode” toggle | Rejected in D1 three-mode; under-describes L1 vs L2 |
++| Put Pack/MCP as Surface levels | Violates ADR-020 Composition axis |
++| Move all confirm back to Panel modal | Violates D10′; 320px cannot hold preview |
++| Emoji-heavy “friendly” chrome | Conflicts DESIGN.md quiet-professional |
++
++---
++
++## 11. Open Questions
++
++| # | Question | Default if unanswered |
++|---|----------|----------------------|
++| Q1 | 装配 drawer: bottom sheet vs right overlay? | Bottom sheet (thumb-friendly, 320px) |
++| Q2 | Cmd+K for 装配? | Yes if no conflict with OS |
++| Q3 | Keep LogBar as ⋯ entry only? | Yes |
++| Q4 | FleetStrip inside FocusBand vs only Cockpit? | FocusBand when multi-agent; else Cockpit |
++
++---
++
++## 12. PR Plan
++
++### PR1 — StatusRail + offline hygiene + token connection colors
++- Files: `App.tsx` Header→StatusRail, `tokens.ts`, `DESIGN.md`  
++- Replace offline `alert()`; no Material status dots in touched paths  
++- Deps: none  
++
++### PR2 — ContextPanelHost extract (no strip delete)
++- Files: peel host/registry/loaders/listener from `BottomBar.tsx` → `ContextPanelHost.tsx`  
++- BottomBar becomes thin tab chrome calling Host  
++- Deps: PR1  
++
++### PR3 — FocusBand state machine
++- Files: new `FocusBand.tsx`; wire ContextStrip / SafetyStrip / Fleet into priority table §4.3  
++- Accept: L2+confirm keeps 急停 visible  
++- Deps: PR1  
++
++### PR4 — Composer chips + slash parity + 装配 P0 entry
++- Files: ComposerDock chips; expand `META_PANEL_SLASH`; 装配 bottom-sheet section list → Host  
++- Deps: PR2  
++
++### PR5 — Hide/remove BottomBar strip (flag)
++- Files: BottomBar strip only; default flag off after smoke  
++- Deps: PR2, PR4  
++
++### PR6 — Full 装配 drawer sections + visual density
++- Files: `ComposeDrawer` sections; ChatView/tool cards; empty states  
++- Board **not** in drawer  
++- Deps: PR4  
++
++### PR7 — Cockpit alignment + DESIGN.md semantic roles
++- Files: cockpit shell; DESIGN.md  
++- Deps: PR1, PR6  
++
++Ship gate: **v2-P0 accept (PR1–PR4)** before strip removal (PR5).
++
++---
++
++## 13. Implementation boundaries
++
++| Do | Don't |
++|----|-------|
++| Extract StatusRail / FocusBand / ComposerDock | Rewrite thread store |
++| Soft-deprecate BottomBar behind flag if needed | Delete Cockpit content-split |
++| Token-only new colors | New Material hex |
++| Copy: 装配 / 确认台 / 聊·网页·计算机 | 中层 Agent |
++
++---
++
++## 14. Success metrics (honest)
++
++| Metric | Scope |
++|--------|--------|
++| ChatStream ≥55% | L0 idle @ 640px panel height |
++| ChatStream ≥40% | L1+confirm and L2+confirm @ 640px |
++| FocusBand ≤80px | All levels |
++| Pack/MCP path | ≤2 clicks **or** 装配 entry + section (documented) |
++| Offline | No `alert()` on reconnect path (P0); other alerts tracked separately |
++| Ontology | Zero「中层 Agent」in new UI copy; Board not under 装配 |
++| Safety | 急停 visible whenever L2 task active |
++
++---
++
++## 15. Adversarial revision log (2026-07-31)
++
++| Source | Verdict | Addressed |
++|--------|---------|-----------|
++| Critic A | MAJOR_REVISE | Board out of 装配; FocusBand hard cap; Host migration; D5′; height worst-case; PR resequence |
++| Critic B | MAJOR_REVISE | Panel host gap; P0 装配 entry; FocusBand/急停; no Abort-by-Send; slash matrix; Esc stack; landfill one-surface rule |
++
++---
++
++## 16. References
++
++- ADR-020 capability three axes  
++- UI three-mode redesign 2026-07-26  
++- docs/DESIGN.md tokens  
++- confirm-center-user-guide.md  
++- Agent UX principles (transparency, agency, progressive delegation) — industry 2025–26 synthesis  
++- Semantic / agentic design systems (Figma semantic DS, Brad Frost agentic DS talks)
++
++---
++
++*End of design draft — awaiting adversarial critique then Claude+Pi dual-review.*
+diff --git a/docs/audit/reviews/sidepanel-uiux-v2-adversarial-A-2026-07-31.md b/docs/audit/reviews/sidepanel-uiux-v2-adversarial-A-2026-07-31.md
+new file mode 100644
+index 0000000..e0f1413
+--- /dev/null
++++ b/docs/audit/reviews/sidepanel-uiux-v2-adversarial-A-2026-07-31.md
+@@ -0,0 +1,262 @@
++# Adversarial UX/Product Critique — Side Panel UI/UX Redesign v2
++
++| Field | Value |
++|-------|--------|
++| Doc under review | `docs/superpowers/specs/2026-07-31-sidepanel-uiux-redesign.md` |
++| Critic role | Independent adversarial UX/product (stress-test, not rubber-stamp) |
++| Date | 2026-07-31 |
++| Comparators | ADR-020 (accepted), three-mode redesign 2026-07-26 (D1–D16), `docs/DESIGN.md`, `chrome-extension/src/sidepanel/App.tsx` |
++
++---
++
++## Verdict: MAJOR_REVISE
++
++Direction is right: collapse strip stack, make Composition legible as「装配」, keep Surface L0/L1/L2 + content-split confirm, no new runtime. **Do not implement as written.** Ontology slip (Board inside Composition plane), height-budget self-contradiction, BottomBar migration under-specified against a ~1k-line panel host, and acceptance criteria that claim more than they measure would ship a quieter shell with broken discoverability and ADR-020 narrative debt.
++
++Not **BLOCK**: no fourth axis, no「中层 Agent」product fork, D10′ content-split preserved, L1 expand remains user-only. Fix the issues below, then dual-review again.
++
++---
++
++## Blocking issues (must fix)
++
++### B1. Board is Autonomy — not a section of「装配」(Composition)
++
++**Evidence**
++
++- Spec §4.5 lists **Board** as section 6 of **装配 Drawer (Composition plane)** with Skills / Knowledge / Packs / MCP.
++- ADR-020 Axis C: *「Board 仅归属 Autonomy（协调状态，不是 Skill/MCP 式组合原语）」*; Axis B enumerates Skill · Knowledge · MCP · user-env · Pack · modules — **Board is not Composition**.
++- Spec §0/§2.1 claim hard ADR-020 fidelity and forbid bare「中层 Agent」; stuffing Autonomy into a Composition-branded drawer reintroduces the *same* mental-model error under a prettier label: “everything secondary lives in 装配.”
++
++**Why blocking**
++
++This is not copy nit. Implementers will wire Board next to Pack/MCP, docs will say「组合能力」, and the next feature will ask “why not put spawn / fleet config in 装配 too?” Ontology wash.
++
++**Required fix**
++
++- Remove Board from the Composition drawer section list.
++- Place Board under Autonomy chrome: FocusBand FleetStrip expand, StatusRail when multi-worker active, and/or Cockpit — consistent with Q4 default and ADR-015/016.
++- If a single entry point is required for discovery when idle, use `/board` + ⋯ only, labeled **编排 / 自主度**, never under 装配.
++
++### B2. FocusBand stacking vs ≥55% ChatStream — acceptance is gamed
++
++**Evidence**
++
++- §4.1 / P7: ChatStream ≥55% viewport height at L0 is an **acceptance metric**.
++- §4.3 allows simultaneous FocusBand rows: L1 ContextStrip (36px) + Confirm (~56px); separately L2 task (~48px) + multi-worker Fleet (~40px). Rule only bans “Context + **full fleet**,” not Context + Confirm or Confirm + Fleet.
++- §5.5 wireframe explicitly stacks **two** FocusBand rows (tab + evaluate confirm).
++- §8 v2-P0 Accept measures only: *「L0: ChatStream height ≥55% … at 640px」* — the empty chrome path, not the worst product path.
++
++**Back-of-envelope at 640px panel height** `[assumed]`
++
++| Stack | Approx chrome | Chat ratio |
++|-------|---------------|------------|
++| L0 idle (StatusRail 48 + Composer+chips ~110) | ~158 | ~75% — easy |
++| L1 + pending confirm (48+36+56+110) | ~250 | ~61% |
++| L2 task + confirm + fleet + composer (48+56+48+40+120) | ~312 | **~51% — fails 55%** |
++
++**Required fix**
++
++- Define a **single FocusBand slot** with strict priority (e.g. Confirm > L2 Safety > Fleet summary > L1 Context), max **one** primary row + optional 1-line secondary, or hard max height (e.g. 56–64px) with overflow into Cockpit/popover.
++- Acceptance must include **worst-case** heights: L1+confirm, L2+confirm, multi-worker+confirm — not only L0 idle.
++- Either drop absolute 55% for non-L0 or lower chrome caps so the number is real.
++
++### B3. BottomBar retirement has no migration map for the actual host
++
++**Evidence**
++
++- Spec K2/§4.1: retire permanent BottomBar tab strip; chips + `/` + 装配 drawer.
++- Code: `BottomBar.tsx` is not “tabs only” — it hosts panel openers, overflow「更多」, Skills/Know/Packs/Board/MCP/Apps bodies, `cmspark:open-context-panel` listeners, and data loaders (`pack.list`, `modules.list`, …). `App.tsx` vertical order is Header → ContextStrip → SafetyStrip → ChatView → FleetStrip → **BottomBar** → InputArea.
++- Slash meta today (`META_PANEL_SLASH` in `App.tsx`) only opens **packs / board / mcp** — not skills, knowledge, history, tabs, apps. Spec claims “`/` parity” and “≤2 clicks to MCP/Pack” without inventorying current gaps.
++- §13 mentions soft-deprecate behind flag; **§12 PR plan has no flag, no dual-path, no panel-host extraction PR**.
++
++**Why blocking**
++
++Killing the tab row without extracting panel host = either (a) dead panels mid-PR, or (b) chips that open nothing, or (c) a giant PR that rewrites BottomBar in place while claiming “shell only.” Three-mode D5 already demoted packs/board/mcp to overflow + `/`; v2 goes further without a replace-before-remove plan.
++
++**Required fix**
++
++Add an explicit migration sequence **before** “no permanent BottomBar” acceptance:
++
++1. Extract `ContextPanelHost` (panel registry + open API) from BottomBar.
++2. Achieve real `/` parity matrix (every former primary + overflow id).
++3. Ship chips → same open API.
++4. Then remove tab strip (optional flag one release).
++5. Only then mount 装配 drawer as browsing shell over the same host.
++
++PR2 must not be “delete BottomBar”; it must be “host extract + strip remove.”
++
++---
++
++## Major issues
++
++### M1. Three-mode D1–D16 “locked” claim soft-reopens D5 implementation without a decision ID
++
++- Three-mode §4 **fixed vertical order** includes permanent **ContextBar** (mode-split 2–3 entries). P0 acceptance literally required mode-filtered BottomBar, not its absence.
++- v2 §2.2: *“does not reopen those product forks”* while K2 retires the permanent tab strip entirely.
++- Spirit of D5 (command-first + mode-split) is compatible; **implementation contract** is not.
++
++**Fix:** Add **K2′ / D5′** (or amend note): “ContextBar permanent tabs → mode-aware chips ≤3 + `/` + 装配; D5 intent preserved.” Reference three-mode §4 as superseded for chrome only. Dual-review should treat this as an intentional IA delta, not silent scope creep.
++
++### M2. L2 Composer chips reintroduce power chrome three-mode removed from Panel
++
++- §4.4 L2 chips: **确认台 · Abort link**.
++- Three-mode §4: L2 ContextBar **minimal / hidden**; abort lives on SafetyStrip (D10′); Cockpit is conductor (D12′).
++- Abort beside composer (near Send) risks **P1.3 / §1.3 “destructive never next to Send”** and duplicates SafetyStrip.
++
++**Fix:** L2 chips empty or single「确认台」opener; Abort only in FocusBand Safety row (mandatory, large hit target). No second Abort in dock.
++
++### M3. `alert()` acceptance overclaims; hygiene scope is incoherent
++
++- §6.1 / §8 / §14: offline uses banner; *“Zero `alert()` in extension UI paths.”*
++- Code: offline path in `App.tsx` DisconnectedBanner retry uses `alert()`; **many more** remain (`NotebooklmImporterPanel`, `BottomBar` skill folder, `ThreadList` title, log path copy, etc.).
++- v2-P0 deliver only kills offline `alert()` — success metric claims zero everywhere.
++
++**Fix:** Split metrics:
++
++- P0: no `alert()` on **connection/offline/reconnect** paths.
++- P1+: replace remaining `alert()` with toast/banner grammar (inventory table).
++- Do not claim zero-global until inventory is closed.
++
++### M4. Modal / overlay hierarchy still undefined after adding 装配
++
++- §0 pain: secondary panels “slide under” chat without clear modal hierarchy.
++- v2 adds 装配 drawer but does not specify z-index / focus trap order vs SettingsSlideout, SkillCraft, NotebookLM importer, McpServerForm, LogBar, Thread popover, slash popover, Fleet expand.
++- §6.2 Esc “priority stack” is named but not ordered.
++
++**Fix:** One table: layer name → open triggers → exclusivity (single vs stack) → Esc closes which → focus return. Rule: only one full-height overlay at a time; slash popover subordinate to drawer.
++
++### M5. 装配 drawer is over-stuffed for 320px; Q1 default may erase chat
++
++- Six accordion/tabs (Skills…Board) in 320px; bottom sheet default (Q1) covers ChatStream — the surface P7 tried to protect.
++- Apps + user-env lumped (§4.5 §5) — different trust stories (Host apps vs secrets ADR-019).
++- Packs omit **modules** / `capability_profile` (code `modules.list` with packs) — enterprise path invisible.
++- Craft lives in ⋯ **and** Skills section — OK if documented; else double IA.
++
++**Fix:**
++
++- Cap drawer to Composition only: Skills · Knowledge · Packs(+modules) · MCP · user-env; Apps as Host subsection or Cockpit-heavy.
++- Prefer **height-capped bottom sheet** (~45–50% panel) or right overlay with dimmed chat still partially visible; document first-run discoverability of `/装配`.
++- Resolve Q1 in-doc before PR4; do not leave implementer default as product decision.
++
++### M6. Missing states matrix is promised then empty
++
++- §5.3 demands default·hover·active·disabled·loading·empty·error for chrome components — **no filled matrix**.
++- Three-mode §6 already listed Loading / Empty / Error / Offline / Confirm / Follow-up queue — v2 does not carry them into shell components.
++- Gaps vs real product:
++
++| State | Spec coverage |
++|-------|----------------|
++| Streaming / tool-running | Thin (ToolCard denser) — no StatusRail “busy” |
++| Offline + pending confirm | Unspecified (disable send vs allow deny?) |
++| Reconnecting | Tooltip only |
++| First-run / unpaired (`.paired`) | Not in empty state |
++| L2 send hard-gate (D12′) | Placeholder only; no disabled Send visual |
++| Confirm timeout (D14) | Not in FocusBand grammar |
++| Pin mode (D3) | Buried in ⋯ menu only |
++| Multi-worker + L1 tab context | Q4 open; collision with B2 |
++| SW death / orphan Cockpit | Out of scope silence — OK if explicit |
++| Enterprise modules disabled | Not in Packs section |
++
++**Fix:** Fill §5.3 for StatusRail, FocusBand, ComposerDock, MinimalConfirm at minimum; add a “states” subsection under §6 with offline×confirm and L2 hard-gate.
++
++### M7. Visual system incomplete and conflicts DESIGN.md
++
++- §5.2 radius **6/8/12 only**; DESIGN.md radius table is **4/6/8**, while Composer already uses `radiusLg` 12 — SoT conflict.
++- DESIGN.md Connection Status still documents Material `#4CAF50/#FF9800/#F44336`; v2 migrates — good, but **must patch DESIGN.md in PR1**, not “later P2.”
++- Token roles miss existing semantics: `userBubbleBg`, `assistantBubbleBg`, `modeBrowserBg`, risk helpers, accent soft — implementers will invent hex again.
++- Dark tokens listed for “Cockpit/L2 strip” while K6 defers Panel dark — OK, but StatusRail at L2 LIVE on light panel + dark Safety is two visual systems; say how ModeBadge LIVE reads on light StatusRail.
++
++**Fix:** One SoT pass: either extend DESIGN.md radius to include 12 and drop 4, or keep 4 for icons; list full semantic roles v2 will touch; PR1 acceptance includes DESIGN.md connection section rewrite.
++
++### M8. PR plan realism / ordering
++
++| Issue | Detail |
++|-------|--------|
++| P0 = PR1+2+3 in 1–1.5 wk | Optimistic given App.tsx monolith + BottomBar host extract |
++| PR2 deps PR1 only | Host extract should be its own PR; chips without host = half-ship |
++| PR3 parallel to PR2 | FocusBand merge independent OK, but P0 accept needs both |
++| PR5 visual deps only PR1 | Can polish bubbles while chips/drawer thrash layout — waste |
++| PR4 装配 after PR2 | Correct only if PR2 extracted host |
++| No rollback / flag | §13 flag not in §12 |
++| No test plan | No unit for open-panel parity; no measure script for 55% height |
++| Cockpit PR6 last | Fine, but “no regression content-split” in P0 needs manual checklist |
++
++**Fix:** Reorder: PR1 StatusRail+tokens+offline → PR2 **PanelHost extract** (BottomBar still present) → PR3 chips + `/` parity + flag to hide tab strip → PR4 FocusBand → PR5 drawer → PR6 visual → PR7 Cockpit. Timebox P0 to PR1–3 with honest 2–3 wk if host extract is real.
++
++### M9. Research / toolchain section dilutes the product doc
++
++- §1.1 is meta (Grok `$design`, OMX, Brad Frost talks). Fine in appendix; weak as §1 of a shipping IA spec.
++- Risks dual-review energy spent on philosophy tables (P1–P7) that mostly restate three-mode + ADR-020.
++
++**Fix:** Move §1.1–1.2 to appendix; open with pain audit (§3) + locked constraints (§2).
++
++---
++
++## Minor / nits
++
++1. **§4.1 “three zones” then lists A–D four zones** — rename “four zones” or fold chips into ChatStream footer.
++2. **§4.2 Menu dumps Craft / export / NB / logs / pin** — discoverability still uneven; no IA for which stay ⋯ vs `/`.
++3. **§4.4 “Hist”** is not Composition; fine on chips, but don’t later drag History into 装配.
++4. **§5.4 empty shortcuts “总结本页”** may imply L1 browser action from L0 empty — clarify “paste/summarize selection as text” vs tool call (ADR-020 L0: no CDP tools).
++5. **Cmd+K (Q2)** conflicts with Chrome/OS in some locales; default Yes is risky — prefer `/` only until tested.
++6. **§7 “合盖耗电”** out-of-scope one-liner is good; ensure no new WS heartbeat from StatusRail polish.
++7. **Emoji residual** — §0 complains; §5.4 empty state still Chinese-only (good) but auto-skill toast in App still uses 🤖 — out of P0 scope if called out.
++8. **Success “3 users 10-min first-run”** — no task script (find Pack, allow confirm, open Cockpit).
++9. **§2.1 UI mapping “L2 Required conductor”** — matches D8/D12′; good. Panel “Safety chip + abort + minimal confirm” must stay when drawer open (drawer must not cover Abort).
++10. **Copy「确认台」** — aligned with DESIGN.md / user guide; keep single brand (spec does).
++11. **Fleet “only multi-agent active”** — matches current FleetStrip intent; ensure idle hide remains acceptance.
++12. **Pin in ⋯ only** — three-mode D3 pin is power-user; consider long-press mode badge (future), not P0.
++
++---
++
++## What is strong
++
++1. **Correct problem framing (§0, §3)** — strip stack + BottomBar landfill + Material residue is code-true (`App.tsx` order; residual `alert`/Material in DESIGN.md).
++2. **Hard non-goals and K1** — refuses fourth axis, thread rewrite, full App rewrite, Panel full dark in P0; protects shipped three-mode product forks at the *ontology* level even when chrome changes.
++3. **Composition naming「装配」** — directly answers ADR-020 “中层 Agent” failure mode; alternatives table correctly rejects Pack-as-Surface and confirm-back-to-modal.
++4. **Content-split preserved** — Cockpit remains 确认台; Panel MinimalConfirm in FocusBand; D10′ not reopened.
++5. **Command-first direction** — extends D5/S1 instead of inventing a sixth bottom icon row.
++6. **Quiet Agent Shell thesis** — consistent with DESIGN.md quiet-professional; token migration of connection colors is overdue and concrete.
++7. **Phased acceptance skeleton** — measurable ChatStream ratio (if fixed per B2), no permanent tab row, copy ban on「中层 Agent」are the right *kinds* of checks.
++8. **Offline / recovery grammar intent (P5)** — right product instinct; needs scoped delivery (M3).
++
++---
++
++## Concrete rewrite suggestions (section IDs)
++
++| Section | Rewrite action |
++|---------|----------------|
++| **§1** | Demote toolchain to Appendix A; lead with constraints + pain. |
++| **§2.2** | Add explicit **D5′ / K2′**: permanent ContextBar tabs superseded by chips + `/` + drawer; list what stays locked (D1–D4, D9′–D16). |
++| **§4.1** | Four zones; add **max chrome budget** table (px) per level + multi-agent. |
++| **§4.3** | **Single-slot FocusBand** priority enum; delete dual-row wireframe or mark as invalid; max height hard cap. |
++| **§4.4** | L2 chips: drop Abort; empty or 确认台 only. Document chip → `openPanel(id)` API. |
++| **§4.5** | Composition-only sections; **remove Board**; split Apps vs user-env; add Packs+modules; axis label footer: “挂到当前线程 / Surface — 非更深层 Agent.” |
++| **§4.5b (new)** | Autonomy entry points: FleetStrip / `/board` / Cockpit — not 装配. |
++| **§5.2–5.3** | Sync radius/type with DESIGN.md; full token role list; **fill** states matrix for 4 shell components. |
++| **§5.5** | Redraw L1+confirm as **one** FocusBand row (tab chip collapsed when confirm active, or confirm replaces context). |
++| **§6.1** | Add offline×confirm, L2 hard-gate Send, first-run unpaired, confirm timeout. |
++| **§6.2** | Ordered Esc stack table. |
++| **§6.4 (new)** | Overlay exclusivity + z-index. |
++| **§8** | Worst-case height accepts; `alert()` scoped; `/` parity checklist (tabs, skills, knowledge, history, packs, board, mcp, apps). |
++| **§11** | Close Q1/Q4 with defaults that respect B1/B2; re-open only if user research contradicts. |
++| **§12** | Insert **PanelHost extract PR**; flag for tab-strip removal; tests; reorder visual after IA stable; honest calendar. |
++| **§13** | “Don’t cover Abort with drawer”; “Don’t put Board under 装配.” |
++| **§14** | Align metrics with scoped P0; first-run script 3 tasks. |
++
++### Minimal “unblock implement” checklist
++
++- [ ] Board out of 装配; Autonomy placement written  
++- [ ] FocusBand single-slot + worst-case height accept  
++- [ ] BottomBar → PanelHost migration sequence in §12  
++- [ ] `/` parity matrix (current code gaps closed on paper)  
++- [ ] `alert()` metric scoped  
++- [ ] D5′ recorded as intentional lock update  
++- [ ] DESIGN.md connection Material hex deleted in same PR as tokens  
++- [ ] Esc/overlay stack table  
++
++Until then: **MAJOR_REVISE** — strong shell concept, unsafe to code as the source of truth.
++
++---
++
++*Critic evidence levels: code paths and ADR quotes `[inspected]`; height arithmetic `[assumed]` from stated px caps; no user study run.*
+diff --git a/docs/audit/reviews/sidepanel-uiux-v2-adversarial-B-2026-07-31.md b/docs/audit/reviews/sidepanel-uiux-v2-adversarial-B-2026-07-31.md
+new file mode 100644
+index 0000000..5089f3d
+--- /dev/null
++++ b/docs/audit/reviews/sidepanel-uiux-v2-adversarial-B-2026-07-31.md
+@@ -0,0 +1,383 @@
++# Adversarial Review B — Side Panel UI/UX Redesign v2  
++## Interaction & Implementation Risk (not brand aesthetics)
++
++| Field | Value |
++|-------|--------|
++| **Verdict** | **MAJOR_REVISE** |
++| Date | 2026-07-31 |
++| Spec | [`docs/superpowers/specs/2026-07-31-sidepanel-uiux-redesign.md`](../../superpowers/specs/2026-07-31-sidepanel-uiux-redesign.md) |
++| Critic focus | Task success after BottomBar removal · discoverability · FocusBand priority · metrics · PR sequencing · landfill re-entry |
++| Code cross-check | `BottomBar.tsx`, `App.tsx`, `mode-controller.ts`, `SafetyStrip.tsx`, `MinimalConfirm.tsx`, `FleetStrip.tsx`, `docs/confirm-center-user-guide.md`, `docs/mission-pack-usage.md` |
++| Evidence tags | `[inspected]` static code · `[spec]` design claims · `[assumed]` unproven product behavior |
++
++---
++
++## Verdict: MAJOR_REVISE
++
++Direction (quiet shell, chat height, command-first Composition, keep D10′ content-split) is sound and consistent with ADR-020 / three-mode locks. **Do not ship PR2 “retire BottomBar” as written.** The draft under-specifies the **panel host** that replaces BottomBar, leaves a **P0→P1 discoverability hole** for Packs/MCP/workspace, and treats FocusBand priority as prose rather than a hard state machine. Those are shippability defects, not polish nits.
++
++Not **BLOCK**: ontology, confirm content-split, Cockpit, and mode derivation are correctly frozen. Not **APPROVE** / **MINOR**: without the must-change list below, implementers will either regress task paths or re-grow strip stack under a new name.
++
++---
++
++## Blocking
++
++*(Issues that must be resolved in the design doc before dual-review sign-off and before any PR that removes BottomBar. Not “stop the entire redesign.”)*
++
++### B1. BottomBar is the panel **host**, not only a tab strip — PR2 has nowhere to render Packs/MCP/Skills
++
++**Reality today `[inspected]`:** `BottomBar.tsx` owns:
++
++1. Primary + overflow tab chrome  
++2. `activePanel` state and panel body (`PacksPanel`, `McpPanel`, `SkillsPanel`, …)  
++3. `loadPanelData()` side effects (`pack.list`, `mcp.list`, …)  
++4. The only listener for `cmspark:open-context-panel` (slash meta path in `App.tsx` `META_PANEL_SLASH` → `CustomEvent`)
++
++**Spec claim `[spec]`:** §4.1 / K2 / PR2 retire permanent BottomBar; chips + `/` parity; 装配 drawer only in PR4.
++
++**Gap:** PR2 says “Keep panel openers for Skills/Know/… via chips” but does **not** name a replacement host component, max height, close semantics, or where slash events land if BottomBar unmounts. If BottomBar is deleted without a host:
++
++| Task | Path breaks? |
++|------|----------------|
++| Chat | No (ChatView independent) |
++| Confirm dangerous tool | No (`SafetyStrip` / `MinimalConfirm` independent) |
++| L2 abort | No (`SafetyStrip` abort / OS hotkey) |
++| Open packs / workspace pick | **Yes** — `PacksPanel` only mounted under BottomBar |
++| MCP list / add server flow | **Yes** — `McpPanel` + form wiring via that tree |
++| Slash `/packs` `/mcp` `/board` | **Yes** — event listener dies with BottomBar |
++
++**Required before dual-review:** Specify explicitly for P0:
++
++- `ContextPanelHost` (name free) that mounts the same panel components, driven by chips + slash + later drawer  
++- Lifecycle: open / Esc close / loadPanelData parity  
++- Soft-flag: BottomBar strip off, host on — or **do not land PR2 until host ships in the same PR**
++
++Without this, “retire BottomBar” is not a refactor; it is an incomplete feature amputation.
++
++---
++
++### B2. P0 acceptance “Pack/MCP ≤ 2 clicks” is false under the chip tables
++
++**Chip tables `[spec]` §4.4:**
++
++| Level | Chips (≤3) | Packs? | MCP? |
++|-------|------------|--------|------|
++| L0 | Skills · Know · Hist | ❌ | ❌ |
++| L1 | Tabs · Skills · 工作区 | ❌ | ❌ |
++| L2 | 确认台 · Abort link | ❌ | ❌ |
++
++**P0 deliverables `[spec]` §8:** StatusRail, remove BottomBar, chips + `/` parity, FocusBand — **no 装配 drawer** (P1).
++
++**Today `[inspected]`:** Packs/MCP/Board are overflow under「更多」— still **clickable without memorizing `/packs`**. Docs (`mission-pack-usage.md` §1) teach “底栏 … 任务包”.
++
++**After P0 as written:**
++
++- Mouse-only / non-command users lose the **visible** Pack/MCP entry until P1 drawer  
++- “≤ 2 clicks from chat” (`§14`) only holds if an unlabeled overflow chip or permanent「装配」button is in P0 — neither is in the P0 accept list  
++- `/` is **not a click**; it is a command vocabulary regression for the same population that already struggles with 功能杂
++
++**Required:** Either:
++
++1. **Pull a minimal 装配 entry into P0** (single button → bottom sheet with section list; content can be thin), **or**  
++2. **Demote P0 scope:** keep BottomBar overflow (or a single「更多」) until drawer ships; measure chat height with overflow collapsed, **or**  
++3. Rewrite metrics: “≤ 2 clicks **or** one `/` command from palette with discoverable labels in empty state”
++
++Ship order “kill strip first, discoverability later” will produce support load and doc thrash (`mission-pack-usage`, confirm-center cross-links).
++
++---
++
++### B3. FocusBand “priority” is not a conflict-safe state machine; L2 abort must not be demoted
++
++**Today stacking `[inspected]` (`App.tsx`):**
++
++```text
++Header
++ContextStrip?          // L1
++SafetyStrip?           // L2 task OR any pending confirm (includes MinimalConfirm + 急停)
++ChatView
++FleetStrip             // visible when workers|locks|intents|pending|expanded
++BottomBar
++InputArea
++```
++
++Critical cases already co-occur:
++
++1. **L2 task running + pending confirm** — `SafetyStrip` shows TaskChip + **急停** + `MinimalConfirm` (enterprise trust row possible).  
++2. **Any pending confirm** — `FleetStrip` treats `pending > 0` as visible (`FleetStrip.tsx` L41), so **Confirm chrome + Fleet strip stack** even for single-agent.  
++3. **Multi-worker + confirm + L2** — three chrome families compete for vertical space.
++
++**Spec `[spec]` §4.3:**
++
++- “0–2 rows”  
++- “Confirm elevates over task chrome”  
++- “Fleet never stacks *below* Confirm as a second full bar — merge into one FocusBand with internal priority”  
++- Table still lists separate max heights for Confirm (~56), L2 (~48), Fleet (~40)
++
++**Unanswered (must write as ordered rules):**
++
++| # | Scenario | Must remain one-gesture | Spec answer today |
++|---|----------|-------------------------|-------------------|
++| 1 | L2 + confirm | **急停** + allow/deny | “Confirm elevates” can be read as **hiding** task/abort row |
++| 2 | Confirm + fleet pending | Deny vs stop-all vs open 确认台 | Not ordered |
++| 3 | L1 ContextStrip + confirm | Tab chip + MinimalConfirm | Wireframe shows **two** FocusBand rows — contradicts “0–2” under load |
++| 4 | Esc | MinimalConfirm: Esc → **deny** (`MinimalConfirm.tsx`); BottomBar: Esc → close panel; drawer/palette will add more | §6.2 “priority stack” lists drawer/palette/popover only — **omits confirm deny** |
++
++**Three-mode lock D10′ `[inspected]`:** Panel L2 = TaskChip + **mandatory abort** + minimal confirm. FocusBand merge **must not** reinterpret “confirm elevates” as “abort optional.”
++
++**Required in spec:**
++
++```text
++FocusBand priority (hard):
++  P0  MinimalConfirm (queue head) — always full row when pending
++  P0  L2 Abort control — always visible when computerTask active & not finished
++      (may share the confirm row as a trailing control; must not require expand)
++  P1  L2 TaskChip / progress (may compress when confirm present)
++  P2  Enterprise trust chip (may fold under confirm)
++  P3  ContextStrip (L1) — hide or collapse to single tab chip when P0 active
++  P4  Fleet compact — suppress when pending==0 && workers==0; when pending>0
++      do NOT open a second bar: badge on confirm row or 确认台 affordance only
++Esc stack (hard):
++  1. slash popover close
++  2. 装配 / thread popover / drawer close
++  3. context panel host close
++  4. MinimalConfirm deny (only if no higher overlay)
++  Never: Esc closes drawer AND denies in one keypress without defined order
++```
++
++Wireframe §5.5 showing two FocusBand rows under L1+confirm must be reconciled with max-height budget or acceptance will fail at L1+evaluate.
++
++---
++
++## Major
++
++### M1. L2 Composer chips place “Abort” next to Send — contradicts own density / safety rules
++
++**Spec `[spec]`:**
++
++- §1.3: “destructive actions never next to Send”  
++- §4.4 L2 chips: `确认台 · Abort link`
++
++**Reality `[inspected]`:** Abort already lives in `SafetyStrip` (correct elevation, dark surface, away from composer). Duplicating Abort as a chip **above** the textarea re-introduces mis-tap risk and dual affordances (chip vs 急停 vs Ctrl+Alt+End).
++
++**Fix:** L2 chips = `确认台` only (or “打开确认台”); **never** Abort in ComposerDock. Keep Abort exclusively in FocusBand Safety row.
++
++---
++
++### M2. Slash “parity” is incomplete even today — retiring BottomBar amplifies it
++
++**Today `[inspected]` `META_PANEL_SLASH`:** only `packs`, `board`, `mcp`.  
++Not meta-slash: skills, knowledge, history, tabs, apps. Those rely on **visible** BottomBar primary tabs at L0/L1.
++
++**P0 chips** restore L0 Skills/Know/Hist and L1 Tabs/Skills — good.  
++**Apps**, full **Board** browse, **MCP server add**, **Pack module enable + workspace.pick** remain:
++
++- command-only until drawer, or  
++- orphaned if slash listener/host missing (B1)
++
++**Fix:** Expand meta slash table in the same PR as host (`/skills` `/knowledge` `/history` `/tabs` `/apps` `/board` `/packs` `/mcp` `/装配`), and update copy that still says “底栏「更多」”.
++
++---
++
++### M3. PR sequencing creates a product regression window and merge conflict magnet
++
++| PR | Hazard |
++|----|--------|
++| PR2 before PR4 | Composition discoverability cliff (B2) |
++| PR2 + PR3 both touch `App.tsx` shell | Parallel deps on PR1 only → conflict / double rewrite of layout |
++| PR2 without host | Broken slash + no panels (B1) |
++| “Soft-deprecate flag” in §13 | If flag leaves **strip + chips**, density is **worse** than today — landfill during migration |
++| PR5 visual pass independent of FocusBand | Easy to polish bubbles while safety stack still broken |
++
++**Fix sequencing (recommended):**
++
++1. **PR1** StatusRail + offline banner (no structural IA cut)  
++2. **PR2a** `ContextPanelHost` + move slash listener + optional collapse of tab *strip only* behind flag (panels still open)  
++3. **PR2b / PR3** FocusBand merge with hard priority tests  
++4. **PR2c** Remove permanent tab row only when chips + 装配 **entry** exist  
++5. **PR4** Full 装配 sections  
++6. Visual / Cockpit as planned  
++
++Acceptance for “no permanent BottomBar” must be **gated on host + one Composition entry**, not on strip deletion alone.
++
++---
++
++### M4. Acceptance metrics are partly unmeasurable / over-scoped
++
++| Metric | Problem |
++|--------|---------|
++| ChatStream ≥55% at 640px L0 | Measurable with DevTools; **must define chrome set** (empty FocusBand, chips only, no drawer, no logs). Good for L0 only — silent on L1+confirm where users most need chat. |
++| Pack/MCP ≤2 clicks | Fails under P0 chip tables (B2); no instrumentation |
++| Zero `alert()` in extension UI | Spec P0 only kills offline `alert` in `App.tsx` L204. **Many remain** `[inspected]`: BottomBar skill import, ThreadList, NotebooklmImporterPanel, logs path prompts. Claiming “zero alert()” without inventory is false marketing. |
++| 10-min first-run / 3 users | Aspirational; not a gate |
++| “No regression: confirm content-split, L2 Cockpit open, abort” | Checkbox only — no scenario list or test file pointers |
++
++**Fix:**
++
++- Split metrics: **L0 height** (gate) vs **L1+confirm height floor** (e.g. ChatStream ≥35% or FocusBand max px)  
++- `alert()` inventory: P0 = connection/reconnect paths; track remaining as P1 debt table  
++- Manual regression script (10 bullets): allow/deny/nonce-redirect, L2 abort ack timeout, fleet stop-all, `/packs` workspace pick, MCP list, Esc stack  
++
++---
++
++### M5. FleetStrip visibility rule fights FocusBand merge
++
++**Today `[inspected]`:** `visible = workerCount > 0 \|\| lockCount > 0 \|\| openIntents > 0 \|\| pending > 0 \|\| expanded`.
++
++Any security confirm forces Fleet chrome even with zero workers — **confirmed landfill residual** from multi-agent work. Spec Q4 defaults “FocusBand when multi-agent” but does not **delete** `pending > 0` from Fleet visibility.
++
++**Fix:** Spec must say: remove `pending > 0` from FleetStrip show condition; pending is owned by MinimalConfirm / 确认台. Keep stop-all only when `workerCount > 0`.
++
++---
++
++### M6. Docs and user-facing contracts lag the IA cut
++
++User guides still teach BottomBar:
++
++- `mission-pack-usage.md` §1: 底栏「任务包」  
++- `confirm-center-user-guide.md`: FleetStrip / SafetyStrip naming (OK if components rename carefully)  
++- `META_PANEL_SLASH` descriptions: “底栏「更多」”  
++- Claude.md / Agents.md common issues: Side Panel → **任务包**
++
++**Fix:** P0/P1 PR checklist must include doc delta for pack/MCP/workspace paths; otherwise dual-review “no product contradiction” fails in the field even if ADR-020 holds.
++
++---
++
++### M7. 装配 drawer can re-introduce 320px landfill under a new label
++
++**Risk vectors `[spec]` + code:**
++
++- Six sections (Skills / Knowledge / Packs / MCP / Apps·user-env / Board) in a bottom sheet ≈ old BottomBar + more  
++- `BottomBar` panel already uses `maxHeight: 320` with sticky header — comment admits Apps form was unusable at 200px; drawer will fight ChatStream ≥55% the moment it opens (acceptable if **modal** and chat height metric is idle-only — **state that**)  
++- Chip overflow → drawer encourages growing chip count past 3  
++- Soft-flag dual path (strip + chips + drawer) = three Composition UIs  
++- Empty-state intent chips + ContextChips +「装配」button + StatusRail ⋯ = chrome creep at L0  
++
++**Guardrails to write into §4.5 / acceptance:**
++
++- Drawer open: ChatStream metric **waived**; idle L0 metric applies only when drawer closed  
++- Max **one** secondary surface at a time (drawer **or** context panel host **or** settings — not stacked)  
++- Board section hidden unless multi-worker active **or** user pin (spec says this; make it a test)  
++- No second permanent tab row inside drawer (accordion or single section list, not 6 icon tabs mimicking BottomBar)  
++
++---
++
++## Minor
++
++### m1. Offline hygiene is good; incomplete relative to “structured recovery”
++
++Replacing reconnect `alert()` with banner is correct (P5). Spec should also name: disable send while disconnected (partially true via connection state), and stop using `window.confirm` for fleet stop-all without a quiet in-panel confirm (still `window.confirm` in `FleetStrip.tsx` L47) — same “breaks in-extension tone” class.
++
++### m2. Connection tokens already partially migrated
++
++`App.tsx` Header status dot already uses `tokens.success|warning|danger` `[inspected]`, not Material `#4CAF50`. Pain audit §3 overstates “Material dots in code paths” for the main Header; residual hex may live in FleetStrip (`#f59e0b`, `#34d399`) and L2 header tints. Scope PR1 to **inventory residual hex**, not “migrate Header from Material.”
++
++### m3. Cmd+K / Q2 unresolved under real Chrome OS shortcuts
++
++Side panel focus + Chrome reserved keys: default “Yes if no conflict” is fine, but P0 should not block on Cmd+K. Prefer `/` + 装配 button only until spike.
++
++### m4. Mode badge `aria-live` and 44×32 confirm targets
++
++Good a11y goals; MinimalConfirm layout is already dense — specify whether hit-target growth is allowed to exceed ~56px FocusBand budget (tension with height metric).
++
++### m5. Pin mode buried in ⋯ menu
++
++Today pin is on ModeBadge in Header. Spec §4.2 puts pin in Menu (⋯). That is a **discoverability regression** for power users who pin L1 during long browser work. Prefer keep pin on badge (current).
++
++### m6. “工作区” chip at L1
++
++Workspace bind lives inside `PacksPanel` (`workspace.pick`) `[inspected]`. L1 chip「工作区」implies a first-class panel; without defining whether it opens Packs section, a stub, or Settings, implementers will invent a fourth panel.
++
++---
++
++## Strengths
++
++1. **Correct freeze of product forks** — ADR-020 axes, D1–D16, D10′ content-split, no confirm modal back into 320px, Pack cannot relax globals. Avoids the usual redesign temptation to re-litigate mode ontology.  
++2. **Honest pain audit** — vertical strip stack is real; `App.tsx` order matches the diagram; offline `alert()` is real.  
++3. **Composition naming「装配」** — makes axis B legible without a fake fourth Surface; aligns with mission-pack / MCP as attach-to-thread, not “deeper agent.”  
++4. **Chat height as acceptance metric** — rare and useful; forces thrift better than aesthetic review alone.  
++5. **Slash already exists (S1)** — `META_PANEL_SLASH` + `cmspark:open-context-panel` is the right extension point; redesign builds on shipped infrastructure rather than inventing a second command system.  
++6. **Confirm-center contract respected** — dual-track, nonce only in Cockpit, close Cockpit ≠ stop task; user guide promises can remain true if FocusBand keeps abort + minimal allow/deny.  
++7. **Phased PR intent** — shell before visual; Cockpit polish last — right risk order *if* Composition entry is not deferred past strip removal (see M3).  
++8. **Non-goals** — no HUD redesign, no thread rewrite, no full App rewrite — bounds blast radius.
++
++---
++
++## Must-change list before dual-review
++
++Spec edits required in `2026-07-31-sidepanel-uiux-redesign.md` (or a locked delta) before Claude+Pi dual-review:
++
++1. **§4 / PR2 — Panel host contract**  
++   - Name host component; ownership of `activePanel`, `loadPanelData`, slash event  
++   - Rule: BottomBar **strip** may die only when host is live in the same release train  
++
++2. **§8 P0 — Composition entry**  
++   - Add P0 accept: permanent or composer-adjacent「装配」control that lists Packs / MCP / Skills / … (can open host sections before full drawer polish)  
++   - Or explicitly keep overflow「更多」until P1 and drop “no permanent BottomBar” from P0  
++
++3. **§4.3 — FocusBand state machine**  
++   - Paste hard priority + Esc stack from B3  
++   - Explicit: L2 **急停** always visible with active task; not demoted by confirm  
++   - Explicit: Fleet does not show solely because `pending > 0`  
++
++4. **§4.4 — Remove Abort from L2 chips**  
++   - Align with “destructive never next to Send”  
++
++5. **§12 — Resequence PRs**  
++   - Host → FocusBand priority → strip removal → full drawer  
++   - Forbid soft-flag dual chrome (strip+chips) for more than a behind-flag dev build  
++
++6. **§14 — Metrics honesty**  
++   - L0 height gate with fixed chrome matrix  
++   - L1+confirm height floor or FocusBand max px  
++   - `alert()` scope = inventory, not blanket zero  
++   - Manual regression script for confirm / abort / packs workspace / slash  
++
++7. **§4.5 — Landfill guards**  
++   - One secondary surface at a time  
++   - Drawer open waives chat-height metric  
++   - Board section gated  
++   - No 6-tab BottomBar clone inside drawer  
++
++8. **Docs delta checklist**  
++   - `mission-pack-usage.md`, slash descriptions, troubleshooting “任务包” path  
++
++9. **§4.2 — Keep mode pin on badge** (or justify regression)  
++
++10. **§4.4 L1「工作区」chip** — define exact open target (Packs/workspace subsection)
++
++---
++
++## Task-success matrix (post-BottomBar, if must-changes land)
++
++| User task | Survives P0? | Condition |
++|-----------|--------------|-----------|
++| Chat L0 | ✅ | StatusRail + ChatStream + Composer only |
++| Confirm dangerous tool (allow/deny) | ✅ | FocusBand MinimalConfirm; Esc deny ordered |
++| Confirm with nonce / whitelist | ✅ | Still Cockpit only (unchanged) |
++| L2 abort | ✅ | FocusBand 急停 mandatory; not composer chip |
++| Open packs + select workspace | ⚠️ → ✅ | **Needs host + 装配 or retained 更多** (B1/B2) |
++| Use MCP panel | ⚠️ → ✅ | Same |
++| Multi-agent stop-all | ✅ | Fleet only when workers>0; not on every confirm |
++| Find skills without `/` | ✅ | L0 chips if host opens SkillsPanel |
++
++---
++
++## Code anchors (absolute)
++
++| Concern | Path |
++|---------|------|
++| Shell stack | `/Users/huchen/Projects/cmspark/chrome-extension/src/sidepanel/App.tsx` (~L167–198, META_PANEL_SLASH ~L37–63, slash open ~L638–647, offline alert ~L204) |
++| Panel host + slash listener | `/Users/huchen/Projects/cmspark/chrome-extension/src/sidepanel/components/BottomBar.tsx` (~L72–125, L378–400) |
++| Level / overflow IA | `/Users/huchen/Projects/cmspark/chrome-extension/src/sidepanel/mode/mode-controller.ts` (`contextBarTabsForLevel`, `contextBarOverflowTabsForLevel`) |
++| L2 abort + confirm | `/Users/huchen/Projects/cmspark/chrome-extension/src/sidepanel/components/SafetyStrip.tsx`, `MinimalConfirm.tsx` |
++| Fleet show-on-pending | `/Users/huchen/Projects/cmspark/chrome-extension/src/sidepanel/components/FleetStrip.tsx` (~L39–44) |
++| Confirm UX promises | `/Users/huchen/Projects/cmspark/docs/confirm-center-user-guide.md` |
++| Packs entry docs | `/Users/huchen/Projects/cmspark/docs/mission-pack-usage.md` §1 |
++
++---
++
++## Bottom line
++
++Redesign v2 correctly aims at strip thrift and Composition legibility. **Interaction risk is concentrated in the cut that removes BottomBar before a host + discoverable 装配 path exist, and in an underspecified FocusBand that can violate D10′ abort guarantees under confirm+fleet load.** Fix those in the draft, resequence PRs, and dual-review can proceed; aesthetic token work can wait.
++
++**Verdict: MAJOR_REVISE** — not a product strategy reject; a shippability gate on IA migration mechanics.
+diff --git a/docs/audit/reviews/sidepanel-uiux-v2-dual-review-prompt-2026-07-31.md b/docs/audit/reviews/sidepanel-uiux-v2-dual-review-prompt-2026-07-31.md
+new file mode 100644
+index 0000000..1d27876
+--- /dev/null
++++ b/docs/audit/reviews/sidepanel-uiux-v2-dual-review-prompt-2026-07-31.md
+@@ -0,0 +1,57 @@
++# Dual external review: Side Panel UI/UX Redesign v2
++
++**Batch:** `sidepanel-uiux-v2`  
++**Stage:** Design SoT after adversarial revision  
++**Date:** 2026-07-31  
++
++## Capability declaration
++
++```text
++Surface:      L0 | L1 | L2  (UI presentation only — no new surface tools)
++L2-classes:   (none new)
++Compose:      skill | knowledge | mcp-server | pack | user-env  (IA: 装配 drawer)
++Autonomy:     board stays Autonomy chrome (not 装配)
++Trust:        existing gates; content-split D10′ preserved
++Channel:      n/a
++```
++
++## Documents to read (tools)
++
++1. **Primary:** `docs/superpowers/specs/2026-07-31-sidepanel-uiux-redesign.md` (full)
++2. **Adversarial A:** `docs/audit/reviews/sidepanel-uiux-v2-adversarial-A-2026-07-31.md`
++3. **Adversarial B:** `docs/audit/reviews/sidepanel-uiux-v2-adversarial-B-2026-07-31.md`
++4. **Ontology:** `docs/adr/020-capability-model-three-axes.md` (§1–3)
++5. **Prior IA:** `docs/superpowers/specs/2026-07-26-ui-three-mode-redesign.md` (§1–5, D1–D16)
++6. Optional: `docs/DESIGN.md` tokens
++
++## Context
++
++- Three-mode L0/L1/L2 + Cockpit **already shipped**; this v2 is **shell/IA/visual** refinement after user feedback (ugly + inconvenient).
++- Two independent adversarial critics both returned **MAJOR_REVISE**; author revised for: Board out of 装配, ContextPanelHost replace-before-remove, FocusBand hard state machine + 急停, P0 装配 entry, slash parity, Esc stack, honest height metrics, PR resequence.
++- Research: agent UX principles (transparency, agency, progressive disclosure, status-first) + quiet-professional tokens.
++
++## Your job
++
++Independent senior design/product review. Challenge the **revised** design for:
++
++1. ADR-020 fidelity (Composition vs Autonomy; no 中层 Agent)  
++2. Whether adversarial blocking issues are actually closed  
++3. Shippability of PR plan / FocusBand / Host migration  
++4. Residual product risk in 320px panel  
++5. Completeness for engineers to implement without guessing  
++
++## Output format
++
++```markdown
++## Summary
++## ADR-020 / three-mode fit
++## Adversarial closure check
++| Issue | Closed? | Evidence |
++## Residual risks
++## Blocking
++## Nits
++VERDICT: APPROVE|APPROVE_WITH_NITS|REJECT
++```
++
++If REJECT: list concrete blocking gaps with section IDs.  
++If APPROVE_WITH_NITS: nits only; design is implementable.
+diff --git a/docs/superpowers/specs/2026-07-31-sidepanel-uiux-redesign.md b/docs/superpowers/specs/2026-07-31-sidepanel-uiux-redesign.md
+new file mode 100644
+index 0000000..8969789
+--- /dev/null
++++ b/docs/superpowers/specs/2026-07-31-sidepanel-uiux-redesign.md
+@@ -0,0 +1,537 @@
++# CMspark Side Panel UI/UX Redesign v2 — Quiet Agent Shell
++
++| Field | Value |
++|-------|--------|
++| Status | **Revised after adversarial A+B (MAJOR_REVISE → ready dual-review)** |
++| Date | 2026-07-31 |
++| Adversarial | `docs/audit/reviews/sidepanel-uiux-v2-adversarial-A-2026-07-31.md` · `…-B-…` |
++| Surfaces | Chrome Side Panel (~320px) · Extension Cockpit · (Native HUD out of scope) |
++| Supersedes / extends | [2026-07-26 three-mode redesign](2026-07-26-ui-three-mode-redesign.md) (IA already landed P0–P2) |
++| Ontology | [ADR-020](../../adr/020-capability-model-three-axes.md) Surface × Composition × Autonomy |
++| Tokens | [docs/DESIGN.md](../../DESIGN.md) · `sidepanel/ui/tokens.ts` |
++
++---
++
++## 0. Why this doc exists
++
++Three-mode (L0/L1/L2) and Cockpit content-split **shipped**, but daily feel remains:
++
++1. **Visually noisy** — mixed radius/hex, dense chrome, emoji residual, half-migrated Material status dots.  
++2. **Interactively expensive** — vertical stack of Header → ContextStrip → SafetyStrip → Chat → FleetStrip → BottomBar → Composer squeezes the message stream; secondary panels still “slide under” chat without a clear modal hierarchy.  
++3. **Ontology not legible** — users still experience “功能杂”：Skill / Pack / MCP / Board live in BottomBar overflow without a **Composition vs Surface** story.
++
++This redesign **does not** invent a fourth capability axis or a second agent runtime. It **refines presentation and interaction** so ADR-020 reads as product, not only as architecture.
++
++---
++
++## 1. Research synthesis — community design skills & philosophies
++
++### 1.1 Skills / workflows available in this toolchain
++
++| Source | Skill / pattern | Use here |
++|--------|-----------------|----------|
++| Grok Build | `$design` write→review loop | Design-doc quality gate |
++| OMX | `$design` (repo DESIGN.md SoT); `$visual-ralph` for pixel implement | Post-approval visual lock |
++| Mattpocock | `design-an-interface` (multi-option interfaces) | Optional API-shape exploration |
++| Community (2026) | Semantic design systems + agent skills/MCP for UI codegen | Tokens + component contracts for AI implementers |
++| Brad Frost / Chromatic | **Agentic design systems** — examples, states, constraints for agents | Component matrix with empty/loading/error/disabled |
++
++**Deprecation note:** `omx-frontend-ui-ux` is a shim → use design + visual-ralph, not that skill.
++
++### 1.2 Agent UX principles (2025–2026 consensus)
++
++Synthesized from agent-UI writing (transparency / control / status / recovery), progressive delegation, and side-panel density practice:
++
++| # | Principle | Product implication for CMspark |
++|---|-----------|----------------------------------|
++| P1 | **Transparency** | Tool steps, risk, and “why confirm” always visible at the right surface (Panel minimal / Cockpit elevated — keep D10′). |
++| P2 | **Human agency** | Abort always one gesture; pin level; never silent L2; Pack cannot relax globals (ADR-020). |
++| P3 | **Progressive disclosure** | L0 chat-first; composition tools behind `/` + one “装配” entry; power chrome only when Surface needs it. |
++| P4 | **Status is first-class** | Connection + mode + task + confirm queue in a **single status rail**, not 4 strips. |
++| P5 | **Structured recovery** | Offline / tool error / confirm timeout → same toast+banner grammar; no `alert()`. |
++| P6 | **Semantic system** | Tokens carry *intent* (`surface.chat`, `risk.high`) not just hex — for humans and future AI implementers. |
++| P7 | **Density budget** | Side Panel: ChatStream height targets — **L0 idle ≥55%**; **worst-case (L2+confirm) ≥40%** of panel; FocusBand hard-capped (see §4.3). |
++
++### 1.3 Side-panel specific patterns
++
++- **One primary scroll region** (chat); secondary content = drawer / overlay / separate window (Cockpit).  
++- **Command palette** (`/`) for low-frequency IA (already S1) — expand to full “装配中心” rather than more BottomBar tabs.  
++- **Thumb zone**: composer + primary actions bottom-fixed; destructive actions never next to Send.  
++- **Confirmation elevation**: keep content-split; never re-introduce full security modal into 320px panel.
++
++---
++
++## 2. Product constraints (locked)
++
++### 2.1 From ADR-020 (non-negotiable)
++
++```text
++Surface:      L0 聊 | L1 网页 | L2 计算机
++Composition:  Skill · Knowledge · MCP · Pack · user-env
++Autonomy:     single loop → multi-worker → Board
++Trust:        rises with Surface; Pack cannot relax globals
++```
++
++UI mapping (unchanged):
++
++| Surface | Panel | Cockpit |
++|---------|-------|---------|
++| L0 | Default home | Closed |
++| L1 | Chat + context; user「展开工作区」 | Optional light workspace |
++| L2 | Safety chip + abort + minimal confirm | Required conductor |
++
++**Forbidden in copy/UI:** bare「中层 Agent」. Use「装配 / 组合能力」.
++
++### 2.2 From three-mode redesign (keep, with one intentional chrome delta)
++
++D1–D16 remain in force for product semantics (mode ontology, hysteresis, content-split, L1 user-only expand, tray L2 → Cockpit, etc.).
++
++**Intentional IA delta (D5′ / K2′)** — supersedes three-mode §4 *implementation* of permanent ContextBar / BottomBar tab row only:
++
++> Mode-split permanent tabs → **≤3 mode-aware chips + `/` + 装配 entry + shared ContextPanelHost**.  
++> D5 *intent* (command-first, low-freq via settings/`/`) is preserved; the permanent tab strip is not.
++
++Dual-review should treat D5′ as an explicit product IA change, not silent scope creep.
++
++### 2.3 Explicit non-goals
++
++- Redesign Companion native HUD (P3a spike separate).  
++- New capability modules or confirm dialects.  
++- Thread model rewrite.  
++- Full App.tsx rewrite in one PR — shell extraction only.  
++- Dark mode for entire Panel in v2-P0 (tokens prepared; optional v2-P2).
++
++---
++
++## 3. Current pain audit (code-grounded)
++
++| Area | Today | Pain |
++|------|-------|------|
++| Vertical chrome | Header + ContextStrip + SafetyStrip + FleetStrip + BottomBar + Composer | Chat squeezed; cognitive “strip stack” |
++| BottomBar | Mode-filtered tabs + overflow | Still feels like landfill when「更多」opened |
++| Header | Thread + badge + connection + ⋯ menu | ⋯ hides Craft / export / NB / logs / settings — discoverability uneven |
++| Status | Badge + connection + toasts + banners | No unified grammar |
++| Visual | tokens.ts exists; residual Material dots (`#4CAF50`) in docs/code paths | Inconsistent “quiet-professional” |
++| Composition | Skills/Know/Pack/MCP/Apps as panels | No mental model vs Surface badge |
++| Offline | `alert()` reconnect path in App.tsx | Breaks in-extension tone |
++| Live log | Fixed field normalize (2026-07-31) | Still a power feature in ⋯ |
++
++---
++
++## 4. Target information architecture
++
++### 4.1 Panel shell — three zones only
++
++```text
++┌─────────────────────────────────────┐
++│  A. StatusRail (fixed, ~40–48px)    │  mode · connection · thread · menu
++├─────────────────────────────────────┤
++│  B. FocusBand (0–2 rows, collapsible)│  L1 context | L2 safety | confirm mini
++│     (never both Context + full fleet)│  Fleet → only multi-agent active
++├─────────────────────────────────────┤
++│  C. ChatStream (flex 1, primary)    │  ≥55% height L0 target
++├─────────────────────────────────────┤
++│  D. ComposerDock (fixed)            │  / palette · attach · input · send
++│     + optional slim ContextChips    │  NOT a second BottomBar
++└─────────────────────────────────────┘
++```
++
++**BottomBar permanent tab strip is retired only after host extraction** (see §4.7 migration). Replacement surfaces:
++
++1. **ContextPanelHost** — single owner of panel bodies + data loaders + `cmspark:open-context-panel` (extracted from BottomBar; **not optional**).  
++2. **Context chips** under composer (mode-aware, max 3 primary) → open Host.  
++3. **`/` command palette** with **full parity matrix** (§4.8) → open Host.  
++4. **「装配」entry (P0 minimum)** — one button/chip opens bottom sheet *section list*; full section UIs can land in P1 but **entry is P0** so Pack/MCP stay discoverable without memorizing slash.  
++5. Board is **not** under 装配 — see §4.5 / Autonomy.
++
++### 4.2 StatusRail (Zone A)
++
++| Element | Behavior |
++|---------|----------|
++| Mode badge | L0 `聊` / L1 `网页` / L2 `计算机·LIVE` — `aria-live="polite"` |
++| Connection | Dot + text tooltip (connected / reconnecting / offline) — **tokens only** |
++| Thread | Title + switcher (compact ThreadList popover) |
++| Menu (⋯) | Settings, secrets, export, Craft, NotebookLM, logs, pin mode |
++
++### 4.3 FocusBand (Zone B) — hard state machine (not soft prose)
++
++**Single slot.** Max **one primary row** (≤56px) + optional **one secondary line** (≤24px). Total FocusBand ≤ **80px**. Overflow actions open Cockpit or popover — never a third bar.
++
++| Priority (highest wins primary) | Content | Abort visible? |
++|----------------------------------|---------|----------------|
++| P0 Confirm pending | MinimalConfirm (tool + risk + Allow/Deny/Stop) | Stop in confirm row |
++| P1 L2 task active (no confirm) | TaskChip + **急停** (mandatory) | **Yes — always in primary when L2** |
++| P2 Multi-worker / locks / intents | Fleet summary (1 line); expand → Autonomy panel / Cockpit | — |
++| P3 L1 context | tab chip +「展开工作区」 | — |
++| P4 idle | empty | — |
++
++**Hard rules:**
++
++1. **Confirm does not bury 急停.** When L2 task **and** confirm: primary = MinimalConfirm that **includes** Abort/Stop control (or primary=Confirm + secondary line with 急停 always visible). Violating D10′ is a bug.  
++2. Fleet never claims primary over Confirm or L2 Safety.  
++3. L1 Context yields to Confirm.  
++4. No dual full-height ContextStrip + SafetyStrip + FleetStrip stack.
++
++### 4.4 ComposerDock (Zone D)
++
++```text
++[ / 装配 ]  [chips: Skills·Tabs·…] 
++┌──────────────────────────────────┐
++│  attach │  textarea…        │ ➤ │
++└──────────────────────────────────┘
++```
++
++| Level | Placeholder | Chips (≤3) + fixed |
++|-------|-------------|---------------------|
++| L0 | 问点什么，或 / 装配 | **装配** · Skills · Know |
++| L1 | 描述网页任务… | **装配** · Tabs · 工作区 |
++| L2 | 排队跟进…（conductor 在确认台） | **确认台** · **装配** · (no Abort here) |
++
++**Abort never lives next to Send** (§1.3 thumb zone). L2 急停 stays in FocusBand / Safety only.
++
++Send shortcut respects settings (Enter / Cmd+Enter).
++
++### 4.5 装配 Drawer (Composition plane only)
++
++**Name:** 装配（not「工具」or「中层」）  
++**Open via:** `/装配` · Composer **装配** chip · empty-state link · (P0) same entry opens thin section list even before full P1 chrome  
++
++**Composition sections only** (ADR-020 Axis B):
++
++1. **Skills** — activate/craft  
++2. **Knowledge** — site/global  
++3. **Packs** — mission packs  
++4. **MCP** — servers  
++5. **Apps / user-env** — host apps + secrets (enterprise-aware copy)  
++
++**Not in 装配 (Autonomy — Axis C):**
++
++- **Board / Fleet / multi-worker** → FocusBand fleet summary, StatusRail when active, Cockpit, `/board`, ⋯「编排」. Never labeled as 组合/装配.
++
++Each Composition section shows **attach target**: “挂到当前线程 · Surface Lx” so Composition ≠ deeper agent.
++
++**Landfill guards:** only one secondary surface open at a time (drawer **or** ContextPanelHost body **or** Settings). Opening one closes the other.
++
++### 4.6 Cockpit (confirm center) — keep, polish only
++
++- Keep dual-track + ConfirmElevated.  
++- Visual: align StatusRail grammar (L2 · LIVE, connection).  
++- No new primary chrome; fix spacing/type scale to match Panel tokens.
++
++### 4.7 ContextPanelHost + BottomBar migration (blocking for implementers)
++
++Today `BottomBar.tsx` is not “tabs only” — it owns `activePanel`, panel mounts, `loadPanelData`, and `cmspark:open-context-panel`.
++
++**Replace-before-remove sequence (mandatory):**
++
++| Step | Deliverable | BottomBar strip |
++|------|-------------|-----------------|
++| M1 | Extract **ContextPanelHost** (registry + open/close + loaders + event listener) | Keep strip |
++| M2 | Chips + `/` + 装配 entry all call Host API; **slash parity matrix complete** (§4.8) | Keep strip optional |
++| M3 | Flag `ui.bottomBarStrip=false` hides tab row only | Host remains |
++| M4 | Delete strip chrome after one release / acceptance | Host only |
++
++**PR2 must not delete BottomBar** without M1 in the same or prior PR.
++
++### 4.8 Slash / open-panel parity matrix
++
++| Target | `/` command | Chip / 装配 | Host panel id |
++|--------|-------------|-------------|---------------|
++| Skills | `/skills` | L0 chip / 装配 | `skills` |
++| Knowledge | `/knowledge` | L0 / 装配 | `knowledge` |
++| History | `/history` | 装配 or Hist chip | `history` |
++| Tabs | `/tabs` | L1 chip | `tabs` |
++| Packs | `/packs` | **装配** (P0) | `packs` |
++| MCP | `/mcp` | **装配** (P0) | `mcp` |
++| Apps | `/apps` | 装配 | `apps` |
++| Board | `/board` | ⋯ 编排 / fleet (not 装配) | `board` |
++| Settings | `/settings` or ⋯ | ⋯ | settings slideout |
++| 确认台 | `/cockpit` | L2 chip | opens cockpit window |
++
++Empty state L0 lists: 总结本页 · **装配** · `/packs` as visible hints (not slash-only).
++
++### 4.9 Esc / overlay priority stack
++
++Highest → lowest (Esc peels one layer):
++
++1. Open modal dialogs (McpServerForm, craft, notebooklm)  
++2. ContextPanelHost body / 装配 drawer  
++3. Thread popover / slash palette  
++4. (Confirm is **not** dismissed by Esc → must Allow/Deny/timeout — safety)
++
++---
++
++
++## 5. Visual system v2
++
++### 5.1 Design thesis
++
++**Quiet Agent Shell** — one accent, soft neutrals, geometry over emoji, mode tint subtle (not neon). Density over decoration.
++
++### 5.2 Token roles (extend `tokens.ts` / DESIGN.md)
++
++| Role | Light | Dark (Cockpit/L2 strip) |
++|------|-------|-------------------------|
++| `surface.canvas` | `#fafbfc` | `#0f1115` |
++| `surface.elevated` | `#ffffff` | `#161a22` |
++| `text.primary` | `#111827` | `#e8eaed` |
++| `text.secondary` | `#4b5563` | `#9aa0a6` |
++| `border.subtle` | `#e5e7eb` | `#2a2f3a` |
++| `accent.primary` | `#2563eb` | `#5b8def` |
++| `status.live` | `#16a34a` | `#4ade80` |
++| `status.warn` | `#d97706` | `#fbbf24` |
++| `status.danger` | `#dc2626` | `#f87171` |
++| `mode.l0` | gray chip | — |
++| `mode.l1` | blue soft chip | — |
++| `mode.l2` | green-on-dark chip | LIVE pulse |
++
++**Migrate:** connection colors from Material `#4CAF50/#FF9800/#F44336` → status tokens.  
++**Radius:** 6/8/12 only. **Type:** 11/12/13/15. **Motion:** ≤200ms + `prefers-reduced-motion`.
++
++### 5.3 Component states matrix (agentic DS)
++
++Every chrome component documents: **default · hover · active · disabled · loading · empty · error**.
++
++Priority polish list: StatusRail, ModeBadge, MessageBubble, ToolCard, MinimalConfirm, Composer, 装配 Drawer, ThreadPopover.
++
++### 5.4 Wireframe (L0)
++
++```text
++┌─ StatusRail ──────────────────────────┐
++│ [聊]  ·  已连接  │ 今日笔记…  ▾  │ ⋯ │
++├───────────────────────────────────────┤
++│                                       │
++│   Empty: 今天想聊什么？                 │
++│   快捷: 总结本页 · /装配 · 导入        │
++│                                       │
++│   (messages…)                         │
++│                                       │
++├───────────────────────────────────────┤
++│  芯片: Skills  Know  Hist              │
++│  ┌──────────────────────────── [➤] ┐  │
++│  │  消息…                           │  │
++│  └──────────────────────────────────┘  │
++└───────────────────────────────────────┘
++```
++
++### 5.5 Wireframe (L1 + confirm)
++
++```text
++┌─ StatusRail [网页] 已连接 ─────────────┐
++├─ FocusBand (single):                  │
++│  ⚠ evaluate · 允许 拒绝  ── tab·展开↗ │  ← confirm primary; context secondary line
++│  ChatStream (tool cards denser)       │
++├─ chips: 装配  Tabs  工作区 ───────────┤
++│  Composer                             │
++└───────────────────────────────────────┘
++```
++
++---
++
++## 6. Interaction redesign
++
++### 6.1 Primary flows
++
++| Flow | v2 behavior |
++|------|-------------|
++| First open | L0 empty state with 3 intent chips (not 6 icons) |
++| Start browser work | First browser tool → L1 badge + soft toast; ContextStrip appears |
++| Confirm | MinimalConfirm in FocusBand; Cockpit elevated for heavy preview |
++| L2 start | Cockpit open/focus; Panel Safety strip; composer queue mode |
++| Composition | `/` or 装配 drawer — never force leave chat to “find MCP” |
++| Offline | Banner + disable send; **no `alert()` on reconnect path** (v2-P0 scope; other alerts migrate monotonically) |
++| Errors | Tool card inline + optional toast; severity color + text |
++
++### 6.2 Keyboard
++
++| Key | Action |
++|-----|--------|
++| `/` | Open palette (when input empty or after space rules existing) |
++| Esc | Close drawer / palette / thread popover (priority stack) |
++| Cmd/Ctrl+K | Optional alias to 装配 (if not conflict) |
++| Enter / Cmd+Enter | Send per settings |
++
++### 6.3 Accessibility
++
++- Focus trap in 装配 drawer and thread popover.  
++- Confirm buttons min 44×32 hit target.  
++- Risk never color-only (label + icon geometry).  
++- Screen reader: mode changes via `aria-live`.
++
++---
++
++## 7. Mapping: user pain → design response
++
++| User complaint | Response |
++|----------------|----------|
++| 太丑 | Quiet tokens + kill Material dots + consistent radius/type + message density |
++| 不方便 | Kill BottomBar strip; chat-first height; 装配 drawer + `/`; StatusRail merge |
++| 功能杂 | Composition drawer labeled 装配; Surface badge only three words |
++| 确认吓人/乱 | Keep content-split; FocusBand priority; Cockpit = 确认台 branding consistency |
++| 合盖耗电 (related) | Out of UI scope — separate WS fix landed; UI must not add idle timers that spam WS |
++
++---
++
++## 8. Phasing & acceptance
++
++### v2-P0 — Host extract + StatusRail + FocusBand (1.5–2 wk)
++
++**Deliver:** StatusRail; **ContextPanelHost extract**; FocusBand state machine; Context chips + **装配 P0 entry** (section list); slash parity matrix; connection token colors; offline banner without `alert()`.
++
++**Accept:**
++
++- [ ] L0 idle: ChatStream height ≥55% at 640px panel height.  
++- [ ] L1+confirm and L2+confirm: ChatStream ≥40%; FocusBand ≤80px; **急停 visible whenever L2 task active**.  
++- [ ] ContextPanelHost opens packs/MCP/skills/… from chips, `/`, and 装配 entry.  
++- [ ] Pack/MCP reachable in ≤2 clicks **or** 1 visible 装配 entry + 1 section tap (no slash memorization required).  
++- [ ] BottomBar **strip** may still exist behind flag; Host is SoT for panels.  
++- [ ] Offline reconnect path: no `alert()`.  
++- [ ] Mode badge + connection use tokens in touched code.  
++- [ ] No regression: D10′ content-split, L2 Cockpit open, abort.
++
++### v2-P1 — Retire strip + full 装配 drawer + visual pass (1–1.5 wk)
++
++**Deliver:** Hide/remove BottomBar tab strip; full 装配 sections UI; ToolCard/MessageBubble density; empty states; Board under Autonomy chrome only.
++
++**Accept:**
++
++- [ ] No permanent BottomBar tab row (flag default off).  
++- [ ] 装配 opens full Composition sections; Board **not** inside 装配.  
++- [ ] Copy never says「中层 Agent」.  
++- [ ] WCAG AA spot-check primary text.
++
++### v2-P2 — Cockpit + density polish (~1 wk)
++
++**Deliver:** Cockpit StatusRail alignment; FocusBand motion; DESIGN.md semantic roles fully listed; remaining Material hex purge in Panel chrome.
++
++**Accept:**
++
++- [ ] Cockpit + Panel status grammar match.  
++- [ ] `prefers-reduced-motion` honored.  
++- [ ] DESIGN.md + tokens.ts in sync (radius 6/8/12; connection status tokens).
++
++---
++
++## 9. Key Decisions
++
++| ID | Decision | Rationale |
++|----|----------|-----------|
++| K1 | Keep ADR-020 / three-mode locks | Avoid product fork; fix presentation |
++| K2 / D5′ | Retire permanent BottomBar **strip after** ContextPanelHost | Replace-before-remove; reclaim height |
++| K3 | Composition = 「装配」 only (no Board) | ADR-020 Axis B; Board = Autonomy |
++| K4 | StatusRail + FocusBand **state machine** | Hard priority; 急停 never buried |
++| K5 | Quiet Agent Shell tokens | Consistent quiet-professional; AI-implementable semantics |
++| K6 | No full Panel dark mode in P0 | Scope control; Cockpit already dark for L2 |
++| K7 | Cockpit remains 确认台 | Existing user guide / branding |
++| K8 | Abort never adjacent to Send | Thumb-zone / mis-tap safety |
++| K9 | 装配 entry in P0 | Avoid slash-only discoverability cliff |
++
++---
++
++## 10. Alternatives considered
++
++| Alternative | Why not |
++|-------------|---------|
++| Full Figma redesign then rewrite | Slow; ontology already coded — polish shell first |
++| Single “Work mode” toggle | Rejected in D1 three-mode; under-describes L1 vs L2 |
++| Put Pack/MCP as Surface levels | Violates ADR-020 Composition axis |
++| Move all confirm back to Panel modal | Violates D10′; 320px cannot hold preview |
++| Emoji-heavy “friendly” chrome | Conflicts DESIGN.md quiet-professional |
++
++---
++
++## 11. Open Questions
++
++| # | Question | Default if unanswered |
++|---|----------|----------------------|
++| Q1 | 装配 drawer: bottom sheet vs right overlay? | Bottom sheet (thumb-friendly, 320px) |
++| Q2 | Cmd+K for 装配? | Yes if no conflict with OS |
++| Q3 | Keep LogBar as ⋯ entry only? | Yes |
++| Q4 | FleetStrip inside FocusBand vs only Cockpit? | FocusBand when multi-agent; else Cockpit |
++
++---
++
++## 12. PR Plan
++
++### PR1 — StatusRail + offline hygiene + token connection colors
++- Files: `App.tsx` Header→StatusRail, `tokens.ts`, `DESIGN.md`  
++- Replace offline `alert()`; no Material status dots in touched paths  
++- Deps: none  
++
++### PR2 — ContextPanelHost extract (no strip delete)
++- Files: peel host/registry/loaders/listener from `BottomBar.tsx` → `ContextPanelHost.tsx`  
++- BottomBar becomes thin tab chrome calling Host  
++- Deps: PR1  
++
++### PR3 — FocusBand state machine
++- Files: new `FocusBand.tsx`; wire ContextStrip / SafetyStrip / Fleet into priority table §4.3  
++- Accept: L2+confirm keeps 急停 visible  
++- Deps: PR1  
++
++### PR4 — Composer chips + slash parity + 装配 P0 entry
++- Files: ComposerDock chips; expand `META_PANEL_SLASH`; 装配 bottom-sheet section list → Host  
++- Deps: PR2  
++
++### PR5 — Hide/remove BottomBar strip (flag)
++- Files: BottomBar strip only; default flag off after smoke  
++- Deps: PR2, PR4  
++
++### PR6 — Full 装配 drawer sections + visual density
++- Files: `ComposeDrawer` sections; ChatView/tool cards; empty states  
++- Board **not** in drawer  
++- Deps: PR4  
++
++### PR7 — Cockpit alignment + DESIGN.md semantic roles
++- Files: cockpit shell; DESIGN.md  
++- Deps: PR1, PR6  
++
++Ship gate: **v2-P0 accept (PR1–PR4)** before strip removal (PR5).
++
++---
++
++## 13. Implementation boundaries
++
++| Do | Don't |
++|----|-------|
++| Extract StatusRail / FocusBand / ComposerDock | Rewrite thread store |
++| Soft-deprecate BottomBar behind flag if needed | Delete Cockpit content-split |
++| Token-only new colors | New Material hex |
++| Copy: 装配 / 确认台 / 聊·网页·计算机 | 中层 Agent |
++
++---
++
++## 14. Success metrics (honest)
++
++| Metric | Scope |
++|--------|--------|
++| ChatStream ≥55% | L0 idle @ 640px panel height |
++| ChatStream ≥40% | L1+confirm and L2+confirm @ 640px |
++| FocusBand ≤80px | All levels |
++| Pack/MCP path | ≤2 clicks **or** 装配 entry + section (documented) |
++| Offline | No `alert()` on reconnect path (P0); other alerts tracked separately |
++| Ontology | Zero「中层 Agent」in new UI copy; Board not under 装配 |
++| Safety | 急停 visible whenever L2 task active |
++
++---
++
++## 15. Adversarial revision log (2026-07-31)
++
++| Source | Verdict | Addressed |
++|--------|---------|-----------|
++| Critic A | MAJOR_REVISE | Board out of 装配; FocusBand hard cap; Host migration; D5′; height worst-case; PR resequence |
++| Critic B | MAJOR_REVISE | Panel host gap; P0 装配 entry; FocusBand/急停; no Abort-by-Send; slash matrix; Esc stack; landfill one-surface rule |
++
++---
++
++## 16. References
++
++- ADR-020 capability three axes  
++- UI three-mode redesign 2026-07-26  
++- docs/DESIGN.md tokens  
++- confirm-center-user-guide.md  
++- Agent UX principles (transparency, agency, progressive delegation) — industry 2025–26 synthesis  
++- Semantic / agentic design systems (Figma semantic DS, Brad Frost agentic DS talks)
++
++---
++
++*End of design draft — awaiting adversarial critique then Claude+Pi dual-review.*
