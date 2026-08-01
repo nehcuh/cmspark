@@ -9,6 +9,7 @@ import markedKatex from "marked-katex-extension"
 import DOMPurify from "dompurify"
 import { renderMermaidBlocks, prefetchMermaid } from "./mermaid"
 import { extractComputerCardData } from "../utils/computer-utils"
+import { fleetProcessingLabel } from "./focus-band-priority"
 import { tokens, statusColor } from "../ui/tokens"
 import {
   IconBranch,
@@ -71,8 +72,14 @@ export function ChatView() {
       }
     }
     const fleetWorkers = fleet?.worker_count ?? 0
-    const fleetBit =
-      fleetWorkers > 0 ? ` · 舰队 ${fleetWorkers} worker` : ""
+    const fleetLabel = fleetProcessingLabel({
+      workerCount: fleetWorkers,
+      lockCount: fleet?.lock_count ?? 0,
+      openIntents: fleet?.open_intent_count ?? 0,
+      worstStatus: fleet?.worst_status,
+    })
+    // Active fleet only (not paused-only zombies) — suffix while tools/thinking.
+    const fleetBit = fleetLabel ? ` · ${fleetLabel.replace(/^舰队/, "").trim()}` : ""
     // #au4dch M1: do NOT hide label when streamingContent is set — tools often
     // run after assistant text; streaming gate previously made UI look idle.
     if (runningTools.length > 0) {
@@ -86,9 +93,9 @@ export function ChatView() {
     }
     if (streamingContent) return null
     if (!isProcessing) {
-      // ST-5: orchestrator may chat.done while workers still run
-      if (fleetWorkers > 0) return `舰队运行中 · ${fleetWorkers} worker`
-      return null
+      // ST-5: orchestrator may chat.done while workers still run (active only).
+      // Paused-only zombies → null (was misleading「舰队运行中」).
+      return fleetLabel
     }
     return `思考中${fleetBit}`
   })()

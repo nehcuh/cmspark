@@ -8,6 +8,9 @@ import {
   FOCUS_BAND_SECONDARY_MAX_PX,
   resolveFocusBandSlot,
   fleetStripShouldShow,
+  classifyFleetActivity,
+  fleetProcessingLabel,
+  fleetPausedOnlyLabel,
   type FocusBandInput,
 } from "../src/sidepanel/components/focus-band-priority"
 
@@ -112,6 +115,7 @@ test("§4.3 rule 2: fleetStripShouldShow ignores pending (no pending arg)", () =
     fleetStripShouldShow({ workerCount: 0, lockCount: 0, openIntents: 0 }),
     false,
   )
+  // Workers without worstStatus → active (fail-open visibility)
   assert.equal(
     fleetStripShouldShow({ workerCount: 1, lockCount: 0, openIntents: 0 }),
     true,
@@ -132,5 +136,59 @@ test("§4.3 rule 2: fleetStripShouldShow ignores pending (no pending arg)", () =
   assert.equal(
     fleetStripShouldShow({ workerCount: 0, lockCount: 0, openIntents: 0, expanded: false }),
     false,
+  )
+})
+
+test("paused-only zombies: no 运行中 label; strip hidden unless showPausedOnly/expanded", () => {
+  const paused = {
+    workerCount: 1,
+    lockCount: 0,
+    openIntents: 0,
+    worstStatus: "paused" as const,
+  }
+  assert.equal(classifyFleetActivity(paused), "paused_only")
+  assert.equal(fleetProcessingLabel(paused), null)
+  assert.equal(fleetStripShouldShow(paused), false)
+  assert.equal(fleetStripShouldShow({ ...paused, expanded: true }), true)
+  assert.equal(fleetStripShouldShow({ ...paused, showPausedOnly: true }), true)
+  assert.equal(fleetPausedOnlyLabel(1), "舰队已暂停 · 1 worker")
+})
+
+test("active fleet: idle workers / holding_tabs / locks still show 运行中 or strip", () => {
+  assert.equal(
+    classifyFleetActivity({
+      workerCount: 1,
+      lockCount: 0,
+      openIntents: 0,
+      worstStatus: "idle",
+    }),
+    "active",
+  )
+  assert.equal(
+    fleetProcessingLabel({
+      workerCount: 2,
+      lockCount: 0,
+      openIntents: 0,
+      worstStatus: "holding_tabs",
+    }),
+    "舰队运行中 · 2 worker",
+  )
+  assert.equal(
+    fleetStripShouldShow({
+      workerCount: 0,
+      lockCount: 1,
+      openIntents: 0,
+      worstStatus: "none",
+    }),
+    true,
+  )
+  assert.match(
+    fleetProcessingLabel({
+      workerCount: 0,
+      lockCount: 3,
+      openIntents: 0,
+      worstStatus: "none",
+    }) || "",
+    /持锁/,
   )
 })
