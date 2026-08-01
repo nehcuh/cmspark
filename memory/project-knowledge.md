@@ -2,13 +2,24 @@
 
 ## Technical Pitfalls
 
+### macOS host_computer：estop code 4 / -3801（真机阻塞，2026-08-01）
+- **用户错误**：`emergency-stop unavailable (estop helper exited … code 4)`；亦见 SCK `-3801`
+- **code 4 含义**：`host.swift` `CGEvent.tapCreate` 失败 → 辅助功能/事件监听（非录屏列表）
+- **产品身份**：已改为 `MacOS/CMspark` + `com.cmspark.agent`（PR #103）；系统弹窗已显示 **CMspark.app**
+- **矛盾**：同一二进制 CLI 下 estop/截图/点击 **成功**；Companion `host_computer` 路径仍失败
+- **权限分离**：录屏 ≠ 辅助功能 ≠ 输入监控 ≠ 确认台；ad-hoc 重装常要 **重开 + 全退进程**
+- **辅助功能里多条 node**：历史/多路径幽灵，应关；**只留 CMspark**；勿删 App 内 Resources/node 运行时
+- **后续 fix（未合 main）**：`2c1437f` — `resolvePackagedContentsDir` + estop 日志/重试
+- **HANDOFF**：`docs/superpowers/plans/2026-08-01-macos-tcc-estop-BLOCKED-HANDOFF.md`
+- 教训：CLI 绿 ≠ daemon spawn 绿；TCC 按 CDHash/进程，ad-hoc 重装=新身份
+
 ### macOS 屏幕录制：勾了 CMspark 仍 -3801（产品身份分裂，2026-08-01）
 - 现象：系统设置里 CMspark 已开，外程序/L2 截图 ScreenCaptureKit `-3801`；开发重装反复出现
 - 根因：`MacOS/CMspark` 曾是 **bash→node**；真正 SCK 在 `Resources/cmspark-host`（`com.cmspark.host`，ad-hoc 独立 CDHash）。TCC 记的是**捕获进程身份**，不是桌面图标名。历史错误串还教用户勾 node/host → 产品体验失败
 - 产品锁：用户路径 **只认 CMspark**；禁止引导 node/cmspark-host
-- 方案 D（计划中）：主可执行 = host Mach-O 装成 `Contents/MacOS/CMspark`，嵌入 `com.cmspark.agent`；`resolveHostBinary` 优先主二进制；文案清零
-- SoT：`docs/superpowers/specs/2026-08-01-macos-tcc-product-identity-design.md`；impl plan 同日
-- 教训：helper 做 TCC 锚可以避免 osascript 名，但 **屏幕录制必须与 App 产品名合一**；ad-hoc 重装会清授权，长期要 Developer ID
+- 方案 D：主可执行 = host Mach-O 装成 `Contents/MacOS/CMspark`，嵌入 `com.cmspark.agent`（PR #103 已合 main）
+- SoT：`docs/superpowers/specs/2026-08-01-macos-tcc-product-identity-design.md`
+- 教训：helper 做 TCC 锚可以避免 osascript 名，但 **屏幕录制必须与 App 产品名合一**；ad-hoc 重装会清授权，长期要 Developer ID；真机阻塞见上条 estop/-3801
 
 ### 技能扫描：非「仅启动一次」，但 skill.list 曾只读内存（2026-07-31）
 - 现象：用户/Agent 拷文件进 `~/.cmspark-agent/skills` 或外部落盘后，Skills 列表/自动匹配像「没装上」；体感「只有 Companion 启动才扫」

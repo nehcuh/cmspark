@@ -2,18 +2,20 @@
 
 ## Current Session
 
+### S30 (2026-08-01 傍晚) [host_computer 真机阻塞 · 用户先撤]
+- **用户错误**：`estop helper exited at startup (code 4)`；日志亦有 SCK `-3801`
+- **已合 main**：PR #103 TCC 产品身份 + Qwen WIP
+- **未合 main**：`2c1437f` host Contents 解析 + estop stderr/重试（已装进 /Applications）
+- **矛盾**：CLI 对 `MacOS/CMspark` estop/截图/点击 **成功**；Side Panel `host_computer` **仍失败**
+- **HANDOFF**：`docs/superpowers/plans/2026-08-01-macos-tcc-estop-BLOCKED-HANDOFF.md`
+- **下次**：读 `computer.estop.spawn` / `early_exit` 日志 → 修 daemon 路径 TCC；再 PR 合 main
+- Recorded: yes — 用户先退出，阻塞已落盘
+
 ### S29 (2026-08-01) [macOS TCC 产品身份 · 对抗验证计划]
 - **触发**：外 App 截图 -3801；用户否决「勾选 node」——只应见 CMspark.app
 - **根因**：bash 主入口 + SCK 在 `cmspark-host`（`com.cmspark.host`）与 App 身份分裂
-- **SoT**：`docs/superpowers/specs/2026-08-01-macos-tcc-product-identity-design.md`（APPROVE_WITH_CHANGES）
-- **计划**：`docs/superpowers/plans/2026-08-01-macos-tcc-product-identity-impl.md`（Tasks 0–8）
-- **对抗合成**：`docs/audit/reviews/macos-tcc-product-identity-adversary-synthesis-20260801.md`
-- **方案 D**：`MacOS/CMspark` = host Mach-O；身份 `com.cmspark.agent`；resolve 优先主二进制；文案禁 node/host
-- **双审**：Claude+Pi **both APPROVE_WITH_NITS** → 执行方式一 Subagent-Driven
-- **实现分支** `fix/macos-tcc-product-identity`：Tasks 0–6 完成；`make package-macos` 产出新 DMG
-  - MacOS/CMspark = Mach-O `com.cmspark.agent`；Resources/cmspark-host → symlink；文案无 node/host 引导
-- **Task 7 未完**：需用户安装新 DMG、只勾 CMspark、外 App 截图验收
-- Recorded: yes — 代码+包就绪；真机 DoD 等人
+- **SoT / plan / 双审 / PR #103** 已推进；真机 Task 7 **未过** → 见 S30
+- Recorded: yes
 
 ### S28 (2026-08-01) [Qwen3-VL 实验层 · 产品设计与文档收束]
 - **范围**：TinyClick → Qwen3-VL 产品化；用户旅程 + 大陆下载 + 预检；多路对抗 + Pi/Claude/Kimi
