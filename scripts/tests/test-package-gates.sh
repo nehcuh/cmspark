@@ -10,6 +10,7 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 PACKAGE_SH="${ROOT}/scripts/package.sh"
+CREATE_DMG="${ROOT}/scripts/create-dmg.sh"
 MAKEFILE="${ROOT}/Makefile"
 RELEASE_YML="${ROOT}/.github/workflows/release.yml"
 CI_YML="${ROOT}/.github/workflows/ci.yml"
@@ -80,6 +81,15 @@ assert_file_has "${PACKAGE_SH}" 'npm run build:host' \
   "package.sh invokes build:host"
 assert_file_has "${PACKAGE_SH}" 'requires macOS \(swiftc/osacompile' \
   "package.sh hard-errors cross-OS macos packaging"
+
+# --- Static: create-dmg.sh native MacOS/CMspark (D4 / A6 / DR-N2) ------------
+echo "[static] create-dmg.sh native MacOS/CMspark (not bash launcher)"
+assert_file_lacks "${CREATE_DMG}" 'env arch -arm64 /bin/bash' \
+  "create-dmg must not install bash as main executable"
+assert_file_has "${CREATE_DMG}" 'Contents/MacOS/CMspark' \
+  "create-dmg installs native MacOS/CMspark"
+assert_file_has "${CREATE_DMG}" 'A6 OK: single CDHash' \
+  "create-dmg asserts CDHash equality for MacOS/CMspark and cmspark-host"
 
 # --- Static: Makefile package-macos depends on build-host --------------------
 echo "[static] Makefile package-macos → build-host"
