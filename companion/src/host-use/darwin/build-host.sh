@@ -87,33 +87,28 @@ echo
 echo "--- file ---"
 file "${OUTPUT_BIN}"
 
-# (4c) Assert product TCC identity (plist section / strings).
+# (4c) Assert product TCC identity.
 # DR-N1: do not use codesign -d --info-plist=- (fails on macOS 26).
-# DR-N7: check embedded Info.plist only (not full-binary strings for host id).
-echo "[build-host] (4c) Assert product TCC identity (plist section / strings)..."
-PLIST_TMP=$(mktemp)
-if otool -s __TEXT __info_plist "${OUTPUT_BIN}" 2>/dev/null | tail -n +3 | xxd -r -p >"${PLIST_TMP}" 2>/dev/null \
-  && plutil -lint "${PLIST_TMP}" >/dev/null 2>&1; then
-  IDENT=$(plutil -extract CFBundleIdentifier raw "${PLIST_TMP}" 2>/dev/null || true)
-  if [[ "${IDENT}" != "com.cmspark.agent" ]]; then
-    echo "[build-host] ERROR: embedded CFBundleIdentifier='${IDENT}' want com.cmspark.agent"
-    rm -f "${PLIST_TMP}"
-    exit 1
-  fi
-  if plutil -p "${PLIST_TMP}" 2>/dev/null | grep -q 'com.cmspark.host'; then
-    echo "[build-host] ERROR: stale com.cmspark.host in embedded Info.plist"
-    rm -f "${PLIST_TMP}"
-    exit 1
-  fi
-  rm -f "${PLIST_TMP}"
-else
-  rm -f "${PLIST_TMP}"
-  if ! strings "${OUTPUT_BIN}" | grep -q 'com.cmspark.agent'; then
-    echo "[build-host] ERROR: com.cmspark.agent not found in binary strings"
-    exit 1
-  fi
-  echo "[build-host] WARN: otool plist extract failed; used strings fallback for agent id only"
+# Primary: codesign Identifier= (Mach-O designated requirement / embedded id).
+# Secondary: source host-Info.plist must be agent (what swiftc embeds).
+# DR-N7: do not ban com.cmspark.host via full-binary strings (comments may linger).
+echo "[build-host] (4c) Assert product TCC identity..."
+IDENT=$(codesign -dv "${OUTPUT_BIN}" 2>&1 | sed -n 's/^Identifier=//p' | head -1 | tr -d '\r')
+if [[ "${IDENT}" != "com.cmspark.agent" ]]; then
+  echo "[build-host] ERROR: codesign Identifier='${IDENT}' want com.cmspark.agent"
+  exit 1
 fi
+SRC_PLIST="${SCRIPT_DIR}/host-Info.plist"
+SRC_IDENT=$(plutil -extract CFBundleIdentifier raw "${SRC_PLIST}" 2>/dev/null || true)
+if [[ "${SRC_IDENT}" != "com.cmspark.agent" ]]; then
+  echo "[build-host] ERROR: ${SRC_PLIST} CFBundleIdentifier='${SRC_IDENT}' want com.cmspark.agent"
+  exit 1
+fi
+if grep -q 'com.cmspark.host' "${SRC_PLIST}"; then
+  echo "[build-host] ERROR: stale com.cmspark.host in ${SRC_PLIST}"
+  exit 1
+fi
+echo "[build-host] identity OK: Identifier=${IDENT}"
 
 # (4b) P2 functional gate (Pi C2/C3 + Grok blocker 2): run classifier self-test
 # post-sign. The binary now exits non-zero on assertion failure AND we require
