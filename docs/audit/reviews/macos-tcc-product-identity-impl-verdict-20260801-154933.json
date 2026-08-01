@@ -1,0 +1,8 @@
+{
+  "batch": "macos-tcc-product-identity-impl",
+  "timestamp": "20260801-154933",
+  "claude": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/macos-tcc-product-identity-impl-claude-20260801-154933.md" },
+  "pi": { "verdict": "REJECT", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/macos-tcc-product-identity-impl-pi-20260801-154933.md" },
+  "both_approve": false,
+  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/macos-tcc-product-identity-impl-diff-20260801-154933.patch"
+}
