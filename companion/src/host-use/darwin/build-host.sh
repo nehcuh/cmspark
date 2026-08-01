@@ -87,6 +87,29 @@ echo
 echo "--- file ---"
 file "${OUTPUT_BIN}"
 
+# (4c) Assert product TCC identity.
+# DR-N1: do not use codesign -d --info-plist=- (fails on macOS 26).
+# Primary: codesign Identifier= (Mach-O designated requirement / embedded id).
+# Secondary: source host-Info.plist must be agent (what swiftc embeds).
+# DR-N7: do not ban com.cmspark.host via full-binary strings (comments may linger).
+echo "[build-host] (4c) Assert product TCC identity..."
+IDENT=$(codesign -dv "${OUTPUT_BIN}" 2>&1 | sed -n 's/^Identifier=//p' | head -1 | tr -d '\r')
+if [[ "${IDENT}" != "com.cmspark.agent" ]]; then
+  echo "[build-host] ERROR: codesign Identifier='${IDENT}' want com.cmspark.agent"
+  exit 1
+fi
+SRC_PLIST="${SCRIPT_DIR}/host-Info.plist"
+SRC_IDENT=$(plutil -extract CFBundleIdentifier raw "${SRC_PLIST}" 2>/dev/null || true)
+if [[ "${SRC_IDENT}" != "com.cmspark.agent" ]]; then
+  echo "[build-host] ERROR: ${SRC_PLIST} CFBundleIdentifier='${SRC_IDENT}' want com.cmspark.agent"
+  exit 1
+fi
+if grep -q 'com.cmspark.host' "${SRC_PLIST}"; then
+  echo "[build-host] ERROR: stale com.cmspark.host in ${SRC_PLIST}"
+  exit 1
+fi
+echo "[build-host] identity OK: Identifier=${IDENT}"
+
 # (4b) P2 functional gate (Pi C2/C3 + Grok blocker 2): run classifier self-test
 # post-sign. The binary now exits non-zero on assertion failure AND we require
 # "ok":true in stdout — double gate so a future regression in either the

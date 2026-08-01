@@ -121,10 +121,15 @@ export interface ComputerConfig {
    */
   modelLicenseDeclined?: boolean
   /**
-   * WP5-I4 交付变体（默认 "hybrid"）。无 WS setter/无 UI 选择器——切换路径
-   * = 手改 config.json + 重启 companion（裁决 4/P3，ADR-010 方式 B 同型）。
+   * 实验层模型变体（Qwen3-VL）。默认 "2b"；可选 "4b" | "8b"。
+   * 设置页可切换（computer.model.set_variant）；旧 hybrid/int8 启动时迁为 2b。
    */
-  modelVariant?: "hybrid" | "int8"
+  modelVariant?: "2b" | "4b" | "8b" | "hybrid" | "int8"
+  /**
+   * 模型下载源。auto=连通性探测（大陆常落 ModelScope）；
+   * huggingface / hf-mirror / modelscope 为显式选择。
+   */
+  modelDownloadSource?: "auto" | "huggingface" | "hf-mirror" | "modelscope"
 }
 
 export interface CompanionConfig {
@@ -532,20 +537,42 @@ export function getConfig(): CompanionConfig {
       delete cachedConfig.computer.modelLicenseAcceptedTextHash
     }
   }
-  if (cachedConfig.computer.modelVariant !== undefined && cachedConfig.computer.modelVariant !== "hybrid" && cachedConfig.computer.modelVariant !== "int8") {
+  // Qwen3-VL variants; migrate legacy TinyClick hybrid/int8 → 2b
+  if (cachedConfig.computer.modelVariant === "hybrid" || cachedConfig.computer.modelVariant === "int8") {
     console.error(
-      `[cmspark-agent] computer.modelVariant 非法（须为 "hybrid"|"int8"）——回退 hybrid (config tampering?)`,
+      `[cmspark-agent] computer.modelVariant=${cachedConfig.computer.modelVariant} 已弃用（TinyClick）——迁移为 Qwen3-VL "2b"`,
     )
-    cachedConfig.computer.modelVariant = "hybrid"
+    cachedConfig.computer.modelVariant = "2b"
   }
-  cachedConfig.computer.modelVariant = cachedConfig.computer.modelVariant ?? "hybrid"
-  // P9：实验层开启态的启动期醒目 loud log——本路径每 cache-miss（≈进程启动）
-  // 只跑一次，不刷屏；合法布尔不撤销、不阻断，仅明示（god-mode 方式 B WARNING
-  // 先例，ADR-010:73）。I4 对抗 P5：持久化 config 无法区分「设置页经门开启」
-  // 与「手改 opt-in」两源——文案不过归因，如实并陈。
+  if (
+    cachedConfig.computer.modelVariant !== undefined &&
+    cachedConfig.computer.modelVariant !== "2b" &&
+    cachedConfig.computer.modelVariant !== "4b" &&
+    cachedConfig.computer.modelVariant !== "8b"
+  ) {
+    console.error(
+      `[cmspark-agent] computer.modelVariant 非法（须为 "2b"|"4b"|"8b"）——回退 2b (config tampering?)`,
+    )
+    cachedConfig.computer.modelVariant = "2b"
+  }
+  cachedConfig.computer.modelVariant = cachedConfig.computer.modelVariant ?? "2b"
+  const src = cachedConfig.computer.modelDownloadSource
+  if (
+    src !== undefined &&
+    src !== "auto" &&
+    src !== "huggingface" &&
+    src !== "hf-mirror" &&
+    src !== "modelscope"
+  ) {
+    console.error(
+      `[cmspark-agent] computer.modelDownloadSource 非法——回退 auto`,
+    )
+    cachedConfig.computer.modelDownloadSource = "auto"
+  }
+  cachedConfig.computer.modelDownloadSource = cachedConfig.computer.modelDownloadSource ?? "auto"
   if (cachedConfig.computer.modelEnabled === true) {
     console.error(
-      `[cmspark-agent] WARNING: computer.modelEnabled=true —— TinyClick 实验层处于开启状态（设置页经门开启 或 手改 config.json opt-in 皆可达此态，持久化配置不区分来源；ADR-010 显式 owner opt-in，同 god-mode 方式 B）。本层未校准，命中仍必经人工确认；关闭请置 false 或经设置页。`,
+      `[cmspark-agent] WARNING: computer.modelEnabled=true —— Qwen3-VL 实验定位层处于开启状态（设置页经门开启 或 手改 config.json opt-in；ADR-010）。本层未校准，命中仍必经人工确认；关闭请置 false 或经设置页。`,
     )
   }
   return cachedConfig
@@ -659,7 +686,12 @@ export function setComputerModelFields(
   patch: Partial<
     Pick<
       ComputerConfig,
-      "modelEnabled" | "modelLicenseAcceptedAt" | "modelLicenseAcceptedTextHash" | "modelLicenseDeclined"
+      | "modelEnabled"
+      | "modelLicenseAcceptedAt"
+      | "modelLicenseAcceptedTextHash"
+      | "modelLicenseDeclined"
+      | "modelVariant"
+      | "modelDownloadSource"
     >
   >,
 ): CompanionConfig {

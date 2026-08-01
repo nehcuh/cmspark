@@ -1185,6 +1185,8 @@ export async function handleMessage(
     case "computer.model.license_response":
     case "computer.model.download":
     case "computer.model.delete":
+    case "computer.model.set_variant":
+    case "computer.model.set_download_source":
       return handleComputerModelMessage(msg, {
         requestConfirmation: session?.requestConfirmation,
         broadcast: session?.broadcast,

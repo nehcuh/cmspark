@@ -616,7 +616,7 @@ describe("computer 实验层五字段 normalize（WP5-I4 WI-4.1 / ADR-010 / P1 /
     assert.equal(getConfig().computer?.modelLicenseAcceptedTextHash, "0123456789ab")
   })
 
-  test("modelVariant 非枚举 → 回退 hybrid + loud log；int8 保留；缺省补默认形 hybrid", async () => {
+  test("modelVariant 非枚举 → 回退 2b + loud log；legacy int8 迁 2b；缺省 2b", async () => {
     await resetConfigFile()
     for (const bad of ["fp32", "", 1, null, {}]) {
       clearConfigCache()
@@ -626,7 +626,7 @@ describe("computer 实验层五字段 normalize（WP5-I4 WI-4.1 / ADR-010 / P1 /
       const orig = console.error
       console.error = (...args: unknown[]) => logs.push(args.map(String).join(" "))
       try {
-        assert.equal(getConfig().computer?.modelVariant, "hybrid", `modelVariant=${JSON.stringify(bad)} 应回退 hybrid`)
+        assert.equal(getConfig().computer?.modelVariant, "2b", `modelVariant=${JSON.stringify(bad)} 应回退 2b`)
       } finally {
         console.error = orig
       }
@@ -635,8 +635,11 @@ describe("computer 实验层五字段 normalize（WP5-I4 WI-4.1 / ADR-010 / P1 /
     clearConfigCache()
     saveConfig({ computer: { coordinateEnabled: false, modelVariant: "int8" } })
     clearConfigCache()
-    assert.equal(getConfig().computer?.modelVariant, "int8")
-    // 缺省默认形（重置为无五字段的老 config.json → normalize 补齐）
+    assert.equal(getConfig().computer?.modelVariant, "2b", "legacy int8 → 2b")
+    clearConfigCache()
+    saveConfig({ computer: { coordinateEnabled: false, modelVariant: "4b" } })
+    clearConfigCache()
+    assert.equal(getConfig().computer?.modelVariant, "4b")
     await resetConfigFile()
     clearConfigCache()
     saveConfig({ computer: { coordinateEnabled: true } })
@@ -644,7 +647,7 @@ describe("computer 实验层五字段 normalize（WP5-I4 WI-4.1 / ADR-010 / P1 /
     const cfg = getConfig()
     assert.equal(cfg.computer?.modelEnabled, false)
     assert.equal(cfg.computer?.modelLicenseDeclined, false)
-    assert.equal(cfg.computer?.modelVariant, "hybrid")
+    assert.equal(cfg.computer?.modelVariant, "2b")
     assert.equal(cfg.computer?.modelLicenseAcceptedAt, undefined)
     assert.equal(cfg.computer?.modelLicenseAcceptedTextHash, undefined)
   })
@@ -690,7 +693,7 @@ describe("computer 实验层五字段 normalize（WP5-I4 WI-4.1 / ADR-010 / P1 /
         modelLicenseAcceptedAt: "2026-07-21T10:00:00.000Z",
         modelLicenseAcceptedTextHash: "abcdef012345",
         modelLicenseDeclined: false,
-        modelVariant: "int8",
+        modelVariant: "8b",
       },
     })
     clearConfigCache()
@@ -699,6 +702,6 @@ describe("computer 实验层五字段 normalize（WP5-I4 WI-4.1 / ADR-010 / P1 /
     assert.equal(c?.modelLicenseAcceptedAt, "2026-07-21T10:00:00.000Z")
     assert.equal(c?.modelLicenseAcceptedTextHash, "abcdef012345")
     assert.equal(c?.modelLicenseDeclined, false)
-    assert.equal(c?.modelVariant, "int8")
+    assert.equal(c?.modelVariant, "8b")
   })
 })

@@ -71,18 +71,26 @@ fi
 echo "  node runtime ($(du -h "${RESOURCES}/node" | cut -f1))"
 echo "  App bundle: $(du -sh "${APP_BUNDLE}" | cut -f1)"
 
-# --- Launcher script: node runs cmspark-agent.js from Resources/ ---
-cat > "${APP_BUNDLE}/Contents/MacOS/CMspark" <<'LAUNCHER'
-#!/usr/bin/env arch -arm64 /bin/bash
-# CMspark Agent — macOS .app launcher
-# Runs node + cmspark-agent.js from the .app bundle's Resources/
-# Shebang forces arm64 to prevent Rosetta prompt (bash is universal binary).
-set -euo pipefail
-
-RESOURCES="$(cd "$(dirname "$0")/../Resources" && pwd)"
-exec "${RESOURCES}/node" "${RESOURCES}/cmspark-agent.js" tray
-LAUNCHER
+# --- Main executable: native CMspark (product TCC identity) ---
+HOST_SRC="${RESOURCES}/cmspark-host"
+if [ ! -f "${HOST_SRC}" ]; then
+  echo "[create-dmg] ERROR: cmspark-host missing in Resources (run package-macos / build:host)"
+  exit 1
+fi
+cp -f "${HOST_SRC}" "${APP_BUNDLE}/Contents/MacOS/CMspark"
 chmod +x "${APP_BUNDLE}/Contents/MacOS/CMspark"
+# A6 / A18: single signed blob for product TCC identity.
+# Do NOT keep an independent Resources/cmspark-host Mach-O: codesign --deep would
+# re-sign it as a second nested blob (different CDHash). Hardlinks also break
+# because codesign rewrites the main executable to a new inode. Symlink to
+# ../MacOS/CMspark survives deep-sign, verifies cleanly, and shares one CDHash.
+rm -f "${HOST_SRC}"
+ln -sf "../MacOS/CMspark" "${HOST_SRC}"
+
+if file "${APP_BUNDLE}/Contents/MacOS/CMspark" | grep -qiE 'script|text executable|ASCII text'; then
+  echo "[create-dmg] ERROR: MacOS/CMspark must be Mach-O, got script/text"
+  exit 1
+fi
 
 # --- Step 3.5: Ad-hoc codesign the entire .app bundle ---
 # Without this, macOS 26 Tahoe TCC treats the bundle as "unsigned" and
@@ -101,6 +109,15 @@ if ! codesign --verify --verbose "${APP_BUNDLE}"; then
   exit 1
 fi
 codesign -dv --verbose=4 "${APP_BUNDLE}" 2>&1 | grep -E "CDHash|Identifier|TeamIdentifier|flags=" | head -5
+
+# DR-N2 / A6: MacOS/CMspark and Resources/cmspark-host must share one CDHash
+HASH_MAIN=$(codesign -dv --verbose=4 "${APP_BUNDLE}/Contents/MacOS/CMspark" 2>&1 | awk -F= '/^CDHash=/{print $2; exit}')
+HASH_HOST=$(codesign -dv --verbose=4 "${RESOURCES}/cmspark-host" 2>&1 | awk -F= '/^CDHash=/{print $2; exit}')
+if [[ -z "${HASH_MAIN}" || "${HASH_MAIN}" != "${HASH_HOST}" ]]; then
+  echo "[create-dmg] ERROR: CDHash mismatch MacOS/CMspark=${HASH_MAIN} Resources/cmspark-host=${HASH_HOST} (A6)"
+  exit 1
+fi
+echo "[create-dmg] A6 OK: single CDHash ${HASH_MAIN}"
 
 # --- Step 4: Create DMG ---
 echo "[5/6] Creating DMG..."

@@ -15,7 +15,7 @@
     <key>CFBundleName</key>
     <string>CMspark</string>
     <key>CFBundleDisplayName</key>
-    <string>CMspark Agent</string>
+    <string>CMspark</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>

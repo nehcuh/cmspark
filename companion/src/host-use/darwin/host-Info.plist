@@ -3,17 +3,19 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleIdentifier</key>
-    <string>com.cmspark.host</string>
+    <string>com.cmspark.agent</string>
     <key>CFBundleName</key>
-    <string>cmspark-host</string>
+    <string>CMspark</string>
+    <key>CFBundleDisplayName</key>
+    <string>CMspark</string>
     <key>CFBundleExecutable</key>
-    <string>cmspark-host</string>
+    <string>CMspark</string>
     <key>CFBundleShortVersionString</key>
     <string>0.1.0</string>
     <key>CFBundleVersion</key>
     <string>1</string>
     <key>NSAppleEventsUsageDescription</key>
-    <string>CMspark needs to read Mail to summarize your inbox.</string>
+    <string>CMspark needs automation access to help with Mail and related tasks you approve.</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.4</string>
 </dict>

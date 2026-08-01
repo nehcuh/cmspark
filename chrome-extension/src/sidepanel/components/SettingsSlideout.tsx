@@ -10,11 +10,13 @@ import { NetSecSettingsSection } from "./NetSecSettingsSection"
 // companion 单一真源);发送固定 source:"settings"(companion 双层围栏)。
 import {
   MODEL_SWITCH_COPY,
+  QWEN_VL_VARIANT_TIPS,
   licenseDoorShouldOpen,
   modelStatusLine,
   modelSwitchDisabledReason,
   modelSwitchHint,
   modelSwitchRunningNote,
+  variantResourceTip,
 } from "./model-switch-logic"
 
 // P1-1 / PR-B: typed-confirmation phrase for arming dangerous security flags.
@@ -762,7 +764,10 @@ export function SettingsSlideout() {
             const runAction = (action: string) => {
               if (action === "重置熔断") send({ type: "computer.model.reset_circuit_breaker", source: "settings" })
               else if (action === "删除并重新下载") setModelDeleteArmed(true)
-              else send({ type: "computer.model.download", source: "settings" })
+              else {
+                dispatch({ type: "SET_COMPUTER_MODEL_ERROR", error: null })
+                send({ type: "computer.model.download", source: "settings" })
+              }
             }
             return (
               <div style={styles.field}>
@@ -789,6 +794,148 @@ export function SettingsSlideout() {
                 {disabledReason && (
                   <div style={{ ...styles.helpText, color: "#B26B00" }}>{disabledReason}</div>
                 )}
+                {/* 用户旅程：检测 → 选源 → 选规模 → 下载 → 启用（全部经 Companion） */}
+                <div style={{ ...styles.helpText, marginTop: 8, fontWeight: 600 }}>使用步骤（经本机 Companion）</div>
+                <div style={{ ...styles.helpText, marginTop: 4, lineHeight: 1.5 }}>
+                  ① Companion 检测本机环境与硬件 → ② 选择下载源（大陆推荐自动/魔搭）→
+                  ③ 选择模型规模 → ④ 下载权重 → ⑤ 开启实验层。
+                  插件本身不跑模型，只通过 Companion 发现/下载/启用。
+                </div>
+                {model?.readinessSummary && (
+                  <div
+                    style={{
+                      ...styles.helpText,
+                      marginTop: 6,
+                      padding: "6px 8px",
+                      borderRadius: 6,
+                      background: model.canEnable ? tokens.successSoft : tokens.accentSoft || "#f0f4ff",
+                      color: model.canEnable ? tokens.success : "#333",
+                    }}
+                  >
+                    <strong>就绪：</strong>
+                    {model.readinessSummary}
+                    {model.preflight?.hardware && (
+                      <div style={{ marginTop: 4, fontSize: 11, opacity: 0.85 }}>
+                        硬件：内存 {model.preflight.hardware.totalRamGb ?? "?"}GB
+                        {model.preflight.hardware.vramGb != null
+                          ? ` · 显存 ${model.preflight.hardware.vramGb}GB`
+                          : ""}
+                        {model.preflight.hardware.accelerator
+                          ? ` · 加速 ${model.preflight.hardware.accelerator}`
+                          : ""}
+                        {model.preflight.hardware.freeDiskGb != null
+                          ? ` · 可用磁盘 ${model.preflight.hardware.freeDiskGb}GB`
+                          : ""}
+                        {model.recommendedVariant
+                          ? ` · 建议规模 ${String(model.recommendedVariant).toUpperCase()}`
+                          : ""}
+                      </div>
+                    )}
+                  </div>
+                )}
+                {Array.isArray(model?.nextSteps) && model!.nextSteps!.length > 0 && (
+                  <ol style={{ ...styles.helpText, margin: "6px 0 0 0", paddingLeft: 18 }}>
+                    {model!.nextSteps!.slice(0, 6).map((step, i) => (
+                      <li key={i} style={{ marginBottom: 2 }}>
+                        {step}
+                      </li>
+                    ))}
+                  </ol>
+                )}
+                {Array.isArray(model?.preflight?.installCommands) &&
+                  model!.preflight!.installCommands!.length > 0 && (
+                    <div style={{ ...styles.helpText, marginTop: 4, fontFamily: "ui-monospace, monospace", fontSize: 11 }}>
+                      {model!.preflight!.installCommands!.map((c) => (
+                        <div key={c} style={{ marginTop: 2 }}>
+                          $ {c}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                {/* 下载源 */}
+                <div style={{ ...styles.helpText, marginTop: 10, fontWeight: 600 }}>下载源</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 4 }}>
+                  {(
+                    [
+                      { id: "auto", label: "自动" },
+                      { id: "modelscope", label: "魔搭 ModelScope" },
+                      { id: "hf-mirror", label: "HF 镜像" },
+                      { id: "huggingface", label: "Hugging Face" },
+                    ] as const
+                  ).map((s) => {
+                    const active = (model?.downloadSource || "auto") === s.id
+                    return (
+                      <button
+                        key={s.id}
+                        type="button"
+                        style={{
+                          ...styles.secondaryBtn,
+                          ...(active
+                            ? { background: tokens.accent, color: "#fff", borderColor: tokens.accent }
+                            : {}),
+                          opacity: model === null || model.modelStatus === "downloading" ? 0.5 : 1,
+                        }}
+                        disabled={model === null || model.modelStatus === "downloading"}
+                        onClick={() => {
+                          dispatch({ type: "SET_COMPUTER_MODEL_ERROR", error: null })
+                          send({
+                            type: "computer.model.set_download_source",
+                            downloadSource: s.id,
+                            source: "settings",
+                          })
+                        }}
+                      >
+                        {s.label}
+                      </button>
+                    )
+                  })}
+                </div>
+                <div style={{ ...styles.helpText, marginTop: 4, fontSize: 11, color: "#666" }}>
+                  {model?.downloadSourceReason ||
+                    "自动：探测 HF 是否可达；不可达或系统语言为中文时优先 ModelScope。中国大陆建议「自动」或「魔搭」。"}
+                  {model?.downloadSourceResolved
+                    ? ` 当前解析：${model.downloadSourceResolved}`
+                    : ""}
+                </div>
+
+                {/* 变体选择 2B / 4B / 8B + 资源提示 */}
+                <div style={{ ...styles.helpText, marginTop: 8, fontWeight: 600 }}>模型规模</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 4 }}>
+                  {(["2b", "4b", "8b"] as const).map((v) => {
+                    const active = (model?.variant || "2b") === v
+                    const tip = QWEN_VL_VARIANT_TIPS[v]!
+                    const rec = model?.recommendedVariant === v
+                    return (
+                      <button
+                        key={v}
+                        type="button"
+                        style={{
+                          ...styles.secondaryBtn,
+                          ...(active
+                            ? { background: tokens.accent, color: "#fff", borderColor: tokens.accent }
+                            : {}),
+                          opacity: model === null || model.modelStatus === "downloading" ? 0.5 : 1,
+                        }}
+                        disabled={model === null || model.modelStatus === "downloading"}
+                        title={tip.tip}
+                        onClick={() => {
+                          dispatch({ type: "SET_COMPUTER_MODEL_ERROR", error: null })
+                          send({ type: "computer.model.set_variant", variant: v, source: "settings" })
+                        }}
+                      >
+                        {tip.label}
+                        {rec ? " · 推荐" : ""}
+                      </button>
+                    )
+                  })}
+                </div>
+                <div style={{ ...styles.helpText, marginTop: 4, color: "#B26B00" }}>
+                  {model?.resourceTip || variantResourceTip(model?.variant)}
+                </div>
+                <div style={{ ...styles.helpText, marginTop: 2, fontSize: 11, color: "#888" }}>
+                  切换规模后请重新「下载模型」。能否流畅运行由 Companion 按本机内存/显存估算；不足仍可下载，但可能很慢或 OOM。
+                </div>
                 {/* 状态行 */}
                 <div
                   style={{
@@ -810,8 +957,21 @@ export function SettingsSlideout() {
                 <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
                   <button
                     style={styles.secondaryBtn}
-                    disabled={model === null || model.modelStatus === "downloading" || model.modelStatus === "ready"}
-                    onClick={() => send({ type: "computer.model.download", source: "settings" })}
+                    disabled={
+                      model === null ||
+                      model.modelStatus === "downloading" ||
+                      model.modelStatus === "ready" ||
+                      model.canDownload === false
+                    }
+                    title={
+                      model?.canDownload === false
+                        ? "环境未就绪：请先按上方步骤安装 Python/依赖"
+                        : "从当前下载源拉取权重到本机 Companion 数据目录"
+                    }
+                    onClick={() => {
+                      dispatch({ type: "SET_COMPUTER_MODEL_ERROR", error: null })
+                      send({ type: "computer.model.download", source: "settings" })
+                    }}
                   >
                     下载模型
                   </button>

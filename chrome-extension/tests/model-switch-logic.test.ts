@@ -26,7 +26,7 @@ function modelState(over: Partial<ComputerModelState> = {}): ComputerModelState 
     licenseAccepted: false,
     modelLicenseDeclined: false,
     modelStatus: "absent",
-    variant: "hybrid",
+    variant: "2b",
     faults: 0,
     ...over,
   }
@@ -57,10 +57,10 @@ test("许可证门触发:license_required 载荷非 null 即弹", () => {
 // --- 下载百分比 ---
 
 test("下载百分比:取整 + clamp + 零总量/空进度 → null", () => {
-  assert.equal(downloadPercent({ variant: "hybrid", file: "a.onnx", receivedBytes: 50, totalBytes: 100 }), 50)
-  assert.equal(downloadPercent({ variant: "hybrid", file: "a.onnx", receivedBytes: 1, totalBytes: 3 }), 33)
-  assert.equal(downloadPercent({ variant: "hybrid", file: "a.onnx", receivedBytes: 200, totalBytes: 100 }), 100)
-  assert.equal(downloadPercent({ variant: "hybrid", file: "a.onnx", receivedBytes: 0, totalBytes: 0 }), null)
+  assert.equal(downloadPercent({ variant: "2b", file: "a.onnx", receivedBytes: 50, totalBytes: 100 }), 50)
+  assert.equal(downloadPercent({ variant: "2b", file: "a.onnx", receivedBytes: 1, totalBytes: 3 }), 33)
+  assert.equal(downloadPercent({ variant: "2b", file: "a.onnx", receivedBytes: 200, totalBytes: 100 }), 100)
+  assert.equal(downloadPercent({ variant: "2b", file: "a.onnx", receivedBytes: 0, totalBytes: 0 }), null)
   assert.equal(downloadPercent(null), null)
 })
 
@@ -96,7 +96,7 @@ test("状态行:error(reason) → 词表标题+详情+动作;absent → model-fi
 
 test("状态行:downloading → 百分比文本(无进度 → 省略号)", () => {
   const v1 = modelStatusLine(modelState({ modelStatus: "downloading" }), {
-    variant: "hybrid",
+    variant: "2b",
     file: "encoder_model.onnx",
     receivedBytes: 352500000,
     totalBytes: 705000000,
@@ -148,7 +148,8 @@ test("错误路由守卫:仅 family=computer.model 命中(不用共享 code)", (
 // --- 镜像文案互锁(companion computer-model-states.test.ts 姊妹面) ---
 
 test("镜像互锁:P2 layerSemantics / runningNote / 熔断词表关键短语", () => {
-  assert.ok(MODEL_SWITCH_COPY.layerSemantics.includes("当前任务结束后生效"))
+  // Qwen3-VL 文案：任务粒度切换说明在 switchRunningNote；layerSemantics 描述模型与急停。
+  assert.ok(MODEL_SWITCH_COPY.layerSemantics.includes("Qwen3-VL"))
   assert.ok(MODEL_SWITCH_COPY.layerSemantics.includes("Ctrl+Alt+End"))
   assert.ok(MODEL_SWITCH_COPY.switchRunningNote.includes("当前任务结束后生效"))
   assert.ok(MODEL_SWITCH_COPY.switchRunningNote.includes("Ctrl+Alt+End"))

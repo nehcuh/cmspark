@@ -43,10 +43,27 @@ import * as path from "node:path"
 import { logger } from "../logger"
 import { getConfig, setComputerModelFields } from "../config"
 import { LICENSE_DOOR_TEXT, LICENSE_DOOR_TEXT_HASH } from "./model-license"
-import { loadModelManifest, modelDirFor, type ModelManifest } from "./model-manifest"
-import { downloadModelVariant, deleteModelVariant, ModelDownloadError } from "./model-download"
-import type { TinyClickSession } from "./tinyclick-session"
+import { loadModelManifest, type ModelManifest } from "./model-manifest"
+import {
+  deleteQwenVlVariant,
+  downloadQwenVlVariant,
+  probeQwenModelDir,
+  QwenDownloadError,
+} from "./qwen-vl-download"
+import {
+  isQwenVlVariant,
+  migrateLegacyModelVariant,
+  QWEN_VL_VARIANT_META,
+  type QwenVlVariant,
+} from "./qwen-vl-catalog"
+import {
+  runQwenVlPreflight,
+  resolveDownloadSource,
+  type DownloadSource,
+} from "./qwen-vl-preflight"
+import type { QwenVlSession } from "./qwen-vl-session"
 import { requireAppsBiometric } from "../apps/biometric-gate"
+import { DATA_DIR } from "../config"
 
 /**
  * 进程级模型会话持有器——写入点仅三处（P8 符号级注释契约，WI-4.5 grep 在案化）：
@@ -57,7 +74,7 @@ import { requireAppsBiometric } from "../apps/biometric-gate"
  */
 export interface ComputerModelSessionHolder {
   session: Pick<
-    TinyClickSession,
+    QwenVlSession,
     "resetCircuitBreaker" | "getStatus" | "getFaults" | "dispose"
   > | null
 }
@@ -74,9 +91,10 @@ export interface ComputerModelHandlerContext {
 /** 可注入依赖（测试替身；生产取默认实现）。 */
 export interface ComputerModelHandlerDeps {
   gate?: typeof requireAppsBiometric
+  /** @deprecated TinyClick path; ignored for Qwen3-VL downloads */
   manifestLoader?: () => Promise<ModelManifest>
-  downloadImpl?: typeof downloadModelVariant
-  deleteImpl?: typeof deleteModelVariant
+  downloadImpl?: typeof downloadQwenVlVariant
+  deleteImpl?: typeof deleteQwenVlVariant
   /** P3 节流时钟（测试 seam，同 deps 族纪律）；默认 Date.now。 */
   now?: () => number
 }
@@ -105,39 +123,6 @@ export function defaultManifestPath(): string {
 
 // --- 磁盘观测探针（get_state 轻量复验） --------------------------------------------
 
-interface ModelDirProbe {
-  /** absent=目录/文件全无；error=部分缺失或大小不符；ready=全文件在盘且大小相符 */
-  status: "absent" | "error" | "ready"
-  sizeBytes?: number
-  error?: string
-}
-
-/**
- * 状态行轻量复验：存在性 + 大小（stat 级，不读字节——705MB 全量 sha256 复验在
- * admission 懒建会话时强制执行（I1 校验即加载），get_state 不做重活）。
- * 哈希损坏 → admission 拒绝并广播 error（fail-closed 方向，UI 观测面诚实边界在案）。
- */
-function probeModelDir(variant: string, manifest: ModelManifest): ModelDirProbe {
-  const files = manifest.models.tinyclick?.variants[variant]?.files ?? []
-  if (files.length === 0) return { status: "error", error: "variant-unknown" }
-  const dir = modelDirFor(variant)
-  let sizeBytes = 0
-  let sawAny = false
-  for (const f of files) {
-    try {
-      const s = fs.statSync(path.join(dir, f.name))
-      sawAny = true
-      if (s.size !== f.size) return { status: "error", error: "model-size-mismatch" }
-      sizeBytes += s.size
-    } catch {
-      // 单个文件缺失：全缺 = absent，部分缺 = error（半成品态）
-      if (sawAny) return { status: "error", error: "model-file-missing" }
-      return files.indexOf(f) === 0 ? { status: "absent" } : { status: "error", error: "model-file-missing" }
-    }
-  }
-  return { status: "ready", sizeBytes }
-}
-
 /** 许可证当前有效性（P1：时间戳 + 文本版本哈希双要素；漂移 = 未接受）。 */
 export function modelLicenseAccepted(cfg: {
   modelLicenseAcceptedAt?: string
@@ -156,30 +141,21 @@ let activeDownload: { variant: string } | null = null
 /** P1：删除进行中标志（download/delete 互斥的另一向；delete×delete 幂等）。 */
 let activeDelete: { variant: string } | null = null
 
-/** 占位主机判定（裁决 5）：manifest url 主机为 .invalid TLD（RFC 2606）且未配镜像。 */
-function isPlaceholderHost(manifest: ModelManifest, variant: string): boolean {
-  const files = manifest.models.tinyclick?.variants[variant]?.files ?? []
-  return files.every((f) => {
-    try {
-      return new URL(f.url).hostname.endsWith(".invalid")
-    } catch {
-      return false
-    }
-  })
+function currentVariant(cfg: { modelVariant?: string }): QwenVlVariant {
+  return migrateLegacyModelVariant(cfg.modelVariant)
 }
 
 /**
- * 当前可观测状态（plan:476 全形）。modelStatus 映射：
- *   有会话：getStatus()==="disabled" → "disabled"（熔断）；其余 → "ready"
- *   无会话：下载中 → "downloading"；磁盘轻量复验 absent/error/ready 细分（WI-4.2
- *   补全③留位）；error 附 reason（I1 词表），UI 走 model-state-messages 文案。
+ * 当前可观测状态。Qwen3-VL：磁盘 probe 看 config.json；会话熔断 → disabled。
  */
 async function statePayload(
   holder: ComputerModelSessionHolder,
-  deps: ComputerModelHandlerDeps = {},
+  _deps: ComputerModelHandlerDeps = {},
+  opts: { downloadError?: string } = {},
 ) {
   const cfg = getConfig().computer ?? { coordinateEnabled: false }
-  const variant = cfg.modelVariant ?? "hybrid"
+  const variant = currentVariant(cfg)
+  const meta = QWEN_VL_VARIANT_META[variant]
   const session = holder.session
   let modelStatus: string
   let sizeBytes: number | undefined
@@ -189,17 +165,31 @@ async function statePayload(
   } else if (activeDownload) {
     modelStatus = "downloading"
   } else {
+    const probe = probeQwenModelDir(variant)
+    modelStatus = probe.status
+    sizeBytes = probe.sizeBytes
+    errorReason = probe.error
+  }
+  if (opts.downloadError && !session && !activeDownload && modelStatus !== "ready") {
+    modelStatus = "error"
+    errorReason = opts.downloadError
+  }
+  // Preflight is best-effort (may take a few seconds). Skip network-heavy path in unit tests.
+  let preflight: Awaited<ReturnType<typeof runQwenVlPreflight>> | null = null
+  if (!process.env.CMSPARK_DATA_DIR?.includes("test") && process.env.NODE_ENV !== "test") {
     try {
-      const manifest = await (deps.manifestLoader ?? (() => loadModelManifest(defaultManifestPath())))()
-      const probe = probeModelDir(variant, manifest)
-      modelStatus = probe.status
-      sizeBytes = probe.sizeBytes
-      errorReason = probe.error
-    } catch (err) {
-      modelStatus = "error"
-      errorReason = err instanceof Error && "code" in err ? String((err as { code?: string }).code) : "manifest-invalid"
+      preflight = await runQwenVlPreflight({
+        variant,
+        downloadSource: (cfg as any).modelDownloadSource as DownloadSource | undefined,
+        dataDir: DATA_DIR,
+      })
+    } catch (e) {
+      logger.warn("computer.model.preflight.failed", {
+        error: e instanceof Error ? e.message : String(e),
+      })
     }
   }
+
   return {
     type: "computer.model.state" as const,
     modelEnabled: cfg.modelEnabled === true,
@@ -208,58 +198,78 @@ async function statePayload(
     modelLicenseDeclined: cfg.modelLicenseDeclined === true,
     modelStatus,
     variant,
+    modelFamily: "qwen3-vl",
+    resourceTip: meta.resourceTip,
+    downloadGb: meta.downloadGb,
+    minRamGb: meta.minRamGb,
+    minVramGb: meta.minVramGb,
+    availableVariants: ["2b", "4b", "8b"] as const,
+    downloadSource: (cfg as any).modelDownloadSource ?? "auto",
+    ...(preflight
+      ? {
+          preflight,
+          canDownload: preflight.canDownload,
+          canEnable: preflight.canEnable && modelLicenseAccepted(cfg) && !cfg.modelLicenseDeclined,
+          readinessSummary: preflight.readinessSummary,
+          nextSteps: preflight.nextSteps,
+          recommendedVariant: preflight.recommendedVariant,
+          downloadSourceResolved: preflight.downloadSourceResolved,
+          downloadSourceReason: preflight.downloadSourceReason,
+        }
+      : {}),
     ...(sizeBytes !== undefined ? { sizeBytes } : {}),
     ...(errorReason !== undefined ? { error: errorReason } : {}),
     faults: session?.getFaults() ?? 0,
   }
 }
 
-/** 后台下载（fire-and-forget；进度/完成/失败全走广播，ack 即时返回）。 */
+/** 后台下载 Qwen3-VL（HF snapshot；进度 best-effort）。 */
 function startBackgroundDownload(
-  variant: string,
+  variant: QwenVlVariant,
   ctx: ComputerModelHandlerContext,
   deps: ComputerModelHandlerDeps,
   holder: ComputerModelSessionHolder,
 ): void {
   activeDownload = { variant }
+  void statePayload(holder, deps).then((s) => ctx.broadcast?.(s))
   const cfg = getConfig().computer ?? { coordinateEnabled: false }
-  // P3（I4 对抗）：进度广播节流——下载器 per TCP chunk 回调（705MB 快网 ≈
-  // 万级广播/十秒窗口，扩展每消息重建 store）。规则：整百分点前进 或 距上次
-  // ≥200ms 才广播（每文件独立记百分点；0% 首帧与 100% 末帧必达——首/末帧
-  // 相对前一观测恒为百分点变化）。万级 → 百级（≤100/文件 + 时间轴兜底）。
   const now = deps.now ?? Date.now
   let lastSentAt = 0
-  const lastPctByFile = new Map<string, number>()
   void (async () => {
+    let downloadError: string | undefined
     try {
-      const manifest = await (deps.manifestLoader ?? (() => loadModelManifest(defaultManifestPath())))()
-      await (deps.downloadImpl ?? downloadModelVariant)(
-        {
-          manifest,
-          modelId: "tinyclick",
-          variant,
-          mirror: cfg.modelMirror,
-          diskBudgetMB: cfg.modelDiskBudgetMB,
+      const preferred = ((cfg as any).modelDownloadSource as DownloadSource | undefined) ?? "auto"
+      // Unit tests: avoid network probes; default modelscope for deterministic offline path.
+      const resolved =
+        process.env.CMSPARK_DATA_DIR?.includes("test") || process.env.NODE_ENV === "test"
+          ? { source: "modelscope" as const, reason: "test" }
+          : await resolveDownloadSource(preferred)
+      await (deps.downloadImpl ?? downloadQwenVlVariant)({
+        variant,
+        source: resolved.source,
+        hfEndpoint:
+          resolved.source === "hf-mirror"
+            ? cfg.modelMirror || "https://hf-mirror.com"
+            : cfg.modelMirror,
+        onProgress: (file, receivedBytes, totalBytes) => {
+          const t = now()
+          if (t - lastSentAt < 200) return
+          lastSentAt = t
+          ctx.broadcast?.({ type: "computer.model.progress", variant, file, receivedBytes, totalBytes })
         },
-        {
-          onProgress: (file, receivedBytes, totalBytes) => {
-            const pct = totalBytes > 0 ? Math.floor((receivedBytes / totalBytes) * 100) : -1
-            const t = now()
-            if (pct === lastPctByFile.get(file) && t - lastSentAt < 200) return
-            lastPctByFile.set(file, pct)
-            lastSentAt = t
-            ctx.broadcast?.({ type: "computer.model.progress", variant, file, receivedBytes, totalBytes })
-          },
-        },
-      )
-      logger.info("computer.model.download.completed", { variant })
+      })
+      logger.info("computer.model.download.completed", {
+        variant,
+        family: "qwen3-vl",
+        source: resolved.source,
+      })
     } catch (err) {
-      const reason = err instanceof ModelDownloadError ? err.reason : "network-error"
+      const reason = err instanceof QwenDownloadError ? err.reason : "network-error"
+      downloadError = reason
       logger.warn("computer.model.download.failed", { variant, reason })
     } finally {
       activeDownload = null
-      // 完成/失败都广播最新状态（状态行随广播刷新）
-      void statePayload(holder, deps).then((s) => ctx.broadcast?.(s))
+      void statePayload(holder, deps, downloadError ? { downloadError } : {}).then((s) => ctx.broadcast?.(s))
     }
   })()
 }
@@ -281,6 +291,8 @@ export async function handleComputerModelMessage(
     "computer.model.download",
     "computer.model.delete",
     "computer.model.reset_circuit_breaker",
+    "computer.model.set_variant",
+    "computer.model.set_download_source",
   ])
   if (SETTINGS_SOURCE_TYPES.has(type) && rest.source !== "settings") {
     logger.warn("computer.model.refused", { type, source: typeof rest.source === "string" ? rest.source : undefined })
@@ -336,7 +348,7 @@ export async function handleComputerModelMessage(
       const outcome = await gate({
         action: "computer.model.set_enabled",
         reason:
-          "Enable TinyClick experimental locate layer (uncalibrated local-model suggestions; every hit still requires per-action human confirmation)",
+          "Enable Qwen3-VL experimental locate layer (uncalibrated local-model suggestions; every hit still requires per-action human confirmation)",
         requestConfirmation: ctx.requestConfirmation,
       })
       if (!outcome.approved) {
@@ -363,28 +375,16 @@ export async function handleComputerModelMessage(
         })
         logger.info("computer.model.license_accepted", { textHash: LICENSE_DOOR_TEXT_HASH })
         const cfg = getConfig().computer ?? { coordinateEnabled: false }
-        const variant = cfg.modelVariant ?? "hybrid"
+        const variant = currentVariant(cfg)
         let downloadNote: string | undefined
         if (activeDownload) {
           downloadNote = "already-running"
         } else if (activeDelete) {
-          // P1：删除进行中不自动触发下载（rm/mkdir 竞态 fail-closed）
           downloadNote = "delete-in-progress"
           logger.warn("computer.model.download.refused", { reason: "delete-in-progress", variant })
         } else {
-          try {
-            const manifest = await (deps.manifestLoader ?? (() => loadModelManifest(defaultManifestPath())))()
-            if (!cfg.modelMirror && isPlaceholderHost(manifest, variant)) {
-              // 占位主机禁网兜底（裁决 5）：如实告知，不伪造下载动作
-              downloadNote = "download-host-unset"
-              logger.info("computer.model.download.skipped", { reason: "download-host-unset", variant })
-            } else {
-              startBackgroundDownload(variant, ctx, deps, holder)
-              downloadNote = "started"
-            }
-          } catch {
-            downloadNote = "manifest-invalid"
-          }
+          startBackgroundDownload(variant, ctx, deps, holder)
+          downloadNote = "started"
         }
         const state = await statePayload(holder, deps)
         ctx.broadcast?.(state)
@@ -400,11 +400,10 @@ export async function handleComputerModelMessage(
 
     case "computer.model.download": {
       const cfg = getConfig().computer ?? { coordinateEnabled: false }
-      const variant = cfg.modelVariant ?? "hybrid"
+      const variant = currentVariant(cfg)
       if (activeDownload) {
         return { type: "computer.model.download.result" as const, ok: true, status: "already-running", variant }
       }
-      // P1：删除进行中拒下载（互斥另一向；rm/mkdir 竞态 fail-closed，零网络零写盘）
       if (activeDelete) {
         logger.warn("computer.model.download.refused", { reason: "delete-in-progress", variant })
         return modelError(
@@ -412,32 +411,57 @@ export async function handleComputerModelMessage(
           { code: "DELETE_IN_PROGRESS" },
         )
       }
-      let manifest: ModelManifest
-      try {
-        manifest = await (deps.manifestLoader ?? (() => loadModelManifest(defaultManifestPath())))()
-      } catch (err) {
-        return modelError(
-          `模型登记信息不可用: ${err instanceof Error ? err.message : String(err)}`,
-          { code: "MANIFEST_INVALID" },
-        )
-      }
-      // 禁网兜底（裁决 5）：占位主机 + 未配镜像 → fail-fast 零网络请求
-      if (!cfg.modelMirror && isPlaceholderHost(manifest, variant)) {
-        logger.info("computer.model.download.refused", { reason: "download-host-unset", variant })
-        return modelError(
-          "模型发布地址尚未配置（发布链 owner 决策中）——当前构建不可下载模型；UIA / OCR / 用户框选定位不受影响。",
-          { code: "DOWNLOAD_HOST_UNSET" },
-        )
-      }
-      // 下载对象 = 当前配置变体的文件组（P3：变体切换 = 手改 config + 重启）
       startBackgroundDownload(variant, ctx, deps, holder)
-      logger.info("computer.model.download.started", { variant })
+      logger.info("computer.model.download.started", { variant, family: "qwen3-vl" })
       return { type: "computer.model.download.result" as const, ok: true, status: "started", variant }
+    }
+
+    case "computer.model.set_variant": {
+      const raw = rest.variant
+      if (!isQwenVlVariant(raw)) {
+        return modelError('computer.model.set_variant requires variant:"2b"|"4b"|"8b"', {
+          code: "INVALID_VARIANT",
+        })
+      }
+      if (activeDownload) {
+        return modelError("模型下载进行中——请待完成后切换变体。", { code: "DOWNLOAD_IN_PROGRESS" })
+      }
+      // Dispose session so next admission loads the new size
+      if (holder.session) {
+        try {
+          await holder.session.dispose()
+        } catch {
+          /* best-effort */
+        }
+        holder.session = null
+      }
+      setComputerModelFields({ modelVariant: raw })
+      logger.info("computer.model.variant_set", { variant: raw })
+      const state = await statePayload(holder, deps)
+      ctx.broadcast?.(state)
+      return state
+    }
+
+    case "computer.model.set_download_source": {
+      const raw = rest.downloadSource ?? rest.source_value
+      const ok =
+        raw === "auto" || raw === "huggingface" || raw === "hf-mirror" || raw === "modelscope"
+      if (!ok) {
+        return modelError(
+          'computer.model.set_download_source requires downloadSource:"auto"|"huggingface"|"hf-mirror"|"modelscope"',
+          { code: "INVALID_DOWNLOAD_SOURCE" },
+        )
+      }
+      setComputerModelFields({ modelDownloadSource: raw })
+      logger.info("computer.model.download_source_set", { downloadSource: raw })
+      const state = await statePayload(holder, deps)
+      ctx.broadcast?.(state)
+      return state
     }
 
     case "computer.model.delete": {
       const cfg = getConfig().computer ?? { coordinateEnabled: false }
-      const variant = cfg.modelVariant ?? "hybrid"
+      const variant = currentVariant(cfg)
       // P1 互斥：下载中拒删（否则 Windows rm 撞 .part 占用 → 裸 EPERM 穿透 +
       // 会话已 dispose + 文件复现；类 Unix 下载以误导性 network-error 收尾）。
       // 拒绝先于 dispose——会话与文件零触碰。
@@ -462,7 +486,7 @@ export async function handleComputerModelMessage(
           }
           holder.session = null
         }
-        const { removedBytes } = await (deps.deleteImpl ?? deleteModelVariant)({ variant })
+        const { removedBytes } = await (deps.deleteImpl ?? deleteQwenVlVariant)(variant)
         logger.info("computer.model.deleted", { variant, removedBytes })
         const state = await statePayload(holder, deps)
         ctx.broadcast?.(state)

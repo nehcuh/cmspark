@@ -347,7 +347,7 @@ export class MacSecurityEnvironment implements SecurityEnvironment {
     if (parsed.axTrusted !== true) {
       throw new ComputerError(
         "INTEGRITY_LEVEL_DENIED",
-        "computer: Accessibility permission not granted — enable in System Settings → Privacy & Security → Accessibility",
+        "computer: Accessibility permission not granted — enable CMspark under System Settings → Privacy & Security → Accessibility, then relaunch",
       )
     }
     if (parsed.secureInput === true) {

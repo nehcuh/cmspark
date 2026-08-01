@@ -105,7 +105,7 @@ export async function ensureEstopHelper(): Promise<EstopResult> {
     if (earlyExit !== null) {
       return {
         ok: false,
-        reason: `estop helper exited at startup (code ${earlyExit}) — check Accessibility permission for cmspark-host`,
+        reason: `estop helper exited at startup (code ${earlyExit}) — check Accessibility permission for CMspark`,
       }
     }
     try {

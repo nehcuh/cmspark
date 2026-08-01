@@ -125,9 +125,37 @@ export const MODEL_STATE_MESSAGES: Record<string, ModelStateMessage> = {
   "download-host-unset": {
     title: "模型发布地址未配置",
     detail:
-      "模型发布地址尚未配置（发布链 owner 决策中）——当前构建不可下载模型。" +
+      "模型发布地址尚未配置——当前构建不可下载模型。" +
       "UIA / OCR / 用户框选定位不受影响。",
     action: null,
+  },
+  "python-missing": {
+    title: "缺少 Python 运行时",
+    detail:
+      "Qwen3-VL 本机推理需要 Python 3。请安装 python3 后重试下载/启用。" +
+      "UIA / OCR / 用户框选定位不受影响。",
+    action: null,
+  },
+  "hf-hub-missing": {
+    title: "缺少 huggingface_hub",
+    detail:
+      "请执行 pip install huggingface_hub 后重试下载。中国大陆可改用下载源「魔搭 ModelScope」并 pip install modelscope。" +
+      "UIA / OCR / 用户框选定位不受影响。",
+    action: "重试下载",
+  },
+  "modelscope-missing": {
+    title: "缺少 modelscope",
+    detail:
+      "当前下载源为 ModelScope，请执行 pip install modelscope 后重试。" +
+      "也可改选 HF 镜像并安装 huggingface_hub。UIA / OCR / 用户框选定位不受影响。",
+    action: "重试下载",
+  },
+  "download-failed": {
+    title: "模型下载失败",
+    detail:
+      "从 Hugging Face 下载 Qwen3-VL 失败（网络或仓库不可用）。可配置镜像后重试；" +
+      "其余定位层不受影响。",
+    action: "重试下载",
   },
   "model-variant-missing": {
     title: "当前变体未下载",
@@ -172,25 +200,24 @@ export interface ModelSwitchCopy {
 }
 
 export const MODEL_SWITCH_COPY: ModelSwitchCopy = {
-  switchLabel: "实验层：TinyClick 本地视觉定位",
+  switchLabel: "实验层：Qwen3-VL 本地视觉定位",
   switchHint:
     "默认关闭。开启后仅作为定位链第 2 层（L2）的坐标候选建议；" +
-    "命中在执行前仍会弹出人工确认。",
+    "支持中文指令；命中在执行前仍会弹出人工确认。",
   masterOffHint: "主开关（computer.use）已关闭——实验层不参与任何定位。",
   appNotAllowedHint:
     "当前应用未加入允许列表（coordinateAllowed）——实验层对该应用不参与定位。",
-  // P2 修订镜像：per-task 生效语义 + estop 引导（companion 侧断言互锁）。
   layerSemantics:
-    "本层是定位链的实验性建议层（L2）：模型输出仅作为坐标候选，" +
-    "任何点击执行前必经人工确认；本层未校准，可能完全错误。" +
-    "关闭开关按任务粒度生效——任务运行中关闭将于当前任务结束后生效；" +
-    "若需立即停止（含当前任务），请按 Ctrl+Alt+End 急停或中止当前任务。" +
-    "拒绝建议或关闭本层后，UIA / OCR / 用户框选兜底不受影响。",
+    "本层使用 Qwen3-VL（默认 2B，可选 4B/8B）在本机对截屏做 GUI 定位建议：" +
+    "模型输出仅作为坐标候选，任何点击执行前必经人工确认；本层未校准，可能完全错误。" +
+    "需要 Python3 + transformers/torch；下载源为 Hugging Face。" +
+    "关闭开关按任务粒度生效；急停请用 Ctrl+Alt+End。" +
+    "UIA / OCR / 用户框选兜底不受影响。",
   licenseDoorHint:
-    "首次开启需阅读并接受模型许可证与研究品免责声明；" +
+    "首次开启需阅读并接受模型许可证与免责声明；" +
     "拒绝则本实验层永久跳过，其余定位层不受影响。",
   firstLoadTimeline:
-    "模型首次加载最长约 35 秒（超时自动降级，且不计入故障熔断）；" +
+    "模型首次加载可能需数十秒至数分钟（取决于硬件与是否 GPU）；" +
     "加载期间 UIA / OCR / 用户框选定位不受影响。",
   switchRunningNote:
     "当前有任务正在运行——开关变更将于当前任务结束后生效；" +
@@ -202,6 +229,40 @@ export const MODEL_SWITCH_COPY: ModelSwitchCopy = {
   licenseDeclinedNotice:
     "你已拒绝实验层许可证——本层永久跳过，其余定位层不受影响。" +
     "（复位路径 = 手动编辑 config.json，属显式 owner opt-in。）",
+}
+
+/** Static resource tips (mirrored from companion qwen-vl-catalog; UI fallback). */
+export const QWEN_VL_VARIANT_TIPS: Record<
+  string,
+  { label: string; downloadGb: number; minRamGb: number; minVramGb: number; tip: string }
+> = {
+  "2b": {
+    label: "2B（默认）",
+    downloadGb: 4.5,
+    minRamGb: 12,
+    minVramGb: 6,
+    tip: "默认推荐。流畅：统一内存/系统内存 ≥12GB，或独显 ≥6GB。CPU 可跑但较慢。",
+  },
+  "4b": {
+    label: "4B",
+    downloadGb: 8,
+    minRamGb: 20,
+    minVramGb: 10,
+    tip: "更强。流畅：统一内存/系统内存 ≥20GB，或独显 ≥10GB。",
+  },
+  "8b": {
+    label: "8B",
+    downloadGb: 16,
+    minRamGb: 32,
+    minVramGb: 16,
+    tip: "最强本机档。流畅：统一内存/系统内存 ≥32GB，或独显 ≥16GB。资源不足会极慢或 OOM。",
+  },
+}
+
+export function variantResourceTip(variant: string | undefined): string {
+  const v = variant && QWEN_VL_VARIANT_TIPS[variant] ? variant : "2b"
+  const m = QWEN_VL_VARIANT_TIPS[v]!
+  return `${m.tip}（约下载 ${m.downloadGb}GB · 建议内存 ≥${m.minRamGb}GB / 显存 ≥${m.minVramGb}GB）`
 }
 
 // --- 纯函数判定 -------------------------------------------------------------------

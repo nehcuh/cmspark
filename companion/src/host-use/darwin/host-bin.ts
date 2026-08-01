@@ -7,9 +7,26 @@
 import * as path from "path"
 import * as fs from "fs"
 
+/**
+ * Pure candidate list for host binary resolution (testable without env).
+ * Order matters: packaged app prefers Contents/MacOS/CMspark (same TCC
+ * product identity as the main process) over Resources/cmspark-host.
+ */
+export function resolveHostBinaryCandidates(fromDir: string): string[] {
+  return [
+    path.resolve(fromDir, "../MacOS/CMspark"),           // packaged preferred
+    path.resolve(fromDir, "CMspark"),
+    path.resolve(fromDir, "cmspark-host"),               // same-dir sibling (legacy DMG)
+    path.resolve(fromDir, "../cmspark-host"),
+    path.resolve(fromDir, "../../cmspark-host"),
+    path.resolve(fromDir, "../../dist/cmspark-host"),
+    path.resolve(fromDir, "../../../dist/cmspark-host"),
+  ]
+}
+
 export function resolveHostBinary(): string {
   // S-P0-1 (2026-07-24 diagnosis): CMSPARK_HOST_BIN was previously gated by
-  // `NODE_ENV !== "production"` — but packaged Electron/pkg/S EA apps rarely
+  // `NODE_ENV !== "production"` — but packaged Electron/pkg/SEA apps rarely
   // set NODE_ENV at all, so the override was live in production. A user-mode
   // attacker with `launchctl setenv CMSPARK_HOST_BIN /tmp/evil` could substitute
   // the binary that performs Touch ID (biometricVerify) and host_read — defeating
@@ -19,6 +36,7 @@ export function resolveHostBinary(): string {
   // is set. This is intentionally separate from NODE_ENV so a misconfigured
   // NODE_ENV cannot re-open the hole. Tests that need to inject a mock binary
   // set CMSPARK_ALLOW_HOST_BIN_OVERRIDE=1 in their setup.
+  // KEEP existing override logic EXACTLY (dual opt-in / D10).
   if (process.env.CMSPARK_HOST_BIN) {
     if (process.env.CMSPARK_ALLOW_HOST_BIN_OVERRIDE === "1") {
       return process.env.CMSPARK_HOST_BIN
@@ -28,25 +46,13 @@ export function resolveHostBinary(): string {
       "Set CMSPARK_ALLOW_HOST_BIN_OVERRIDE=1 to enable (dev/test only).",
     )
   }
-  // Search order covers 4 deployment modes:
-  //   1. DMG / packaged install: the bundled cmspark-agent.js sits in
-  //      <App>/Contents/Resources with cmspark-host as a SAME-DIR sibling
-  //      (__dirname IS the staging dir once bundled — do not assume it is
-  //      one level below, or Touch ID/biometric-verify ENOENTs and silently
-  //      downgrades to the manual-nonce gate).
-  //   2. Unbundled staging: STAGING/<sub>/cmspark-agent.js + STAGING/cmspark-host
-  //      (binary one level up from the entry's dir).
-  //   3. npm dev mode: companion/dist/host-use/darwin/index.js → projectRoot = companion/
-  //      binary at companion/dist/cmspark-host (3 levels up from darwin/)
-  //   4. Repo root scripts: rare; check both candidates and return whichever exists.
-  const candidates = [
-    path.resolve(__dirname, "cmspark-host"),              // same-dir sibling (DMG bundle)
-    path.resolve(__dirname, "../cmspark-host"),           // staged one level up
-    path.resolve(__dirname, "../../cmspark-host"),        // alt staging layout
-    path.resolve(__dirname, "../../dist/cmspark-host"),   // dev mode: companion/dist/
-    path.resolve(__dirname, "../../../dist/cmspark-host"),// dev mode: repo-root/dist/
-  ]
-  for (const c of candidates) {
+  // Search order covers packaged + legacy DMG + staging + npm dev modes:
+  //   1. Packaged app: __dirname = Contents/Resources → prefer ../MacOS/CMspark
+  //      so host IPC inherits the main binary's TCC product identity (D6/A3/A18).
+  //   2. Legacy DMG: cmspark-host as same-dir sibling under Resources.
+  //   3. Unbundled staging: binary one level up or under dist/.
+  //   4. npm dev: companion/dist/cmspark-host from host-use/darwin/.
+  for (const c of resolveHostBinaryCandidates(__dirname)) {
     try {
       if (fs.existsSync(c)) return c
     } catch {

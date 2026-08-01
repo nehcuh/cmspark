@@ -297,20 +297,19 @@ export interface LocateHit {
   bbox: RectPx
   layer: LocateLayer
   /**
-   * UIA/OCR 层照常赋值；WP5 I3 实验层（tinyclick）在校准曲线落地前结构性
-   * 缺省（G3——未校准置信度永不上屏，类型系统强制，校准后升级须评审）。
+   * UIA/OCR 层照常赋值；实验 VLM 层（qwen-vl）在校准曲线落地前结构性
+   * 缺省（G3——未校准置信度永不上屏）。
    */
   confidence?: number
   matchedText: string
 }
 
 /**
- * WP3 (plan §B.1): the four locator layers. "uia" = L0 (WP3), "ocr" = L1
- * (WP1), "tinyclick" = L2 (WP5 I3 — experimental local model layer, re-L2
- * gated, never auto-injected), "cloud" = L3 (WP6 stub — honest skip).
- * Degradation is one-way down the chain.
+ * WP3 (plan §B.1): the four locator layers. "uia" = L0, "ocr" = L1,
+ * "qwen-vl" = L2 experimental local VLM (re-L2 gated; "tinyclick" legacy alias),
+ * "cloud" = L3 stub. Degradation is one-way down the chain.
  */
-export type LocateLayer = "uia" | "ocr" | "tinyclick" | "cloud"
+export type LocateLayer = "uia" | "ocr" | "qwen-vl" | "tinyclick" | "cloud"
 
 /**
  * WP3: one layer attempt in the locate chain (structured degradation log —

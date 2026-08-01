@@ -2,6 +2,14 @@
 
 ## Technical Pitfalls
 
+### macOS 屏幕录制：勾了 CMspark 仍 -3801（产品身份分裂，2026-08-01）
+- 现象：系统设置里 CMspark 已开，外程序/L2 截图 ScreenCaptureKit `-3801`；开发重装反复出现
+- 根因：`MacOS/CMspark` 曾是 **bash→node**；真正 SCK 在 `Resources/cmspark-host`（`com.cmspark.host`，ad-hoc 独立 CDHash）。TCC 记的是**捕获进程身份**，不是桌面图标名。历史错误串还教用户勾 node/host → 产品体验失败
+- 产品锁：用户路径 **只认 CMspark**；禁止引导 node/cmspark-host
+- 方案 D（计划中）：主可执行 = host Mach-O 装成 `Contents/MacOS/CMspark`，嵌入 `com.cmspark.agent`；`resolveHostBinary` 优先主二进制；文案清零
+- SoT：`docs/superpowers/specs/2026-08-01-macos-tcc-product-identity-design.md`；impl plan 同日
+- 教训：helper 做 TCC 锚可以避免 osascript 名，但 **屏幕录制必须与 App 产品名合一**；ad-hoc 重装会清授权，长期要 Developer ID
+
 ### 技能扫描：非「仅启动一次」，但 skill.list 曾只读内存（2026-07-31）
 - 现象：用户/Agent 拷文件进 `~/.cmspark-agent/skills` 或外部落盘后，Skills 列表/自动匹配像「没装上」；体感「只有 Companion 启动才扫」
 - 根因：audit item 10 去掉了每次 `skill.list` 的全量 `refresh()`（防 4 目录同步扫盘卡 UI）；API 导入路径会 refresh，**外部写盘不通知**
@@ -417,3 +425,10 @@
 - 3 explore sub-agents parallel → grill-me (5 rounds, Kimi Code answers) → Claude Code final review
 - Found 2 blocking issues (schema duplication, feedback semantic error) before implementation
 - After implementation, adversarial code review found 8 issues (1 CRITICAL, 1 HIGH)
+
+## Qwen3-VL 实验层（2026-08-01）
+
+- **SoT**: `docs/superpowers/specs/2026-08-01-qwen3-vl-experimental-layer-product-design.md`
+- **开工**: `docs/superpowers/plans/2026-08-01-qwen3-vl-experimental-layer-impl.md` + HANDOFF
+- **坑**: Companion 权威非扩展推理；大陆用 auto/魔搭；P0=A1–A8 未绿勿宣称可内测；坐标必须像素；canEnable 硬禁用；trust_remote_code 须门文案
+- **决策锁**: D1 硬禁用 / D3 像素 / D8 废 budgetMB / D9 许可 UI 复位 / D11 modelEnabled 禁 G1 skip

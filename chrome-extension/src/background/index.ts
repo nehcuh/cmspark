@@ -929,6 +929,8 @@ function setupMessageHandlers() {
       case "computer.model.download":
       case "computer.model.delete":
       case "computer.model.reset_circuit_breaker":
+      case "computer.model.set_variant":
+      case "computer.model.set_download_source":
         // Forward to companion
         wsClient.send(message)
         sendResponse({ ok: true })

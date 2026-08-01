@@ -100,13 +100,37 @@ Computer Use 与其它高危工具共用 [确认台](confirm-center-user-guide.m
 
 | 平台 | 状态（0.3.0） |
 |------|----------------|
-| **macOS** | 主路径：原生适配 + 证据/急停；需本机权限（辅助功能等，按系统提示） |
+| **macOS** | 主路径：原生适配 + 证据/急停；需本机权限（**只认 CMspark**，见下） |
 | **Windows** | 主路径：PowerShell/UIA 脚本族 + 窗口捕获；Hello 等与 host 写路径协同处见 host 指南 |
 | **Linux** | Computer 坐标注入 **非** 本阶段一等交付；Host 读路径也多为 pending |
 
 具体适配在 `companion/src/computer/`（`darwin-adapters` / `win-adapters` 等）。
 
+### macOS 权限（只认 CMspark）
+
+Computer Use 截图与键鼠需要系统权限。请 **只** 为 **CMspark** 打开：
+
+1. **系统设置 → 隐私与安全性 → 屏幕录制** → 打开 **CMspark**
+2. **系统设置 → 隐私与安全性 → 辅助功能** → 打开 **CMspark**
+3. **完全退出** CMspark（菜单栏图标退出）后重新打开
+
+**不要**去找或勾选 `node`、`cmspark-host` 等内部进程名。若列表里有历史残留项，可关闭它们；以 **CMspark** 为准。
+
+更新或重装后若截图再次失败：把 CMspark 开关关掉再打开一次（ad-hoc 安装时系统可能要求重新授权）。
+
+> P0 交付路径为 **CMspark.app（DMG）**；其他安装方式（如 install-daemon）的 TCC 身份可能不同，不在本修复范围内。
+
 ---
+
+## 6.1 实验层：Qwen3-VL 本机视觉定位（可选）
+
+默认 **关闭**。开启后作为 UIA/OCR 之后的 **L2 建议点**，**每次命中仍要人工确认**。
+
+- **权威在 Companion**：扩展只发 `computer.model.*`，不在浏览器内推理。  
+- **用户路径**：设置 → 看「就绪」预检 → 选下载源（大陆推荐自动/魔搭）→ 选 2B/4B/8B → 下载 → 开启。  
+- **依赖**：本机 Python3 +（下载）`huggingface_hub` 或 `modelscope` +（推理）`transformers torch pillow`。  
+- **中国大陆**：默认 `auto` 会探测 HF/魔搭；显式可选 ModelScope / HF 镜像。  
+- 完整说明：[qwen-vl-experimental-layer.md](qwen-vl-experimental-layer.md)
 
 ## 7. 硬限制（请勿指望绕过）
 

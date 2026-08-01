@@ -10,19 +10,31 @@
 //
 // The single spawnHostBin() helper below is the authoritative spawn surface —
 // do not call execFileAsync on cmspark-host directly elsewhere.
+//
+// Packaged TCC identity (2026-08-01): Contents/MacOS/CMspark is re-signed by
+// `codesign --deep` at DMG time, which changes the file SHA256. The pinned
+// CMSPARK_HOST_SHA256 still matches `companion/dist/cmspark-host` (dev). For
+// binaries inside `*.app/Contents/`, we accept a verified codesign identity
+// of com.cmspark.agent instead of the pre-sign pin (Pi dual-review B1).
 
 import * as fs from "fs"
 import * as crypto from "crypto"
 import { promisify } from "util"
-import { execFile } from "child_process"
+import { execFile, execFileSync, spawnSync } from "child_process"
+import * as path from "path"
 
 const execFileAsync = promisify(execFile)
+
+/** Product identity embedded in host-Info.plist / codesign Identifier. */
+export const CMSPARK_HOST_CODESIGN_ID = "com.cmspark.agent"
 
 export interface HostIntegrityCheck {
   ok: boolean
   inode: number
   dev: number
   realpath: string
+  /** How ok was decided — useful for tests/diagnostics. */
+  reason?: "sha256" | "codesign-product" | "mismatch" | "error"
 }
 
 /**
@@ -35,14 +47,49 @@ export interface HostIntegrityCheck {
  * a PR, this constant must also change in the same PR.
  *
  * PROD-TIME NOTE: DMG installs ship with this constant pre-baked into the
- * bundled companion JS. End users never run build-host.sh.
+ * bundled companion JS for the *pre-package* dist binary. Packaged
+ * MacOS/CMspark is deep-signed and will NOT match this pin; see
+ * codesignProductIdentityOk path in checkHostIntegrity.
  */
-export const CMSPARK_HOST_SHA256 = "c76eed837ac45c83c9626cec51e45c6dbfc6183410dceaf7654585f9e54fe6e4"
+export const CMSPARK_HOST_SHA256 = "07107459864bafd2902c8a07a083c918ede0221593ad3540499d6ed39f216e83"
+
+/**
+ * True when realpath is inside a macOS .app Contents tree (packaged install).
+ */
+export function isPackagedAppHostPath(realpath: string): boolean {
+  const norm = path.normalize(realpath)
+  // POSIX and accidental backslash paths
+  if (/\.app\/Contents\//i.test(norm)) return true
+  if (norm.toLowerCase().includes(`${path.sep}.app${path.sep}contents${path.sep}`)) return true
+  return false
+}
+
+/**
+ * codesign --verify + Identifier=com.cmspark.agent (adhoc OK).
+ * Used for packaged main binary whose SHA drifts after create-dmg deep-sign.
+ */
+export function codesignProductIdentityOk(binPath: string): boolean {
+  try {
+    execFileSync("codesign", ["--verify", binPath], {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "pipe"],
+    })
+  } catch {
+    return false
+  }
+  // codesign -dv writes metadata to stderr (exit 0)
+  const r = spawnSync("codesign", ["-dv", binPath], { encoding: "utf-8" })
+  const meta = `${r.stdout || ""}\n${r.stderr || ""}`
+  const m = meta.match(/^Identifier=(.+)$/m)
+  if (!m) return false
+  return m[1].trim() === CMSPARK_HOST_CODESIGN_ID
+}
 
 /**
  * Hash the binary at binPath via an open fd (avoids path-substitution race
- * between stat and read). Returns ok=true only if digest matches the pinned
- * constant. On any fs error, returns ok=false with sentinel inode/dev=-1.
+ * between stat and read). Returns ok=true if:
+ *   - digest matches CMSPARK_HOST_SHA256 (dev / pre-package dist), OR
+ *   - path is inside *.app/Contents/ AND codesign verifies as com.cmspark.agent
  *
  * Exported for unit testing. Production callers should use spawnHostBin().
  */
@@ -59,15 +106,41 @@ export function checkHostIntegrity(binPath: string): HostIntegrityCheck {
       if (n === 0) break
       hash.update(BUF.slice(0, n))
     }
+    // Close before codesign so we don't hold exclusive locks
+    try { fs.closeSync(fd) } catch { /* ignore */ }
+    fd = null
+
     const digest = hash.digest("hex")
+    if (digest === CMSPARK_HOST_SHA256) {
+      return {
+        ok: true,
+        inode: stat.ino,
+        dev: stat.dev,
+        realpath,
+        reason: "sha256",
+      }
+    }
+
+    // Packaged app: deep-sign changes SHA; trust codesign product identity.
+    if (isPackagedAppHostPath(realpath) && codesignProductIdentityOk(realpath)) {
+      return {
+        ok: true,
+        inode: stat.ino,
+        dev: stat.dev,
+        realpath,
+        reason: "codesign-product",
+      }
+    }
+
     return {
-      ok: digest === CMSPARK_HOST_SHA256,
+      ok: false,
       inode: stat.ino,
       dev: stat.dev,
       realpath,
+      reason: "mismatch",
     }
   } catch {
-    return { ok: false, inode: -1, dev: -1, realpath: "" }
+    return { ok: false, inode: -1, dev: -1, realpath: "", reason: "error" }
   } finally {
     if (fd !== null) {
       try { fs.closeSync(fd) } catch { /* ignore */ }
@@ -129,9 +202,10 @@ export async function spawnHostBin(
   if (!pre.ok) {
     throw new Error(
       `[host-integrity] Binary integrity check FAILED — refusing to spawn. ` +
-      `Expected SHA256 ${CMSPARK_HOST_SHA256.slice(0, 16)}… at ${bin}. ` +
+      `Expected SHA256 ${CMSPARK_HOST_SHA256.slice(0, 16)}… or codesign ` +
+      `Identifier=${CMSPARK_HOST_CODESIGN_ID} inside *.app/Contents/ at ${bin}. ` +
       `If you just rebuilt, run \`bash companion/src/host-use/darwin/build-host.sh\` ` +
-      `to auto-update this constant. If not, treat the binary as compromised.`,
+      `to auto-update the pin. If not, treat the binary as compromised.`,
     )
   }
 
