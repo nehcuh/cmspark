@@ -487,8 +487,15 @@ func runMoveFile(sourcePath: String, destPath: String) throws -> String {
 ///
 /// DR-N4: spawn via `/usr/bin/arch -arm64` to match the old bash launcher and
 /// avoid Rosetta node on Apple Silicon.
+///
+/// Estop ownership (2026-08 platform analysis): start the emergency-stop helper
+/// as a **child of this Aqua-launched CMspark Mach-O** before the Node tray.
+/// Companion only connects to `/tmp/cmspark-estop.sock` — it must not be the
+/// process that first creates the CGEventTap (daemon-spawned tap failed with
+/// code 4 while CLI estop on the same binary succeeded).
 func launchAgentTrayAndExit() -> Never {
-    let execDir = URL(fileURLWithPath: CommandLine.arguments[0])
+    let execPath = CommandLine.arguments[0]
+    let execDir = URL(fileURLWithPath: execPath)
         .standardizedFileURL.deletingLastPathComponent()
     let resources = execDir.deletingLastPathComponent().appendingPathComponent("Resources")
     let candidates: [(node: URL, agent: URL)] = [
@@ -504,6 +511,47 @@ func launchAgentTrayAndExit() -> Never {
         fputs("CMspark: cannot find node + cmspark-agent.js (expected under Contents/Resources)\n", stderr)
         exit(2)
     }
+
+    // Best-effort tray-owned estop (same binary, product TCC identity).
+    // Not detached: dies when this launcher process exits with the tray.
+    let estopSock = "/tmp/cmspark-estop.sock"
+    let estopAlreadyUp: Bool = {
+        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        guard fd >= 0 else { return false }
+        defer { close(fd) }
+        var addr = sockaddr_un()
+        addr.sun_family = sa_family_t(AF_UNIX)
+        let pathBytes = Array(estopSock.utf8)
+        guard pathBytes.count < 104 else { return false }
+        withUnsafeMutableBytes(of: &addr.sun_path) { raw in
+            for i in 0..<pathBytes.count { raw[i] = pathBytes[i] }
+            raw[pathBytes.count] = 0
+        }
+        let ok = withUnsafePointer(to: &addr) { ptr in
+            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.stride)) == 0
+            }
+        }
+        return ok
+    }()
+    if !estopAlreadyUp {
+        let estop = Process()
+        estop.executableURL = URL(fileURLWithPath: execPath)
+        estop.arguments = ["estop", "--socket-path", estopSock]
+        estop.standardOutput = FileHandle.nullDevice
+        estop.standardError = FileHandle.nullDevice
+        do {
+            try estop.run()
+            // Keep reference so ARC does not tear down the Process while running.
+            gTrayOwnedEstopProcess = estop
+            if ProcessInfo.processInfo.environment["CMSPARK_HOST_DEBUG"] == "1" {
+                fputs("[host] tray-owned estop started pid=\(estop.processIdentifier)\n", stderr)
+            }
+        } catch {
+            fputs("CMspark: warning: could not start estop helper: \(error)\n", stderr)
+        }
+    }
+
     let proc = Process()
     // DR-N4: match old bash launcher arch -arm64
     proc.executableURL = URL(fileURLWithPath: "/usr/bin/arch")
@@ -512,12 +560,22 @@ func launchAgentTrayAndExit() -> Never {
     do {
         try proc.run()
         proc.waitUntilExit()
+        // Tear down estop with the app session
+        if let ep = gTrayOwnedEstopProcess, ep.isRunning {
+            ep.terminate()
+        }
         exit(proc.terminationStatus)
     } catch {
         fputs("CMspark: failed to start agent: \(error)\n", stderr)
+        if let ep = gTrayOwnedEstopProcess, ep.isRunning {
+            ep.terminate()
+        }
         exit(2)
     }
 }
+
+/// Retained so the tray-owned estop child is not deallocated while running.
+var gTrayOwnedEstopProcess: Process?
 
 // MARK: - Entry point
 

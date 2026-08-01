@@ -784,6 +784,18 @@ export async function startMenuBarAgent(): Promise<void> {
     })
   }, POLL_INTERVAL_MS)
 
+  // Darwin: ensure emergency-stop helper is up before daemon CU paths run.
+  // Packaged app: MacOS/CMspark already starts estop as Aqua child (host.swift).
+  // Dev / node-only tray: best-effort start from this process.
+  if (process.platform === "darwin") {
+    try {
+      const { startTrayOwnedEstopBestEffort } = await import("./computer/darwin-estop")
+      startTrayOwnedEstopBestEffort()
+    } catch (err: any) {
+      console.warn("[tray] estop ensure skipped:", err?.message || err)
+    }
+  }
+
   // Product: tray launch always ensures Companion is up — no separate "启动" required.
   if (state.companionStatus !== "running") {
     console.log("[tray] Companion not running — auto-starting daemon")
