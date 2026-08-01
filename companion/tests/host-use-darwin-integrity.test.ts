@@ -105,6 +105,32 @@ test("S-P0-2 / T2: spawnHostBin returns stdout on hash match against production 
   assert.equal(parsed.ok, true)
 })
 
+// Packaged app path (optional — present after create-dmg)
+const PACKAGED_BIN = path.resolve(
+  __dirname,
+  "../../dist-package/dmg-staging/CMspark.app/Contents/MacOS/CMspark",
+)
+const packagedBinExists = fs.existsSync(PACKAGED_BIN)
+
+test("TCC B1: packaged MacOS/CMspark passes integrity via codesign product id", {
+  skip: !packagedBinExists || process.platform !== "darwin",
+}, () => {
+  const { checkHostIntegrity, isPackagedAppHostPath } = require("../src/host-use/darwin/host-integrity") as typeof import("../src/host-use/darwin/host-integrity")
+  assert.equal(isPackagedAppHostPath(fs.realpathSync(PACKAGED_BIN)), true)
+  const result = checkHostIntegrity(PACKAGED_BIN)
+  assert.equal(result.ok, true, `expected ok, got ${JSON.stringify(result)}`)
+  assert.equal(result.reason, "codesign-product")
+})
+
+test("TCC B1: spawnHostBin security-check on packaged MacOS/CMspark", {
+  skip: !packagedBinExists || process.platform !== "darwin",
+}, async () => {
+  const { spawnHostBin } = await import("../src/host-use/darwin/host-integrity")
+  const stdout = await spawnHostBin(PACKAGED_BIN, ["security-check"], { timeoutMs: 5000 })
+  const parsed = JSON.parse(stdout)
+  assert.equal(parsed.ok, true)
+})
+
 test("S-P0-2 / T3: CMSPARK_SKIP_HOST_INTEGRITY=1 bypasses integrity check", { skip: !prodBinExists }, async () => {
   // Use a temp binary with deliberately wrong hash — bypass should still work.
   const fakeBin = writeTempBin(Buffer.from("#!/bin/sh\necho '{\"ok\":true}'\n"))
