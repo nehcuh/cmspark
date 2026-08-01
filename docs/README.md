@@ -17,6 +17,7 @@
 | [user-env.md](user-env.md) | **Composition**（密钥） | skill / shell / MCP 子进程 Secrets（如 Datayes） |
 | [mission-pack-usage.md](mission-pack-usage.md) | **Composition**（+ 企业 Channel） | 任务包、模块、workspace/shell/netsec |
 | [computer-use-user-guide.md](computer-use-user-guide.md) | **Surface L2** | 坐标桌面、急停、session-trust、平台限制 |
+| [qwen-vl-experimental-layer.md](qwen-vl-experimental-layer.md) | **Surface L2 · 实验** | Qwen3-VL 本机视觉定位：预检、下载源（含魔搭）、启用 |
 | [host-and-apps.md](host-and-apps.md) | **Surface L2**（语义 Host） | Host 读写、Apps 白名单、生物识别边界 |
 | [multi-agent-user-guide.md](multi-agent-user-guide.md) | **Autonomy**（Worker≈L1） | spawn_worker、tab 锁、Mission Board、上限 |
 | [notebooklm-user-guide.md](notebooklm-user-guide.md) | **产品特性**（非组合原语） | NotebookLM 导入器、权限、结果 |
@@ -101,7 +102,7 @@
 
 | 路径 | 说明 |
 |------|------|
-| [superpowers/specs/](superpowers/specs/) | 锁定中的产品/设计 spec（如 UI 三模式、Mission Pack 企业设计） |
+| [superpowers/specs/](superpowers/specs/) | 锁定中的产品/设计 spec（UI 三模式、Mission Pack、**Qwen3-VL 实验层**） |
 | [superpowers/plans/](superpowers/plans/) | 实施 plan / spike（含 HUD 等） |
 | [decisions/](decisions/) | 对抗评审 brief、synthesis、锁文件；**被代码注释引用的路径勿盲删** |
 | [docs-reorg-plan-2026-07-28.md](docs-reorg-plan-2026-07-28.md) | 本文档重梳总计划（Phase 1–4） |
@@ -126,6 +127,12 @@
 | [audit/](audit/) | 近期诊断 / fanout / handoff / reviews |
 | [decisions/](decisions/) | 锁文件与 synthesis；**被代码注释引用的路径勿盲删** |
 | [superpowers/](superpowers/) | 进行中 specs/plans |
+| [Qwen3-VL 实验层 · 产品设计](superpowers/specs/2026-08-01-qwen3-vl-experimental-layer-product-design.md) | SoT（经多路对抗 + Pi/Claude/Kimi） |
+| [Qwen3-VL 实验层 · 实施 plan](superpowers/plans/2026-08-01-qwen3-vl-experimental-layer-impl.md) | **后续开工入口** |
+| [Qwen3-VL 实验层 · 交接](superpowers/plans/2026-08-01-qwen3-vl-HANDOFF.md) | 下一任 15 分钟上手 |
+| [macOS TCC 产品身份 · 设计](superpowers/specs/2026-08-01-macos-tcc-product-identity-design.md) | SoT（对抗验证）：隐私设置只认 CMspark |
+| [macOS TCC 产品身份 · 实施 plan](superpowers/plans/2026-08-01-macos-tcc-product-identity-impl.md) | 方案 D：MacOS/CMspark=host Mach-O；Tasks 0–8 |
+| [macOS TCC 对抗合成](audit/reviews/macos-tcc-product-identity-adversary-synthesis-20260801.md) | 方案裁决 + Blocker 清单 |
 | [optimization-plan-post-v0.3.0.md](optimization-plan-post-v0.3.0.md) | 发布后仍开放的 P2+ 工作（未归档） |
 | [remediation-plan-2026-07-09.md](remediation-plan-2026-07-09.md)、[security-design-tiered-gates-2026-07-11.md](security-design-tiered-gates-2026-07-11.md) | 仍被引用的设计/修复说明 |
 

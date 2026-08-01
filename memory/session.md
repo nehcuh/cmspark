@@ -2,6 +2,25 @@
 
 ## Current Session
 
+### S29 (2026-08-01) [macOS TCC 产品身份 · 对抗验证计划]
+- **触发**：外 App 截图 -3801；用户否决「勾选 node」——只应见 CMspark.app
+- **根因**：bash 主入口 + SCK 在 `cmspark-host`（`com.cmspark.host`）与 App 身份分裂
+- **SoT**：`docs/superpowers/specs/2026-08-01-macos-tcc-product-identity-design.md`（APPROVE_WITH_CHANGES）
+- **计划**：`docs/superpowers/plans/2026-08-01-macos-tcc-product-identity-impl.md`（Tasks 0–8）
+- **对抗合成**：`docs/audit/reviews/macos-tcc-product-identity-adversary-synthesis-20260801.md`
+- **方案 D**：`MacOS/CMspark` = host Mach-O；身份 `com.cmspark.agent`；resolve 优先主二进制；文案禁 node/host
+- **下次**：执行 plan Task 1→7；**无 DoD 真机证据不得宣称完成**；P1=Developer ID + XPC
+- Recorded: yes — 计划完成；实现未开
+
+### S28 (2026-08-01) [Qwen3-VL 实验层 · 产品设计与文档收束]
+- **范围**：TinyClick → Qwen3-VL 产品化；用户旅程 + 大陆下载 + 预检；多路对抗 + Pi/Claude/Kimi
+- **SoT**：`docs/superpowers/specs/2026-08-01-qwen3-vl-experimental-layer-product-design.md`（PASS_WITH_CHANGES）
+- **开工**：`docs/superpowers/plans/2026-08-01-qwen3-vl-experimental-layer-impl.md` + `...-HANDOFF.md`
+- **用户**：`docs/qwen-vl-experimental-layer.md`；导航已挂 `docs/README.md`
+- **审查归档**：`docs/audit/reviews/qwen3-vl-product-design-*` + `qwen3-vl-replace-*`
+- **下次开工**：按 HANDOFF → plan P0-1…P0-8（A1–A8）；勿宣称可内测直到 P0 绿
+- Recorded: yes — 文档收束；实现未完
+
 ### S27 (2026-08-01) [#au4dch 三痛点 → UX 优化方向文档]
 - **触发**：会话 #au4dch（装 Black-cat + 渗透）复盘三点：重复下载 / 侧栏像结束 / 黑窗无输出
 - **证据**：~190× shell_exec、0× spawn_worker、最长 ~135s 超时；processingLabel 看错 tool 消息结构；shell 无 windowsHide / 无 progress；网页 PTY 仅有规格
