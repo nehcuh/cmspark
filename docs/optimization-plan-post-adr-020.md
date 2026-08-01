@@ -107,7 +107,8 @@ E  Autonomy       仅 defer 表内；spawn 保持 L2 HITL
 | G10 SSO 自动复用 | deferred | S:L1 + C |
 | G11 Type B 工具链 skill | deferred | C + A；勿与新 runtime 混淆 |
 | G13 skill-craft | ✅ | 已实现 |
-| **下载去重 / prefer_existing** | 🔶 UX 子轨 Wave 2 | [#au4dch DL-*](optimization-plan-au4dch-ux-shell-download.md)：`downloads.find` + `browser_download` 复用已有 Downloads |
+| **下载去重 / prefer_existing** | ✅ 已合 main（PR #100） | [#au4dch DL-*](optimization-plan-au4dch-ux-shell-download.md) |
+| **Agent 下载并安装外部 Skill** | 🔶 Backlog | [optimization-plan-agent-skill-install.md](optimization-plan-agent-skill-install.md)：LLM `skill_install` → `~/.cmspark-agent/skills`（#au4dch 装错目录痛点） |
 
 每个 Pack/模块 PR 必须填 **能力声明**（PR template）。
 
@@ -198,6 +199,7 @@ E  Autonomy       仅 defer 表内；spawn 保持 L2 HITL
 | 2026-07-29 | 初版：ADR-020 后统一 backlog；P1 四条盘点；PR template + dual-review 能力清单；supersede post-v0.3.0 排序权威 |
 | 2026-07-30 | P1-1 → FIXED（PR #85 pending merge）；main 已合 Windows 平台 P0（osascript 过滤 + MCP home）；下一优先 P1-2；执行序更新 |
 | 2026-08-01 | 挂接 [#au4dch UX 子轨](optimization-plan-au4dch-ux-shell-download.md)（下载去重 · 运行态 · shell 黑窗/PTY）；更正 browser_download P1.0 已合；执行序插入 Wave 1–4 |
+| 2026-08-01 | Composition backlog：Agent 安装外部 Skill → [optimization-plan-agent-skill-install.md](optimization-plan-agent-skill-install.md)；DL prefer_existing 标为已合 PR #100 |
 
 ---
 
