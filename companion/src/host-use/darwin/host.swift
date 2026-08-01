@@ -515,7 +515,7 @@ func launchAgentTrayAndExit() -> Never {
     // Best-effort tray-owned estop (same binary, product TCC identity).
     // Not detached: dies when this launcher process exits with the tray.
     let estopSock = "/tmp/cmspark-estop.sock"
-    let estopAlreadyUp: Bool = {
+    func estopSocketLive() -> Bool {
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { return false }
         defer { close(fd) }
@@ -527,26 +527,39 @@ func launchAgentTrayAndExit() -> Never {
             for i in 0..<pathBytes.count { raw[i] = pathBytes[i] }
             raw[pathBytes.count] = 0
         }
-        let ok = withUnsafePointer(to: &addr) { ptr in
+        return withUnsafePointer(to: &addr) { ptr in
             ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) {
                 connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.stride)) == 0
             }
         }
-        return ok
-    }()
-    if !estopAlreadyUp {
+    }
+    if !estopSocketLive() {
+        // Stale socket file (bind then crash) blocks re-bind — remove before spawn.
+        unlink(estopSock)
         let estop = Process()
         estop.executableURL = URL(fileURLWithPath: execPath)
         estop.arguments = ["estop", "--socket-path", estopSock]
+        // Capture stderr to a log so TCC/tap failures are diagnosable without CMSPARK_HOST_DEBUG.
+        let logPath = (NSHomeDirectory() as NSString)
+            .appendingPathComponent(".cmspark-agent/logs/estop-tray.log")
+        try? FileManager.default.createDirectory(
+            atPath: (logPath as NSString).deletingLastPathComponent,
+            withIntermediateDirectories: true
+        )
+        if FileManager.default.createFile(atPath: logPath, contents: nil) {
+            if let fh = FileHandle(forWritingAtPath: logPath) {
+                _ = try? fh.seekToEnd()
+                estop.standardError = fh
+            }
+        } else {
+            estop.standardError = FileHandle.nullDevice
+        }
         estop.standardOutput = FileHandle.nullDevice
-        estop.standardError = FileHandle.nullDevice
         do {
             try estop.run()
             // Keep reference so ARC does not tear down the Process while running.
             gTrayOwnedEstopProcess = estop
-            if ProcessInfo.processInfo.environment["CMSPARK_HOST_DEBUG"] == "1" {
-                fputs("[host] tray-owned estop started pid=\(estop.processIdentifier)\n", stderr)
-            }
+            fputs("[host] tray-owned estop started pid=\(estop.processIdentifier)\n", stderr)
         } catch {
             fputs("CMspark: warning: could not start estop helper: \(error)\n", stderr)
         }
