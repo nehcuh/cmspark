@@ -20,6 +20,7 @@ import { spawn, type ChildProcess } from "child_process"
 import { createConnection, type Socket } from "net"
 import * as fs from "fs"
 import { resolveHostBinary } from "../host-use/darwin/host-bin"
+import { logger } from "../logger"
 
 const ESTOP_SOCK_PATH = "/tmp/cmspark-estop.sock"
 const ESTOP_FLAG_PATH = "/tmp/cmspark-estop.flag"
@@ -58,6 +59,7 @@ async function connectToEstop(): Promise<Socket> {
  * "abortCheck polls: socket.read() fails? → EMERGENCY_STOP_LOST".
  */
 let liveSock: Socket | null = null
+let liveChild: ChildProcess | null = null
 
 function holdSocket(sock: Socket): void {
   if (liveSock && !liveSock.destroyed) liveSock.destroy()
@@ -69,9 +71,82 @@ function holdSocket(sock: Socket): void {
   sock.pause()  // "estop\n" event lines are advisory; flag file is the signal
 }
 
+function unlinkEstopSocket(): void {
+  try {
+    fs.unlinkSync(ESTOP_SOCK_PATH)
+  } catch {
+    /* not present */
+  }
+}
+
+/**
+ * Spawn estop once; return ok or a diagnostic reason (includes stderr snippet).
+ */
+async function spawnEstopOnce(): Promise<EstopResult> {
+  unlinkEstopSocket()
+  const bin = resolveHostBinary()
+  logger.info("computer.estop.spawn", { bin, sock: ESTOP_SOCK_PATH })
+
+  const child = spawn(bin, ["estop", "--socket-path", ESTOP_SOCK_PATH], {
+    detached: false,
+    stdio: ["ignore", "ignore", "pipe"],
+    env: process.env,
+  })
+  liveChild = child
+
+  let stderrBuf = ""
+  child.stderr?.on("data", (d: Buffer | string) => {
+    stderrBuf += String(d)
+    if (stderrBuf.length > 2000) stderrBuf = stderrBuf.slice(-2000)
+  })
+
+  let earlyExit: number | null = null
+  child.on("error", (err) => {
+    earlyExit = -1
+    logger.warn("computer.estop.spawn_error", { bin, error: String(err) })
+  })
+  child.on("exit", (code) => {
+    earlyExit = code ?? -1
+    if (liveChild === child) liveChild = null
+  })
+  // Do NOT unref until connected — keeps lifecycle tied to successful start.
+
+  for (let i = 0; i < 50; i++) {
+    await new Promise((r) => setTimeout(r, 100))
+    if (earlyExit !== null) {
+      const snip = stderrBuf.trim().slice(0, 400)
+      logger.warn("computer.estop.early_exit", { bin, code: earlyExit, stderr: snip })
+      return {
+        ok: false,
+        reason:
+          `estop helper exited at startup (code ${earlyExit})` +
+          (snip ? `: ${snip}` : " — check Accessibility + Input Monitoring for CMspark"),
+      }
+    }
+    try {
+      const sock = await connectToEstop()
+      holdSocket(sock)
+      child.unref()
+      return { ok: true }
+    } catch {
+      /* retry */
+    }
+  }
+
+  try {
+    child.kill()
+  } catch {
+    /* ignore */
+  }
+  return { ok: false, reason: `estop helper did not start within 5s (bin=${bin})` }
+}
+
 /**
  * Ensure the estop helper is running. Spawns it if not already alive.
  * Returns ok:true when the helper is connected and the hotkey is registered.
+ *
+ * Retries once on exit code 4 (CGEventTap / Accessibility) so a just-granted
+ * TCC prompt can take effect without requiring a full daemon restart.
  */
 export async function ensureEstopHelper(): Promise<EstopResult> {
   // 1. Held connection from a previous task still alive?
@@ -86,38 +161,17 @@ export async function ensureEstopHelper(): Promise<EstopResult> {
     // Not running — spawn
   }
 
-  // 3. Spawn cmspark-host estop (NOT detached — lives and dies with companion)
-  const child = spawn(resolveHostBinary(), ["estop", "--socket-path", ESTOP_SOCK_PATH], {
-    detached: false,
-    stdio: "ignore",
-  })
-  child.unref()
-  let earlyExit: number | null = null
-  // Spawn failure (binary missing) is an ASYNC 'error' event — left unhandled
-  // it becomes an uncaughtException and kills the daemon.
-  child.on("error", () => { earlyExit = -1 })
-  child.on("exit", (code) => { earlyExit = code ?? -1 })
-
-  // 4. Wait for socket to appear (max 5s); bail early when the helper died
-  //    at startup (unknown subcommand, no Accessibility permission, …).
-  for (let i = 0; i < 50; i++) {
-    await new Promise((r) => setTimeout(r, 100))
-    if (earlyExit !== null) {
-      return {
-        ok: false,
-        reason: `estop helper exited at startup (code ${earlyExit}) — check Accessibility permission for CMspark`,
-      }
-    }
-    try {
-      const sock = await connectToEstop()
-      holdSocket(sock)
-      return { ok: true }
-    } catch {
-      /* retry */
-    }
+  // 3. Spawn (retry once on Accessibility/tap failure)
+  let last: EstopResult = { ok: false, reason: "estop not started" }
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    last = await spawnEstopOnce()
+    if (last.ok) return last
+    const code4 = last.reason?.includes("code 4")
+    if (!code4 || attempt === 2) break
+    logger.info("computer.estop.retry_after_ax", { attempt, reason: last.reason })
+    await new Promise((r) => setTimeout(r, 1500))
   }
-
-  return { ok: false, reason: "estop helper did not start within 5s" }
+  return last
 }
 
 /**
