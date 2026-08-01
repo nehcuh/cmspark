@@ -92,3 +92,34 @@
 
 - 勿宣称「用户侧 Computer Use 已完全修好」— **真机 host_computer 仍失败**。  
 - CLI 成功 ≠ Side Panel 成功。
+
+---
+
+## Update 2026-08-01 night — tray-owned estop landed (still device-blocked)
+
+### Code (branch `fix/macos-tcc-product-identity`)
+- `host.swift`: Aqua `launchAgentTrayAndExit` starts `estop` child **before** Node tray; unlinks stale socket; logs stderr → `~/.cmspark-agent/logs/estop-tray.log`
+- `darwin-estop.ts`: connect grace 3s → daemon fallback only; `startTrayOwnedEstopBestEffort` for dev tray
+- Workflow: `.grok/workflows/tray-estop-cu-fix.rhai`
+- Pi+Kimi impl review: **both APPROVE_WITH_NITS** (`tray-estop-impl-*-20260801-215220.md`)
+
+### New executed evidence
+After reinstall latest DMG:
+```
+estop-tray.log:
+estop: CGEventTap creation failed — grant Accessibility permission to CMspark
+```
+- Process tree: CMspark → tray only; **no living estop child**
+- Socket file may exist **dead** (bind then exit 4) → Connection refused
+- CLI `MacOS/CMspark estop` can still succeed while **app-launched** child fails → TCC grant may not cover current CDHash / LaunchServices launch path
+
+### User action still required
+1. Re-toggle **辅助功能** for CMspark (off→on) after every ad-hoc reinstall  
+2. Re-toggle **录屏** similarly  
+3. Fully quit + relaunch  
+4. Confirm `estop-tray.log` empty of CGEventTap errors and `ps` shows `CMspark estop`
+
+### Next engineering if still fail after re-toggle
+- Compare `codesign` CDHash of running binary vs TCC entry  
+- Consider Input Monitoring grant  
+- Consider Developer ID (stop ad-hoc CDHash churn)
