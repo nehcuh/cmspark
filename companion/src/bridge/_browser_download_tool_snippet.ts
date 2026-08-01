@@ -5,7 +5,7 @@ export const BROWSER_DOWNLOAD_TOOL = {
   function: {
     name: "browser_download",
     description:
-      "Click a download control on a page (CSS selector and/or visible text such as 下载) and wait until the browser finishes saving the file into the user Downloads folder (or a sandboxed subpath). Prefer this over osascript_eval / shell curl for authenticated downloads. Returns absolute path, filename, and bytes. Concurrent downloads on the same tab are rejected (DOWNLOAD_BUSY). When filenameHint (or urlContains) is set, prefer_existing defaults to true: reuses an already-complete chrome.downloads item instead of clicking again (set force_redownload=true to force a new download). Prefer calling downloads_find first when the user may already have the file.",
+      "Click a download control on a page (CSS selector and/or visible text such as 下载) and wait until the browser finishes saving the file into the user Downloads folder (or a sandboxed subpath). Prefer this over osascript_eval / shell curl for authenticated downloads. Returns absolute path, filename, and bytes. Concurrent downloads on the same tab are rejected (DOWNLOAD_BUSY). When filenameHint (or urlContains) is set, prefer_existing defaults to true: reuses an already-complete chrome.downloads item under Downloads instead of clicking (set force_redownload=true to force a new download). Cache match is by filename/url substring (newest first) — verify the returned url domain before trusting the file; prefer urlContains when the expected host is known. Prefer calling downloads_find first when the user may already have the file.",
     parameters: {
       type: "object",
       properties: {

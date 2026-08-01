@@ -2,8 +2,10 @@
  * downloads.find — read-only search of completed Chrome downloads (#au4dch DL-1).
  * Prefer over re-clicking browser_download when the file already exists.
  *
- * Security (adversarial B1): only return paths under user Downloads roots
- * (never Desktop/Documents/arbitrary Save-As locations).
+ * Security (adversarial B1): only return paths whose path contains a common
+ * Downloads folder segment (`Downloads` / `下载`). This is a lightweight
+ * name-segment allowlist (not OS realpath of the official Downloads dir);
+ * paths under Desktop/Documents without that segment are dropped.
  */
 
 export type DownloadsSearchApi = {

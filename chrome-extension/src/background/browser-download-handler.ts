@@ -13,7 +13,7 @@ import {
   createDownloadWaiter,
   type DownloadCompleteInfo,
 } from "./download-waiter"
-import { findPreferredExistingDownload } from "./downloads-find"
+import { findPreferredExistingDownload, redactDownloadUrl } from "./downloads-find"
 
 export interface BrowserDownloadBridge {
   getTabId(params: Record<string, any>): number
@@ -264,7 +264,8 @@ export async function runBrowserDownload(
         filename: base,
         bytes: info.fileSize ?? info.totalBytes ?? 0,
         state: "completed",
-        url: info.url || "",
+        // Kimi Major: redact query/hash on live download path too (presigned URLs)
+        url: redactDownloadUrl(info.url || ""),
         transport: "downloads",
         source: "download",
       },
