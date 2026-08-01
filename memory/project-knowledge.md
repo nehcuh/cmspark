@@ -2,13 +2,31 @@
 
 ## Technical Pitfalls
 
+### macOS host_computer：estop code 4 / LS vs CLI TCC（2026-08-01→02 闭环）
+- **用户错误（旧）**：`emergency-stop unavailable (… code 4)`；亦见 SCK `-3801`
+- **code 4 含义**：`CGEvent.tapCreate` 失败（辅助功能/事件监听），旧逻辑 **整 helper 退出** → socket 死 → CU preflight 硬拒
+- **产品身份**：`MacOS/CMspark` + `com.cmspark.agent`（PR #103 已合 main）
+- **关键发现（反直觉）**：同一 ad-hoc CDHash，**CLI/`Process` 从 Terminal 可建 tap**；`open -a` / LS 启动路径下 `AXIsProcessTrusted` 常 false、tapCreate nil。CLI `security-check` axTrusted=true **≠** app 内 estop 可信
+- **修法（分支 tip，待合 main）**：
+  1. tray/Aqua 拥有 estop（`launchAgentTrayAndExit` 先 spawn estop）
+  2. **soft-fail**：tap 失败 → 热键 DEGRADED，**socket 保活**（CU fail-closed = socket 非 hotkey）
+  3. `describe` 空间分行 OCR（勿 `join(" ")`），防 agent `shell_exec` 自写 Vision
+- **Ship**：`dist-package/CMspark-v0.3.0-macOS.dmg`（2026-08-02）；ship note `docs/superpowers/plans/2026-08-02-macos-dmg-ship-note.md`
+- **仍开放**：LS 热键 DEGRADED；ad-hoc 重装 TCC；Developer ID；Side Panel 每机真机确认台
+- 教训：CU fail-closed 应对 **proof-of-life socket**；热键是 best-effort。旧 DMG 不含 soft-fail/spatial describe——分发须重打
+
+### macOS describe OCR：`join(" ")` 毁阅读序 → shell Vision 旁路（2026-08-01 #k47c0u）
+- 现象：`describe` 像只读到一行；agent 写 `/tmp/ocr.swift` + `screencapture`（enterprise auto-approve）
+- 根因：产品 OCR **已是** `VNRecognizeTextRequest`；`untrustedText = words.join(" ")` 丢行结构；Vision 配置 405 时更易旁路
+- 修：`ocr-describe.ts` mid-Y 聚类分行 + `[untrusted host-ocr]` 前缀；adapter/catalog 禁止 shell OCR 替代
+- 教训：引擎可用 ≠ 给 LLM 的版式可用；enterprise shell 自动批准会放大旁路
 ### macOS 屏幕录制：勾了 CMspark 仍 -3801（产品身份分裂，2026-08-01）
 - 现象：系统设置里 CMspark 已开，外程序/L2 截图 ScreenCaptureKit `-3801`；开发重装反复出现
 - 根因：`MacOS/CMspark` 曾是 **bash→node**；真正 SCK 在 `Resources/cmspark-host`（`com.cmspark.host`，ad-hoc 独立 CDHash）。TCC 记的是**捕获进程身份**，不是桌面图标名。历史错误串还教用户勾 node/host → 产品体验失败
 - 产品锁：用户路径 **只认 CMspark**；禁止引导 node/cmspark-host
-- 方案 D（计划中）：主可执行 = host Mach-O 装成 `Contents/MacOS/CMspark`，嵌入 `com.cmspark.agent`；`resolveHostBinary` 优先主二进制；文案清零
-- SoT：`docs/superpowers/specs/2026-08-01-macos-tcc-product-identity-design.md`；impl plan 同日
-- 教训：helper 做 TCC 锚可以避免 osascript 名，但 **屏幕录制必须与 App 产品名合一**；ad-hoc 重装会清授权，长期要 Developer ID
+- 方案 D：主可执行 = host Mach-O 装成 `Contents/MacOS/CMspark`，嵌入 `com.cmspark.agent`（PR #103 已合 main）
+- SoT：`docs/superpowers/specs/2026-08-01-macos-tcc-product-identity-design.md`
+- 教训：helper 做 TCC 锚可以避免 osascript 名，但 **屏幕录制必须与 App 产品名合一**；ad-hoc 重装会清授权，长期要 Developer ID；真机阻塞见上条 estop/-3801
 
 ### 技能扫描：非「仅启动一次」，但 skill.list 曾只读内存（2026-07-31）
 - 现象：用户/Agent 拷文件进 `~/.cmspark-agent/skills` 或外部落盘后，Skills 列表/自动匹配像「没装上」；体感「只有 Companion 启动才扫」
@@ -198,6 +216,15 @@
 - 教训：多层安全「跳过」必须写清代数；allowlist/task auth/L2/forceConfirm/god-mode 不是同一开关。
 
 ## Reusable Patterns
+
+### macOS CU 热键 vs fail-closed（2026-08-02）
+- Fail-closed 应对 **socket proof-of-life**（companion 持连）；全局热键/CGEventTap 为 best-effort
+- LS 启动路径 ad-hoc TCC 常比 CLI 严：勿用 CLI `security-check` 断言 app 内 tap 可用
+- Soft-fail + 日志 `hotkey DEGRADED` 比 exit(4) 更不易把整条 CU 打死
+
+### P0 batch-fix + 对抗后 Pi（或 Claude+Pi）外部审（2026-08 续用）
+- Workflow：实现 → 定向测试 → `pi -p --no-session`（+ 可选 claude）→ APPROVE* 才 ship
+- kimi：`-p` 不可与 `-y`/`--auto` 同用；用户可跳过 Kimi 只保留 Pi/Claude
 
 ### ADR-020 后 backlog 必须换坐标系（2026-07-29）
 - 本体：`docs/adr/020-capability-model-three-axes.md`（Surface / Composition / Autonomy；Trust 横切）

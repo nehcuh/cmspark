@@ -6,6 +6,7 @@ import test from "node:test"
 import {
   resolveHostBinary,
   resolveHostBinaryCandidates,
+  resolvePackagedContentsDir,
 } from "../src/host-use/darwin/host-bin"
 
 test("packaged layout prefers Contents/MacOS/CMspark over Resources/cmspark-host", () => {
@@ -74,4 +75,18 @@ test("CMSPARK_HOST_BIN with ALLOW=1 returns override path", () => {
     if (prevAllow === undefined) delete process.env.CMSPARK_ALLOW_HOST_BIN_OVERRIDE
     else process.env.CMSPARK_ALLOW_HOST_BIN_OVERRIDE = prevAllow
   }
+})
+
+test("resolvePackagedContentsDir finds Contents from agent script path", () => {
+  const script =
+    "/Applications/CMspark.app/Contents/Resources/cmspark-agent.js"
+  const contents = resolvePackagedContentsDir(script, "/usr/bin/node")
+  assert.equal(contents, path.normalize("/Applications/CMspark.app/Contents"))
+})
+
+test("resolvePackagedContentsDir finds Contents from node inside app", () => {
+  const nodeBin =
+    "/Applications/CMspark.app/Contents/Resources/node"
+  const contents = resolvePackagedContentsDir("", nodeBin)
+  assert.equal(contents, path.normalize("/Applications/CMspark.app/Contents"))
 })

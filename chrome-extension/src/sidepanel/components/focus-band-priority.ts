@@ -89,17 +89,74 @@ export function resolveFocusBandSlot(input: FocusBandInput): FocusBandSlot {
   }
 }
 
+/**
+ * Fleet liveness for chrome (FocusBand / ChatView processingLabel).
+ * - active: locks, open intents, holding_tabs, or non-paused workers (idle)
+ * - paused_only: workers exist but all paused and no locks/intents (zombie)
+ * - none: empty fleet
+ *
+ * Zombie paused workers must NOT show as「舰队运行中」or steal FocusBand.
+ */
+export type FleetActivityKind = "none" | "active" | "paused_only"
+
+export function classifyFleetActivity(input: {
+  workerCount: number
+  lockCount: number
+  openIntents: number
+  /** From fleet.worst_status when available */
+  worstStatus?: string | null
+}): FleetActivityKind {
+  if (input.lockCount > 0 || input.openIntents > 0) return "active"
+  if (input.worstStatus === "holding_tabs" || input.worstStatus === "idle") return "active"
+  if (input.workerCount > 0 && input.worstStatus === "paused") return "paused_only"
+  // Missing worstStatus but workers present → treat as active (fail open for visibility)
+  if (input.workerCount > 0) return "active"
+  return "none"
+}
+
+/**
+ * Side-panel processingLabel for fleet (null = hide).
+ * Paused-only zombies: no nag label (user cleans via 确认台 / 全停 when strip shown).
+ */
+export function fleetProcessingLabel(input: {
+  workerCount: number
+  lockCount: number
+  openIntents: number
+  worstStatus?: string | null
+}): string | null {
+  const kind = classifyFleetActivity(input)
+  if (kind === "none") return null
+  if (kind === "paused_only") {
+    // Soft hint only if caller wants it; default ChatView passes showPausedHint=false via null.
+    return null
+  }
+  if (input.workerCount > 0) return `舰队运行中 · ${input.workerCount} worker`
+  if (input.lockCount > 0) return `舰队持锁 · ${input.lockCount} 锁`
+  if (input.openIntents > 0) return `舰队 · ${input.openIntents} intent 未关闭`
+  return "舰队运行中"
+}
+
+/** Optional muted label when only paused workers remain (settings / expanded strip). */
+export function fleetPausedOnlyLabel(workerCount: number): string {
+  return `舰队已暂停 · ${workerCount} worker`
+}
+
 /** Fleet strip visibility — multi-agent only; pending confirms excluded. */
 export function fleetStripShouldShow(input: {
   workerCount: number
   lockCount: number
   openIntents: number
+  worstStatus?: string | null
   expanded?: boolean
+  /**
+   * When true, show strip even for paused_only zombies so operator can 全停.
+   * Default false: hide auto-chrome for paused-only (confirm center still lists fleet).
+   */
+  showPausedOnly?: boolean
 }): boolean {
-  return (
-    input.workerCount > 0 ||
-    input.lockCount > 0 ||
-    input.openIntents > 0 ||
-    !!input.expanded
-  )
+  if (input.expanded) return true
+  const kind = classifyFleetActivity(input)
+  if (kind === "active") return true
+  if (kind === "paused_only" && input.showPausedOnly) return true
+  return false
 }

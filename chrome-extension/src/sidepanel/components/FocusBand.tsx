@@ -14,6 +14,7 @@ import { FleetStrip } from "./FleetStrip"
 import {
   FOCUS_BAND_MAX_PX,
   FOCUS_BAND_SECONDARY_MAX_PX,
+  classifyFleetActivity,
   resolveFocusBandSlot,
   type FocusBandSlot,
 } from "./focus-band-priority"
@@ -24,6 +25,8 @@ export {
   FOCUS_BAND_SECONDARY_MAX_PX,
   resolveFocusBandSlot,
   fleetStripShouldShow,
+  classifyFleetActivity,
+  fleetProcessingLabel,
 } from "./focus-band-priority"
 
 export function FocusBand({
@@ -40,10 +43,14 @@ export function FocusBand({
     !task.abortAcked &&
     (task.status === "running" || task.status === "paused")
   const fleet = state.fleet
+  // Paused-only zombie workers must not steal FocusBand as「舰队运行中」.
   const hasFleetActivity =
-    (fleet?.worker_count ?? 0) > 0 ||
-    (fleet?.lock_count ?? 0) > 0 ||
-    (fleet?.open_intent_count ?? 0) > 0
+    classifyFleetActivity({
+      workerCount: fleet?.worker_count ?? 0,
+      lockCount: fleet?.lock_count ?? 0,
+      openIntents: fleet?.open_intent_count ?? 0,
+      worstStatus: fleet?.worst_status,
+    }) === "active"
   const isBrowserContext = capabilityLevel === "browser"
 
   const slot: FocusBandSlot = resolveFocusBandSlot({

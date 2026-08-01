@@ -49,7 +49,11 @@ export function FleetStrip({
     workerCount,
     lockCount,
     openIntents,
+    worstStatus: worst,
+    // Standalone expanded strip can still list paused zombies for 全停.
+    // FocusBand never expands in-band — paused-only stays hidden there.
     expanded: focusBand ? false : expanded,
+    showPausedOnly: !focusBand && expanded,
   })
   if (!visible) {
     return null
@@ -84,6 +88,9 @@ export function FleetStrip({
           <span style={styles.meta}>
             {workerCount} worker · {lockCount} 锁
             {openIntents > 0 ? ` · ${openIntents} intent` : ""} · {worstLabel(worst)}
+            {worst === "paused" && lockCount === 0 && openIntents === 0
+              ? "（可点全停清理）"
+              : ""}
           </span>
           {openIntents > 0 && (
             <span style={{ ...styles.badge, background: "#ca8a04" }} title="未关闭 Intent">

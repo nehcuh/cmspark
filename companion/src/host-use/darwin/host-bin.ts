@@ -24,6 +24,34 @@ export function resolveHostBinaryCandidates(fromDir: string): string[] {
   ]
 }
 
+/**
+ * Detect `Something.app/Contents` from the running agent entry or node binary.
+ * Packaged CMspark always runs as:
+ *   Resources/node  Resources/cmspark-agent.js …
+ * so argv[1] / execPath sit under Contents/ — more reliable than esbuild
+ * __dirname for finding MacOS/CMspark (TCC product identity).
+ */
+export function resolvePackagedContentsDir(
+  argv1: string = process.argv[1] || "",
+  execPath: string = process.execPath,
+): string | null {
+  const marker = `${path.sep}Contents${path.sep}`
+  for (const raw of [argv1, execPath]) {
+    if (!raw) continue
+    let abs: string
+    try {
+      abs = path.resolve(raw)
+    } catch {
+      continue
+    }
+    if (!abs.includes(".app")) continue
+    const idx = abs.indexOf(marker)
+    if (idx === -1) continue
+    return abs.slice(0, idx + `${path.sep}Contents`.length)
+  }
+  return null
+}
+
 export function resolveHostBinary(): string {
   // S-P0-1 (2026-07-24 diagnosis): CMSPARK_HOST_BIN was previously gated by
   // `NODE_ENV !== "production"` — but packaged Electron/pkg/SEA apps rarely
@@ -46,17 +74,41 @@ export function resolveHostBinary(): string {
       "Set CMSPARK_ALLOW_HOST_BIN_OVERRIDE=1 to enable (dev/test only).",
     )
   }
-  // Search order covers packaged + legacy DMG + staging + npm dev modes:
-  //   1. Packaged app: __dirname = Contents/Resources → prefer ../MacOS/CMspark
-  //      so host IPC inherits the main binary's TCC product identity (D6/A3/A18).
-  //   2. Legacy DMG: cmspark-host as same-dir sibling under Resources.
-  //   3. Unbundled staging: binary one level up or under dist/.
-  //   4. npm dev: companion/dist/cmspark-host from host-use/darwin/.
-  for (const c of resolveHostBinaryCandidates(__dirname)) {
+
+  // 0. Packaged .app (authoritative for TCC identity D4/D6)
+  const contents = resolvePackagedContentsDir()
+  if (contents) {
+    const mainBin = path.join(contents, "MacOS", "CMspark")
     try {
-      if (fs.existsSync(c)) return c
+      if (fs.existsSync(mainBin)) return mainBin
     } catch {
-      // ignore — try next candidate
+      /* continue */
+    }
+    const legacy = path.join(contents, "Resources", "cmspark-host")
+    try {
+      if (fs.existsSync(legacy)) return legacy
+    } catch {
+      /* continue */
+    }
+  }
+
+  // 1–4. __dirname candidates (dev / staging / legacy layouts)
+  const roots = new Set<string>()
+  roots.add(__dirname)
+  if (process.argv[1]) {
+    try {
+      roots.add(path.dirname(path.resolve(process.argv[1])))
+    } catch {
+      /* ignore */
+    }
+  }
+  for (const root of roots) {
+    for (const c of resolveHostBinaryCandidates(root)) {
+      try {
+        if (fs.existsSync(c)) return c
+      } catch {
+        // ignore — try next candidate
+      }
     }
   }
   // Fall back to dev-mode path (will ENOENT at execFile with clear error

@@ -487,8 +487,15 @@ func runMoveFile(sourcePath: String, destPath: String) throws -> String {
 ///
 /// DR-N4: spawn via `/usr/bin/arch -arm64` to match the old bash launcher and
 /// avoid Rosetta node on Apple Silicon.
+///
+/// Estop ownership (2026-08 platform analysis): start the emergency-stop helper
+/// as a **child of this Aqua-launched CMspark Mach-O** before the Node tray.
+/// Companion only connects to `/tmp/cmspark-estop.sock` — it must not be the
+/// process that first creates the CGEventTap (daemon-spawned tap failed with
+/// code 4 while CLI estop on the same binary succeeded).
 func launchAgentTrayAndExit() -> Never {
-    let execDir = URL(fileURLWithPath: CommandLine.arguments[0])
+    let execPath = CommandLine.arguments[0]
+    let execDir = URL(fileURLWithPath: execPath)
         .standardizedFileURL.deletingLastPathComponent()
     let resources = execDir.deletingLastPathComponent().appendingPathComponent("Resources")
     let candidates: [(node: URL, agent: URL)] = [
@@ -504,6 +511,60 @@ func launchAgentTrayAndExit() -> Never {
         fputs("CMspark: cannot find node + cmspark-agent.js (expected under Contents/Resources)\n", stderr)
         exit(2)
     }
+
+    // Best-effort tray-owned estop (same binary, product TCC identity).
+    // Not detached: dies when this launcher process exits with the tray.
+    let estopSock = "/tmp/cmspark-estop.sock"
+    func estopSocketLive() -> Bool {
+        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        guard fd >= 0 else { return false }
+        defer { close(fd) }
+        var addr = sockaddr_un()
+        addr.sun_family = sa_family_t(AF_UNIX)
+        let pathBytes = Array(estopSock.utf8)
+        guard pathBytes.count < 104 else { return false }
+        withUnsafeMutableBytes(of: &addr.sun_path) { raw in
+            for i in 0..<pathBytes.count { raw[i] = pathBytes[i] }
+            raw[pathBytes.count] = 0
+        }
+        return withUnsafePointer(to: &addr) { ptr in
+            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.stride)) == 0
+            }
+        }
+    }
+    if !estopSocketLive() {
+        // Stale socket file (bind then crash) blocks re-bind — remove before spawn.
+        unlink(estopSock)
+        let estop = Process()
+        estop.executableURL = URL(fileURLWithPath: execPath)
+        estop.arguments = ["estop", "--socket-path", estopSock]
+        // Capture stderr to a log so TCC/tap failures are diagnosable without CMSPARK_HOST_DEBUG.
+        let logPath = (NSHomeDirectory() as NSString)
+            .appendingPathComponent(".cmspark-agent/logs/estop-tray.log")
+        try? FileManager.default.createDirectory(
+            atPath: (logPath as NSString).deletingLastPathComponent,
+            withIntermediateDirectories: true
+        )
+        if FileManager.default.createFile(atPath: logPath, contents: nil) {
+            if let fh = FileHandle(forWritingAtPath: logPath) {
+                _ = try? fh.seekToEnd()
+                estop.standardError = fh
+            }
+        } else {
+            estop.standardError = FileHandle.nullDevice
+        }
+        estop.standardOutput = FileHandle.nullDevice
+        do {
+            try estop.run()
+            // Keep reference so ARC does not tear down the Process while running.
+            gTrayOwnedEstopProcess = estop
+            fputs("[host] tray-owned estop started pid=\(estop.processIdentifier)\n", stderr)
+        } catch {
+            fputs("CMspark: warning: could not start estop helper: \(error)\n", stderr)
+        }
+    }
+
     let proc = Process()
     // DR-N4: match old bash launcher arch -arm64
     proc.executableURL = URL(fileURLWithPath: "/usr/bin/arch")
@@ -512,12 +573,22 @@ func launchAgentTrayAndExit() -> Never {
     do {
         try proc.run()
         proc.waitUntilExit()
+        // Tear down estop with the app session
+        if let ep = gTrayOwnedEstopProcess, ep.isRunning {
+            ep.terminate()
+        }
         exit(proc.terminationStatus)
     } catch {
         fputs("CMspark: failed to start agent: \(error)\n", stderr)
+        if let ep = gTrayOwnedEstopProcess, ep.isRunning {
+            ep.terminate()
+        }
         exit(2)
     }
 }
+
+/// Retained so the tray-owned estop child is not deallocated while running.
+var gTrayOwnedEstopProcess: Process?
 
 // MARK: - Entry point
 
@@ -1836,9 +1907,16 @@ func cuEvidenceSeal(inputPath: String, outputPath: String) -> String {
 //   - on hotkey press: write the estop flag file (JSON {"timestamp": ms})
 //     and push an "estop" event line to every connected socket
 //
-// TCC: CGEventTap creation requires Accessibility (Input Monitoring) trust
-// for THIS binary. tapCreate returning nil = not trusted → exit with a clear
-// stderr message so the companion's preflight fails closed fast.
+// TCC: CGEventTap hotkey requires Accessibility (and often Input Monitoring)
+// for THIS binary when launched via LaunchServices. Device evidence 2026-08:
+// CLI / non-LS spawn of the same ad-hoc CDHash can create the tap while
+// `open -a CMspark.app` / tray-spawned child fails with nil tapCreate even
+// when AXIsProcessTrusted() is true for a CLI `security-check`.
+//
+// Fail-closed for Computer Use is the UNIX socket proof-of-life (companion
+// holds a connection). The global hotkey is best-effort: if tapCreate fails
+// we keep the helper alive (hotkey degraded) so host_computer is not
+// hard-blocked on LS/TCC quirks. User can still stop via tray / Side Panel.
 
 final class EstopContext {
     let flagPath: String
@@ -1936,36 +2014,61 @@ func runEstop(socketPath: String, flagPath: String) throws -> Never {
         }
     }
 
-    // 2. CGEventTap hotkey: Ctrl+Shift+Alt+Cmd+E
-    // tapCreate fails SILENTLY (returns nil) when the binary is not
-    // TCC-trusted — it never prompts on its own. Request trust explicitly so
-    // the user gets the system "would like to control this computer" dialog
-    // and a landing spot in the Accessibility list instead of a dead helper.
-    if !AXIsProcessTrusted() {
+    // 2. CGEventTap hotkey: Ctrl+Shift+Alt+Cmd+E (best-effort)
+    // tapCreate fails SILENTLY (returns nil) when TCC denies the tap.
+    // Request trust explicitly so the user may get the system dialog and a
+    // landing spot in Accessibility / Input Monitoring.
+    let axTrustedBefore = AXIsProcessTrusted()
+    if !axTrustedBefore {
         let promptOpts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         _ = AXIsProcessTrustedWithOptions(promptOpts)
     }
     let mask = CGEventMask(1 << CGEventType.keyDown.rawValue)
-    guard let tap = CGEvent.tapCreate(
+    // Prefer listenOnly: we never modify events (callback always passes through).
+    // Some LaunchServices/TCC contexts reject defaultTap while listenOnly works.
+    var tap = CGEvent.tapCreate(
         tap: .cgSessionEventTap,
         place: .headInsertEventTap,
-        options: .defaultTap,
+        options: .listenOnly,
         eventsOfInterest: mask,
         callback: estopEventTapCallback,
         userInfo: nil
-    ) else {
-        close(serverFD)
-        throw HostError(
-            code: 4,
-            message: "estop: CGEventTap creation failed — grant Accessibility permission to CMspark (System Settings → Privacy & Security → Accessibility)"
+    )
+    var tapMode = "listenOnly"
+    if tap == nil {
+        tap = CGEvent.tapCreate(
+            tap: .cgSessionEventTap,
+            place: .headInsertEventTap,
+            options: .defaultTap,
+            eventsOfInterest: mask,
+            callback: estopEventTapCallback,
+            userInfo: nil
+        )
+        tapMode = "defaultTap"
+    }
+    if let tap = tap {
+        gEstopTap = tap
+        let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+        CFRunLoopAddSource(CFRunLoopGetCurrent(), source, .commonModes)
+        CGEvent.tapEnable(tap: tap, enable: true)
+        fputs(
+            "estop: hotkey armed (Ctrl+Shift+Alt+Cmd+E) mode=\(tapMode) axTrusted=\(AXIsProcessTrusted())\n",
+            stderr
+        )
+    } else {
+        // Do NOT exit — socket proof-of-life is the CU fail-closed channel.
+        // Hotkey degraded until user re-grants Accessibility/Input Monitoring
+        // for this ad-hoc CDHash (or we ship Developer ID).
+        fputs(
+            "estop: CGEventTap unavailable — hotkey DEGRADED; socket proof-of-life still active. " +
+            "axTrustedBefore=\(axTrustedBefore) axTrustedNow=\(AXIsProcessTrusted()). " +
+            "Grant System Settings → Privacy & Security → Accessibility (and Input Monitoring) " +
+            "to CMspark, fully quit and relaunch. (legacy code-4 path removed)\n",
+            stderr
         )
     }
-    gEstopTap = tap
-    let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-    CFRunLoopAddSource(CFRunLoopGetCurrent(), source, .commonModes)
-    CGEvent.tapEnable(tap: tap, enable: true)
 
-    // 3. Live until killed (companion spawns us non-detached; we die with it)
+    // 3. Live until killed (companion / tray owns lifecycle; we die with parent)
     CFRunLoopRun()
     exit(0)  // unreachable — satisfies Never
 }
