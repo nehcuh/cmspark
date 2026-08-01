@@ -1915,20 +1915,20 @@ test("executor G4: experimental 命中 → re-L2 批准 → 注入建议点（ca
   const details = confirm.captured[0].details
   assert.deepEqual(details.dangerousApis, ["computer.experimental_suggestion"])
   assert.ok(details.criticalApis?.includes("computer.coordinate_injection"))
-  assert.ok(details.code.includes("实验层建议（TinyClick 本地模型，未校准，可能完全错误）"), "caption 必须明示实验层+未校准+可能完全错误")
+  assert.ok(details.code.includes("实验层建议（Qwen3-VL 本地模型，未校准，可能完全错误）"), "caption 必须明示实验层+未校准+可能完全错误")
   assert.ok(details.code.includes("(150, 168)"), "caption 标注建议点客户端坐标")
   assert.equal(details.previewImage, "PREVIEW_B64", "建议点标注预览走 §F.1 通道")
   assert.equal(details.autoConfirmEligible, false, "实验层建议永不自动批准")
   // 预览 builder 收到图像空间建议点（client + pointClient）
   assert.deepEqual(previewCalls[0].point, { x: 160, y: 208 })
-  // 证据链：layer tinyclick、confidence 缺省（G3）、uncrossverified（A1.3）
+  // 证据链：layer qwen-vl（L2 实验层；deps.tinyclick 槽位名历史保留）、confidence 缺省（G3）、uncrossverified（A1.3）
   const rec = evidence.records.find((x) => x.action === "click")!
-  assert.equal(rec.layer, "tinyclick")
+  assert.equal(rec.layer, "qwen-vl")
   assert.equal(rec.confidence, undefined, "G3：未校准置信度不上证据链")
   assert.equal(rec.uncrossverified, true)
   assert.equal(rec.crossverified, false)
-  assert.ok(rec.locateAttempts!.some((a) => a.layer === "tinyclick" && a.outcome === "hit"))
-  assert.equal(r.steps[0].layer, "tinyclick")
+  assert.ok(rec.locateAttempts!.some((a) => a.layer === "qwen-vl" && a.outcome === "hit"))
+  assert.equal(r.steps[0].layer, "qwen-vl")
   assert.equal(r.steps[0].confidence, undefined)
 })
 
@@ -2110,14 +2110,14 @@ test("P7 回归：admission 开启态下批准后刷新链 deps.tinyclick 恒 nu
   assert.equal(injector.clicks.length, 0, "刷新路径零注入")
   assert.equal(tc.calls.length, 0, "刷新链 deps.tinyclick 恒 null——实验层全任务零调用（P7 锁）")
   // 结构证据（executor log 通道）：刷新链以 tinyclick:null 跳过，可观测形态 =
-  // computeruse.locate{layer:"tinyclick", hit:false, reason:"model-disabled",
+  // computeruse.locate{layer:"qwen-vl", hit:false, reason:"model-disabled",
   // refresh:true}（初次链 L1 hit 不触及实验层；G4 命中链不走刷新分支）。
-  const tcLogs = logs.filter((l) => l.event === "computeruse.locate" && l.data?.layer === "tinyclick")
-  assert.ok(tcLogs.length >= 1, "刷新链须留下 tinyclick 层跳过日志")
+  const tcLogs = logs.filter((l) => l.event === "computeruse.locate" && l.data?.layer === "qwen-vl")
+  assert.ok(tcLogs.length >= 1, "刷新链须留下 qwen-vl 层跳过日志")
   for (const l of tcLogs) {
     assert.equal(l.data.hit, false, "刷新通道绝不产生实验层命中（未经 G4 人审的建议不得借道）")
     assert.equal(l.data.reason, "model-disabled", "null 注入的可观测形态 = model-disabled 跳过")
-    assert.equal(l.data.refresh, true, "tinyclick 日志只能来自刷新通道的 null 跳过")
+    assert.equal(l.data.refresh, true, "qwen-vl 日志只能来自刷新通道的 null 跳过")
   }
 })
 
