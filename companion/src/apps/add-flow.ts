@@ -29,6 +29,7 @@ import {
 } from "./types"
 import { checkAddAllowed } from "./guards"
 
+import { validateCliManifest, asCliManifest } from "./cli-manifest"
 export interface AddFlowWarning {
   code:
     | "unsigned_binary"
@@ -57,6 +58,8 @@ export interface AddFlowInput {
   existingEntries: Record<string, AppEntry>
   /** Requested policy; persisted only after the caller's gates. Default "manual". */
   policy?: AppEntry["policy"]
+  /** Phase-2 CLI: required when kind=cli */
+  cli_manifest?: unknown
 }
 
 export interface AddFlowDeps {
@@ -230,8 +233,12 @@ export async function buildAppEntry(
   if (!path.isAbsolute(expanded)) {
     throw new AddFlowError("absolute_path_required", `apps.add requires an absolute path (got "${expanded}")`)
   }
-  if (!/\.exe$/i.test(expanded)) {
+  const isWin = process.platform === "win32"
+  if (isWin && !/\.exe$/i.test(expanded)) {
     throw new AddFlowError("not_an_exe", `apps.add only accepts .exe targets or AUMIDs (got "${expanded}")`)
+  }
+  if (!isWin && input.kind === "gui" && !hasBundleId) {
+    // macOS GUI without bundleId still needs a path that exists (open -a may use path)
   }
   const resolved = path.resolve(expanded)
   if (!exists(resolved)) {
@@ -303,7 +310,14 @@ export async function buildAppEntry(
   const display = input.displayName?.trim() || path.basename(canonical).replace(/\.exe$/i, "")
   // Slug source: exe basename first (stable, usually latin) — a CJK display
   // name would sanitize to the useless "app".
-  const token = uniqueToken(slugify(path.basename(canonical)), input.kind, input.existingEntries)
+  // Token platform namespace: infer from path (tests inject Win paths on mac hosts)
+  const nsPlatform: "win" | "mac" =
+    /^[A-Za-z]:[\\/]/.test(canonical) || canonical.startsWith("\\") || /\.exe$/i.test(canonical)
+      ? "win"
+      : process.platform === "darwin"
+        ? "mac"
+        : "win"
+  const token = uniqueToken(slugify(path.basename(canonical)), input.kind, input.existingEntries, nsPlatform)
   const entry: AppEntry = {
     token,
     kind: input.kind,
@@ -317,6 +331,17 @@ export async function buildAppEntry(
       ...(signer ? { signer } : {}),
       user_writable_dir: userWritable,
     },
+  }
+
+  if (input.kind === "cli") {
+    const mErr = validateCliManifest(input.cli_manifest)
+    if (mErr) throw new AddFlowError("not_an_exe", `cli_manifest invalid: ${mErr}`)
+    entry.cli_manifest = asCliManifest(input.cli_manifest) as Record<string, unknown> | null
+    // L-CLI-1: CLI never auto
+    if (entry.policy === "auto") {
+      entry.policy = "ai"
+      warnings.push({ code: "unsigned_binary", message: "CLI 策略上限为 AI 判断（无免确认）" })
+    }
   }
   const schemaErr = validateAppEntry(entry)
   if (schemaErr) throw new AddFlowError("not_an_exe", `internal: built entry failed schema: ${schemaErr}`)

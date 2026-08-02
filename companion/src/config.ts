@@ -117,7 +117,7 @@ export interface ComputerConfig {
   modelLicenseAcceptedTextHash?: string
   /**
    * WP5-I4 许可证已拒绝（默认 false）。true → set_enabled(true) 恒返
-   * LICENSE_DECLINED（永久跳过；复位 = 手改 config.json，不提供 UI 复位）。
+   * LICENSE_DECLINED（跳过；设置页可 reset_decline 复位）。
    */
   modelLicenseDeclined?: boolean
   /**
@@ -130,6 +130,21 @@ export interface ComputerConfig {
    * huggingface / hf-mirror / modelscope 为显式选择。
    */
   modelDownloadSource?: "auto" | "huggingface" | "hf-mirror" | "modelscope"
+  /**
+   * Absolute directory for model weights (contains qwen3-vl-2b/ …).
+   * Default: ~/.cmspark-agent/models. User-selectable via Settings.
+   */
+  modelRootDir?: string
+  /**
+   * Python 使用方式：
+   * - isolated（默认）：CMspark 独立虚拟环境 ~/.cmspark-agent/python-env
+   * - system：本机全局 / 用户指定的 Python
+   */
+  pythonMode?: "isolated" | "system"
+  /** mode=system 时可选的绝对 python 路径 */
+  pythonPath?: string
+  /** 若本机有 uv，创建/安装独立环境时优先使用（默认 true） */
+  pythonPreferUv?: boolean
 }
 
 export interface CompanionConfig {
@@ -692,6 +707,10 @@ export function setComputerModelFields(
       | "modelLicenseDeclined"
       | "modelVariant"
       | "modelDownloadSource"
+      | "modelRootDir"
+      | "pythonMode"
+      | "pythonPath"
+      | "pythonPreferUv"
     >
   >,
 ): CompanionConfig {

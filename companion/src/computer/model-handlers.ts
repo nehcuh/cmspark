@@ -10,13 +10,13 @@
 //
 // WI-4.2 四路由（I4 详案 plan:536-542 + 设计裁决 1/2/4/5 + P1/P3/P5/P6）：
 //   - set_enabled(true)：license 未接受/条款漂移 → license_required（config 零
-//     写入）；已拒绝 → LICENSE_DECLINED（永久跳过，无 UI 复位）；已接受 →
+//     写入）；已拒绝 → LICENSE_DECLINED（跳过，无 UI 复位）；已接受 →
 //     D2 生物识别门（裁决 1：持久能力授权与 apps coordinateAllowed 同级；
 //     clear 免费）。license_response/download/delete 不过门，但均 settings
 //     双层围栏（validateWsMessage + 本 handler belt 复核，P6）。
 //   - license_response accepted:true → 写时间戳 + LICENSE_DOOR_TEXT_HASH（P1
 //     文本版本绑定；漂移重门在 set_enabled/admission 侧比对）+ 自动触发 download；
-//     accepted:false → modelLicenseDeclined=true（永久跳过）。
+//     accepted:false → modelLicenseDeclined=true（跳过）。
 //   - download：按当前配置变体下载文件组（P3）；占位主机 .invalid 且未配镜像
 //     → fail-fast download-host-unset（零网络请求，裁决 5）；进程级单飞幂等
 //     （P10：防并发不防轮询——轮询 DoS 残余声明入 i4-implementation-notes）。
@@ -97,6 +97,17 @@ export interface ComputerModelHandlerDeps {
   deleteImpl?: typeof deleteQwenVlVariant
   /** P3 节流时钟（测试 seam，同 deps 族纪律）；默认 Date.now。 */
   now?: () => number
+  /**
+   * L-QW-1: probe whether experimental layer may be enabled (model ready + deps).
+   * Tests inject; production uses preflight + probeQwenModelDir.
+   * Return false → set_enabled(true) hard-refuses with zero config write.
+   */
+  canEnableProbe?: () => boolean | Promise<boolean>
+  /**
+   * B1 test seam: override canDownload gate for download / license auto-download.
+   * Production uses runQwenVlPreflight().canDownload.
+   */
+  canDownloadProbe?: () => boolean | Promise<{ ok: boolean; reason?: string }>
 }
 
 function modelError(error: string, extra?: Record<string, unknown>) {
@@ -104,6 +115,36 @@ function modelError(error: string, extra?: Record<string, unknown>) {
   // 实验区错误位（apps family:"apps" 先例）；旧扩展忽略 family 落 chat 流，
   // 向后兼容。computer 其余 handler 维持 family "computer" 不变。
   return { type: "error", family: "computer.model" as const, error, ...extra }
+}
+
+async function resolveCanDownload(
+  deps: ComputerModelHandlerDeps,
+  variant: string,
+  downloadSource?: string,
+): Promise<{ ok: boolean; reason?: string }> {
+  if (deps.canDownloadProbe) {
+    const r = await deps.canDownloadProbe()
+    if (typeof r === "boolean") return { ok: r, reason: r ? undefined : "canDownloadProbe=false" }
+    return { ok: r.ok === true, reason: r.reason }
+  }
+  try {
+    const { runQwenVlPreflight } = await import("./qwen-vl-preflight")
+    const { DATA_DIR: dataDir } = await import("../config")
+    const pre = await runQwenVlPreflight({
+      variant,
+      downloadSource: downloadSource as any,
+      dataDir,
+    })
+    return {
+      ok: pre.canDownload === true,
+      reason: pre.downloadBlockReason || pre.readinessSummary,
+    }
+  } catch (e) {
+    return {
+      ok: false,
+      reason: e instanceof Error ? e.message : "环境检测失败",
+    }
+  }
 }
 
 /** manifest 随发版路径解析：src 布局（companion/src/computer → 上两级）/
@@ -205,18 +246,52 @@ async function statePayload(
     minVramGb: meta.minVramGb,
     availableVariants: ["2b", "4b", "8b"] as const,
     downloadSource: (cfg as any).modelDownloadSource ?? "auto",
+    // Product UX: always emit canDownload/canEnable as booleans so the UI never
+    // treats "unknown" as "allowed to click download".
     ...(preflight
       ? {
           preflight,
-          canDownload: preflight.canDownload,
-          canEnable: preflight.canEnable && modelLicenseAccepted(cfg) && !cfg.modelLicenseDeclined,
+          canDownload: preflight.canDownload === true,
+          canEnable:
+            preflight.canEnable === true &&
+            modelLicenseAccepted(cfg) &&
+            !cfg.modelLicenseDeclined,
           readinessSummary: preflight.readinessSummary,
           nextSteps: preflight.nextSteps,
           recommendedVariant: preflight.recommendedVariant,
           downloadSourceResolved: preflight.downloadSourceResolved,
           downloadSourceReason: preflight.downloadSourceReason,
+          downloadBlockReason: preflight.downloadBlockReason,
+          enableBlockReason: preflight.enableBlockReason,
+          modelRootDir: preflight.modelRootDir,
+          pythonMode: preflight.pythonMode,
+          uvAvailable: preflight.uvAvailable,
+          pythonResolution: preflight.pythonResolution,
+          isolatedEnvExists: preflight.isolatedEnvExists,
+          pythonPath:
+            typeof cfg.pythonPath === "string" && cfg.pythonPath
+              ? cfg.pythonPath
+              : preflight.deps?.pythonPath,
         }
-      : {}),
+      : {
+          canDownload: false,
+          canEnable: false,
+          readinessSummary: "正在检测本机环境（Python / 磁盘 / 硬件）…",
+          nextSteps: [
+            "请稍候；若长时间无结果，请重启 CMspark 后再打开本页。",
+            "实验层依赖本机 Python 与下载组件，不会在浏览器插件内下载模型。",
+          ],
+          modelRootDir: (() => {
+            try {
+              const { resolveModelRootDir } = require("./qwen-vl-download") as typeof import("./qwen-vl-download")
+              return resolveModelRootDir()
+            } catch {
+              return ""
+            }
+          })(),
+          pythonMode: "isolated",
+          uvAvailable: false,
+        }),
     ...(sizeBytes !== undefined ? { sizeBytes } : {}),
     ...(errorReason !== undefined ? { error: errorReason } : {}),
     faults: session?.getFaults() ?? 0,
@@ -293,6 +368,12 @@ export async function handleComputerModelMessage(
     "computer.model.reset_circuit_breaker",
     "computer.model.set_variant",
     "computer.model.set_download_source",
+    "computer.model.set_model_root",
+    "computer.model.pick_model_root",
+    "computer.model.set_python_mode",
+    "computer.model.pick_python_path",
+    "computer.model.ensure_python_env",
+    "computer.model.install_deps",
   ])
   if (SETTINGS_SOURCE_TYPES.has(type) && rest.source !== "settings") {
     logger.warn("computer.model.refused", { type, source: typeof rest.source === "string" ? rest.source : undefined })
@@ -323,11 +404,11 @@ export async function handleComputerModelMessage(
         return state
       }
       const cfg = getConfig().computer ?? { coordinateEnabled: false }
-      // 许可证状态机（裁决 2）：已拒绝 → 永久跳过；未接受/条款漂移（P1 哈希
+      // 许可证状态机（裁决 2）：已拒绝 → 跳过；未接受/条款漂移（P1 哈希
       // 不符）→ license_required（config 零写入）。
       if (cfg.modelLicenseDeclined === true) {
         return modelError(
-          "实验层许可证已被拒绝，本层永久跳过（复位路径 = 手改 config.json，ADR-010 显式 owner opt-in）",
+          "实验层许可证已被拒绝。可在设置页实验层点击「复位许可拒绝」后重新阅读并接受条款（无需手改 config.json）",
           { code: "LICENSE_DECLINED" },
         )
       }
@@ -335,7 +416,37 @@ export async function handleComputerModelMessage(
         return {
           type: "computer.model.license_required" as const,
           licenseText: LICENSE_DOOR_TEXT,
-          notice: "阅读并接受许可证与免责声明后可开启实验层；拒绝则本层永久跳过，其余定位层不受影响。",
+          notice: "阅读并接受许可证与免责声明后可开启实验层；拒绝则本层跳过，其余定位层不受影响。之后可在设置页「复位许可拒绝」重新打开流程。",
+        }
+      }
+      // L-QW-1 / SoT D1: hard-disable enable unless canEnable (model + infer deps).
+      // Zero config write on fail — UI may show canEnable:false but API must not arm.
+      {
+        let can = true
+        if (deps.canEnableProbe) {
+          can = await deps.canEnableProbe()
+        } else {
+          try {
+            const probe = probeQwenModelDir(currentVariant(cfg))
+            if (probe.status !== "ready") {
+              can = false
+            } else {
+              const pre = await runQwenVlPreflight({
+                variant: currentVariant(cfg),
+                downloadSource: (cfg as any).modelDownloadSource as DownloadSource | undefined,
+                dataDir: DATA_DIR,
+              })
+              can = pre.canEnable === true
+            }
+          } catch {
+            can = false
+          }
+        }
+        if (!can) {
+          return modelError(
+            "实验层尚未就绪（模型未下载、推理依赖未齐或 worker 不可用），无法开启",
+            { code: "CANNOT_ENABLE" },
+          )
         }
       }
       // 已接受 → D2 生物识别门（裁决 1：持久能力授权，apps coordinateAllowed 先例）
@@ -366,6 +477,14 @@ export async function handleComputerModelMessage(
     }
 
     case "computer.model.license_response": {
+      // D9 / F2-D: settings may clear a prior decline without accepting the license.
+      if (rest.reset_decline === true || rest.resetDecline === true) {
+        setComputerModelFields({ modelLicenseDeclined: false })
+        logger.info("computer.model.license_decline_reset", { source: rest.source })
+        const state = await statePayload(holder, deps)
+        ctx.broadcast?.(state)
+        return { ...state, declineReset: true }
+      }
       if (rest.accepted === true) {
         // 接受：写时间戳 + 文本版本哈希（P1）+ 清拒绝标记，自动触发 download（裁决 2）
         setComputerModelFields({
@@ -383,14 +502,23 @@ export async function handleComputerModelMessage(
           downloadNote = "delete-in-progress"
           logger.warn("computer.model.download.refused", { reason: "delete-in-progress", variant })
         } else {
-          startBackgroundDownload(variant, ctx, deps, holder)
-          downloadNote = "started"
+          // B2: only auto-download when env is ready (same truth as preflight canDownload)
+          const ready = await resolveCanDownload(deps, variant, (cfg as any).modelDownloadSource)
+          if (ready.ok) {
+            startBackgroundDownload(variant, ctx, deps, holder)
+            downloadNote = "started"
+          } else {
+            downloadNote = "skipped-env-not-ready"
+            logger.info("computer.model.download.skipped_after_license", {
+              reason: ready.reason || "canDownload=false",
+            })
+          }
         }
         const state = await statePayload(holder, deps)
         ctx.broadcast?.(state)
         return { ...state, download: downloadNote }
       }
-      // 拒绝：永久跳过（复位 = 手改 config.json，不提供 UI 复位——裁决 2）
+      // 拒绝：跳过；设置页可通过 reset_decline 复位（D9）
       setComputerModelFields({ modelLicenseDeclined: true })
       logger.info("computer.model.license_declined", {})
       const state = await statePayload(holder, deps)
@@ -409,6 +537,18 @@ export async function handleComputerModelMessage(
         return modelError(
           "模型删除进行中——待其完成后重试下载；本次未发起任何网络请求。",
           { code: "DELETE_IN_PROGRESS" },
+        )
+      }
+      // B1: trust-boundary gate — UI button is not sufficient (handler is SoT)
+      const ready = await resolveCanDownload(deps, variant, (cfg as any).modelDownloadSource)
+      if (!ready.ok) {
+        logger.warn("computer.model.download.refused", {
+          reason: "env-not-ready",
+          detail: ready.reason,
+        })
+        return modelError(
+          ready.reason || "环境未就绪，无法下载。请先完成设置页「环境检查」。",
+          { code: "CANNOT_DOWNLOAD" },
         )
       }
       startBackgroundDownload(variant, ctx, deps, holder)
@@ -457,6 +597,161 @@ export async function handleComputerModelMessage(
       const state = await statePayload(holder, deps)
       ctx.broadcast?.(state)
       return state
+    }
+
+    case "computer.model.set_model_root": {
+      const { validateModelRootDir, resolveModelRootDir } = await import("./qwen-vl-download")
+      const { DATA_DIR: dataDir } = await import("../config")
+      const raw = typeof rest.path === "string" ? rest.path : typeof rest.modelRootDir === "string" ? rest.modelRootDir : ""
+      if (rest.reset === true || raw === "" || raw === "default") {
+        const def = path.join(dataDir, "models")
+        const v = validateModelRootDir(def)
+        if (!v.ok) return modelError(v.error, { code: "INVALID_MODEL_ROOT" })
+        setComputerModelFields({ modelRootDir: v.path })
+        logger.info("computer.model.model_root_reset", { path: v.path })
+      } else {
+        const v = validateModelRootDir(raw)
+        if (!v.ok) return modelError(v.error, { code: "INVALID_MODEL_ROOT" })
+        setComputerModelFields({ modelRootDir: v.path })
+        logger.info("computer.model.model_root_set", { path: v.path })
+      }
+      const state = await statePayload(holder, deps)
+      ctx.broadcast?.(state)
+      return { ...state, modelRootDir: resolveModelRootDir() }
+    }
+
+    case "computer.model.pick_model_root": {
+      const { pickFolderNative } = await import("../obsidian/folder-picker")
+      const { validateModelRootDir, resolveModelRootDir } = await import("./qwen-vl-download")
+      const picked = await pickFolderNative()
+      if (picked.error === "cancelled") {
+        return { type: "computer.model.pick_model_root.result", ok: false, cancelled: true }
+      }
+      if (picked.error || !picked.path) {
+        return modelError(picked.error || "未选择文件夹", { code: "PICK_FAILED" })
+      }
+      const v = validateModelRootDir(picked.path)
+      if (!v.ok) return modelError(v.error, { code: "INVALID_MODEL_ROOT" })
+      setComputerModelFields({ modelRootDir: v.path })
+      logger.info("computer.model.model_root_picked", { path: v.path })
+      const state = await statePayload(holder, deps)
+      ctx.broadcast?.(state)
+      return { ...state, ok: true, modelRootDir: resolveModelRootDir() }
+    }
+
+    case "computer.model.set_python_mode": {
+      const mode = rest.mode === "system" ? "system" : rest.mode === "isolated" ? "isolated" : null
+      if (!mode) {
+        return modelError('computer.model.set_python_mode requires mode:"isolated"|"system"', {
+          code: "INVALID_PYTHON_MODE",
+        })
+      }
+      const patch: Parameters<typeof setComputerModelFields>[0] = { pythonMode: mode }
+      if (mode === "system" && typeof rest.pythonPath === "string" && rest.pythonPath.trim()) {
+        const p = rest.pythonPath.trim()
+        if (path.isAbsolute(p)) {
+          const { validatePythonExecutable } = await import("./python-runtime")
+          const v = await validatePythonExecutable(p)
+          if (!v.ok) return modelError(v.error, { code: "INVALID_PYTHON_PATH" })
+          patch.pythonPath = v.path
+        }
+      }
+      if (mode === "isolated") {
+        // clear system override so isolated is unambiguous
+        patch.pythonPath = undefined as any
+      }
+      setComputerModelFields(patch)
+      logger.info("computer.model.python_mode_set", { mode })
+      const state = await statePayload(holder, deps)
+      ctx.broadcast?.(state)
+      return state
+    }
+
+    case "computer.model.pick_python_path": {
+      const { pickFileNative } = await import("../obsidian/folder-picker")
+      const { validatePythonExecutable } = await import("./python-runtime")
+      const picked = await pickFileNative({
+        prompt: "选择本机 Python 可执行文件（python3 / python）",
+      })
+      if (picked.error === "cancelled") {
+        return { type: "computer.model.pick_python_path.result", ok: false, cancelled: true }
+      }
+      if (picked.error || !picked.path) {
+        return modelError(picked.error || "未选择文件", { code: "PICK_FAILED" })
+      }
+      const v = await validatePythonExecutable(picked.path)
+      if (!v.ok) return modelError(v.error, { code: "INVALID_PYTHON_PATH" })
+      setComputerModelFields({ pythonMode: "system", pythonPath: v.path })
+      logger.info("computer.model.python_path_picked", { path: v.path })
+      const state = await statePayload(holder, deps)
+      ctx.broadcast?.(state)
+      return {
+        ...state,
+        type: "computer.model.pick_python_path.result",
+        ok: true,
+        pythonPath: v.path,
+      }
+    }
+
+    case "computer.model.ensure_python_env": {
+      const { ensureIsolatedPythonEnv, sanitizePythonPackages } = await import("./python-runtime")
+      setComputerModelFields({ pythonMode: "isolated" })
+      const pkgs = sanitizePythonPackages(rest.packages)
+      const result = await ensureIsolatedPythonEnv(pkgs)
+      logger.info("computer.model.ensure_python_env", {
+        ok: result.ok,
+        usedUv: result.usedUv,
+        error: result.error,
+      })
+      const state = await statePayload(holder, deps)
+      ctx.broadcast?.(state)
+      return {
+        ...state,
+        type: "computer.model.ensure_python_env.result",
+        ok: result.ok,
+        usedUv: result.usedUv,
+        pythonPath: result.pythonPath,
+        log: result.log,
+        error: result.error,
+      }
+    }
+
+    case "computer.model.install_deps": {
+      // Install into current mode env (isolated preferred via ensure; system uses pip/uv)
+      const { ensureIsolatedPythonEnv, buildInstallCommands, resolvePythonRuntime, sanitizePythonPackages } =
+        await import("./python-runtime")
+      const mode = getConfig().computer?.pythonMode === "system" ? "system" : "isolated"
+      const pkgs = sanitizePythonPackages(rest.packages)
+      if (mode === "isolated") {
+        const result = await ensureIsolatedPythonEnv(pkgs)
+        const state = await statePayload(holder, deps)
+        ctx.broadcast?.(state)
+        return {
+          ...state,
+          type: "computer.model.install_deps.result",
+          ok: result.ok,
+          usedUv: result.usedUv,
+          log: result.log,
+          error: result.error,
+        }
+      }
+      const runtime = await resolvePythonRuntime({ mode: "system", systemPythonPath: getConfig().computer?.pythonPath })
+      const cmds = buildInstallCommands({
+        mode: "system",
+        uvAvailable: runtime.uvAvailable,
+        packages: pkgs,
+        pythonPath: runtime.pythonPath,
+      })
+      // Don't auto-run against system python without user terminal — return commands
+      const state = await statePayload(holder, deps)
+      return {
+        ...state,
+        type: "computer.model.install_deps.result",
+        ok: false,
+        needsManual: true,
+        installCommands: cmds,
+        error: "全局 Python 模式：请在终端执行返回的命令（避免静默改动系统环境）",
+      }
     }
 
     case "computer.model.delete": {

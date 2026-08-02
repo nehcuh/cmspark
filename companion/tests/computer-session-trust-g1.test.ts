@@ -137,3 +137,28 @@ test("G1 skip: actions floor via budget covers LLM task-split growth", () => {
     false,
   )
 })
+
+test("G1 skip: modelEnabled true blocks even without experimental action", () => {
+  const t = new ComputerSessionTrust()
+  const key = resolveComputerTrustKey("3ffkgl", "ws")
+  t.grant(key, "mac.app.wechat", { explicitOptIn: true })
+  t.recordBudget(key, "mac.app.wechat", 15)
+  t.recordActions(key, "mac.app.wechat", 5)
+  t.extendCorpus(key, "mac.app.wechat", ["hello"])
+  assert.equal(
+    g1InitialSkipEligible({
+      trust: t, trustKey: key, app: "mac.app.wechat",
+      typeCorpus: ["hello"], budget: 10, actionCount: 3, experimental: false,
+      modelEnabled: true,
+    }),
+    false,
+  )
+  assert.equal(
+    g1InitialSkipEligible({
+      trust: t, trustKey: key, app: "mac.app.wechat",
+      typeCorpus: ["hello"], budget: 10, actionCount: 3, experimental: false,
+      modelEnabled: false,
+    }),
+    true,
+  )
+})

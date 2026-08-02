@@ -58,6 +58,11 @@ export class SecurityPolicy {
         // MUST be non-empty for a well-formed call — an empty payload would
         // make tokens replayable across apps (the `default: ""` footgun).
         return `${String(params?.app || "")}|${String(params?.action || "")}`
+      case "host_cli": {
+        // L-CLI-6: non-empty app|subcommand|canonical(flags,args)
+        const { hostCliBindingPayload } = require("./apps/cli-manifest") as typeof import("./apps/cli-manifest")
+        return hostCliBindingPayload(params ?? {})
+      }
       case "host_computer": {
         // Coordinate computer-use (A3): bind app + task + the FULL action draft
         // (incl. every type.text literal via the corpus hash) so a tampered

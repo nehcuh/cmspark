@@ -570,7 +570,22 @@ export interface ComputerModelState {
   nextSteps?: string[]
   canDownload?: boolean
   canEnable?: boolean
+  /** Plain-language why download button is blocked */
+  downloadBlockReason?: string
+  enableBlockReason?: string
+  modelRootDir?: string
+  pythonMode?: "isolated" | "system"
+  /** Absolute path when user picked a system interpreter */
+  pythonPath?: string
+  uvAvailable?: boolean
+  pythonResolution?: string
+  isolatedEnvExists?: boolean
   preflight?: {
+    modelRootDir?: string
+    pythonMode?: "isolated" | "system"
+    uvAvailable?: boolean
+    pythonResolution?: string
+    isolatedEnvExists?: boolean
     readinessSummary?: string
     nextSteps?: string[]
     canDownload?: boolean
@@ -579,6 +594,16 @@ export interface ComputerModelState {
     downloadSourceResolved?: string
     downloadSourceReason?: string
     installCommands?: string[]
+    downloadBlockReason?: string
+    enableBlockReason?: string
+    requirements?: Array<{
+      id: string
+      category: "software" | "hardware" | "model"
+      label: string
+      ok: boolean
+      detail?: string
+      blocking?: boolean
+    }>
     hardware?: {
       totalRamGb?: number
       freeDiskGb?: number | null

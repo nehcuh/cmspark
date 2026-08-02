@@ -82,6 +82,7 @@ export const PAGE_CONTENT_TOOLS: ReadonlySet<string> = new Set([
   "navigate",
   "get_cookies",
   "list_all_cookies",
+  "host_cli",
 ])
 
 /**

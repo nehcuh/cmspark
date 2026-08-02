@@ -361,11 +361,27 @@ test("apps.add lolbin → lolbin_denied error code", async () => {
   }
 })
 
-test("apps.add kind cli → CLI_PHASE2 typed error (P1 gui only)", async () => {
+test("apps.add kind cli without manifest → CLI_MANIFEST_REQUIRED", async () => {
   reset()
   const r: any = await handleAppsMessage({ type: "apps.add", kind: "cli", path: SYS_EXE }, {}, deps())
   assert.equal(r.type, "error")
-  assert.equal(r.code, "CLI_PHASE2")
+  assert.equal(r.code, "CLI_MANIFEST_REQUIRED")
+})
+
+test("apps.add kind cli policy auto → CLI_POLICY_CAP", async () => {
+  reset()
+  const r: any = await handleAppsMessage({
+    type: "apps.add",
+    kind: "cli",
+    path: SYS_EXE,
+    policy: "auto",
+    cli_manifest: {
+      schema_version: 1,
+      subcommands: [{ name: "run", risk: "read-only" }],
+    },
+  }, {}, deps())
+  assert.equal(r.type, "error")
+  assert.equal(r.code, "CLI_POLICY_CAP")
 })
 
 test("apps.add duplicate path → duplicate_app", async () => {

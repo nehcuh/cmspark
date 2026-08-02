@@ -1,0 +1,8 @@
+{
+  "batch": "cli-qwen-p0",
+  "timestamp": "20260802-093812",
+  "claude": { "verdict": "REJECT", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark-wt-cli-qwen-20260802/docs/audit/reviews/cli-qwen-p0-claude-20260802-093812.md" },
+  "pi": { "verdict": "REJECT", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark-wt-cli-qwen-20260802/docs/audit/reviews/cli-qwen-p0-pi-20260802-093812.md" },
+  "both_approve": false,
+  "diff_path": "/Users/huchen/Projects/cmspark-wt-cli-qwen-20260802/docs/audit/reviews/cli-qwen-p0-diff-20260802-093812.patch"
+}

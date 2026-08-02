@@ -1,0 +1,8 @@
+{
+  "batch": "qwen-env-ux",
+  "timestamp": "20260802-132428",
+  "claude": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark-wt-cli-qwen-20260802/docs/audit/reviews/qwen-env-ux-claude-20260802-132428.md" },
+  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark-wt-cli-qwen-20260802/docs/audit/reviews/qwen-env-ux-pi-20260802-132428.md" },
+  "both_approve": true,
+  "diff_path": "/Users/huchen/Projects/cmspark-wt-cli-qwen-20260802/docs/audit/reviews/qwen-env-ux-diff-20260802-132428.patch"
+}

@@ -21,6 +21,7 @@ export const WORKER_HARD_DENY = new Set([
   "host_write",
   "host_read",
   "host_app",
+  "host_cli",
 ])
 
 /** Default narrow surface for orchestrator threads. */

@@ -88,9 +88,12 @@ export function g1InitialSkipEligible(args: {
   budget: number
   actionCount: number
   experimental: boolean
+  /** L-QW-2 / SoT D11: experimental layer ON blocks G1 even without action.experimental */
+  modelEnabled?: boolean
 }): boolean {
-  const { trust, trustKey, app, typeCorpus, budget, actionCount, experimental } = args
+  const { trust, trustKey, app, typeCorpus, budget, actionCount, experimental, modelEnabled } = args
   if (experimental) return false
+  if (modelEnabled === true) return false
   if (!trustKeyAllowsInitialSkip(trustKey)) return false
   if (!trust.hasExplicitOptIn(trustKey, app)) return false
   if (!trust.isTrusted(trustKey, app)) return false
@@ -113,7 +116,7 @@ export function g1InitialSkipEligible(args: {
  */
 const PROMPT_ALWAYS_TAGS = new Set<string>([
   "computer.danger_detected",         // real risk surface detected
-  "computer.experimental_suggestion", // TinyClick uncalibrated layer
+  "computer.experimental_suggestion", // Qwen3-VL uncalibrated experimental layer
   "computer.foreground_yielded",      // foreign process took frontmost
 ])
 

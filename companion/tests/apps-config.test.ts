@@ -120,7 +120,7 @@ function cliEntry(overrides: Record<string, any> = {}): Record<string, any> {
       signer: "CN=Contoso, O=Contoso, C=US",
       user_writable_dir: false,
     },
-    cli_manifest: {},
+    cli_manifest: { schema_version: 1, subcommands: [{ name: "run", risk: "read-only" }] },
     ...overrides,
   }
 }
@@ -136,9 +136,13 @@ describe("validateAppEntry schema matrix", { concurrency: 1 }, () => {
     assert.equal(validateAppEntry(guiAumidEntry()), null)
   })
 
-  test("accepts a valid cli entry with empty-object cli_manifest placeholder", () => {
+  test("accepts a valid cli entry with schema_version-1 cli_manifest", () => {
     assert.equal(validateAppEntry(cliEntry()), null)
-    assert.equal(validateAppEntry(cliEntry({ cli_manifest: null })), null)
+  })
+
+  test("rejects cli entry without cli_manifest (Phase-2 strict)", () => {
+    assert.ok(validateAppEntry(cliEntry({ cli_manifest: null })) !== null)
+    assert.ok(validateAppEntry(cliEntry({ cli_manifest: {} })) !== null)
   })
 
   test("accepts exe.sha256 and empty templates array", () => {

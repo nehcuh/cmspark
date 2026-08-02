@@ -31,7 +31,7 @@ export const MODEL_STATE_MESSAGES: Record<string, ModelStateMessage> = {
   "model-file-missing": {
     title: "模型文件缺失",
     detail:
-      "TinyClick 模型未下载或已被删除。UIA / OCR / 用户框选定位不受影响；" +
+      "Qwen3-VL 模型未下载或已被删除。UIA / OCR / 用户框选定位不受影响；" +
       "在设置页下载模型后可启用本实验层。",
     action: "下载模型",
   },
@@ -69,9 +69,9 @@ export const MODEL_STATE_MESSAGES: Record<string, ModelStateMessage> = {
   "disk-budget-exceeded": {
     title: "磁盘预算超限",
     detail:
-      "模型根目录占用（全部变体合计）将超过预算（computer.modelDiskBudgetMB，默认 2048MB）。" +
-      "可调大预算或删除其他变体后重试；其余定位层不受影响。",
-    action: "调整磁盘预算",
+      "可用磁盘不足以容纳所选模型变体（需约「下载体积 + 2GB」余量）。" +
+      "请释放磁盘空间或删除其他变体后重试；其余定位层不受影响。",
+    action: "释放磁盘空间",
   },
   "disk-full": {
     title: "磁盘空间不足",
@@ -130,39 +130,40 @@ export const MODEL_STATE_MESSAGES: Record<string, ModelStateMessage> = {
     action: null,
   },
   "python-missing": {
-    title: "缺少 Python 运行时",
+    title: "需要先安装 Python 3",
     detail:
-      "Qwen3-VL 本机推理需要 Python 3。请安装 python3 后重试下载/启用。" +
+      "实验层在本机 Companion 中下载与运行，需要 Python 3。" +
+      "Mac：终端执行 brew install python3；Windows：从 python.org 安装并勾选 PATH。完成后重启 CMspark。" +
       "UIA / OCR / 用户框选定位不受影响。",
     action: null,
   },
   "hf-hub-missing": {
-    title: "缺少 huggingface_hub",
+    title: "本机尚未准备好「模型下载组件」",
     detail:
-      "请执行 pip install huggingface_hub 后重试下载。中国大陆可改用下载源「魔搭 ModelScope」并 pip install modelscope。" +
+      "还不能从当前下载源拉取模型。请打开设置 → 实验功能，按「环境检查」清单复制安装命令到终端执行（约 1～3 分钟），或改选下载源「魔搭 ModelScope」。" +
       "UIA / OCR / 用户框选定位不受影响。",
-    action: "重试下载",
+    action: "查看环境检查",
   },
   "modelscope-missing": {
-    title: "缺少 modelscope",
+    title: "本机尚未准备好「模型下载组件」",
     detail:
-      "当前下载源为 ModelScope，请执行 pip install modelscope 后重试。" +
-      "也可改选 HF 镜像并安装 huggingface_hub。UIA / OCR / 用户框选定位不受影响。",
-    action: "重试下载",
+      "当前为大陆推荐源，仍需在本机安装下载组件。请打开设置 → 实验功能，按「环境检查」清单中的一键命令在终端执行后再点下载。" +
+      "UIA / OCR / 用户框选定位不受影响。",
+    action: "查看环境检查",
   },
   "download-failed": {
     title: "模型下载失败",
     detail:
-      "从 Hugging Face 下载 Qwen3-VL 失败（网络或仓库不可用）。可配置镜像后重试；" +
+      "网络或下载源暂时不可用。可改选「魔搭 ModelScope」或「HF 镜像」后重试；并确认磁盘空间充足。" +
       "其余定位层不受影响。",
     action: "重试下载",
   },
   "model-variant-missing": {
-    title: "当前变体未下载",
+    title: "当前规模尚未下载",
     detail:
-      "当前配置交付变体的模型文件未下载或不完整。下载当前变体后方可启用实验层；" +
+      "所选模型规模的文件未下载或不完整。请先完成环境检查中的软件项，再点「下载模型」。" +
       "UIA / OCR / 用户框选定位不受影响。",
-    action: "下载当前变体",
+    action: "下载当前规模",
   },
   "circuit-breaker": {
     title: "模型层已熔断停用",
@@ -215,7 +216,7 @@ export const MODEL_SWITCH_COPY: ModelSwitchCopy = {
     "UIA / OCR / 用户框选兜底不受影响。",
   licenseDoorHint:
     "首次开启需阅读并接受模型许可证与免责声明；" +
-    "拒绝则本实验层永久跳过，其余定位层不受影响。",
+    "拒绝则本实验层跳过，其余定位层不受影响；之后可在设置页「复位许可拒绝」重新打开流程。",
   firstLoadTimeline:
     "模型首次加载可能需数十秒至数分钟（取决于硬件与是否 GPU）；" +
     "加载期间 UIA / OCR / 用户框选定位不受影响。",
@@ -227,8 +228,8 @@ export const MODEL_SWITCH_COPY: ModelSwitchCopy = {
   statusReadyDisabled: "模型已下载就绪——实验层未开启。",
   downloadInProgress: "模型下载中",
   licenseDeclinedNotice:
-    "你已拒绝实验层许可证——本层永久跳过，其余定位层不受影响。" +
-    "（复位路径 = 手动编辑 config.json，属显式 owner opt-in。）",
+    "你已拒绝实验层许可证——本层已跳过，其余定位层不受影响。" +
+    "可在设置页「实验层」重新打开许可流程以复位拒绝（无需手改 config.json）。",
 }
 
 /** Static resource tips (mirrored from companion qwen-vl-catalog; UI fallback). */
@@ -345,7 +346,7 @@ export function licenseDoorShouldOpen(door: ComputerModelLicenseDoor | null): bo
 
 /**
  * 开关禁用原因（组件据此禁用开关行）：
- *   许可证已拒绝 → 永久跳过提示（裁决 2，无 UI 复位）；其余 → null（可拨动）。
+ *   许可证已拒绝 → 跳过提示（可复位）（裁决 2，设置页「复位许可拒绝」可复位）；其余 → null（可拨动）。
  */
 export function modelSwitchDisabledReason(modelState: ComputerModelState | null): string | null {
   if (modelState?.modelLicenseDeclined === true) return MODEL_SWITCH_COPY.licenseDeclinedNotice

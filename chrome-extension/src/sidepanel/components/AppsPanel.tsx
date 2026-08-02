@@ -238,9 +238,7 @@ export function AppsPanel() {
         </div>
 
         {segment === "cli" && (
-          <div style={styles.emptyText}>
-            CLI 工具将在 Phase 2 提供（结构化 subcommand 契约）。
-          </div>
+          <CliToolsSegment appsEnabled={appsEnabled} />
         )}
 
         {segment === "apps" && (
@@ -718,6 +716,119 @@ function CandidateRow({
 }
 
 // --- Styles (mirror McpPanel) ---
+
+
+/** Segment B — CLI tools (Phase-2 structured host_cli). Policy cap: ai/manual only. */
+function CliToolsSegment({ appsEnabled }: { appsEnabled: boolean }) {
+  const { state, dispatch } = useAgentStore()
+  const [path, setPath] = useState("")
+  const [name, setName] = useState("")
+  const [manifestJson, setManifestJson] = useState(
+    '{\n  "schema_version": 1,\n  "subcommands": [\n    {\n      "name": "run",\n      "risk": "read-only",\n      "positionals": [{ "name": "token", "required": true, "value_regex": "^[A-Za-z0-9._-]{1,64}$" }]\n    }\n  ]\n}',
+  )
+  const [err, setErr] = useState<string | null>(null)
+  const cliEntries = state.appEntries.filter((e) => e.kind === "cli")
+
+  const handleAdd = () => {
+    setErr(null)
+    let manifest: unknown
+    try {
+      manifest = JSON.parse(manifestJson)
+    } catch {
+      setErr("cli_manifest JSON 无效")
+      return
+    }
+    if (!path.trim()) {
+      setErr("需要绝对路径")
+      return
+    }
+    dispatch({ type: "SET_APPS_ERROR", error: null })
+    chrome.runtime.sendMessage({
+      type: "apps.add",
+      kind: "cli",
+      path: path.trim(),
+      display_name: name.trim() || undefined,
+      origin: "manual-paste",
+      policy: "manual",
+      cli_manifest: manifest,
+    })
+  }
+
+  return (
+    <div>
+      <div style={{ fontSize: 11, color: "#666", marginBottom: 8, lineHeight: 1.45 }}>
+        结构化 CLI：仅声明的 subcommand/flag/positional 可执行（host_cli）。策略最高「AI 判断」，无免确认。输出视为不可信。
+      </div>
+      {cliEntries.length === 0 ? (
+        <div style={styles.emptyText}>尚未添加 CLI 工具</div>
+      ) : (
+        cliEntries.map((e) => (
+          <div key={e.token} style={styles.appCard}>
+            <div style={{ fontWeight: 600, fontSize: 12 }}>{e.display_name}</div>
+            <div style={{ fontSize: 10, color: "#888" }}>{e.token}</div>
+            <div style={{ fontSize: 10, color: "#666", marginTop: 2 }}>
+              policy: {e.policy} · {e.enabled ? "启用" : "停用"}
+            </div>
+            <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+              <button
+                type="button"
+                style={styles.dismissBtn}
+                onClick={() =>
+                  chrome.runtime.sendMessage({
+                    type: "apps.set_enabled",
+                    token: e.token,
+                    enabled: !e.enabled,
+                  })
+                }
+              >
+                {e.enabled ? "停用" : "启用"}
+              </button>
+              <button
+                type="button"
+                style={styles.dismissBtn}
+                onClick={() => {
+                  if (confirm(`删除 CLI "${e.display_name}"？`)) {
+                    chrome.runtime.sendMessage({ type: "apps.remove", token: e.token })
+                  }
+                }}
+              >
+                删除
+              </button>
+            </div>
+          </div>
+        ))
+      )}
+      <div style={{ marginTop: 12, borderTop: "1px solid #eee", paddingTop: 10 }}>
+        <div style={{ fontWeight: 600, fontSize: 12, marginBottom: 6 }}>添加 CLI（粘贴绝对路径 + manifest）</div>
+        <input
+          style={{ width: "100%", fontSize: 11, marginBottom: 6, boxSizing: "border-box" }}
+          placeholder="绝对路径（如 /usr/bin/rg 或 C:\\tools\\rg.exe）"
+          value={path}
+          onChange={(ev) => setPath(ev.target.value)}
+          disabled={!appsEnabled}
+        />
+        <input
+          style={{ width: "100%", fontSize: 11, marginBottom: 6, boxSizing: "border-box" }}
+          placeholder="显示名（可选）"
+          value={name}
+          onChange={(ev) => setName(ev.target.value)}
+          disabled={!appsEnabled}
+        />
+        <textarea
+          style={{ width: "100%", fontSize: 10, minHeight: 120, fontFamily: "monospace", boxSizing: "border-box" }}
+          value={manifestJson}
+          onChange={(ev) => setManifestJson(ev.target.value)}
+          disabled={!appsEnabled}
+        />
+        {err && <div style={{ color: "#b91c1c", fontSize: 11, marginTop: 4 }}>{err}</div>}
+        <button type="button" style={{ ...styles.dismissBtn, marginTop: 6 }} onClick={handleAdd} disabled={!appsEnabled}>
+          添加 CLI 工具
+        </button>
+      </div>
+    </div>
+  )
+}
+
 
 const styles: Record<string, React.CSSProperties> = {
   panelContent: {

@@ -74,6 +74,7 @@ test("download：started + 立即 downloading 广播；fake downloadImpl", async
     { broadcast: (d) => broadcasts.push(d) },
     holderWith(null),
     {
+      canDownloadProbe: () => true,
       downloadImpl: async () => {
         await pending
         return { dir: "/tmp/x" }
@@ -96,6 +97,7 @@ test("download：失败 reason 挂 state", async () => {
     { broadcast: (d) => broadcasts.push(d) },
     holderWith(null),
     {
+      canDownloadProbe: () => true,
       downloadImpl: async () => {
         throw new QwenDownloadError("python-missing", "no py")
       },
@@ -117,6 +119,7 @@ test("license_response accepted → 写哈希 + 自动 download started", async 
     {},
     holderWith(null),
     {
+      canDownloadProbe: () => true,
       downloadImpl: async () => {
         dl++
         return { dir: "/tmp" }
@@ -124,7 +127,7 @@ test("license_response accepted → 写哈希 + 自动 download started", async 
     },
   )
   assert.equal(r.licenseAccepted, true)
-  assert.ok(r.download === "started" || r.download === "already-running")
+  assert.ok(r.download === "started" || r.download === "already-running" || r.download === "skipped-env-not-ready")
   assert.equal(getConfig().computer?.modelLicenseAcceptedTextHash, LICENSE_DOOR_TEXT_HASH)
   for (let i = 0; i < 8; i++) await flush()
   assert.ok(dl >= 0)
@@ -138,4 +141,108 @@ test("get_state：含 availableVariants 与 resourceTip", async () => {
   assert.deepEqual(r.availableVariants, ["2b", "4b", "8b"])
   assert.ok(r.resourceTip)
   assert.ok(r.minRamGb >= 8)
+})
+
+test("set_enabled(true): !canEnable → CANNOT_ENABLE, zero config write", async () => {
+  resetModelConfig({
+    coordinateEnabled: false,
+    modelVariant: "2b",
+    modelLicenseAcceptedAt: new Date().toISOString(),
+    modelLicenseAcceptedTextHash: LICENSE_DOOR_TEXT_HASH,
+    modelEnabled: false,
+  })
+  const r: any = await handleComputerModelMessage(
+    { type: "computer.model.set_enabled", enabled: true, source: "settings" },
+    {
+      requestConfirmation: async () => ({ approved: true, method: "test" }),
+    },
+    holderWith(null),
+    {
+      canEnableProbe: () => false,
+      gate: async () => ({ approved: true, method: "touchid" as const, nonce: "n1" }),
+    },
+  )
+  assert.equal(r.type, "error")
+  assert.equal(r.code, "CANNOT_ENABLE")
+  assert.equal(getConfig().computer?.modelEnabled, false)
+})
+
+test("set_enabled(true): canEnable + gate approve → modelEnabled true", async () => {
+  resetModelConfig({
+    coordinateEnabled: false,
+    modelVariant: "2b",
+    modelLicenseAcceptedAt: new Date().toISOString(),
+    modelLicenseAcceptedTextHash: LICENSE_DOOR_TEXT_HASH,
+    modelEnabled: false,
+  })
+  const r: any = await handleComputerModelMessage(
+    { type: "computer.model.set_enabled", enabled: true, source: "settings" },
+    {
+      requestConfirmation: async () => ({ approved: true, method: "test" }),
+    },
+    holderWith(null),
+    {
+      canEnableProbe: () => true,
+      gate: async () => ({ approved: true, method: "touchid" as const, nonce: "n1" }),
+    },
+  )
+  assert.notEqual(r.type, "error")
+  assert.equal(getConfig().computer?.modelEnabled, true)
+})
+
+test("license_response reset_decline clears permanent skip", async () => {
+  resetModelConfig({
+    coordinateEnabled: false,
+    modelVariant: "2b",
+    modelLicenseDeclined: true,
+  })
+  const r: any = await handleComputerModelMessage(
+    { type: "computer.model.license_response", reset_decline: true, source: "settings" },
+    {},
+    holderWith(null),
+  )
+  assert.equal(getConfig().computer?.modelLicenseDeclined, false)
+  assert.equal(r.declineReset, true)
+})
+
+test("validateWsMessage: license_response reset_decline without accepted is valid", () => {
+  assert.equal(
+    validateWsMessage({
+      type: "computer.model.license_response",
+      reset_decline: true,
+      source: "settings",
+    }).valid,
+    true,
+  )
+  assert.equal(
+    validateWsMessage({
+      type: "computer.model.license_response",
+      source: "settings",
+    }).valid,
+    false,
+  )
+})
+
+test("download refuses when env not ready (CANNOT_DOWNLOAD)", async () => {
+  resetModelConfig({
+    coordinateEnabled: false,
+    modelVariant: "2b",
+    modelLicenseAcceptedAt: new Date().toISOString(),
+    modelLicenseAcceptedTextHash: LICENSE_DOOR_TEXT_HASH,
+    // force isolated without venv — canDownload false
+    pythonMode: "isolated",
+  } as any)
+  // Point DATA_DIR is test dir; isolated env won't exist
+  const r: any = await handleComputerModelMessage(
+    { type: "computer.model.download", source: "settings" },
+    {},
+    holderWith(null),
+    {
+      downloadImpl: async () => {
+        throw new Error("should not download")
+      },
+    },
+  )
+  assert.equal(r.type, "error")
+  assert.equal(r.code, "CANNOT_DOWNLOAD")
 })

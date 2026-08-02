@@ -272,7 +272,7 @@ test("状态行文案：就绪双态 + 下载前缀 + 拒绝恒态（无未校�
   assert.ok(MODEL_SWITCH_COPY.statusReadyEnabled.includes("人工确认"), "开启态仍须 G4 叙事")
   assert.ok(MODEL_SWITCH_COPY.statusReadyDisabled.includes("未开启"))
   assert.ok(MODEL_SWITCH_COPY.downloadInProgress.includes("下载"))
-  assert.ok(MODEL_SWITCH_COPY.licenseDeclinedNotice.includes("永久跳过"))
+  assert.ok(MODEL_SWITCH_COPY.licenseDeclinedNotice.includes("跳过"))
   assert.ok(MODEL_SWITCH_COPY.licenseDeclinedNotice.includes("不受影响"))
   for (const s of [
     MODEL_SWITCH_COPY.statusReadyEnabled,

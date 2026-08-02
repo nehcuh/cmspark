@@ -37,7 +37,7 @@ def _reply(obj: dict) -> None:
 
 
 def _parse_point(text: str, width: int, height: int) -> Optional[Tuple[int, int]]:
-    """Extract click point from model text. Supports JSON, (x,y), and 0–1000 relative."""
+    """Extract click point from model text. Supports JSON and (x,y) image pixels."""
     if not text:
         return None
     # JSON object with x/y
@@ -63,19 +63,14 @@ def _parse_point(text: str, width: int, height: int) -> Optional[Tuple[int, int]
 
 
 def _normalize(x: float, y: float, width: int, height: int) -> Tuple[int, int]:
-    # Qwen3-VL often uses 0–1000 relative boxes/points
-    if 0 <= x <= 1000 and 0 <= y <= 1000 and (x > width or y > height or (x <= 1000 and y <= 1000 and width > 1000)):
-        # If both coords look like 0-1000 space relative to a large screenshot
-        if x <= 1000 and y <= 1000 and (width > 1000 or height > 1000 or max(x, y) > 1):
-            # Prefer relative mapping when values are in [0,1000] and not already pixel-ish
-            if x <= 1000 and y <= 1000 and not (x < width and y < height and max(x, y) > 1000):
-                # Heuristic: if both ≤1000 and image is larger, treat as relative
-                if width >= 200 or height >= 200:
-                    if x <= 1000 and y <= 1000 and (x > 1 or y > 1):
-                        # relative 0-1000 → pixels
-                        px = int(round(x / 1000.0 * width))
-                        py = int(round(y / 1000.0 * height))
-                        return max(0, min(width - 1, px)), max(0, min(height - 1, py))
+    """Clamp to image pixels only (SoT D3 / L-QW-3).
+
+    Never treat in-bounds or 0–1000 values as relative-to-1000 when they already
+    fit the image — false scaling on wide screens was a P0 blocker.
+    Explicit out-of-bounds coords (>width/height) still clamp, not rescale.
+    """
+    if width <= 0 or height <= 0:
+        return 0, 0
     px = int(round(x))
     py = int(round(y))
     return max(0, min(width - 1, px)), max(0, min(height - 1, py))
