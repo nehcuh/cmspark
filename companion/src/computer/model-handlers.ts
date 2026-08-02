@@ -211,18 +211,33 @@ async function statePayload(
     minVramGb: meta.minVramGb,
     availableVariants: ["2b", "4b", "8b"] as const,
     downloadSource: (cfg as any).modelDownloadSource ?? "auto",
+    // Product UX: always emit canDownload/canEnable as booleans so the UI never
+    // treats "unknown" as "allowed to click download".
     ...(preflight
       ? {
           preflight,
-          canDownload: preflight.canDownload,
-          canEnable: preflight.canEnable && modelLicenseAccepted(cfg) && !cfg.modelLicenseDeclined,
+          canDownload: preflight.canDownload === true,
+          canEnable:
+            preflight.canEnable === true &&
+            modelLicenseAccepted(cfg) &&
+            !cfg.modelLicenseDeclined,
           readinessSummary: preflight.readinessSummary,
           nextSteps: preflight.nextSteps,
           recommendedVariant: preflight.recommendedVariant,
           downloadSourceResolved: preflight.downloadSourceResolved,
           downloadSourceReason: preflight.downloadSourceReason,
+          downloadBlockReason: preflight.downloadBlockReason,
+          enableBlockReason: preflight.enableBlockReason,
         }
-      : {}),
+      : {
+          canDownload: false,
+          canEnable: false,
+          readinessSummary: "正在检测本机环境（Python / 磁盘 / 硬件）…",
+          nextSteps: [
+            "请稍候；若长时间无结果，请重启 CMspark 后再打开本页。",
+            "实验层依赖本机 Python 与下载组件，不会在浏览器插件内下载模型。",
+          ],
+        }),
     ...(sizeBytes !== undefined ? { sizeBytes } : {}),
     ...(errorReason !== undefined ? { error: errorReason } : {}),
     faults: session?.getFaults() ?? 0,

@@ -161,7 +161,15 @@ export async function downloadQwenVlVariant(args: DownloadQwenArgs): Promise<{ d
   }
 
   const run = args.runPython ?? defaultRunPython
-  const pyCandidates = process.platform === "win32" ? ["python", "py"] : ["python3", "python"]
+  // Prefer ~/.cmspark-agent/python-env when present (PEP 668 / GUI PATH).
+  const venvPy =
+    process.platform === "win32"
+      ? path.join(DATA_DIR, "python-env", "Scripts", "python.exe")
+      : path.join(DATA_DIR, "python-env", "bin", "python3")
+  const pyCandidates =
+    process.platform === "win32"
+      ? [venvPy, "python", "py"]
+      : [venvPy, "python3", "python"]
   let lastErr = ""
   for (const py of pyCandidates) {
     const result = await run([py, "-c", DOWNLOAD_SCRIPT, source, modelId, dir], env)

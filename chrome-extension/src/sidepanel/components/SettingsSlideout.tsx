@@ -819,57 +819,157 @@ export function SettingsSlideout() {
                   ③ 选择模型规模 → ④ 下载权重 → ⑤ 开启实验层。
                   插件本身不跑模型，只通过 Companion 发现/下载/启用。
                 </div>
-                {model?.readinessSummary && (
-                  <div
-                    style={{
-                      ...styles.helpText,
-                      marginTop: 6,
-                      padding: "6px 8px",
-                      borderRadius: 6,
-                      background: model.canEnable ? tokens.successSoft : tokens.accentSoft || "#f0f4ff",
-                      color: model.canEnable ? tokens.success : "#333",
-                    }}
-                  >
-                    <strong>就绪：</strong>
-                    {model.readinessSummary}
-                    {model.preflight?.hardware && (
-                      <div style={{ marginTop: 4, fontSize: 11, opacity: 0.85 }}>
-                        硬件：内存 {model.preflight.hardware.totalRamGb ?? "?"}GB
-                        {model.preflight.hardware.vramGb != null
-                          ? ` · 显存 ${model.preflight.hardware.vramGb}GB`
-                          : ""}
-                        {model.preflight.hardware.accelerator
-                          ? ` · 加速 ${model.preflight.hardware.accelerator}`
-                          : ""}
-                        {model.preflight.hardware.freeDiskGb != null
-                          ? ` · 可用磁盘 ${model.preflight.hardware.freeDiskGb}GB`
-                          : ""}
-                        {model.recommendedVariant
-                          ? ` · 建议规模 ${String(model.recommendedVariant).toUpperCase()}`
-                          : ""}
+                {/* 环境检查：显著清单（软件 / 硬件 / 模型）——用户无需知道包名 */}
+                <div
+                  style={{
+                    marginTop: 10,
+                    padding: "10px 10px 8px",
+                    borderRadius: 8,
+                    border: `1px solid ${
+                      model?.canEnable
+                        ? (tokens.success as string) || "#2e7d32"
+                        : model?.canDownload === true
+                          ? "#f0c14b"
+                          : "#e57373"
+                    }`,
+                    background: model?.canEnable
+                      ? tokens.successSoft || "#e8f5e9"
+                      : model?.canDownload === true
+                        ? "#fff8e1"
+                        : "#ffebee",
+                  }}
+                >
+                  <div style={{ fontWeight: 700, fontSize: 12, marginBottom: 4, color: "#222" }}>
+                    环境检查（下载 / 启用前必看）
+                  </div>
+                  <div style={{ fontSize: 12, lineHeight: 1.45, color: "#333", marginBottom: 6 }}>
+                    <strong>状态：</strong>
+                    {model?.readinessSummary ||
+                      model?.preflight?.readinessSummary ||
+                      "等待 Companion 回报本机环境…"}
+                  </div>
+                  {Array.isArray(model?.preflight?.requirements) &&
+                  model!.preflight!.requirements!.length > 0 ? (
+                    <ul
+                      style={{
+                        margin: "0 0 6px 0",
+                        padding: 0,
+                        listStyle: "none",
+                        fontSize: 11,
+                        lineHeight: 1.5,
+                      }}
+                    >
+                      {model!.preflight!.requirements!.map((r) => (
+                        <li
+                          key={r.id}
+                          style={{
+                            display: "flex",
+                            gap: 6,
+                            marginBottom: 4,
+                            alignItems: "flex-start",
+                            color: r.ok ? "#2e7d32" : r.blocking ? "#b71c1c" : "#e65100",
+                          }}
+                        >
+                          <span style={{ flexShrink: 0, fontWeight: 700 }}>{r.ok ? "✓" : "✗"}</span>
+                          <span>
+                            <span style={{ fontWeight: 600 }}>{r.label}</span>
+                            {r.detail ? (
+                              <span style={{ display: "block", color: "#555", fontWeight: 400 }}>
+                                {r.detail}
+                              </span>
+                            ) : null}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : model?.preflight?.hardware ? (
+                    <div style={{ fontSize: 11, color: "#555", marginBottom: 6 }}>
+                      硬件快照：内存 {model.preflight.hardware.totalRamGb ?? "?"}GB
+                      {model.preflight.hardware.vramGb != null
+                        ? ` · 显存 ${model.preflight.hardware.vramGb}GB`
+                        : ""}
+                      {model.preflight.hardware.accelerator
+                        ? ` · 加速 ${model.preflight.hardware.accelerator}`
+                        : ""}
+                      {model.preflight.hardware.freeDiskGb != null
+                        ? ` · 可用磁盘 ${model.preflight.hardware.freeDiskGb}GB`
+                        : ""}
+                      {model.recommendedVariant
+                        ? ` · 建议规模 ${String(model.recommendedVariant).toUpperCase()}`
+                        : ""}
+                    </div>
+                  ) : null}
+                  {(model?.downloadBlockReason || model?.preflight?.downloadBlockReason) &&
+                    model?.canDownload !== true && (
+                      <div
+                        style={{
+                          fontSize: 11,
+                          fontWeight: 600,
+                          color: "#b71c1c",
+                          marginBottom: 6,
+                          lineHeight: 1.4,
+                        }}
+                      >
+                        暂不可下载：
+                        {model?.downloadBlockReason || model?.preflight?.downloadBlockReason}
                       </div>
                     )}
-                  </div>
-                )}
-                {Array.isArray(model?.nextSteps) && model!.nextSteps!.length > 0 && (
-                  <ol style={{ ...styles.helpText, margin: "6px 0 0 0", paddingLeft: 18 }}>
-                    {model!.nextSteps!.slice(0, 6).map((step, i) => (
-                      <li key={i} style={{ marginBottom: 2 }}>
-                        {step}
-                      </li>
-                    ))}
-                  </ol>
-                )}
-                {Array.isArray(model?.preflight?.installCommands) &&
-                  model!.preflight!.installCommands!.length > 0 && (
-                    <div style={{ ...styles.helpText, marginTop: 4, fontFamily: "ui-monospace, monospace", fontSize: 11 }}>
-                      {model!.preflight!.installCommands!.map((c) => (
-                        <div key={c} style={{ marginTop: 2 }}>
-                          $ {c}
-                        </div>
+                  {(model?.enableBlockReason || model?.preflight?.enableBlockReason) &&
+                    model?.canEnable !== true &&
+                    model?.modelStatus === "ready" && (
+                      <div
+                        style={{
+                          fontSize: 11,
+                          fontWeight: 600,
+                          color: "#e65100",
+                          marginBottom: 6,
+                          lineHeight: 1.4,
+                        }}
+                      >
+                        暂不可开启：
+                        {model?.enableBlockReason || model?.preflight?.enableBlockReason}
+                      </div>
+                    )}
+                  {Array.isArray(model?.nextSteps) && model!.nextSteps!.length > 0 && (
+                    <ol style={{ margin: "0 0 6px 0", paddingLeft: 18, fontSize: 11, color: "#333" }}>
+                      {model!.nextSteps!.slice(0, 6).map((step, i) => (
+                        <li key={i} style={{ marginBottom: 3 }}>
+                          {step}
+                        </li>
                       ))}
-                    </div>
+                    </ol>
                   )}
+                  {Array.isArray(model?.preflight?.installCommands) &&
+                    model!.preflight!.installCommands!.length > 0 && (
+                      <div style={{ marginTop: 4 }}>
+                        <div style={{ fontSize: 11, fontWeight: 600, color: "#333", marginBottom: 4 }}>
+                          一键安装命令（复制到「终端」执行）
+                        </div>
+                        {model!.preflight!.installCommands!.map((c) => (
+                          <div
+                            key={c}
+                            style={{
+                              fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                              fontSize: 10,
+                              background: "#1e1e1e",
+                              color: "#e0e0e0",
+                              padding: "8px 8px",
+                              borderRadius: 6,
+                              marginBottom: 4,
+                              wordBreak: "break-all",
+                              userSelect: "all",
+                            }}
+                            title="点击三下可选中全文复制"
+                          >
+                            {c}
+                          </div>
+                        ))}
+                        <div style={{ fontSize: 10, color: "#666", marginTop: 2 }}>
+                          完成后回到本页，清单应变为绿色，再点「下载模型」。无需理解软件包名称。
+                        </div>
+                      </div>
+                    )}
+                </div>
 
                 {/* 下载源 */}
                 <div style={{ ...styles.helpText, marginTop: 10, fontWeight: 600 }}>下载源</div>
@@ -979,11 +1079,14 @@ export function SettingsSlideout() {
                       model === null ||
                       model.modelStatus === "downloading" ||
                       model.modelStatus === "ready" ||
-                      model.canDownload === false
+                      // Fail-closed: only enable when Companion explicitly says canDownload
+                      model.canDownload !== true
                     }
                     title={
-                      model?.canDownload === false
-                        ? "环境未就绪：请先按上方步骤安装 Python/依赖"
+                      model?.canDownload !== true
+                        ? model?.downloadBlockReason ||
+                          model?.preflight?.downloadBlockReason ||
+                          "环境未就绪：请先完成上方「环境检查」中的软件/磁盘项"
                         : "从当前下载源拉取权重到本机 Companion 数据目录"
                     }
                     onClick={() => {
@@ -991,7 +1094,7 @@ export function SettingsSlideout() {
                       send({ type: "computer.model.download", source: "settings" })
                     }}
                   >
-                    下载模型
+                    {model?.canDownload === true ? "下载模型" : "下载模型（先完成环境检查）"}
                   </button>
                   <button
                     style={{

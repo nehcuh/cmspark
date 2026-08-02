@@ -127,39 +127,40 @@ export const MODEL_STATE_MESSAGES: Record<string, ModelStateMessage> = {
     action: null,
   },
   "python-missing": {
-    title: "缺少 Python 运行时",
+    title: "需要先安装 Python 3",
     detail:
-      "Qwen3-VL 本机推理需要 Python 3。请安装 python3 后重试下载/启用。" +
+      "实验层在本机 Companion 中下载与运行，需要 Python 3。" +
+      "Mac：终端执行 brew install python3；Windows：从 python.org 安装并勾选 PATH。完成后重启 CMspark。" +
       "UIA / OCR / 用户框选定位不受影响。",
     action: null,
   },
   "hf-hub-missing": {
-    title: "缺少 huggingface_hub",
+    title: "本机尚未准备好「模型下载组件」",
     detail:
-      "请执行 pip install huggingface_hub 后重试下载。中国大陆可改用下载源「魔搭 ModelScope」并 pip install modelscope。" +
+      "还不能从当前下载源拉取模型。请打开设置 → 实验功能，按「环境检查」清单复制安装命令到终端执行（约 1～3 分钟），或改选下载源「魔搭 ModelScope」。" +
       "UIA / OCR / 用户框选定位不受影响。",
-    action: "重试下载",
+    action: "查看环境检查",
   },
   "modelscope-missing": {
-    title: "缺少 modelscope",
+    title: "本机尚未准备好「模型下载组件」",
     detail:
-      "当前下载源为 ModelScope，请执行 pip install modelscope 后重试。" +
-      "也可改选 HF 镜像并安装 huggingface_hub。UIA / OCR / 用户框选定位不受影响。",
-    action: "重试下载",
+      "当前为大陆推荐源，仍需在本机安装下载组件。请打开设置 → 实验功能，按红色/橙色「环境检查」清单中的一键命令在终端执行后再点下载。" +
+      "UIA / OCR / 用户框选定位不受影响。",
+    action: "查看环境检查",
   },
   "download-failed": {
     title: "模型下载失败",
     detail:
-      "从 Hugging Face 下载 Qwen3-VL 失败（网络或仓库不可用）。可配置 HF_ENDPOINT/镜像后重试；" +
+      "网络或下载源暂时不可用。可改选「魔搭 ModelScope」或「HF 镜像」后重试；并确认磁盘空间充足。" +
       "其余定位层不受影响。",
     action: "重试下载",
   },
   "model-variant-missing": {
-    title: "当前变体未下载",
+    title: "当前规模尚未下载",
     detail:
-      "当前配置交付变体的模型文件未下载或不完整。下载当前变体后方可启用实验层；" +
+      "所选模型规模的文件未下载或不完整。请先完成环境检查中的软件项，再点「下载模型」。" +
       "UIA / OCR / 用户框选定位不受影响。",
-    action: "下载当前变体",
+    action: "下载当前规模",
   },
   // --- WP5-I4 WI-4.4 熔断状态文案（runtime 熔断广播 reason=circuit-breaker） ---------
   "circuit-breaker": {

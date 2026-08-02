@@ -570,6 +570,9 @@ export interface ComputerModelState {
   nextSteps?: string[]
   canDownload?: boolean
   canEnable?: boolean
+  /** Plain-language why download button is blocked */
+  downloadBlockReason?: string
+  enableBlockReason?: string
   preflight?: {
     readinessSummary?: string
     nextSteps?: string[]
@@ -579,6 +582,16 @@ export interface ComputerModelState {
     downloadSourceResolved?: string
     downloadSourceReason?: string
     installCommands?: string[]
+    downloadBlockReason?: string
+    enableBlockReason?: string
+    requirements?: Array<{
+      id: string
+      category: "software" | "hardware" | "model"
+      label: string
+      ok: boolean
+      detail?: string
+      blocking?: boolean
+    }>
     hardware?: {
       totalRamGb?: number
       freeDiskGb?: number | null
