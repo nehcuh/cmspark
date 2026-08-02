@@ -15,6 +15,7 @@ function toolDisplayNameZh(toolName: string): string {
     host_read: "读取本机应用数据",
     host_write: "写入本机应用数据",
     host_app: "启动本机应用",
+    host_cli: "执行白名单 CLI",
     navigate: "打开网页",
     screenshot: "截图",
     get_page_text: "读取页面文字",
@@ -801,6 +802,7 @@ export function createToolExecutor(ws: WebSocket) {
       "board_complete",
     ]
     const hostAppGated = toolName === "host_app" && (os.platform() === "win32" || os.platform() === "darwin")
+    const hostCliGated = toolName === "host_cli" && (os.platform() === "win32" || os.platform() === "darwin")
     // Coordinate computer-use (WP1): critical-class — the task-level L2 dialog
     // is shown EVERY task (god-mode / auto-approve do NOT skip it), always
     // originWs-bound, and input injection is NEVER thread-trusted. Off win32
@@ -815,7 +817,7 @@ export function createToolExecutor(ws: WebSocket) {
       logToolFinish(toolCallId, toolName, startedAt, result)
       return result
     }
-    if ((L2_GATE_TOOLS.includes(toolName) || hostAppGated || hostComputerGated) && !finalParams.security_token) {
+    if ((L2_GATE_TOOLS.includes(toolName) || hostAppGated || hostCliGated || hostComputerGated) && !finalParams.security_token) {
       // shell_exec / netsec use command|targets for L2 preview text (not code/expression).
       // spawn_worker / ask_user use role/question summaries for the Confirm Center.
       const code = String(
@@ -827,6 +829,9 @@ export function createToolExecutor(ws: WebSocket) {
             ? `Spawn worker role=${finalParams.role_label || finalParams.roleLabel || "worker"} alias=${finalParams.alias || ""} pack=${finalParams.pack_id || "none"} allow=${Array.isArray(finalParams.tool_allow) ? finalParams.tool_allow.join(",") : "default"}`
             : "") ||
           (toolName === "ask_user" ? String(finalParams.question || finalParams.prompt || "") : "") ||
+          (toolName === "host_cli"
+            ? `host_cli app=${finalParams.app || ""} sub=${finalParams.subcommand || ""}`
+            : "") ||
           (toolName === "board_complete"
             ? `board_complete empty_complete=${!!finalParams.empty_complete} supporting=${Array.isArray(finalParams.supporting_fact_ids) ? finalParams.supporting_fact_ids.join(",") : ""} residual=${Array.isArray(finalParams.residual_risks) ? finalParams.residual_risks.slice(0, 3).join(" | ") : ""} reason=${finalParams.empty_complete_reason || finalParams.goal_summary || ""}`
             : "") ||
@@ -995,6 +1000,8 @@ export function createToolExecutor(ws: WebSocket) {
                 budget: budgetN,
                 actionCount,
                 experimental: experimentalFlag,
+                // L-QW-2: config-level block — action.experimental alone is insufficient
+                modelEnabled: getConfig().computer?.modelEnabled === true,
               })
             ) {
               hostComputerTrustSkip = true
@@ -1138,11 +1145,24 @@ export function createToolExecutor(ws: WebSocket) {
       // launch of an auto-policy app skips L2. (P1 ships launch only; any
       // future with-args op must NOT inherit this skip — adversary D3.)
       const appWhitelisted = hostApp?.policy === "auto"
-      const skipConfirmation = securityConfig.auto_approve_dangerous === true
+      let skipConfirmation = securityConfig.auto_approve_dangerous === true
         || securityConfig.allow_all_schemes === true
         || (relevantDomain !== "" && isAutoApprovedDomain(relevantDomain))
         || threadTrusted
         || appWhitelisted
+      // Q5 (L-CLI-5): after host_cli output in this thread, force L2 for host_cli
+      // and host_app until the next real user message.
+      try {
+        const { isCliOutputTainted } = require("./apps/cli-q5") as typeof import("./apps/cli-q5")
+        const q5Thread =
+          typeof (finalParams as any).__thread_id === "string"
+            ? String((finalParams as any).__thread_id)
+            : sessionId
+        if (isCliOutputTainted(q5Thread) && (toolName === "host_cli" || toolName === "host_app")) {
+          skipConfirmation = false
+          logger.info("security.cli_q5_force_l2", { tool_name: toolName, thread: q5Thread })
+        }
+      } catch { /* ignore */ }
       // §6.2 CRITICAL_API_GATE: detectCriticalApis() is the never-auto-approved
       // subset of detectDangerousApis() (exfil + sandbox-escape + obfuscation
       // variants). Even when skipConfirmation is true (god-mode / global toggle
@@ -1163,7 +1183,8 @@ export function createToolExecutor(ws: WebSocket) {
         toolName === "netsec_port_scan" ||
         toolName === "spawn_worker" ||
         toolName === "ask_user" ||
-        toolName === "board_complete"
+        toolName === "board_complete" ||
+        toolName === "host_cli" // L-CLI-9: god-mode never skips host_cli L2
       const criticalApis = hostComputerGated
         ? ["computer.coordinate_injection"]
         : capabilityForceConfirm
@@ -3739,6 +3760,105 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
         return { success: false, error: `host_app launch failed: ${err?.message || String(err)}` }
       }
     }
+
+    case "host_cli": {
+      // Apps Phase-2: structured CLI (L-CLI-*). Three-place gate: ① L2 list ② binding ③ here.
+      if (params.security_token) {
+        const valid = securityPolicy.validateTokenFor(
+          String(params.security_token),
+          "host_cli",
+          params,
+        )
+        if (!valid) {
+          return { success: false, error: "Invalid or expired security token for host_cli" }
+        }
+      } else {
+        return { success: false, error: "host_cli requires L2 security_token confirmation" }
+      }
+      const isMac = os.platform() === "darwin"
+      const isWin = os.platform() === "win32"
+      if (!isWin && !isMac) {
+        return { success: false, error: `host_cli requires macOS or Windows (platform=${os.platform()})` }
+      }
+      const appToken = String(params.app || "")
+      const subcommand = String(params.subcommand || "")
+      if (!APP_TOKEN_PATTERN.test(appToken) || !appToken.includes(".cli.")) {
+        return { success: false, error: `host_cli: invalid CLI app token "${appToken}"` }
+      }
+      const appsCfg = getConfig().apps
+      if (!appsCfg || appsCfg.enabled === false) {
+        return { success: false, error: "host_cli: the Apps feature is disabled" }
+      }
+      const entry = appsCfg.entries?.[appToken]
+      if (!entry || entry.kind !== "cli") {
+        return { success: false, error: `host_cli: unknown or non-cli token "${appToken}"` }
+      }
+      if (!entry.enabled) {
+        return { success: false, error: `host_cli: "${entry.display_name}" is disabled` }
+      }
+      if (entry.policy === "auto") {
+        // L-CLI-1 belt: config tamper may set auto — still never silent (token already required)
+      }
+      try {
+        const { prepareCliExecution, runCliExecFile } = await import("./apps/cli-exec")
+        const { markCliOutputSeen } = await import("./apps/cli-q5")
+        const prepared = prepareCliExecution(entry, {
+          app: appToken,
+          subcommand,
+          flags: params.flags,
+          args: params.args,
+        })
+        if (!prepared.ok) {
+          return { success: false, error: `host_cli: ${prepared.error}` }
+        }
+        // Dangerous risk: still require L2 (already have token); biometric floor deferred to L2 dialog riskLevel
+        const result = await runCliExecFile(prepared.exe, prepared.argv, {
+          timeoutMs: prepared.timeoutMs,
+          maxOutputBytes: prepared.maxOutputBytes,
+        })
+        const threadForQ5 =
+          typeof (params as any).__thread_id === "string"
+            ? String((params as any).__thread_id)
+            : execOpts?.computerSessionId
+        if (threadForQ5) markCliOutputSeen(threadForQ5)
+        logger.info("cli.exec", {
+          tool_call_id: toolCallId,
+          token: appToken,
+          subcommand,
+          risk: prepared.risk,
+          exit_code: result.exit_code,
+          duration_ms: result.duration_ms,
+          timed_out: result.timed_out === true,
+        })
+        // Caller wraps with wrapUntrusted; return plain text fields
+        if (!result.ok && result.timed_out) {
+          return {
+            success: false,
+            error: `host_cli timed out after ${prepared.timeoutMs}ms`,
+            data: { stdout: result.stdout, stderr: result.stderr, exit_code: result.exit_code },
+          }
+        }
+        return {
+          success: result.exit_code === 0,
+          data: {
+            token: appToken,
+            subcommand,
+            risk: prepared.risk,
+            exit_code: result.exit_code,
+            stdout: result.stdout,
+            stderr: result.stderr,
+            duration_ms: result.duration_ms,
+            argv: prepared.argv,
+          },
+          ...(result.exit_code !== 0
+            ? { error: `host_cli exit ${result.exit_code}${result.stderr ? ": " + result.stderr.slice(0, 200) : ""}` }
+            : {}),
+        }
+      } catch (err: any) {
+        return { success: false, error: `host_cli error: ${err?.message || String(err)}` }
+      }
+    }
+
     case "host_computer": {
       // Coordinate computer-use (WP1). The task-level L2 dialog ran in the
       // gate above (critical-class, originWs-bound); the security token binds

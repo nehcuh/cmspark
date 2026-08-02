@@ -97,6 +97,12 @@ export interface ComputerModelHandlerDeps {
   deleteImpl?: typeof deleteQwenVlVariant
   /** P3 节流时钟（测试 seam，同 deps 族纪律）；默认 Date.now。 */
   now?: () => number
+  /**
+   * L-QW-1: probe whether experimental layer may be enabled (model ready + deps).
+   * Tests inject; production uses preflight + probeQwenModelDir.
+   * Return false → set_enabled(true) hard-refuses with zero config write.
+   */
+  canEnableProbe?: () => boolean | Promise<boolean>
 }
 
 function modelError(error: string, extra?: Record<string, unknown>) {
@@ -338,6 +344,36 @@ export async function handleComputerModelMessage(
           notice: "阅读并接受许可证与免责声明后可开启实验层；拒绝则本层永久跳过，其余定位层不受影响。",
         }
       }
+      // L-QW-1 / SoT D1: hard-disable enable unless canEnable (model + infer deps).
+      // Zero config write on fail — UI may show canEnable:false but API must not arm.
+      {
+        let can = true
+        if (deps.canEnableProbe) {
+          can = await deps.canEnableProbe()
+        } else {
+          try {
+            const probe = probeQwenModelDir(currentVariant(cfg))
+            if (probe.status !== "ready") {
+              can = false
+            } else {
+              const pre = await runQwenVlPreflight({
+                variant: currentVariant(cfg),
+                downloadSource: (cfg as any).modelDownloadSource as DownloadSource | undefined,
+                dataDir: DATA_DIR,
+              })
+              can = pre.canEnable === true
+            }
+          } catch {
+            can = false
+          }
+        }
+        if (!can) {
+          return modelError(
+            "实验层尚未就绪（模型未下载、推理依赖未齐或 worker 不可用），无法开启",
+            { code: "CANNOT_ENABLE" },
+          )
+        }
+      }
       // 已接受 → D2 生物识别门（裁决 1：持久能力授权，apps coordinateAllowed 先例）
       if (!ctx.requestConfirmation) {
         return modelError("computer.model.set_enabled(true) requires an interactive confirmation channel", {
@@ -366,6 +402,14 @@ export async function handleComputerModelMessage(
     }
 
     case "computer.model.license_response": {
+      // D9 / F2-D: settings may clear a prior decline without accepting the license.
+      if (rest.reset_decline === true || rest.resetDecline === true) {
+        setComputerModelFields({ modelLicenseDeclined: false })
+        logger.info("computer.model.license_decline_reset", { source: rest.source })
+        const state = await statePayload(holder, deps)
+        ctx.broadcast?.(state)
+        return { ...state, declineReset: true }
+      }
       if (rest.accepted === true) {
         // 接受：写时间戳 + 文本版本哈希（P1）+ 清拒绝标记，自动触发 download（裁决 2）
         setComputerModelFields({

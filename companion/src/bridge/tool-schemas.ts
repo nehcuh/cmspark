@@ -185,6 +185,15 @@ export const TOOL_ARG_SCHEMAS: Record<string, z.ZodTypeAny> = {
     security_token: z.string().optional(),
   }),
 
+  // Apps Phase-2 structured CLI (no free-args; fixed positionals from manifest)
+  host_cli: z.object({
+    app: z.string().min(1),
+    subcommand: z.string().min(1),
+    flags: z.record(z.union([z.string(), z.boolean()])).optional(),
+    args: z.array(z.string()).max(16).optional(),
+    security_token: z.string().optional(),
+  }),
+
   // --- Windows host_computer (coordinate computer-use WP1+WP2, critical-class) ---
   host_computer: z.object({
     // Y1 (WP4 代码级对抗裁决):task 封顶 4000——full_preview 尺寸与 re-L2

@@ -23,7 +23,8 @@
 |------|------|--------|
 | **Host 读** | `host_read` | 从本机邮件等应用读结构化内容（如收件箱顶条预览） |
 | **Host 写** | `host_write` | 受控写：如建笔记、受限目录内移动文件 |
-| **App 启动** | `host_app` | 启动你**亲自加白**的应用（仅无参 `launch`） |
+| **App 启动** | `host_app` | 启动你**亲自加白**的 GUI 应用（仅无参 `launch`） |
+| **CLI 工具** | `host_cli` | 运行你加白的 **结构化** CLI（manifest 内 subcommand/flag；无自由 argv） |
 | **Computer Use** | `host_computer` | 对已授权坐标的窗口做键鼠（见 [Computer Use](computer-use-user-guide.md)） |
 
 这些都是 **L2 / opt-in / 高危门**，**不是**浏览器 **L1** CDP 工具的默认扩展。能网页内完成的，优先 L1；有语义 Host API 时，优先本指南，再考虑坐标 Computer Use。
@@ -36,7 +37,7 @@
 2. **全局 App** 行：只读指示 `apps.enabled`；关闭后 **`host_app` 一律拒绝**。当前版本若显示关闭，需在 **`~/.cmspark-agent/config.json`** 中开启（面板不提供假开关）。  
 3. **坐标操作** 行：只读镜像 `computer.coordinateEnabled`（见 Computer Use 指南）。  
 4. 在 **应用** 分段中搜索本机候选、**加白名单**、设置每应用策略（见下）。  
-5. CLI 工具分段为占位（后续阶段），可忽略。
+5. **CLI 工具**分段：添加结构化 CLI（绝对路径 + `cli_manifest` JSON）；LLM 通过 **`host_cli`** 调用声明的 subcommand（无 free-args）。策略最高「AI 判断」，每次执行经 L2；危险级可升生物识别。输出按不可信内容处理。
 
 ### 每应用策略（`host_app` launch）
 

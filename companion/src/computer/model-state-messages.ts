@@ -25,7 +25,7 @@ export const MODEL_STATE_MESSAGES: Record<string, ModelStateMessage> = {
   "model-file-missing": {
     title: "模型文件缺失",
     detail:
-      "TinyClick 模型未下载或已被删除。UIA / OCR / 用户框选定位不受影响；" +
+      "Qwen3-VL 模型未下载或已被删除。UIA / OCR / 用户框选定位不受影响；" +
       "在设置页下载模型后可启用本实验层。",
     action: "下载模型",
   },
@@ -64,9 +64,9 @@ export const MODEL_STATE_MESSAGES: Record<string, ModelStateMessage> = {
   "disk-budget-exceeded": {
     title: "磁盘预算超限",
     detail:
-      "模型根目录占用（全部变体合计）将超过预算（computer.modelDiskBudgetMB，默认 2048MB）。" +
-      "可调大预算或删除其他变体后重试；其余定位层不受影响。",
-    action: "调整磁盘预算",
+      "可用磁盘不足以容纳所选模型变体（需约「下载体积 + 2GB」余量）。" +
+      "请释放磁盘空间或删除其他变体后重试；其余定位层不受影响。",
+    action: "释放磁盘空间",
   },
   "disk-full": {
     title: "磁盘空间不足",
@@ -219,7 +219,7 @@ export interface ModelSwitchCopy {
 }
 
 export const MODEL_SWITCH_COPY: ModelSwitchCopy = {
-  switchLabel: "实验层：TinyClick 本地视觉定位",
+  switchLabel: "实验层：Qwen3-VL 本地视觉定位",
   switchHint:
     "默认关闭。开启后仅作为定位链第 2 层（L2）的坐标候选建议；" +
     "命中在执行前仍会弹出人工确认。",
@@ -248,6 +248,6 @@ export const MODEL_SWITCH_COPY: ModelSwitchCopy = {
   statusReadyDisabled: "模型已下载就绪——实验层未开启。",
   downloadInProgress: "模型下载中",
   licenseDeclinedNotice:
-    "你已拒绝实验层许可证——本层永久跳过，其余定位层不受影响。" +
-    "（复位路径 = 手动编辑 config.json，属显式 owner opt-in。）",
+    "你已拒绝实验层许可证——本层已跳过，其余定位层不受影响。" +
+    "可在设置页「实验层」重新打开许可流程以复位拒绝（无需手改 config.json）。",
 }

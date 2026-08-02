@@ -211,14 +211,20 @@ export async function handleAppsMessage(
         return appsError("Invalid config keys detected")
       }
       const kind: AppKind = rest.kind === "cli" ? "cli" : "gui"
-      if (kind !== "gui") {
-        return appsError("apps.add: kind \"cli\" is Phase-2 (P1 supports gui only)", {
-          code: "CLI_PHASE2",
-        })
-      }
-      const policy = rest.policy === undefined ? "manual" : String(rest.policy)
+      let policy = rest.policy === undefined ? "manual" : String(rest.policy)
       if (!VALID_POLICIES.has(policy)) {
         return appsError(`Invalid policy "${policy}" (must be auto, ai, or manual)`, { code: "INVALID_POLICY" })
+      }
+      // L-CLI-1: CLI policy cap = ai (no auto silent path)
+      if (kind === "cli" && policy === "auto") {
+        return appsError('apps.add: kind "cli" cannot use policy "auto" (cap is ai)', {
+          code: "CLI_POLICY_CAP",
+        })
+      }
+      if (kind === "cli" && rest.cli_manifest === undefined && rest.cliManifest === undefined) {
+        return appsError('apps.add: kind "cli" requires cli_manifest with ≥1 subcommand', {
+          code: "CLI_MANIFEST_REQUIRED",
+        })
       }
       const origin: AddFlowOrigin =
         rest.origin === "enumerate" || rest.origin === "manual-paste"
@@ -239,6 +245,7 @@ export async function handleAppsMessage(
             origin,
             existingEntries: existing,
             policy: "manual", // requested policy applied only after the gates below
+            cli_manifest: rest.cli_manifest ?? rest.cliManifest,
           },
           deps,
         )
@@ -354,7 +361,10 @@ export async function handleAppsMessage(
       }
       // Write-time cap re-check (WP1 review note ④) — even a "downgrade"
       // request is validated so a tampered exe block can't smuggle auto.
-      const cap = maxPolicyForEntry(entry)
+            if (entry.kind === "cli" && policy === "auto") {
+        return appsError('CLI apps cannot use policy "auto" (L-CLI-1)', { code: "CLI_POLICY_CAP" })
+      }
+const cap = maxPolicyForEntry(entry)
       if (POLICY_RANK[policy as AppPolicy] > POLICY_RANK[cap]) {
         return appsError(
           `policy "${policy}" exceeds the maximum allowed for this app ("${cap}" — unsigned binary, user-writable directory, or AUMID)`,

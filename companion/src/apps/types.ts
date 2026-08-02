@@ -12,6 +12,7 @@
 
 import * as path from "path"
 import { basenameToVault, isLolbinPath } from "./guards"
+import { validateCliManifest } from "./cli-manifest"
 
 export type AppKind = "gui" | "cli"
 export type AppSource = "preset" | "user"
@@ -176,6 +177,12 @@ export function validateAppEntry(raw: unknown): string | null {
     if (typeof e.cli_manifest !== "object" || Array.isArray(e.cli_manifest)) {
       return `app "${e.token}" cli_manifest must be an object or null`
     }
+    if (e.kind === "cli") {
+      const mErr = validateCliManifest(e.cli_manifest)
+      if (mErr) return `app "${e.token}" ${mErr}`
+    }
+  } else if (e.kind === "cli") {
+    return `cli app "${e.token}" requires cli_manifest`
   }
   if (e.coordinateAllowed !== undefined && typeof e.coordinateAllowed !== "boolean") {
     return `app "${e.token}" coordinateAllowed must be a boolean`
