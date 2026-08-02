@@ -11,6 +11,44 @@ import { DATA_DIR } from "../config"
 
 export type PythonMode = "isolated" | "system"
 
+/** Fixed allowlist for ensure_python_env / install_deps (adversary B4). */
+export const ALLOWED_PYTHON_PACKAGES = new Set([
+  "modelscope",
+  "huggingface_hub",
+  "transformers",
+  "torch",
+  "pillow",
+  "accelerate",
+  "safetensors",
+  "numpy",
+  "tokenizers",
+  "sentencepiece",
+])
+
+/**
+ * Sanitize client-supplied package list: only bare allowlisted names.
+ * Rejects flags (-*), URLs, paths, git refs.
+ */
+export function sanitizePythonPackages(raw: unknown): string[] {
+  if (!Array.isArray(raw)) {
+    return ["modelscope", "huggingface_hub", "transformers", "torch", "pillow"]
+  }
+  const out: string[] = []
+  for (const item of raw) {
+    const s = String(item || "").trim()
+    if (!s) continue
+    if (s.startsWith("-")) continue
+    if (/[/:\\@\s]/.test(s) || s.includes("://")) continue
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(s)) continue
+    const base = s.split("[")[0]!.toLowerCase() // strip extras like package[extra]
+    if (!ALLOWED_PYTHON_PACKAGES.has(base) && !ALLOWED_PYTHON_PACKAGES.has(s.toLowerCase())) continue
+    out.push(base)
+  }
+  return out.length > 0
+    ? [...new Set(out)]
+    : ["modelscope", "huggingface_hub", "transformers", "torch", "pillow"]
+}
+
 export interface PythonRuntimeInfo {
   mode: PythonMode
   /** Resolved interpreter path if available */
@@ -155,32 +193,24 @@ export async function resolvePythonRuntime(opts: {
     }
   }
 
-  // Fall back to system only for probing "something exists" — UI still shows isolated preferred
-  const sysCands = process.platform === "win32" ? ["python", "py"] : ["python3", "python"]
-  for (const c of sysCands) {
-    const exe = await probePythonBin(c)
-    if (exe) {
-      return {
-        mode: "isolated",
-        pythonPath: exe,
-        uvAvailable: uv.ok,
-        ...(uv.path ? { uvPath: uv.path } : {}),
-        isolatedRoot: root,
-        isolatedExists: false,
-        resolution: "独立环境尚未创建；检测到本机 Python，可一键创建独立环境",
-      }
-    }
-  }
+  // Isolated missing: do NOT return system python as pythonPath (would pollute dep probes).
+  const basePy =
+    (await probePythonBin("python3")) ||
+    (await probePythonBin("python")) ||
+    (process.platform === "win32" ? await probePythonBin("py") : null)
 
   return {
     mode: "isolated",
+    // intentionally omit pythonPath until venv exists
     uvAvailable: uv.ok,
     ...(uv.path ? { uvPath: uv.path } : {}),
     isolatedRoot: root,
     isolatedExists: false,
-    resolution: uv.ok
-      ? "未找到 Python；可用 uv 创建独立环境（需本机有可被 uv 使用的 Python）"
-      : "未找到 Python 3，请先安装或改用「全局环境」并指定解释器",
+    resolution: basePy
+      ? "独立环境尚未创建；本机有 Python，可一键创建独立环境"
+      : uv.ok
+        ? "独立环境尚未创建；可用 uv 创建（需本机有可被 uv 使用的 Python）"
+        : "独立环境尚未创建，且未找到 Python 3",
   }
 }
 

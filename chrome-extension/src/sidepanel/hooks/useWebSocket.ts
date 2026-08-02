@@ -777,6 +777,24 @@ export function useWebSocket() {
               ...(Array.isArray(msg.nextSteps) ? { nextSteps: msg.nextSteps.filter((s: unknown) => typeof s === "string") } : {}),
               ...(typeof msg.canDownload === "boolean" ? { canDownload: msg.canDownload } : {}),
               ...(typeof msg.canEnable === "boolean" ? { canEnable: msg.canEnable } : {}),
+              ...(typeof msg.downloadBlockReason === "string"
+                ? { downloadBlockReason: msg.downloadBlockReason }
+                : {}),
+              ...(typeof msg.enableBlockReason === "string"
+                ? { enableBlockReason: msg.enableBlockReason }
+                : {}),
+              ...(typeof msg.modelRootDir === "string" ? { modelRootDir: msg.modelRootDir } : {}),
+              ...(msg.pythonMode === "isolated" || msg.pythonMode === "system"
+                ? { pythonMode: msg.pythonMode }
+                : {}),
+              ...(typeof msg.pythonPath === "string" ? { pythonPath: msg.pythonPath } : {}),
+              ...(typeof msg.uvAvailable === "boolean" ? { uvAvailable: msg.uvAvailable } : {}),
+              ...(typeof msg.pythonResolution === "string"
+                ? { pythonResolution: msg.pythonResolution }
+                : {}),
+              ...(typeof msg.isolatedEnvExists === "boolean"
+                ? { isolatedEnvExists: msg.isolatedEnvExists }
+                : {}),
               ...(msg.preflight && typeof msg.preflight === "object" ? { preflight: msg.preflight } : {}),
               ...(typeof msg.sizeBytes === "number" ? { sizeBytes: msg.sizeBytes } : {}),
               ...(typeof msg.error === "string" ? { error: msg.error } : {}),

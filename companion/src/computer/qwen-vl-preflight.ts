@@ -520,9 +520,9 @@ export async function runQwenVlPreflight(args: {
         runtime.mode === "isolated"
           ? "Python 环境（CMspark 独立环境）"
           : "Python 环境（本机全局）",
-      ok: deps.python && (runtime.mode === "system" || runtime.isolatedExists || Boolean(deps.pythonPath)),
+      ok: pythonEnvReady,
       detail: runtime.resolution + (deps.pythonPath ? ` · ${deps.pythonPath}` : ""),
-      blocking: !deps.python,
+      blocking: !pythonEnvReady,
     },
     {
       id: "uv",

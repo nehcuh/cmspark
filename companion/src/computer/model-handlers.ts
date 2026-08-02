@@ -103,6 +103,11 @@ export interface ComputerModelHandlerDeps {
    * Return false → set_enabled(true) hard-refuses with zero config write.
    */
   canEnableProbe?: () => boolean | Promise<boolean>
+  /**
+   * B1 test seam: override canDownload gate for download / license auto-download.
+   * Production uses runQwenVlPreflight().canDownload.
+   */
+  canDownloadProbe?: () => boolean | Promise<{ ok: boolean; reason?: string }>
 }
 
 function modelError(error: string, extra?: Record<string, unknown>) {
@@ -110,6 +115,36 @@ function modelError(error: string, extra?: Record<string, unknown>) {
   // 实验区错误位（apps family:"apps" 先例）；旧扩展忽略 family 落 chat 流，
   // 向后兼容。computer 其余 handler 维持 family "computer" 不变。
   return { type: "error", family: "computer.model" as const, error, ...extra }
+}
+
+async function resolveCanDownload(
+  deps: ComputerModelHandlerDeps,
+  variant: string,
+  downloadSource?: string,
+): Promise<{ ok: boolean; reason?: string }> {
+  if (deps.canDownloadProbe) {
+    const r = await deps.canDownloadProbe()
+    if (typeof r === "boolean") return { ok: r, reason: r ? undefined : "canDownloadProbe=false" }
+    return { ok: r.ok === true, reason: r.reason }
+  }
+  try {
+    const { runQwenVlPreflight } = await import("./qwen-vl-preflight")
+    const { DATA_DIR: dataDir } = await import("../config")
+    const pre = await runQwenVlPreflight({
+      variant,
+      downloadSource: downloadSource as any,
+      dataDir,
+    })
+    return {
+      ok: pre.canDownload === true,
+      reason: pre.downloadBlockReason || pre.readinessSummary,
+    }
+  } catch (e) {
+    return {
+      ok: false,
+      reason: e instanceof Error ? e.message : "环境检测失败",
+    }
+  }
 }
 
 /** manifest 随发版路径解析：src 布局（companion/src/computer → 上两级）/
@@ -467,8 +502,17 @@ export async function handleComputerModelMessage(
           downloadNote = "delete-in-progress"
           logger.warn("computer.model.download.refused", { reason: "delete-in-progress", variant })
         } else {
-          startBackgroundDownload(variant, ctx, deps, holder)
-          downloadNote = "started"
+          // B2: only auto-download when env is ready (same truth as preflight canDownload)
+          const ready = await resolveCanDownload(deps, variant, (cfg as any).modelDownloadSource)
+          if (ready.ok) {
+            startBackgroundDownload(variant, ctx, deps, holder)
+            downloadNote = "started"
+          } else {
+            downloadNote = "skipped-env-not-ready"
+            logger.info("computer.model.download.skipped_after_license", {
+              reason: ready.reason || "canDownload=false",
+            })
+          }
         }
         const state = await statePayload(holder, deps)
         ctx.broadcast?.(state)
@@ -493,6 +537,18 @@ export async function handleComputerModelMessage(
         return modelError(
           "模型删除进行中——待其完成后重试下载；本次未发起任何网络请求。",
           { code: "DELETE_IN_PROGRESS" },
+        )
+      }
+      // B1: trust-boundary gate — UI button is not sufficient (handler is SoT)
+      const ready = await resolveCanDownload(deps, variant, (cfg as any).modelDownloadSource)
+      if (!ready.ok) {
+        logger.warn("computer.model.download.refused", {
+          reason: "env-not-ready",
+          detail: ready.reason,
+        })
+        return modelError(
+          ready.reason || "环境未就绪，无法下载。请先完成设置页「环境检查」。",
+          { code: "CANNOT_DOWNLOAD" },
         )
       }
       startBackgroundDownload(variant, ctx, deps, holder)
@@ -638,11 +694,9 @@ export async function handleComputerModelMessage(
     }
 
     case "computer.model.ensure_python_env": {
-      const { ensureIsolatedPythonEnv } = await import("./python-runtime")
+      const { ensureIsolatedPythonEnv, sanitizePythonPackages } = await import("./python-runtime")
       setComputerModelFields({ pythonMode: "isolated" })
-      const pkgs = Array.isArray(rest.packages)
-        ? rest.packages.map(String).filter(Boolean)
-        : ["modelscope", "huggingface_hub", "transformers", "torch", "pillow"]
+      const pkgs = sanitizePythonPackages(rest.packages)
       const result = await ensureIsolatedPythonEnv(pkgs)
       logger.info("computer.model.ensure_python_env", {
         ok: result.ok,
@@ -664,12 +718,10 @@ export async function handleComputerModelMessage(
 
     case "computer.model.install_deps": {
       // Install into current mode env (isolated preferred via ensure; system uses pip/uv)
-      const { ensureIsolatedPythonEnv, buildInstallCommands, resolvePythonRuntime } =
+      const { ensureIsolatedPythonEnv, buildInstallCommands, resolvePythonRuntime, sanitizePythonPackages } =
         await import("./python-runtime")
       const mode = getConfig().computer?.pythonMode === "system" ? "system" : "isolated"
-      const pkgs = Array.isArray(rest.packages)
-        ? rest.packages.map(String).filter(Boolean)
-        : ["modelscope", "huggingface_hub", "transformers", "torch", "pillow"]
+      const pkgs = sanitizePythonPackages(rest.packages)
       if (mode === "isolated") {
         const result = await ensureIsolatedPythonEnv(pkgs)
         const state = await statePayload(holder, deps)
