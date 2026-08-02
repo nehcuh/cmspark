@@ -1550,9 +1550,26 @@ export function SettingsSlideout() {
                 <div style={{ ...styles.helpText, marginTop: 4, fontSize: 11, color: "#555" }}>
                   {(model?.pythonResolution || model?.preflight?.pythonResolution) ??
                     "检测中…"}
-                  {(model?.uvAvailable ?? model?.preflight?.uvAvailable)
-                    ? " · 已检测到 uv（创建/安装时优先使用）"
-                    : " · 未检测到 uv（可选：brew install uv）"}
+                  {(() => {
+                    const uvOk = model?.uvAvailable ?? model?.preflight?.uvAvailable
+                    const uvPath = model?.uvPath || model?.preflight?.uvPath
+                    // Prefer server-driven platform hint (W7/N4); never hardcode brew here
+                    const hint =
+                      model?.uvInstallHint || model?.preflight?.uvInstallHint || ""
+                    if (uvOk) {
+                      // Truncate middle for long absolute paths
+                      const shown =
+                        uvPath && uvPath.length > 48
+                          ? `${uvPath.slice(0, 20)}…${uvPath.slice(-24)}`
+                          : uvPath
+                      return shown
+                        ? ` · 已检测到 uv（${shown}）`
+                        : " · 已检测到 uv（创建/安装时优先使用）"
+                    }
+                    return hint
+                      ? ` · 未检测到 uv（可选：${hint}）`
+                      : " · 未检测到 uv（可选安装以加速）"
+                  })()}
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 6 }}>
                   {(

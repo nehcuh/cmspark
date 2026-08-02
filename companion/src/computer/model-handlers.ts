@@ -266,6 +266,12 @@ async function statePayload(
           modelRootDir: preflight.modelRootDir,
           pythonMode: preflight.pythonMode,
           uvAvailable: preflight.uvAvailable,
+          ...(typeof preflight.uvPath === "string" && preflight.uvPath
+            ? { uvPath: preflight.uvPath }
+            : {}),
+          ...(typeof preflight.uvInstallHint === "string" && preflight.uvInstallHint
+            ? { uvInstallHint: preflight.uvInstallHint }
+            : {}),
           pythonResolution: preflight.pythonResolution,
           isolatedEnvExists: preflight.isolatedEnvExists,
           pythonPath:
@@ -291,6 +297,7 @@ async function statePayload(
           })(),
           pythonMode: "isolated",
           uvAvailable: false,
+          // N5: both state paths surface uv fields when known; pending path has none
         }),
     ...(sizeBytes !== undefined ? { sizeBytes } : {}),
     ...(errorReason !== undefined ? { error: errorReason } : {}),
@@ -739,6 +746,7 @@ export async function handleComputerModelMessage(
       const cmds = buildInstallCommands({
         mode: "system",
         uvAvailable: runtime.uvAvailable,
+        uvPath: runtime.uvPath,
         packages: pkgs,
         pythonPath: runtime.pythonPath,
       })

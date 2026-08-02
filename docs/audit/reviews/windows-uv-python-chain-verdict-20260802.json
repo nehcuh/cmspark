@@ -1,0 +1,19 @@
+{
+    "nits_summary":  [
+                         "runCapture optional env for enriched PATH where",
+                         "where hit must be absolute + uv.exe basename before pin",
+                         "buildInstallCommands + callers need uvPath",
+                         "server-driven uvInstallHint on preflight (prefer over navigator.platform)",
+                         "model-handlers dual state builders both pass uvPath",
+                         "tests: W6 no computer-\u003emcp import; W9 uv non-blocking; payload-level uvPath"
+                     ],
+    "stage":  "design+plan",
+    "batch":  "windows-uv-python-chain",
+    "date":  "2026-08-02",
+    "gate":  "IMPLEMENTATION_ALLOWED",
+    "pi":  {
+               "verdict":  "APPROVE_WITH_NITS",
+               "path":  "docs/audit/reviews/windows-uv-python-chain-pi-20260802-230116.md"
+           },
+    "both_ok":  true
+}
