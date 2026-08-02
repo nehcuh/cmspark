@@ -2,6 +2,15 @@
 
 ## Current Session
 
+### S34 (2026-08-02 ~14:00–14:54) [Trust IA / 运行自主度 · 对抗+双审+实现]
+- **触发**：权限入口过多；God-mode 心智应为长程自治
+- **对抗**：Product/Security/Compat/Autonomy 四路 → 否决 Scheme C（God 吞全部 L2）；锁定 Hybrid D
+- **SoT/plan**：`docs/superpowers/specs/2026-08-02-trust-ia-autopilot-design.md` · `…/plans/2026-08-02-trust-ia-autopilot-impl.md`
+- **双审**：Pi+Claude **APPROVE_WITH_NITS**（`trust-ia-autopilot-verdict-20260802-144203.json`）
+- **实现（P0+P1）**：SettingsSlideout 运行自主度+协议解锁+高级闸门；`autopilot-tier.ts`+8 tests；StatusRail 巡航徽章；文档锁步；**未改** `server.ts` forceConfirm
+- **下次**：真机点验武装/解除；可选实现 dual-review PR；P2 会话作用域/TTL/spawn 预算另开
+- Recorded: yes — Trust packaging vs God 扩语义
+
 ### S33 (2026-08-02 ~14:22) [ship DMG + PR #105 merge + vision 405 诊断 + Qwen 测试说明]
 - **打包安装**：worktree tip 打 `CMspark-v0.3.0-macOS.dmg`；`ditto` → `/Applications/CMspark.app`；codesign verify OK；`open -a CMspark`
 - **合 main**：**PR #105** squash merge `6f3a210` — CLI Phase-2 `host_cli` + Qwen3-VL P0/env UX（CI build 绿）
@@ -342,11 +351,11 @@
 
 ## In-Flight Tasks (Cross-Session)
 
-### CLI Phase-2 + Qwen3-VL P0 (S32–S33)
-- status: **done** (PR #105 merged main `6f3a210`)
-- context: host_cli + qwen download/env UX + dual-review; local DMG installed; vision base_url fixed separately in user config
-- next_action: User true CU smoke with experimental locate (whitelist app); optional recharge BigModel for vision path
-- resume_doc: `docs/qwen-vl-experimental-layer.md` · `docs/superpowers/plans/2026-08-02-cli-qwen-COMPLETION.md`
+### Trust IA + 运行自主度 (S34)
+- status: **active** (P0+P1 in working tree; not yet PR/merged)
+- context: God→协议解锁；Autopilot dual-writes existing flags; dual-reviewed APPROVE_WITH_NITS; companion skip algebra untouched
+- next_action: Manual smoke arm/disarm in Side Panel; optional impl dual-review + PR; P2 session/TTL/spawn deferred
+- resume_doc: `docs/superpowers/specs/2026-08-02-trust-ia-autopilot-design.md` · `docs/superpowers/plans/2026-08-02-trust-ia-autopilot-impl.md`
 - updated: 2026-08-02
 
 ### macOS TCC product identity + host_computer unblock (S29–S31)

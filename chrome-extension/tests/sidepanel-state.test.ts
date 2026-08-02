@@ -147,8 +147,8 @@ test("initial side panel sync requests threads, skills, knowledge, config, and m
   const sent: object[] = []
   const initializedRef = { current: false }
 
-  // Production requestInitialSidePanelData (useWebSocket.ts) sends 6 messages
-  // on connect: threads, skills, knowledge, config, MCP server list, user_env list.
+  // Production requestInitialSidePanelData (useWebSocket.ts) sends 7 messages
+  // on connect: threads, skills, knowledge, config, MCP, user_env, unattended status.
   // Keep these in lock-step — a new initial-sync message means updating this
   // expected array. The CI extension `npm test` step now catches such drift.
   const expected = [
@@ -158,6 +158,7 @@ test("initial side panel sync requests threads, skills, knowledge, config, and m
     { type: "config.get" },
     { type: "mcp.list" },
     { type: "user_env.list" },
+    { type: "security.unattended.status" },
   ]
 
   assert.equal(requestInitialSidePanelData((message) => sent.push(message), initializedRef), true)

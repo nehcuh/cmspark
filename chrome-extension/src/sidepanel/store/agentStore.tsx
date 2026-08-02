@@ -83,6 +83,13 @@ export interface AgentState {
   userEnvError: string | null
   /** ADR-019 last success status line for Secrets section (e.g. 已保存). */
   userEnvStatus: string | null
+  /** ADR-021 process-memory unattended desktop grant (null = unknown / not fetched). */
+  unattended: {
+    armed: boolean
+    armedAt: number | null
+    expiresAt: number | null
+    includeProtocol: boolean
+  } | null
 }
 
 export type AgentAction =
@@ -151,6 +158,15 @@ export type AgentAction =
   | { type: "SET_USER_ENV"; userEnv: UserEnvPublic }
   | { type: "SET_USER_ENV_ERROR"; error: string | null }
   | { type: "SET_USER_ENV_STATUS"; status: string | null }
+  | {
+      type: "SET_UNATTENDED_STATUS"
+      unattended: {
+        armed: boolean
+        armedAt: number | null
+        expiresAt: number | null
+        includeProtocol: boolean
+      } | null
+    }
 
 export const initialState: AgentState = {
   connectionState: "disconnected",
@@ -226,6 +242,7 @@ export const initialState: AgentState = {
   userEnv: null,
   userEnvError: null,
   userEnvStatus: null,
+  unattended: null,
 }
 
 export function agentReducer(state: AgentState, action: AgentAction): AgentState {
@@ -315,6 +332,8 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       return { ...state, operations: action.operations }
     case "SET_CONFIG":
       return { ...state, config: { ...state.config, ...action.config } }
+    case "SET_UNATTENDED_STATUS":
+      return { ...state, unattended: action.unattended }
     case "SET_OBSIDIAN_PROFILE_STATUS":
       return { ...state, obsidianProfileStatus: action.status }
     case "SET_KNOWLEDGE_IMPORT_STATUS":

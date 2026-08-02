@@ -50,7 +50,7 @@
 规则：
 
 1. **单一 tool-loop runtime**（Companion LLM + tools）。L2 不是第二套 Agent 框架。  
-2. **信任单调**：L2 不得继承 L0 宽松语义；`god-mode` / `auto_approve` **不得**静默跳过 CU 任务级 L2（[ADR-017](017-computer-use.md)）。  
+2. **信任单调**：L2 不得继承 L0 宽松语义；`god-mode` / `auto_approve` **不得**静默跳过 CU 任务级 L2（[ADR-017](017-computer-use.md)）。**例外**：[ADR-021](021-unattended-desktop-session.md) 进程内「无人值守」grant 可跳过 **initial** L2（仅坐标白名单 App；非全局 bool 继承；危险 re-L2 仍强制确认）——属 Trust packaging，不是 Surface 降级。  
 3. Linux / 不完整 Host 路径保持文档诚实：见 [ADR-018](018-host-use.md) Decision 6（写路径/nonce 等受限），不得假装全平台对等。
 
 #### Axis B — Composition（组合面）

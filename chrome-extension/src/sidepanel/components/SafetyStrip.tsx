@@ -6,6 +6,7 @@ import { useAgentStore } from "../store/agentStore"
 import { MinimalConfirm } from "./MinimalConfirm"
 import { tokens } from "../ui/tokens"
 import { IconExternal, IconMonitor, IconStop } from "../ui/icons"
+import { disarmAllFlags, trustStatusChip } from "./autopilot-tier"
 
 const ABORT_ACK_TIMEOUT_MS = 3000
 
@@ -65,7 +66,23 @@ export function SafetyStrip({ compact = false }: { compact?: boolean } = {}) {
     ((entTrust.remaining_netsec_ms > 0 && entTrust.families.includes("netsec")) ||
       (entTrust.remaining_shell_ms > 0 && entTrust.families.includes("shell")))
 
-  if (!task && !hasConfirm && !entActive) return null
+  const unattendedArmed = state.unattended?.armed === true
+  const cruiseLabel = trustStatusChip(
+    {
+      auto_approve_dangerous: state.config.auto_approve_dangerous === true,
+      auto_approve_enterprise_tools: state.config.auto_approve_enterprise_tools === true,
+      allow_all_schemes: state.config.allow_all_schemes === true,
+    },
+    unattendedArmed,
+  )
+  const cruiseActive = cruiseLabel != null
+
+  if (!task && !hasConfirm && !entActive && !cruiseActive) return null
+
+  const disarmCruise = () => {
+    chrome.runtime.sendMessage({ type: "security.unattended.disarm", clear_cruise: true })
+    chrome.runtime.sendMessage({ type: "config.set", config: disarmAllFlags() })
+  }
 
   const finished = task?.status === "finished"
   const live = task && !finished
@@ -179,6 +196,16 @@ export function SafetyStrip({ compact = false }: { compact?: boolean } = {}) {
       </div>
       {abortUnconfirmed && task && !task.abortAcked && !finished && (
         <div style={styles.warn}>急停未确认 — 可用 Ctrl+Alt+End</div>
+      )}
+      {cruiseActive && cruiseLabel && (
+        <div style={styles.entChip}>
+          <span title={"运行自主度已武装；解除将关闭网页/企业/协议三类自动批准"}>
+            {cruiseLabel}
+          </span>
+          <button type="button" style={styles.entRevoke} onClick={disarmCruise} title="关闭网页/企业/协议三类自动批准">
+            解除
+          </button>
+        </div>
       )}
       {entActive && entTrust && (
         <div style={styles.entChip}>

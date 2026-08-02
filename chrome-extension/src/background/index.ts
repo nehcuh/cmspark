@@ -894,6 +894,10 @@ function setupMessageHandlers() {
       case "netsec.authorize_task":
       case "enterprise.session_trust.status":
       case "enterprise.session_trust.revoke":
+      // ADR-021 unattended desktop (process-memory grant; phrase on arm)
+      case "security.unattended.arm":
+      case "security.unattended.disarm":
+      case "security.unattended.status":
       case "history.query":
       case "history.export":
       case "mcp.list":

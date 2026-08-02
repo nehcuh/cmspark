@@ -2,6 +2,8 @@
 
 **日期**: 2026-07-12 | **状态**: 已确认（PR #35 PR-0 / #36 PR-A / #37 PR-B 已合并；PR-C 本 PR）
 
+> **UI 名称（2026-08-02）**：扩展设置中产品主标签为 **「协议解锁」**；字段仍为 `security.allow_all_schemes`，审计 reason 可仍为 `god_mode`。长程无人值守主路径见 **运行自主度**（Trust packaging，不扩本 ADR 的 forceConfirm 语义）。设计 SoT：`docs/superpowers/specs/2026-08-02-trust-ia-autopilot-design.md`。
+
 ## 背景
 
 CMspark 的安全模型是**两层门**（见 [ADR-006](006-layered-defense.md)）：

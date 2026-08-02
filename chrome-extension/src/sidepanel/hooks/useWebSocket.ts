@@ -44,6 +44,8 @@ export function requestInitialSidePanelData(
   sendMessage({ type: "mcp.list" })
   // ADR-019: redacted secrets snapshot (auth required; no plaintext).
   sendMessage({ type: "user_env.list" })
+  // ADR-021: hydrate unattended grant for StatusRail chip
+  sendMessage({ type: "security.unattended.status" })
   return true
 }
 
@@ -432,6 +434,25 @@ export function useWebSocket() {
           // Refresh fleet strip when confirms arrive (pending badge + worker map)
           chrome.runtime.sendMessage({ type: "fleet.status" })
           break
+
+        case "security.unattended.status": {
+          dispatch({
+            type: "SET_UNATTENDED_STATUS",
+            unattended: {
+              armed: msg.armed === true,
+              armedAt: typeof msg.armedAt === "number" ? msg.armedAt : typeof msg.armed_at === "number" ? msg.armed_at : null,
+              expiresAt:
+                typeof msg.expiresAt === "number"
+                  ? msg.expiresAt
+                  : typeof msg.expires_at === "number"
+                    ? msg.expires_at
+                    : null,
+              includeProtocol:
+                msg.includeProtocol === true || msg.include_protocol === true,
+            },
+          })
+          break
+        }
 
         case "fleet.status":
         case "fleet.stop_all_result":

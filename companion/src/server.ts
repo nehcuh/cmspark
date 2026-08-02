@@ -920,6 +920,9 @@ export function createToolExecutor(ws: WebSocket) {
       // is refreshed by isTrusted(); corpus does not need re-accumulation (the
       // skip-eligible task's corpus is by definition a subset of the stored one).
       let hostComputerTrustSkip = false
+      /** ADR-021 audit: "session_trust_corpus_subset" | "unattended_session_grant" */
+      let hostComputerTrustSkipReason: "session_trust_corpus_subset" | "unattended_session_grant" | null =
+        null
       if (hostComputerGated) {
         const { assertCoordinateAllowed } = await import("./computer/policy")
         // Y3 (WP2): the preview text comes from the PURE builder — task text
@@ -991,6 +994,7 @@ export function createToolExecutor(ws: WebSocket) {
             // Grill Q2/Q3: single pure gate (g1InitialSkipEligible) — no drift vs tests.
             const maxBudget = trust.maxBudgetSeen(trustKey, appToken)
             const maxActions = trust.maxActionsSeen(trustKey, appToken)
+            const modelEnabled = getConfig().computer?.modelEnabled === true
             if (
               g1InitialSkipEligible({
                 trust,
@@ -1001,10 +1005,11 @@ export function createToolExecutor(ws: WebSocket) {
                 actionCount,
                 experimental: experimentalFlag,
                 // L-QW-2: config-level block — action.experimental alone is insufficient
-                modelEnabled: getConfig().computer?.modelEnabled === true,
+                modelEnabled,
               })
             ) {
               hostComputerTrustSkip = true
+              hostComputerTrustSkipReason = "session_trust_corpus_subset"
               logger.info("computer.session_trust.task_auto_approved", {
                 tool_call_id: toolCallId,
                 trust_key: trustKey,
@@ -1018,20 +1023,84 @@ export function createToolExecutor(ws: WebSocket) {
                 explicit_opt_in: true,
               })
             } else {
-              logger.info("computer.session_trust.skip_missed", {
-                tool_call_id: toolCallId,
-                trust_key: trustKey,
-                chat_thread_id: chatThreadId ?? null,
-                app: appToken,
-                trusted: trust.isTrusted(trustKey, appToken),
-                explicit_opt_in: trust.hasExplicitOptIn(trustKey, appToken),
-                key_allows_skip: trustKeyAllowsInitialSkip(trustKey),
-                corpus_eligible: trust.corpusContains(trustKey, appToken, typeCorpus),
-                budget_eligible: maxBudget > 0 && budgetN <= maxBudget,
-                actions_eligible: maxActions > 0 && actionCount <= maxActions,
+              // ADR-021: process-memory unattended grant (sibling of G1, not god/auto_approve).
+              // assertCoordinateAllowed already passed → coordinateAllowed true for this app.
+              const { evaluateUnattendedHostComputerSkip, isUnattendedArmed } = await import(
+                "./computer/unattended-grant"
+              )
+              const unattendedSkip = evaluateUnattendedHostComputerSkip({
+                coordinateAllowed: true,
                 experimental: experimentalFlag,
-                max_budget_seen: maxBudget,
-                max_actions_seen: maxActions,
+                modelEnabled,
+                credentialLatched: trust.hasCredentialLatch(trustKey, appToken),
+                budget: budgetN,
+                actionCount,
+              })
+              if (unattendedSkip) {
+                hostComputerTrustSkip = true
+                hostComputerTrustSkipReason = "unattended_session_grant"
+                logger.info("computer.unattended.task_auto_approved", {
+                  tool_call_id: toolCallId,
+                  trust_key: trustKey,
+                  chat_thread_id: chatThreadId ?? null,
+                  app: appToken,
+                  budget: budgetN,
+                  actions: actionCount,
+                  reason: "unattended_session_grant",
+                })
+              } else {
+                logger.info("computer.session_trust.skip_missed", {
+                  tool_call_id: toolCallId,
+                  trust_key: trustKey,
+                  chat_thread_id: chatThreadId ?? null,
+                  app: appToken,
+                  trusted: trust.isTrusted(trustKey, appToken),
+                  explicit_opt_in: trust.hasExplicitOptIn(trustKey, appToken),
+                  key_allows_skip: trustKeyAllowsInitialSkip(trustKey),
+                  corpus_eligible: trust.corpusContains(trustKey, appToken, typeCorpus),
+                  budget_eligible: maxBudget > 0 && budgetN <= maxBudget,
+                  actions_eligible: maxActions > 0 && actionCount <= maxActions,
+                  experimental: experimentalFlag,
+                  max_budget_seen: maxBudget,
+                  max_actions_seen: maxActions,
+                  unattended_armed: isUnattendedArmed(),
+                })
+              }
+            }
+          } else if (finalParams.app) {
+            // No sessionId — G1 needs session; unattended is process-global (ADR-021).
+            const { evaluateUnattendedHostComputerSkip, isUnattendedArmed } = await import(
+              "./computer/unattended-grant"
+            )
+            const actionsArr = Array.isArray(finalParams.actions) ? finalParams.actions : []
+            let experimentalFlag = false
+            for (const a of actionsArr) {
+              if (a && typeof a === "object" && (a as any).experimental === true) experimentalFlag = true
+            }
+            if (
+              evaluateUnattendedHostComputerSkip({
+                coordinateAllowed: true,
+                experimental: experimentalFlag,
+                modelEnabled: getConfig().computer?.modelEnabled === true,
+                credentialLatched: false,
+                budget: budgetN,
+                actionCount: actionsArr.length,
+              })
+            ) {
+              hostComputerTrustSkip = true
+              hostComputerTrustSkipReason = "unattended_session_grant"
+              logger.info("computer.unattended.task_auto_approved", {
+                tool_call_id: toolCallId,
+                app: String(finalParams.app || ""),
+                budget: budgetN,
+                actions: actionsArr.length,
+                reason: "unattended_session_grant",
+                no_session_id: true,
+              })
+            } else if (isUnattendedArmed()) {
+              logger.info("computer.unattended.skip_missed", {
+                tool_call_id: toolCallId,
+                experimental: experimentalFlag,
               })
             }
           }
@@ -1816,7 +1885,8 @@ export function createToolExecutor(ws: WebSocket) {
         // P5 (Pi final-review caveat 3 2026-07-24): hostComputerTrustSkip has
         // its own audit reason so silent-skip is distinguishable from god-mode
         // / whitelist in the audit log.
-        const autoReason = hostComputerTrustSkip ? "session_trust_corpus_subset"
+        const autoReason = hostComputerTrustSkip
+          ? (hostComputerTrustSkipReason || "session_trust_corpus_subset")
           : securityConfig.allow_all_schemes ? "god_mode"
           : securityConfig.auto_approve_dangerous ? "global_toggle"
           : appWhitelisted ? "app_whitelist"

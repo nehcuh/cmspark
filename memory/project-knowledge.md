@@ -227,6 +227,17 @@
 
 ## Reusable Patterns
 
+### 产品安全入口：对抗四角色 → SoT → Pi/Claude 双审 → 再实现（2026-08-02）
+- **何时用**：改 Trust / 确认门 / 高风险 UI 叙事（尤其用户与 ADR 心智冲突时）
+- **步骤**：
+  1. 并行 subagent：Product/UX · Security · Compat/ADR · Autonomy（或平台角色）
+  2. 写 adversary synthesis + design SoT + impl plan（锁 D/S/R 门）
+  3. `scripts/dual-external-review.sh <batch> <prompt>` → 双方 APPROVE / APPROVE_WITH_NITS
+  4. 折叠 nits 再写代码；**gate algebra 默认不动** unless plan 明确
+- **模板**：`docs/audit/reviews/trust-ia-autopilot-dual-review-prompt-20260802.md` · macos-tcc / mission-pack UX 同类
+- **反模式**：先扩 god 语义再补文档；双审前实现；用「Autopilot」作第 4 能力轴
+
+
 ### macOS CU 热键 vs fail-closed（2026-08-02）
 - Fail-closed 应对 **socket proof-of-life**（companion 持连）；全局热键/CGEventTap 为 best-effort
 - LS 启动路径 ad-hoc TCC 常比 CLI 严：勿用 CLI `security-check` 断言 app 内 tap 可用
@@ -336,6 +347,20 @@
 - 教训：JS 单线程下，**全同步**的 read-modify-write 天然原子，不存在交错竞态——只有 caller「读 → await → 用陈旧快照写」才有竞态。审计/评审提"竞态"时先确认是否有 await 间隙，别为不存在的竞态加锁（cargo-cult）。kimi 终审也独立验证了所有 caller无 await 间隙，确认非 bug。
 
 ## Architecture Decisions
+
+### Trust IA + 运行自主度（Autopilot packaging，2026-08-02）
+- **问题**：权限入口过多；「God-mode」过卖（实际只是 `allow_all_schemes` = L1 + 部分网页 L2）；用户要的是长程无人值守一条路
+- **否决**：把 God 扩成跳过 shell/CU/spawn forceConfirm（Scheme C）— 升级静默提权 + prompt-injection 产品化 RCE；ADR-010/014/017/020 合同破坏
+- **产品形态**：
+  1. UI 主标签 **协议解锁**（wire 仍 `allow_all_schemes`；审计 reason 可仍 `god_mode`）
+  2. **运行自主度** = Trust packaging：档位双写现有 `auto_approve_dangerous` / `auto_approve_enterprise_tools` / `allow_all_schemes`
+  3. Hard floors v1：CU 任务 L2、`spawn_worker`、cookie、workspace、pack whitelist 等仍确认
+  4. 不新增 superseding config enum（P0/P1）
+- **流程**：四路对抗 → SoT/plan → Pi+Claude **APPROVE_WITH_NITS** → 再改代码；**禁止**先改 `server.ts` skip 代数
+- **SoT**：`docs/superpowers/specs/2026-08-02-trust-ia-autopilot-design.md`
+- **实现**：`SettingsSlideout` 运行自主度 + 高级闸门；`autopilot-tier.ts`；StatusRail 巡航徽章；companion skip 未改
+- **P2 开放**：会话/线程作用域武装、TTL、spawn 预算、含桌面巡航
+- **教训**：用户「God=全开」用 **Autopilot + 后果矩阵** 接 JTBD，不要污染协议键语义
 
 ### Companion Native HUD N1–N10（2026-07-27 LOCK，P3a 前）
 - **Source of truth**: `docs/decisions/v1.3/companion-native-hud-n1n10-lock-2026-07-27.md`
