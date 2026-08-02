@@ -301,3 +301,35 @@ export function buildInstallCommands(opts: {
   const py = opts.pythonPath || (process.platform === "win32" ? "python" : "python3")
   return [`"${py}" -m pip install ${pkgs}`]
 }
+
+
+/** Ensure path looks like a usable Python binary (absolute + runs -c). */
+export async function validatePythonExecutable(
+  raw: string,
+): Promise<{ ok: true; path: string } | { ok: false; error: string }> {
+  const p = String(raw || "").trim()
+  if (!p) return { ok: false, error: "路径不能为空" }
+  if (!path.isAbsolute(p)) return { ok: false, error: "请选择绝对路径的 Python 可执行文件" }
+  if (!fs.existsSync(p)) return { ok: false, error: "文件不存在" }
+  try {
+    const st = fs.statSync(p)
+    if (!st.isFile() && !st.isSymbolicLink()) {
+      // on unix python can be symlink to file — isFile follows links usually
+    }
+  } catch (e: any) {
+    return { ok: false, error: e?.message || String(e) }
+  }
+  const exe = await probePythonBin(p)
+  if (!exe) {
+    return {
+      ok: false,
+      error: "无法作为 Python 启动（请选择 python / python3 可执行文件，而不是目录）",
+    }
+  }
+  // Prefer realpath for stability
+  try {
+    return { ok: true, path: fs.realpathSync(p) }
+  } catch {
+    return { ok: true, path: p }
+  }
+}

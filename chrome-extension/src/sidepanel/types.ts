@@ -575,6 +575,8 @@ export interface ComputerModelState {
   enableBlockReason?: string
   modelRootDir?: string
   pythonMode?: "isolated" | "system"
+  /** Absolute path when user picked a system interpreter */
+  pythonPath?: string
   uvAvailable?: boolean
   pythonResolution?: string
   isolatedEnvExists?: boolean

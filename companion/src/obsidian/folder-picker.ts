@@ -86,3 +86,76 @@ async function pickWindows(): Promise<PickResult> {
     return { error: `Windows 文件夹对话框失败: ${msg.slice(0, 160)}` }
   }
 }
+
+/**
+ * Native OS file-picker (single file). Used for selecting a Python interpreter.
+ * Same platform backends as pickFolderNative; returns absolute path.
+ */
+export async function pickFileNative(opts?: {
+  prompt?: string
+  /** macOS ofi types e.g. {"public.unix-executable"} — best-effort filter */
+  macTypes?: string[]
+}): Promise<PickResult> {
+  const prompt = opts?.prompt || "选择文件"
+  try {
+    if (isMacOS()) return await pickFileMacOS(prompt)
+    if (isLinux()) return await pickFileLinux(prompt)
+    if (isWindows()) return await pickFileWindows(prompt)
+    return { error: "当前平台不支持图形化选择文件,请手动输入路径" }
+  } catch (e: any) {
+    return { error: `选择文件失败: ${e.message || String(e)}` }
+  }
+}
+
+async function pickFileMacOS(prompt: string): Promise<PickResult> {
+  // Escape prompt for AppleScript string
+  const p = prompt.replace(/\\/g, "\\\\").replace(/"/g, '\\"')
+  const script = `POSIX path of (choose file with prompt "${p}")`
+  try {
+    const { stdout } = await execFileP("osascript", ["-e", script], { timeout: PICK_TIMEOUT_MS })
+    const path = stdout.trim()
+    return path ? { path } : { error: "未选择文件" }
+  } catch (e: any) {
+    const msg = ((e.stderr || "") + " " + (e.message || "")).toString()
+    if (/cancel|-128/i.test(msg)) return { error: "cancelled" }
+    return { error: `macOS 文件对话框失败: ${msg.slice(0, 160)}` }
+  }
+}
+
+async function pickFileLinux(prompt: string): Promise<PickResult> {
+  try {
+    const { stdout } = await execFileP(
+      "zenity",
+      ["--file-selection", `--title=${prompt}`],
+      { timeout: PICK_TIMEOUT_MS },
+    )
+    const path = stdout.trim()
+    return path ? { path } : { error: "cancelled" }
+  } catch (e: any) {
+    const msg = ((e.stderr || "") + " " + (e.message || "")).toString()
+    if (e.code === "ENOENT") return { error: "未安装 zenity,请手动输入路径" }
+    if (e.code === 1 || /cancel/i.test(msg)) return { error: "cancelled" }
+    return { error: `zenity 失败: ${msg.slice(0, 160)}` }
+  }
+}
+
+async function pickFileWindows(prompt: string): Promise<PickResult> {
+  const title = prompt.replace(/'/g, "''")
+  const ps =
+    "Add-Type -AssemblyName System.Windows.Forms; " +
+    "$d = New-Object System.Windows.Forms.OpenFileDialog; " +
+    `$d.Title = '${title}'; ` +
+    "$d.Filter = 'Executable|*.exe;python.exe;pythonw.exe|All files|*.*'; " +
+    "$d.CheckFileExists = $true; " +
+    "if ($d.ShowDialog() -eq 'OK') { Write-Output $d.FileName }"
+  try {
+    const { stdout } = await execFileP("powershell", ["-NoProfile", "-Command", ps], {
+      timeout: PICK_TIMEOUT_MS,
+    })
+    const path = stdout.trim()
+    return path ? { path } : { error: "cancelled" }
+  } catch (e: any) {
+    const msg = ((e.stderr || "") + " " + (e.message || "")).toString()
+    return { error: `Windows 文件对话框失败: ${msg.slice(0, 160)}` }
+  }
+}

@@ -934,6 +934,7 @@ function setupMessageHandlers() {
       case "computer.model.set_model_root":
       case "computer.model.pick_model_root":
       case "computer.model.set_python_mode":
+      case "computer.model.pick_python_path":
       case "computer.model.ensure_python_env":
       case "computer.model.install_deps":
         // Forward to companion

@@ -4945,6 +4945,12 @@ export function validateWsMessage(msg: any): WsValidationResult {
       }
       return { valid: true }
     },
+    "computer.model.pick_python_path": (m) => {
+      if (m.source !== "settings") {
+        return { valid: false, error: 'computer.model.pick_python_path requires source:"settings"' }
+      }
+      return { valid: true }
+    },
     "computer.model.ensure_python_env": (m) => {
       if (m.source !== "settings") {
         return { valid: false, error: 'computer.model.ensure_python_env requires source:"settings"' }

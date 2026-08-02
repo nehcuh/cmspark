@@ -1074,6 +1074,32 @@ export function SettingsSlideout() {
                     )
                   })}
                 </div>
+                {(model?.pythonMode || model?.preflight?.pythonMode) === "system" && (
+                  <div style={{ marginTop: 6 }}>
+                    <div style={{ ...styles.helpText, fontSize: 10, color: "#666", marginBottom: 4 }}>
+                      当前全局解释器：
+                      <span style={{ fontFamily: "ui-monospace, monospace", color: "#333" }}>
+                        {model?.pythonPath ||
+                          (typeof model?.preflight?.deps?.pythonPath === "string"
+                            ? model.preflight.deps.pythonPath
+                            : null) ||
+                          "（PATH 自动探测）"}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      style={styles.secondaryBtn}
+                      disabled={model === null || model.modelStatus === "downloading"}
+                      title="用系统对话框选择 python3 / python 可执行文件"
+                      onClick={() => {
+                        dispatch({ type: "SET_COMPUTER_MODEL_ERROR", error: null })
+                        send({ type: "computer.model.pick_python_path", source: "settings" })
+                      }}
+                    >
+                      选择 Python 可执行文件…
+                    </button>
+                  </div>
+                )}
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
                   <button
                     type="button"

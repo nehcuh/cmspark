@@ -233,6 +233,10 @@ async function statePayload(
           uvAvailable: preflight.uvAvailable,
           pythonResolution: preflight.pythonResolution,
           isolatedEnvExists: preflight.isolatedEnvExists,
+          pythonPath:
+            typeof cfg.pythonPath === "string" && cfg.pythonPath
+              ? cfg.pythonPath
+              : preflight.deps?.pythonPath,
         }
       : {
           canDownload: false,
@@ -332,6 +336,7 @@ export async function handleComputerModelMessage(
     "computer.model.set_model_root",
     "computer.model.pick_model_root",
     "computer.model.set_python_mode",
+    "computer.model.pick_python_path",
     "computer.model.ensure_python_env",
     "computer.model.install_deps",
   ])
@@ -588,10 +593,12 @@ export async function handleComputerModelMessage(
       const patch: Parameters<typeof setComputerModelFields>[0] = { pythonMode: mode }
       if (mode === "system" && typeof rest.pythonPath === "string" && rest.pythonPath.trim()) {
         const p = rest.pythonPath.trim()
-        if (!path.isAbsolute(p) && process.platform !== "win32") {
-          // allow bare "python3" only as empty path (PATH resolve)
+        if (path.isAbsolute(p)) {
+          const { validatePythonExecutable } = await import("./python-runtime")
+          const v = await validatePythonExecutable(p)
+          if (!v.ok) return modelError(v.error, { code: "INVALID_PYTHON_PATH" })
+          patch.pythonPath = v.path
         }
-        if (path.isAbsolute(p)) patch.pythonPath = p
       }
       if (mode === "isolated") {
         // clear system override so isolated is unambiguous
@@ -602,6 +609,32 @@ export async function handleComputerModelMessage(
       const state = await statePayload(holder, deps)
       ctx.broadcast?.(state)
       return state
+    }
+
+    case "computer.model.pick_python_path": {
+      const { pickFileNative } = await import("../obsidian/folder-picker")
+      const { validatePythonExecutable } = await import("./python-runtime")
+      const picked = await pickFileNative({
+        prompt: "选择本机 Python 可执行文件（python3 / python）",
+      })
+      if (picked.error === "cancelled") {
+        return { type: "computer.model.pick_python_path.result", ok: false, cancelled: true }
+      }
+      if (picked.error || !picked.path) {
+        return modelError(picked.error || "未选择文件", { code: "PICK_FAILED" })
+      }
+      const v = await validatePythonExecutable(picked.path)
+      if (!v.ok) return modelError(v.error, { code: "INVALID_PYTHON_PATH" })
+      setComputerModelFields({ pythonMode: "system", pythonPath: v.path })
+      logger.info("computer.model.python_path_picked", { path: v.path })
+      const state = await statePayload(holder, deps)
+      ctx.broadcast?.(state)
+      return {
+        ...state,
+        type: "computer.model.pick_python_path.result",
+        ok: true,
+        pythonPath: v.path,
+      }
     }
 
     case "computer.model.ensure_python_env": {
