@@ -24,7 +24,7 @@ import {
   IconSpinner,
   IconMore,
 } from "../ui/icons"
-import { cruiseChipLabel, disarmAllFlags } from "./autopilot-tier"
+import { disarmAllFlags, trustStatusChip } from "./autopilot-tier"
 
 export function StatusRail({
   connectionState,
@@ -162,12 +162,18 @@ export function StatusRail({
 
   const closeMenu = () => setMenuOpen(false)
   const connLabel = connectionLabel(connectionState)
-  const cruiseLabel = cruiseChipLabel({
-    auto_approve_dangerous: state.config.auto_approve_dangerous === true,
-    auto_approve_enterprise_tools: state.config.auto_approve_enterprise_tools === true,
-    allow_all_schemes: state.config.allow_all_schemes === true,
-  })
+  const unattendedArmed = state.unattended?.armed === true
+  const cruiseLabel = trustStatusChip(
+    {
+      auto_approve_dangerous: state.config.auto_approve_dangerous === true,
+      auto_approve_enterprise_tools: state.config.auto_approve_enterprise_tools === true,
+      allow_all_schemes: state.config.allow_all_schemes === true,
+    },
+    unattendedArmed,
+  )
   const disarmCruise = () => {
+    // Full disarm: unattended grant + cruise flags (clear_cruise on companion)
+    chrome.runtime.sendMessage({ type: "security.unattended.disarm", clear_cruise: true })
     chrome.runtime.sendMessage({ type: "config.set", config: disarmAllFlags() })
   }
 
@@ -210,7 +216,11 @@ export function StatusRail({
         <button
           type="button"
           style={railStyles.cruisePill}
-          title="运行自主度已武装；点击解除（关闭网页/企业/协议三类自动批准）"
+          title={
+            unattendedArmed
+              ? "无人值守已武装（本会话桌面值守）；点击解除值守与巡航 flags"
+              : "运行自主度已武装；点击解除（关闭网页/企业/协议三类自动批准）"
+          }
           onClick={disarmCruise}
           aria-label={`${cruiseLabel}，点击解除`}
         >

@@ -80,7 +80,7 @@
 | **D1** | 产品名词 **禁用「God-mode」作主标签**；UI 用 **协议解锁**；副文案写清仅 L1+网页 L2 | Settings `rg` 无主标题 God-mode；可保留代码注释 / 审计 reason `god_mode` |
 | **D2** | **运行自主度** 为多 flag 武装的**唯一主路径**；旧三开关降到 **高级 · 独立闸门** | 主分区 CTA 可完成网页±企业武装而无需先找三个勾 |
 | **D3** | 武装前 **强制展示后果矩阵**（工具族 × 跳过/仍确认） | 未展示矩阵不可提交短语 |
-| **D4** | **Hard floors v1**：Autopilot **不得**静默跳过 `host_computer` 任务级 L2、`spawn_worker`、`ask_user`、`board_complete`、MCP critical、evaluate critical_api、cookie 信任域、workspace 绑定、pack whitelist、netsec 空名单 | 单测 + 矩阵文案一致 |
+| **D4** | **Hard floors v1**：默认 Autopilot 档 **不得**静默跳过 `host_computer` 任务级 L2、`spawn_worker`、`ask_user`、`board_complete`、MCP critical、evaluate critical_api、cookie 信任域、workspace 绑定、pack whitelist、netsec 空名单。**例外**：[ADR-021](../../adr/021-unattended-desktop-session.md) / 无人值守档的进程内 grant 可跳过 **initial** L2（仅 coordinateAllowed；危险 re-L2 仍确认） | 单测 + 矩阵文案一致 |
 | **D5** | Enterprise 跳过 **永远** 在 scope ∩ 之后；武装不写 allowlist、不 enable module | 与 Plan A/B 一致 |
 | **D6** | Wire keys 冻结：`auto_approve_dangerous` / `allow_all_schemes` / `auto_approve_enterprise_tools`；Autopilot **双写**这些 bool，不新增 superseding config key（P0/P1） | config schema 无新必填 trust enum |
 | **D7** | false→true 仍走 companion phrase step-up（`SECURITY_ARM_FLAGS`）；一次武装多 flag 时 **逐 flag 审计** `security.flag_armed` | 审计含 flags[] |

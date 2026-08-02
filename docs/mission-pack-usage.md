@@ -178,7 +178,8 @@
 
 - Agent 调用 **`netsec_port_scan`** 时默认再过一次 **L2 确认**（侧栏红条或 [确认台](confirm-center-user-guide.md)）。
 - **本线程企业信任（Plan A）**：在 L2 红条勾选「本线程内自动批准同类（netsec）」后，同线程、范围内后续扫描可跳过 L2（30 分钟无人工批准 / 最长 8 小时 / Companion 重启后失效）。**仅 netsec family**，不放开 shell。
-- **全局企业自动批准（Plan B）**：设置 → **运行自主度**「全自动巡航」或 高级闸门 →「全局自动批准企业高危工具」+ 短语确认；仍受 allowlist / 任务授权约束；**不会**被协议解锁（原 God-mode）/「自动批准危险操作」单独跳过 shell/netsec。
+- **全局企业自动批准（Plan B）**：设置 → **运行自主度**「全自动巡航」或 高级闸门 →「全局自动批准企业高危工具」+ 短语确认；仍受 allowlist / 任务授权约束；**不会**被协议解锁（原 God-mode）/「自动批准危险操作」单独跳过 shell/netsec。  
+- **桌面无人值守**（`host_computer`）：与 Plan B **正交**；走「运行自主度 → 无人值守」，**不能**靠 Pack / god 静默打开；见 [computer-use-user-guide §5.1](computer-use-user-guide.md#51-无人值守桌面值守与-g1-对照)。
 - 实现仅为 **TCP connect 探针**，不是完整 nmap。
 - **仅用于你有权测试的目标**。
 

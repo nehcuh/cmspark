@@ -51,7 +51,10 @@
 
 4. **目标不是结构排除类**：密码管理器、浏览器本体、终端、钱包、LOLBIN 等 **永远不能** 开坐标（见 ADR-017 / 代码 `canEverCoordinate`）。
 
-5. **任务级 L2**：`host_computer` 任务在确认台/红条展示任务描述、目标 App、**逐字 type 文本**、动作预算；**god-mode / auto_approve 不能跳过**。默认每次任务都要批；若已有 session-trust 且满足 §5 的 G1 条件，同线程同 App 的**后续**任务可跳过初始 L2（危险/实验/前台让出类仍始终 prompt）。
+5. **任务级 L2**：`host_computer` 任务在确认台/红条展示任务描述、目标 App、**逐字 type 文本**、动作预算。  
+   - **全局开关**（协议解锁 / 自动批准危险 / 企业自动批准）**不能单独**跳过任务级 initial L2。  
+   - **G1 session-trust**（§5）：交互批准后，同线程同 App 后续任务在 corpus/预算条件下可 skip。  
+   - **无人值守**（§5.1 / [ADR-021](adr/021-unattended-desktop-session.md)）：设置 → 运行自主度 → **无人值守** 短语武装后，本 Companion 进程内对 **已开坐标的白名单 App** 可跳过 **initial** L2（含键入预览）；危险/实验/前台让出 re-L2 **仍确认**；重启失效。
 
 ### 快速检查清单
 
@@ -88,11 +91,27 @@ Computer Use 与其它高危工具共用 [确认台](confirm-center-user-guide.m
 | **存什么** | 进程内 grant：某线程（优先 `thread:` key）或某 WS 会话 + App 上的信任状态 |
 | **何时写入** | 你批准了**任务级**初始 L2 之后（可勾选「本会话自动同意同类操作」等 UI 文案，以面板为准） |
 | **能跳过什么** | ① 部分 **任务中途 re-L2**（如预算耗尽后继续、部分 pause，任务本地即可静默）；② **G1 多任务 initial-L2 skip**：须 **显式 opt-in** + 同 thread key + 同 App + type corpus ⊆ 已批 + budget/actions ≤ 已见上限 + 未过期 + 无凭据闩 + 非 experimental |
-| **绝不能静默过** | 危险检测（`danger_detected`）、实验性定位建议（`experimental_suggestion`）、前台让出（`foreground_yielded`）— **始终 prompt**；**god-mode / auto_approve 也不能**跳过任务级 L2 |
+| **绝不能静默过** | 危险检测（`danger_detected`）、实验性定位建议（`experimental_suggestion`）、前台让出（`foreground_yielded`）— **始终 prompt**；**协议解锁 / auto_approve 也不能单独**跳过任务级 L2（值守见 §5.1） |
 | **失效** | Companion 重启清空；默认 **约 30 分钟** 自上次交互批准空闲过期；OCR 见到凭据界面会 **闩住**，阻止下一轮 initial-skip |
-| **不是** | `ThreadApprovals` 的 host 白名单、也不是 `auto_approve_dangerous` / 企业 god-mode |
+| **不是** | `ThreadApprovals` 的 host 白名单、也不是 `auto_approve_dangerous` / 协议解锁；**也不是**无人值守（见下） |
 
 用一句话：**你已批过「这一会话对这个 App」的范围（并可勾选自动同意同类）；系统在安全标签与 corpus/预算门允许时少问「继续吗」与后续同类任务的初始确认。**
+
+### 5.1 无人值守（桌面值守）与 G1 对照
+
+| | **G1 session-trust** | **无人值守（ADR-021）** |
+|--|----------------------|-------------------------|
+| 入口 | 确认台勾「本会话自动同意同类」 | 设置 → **运行自主度 → 无人值守** + 短语 + 双勾选 |
+| 首枪 initial L2 | **必须**先交互批一次 | 武装后 **可跳过**（键入无逐字预览） |
+| App 范围 | 已批的那个 app | 每次任务实时 `coordinateAllowed` |
+| type 文本 | 须 ⊆ 已批 corpus | **open_within_app**（不绑 corpus） |
+| 寿命 | ~30min idle / 重启清 | **8h 墙钟** / 重启清 / 点解除 |
+| 徽章 | （企业信任等） | 顶栏 **值守中 · 桌面** |
+| 危险 re-L2 | 始终确认 | 始终确认 |
+| 急停 | 停任务 | 停任务，**不等于**解除值守 |
+
+**启用前**：`computer.coordinateEnabled`、Apps 白名单、目标 App「允许坐标」。  
+**诚实风险**：免初始确认后，prompt 注入可驱动已放权 App 上的键鼠；OCR 可能漏检部分支付 UI——自负后果。
 
 ---
 

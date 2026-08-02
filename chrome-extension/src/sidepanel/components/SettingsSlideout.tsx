@@ -20,14 +20,16 @@ import {
 } from "./model-switch-logic"
 import {
   AUTOPILOT_CONSEQUENCE_ROWS,
+  UNATTENDED_MATRIX_FOOTNOTES,
+  type AutopilotArmPick,
   type AutopilotTier,
-  cruiseChipLabel,
-  deriveAutopilotTier,
+  deriveDisplayTier,
   disarmAllFlags,
   flagsNeedingArm,
   flagsNeedingDisarm,
   targetFlagsForTier,
   tierShortLabel,
+  trustStatusChip,
 } from "./autopilot-tier"
 
 // P1-1 / PR-B: typed-confirmation phrase for arming dangerous security flags.
@@ -68,15 +70,16 @@ export function SettingsSlideout() {
   const [autoDangerConfirm, setAutoDangerConfirm] = useState(false)
   const [autoDangerPhrase, setAutoDangerPhrase] = useState("")
   const [autoDangerMsg, setAutoDangerMsg] = useState<string | null>(null)
-  // Trust IA: Autopilot package arm
-  const [autopilotTierPick, setAutopilotTierPick] = useState<
-    "browser" | "full" | "full_protocol"
-  >("browser")
+  // Trust IA + ADR-021: Autopilot package arm / unattended
+  const [autopilotTierPick, setAutopilotTierPick] = useState<AutopilotArmPick>("browser")
   const [autopilotConfirm, setAutopilotConfirm] = useState(false)
   const [autopilotPhrase, setAutopilotPhrase] = useState("")
   const [autopilotMsg, setAutopilotMsg] = useState<string | null>(null)
   const [autopilotBusy, setAutopilotBusy] = useState(false)
   const [advancedGatesOpen, setAdvancedGatesOpen] = useState(false)
+  const [unattendedAckDesktop, setUnattendedAckDesktop] = useState(false)
+  const [unattendedAckSession, setUnattendedAckSession] = useState(false)
+  const [unattendedIncludeProtocol, setUnattendedIncludeProtocol] = useState(false)
   // WP5-I4 实验区:删除模型两步确认按钮的待命态(非 store——纯组件内 UI 态)。
   const [modelDeleteArmed, setModelDeleteArmed] = useState(false)
 
@@ -100,6 +103,11 @@ export function SettingsSlideout() {
     setAutopilotPhrase("")
     setAutopilotMsg(null)
     setAutopilotBusy(false)
+    setUnattendedAckDesktop(false)
+    setUnattendedAckSession(false)
+    setUnattendedIncludeProtocol(false)
+    // Hydrate unattended grant for chip / disarm
+    chrome.runtime.sendMessage({ type: "security.unattended.status" })
     // WP5-I4 实验区:打开设置页拉一次模型状态(后续由 state 广播驱动,
     // 无乐观更新);清掉上次打开残留的错误与删除待命态。
     setModelDeleteArmed(false)
@@ -348,13 +356,73 @@ export function SettingsSlideout() {
       setAutopilotMsg(`请输入「${SECURITY_ARM_PHRASE}」`)
       return
     }
+    if (autopilotTierPick === "unattended") {
+      if (!unattendedAckDesktop || !unattendedAckSession) {
+        setAutopilotMsg("请勾选两项确认（桌面免初始确认 + 会话失效）")
+        return
+      }
+    }
     const phrase = autopilotPhrase.trim()
     setAutopilotBusy(true)
-    const target = targetFlagsForTier(autopilotTierPick, {
-      auto_approve_dangerous: config.auto_approve_dangerous,
-      auto_approve_enterprise_tools: config.auto_approve_enterprise_tools,
-      allow_all_schemes: config.allow_all_schemes,
+
+    if (autopilotTierPick === "unattended") {
+      // ADR-021: process grant via companion; dual-writes cruise flags server-side.
+      // Background only ACKs {ok:true}; real status arrives via WS broadcast
+      // (security.unattended.status → SET_UNATTENDED_STATUS). Do not invent armed:true.
+      chrome.runtime.sendMessage(
+        {
+          type: "security.unattended.arm",
+          confirmation_phrase: phrase,
+          include_protocol: unattendedIncludeProtocol === true,
+        },
+        () => {
+          if (chrome.runtime.lastError) {
+            setAutopilotMsg(chrome.runtime.lastError.message || "武装失败（扩展通道）")
+            setAutopilotBusy(false)
+            return
+          }
+          dispatch({
+            type: "ADD_SECURITY_AUDIT",
+            entry: {
+              id: `unattended-on-${crypto.randomUUID()}`,
+              ts: new Date().toISOString(),
+              level: "error",
+              tool_name: "unattended_desktop",
+              action: "changed",
+              risk_level: "high",
+              risk_score: 100,
+              source: "ui_phrase_confirmed",
+              message:
+                "已请求武装无人值守 — 以 Companion 返回的值守状态为准；host_computer 初始 L2 可跳过；危险 re-L2 仍确认",
+            },
+          })
+          setAutopilotConfirm(false)
+          setAutopilotPhrase("")
+          setAutopilotMsg(null)
+          setAutopilotBusy(false)
+          setAdvancedGatesOpen(true)
+          // Reconcile flags + grant from companion (source of truth)
+          chrome.runtime.sendMessage({ type: "config.get" })
+          chrome.runtime.sendMessage({ type: "security.unattended.status" })
+        },
+      )
+      return
+    }
+
+    // Non-unattended: dual-write flags only; clear any leftover unattended grant
+    chrome.runtime.sendMessage({ type: "security.unattended.disarm" })
+    dispatch({
+      type: "SET_UNATTENDED_STATUS",
+      unattended: { armed: false, armedAt: null, expiresAt: null, includeProtocol: false },
     })
+    const target = targetFlagsForTier(
+      autopilotTierPick,
+      {
+        auto_approve_dangerous: config.auto_approve_dangerous,
+        auto_approve_enterprise_tools: config.auto_approve_enterprise_tools,
+        allow_all_schemes: config.allow_all_schemes,
+      },
+    )
     applySecurityFlagsTarget(
       target,
       phrase,
@@ -369,10 +437,16 @@ export function SettingsSlideout() {
 
   const handleAutopilotDisarm = () => {
     setAutopilotBusy(true)
+    // Clear unattended grant + all cruise flags (full disarm)
+    chrome.runtime.sendMessage({ type: "security.unattended.disarm", clear_cruise: true })
+    dispatch({
+      type: "SET_UNATTENDED_STATUS",
+      unattended: { armed: false, armedAt: null, expiresAt: null, includeProtocol: false },
+    })
     applySecurityFlagsTarget(
       disarmAllFlags(),
       undefined,
-      "解除运行自主度武装（已关闭网页/企业/协议三类自动批准）",
+      "解除运行自主度 / 无人值守（已关闭网页/企业/协议三类自动批准 + 桌面值守）",
     )
     setAutopilotBusy(false)
     setAutopilotConfirm(false)
@@ -557,16 +631,17 @@ export function SettingsSlideout() {
 
           <div style={styles.divider} />
 
-          {/* --- 运行自主度 (Trust packaging / Autopilot) --- */}
+          {/* --- 运行自主度 (Trust packaging / Autopilot + ADR-021 unattended) --- */}
           {(() => {
             const armFlags = {
               auto_approve_dangerous: config.auto_approve_dangerous === true,
               auto_approve_enterprise_tools: config.auto_approve_enterprise_tools === true,
               allow_all_schemes: config.allow_all_schemes === true,
             }
-            const tier = deriveAutopilotTier(armFlags)
-            const chip = cruiseChipLabel(armFlags)
-            const anyArmed = tier !== "off"
+            const unattendedArmed = state.unattended?.armed === true
+            const tier = deriveDisplayTier(armFlags, unattendedArmed)
+            const chip = trustStatusChip(armFlags, unattendedArmed)
+            const anyArmed = tier !== "off" || unattendedArmed
             return (
               <>
                 <div style={styles.sectionTitle}>
@@ -589,8 +664,8 @@ export function SettingsSlideout() {
                 </div>
                 <div style={styles.field}>
                   <div style={styles.helpText}>
-                    长程无人值守的<strong>主入口</strong>：武装后已选工具族可跳过每次确认。
-                    默认关闭。急停与硬性拒绝仍然有效；你将承担 prompt 注入驱动已放权操作的后果。
+                    长程无人值守的<strong>主入口</strong>。默认关闭。急停与硬性拒绝仍然有效。
+                    选「无人值守」后，已白名单坐标 App 的桌面操控可免初始确认（本会话，重启失效）。
                   </div>
                   <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
                     {(
@@ -604,7 +679,12 @@ export function SettingsSlideout() {
                         {
                           id: "full_protocol" as const,
                           label: "全自动巡航（含协议解锁）",
-                          hint: "上者 + 非 http(s) 协议；最高风险",
+                          hint: "上者 + 非 http(s)；仍不含桌面",
+                        },
+                        {
+                          id: "unattended" as const,
+                          label: "无人值守",
+                          hint: "本会话：全自动 + 白名单 App 桌面免初始确认（含微信键入）",
                         },
                       ] as const
                     ).map((opt) => (
@@ -634,7 +714,9 @@ export function SettingsSlideout() {
                           style={{ marginTop: 3 }}
                         />
                         <div>
-                          <div style={{ fontWeight: 500 }}>{opt.label}</div>
+                          <div style={{ fontWeight: 500, color: opt.id === "unattended" ? tokens.danger : undefined }}>
+                            {opt.label}
+                          </div>
                           <div style={{ fontSize: 11, color: tokens.textSecondary }}>{opt.hint}</div>
                         </div>
                       </label>
@@ -667,6 +749,9 @@ export function SettingsSlideout() {
                           <th style={{ textAlign: "left", padding: "4px 6px", border: "1px solid #e0e0e0" }}>
                             +协议
                           </th>
+                          <th style={{ textAlign: "left", padding: "4px 6px", border: "1px solid #e0e0e0" }}>
+                            值守
+                          </th>
                         </tr>
                       </thead>
                       <tbody>
@@ -676,14 +761,19 @@ export function SettingsSlideout() {
                             <td style={{ padding: "4px 6px", border: "1px solid #e0e0e0" }}>{row.browser}</td>
                             <td style={{ padding: "4px 6px", border: "1px solid #e0e0e0" }}>{row.full}</td>
                             <td style={{ padding: "4px 6px", border: "1px solid #e0e0e0" }}>{row.protocol}</td>
+                            <td style={{ padding: "4px 6px", border: "1px solid #e0e0e0" }}>{row.unattended}</td>
                           </tr>
                         ))}
                       </tbody>
                     </table>
                     <div style={{ ...styles.helpText, marginTop: 4 }}>
-                      * shell/netsec 跳过仍受模块启用、白名单/任务授权约束；community 配置下企业跳过不会生效。
+                      {UNATTENDED_MATRIX_FOOTNOTES}
+                      <br />
                       当前档位：<strong>{tierShortLabel(tier)}</strong>
                       {tier === "custom" ? "（高级闸门与预设不一致）" : ""}
+                      {unattendedArmed && state.unattended?.expiresAt
+                        ? ` · 值守至 ${new Date(state.unattended.expiresAt).toLocaleString()}`
+                        : ""}
                     </div>
                   </div>
 
@@ -712,7 +802,7 @@ export function SettingsSlideout() {
                         style={styles.toggleBtn}
                         disabled={autopilotBusy}
                         onClick={handleAutopilotDisarm}
-                        title="将关闭网页/企业/协议三类自动批准"
+                        title="解除桌面值守 + 关闭网页/企业/协议三类自动批准"
                       >
                         解除武装
                       </button>
@@ -729,6 +819,37 @@ export function SettingsSlideout() {
                         border: "1px solid #E0B4B4",
                       }}
                     >
+                      {autopilotTierPick === "unattended" && (
+                        <div style={{ marginBottom: 10, fontSize: 12, color: tokens.danger, lineHeight: 1.5 }}>
+                          <div style={{ fontWeight: 600, marginBottom: 6 }}>
+                            键入内容将在执行前<strong>不再</strong>逐字预览。仅已白名单且开坐标的 App。
+                          </div>
+                          <label style={{ display: "flex", gap: 6, marginBottom: 4, cursor: "pointer" }}>
+                            <input
+                              type="checkbox"
+                              checked={unattendedAckDesktop}
+                              onChange={(e) => setUnattendedAckDesktop(e.target.checked)}
+                            />
+                            允许已白名单且已开坐标的 App 在本会话免初始确认
+                          </label>
+                          <label style={{ display: "flex", gap: 6, marginBottom: 4, cursor: "pointer" }}>
+                            <input
+                              type="checkbox"
+                              checked={unattendedAckSession}
+                              onChange={(e) => setUnattendedAckSession(e.target.checked)}
+                            />
+                            确认：重启 Companion 后自动失效，不会写入长期配置
+                          </label>
+                          <label style={{ display: "flex", gap: 6, cursor: "pointer", color: "#8a5a00" }}>
+                            <input
+                              type="checkbox"
+                              checked={unattendedIncludeProtocol}
+                              onChange={(e) => setUnattendedIncludeProtocol(e.target.checked)}
+                            />
+                            同时协议解锁（非 http(s)，更高风险，默认关）
+                          </label>
+                        </div>
+                      )}
                       <div style={{ fontSize: 12, color: tokens.danger, fontWeight: 500, marginBottom: 6 }}>
                         确认武装「{tierShortLabel(autopilotTierPick as AutopilotTier)}」— 请输入「
                         <b>{SECURITY_ARM_PHRASE}</b>」：

@@ -165,6 +165,10 @@ export const FORBIDDEN_PACK_KEYS = new Set([
   "auto_approved_domains",
   "trusted_domains",
   "god_mode",
+  // ADR-021: unattended is process grant via security.unattended.arm — never pack config
+  "unattended",
+  "unattended_computer",
+  "unattended_desktop",
 ])
 
 export const PACK_ID_RE = /^[a-z0-9][a-z0-9-]{1,63}$/

@@ -2089,6 +2089,60 @@ export async function handleMessage(
         },
       }
     }
+
+    // ADR-021: process-memory unattended desktop grant (not config SoT)
+    case "security.unattended.arm": {
+      const { armUnattended } = await import("./computer/unattended-grant")
+      const includeProtocol = rest.include_protocol === true
+      const result = armUnattended({
+        confirmation_phrase: rest.confirmation_phrase,
+        include_protocol: includeProtocol,
+        max_budget_cap: rest.max_budget_cap,
+        max_actions_cap: rest.max_actions_cap,
+      })
+      if (!result.ok) {
+        return { type: "error", error: result.error }
+      }
+      // Packaging dual-write: full cruise bools (CU skip still only via grant).
+      // Phrase already validated by armUnattended — safe to persist flags.
+      const current = getConfig()
+      saveConfig({
+        security: {
+          ...(current.security || {}),
+          auto_approve_dangerous: true,
+          auto_approve_enterprise_tools: true,
+          // Protocol only when requested; do not force-clear existing scheme unlock.
+          ...(includeProtocol ? { allow_all_schemes: true } : {}),
+        },
+      })
+      logger.info("security.unattended.arm_ok", {
+        include_protocol: includeProtocol,
+        expires_at: result.status.expiresAt,
+      })
+      return { type: "security.unattended.status", ...result.status }
+    }
+    case "security.unattended.disarm": {
+      const { disarmUnattended } = await import("./computer/unattended-grant")
+      const clearCruise = rest.clear_cruise === true
+      const status = disarmUnattended()
+      if (clearCruise) {
+        const current = getConfig()
+        saveConfig({
+          security: {
+            ...(current.security || {}),
+            auto_approve_dangerous: false,
+            auto_approve_enterprise_tools: false,
+            allow_all_schemes: false,
+          },
+        })
+      }
+      return { type: "security.unattended.status", ...status }
+    }
+    case "security.unattended.status": {
+      const { getUnattendedStatus } = await import("./computer/unattended-grant")
+      const status = getUnattendedStatus()
+      return { type: "security.unattended.status", ...status }
+    }
     case "enterprise.session_trust.revoke": {
       const { enterpriseSessionTrust, resolveEnterpriseTrustKey } = await import(
         "./capability/enterprise-session-trust"

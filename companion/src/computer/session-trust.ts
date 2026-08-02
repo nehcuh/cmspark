@@ -240,6 +240,15 @@ export class ComputerSessionTrust {
   }
 
   /**
+   * Credential latch set (ADR-021 unattended / G1). Pure read — no idle.
+   * True when OCR saw credential surface (or fail-closed null).
+   */
+  hasCredentialLatch(sessionId: string, appToken: string): boolean {
+    const rec = this.record(sessionId, appToken)
+    return !!rec && rec.credentialSurfaceSeen === true
+  }
+
+  /**
    * True when this session has already approved a task for the app token AND
    * the grant has not been idle-expired AND the credential latch is not set.
    *

@@ -1,27 +1,21 @@
-// Pure tests for Trust IA Autopilot tier derivation (design 2026-08-02 §5.2)
+// Pure tests for Trust IA Autopilot + ADR-021 unattended tier
 
 import test from "node:test"
 import assert from "node:assert/strict"
 import {
   deriveAutopilotTier,
+  deriveDisplayTier,
   targetFlagsForTier,
   disarmAllFlags,
   flagsNeedingArm,
   flagsNeedingDisarm,
   cruiseChipLabel,
+  trustStatusChip,
   tierShortLabel,
 } from "../src/sidepanel/components/autopilot-tier"
 
 test("deriveAutopilotTier maps all false to off", () => {
   assert.equal(deriveAutopilotTier({}), "off")
-  assert.equal(
-    deriveAutopilotTier({
-      auto_approve_dangerous: false,
-      auto_approve_enterprise_tools: false,
-      allow_all_schemes: false,
-    }),
-    "off",
-  )
 })
 
 test("deriveAutopilotTier maps browser / full / full_protocol", () => {
@@ -43,16 +37,34 @@ test("deriveAutopilotTier maps browser / full / full_protocol", () => {
   )
 })
 
-test("deriveAutopilotTier maps partial combos to custom", () => {
-  assert.equal(deriveAutopilotTier({ allow_all_schemes: true }), "custom")
-  assert.equal(deriveAutopilotTier({ auto_approve_enterprise_tools: true }), "custom")
+test("deriveDisplayTier prefers unattended when grant armed", () => {
   assert.equal(
-    deriveAutopilotTier({
-      auto_approve_dangerous: true,
-      allow_all_schemes: true,
-    }),
-    "custom",
+    deriveDisplayTier({ auto_approve_dangerous: true }, true),
+    "unattended",
   )
+  assert.equal(deriveDisplayTier({ auto_approve_dangerous: true }, false), "browser")
+})
+
+test("trustStatusChip unattended priority", () => {
+  assert.equal(trustStatusChip({}, true), "值守中 · 桌面")
+  assert.equal(
+    trustStatusChip({ auto_approve_dangerous: true }, false),
+    `巡航中 · ${tierShortLabel("browser")}`,
+  )
+  assert.equal(cruiseChipLabel({}), null)
+})
+
+test("targetFlagsForTier unattended with/without protocol", () => {
+  assert.deepEqual(targetFlagsForTier("unattended", {}, { includeProtocol: false }), {
+    auto_approve_dangerous: true,
+    auto_approve_enterprise_tools: true,
+    allow_all_schemes: false,
+  })
+  assert.deepEqual(targetFlagsForTier("unattended", {}, { includeProtocol: true }), {
+    auto_approve_dangerous: true,
+    auto_approve_enterprise_tools: true,
+    allow_all_schemes: true,
+  })
 })
 
 test("targetFlagsForTier browser keeps enterprise, clears protocol", () => {
@@ -63,19 +75,6 @@ test("targetFlagsForTier browser keeps enterprise, clears protocol", () => {
   assert.equal(t.auto_approve_dangerous, true)
   assert.equal(t.auto_approve_enterprise_tools, true)
   assert.equal(t.allow_all_schemes, false)
-})
-
-test("targetFlagsForTier full and full_protocol triples", () => {
-  assert.deepEqual(targetFlagsForTier("full", {}), {
-    auto_approve_dangerous: true,
-    auto_approve_enterprise_tools: true,
-    allow_all_schemes: false,
-  })
-  assert.deepEqual(targetFlagsForTier("full_protocol", {}), {
-    auto_approve_dangerous: true,
-    auto_approve_enterprise_tools: true,
-    allow_all_schemes: true,
-  })
 })
 
 test("flagsNeedingArm only false→true", () => {
@@ -102,13 +101,5 @@ test("flagsNeedingDisarm only true→false", () => {
       disarmAllFlags(),
     ),
     ["auto_approve_dangerous", "allow_all_schemes"],
-  )
-})
-
-test("cruiseChipLabel", () => {
-  assert.equal(cruiseChipLabel({}), null)
-  assert.equal(
-    cruiseChipLabel({ auto_approve_dangerous: true }),
-    `巡航中 · ${tierShortLabel("browser")}`,
   )
 })

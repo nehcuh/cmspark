@@ -1,0 +1,8 @@
+{
+  "batch": "unattended-desktop-m2-r2",
+  "timestamp": "20260802-160240",
+  "claude": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/unattended-desktop-m2-r2-claude-20260802-160240.md" },
+  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/unattended-desktop-m2-r2-pi-20260802-160240.md" },
+  "both_approve": true,
+  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/unattended-desktop-m2-r2-diff-20260802-160240.patch"
+}

@@ -21,8 +21,11 @@
 2. **双开关 fail-closed**：  
    - 全局 `computer.coordinateEnabled`（默认 false）。**0.3.0 用户实用路径**：写 `config.json`；Companion 有 `computer.set_enabled`（可走生物识别），但扩展/托盘 **尚未** 暴露拨开关 UI（Apps 面板只读镜像）。  
    - 每应用 `AppEntry.coordinateAllowed`（vault/浏览器/终端/钱包/LOLBIN **结构排除**，永远不可开）。  
-3. **任务级 L2 强制**：枚举 task、app、全部 type 文本、预算；**god-mode / auto_approve 永不跳过**任务级 L2。  
+3. **任务级 L2 强制**：枚举 task、app、全部 type 文本、预算。  
+   - **全局 bool**（`allow_all_schemes` / `auto_approve_dangerous` / `auto_approve_enterprise_tools`）**永不**单独跳过任务级 initial L2。  
+   - **例外（[ADR-021](021-unattended-desktop-session.md)）**：用户经短语+矩阵**显式武装**的进程内 **无人值守 grant** 可跳过 **initial** L2（仅 `coordinateAllowed` App；open_within_app；8h 墙钟；危险/实验/前台让出 re-L2 仍强制确认）。  
 4. **Session-trust**（`computer/session-trust` G1）：进程内、按 thread（优先，initial-skip 仅 `thread:` key）/ ws + app；可抑制部分 mid-task re-L2；**显式 opt-in** 且 corpus ⊆ 已批、budget/actions ≤ 已见上限、未过期、无凭据闩时，可跳过 **同线程同 App 后续任务的 initial L2**；danger / experimental / foreground_yielded **始终 prompt**；~30min 自上次交互批准空闲过期；Companion 重启清空。  
+   - **与 ADR-021 并行**：G1 = 交互后 corpus 子集；值守 = 预武装 open_within_app；两者均可置 `hostComputerTrustSkip`，代数为 OR，审计 reason 可区分。  
 5. **硬拒**：支付/转账/购买/验证码终确、凭据上下文键入、任务自弹对话框代点等。  
 6. **UI**：Confirm Center / Cockpit 步骤轨 + 急停；关窗不停任务。  
 7. **Multi-agent**：Worker `WORKER_HARD_DENY` 含 `host_computer`；存在 tab lease 时禁止对 Chrome 窗坐标注入。  
@@ -34,8 +37,8 @@
 ## Consequences
 
 - **正向**：桌面 GUI 自动化成为一等能力且默认关；确认台成为操控面。  
-- **负向**：权限与平台适配成本高；Linux 非一等；用户须理解「双开关 + 任务级 L2（god-mode 不跳过；session-trust 条件放宽后续同类）」；全局开启尚依赖配置文件。  
-- **维护**：改开关语义或硬拒列表须同步用户指南 + 本 ADR；过程稿路径仅作历史。
+- **负向**：权限与平台适配成本高；Linux 非一等；用户须理解「双开关 + 任务级 L2（全局 bool 不跳过；G1 / ADR-021 值守条件放宽）」；全局开启尚依赖配置文件；值守 open_within_app 放大注入键入面。  
+- **维护**：改开关语义或硬拒列表须同步用户指南 + 本 ADR + ADR-021；过程稿路径仅作历史。
 
 ---
 
