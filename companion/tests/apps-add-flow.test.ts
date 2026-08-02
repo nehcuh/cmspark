@@ -166,7 +166,7 @@ test("relative path → absolute_path_required", async () => {
 test("non-.exe target → not_an_exe on win32; posix uses existence gate", async () => {
   if (WIN) {
     await assert.rejects(
-      buildAppEntry(baseInput({ path: "C:\tools\run.bat" }), deps()),
+      buildAppEntry(baseInput({ path: "C:\\tools\\run.bat" }), deps()),
       (e: any) => e instanceof AddFlowError && e.code === "not_an_exe",
     )
   } else {

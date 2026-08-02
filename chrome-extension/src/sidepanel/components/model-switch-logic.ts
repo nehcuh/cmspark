@@ -215,7 +215,7 @@ export const MODEL_SWITCH_COPY: ModelSwitchCopy = {
     "UIA / OCR / 用户框选兜底不受影响。",
   licenseDoorHint:
     "首次开启需阅读并接受模型许可证与免责声明；" +
-    "拒绝则本实验层永久跳过，其余定位层不受影响。",
+    "拒绝则本实验层跳过，其余定位层不受影响；之后可在设置页「复位许可拒绝」重新打开流程。",
   firstLoadTimeline:
     "模型首次加载可能需数十秒至数分钟（取决于硬件与是否 GPU）；" +
     "加载期间 UIA / OCR / 用户框选定位不受影响。",

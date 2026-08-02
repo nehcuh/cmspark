@@ -201,3 +201,21 @@ test("license_response reset_decline clears permanent skip", async () => {
   assert.equal(getConfig().computer?.modelLicenseDeclined, false)
   assert.equal(r.declineReset, true)
 })
+
+test("validateWsMessage: license_response reset_decline without accepted is valid", () => {
+  assert.equal(
+    validateWsMessage({
+      type: "computer.model.license_response",
+      reset_decline: true,
+      source: "settings",
+    }).valid,
+    true,
+  )
+  assert.equal(
+    validateWsMessage({
+      type: "computer.model.license_response",
+      source: "settings",
+    }).valid,
+    false,
+  )
+})

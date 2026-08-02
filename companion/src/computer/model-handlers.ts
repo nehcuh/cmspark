@@ -10,13 +10,13 @@
 //
 // WI-4.2 四路由（I4 详案 plan:536-542 + 设计裁决 1/2/4/5 + P1/P3/P5/P6）：
 //   - set_enabled(true)：license 未接受/条款漂移 → license_required（config 零
-//     写入）；已拒绝 → LICENSE_DECLINED（永久跳过，无 UI 复位）；已接受 →
+//     写入）；已拒绝 → LICENSE_DECLINED（跳过，无 UI 复位）；已接受 →
 //     D2 生物识别门（裁决 1：持久能力授权与 apps coordinateAllowed 同级；
 //     clear 免费）。license_response/download/delete 不过门，但均 settings
 //     双层围栏（validateWsMessage + 本 handler belt 复核，P6）。
 //   - license_response accepted:true → 写时间戳 + LICENSE_DOOR_TEXT_HASH（P1
 //     文本版本绑定；漂移重门在 set_enabled/admission 侧比对）+ 自动触发 download；
-//     accepted:false → modelLicenseDeclined=true（永久跳过）。
+//     accepted:false → modelLicenseDeclined=true（跳过）。
 //   - download：按当前配置变体下载文件组（P3）；占位主机 .invalid 且未配镜像
 //     → fail-fast download-host-unset（零网络请求，裁决 5）；进程级单飞幂等
 //     （P10：防并发不防轮询——轮询 DoS 残余声明入 i4-implementation-notes）。
@@ -329,7 +329,7 @@ export async function handleComputerModelMessage(
         return state
       }
       const cfg = getConfig().computer ?? { coordinateEnabled: false }
-      // 许可证状态机（裁决 2）：已拒绝 → 永久跳过；未接受/条款漂移（P1 哈希
+      // 许可证状态机（裁决 2）：已拒绝 → 跳过；未接受/条款漂移（P1 哈希
       // 不符）→ license_required（config 零写入）。
       if (cfg.modelLicenseDeclined === true) {
         return modelError(
@@ -341,7 +341,7 @@ export async function handleComputerModelMessage(
         return {
           type: "computer.model.license_required" as const,
           licenseText: LICENSE_DOOR_TEXT,
-          notice: "阅读并接受许可证与免责声明后可开启实验层；拒绝则本层永久跳过，其余定位层不受影响。",
+          notice: "阅读并接受许可证与免责声明后可开启实验层；拒绝则本层跳过，其余定位层不受影响。之后可在设置页「复位许可拒绝」重新打开流程。",
         }
       }
       // L-QW-1 / SoT D1: hard-disable enable unless canEnable (model + infer deps).

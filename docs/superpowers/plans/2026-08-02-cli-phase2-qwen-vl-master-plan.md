@@ -1,3 +1,14 @@
+## ADR-020 capability declaration
+
+| Axis | Declaration |
+|------|-------------|
+| **Surface** | F1 host_cli = L2 Host; F2 Qwen = L2 CU experimental |
+| **Composition** | Apps config + tool catalog; no bare middle agent |
+| **Autonomy** | Workers hard-deny host_cli |
+| **Trust** | god-mode cannot skip host_cli L2; experimental re-L2 always; Q5 |
+| **Channel** | Community Apps structured CLI; free shell stays enterprise shell_exec |
+| **originWs** | SecurityPolicy L2 token family shared with host_app |
+
 # Master Plan：Apps CLI Phase-2 + Qwen3-VL 实验层 + 缺陷收敛
 
 > **日期**: 2026-08-02  

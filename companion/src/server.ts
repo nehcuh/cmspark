@@ -4888,7 +4888,11 @@ export function validateWsMessage(msg: any): WsValidationResult {
       return { valid: true }
     },
     "computer.model.license_response": (m) => {
-      if (typeof m.accepted !== "boolean") return { valid: false, error: "computer.model.license_response requires accepted:boolean" }
+      // D9: reset_decline clears a prior decline without accepting the license text.
+      const isReset = m.reset_decline === true || m.resetDecline === true
+      if (!isReset && typeof m.accepted !== "boolean") {
+        return { valid: false, error: "computer.model.license_response requires accepted:boolean (or reset_decline:true)" }
+      }
       if (m.source !== "settings") return { valid: false, error: 'computer.model.license_response requires source:"settings" (settings-page only)' }
       return { valid: true }
     },

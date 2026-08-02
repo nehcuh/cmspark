@@ -127,10 +127,11 @@ test("状态行:error 字段优先于 modelStatus 分支", () => {
 
 // --- 开关禁用原因(许可证已拒绝) ---
 
-test("禁用原因:declined → 永久跳过提示;其余 → null", () => {
+test("禁用原因:declined → 可复位跳过提示;其余 → null", () => {
   const r = modelSwitchDisabledReason(modelState({ modelLicenseDeclined: true }))
   assert.ok(r !== null)
-  assert.ok(r!.includes("永久跳过"))
+  assert.ok(r!.includes("跳过"))
+  assert.ok(r!.includes("复位") || r!.includes("设置页"))
   assert.equal(modelSwitchDisabledReason(modelState()), null)
   assert.equal(modelSwitchDisabledReason(null), null)
 })
