@@ -117,7 +117,7 @@ export interface ComputerConfig {
   modelLicenseAcceptedTextHash?: string
   /**
    * WP5-I4 许可证已拒绝（默认 false）。true → set_enabled(true) 恒返
-   * LICENSE_DECLINED（永久跳过；复位 = 手改 config.json，不提供 UI 复位）。
+   * LICENSE_DECLINED（跳过；设置页可 reset_decline 复位）。
    */
   modelLicenseDeclined?: boolean
   /**

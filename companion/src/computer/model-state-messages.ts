@@ -214,7 +214,7 @@ export interface ModelSwitchCopy {
   statusReadyDisabled: string
   /** 状态行：下载中文本前缀（百分比/文件名由逻辑层拼接） */
   downloadInProgress: string
-  /** 许可证已拒绝的恒态提示（永久跳过，无 UI 复位——裁决 2） */
+  /** 许可证已拒绝的恒态提示（跳过；设置页可复位（D9）） */
   licenseDeclinedNotice: string
 }
 
