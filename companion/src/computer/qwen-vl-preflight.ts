@@ -15,6 +15,7 @@ import { probeQwenModelDir, resolveModelRootDir } from "./qwen-vl-download"
 import {
   buildInstallCommands,
   resolvePythonRuntime,
+  uvInstallHint,
   type PythonMode,
 } from "./python-runtime"
 
@@ -85,8 +86,12 @@ export interface QwenVlPreflight {
   modelRootDir: string
   /** isolated | system */
   pythonMode: PythonMode
-  /** uv available on PATH */
+  /** uv available (absolute path discovered) */
   uvAvailable: boolean
+  /** Absolute uv path when discovered (W8) */
+  uvPath?: string
+  /** Server-driven platform install hint (W7 / N4) */
+  uvInstallHint: string
   /** How Python was resolved (user-facing) */
   pythonResolution: string
   isolatedEnvExists: boolean
@@ -429,10 +434,11 @@ export async function runQwenVlPreflight(args: {
     )
     downloadBlockReason = "需要可用的 Python 环境才能下载本机视觉模型"
   } else if (!deps.python || (runtime.mode === "isolated" && !runtime.isolatedExists)) {
+    const installUv = uvInstallHint()
     nextSteps.push(
       runtime.uvAvailable
         ? "推荐：点下方「创建独立环境」——将优先使用本机 uv 创建专用虚拟环境（不污染全局 Python）。"
-        : "推荐：点下方「创建独立环境」创建专用虚拟环境；或安装 uv（brew install uv）后再创建，安装依赖更快。",
+        : `推荐：点下方「创建独立环境」创建专用虚拟环境；或安装 uv（${installUv}）后再创建，安装依赖更快。`,
     )
     downloadBlockReason = "请先创建 CMspark 独立 Python 环境，或切换为「使用全局 Python」"
   } else {
@@ -448,6 +454,7 @@ export async function runQwenVlPreflight(args: {
       const cmds = buildInstallCommands({
         mode: runtime.mode,
         uvAvailable: runtime.uvAvailable,
+        uvPath: runtime.uvPath,
         packages: allPkgs,
         pythonPath: deps.pythonPath,
       })
@@ -530,8 +537,10 @@ export async function runQwenVlPreflight(args: {
       label: "uv（可选，推荐）",
       ok: runtime.uvAvailable,
       detail: runtime.uvAvailable
-        ? "已检测：创建/安装独立环境时将优先使用 uv"
-        : "未检测：仍可用 python -m venv；安装 uv 可加速（brew install uv）",
+        ? runtime.uvPath
+          ? `已检测：创建/安装独立环境时将优先使用 uv · ${runtime.uvPath}`
+          : "已检测：创建/安装独立环境时将优先使用 uv"
+        : `未检测：仍可用 python -m venv；安装 uv 可加速（${uvInstallHint()}）`,
       blocking: false,
     },
     {
@@ -624,6 +633,8 @@ export async function runQwenVlPreflight(args: {
     modelRootDir: modelsRoot,
     pythonMode: runtime.mode,
     uvAvailable: runtime.uvAvailable,
+    ...(runtime.uvPath ? { uvPath: runtime.uvPath } : {}),
+    uvInstallHint: uvInstallHint(),
     pythonResolution: runtime.resolution,
     isolatedEnvExists: runtime.isolatedExists,
   }

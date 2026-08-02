@@ -577,12 +577,18 @@ export interface ComputerModelState {
   /** Absolute path when user picked a system interpreter */
   pythonPath?: string
   uvAvailable?: boolean
+  /** Absolute uv path when Companion discovered it */
+  uvPath?: string
+  /** Server-driven platform install hint (e.g. winget / brew / curl) */
+  uvInstallHint?: string
   pythonResolution?: string
   isolatedEnvExists?: boolean
   preflight?: {
     modelRootDir?: string
     pythonMode?: "isolated" | "system"
     uvAvailable?: boolean
+    uvPath?: string
+    uvInstallHint?: string
     pythonResolution?: string
     isolatedEnvExists?: boolean
     readinessSummary?: string

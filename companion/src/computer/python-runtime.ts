@@ -3,9 +3,14 @@
 //   - Prefer `uv` when available for creating/installing isolated envs
 //   - User chooses isolated (CMspark-managed venv) vs system (global) Python
 //   - Paths and install commands are user-facing; package names only in commands
+//
+// uv discovery (Scheme D / W1–W12): well-known absolute probes first, then
+// process-local PATH enrichment for where/which. Successful discovery always
+// returns an absolute path — never bare "uv".
 
 import { spawn } from "node:child_process"
 import * as fs from "node:fs"
+import * as os from "node:os"
 import * as path from "node:path"
 import { DATA_DIR } from "../config"
 
@@ -63,13 +68,34 @@ export interface PythonRuntimeInfo {
   resolution: string
 }
 
+/** Injectable hooks for unit tests (production defaults stay thin). */
+export interface UvDiscoveryDeps {
+  existsSync?: (p: string) => boolean
+  readdirSync?: (p: string) => string[]
+  statSync?: (p: string) => { isFile(): boolean; isSymbolicLink(): boolean; isDirectory(): boolean }
+  realpathSync?: (p: string) => string
+  runCapture?: (
+    bin: string,
+    args: string[],
+    timeoutMs?: number,
+    env?: NodeJS.ProcessEnv,
+  ) => Promise<{ code: number; out: string; err: string }>
+  platform?: NodeJS.Platform
+  env?: NodeJS.ProcessEnv
+  homedir?: () => string
+}
+
 function runCapture(
   bin: string,
   args: string[],
   timeoutMs = 20_000,
+  env?: NodeJS.ProcessEnv,
 ): Promise<{ code: number; out: string; err: string }> {
   return new Promise((resolve) => {
-    const child = spawn(bin, args, { stdio: ["ignore", "pipe", "pipe"], env: process.env })
+    const child = spawn(bin, args, {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: env ?? process.env,
+    })
     let out = ""
     let err = ""
     const timer = setTimeout(() => {
@@ -97,6 +123,291 @@ function runCapture(
   })
 }
 
+/** Path helpers for the target platform (lets unit tests inject win32 paths on any host). */
+function pathApi(platform: NodeJS.Platform): path.PlatformPath {
+  return platform === "win32" ? path.win32 : path.posix
+}
+
+function resolveDeps(deps?: UvDiscoveryDeps) {
+  const platform = deps?.platform ?? process.platform
+  return {
+    existsSync: deps?.existsSync ?? fs.existsSync.bind(fs),
+    readdirSync: deps?.readdirSync ?? ((p: string) => fs.readdirSync(p)),
+    statSync:
+      deps?.statSync ??
+      ((p: string) => {
+        const st = fs.statSync(p)
+        return {
+          isFile: () => st.isFile(),
+          isSymbolicLink: () => {
+            try {
+              return fs.lstatSync(p).isSymbolicLink()
+            } catch {
+              return false
+            }
+          },
+          isDirectory: () => st.isDirectory(),
+        }
+      }),
+    realpathSync: deps?.realpathSync ?? ((p: string) => fs.realpathSync(p)),
+    runCapture: deps?.runCapture ?? runCapture,
+    platform,
+    env: deps?.env ?? process.env,
+    homedir: deps?.homedir ?? (() => os.homedir()),
+    path: pathApi(platform),
+  }
+}
+
+/**
+ * True when path exists, is a file (or symlink), and basename is uv / uv.exe.
+ * Relative paths always fail (W2 absolute pin).
+ */
+export function isUvExecutable(absPath: string, deps?: UvDiscoveryDeps): boolean {
+  if (!absPath || typeof absPath !== "string") return false
+  const d = resolveDeps(deps)
+  if (!d.path.isAbsolute(absPath)) return false
+  const base = d.path.basename(absPath).toLowerCase()
+  if (base !== "uv" && base !== "uv.exe") return false
+  try {
+    if (!d.existsSync(absPath)) return false
+    const st = d.statSync(absPath)
+    // isFile() follows symlinks; accept file or symlink-to-file
+    if (st.isFile()) return true
+    if (typeof st.isSymbolicLink === "function" && st.isSymbolicLink()) return true
+    return false
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Well-known absolute uv locations (W3 win32 / W4 unix).
+ * WinGet Packages: single-level readdir, package-id prefix only (G5).
+ */
+export function listWellKnownUvCandidates(deps?: UvDiscoveryDeps): string[] {
+  const d = resolveDeps(deps)
+  const home = d.homedir()
+  const env = d.env
+  const P = d.path
+  const out: string[] = []
+  const seen = new Set<string>()
+  const push = (p: string | undefined | null) => {
+    if (!p) return
+    const n = P.normalize(p)
+    if (seen.has(n)) return
+    seen.add(n)
+    out.push(n)
+  }
+
+  if (d.platform === "win32") {
+    const localAppData =
+      env.LOCALAPPDATA || P.join(home, "AppData", "Local")
+    // WinGet Links (if present)
+    push(P.join(localAppData, "Microsoft", "WinGet", "Links", "uv.exe"))
+    // WinGet Packages: only astral-sh.uv_* (package-id scoped)
+    const packagesDir = P.join(localAppData, "Microsoft", "WinGet", "Packages")
+    try {
+      if (d.existsSync(packagesDir)) {
+        const entries = d.readdirSync(packagesDir)
+        for (const entry of entries) {
+          if (!/^astral-sh\.uv_/i.test(entry)) continue
+          push(P.join(packagesDir, entry, "uv.exe"))
+        }
+      }
+    } catch {
+      /* best-effort */
+    }
+    push(P.join(home, ".local", "bin", "uv.exe"))
+    push(P.join(home, "scoop", "shims", "uv.exe"))
+    push(
+      P.join(
+        env.ProgramData || "C:\\ProgramData",
+        "chocolatey",
+        "bin",
+        "uv.exe",
+      ),
+    )
+    push(P.join(home, ".cargo", "bin", "uv.exe"))
+  } else {
+    // W4 unix
+    push(P.join(home, ".local", "bin", "uv"))
+    push("/opt/homebrew/bin/uv")
+    push("/usr/local/bin/uv")
+  }
+
+  return out
+}
+
+/**
+ * PATH string for lookup-only spawns (W5). Ideas from MCP buildSpawnPath
+ * but implemented locally — never import mcp/transport (W6).
+ */
+export function processLocalLookupPath(deps?: UvDiscoveryDeps): string {
+  const d = resolveDeps(deps)
+  const env = d.env
+  const home = d.homedir()
+  const P = d.path
+  const delim = P.delimiter
+  const existing = env.PATH ?? env.Path ?? ""
+  const segments = new Set<string>()
+  existing.split(delim).forEach((p) => {
+    if (p) segments.add(p)
+  })
+
+  const candidates: string[] = []
+  try {
+    // process.execPath is always host-native
+    candidates.push(path.dirname(process.execPath))
+  } catch {
+    /* ignore */
+  }
+  candidates.push(
+    "/opt/homebrew/bin",
+    "/opt/homebrew/sbin",
+    "/usr/local/bin",
+    "/usr/local/sbin",
+    P.join(home, ".local", "bin"),
+    "/usr/bin",
+    "/bin",
+    P.join(home, ".cargo", "bin"),
+  )
+  // Windows well-known bins
+  candidates.push(
+    P.join(env.APPDATA || P.join(home, "AppData", "Roaming"), "npm"),
+    P.join(env.ProgramFiles || "C:\\Program Files", "nodejs"),
+    P.join(env["ProgramFiles(x86)"] || "C:\\Program Files (x86)", "nodejs"),
+    P.join(env.LOCALAPPDATA || P.join(home, "AppData", "Local"), "fnm", "aliases", "default"),
+    P.join(env.LOCALAPPDATA || P.join(home, "AppData", "Local"), "Volta", "bin"),
+    P.join(home, "scoop", "shims"),
+    P.join(env.ProgramData || "C:\\ProgramData", "chocolatey", "bin"),
+  )
+  // WinGet Links dir (PATH-style, for where)
+  {
+    const localAppData = env.LOCALAPPDATA || P.join(home, "AppData", "Local")
+    candidates.push(P.join(localAppData, "Microsoft", "WinGet", "Links"))
+    // Also prepend package dirs that match astral-sh.uv_* so where can find uv.exe
+    const packagesDir = P.join(localAppData, "Microsoft", "WinGet", "Packages")
+    try {
+      if (d.existsSync(packagesDir)) {
+        const entries = d.readdirSync(packagesDir)
+        for (const entry of entries) {
+          if (!/^astral-sh\.uv_/i.test(entry)) continue
+          candidates.push(P.join(packagesDir, entry))
+        }
+      }
+    } catch {
+      /* best-effort */
+    }
+  }
+  // Python Scripts (uvx-adjacent installs)
+  {
+    const appData = env.APPDATA || P.join(home, "AppData", "Roaming")
+    const pyBase = P.join(appData, "Python")
+    try {
+      if (d.existsSync(pyBase)) {
+        const vers = d.readdirSync(pyBase).filter((v) => /^Python\d+/.test(v))
+        for (const v of vers) candidates.push(P.join(pyBase, v, "Scripts"))
+      }
+    } catch {
+      /* best-effort */
+    }
+  }
+
+  for (const c of candidates) {
+    if (c && !segments.has(c)) segments.add(c)
+  }
+
+  const head: string[] = []
+  for (const c of candidates) {
+    if (c && segments.has(c)) {
+      head.push(c)
+      segments.delete(c)
+    }
+  }
+  return [...new Set([...head, ...Array.from(segments)])].join(delim)
+}
+
+/**
+ * Platform-aware install hint for Settings / preflight (W7).
+ * win32 never brew-only.
+ */
+export function uvInstallHint(platform: NodeJS.Platform = process.platform): string {
+  if (platform === "win32") return "winget install --id astral-sh.uv -e"
+  if (platform === "darwin") return "brew install uv"
+  return "curl -LsSf https://astral.sh/uv/install.sh | sh"
+}
+
+async function pinUvPath(
+  candidate: string,
+  d: ReturnType<typeof resolveDeps>,
+  probeVersion: boolean,
+): Promise<string | null> {
+  if (!isUvExecutable(candidate, {
+    existsSync: d.existsSync,
+    statSync: d.statSync,
+    platform: d.platform,
+    env: d.env,
+    homedir: d.homedir,
+  })) {
+    return null
+  }
+  if (probeVersion) {
+    const vr = await d.runCapture(candidate, ["--version"], 5_000)
+    if (vr.code !== 0) return null
+  }
+  try {
+    return d.realpathSync(candidate)
+  } catch {
+    return d.path.normalize(candidate)
+  }
+}
+
+/**
+ * Discover uv (W1 order): well-known absolute → where/which under
+ * process-local PATH. Success always absolute (W2); never path:"uv" (G1).
+ */
+export async function findUv(
+  deps?: UvDiscoveryDeps,
+): Promise<{ ok: boolean; path?: string }> {
+  const d = resolveDeps(deps)
+  const P = d.path
+
+  // 1. Well-known absolute candidates first (W11 execution preference)
+  for (const cand of listWellKnownUvCandidates(deps)) {
+    const pinned = await pinUvPath(cand, d, true)
+    if (pinned && P.isAbsolute(pinned)) {
+      return { ok: true, path: pinned }
+    }
+  }
+
+  // 2. where / which under process-local enriched PATH (lookup env only — W5)
+  const lookupPath = processLocalLookupPath(deps)
+  const pathKey = d.platform === "win32" && d.env.Path && !d.env.PATH ? "Path" : "PATH"
+  const lookupEnv: NodeJS.ProcessEnv = { ...d.env, [pathKey]: lookupPath, PATH: lookupPath }
+  const whichBin = d.platform === "win32" ? "where" : "which"
+  const r = await d.runCapture(whichBin, ["uv"], 5_000, lookupEnv)
+  if (r.code === 0) {
+    const lines = r.out
+      .trim()
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean)
+    for (const hit of lines) {
+      // N2: where hit must be absolute + basename uv[.exe] before pin
+      if (!P.isAbsolute(hit)) continue
+      const base = P.basename(hit).toLowerCase()
+      if (base !== "uv" && base !== "uv.exe") continue
+      const pinned = await pinUvPath(hit, d, true)
+      if (pinned && P.isAbsolute(pinned)) {
+        return { ok: true, path: pinned }
+      }
+    }
+  }
+
+  // 3. Fail closed — never return { ok: true, path: "uv" }
+  return { ok: false }
+}
+
 export function isolatedPythonRoot(): string {
   return path.join(DATA_DIR, "python-env")
 }
@@ -111,18 +422,6 @@ export function isolatedPipBin(): string {
   return process.platform === "win32"
     ? path.join(isolatedPythonRoot(), "Scripts", "pip.exe")
     : path.join(isolatedPythonRoot(), "bin", "pip")
-}
-
-export async function findUv(): Promise<{ ok: boolean; path?: string }> {
-  const r = await runCapture(process.platform === "win32" ? "where" : "which", ["uv"], 5_000)
-  if (r.code === 0) {
-    const p = r.out.trim().split(/\r?\n/)[0]?.trim()
-    if (p) return { ok: true, path: p }
-  }
-  // try bare spawn
-  const r2 = await runCapture("uv", ["--version"], 5_000)
-  if (r2.code === 0) return { ok: true, path: "uv" }
-  return { ok: false }
 }
 
 async function probePythonBin(bin: string): Promise<string | null> {
@@ -145,6 +444,10 @@ export async function resolvePythonRuntime(opts: {
   const isoBin = isolatedPythonBin()
   const isolatedExists = fs.existsSync(isoBin)
   const uv = await findUv()
+  // W2: only surface absolute uvPath
+  const uvPath =
+    uv.ok && uv.path && path.isAbsolute(uv.path) ? uv.path : undefined
+  const uvAvailable = Boolean(uvPath)
 
   if (mode === "system") {
     const cands = [
@@ -157,8 +460,8 @@ export async function resolvePythonRuntime(opts: {
         return {
           mode: "system",
           pythonPath: exe,
-          uvAvailable: uv.ok,
-          ...(uv.path ? { uvPath: uv.path } : {}),
+          uvAvailable,
+          ...(uvPath ? { uvPath } : {}),
           isolatedRoot: root,
           isolatedExists,
           resolution: "使用本机全局 Python",
@@ -167,8 +470,8 @@ export async function resolvePythonRuntime(opts: {
     }
     return {
       mode: "system",
-      uvAvailable: uv.ok,
-      ...(uv.path ? { uvPath: uv.path } : {}),
+      uvAvailable,
+      ...(uvPath ? { uvPath } : {}),
       isolatedRoot: root,
       isolatedExists,
       resolution: "已选全局 Python，但未在 PATH 中找到可用的 python3",
@@ -182,11 +485,11 @@ export async function resolvePythonRuntime(opts: {
       return {
         mode: "isolated",
         pythonPath: exe,
-        uvAvailable: uv.ok,
-        ...(uv.path ? { uvPath: uv.path } : {}),
+        uvAvailable,
+        ...(uvPath ? { uvPath } : {}),
         isolatedRoot: root,
         isolatedExists: true,
-        resolution: uv.ok
+        resolution: uvAvailable
           ? "使用 CMspark 独立环境（推荐；本机已检测到 uv，安装依赖时可优先用 uv）"
           : "使用 CMspark 独立环境（推荐）",
       }
@@ -202,13 +505,13 @@ export async function resolvePythonRuntime(opts: {
   return {
     mode: "isolated",
     // intentionally omit pythonPath until venv exists
-    uvAvailable: uv.ok,
-    ...(uv.path ? { uvPath: uv.path } : {}),
+    uvAvailable,
+    ...(uvPath ? { uvPath } : {}),
     isolatedRoot: root,
     isolatedExists: false,
     resolution: basePy
       ? "独立环境尚未创建；本机有 Python，可一键创建独立环境"
-      : uv.ok
+      : uvAvailable
         ? "独立环境尚未创建；可用 uv 创建（需本机有可被 uv 使用的 Python）"
         : "独立环境尚未创建，且未找到 Python 3",
   }
@@ -224,13 +527,25 @@ export interface EnsureEnvResult {
 
 /**
  * Create/repair isolated venv and install packages.
- * Prefer: uv venv + uv pip install when uv available.
+ * Prefer: uv venv + uv pip install when uv available (absolute path only — T2).
+ * Optional deps: inject findUv/runCapture for unit tests.
  */
-export async function ensureIsolatedPythonEnv(packages: string[]): Promise<EnsureEnvResult> {
+export async function ensureIsolatedPythonEnv(
+  packages: string[],
+  deps?: UvDiscoveryDeps & {
+    findUv?: () => Promise<{ ok: boolean; path?: string }>
+    existsSync?: (p: string) => boolean
+  },
+): Promise<EnsureEnvResult> {
   const root = isolatedPythonRoot()
-  const uv = await findUv()
+  const capture = deps?.runCapture ?? runCapture
+  const exists = deps?.existsSync ?? fs.existsSync.bind(fs)
+  const uv = deps?.findUv ? await deps.findUv() : await findUv(deps)
   const logs: string[] = []
-  const usedUv = uv.ok
+  // T2 / W2: only use uv when path is absolute; else fall through to venv/pip
+  const uvBin =
+    uv.ok && uv.path && path.isAbsolute(uv.path) ? uv.path : null
+  const usedUv = Boolean(uvBin)
 
   try {
     fs.mkdirSync(path.dirname(root), { recursive: true })
@@ -238,11 +553,10 @@ export async function ensureIsolatedPythonEnv(packages: string[]): Promise<Ensur
     /* ignore */
   }
 
-  if (uv.ok) {
-    logs.push("检测到 uv，使用 uv 创建/维护独立环境")
-    const uvBin = uv.path || "uv"
-    if (!fs.existsSync(isolatedPythonBin())) {
-      const cr = await runCapture(uvBin, ["venv", root], 120_000)
+  if (uvBin) {
+    logs.push(`检测到 uv，使用 uv 创建/维护独立环境（${uvBin}）`)
+    if (!exists(isolatedPythonBin())) {
+      const cr = await capture(uvBin, ["venv", root], 120_000)
       logs.push(`uv venv → exit ${cr.code}`)
       if (cr.out) logs.push(cr.out.trim().slice(0, 500))
       if (cr.err) logs.push(cr.err.trim().slice(0, 500))
@@ -252,7 +566,7 @@ export async function ensureIsolatedPythonEnv(packages: string[]): Promise<Ensur
     }
     if (packages.length > 0) {
       const args = ["pip", "install", "--python", isolatedPythonBin(), ...packages]
-      const ir = await runCapture(uvBin, args, 600_000)
+      const ir = await capture(uvBin, args, 600_000)
       logs.push(`uv pip install ${packages.join(" ")} → exit ${ir.code}`)
       if (ir.out) logs.push(ir.out.trim().slice(-800))
       if (ir.err) logs.push(ir.err.trim().slice(-800))
@@ -260,7 +574,7 @@ export async function ensureIsolatedPythonEnv(packages: string[]): Promise<Ensur
         return {
           ok: false,
           usedUv: true,
-          pythonPath: fs.existsSync(isolatedPythonBin()) ? isolatedPythonBin() : undefined,
+          pythonPath: exists(isolatedPythonBin()) ? isolatedPythonBin() : undefined,
           log: logs.join("\n"),
           error: "uv pip install 失败（见日志）",
         }
@@ -268,6 +582,15 @@ export async function ensureIsolatedPythonEnv(packages: string[]): Promise<Ensur
     }
   } else {
     logs.push("未检测到 uv，使用 python -m venv + pip")
+    // When deps injected for unit tests without real python, short-circuit
+    if (deps?.findUv || deps?.runCapture) {
+      return {
+        ok: false,
+        usedUv: false,
+        log: logs.join("\n"),
+        error: "本机没有可用的 Python，无法创建独立环境",
+      }
+    }
     const basePy =
       (await probePythonBin("python3")) ||
       (await probePythonBin("python")) ||
@@ -275,8 +598,8 @@ export async function ensureIsolatedPythonEnv(packages: string[]): Promise<Ensur
     if (!basePy) {
       return { ok: false, usedUv: false, log: logs.join("\n"), error: "本机没有可用的 Python，无法创建独立环境" }
     }
-    if (!fs.existsSync(isolatedPythonBin())) {
-      const cr = await runCapture(basePy, ["-m", "venv", root], 120_000)
+    if (!exists(isolatedPythonBin())) {
+      const cr = await capture(basePy, ["-m", "venv", root], 120_000)
       logs.push(`python -m venv → exit ${cr.code}`)
       if (cr.code !== 0) {
         return { ok: false, usedUv: false, log: logs.join("\n"), error: "venv 创建失败" }
@@ -284,7 +607,7 @@ export async function ensureIsolatedPythonEnv(packages: string[]): Promise<Ensur
     }
     if (packages.length > 0) {
       const pip = isolatedPipBin()
-      const ir = await runCapture(pip, ["install", ...packages], 600_000)
+      const ir = await capture(pip, ["install", ...packages], 600_000)
       logs.push(`pip install ${packages.join(" ")} → exit ${ir.code}`)
       if (ir.code !== 0) {
         return {
@@ -294,6 +617,18 @@ export async function ensureIsolatedPythonEnv(packages: string[]): Promise<Ensur
           log: logs.join("\n"),
           error: "pip install 失败（见日志）",
         }
+      }
+    }
+  }
+
+  // After uv path: if test injects and isolated bin "exists", skip real python probe
+  if (deps?.findUv || deps?.runCapture) {
+    if (usedUv && uvBin) {
+      return {
+        ok: true,
+        pythonPath: isolatedPythonBin(),
+        usedUv: true,
+        log: logs.join("\n"),
       }
     }
   }
@@ -309,16 +644,20 @@ export async function ensureIsolatedPythonEnv(packages: string[]): Promise<Ensur
 export function buildInstallCommands(opts: {
   mode: PythonMode
   uvAvailable: boolean
+  /** Absolute uv binary when known (N3); preferred over bare `uv` in copy-paste. */
+  uvPath?: string
   packages: string[]
   pythonPath?: string
 }): string[] {
   if (opts.packages.length === 0) return []
   const pkgs = opts.packages.join(" ")
+  const uvCmd =
+    opts.uvPath && path.isAbsolute(opts.uvPath) ? `"${opts.uvPath}"` : "uv"
   if (opts.mode === "isolated") {
     if (opts.uvAvailable) {
       return [
-        `uv venv "${isolatedPythonRoot()}"`,
-        `uv pip install --python "${isolatedPythonBin()}" ${pkgs}`,
+        `${uvCmd} venv "${isolatedPythonRoot()}"`,
+        `${uvCmd} pip install --python "${isolatedPythonBin()}" ${pkgs}`,
       ]
     }
     const py = opts.pythonPath || (process.platform === "win32" ? "python" : "python3")
@@ -326,7 +665,7 @@ export function buildInstallCommands(opts: {
   }
   // system
   if (opts.uvAvailable) {
-    return [`uv pip install ${pkgs}`]
+    return [`${uvCmd} pip install ${pkgs}`]
   }
   const py = opts.pythonPath || (process.platform === "win32" ? "python" : "python3")
   return [`"${py}" -m pip install ${pkgs}`]

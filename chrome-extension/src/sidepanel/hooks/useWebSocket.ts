@@ -810,6 +810,10 @@ export function useWebSocket() {
                 : {}),
               ...(typeof msg.pythonPath === "string" ? { pythonPath: msg.pythonPath } : {}),
               ...(typeof msg.uvAvailable === "boolean" ? { uvAvailable: msg.uvAvailable } : {}),
+              ...(typeof msg.uvPath === "string" ? { uvPath: msg.uvPath } : {}),
+              ...(typeof msg.uvInstallHint === "string"
+                ? { uvInstallHint: msg.uvInstallHint }
+                : {}),
               ...(typeof msg.pythonResolution === "string"
                 ? { pythonResolution: msg.pythonResolution }
                 : {}),
