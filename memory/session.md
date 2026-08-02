@@ -11,6 +11,16 @@
 - **下次**: 重启 Companion 侧栏确认「已检测到 uv」；可选 PR；P1 config override
 - Recorded: yes — PATH 假阴性 / absolute pin
 
+### S35 (2026-08-02 ~14:54–16:43) [Trust IA + 无人值守 → PR #106 合 main]
+- **Trust IA**：运行自主度 + 协议解锁；双审后实现；打包装 `/Applications/CMspark.app`
+- **产品转向**：用户锁定无人值守硬需求；微信 CU 必须可免 initial L2（Option B）
+- **ADR-021**：四路对抗（Security REJECT 目标，产品+Compat+Impl 推进）→ M0–M3 门控双审 → companion grant + 扩展 UI
+- **Ship**：**PR #106** squash → main `ed92a81`；CI build 绿
+- **仓库卫生**：本地仅 `main`；14 个旧分支已删；与 origin 对齐
+- **下次**：真机微信清单；可选 Developer ID / CU smoke；未跟踪 patch/images 可清
+- Recorded: yes — ADR-021 + dual-gate workflow + M2 CI tripwire
+
+
 ### S35 (2026-08-02) [Windows uv/Python chain · 对抗设计]
 - **触发**: 插件未检测到 uv；诊断为 PATH 假阴性 + brew 文案
 - **流程**: 四路对抗 workflow → SoT/plan → Pi 复审 → 开发 workflow
@@ -366,11 +376,18 @@
 
 ## In-Flight Tasks (Cross-Session)
 
+<<<<<<< HEAD
 ### Trust IA + 杩愯鑷富搴?(S34)
 - status: **active** (P0+P1 in working tree; not yet PR/merged)
 - context: God鈫掑崗璁В閿侊紱Autopilot dual-writes existing flags; dual-reviewed APPROVE_WITH_NITS; companion skip algebra untouched
 - next_action: Manual smoke arm/disarm in Side Panel; optional impl dual-review + PR; P2 session/TTL/spawn deferred
 - resume_doc: `docs/superpowers/specs/2026-08-02-trust-ia-autopilot-design.md` 路 `docs/superpowers/plans/2026-08-02-trust-ia-autopilot-impl.md`
+=======
+### Unattended desktop / Trust IA (S34–S35) → DONE #106
+- status: **done** (PR #106 → main `ed92a81`)
+- residual: operator WeChat true-device checklist; re-package DMG if distributing
+- resume_doc: `docs/superpowers/plans/2026-08-02-unattended-desktop-manual-checklist.md`
+>>>>>>> 58ce6db (chore(session): S35 handoff — Trust IA + unattended #106 on main)
 - updated: 2026-08-02
 
 ### macOS TCC product identity + host_computer unblock (S29鈥揝31)

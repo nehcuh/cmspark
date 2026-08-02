@@ -3,22 +3,17 @@
 ## Session Handoff
 
 <!-- handoff:start -->
-### 2026-08-02 ~14:54 (S34 — Trust IA / 运行自主度)
-- **产品**：权限入口混乱 + God-mode 过卖 → Hybrid 锁定
-  - **协议解锁** = `allow_all_schemes`（非全开）
-  - **运行自主度** = 双写 `auto_approve_dangerous` / enterprise / protocol；后果矩阵 + 短语
-  - **否决** God 静默跳过 shell/CU/spawn
-- **流程**：四路对抗 → SoT/plan → Pi+Claude APPROVE_WITH_NITS → P0+P1 实现
-- **代码**：`SettingsSlideout` · `autopilot-tier.ts` · StatusRail 巡航徽章；**未改** `server.ts` skip
-- **文档**：spec/plan + audit reviews `trust-ia-autopilot-*`；confirm-center / mission-pack / ADR-010 脚注
-- **经验**：`memory/project-knowledge.md` Architecture + Reusable Patterns
+### 2026-08-02 ~16:43 (S35 — Trust IA + 无人值守 #106 合 main)
+- **main tip**：`ed92a81` — PR **#106** squash：运行自主度/协议解锁 + ADR-021 无人值守桌面值守
+- **能力**：设置「无人值守」武装后，`coordinateAllowed` App 上 `host_computer` 可跳过 **initial** L2（8h 进程 grant）；顶栏「值守中 · 桌面」；危险 re-L2 仍确认
+- **流程**：M0–M3 对抗/双审门控；M2 曾因 sidepanel 初始同步测未更新被 REJECT 后修复
+- **仓库**：本地仅 `main`；与 origin 一致
 - **下次**：
-  1. Side Panel 真机武装/解除 smoke
-  2. 可选实现 dual-review + PR 合 main
-  3. P2：会话作用域 / TTL / spawn 预算 / 桌面巡航（需新 ADR 门）
+  1. 真机微信清单 `docs/superpowers/plans/2026-08-02-unattended-desktop-manual-checklist.md`
+  2. 需要分发则 `make package-macos` 重装 `/Applications`
+  3. 可选：Developer ID / CU experimental smoke / 清理未跟踪 patch
 
-### 2026-08-02 ~14:22 (S33 — #105 merge + vision 405 + Qwen test guide)
-- main tip `6f3a210` PR #105：host_cli + Qwen P0/env UX
-- vision 405：智谱 base_url 须 `/api/paas/v4`；本地 Qwen ≠ analyze_image
-- 下次：CU 白名单 App 测 experimental；智谱余额 / Developer ID
+### 2026-08-02 ~14:54 (S34 — Trust IA 设计与 P0+P1)
+- Hybrid：协议解锁 ≠ 全开；运行自主度 dual-write 三 bool
+- 后并入 #106；桌面免确认由 ADR-021 承接
 <!-- handoff:end -->
