@@ -18,12 +18,25 @@ import {
   modelSwitchRunningNote,
   variantResourceTip,
 } from "./model-switch-logic"
+import {
+  AUTOPILOT_CONSEQUENCE_ROWS,
+  type AutopilotTier,
+  cruiseChipLabel,
+  deriveAutopilotTier,
+  disarmAllFlags,
+  flagsNeedingArm,
+  flagsNeedingDisarm,
+  targetFlagsForTier,
+  tierShortLabel,
+} from "./autopilot-tier"
 
 // P1-1 / PR-B: typed-confirmation phrase for arming dangerous security flags.
 // Lock-step with companion/src/security-arm.ts SECURITY_ARM_CONFIRM_PHRASE —
 // companion rejects false→true without this top-level confirmation_phrase.
 // UI phrase alone is theater; arm path must forward phrase on config.set.
+// Alias kept as SECURITY_ARM_CONFIRM_PHRASE semantics; not a product "God" noun.
 const GODMODE_CONFIRM_PHRASE = "我了解风险"
+const SECURITY_ARM_PHRASE = GODMODE_CONFIRM_PHRASE
 
 const SAFETY_SKILLS = [
   { id: "cookie_guard", label: "Cookie 守卫" },
@@ -55,6 +68,15 @@ export function SettingsSlideout() {
   const [autoDangerConfirm, setAutoDangerConfirm] = useState(false)
   const [autoDangerPhrase, setAutoDangerPhrase] = useState("")
   const [autoDangerMsg, setAutoDangerMsg] = useState<string | null>(null)
+  // Trust IA: Autopilot package arm
+  const [autopilotTierPick, setAutopilotTierPick] = useState<
+    "browser" | "full" | "full_protocol"
+  >("browser")
+  const [autopilotConfirm, setAutopilotConfirm] = useState(false)
+  const [autopilotPhrase, setAutopilotPhrase] = useState("")
+  const [autopilotMsg, setAutopilotMsg] = useState<string | null>(null)
+  const [autopilotBusy, setAutopilotBusy] = useState(false)
+  const [advancedGatesOpen, setAdvancedGatesOpen] = useState(false)
   // WP5-I4 实验区:删除模型两步确认按钮的待命态(非 store——纯组件内 UI 态)。
   const [modelDeleteArmed, setModelDeleteArmed] = useState(false)
 
@@ -74,6 +96,10 @@ export function SettingsSlideout() {
     setAutoDangerConfirm(false)
     setAutoDangerPhrase("")
     setAutoDangerMsg(null)
+    setAutopilotConfirm(false)
+    setAutopilotPhrase("")
+    setAutopilotMsg(null)
+    setAutopilotBusy(false)
     // WP5-I4 实验区:打开设置页拉一次模型状态(后续由 state 广播驱动,
     // 无乐观更新);清掉上次打开残留的错误与删除待命态。
     setModelDeleteArmed(false)
@@ -83,6 +109,24 @@ export function SettingsSlideout() {
       setWsPaired(!!resp?.paired)
     })
   }, [state.settingsOpen])
+
+  // Auto-expand advanced gates when any arm flag is on (user can still collapse).
+  useEffect(() => {
+    if (!state.settingsOpen) return
+    const c = state.config
+    if (
+      c.auto_approve_dangerous === true ||
+      c.auto_approve_enterprise_tools === true ||
+      c.allow_all_schemes === true
+    ) {
+      setAdvancedGatesOpen(true)
+    }
+  }, [
+    state.settingsOpen,
+    state.config.auto_approve_dangerous,
+    state.config.auto_approve_enterprise_tools,
+    state.config.allow_all_schemes,
+  ])
 
   if (!state.settingsOpen) return null
 
@@ -225,14 +269,14 @@ export function SettingsSlideout() {
         risk_level: "low",
         risk_score: 0,
         source: "ui_phrase_confirmed",
-        message: "已关闭 God-mode（恢复协议保护：L1 scheme 硬阻断 + L2 确认门重新生效）",
+        message: "已关闭协议解锁（恢复协议保护：L1 scheme 硬阻断 + 网页 L2 确认门重新生效）",
       },
     })
   }
 
   const handleGodModeConfirm = () => {
-    if (godmodePhrase.trim() !== GODMODE_CONFIRM_PHRASE) {
-      setGodmodeMsg(`确认短语不匹配，请输入「${GODMODE_CONFIRM_PHRASE}」`)
+    if (godmodePhrase.trim() !== SECURITY_ARM_PHRASE) {
+      setGodmodeMsg(`确认短语不匹配，请输入「${SECURITY_ARM_PHRASE}」`)
       return
     }
     const phrase = godmodePhrase.trim()
@@ -242,7 +286,7 @@ export function SettingsSlideout() {
     dispatch({
       type: "ADD_SECURITY_AUDIT",
       entry: {
-        id: `godmode-on-${crypto.randomUUID()}`,
+        id: `protocol-unlock-on-${crypto.randomUUID()}`,
         ts: new Date().toISOString(),
         level: "error",
         tool_name: "allow_all_schemes",
@@ -250,12 +294,90 @@ export function SettingsSlideout() {
         risk_level: "high",
         risk_score: 100,
         source: "ui_phrase_confirmed",
-        message: "已启用 God-mode（允许所有协议）— L1 scheme 硬阻断 + L2 确认门均已绕过，prompt 注入可直接驱动浏览器",
+        message:
+          "已启用协议解锁（allow_all_schemes）— L1 scheme 硬阻断 + 部分网页 L2 已绕过；不含 shell/CU/spawn forceConfirm",
       },
     })
     setGodmodeConfirm(false)
     setGodmodePhrase("")
     setGodmodeMsg(null)
+  }
+
+  const applySecurityFlagsTarget = (
+    target: {
+      auto_approve_dangerous: boolean
+      auto_approve_enterprise_tools: boolean
+      allow_all_schemes: boolean
+    },
+    phrase: string | undefined,
+    auditMessage: string,
+  ) => {
+    const current = {
+      auto_approve_dangerous: config.auto_approve_dangerous === true,
+      auto_approve_enterprise_tools: config.auto_approve_enterprise_tools === true,
+      allow_all_schemes: config.allow_all_schemes === true,
+    }
+    const toDisarm = flagsNeedingDisarm(current, target)
+    const toArm = flagsNeedingArm(current, target)
+    for (const k of toDisarm) {
+      sendSecurityFlagConfig({ [k]: false })
+    }
+    for (const k of toArm) {
+      if (!phrase) return
+      sendSecurityFlagConfig({ [k]: true }, phrase)
+    }
+    dispatch({ type: "SET_CONFIG", config: { ...target } })
+    dispatch({
+      type: "ADD_SECURITY_AUDIT",
+      entry: {
+        id: `autopilot-${crypto.randomUUID()}`,
+        ts: new Date().toISOString(),
+        level: toArm.length > 0 ? "error" : "info",
+        tool_name: "autopilot_packaging",
+        action: "changed",
+        risk_level: toArm.length > 0 ? "high" : "low",
+        risk_score: toArm.length > 0 ? 80 : 0,
+        source: "ui_phrase_confirmed",
+        message: `${auditMessage} [${[...toArm, ...toDisarm.map((k) => `-${k}`)].join(", ") || "noop"}]`,
+      },
+    })
+  }
+
+  const handleAutopilotArmConfirm = () => {
+    if (autopilotPhrase.trim() !== SECURITY_ARM_PHRASE) {
+      setAutopilotMsg(`请输入「${SECURITY_ARM_PHRASE}」`)
+      return
+    }
+    const phrase = autopilotPhrase.trim()
+    setAutopilotBusy(true)
+    const target = targetFlagsForTier(autopilotTierPick, {
+      auto_approve_dangerous: config.auto_approve_dangerous,
+      auto_approve_enterprise_tools: config.auto_approve_enterprise_tools,
+      allow_all_schemes: config.allow_all_schemes,
+    })
+    applySecurityFlagsTarget(
+      target,
+      phrase,
+      `武装运行自主度：${tierShortLabel(autopilotTierPick as AutopilotTier)}`,
+    )
+    setAutopilotConfirm(false)
+    setAutopilotPhrase("")
+    setAutopilotMsg(null)
+    setAutopilotBusy(false)
+    setAdvancedGatesOpen(true)
+  }
+
+  const handleAutopilotDisarm = () => {
+    setAutopilotBusy(true)
+    applySecurityFlagsTarget(
+      disarmAllFlags(),
+      undefined,
+      "解除运行自主度武装（已关闭网页/企业/协议三类自动批准）",
+    )
+    setAutopilotBusy(false)
+    setAutopilotConfirm(false)
+    setAutopilotPhrase("")
+    setAutopilotMsg(null)
   }
 
   const handleShortcutChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -400,12 +522,10 @@ export function SettingsSlideout() {
             )}
           </div>
 
-          {/* --- How permissions work (Mission Pack UX P1.5) --- */}
-          <div style={styles.sectionTitle}>场景 · 本机能力 · 确认开关</div>
+          {/* --- How permissions work --- */}
+          <div style={styles.sectionTitle}>场景 · 本机能力 · 确认</div>
           <div style={styles.field}>
-            <div style={styles.helpText}>
-              三道门互不替代，请勿混淆：
-            </div>
+            <div style={styles.helpText}>三道门互不替代，请勿混淆：</div>
             <ul
               style={{
                 margin: "6px 0 0",
@@ -416,31 +536,253 @@ export function SettingsSlideout() {
               }}
             >
               <li>
-                <strong>场景</strong>（侧栏「场景」）：本对话用什么模板；可能
-                <em>限制</em>可用工具。可随时「退出场景」。
+                <strong>场景</strong>（侧栏「场景」）：本对话模板；可能<em>限制</em>可用工具。
               </li>
               <li>
-                <strong>本机能力</strong>（场景页折叠区）：是否允许工作区读写 / 扫描 / 命令等电源。
+                <strong>本机能力</strong>（场景页）：工作区 / 扫描 / 命令等电源是否启用。
               </li>
               <li>
-                <strong>确认开关</strong>（下方安全设置）：危险操作要不要弹窗确认；
-                <em>不会</em>放开场景已关掉的工具。
-              </li>
-              <li>
-                <strong>工作区</strong>（场景页「选择工作区」）：本机读写的场地绑定；
-                God-mode / 自动批准<strong>都不会</strong>代替选文件夹。
+                <strong>运行自主度</strong>（下方）：危险操作要不要每次确认；
+                <em>不会</em>放开场景已关掉的工具，也<strong>不能</strong>代替选工作区。
               </li>
             </ul>
             <div style={{ ...styles.helpText, marginTop: 8 }}>
-              安装技能请用 <strong>Skills → 导入 ZIP / 文件夹</strong>，不要点「应用安全审查 → 用于本对话」。
-              网络扫描目标与本对话授权见下方「网络扫描」。
-              若工具提示「需要先绑定工作区」，请去场景页选文件夹，而不是再开 God-mode。
+              若工具提示「需要先绑定工作区」，请去场景页选文件夹，而不是开协议解锁或巡航。
             </div>
           </div>
 
           <div style={styles.divider} />
 
           <NetSecSettingsSection />
+
+          <div style={styles.divider} />
+
+          {/* --- 运行自主度 (Trust packaging / Autopilot) --- */}
+          {(() => {
+            const armFlags = {
+              auto_approve_dangerous: config.auto_approve_dangerous === true,
+              auto_approve_enterprise_tools: config.auto_approve_enterprise_tools === true,
+              allow_all_schemes: config.allow_all_schemes === true,
+            }
+            const tier = deriveAutopilotTier(armFlags)
+            const chip = cruiseChipLabel(armFlags)
+            const anyArmed = tier !== "off"
+            return (
+              <>
+                <div style={styles.sectionTitle}>
+                  运行自主度
+                  {chip && (
+                    <span
+                      style={{
+                        fontSize: 10,
+                        fontWeight: 600,
+                        marginLeft: 8,
+                        padding: "1px 6px",
+                        borderRadius: 8,
+                        color: "#fff",
+                        background: "#C62828",
+                      }}
+                    >
+                      {chip}
+                    </span>
+                  )}
+                </div>
+                <div style={styles.field}>
+                  <div style={styles.helpText}>
+                    长程无人值守的<strong>主入口</strong>：武装后已选工具族可跳过每次确认。
+                    默认关闭。急停与硬性拒绝仍然有效；你将承担 prompt 注入驱动已放权操作的后果。
+                  </div>
+                  <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
+                    {(
+                      [
+                        { id: "browser" as const, label: "网页巡航", hint: "跳过网页类 L2（evaluate / 导航）" },
+                        {
+                          id: "full" as const,
+                          label: "全自动巡航",
+                          hint: "网页 L2 + 企业 shell/netsec（须 enterprise 模块与范围）",
+                        },
+                        {
+                          id: "full_protocol" as const,
+                          label: "全自动巡航（含协议解锁）",
+                          hint: "上者 + 非 http(s) 协议；最高风险",
+                        },
+                      ] as const
+                    ).map((opt) => (
+                      <label
+                        key={opt.id}
+                        style={{
+                          display: "flex",
+                          gap: 8,
+                          alignItems: "flex-start",
+                          cursor: autopilotBusy ? "not-allowed" : "pointer",
+                          fontSize: 13,
+                          padding: "6px 8px",
+                          borderRadius: 6,
+                          border:
+                            autopilotTierPick === opt.id
+                              ? "1px solid #E0A0A0"
+                              : "1px solid transparent",
+                          background: autopilotTierPick === opt.id ? "#FFF8F8" : "transparent",
+                        }}
+                      >
+                        <input
+                          type="radio"
+                          name="autopilot-tier"
+                          checked={autopilotTierPick === opt.id}
+                          disabled={autopilotBusy}
+                          onChange={() => setAutopilotTierPick(opt.id)}
+                          style={{ marginTop: 3 }}
+                        />
+                        <div>
+                          <div style={{ fontWeight: 500 }}>{opt.label}</div>
+                          <div style={{ fontSize: 11, color: tokens.textSecondary }}>{opt.hint}</div>
+                        </div>
+                      </label>
+                    ))}
+                  </div>
+
+                  <div style={{ marginTop: 10, overflowX: "auto" }}>
+                    <div style={{ ...styles.helpText, fontWeight: 600, marginBottom: 4 }}>
+                      武装后仍会 / 不会跳过（后果矩阵）
+                    </div>
+                    <table
+                      style={{
+                        width: "100%",
+                        borderCollapse: "collapse",
+                        fontSize: 10,
+                        color: "#444",
+                      }}
+                    >
+                      <thead>
+                        <tr style={{ background: "#f5f5f5" }}>
+                          <th style={{ textAlign: "left", padding: "4px 6px", border: "1px solid #e0e0e0" }}>
+                            工具族
+                          </th>
+                          <th style={{ textAlign: "left", padding: "4px 6px", border: "1px solid #e0e0e0" }}>
+                            网页
+                          </th>
+                          <th style={{ textAlign: "left", padding: "4px 6px", border: "1px solid #e0e0e0" }}>
+                            全自动
+                          </th>
+                          <th style={{ textAlign: "left", padding: "4px 6px", border: "1px solid #e0e0e0" }}>
+                            +协议
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {AUTOPILOT_CONSEQUENCE_ROWS.map((row) => (
+                          <tr key={row.family}>
+                            <td style={{ padding: "4px 6px", border: "1px solid #e0e0e0" }}>{row.family}</td>
+                            <td style={{ padding: "4px 6px", border: "1px solid #e0e0e0" }}>{row.browser}</td>
+                            <td style={{ padding: "4px 6px", border: "1px solid #e0e0e0" }}>{row.full}</td>
+                            <td style={{ padding: "4px 6px", border: "1px solid #e0e0e0" }}>{row.protocol}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    <div style={{ ...styles.helpText, marginTop: 4 }}>
+                      * shell/netsec 跳过仍受模块启用、白名单/任务授权约束；community 配置下企业跳过不会生效。
+                      当前档位：<strong>{tierShortLabel(tier)}</strong>
+                      {tier === "custom" ? "（高级闸门与预设不一致）" : ""}
+                    </div>
+                  </div>
+
+                  <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+                    <button
+                      type="button"
+                      style={{
+                        ...styles.toggleBtn,
+                        color: "#fff",
+                        background: "#C62828",
+                        borderColor: "#C62828",
+                        opacity: autopilotBusy ? 0.6 : 1,
+                      }}
+                      disabled={autopilotBusy}
+                      onClick={() => {
+                        setAutopilotConfirm(true)
+                        setAutopilotPhrase("")
+                        setAutopilotMsg(null)
+                      }}
+                    >
+                      {anyArmed ? "重新武装…" : "武装…"}
+                    </button>
+                    {anyArmed && (
+                      <button
+                        type="button"
+                        style={styles.toggleBtn}
+                        disabled={autopilotBusy}
+                        onClick={handleAutopilotDisarm}
+                        title="将关闭网页/企业/协议三类自动批准"
+                      >
+                        解除武装
+                      </button>
+                    )}
+                  </div>
+
+                  {autopilotConfirm && (
+                    <div
+                      style={{
+                        marginTop: 10,
+                        padding: 8,
+                        background: "#fff",
+                        borderRadius: 6,
+                        border: "1px solid #E0B4B4",
+                      }}
+                    >
+                      <div style={{ fontSize: 12, color: tokens.danger, fontWeight: 500, marginBottom: 6 }}>
+                        确认武装「{tierShortLabel(autopilotTierPick as AutopilotTier)}」— 请输入「
+                        <b>{SECURITY_ARM_PHRASE}</b>」：
+                      </div>
+                      <div style={{ display: "flex", gap: 6 }}>
+                        <input
+                          style={{ ...styles.input, flex: 1 }}
+                          type="text"
+                          value={autopilotPhrase}
+                          onChange={(e) => {
+                            setAutopilotPhrase(e.target.value)
+                            setAutopilotMsg(null)
+                          }}
+                          placeholder={SECURITY_ARM_PHRASE}
+                          autoComplete="off"
+                          spellCheck={false}
+                          autoFocus
+                          disabled={autopilotBusy}
+                        />
+                        <button
+                          type="button"
+                          style={{
+                            ...styles.toggleBtn,
+                            color: "#fff",
+                            background: "#C62828",
+                            borderColor: "#C62828",
+                          }}
+                          disabled={autopilotBusy}
+                          onClick={handleAutopilotArmConfirm}
+                        >
+                          确认武装
+                        </button>
+                        <button
+                          type="button"
+                          style={styles.toggleBtn}
+                          disabled={autopilotBusy}
+                          onClick={() => {
+                            setAutopilotConfirm(false)
+                            setAutopilotPhrase("")
+                            setAutopilotMsg(null)
+                          }}
+                        >
+                          取消
+                        </button>
+                      </div>
+                      {autopilotMsg && (
+                        <div style={{ fontSize: 11, color: "#C62828", marginTop: 4 }}>{autopilotMsg}</div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </>
+            )
+          })()}
 
           <div style={styles.divider} />
 
@@ -521,6 +863,37 @@ export function SettingsSlideout() {
             )}
           </div>
 
+          {/* 高级 · 独立闸门 — default collapsed; auto-hint when any flag on */}
+          <div style={styles.field}>
+            <button
+              type="button"
+              style={{
+                ...styles.secondaryBtn,
+                width: "100%",
+                textAlign: "left",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+              }}
+              onClick={() => setAdvancedGatesOpen((o) => !o)}
+            >
+              <span>
+                高级 · 独立闸门
+                {(config.auto_approve_dangerous ||
+                  config.auto_approve_enterprise_tools ||
+                  config.allow_all_schemes) && (
+                  <span style={{ fontSize: 10, color: "#C62828", marginLeft: 6 }}>有开关已开</span>
+                )}
+              </span>
+              <span style={{ fontSize: 11, color: "#888" }}>{advancedGatesOpen ? "收起 ▲" : "展开 ▼"}</span>
+            </button>
+            <div style={{ ...styles.helpText, marginTop: 6 }}>
+              细粒度手动开关；长程请优先用上方「运行自主度」。下列开关与预设不一致时档位显示「自定义」。
+            </div>
+          </div>
+
+          {advancedGatesOpen && (
+            <>
           <div style={styles.field}>
             <label style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer", fontSize: 13 }}>
               <input
@@ -530,17 +903,16 @@ export function SettingsSlideout() {
                 style={{ marginTop: 3 }}
               />
               <div>
-                <div style={{ fontWeight: 500 }}>自动批准所有危险操作</div>
+                <div style={{ fontWeight: 500 }}>自动批准所有危险操作（网页 L2）</div>
                 <div style={{ fontSize: 11, color: "#B26B00", marginTop: 2 }}>
-                  ⚠ 跳过 evaluate / navigate 等网页类 L2 确认。<b>不含</b> shell_exec / netsec_port_scan（企业 forceConfirm；请用下方「全局自动批准企业高危工具」）。
-                  仅供长期无人值守的可信工作流使用。
+                  ⚠ 跳过 evaluate / navigate 等网页类 L2。<b>不含</b> shell / netsec（请用企业开关或全自动巡航）。
                 </div>
               </div>
             </label>
             {autoDangerConfirm && (
               <div style={{ marginTop: 10, padding: 8, background: "#fff", borderRadius: 6, border: "1px solid #E0C090" }}>
                 <div style={{ fontSize: 12, color: "#B26B00", fontWeight: 500, marginBottom: 6 }}>
-                  请输入「<b>{GODMODE_CONFIRM_PHRASE}</b>」以确认开启：
+                  请输入「<b>{SECURITY_ARM_PHRASE}</b>」以确认开启：
                 </div>
                 <div style={{ display: "flex", gap: 6 }}>
                   <input
@@ -548,7 +920,7 @@ export function SettingsSlideout() {
                     type="text"
                     value={autoDangerPhrase}
                     onChange={(e) => { setAutoDangerPhrase(e.target.value); setAutoDangerMsg(null) }}
-                    placeholder={GODMODE_CONFIRM_PHRASE}
+                    placeholder={SECURITY_ARM_PHRASE}
                     autoComplete="off"
                     spellCheck={false}
                     autoFocus
@@ -590,14 +962,46 @@ export function SettingsSlideout() {
                 </div>
                 <div style={{ fontSize: 11, color: "#8a5a00", marginTop: 4, lineHeight: 1.5 }}>
                   仍受模块启用、目标白名单、任务授权（netsec）/ shell 策略约束。
-                  <b>不跳过</b> spawn_worker、桌面操控、MCP 关键能力。靶场渗透可用；默认关闭。
+                  <b>不跳过</b> spawn_worker、桌面操控、MCP 关键能力。
                 </div>
-                <div style={{ fontSize: 10, color: "#666", marginTop: 6, fontFamily: "monospace" }}>
-                  | 开关 | 网页 evaluate | shell/netsec |{"\n"}
-                  | 自动批准危险 | 可跳过 | 仍确认 |{"\n"}
-                  | God-mode | 可跳过 | 仍确认 |{"\n"}
-                  | 本开关(B) | 不变 | 可跳过(有范围) |
-                </div>
+                <table
+                  style={{
+                    width: "100%",
+                    marginTop: 8,
+                    borderCollapse: "collapse",
+                    fontSize: 10,
+                    color: "#555",
+                  }}
+                >
+                  <thead>
+                    <tr style={{ background: "#fff8f0" }}>
+                      <th style={{ textAlign: "left", padding: "3px 5px", border: "1px solid #f0d0a0" }}>开关</th>
+                      <th style={{ textAlign: "left", padding: "3px 5px", border: "1px solid #f0d0a0" }}>网页 L2</th>
+                      <th style={{ textAlign: "left", padding: "3px 5px", border: "1px solid #f0d0a0" }}>shell/netsec</th>
+                      <th style={{ textAlign: "left", padding: "3px 5px", border: "1px solid #f0d0a0" }}>协议 L1</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td style={{ padding: "3px 5px", border: "1px solid #f0d0a0" }}>自动批准危险</td>
+                      <td style={{ padding: "3px 5px", border: "1px solid #f0d0a0" }}>可跳过</td>
+                      <td style={{ padding: "3px 5px", border: "1px solid #f0d0a0" }}>仍确认</td>
+                      <td style={{ padding: "3px 5px", border: "1px solid #f0d0a0" }}>仍阻断</td>
+                    </tr>
+                    <tr>
+                      <td style={{ padding: "3px 5px", border: "1px solid #f0d0a0" }}>协议解锁</td>
+                      <td style={{ padding: "3px 5px", border: "1px solid #f0d0a0" }}>可跳过</td>
+                      <td style={{ padding: "3px 5px", border: "1px solid #f0d0a0" }}>仍确认</td>
+                      <td style={{ padding: "3px 5px", border: "1px solid #f0d0a0" }}>可跳过</td>
+                    </tr>
+                    <tr>
+                      <td style={{ padding: "3px 5px", border: "1px solid #f0d0a0" }}>本开关(企业)</td>
+                      <td style={{ padding: "3px 5px", border: "1px solid #f0d0a0" }}>不变</td>
+                      <td style={{ padding: "3px 5px", border: "1px solid #f0d0a0" }}>可跳过(有范围)</td>
+                      <td style={{ padding: "3px 5px", border: "1px solid #f0d0a0" }}>不变</td>
+                    </tr>
+                  </tbody>
+                </table>
               </div>
             </label>
             {entBConfirm && (
@@ -632,7 +1036,7 @@ export function SettingsSlideout() {
             )}
           </div>
 
-          {/* PR-B God-mode (security.allow_all_schemes) — bypasses BOTH layers. */}
+          {/* Protocol unlock (security.allow_all_schemes) — former UI name God-mode */}
           <div style={{ ...styles.field, padding: 10, borderRadius: 8, background: "#FFF8F8", border: "1px solid #F0C0C0" }}>
             <label style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer", fontSize: 13 }}>
               <input
@@ -643,7 +1047,7 @@ export function SettingsSlideout() {
               />
               <div>
                 <div style={{ fontWeight: 500, color: tokens.danger }}>
-                  God-mode（允许所有协议）
+                  协议解锁（允许非 http(s) 协议）
                   {config.allow_all_schemes === true && (
                     <span style={{
                       fontSize: 10, fontWeight: 600, marginLeft: 6, padding: "1px 6px",
@@ -652,9 +1056,9 @@ export function SettingsSlideout() {
                   )}
                 </div>
                 <div style={{ fontSize: 11, color: "#C62828", marginTop: 4, lineHeight: 1.5 }}>
-                  ☠ <b>最高风险</b>：绕过协议硬阻断（L1）与部分 L2——比「自动批准危险操作」更强。
-                  <b>不含</b> shell_exec / netsec_port_scan 企业 forceConfirm（除非另开「全局自动批准企业高危工具」）。
-                  关闭协议保护后，<b>prompt 注入</b>即可执行 <code>data:</code> 脚本、打开 <code>chrome://</code> 特权页。
+                  ☠ 绕过协议硬阻断（L1）与部分网页 L2——<b>不等于</b>无人值守全开。
+                  <b>不含</b> shell_exec / netsec / host_computer / spawn 的 forceConfirm。
+                  曾用名 God-mode。关闭后 prompt 注入仍可能驱动 <code>data:</code> / <code>chrome://</code>。
                 </div>
               </div>
             </label>
@@ -662,7 +1066,7 @@ export function SettingsSlideout() {
             {godmodeConfirm && (
               <div style={{ marginTop: 10, padding: 8, background: "#fff", borderRadius: 6, border: "1px solid #E0B4B4" }}>
                 <div style={{ fontSize: 12, color: tokens.danger, fontWeight: 500, marginBottom: 6 }}>
-                  请输入「<b>{GODMODE_CONFIRM_PHRASE}</b>」以确认开启 God-mode：
+                  请输入「<b>{SECURITY_ARM_PHRASE}</b>」以确认开启协议解锁：
                 </div>
                 <div style={{ display: "flex", gap: 6 }}>
                   <input
@@ -670,7 +1074,7 @@ export function SettingsSlideout() {
                     type="text"
                     value={godmodePhrase}
                     onChange={e => { setGodmodePhrase(e.target.value); setGodmodeMsg(null) }}
-                    placeholder={GODMODE_CONFIRM_PHRASE}
+                    placeholder={SECURITY_ARM_PHRASE}
                     autoComplete="off"
                     spellCheck={false}
                     autoFocus
@@ -690,6 +1094,8 @@ export function SettingsSlideout() {
               </div>
             )}
           </div>
+            </>
+          )}
 
           <div style={styles.field}>
             <label style={styles.label}>安全审计日志</label>

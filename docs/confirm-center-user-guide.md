@@ -103,7 +103,7 @@ Companion 在下列工具**真正执行前**会排队确认（列表以代码 `L
 
 - 配置与任务授权：**偏「我允许这类事 / 这些目标」**。  
 - 确认台 L2：**偏「这一次我同意 Agent 现在就做」**（防 prompt 注入静默扩权）。  
-- **A/B 不是** allowlist 的替代；空名单仍全拒。God-mode /「自动批准危险操作」**单独**仍不会跳过 shell/netsec。
+- **A/B 不是** allowlist 的替代；空名单仍全拒。**协议解锁**（原 God-mode）/「自动批准危险操作」**单独**仍不会跳过 shell/netsec。长程少确认请用设置 → **运行自主度**（全自动巡航可合成企业 Plan B）。
 
 NetSec 完整路径示例见 [mission-pack-usage.md §5](mission-pack-usage.md#5-开启-netsec端口探测)。
 

@@ -24,6 +24,7 @@ import {
   IconSpinner,
   IconMore,
 } from "../ui/icons"
+import { cruiseChipLabel, disarmAllFlags } from "./autopilot-tier"
 
 export function StatusRail({
   connectionState,
@@ -161,6 +162,14 @@ export function StatusRail({
 
   const closeMenu = () => setMenuOpen(false)
   const connLabel = connectionLabel(connectionState)
+  const cruiseLabel = cruiseChipLabel({
+    auto_approve_dangerous: state.config.auto_approve_dangerous === true,
+    auto_approve_enterprise_tools: state.config.auto_approve_enterprise_tools === true,
+    allow_all_schemes: state.config.allow_all_schemes === true,
+  })
+  const disarmCruise = () => {
+    chrome.runtime.sendMessage({ type: "config.set", config: disarmAllFlags() })
+  }
 
   // G1: no full-rail mode fill — badge carries mode; L1/L2 get a 3px accent line only.
   const modeLine =
@@ -197,6 +206,18 @@ export function StatusRail({
         pinned={pinned}
         onTogglePin={togglePin}
       />
+      {cruiseLabel && (
+        <button
+          type="button"
+          style={railStyles.cruisePill}
+          title="运行自主度已武装；点击解除（关闭网页/企业/协议三类自动批准）"
+          onClick={disarmCruise}
+          aria-label={`${cruiseLabel}，点击解除`}
+        >
+          {cruiseLabel}
+          <span style={railStyles.cruiseX}>解除</span>
+        </button>
+      )}
       <div
         role="status"
         aria-label={connLabel}
@@ -424,6 +445,30 @@ const railStyles: Record<string, CSSProperties> = {
   spacer: {
     flex: 1,
     minWidth: 4,
+  },
+  cruisePill: {
+    flexShrink: 0,
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 4,
+    maxWidth: 140,
+    padding: "2px 8px",
+    borderRadius: 999,
+    border: "1px solid #f0c0c0",
+    background: "#fff5f5",
+    color: "#b71c1c",
+    fontSize: 10,
+    fontWeight: 700,
+    fontFamily: tokens.font,
+    cursor: "pointer",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  cruiseX: {
+    fontWeight: 600,
+    opacity: 0.85,
+    fontSize: 9,
   },
   connPill: {
     display: "inline-flex",

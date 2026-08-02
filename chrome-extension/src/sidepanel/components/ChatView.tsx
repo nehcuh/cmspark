@@ -408,10 +408,10 @@ function toolResultUserHint(result: any): string | null {
   const dataHint =
     typeof result.data?.user_hint_zh === "string" ? result.data.user_hint_zh : ""
   if (/workspace_root not set|需要先绑定工作区|pick a folder first/i.test(err)) {
-    return "需要先绑定工作区：侧栏「场景」→「选择工作区」。God-mode 不会跳过这一步。"
+    return "需要先绑定工作区：侧栏「场景」→「选择工作区」。协议解锁 / 运行自主度不会跳过这一步。"
   }
   if (/tool_not_allowed|当前场景不允许|可退出场景/i.test(err)) {
-    return "当前场景限制了该工具：侧栏「场景」→「退出场景」后再试。God-mode 无效于此。"
+    return "当前场景限制了该工具：侧栏「场景」→「退出场景」后再试。协议解锁 / 运行自主度无效于此。"
   }
   if (dataHint) return dataHint
   // First line of multi-line Chinese errors

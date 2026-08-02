@@ -1,0 +1,8 @@
+{
+  "batch": "trust-ia-autopilot",
+  "timestamp": "20260802-144203",
+  "claude": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/trust-ia-autopilot-claude-20260802-144203.md" },
+  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/trust-ia-autopilot-pi-20260802-144203.md" },
+  "both_approve": true,
+  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/trust-ia-autopilot-diff-20260802-144203.patch"
+}

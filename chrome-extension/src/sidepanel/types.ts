@@ -153,11 +153,10 @@ export interface LLMConfig {
   // Global bypass for ALL dangerous tool confirmations. Flattened from companion
   // config `security.auto_approve_dangerous`. Default false.
   auto_approve_dangerous?: boolean
-  // GOD-MODE: bypasses BOTH the URL-scheme hard-block (Layer 1) AND the dangerous-tool
-  // confirmation gate (Layer 2). Strictly stronger than auto_approve_dangerous (L2 only).
-  // Flattened from companion config `security.allow_all_schemes`. Default false.
-  // UI enable requires a typed confirmation phrase (PR-B); gated behind PR-0 WS auth.
-  // NOTE: does NOT skip shell_exec / netsec_port_scan forceConfirm (use auto_approve_enterprise_tools).
+  // Protocol unlock (UI: 协议解锁; audit reason may still say god_mode):
+  // bypasses URL-scheme hard-block (L1) AND partial browser L2. Stronger than
+  // auto_approve_dangerous for schemes. Flattened from security.allow_all_schemes.
+  // Does NOT skip shell/netsec/CU/spawn forceConfirm.
   allow_all_schemes?: boolean
   /**
    * Plan B: skip L2 for shell_exec / netsec_port_scan after scope gates.
