@@ -2,6 +2,36 @@
 
 ## Current Session
 
+### S33 (2026-08-02 ~14:22) [ship DMG + PR #105 merge + vision 405 诊断 + Qwen 测试说明]
+- **打包安装**：worktree tip 打 `CMspark-v0.3.0-macOS.dmg`；`ditto` → `/Applications/CMspark.app`；codesign verify OK；`open -a CMspark`
+- **合 main**：**PR #105** squash merge `6f3a210` — CLI Phase-2 `host_cli` + Qwen3-VL P0/env UX（CI build 绿）
+- **用户报 405**：`analyze_image`/截图 → `vision.analysis_failed` model=`glm-4.6v` nginx 405 — **非**本地 Qwen
+- **修配置**：`vision.base_url` `…/paas/v4` → `…/api/paas/v4`；探针变 429 **余额不足 1113**
+- **Qwen 测法**：实验层 = CU 定位建议（UIA/OCR 后）；确认台 experimental；日志 qwen/locate；勿用 vision 描述测
+- **本机 Qwen 就绪**：`qwen3-vl-2b` 在盘、`modelEnabled=true`、isolated python torch/transformers/PIL ok
+- Recorded: yes — vision≠Qwen；智谱 `/api` 路径
+
+### S32 COMPLETE (2026-08-02) [AFK: CLI Phase2 + Qwen P0] → **MERGED #105**
+- **Worktree**: `/Users/huchen/Projects/cmspark-wt-cli-qwen-20260802` branch `feat/cli-qwen-diag-20260802` @ `db59a46`
+- **Stop gate**: Pi + Claude **APPROVE_WITH_NITS** (cli-qwen-p0-r4 + qwen-env-ux)
+- **Merged**: PR #105 → main `6f3a210` (2026-08-02)
+- **Master plan**: docs/superpowers/plans/2026-08-02-cli-phase2-qwen-vl-master-plan.md
+- **Completion**: docs/superpowers/plans/2026-08-02-cli-qwen-COMPLETION.md
+- Recorded: yes
+
+
+### S32 (2026-08-02) [AFK: CLI Phase2 + Qwen-VL P0 + diagnosis]
+- **用户指令**: 深度体检 → 对抗验证 → Pi 复审 → worktree 开发两功能+缺陷；**完整完成才停**；决策先对抗再 Pi；不确定停否则 Pi+Claude 双路
+- **两功能**:
+  1. Apps CLI Phase-2 (`host_cli` + Segment B + cli_manifest)
+  2. Qwen3-VL 下载配置 + 增强点击（impl P0-1…P0-8）
+- **Master plan**: `docs/superpowers/plans/2026-08-02-cli-phase2-qwen-vl-master-plan.md`
+- **验收锁**: plan §2 F1-A…J / F2-A…K / D-A…C + dual APPROVE
+- **禁止**: free-args；PTY；改 main 工作树；TCC 回退；未完成假绿
+- **状态**: 启动 deep-diagnosis + plan 对抗/Pi → worktree 实现中
+- Recorded: yes — AFK 全流程
+
+
 ### S31 (2026-08-01~02) [tray-estop → soft-fail → OCR describe → DMG 分发]
 - **从 S30 阻塞续**：tray/Aqua 拥有 estop；Pi+Claude **APPROVE_WITH_NITS**；真机仍 CGEventTap fail under LS
 - **根因探针**：CLI/Python Process estop **SOCKET_LIVE**；`open -a` 路径 tapCreate nil（TCC 归因差异）
@@ -312,10 +342,17 @@
 
 ## In-Flight Tasks (Cross-Session)
 
+### CLI Phase-2 + Qwen3-VL P0 (S32–S33)
+- status: **done** (PR #105 merged main `6f3a210`)
+- context: host_cli + qwen download/env UX + dual-review; local DMG installed; vision base_url fixed separately in user config
+- next_action: User true CU smoke with experimental locate (whitelist app); optional recharge BigModel for vision path
+- resume_doc: `docs/qwen-vl-experimental-layer.md` · `docs/superpowers/plans/2026-08-02-cli-qwen-COMPLETION.md`
+- updated: 2026-08-02
+
 ### macOS TCC product identity + host_computer unblock (S29–S31)
-- status: **active** (code landed on branch; DMG rebuilt; main PR pending)
-- context: PR #103 on main (identity). Branch `fix/macos-tcc-product-identity` tip `e156e78`: tray estop, soft-fail tap, spatial describe, ship note + DMG 2026-08-02
-- next_action: User Side Panel host_computer smoke → open PR merge to main; optional Developer ID / DEGRADED UI
+- status: **mostly done on main** (#103 identity; #104 estop soft-fail / describe / fleet UI)
+- context: LS hotkey may still DEGRADED under ad-hoc; Developer ID still open; CU true Side Panel smoke residual
+- next_action: Optional Side Panel host_computer 确认台真机一轮；Developer ID / DEGRADED UI
 - resume_doc: `docs/superpowers/plans/2026-08-01-macos-tcc-estop-BLOCKED-HANDOFF.md` · `docs/superpowers/plans/2026-08-02-macos-dmg-ship-note.md`
 - updated: 2026-08-02
 

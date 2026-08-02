@@ -2,6 +2,16 @@
 
 ## Technical Pitfalls
 
+### Vision 405 ≠ 本地 Qwen；智谱 base_url 必须带 `/api`（2026-08-02）
+- **用户误判**：已下载 Qwen3-VL 并开启实验层，仍报 `vision.analysis_failed` / `405 Not Allowed (nginx)`（截图 + `analyze_image` 同错）
+- **两层能力**：
+  - **本地 Qwen**（`computer.modelEnabled` + `~/.cmspark-agent/models/qwen3-vl-*`）→ Computer Use **UIA/OCR 之后的实验定位建议点**；不服务 `analyze_image` 描述
+  - **Vision**（`config.vision`，`llm/vision-pipeline.ts` → OpenAI `chat.completions`）→ `screenshot` / `analyze_image` **看图说话**
+- **405 根因**：智谱配成 `https://open.bigmodel.cn/paas/v4`（少 `/api`）→ nginx 405；正确为 **`https://open.bigmodel.cn/api/paas/v4`**
+- **改对后常见下一错**：`429 code 1113 余额不足或无可用资源包`（端点通、账号无额度）
+- **测本地 Qwen**：白名单 App 上走 `host_computer`，确认台看 **experimental_suggestion**；日志 `qwen|experimental|locate`；**不要**用「描述网页截图」测
+- 教训：产品层命名「模型」易混；排障先看 `vision.analysis_failed` 的 **model 字段**（如 `glm-4.6v`）与 `computer.model*` 是否同轨
+
 ### macOS host_computer：estop code 4 / LS vs CLI TCC（2026-08-01→02 闭环）
 - **用户错误（旧）**：`emergency-stop unavailable (… code 4)`；亦见 SCK `-3801`
 - **code 4 含义**：`CGEvent.tapCreate` 失败（辅助功能/事件监听），旧逻辑 **整 helper 退出** → socket 死 → CU preflight 硬拒

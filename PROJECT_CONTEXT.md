@@ -3,24 +3,20 @@
 ## Session Handoff
 
 <!-- handoff:start -->
-### 2026-08-02 (S31 — soft-fail estop + OCR describe + DMG)
-- **Branch tip**：`fix/macos-tcc-product-identity` @ `e156e78`（未合 main）
-- **main 已有**：PR #103 TCC 产品身份（`MacOS/CMspark` / `com.cmspark.agent`）
-- **本会话交付**：
-  - tray/Aqua 拥有 estop；soft-fail CGEventTap（socket 保活，热键 DEGRADED）
-  - spatial `describe` OCR + 禁止 shell Vision 旁路；Pi APPROVE_WITH_NITS
-  - `make package-macos` → `dist-package/CMspark-v0.3.0-macOS.dmg`（CDHash `dae88680…`）
-  - 已 ditto `/Applications/CMspark.app`；SOCKET_LIVE 验证
-  - ship note：`docs/superpowers/plans/2026-08-02-macos-dmg-ship-note.md`
-- **关键发现**：CLI tap OK ≠ LS/`open -a` tap OK（ad-hoc TCC 归因）
+### 2026-08-02 ~14:22 (S33 — #105 merge + vision 405 + Qwen test guide)
+- **main tip**：`6f3a210` — PR **#105** squash：CLI Phase-2 `host_cli` + Qwen3-VL P0/env UX
+- **本会话**：
+  - DMG 装入 `/Applications/CMspark.app`（worktree 包，codesign adhoc OK）
+  - 用户 vision 405：`glm-4.6v` + 错误 base_url `open.bigmodel.cn/paas/v4` → 改为 **`…/api/paas/v4`**；下一错 429 余额 1113
+  - 澄清：本地 Qwen ≠ `analyze_image`；测 Qwen 用白名单 App 的 `host_computer` + experimental 确认台
+  - 本机：`qwen3-vl-2b` 在盘、`modelEnabled=true`、isolated torch/transformers/PIL ok
+- **经验**：`memory/project-knowledge.md` — Vision 405 ≠ Qwen；智谱 `/api` 路径
 - **下次**：
-  1. Side Panel `host_computer` 确认台真机一轮
-  2. PR 合 main（含 soft-fail + describe + 后续 tray 提交）
-  3. 分发用**新** DMG；旧 08-01 21:51 包无 soft-fail/spatial describe
-- **Workflows**：`.grok/workflows/tray-estop-cu-fix.rhai` · `estop-tap-degraded-cu-fix.rhai` · `ocr-describe-enhance.rhai`
+  1. 真机 CU 白名单 App 测实验定位（看 experimental_suggestion + 日志）
+  2. 若要网页看图：充值智谱或换 vision 端点（Ollama 等）
+  3. 可选：UI 校验错误 bigmodel base_url；Developer ID / LS hotkey DEGRADED
 
-### 2026-08-01 (S30 — host_computer 阻塞 handoff)
-- 阻塞：estop code 4 / -3801；CLI 成功 vs daemon 失败
-- HANDOFF：`docs/superpowers/plans/2026-08-01-macos-tcc-estop-BLOCKED-HANDOFF.md`
-- S31 已 soft-fail 缓解 preflight；热键/ad-hoc TCC 仍开放
+### 2026-08-02 (S31 — soft-fail estop + OCR describe + DMG)
+- soft-fail estop + spatial describe 已随 **#104** 等进 main；旧「分支未合」handoff 过时
+- 残余：ad-hoc LS 热键 DEGRADED、Developer ID、真机 CU 确认台抽检
 <!-- handoff:end -->
