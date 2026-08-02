@@ -184,24 +184,31 @@ test("W6: python-runtime module source must not import mcp/transport", () => {
 
 // ── findUv discovery (W1/W2/W11) ─────────────────────────────────────────────
 
+/** Path API matching findUv's injected platform (host may be linux while platform=win32). */
+function pathFor(platform: NodeJS.Platform): path.PlatformPath {
+  return platform === "win32" ? path.win32 : path.posix
+}
+
 function fixtureFileDeps(absUv: string, platform: NodeJS.Platform): UvDiscoveryDeps {
-  const files = new Set([path.normalize(absUv)])
+  const P = pathFor(platform)
+  const norm = (p: string) => P.normalize(p)
+  const files = new Set([norm(absUv)])
   return {
     platform,
     env: { PATH: "" }, // stripped PATH
     homedir: () =>
       platform === "win32" ? "C:\\Users\\fixture" : "/home/fixture",
-    existsSync: (p) => files.has(path.normalize(p)),
+    existsSync: (p) => files.has(norm(p)),
     readdirSync: () => [],
     statSync: (p) => ({
-      isFile: () => files.has(path.normalize(p)),
+      isFile: () => files.has(norm(p)),
       isSymbolicLink: () => false,
       isDirectory: () => false,
     }),
-    realpathSync: (p) => path.normalize(p),
+    realpathSync: (p) => norm(p),
     runCapture: async (bin, args) => {
       // version probe on the absolute fixture
-      if (path.normalize(bin) === path.normalize(absUv) && args[0] === "--version") {
+      if (norm(bin) === norm(absUv) && args[0] === "--version") {
         return { code: 0, out: "uv 0.6.0\n", err: "" }
       }
       // where/which under stripped PATH → fail
@@ -214,66 +221,49 @@ function fixtureFileDeps(absUv: string, platform: NodeJS.Platform): UvDiscoveryD
 }
 
 test("stripped PATH + fixture .local/bin/uv → ok + absolute", async () => {
-  const abs =
-    process.platform === "win32"
-      ? "C:\\Users\\fixture\\.local\\bin\\uv.exe"
-      : "/home/fixture/.local/bin/uv"
-  // Force win32 layout when testing win path on any host, or use host platform
-  const platform: NodeJS.Platform =
-    abs.endsWith("uv.exe") ? "win32" : process.platform === "win32" ? "linux" : process.platform
-  const home = platform === "win32" ? "C:\\Users\\fixture" : "/home/fixture"
-  const localUv =
-    platform === "win32"
-      ? path.join(home, ".local", "bin", "uv.exe")
-      : path.join(home, ".local", "bin", "uv")
+  // Always exercise both layouts via platform inject, independent of CI host OS
+  const platform: NodeJS.Platform = "linux"
+  const P = pathFor(platform)
+  const home = "/home/fixture"
+  const localUv = P.join(home, ".local", "bin", "uv")
 
   const deps = fixtureFileDeps(localUv, platform)
   deps.homedir = () => home
-  deps.env = {
-    PATH: "",
-    LOCALAPPDATA: path.join(home, "AppData", "Local"),
-  }
+  deps.env = { PATH: "" }
 
   const r = await findUv(deps)
   assert.equal(r.ok, true)
   assert.ok(r.path)
-  assert.ok(path.isAbsolute(r.path!))
+  assert.ok(P.isAbsolute(r.path!))
   assert.notEqual(r.path, "uv")
-  const base = path.basename(r.path!).toLowerCase()
+  const base = P.basename(r.path!).toLowerCase()
   assert.ok(base === "uv" || base === "uv.exe")
 })
 
 test("stripped PATH + fixture WinGet astral-sh.uv_x/uv.exe → ok + absolute", async () => {
+  const platform: NodeJS.Platform = "win32"
+  const P = pathFor(platform)
   const home = "C:\\Users\\fixture"
-  const localApp = path.join(home, "AppData", "Local")
-  const pkgDir = path.join(localApp, "Microsoft", "WinGet", "Packages", "astral-sh.uv_0.6.14")
-  const uvExe = path.join(pkgDir, "uv.exe")
+  const localApp = P.join(home, "AppData", "Local")
+  const packagesRoot = P.join(localApp, "Microsoft", "WinGet", "Packages")
+  const pkgDir = P.join(packagesRoot, "astral-sh.uv_0.6.14")
+  const uvExe = P.join(pkgDir, "uv.exe")
+  const same = (a: string, b: string) => P.normalize(a) === P.normalize(b)
 
   const deps: UvDiscoveryDeps = {
-    platform: "win32",
+    platform,
     env: { PATH: "", LOCALAPPDATA: localApp },
     homedir: () => home,
-    existsSync: (p) => {
-      const n = path.normalize(p)
-      return (
-        n === path.normalize(uvExe) ||
-        n === path.normalize(path.join(localApp, "Microsoft", "WinGet", "Packages"))
-      )
-    },
-    readdirSync: (p) => {
-      if (path.normalize(p) === path.normalize(path.join(localApp, "Microsoft", "WinGet", "Packages"))) {
-        return ["astral-sh.uv_0.6.14"]
-      }
-      return []
-    },
+    existsSync: (p) => same(p, uvExe) || same(p, packagesRoot),
+    readdirSync: (p) => (same(p, packagesRoot) ? ["astral-sh.uv_0.6.14"] : []),
     statSync: (p) => ({
-      isFile: () => path.normalize(p) === path.normalize(uvExe),
+      isFile: () => same(p, uvExe),
       isSymbolicLink: () => false,
       isDirectory: () => false,
     }),
-    realpathSync: (p) => path.normalize(p),
+    realpathSync: (p) => P.normalize(p),
     runCapture: async (bin, args) => {
-      if (path.normalize(bin) === path.normalize(uvExe) && args[0] === "--version") {
+      if (same(bin, uvExe) && args[0] === "--version") {
         return { code: 0, out: "uv 0.6.14\n", err: "" }
       }
       if (bin === "where" || bin === "which") return { code: 1, out: "", err: "" }
@@ -283,44 +273,37 @@ test("stripped PATH + fixture WinGet astral-sh.uv_x/uv.exe → ok + absolute", a
 
   const r = await findUv(deps)
   assert.equal(r.ok, true)
-  assert.ok(r.path && path.isAbsolute(r.path))
+  assert.ok(r.path && P.isAbsolute(r.path))
   assert.notEqual(r.path, "uv")
-  assert.equal(path.basename(r.path!).toLowerCase(), "uv.exe")
+  assert.equal(P.basename(r.path!).toLowerCase(), "uv.exe")
 })
 
 test("unrelated WinGet package dir with uv.exe is ignored", async () => {
+  const platform: NodeJS.Platform = "win32"
+  const P = pathFor(platform)
   const home = "C:\\Users\\fixture"
-  const localApp = path.join(home, "AppData", "Local")
-  const evilPkg = path.join(localApp, "Microsoft", "WinGet", "Packages", "Evil.Tool_1.0")
-  const evilUv = path.join(evilPkg, "uv.exe")
+  const localApp = P.join(home, "AppData", "Local")
+  const packagesRoot = P.join(localApp, "Microsoft", "WinGet", "Packages")
+  const evilPkg = P.join(packagesRoot, "Evil.Tool_1.0")
+  const evilUv = P.join(evilPkg, "uv.exe")
+  const same = (a: string, b: string) => P.normalize(a) === P.normalize(b)
 
   const deps: UvDiscoveryDeps = {
-    platform: "win32",
+    platform,
     env: { PATH: "", LOCALAPPDATA: localApp },
     homedir: () => home,
-    existsSync: (p) => {
-      const n = path.normalize(p)
-      return (
-        n === path.normalize(evilUv) ||
-        n === path.normalize(path.join(localApp, "Microsoft", "WinGet", "Packages"))
-      )
-    },
-    readdirSync: (p) => {
-      if (path.normalize(p) === path.normalize(path.join(localApp, "Microsoft", "WinGet", "Packages"))) {
-        return ["Evil.Tool_1.0"] // no astral-sh.uv_ prefix
-      }
-      return []
-    },
+    existsSync: (p) => same(p, evilUv) || same(p, packagesRoot),
+    readdirSync: (p) => (same(p, packagesRoot) ? ["Evil.Tool_1.0"] : []),
     statSync: (p) => ({
-      isFile: () => path.normalize(p) === path.normalize(evilUv),
+      isFile: () => same(p, evilUv),
       isSymbolicLink: () => false,
       isDirectory: () => false,
     }),
-    realpathSync: (p) => path.normalize(p),
+    realpathSync: (p) => P.normalize(p),
     runCapture: async (bin) => {
       if (bin === "where" || bin === "which") return { code: 1, out: "", err: "" }
       // if somehow probed, pretend version works — still must not be selected
-      if (path.normalize(bin) === path.normalize(evilUv)) {
+      if (same(bin, evilUv)) {
         return { code: 0, out: "uv fake\n", err: "" }
       }
       return { code: 127, out: "", err: "ENOENT" }
