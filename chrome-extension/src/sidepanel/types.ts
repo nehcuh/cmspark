@@ -573,7 +573,17 @@ export interface ComputerModelState {
   /** Plain-language why download button is blocked */
   downloadBlockReason?: string
   enableBlockReason?: string
+  modelRootDir?: string
+  pythonMode?: "isolated" | "system"
+  uvAvailable?: boolean
+  pythonResolution?: string
+  isolatedEnvExists?: boolean
   preflight?: {
+    modelRootDir?: string
+    pythonMode?: "isolated" | "system"
+    uvAvailable?: boolean
+    pythonResolution?: string
+    isolatedEnvExists?: boolean
     readinessSummary?: string
     nextSteps?: string[]
     canDownload?: boolean

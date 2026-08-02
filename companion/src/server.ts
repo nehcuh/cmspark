@@ -4924,6 +4924,39 @@ export function validateWsMessage(msg: any): WsValidationResult {
       }
       return { valid: true }
     },
+    "computer.model.set_model_root": (m) => {
+      if (m.source !== "settings") {
+        return { valid: false, error: 'computer.model.set_model_root requires source:"settings"' }
+      }
+      return { valid: true }
+    },
+    "computer.model.pick_model_root": (m) => {
+      if (m.source !== "settings") {
+        return { valid: false, error: 'computer.model.pick_model_root requires source:"settings"' }
+      }
+      return { valid: true }
+    },
+    "computer.model.set_python_mode": (m) => {
+      if (m.source !== "settings") {
+        return { valid: false, error: 'computer.model.set_python_mode requires source:"settings"' }
+      }
+      if (m.mode !== "isolated" && m.mode !== "system") {
+        return { valid: false, error: 'computer.model.set_python_mode requires mode:"isolated"|"system"' }
+      }
+      return { valid: true }
+    },
+    "computer.model.ensure_python_env": (m) => {
+      if (m.source !== "settings") {
+        return { valid: false, error: 'computer.model.ensure_python_env requires source:"settings"' }
+      }
+      return { valid: true }
+    },
+    "computer.model.install_deps": (m) => {
+      if (m.source !== "settings") {
+        return { valid: false, error: 'computer.model.install_deps requires source:"settings"' }
+      }
+      return { valid: true }
+    },
     "tool.result": (m) => {
       if (typeof m.tool_call_id !== "string" || !m.tool_call_id) return { valid: false, error: "tool.result requires tool_call_id" }
       return { valid: true }

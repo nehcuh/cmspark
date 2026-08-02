@@ -4,13 +4,47 @@
 import { spawn } from "node:child_process"
 import * as fs from "node:fs"
 import * as path from "node:path"
-import { DATA_DIR } from "../config"
+import { DATA_DIR, getConfig } from "../config"
 import { logger } from "../logger"
 import {
   qwenVlDirName,
   qwenVlMeta,
   type QwenVlVariant,
 } from "./qwen-vl-catalog"
+import { isolatedPythonBin } from "./python-runtime"
+
+/** Default models root: ~/.cmspark-agent/models (overridable via computer.modelRootDir). */
+export function resolveModelRootDir(override?: string | null): string {
+  const fromCfg =
+    typeof override === "string" && override.trim()
+      ? override.trim()
+      : typeof getConfig().computer?.modelRootDir === "string"
+        ? String(getConfig().computer!.modelRootDir).trim()
+        : ""
+  if (fromCfg && path.isAbsolute(fromCfg)) {
+    return path.resolve(fromCfg)
+  }
+  return path.join(DATA_DIR, "models")
+}
+
+/** Validate and normalize a user-chosen model root (absolute dir). */
+export function validateModelRootDir(raw: string): { ok: true; path: string } | { ok: false; error: string } {
+  const p = String(raw || "").trim()
+  if (!p) return { ok: false, error: "路径不能为空" }
+  if (!path.isAbsolute(p)) return { ok: false, error: "请选择绝对路径" }
+  // Block trivial path escape into empty / null-like
+  if (p === "/" || p === "\\" || /^[A-Za-z]:\\?$/.test(p)) {
+    return { ok: false, error: "请选择具体的文件夹，不要选磁盘根目录" }
+  }
+  try {
+    fs.mkdirSync(p, { recursive: true })
+    const st = fs.statSync(p)
+    if (!st.isDirectory()) return { ok: false, error: "路径不是文件夹" }
+    return { ok: true, path: fs.realpathSync(p) }
+  } catch (e: any) {
+    return { ok: false, error: e?.message || String(e) }
+  }
+}
 
 export type QwenDownloadReason =
   | "network-error"
@@ -31,8 +65,21 @@ export class QwenDownloadError extends Error {
   }
 }
 
-export function qwenModelDir(variant: QwenVlVariant, baseDir?: string): string {
-  return path.join(baseDir ?? DATA_DIR, "models", qwenVlDirName(variant))
+/**
+ * @param modelRootOrDataDir — preferred: models root directory.
+ *   Legacy callers may pass DATA_DIR; we detect and append "models".
+ */
+export function qwenModelDir(variant: QwenVlVariant, modelRootOrDataDir?: string): string {
+  let root = modelRootOrDataDir
+  if (!root) {
+    root = resolveModelRootDir()
+  } else if (path.basename(root) !== "models" && fs.existsSync(path.join(root, "models"))) {
+    // legacy DATA_DIR pass-through
+    root = path.join(root, "models")
+  } else if (root === DATA_DIR || root.endsWith(`${path.sep}.cmspark-agent`)) {
+    root = path.join(root, "models")
+  }
+  return path.join(root, qwenVlDirName(variant))
 }
 
 /** Lightweight readiness: HF snapshot always writes config.json. */
@@ -161,15 +208,22 @@ export async function downloadQwenVlVariant(args: DownloadQwenArgs): Promise<{ d
   }
 
   const run = args.runPython ?? defaultRunPython
-  // Prefer ~/.cmspark-agent/python-env when present (PEP 668 / GUI PATH).
-  const venvPy =
-    process.platform === "win32"
-      ? path.join(DATA_DIR, "python-env", "Scripts", "python.exe")
-      : path.join(DATA_DIR, "python-env", "bin", "python3")
+  // Prefer isolated venv / config python (see python-runtime + preflight).
+  const cfg = getConfig().computer
+  const mode = cfg?.pythonMode === "system" ? "system" : "isolated"
+  const iso = isolatedPythonBin()
+  const sysPath = typeof cfg?.pythonPath === "string" ? cfg.pythonPath.trim() : ""
   const pyCandidates =
-    process.platform === "win32"
-      ? [venvPy, "python", "py"]
-      : [venvPy, "python3", "python"]
+    mode === "system"
+      ? [
+          ...(sysPath ? [sysPath] : []),
+          ...(process.platform === "win32" ? ["python", "py"] : ["python3", "python"]),
+        ]
+      : [
+          iso,
+          ...(sysPath ? [sysPath] : []),
+          ...(process.platform === "win32" ? ["python", "py"] : ["python3", "python"]),
+        ]
   let lastErr = ""
   for (const py of pyCandidates) {
     const result = await run([py, "-c", DOWNLOAD_SCRIPT, source, modelId, dir], env)

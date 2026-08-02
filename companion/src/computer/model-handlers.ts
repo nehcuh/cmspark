@@ -228,6 +228,11 @@ async function statePayload(
           downloadSourceReason: preflight.downloadSourceReason,
           downloadBlockReason: preflight.downloadBlockReason,
           enableBlockReason: preflight.enableBlockReason,
+          modelRootDir: preflight.modelRootDir,
+          pythonMode: preflight.pythonMode,
+          uvAvailable: preflight.uvAvailable,
+          pythonResolution: preflight.pythonResolution,
+          isolatedEnvExists: preflight.isolatedEnvExists,
         }
       : {
           canDownload: false,
@@ -237,6 +242,16 @@ async function statePayload(
             "请稍候；若长时间无结果，请重启 CMspark 后再打开本页。",
             "实验层依赖本机 Python 与下载组件，不会在浏览器插件内下载模型。",
           ],
+          modelRootDir: (() => {
+            try {
+              const { resolveModelRootDir } = require("./qwen-vl-download") as typeof import("./qwen-vl-download")
+              return resolveModelRootDir()
+            } catch {
+              return ""
+            }
+          })(),
+          pythonMode: "isolated",
+          uvAvailable: false,
         }),
     ...(sizeBytes !== undefined ? { sizeBytes } : {}),
     ...(errorReason !== undefined ? { error: errorReason } : {}),
@@ -314,6 +329,11 @@ export async function handleComputerModelMessage(
     "computer.model.reset_circuit_breaker",
     "computer.model.set_variant",
     "computer.model.set_download_source",
+    "computer.model.set_model_root",
+    "computer.model.pick_model_root",
+    "computer.model.set_python_mode",
+    "computer.model.ensure_python_env",
+    "computer.model.install_deps",
   ])
   if (SETTINGS_SOURCE_TYPES.has(type) && rest.source !== "settings") {
     logger.warn("computer.model.refused", { type, source: typeof rest.source === "string" ? rest.source : undefined })
@@ -516,6 +536,137 @@ export async function handleComputerModelMessage(
       const state = await statePayload(holder, deps)
       ctx.broadcast?.(state)
       return state
+    }
+
+    case "computer.model.set_model_root": {
+      const { validateModelRootDir, resolveModelRootDir } = await import("./qwen-vl-download")
+      const { DATA_DIR: dataDir } = await import("../config")
+      const raw = typeof rest.path === "string" ? rest.path : typeof rest.modelRootDir === "string" ? rest.modelRootDir : ""
+      if (rest.reset === true || raw === "" || raw === "default") {
+        const def = path.join(dataDir, "models")
+        const v = validateModelRootDir(def)
+        if (!v.ok) return modelError(v.error, { code: "INVALID_MODEL_ROOT" })
+        setComputerModelFields({ modelRootDir: v.path })
+        logger.info("computer.model.model_root_reset", { path: v.path })
+      } else {
+        const v = validateModelRootDir(raw)
+        if (!v.ok) return modelError(v.error, { code: "INVALID_MODEL_ROOT" })
+        setComputerModelFields({ modelRootDir: v.path })
+        logger.info("computer.model.model_root_set", { path: v.path })
+      }
+      const state = await statePayload(holder, deps)
+      ctx.broadcast?.(state)
+      return { ...state, modelRootDir: resolveModelRootDir() }
+    }
+
+    case "computer.model.pick_model_root": {
+      const { pickFolderNative } = await import("../obsidian/folder-picker")
+      const { validateModelRootDir, resolveModelRootDir } = await import("./qwen-vl-download")
+      const picked = await pickFolderNative()
+      if (picked.error === "cancelled") {
+        return { type: "computer.model.pick_model_root.result", ok: false, cancelled: true }
+      }
+      if (picked.error || !picked.path) {
+        return modelError(picked.error || "未选择文件夹", { code: "PICK_FAILED" })
+      }
+      const v = validateModelRootDir(picked.path)
+      if (!v.ok) return modelError(v.error, { code: "INVALID_MODEL_ROOT" })
+      setComputerModelFields({ modelRootDir: v.path })
+      logger.info("computer.model.model_root_picked", { path: v.path })
+      const state = await statePayload(holder, deps)
+      ctx.broadcast?.(state)
+      return { ...state, ok: true, modelRootDir: resolveModelRootDir() }
+    }
+
+    case "computer.model.set_python_mode": {
+      const mode = rest.mode === "system" ? "system" : rest.mode === "isolated" ? "isolated" : null
+      if (!mode) {
+        return modelError('computer.model.set_python_mode requires mode:"isolated"|"system"', {
+          code: "INVALID_PYTHON_MODE",
+        })
+      }
+      const patch: Parameters<typeof setComputerModelFields>[0] = { pythonMode: mode }
+      if (mode === "system" && typeof rest.pythonPath === "string" && rest.pythonPath.trim()) {
+        const p = rest.pythonPath.trim()
+        if (!path.isAbsolute(p) && process.platform !== "win32") {
+          // allow bare "python3" only as empty path (PATH resolve)
+        }
+        if (path.isAbsolute(p)) patch.pythonPath = p
+      }
+      if (mode === "isolated") {
+        // clear system override so isolated is unambiguous
+        patch.pythonPath = undefined as any
+      }
+      setComputerModelFields(patch)
+      logger.info("computer.model.python_mode_set", { mode })
+      const state = await statePayload(holder, deps)
+      ctx.broadcast?.(state)
+      return state
+    }
+
+    case "computer.model.ensure_python_env": {
+      const { ensureIsolatedPythonEnv } = await import("./python-runtime")
+      setComputerModelFields({ pythonMode: "isolated" })
+      const pkgs = Array.isArray(rest.packages)
+        ? rest.packages.map(String).filter(Boolean)
+        : ["modelscope", "huggingface_hub", "transformers", "torch", "pillow"]
+      const result = await ensureIsolatedPythonEnv(pkgs)
+      logger.info("computer.model.ensure_python_env", {
+        ok: result.ok,
+        usedUv: result.usedUv,
+        error: result.error,
+      })
+      const state = await statePayload(holder, deps)
+      ctx.broadcast?.(state)
+      return {
+        ...state,
+        type: "computer.model.ensure_python_env.result",
+        ok: result.ok,
+        usedUv: result.usedUv,
+        pythonPath: result.pythonPath,
+        log: result.log,
+        error: result.error,
+      }
+    }
+
+    case "computer.model.install_deps": {
+      // Install into current mode env (isolated preferred via ensure; system uses pip/uv)
+      const { ensureIsolatedPythonEnv, buildInstallCommands, resolvePythonRuntime } =
+        await import("./python-runtime")
+      const mode = getConfig().computer?.pythonMode === "system" ? "system" : "isolated"
+      const pkgs = Array.isArray(rest.packages)
+        ? rest.packages.map(String).filter(Boolean)
+        : ["modelscope", "huggingface_hub", "transformers", "torch", "pillow"]
+      if (mode === "isolated") {
+        const result = await ensureIsolatedPythonEnv(pkgs)
+        const state = await statePayload(holder, deps)
+        ctx.broadcast?.(state)
+        return {
+          ...state,
+          type: "computer.model.install_deps.result",
+          ok: result.ok,
+          usedUv: result.usedUv,
+          log: result.log,
+          error: result.error,
+        }
+      }
+      const runtime = await resolvePythonRuntime({ mode: "system", systemPythonPath: getConfig().computer?.pythonPath })
+      const cmds = buildInstallCommands({
+        mode: "system",
+        uvAvailable: runtime.uvAvailable,
+        packages: pkgs,
+        pythonPath: runtime.pythonPath,
+      })
+      // Don't auto-run against system python without user terminal — return commands
+      const state = await statePayload(holder, deps)
+      return {
+        ...state,
+        type: "computer.model.install_deps.result",
+        ok: false,
+        needsManual: true,
+        installCommands: cmds,
+        error: "全局 Python 模式：请在终端执行返回的命令（避免静默改动系统环境）",
+      }
     }
 
     case "computer.model.delete": {

@@ -971,6 +971,142 @@ export function SettingsSlideout() {
                     )}
                 </div>
 
+                {/* 模型保存位置 + Python 环境（用户可控） */}
+                <div style={{ ...styles.helpText, marginTop: 12, fontWeight: 700, fontSize: 12 }}>
+                  模型保存位置
+                </div>
+                <div
+                  style={{
+                    ...styles.helpText,
+                    marginTop: 4,
+                    fontSize: 11,
+                    fontFamily: "ui-monospace, monospace",
+                    wordBreak: "break-all",
+                    color: "#333",
+                  }}
+                >
+                  {model?.modelRootDir ||
+                    model?.preflight?.modelRootDir ||
+                    "~/.cmspark-agent/models"}
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
+                  <button
+                    type="button"
+                    style={styles.secondaryBtn}
+                    disabled={model === null || model.modelStatus === "downloading"}
+                    onClick={() => {
+                      dispatch({ type: "SET_COMPUTER_MODEL_ERROR", error: null })
+                      send({ type: "computer.model.pick_model_root", source: "settings" })
+                    }}
+                  >
+                    选择文件夹…
+                  </button>
+                  <button
+                    type="button"
+                    style={styles.secondaryBtn}
+                    disabled={model === null || model.modelStatus === "downloading"}
+                    onClick={() => {
+                      dispatch({ type: "SET_COMPUTER_MODEL_ERROR", error: null })
+                      send({ type: "computer.model.set_model_root", reset: true, source: "settings" })
+                    }}
+                  >
+                    恢复默认
+                  </button>
+                </div>
+                <div style={{ ...styles.helpText, marginTop: 4, fontSize: 10, color: "#666" }}>
+                  权重会下载到该目录下的 qwen3-vl-2b / 4b / 8b 子文件夹。请选择有足够空间的磁盘位置。
+                </div>
+
+                <div style={{ ...styles.helpText, marginTop: 12, fontWeight: 700, fontSize: 12 }}>
+                  Python 环境
+                </div>
+                <div style={{ ...styles.helpText, marginTop: 4, fontSize: 11, color: "#555" }}>
+                  {(model?.pythonResolution || model?.preflight?.pythonResolution) ??
+                    "检测中…"}
+                  {(model?.uvAvailable ?? model?.preflight?.uvAvailable)
+                    ? " · 已检测到 uv（创建/安装时优先使用）"
+                    : " · 未检测到 uv（可选：brew install uv）"}
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 6 }}>
+                  {(
+                    [
+                      {
+                        id: "isolated" as const,
+                        label: "CMspark 独立环境（推荐）",
+                        desc: "专用虚拟环境，不污染系统 Python；有 uv 时优先用 uv 创建与装包",
+                      },
+                      {
+                        id: "system" as const,
+                        label: "本机全局 Python",
+                        desc: "使用 PATH 上的 python3；安装依赖需你在终端手动执行（避免静默改系统环境）",
+                      },
+                    ] as const
+                  ).map((opt) => {
+                    const active =
+                      (model?.pythonMode || model?.preflight?.pythonMode || "isolated") === opt.id
+                    return (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        style={{
+                          ...styles.secondaryBtn,
+                          textAlign: "left",
+                          ...(active
+                            ? { borderColor: tokens.accent, background: tokens.accentSoft || "#eef3ff" }
+                            : {}),
+                        }}
+                        disabled={model === null || model.modelStatus === "downloading"}
+                        onClick={() => {
+                          dispatch({ type: "SET_COMPUTER_MODEL_ERROR", error: null })
+                          send({
+                            type: "computer.model.set_python_mode",
+                            mode: opt.id,
+                            source: "settings",
+                          })
+                        }}
+                      >
+                        <div style={{ fontWeight: 600, fontSize: 11 }}>
+                          {active ? "● " : "○ "}
+                          {opt.label}
+                        </div>
+                        <div style={{ fontSize: 10, color: "#666", marginTop: 2 }}>{opt.desc}</div>
+                      </button>
+                    )
+                  })}
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+                  <button
+                    type="button"
+                    style={styles.secondaryBtn}
+                    disabled={
+                      model === null ||
+                      model.modelStatus === "downloading" ||
+                      (model?.pythonMode || model?.preflight?.pythonMode) === "system"
+                    }
+                    title="创建或修复 ~/.cmspark-agent/python-env；优先 uv"
+                    onClick={() => {
+                      dispatch({ type: "SET_COMPUTER_MODEL_ERROR", error: null })
+                      send({ type: "computer.model.ensure_python_env", source: "settings" })
+                    }}
+                  >
+                    {(model?.isolatedEnvExists ?? model?.preflight?.isolatedEnvExists)
+                      ? "修复/更新独立环境"
+                      : "创建独立环境"}
+                  </button>
+                  <button
+                    type="button"
+                    style={styles.secondaryBtn}
+                    disabled={model === null || model.modelStatus === "downloading"}
+                    title="安装下载与推理所需组件"
+                    onClick={() => {
+                      dispatch({ type: "SET_COMPUTER_MODEL_ERROR", error: null })
+                      send({ type: "computer.model.install_deps", source: "settings" })
+                    }}
+                  >
+                    安装缺失依赖
+                  </button>
+                </div>
+
                 {/* 下载源 */}
                 <div style={{ ...styles.helpText, marginTop: 10, fontWeight: 600 }}>下载源</div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 4 }}>

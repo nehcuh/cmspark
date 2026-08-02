@@ -11,7 +11,12 @@ import {
   qwenVlMeta,
   type QwenVlVariant,
 } from "./qwen-vl-catalog"
-import { probeQwenModelDir } from "./qwen-vl-download"
+import { probeQwenModelDir, resolveModelRootDir } from "./qwen-vl-download"
+import {
+  buildInstallCommands,
+  resolvePythonRuntime,
+  type PythonMode,
+} from "./python-runtime"
 
 export type DownloadSource = "auto" | "huggingface" | "hf-mirror" | "modelscope"
 
@@ -76,6 +81,15 @@ export interface QwenVlPreflight {
   downloadBlockReason?: string
   /** Plain-language block reason when canEnable is false but model may be on disk */
   enableBlockReason?: string
+  /** Absolute models root directory (user-selectable) */
+  modelRootDir: string
+  /** isolated | system */
+  pythonMode: PythonMode
+  /** uv available on PATH */
+  uvAvailable: boolean
+  /** How Python was resolved (user-facing) */
+  pythonResolution: string
+  isolatedEnvExists: boolean
 }
 
 function runCapture(bin: string, args: string[], timeoutMs = 12_000): Promise<{ code: number; out: string }> {
@@ -322,11 +336,34 @@ export async function runQwenVlPreflight(args: {
   variant?: string
   downloadSource?: DownloadSource
   dataDir?: string
+  /** Override model root (absolute). Default: config.modelRootDir or DATA_DIR/models */
+  modelRootDir?: string
+  pythonMode?: PythonMode
+  pythonPath?: string
 }): Promise<QwenVlPreflight> {
   const variant = migrateLegacyModelVariant(args.variant)
   const meta = qwenVlMeta(variant)
 
-  const py = await findPython()
+  // Lazy import getConfig to avoid circular init in tests
+  let cfgMode: PythonMode | undefined = args.pythonMode
+  let cfgPyPath: string | undefined = args.pythonPath
+  try {
+    const { getConfig } = require("../config") as typeof import("../config")
+    const c = getConfig().computer
+    if (!cfgMode) cfgMode = c?.pythonMode === "system" ? "system" : "isolated"
+    if (!cfgPyPath && typeof c?.pythonPath === "string") cfgPyPath = c.pythonPath
+  } catch {
+    cfgMode = cfgMode || "isolated"
+  }
+
+  const runtime = await resolvePythonRuntime({
+    mode: cfgMode,
+    systemPythonPath: cfgPyPath,
+  })
+  const py = {
+    ok: Boolean(runtime.pythonPath),
+    path: runtime.pythonPath,
+  }
   const depExtras = py.ok && py.path ? await probePythonDeps(py.path) : {
     huggingface_hub: false,
     modelscope: false,
@@ -342,7 +379,7 @@ export async function runQwenVlPreflight(args: {
 
   const totalRamGb = Math.round((os.totalmem() / 1024 ** 3) * 10) / 10
   const freeRamGb = Math.round((os.freemem() / 1024 ** 3) * 10) / 10
-  const modelsRoot = path.join(args.dataDir || path.join(os.homedir(), ".cmspark-agent"), "models")
+  const modelsRoot = resolveModelRootDir(args.modelRootDir ?? null)
   try {
     fs.mkdirSync(modelsRoot, { recursive: true })
   } catch {
@@ -359,7 +396,7 @@ export async function runQwenVlPreflight(args: {
     notes: acc.notes,
   }
 
-  const probe = probeQwenModelDir(variant, args.dataDir)
+  const probe = probeQwenModelDir(variant, modelsRoot)
   const modelReady = probe.status === "ready"
   const recommendedVariant = recommendVariant(hardware)
   const fit = variantFit(variant, hardware)
@@ -372,29 +409,32 @@ export async function runQwenVlPreflight(args: {
   const diskTight =
     hardware.freeDiskGb != null && hardware.freeDiskGb < meta.downloadGb + 2
 
+  // Isolated mode requires the managed venv to exist (not just any system python).
+  const pythonEnvReady =
+    runtime.mode === "system" ? deps.python === true : runtime.isolatedExists && deps.python === true
   // Product rule: never force-block download solely on RAM (user may still try),
   // but always surface hardware guidance. Disk critically short → block download.
-  const canDownload = deps.python && !needHub && !diskTight
-  const canEnable = modelReady && deps.python && !needInfer
-
-  const venvPip = path.join(DATA_DIR, "python-env", process.platform === "win32" ? "Scripts\\pip.exe" : "bin/pip")
-  const pipCmd = fs.existsSync(venvPip)
-    ? `"${venvPip}"`
-    : deps.pythonPath
-      ? `"${deps.pythonPath.replace(/python(\.exe)?$/i, "pip$1")}"`
-      : "pip3"
+  const canDownload = pythonEnvReady && !needHub && !diskTight
+  const canEnable = modelReady && pythonEnvReady && !needInfer
 
   const nextSteps: string[] = []
   const installCommands: string[] = []
   let downloadBlockReason: string | undefined
   let enableBlockReason: string | undefined
 
-  // --- Software install commands (copy-paste) ---
-  if (!deps.python) {
+  // --- Software install commands (copy-paste; prefer uv when available) ---
+  if (!deps.python && runtime.mode === "system") {
     nextSteps.push(
-      "本机未检测到 Python 3。请先安装（Mac 可用 Homebrew：brew install python3；Windows 从 python.org 安装并勾选 PATH）。安装后重启 CMspark。",
+      "本机未检测到可用的全局 Python。请安装 Python 3，或改选「CMspark 独立环境」并点「创建独立环境」。",
     )
-    downloadBlockReason = "需要先安装 Python 3，才能下载本机视觉模型"
+    downloadBlockReason = "需要可用的 Python 环境才能下载本机视觉模型"
+  } else if (!deps.python || (runtime.mode === "isolated" && !runtime.isolatedExists)) {
+    nextSteps.push(
+      runtime.uvAvailable
+        ? "推荐：点下方「创建独立环境」——将优先使用本机 uv 创建专用虚拟环境（不污染全局 Python）。"
+        : "推荐：点下方「创建独立环境」创建专用虚拟环境；或安装 uv（brew install uv）后再创建，安装依赖更快。",
+    )
+    downloadBlockReason = "请先创建 CMspark 独立 Python 环境，或切换为「使用全局 Python」"
   } else {
     const downloadPkgs: string[] = []
     if (src.source === "modelscope" && !deps.modelscope) downloadPkgs.push("modelscope")
@@ -405,28 +445,35 @@ export async function runQwenVlPreflight(args: {
     if (!deps.pillow) inferPkgs.push("pillow")
     const allPkgs = [...new Set([...downloadPkgs, ...inferPkgs])]
     if (allPkgs.length) {
-      const cmd = `${pipCmd} install ${allPkgs.join(" ")}`
-      installCommands.push(cmd)
+      const cmds = buildInstallCommands({
+        mode: runtime.mode,
+        uvAvailable: runtime.uvAvailable,
+        packages: allPkgs,
+        pythonPath: deps.pythonPath,
+      })
+      installCommands.push(...cmds)
       if (downloadPkgs.length) {
         nextSteps.push(
-          "下载模型前，需在本机准备「模型获取工具」（一键复制下方命令到终端执行，约 1～3 分钟）。无需理解具体软件包名称。",
+          "下载模型前，需准备「模型获取工具」。可点「安装缺失依赖」（优先 uv），或复制下方命令到终端。",
         )
         downloadBlockReason =
-          src.source === "modelscope"
-            ? "本机尚未准备好「模型下载组件」（大陆源）。请先执行下方安装命令，再点下载。"
-            : "本机尚未准备好「模型下载组件」。请先执行下方安装命令，或改选下载源「魔搭 ModelScope」后安装对应组件。"
+          "本机尚未准备好「模型下载组件」。请先安装缺失依赖（可用 uv / 独立环境），再点下载。"
       }
       if (inferPkgs.length) {
-        nextSteps.push(
-          "启用实验层前，还需「本地推理组件」（transformers / torch 等）。可与下载组件一并安装（见下方命令）。",
-        )
+        nextSteps.push("启用实验层前，还需「本地推理组件」。可与下载组件一并安装。")
         if (modelReady) {
-          enableBlockReason = "模型文件已在本机，但仍缺推理组件，无法开启。请执行下方安装命令后重试。"
+          enableBlockReason = "模型文件已在本机，但仍缺推理组件，无法开启。"
         }
       }
-      nextSteps.push(`在「终端」执行：${cmd}`)
+      for (const cmd of cmds) nextSteps.push(`终端：${cmd}`)
     }
   }
+
+  nextSteps.push(`模型保存位置：${modelsRoot}（可在下方更改）`)
+  nextSteps.push(
+    `Python：${runtime.resolution}` +
+      (runtime.uvAvailable ? " · 已检测到 uv" : " · 未检测到 uv（可选安装以加速）"),
+  )
 
   if (diskTight) {
     nextSteps.push(
@@ -469,14 +516,23 @@ export async function runQwenVlPreflight(args: {
     {
       id: "python",
       category: "software",
-      label: "Python 3 运行环境",
-      ok: deps.python,
-      detail: deps.python
-        ? deps.pythonPath
-          ? `已检测：${deps.pythonPath}`
-          : "已检测"
-        : "未检测到。实验层下载与推理都依赖本机 Python。",
+      label:
+        runtime.mode === "isolated"
+          ? "Python 环境（CMspark 独立环境）"
+          : "Python 环境（本机全局）",
+      ok: deps.python && (runtime.mode === "system" || runtime.isolatedExists || Boolean(deps.pythonPath)),
+      detail: runtime.resolution + (deps.pythonPath ? ` · ${deps.pythonPath}` : ""),
       blocking: !deps.python,
+    },
+    {
+      id: "uv",
+      category: "software",
+      label: "uv（可选，推荐）",
+      ok: runtime.uvAvailable,
+      detail: runtime.uvAvailable
+        ? "已检测：创建/安装独立环境时将优先使用 uv"
+        : "未检测：仍可用 python -m venv；安装 uv 可加速（brew install uv）",
+      blocking: false,
     },
     {
       id: "download-tools",
@@ -565,5 +621,10 @@ export async function runQwenVlPreflight(args: {
     requirements,
     ...(downloadBlockReason ? { downloadBlockReason } : {}),
     ...(enableBlockReason ? { enableBlockReason } : {}),
+    modelRootDir: modelsRoot,
+    pythonMode: runtime.mode,
+    uvAvailable: runtime.uvAvailable,
+    pythonResolution: runtime.resolution,
+    isolatedEnvExists: runtime.isolatedExists,
   }
 }

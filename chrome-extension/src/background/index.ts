@@ -931,6 +931,11 @@ function setupMessageHandlers() {
       case "computer.model.reset_circuit_breaker":
       case "computer.model.set_variant":
       case "computer.model.set_download_source":
+      case "computer.model.set_model_root":
+      case "computer.model.pick_model_root":
+      case "computer.model.set_python_mode":
+      case "computer.model.ensure_python_env":
+      case "computer.model.install_deps":
         // Forward to companion
         wsClient.send(message)
         sendResponse({ ok: true })
