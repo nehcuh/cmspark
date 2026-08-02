@@ -741,7 +741,7 @@ export function SettingsSlideout() {
 
           <div style={styles.divider} />
 
-          {/* --- WP5-I4 实验功能(TinyClick 本地模型定位层) --- */}
+          {/* --- WP5-I4 实验功能(Qwen3-VL 本地模型定位层) --- */}
           <div style={styles.sectionTitle}>实验功能</div>
           {(() => {
             // 纯渲染:一切文案/判定来自 logic 纯函数;发送固定 source:"settings";
@@ -793,6 +793,24 @@ export function SettingsSlideout() {
                 <div style={styles.helpText}>{depHint ?? MODEL_SWITCH_COPY.layerSemantics}</div>
                 {disabledReason && (
                   <div style={{ ...styles.helpText, color: "#B26B00" }}>{disabledReason}</div>
+                )}
+                {model?.modelLicenseDeclined === true && (
+                  <div style={{ marginTop: 6 }}>
+                    <button
+                      style={styles.secondaryBtn}
+                      type="button"
+                      onClick={() => {
+                        dispatch({ type: "SET_COMPUTER_MODEL_ERROR", error: null })
+                        send({
+                          type: "computer.model.license_response",
+                          reset_decline: true,
+                          source: "settings",
+                        })
+                      }}
+                    >
+                      复位许可拒绝
+                    </button>
+                  </div>
                 )}
                 {/* 用户旅程：检测 → 选源 → 选规模 → 下载 → 启用（全部经 Companion） */}
                 <div style={{ ...styles.helpText, marginTop: 8, fontWeight: 600 }}>使用步骤（经本机 Companion）</div>
@@ -1038,7 +1056,7 @@ export function SettingsSlideout() {
                     chrome.runtime.sendMessage({ type: "computer.model.license_response", accepted: false, source: "settings" })
                   }}
                 >
-                  拒绝(永久跳过)
+                  拒绝(跳过本层)
                 </button>
                 <button
                   style={styles.saveBtn}

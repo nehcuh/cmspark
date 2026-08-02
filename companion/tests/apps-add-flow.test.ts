@@ -163,12 +163,18 @@ test("relative path → absolute_path_required", async () => {
   )
 })
 
-test("non-.exe target → not_an_exe", async () => {
-  const batPath = WIN ? "C:\\tools\\run.bat" : "/opt/tools/run.bat"
-  await assert.rejects(
-    buildAppEntry(baseInput({ path: batPath }), deps()),
-    (e: any) => e instanceof AddFlowError && e.code === "not_an_exe",
-  )
+test("non-.exe target → not_an_exe on win32; posix uses existence gate", async () => {
+  if (WIN) {
+    await assert.rejects(
+      buildAppEntry(baseInput({ path: "C:\tools\run.bat" }), deps()),
+      (e: any) => e instanceof AddFlowError && e.code === "not_an_exe",
+    )
+  } else {
+    await assert.rejects(
+      buildAppEntry(baseInput({ path: "/opt/tools/run.bat" }), deps({ exists: () => false })),
+      (e: any) => e instanceof AddFlowError && e.code === "not_found",
+    )
+  }
 })
 
 test("missing file → not_found", async () => {

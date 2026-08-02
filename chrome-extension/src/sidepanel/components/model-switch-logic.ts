@@ -345,7 +345,7 @@ export function licenseDoorShouldOpen(door: ComputerModelLicenseDoor | null): bo
 
 /**
  * 开关禁用原因（组件据此禁用开关行）：
- *   许可证已拒绝 → 永久跳过提示（裁决 2，无 UI 复位）；其余 → null（可拨动）。
+ *   许可证已拒绝 → 永久跳过提示（裁决 2，设置页「复位许可拒绝」可复位）；其余 → null（可拨动）。
  */
 export function modelSwitchDisabledReason(modelState: ComputerModelState | null): string | null {
   if (modelState?.modelLicenseDeclined === true) return MODEL_SWITCH_COPY.licenseDeclinedNotice

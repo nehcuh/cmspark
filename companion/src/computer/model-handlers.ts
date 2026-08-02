@@ -333,7 +333,7 @@ export async function handleComputerModelMessage(
       // 不符）→ license_required（config 零写入）。
       if (cfg.modelLicenseDeclined === true) {
         return modelError(
-          "实验层许可证已被拒绝，本层永久跳过（复位路径 = 手改 config.json，ADR-010 显式 owner opt-in）",
+          "实验层许可证已被拒绝。可在设置页实验层点击「复位许可拒绝」后重新阅读并接受条款（无需手改 config.json）",
           { code: "LICENSE_DECLINED" },
         )
       }
@@ -434,7 +434,7 @@ export async function handleComputerModelMessage(
         ctx.broadcast?.(state)
         return { ...state, download: downloadNote }
       }
-      // 拒绝：永久跳过（复位 = 手改 config.json，不提供 UI 复位——裁决 2）
+      // 拒绝：跳过；设置页可通过 reset_decline 复位（D9）
       setComputerModelFields({ modelLicenseDeclined: true })
       logger.info("computer.model.license_declined", {})
       const state = await statePayload(holder, deps)
