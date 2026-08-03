@@ -9,6 +9,11 @@ import markedKatex from "marked-katex-extension"
 import DOMPurify from "dompurify"
 import { renderMermaidBlocks, prefetchMermaid } from "./mermaid"
 import { extractComputerCardData } from "../utils/computer-utils"
+import {
+  extractShellCardData,
+  formatShellMetaLine,
+  SHELL_BODY_PREVIEW_CHARS,
+} from "../utils/shell-card-utils"
 import { fleetProcessingLabel } from "./focus-band-priority"
 import { tokens, statusColor } from "../ui/tokens"
 import {
@@ -423,6 +428,8 @@ function toolResultUserHint(result: any): string | null {
 function ToolCallCard({ tc }: { tc: any }) {
   const [expanded, setExpanded] = useState(false)
   const [visionExpanded, setVisionExpanded] = useState(false)
+  const [shellExpanded, setShellExpanded] = useState(false)
+  const [showRawJson, setShowRawJson] = useState(false)
   const hasResult = tc.result && !tc.error
   const userHint = hasResult ? toolResultUserHint(tc.result) : null
   // Avoid stringifying huge objects on every render; cap preview stringification
@@ -441,9 +448,32 @@ function ToolCallCard({ tc }: { tc: any }) {
   const computerCard = isComputerTask ? extractComputerCardData(tc.result) : null
   const computerFailed = computerCard !== null && (computerCard.failed || tc.status === "error")
 
-  const statusTone = statusColor(tc.status === "success" ? "success" : tc.status)
+  // shell_exec: command + stdout/stderr plain text (not buried JSON headers).
+  // History reload often omits status — derive from result.success / exit_code.
+  const isShellExec = tc.tool_name === "shell_exec"
+  const shellCard = isShellExec ? extractShellCardData(tc.params, tc.result) : null
+  const shellBodyLong =
+    !!shellCard && shellCard.body.length > SHELL_BODY_PREVIEW_CHARS
+  const shellFailed = !!shellCard && (shellCard.failed || tc.status === "error")
+
+  // Live tool.start sets status; history reload often omits it — derive from result.
+  const derivedStatus: string =
+    tc.status === "running" || tc.status === "success" || tc.status === "error"
+      ? tc.status
+      : shellCard
+        ? hasResult
+          ? shellFailed
+            ? "error"
+            : "success"
+          : "unknown"
+        : hasResult
+          ? tc.result?.success
+            ? "success"
+            : "error"
+          : "unknown"
+  const statusTone = statusColor(derivedStatus)
   const statusGlyph =
-    tc.status === "running" ? "…" : tc.status === "success" ? "✓" : tc.status === "error" ? "!" : "–"
+    derivedStatus === "running" ? "…" : derivedStatus === "success" ? "✓" : derivedStatus === "error" ? "!" : "–"
 
   // #au4dch ST-3: live progress from tool.progress
   const progressElapsed =
@@ -453,32 +483,38 @@ function ToolCallCard({ tc }: { tc: any }) {
   const progressErr =
     typeof tc.progress_stderr_tail === "string" ? tc.progress_stderr_tail : ""
   const showLiveProgress =
-    tc.status === "running" && (progressElapsed != null || progressOut || progressErr)
+    derivedStatus === "running" && (progressElapsed != null || progressOut || progressErr)
+
+  // Generic tools: click card to expand JSON. Shell uses its own expand control.
+  const canExpandGeneric = hasResult && isLongResult && !isShellExec
 
   return (
     <div
       style={{
         ...styles.toolCard,
         // G3: status via left hairline only — not a full-border cage
-        borderLeftColor: statusTone,
-        cursor: hasResult && isLongResult ? "pointer" : "default",
+        borderLeftColor: shellFailed ? tokens.danger : statusTone,
+        cursor: canExpandGeneric ? "pointer" : "default",
       }}
       onClick={() => {
-        if (hasResult && isLongResult) setExpanded(!expanded)
+        if (canExpandGeneric) setExpanded(!expanded)
       }}
       data-testid="tool-call-card"
+      data-tool={tc.tool_name || ""}
     >
       <div style={styles.toolHeader}>
         <span
           style={{
             ...styles.toolStatusGlyph,
-            color: statusTone,
+            color: shellFailed ? tokens.danger : statusTone,
           }}
-          aria-label={tc.status || "unknown"}
+          aria-label={derivedStatus || "unknown"}
         >
           {statusGlyph}
         </span>
-        <span style={styles.toolName}>{tc.tool_name}</span>
+        <span style={styles.toolName}>
+          {isShellExec ? "shell_exec · 本机命令" : tc.tool_name}
+        </span>
         {isVisionTool && tc.vision_status === "analyzing" && (
           <span style={styles.toolMeta}>Analyzing…</span>
         )}
@@ -493,7 +529,7 @@ function ToolCallCard({ tc }: { tc: any }) {
         {isVisionTool && tc.vision_status === "error" && (
           <span style={{ ...styles.toolMeta, color: tokens.warning }}>Vision failed</span>
         )}
-        {hasResult && isLongResult && (
+        {canExpandGeneric && (
           <span style={styles.toolExpandHint}>{expanded ? "收起" : "展开"}</span>
         )}
         {showLiveProgress && progressElapsed != null && (
@@ -502,6 +538,121 @@ function ToolCallCard({ tc }: { tc: any }) {
           </span>
         )}
       </div>
+      {shellCard && shellCard.commandPreview && (
+        <div
+          style={{
+            ...styles.toolInset,
+            marginTop: 6,
+            fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+            fontSize: 10,
+            lineHeight: 1.4,
+            color: tokens.textSecondary,
+            wordBreak: "break-all",
+          }}
+          data-testid="shell-command-preview"
+          title={shellCard.command || undefined}
+        >
+          <span style={{ color: tokens.textMuted, marginRight: 4 }}>$</span>
+          {shellCard.commandPreview}
+        </div>
+      )}
+      {shellCard && (hasResult || shellCard.body) && (
+        <div data-testid="shell-result-card">
+          {formatShellMetaLine(shellCard) && (
+            <div
+              style={{
+                marginTop: 4,
+                fontSize: 10,
+                color: shellFailed ? tokens.danger : tokens.textMuted,
+              }}
+              data-testid="shell-meta-line"
+            >
+              {formatShellMetaLine(shellCard)}
+            </div>
+          )}
+          {shellCard.body ? (
+            <>
+              <pre
+                style={{
+                  margin: "6px 0 0",
+                  padding: "6px 8px",
+                  fontSize: 10,
+                  lineHeight: 1.4,
+                  maxHeight: shellExpanded ? 320 : 140,
+                  overflow: "auto",
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                  background: "rgba(0,0,0,0.28)",
+                  borderRadius: 4,
+                  color: tokens.text,
+                }}
+                data-testid="shell-stdout-body"
+              >
+                {shellExpanded || !shellBodyLong
+                  ? shellCard.body
+                  : shellCard.body.slice(0, SHELL_BODY_PREVIEW_CHARS) + "\n…"}
+              </pre>
+              {(shellBodyLong || hasResult) && (
+                <div style={{ display: "flex", gap: 8, marginTop: 4, flexWrap: "wrap" }}>
+                  {shellBodyLong && (
+                    <button
+                      type="button"
+                      data-testid="shell-body-expand"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setShellExpanded(!shellExpanded)
+                      }}
+                      style={styles.toolLinkBtn}
+                    >
+                      {shellExpanded ? "收起输出" : "展开全部输出"}
+                    </button>
+                  )}
+                  {hasResult && (
+                    <button
+                      type="button"
+                      data-testid="shell-raw-json-toggle"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setShowRawJson(!showRawJson)
+                      }}
+                      style={styles.toolLinkBtn}
+                    >
+                      {showRawJson ? "隐藏 JSON" : "原始 JSON"}
+                    </button>
+                  )}
+                </div>
+              )}
+            </>
+          ) : (
+            hasResult && (
+              <div style={{ marginTop: 4, fontSize: 10, color: tokens.textMuted }}>
+                （无 stdout/stderr）
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setShowRawJson(!showRawJson)
+                  }}
+                  style={{ ...styles.toolLinkBtn, marginLeft: 6 }}
+                >
+                  {showRawJson ? "隐藏 JSON" : "原始 JSON"}
+                </button>
+              </div>
+            )
+          )}
+          {showRawJson && hasResult && (
+            <pre
+              style={{
+                ...styles.toolResult,
+                maxHeight: 200,
+                marginTop: 6,
+              }}
+            >
+              <code>{resultStr}</code>
+            </pre>
+          )}
+        </div>
+      )}
       {showLiveProgress && (progressOut || progressErr) && (
         <pre
           style={{
@@ -604,7 +755,8 @@ function ToolCallCard({ tc }: { tc: any }) {
           {userHint}
         </div>
       )}
-      {hasResult && (
+      {/* Generic tools keep JSON preview; shell_exec uses plain-text card above. */}
+      {hasResult && !isShellExec && (
         <pre
           style={{
             ...styles.toolResult,
