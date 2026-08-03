@@ -10,6 +10,7 @@ import {
   isPathUnderDownloads,
   redactDownloadUrl,
   detectDownloadConflicts,
+  githubZipMissHint,
 } from "../src/background/downloads-find"
 import { runBrowserDownload } from "../src/background/browser-download-handler"
 
@@ -157,6 +158,43 @@ test("runDownloadsFind returns matches from injectable API", async () => {
   assert.equal(r.success, true)
   assert.equal(r.data.count, 1)
   assert.equal(r.data.matches[0].filename, "pkg.tgz")
+})
+
+test("runDownloadsFind falls back to broad search when narrow regex misses", async () => {
+  let calls = 0
+  const r = await runDownloadsFind({
+    filenameHint: "Black-cat-master",
+    __downloadsApi: {
+      search: async (q) => {
+        calls++
+        // First (narrow) call uses filenameRegex and returns empty — Chrome flaky path
+        if (q.filenameRegex) return []
+        // Broad call: full recent list
+        return [
+          {
+            id: 11,
+            filename: "C:\\Users\\t\\Downloads\\Black-cat-master.zip",
+            url: "https://github.com/x/Black-cat/archive/refs/heads/master.zip",
+            state: "complete",
+            exists: true,
+            fileSize: 87848,
+          } as any,
+        ]
+      },
+    },
+  })
+  assert.equal(r.success, true)
+  assert.ok(calls >= 2, "expected narrow then broad search")
+  assert.equal(r.data.search_mode, "broad")
+  assert.equal(r.data.count, 1)
+  assert.equal(r.data.matches[0].filename, "Black-cat-master.zip")
+})
+
+test("githubZipMissHint mentions Code button and archive URL", () => {
+  const h = githubZipMissHint("Black-cat")
+  assert.match(h, /Download ZIP/)
+  assert.match(h, /archive\/refs\/heads/)
+  assert.match(h, /skill_install/)
 })
 
 const bridge = {
