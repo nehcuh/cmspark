@@ -15,6 +15,7 @@ import {
   SHELL_BODY_PREVIEW_CHARS,
 } from "../utils/shell-card-utils"
 import { fleetProcessingLabel } from "./focus-band-priority"
+import { collectRunningTools, formatRunningToolsLabel } from "../utils/running-tools"
 import { tokens, statusColor } from "../ui/tokens"
 import {
   IconBranch,
@@ -60,22 +61,9 @@ export function ChatView() {
   const { level } = useCapabilityMode()
 
   // Show processing label when request active OR any tool still running
-  // (#au4dch ST-1: live tools are role=tool messages from tool.start, not only
-  // last assistant.tool_calls — old logic looked "finished" during long shell).
+  // (#au4dch ST-1/ST-4: shared collectRunningTools with FocusBand).
   const processingLabel = (() => {
-    const runningTools: { name: string; elapsed?: number }[] = []
-    // Scan recent messages (newest first) for running tool_calls
-    for (let i = messages.length - 1; i >= 0 && i >= messages.length - 40; i--) {
-      const m = messages[i]
-      for (const tc of m?.tool_calls || []) {
-        if (tc?.status === "running") {
-          runningTools.push({
-            name: tc.tool_name || "tool",
-            elapsed: typeof tc.progress_elapsed_ms === "number" ? tc.progress_elapsed_ms : undefined,
-          })
-        }
-      }
-    }
+    const runningTools = collectRunningTools(messages)
     const fleetWorkers = fleet?.worker_count ?? 0
     const fleetLabel = fleetProcessingLabel({
       workerCount: fleetWorkers,
@@ -88,13 +76,8 @@ export function ChatView() {
     // #au4dch M1: do NOT hide label when streamingContent is set — tools often
     // run after assistant text; streaming gate previously made UI look idle.
     if (runningTools.length > 0) {
-      const parts = runningTools.slice(0, 3).map((t) => {
-        if (t.elapsed != null && t.elapsed >= 1000) {
-          return `${t.name} ${Math.floor(t.elapsed / 1000)}s`
-        }
-        return t.name
-      })
-      return `执行中: ${parts.join(", ")}${fleetBit}`
+      const base = formatRunningToolsLabel(runningTools) || "执行中"
+      return `${base}${fleetBit}`
     }
     if (streamingContent) return null
     if (!isProcessing) {

@@ -1,0 +1,67 @@
+# Outbound MCP Server — Phase 0 Spike Plan
+
+| Field | Value |
+|-------|--------|
+| Date | 2026-08-03 |
+| Status | **P0b LOCKED** for S40 AFK · implements brief L1–L9 |
+| SoT | [cmspark-as-mcp-server-brief-2026-08-03.md](../../decisions/cmspark-as-mcp-server-brief-2026-08-03.md) |
+| Code | `companion/src/outbound-mcp/` (stdio façade skeleton) |
+
+## 1. Goal (Phase 0)
+
+Prove whether CMspark's **logged-in Chrome session** is irreplaceable vs Playwright MCP on SSO tasks **before** expanding product surface.
+
+Phase 0 is **not** a ship of "Browser MCP clone".
+
+## 2. Tool whitelist (default outbound profile)
+
+| # | Tool | Why |
+|---|------|-----|
+| 1 | `cmspark__list_tabs` | Orientation without DOM dump |
+| 2 | `cmspark__navigate` | L1 navigate (confirm when domain policy requires) |
+| 3 | `cmspark__get_page_text` | **Data-exfil class** — disclosure gate (L3+) |
+| 4 | `cmspark__click` | Interactive L1 |
+| 5 | `cmspark__type` | Interactive L1 |
+| 6 | `cmspark__screenshot` | **Data-exfil class** — disclosure gate (L3+) |
+| 7 | `cmspark__wait_for` | Stability |
+| 8 | `cmspark__downloads_find` | Read-only Downloads (no path escape) |
+
+### Forbidden (hard)
+
+cookies*, evaluate, host_*, shell_*, netsec_*, osascript_*, skill_install (internal), MCP meta passthrough.
+
+## 3. Metrics sheet (T1 primary)
+
+| Metric | Threshold |
+|--------|-----------|
+| Task completion rate | ≥ 80% in time box |
+| Confirm timeouts | Actionable MCP error, no hang |
+| Profile violations | **0** forbidden tools |
+| Audit completeness | 100% tool calls leave audit line |
+| Confirm without Side Panel | Document only if tray path exists; else fail-closed |
+
+## 4. Disclosure copy (L3+)
+
+> 此 MCP 调用将把页面文本/截图发送给**外部**编程 Agent 使用的云端模型。  
+> 仅在你已确认该任务与数据分类允许时继续。
+
+## 5. Spike code DoD (P0c)
+
+- [x] stdio entry skeleton lists only whitelist names  
+- [x] refuses forbidden tools with structured error  
+- [x] audit line helper  
+- [ ] Live bridge to Companion WS (follow-up if bake-off authorized)  
+- [ ] Tray/global confirm (L8) — required before interactive T1  
+
+## 6. Bake-off (P0d) — human checklist
+
+1. Start Companion + Extension logged into SSO site  
+2. Run Playwright MCP on same task (clean profile)  
+3. Run CMspark outbound spike on same task  
+4. Fill metrics table; if T1 fails L7 → pivot Option B/C  
+
+**AFK note**: live SSO bake-off deferred to human session; protocol + skeleton complete.
+
+## 7. Non-goals
+
+Full catalog, L2 export, CWS, default-on install, Skill-only browser service.

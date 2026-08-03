@@ -5,7 +5,7 @@ export const BROWSER_DOWNLOAD_TOOL = {
   function: {
     name: "browser_download",
     description:
-      "Click a download control on a page (CSS selector and/or visible text such as 下载) and wait until the browser finishes saving the file into the user Downloads folder (or a sandboxed subpath). Prefer this over osascript_eval / shell curl for authenticated downloads. Returns absolute path, filename, and bytes. Concurrent downloads on the same tab are rejected (DOWNLOAD_BUSY). When filenameHint (or urlContains) is set, prefer_existing defaults to true: reuses an already-complete chrome.downloads item under Downloads instead of clicking (set force_redownload=true to force a new download). Cache match is by filename/url substring (newest first) — verify the returned url domain before trusting the file; prefer urlContains when the expected host is known. Prefer calling downloads_find first when the user may already have the file.",
+      "Click a download control on a page (CSS selector and/or visible text such as 下载 / Download ZIP) and wait until Chrome saves the file into Downloads. Prefer this over shell curl for authenticated GitHub. Concurrent downloads on the same tab are rejected (DOWNLOAD_BUSY). prefer_existing defaults true when filenameHint/urlContains set. GitHub repo ZIP: either navigate to /archive/refs/heads/main.zip then download, OR two-step UI — click text=Code (or Code 按钮) then text=\"Download ZIP\" with filenameHint like repo-main.zip. After complete, skill_install({ zip_path }) for skills. Prefer downloads_find first if the user may already have the file.",
     parameters: {
       type: "object",
       properties: {
@@ -62,7 +62,7 @@ export const DOWNLOADS_FIND_TOOL = {
   function: {
     name: "downloads_find",
     description:
-      "Search the browser's completed Downloads for an existing file by filenameHint and/or urlContains. Use BEFORE browser_download or shell curl when the user may already have the package (e.g. release tar.gz). Returns paths of complete existing items only (read-only).",
+      "Search completed Chrome Downloads by filenameHint and/or urlContains (read-only). Use BEFORE re-download. GitHub Code ZIP basenames are often <repo>-main.zip or <repo>-master.zip. If this tool errors or returns empty after a known download: fall back to browser_download (Code → Download ZIP) or archive URL, then skill_install({ zip_path }) — do not use shell curl by default. conflict_hint_zh when multiple size/mtime differ.",
     parameters: {
       type: "object",
       properties: {

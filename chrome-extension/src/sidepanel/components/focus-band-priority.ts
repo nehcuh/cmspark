@@ -1,5 +1,5 @@
 // FocusBand state machine (UIUX v2 §4.3) — pure priority resolution.
-// Priority: Confirm > L2 Safety+急停 > Fleet > L1 Context > empty.
+// Priority: Confirm > L2 Safety+急停 > Fleet > Thread tools (ST-4) > L1 Context > empty.
 // Hard cap: one primary (≤56px) + optional secondary (≤24px) = ≤80px total.
 
 export const FOCUS_BAND_MAX_PX = 80
@@ -11,6 +11,7 @@ export type FocusBandPrimary =
   | "confirm"
   | "l2_safety"
   | "fleet"
+  | "thread_tools"
   | "l1_context"
   | "empty"
 
@@ -29,6 +30,11 @@ export interface FocusBandInput {
    * Pending confirms must NOT force fleet visibility (§4.3 rule 2).
    */
   hasFleetActivity: boolean
+  /**
+   * #au4dch ST-4: any tool_call with status===running in the active thread.
+   * Surfaces long shell_exec / tool loops in FocusBand, not only chat footer.
+   */
+  hasThreadTools?: boolean
   /** L1 browser surface — ContextStrip when nothing higher. */
   isBrowserContext: boolean
 }
@@ -45,20 +51,27 @@ export interface FocusBandSlot {
    * (wireframe §5.5). Mutually exclusive with secondaryAbort under height budget.
    */
   secondaryContext: boolean
+  /**
+   * Secondary line for running tools under confirm/fleet when height allows
+   * (no abort secondary).
+   */
+  secondaryTools: boolean
 }
 
 /**
  * Resolve FocusBand single-slot priority.
- * Highest wins: Confirm → L2 Safety → Fleet → L1 Context → empty.
+ * Highest wins: Confirm → L2 Safety → Fleet → Thread tools → L1 Context → empty.
  */
 export function resolveFocusBandSlot(input: FocusBandInput): FocusBandSlot {
+  const hasTools = input.hasThreadTools === true
   if (input.hasPendingConfirm) {
     // Confirm owns primary. 急停 secondary when L2 task active (never bury abort).
-    // Context secondary only when no abort secondary (height budget).
+    // Tools secondary only when no abort secondary (height budget).
     return {
       primary: "confirm",
       secondaryAbort: input.l2AbortRequired,
-      secondaryContext: input.isBrowserContext && !input.l2AbortRequired,
+      secondaryContext: input.isBrowserContext && !input.l2AbortRequired && !hasTools,
+      secondaryTools: hasTools && !input.l2AbortRequired,
     }
   }
   if (input.hasL2Task) {
@@ -66,6 +79,7 @@ export function resolveFocusBandSlot(input: FocusBandInput): FocusBandSlot {
       primary: "l2_safety",
       secondaryAbort: false,
       secondaryContext: false,
+      secondaryTools: false,
     }
   }
   if (input.hasFleetActivity) {
@@ -73,6 +87,15 @@ export function resolveFocusBandSlot(input: FocusBandInput): FocusBandSlot {
       primary: "fleet",
       secondaryAbort: false,
       secondaryContext: false,
+      secondaryTools: hasTools,
+    }
+  }
+  if (hasTools) {
+    return {
+      primary: "thread_tools",
+      secondaryAbort: false,
+      secondaryContext: false,
+      secondaryTools: false,
     }
   }
   if (input.isBrowserContext) {
@@ -80,12 +103,14 @@ export function resolveFocusBandSlot(input: FocusBandInput): FocusBandSlot {
       primary: "l1_context",
       secondaryAbort: false,
       secondaryContext: false,
+      secondaryTools: false,
     }
   }
   return {
     primary: "empty",
     secondaryAbort: false,
     secondaryContext: false,
+    secondaryTools: false,
   }
 }
 

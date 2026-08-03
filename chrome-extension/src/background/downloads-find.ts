@@ -159,45 +159,144 @@ export async function runDownloadsFind(params: FindDownloadsParams): Promise<Too
     }
   }
 
-  const query: chrome.downloads.DownloadQuery = {
-    state: "complete",
-    exists: true,
-    orderBy: ["-startTime"],
-    limit: 50,
-  }
-  // Chrome filenameRegex is RE2-ish; escape literal hints.
-  if (filenameHint) {
-    query.filenameRegex = escapeRegExp(filenameHint)
-  }
-
+  /**
+   * Chrome downloads.search quirks (Windows / GitHub zip pain):
+   * - filenameRegex is RE2 and sometimes returns empty for valid basenames
+   * - exists:true in the query can drop items still settling
+   * Strategy: try narrow query first; if zero hits after filter, fall back to
+   * recent complete downloads without filenameRegex and filter client-side.
+   */
+  const scanLimit = Math.max(limit, 20)
   let items: chrome.downloads.DownloadItem[] = []
+  let searchMode: "narrow" | "broad" = "narrow"
   try {
-    items = await api.search(query)
+    items = await searchDownloadsApi(api, {
+      filenameHint,
+      narrow: true,
+    })
+    let matches = filterCompletedDownloads(items, {
+      filenameHint,
+      urlContains,
+      limit: scanLimit,
+      downloadsRoots: params.__downloadsRoots,
+    })
+    if (matches.length === 0) {
+      searchMode = "broad"
+      items = await searchDownloadsApi(api, {
+        filenameHint,
+        narrow: false,
+      })
+      matches = filterCompletedDownloads(items, {
+        filenameHint,
+        urlContains,
+        limit: scanLimit,
+        downloadsRoots: params.__downloadsRoots,
+      })
+    }
+    const conflict = detectDownloadConflicts(matches)
+    const trimmed = matches.slice(0, limit)
+    return {
+      success: true,
+      data: {
+        count: trimmed.length,
+        matches: trimmed,
+        search_mode: searchMode,
+        ...(conflict
+          ? {
+              conflict: true,
+              conflict_hint_zh: conflict,
+            }
+          : {}),
+        note:
+          trimmed.length > 0
+            ? conflict
+              ? `Multiple Downloads matches differ in size/time — pick carefully. ${conflict}`
+              : "Use path from matches (Downloads only). For skill ZIP: skill_install({ zip_path }). GitHub Code button zips are often named <repo>-main.zip / <repo>-master.zip."
+            : githubZipMissHint(filenameHint, urlContains),
+      },
+    }
   } catch (e: any) {
     return {
       success: false,
       error: e?.message || String(e),
-      data: { error_code: "DOWNLOADS_SEARCH_FAILED" },
+      data: {
+        error_code: "DOWNLOADS_SEARCH_FAILED",
+        recovery_zh:
+          "downloads_find 不可用时：用 browser_download 点 GitHub「Code」→「Download ZIP」，或打开 /archive/refs/heads/main.zip；完成后 skill_install({ zip_path })。",
+      },
     }
   }
+}
 
-  const matches = filterCompletedDownloads(items, {
-    filenameHint,
-    urlContains,
-    limit,
-    downloadsRoots: params.__downloadsRoots,
-  })
-  return {
-    success: true,
-    data: {
-      count: matches.length,
-      matches,
-      note:
-        matches.length > 0
-          ? "Use path from matches (Downloads only); set browser_download force_redownload=true only if you need a fresh copy."
-          : "No complete existing download under Downloads matched; proceed with browser_download click if needed.",
-    },
+async function searchDownloadsApi(
+  api: DownloadsSearchApi,
+  opts: { filenameHint?: string; narrow: boolean },
+): Promise<chrome.downloads.DownloadItem[]> {
+  const base: chrome.downloads.DownloadQuery = {
+    state: "complete",
+    orderBy: ["-startTime"],
+    // Broader limit for client filter; narrow still caps Chrome work.
+    limit: opts.narrow ? 50 : 100,
   }
+  // Do not put exists:true in query — filter exists in filterCompletedDownloads
+  // (exists can be undefined while file is present on disk).
+  if (opts.narrow && opts.filenameHint) {
+    // Chrome filenameRegex is RE2-ish; escape literal hints.
+    base.filenameRegex = escapeRegExp(opts.filenameHint)
+  }
+  return api.search(base)
+}
+
+/** Hint when cache miss — prefer GitHub archive / Code ZIP over shell curl. */
+export function githubZipMissHint(
+  filenameHint?: string,
+  urlContains?: string,
+): string {
+  const parts = [
+    "No complete download under Downloads matched.",
+    "Options: (1) browser_download text=\"Download ZIP\" after opening the Code menu on the repo page;",
+    "(2) navigate to https://github.com/<owner>/<repo>/archive/refs/heads/main.zip then browser_download;",
+    "(3) if the user already saved <repo>-main.zip / <repo>-master.zip, retry downloads_find with that basename;",
+    "then skill_install({ zip_path }). Prefer browser_download over shell curl for authenticated GitHub.",
+  ]
+  if (filenameHint) parts.push(`Tried filenameHint=${filenameHint}.`)
+  if (urlContains) parts.push(`Tried urlContains=${urlContains}.`)
+  return parts.join(" ")
+}
+
+/**
+ * DL-4: when multiple complete hits share a basename but differ in bytes or endTime,
+ * surface a Chinese hint so the Agent does not pick the wrong file silently.
+ */
+export function detectDownloadConflicts(matches: FoundDownload[]): string | null {
+  if (!matches || matches.length < 2) return null
+  const byName = new Map<string, FoundDownload[]>()
+  for (const m of matches) {
+    const key = (m.filename || "").toLowerCase()
+    if (!key) continue
+    const arr = byName.get(key) || []
+    arr.push(m)
+    byName.set(key, arr)
+  }
+  const hints: string[] = []
+  for (const [name, group] of byName) {
+    if (group.length < 2) continue
+    const sizes = new Set(group.map((g) => g.bytes))
+    const times = new Set(group.map((g) => g.endTime || "").filter(Boolean))
+    const paths = new Set(group.map((g) => g.path))
+    // Conflict if size differs, non-empty endTime differs, or multiple paths share name
+    // (same size + missing endTime still multi-path → warn; Pi N1 N1)
+    if (sizes.size > 1 || times.size > 1 || paths.size > 1) {
+      const sizePart =
+        sizes.size > 1
+          ? `大小不同: ${[...sizes].map((s) => `${s}B`).join(" / ")}`
+          : times.size > 1
+            ? "时间戳不同"
+            : "多路径同名"
+      hints.push(`「${name}」有 ${group.length} 份 (${sizePart})；请用 endTime/bytes/path 选对，勿默认第一项`)
+    }
+  }
+  return hints.length ? hints.join("；") : null
 }
 
 /** First best match for prefer_existing short-circuit. */

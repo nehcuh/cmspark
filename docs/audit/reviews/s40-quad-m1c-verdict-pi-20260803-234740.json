@@ -1,0 +1,7 @@
+{
+  "batch": "s40-quad-m1c",
+  "timestamp": "20260803-234740",
+  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/c/Users/HuChen/Projects/cmspark/docs/audit/reviews/s40-quad-m1c-pi-20260803-234740.md" },
+  "approve": true,
+  "diff_path": "/c/Users/HuChen/Projects/cmspark/docs/audit/reviews/s40-quad-m1c-diff-20260803-234740.patch"
+}

@@ -3,16 +3,13 @@
 ## Session Handoff
 
 <!-- handoff:start -->
-### 2026-08-03 (S39 — PR 收口 + Anthropic P1)
-- **PR 收口**: #112 closed (already on main)；#111 cookie trust 文案 MERGED；#110 shell_exec card MERGED
-- **Anthropic P1 PR #113 OPEN**: https://github.com/nehcuh/cmspark/pull/113 · `feat/llm-anthropic-p1-ui-probe` @ `bed0cf0`
-  - Side Panel + settings-web：API 协议选择 + Coding Plan 网关兼容头 + 快速配置 chips
-  - `probeLlmConnection`：openai chat/completions + anthropic /messages；L7 拒发；WS config.test + /api/test
-  - skill-craft / skill-engine → createProvider / llmExtract
-  - extra_headers 广播脱敏
-- **测试**: companion 相关 69 pass；extension sidepanel-state 15 pass
-- **下次**: 合 #113；真机 Coding Plan 中继 smoke（可选）；S36 residual unattended honesty
+### 2026-08-03 (S40 — AFK quad-track)
+- **Branch**: `feat/s40-quad-track-ux-skill-shell-mcp` @ `08f7299`
+- **Tracks**: ST-4 FocusBand + DL-4; skill_install; shell P1b argv; Outbound MCP Phase0 facade
+- **Gates**: Pi N1→N1c APPROVE_WITH_NITS; Pi M1c APPROVE_WITH_NITS; Claude dual N/A (not logged in)
+- **下次**: 合 S40 PR；Claude 登录后可选补 dual；Outbound bake-off 真机 T1
+- **Note**: S36 residual 已在 #108；Anthropic P1 已合 #113
 
-### 2026-08-03 ~17:44 (S38 — Anthropic LLM protocol P0)
-- P0 on main `5d9986b`；ship note under docs/audit/reviews/
+### 2026-08-03 (S39 — PR 收口 + Anthropic P1)
+- #110/#111/#113 merged; #112 closed
 <!-- handoff:end -->

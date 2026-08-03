@@ -1,0 +1,776 @@
+# Pi external review context
+batch: s40-quad-n1b
+base: HEAD
+time: 20260803-232519
+
+629580e
+
+ M chrome-extension/src/background/downloads-find.ts
+ M chrome-extension/src/sidepanel/components/ChatView.tsx
+ M chrome-extension/src/sidepanel/components/FocusBand.tsx
+ M chrome-extension/src/sidepanel/components/focus-band-priority.ts
+ M chrome-extension/tests/downloads-find.test.ts
+ M chrome-extension/tests/focus-band-priority.test.ts
+ M companion/src/bridge/_browser_download_tool_snippet.ts
+ M companion/src/bridge/tool-definitions-inject.ts
+ M companion/src/capability/shell.ts
+ M companion/src/server.ts
+ M companion/tests/shell-progress-windowsHide.test.ts
+?? chrome-extension/src/sidepanel/utils/running-tools.ts
+?? chrome-extension/tests/running-tools.test.ts
+?? companion/src/outbound-mcp/
+?? companion/src/skills/skill-install.ts
+?? companion/tests/outbound-mcp-facade.test.ts
+?? companion/tests/skill-install.test.ts
+?? docs/audit/reviews/s40-quad-n1-diff-20260803-231820.patch
+?? docs/audit/reviews/s40-quad-n1-pi-20260803-231820.md
+?? docs/audit/reviews/s40-quad-n1-verdict-pi-20260803-231820.json
+?? docs/audit/reviews/s40-quad-n1b-diff-20260803-232519.patch
+?? docs/audit/reviews/s40-quad-track-n1-prompt.md
+?? docs/superpowers/plans/2026-08-03-outbound-mcp-phase0-spike.md
+?? docs/superpowers/plans/2026-08-03-s40-quad-track-AFK.md
+?? skills/
+
+## Diff
+ chrome-extension/src/background/downloads-find.ts  |  57 ++++++++++-
+ .../src/sidepanel/components/ChatView.tsx          |  27 +-----
+ .../src/sidepanel/components/FocusBand.tsx         |  63 +++++++++++++
+ .../sidepanel/components/focus-band-priority.ts    |  33 ++++++-
+ chrome-extension/tests/downloads-find.test.ts      |  43 +++++++++
+ chrome-extension/tests/focus-band-priority.test.ts |  32 +++++++
+ .../src/bridge/_browser_download_tool_snippet.ts   |   2 +-
+ companion/src/bridge/tool-definitions-inject.ts    |   6 +-
+ companion/src/capability/shell.ts                  | 105 ++++++++++++++++++++-
+ companion/src/server.ts                            |  21 +++++
+ companion/tests/shell-progress-windowsHide.test.ts |  47 +++++++++
+ 11 files changed, 400 insertions(+), 36 deletions(-)
+
+diff --git a/chrome-extension/src/background/downloads-find.ts b/chrome-extension/src/background/downloads-find.ts
+index 26ff940..ab58013 100644
+--- a/chrome-extension/src/background/downloads-find.ts
++++ b/chrome-extension/src/background/downloads-find.ts
+@@ -181,25 +181,72 @@ export async function runDownloadsFind(params: FindDownloadsParams): Promise<Too
+     }
+   }
+ 
++  // Fetch enough rows to detect size/mtime conflicts (DL-4), then trim to limit.
++  const scanLimit = Math.max(limit, 20)
+   const matches = filterCompletedDownloads(items, {
+     filenameHint,
+     urlContains,
+-    limit,
++    limit: scanLimit,
+     downloadsRoots: params.__downloadsRoots,
+   })
++  const conflict = detectDownloadConflicts(matches)
++  const trimmed = matches.slice(0, limit)
+   return {
+     success: true,
+     data: {
+-      count: matches.length,
+-      matches,
++      count: trimmed.length,
++      matches: trimmed,
++      ...(conflict
++        ? {
++            conflict: true,
++            conflict_hint_zh: conflict,
++          }
++        : {}),
+       note:
+-        matches.length > 0
+-          ? "Use path from matches (Downloads only); set browser_download force_redownload=true only if you need a fresh copy."
++        trimmed.length > 0
++          ? conflict
++            ? `Multiple Downloads matches differ in size/time — pick carefully. ${conflict}`
++            : "Use path from matches (Downloads only); set browser_download force_redownload=true only if you need a fresh copy. For skill packages, install with skill_install into ~/.cmspark-agent/skills (not the git repo)."
+           : "No complete existing download under Downloads matched; proceed with browser_download click if needed.",
+     },
+   }
+ }
+ 
++/**
++ * DL-4: when multiple complete hits share a basename but differ in bytes or endTime,
++ * surface a Chinese hint so the Agent does not pick the wrong file silently.
++ */
++export function detectDownloadConflicts(matches: FoundDownload[]): string | null {
++  if (!matches || matches.length < 2) return null
++  const byName = new Map<string, FoundDownload[]>()
++  for (const m of matches) {
++    const key = (m.filename || "").toLowerCase()
++    if (!key) continue
++    const arr = byName.get(key) || []
++    arr.push(m)
++    byName.set(key, arr)
++  }
++  const hints: string[] = []
++  for (const [name, group] of byName) {
++    if (group.length < 2) continue
++    const sizes = new Set(group.map((g) => g.bytes))
++    const times = new Set(group.map((g) => g.endTime || "").filter(Boolean))
++    const paths = new Set(group.map((g) => g.path))
++    // Conflict if size differs, non-empty endTime differs, or multiple paths share name
++    // (same size + missing endTime still multi-path → warn; Pi N1 N1)
++    if (sizes.size > 1 || times.size > 1 || paths.size > 1) {
++      const sizePart =
++        sizes.size > 1
++          ? `大小不同: ${[...sizes].map((s) => `${s}B`).join(" / ")}`
++          : times.size > 1
++            ? "时间戳不同"
++            : "多路径同名"
++      hints.push(`「${name}」有 ${group.length} 份 (${sizePart})；请用 endTime/bytes/path 选对，勿默认第一项`)
++    }
++  }
++  return hints.length ? hints.join("；") : null
++}
++
+ /** First best match for prefer_existing short-circuit. */
+ export async function findPreferredExistingDownload(
+   params: FindDownloadsParams,
+diff --git a/chrome-extension/src/sidepanel/components/ChatView.tsx b/chrome-extension/src/sidepanel/components/ChatView.tsx
+index 8254874..4680725 100644
+--- a/chrome-extension/src/sidepanel/components/ChatView.tsx
++++ b/chrome-extension/src/sidepanel/components/ChatView.tsx
+@@ -15,6 +15,7 @@ import {
+   SHELL_BODY_PREVIEW_CHARS,
+ } from "../utils/shell-card-utils"
+ import { fleetProcessingLabel } from "./focus-band-priority"
++import { collectRunningTools, formatRunningToolsLabel } from "../utils/running-tools"
+ import { tokens, statusColor } from "../ui/tokens"
+ import {
+   IconBranch,
+@@ -60,22 +61,9 @@ export function ChatView() {
+   const { level } = useCapabilityMode()
+ 
+   // Show processing label when request active OR any tool still running
+-  // (#au4dch ST-1: live tools are role=tool messages from tool.start, not only
+-  // last assistant.tool_calls — old logic looked "finished" during long shell).
++  // (#au4dch ST-1/ST-4: shared collectRunningTools with FocusBand).
+   const processingLabel = (() => {
+-    const runningTools: { name: string; elapsed?: number }[] = []
+-    // Scan recent messages (newest first) for running tool_calls
+-    for (let i = messages.length - 1; i >= 0 && i >= messages.length - 40; i--) {
+-      const m = messages[i]
+-      for (const tc of m?.tool_calls || []) {
+-        if (tc?.status === "running") {
+-          runningTools.push({
+-            name: tc.tool_name || "tool",
+-            elapsed: typeof tc.progress_elapsed_ms === "number" ? tc.progress_elapsed_ms : undefined,
+-          })
+-        }
+-      }
+-    }
++    const runningTools = collectRunningTools(messages)
+     const fleetWorkers = fleet?.worker_count ?? 0
+     const fleetLabel = fleetProcessingLabel({
+       workerCount: fleetWorkers,
+@@ -88,13 +76,8 @@ export function ChatView() {
+     // #au4dch M1: do NOT hide label when streamingContent is set — tools often
+     // run after assistant text; streaming gate previously made UI look idle.
+     if (runningTools.length > 0) {
+-      const parts = runningTools.slice(0, 3).map((t) => {
+-        if (t.elapsed != null && t.elapsed >= 1000) {
+-          return `${t.name} ${Math.floor(t.elapsed / 1000)}s`
+-        }
+-        return t.name
+-      })
+-      return `执行中: ${parts.join(", ")}${fleetBit}`
++      const base = formatRunningToolsLabel(runningTools) || "执行中"
++      return `${base}${fleetBit}`
+     }
+     if (streamingContent) return null
+     if (!isProcessing) {
+diff --git a/chrome-extension/src/sidepanel/components/FocusBand.tsx b/chrome-extension/src/sidepanel/components/FocusBand.tsx
+index b5834ba..494d761 100644
+--- a/chrome-extension/src/sidepanel/components/FocusBand.tsx
++++ b/chrome-extension/src/sidepanel/components/FocusBand.tsx
+@@ -13,11 +13,16 @@ import { ContextStrip } from "./ContextStrip"
+ import { FleetStrip } from "./FleetStrip"
+ import {
+   FOCUS_BAND_MAX_PX,
++  FOCUS_BAND_PRIMARY_MAX_PX,
+   FOCUS_BAND_SECONDARY_MAX_PX,
+   classifyFleetActivity,
+   resolveFocusBandSlot,
+   type FocusBandSlot,
+ } from "./focus-band-priority"
++import {
++  collectRunningTools,
++  formatRunningToolsLabel,
++} from "../utils/running-tools"
+ 
+ export {
+   FOCUS_BAND_MAX_PX,
+@@ -52,12 +57,17 @@ export function FocusBand({
+       worstStatus: fleet?.worst_status,
+     }) === "active"
+   const isBrowserContext = capabilityLevel === "browser"
++  // #au4dch ST-4: long tools must surface in FocusBand (not only chat footer).
++  const runningTools = collectRunningTools(state.messages)
++  const hasThreadTools = runningTools.length > 0
++  const toolsLabel = formatRunningToolsLabel(runningTools)
+ 
+   const slot: FocusBandSlot = resolveFocusBandSlot({
+     hasPendingConfirm,
+     hasL2Task,
+     l2AbortRequired,
+     hasFleetActivity,
++    hasThreadTools,
+     isBrowserContext,
+   })
+ 
+@@ -104,11 +114,21 @@ export function FocusBand({
+             <FleetStrip focusBand />
+           </div>
+         )}
++        {slot.primary === "thread_tools" && toolsLabel && (
++          <div style={styles.primary} data-focus-band-tools>
++            <ThreadToolsLine label={toolsLabel} />
++          </div>
++        )}
+         {slot.primary === "l1_context" && (
+           <div style={styles.primary}>
+             <ContextStrip compact />
+           </div>
+         )}
++        {slot.secondaryTools && toolsLabel && (
++          <div style={styles.secondaryTools} data-focus-band-tools-secondary>
++            {toolsLabel}
++          </div>
++        )}
+         {slot.secondaryContext && slot.primary === "confirm" && (
+           <div style={styles.secondaryContext}>
+             <ContextStrip compact secondary />
+@@ -119,6 +139,16 @@ export function FocusBand({
+   )
+ }
+ 
++/** Primary or secondary one-line active tools (ST-4). */
++function ThreadToolsLine({ label }: { label: string }) {
++  return (
++    <div style={styles.toolsLine} title={label}>
++      <span style={styles.toolsDot} aria-hidden />
++      <span style={styles.toolsText}>{label}</span>
++    </div>
++  )
++}
++
+ /** Secondary ≤24px 急停 row — Confirm does not bury abort (hard rule 1). */
+ function AbortSecondaryLine({
+   taskId,
+@@ -253,4 +283,37 @@ const styles: Record<string, CSSProperties> = {
+     overflow: "hidden",
+     flexShrink: 0,
+   },
++  toolsLine: {
++    display: "flex",
++    alignItems: "center",
++    gap: 6,
++    padding: "6px 10px",
++    minHeight: 28,
++    maxHeight: FOCUS_BAND_PRIMARY_MAX_PX,
++  },
++  toolsDot: {
++    width: 6,
++    height: 6,
++    borderRadius: 3,
++    background: tokens.warning,
++    flexShrink: 0,
++  },
++  toolsText: {
++    fontSize: 12,
++    fontWeight: 500,
++    color: tokens.text,
++    overflow: "hidden",
++    textOverflow: "ellipsis",
++    whiteSpace: "nowrap",
++  },
++  secondaryTools: {
++    flexShrink: 0,
++    maxHeight: FOCUS_BAND_SECONDARY_MAX_PX,
++    padding: "2px 10px 6px",
++    fontSize: 11,
++    color: tokens.textMuted || tokens.muted || "#888",
++    overflow: "hidden",
++    textOverflow: "ellipsis",
++    whiteSpace: "nowrap",
++  },
+ }
+diff --git a/chrome-extension/src/sidepanel/components/focus-band-priority.ts b/chrome-extension/src/sidepanel/components/focus-band-priority.ts
+index 3a41634..7ad925f 100644
+--- a/chrome-extension/src/sidepanel/components/focus-band-priority.ts
++++ b/chrome-extension/src/sidepanel/components/focus-band-priority.ts
+@@ -1,5 +1,5 @@
+ // FocusBand state machine (UIUX v2 §4.3) — pure priority resolution.
+-// Priority: Confirm > L2 Safety+急停 > Fleet > L1 Context > empty.
++// Priority: Confirm > L2 Safety+急停 > Fleet > Thread tools (ST-4) > L1 Context > empty.
+ // Hard cap: one primary (≤56px) + optional secondary (≤24px) = ≤80px total.
+ 
+ export const FOCUS_BAND_MAX_PX = 80
+@@ -11,6 +11,7 @@ export type FocusBandPrimary =
+   | "confirm"
+   | "l2_safety"
+   | "fleet"
++  | "thread_tools"
+   | "l1_context"
+   | "empty"
+ 
+@@ -29,6 +30,11 @@ export interface FocusBandInput {
+    * Pending confirms must NOT force fleet visibility (§4.3 rule 2).
+    */
+   hasFleetActivity: boolean
++  /**
++   * #au4dch ST-4: any tool_call with status===running in the active thread.
++   * Surfaces long shell_exec / tool loops in FocusBand, not only chat footer.
++   */
++  hasThreadTools?: boolean
+   /** L1 browser surface — ContextStrip when nothing higher. */
+   isBrowserContext: boolean
+ }
+@@ -45,20 +51,27 @@ export interface FocusBandSlot {
+    * (wireframe §5.5). Mutually exclusive with secondaryAbort under height budget.
+    */
+   secondaryContext: boolean
++  /**
++   * Secondary line for running tools under confirm/fleet when height allows
++   * (no abort secondary).
++   */
++  secondaryTools: boolean
+ }
+ 
+ /**
+  * Resolve FocusBand single-slot priority.
+- * Highest wins: Confirm → L2 Safety → Fleet → L1 Context → empty.
++ * Highest wins: Confirm → L2 Safety → Fleet → Thread tools → L1 Context → empty.
+  */
+ export function resolveFocusBandSlot(input: FocusBandInput): FocusBandSlot {
++  const hasTools = input.hasThreadTools === true
+   if (input.hasPendingConfirm) {
+     // Confirm owns primary. 急停 secondary when L2 task active (never bury abort).
+-    // Context secondary only when no abort secondary (height budget).
++    // Tools secondary only when no abort secondary (height budget).
+     return {
+       primary: "confirm",
+       secondaryAbort: input.l2AbortRequired,
+-      secondaryContext: input.isBrowserContext && !input.l2AbortRequired,
++      secondaryContext: input.isBrowserContext && !input.l2AbortRequired && !hasTools,
++      secondaryTools: hasTools && !input.l2AbortRequired,
+     }
+   }
+   if (input.hasL2Task) {
+@@ -66,6 +79,7 @@ export function resolveFocusBandSlot(input: FocusBandInput): FocusBandSlot {
+       primary: "l2_safety",
+       secondaryAbort: false,
+       secondaryContext: false,
++      secondaryTools: false,
+     }
+   }
+   if (input.hasFleetActivity) {
+@@ -73,6 +87,15 @@ export function resolveFocusBandSlot(input: FocusBandInput): FocusBandSlot {
+       primary: "fleet",
+       secondaryAbort: false,
+       secondaryContext: false,
++      secondaryTools: hasTools,
++    }
++  }
++  if (hasTools) {
++    return {
++      primary: "thread_tools",
++      secondaryAbort: false,
++      secondaryContext: false,
++      secondaryTools: false,
+     }
+   }
+   if (input.isBrowserContext) {
+@@ -80,12 +103,14 @@ export function resolveFocusBandSlot(input: FocusBandInput): FocusBandSlot {
+       primary: "l1_context",
+       secondaryAbort: false,
+       secondaryContext: false,
++      secondaryTools: false,
+     }
+   }
+   return {
+     primary: "empty",
+     secondaryAbort: false,
+     secondaryContext: false,
++    secondaryTools: false,
+   }
+ }
+ 
+diff --git a/chrome-extension/tests/downloads-find.test.ts b/chrome-extension/tests/downloads-find.test.ts
+index 9a343ca..3b77187 100644
+--- a/chrome-extension/tests/downloads-find.test.ts
++++ b/chrome-extension/tests/downloads-find.test.ts
+@@ -9,6 +9,7 @@ import {
+   runDownloadsFind,
+   isPathUnderDownloads,
+   redactDownloadUrl,
++  detectDownloadConflicts,
+ } from "../src/background/downloads-find"
+ import { runBrowserDownload } from "../src/background/browser-download-handler"
+ 
+@@ -89,6 +90,48 @@ test("filterCompletedDownloads B1 drops Desktop paths even if filename matches",
+   assert.ok(m.every((x) => x.id !== 4))
+ })
+ 
++test("detectDownloadConflicts flags same name different sizes (DL-4)", () => {
++  const conflict = detectDownloadConflicts([
++    {
++      id: 1,
++      path: "C:\\Users\\t\\Downloads\\a.zip",
++      filename: "a.zip",
++      bytes: 100,
++      url: "https://x/a.zip",
++      endTime: "2026-01-01T00:00:00Z",
++      source: "cache",
++    },
++    {
++      id: 2,
++      path: "C:\\Users\\t\\Downloads\\a.zip",
++      filename: "a.zip",
++      bytes: 200,
++      url: "https://y/a.zip",
++      endTime: "2026-02-01T00:00:00Z",
++      source: "cache",
++    },
++  ])
++  assert.ok(conflict)
++  assert.match(conflict!, /a\.zip/)
++  assert.match(conflict!, /大小/)
++})
++
++test("detectDownloadConflicts null when single match", () => {
++  assert.equal(
++    detectDownloadConflicts([
++      {
++        id: 1,
++        path: "C:\\Users\\t\\Downloads\\a.zip",
++        filename: "a.zip",
++        bytes: 100,
++        url: "https://x/a.zip",
++        source: "cache",
++      },
++    ]),
++    null,
++  )
++})
++
+ test("runDownloadsFind requires a hint", async () => {
+   const r = await runDownloadsFind({})
+   assert.equal(r.success, false)
+diff --git a/chrome-extension/tests/focus-band-priority.test.ts b/chrome-extension/tests/focus-band-priority.test.ts
+index 5ea1a46..f8a83c3 100644
+--- a/chrome-extension/tests/focus-band-priority.test.ts
++++ b/chrome-extension/tests/focus-band-priority.test.ts
+@@ -34,9 +34,41 @@ test("§4.3 idle → empty", () => {
+     primary: "empty",
+     secondaryAbort: false,
+     secondaryContext: false,
++    secondaryTools: false,
+   })
+ })
+ 
++test("§4.3 ST-4 thread_tools beats L1 context", () => {
++  const slot = resolveFocusBandSlot({
++    ...idle,
++    hasThreadTools: true,
++    isBrowserContext: true,
++  })
++  assert.equal(slot.primary, "thread_tools")
++})
++
++test("§4.3 ST-4 fleet primary + tools secondary", () => {
++  const slot = resolveFocusBandSlot({
++    ...idle,
++    hasFleetActivity: true,
++    hasThreadTools: true,
++  })
++  assert.equal(slot.primary, "fleet")
++  assert.equal(slot.secondaryTools, true)
++})
++
++test("§4.3 ST-4 confirm + tools secondary when no abort", () => {
++  const slot = resolveFocusBandSlot({
++    ...idle,
++    hasPendingConfirm: true,
++    hasThreadTools: true,
++    isBrowserContext: true,
++  })
++  assert.equal(slot.primary, "confirm")
++  assert.equal(slot.secondaryTools, true)
++  assert.equal(slot.secondaryContext, false)
++})
++
+ test("§4.3 P3 L1 context alone", () => {
+   const slot = resolveFocusBandSlot({ ...idle, isBrowserContext: true })
+   assert.equal(slot.primary, "l1_context")
+diff --git a/companion/src/bridge/_browser_download_tool_snippet.ts b/companion/src/bridge/_browser_download_tool_snippet.ts
+index 68bc550..02f2845 100644
+--- a/companion/src/bridge/_browser_download_tool_snippet.ts
++++ b/companion/src/bridge/_browser_download_tool_snippet.ts
+@@ -62,7 +62,7 @@ export const DOWNLOADS_FIND_TOOL = {
+   function: {
+     name: "downloads_find",
+     description:
+-      "Search the browser's completed Downloads for an existing file by filenameHint and/or urlContains. Use BEFORE browser_download or shell curl when the user may already have the package (e.g. release tar.gz). Returns paths of complete existing items only (read-only).",
++      "Search the browser's completed Downloads for an existing file by filenameHint and/or urlContains. Use BEFORE browser_download or shell curl when the user may already have the package (e.g. release tar.gz). Returns paths of complete existing items only (read-only). When multiple matches differ in size/mtime, conflict_hint_zh is set — do not pick blindly. For skill ZIPs/folders: after find, call skill_install so files land in ~/.cmspark-agent/skills (never the git repo skills/).",
+     parameters: {
+       type: "object",
+       properties: {
+diff --git a/companion/src/bridge/tool-definitions-inject.ts b/companion/src/bridge/tool-definitions-inject.ts
+index 18eb4bb..c70bb48 100644
+--- a/companion/src/bridge/tool-definitions-inject.ts
++++ b/companion/src/bridge/tool-definitions-inject.ts
+@@ -1,7 +1,8 @@
+ // P1.0 inject helper — called from getAllToolDefinitions to ensure browser_download
+ // is present without re-serializing the full catalog array in a single edit.
+-// #au4dch also injects downloads_find.
++// #au4dch also injects downloads_find; S40 injects skill_install.
+ import { BROWSER_DOWNLOAD_TOOL, DOWNLOADS_FIND_TOOL } from "./_browser_download_tool_snippet"
++import { SKILL_INSTALL_TOOL } from "../skills/skill-install"
+ 
+ export function ensureBrowserDownloadTool<T extends { function: { name: string } }>(
+   tools: T[],
+@@ -13,5 +14,8 @@ export function ensureBrowserDownloadTool<T extends { function: { name: string }
+   if (!out.some((t) => t.function.name === "downloads_find")) {
+     out = [...out, DOWNLOADS_FIND_TOOL as unknown as T]
+   }
++  if (!out.some((t) => t.function.name === "skill_install")) {
++    out = [...out, SKILL_INSTALL_TOOL as unknown as T]
++  }
+   return out
+ }
+diff --git a/companion/src/capability/shell.ts b/companion/src/capability/shell.ts
+index f2e73c8..1e94b48 100644
+--- a/companion/src/capability/shell.ts
++++ b/companion/src/capability/shell.ts
+@@ -89,7 +89,7 @@ export type ShellProgress = {
+ }
+ 
+ /**
+- * Options for Node spawn of shell_exec children.
++ * Options for Node spawn of shell_exec children (legacy shell:true path).
+  * windowsHide: true on win32 so approved one-shots do not flash an empty console
+  * (#au4dch black-window pain). Harmless no-op on non-win platforms.
+  */
+@@ -107,6 +107,99 @@ export function shellSpawnOptions(cwd: string, env: NodeJS.ProcessEnv): {
+   }
+ }
+ 
++/**
++ * P1b: try parse a simple command into argv for spawn(..., { shell: false }).
++ * Returns null if metacharacters present, empty, or unparseable.
++ * Supports basic double/single quotes.
++ * Backslash escapes only `\"`, `\'`, `\\` — never swallow path separators
++ * (Windows `C:\Users\...` must stay intact; Pi N1 B2).
++ */
++export function tryParseSimpleArgv(command: string): string[] | null {
++  const cmd = (command || "").trim()
++  if (!cmd) return null
++  if (hasShellAllowlistMetachar(cmd)) return null
++  // Reject unquoted wildcards / env expansion residual for argv mode
++  if (/[*?]/.test(cmd) || /\$\{/.test(cmd) || /\$[A-Za-z_]/.test(cmd)) return null
++
++  const tokens: string[] = []
++  let i = 0
++  while (i < cmd.length) {
++    while (i < cmd.length && /\s/.test(cmd[i])) i++
++    if (i >= cmd.length) break
++    const c = cmd[i]
++    if (c === '"' || c === "'") {
++      const quote = c
++      i++
++      let buf = ""
++      while (i < cmd.length && cmd[i] !== quote) {
++        // Only escape quote or backslash — leave Windows path backslashes alone
++        if (
++          cmd[i] === "\\" &&
++          i + 1 < cmd.length &&
++          (cmd[i + 1] === quote || cmd[i + 1] === "\\")
++        ) {
++          buf += cmd[i + 1]
++          i += 2
++          continue
++        }
++        buf += cmd[i]
++        i++
++      }
++      if (i >= cmd.length) return null // unclosed quote
++      i++ // closing quote
++      tokens.push(buf)
++    } else {
++      let buf = ""
++      while (i < cmd.length && !/\s/.test(cmd[i])) {
++        buf += cmd[i]
++        i++
++      }
++      tokens.push(buf)
++    }
++  }
++  if (tokens.length === 0) return null
++  // First token must look like a program name (no empty)
++  if (!tokens[0]) return null
++  return tokens
++}
++
++/**
++ * Whether to spawn with shell:false + argv (P1b).
++ * - Non-win32: any successful parse.
++ * - win32: only when policy=allowlist (stricter, no bare `npm`/cmd builtins)
++ *   OR program looks like an explicit executable path (.exe/.com/.bat/.cmd or drive path).
++ * Bare names (npm, echo, dir) keep shell:true so .cmd shims and builtins work (Pi N1 B1).
++ */
++export function shouldUseArgvSpawn(
++  argv: string[] | null,
++  opts?: { platform?: NodeJS.Platform; policy?: string },
++): boolean {
++  if (!argv || argv.length === 0) return false
++  const platform = opts?.platform ?? process.platform
++  const policy = opts?.policy ?? getModule("shell")?.policy ?? "confirm_per_command"
++  if (platform !== "win32") return true
++  if (policy === "allowlist") return true
++  const prog = argv[0]
++  if (/\.(exe|com|bat|cmd)$/i.test(prog)) return true
++  // Absolute Windows path (drive letter or UNC) — even without extension
++  if (/^[A-Za-z]:[\\/]/.test(prog) || prog.startsWith("\\\\")) return true
++  return false
++}
++
++export function shellSpawnArgvOptions(cwd: string, env: NodeJS.ProcessEnv): {
++  shell: false
++  cwd: string
++  env: NodeJS.ProcessEnv
++  windowsHide: boolean
++} {
++  return {
++    shell: false,
++    cwd,
++    env,
++    windowsHide: true,
++  }
++}
++
+ export async function shellExec(opts: {
+   command: string
+   cwd?: string | null
+@@ -141,8 +234,13 @@ export async function shellExec(opts: {
+   const started = Date.now()
+ 
+   return new Promise((resolve) => {
+-    // Use shell: true for one-shot; confirmation already happened at L2
+-    const child = spawn(command, shellSpawnOptions(cwd, buildChildEnv()))
++    // P1b: shell:false + argv when parseable AND safe on this platform (see shouldUseArgvSpawn).
++    const env = buildChildEnv()
++    const argv = tryParseSimpleArgv(command)
++    const useArgv = shouldUseArgvSpawn(argv)
++    const child = useArgv && argv
++      ? spawn(argv[0], argv.slice(1), shellSpawnArgvOptions(cwd, env))
++      : spawn(command, shellSpawnOptions(cwd, env))
+ 
+     let stdout = ""
+     let stderr = ""
+@@ -224,6 +322,7 @@ export async function shellExec(opts: {
+           timed_out: killed,
+           duration_ms: Date.now() - started,
+           cwd,
++          spawn_mode: useArgv ? "argv" : "shell",
+           stdout: stdout.slice(0, MAX_OUTPUT),
+           stderr: stderr.slice(0, MAX_OUTPUT),
+           truncated: stdout.length >= MAX_OUTPUT || stderr.length >= MAX_OUTPUT,
+diff --git a/companion/src/server.ts b/companion/src/server.ts
+index ff5dbbf..10e46d0 100644
+--- a/companion/src/server.ts
++++ b/companion/src/server.ts
+@@ -3240,6 +3240,27 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?:
+         },
+       }
+     }
++    case "skill_install": {
++      // Composition: install into user skills root only (not repo / ~/.claude).
++      const { skillInstall } = await import("./skills/skill-install")
++      const r = skillInstall(skillEngine, {
++        path: params.path,
++        zip_path: params.zip_path,
++        content: params.content,
++      })
++      if (!r.ok) {
++        return { success: false, error: r.error, data: { skills_root: r.skills_root } }
++      }
++      return {
++        success: true,
++        data: {
++          name: r.name,
++          dest_path: r.dest_path,
++          skills_root: r.skills_root,
++          hint_zh: r.hint_zh,
++        },
++      }
++    }
+     case "shell_exec": {
+       if (params.security_token) {
+         const valid = securityPolicy.validateToken(params.security_token, "shell_exec", params.command || "")
+diff --git a/companion/tests/shell-progress-windowsHide.test.ts b/companion/tests/shell-progress-windowsHide.test.ts
+index 9328fa6..d325a1f 100644
+--- a/companion/tests/shell-progress-windowsHide.test.ts
++++ b/companion/tests/shell-progress-windowsHide.test.ts
+@@ -5,6 +5,10 @@ import { describe, it } from "node:test"
+ import assert from "node:assert/strict"
+ import {
+   shellSpawnOptions,
++  shellSpawnArgvOptions,
++  tryParseSimpleArgv,
++  shouldUseArgvSpawn,
++  hasShellAllowlistMetachar,
+   tailChars,
+   PROGRESS_TAIL_CHARS,
+   buildChildEnv,
+@@ -19,6 +23,49 @@ describe("shellSpawnOptions", () => {
+   })
+ })
+ 
++describe("tryParseSimpleArgv (P1b)", () => {
++  it("parses simple tokens", () => {
++    assert.deepEqual(tryParseSimpleArgv("echo hello"), ["echo", "hello"])
++  })
++  it("parses double-quoted args", () => {
++    assert.deepEqual(tryParseSimpleArgv('python "my script.py" --flag'), [
++      "python",
++      "my script.py",
++      "--flag",
++    ])
++  })
++  it("preserves Windows path backslashes inside quotes (B2)", () => {
++    assert.deepEqual(tryParseSimpleArgv('python "C:\\Users\\t\\script.py" --flag'), [
++      "python",
++      "C:\\Users\\t\\script.py",
++      "--flag",
++    ])
++  })
++  it("rejects metacharacters", () => {
++    assert.equal(tryParseSimpleArgv("echo ok; rm -rf /"), null)
++    assert.equal(hasShellAllowlistMetachar("echo ok; rm"), true)
++  })
++  it("rejects env expansion and globs", () => {
++    assert.equal(tryParseSimpleArgv("echo $HOME"), null)
++    assert.equal(tryParseSimpleArgv("ls *.txt"), null)
++  })
++  it("shellSpawnArgvOptions uses shell:false", () => {
++    const o = shellSpawnArgvOptions("/tmp", buildChildEnv())
++    assert.equal(o.shell, false)
++    assert.equal(o.windowsHide, true)
++  })
++  it("win32 bare names stay on shell:true; allowlist or .exe uses argv (B1)", () => {
++    const npm = tryParseSimpleArgv("npm run build")
++    assert.ok(npm)
++    assert.equal(shouldUseArgvSpawn(npm, { platform: "win32", policy: "confirm_per_command" }), false)
++    assert.equal(shouldUseArgvSpawn(npm, { platform: "win32", policy: "allowlist" }), true)
++    assert.equal(shouldUseArgvSpawn(npm, { platform: "linux", policy: "confirm_per_command" }), true)
++    const exe = tryParseSimpleArgv("C:\\\\Tools\\\\bin.exe --help")
++    assert.ok(exe)
++    assert.equal(shouldUseArgvSpawn(exe, { platform: "win32", policy: "confirm_per_command" }), true)
++  })
++})
++
+ describe("tailChars", () => {
+   it("returns full string when short", () => {
+     assert.equal(tailChars("abc", 10), "abc")

@@ -9,6 +9,8 @@ import {
   runDownloadsFind,
   isPathUnderDownloads,
   redactDownloadUrl,
+  detectDownloadConflicts,
+  githubZipMissHint,
 } from "../src/background/downloads-find"
 import { runBrowserDownload } from "../src/background/browser-download-handler"
 
@@ -89,6 +91,48 @@ test("filterCompletedDownloads B1 drops Desktop paths even if filename matches",
   assert.ok(m.every((x) => x.id !== 4))
 })
 
+test("detectDownloadConflicts flags same name different sizes (DL-4)", () => {
+  const conflict = detectDownloadConflicts([
+    {
+      id: 1,
+      path: "C:\\Users\\t\\Downloads\\a.zip",
+      filename: "a.zip",
+      bytes: 100,
+      url: "https://x/a.zip",
+      endTime: "2026-01-01T00:00:00Z",
+      source: "cache",
+    },
+    {
+      id: 2,
+      path: "C:\\Users\\t\\Downloads\\a.zip",
+      filename: "a.zip",
+      bytes: 200,
+      url: "https://y/a.zip",
+      endTime: "2026-02-01T00:00:00Z",
+      source: "cache",
+    },
+  ])
+  assert.ok(conflict)
+  assert.match(conflict!, /a\.zip/)
+  assert.match(conflict!, /大小/)
+})
+
+test("detectDownloadConflicts null when single match", () => {
+  assert.equal(
+    detectDownloadConflicts([
+      {
+        id: 1,
+        path: "C:\\Users\\t\\Downloads\\a.zip",
+        filename: "a.zip",
+        bytes: 100,
+        url: "https://x/a.zip",
+        source: "cache",
+      },
+    ]),
+    null,
+  )
+})
+
 test("runDownloadsFind requires a hint", async () => {
   const r = await runDownloadsFind({})
   assert.equal(r.success, false)
@@ -114,6 +158,43 @@ test("runDownloadsFind returns matches from injectable API", async () => {
   assert.equal(r.success, true)
   assert.equal(r.data.count, 1)
   assert.equal(r.data.matches[0].filename, "pkg.tgz")
+})
+
+test("runDownloadsFind falls back to broad search when narrow regex misses", async () => {
+  let calls = 0
+  const r = await runDownloadsFind({
+    filenameHint: "Black-cat-master",
+    __downloadsApi: {
+      search: async (q) => {
+        calls++
+        // First (narrow) call uses filenameRegex and returns empty — Chrome flaky path
+        if (q.filenameRegex) return []
+        // Broad call: full recent list
+        return [
+          {
+            id: 11,
+            filename: "C:\\Users\\t\\Downloads\\Black-cat-master.zip",
+            url: "https://github.com/x/Black-cat/archive/refs/heads/master.zip",
+            state: "complete",
+            exists: true,
+            fileSize: 87848,
+          } as any,
+        ]
+      },
+    },
+  })
+  assert.equal(r.success, true)
+  assert.ok(calls >= 2, "expected narrow then broad search")
+  assert.equal(r.data.search_mode, "broad")
+  assert.equal(r.data.count, 1)
+  assert.equal(r.data.matches[0].filename, "Black-cat-master.zip")
+})
+
+test("githubZipMissHint mentions Code button and archive URL", () => {
+  const h = githubZipMissHint("Black-cat")
+  assert.match(h, /Download ZIP/)
+  assert.match(h, /archive\/refs\/heads/)
+  assert.match(h, /skill_install/)
 })
 
 const bridge = {
