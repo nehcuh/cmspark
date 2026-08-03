@@ -140,3 +140,32 @@ test("non-JSON body → failed warning (res.json throw is caught)", async (t) =>
   assert.equal(events.length, 1)
   assert.equal(events[0].event, "startup.model_probe.failed")
 })
+
+test("protocol=anthropic → soft-skip (no fetch, no warn)", async (t) => {
+  let called = false
+  mockFetch(t, () => {
+    called = true
+    throw new Error("fetch must not be called for anthropic protocol")
+  })
+  const { events, warn } = captureWarn()
+  await probeChatModel(makeConfig({ protocol: "anthropic", model_name: "claude-sonnet-4-20250514" }), warn)
+  assert.equal(called, false, "openai /models probe must not run for anthropic")
+  assert.equal(events.length, 0)
+})
+
+test("protocol omitted or openai → still probes /models (DeepSeek regression)", async (t) => {
+  let called = false
+  mockFetch(t, async (url: unknown) => {
+    called = true
+    assert.equal(url, "https://api.deepseek.com/v1/models")
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ data: [{ id: "deepseek-v4-flash" }] }),
+    }
+  })
+  const { events, warn } = captureWarn()
+  await probeChatModel(makeConfig({ protocol: "openai" }), warn)
+  assert.equal(called, true)
+  assert.equal(events.length, 0)
+})

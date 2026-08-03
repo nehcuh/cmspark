@@ -1,7 +1,6 @@
-// LLM adapter — OpenAI-compatible chat completions with tool calling
+// LLM adapter — chat + tool loop via LlmProvider (OpenAI / Anthropic wire)
 
 import os from "os"
-import OpenAI from "openai"
 import type { ThreadManager } from "../threads/thread-manager"
 import type { SkillEngine } from "../skills/skill-engine"
 import type { HistoryStore } from "../history/store"
@@ -11,9 +10,14 @@ import { classifyError } from "../security"
 import { logger } from "../logger"
 import { analyzeImage } from "./vision-pipeline"
 import { wrapUntrusted } from "./text-sanitize"
-import { getConfig } from "../config"
+import { getConfig, type LlmConfig } from "../config"
 import { getMcpManager } from "../mcp"
 import type { AppsConfig } from "../apps/types"
+import {
+  createProvider,
+  type CanonicalChatMessage,
+  type CanonicalToolDefinition,
+} from "./provider"
 
 // Jailbreak patterns to detect in LLM output
 const JAILBREAK_OUTPUT_PATTERNS = [
@@ -77,13 +81,8 @@ interface ChatCreateParams {
   skillIds: string[]
   knowledgeIds?: string[]
   fileContents?: Array<{ filename: string; content: string }>
-  config: {
-    base_url: string
-    api_key: string
-    model_name: string
-    temperature: number
-    context_window: number
-  }
+  /** Full llm config (protocol + credentials). Default protocol=openai preserves DeepSeek path. */
+  config: LlmConfig
   threadManager: ThreadManager
   skillEngine: SkillEngine
   historyStore: HistoryStore
@@ -138,7 +137,7 @@ export type HistoryMessageLike = {
 }
 
 /**
- * P0-B: rebuild OpenAI chat messages from persisted thread history.
+ * P0-B: rebuild canonical (OpenAI-shaped) chat messages from persisted thread history.
  * - Assistant rows with incomplete following tool results are stripped to text-only.
  * - Pairing is by tool_call id (not mere role adjacency): a delayed/out-of-order
  *   tool result whose id belongs to an earlier interrupted call must not "satisfy"
@@ -147,11 +146,12 @@ export type HistoryMessageLike = {
  * - Unpaired role=tool rows (orphan tool_call_id not in the open set) are skipped
  *   so legacy corrupt history never produces a schema-invalid next create (400).
  * Pure function — unit-testable without chatCreate / network.
+ * Providers convert to wire format (Anthropic Messages, etc.) at the boundary (L1/L2).
  */
 export function rebuildMessagesFromHistory(
   history: HistoryMessageLike[],
-): OpenAI.Chat.Completions.ChatCompletionMessageParam[] {
-  const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = []
+): CanonicalChatMessage[] {
+  const messages: CanonicalChatMessage[] = []
   const openToolCallIds = new Set<string>()
 
   for (let i = 0; i < history.length; i++) {
@@ -189,16 +189,16 @@ export function rebuildMessagesFromHistory(
           content: msg.content || null,
           tool_calls: tcList.map((tc: any) => ({
             id: tc.id,
-            type: "function",
+            type: "function" as const,
             function: {
               name: tc.function?.name || tc.name,
               arguments: tc.function?.arguments || tc.arguments || "{}",
             },
           })),
-        } as any)
+        })
       } else {
         openToolCallIds.clear()
-        messages.push({ role: "assistant", content: msg.content || "(tool call failed)" } as any)
+        messages.push({ role: "assistant", content: msg.content || "(tool call failed)" })
       }
     } else if (msg.role === "tool" && msg.tool_calls) {
       for (const tc of msg.tool_calls) {
@@ -208,7 +208,7 @@ export function rebuildMessagesFromHistory(
           role: "tool",
           tool_call_id: tc.id,
           content: wrapUntrusted(JSON.stringify(tc.result || {}), tc.id, tc.tool_name),
-        } as any)
+        })
       }
     }
   }
@@ -402,9 +402,9 @@ ${hostUseRule12}${appIndexSection ? `\n\n${appIndexSection}` : ""}`
     .filter(Boolean)
     .join("\n\n")
 
-  // Build messages array
+  // Build messages array (canonical OpenAI chat shape; providers convert wire format)
   const history = threadManager.getMessages(threadId)
-  const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = []
+  const messages: CanonicalChatMessage[] = []
 
   if (systemPrompt) {
     messages.push({ role: "system", content: systemPrompt })
@@ -435,13 +435,8 @@ ${hostUseRule12}${appIndexSection ? `\n\n${appIndexSection}` : ""}`
     }
   }
 
-  // Create OpenAI client
-  const client = new OpenAI({
-    baseURL: config.base_url,
-    apiKey: config.api_key || "sk-placeholder",
-    timeout: 120000,
-    maxRetries: 0,
-  })
+  // L2: provider abstraction — openai SDK or Anthropic Messages fetch+SSE
+  const provider = createProvider(config)
 
   // Native tools + dynamically aggregated MCP tools (mcp__<server>__<tool>).
   // Audit item 7: honor per-thread MCP selection.
@@ -499,30 +494,32 @@ ${hostUseRule12}${appIndexSection ? `\n\n${appIndexSection}` : ""}`
     let savedAssistantId: string | undefined
 
     try {
-      const stream = await client.chat.completions.create({
-        model: config.model_name,
-        messages,
-        temperature: config.temperature,
-        tools,
-        tool_choice: "auto",
-        stream: true,
-        stream_options: { include_usage: true },
-      }, { signal })
-
       let reasoningContent = ""
-      let toolCalls: any[] = []
-      let finalUsage: any = undefined
+      type StreamToolCall = {
+        id: string
+        type: "function"
+        function: { name: string; arguments: string }
+      }
+      const toolCalls: StreamToolCall[] = []
+      let finalUsage:
+        | {
+            prompt_tokens?: number
+            completion_tokens?: number
+            total_tokens?: number
+            reasoning_tokens?: number
+          }
+        | undefined
 
-      for await (const chunk of stream) {
-        const delta = chunk.choices[0]?.delta as any
-
-        // OpenAI-compatible providers emit usage on the terminal chunk (empty choices).
-        if ((chunk as any).usage) {
-          finalUsage = (chunk as any).usage
-        }
-
-        if (delta?.content) {
-          const incoming = delta.content
+      // Consume CanonicalStreamEvent from provider (token | tool_call_delta | reasoning | usage | done)
+      for await (const ev of provider.streamChat({
+        messages,
+        tools: tools as CanonicalToolDefinition[],
+        temperature: config.temperature,
+        model: config.model_name,
+        signal,
+      })) {
+        if (ev.type === "token") {
+          const incoming = ev.text
           assistantContent += incoming
           // Real-time jailbreak detection during streaming. Scan only the incoming
           // token plus a small trailing window — NOT the full accumulated content.
@@ -544,28 +541,33 @@ ${hostUseRule12}${appIndexSection ? `\n\n${appIndexSection}` : ""}`
             return
           }
           sendToExtension({ type: "chat.token", thread_id: threadId, content: assistantContent })
-        }
-
-        // DeepSeek thinking mode: capture reasoning_content
-        if (delta?.reasoning_content) {
-          reasoningContent += delta.reasoning_content
-        }
-
-        if (delta?.tool_calls) {
-          for (const tc of delta.tool_calls) {
-            if (tc.index !== undefined) {
-              if (!toolCalls[tc.index]) {
-                toolCalls[tc.index] = { id: tc.id || "", type: "function", function: { name: "", arguments: "" } }
-              }
-              if (tc.id) toolCalls[tc.index].id = tc.id
-              if (tc.function?.name) toolCalls[tc.index].function.name += tc.function.name
-              if (tc.function?.arguments) toolCalls[tc.index].function.arguments += tc.function.arguments
+        } else if (ev.type === "reasoning") {
+          // DeepSeek thinking / Anthropic thinking blocks → same internal slot
+          reasoningContent += ev.text
+        } else if (ev.type === "tool_call_delta") {
+          const idx = ev.index
+          if (!toolCalls[idx]) {
+            toolCalls[idx] = {
+              id: "",
+              type: "function",
+              function: { name: "", arguments: "" },
             }
           }
+          if (ev.id) toolCalls[idx].id = ev.id
+          if (ev.name) toolCalls[idx].function.name += ev.name
+          if (ev.arguments) toolCalls[idx].function.arguments += ev.arguments
+        } else if (ev.type === "usage") {
+          finalUsage = {
+            prompt_tokens: ev.prompt_tokens,
+            completion_tokens: ev.completion_tokens,
+            total_tokens: ev.total_tokens,
+            reasoning_tokens: ev.reasoning_tokens,
+          }
         }
+        // "done" is terminal; finish_reason unused by tool loop today
       }
 
-      // Log usage for the completed LLM round (terminal chunk carries usage).
+      // Log usage for the completed LLM round (provider yields usage event when available).
       if (finalUsage?.total_tokens !== undefined) {
         logger.info("llm.usage", {
           thread_id: threadId,
@@ -575,12 +577,14 @@ ${hostUseRule12}${appIndexSection ? `\n\n${appIndexSection}` : ""}`
           prompt_tokens: finalUsage.prompt_tokens,
           completion_tokens: finalUsage.completion_tokens,
           total_tokens: finalUsage.total_tokens,
-          reasoning_tokens: finalUsage.completion_tokens_details?.reasoning_tokens,
+          reasoning_tokens: finalUsage.reasoning_tokens,
         })
       }
 
-      // Save assistant message
-      const assistantMsg = toolCalls.filter(Boolean)
+      // Save assistant message (sparse index holes from tool_call_delta are dropped)
+      const assistantMsg: StreamToolCall[] = toolCalls.filter(
+        (tc): tc is StreamToolCall => tc != null,
+      )
       const savedMsg = {
         thread_id: threadId,
         role: "assistant" as const,
@@ -623,7 +627,7 @@ ${hostUseRule12}${appIndexSection ? `\n\n${appIndexSection}` : ""}`
       }
 
       // Execute tool calls via extension (async — wait for results)
-      const toolResults: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = []
+      const toolResults: CanonicalChatMessage[] = []
       let shouldStop = false
 
       for (const tc of assistantMsg) {
@@ -1095,7 +1099,7 @@ ${hostUseRule12}${appIndexSection ? `\n\n${appIndexSection}` : ""}`
 export async function generateThreadTitle(params: {
   threadId: string
   threadManager: ThreadManager
-  config: ChatCreateParams["config"]
+  config: LlmConfig
   sendToExtension: (data: any) => void
   force?: boolean
 }) {
@@ -1119,16 +1123,11 @@ export async function generateThreadTitle(params: {
 
     if (previewMsgs.length < 10) return
 
-    const client = new OpenAI({
-      baseURL: config.base_url,
-      apiKey: config.api_key || "sk-placeholder",
-      timeout: 8000,
-      maxRetries: 0,
-    })
-
-    const response = await client.chat.completions.create({
-      model: config.model_name,
+    const provider = createProvider(config)
+    const result = await provider.complete({
       temperature: 0.3,
+      model: config.model_name,
+      signal: AbortSignal.timeout(8000),
       messages: [
         {
           role: "system",
@@ -1138,19 +1137,19 @@ export async function generateThreadTitle(params: {
       ],
     })
 
-    if (response.usage?.total_tokens !== undefined) {
+    if (result.usage?.total_tokens !== undefined) {
       logger.info("llm.usage", {
         thread_id: threadId,
         model: config.model_name,
         kind: "title",
-        prompt_tokens: response.usage.prompt_tokens,
-        completion_tokens: response.usage.completion_tokens,
-        total_tokens: response.usage.total_tokens,
-        reasoning_tokens: (response.usage as any).completion_tokens_details?.reasoning_tokens,
+        prompt_tokens: result.usage.prompt_tokens,
+        completion_tokens: result.usage.completion_tokens,
+        total_tokens: result.usage.total_tokens,
+        reasoning_tokens: result.usage.reasoning_tokens,
       })
     }
 
-    let alias = response.choices[0]?.message?.content?.trim().replace(/[\n"'"]/g, "") || ""
+    let alias = result.content.trim().replace(/[\n"'"]/g, "") || ""
     // Truncate and sanitize
     alias = alias.slice(0, 16)
     if (alias) {

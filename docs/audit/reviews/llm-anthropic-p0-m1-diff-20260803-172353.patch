@@ -1,0 +1,648 @@
+# Dual external review context
+batch: llm-anthropic-p0-m1
+base: 8c70c3a352d6976974eb2625f9d0479bc8228213
+time: 20260803-172353
+
+8c70c3a
+
+ M companion/src/config.ts
+ M companion/src/llm/adapter.ts
+ M companion/src/llm/llm-extract.ts
+ M companion/src/server.ts
+ M companion/src/settings-web.ts
+ M companion/tests/model-probe.test.ts
+ M docs/README.md
+ M docs/optimization-plan-post-adr-020.md
+?? .grok/hooks/
+?? .grok/rules/
+?? .grok/workflows/llm-anthropic-protocol-p0-with-gates.rhai
+?? companion/src/llm/provider.ts
+?? companion/src/llm/providers/
+?? companion/tests/llm-headers-policy.test.ts
+?? companion/tests/llm-provider-anthropic.test.ts
+?? docs/audit/reviews/cli-qwen-plan-v2-for-pi.md
+?? docs/audit/reviews/cli-qwen-plan-v2-pi-20260802-092659.md
+?? docs/audit/reviews/estop-tap-degraded-kimi-20260801-220643.md
+?? docs/audit/reviews/llm-anthropic-n1-diff-20260803-165421.patch
+?? docs/audit/reviews/llm-anthropic-n1-pi-20260803-165421.md
+?? docs/audit/reviews/llm-anthropic-n1-verdict-pi-20260803-165421.json
+?? docs/audit/reviews/llm-anthropic-n1b-diff-20260803-165856.patch
+?? docs/audit/reviews/llm-anthropic-n1b-pi-20260803-165856.md
+?? docs/audit/reviews/llm-anthropic-n1b-verdict-pi-20260803-165856.json
+?? docs/audit/reviews/llm-anthropic-n2-diff-20260803-170828.patch
+?? docs/audit/reviews/llm-anthropic-n2-pi-20260803-170828.md
+?? docs/audit/reviews/llm-anthropic-n2-verdict-pi-20260803-170828.json
+?? docs/audit/reviews/llm-anthropic-n3-diff-20260803-171854.patch
+?? docs/audit/reviews/llm-anthropic-n3-pi-20260803-171854.md
+?? docs/audit/reviews/llm-anthropic-n3-verdict-pi-20260803-171854.json
+?? docs/audit/reviews/llm-anthropic-p0-m1-diff-20260803-172353.patch
+?? docs/audit/reviews/llm-anthropic-protocol-claude-20260803-163315.md
+?? docs/audit/reviews/llm-anthropic-protocol-diff-20260803-163315.patch
+?? docs/audit/reviews/llm-anthropic-protocol-dual-review-prompt-20260803.md
+?? docs/audit/reviews/llm-anthropic-protocol-pi-20260803-163315.md
+?? docs/audit/reviews/llm-anthropic-protocol-verdict-20260803-163315.json
+?? docs/audit/reviews/trust-ia-autopilot-diff-20260802-144203.patch
+?? docs/audit/reviews/unattended-desktop-diff-20260802-153129.patch
+?? docs/audit/reviews/unattended-desktop-m1-diff-20260802-154236.patch
+?? docs/audit/reviews/unattended-desktop-m2-diff-20260802-155452.patch
+?? docs/audit/reviews/unattended-desktop-m2-r2-diff-20260802-160240.patch
+?? docs/audit/reviews/unattended-desktop-m3-diff-20260802-161147.patch
+?? docs/decisions/llm-anthropic-protocol-design-2026-08-03.md
+?? docs/decisions/llm-anthropic-protocol-dual-review-synthesis-2026-08-03.md
+?? docs/optimization-plan-document-parse-vision.md
+?? images/
+?? scripts/pi-external-review.sh
+
+## Diff (git diff + staged)
+ companion/src/config.ts                |  60 ++++++++++--
+ companion/src/llm/adapter.ts           | 169 ++++++++++++++++-----------------
+ companion/src/llm/llm-extract.ts       |  50 +++++++---
+ companion/src/server.ts                |   9 ++
+ companion/src/settings-web.ts          |  13 +++
+ companion/tests/model-probe.test.ts    |  29 ++++++
+ docs/README.md                         |   1 +
+ docs/optimization-plan-post-adr-020.md |   1 +
+ 8 files changed, 228 insertions(+), 104 deletions(-)
+
+diff --git a/companion/src/config.ts b/companion/src/config.ts
+index b224189..72f7929 100644
+--- a/companion/src/config.ts
++++ b/companion/src/config.ts
+@@ -147,15 +147,55 @@ export interface ComputerConfig {
+   pythonPreferUv?: boolean
+ }
+ 
++/** Wire protocol for chat completions. Default "openai". */
++export type LlmProtocol = "openai" | "anthropic"
++
++/**
++ * Auth header style. "auto" (default) → openai: Bearer, anthropic: x-api-key.
++ * Override only when a gateway documents otherwise.
++ */
++export type LlmAuthStyle = "auto" | "bearer" | "x-api-key"
++
++/**
++ * Client identity header profile for third-party Coding Plan gateways.
++ * Default "none". "claude_code_compat" injects documented gateway-compat headers
++ * (UA / x-app). NEVER allowed on first-party Anthropic hosts (L7).
++ */
++export type LlmClientHeaderProfile = "none" | "claude_code_compat"
++
++export interface LlmConfig {
++  base_url: string
++  api_key: string
++  model_name: string
++  temperature: number
++  context_window: number
++  /**
++   * Wire protocol; default "openai".
++   * Omitted on disk → deepMerge fills default (legacy configs unchanged).
++   */
++  protocol?: LlmProtocol
++  /**
++   * Auth: "auto" (default) → openai: Bearer, anthropic: x-api-key.
++   * Override only if a gateway documents otherwise.
++   */
++  auth_style?: LlmAuthStyle
++  /**
++   * default "none".
++   * "claude_code_compat" = inject documented gateway-compat headers
++   * (UA / x-app / optional anthropic-beta). NEVER on first-party Anthropic hosts.
++   */
++  client_header_profile?: LlmClientHeaderProfile
++  /** Pin for UA string under claude_code_compat; default "2.1.220". */
++  claude_code_compat_version?: string
++  /** Allowlisted extra headers only; values never logged. */
++  extra_headers?: Record<string, string>
++  /** Anthropic API version header; default "2023-06-01". */
++  anthropic_version?: string
++}
++
+ export interface CompanionConfig {
+   port: number
+-  llm: {
+-    base_url: string
+-    api_key: string
+-    model_name: string
+-    temperature: number
+-    context_window: number
+-  }
++  llm: LlmConfig
+   vision?: VisionConfig
+   trusted_domains: string[]
+   /**
+@@ -216,6 +256,12 @@ const defaultConfig: CompanionConfig = {
+     model_name: "deepseek-v4-flash",
+     temperature: 0.7,
+     context_window: 1000000,
++    // Anthropic protocol P0 defaults (omit on disk → these values via deepMerge)
++    protocol: "openai",
++    auth_style: "auto",
++    client_header_profile: "none",
++    claude_code_compat_version: "2.1.220",
++    anthropic_version: "2023-06-01",
+   },
+   vision: {
+     enabled: false,
+diff --git a/companion/src/llm/adapter.ts b/companion/src/llm/adapter.ts
+index c37c42e..3d531f7 100644
+--- a/companion/src/llm/adapter.ts
++++ b/companion/src/llm/adapter.ts
+@@ -1,7 +1,6 @@
+-// LLM adapter — OpenAI-compatible chat completions with tool calling
++// LLM adapter — chat + tool loop via LlmProvider (OpenAI / Anthropic wire)
+ 
+ import os from "os"
+-import OpenAI from "openai"
+ import type { ThreadManager } from "../threads/thread-manager"
+ import type { SkillEngine } from "../skills/skill-engine"
+ import type { HistoryStore } from "../history/store"
+@@ -11,9 +10,14 @@ import { classifyError } from "../security"
+ import { logger } from "../logger"
+ import { analyzeImage } from "./vision-pipeline"
+ import { wrapUntrusted } from "./text-sanitize"
+-import { getConfig } from "../config"
++import { getConfig, type LlmConfig } from "../config"
+ import { getMcpManager } from "../mcp"
+ import type { AppsConfig } from "../apps/types"
++import {
++  createProvider,
++  type CanonicalChatMessage,
++  type CanonicalToolDefinition,
++} from "./provider"
+ 
+ // Jailbreak patterns to detect in LLM output
+ const JAILBREAK_OUTPUT_PATTERNS = [
+@@ -77,13 +81,8 @@ interface ChatCreateParams {
+   skillIds: string[]
+   knowledgeIds?: string[]
+   fileContents?: Array<{ filename: string; content: string }>
+-  config: {
+-    base_url: string
+-    api_key: string
+-    model_name: string
+-    temperature: number
+-    context_window: number
+-  }
++  /** Full llm config (protocol + credentials). Default protocol=openai preserves DeepSeek path. */
++  config: LlmConfig
+   threadManager: ThreadManager
+   skillEngine: SkillEngine
+   historyStore: HistoryStore
+@@ -138,7 +137,7 @@ export type HistoryMessageLike = {
+ }
+ 
+ /**
+- * P0-B: rebuild OpenAI chat messages from persisted thread history.
++ * P0-B: rebuild canonical (OpenAI-shaped) chat messages from persisted thread history.
+  * - Assistant rows with incomplete following tool results are stripped to text-only.
+  * - Pairing is by tool_call id (not mere role adjacency): a delayed/out-of-order
+  *   tool result whose id belongs to an earlier interrupted call must not "satisfy"
+@@ -147,11 +146,12 @@ export type HistoryMessageLike = {
+  * - Unpaired role=tool rows (orphan tool_call_id not in the open set) are skipped
+  *   so legacy corrupt history never produces a schema-invalid next create (400).
+  * Pure function — unit-testable without chatCreate / network.
++ * Providers convert to wire format (Anthropic Messages, etc.) at the boundary (L1/L2).
+  */
+ export function rebuildMessagesFromHistory(
+   history: HistoryMessageLike[],
+-): OpenAI.Chat.Completions.ChatCompletionMessageParam[] {
+-  const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = []
++): CanonicalChatMessage[] {
++  const messages: CanonicalChatMessage[] = []
+   const openToolCallIds = new Set<string>()
+ 
+   for (let i = 0; i < history.length; i++) {
+@@ -189,16 +189,16 @@ export function rebuildMessagesFromHistory(
+           content: msg.content || null,
+           tool_calls: tcList.map((tc: any) => ({
+             id: tc.id,
+-            type: "function",
++            type: "function" as const,
+             function: {
+               name: tc.function?.name || tc.name,
+               arguments: tc.function?.arguments || tc.arguments || "{}",
+             },
+           })),
+-        } as any)
++        })
+       } else {
+         openToolCallIds.clear()
+-        messages.push({ role: "assistant", content: msg.content || "(tool call failed)" } as any)
++        messages.push({ role: "assistant", content: msg.content || "(tool call failed)" })
+       }
+     } else if (msg.role === "tool" && msg.tool_calls) {
+       for (const tc of msg.tool_calls) {
+@@ -208,7 +208,7 @@ export function rebuildMessagesFromHistory(
+           role: "tool",
+           tool_call_id: tc.id,
+           content: wrapUntrusted(JSON.stringify(tc.result || {}), tc.id, tc.tool_name),
+-        } as any)
++        })
+       }
+     }
+   }
+@@ -402,9 +402,9 @@ ${hostUseRule12}${appIndexSection ? `\n\n${appIndexSection}` : ""}`
+     .filter(Boolean)
+     .join("\n\n")
+ 
+-  // Build messages array
++  // Build messages array (canonical OpenAI chat shape; providers convert wire format)
+   const history = threadManager.getMessages(threadId)
+-  const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = []
++  const messages: CanonicalChatMessage[] = []
+ 
+   if (systemPrompt) {
+     messages.push({ role: "system", content: systemPrompt })
+@@ -435,13 +435,8 @@ ${hostUseRule12}${appIndexSection ? `\n\n${appIndexSection}` : ""}`
+     }
+   }
+ 
+-  // Create OpenAI client
+-  const client = new OpenAI({
+-    baseURL: config.base_url,
+-    apiKey: config.api_key || "sk-placeholder",
+-    timeout: 120000,
+-    maxRetries: 0,
+-  })
++  // L2: provider abstraction — openai SDK or Anthropic Messages fetch+SSE
++  const provider = createProvider(config)
+ 
+   // Native tools + dynamically aggregated MCP tools (mcp__<server>__<tool>).
+   // Audit item 7: honor per-thread MCP selection.
+@@ -499,30 +494,32 @@ ${hostUseRule12}${appIndexSection ? `\n\n${appIndexSection}` : ""}`
+     let savedAssistantId: string | undefined
+ 
+     try {
+-      const stream = await client.chat.completions.create({
+-        model: config.model_name,
+-        messages,
+-        temperature: config.temperature,
+-        tools,
+-        tool_choice: "auto",
+-        stream: true,
+-        stream_options: { include_usage: true },
+-      }, { signal })
+-
+       let reasoningContent = ""
+-      let toolCalls: any[] = []
+-      let finalUsage: any = undefined
+-
+-      for await (const chunk of stream) {
+-        const delta = chunk.choices[0]?.delta as any
+-
+-        // OpenAI-compatible providers emit usage on the terminal chunk (empty choices).
+-        if ((chunk as any).usage) {
+-          finalUsage = (chunk as any).usage
+-        }
++      type StreamToolCall = {
++        id: string
++        type: "function"
++        function: { name: string; arguments: string }
++      }
++      const toolCalls: StreamToolCall[] = []
++      let finalUsage:
++        | {
++            prompt_tokens?: number
++            completion_tokens?: number
++            total_tokens?: number
++            reasoning_tokens?: number
++          }
++        | undefined
+ 
+-        if (delta?.content) {
+-          const incoming = delta.content
++      // Consume CanonicalStreamEvent from provider (token | tool_call_delta | reasoning | usage | done)
++      for await (const ev of provider.streamChat({
++        messages,
++        tools: tools as CanonicalToolDefinition[],
++        temperature: config.temperature,
++        model: config.model_name,
++        signal,
++      })) {
++        if (ev.type === "token") {
++          const incoming = ev.text
+           assistantContent += incoming
+           // Real-time jailbreak detection during streaming. Scan only the incoming
+           // token plus a small trailing window — NOT the full accumulated content.
+@@ -544,28 +541,33 @@ ${hostUseRule12}${appIndexSection ? `\n\n${appIndexSection}` : ""}`
+             return
+           }
+           sendToExtension({ type: "chat.token", thread_id: threadId, content: assistantContent })
+-        }
+-
+-        // DeepSeek thinking mode: capture reasoning_content
+-        if (delta?.reasoning_content) {
+-          reasoningContent += delta.reasoning_content
+-        }
+-
+-        if (delta?.tool_calls) {
+-          for (const tc of delta.tool_calls) {
+-            if (tc.index !== undefined) {
+-              if (!toolCalls[tc.index]) {
+-                toolCalls[tc.index] = { id: tc.id || "", type: "function", function: { name: "", arguments: "" } }
+-              }
+-              if (tc.id) toolCalls[tc.index].id = tc.id
+-              if (tc.function?.name) toolCalls[tc.index].function.name += tc.function.name
+-              if (tc.function?.arguments) toolCalls[tc.index].function.arguments += tc.function.arguments
++        } else if (ev.type === "reasoning") {
++          // DeepSeek thinking / Anthropic thinking blocks → same internal slot
++          reasoningContent += ev.text
++        } else if (ev.type === "tool_call_delta") {
++          const idx = ev.index
++          if (!toolCalls[idx]) {
++            toolCalls[idx] = {
++              id: "",
++              type: "function",
++              function: { name: "", arguments: "" },
+             }
+           }
++          if (ev.id) toolCalls[idx].id = ev.id
++          if (ev.name) toolCalls[idx].function.name += ev.name
++          if (ev.arguments) toolCalls[idx].function.arguments += ev.arguments
++        } else if (ev.type === "usage") {
++          finalUsage = {
++            prompt_tokens: ev.prompt_tokens,
++            completion_tokens: ev.completion_tokens,
++            total_tokens: ev.total_tokens,
++            reasoning_tokens: ev.reasoning_tokens,
++          }
+         }
++        // "done" is terminal; finish_reason unused by tool loop today
+       }
+ 
+-      // Log usage for the completed LLM round (terminal chunk carries usage).
++      // Log usage for the completed LLM round (provider yields usage event when available).
+       if (finalUsage?.total_tokens !== undefined) {
+         logger.info("llm.usage", {
+           thread_id: threadId,
+@@ -575,12 +577,14 @@ ${hostUseRule12}${appIndexSection ? `\n\n${appIndexSection}` : ""}`
+           prompt_tokens: finalUsage.prompt_tokens,
+           completion_tokens: finalUsage.completion_tokens,
+           total_tokens: finalUsage.total_tokens,
+-          reasoning_tokens: finalUsage.completion_tokens_details?.reasoning_tokens,
++          reasoning_tokens: finalUsage.reasoning_tokens,
+         })
+       }
+ 
+-      // Save assistant message
+-      const assistantMsg = toolCalls.filter(Boolean)
++      // Save assistant message (sparse index holes from tool_call_delta are dropped)
++      const assistantMsg: StreamToolCall[] = toolCalls.filter(
++        (tc): tc is StreamToolCall => tc != null,
++      )
+       const savedMsg = {
+         thread_id: threadId,
+         role: "assistant" as const,
+@@ -623,7 +627,7 @@ ${hostUseRule12}${appIndexSection ? `\n\n${appIndexSection}` : ""}`
+       }
+ 
+       // Execute tool calls via extension (async — wait for results)
+-      const toolResults: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = []
++      const toolResults: CanonicalChatMessage[] = []
+       let shouldStop = false
+ 
+       for (const tc of assistantMsg) {
+@@ -1095,7 +1099,7 @@ ${hostUseRule12}${appIndexSection ? `\n\n${appIndexSection}` : ""}`
+ export async function generateThreadTitle(params: {
+   threadId: string
+   threadManager: ThreadManager
+-  config: ChatCreateParams["config"]
++  config: LlmConfig
+   sendToExtension: (data: any) => void
+   force?: boolean
+ }) {
+@@ -1119,16 +1123,11 @@ export async function generateThreadTitle(params: {
+ 
+     if (previewMsgs.length < 10) return
+ 
+-    const client = new OpenAI({
+-      baseURL: config.base_url,
+-      apiKey: config.api_key || "sk-placeholder",
+-      timeout: 8000,
+-      maxRetries: 0,
+-    })
+-
+-    const response = await client.chat.completions.create({
+-      model: config.model_name,
++    const provider = createProvider(config)
++    const result = await provider.complete({
+       temperature: 0.3,
++      model: config.model_name,
++      signal: AbortSignal.timeout(8000),
+       messages: [
+         {
+           role: "system",
+@@ -1138,19 +1137,19 @@ export async function generateThreadTitle(params: {
+       ],
+     })
+ 
+-    if (response.usage?.total_tokens !== undefined) {
++    if (result.usage?.total_tokens !== undefined) {
+       logger.info("llm.usage", {
+         thread_id: threadId,
+         model: config.model_name,
+         kind: "title",
+-        prompt_tokens: response.usage.prompt_tokens,
+-        completion_tokens: response.usage.completion_tokens,
+-        total_tokens: response.usage.total_tokens,
+-        reasoning_tokens: (response.usage as any).completion_tokens_details?.reasoning_tokens,
++        prompt_tokens: result.usage.prompt_tokens,
++        completion_tokens: result.usage.completion_tokens,
++        total_tokens: result.usage.total_tokens,
++        reasoning_tokens: result.usage.reasoning_tokens,
+       })
+     }
+ 
+-    let alias = response.choices[0]?.message?.content?.trim().replace(/[\n"'"]/g, "") || ""
++    let alias = result.content.trim().replace(/[\n"'"]/g, "") || ""
+     // Truncate and sanitize
+     alias = alias.slice(0, 16)
+     if (alias) {
+diff --git a/companion/src/llm/llm-extract.ts b/companion/src/llm/llm-extract.ts
+index 6cc016d..dd80506 100644
+--- a/companion/src/llm/llm-extract.ts
++++ b/companion/src/llm/llm-extract.ts
+@@ -1,10 +1,16 @@
+ // One-shot (non-streaming) structured LLM extraction helper.
+ //
+-// Consolidates the `new OpenAI()` → `chat.completions.create` pattern duplicated
+-// across skill-craft.ts / adapter.generateThreadTitle / skill-engine rerank etc.
++// Consolidates createProvider().complete for skill-craft / summary / vault profile etc.
+ // Callers bring their own system prompt + parser; this just returns the raw text.
++// Vision stays on vision-pipeline (OpenAI-only, L10) — not routed here.
+ 
+-import OpenAI from "openai"
++import type {
++  LlmAuthStyle,
++  LlmClientHeaderProfile,
++  LlmConfig,
++  LlmProtocol,
++} from "../config"
++import { createProvider } from "./provider"
+ import { stripLoneSurrogates } from "./text-sanitize"
+ 
+ export interface LlmExtractConfig {
+@@ -12,6 +18,30 @@ export interface LlmExtractConfig {
+   api_key: string
+   model_name: string
+   temperature: number
++  /** Optional; default openai. When callers pass full getConfig().llm these flow through. */
++  protocol?: LlmProtocol
++  auth_style?: LlmAuthStyle
++  client_header_profile?: LlmClientHeaderProfile
++  claude_code_compat_version?: string
++  extra_headers?: Record<string, string>
++  anthropic_version?: string
++  context_window?: number
++}
++
++function toLlmConfig(config: LlmExtractConfig): LlmConfig {
++  return {
++    base_url: config.base_url,
++    api_key: config.api_key,
++    model_name: config.model_name,
++    temperature: config.temperature,
++    context_window: config.context_window ?? 100_000,
++    protocol: config.protocol ?? "openai",
++    auth_style: config.auth_style,
++    client_header_profile: config.client_header_profile,
++    claude_code_compat_version: config.claude_code_compat_version,
++    extra_headers: config.extra_headers,
++    anthropic_version: config.anthropic_version,
++  }
+ }
+ 
+ export async function llmExtract(params: {
+@@ -24,15 +54,11 @@ export async function llmExtract(params: {
+   timeout?: number
+ }): Promise<string> {
+   const { systemPrompt, userContent, config, temperatureCap = 0.3, timeout = 60000 } = params
+-  const client = new OpenAI({
+-    baseURL: config.base_url,
+-    apiKey: config.api_key || "sk-placeholder",
+-    timeout,
+-    maxRetries: 0,
+-  })
+-  const response = await client.chat.completions.create({
+-    model: config.model_name,
++  const provider = createProvider(toLlmConfig(config))
++  const result = await provider.complete({
+     temperature: Math.min(config.temperature, temperatureCap),
++    model: config.model_name,
++    signal: AbortSignal.timeout(timeout),
+     messages: [
+       { role: "system", content: systemPrompt },
+       // Strip lone surrogates from user content — vault notes / thread text can contain them
+@@ -41,5 +67,5 @@ export async function llmExtract(params: {
+       { role: "user", content: stripLoneSurrogates(userContent) },
+     ],
+   })
+-  return response.choices[0]?.message?.content?.trim() || ""
++  return result.content.trim() || ""
+ }
+diff --git a/companion/src/server.ts b/companion/src/server.ts
+index 41a56f6..fc14670 100644
+--- a/companion/src/server.ts
++++ b/companion/src/server.ts
+@@ -5294,6 +5294,15 @@ export async function probeChatModel(
+ ): Promise<void> {
+   const { base_url, api_key, model_name } = config.llm
+   if (!api_key) return // nothing to probe without a key
++
++  // L10: Anthropic Messages has no OpenAI-style /models listing used by this probe.
++  // Soft-skip so protocol=anthropic never hits Bearer GET {base}/models (wrong auth/shape).
++  // P1 may add protocol-aware listing; P0 does not block startup.
++  const protocol = config.llm.protocol ?? "openai"
++  if (protocol === "anthropic") {
++    return
++  }
++
+   try {
+     const url = base_url.replace(/\/+$/, "") + "/models"
+     const res = await fetch(url, {
+diff --git a/companion/src/settings-web.ts b/companion/src/settings-web.ts
+index 80cd7d2..fd52cea 100644
+--- a/companion/src/settings-web.ts
++++ b/companion/src/settings-web.ts
+@@ -456,6 +456,19 @@ async function handleTestProxy(
+   try {
+     if (kind === "llm") {
+       if (!key) throw new Error("API Key is empty")
++      // P0 soft-skip: full Anthropic Messages test + UI protocol fields land in P1 (L10).
++      // Prefer not hitting OpenAI /chat/completions with x-api-key style credentials.
++      const protocol =
++        (typeof parsed.protocol === "string" && parsed.protocol) ||
++        config.llm.protocol ||
++        "openai"
++      if (protocol === "anthropic") {
++        jsonResponse(res, {
++          ok: true,
++          message: "skipped: anthropic protocol connection test is P1 (chat path uses Messages API)",
++        })
++        return
++      }
+       const url = `${validatedBaseUrl.replace(/\/+$/, "")}/chat/completions`
+       const response = await fetch(url, {
+         method: "POST",
+diff --git a/companion/tests/model-probe.test.ts b/companion/tests/model-probe.test.ts
+index cf0cc65..9f7a23f 100644
+--- a/companion/tests/model-probe.test.ts
++++ b/companion/tests/model-probe.test.ts
+@@ -140,3 +140,32 @@ test("non-JSON body → failed warning (res.json throw is caught)", async (t) =>
+   assert.equal(events.length, 1)
+   assert.equal(events[0].event, "startup.model_probe.failed")
+ })
++
++test("protocol=anthropic → soft-skip (no fetch, no warn)", async (t) => {
++  let called = false
++  mockFetch(t, () => {
++    called = true
++    throw new Error("fetch must not be called for anthropic protocol")
++  })
++  const { events, warn } = captureWarn()
++  await probeChatModel(makeConfig({ protocol: "anthropic", model_name: "claude-sonnet-4-20250514" }), warn)
++  assert.equal(called, false, "openai /models probe must not run for anthropic")
++  assert.equal(events.length, 0)
++})
++
++test("protocol omitted or openai → still probes /models (DeepSeek regression)", async (t) => {
++  let called = false
++  mockFetch(t, async (url: unknown) => {
++    called = true
++    assert.equal(url, "https://api.deepseek.com/v1/models")
++    return {
++      ok: true,
++      status: 200,
++      json: async () => ({ data: [{ id: "deepseek-v4-flash" }] }),
++    }
++  })
++  const { events, warn } = captureWarn()
++  await probeChatModel(makeConfig({ protocol: "openai" }), warn)
++  assert.equal(called, true)
++  assert.equal(events.length, 0)
++})
+diff --git a/docs/README.md b/docs/README.md
+index c42c5bc..6e1bd07 100644
+--- a/docs/README.md
++++ b/docs/README.md
+@@ -92,6 +92,7 @@
+ | **[optimization-plan-post-adr-020.md](optimization-plan-post-adr-020.md)** | **排序权威**：A–E 骨架（治理 / Trust P1 / Composition / L2 / Autonomy） |
+ | **[optimization-plan-au4dch-ux-shell-download.md](optimization-plan-au4dch-ux-shell-download.md)** | **UX 子轨**（#au4dch）：下载去重 · 长 tool/舰队运行态 · shell 黑窗止血与网页 PTY epic |
+ | **[optimization-plan-agent-skill-install.md](optimization-plan-agent-skill-install.md)** | **Backlog**：Agent 在 Chrome 下载 skill → 安装到 `~/.cmspark-agent/skills`（一等 `skill_install`） |
++| **[optimization-plan-document-parse-vision.md](optimization-plan-document-parse-vision.md)** | **Backlog**：聊天附件文档解析 / 图文理解（P0 增强现有管道 → P1 OCR/结构 → P2 DocAI） |
+ | [audit/p1-security-open-items-2026-07-29.md](audit/p1-security-open-items-2026-07-29.md) | 07-28 诊断 P1 四条代码盘点（god-mode / originWs / evaluate / shell） |
+ | [audit/reviews/_templates/dual-review-capability-checklist.md](audit/reviews/_templates/dual-review-capability-checklist.md) | dual-review 能力声明检查清单 |
+ | [optimization-plan-post-v0.3.0.md](optimization-plan-post-v0.3.0.md) | 历史：v0.3.0 后 P2/P3 闭环考古（**勿再作排序权威**） |
+diff --git a/docs/optimization-plan-post-adr-020.md b/docs/optimization-plan-post-adr-020.md
+index 6864cfc..dd86918 100644
+--- a/docs/optimization-plan-post-adr-020.md
++++ b/docs/optimization-plan-post-adr-020.md
+@@ -109,6 +109,7 @@ E  Autonomy       仅 defer 表内；spawn 保持 L2 HITL
+ | G13 skill-craft | ✅ | 已实现 |
+ | **下载去重 / prefer_existing** | ✅ 已合 main（PR #100） | [#au4dch DL-*](optimization-plan-au4dch-ux-shell-download.md) |
+ | **Agent 下载并安装外部 Skill** | 🔶 Backlog | [optimization-plan-agent-skill-install.md](optimization-plan-agent-skill-install.md)：LLM `skill_install` → `~/.cmspark-agent/skills`（#au4dch 装错目录痛点） |
++| **聊天附件文档解析 / 图文理解** | 🔶 Backlog | [optimization-plan-document-parse-vision.md](optimization-plan-document-parse-vision.md)：基线 `file-parser` + vision；P0 有字 PDF 抽图/可配置/golden → P1 OCR·结构 → P2 DocAI。**不**插队 B 轨；与 M4 `analyze_image` 门、CU OCR 分轨 |
+ | **Outbound MCP Server（服务外部编程 Agent）** | 🔶 **DIRECTION LOCKED** · 未开工 | [brief](decisions/cmspark-as-mcp-server-brief-2026-08-03.md) · [adversary](decisions/cmspark-as-mcp-server-adversary-synthesis-2026-08-03.md) · dual-review Claude+Pi **APPROVE_WITH_NITS**（`cmspark-mcp-server-strategy-verdict-20260803-150011`）。**Composition 导出 L1**（非新 runtime）；默认禁 L2/cookies/shell；Phase 0 对照 Playwright 后才扩面；Skill 仅 adoption。**不**插队 B 轨 P1 安全 |
+ 
+ 每个 Pack/模块 PR 必须填 **能力声明**（PR template）。

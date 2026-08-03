@@ -1,0 +1,7 @@
+{
+  "batch": "llm-anthropic-n1b",
+  "timestamp": "20260803-165856",
+  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/llm-anthropic-n1b-pi-20260803-165856.md" },
+  "approve": true,
+  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/llm-anthropic-n1b-diff-20260803-165856.patch"
+}

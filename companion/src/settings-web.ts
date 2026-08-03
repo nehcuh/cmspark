@@ -456,6 +456,19 @@ async function handleTestProxy(
   try {
     if (kind === "llm") {
       if (!key) throw new Error("API Key is empty")
+      // P0 soft-skip: full Anthropic Messages test + UI protocol fields land in P1 (L10).
+      // Prefer not hitting OpenAI /chat/completions with x-api-key style credentials.
+      const protocol =
+        (typeof parsed.protocol === "string" && parsed.protocol) ||
+        config.llm.protocol ||
+        "openai"
+      if (protocol === "anthropic") {
+        jsonResponse(res, {
+          ok: true,
+          message: "skipped: anthropic protocol connection test is P1 (chat path uses Messages API)",
+        })
+        return
+      }
       const url = `${validatedBaseUrl.replace(/\/+$/, "")}/chat/completions`
       const response = await fetch(url, {
         method: "POST",

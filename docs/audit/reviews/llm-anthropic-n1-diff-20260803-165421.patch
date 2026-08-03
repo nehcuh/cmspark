@@ -1,0 +1,146 @@
+# Pi external review context
+batch: llm-anthropic-n1
+base: 8c70c3a352d6976974eb2625f9d0479bc8228213
+time: 20260803-165421
+
+8c70c3a
+
+ M companion/src/config.ts
+ M docs/README.md
+ M docs/optimization-plan-post-adr-020.md
+?? .grok/hooks/
+?? .grok/rules/
+?? .grok/workflows/llm-anthropic-protocol-p0-with-gates.rhai
+?? companion/src/llm/providers/
+?? companion/tests/llm-headers-policy.test.ts
+?? docs/audit/reviews/cli-qwen-plan-v2-for-pi.md
+?? docs/audit/reviews/cli-qwen-plan-v2-pi-20260802-092659.md
+?? docs/audit/reviews/estop-tap-degraded-kimi-20260801-220643.md
+?? docs/audit/reviews/llm-anthropic-n1-diff-20260803-165421.patch
+?? docs/audit/reviews/llm-anthropic-protocol-claude-20260803-163315.md
+?? docs/audit/reviews/llm-anthropic-protocol-diff-20260803-163315.patch
+?? docs/audit/reviews/llm-anthropic-protocol-dual-review-prompt-20260803.md
+?? docs/audit/reviews/llm-anthropic-protocol-pi-20260803-163315.md
+?? docs/audit/reviews/llm-anthropic-protocol-verdict-20260803-163315.json
+?? docs/audit/reviews/trust-ia-autopilot-diff-20260802-144203.patch
+?? docs/audit/reviews/unattended-desktop-diff-20260802-153129.patch
+?? docs/audit/reviews/unattended-desktop-m1-diff-20260802-154236.patch
+?? docs/audit/reviews/unattended-desktop-m2-diff-20260802-155452.patch
+?? docs/audit/reviews/unattended-desktop-m2-r2-diff-20260802-160240.patch
+?? docs/audit/reviews/unattended-desktop-m3-diff-20260802-161147.patch
+?? docs/decisions/llm-anthropic-protocol-design-2026-08-03.md
+?? docs/decisions/llm-anthropic-protocol-dual-review-synthesis-2026-08-03.md
+?? docs/optimization-plan-document-parse-vision.md
+?? images/
+?? scripts/pi-external-review.sh
+
+## Diff
+ companion/src/config.ts                | 60 ++++++++++++++++++++++++++++++----
+ docs/README.md                         |  1 +
+ docs/optimization-plan-post-adr-020.md |  1 +
+ 3 files changed, 55 insertions(+), 7 deletions(-)
+
+diff --git a/companion/src/config.ts b/companion/src/config.ts
+index b224189..72f7929 100644
+--- a/companion/src/config.ts
++++ b/companion/src/config.ts
+@@ -147,15 +147,55 @@ export interface ComputerConfig {
+   pythonPreferUv?: boolean
+ }
+ 
++/** Wire protocol for chat completions. Default "openai". */
++export type LlmProtocol = "openai" | "anthropic"
++
++/**
++ * Auth header style. "auto" (default) → openai: Bearer, anthropic: x-api-key.
++ * Override only when a gateway documents otherwise.
++ */
++export type LlmAuthStyle = "auto" | "bearer" | "x-api-key"
++
++/**
++ * Client identity header profile for third-party Coding Plan gateways.
++ * Default "none". "claude_code_compat" injects documented gateway-compat headers
++ * (UA / x-app). NEVER allowed on first-party Anthropic hosts (L7).
++ */
++export type LlmClientHeaderProfile = "none" | "claude_code_compat"
++
++export interface LlmConfig {
++  base_url: string
++  api_key: string
++  model_name: string
++  temperature: number
++  context_window: number
++  /**
++   * Wire protocol; default "openai".
++   * Omitted on disk → deepMerge fills default (legacy configs unchanged).
++   */
++  protocol?: LlmProtocol
++  /**
++   * Auth: "auto" (default) → openai: Bearer, anthropic: x-api-key.
++   * Override only if a gateway documents otherwise.
++   */
++  auth_style?: LlmAuthStyle
++  /**
++   * default "none".
++   * "claude_code_compat" = inject documented gateway-compat headers
++   * (UA / x-app / optional anthropic-beta). NEVER on first-party Anthropic hosts.
++   */
++  client_header_profile?: LlmClientHeaderProfile
++  /** Pin for UA string under claude_code_compat; default "2.1.220". */
++  claude_code_compat_version?: string
++  /** Allowlisted extra headers only; values never logged. */
++  extra_headers?: Record<string, string>
++  /** Anthropic API version header; default "2023-06-01". */
++  anthropic_version?: string
++}
++
+ export interface CompanionConfig {
+   port: number
+-  llm: {
+-    base_url: string
+-    api_key: string
+-    model_name: string
+-    temperature: number
+-    context_window: number
+-  }
++  llm: LlmConfig
+   vision?: VisionConfig
+   trusted_domains: string[]
+   /**
+@@ -216,6 +256,12 @@ const defaultConfig: CompanionConfig = {
+     model_name: "deepseek-v4-flash",
+     temperature: 0.7,
+     context_window: 1000000,
++    // Anthropic protocol P0 defaults (omit on disk → these values via deepMerge)
++    protocol: "openai",
++    auth_style: "auto",
++    client_header_profile: "none",
++    claude_code_compat_version: "2.1.220",
++    anthropic_version: "2023-06-01",
+   },
+   vision: {
+     enabled: false,
+diff --git a/docs/README.md b/docs/README.md
+index c42c5bc..6e1bd07 100644
+--- a/docs/README.md
++++ b/docs/README.md
+@@ -92,6 +92,7 @@
+ | **[optimization-plan-post-adr-020.md](optimization-plan-post-adr-020.md)** | **排序权威**：A–E 骨架（治理 / Trust P1 / Composition / L2 / Autonomy） |
+ | **[optimization-plan-au4dch-ux-shell-download.md](optimization-plan-au4dch-ux-shell-download.md)** | **UX 子轨**（#au4dch）：下载去重 · 长 tool/舰队运行态 · shell 黑窗止血与网页 PTY epic |
+ | **[optimization-plan-agent-skill-install.md](optimization-plan-agent-skill-install.md)** | **Backlog**：Agent 在 Chrome 下载 skill → 安装到 `~/.cmspark-agent/skills`（一等 `skill_install`） |
++| **[optimization-plan-document-parse-vision.md](optimization-plan-document-parse-vision.md)** | **Backlog**：聊天附件文档解析 / 图文理解（P0 增强现有管道 → P1 OCR/结构 → P2 DocAI） |
+ | [audit/p1-security-open-items-2026-07-29.md](audit/p1-security-open-items-2026-07-29.md) | 07-28 诊断 P1 四条代码盘点（god-mode / originWs / evaluate / shell） |
+ | [audit/reviews/_templates/dual-review-capability-checklist.md](audit/reviews/_templates/dual-review-capability-checklist.md) | dual-review 能力声明检查清单 |
+ | [optimization-plan-post-v0.3.0.md](optimization-plan-post-v0.3.0.md) | 历史：v0.3.0 后 P2/P3 闭环考古（**勿再作排序权威**） |
+diff --git a/docs/optimization-plan-post-adr-020.md b/docs/optimization-plan-post-adr-020.md
+index 6864cfc..dd86918 100644
+--- a/docs/optimization-plan-post-adr-020.md
++++ b/docs/optimization-plan-post-adr-020.md
+@@ -109,6 +109,7 @@ E  Autonomy       仅 defer 表内；spawn 保持 L2 HITL
+ | G13 skill-craft | ✅ | 已实现 |
+ | **下载去重 / prefer_existing** | ✅ 已合 main（PR #100） | [#au4dch DL-*](optimization-plan-au4dch-ux-shell-download.md) |
+ | **Agent 下载并安装外部 Skill** | 🔶 Backlog | [optimization-plan-agent-skill-install.md](optimization-plan-agent-skill-install.md)：LLM `skill_install` → `~/.cmspark-agent/skills`（#au4dch 装错目录痛点） |
++| **聊天附件文档解析 / 图文理解** | 🔶 Backlog | [optimization-plan-document-parse-vision.md](optimization-plan-document-parse-vision.md)：基线 `file-parser` + vision；P0 有字 PDF 抽图/可配置/golden → P1 OCR·结构 → P2 DocAI。**不**插队 B 轨；与 M4 `analyze_image` 门、CU OCR 分轨 |
+ | **Outbound MCP Server（服务外部编程 Agent）** | 🔶 **DIRECTION LOCKED** · 未开工 | [brief](decisions/cmspark-as-mcp-server-brief-2026-08-03.md) · [adversary](decisions/cmspark-as-mcp-server-adversary-synthesis-2026-08-03.md) · dual-review Claude+Pi **APPROVE_WITH_NITS**（`cmspark-mcp-server-strategy-verdict-20260803-150011`）。**Composition 导出 L1**（非新 runtime）；默认禁 L2/cookies/shell；Phase 0 对照 Playwright 后才扩面；Skill 仅 adoption。**不**插队 B 轨 P1 安全 |
+ 
+ 每个 Pack/模块 PR 必须填 **能力声明**（PR template）。

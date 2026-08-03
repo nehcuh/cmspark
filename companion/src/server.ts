@@ -5294,6 +5294,15 @@ export async function probeChatModel(
 ): Promise<void> {
   const { base_url, api_key, model_name } = config.llm
   if (!api_key) return // nothing to probe without a key
+
+  // L10: Anthropic Messages has no OpenAI-style /models listing used by this probe.
+  // Soft-skip so protocol=anthropic never hits Bearer GET {base}/models (wrong auth/shape).
+  // P1 may add protocol-aware listing; P0 does not block startup.
+  const protocol = config.llm.protocol ?? "openai"
+  if (protocol === "anthropic") {
+    return
+  }
+
   try {
     const url = base_url.replace(/\/+$/, "") + "/models"
     const res = await fetch(url, {

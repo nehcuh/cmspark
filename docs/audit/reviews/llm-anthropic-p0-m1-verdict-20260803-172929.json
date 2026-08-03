@@ -1,0 +1,8 @@
+{
+  "batch": "llm-anthropic-p0-m1",
+  "timestamp": "20260803-172929",
+  "claude": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/llm-anthropic-p0-m1-claude-20260803-172929.md" },
+  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/llm-anthropic-p0-m1-pi-20260803-172929.md" },
+  "both_approve": true,
+  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/llm-anthropic-p0-m1-diff-20260803-172929.patch"
+}

@@ -147,15 +147,55 @@ export interface ComputerConfig {
   pythonPreferUv?: boolean
 }
 
+/** Wire protocol for chat completions. Default "openai". */
+export type LlmProtocol = "openai" | "anthropic"
+
+/**
+ * Auth header style. "auto" (default) → openai: Bearer, anthropic: x-api-key.
+ * Override only when a gateway documents otherwise.
+ */
+export type LlmAuthStyle = "auto" | "bearer" | "x-api-key"
+
+/**
+ * Client identity header profile for third-party Coding Plan gateways.
+ * Default "none". "claude_code_compat" injects documented gateway-compat headers
+ * (UA / x-app). NEVER allowed on first-party Anthropic hosts (L7).
+ */
+export type LlmClientHeaderProfile = "none" | "claude_code_compat"
+
+export interface LlmConfig {
+  base_url: string
+  api_key: string
+  model_name: string
+  temperature: number
+  context_window: number
+  /**
+   * Wire protocol; default "openai".
+   * Omitted on disk → deepMerge fills default (legacy configs unchanged).
+   */
+  protocol?: LlmProtocol
+  /**
+   * Auth: "auto" (default) → openai: Bearer, anthropic: x-api-key.
+   * Override only if a gateway documents otherwise.
+   */
+  auth_style?: LlmAuthStyle
+  /**
+   * default "none".
+   * "claude_code_compat" = inject documented gateway-compat headers
+   * (UA / x-app / optional anthropic-beta). NEVER on first-party Anthropic hosts.
+   */
+  client_header_profile?: LlmClientHeaderProfile
+  /** Pin for UA string under claude_code_compat; default "2.1.220". */
+  claude_code_compat_version?: string
+  /** Allowlisted extra headers only; values never logged. */
+  extra_headers?: Record<string, string>
+  /** Anthropic API version header; default "2023-06-01". */
+  anthropic_version?: string
+}
+
 export interface CompanionConfig {
   port: number
-  llm: {
-    base_url: string
-    api_key: string
-    model_name: string
-    temperature: number
-    context_window: number
-  }
+  llm: LlmConfig
   vision?: VisionConfig
   trusted_domains: string[]
   /**
@@ -216,6 +256,12 @@ const defaultConfig: CompanionConfig = {
     model_name: "deepseek-v4-flash",
     temperature: 0.7,
     context_window: 1000000,
+    // Anthropic protocol P0 defaults (omit on disk → these values via deepMerge)
+    protocol: "openai",
+    auth_style: "auto",
+    client_header_profile: "none",
+    claude_code_compat_version: "2.1.220",
+    anthropic_version: "2023-06-01",
   },
   vision: {
     enabled: false,
