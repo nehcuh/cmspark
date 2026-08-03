@@ -109,6 +109,7 @@ E  Autonomy       仅 defer 表内；spawn 保持 L2 HITL
 | G13 skill-craft | ✅ | 已实现 |
 | **下载去重 / prefer_existing** | ✅ 已合 main（PR #100） | [#au4dch DL-*](optimization-plan-au4dch-ux-shell-download.md) |
 | **Agent 下载并安装外部 Skill** | 🔶 Backlog | [optimization-plan-agent-skill-install.md](optimization-plan-agent-skill-install.md)：LLM `skill_install` → `~/.cmspark-agent/skills`（#au4dch 装错目录痛点） |
+| **Outbound MCP Server（服务外部编程 Agent）** | 🔶 **DIRECTION LOCKED** · 未开工 | [brief](decisions/cmspark-as-mcp-server-brief-2026-08-03.md) · [adversary](decisions/cmspark-as-mcp-server-adversary-synthesis-2026-08-03.md) · dual-review Claude+Pi **APPROVE_WITH_NITS**（`cmspark-mcp-server-strategy-verdict-20260803-150011`）。**Composition 导出 L1**（非新 runtime）；默认禁 L2/cookies/shell；Phase 0 对照 Playwright 后才扩面；Skill 仅 adoption。**不**插队 B 轨 P1 安全 |
 
 每个 Pack/模块 PR 必须填 **能力声明**（PR template）。
 
@@ -200,6 +201,7 @@ E  Autonomy       仅 defer 表内；spawn 保持 L2 HITL
 | 2026-07-30 | P1-1 → FIXED（PR #85 pending merge）；main 已合 Windows 平台 P0（osascript 过滤 + MCP home）；下一优先 P1-2；执行序更新 |
 | 2026-08-01 | 挂接 [#au4dch UX 子轨](optimization-plan-au4dch-ux-shell-download.md)（下载去重 · 运行态 · shell 黑窗/PTY）；更正 browser_download P1.0 已合；执行序插入 Wave 1–4 |
 | 2026-08-01 | Composition backlog：Agent 安装外部 Skill → [optimization-plan-agent-skill-install.md](optimization-plan-agent-skill-install.md)；DL prefer_existing 标为已合 PR #100 |
+| 2026-08-03 | Composition：**Outbound MCP Server** 方向锁定（多路对抗 + Pi/Claude dual-review APPROVE_WITH_NITS）→ [cmspark-as-mcp-server-brief-2026-08-03.md](decisions/cmspark-as-mcp-server-brief-2026-08-03.md)；未开工，不插队 B 轨 |
 
 ---
 

@@ -2,6 +2,15 @@
 
 ## Current Session
 
+### S37 (2026-08-03) [Outbound MCP Server 战略 · 对抗 + 双审 · brief 落盘]
+- **问题**: 是否将插件作为服务暴露给 Claude Code / Grok / Kimi 等（Skill vs MCP）
+- **对抗**: Advocate / Skeptic / Implementer + 市面四类（Playwright / DevTools MCP / real-Chrome MCP / cloud stealth）
+- **双审**: `scripts/dual-external-review.sh cmspark-mcp-server-strategy` → Claude+Pi 均 **APPROVE_WITH_NITS**
+- **SoT**: `docs/decisions/cmspark-as-mcp-server-brief-2026-08-03.md`（L1–L9 + L3+/L4+；Option A；Phase 0 协议）
+- **挂 backlog**: `docs/optimization-plan-post-adr-020.md` §C Composition · 未开工 · 不插队 B 轨
+- **下次**: 需要时写 Phase 0 spike plan；ADR-022 待代码授权后再开
+- Recorded: yes — outbound MCP = Composition 导出 L1，非 Browser MCP 克隆
+
 ### S36 (2026-08-03 ~09:00–11:12) [pull main + 四路对抗评审 #105–#107]
 - **拉取**: `git pull --rebase origin main`；收 #107 Windows uv；本地 2 个 chore handoff 重放；`memory/session.md` 冲突已解
 - **评审范围**: 生产 diff `6f3a210^..dd3b1dd`（#105 host_cli+Qwen / #106 Trust IA+ADR-021 / #107 uv）

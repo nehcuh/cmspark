@@ -277,6 +277,15 @@
 - dual-review 自动附：`docs/audit/reviews/_templates/dual-review-capability-checklist.md`（`scripts/dual-external-review.sh`）
 - 安全残余盘点模板：先写 `docs/audit/p1-*-open-items-*.md`（OPEN/FIXED + 文件锚点）再改代码
 
+### Outbound MCP Server 方向（2026-08-03 · DIRECTION LOCKED · 未开工）
+- **问题**：给 Claude/Cursor/Grok 等编程 Agent 暴露真实 Chrome 能力 — Skill 不够，主路径是 MCP Server
+- **不做**：通用 Browser MCP 克隆；默认出 L2/cookies/shell；用 Skill 冒充浏览器服务
+- **做（若做）**：Composition 导出 curated L1；Trust/HITL/审计差异化；对照 Playwright（无状态）与 DevTools MCP（调试）
+- **锁 L1–L9**：见 `docs/decisions/cmspark-as-mcp-server-brief-2026-08-03.md`（含 L3+ 页内容出境、L4+ stdio≠auth、L8 IDE 确认不依赖 Side Panel、L9 双入口 tab lease、`cmspark__*` 命名）
+- **真相**：今天 Companion 只是 MCP **client**；`ws_secret` 不管 MCP caller
+- **排序**：挂 optimization-plan §C；**不**插队 B 轨 P1；Phase 0 bake-off 后才扩面
+- **双审**：Claude+Pi APPROVE_WITH_NITS → `cmspark-mcp-server-strategy-verdict-20260803-150011`
+
 ### Broadcast pattern for cross-client actions
 - When tray triggers an action that should execute in the Chrome extension, companion creates the entity then **broadcasts** a start message to ALL WebSocket clients
 - The extension picks it up and initiates its own request through its connection, so streaming flows naturally

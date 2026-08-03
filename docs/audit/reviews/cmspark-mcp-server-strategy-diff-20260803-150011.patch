@@ -1,0 +1,25 @@
+# Dual external review context
+batch: cmspark-mcp-server-strategy
+base: HEAD
+time: 20260803-150011
+
+bf5cd71
+
+?? .grok/hooks/
+?? .grok/rules/
+?? docs/audit/reviews/cli-qwen-plan-v2-for-pi.md
+?? docs/audit/reviews/cli-qwen-plan-v2-pi-20260802-092659.md
+?? docs/audit/reviews/cmspark-mcp-server-strategy-diff-20260803-150011.patch
+?? docs/audit/reviews/cmspark-mcp-server-strategy-dual-review-prompt-20260803.md
+?? docs/audit/reviews/estop-tap-degraded-kimi-20260801-220643.md
+?? docs/audit/reviews/trust-ia-autopilot-diff-20260802-144203.patch
+?? docs/audit/reviews/unattended-desktop-diff-20260802-153129.patch
+?? docs/audit/reviews/unattended-desktop-m1-diff-20260802-154236.patch
+?? docs/audit/reviews/unattended-desktop-m2-diff-20260802-155452.patch
+?? docs/audit/reviews/unattended-desktop-m2-r2-diff-20260802-160240.patch
+?? docs/audit/reviews/unattended-desktop-m3-diff-20260802-161147.patch
+?? docs/decisions/cmspark-as-mcp-server-adversary-synthesis-2026-08-03.md
+?? images/
+
+## Diff (git diff + staged)
+
