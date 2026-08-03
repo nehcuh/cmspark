@@ -565,11 +565,14 @@ function setupMessageHandlers() {
         return true
 
       case "config.test": {
-        // message.llmOverride: config from the extension's settings UI (before saving).
-        // Used only for connection testing; actual chat uses the synced global config.
-        const llmOverride = (message.llmOverride?.api_key && message.llmOverride.api_key !== "***")
-          ? message.llmOverride
-          : null
+        // message.llmOverride: unsaved UI fields (protocol/profile/url/key) for the probe.
+        // Always forward object when present so protocol is tested before Save;
+        // companion merges api_key only when non-masked.
+        const raw = message.llmOverride
+        const llmOverride =
+          raw && typeof raw === "object"
+            ? raw
+            : null
         wsClient.send({ type: "config.test", llm_override: llmOverride })
         sendResponse({ ok: true })
         return true

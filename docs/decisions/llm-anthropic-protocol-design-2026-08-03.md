@@ -3,7 +3,7 @@
 | Field | Value |
 |-------|--------|
 | Date | 2026-08-03 |
-| Status | **DIRECTION LOCKED** — Pi+Claude dual-review **APPROVE_WITH_NITS**；must-fix 已并入下文；**P0 implementation landed**（M1 dual both_approve · ship note `docs/audit/reviews/llm-anthropic-protocol-p0-ship-note-2026-08-03.md`）；P1 UI 未做 |
+| Status | **DIRECTION LOCKED** — Pi+Claude dual-review **APPROVE_WITH_NITS**；**P0 landed**；**P1 UI + protocol-aware connection test + skill-craft/engine createProvider** in progress / landed on main |
 | Authors | Grok（PATH-A/B/C 多路对抗）+ Claude/Pi dual-review |
 | Related | `companion/src/llm/adapter.ts` · `config.ts` · `settings-web.ts` · ADR-020 |
 | Process | 三路 plan 对抗 → brief → [dual-review synthesis](llm-anthropic-protocol-dual-review-synthesis-2026-08-03.md) · artifacts `docs/audit/reviews/llm-anthropic-protocol-*20260803-163315*` |

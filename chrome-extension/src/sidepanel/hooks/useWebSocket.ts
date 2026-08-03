@@ -121,6 +121,10 @@ export function normalizeConfig(config: any): Partial<LLMConfig> {
     model_name: llm.model_name,
     temperature: llm.temperature,
     context_window: llm.context_window,
+    // Anthropic P1: wire protocol + Coding Plan gateway-compat profile
+    protocol: llm.protocol === "anthropic" ? "anthropic" : "openai",
+    client_header_profile:
+      llm.client_header_profile === "claude_code_compat" ? "claude_code_compat" : "none",
   }
   if (Array.isArray(config.trusted_domains)) {
     normalized.trusted_domains = config.trusted_domains

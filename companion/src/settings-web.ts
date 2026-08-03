@@ -19,6 +19,7 @@ import * as crypto from "crypto"
 import * as dns from "dns"
 import * as net from "net"
 import { getConfig, saveConfig, isMaskedApiKey } from "./config"
+import { probeLlmConnection } from "./llm/connection-test"
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -340,8 +341,17 @@ function handleRequest(req: http.IncomingMessage, res: http.ServerResponse, port
     if (pathOnly === "/api/config" && req.method === "GET") {
       const config = getConfig()
       const vision = config.vision
+      const llmPublic: Record<string, unknown> = {
+        ...config.llm,
+        api_key: maskApiKey(config.llm.api_key),
+      }
+      if (config.llm.extra_headers && typeof config.llm.extra_headers === "object") {
+        llmPublic.extra_headers = Object.fromEntries(
+          Object.keys(config.llm.extra_headers).map((k) => [k, "***"]),
+        )
+      }
       jsonResponse(res, {
-        llm: { ...config.llm, api_key: maskApiKey(config.llm.api_key) },
+        llm: llmPublic,
         vision: vision
           ? { ...vision, api_key: maskApiKey(vision.api_key) }
           : { enabled: false, base_url: "http://localhost:11434/v1", api_key: "", model_name: "llava:7b", timeout_ms: 30000, max_tokens: 1024, fallback: "metadata", cache_ttl_seconds: 300 },
@@ -456,41 +466,37 @@ async function handleTestProxy(
   try {
     if (kind === "llm") {
       if (!key) throw new Error("API Key is empty")
-      // P0 soft-skip: full Anthropic Messages test + UI protocol fields land in P1 (L10).
-      // Prefer not hitting OpenAI /chat/completions with x-api-key style credentials.
+      // P1: same protocol + profile as chat (probeLlmConnection)
       const protocol =
         (typeof parsed.protocol === "string" && parsed.protocol) ||
         config.llm.protocol ||
         "openai"
-      if (protocol === "anthropic") {
-        jsonResponse(res, {
-          ok: true,
-          message: "skipped: anthropic protocol connection test is P1 (chat path uses Messages API)",
-        })
-        return
-      }
-      const url = `${validatedBaseUrl.replace(/\/+$/, "")}/chat/completions`
-      const response = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${key}`,
-        },
-        body: JSON.stringify({
-          model: model_name || "deepseek-chat",
-          messages: [{ role: "user", content: "Reply OK" }],
-          max_tokens: 5,
-        }),
-        signal: AbortSignal.timeout(10000),
+      const client_header_profile =
+        (typeof parsed.client_header_profile === "string" && parsed.client_header_profile) ||
+        config.llm.client_header_profile ||
+        "none"
+      const auth_style =
+        (typeof parsed.auth_style === "string" && parsed.auth_style) ||
+        config.llm.auth_style ||
+        "auto"
+      const probe = await probeLlmConnection({
+        base_url: validatedBaseUrl,
+        api_key: key,
+        model_name: typeof model_name === "string" ? model_name : config.llm.model_name,
+        protocol,
+        client_header_profile,
+        auth_style,
+        claude_code_compat_version: config.llm.claude_code_compat_version,
+        anthropic_version: config.llm.anthropic_version,
+        extra_headers: config.llm.extra_headers,
       })
-      // Do NOT reflect upstream body — only status.
-      if (response.ok) {
-        jsonResponse(res, { ok: true, message: `success: ${response.status}` })
+      if (probe.ok) {
+        jsonResponse(res, { ok: true, message: probe.message || `success: ${probe.status ?? 200}` })
       } else {
-        jsonResponse(res, { ok: false, error: `error: upstream returned ${response.status}` })
+        jsonResponse(res, { ok: false, error: probe.error || "Connection failed" })
       }
     } else {
-      // vision — probe /models
+      // vision — probe /models (always OpenAI-compatible, L10)
       const url = validatedBaseUrl.endsWith("/models")
         ? validatedBaseUrl
         : validatedBaseUrl.replace(/\/+$/, "") + "/models"
@@ -580,8 +586,35 @@ input:focus{border-color:#4A90D9}
     </div>
 
     <div class="field">
+      <label>API 协议</label>
+      <select id="protocol" style="width:100%;padding:8px 12px;background:#0f3460;border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#e0e0e0;font-size:14px;font-family:inherit;outline:none">
+        <option value="openai">OpenAI-compatible（默认）</option>
+        <option value="anthropic">Anthropic Messages</option>
+      </select>
+      <div class="hint" id="protocolHint">默认 OpenAI Chat Completions。Anthropic 协议走 /messages。</div>
+    </div>
+
+    <div class="field">
       <label>Base URL</label>
       <input type="text" id="baseUrl" placeholder="https://api.openai.com/v1">
+      <div class="hint" id="baseUrlHint">OpenAI-compatible 端点，例如 https://api.deepseek.com/v1</div>
+    </div>
+
+    <div class="field" id="compatField" style="display:none">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+        <input type="checkbox" id="clientHeaderCompat" style="width:auto">
+        Coding Plan 网关兼容头
+      </label>
+      <div class="hint">部分第三方「Coding Plan」中继只接受类似 Claude Code 的 User-Agent / 应用头。开启后，CMspark 会在 Anthropic 协议请求上附加这些兼容头。<strong>不会</strong>登录或盗用 Anthropic 官方订阅；请只用于你有权使用的 API / 中继。官方 Anthropic 主机请保持关闭。</div>
+    </div>
+
+    <div class="field">
+      <label>快速配置</label>
+      <div class="presets" id="protocolPresets">
+        <span class="preset" data-proto="openai" data-profile="none" data-url="https://api.deepseek.com/v1">OpenAI 兼容</span>
+        <span class="preset" data-proto="anthropic" data-profile="none" data-url="https://api.anthropic.com">Anthropic Messages</span>
+        <span class="preset" data-proto="anthropic" data-profile="claude_code_compat" data-url="">Coding Plan 中继</span>
+      </div>
     </div>
 
     <div class="field">
@@ -708,6 +741,8 @@ input:focus{border-color:#4A90D9}
   var $=function(id){return document.getElementById(id)};
   var apiKeyEl=$("apiKey"),baseUrlEl=$("baseUrl"),modelNameEl=$("modelName"),
       tempEl=$("temperature"),tempValEl=$("tempVal"),ctxWinEl=$("contextWindow"),
+      protocolEl=$("protocol"),compatEl=$("clientHeaderCompat"),compatField=$("compatField"),
+      baseUrlHint=$("baseUrlHint"),
       resultEl=$("result"),savedFlash=$("savedFlash"),statusDot=$("statusDot"),
       visionEnabledEl=$("visionEnabled"),visionFields=$("visionFields"),
       visionApiKeyEl=$("visionApiKey"),visionBaseUrlEl=$("visionBaseUrl"),
@@ -721,7 +756,28 @@ input:focus{border-color:#4A90D9}
     visionFields.style.pointerEvents=on?"auto":"none";
   }
 
+  function syncProtocolUi(){
+    var isAnth=protocolEl.value==="anthropic";
+    compatField.style.display=isAnth?"block":"none";
+    if(!isAnth){compatEl.checked=false}
+    baseUrlHint.textContent=isAnth
+      ?"Anthropic Messages 端点（拼到 /messages）。示例：https://api.anthropic.com 或中继 https://host/v1。勿混 /chat/completions"
+      :"OpenAI-compatible 端点，例如 https://api.deepseek.com/v1";
+  }
+
   visionEnabledEl.onchange=toggleVisionFields;
+  protocolEl.onchange=syncProtocolUi;
+
+  document.querySelectorAll("#protocolPresets .preset").forEach(function(el){
+    el.onclick=function(){
+      protocolEl.value=el.getAttribute("data-proto")||"openai";
+      compatEl.checked=(el.getAttribute("data-profile")==="claude_code_compat");
+      var u=el.getAttribute("data-url");
+      if(u!==null&&u!==""){baseUrlEl.value=u}
+      if(u===""){baseUrlEl.focus();baseUrlEl.placeholder="粘贴 Coding Plan 中继 Base URL"}
+      syncProtocolUi();
+    };
+  });
 
   function load(){
     fetch(url("/api/config")).then(function(r){return r.json()}).then(function(d){
@@ -732,6 +788,9 @@ input:focus{border-color:#4A90D9}
       tempEl.value=llm.temperature!=null?llm.temperature:0.7;
       tempValEl.textContent=tempEl.value;
       ctxWinEl.value=llm.context_window||1000000;
+      protocolEl.value=llm.protocol==="anthropic"?"anthropic":"openai";
+      compatEl.checked=llm.client_header_profile==="claude_code_compat";
+      syncProtocolUi();
       // Vision fields
       var vision=d.vision||{};
       visionEnabledEl.checked=!!vision.enabled;
@@ -755,7 +814,9 @@ input:focus{border-color:#4A90D9}
       base_url:baseUrlEl.value,
       model_name:modelNameEl.value,
       temperature:parseFloat(tempEl.value),
-      context_window:parseInt(ctxWinEl.value,10)
+      context_window:parseInt(ctxWinEl.value,10),
+      protocol:protocolEl.value==="anthropic"?"anthropic":"openai",
+      client_header_profile:(protocolEl.value==="anthropic"&&compatEl.checked)?"claude_code_compat":"none"
     }};
     if(visionEnabledEl.checked){
       data.vision={

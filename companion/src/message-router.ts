@@ -17,6 +17,7 @@ import { normalizeHostname } from "./skills/site-matcher"
 import type { HistoryStore } from "./history/store"
 import { getConfig, saveConfig, replaceMcpServers, setMcpEnabled, isMaskedApiKey } from "./config"
 import { chatCreate, generateThreadTitle } from "./llm/adapter"
+import { probeLlmConnection } from "./llm/connection-test"
 import { parseFile } from "./file-parser"
 import type { FileParseResult } from "./file-parser"
 import { analyzeImage } from "./llm/vision-pipeline"
@@ -70,6 +71,18 @@ function normalizeChatHostname(hostname?: unknown, url?: unknown): string | unde
     }
   }
   return undefined
+}
+
+/** Mask extra_headers values for WS broadcast (never send secrets to extension). */
+function redactExtraHeaders(
+  headers: Record<string, string> | undefined,
+): Record<string, string> | undefined {
+  if (!headers || typeof headers !== "object") return undefined
+  const out: Record<string, string> = {}
+  for (const k of Object.keys(headers)) {
+    out[k] = "***"
+  }
+  return out
 }
 
 // Per-thread abort controllers for cancelling in-flight LLM requests
@@ -163,7 +176,12 @@ export async function handleMessage(
           // The frontend normalizes "***" back to "" but uses it as a truthy signal
           // for "已配置" indicators (UX fix: users had no way to tell their key was
           // already saved because the input was always blank).
-          llm: { ...config.llm, api_key: config.llm.api_key ? "***" : "" },
+          llm: {
+            ...config.llm,
+            api_key: config.llm.api_key ? "***" : "",
+            // Never broadcast extra_headers values (N3 nit / P1)
+            extra_headers: redactExtraHeaders(config.llm.extra_headers),
+          },
           vision: config.vision ? { ...config.vision, api_key: config.vision.api_key ? "***" : "" } : undefined,
         },
       }
@@ -179,13 +197,37 @@ export async function handleMessage(
       if (cfg.llm) {
         normalized.llm = sanitizeConfig({ ...cfg.llm })
         if (isMaskedApiKey(normalized.llm.api_key)) delete normalized.llm.api_key
-      } else if (cfg.base_url || cfg.model_name || cfg.temperature !== undefined || cfg.context_window !== undefined) {
+      } else if (
+        cfg.base_url ||
+        cfg.model_name ||
+        cfg.temperature !== undefined ||
+        cfg.context_window !== undefined ||
+        cfg.protocol !== undefined ||
+        cfg.client_header_profile !== undefined ||
+        cfg.auth_style !== undefined
+      ) {
         normalized.llm = {}
         if (cfg.base_url) normalized.llm.base_url = cfg.base_url
         if (cfg.api_key && !isMaskedApiKey(cfg.api_key)) normalized.llm.api_key = cfg.api_key
         if (cfg.model_name) normalized.llm.model_name = cfg.model_name
         if (cfg.temperature !== undefined) normalized.llm.temperature = cfg.temperature
         if (cfg.context_window !== undefined) normalized.llm.context_window = cfg.context_window
+        // Anthropic P1: protocol + Coding Plan gateway-compat profile (flat UI fields)
+        if (cfg.protocol === "openai" || cfg.protocol === "anthropic") {
+          normalized.llm.protocol = cfg.protocol
+        }
+        if (cfg.client_header_profile === "none" || cfg.client_header_profile === "claude_code_compat") {
+          normalized.llm.client_header_profile = cfg.client_header_profile
+        }
+        if (cfg.auth_style === "auto" || cfg.auth_style === "bearer" || cfg.auth_style === "x-api-key") {
+          normalized.llm.auth_style = cfg.auth_style
+        }
+        if (typeof cfg.claude_code_compat_version === "string" && cfg.claude_code_compat_version.trim()) {
+          normalized.llm.claude_code_compat_version = cfg.claude_code_compat_version.trim()
+        }
+        if (typeof cfg.anthropic_version === "string" && cfg.anthropic_version.trim()) {
+          normalized.llm.anthropic_version = cfg.anthropic_version.trim()
+        }
       }
       if (cfg.port) normalized.port = cfg.port
       if (Array.isArray(cfg.trusted_domains)) normalized.trusted_domains = cfg.trusted_domains
@@ -280,7 +322,11 @@ export async function handleMessage(
         config: {
           ...updated,
           // Same "is set" signal preservation as config.get — see comment there.
-          llm: { ...updated.llm, api_key: updated.llm.api_key ? "***" : "" },
+          llm: {
+            ...updated.llm,
+            api_key: updated.llm.api_key ? "***" : "",
+            extra_headers: redactExtraHeaders(updated.llm.extra_headers),
+          },
           vision: updated.vision ? { ...updated.vision, api_key: updated.vision.api_key ? "***" : "" } : undefined,
         },
       }
@@ -289,37 +335,39 @@ export async function handleMessage(
     case "config.test":
     case "settings.test": {
       const config = getConfig()
-      // If the caller (extension UI) sends llm_override with a valid API key, test that
-      // config; otherwise fall back to the companion's stored config (set via tray).
+      // Extension may send llm_override for unsaved UI fields (protocol/profile/url/key).
+      // Merge field-by-field: key only from override when non-masked; protocol always may override.
       const override = rest.llm_override as Record<string, unknown> | undefined
       const hasOverrideKey = !!(override?.api_key && !isMaskedApiKey(override.api_key as string))
-      const testConfig = hasOverrideKey
-        ? {
-            api_key:        String(override!.api_key),
-            base_url:       String(override!.base_url ?? config.llm.base_url),
-            model_name:     String(override!.model_name ?? config.llm.model_name),
-          }
-        : {
-            api_key:    config.llm.api_key,
-            base_url:   config.llm.base_url,
-            model_name: config.llm.model_name,
-          }
+      const testConfig = {
+        api_key: hasOverrideKey
+          ? String(override!.api_key)
+          : config.llm.api_key,
+        base_url: String(override?.base_url ?? config.llm.base_url),
+        model_name: String(override?.model_name ?? config.llm.model_name),
+        protocol: (override?.protocol as string | undefined) ?? config.llm.protocol ?? "openai",
+        client_header_profile:
+          (override?.client_header_profile as string | undefined) ??
+          config.llm.client_header_profile ??
+          "none",
+        auth_style:
+          (override?.auth_style as string | undefined) ?? config.llm.auth_style ?? "auto",
+        claude_code_compat_version:
+          (override?.claude_code_compat_version as string | undefined) ??
+          config.llm.claude_code_compat_version,
+        anthropic_version:
+          (override?.anthropic_version as string | undefined) ?? config.llm.anthropic_version,
+        extra_headers: config.llm.extra_headers,
+      }
 
       if (!testConfig.api_key || testConfig.api_key === "sk-placeholder" || isMaskedApiKey(testConfig.api_key)) {
         return { type: "config.testResult", ok: false, error: "API Key 未配置" }
       }
-      try {
-        const client = new OpenAI({
-          baseURL: testConfig.base_url,
-          apiKey:  testConfig.api_key,
-          timeout: 10000,
-          maxRetries: 0,
-        })
-        await client.models.list()
-        return { type: "config.testResult", ok: true }
-      } catch (e: any) {
-        return { type: "config.testResult", ok: false, error: e.message || String(e) }
+      const probe = await probeLlmConnection(testConfig)
+      if (probe.ok) {
+        return { type: "config.testResult", ok: true, message: probe.message }
       }
+      return { type: "config.testResult", ok: false, error: probe.error || "连接失败" }
     }
 
     case "config.testVision": {
@@ -351,6 +399,9 @@ export async function handleMessage(
           model_name: config.llm.model_name,
           temperature: config.llm.temperature,
           context_window: config.llm.context_window,
+          protocol: config.llm.protocol ?? "openai",
+          client_header_profile: config.llm.client_header_profile ?? "none",
+          auth_style: config.llm.auth_style ?? "auto",
         },
       }
     }
@@ -366,6 +417,15 @@ export async function handleMessage(
       if (cfg.model_name) normalized.llm.model_name = cfg.model_name
       if (cfg.temperature !== undefined) normalized.llm.temperature = cfg.temperature
       if (cfg.context_window !== undefined) normalized.llm.context_window = cfg.context_window
+      if (cfg.protocol === "openai" || cfg.protocol === "anthropic") {
+        normalized.llm.protocol = cfg.protocol
+      }
+      if (cfg.client_header_profile === "none" || cfg.client_header_profile === "claude_code_compat") {
+        normalized.llm.client_header_profile = cfg.client_header_profile
+      }
+      if (cfg.auth_style === "auto" || cfg.auth_style === "bearer" || cfg.auth_style === "x-api-key") {
+        normalized.llm.auth_style = cfg.auth_style
+      }
 
       // Validate temperature
       if (normalized.llm.temperature !== undefined) {
