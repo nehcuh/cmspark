@@ -1,0 +1,8 @@
+{
+  "batch": "s40-quad-m1b",
+  "timestamp": "20260803-234150",
+  "claude": { "verdict": "UNKNOWN", "exit_code": 1, "path": "/c/Users/HuChen/Projects/cmspark/docs/audit/reviews/s40-quad-m1b-claude-20260803-234150.md" },
+  "pi": { "verdict": "REJECT", "exit_code": 0, "path": "/c/Users/HuChen/Projects/cmspark/docs/audit/reviews/s40-quad-m1b-pi-20260803-234150.md" },
+  "both_approve": false,
+  "diff_path": "/c/Users/HuChen/Projects/cmspark/docs/audit/reviews/s40-quad-m1b-diff-20260803-234150.patch"
+}

@@ -181,23 +181,70 @@ export async function runDownloadsFind(params: FindDownloadsParams): Promise<Too
     }
   }
 
+  // Fetch enough rows to detect size/mtime conflicts (DL-4), then trim to limit.
+  const scanLimit = Math.max(limit, 20)
   const matches = filterCompletedDownloads(items, {
     filenameHint,
     urlContains,
-    limit,
+    limit: scanLimit,
     downloadsRoots: params.__downloadsRoots,
   })
+  const conflict = detectDownloadConflicts(matches)
+  const trimmed = matches.slice(0, limit)
   return {
     success: true,
     data: {
-      count: matches.length,
-      matches,
+      count: trimmed.length,
+      matches: trimmed,
+      ...(conflict
+        ? {
+            conflict: true,
+            conflict_hint_zh: conflict,
+          }
+        : {}),
       note:
-        matches.length > 0
-          ? "Use path from matches (Downloads only); set browser_download force_redownload=true only if you need a fresh copy."
+        trimmed.length > 0
+          ? conflict
+            ? `Multiple Downloads matches differ in size/time — pick carefully. ${conflict}`
+            : "Use path from matches (Downloads only); set browser_download force_redownload=true only if you need a fresh copy. For skill packages, install with skill_install into ~/.cmspark-agent/skills (not the git repo)."
           : "No complete existing download under Downloads matched; proceed with browser_download click if needed.",
     },
   }
+}
+
+/**
+ * DL-4: when multiple complete hits share a basename but differ in bytes or endTime,
+ * surface a Chinese hint so the Agent does not pick the wrong file silently.
+ */
+export function detectDownloadConflicts(matches: FoundDownload[]): string | null {
+  if (!matches || matches.length < 2) return null
+  const byName = new Map<string, FoundDownload[]>()
+  for (const m of matches) {
+    const key = (m.filename || "").toLowerCase()
+    if (!key) continue
+    const arr = byName.get(key) || []
+    arr.push(m)
+    byName.set(key, arr)
+  }
+  const hints: string[] = []
+  for (const [name, group] of byName) {
+    if (group.length < 2) continue
+    const sizes = new Set(group.map((g) => g.bytes))
+    const times = new Set(group.map((g) => g.endTime || "").filter(Boolean))
+    const paths = new Set(group.map((g) => g.path))
+    // Conflict if size differs, non-empty endTime differs, or multiple paths share name
+    // (same size + missing endTime still multi-path → warn; Pi N1 N1)
+    if (sizes.size > 1 || times.size > 1 || paths.size > 1) {
+      const sizePart =
+        sizes.size > 1
+          ? `大小不同: ${[...sizes].map((s) => `${s}B`).join(" / ")}`
+          : times.size > 1
+            ? "时间戳不同"
+            : "多路径同名"
+      hints.push(`「${name}」有 ${group.length} 份 (${sizePart})；请用 endTime/bytes/path 选对，勿默认第一项`)
+    }
+  }
+  return hints.length ? hints.join("；") : null
 }
 
 /** First best match for prefer_existing short-circuit. */

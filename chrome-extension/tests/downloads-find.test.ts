@@ -9,6 +9,7 @@ import {
   runDownloadsFind,
   isPathUnderDownloads,
   redactDownloadUrl,
+  detectDownloadConflicts,
 } from "../src/background/downloads-find"
 import { runBrowserDownload } from "../src/background/browser-download-handler"
 
@@ -87,6 +88,48 @@ test("filterCompletedDownloads B1 drops Desktop paths even if filename matches",
     limit: 10,
   })
   assert.ok(m.every((x) => x.id !== 4))
+})
+
+test("detectDownloadConflicts flags same name different sizes (DL-4)", () => {
+  const conflict = detectDownloadConflicts([
+    {
+      id: 1,
+      path: "C:\\Users\\t\\Downloads\\a.zip",
+      filename: "a.zip",
+      bytes: 100,
+      url: "https://x/a.zip",
+      endTime: "2026-01-01T00:00:00Z",
+      source: "cache",
+    },
+    {
+      id: 2,
+      path: "C:\\Users\\t\\Downloads\\a.zip",
+      filename: "a.zip",
+      bytes: 200,
+      url: "https://y/a.zip",
+      endTime: "2026-02-01T00:00:00Z",
+      source: "cache",
+    },
+  ])
+  assert.ok(conflict)
+  assert.match(conflict!, /a\.zip/)
+  assert.match(conflict!, /大小/)
+})
+
+test("detectDownloadConflicts null when single match", () => {
+  assert.equal(
+    detectDownloadConflicts([
+      {
+        id: 1,
+        path: "C:\\Users\\t\\Downloads\\a.zip",
+        filename: "a.zip",
+        bytes: 100,
+        url: "https://x/a.zip",
+        source: "cache",
+      },
+    ]),
+    null,
+  )
 })
 
 test("runDownloadsFind requires a hint", async () => {

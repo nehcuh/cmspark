@@ -1,0 +1,7 @@
+{
+  "batch": "s40-quad-n1b",
+  "timestamp": "20260803-232519",
+  "pi": { "verdict": "REJECT", "exit_code": 0, "path": "/c/Users/HuChen/Projects/cmspark/docs/audit/reviews/s40-quad-n1b-pi-20260803-232519.md" },
+  "approve": false,
+  "diff_path": "/c/Users/HuChen/Projects/cmspark/docs/audit/reviews/s40-quad-n1b-diff-20260803-232519.patch"
+}

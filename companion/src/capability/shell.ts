@@ -89,7 +89,7 @@ export type ShellProgress = {
 }
 
 /**
- * Options for Node spawn of shell_exec children.
+ * Options for Node spawn of shell_exec children (legacy shell:true path).
  * windowsHide: true on win32 so approved one-shots do not flash an empty console
  * (#au4dch black-window pain). Harmless no-op on non-win platforms.
  */
@@ -101,6 +101,126 @@ export function shellSpawnOptions(cwd: string, env: NodeJS.ProcessEnv): {
 } {
   return {
     shell: true,
+    cwd,
+    env,
+    windowsHide: true,
+  }
+}
+
+/**
+ * P1b: try parse a simple command into argv for spawn(..., { shell: false }).
+ * Returns null if metacharacters present, empty, or unparseable.
+ * Supports basic double/single quotes.
+ * Backslash escapes only `\"`, `\'`, `\\` — never swallow path separators
+ * (Windows `C:\Users\...` must stay intact; Pi N1 B2).
+ */
+export function tryParseSimpleArgv(command: string): string[] | null {
+  const cmd = (command || "").trim()
+  if (!cmd) return null
+  if (hasShellAllowlistMetachar(cmd)) return null
+  // Reject unquoted wildcards / env expansion residual for argv mode
+  if (/[*?]/.test(cmd) || /\$\{/.test(cmd) || /\$[A-Za-z_]/.test(cmd)) return null
+
+  const tokens: string[] = []
+  let i = 0
+  while (i < cmd.length) {
+    while (i < cmd.length && /\s/.test(cmd[i])) i++
+    if (i >= cmd.length) break
+    const c = cmd[i]
+    if (c === '"' || c === "'") {
+      const quote = c
+      i++
+      let buf = ""
+      while (i < cmd.length && cmd[i] !== quote) {
+        // Only escape quote or backslash — leave Windows path backslashes alone
+        if (
+          cmd[i] === "\\" &&
+          i + 1 < cmd.length &&
+          (cmd[i + 1] === quote || cmd[i + 1] === "\\")
+        ) {
+          buf += cmd[i + 1]
+          i += 2
+          continue
+        }
+        buf += cmd[i]
+        i++
+      }
+      if (i >= cmd.length) return null // unclosed quote
+      i++ // closing quote
+      tokens.push(buf)
+    } else {
+      let buf = ""
+      while (i < cmd.length && !/\s/.test(cmd[i])) {
+        buf += cmd[i]
+        i++
+      }
+      tokens.push(buf)
+    }
+  }
+  if (tokens.length === 0) return null
+  // First token must look like a program name (no empty)
+  if (!tokens[0]) return null
+  return tokens
+}
+
+/**
+ * Whether to spawn with shell:false + argv (P1b).
+ * - Non-win32: any successful parse (true PE binaries / #! scripts work with shell:false).
+ * - win32: ONLY when program ends with `.exe` or `.com`.
+ *   Node on Windows **cannot** spawn `.bat`/`.cmd` without shell (EINVAL);
+ *   bare names (`npm`, `echo`) are cmd shims/builtins — must stay shell:true
+ *   (Pi N1 B1 / N1b: do not treat .bat/.cmd or allowlist as argv-safe on win32).
+ */
+export function shouldUseArgvSpawn(
+  argv: string[] | null,
+  opts?: { platform?: NodeJS.Platform; policy?: string },
+): boolean {
+  if (!argv || argv.length === 0) return false
+  const platform = opts?.platform ?? process.platform
+  void opts?.policy
+  const prog = argv[0]
+  const base = prog.replace(/^["']|["']$/g, "")
+  if (platform === "win32") {
+    // Only PE/COM — never .bat/.cmd or bare PATH names (Node EINVAL/ENOENT)
+    return /\.(exe|com)$/i.test(base)
+  }
+  // POSIX: avoid shell builtins that fail under shell:false (cd/export/source/…)
+  const builtin = new Set([
+    "cd",
+    "export",
+    "source",
+    ".",
+    "eval",
+    "set",
+    "unset",
+    "alias",
+    "ulimit",
+    "umask",
+    "read",
+    "hash",
+    "type",
+    "builtin",
+    "command",
+    "declare",
+    "local",
+    "return",
+    "shift",
+    "wait",
+    "exec",
+  ])
+  const leaf = base.includes("/") ? base.split("/").pop() || base : base
+  if (builtin.has(leaf)) return false
+  return true
+}
+
+export function shellSpawnArgvOptions(cwd: string, env: NodeJS.ProcessEnv): {
+  shell: false
+  cwd: string
+  env: NodeJS.ProcessEnv
+  windowsHide: boolean
+} {
+  return {
+    shell: false,
     cwd,
     env,
     windowsHide: true,
@@ -141,8 +261,13 @@ export async function shellExec(opts: {
   const started = Date.now()
 
   return new Promise((resolve) => {
-    // Use shell: true for one-shot; confirmation already happened at L2
-    const child = spawn(command, shellSpawnOptions(cwd, buildChildEnv()))
+    // P1b: shell:false + argv when parseable AND safe on this platform (see shouldUseArgvSpawn).
+    const env = buildChildEnv()
+    const argv = tryParseSimpleArgv(command)
+    const useArgv = shouldUseArgvSpawn(argv)
+    const child = useArgv && argv
+      ? spawn(argv[0], argv.slice(1), shellSpawnArgvOptions(cwd, env))
+      : spawn(command, shellSpawnOptions(cwd, env))
 
     let stdout = ""
     let stderr = ""
@@ -224,6 +349,7 @@ export async function shellExec(opts: {
           timed_out: killed,
           duration_ms: Date.now() - started,
           cwd,
+          spawn_mode: useArgv ? "argv" : "shell",
           stdout: stdout.slice(0, MAX_OUTPUT),
           stderr: stderr.slice(0, MAX_OUTPUT),
           truncated: stdout.length >= MAX_OUTPUT || stderr.length >= MAX_OUTPUT,

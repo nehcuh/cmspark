@@ -34,7 +34,39 @@ test("§4.3 idle → empty", () => {
     primary: "empty",
     secondaryAbort: false,
     secondaryContext: false,
+    secondaryTools: false,
   })
+})
+
+test("§4.3 ST-4 thread_tools beats L1 context", () => {
+  const slot = resolveFocusBandSlot({
+    ...idle,
+    hasThreadTools: true,
+    isBrowserContext: true,
+  })
+  assert.equal(slot.primary, "thread_tools")
+})
+
+test("§4.3 ST-4 fleet primary + tools secondary", () => {
+  const slot = resolveFocusBandSlot({
+    ...idle,
+    hasFleetActivity: true,
+    hasThreadTools: true,
+  })
+  assert.equal(slot.primary, "fleet")
+  assert.equal(slot.secondaryTools, true)
+})
+
+test("§4.3 ST-4 confirm + tools secondary when no abort", () => {
+  const slot = resolveFocusBandSlot({
+    ...idle,
+    hasPendingConfirm: true,
+    hasThreadTools: true,
+    isBrowserContext: true,
+  })
+  assert.equal(slot.primary, "confirm")
+  assert.equal(slot.secondaryTools, true)
+  assert.equal(slot.secondaryContext, false)
 })
 
 test("§4.3 P3 L1 context alone", () => {

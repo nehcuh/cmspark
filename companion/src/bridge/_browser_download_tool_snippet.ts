@@ -62,7 +62,7 @@ export const DOWNLOADS_FIND_TOOL = {
   function: {
     name: "downloads_find",
     description:
-      "Search the browser's completed Downloads for an existing file by filenameHint and/or urlContains. Use BEFORE browser_download or shell curl when the user may already have the package (e.g. release tar.gz). Returns paths of complete existing items only (read-only).",
+      "Search the browser's completed Downloads for an existing file by filenameHint and/or urlContains. Use BEFORE browser_download or shell curl when the user may already have the package (e.g. release tar.gz). Returns paths of complete existing items only (read-only). When multiple matches differ in size/mtime, conflict_hint_zh is set — do not pick blindly. For skill ZIPs/folders: after find, call skill_install so files land in ~/.cmspark-agent/skills (never the git repo skills/).",
     parameters: {
       type: "object",
       properties: {

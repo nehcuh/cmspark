@@ -2165,6 +2165,7 @@ export function createToolExecutor(ws: WebSocket) {
       "host_app",
       "host_computer",
       "use_skill",
+      "skill_install",
       "record_experience",
       "workspace_list_dir",
       "workspace_read_file",
@@ -3237,6 +3238,27 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
           hint:
             "Write files under this path with MCP filesystem (create_directory for subfolders if needed). " +
             "If MCP reports Access denied, the user can approve adding this directory to allowlist.",
+        },
+      }
+    }
+    case "skill_install": {
+      // Composition: install into user skills root only (not repo / ~/.claude).
+      const { skillInstall } = await import("./skills/skill-install")
+      const r = skillInstall(skillEngine, {
+        path: params.path,
+        zip_path: params.zip_path,
+        content: params.content,
+      })
+      if (!r.ok) {
+        return { success: false, error: r.error, data: { skills_root: r.skills_root } }
+      }
+      return {
+        success: true,
+        data: {
+          name: r.name,
+          dest_path: r.dest_path,
+          skills_root: r.skills_root,
+          hint_zh: r.hint_zh,
         },
       }
     }

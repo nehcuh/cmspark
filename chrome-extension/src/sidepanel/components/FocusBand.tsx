@@ -13,11 +13,16 @@ import { ContextStrip } from "./ContextStrip"
 import { FleetStrip } from "./FleetStrip"
 import {
   FOCUS_BAND_MAX_PX,
+  FOCUS_BAND_PRIMARY_MAX_PX,
   FOCUS_BAND_SECONDARY_MAX_PX,
   classifyFleetActivity,
   resolveFocusBandSlot,
   type FocusBandSlot,
 } from "./focus-band-priority"
+import {
+  collectRunningTools,
+  formatRunningToolsLabel,
+} from "../utils/running-tools"
 
 export {
   FOCUS_BAND_MAX_PX,
@@ -52,12 +57,17 @@ export function FocusBand({
       worstStatus: fleet?.worst_status,
     }) === "active"
   const isBrowserContext = capabilityLevel === "browser"
+  // #au4dch ST-4: long tools must surface in FocusBand (not only chat footer).
+  const runningTools = collectRunningTools(state.messages)
+  const hasThreadTools = runningTools.length > 0
+  const toolsLabel = formatRunningToolsLabel(runningTools)
 
   const slot: FocusBandSlot = resolveFocusBandSlot({
     hasPendingConfirm,
     hasL2Task,
     l2AbortRequired,
     hasFleetActivity,
+    hasThreadTools,
     isBrowserContext,
   })
 
@@ -104,9 +114,19 @@ export function FocusBand({
             <FleetStrip focusBand />
           </div>
         )}
+        {slot.primary === "thread_tools" && toolsLabel && (
+          <div style={styles.primary} data-focus-band-tools>
+            <ThreadToolsLine label={toolsLabel} />
+          </div>
+        )}
         {slot.primary === "l1_context" && (
           <div style={styles.primary}>
             <ContextStrip compact />
+          </div>
+        )}
+        {slot.secondaryTools && toolsLabel && (
+          <div style={styles.secondaryTools} data-focus-band-tools-secondary>
+            {toolsLabel}
           </div>
         )}
         {slot.secondaryContext && slot.primary === "confirm" && (
@@ -115,6 +135,16 @@ export function FocusBand({
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+/** Primary or secondary one-line active tools (ST-4). */
+function ThreadToolsLine({ label }: { label: string }) {
+  return (
+    <div style={styles.toolsLine} title={label}>
+      <span style={styles.toolsDot} aria-hidden />
+      <span style={styles.toolsText}>{label}</span>
     </div>
   )
 }
@@ -252,5 +282,38 @@ const styles: Record<string, CSSProperties> = {
     maxHeight: FOCUS_BAND_SECONDARY_MAX_PX,
     overflow: "hidden",
     flexShrink: 0,
+  },
+  toolsLine: {
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+    padding: "6px 10px",
+    minHeight: 28,
+    maxHeight: FOCUS_BAND_PRIMARY_MAX_PX,
+  },
+  toolsDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    background: tokens.warning,
+    flexShrink: 0,
+  },
+  toolsText: {
+    fontSize: 12,
+    fontWeight: 500,
+    color: tokens.text,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  secondaryTools: {
+    flexShrink: 0,
+    maxHeight: FOCUS_BAND_SECONDARY_MAX_PX,
+    padding: "2px 10px 6px",
+    fontSize: 11,
+    color: tokens.textMuted || "#888",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
   },
 }
