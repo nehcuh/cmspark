@@ -111,6 +111,56 @@ export function isTrustedDomain(domain: string): boolean {
 }
 
 /**
+ * User/agent-facing copy when cookie tools are blocked by trusted_domains.
+ * Keeps "Security Block:" prefix so classifyError stays on the security path.
+ */
+export function cookieTrustBlockedMessage(targetDomain: string, toolName?: string): string {
+  const domain = (targetDomain || "").trim() || "（未指定域名）"
+  const isGlobal = /global|all domains|\*/i.test(domain) || domain === "*"
+  const suggest = isGlobal
+    ? "list_all_cookies 需要信任域中包含通配 *（仅建议在隔离调试环境使用，风险极高）。"
+    : `建议添加：${domain}  或  *.${domain.split(".").slice(-2).join(".")}（若需整站子域）`
+  const toolBit = toolName ? `工具「${toolName}」` : "Cookie 相关工具"
+
+  return (
+    `Security Block: ${toolBit}无法访问域名「${domain}」的 Cookie——该域名不在「Cookie 信任域」名单中。\n` +
+    `\n` +
+    `这与「全自动巡航 / 自动批准域名」不是同一开关：\n` +
+    `· 全自动巡航：少弹确认（evaluate / navigate 等）\n` +
+    `· Cookie 信任域：是否允许读写该站登录态（get_cookies / set_cookie 等）\n` +
+    `\n` +
+    `操作路径：\n` +
+    `1. 打开侧栏 → 设置（齿轮）→「安全设置」→「Cookie 信任域」\n` +
+    `2. 点「管理信任域（需二次确认）」\n` +
+    `3. 每行一个域名，保存后请 Agent 重试本工具\n` +
+    `4. ${suggest}\n` +
+    `\n` +
+    `若不需要读 Cookie，可忽略此提示，改用页面文字/接口响应判断登录态。`
+  )
+}
+
+/** Structured fields for Side Panel tool-card hints (user_hint_zh). */
+export function cookieTrustBlockedPayload(
+  targetDomain: string,
+  toolName?: string,
+): { success: false; error: string; data: { error_code: string; user_hint_zh: string; target_domain: string } } {
+  const domain = (targetDomain || "").trim() || "unknown"
+  const error = cookieTrustBlockedMessage(targetDomain, toolName)
+  return {
+    success: false,
+    error,
+    data: {
+      error_code: "COOKIE_TRUST_DENIED",
+      target_domain: domain,
+      user_hint_zh:
+        `Cookie 被拦：域名「${domain}」不在信任名单。` +
+        `请到 设置 → 安全设置 → Cookie 信任域 添加该域名后重试。` +
+        `（全自动巡航不会自动放行 Cookie）`,
+    },
+  }
+}
+
+/**
  * Check if a domain is in the auto_approved_domains list (skips tool-call
  * confirmations for evaluate/navigate/etc.). Same matcher as isTrustedDomain
  * but reads from a separate config field so the two gates don't bleed together.

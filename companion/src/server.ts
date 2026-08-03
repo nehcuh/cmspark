@@ -53,7 +53,7 @@ import { handleMessage } from "./message-router"
 import { ThreadManager } from "./threads/thread-manager"
 import { SkillEngine } from "./skills/skill-engine"
 import { HistoryStore } from "./history/store"
-import { checkHighRiskExecution, highRiskExecutionDeniedError, isTrustedDomain, isAutoApprovedDomain, isCloudMetadataIp, isPrivateOrLoopbackIp, detectCriticalApis, classifyMcpCall, mergeCapabilities, CRITICAL_MCP_CAPABILITIES, CRITICAL_MCP_META_TOOLS } from "./security"
+import { checkHighRiskExecution, highRiskExecutionDeniedError, isTrustedDomain, isAutoApprovedDomain, isCloudMetadataIp, isPrivateOrLoopbackIp, detectCriticalApis, classifyMcpCall, mergeCapabilities, CRITICAL_MCP_CAPABILITIES, CRITICAL_MCP_META_TOOLS, cookieTrustBlockedPayload } from "./security"
 import { SecurityConfirmationManager, type SecurityConfirmationDetails, type SecurityConfirmationDecision, DEFAULT_SECURITY_CONFIRMATION_TIMEOUT_MS } from "./security-confirmation"
 import { getTrayInstance } from "./menu-bar-agent"
 import type { TrayConfirmRequest } from "./tray/tray-adapter"
@@ -701,11 +701,14 @@ export function createToolExecutor(ws: WebSocket) {
       }
 
       if (!isSafe) {
-        const result = {
-          success: false,
-          error: `Security Block: Access to cookie for domain "${targetDomain || "unknown"}" is blocked. This domain is not in the trusted_domains list. Please configure trusted domains in settings.`,
-        }
-        logger.warn("security.cookie_blocked", { tool_call_id: toolCallId, tool_name: toolName, target_domain: targetDomain || "unknown" })
+        // Plain-language path: Cookie 信任域 ≠ 全自动巡航 / auto_approved_domains.
+        const result = cookieTrustBlockedPayload(targetDomain || "unknown", toolName)
+        logger.warn("security.cookie_blocked", {
+          tool_call_id: toolCallId,
+          tool_name: toolName,
+          target_domain: targetDomain || "unknown",
+          error_code: "COOKIE_TRUST_DENIED",
+        })
         logToolFinish(toolCallId, toolName, startedAt, result)
         return result
       }
