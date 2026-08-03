@@ -407,16 +407,33 @@ function toolResultUserHint(result: any): string | null {
   const err = typeof result.error === "string" ? result.error : ""
   const dataHint =
     typeof result.data?.user_hint_zh === "string" ? result.data.user_hint_zh : ""
+  // Prefer structured companion hints (e.g. COOKIE_TRUST_DENIED) when present.
+  if (dataHint) return dataHint
   if (/workspace_root not set|需要先绑定工作区|pick a folder first/i.test(err)) {
     return "需要先绑定工作区：侧栏「场景」→「选择工作区」。协议解锁 / 运行自主度不会跳过这一步。"
   }
   if (/tool_not_allowed|当前场景不允许|可退出场景/i.test(err)) {
     return "当前场景限制了该工具：侧栏「场景」→「退出场景」后再试。协议解锁 / 运行自主度无效于此。"
   }
-  if (dataHint) return dataHint
-  // First line of multi-line Chinese errors
-  const first = err.split("\n").find((l: string) => l.trim() && !l.trim().startsWith("["))
-  if (first && /[\u4e00-\u9fff]/.test(first) && first.length < 120) return first.trim()
+  if (
+    /COOKIE_TRUST|Cookie 信任域|not in the trusted_domains|Access to cookie for domain/i.test(err) ||
+    result.data?.error_code === "COOKIE_TRUST_DENIED"
+  ) {
+    const dom =
+      typeof result.data?.target_domain === "string" && result.data.target_domain
+        ? result.data.target_domain
+        : "该域名"
+    return (
+      `Cookie 被拦：「${dom}」不在信任名单。` +
+      `设置 → 安全设置 → Cookie 信任域 → 管理信任域，添加域名后重试。` +
+      `全自动巡航不会自动放行 Cookie。`
+    )
+  }
+  // First line of multi-line Chinese errors (skip English "Security Block:" title line)
+  const first = err
+    .split("\n")
+    .find((l: string) => l.trim() && !l.trim().startsWith("[") && /[\u4e00-\u9fff]/.test(l) && l.length < 160)
+  if (first) return first.trim().replace(/^Security Block:\s*/i, "")
   return null
 }
 

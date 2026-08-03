@@ -946,6 +946,8 @@ export function SettingsSlideout() {
                 />
                 <div style={styles.helpText}>
                   每行一个域名；支持 <code>*.company.com</code> 通配子域。仅调试环境建议使用 <code>*</code>。
+                  <br />
+                  <b>与「全自动巡航」无关：</b>巡航只少弹确认；读写 Cookie（登录态）必须把目标站写在这里。
                 </div>
               </>
             ) : (
@@ -957,7 +959,8 @@ export function SettingsSlideout() {
                   管理信任域（需二次确认）
                 </button>
                 <div style={styles.helpText}>
-                  当前已配置 {(config.trusted_domains || []).length} 个信任域
+                  当前已配置 {(config.trusted_domains || []).length} 个信任域。
+                  渗透/需登录态时请把目标站加到此处；全自动巡航不会自动放行 Cookie。
                 </div>
               </div>
             )}
