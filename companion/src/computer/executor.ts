@@ -193,6 +193,8 @@ export interface ComputerExecutorDeps {
    * 缺省 = 层关闭。
    */
   tinyclickLocator?: ExperimentalLocator | null
+  /** When tinyclickLocator is null, honest skip reason for locate-chain logs. */
+  tinyclickSkipReason?: string
 }
 
 export interface ComputerStepResult {
@@ -840,6 +842,9 @@ export async function runComputerTask(
             capturer: deps.capturer,
             ocrAvailable,
             tinyclick: deps.tinyclickLocator ?? null,
+            ...(deps.tinyclickLocator
+              ? {}
+              : { tinyclickSkipReason: deps.tinyclickSkipReason || "model-not-admitted" }),
             log: (event, data) => log(event, { taskId, seq, ...data }),
           },
           trackCapture,
@@ -1171,6 +1176,7 @@ export async function runComputerTask(
               // 否则未经人审的建议会借刷新通道绕过 G4 门（实验层命中只在首个
               // locate 通道产生，且该命中走上方区域复核分支，不到这里）。
               tinyclick: null,
+              tinyclickSkipReason: "refresh-no-experimental",
               log: (event, data) => log(event, { taskId, seq, refresh: true, ...data }),
             },
             trackCapture,

@@ -106,10 +106,16 @@ export class QwenVlLocator {
       return { kind: "hit", point: { x, y }, raw: r.raw, ms: r.ms }
     } catch (e) {
       if (e instanceof ModelRuntimeError) {
+        // Layer unavailable / busy / packaging gaps → skip so OCR/UIA continue.
+        // Keep real codes (worker-missing, model-not-ready) — never collapse to
+        // a misleading "model-disabled" when the switch is actually ON.
         if (
           e.code === "model-disabled" ||
           e.code === "model-not-ready" ||
-          e.code === "qwen-vl-busy"
+          e.code === "qwen-vl-busy" ||
+          e.code === "worker-missing" ||
+          e.code === "worker-spawn-failed" ||
+          e.code === "worker-exit"
         ) {
           return { kind: "skipped", reason: e.code }
         }
