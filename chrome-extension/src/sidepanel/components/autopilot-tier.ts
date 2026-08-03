@@ -217,4 +217,8 @@ export const AUTOPILOT_CONSEQUENCE_ROWS: Array<{
 ]
 
 export const UNATTENDED_MATRIX_FOOTNOTES =
-  "‡ 仅白名单且已开坐标的 App；键入内容执行前不再逐字预览。† 勾选「同时协议解锁」才放行非 http(s)。* 须 enterprise 模块与范围。"
+  "‡ 仅白名单且已开坐标的 App；键入内容执行前不再逐字预览。" +
+  "† 勾选「同时协议解锁」才放行非 http(s)（武装时精确写入 allow_all_schemes）。" +
+  "* 须 enterprise 模块与范围；无人值守会 dual-write 持久巡航，解除武装才清。" +
+  "桌面 grant 进程内存 8h，重启失效。" +
+  " 三者正交：协议解锁(L1 scheme) · 巡航 bool(网页/企业 L2) · 桌面 grant(host_computer 初始 L2)——勿当作单一「更深自主」轴。"

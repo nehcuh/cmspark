@@ -196,6 +196,22 @@ export class SecurityPolicy {
     return { ok: true }
   }
 
+  /**
+   * Drop in-memory issued tokens for a tool (S36 S-F3 residual).
+   * Used on unattended disarm so a still-valid 2m host_computer token cannot
+   * race past a freshly disarmed grant if mid-flight re-entry used the token.
+   */
+  purgeIssuedTokensForTool(toolName: string): number {
+    let n = 0
+    for (const [tok, payload] of this.issuedTokens) {
+      if (payload.toolName === toolName) {
+        this.issuedTokens.delete(tok)
+        n++
+      }
+    }
+    return n
+  }
+
   private _sign(payload: TokenPayload): string {
     const data = `${payload.toolName}:${payload.code}:${payload.ts}:${payload.nonce}:${payload.codeHash}:${payload.threadId}`
     const sig = createHmac("sha256", TOKEN_SECRET).update(data).digest("hex")

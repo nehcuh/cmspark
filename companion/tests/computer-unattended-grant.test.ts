@@ -119,6 +119,40 @@ describe("arm / disarm process memory", () => {
   })
 })
 
+describe("task-abort-registry (disarm share)", () => {
+  it("flipAllComputerTaskAborts flips seeded tasks", async () => {
+    const { flipAllComputerTaskAborts, getComputerTaskAbortRegistry } = await import(
+      "../src/computer/task-abort-registry"
+    )
+    const reg = getComputerTaskAbortRegistry()
+    reg.clear()
+    reg.set("t1", false)
+    reg.set("t2", false)
+    assert.equal(flipAllComputerTaskAborts(), 2)
+    assert.equal(reg.get("t1"), true)
+    assert.equal(reg.get("t2"), true)
+    reg.clear()
+  })
+})
+
+describe("securityPolicy purge on disarm residual", () => {
+  it("purgeIssuedTokensForTool drops only matching tool", () => {
+    const { SecurityPolicy } = require("../src/security-policy") as typeof import("../src/security-policy")
+    const pol = new SecurityPolicy()
+    const a = pol.issueTokenFor("host_computer", { app: "com.tencent.xinWeChat", task: "t", actions: [] })
+    const b = pol.issueTokenFor("host_cli", { app: "mac.cli.echo", subcommand: "run", args: ["x"] })
+    assert.equal(pol.purgeIssuedTokensForTool("host_computer"), 1)
+    assert.equal(
+      pol.validateTokenFor(a.token, "host_computer", { app: "com.tencent.xinWeChat", task: "t", actions: [] }),
+      false,
+    )
+    assert.equal(
+      pol.validateTokenFor(b.token, "host_cli", { app: "mac.cli.echo", subcommand: "run", args: ["x"] }),
+      true,
+    )
+  })
+})
+
 describe("evaluateUnattendedHostComputerSkip live grant", () => {
   it("unarmed → false", () => {
     assert.equal(

@@ -2093,6 +2093,16 @@ export async function handleMessage(
     // ADR-021: process-memory unattended desktop grant (not config SoT)
     case "security.unattended.arm": {
       const { armUnattended } = await import("./computer/unattended-grant")
+      // S36 P0: server-side dual-ack (UI checkboxes alone are not a trust boundary)
+      const ackDesktop = rest.ack_desktop === true
+      const ackSession = rest.ack_session === true
+      if (!ackDesktop || !ackSession) {
+        return {
+          type: "error",
+          error:
+            "Arming unattended desktop requires ack_desktop=true and ack_session=true (Settings dual-ack).",
+        }
+      }
       const includeProtocol = rest.include_protocol === true
       const result = armUnattended({
         confirmation_phrase: rest.confirmation_phrase,
@@ -2103,16 +2113,16 @@ export async function handleMessage(
       if (!result.ok) {
         return { type: "error", error: result.error }
       }
-      // Packaging dual-write: full cruise bools (CU skip still only via grant).
-      // Phrase already validated by armUnattended — safe to persist flags.
+      // Packaging dual-write: exact cruise target vector (CU skip still only via grant).
+      // Phrase + acks already validated — safe to persist flags.
+      // allow_all_schemes is set exactly to include_protocol (clear sticky residual).
       const current = getConfig()
       saveConfig({
         security: {
           ...(current.security || {}),
           auto_approve_dangerous: true,
           auto_approve_enterprise_tools: true,
-          // Protocol only when requested; do not force-clear existing scheme unlock.
-          ...(includeProtocol ? { allow_all_schemes: true } : {}),
+          allow_all_schemes: includeProtocol,
         },
       })
       logger.info("security.unattended.arm_ok", {
@@ -2123,8 +2133,20 @@ export async function handleMessage(
     }
     case "security.unattended.disarm": {
       const { disarmUnattended } = await import("./computer/unattended-grant")
+      const { flipAllComputerTaskAborts } = await import("./computer/task-abort-registry")
+      const { securityPolicy } = await import("./security-policy")
       const clearCruise = rest.clear_cruise === true
       const status = disarmUnattended()
+      // S36 P0/F3: disarm stops in-flight host_computer injects
+      const aborted = flipAllComputerTaskAborts()
+      if (aborted > 0) {
+        logger.warn("security.unattended.disarm_aborted_computer_tasks", { matched: aborted })
+      }
+      // S-F3 residual: drop live host_computer L2 tokens so post-disarm re-entry re-gates
+      const purged = securityPolicy.purgeIssuedTokensForTool("host_computer")
+      if (purged > 0) {
+        logger.info("security.unattended.disarm_purged_tokens", { tool: "host_computer", purged })
+      }
       if (clearCruise) {
         const current = getConfig()
         saveConfig({
@@ -2136,7 +2158,12 @@ export async function handleMessage(
           },
         })
       }
-      return { type: "security.unattended.status", ...status }
+      return {
+        type: "security.unattended.status",
+        ...status,
+        computer_tasks_aborted: aborted,
+        tokens_purged: purged,
+      }
     }
     case "security.unattended.status": {
       const { getUnattendedStatus } = await import("./computer/unattended-grant")

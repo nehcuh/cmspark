@@ -82,6 +82,7 @@ class PythonLineTransport implements QwenVlTransport {
     const child = spawn(this.pythonBin, [this.workerScript], {
       stdio: ["pipe", "pipe", "pipe"],
       env: process.env,
+      windowsHide: true,
     })
     this.child = child
     child.stdout.setEncoding("utf8")

@@ -255,6 +255,7 @@ test("P2：layerSemantics 补 per-task 生效语义 + estop 引导（虚假保�
   const s = MODEL_SWITCH_COPY.layerSemantics
   assert.ok(s.includes("当前任务结束后生效"), "per-task 生效语义必须明示（P2）")
   assert.ok(s.includes("Ctrl+Alt+End"), "estop 引导必须存在（P2）")
+  assert.ok(s.includes("⌃⌥⌘⇧E") || s.includes("macOS"), "macOS 急停文案必须存在（S36）")
   assert.ok(s.includes("中止当前任务") || s.includes("中止任务"), "中止任务通道必须明示")
   // 原断言保持：L2/人工确认/未校准披露/降级叙事不受修订影响
   assert.ok(s.includes("人工确认"))
@@ -266,6 +267,7 @@ test("P2：switchRunningNote 任务运行中旁注 = per-task 生效 + estop 引
   const s = MODEL_SWITCH_COPY.switchRunningNote
   assert.ok(s.includes("当前任务结束后生效"))
   assert.ok(s.includes("Ctrl+Alt+End"))
+  assert.ok(s.includes("⌃⌥⌘⇧E") || s.includes("macOS"), "macOS 急停文案必须存在（S36）")
 })
 
 test("状态行文案：就绪双态 + 下载前缀 + 拒绝恒态（无未校准数字）", () => {

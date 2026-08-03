@@ -1,6 +1,10 @@
 // Structured CLI contract (Apps Phase-2 / L-CLI-*).
 // Manifest is the ONLY way to authorize subcommands/flags/positionals.
 // Free-args are forbidden — positionals are fixed-arity slots only.
+//
+// Argv style: GNU long flags only (`--name` / `--name value`). Windows-native
+// `/Flag` or single-dash tools need a wrapper binary or custom entry — host_cli
+// does not emit slash-flags (P-F5 honesty).
 
 export type CliRisk = "read-only" | "state-changing" | "dangerous"
 
@@ -45,8 +49,13 @@ export const CLI_DEFAULT_MAX_OUTPUT = 65_536
 export const CLI_HARD_MAX_OUTPUT = 256_000
 export const CLI_TRUNCATE_CHARS = 8_000
 
-/** Charset for flag values / positionals unless overridden by value_regex. */
-export const CLI_SAFE_VALUE = /^[A-Za-z0-9._:@/\\+\-=,~ ]{1,512}$/
+/**
+ * Charset for flag values / positionals unless overridden by value_regex.
+ * P-F7: include Unicode letters/numbers (CJK usernames & paths on Windows).
+ * Still length-capped; option-injection prefixes rejected separately.
+ */
+export const CLI_SAFE_VALUE =
+  /^[\p{L}\p{N}._:@/\\+\-=,~ ]{1,512}$/u
 
 const SUB_NAME = /^[a-zA-Z0-9][a-zA-Z0-9_\-]{0,63}$/
 const FLAG_NAME = /^[a-zA-Z0-9][a-zA-Z0-9_\-]{0,31}$/
@@ -114,6 +123,14 @@ export function validateCliManifest(raw: unknown): string | null {
         if (p.value_regex !== undefined && typeof p.value_regex !== "string") {
           return `positional "${p.name}" value_regex must be string`
         }
+        if (typeof p.value_regex === "string") {
+          try {
+            // eslint-disable-next-line no-new
+            new RegExp(p.value_regex)
+          } catch {
+            return `positional "${p.name}" value_regex is not a valid RegExp`
+          }
+        }
       }
     }
     if (s.timeout_ms !== undefined) {
@@ -166,6 +183,16 @@ export function looksLikeOptionInjection(value: string): boolean {
   return v.startsWith("-") || v.startsWith("/") || v.startsWith("@")
 }
 
+/**
+ * Full-string match (contract: value_regex must match the entire value).
+ * Unanchored patterns must not partial-pass (e.g. "safe" must not accept "unsafe").
+ */
+export function fullStringRegexMatch(pattern: string, value: string): boolean {
+  const re = new RegExp(pattern)
+  const m = value.match(re)
+  return m != null && m.index === 0 && m[0] === value
+}
+
 export function validateSlotValue(
   value: string,
   opts: { value_regex?: string; max_len?: number; label: string },
@@ -179,8 +206,9 @@ export function validateSlotValue(
   }
   if (opts.value_regex) {
     try {
-      const re = new RegExp(opts.value_regex)
-      if (!re.test(value)) return `${opts.label} failed value_regex`
+      if (!fullStringRegexMatch(opts.value_regex, value)) {
+        return `${opts.label} failed value_regex`
+      }
     } catch {
       return `${opts.label} has invalid value_regex in manifest`
     }

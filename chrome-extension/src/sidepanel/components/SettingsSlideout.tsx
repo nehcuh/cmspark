@@ -374,6 +374,8 @@ export function SettingsSlideout() {
           type: "security.unattended.arm",
           confirmation_phrase: phrase,
           include_protocol: unattendedIncludeProtocol === true,
+          ack_desktop: true,
+          ack_session: true,
         },
         () => {
           if (chrome.runtime.lastError) {
@@ -393,7 +395,7 @@ export function SettingsSlideout() {
               risk_score: 100,
               source: "ui_phrase_confirmed",
               message:
-                "已请求武装无人值守 — 以 Companion 返回的值守状态为准；host_computer 初始 L2 可跳过；危险 re-L2 仍确认",
+                "已请求武装无人值守 — 以 Companion 返回的值守状态为准；host_computer 初始 L2 可跳过；危险 re-L2 仍确认；网页/企业巡航会写入长期配置",
             },
           })
           setAutopilotConfirm(false)
@@ -409,11 +411,10 @@ export function SettingsSlideout() {
       return
     }
 
-    // Non-unattended: dual-write flags only; clear any leftover unattended grant
-    chrome.runtime.sendMessage({ type: "security.unattended.disarm" })
-    dispatch({
-      type: "SET_UNATTENDED_STATUS",
-      unattended: { armed: false, armedAt: null, expiresAt: null, includeProtocol: false },
+    // Non-unattended: dual-write flags only; clear any leftover unattended grant.
+    // Do not invent armed:false — wait for security.unattended.status.
+    chrome.runtime.sendMessage({ type: "security.unattended.disarm", clear_cruise: false }, () => {
+      chrome.runtime.sendMessage({ type: "security.unattended.status" })
     })
     const target = targetFlagsForTier(
       autopilotTierPick,
@@ -437,21 +438,28 @@ export function SettingsSlideout() {
 
   const handleAutopilotDisarm = () => {
     setAutopilotBusy(true)
-    // Clear unattended grant + all cruise flags (full disarm)
-    chrome.runtime.sendMessage({ type: "security.unattended.disarm", clear_cruise: true })
-    dispatch({
-      type: "SET_UNATTENDED_STATUS",
-      unattended: { armed: false, armedAt: null, expiresAt: null, includeProtocol: false },
-    })
-    applySecurityFlagsTarget(
-      disarmAllFlags(),
-      undefined,
-      "解除运行自主度 / 无人值守（已关闭网页/企业/协议三类自动批准 + 桌面值守）",
+    // Full disarm: companion SoT for grant + cruise; no optimistic SET_UNATTENDED_STATUS.
+    chrome.runtime.sendMessage(
+      { type: "security.unattended.disarm", clear_cruise: true },
+      () => {
+        if (chrome.runtime.lastError) {
+          setAutopilotMsg(chrome.runtime.lastError.message || "解除失败（扩展通道）")
+          setAutopilotBusy(false)
+          return
+        }
+        applySecurityFlagsTarget(
+          disarmAllFlags(),
+          undefined,
+          "解除运行自主度 / 无人值守（已关闭网页/企业/协议三类自动批准 + 桌面值守；进行中的桌面任务已请求中止）",
+        )
+        chrome.runtime.sendMessage({ type: "config.get" })
+        chrome.runtime.sendMessage({ type: "security.unattended.status" })
+        setAutopilotBusy(false)
+        setAutopilotConfirm(false)
+        setAutopilotPhrase("")
+        setAutopilotMsg(null)
+      },
     )
-    setAutopilotBusy(false)
-    setAutopilotConfirm(false)
-    setAutopilotPhrase("")
-    setAutopilotMsg(null)
   }
 
   const handleShortcutChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -665,7 +673,7 @@ export function SettingsSlideout() {
                 <div style={styles.field}>
                   <div style={styles.helpText}>
                     长程无人值守的<strong>主入口</strong>。默认关闭。急停与硬性拒绝仍然有效。
-                    选「无人值守」后，已白名单坐标 App 的桌面操控可免初始确认（本会话，重启失效）。
+                    选「无人值守」后，已白名单坐标 App 的桌面操控可免初始确认（进程会话 8h/重启失效）；同时会写入长期配置开启网页/企业巡航，解除武装时关闭。
                   </div>
                   <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
                     {(
@@ -838,7 +846,7 @@ export function SettingsSlideout() {
                               checked={unattendedAckSession}
                               onChange={(e) => setUnattendedAckSession(e.target.checked)}
                             />
-                            确认：重启 Companion 后自动失效，不会写入长期配置
+                            确认：桌面值守为进程会话（重启 Companion 后失效）；同时会<strong>写入长期配置</strong>开启网页/企业自动批准（解除武装时一并关闭）
                           </label>
                           <label style={{ display: "flex", gap: 6, cursor: "pointer", color: "#8a5a00" }}>
                             <input
@@ -1514,7 +1522,7 @@ export function SettingsSlideout() {
                 >
                   {model?.modelRootDir ||
                     model?.preflight?.modelRootDir ||
-                    "~/.cmspark-agent/models"}
+                    "（Companion 数据目录 / models — 打开设置后由服务端回填绝对路径）"}
                 </div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
                   <button
@@ -1582,7 +1590,7 @@ export function SettingsSlideout() {
                       {
                         id: "system" as const,
                         label: "本机全局 Python",
-                        desc: "使用 PATH 上的 python3；安装依赖需你在终端手动执行（避免静默改系统环境）",
+                        desc: "使用 PATH 上的 python / python3（Windows 常见 python.exe / py）；安装依赖需你在终端手动执行（避免静默改系统环境）",
                       },
                     ] as const
                   ).map((opt) => {
@@ -1634,7 +1642,7 @@ export function SettingsSlideout() {
                       type="button"
                       style={styles.secondaryBtn}
                       disabled={model === null || model.modelStatus === "downloading"}
-                      title="用系统对话框选择 python3 / python 可执行文件"
+                      title="用系统对话框选择 python / python3 可执行文件"
                       onClick={() => {
                         dispatch({ type: "SET_COMPUTER_MODEL_ERROR", error: null })
                         send({ type: "computer.model.pick_python_path", source: "settings" })
@@ -1653,7 +1661,7 @@ export function SettingsSlideout() {
                       model.modelStatus === "downloading" ||
                       (model?.pythonMode || model?.preflight?.pythonMode) === "system"
                     }
-                    title="创建或修复 ~/.cmspark-agent/python-env；优先 uv"
+                    title="创建或修复 Companion 数据目录下的独立 python-env；优先 uv"
                     onClick={() => {
                       dispatch({ type: "SET_COMPUTER_MODEL_ERROR", error: null })
                       send({ type: "computer.model.ensure_python_env", source: "settings" })

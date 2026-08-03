@@ -2,6 +2,18 @@
 
 ## Technical Pitfalls
 
+### 无人值守 packaging：进程 grant vs 持久 cruise dual-write（2026-08-03 S36）
+- **现象**：UI 勾选「重启后自动失效，不会写入长期配置」；`security.unattended.arm` 却 `saveConfig` 写 `auto_approve_dangerous` + `auto_approve_enterprise_tools`（可选 `allow_all_schemes`）
+- **影响**：用户以为「会话值守」；重启后桌面 grant 没了，**网页/企业巡航仍开**；enterprise 模块开启时 shell/netsec 可跟跳 L2
+- **实现锚点**：`message-router.ts` arm 段 dual-write；`SettingsSlideout` 仅客户端 dual-ack；`include_protocol:false` **不** force-clear 已有 scheme unlock
+- **修法方向**：服务端 acks/`user_gesture`；arm 时精确写 target 向量（含 clear protocol）；文案与 dual-write 同真；或停止 dual-write 仅进程 overlay
+- **报告**：`docs/audit/reviews/multi-adversarial-review-20260803-main-105-107.md`
+
+### `ensure_python_env` 失败前已写 `pythonMode: isolated`（2026-08-03）
+- **锚点**：`companion/src/computer/model-handlers.ts` case `computer.model.ensure_python_env` — `setComputerModelFields({ pythonMode: "isolated" })` 在 `ensureIsolatedPythonEnv` 之前
+- **影响**：venv/pip 失败后配置卡在 isolated，preflight/download 按 isolated 判未就绪，原 system 路径被弃用
+- **修法**：仅 `result.ok` 后持久化，或失败回滚旧 mode
+
 ### Vision 405 ≠ 本地 Qwen；智谱 base_url 必须带 `/api`（2026-08-02）
 - **用户误判**：已下载 Qwen3-VL 并开启实验层，仍报 `vision.analysis_failed` / `405 Not Allowed (nginx)`（截图 + `analyze_image` 同错）
 - **两层能力**：
@@ -227,6 +239,16 @@
 
 ## Reusable Patterns
 
+### 合 main 后多路对抗复审（post-ship multi-lane review）（2026-08-03）
+- **何时用**：#105/#106 类大 diff 已合 main，需要独立于实现会话的对抗体检
+- **步骤**：
+  1. `git fetch` + 安全 rebase/ff；收集 **生产路径** diff（排除 audit 文档噪声）
+  2. 并行 4 路 read-only subagent：Security · Correctness · Architecture · Compat（可按题换角色）
+  3. 编排器 **[inspected]** 抽检 HIGH（勿盲信 lane 摘要）
+  4. 合成：任一路 REQUEST_CHANGES 且 architect≠CLEAR → 最终 REQUEST_CHANGES；写 `docs/audit/reviews/multi-adversarial-review-*.md`
+- **价值**：捕获 dual-write 文案撒谎、失败路径状态机、跨平台文案等实现门控易漏项
+- **产物例**：`docs/audit/reviews/multi-adversarial-review-20260803-main-105-107.md`
+
 ### 产品安全入口：对抗四角色 → SoT → Pi/Claude 双审 → 再实现（2026-08-02）
 - **何时用**：改 Trust / 确认门 / 高风险 UI 叙事（尤其用户与 ADR 心智冲突时）
 - **步骤**：
@@ -348,19 +370,19 @@
 
 ## Architecture Decisions
 
-### Trust IA + 运行自主度（Autopilot packaging，2026-08-02）
-- **问题**：权限入口过多；「God-mode」过卖（实际只是 `allow_all_schemes` = L1 + 部分网页 L2）；用户要的是长程无人值守一条路
-- **否决**：把 God 扩成跳过 shell/CU/spawn forceConfirm（Scheme C）— 升级静默提权 + prompt-injection 产品化 RCE；ADR-010/014/017/020 合同破坏
-- **产品形态**：
-  1. UI 主标签 **协议解锁**（wire 仍 `allow_all_schemes`；审计 reason 可仍 `god_mode`）
-  2. **运行自主度** = Trust packaging：档位双写现有 `auto_approve_dangerous` / `auto_approve_enterprise_tools` / `allow_all_schemes`
-  3. Hard floors v1：CU 任务 L2、`spawn_worker`、cookie、workspace、pack whitelist 等仍确认
-  4. 不新增 superseding config enum（P0/P1）
-- **流程**：四路对抗 → SoT/plan → Pi+Claude **APPROVE_WITH_NITS** → 再改代码；**禁止**先改 `server.ts` skip 代数
-- **SoT**：`docs/superpowers/specs/2026-08-02-trust-ia-autopilot-design.md`
-- **实现**：`SettingsSlideout` 运行自主度 + 高级闸门；`autopilot-tier.ts`；StatusRail 巡航徽章；companion skip 未改
-- **P2 开放**：会话/线程作用域武装、TTL、spawn 预算、含桌面巡航
-- **教训**：用户「God=全开」用 **Autopilot + 后果矩阵** 接 JTBD，不要污染协议键语义
+### Trust IA + 运行自主度（2026-08-02）→ **#106 main**
+- 协议解锁 + 运行自主度 dual-write 三 bool；否决 Scheme C（God 不扩 CU/shell）
+- Ship：PR **#106** `ed92a81`
+
+### 无人值守桌面值守 ADR-021（2026-08-02）→ **#106 main**
+- **硬需求**：长程无人值守；微信 `host_computer` 可免 initial L2
+- **安全**：对抗 REJECT 目标；产品以 F1–F15 地板 + OCR residual 推进
+- **实现**：进程 grant 8h；`hostComputerTrustSkip = G1 || unattended`；open_within_app；仅 coordinateAllowed
+- **UI**：无人值守档 + **值守中 · 桌面**；急停 ≠ 解除；Pack 禁武装
+- **流程坑**：扩展初始同步加消息必须改 `sidepanel-state.test.ts`；勿 `armed || true` 乐观假绿
+- **SoT**：`docs/adr/021-unattended-desktop-session.md` · unattended-desktop design/plan
+- **真机**：`docs/superpowers/plans/2026-08-02-unattended-desktop-manual-checklist.md`
+- **S36 post-ship（未关）**：UI「不会写入长期配置」与 arm 时 `saveConfig` dual-write cruise/enterprise 冲突；`include_protocol:false` 不清除已有 `allow_all_schemes`；服务端未强制 dual-ack（仅短语）
 
 ### Companion Native HUD N1–N10（2026-07-27 LOCK，P3a 前）
 - **Source of truth**: `docs/decisions/v1.3/companion-native-hud-n1n10-lock-2026-07-27.md`

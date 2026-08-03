@@ -95,6 +95,8 @@ function runCapture(
     const child = spawn(bin, args, {
       stdio: ["ignore", "pipe", "pipe"],
       env: env ?? process.env,
+      // S36 P0: suppress console flash for console-subsystem tools under GUI Companion
+      windowsHide: true,
     })
     let out = ""
     let err = ""
@@ -525,6 +527,26 @@ export interface EnsureEnvResult {
   error?: string
 }
 
+/** Windows MAX_PATH residual tip when venv/torch trees fail (P-F8). */
+export function longPathFailureHint(
+  error: string,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  if (platform !== "win32") return error
+  const blob = error.toLowerCase()
+  const pathish =
+    blob.includes("path") ||
+    blob.includes("filename") ||
+    blob.includes("too long") ||
+    blob.includes("enametoolong") ||
+    blob.includes("no such file") ||
+    blob.includes("失败")
+  if (!pathish) {
+    return `${error}。Windows 提示：torch/venv 目录很深时可能触发 MAX_PATH——可启用「Win32 长路径」或把 python-env/模型目录放到更短路径（如 C:\\cmspark-py）。`
+  }
+  return `${error}。疑似路径过长/MAX_PATH：启用 Win32 长路径，或将独立环境与模型目录放到更短路径（如 C:\\cmspark-py）。`
+}
+
 /**
  * Create/repair isolated venv and install packages.
  * Prefer: uv venv + uv pip install when uv available (absolute path only — T2).
@@ -547,6 +569,14 @@ export async function ensureIsolatedPythonEnv(
     uv.ok && uv.path && path.isAbsolute(uv.path) ? uv.path : null
   const usedUv = Boolean(uvBin)
 
+  const fail = (error: string, extra?: Partial<EnsureEnvResult>): EnsureEnvResult => ({
+    ok: false,
+    usedUv,
+    log: logs.join("\n"),
+    error: longPathFailureHint(error),
+    ...extra,
+  })
+
   try {
     fs.mkdirSync(path.dirname(root), { recursive: true })
   } catch {
@@ -561,7 +591,7 @@ export async function ensureIsolatedPythonEnv(
       if (cr.out) logs.push(cr.out.trim().slice(0, 500))
       if (cr.err) logs.push(cr.err.trim().slice(0, 500))
       if (cr.code !== 0) {
-        return { ok: false, usedUv: true, log: logs.join("\n"), error: "uv venv 创建失败" }
+        return fail("uv venv 创建失败", { usedUv: true })
       }
     }
     if (packages.length > 0) {
@@ -571,38 +601,30 @@ export async function ensureIsolatedPythonEnv(
       if (ir.out) logs.push(ir.out.trim().slice(-800))
       if (ir.err) logs.push(ir.err.trim().slice(-800))
       if (ir.code !== 0) {
-        return {
-          ok: false,
+        return fail("uv pip install 失败（见日志）", {
           usedUv: true,
           pythonPath: exists(isolatedPythonBin()) ? isolatedPythonBin() : undefined,
-          log: logs.join("\n"),
-          error: "uv pip install 失败（见日志）",
-        }
+        })
       }
     }
   } else {
     logs.push("未检测到 uv，使用 python -m venv + pip")
     // When deps injected for unit tests without real python, short-circuit
     if (deps?.findUv || deps?.runCapture) {
-      return {
-        ok: false,
-        usedUv: false,
-        log: logs.join("\n"),
-        error: "本机没有可用的 Python，无法创建独立环境",
-      }
+      return fail("本机没有可用的 Python，无法创建独立环境", { usedUv: false })
     }
     const basePy =
       (await probePythonBin("python3")) ||
       (await probePythonBin("python")) ||
       (process.platform === "win32" ? await probePythonBin("py") : null)
     if (!basePy) {
-      return { ok: false, usedUv: false, log: logs.join("\n"), error: "本机没有可用的 Python，无法创建独立环境" }
+      return fail("本机没有可用的 Python，无法创建独立环境", { usedUv: false })
     }
     if (!exists(isolatedPythonBin())) {
       const cr = await capture(basePy, ["-m", "venv", root], 120_000)
       logs.push(`python -m venv → exit ${cr.code}`)
       if (cr.code !== 0) {
-        return { ok: false, usedUv: false, log: logs.join("\n"), error: "venv 创建失败" }
+        return fail("venv 创建失败", { usedUv: false })
       }
     }
     if (packages.length > 0) {
@@ -610,13 +632,10 @@ export async function ensureIsolatedPythonEnv(
       const ir = await capture(pip, ["install", ...packages], 600_000)
       logs.push(`pip install ${packages.join(" ")} → exit ${ir.code}`)
       if (ir.code !== 0) {
-        return {
-          ok: false,
+        return fail("pip install 失败（见日志）", {
           usedUv: false,
           pythonPath: isolatedPythonBin(),
-          log: logs.join("\n"),
-          error: "pip install 失败（见日志）",
-        }
+        })
       }
     }
   }
@@ -635,9 +654,48 @@ export async function ensureIsolatedPythonEnv(
 
   const exe = await probePythonBin(isolatedPythonBin())
   if (!exe) {
-    return { ok: false, usedUv, log: logs.join("\n"), error: "独立环境创建后仍无法启动 Python" }
+    return fail("独立环境创建后仍无法启动 Python")
   }
   return { ok: true, pythonPath: exe, usedUv, log: logs.join("\n") }
+}
+
+/** Platform-aware absolute path (host path.isAbsolute misreads win32 drive letters on posix). */
+export function isAbsolutePathForPlatform(
+  p: string,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  if (platform === "win32") return path.win32.isAbsolute(p)
+  return path.posix.isAbsolute(p)
+}
+
+/**
+ * Quote a path for user-facing shell copy-paste.
+ * PowerShell needs `& 'path with spaces'` (quoted path alone is a string, not invoke).
+ */
+export function shellInvokePath(
+  absOrBare: string,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  if (!isAbsolutePathForPlatform(absOrBare, platform)) {
+    // bare command names (uv / python) — no quoting
+    if (!absOrBare.includes("/") && !absOrBare.includes("\\")) return absOrBare
+  }
+  if (platform === "win32") {
+    // PowerShell: & 'C:\Users\John Doe\...\uv.exe'
+    return `& '${absOrBare.replace(/'/g, "''")}'`
+  }
+  return `"${absOrBare.replace(/"/g, '\\"')}"`
+}
+
+/** Quote a path as an argument (not invocable) for the same shell family. */
+export function shellArgPath(
+  p: string,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  if (platform === "win32") {
+    return `'${p.replace(/'/g, "''")}'`
+  }
+  return `"${p.replace(/"/g, '\\"')}"`
 }
 
 /** Build user-facing install command lines (prefer uv when available + isolated). */
@@ -648,27 +706,42 @@ export function buildInstallCommands(opts: {
   uvPath?: string
   packages: string[]
   pythonPath?: string
+  /** Target platform for shell quoting (default: host). */
+  platform?: NodeJS.Platform
 }): string[] {
   if (opts.packages.length === 0) return []
+  const plat = opts.platform ?? process.platform
   const pkgs = opts.packages.join(" ")
   const uvCmd =
-    opts.uvPath && path.isAbsolute(opts.uvPath) ? `"${opts.uvPath}"` : "uv"
+    opts.uvPath && isAbsolutePathForPlatform(opts.uvPath, plat)
+      ? shellInvokePath(opts.uvPath, plat)
+      : "uv"
+  const rootArg = shellArgPath(isolatedPythonRoot(), plat)
+  const binArg = shellArgPath(isolatedPythonBin(), plat)
   if (opts.mode === "isolated") {
     if (opts.uvAvailable) {
       return [
-        `${uvCmd} venv "${isolatedPythonRoot()}"`,
-        `${uvCmd} pip install --python "${isolatedPythonBin()}" ${pkgs}`,
+        `${uvCmd} venv ${rootArg}`,
+        `${uvCmd} pip install --python ${binArg} ${pkgs}`,
       ]
     }
-    const py = opts.pythonPath || (process.platform === "win32" ? "python" : "python3")
-    return [`"${py}" -m venv "${isolatedPythonRoot()}"`, `"${isolatedPipBin()}" install ${pkgs}`]
+    const pyBare = opts.pythonPath || (plat === "win32" ? "python" : "python3")
+    const pyCmd = isAbsolutePathForPlatform(pyBare, plat)
+      ? shellInvokePath(pyBare, plat)
+      : pyBare
+    const pipBin = isolatedPipBin()
+    const pipCmd = shellInvokePath(pipBin, plat)
+    return [`${pyCmd} -m venv ${rootArg}`, `${pipCmd} install ${pkgs}`]
   }
   // system
   if (opts.uvAvailable) {
     return [`${uvCmd} pip install ${pkgs}`]
   }
-  const py = opts.pythonPath || (process.platform === "win32" ? "python" : "python3")
-  return [`"${py}" -m pip install ${pkgs}`]
+  const pyBare = opts.pythonPath || (plat === "win32" ? "python" : "python3")
+  const pyCmd = isAbsolutePathForPlatform(pyBare, plat)
+    ? shellInvokePath(pyBare, plat)
+    : pyBare
+  return [`${pyCmd} -m pip install ${pkgs}`]
 }
 
 

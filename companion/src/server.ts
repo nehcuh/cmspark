@@ -95,6 +95,10 @@ import {
   AUTH_TIMEOUT_MS,
 } from "./ws-auth"
 import { allowInboundLogEvent } from "./log-event-gate"
+import {
+  flipAllComputerTaskAborts,
+  getComputerTaskAbortRegistry,
+} from "./computer/task-abort-registry"
 
 const MAX_WS_MESSAGE_SIZE = 10 * 1024 * 1024 // 10MB
 
@@ -331,14 +335,10 @@ const DESTRUCTIVE_MCP_TOOL_PATTERN = /\b(write|delete|exec|commit|rm|remove|shel
 const mcpSessionByWs = new Map<WebSocket, string>()
 
 /**
- * WP2 (§E.6): running computer-task abort registry. The host_computer handler
- * inserts its taskId before runComputerTask starts (so the panel can target a
- * run that is still inside its first L2 gate) and removes it in a finally.
- * A computer.task.abort WS message flips the flag; the executor's abortCheck
- * polls it between actions / during waits. Any authenticated panel connection
- * may abort — stopping injection is always the safe direction.
+ * WP2 (§E.6): running computer-task abort registry lives in
+ * computer/task-abort-registry.ts so unattended disarm can flip flags too.
  */
-const computerTaskAbort = new Map<string, boolean>()
+const computerTaskAbort = getComputerTaskAbortRegistry()
 
 /**
  * Exported for integration tests (R1, §E.6.2): direct access to the running-
@@ -348,6 +348,9 @@ const computerTaskAbort = new Map<string, boolean>()
 export function getComputerTaskRegistryForTests(): Map<string, boolean> {
   return computerTaskAbort
 }
+
+/** Re-export for integration tests (chat.abort / unattended disarm). */
+export { flipAllComputerTaskAborts }
 
 /**
  * WP2 (§E.6) F1: computer.task.abort WS handler — extracted from the message
@@ -360,20 +363,6 @@ export function getComputerTaskRegistryForTests(): Map<string, boolean> {
  * the WS seam) — the send alone is guarded by the OPEN check. Returns the
  * ack payload (also used by the dispatch to send the ack).
  */
-/**
- * P0-B: silently flip every running computer-task abort flag (no WS ack).
- * Used by chat.abort so Stop also kills host_computer injects without a
- * separate 急停 and without double-acking computer.task.abort.ack.
- * Returns the number of flags flipped. Exported for integration tests.
- */
-export function flipAllComputerTaskAborts(): number {
-  let matched = 0
-  for (const k of computerTaskAbort.keys()) {
-    computerTaskAbort.set(k, true)
-    matched++
-  }
-  return matched
-}
 
 export function handleComputerTaskAbort(
   ws: { readyState: number; send: (data: string) => void },

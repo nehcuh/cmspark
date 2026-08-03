@@ -5,8 +5,17 @@ import {
   buildCliArgv,
   hostCliBindingPayload,
   looksLikeOptionInjection,
+  validateSlotValue,
+  fullStringRegexMatch,
 } from "../src/apps/cli-manifest"
-import { buildCliChildEnv, stripAnsi, prepareCliExecution, echoCliManifest } from "../src/apps/cli-exec"
+import {
+  buildCliChildEnv,
+  defaultCliPathFallback,
+  stripAnsi,
+  prepareCliExecution,
+  echoCliManifest,
+} from "../src/apps/cli-exec"
+import { CLI_SAFE_VALUE } from "../src/apps/cli-manifest"
 import { markCliOutputSeen, clearCliOutputTaint, isCliOutputTainted, _resetCliQ5ForTests } from "../src/apps/cli-q5"
 import { SecurityPolicy } from "../src/security-policy"
 import type { AppEntry } from "../src/apps/types"
@@ -21,6 +30,34 @@ test("validateCliManifest requires ≥1 subcommand", () => {
     }),
     null,
   )
+})
+
+test("value_regex full-string match (no partial pass)", () => {
+  assert.equal(fullStringRegexMatch("safe", "safe"), true)
+  assert.equal(fullStringRegexMatch("safe", "unsafe"), false)
+  assert.equal(fullStringRegexMatch("safe", "safe;evil"), false)
+  assert.equal(fullStringRegexMatch("^[A-Za-z0-9]+$", "abc"), true)
+  assert.equal(fullStringRegexMatch("[A-Za-z0-9]+", "abcXXX"), true) // full match of pattern on whole value? "abcXXX" matches [A-Za-z0-9]+ fully
+  assert.equal(fullStringRegexMatch("[A-Za-z0-9]+", "abc XXX"), false)
+  assert.equal(
+    validateSlotValue("unsafe", { value_regex: "safe", label: "arg" }),
+    "arg failed value_regex",
+  )
+  assert.equal(validateSlotValue("safe", { value_regex: "safe", label: "arg" }), null)
+})
+
+test("validateCliManifest rejects invalid positional value_regex", () => {
+  const err = validateCliManifest({
+    schema_version: 1,
+    subcommands: [
+      {
+        name: "run",
+        risk: "read-only",
+        positionals: [{ name: "p", required: true, value_regex: "[unclosed" }],
+      },
+    ],
+  })
+  assert.ok(err && err.includes("value_regex"))
 })
 
 test("buildCliArgv rejects undeclared flags and option injection", () => {
@@ -61,6 +98,22 @@ test("bindingPayloadFor host_cli three-place non-empty", () => {
     pol.validateTokenFor(tok.token, "host_cli", { app: "mac.cli.other", subcommand: "run", args: ["t1"] }),
     false,
   )
+})
+
+test("CLI_SAFE_VALUE accepts CJK path segments (P-F7)", () => {
+  assert.ok(CLI_SAFE_VALUE.test("C:\\Users\\陈明\\docs\\报告.txt".replace(/\\/g, "\\")))
+  assert.ok(CLI_SAFE_VALUE.test("/Users/太郎/docs/レポート"))
+  assert.equal(validateSlotValue("报告.md", { label: "arg" }), null)
+  assert.ok(validateSlotValue("$(evil)", { label: "arg" }) !== null)
+})
+
+test("buildCliChildEnv PATH fallback is platform-aware (P-F6)", () => {
+  const win = buildCliChildEnv({ SystemRoot: "C:\\Windows" } as any, "win32")
+  assert.ok(win.PATH && win.PATH.includes("System32"))
+  assert.ok(!win.PATH!.includes("/usr/bin"))
+  const unix = buildCliChildEnv({} as any, "darwin")
+  assert.ok(unix.PATH && unix.PATH.includes("/usr/bin"))
+  assert.equal(defaultCliPathFallback("win32", { SystemRoot: "D:\\Win" }), "D:\\Win\\System32;D:\\Win;D:\\Win\\System32\\Wbem;D:\\Win\\System32\\WindowsPowerShell\\v1.0")
 })
 
 test("buildCliChildEnv scrubs secrets", () => {
