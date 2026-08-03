@@ -1,0 +1,7 @@
+{
+  "batch": "s40-pr114-merge",
+  "timestamp": "20260804-073114",
+  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/c/Users/HuChen/Projects/cmspark/docs/audit/reviews/s40-pr114-merge-pi-20260804-073114.md" },
+  "approve": true,
+  "diff_path": "/c/Users/HuChen/Projects/cmspark/docs/audit/reviews/s40-pr114-merge-diff-20260804-073114.patch"
+}
