@@ -2,6 +2,16 @@
 
 ## Technical Pitfalls
 
+### Anthropic first-party denylist：FQDN 尾点可绕过 naive 匹配（2026-08-03 S38）
+- **现象**: `api.anthropic.com.`（trailing dot）若只做 exact / `.anthropic.com` 后缀比较，可能不命中 first-party → 兼容头策略失效
+- **修法**: hostname 规范化时 **strip trailing dots** 再匹配；加回归测
+- **关联**: L7 union 必须同时挡 `client_header_profile` 与 `extra_headers`，防 profile 关了仍用 extras 伪装 UA
+
+### LLM 协议适配：内部 OpenAI 形、Anthropic 只在 wire（2026-08-03）
+- 线程持久化 / tool 环 **不要** 迁 Messages 形；`tool_use.id` 出站规范化 `^[a-zA-Z0-9_-]+$`
+- P0 用 `fetch`+SSE 而非 `@anthropic-ai/sdk`，才能控 Coding Plan 兼容头
+- 官方 `api.anthropic.com` / `claude.ai` **禁止** Claude Code 兼容头；system 首行「You are Claude Code」v1 不做
+
 ### 无人值守 packaging：进程 grant vs 持久 cruise dual-write（2026-08-03 S36）
 - **现象**：UI 勾选「重启后自动失效，不会写入长期配置」；`security.unattended.arm` 却 `saveConfig` 写 `auto_approve_dangerous` + `auto_approve_enterprise_tools`（可选 `allow_all_schemes`）
 - **影响**：用户以为「会话值守」；重启后桌面 grant 没了，**网页/企业巡航仍开**；enterprise 模块开启时 shell/netsec 可跟跳 L2
@@ -238,6 +248,16 @@
 - 教训：多层安全「跳过」必须写清代数；allowlist/task auth/L2/forceConfirm/god-mode 不是同一开关。
 
 ## Reusable Patterns
+
+### 实现 workflow：节点 Pi-only + 里程碑 Claude+Pi dual（2026-08-03 S38）
+- **何时用**：多切片实现且需外部审，但不想每个切片都跑双路（贵/慢）
+- **脚本**:
+  - 节点：`scripts/pi-external-review.sh <batch> <prompt> [base]`
+  - 里程碑：`scripts/dual-external-review.sh <batch> <prompt> [base]`
+- **编排例**: `.grok/workflows/llm-anthropic-protocol-p0-with-gates.rhai`
+  - Prep → Node impl → Pi → Fix/recheck → … → M1 tests → dual → Fix → Ship note
+- **门禁**: Pi/dual REJECT 则 `await_user`；NITS 修安全/正确性后可过
+- **价值**: N1 真实抓住 denylist 绕过；M1 dual 锁定 ship 面
 
 ### 合 main 后多路对抗复审（post-ship multi-lane review）（2026-08-03）
 - **何时用**：#105/#106 类大 diff 已合 main，需要独立于实现会话的对抗体检

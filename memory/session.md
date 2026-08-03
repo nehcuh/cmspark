@@ -2,6 +2,16 @@
 
 ## Current Session
 
+### S38 (2026-08-03) [LLM Anthropic 协议 P0 · 多路设计 + workflow 门禁 · PR #112]
+- **需求**: 支持 Anthropic Messages；可选 Coding Plan 网关兼容头（非 Max 伪装）
+- **设计**: 三路对抗 → brief → Pi+Claude dual **APPROVE_WITH_NITS** → DIRECTION LOCKED
+- **SoT**: `docs/decisions/llm-anthropic-protocol-design-2026-08-03.md` · synthesis + ship note
+- **实现**: workflow `llm-anthropic-protocol-p0-with-gates`（节点 Pi / 里程碑 dual）；N1 Pi 先 REJECT（FQDN 尾点绕过）→ 修后 APPROVE*
+- **代码**: `LlmProvider` + OpenAI/Anthropic wire；L7 first-party 硬拒；默认 openai；52 单测绿
+- **Ship**: commit `5d9986b` · branch `feat/llm-anthropic-protocol-p0` · **PR #112** OPEN
+- **下次**: 合 #112；P1 UI（协议选择 + Coding Plan 兼容头 checkbox）；skill-craft 旁路迁 createProvider
+- Recorded: yes — wire-only Anthropic + L7 + 节点/里程碑分级复审
+
 ### S37 (2026-08-03) [Outbound MCP Server 战略 · 对抗 + 双审 · brief 落盘]
 - **问题**: 是否将插件作为服务暴露给 Claude Code / Grok / Kimi 等（Skill vs MCP）
 - **对抗**: Advocate / Skeptic / Implementer + 市面四类（Playwright / DevTools MCP / real-Chrome MCP / cloud stealth）
