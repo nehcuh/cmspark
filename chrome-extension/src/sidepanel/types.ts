@@ -136,6 +136,12 @@ export interface LogEntry {
 
 export type SendShortcut = "Enter" | "Cmd+Enter" | "Ctrl+Enter"
 
+/** Wire protocol for chat (Anthropic P1). Default openai. */
+export type LlmProtocol = "openai" | "anthropic"
+
+/** Coding Plan gateway-compat header profile. */
+export type LlmClientHeaderProfile = "none" | "claude_code_compat"
+
 export interface LLMConfig {
   base_url: string
   api_key: string
@@ -145,6 +151,15 @@ export interface LLMConfig {
   model_name: string
   temperature: number
   context_window: number
+  /**
+   * Wire protocol; default "openai". Flattened from companion config.llm.protocol.
+   */
+  protocol?: LlmProtocol
+  /**
+   * Coding Plan gateway-compat headers (L12). Only meaningful when protocol=anthropic.
+   * Flattened from companion config.llm.client_header_profile.
+   */
+  client_header_profile?: LlmClientHeaderProfile
   trusted_domains: string[]
   safety_skills_enabled: string[]
   // Domains whose tool-call confirmations (evaluate, navigate, etc.) are auto-approved.

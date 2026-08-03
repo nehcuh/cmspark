@@ -1,7 +1,7 @@
 // Skill-craft: extract reusable skills from conversation history via LLM analysis
 
-import OpenAI from "openai"
 import type { ThreadManager } from "../threads/thread-manager"
+import { llmExtract, type LlmExtractConfig } from "../llm/llm-extract"
 
 export interface CraftedSkill {
   name: string
@@ -24,12 +24,8 @@ export interface CraftParams {
   threadManager: ThreadManager
   messageIds?: string[]
   messageCount?: number
-  config: {
-    base_url: string
-    api_key: string
-    model_name: string
-    temperature: number
-  }
+  /** Full llm config preferred so Anthropic protocol flows through createProvider. */
+  config: LlmExtractConfig
 }
 
 const CRAFT_SYSTEM_PROMPT = `你是一个技能提取器。分析以下 Agent 对话历史，识别可复用的操作模式。
@@ -120,22 +116,16 @@ export async function craftSkill(params: CraftParams): Promise<CraftedSkill | nu
     return ""
   }).filter(Boolean).join("\n\n")
 
-  // Create OpenAI client
-  const client = new OpenAI({
-    baseURL: config.base_url,
-    apiKey: config.api_key || "sk-placeholder",
+  // Route through createProvider (OpenAI or Anthropic) via llmExtract
+  const output = await llmExtract({
+    systemPrompt: CRAFT_SYSTEM_PROMPT,
+    userContent: `请分析以下对话历史，提取可复用的技能：\n\n${conversationText}`,
+    config: {
+      ...config,
+      api_key: config.api_key || "sk-placeholder",
+    },
+    temperatureCap: 0.3,
   })
-
-  const response = await client.chat.completions.create({
-    model: config.model_name,
-    temperature: Math.min(config.temperature, 0.3), // lower temp for extraction
-    messages: [
-      { role: "system", content: CRAFT_SYSTEM_PROMPT },
-      { role: "user", content: `请分析以下对话历史，提取可复用的技能：\n\n${conversationText}` },
-    ],
-  })
-
-  const output = response.choices[0]?.message?.content?.trim() || ""
 
   if (!output || output === "NO_PATTERN") return null
 

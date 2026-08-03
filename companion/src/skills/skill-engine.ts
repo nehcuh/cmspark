@@ -3,12 +3,12 @@
 import * as fs from "fs"
 import * as path from "path"
 import * as os from "os"
-import OpenAI from "openai"
 import { tokenize, tokensToVec, cosineSimilarity } from "./semantic-match"
 import matter from "gray-matter"
 import AdmZip from "adm-zip"
 import * as yaml from "js-yaml"
-import { getConfigDir } from "../config"
+import { getConfigDir, type LlmConfig as CompanionLlmConfig } from "../config"
+import { createProvider } from "../llm/provider"
 import { ThreadManager } from "../threads/thread-manager"
 import { matchSite } from "./site-matcher"
 import { sanitizeKnowledgeContent } from "./content-sanitizer"
@@ -43,12 +43,8 @@ interface Skill extends SkillMeta {
   content: string  // markdown body (without frontmatter)
 }
 
-interface LlmConfig {
-  base_url: string
-  api_key: string
-  model_name: string
-  temperature: number
-}
+/** Accept full companion llm config so protocol/profile reach createProvider. */
+type LlmConfig = CompanionLlmConfig
 
 const KNOWLEDGE_SEARCH_THRESHOLD_TOKENS = 1000
 const KNOWLEDGE_SEARCH_TOPK = 3
@@ -382,24 +378,21 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
 - Return at most 3 items, sorted by confidence descending`
 
     try {
-      const client = new OpenAI({
-        baseURL: this.llmConfig.base_url,
-        apiKey: this.llmConfig.api_key || "sk-placeholder",
-        timeout: 15000,
-        maxRetries: 1,
+      const provider = createProvider({
+        ...this.llmConfig,
+        api_key: this.llmConfig.api_key || "sk-placeholder",
       })
-
-      const response = await client.chat.completions.create({
+      const complete = await provider.complete({
         model: this.llmConfig.model_name,
+        temperature: 0.1,
+        signal: AbortSignal.timeout(15000),
         messages: [
           { role: "system", content: "You are a skill matching assistant. Respond only with valid JSON." },
           { role: "user", content: prompt },
         ],
-        temperature: 0.1,
-        max_tokens: 500,
       })
 
-      const content = response.choices[0]?.message?.content || "[]"
+      const content = complete.content || "[]"
       const jsonMatch = content.match(/\[[\s\S]*\]/)
       const parsed = JSON.parse(jsonMatch ? jsonMatch[0] : "[]")
 

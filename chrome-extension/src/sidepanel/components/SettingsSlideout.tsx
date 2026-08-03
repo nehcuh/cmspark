@@ -477,12 +477,20 @@ export function SettingsSlideout() {
     } else {
       dispatch({ type: "SET_TEST_VISION_RESULT", result: null })
     }
-    // Pass the API key currently shown in the UI so the test reflects what the
-    // user sees — even before they click Save. Falls back to the last saved key
-    // in the background if config.api_key is empty.
-    const llmOverride = (config.api_key && config.api_key !== "***")
-      ? { api_key: config.api_key, base_url: config.base_url, model_name: config.model_name }
-      : null
+    // Pass unsaved UI fields so the probe uses the same protocol/profile/url as Save.
+    // api_key only when the user typed a real key; otherwise companion uses stored key.
+    const llmOverride: Record<string, string> = {
+      base_url: config.base_url,
+      model_name: config.model_name,
+      protocol: config.protocol === "anthropic" ? "anthropic" : "openai",
+      client_header_profile:
+        config.protocol === "anthropic" && config.client_header_profile === "claude_code_compat"
+          ? "claude_code_compat"
+          : "none",
+    }
+    if (config.api_key && config.api_key !== "***") {
+      llmOverride.api_key = config.api_key
+    }
     chrome.runtime.sendMessage({ type: "config.test", llmOverride })
     if (config.vision_enabled) {
       chrome.runtime.sendMessage({ type: "config.testVision" })
@@ -1897,14 +1905,50 @@ export function SettingsSlideout() {
           <div style={styles.sectionTitle}>LLM 配置</div>
 
           <div style={styles.field}>
+            <label style={styles.label}>API 协议</label>
+            <select
+              style={styles.input}
+              value={config.protocol === "anthropic" ? "anthropic" : "openai"}
+              onChange={e => {
+                const protocol = e.target.value === "anthropic" ? "anthropic" as const : "openai" as const
+                dispatch({
+                  type: "SET_CONFIG",
+                  config: {
+                    protocol,
+                    // Leaving anthropic clears compat profile (only valid under anthropic)
+                    ...(protocol === "openai" ? { client_header_profile: "none" as const } : {}),
+                  },
+                })
+              }}
+            >
+              <option value="openai">OpenAI-compatible（默认）</option>
+              <option value="anthropic">Anthropic Messages</option>
+            </select>
+            <div style={styles.helpText}>
+              {config.protocol === "anthropic"
+                ? "Anthropic 协议走 /messages（x-api-key）。内部工具循环不变。"
+                : "默认 OpenAI Chat Completions（DeepSeek / 多数中继）。"}
+            </div>
+          </div>
+
+          <div style={styles.field}>
             <label style={styles.label}>Base URL</label>
             <input
               style={styles.input}
               type="text"
               value={config.base_url}
               onChange={e => dispatch({ type: "SET_CONFIG", config: { base_url: e.target.value } })}
-              placeholder="https://api.openai.com/v1"
+              placeholder={
+                config.protocol === "anthropic"
+                  ? "https://api.anthropic.com 或中继 https://host/v1"
+                  : "https://api.deepseek.com/v1"
+              }
             />
+            {config.protocol === "anthropic" && (
+              <div style={styles.helpText}>
+                将拼到 /messages；勿混用 /chat/completions。官方 Anthropic 主机不要开下方兼容头。
+              </div>
+            )}
           </div>
 
           <div style={styles.field}>
@@ -1937,6 +1981,86 @@ export function SettingsSlideout() {
                 ✓ Companion 已保存 API Key 并正常工作。如需更换，请在上方输入新值；留空保存将沿用现有密钥。
               </div>
             )}
+          </div>
+
+          {config.protocol === "anthropic" && (
+            <div style={styles.field}>
+              <label style={{ ...styles.label, display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                <input
+                  type="checkbox"
+                  checked={config.client_header_profile === "claude_code_compat"}
+                  onChange={e =>
+                    dispatch({
+                      type: "SET_CONFIG",
+                      config: {
+                        client_header_profile: e.target.checked ? "claude_code_compat" : "none",
+                      },
+                    })
+                  }
+                />
+                Coding Plan 网关兼容头
+              </label>
+              <div style={styles.helpText}>
+                部分第三方「Coding Plan」中继只接受类似 Claude Code 的 User-Agent / 应用头。
+                开启后，CMspark 会在 Anthropic 协议请求上附加这些兼容头。
+                <strong>不会</strong>登录或盗用 Anthropic 官方订阅；请只用于你有权使用的 API / 中继。
+                若使用官方 Anthropic 或无需门控的端点，请保持关闭。
+              </div>
+            </div>
+          )}
+
+          <div style={styles.field}>
+            <label style={styles.label}>快速配置</label>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              <button
+                type="button"
+                style={styles.toggleBtn}
+                onClick={() =>
+                  dispatch({
+                    type: "SET_CONFIG",
+                    config: {
+                      protocol: "openai",
+                      client_header_profile: "none",
+                      base_url: "https://api.deepseek.com/v1",
+                    },
+                  })
+                }
+              >
+                OpenAI 兼容
+              </button>
+              <button
+                type="button"
+                style={styles.toggleBtn}
+                onClick={() =>
+                  dispatch({
+                    type: "SET_CONFIG",
+                    config: {
+                      protocol: "anthropic",
+                      client_header_profile: "none",
+                      base_url: "https://api.anthropic.com",
+                    },
+                  })
+                }
+              >
+                Anthropic Messages
+              </button>
+              <button
+                type="button"
+                style={styles.toggleBtn}
+                onClick={() =>
+                  dispatch({
+                    type: "SET_CONFIG",
+                    config: {
+                      protocol: "anthropic",
+                      client_header_profile: "claude_code_compat",
+                      base_url: "",
+                    },
+                  })
+                }
+              >
+                Coding Plan 中继
+              </button>
+            </div>
           </div>
 
           <div style={styles.field}>

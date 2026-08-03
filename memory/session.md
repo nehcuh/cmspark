@@ -2,6 +2,18 @@
 
 ## Current Session
 
+### S39 (2026-08-03) [PR 收口 + Anthropic P1 UI/probe/skill 旁路]
+- **PR 收口**: #112 closed（代码已在 main）；#111 MERGED；#110 MERGED
+- **P1 实现**:
+  - `companion/src/llm/connection-test.ts` + 单测
+  - message-router `config.test` / flat config.set protocol 字段；extra_headers 脱敏
+  - settings-web 协议 UI + 真实 anthropic probe（去掉 soft-skip）
+  - Side Panel Settings：协议 / 兼容头 / 快速配置；bg 转发 llmOverride 始终带 protocol
+  - skill-craft → llmExtract；skill-engine match → createProvider
+- **验证**: companion 相关 69 pass；extension normalizeConfig 15 pass
+- **下次**: push/PR 合 main；可选真机中继 smoke
+- Recorded: yes — P1 UI + protocol-aware probe
+
 ### S38 (2026-08-03) [LLM Anthropic 协议 P0 · 多路设计 + workflow 门禁 · PR #112]
 - **需求**: 支持 Anthropic Messages；可选 Coding Plan 网关兼容头（非 Max 伪装）
 - **设计**: 三路对抗 → brief → Pi+Claude dual **APPROVE_WITH_NITS** → DIRECTION LOCKED

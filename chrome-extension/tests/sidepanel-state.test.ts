@@ -98,9 +98,28 @@ test("normalizeConfig flattens companion config and keeps masked API keys out of
     model_name: "model-x",
     temperature: 0.2,
     context_window: 4096,
+    protocol: "openai",
+    client_header_profile: "none",
     trusted_domains: ["example.com", "*.company.com"],
     vision_enabled: false,
   })
+})
+
+test("normalizeConfig maps anthropic protocol and coding-plan profile", () => {
+  const n = normalizeConfig({
+    llm: {
+      base_url: "https://gateway.example/v1",
+      api_key: "",
+      model_name: "claude-sonnet-4-6",
+      temperature: 0.5,
+      context_window: 200000,
+      protocol: "anthropic",
+      client_header_profile: "claude_code_compat",
+    },
+  })
+  assert.equal(n.protocol, "anthropic")
+  assert.equal(n.client_header_profile, "claude_code_compat")
+  assert.equal(n.base_url, "https://gateway.example/v1")
 })
 
 test("ADD_MESSAGE dedupes by message id (optimistic panel + SW chat.user echo)", () => {
