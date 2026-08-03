@@ -758,6 +758,7 @@ function CliToolsSegment({ appsEnabled }: { appsEnabled: boolean }) {
     <div>
       <div style={{ fontSize: 11, color: "#666", marginBottom: 8, lineHeight: 1.45 }}>
         结构化 CLI：仅声明的 subcommand/flag/positional 可执行（host_cli）。策略最高「AI 判断」，无免确认。输出视为不可信。
+        参数风格为 GNU 长旗标（--flag）；Windows 原生 /Flag 工具请用包装脚本或改用 shell 企业通道。路径参数支持中文等 Unicode（默认白名单）。
       </div>
       {cliEntries.length === 0 ? (
         <div style={styles.emptyText}>尚未添加 CLI 工具</div>

@@ -2134,12 +2134,18 @@ export async function handleMessage(
     case "security.unattended.disarm": {
       const { disarmUnattended } = await import("./computer/unattended-grant")
       const { flipAllComputerTaskAborts } = await import("./computer/task-abort-registry")
+      const { securityPolicy } = await import("./security-policy")
       const clearCruise = rest.clear_cruise === true
       const status = disarmUnattended()
       // S36 P0/F3: disarm stops in-flight host_computer injects
       const aborted = flipAllComputerTaskAborts()
       if (aborted > 0) {
         logger.warn("security.unattended.disarm_aborted_computer_tasks", { matched: aborted })
+      }
+      // S-F3 residual: drop live host_computer L2 tokens so post-disarm re-entry re-gates
+      const purged = securityPolicy.purgeIssuedTokensForTool("host_computer")
+      if (purged > 0) {
+        logger.info("security.unattended.disarm_purged_tokens", { tool: "host_computer", purged })
       }
       if (clearCruise) {
         const current = getConfig()
@@ -2152,7 +2158,12 @@ export async function handleMessage(
           },
         })
       }
-      return { type: "security.unattended.status", ...status, computer_tasks_aborted: aborted }
+      return {
+        type: "security.unattended.status",
+        ...status,
+        computer_tasks_aborted: aborted,
+        tokens_purged: purged,
+      }
     }
     case "security.unattended.status": {
       const { getUnattendedStatus } = await import("./computer/unattended-grant")

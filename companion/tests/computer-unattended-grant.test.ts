@@ -135,6 +135,24 @@ describe("task-abort-registry (disarm share)", () => {
   })
 })
 
+describe("securityPolicy purge on disarm residual", () => {
+  it("purgeIssuedTokensForTool drops only matching tool", () => {
+    const { SecurityPolicy } = require("../src/security-policy") as typeof import("../src/security-policy")
+    const pol = new SecurityPolicy()
+    const a = pol.issueTokenFor("host_computer", { app: "com.tencent.xinWeChat", task: "t", actions: [] })
+    const b = pol.issueTokenFor("host_cli", { app: "mac.cli.echo", subcommand: "run", args: ["x"] })
+    assert.equal(pol.purgeIssuedTokensForTool("host_computer"), 1)
+    assert.equal(
+      pol.validateTokenFor(a.token, "host_computer", { app: "com.tencent.xinWeChat", task: "t", actions: [] }),
+      false,
+    )
+    assert.equal(
+      pol.validateTokenFor(b.token, "host_cli", { app: "mac.cli.echo", subcommand: "run", args: ["x"] }),
+      true,
+    )
+  })
+})
+
 describe("evaluateUnattendedHostComputerSkip live grant", () => {
   it("unarmed → false", () => {
     assert.equal(

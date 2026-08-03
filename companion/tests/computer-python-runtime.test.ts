@@ -11,6 +11,7 @@ import {
   uvInstallHint,
   buildInstallCommands,
   ensureIsolatedPythonEnv,
+  longPathFailureHint,
   type UvDiscoveryDeps,
 } from "../src/computer/python-runtime"
 
@@ -482,4 +483,11 @@ test("W9: uvInstallHint and missing uv do not imply blocking download gates", ()
   })
   assert.ok(cmds.some((c) => c.includes("venv") || c.includes("pip")))
   assert.ok(!cmds.some((c) => c.startsWith("uv ")))
+})
+
+test("longPathFailureHint only expands on win32 (P-F8)", () => {
+  assert.equal(longPathFailureHint("pip install 失败", "darwin"), "pip install 失败")
+  const w = longPathFailureHint("uv pip install 失败（见日志）", "win32")
+  assert.ok(w.includes("MAX_PATH") || w.includes("长路径"))
+  assert.ok(w.startsWith("uv pip install"))
 })

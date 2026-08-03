@@ -119,3 +119,16 @@ Landed on main worktree after REQUEST_CHANGES:
 | P1 CLI | full-string `value_regex`; positional regex validated at ingest |
 
 Tests: companion focused suite + computer-task-abort integration + extension model-switch green.
+
+### Remaining P1 batch (same day)
+
+| Item | Fix |
+|------|-----|
+| P-F4 Settings paths | no `~`/python3-only copy; server absolute path + platform-neutral Python wording |
+| P-F5 host_cli flags | AppsPanel + cli-manifest: GNU `--flag` honesty (no slash-flags) |
+| P-F6 PATH fallback | `defaultCliPathFallback` win32 SystemRoot vs Unix |
+| P-F7 CJK charset | `CLI_SAFE_VALUE` uses `\p{L}\p{N}` |
+| P-F8 MAX_PATH | `longPathFailureHint` on ensureIsolatedPythonEnv fail (win32) |
+| S-F3 residual | purge `host_computer` issued tokens on disarm |
+| Correctness F7 | `scheduleUnattendedExpireClear` client TTL chip |
+| A-F2 light | matrix footnote: three orthogonal Trust mechanisms |

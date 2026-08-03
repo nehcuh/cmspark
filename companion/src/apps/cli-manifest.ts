@@ -1,6 +1,10 @@
 // Structured CLI contract (Apps Phase-2 / L-CLI-*).
 // Manifest is the ONLY way to authorize subcommands/flags/positionals.
 // Free-args are forbidden — positionals are fixed-arity slots only.
+//
+// Argv style: GNU long flags only (`--name` / `--name value`). Windows-native
+// `/Flag` or single-dash tools need a wrapper binary or custom entry — host_cli
+// does not emit slash-flags (P-F5 honesty).
 
 export type CliRisk = "read-only" | "state-changing" | "dangerous"
 
@@ -45,8 +49,13 @@ export const CLI_DEFAULT_MAX_OUTPUT = 65_536
 export const CLI_HARD_MAX_OUTPUT = 256_000
 export const CLI_TRUNCATE_CHARS = 8_000
 
-/** Charset for flag values / positionals unless overridden by value_regex. */
-export const CLI_SAFE_VALUE = /^[A-Za-z0-9._:@/\\+\-=,~ ]{1,512}$/
+/**
+ * Charset for flag values / positionals unless overridden by value_regex.
+ * P-F7: include Unicode letters/numbers (CJK usernames & paths on Windows).
+ * Still length-capped; option-injection prefixes rejected separately.
+ */
+export const CLI_SAFE_VALUE =
+  /^[\p{L}\p{N}._:@/\\+\-=,~ ]{1,512}$/u
 
 const SUB_NAME = /^[a-zA-Z0-9][a-zA-Z0-9_\-]{0,63}$/
 const FLAG_NAME = /^[a-zA-Z0-9][a-zA-Z0-9_\-]{0,31}$/

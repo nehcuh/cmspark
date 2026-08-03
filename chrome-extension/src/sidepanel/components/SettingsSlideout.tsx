@@ -1522,7 +1522,7 @@ export function SettingsSlideout() {
                 >
                   {model?.modelRootDir ||
                     model?.preflight?.modelRootDir ||
-                    "~/.cmspark-agent/models"}
+                    "（Companion 数据目录 / models — 打开设置后由服务端回填绝对路径）"}
                 </div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
                   <button
@@ -1590,7 +1590,7 @@ export function SettingsSlideout() {
                       {
                         id: "system" as const,
                         label: "本机全局 Python",
-                        desc: "使用 PATH 上的 python3；安装依赖需你在终端手动执行（避免静默改系统环境）",
+                        desc: "使用 PATH 上的 python / python3（Windows 常见 python.exe / py）；安装依赖需你在终端手动执行（避免静默改系统环境）",
                       },
                     ] as const
                   ).map((opt) => {
@@ -1642,7 +1642,7 @@ export function SettingsSlideout() {
                       type="button"
                       style={styles.secondaryBtn}
                       disabled={model === null || model.modelStatus === "downloading"}
-                      title="用系统对话框选择 python3 / python 可执行文件"
+                      title="用系统对话框选择 python / python3 可执行文件"
                       onClick={() => {
                         dispatch({ type: "SET_COMPUTER_MODEL_ERROR", error: null })
                         send({ type: "computer.model.pick_python_path", source: "settings" })
@@ -1661,7 +1661,7 @@ export function SettingsSlideout() {
                       model.modelStatus === "downloading" ||
                       (model?.pythonMode || model?.preflight?.pythonMode) === "system"
                     }
-                    title="创建或修复 ~/.cmspark-agent/python-env；优先 uv"
+                    title="创建或修复 Companion 数据目录下的独立 python-env；优先 uv"
                     onClick={() => {
                       dispatch({ type: "SET_COMPUTER_MODEL_ERROR", error: null })
                       send({ type: "computer.model.ensure_python_env", source: "settings" })

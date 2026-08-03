@@ -49,6 +49,50 @@ export function requestInitialSidePanelData(
   return true
 }
 
+/** Module-level timer so multiple status messages replace (not stack) TTL clears. */
+let unattendedExpireTimer: ReturnType<typeof setTimeout> | null = null
+
+/**
+ * Schedule local UI clear when process grant hard TTL elapses (Correctness F7).
+ * Companion is still SoT — we re-fetch status at expiry; do not invent armed:true.
+ */
+export function scheduleUnattendedExpireClear(
+  expiresAt: number | null | undefined,
+  armed: boolean,
+  dispatch: (action: { type: "SET_UNATTENDED_STATUS"; unattended: {
+    armed: boolean
+    armedAt: number | null
+    expiresAt: number | null
+    includeProtocol: boolean
+  } }) => void,
+  sendMessage: (message: object) => void,
+  now: number = Date.now(),
+): void {
+  if (unattendedExpireTimer != null) {
+    clearTimeout(unattendedExpireTimer)
+    unattendedExpireTimer = null
+  }
+  if (!armed || expiresAt == null || !(expiresAt > now)) {
+    if (armed && expiresAt != null && expiresAt <= now) {
+      dispatch({
+        type: "SET_UNATTENDED_STATUS",
+        unattended: { armed: false, armedAt: null, expiresAt: null, includeProtocol: false },
+      })
+      sendMessage({ type: "security.unattended.status" })
+    }
+    return
+  }
+  const delay = Math.min(expiresAt - now, 2_147_000_000) // clamp setTimeout 32-bit
+  unattendedExpireTimer = setTimeout(() => {
+    unattendedExpireTimer = null
+    dispatch({
+      type: "SET_UNATTENDED_STATUS",
+      unattended: { armed: false, armedAt: null, expiresAt: null, includeProtocol: false },
+    })
+    sendMessage({ type: "security.unattended.status" })
+  }, delay)
+}
+
 /**
  * P0-B: whether a chat stream event should apply to the active UI thread.
  * - Missing/empty thread_id → apply (legacy broadcasts, same-thread compat).
@@ -436,20 +480,26 @@ export function useWebSocket() {
           break
 
         case "security.unattended.status": {
+          const armed = msg.armed === true
+          const expiresAt =
+            typeof msg.expiresAt === "number"
+              ? msg.expiresAt
+              : typeof msg.expires_at === "number"
+                ? msg.expires_at
+                : null
+          const unattended = {
+            armed,
+            armedAt: typeof msg.armedAt === "number" ? msg.armedAt : typeof msg.armed_at === "number" ? msg.armed_at : null,
+            expiresAt,
+            includeProtocol:
+              msg.includeProtocol === true || msg.include_protocol === true,
+          }
           dispatch({
             type: "SET_UNATTENDED_STATUS",
-            unattended: {
-              armed: msg.armed === true,
-              armedAt: typeof msg.armedAt === "number" ? msg.armedAt : typeof msg.armed_at === "number" ? msg.armed_at : null,
-              expiresAt:
-                typeof msg.expiresAt === "number"
-                  ? msg.expiresAt
-                  : typeof msg.expires_at === "number"
-                    ? msg.expires_at
-                    : null,
-              includeProtocol:
-                msg.includeProtocol === true || msg.include_protocol === true,
-            },
+            unattended,
+          })
+          scheduleUnattendedExpireClear(expiresAt, armed, dispatch, (message) => {
+            chrome.runtime.sendMessage(message)
           })
           break
         }

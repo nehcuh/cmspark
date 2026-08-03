@@ -41,7 +41,27 @@ const ENV_ALLOW = new Set([
 
 const ENV_DENY_RE = /^(CMSPARK_|DEEPSEEK_|OPENAI_|ANTHROPIC_|.*_(API_KEY|TOKEN|SECRET|PASSWORD))$/i
 
-export function buildCliChildEnv(parent: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+/** Platform-aware PATH when parent PATH/Path stripped empty (P-F6). */
+export function defaultCliPathFallback(
+  platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  if (platform === "win32") {
+    const root = env.SystemRoot || env.SYSTEMROOT || "C:\\Windows"
+    return [
+      `${root}\\System32`,
+      root,
+      `${root}\\System32\\Wbem`,
+      `${root}\\System32\\WindowsPowerShell\\v1.0`,
+    ].join(";")
+  }
+  return "/usr/bin:/bin:/usr/local/bin"
+}
+
+export function buildCliChildEnv(
+  parent: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = {}
   for (const k of Object.keys(parent)) {
     if (ENV_DENY_RE.test(k)) continue
@@ -49,9 +69,9 @@ export function buildCliChildEnv(parent: NodeJS.ProcessEnv = process.env): NodeJ
     const v = parent[k]
     if (typeof v === "string") out[k] = v
   }
-  // Minimal PATH fallback if stripped empty
+  // Minimal PATH fallback if stripped empty (win32 ≠ Unix defaults)
   if (!out.PATH && !out.Path) {
-    out.PATH = parent.PATH || parent.Path || "/usr/bin:/bin:/usr/local/bin"
+    out.PATH = parent.PATH || parent.Path || defaultCliPathFallback(platform, parent)
   }
   return out
 }
