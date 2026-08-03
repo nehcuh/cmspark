@@ -95,6 +95,8 @@ function runCapture(
     const child = spawn(bin, args, {
       stdio: ["ignore", "pipe", "pipe"],
       env: env ?? process.env,
+      // S36 P0: suppress console flash for console-subsystem tools under GUI Companion
+      windowsHide: true,
     })
     let out = ""
     let err = ""
@@ -640,6 +642,45 @@ export async function ensureIsolatedPythonEnv(
   return { ok: true, pythonPath: exe, usedUv, log: logs.join("\n") }
 }
 
+/** Platform-aware absolute path (host path.isAbsolute misreads win32 drive letters on posix). */
+export function isAbsolutePathForPlatform(
+  p: string,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  if (platform === "win32") return path.win32.isAbsolute(p)
+  return path.posix.isAbsolute(p)
+}
+
+/**
+ * Quote a path for user-facing shell copy-paste.
+ * PowerShell needs `& 'path with spaces'` (quoted path alone is a string, not invoke).
+ */
+export function shellInvokePath(
+  absOrBare: string,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  if (!isAbsolutePathForPlatform(absOrBare, platform)) {
+    // bare command names (uv / python) — no quoting
+    if (!absOrBare.includes("/") && !absOrBare.includes("\\")) return absOrBare
+  }
+  if (platform === "win32") {
+    // PowerShell: & 'C:\Users\John Doe\...\uv.exe'
+    return `& '${absOrBare.replace(/'/g, "''")}'`
+  }
+  return `"${absOrBare.replace(/"/g, '\\"')}"`
+}
+
+/** Quote a path as an argument (not invocable) for the same shell family. */
+export function shellArgPath(
+  p: string,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  if (platform === "win32") {
+    return `'${p.replace(/'/g, "''")}'`
+  }
+  return `"${p.replace(/"/g, '\\"')}"`
+}
+
 /** Build user-facing install command lines (prefer uv when available + isolated). */
 export function buildInstallCommands(opts: {
   mode: PythonMode
@@ -648,27 +689,42 @@ export function buildInstallCommands(opts: {
   uvPath?: string
   packages: string[]
   pythonPath?: string
+  /** Target platform for shell quoting (default: host). */
+  platform?: NodeJS.Platform
 }): string[] {
   if (opts.packages.length === 0) return []
+  const plat = opts.platform ?? process.platform
   const pkgs = opts.packages.join(" ")
   const uvCmd =
-    opts.uvPath && path.isAbsolute(opts.uvPath) ? `"${opts.uvPath}"` : "uv"
+    opts.uvPath && isAbsolutePathForPlatform(opts.uvPath, plat)
+      ? shellInvokePath(opts.uvPath, plat)
+      : "uv"
+  const rootArg = shellArgPath(isolatedPythonRoot(), plat)
+  const binArg = shellArgPath(isolatedPythonBin(), plat)
   if (opts.mode === "isolated") {
     if (opts.uvAvailable) {
       return [
-        `${uvCmd} venv "${isolatedPythonRoot()}"`,
-        `${uvCmd} pip install --python "${isolatedPythonBin()}" ${pkgs}`,
+        `${uvCmd} venv ${rootArg}`,
+        `${uvCmd} pip install --python ${binArg} ${pkgs}`,
       ]
     }
-    const py = opts.pythonPath || (process.platform === "win32" ? "python" : "python3")
-    return [`"${py}" -m venv "${isolatedPythonRoot()}"`, `"${isolatedPipBin()}" install ${pkgs}`]
+    const pyBare = opts.pythonPath || (plat === "win32" ? "python" : "python3")
+    const pyCmd = isAbsolutePathForPlatform(pyBare, plat)
+      ? shellInvokePath(pyBare, plat)
+      : pyBare
+    const pipBin = isolatedPipBin()
+    const pipCmd = shellInvokePath(pipBin, plat)
+    return [`${pyCmd} -m venv ${rootArg}`, `${pipCmd} install ${pkgs}`]
   }
   // system
   if (opts.uvAvailable) {
     return [`${uvCmd} pip install ${pkgs}`]
   }
-  const py = opts.pythonPath || (process.platform === "win32" ? "python" : "python3")
-  return [`"${py}" -m pip install ${pkgs}`]
+  const pyBare = opts.pythonPath || (plat === "win32" ? "python" : "python3")
+  const pyCmd = isAbsolutePathForPlatform(pyBare, plat)
+    ? shellInvokePath(pyBare, plat)
+    : pyBare
+  return [`${pyCmd} -m pip install ${pkgs}`]
 }
 
 

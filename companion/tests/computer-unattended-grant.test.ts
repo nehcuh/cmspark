@@ -119,6 +119,22 @@ describe("arm / disarm process memory", () => {
   })
 })
 
+describe("task-abort-registry (disarm share)", () => {
+  it("flipAllComputerTaskAborts flips seeded tasks", async () => {
+    const { flipAllComputerTaskAborts, getComputerTaskAbortRegistry } = await import(
+      "../src/computer/task-abort-registry"
+    )
+    const reg = getComputerTaskAbortRegistry()
+    reg.clear()
+    reg.set("t1", false)
+    reg.set("t2", false)
+    assert.equal(flipAllComputerTaskAborts(), 2)
+    assert.equal(reg.get("t1"), true)
+    assert.equal(reg.get("t2"), true)
+    reg.clear()
+  })
+})
+
 describe("evaluateUnattendedHostComputerSkip live grant", () => {
   it("unarmed → false", () => {
     assert.equal(

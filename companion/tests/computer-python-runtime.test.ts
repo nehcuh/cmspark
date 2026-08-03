@@ -392,8 +392,35 @@ test("buildInstallCommands prefers quoted absolute uvPath", () => {
     packages: ["torch"],
   })
   assert.ok(cmds.length >= 1)
-  assert.ok(cmds[0]!.includes(abs) || cmds[0]!.includes(`"${abs}"`))
+  assert.ok(cmds[0]!.includes(abs))
   assert.ok(!cmds[0]!.startsWith("uv "))
+})
+
+test("buildInstallCommands win32 uses PowerShell & 'path' invoke for spaces", () => {
+  const abs = "C:\\Users\\John Doe\\AppData\\Local\\uv.exe"
+  const cmds = buildInstallCommands({
+    mode: "isolated",
+    uvAvailable: true,
+    uvPath: abs,
+    packages: ["torch"],
+    platform: "win32",
+  })
+  assert.ok(cmds[0]!.startsWith("& '"))
+  assert.ok(cmds[0]!.includes(abs))
+  assert.ok(cmds[0]!.includes("venv"))
+})
+
+test("buildInstallCommands darwin uses double-quoted absolute uvPath", () => {
+  const abs = "/Users/me/.local/bin/uv"
+  const cmds = buildInstallCommands({
+    mode: "isolated",
+    uvAvailable: true,
+    uvPath: abs,
+    packages: ["torch"],
+    platform: "darwin",
+  })
+  assert.ok(cmds[0]!.includes(`"${abs}"`))
+  assert.ok(!cmds[0]!.startsWith("& "))
 })
 
 // ── ensureIsolatedPythonEnv absolute argv0 (T2) ──────────────────────────────

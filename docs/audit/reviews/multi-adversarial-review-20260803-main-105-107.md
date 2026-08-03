@@ -102,3 +102,20 @@
 - Pull + rebase conflict resolution: `[executed]`
 - Spot-check of HIGH findings vs source: `[inspected]`
 - End-to-end arm/disarm on live Companion: `[assumed]` (not run in this session)
+
+---
+
+## Follow-up implementation (2026-08-03 S36 fix)
+
+Landed on main worktree after REQUEST_CHANGES:
+
+| Item | Fix |
+|------|-----|
+| P0 Trust acks | `ack_desktop` + `ack_session` required server-side on `security.unattended.arm` |
+| P0 dual-write honesty | UI copy names durable cruise; `allow_all_schemes = include_protocol` exact vector |
+| P0 disarm | no optimistic `armed:false`; companion status SoT; `flipAllComputerTaskAborts` on disarm |
+| P0 ensure_python_env | persist `pythonMode:isolated` only on success |
+| P0 platform | `windowsHide` on computer spawns; PowerShell `& 'path'`; dual-OS estop copy |
+| P1 CLI | full-string `value_regex`; positional regex validated at ingest |
+
+Tests: companion focused suite + computer-task-abort integration + extension model-switch green.

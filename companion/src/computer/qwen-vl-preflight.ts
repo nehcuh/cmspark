@@ -99,7 +99,11 @@ export interface QwenVlPreflight {
 
 function runCapture(bin: string, args: string[], timeoutMs = 12_000): Promise<{ code: number; out: string }> {
   return new Promise((resolve) => {
-    const child = spawn(bin, args, { stdio: ["ignore", "pipe", "pipe"], env: process.env })
+    const child = spawn(bin, args, {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: process.env,
+      windowsHide: true,
+    })
     let out = ""
     const timer = setTimeout(() => {
       try {

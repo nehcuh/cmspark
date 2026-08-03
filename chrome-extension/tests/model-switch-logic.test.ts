@@ -152,8 +152,10 @@ test("镜像互锁:P2 layerSemantics / runningNote / 熔断词表关键短语", 
   // Qwen3-VL 文案：任务粒度切换说明在 switchRunningNote；layerSemantics 描述模型与急停。
   assert.ok(MODEL_SWITCH_COPY.layerSemantics.includes("Qwen3-VL"))
   assert.ok(MODEL_SWITCH_COPY.layerSemantics.includes("Ctrl+Alt+End"))
+  assert.ok(MODEL_SWITCH_COPY.layerSemantics.includes("⌃⌥⌘⇧E") || MODEL_SWITCH_COPY.layerSemantics.includes("macOS"))
   assert.ok(MODEL_SWITCH_COPY.switchRunningNote.includes("当前任务结束后生效"))
   assert.ok(MODEL_SWITCH_COPY.switchRunningNote.includes("Ctrl+Alt+End"))
+  assert.ok(MODEL_SWITCH_COPY.switchRunningNote.includes("⌃⌥⌘⇧E") || MODEL_SWITCH_COPY.switchRunningNote.includes("macOS"))
   const cb = MODEL_STATE_MESSAGES["circuit-breaker"]
   assert.ok(cb, "circuit-breaker 词表条目必须镜像在案")
   assert.ok(cb!.detail.includes("无自动恢复"))

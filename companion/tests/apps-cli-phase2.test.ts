@@ -5,6 +5,8 @@ import {
   buildCliArgv,
   hostCliBindingPayload,
   looksLikeOptionInjection,
+  validateSlotValue,
+  fullStringRegexMatch,
 } from "../src/apps/cli-manifest"
 import { buildCliChildEnv, stripAnsi, prepareCliExecution, echoCliManifest } from "../src/apps/cli-exec"
 import { markCliOutputSeen, clearCliOutputTaint, isCliOutputTainted, _resetCliQ5ForTests } from "../src/apps/cli-q5"
@@ -21,6 +23,34 @@ test("validateCliManifest requires ≥1 subcommand", () => {
     }),
     null,
   )
+})
+
+test("value_regex full-string match (no partial pass)", () => {
+  assert.equal(fullStringRegexMatch("safe", "safe"), true)
+  assert.equal(fullStringRegexMatch("safe", "unsafe"), false)
+  assert.equal(fullStringRegexMatch("safe", "safe;evil"), false)
+  assert.equal(fullStringRegexMatch("^[A-Za-z0-9]+$", "abc"), true)
+  assert.equal(fullStringRegexMatch("[A-Za-z0-9]+", "abcXXX"), true) // full match of pattern on whole value? "abcXXX" matches [A-Za-z0-9]+ fully
+  assert.equal(fullStringRegexMatch("[A-Za-z0-9]+", "abc XXX"), false)
+  assert.equal(
+    validateSlotValue("unsafe", { value_regex: "safe", label: "arg" }),
+    "arg failed value_regex",
+  )
+  assert.equal(validateSlotValue("safe", { value_regex: "safe", label: "arg" }), null)
+})
+
+test("validateCliManifest rejects invalid positional value_regex", () => {
+  const err = validateCliManifest({
+    schema_version: 1,
+    subcommands: [
+      {
+        name: "run",
+        risk: "read-only",
+        positionals: [{ name: "p", required: true, value_regex: "[unclosed" }],
+      },
+    ],
+  })
+  assert.ok(err && err.includes("value_regex"))
 })
 
 test("buildCliArgv rejects undeclared flags and option injection", () => {

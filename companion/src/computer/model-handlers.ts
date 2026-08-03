@@ -702,9 +702,13 @@ export async function handleComputerModelMessage(
 
     case "computer.model.ensure_python_env": {
       const { ensureIsolatedPythonEnv, sanitizePythonPackages } = await import("./python-runtime")
-      setComputerModelFields({ pythonMode: "isolated" })
+      // S36 P0: only persist pythonMode after env create succeeds (failed ensure
+      // must not trap system users on broken isolated mode).
       const pkgs = sanitizePythonPackages(rest.packages)
       const result = await ensureIsolatedPythonEnv(pkgs)
+      if (result.ok) {
+        setComputerModelFields({ pythonMode: "isolated" })
+      }
       logger.info("computer.model.ensure_python_env", {
         ok: result.ok,
         usedUv: result.usedUv,

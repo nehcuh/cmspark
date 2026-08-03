@@ -180,6 +180,7 @@ function defaultRunPython(args: string[], env: NodeJS.ProcessEnv): Promise<{ cod
     const child = spawn(args[0]!, args.slice(1), {
       env,
       stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
     })
     let stderr = ""
     let stdout = ""

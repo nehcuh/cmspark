@@ -114,6 +114,14 @@ export function validateCliManifest(raw: unknown): string | null {
         if (p.value_regex !== undefined && typeof p.value_regex !== "string") {
           return `positional "${p.name}" value_regex must be string`
         }
+        if (typeof p.value_regex === "string") {
+          try {
+            // eslint-disable-next-line no-new
+            new RegExp(p.value_regex)
+          } catch {
+            return `positional "${p.name}" value_regex is not a valid RegExp`
+          }
+        }
       }
     }
     if (s.timeout_ms !== undefined) {
@@ -166,6 +174,16 @@ export function looksLikeOptionInjection(value: string): boolean {
   return v.startsWith("-") || v.startsWith("/") || v.startsWith("@")
 }
 
+/**
+ * Full-string match (contract: value_regex must match the entire value).
+ * Unanchored patterns must not partial-pass (e.g. "safe" must not accept "unsafe").
+ */
+export function fullStringRegexMatch(pattern: string, value: string): boolean {
+  const re = new RegExp(pattern)
+  const m = value.match(re)
+  return m != null && m.index === 0 && m[0] === value
+}
+
 export function validateSlotValue(
   value: string,
   opts: { value_regex?: string; max_len?: number; label: string },
@@ -179,8 +197,9 @@ export function validateSlotValue(
   }
   if (opts.value_regex) {
     try {
-      const re = new RegExp(opts.value_regex)
-      if (!re.test(value)) return `${opts.label} failed value_regex`
+      if (!fullStringRegexMatch(opts.value_regex, value)) {
+        return `${opts.label} failed value_regex`
+      }
     } catch {
       return `${opts.label} has invalid value_regex in manifest`
     }

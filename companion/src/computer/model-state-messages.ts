@@ -233,7 +233,7 @@ export const MODEL_SWITCH_COPY: ModelSwitchCopy = {
     "本层是定位链的实验性建议层（L2）：模型输出仅作为坐标候选，" +
     "任何点击执行前必经人工确认；本层未校准，可能完全错误。" +
     "关闭开关按任务粒度生效——任务运行中关闭将于当前任务结束后生效；" +
-    "若需立即停止（含当前任务），请按 Ctrl+Alt+End 急停或中止当前任务。" +
+    "若需立即停止（含当前任务），请按急停：Windows Ctrl+Alt+End · macOS ⌃⌥⌘⇧E · 或侧栏中止当前任务。" +
     "拒绝建议或关闭本层后，UIA / OCR / 用户框选兜底不受影响。",
   licenseDoorHint:
     "首次开启需阅读并接受模型许可证与研究品免责声明；" +
@@ -243,7 +243,7 @@ export const MODEL_SWITCH_COPY: ModelSwitchCopy = {
     "加载期间 UIA / OCR / 用户框选定位不受影响。",
   switchRunningNote:
     "当前有任务正在运行——开关变更将于当前任务结束后生效；" +
-    "立即停止请按 Ctrl+Alt+End 急停或中止任务。",
+    "立即停止请按急停：Windows Ctrl+Alt+End · macOS ⌃⌥⌘⇧E · 或侧栏中止任务。",
   statusReadyEnabled:
     "实验层已开启，模型就绪。任务执行中每个模型建议在点击前仍需人工确认。",
   statusReadyDisabled: "模型已下载就绪——实验层未开启。",
