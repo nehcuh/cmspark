@@ -74,11 +74,17 @@ export interface LocateChainDeps {
   /**
    * WP5 I3：L2 实验层。EXECUTOR 决定 admission——开关开 + 模型 ready + 无熔断
    * 才传非 null（ready 语义：modelStatus:"ready" = 文件在盘且校验过，session
-   * 懒建，P3-c/M7）。null/缺省 = 层未启用 → skipped model-disabled（行为与
-   * 旧 stub 等价，仅 reason 文案变化）。Pick 结构型以便测试注入 fake。
+   * 懒建，P3-c/M7）。null/缺省 = 层未启用 → skipped（reason 见 tinyclickSkipReason）。
+   * Pick 结构型以便测试注入 fake。
    */
   /** Experimental L2 locator (Qwen3-VL). Name kept for historical deps wiring. */
   tinyclick?: ExperimentalLocator | null
+  /**
+   * When tinyclick is null, surface the real admission/skip reason in the
+   * attempt log (e.g. model-switch-off, model-build-failed, worker-missing).
+   * Default "model-not-admitted" — do not mislabel as model-disabled.
+   */
+  tinyclickSkipReason?: string
   log?: (event: string, data: Record<string, unknown>) => void
   now?: () => number
 }
@@ -627,8 +633,9 @@ export async function locateTargetWithChain(args: {
     attempts.push({ layer: "qwen-vl", outcome: outcome.kind, reason: outcome.reason, ms: now() - t0 })
     log("computeruse.locate", { layer: "qwen-vl", hit: false, reason: outcome.reason, ms: now() - t0 })
   } else {
-    attempts.push({ layer: "qwen-vl", outcome: "skipped", reason: "model-disabled", ms: 0 })
-    log("computeruse.locate", { layer: "qwen-vl", hit: false, reason: "model-disabled" })
+    const skipReason = deps.tinyclickSkipReason || "model-not-admitted"
+    attempts.push({ layer: "qwen-vl", outcome: "skipped", reason: skipReason, ms: 0 })
+    log("computeruse.locate", { layer: "qwen-vl", hit: false, reason: skipReason })
   }
 
   // ---- L3: cloud（WP6 honest stub，不动） ---------------------------------------

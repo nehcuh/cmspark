@@ -2114,13 +2114,13 @@ test("P7 回归：admission 开启态下批准后刷新链 deps.tinyclick 恒 nu
   assert.equal(injector.clicks.length, 0, "刷新路径零注入")
   assert.equal(tc.calls.length, 0, "刷新链 deps.tinyclick 恒 null——实验层全任务零调用（P7 锁）")
   // 结构证据（executor log 通道）：刷新链以 tinyclick:null 跳过，可观测形态 =
-  // computeruse.locate{layer:"qwen-vl", hit:false, reason:"model-disabled",
+  // computeruse.locate{layer:"qwen-vl", hit:false, reason:"refresh-no-experimental",
   // refresh:true}（初次链 L1 hit 不触及实验层；G4 命中链不走刷新分支）。
   const tcLogs = logs.filter((l) => l.event === "computeruse.locate" && l.data?.layer === "qwen-vl")
   assert.ok(tcLogs.length >= 1, "刷新链须留下 qwen-vl 层跳过日志")
   for (const l of tcLogs) {
     assert.equal(l.data.hit, false, "刷新通道绝不产生实验层命中（未经 G4 人审的建议不得借道）")
-    assert.equal(l.data.reason, "model-disabled", "null 注入的可观测形态 = model-disabled 跳过")
+    assert.equal(l.data.reason, "refresh-no-experimental", "刷新通道 null 注入 = refresh-no-experimental")
     assert.equal(l.data.refresh, true, "qwen-vl 日志只能来自刷新通道的 null 跳过")
   }
 })

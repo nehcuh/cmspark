@@ -261,9 +261,9 @@ test("chain: L0 skipped + L1 language-missing -> honest stubs -> ELEMENT_NOT_FOU
   }
   assert.match(captured.message, /uia:skipped\(uia-incapable-or-unprobed\)/)
   assert.match(captured.message, /ocr:skipped\(ocr-language-missing\)/)
-  // WP5 I3：admission 关闭（deps.tinyclick 缺省）→ model-disabled（行为与旧
-  // stub 等价，仅 reason 文案变化，plan:489 ③）
-  assert.match(captured.message, /qwen-vl:skipped\(model-disabled\)/)
+  // WP5 I3：admission 关闭（deps.tinyclick 缺省）→ model-not-admitted
+  // （勿再误标为 model-disabled，开关可能是开着的但 worker/admission 失败）
+  assert.match(captured.message, /qwen-vl:skipped\(model-not-admitted\)/)
   assert.match(captured.message, /cloud:skipped\(wp6-not-implemented\)/)
 })
 
@@ -526,14 +526,14 @@ function tcHit(point = { x: 150, y: 180 }): TinyClickLocateOutcome {
   }
 }
 
-test("L2: admission 关闭（tinyclick 缺省）→ skipped model-disabled，链落 L3 stub", async () => {
+test("L2: admission 关闭（tinyclick 缺省）→ skipped model-not-admitted，链落 L3 stub", async () => {
   const locator = new FakeLocator([]) // L1：语言包在、锚文本不在
   await assert.rejects(
     runChain(chainDeps({ locator })),
     (err: any) =>
       err instanceof ComputerError &&
       err.code === "ELEMENT_NOT_FOUND" &&
-      /qwen-vl:skipped\(model-disabled\)/.test(err.message) &&
+      /qwen-vl:skipped\(model-not-admitted\)/.test(err.message) &&
       /cloud:skipped\(wp6-not-implemented\)/.test(err.message),
   )
 })

@@ -220,6 +220,19 @@ if [ -f companion/dist/tinyclick-worker.js ]; then
   cp companion/dist/tinyclick-worker.js "${STAGING}/"
 fi
 
+# Qwen3-VL Python worker sidecar — MUST sit next to cmspark-agent.js so
+# resolveQwenVlWorkerScript() finds Resources/qwen-vl-worker.py in the .app
+# bundle. Without this, admission fails with worker-missing and locate falls
+# through as model-not-admitted (formerly mislabeled model-disabled).
+if [ -f companion/dist/computer/qwen-vl-worker.py ]; then
+  cp companion/dist/computer/qwen-vl-worker.py "${STAGING}/qwen-vl-worker.py"
+elif [ -f companion/src/computer/qwen-vl-worker.py ]; then
+  cp companion/src/computer/qwen-vl-worker.py "${STAGING}/qwen-vl-worker.py"
+else
+  echo "ERROR: qwen-vl-worker.py missing (need dist/computer or src/computer) — Qwen3-VL locate hard-gate" >&2
+  exit 1
+fi
+
 # WASM
 cp companion/node_modules/sql.js/dist/sql-wasm.wasm "${STAGING}/"
 

@@ -1,10 +1,13 @@
 // Qwen3-VL main-thread runtime: long-lived Python worker (load once, infer many).
 
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process"
+import * as fs from "node:fs"
 import * as path from "node:path"
 import { logger } from "../logger"
+import { getAppRoot } from "../paths"
 import type { QwenVlVariant } from "./qwen-vl-catalog"
 import { qwenModelDir } from "./qwen-vl-download"
+import { isolatedPythonBin } from "./python-runtime"
 
 export class ModelRuntimeError extends Error {
   readonly code: string
@@ -53,15 +56,76 @@ type Pending = {
   reject: (e: Error) => void
 }
 
-function defaultWorkerScript(): string {
-  // src layout: companion/src/computer/qwen-vl-worker.py
-  // dist layout: companion/dist/computer/ or .test-dist/...
+/**
+ * Resolve qwen-vl-worker.py for dev (tsc dist/), packaged App (Resources/),
+ * and source-tree layouts. Returns the first existing path.
+ * Throws ModelRuntimeError("worker-missing") when none exist.
+ */
+export function resolveQwenVlWorkerScript(explicit?: string): string {
+  if (explicit) {
+    if (fs.existsSync(explicit)) return explicit
+    throw new ModelRuntimeError(
+      "worker-missing",
+      `qwen-vl-worker.py not found at explicit path: ${explicit}`,
+    )
+  }
+
+  let appRoot: string | undefined
+  try {
+    appRoot = getAppRoot()
+  } catch {
+    appRoot = undefined
+  }
+
   const candidates = [
+    // tsc dist: companion/dist/computer/qwen-vl-worker.py (copied by npm run build)
     path.join(__dirname, "qwen-vl-worker.py"),
+    // Packaged .app / zip: worker next to cmspark-agent.js (Resources/)
+    ...(appRoot
+      ? [
+          path.join(appRoot, "qwen-vl-worker.py"),
+          path.join(appRoot, "computer", "qwen-vl-worker.py"),
+          path.join(appRoot, "dist", "computer", "qwen-vl-worker.py"),
+          path.join(appRoot, "src", "computer", "qwen-vl-worker.py"),
+        ]
+      : []),
+    // Dev source relative to dist/ or src/
     path.join(__dirname, "..", "src", "computer", "qwen-vl-worker.py"),
     path.join(__dirname, "..", "..", "src", "computer", "qwen-vl-worker.py"),
+    path.join(__dirname, "computer", "qwen-vl-worker.py"),
   ]
-  return candidates[0]!
+
+  for (const c of candidates) {
+    if (c && fs.existsSync(c)) return c
+  }
+
+  throw new ModelRuntimeError(
+    "worker-missing",
+    `qwen-vl-worker.py not found (packaging gap or incomplete install). Tried: ${candidates
+      .filter(Boolean)
+      .slice(0, 6)
+      .join(" | ")}. Reinstall CMspark or copy the worker next to cmspark-agent.js.`,
+  )
+}
+
+/**
+ * Default interpreter for Qwen3-VL: CMspark isolated env ONLY
+ * (~/.cmspark-agent/python-env, typically created via uv).
+ * Never silently fall back to PATH/system python3 — that is an explicit
+ * config.pythonMode="system" choice wired by QwenVlSession.
+ */
+function defaultPythonBin(): string {
+  try {
+    const iso = isolatedPythonBin()
+    if (fs.existsSync(iso)) return iso
+  } catch {
+    /* DATA_DIR edge */
+  }
+  throw new ModelRuntimeError(
+    "model-not-ready",
+    "Qwen3-VL 需要 CMspark 独立 Python 环境（~/.cmspark-agent/python-env，设置页可经 uv 创建）。" +
+      "未找到该解释器，且构造时未传入 pythonBin；不会回退到系统 python3。",
+  )
 }
 
 class PythonLineTransport implements QwenVlTransport {
@@ -79,9 +143,23 @@ class PythonLineTransport implements QwenVlTransport {
 
   private ensureChild(): ChildProcessWithoutNullStreams {
     if (this.child && !this.child.killed) return this.child
+    // Prefer isolated venv semantics when the binary lives under python-env.
+    // Do not rely on PATH to find packages — the absolute pythonBin is the source of truth.
+    const env: NodeJS.ProcessEnv = { ...process.env }
+    try {
+      const iso = isolatedPythonBin()
+      if (this.pythonBin === iso || this.pythonBin.startsWith(path.dirname(path.dirname(iso)) + path.sep)) {
+        const root = path.dirname(path.dirname(iso)) // .../python-env
+        env.VIRTUAL_ENV = root
+        const binDir = path.dirname(this.pythonBin)
+        env.PATH = `${binDir}${path.delimiter}${env.PATH || ""}`
+      }
+    } catch {
+      /* keep process.env */
+    }
     const child = spawn(this.pythonBin, [this.workerScript], {
       stdio: ["pipe", "pipe", "pipe"],
-      env: process.env,
+      env,
       windowsHide: true,
     })
     this.child = child
@@ -207,12 +285,17 @@ export class QwenVlRuntime {
 
   constructor(deps: QwenVlRuntimeDeps) {
     this.deps = deps
-    this.transport =
-      deps.transport ??
-      new PythonLineTransport(
-        deps.pythonBin ?? (process.platform === "win32" ? "python" : "python3"),
-        deps.workerScript ?? defaultWorkerScript(),
+    if (deps.transport) {
+      this.transport = deps.transport
+    } else {
+      // Resolve worker at construct time so admission fails with worker-missing
+      // instead of a cryptic "can't open file" from a missing path.
+      const workerScript = resolveQwenVlWorkerScript(deps.workerScript)
+      this.transport = new PythonLineTransport(
+        deps.pythonBin ?? defaultPythonBin(),
+        workerScript,
       )
+    }
   }
 
   getStatus(): QwenVlStatus {

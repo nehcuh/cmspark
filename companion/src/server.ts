@@ -4035,7 +4035,7 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
               uiaProber: new MacAxProber(),
               uiaWatcherFactory: (t, opts) => startMacAxWindowWatcher(t, opts),
               // Qwen3-VL works on macOS (MPS/CPU via Python transformers)
-              tinyclickLocator: await (async () => {
+              ...(await (async () => {
                 try {
                   const { resolveModelAdmissionSafe } = await import("./computer/model-admission")
                   const { computerModelSession } = await import("./computer/model-handlers")
@@ -4048,11 +4048,20 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
                       stillEnabled: () => getConfig().computer?.modelEnabled === true,
                     },
                   })
-                  return adm.locator
-                } catch {
-                  return null
+                  return {
+                    tinyclickLocator: adm.locator,
+                    ...(adm.locator
+                      ? {}
+                      : { tinyclickSkipReason: adm.reason || "model-not-admitted" }),
+                  }
+                } catch (e) {
+                  return {
+                    tinyclickLocator: null,
+                    tinyclickSkipReason:
+                      e instanceof Error ? `admission-error:${e.message.slice(0, 80)}` : "model-admission-error",
+                  }
                 }
-              })(),
+              })()),
               onUiaVerdict: (token, verdict, probedAt) => {
                 const wb = writeBackUiaVerdict(token, verdict, probedAt)
                 logger.info("computer.uia.writeback", { tool_call_id: toolCallId, token, applied: wb.applied, reason: wb.reason })
@@ -4148,6 +4157,9 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
               uiaProber: new PsUiaProber(),
               uiaWatcherFactory: (t, opts) => startUiaWindowWatcher(t, opts),
               tinyclickLocator: tinyclickAdmission.locator,
+              ...(tinyclickAdmission.locator
+                ? {}
+                : { tinyclickSkipReason: tinyclickAdmission.reason || "model-not-admitted" }),
               onUiaVerdict: (token, verdict, probedAt) => {
                 const wb = writeBackUiaVerdict(token, verdict, probedAt)
                 logger.info("computer.uia.writeback", { tool_call_id: toolCallId, token, applied: wb.applied, reason: wb.reason })
