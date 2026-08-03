@@ -2,6 +2,18 @@
 
 ## Technical Pitfalls
 
+### 无人值守 packaging：进程 grant vs 持久 cruise dual-write（2026-08-03 S36）
+- **现象**：UI 勾选「重启后自动失效，不会写入长期配置」；`security.unattended.arm` 却 `saveConfig` 写 `auto_approve_dangerous` + `auto_approve_enterprise_tools`（可选 `allow_all_schemes`）
+- **影响**：用户以为「会话值守」；重启后桌面 grant 没了，**网页/企业巡航仍开**；enterprise 模块开启时 shell/netsec 可跟跳 L2
+- **实现锚点**：`message-router.ts` arm 段 dual-write；`SettingsSlideout` 仅客户端 dual-ack；`include_protocol:false` **不** force-clear 已有 scheme unlock
+- **修法方向**：服务端 acks/`user_gesture`；arm 时精确写 target 向量（含 clear protocol）；文案与 dual-write 同真；或停止 dual-write 仅进程 overlay
+- **报告**：`docs/audit/reviews/multi-adversarial-review-20260803-main-105-107.md`
+
+### `ensure_python_env` 失败前已写 `pythonMode: isolated`（2026-08-03）
+- **锚点**：`companion/src/computer/model-handlers.ts` case `computer.model.ensure_python_env` — `setComputerModelFields({ pythonMode: "isolated" })` 在 `ensureIsolatedPythonEnv` 之前
+- **影响**：venv/pip 失败后配置卡在 isolated，preflight/download 按 isolated 判未就绪，原 system 路径被弃用
+- **修法**：仅 `result.ok` 后持久化，或失败回滚旧 mode
+
 ### Vision 405 ≠ 本地 Qwen；智谱 base_url 必须带 `/api`（2026-08-02）
 - **用户误判**：已下载 Qwen3-VL 并开启实验层，仍报 `vision.analysis_failed` / `405 Not Allowed (nginx)`（截图 + `analyze_image` 同错）
 - **两层能力**：
@@ -227,6 +239,16 @@
 
 ## Reusable Patterns
 
+### 合 main 后多路对抗复审（post-ship multi-lane review）（2026-08-03）
+- **何时用**：#105/#106 类大 diff 已合 main，需要独立于实现会话的对抗体检
+- **步骤**：
+  1. `git fetch` + 安全 rebase/ff；收集 **生产路径** diff（排除 audit 文档噪声）
+  2. 并行 4 路 read-only subagent：Security · Correctness · Architecture · Compat（可按题换角色）
+  3. 编排器 **[inspected]** 抽检 HIGH（勿盲信 lane 摘要）
+  4. 合成：任一路 REQUEST_CHANGES 且 architect≠CLEAR → 最终 REQUEST_CHANGES；写 `docs/audit/reviews/multi-adversarial-review-*.md`
+- **价值**：捕获 dual-write 文案撒谎、失败路径状态机、跨平台文案等实现门控易漏项
+- **产物例**：`docs/audit/reviews/multi-adversarial-review-20260803-main-105-107.md`
+
 ### 产品安全入口：对抗四角色 → SoT → Pi/Claude 双审 → 再实现（2026-08-02）
 - **何时用**：改 Trust / 确认门 / 高风险 UI 叙事（尤其用户与 ADR 心智冲突时）
 - **步骤**：
@@ -360,6 +382,7 @@
 - **流程坑**：扩展初始同步加消息必须改 `sidepanel-state.test.ts`；勿 `armed || true` 乐观假绿
 - **SoT**：`docs/adr/021-unattended-desktop-session.md` · unattended-desktop design/plan
 - **真机**：`docs/superpowers/plans/2026-08-02-unattended-desktop-manual-checklist.md`
+- **S36 post-ship（未关）**：UI「不会写入长期配置」与 arm 时 `saveConfig` dual-write cruise/enterprise 冲突；`include_protocol:false` 不清除已有 `allow_all_schemes`；服务端未强制 dual-ack（仅短语）
 
 ### Companion Native HUD N1–N10（2026-07-27 LOCK，P3a 前）
 - **Source of truth**: `docs/decisions/v1.3/companion-native-hud-n1n10-lock-2026-07-27.md`

@@ -3,17 +3,17 @@
 ## Session Handoff
 
 <!-- handoff:start -->
-### 2026-08-02 ~16:43 (S35 — Trust IA + 无人值守 #106 合 main)
-- **main tip**：`ed92a81` — PR **#106** squash：运行自主度/协议解锁 + ADR-021 无人值守桌面值守
-- **能力**：设置「无人值守」武装后，`coordinateAllowed` App 上 `host_computer` 可跳过 **initial** L2（8h 进程 grant）；顶栏「值守中 · 桌面」；危险 re-L2 仍确认
-- **流程**：M0–M3 对抗/双审门控；M2 曾因 sidepanel 初始同步测未更新被 REJECT 后修复
-- **仓库**：本地仅 `main`；与 origin 一致
+### 2026-08-03 ~11:12 (S36 — pull + 四路对抗 #105–#107)
+- **main tip**：`dd3b1dd` (#107) + 本地 handoff commits；与 origin 对齐生产代码
+- **动作**：rebase 拉最新；四路对抗（Security/Correctness/Architecture/Compat）评审 #105+#106+#107
+- **Verdict**：**REQUEST_CHANGES** — 报告 `docs/audit/reviews/multi-adversarial-review-20260803-main-105-107.md`
+- **P0**：unattended dual-write 文案/持久化诚实性；`ensure_python_env` 先写 isolated；Windows windowsHide / PS 安装命令 / macOS 急停文案
 - **下次**：
-  1. 真机微信清单 `docs/superpowers/plans/2026-08-02-unattended-desktop-manual-checklist.md`
-  2. 需要分发则 `make package-macos` 重装 `/Applications`
-  3. 可选：Developer ID / CU experimental smoke / 清理未跟踪 patch
+  1. 按 P0 批修（Trust honesty → pythonMode 事务 → 平台补丁）
+  2. 真机微信清单（#106 residual）
+  3. 可选清理未跟踪 patch/images
 
-### 2026-08-02 ~14:54 (S34 — Trust IA 设计与 P0+P1)
-- Hybrid：协议解锁 ≠ 全开；运行自主度 dual-write 三 bool
-- 后并入 #106；桌面免确认由 ADR-021 承接
+### 2026-08-02 ~16:43 (S35 — Trust IA + 无人值守 #106 合 main)
+- **main tip**：`ed92a81` — #106 运行自主度 + ADR-021；后 #107 Windows uv
+- **残余**：真机清单；S36 发现 packaging honesty 未关
 <!-- handoff:end -->
