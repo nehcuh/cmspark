@@ -231,6 +231,7 @@ Bake-off 默认非敏感页；敏感页须显式 disclosure（L3+）。
 | 2026-08-03 | P0b spike plan + P0c façade skeleton（profile/gate/audit） |
 | 2026-08-04 | **本 ADR Accepted**：brief 升格为决策 SoT；实现仍按 Phase 0→P1 门控 |
 | 2026-08-04 | 实现闸门：Eval Engineering skill + [P0c eval gates](../superpowers/plans/2026-08-04-outbound-mcp-p0c-eval-gates.md)（M1–M9 · T3 dual） |
+| 2026-08-04 | 场景应用（非本 ADR 规范）：[Daily Content Loop brief](../decisions/daily-content-loop-brief-2026-08-04.md) — 定时情报环用 L1 采集，非 L2/值守 |
 
 ---
 
