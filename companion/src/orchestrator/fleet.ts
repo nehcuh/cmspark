@@ -14,6 +14,8 @@ export interface FleetWorkerView {
   agent_role?: string
   paused: boolean
   status: "idle" | "paused" | "holding_tabs" | "unknown"
+  /** In-flight LLM for this worker (run-state). */
+  llm_active?: boolean
   tab_locks: Array<{
     tab_id: number
     state: string
@@ -32,6 +34,8 @@ export interface FleetSnapshot {
   open_intent_count: number
   worst_status: "idle" | "paused" | "holding_tabs" | "none"
   orchestrator_runs: string[]
+  /** Threads with active LLM abort controllers (honest RunBusy). */
+  llm_active_thread_ids: string[]
 }
 
 export function buildFleetSnapshot(tm: ThreadManager): FleetSnapshot {
@@ -42,6 +46,19 @@ export function buildFleetSnapshot(tm: ThreadManager): FleetSnapshot {
     arr.push(l)
     locksByHolder.set(l.holder_thread_id, arr)
   }
+
+  let llmActive: string[] = []
+  try {
+    // Lazy require avoids circular import at module load
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { listLlmActiveThreadIds } = require("../message-router") as {
+      listLlmActiveThreadIds: () => string[]
+    }
+    llmActive = listLlmActiveThreadIds()
+  } catch {
+    llmActive = []
+  }
+  const llmSet = new Set(llmActive)
 
   const all = tm.list() as any[]
   const workers = all.filter(
@@ -64,6 +81,7 @@ export function buildFleetSnapshot(tm: ThreadManager): FleetSnapshot {
       agent_role: w.agent_role,
       paused: !!w.paused,
       status,
+      llm_active: llmSet.has(w.id),
       tab_locks: wLocks.map((l) => ({
         tab_id: l.tab_id,
         state: l.state,
@@ -109,6 +127,7 @@ export function buildFleetSnapshot(tm: ThreadManager): FleetSnapshot {
     open_intent_count,
     worst_status: worst,
     orchestrator_runs: runs,
+    llm_active_thread_ids: llmActive,
   }
 }
 

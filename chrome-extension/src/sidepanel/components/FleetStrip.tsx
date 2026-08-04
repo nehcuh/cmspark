@@ -60,7 +60,13 @@ export function FleetStrip({
   }
 
   const stopAll = () => {
-    if (!window.confirm("停止所有 worker？将 abort LLM、释放 tab 锁并暂停。")) return
+    if (
+      !window.confirm(
+        "停止全部子任务？将中止全部 worker LLM、拒绝待确认，并释放相关 tab 锁。",
+      )
+    ) {
+      return
+    }
     chrome.runtime.sendMessage({ type: "fleet.stop_all" })
   }
 
@@ -68,12 +74,13 @@ export function FleetStrip({
     dispatch({ type: "SET_ACTIVE_THREAD", threadId: w.id })
     chrome.runtime.sendMessage({ type: "thread.select", threadId: w.id })
     setExpanded(false)
+    dispatch({ type: "SET_FLEET_LIST_OPEN", open: false })
   }
 
   const onMainClick = () => {
     if (focusBand) {
-      // Expand → Autonomy / Cockpit — never a third bar inside FocusBand.
-      chrome.runtime.sendMessage({ type: "cockpit.open" })
+      // SoT Q2: primary → worker list portal (not nested under FocusBand overflow).
+      dispatch({ type: "SET_FLEET_LIST_OPEN", open: true })
       return
     }
     setExpanded((e) => !e)
@@ -153,7 +160,7 @@ export function FleetStrip({
                 </div>
                 <div style={styles.actions}>
                   <button type="button" style={styles.smallBtn} onClick={() => enterWorker(w)}>
-                    切入
+                    进入子任务
                   </button>
                   {w.paused ? (
                     <button

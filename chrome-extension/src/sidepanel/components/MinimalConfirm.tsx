@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties } from "re
 import { useAgentStore } from "../store/agentStore"
 import type { SecurityConfirmationRequest } from "../types"
 import { tokens, riskColorDark, riskLabel } from "../ui/tokens"
+import { resolveStopTargetId } from "../utils/thread-busy"
 
 /** Darker red ink for compact confirm on soft dangerSurface (~WCAG AA at 11px). */
 const COMPACT_DANGER_INK = "#b91c1c"
@@ -29,14 +30,24 @@ export function MinimalConfirm({ compact = false }: { compact?: boolean } = {}) 
       if (!request) return
       const needsNonce = !!request.nonce_challenge
       if (approved && needsNonce) return
-      const stopTargetId = request.worker_id || activeThreadId
+      // F-S1: stamp-first; multi-agent without worker_id → deny-safe (no wrong abort)
+      const multiAgentContext = !!(
+        request.worker_id ||
+        request.orchestrator_run_id ||
+        request.parent_thread_id
+      )
+      const stopTargetId = resolveStopTargetId({
+        workerId: request.worker_id,
+        activeThreadId,
+        multiAgentContext,
+      })
       chrome.runtime.sendMessage({
         type: "security.confirmation.response",
         confirmation_id: request.confirmation_id,
         approved,
         stop_thread: stopThread,
         add_to_whitelist: [],
-        stop_thread_id: stopThread ? stopTargetId : undefined,
+        stop_thread_id: stopThread && stopTargetId ? stopTargetId : undefined,
         add_to_enterprise_session_trust:
           approved && !stopThread && enterpriseTrust && request.offer_enterprise_session_trust === true
             ? true
@@ -51,6 +62,7 @@ export function MinimalConfirm({ compact = false }: { compact?: boolean } = {}) 
         })
         if (stopTargetId === activeThreadId) {
           dispatch({ type: "SET_STREAMING", content: "" })
+          dispatch({ type: "SET_PROCESSING", isProcessing: false })
         }
       }
     },
@@ -85,7 +97,16 @@ export function MinimalConfirm({ compact = false }: { compact?: boolean } = {}) 
   const workerLabel =
     request.worker_role_label ||
     (request.worker_id ? `worker ${request.worker_id.slice(0, 8)}` : null)
-  const stopTargetId = request.worker_id || activeThreadId
+  const multiAgentContext = !!(
+    request.worker_id ||
+    request.orchestrator_run_id ||
+    request.parent_thread_id
+  )
+  const stopTargetId = resolveStopTargetId({
+    workerId: request.worker_id,
+    activeThreadId,
+    multiAgentContext,
+  })
   const queueLen = queue.length
   const queueTail = queue.slice(1, 4)
   const offerEnterprise = request.offer_enterprise_session_trust === true && !needsNonce

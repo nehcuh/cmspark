@@ -408,7 +408,7 @@ export function SettingsSlideout() {
               risk_score: 100,
               source: "ui_phrase_confirmed",
               message:
-                "已请求武装无人值守 — 以 Companion 返回的值守状态为准；host_computer 初始 L2 可跳过；危险 re-L2 仍确认；网页/企业巡航会写入长期配置",
+                "已请求武装无人值守 — 值守 grant 生效；并写入全自动+协议巡航。三旗全开时 evaluate/shell/spawn/cookie/桌面 re-L2 等不再二次确认（自担风险）",
             },
           })
           setAutopilotConfirm(false)

@@ -36,6 +36,17 @@ import {
   IconAttach,
   IconAlert,
 } from "./ui/icons"
+import { collectRunningTools } from "./utils/running-tools"
+import {
+  composerBusyPlaceholder,
+  deriveRunBusy,
+  deriveThreadBusy,
+  filterIdsByRun,
+  resolveComposerMode,
+} from "./utils/thread-busy"
+import { WorkerScopeBar } from "./components/WorkerScopeBar"
+import { RunBusyChip } from "./components/RunBusyChip"
+import { FleetWorkerListPortal } from "./components/FleetWorkerList"
 
 // Error Boundary — catches rendering errors to prevent white screen
 class ErrorBoundary extends Component<{ children: React.ReactNode }, { error: Error | null }> {
@@ -159,7 +170,10 @@ function AppContent() {
       <FocusBand capabilityLevel={level} />
       {/* Scene / workspace status — Mission Pack UX redesign P0 */}
       <SceneStatusBar />
+      <RunBusyChip />
+      <WorkerScopeBar />
       <ChatView />
+      <FleetWorkerListPortal />
       {/* R3: ComputerTaskBar removed — step timeline only in Cockpit dual-track */}
       {/* UIUX v2 §4.7 M3/PR5: permanent BottomBar strip behind ui.bottomBarStrip (default off). Host is SoT. */}
       {ui.bottomBarStrip ? <BottomBar capabilityLevel={level} /> : null}
@@ -291,20 +305,71 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
     isComputer &&
     !!state.computerTask &&
     (state.computerTask.status === "running" || state.computerTask.status === "paused")
+  const runningTools = collectRunningTools(state.messages)
+  const activeId = state.activeThreadId
+  const activeThread = state.threads.find((t) => t.id === activeId)
+  const mapBusy = !!(activeId && state.threadBusyById[activeId])
+  const threadBusy = deriveThreadBusy({
+    streaming: isStreaming,
+    isProcessing: state.isProcessing,
+    runningToolCount: runningTools.length,
+    mapBusy,
+  })
+  const fleet = state.fleet
+  const runId = activeThread?.orchestrator_run_id || null
+  const workers = fleet?.workers || []
+  const llmActiveRaw = fleet?.llm_active_thread_ids || []
+  const llmActiveThreadIds = runId
+    ? filterIdsByRun(llmActiveRaw, workers, runId)
+    : llmActiveRaw
+  const workerBusyIds = filterIdsByRun(
+    Object.entries(state.threadBusyById)
+      .filter(([, b]) => b)
+      .map(([id]) => id),
+    workers,
+    runId,
+  )
+  const anyHoldingTabs = workers.some((w) => w.status === "holding_tabs")
+  // Prefer run-scoped lock count when we can attribute locks to workers of this run
+  let lockCount = fleet?.lock_count ?? 0
+  if (runId && fleet?.locks?.length) {
+    const runWorkerIds = new Set(
+      workers.filter((w) => w.orchestrator_run_id === runId).map((w) => w.id),
+    )
+    if (activeId) runWorkerIds.add(activeId)
+    lockCount = fleet.locks.filter((l) => runWorkerIds.has(l.holder_thread_id)).length
+  }
+  const openIntents = fleet?.open_intent_count ?? 0
+  const runBusy = deriveRunBusy({
+    lockCount,
+    openIntents,
+    anyHoldingTabs: runId
+      ? workers.some((w) => w.orchestrator_run_id === runId && w.status === "holding_tabs")
+      : anyHoldingTabs,
+    llmActiveThreadIds,
+    workerBusyIds,
+  })
+  const composerMode = resolveComposerMode({ taskActive, threadBusy, runBusy })
+  const isWorker = activeThread?.agent_role === "worker"
   const canSend =
-    !isStreaming &&
+    composerMode !== "l2_task" &&
+    composerMode !== "thread_busy" &&
     hasContent &&
     !!state.activeThreadId &&
-    state.connectionState === "connected" &&
-    !taskActive
+    state.connectionState === "connected"
   const needsThread = !state.activeThreadId
   const needsConnection = state.connectionState !== "connected"
+  const showStop = threadBusy || isStreaming
 
   const getPlaceholder = () => {
     if (needsThread) return "请先创建或选择一个线程"
     if (needsConnection) return "等待 companion 连接..."
-    // P1 D12′: Cockpit is task conductor — Panel cannot interject mid-task
-    if (taskActive) return "任务进行中 — 请在确认台发送指令或先急停"
+    const busyPh = composerBusyPlaceholder(composerMode, {
+      lockCount,
+      isWorker,
+      roleLabel: activeThread?.worker_role_label || activeThread?.alias || undefined,
+    })
+    if (busyPh) return busyPh
     return composerPlaceholder(capabilityLevel)
   }
 
@@ -479,6 +544,9 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
           skillIds,
         })
         dispatch({ type: "SET_PROCESSING", isProcessing: true })
+        if (state.activeThreadId) {
+          dispatch({ type: "SET_THREAD_BUSY", threadId: state.activeThreadId, busy: true })
+        }
         dispatch({
           type: "ADD_MESSAGE",
           message: {
@@ -501,6 +569,9 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
           clientMessageId,
         })
         dispatch({ type: "SET_PROCESSING", isProcessing: true })
+        if (state.activeThreadId) {
+          dispatch({ type: "SET_THREAD_BUSY", threadId: state.activeThreadId, busy: true })
+        }
         dispatch({
           type: "ADD_MESSAGE",
           message: {
@@ -528,6 +599,9 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
     })
     dispatch({ type: "SET_STREAMING", content: "" })
     dispatch({ type: "SET_PROCESSING", isProcessing: false })
+    if (state.activeThreadId) {
+      dispatch({ type: "SET_THREAD_BUSY", threadId: state.activeThreadId, busy: false })
+    }
   }
 
   const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -643,12 +717,12 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
             background: needsThread || needsConnection ? tokens.bgMuted : tokens.bgElevated,
           }}
         >
-          {!isStreaming && (
+          {!showStop && (
             <button
               type="button"
               style={styles.attachBtn}
               onClick={() => fileInputRef.current?.click()}
-              disabled={needsThread || needsConnection}
+              disabled={needsThread || needsConnection || threadBusy}
               title="上传文件"
             >
               <IconAttach size={16} />
@@ -660,12 +734,17 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
             placeholder={getPlaceholder()}
             rows={2}
             value={text}
-            disabled={needsThread || needsConnection}
+            disabled={needsThread || needsConnection || threadBusy}
             onChange={handleChange}
             onKeyDown={handleKeyDown}
           />
-          {isStreaming ? (
-            <button type="button" style={styles.stopBtn} onClick={handleStop} title="停止生成">
+          {showStop ? (
+            <button
+              type="button"
+              style={styles.stopBtn}
+              onClick={handleStop}
+              title={isWorker ? "停止该子任务（本轮）" : "停止本轮"}
+            >
               <IconStop size={14} />
             </button>
           ) : (
@@ -685,7 +764,9 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
                     ? "Companion 未连接"
                     : taskActive
                       ? "任务进行中，请在确认台发送"
-                      : "发送"
+                      : threadBusy
+                        ? "本对话处理中"
+                        : "发送"
               }
             >
               <IconSend size={15} />

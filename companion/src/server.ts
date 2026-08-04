@@ -678,26 +678,28 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
       finalParams.tabId = Number.isFinite(n) ? n : undefined
     }
     const startedAt = Date.now()
-    // Notify extension: tool execution started (show in sidebar)
-    ws.send(JSON.stringify({
-      type: "tool.start",
-      tool_call_id: toolCallId,
-      tool_name: toolName,
-      params: summarizeToolParams(finalParams),
-    }))
-    logger.info("tool.start", {
-      tool_call_id: toolCallId,
-      tool_name: toolName,
-      params: summarizeToolParams(finalParams),
-    })
-
     // --- ADR-015 multi-agent gates (before L2 / cookie / dispatch) ---
+    // Resolve acting thread first so tool.start carries thread_id (run-state W0/W2).
     const actingThreadId =
       typeof (finalParams as any).__thread_id === "string"
         ? String((finalParams as any).__thread_id)
         : typeof (finalParams as any)._thread_id === "string"
           ? String((finalParams as any)._thread_id)
           : undefined
+    // Notify extension: tool execution started (show in sidebar)
+    ws.send(JSON.stringify({
+      type: "tool.start",
+      tool_call_id: toolCallId,
+      tool_name: toolName,
+      params: summarizeToolParams(finalParams),
+      ...(actingThreadId ? { thread_id: actingThreadId } : {}),
+    }))
+    logger.info("tool.start", {
+      tool_call_id: toolCallId,
+      tool_name: toolName,
+      params: summarizeToolParams(finalParams),
+      thread_id: actingThreadId,
+    })
     // Only true when re-applied under trustedOutbound — never from raw LLM params.
     const isOutboundMcpCall = (finalParams as any).__outbound_mcp === true
     try {
@@ -852,6 +854,13 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
     }
 
     // Security Pre-flight Checks (P0 - Cookie Trust Domains Gate)
+    // Full autonomy cruise (网页+企业巡航+协议解锁三旗全开): user opted into max
+    // residual risk — do not block cookie tools solely on trusted_domains.
+    const securityCfgEarly = getConfig().security
+    const userFullAutonomyCruise =
+      securityCfgEarly?.auto_approve_dangerous === true &&
+      securityCfgEarly?.auto_approve_enterprise_tools === true &&
+      securityCfgEarly?.allow_all_schemes === true
     const COOKIE_TOOLS = ["get_cookies", "set_cookie", "delete_cookie", "list_all_cookies"]
     if (COOKIE_TOOLS.includes(toolName)) {
       let isSafe = false
@@ -876,6 +885,16 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
         // list_all_cookies is global; only safe if "*" is in trusted domains
         isSafe = isTrustedDomain("*")
         targetDomain = "Global / All Domains"
+      }
+
+      if (!isSafe && userFullAutonomyCruise) {
+        isSafe = true
+        logger.warn("security.cookie_trust_waived", {
+          tool_call_id: toolCallId,
+          tool_name: toolName,
+          target_domain: targetDomain || "unknown",
+          reason: "full_autonomy_cruise",
+        })
       }
 
       if (!isSafe) {
@@ -1439,12 +1458,36 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
         toolName === "board_complete" ||
         toolName === "host_cli" || // L-CLI-9: god-mode never skips host_cli L2
         toolName === "skill_install" // S41: durable skill write — god-mode never skips
+      const userFullAutonomy =
+        securityConfig.auto_approve_dangerous === true &&
+        securityConfig.auto_approve_enterprise_tools === true &&
+        securityConfig.allow_all_schemes === true
       const criticalApis = hostComputerGated
         ? ["computer.coordinate_injection"]
         : capabilityForceConfirm
           ? [toolName]
           : detectCriticalApis(code)
-      const forceConfirm = criticalApis.length > 0
+      const browserScriptTool = toolName === "evaluate" || toolName === "osascript_eval"
+      // Waive forceConfirm when: (1) browser script + any L2 skip, or (2) full autonomy cruise.
+      const forceConfirm =
+        criticalApis.length > 0 &&
+        !(browserScriptTool && skipConfirmation) &&
+        !userFullAutonomy
+      if (criticalApis.length > 0 && (userFullAutonomy || (browserScriptTool && skipConfirmation))) {
+        logger.info("security.critical_api_waived", {
+          tool_call_id: toolCallId,
+          tool_name: toolName,
+          critical_apis: criticalApis,
+          reason: userFullAutonomy
+            ? "full_autonomy_cruise"
+            : securityConfig.allow_all_schemes === true
+              ? "god_mode"
+              : securityConfig.auto_approve_dangerous === true
+                ? "global_toggle"
+                : "domain_or_thread_skip",
+          relevant_domain: relevantDomain || undefined,
+        })
+      }
 
       // Plan A/B: enterprise L2 skip for shell/netsec only (G1–G5)
       let enterpriseSkip = false

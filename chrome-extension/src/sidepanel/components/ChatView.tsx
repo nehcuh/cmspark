@@ -16,6 +16,12 @@ import {
 } from "../utils/shell-card-utils"
 import { fleetProcessingLabel } from "./focus-band-priority"
 import { collectRunningTools, formatRunningToolsLabel } from "../utils/running-tools"
+import {
+  deriveRunBusy,
+  deriveThreadBusy,
+  filterIdsByRun,
+  isIntentOnlyRunBusy,
+} from "../utils/thread-busy"
 import { tokens, statusColor } from "../ui/tokens"
 import {
   IconBranch,
@@ -53,7 +59,8 @@ const TOOL_RESULT_PREVIEW = 200
 
 export function ChatView() {
   const { state, dispatch } = useAgentStore()
-  const { messages, streamingContent, activeThreadId, isProcessing, sendShortcut, fleet } = state
+  const { messages, streamingContent, activeThreadId, isProcessing, sendShortcut, fleet, threadBusyById, threads } =
+    state
   const containerRef = useRef<HTMLDivElement>(null)
   const lastMessageCountRef = useRef(messages.length)
   const pinnedRef = useRef(true)
@@ -62,8 +69,50 @@ export function ChatView() {
 
   // Show processing label when request active OR any tool still running
   // (#au4dch ST-1/ST-4: shared collectRunningTools with FocusBand).
+  const runningTools = collectRunningTools(messages)
+  const mapBusy = !!(activeThreadId && threadBusyById[activeThreadId])
+  const threadBusy = deriveThreadBusy({
+    streaming: !!streamingContent,
+    isProcessing,
+    runningToolCount: runningTools.length,
+    mapBusy,
+  })
+  const activeThread = threads.find((t) => t.id === activeThreadId)
+  const runId = activeThread?.orchestrator_run_id || null
+  const workers = fleet?.workers || []
+  const llmActiveThreadIds = filterIdsByRun(
+    fleet?.llm_active_thread_ids || [],
+    workers,
+    runId,
+  )
+  const workerBusyIds = filterIdsByRun(
+    Object.entries(threadBusyById)
+      .filter(([, b]) => b)
+      .map(([id]) => id),
+    workers,
+    runId,
+  )
+  let lockCount = fleet?.lock_count ?? 0
+  if (runId && fleet?.locks?.length) {
+    const runWorkerIds = new Set(
+      workers.filter((w) => w.orchestrator_run_id === runId).map((w) => w.id),
+    )
+    if (activeThreadId) runWorkerIds.add(activeThreadId)
+    lockCount = fleet.locks.filter((l) => runWorkerIds.has(l.holder_thread_id)).length
+  }
+  const runBusyInput = {
+    lockCount,
+    openIntents: fleet?.open_intent_count ?? 0,
+    anyHoldingTabs: runId
+      ? workers.some((w) => w.orchestrator_run_id === runId && w.status === "holding_tabs")
+      : workers.some((w) => w.status === "holding_tabs"),
+    llmActiveThreadIds,
+    workerBusyIds,
+  }
+  const runBusy = deriveRunBusy(runBusyInput)
+  const intentOnly = isIntentOnlyRunBusy(runBusyInput)
+
   const processingLabel = (() => {
-    const runningTools = collectRunningTools(messages)
     const fleetWorkers = fleet?.worker_count ?? 0
     const fleetLabel = fleetProcessingLabel({
       workerCount: fleetWorkers,
@@ -80,13 +129,19 @@ export function ChatView() {
       return `${base}${fleetBit}`
     }
     if (streamingContent) return null
-    if (!isProcessing) {
-      // ST-5: orchestrator may chat.done while workers still run (active only).
-      // Paused-only zombies → null (was misleading「舰队运行中」).
-      return fleetLabel
+    if (threadBusy || isProcessing) {
+      return `思考中${fleetBit}`
     }
-    return `思考中${fleetBit}`
+    return null
   })()
+
+  // SoT §6: false-end banner when local turn idle but run still live
+  const fakeEndLabel =
+    !threadBusy && runBusy
+      ? intentOnly
+        ? "任务板仍有未关闭意图"
+        : "编排本轮已结束 · 子任务还在跑"
+      : null
 
   // Auto-scroll to bottom when new messages arrive or streaming updates.
   // Respects user scroll: if the user has scrolled up to read history, we stop
@@ -207,6 +262,18 @@ export function ChatView() {
             {processingLabel}
             <span style={styles.statusDots}>...</span>
           </div>
+        </div>
+      )}
+      {fakeEndLabel && !processingLabel && (
+        <div style={styles.agentMsg}>
+          <button
+            type="button"
+            style={styles.fakeEnd}
+            onClick={() => dispatch({ type: "SET_FLEET_LIST_OPEN", open: true })}
+          >
+            {fakeEndLabel}
+            <span style={{ color: tokens.accent, marginLeft: 6 }}>查看子任务</span>
+          </button>
         </div>
       )}
     </div>
@@ -1222,6 +1289,19 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: "center",
     gap: 4,
     border: "1px solid rgba(79, 70, 229, 0.12)",
+  },
+  fakeEnd: {
+    display: "block",
+    width: "100%",
+    textAlign: "left",
+    border: "1px solid #fde68a",
+    background: "#fffbeb",
+    color: "#92400e",
+    borderRadius: 8,
+    padding: "8px 10px",
+    fontSize: 12,
+    cursor: "pointer",
+    fontFamily: "inherit",
   },
   statusDots: {
     display: "inline-block",

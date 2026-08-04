@@ -190,35 +190,35 @@ export const AUTOPILOT_CONSEQUENCE_ROWS: Array<{
     family: "host_computer 初始 L2",
     browser: "仍确认",
     full: "仍确认",
-    protocol: "仍确认",
+    protocol: "跳过·高风险",
     unattended: "跳过‡",
   },
   {
     family: "host_computer 危险/实验/让出 re-L2",
     browser: "仍确认",
     full: "仍确认",
-    protocol: "仍确认",
-    unattended: "仍确认",
+    protocol: "跳过·高风险",
+    unattended: "跳过·高风险§",
   },
   {
-    family: "spawn / ask_user",
+    family: "spawn / ask_user / shell / skill_install",
     browser: "仍确认",
-    full: "仍确认",
-    protocol: "仍确认",
-    unattended: "仍确认",
+    full: "shell 跳过*",
+    protocol: "跳过·高风险",
+    unattended: "跳过·高风险§",
   },
   {
-    family: "Cookie / 工作区绑定",
-    browser: "不涉及",
-    full: "不涉及",
-    protocol: "不涉及",
-    unattended: "不涉及",
+    family: "Cookie 读写",
+    browser: "须信任域",
+    full: "须信任域",
+    protocol: "跳过·高风险§",
+    unattended: "跳过·高风险§",
   },
 ]
 
 export const UNATTENDED_MATRIX_FOOTNOTES =
   "‡ 仅白名单且已开坐标的 App；键入内容执行前不再逐字预览。" +
   "† 勾选「同时协议解锁」才放行非 http(s)（武装时精确写入 allow_all_schemes）。" +
-  "* 须 enterprise 模块与范围；无人值守会 dual-write 持久巡航，解除武装才清。" +
-  "桌面 grant 进程内存 8h，重启失效。" +
-  " 三者正交：协议解锁(L1 scheme) · 巡航 bool(网页/企业 L2) · 桌面 grant(host_computer 初始 L2)——勿当作单一「更深自主」轴。"
+  "* 须 enterprise 模块与范围。" +
+  "§ 全自动+协议三旗全开（dangerous+enterprise+allow_all_schemes）时：用户已接受最大风险，L2/critical/ cookie 信任域门不再二次确认；解除武装或关掉任一旗即恢复。" +
+  " 无人值守会 dual-write 持久巡航，解除武装才清；桌面 grant 进程内存 8h，重启失效。"

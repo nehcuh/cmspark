@@ -102,7 +102,13 @@ Orchestrator **默认不能**直接 mutate 浏览器 / shell / host；执行细�
 | `collect_handback` | board 模式下要求 **结构化** handback，抑制散文幻觉 |
 
 Side Panel：**BoardPanel**（底栏/上下文入口以当前 UI 为准）展示板状态。  
-FleetStrip：worker 数量、状态、**全停**（abort LLM + 拒 pending + 释放该 run 相关 lease）。
+FleetStrip / **子任务列表**：worker 数量、状态、**进入子任务**（下钻观察该 worker 对话与 tool）、**全停**（abort LLM + 拒 pending + 释放相关 tab 锁，需二次确认）。
+
+### 5.4 运行态与下钻（0.3.x+）
+
+- 本线程仍在 LLM/tool 时：Composer 显示 **停止本轮**，不可误当空闲发送。  
+- 编排本轮已 `chat.done` 但子任务仍活（锁 / LLM / busy 图，**不是**「有 idle worker」）：侧栏 **子任务还在跑** 芯片与假结束条可点开列表。  
+- 在 worker 内：顶栏 **← 返回编排**；发送文案标明 **发送给子任务**；follow-up **不**偷 tab 锁。
 
 ### 5.3 本阶段不做（避免期待过度）
 
