@@ -288,7 +288,7 @@ cmspark__accept_data_disclosure  arguments: { "acknowledge": true }
 
 | 工具 | 说明 |
 |------|------|
-| `cmspark__accept_data_disclosure` | **先调用**（**必须** `acknowledge: true`）— 服务端 disclosure 会话；`get_page_text` / `screenshot` 依赖它 |
+| `cmspark__accept_data_disclosure` | **先调用**（**必须** `acknowledge: true`）— Companion **服务端** disclosure 会话；`get_page_text` / `screenshot` 依赖它。**注意**：当前为编程 Agent 自确认（无人类 HITL），不表示终端用户已同意云端外泄；P1 grant 前勿用「用户已同意」话术 |
 | `cmspark__list_outbound_profile` | 列出当前策展 L1 工具名 |
 | `cmspark__list_tabs` | 列标签（建议其它工具前先调） |
 | `cmspark__navigate` / `click` / `type` / `wait_for` / `downloads_find` | 策展 L1 交互 / 只读 Downloads |
@@ -303,7 +303,7 @@ cmspark__accept_data_disclosure  arguments: { "acknowledge": true }
 - 门禁 / disclosure / audit / synthetic origin：**已实现**  
 - **真桥**：`mcp-outbound` → `POST http://127.0.0.1:<port>/outbound-mcp/v1/invoke`（`Authorization: Bearer <ws_secret>`）→ Companion `createToolExecutor` → Extension CDP  
 - 先 `cmspark-agent start`（或 tray/daemon）并打开扩展配对；再由编程 Agent **按需 spawn** `mcp-outbound`  
-- 无扩展连接时：`EXTENSION_UNAVAILABLE`  
-- **L8 确认**：Outbound 触发的 L2 确认 fan-out 到所有已鉴权面板 + 优先托盘对话框 + OS 通知；超时返回 `OUTBOUND_CONFIRM_REQUIRED`（勿只盯 IDE）  
+- 无扩展连接时：`EXTENSION_UNAVAILABLE`（**仅** Chrome 扩展 peer 可做 CDP runner；tray 不会再被绑成 runner）  
+- **L8 确认**：Outbound L2 / URL-gate 确认 **fan-out** 到所有已鉴权 Side Panel；**macOS Swift tray** 可弹原生确认窗；**Windows/Linux** 无原生 tray 确认（仅 Side Panel + 通知），超时 `OUTBOUND_CONFIRM_REQUIRED`（勿只盯 IDE）  
 - **L9 tab lease**：交互工具须显式 `tabId`；holder=`outbound_mcp:<caller>`；与 Side Panel 冲突时 **Side Panel 赢**，MCP 得 `TAB_LOCKED` + `queue_disclosure_zh`  
 - **租约上限**：同一 caller 默认最多 **2** 个 tab lease（与 multi-agent worker 同 cap）

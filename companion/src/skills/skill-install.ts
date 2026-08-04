@@ -13,6 +13,8 @@
 import * as fs from "fs"
 import * as path from "path"
 import * as os from "os"
+import matter from "gray-matter"
+import AdmZip from "adm-zip"
 import { getConfigDir } from "../config"
 import type { SkillEngine } from "./skill-engine"
 import { appendCapabilityAudit } from "../packs/audit-log"
@@ -91,6 +93,111 @@ const MAX_DIR_BYTES = 25 * 1024 * 1024
 const MAX_DIR_FILES = 500
 /** Content branch size cap (S41 multi-adv — free content is not unbounded). */
 export const MAX_CONTENT_BYTES = 256 * 1024
+
+function safeSkillName(name: string): string {
+  return name.replace(/[^a-zA-Z0-9-]/g, "-").toLowerCase()
+}
+
+/**
+ * S42 P1: best-effort preview of install target for L2 dialog + token binding.
+ * Detects whether dest already exists (overwrite) without writing.
+ */
+export function skillInstallOverwritePreview(params: SkillInstallParams): {
+  mode: "content" | "zip" | "path" | "empty"
+  name: string | null
+  dest_path: string | null
+  overwrite: boolean
+} {
+  const root = getUserSkillsRoot()
+  const checkDest = (name: string | null | undefined): {
+    name: string | null
+    dest_path: string | null
+    overwrite: boolean
+  } => {
+    if (!name || !String(name).trim()) {
+      return { name: null, dest_path: null, overwrite: false }
+    }
+    const safe = safeSkillName(String(name))
+    if (!safe || safe === "-") {
+      return { name: String(name), dest_path: null, overwrite: false }
+    }
+    const filePath = path.join(root, `${safe}.md`)
+    const dirPath = path.join(root, safe)
+    const overwrite = fs.existsSync(filePath) || fs.existsSync(dirPath)
+    // Prefer file path for single-md installs, dir for folder-shaped names
+    const dest_path = fs.existsSync(dirPath) ? dirPath : filePath
+    return { name: String(name), dest_path, overwrite }
+  }
+
+  try {
+    if (params.content && typeof params.content === "string" && params.content.trim()) {
+      try {
+        const parsed = matter(params.content)
+        const name = parsed.data?.name ? String(parsed.data.name) : null
+        return { mode: "content", ...checkDest(name) }
+      } catch {
+        return { mode: "content", name: null, dest_path: null, overwrite: false }
+      }
+    }
+
+    if (params.zip_path && typeof params.zip_path === "string") {
+      try {
+        const expanded = expandUserPath(params.zip_path)
+        const resolved = fs.realpathSync(path.resolve(expanded))
+        if (!fs.statSync(resolved).isFile()) {
+          return { mode: "zip", name: null, dest_path: null, overwrite: false }
+        }
+        const zip = new AdmZip(resolved)
+        const entries = zip.getEntries()
+        const skillMd = entries.find(
+          (e) => e.entryName.endsWith("SKILL.md") || e.entryName.endsWith("SKILL.md/"),
+        )
+        if (!skillMd) {
+          return { mode: "zip", name: null, dest_path: null, overwrite: false }
+        }
+        const raw = zip.readAsText(skillMd)
+        const parsed = matter(raw)
+        const skillDirName = skillMd.entryName.replace(/\/?SKILL\.md\/?$/, "")
+        const folderName = path.basename(skillDirName) || "skill"
+        const name = parsed.data?.name ? String(parsed.data.name) : folderName
+        return { mode: "zip", ...checkDest(name) }
+      } catch {
+        return { mode: "zip", name: null, dest_path: null, overwrite: false }
+      }
+    }
+
+    if (params.path && typeof params.path === "string") {
+      try {
+        const expanded = expandUserPath(params.path)
+        const resolved = fs.realpathSync(path.resolve(expanded))
+        const st = fs.statSync(resolved)
+        if (st.isFile() && /\.md$/i.test(resolved)) {
+          const content = fs.readFileSync(resolved, "utf-8")
+          const parsed = matter(content)
+          const name = parsed.data?.name ? String(parsed.data.name) : path.basename(resolved, ".md")
+          return { mode: "path", ...checkDest(name) }
+        }
+        if (st.isDirectory()) {
+          const skillMd = path.join(resolved, "SKILL.md")
+          if (fs.existsSync(skillMd)) {
+            const content = fs.readFileSync(skillMd, "utf-8")
+            const parsed = matter(content)
+            const name = parsed.data?.name
+              ? String(parsed.data.name)
+              : path.basename(resolved)
+            return { mode: "path", ...checkDest(name) }
+          }
+        }
+      } catch {
+        /* fall through */
+      }
+      return { mode: "path", name: null, dest_path: null, overwrite: false }
+    }
+  } catch {
+    /* best-effort */
+  }
+  return { mode: "empty", name: null, dest_path: null, overwrite: false }
+}
 
 function assertDirBudget(dir: string, acc = { bytes: 0, files: 0 }): void {
   for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {

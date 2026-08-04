@@ -893,32 +893,37 @@ export class BrowserBridge {
       }
     }
 
-    // 3) CDP PageDown as third signal (X timeline often listens to keyboard)
-    if (data?.moved !== true) {
+    // 3) CDP PageDown/PageUp as third signal (X timeline often listens to keyboard).
+    // S42 P1: direction must match deltaY — never force PageDown on scroll-up.
+    // Skip when deltaY === 0 (horizontal-only scroll).
+    if (data?.moved !== true && deltaY !== 0) {
+      const pageKey = deltaY > 0 ? "PageDown" : "PageUp"
+      const vk = deltaY > 0 ? 34 : 33
       try {
         await this.sendCdp(tabId, "Input.dispatchKeyEvent", {
           type: "keyDown",
-          key: "PageDown",
-          code: "PageDown",
-          windowsVirtualKeyCode: 34,
-          nativeVirtualKeyCode: 34,
+          key: pageKey,
+          code: pageKey,
+          windowsVirtualKeyCode: vk,
+          nativeVirtualKeyCode: vk,
         })
         await this.sendCdp(tabId, "Input.dispatchKeyEvent", {
           type: "keyUp",
-          key: "PageDown",
-          code: "PageDown",
-          windowsVirtualKeyCode: 34,
-          nativeVirtualKeyCode: 34,
+          key: pageKey,
+          code: pageKey,
+          windowsVirtualKeyCode: vk,
+          nativeVirtualKeyCode: vk,
         })
+        const pathTag = deltaY > 0 ? "cdp_pagedown" : "cdp_pageup"
         data = {
-          ...(data || { mode: "cdp_pagedown", deltaRequested: deltaY, moved: null }),
-          path: data?.path ? `${data.path}+cdp_pagedown` : "cdp_pagedown",
+          ...(data || { mode: pathTag, deltaRequested: deltaY, moved: null }),
+          path: data?.path ? `${data.path}+${pathTag}` : pathTag,
           warning:
             (data?.warning ? data.warning + " " : "") +
-            "Also sent PageDown; verify with get_page_text.",
+            `Also sent ${pageKey}; verify with get_page_text.`,
         }
       } catch (e: any) {
-        errors.push(`cdp_pagedown: ${e?.message || e}`)
+        errors.push(`cdp_page_key: ${e?.message || e}`)
       }
     }
 

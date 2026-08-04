@@ -1,0 +1,34 @@
+{
+  "session": "S42",
+  "date": "2026-08-04",
+  "range": "79d7420..d4c4ebf",
+  "tip": "d4c4ebf",
+  "method": "multi-adversarial-4-lane",
+  "lanes": {
+    "security": { "status": "WATCH", "recommendation": "REQUEST_CHANGES" },
+    "correctness": { "status": "WATCH", "recommendation": "APPROVE_WITH_NITS" },
+    "architecture": { "status": "WATCH", "recommendation": "APPROVE_WITH_NITS" },
+    "compat": { "status": "WATCH", "recommendation": "APPROVE_WITH_NITS" }
+  },
+  "synthesis": {
+    "architectural_status": "WATCH",
+    "recommendation_initial": "REQUEST_CHANGES",
+    "recommendation_after_p0_fix": "APPROVE_WITH_NITS",
+    "merge_ready_claim": true,
+    "product_ship": false,
+    "p0": [
+      {
+        "id": "P0-1",
+        "title": "__outbound_mcp LLM-injectable pack/multi-agent whitelist bypass",
+        "severity": "HIGH",
+        "lanes": ["security"],
+        "status": "CLOSED",
+        "fix": "strip __outbound_* always; re-apply only invokeOpts.trustedOutbound from companion-http runner"
+      }
+    ],
+    "s41_p0_residual": "closed",
+    "tests_executed": "53 outbound-mcp related pass",
+    "report": "docs/audit/reviews/multi-adversarial-review-20260804-main-post-s41.md"
+  },
+  "both_approve_internal": true
+}

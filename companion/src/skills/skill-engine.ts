@@ -852,7 +852,31 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
 
     const destDir = path.join(this.skillsDir, safeName)
 
-    // Remove existing if present
+    // S42 P1: pre-check central-directory uncompressed sizes before getData()
+    // materializes buffers (honest zip-bomb defense). Headers can lie — still
+    // enforce post-getData totals below.
+    let headerFiles = 0
+    let headerBytes = 0
+    for (const entry of entries) {
+      if (entry.isDirectory) continue
+      headerFiles++
+      const claimed = Number((entry as any).header?.size)
+      if (Number.isFinite(claimed) && claimed > 0) {
+        headerBytes += claimed
+      }
+      if (headerFiles > SkillEngine.MAX_ZIP_EXTRACT_FILES) {
+        throw new Error(
+          `Zip extract has too many files (max ${SkillEngine.MAX_ZIP_EXTRACT_FILES})`,
+        )
+      }
+      if (headerBytes > SkillEngine.MAX_ZIP_EXTRACT_BYTES) {
+        throw new Error(
+          `Zip extract too large (max ${SkillEngine.MAX_ZIP_EXTRACT_BYTES} uncompressed bytes, per central directory)`,
+        )
+      }
+    }
+
+    // Remove existing if present (L2 preview discloses overwrite=true)
     if (fs.existsSync(destDir)) {
       fs.rmSync(destDir, { recursive: true })
     }
@@ -884,6 +908,15 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
         const normalizedDest = path.resolve(destDir)
         if (!resolvedPath.startsWith(normalizedDest + path.sep) && resolvedPath !== normalizedDest) {
           throw new Error(`Security Violation: Path traversal detected in zip entry: ${entry.entryName}`)
+        }
+
+        const claimed = Number((entry as any).header?.size)
+        if (Number.isFinite(claimed) && claimed > 0) {
+          if (extractBytes + claimed > SkillEngine.MAX_ZIP_EXTRACT_BYTES) {
+            throw new Error(
+              `Zip extract too large (max ${SkillEngine.MAX_ZIP_EXTRACT_BYTES} uncompressed bytes)`,
+            )
+          }
         }
 
         const data = entry.getData()

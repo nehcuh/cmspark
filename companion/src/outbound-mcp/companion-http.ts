@@ -252,9 +252,14 @@ export async function companionInvokeOutbound(
       )
     ) {
       error_code = "OUTBOUND_CONFIRM_REQUIRED"
+      // S42 P1: platform-honest L8 copy — Swift tray has native confirm; win32/linux
+      // systray2 does not (Side Panel fan-out only).
+      const trayHint =
+        process.platform === "darwin"
+          ? "approve via macOS tray dialog (if CMspark tray is Swift) and/or any open Side Panel"
+          : "open CMspark Side Panel and approve (Windows/Linux tray has no native confirm dialog)"
       error =
-        `${error} — L8: approve via system tray dialog and/or any open CMspark Side Panel; ` +
-        `do not rely on IDE focus alone. If no tray, open Side Panel or enable CMspark tray.`
+        `${error} — L8: ${trayHint}; do not rely on IDE focus alone.`
     }
     appendOutboundMcpAudit({
       caller_id,
