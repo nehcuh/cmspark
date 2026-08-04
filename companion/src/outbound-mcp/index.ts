@@ -45,3 +45,11 @@ export {
   createHttpOutboundDispatcher,
   companionPostDisclosure,
 } from "./http-client"
+export {
+  gateOutboundTabLease,
+  sidePanelWinsReleaseOutboundLease,
+  outboundHolderThreadId,
+  isOutboundHolder,
+  OUTBOUND_MCP_PARAM,
+  OUTBOUND_CALLER_PARAM,
+} from "./dual-entry"

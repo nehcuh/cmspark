@@ -606,6 +606,7 @@ export function createToolExecutor(ws: WebSocket) {
         : typeof (finalParams as any)._thread_id === "string"
           ? String((finalParams as any)._thread_id)
           : undefined
+    const isOutboundMcpCall = (finalParams as any).__outbound_mcp === true
     try {
       const {
         TAB_LEASE_TOOLS,
@@ -615,6 +616,22 @@ export function createToolExecutor(ws: WebSocket) {
         sweepExpired,
       } = await import("./orchestrator")
       sweepExpired({ hasPendingForTab })
+
+      // ADR-022 L9: Side Panel wins — if non-outbound actor targets a tab held
+      // by outbound_mcp:*, force-release so dual-entry does not thrash.
+      if (
+        !isOutboundMcpCall &&
+        TAB_LEASE_TOOLS.has(toolName) &&
+        typeof finalParams.tabId === "number"
+      ) {
+        try {
+          const { sidePanelWinsReleaseOutboundLease } = await import("./outbound-mcp/dual-entry")
+          sidePanelWinsReleaseOutboundLease(finalParams.tabId, actingThreadId)
+        } catch {
+          /* best-effort */
+        }
+      }
+
       if (actingThreadId && threadManager) {
         const th = threadManager.get(actingThreadId) as any
         if (th?.paused) {
@@ -669,6 +686,8 @@ export function createToolExecutor(ws: WebSocket) {
           ;(finalParams as any).__require_tab_id = true
         }
         // Early exclusive HARD for tab tools — multi-agent only (ADR-015).
+        // Outbound MCP already leased in companion-http (L9); skip double-acquire here
+        // when isOutboundMcpCall (holder is outbound_mcp:*).
         // Normal single-agent chats must not take per-worker tab leases: browse /
         // AppSec often opens many tabs and max_tabs_leased_per_worker=2 would
         // hard-fail as non_recoverable (thread 1gfd6t). When any multi-agent
@@ -678,6 +697,7 @@ export function createToolExecutor(ws: WebSocket) {
         // Interactive L2 path upgrades same-holder HARD → HELD_PENDING_L2 below.
         if (
           multi &&
+          !isOutboundMcpCall &&
           TAB_LEASE_TOOLS.has(toolName) &&
           typeof finalParams.tabId === "number" &&
           actingThreadId
@@ -1540,14 +1560,15 @@ export function createToolExecutor(ws: WebSocket) {
           // (those need the inline paste-blocked nonce UI in Side Panel — Swift
           // dialog has no nonce input). Plain macOS computer-use / evaluate / etc.
           // are eligible for the tray shortcut.
+          // L8: outbound MCP always prefers tray when available (IDE focus independent)
           const trayEligible = !!tray && !winL2NonceChallenge
           const trayReq: TrayConfirmRequest | null = trayEligible
             ? {
                 id: sharedConfirmId,
-                toolName,
+                toolName: isOutboundMcpCall ? `[Outbound] ${toolName}` : toolName,
                 riskLevel: forceConfirm
                   ? "high"
-                  : safety.dangerousApis.length > 0 ? "medium" : "low",
+                  : safety.dangerousApis.length > 0 || isOutboundMcpCall ? "medium" : "low",
                 // Truncate to keep NSWindow readable — full text goes to Side Panel.
                 summary: traySummary.length > 800 ? traySummary.slice(0, 800) + "…" : traySummary,
                 criticalApis,
@@ -1631,12 +1652,57 @@ export function createToolExecutor(ws: WebSocket) {
             }
           }
 
-          const wsPromise = securityConfirmations.request(
-            (data) => {
-              if (ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify(data))
+          // ADR-022 L8: outbound MCP must not depend on Side Panel focus alone.
+          // Fan-out confirm to every authenticated panel; leave origin unbound
+          // (any authenticated peer may respond). Nonce/host_computer still
+          // origin-bound when NOT outbound (A1).
+          const sendConfirm = (data: any) => {
+            const payload = JSON.stringify(data)
+            if (isOutboundMcpCall) {
+              for (const c of clients) {
+                if (c.readyState === WebSocket.OPEN && wsAuth.get(c)?.authenticated === true) {
+                  try {
+                    c.send(payload)
+                  } catch {
+                    /* best-effort fan-out */
+                  }
+                }
               }
-            },
+            } else if (ws.readyState === WebSocket.OPEN) {
+              ws.send(payload)
+            }
+          }
+          if (isOutboundMcpCall) {
+            logger.info("outbound_mcp.confirm_fanout", {
+              tool_call_id: toolCallId,
+              tool_name: toolName,
+              caller: String((finalParams as any).__outbound_caller_id || ""),
+              tray: !!trayEligible,
+            })
+            try {
+              // eslint-disable-next-line @typescript-eslint/no-var-requires
+              const notifier = require("node-notifier") as {
+                notify: (o: { title?: string; message?: string; sound?: boolean }) => void
+              }
+              notifier.notify({
+                title: "CMspark 需要确认",
+                message: `Outbound MCP 请求: ${toolName} — 请在托盘或 Side Panel 批准/拒绝`,
+                sound: true,
+              })
+            } catch {
+              /* optional — non-Swift platforms */
+            }
+          }
+
+          const confirmOriginOpts =
+            isOutboundMcpCall
+              ? undefined // L8: any authenticated peer + tray may resolve
+              : winL2NonceChallenge || hostComputerGated
+                ? { originWs: ws }
+                : undefined
+
+          const wsPromise = securityConfirmations.request(
+            sendConfirm,
             {
               toolName,
               dangerousApis: safety.dangerousApis,
@@ -1681,13 +1747,7 @@ export function createToolExecutor(ws: WebSocket) {
                 ? { boardCompleteDigest: boardCompleteDigestForConfirm }
                 : {}),
             },
-            // Adversary amendment A1: a confirmation carrying a nonce challenge
-            // MUST be origin-bound — otherwise any loopback WS peer could burn
-            // the 3 nonce attempts (DoS). Requests without a nonce keep the
-            // existing broadcast behavior unchanged.
-            // host_computer: EVERY computer confirmation is origin-bound (A1/E5),
-            // nonce or not.
-            (winL2NonceChallenge || hostComputerGated) ? { originWs: ws } : undefined,
+            confirmOriginOpts,
             // P0a: pre-generated id shared with tray.
             sharedConfirmId,
           )
