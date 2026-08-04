@@ -2,10 +2,7 @@
  * stdio MCP server for outbound L1 tools (ADR-022 Phase 0c).
  *
  * Not default-on: only runs when user invokes `cmspark-agent mcp-outbound`.
- * Meta tool cmspark__accept_data_disclosure records server-side disclosure.
- *
- * Uses low-level Server + setRequestHandler to avoid McpServer/zod deep
- * instantiation issues in this repo's TypeScript version.
+ * Dispatches to Companion loopback HTTP (Bearer ws_secret) when companion is up.
  */
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js"
@@ -16,10 +13,17 @@ import {
 } from "@modelcontextprotocol/sdk/types.js"
 import { OUTBOUND_MCP_ALLOWLIST, OUTBOUND_DISCLOSURE_ZH } from "./profile"
 import { acceptOutboundDisclosure } from "./disclosure-session"
-import { invokeOutboundTool } from "./bridge"
+import { invokeOutboundTool, setOutboundDispatcher } from "./bridge"
 import { listOutboundTools } from "./facade"
+import {
+  companionPostDisclosure,
+  createHttpOutboundDispatcher,
+} from "./http-client"
+import { getOrCreateSharedSecret } from "../ws-auth"
+import { getConfig } from "../config"
 
 const CALLER_ENV = "CMSPARK_OUTBOUND_CALLER_ID"
+const PORT_ENV = "CMSPARK_OUTBOUND_PORT"
 
 const META_ACCEPT = "cmspark__accept_data_disclosure"
 const META_PROFILE = "cmspark__list_outbound_profile"
@@ -52,11 +56,30 @@ function openArgsSchema(): {
 } {
   return {
     type: "object",
-    properties: {
-      // Free-form tool args bag; internal tools validate further
-    },
+    properties: {},
     additionalProperties: true,
   }
+}
+
+/** Resolve companion loopback + secret; wire HTTP dispatcher. */
+export function wireDefaultOutboundHttpDispatcher(): {
+  port: number
+  token_present: boolean
+} {
+  const config = getConfig()
+  const port =
+    Number(process.env[PORT_ENV]) ||
+    Number(config.port) ||
+    23401
+  const token = getOrCreateSharedSecret()
+  setOutboundDispatcher(
+    createHttpOutboundDispatcher({
+      port,
+      token,
+      timeout_ms: 120_000,
+    }),
+  )
+  return { port, token_present: Boolean(token) }
 }
 
 /** Build MCP server instance (testable without connecting transport). */
@@ -79,6 +102,7 @@ export function createOutboundMcpServer(): Server {
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const name = request.params.name
     const args = (request.params.arguments || {}) as Record<string, unknown>
+    const cid = callerId()
 
     if (name === META_ACCEPT) {
       if (args.acknowledge !== true) {
@@ -96,7 +120,14 @@ export function createOutboundMcpServer(): Server {
           isError: true,
         }
       }
-      const sess = acceptOutboundDisclosure(callerId())
+      // Local session (stdio process gate) + companion process (execute gate)
+      const sess = acceptOutboundDisclosure(cid)
+      const config = getConfig()
+      const port = Number(process.env[PORT_ENV]) || Number(config.port) || 23401
+      const remote = await companionPostDisclosure(
+        { port, token: getOrCreateSharedSecret() },
+        cid,
+      )
       return {
         content: [
           {
@@ -105,10 +136,12 @@ export function createOutboundMcpServer(): Server {
               ok: true,
               caller_id: sess.caller_id,
               accepted_at: sess.accepted_at,
+              companion_disclosure: remote.ok ? "ok" : remote.error || "failed",
               disclosure_text_zh: OUTBOUND_DISCLOSURE_ZH,
             }),
           },
         ],
+        isError: !remote.ok,
       }
     }
 
@@ -140,14 +173,13 @@ export function createOutboundMcpServer(): Server {
     }
 
     const domain = typeof args.domain === "string" ? args.domain : undefined
-    // Prefer nested args if provided; else pass whole bag minus domain
     const toolArgs =
       args.args && typeof args.args === "object" && !Array.isArray(args.args)
         ? (args.args as Record<string, unknown>)
         : Object.fromEntries(Object.entries(args).filter(([k]) => k !== "domain"))
 
     const result = await invokeOutboundTool({
-      caller_id: callerId(),
+      caller_id: cid,
       tool: name,
       args: toolArgs,
       domain,
@@ -164,6 +196,11 @@ export function createOutboundMcpServer(): Server {
 
 /** Connect stdio transport and run until stdin closes. */
 export async function runOutboundMcpStdioServer(): Promise<void> {
+  const wire = wireDefaultOutboundHttpDispatcher()
+  // Log to stderr only — stdout is MCP JSON-RPC
+  console.error(
+    `[cmspark-outbound] stdio MCP up; companion HTTP 127.0.0.1:${wire.port} (Bearer ws_secret)`,
+  )
   const server = createOutboundMcpServer()
   const transport = new StdioServerTransport()
   await server.connect(transport)
