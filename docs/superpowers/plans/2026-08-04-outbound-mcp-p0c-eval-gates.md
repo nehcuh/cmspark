@@ -168,7 +168,8 @@ Channel:      community
 7. [x] 独立对抗 Claude **APPROVE_WITH_NITS** — `outbound-mcp-p0c-adversary-claude-20260804-105153.md`
 8. [x] Pi 复审 **APPROVE_WITH_NITS** — `outbound-mcp-p0c-pi-rereview-20260804-110035.md`
 9. [x] 合成 both_ok — `outbound-mcp-p0c-confirm-synthesis-20260804.md`（库路径可 bake-off；非产品 ship）
-10. [ ] P0d bake-off；L8/L9；N5 HTTP e2e 测建议 bake-off 前补
+10. [x] N5 HTTP e2e 测 — `companion/tests/outbound-mcp-http-e2e.test.ts`
+11. [ ] P0d bake-off；L8/L9
 ```
 
 ---
