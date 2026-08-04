@@ -129,7 +129,11 @@ export function ThreadList() {
                   }}
                 >
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={styles.threadAlias}>{t.alias || t.id}</div>
+                    <div style={styles.threadAlias}>
+                      {t.alias?.trim()
+                        ? t.alias
+                        : `未命名 · ${String(t.id || "").slice(0, 8)}`}
+                    </div>
                     <div style={styles.threadId}>#{t.id}</div>
                   </div>
                   <button

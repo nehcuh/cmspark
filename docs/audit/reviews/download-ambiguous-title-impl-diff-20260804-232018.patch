@@ -1,0 +1,265 @@
+# Dual external review context
+batch: download-ambiguous-title-impl
+base: origin/main
+time: 20260804-232018
+
+4b8a711
+
+ M chrome-extension/src/background/browser-bridge.ts
+ M chrome-extension/src/background/browser-download-handler.ts
+ M chrome-extension/src/background/downloads-find.ts
+ M chrome-extension/src/sidepanel/components/ThreadList.tsx
+ M chrome-extension/tests/browser-download-handler.test.ts
+ M companion/src/llm/adapter.ts
+?? companion/tests/thread-provisional-title.test.ts
+?? docs/audit/reviews/_prompts/download-ambiguous-title-impl-dual.md
+?? docs/audit/reviews/download-ambiguous-title-impl-diff-20260804-232018.patch
+?? docs/audit/reviews/download-ambiguous-title-plan-pi-20260804.md
+?? docs/superpowers/specs/2026-08-04-download-ambiguous-title-fix-goals.md
+?? skills/
+
+## Diff (git diff + staged)
+ chrome-extension/src/background/browser-bridge.ts  | 24 +++++++-
+ .../src/background/browser-download-handler.ts     | 17 +++++-
+ chrome-extension/src/background/downloads-find.ts  | 13 ++++-
+ .../src/sidepanel/components/ThreadList.tsx        |  6 +-
+ .../tests/browser-download-handler.test.ts         |  2 +
+ companion/src/llm/adapter.ts                       | 67 +++++++++++++++++++++-
+ 6 files changed, 119 insertions(+), 10 deletions(-)
+
+diff --git a/chrome-extension/src/background/browser-bridge.ts b/chrome-extension/src/background/browser-bridge.ts
+index 86c4fb9..d28c23e 100644
+--- a/chrome-extension/src/background/browser-bridge.ts
++++ b/chrome-extension/src/background/browser-bridge.ts
+@@ -8,6 +8,10 @@ import { runBrowserDownload } from "./browser-download-handler"
+ import { runWithDownloadBusyBeforeQueue } from "./download-busy-entry"
+ import { resolveEvaluateExecution } from "./evaluate-code-policy"
+ import { buildSpaScrollExpression } from "./spa-scroll-expr"
++// Static import (not dynamic): MV3 SW dynamic import("./downloads-find") was
++// compiled to a separate chunk that failed importScripts in production
++// (thread #dagg58: "downloads-find.xxx.js failed to load"). Goals G1.1.
++import { runDownloadsFind } from "./downloads-find"
+ 
+ // Re-export for callers / tests that import from browser-bridge.
+ export { selectorJsLiteral } from "./selector-js-literal"
+@@ -1253,8 +1257,24 @@ export class BrowserBridge {
+ 
+   /** #au4dch DL-1: read-only search of completed chrome.downloads items. */
+   private async downloadsFind(params: Record<string, any>): Promise<ToolResult> {
+-    const { runDownloadsFind } = await import("./downloads-find")
+-    return runDownloadsFind(params)
++    try {
++      return await runDownloadsFind(params)
++    } catch (e: any) {
++      const msg = e?.message || String(e)
++      return {
++        success: false,
++        error: msg,
++        data: {
++          error_code: /importScripts|failed to load/i.test(msg)
++            ? "DOWNLOADS_FIND_CHUNK_LOAD"
++            : "DOWNLOADS_FIND_FAILED",
++          user_hint_zh:
++            "本地下载列表读取失败。请到 chrome://extensions 重载 CMspark 扩展后重试；" +
++            "若刚更新扩展请完全关闭再打开 Side Panel。也可让我改用 browser_download 指定按钮文字/选择器下载。",
++          suggested_action: "reload_extension_or_browser_download",
++        },
++      }
++    }
+   }
+ 
+   /** @deprecated D18 — use browser_download */
+diff --git a/chrome-extension/src/background/browser-download-handler.ts b/chrome-extension/src/background/browser-download-handler.ts
+index 5f3810a..8842674 100644
+--- a/chrome-extension/src/background/browser-download-handler.ts
++++ b/chrome-extension/src/background/browser-download-handler.ts
+@@ -150,10 +150,20 @@ export async function runBrowserDownload(
+         return {
+           success: false,
+           error: `ELEMENT_NOT_FOUND: no visible element matching text "${text}"`,
+-          data: { error_code: "ELEMENT_NOT_FOUND", text, exact },
++          data: {
++            error_code: "ELEMENT_NOT_FOUND",
++            text,
++            exact,
++            user_hint_zh: `页面上找不到可见文字「${text}」。请换更准确的按钮文案（如「Download ZIP」）、提供 CSS selector，或先 list_tabs/截图确认页面已加载完成。`,
++            suggested_action: "refine_text_or_selector",
++          },
+         }
+       }
+       if (classification === "ELEMENT_AMBIGUOUS") {
++        const preview = (match?.matches || [])
++          .slice(0, 5)
++          .map((m, i) => `${i + 1}.${m.tag}「${(m.text || "").slice(0, 40)}」`)
++          .join("；")
+         return {
+           success: false,
+           error: `ELEMENT_AMBIGUOUS: ${count} elements match text "${text}"`,
+@@ -161,6 +171,11 @@ export async function runBrowserDownload(
+             error_code: "ELEMENT_AMBIGUOUS",
+             count,
+             matches: match?.matches?.slice(0, 5),
++            user_hint_zh:
++              `页面上有 ${count} 处匹配「${text}」，无法安全自动点击（防止点错）。` +
++              (preview ? ` 候选：${preview}。` : " ") +
++              `请改用更精确的文字（exact=true 或完整「Download ZIP」）、CSS selector，或先 evaluate/截图定位唯一按钮。`,
++            suggested_action: "disambiguate_selector_or_exact_text",
+           },
+         }
+       }
+diff --git a/chrome-extension/src/background/downloads-find.ts b/chrome-extension/src/background/downloads-find.ts
+index 6330889..a58c5ae 100644
+--- a/chrome-extension/src/background/downloads-find.ts
++++ b/chrome-extension/src/background/downloads-find.ts
+@@ -216,13 +216,20 @@ export async function runDownloadsFind(params: FindDownloadsParams): Promise<Too
+       },
+     }
+   } catch (e: any) {
++    const msg = e?.message || String(e)
+     return {
+       success: false,
+-      error: e?.message || String(e),
++      error: msg,
+       data: {
+-        error_code: "DOWNLOADS_SEARCH_FAILED",
++        error_code: /importScripts|failed to load/i.test(msg)
++          ? "DOWNLOADS_FIND_CHUNK_LOAD"
++          : "DOWNLOADS_SEARCH_FAILED",
++        // Prefer user_hint_zh (ChatView surfaces this); keep recovery_zh for older agents
++        user_hint_zh:
++          "本地下载列表读取失败。请重载 CMspark 扩展后重试；或改用 browser_download（指定按钮文字如「Download ZIP」）下载，再 skill_install({ zip_path })。",
+         recovery_zh:
+-          "downloads_find 不可用时：用 browser_download 点 GitHub「Code」→「Download ZIP」，或打开 /archive/refs/heads/main.zip；完成后 skill_install({ zip_path })。",
++          "downloads_find 不可用时：用 browser_download 点 GitHub「Code」→「Download ZIP」，或打开 /archive/refs/heads/main.zip；完成后 skill_install({ zip_path })。重载扩展可修复 importScripts/分包加载失败。",
++        suggested_action: "reload_extension_or_browser_download",
+       },
+     }
+   }
+diff --git a/chrome-extension/src/sidepanel/components/ThreadList.tsx b/chrome-extension/src/sidepanel/components/ThreadList.tsx
+index 40d6237..30ec029 100644
+--- a/chrome-extension/src/sidepanel/components/ThreadList.tsx
++++ b/chrome-extension/src/sidepanel/components/ThreadList.tsx
+@@ -129,7 +129,11 @@ export function ThreadList() {
+                   }}
+                 >
+                   <div style={{ flex: 1, minWidth: 0 }}>
+-                    <div style={styles.threadAlias}>{t.alias || t.id}</div>
++                    <div style={styles.threadAlias}>
++                      {t.alias?.trim()
++                        ? t.alias
++                        : `未命名 · ${String(t.id || "").slice(0, 8)}`}
++                    </div>
+                     <div style={styles.threadId}>#{t.id}</div>
+                   </div>
+                   <button
+diff --git a/chrome-extension/tests/browser-download-handler.test.ts b/chrome-extension/tests/browser-download-handler.test.ts
+index 42e2515..c7eb5bb 100644
+--- a/chrome-extension/tests/browser-download-handler.test.ts
++++ b/chrome-extension/tests/browser-download-handler.test.ts
+@@ -195,6 +195,8 @@ test("runBrowserDownload: text multi-match → ELEMENT_AMBIGUOUS + busy released
+   assert.match(r.error || "", /ELEMENT_AMBIGUOUS/)
+   assert.equal(r.data?.error_code, "ELEMENT_AMBIGUOUS")
+   assert.equal(r.data?.count, 2)
++  assert.match(String(r.data?.user_hint_zh || ""), /匹配/)
++  assert.ok(Array.isArray(r.data?.matches) && r.data.matches.length >= 2)
+   assert.equal(bridge.downloadBusyTabs.size, 0)
+   assert.equal(bridge.downloadBusyTabs.has(3), false)
+ })
+diff --git a/companion/src/llm/adapter.ts b/companion/src/llm/adapter.ts
+index 7b0bd04..452ae50 100644
+--- a/companion/src/llm/adapter.ts
++++ b/companion/src/llm/adapter.ts
+@@ -272,6 +272,17 @@ export async function chatCreate(params: ChatCreateParams) {
+       clearCliOutputTaint(threadId)
+     } catch { /* ignore */ }
+     let userContent = message
++    // G3.1: provisional list title immediately (before LLM / tools)
++    try {
++      ensureProvisionalThreadTitle({
++        threadId,
++        threadManager,
++        userText: message,
++        sendToExtension,
++      })
++    } catch {
++      /* non-fatal */
++    }
+     if (fileContents?.length) {
+       const estimateTokens = (text: string): number => {
+         const chineseChars = (text.match(/[一-鿿㐀-䶿]/g) || []).length
+@@ -1101,6 +1112,42 @@ ${hostUseRule12}${appIndexSection ? `\n\n${appIndexSection}` : ""}`
+   })
+ }
+ 
++/**
++ * Immediate title from first user message (G3.1) — no LLM.
++ * Collapses whitespace; truncates for list UI.
++ */
++export function provisionalTitleFromUserText(raw: string, maxLen = 16): string {
++  const t = String(raw || "")
++    .replace(/\s+/g, " ")
++    .trim()
++  if (!t) return ""
++  // Drop common file-upload noise prefixes
++  const cleaned = t.replace(/^\[文件[^\]]*\]\s*/g, "").trim() || t
++  if (cleaned.length <= maxLen) return cleaned
++  return cleaned.slice(0, maxLen - 1) + "…"
++}
++
++/**
++ * If thread has empty alias, set provisional title from user text and notify UI.
++ * Does not overwrite non-empty alias. Returns true if updated.
++ */
++export function ensureProvisionalThreadTitle(params: {
++  threadId: string
++  threadManager: ThreadManager
++  userText: string
++  sendToExtension: (data: any) => void
++}): boolean {
++  const { threadId, threadManager, userText, sendToExtension } = params
++  const thread = threadManager.get(threadId)
++  if (!thread) return false
++  if (thread.alias && String(thread.alias).trim()) return false
++  const alias = provisionalTitleFromUserText(userText)
++  if (!alias) return false
++  threadManager.update(threadId, { alias })
++  sendToExtension({ type: "thread.updated", thread: threadManager.get(threadId) })
++  return true
++}
++
+ /** Best-effort auto-naming: summarize the first exchange into a short title. Set force=true to overwrite an existing alias. */
+ export async function generateThreadTitle(params: {
+   threadId: string
+@@ -1113,7 +1160,17 @@ export async function generateThreadTitle(params: {
+   try {
+     const thread = threadManager.get(threadId)
+     if (!thread) return
+-    if (thread.alias && !force) return
++    // Allow upgrade from provisional first-user-snippet when we have a full exchange
++    const hasOnlyProvisional =
++      !!thread.alias &&
++      (() => {
++        const msgs = threadManager.getMessages(threadId)
++        const firstUser = msgs.find((m) => m.role === "user")
++        if (!firstUser?.content) return false
++        const prov = provisionalTitleFromUserText(String(firstUser.content))
++        return prov === thread.alias || prov.replace(/…$/, "") === String(thread.alias).replace(/…$/, "")
++      })()
++    if (thread.alias && !force && !hasOnlyProvisional) return
+ 
+     const msgs = threadManager.getMessages(threadId)
+     const hasUser = msgs.some(m => m.role === "user")
+@@ -1162,7 +1219,11 @@ export async function generateThreadTitle(params: {
+       threadManager.update(threadId, { alias })
+       sendToExtension({ type: "thread.updated", thread: threadManager.get(threadId) })
+     }
+-  } catch {
+-    // Silently fail — alias generation is best-effort
++  } catch (e: any) {
++    // G3.4: do not silent-void — title generation is best-effort but must be observable
++    logger.warn("thread.title_generate_failed", {
++      thread_id: threadId,
++      error: e?.message || String(e),
++    })
+   }
+ }

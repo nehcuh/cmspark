@@ -272,6 +272,17 @@ export async function chatCreate(params: ChatCreateParams) {
       clearCliOutputTaint(threadId)
     } catch { /* ignore */ }
     let userContent = message
+    // G3.1: provisional list title immediately (before LLM / tools)
+    try {
+      ensureProvisionalThreadTitle({
+        threadId,
+        threadManager,
+        userText: message,
+        sendToExtension,
+      })
+    } catch {
+      /* non-fatal */
+    }
     if (fileContents?.length) {
       const estimateTokens = (text: string): number => {
         const chineseChars = (text.match(/[一-鿿㐀-䶿]/g) || []).length
@@ -1101,6 +1112,42 @@ ${hostUseRule12}${appIndexSection ? `\n\n${appIndexSection}` : ""}`
   })
 }
 
+/**
+ * Immediate title from first user message (G3.1) — no LLM.
+ * Collapses whitespace; truncates for list UI.
+ */
+export function provisionalTitleFromUserText(raw: string, maxLen = 16): string {
+  const t = String(raw || "")
+    .replace(/\s+/g, " ")
+    .trim()
+  if (!t) return ""
+  // Drop common file-upload noise prefixes
+  const cleaned = t.replace(/^\[文件[^\]]*\]\s*/g, "").trim() || t
+  if (cleaned.length <= maxLen) return cleaned
+  return cleaned.slice(0, maxLen - 1) + "…"
+}
+
+/**
+ * If thread has empty alias, set provisional title from user text and notify UI.
+ * Does not overwrite non-empty alias. Returns true if updated.
+ */
+export function ensureProvisionalThreadTitle(params: {
+  threadId: string
+  threadManager: ThreadManager
+  userText: string
+  sendToExtension: (data: any) => void
+}): boolean {
+  const { threadId, threadManager, userText, sendToExtension } = params
+  const thread = threadManager.get(threadId)
+  if (!thread) return false
+  if (thread.alias && String(thread.alias).trim()) return false
+  const alias = provisionalTitleFromUserText(userText)
+  if (!alias) return false
+  threadManager.update(threadId, { alias })
+  sendToExtension({ type: "thread.updated", thread: threadManager.get(threadId) })
+  return true
+}
+
 /** Best-effort auto-naming: summarize the first exchange into a short title. Set force=true to overwrite an existing alias. */
 export async function generateThreadTitle(params: {
   threadId: string
@@ -1113,7 +1160,17 @@ export async function generateThreadTitle(params: {
   try {
     const thread = threadManager.get(threadId)
     if (!thread) return
-    if (thread.alias && !force) return
+    // Allow upgrade from provisional first-user-snippet when we have a full exchange
+    const hasOnlyProvisional =
+      !!thread.alias &&
+      (() => {
+        const msgs = threadManager.getMessages(threadId)
+        const firstUser = msgs.find((m) => m.role === "user")
+        if (!firstUser?.content) return false
+        const prov = provisionalTitleFromUserText(String(firstUser.content))
+        return prov === thread.alias || prov.replace(/…$/, "") === String(thread.alias).replace(/…$/, "")
+      })()
+    if (thread.alias && !force && !hasOnlyProvisional) return
 
     const msgs = threadManager.getMessages(threadId)
     const hasUser = msgs.some(m => m.role === "user")
@@ -1162,7 +1219,11 @@ export async function generateThreadTitle(params: {
       threadManager.update(threadId, { alias })
       sendToExtension({ type: "thread.updated", thread: threadManager.get(threadId) })
     }
-  } catch {
-    // Silently fail — alias generation is best-effort
+  } catch (e: any) {
+    // G3.4: do not silent-void — title generation is best-effort but must be observable
+    logger.warn("thread.title_generate_failed", {
+      thread_id: threadId,
+      error: e?.message || String(e),
+    })
   }
 }

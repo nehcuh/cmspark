@@ -138,7 +138,12 @@ export async function runDownloadsFind(params: FindDownloadsParams): Promise<Too
     return {
       success: false,
       error: "downloads.find requires filenameHint and/or urlContains",
-      data: { error_code: "HINT_REQUIRED" },
+      data: {
+        error_code: "HINT_REQUIRED",
+        user_hint_zh:
+          "请提供文件名关键字（filenameHint，如 repo-main.zip）和/或下载 URL 片段（urlContains）后再搜索本地下载。",
+        suggested_action: "provide_filenameHint_or_urlContains",
+      },
     }
   }
   let limit = 5
@@ -155,7 +160,12 @@ export async function runDownloadsFind(params: FindDownloadsParams): Promise<Too
     return {
       success: false,
       error: "downloads API unavailable",
-      data: { error_code: "DOWNLOADS_API_UNAVAILABLE" },
+      data: {
+        error_code: "DOWNLOADS_API_UNAVAILABLE",
+        user_hint_zh:
+          "Chrome 下载 API 不可用（扩展权限或环境异常）。请重载 CMspark 扩展并确认已授予 downloads 权限；或改用 browser_download 下载后再 skill_install。",
+        suggested_action: "reload_extension_or_browser_download",
+      },
     }
   }
 
@@ -216,13 +226,20 @@ export async function runDownloadsFind(params: FindDownloadsParams): Promise<Too
       },
     }
   } catch (e: any) {
+    const msg = e?.message || String(e)
     return {
       success: false,
-      error: e?.message || String(e),
+      error: msg,
       data: {
-        error_code: "DOWNLOADS_SEARCH_FAILED",
+        error_code: /importScripts|failed to load/i.test(msg)
+          ? "DOWNLOADS_FIND_CHUNK_LOAD"
+          : "DOWNLOADS_SEARCH_FAILED",
+        // Prefer user_hint_zh (ChatView surfaces this); keep recovery_zh for older agents
+        user_hint_zh:
+          "本地下载列表读取失败。请重载 CMspark 扩展后重试；或改用 browser_download（指定按钮文字如「Download ZIP」）下载，再 skill_install({ zip_path })。",
         recovery_zh:
-          "downloads_find 不可用时：用 browser_download 点 GitHub「Code」→「Download ZIP」，或打开 /archive/refs/heads/main.zip；完成后 skill_install({ zip_path })。",
+          "downloads_find 不可用时：用 browser_download 点 GitHub「Code」→「Download ZIP」，或打开 /archive/refs/heads/main.zip；完成后 skill_install({ zip_path })。重载扩展可修复 importScripts/分包加载失败。",
+        suggested_action: "reload_extension_or_browser_download",
       },
     }
   }

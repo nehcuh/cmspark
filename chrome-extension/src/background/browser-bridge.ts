@@ -8,6 +8,10 @@ import { runBrowserDownload } from "./browser-download-handler"
 import { runWithDownloadBusyBeforeQueue } from "./download-busy-entry"
 import { resolveEvaluateExecution } from "./evaluate-code-policy"
 import { buildSpaScrollExpression } from "./spa-scroll-expr"
+// Static import (not dynamic): MV3 SW dynamic import("./downloads-find") was
+// compiled to a separate chunk that failed importScripts in production
+// (thread #dagg58: "downloads-find.xxx.js failed to load"). Goals G1.1.
+import { runDownloadsFind } from "./downloads-find"
 
 // Re-export for callers / tests that import from browser-bridge.
 export { selectorJsLiteral } from "./selector-js-literal"
@@ -1253,8 +1257,24 @@ export class BrowserBridge {
 
   /** #au4dch DL-1: read-only search of completed chrome.downloads items. */
   private async downloadsFind(params: Record<string, any>): Promise<ToolResult> {
-    const { runDownloadsFind } = await import("./downloads-find")
-    return runDownloadsFind(params)
+    try {
+      return await runDownloadsFind(params)
+    } catch (e: any) {
+      const msg = e?.message || String(e)
+      return {
+        success: false,
+        error: msg,
+        data: {
+          error_code: /importScripts|failed to load/i.test(msg)
+            ? "DOWNLOADS_FIND_CHUNK_LOAD"
+            : "DOWNLOADS_FIND_FAILED",
+          user_hint_zh:
+            "本地下载列表读取失败。请到 chrome://extensions 重载 CMspark 扩展后重试；" +
+            "若刚更新扩展请完全关闭再打开 Side Panel。也可让我改用 browser_download 指定按钮文字/选择器下载。",
+          suggested_action: "reload_extension_or_browser_download",
+        },
+      }
+    }
   }
 
   /** @deprecated D18 — use browser_download */
