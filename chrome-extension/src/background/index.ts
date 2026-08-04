@@ -425,10 +425,27 @@ async function handleCompanionMessage(msg: any) {
 
 function setupMessageHandlers() {
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    switch (message.type) {
+    // Outer guard: any uncaught throw in a case would otherwise leave the
+    // sender with lastError "The message port closed before a response was received."
+    try {
+      return handleRuntimeMessage(message, sendResponse)
+    } catch (e: any) {
+      try {
+        sendResponse({ ok: false, error: e?.message || String(e) })
+      } catch {
+        /* channel already closed */
+      }
+      return true
+    }
+  })
+}
+
+/** Sync dispatch for extension UI → SW messages. Returns whether the channel is kept open. */
+function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): boolean {
+    switch (message?.type) {
       case "getStatus":
         sendResponse({
-          connectionState: wsClient.getState(),
+          connectionState: wsClient?.getState?.() ?? "disconnected",
         })
         return true
 
@@ -943,11 +960,30 @@ function setupMessageHandlers() {
       case "computer.model.set_python_mode":
       case "computer.model.pick_python_path":
       case "computer.model.ensure_python_env":
-      case "computer.model.install_deps":
-        // Forward to companion
-        wsClient.send(message)
-        sendResponse({ ok: true })
+      case "computer.model.install_deps": {
+        // Forward to companion. Always call sendResponse so Side Panel callbacks
+        // never see "The message port closed before a response was received"
+        // (that lastError fires when no listener answers — default used to return
+        // false without sendResponse, and any throw before sendResponse did the same).
+        try {
+          if (!wsClient) {
+            sendResponse({ ok: false, error: "Service worker 未初始化，请重载扩展" })
+            return true
+          }
+          const sent = wsClient.send(message)
+          if (!sent) {
+            sendResponse({
+              ok: false,
+              error: "Companion 未连接，请确认菜单栏 CMspark 已启动且 Side Panel 显示已连接",
+            })
+            return true
+          }
+          sendResponse({ ok: true })
+        } catch (e: any) {
+          sendResponse({ ok: false, error: e?.message || String(e) })
+        }
         return true
+      }
 
       // UI Mode P1 — L2 Cockpit window lifecycle (does not stop computer tasks)
       case "cockpit.open": {
@@ -978,9 +1014,18 @@ function setupMessageHandlers() {
         return true
 
       default:
-        return false
+        // Always answer when the sender used a callback; silent return false
+        // surfaces as chrome.runtime.lastError "message port closed…".
+        try {
+          sendResponse({
+            ok: false,
+            error: `Unknown message type: ${typeof message?.type === "string" ? message.type : "?"}`,
+          })
+        } catch {
+          /* channel already closed */
+        }
+        return true
     }
-  })
 }
 
 // M1 (audit P2-1): keep the companion's tabUrlCache (the evaluate auto-approve

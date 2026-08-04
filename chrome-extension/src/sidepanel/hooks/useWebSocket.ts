@@ -224,8 +224,24 @@ export function useWebSocket() {
       }
     })
 
-    // Listen for messages from background (broadcast via chrome.runtime.sendMessage)
+    // Listen for messages from background (broadcast via chrome.runtime.sendMessage).
+    // Note: when another extension page (e.g. Cockpit) is open, chrome.runtime.sendMessage
+    // from Side Panel also delivers to that page. Only handle inbound companion/SW
+    // broadcasts here — never claim the response channel (do not return true).
     const messageListener = (msg: any) => {
+      if (!msg || typeof msg.type !== "string") return false
+      // Outbound UI→SW commands (armed via Settings etc.) must not be processed here.
+      // Background is the sole handler; a throw in this listener can break the response path.
+      if (
+        msg.type === "security.unattended.arm" ||
+        msg.type === "security.unattended.disarm" ||
+        msg.type === "security.unattended.status" ||
+        msg.type === "config.set" ||
+        msg.type === "config.get"
+      ) {
+        return false
+      }
+      try {
       switch (msg.type) {
         case "chat.token":
           // P0-B: ignore stream events for non-active threads
@@ -1077,6 +1093,10 @@ export function useWebSocket() {
           break
         }
       }
+      } catch {
+        /* never break SW/UI response path for concurrent pages */
+      }
+      return false
     }
     chrome.runtime.onMessage.addListener(messageListener)
 
