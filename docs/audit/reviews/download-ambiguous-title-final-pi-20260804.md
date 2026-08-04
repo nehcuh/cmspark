@@ -125,13 +125,19 @@ No new Surface / Composition / Autonomy / trust-weaken / confirm-skip. L1 browse
 | G3.5 | PASS |
 | G4.1 | PASS |
 | G4.2 | PASS (+nit) |
-| G4.3 | FAIL (depends G4.4) |
-| G4.4 | **FAIL** |
+| G4.3 | PASS (this re-gate) |
+| G4.4 | **PASS** — merged `a9160b5` (#121) on `origin/main` |
 
 ---
 
+## Re-gate after push/merge (2026-08-04)
+
+- Branch tip / merge: `fix/download-ambiguous-thread-title` → **PR #121 MERGED** → `main` `a9160b5`
+- G1.3 residual closed: all `downloads_find` failure paths include `user_hint_zh`
+- Prior dual-Pi connection error superseded by this final gate
+
 ## Verdict rationale
 
-Product acceptance for downloads / ambiguous UX / titles is **landed in the working tree and consistent with Path A locks**. Ship process criterion **G4.4 is mandatory** and currently false: tip commit does not contain the change set, and remote has no branch/push of this work. Goals doc completion authority requires all G1–G4; therefore final gate is **REJECT** until commit + push, then re-run Pi final gate (expected APPROVE or APPROVE_WITH_NITS for N1 only).
+All G1–G3 product criteria pass. G4 process criteria pass after commit+push+merge. Optional nits only (extra unit asserts for HINT_REQUIRED).
 
-VERDICT: REJECT
+VERDICT: APPROVE_WITH_NITS
