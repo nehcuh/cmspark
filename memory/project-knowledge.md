@@ -1,5 +1,15 @@
 # Project Knowledge
 
+## Process Patterns
+
+### Eval Engineering 闸门（2026-08-04）
+- **思想**: 不信任模型；用机核 + 异家族 dual + 爆炸半径放行（Hanako 评估工程 6 步映射）
+- **Skill**: `docs/skills/eval-engineering-gate/SKILL.md`（git SoT；本地可选镜像 `.claude/skills/cmspark-eval-engineering-gate/`）
+- **卡片**: `docs/audit/reviews/_templates/eval-gate-card.md`
+- **已有资产**: `dual-external-review.sh`（Claude+Pi）= 异家族；单测/CI = 机核；REJECT exit 2 = 卡住流程；ADR Trust = blast
+- **缺口纪律**: 禁止 self-APPROVE 合 main；禁止信心分阈值；`disclosure_accepted` 不可信 caller 自报（S40 N1 → Outbound M3）
+- **Outbound 应用**: `docs/superpowers/plans/2026-08-04-outbound-mcp-p0c-eval-gates.md`（M1–M9 · T3）
+
 ## Technical Pitfalls
 
 ### Anthropic first-party denylist：FQDN 尾点可绕过 naive 匹配（2026-08-03 S38）

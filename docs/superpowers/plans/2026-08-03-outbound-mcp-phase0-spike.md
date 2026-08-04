@@ -4,7 +4,8 @@
 |-------|--------|
 | Date | 2026-08-03 |
 | Status | **P0b LOCKED** for S40 AFK · implements brief L1–L9 |
-| SoT | [cmspark-as-mcp-server-brief-2026-08-03.md](../../decisions/cmspark-as-mcp-server-brief-2026-08-03.md) |
+| Decision SoT | **[ADR-022](../../adr/022-outbound-mcp-server.md)** |
+| Process brief | [cmspark-as-mcp-server-brief-2026-08-03.md](../../decisions/cmspark-as-mcp-server-brief-2026-08-03.md) (superseded as SoT) |
 | Code | `companion/src/outbound-mcp/` (stdio façade skeleton) |
 
 ## 1. Goal (Phase 0)
@@ -47,11 +48,16 @@ cookies*, evaluate, host_*, shell_*, netsec_*, osascript_*, skill_install (inter
 
 ## 5. Spike code DoD (P0c)
 
+> **Eval gates (authoritative for next impl):** [2026-08-04-outbound-mcp-p0c-eval-gates.md](2026-08-04-outbound-mcp-p0c-eval-gates.md) M1–M9 · skill [eval-engineering-gate](../../skills/eval-engineering-gate/SKILL.md)
+
 - [x] stdio entry skeleton lists only whitelist names  
 - [x] refuses forbidden tools with structured error  
 - [x] audit line helper  
 - [ ] Live bridge to Companion WS (follow-up if bake-off authorized)  
 - [ ] Tray/global confirm (L8) — required before interactive T1  
+- [ ] Server-side disclosure session (not caller-trusted bool) — M3  
+- [ ] originWs / synthetic origin on confirm — M6  
+- [ ] dual-external-review after machine green — T3 
 
 ## 6. Bake-off (P0d) — human checklist
 

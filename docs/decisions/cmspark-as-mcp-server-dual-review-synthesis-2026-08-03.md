@@ -57,11 +57,12 @@
 2. Freeze Phase 0 protocol with numeric pass/fail.  
 3. Do **not** start façade implementation until L8/L9/originWs/content-disclosure are written as DoD.
 
-## Follow-through (same day)
+## Follow-through
 
-- **Brief (SoT):** [cmspark-as-mcp-server-brief-2026-08-03.md](cmspark-as-mcp-server-brief-2026-08-03.md) — status **DIRECTION LOCKED**; L1–L9 + L3+/L4+ folded.  
+- **Decision SoT (2026-08-04):** [ADR-022](../adr/022-outbound-mcp-server.md) — Accepted; brief retained as process.  
+- **Brief (historical):** [cmspark-as-mcp-server-brief-2026-08-03.md](cmspark-as-mcp-server-brief-2026-08-03.md) — L1–L9 folded into ADR.  
 - **Backlog:** [optimization-plan-post-adr-020.md](../optimization-plan-post-adr-020.md) §C row「Outbound MCP Server」.  
-- Implementation **not** started.
+- Implementation: P0c façade skeleton present; live bridge / L8 / L9 / bake-off still open.
 
 ---
 

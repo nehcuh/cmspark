@@ -3,7 +3,7 @@
 | Field | Value |
 |-------|--------|
 | Date | 2026-08-03 |
-| Status | **DIRECTION LOCKED** — dual-review Claude+Pi both **APPROVE_WITH_NITS** (nits folded below); **no implementation** until Phase 0 DoD met |
+| Status | **SUPERSEDED as decision SoT by [ADR-022](../adr/022-outbound-mcp-server.md)** (2026-08-04). Process artifact retained; locks L1–L9 live in the ADR. Phase 0 implementation still gated on P0c DoD |
 | Authors | Grok (multi-path adversary) + Claude/Pi dual-review |
 | Related | [ADR-020](../adr/020-capability-model-three-axes.md) · [mcp.md](../mcp.md) · architecture §8 (Companion = MCP **client** today) · [ADR-015](../adr/015-multi-agent-orchestrator-tab-lock.md) tab lease |
 | Process | [adversary synthesis](cmspark-as-mcp-server-adversary-synthesis-2026-08-03.md) · [dual-review synthesis](cmspark-as-mcp-server-dual-review-synthesis-2026-08-03.md) · artifacts `docs/audit/reviews/cmspark-mcp-server-strategy-*20260803-150011*` |
@@ -196,6 +196,7 @@ Record for T1 (primary):
 | 2026-08-03 | Internal multi-path adversary (Advocate / Skeptic / Implementer) |
 | 2026-08-03 | Dual-review Claude + Pi **APPROVE_WITH_NITS** → nits folded as L3+/L4+/L8 deliverable/L9/originWs/metrics/`cmspark__*` |
 | 2026-08-03 | Brief status **DIRECTION LOCKED** for optimization backlog |
+| 2026-08-04 | Decision SoT moved to **ADR-022**; this brief is historical process |
 
 ---
 

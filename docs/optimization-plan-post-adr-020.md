@@ -109,7 +109,8 @@ E  Autonomy       仅 defer 表内；spawn 保持 L2 HITL
 | G13 skill-craft | ✅ | 已实现 |
 | **下载去重 / prefer_existing** | ✅ 已合 main（PR #100） | [#au4dch DL-*](optimization-plan-au4dch-ux-shell-download.md) |
 | **Agent 下载并安装外部 Skill** | 🔶 Backlog | [optimization-plan-agent-skill-install.md](optimization-plan-agent-skill-install.md)：LLM `skill_install` → `~/.cmspark-agent/skills`（#au4dch 装错目录痛点） |
-| **Outbound MCP Server（服务外部编程 Agent）** | 🔶 **DIRECTION LOCKED** · 未开工 | [brief](decisions/cmspark-as-mcp-server-brief-2026-08-03.md) · [adversary](decisions/cmspark-as-mcp-server-adversary-synthesis-2026-08-03.md) · dual-review Claude+Pi **APPROVE_WITH_NITS**（`cmspark-mcp-server-strategy-verdict-20260803-150011`）。**Composition 导出 L1**（非新 runtime）；默认禁 L2/cookies/shell；Phase 0 对照 Playwright 后才扩面；Skill 仅 adoption。**不**插队 B 轨 P1 安全 |
+| **聊天附件文档解析 / 图文理解** | 🔶 Backlog | [optimization-plan-document-parse-vision.md](optimization-plan-document-parse-vision.md)：基线 `file-parser` + vision；P0 有字 PDF 抽图/可配置/golden → P1 OCR·结构 → P2 DocAI。**不**插队 B 轨；与 M4 `analyze_image` 门、CU OCR 分轨 |
+| **Outbound MCP Server（服务外部编程 Agent）** | 🔶 **ADR-022 Accepted** · Phase 0 骨架有 / 真桥未接 | **SoT** [ADR-022](adr/022-outbound-mcp-server.md)；过程 [brief](decisions/cmspark-as-mcp-server-brief-2026-08-03.md) · [spike](superpowers/plans/2026-08-03-outbound-mcp-phase0-spike.md)。**Composition 导出 L1**（非新 runtime）；默认禁 L2/cookies/shell；P0c 真桥 + L8/L9 → P0d bake-off → P1 grant。**不**插队 Trust 纪律（originWs） |
 
 每个 Pack/模块 PR 必须填 **能力声明**（PR template）。
 
@@ -172,7 +173,9 @@ E  Autonomy       仅 defer 表内；spawn 保持 L2 HITL
 6. **E** 仅当有明确编排缺口且 dual-review 批准 defer 表内项（ST-5 属于可见性增强，**不是** auto-spawn）  
 7. **F** 插入发布前硬缺口（e2e / Node 对齐）
 
-**方法论**：worktree → 实现 → 对抗 → `scripts/dual-external-review.sh` → CI 绿 → merge。危险 flag / 确认绑定 / shell 变更 **禁止 waive** 无用户明示。
+**方法论（Eval Engineering 闸门）**：worktree → **机核**（测/建）→ 对抗 → `scripts/dual-external-review.sh`（异家族 Claude+Pi）→ CI 绿 → merge。  
+规范 skill：[`docs/skills/eval-engineering-gate/SKILL.md`](skills/eval-engineering-gate/SKILL.md) · 卡片模板 [`eval-gate-card.md`](audit/reviews/_templates/eval-gate-card.md)。  
+原则：可机核的不交给 LLM；VERDICT 要卡住流程（非 dashboard）；看结果+路径+零件；翻车进 case；放行看 **爆炸半径** 不看信心分。危险 flag / 确认绑定 / shell / outbound 真桥 **禁止 waive** 无用户明示。
 
 ---
 
@@ -202,6 +205,8 @@ E  Autonomy       仅 defer 表内；spawn 保持 L2 HITL
 | 2026-08-01 | 挂接 [#au4dch UX 子轨](optimization-plan-au4dch-ux-shell-download.md)（下载去重 · 运行态 · shell 黑窗/PTY）；更正 browser_download P1.0 已合；执行序插入 Wave 1–4 |
 | 2026-08-01 | Composition backlog：Agent 安装外部 Skill → [optimization-plan-agent-skill-install.md](optimization-plan-agent-skill-install.md)；DL prefer_existing 标为已合 PR #100 |
 | 2026-08-03 | Composition：**Outbound MCP Server** 方向锁定（多路对抗 + Pi/Claude dual-review APPROVE_WITH_NITS）→ [cmspark-as-mcp-server-brief-2026-08-03.md](decisions/cmspark-as-mcp-server-brief-2026-08-03.md)；未开工，不插队 B 轨 |
+| 2026-08-04 | Composition：**ADR-022** Accepted（brief 升格决策 SoT）；P0c 真桥 / L8 / L9 / bake-off 仍开放 |
+| 2026-08-04 | 方法论：挂接 **Eval Engineering 闸门** skill + P0c gate card（异家族 dual / 机核优先 / blast tier） |
 
 ---
 

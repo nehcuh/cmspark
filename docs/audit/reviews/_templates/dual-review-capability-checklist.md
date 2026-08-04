@@ -38,6 +38,15 @@ See [p1-security-open-items-2026-07-29.md](../../p1-security-open-items-2026-07-
 | P1-3 | evaluate integrity | `browser-bridge` evaluate / sanitizer / token bind |
 | P1-4 | shell structure | `capability/shell.ts`, shell policy, spawn |
 
+## Eval Engineering (optional but T3+ recommended)
+
+See [eval-gate-card.md](eval-gate-card.md) and skill `cmspark-eval-engineering-gate`:
+
+1. Prefer **machine-checkable** claims over prose quality.  
+2. Score **outcome + trajectory + component**, not length.  
+3. **Blast radius** decides human-required vs dual-only — not model confidence.  
+4. REJECT must block merge; APPROVE_WITH_NITS lists only non-blockers.
+
 ## Verdict reminder
 
 End with exactly one of:

@@ -13,7 +13,7 @@ CMspark **不是**多套 Agent runtime，而是 **一个** Companion tool-loop�
 | 轴 | 名称 | 内容 |
 |----|------|------|
 | **A Surface** | 作用面 | **L0 聊**（无 CDP tool）→ **L1 网页**（CDP/tabs/cookies）→ **L2 宿主**（CU / Host / Apps / 企业 shell·netsec，opt-in） |
-| **B Composition** | 组合面 | Skill · Knowledge · MCP · Pack · user-env · modules — **装配**，不是「中层 Agent」 |
+| **B Composition** | 组合面 | Skill · Knowledge · MCP（client）· Outbound MCP（export，[ADR-022](adr/022-outbound-mcp-server.md)）· Pack · user-env · modules — **装配**，不是「中层 Agent」 |
 | **C Autonomy** | 自主度 | 单线程 → multi-worker + tab lease → Mission Board（Board **只**归本轴） |
 
 **横切标签**：Trust（随 Surface 单调变严；session-trust 见 ADR-017）· Channel（`community` | `enterprise`）。
@@ -23,7 +23,7 @@ CMspark **不是**多套 Agent runtime，而是 **一个** Companion tool-loop�
 **叠加纪律**：新场景优先 **Pack**（+ skill/MCP）；禁止 Pack 写全局 auto_approve/god-mode；禁止无 Pack 替代就加一级 Side Panel 入口。
 
 ```text
-  Composition: Skill · Knowledge · MCP · Pack · user-env
+  Composition: Skill · Knowledge · MCP · Outbound MCP · Pack · user-env
         │
    L0 ──▶ L1 ──▶ L2 (opt-in)
         │
@@ -446,6 +446,7 @@ cmspark/
 │   │   ├── security-confirmation.ts # L2 确认队列 (~45s + origin 绑定)
 │   │   ├── ws-auth.ts               # WS 配对 / handshake
 │   │   ├── mcp/                     # MCP client/manager/aggregator/transport
+│   │   ├── outbound-mcp/            # Outbound MCP façade (ADR-022; Phase 0)
 │   │   ├── computer/                # Computer Use（opt-in 桌面操控）
 │   │   ├── host-use/                # Host 读写 / 平台 adapter（darwin/win/linux）
 │   │   ├── apps/                    # 应用枚举 / 启动 / 生物识别门
@@ -640,6 +641,19 @@ Companion 作为 **MCP 客户端/聚合器**，把外部 server 的 tools（及�
 | `bridge/tool-definitions.ts` | `getMcpMetaToolDefinitions`（按 server 能力动态暴露） |
 
 配置权威：`~/.cmspark-agent/config.json` 的 `mcp` 段。MCP **不**绕过 Companion 安全策略；危险 MCP 工具仍可走确认策略（见 mcp.md）。
+
+### 8.3 Outbound MCP（编程 Agent 导出 · ADR-022）
+
+> 决策 SoT：[ADR-022](adr/022-outbound-mcp-server.md)。**不是** inbound 客户端的逆操作而已：这是 **Composition 对 Surface L1 的策展导出**。
+
+| 方向 | 角色 | 状态 |
+|------|------|------|
+| **Inbound**（§8.1） | Companion = MCP **client** | 0.3.0 已交付 |
+| **Outbound** | Companion = MCP **server 门面** → 同一安全栈 → Extension/CDP | ADR Accepted；Phase 0 门控 |
+
+- 工具命名：`cmspark__*`（默认 curated L1 子集；禁 cookies / evaluate / L2 / shell / netsec）
+- 代码：`companion/src/outbound-mcp/`（profile · façade gate · audit）；stdio 真桥 / L8 托盘确认 / L9 tab lease / grant 见 ADR 分阶段
+- 产品主叙事仍是 Side Panel；outbound **非** default-on；Skill 仅 adoption
 
 ---
 

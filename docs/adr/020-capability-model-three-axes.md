@@ -61,7 +61,8 @@
 |------|------|
 | **Skill**（Type A） | 方法论 / prompt 模板 |
 | **Knowledge** | 站点/全局/技能记忆 |
-| **MCP** | 外部工具服务器（`mcp__…`） |
+| **MCP**（inbound） | 外部工具服务器（`mcp__…`）— Companion 作 **client** |
+| **Outbound MCP**（export） | 把 curated **Surface L1** 子集导出给外部编程 Agent（`cmspark__*`）— **门面，非新 runtime**（[ADR-022](022-outbound-mcp-server.md)；Phase 0 门控） |
 | **user-env secrets** | shell/MCP 子进程密钥（[ADR-019](019-user-env-secrets.md)） |
 | **Mission Pack** | 场景配方：skills + knowledge + tool_whitelist + system_prompt_append + modules — **非 runtime**（[ADR-014](014-mission-pack-enterprise-modules.md)） |
 | **Capability modules** | 安装级开关（appsec / workspace / shell / netsec）+ `capability_profile` |
