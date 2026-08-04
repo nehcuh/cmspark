@@ -3,12 +3,13 @@
 ## Process Patterns
 
 ### Eval Engineering 闸门（2026-08-04）
-- **思想**: 不信任模型；用机核 + 异家族 dual + 爆炸半径放行（Hanako 评估工程 6 步映射）
-- **Skill**: `docs/skills/eval-engineering-gate/SKILL.md`（git SoT；本地可选镜像 `.claude/skills/cmspark-eval-engineering-gate/`）
-- **卡片**: `docs/audit/reviews/_templates/eval-gate-card.md`
-- **已有资产**: `dual-external-review.sh`（Claude+Pi）= 异家族；单测/CI = 机核；REJECT exit 2 = 卡住流程；ADR Trust = blast
-- **缺口纪律**: 禁止 self-APPROVE 合 main；禁止信心分阈值；`disclosure_accepted` 不可信 caller 自报（S40 N1 → Outbound M3）
-- **Outbound 应用**: `docs/superpowers/plans/2026-08-04-outbound-mcp-p0c-eval-gates.md`（M1–M9 · T3）
+- **思想**: 不信任模型；用机核 + 独立评审 + 爆炸半径放行（Hanako 评估工程 6 步映射）
+- **Skill**: `docs/skills/eval-engineering-gate/SKILL.md`（git SoT；v1.1）
+- **确认序（用户锁定）**: **独立对抗 agent 确认 → Pi 复审**；实现 agent 不得自评放行；dual-external-review.sh 仅可选补充
+- **卡片**: `docs/audit/reviews/_templates/eval-gate-card.md`（ADVERSARY + PI_REREVIEW）
+- **机核**: 单测/CI；红则禁止进审
+- **缺口纪律**: 禁止 self-APPROVE；禁止「同会话自对抗」；禁止跳过 Pi；禁止信心分阈值；`disclosure_accepted` 不可信 caller 自报
+- **Outbound 应用**: `docs/superpowers/plans/2026-08-04-outbound-mcp-p0c-eval-gates.md`
 
 ## Technical Pitfalls
 

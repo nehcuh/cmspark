@@ -174,9 +174,10 @@ E  Autonomy       仅 defer 表内；spawn 保持 L2 HITL
 6. **E** 仅当有明确编排缺口且 dual-review 批准 defer 表内项（ST-5 属于可见性增强，**不是** auto-spawn）  
 7. **F** 插入发布前硬缺口（e2e / Node 对齐）
 
-**方法论（Eval Engineering 闸门）**：worktree → **机核**（测/建）→ 对抗 → `scripts/dual-external-review.sh`（异家族 Claude+Pi）→ CI 绿 → merge。  
+**方法论（Eval Engineering 闸门）**：worktree → **机核**（测/建）→ **独立对抗 agent 确认** → **Pi 复审**对抗结论 → CI 绿 → merge。  
+（可选补充：`scripts/dual-external-review.sh` Claude+Pi 并行。）  
 规范 skill：[`docs/skills/eval-engineering-gate/SKILL.md`](skills/eval-engineering-gate/SKILL.md) · 卡片模板 [`eval-gate-card.md`](audit/reviews/_templates/eval-gate-card.md)。  
-原则：可机核的不交给 LLM；VERDICT 要卡住流程（非 dashboard）；看结果+路径+零件；翻车进 case；放行看 **爆炸半径** 不看信心分。危险 flag / 确认绑定 / shell / outbound 真桥 **禁止 waive** 无用户明示。
+原则：可机核的不交给 LLM；确认序 **对抗 → Pi**（实现者不得自评）；VERDICT 卡住流程；看结果+路径+零件；放行看 **爆炸半径**。危险 flag / 确认绑定 / shell / outbound 真桥 **禁止 waive** 无用户明示。
 
 ---
 
@@ -210,6 +211,7 @@ E  Autonomy       仅 defer 表内；spawn 保持 L2 HITL
 | 2026-08-04 | 方法论：挂接 **Eval Engineering 闸门** skill + P0c gate card（异家族 dual / 机核优先 / blast tier） |
 | 2026-08-04 | Composition 场景：**Daily Content Loop** DRAFT brief（Loop Engineering × ADR-022） |
 | 2026-08-04 | Daily Content Loop **DIRECTION LOCKED**（公开站·本地模型·本机+邮件·双轨验证·Agent 配置） |
+| 2026-08-04 | 确认序锁定：**独立对抗 agent → Pi 复审**（Eval gate v1.1） |
 
 ---
 

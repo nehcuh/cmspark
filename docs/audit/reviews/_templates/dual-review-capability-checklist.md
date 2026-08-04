@@ -38,14 +38,21 @@ See [p1-security-open-items-2026-07-29.md](../../p1-security-open-items-2026-07-
 | P1-3 | evaluate integrity | `browser-bridge` evaluate / sanitizer / token bind |
 | P1-4 | shell structure | `capability/shell.ts`, shell policy, spawn |
 
-## Eval Engineering (optional but T3+ recommended)
+## Eval Engineering (T2+ recommended · T3+ mandatory)
 
-See [eval-gate-card.md](eval-gate-card.md) and skill `cmspark-eval-engineering-gate`:
+See [eval-gate-card.md](eval-gate-card.md) and [eval-engineering-gate skill](../../../skills/eval-engineering-gate/SKILL.md).
+
+**Default confirmation order (locked 2026-08-04):**
+
+1. MACHINE green  
+2. **Independent adversary agent(s)** VERDICT  
+3. **Pi re-review** of adversary findings + diff VERDICT  
 
 1. Prefer **machine-checkable** claims over prose quality.  
 2. Score **outcome + trajectory + component**, not length.  
-3. **Blast radius** decides human-required vs dual-only — not model confidence.  
-4. REJECT must block merge; APPROVE_WITH_NITS lists only non-blockers.
+3. **Blast radius** decides human-required vs auto — not model confidence.  
+4. REJECT must block merge; APPROVE_WITH_NITS lists only non-blockers.  
+5. Implementer self-APPROVE is never a gate.
 
 ## Verdict reminder
 
