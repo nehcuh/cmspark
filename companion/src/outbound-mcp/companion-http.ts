@@ -256,12 +256,15 @@ export type CompanionInvokeBody = {
 
 /**
  * Pure invoke logic (no HTTP). Used by HTTP handler and unit tests.
+ * @param opts.grant_id — set only by authenticated HTTP path (never trust body)
  */
 export async function companionInvokeOutbound(
   body: CompanionInvokeBody,
+  opts?: { grant_id?: string },
 ): Promise<OutboundCallResult & { data?: unknown; origin?: ReturnType<typeof makeOutboundMcpOrigin> }> {
   const caller_id = (body.caller_id || "http-unknown").trim() || "http-unknown"
   const tool = (body.tool || "").trim()
+  const grant_id = opts?.grant_id
   const req: OutboundCallRequest = {
     caller_id,
     tool,
@@ -281,6 +284,7 @@ export async function companionInvokeOutbound(
       tool,
       ok: false,
       error_code: "DISCLOSURE_REQUIRED",
+      grant_id,
     })
     return {
       ok: false,
@@ -308,6 +312,7 @@ export async function companionInvokeOutbound(
       tool,
       ok: false,
       error_code: "EXTENSION_UNAVAILABLE",
+      grant_id,
     })
     return {
       ok: false,
@@ -328,6 +333,7 @@ export async function companionInvokeOutbound(
       tool,
       ok: false,
       error_code: leaseGate.error_code,
+      grant_id,
     })
     return {
       ok: false,
@@ -383,6 +389,7 @@ export async function companionInvokeOutbound(
       ok: result.success,
       error_code,
       confirm_outcome: result.success ? "n/a" : "denied",
+      grant_id,
     })
     return {
       ok: result.success,
@@ -398,6 +405,7 @@ export async function companionInvokeOutbound(
       tool,
       ok: false,
       error_code: "DISPATCH_THREW",
+      grant_id,
     })
     return {
       ok: false,
@@ -516,7 +524,10 @@ export async function handleOutboundMcpHttp(
         }
         body.caller_id = auth.bound_caller_id
       }
-      const out = await companionInvokeOutbound(body)
+      // N1 dual-review: pass auth grant_id into tool audit (never from client body)
+      const out = await companionInvokeOutbound(body, {
+        grant_id: auth.mode === "grant" ? auth.grant_id : undefined,
+      })
       json(res, out.ok ? 200 : 422, {
         ...out,
         auth_mode: auth.mode,
@@ -528,11 +539,7 @@ export async function handleOutboundMcpHttp(
     return true
   }
 
-  // Auth required for unknown POST under prefix (404 still after auth? keep 404 without auth for probe noise)
-  if (!authorizeOutboundRequest(req, expectedSecret).ok && pathOnly.startsWith(OUTBOUND_HTTP_PREFIX)) {
-    // unauthenticated unknown → 404 without leaking
-  }
-
+  // Unknown path under prefix — 404 without auth oracle (N3: removed dead auth probe block)
   json(res, 404, { ok: false, error_code: "NOT_FOUND" })
   return true
 }
