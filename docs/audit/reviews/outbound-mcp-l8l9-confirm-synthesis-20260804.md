@@ -39,7 +39,7 @@
 | N2 mid-flight CDP on side_panel_wins | remains (design residual) |
 | N3 lease cap 2 | **documented** in mcp.md |
 | N4 audit `as any` | remains |
-| Follow-up | real `createToolExecutor` + `__outbound_mcp` integration test (recommended, not blocker) |
+| Follow-up | real `createToolExecutor` + `__outbound_mcp` integration test | **FIXED** — `tests/integration/outbound-mcp-executor.test.ts` (B1 counterfactual + full stack) |
 
 ## MERGE claim
 

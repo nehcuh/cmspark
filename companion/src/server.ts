@@ -540,6 +540,17 @@ async function initServices() {
   }
 }
 
+/**
+ * Integration tests: ensure module-level ThreadManager exists so outbound B1
+ * path (`isToolAllowed` on synthetic holders) is exercised. No-op if already set.
+ */
+export function seedThreadManagerForTests(): ThreadManager {
+  if (!threadManager) {
+    threadManager = new ThreadManager()
+  }
+  return threadManager
+}
+
 // Exported for integration tests (audit item 6).
 export function createToolExecutor(ws: WebSocket) {
   // Per-connection session id — used as the key for MCP first-use confirmation cache
