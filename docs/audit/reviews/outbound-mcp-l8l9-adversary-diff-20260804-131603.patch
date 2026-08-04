@@ -1,0 +1,740 @@
+# Adversary context L8/L9
+base: e2c4efe (before L8/L9)
+head: 6d5790f
+time: 20260804-131603
+
+6d5790f feat(outbound-mcp): L8 confirm fan-out and L9 dual-entry tab lease
+
+ companion/src/outbound-mcp/companion-http.ts       |  59 +++++++-
+ companion/src/outbound-mcp/dual-entry.ts           | 159 +++++++++++++++++++++
+ companion/src/outbound-mcp/index.ts                |   8 ++
+ companion/src/server.ts                            |  88 ++++++++++--
+ .../tests/outbound-mcp-companion-http.test.ts      |  35 ++++-
+ companion/tests/outbound-mcp-dual-entry.test.ts    | 109 ++++++++++++++
+ companion/tests/outbound-mcp-http-e2e.test.ts      |  32 ++++-
+ docs/adr/022-outbound-mcp-server.md                |   8 +-
+ docs/mcp.md                                        |   3 +-
+ .../2026-08-04-outbound-mcp-p0c-eval-gates.md      |   4 +-
+ 10 files changed, 474 insertions(+), 31 deletions(-)
+
+diff --git a/companion/src/outbound-mcp/companion-http.ts b/companion/src/outbound-mcp/companion-http.ts
+index f2f9bb9..0ca27ef 100644
+--- a/companion/src/outbound-mcp/companion-http.ts
++++ b/companion/src/outbound-mcp/companion-http.ts
+@@ -23,6 +23,12 @@ import {
+ import { OUTBOUND_MCP_EXFIL_CLASS, outboundToInternalName } from "./profile"
+ import { makeOutboundMcpOrigin } from "./origin"
+ import { appendOutboundMcpAudit } from "./audit"
++import {
++  gateOutboundTabLease,
++  OUTBOUND_MCP_PARAM,
++  OUTBOUND_CALLER_PARAM,
++  outboundHolderThreadId,
++} from "./dual-entry"
+ 
+ export const OUTBOUND_HTTP_PREFIX = "/outbound-mcp/v1"
+ export const OUTBOUND_INVOKE_PATH = `${OUTBOUND_HTTP_PREFIX}/invoke`
+@@ -198,21 +204,64 @@ export async function companionInvokeOutbound(
+     }
+   }
+ 
++  // L9: dual-entry tab lease before CDP
++  const args = { ...(body.args || {}) }
++  const leaseGate = gateOutboundTabLease(internal, args, caller_id)
++  if (!leaseGate.ok) {
++    appendOutboundMcpAudit({
++      caller_id,
++      tool,
++      ok: false,
++      error_code: leaseGate.error_code,
++    })
++    return {
++      ok: false,
++      error: leaseGate.error,
++      error_code: leaseGate.error_code,
++      internal_tool: internal,
++      origin,
++      data: {
++        error_code: leaseGate.error_code,
++        tab_id: leaseGate.tab_id,
++        holder_thread_id: leaseGate.holder_thread_id,
++        side_panel_wins: leaseGate.side_panel_wins === true,
++        queue_disclosure_zh: leaseGate.queue_disclosure_zh,
++      },
++    }
++  }
++
++  // L8/L9: tag params so createToolExecutor fans out confirms + treats holder
++  const taggedArgs: Record<string, unknown> = {
++    ...args,
++    [OUTBOUND_MCP_PARAM]: true,
++    [OUTBOUND_CALLER_PARAM]: caller_id,
++    __thread_id: outboundHolderThreadId(caller_id),
++  }
++
+   const toolCallId = `ob_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`
+   try {
+-    const result = await runner(toolCallId, internal, body.args || {})
++    const result = await runner(toolCallId, internal, taggedArgs)
++    // Map confirm-timeout into actionable MCP error (L8 fail-closed messaging)
++    let error = result.success ? undefined : result.error || "dispatch failed"
++    let error_code = result.success ? undefined : "DISPATCH_FAILED"
++    if (!result.success && error && /timeout|denied|confirmation/i.test(error)) {
++      error_code = "OUTBOUND_CONFIRM_REQUIRED"
++      error =
++        `${error} — L8: approve via system tray dialog and/or any open CMspark Side Panel; ` +
++        `do not rely on IDE focus alone. If no tray, open Side Panel or enable CMspark tray.`
++    }
+     appendOutboundMcpAudit({
+       caller_id,
+       tool,
+       domain: body.domain,
+       ok: result.success,
+-      error_code: result.success ? undefined : "DISPATCH_FAILED",
+-      confirm_outcome: "n/a",
++      error_code,
++      confirm_outcome: result.success ? "n/a" : "denied",
+     })
+     return {
+       ok: result.success,
+-      error: result.success ? undefined : result.error || "dispatch failed",
+-      error_code: result.success ? undefined : "DISPATCH_FAILED",
++      error,
++      error_code,
+       internal_tool: internal,
+       data: result.data,
+       origin,
+diff --git a/companion/src/outbound-mcp/dual-entry.ts b/companion/src/outbound-mcp/dual-entry.ts
+new file mode 100644
+index 0000000..ba69b5d
+--- /dev/null
++++ b/companion/src/outbound-mcp/dual-entry.ts
+@@ -0,0 +1,159 @@
++/**
++ * ADR-022 L9 — dual-entry tab lease between Side Panel and outbound MCP.
++ *
++ * - Outbound interactive tools take exclusive lease as holder `outbound_mcp:<caller>`.
++ * - Side Panel tools on the same tab force-release outbound (Side Panel wins).
++ * - MCP conflict → structured error with queue disclosure (no thrash).
++ */
++
++import {
++  acquireOrRenewTabLease,
++  forceReleaseTab,
++  getTabLease,
++  type LeaseResult,
++} from "../orchestrator/tab-lease"
++import { TAB_LEASE_TOOLS } from "../orchestrator/constants"
++import { appendCapabilityAudit } from "../packs/audit-log"
++
++export const OUTBOUND_HOLDER_PREFIX = "outbound_mcp:"
++
++/** Param flag injected by companion-http for createToolExecutor. */
++export const OUTBOUND_MCP_PARAM = "__outbound_mcp"
++export const OUTBOUND_CALLER_PARAM = "__outbound_caller_id"
++
++export function outboundHolderThreadId(callerId: string): string {
++  const id = (callerId || "").trim() || "unknown"
++  return `${OUTBOUND_HOLDER_PREFIX}${id}`
++}
++
++export function isOutboundHolder(threadId: string | undefined | null): boolean {
++  return typeof threadId === "string" && threadId.startsWith(OUTBOUND_HOLDER_PREFIX)
++}
++
++/** Tools that require exclusive tab lease for outbound dual-entry. */
++export function outboundNeedsTabLease(internalTool: string): boolean {
++  if (internalTool === "list_tabs") return false
++  return TAB_LEASE_TOOLS.has(internalTool)
++}
++
++export type OutboundLeaseGateResult =
++  | { ok: true; tabId?: number; holder: string }
++  | {
++      ok: false
++      error_code: string
++      error: string
++      tab_id?: number
++      holder_thread_id?: string
++      side_panel_wins?: boolean
++      queue_disclosure_zh: string
++    }
++
++/**
++ * Before outbound CDP dispatch: require tabId for lease tools; acquire HARD lease.
++ */
++export function gateOutboundTabLease(
++  internalTool: string,
++  params: Record<string, unknown>,
++  callerId: string,
++): OutboundLeaseGateResult {
++  const holder = outboundHolderThreadId(callerId)
++  if (!outboundNeedsTabLease(internalTool)) {
++    return { ok: true, holder }
++  }
++
++  const raw = params.tabId
++  const tabId =
++    typeof raw === "number" && Number.isFinite(raw)
++      ? raw
++      : typeof raw === "string" && raw.trim() !== "" && Number.isFinite(Number(raw))
++        ? Number(raw)
++        : undefined
++
++  if (tabId === undefined) {
++    return {
++      ok: false,
++      error_code: "TAB_ID_REQUIRED",
++      error:
++        "TAB_ID_REQUIRED: outbound interactive tools require explicit numeric tabId (list_tabs first) — dual-entry L9",
++      queue_disclosure_zh:
++        "编程 Agent 须先 list_tabs 再带 tabId 操作；禁止静默操作当前激活标签（双入口防互抢）。",
++    }
++  }
++
++  const existing = getTabLease(tabId)
++  if (existing && !isOutboundHolder(existing.holderThreadId)) {
++    // Side Panel / multi-agent worker holds tab — MCP queues (Side Panel wins)
++    try {
++      appendCapabilityAudit({
++        type: "outbound_mcp.tab_lease_blocked",
++        at: new Date().toISOString(),
++        tab_id: tabId,
++        holder_thread_id: existing.holderThreadId,
++        outbound_caller: callerId,
++        reason: "side_panel_or_worker_holds",
++      } as any)
++    } catch {
++      /* best-effort */
++    }
++    return {
++      ok: false,
++      error_code: existing.state === "SOFT_RESERVED" ? "TAB_BUSY_CONFIRMING" : "TAB_LOCKED",
++      error: `tab ${tabId} held by ${existing.holderThreadId} (${existing.state}) — Side Panel wins; MCP must queue or pick another tab`,
++      tab_id: tabId,
++      holder_thread_id: existing.holderThreadId,
++      side_panel_wins: true,
++      queue_disclosure_zh:
++        "Side Panel / Worker 正占用该标签。按 ADR-022 L9，Side Panel 优先；请排队或换 tab，勿与主面板抢同一标签。",
++    }
++  }
++
++  const res: LeaseResult = acquireOrRenewTabLease({
++    tabId,
++    holderThreadId: holder,
++    needsL2: false,
++  })
++  if (!res.ok) {
++    return {
++      ok: false,
++      error_code: res.error_code,
++      error: res.error,
++      tab_id: res.tab_id,
++      holder_thread_id: res.holder_thread_id,
++      queue_disclosure_zh:
++        "无法获取标签租约；请 list_tab_locks / 换 tab / 关闭多余标签后重试。",
++    }
++  }
++
++  return { ok: true, tabId, holder }
++}
++
++/**
++ * Side Panel (or any non-outbound holder) is about to use a tab: force-release
++ * outbound lease so Side Panel wins (ADR-022 L9).
++ */
++export function sidePanelWinsReleaseOutboundLease(
++  tabId: number,
++  actingThreadId: string | undefined,
++): boolean {
++  if (isOutboundHolder(actingThreadId)) {
++    // Outbound path — do not release self
++    return false
++  }
++  const existing = getTabLease(tabId)
++  if (!existing || !isOutboundHolder(existing.holderThreadId)) {
++    return false
++  }
++  forceReleaseTab(tabId, "side_panel_wins", { hasPending: false })
++  try {
++    appendCapabilityAudit({
++      type: "outbound_mcp.side_panel_wins",
++      at: new Date().toISOString(),
++      tab_id: tabId,
++      released_holder: existing.holderThreadId,
++      acting_thread_id: actingThreadId || "side_panel",
++    } as any)
++  } catch {
++    /* best-effort */
++  }
++  return true
++}
+diff --git a/companion/src/outbound-mcp/index.ts b/companion/src/outbound-mcp/index.ts
+index 0911eee..4e43cbb 100644
+--- a/companion/src/outbound-mcp/index.ts
++++ b/companion/src/outbound-mcp/index.ts
+@@ -45,3 +45,11 @@ export {
+   createHttpOutboundDispatcher,
+   companionPostDisclosure,
+ } from "./http-client"
++export {
++  gateOutboundTabLease,
++  sidePanelWinsReleaseOutboundLease,
++  outboundHolderThreadId,
++  isOutboundHolder,
++  OUTBOUND_MCP_PARAM,
++  OUTBOUND_CALLER_PARAM,
++} from "./dual-entry"
+diff --git a/companion/src/server.ts b/companion/src/server.ts
+index 7c64f75..7c753b6 100644
+--- a/companion/src/server.ts
++++ b/companion/src/server.ts
+@@ -606,6 +606,7 @@ export function createToolExecutor(ws: WebSocket) {
+         : typeof (finalParams as any)._thread_id === "string"
+           ? String((finalParams as any)._thread_id)
+           : undefined
++    const isOutboundMcpCall = (finalParams as any).__outbound_mcp === true
+     try {
+       const {
+         TAB_LEASE_TOOLS,
+@@ -615,6 +616,22 @@ export function createToolExecutor(ws: WebSocket) {
+         sweepExpired,
+       } = await import("./orchestrator")
+       sweepExpired({ hasPendingForTab })
++
++      // ADR-022 L9: Side Panel wins — if non-outbound actor targets a tab held
++      // by outbound_mcp:*, force-release so dual-entry does not thrash.
++      if (
++        !isOutboundMcpCall &&
++        TAB_LEASE_TOOLS.has(toolName) &&
++        typeof finalParams.tabId === "number"
++      ) {
++        try {
++          const { sidePanelWinsReleaseOutboundLease } = await import("./outbound-mcp/dual-entry")
++          sidePanelWinsReleaseOutboundLease(finalParams.tabId, actingThreadId)
++        } catch {
++          /* best-effort */
++        }
++      }
++
+       if (actingThreadId && threadManager) {
+         const th = threadManager.get(actingThreadId) as any
+         if (th?.paused) {
+@@ -669,6 +686,8 @@ export function createToolExecutor(ws: WebSocket) {
+           ;(finalParams as any).__require_tab_id = true
+         }
+         // Early exclusive HARD for tab tools — multi-agent only (ADR-015).
++        // Outbound MCP already leased in companion-http (L9); skip double-acquire here
++        // when isOutboundMcpCall (holder is outbound_mcp:*).
+         // Normal single-agent chats must not take per-worker tab leases: browse /
+         // AppSec often opens many tabs and max_tabs_leased_per_worker=2 would
+         // hard-fail as non_recoverable (thread 1gfd6t). When any multi-agent
+@@ -678,6 +697,7 @@ export function createToolExecutor(ws: WebSocket) {
+         // Interactive L2 path upgrades same-holder HARD → HELD_PENDING_L2 below.
+         if (
+           multi &&
++          !isOutboundMcpCall &&
+           TAB_LEASE_TOOLS.has(toolName) &&
+           typeof finalParams.tabId === "number" &&
+           actingThreadId
+@@ -1540,14 +1560,15 @@ export function createToolExecutor(ws: WebSocket) {
+           // (those need the inline paste-blocked nonce UI in Side Panel — Swift
+           // dialog has no nonce input). Plain macOS computer-use / evaluate / etc.
+           // are eligible for the tray shortcut.
++          // L8: outbound MCP always prefers tray when available (IDE focus independent)
+           const trayEligible = !!tray && !winL2NonceChallenge
+           const trayReq: TrayConfirmRequest | null = trayEligible
+             ? {
+                 id: sharedConfirmId,
+-                toolName,
++                toolName: isOutboundMcpCall ? `[Outbound] ${toolName}` : toolName,
+                 riskLevel: forceConfirm
+                   ? "high"
+-                  : safety.dangerousApis.length > 0 ? "medium" : "low",
++                  : safety.dangerousApis.length > 0 || isOutboundMcpCall ? "medium" : "low",
+                 // Truncate to keep NSWindow readable — full text goes to Side Panel.
+                 summary: traySummary.length > 800 ? traySummary.slice(0, 800) + "…" : traySummary,
+                 criticalApis,
+@@ -1631,12 +1652,57 @@ export function createToolExecutor(ws: WebSocket) {
+             }
+           }
+ 
+-          const wsPromise = securityConfirmations.request(
+-            (data) => {
+-              if (ws.readyState === WebSocket.OPEN) {
+-                ws.send(JSON.stringify(data))
++          // ADR-022 L8: outbound MCP must not depend on Side Panel focus alone.
++          // Fan-out confirm to every authenticated panel; leave origin unbound
++          // (any authenticated peer may respond). Nonce/host_computer still
++          // origin-bound when NOT outbound (A1).
++          const sendConfirm = (data: any) => {
++            const payload = JSON.stringify(data)
++            if (isOutboundMcpCall) {
++              for (const c of clients) {
++                if (c.readyState === WebSocket.OPEN && wsAuth.get(c)?.authenticated === true) {
++                  try {
++                    c.send(payload)
++                  } catch {
++                    /* best-effort fan-out */
++                  }
++                }
+               }
+-            },
++            } else if (ws.readyState === WebSocket.OPEN) {
++              ws.send(payload)
++            }
++          }
++          if (isOutboundMcpCall) {
++            logger.info("outbound_mcp.confirm_fanout", {
++              tool_call_id: toolCallId,
++              tool_name: toolName,
++              caller: String((finalParams as any).__outbound_caller_id || ""),
++              tray: !!trayEligible,
++            })
++            try {
++              // eslint-disable-next-line @typescript-eslint/no-var-requires
++              const notifier = require("node-notifier") as {
++                notify: (o: { title?: string; message?: string; sound?: boolean }) => void
++              }
++              notifier.notify({
++                title: "CMspark 需要确认",
++                message: `Outbound MCP 请求: ${toolName} — 请在托盘或 Side Panel 批准/拒绝`,
++                sound: true,
++              })
++            } catch {
++              /* optional — non-Swift platforms */
++            }
++          }
++
++          const confirmOriginOpts =
++            isOutboundMcpCall
++              ? undefined // L8: any authenticated peer + tray may resolve
++              : winL2NonceChallenge || hostComputerGated
++                ? { originWs: ws }
++                : undefined
++
++          const wsPromise = securityConfirmations.request(
++            sendConfirm,
+             {
+               toolName,
+               dangerousApis: safety.dangerousApis,
+@@ -1681,13 +1747,7 @@ export function createToolExecutor(ws: WebSocket) {
+                 ? { boardCompleteDigest: boardCompleteDigestForConfirm }
+                 : {}),
+             },
+-            // Adversary amendment A1: a confirmation carrying a nonce challenge
+-            // MUST be origin-bound — otherwise any loopback WS peer could burn
+-            // the 3 nonce attempts (DoS). Requests without a nonce keep the
+-            // existing broadcast behavior unchanged.
+-            // host_computer: EVERY computer confirmation is origin-bound (A1/E5),
+-            // nonce or not.
+-            (winL2NonceChallenge || hostComputerGated) ? { originWs: ws } : undefined,
++            confirmOriginOpts,
+             // P0a: pre-generated id shared with tray.
+             sharedConfirmId,
+           )
+diff --git a/companion/tests/outbound-mcp-companion-http.test.ts b/companion/tests/outbound-mcp-companion-http.test.ts
+index 59feae4..2b50b0f 100644
+--- a/companion/tests/outbound-mcp-companion-http.test.ts
++++ b/companion/tests/outbound-mcp-companion-http.test.ts
+@@ -56,9 +56,9 @@ test("companion invoke EXTENSION_UNAVAILABLE without runner", async () => {
+ })
+ 
+ test("companion invoke dispatches via runner after gate", async () => {
+-  const calls: { tool: string; id: string }[] = []
++  const calls: { tool: string; id: string; params: any }[] = []
+   setOutboundToolRunner(async (id, tool, params) => {
+-    calls.push({ tool, id })
++    calls.push({ tool, id, params })
+     assert.equal(tool, "list_tabs")
+     return { success: true, data: { tabs: [{ id: 1 }] } }
+   })
+@@ -72,6 +72,9 @@ test("companion invoke dispatches via runner after gate", async () => {
+   assert.equal(calls.length, 1)
+   assert.ok(calls[0].id.startsWith("ob_"))
+   assert.equal(r.origin?.synthetic_origin, "outbound_mcp:agent")
++  // L8 flag for confirm fan-out
++  assert.equal(calls[0].params.__outbound_mcp, true)
++  assert.equal(calls[0].params.__outbound_caller_id, "agent")
+ })
+ 
+ test("companion exfil after acceptDisclosure reaches runner", async () => {
+@@ -80,13 +83,26 @@ test("companion exfil after acceptDisclosure reaches runner", async () => {
+     assert.equal(tool, "screenshot")
+     return { success: true, data: { ok: true } }
+   })
++  // L9: screenshot needs tabId
+   const r = await companionInvokeOutbound({
+     caller_id: "d1",
+     tool: "cmspark__screenshot",
++    args: { tabId: 1 },
+   })
+   assert.equal(r.ok, true)
+ })
+ 
++test("companion interactive without tabId → TAB_ID_REQUIRED (L9)", async () => {
++  setOutboundToolRunner(async () => ({ success: true }))
++  const r = await companionInvokeOutbound({
++    caller_id: "c",
++    tool: "cmspark__click",
++    args: {},
++  })
++  assert.equal(r.ok, false)
++  assert.equal(r.error_code, "TAB_ID_REQUIRED")
++})
++
+ test("runner failure surfaces DISPATCH_FAILED", async () => {
+   setOutboundToolRunner(async () => ({ success: false, error: "tab gone" }))
+   const r = await companionInvokeOutbound({
+@@ -97,3 +113,18 @@ test("runner failure surfaces DISPATCH_FAILED", async () => {
+   assert.equal(r.error_code, "DISPATCH_FAILED")
+   assert.match(r.error || "", /tab gone/)
+ })
++
++test("runner confirm timeout maps to OUTBOUND_CONFIRM_REQUIRED (L8)", async () => {
++  setOutboundToolRunner(async () => ({
++    success: false,
++    error: "Security confirmation timeout for navigate",
++  }))
++  const r = await companionInvokeOutbound({
++    caller_id: "c",
++    tool: "cmspark__navigate",
++    args: { tabId: 2, url: "https://example.com" },
++  })
++  assert.equal(r.ok, false)
++  assert.equal(r.error_code, "OUTBOUND_CONFIRM_REQUIRED")
++  assert.match(r.error || "", /tray|Side Panel/i)
++})
+diff --git a/companion/tests/outbound-mcp-dual-entry.test.ts b/companion/tests/outbound-mcp-dual-entry.test.ts
+new file mode 100644
+index 0000000..302ae9a
+--- /dev/null
++++ b/companion/tests/outbound-mcp-dual-entry.test.ts
+@@ -0,0 +1,109 @@
++/**
++ * ADR-022 L9 dual-entry tab lease unit tests.
++ */
++
++import test from "node:test"
++import assert from "node:assert/strict"
++import {
++  gateOutboundTabLease,
++  sidePanelWinsReleaseOutboundLease,
++  outboundHolderThreadId,
++  isOutboundHolder,
++  OUTBOUND_MCP_PARAM,
++} from "../src/outbound-mcp/dual-entry"
++import {
++  acquireOrRenewTabLease,
++  getTabLease,
++  _resetTabLeasesForTests,
++  registerTabLeasePendingHooks,
++} from "../src/orchestrator/tab-lease"
++
++// tab-lease fail-closed without hooks: hasPending returns true → never FREE on sweep.
++// Register no-pending hooks so force release / acquire work in isolation.
++test.beforeEach(() => {
++  _resetTabLeasesForTests()
++  registerTabLeasePendingHooks({
++    hasPendingForTab: () => false,
++  })
++})
++
++test("outboundHolderThreadId prefix", () => {
++  assert.equal(outboundHolderThreadId("agent-1"), "outbound_mcp:agent-1")
++  assert.equal(isOutboundHolder("outbound_mcp:x"), true)
++  assert.equal(isOutboundHolder("thread-abc"), false)
++})
++
++test("list_tabs does not require lease", () => {
++  const r = gateOutboundTabLease("list_tabs", {}, "c1")
++  assert.equal(r.ok, true)
++})
++
++test("interactive tool without tabId → TAB_ID_REQUIRED", () => {
++  const r = gateOutboundTabLease("click", {}, "c1")
++  assert.equal(r.ok, false)
++  if (!r.ok) {
++    assert.equal(r.error_code, "TAB_ID_REQUIRED")
++    assert.ok(r.queue_disclosure_zh)
++  }
++})
++
++test("outbound acquires hard lease on tab", () => {
++  const r = gateOutboundTabLease("navigate", { tabId: 42 }, "coder")
++  assert.equal(r.ok, true)
++  const lease = getTabLease(42)
++  assert.ok(lease)
++  assert.equal(lease!.holderThreadId, "outbound_mcp:coder")
++  assert.equal(lease!.state, "HARD_HELD")
++})
++
++test("Side Panel / worker hold blocks outbound (side_panel_wins disclosure)", () => {
++  const side = acquireOrRenewTabLease({
++    tabId: 7,
++    holderThreadId: "worker-thread-1",
++    needsL2: false,
++  })
++  assert.equal(side.ok, true)
++
++  const r = gateOutboundTabLease("type", { tabId: 7 }, "mcp-agent")
++  assert.equal(r.ok, false)
++  if (!r.ok) {
++    assert.equal(r.side_panel_wins, true)
++    assert.ok(
++      r.error_code === "TAB_LOCKED" || r.error_code === "TAB_BUSY_CONFIRMING",
++    )
++    assert.match(r.queue_disclosure_zh, /Side Panel/)
++  }
++  // worker still holds
++  assert.equal(getTabLease(7)?.holderThreadId, "worker-thread-1")
++})
++
++test("sidePanelWinsReleaseOutboundLease frees outbound hold", () => {
++  const acq = gateOutboundTabLease("screenshot", { tabId: 99 }, "ob")
++  assert.equal(acq.ok, true)
++  assert.ok(getTabLease(99))
++
++  const released = sidePanelWinsReleaseOutboundLease(99, "sidepanel-thread")
++  assert.equal(released, true)
++  assert.equal(getTabLease(99), null)
++})
++
++test("sidePanelWins does not release non-outbound holder", () => {
++  acquireOrRenewTabLease({
++    tabId: 3,
++    holderThreadId: "worker-x",
++    needsL2: false,
++  })
++  const released = sidePanelWinsReleaseOutboundLease(3, "other")
++  assert.equal(released, false)
++  assert.equal(getTabLease(3)?.holderThreadId, "worker-x")
++})
++
++test("outbound re-acquire same caller renews", () => {
++  assert.equal(gateOutboundTabLease("click", { tabId: 1 }, "same").ok, true)
++  assert.equal(gateOutboundTabLease("type", { tabId: 1 }, "same").ok, true)
++  assert.equal(getTabLease(1)?.holderThreadId, "outbound_mcp:same")
++})
++
++test("OUTBOUND_MCP_PARAM constant stable", () => {
++  assert.equal(OUTBOUND_MCP_PARAM, "__outbound_mcp")
++})
+diff --git a/companion/tests/outbound-mcp-http-e2e.test.ts b/companion/tests/outbound-mcp-http-e2e.test.ts
+index c028f57..d581ec0 100644
+--- a/companion/tests/outbound-mcp-http-e2e.test.ts
++++ b/companion/tests/outbound-mcp-http-e2e.test.ts
+@@ -193,6 +193,7 @@ test("e2e: disclosure POST + invoke happy path through real HTTP", async () => {
+     if (tool === "list_tabs") return { success: true, data: { tabs: [{ id: 7 }] } }
+     if (tool === "get_page_text") {
+       assert.equal((params as any).tabId, 7)
++      assert.equal((params as any).__outbound_mcp, true)
+       return { success: true, data: { text: "hello e2e" } }
+     }
+     return { success: false, error: "unexpected tool " + tool }
+@@ -235,7 +236,7 @@ test("e2e: disclosure POST + invoke happy path through real HTTP", async () => {
+     assert.equal(tabs.json.internal_tool, "list_tabs")
+     assert.equal(tabs.json.origin?.synthetic_origin, "outbound_mcp:e2e-agent")
+ 
+-    // get_page_text after disclosure
++    // get_page_text after disclosure (L9 tabId required)
+     const text = await requestJson(port, "POST", OUTBOUND_INVOKE_PATH, {
+       token: SECRET,
+       body: {
+@@ -302,6 +303,7 @@ test("e2e: http-client dispatcher + companionPostDisclosure end-to-end", async (
+     const r = await invokeOutboundTool({
+       caller_id: "client-agent",
+       tool: "cmspark__screenshot",
++      args: { tabId: 3 },
+     })
+     assert.equal(r.ok, true)
+     assert.deepEqual(r.dispatch?.data, { png: "base64" })
+@@ -310,6 +312,23 @@ test("e2e: http-client dispatcher + companionPostDisclosure end-to-end", async (
+   }
+ })
+ 
++test("e2e: L9 click without tabId over HTTP → TAB_ID_REQUIRED", async () => {
++  const server = createOutboundTestServer()
++  const port = await listen(server)
++  setOutboundToolRunner(async () => ({ success: true }))
++  try {
++    const r = await requestJson(port, "POST", OUTBOUND_INVOKE_PATH, {
++      token: SECRET,
++      body: { caller_id: "x", tool: "cmspark__click", args: {} },
++    })
++    assert.equal(r.status, 422)
++    assert.equal(r.json.error_code, "TAB_ID_REQUIRED")
++    assert.ok(r.json.data?.queue_disclosure_zh)
++  } finally {
++    await close(server)
++  }
++})
++
+ test("e2e: unknown outbound path under prefix → 404 JSON", async () => {
+   const server = createOutboundTestServer()
+   const port = await listen(server)
+@@ -331,11 +350,16 @@ test("e2e: runner DISPATCH_FAILED surfaces 422 over HTTP", async () => {
+   try {
+     const r = await requestJson(port, "POST", OUTBOUND_INVOKE_PATH, {
+       token: SECRET,
+-      body: { caller_id: "c", tool: "cmspark__wait_for", args: { selector: "#x" } },
++      body: {
++        caller_id: "c",
++        tool: "cmspark__wait_for",
++        args: { tabId: 1, selector: "#x" },
++      },
+     })
+     assert.equal(r.status, 422)
+-    assert.equal(r.json.error_code, "DISPATCH_FAILED")
+-    assert.match(r.json.error || "", /cdp timeout/)
++    // "timeout" in error → L8 maps to OUTBOUND_CONFIRM_REQUIRED
++    assert.equal(r.json.error_code, "OUTBOUND_CONFIRM_REQUIRED")
++    assert.match(r.json.error || "", /cdp timeout|tray|Side Panel/i)
+   } finally {
+     await close(server)
+   }
+diff --git a/docs/adr/022-outbound-mcp-server.md b/docs/adr/022-outbound-mcp-server.md
+index c8aed9c..1e1f09e 100644
+--- a/docs/adr/022-outbound-mcp-server.md
++++ b/docs/adr/022-outbound-mcp-server.md
+@@ -213,10 +213,10 @@ Bake-off 默认非敏感页；敏感页须显式 disclosure（L3+）。
+ | `companion/src/outbound-mcp/facade.ts` | gate + disclosure 门 + tools list | skeleton（**无** live WS 桥） |
+ | `companion/src/outbound-mcp/audit.ts` | outbound 审计行 | skeleton |
+ | `companion/tests/outbound-mcp-facade.test.ts` | 门禁单测 | 有 |
+-| stdio MCP entry / CLI | `tools/list` + `tools/call` 接 façade | **待** P0c |
+-| Live bridge → 内部 tool 调度 | originWs 绑定 | **待** P0c |
+-| Tray/全局确认（L8） | IDE 无 Side Panel 聚焦 | **待** P0c |
+-| Tab lease 双入口（L9） | 复用 ADR-015 | **待** 交互任务前 |
++| stdio MCP entry / CLI | `tools/list` + `tools/call` 接 façade | skeleton ✅ |
++| Live bridge → 内部 tool 调度 | loopback HTTP + createToolExecutor | ✅ P0c |
++| Tray/全局确认（L8） | 托盘优先 + 全面板 fan-out + OS notify；超时 `OUTBOUND_CONFIRM_REQUIRED` | ✅ 代码路径 |
++| Tab lease 双入口（L9） | `outbound_mcp:<caller>` lease；Side Panel 赢 | ✅ 代码路径 |
+ | Grant 模型（L4+） | P1 发货门 | **待** P1 |
+ 
+ **Inbound** MCP 客户端栈（`companion/src/mcp/`）保持不变：用户仍可把外部 server 接到 Side Panel Agent。
+diff --git a/docs/mcp.md b/docs/mcp.md
+index 5b3cd2d..5697d82 100644
+--- a/docs/mcp.md
++++ b/docs/mcp.md
+@@ -230,4 +230,5 @@ cmspark-agent mcp-outbound
+ - **真桥**：`mcp-outbound` → `POST http://127.0.0.1:<port>/outbound-mcp/v1/invoke`（`Authorization: Bearer <ws_secret>`）→ Companion `createToolExecutor` → Extension CDP  
+ - 先 `cmspark-agent start`（或 tray/daemon）并打开扩展配对；再起 `mcp-outbound`  
+ - 无扩展连接时：`EXTENSION_UNAVAILABLE`  
+-- 交互确认 L8 / tab lease L9：bake-off 前仍开放（确认仍走已连接的 Side Panel WS）
++- **L8 确认**：Outbound 触发的 L2 确认 fan-out 到所有已鉴权面板 + 优先托盘对话框 + OS 通知；超时返回 `OUTBOUND_CONFIRM_REQUIRED`（勿只盯 IDE）  
++- **L9 tab lease**：交互工具须显式 `tabId`；holder=`outbound_mcp:<caller>`；与 Side Panel 冲突时 **Side Panel 赢**，MCP 得 `TAB_LOCKED` + `queue_disclosure_zh`
+diff --git a/docs/superpowers/plans/2026-08-04-outbound-mcp-p0c-eval-gates.md b/docs/superpowers/plans/2026-08-04-outbound-mcp-p0c-eval-gates.md
+index bdfb093..f6eae57 100644
+--- a/docs/superpowers/plans/2026-08-04-outbound-mcp-p0c-eval-gates.md
++++ b/docs/superpowers/plans/2026-08-04-outbound-mcp-p0c-eval-gates.md
+@@ -169,7 +169,9 @@ Channel:      community
+ 8. [x] Pi 复审 **APPROVE_WITH_NITS** — `outbound-mcp-p0c-pi-rereview-20260804-110035.md`
+ 9. [x] 合成 both_ok — `outbound-mcp-p0c-confirm-synthesis-20260804.md`（库路径可 bake-off；非产品 ship）
+ 10. [x] N5 HTTP e2e 测 — `companion/tests/outbound-mcp-http-e2e.test.ts`
+-11. [ ] P0d bake-off；L8/L9
++11. [x] L8 confirm fan-out + tray label + notify + OUTBOUND_CONFIRM_REQUIRED
++12. [x] L9 dual-entry tab lease + Side Panel wins — `dual-entry.ts` + tests
++13. [ ] P0d 真人 bake-off；对抗→Pi（L8/L9 批）
+ ```
+ 
+ ---

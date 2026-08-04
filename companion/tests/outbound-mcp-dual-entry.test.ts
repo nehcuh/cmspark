@@ -107,3 +107,15 @@ test("outbound re-acquire same caller renews", () => {
 test("OUTBOUND_MCP_PARAM constant stable", () => {
   assert.equal(OUTBOUND_MCP_PARAM, "__outbound_mcp")
 })
+
+test("B1 hazard: ThreadManager denies synthetic outbound_mcp holder (gate skip required)", async () => {
+  // Documents why createToolExecutor must skip isToolAllowed for isOutboundMcpCall.
+  const { ThreadManager } = await import("../src/threads/thread-manager")
+  const tm = new ThreadManager()
+  assert.equal(
+    tm.isToolAllowed("outbound_mcp:agent", "list_tabs"),
+    false,
+    "unknown synthetic thread must not pass pack whitelist",
+  )
+  assert.equal(tm.isToolAllowed("outbound_mcp:agent", "get_page_text"), false)
+})
