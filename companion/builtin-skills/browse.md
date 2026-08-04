@@ -73,6 +73,8 @@ You have access to a Chrome browser through the CMspark Browser Agent. You can:
 4. **Use get_element_info before clicking** — verify the element exists and is visible
 5. **Extract data with evaluate** — for structured data extraction from tables/lists
 6. **Handle errors gracefully** — if a selector fails, try alternate approaches
+7. **X/Twitter (x.com) scroll & CSP** — Prefer `scroll` / `press_key` PageDown / `get_page_text` over raw `evaluate` loops. `scroll` uses CDP first (Runtime.evaluate + mouseWheel + PageDown), not chrome.scripting injection. If `evaluate` returns `result: null` or "Script injection failed", do **not** claim "CSP blocked everything" — use `get_page_html` (CDP DOM) or `screenshot`. `osascript_eval` is macOS last-resort only and needs a matching tab URL fragment.
+
 
 ## Tool Categories
 
