@@ -111,6 +111,7 @@ E  Autonomy       仅 defer 表内；spawn 保持 L2 HITL
 | **Agent 下载并安装外部 Skill** | 🔶 Backlog | [optimization-plan-agent-skill-install.md](optimization-plan-agent-skill-install.md)：LLM `skill_install` → `~/.cmspark-agent/skills`（#au4dch 装错目录痛点） |
 | **聊天附件文档解析 / 图文理解** | 🔶 Backlog | [optimization-plan-document-parse-vision.md](optimization-plan-document-parse-vision.md)：基线 `file-parser` + vision；P0 有字 PDF 抽图/可配置/golden → P1 OCR·结构 → P2 DocAI。**不**插队 B 轨；与 M4 `analyze_image` 门、CU OCR 分轨 |
 | **Outbound MCP Server（服务外部编程 Agent）** | 🔶 **ADR-022 Accepted** · Phase 0 骨架有 / 真桥未接 | **SoT** [ADR-022](adr/022-outbound-mcp-server.md)；过程 [brief](decisions/cmspark-as-mcp-server-brief-2026-08-03.md) · [spike](superpowers/plans/2026-08-03-outbound-mcp-phase0-spike.md)。**Composition 导出 L1**（非新 runtime）；默认禁 L2/cookies/shell；P0c 真桥 + L8/L9 → P0d bake-off → P1 grant。**不**插队 Trust 纪律（originWs） |
+| **Daily Content Loop（每日情报环）** | 🔶 **DIRECTION LOCKED** | [brief](decisions/daily-content-loop-brief-2026-08-04.md)：公开站为主；本地模型；本机+邮件；Stage C 代码+网页双轨；Agent 配置 schedule。D1–D12。**依赖** Outbound P0c → runbook → Pack → M0/M1 |
 
 每个 Pack/模块 PR 必须填 **能力声明**（PR template）。
 
@@ -207,6 +208,8 @@ E  Autonomy       仅 defer 表内；spawn 保持 L2 HITL
 | 2026-08-03 | Composition：**Outbound MCP Server** 方向锁定（多路对抗 + Pi/Claude dual-review APPROVE_WITH_NITS）→ [cmspark-as-mcp-server-brief-2026-08-03.md](decisions/cmspark-as-mcp-server-brief-2026-08-03.md)；未开工，不插队 B 轨 |
 | 2026-08-04 | Composition：**ADR-022** Accepted（brief 升格决策 SoT）；P0c 真桥 / L8 / L9 / bake-off 仍开放 |
 | 2026-08-04 | 方法论：挂接 **Eval Engineering 闸门** skill + P0c gate card（异家族 dual / 机核优先 / blast tier） |
+| 2026-08-04 | Composition 场景：**Daily Content Loop** DRAFT brief（Loop Engineering × ADR-022） |
+| 2026-08-04 | Daily Content Loop **DIRECTION LOCKED**（公开站·本地模型·本机+邮件·双轨验证·Agent 配置） |
 
 ---
 

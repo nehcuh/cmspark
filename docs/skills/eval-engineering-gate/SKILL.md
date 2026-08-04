@@ -231,7 +231,8 @@ scripts/dual-external-review.sh <batch-id> <prompt-file> [base-commit]
 ## 9. 本次产品线锚点
 
 - **Outbound MCP**: [ADR-022](../../adr/022-outbound-mcp-server.md)  
-- **P0c 门控卡**: [eval gates plan](../../superpowers/plans/2026-08-04-outbound-mcp-p0c-eval-gates.md)
+- **P0c 门控卡**: [eval gates plan](../../superpowers/plans/2026-08-04-outbound-mcp-p0c-eval-gates.md)  
+- **业务环示例**: [Daily Content Loop brief](../../decisions/daily-content-loop-brief-2026-08-04.md)（Loop × Eval）
 
 ## 10. 仓库位置
 

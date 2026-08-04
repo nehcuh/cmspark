@@ -101,6 +101,7 @@
 | [audit/reviews/_templates/eval-gate-card.md](audit/reviews/_templates/eval-gate-card.md) | Eval Engineering 放行卡片（机核 + dual + blast） |
 | [superpowers/plans/2026-08-04-outbound-mcp-p0c-eval-gates.md](superpowers/plans/2026-08-04-outbound-mcp-p0c-eval-gates.md) | Outbound MCP P0c 门控卡（M1–M9） |
 | [skills/eval-engineering-gate/SKILL.md](skills/eval-engineering-gate/SKILL.md) | Eval Engineering 闸门 skill（机核 + dual + blast） |
+| [decisions/daily-content-loop-brief-2026-08-04.md](decisions/daily-content-loop-brief-2026-08-04.md) | **DIRECTION LOCKED**：每日情报环（公开站·本地模型·本机+邮件·代码+网页验证） |
 | [optimization-plan-post-v0.3.0.md](optimization-plan-post-v0.3.0.md) | 历史：v0.3.0 后 P2/P3 闭环考古（**勿再作排序权威**） |
 
 ---
