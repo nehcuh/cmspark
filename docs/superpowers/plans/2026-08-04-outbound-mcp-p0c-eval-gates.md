@@ -94,18 +94,27 @@ npm --prefix companion run build
 
 ---
 
-## E. 异家族 dual（第 1–2 步）
+## E. 确认序：独立对抗 → Pi 复审（用户 2026-08-04 锁定）
 
-**Trigger**: M1–M7 机核绿之后，merge/PR 之前。
+**Trigger**: 相关 MACHINE 绿之后，merge/PR 或宣称「P0c 完成」之前。
 
-```bash
-scripts/dual-external-review.sh outbound-mcp-p0c docs/audit/reviews/_prompts/outbound-mcp-p0c.md HEAD
+```text
+1. 独立对抗 agent（非实现会话）
+   - 读 diff + ADR-022 + 本 gate card §B
+   - 三层 outcome / trajectory / component
+   - 产出 docs/audit/reviews/outbound-mcp-p0c-adversary-<ts>.md
+   - 末行 VERDICT: APPROVE | APPROVE_WITH_NITS | REJECT
+
+2. Pi 复审
+   - 输入：同一 diff + 机核输出 + 对抗完整报告
+   - 任务：确认或驳回对抗；漏检 → REJECT
+   - 产出 docs/audit/reviews/outbound-mcp-p0c-pi-rereview-<ts>.md
+   - 末行 VERDICT
+
+3. 可选补充：scripts/dual-external-review.sh …
 ```
 
-Prompt 文件应粘贴：
-
-1. 本 gate card §B DoD  
-2. 能力声明：
+能力声明（贴进对抗与 Pi prompt）：
 
 ```text
 Surface:      L1 (export curated)
@@ -116,9 +125,7 @@ Trust:        domain + L2 + originWs + disclosure session; no grant skip
 Channel:      community
 ```
 
-3. 要求 VERDICT 三选一；REJECT 必须 file:line  
-
-**exit ≠ 0 → 禁止声称 P0c 完成。**
+**对抗或 Pi 任一 REJECT / 未跑 → 禁止声称 P0c 完成。**
 
 ---
 
@@ -127,8 +134,8 @@ Channel:      community
 | 变更 | 搞砸代价 | 放行 |
 |------|----------|------|
 | profile/gate 单测增强 | 低 | T1/T2 CI |
-| stdio 列表 + 拒禁工具 | 中（错误暴露面） | dual |
-| **真桥执行 navigate/click** | 高（用户浏览器被外控） | dual + 默认关 + 确认栈 |
+| stdio 列表 + 拒禁工具 | 中（错误暴露面） | 对抗 → Pi |
+| **真桥执行 navigate/click** | 高（用户浏览器被外控） | 对抗 → Pi + 默认关 + 确认栈 |
 | 跳过确认 / grant 未做就放行 | **极高** | **禁止**；真人 + ADR 修订 |
 | default-on 安装 | 极高 | T4 永不本阶段 |
 
@@ -156,11 +163,12 @@ Channel:      community
 2. [x] 实现 session disclosure + bridge 最小路径（injectable dispatcher）
 3. [x] M1 M2 M4 M5 M6 单测（bridge origin + gate）
 4. [x] M7 默认关：仅 `cmspark-agent mcp-outbound` 启动 stdio；start/daemon 不拉起
-5. [ ] MACHINE 全绿（本会话命令输出）
-6. [ ] dual-external-review outbound-mcp-p0c
-7. [ ] APPROVE* → PR；REJECT → 修 → 重 5–6
-8. [ ] P0d bake-off 仅在 M8/M9 就绪或只读子集上
-9. [ ] 生产 setOutboundDispatcher 接到 Companion executeTool（真 CDP）— 可 follow-up
+5. [x] MACHINE 全绿（outbound-mcp 11/11，2026-08-04）
+6. [ ] 生产 setOutboundDispatcher → Companion executeTool（真 CDP）
+7. [ ] 独立对抗 agent 确认（diff + DoD）
+8. [ ] Pi 复审对抗结论
+9. [ ] 对抗+Pi APPROVE* → 才可宣称 P0c / 开 PR
+10. [ ] P0d bake-off 仅在 M8/M9 就绪或只读子集上
 ```
 
 ---

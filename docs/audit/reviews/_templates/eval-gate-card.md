@@ -33,11 +33,12 @@ Channel:
 
 - Suspected hotspots (file:line):  
 
-## Judges
+## Judges（确认序：独立对抗 → Pi 复审）
 
-- [ ] Internal adversary (T3+): path / verdict  
-- [ ] `scripts/dual-external-review.sh` → both APPROVE*  
+- [ ] **独立对抗 agent** 报告：`docs/audit/reviews/<batch>-adversary-*.md` · VERDICT  
+- [ ] **Pi 复审**（读对抗报告 + diff + 机核）：`…-pi-rereview-*.md` · VERDICT  
 - [ ] Nits folded or owned  
+- [ ] （可选）`scripts/dual-external-review.sh`  
 
 ## Blast
 
@@ -49,5 +50,6 @@ Channel:
 | Gate | Result |
 |------|--------|
 | MACHINE | PASS \| FAIL |
-| DUAL | APPROVE \| APPROVE_WITH_NITS \| REJECT \| N/A |
-| MERGE | YES \| NO — reason |
+| ADVERSARY | APPROVE \| APPROVE_WITH_NITS \| REJECT \| N/A |
+| PI_REREVIEW | APPROVE \| APPROVE_WITH_NITS \| REJECT \| N/A |
+| MERGE | YES \| NO — reason（须 MACHINE + 对抗 + Pi 均过） |
