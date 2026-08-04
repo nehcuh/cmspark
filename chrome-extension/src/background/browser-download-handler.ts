@@ -150,10 +150,20 @@ export async function runBrowserDownload(
         return {
           success: false,
           error: `ELEMENT_NOT_FOUND: no visible element matching text "${text}"`,
-          data: { error_code: "ELEMENT_NOT_FOUND", text, exact },
+          data: {
+            error_code: "ELEMENT_NOT_FOUND",
+            text,
+            exact,
+            user_hint_zh: `页面上找不到可见文字「${text}」。请换更准确的按钮文案（如「Download ZIP」）、提供 CSS selector，或先 list_tabs/截图确认页面已加载完成。`,
+            suggested_action: "refine_text_or_selector",
+          },
         }
       }
       if (classification === "ELEMENT_AMBIGUOUS") {
+        const preview = (match?.matches || [])
+          .slice(0, 5)
+          .map((m, i) => `${i + 1}.${m.tag}「${(m.text || "").slice(0, 40)}」`)
+          .join("；")
         return {
           success: false,
           error: `ELEMENT_AMBIGUOUS: ${count} elements match text "${text}"`,
@@ -161,6 +171,11 @@ export async function runBrowserDownload(
             error_code: "ELEMENT_AMBIGUOUS",
             count,
             matches: match?.matches?.slice(0, 5),
+            user_hint_zh:
+              `页面上有 ${count} 处匹配「${text}」，无法安全自动点击（防止点错）。` +
+              (preview ? ` 候选：${preview}。` : " ") +
+              `请改用更精确的文字（exact=true 或完整「Download ZIP」）、CSS selector，或先 evaluate/截图定位唯一按钮。`,
+            suggested_action: "disambiguate_selector_or_exact_text",
           },
         }
       }

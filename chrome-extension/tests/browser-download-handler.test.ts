@@ -195,6 +195,8 @@ test("runBrowserDownload: text multi-match → ELEMENT_AMBIGUOUS + busy released
   assert.match(r.error || "", /ELEMENT_AMBIGUOUS/)
   assert.equal(r.data?.error_code, "ELEMENT_AMBIGUOUS")
   assert.equal(r.data?.count, 2)
+  assert.match(String(r.data?.user_hint_zh || ""), /匹配/)
+  assert.ok(Array.isArray(r.data?.matches) && r.data.matches.length >= 2)
   assert.equal(bridge.downloadBusyTabs.size, 0)
   assert.equal(bridge.downloadBusyTabs.has(3), false)
 })
