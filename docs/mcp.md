@@ -227,5 +227,7 @@ cmspark-agent mcp-outbound
 ### 现状（P0c 进度）
 
 - 门禁 / disclosure / audit / synthetic origin：**已实现**  
-- 真 CDP 调度：需 Companion `setOutboundDispatcher` 接线（未完成时工具返回 `BRIDGE_UNAVAILABLE`）  
-- 交互确认 L8 / tab lease L9：bake-off 前仍开放
+- **真桥**：`mcp-outbound` → `POST http://127.0.0.1:<port>/outbound-mcp/v1/invoke`（`Authorization: Bearer <ws_secret>`）→ Companion `createToolExecutor` → Extension CDP  
+- 先 `cmspark-agent start`（或 tray/daemon）并打开扩展配对；再起 `mcp-outbound`  
+- 无扩展连接时：`EXTENSION_UNAVAILABLE`  
+- 交互确认 L8 / tab lease L9：bake-off 前仍开放（确认仍走已连接的 Side Panel WS）

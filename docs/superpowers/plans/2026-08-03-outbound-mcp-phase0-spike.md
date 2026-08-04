@@ -56,10 +56,12 @@ cookies*, evaluate, host_*, shell_*, netsec_*, osascript_*, skill_install (inter
 - [x] Server-side disclosure session (not caller-trusted bool) — M3  
 - [x] synthetic origin on invoke (`outbound_mcp:<caller>`) — M6  
 - [x] CLI `cmspark-agent mcp-outbound` (not default-on) — M7  
-- [x] Injectable dispatcher bridge + unit tests (M4 partial)  
-- [ ] Production `setOutboundDispatcher` → Companion executeTool / CDP  
+- [x] Injectable dispatcher bridge + unit tests  
+- [x] Production: loopback HTTP invoke + createToolExecutor(Extension WS)  
+- [x] stdio mcp-outbound defaults to HTTP dispatcher (Bearer ws_secret)  
 - [ ] Tray/global confirm (L8) — required before interactive T1  
-- [ ] dual-external-review after machine green — T3 
+- [ ] 独立对抗 → Pi 复审（确认序）  
+- [ ] P0d bake-off 
 
 ## 6. Bake-off (P0d) — human checklist
 

@@ -150,15 +150,75 @@ export function isAllowedWsOrigin(origin: string | undefined | null): boolean {
  * without any WS handshake, so it is intentionally outside the shared-secret
  * auth flow and exposes no sensitive state.
  */
+/**
+ * Loopback HTTP (healthz + outbound-mcp invoke). Async-capable wrapper used as
+ * http.createServer handler.
+ */
 export function handleHealthzRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
+  void handleLoopbackHttp(req, res)
+}
+
+async function handleLoopbackHttp(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   const pathOnly = req.url ? req.url.split("?")[0] : ""
   if (req.method === "GET" && pathOnly === "/healthz") {
     res.writeHead(200, { "Content-Type": "application/json" })
     res.end(JSON.stringify({ status: "ok", uptime: process.uptime() }))
     return
   }
+
+  // Outbound MCP bridge (ADR-022 P0c) — auth inside handler
+  try {
+    const { handleOutboundMcpHttp } = await import("./outbound-mcp/companion-http")
+    const secret = getOrCreateSharedSecret()
+    const handled = await handleOutboundMcpHttp(req, res, secret)
+    if (handled) return
+  } catch (err: any) {
+    logger.warn("outbound_mcp.http_error", { error: err?.message || String(err) })
+    if (!res.headersSent) {
+      res.writeHead(500, { "Content-Type": "application/json" })
+      res.end(JSON.stringify({ ok: false, error_code: "INTERNAL", error: "outbound http error" }))
+    }
+    return
+  }
+
   res.writeHead(404, { "Content-Type": "text/plain" })
   res.end("Not Found")
+}
+
+/** Pick an authenticated Extension/panel WS for outbound tool dispatch. */
+export function pickAuthenticatedClientWs(): WebSocket | null {
+  for (const c of clients) {
+    if (c.readyState === WebSocket.OPEN && wsAuth.get(c)?.authenticated === true) {
+      return c
+    }
+  }
+  return null
+}
+
+let outboundRunnerWs: WebSocket | null = null
+
+/**
+ * Ensure outbound HTTP runner is wired to createToolExecutor(extensionWs).
+ * Synchronous so invoke never races an empty runner after auth.
+ */
+export function ensureOutboundToolRunnerWired(): boolean {
+  // Lazy require avoids circular import at module load (companion-http is light).
+  const { setOutboundToolRunner } = require("./outbound-mcp/companion-http") as typeof import("./outbound-mcp/companion-http")
+  const ws = pickAuthenticatedClientWs()
+  if (!ws) {
+    setOutboundToolRunner(null)
+    outboundRunnerWs = null
+    return false
+  }
+  if (outboundRunnerWs === ws) {
+    return true
+  }
+  const executeTool = createToolExecutor(ws)
+  setOutboundToolRunner(async (toolCallId, internalTool, params) => {
+    return executeTool(toolCallId, internalTool, params)
+  })
+  outboundRunnerWs = ws
+  return true
 }
 
 function getDomainFromUrl(urlString: string): string {
@@ -5444,6 +5504,16 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
     }
   }
 
+  // Outbound MCP: refresh tool runner before each HTTP invoke
+  try {
+    const { setOutboundRunnerRefresh } = require("./outbound-mcp/companion-http") as typeof import("./outbound-mcp/companion-http")
+    setOutboundRunnerRefresh(() => {
+      ensureOutboundToolRunnerWired()
+    })
+  } catch (e: any) {
+    logger.warn("outbound_mcp.refresh_hook_failed", { error: e?.message || String(e) })
+  }
+
   logger.info("server.start", {
     port,
     model_name: config.llm.model_name,
@@ -5694,6 +5764,12 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
             // Record (idempotently) that some peer has paired, so the tray can stop
             // auto-surfacing the pairing secret. Best-effort; never blocks auth.
             markPaired()
+            // Wire outbound MCP HTTP → createToolExecutor(this peer)
+            try {
+              ensureOutboundToolRunnerWired()
+            } catch (wireErr: any) {
+              logger.warn("outbound_mcp.wire_failed", { error: wireErr?.message || String(wireErr) })
+            }
             if (ws.readyState === WebSocket.OPEN) {
               ws.send(JSON.stringify({ type: "auth.ok" }))
               ws.send(JSON.stringify({ type: "connected" }))
@@ -5963,6 +6039,12 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
       if (closedAuth) {
         clearTimeout(closedAuth.timer)
         wsAuth.delete(ws)
+      }
+      // Rebind or clear outbound MCP runner if this was the dispatch peer
+      try {
+        ensureOutboundToolRunnerWired()
+      } catch {
+        /* best-effort */
       }
       applyConnectionCloseGracePeriod()
       securityConfirmations.rejectAll("disconnect", ws)

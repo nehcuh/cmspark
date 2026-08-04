@@ -32,4 +32,16 @@ export type { OutboundMcpOrigin } from "./origin"
 export {
   createOutboundMcpServer,
   runOutboundMcpStdioServer,
+  wireDefaultOutboundHttpDispatcher,
 } from "./stdio-server"
+export {
+  handleOutboundMcpHttp,
+  companionInvokeOutbound,
+  setOutboundToolRunner,
+  OUTBOUND_INVOKE_PATH,
+  OUTBOUND_DISCLOSURE_PATH,
+} from "./companion-http"
+export {
+  createHttpOutboundDispatcher,
+  companionPostDisclosure,
+} from "./http-client"
