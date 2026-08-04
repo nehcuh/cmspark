@@ -1,0 +1,20 @@
+{
+  "batch": "outbound-mcp-l8l9",
+  "timestamp": "20260804",
+  "order": ["machine", "adversary", "fix_b1", "pi_rereview"],
+  "machine": { "result": "42/42 pass after fix" },
+  "adversary": {
+    "reviewer": "claude",
+    "verdict": "REJECT",
+    "blocker": "B1 isToolAllowed synthetic thread",
+    "path": "docs/audit/reviews/outbound-mcp-l8l9-adversary-claude-20260804-131603.md"
+  },
+  "fix": { "commit": "aa43a94" },
+  "pi_rereview": {
+    "reviewer": "pi",
+    "verdict": "APPROVE_WITH_NITS",
+    "path": "docs/audit/reviews/outbound-mcp-l8l9-pi-rereview-20260804-132508.md"
+  },
+  "both_approve_after_fix": true,
+  "synthesis": "docs/audit/reviews/outbound-mcp-l8l9-confirm-synthesis-20260804.md"
+}
