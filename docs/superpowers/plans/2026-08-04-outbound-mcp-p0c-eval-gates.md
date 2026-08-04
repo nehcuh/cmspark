@@ -171,7 +171,8 @@ Channel:      community
 10. [x] N5 HTTP e2e 测 — `companion/tests/outbound-mcp-http-e2e.test.ts`
 11. [x] L8 confirm fan-out + tray label + notify + OUTBOUND_CONFIRM_REQUIRED
 12. [x] L9 dual-entry tab lease + Side Panel wins — `dual-entry.ts` + tests
-13. [ ] P0d 真人 bake-off；对抗→Pi（L8/L9 批）
+13. [x] L8/L9 对抗 **REJECT**(B1) → fix `aa43a94` → Pi **APPROVE_WITH_NITS** — see `outbound-mcp-l8l9-confirm-synthesis-20260804.md`
+14. [ ] P0d 真人 bake-off
 ```
 
 ---
