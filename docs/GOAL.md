@@ -13,7 +13,7 @@
 | 轴 | 含义 | 默认/扩展 |
 |----|------|-----------|
 | **Surface** | L0 聊 → L1 网页 → L2 宿主 | 默认 L0/L1；L2 opt-in |
-| **Composition** | Skill · Knowledge · MCP · Pack · user-env | 场景叠加主路径（Pack-first）；**不是**「中层 Agent」 |
+| **Composition** | Skill · Knowledge · MCP（client）· **Outbound MCP**（export，[ADR-022](adr/022-outbound-mcp-server.md)）· Pack · user-env | 场景叠加主路径（Pack-first）；**不是**「中层 Agent」 |
 | **Autonomy** | 单线程 → multi-worker → Board | 编排增强 ≠ 更深作用面 |
 
 一句话：默认浏览器内 Agent；场景靠 Pack 叠加；桌面/企业更深作用面需显式开启与更严门禁。
@@ -267,6 +267,13 @@ Agent 可以在用户授权下对任意标签页执行全部 26 种工具操作�
 ### G20. MCP / Computer·Host Use / Multi-Agent·Board / NotebookLM ✅ 已实现（0.3.0）
 
 - 见上文对应「已交付功能扩展」节；用户文档已入 `docs/*-user-guide.md` 与 `docs/README.md` 导航。
+
+### G21. Outbound MCP Server（编程 Agent 对接）— *Phase 0 门控* · **C 导出 L1**
+
+- **决策 SoT**：[ADR-022](adr/022-outbound-mcp-server.md)（Accepted；**非** default-on 产品 ship）。
+- 目标：把 **curated L1** 浏览器面（`cmspark__*`）以 stdio MCP 导出给 Claude Code / Cursor 等；默认禁 L2 / cookies / shell；Skill 仅 adoption。
+- 成功门：Phase 0 bake-off 证明已登录/SSO 会话相对 Playwright 不可替代（T1），否则 pivot 只读或垂直 API。
+- 当前：`companion/src/outbound-mcp/` 门禁骨架；真桥 / L8 托盘确认 / L9 tab lease / grant 模型按 ADR 分阶段。
 
 ---
 
