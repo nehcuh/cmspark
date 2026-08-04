@@ -38,9 +38,21 @@ export {
   handleOutboundMcpHttp,
   companionInvokeOutbound,
   setOutboundToolRunner,
+  authorizeOutboundRequest,
+  authorizeOutboundHttp,
   OUTBOUND_INVOKE_PATH,
   OUTBOUND_DISCLOSURE_PATH,
 } from "./companion-http"
+export {
+  issueOutboundGrant,
+  verifyOutboundGrantToken,
+  revokeOutboundGrant,
+  revokeAllOutboundGrants,
+  listOutboundGrants,
+  resetOutboundGrantsForTests,
+  DEFAULT_GRANT_TTL_MS,
+  OUTBOUND_GRANT_TOKEN_PREFIX,
+} from "./outbound-grants"
 export {
   createHttpOutboundDispatcher,
   companionPostDisclosure,

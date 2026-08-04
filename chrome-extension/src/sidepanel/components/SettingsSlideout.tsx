@@ -6,6 +6,7 @@ import { Modal } from "./ui/Modal"
 import { tokens } from "../ui/tokens"
 import { UserEnvSection } from "./UserEnvSection"
 import { NetSecSettingsSection } from "./NetSecSettingsSection"
+import { OutboundMcpSettingsSection } from "./OutboundMcpSettingsSection"
 // WP5-I4 实验功能段:组件纯渲染,文案/判定全部来自 logic 纯函数(镜像
 // companion 单一真源);发送固定 source:"settings"(companion 双层围栏)。
 import {
@@ -569,6 +570,11 @@ export function SettingsSlideout() {
               </div>
             )}
           </div>
+
+          <div style={styles.divider} />
+
+          {/* --- Outbound MCP L4+ grants --- */}
+          <OutboundMcpSettingsSection />
 
           <div style={styles.divider} />
 

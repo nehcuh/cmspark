@@ -2,7 +2,9 @@
  * Loopback HTTP surface for outbound MCP → Companion tool executor (P0c M4).
  *
  * Bound only via companion's existing 127.0.0.1 HTTP server.
- * Auth: Authorization: Bearer <ws_secret> (same pairing secret as Extension).
+ * Auth:
+ *   - P0 default: Bearer ws_secret (Extension pairing) OR cmg_ grant token
+ *   - P1 require_grant=true: grant only (never fall back to ws_secret) — L4+ lock
  *
  * Disclosure sessions for this path live in-process on Companion (source of
  * truth for execute). The stdio mcp-outbound process dual-writes accept.
@@ -10,6 +12,7 @@
 
 import type { IncomingMessage, ServerResponse } from "http"
 import { timingSafeEqual } from "crypto"
+import { getConfig } from "../config"
 import {
   acceptOutboundDisclosure,
   hasOutboundDisclosure,
@@ -29,6 +32,10 @@ import {
   OUTBOUND_CALLER_PARAM,
   outboundHolderThreadId,
 } from "./dual-entry"
+import {
+  isOutboundGrantTokenShape,
+  verifyOutboundGrantToken,
+} from "./outbound-grants"
 
 export const OUTBOUND_HTTP_PREFIX = "/outbound-mcp/v1"
 export const OUTBOUND_INVOKE_PATH = `${OUTBOUND_HTTP_PREFIX}/invoke`
@@ -84,6 +91,10 @@ export function extractBearerToken(req: IncomingMessage): string | null {
   return m ? m[1] : null
 }
 
+/**
+ * Legacy: true only when Bearer equals Extension ws_secret.
+ * Prefer authorizeOutboundRequest for full grant/legacy matrix.
+ */
 export function authorizeOutboundHttp(
   req: IncomingMessage,
   expectedSecret: string,
@@ -92,6 +103,110 @@ export function authorizeOutboundHttp(
   const token = extractBearerToken(req)
   if (!token) return false
   return safeEqualStr(token, expectedSecret)
+}
+
+export type OutboundHttpAuthOk = {
+  ok: true
+  mode: "ws_secret" | "grant"
+  grant_id?: string
+  /** When mode=grant, body caller_id must match this (or be filled from it). */
+  bound_caller_id?: string
+}
+
+export type OutboundHttpAuthFail = {
+  ok: false
+  error_code: string
+  error: string
+  http_status: number
+}
+
+export type OutboundHttpAuthResult = OutboundHttpAuthOk | OutboundHttpAuthFail
+
+/**
+ * L4+ auth matrix (dual-review lock).
+ * @param bodyCallerId optional body caller for grant binding check
+ */
+export function authorizeOutboundRequest(
+  req: IncomingMessage,
+  expectedWsSecret: string,
+  opts?: { requireGrant?: boolean; bodyCallerId?: string | null },
+): OutboundHttpAuthResult {
+  const requireGrant =
+    opts?.requireGrant === true ||
+    getConfig().outbound_mcp?.require_grant === true
+  const token = extractBearerToken(req)
+  if (!token) {
+    return {
+      ok: false,
+      error_code: requireGrant ? "GRANT_REQUIRED" : "UNAUTHORIZED",
+      error: requireGrant
+        ? "missing outbound grant bearer (CMSPARK_OUTBOUND_GRANT / cmg_…)"
+        : "missing or invalid bearer token",
+      http_status: 401,
+    }
+  }
+
+  const looksGrant = isOutboundGrantTokenShape(token)
+  const looksWs =
+    Boolean(expectedWsSecret) && safeEqualStr(token, expectedWsSecret)
+
+  if (requireGrant) {
+    // Grant only — never accept ws_secret (even if equal by accident)
+    if (looksWs && !looksGrant) {
+      return {
+        ok: false,
+        error_code: "GRANT_REQUIRED",
+        error:
+          "outbound.require_grant=true: Extension ws_secret is not accepted on /outbound-mcp; use CMSPARK_OUTBOUND_GRANT",
+        http_status: 401,
+      }
+    }
+    const v = verifyOutboundGrantToken(token, opts?.bodyCallerId)
+    if (!v.ok) {
+      return {
+        ok: false,
+        error_code: v.error_code,
+        error: v.error,
+        http_status: v.http_status,
+      }
+    }
+    return {
+      ok: true,
+      mode: "grant",
+      grant_id: v.grant_id,
+      bound_caller_id: v.caller_id,
+    }
+  }
+
+  // P0 dual-mode: grant preferred when cmg_ shape; else ws_secret
+  if (looksGrant) {
+    const v = verifyOutboundGrantToken(token, opts?.bodyCallerId)
+    if (!v.ok) {
+      return {
+        ok: false,
+        error_code: v.error_code,
+        error: v.error,
+        http_status: v.http_status,
+      }
+    }
+    return {
+      ok: true,
+      mode: "grant",
+      grant_id: v.grant_id,
+      bound_caller_id: v.caller_id,
+    }
+  }
+
+  if (looksWs) {
+    return { ok: true, mode: "ws_secret" }
+  }
+
+  return {
+    ok: false,
+    error_code: "UNAUTHORIZED",
+    error: "missing or invalid bearer token",
+    http_status: 401,
+  }
 }
 
 function readJsonBody(req: IncomingMessage, limit = 1_000_000): Promise<unknown> {
@@ -141,12 +256,15 @@ export type CompanionInvokeBody = {
 
 /**
  * Pure invoke logic (no HTTP). Used by HTTP handler and unit tests.
+ * @param opts.grant_id — set only by authenticated HTTP path (never trust body)
  */
 export async function companionInvokeOutbound(
   body: CompanionInvokeBody,
+  opts?: { grant_id?: string },
 ): Promise<OutboundCallResult & { data?: unknown; origin?: ReturnType<typeof makeOutboundMcpOrigin> }> {
   const caller_id = (body.caller_id || "http-unknown").trim() || "http-unknown"
   const tool = (body.tool || "").trim()
+  const grant_id = opts?.grant_id
   const req: OutboundCallRequest = {
     caller_id,
     tool,
@@ -166,6 +284,7 @@ export async function companionInvokeOutbound(
       tool,
       ok: false,
       error_code: "DISCLOSURE_REQUIRED",
+      grant_id,
     })
     return {
       ok: false,
@@ -193,6 +312,7 @@ export async function companionInvokeOutbound(
       tool,
       ok: false,
       error_code: "EXTENSION_UNAVAILABLE",
+      grant_id,
     })
     return {
       ok: false,
@@ -213,6 +333,7 @@ export async function companionInvokeOutbound(
       tool,
       ok: false,
       error_code: leaseGate.error_code,
+      grant_id,
     })
     return {
       ok: false,
@@ -268,6 +389,7 @@ export async function companionInvokeOutbound(
       ok: result.success,
       error_code,
       confirm_outcome: result.success ? "n/a" : "denied",
+      grant_id,
     })
     return {
       ok: result.success,
@@ -283,6 +405,7 @@ export async function companionInvokeOutbound(
       tool,
       ok: false,
       error_code: "DISPATCH_THREW",
+      grant_id,
     })
     return {
       ok: false,
@@ -305,7 +428,7 @@ export async function companionAcceptDisclosure(caller_id: string): Promise<{
 
 /**
  * Route outbound-mcp HTTP. Returns true if handled.
- * expectedSecret from getOrCreateSharedSecret().
+ * expectedSecret = Extension ws_secret (used only when require_grant is false).
  */
 export async function handleOutboundMcpHttp(
   req: IncomingMessage,
@@ -319,16 +442,13 @@ export async function handleOutboundMcpHttp(
 
   if (req.method === "GET" && pathOnly === OUTBOUND_HEALTH_PATH) {
     // Health is unauthenticated but only on loopback (server bind); reports no secrets
+    const requireGrant = getConfig().outbound_mcp?.require_grant === true
     json(res, 200, {
       status: "ok",
       runner: toolRunner ? "wired" : "none",
       service: "outbound-mcp",
+      require_grant: requireGrant,
     })
-    return true
-  }
-
-  if (!authorizeOutboundHttp(req, expectedSecret)) {
-    json(res, 401, { ok: false, error_code: "UNAUTHORIZED", error: "missing or invalid bearer token" })
     return true
   }
 
@@ -339,9 +459,38 @@ export async function handleOutboundMcpHttp(
         json(res, 400, { ok: false, error_code: "ACK_REQUIRED" })
         return true
       }
-      const caller_id = (body.caller_id || "http-unknown").trim() || "http-unknown"
+      const bodyCaller = (body.caller_id || "http-unknown").trim() || "http-unknown"
+      const auth = authorizeOutboundRequest(req, expectedSecret, {
+        bodyCallerId: body.caller_id,
+      })
+      if (!auth.ok) {
+        json(res, auth.http_status, {
+          ok: false,
+          error_code: auth.error_code,
+          error: auth.error,
+        })
+        return true
+      }
+      const caller_id =
+        auth.mode === "grant" && auth.bound_caller_id
+          ? auth.bound_caller_id
+          : bodyCaller
+      if (
+        auth.mode === "grant" &&
+        auth.bound_caller_id &&
+        body.caller_id &&
+        String(body.caller_id).trim() &&
+        String(body.caller_id).trim() !== auth.bound_caller_id
+      ) {
+        json(res, 403, {
+          ok: false,
+          error_code: "GRANT_CALLER_MISMATCH",
+          error: "caller_id does not match grant binding",
+        })
+        return true
+      }
       const out = await companionAcceptDisclosure(caller_id)
-      json(res, 200, out)
+      json(res, 200, { ...out, auth_mode: auth.mode, grant_id: auth.grant_id })
     } catch (e: any) {
       json(res, 400, { ok: false, error_code: "BAD_BODY", error: e?.message || String(e) })
     }
@@ -351,14 +500,46 @@ export async function handleOutboundMcpHttp(
   if (req.method === "POST" && pathOnly === OUTBOUND_INVOKE_PATH) {
     try {
       const body = (await readJsonBody(req)) as CompanionInvokeBody
-      const out = await companionInvokeOutbound(body)
-      json(res, out.ok ? 200 : 422, out)
+      const auth = authorizeOutboundRequest(req, expectedSecret, {
+        bodyCallerId: body.caller_id,
+      })
+      if (!auth.ok) {
+        json(res, auth.http_status, {
+          ok: false,
+          error_code: auth.error_code,
+          error: auth.error,
+        })
+        return true
+      }
+      // Grant binds caller identity
+      if (auth.mode === "grant" && auth.bound_caller_id) {
+        const bodyCaller = (body.caller_id || "").trim()
+        if (bodyCaller && bodyCaller !== auth.bound_caller_id) {
+          json(res, 403, {
+            ok: false,
+            error_code: "GRANT_CALLER_MISMATCH",
+            error: "caller_id does not match grant binding",
+          })
+          return true
+        }
+        body.caller_id = auth.bound_caller_id
+      }
+      // N1 dual-review: pass auth grant_id into tool audit (never from client body)
+      const out = await companionInvokeOutbound(body, {
+        grant_id: auth.mode === "grant" ? auth.grant_id : undefined,
+      })
+      json(res, out.ok ? 200 : 422, {
+        ...out,
+        auth_mode: auth.mode,
+        grant_id: auth.grant_id,
+      })
     } catch (e: any) {
       json(res, 400, { ok: false, error_code: "BAD_BODY", error: e?.message || String(e) })
     }
     return true
   }
 
+  // Unknown path under prefix — 404 without auth oracle (N3: removed dead auth probe block)
   json(res, 404, { ok: false, error_code: "NOT_FOUND" })
   return true
 }

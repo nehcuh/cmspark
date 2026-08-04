@@ -2019,6 +2019,106 @@ export async function handleMessage(
         modules: config.modules || {},
       }
     }
+    // --- Outbound MCP L4+ grants (Settings UI) ---
+    case "outbound_mcp.grants.list": {
+      const {
+        listOutboundGrants,
+      } = await import("./outbound-mcp/outbound-grants")
+      const config = getConfig()
+      return {
+        type: "outbound_mcp.grants.list",
+        require_grant: config.outbound_mcp?.require_grant === true,
+        grants: listOutboundGrants(),
+      }
+    }
+    case "outbound_mcp.grants.issue": {
+      const { issueOutboundGrant } = await import("./outbound-mcp/outbound-grants")
+      const caller_id =
+        typeof rest.caller_id === "string" ? rest.caller_id.trim() : ""
+      if (!caller_id) {
+        return { type: "error", error: "caller_id required" }
+      }
+      const label =
+        typeof rest.label === "string" && rest.label.trim()
+          ? rest.label.trim()
+          : caller_id
+      let ttl_ms: number | undefined
+      if (rest.ttl_ms !== undefined && rest.ttl_ms !== null && rest.ttl_ms !== "") {
+        const n = Number(rest.ttl_ms)
+        if (!Number.isFinite(n) || n < 0) {
+          return { type: "error", error: "ttl_ms must be a non-negative number (0 = no expiry)" }
+        }
+        ttl_ms = n
+      }
+      try {
+        const issued = issueOutboundGrant({ label, caller_id, ttl_ms })
+        const { listOutboundGrants } = await import("./outbound-mcp/outbound-grants")
+        return {
+          type: "outbound_mcp.grants.issued",
+          // Raw token shown once in UI — never re-fetchable
+          grant: {
+            id: issued.id,
+            label: issued.label,
+            caller_id: issued.caller_id,
+            profile: issued.profile,
+            expires_at: issued.expires_at,
+            created_at: issued.created_at,
+            token: issued.token,
+          },
+          grants: listOutboundGrants(),
+          require_grant: getConfig().outbound_mcp?.require_grant === true,
+        }
+      } catch (e: any) {
+        return { type: "error", error: e?.message || String(e) }
+      }
+    }
+    case "outbound_mcp.grants.revoke": {
+      const { revokeOutboundGrant, listOutboundGrants } = await import(
+        "./outbound-mcp/outbound-grants"
+      )
+      const id = typeof rest.grant_id === "string" ? rest.grant_id.trim() : ""
+      if (!id) return { type: "error", error: "grant_id required" }
+      const ok = revokeOutboundGrant(id)
+      if (!ok) return { type: "error", error: `grant not found: ${id}` }
+      return {
+        type: "outbound_mcp.grants.list",
+        grants: listOutboundGrants(),
+        require_grant: getConfig().outbound_mcp?.require_grant === true,
+        revoked_id: id,
+      }
+    }
+    case "outbound_mcp.grants.revoke_all": {
+      const { revokeAllOutboundGrants, listOutboundGrants } = await import(
+        "./outbound-mcp/outbound-grants"
+      )
+      const n = revokeAllOutboundGrants()
+      return {
+        type: "outbound_mcp.grants.list",
+        grants: listOutboundGrants(),
+        require_grant: getConfig().outbound_mcp?.require_grant === true,
+        revoked_count: n,
+      }
+    }
+    case "outbound_mcp.set_require_grant": {
+      if (typeof rest.require_grant !== "boolean") {
+        return { type: "error", error: "require_grant boolean required" }
+      }
+      const current = getConfig()
+      saveConfig({
+        outbound_mcp: {
+          ...(current.outbound_mcp || {}),
+          require_grant: rest.require_grant,
+        },
+      })
+      const {
+        listOutboundGrants,
+      } = await import("./outbound-mcp/outbound-grants")
+      return {
+        type: "outbound_mcp.grants.list",
+        require_grant: getConfig().outbound_mcp?.require_grant === true,
+        grants: listOutboundGrants(),
+      }
+    }
     case "modules.set_enabled": {
       const { setModuleEnabled } = await import("./capability/modules")
       if (!rest.module || typeof rest.module !== "string") {

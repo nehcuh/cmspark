@@ -901,6 +901,12 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
       case "modules.list":
       case "modules.set_enabled":
       case "modules.update":
+      // Outbound MCP L4+ grants (Settings)
+      case "outbound_mcp.grants.list":
+      case "outbound_mcp.grants.issue":
+      case "outbound_mcp.grants.revoke":
+      case "outbound_mcp.grants.revoke_all":
+      case "outbound_mcp.set_require_grant":
       case "fleet.status":
       case "fleet.stop_all":
       case "worker.pause":

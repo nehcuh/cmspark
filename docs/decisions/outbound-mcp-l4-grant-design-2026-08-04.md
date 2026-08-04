@@ -3,7 +3,7 @@
 | Field | Value |
 |-------|--------|
 | Date | 2026-08-04 |
-| Status | **DIRECTION LOCKED · APPROVE_WITH_NITS** (dual-review 2026-08-04) · **not implemented** |
+| Status | **DIRECTION LOCKED · APPROVE_WITH_NITS** · **M1–M3 code landed** (`require_grant` default **false** until P1 GA / T1 product ship) |
 | Dual-review | Pi **APPROVE_WITH_NITS** · Independent re-run **APPROVE_WITH_NITS** · official `claude` CLI not logged-in (infra); synthesis below |
 | Artifacts | [pi](../audit/reviews/outbound-mcp-l4-grant-pi-20260804-215353.md) · [independent](../audit/reviews/outbound-mcp-l4-grant-claude-rerun-20260804.md) · [synthesis](../audit/reviews/outbound-mcp-l4-grant-dual-synthesis-20260804.md) · [verdict](../audit/reviews/outbound-mcp-l4-grant-verdict-20260804-215353.json) |
 | SoT | [ADR-022](../adr/022-outbound-mcp-server.md) L4 / L4+ · P1 roadmap |
