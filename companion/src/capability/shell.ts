@@ -160,6 +160,12 @@ export function tryParseSimpleArgv(command: string): string[] | null {
   if (tokens.length === 0) return null
   // First token must look like a program name (no empty)
   if (!tokens[0]) return null
+  // S41 multi-adv P0: ENV=value prefixes (FOO=1 cmd) and unquoted ~ need shell.
+  // Under shell:false, spawn("FOO=1", …) is ENOENT and ~ is a literal path.
+  for (const t of tokens) {
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(t)) return null
+    if (t === "~" || t.startsWith("~/") || t.startsWith("~\\")) return null
+  }
   return tokens
 }
 

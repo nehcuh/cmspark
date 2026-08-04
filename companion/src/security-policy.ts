@@ -82,6 +82,22 @@ export class SecurityPolicy {
       // ADR-016: bind complete intent so token cannot be swapped for empty_complete flip
       case "board_complete":
         return `board_complete|empty=${params?.empty_complete === true ? "1" : "0"}|ids=${Array.isArray(params?.supporting_fact_ids) ? params.supporting_fact_ids.join(",") : ""}|reason=${String(params?.empty_complete_reason || params?.goal_summary || "")}`
+      // S41 multi-adv: durable skill-library write — bind mode + target fingerprint
+      case "skill_install": {
+        const mode = params?.content
+          ? "content"
+          : params?.zip_path
+            ? "zip"
+            : params?.path
+              ? "path"
+              : "empty"
+        const target = String(params?.path || params?.zip_path || "")
+        const contentFp =
+          typeof params?.content === "string" && params.content
+            ? createHash("sha256").update(String(params.content)).digest("hex").slice(0, 16)
+            : ""
+        return `skill_install|${mode}|${target}|${contentFp}|len=${typeof params?.content === "string" ? params.content.length : 0}`
+      }
       default:
         return ""
     }

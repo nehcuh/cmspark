@@ -1,6 +1,13 @@
 /**
  * skill_install — LLM-facing install of external skills into user skills dir.
  * Dest is ALWAYS getConfigDir()/skills (never repo skills/ or ~/.claude/skills).
+ *
+ * Trust (S41 multi-adv + dual re-review):
+ * - L2 forceConfirm at server (security_token) — durable skill-library write
+ * - path/zip sources: Downloads segment / tmp / data dir allowlist
+ * - content: size-capped (not free arbitrary FS, but still needs L2)
+ * - zip: compressed + uncompressed extract budgets
+ * - dest_path/name honesty from engine import return values
  */
 
 import * as fs from "fs"
@@ -8,6 +15,7 @@ import * as path from "path"
 import * as os from "os"
 import { getConfigDir } from "../config"
 import type { SkillEngine } from "./skill-engine"
+import { appendCapabilityAudit } from "../packs/audit-log"
 
 export type SkillInstallParams = {
   /** Local directory containing SKILL.md */
@@ -31,8 +39,17 @@ export function getUserSkillsRoot(): string {
   return path.join(getConfigDir(), "skills")
 }
 
-function expandUserPath(p: string): string {
-  const trimmed = p.trim()
+/** Expand ~ and Windows %VAR% (advertised in tool errors; S41 Compat C4). */
+export function expandUserPath(p: string): string {
+  let trimmed = p.trim()
+  // %USERPROFILE% / %TEMP% etc.
+  trimmed = trimmed.replace(/%([^%]+)%/g, (_m, name: string) => {
+    const v =
+      process.env[name] ??
+      process.env[name.toUpperCase()] ??
+      process.env[name.toLowerCase()]
+    return v != null && v !== "" ? v : `%${name}%`
+  })
   if (trimmed === "~") return os.homedir()
   if (trimmed.startsWith("~/") || trimmed.startsWith("~" + path.sep)) {
     return path.join(os.homedir(), trimmed.slice(2))
@@ -42,7 +59,7 @@ function expandUserPath(p: string): string {
 
 /**
  * Trust: skill_install may only read from user Downloads, cmspark data dir,
- * or an explicit allowlist of common package roots — never arbitrary FS
+ * or OS temp — never arbitrary FS
  * (would chain with use_skill into ungated .md exfil; dual-review M1 B2).
  */
 export function isSkillInstallSourceAllowed(resolvedPath: string): boolean {
@@ -72,6 +89,8 @@ export function isSkillInstallSourceAllowed(resolvedPath: string): boolean {
 const MAX_ZIP_BYTES = 25 * 1024 * 1024
 const MAX_DIR_BYTES = 25 * 1024 * 1024
 const MAX_DIR_FILES = 500
+/** Content branch size cap (S41 multi-adv — free content is not unbounded). */
+export const MAX_CONTENT_BYTES = 256 * 1024
 
 function assertDirBudget(dir: string, acc = { bytes: 0, files: 0 }): void {
   for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -99,6 +118,18 @@ function extractNameFromMarkdown(md: string): string | null {
   return nameLine ? nameLine[1].trim().replace(/^["']|["']$/g, "") : null
 }
 
+function auditInstall(ok: boolean, extra: Record<string, unknown>): void {
+  try {
+    appendCapabilityAudit({
+      type: ok ? "skill_install.ok" : "skill_install.fail",
+      at: new Date().toISOString(),
+      ...extra,
+    })
+  } catch {
+    /* audit must never break install */
+  }
+}
+
 /**
  * Install skill into user skills root via SkillEngine import helpers.
  */
@@ -112,15 +143,24 @@ export function skillInstall(
 
   try {
     if (params.content && typeof params.content === "string" && params.content.trim()) {
-      const name = extractNameFromMarkdown(params.content)
-      engine.importSkill(params.content)
+      const contentBytes = Buffer.byteLength(params.content, "utf-8")
+      if (contentBytes > MAX_CONTENT_BYTES) {
+        const err = `content too large (max ${MAX_CONTENT_BYTES} bytes)`
+        auditInstall(false, { mode: "content", error: err, bytes: contentBytes })
+        return { ok: false, error: err, skills_root: root }
+      }
+      const imported = engine.importSkill(params.content)
       engine.refresh()
-      const safe = (name || "skill").replace(/[^a-zA-Z0-9-]/g, "-").toLowerCase()
-      const dest = path.join(root, `${safe}.md`)
+      auditInstall(true, {
+        mode: "content",
+        name: imported.name,
+        dest_path: imported.destPath,
+        bytes: contentBytes,
+      })
       return {
         ok: true,
-        name: name || safe,
-        dest_path: fs.existsSync(dest) ? dest : root,
+        name: imported.name,
+        dest_path: imported.destPath,
         skills_root: root,
         hint_zh: hint,
       }
@@ -138,7 +178,7 @@ export function skillInstall(
         return {
           ok: false,
           error:
-            "zip_path must be under Downloads, %TEMP%, or ~/.cmspark-agent (arbitrary paths blocked for Trust)",
+            "zip_path must be under Downloads, OS temp, or ~/.cmspark-agent (arbitrary paths blocked for Trust)",
           skills_root: root,
         }
       }
@@ -152,11 +192,18 @@ export function skillInstall(
       if (buf.length > MAX_ZIP_BYTES) {
         return { ok: false, error: `zip too large (max ${MAX_ZIP_BYTES} bytes)`, skills_root: root }
       }
-      engine.importSkillFolder(buf.toString("base64"))
+      const imported = engine.importSkillFolder(buf.toString("base64"))
       engine.refresh()
+      auditInstall(true, {
+        mode: "zip",
+        name: imported.name,
+        dest_path: imported.destPath,
+        zip_bytes: buf.length,
+      })
       return {
         ok: true,
-        dest_path: root,
+        name: imported.name,
+        dest_path: imported.destPath,
         skills_root: root,
         hint_zh: hint,
       }
@@ -174,7 +221,7 @@ export function skillInstall(
         return {
           ok: false,
           error:
-            "path must be under Downloads, %TEMP%, or ~/.cmspark-agent (arbitrary host paths blocked; use panel import for trusted dirs)",
+            "path must be under Downloads, OS temp, or ~/.cmspark-agent (arbitrary host paths blocked; use panel import for trusted dirs)",
           skills_root: root,
         }
       }
@@ -183,18 +230,25 @@ export function skillInstall(
         if (st.size > MAX_DIR_BYTES) {
           return { ok: false, error: "skill file too large", skills_root: root }
         }
+        if (st.size > MAX_CONTENT_BYTES) {
+          return {
+            ok: false,
+            error: `skill file too large for content import (max ${MAX_CONTENT_BYTES} bytes)`,
+            skills_root: root,
+          }
+        }
         const content = fs.readFileSync(resolved, "utf-8")
-        const name = extractNameFromMarkdown(content)
-        engine.importSkill(content)
+        const imported = engine.importSkill(content)
         engine.refresh()
-        const safe = (name || path.basename(resolved, ".md"))
-          .replace(/[^a-zA-Z0-9-]/g, "-")
-          .toLowerCase()
-        const dest = path.join(root, `${safe}.md`)
+        auditInstall(true, {
+          mode: "path_md",
+          name: imported.name,
+          dest_path: imported.destPath,
+        })
         return {
           ok: true,
-          name: name || safe,
-          dest_path: dest,
+          name: imported.name,
+          dest_path: imported.destPath,
           skills_root: root,
           hint_zh: hint,
         }
@@ -205,20 +259,17 @@ export function skillInstall(
         } catch (e: any) {
           return { ok: false, error: e?.message || String(e), skills_root: root }
         }
-        engine.importSkillFromPath(resolved)
+        const imported = engine.importSkillFromPath(resolved)
         engine.refresh()
-        let name: string | undefined
-        try {
-          const md = fs.readFileSync(path.join(resolved, "SKILL.md"), "utf-8")
-          name = extractNameFromMarkdown(md) || undefined
-        } catch {
-          /* ignore */
-        }
-        const safe = (name || path.basename(resolved)).replace(/[^a-zA-Z0-9-]/g, "-").toLowerCase()
+        auditInstall(true, {
+          mode: "path_dir",
+          name: imported.name,
+          dest_path: imported.destPath,
+        })
         return {
           ok: true,
-          name,
-          dest_path: path.join(root, safe),
+          name: imported.name,
+          dest_path: imported.destPath,
           skills_root: root,
           hint_zh: hint,
         }
@@ -235,12 +286,14 @@ export function skillInstall(
       error: "skill_install requires path, zip_path, or content",
       skills_root: root,
       hint_zh:
-        "先 downloads_find / browser_download 拿到 Downloads 下路径，再 skill_install。目标库固定 ~/.cmspark-agent/skills。",
+        "先 downloads_find / browser_download 拿到 Downloads 下路径，再 skill_install。目标库固定 ~/.cmspark-agent/skills。需用户 L2 确认。",
     }
   } catch (e: any) {
+    const err = e?.message || String(e)
+    auditInstall(false, { error: err })
     return {
       ok: false,
-      error: e?.message || String(e),
+      error: err,
       skills_root: root,
     }
   }
@@ -251,21 +304,21 @@ export const SKILL_INSTALL_TOOL = {
   function: {
     name: "skill_install",
     description:
-      "Install an external skill into the CMspark user skills library (~/.cmspark-agent/skills on Unix, %USERPROFILE%\\.cmspark-agent\\skills on Windows). Prefer this over shell copy. After downloads_find/browser_download of a skill zip or folder, pass path or zip_path. Never write skills into the git repo skills/ directory or ~/.claude/skills.",
+      "Install an external skill into the CMspark user skills library (~/.cmspark-agent/skills on Unix, %USERPROFILE%\\.cmspark-agent\\skills on Windows). Prefer this over shell copy. After downloads_find/browser_download of a skill zip or folder, pass path or zip_path. Requires user L2 confirmation. Never write skills into the git repo skills/ directory or ~/.claude/skills. content is size-capped (256KiB).",
     parameters: {
       type: "object",
       properties: {
         path: {
           type: "string",
-          description: "Local directory with SKILL.md, or a single .md skill file",
+          description: "Local directory with SKILL.md, or a single .md skill file (under Downloads/tmp/data)",
         },
         zip_path: {
           type: "string",
-          description: "Local .zip containing SKILL.md (folder skill)",
+          description: "Local .zip containing SKILL.md (folder skill); compressed+extract size capped",
         },
         content: {
           type: "string",
-          description: "Raw markdown with YAML frontmatter (single skill file)",
+          description: "Raw markdown with YAML frontmatter (single skill file, max 256KiB); still requires L2",
         },
       },
       required: [] as string[],
@@ -278,6 +331,7 @@ export const SKILL_INSTALL_CAPABILITY = {
   Surface: "L0 local install write to user skills; path sources limited to Downloads/tmp/data dir",
   Composition: "Skills install primitive — not a new Agent runtime",
   Autonomy: "none",
-  Trust: "source path allowlist; no arbitrary FS read; zip/dir size caps",
+  Trust:
+    "L2 forceConfirm (security_token); path allowlist for path/zip; content size-capped; zip compressed+uncompressed budgets; audit lines; not free like record_experience for agent install",
   Channel: "community",
 } as const

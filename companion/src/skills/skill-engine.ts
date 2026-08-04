@@ -800,7 +800,10 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
     }
   }
 
-  importSkill(content: string): void {
+  /**
+   * Import a single-file skill. Returns dest for agent path honesty (S41 multi-adv).
+   */
+  importSkill(content: string): { name: string; destPath: string } {
     let parsed: { data: { name?: string }; content: string }
     try {
       parsed = matter(content)
@@ -819,9 +822,14 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
 
     fs.writeFileSync(filePath, content)
     this.refresh()
+    return { name: String(name), destPath: filePath }
   }
 
-  importSkillFolder(zipBase64: string): void {
+  // S41 multi-adv: zip compressed cap alone is insufficient — bound extract size/count.
+  private static readonly MAX_ZIP_EXTRACT_BYTES = 25 * 1024 * 1024
+  private static readonly MAX_ZIP_EXTRACT_FILES = 500
+
+  importSkillFolder(zipBase64: string): { name: string; destPath: string } {
     const buffer = Buffer.from(zipBase64, "base64")
     const zip = new AdmZip(buffer)
 
@@ -851,40 +859,67 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
 
     fs.mkdirSync(destDir, { recursive: true })
 
-    // Extract all entries
-    for (const entry of entries) {
-      if (entry.isDirectory) continue
+    let extractBytes = 0
+    let extractFiles = 0
+    try {
+      // Extract all entries with uncompressed budget (zip-bomb defense)
+      for (const entry of entries) {
+        if (entry.isDirectory) continue
 
-      // Compute the relative path within the zip
-      let relativePath = entry.entryName
-      // Strip leading skill directory name if present
-      if (skillDirName && relativePath.startsWith(skillDirName + "/")) {
-        relativePath = relativePath.slice(skillDirName.length + 1)
+        // Compute the relative path within the zip
+        let relativePath = entry.entryName
+        // Strip leading skill directory name if present
+        if (skillDirName && relativePath.startsWith(skillDirName + "/")) {
+          relativePath = relativePath.slice(skillDirName.length + 1)
+        }
+
+        // Normalize and validate: reject absolute paths, parent traversal, and null bytes
+        relativePath = path.normalize(relativePath).replace(/\\/g, "/")
+        if (path.isAbsolute(relativePath) || relativePath.startsWith("..") || relativePath.includes("\0")) {
+          throw new Error(`Security Violation: Invalid zip entry path: ${entry.entryName}`)
+        }
+
+        // Secure path traversal check (P0) — ensure resolved path stays under destDir
+        const resolvedPath = path.resolve(destDir, relativePath)
+        const normalizedDest = path.resolve(destDir)
+        if (!resolvedPath.startsWith(normalizedDest + path.sep) && resolvedPath !== normalizedDest) {
+          throw new Error(`Security Violation: Path traversal detected in zip entry: ${entry.entryName}`)
+        }
+
+        const data = entry.getData()
+        extractFiles++
+        extractBytes += data.length
+        if (extractFiles > SkillEngine.MAX_ZIP_EXTRACT_FILES) {
+          throw new Error(
+            `Zip extract has too many files (max ${SkillEngine.MAX_ZIP_EXTRACT_FILES})`,
+          )
+        }
+        if (extractBytes > SkillEngine.MAX_ZIP_EXTRACT_BYTES) {
+          throw new Error(
+            `Zip extract too large (max ${SkillEngine.MAX_ZIP_EXTRACT_BYTES} uncompressed bytes)`,
+          )
+        }
+
+        // Ensure we don't create nested directories
+        if (relativePath.includes("/")) {
+          const subDir = path.dirname(relativePath)
+          fs.mkdirSync(path.join(destDir, subDir), { recursive: true })
+        }
+
+        fs.writeFileSync(resolvedPath, data)
       }
-
-      // Normalize and validate: reject absolute paths, parent traversal, and null bytes
-      relativePath = path.normalize(relativePath).replace(/\\/g, "/")
-      if (path.isAbsolute(relativePath) || relativePath.startsWith("..") || relativePath.includes("\0")) {
-        throw new Error(`Security Violation: Invalid zip entry path: ${entry.entryName}`)
+    } catch (e) {
+      // Cleanup partial dest on budget/slip failure
+      try {
+        if (fs.existsSync(destDir)) fs.rmSync(destDir, { recursive: true, force: true })
+      } catch {
+        /* ignore */
       }
-
-      // Secure path traversal check (P0) — ensure resolved path stays under destDir
-      const resolvedPath = path.resolve(destDir, relativePath)
-      const normalizedDest = path.resolve(destDir)
-      if (!resolvedPath.startsWith(normalizedDest + path.sep) && resolvedPath !== normalizedDest) {
-        throw new Error(`Security Violation: Path traversal detected in zip entry: ${entry.entryName}`)
-      }
-
-      // Ensure we don't create nested directories
-      if (relativePath.includes("/")) {
-        const subDir = path.dirname(relativePath)
-        fs.mkdirSync(path.join(destDir, subDir), { recursive: true })
-      }
-
-      fs.writeFileSync(resolvedPath, entry.getData())
+      throw e
     }
 
     this.refresh()
+    return { name: String(skillName), destPath: destDir }
   }
 
   /**
@@ -897,7 +932,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
    * Skills-panel "import path" feature reject every realistic source
    * (~/.claude/skills/…, ~/Downloads/…) with "Path traversal not allowed".
    */
-  importSkillFromPath(dirPath: string): void {
+  importSkillFromPath(dirPath: string): { name: string; destPath: string } {
     if (typeof dirPath !== "string" || dirPath.includes("\0")) {
       throw new Error("Invalid directory path")
     }
@@ -945,7 +980,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
     const files = this.readDirectoryFiles(resolved)
     // Strip a leading "<folder>/" prefix if files were nested (shouldn't for
     // flat skill dirs); importSkillFiles expects SKILL.md at top or …/SKILL.md.
-    this.importSkillFiles(files)
+    return this.importSkillFiles(files)
   }
 
   private readDirectoryFiles(dir: string, prefix = ""): { path: string; content: string }[] {
@@ -962,7 +997,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
     return results
   }
 
-  importSkillFiles(files: { path: string; content: string }[]): void {
+  importSkillFiles(files: { path: string; content: string }[]): { name: string; destPath: string } {
     // Find SKILL.md to determine skill name
     const skillMd = files.find(f => f.path === "SKILL.md" || f.path.endsWith("/SKILL.md"))
     if (!skillMd) throw new Error("Folder must contain a SKILL.md file")
@@ -1003,6 +1038,7 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
     }
 
     this.refresh()
+    return { name: String(name), destPath: destDir }
   }
 
   deleteSkill(name: string): void {

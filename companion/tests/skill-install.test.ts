@@ -1,5 +1,5 @@
 /**
- * skill_install — install into user skills root (S40 Track 3)
+ * skill_install — install into user skills root (S40 Track 3 + S41 multi-adv fixes)
  */
 import test from "node:test"
 import assert from "node:assert/strict"
@@ -10,11 +10,12 @@ import {
   skillInstall,
   getUserSkillsRoot,
   isSkillInstallSourceAllowed,
+  expandUserPath,
+  MAX_CONTENT_BYTES,
 } from "../src/skills/skill-install"
 
 function makeEngine(skillsDir: string) {
   // Minimal SkillEngine-shaped stub that implements import* used by skillInstall
-  const files: string[] = []
   return {
     skillsDir,
     importSkill(content: string) {
@@ -24,37 +25,79 @@ function makeEngine(skillsDir: string) {
       const dest = path.join(skillsDir, `${safe}.md`)
       fs.mkdirSync(skillsDir, { recursive: true })
       fs.writeFileSync(dest, content)
-      files.push(dest)
+      return { name, destPath: dest }
     },
     importSkillFromPath(dirPath: string) {
       const skillMd = path.join(dirPath, "SKILL.md")
       if (!fs.existsSync(skillMd)) throw new Error("No SKILL.md")
       const content = fs.readFileSync(skillMd, "utf-8")
-      this.importSkill(content)
-      // also copy dir
       const m = content.match(/^name:\s*(.+)$/m)
       const name = (m?.[1] || "x").trim()
       const safe = name.replace(/[^a-zA-Z0-9-]/g, "-").toLowerCase()
       const destDir = path.join(skillsDir, safe)
       fs.mkdirSync(destDir, { recursive: true })
       fs.writeFileSync(path.join(destDir, "SKILL.md"), content)
+      return { name, destPath: destDir }
     },
-    importSkillFolder(_b64: string) {
-      // not used in path tests
-      throw new Error("not implemented in stub")
+    importSkillFolder(b64: string) {
+      // Decode and look for name in SKILL.md-like payload (AdmZip-free stub)
+      const raw = Buffer.from(b64, "base64").toString("utf-8")
+      // Real engine uses AdmZip; stub expects base64 of "SKILL.md\0---\nname: zip-demo\n..."
+      // For unit tests we accept base64 of a marker string "ZIP:name:zip-demo"
+      const marker = Buffer.from(b64, "base64").toString("utf-8")
+      const m = marker.match(/name:\s*([a-zA-Z0-9-]+)/)
+      const name = m?.[1] || "zip-skill"
+      const safe = name.replace(/[^a-zA-Z0-9-]/g, "-").toLowerCase()
+      const destDir = path.join(skillsDir, safe)
+      fs.mkdirSync(destDir, { recursive: true })
+      fs.writeFileSync(
+        path.join(destDir, "SKILL.md"),
+        `---\nname: ${name}\ndescription: z\n---\n\nZip\n`,
+      )
+      void raw
+      return { name, destPath: destDir }
     },
     refresh() {},
   } as any
 }
 
-test("skill_install content writes under skills root", () => {
+test("skill_install content writes under skills root with honest dest_path", () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-skill-"))
   const engine = makeEngine(tmp)
   const r = skillInstall(engine, {
     content: "---\nname: demo-skill\ndescription: d\n---\n\nBody\n",
   })
   assert.equal(r.ok, true, r.error)
+  assert.equal(r.name, "demo-skill")
+  assert.equal(r.dest_path, path.join(tmp, "demo-skill.md"))
   assert.ok(fs.existsSync(path.join(tmp, "demo-skill.md")))
+})
+
+test("skill_install rejects oversized content", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-skill-big-"))
+  const engine = makeEngine(tmp)
+  const body = "x".repeat(MAX_CONTENT_BYTES + 1)
+  const r = skillInstall(engine, {
+    content: `---\nname: big\ndescription: d\n---\n\n${body}\n`,
+  })
+  assert.equal(r.ok, false)
+  assert.match(r.error || "", /too large/)
+})
+
+test("skill_install zip_path returns dest_path under skill name (not skills root)", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-skill-zip-src-"))
+  const skills = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-skill-zip-dst-"))
+  const zipPath = path.join(tmp, "Downloads", "s.zip")
+  fs.mkdirSync(path.dirname(zipPath), { recursive: true })
+  // Stub engine reads base64 for name; file only needs to exist + .zip suffix
+  fs.writeFileSync(zipPath, Buffer.from("name: zip-demo\n", "utf-8"))
+  const engine = makeEngine(skills)
+  const r = skillInstall(engine, { zip_path: zipPath })
+  assert.equal(r.ok, true, r.error)
+  assert.equal(r.name, "zip-demo")
+  assert.ok(r.dest_path && r.dest_path.endsWith(`${path.sep}zip-demo`), r.dest_path)
+  assert.notEqual(r.dest_path, r.skills_root)
+  assert.ok(fs.existsSync(path.join(skills, "zip-demo", "SKILL.md")))
 })
 
 test("isSkillInstallSourceAllowed allows Downloads and tmp, rejects arbitrary", () => {
@@ -63,11 +106,8 @@ test("isSkillInstallSourceAllowed allows Downloads and tmp, rejects arbitrary", 
   fs.writeFileSync(dl, "x")
   assert.equal(isSkillInstallSourceAllowed(fs.realpathSync(dl)), true)
   assert.equal(isSkillInstallSourceAllowed(fs.realpathSync(os.tmpdir())), true)
-  // C:\Windows or /etc style — use a non-Downloads non-tmp path if possible
   const home = os.homedir()
   if (home && !home.toLowerCase().includes("download")) {
-    // home root itself is not under Downloads/tmp/data — should be false
-    // unless getConfigDir is under home (it is ~/.cmspark-agent). Realpath of home alone:
     try {
       const desktop = path.join(home, "Desktop")
       if (fs.existsSync(desktop)) {
@@ -89,10 +129,10 @@ test("skill_install path directory with SKILL.md", () => {
     "---\nname: from-path\ndescription: x\n---\n\nHi\n",
   )
   const engine = makeEngine(skills)
-  // Override by calling importSkillFromPath via skillInstall — dest is engine's skillsDir
-  // skillInstall uses real getUserSkillsRoot in return metadata only
   const r = skillInstall(engine, { path: src })
   assert.equal(r.ok, true, r.error)
+  assert.equal(r.name, "from-path")
+  assert.ok(r.dest_path?.includes("from-path"), r.dest_path)
   assert.ok(r.hint_zh?.includes("cmspark-agent") || r.hint_zh?.includes("skills"))
   assert.ok(fs.existsSync(path.join(skills, "from-path.md")) || fs.existsSync(path.join(skills, "from-path")))
 })
@@ -107,4 +147,14 @@ test("skill_install rejects empty params", () => {
 
 test("getUserSkillsRoot ends with skills", () => {
   assert.ok(getUserSkillsRoot().replace(/\\/g, "/").endsWith("/skills") || getUserSkillsRoot().endsWith(`${path.sep}skills`))
+})
+
+test("expandUserPath expands ~ and %TEMP% when set", () => {
+  const home = os.homedir()
+  assert.equal(expandUserPath("~"), home)
+  assert.ok(expandUserPath("~/foo").startsWith(home))
+  if (process.env.TEMP || process.env.TMP) {
+    const expanded = expandUserPath("%TEMP%\\x.zip")
+    assert.ok(!expanded.includes("%TEMP%"), expanded)
+  }
 })

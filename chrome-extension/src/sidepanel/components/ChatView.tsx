@@ -457,20 +457,26 @@ function ToolCallCard({ tc }: { tc: any }) {
   const shellFailed = !!shellCard && (shellCard.failed || tc.status === "error")
 
   // Live tool.start sets status; history reload often omits it — derive from result.
+  // S41 multi-adv: shell_exec returns success:true with exit_code≠0 so the agent
+  // can read stdout — prefer shellFailed over tc.status for glyph/tone (avoid ✓+red).
   const derivedStatus: string =
-    tc.status === "running" || tc.status === "success" || tc.status === "error"
-      ? tc.status
-      : shellCard
-        ? hasResult
-          ? shellFailed
-            ? "error"
-            : "success"
-          : "unknown"
-        : hasResult
-          ? tc.result?.success
-            ? "success"
-            : "error"
-          : "unknown"
+    tc.status === "running"
+      ? "running"
+      : shellCard && shellFailed
+        ? "error"
+        : tc.status === "success" || tc.status === "error"
+          ? tc.status
+          : shellCard
+            ? hasResult
+              ? shellFailed
+                ? "error"
+                : "success"
+              : "unknown"
+            : hasResult
+              ? tc.result?.success
+                ? "success"
+                : "error"
+              : "unknown"
   const statusTone = statusColor(derivedStatus)
   const statusGlyph =
     derivedStatus === "running" ? "…" : derivedStatus === "success" ? "✓" : derivedStatus === "error" ? "!" : "–"

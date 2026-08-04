@@ -49,6 +49,14 @@ describe("tryParseSimpleArgv (P1b)", () => {
     assert.equal(tryParseSimpleArgv("echo $HOME"), null)
     assert.equal(tryParseSimpleArgv("ls *.txt"), null)
   })
+  it("rejects ENV=value prefixes and unquoted ~ (S41 P0 — stay shell:true)", () => {
+    assert.equal(tryParseSimpleArgv("FOO=1 ls"), null)
+    assert.equal(tryParseSimpleArgv("A=b B=c echo hi"), null)
+    assert.equal(tryParseSimpleArgv("ls ~"), null)
+    assert.equal(tryParseSimpleArgv("cat ~/Downloads/x"), null)
+    // Still parses plain commands
+    assert.deepEqual(tryParseSimpleArgv("ls /tmp"), ["ls", "/tmp"])
+  })
   it("shellSpawnArgvOptions uses shell:false", () => {
     const o = shellSpawnArgvOptions("/tmp", buildChildEnv())
     assert.equal(o.shell, false)

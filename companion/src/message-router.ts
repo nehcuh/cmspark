@@ -339,12 +339,18 @@ export async function handleMessage(
       // Merge field-by-field: key only from override when non-masked; protocol always may override.
       const override = rest.llm_override as Record<string, unknown> | undefined
       const hasOverrideKey = !!(override?.api_key && !isMaskedApiKey(override.api_key as string))
+      // S41 multi-adv P0: empty-string override must not clobber stored URL/model
+      // (Coding Plan 中继 preset sets base_url:"" intentionally).
+      const nonBlank = (v: unknown, fallback: string): string => {
+        const s = v == null ? "" : String(v).trim()
+        return s || fallback
+      }
       const testConfig = {
         api_key: hasOverrideKey
           ? String(override!.api_key)
           : config.llm.api_key,
-        base_url: String(override?.base_url ?? config.llm.base_url),
-        model_name: String(override?.model_name ?? config.llm.model_name),
+        base_url: nonBlank(override?.base_url, config.llm.base_url),
+        model_name: nonBlank(override?.model_name, config.llm.model_name),
         protocol: (override?.protocol as string | undefined) ?? config.llm.protocol ?? "openai",
         client_header_profile:
           (override?.client_header_profile as string | undefined) ??

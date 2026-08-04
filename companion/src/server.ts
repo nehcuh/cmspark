@@ -792,6 +792,8 @@ export function createToolExecutor(ws: WebSocket) {
       "ask_user",
       // ADR-016 G5/G6/G9: board_complete requires Confirm Center + canComplete
       "board_complete",
+      // S41 multi-adv: durable skill-library write (content/path/zip) — L2 + forceConfirm
+      "skill_install",
     ]
     const hostAppGated = toolName === "host_app" && (os.platform() === "win32" || os.platform() === "darwin")
     const hostCliGated = toolName === "host_cli" && (os.platform() === "win32" || os.platform() === "darwin")
@@ -826,6 +828,9 @@ export function createToolExecutor(ws: WebSocket) {
             : "") ||
           (toolName === "board_complete"
             ? `board_complete empty_complete=${!!finalParams.empty_complete} supporting=${Array.isArray(finalParams.supporting_fact_ids) ? finalParams.supporting_fact_ids.join(",") : ""} residual=${Array.isArray(finalParams.residual_risks) ? finalParams.residual_risks.slice(0, 3).join(" | ") : ""} reason=${finalParams.empty_complete_reason || finalParams.goal_summary || ""}`
+            : "") ||
+          (toolName === "skill_install"
+            ? `skill_install path=${finalParams.path || ""} zip=${finalParams.zip_path || ""} content_len=${typeof finalParams.content === "string" ? finalParams.content.length : 0}`
             : "") ||
           "",
       )
@@ -1245,7 +1250,8 @@ export function createToolExecutor(ws: WebSocket) {
         toolName === "spawn_worker" ||
         toolName === "ask_user" ||
         toolName === "board_complete" ||
-        toolName === "host_cli" // L-CLI-9: god-mode never skips host_cli L2
+        toolName === "host_cli" || // L-CLI-9: god-mode never skips host_cli L2
+        toolName === "skill_install" // S41: durable skill write — god-mode never skips
       const criticalApis = hostComputerGated
         ? ["computer.coordinate_injection"]
         : capabilityForceConfirm
@@ -3243,6 +3249,20 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
     }
     case "skill_install": {
       // Composition: install into user skills root only (not repo / ~/.claude).
+      // S41 multi-adv: L2 forceConfirm — require security_token (bindingPayloadFor skill_install).
+      // Thread id defaults to "default" to match issueTokenFor at the L2 gate.
+      if (params.security_token) {
+        const valid = securityPolicy.validateTokenFor(
+          params.security_token,
+          "skill_install",
+          params,
+        )
+        if (!valid) {
+          return { success: false, error: "Invalid or expired security token for skill_install" }
+        }
+      } else {
+        return { success: false, error: "skill_install requires L2 security_token confirmation" }
+      }
       const { skillInstall } = await import("./skills/skill-install")
       const r = skillInstall(skillEngine, {
         path: params.path,

@@ -829,6 +829,42 @@ test("skill-engine: importSkillFolder rejects zip without SKILL.md", async () =>
   )
 })
 
+test("skill-engine: importSkillFolder returns name+destPath and enforces extract budget", async () => {
+  resetMockDirs()
+  process.env.HOME = tempHome
+
+  const AdmZip = require("adm-zip")
+  const zip = new AdmZip()
+  zip.addFile(
+    "SKILL.md",
+    Buffer.from("---\nname: zip-honest\ndescription: t\n---\n\n# Body\n"),
+  )
+  const { SkillEngine } = await import("../src/skills/skill-engine")
+  const engine = new SkillEngine()
+  const r = engine.importSkillFolder(zip.toBuffer().toString("base64"))
+  assert.equal(r.name, "zip-honest")
+  assert.ok(r.destPath.endsWith(`${path.sep}zip-honest`) || r.destPath.endsWith("/zip-honest"))
+  assert.ok(fs.existsSync(path.join(r.destPath, "SKILL.md")))
+
+  // Uncompressed budget: many large files (still small compressed if zeros — use random)
+  const bomb = new AdmZip()
+  bomb.addFile(
+    "SKILL.md",
+    Buffer.from("---\nname: bomb-skill\ndescription: t\n---\n\n# Body\n"),
+  )
+  // 30 × 1MiB of non-compressible-ish data → >25MiB uncompressed
+  const chunk = Buffer.alloc(1024 * 1024, 0x41)
+  for (let i = 0; i < 30; i++) {
+    bomb.addFile(`blob-${i}.bin`, chunk)
+  }
+  assert.throws(
+    () => engine.importSkillFolder(bomb.toBuffer().toString("base64")),
+    /too large|too many files/i,
+  )
+  // Partial dest cleaned up
+  assert.equal(engine.get("bomb-skill"), undefined)
+})
+
 test("skill-engine: importSkillFromPath rejects non-directory / missing path", async () => {
   resetMockDirs()
   process.env.HOME = tempHome

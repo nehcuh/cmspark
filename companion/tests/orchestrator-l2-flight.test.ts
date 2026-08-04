@@ -145,6 +145,23 @@ test("bindingPayloadFor: shell/spawn/ask_user non-empty", () => {
   assert.equal(SecurityPolicy.bindingPayloadFor("ask_user", { question: "Go?" }), "Go?")
 })
 
+test("bindingPayloadFor: skill_install binds mode and content fingerprint (S41)", () => {
+  const pathBind = SecurityPolicy.bindingPayloadFor("skill_install", {
+    path: "/tmp/Downloads/a",
+  })
+  assert.match(pathBind, /^skill_install\|path\|/)
+  assert.ok(pathBind.includes("/tmp/Downloads/a"))
+  const contentBind = SecurityPolicy.bindingPayloadFor("skill_install", {
+    content: "---\nname: x\n---\nbody",
+  })
+  assert.match(contentBind, /^skill_install\|content\|/)
+  assert.ok(contentBind.includes("len="))
+  const contentBind2 = SecurityPolicy.bindingPayloadFor("skill_install", {
+    content: "---\nname: y\n---\nother",
+  })
+  assert.notEqual(contentBind, contentBind2)
+})
+
 test("L2 tryDequeue multi-admits two eligible waiters under process cap", async () => {
   _resetL2AdmissionForTests()
   // Fill process cap (2)

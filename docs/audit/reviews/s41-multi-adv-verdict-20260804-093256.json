@@ -1,0 +1,8 @@
+{
+  "batch": "s41-multi-adv",
+  "timestamp": "20260804-093256",
+  "claude": { "verdict": "REJECT", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/s41-multi-adv-claude-20260804-093256.md" },
+  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/s41-multi-adv-pi-20260804-093256.md" },
+  "both_approve": false,
+  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/s41-multi-adv-diff-20260804-093256.patch"
+}
