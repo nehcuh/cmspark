@@ -7,6 +7,7 @@ import { TabQueue, coerceTabId } from "./tab-queue"
 import { runBrowserDownload } from "./browser-download-handler"
 import { runWithDownloadBusyBeforeQueue } from "./download-busy-entry"
 import { resolveEvaluateExecution } from "./evaluate-code-policy"
+import { buildSpaScrollExpression } from "./spa-scroll-expr"
 
 // Re-export for callers / tests that import from browser-bridge.
 export { selectorJsLiteral } from "./selector-js-literal"
@@ -216,10 +217,21 @@ export class BrowserBridge {
 
   // Execute JS via chrome.scripting. ISOLATED world first (CSP-safe),
   // then MAIN world if ISOLATED had injection errors (some SPAs block ISOLATED).
+  // Prefer CDP Runtime.evaluate (safeEvaluate) for X/Twitter — scripting can fail
+  // with empty results or CSP while the debugger path still works.
   private async scriptingExecute(tabId: number, code: string): Promise<any> {
     // Detect simple read-only expressions — use direct DOM funcs, no new Function()
     const bodyTextExpr = code === "document.body?.innerText || ''"
     const bodyHtmlExpr = code.startsWith("document.querySelector('html')")
+
+    const hasUsableResult = (results: ScriptingResult[] | undefined): boolean => {
+      if (!results || results.length === 0) return false
+      const r = results[0]
+      if (r?.error) return false
+      // Chrome may return a frame entry with no result when injection is blocked
+      // without throwing — treat as failure so callers can fall through.
+      return "result" in r
+    }
 
     // Strategy 1: ISOLATED world
     try {
@@ -241,11 +253,10 @@ export class BrowserBridge {
           args: [code],
         })
       }
-      // Only fall through if there was an actual injection error (not just empty result)
-      if (!results?.[0]?.error) return results?.[0]?.result
+      if (hasUsableResult(results)) return results![0].result
     } catch { /* fall through to MAIN world */ }
 
-    // Strategy 2: MAIN world (subject to page CSP)
+    // Strategy 2: MAIN world (subject to page CSP — X/Twitter often blocks eval here)
     try {
       let results: ScriptingResult[] | undefined
       if (bodyTextExpr) {
@@ -265,7 +276,7 @@ export class BrowserBridge {
           args: [code],
         })
       }
-      if (!results?.[0]?.error) return results?.[0]?.result
+      if (hasUsableResult(results)) return results![0].result
     } catch { /* fall through */ }
 
     throw new Error("Script injection failed in both ISOLATED and MAIN worlds")
@@ -613,14 +624,34 @@ export class BrowserBridge {
     }
   }
 
-  // Safe JS execution: try CDP first, fallback to chrome.scripting
+  // Safe JS execution: CDP Runtime.evaluate first (not subject to page CSP the same
+  // way chrome.scripting MAIN/eval is — critical for x.com). Scripting is fallback.
   private async safeEvaluate(tabId: number, expression: string): Promise<any> {
     try {
-      return await this.sendCdp(tabId, "Runtime.evaluate", { expression, returnByValue: true })
-    } catch {
-      // Fallback to chrome.scripting
-      const result = await this.scriptingExecute(tabId, expression)
-      return { result: { value: result } }
+      const cdp = await this.sendCdp(tabId, "Runtime.evaluate", {
+        expression,
+        returnByValue: true,
+        awaitPromise: true,
+      })
+      // Surface page exceptions instead of silently returning null (agent mislabels as CSP).
+      if (cdp?.exceptionDetails) {
+        const text =
+          cdp.exceptionDetails?.exception?.description ||
+          cdp.exceptionDetails?.text ||
+          "Runtime.evaluate exception"
+        throw new Error(text)
+      }
+      return cdp
+    } catch (cdpErr: any) {
+      // Fallback to chrome.scripting only when CDP attach/evaluate truly failed
+      try {
+        const result = await this.scriptingExecute(tabId, expression)
+        return { result: { value: result } }
+      } catch (scriptErr: any) {
+        throw new Error(
+          `${cdpErr?.message || cdpErr}; scripting fallback: ${scriptErr?.message || scriptErr}`,
+        )
+      }
     }
   }
 
@@ -778,9 +809,12 @@ export class BrowserBridge {
 
   /**
    * Scroll the page. X/Twitter and many SPAs do NOT scroll `window` — the feed
-   * lives in an overflow:auto container. Blind window.scrollBy / mouseWheel at
-   * (300,300) often reports success while the user sees no movement.
-   * Prefer the largest scrollable element; return before/after so the agent can verify.
+   * lives in an overflow:auto container.
+   *
+   * Priority (gt24cb regression): **CDP first**, chrome.scripting last.
+   * fbf9452 put MAIN-world scripting first for SPA containers; on x.com that
+   * path often fails with "Script injection failed in both ISOLATED and MAIN
+   * worlds" even though CDP Runtime.evaluate / mouseWheel still work.
    */
   private async scroll(params: Record<string, any>): Promise<ToolResult> {
     const tabId = this.getTabId(params)
@@ -789,175 +823,46 @@ export class BrowserBridge {
     const x = Number(params.x || 400) || 400
     const y = Number(params.y || 400) || 400
 
-    // Prefer MAIN world so SPA scroll containers (X timeline) are visible/modifiable.
+    type ScrollReport = {
+      mode: string
+      moved: boolean | null
+      before?: number
+      after?: number
+      deltaRequested: number
+      tag?: string
+      testid?: string | null
+      scrollHeight?: number
+      clientHeight?: number
+      windowScrollY?: number
+      path?: string
+      warning?: string
+    }
+
+    const spaScrollExpr = buildSpaScrollExpression(deltaX, deltaY, x, y)
+    let data: ScrollReport | undefined
+    const errors: string[] = []
+
+    // 1) CDP Runtime.evaluate — primary for CSP-restricted SPAs (x.com)
     try {
-      const injected = await chrome.scripting.executeScript({
-        target: { tabId },
-        world: "MAIN",
-        func: (dx: number, dy: number, wheelX: number, wheelY: number) => {
-          type ScrollReport = {
-            mode: string
-            moved: boolean
-            before: number
-            after: number
-            deltaRequested: number
-            tag?: string
-            testid?: string | null
-            scrollHeight?: number
-            clientHeight?: number
-            windowScrollY?: number
-          }
-
-          const isScrollable = (el: Element): el is HTMLElement => {
-            if (!(el instanceof HTMLElement)) return false
-            const st = getComputedStyle(el)
-            const oy = st.overflowY
-            if (oy !== "auto" && oy !== "scroll" && oy !== "overlay") return false
-            return el.scrollHeight > el.clientHeight + 40 && el.clientHeight > 80
-          }
-
-          const pickScrollable = (): HTMLElement | null => {
-            const prefs = [
-              '[data-testid="primaryColumn"]',
-              'main[role="main"]',
-              '[role="main"]',
-              '[data-testid="cellInnerDiv"]',
-              "div[aria-label*='Timeline']",
-              "section[role='region']",
-            ]
-            for (const sel of prefs) {
-              const el = document.querySelector(sel)
-              if (el && isScrollable(el)) return el
-              // primaryColumn may nest the real scroller
-              if (el) {
-                const nested = Array.from(el.querySelectorAll("*")).find(isScrollable)
-                if (nested) return nested as HTMLElement
-              }
-            }
-            let best: HTMLElement | null = null
-            let bestRoom = 0
-            for (const el of Array.from(document.querySelectorAll("body *"))) {
-              if (!isScrollable(el)) continue
-              const room = el.scrollHeight - el.clientHeight
-              if (room > bestRoom) {
-                bestRoom = room
-                best = el
-              }
-            }
-            return best
-          }
-
-          const winBefore = window.scrollY || document.documentElement.scrollTop || 0
-          const target = pickScrollable()
-
-          if (target) {
-            const before = target.scrollTop
-            target.scrollBy({ left: dx, top: dy, behavior: "auto" })
-            if (Math.abs(target.scrollTop - before) < 2 && dy !== 0) {
-              target.scrollTop = before + dy
-            }
-            // Dispatch wheel at center as well (some React listeners need it)
-            try {
-              const r = target.getBoundingClientRect()
-              const cx = r.left + Math.min(r.width / 2, 200)
-              const cy = r.top + Math.min(r.height / 2, 200)
-              target.dispatchEvent(
-                new WheelEvent("wheel", {
-                  bubbles: true,
-                  cancelable: true,
-                  deltaX: dx,
-                  deltaY: dy,
-                  clientX: cx,
-                  clientY: cy,
-                }),
-              )
-            } catch {
-              /* ignore */
-            }
-            const after = target.scrollTop
-            return {
-              mode: "element",
-              moved: Math.abs(after - before) >= 2,
-              before,
-              after,
-              deltaRequested: dy,
-              tag: target.tagName,
-              testid: target.getAttribute("data-testid"),
-              scrollHeight: target.scrollHeight,
-              clientHeight: target.clientHeight,
-              windowScrollY: winBefore,
-            } satisfies ScrollReport
-          }
-
-          window.scrollBy(dx, dy)
-          // Fallback synthetic wheel on document
-          try {
-            document.dispatchEvent(
-              new WheelEvent("wheel", {
-                bubbles: true,
-                cancelable: true,
-                deltaX: dx,
-                deltaY: dy,
-                clientX: wheelX,
-                clientY: wheelY,
-              }),
-            )
-          } catch {
-            /* ignore */
-          }
-          const winAfter = window.scrollY || document.documentElement.scrollTop || 0
-          return {
-            mode: "window",
-            moved: Math.abs(winAfter - winBefore) >= 2,
-            before: winBefore,
-            after: winAfter,
-            deltaRequested: dy,
-            windowScrollY: winAfter,
-          } satisfies ScrollReport
-        },
-        args: [deltaX, deltaY, x, y],
+      const cdp = await this.sendCdp(tabId, "Runtime.evaluate", {
+        expression: spaScrollExpr,
+        returnByValue: true,
       })
-
-      const data = injected?.[0]?.result as
-        | {
-            mode: string
-            moved: boolean
-            before: number
-            after: number
-            deltaRequested: number
-          }
-        | undefined
-
-      // CDP mouseWheel as additional signal (helps some pages when element scroll failed)
-      if (!data?.moved) {
-        try {
-          await this.sendCdp(tabId, "Input.dispatchMouseEvent", {
-            type: "mouseWheel",
-            x,
-            y,
-            deltaX,
-            deltaY,
-          })
-        } catch {
-          /* ignore */
-        }
+      if (cdp?.exceptionDetails) {
+        errors.push(
+          cdp.exceptionDetails?.exception?.description ||
+            cdp.exceptionDetails?.text ||
+            "Runtime.evaluate exception",
+        )
+      } else if (cdp?.result?.value && typeof cdp.result.value === "object") {
+        data = { ...(cdp.result.value as ScrollReport), path: "cdp_runtime" }
       }
-
-      if (data && data.moved === false) {
-        return {
-          success: true,
-          data: {
-            ...data,
-            warning:
-              "Scroll did not change scrollTop (common on X/Twitter SPA if feed scroller not found). " +
-              "Try press_key PageDown, or evaluate scrolling [data-testid=primaryColumn] / [role=main]. " +
-              "Do NOT claim the page scrolled without re-checking get_page_text.",
-          },
-        }
-      }
-
-      return { success: true, data: data || { mode: "unknown", moved: true } }
     } catch (e: any) {
+      errors.push(`cdp_runtime: ${e?.message || e}`)
+    }
+
+    // 2) CDP mouseWheel — OS-level wheel into the page (works when scripting is blocked)
+    if (!data?.moved) {
       try {
         await this.sendCdp(tabId, "Input.dispatchMouseEvent", {
           type: "mouseWheel",
@@ -966,17 +871,202 @@ export class BrowserBridge {
           deltaX,
           deltaY,
         })
-      } catch {
-        await this.scriptingExecute(tabId, `window.scrollBy(${deltaX}, ${deltaY})`)
+        if (!data) {
+          data = {
+            mode: "cdp_mouse_wheel",
+            moved: null,
+            deltaRequested: deltaY,
+            path: "cdp_mouse_wheel",
+            warning: "Dispatched CDP mouseWheel; verify with get_page_text (no scrollTop sample).",
+          }
+        } else {
+          data = {
+            ...data,
+            path: `${data.path}+cdp_mouse_wheel`,
+            warning:
+              (data.warning ? data.warning + " " : "") +
+              "Also dispatched CDP mouseWheel; re-check get_page_text.",
+          }
+        }
+      } catch (e: any) {
+        errors.push(`cdp_mouse_wheel: ${e?.message || e}`)
       }
-      return {
-        success: true,
-        data: {
-          mode: "fallback",
-          moved: null,
-          warning: `Scroll fallback used (${e?.message || e}). Verify with get_page_text.`,
-        },
+    }
+
+    // 3) CDP PageDown as third signal (X timeline often listens to keyboard)
+    if (data?.moved !== true) {
+      try {
+        await this.sendCdp(tabId, "Input.dispatchKeyEvent", {
+          type: "keyDown",
+          key: "PageDown",
+          code: "PageDown",
+          windowsVirtualKeyCode: 34,
+          nativeVirtualKeyCode: 34,
+        })
+        await this.sendCdp(tabId, "Input.dispatchKeyEvent", {
+          type: "keyUp",
+          key: "PageDown",
+          code: "PageDown",
+          windowsVirtualKeyCode: 34,
+          nativeVirtualKeyCode: 34,
+        })
+        data = {
+          ...(data || { mode: "cdp_pagedown", deltaRequested: deltaY, moved: null }),
+          path: data?.path ? `${data.path}+cdp_pagedown` : "cdp_pagedown",
+          warning:
+            (data?.warning ? data.warning + " " : "") +
+            "Also sent PageDown; verify with get_page_text.",
+        }
+      } catch (e: any) {
+        errors.push(`cdp_pagedown: ${e?.message || e}`)
       }
+    }
+
+    // 4) chrome.scripting MAIN — last resort only (often blocked on x.com)
+    if (data?.moved !== true) {
+      try {
+        const injected = await chrome.scripting.executeScript({
+          target: { tabId },
+          world: "MAIN",
+          func: (dx: number, dy: number, wheelX: number, wheelY: number) => {
+            const isScrollable = (el: Element): el is HTMLElement => {
+              if (!(el instanceof HTMLElement)) return false
+              const st = getComputedStyle(el)
+              const oy = st.overflowY
+              if (oy !== "auto" && oy !== "scroll" && oy !== "overlay") return false
+              return el.scrollHeight > el.clientHeight + 40 && el.clientHeight > 80
+            }
+            const prefs = [
+              '[data-testid="primaryColumn"]',
+              'main[role="main"]',
+              '[role="main"]',
+              '[data-testid="cellInnerDiv"]',
+              "div[aria-label*='Timeline']",
+              "section[role='region']",
+            ]
+            let target: HTMLElement | null = null
+            for (const sel of prefs) {
+              const el = document.querySelector(sel)
+              if (el && isScrollable(el)) {
+                target = el
+                break
+              }
+              if (el) {
+                const nested = Array.from(el.querySelectorAll("*")).find(isScrollable)
+                if (nested) {
+                  target = nested as HTMLElement
+                  break
+                }
+              }
+            }
+            if (!target) {
+              let bestRoom = 0
+              for (const el of Array.from(document.querySelectorAll("body *"))) {
+                if (!isScrollable(el)) continue
+                const room = el.scrollHeight - el.clientHeight
+                if (room > bestRoom) {
+                  bestRoom = room
+                  target = el
+                }
+              }
+            }
+            const winBefore = window.scrollY || document.documentElement.scrollTop || 0
+            if (target) {
+              const before = target.scrollTop
+              target.scrollBy({ left: dx, top: dy, behavior: "auto" })
+              if (Math.abs(target.scrollTop - before) < 2 && dy !== 0) target.scrollTop = before + dy
+              try {
+                const r = target.getBoundingClientRect()
+                target.dispatchEvent(
+                  new WheelEvent("wheel", {
+                    bubbles: true,
+                    cancelable: true,
+                    deltaX: dx,
+                    deltaY: dy,
+                    clientX: r.left + Math.min(r.width / 2, 200),
+                    clientY: r.top + Math.min(r.height / 2, 200),
+                  }),
+                )
+              } catch { /* ignore */ }
+              const after = target.scrollTop
+              return {
+                mode: "element",
+                moved: Math.abs(after - before) >= 2,
+                before,
+                after,
+                deltaRequested: dy,
+                tag: target.tagName,
+                testid: target.getAttribute("data-testid"),
+                scrollHeight: target.scrollHeight,
+                clientHeight: target.clientHeight,
+                windowScrollY: winBefore,
+              }
+            }
+            window.scrollBy(dx, dy)
+            try {
+              document.dispatchEvent(
+                new WheelEvent("wheel", {
+                  bubbles: true,
+                  cancelable: true,
+                  deltaX: dx,
+                  deltaY: dy,
+                  clientX: wheelX,
+                  clientY: wheelY,
+                }),
+              )
+            } catch { /* ignore */ }
+            const winAfter = window.scrollY || document.documentElement.scrollTop || 0
+            return {
+              mode: "window",
+              moved: Math.abs(winAfter - winBefore) >= 2,
+              before: winBefore,
+              after: winAfter,
+              deltaRequested: dy,
+              windowScrollY: winAfter,
+            }
+          },
+          args: [deltaX, deltaY, x, y],
+        })
+        const scriptData = injected?.[0]?.result as ScrollReport | undefined
+        if (scriptData) {
+          data = { ...scriptData, path: data?.path ? `${data.path}+scripting` : "scripting" }
+        }
+      } catch (e: any) {
+        errors.push(`scripting: ${e?.message || e}`)
+      }
+    }
+
+    if (data) {
+      if (data.moved === false) {
+        return {
+          success: true,
+          data: {
+            ...data,
+            warning:
+              data.warning ||
+              "Scroll did not change scrollTop (common on X/Twitter SPA if feed scroller not found). " +
+                "Try press_key PageDown, or re-check get_page_text. " +
+                "Do NOT claim the page scrolled without verifying content changed.",
+          },
+        }
+      }
+      return { success: true, data }
+    }
+
+    // Never surface raw "Script injection failed…" as the only failure for scroll —
+    // agent should still have CDP attempts; return soft failure with guidance.
+    return {
+      success: true,
+      data: {
+        mode: "exhausted",
+        moved: false,
+        deltaRequested: deltaY,
+        path: "none",
+        warning:
+          `All scroll paths failed (${errors.join("; ") || "unknown"}). ` +
+          "Try press_key PageDown, or host_computer scroll if coordinate mode is on. " +
+          "Verify with get_page_text — do not claim scrolled.",
+      },
     }
   }
 
