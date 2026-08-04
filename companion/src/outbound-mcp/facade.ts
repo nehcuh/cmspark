@@ -1,8 +1,8 @@
 /**
- * Outbound MCP façade skeleton (Phase 0c).
+ * Outbound MCP façade (Phase 0c).
  *
- * stdio MCP product bridge to Companion WS is intentionally incomplete:
- * this module enforces profile + audit so bake-off wiring cannot skip L3/L4.
+ * Enforces curated L1 profile + server-side L3+ disclosure + audit.
+ * Live Companion dispatch lives in bridge.ts (injectable).
  */
 
 import {
@@ -13,12 +13,16 @@ import {
   outboundToInternalName,
 } from "./profile"
 import { appendOutboundMcpAudit } from "./audit"
+import { hasOutboundDisclosure } from "./disclosure-session"
 
 export type OutboundCallRequest = {
   caller_id: string
   tool: string
   args?: Record<string, unknown>
-  /** User has accepted L3+ disclosure for this session/task */
+  /**
+   * @deprecated Ignored for authorization. Kept for API compatibility only.
+   * Use acceptOutboundDisclosure(caller_id) so the server holds session state.
+   */
   disclosure_accepted?: boolean
   domain?: string
 }
@@ -42,7 +46,7 @@ export function listOutboundTools(): string[] {
 
 /**
  * Gate a tool call before any Companion dispatch.
- * Fail-closed on forbidden tools and missing disclosure for exfil-class tools.
+ * Fail-closed on forbidden tools and missing **server-side** disclosure for exfil-class tools.
  */
 export function gateOutboundCall(req: OutboundCallRequest): OutboundCallResult {
   const tool = (req.tool || "").trim()
@@ -72,7 +76,8 @@ export function gateOutboundCall(req: OutboundCallRequest): OutboundCallResult {
     }
   }
 
-  if (OUTBOUND_MCP_EXFIL_CLASS.has(tool) && req.disclosure_accepted !== true) {
+  // M3: server session only — caller disclosure_accepted is intentionally ignored
+  if (OUTBOUND_MCP_EXFIL_CLASS.has(tool) && !hasOutboundDisclosure(req.caller_id)) {
     appendOutboundMcpAudit({
       caller_id: req.caller_id || "unknown",
       tool,

@@ -152,14 +152,15 @@ Channel:      community
 ## H. 执行序（本次开发）
 
 ```text
-1. [ ] 写/改失败测：M3 服务端 disclosure（RED）
-2. [ ] 实现 session disclosure + 真桥最小路径（GREEN）
-3. [ ] M1 M2 M4 M5 M6 单测
-4. [ ] M7 默认关断言
+1. [x] 写/改失败测：M3 服务端 disclosure（RED→GREEN）
+2. [x] 实现 session disclosure + bridge 最小路径（injectable dispatcher）
+3. [x] M1 M2 M4 M5 M6 单测（bridge origin + gate）
+4. [x] M7 默认关：仅 `cmspark-agent mcp-outbound` 启动 stdio；start/daemon 不拉起
 5. [ ] MACHINE 全绿（本会话命令输出）
 6. [ ] dual-external-review outbound-mcp-p0c
 7. [ ] APPROVE* → PR；REJECT → 修 → 重 5–6
 8. [ ] P0d bake-off 仅在 M8/M9 就绪或只读子集上
+9. [ ] 生产 setOutboundDispatcher 接到 Companion executeTool（真 CDP）— 可 follow-up
 ```
 
 ---

@@ -183,3 +183,49 @@ tail -f ~/.cmspark-agent/logs/companion-$(date +%Y-%m-%d).log | grep -i mcp
 ```
 
 常见错误对照见 [`docs/TROUBLESHOOTING.md`](./TROUBLESHOOTING.md#mcp-相关)。
+
+---
+
+## Outbound MCP（编程 Agent 调用 CMspark 浏览器 · ADR-022）
+
+> **方向**：Companion 作为 **MCP server**，把 curated **L1** 工具以 `cmspark__*` 导出给 Claude Code / Cursor 等。  
+> **规范**：[ADR-022](adr/022-outbound-mcp-server.md) · 场景 [Daily Content Loop](decisions/daily-content-loop-brief-2026-08-04.md)
+
+### 启动（显式 opt-in，非 default-on）
+
+```bash
+# 需已 build companion；不会由 daemon start 自动拉起
+cmspark-agent mcp-outbound
+```
+
+编程 Agent 配置示例（stdio）：
+
+```json
+{
+  "mcpServers": {
+    "cmspark": {
+      "command": "cmspark-agent",
+      "args": ["mcp-outbound"],
+      "env": {
+        "CMSPARK_OUTBOUND_CALLER_ID": "my-coding-agent"
+      }
+    }
+  }
+}
+```
+
+### 关键工具
+
+| 工具 | 说明 |
+|------|------|
+| `cmspark__accept_data_disclosure` | **先调用**（`acknowledge: true`）— 服务端会话；`get_page_text` / `screenshot` 依赖它 |
+| `cmspark__list_tabs` / `navigate` / `click` / `type` / `wait_for` / `downloads_find` | 策展 L1 |
+| `cmspark__get_page_text` / `screenshot` | 外泄类；无服务端 disclosure 则拒 |
+
+**默认禁止**：cookies、evaluate、host/CU、shell、netsec。
+
+### 现状（P0c 进度）
+
+- 门禁 / disclosure / audit / synthetic origin：**已实现**  
+- 真 CDP 调度：需 Companion `setOutboundDispatcher` 接线（未完成时工具返回 `BRIDGE_UNAVAILABLE`）  
+- 交互确认 L8 / tab lease L9：bake-off 前仍开放

@@ -53,10 +53,12 @@ cookies*, evaluate, host_*, shell_*, netsec_*, osascript_*, skill_install (inter
 - [x] stdio entry skeleton lists only whitelist names  
 - [x] refuses forbidden tools with structured error  
 - [x] audit line helper  
-- [ ] Live bridge to Companion WS (follow-up if bake-off authorized)  
+- [x] Server-side disclosure session (not caller-trusted bool) — M3  
+- [x] synthetic origin on invoke (`outbound_mcp:<caller>`) — M6  
+- [x] CLI `cmspark-agent mcp-outbound` (not default-on) — M7  
+- [x] Injectable dispatcher bridge + unit tests (M4 partial)  
+- [ ] Production `setOutboundDispatcher` → Companion executeTool / CDP  
 - [ ] Tray/global confirm (L8) — required before interactive T1  
-- [ ] Server-side disclosure session (not caller-trusted bool) — M3  
-- [ ] originWs / synthetic origin on confirm — M6  
 - [ ] dual-external-review after machine green — T3 
 
 ## 6. Bake-off (P0d) — human checklist
