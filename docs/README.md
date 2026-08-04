@@ -13,7 +13,7 @@
 |------|----------------|------|
 | [../README.md](../README.md) | 全景 | 安装、三轴能力矩阵、快速用、配置与托盘 |
 | [confirm-center-user-guide.md](confirm-center-user-guide.md) | **横切 Trust UI**（L1/L2） | 确认台 / Cockpit、高危审批、CU 操控台 |
-| [mcp.md](mcp.md) | **Composition** | MCP server、信任级别、Resources/Prompts、排错 |
+| [mcp.md](mcp.md) | **Composition** | MCP server（Inbound + **Outbound ADR-022**）、Grok `config.toml`、信任级别、Resources/Prompts、排错 |
 | [user-env.md](user-env.md) | **Composition**（密钥） | skill / shell / MCP 子进程 Secrets（如 Datayes） |
 | [mission-pack-usage.md](mission-pack-usage.md) | **Composition**（+ 企业 Channel） | 任务包、模块、workspace/shell/netsec |
 | [computer-use-user-guide.md](computer-use-user-guide.md) | **Surface L2** | 坐标桌面、急停、session-trust、平台限制 |

@@ -188,47 +188,121 @@ tail -f ~/.cmspark-agent/logs/companion-$(date +%Y-%m-%d).log | grep -i mcp
 
 ## Outbound MCP（编程 Agent 调用 CMspark 浏览器 · ADR-022）
 
-> **方向**：Companion 作为 **MCP server**，把 curated **L1** 工具以 `cmspark__*` 导出给 Claude Code / Cursor 等。  
-> **规范**：[ADR-022](adr/022-outbound-mcp-server.md) · 场景 [Daily Content Loop](decisions/daily-content-loop-brief-2026-08-04.md)
+<a id="outbound-mcp"></a>
 
-### 启动（显式 opt-in，非 default-on）
+> **方向**：Companion 作为 **MCP server**，把 curated **L1** 工具以 `cmspark__*` 导出给 Claude Code / Cursor / **Grok Build** 等。  
+> **规范**：[ADR-022](adr/022-outbound-mcp-server.md) · 场景 [Daily Content Loop](decisions/daily-content-loop-brief-2026-08-04.md)  
+> **排错**：[TROUBLESHOOTING.md · Outbound MCP](./TROUBLESHOOTING.md#outbound-mcp)
+
+这与上文 **Inbound MCP**（`~/.cmspark-agent/config.json` 里配置 *外部* server 给 Side Panel 用）方向相反：Outbound 是 **CMspark 导出浏览器面** 给 *外部* 编程 Agent。
+
+### 前置条件（所有编程 Agent 共用）
+
+1. **Companion 在跑**：tray / `cmspark-agent daemon start` / 打开 CMspark.app  
+2. **Chrome 扩展已配对**（Side Panel 绿 / 已连接），否则 `list_tabs` 等会 `EXTENSION_UNAVAILABLE` 或超时  
+3. 编程 Agent 侧 **显式配置** `mcp-outbound`（**非** default-on：`daemon start` **不会**自动拉起 stdio MCP）
+
+### 启动（显式 opt-in）
 
 ```bash
-# 需已 build companion；不会由 daemon start 自动拉起
+# 开发树：需已 build companion；PATH 上有 cmspark-agent 时：
 cmspark-agent mcp-outbound
+
+# DMG /Applications 安装（推荐写绝对路径，避免 IDE 找不到 PATH）：
+/Applications/CMspark.app/Contents/Resources/cmspark-agent mcp-outbound
 ```
 
-编程 Agent 配置示例（stdio）：
+stdio 进程会连本机 Companion：`POST http://127.0.0.1:<port>/outbound-mcp/v1/invoke`，`Authorization: Bearer <ws_secret>`（与扩展同一 `~/.cmspark-agent/ws_secret`）。
+
+### 通用编程 Agent 配置示例（JSON / Claude Code 风格）
 
 ```json
 {
   "mcpServers": {
     "cmspark": {
-      "command": "cmspark-agent",
+      "command": "/Applications/CMspark.app/Contents/Resources/cmspark-agent",
       "args": ["mcp-outbound"],
       "env": {
-        "CMSPARK_OUTBOUND_CALLER_ID": "my-coding-agent"
+        "CMSPARK_OUTBOUND_CALLER_ID": "my-coding-agent",
+        "CMSPARK_OUTBOUND_PORT": "23401"
       }
     }
   }
 }
 ```
 
-### 关键工具
+开发机也可把 `command` 换成 `cmspark-agent` 或 `node …/companion/dist/index.js`（需本机 PATH / node_modules 可用）。
+
+### Grok Build 配置（`config.toml`）
+
+Grok 读 **TOML**，不是 JSON。用户级与项目级均可：
+
+| 范围 | 路径 |
+|------|------|
+| 用户级 | `~/.grok/config.toml` |
+| 项目级 | 仓库内 `.grok/config.toml`（需 folder trust） |
+
+推荐（DMG 安装后）：
+
+```toml
+# CMspark Outbound MCP — L1 浏览器面（ADR-022）
+# 前置：CMspark.app / daemon 运行 + Chrome 扩展 Side Panel 已配对
+[mcp_servers.cmspark]
+command = "/Applications/CMspark.app/Contents/Resources/cmspark-agent"
+args = ["mcp-outbound"]
+enabled = true
+startup_timeout_sec = 45
+tool_timeout_sec = 120
+env = { CMSPARK_OUTBOUND_CALLER_ID = "grok-build", CMSPARK_OUTBOUND_PORT = "23401" }
+```
+
+验证：
+
+```bash
+grok mcp list
+grok mcp doctor cmspark
+# 期望：command found · handshake OK · 10 tools discovered · healthy
+```
+
+**配置 vs 会话（重要）：**
+
+| 层 | 含义 |
+|----|------|
+| 配置 | 磁盘上已写 `[mcp_servers.cmspark]`；`doctor` 可单独拉起进程并握手 |
+| 会话 | **当前这一次** Grok 对话是否已把 `cmspark__*` 注册进工具表 |
+
+`doctor` 绿 **≠** 当前会话一定已挂载。改 config / 修好 Companion 后若工具仍只有 `tasks`/`voice` 等，请：
+
+1. **退出并新开 Grok 会话**（最稳），或  
+2. 使用 TUI 的 MCP reconnect / reload（若有）
+
+成功时会话内应能发现 `cmspark__list_tabs` 等；调用外泄类工具前须先：
+
+```text
+cmspark__accept_data_disclosure  arguments: { "acknowledge": true }
+```
+
+未带 `acknowledge: true` 会返回 `ACK_REQUIRED`。
+
+### 关键工具（默认 outbound L1 profile）
 
 | 工具 | 说明 |
 |------|------|
-| `cmspark__accept_data_disclosure` | **先调用**（`acknowledge: true`）— 服务端会话；`get_page_text` / `screenshot` 依赖它 |
-| `cmspark__list_tabs` / `navigate` / `click` / `type` / `wait_for` / `downloads_find` | 策展 L1 |
+| `cmspark__accept_data_disclosure` | **先调用**（**必须** `acknowledge: true`）— 服务端 disclosure 会话；`get_page_text` / `screenshot` 依赖它 |
+| `cmspark__list_outbound_profile` | 列出当前策展 L1 工具名 |
+| `cmspark__list_tabs` | 列标签（建议其它工具前先调） |
+| `cmspark__navigate` / `click` / `type` / `wait_for` / `downloads_find` | 策展 L1 交互 / 只读 Downloads |
 | `cmspark__get_page_text` / `screenshot` | 外泄类；无服务端 disclosure 则拒 |
 
-**默认禁止**：cookies、evaluate、host/CU、shell、netsec。
+**不在默认 L1（调用会 `PROFILE_FORBIDDEN`）：**  
+`scroll`、`evaluate`、cookies、host/CU、shell、netsec 等。  
+长页翻读：用 `navigate` 到目标 URL + `get_page_text`，或在 Side Panel 内用完整工具面；不要假设 Outbound 有 `cmspark__scroll`。
 
 ### 现状（P0c 进度）
 
 - 门禁 / disclosure / audit / synthetic origin：**已实现**  
 - **真桥**：`mcp-outbound` → `POST http://127.0.0.1:<port>/outbound-mcp/v1/invoke`（`Authorization: Bearer <ws_secret>`）→ Companion `createToolExecutor` → Extension CDP  
-- 先 `cmspark-agent start`（或 tray/daemon）并打开扩展配对；再起 `mcp-outbound`  
+- 先 `cmspark-agent start`（或 tray/daemon）并打开扩展配对；再由编程 Agent **按需 spawn** `mcp-outbound`  
 - 无扩展连接时：`EXTENSION_UNAVAILABLE`  
 - **L8 确认**：Outbound 触发的 L2 确认 fan-out 到所有已鉴权面板 + 优先托盘对话框 + OS 通知；超时返回 `OUTBOUND_CONFIRM_REQUIRED`（勿只盯 IDE）  
 - **L9 tab lease**：交互工具须显式 `tabId`；holder=`outbound_mcp:<caller>`；与 Side Panel 冲突时 **Side Panel 赢**，MCP 得 `TAB_LOCKED` + `queue_disclosure_zh`  

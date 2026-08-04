@@ -85,6 +85,59 @@ server 没连上或没声明 `tools` capability。先解决上面的连接问题
 
 只有声明了 `resources` 能力的 server 才支持 `mcp_list_resources`。filesystem / brave-search 等 tools-only server 应该使用 `mcp__<server>__<tool>` 形式的 namespaced 工具。如果 LLM 仍反复误用，检查 server 是否已正常连接；连接正常时 meta tools 会按 capability 动态暴露。
 
+## Outbound MCP（编程 Agent · ADR-022）
+
+<a id="outbound-mcp"></a>
+
+> 完整配置见 [`docs/mcp.md` · Outbound MCP](./mcp.md#outbound-mcp)（含 **Grok `config.toml`**）。  
+> 与上文 **Inbound** MCP（Companion 拉外部 server）方向相反。
+
+### `grok mcp doctor` 绿，但对话里没有 `cmspark__*` 工具
+
+**配置 ≠ 当前会话挂载。** `doctor` 会单独 spawn `mcp-outbound` 测握手；已打开的 Grok 会话未必已注册该 server。
+
+**解决：** 退出并 **新开 Grok 会话**（或 TUI MCP reload）；确认 `~/.grok/config.toml` 或项目 `.grok/config.toml` 有 `[mcp_servers.cmspark]` 且 `enabled = true`。
+
+### `MODULE_NOT_FOUND: @modelcontextprotocol/sdk`
+
+打包/hot-swap 的 `cmspark-agent.js` 若把 MCP SDK 标成 external 且 Resources 未带 `node_modules`，`mcp-outbound` 会秒崩。
+
+**解决：** 使用 `make package-macos` 正规产物（esbuild **内联** SDK），或开发树 `node companion/dist/index.js mcp-outbound`。Grok 的 `command` 指向  
+`/Applications/CMspark.app/Contents/Resources/cmspark-agent`。
+
+### `ACK_REQUIRED` / `DISCLOSURE_REQUIRED`
+
+读页面正文/截图前须先：
+
+```text
+cmspark__accept_data_disclosure  { "acknowledge": true }
+```
+
+缺 `acknowledge: true` → `ACK_REQUIRED`；Companion 侧无 disclosure 会话 → `DISCLOSURE_REQUIRED`。
+
+### `PROFILE_FORBIDDEN`（如 `cmspark__scroll`）
+
+默认 outbound L1 **不含** `scroll` / `evaluate` / cookies / shell 等。  
+长文：用 `navigate` 到具体 URL + `get_page_text`，不要依赖 Outbound 翻页工具。
+
+### `EXTENSION_UNAVAILABLE` / `list_tabs` 超时
+
+Companion 在跑但 **没有已鉴权的 Chrome 扩展**（Side Panel 未开或未配对）。
+
+**解决：** 打开 Side Panel 至「已连接」；`curl` 检查  
+`GET http://127.0.0.1:23401/outbound-mcp/v1/health` 应返回 `"runner":"wired"`（需 Bearer `ws_secret`）。
+
+### `OUTBOUND_CONFIRM_REQUIRED`
+
+危险工具等 L2 确认超时或未在托盘/确认台处理。Outbound 确认会 fan-out 面板 + 托盘，不只看编程 Agent 窗口。
+
+### command not found / doctor 找不到 `cmspark-agent`
+
+IDE 启动时 PATH 往往没有 dev 的 `cmspark-agent`。
+
+**解决：** `command` 写绝对路径  
+`/Applications/CMspark.app/Contents/Resources/cmspark-agent`，`args = ["mcp-outbound"]`。
+
 ## 确认台 / L2 安全确认
 
 > 完整说明见 [confirm-center-user-guide.md](./confirm-center-user-guide.md)。
