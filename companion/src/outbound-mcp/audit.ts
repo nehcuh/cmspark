@@ -12,6 +12,8 @@ export type OutboundAuditEvent = {
   confirm_outcome?: "approved" | "denied" | "timeout" | "skipped" | "n/a"
   ok: boolean
   error_code?: string
+  /** L4+ grant id when auth mode is grant */
+  grant_id?: string
 }
 
 export function appendOutboundMcpAudit(ev: OutboundAuditEvent): void {
@@ -23,6 +25,7 @@ export function appendOutboundMcpAudit(ev: OutboundAuditEvent): void {
     confirm_outcome: ev.confirm_outcome ?? "n/a",
     ok: ev.ok,
     error_code: ev.error_code,
+    grant_id: ev.grant_id,
     at: new Date().toISOString(),
   } as any)
 }

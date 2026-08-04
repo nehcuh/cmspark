@@ -27,6 +27,8 @@ import { getConfig } from "../config"
 
 const CALLER_ENV = "CMSPARK_OUTBOUND_CALLER_ID"
 const PORT_ENV = "CMSPARK_OUTBOUND_PORT"
+/** L4+ grant token (cmg_…). Required when outbound_mcp.require_grant=true. */
+export const GRANT_ENV = "CMSPARK_OUTBOUND_GRANT"
 
 const META_ACCEPT = "cmspark__accept_data_disclosure"
 const META_PROFILE = "cmspark__list_outbound_profile"
@@ -64,17 +66,42 @@ function openArgsSchema(): {
   }
 }
 
-/** Resolve companion loopback + secret; wire HTTP dispatcher. */
+/**
+ * Resolve HTTP bearer for mcp-outbound → companion loopback.
+ * L4+ dual-review: when require_grant, never fall back to ws_secret.
+ */
+export function resolveOutboundHttpBearer(): {
+  token: string
+  mode: "grant" | "ws_secret"
+} {
+  const requireGrant = getConfig().outbound_mcp?.require_grant === true
+  const grant = (process.env[GRANT_ENV] || "").trim()
+  if (requireGrant) {
+    if (!grant) {
+      throw new Error(
+        `GRANT_REQUIRED: set ${GRANT_ENV} (cmg_…) when outbound_mcp.require_grant=true — Extension ws_secret is not accepted`,
+      )
+    }
+    return { token: grant, mode: "grant" }
+  }
+  if (grant) {
+    return { token: grant, mode: "grant" }
+  }
+  return { token: getOrCreateSharedSecret(), mode: "ws_secret" }
+}
+
+/** Resolve companion loopback + secret/grant; wire HTTP dispatcher. */
 export function wireDefaultOutboundHttpDispatcher(): {
   port: number
   token_present: boolean
+  auth_mode: "grant" | "ws_secret"
 } {
   const config = getConfig()
   const port =
     Number(process.env[PORT_ENV]) ||
     Number(config.port) ||
     23401
-  const token = getOrCreateSharedSecret()
+  const { token, mode } = resolveOutboundHttpBearer()
   setOutboundDispatcher(
     createHttpOutboundDispatcher({
       port,
@@ -82,7 +109,7 @@ export function wireDefaultOutboundHttpDispatcher(): {
       timeout_ms: 120_000,
     }),
   )
-  return { port, token_present: Boolean(token) }
+  return { port, token_present: Boolean(token), auth_mode: mode }
 }
 
 /** Build MCP server instance (testable without connecting transport). */
@@ -128,10 +155,25 @@ export function createOutboundMcpServer(): Server {
       // success so agents parsing JSON text do not proceed on a false accept.
       const config = getConfig()
       const port = Number(process.env[PORT_ENV]) || Number(config.port) || 23401
-      const remote = await companionPostDisclosure(
-        { port, token: getOrCreateSharedSecret() },
-        cid,
-      )
+      let token: string
+      try {
+        token = resolveOutboundHttpBearer().token
+      } catch (e: any) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify({
+                ok: false,
+                error_code: "GRANT_REQUIRED",
+                error: e?.message || String(e),
+              }),
+            },
+          ],
+          isError: true,
+        }
+      }
+      const remote = await companionPostDisclosure({ port, token }, cid)
       if (!remote.ok) {
         revokeOutboundDisclosure(cid)
         return {
@@ -224,7 +266,7 @@ export async function runOutboundMcpStdioServer(): Promise<void> {
   const wire = wireDefaultOutboundHttpDispatcher()
   // Log to stderr only — stdout is MCP JSON-RPC
   console.error(
-    `[cmspark-outbound] stdio MCP up; companion HTTP 127.0.0.1:${wire.port} (Bearer ws_secret)`,
+    `[cmspark-outbound] stdio MCP up; companion HTTP 127.0.0.1:${wire.port} (auth=${wire.auth_mode})`,
   )
   const server = createOutboundMcpServer()
   const transport = new StdioServerTransport()

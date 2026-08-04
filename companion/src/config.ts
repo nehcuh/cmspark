@@ -221,6 +221,15 @@ export interface CompanionConfig {
   computer?: ComputerConfig
   obsidian?: ObsidianExportConfig
   /**
+   * Outbound MCP (ADR-022) packaging. When require_grant is true, loopback
+   * HTTP invoke/disclosure accept only CMSPARK_OUTBOUND_GRANT (cmg_…) tokens —
+   * never Extension ws_secret (L4+ dual-review lock).
+   */
+  outbound_mcp?: {
+    /** Default false until P1 GA / product ship claim. */
+    require_grant?: boolean
+  }
+  /**
    * Distribution channel: community (CWS-friendly) vs enterprise (local install modules).
    * Companion is source of truth — extension cannot forge enterprise alone.
    */
@@ -279,6 +288,9 @@ const defaultConfig: CompanionConfig = {
   log_retention_days: 14,
   log_max_file_mb: 10,
   capability_profile: "community",
+  outbound_mcp: {
+    require_grant: false,
+  },
   modules: {
     appsec: {
       available: true,

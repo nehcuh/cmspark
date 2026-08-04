@@ -213,7 +213,14 @@ cmspark-agent mcp-outbound
 /Applications/CMspark.app/Contents/Resources/cmspark-agent mcp-outbound
 ```
 
-stdio 进程会连本机 Companion：`POST http://127.0.0.1:<port>/outbound-mcp/v1/invoke`，`Authorization: Bearer <ws_secret>`（与扩展同一 `~/.cmspark-agent/ws_secret`）。
+stdio 进程会连本机 Companion：`POST http://127.0.0.1:<port>/outbound-mcp/v1/invoke`，`Authorization: Bearer …`：
+
+| 模式 | Bearer | 说明 |
+|------|--------|------|
+| **P0 默认**（`outbound_mcp.require_grant=false`） | `ws_secret` 或 `CMSPARK_OUTBOUND_GRANT`（`cmg_…`） | 兼容 bake-off；仍建议最终迁到 grant |
+| **P1 require_grant** | **仅** `CMSPARK_OUTBOUND_GRANT` | 拒绝 Extension `ws_secret`（L4+）；见 [grant design](decisions/outbound-mcp-l4-grant-design-2026-08-04.md) |
+
+签发 grant（Companion 进程 / 测试 API）：`issueOutboundGrant({ label, caller_id })` → 一次性 token 写入 IDE `env.CMSPARK_OUTBOUND_GRANT`。
 
 ### 通用编程 Agent 配置示例（JSON / Claude Code 风格）
 
