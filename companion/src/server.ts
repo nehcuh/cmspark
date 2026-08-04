@@ -185,14 +185,25 @@ async function handleLoopbackHttp(req: http.IncomingMessage, res: http.ServerRes
   res.end("Not Found")
 }
 
-/** Pick an authenticated Extension/panel WS for outbound tool dispatch. */
+/**
+ * Pick an authenticated WS for outbound CDP tool dispatch.
+ * Prefer chrome-extension:// (browser bridge). Tray (`cmspark-tray://local`)
+ * authenticates but does NOT handle tool.execute — binding outbound to tray
+ * causes 15s timeouts on list_tabs etc.
+ */
 export function pickAuthenticatedClientWs(): WebSocket | null {
+  let fallback: WebSocket | null = null
   for (const c of clients) {
-    if (c.readyState === WebSocket.OPEN && wsAuth.get(c)?.authenticated === true) {
+    const st = wsAuth.get(c)
+    if (c.readyState !== WebSocket.OPEN || st?.authenticated !== true) continue
+    const origin = st.origin || ""
+    if (/^chrome-extension:\/\//i.test(origin)) {
       return c
     }
+    // tray / unknown — only use if no extension peer
+    if (!fallback) fallback = c
   }
-  return null
+  return fallback
 }
 
 let outboundRunnerWs: WebSocket | null = null
@@ -210,14 +221,20 @@ export function ensureOutboundToolRunnerWired(): boolean {
     outboundRunnerWs = null
     return false
   }
+  // Prefer rebinding when a better peer appears (extension after tray).
   if (outboundRunnerWs === ws) {
     return true
   }
+  const origin = wsAuth.get(ws)?.origin || ""
   const executeTool = createToolExecutor(ws)
   setOutboundToolRunner(async (toolCallId, internalTool, params) => {
     return executeTool(toolCallId, internalTool, params)
   })
   outboundRunnerWs = ws
+  logger.info("outbound_mcp.runner_wired", {
+    origin: origin || "<none>",
+    prefers_extension: /^chrome-extension:\/\//i.test(origin),
+  })
   return true
 }
 
@@ -245,7 +262,10 @@ const activeTrayConfirmsByWs = new WeakMap<WebSocket, Set<string>>()
 // message is rejected (and the connection terminated) until then, so a local
 // process that forged the Origin header still cannot drive the agent without the
 // shared secret. See ws-auth.ts and server.ts:1418-1420 for the threat model.
-const wsAuth = new WeakMap<WebSocket, { nonce: string; authenticated: boolean; timer: NodeJS.Timeout }>()
+const wsAuth = new WeakMap<
+  WebSocket,
+  { nonce: string; authenticated: boolean; timer: NodeJS.Timeout; origin?: string }
+>()
 
 // Core services — initialized on first connection
 let threadManager: ThreadManager
@@ -5737,7 +5757,7 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
     }
   })
 
-  wss.on("connection", (ws) => {
+  wss.on("connection", (ws, req) => {
     // Note: services (threadManager / skillEngine / historyStore) are initialized
     // exactly once via `await initServices()` at boot (line ~835) before the WS
     // server starts listening. A previous version re-ran initServices() here on
@@ -5746,8 +5766,10 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
     // this.db was still null, silently dropping records during the init window).
     // Removed in audit item 14.
     clients.add(ws)
+    const peerOrigin =
+      typeof req.headers.origin === "string" ? req.headers.origin : undefined
     console.log(`[cmspark-agent] Client connected (${clients.size} total)`)
-    logger.info("ws.client_connected", { clients: clients.size })
+    logger.info("ws.client_connected", { clients: clients.size, origin: peerOrigin || "<none>" })
 
     // P0-2B: challenge this peer immediately. It must reply (auth.handshake) with
     // proof = HMAC-SHA256(sharedSecret, nonce) within AUTH_TIMEOUT_MS, else we
@@ -5761,7 +5783,12 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
         try { ws.terminate() } catch { /* closing */ }
       }
     }, AUTH_TIMEOUT_MS)
-    wsAuth.set(ws, { nonce: challengeNonce, authenticated: false, timer: authTimer })
+    wsAuth.set(ws, {
+      nonce: challengeNonce,
+      authenticated: false,
+      timer: authTimer,
+      origin: peerOrigin,
+    })
     if (ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: "auth.challenge", nonce: challengeNonce }))
     }
