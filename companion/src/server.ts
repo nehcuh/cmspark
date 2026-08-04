@@ -5531,6 +5531,26 @@ export function validateWsMessage(msg: any): WsValidationResult {
       if (!m.patch || typeof m.patch !== "object") return { valid: false, error: "modules.update requires patch object" }
       return { valid: true }
     },
+    "outbound_mcp.grants.list": () => ({ valid: true }),
+    "outbound_mcp.grants.issue": (m) => {
+      if (typeof m.caller_id !== "string" || !m.caller_id.trim()) {
+        return { valid: false, error: "outbound_mcp.grants.issue requires caller_id" }
+      }
+      return { valid: true }
+    },
+    "outbound_mcp.grants.revoke": (m) => {
+      if (typeof m.grant_id !== "string" || !m.grant_id.trim()) {
+        return { valid: false, error: "outbound_mcp.grants.revoke requires grant_id" }
+      }
+      return { valid: true }
+    },
+    "outbound_mcp.grants.revoke_all": () => ({ valid: true }),
+    "outbound_mcp.set_require_grant": (m) => {
+      if (typeof m.require_grant !== "boolean") {
+        return { valid: false, error: "outbound_mcp.set_require_grant requires require_grant boolean" }
+      }
+      return { valid: true }
+    },
     // ADR-015 multi-agent fleet / Confirm Center
     "fleet.status": () => ({ valid: true }),
     "fleet.stop_all": () => ({ valid: true }),
