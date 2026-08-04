@@ -367,7 +367,7 @@ export function SettingsSlideout() {
 
     if (autopilotTierPick === "unattended") {
       // ADR-021: process grant via companion; dual-writes cruise flags server-side.
-      // Background only ACKs {ok:true}; real status arrives via WS broadcast
+      // Background ACKs {ok:true|false}; real status arrives via WS broadcast
       // (security.unattended.status → SET_UNATTENDED_STATUS). Do not invent armed:true.
       chrome.runtime.sendMessage(
         {
@@ -377,9 +377,22 @@ export function SettingsSlideout() {
           ack_desktop: true,
           ack_session: true,
         },
-        () => {
-          if (chrome.runtime.lastError) {
-            setAutopilotMsg(chrome.runtime.lastError.message || "武装失败（扩展通道）")
+        (resp?: { ok?: boolean; error?: string }) => {
+          const channelErr = chrome.runtime.lastError?.message
+          if (channelErr) {
+            // Classic MV3: SW did not answer (dead worker / no sendResponse).
+            // Still probe status — a prior grant or delayed SW wake may succeed.
+            setAutopilotMsg(
+              channelErr.includes("message port closed")
+                ? "扩展后台未响应（可能已休眠）。请：① 确认 Side Panel 顶部为「已连接」② chrome://extensions 点 CMspark「重新加载」后再试"
+                : channelErr,
+            )
+            setAutopilotBusy(false)
+            chrome.runtime.sendMessage({ type: "security.unattended.status" })
+            return
+          }
+          if (resp && resp.ok === false) {
+            setAutopilotMsg(resp.error || "武装失败")
             setAutopilotBusy(false)
             return
           }
