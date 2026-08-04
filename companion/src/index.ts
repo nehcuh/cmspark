@@ -45,7 +45,9 @@ Usage:
   cmspark-agent tray status                查看托盘后端信息
   cmspark-agent tray rebuild               重新编译 Swift 托盘（macOS）
 
-  cmspark-agent menu-bar                   启动菜单栏（已弃用，请使用 tray）`)
+  cmspark-agent menu-bar                   启动菜单栏（已弃用，请使用 tray）
+
+  cmspark-agent mcp-outbound               启动 Outbound MCP stdio 服务（非 default-on；编程 Agent 对接）`)
 }
 
 // ---------------------------------------------------------------------------
@@ -338,6 +340,14 @@ async function main() {
         default:
           await startMenuBarAgent()
       }
+      break
+    }
+
+    case "mcp-outbound": {
+      // ADR-022 Phase 0c: explicit opt-in stdio MCP (never auto-started by start/daemon)
+      await initDataDir()
+      const { runOutboundMcpStdioServer } = await import("./outbound-mcp/stdio-server")
+      await runOutboundMcpStdioServer()
       break
     }
 
