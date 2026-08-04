@@ -343,7 +343,7 @@ test("e2e: unknown outbound path under prefix → 404 JSON", async () => {
   }
 })
 
-test("e2e: runner DISPATCH_FAILED surfaces 422 over HTTP", async () => {
+test("e2e: runner DISPATCH_FAILED surfaces 422 over HTTP (CDP timeout not remapped)", async () => {
   const server = createOutboundTestServer()
   const port = await listen(server)
   setOutboundToolRunner(async () => ({ success: false, error: "cdp timeout" }))
@@ -357,9 +357,33 @@ test("e2e: runner DISPATCH_FAILED surfaces 422 over HTTP", async () => {
       },
     })
     assert.equal(r.status, 422)
-    // "timeout" in error → L8 maps to OUTBOUND_CONFIRM_REQUIRED
+    // N1: generic CDP timeout must NOT become OUTBOUND_CONFIRM_REQUIRED
+    assert.equal(r.json.error_code, "DISPATCH_FAILED")
+    assert.match(r.json.error || "", /cdp timeout/)
+  } finally {
+    await close(server)
+  }
+})
+
+test("e2e: security confirmation timeout maps to OUTBOUND_CONFIRM_REQUIRED", async () => {
+  const server = createOutboundTestServer()
+  const port = await listen(server)
+  setOutboundToolRunner(async () => ({
+    success: false,
+    error: "Security confirmation timeout for navigate",
+  }))
+  try {
+    const r = await requestJson(port, "POST", OUTBOUND_INVOKE_PATH, {
+      token: SECRET,
+      body: {
+        caller_id: "c",
+        tool: "cmspark__navigate",
+        args: { tabId: 1, url: "https://example.com" },
+      },
+    })
+    assert.equal(r.status, 422)
     assert.equal(r.json.error_code, "OUTBOUND_CONFIRM_REQUIRED")
-    assert.match(r.json.error || "", /cdp timeout|tray|Side Panel/i)
+    assert.match(r.json.error || "", /tray|Side Panel/i)
   } finally {
     await close(server)
   }

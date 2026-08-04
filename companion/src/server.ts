@@ -632,7 +632,12 @@ export function createToolExecutor(ws: WebSocket) {
         }
       }
 
-      if (actingThreadId && threadManager) {
+      // ADR-022 L8/L9 adversary B1: outbound injects synthetic __thread_id
+      // (`outbound_mcp:<caller>`) for lease holder identity, but that id is NOT a
+      // ThreadManager thread — isToolAllowed would always deny. Outbound surface is
+      // already gated by gateOutboundCall + disclosure + dual-entry lease; skip the
+      // multi-agent / pack whitelist path for isOutboundMcpCall.
+      if (actingThreadId && threadManager && !isOutboundMcpCall) {
         const th = threadManager.get(actingThreadId) as any
         if (th?.paused) {
           const result = {

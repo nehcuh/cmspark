@@ -241,10 +241,16 @@ export async function companionInvokeOutbound(
   const toolCallId = `ob_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`
   try {
     const result = await runner(toolCallId, internal, taggedArgs)
-    // Map confirm-timeout into actionable MCP error (L8 fail-closed messaging)
+    // L8: only map *confirmation* failures (not generic CDP "timeout") — adversary N1
     let error = result.success ? undefined : result.error || "dispatch failed"
     let error_code = result.success ? undefined : "DISPATCH_FAILED"
-    if (!result.success && error && /timeout|denied|confirmation/i.test(error)) {
+    if (
+      !result.success &&
+      error &&
+      /security confirmation|confirmation (timeout|denied|expired)|denied by user|high.?risk.*denied|OUTBOUND_CONFIRM/i.test(
+        error,
+      )
+    ) {
       error_code = "OUTBOUND_CONFIRM_REQUIRED"
       error =
         `${error} — L8: approve via system tray dialog and/or any open CMspark Side Panel; ` +
