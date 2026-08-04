@@ -1,0 +1,22 @@
+{
+  "batch": "outbound-mcp-p0c",
+  "timestamp": "20260804",
+  "order": ["machine", "adversary", "pi_rereview"],
+  "machine": {
+    "tests": "outbound-mcp-facade + outbound-mcp-companion-http",
+    "result": "18/18 pass"
+  },
+  "adversary": {
+    "reviewer": "claude",
+    "verdict": "APPROVE_WITH_NITS",
+    "path": "docs/audit/reviews/outbound-mcp-p0c-adversary-claude-20260804-105153.md"
+  },
+  "pi_rereview": {
+    "reviewer": "pi",
+    "verdict": "APPROVE_WITH_NITS",
+    "path": "docs/audit/reviews/outbound-mcp-p0c-pi-rereview-20260804-110035.md"
+  },
+  "both_approve": true,
+  "blockers": 0,
+  "synthesis": "docs/audit/reviews/outbound-mcp-p0c-confirm-synthesis-20260804.md"
+}

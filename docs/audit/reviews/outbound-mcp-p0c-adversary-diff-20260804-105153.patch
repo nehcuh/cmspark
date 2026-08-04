@@ -1,0 +1,3054 @@
+# Adversary context
+base: 45480f913da2466a3a66e418e136857ffd478b74
+head: 63d36af
+time: 20260804-105153
+
+63d36af feat(outbound-mcp): wire dispatcher via loopback HTTP to CDP
+73a1194 docs: lock confirm order as adversary then Pi re-review
+0f94c75 feat(outbound-mcp): P0c gate, disclosure session, stdio CLI
+ea1bbea docs: lock Daily Content Loop product direction
+287232c docs: ADR-022 Outbound MCP + Eval Engineering gates
+
+ companion/src/index.ts                             |  12 +-
+ companion/src/outbound-mcp/bridge.ts               | 155 +++++++
+ companion/src/outbound-mcp/companion-http.ts       | 304 ++++++++++++++
+ companion/src/outbound-mcp/disclosure-session.ts   |  73 ++++
+ companion/src/outbound-mcp/facade.ts               |  17 +-
+ companion/src/outbound-mcp/http-client.ts          | 124 ++++++
+ companion/src/outbound-mcp/index.ts                |  47 +++
+ companion/src/outbound-mcp/origin.ts               |  27 ++
+ companion/src/outbound-mcp/stdio-server.ts         | 211 ++++++++++
+ companion/src/server.ts                            |  82 ++++
+ .../tests/outbound-mcp-companion-http.test.ts      |  99 +++++
+ companion/tests/outbound-mcp-facade.test.ts        |  98 ++++-
+ docs/GOAL.md                                       |   9 +-
+ docs/README.md                                     |   8 +
+ docs/adr/020-capability-model-three-axes.md        |   3 +-
+ docs/adr/022-outbound-mcp-server.md                | 238 +++++++++++
+ docs/architecture.md                               |  18 +-
+ .../_templates/dual-review-capability-checklist.md |  16 +
+ docs/audit/reviews/_templates/eval-gate-card.md    |  55 +++
+ .../cmspark-as-mcp-server-brief-2026-08-03.md      |   3 +-
+ ...-mcp-server-dual-review-synthesis-2026-08-03.md |   7 +-
+ .../daily-content-loop-brief-2026-08-04.md         | 452 +++++++++++++++++++++
+ docs/mcp.md                                        |  48 +++
+ docs/optimization-plan-post-adr-020.md             |  14 +-
+ docs/skills/eval-engineering-gate/SKILL.md         | 277 +++++++++++++
+ .../plans/2026-08-03-outbound-mcp-phase0-spike.md  |  14 +-
+ .../2026-08-04-outbound-mcp-p0c-eval-gates.md      | 190 +++++++++
+ memory/project-knowledge.md                        |  11 +
+ 28 files changed, 2589 insertions(+), 23 deletions(-)
+
+diff --git a/companion/src/index.ts b/companion/src/index.ts
+index 15537d6..3ceb334 100644
+--- a/companion/src/index.ts
++++ b/companion/src/index.ts
+@@ -45,7 +45,9 @@ Usage:
+   cmspark-agent tray status                查看托盘后端信息
+   cmspark-agent tray rebuild               重新编译 Swift 托盘（macOS）
+ 
+-  cmspark-agent menu-bar                   启动菜单栏（已弃用，请使用 tray）`)
++  cmspark-agent menu-bar                   启动菜单栏（已弃用，请使用 tray）
++
++  cmspark-agent mcp-outbound               启动 Outbound MCP stdio 服务（非 default-on；编程 Agent 对接）`)
+ }
+ 
+ // ---------------------------------------------------------------------------
+@@ -341,6 +343,14 @@ async function main() {
+       break
+     }
+ 
++    case "mcp-outbound": {
++      // ADR-022 Phase 0c: explicit opt-in stdio MCP (never auto-started by start/daemon)
++      await initDataDir()
++      const { runOutboundMcpStdioServer } = await import("./outbound-mcp/stdio-server")
++      await runOutboundMcpStdioServer()
++      break
++    }
++
+     case "settings": {
+       const cliArgs = process.argv.slice(3)
+       // P0-2B: read-only WS pairing secret (first-run / re-pair display). The
+diff --git a/companion/src/outbound-mcp/bridge.ts b/companion/src/outbound-mcp/bridge.ts
+new file mode 100644
+index 0000000..23c6a6d
+--- /dev/null
++++ b/companion/src/outbound-mcp/bridge.ts
+@@ -0,0 +1,155 @@
++/**
++ * Outbound MCP invoke path: gate → (optional) companion tool dispatch.
++ *
++ * Live Extension/CDP dispatch is injected so unit tests do not boot server.ts.
++ * When no dispatcher is set, allowed tools fail closed with BRIDGE_UNAVAILABLE
++ * (stdio still lists tools; coding agents get an actionable error).
++ */
++
++import { gateOutboundCall, type OutboundCallRequest, type OutboundCallResult } from "./facade"
++import { makeOutboundMcpOrigin, type OutboundMcpOrigin } from "./origin"
++import { appendOutboundMcpAudit } from "./audit"
++import { OUTBOUND_MCP_EXFIL_CLASS } from "./profile"
++import { hasOutboundDisclosure } from "./disclosure-session"
++
++export type OutboundDispatchRequest = {
++  internal_tool: string
++  mcp_tool: string
++  args: Record<string, unknown>
++  caller_id: string
++  origin: OutboundMcpOrigin
++}
++
++export type OutboundDispatchResult = {
++  success: boolean
++  data?: unknown
++  error?: string
++}
++
++export type OutboundDispatcher = (
++  req: OutboundDispatchRequest,
++) => Promise<OutboundDispatchResult>
++
++export type InvokeOutboundResult = OutboundCallResult & {
++  dispatch?: OutboundDispatchResult
++  origin?: OutboundMcpOrigin
++}
++
++let defaultDispatcher: OutboundDispatcher | null = null
++
++/** Wire production dispatcher (e.g. from companion tool executor). */
++export function setOutboundDispatcher(fn: OutboundDispatcher | null): void {
++  defaultDispatcher = fn
++}
++
++export function getOutboundDispatcher(): OutboundDispatcher | null {
++  return defaultDispatcher
++}
++
++/**
++ * Gate then dispatch. Does not trust caller disclosure_accepted —
++ * facade checks server-side disclosure session.
++ */
++export async function invokeOutboundTool(
++  req: OutboundCallRequest,
++  dispatcher: OutboundDispatcher | null | undefined = defaultDispatcher,
++): Promise<InvokeOutboundResult> {
++  const gate = gateOutboundCall(req)
++  if (!gate.ok) {
++    return gate
++  }
++
++  const origin = makeOutboundMcpOrigin(req.caller_id)
++  const internal = gate.internal_tool
++  if (!internal) {
++    appendOutboundMcpAudit({
++      caller_id: req.caller_id || "unknown",
++      tool: req.tool,
++      ok: false,
++      error_code: "INTERNAL_NAME_MISSING",
++    })
++    return {
++      ok: false,
++      error: "internal tool name missing",
++      error_code: "INTERNAL_NAME_MISSING",
++      origin,
++    }
++  }
++
++  if (!dispatcher) {
++    appendOutboundMcpAudit({
++      caller_id: req.caller_id || "unknown",
++      tool: req.tool,
++      domain: req.domain,
++      ok: false,
++      error_code: "BRIDGE_UNAVAILABLE",
++      confirm_outcome: "n/a",
++    })
++    return {
++      ok: false,
++      error:
++        "outbound bridge not connected to Companion tool executor — start companion and use a wired mcp-outbound profile, or inject setOutboundDispatcher",
++      error_code: "BRIDGE_UNAVAILABLE",
++      internal_tool: internal,
++      origin,
++    }
++  }
++
++  // Defense in depth: re-check disclosure before dispatch for exfil tools
++  if (OUTBOUND_MCP_EXFIL_CLASS.has(req.tool) && !hasOutboundDisclosure(req.caller_id)) {
++    appendOutboundMcpAudit({
++      caller_id: req.caller_id || "unknown",
++      tool: req.tool,
++      ok: false,
++      error_code: "DISCLOSURE_REQUIRED",
++    })
++    return {
++      ok: false,
++      error: "disclosure_required",
++      error_code: "DISCLOSURE_REQUIRED",
++      disclosure_required: true,
++      origin,
++    }
++  }
++
++  try {
++    const dispatch = await dispatcher({
++      internal_tool: internal,
++      mcp_tool: req.tool,
++      args: req.args || {},
++      caller_id: req.caller_id || "unknown",
++      origin,
++    })
++    appendOutboundMcpAudit({
++      caller_id: req.caller_id || "unknown",
++      tool: req.tool,
++      domain: req.domain,
++      ok: dispatch.success,
++      error_code: dispatch.success ? undefined : "DISPATCH_FAILED",
++      confirm_outcome: "n/a",
++    })
++    return {
++      ok: dispatch.success,
++      error: dispatch.success ? undefined : dispatch.error || "dispatch failed",
++      error_code: dispatch.success ? undefined : "DISPATCH_FAILED",
++      internal_tool: internal,
++      dispatch,
++      origin,
++    }
++  } catch (e: any) {
++    const msg = e?.message || String(e)
++    appendOutboundMcpAudit({
++      caller_id: req.caller_id || "unknown",
++      tool: req.tool,
++      ok: false,
++      error_code: "DISPATCH_THREW",
++    })
++    return {
++      ok: false,
++      error: msg,
++      error_code: "DISPATCH_THREW",
++      internal_tool: internal,
++      origin,
++    }
++  }
++}
+diff --git a/companion/src/outbound-mcp/companion-http.ts b/companion/src/outbound-mcp/companion-http.ts
+new file mode 100644
+index 0000000..f2f9bb9
+--- /dev/null
++++ b/companion/src/outbound-mcp/companion-http.ts
+@@ -0,0 +1,304 @@
++/**
++ * Loopback HTTP surface for outbound MCP → Companion tool executor (P0c M4).
++ *
++ * Bound only via companion's existing 127.0.0.1 HTTP server.
++ * Auth: Authorization: Bearer <ws_secret> (same pairing secret as Extension).
++ *
++ * Disclosure sessions for this path live in-process on Companion (source of
++ * truth for execute). The stdio mcp-outbound process dual-writes accept.
++ */
++
++import type { IncomingMessage, ServerResponse } from "http"
++import { timingSafeEqual } from "crypto"
++import {
++  acceptOutboundDisclosure,
++  hasOutboundDisclosure,
++  clearAllOutboundDisclosureSessions,
++} from "./disclosure-session"
++import {
++  gateOutboundCall,
++  type OutboundCallRequest,
++  type OutboundCallResult,
++} from "./facade"
++import { OUTBOUND_MCP_EXFIL_CLASS, outboundToInternalName } from "./profile"
++import { makeOutboundMcpOrigin } from "./origin"
++import { appendOutboundMcpAudit } from "./audit"
++
++export const OUTBOUND_HTTP_PREFIX = "/outbound-mcp/v1"
++export const OUTBOUND_INVOKE_PATH = `${OUTBOUND_HTTP_PREFIX}/invoke`
++export const OUTBOUND_DISCLOSURE_PATH = `${OUTBOUND_HTTP_PREFIX}/disclosure`
++export const OUTBOUND_HEALTH_PATH = `${OUTBOUND_HTTP_PREFIX}/health`
++
++export type OutboundToolRunner = (
++  toolCallId: string,
++  internalTool: string,
++  params: Record<string, unknown>,
++) => Promise<{ success: boolean; data?: unknown; error?: string }>
++
++let toolRunner: OutboundToolRunner | null = null
++/** Called before each invoke to re-bind extension WS if needed (set from server.ts). */
++let refreshRunner: (() => void) | null = null
++
++/** Wire production runner (createToolExecutor bound to an extension WS). */
++export function setOutboundToolRunner(runner: OutboundToolRunner | null): void {
++  toolRunner = runner
++}
++
++export function getOutboundToolRunner(): OutboundToolRunner | null {
++  return toolRunner
++}
++
++export function setOutboundRunnerRefresh(fn: (() => void) | null): void {
++  refreshRunner = fn
++}
++
++/** Test helper */
++export function resetOutboundCompanionHttpForTests(): void {
++  toolRunner = null
++  refreshRunner = null
++  clearAllOutboundDisclosureSessions()
++}
++
++function safeEqualStr(a: string, b: string): boolean {
++  const ba = Buffer.from(a)
++  const bb = Buffer.from(b)
++  if (ba.length !== bb.length) return false
++  try {
++    return timingSafeEqual(ba, bb)
++  } catch {
++    return false
++  }
++}
++
++/** Extract Bearer token from Authorization header. */
++export function extractBearerToken(req: IncomingMessage): string | null {
++  const h = req.headers.authorization
++  if (!h || typeof h !== "string") return null
++  const m = /^Bearer\s+(\S+)$/i.exec(h.trim())
++  return m ? m[1] : null
++}
++
++export function authorizeOutboundHttp(
++  req: IncomingMessage,
++  expectedSecret: string,
++): boolean {
++  if (!expectedSecret) return false
++  const token = extractBearerToken(req)
++  if (!token) return false
++  return safeEqualStr(token, expectedSecret)
++}
++
++function readJsonBody(req: IncomingMessage, limit = 1_000_000): Promise<unknown> {
++  return new Promise((resolve, reject) => {
++    const chunks: Buffer[] = []
++    let size = 0
++    req.on("data", (c: Buffer) => {
++      size += c.length
++      if (size > limit) {
++        reject(new Error("body_too_large"))
++        req.destroy()
++        return
++      }
++      chunks.push(c)
++    })
++    req.on("end", () => {
++      try {
++        const raw = Buffer.concat(chunks).toString("utf8")
++        if (!raw.trim()) {
++          resolve({})
++          return
++        }
++        resolve(JSON.parse(raw))
++      } catch (e) {
++        reject(e)
++      }
++    })
++    req.on("error", reject)
++  })
++}
++
++function json(res: ServerResponse, status: number, body: unknown): void {
++  const s = JSON.stringify(body)
++  res.writeHead(status, {
++    "Content-Type": "application/json",
++    "Content-Length": Buffer.byteLength(s),
++  })
++  res.end(s)
++}
++
++export type CompanionInvokeBody = {
++  caller_id?: string
++  tool?: string
++  args?: Record<string, unknown>
++  domain?: string
++}
++
++/**
++ * Pure invoke logic (no HTTP). Used by HTTP handler and unit tests.
++ */
++export async function companionInvokeOutbound(
++  body: CompanionInvokeBody,
++): Promise<OutboundCallResult & { data?: unknown; origin?: ReturnType<typeof makeOutboundMcpOrigin> }> {
++  const caller_id = (body.caller_id || "http-unknown").trim() || "http-unknown"
++  const tool = (body.tool || "").trim()
++  const req: OutboundCallRequest = {
++    caller_id,
++    tool,
++    args: body.args || {},
++    domain: body.domain,
++  }
++
++  const gate = gateOutboundCall(req)
++  if (!gate.ok) {
++    return gate
++  }
++
++  // Defense in depth for exfil (session is companion-process truth)
++  if (OUTBOUND_MCP_EXFIL_CLASS.has(tool) && !hasOutboundDisclosure(caller_id)) {
++    appendOutboundMcpAudit({
++      caller_id,
++      tool,
++      ok: false,
++      error_code: "DISCLOSURE_REQUIRED",
++    })
++    return {
++      ok: false,
++      error: "disclosure_required",
++      error_code: "DISCLOSURE_REQUIRED",
++      disclosure_required: true,
++    }
++  }
++
++  const internal = gate.internal_tool || outboundToInternalName(tool)
++  if (!internal) {
++    return { ok: false, error: "internal tool name missing", error_code: "INTERNAL_NAME_MISSING" }
++  }
++
++  const origin = makeOutboundMcpOrigin(caller_id)
++  try {
++    refreshRunner?.()
++  } catch {
++    /* best-effort rebind */
++  }
++  const runner = toolRunner
++  if (!runner) {
++    appendOutboundMcpAudit({
++      caller_id,
++      tool,
++      ok: false,
++      error_code: "EXTENSION_UNAVAILABLE",
++    })
++    return {
++      ok: false,
++      error:
++        "no authenticated Extension connected — open CMspark Side Panel / ensure companion+extension paired",
++      error_code: "EXTENSION_UNAVAILABLE",
++      internal_tool: internal,
++      origin,
++    }
++  }
++
++  const toolCallId = `ob_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`
++  try {
++    const result = await runner(toolCallId, internal, body.args || {})
++    appendOutboundMcpAudit({
++      caller_id,
++      tool,
++      domain: body.domain,
++      ok: result.success,
++      error_code: result.success ? undefined : "DISPATCH_FAILED",
++      confirm_outcome: "n/a",
++    })
++    return {
++      ok: result.success,
++      error: result.success ? undefined : result.error || "dispatch failed",
++      error_code: result.success ? undefined : "DISPATCH_FAILED",
++      internal_tool: internal,
++      data: result.data,
++      origin,
++    }
++  } catch (e: any) {
++    appendOutboundMcpAudit({
++      caller_id,
++      tool,
++      ok: false,
++      error_code: "DISPATCH_THREW",
++    })
++    return {
++      ok: false,
++      error: e?.message || String(e),
++      error_code: "DISPATCH_THREW",
++      internal_tool: internal,
++      origin,
++    }
++  }
++}
++
++export async function companionAcceptDisclosure(caller_id: string): Promise<{
++  ok: boolean
++  caller_id: string
++  accepted_at: number
++}> {
++  const sess = acceptOutboundDisclosure(caller_id)
++  return { ok: true, caller_id: sess.caller_id, accepted_at: sess.accepted_at }
++}
++
++/**
++ * Route outbound-mcp HTTP. Returns true if handled.
++ * expectedSecret from getOrCreateSharedSecret().
++ */
++export async function handleOutboundMcpHttp(
++  req: IncomingMessage,
++  res: ServerResponse,
++  expectedSecret: string,
++): Promise<boolean> {
++  const pathOnly = req.url ? req.url.split("?")[0] : ""
++  if (!pathOnly.startsWith(OUTBOUND_HTTP_PREFIX)) {
++    return false
++  }
++
++  if (req.method === "GET" && pathOnly === OUTBOUND_HEALTH_PATH) {
++    // Health is unauthenticated but only on loopback (server bind); reports no secrets
++    json(res, 200, {
++      status: "ok",
++      runner: toolRunner ? "wired" : "none",
++      service: "outbound-mcp",
++    })
++    return true
++  }
++
++  if (!authorizeOutboundHttp(req, expectedSecret)) {
++    json(res, 401, { ok: false, error_code: "UNAUTHORIZED", error: "missing or invalid bearer token" })
++    return true
++  }
++
++  if (req.method === "POST" && pathOnly === OUTBOUND_DISCLOSURE_PATH) {
++    try {
++      const body = (await readJsonBody(req)) as { caller_id?: string; acknowledge?: boolean }
++      if (body.acknowledge !== true) {
++        json(res, 400, { ok: false, error_code: "ACK_REQUIRED" })
++        return true
++      }
++      const caller_id = (body.caller_id || "http-unknown").trim() || "http-unknown"
++      const out = await companionAcceptDisclosure(caller_id)
++      json(res, 200, out)
++    } catch (e: any) {
++      json(res, 400, { ok: false, error_code: "BAD_BODY", error: e?.message || String(e) })
++    }
++    return true
++  }
++
++  if (req.method === "POST" && pathOnly === OUTBOUND_INVOKE_PATH) {
++    try {
++      const body = (await readJsonBody(req)) as CompanionInvokeBody
++      const out = await companionInvokeOutbound(body)
++      json(res, out.ok ? 200 : 422, out)
++    } catch (e: any) {
++      json(res, 400, { ok: false, error_code: "BAD_BODY", error: e?.message || String(e) })
++    }
++    return true
++  }
++
++  json(res, 404, { ok: false, error_code: "NOT_FOUND" })
++  return true
++}
+diff --git a/companion/src/outbound-mcp/disclosure-session.ts b/companion/src/outbound-mcp/disclosure-session.ts
+new file mode 100644
+index 0000000..b666a79
+--- /dev/null
++++ b/companion/src/outbound-mcp/disclosure-session.ts
+@@ -0,0 +1,73 @@
++/**
++ * Server-side L3+ disclosure sessions for outbound MCP (ADR-022 L3+ / P0c M3).
++ *
++ * Caller-supplied `disclosure_accepted` MUST NOT authorize exfil tools.
++ * Only an in-process session marked via acceptOutboundDisclosure() counts.
++ */
++
++export type DisclosureSession = {
++  caller_id: string
++  accepted_at: number
++  /** Optional wall-clock expiry; 0 = no TTL */
++  expires_at: number
++}
++
++const DEFAULT_TTL_MS = 8 * 60 * 60 * 1000 // 8h — align with unattended-style session length
++
++const sessions = new Map<string, DisclosureSession>()
++
++function now(): number {
++  return Date.now()
++}
++
++function isLive(s: DisclosureSession, t = now()): boolean {
++  if (s.expires_at > 0 && t >= s.expires_at) return false
++  return true
++}
++
++/** Mark disclosure accepted for this caller (stdio session / product UX). */
++export function acceptOutboundDisclosure(
++  caller_id: string,
++  opts?: { ttl_ms?: number },
++): DisclosureSession {
++  const id = (caller_id || "").trim() || "unknown"
++  const ttl = opts?.ttl_ms ?? DEFAULT_TTL_MS
++  const accepted_at = now()
++  const sess: DisclosureSession = {
++    caller_id: id,
++    accepted_at,
++    expires_at: ttl > 0 ? accepted_at + ttl : 0,
++  }
++  sessions.set(id, sess)
++  return sess
++}
++
++/** True only if server has a live disclosure session for caller. */
++export function hasOutboundDisclosure(caller_id: string): boolean {
++  const id = (caller_id || "").trim() || "unknown"
++  const s = sessions.get(id)
++  if (!s) return false
++  if (!isLive(s)) {
++    sessions.delete(id)
++    return false
++  }
++  return true
++}
++
++export function revokeOutboundDisclosure(caller_id: string): boolean {
++  return sessions.delete((caller_id || "").trim() || "unknown")
++}
++
++/** Test / process shutdown helper. */
++export function clearAllOutboundDisclosureSessions(): void {
++  sessions.clear()
++}
++
++export function outboundDisclosureSessionCount(): number {
++  // prune expired
++  const t = now()
++  for (const [k, s] of sessions) {
++    if (!isLive(s, t)) sessions.delete(k)
++  }
++  return sessions.size
++}
+diff --git a/companion/src/outbound-mcp/facade.ts b/companion/src/outbound-mcp/facade.ts
+index 14d4cfb..ba1678a 100644
+--- a/companion/src/outbound-mcp/facade.ts
++++ b/companion/src/outbound-mcp/facade.ts
+@@ -1,8 +1,8 @@
+ /**
+- * Outbound MCP façade skeleton (Phase 0c).
++ * Outbound MCP façade (Phase 0c).
+  *
+- * stdio MCP product bridge to Companion WS is intentionally incomplete:
+- * this module enforces profile + audit so bake-off wiring cannot skip L3/L4.
++ * Enforces curated L1 profile + server-side L3+ disclosure + audit.
++ * Live Companion dispatch lives in bridge.ts (injectable).
+  */
+ 
+ import {
+@@ -13,12 +13,16 @@ import {
+   outboundToInternalName,
+ } from "./profile"
+ import { appendOutboundMcpAudit } from "./audit"
++import { hasOutboundDisclosure } from "./disclosure-session"
+ 
+ export type OutboundCallRequest = {
+   caller_id: string
+   tool: string
+   args?: Record<string, unknown>
+-  /** User has accepted L3+ disclosure for this session/task */
++  /**
++   * @deprecated Ignored for authorization. Kept for API compatibility only.
++   * Use acceptOutboundDisclosure(caller_id) so the server holds session state.
++   */
+   disclosure_accepted?: boolean
+   domain?: string
+ }
+@@ -42,7 +46,7 @@ export function listOutboundTools(): string[] {
+ 
+ /**
+  * Gate a tool call before any Companion dispatch.
+- * Fail-closed on forbidden tools and missing disclosure for exfil-class tools.
++ * Fail-closed on forbidden tools and missing **server-side** disclosure for exfil-class tools.
+  */
+ export function gateOutboundCall(req: OutboundCallRequest): OutboundCallResult {
+   const tool = (req.tool || "").trim()
+@@ -72,7 +76,8 @@ export function gateOutboundCall(req: OutboundCallRequest): OutboundCallResult {
+     }
+   }
+ 
+-  if (OUTBOUND_MCP_EXFIL_CLASS.has(tool) && req.disclosure_accepted !== true) {
++  // M3: server session only — caller disclosure_accepted is intentionally ignored
++  if (OUTBOUND_MCP_EXFIL_CLASS.has(tool) && !hasOutboundDisclosure(req.caller_id)) {
+     appendOutboundMcpAudit({
+       caller_id: req.caller_id || "unknown",
+       tool,
+diff --git a/companion/src/outbound-mcp/http-client.ts b/companion/src/outbound-mcp/http-client.ts
+new file mode 100644
+index 0000000..bd41af7
+--- /dev/null
++++ b/companion/src/outbound-mcp/http-client.ts
+@@ -0,0 +1,124 @@
++/**
++ * stdio mcp-outbound → Companion loopback HTTP dispatcher.
++ */
++
++import http from "http"
++import {
++  OUTBOUND_DISCLOSURE_PATH,
++  OUTBOUND_INVOKE_PATH,
++  OUTBOUND_HEALTH_PATH,
++} from "./companion-http"
++import type { OutboundDispatcher, OutboundDispatchRequest, OutboundDispatchResult } from "./bridge"
++
++export type HttpClientOptions = {
++  /** default 127.0.0.1 */
++  host?: string
++  /** companion port */
++  port: number
++  /** ws_secret bearer */
++  token: string
++  timeout_ms?: number
++}
++
++function requestJson(
++  opts: HttpClientOptions,
++  method: string,
++  path: string,
++  body?: unknown,
++): Promise<{ status: number; json: any }> {
++  const timeout = opts.timeout_ms ?? 120_000
++  const payload = body === undefined ? null : Buffer.from(JSON.stringify(body), "utf8")
++  return new Promise((resolve, reject) => {
++    const req = http.request(
++      {
++        host: opts.host || "127.0.0.1",
++        port: opts.port,
++        path,
++        method,
++        headers: {
++          Authorization: `Bearer ${opts.token}`,
++          ...(payload
++            ? {
++                "Content-Type": "application/json",
++                "Content-Length": payload.length,
++              }
++            : {}),
++        },
++        timeout,
++      },
++      (res) => {
++        const chunks: Buffer[] = []
++        res.on("data", (c) => chunks.push(c))
++        res.on("end", () => {
++          const raw = Buffer.concat(chunks).toString("utf8")
++          let parsed: any = null
++          try {
++            parsed = raw ? JSON.parse(raw) : null
++          } catch {
++            parsed = { ok: false, error: "invalid_json", raw: raw.slice(0, 200) }
++          }
++          resolve({ status: res.statusCode || 0, json: parsed })
++        })
++      },
++    )
++    req.on("error", reject)
++    req.on("timeout", () => {
++      req.destroy()
++      reject(new Error("outbound_http_timeout"))
++    })
++    if (payload) req.write(payload)
++    req.end()
++  })
++}
++
++export async function companionOutboundHealth(
++  opts: HttpClientOptions,
++): Promise<{ ok: boolean; runner?: string }> {
++  try {
++    const r = await requestJson(opts, "GET", OUTBOUND_HEALTH_PATH)
++    return { ok: r.status === 200, runner: r.json?.runner }
++  } catch {
++    return { ok: false }
++  }
++}
++
++export async function companionPostDisclosure(
++  opts: HttpClientOptions,
++  caller_id: string,
++): Promise<{ ok: boolean; error?: string }> {
++  try {
++    const r = await requestJson(opts, "POST", OUTBOUND_DISCLOSURE_PATH, {
++      caller_id,
++      acknowledge: true,
++    })
++    if (r.status === 200 && r.json?.ok) return { ok: true }
++    return {
++      ok: false,
++      error: r.json?.error || r.json?.error_code || `http_${r.status}`,
++    }
++  } catch (e: any) {
++    return { ok: false, error: e?.message || String(e) }
++  }
++}
++
++export function createHttpOutboundDispatcher(opts: HttpClientOptions): OutboundDispatcher {
++  return async (req: OutboundDispatchRequest): Promise<OutboundDispatchResult> => {
++    try {
++      const r = await requestJson(opts, "POST", OUTBOUND_INVOKE_PATH, {
++        caller_id: req.caller_id,
++        tool: req.mcp_tool,
++        args: req.args,
++      })
++      const j = r.json || {}
++      if (j.ok === true) {
++        return { success: true, data: j.data }
++      }
++      return {
++        success: false,
++        error: j.error || j.error_code || `http_${r.status}`,
++      }
++    } catch (e: any) {
++      return { success: false, error: e?.message || String(e) }
++    }
++  }
++}
+diff --git a/companion/src/outbound-mcp/index.ts b/companion/src/outbound-mcp/index.ts
+new file mode 100644
+index 0000000..0911eee
+--- /dev/null
++++ b/companion/src/outbound-mcp/index.ts
+@@ -0,0 +1,47 @@
++/** Outbound MCP public surface (ADR-022 Phase 0c). */
++
++export {
++  OUTBOUND_MCP_ALLOWLIST,
++  OUTBOUND_MCP_EXFIL_CLASS,
++  OUTBOUND_DISCLOSURE_ZH,
++  isOutboundAllowed,
++  isOutboundForbidden,
++  outboundToInternalName,
++} from "./profile"
++export { gateOutboundCall, listOutboundTools } from "./facade"
++export type { OutboundCallRequest, OutboundCallResult } from "./facade"
++export {
++  acceptOutboundDisclosure,
++  hasOutboundDisclosure,
++  revokeOutboundDisclosure,
++  clearAllOutboundDisclosureSessions,
++} from "./disclosure-session"
++export {
++  invokeOutboundTool,
++  setOutboundDispatcher,
++  getOutboundDispatcher,
++} from "./bridge"
++export type {
++  OutboundDispatcher,
++  OutboundDispatchRequest,
++  OutboundDispatchResult,
++  InvokeOutboundResult,
++} from "./bridge"
++export { makeOutboundMcpOrigin } from "./origin"
++export type { OutboundMcpOrigin } from "./origin"
++export {
++  createOutboundMcpServer,
++  runOutboundMcpStdioServer,
++  wireDefaultOutboundHttpDispatcher,
++} from "./stdio-server"
++export {
++  handleOutboundMcpHttp,
++  companionInvokeOutbound,
++  setOutboundToolRunner,
++  OUTBOUND_INVOKE_PATH,
++  OUTBOUND_DISCLOSURE_PATH,
++} from "./companion-http"
++export {
++  createHttpOutboundDispatcher,
++  companionPostDisclosure,
++} from "./http-client"
+diff --git a/companion/src/outbound-mcp/origin.ts b/companion/src/outbound-mcp/origin.ts
+new file mode 100644
+index 0000000..353d349
+--- /dev/null
++++ b/companion/src/outbound-mcp/origin.ts
+@@ -0,0 +1,27 @@
++/**
++ * Synthetic origin for outbound MCP confirm path (ADR-022 L4 / P0c M6).
++ * Not a real WebSocket; confirm stack must still bind an origin identity
++ * so responses cannot be claimed by an arbitrary peer without matching id.
++ */
++
++export type OutboundMcpOrigin = {
++  kind: "outbound_mcp"
++  caller_id: string
++  /** Opaque origin id for SecurityConfirmationManager binding */
++  synthetic_origin: string
++  /**
++   * Placeholder for future WS-backed façade.
++   * null means no live socket — confirm UX must use tray/global or fail-closed.
++   */
++  originWs: null
++}
++
++export function makeOutboundMcpOrigin(caller_id: string): OutboundMcpOrigin {
++  const id = (caller_id || "").trim() || "unknown"
++  return {
++    kind: "outbound_mcp",
++    caller_id: id,
++    synthetic_origin: `outbound_mcp:${id}`,
++    originWs: null,
++  }
++}
+diff --git a/companion/src/outbound-mcp/stdio-server.ts b/companion/src/outbound-mcp/stdio-server.ts
+new file mode 100644
+index 0000000..53fb6ed
+--- /dev/null
++++ b/companion/src/outbound-mcp/stdio-server.ts
+@@ -0,0 +1,211 @@
++/**
++ * stdio MCP server for outbound L1 tools (ADR-022 Phase 0c).
++ *
++ * Not default-on: only runs when user invokes `cmspark-agent mcp-outbound`.
++ * Dispatches to Companion loopback HTTP (Bearer ws_secret) when companion is up.
++ */
++
++import { Server } from "@modelcontextprotocol/sdk/server/index.js"
++import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
++import {
++  CallToolRequestSchema,
++  ListToolsRequestSchema,
++} from "@modelcontextprotocol/sdk/types.js"
++import { OUTBOUND_MCP_ALLOWLIST, OUTBOUND_DISCLOSURE_ZH } from "./profile"
++import { acceptOutboundDisclosure } from "./disclosure-session"
++import { invokeOutboundTool, setOutboundDispatcher } from "./bridge"
++import { listOutboundTools } from "./facade"
++import {
++  companionPostDisclosure,
++  createHttpOutboundDispatcher,
++} from "./http-client"
++import { getOrCreateSharedSecret } from "../ws-auth"
++import { getConfig } from "../config"
++
++const CALLER_ENV = "CMSPARK_OUTBOUND_CALLER_ID"
++const PORT_ENV = "CMSPARK_OUTBOUND_PORT"
++
++const META_ACCEPT = "cmspark__accept_data_disclosure"
++const META_PROFILE = "cmspark__list_outbound_profile"
++
++function callerId(): string {
++  return (process.env[CALLER_ENV] || "stdio-default").trim() || "stdio-default"
++}
++
++function toolDescription(name: string): string {
++  const base: Record<string, string> = {
++    cmspark__list_tabs: "List open Chrome tabs (CMspark outbound L1)",
++    cmspark__navigate: "Navigate a tab to a URL (may require domain confirm)",
++    cmspark__get_page_text: "Read page text — data-exfil; requires prior disclosure accept",
++    cmspark__click: "Click element (L1 interactive)",
++    cmspark__type: "Type into focused/target element (L1)",
++    cmspark__screenshot: "Screenshot — data-exfil; requires prior disclosure accept",
++    cmspark__wait_for: "Wait for selector/condition",
++    cmspark__downloads_find: "Find files in Downloads sandbox (read-only)",
++    [META_ACCEPT]:
++      "Accept that page text/screenshots may enter this coding agent context (server-side session)",
++    [META_PROFILE]: "List default outbound L1 tool names (curated profile)",
++  }
++  return base[name] || `CMspark outbound tool ${name}`
++}
++
++function openArgsSchema(): {
++  type: "object"
++  properties: Record<string, unknown>
++  additionalProperties: boolean
++} {
++  return {
++    type: "object",
++    properties: {},
++    additionalProperties: true,
++  }
++}
++
++/** Resolve companion loopback + secret; wire HTTP dispatcher. */
++export function wireDefaultOutboundHttpDispatcher(): {
++  port: number
++  token_present: boolean
++} {
++  const config = getConfig()
++  const port =
++    Number(process.env[PORT_ENV]) ||
++    Number(config.port) ||
++    23401
++  const token = getOrCreateSharedSecret()
++  setOutboundDispatcher(
++    createHttpOutboundDispatcher({
++      port,
++      token,
++      timeout_ms: 120_000,
++    }),
++  )
++  return { port, token_present: Boolean(token) }
++}
++
++/** Build MCP server instance (testable without connecting transport). */
++export function createOutboundMcpServer(): Server {
++  const server = new Server(
++    { name: "cmspark-outbound", version: "0.3.0-p0c" },
++    { capabilities: { tools: {} } },
++  )
++
++  const allToolNames = [META_ACCEPT, META_PROFILE, ...OUTBOUND_MCP_ALLOWLIST]
++
++  server.setRequestHandler(ListToolsRequestSchema, async () => ({
++    tools: allToolNames.map((name) => ({
++      name,
++      description: toolDescription(name),
++      inputSchema: openArgsSchema(),
++    })),
++  }))
++
++  server.setRequestHandler(CallToolRequestSchema, async (request) => {
++    const name = request.params.name
++    const args = (request.params.arguments || {}) as Record<string, unknown>
++    const cid = callerId()
++
++    if (name === META_ACCEPT) {
++      if (args.acknowledge !== true) {
++        return {
++          content: [
++            {
++              type: "text" as const,
++              text: JSON.stringify({
++                ok: false,
++                error_code: "ACK_REQUIRED",
++                disclosure_text_zh: OUTBOUND_DISCLOSURE_ZH,
++              }),
++            },
++          ],
++          isError: true,
++        }
++      }
++      // Local session (stdio process gate) + companion process (execute gate)
++      const sess = acceptOutboundDisclosure(cid)
++      const config = getConfig()
++      const port = Number(process.env[PORT_ENV]) || Number(config.port) || 23401
++      const remote = await companionPostDisclosure(
++        { port, token: getOrCreateSharedSecret() },
++        cid,
++      )
++      return {
++        content: [
++          {
++            type: "text" as const,
++            text: JSON.stringify({
++              ok: true,
++              caller_id: sess.caller_id,
++              accepted_at: sess.accepted_at,
++              companion_disclosure: remote.ok ? "ok" : remote.error || "failed",
++              disclosure_text_zh: OUTBOUND_DISCLOSURE_ZH,
++            }),
++          },
++        ],
++        isError: !remote.ok,
++      }
++    }
++
++    if (name === META_PROFILE) {
++      return {
++        content: [
++          {
++            type: "text" as const,
++            text: JSON.stringify({ tools: listOutboundTools() }),
++          },
++        ],
++      }
++    }
++
++    if (!(OUTBOUND_MCP_ALLOWLIST as readonly string[]).includes(name)) {
++      return {
++        content: [
++          {
++            type: "text" as const,
++            text: JSON.stringify({
++              ok: false,
++              error_code: "PROFILE_FORBIDDEN",
++              error: `tool "${name}" is not on the default outbound L1 profile`,
++            }),
++          },
++        ],
++        isError: true,
++      }
++    }
++
++    const domain = typeof args.domain === "string" ? args.domain : undefined
++    const toolArgs =
++      args.args && typeof args.args === "object" && !Array.isArray(args.args)
++        ? (args.args as Record<string, unknown>)
++        : Object.fromEntries(Object.entries(args).filter(([k]) => k !== "domain"))
++
++    const result = await invokeOutboundTool({
++      caller_id: cid,
++      tool: name,
++      args: toolArgs,
++      domain,
++    })
++
++    return {
++      content: [{ type: "text" as const, text: JSON.stringify(result) }],
++      isError: !result.ok,
++    }
++  })
++
++  return server
++}
++
++/** Connect stdio transport and run until stdin closes. */
++export async function runOutboundMcpStdioServer(): Promise<void> {
++  const wire = wireDefaultOutboundHttpDispatcher()
++  // Log to stderr only — stdout is MCP JSON-RPC
++  console.error(
++    `[cmspark-outbound] stdio MCP up; companion HTTP 127.0.0.1:${wire.port} (Bearer ws_secret)`,
++  )
++  const server = createOutboundMcpServer()
++  const transport = new StdioServerTransport()
++  await server.connect(transport)
++  await new Promise<void>((resolve) => {
++    process.stdin.on("end", () => resolve())
++    process.stdin.on("close", () => resolve())
++  })
++}
+diff --git a/companion/src/server.ts b/companion/src/server.ts
+index 2315579..7c64f75 100644
+--- a/companion/src/server.ts
++++ b/companion/src/server.ts
+@@ -150,17 +150,77 @@ export function isAllowedWsOrigin(origin: string | undefined | null): boolean {
+  * without any WS handshake, so it is intentionally outside the shared-secret
+  * auth flow and exposes no sensitive state.
+  */
++/**
++ * Loopback HTTP (healthz + outbound-mcp invoke). Async-capable wrapper used as
++ * http.createServer handler.
++ */
+ export function handleHealthzRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
++  void handleLoopbackHttp(req, res)
++}
++
++async function handleLoopbackHttp(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+   const pathOnly = req.url ? req.url.split("?")[0] : ""
+   if (req.method === "GET" && pathOnly === "/healthz") {
+     res.writeHead(200, { "Content-Type": "application/json" })
+     res.end(JSON.stringify({ status: "ok", uptime: process.uptime() }))
+     return
+   }
++
++  // Outbound MCP bridge (ADR-022 P0c) — auth inside handler
++  try {
++    const { handleOutboundMcpHttp } = await import("./outbound-mcp/companion-http")
++    const secret = getOrCreateSharedSecret()
++    const handled = await handleOutboundMcpHttp(req, res, secret)
++    if (handled) return
++  } catch (err: any) {
++    logger.warn("outbound_mcp.http_error", { error: err?.message || String(err) })
++    if (!res.headersSent) {
++      res.writeHead(500, { "Content-Type": "application/json" })
++      res.end(JSON.stringify({ ok: false, error_code: "INTERNAL", error: "outbound http error" }))
++    }
++    return
++  }
++
+   res.writeHead(404, { "Content-Type": "text/plain" })
+   res.end("Not Found")
+ }
+ 
++/** Pick an authenticated Extension/panel WS for outbound tool dispatch. */
++export function pickAuthenticatedClientWs(): WebSocket | null {
++  for (const c of clients) {
++    if (c.readyState === WebSocket.OPEN && wsAuth.get(c)?.authenticated === true) {
++      return c
++    }
++  }
++  return null
++}
++
++let outboundRunnerWs: WebSocket | null = null
++
++/**
++ * Ensure outbound HTTP runner is wired to createToolExecutor(extensionWs).
++ * Synchronous so invoke never races an empty runner after auth.
++ */
++export function ensureOutboundToolRunnerWired(): boolean {
++  // Lazy require avoids circular import at module load (companion-http is light).
++  const { setOutboundToolRunner } = require("./outbound-mcp/companion-http") as typeof import("./outbound-mcp/companion-http")
++  const ws = pickAuthenticatedClientWs()
++  if (!ws) {
++    setOutboundToolRunner(null)
++    outboundRunnerWs = null
++    return false
++  }
++  if (outboundRunnerWs === ws) {
++    return true
++  }
++  const executeTool = createToolExecutor(ws)
++  setOutboundToolRunner(async (toolCallId, internalTool, params) => {
++    return executeTool(toolCallId, internalTool, params)
++  })
++  outboundRunnerWs = ws
++  return true
++}
++
+ function getDomainFromUrl(urlString: string): string {
+   try {
+     const parsed = new URL(urlString)
+@@ -5444,6 +5504,16 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
+     }
+   }
+ 
++  // Outbound MCP: refresh tool runner before each HTTP invoke
++  try {
++    const { setOutboundRunnerRefresh } = require("./outbound-mcp/companion-http") as typeof import("./outbound-mcp/companion-http")
++    setOutboundRunnerRefresh(() => {
++      ensureOutboundToolRunnerWired()
++    })
++  } catch (e: any) {
++    logger.warn("outbound_mcp.refresh_hook_failed", { error: e?.message || String(e) })
++  }
++
+   logger.info("server.start", {
+     port,
+     model_name: config.llm.model_name,
+@@ -5694,6 +5764,12 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
+             // Record (idempotently) that some peer has paired, so the tray can stop
+             // auto-surfacing the pairing secret. Best-effort; never blocks auth.
+             markPaired()
++            // Wire outbound MCP HTTP → createToolExecutor(this peer)
++            try {
++              ensureOutboundToolRunnerWired()
++            } catch (wireErr: any) {
++              logger.warn("outbound_mcp.wire_failed", { error: wireErr?.message || String(wireErr) })
++            }
+             if (ws.readyState === WebSocket.OPEN) {
+               ws.send(JSON.stringify({ type: "auth.ok" }))
+               ws.send(JSON.stringify({ type: "connected" }))
+@@ -5964,6 +6040,12 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
+         clearTimeout(closedAuth.timer)
+         wsAuth.delete(ws)
+       }
++      // Rebind or clear outbound MCP runner if this was the dispatch peer
++      try {
++        ensureOutboundToolRunnerWired()
++      } catch {
++        /* best-effort */
++      }
+       applyConnectionCloseGracePeriod()
+       securityConfirmations.rejectAll("disconnect", ws)
+       // C-P0-6: cancel any tray dialogs that were racing this WS. Without this,
+diff --git a/companion/tests/outbound-mcp-companion-http.test.ts b/companion/tests/outbound-mcp-companion-http.test.ts
+new file mode 100644
+index 0000000..59feae4
+--- /dev/null
++++ b/companion/tests/outbound-mcp-companion-http.test.ts
+@@ -0,0 +1,99 @@
++import test from "node:test"
++import assert from "node:assert/strict"
++import {
++  companionInvokeOutbound,
++  companionAcceptDisclosure,
++  authorizeOutboundHttp,
++  setOutboundToolRunner,
++  resetOutboundCompanionHttpForTests,
++  extractBearerToken,
++} from "../src/outbound-mcp/companion-http"
++import { clearAllOutboundDisclosureSessions } from "../src/outbound-mcp/disclosure-session"
++import type { IncomingMessage } from "http"
++
++function fakeReq(auth?: string): IncomingMessage {
++  return { headers: { authorization: auth } } as IncomingMessage
++}
++
++test.beforeEach(() => {
++  resetOutboundCompanionHttpForTests()
++  clearAllOutboundDisclosureSessions()
++})
++
++test("authorizeOutboundHttp requires matching bearer", () => {
++  assert.equal(authorizeOutboundHttp(fakeReq(), "secret"), false)
++  assert.equal(authorizeOutboundHttp(fakeReq("Bearer wrong"), "secret"), false)
++  assert.equal(authorizeOutboundHttp(fakeReq("Bearer secret"), "secret"), true)
++  assert.equal(extractBearerToken(fakeReq("Bearer abc")), "abc")
++})
++
++test("companion invoke refuses forbidden tools", async () => {
++  const r = await companionInvokeOutbound({
++    caller_id: "c",
++    tool: "cmspark__shell_exec",
++  })
++  assert.equal(r.ok, false)
++  assert.equal(r.error_code, "PROFILE_FORBIDDEN")
++})
++
++test("companion invoke refuses exfil without disclosure even with runner", async () => {
++  setOutboundToolRunner(async () => ({ success: true, data: { text: "x" } }))
++  const r = await companionInvokeOutbound({
++    caller_id: "c",
++    tool: "cmspark__get_page_text",
++  })
++  assert.equal(r.ok, false)
++  assert.equal(r.error_code, "DISCLOSURE_REQUIRED")
++})
++
++test("companion invoke EXTENSION_UNAVAILABLE without runner", async () => {
++  const r = await companionInvokeOutbound({
++    caller_id: "c",
++    tool: "cmspark__list_tabs",
++  })
++  assert.equal(r.ok, false)
++  assert.equal(r.error_code, "EXTENSION_UNAVAILABLE")
++})
++
++test("companion invoke dispatches via runner after gate", async () => {
++  const calls: { tool: string; id: string }[] = []
++  setOutboundToolRunner(async (id, tool, params) => {
++    calls.push({ tool, id })
++    assert.equal(tool, "list_tabs")
++    return { success: true, data: { tabs: [{ id: 1 }] } }
++  })
++  const r = await companionInvokeOutbound({
++    caller_id: "agent",
++    tool: "cmspark__list_tabs",
++    args: {},
++  })
++  assert.equal(r.ok, true)
++  assert.deepEqual(r.data, { tabs: [{ id: 1 }] })
++  assert.equal(calls.length, 1)
++  assert.ok(calls[0].id.startsWith("ob_"))
++  assert.equal(r.origin?.synthetic_origin, "outbound_mcp:agent")
++})
++
++test("companion exfil after acceptDisclosure reaches runner", async () => {
++  await companionAcceptDisclosure("d1")
++  setOutboundToolRunner(async (_id, tool) => {
++    assert.equal(tool, "screenshot")
++    return { success: true, data: { ok: true } }
++  })
++  const r = await companionInvokeOutbound({
++    caller_id: "d1",
++    tool: "cmspark__screenshot",
++  })
++  assert.equal(r.ok, true)
++})
++
++test("runner failure surfaces DISPATCH_FAILED", async () => {
++  setOutboundToolRunner(async () => ({ success: false, error: "tab gone" }))
++  const r = await companionInvokeOutbound({
++    caller_id: "c",
++    tool: "cmspark__list_tabs",
++  })
++  assert.equal(r.ok, false)
++  assert.equal(r.error_code, "DISPATCH_FAILED")
++  assert.match(r.error || "", /tab gone/)
++})
+diff --git a/companion/tests/outbound-mcp-facade.test.ts b/companion/tests/outbound-mcp-facade.test.ts
+index 1774cab..b6bd098 100644
+--- a/companion/tests/outbound-mcp-facade.test.ts
++++ b/companion/tests/outbound-mcp-facade.test.ts
+@@ -8,12 +8,27 @@ import {
+   isOutboundAllowed,
+   OUTBOUND_MCP_ALLOWLIST,
+ } from "../src/outbound-mcp/profile"
++import {
++  acceptOutboundDisclosure,
++  clearAllOutboundDisclosureSessions,
++  hasOutboundDisclosure,
++} from "../src/outbound-mcp/disclosure-session"
++import {
++  invokeOutboundTool,
++  setOutboundDispatcher,
++} from "../src/outbound-mcp/bridge"
++import { makeOutboundMcpOrigin } from "../src/outbound-mcp/origin"
++
++test.beforeEach(() => {
++  clearAllOutboundDisclosureSessions()
++  setOutboundDispatcher(null)
++})
+ 
+ test("listOutboundTools matches allowlist", () => {
+   assert.deepEqual(listOutboundTools(), [...OUTBOUND_MCP_ALLOWLIST])
+ })
+ 
+-test("gate allows whitelist tool with disclosure when needed", () => {
++test("gate allows whitelist tool without disclosure when not exfil", () => {
+   const r = gateOutboundCall({
+     caller_id: "test",
+     tool: "cmspark__list_tabs",
+@@ -36,7 +51,7 @@ test("gate refuses shell / cookies / host", () => {
+   }
+ })
+ 
+-test("exfil-class requires disclosure", () => {
++test("exfil-class requires server disclosure session (M3)", () => {
+   const r = gateOutboundCall({
+     caller_id: "t",
+     tool: "cmspark__get_page_text",
+@@ -44,12 +59,28 @@ test("exfil-class requires disclosure", () => {
+   assert.equal(r.ok, false)
+   assert.equal(r.error_code, "DISCLOSURE_REQUIRED")
+   assert.ok(r.disclosure_text_zh)
++})
+ 
+-  const ok = gateOutboundCall({
+-    caller_id: "t",
++test("caller disclosure_accepted true WITHOUT server session still refused (M3)", () => {
++  // Critical: do not trust MCP client boolean
++  const r = gateOutboundCall({
++    caller_id: "forger",
+     tool: "cmspark__screenshot",
+     disclosure_accepted: true,
+   })
++  assert.equal(r.ok, false)
++  assert.equal(r.error_code, "DISCLOSURE_REQUIRED")
++  assert.equal(hasOutboundDisclosure("forger"), false)
++})
++
++test("server acceptOutboundDisclosure then exfil allowed at gate", () => {
++  acceptOutboundDisclosure("legit")
++  assert.equal(hasOutboundDisclosure("legit"), true)
++  const ok = gateOutboundCall({
++    caller_id: "legit",
++    tool: "cmspark__screenshot",
++    // even without client flag
++  })
+   assert.equal(ok.ok, true)
+   assert.equal(ok.internal_tool, "screenshot")
+ })
+@@ -58,3 +89,62 @@ test("isOutboundAllowed only for cmspark__ curated set", () => {
+   assert.equal(isOutboundAllowed("cmspark__navigate"), true)
+   assert.equal(isOutboundAllowed("navigate"), false)
+ })
++
++test("invoke without dispatcher fails BRIDGE_UNAVAILABLE after gate", async () => {
++  const r = await invokeOutboundTool({
++    caller_id: "c1",
++    tool: "cmspark__list_tabs",
++  })
++  assert.equal(r.ok, false)
++  assert.equal(r.error_code, "BRIDGE_UNAVAILABLE")
++  assert.equal(r.internal_tool, "list_tabs")
++  assert.ok(r.origin)
++  assert.equal(r.origin?.kind, "outbound_mcp")
++  assert.equal(r.origin?.synthetic_origin, "outbound_mcp:c1")
++  assert.equal(r.origin?.originWs, null)
++})
++
++test("invoke with dispatcher runs and binds origin (M4/M6)", async () => {
++  const seen: unknown[] = []
++  setOutboundDispatcher(async (req) => {
++    seen.push(req)
++    return { success: true, data: { tabs: [] } }
++  })
++  const r = await invokeOutboundTool({
++    caller_id: "agent-a",
++    tool: "cmspark__list_tabs",
++    args: {},
++  })
++  assert.equal(r.ok, true)
++  assert.equal(r.dispatch?.success, true)
++  assert.equal(seen.length, 1)
++  const d = seen[0] as {
++    internal_tool: string
++    origin: { synthetic_origin: string; kind: string }
++  }
++  assert.equal(d.internal_tool, "list_tabs")
++  assert.equal(d.origin.kind, "outbound_mcp")
++  assert.equal(d.origin.synthetic_origin, "outbound_mcp:agent-a")
++})
++
++test("invoke exfil without session never reaches dispatcher", async () => {
++  let called = false
++  setOutboundDispatcher(async () => {
++    called = true
++    return { success: true }
++  })
++  const r = await invokeOutboundTool({
++    caller_id: "x",
++    tool: "cmspark__get_page_text",
++    disclosure_accepted: true,
++  })
++  assert.equal(r.ok, false)
++  assert.equal(r.error_code, "DISCLOSURE_REQUIRED")
++  assert.equal(called, false)
++})
++
++test("makeOutboundMcpOrigin shape", () => {
++  const o = makeOutboundMcpOrigin("pid-9")
++  assert.equal(o.synthetic_origin, "outbound_mcp:pid-9")
++  assert.equal(o.originWs, null)
++})
+diff --git a/docs/GOAL.md b/docs/GOAL.md
+index 1c61564..d9592cb 100644
+--- a/docs/GOAL.md
++++ b/docs/GOAL.md
+@@ -13,7 +13,7 @@
+ | 轴 | 含义 | 默认/扩展 |
+ |----|------|-----------|
+ | **Surface** | L0 聊 → L1 网页 → L2 宿主 | 默认 L0/L1；L2 opt-in |
+-| **Composition** | Skill · Knowledge · MCP · Pack · user-env | 场景叠加主路径（Pack-first）；**不是**「中层 Agent」 |
++| **Composition** | Skill · Knowledge · MCP（client）· **Outbound MCP**（export，[ADR-022](adr/022-outbound-mcp-server.md)）· Pack · user-env | 场景叠加主路径（Pack-first）；**不是**「中层 Agent」 |
+ | **Autonomy** | 单线程 → multi-worker → Board | 编排增强 ≠ 更深作用面 |
+ 
+ 一句话：默认浏览器内 Agent；场景靠 Pack 叠加；桌面/企业更深作用面需显式开启与更严门禁。
+@@ -268,6 +268,13 @@ Agent 可以在用户授权下对任意标签页执行全部 26 种工具操作
+ 
+ - 见上文对应「已交付功能扩展」节；用户文档已入 `docs/*-user-guide.md` 与 `docs/README.md` 导航。
+ 
++### G21. Outbound MCP Server（编程 Agent 对接）— *Phase 0 门控* · **C 导出 L1**
++
++- **决策 SoT**：[ADR-022](adr/022-outbound-mcp-server.md)（Accepted；**非** default-on 产品 ship）。
++- 目标：把 **curated L1** 浏览器面（`cmspark__*`）以 stdio MCP 导出给 Claude Code / Cursor 等；默认禁 L2 / cookies / shell；Skill 仅 adoption。
++- 成功门：Phase 0 bake-off 证明已登录/SSO 会话相对 Playwright 不可替代（T1），否则 pivot 只读或垂直 API。
++- 当前：`companion/src/outbound-mcp/` 门禁骨架；真桥 / L8 托盘确认 / L9 tab lease / grant 模型按 ADR 分阶段。
++
+ ---
+ 
+ ## 架构约束
+diff --git a/docs/README.md b/docs/README.md
+index c42c5bc..b48331e 100644
+--- a/docs/README.md
++++ b/docs/README.md
+@@ -68,6 +68,8 @@
+ | 018 | Host Use / Apps（Implemented） | [018](adr/018-host-use.md) |
+ | 019 | User-env secrets（shell/MCP） | [019](adr/019-user-env-secrets.md) |
+ | **020** | **Capability model · three axes** | [020](adr/020-capability-model-three-axes.md) |
++| 021 | 无人值守 · 桌面会话 grant | [021](adr/021-unattended-desktop-session.md) |
++| **022** | **Outbound MCP Server**（编程 Agent 的 L1 浏览器面） | [022](adr/022-outbound-mcp-server.md) |
+ 
+ 过程件：UI 三模式 / Cockpit 以 `docs/superpowers/specs/` 与 [DESIGN.md](DESIGN.md) 为准（**勿**再记「拟议 ADR-019 UI」——019 已是 user-env）。
+ 
+@@ -92,8 +94,14 @@
+ | **[optimization-plan-post-adr-020.md](optimization-plan-post-adr-020.md)** | **排序权威**：A–E 骨架（治理 / Trust P1 / Composition / L2 / Autonomy） |
+ | **[optimization-plan-au4dch-ux-shell-download.md](optimization-plan-au4dch-ux-shell-download.md)** | **UX 子轨**（#au4dch）：下载去重 · 长 tool/舰队运行态 · shell 黑窗止血与网页 PTY epic |
+ | **[optimization-plan-agent-skill-install.md](optimization-plan-agent-skill-install.md)** | **Backlog**：Agent 在 Chrome 下载 skill → 安装到 `~/.cmspark-agent/skills`（一等 `skill_install`） |
++| **[optimization-plan-document-parse-vision.md](optimization-plan-document-parse-vision.md)** | **Backlog**：聊天附件文档解析 / 图文理解（P0 增强现有管道 → P1 OCR/结构 → P2 DocAI） |
++| **[ADR-022 Outbound MCP](adr/022-outbound-mcp-server.md)** | **Accepted · Phase 0 门控**：对外编程 Agent 的 curated L1 面；brief/spike 见 decisions + superpowers/plans |
+ | [audit/p1-security-open-items-2026-07-29.md](audit/p1-security-open-items-2026-07-29.md) | 07-28 诊断 P1 四条代码盘点（god-mode / originWs / evaluate / shell） |
+ | [audit/reviews/_templates/dual-review-capability-checklist.md](audit/reviews/_templates/dual-review-capability-checklist.md) | dual-review 能力声明检查清单 |
++| [audit/reviews/_templates/eval-gate-card.md](audit/reviews/_templates/eval-gate-card.md) | Eval Engineering 放行卡片（机核 + dual + blast） |
++| [superpowers/plans/2026-08-04-outbound-mcp-p0c-eval-gates.md](superpowers/plans/2026-08-04-outbound-mcp-p0c-eval-gates.md) | Outbound MCP P0c 门控卡（M1–M9） |
++| [skills/eval-engineering-gate/SKILL.md](skills/eval-engineering-gate/SKILL.md) | Eval Engineering 闸门 skill（机核 + dual + blast） |
++| [decisions/daily-content-loop-brief-2026-08-04.md](decisions/daily-content-loop-brief-2026-08-04.md) | **DIRECTION LOCKED**：每日情报环（公开站·本地模型·本机+邮件·代码+网页验证） |
+ | [optimization-plan-post-v0.3.0.md](optimization-plan-post-v0.3.0.md) | 历史：v0.3.0 后 P2/P3 闭环考古（**勿再作排序权威**） |
+ 
+ ---
+diff --git a/docs/adr/020-capability-model-three-axes.md b/docs/adr/020-capability-model-three-axes.md
+index 9000864..d6a234d 100644
+--- a/docs/adr/020-capability-model-three-axes.md
++++ b/docs/adr/020-capability-model-three-axes.md
+@@ -61,7 +61,8 @@
+ |------|------|
+ | **Skill**（Type A） | 方法论 / prompt 模板 |
+ | **Knowledge** | 站点/全局/技能记忆 |
+-| **MCP** | 外部工具服务器（`mcp__…`） |
++| **MCP**（inbound） | 外部工具服务器（`mcp__…`）— Companion 作 **client** |
++| **Outbound MCP**（export） | 把 curated **Surface L1** 子集导出给外部编程 Agent（`cmspark__*`）— **门面，非新 runtime**（[ADR-022](022-outbound-mcp-server.md)；Phase 0 门控） |
+ | **user-env secrets** | shell/MCP 子进程密钥（[ADR-019](019-user-env-secrets.md)） |
+ | **Mission Pack** | 场景配方：skills + knowledge + tool_whitelist + system_prompt_append + modules — **非 runtime**（[ADR-014](014-mission-pack-enterprise-modules.md)） |
+ | **Capability modules** | 安装级开关（appsec / workspace / shell / netsec）+ `capability_profile` |
+diff --git a/docs/adr/022-outbound-mcp-server.md b/docs/adr/022-outbound-mcp-server.md
+new file mode 100644
+index 0000000..c8aed9c
+--- /dev/null
++++ b/docs/adr/022-outbound-mcp-server.md
+@@ -0,0 +1,238 @@
++# ADR-022: Outbound MCP Server（对外编程 Agent 的 L1 浏览器面）
++
++**日期**: 2026-08-04 | **状态**: **Accepted**（方向锁定；实现按 Phase 0 → P1 门控，**未**产品 ship / 非 default-on）  
++**相关**: [ADR-020](020-capability-model-three-axes.md) · [ADR-015](015-multi-agent-orchestrator-tab-lock.md) tab lease · [ADR-014](014-mission-pack-enterprise-modules.md) Pack · 用户 MCP 客户端指南 [mcp.md](../mcp.md)  
++**过程 SoT（历史）**: [brief](../decisions/cmspark-as-mcp-server-brief-2026-08-03.md) · [adversary](../decisions/cmspark-as-mcp-server-adversary-synthesis-2026-08-03.md) · [dual-review](../decisions/cmspark-as-mcp-server-dual-review-synthesis-2026-08-03.md) · spike plan [2026-08-03-outbound-mcp-phase0-spike.md](../superpowers/plans/2026-08-03-outbound-mcp-phase0-spike.md)  
++**双审**: Claude + Pi **APPROVE_WITH_NITS**（`docs/audit/reviews/cmspark-mcp-server-strategy-*-20260803-150011*`）；nits 已并入本 ADR 决策 L1–L9
++
++> **规范优先级**：本 ADR 为 Outbound MCP **决策 SoT**。brief 保留为过程件；实现细节与白名单以代码 `companion/src/outbound-mcp/` + spike plan 为准，冲突时以本 ADR 的锁与非目标为准。
++
++---
++
++## 背景
++
++CMspark 已有稳定 **L1 浏览器 Agent**（Extension + Companion + 域确认 / L2 / 配对 / 审计）与 **MCP 客户端**（`companion/src/mcp/`：连外部 server，工具名 `mcp__…`）。自然产品问题：
++
++> 能否把同一浏览器作用面暴露给 **外部编程 Agent**（Claude Code、Cursor、Grok Build、Kimi 等）——通过 MCP 和/或 Skill？
++
++市场已有：
++
++| 原型 | 代表 | 与我们的关系 |
++|------|------|----------------|
++| A 无状态自动化 | Playwright MCP | **不竞争** CI/headless |
++| B 官方调试面 | Chrome DevTools MCP | **互补**（perf / network / inspect） |
++| C 真实日常 Chrome + 扩展 | Browser MCP、mcp-chrome、AgentDesk 等 | 红海；仅 **Trust + HITL + Pack + 审计** 可差异化 |
++| D 云隐身浏览器 | 商业 stealth | 范围外 |
++
++**Repo 事实（决策时）**：
++
++- Companion 仅为 MCP **client**，无 outbound server 产品面  
++- `ws_secret` 鉴权 **Extension↔Companion**，**不等于** MCP caller 鉴权  
++- 确认台偏 Side Panel / Cockpit；IDE 驱动时 Side Panel–only 确认不足  
++- Tab lease（ADR-015）可复用，勿另造锁  
++
++需要一页 **可检查、可门控** 的决策：对外导出什么、禁止什么、Phase 0 如何证伪、与 ADR-020 如何贴合——**不是**「再做一个通用 Browser MCP」。
++
++---
++
++## 决策
++
++### 1. 一句话定位
++
++> **不要**交付通用「更好的 Browser MCP」。  
++> 若对外导出：为编程 Agent 提供 **可租用、可拒绝、可审计的 L1 浏览器面**——补 Playwright（无状态自动化）与 DevTools MCP（调试环）——且 **仅在 Phase 0 证明「已登录会话不可替代」之后才扩面**。
++
++**产品主叙事仍是 Side Panel Agent。** Outbound MCP 是 **Composition 对 Surface L1 的导出门面**，不是第二产品身份，不是新 runtime，禁止写成「中层 Agent」。
++
++### 2. ADR-020 坐标（能力声明模板）
++
++```text
++Surface:      L1（outbound 默认导出）；L2 永不进 default outbound profile
++L2-classes:   （默认无）host_* / shell / netsec 禁止进入默认集合
++Compose:      mcp-server（outbound 门面）+ 可选 skill（adoption）+ 可选 pack（场景）
++Autonomy:     outbound 单调用方；multi-worker / Board 保持内部，除非另案设计
++Trust:        域确认 + L2 确认 + 配对；产品 ship 前必须有 MCP-caller grant
++Channel:      community 默认；enterprise 模块不进 default outbound set
++```
++
++| 轴 | 放置 |
++|----|------|
++| **Composition** | Outbound MCP = 在 profile 下导出既有工具（门面，非新 loop） |
++| **Surface** | 默认仅 curated L1 子集（比内部 L1 更窄） |
++| **Autonomy** | 非新编排器；无静默 fan-out |
++| **禁用语言** | 「中层 Agent」/「第二 runtime」 |
++
++### 3. 锁定决策 L1–L9
++
++| ID | 锁 |
++|----|-----|
++| **L1** | 无 Phase 0 对「已登录不可替代」的证伪，**不做** all-in 通用 Browser MCP。 |
++| **L2** | 主叙事 = Side Panel Agent；outbound = Composition 导出 only。 |
++| **L3** | 默认 outbound profile = **策展 L1 子集**。默认禁止：cookies、evaluate、L2（host/CU）、shell、netsec。 |
++| **L3+** | 返回 **页面正文 / 截图 / DOM 快照** 给第三方 LLM 的工具属 **数据外泄类**。默认拒绝或要求 **按会话/任务 disclosure** 后才启用。隐私文案不得在此类工具向云模型流式传输时宣称「仅本地」。 |
++| **L4** | **MCP caller 不可信。** 门禁按 **操作风险**，从不按「来自 MCP 即放行」。 |
++| **L4+** | **Loopback / stdio / parent PID ≠ 鉴权。** Grant 模型（per-caller token、签名 grant、或用户粘贴 client secret — 设计阶段选定）是 **P1 发货门**。Phase 0 **不得**实现 confirm-skip。 |
++| **L5** | **Skill = 仅 adoption**（何时/如何/哪些工具）。能力本体 = MCP（或等价 tool 协议）。Outbound 工具命名空间优先 **`cmspark__*`**，避免与 Playwright MCP 撞名。 |
++| **L6** | CI / headless 是 Playwright 地盘 — 不把 CMspark 定位到那里。 |
++| **L7** | Phase 0 成功标准：在 **已登录 / SSO** 任务上 CMspark 为唯一可行或明显更优；公网/localhost 干净任务可输给 Playwright。 |
++| **L8** | 确认 UX 是产品。凡 outbound **可写/需确认** 路径：每次需确认的调用 **必须** 在不要求 Side Panel 聚焦时暴露 allow/deny（托盘通知、全局入口、或强制聚焦）。**仅 Side Panel 确认对 IDE Agent 不足。** |
++| **L9** | 交互型 outbound profile **强制双入口 tab lease**：复用 [ADR-015](015-multi-agent-orchestrator-tab-lock.md)；Side Panel 与 MCP 不得互抢同一 tab。冲突默认：**Side Panel 赢**，MCP 排队并披露。交互 Phase 0 任务前必须具备，否则 bake-off 指标无效。 |
++
++### 4. 默认工具面（Phase 0 profile）
++
++实现权威：`companion/src/outbound-mcp/profile.ts`。概念白名单（6–8 个，可微调但不得默默塞入禁类）：
++
++| 工具（MCP 名） | 说明 |
++|----------------|------|
++| `cmspark__list_tabs` | 定向，无 DOM dump |
++| `cmspark__navigate` | L1 导航（域策略需确认时确认） |
++| `cmspark__click` / `cmspark__type` | 交互 L1 |
++| `cmspark__wait_for` | 稳定 |
++| `cmspark__downloads_find` | Downloads 只读检索（无路径逃逸） |
++| `cmspark__get_page_text` / `cmspark__screenshot` | **外泄类** — L3+ disclosure |
++
++**硬禁（default profile）**：`cookies*`、`evaluate`、`host_*`、`shell_*`、`netsec_*`、`osascript_*`、内部-only 工具、把 inbound MCP 再透传出去。
++
++### 5. 安全接线（代码 DoD，门面存在时）
++
++1. 凡 outbound 触发的 `securityConfirmations.request` **必须**绑定 `{ originWs: <mcp-bound 或 synthetic origin> }`（与 P1-2 originWs 纪律一致）。  
++2. **审计**：每次 outbound tool 调用一条结构化记录（caller id、tool、domain、confirm outcome）；建议落 `logs/` 或既有 capability-audit 族，mode 0o600。  
++3. Phase 0 transport：**stdio only**；任何安装路径 **非 default-on**。  
++4. 外泄类工具：`disclosure_accepted` **须由 Companion 会话状态强制**，不得仅信任 MCP 参数自报。  
++5. 单一工具注册表生成 internal + MCP schema，**禁止**双写漂移（中期目标；Phase 0 可显式 map `cmspark__X` → 内部名）。
++
++### 6. Phase 0 实验协议（证伪门）
++
++| ID | 任务 | 期望 |
++|----|------|------|
++| **T1** | 用户 Chrome **已登录** 内网/SSO 页 | CMspark 应赢或唯一可行 |
++| **T2** | localhost PR 预览（干净环境可） | Playwright 赢可接受 |
++| **T3** | 公网页 | Playwright 赢可接受 |
++
++**T1 主指标（草案，spike plan 可微调阈值）**：
++
++| 指标 | 门槛 |
++|------|------|
++| 完成率 | 时限内 ≥ 80%，无人工改浏览器手术 |
++| 确认超时 | 可操作的 MCP error，不挂死 |
++| 无 Side Panel 聚焦的确认 | 有 tray/全局路径时 ≥ 90% 在 &lt;45s 内解决；**无路径则仅测 fail-closed**，确认负担指标作废 |
++| 审计完整率 | 100% |
++| Profile 违规 | **0** 次禁工具成功调用 |
++
++**Fail →** 枢轴 Option B（只读观测 MCP）或 C（垂直 Pack 形 API）；**禁止**在 T1 失败时扩通用自动化面。  
++Bake-off 默认非敏感页；敏感页须显式 disclosure（L3+）。
++
++### 7. 分阶段路线图（实现门控）
++
++| 阶段 | 交付 | 门 |
++|------|------|-----|
++| **P0a** | 决策文档（brief → **本 ADR**） | dual-review 已过 |
++| **P0b** | Spike plan：白名单、指标、disclosure 文案 | L1–L9 |
++| **P0c** | stdio 门面 + 真桥；L8 tray/全局确认；L9 lease；originWs；L3+ 会话 disclosure | DoD checklist 全绿 |
++| **P0d** | T1–T3 vs Playwright MCP bake-off | L7 指标 |
++| **P1** | Grant 模型（L4+）；interact profile；安装文档；仍非 default-on | 另 dual-review |
++| **P2+** | Pack 场景；可选观测扩面；CWS/分发仅在 trust 故事站得住之后 | 另 dual-review |
++
++**安装 / CWS：v0 明确非目标** — Phase 0 不假设 sideload 摩擦已解决。
++
++### 8. 选项冻结
++
++| 选项 | 含义 | 状态 |
++|------|------|------|
++| **A** | 本 ADR + Phase 0 bake-off；无产品 ship | **SELECTED** |
++| **B** | 仅观测 MCP（console/network/DOM/截图读路径） | Phase 0 **fail → pivot** |
++| **C** | 仅垂直 API（如 AppSec Pack 形） | Phase 0 fail 备选 pivot |
++| **D** | 暂不对外 MCP | 仅当 T1 失败或 trust DoD 不可达 |
++
++### 9. 明确非目标（v0）
++
++1. 经 MCP 导出 **完整** 内部工具目录  
++2. 默认导出 Computer Use / Host / shell / netsec / cookies / evaluate  
++3. 用 outbound 取代 Side Panel 作为主产品  
++4. 云多租户「浏览器 SaaS」  
++5. 在截图/页面向第三方 LLM 无限制流式传输时宣称本地隐私  
++6. 仅 Skill、无 MCP 本体充当「给外部 Agent 的浏览器服务」  
++7. 在 CI/headless E2E 上与 Playwright 抢定位  
++
++### 10. 设计评审必查盲点
++
++1. 恶意 / 多 MCP 客户端；确认疲劳 → 一键全开  
++2. 云上下文外泄（页文、截图）  
++3. 无 L9 的双 Agent 抢 tab  
++4. Companion 重启 / Extension SW 休眠 / stdio 父进程死亡  
++5. 商店分发 vs sideload 摩擦  
++6. 品牌稀释（「又一个 browser MCP」）  
++7. 企业合规（OA / 邮件自动化）  
++8. 工具命名碰撞 — `cmspark__*`  
++9. 注册表双写债务  
++
++---
++
++## 后果
++
++**正面**
++
++- 编程 Agent 可租用 **用户已登录 Chrome**（SSO / cookie / 打开页签），与 Playwright 干净 profile 形成互补 JTBD。  
++- 差异化落在 **拒绝权、确认台、审计、Pack**，而非工具数量军备。  
++- 与 ADR-020 一致：导出 = Composition，不发明 runtime。  
++- Phase 0 证伪失败有明确 pivot，避免沉没成本做成 C 类克隆。
++
++**代价 / 风险**
++
++- 安装链（Companion + 扩展配对 + MCP JSON）重于 `npx` 轻量 MCP。  
++- IDE 场景下 L8 确认 UX 是 **新产品工作**，非接线副产品。  
++- 双入口（Side Panel + MCP）争用 tab，必须 L9 否则 bake-off 失真。  
++- 外泄类工具与「本地隐私」叙事张力，须披露诚实。  
++- `ws_secret` 不能误用为 MCP 鉴权（L4+）。
++
++**维护**
++
++- 改默认 allowlist / 禁类 / grant 语义：同步本 ADR + spike plan + `outbound-mcp/profile.ts` + 用户文档（发货时）。  
++- brief / adversary 过程件 **不得**单独改锁而不改本 ADR。
++
++---
++
++## 拒绝的方案
++
++| 方案 | 原因 |
++|------|------|
++| 全量工具目录 MCP 化 | 商品化 + 外泄面爆炸；违反 L1/L3 |
++| Skill-only「浏览器服务」 | 外部 Agent 无法可靠驱动 CDP；违反 L5 |
++| 默认导出 L2 / shell / cookies | Trust 单调与企业模块边界 |
++| stdio/loopback 即信任 | 违反 L4+；多客户端/劫持面 |
++| 与 Playwright 抢 CI/E2E 定位 | 违反 L6；必输红海 |
++| Phase 0 跳过 L8/L9 却宣称交互 bake-off 有效 | 指标无效；违反 L8/L9 |
++
++---
++
++## 实现地图（截至 ADR 落地）
++
++| 路径 | 职责 | 状态 |
++|------|------|------|
++| `companion/src/outbound-mcp/profile.ts` | 默认 allowlist / 外泄类 / `cmspark__*` map | skeleton |
++| `companion/src/outbound-mcp/facade.ts` | gate + disclosure 门 + tools list | skeleton（**无** live WS 桥） |
++| `companion/src/outbound-mcp/audit.ts` | outbound 审计行 | skeleton |
++| `companion/tests/outbound-mcp-facade.test.ts` | 门禁单测 | 有 |
++| stdio MCP entry / CLI | `tools/list` + `tools/call` 接 façade | **待** P0c |
++| Live bridge → 内部 tool 调度 | originWs 绑定 | **待** P0c |
++| Tray/全局确认（L8） | IDE 无 Side Panel 聚焦 | **待** P0c |
++| Tab lease 双入口（L9） | 复用 ADR-015 | **待** 交互任务前 |
++| Grant 模型（L4+） | P1 发货门 | **待** P1 |
++
++**Inbound** MCP 客户端栈（`companion/src/mcp/`）保持不变：用户仍可把外部 server 接到 Side Panel Agent。
++
++---
++
++## 变更日志
++
++| 日期 | 变更 |
++|------|------|
++| 2026-08-03 | 方向：多路对抗 + dual-review APPROVE_WITH_NITS；brief DIRECTION LOCKED |
++| 2026-08-03 | P0b spike plan + P0c façade skeleton（profile/gate/audit） |
++| 2026-08-04 | **本 ADR Accepted**：brief 升格为决策 SoT；实现仍按 Phase 0→P1 门控 |
++| 2026-08-04 | 实现闸门：Eval Engineering skill + [P0c eval gates](../superpowers/plans/2026-08-04-outbound-mcp-p0c-eval-gates.md)（M1–M9 · T3 dual） |
++| 2026-08-04 | 场景应用（非本 ADR 规范）：[Daily Content Loop brief](../decisions/daily-content-loop-brief-2026-08-04.md) — 定时情报环用 L1 采集，非 L2/值守 |
++
++---
++
++*Accepted · Outbound MCP = Composition export of curated L1 · not a second product runtime.*
+diff --git a/docs/architecture.md b/docs/architecture.md
+index f59db52..047310c 100644
+--- a/docs/architecture.md
++++ b/docs/architecture.md
+@@ -13,7 +13,7 @@ CMspark **不是**多套 Agent runtime，而是 **一个** Companion tool-loop
+ | 轴 | 名称 | 内容 |
+ |----|------|------|
+ | **A Surface** | 作用面 | **L0 聊**（无 CDP tool）→ **L1 网页**（CDP/tabs/cookies）→ **L2 宿主**（CU / Host / Apps / 企业 shell·netsec，opt-in） |
+-| **B Composition** | 组合面 | Skill · Knowledge · MCP · Pack · user-env · modules — **装配**，不是「中层 Agent」 |
++| **B Composition** | 组合面 | Skill · Knowledge · MCP（client）· Outbound MCP（export，[ADR-022](adr/022-outbound-mcp-server.md)）· Pack · user-env · modules — **装配**，不是「中层 Agent」 |
+ | **C Autonomy** | 自主度 | 单线程 → multi-worker + tab lease → Mission Board（Board **只**归本轴） |
+ 
+ **横切标签**：Trust（随 Surface 单调变严；session-trust 见 ADR-017）· Channel（`community` | `enterprise`）。
+@@ -23,7 +23,7 @@ CMspark **不是**多套 Agent runtime，而是 **一个** Companion tool-loop
+ **叠加纪律**：新场景优先 **Pack**（+ skill/MCP）；禁止 Pack 写全局 auto_approve/god-mode；禁止无 Pack 替代就加一级 Side Panel 入口。
+ 
+ ```text
+-  Composition: Skill · Knowledge · MCP · Pack · user-env
++  Composition: Skill · Knowledge · MCP · Outbound MCP · Pack · user-env
+         │
+    L0 ──▶ L1 ──▶ L2 (opt-in)
+         │
+@@ -446,6 +446,7 @@ cmspark/
+ │   │   ├── security-confirmation.ts # L2 确认队列 (~45s + origin 绑定)
+ │   │   ├── ws-auth.ts               # WS 配对 / handshake
+ │   │   ├── mcp/                     # MCP client/manager/aggregator/transport
++│   │   ├── outbound-mcp/            # Outbound MCP façade (ADR-022; Phase 0)
+ │   │   ├── computer/                # Computer Use（opt-in 桌面操控）
+ │   │   ├── host-use/                # Host 读写 / 平台 adapter（darwin/win/linux）
+ │   │   ├── apps/                    # 应用枚举 / 启动 / 生物识别门
+@@ -641,6 +642,19 @@ Companion 作为 **MCP 客户端/聚合器**，把外部 server 的 tools（及
+ 
+ 配置权威：`~/.cmspark-agent/config.json` 的 `mcp` 段。MCP **不**绕过 Companion 安全策略；危险 MCP 工具仍可走确认策略（见 mcp.md）。
+ 
++### 8.3 Outbound MCP（编程 Agent 导出 · ADR-022）
++
++> 决策 SoT：[ADR-022](adr/022-outbound-mcp-server.md)。**不是** inbound 客户端的逆操作而已：这是 **Composition 对 Surface L1 的策展导出**。
++
++| 方向 | 角色 | 状态 |
++|------|------|------|
++| **Inbound**（§8.1） | Companion = MCP **client** | 0.3.0 已交付 |
++| **Outbound** | Companion = MCP **server 门面** → 同一安全栈 → Extension/CDP | ADR Accepted；Phase 0 门控 |
++
++- 工具命名：`cmspark__*`（默认 curated L1 子集；禁 cookies / evaluate / L2 / shell / netsec）
++- 代码：`companion/src/outbound-mcp/`（profile · façade gate · audit）；stdio 真桥 / L8 托盘确认 / L9 tab lease / grant 见 ADR 分阶段
++- 产品主叙事仍是 Side Panel；outbound **非** default-on；Skill 仅 adoption
++
+ ---
+ 
+ ## 9. Computer Use · Host Use · Apps
+diff --git a/docs/audit/reviews/_templates/dual-review-capability-checklist.md b/docs/audit/reviews/_templates/dual-review-capability-checklist.md
+index 99a5bae..66cd390 100644
+--- a/docs/audit/reviews/_templates/dual-review-capability-checklist.md
++++ b/docs/audit/reviews/_templates/dual-review-capability-checklist.md
+@@ -38,6 +38,22 @@ See [p1-security-open-items-2026-07-29.md](../../p1-security-open-items-2026-07-
+ | P1-3 | evaluate integrity | `browser-bridge` evaluate / sanitizer / token bind |
+ | P1-4 | shell structure | `capability/shell.ts`, shell policy, spawn |
+ 
++## Eval Engineering (T2+ recommended · T3+ mandatory)
++
++See [eval-gate-card.md](eval-gate-card.md) and [eval-engineering-gate skill](../../../skills/eval-engineering-gate/SKILL.md).
++
++**Default confirmation order (locked 2026-08-04):**
++
++1. MACHINE green  
++2. **Independent adversary agent(s)** VERDICT  
++3. **Pi re-review** of adversary findings + diff VERDICT  
++
++1. Prefer **machine-checkable** claims over prose quality.  
++2. Score **outcome + trajectory + component**, not length.  
++3. **Blast radius** decides human-required vs auto — not model confidence.  
++4. REJECT must block merge; APPROVE_WITH_NITS lists only non-blockers.  
++5. Implementer self-APPROVE is never a gate.
++
+ ## Verdict reminder
+ 
+ End with exactly one of:
+diff --git a/docs/audit/reviews/_templates/eval-gate-card.md b/docs/audit/reviews/_templates/eval-gate-card.md
+new file mode 100644
+index 0000000..c952f4c
+--- /dev/null
++++ b/docs/audit/reviews/_templates/eval-gate-card.md
+@@ -0,0 +1,55 @@
++# Eval gate card — `<batch-id>`
++
++> 模板来源：`.claude/skills/cmspark-eval-engineering-gate/SKILL.md`  
++> 填完后附在 dual-review prompt 或 PR body。
++
++**Blast tier**: T0 | T1 | T2 | T3 | T4  
++**Date**:  
++**Base**:  
++
++## Capability declaration (ADR-020)
++
++```text
++Surface:      
++L2-classes:   
++Compose:      
++Autonomy:     
++Trust:        
++Channel:      
++```
++
++## Machine (must pass first — paste commands + exit codes)
++
++- [ ]  
++- [ ] Outcome DoD (external observables only):  
++- [ ] No forbidden tools/paths / no default-on surprise  
++
++## Trajectory
++
++- [ ] Diff scope matches claim  
++- [ ] No thrash / duplicate tool spam / unrelated drive-by  
++
++## Component
++
++- Suspected hotspots (file:line):  
++
++## Judges（确认序：独立对抗 → Pi 复审）
++
++- [ ] **独立对抗 agent** 报告：`docs/audit/reviews/<batch>-adversary-*.md` · VERDICT  
++- [ ] **Pi 复审**（读对抗报告 + diff + 机核）：`…-pi-rereview-*.md` · VERDICT  
++- [ ] Nits folded or owned  
++- [ ] （可选）`scripts/dual-external-review.sh`  
++
++## Blast
++
++- [ ] Tier allows this merge path  
++- [ ] Residual risks:  
++
++## Verdict
++
++| Gate | Result |
++|------|--------|
++| MACHINE | PASS \| FAIL |
++| ADVERSARY | APPROVE \| APPROVE_WITH_NITS \| REJECT \| N/A |
++| PI_REREVIEW | APPROVE \| APPROVE_WITH_NITS \| REJECT \| N/A |
++| MERGE | YES \| NO — reason（须 MACHINE + 对抗 + Pi 均过） |
+diff --git a/docs/decisions/cmspark-as-mcp-server-brief-2026-08-03.md b/docs/decisions/cmspark-as-mcp-server-brief-2026-08-03.md
+index 7aa26a5..445c318 100644
+--- a/docs/decisions/cmspark-as-mcp-server-brief-2026-08-03.md
++++ b/docs/decisions/cmspark-as-mcp-server-brief-2026-08-03.md
+@@ -3,7 +3,7 @@
+ | Field | Value |
+ |-------|--------|
+ | Date | 2026-08-03 |
+-| Status | **DIRECTION LOCKED** — dual-review Claude+Pi both **APPROVE_WITH_NITS** (nits folded below); **no implementation** until Phase 0 DoD met |
++| Status | **SUPERSEDED as decision SoT by [ADR-022](../adr/022-outbound-mcp-server.md)** (2026-08-04). Process artifact retained; locks L1–L9 live in the ADR. Phase 0 implementation still gated on P0c DoD |
+ | Authors | Grok (multi-path adversary) + Claude/Pi dual-review |
+ | Related | [ADR-020](../adr/020-capability-model-three-axes.md) · [mcp.md](../mcp.md) · architecture §8 (Companion = MCP **client** today) · [ADR-015](../adr/015-multi-agent-orchestrator-tab-lock.md) tab lease |
+ | Process | [adversary synthesis](cmspark-as-mcp-server-adversary-synthesis-2026-08-03.md) · [dual-review synthesis](cmspark-as-mcp-server-dual-review-synthesis-2026-08-03.md) · artifacts `docs/audit/reviews/cmspark-mcp-server-strategy-*20260803-150011*` |
+@@ -196,6 +196,7 @@ Record for T1 (primary):
+ | 2026-08-03 | Internal multi-path adversary (Advocate / Skeptic / Implementer) |
+ | 2026-08-03 | Dual-review Claude + Pi **APPROVE_WITH_NITS** → nits folded as L3+/L4+/L8 deliverable/L9/originWs/metrics/`cmspark__*` |
+ | 2026-08-03 | Brief status **DIRECTION LOCKED** for optimization backlog |
++| 2026-08-04 | Decision SoT moved to **ADR-022**; this brief is historical process |
+ 
+ ---
+ 
+diff --git a/docs/decisions/cmspark-as-mcp-server-dual-review-synthesis-2026-08-03.md b/docs/decisions/cmspark-as-mcp-server-dual-review-synthesis-2026-08-03.md
+index f59f889..f683d65 100644
+--- a/docs/decisions/cmspark-as-mcp-server-dual-review-synthesis-2026-08-03.md
++++ b/docs/decisions/cmspark-as-mcp-server-dual-review-synthesis-2026-08-03.md
+@@ -57,11 +57,12 @@
+ 2. Freeze Phase 0 protocol with numeric pass/fail.  
+ 3. Do **not** start façade implementation until L8/L9/originWs/content-disclosure are written as DoD.
+ 
+-## Follow-through (same day)
++## Follow-through
+ 
+-- **Brief (SoT):** [cmspark-as-mcp-server-brief-2026-08-03.md](cmspark-as-mcp-server-brief-2026-08-03.md) — status **DIRECTION LOCKED**; L1–L9 + L3+/L4+ folded.  
++- **Decision SoT (2026-08-04):** [ADR-022](../adr/022-outbound-mcp-server.md) — Accepted; brief retained as process.  
++- **Brief (historical):** [cmspark-as-mcp-server-brief-2026-08-03.md](cmspark-as-mcp-server-brief-2026-08-03.md) — L1–L9 folded into ADR.  
+ - **Backlog:** [optimization-plan-post-adr-020.md](../optimization-plan-post-adr-020.md) §C row「Outbound MCP Server」.  
+-- Implementation **not** started.
++- Implementation: P0c façade skeleton present; live bridge / L8 / L9 / bake-off still open.
+ 
+ ---
+ 
+diff --git a/docs/decisions/daily-content-loop-brief-2026-08-04.md b/docs/decisions/daily-content-loop-brief-2026-08-04.md
+new file mode 100644
+index 0000000..50d3644
+--- /dev/null
++++ b/docs/decisions/daily-content-loop-brief-2026-08-04.md
+@@ -0,0 +1,452 @@
++# Brief: Daily Content Loop（每日内容情报环）
++
++| Field | Value |
++|-------|--------|
++| Date | 2026-08-04 |
++| Status | **DIRECTION LOCKED**（用户 2026-08-04 拍板 §11；D1–D12）— 可选 dual-review；实现仍依赖 Outbound P0c |
++| Authors | Grok（对话场景收敛：用户日报环 + Loop Engineering + ADR-022） |
++| Related | [ADR-020](../adr/020-capability-model-three-axes.md) · [ADR-022](../adr/022-outbound-mcp-server.md) · [Eval Engineering skill](../skills/eval-engineering-gate/SKILL.md) · [P0c eval gates](../superpowers/plans/2026-08-04-outbound-mcp-p0c-eval-gates.md) · Pack [ADR-014](../adr/014-mission-pack-enterprise-modules.md) |
++| Depends on | Outbound MCP **P0c 真桥**（采集/网页再探）· 编程 Agent **本地模型** · **P1 grant**（定时低确认）· Agent 协助配置 schedule/邮件 |
++| Non-goals (v0) | CMspark 内置「情报 SaaS」runtime；默认导出 L2/CU/cookie API；值守 grant 自动绑 MCP；无源列表的全网爬虫；把公开站强绑「仅 SSO 才有价值」 |
++
++---
++
++## 0. Why this document
++
++用户场景（收敛表述）：
++
++> 每天定时刷新关心的网站最新内容 → AI 判定好坏与可行性 → 编程 Agent 尝试验证并打分 → 自动生成每日报告 → 用户只在需要时打开报告，确认有没有值得关注的内容。
++
++这与「通用 Browser MCP」或「编程 Agent 值守操控整机」不同：它是一条 **异步业务闭环（Loop Engineering）**，CMspark 只提供其中 **已登录浏览器采集/再探** 节点。
++
++本 brief 锁定：
++
++1. 环的阶段、artifact、验收信号  
++2. 谁当 Loop owner、CMspark 边界  
++3. Trust / 确认 / 外泄策略  
++4. 交付形态（Pack + 外部 schedule 优先）  
++5. 与 ADR-022 / Eval gate 的门控  
++
++**用户拍板已完成**（§11 → §12）。**不是**实现 PR；真跑依赖 Outbound P0c + Agent 侧配置。
++
++### 0.1 用户锁定的产品选择（2026-08-04）
++
++| # | 问题 | 锁定选择 |
++|---|------|----------|
++| 1 | 首发源 | **公开站为主**（可选少量需登录源作增强，非 v0 必选） |
++| 2 | 报告落点 | **本机目录 + 邮件**（双通道；本机为权威归档，邮件为投递） |
++| 3 | 判定/环内 LLM | **编程 Agent 使用本地模型**（页文优先不进云） |
++| 4 | 验证深度 | **默认跑代码验证 + 网页再探**（Stage C 必选双轨） |
++| 5 | 定时/配置 | **由编程 Agent 协助用户配置**（cron/launchd、MCP、邮件、sources） |
++
++---
++
++## 1. One-sentence positioning
++
++> **Daily Content Loop** = 本机定时的「采集 → 本地判定 → 代码+网页验证 → 本机报告+邮件」环；  
++> **CMspark** = 环上可拒绝、可审计的 **L1 浏览器传感器**（公开站为主，登录态可选）；  
++> **编程 Agent（本地模型）** = 环的主编排、配置助手与报告员；  
++> **用户** = 异步决策者（读本机/邮件报告，不盯每一页刷新）。
++
++禁止叙事：
++
++- 「CMspark 变成每日情报中台 / 第二 Agent runtime」  
++- 「开了无人值守，IDE Agent 就能静默全自动」  
++- 「cookie 导出给云模型做采集」  
++- 「公开站必须走云端大模型才算完成」  
++
++---
++
++## 2. Capability declaration (ADR-020)
++
++```text
++Surface:      L1（采集 + Stage C 网页再探）；代码验证 = Agent workspace（非 CMspark L2）
++L2-classes:   (none via outbound default) — 桌面 CU/Host 不进 v0 环
++Compose:      outbound-mcp + skill(adoption) + pack(sources+prompts+paths+mail) + optional knowledge
++Autonomy:     编程 Agent 配置的 OS/Agent schedule 驱动「单次环 run」；非 multi-worker fan-out 默认
++Trust:        源域 allowlist + 本地模型优先（降外泄）+ P1 caller grant（定时少确认）
++Channel:      community
++Privacy:      Judge/Validate LLM = local via coding agent；artifact 本机权威
++```
++
++| 轴 | 放置 |
++|----|------|
++| **Composition** | Pack 配方 + Outbound 工具 + Skill「怎么跑环/怎么配 schedule·邮件」 |
++| **Surface** | 浏览器采集/再探 = L1；报告 = 本机文件 + 邮件投递 |
++| **Autonomy** | Schedule **由编程 Agent 协助写入** OS/Agent 配置；CMspark v0 **不**做内置 cron 产品 |
++| **Eval / Loop** | 每段可观察 artifact；C 段须 code+web 双证据（或显式 skip 原因） |
++
++---
++
++## 3. JTBD
++
++| Actor | Job |
++|-------|-----|
++| 信息过载用户 | 少花时间刷多个**公开**（及可选登录）站，仍不错过「值得跟进」的条目 |
++| 编程 Agent | 有稳定输入（抓取 JSON）和稳定输出（本机 MD + 邮件），可重复跑；**并协助首次配置** |
++| 隐私敏感用户 | 判定/验证用 **本地模型**；页文默认不进云；失败可审计 |
++
++**成功画面（人侧）：** 邮箱或本机打开今日报告 → 高分条目 + 代码/网页双证据 → 决定是否深挖；其余时间零打扰。
++
++---
++
++## 4. Loop topology（规范）
++
++```text
++[Trigger: cron | launchd | agent schedule | 手动]
++        │
++        ▼
++  Loop Owner = 编程 Agent（或等价脚本 + LLM）
++        │
++        ├─ Stage A  Collect   ──MCP cmspark__*──► 用户 Chrome（源 allowlist）
++        │                      artifact: collect.json
++        ├─ Stage B  Judge     ──本地 LLM only───► artifact: judge.json
++        ├─ Stage C  Validate  ──code + web 双轨─► artifact: validate.json
++        │            code: Agent workspace
++        │            web:  CMspark L1 re-fetch（必选，除非 item 标 skip_web）
++        └─ Stage D  Report    ──本机 MD + 邮件──► daily-YYYY-MM-DD.md
++                                                      + mail delivery receipt
++                                                      │
++                                                      ▼
++                                              User async read (disk and/or inbox)
++```
++
++### 4.1 Stage contracts
++
++| Stage | 输入 | 输出 | 成功判据（可机核） |
++|-------|------|------|-------------------|
++| **A Collect** | `sources.yaml` + run_id | `collect.json` | 每个 source 有 `status`；`ok` 者有 `items[]` 且每条有 `url` 或 `stable_id` |
++| **B Judge** | collect.json | `judge.json` | 每条有 `score`∈[0,1]、`tags[]`、`rationale`、`grounded_snippet_ids[]`；**model_route=local**；无 grounded → 条目无效 |
++| **C Validate** | judge 中 score≥阈值 的子集 | `validate.json` | 每条 **同时** 有 `code` 与 `web` 子结果（或显式 `skip_*` + reason）；汇总 `feasibility_score`；失败有 `error_class` |
++| **D Report** | 上三者 | 本机 `daily-YYYY-MM-DD.md` + **邮件投递结果** | 本机文件存在；`mail.status` ∈ {sent, skipped_user, failed}；高分区非空或显式「今日无达标」 |
++
++**Stage 失败隔离：** 单 source / 单 item 失败 → 记入 artifact，**不**中止整环（除非 Trigger 配置 `fail_fast: true`）。
++
++### 4.2 归责（error_class）
++
++| error_class | 含义 | 下轮动作 |
++|-------------|------|----------|
++| `auth_expired` | 登录态失效 | 报告置顶；需用户重登 Chrome |
++| `blocked_confirm` | 确认超时/拒绝 | 检查域白名单 / grant |
++| `nav_timeout` | 页未就绪 | 调 wait / 选择器策略 |
++| `empty_extract` | 正文空 | 选择器/SPA 策略；非 LLM 编造 |
++| `llm_ungrounded` | 判定无 snippet 依据 | **丢弃该判定**（忠实度闸） |
++| `validate_env` | 本机依赖/网络 | Agent 侧修环境 |
++| `external_rate_limit` | 对方限流 | 退避；非 Agent 无能 |
++
++---
++
++## 5. Artifact schemas（v0 草案）
++
++路径建议（Loop owner 工作区，**非**强制写 `~/.cmspark-agent`）：
++
++```text
++<loop_root>/
++  sources.yaml
++  runs/<run_id>/
++    collect.json
++    judge.json
++    validate.json
++  reports/daily-YYYY-MM-DD.md
++```
++
++### 5.1 `sources.yaml`（公开站为主）
++
++```yaml
++version: 1
++# 本地模型判定：页文主要留在本机；disclosure 仍建议 per_run 记账
++disclosure_mode: per_run
++model:
++  judge: local           # locked — 编程 Agent 本地模型
++  validate_summary: local
++defaults:
++  max_items_per_source: 20
++  timeout_s: 60
++  validate:
++    code: required       # locked
++    web_reprobe: required  # locked — CMspark L1
++sources:
++  # 主路径：公开站
++  - id: public-changelog
++    name: "某开源项目 Changelog"
++    url: "https://github.com/example/project/releases"
++    domain: "github.com"
++    auth: none
++    prefer: cmspark_or_http  # 公开可用 HTTP；JS 重页优先 CMspark
++    extract: list_then_detail
++    judge_hint: "是否有我们依赖的 breaking change"
++  - id: public-blog
++    name: "公开技术博客"
++    url: "https://blog.example.org/"
++    domain: "blog.example.org"
++    auth: none
++    prefer: cmspark_or_http
++  # 可选增强（非 v0 必选）：需登录源
++  # - id: sso-docs
++  #   auth: session_chrome
++  #   ...
++report:
++  local_dir: "reports"           # 相对 loop_root；权威归档
++  mail:
++    enabled: true
++    to: "${USER_EMAIL}"          # 由编程 Agent 协助写入用户配置
++    on: always                   # always | high_score_only
++    attach_md: true
++```
++
++### 5.2 `collect.json`（摘录）
++
++```json
++{
++  "run_id": "2026-08-04T0800Z",
++  "started_at": "...",
++  "sources": [
++    {
++      "source_id": "example-sso-docs",
++      "status": "ok",
++      "fetched_at": "...",
++      "items": [
++        {
++          "item_id": "…",
++          "url": "https://…",
++          "title": "…",
++          "snippets": [
++            { "snippet_id": "s1", "text": "…" }
++          ],
++          "raw_tool": "cmspark__get_page_text"
++        }
++      ]
++    },
++    {
++      "source_id": "other",
++      "status": "failed",
++      "error_class": "auth_expired",
++      "message": "…"
++    }
++  ]
++}
++```
++
++### 5.3 `judge.json` / `validate.json`（字段底线）
++
++- **Judge：** `item_id`, `score`, `tags`, `rationale`, `grounded_snippet_ids[]`（空 → 无效）, `model: "local"`  
++- **Validate（双轨强制）：**
++  - `code`: `{ status, commands[], log_paths[], score? }`
++  - `web`: `{ status, url, tool: "cmspark__…", snapshot_ref?, score? }`
++  - `feasibility_score`（汇总）, `error_class?`
++  - 缺一轨且无 `skip_*_reason` → **Stage C 对该 item 失败**
++
++### 5.4 日报 MD 结构（用户可见）
++
++```markdown
++# Daily Content — YYYY-MM-DD
++- Run: <run_id> · Sources ok/fail · Judge model: local
++- Artifacts: <loop_root>/runs/<run_id>/
++- Mail: sent | failed | skipped — <detail>
++
++## 值得关注（score ≥ threshold）
++### [标题](url)
++- 判定: … · 可行性: …
++- 代码证据: path/to/log 或 test name
++- 网页再探: url · cmspark tool · 时间
++- 建议动作: watch | try | ignore
++
++## 其余摘要
++…
++
++## 失败源 / 半失败验证
++- source_id / item_id — error_class — 用户动作提示
++```
++
++### 5.5 邮件投递（D 段）
++
++| 规则 | 说明 |
++|------|------|
++| **权威** | 本机 `reports/daily-*.md` 始终写入；邮件失败 **不** 回滚本机报告 |
++| **内容** | 默认正文 = MD 全文或「高分区 + 本机路径链接」；体积过大则摘要 + 本机路径 |
++| **密钥** | SMTP/API 走编程 Agent / OS 钥匙串或 user-env 类秘密；**不**写进 pack 明文 |
++| **配置** | 首次由 **编程 Agent 协助** 探测/写入 `report.mail`（见 §8.3） |
++
++---
++
++## 6. CMspark / Outbound 绑定（ADR-022）
++
++### 6.1 默认工具（环 Stage A / 可选 C）
++
++| Tool | Loop 用途 |
++|------|-----------|
++| `cmspark__list_tabs` | 复用已开登录页，少 navigate |
++| `cmspark__navigate` | 打开 source URL |
++| `cmspark__wait_for` | SPA/慢页 |
++| `cmspark__get_page_text` | 抽正文（**L3+ disclosure**） |
++| `cmspark__screenshot` | 可选证据；外泄类 |
++| `cmspark__click` / `type` | 展开列表、分页、轻交互 |
++| `cmspark__downloads_find` | 若源提供附件下载后再读 |
++
++**禁止进 v0 环 profile：** cookies\*、evaluate、host\_\*、shell、netsec、默认 L2。
++
++### 6.2 公开站为主 + 登录态可选
++
++- **v0 主路径：** `auth: none` 公开站；可用 CMspark（JS/反爬/要截图）或轻量 HTTP（实现可选优化，**不**替代 Outbound 产品叙事）。  
++- **可选：** `auth: session_chrome` 需登录源 — 登录态 cookie **留在 Chrome**；**导出 cookie = 非目标**。  
++- CMspark 价值在公开站场景：稳定导航、截图证据、与 Stage C 网页再探同一工具面、后续无缝加 SSO 源。
++
++### 6.3 Trust 与「定时少打断」
++
++| 模式 | 说明 | 依赖 |
++|------|------|------|
++| **M0 手动** | 编程 Agent 内触发一趟环 | P0c 真桥 + 本地模型 |
++| **M1 半自动** | Agent 配好的 schedule 触发；新域仍确认 | P0c + L8 tray 确认 |
++| **M2 低确认** | 源域预授信或 **loop grant**（只读 + 白名单 + TTL） | **P1 grant**（ADR-022 L4+） |
++| **M3 禁** | 值守 CU + outbound 静默 | **明确不做** |
++
++v0 产品承诺停在 **M0–M1**；M2 为 P1 目标。
++
++### 6.4 外泄与本地模型（L3+ 对齐用户选择）
++
++| 规则 | 锁定 |
++|------|------|
++| Judge / 验证摘要 LLM | **本地**（编程 Agent 配置的 local model） |
++| 页文是否进云 | **默认否**；若用户改用云模型须重新 disclosure |
++| `get_page_text` / screenshot | 仍记 audit；disclosure `per_run` 说明「进入本机 Agent 上下文」 |
++| 本机报告 | 权威 |
++| 邮件 | 投递通道；失败不删本机文件；收件人由用户确认后写入配置 |
++
++---
++
++## 7. Stage C「验证可行性」边界（双轨必选）
++
++| 验证类型 | v0 | 执行者 |
++|----------|----|--------|
++| 对照本机 repo / 文档 | ✅ **code 轨** | 编程 Agent |
++| 跑检查、单测、类型检查、最小 repro | ✅ **code 轨** | 编程 Agent workspace |
++| 再打开链接核对仍在线/要点是否仍在 | ✅ **web 轨** | CMspark L1（`navigate`/`get_page_text`/…） |
++| 仅一轨成功 | ⚠️ item `status=partial`；报告标黄；默认 **不进「强推荐」** |
++| 部署、改生产、发帖、转账 | ❌ | 永不进自动环 |
++| 桌面客户端 CU | ❌ v0 | Side Panel 人工或远期 profile |
++
++**原则：** 用户锁定 **代码 + 网页再探** 均要跑；缺轨必须 `skip_*_reason`（如「无对应仓库」），禁止静默只跑一轨还报「已验证」。
++
++---
++
++## 8. 交付形态（Pack-first + Agent 配置）
++
++### 8.1 推荐默认
++
++| 组件 | 内容 |
++|------|------|
++| **Mission Pack** `daily-content-loop` | sources 公开站模板、环协议 prompt、报告/邮件路径约定、skill 引用 |
++| **Skill** | adoption：环阶段、`cmspark__*` 用法、双轨验证、忠实度、**如何请 Agent 配置 schedule/SMTP** |
++| **Outbound MCP** | 浏览器能力本体（ADR-022） |
++| **Schedule + Mail** | **由编程 Agent 协助配置** 写入用户机器（cron/launchd/Agent schedule + 邮件密钥）— **v0 不**在 Companion 内做 cron/SMTP 产品 UI |
++
++### 8.2 明确不选（v0）
++
++| 方案 | 原因 |
++|------|------|
++| CMspark 内嵌「每日情报 Agent」一级 UI | 违反 Pack-first / 一级入口纪律 |
++| 仅 Skill、无 MCP | 外部 Agent 无法驱动浏览器（ADR-022 L5） |
++| 强制云端 Judge | 与用户锁定「本地模型」冲突 |
++| 把邮件当唯一归档 | 本机 MD 为权威 |
++
++### 8.3 编程 Agent「帮我配置」清单（首次 onboarding）
++
++Agent 应按序完成并留下可机核痕迹（写入 `loop_root/SETUP.md` 或 config）：
++
++1. **创建** `loop_root/`、`sources.yaml`（公开站示例可改）、`reports/`  
++2. **确认** 本地模型可用（编程 Agent 侧）；写 `model.judge=local`  
++3. **配置** CMspark Outbound MCP 接入（stdio / 文档中的 client JSON 片段）  
++4. **配置** 邮件：`to`、SMTP 或系统 `mail`；发一封测试信；记录 `mail.status=test_ok`  
++5. **配置** 定时：launchd/cron 或 Agent schedule；dry-run 触发一次 M0  
++6. **域列表** 导出给用户：建议加入确认白名单的公开域（为 M2 铺路，v0 可不自动写 `auto_approved_domains`）  
++
++**禁止** Agent 在 onboarding 中：打开 god-mode、导出 cookie、安装不明 SMTP 后门、跳过测试邮件直接宣称完成。
++
++---
++
++## 9. Loop Engineering × Eval Engineering
++
++| Loop 需求 | Eval 闸 |
++|-----------|---------|
++| Agent 自称「已采集」 | **MACHINE：** collect.json schema + 非空或显式 failed |
++| 判定文采好但无依据 | **忠实度：** 无 `grounded_snippet_ids` → 条目作废 |
++| 验证绕圈 40 步 | **路径：** 每 item 工具调用上限；超限 `error_class=thrash` |
++| 合「自动群发无关收件人」 | **Blast T4：** 邮件仅用户确认的 `to`；禁止扩大通讯录 |
++| 声称双轨验证但只有 code | **MACHINE：** validate.json 缺 web → FAIL |
++| 日报写进 main 营销页 | 非本环；走开发 dual-review |
++
++**环 run 的 merge 类比：**  
++`reports/daily-*.md` 写入本机 = T0/T1（用户数据）；  
++**改 CMspark 产品代码** 仍走 T3 dual，与日报环无关。
++
++---
++
++## 10. Phased roadmap
++
++| Phase | 交付 | Gate |
++|-------|------|------|
++| **L0 Brief** | 本文 | ✅ 用户拍板 §11 → DIRECTION LOCKED |
++| **L1 Manual runbook** | 公开站 sources 例 + Agent onboarding prompt（§8.3）+ 一次 M0 手动跑通 | P0c M1–M7 绿；本地模型；双轨 C；本机 MD |
++| **L2 Pack skeleton** | `daily-content-loop` pack + skill + 邮件/报告约定 | Pack 校验；无新一级 UI |
++| **L3 Agent-configured M1** | Agent 写好 schedule + 测试邮件 + 一趟定时 | L8；mail 失败隔离；SETUP.md 完整 |
++| **L4 Low-confirm M2** | loop grant / 公开域预授信 | ADR-022 P1 dual-review |
++| **L5+** | 可选 SSO 源配方、Obsidian 链、多环 | 另 brief |
++
++**依赖硬序：** Outbound P0c → L1 runbook（可先写文档）→ Pack → Agent 配置 schedule/邮件；**不可**先承诺 M2 静默。
++
++---
++
++## 11. Open questions — **已关闭**
++
++| # | 决议（用户 2026-08-04） |
++|---|------------------------|
++| 1 | **公开站为主**（登录源可选增强） |
++| 2 | **本机目录 + 邮件**（本机权威） |
++| 3 | **编程 Agent 本地模型** 做判定/环内推理 |
++| 4 | **Stage C = 代码 + 网页再探** 双轨必选 |
++| 5 | **编程 Agent 协助配置** schedule / MCP / 邮件 / sources |
++
++残留实现细节（不挡方向锁）：SMTP 供应商、具体本地模型名、公开站初始清单 — 在 L1 runbook / onboarding 时由 Agent 与用户填。
++
++---
++
++## 12. Decision freeze（**LOCKED**）
++
++| ID | 锁 |
++|----|-----|
++| **D1** | Loop owner = 编程 Agent（本地模型），**不是**新 CMspark runtime |
++| **D2** | CMspark 提供 **L1 采集 + Stage C 网页再探**；不导出 cookie；L2/CU 不进 v0 环 |
++| **D3** | 交付 = Pack + Skill(adoption) + Outbound + **Agent 配置的** schedule/邮件 |
++| **D4** | 四阶段 artifact 契约强制；无 grounded snippet 的判定无效 |
++| **D5** | v0 自动化 **M0–M1**；M2 依赖 P1 grant；M3 永非目标 |
++| **D6** | Stage C **代码 + 网页** 双轨；缺轨须 skip 原因；桌面 CU 不进 v0 |
++| **D7** | 单源失败隔离；失败置顶提示用户 |
++| **D8** | 源策略 **公开站为主** |
++| **D9** | 报告 **本机权威 + 邮件投递**；邮件失败不删本机文件 |
++| **D10** | Judge/环内 LLM **local**；默认页文不进云 |
++| **D11** | 首次 setup 由 **编程 Agent 按 §8.3 清单** 协助完成并写 SETUP 痕迹 |
++| **D12** | 邮件收件人/域白名单变更须用户确认；禁止 Agent 自扩通讯录 |
++
++---
++
++## 13. Next actions
++
++1. ~~用户确认 §11~~ ✅  
++2. 可选：dual-review 本 brief（产品策略级）  
++3. **Outbound P0c** 按 [eval gates](../superpowers/plans/2026-08-04-outbound-mcp-p0c-eval-gates.md)（阻塞真采集/网页再探）  
++4. **L1 runbook**：公开站示例 + §8.3 onboarding prompt（可与 P0c 并行写文档）  
++5. **Pack skeleton** `daily-content-loop`（无 default-on）  
++6. P0c 绿后：Agent 带用户跑通 **M0**（本机报告 + 测试邮件）→ 再配 **M1** schedule  
++
++---
++
++## 14. Change log
++
++| Date | Change |
++|------|--------|
++| 2026-08-04 | 初版 DRAFT：场景收敛、四段环、artifact、ADR-022 绑定、M0–M3、Pack-first、D1–D7 |
++| 2026-08-04 | **DIRECTION LOCKED**：公开站为主；本机+邮件；本地模型；C 双轨；Agent 配置；D8–D12 |
++
++---
++
++*Daily Content Loop = Loop Engineering: public-web collect → local judge → code+web validate → disk+mail report — CMspark is the L1 browser node, not the whole runtime.*
+diff --git a/docs/mcp.md b/docs/mcp.md
+index 2aa45fb..5b3cd2d 100644
+--- a/docs/mcp.md
++++ b/docs/mcp.md
+@@ -183,3 +183,51 @@ tail -f ~/.cmspark-agent/logs/companion-$(date +%Y-%m-%d).log | grep -i mcp
+ ```
+ 
+ 常见错误对照见 [`docs/TROUBLESHOOTING.md`](./TROUBLESHOOTING.md#mcp-相关)。
++
++---
++
++## Outbound MCP（编程 Agent 调用 CMspark 浏览器 · ADR-022）
++
++> **方向**：Companion 作为 **MCP server**，把 curated **L1** 工具以 `cmspark__*` 导出给 Claude Code / Cursor 等。  
++> **规范**：[ADR-022](adr/022-outbound-mcp-server.md) · 场景 [Daily Content Loop](decisions/daily-content-loop-brief-2026-08-04.md)
++
++### 启动（显式 opt-in，非 default-on）
++
++```bash
++# 需已 build companion；不会由 daemon start 自动拉起
++cmspark-agent mcp-outbound
++```
++
++编程 Agent 配置示例（stdio）：
++
++```json
++{
++  "mcpServers": {
++    "cmspark": {
++      "command": "cmspark-agent",
++      "args": ["mcp-outbound"],
++      "env": {
++        "CMSPARK_OUTBOUND_CALLER_ID": "my-coding-agent"
++      }
++    }
++  }
++}
++```
++
++### 关键工具
++
++| 工具 | 说明 |
++|------|------|
++| `cmspark__accept_data_disclosure` | **先调用**（`acknowledge: true`）— 服务端会话；`get_page_text` / `screenshot` 依赖它 |
++| `cmspark__list_tabs` / `navigate` / `click` / `type` / `wait_for` / `downloads_find` | 策展 L1 |
++| `cmspark__get_page_text` / `screenshot` | 外泄类；无服务端 disclosure 则拒 |
++
++**默认禁止**：cookies、evaluate、host/CU、shell、netsec。
++
++### 现状（P0c 进度）
++
++- 门禁 / disclosure / audit / synthetic origin：**已实现**  
++- **真桥**：`mcp-outbound` → `POST http://127.0.0.1:<port>/outbound-mcp/v1/invoke`（`Authorization: Bearer <ws_secret>`）→ Companion `createToolExecutor` → Extension CDP  
++- 先 `cmspark-agent start`（或 tray/daemon）并打开扩展配对；再起 `mcp-outbound`  
++- 无扩展连接时：`EXTENSION_UNAVAILABLE`  
++- 交互确认 L8 / tab lease L9：bake-off 前仍开放（确认仍走已连接的 Side Panel WS）
+diff --git a/docs/optimization-plan-post-adr-020.md b/docs/optimization-plan-post-adr-020.md
+index 6864cfc..05c6c20 100644
+--- a/docs/optimization-plan-post-adr-020.md
++++ b/docs/optimization-plan-post-adr-020.md
+@@ -109,7 +109,9 @@ E  Autonomy       仅 defer 表内；spawn 保持 L2 HITL
+ | G13 skill-craft | ✅ | 已实现 |
+ | **下载去重 / prefer_existing** | ✅ 已合 main（PR #100） | [#au4dch DL-*](optimization-plan-au4dch-ux-shell-download.md) |
+ | **Agent 下载并安装外部 Skill** | 🔶 Backlog | [optimization-plan-agent-skill-install.md](optimization-plan-agent-skill-install.md)：LLM `skill_install` → `~/.cmspark-agent/skills`（#au4dch 装错目录痛点） |
+-| **Outbound MCP Server（服务外部编程 Agent）** | 🔶 **DIRECTION LOCKED** · 未开工 | [brief](decisions/cmspark-as-mcp-server-brief-2026-08-03.md) · [adversary](decisions/cmspark-as-mcp-server-adversary-synthesis-2026-08-03.md) · dual-review Claude+Pi **APPROVE_WITH_NITS**（`cmspark-mcp-server-strategy-verdict-20260803-150011`）。**Composition 导出 L1**（非新 runtime）；默认禁 L2/cookies/shell；Phase 0 对照 Playwright 后才扩面；Skill 仅 adoption。**不**插队 B 轨 P1 安全 |
++| **聊天附件文档解析 / 图文理解** | 🔶 Backlog | [optimization-plan-document-parse-vision.md](optimization-plan-document-parse-vision.md)：基线 `file-parser` + vision；P0 有字 PDF 抽图/可配置/golden → P1 OCR·结构 → P2 DocAI。**不**插队 B 轨；与 M4 `analyze_image` 门、CU OCR 分轨 |
++| **Outbound MCP Server（服务外部编程 Agent）** | 🔶 **ADR-022 Accepted** · Phase 0 骨架有 / 真桥未接 | **SoT** [ADR-022](adr/022-outbound-mcp-server.md)；过程 [brief](decisions/cmspark-as-mcp-server-brief-2026-08-03.md) · [spike](superpowers/plans/2026-08-03-outbound-mcp-phase0-spike.md)。**Composition 导出 L1**（非新 runtime）；默认禁 L2/cookies/shell；P0c 真桥 + L8/L9 → P0d bake-off → P1 grant。**不**插队 Trust 纪律（originWs） |
++| **Daily Content Loop（每日情报环）** | 🔶 **DIRECTION LOCKED** | [brief](decisions/daily-content-loop-brief-2026-08-04.md)：公开站为主；本地模型；本机+邮件；Stage C 代码+网页双轨；Agent 配置 schedule。D1–D12。**依赖** Outbound P0c → runbook → Pack → M0/M1 |
+ 
+ 每个 Pack/模块 PR 必须填 **能力声明**（PR template）。
+ 
+@@ -172,7 +174,10 @@ E  Autonomy       仅 defer 表内；spawn 保持 L2 HITL
+ 6. **E** 仅当有明确编排缺口且 dual-review 批准 defer 表内项（ST-5 属于可见性增强，**不是** auto-spawn）  
+ 7. **F** 插入发布前硬缺口（e2e / Node 对齐）
+ 
+-**方法论**：worktree → 实现 → 对抗 → `scripts/dual-external-review.sh` → CI 绿 → merge。危险 flag / 确认绑定 / shell 变更 **禁止 waive** 无用户明示。
++**方法论（Eval Engineering 闸门）**：worktree → **机核**（测/建）→ **独立对抗 agent 确认** → **Pi 复审**对抗结论 → CI 绿 → merge。  
++（可选补充：`scripts/dual-external-review.sh` Claude+Pi 并行。）  
++规范 skill：[`docs/skills/eval-engineering-gate/SKILL.md`](skills/eval-engineering-gate/SKILL.md) · 卡片模板 [`eval-gate-card.md`](audit/reviews/_templates/eval-gate-card.md)。  
++原则：可机核的不交给 LLM；确认序 **对抗 → Pi**（实现者不得自评）；VERDICT 卡住流程；看结果+路径+零件；放行看 **爆炸半径**。危险 flag / 确认绑定 / shell / outbound 真桥 **禁止 waive** 无用户明示。
+ 
+ ---
+ 
+@@ -202,6 +207,11 @@ E  Autonomy       仅 defer 表内；spawn 保持 L2 HITL
+ | 2026-08-01 | 挂接 [#au4dch UX 子轨](optimization-plan-au4dch-ux-shell-download.md)（下载去重 · 运行态 · shell 黑窗/PTY）；更正 browser_download P1.0 已合；执行序插入 Wave 1–4 |
+ | 2026-08-01 | Composition backlog：Agent 安装外部 Skill → [optimization-plan-agent-skill-install.md](optimization-plan-agent-skill-install.md)；DL prefer_existing 标为已合 PR #100 |
+ | 2026-08-03 | Composition：**Outbound MCP Server** 方向锁定（多路对抗 + Pi/Claude dual-review APPROVE_WITH_NITS）→ [cmspark-as-mcp-server-brief-2026-08-03.md](decisions/cmspark-as-mcp-server-brief-2026-08-03.md)；未开工，不插队 B 轨 |
++| 2026-08-04 | Composition：**ADR-022** Accepted（brief 升格决策 SoT）；P0c 真桥 / L8 / L9 / bake-off 仍开放 |
++| 2026-08-04 | 方法论：挂接 **Eval Engineering 闸门** skill + P0c gate card（异家族 dual / 机核优先 / blast tier） |
++| 2026-08-04 | Composition 场景：**Daily Content Loop** DRAFT brief（Loop Engineering × ADR-022） |
++| 2026-08-04 | Daily Content Loop **DIRECTION LOCKED**（公开站·本地模型·本机+邮件·双轨验证·Agent 配置） |
++| 2026-08-04 | 确认序锁定：**独立对抗 agent → Pi 复审**（Eval gate v1.1） |
+ 
+ ---
+ 
+diff --git a/docs/skills/eval-engineering-gate/SKILL.md b/docs/skills/eval-engineering-gate/SKILL.md
+new file mode 100644
+index 0000000..17131cc
+--- /dev/null
++++ b/docs/skills/eval-engineering-gate/SKILL.md
+@@ -0,0 +1,277 @@
++---
++id: cmspark/eval-engineering-gate
++name: eval-engineering-gate
++description: >-
++  Eval Engineering gate for CMspark agent work — multi-family judges, machine
++  checks over LLM scores, process+outcome layers, corpus-from-traces, pinned
++  judge versions, blast-radius auto-merge. Use when shipping code, dual-review,
++  AFK batches, claiming merge-ready, or user mentions 评估工程 / eval gate /
++  闸门 / 自动合并 / Hanako eval engineering.
++tags: [eval, gate, dual-review, verification, merge, 评估工程, 闸门, dual-review]
++triggers:
++  - "eval engineering"
++  - "评估工程"
++  - "闸门"
++  - "dual-review"
++  - "merge-ready"
++  - "auto merge"
++  - "eval gate"
++version: 1.1.0
++intent: >-
++  Make AI-produced changes mergeable only when independent evidence + rules pass;
++  map Eval Engineering 6 steps onto CMspark's dual-review / CI / ADR stack.
++---
++
++# Eval Engineering Gate（CMspark）
++
++> **Thesis**: AI 干完活能否「不用人审就合 main」——不靠信任模型，靠**闸门读证据、按规则放行**。  
++> **来源映射**: Hanako「评估工程」6 步 × 本仓库已有对抗 / dual-review / CI 实践。  
++> **铁律**: 喂给闸门一个偏心老师，比没有闸门更糟。  
++> **确认序（用户 2026-08-04 锁定）**：**独立对抗 agent** 先确认 → **Pi 复审**对抗结论；实现 agent 不得自评放行。
++
++## When to load
++
++- 任意 **实现 → 合 main** 路径（含 AFK / worktree / PR）
++- 用户说「按评估工程」「闸门」「dual-review」「能不能自动合」
++- 危险面：security / shell / L2 / outbound MCP / god-mode / confirm 绑定
++
++**不替代**: TDD 写测、ADR 决策、产品 grill。本 skill 管 **放行判据与评审编排**。
++
++---
++
++## 0. 现有资产 ↔ 文章 6 步
++
++| 步 | 文章要点 | CMspark 已有 | 缺口 / 纪律 |
++|----|----------|--------------|-------------|
++| **1 阅卷偏见** | 异家族评审；可机核的别交给 LLM | **独立对抗 agent**（非实现者）+ **Pi 复审**；可选 `dual-external-review.sh`；单测/CI | 禁止「自己模型自评就 APPROVE」；禁止用 confidence 当门 |
++| **2 改流程** | 分要卡住下一步，不是贴 dashboard | 对抗 REJECT / Pi REJECT → **不合**；机核红禁止进审 | 分数/VERDICT 未写进 stop 条件 = 只有报告 |
++| **3 三层** | 结果 / 路径 / 零件 | 对抗 synthesis；trace 审计；process 评审 | 只看「测试绿」不够；查死循环、幻觉 tool result、双写 |
++| **4 语料** | 好/坏 trace 成 case | `docs/audit/reviews/*`、session、project-knowledge | 翻车必落 4 行 case；归责 AI vs 外部 |
++| **5 锁版本** | 判官版本 + 可独立观察的通过条件 | verdict JSON 时间戳；ADR 锁；测试 pin | 评分标准写「可观察结果」；不奖长文/关键词 |
++| **6 爆炸半径** | 放行看搞砸代价，不看信心 | ADR-020 Trust 单调；危险 flag 禁 waive | 按 blast 分 auto / dual / 真人 |
++
++---
++
++## 1. 闸门分层（按爆炸半径 · 第 6 步）
++
++合并前先定 **blast tier**，再选闸门强度：
++
++| Tier | 例子 | 最低闸门 | 可 auto-merge？ |
++|------|------|----------|-----------------|
++| **T0 文档/注释** | ADR 正文、导航表、changelog | 链接存在 + 无矛盾；可选单人 self-check | 是（作者可合） |
++| **T1 纯测/重构** | 无行为变的测试、重命名 | 相关 suite 绿 + build | 是（CI 绿后） |
++| **T2 功能 L0/L1** | UI 文案、只读工具、Pack skill | 单测 + 能力声明 + **独立对抗 → Pi 复审** | 否，除非对抗+Pi 均 APPROVE* |
++| **T3 Trust / 安全** | confirm、originWs、shell、god-mode、outbound 真桥 | 单测 + **独立对抗（可多路）→ Pi 复审**；威胁模型变更时对抗必做 | **否**；对抗+Pi 均 APPROVE* 才合 |
++| **T4 对外/不可逆** | default-on、CWS 声称、grant 跳过确认、钱/账号 | 对抗 + Pi + **真人** + bake-off 指标 | **永不** auto |
++
++**Outbound MCP（ADR-022）默认**: 骨架 T2→T3；**live bridge / L8 / L9 / grant = T3**；default-on / CWS = T4。
++
++---
++
++## 2. 标准闸门流水线（第 1–2 步）
++
++### 2.0 确认序（锁定 · 用户 2026-08-04）
++
++```text
++implement (worktree 优先)
++    → MACHINE checks (test/build — 非 LLM；红则停)
++    → 独立对抗 agent 确认（Advocate/Skeptic/Implementer 或 Security/Product 多路）
++         · 与实现 agent 隔离；读真实 diff / 跑必要命令
++         · 产出：结论 + file:line + VERDICT
++    → Pi 复审（二次确认）
++         · 输入：diff + 机核输出 + 对抗报告（不得只看摘要）
++         · Pi 可驳回对抗的漏判或过松 APPROVE
++    → 对抗 APPROVE* 且 Pi APPROVE* → CI 绿 → merge
++```
++
++| 角色 | 职责 | 禁止 |
++|------|------|------|
++| **实现 agent** | 写代码、跑机核、修 nits | 自称 merge-ready / 给自己 APPROVE |
++| **独立对抗 agent** | 质疑威胁、完整性、DoD、路径；给 VERDICT | 与实现同一会话「自己夸自己」当对抗 |
++| **Pi** | 复审对抗结论 + diff；最终放行/驳回 | 在无对抗报告时单独当唯一门（T2+） |
++
++**与 `dual-external-review.sh` 关系**：脚本（Claude+Pi 并行）仍可用作 **补充** 或历史路径；**本仓库默认确认序以「对抗 → Pi 复审」为准**。若跑 dual 脚本，Pi 侧仍须能看到对抗材料时更佳。
++
++### 机器优先（第 1 步铁律 3）
++
++**必须代码/命令核验的，禁止只靠评审模型：**
++
++- 测试 exit 0、类型检查、禁工具是否 `PROFILE_FORBIDDEN`
++- 文件/路径存在、审计行写出、config 默认值
++- `git diff` 是否含声称改动的文件
++
++### 独立对抗 + Pi 复审（第 1 步铁律 1–2）
++
++**对抗 agent prompt 必含：**
++
++1. 能力声明（ADR-020）  
++2. 外部可观察 DoD 清单  
++3. 三层：outcome / trajectory / component  
++4. 最终一行：`VERDICT: APPROVE` | `APPROVE_WITH_NITS` | `REJECT`  
++
++**Pi 复审 prompt 必含：**
++
++1. 机核命令与 exit code  
++2. 对抗完整报告路径（`docs/audit/reviews/…`）  
++3. 同一 diff / base commit  
++4. 任务：**确认或驳回**对抗结论；漏检 → REJECT；过严 nits 可降级  
++5. 最终一行：同上 VERDICT  
++
++可选补充：
++
++```bash
++scripts/dual-external-review.sh <batch-id> <prompt-file> [base-commit]
++```
++
++- 实现 agent **不得**用自己的「我觉得 OK」代替 VERDICT  
++- 仅对抗过、Pi 未过 = **未放行**  
++- 已知偏心：长文加分、家族偏袒 → prompt **禁止**「写得完整就加分」
++
++### 卡住流程（第 2 步）
++
++| 信号 | 动作 |
++|------|------|
++| suite 红 | 禁止对抗/Pi、禁止 PR「完成」 |
++| 对抗 REJECT | 修 blockers，重跑对抗；**不** waive |
++| Pi REJECT | 修后 **对抗可增量**，Pi **必须**重跑 |
++| 能力声明缺失（加 tool/gate/一级 UI） | 对抗/Pi **blocking** |
++| Agent 自称 done、无新鲜证据 | 触发 `verification-before-completion` |
++
++---
++
++## 3. 三层评分（第 3 步）
++
++每次 batch / dual prompt 要求评审看三层（可检查表）：
++
++| 层 | 问题 | 证据 |
++|----|------|------|
++| **结果 Outcome** | 需求/DoD 是否真满足？ | 测过、命令输出、checklist 勾选 |
++| **路径 Trajectory** | 是否绕圈、重复 tool、无意义重试、改无关文件？ | diff 范围、tool 日志、commit 粒度 |
++| **零件 Component** | 哪个模块坏了？（能指到文件） | file:line、单测名 |
++
++**起步指标（实现侧自查）**
++
++1. **忠实度**: 结论是否基于 tool/命令真实输出，而非模型编造  
++2. **参数准确度**: 正确工具与参数（含 `cmspark__*` / originWs）  
++3. **任务完成度**: 外部可观察 DoD，不是「我写完了」
++
++阴险失败：**流畅叙述 + 编造事实**（汇率/路径/测试数）——必须机核。
++
++---
++
++## 4. 从 trace 挖 case（第 4 步）
++
++翻车或差点翻车 → 写 **4 行 case** 进 `docs/audit/reviews/` 或测试：
++
++```text
++1. 做了什么（动作 / 工具 / 文件）
++2. 成功了什么 / 失败了什么
++3. 归责：AI 锅 | 外部依赖 | 规格不清
++4. 本 case 保护哪条能力（ADR 锁 / 安全门 / UX）
++```
++
++**归责纪律**
++
++- 同一参数查两次空转 = **AI 锅**  
++- 限流/超时 = **外部**，仅当规格要求恢复时才成测试  
++- 日志只记 **实际** 行为；**应该** 来自 ADR / 测试 / 规则 / 真人  
++
++**校验阅卷机本身**: 喂「明显对」+「看似对实则错」各一例；判错 → 修规则/测试，不先骂实现 agent。
++
++---
++
++## 5. 锁版本与 Goodhart（第 5 步）
++
++| 规则 | 做法 |
++|------|------|
++| 判官可追溯 | dual 产物：`*-claude-*.md` / `*-pi-*.md` / `*-verdict-*.json` 带时间戳 |
++| 通过条件 | **「可独立观察的结果发生」** — 非关键词堆砌 |
++| 永不奖励长相 | 不因更长 diff、更多引用、更像参考答案而 APPROVE |
++| 禁无依据自纠 | DeepMind 结论：无外部依据的自我纠错常更差 → 必须 dual / 测试 / 用户 |
++| 跑得动 | 相关 suite 应在「一杯咖啡」内；全仓 500 case 是方向，**先保关键路径快且稳** |
++
++---
++
++## 6. 实现 agent 操作清单（复制即用）
++
++```markdown
++## Eval gate card — <batch-id>
++
++**Blast tier**: T0 | T1 | T2 | T3 | T4
++**Capability declaration** (ADR-020):
++  Surface / L2-classes / Compose / Autonomy / Trust / Channel
++
++### Machine (must pass first)
++- [ ] Commands run this session (paste exit codes)
++- [ ] Outcome DoD checklist (external observables only)
++- [ ] No forbidden tools/paths introduced
++
++### Trajectory
++- [ ] Diff scope matches claim (no drive-by)
++- [ ] No known thrash patterns
++
++### Judges（确认序：对抗 → Pi）
++- [ ] 独立对抗 agent 报告路径 + VERDICT
++- [ ] Pi 复审（读对抗报告 + diff）+ VERDICT
++- [ ] Nits folded or filed with owner
++- [ ] （可选）dual-external-review.sh
++
++### Blast
++- [ ] Tier allows this merge path
++- [ ] residual risks documented
++
++### Verdict
++- MACHINE: PASS | FAIL
++- ADVERSARY: APPROVE | APPROVE_WITH_NITS | REJECT | N/A
++- PI_REREVIEW: APPROVE | APPROVE_WITH_NITS | REJECT | N/A
++- MERGE: YES | NO — reason（须 ADVERSARY+PI 均为 APPROVE* 且 MACHINE PASS）
++```
++
++**宣称 merge-ready 前**: 必须有本会话内 MACHINE PASS + 独立对抗 APPROVE* + **Pi 复审 APPROVE***。违反 = 违反 `verification-before-completion`。
++
++---
++
++## 7. 与其它 skill 的关系
++
++| Skill / 脚本 | 角色 |
++|--------------|------|
++| `superpowers-verification-before-completion` | 完成声称前的机核铁律 |
++| 独立对抗 agent + Pi 复审 | **默认确认序**（用户锁定） |
++| `scripts/dual-external-review.sh` | 可选补充（Claude+Pi 并行） |
++| dual-review capability checklist | ADR-020 轴检查 |
++| `superpowers-test-driven-development` | 结果层机核的生产手段 |
++| `builtin-deep-diagnosis-optimization` | 大盘诊断 + kimi + container 三验 |
++| `builtin-experience-evolution` | 翻车 → project-knowledge case |
++| ADR / brief / grill | **应该怎样** 的规格源（非日志） |
++
++---
++
++## 8. Anti-patterns
++
++| 禁止 | 为何 |
++|------|------|
++| 单模型 self-APPROVE 后合 main | 家族偏心 + 无闸 |
++| 实现会话内「自对抗」当独立对抗 | 不独立 = 无闸 |
++| 跳过 Pi 复审只留对抗报告 | 确认序未完成 |
++| 只贴 CI 绿数字不卡 merge | 温度计 ≠ 空调 |
++| 用「信心 95%」替代 blast tier | 第 6 步 |
++| 奖励「评审回复更长」 | Goodhart |
++| 把限流失败记成 agent 无能而不写恢复规格 | 归责错 |
++| T3 变更 waive 对抗/Pi | 安全面 |
++
++---
++
++## 9. 本次产品线锚点
++
++- **Outbound MCP**: [ADR-022](../../adr/022-outbound-mcp-server.md)  
++- **P0c 门控卡**: [eval gates plan](../../superpowers/plans/2026-08-04-outbound-mcp-p0c-eval-gates.md)  
++- **业务环示例**: [Daily Content Loop brief](../../decisions/daily-content-loop-brief-2026-08-04.md)（Loop × Eval）
++
++## 10. 仓库位置
++
++- **Git SoT**: `docs/skills/eval-engineering-gate/SKILL.md`（本文件）  
++- **本地 agent 副本**（可选）: `.claude/skills/cmspark-eval-engineering-gate/SKILL.md` — 与 SoT 同步；`.claude/` 默认 gitignore
++
++---
++
++*v1.1.0 · CMspark-native Eval Engineering · 确认序：独立对抗 → Pi 复审 · 2026-08-04*
+diff --git a/docs/superpowers/plans/2026-08-03-outbound-mcp-phase0-spike.md b/docs/superpowers/plans/2026-08-03-outbound-mcp-phase0-spike.md
+index 2f13f25..00f6227 100644
+--- a/docs/superpowers/plans/2026-08-03-outbound-mcp-phase0-spike.md
++++ b/docs/superpowers/plans/2026-08-03-outbound-mcp-phase0-spike.md
+@@ -4,7 +4,8 @@
+ |-------|--------|
+ | Date | 2026-08-03 |
+ | Status | **P0b LOCKED** for S40 AFK · implements brief L1–L9 |
+-| SoT | [cmspark-as-mcp-server-brief-2026-08-03.md](../../decisions/cmspark-as-mcp-server-brief-2026-08-03.md) |
++| Decision SoT | **[ADR-022](../../adr/022-outbound-mcp-server.md)** |
++| Process brief | [cmspark-as-mcp-server-brief-2026-08-03.md](../../decisions/cmspark-as-mcp-server-brief-2026-08-03.md) (superseded as SoT) |
+ | Code | `companion/src/outbound-mcp/` (stdio façade skeleton) |
+ 
+ ## 1. Goal (Phase 0)
+@@ -47,11 +48,20 @@ cookies*, evaluate, host_*, shell_*, netsec_*, osascript_*, skill_install (inter
+ 
+ ## 5. Spike code DoD (P0c)
+ 
++> **Eval gates (authoritative for next impl):** [2026-08-04-outbound-mcp-p0c-eval-gates.md](2026-08-04-outbound-mcp-p0c-eval-gates.md) M1–M9 · skill [eval-engineering-gate](../../skills/eval-engineering-gate/SKILL.md)
++
+ - [x] stdio entry skeleton lists only whitelist names  
+ - [x] refuses forbidden tools with structured error  
+ - [x] audit line helper  
+-- [ ] Live bridge to Companion WS (follow-up if bake-off authorized)  
++- [x] Server-side disclosure session (not caller-trusted bool) — M3  
++- [x] synthetic origin on invoke (`outbound_mcp:<caller>`) — M6  
++- [x] CLI `cmspark-agent mcp-outbound` (not default-on) — M7  
++- [x] Injectable dispatcher bridge + unit tests  
++- [x] Production: loopback HTTP invoke + createToolExecutor(Extension WS)  
++- [x] stdio mcp-outbound defaults to HTTP dispatcher (Bearer ws_secret)  
+ - [ ] Tray/global confirm (L8) — required before interactive T1  
++- [ ] 独立对抗 → Pi 复审（确认序）  
++- [ ] P0d bake-off 
+ 
+ ## 6. Bake-off (P0d) — human checklist
+ 
+diff --git a/docs/superpowers/plans/2026-08-04-outbound-mcp-p0c-eval-gates.md b/docs/superpowers/plans/2026-08-04-outbound-mcp-p0c-eval-gates.md
+new file mode 100644
+index 0000000..44a58d5
+--- /dev/null
++++ b/docs/superpowers/plans/2026-08-04-outbound-mcp-p0c-eval-gates.md
+@@ -0,0 +1,190 @@
++# Outbound MCP P0c — Eval Engineering Gate Card
++
++| Field | Value |
++|-------|--------|
++| Date | 2026-08-04 |
++| Skill | [`docs/skills/eval-engineering-gate/SKILL.md`](../../skills/eval-engineering-gate/SKILL.md) |
++| Decision SoT | [ADR-022](../../adr/022-outbound-mcp-server.md) |
++| Spike | [2026-08-03-outbound-mcp-phase0-spike.md](2026-08-03-outbound-mcp-phase0-spike.md) |
++| Blast tier | **T3**（Trust / 对外工具面；非 default-on） |
++
++> 本文把「评估工程」6 步 **接到** Outbound MCP 下一刀（P0c 真桥），不是再写一篇战略。
++
++---
++
++## A. 已完成工作的闸门复盘（ADR-022 文档批）
++
++| 层 | 判定 | 证据 |
++|----|------|------|
++| **结果** | PASS | ADR-022 文件存在；README / GOAL / architecture / plan §C 交叉引用；brief SUPERSEDED |
++| **路径** | PASS | 仅文档与 SoT 指针；无生产代码行为变更 |
++| **零件** | n/a | 无 runtime 零件 |
++| **Blast** | T0 | 文档决策升格 → 允许作者合入文档，**不**等于 P0c 放行 |
++| **Dual** | 沿用 2026-08-03 strategy dual（APPROVE_WITH_NITS） | 方向已审；**本批未重跑 dual**（T0 可接受） |
++
++**MERGE 文档批**: YES（T0）。**MERGE 真桥**: NO — 见下。
++
++---
++
++## B. P0c 目标（外部可观察 · 第 5 步）
++
++通过条件必须是**可独立观察的结果**，禁止「实现看起来完整」：
++
++| ID | Observable DoD | 机核方式 |
++|----|----------------|----------|
++| **M1** | stdio 或 CLI 入口能 `tools/list` 且 **仅** `OUTBOUND_MCP_ALLOWLIST` 名 | 集成测或脚本 assert 集合相等 |
++| **M2** | 禁工具调用 → 结构化 error `PROFILE_FORBIDDEN`，**零**次内部 dispatch | 单测 + 可选 spy on dispatch |
++| **M3** | 外泄类无会话 disclosure → `DISCLOSURE_REQUIRED`；disclosure 状态 **服务端持有**（不信任 caller 布尔自报） | 单测：伪造 `disclosure_accepted:true` 但无 session → 仍拒 |
++| **M4** | 允许工具在 Companion+Extension 就绪时走 **真实** 内部 tool 路径并返回结果/错误 | 集成测 mock WS 或 fixture companion |
++| **M5** | 每次 outbound call 有 audit 行（caller、tool、domain、outcome） | 读 audit sink / 临时文件 assert |
++| **M6** | 触发确认时 `request` 带 **originWs 或 synthetic MCP origin** | 单测 assert 参数；grep 无裸 `request(` |
++| **M7** | **非** default-on：未显式启动/配置时用户装机行为不变 | 文档 + 默认 config 无 outbound server 键，或默认 false |
++| **M8** | L8：需确认路径在 **无 Side Panel 聚焦** 时有 tray/全局 affordance **或** fail-closed 可操作 MCP error | 交互 bake-off 前：至少 fail-closed 测过；tray 路径有则测分辨率 |
++| **M9** | L9：交互工具在双入口争用时 Side Panel 赢 / MCP 排队披露 **或** 文档标明「交互 bake-off 阻塞直至 L9」 | 单测 lease 或明确 defer 标签 |
++
++**P0c 「代码完成」定义**: M1–M7 绿。  
++**P0d 交互 bake-off 开始**: M8–M9 绿或显式 defer 且 T1 仅用只读工具。
++
++---
++
++## C. 机器检查清单（第 1 步 · 优先于 LLM）
++
++```bash
++# 相关 suite（命名以仓库为准，实现时固定）
++npm --prefix companion test -- --test-name-pattern='outbound-mcp'
++# 或 node --test companion/tests/outbound-mcp*.test.ts
++
++npm --prefix companion run build
++```
++
++禁止用 dual-review 代替上述命令。
++
++### 负例（校验阅卷机 · 第 4 步）
++
++实现 gate 测试时必须包含：
++
++| Case | 期望 | 归责若失败 |
++|------|------|------------|
++| 白名单 `list_tabs` | allow + map 内部名 | 规则/映射坏 |
++| `shell_exec` / `get_cookies` / `host_computer` | FORBIDDEN | profile 洞 |
++| `get_page_text` 无 session disclosure | DISCLOSURE_REQUIRED | L3+ 洞 |
++| caller 传 `disclosure_accepted:true` 无服务端 session | **仍拒** | 信任 caller = 闸门坏 |
++| 审计 sink 在 allow 与 forbid 路径都写 | 行存在 | audit 漏 |
++
++---
++
++## D. 三层评审焦点（第 3 步 · dual prompt 必含）
++
++### Outcome
++
++- ADR-022 L3/L3+/L4/L4+ 是否被代码违反？  
++- M1–M7 是否有**新鲜**测试输出？
++
++### Trajectory
++
++- 是否偷偷扩大 allowlist？  
++- 是否把 inbound `mcp/` 与 outbound 搅成双写 schema？  
++- 是否用 god-mode / auto_approve 给 MCP 放行？
++
++### Component
++
++- `outbound-mcp/*` vs `server.ts` dispatch vs security-confirmation  
++- originWs 绑定点 file:line  
++- disclosure session 存储位置（内存？按 caller_id？TTL？）
++
++---
++
++## E. 确认序：独立对抗 → Pi 复审（用户 2026-08-04 锁定）
++
++**Trigger**: 相关 MACHINE 绿之后，merge/PR 或宣称「P0c 完成」之前。
++
++```text
++1. 独立对抗 agent（非实现会话）
++   - 读 diff + ADR-022 + 本 gate card §B
++   - 三层 outcome / trajectory / component
++   - 产出 docs/audit/reviews/outbound-mcp-p0c-adversary-<ts>.md
++   - 末行 VERDICT: APPROVE | APPROVE_WITH_NITS | REJECT
++
++2. Pi 复审
++   - 输入：同一 diff + 机核输出 + 对抗完整报告
++   - 任务：确认或驳回对抗；漏检 → REJECT
++   - 产出 docs/audit/reviews/outbound-mcp-p0c-pi-rereview-<ts>.md
++   - 末行 VERDICT
++
++3. 可选补充：scripts/dual-external-review.sh …
++```
++
++能力声明（贴进对抗与 Pi prompt）：
++
++```text
++Surface:      L1 (export curated)
++L2-classes:   (none)
++Compose:      outbound-mcp-server (ADR-022)
++Autonomy:     single
++Trust:        domain + L2 + originWs + disclosure session; no grant skip
++Channel:      community
++```
++
++**对抗或 Pi 任一 REJECT / 未跑 → 禁止声称 P0c 完成。**
++
++---
++
++## F. 爆炸半径与放行矩阵（第 6 步）
++
++| 变更 | 搞砸代价 | 放行 |
++|------|----------|------|
++| profile/gate 单测增强 | 低 | T1/T2 CI |
++| stdio 列表 + 拒禁工具 | 中（错误暴露面） | 对抗 → Pi |
++| **真桥执行 navigate/click** | 高（用户浏览器被外控） | 对抗 → Pi + 默认关 + 确认栈 |
++| 跳过确认 / grant 未做就放行 | **极高** | **禁止**；真人 + ADR 修订 |
++| default-on 安装 | 极高 | T4 永不本阶段 |
++
++**不使用**「模型信心分」阈值。
++
++---
++
++## G. 语料种子（第 4 步 · 已有）
++
++| 来源 | 用作 |
++|------|------|
++| ADR-022 L1–L9 | 应该怎样 |
++| S40 N1 nit: `disclosure_accepted` caller-supplied | 负例 → M3 |
++| strategy dual 20260803 | 方向锁版本 |
++| `outbound-mcp-facade.test.ts` | 好基线 |
++
++新翻车追加 4 行 case 到 `docs/audit/reviews/` 或本文件附录。
++
++---
++
++## H. 执行序（本次开发）
++
++```text
++1. [x] 写/改失败测：M3 服务端 disclosure（RED→GREEN）
++2. [x] 实现 session disclosure + bridge 最小路径（injectable dispatcher）
++3. [x] M1 M2 M4 M5 M6 单测（bridge origin + gate）
++4. [x] M7 默认关：仅 `cmspark-agent mcp-outbound` 启动 stdio；start/daemon 不拉起
++5. [x] MACHINE 全绿（outbound-mcp façade 11 + companion-http tests）
++6. [x] 生产桥：HTTP invoke + createToolExecutor（扩展 WS）；stdio 默认 HTTP dispatcher
++7. [ ] 独立对抗 agent 确认（diff + DoD）— 用户确认序
++8. [ ] Pi 复审对抗结论
++9. [ ] 对抗+Pi APPROVE* → 才可宣称 P0c 完成 / 开 PR
++10. [ ] P0d bake-off；L8/L9
++```
++
++---
++
++## I. 明确不做（本卡范围）
++
++- P1 grant 模型完整实现  
++- CWS / default-on  
++- 全工具目录导出  
++- 用 Skill 代替 MCP 本体  
++- 跳过 dual 的「时间紧」waive  
++
++---
++
++## J. 变更日志
++
++| Date | Change |
++|------|--------|
++| 2026-08-04 | 初版：Eval Engineering 映射 + P0c M1–M9 + ADR-022 文档批复盘 |
+diff --git a/memory/project-knowledge.md b/memory/project-knowledge.md
+index 5a3ff88..e0b97e6 100644
+--- a/memory/project-knowledge.md
++++ b/memory/project-knowledge.md
+@@ -1,5 +1,16 @@
+ # Project Knowledge
+ 
++## Process Patterns
++
++### Eval Engineering 闸门（2026-08-04）
++- **思想**: 不信任模型；用机核 + 独立评审 + 爆炸半径放行（Hanako 评估工程 6 步映射）
++- **Skill**: `docs/skills/eval-engineering-gate/SKILL.md`（git SoT；v1.1）
++- **确认序（用户锁定）**: **独立对抗 agent 确认 → Pi 复审**；实现 agent 不得自评放行；dual-external-review.sh 仅可选补充
++- **卡片**: `docs/audit/reviews/_templates/eval-gate-card.md`（ADVERSARY + PI_REREVIEW）
++- **机核**: 单测/CI；红则禁止进审
++- **缺口纪律**: 禁止 self-APPROVE；禁止「同会话自对抗」；禁止跳过 Pi；禁止信心分阈值；`disclosure_accepted` 不可信 caller 自报
++- **Outbound 应用**: `docs/superpowers/plans/2026-08-04-outbound-mcp-p0c-eval-gates.md`
++
+ ## Technical Pitfalls
+ 
+ ### Anthropic first-party denylist：FQDN 尾点可绕过 naive 匹配（2026-08-03 S38）

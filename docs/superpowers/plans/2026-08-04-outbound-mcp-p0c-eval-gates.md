@@ -163,12 +163,12 @@ Channel:      community
 2. [x] 实现 session disclosure + bridge 最小路径（injectable dispatcher）
 3. [x] M1 M2 M4 M5 M6 单测（bridge origin + gate）
 4. [x] M7 默认关：仅 `cmspark-agent mcp-outbound` 启动 stdio；start/daemon 不拉起
-5. [x] MACHINE 全绿（outbound-mcp façade 11 + companion-http tests）
+5. [x] MACHINE 全绿（outbound-mcp 18/18）
 6. [x] 生产桥：HTTP invoke + createToolExecutor（扩展 WS）；stdio 默认 HTTP dispatcher
-7. [ ] 独立对抗 agent 确认（diff + DoD）— 用户确认序
-8. [ ] Pi 复审对抗结论
-9. [ ] 对抗+Pi APPROVE* → 才可宣称 P0c 完成 / 开 PR
-10. [ ] P0d bake-off；L8/L9
+7. [x] 独立对抗 Claude **APPROVE_WITH_NITS** — `outbound-mcp-p0c-adversary-claude-20260804-105153.md`
+8. [x] Pi 复审 **APPROVE_WITH_NITS** — `outbound-mcp-p0c-pi-rereview-20260804-110035.md`
+9. [x] 合成 both_ok — `outbound-mcp-p0c-confirm-synthesis-20260804.md`（库路径可 bake-off；非产品 ship）
+10. [ ] P0d bake-off；L8/L9；N5 HTTP e2e 测建议 bake-off 前补
 ```
 
 ---
