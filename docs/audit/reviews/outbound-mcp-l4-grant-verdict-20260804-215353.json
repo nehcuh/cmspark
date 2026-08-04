@@ -1,0 +1,8 @@
+{
+  "batch": "outbound-mcp-l4-grant",
+  "timestamp": "20260804-215353",
+  "claude": { "verdict": "UNKNOWN", "exit_code": 1, "path": "/c/Users/HuChen/Projects/cmspark/docs/audit/reviews/outbound-mcp-l4-grant-claude-20260804-215353.md" },
+  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/c/Users/HuChen/Projects/cmspark/docs/audit/reviews/outbound-mcp-l4-grant-pi-20260804-215353.md" },
+  "both_approve": false,
+  "diff_path": "/c/Users/HuChen/Projects/cmspark/docs/audit/reviews/outbound-mcp-l4-grant-diff-20260804-215353.patch"
+}

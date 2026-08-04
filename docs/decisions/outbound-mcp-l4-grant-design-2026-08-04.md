@@ -3,7 +3,9 @@
 | Field | Value |
 |-------|--------|
 | Date | 2026-08-04 |
-| Status | **DRAFT · DIRECTION PROPOSAL** (not dual-reviewed; not implemented) |
+| Status | **DIRECTION LOCKED · APPROVE_WITH_NITS** (dual-review 2026-08-04) · **not implemented** |
+| Dual-review | Pi **APPROVE_WITH_NITS** · Independent re-run **APPROVE_WITH_NITS** · official `claude` CLI not logged-in (infra); synthesis below |
+| Artifacts | [pi](../audit/reviews/outbound-mcp-l4-grant-pi-20260804-215353.md) · [independent](../audit/reviews/outbound-mcp-l4-grant-claude-rerun-20260804.md) · [synthesis](../audit/reviews/outbound-mcp-l4-grant-dual-synthesis-20260804.md) · [verdict](../audit/reviews/outbound-mcp-l4-grant-verdict-20260804-215353.json) |
 | SoT | [ADR-022](../adr/022-outbound-mcp-server.md) L4 / L4+ · P1 roadmap |
 | Related | S42 multi-adv (ws_secret dual-use A-F2) · [mcp.md Outbound](../mcp.md#outbound-mcp) · P0d bake-off |
 | Non-goals (this doc) | Confirm-skip · multi-tenant cloud · product ship · expand allowlist |
@@ -123,32 +125,37 @@ ADR-022 **L4+**: loopback / stdio / parent PID ≠ authentication.
 
 - Store **hash only** (never raw token after issue UI).
 - Issue UI shows token **once**.
+- **Token format (locked dual-review):** ≥32 random bytes, prefix `cmg_`, store `sha256` of raw (unsalted OK for high-entropy).
+- **Verify freshness:** per-request store read or cache invalidate on revoke/expiry (no restart-only TOCTOU).
+- **Windows:** `0o600` is advisory on NTFS; real defense = user-profile dir + hash-only + OS user boundary (platform-honest).
 
 ### 5.2 HTTP auth matrix
 
-| Request | Today (P0) | P1 |
+| Request | Today (P0) | P1 (`outbound.require_grant=true`) |
 |---------|------------|-----|
 | `GET …/health` | unauthenticated | unauthenticated (no secrets) |
-| `POST …/disclosure` | Bearer `ws_secret` | Bearer **grant** (or `X-CMspark-Grant`) |
-| `POST …/invoke` | Bearer `ws_secret` | Bearer **grant** |
+| `POST …/disclosure` | Bearer `ws_secret` | Bearer **grant only**; body `caller_id` must match grant → else `GRANT_CALLER_MISMATCH` |
+| `POST …/invoke` | Bearer `ws_secret` | Bearer **grant only**; same caller bind |
 | Extension WS | `ws_secret` pairing | **unchanged** |
-| `mcp-outbound` stdio | reads `ws_secret` for HTTP | reads `CMSPARK_OUTBOUND_GRANT` (required); may still discover companion port from config |
+| `mcp-outbound` stdio | reads `ws_secret` for HTTP | **`CMSPARK_OUTBOUND_GRANT` required**; **never** fall back to `getOrCreateSharedSecret()` when flag ON |
+
+**Both presented:** if request carries both `ws_secret` and a grant under require_grant, **reject as ambiguous** (fail-closed).
 
 ### 5.3 Migration
 
-1. P1 feature flag `outbound.require_grant` default **false** in dev / true when product claims ship  
-2. Deprecation window: accept `ws_secret` **with loud audit** `auth.legacy_ws_secret` then hard reject  
-3. Docs: never recommend pasting `ws_secret` into IDE MCP config after grant GA  
+1. Flag `outbound.require_grant`: **ON at first P1 GA** (hard reject `ws_secret` on `/outbound-mcp/*` from that build). Dev-only optional dual-window with `auth.legacy_ws_secret` audit before GA.  
+2. Phase 0 never product-shipped → no long prod migration burden.  
+3. Docs: never recommend pasting `ws_secret` into IDE MCP config after grant GA.
 
 ### 5.4 Scope
 
-| Field | Phase 1 |
+| Field | Phase 1 (**locked**) |
 |-------|---------|
-| Profile | Fixed default L1 allowlist only |
+| Profile | Fixed default L1 allowlist only; unknown profile enum → fail-closed |
 | Confirm-skip | **Forbidden** |
-| Multi-caller | Multiple grants; each `caller_id` unique or labeled |
-| Revoke | UI list + `revoke` + delete file entry |
-| TTL | Default 30d or session-until-restart (pick in dual-review) |
+| Multi-caller | **Multiple** grants per machine; each bound to `caller_id` + label; revoke-all kill-switch |
+| Revoke | UI list + `revoke` + delete entry; next request must fail |
+| TTL | **Default 30d wall-clock**; per-grant override (1h/24h/7d/30d); not “until restart” |
 
 ### 5.5 UX (minimal)
 
@@ -157,15 +164,17 @@ ADR-022 **L4+**: loopback / stdio / parent PID ≠ authentication.
 3. Actions: copy token · revoke · show last used  
 4. Tray: optional “show grants” shortcut  
 
-### 5.6 Errors
+### 5.6 Errors + HTTP mapping (**locked**)
 
-| Code | When |
-|------|------|
-| `GRANT_REQUIRED` | No/invalid grant on invoke/disclosure |
-| `GRANT_EXPIRED` | Past `expires_at` |
-| `GRANT_REVOKED` | User revoked |
-| `GRANT_CALLER_MISMATCH` | Body `caller_id` ≠ grant binding |
-| `UNAUTHORIZED` | Malformed bearer (keep) |
+| Code | HTTP | When |
+|------|------|------|
+| `GRANT_REQUIRED` | **401** | No/invalid grant on invoke/disclosure |
+| `GRANT_EXPIRED` | **403** | Past `expires_at` |
+| `GRANT_REVOKED` | **403** | User revoked |
+| `GRANT_CALLER_MISMATCH` | **403** | Body `caller_id` ≠ grant binding (invoke **and** disclosure) |
+| `UNAUTHORIZED` | **401** | Malformed bearer |
+
+Profile denials stay existing `PROFILE_FORBIDDEN` / 422 — not grant codes.
 
 ---
 
@@ -173,27 +182,32 @@ ADR-022 **L4+**: loopback / stdio / parent PID ≠ authentication.
 
 | Threat | Mitigation |
 |--------|------------|
-| Malware reads grant file | Same class as reading config; hash storage limits reuse of disk dump only if attacker has online token — still protect with 0o600 + OS user boundary |
-| IDE config leak of grant | User education; short TTL; revoke UI |
-| Grant + prompt-injection | L4: still gate by op risk; L2/URL confirm remain |
-| Confused deputy (agent A uses grant for B) | Bind `caller_id` on grant; audit both |
-| ws_secret still on disk | Extension needs it; do not put in MCP env post-P1 |
+| Disk dump of grants.json | Yields **unusable hashes** (high-entropy token); plaintext token lives in IDE env/config → TTL + revoke + education |
+| Process env / `/proc` environ visibility | Same class as any API key in IDE MCP config; short TTL + revoke-all |
+| IDE config leak of grant | User education; TTL; revoke UI |
+| Grant + prompt-injection | L4: still gate by op risk; L2/URL confirm remain; **grant ≠ user cloud-exfil consent** |
+| Confused deputy | Bind `caller_id`; audit `grant_id` + caller on every invoke/disclosure |
+| ws_secret still on disk | Extension needs it; **never** put in MCP env post-P1 |
 
 ---
 
-## 7. Implementation sketch (not started)
+## 7. Implementation sketch (**blocked until T1 PASS**)
 
 | Step | Work |
 |------|------|
-| M1 | `outbound-grants.ts` store + hash issue/verify/revoke |
-| M2 | `authorizeOutboundHttp` accept grant; dual-mode flag |
-| M3 | stdio wire `CMSPARK_OUTBOUND_GRANT`; stop defaulting to `ws_secret` when flag on |
-| M4 | Settings UI + optional tray |
-| M5 | Tests: grant happy / mismatch / expired / legacy path |
-| M6 | dual-review + docs (`mcp.md`, ADR-022 changelog) |
-| M7 | Deprecate ws_secret bearer for outbound HTTP |
+| M1 | `outbound-grants.ts` store + issue/verify/revoke; extend audit with `grant_id` |
+| M2 | `authorizeOutboundHttp` grant-only when flag ON; caller bind on invoke+disclosure |
+| M3 | stdio: `CMSPARK_OUTBOUND_GRANT` required; **hard-fail**, never fall back to `ws_secret` |
+| M4 | Settings UI + optional tray + revoke-all |
+| M5 | Tests: happy / mismatch / expired / no-fallback / dual-presented reject |
+| M6 | Docs (`mcp.md`, ADR-022 changelog) + implementation dual-review |
+| M7 | GA: hard reject `ws_secret` on `/outbound-mcp/*` |
 
-**Eval gate**: no product language “safe multi-agent MCP” until M1–M6 green and dual APPROVE*.
+**Gates:**
+
+1. **Design dual-review** (this doc): **DONE** APPROVE_WITH_NITS · direction locked.  
+2. **P0d T1 PASS (L7)** before **any M1 code**.  
+3. **Implementation dual-review** after M1–M5 before product language.
 
 ---
 
@@ -201,30 +215,43 @@ ADR-022 **L4+**: loopback / stdio / parent PID ≠ authentication.
 
 | ADR rule | Implication |
 |----------|-------------|
-| **T1 fail → pivot** | Do **not** implement grant as ship if L7 fails — grant is for **trust packaging of a proven surface**, not a substitute for product value |
-| **T1 pass** | Open dual-review on **this** design; then implement M1+ |
+| **T1 fail → pivot** | Do **not** implement grant as ship if L7 fails — grant packages a *proven* surface |
+| **Design lock pre-T1** | **Allowed** (this dual-review). M1–M7 still wait for T1 PASS |
+| **T1 pass** | Start M1+ with this locked scheme |
 
 ---
 
-## 9. Open questions (for dual-review)
+## 9. Open questions — **LOCKED by dual-review**
 
-1. Default TTL: 7d / 30d / until companion restart?  
-2. Hard cutover date for rejecting `ws_secret` on `/outbound-mcp/*`?  
-3. Should disclosure accept require grant **and** human HITL (upgrade L3+), or grant-only still agent-self-ack?  
-4. One grant per machine vs many concurrent IDEs?
+| # | Question | **Locked answer** |
+|---|----------|-------------------|
+| Q1 | Default TTL | **30d wall-clock**; per-grant override 1h/24h/7d/30d; not until-restart |
+| Q2 | Hard cutover | **At first P1 GA**: `require_grant=true` + hard reject `ws_secret` on outbound HTTP; dev-only legacy window before GA |
+| Q3 | Disclosure HITL | **P1:** grant-bound agent self-ack **with** human-visible audit/toast + instant revoke; **grant ≠ consent marketing**. **P2:** upgrade exfil class to human HITL |
+| Q4 | Multi-IDE | **Multiple grants** per machine (per caller_id/label); revoke-all; no single machine-wide grant |
 
 ---
 
-## 10. Recommendation
+## 10. Recommendation (locked)
 
 | Phase | Action |
 |-------|--------|
-| **Now** | Keep P0 dual-use `ws_secret` for bake-off only; document risk (done in S42 docs) |
-| **After P0d PASS** | Dual-review this grant design → implement Option D/A |
-| **If P0d FAIL** | Pivot Option B/C per ADR-022; **park grant** |
+| **Now** | P0 dual-use `ws_secret` for bake-off only; risk documented |
+| **Design** | **Option D / Phase 1 = A** — **DIRECTION LOCKED** (dual APPROVE_WITH_NITS) |
+| **After P0d T1 PASS** | Implement M1–M7 per this doc |
+| **If P0d FAIL** | Pivot Option B/C per ADR-022; **park grant implementation** |
 
-**Provisional scheme**: **Option D (hybrid) with Phase 1 = hashed client secret grants bound to `caller_id` + profile + TTL; Extension pairing remains `ws_secret`.**
+**Locked scheme:** Option D (hybrid) with Phase 1 = hashed client-secret grants bound to `caller_id` + L1 profile + 30d TTL; Extension pairing remains `ws_secret`; no confirm-skip; no ws_secret fallback when require_grant is ON.
 
 ---
 
-*Draft only — not an Accepted ADR until dual-review.*
+## 11. Dual-review record
+
+| Reviewer | Verdict | Artifact |
+|----------|---------|----------|
+| Pi Agent (`pi` CLI) | **APPROVE_WITH_NITS** | `outbound-mcp-l4-grant-pi-20260804-215353.md` |
+| Independent Claude-class re-run | **APPROVE_WITH_NITS** | `outbound-mcp-l4-grant-claude-rerun-20260804.md` |
+| Official `claude` CLI (batch script) | **UNKNOWN** (not logged in) | infra — re-run after `/login` optional |
+| Combined | **both_ok for design direction** (two independent APPROVE_WITH_NITS) | synthesis |
+
+*Design direction locked. Implementation not authorized until P0d T1 PASS + M-path dual-review.*

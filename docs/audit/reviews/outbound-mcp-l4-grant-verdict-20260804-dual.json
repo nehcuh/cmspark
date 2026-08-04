@@ -1,0 +1,28 @@
+{
+  "batch": "outbound-mcp-l4-grant",
+  "date": "2026-08-04",
+  "design": "docs/decisions/outbound-mcp-l4-grant-design-2026-08-04.md",
+  "reviewers": {
+    "pi_cli": {
+      "verdict": "APPROVE_WITH_NITS",
+      "path": "docs/audit/reviews/outbound-mcp-l4-grant-pi-20260804-215353.md"
+    },
+    "claude_cli_script": {
+      "verdict": "UNKNOWN",
+      "reason": "Not logged in · Please run /login",
+      "path": "docs/audit/reviews/outbound-mcp-l4-grant-claude-20260804-215353.md"
+    },
+    "independent_claude_class_rerun": {
+      "verdict": "APPROVE_WITH_NITS",
+      "path": "docs/audit/reviews/outbound-mcp-l4-grant-claude-rerun-20260804.md"
+    }
+  },
+  "synthesis": {
+    "direction_locked": true,
+    "scheme": "Option D / Phase 1 Option A hashed client secret grant",
+    "both_approve_direction": true,
+    "implementation_authorized": false,
+    "implementation_gate": "P0d T1 PASS (L7)",
+    "path": "docs/audit/reviews/outbound-mcp-l4-grant-dual-synthesis-20260804.md"
+  }
+}
