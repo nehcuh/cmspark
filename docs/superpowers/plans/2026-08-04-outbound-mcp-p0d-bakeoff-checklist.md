@@ -3,7 +3,7 @@
 | Field | Value |
 |-------|--------|
 | Date | 2026-08-04 |
-| Status | **Ready to run**（P0c 已合 main · #115/#116） |
+| Status | **Ready to run**（P0c 已合 main · #115/#116 · S42 #118 · #117）· **自动 preflight 已跑** → [outbound-mcp-p0d-preflight-20260804.md](../../audit/reviews/outbound-mcp-p0d-preflight-20260804.md) · **T1–T3 仍待真人** |
 | SoT | [ADR-022](../../adr/022-outbound-mcp-server.md) §6–7 · [P0c eval gates](2026-08-04-outbound-mcp-p0c-eval-gates.md) |
 | User config | [mcp.md · Outbound / Grok](../../mcp.md#outbound-mcp) |
 | Goal | **证伪 L7**：已登录/SSO 任务上 CMspark 是否不可替代；公网/localhost 可输给 Playwright |

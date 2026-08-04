@@ -2,12 +2,13 @@
 
 ## Current Session
 
-### S42 (2026-08-04) [pull main + 四路对抗 + P0/P1 + #118 merge + #117 rebase]
-- **拉取**: `git pull origin main` → `d4c4ebf` 后四路对抗；P0+P1 修后 **PR #118 MERGED** → main `88ad651`
-- **P0/P1**: `__outbound_mcp` trustedOutbound；extension-only runner；SPA PageUp/Down；disclosure honesty；skill overwrite；zip header budget；L8 fan-out；Swift-only trayEligible
-- **#117**: 与 main 冲突于 `server.ts` tool.start/`thread_id` — 已 rebase 合并（保留 run-state thread_id + S42 strip）
-- **下次**: push #117 分支；CI 绿后合 #117
-- Recorded: yes — S42 + #118 ship + #117 rebase
+### S42 (2026-08-04) [multi-adv → #118/#117 merge → P0d preflight + grant draft]
+- **Ship**: #118 S42 trust `88ad651` · #117 run-state `42dc49b` 均已合 main
+- **P0d 自动 preflight** `[executed]`: Companion 重建启动；health `runner:wired`；list_tabs 真 tab；PROFILE_FORBIDDEN(shell/evaluate)；DISCLOSURE_REQUIRED→accept→get_page_text；产物 `docs/audit/reviews/outbound-mcp-p0d-preflight-20260804.md`
+- **L7**: **INCONCLUSIVE**（T1–T3 未跑，非 FAIL）
+- **Grant L4+ 设计 draft**: `docs/decisions/outbound-mcp-l4-grant-design-2026-08-04.md`（Option D/A；待 dual-review；T1 PASS 前不实现发货）
+- **下次**: 真人 T1–T3 bake-off；或 dual-review grant 设计
+- Recorded: yes — preflight + grant draft
 
 ### S41 (2026-08-04 ~17:00–18:14) [运行态假空闲 + 子任务下钻 · 对抗→双审→实现 · PR #117]
 - **产品问题**：复杂任务像会话结束，可打字，随后 agent 又响应；多 worker 需下钻看进展
