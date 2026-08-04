@@ -128,7 +128,7 @@ Chrome Extension (Plasmo + React)  ←→  WebSocket (ws://127.0.0.1:23401)  ←
 - docs/adr/020-capability-model-three-axes.md — Surface · Composition · Autonomy 本体（能力叠加纪律）
 - docs/mission-pack-usage.md — 任务包 / 企业模块使用说明
 - docs/confirm-center-user-guide.md — 确认台（Confirm Center / Cockpit）用户说明
-- docs/mcp.md — MCP 配置与排错
+- docs/mcp.md — MCP 配置与排错（Inbound + Outbound ADR-022 / Grok config.toml）
 - docs/computer-use-user-guide.md — Computer Use 启用 / 急停 / 限制
 - docs/host-and-apps.md — Host 读写与 Apps 白名单
 - docs/notebooklm-user-guide.md — NotebookLM 导入
