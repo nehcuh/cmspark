@@ -1,0 +1,14 @@
+# Dual external review context
+batch: outbound-mcp-l4-grant
+base: HEAD
+time: 20260804-215353
+
+4e01c1e
+
+?? docs/audit/reviews/_prompts/outbound-mcp-l4-grant-dual-review.md
+?? docs/audit/reviews/outbound-mcp-l4-grant-diff-20260804-215353.patch
+?? docs/audit/reviews/s42-main-pull-diff-20260804.patch
+?? skills/
+
+## Diff (git diff + staged)
+

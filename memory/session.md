@@ -2,13 +2,16 @@
 
 ## Current Session
 
-### S42 (2026-08-04) [… → dual-lock grant → M1 implement]
-- **Ship**: #118 · #117 · #119（preflight+design dual-lock）合 main
-- **Grant dual-review**: Pi + independent **APPROVE_WITH_NITS** → DIRECTION LOCKED
-- **Grant M1–M4** `[executed]`: store+auth+stdio+Settings UI；grant 单测 **12 pass**；impl dual Claude+Pi **APPROVE_WITH_NITS** both_ok
-- **PR #120** OPEN · 可合（非 GA）
-- **下次**: 合 #120；T1 bake-off；可选 nits 清理；require_grant GA 门
-- Recorded: yes — grant M1–M4 + impl dual
+### S42 COMPLETE (2026-08-04) [multi-adv → #117–#120 ship · grant M1–M4]
+- **Main tip**: `3fd7f1a` — 与 origin/main 同步
+- **已合 PR**:
+  - #118 S42 Trust P0/P1（`__outbound_mcp` / SPA / L8…）
+  - #117 run-state + full-autonomy cruise
+  - #119 P0d preflight + L4+ grant design dual-lock
+  - **#120** grant M1–M4 + Settings UI + dual APPROVE_WITH_NITS + N1/N3 修后 squash
+- **Grant**: `require_grant` 默认 false；Settings 签发/撤销；`cmg_` 哈希存储
+- **下次**: 真人 P0d T1–T3；require_grant GA；nits N2/N5/N6 可选
+- Recorded: yes — session flush · remote main green
 
 ### S41 (2026-08-04 ~17:00–18:14) [运行态假空闲 + 子任务下钻 · 对抗→双审→实现 · PR #117]
 - **产品问题**：复杂任务像会话结束，可打字，随后 agent 又响应；多 worker 需下钻看进展
