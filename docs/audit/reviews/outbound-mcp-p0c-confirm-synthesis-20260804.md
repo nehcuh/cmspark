@@ -33,7 +33,7 @@
 | N2 | Default `caller_id=stdio-default` shared across clients | Prefer unique `CMSPARK_OUTBOUND_CALLER_ID` per agent (docs) |
 | N3 | timingSafeEqual length early-return (minor) | Optional harden |
 | N4 | INTERNAL_NAME_MISSING audit skip on HTTP path (unreachable) | Optional consistency |
-| N5 | No HTTP-layer e2e test | **Before P0d bake-off** |
+| N5 | No HTTP-layer e2e test | **FIXED** — `tests/outbound-mcp-http-e2e.test.ts` (2026-08-04) |
 | N6 | Unauth `/outbound-mcp/v1/health` leaks runner wired\|none | Acceptable P0c (loopback) |
 | N7 | First-run ws_secret dual-process race | Doc: start companion before mcp-outbound |
 
