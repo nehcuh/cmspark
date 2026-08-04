@@ -23,6 +23,12 @@ import {
 import { OUTBOUND_MCP_EXFIL_CLASS, outboundToInternalName } from "./profile"
 import { makeOutboundMcpOrigin } from "./origin"
 import { appendOutboundMcpAudit } from "./audit"
+import {
+  gateOutboundTabLease,
+  OUTBOUND_MCP_PARAM,
+  OUTBOUND_CALLER_PARAM,
+  outboundHolderThreadId,
+} from "./dual-entry"
 
 export const OUTBOUND_HTTP_PREFIX = "/outbound-mcp/v1"
 export const OUTBOUND_INVOKE_PATH = `${OUTBOUND_HTTP_PREFIX}/invoke`
@@ -198,21 +204,64 @@ export async function companionInvokeOutbound(
     }
   }
 
+  // L9: dual-entry tab lease before CDP
+  const args = { ...(body.args || {}) }
+  const leaseGate = gateOutboundTabLease(internal, args, caller_id)
+  if (!leaseGate.ok) {
+    appendOutboundMcpAudit({
+      caller_id,
+      tool,
+      ok: false,
+      error_code: leaseGate.error_code,
+    })
+    return {
+      ok: false,
+      error: leaseGate.error,
+      error_code: leaseGate.error_code,
+      internal_tool: internal,
+      origin,
+      data: {
+        error_code: leaseGate.error_code,
+        tab_id: leaseGate.tab_id,
+        holder_thread_id: leaseGate.holder_thread_id,
+        side_panel_wins: leaseGate.side_panel_wins === true,
+        queue_disclosure_zh: leaseGate.queue_disclosure_zh,
+      },
+    }
+  }
+
+  // L8/L9: tag params so createToolExecutor fans out confirms + treats holder
+  const taggedArgs: Record<string, unknown> = {
+    ...args,
+    [OUTBOUND_MCP_PARAM]: true,
+    [OUTBOUND_CALLER_PARAM]: caller_id,
+    __thread_id: outboundHolderThreadId(caller_id),
+  }
+
   const toolCallId = `ob_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`
   try {
-    const result = await runner(toolCallId, internal, body.args || {})
+    const result = await runner(toolCallId, internal, taggedArgs)
+    // Map confirm-timeout into actionable MCP error (L8 fail-closed messaging)
+    let error = result.success ? undefined : result.error || "dispatch failed"
+    let error_code = result.success ? undefined : "DISPATCH_FAILED"
+    if (!result.success && error && /timeout|denied|confirmation/i.test(error)) {
+      error_code = "OUTBOUND_CONFIRM_REQUIRED"
+      error =
+        `${error} — L8: approve via system tray dialog and/or any open CMspark Side Panel; ` +
+        `do not rely on IDE focus alone. If no tray, open Side Panel or enable CMspark tray.`
+    }
     appendOutboundMcpAudit({
       caller_id,
       tool,
       domain: body.domain,
       ok: result.success,
-      error_code: result.success ? undefined : "DISPATCH_FAILED",
-      confirm_outcome: "n/a",
+      error_code,
+      confirm_outcome: result.success ? "n/a" : "denied",
     })
     return {
       ok: result.success,
-      error: result.success ? undefined : result.error || "dispatch failed",
-      error_code: result.success ? undefined : "DISPATCH_FAILED",
+      error,
+      error_code,
       internal_tool: internal,
       data: result.data,
       origin,

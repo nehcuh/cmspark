@@ -230,4 +230,5 @@ cmspark-agent mcp-outbound
 - **真桥**：`mcp-outbound` → `POST http://127.0.0.1:<port>/outbound-mcp/v1/invoke`（`Authorization: Bearer <ws_secret>`）→ Companion `createToolExecutor` → Extension CDP  
 - 先 `cmspark-agent start`（或 tray/daemon）并打开扩展配对；再起 `mcp-outbound`  
 - 无扩展连接时：`EXTENSION_UNAVAILABLE`  
-- 交互确认 L8 / tab lease L9：bake-off 前仍开放（确认仍走已连接的 Side Panel WS）
+- **L8 确认**：Outbound 触发的 L2 确认 fan-out 到所有已鉴权面板 + 优先托盘对话框 + OS 通知；超时返回 `OUTBOUND_CONFIRM_REQUIRED`（勿只盯 IDE）  
+- **L9 tab lease**：交互工具须显式 `tabId`；holder=`outbound_mcp:<caller>`；与 Side Panel 冲突时 **Side Panel 赢**，MCP 得 `TAB_LOCKED` + `queue_disclosure_zh`

@@ -193,6 +193,7 @@ test("e2e: disclosure POST + invoke happy path through real HTTP", async () => {
     if (tool === "list_tabs") return { success: true, data: { tabs: [{ id: 7 }] } }
     if (tool === "get_page_text") {
       assert.equal((params as any).tabId, 7)
+      assert.equal((params as any).__outbound_mcp, true)
       return { success: true, data: { text: "hello e2e" } }
     }
     return { success: false, error: "unexpected tool " + tool }
@@ -235,7 +236,7 @@ test("e2e: disclosure POST + invoke happy path through real HTTP", async () => {
     assert.equal(tabs.json.internal_tool, "list_tabs")
     assert.equal(tabs.json.origin?.synthetic_origin, "outbound_mcp:e2e-agent")
 
-    // get_page_text after disclosure
+    // get_page_text after disclosure (L9 tabId required)
     const text = await requestJson(port, "POST", OUTBOUND_INVOKE_PATH, {
       token: SECRET,
       body: {
@@ -302,9 +303,27 @@ test("e2e: http-client dispatcher + companionPostDisclosure end-to-end", async (
     const r = await invokeOutboundTool({
       caller_id: "client-agent",
       tool: "cmspark__screenshot",
+      args: { tabId: 3 },
     })
     assert.equal(r.ok, true)
     assert.deepEqual(r.dispatch?.data, { png: "base64" })
+  } finally {
+    await close(server)
+  }
+})
+
+test("e2e: L9 click without tabId over HTTP → TAB_ID_REQUIRED", async () => {
+  const server = createOutboundTestServer()
+  const port = await listen(server)
+  setOutboundToolRunner(async () => ({ success: true }))
+  try {
+    const r = await requestJson(port, "POST", OUTBOUND_INVOKE_PATH, {
+      token: SECRET,
+      body: { caller_id: "x", tool: "cmspark__click", args: {} },
+    })
+    assert.equal(r.status, 422)
+    assert.equal(r.json.error_code, "TAB_ID_REQUIRED")
+    assert.ok(r.json.data?.queue_disclosure_zh)
   } finally {
     await close(server)
   }
@@ -331,11 +350,16 @@ test("e2e: runner DISPATCH_FAILED surfaces 422 over HTTP", async () => {
   try {
     const r = await requestJson(port, "POST", OUTBOUND_INVOKE_PATH, {
       token: SECRET,
-      body: { caller_id: "c", tool: "cmspark__wait_for", args: { selector: "#x" } },
+      body: {
+        caller_id: "c",
+        tool: "cmspark__wait_for",
+        args: { tabId: 1, selector: "#x" },
+      },
     })
     assert.equal(r.status, 422)
-    assert.equal(r.json.error_code, "DISPATCH_FAILED")
-    assert.match(r.json.error || "", /cdp timeout/)
+    // "timeout" in error → L8 maps to OUTBOUND_CONFIRM_REQUIRED
+    assert.equal(r.json.error_code, "OUTBOUND_CONFIRM_REQUIRED")
+    assert.match(r.json.error || "", /cdp timeout|tray|Side Panel/i)
   } finally {
     await close(server)
   }

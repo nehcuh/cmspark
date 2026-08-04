@@ -213,10 +213,10 @@ Bake-off 默认非敏感页；敏感页须显式 disclosure（L3+）。
 | `companion/src/outbound-mcp/facade.ts` | gate + disclosure 门 + tools list | skeleton（**无** live WS 桥） |
 | `companion/src/outbound-mcp/audit.ts` | outbound 审计行 | skeleton |
 | `companion/tests/outbound-mcp-facade.test.ts` | 门禁单测 | 有 |
-| stdio MCP entry / CLI | `tools/list` + `tools/call` 接 façade | **待** P0c |
-| Live bridge → 内部 tool 调度 | originWs 绑定 | **待** P0c |
-| Tray/全局确认（L8） | IDE 无 Side Panel 聚焦 | **待** P0c |
-| Tab lease 双入口（L9） | 复用 ADR-015 | **待** 交互任务前 |
+| stdio MCP entry / CLI | `tools/list` + `tools/call` 接 façade | skeleton ✅ |
+| Live bridge → 内部 tool 调度 | loopback HTTP + createToolExecutor | ✅ P0c |
+| Tray/全局确认（L8） | 托盘优先 + 全面板 fan-out + OS notify；超时 `OUTBOUND_CONFIRM_REQUIRED` | ✅ 代码路径 |
+| Tab lease 双入口（L9） | `outbound_mcp:<caller>` lease；Side Panel 赢 | ✅ 代码路径 |
 | Grant 模型（L4+） | P1 发货门 | **待** P1 |
 
 **Inbound** MCP 客户端栈（`companion/src/mcp/`）保持不变：用户仍可把外部 server 接到 Side Panel Agent。

@@ -56,9 +56,9 @@ test("companion invoke EXTENSION_UNAVAILABLE without runner", async () => {
 })
 
 test("companion invoke dispatches via runner after gate", async () => {
-  const calls: { tool: string; id: string }[] = []
+  const calls: { tool: string; id: string; params: any }[] = []
   setOutboundToolRunner(async (id, tool, params) => {
-    calls.push({ tool, id })
+    calls.push({ tool, id, params })
     assert.equal(tool, "list_tabs")
     return { success: true, data: { tabs: [{ id: 1 }] } }
   })
@@ -72,6 +72,9 @@ test("companion invoke dispatches via runner after gate", async () => {
   assert.equal(calls.length, 1)
   assert.ok(calls[0].id.startsWith("ob_"))
   assert.equal(r.origin?.synthetic_origin, "outbound_mcp:agent")
+  // L8 flag for confirm fan-out
+  assert.equal(calls[0].params.__outbound_mcp, true)
+  assert.equal(calls[0].params.__outbound_caller_id, "agent")
 })
 
 test("companion exfil after acceptDisclosure reaches runner", async () => {
@@ -80,11 +83,24 @@ test("companion exfil after acceptDisclosure reaches runner", async () => {
     assert.equal(tool, "screenshot")
     return { success: true, data: { ok: true } }
   })
+  // L9: screenshot needs tabId
   const r = await companionInvokeOutbound({
     caller_id: "d1",
     tool: "cmspark__screenshot",
+    args: { tabId: 1 },
   })
   assert.equal(r.ok, true)
+})
+
+test("companion interactive without tabId → TAB_ID_REQUIRED (L9)", async () => {
+  setOutboundToolRunner(async () => ({ success: true }))
+  const r = await companionInvokeOutbound({
+    caller_id: "c",
+    tool: "cmspark__click",
+    args: {},
+  })
+  assert.equal(r.ok, false)
+  assert.equal(r.error_code, "TAB_ID_REQUIRED")
 })
 
 test("runner failure surfaces DISPATCH_FAILED", async () => {
@@ -96,4 +112,19 @@ test("runner failure surfaces DISPATCH_FAILED", async () => {
   assert.equal(r.ok, false)
   assert.equal(r.error_code, "DISPATCH_FAILED")
   assert.match(r.error || "", /tab gone/)
+})
+
+test("runner confirm timeout maps to OUTBOUND_CONFIRM_REQUIRED (L8)", async () => {
+  setOutboundToolRunner(async () => ({
+    success: false,
+    error: "Security confirmation timeout for navigate",
+  }))
+  const r = await companionInvokeOutbound({
+    caller_id: "c",
+    tool: "cmspark__navigate",
+    args: { tabId: 2, url: "https://example.com" },
+  })
+  assert.equal(r.ok, false)
+  assert.equal(r.error_code, "OUTBOUND_CONFIRM_REQUIRED")
+  assert.match(r.error || "", /tray|Side Panel/i)
 })
