@@ -186,13 +186,11 @@ async function handleLoopbackHttp(req: http.IncomingMessage, res: http.ServerRes
 }
 
 /**
- * Pick an authenticated WS for outbound CDP tool dispatch.
- * Prefer chrome-extension:// (browser bridge). Tray (`cmspark-tray://local`)
- * authenticates but does NOT handle tool.execute — binding outbound to tray
- * causes 15s timeouts on list_tabs etc.
+ * Pick an authenticated **Chrome extension** WS for outbound CDP tool dispatch.
+ * S42 P1: tray (`cmspark-tray://local`) authenticates but does NOT handle
+ * tool.execute — never bind outbound runner to tray (was 15s timeout residual).
  */
 export function pickAuthenticatedClientWs(): WebSocket | null {
-  let fallback: WebSocket | null = null
   for (const c of clients) {
     const st = wsAuth.get(c)
     if (c.readyState !== WebSocket.OPEN || st?.authenticated !== true) continue
@@ -200,10 +198,8 @@ export function pickAuthenticatedClientWs(): WebSocket | null {
     if (/^chrome-extension:\/\//i.test(origin)) {
       return c
     }
-    // tray / unknown — only use if no extension peer
-    if (!fallback) fallback = c
   }
-  return fallback
+  return null
 }
 
 let outboundRunnerWs: WebSocket | null = null
@@ -211,6 +207,7 @@ let outboundRunnerWs: WebSocket | null = null
 /**
  * Ensure outbound HTTP runner is wired to createToolExecutor(extensionWs).
  * Synchronous so invoke never races an empty runner after auth.
+ * Extension-only: no extension peer → EXTENSION_UNAVAILABLE (fast fail).
  */
 export function ensureOutboundToolRunnerWired(): boolean {
   // Lazy require avoids circular import at module load (companion-http is light).
@@ -221,19 +218,23 @@ export function ensureOutboundToolRunnerWired(): boolean {
     outboundRunnerWs = null
     return false
   }
-  // Prefer rebinding when a better peer appears (extension after tray).
+  // Prefer rebinding when a better peer appears (extension reconnect).
   if (outboundRunnerWs === ws) {
     return true
   }
   const origin = wsAuth.get(ws)?.origin || ""
   const executeTool = createToolExecutor(ws)
+  // trustedOutbound: only this Bearer-gated runner may re-apply __outbound_mcp
+  // (S42 multi-adv P0 — params alone are not a trust boundary).
   setOutboundToolRunner(async (toolCallId, internalTool, params) => {
-    return executeTool(toolCallId, internalTool, params)
+    return executeTool(toolCallId, internalTool, params, undefined, {
+      trustedOutbound: true,
+    })
   })
   outboundRunnerWs = ws
   logger.info("outbound_mcp.runner_wired", {
     origin: origin || "<none>",
-    prefers_extension: /^chrome-extension:\/\//i.test(origin),
+    prefers_extension: true,
   })
   return true
 }
@@ -571,15 +572,39 @@ export function seedThreadManagerForTests(): ThreadManager {
   return threadManager
 }
 
+/**
+ * Per-invoke options for createToolExecutor.
+ * S42 multi-adv P0: outbound provenance must NEVER be trusted from tool params
+ * (LLM / generic zod fallback can inject `__outbound_mcp`). Only the companion-http
+ * runner (or tests) may pass `trustedOutbound: true` after Bearer auth.
+ */
+export type ToolExecuteInvokeOpts = {
+  trustedOutbound?: boolean
+}
+
+export type ToolExecutorFn = (
+  toolCallId: string,
+  toolName: string,
+  params: any,
+  signal?: AbortSignal,
+  invokeOpts?: ToolExecuteInvokeOpts,
+) => Promise<{ success: boolean; data?: any; error?: string }>
+
 // Exported for integration tests (audit item 6).
-export function createToolExecutor(ws: WebSocket) {
+export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
   // Per-connection session id — used as the key for MCP first-use confirmation cache
   // so approvals don't bleed across browser sessions.
   const sessionId = randomUUID()
   // Audit item 8: register the (ws, sessionId) pair so ws.on("close") can clean
   // up the per-session MCP confirm-cache. Without this, stale approvals leak.
   mcpSessionByWs.set(ws, sessionId)
-  return async (toolCallId: string, toolName: string, params: any, signal?: AbortSignal): Promise<{ success: boolean; data?: any; error?: string }> => {
+  return async (
+    toolCallId: string,
+    toolName: string,
+    params: any,
+    signal?: AbortSignal,
+    invokeOpts?: ToolExecuteInvokeOpts,
+  ): Promise<{ success: boolean; data?: any; error?: string }> => {
     let finalParams = params || {}
     // #au4dch DL-1: normalize dotted alias → downloads_find
     if (toolName === "downloads.find") {
@@ -605,6 +630,42 @@ export function createToolExecutor(ws: WebSocket) {
       })
       const { security_token: _stripped, ...rest } = finalParams
       finalParams = rest
+    }
+    // S42 multi-adv P0: strip client/LLM __outbound_* always. Re-apply only when
+    // invokeOpts.trustedOutbound (companion-http runner after Bearer auth).
+    // Generic tool schemas use z.record(z.unknown()) and would otherwise let a
+    // pack/worker bypass isToolAllowed via `"__outbound_mcp": true`.
+    const inboundOutboundMcp = (finalParams as any).__outbound_mcp === true
+    const inboundOutboundCaller =
+      typeof (finalParams as any).__outbound_caller_id === "string"
+        ? String((finalParams as any).__outbound_caller_id)
+        : undefined
+    if (
+      Object.prototype.hasOwnProperty.call(finalParams, "__outbound_mcp") ||
+      Object.prototype.hasOwnProperty.call(finalParams, "__outbound_caller_id")
+    ) {
+      if (!invokeOpts?.trustedOutbound) {
+        logger.warn("security.outbound_flag.stripped_untrusted", {
+          tool_call_id: toolCallId,
+          tool_name: toolName,
+          had_flag: inboundOutboundMcp,
+        })
+      }
+      const {
+        __outbound_mcp: _om,
+        __outbound_caller_id: _oc,
+        ...restOb
+      } = finalParams as Record<string, unknown>
+      finalParams = restOb
+    }
+    if (invokeOpts?.trustedOutbound === true && inboundOutboundMcp) {
+      finalParams = {
+        ...finalParams,
+        __outbound_mcp: true,
+        ...(inboundOutboundCaller
+          ? { __outbound_caller_id: inboundOutboundCaller }
+          : {}),
+      }
     }
     // Normalize tabId to a number. LLMs occasionally pass "123" as a string;
     // without this, getCachedTabUrl and the navigate/set_tab_url cache update
@@ -637,6 +698,7 @@ export function createToolExecutor(ws: WebSocket) {
         : typeof (finalParams as any)._thread_id === "string"
           ? String((finalParams as any)._thread_id)
           : undefined
+    // Only true when re-applied under trustedOutbound — never from raw LLM params.
     const isOutboundMcpCall = (finalParams as any).__outbound_mcp === true
     try {
       const {
@@ -946,7 +1008,16 @@ export function createToolExecutor(ws: WebSocket) {
             ? `board_complete empty_complete=${!!finalParams.empty_complete} supporting=${Array.isArray(finalParams.supporting_fact_ids) ? finalParams.supporting_fact_ids.join(",") : ""} residual=${Array.isArray(finalParams.residual_risks) ? finalParams.residual_risks.slice(0, 3).join(" | ") : ""} reason=${finalParams.empty_complete_reason || finalParams.goal_summary || ""}`
             : "") ||
           (toolName === "skill_install"
-            ? `skill_install path=${finalParams.path || ""} zip=${finalParams.zip_path || ""} content_len=${typeof finalParams.content === "string" ? finalParams.content.length : 0}`
+            ? (() => {
+                try {
+                  // Lazy require keeps createToolExecutor load light; preview is best-effort.
+                  const { skillInstallOverwritePreview } = require("./skills/skill-install") as typeof import("./skills/skill-install")
+                  const prev = skillInstallOverwritePreview(finalParams)
+                  return `skill_install path=${finalParams.path || ""} zip=${finalParams.zip_path || ""} content_len=${typeof finalParams.content === "string" ? finalParams.content.length : 0} name=${prev.name || ""} overwrite=${prev.overwrite ? "true" : "false"} dest=${prev.dest_path || ""}`
+                } catch {
+                  return `skill_install path=${finalParams.path || ""} zip=${finalParams.zip_path || ""} content_len=${typeof finalParams.content === "string" ? finalParams.content.length : 0}`
+                }
+              })()
             : "") ||
           "",
       )
@@ -1591,13 +1662,18 @@ export function createToolExecutor(ws: WebSocket) {
               ? `Launch app "${hostApp.entry.display_name}" (${hostApp.token}) — no arguments`
               : code
           const tray = getTrayInstance()
-          // Tray dialog is only dispatched when (1) a Swift tray backend is live,
-          // and (2) the confirmation is NOT a Windows Hello nonce challenge
-          // (those need the inline paste-blocked nonce UI in Side Panel — Swift
-          // dialog has no nonce input). Plain macOS computer-use / evaluate / etc.
-          // are eligible for the tray shortcut.
-          // L8: outbound MCP always prefers tray when available (IDE focus independent)
-          const trayEligible = !!tray && !winL2NonceChallenge
+          // Tray dialog only when Swift backend can actually show a native
+          // confirm (S42 P1 Compat-C5). systray2/readline return a never-resolving
+          // Promise — marking them trayEligible lied on Windows/Linux and held
+          // Promise.race with a dead contender. Win Hello nonce still needs Side Panel.
+          let trayBackendIsSwift = false
+          try {
+            const { detectTrayBackend } = require("./tray/tray-adapter") as typeof import("./tray/tray-adapter")
+            trayBackendIsSwift = detectTrayBackend() === "swift"
+          } catch {
+            trayBackendIsSwift = false
+          }
+          const trayEligible = !!tray && !winL2NonceChallenge && trayBackendIsSwift
           const trayReq: TrayConfirmRequest | null = trayEligible
             ? {
                 id: sharedConfirmId,
@@ -1702,6 +1778,14 @@ export function createToolExecutor(ws: WebSocket) {
                   } catch {
                     /* best-effort fan-out */
                   }
+                }
+              }
+              // Executor-bound socket always (extension peer; tests without clients set)
+              if (ws.readyState === WebSocket.OPEN) {
+                try {
+                  ws.send(payload)
+                } catch {
+                  /* ignore */
                 }
               }
             } else if (ws.readyState === WebSocket.OPEN) {
@@ -2154,22 +2238,44 @@ export function createToolExecutor(ws: WebSocket) {
           tool_name: toolName,
           url: rawUrl,
           host,
+          outbound: isOutboundMcpCall,
         })
+        // S42 P1: outbound navigate must not depend on a single Side Panel focus
+        // (L8). Fan-out + unbound origin for outbound; Side Panel path stays
+        // origin-bound so another peer cannot cross-approve.
         const decision = await securityConfirmations.request(
           (data) => {
-            if (ws.readyState === WebSocket.OPEN) {
-              ws.send(JSON.stringify(data))
+            const payload = JSON.stringify(data)
+            if (isOutboundMcpCall) {
+              for (const c of clients) {
+                if (c.readyState === WebSocket.OPEN && wsAuth.get(c)?.authenticated === true) {
+                  try {
+                    c.send(payload)
+                  } catch {
+                    /* best-effort fan-out */
+                  }
+                }
+              }
+              // Always notify the executor-bound socket (extension peer / tests).
+              // Fan-out alone misses peers not in `clients` (integration harness).
+              if (ws.readyState === WebSocket.OPEN) {
+                try {
+                  ws.send(payload)
+                } catch {
+                  /* ignore */
+                }
+              }
+            } else if (ws.readyState === WebSocket.OPEN) {
+              ws.send(payload)
             }
           },
           {
-            toolName,
+            toolName: isOutboundMcpCall ? `[Outbound] ${toolName}` : toolName,
             dangerousApis: [],
             code: `navigate(${rawUrl})`,
             relevantDomains: [host],
           },
-          // Trust multi-peer (P1-2): bind URL L2 to the requesting socket so
-          // another loopback Side Panel cannot cross-approve navigate.
-          { originWs: ws },
+          isOutboundMcpCall ? {} : { originWs: ws },
         )
         if (!decision.approved) {
           const reason = decision.reason === "approved" ? "unavailable" : decision.reason

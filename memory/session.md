@@ -2,6 +2,29 @@
 
 ## Current Session
 
+### S42 (2026-08-04) [pull main + 四路对抗 + P0 修复]
+- **拉取**: `git pull origin main` fast-forward `79d7420` → `d4c4ebf`
+- **四路对抗**: Security/Correctness/Architecture/Compat → 初评 **REQUEST_CHANGES**
+- **P0 修复** `[executed]`:
+  - `createToolExecutor` 始终 strip `__outbound_mcp` / `__outbound_caller_id`
+  - 仅 `invokeOpts.trustedOutbound: true` 可 re-apply（`ensureOutboundToolRunnerWired` 传入）
+  - 对抗单测：pack 白名单 + 注入 flag 无 trust → `tool_not_allowed`；trusted 路径仍放行；untrusted wire fail-closed
+  - outbound-mcp 相关 **53 pass**
+- **裁决**: P0 后 **APPROVE_WITH_NITS** → P1 批修落地
+- **P1 修复** `[executed]`:
+  - Outbound runner **extension-only**（禁 tray fallback）
+  - SPA scroll **PageUp/PageDown** 按 deltaY
+  - Disclosure accept JSON **ok 诚实**（companion 双写失败 → ok:false + revoke local）
+  - skill_install L2 **overwrite 预览** + token binding `ow=`
+  - Zip **header 预预算** before getData
+  - URL-gate outbound **fan-out**；trayEligible **仅 Swift**；L8 文案平台诚实
+  - docs/mcp.md L3+/L8 诚实声明
+  - 相关单测 41+spa-scroll pass
+- **仍开**: A-F2 grant 分离 secret；A-F3 dual stack；Downloads 段 allowlist / win32 %VAR% argv
+- **产物**: multi-adv report + s42-lane-* + verdict JSON
+- **下次**: 可选 commit/PR；可选 dual-external；P1 residual 或 grant 设计
+- Recorded: yes — S42 multi-adv + P0 + P1 batch
+
 ### S39 (2026-08-03) [PR 收口 + Anthropic P1 UI/probe/skill 旁路]
 - **PR 收口**: #112 closed（代码已在 main）；#111 MERGED；#110 MERGED
 - **P1 实现**:

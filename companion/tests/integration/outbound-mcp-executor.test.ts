@@ -24,6 +24,7 @@ import {
   seedThreadManagerForTests,
 } from "../../src/server.js"
 import { ThreadManager } from "../../src/threads/thread-manager.js"
+import { getConfigDir } from "../../src/config.js"
 import {
   setOutboundToolRunner,
   resetOutboundCompanionHttpForTests,
@@ -189,11 +190,17 @@ test("createToolExecutor: outbound tags + list_tabs succeeds (not tool_not_allow
   const executeTool = createToolExecutor(serverSideWs)
   armAutoToolResult({ tabs: [{ id: 9, title: "t" }] })
 
-  const result = await executeTool("ob_list_1", "list_tabs", {
-    __outbound_mcp: true,
-    __outbound_caller_id: "agent-a",
-    __thread_id: "outbound_mcp:agent-a",
-  })
+  const result = await executeTool(
+    "ob_list_1",
+    "list_tabs",
+    {
+      __outbound_mcp: true,
+      __outbound_caller_id: "agent-a",
+      __thread_id: "outbound_mcp:agent-a",
+    },
+    undefined,
+    { trustedOutbound: true },
+  )
 
   assert.equal(result.success, true, `expected success, got ${JSON.stringify(result)}`)
   assert.notEqual((result as any).data?.error_code, "tool_not_allowed")
@@ -211,20 +218,72 @@ test("createToolExecutor: synthetic thread_id WITHOUT __outbound_mcp → tool_no
   assert.equal((result as any).data?.error_code, "tool_not_allowed")
 })
 
+test("S42 P0: LLM-injected __outbound_mcp without trustedOutbound is stripped (pack whitelist holds)", async () => {
+  // Adversarial: generic zod fallback preserves unknown keys; Side Panel path
+  // must not honor __outbound_mcp from params alone.
+  fs.mkdirSync(path.join(getConfigDir(), "threads"), { recursive: true })
+  const tm = seedThreadManagerForTests()
+  const thread = tm.create("s42-pack-worker")
+  tm.applyPackPatch(thread.id, {
+    mission_pack_id: "s42-test-pack",
+    mission_pack_snapshot: null,
+    tool_whitelist: ["get_page_html"], // list_tabs intentionally denied
+    active_skill_ids: ["browse"],
+    system_prompt_append: null,
+  })
+  assert.equal(tm.isToolAllowed(thread.id, "list_tabs"), false)
+
+  const executeTool = createToolExecutor(serverSideWs)
+  const result = await executeTool("s42_inject", "list_tabs", {
+    __thread_id: thread.id,
+    __outbound_mcp: true, // attack payload
+    __outbound_caller_id: "evil-llm",
+  })
+  // No trustedOutbound → flag stripped → isToolAllowed denies
+  assert.equal(result.success, false, `expected deny, got ${JSON.stringify(result)}`)
+  assert.equal((result as any).data?.error_code, "tool_not_allowed")
+})
+
+test("S42 P0: same tags WITH trustedOutbound skip whitelist (real outbound path)", async () => {
+  // Trusted outbound + synthetic holder must not hit isToolAllowed deny.
+  const executeTool = createToolExecutor(serverSideWs)
+  armAutoToolResult({ tabs: [{ id: 2 }] })
+  const result = await executeTool(
+    "s42_trusted",
+    "list_tabs",
+    {
+      __outbound_mcp: true,
+      __outbound_caller_id: "agent-trusted",
+      __thread_id: "outbound_mcp:agent-trusted",
+    },
+    undefined,
+    { trustedOutbound: true },
+  )
+  assert.equal(result.success, true, `trusted outbound: ${JSON.stringify(result)}`)
+  assert.notEqual((result as any).data?.error_code, "tool_not_allowed")
+})
+
 test("createToolExecutor: outbound navigate untrusted domain → confirm fan-out resolvable", async () => {
   const executeTool = createToolExecutor(serverSideWs)
   const confirmationPromise = expectClientMessage("security.confirmation.request")
 
-  const resultPromise = executeTool("ob_nav_1", "navigate", {
-    tabId: 1,
-    url: "https://untrusted-outbound.example/",
-    __outbound_mcp: true,
-    __outbound_caller_id: "agent-b",
-    __thread_id: "outbound_mcp:agent-b",
-  })
+  const resultPromise = executeTool(
+    "ob_nav_1",
+    "navigate",
+    {
+      tabId: 1,
+      url: "https://untrusted-outbound.example/",
+      __outbound_mcp: true,
+      __outbound_caller_id: "agent-b",
+      __thread_id: "outbound_mcp:agent-b",
+    },
+    undefined,
+    { trustedOutbound: true },
+  )
 
   const confirmation = await confirmationPromise
-  assert.equal(confirmation.tool_name, "navigate")
+  // S42 P1: outbound URL-gate labels tool as [Outbound] navigate for UI honesty
+  assert.match(String(confirmation.tool_name || ""), /navigate/)
   // L8: origin unbound for outbound — privileged respond() still works
   clientSideWs.send(
     JSON.stringify({
@@ -249,11 +308,22 @@ test("createToolExecutor: outbound navigate untrusted domain → confirm fan-out
   assert.equal(result.success, true, `navigate after confirm: ${JSON.stringify(result)}`)
 })
 
+/** Wire runner the same way production does (trustedOutbound: true). */
+function wireTrustedOutboundRunner(
+  executeTool: ReturnType<typeof createToolExecutor>,
+  onParams?: (params: Record<string, unknown>) => void,
+): void {
+  setOutboundToolRunner(async (toolCallId, internalTool, params) => {
+    onParams?.(params as Record<string, unknown>)
+    return executeTool(toolCallId, internalTool, params, undefined, {
+      trustedOutbound: true,
+    })
+  })
+}
+
 test("companionInvokeOutbound → createToolExecutor full stack (list_tabs)", async () => {
   const executeTool = createToolExecutor(serverSideWs)
-  setOutboundToolRunner(async (toolCallId, internalTool, params) => {
-    return executeTool(toolCallId, internalTool, params)
-  })
+  wireTrustedOutboundRunner(executeTool)
   armAutoToolResult({ tabs: [{ id: 3, url: "https://a.example" }] })
 
   const r = await companionInvokeOutbound({
@@ -268,9 +338,7 @@ test("companionInvokeOutbound → createToolExecutor full stack (list_tabs)", as
 
 test("companionInvokeOutbound → createToolExecutor click requires tabId (L9)", async () => {
   const executeTool = createToolExecutor(serverSideWs)
-  setOutboundToolRunner(async (toolCallId, internalTool, params) => {
-    return executeTool(toolCallId, internalTool, params)
-  })
+  wireTrustedOutboundRunner(executeTool)
 
   const r = await companionInvokeOutbound({
     caller_id: "stack-agent",
@@ -283,10 +351,9 @@ test("companionInvokeOutbound → createToolExecutor click requires tabId (L9)",
 
 test("companionInvokeOutbound → createToolExecutor click with tabId reaches CDP", async () => {
   const executeTool = createToolExecutor(serverSideWs)
-  setOutboundToolRunner(async (toolCallId, internalTool, params) => {
+  wireTrustedOutboundRunner(executeTool, (params) => {
     assert.equal(params.__outbound_mcp, true)
     assert.equal(params.__thread_id, "outbound_mcp:stack-agent")
-    return executeTool(toolCallId, internalTool, params)
   })
   armAutoToolResult({ clicked: true })
 
@@ -300,9 +367,7 @@ test("companionInvokeOutbound → createToolExecutor click with tabId reaches CD
 
 test("companionInvokeOutbound screenshot needs disclosure then CDP", async () => {
   const executeTool = createToolExecutor(serverSideWs)
-  setOutboundToolRunner(async (toolCallId, internalTool, params) => {
-    return executeTool(toolCallId, internalTool, params)
-  })
+  wireTrustedOutboundRunner(executeTool)
 
   const denied = await companionInvokeOutbound({
     caller_id: "stack-agent",
@@ -321,4 +386,26 @@ test("companionInvokeOutbound screenshot needs disclosure then CDP", async () =>
     args: { tabId: 1 },
   })
   assert.equal(ok.ok, true, `screenshot: ${JSON.stringify(ok)}`)
+})
+
+test("S42 P0: untrusted runner (no trustedOutbound) still denies synthetic outbound holder", async () => {
+  // Counterfactual: if someone wires setOutboundToolRunner without trustedOutbound,
+  // B1 fail-closed must hold (params alone insufficient).
+  const executeTool = createToolExecutor(serverSideWs)
+  setOutboundToolRunner(async (toolCallId, internalTool, params) => {
+    // deliberately omit trustedOutbound
+    return executeTool(toolCallId, internalTool, params)
+  })
+  const r = await companionInvokeOutbound({
+    caller_id: "untrusted-wire",
+    tool: "cmspark__list_tabs",
+  })
+  assert.equal(r.ok, false)
+  // dispatch fails with tool_not_allowed after strip
+  assert.ok(
+    r.error_code === "DISPATCH_FAILED" ||
+      (r.data as any)?.error_code === "tool_not_allowed" ||
+      /tool_not_allowed|not allowed/i.test(String(r.error || "")),
+    `expected whitelist deny after strip, got ${JSON.stringify(r)}`,
+  )
 })

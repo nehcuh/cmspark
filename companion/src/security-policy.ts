@@ -96,7 +96,19 @@ export class SecurityPolicy {
           typeof params?.content === "string" && params.content
             ? createHash("sha256").update(String(params.content)).digest("hex").slice(0, 16)
             : ""
-        return `skill_install|${mode}|${target}|${contentFp}|len=${typeof params?.content === "string" ? params.content.length : 0}`
+        // S42 P1: bind overwrite bit so token cannot be swapped to a different
+        // "overwrite existing skill" decision after L2 preview.
+        let overwrite = "0"
+        try {
+          // Avoid hard import cycle: dynamic require of preview helper
+          const { skillInstallOverwritePreview } = require("./skills/skill-install") as {
+            skillInstallOverwritePreview: (p: any) => { overwrite: boolean }
+          }
+          overwrite = skillInstallOverwritePreview(params).overwrite ? "1" : "0"
+        } catch {
+          overwrite = "?"
+        }
+        return `skill_install|${mode}|${target}|${contentFp}|len=${typeof params?.content === "string" ? params.content.length : 0}|ow=${overwrite}`
       }
       default:
         return ""

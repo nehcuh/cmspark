@@ -12,7 +12,10 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js"
 import { OUTBOUND_MCP_ALLOWLIST, OUTBOUND_DISCLOSURE_ZH } from "./profile"
-import { acceptOutboundDisclosure } from "./disclosure-session"
+import {
+  acceptOutboundDisclosure,
+  revokeOutboundDisclosure,
+} from "./disclosure-session"
 import { invokeOutboundTool, setOutboundDispatcher } from "./bridge"
 import { listOutboundTools } from "./facade"
 import {
@@ -120,14 +123,36 @@ export function createOutboundMcpServer(): Server {
           isError: true,
         }
       }
-      // Local session (stdio process gate) + companion process (execute gate)
-      const sess = acceptOutboundDisclosure(cid)
+      // Companion process is execute-time SoT for disclosure (ADR-022 M3).
+      // Dual-write: local gate + companion. S42 P1: body `ok` must match remote
+      // success so agents parsing JSON text do not proceed on a false accept.
       const config = getConfig()
       const port = Number(process.env[PORT_ENV]) || Number(config.port) || 23401
       const remote = await companionPostDisclosure(
         { port, token: getOrCreateSharedSecret() },
         cid,
       )
+      if (!remote.ok) {
+        revokeOutboundDisclosure(cid)
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify({
+                ok: false,
+                error_code: "COMPANION_DISCLOSURE_FAILED",
+                caller_id: cid,
+                companion_disclosure: remote.error || "failed",
+                disclosure_text_zh: OUTBOUND_DISCLOSURE_ZH,
+                hint_zh:
+                  "Companion 未确认披露（未启动 / 未配对 / Bearer 错误）。请先启动 Companion 与扩展后再 accept。",
+              }),
+            },
+          ],
+          isError: true,
+        }
+      }
+      const sess = acceptOutboundDisclosure(cid)
       return {
         content: [
           {
@@ -136,12 +161,12 @@ export function createOutboundMcpServer(): Server {
               ok: true,
               caller_id: sess.caller_id,
               accepted_at: sess.accepted_at,
-              companion_disclosure: remote.ok ? "ok" : remote.error || "failed",
+              companion_disclosure: "ok",
               disclosure_text_zh: OUTBOUND_DISCLOSURE_ZH,
             }),
           },
         ],
-        isError: !remote.ok,
+        isError: false,
       }
     }
 

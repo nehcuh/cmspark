@@ -12,6 +12,7 @@ import {
   isSkillInstallSourceAllowed,
   expandUserPath,
   MAX_CONTENT_BYTES,
+  skillInstallOverwritePreview,
 } from "../src/skills/skill-install"
 
 function makeEngine(skillsDir: string) {
@@ -156,5 +157,33 @@ test("expandUserPath expands ~ and %TEMP% when set", () => {
   if (process.env.TEMP || process.env.TMP) {
     const expanded = expandUserPath("%TEMP%\\x.zip")
     assert.ok(!expanded.includes("%TEMP%"), expanded)
+  }
+})
+
+test("S42 P1: skillInstallOverwritePreview detects existing skill dest", () => {
+  const root = getUserSkillsRoot()
+  fs.mkdirSync(root, { recursive: true })
+  const dest = path.join(root, "s42-ow-demo.md")
+  fs.writeFileSync(dest, "---\nname: s42-ow-demo\ndescription: x\n---\n\nold\n")
+  try {
+    const prev = skillInstallOverwritePreview({
+      content: "---\nname: s42-ow-demo\ndescription: d\n---\n\nBody\n",
+    })
+    assert.equal(prev.mode, "content")
+    assert.equal(prev.name, "s42-ow-demo")
+    assert.equal(prev.overwrite, true)
+    assert.ok(prev.dest_path)
+
+    const fresh = skillInstallOverwritePreview({
+      content: "---\nname: s42-ow-never-exists-xyz\ndescription: d\n---\n\nBody\n",
+    })
+    assert.equal(fresh.overwrite, false)
+    assert.equal(fresh.name, "s42-ow-never-exists-xyz")
+  } finally {
+    try {
+      fs.unlinkSync(dest)
+    } catch {
+      /* */
+    }
   }
 })

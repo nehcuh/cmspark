@@ -17,3 +17,8 @@ test("buildSpaScrollExpression coerces NaN to 0", () => {
   const expr = buildSpaScrollExpression(Number.NaN, Number.NaN, Number.NaN, Number.NaN)
   assert.match(expr, /var dx = 0, dy = 0, wheelX = 0, wheelY = 0/)
 })
+
+test("buildSpaScrollExpression embeds negative dy for scroll-up", () => {
+  const expr = buildSpaScrollExpression(0, -800, 400, 400)
+  assert.match(expr, /var dx = 0, dy = -800/)
+})
