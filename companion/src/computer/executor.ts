@@ -634,6 +634,28 @@ export async function runComputerTask(
 
   /** Re-L2 with an explicit reason; returns true when approved. */
   const reL2 = async (reason: string, dangerous: string[], seqNum?: number, previewImage?: string): Promise<boolean> => {
+    // Full autonomy cruise (网页+企业+协议三旗全开): user accepted residual risk —
+    // do not interrupt mid-task with re-L2 dialogs (product 2026-08).
+    try {
+      const { getConfig } = require("../config") as typeof import("../config")
+      const sec = getConfig().security
+      if (
+        sec?.auto_approve_dangerous === true &&
+        sec?.auto_approve_enterprise_tools === true &&
+        sec?.allow_all_schemes === true
+      ) {
+        log("computer.task.reconfirm.auto_approved", {
+          taskId,
+          reason,
+          tags: dangerous,
+          app: params.app,
+          reason_skip: "full_autonomy_cruise",
+        })
+        return true
+      }
+    } catch {
+      /* config unavailable — fall through */
+    }
     // UX-spike 2026-07-23: per-session re-L2 suppression. After the initial
     // task L2 gated the whole task (every type literal + budget + target app),
     // mid-task re-asks are usually the same human repeatedly approving

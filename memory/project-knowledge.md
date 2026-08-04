@@ -2,6 +2,15 @@
 
 ## Process Patterns
 
+### 脏工作区混功能：server.ts 必须手术式拆分再提交（2026-08-04）
+- **现象**：同一 `server.ts` 同时有 full-autonomy cruise 与 run-state `thread_id`；`git add` 整文件会把未审 Trust 改动塞进 UX PR
+- **做法**：HEAD 还原 → 只重放本功能 hunk；另一功能 hunk 再单独回放；或 `git add -p`；dual-review 附带 patch 若含 dirty tree 须在 prompt 声明
+- **反例**：为「干净 diff」抹掉另一 WIP，用户后续要求一并提交时需从 patch/对话恢复
+
+### 设计门：Product MAJOR_REVISE 必须回写 SoT 再 dual（2026-08-04）
+- 四路对抗 Product 可 MAJOR_REVISE，其余 PASS_WITH_CHANGES → **吸收全部 Product blocking 后再** `dual-external-review.sh`
+- 本轮：W2-min 同 ship、诚实 RunBusy、常驻芯片、portal、F-S1 → Pi+Claude **APPROVE_WITH_NITS**
+
 ### Eval Engineering 闸门（2026-08-04）
 - **思想**: 不信任模型；用机核 + 独立评审 + 爆炸半径放行（Hanako 评估工程 6 步映射）
 - **Skill**: `docs/skills/eval-engineering-gate/SKILL.md`（git SoT；v1.1）
@@ -12,6 +21,14 @@
 - **Outbound 应用**: `docs/superpowers/plans/2026-08-04-outbound-mcp-p0c-eval-gates.md`
 
 ## Technical Pitfalls
+
+### 运行态假空闲：Composer 只认 streaming，不认整轮 busy（2026-08-04）
+- **现象**：复杂多 tool / 思考间隙，侧栏像会话结束，可打字发送，随后 agent 又突然继续
+- **根因**：`canSend`/`Stop` 只绑 `streamingContent`；`isProcessing`/running tools/fleet 不进门控；`SET_ACTIVE_THREAD` 清零 busy；`tool.start` 无 `thread_id` 写到 active 线程
+- **RunBusy 陷阱**：`classifyFleetActivity` 把**残留 idle worker** 当 active → 横幅会「永远还在跑」；必须用诚实 `deriveRunBusy`（locks / intents / holding_tabs / llm_active / threadBusyById），禁止 `worker_count>0` 单独成立
+- **FocusBand**：`maxHeight:80; overflow:hidden` 会裁切内嵌列表 → worker 列表必须 **portal** 到 body
+- **下钻同 ship**：W1 进入 worker 若无 `threadBusyById`+tool `thread_id`，会**制造**更多假空闲（Product 对抗 MAJOR_REVISE）
+- **SoT/实现**：`docs/superpowers/specs/2026-08-04-run-state-and-worker-drilldown.md` · PR #117 · `utils/thread-busy.ts`
 
 ### Anthropic first-party denylist：FQDN 尾点可绕过 naive 匹配（2026-08-03 S38）
 - **现象**: `api.anthropic.com.`（trailing dot）若只做 exact / `.anthropic.com` 后缀比较，可能不命中 first-party → 兼容头策略失效

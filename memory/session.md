@@ -2,28 +2,23 @@
 
 ## Current Session
 
-### S42 (2026-08-04) [pull main + 四路对抗 + P0 修复]
-- **拉取**: `git pull origin main` fast-forward `79d7420` → `d4c4ebf`
-- **四路对抗**: Security/Correctness/Architecture/Compat → 初评 **REQUEST_CHANGES**
-- **P0 修复** `[executed]`:
-  - `createToolExecutor` 始终 strip `__outbound_mcp` / `__outbound_caller_id`
-  - 仅 `invokeOpts.trustedOutbound: true` 可 re-apply（`ensureOutboundToolRunnerWired` 传入）
-  - 对抗单测：pack 白名单 + 注入 flag 无 trust → `tool_not_allowed`；trusted 路径仍放行；untrusted wire fail-closed
-  - outbound-mcp 相关 **53 pass**
-- **裁决**: P0 后 **APPROVE_WITH_NITS** → P1 批修落地
-- **P1 修复** `[executed]`:
-  - Outbound runner **extension-only**（禁 tray fallback）
-  - SPA scroll **PageUp/PageDown** 按 deltaY
-  - Disclosure accept JSON **ok 诚实**（companion 双写失败 → ok:false + revoke local）
-  - skill_install L2 **overwrite 预览** + token binding `ow=`
-  - Zip **header 预预算** before getData
-  - URL-gate outbound **fan-out**；trayEligible **仅 Swift**；L8 文案平台诚实
-  - docs/mcp.md L3+/L8 诚实声明
-  - 相关单测 41+spa-scroll pass
-- **仍开**: A-F2 grant 分离 secret；A-F3 dual stack；Downloads 段 allowlist / win32 %VAR% argv
-- **产物**: multi-adv report + s42-lane-* + verdict JSON
-- **下次**: 可选 commit/PR；可选 dual-external；P1 residual 或 grant 设计
-- Recorded: yes — S42 multi-adv + P0 + P1 batch
+### S42 (2026-08-04) [pull main + 四路对抗 + P0/P1 + #118 merge + #117 rebase]
+- **拉取**: `git pull origin main` → `d4c4ebf` 后四路对抗；P0+P1 修后 **PR #118 MERGED** → main `88ad651`
+- **P0/P1**: `__outbound_mcp` trustedOutbound；extension-only runner；SPA PageUp/Down；disclosure honesty；skill overwrite；zip header budget；L8 fan-out；Swift-only trayEligible
+- **#117**: 与 main 冲突于 `server.ts` tool.start/`thread_id` — 已 rebase 合并（保留 run-state thread_id + S42 strip）
+- **下次**: push #117 分支；CI 绿后合 #117
+- Recorded: yes — S42 + #118 ship + #117 rebase
+
+### S41 (2026-08-04 ~17:00–18:14) [运行态假空闲 + 子任务下钻 · 对抗→双审→实现 · PR #117]
+- **产品问题**：复杂任务像会话结束，可打字，随后 agent 又响应；多 worker 需下钻看进展
+- **门禁**：四路对抗（Product MAJOR_REVISE + 三路 PASS_WITH）→ SoT 锁定 → Pi+Claude dual **APPROVE_WITH_NITS**
+- **实现**：`thread-busy` 纯函数 · Composer ThreadBusy 门控 · RunBusyChip/ScopeBar/portal FleetWorkerList · tool `thread_id` · fleet `llm_active` · F-S1 stop · 假结束条
+- **同批**：full-autonomy cruise（三旗：cookie/critical/re-L2 放行 + matrix/gates 测）
+- **Docs**：Outbound P0d bake-off checklist + 交叉链接
+- **Ship**：branch `feat/run-state-worker-drilldown` · **PR #117**
+- **验证**：extension 421 pass；tsc 绿；security-gates 56 pass
+- **下次**：rebase main 后合 #117；真机长 tool + spawn 下钻；P0d 真人 bake-off
+- Recorded: yes — 假空闲/RunBusy/portal + 脏树拆分
 
 ### S39 (2026-08-03) [PR 收口 + Anthropic P1 UI/probe/skill 旁路]
 - **PR 收口**: #112 closed（代码已在 main）；#111 MERGED；#110 MERGED
@@ -439,12 +434,26 @@
 
 ## In-Flight Tasks (Cross-Session)
 
+### Run-state + full-autonomy (S41) → PR #117 OPEN
+- status: **active** (await merge / manual smoke)
+- context: `feat/run-state-worker-drilldown` · PR #117 · dual APPROVE_WITH_NITS
+- next_action: 合 #117；真机长 tool + spawn 下钻 smoke；可选 P0d bake-off 手测
+- resume_doc: `docs/superpowers/specs/2026-08-04-run-state-and-worker-drilldown.md`
+- updated: 2026-08-04
+
+### Outbound MCP P0d bake-off (human)
+- status: **active** (checklist ready)
+- context: P0c on main; checklist `2026-08-04-outbound-mcp-p0d-bakeoff-checklist.md` pushed on #117 branch
+- next_action: 真人 SSO T1–T3 vs Playwright；T1 失败 pivot B/C
+- resume_doc: `docs/superpowers/plans/2026-08-04-outbound-mcp-p0d-bakeoff-checklist.md`
+- updated: 2026-08-04
+
 ### Multi-adversarial P0 follow-up (#105–#107 post-ship) (S36)
 - status: **active**
-- context: 四路对抗 REQUEST_CHANGES；报告 `docs/audit/reviews/multi-adversarial-review-20260803-main-105-107.md`
+- context: 四路对抗 REQUEST_CHANGES；报告 `docs/audit/reviews/multi-adversarial-review-20260803-main-105-107.md`；S41 加深「三旗全开放行」需与 dual-write 诚实文案同真
 - next_action: P0 批修 — arm acks/dual-write 诚实性 · ensure_python_env 事务 · windowsHide/PS/estop 文案
 - resume_doc: `docs/audit/reviews/multi-adversarial-review-20260803-main-105-107.md`
-- updated: 2026-08-03
+- updated: 2026-08-04
 
 ### Unattended desktop / Trust IA (S34–S35) → DONE #106
 - status: **done** (PR #106 → main `ed92a81`；#107 已合；S36 发现 packaging honesty 残余)

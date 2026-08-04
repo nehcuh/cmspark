@@ -77,6 +77,13 @@ export interface AgentState {
   modePin: CapabilityLevel | null
   /** ADR-015 FleetStrip — null until first fleet.status */
   fleet: FleetSnapshot | null
+  /**
+   * Run-state W2-min: per-thread LLM/tool busy map (survives SET_ACTIVE_THREAD).
+   * Keys are thread ids; true while turn/tools in flight for that thread.
+   */
+  threadBusyById: Record<string, boolean>
+  /** Open fleet worker list popover (portal). */
+  fleetListOpen: boolean
   /** ADR-019 user-env public snapshot (keys + mask only; null until first list/updated). */
   userEnv: UserEnvPublic | null
   /** ADR-019 last user_env.* error (Chinese-mapped), shown in Settings Secrets section. */
@@ -155,6 +162,8 @@ export type AgentAction =
   | { type: "NOTE_BROWSER_TOOL"; at?: number }
   | { type: "SET_MODE_PIN"; pin: CapabilityLevel | null }
   | { type: "SET_FLEET"; fleet: FleetSnapshot | null }
+  | { type: "SET_THREAD_BUSY"; threadId: string; busy: boolean }
+  | { type: "SET_FLEET_LIST_OPEN"; open: boolean }
   | { type: "SET_USER_ENV"; userEnv: UserEnvPublic }
   | { type: "SET_USER_ENV_ERROR"; error: string | null }
   | { type: "SET_USER_ENV_STATUS"; status: string | null }
@@ -241,6 +250,8 @@ export const initialState: AgentState = {
   lastBrowserToolAt: null,
   modePin: null,
   fleet: null,
+  threadBusyById: {},
+  fleetListOpen: false,
   userEnv: null,
   userEnvError: null,
   userEnvStatus: null,
@@ -383,6 +394,7 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         ? (filtered[0]?.id || null)
         : state.activeThreadId
       const nextThread = filtered.find(t => t.id === nextActive)
+      const { [action.threadId]: _removed, ...restBusy } = state.threadBusyById
       return {
         ...state,
         threads: filtered,
@@ -391,6 +403,7 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         streamingContent: state.activeThreadId === action.threadId ? "" : state.streamingContent,
         pinnedTabIds: nextThread?.pinned_tabs || [],
         activeSkillIds: nextThread?.active_skill_ids || [],
+        threadBusyById: restBusy,
       }
     }
     case "UPSERT_THREAD": {
@@ -454,6 +467,19 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       return { ...state, companionConfig: action.config }
     case "SET_PROCESSING":
       return { ...state, isProcessing: action.isProcessing }
+    case "SET_THREAD_BUSY": {
+      const id = action.threadId
+      if (!id) return state
+      if (action.busy) {
+        if (state.threadBusyById[id]) return state
+        return { ...state, threadBusyById: { ...state.threadBusyById, [id]: true } }
+      }
+      if (!state.threadBusyById[id]) return state
+      const { [id]: _, ...rest } = state.threadBusyById
+      return { ...state, threadBusyById: rest }
+    }
+    case "SET_FLEET_LIST_OPEN":
+      return { ...state, fleetListOpen: action.open }
     case "SET_MCP_SERVERS":
       return { ...state, mcpServers: Array.isArray(action.servers) ? action.servers : [] }
     case "UPDATE_MCP_SERVER_STATUS": {

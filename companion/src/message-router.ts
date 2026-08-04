@@ -88,6 +88,11 @@ function redactExtraHeaders(
 // Per-thread abort controllers for cancelling in-flight LLM requests
 const abortControllers = new Map<string, AbortController>()
 
+/** Run-state: threads with an in-flight LLM abort controller. */
+export function listLlmActiveThreadIds(): string[] {
+  return [...abortControllers.keys()]
+}
+
 /** Abort in-flight LLM for a thread (ADR-015 worker_cancel / chat.abort). */
 export function abortThreadChat(threadId: string): boolean {
   if (!threadId) return false

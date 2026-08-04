@@ -61,16 +61,18 @@ cookies*, evaluate, host_*, shell_*, netsec_*, osascript_*, skill_install (inter
 - [x] stdio mcp-outbound defaults to HTTP dispatcher (Bearer ws_secret)  
 - [ ] Tray/global confirm (L8) — required before interactive T1  
 - [ ] 独立对抗 → Pi 复审（确认序）  
-- [ ] P0d bake-off 
+- [ ] P0d bake-off — 完整手测清单见 **[2026-08-04-outbound-mcp-p0d-bakeoff-checklist.md](2026-08-04-outbound-mcp-p0d-bakeoff-checklist.md)**
 
 ## 6. Bake-off (P0d) — human checklist
 
+> **权威步骤与记分表**：[`2026-08-04-outbound-mcp-p0d-bakeoff-checklist.md`](2026-08-04-outbound-mcp-p0d-bakeoff-checklist.md)
+
 1. Start Companion + Extension logged into SSO site  
 2. Run Playwright MCP on same task (clean profile)  
-3. Run CMspark outbound spike on same task  
+3. Run CMspark outbound on same task（disclosure → list_tabs → navigate → get_page_text）  
 4. Fill metrics table; if T1 fails L7 → pivot Option B/C  
 
-**AFK note**: live SSO bake-off deferred to human session; protocol + skeleton complete.
+**AFK note**: live SSO bake-off is human-session only; protocol + P0c bridge complete on main.
 
 ## 7. Non-goals
 

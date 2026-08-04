@@ -192,6 +192,7 @@ tail -f ~/.cmspark-agent/logs/companion-$(date +%Y-%m-%d).log | grep -i mcp
 
 > **方向**：Companion 作为 **MCP server**，把 curated **L1** 工具以 `cmspark__*` 导出给 Claude Code / Cursor / **Grok Build** 等。  
 > **规范**：[ADR-022](adr/022-outbound-mcp-server.md) · 场景 [Daily Content Loop](decisions/daily-content-loop-brief-2026-08-04.md)  
+> **P0d 手测**：[Outbound MCP P0d bake-off checklist](superpowers/plans/2026-08-04-outbound-mcp-p0d-bakeoff-checklist.md)（T1–T3 vs Playwright）  
 > **排错**：[TROUBLESHOOTING.md · Outbound MCP](./TROUBLESHOOTING.md#outbound-mcp)
 
 这与上文 **Inbound MCP**（`~/.cmspark-agent/config.json` 里配置 *外部* server 给 Side Panel 用）方向相反：Outbound 是 **CMspark 导出浏览器面** 给 *外部* 编程 Agent。

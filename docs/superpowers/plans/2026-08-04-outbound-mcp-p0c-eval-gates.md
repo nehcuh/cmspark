@@ -173,7 +173,7 @@ Channel:      community
 12. [x] L9 dual-entry tab lease + Side Panel wins — `dual-entry.ts` + tests
 13. [x] L8/L9 对抗 **REJECT**(B1) → fix `aa43a94` → Pi **APPROVE_WITH_NITS** — see `outbound-mcp-l8l9-confirm-synthesis-20260804.md`
 14. [x] createToolExecutor 集成测 — `tests/integration/outbound-mcp-executor.test.ts`（B1 反例 + companionInvoke 全栈）
-15. [ ] P0d 真人 bake-off
+15. [ ] P0d 真人 bake-off — **清单**：[2026-08-04-outbound-mcp-p0d-bakeoff-checklist.md](2026-08-04-outbound-mcp-p0d-bakeoff-checklist.md)
 ```
 
 ---

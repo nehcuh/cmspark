@@ -243,12 +243,18 @@ export function useWebSocket() {
       }
       try {
       switch (msg.type) {
-        case "chat.token":
+        case "chat.token": {
           // P0-B: ignore stream events for non-active threads
+          const tokenTid =
+            typeof msg.thread_id === "string" && msg.thread_id ? msg.thread_id : ""
+          if (tokenTid) {
+            dispatch({ type: "SET_THREAD_BUSY", threadId: tokenTid, busy: true })
+          }
           if (!shouldApplyStreamEvent(msg.thread_id, activeThreadRef.current)) break
           streamingRef.current = msg.content
           dispatch({ type: "SET_STREAMING", content: msg.content })
           break
+        }
 
         case "chat.user": {
           // SW rebroadcast of user turns from any surface (panel / Cockpit).
@@ -261,6 +267,9 @@ export function useWebSocket() {
           const id =
             (typeof msg.message_id === "string" && msg.message_id) ||
             `${threadId}_user_${Date.now()}`
+          if (threadId) {
+            dispatch({ type: "SET_THREAD_BUSY", threadId, busy: true })
+          }
           dispatch({ type: "SET_PROCESSING", isProcessing: true })
           dispatch({
             type: "ADD_MESSAGE",
@@ -278,13 +287,16 @@ export function useWebSocket() {
         }
 
         case "chat.done": {
+          const doneThreadId =
+            (typeof msg.thread_id === "string" && msg.thread_id) || activeThreadRef.current
+          if (doneThreadId) {
+            dispatch({ type: "SET_THREAD_BUSY", threadId: doneThreadId, busy: false })
+          }
           if (!shouldApplyStreamEvent(msg.thread_id, activeThreadRef.current)) break
           const content = streamingRef.current
           streamingRef.current = ""
           dispatch({ type: "SET_STREAMING", content: "" })
           dispatch({ type: "SET_PROCESSING", isProcessing: false })
-          const doneThreadId =
-            (typeof msg.thread_id === "string" && msg.thread_id) || activeThreadRef.current
           if (doneThreadId && content) {
             dispatch({
               type: "ADD_MESSAGE",
@@ -304,7 +316,12 @@ export function useWebSocket() {
           break
         }
 
-        case "chat.aborted":
+        case "chat.aborted": {
+          const abortTid =
+            (typeof msg.thread_id === "string" && msg.thread_id) || activeThreadRef.current
+          if (abortTid) {
+            dispatch({ type: "SET_THREAD_BUSY", threadId: abortTid, busy: false })
+          }
           if (!shouldApplyStreamEvent(msg.thread_id, activeThreadRef.current)) break
           streamingRef.current = ""
           dispatch({ type: "SET_STREAMING", content: "" })
@@ -320,6 +337,7 @@ export function useWebSocket() {
             },
           })
           break
+        }
 
         case "log.event": {
           // Wire shape is top-level { source, level, event, data } (see
@@ -332,9 +350,14 @@ export function useWebSocket() {
           break
         }
 
-        case "chat.error":
+        case "chat.error": {
           // P0-B: gate on thread_id; clear streamingRef so residual tokens are
           // not later ADD_MESSAGE'd as a completed assistant via chat.done.
+          const errTid =
+            (typeof msg.thread_id === "string" && msg.thread_id) || activeThreadRef.current
+          if (errTid) {
+            dispatch({ type: "SET_THREAD_BUSY", threadId: errTid, busy: false })
+          }
           if (!shouldApplyStreamEvent(msg.thread_id, activeThreadRef.current)) break
           streamingRef.current = ""
           dispatch({ type: "SET_STREAMING", content: "" })
@@ -356,13 +379,24 @@ export function useWebSocket() {
             })
           }
           break
+        }
 
-        case "tool.start":
+        case "tool.start": {
+          const toolTid =
+            typeof msg.thread_id === "string" && msg.thread_id
+              ? msg.thread_id
+              : ""
+          if (toolTid) {
+            dispatch({ type: "SET_THREAD_BUSY", threadId: toolTid, busy: true })
+          }
+          // With stamped thread_id: only mutate active transcript (no cross-thread pollution).
+          // Missing thread_id: legacy apply to active (compat).
+          if (toolTid && !shouldApplyStreamEvent(toolTid, activeThreadRef.current)) break
           dispatch({
             type: "ADD_MESSAGE",
             message: {
               id: msg.tool_call_id,
-              thread_id: activeThreadRef.current || "",
+              thread_id: toolTid || activeThreadRef.current || "",
               role: "tool",
               content: "",
               tool_calls: [{
@@ -379,8 +413,12 @@ export function useWebSocket() {
             dispatch({ type: "NOTE_BROWSER_TOOL" })
           }
           break
+        }
 
-        case "tool.result":
+        case "tool.result": {
+          const resTid =
+            typeof msg.thread_id === "string" && msg.thread_id ? msg.thread_id : ""
+          if (resTid && !shouldApplyStreamEvent(resTid, activeThreadRef.current)) break
           dispatch({
             type: "UPDATE_TOOL_CALL",
             messageId: msg.tool_call_id,
@@ -394,6 +432,7 @@ export function useWebSocket() {
             dispatch({ type: "NOTE_BROWSER_TOOL" })
           }
           break
+        }
 
         case "tool.progress": {
           // #au4dch ST-2: optional live tails; ignore if not for active thread
@@ -417,7 +456,10 @@ export function useWebSocket() {
           break
         }
 
-        case "tool.vision_start":
+        case "tool.vision_start": {
+          const vTid =
+            typeof msg.thread_id === "string" && msg.thread_id ? msg.thread_id : ""
+          if (vTid && !shouldApplyStreamEvent(vTid, activeThreadRef.current)) break
           dispatch({
             type: "UPDATE_TOOL_CALL",
             messageId: msg.tool_call_id,
@@ -425,8 +467,12 @@ export function useWebSocket() {
             updates: { vision_status: "analyzing" },
           })
           break
+        }
 
-        case "tool.vision_done":
+        case "tool.vision_done": {
+          const vdTid =
+            typeof msg.thread_id === "string" && msg.thread_id ? msg.thread_id : ""
+          if (vdTid && !shouldApplyStreamEvent(vdTid, activeThreadRef.current)) break
           dispatch({
             type: "UPDATE_TOOL_CALL",
             messageId: msg.tool_call_id,
@@ -437,6 +483,7 @@ export function useWebSocket() {
             },
           })
           break
+        }
 
         case "config.testVisionResult":
           dispatch({
@@ -541,6 +588,9 @@ export function useWebSocket() {
                   typeof snap.open_intent_count === "number" ? snap.open_intent_count : 0,
                 worst_status: snap.worst_status || "none",
                 orchestrator_runs: Array.isArray(snap.orchestrator_runs) ? snap.orchestrator_runs : [],
+                llm_active_thread_ids: Array.isArray(snap.llm_active_thread_ids)
+                  ? snap.llm_active_thread_ids.filter((x: unknown) => typeof x === "string")
+                  : [],
               },
             })
           }

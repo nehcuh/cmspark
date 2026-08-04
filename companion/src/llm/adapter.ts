@@ -658,6 +658,7 @@ ${hostUseRule12}${appIndexSection ? `\n\n${appIndexSection}` : ""}`
           sendToExtension({
             type: "tool.result",
             tool_call_id: tc.id,
+            thread_id: threadId,
             tool_name: toolName,
             result: parseResult,
           })
@@ -692,6 +693,7 @@ ${hostUseRule12}${appIndexSection ? `\n\n${appIndexSection}` : ""}`
           sendToExtension({
             type: "tool.result",
             tool_call_id: tc.id,
+            thread_id: threadId,
             tool_name: toolName,
             result: validationResult,
           })
@@ -750,6 +752,7 @@ ${hostUseRule12}${appIndexSection ? `\n\n${appIndexSection}` : ""}`
           sendToExtension({
             type: "tool.result",
             tool_call_id: tc.id,
+            thread_id: threadId,
             tool_name: toolName,
             result: toolResult,
           })
@@ -763,7 +766,8 @@ ${hostUseRule12}${appIndexSection ? `\n\n${appIndexSection}` : ""}`
               ?? (threadManager.get(threadId)?.config_override as any)?.vision_enabled
 
             if (visionEnabled && config.vision) {
-              sendToExtension({ type: "tool.vision_start", tool_call_id: tc.id })
+              sendToExtension({ type: "tool.vision_start", thread_id: threadId,
+                  tool_call_id: tc.id })
 
               try {
                 const visionResult = await analyzeImage(
@@ -798,6 +802,7 @@ ${hostUseRule12}${appIndexSection ? `\n\n${appIndexSection}` : ""}`
 
                 sendToExtension({
                   type: "tool.vision_done",
+                  thread_id: threadId,
                   tool_call_id: tc.id,
                   cached: visionResult.cached,
                   latency_ms: visionResult.latency_ms,
@@ -810,6 +815,7 @@ ${hostUseRule12}${appIndexSection ? `\n\n${appIndexSection}` : ""}`
                 })
                 sendToExtension({
                   type: "tool.vision_done",
+                  thread_id: threadId,
                   tool_call_id: tc.id,
                   error: visionErr.message,
                 })

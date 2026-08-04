@@ -274,6 +274,7 @@ export interface FleetWorkerView {
   agent_role?: string
   paused: boolean
   status: "idle" | "paused" | "holding_tabs" | "unknown"
+  llm_active?: boolean
   tab_locks: Array<{ tab_id: number; state: string; lease_expires_at: number }>
 }
 
@@ -291,6 +292,8 @@ export interface FleetSnapshot {
   open_intent_count?: number
   worst_status: "idle" | "paused" | "holding_tabs" | "none"
   orchestrator_runs: string[]
+  /** Companion abortControllers keys — honest RunBusy signal */
+  llm_active_thread_ids?: string[]
 }
 
 /** ADR-019 user-env public snapshot (never carries plaintext values). */
