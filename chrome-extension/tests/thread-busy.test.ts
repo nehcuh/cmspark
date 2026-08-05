@@ -15,6 +15,7 @@ import {
   filterIdsByFleetScope,
   resolveOpenIntentsForScope,
   buildScopedRunBusyInput,
+  buildFleetStopAllMessage,
 } from "../src/sidepanel/utils/thread-busy"
 
 test("deriveThreadBusy: any of streaming/processing/tools/map", () => {
@@ -314,6 +315,29 @@ test("buildScopedRunBusyInput: same-run worker still lights RunBusy", () => {
   assert.deepEqual(runBusyInput.llmActiveThreadIds, ["w1"])
   assert.deepEqual(runBusyInput.workerBusyIds, ["w1"])
   assert.equal(deriveRunBusy(runBusyInput), true)
+})
+
+// --- S45 multi-lane P0: fleet.stop_all payload scoping ---
+test("buildFleetStopAllMessage: run scope stamps orchestrator_run_id", () => {
+  const msg = buildFleetStopAllMessage({ kind: "run", runId: "orun_abc" })
+  assert.equal(msg.type, "fleet.stop_all")
+  assert.equal(msg.orchestrator_run_id, "orun_abc")
+  assert.match(msg.confirmText, /run/)
+})
+
+test("buildFleetStopAllMessage: parent stamps parent_thread_id (not process-wide)", () => {
+  const parent = buildFleetStopAllMessage({ kind: "parent", parentId: "host1" })
+  assert.equal(parent.type, "fleet.stop_all")
+  assert.equal(parent.orchestrator_run_id, undefined)
+  assert.equal(parent.parent_thread_id, "host1")
+  assert.match(parent.confirmText, /本会话/)
+})
+
+test("buildFleetStopAllMessage: none is process-wide residual cleanup", () => {
+  const none = buildFleetStopAllMessage({ kind: "none" })
+  assert.equal(none.orchestrator_run_id, undefined)
+  assert.equal(none.parent_thread_id, undefined)
+  assert.match(none.confirmText, /进程内全部/)
 })
 
 test("isIntentOnlyRunBusy", () => {

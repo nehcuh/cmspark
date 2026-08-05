@@ -44,6 +44,7 @@ import {
   deriveThreadBusy,
   resolveComposerMode,
 } from "./utils/thread-busy"
+import { shouldApplyStreamEvent } from "./hooks/useWebSocket"
 import { WorkerScopeBar } from "./components/WorkerScopeBar"
 import { RunBusyChip } from "./components/RunBusyChip"
 import { FleetWorkerListPortal } from "./components/FleetWorkerList"
@@ -220,6 +221,9 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const sendingRef = useRef(false)
+  /** Fresh active thread for SW upload callbacks (closure state is stale after switch). */
+  const activeThreadIdRef = useRef(state.activeThreadId)
+  activeThreadIdRef.current = state.activeThreadId
   const isComputer = capabilityLevel === "computer"
 
   const openCompose = useCallback(() => {
@@ -597,8 +601,13 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
               /* ignore */
             }
             if (swErr || !response?.ok) {
+              // Always clear mapBusy for the upload thread.
               if (uploadThreadId) {
                 dispatch({ type: "SET_THREAD_BUSY", threadId: uploadThreadId, busy: false })
+              }
+              // S45 P0: do not unlock / pollute another thread if user switched mid-send.
+              if (!shouldApplyStreamEvent(uploadThreadId, activeThreadIdRef.current)) {
+                return
               }
               dispatch({ type: "SET_PROCESSING_STATUS", status: null })
               dispatch({ type: "SET_PROCESSING", isProcessing: false })

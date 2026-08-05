@@ -29,3 +29,9 @@ test("shouldApplyStreamEvent: missing thread_id applies even when active is null
   // Legacy events without thread_id still apply so pre-thread_id wire stays usable.
   assert.equal(shouldApplyStreamEvent(undefined, null), true)
 })
+
+// S45 multi-lane P0: file.upload_error / SW-fail panel chrome uses the same gate.
+test("shouldApplyStreamEvent: upload-error style foreign thread is rejected", () => {
+  assert.equal(shouldApplyStreamEvent("upload-thread-a", "active-thread-b"), false)
+  assert.equal(shouldApplyStreamEvent("upload-thread-a", "upload-thread-a"), true)
+})

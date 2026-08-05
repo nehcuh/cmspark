@@ -5995,22 +5995,37 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
         // WebSocket message size limit (P0)
         const rawLen = Buffer.isBuffer(raw) ? raw.length : Buffer.byteLength(raw.toString())
         if (rawLen > MAX_WS_MESSAGE_SIZE) {
+          // Peek type + thread_id without full parse (prefix search) for diagnostics
+          // and to stamp file.upload_error so UI can clear the right mapBusy.
+          const peek = (() => {
+            try {
+              const s = Buffer.isBuffer(raw) ? raw.subarray(0, 400).toString("utf8") : String(raw).slice(0, 400)
+              const typeM = s.match(/"type"\s*:\s*"([^"]+)"/)
+              const tidM = s.match(/"thread_id"\s*:\s*"([^"]+)"/)
+              return { type: typeM?.[1] || null, thread_id: tidM?.[1] || null }
+            } catch {
+              return { type: null, thread_id: null }
+            }
+          })()
           logger.warn("ws.message_too_large", {
             size: rawLen,
             max: MAX_WS_MESSAGE_SIZE,
-            // Peek type without full parse when possible (prefix search)
-            peek: (() => {
-              try {
-                const s = Buffer.isBuffer(raw) ? raw.subarray(0, 200).toString("utf8") : String(raw).slice(0, 200)
-                const m = s.match(/"type"\s*:\s*"([^"]+)"/)
-                return m?.[1] || null
-              } catch {
-                return null
-              }
-            })(),
+            peek: peek.type,
+            thread_id: peek.thread_id,
           })
           if (ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: "error", error: "Message too large" }))
+            // S45 P1: upload oversized → stamped file.upload_error (not bare error)
+            if (peek.type === "file.upload" && peek.thread_id) {
+              ws.send(
+                JSON.stringify({
+                  type: "file.upload_error",
+                  error: "Message too large",
+                  thread_id: peek.thread_id,
+                }),
+              )
+            } else {
+              ws.send(JSON.stringify({ type: "error", error: "Message too large" }))
+            }
           }
           return
         }
@@ -6060,7 +6075,23 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
               : {}),
           })
           if (ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: "error", error: `Invalid message: ${validation.error}` }))
+            // S45 P1: file.upload validation fails with stamped upload_error so
+            // Side Panel can clear the correct thread mapBusy after switch.
+            if (
+              msg?.type === "file.upload" &&
+              typeof msg.thread_id === "string" &&
+              msg.thread_id
+            ) {
+              ws.send(
+                JSON.stringify({
+                  type: "file.upload_error",
+                  error: `Invalid message: ${validation.error}`,
+                  thread_id: msg.thread_id,
+                }),
+              )
+            } else {
+              ws.send(JSON.stringify({ type: "error", error: `Invalid message: ${validation.error}` }))
+            }
           }
           return
         }

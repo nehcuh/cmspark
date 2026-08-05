@@ -6,6 +6,7 @@ import { useAgentStore } from "../store/agentStore"
 import type { FleetWorkerView } from "../types"
 import { tokens } from "../ui/tokens"
 import {
+  buildFleetStopAllMessage,
   resolveFleetScope,
   workersInFleetScope,
 } from "../utils/thread-busy"
@@ -67,15 +68,24 @@ export function FleetWorkerList({
     onClose?.()
   }
 
+  const stopBuilt = useMemo(() => buildFleetStopAllMessage(scope), [scope])
+
   const stopAll = () => {
-    if (
-      !window.confirm(
-        "停止全部子任务？将中止全部 worker LLM、拒绝待确认，并释放相关 tab 锁。",
-      )
-    ) {
+    if (!window.confirm(stopBuilt.confirmText)) {
       return
     }
-    chrome.runtime.sendMessage({ type: "fleet.stop_all" })
+    const payload: {
+      type: "fleet.stop_all"
+      orchestrator_run_id?: string
+      parent_thread_id?: string
+    } = { type: "fleet.stop_all" }
+    if (stopBuilt.orchestrator_run_id) {
+      payload.orchestrator_run_id = stopBuilt.orchestrator_run_id
+    }
+    if (stopBuilt.parent_thread_id) {
+      payload.parent_thread_id = stopBuilt.parent_thread_id
+    }
+    chrome.runtime.sendMessage(payload)
   }
 
   const emptyHint =
@@ -206,9 +216,9 @@ export function FleetWorkerList({
           onClick={stopAll}
           disabled={workers.filter((w) => w.agent_role === "worker").length === 0}
           title={
-            scope.kind === "none"
-              ? "当前会话无子任务；全停会作用到进程内全部 worker（确认台清理残留时使用）"
-              : "Stop all workers"
+            workers.filter((w) => w.agent_role === "worker").length === 0
+              ? "当前会话无子任务可停"
+              : stopBuilt.stopTitle
           }
         >
           全停
