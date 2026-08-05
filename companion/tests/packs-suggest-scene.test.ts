@@ -66,3 +66,29 @@ test("suggestSceneConfig falls back to heuristic without llm", async () => {
   assert.equal(s.source, "heuristic")
   assert.ok(s.skill_ids.includes("demo-research"))
 })
+
+test("suggestSceneConfig generate mode returns draft prompt without llm", async () => {
+  const s = await suggestSceneConfig({
+    brief: "授权红队渗透测试",
+    name: "红队",
+    skills: [{ name: "pentest-redteam", description: "红队 渗透" }],
+    mcp: [],
+    llm: null,
+    mode: "generate",
+  })
+  assert.equal(s.mode, "generate")
+  assert.ok(s.system_prompt_append && s.system_prompt_append.length > 20)
+})
+
+test("suggestSceneConfig optimize without prompt returns guidance", async () => {
+  const s = await suggestSceneConfig({
+    brief: "x",
+    existingPrompt: "",
+    skills: [],
+    mcp: [],
+    llm: null,
+    mode: "optimize",
+  })
+  assert.equal(s.mode, "optimize")
+  assert.match(s.rationale_zh || "", /prompt|优化/i)
+})

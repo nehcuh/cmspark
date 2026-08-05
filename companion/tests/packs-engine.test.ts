@@ -108,6 +108,81 @@ test("install dir + list + apply allowlist + uninstall restores snapshot", () =>
   assert.equal(t3.tool_whitelist, null)
 })
 
+test("saveUserPack allowlist shell_exec derives requires_modules and apply blocks without module", () => {
+  const skillEngine = new SkillEngine()
+  const saved = packEngine.saveUserPack(
+    {
+      name: "shell-scene",
+      system_prompt_append: "你是 shell 场景助手。",
+      skill_ids: [],
+      tools: { mode: "allowlist", allow: ["shell_exec", "list_tabs"], deny: [] },
+    },
+    skillEngine,
+  )
+  assert.equal(saved.ok, true)
+  if (!saved.ok) return
+  const detail = packEngine.getPackDetail(saved.id)
+  assert.equal(detail.ok, true)
+  if (!detail.ok) return
+  assert.equal(detail.pack.tools.mode, "allowlist")
+  assert.ok(detail.pack.tools.allow.includes("shell_exec"))
+  assert.ok(detail.pack.requires_modules.includes("shell"))
+  assert.equal(detail.pack.channel, "enterprise")
+
+  const tm = new ThreadManager()
+  const thread = tm.create("shell-scene-apply")
+  // Ensure shell module disabled
+  const cfg = getConfig()
+  saveConfig({
+    capability_profile: "community",
+    modules: {
+      ...cfg.modules,
+      shell: { ...(cfg.modules as any)?.shell, available: true, enabled: false },
+    },
+  } as any)
+  clearConfigCache()
+  const applied = packEngine.applyPack(saved.id, thread.id, tm, skillEngine)
+  assert.equal(applied.ok, false, "apply must fail-closed without shell module / enterprise")
+
+  packEngine.deleteUserPack(saved.id, tm, skillEngine)
+  saveConfig({ modules: cfg.modules, capability_profile: cfg.capability_profile } as any)
+  clearConfigCache()
+})
+
+test("saveUserPack update omitting tools preserves allowlist", () => {
+  const skillEngine = new SkillEngine()
+  const saved = packEngine.saveUserPack(
+    {
+      name: "preserve-tools",
+      system_prompt_append: "prompt v1",
+      tools: { mode: "allowlist", allow: ["list_tabs", "get_page_text", "use_skill"], deny: [] },
+    },
+    skillEngine,
+  )
+  assert.equal(saved.ok, true)
+  if (!saved.ok) return
+  const updated = packEngine.saveUserPack(
+    {
+      id: saved.id,
+      name: "preserve-tools-v2",
+      system_prompt_append: "prompt v2 only name/prompt",
+      skill_ids: [],
+      // tools omitted → preserve
+    },
+    skillEngine,
+  )
+  assert.equal(updated.ok, true)
+  const detail = packEngine.getPackDetail(saved.id)
+  assert.equal(detail.ok, true)
+  if (!detail.ok) return
+  assert.equal(detail.pack.tools.mode, "allowlist")
+  assert.ok(detail.pack.tools.allow.includes("list_tabs"))
+  assert.equal(detail.pack.name, "preserve-tools-v2")
+
+  const tm = new ThreadManager()
+  packEngine.deleteUserPack(saved.id, tm, skillEngine)
+})
+
 test("saveUserPack + apply uses skill_refs and mcp_servers (tools unchanged)", () => {
   const skillEngine = new SkillEngine()
   // Seed a global skill the user scene can ref

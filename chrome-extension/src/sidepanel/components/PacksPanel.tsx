@@ -35,6 +35,43 @@ type ModuleStateView = {
 type SkillOption = { name: string; description?: string }
 type McpOption = { name: string; status?: string; enabled?: boolean }
 
+type ToolsModeUi = "unchanged" | "allowlist"
+
+/** Curated native tools for scene allowlist UI (P0 static groups). */
+const SCENE_TOOL_GROUPS: Array<{ title: string; highRisk?: boolean; tools: string[] }> = [
+  {
+    title: "浏览 / 页面",
+    tools: [
+      "list_tabs",
+      "create_tab",
+      "switch_tab",
+      "close_tab",
+      "navigate",
+      "get_page_text",
+      "get_page_html",
+      "screenshot",
+      "click",
+      "type_text",
+      "use_skill",
+    ],
+  },
+  {
+    title: "高危 / 企业（需本机模块；每次仍确认）",
+    highRisk: true,
+    tools: [
+      "shell_exec",
+      "evaluate",
+      "osascript_eval",
+      "host_computer",
+      "host_cli",
+      "host_app",
+      "netsec_port_scan",
+      "workspace_list_dir",
+      "workspace_read_file",
+    ],
+  },
+]
+
 type SceneEditorState = {
   /** null = create; string = edit existing user pack id */
   id: string | null
@@ -43,6 +80,10 @@ type SceneEditorState = {
   system_prompt_append: string
   skill_ids: string[]
   mcp_server_ids: string[]
+  tools_mode: ToolsModeUi
+  tools_allow: string[]
+  /** Clone: copy source pack tools into save payload */
+  preserve_tools: boolean
 }
 
 const emptyEditor = (): SceneEditorState => ({
@@ -52,6 +93,9 @@ const emptyEditor = (): SceneEditorState => ({
   system_prompt_append: "",
   skill_ids: [],
   mcp_server_ids: [],
+  tools_mode: "unchanged",
+  tools_allow: [],
+  preserve_tools: false,
 })
 
 /** Prefer pack.yaml ui.*; AppSec hardcopy fallback if installed pack lacks ui. */
@@ -86,6 +130,8 @@ export function PacksPanel() {
   const pendingApplyThreadRef = useRef<string | null>(null)
   /** pack.get mode: edit existing user pack vs clone builtin into new user scene. */
   const packGetModeRef = useRef<"edit" | "clone">("edit")
+  /** Source tools when cloning (for「保留原场景工具限制」). */
+  const cloneToolsRef = useRef<{ mode: ToolsModeUi; allow: string[] } | null>(null)
   const [suggestNote, setSuggestNote] = useState<string>("")
   const activeThreadRef = useRef(state.activeThreadId)
   activeThreadRef.current = state.activeThreadId
@@ -151,9 +197,13 @@ export function PacksPanel() {
         const mode = packGetModeRef.current
         packGetModeRef.current = "edit"
         if (mode === "clone") {
-          // 另存为我的：new user scene, no id; tools stay unchanged (not AppSec allowlist)
+          // 另存为我的：default 不收窄工具；用户可勾「保留工具限制」
           const refs = Array.isArray(p.skill_refs) ? p.skill_refs : []
           const installed = Array.isArray(p.installed_skill_ids) ? p.installed_skill_ids : []
+          const srcTools = p.tools || { mode: "unchanged", allow: [], deny: [] }
+          const srcMode: ToolsModeUi = srcTools.mode === "allowlist" ? "allowlist" : "unchanged"
+          const srcAllow = Array.isArray(srcTools.allow) ? [...srcTools.allow] : []
+          cloneToolsRef.current = { mode: srcMode, allow: srcAllow }
           setEditor({
             id: null,
             name: `${p.name || "场景"}（我的）`,
@@ -161,9 +211,16 @@ export function PacksPanel() {
             system_prompt_append: p.system_prompt_append || "",
             skill_ids: [...new Set([...refs, ...installed])],
             mcp_server_ids: Array.isArray(p.mcp_servers) ? p.mcp_servers : [],
+            tools_mode: "unchanged",
+            tools_allow: srcAllow,
+            preserve_tools: false,
           })
-          setSuggestNote("已从模板复制。用户场景默认不收窄工具；可改 prompt / 技能后保存。")
+          setSuggestNote(
+            "已从模板复制。默认不额外限制工具（可勾「保留原场景工具限制」）。可改 prompt / 技能后保存。",
+          )
         } else {
+          cloneToolsRef.current = null
+          const t = p.tools || { mode: "unchanged", allow: [] }
           setEditor({
             id: p.id,
             name: p.name || "",
@@ -171,6 +228,9 @@ export function PacksPanel() {
             system_prompt_append: p.system_prompt_append || "",
             skill_ids: Array.isArray(p.skill_refs) ? p.skill_refs : [],
             mcp_server_ids: Array.isArray(p.mcp_servers) ? p.mcp_servers : [],
+            tools_mode: t.mode === "allowlist" ? "allowlist" : "unchanged",
+            tools_allow: Array.isArray(t.allow) ? [...t.allow] : [],
+            preserve_tools: false,
           })
           setSuggestNote("")
         }
@@ -178,27 +238,38 @@ export function PacksPanel() {
       }
       if (msg?.type === "pack.suggest_config" && msg.suggestion) {
         const s = msg.suggestion
+        const smode = s.mode || "recommend"
         setEditor((prev) => {
           if (!prev) return prev
+          if (smode === "optimize") {
+            const nextPrompt =
+              typeof s.system_prompt_append === "string" && s.system_prompt_append.trim()
+                ? s.system_prompt_append
+                : prev.system_prompt_append
+            return { ...prev, system_prompt_append: nextPrompt }
+          }
           const nextSkills = Array.isArray(s.skill_ids) ? s.skill_ids : []
           const nextMcp = Array.isArray(s.mcp_server_ids) ? s.mcp_server_ids : []
-          // Merge: AI picks become selected (union with existing if user already ticked some)
           const skill_ids = [...new Set([...prev.skill_ids, ...nextSkills])]
           const mcp_server_ids = [...new Set([...prev.mcp_server_ids, ...nextMcp])]
           let system_prompt_append = prev.system_prompt_append
-          if (
-            (!system_prompt_append || !system_prompt_append.trim()) &&
-            typeof s.system_prompt_append === "string" &&
-            s.system_prompt_append.trim()
-          ) {
-            system_prompt_append = s.system_prompt_append
+          if (typeof s.system_prompt_append === "string" && s.system_prompt_append.trim()) {
+            if (smode === "generate") {
+              if (!prev.system_prompt_append.trim() || window.confirm("用 AI 生成的 system prompt 覆盖当前内容？")) {
+                system_prompt_append = s.system_prompt_append
+              }
+            } else if (!system_prompt_append.trim()) {
+              system_prompt_append = s.system_prompt_append
+            }
           }
           return { ...prev, skill_ids, mcp_server_ids, system_prompt_append }
         })
         const src = s.source === "llm" ? "AI" : "关键词"
         const rationale = typeof s.rationale_zh === "string" ? s.rationale_zh : ""
+        const label =
+          smode === "generate" ? "生成" : smode === "optimize" ? "优化" : "推荐"
         setSuggestNote(
-          `${src} 推荐已勾选（可再改）${rationale ? `：${rationale}` : ""}`.slice(0, 200),
+          `${src}${label}完成（可再改）${rationale ? `：${rationale}` : ""}`.slice(0, 220),
         )
         setBusy(null)
       }
@@ -393,21 +464,54 @@ export function PacksPanel() {
     })
   }
 
-  const requestAiSuggest = () => {
+  const requestAiSuggest = (mode: "recommend" | "generate" | "optimize" = "recommend") => {
     if (!editor) return
-    const brief = editor.description.trim() || editor.name.trim()
-    if (!brief && !editor.system_prompt_append.trim()) {
-      flash("请先填写名称、简介或 system prompt，再请求 AI 推荐")
-      return
+    if (mode === "optimize") {
+      if (!editor.system_prompt_append.trim()) {
+        flash("请先填写 system prompt，再请求优化")
+        return
+      }
+    } else {
+      const brief = editor.description.trim() || editor.name.trim()
+      if (!brief && !editor.system_prompt_append.trim()) {
+        flash("请先填写名称、简介或描述，再请求 AI")
+        return
+      }
     }
     setBusy("suggest")
-    setSuggestNote("正在推荐…")
+    setSuggestNote(
+      mode === "generate" ? "正在生成场景…" : mode === "optimize" ? "正在优化 prompt…" : "正在推荐…",
+    )
     chrome.runtime.sendMessage({
       type: "pack.suggest_config",
       user_gesture: true,
+      mode,
       name: editor.name.trim() || undefined,
       brief: editor.description.trim() || editor.name.trim(),
       system_prompt_append: editor.system_prompt_append.trim() || undefined,
+    })
+  }
+
+  const toggleToolAllow = (name: string) => {
+    setEditor((prev) => {
+      if (!prev) return prev
+      const has = prev.tools_allow.includes(name)
+      if (!has) {
+        const high = SCENE_TOOL_GROUPS.find((g) => g.highRisk)?.tools.includes(name)
+        if (
+          high &&
+          !window.confirm(
+            `将「${name}」加入本场景工具面？\n仍需本机对应模块开启，且每次调用需安全确认（场景不能跳过确认）。`,
+          )
+        ) {
+          return prev
+        }
+      }
+      return {
+        ...prev,
+        tools_allow: has ? prev.tools_allow.filter((t) => t !== name) : [...prev.tools_allow, name],
+        tools_mode: "allowlist",
+      }
     })
   }
 
@@ -425,6 +529,27 @@ export function PacksPanel() {
       flash("请先选择或创建对话，再保存并用于本对话")
       return
     }
+    // Resolve tools: preserve_tools on clone uses source allowlist
+    let toolsPayload:
+      | { mode: "unchanged" | "allowlist"; allow: string[]; deny: string[] }
+      | undefined
+    if (editor.preserve_tools && cloneToolsRef.current?.mode === "allowlist") {
+      toolsPayload = {
+        mode: "allowlist",
+        allow: [...cloneToolsRef.current.allow],
+        deny: [],
+      }
+    } else if (editor.tools_mode === "allowlist") {
+      const allow = [...editor.tools_allow]
+      if (editor.skill_ids.length > 0 && !allow.includes("use_skill")) allow.push("use_skill")
+      if (allow.length === 0) {
+        flash("「仅允许勾选工具」时请至少勾选一个工具")
+        return
+      }
+      toolsPayload = { mode: "allowlist", allow, deny: [] }
+    } else {
+      toolsPayload = { mode: "unchanged", allow: [], deny: [] }
+    }
     setBusy(andApply ? "save-apply" : "save")
     pendingApplyThreadRef.current = andApply ? state.activeThreadId || null : null
     chrome.runtime.sendMessage({
@@ -436,6 +561,7 @@ export function PacksPanel() {
       system_prompt_append: editor.system_prompt_append.trim(),
       skill_ids: editor.skill_ids,
       mcp_server_ids: editor.mcp_server_ids,
+      tools: toolsPayload,
       apply_thread_id: andApply ? state.activeThreadId || undefined : undefined,
     })
   }
@@ -681,19 +807,47 @@ export function PacksPanel() {
         <div style={styles.modalOverlay} role="dialog" aria-modal="true" aria-label="编辑场景">
           <div style={{ ...styles.modal, maxWidth: 360, maxHeight: "90vh", overflow: "auto" }}>
             <div style={styles.modalTitle}>{editor.id ? "编辑场景" : "新建场景"}</div>
+            <label style={styles.fieldLabel}>场景描述（可先写一句话，再 AI 生成）</label>
+            <input
+              style={styles.input}
+              value={editor.description}
+              onChange={(e) => setEditor({ ...editor, description: e.target.value })}
+              placeholder="例如：授权渗透、确认 root，用 redteam 技能与 shell"
+            />
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
+              <button
+                type="button"
+                style={styles.linkBtn}
+                onClick={() => requestAiSuggest("generate")}
+                disabled={!!busy}
+                title="根据描述生成 prompt 并推荐技能/MCP"
+              >
+                {busy === "suggest" ? "生成中…" : "✨ AI 生成场景"}
+              </button>
+              <button
+                type="button"
+                style={styles.linkBtn}
+                onClick={() => requestAiSuggest("recommend")}
+                disabled={!!busy}
+              >
+                推荐技能/MCP
+              </button>
+              <button
+                type="button"
+                style={styles.linkBtn}
+                onClick={() => requestAiSuggest("optimize")}
+                disabled={!!busy}
+                title="在已有 prompt 与勾选基础上优化文案"
+              >
+                优化 Prompt
+              </button>
+            </div>
             <label style={styles.fieldLabel}>名称</label>
             <input
               style={styles.input}
               value={editor.name}
               onChange={(e) => setEditor({ ...editor, name: e.target.value })}
               placeholder="例如：投研助手"
-            />
-            <label style={styles.fieldLabel}>简介（可选）</label>
-            <input
-              style={styles.input}
-              value={editor.description}
-              onChange={(e) => setEditor({ ...editor, description: e.target.value })}
-              placeholder="一句话说明这个场景做什么"
             />
             <label style={styles.fieldLabel}>System prompt</label>
             <textarea
@@ -703,18 +857,32 @@ export function PacksPanel() {
               placeholder="该场景下助手的角色与输出要求…"
               rows={5}
             />
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 8 }}>
-              <label style={{ ...styles.fieldLabel, margin: 0 }}>可用技能（应用时优先启用）</label>
-              <button
-                type="button"
-                style={styles.linkBtn}
-                onClick={requestAiSuggest}
-                disabled={!!busy}
-                title="根据名称/简介/prompt 推荐技能与 MCP（需确认后保存）"
-              >
-                {busy === "suggest" ? "推荐中…" : "✨ AI 推荐"}
-              </button>
-            </div>
+            {!editor.id && cloneToolsRef.current?.mode === "allowlist" ? (
+              <label style={{ ...styles.checkRow, marginTop: 8 }}>
+                <input
+                  type="checkbox"
+                  checked={editor.preserve_tools}
+                  onChange={(e) => {
+                    const on = e.target.checked
+                    setEditor({
+                      ...editor,
+                      preserve_tools: on,
+                      tools_mode: on ? "allowlist" : "unchanged",
+                      tools_allow: on
+                        ? [...(cloneToolsRef.current?.allow || [])]
+                        : editor.tools_allow,
+                    })
+                  }}
+                />
+                <span>
+                  <strong>保留原场景的工具限制</strong>
+                  <span style={{ display: "block", fontSize: 10, color: tokens.textMuted }}>
+                    不勾选则默认不额外限制工具（全工具面，仍受模块与 L2 约束）
+                  </span>
+                </span>
+              </label>
+            ) : null}
+            <label style={styles.fieldLabel}>可用技能（应用时优先启用）</label>
             <div style={styles.checkList}>
               {skillOptions.length === 0 && <div style={styles.empty}>暂无技能，可先到 Skills 安装</div>}
               {skillOptions.map((s) => (
@@ -735,7 +903,7 @@ export function PacksPanel() {
                 </label>
               ))}
             </div>
-            <label style={styles.fieldLabel}>可用 MCP（应用时仅暴露这些）</label>
+            <label style={styles.fieldLabel}>可用 MCP（应用时仅暴露这些；与工具白名单正交）</label>
             <div style={styles.checkList}>
               {mcpOptions.length === 0 && <div style={styles.empty}>暂无已配置 MCP，可到设置添加</div>}
               {mcpOptions.map((s) => (
@@ -754,9 +922,59 @@ export function PacksPanel() {
                 </label>
               ))}
             </div>
+            <label style={styles.fieldLabel}>工具策略</label>
+            <label style={styles.checkRow}>
+              <input
+                type="radio"
+                name="tools_mode"
+                checked={editor.tools_mode === "unchanged" && !editor.preserve_tools}
+                onChange={() =>
+                  setEditor({ ...editor, tools_mode: "unchanged", preserve_tools: false })
+                }
+              />
+              <span>不额外限制（默认；模型仍可见本机已暴露的工具）</span>
+            </label>
+            <label style={styles.checkRow}>
+              <input
+                type="radio"
+                name="tools_mode"
+                checked={editor.tools_mode === "allowlist" || editor.preserve_tools}
+                onChange={() => setEditor({ ...editor, tools_mode: "allowlist" })}
+              />
+              <span>仅允许勾选的工具（可收窄专业面）</span>
+            </label>
+            {(editor.tools_mode === "allowlist" || editor.preserve_tools) && (
+              <div style={styles.checkList}>
+                {SCENE_TOOL_GROUPS.map((g) => (
+                  <div key={g.title} style={{ marginBottom: 6 }}>
+                    <div
+                      style={{
+                        fontSize: 10,
+                        fontWeight: 600,
+                        color: g.highRisk ? "#b45309" : tokens.textMuted,
+                        marginBottom: 2,
+                      }}
+                    >
+                      {g.title}
+                    </div>
+                    {g.tools.map((tn) => (
+                      <label key={tn} style={styles.checkRow}>
+                        <input
+                          type="checkbox"
+                          checked={editor.tools_allow.includes(tn)}
+                          onChange={() => toggleToolAllow(tn)}
+                          disabled={editor.preserve_tools}
+                        />
+                        <span style={{ fontFamily: tokens.fontMono, fontSize: 11 }}>{tn}</span>
+                      </label>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            )}
             {suggestNote ? <div style={{ ...styles.hint, marginTop: 8, color: tokens.accent }}>{suggestNote}</div> : null}
             <div style={{ ...styles.hint, marginTop: 8 }}>
-              AI 只预勾选，不会自动保存；请检查后点「保存」或「保存并用于本对话」。
+              AI 只预填，不会自动保存；高危工具需本机模块，且不能跳过安全确认。
             </div>
             <div style={{ ...styles.modalActions, flexWrap: "wrap" }}>
               <button
@@ -765,6 +983,7 @@ export function PacksPanel() {
                 onClick={() => {
                   setEditor(null)
                   setSuggestNote("")
+                  cloneToolsRef.current = null
                   pendingApplyThreadRef.current = null
                 }}
                 disabled={busy === "save" || busy === "save-apply"}

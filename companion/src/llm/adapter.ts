@@ -486,12 +486,14 @@ ${hostUseRule12}${appIndexSection ? `\n\n${appIndexSection}` : ""}`
   // ADR-015: narrow LLM-visible tool schemas by thread tool_whitelist (null = full surface).
   // isToolAllowed still hard-gates execution; filtering reduces orchestrator/worker hallucination.
   // Platform filter: omit osascript_eval on non-darwin so the model cannot call a dead tool.
-  let tools: ToolDefinition[] = [...getToolDefinitions(os.platform()), ...mcpTools, ...mcpMetaTools]
+  // MCP tools stay orthogonal to native pack allowlist (user-scene D8 / 2026-08-06 design).
+  let nativeTools: ToolDefinition[] = [...getToolDefinitions(os.platform())]
   const whitelist = thread?.tool_whitelist
   if (Array.isArray(whitelist)) {
     const allowed = new Set(whitelist)
-    tools = tools.filter((t) => allowed.has(t.function.name))
+    nativeTools = nativeTools.filter((t) => allowed.has(t.function.name))
   }
+  let tools: ToolDefinition[] = [...nativeTools, ...mcpTools, ...mcpMetaTools]
 
   // Tool calling loop
   let round = 0

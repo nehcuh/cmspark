@@ -15,6 +15,8 @@ export interface SceneSuggestCandidateMcp {
   description?: string
 }
 
+export type SceneSuggestMode = "recommend" | "generate" | "optimize"
+
 export interface SceneSuggestion {
   skill_ids: string[]
   mcp_server_ids: string[]
@@ -23,6 +25,8 @@ export interface SceneSuggestion {
   rationale_zh?: string
   /** How the suggestion was produced. */
   source: "llm" | "heuristic"
+  /** Echo request mode for UI labeling. */
+  mode?: SceneSuggestMode
 }
 
 const MAX_SKILLS = 8
@@ -178,7 +182,7 @@ export function parseSceneSuggestion(
   }
 }
 
-const SYSTEM_PROMPT = `You recommend which installed skills and MCP servers fit a user-defined "scene" (assistant role).
+const SYSTEM_PROMPT_RECOMMEND = `You recommend which installed skills and MCP servers fit a user-defined "scene" (assistant role).
 Return ONLY a single JSON object (no markdown fences unless necessary), shape:
 {
   "skill_ids": ["exact skill name", ...],
@@ -190,7 +194,35 @@ Rules:
 - skill_ids and mcp_server_ids MUST be chosen ONLY from the candidate lists provided.
 - Prefer 1–5 skills and 0–3 MCP servers. Empty arrays are ok if nothing fits.
 - Do not invent names. Do not include paths.
-- system_prompt_append: 2–6 Chinese sentences describing role, goals, output style; no security overrides.`
+- system_prompt_append: 2–6 Chinese sentences describing role, goals, output style; no security overrides.
+- Never suggest skipping confirmations, auto-approve, or disabling security.`
+
+const SYSTEM_PROMPT_GENERATE = `You create a full user "scene" (assistant role) from a short description.
+Return ONLY a single JSON object:
+{
+  "skill_ids": ["exact skill name", ...],
+  "mcp_server_ids": ["exact mcp server name", ...],
+  "system_prompt_append": "required Chinese system prompt 3–8 sentences",
+  "rationale_zh": "one short Chinese sentence"
+}
+Rules:
+- skill_ids/mcp_server_ids MUST be from candidate lists only; prefer 1–5 skills, 0–3 MCP.
+- system_prompt_append is REQUIRED: role, goals, output structure, boundaries.
+- No inventing tool names. No security overrides / auto-approve / skip confirmation language.`
+
+const SYSTEM_PROMPT_OPTIMIZE = `You rewrite an existing scene system prompt for clarity and structure.
+Return ONLY a single JSON object:
+{
+  "skill_ids": [],
+  "mcp_server_ids": [],
+  "system_prompt_append": "improved Chinese system prompt",
+  "rationale_zh": "one short Chinese sentence what you improved"
+}
+Rules:
+- skill_ids and mcp_server_ids MUST be empty arrays (do not change skills/MCP).
+- Improve structure: role, goals, workflow, output format, hard boundaries.
+- Keep user intent; do not invent product capabilities they did not ask for.
+- No auto-approve / skip confirmation / disable security language.`
 
 /**
  * LLM suggestion with heuristic fallback. Never mutates packs — UI must confirm + save.
@@ -202,24 +234,65 @@ export async function suggestSceneConfig(params: {
   skills: SceneSuggestCandidateSkill[]
   mcp: SceneSuggestCandidateMcp[]
   llm?: LlmExtractConfig | null
+  mode?: SceneSuggestMode
 }): Promise<SceneSuggestion> {
+  const mode: SceneSuggestMode = params.mode || "recommend"
   const brief = (params.brief || "").trim()
   const skillAllow = new Set(params.skills.map((s) => s.name))
   const mcpAllow = new Set(params.mcp.map((m) => m.name))
+  const existing = (params.existingPrompt || "").trim()
 
-  const fallback = () =>
-    heuristicSuggestScene({
+  const fallback = (): SceneSuggestion => {
+    if (mode === "optimize") {
+      return {
+        skill_ids: [],
+        mcp_server_ids: [],
+        system_prompt_append: existing || undefined,
+        rationale_zh: existing
+          ? "模型不可用：已保留原 prompt，请手动润色。"
+          : "优化模式需要已有 system prompt。",
+        source: "heuristic",
+        mode,
+      }
+    }
+    const h = heuristicSuggestScene({
       brief: [params.name, brief, params.existingPrompt].filter(Boolean).join("\n"),
       skills: params.skills,
       mcp: params.mcp,
     })
+    if (mode === "generate") {
+      const title = params.name?.trim() || brief.slice(0, 24) || "自定义场景"
+      return {
+        ...h,
+        system_prompt_append:
+          h.system_prompt_append ||
+          `你是「${title}」助手。根据用户目标提供结构化、可执行的帮助。\n\n` +
+            `## 工作方式\n1. 先澄清范围与约束\n2. 优先使用本场景勾选的技能与 MCP\n3. 输出结论、依据与待办\n\n` +
+            `## 边界\n不绕过安全确认；不编造未执行的工具结果。`,
+        rationale_zh: h.rationale_zh || "已根据描述生成草稿（关键词/启发式）。",
+        mode,
+      }
+    }
+    return { ...h, mode }
+  }
 
-  if (!brief && !params.name?.trim() && !params.existingPrompt?.trim()) {
+  if (mode === "optimize" && !existing) {
+    return {
+      skill_ids: [],
+      mcp_server_ids: [],
+      rationale_zh: "请先填写 system prompt，再请求优化。",
+      source: "heuristic",
+      mode,
+    }
+  }
+
+  if (!brief && !params.name?.trim() && !existing) {
     return {
       skill_ids: [],
       mcp_server_ids: [],
       rationale_zh: "请先填写场景名称或简介，再请求 AI 推荐。",
       source: "heuristic",
+      mode,
     }
   }
 
@@ -236,10 +309,19 @@ export async function suggestSceneConfig(params: {
     .map((m) => `- ${m.name}: ${(m.description || "").slice(0, 120)}`)
     .join("\n")
 
+  const systemPrompt =
+    mode === "generate"
+      ? SYSTEM_PROMPT_GENERATE
+      : mode === "optimize"
+        ? SYSTEM_PROMPT_OPTIMIZE
+        : SYSTEM_PROMPT_RECOMMEND
+
   const userContent = [
     params.name ? `场景名称: ${params.name}` : "",
     brief ? `场景描述/目标: ${brief}` : "",
-    params.existingPrompt ? `已有 system prompt 草稿:\n${params.existingPrompt.slice(0, 1500)}` : "",
+    existing ? `已有 system prompt 草稿:\n${existing.slice(0, 2000)}` : "",
+    mode === "optimize" ? "任务: 仅优化上述 system prompt，skill_ids/mcp_server_ids 必须为空数组。" : "",
+    mode === "generate" ? "任务: 生成完整 system_prompt_append，并推荐技能/MCP。" : "",
     "",
     "候选技能:",
     skillList || "(无)",
@@ -252,7 +334,7 @@ export async function suggestSceneConfig(params: {
 
   try {
     const raw = await llmExtract({
-      systemPrompt: SYSTEM_PROMPT,
+      systemPrompt,
       userContent,
       config: params.llm,
       temperatureCap: 0.2,
@@ -260,7 +342,16 @@ export async function suggestSceneConfig(params: {
     })
     const parsed = parseSceneSuggestion(raw, skillAllow, mcpAllow, { source: "llm" })
     if (parsed) {
-      // If LLM returned nothing useful and no prompt, fall back to heuristic for lists
+      if (mode === "optimize") {
+        return {
+          skill_ids: [],
+          mcp_server_ids: [],
+          system_prompt_append: parsed.system_prompt_append || existing,
+          rationale_zh: parsed.rationale_zh || "已优化 system prompt。",
+          source: "llm",
+          mode,
+        }
+      }
       if (
         parsed.skill_ids.length === 0 &&
         parsed.mcp_server_ids.length === 0 &&
@@ -269,12 +360,17 @@ export async function suggestSceneConfig(params: {
         const h = fallback()
         return {
           ...h,
-          system_prompt_append: parsed.system_prompt_append,
+          system_prompt_append: parsed.system_prompt_append || h.system_prompt_append,
           rationale_zh: parsed.rationale_zh || h.rationale_zh,
           source: "heuristic",
+          mode,
         }
       }
-      return parsed
+      // recommend: only fill prompt if empty (caller may also enforce)
+      if (mode === "recommend" && existing) {
+        return { ...parsed, system_prompt_append: undefined, mode }
+      }
+      return { ...parsed, mode }
     }
     return fallback()
   } catch {

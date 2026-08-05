@@ -557,6 +557,17 @@ export class ThreadManager {
     const thread = this.get(threadId)
     if (!thread) return false
     if (thread.tool_whitelist === null) return true
+    // Native pack allowlist is orthogonal to MCP: MCP visibility is controlled by
+    // mcp_selection_mode / active_mcp_server_ids (adapter + executeMcpTool).
+    // Without this, allowlist scenes silently break all mcp__* tools (D8).
+    if (
+      toolName.startsWith("mcp__") ||
+      toolName === "mcp_list_resources" ||
+      toolName === "mcp_read_resource" ||
+      toolName === "mcp_get_prompt"
+    ) {
+      return true
+    }
     return thread.tool_whitelist.includes(toolName)
   }
 

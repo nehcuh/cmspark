@@ -14,15 +14,86 @@ import {
   MAX_SYSTEM_PROMPT_APPEND,
   MAX_ZIP_ENTRIES,
   PACK_ID_RE,
+  TOOL_IMPLIED_MODULES,
   type PackDetail,
   type PackListItem,
   type PackManifest,
   type PackOrigin,
+  type PackTools,
   type SelectionMode,
   type ThreadPackSnapshot,
   type ToolsMode,
   type UserPackSaveInput,
 } from "./types"
+import { getAllToolDefinitions } from "../bridge/tool-definitions"
+
+const DEFAULT_USER_TOOLS: PackTools = { mode: "unchanged", allow: [], deny: [] }
+
+/** Derive requires_modules from allow-list (replace, not merge — avoids stale requires). */
+export function deriveRequiresModulesFromTools(tools: PackTools): string[] {
+  if (tools.mode === "unchanged") return []
+  const mods = new Set<string>()
+  for (const t of tools.allow || []) {
+    const m = TOOL_IMPLIED_MODULES[t]
+    if (m) mods.add(m)
+  }
+  return [...mods].sort()
+}
+
+/**
+ * Resolve tools for user pack save.
+ * - input.tools present → validate + normalize
+ * - update omit → keep existing
+ * - create omit → unchanged
+ */
+export function resolveUserPackTools(
+  input: UserPackSaveInput,
+  existing: PackTools | null,
+): { ok: true; tools: PackTools } | { ok: false; error: string } {
+  const known = new Set(getAllToolDefinitions().map((t) => t.function.name))
+  if (input.tools) {
+    const mode = input.tools.mode
+    if (mode !== "allowlist" && mode !== "intersect" && mode !== "unchanged") {
+      return { ok: false, error: `invalid tools.mode: ${mode}` }
+    }
+    let allow = Array.isArray(input.tools.allow)
+      ? input.tools.allow.filter((s) => typeof s === "string" && s.trim()).map((s) => s.trim())
+      : []
+    const deny = Array.isArray(input.tools.deny)
+      ? input.tools.deny.filter((s) => typeof s === "string" && s.trim()).map((s) => s.trim())
+      : []
+    for (const t of [...allow, ...deny]) {
+      if (!known.has(t)) return { ok: false, error: `unknown tool in tools: ${t}` }
+    }
+    // D9: skill_ids present → ensure use_skill on allowlist/intersect
+    const skillIds = Array.isArray(input.skill_ids) ? input.skill_ids : []
+    if ((mode === "allowlist" || mode === "intersect") && skillIds.length > 0) {
+      if (known.has("use_skill") && !allow.includes("use_skill") && !deny.includes("use_skill")) {
+        allow = [...allow, "use_skill"]
+      }
+    }
+    if (mode === "allowlist" && allow.filter((t) => !deny.includes(t)).length === 0) {
+      return { ok: false, error: "tools.mode=allowlist requires a non-empty allow list" }
+    }
+    return { ok: true, tools: { mode, allow, deny } }
+  }
+  if (existing) return { ok: true, tools: { ...existing, allow: [...existing.allow], deny: [...existing.deny] } }
+  return { ok: true, tools: { ...DEFAULT_USER_TOOLS } }
+}
+
+function toolsSummaryZh(tools: PackTools, custom?: string): string {
+  if (custom && custom.trim()) return custom.trim()
+  if (tools.mode === "unchanged") {
+    return "不额外限制工具；优先使用本场景勾选的技能与 MCP"
+  }
+  const effective = (tools.allow || []).filter((t) => !(tools.deny || []).includes(t))
+  const preview = effective.slice(0, 8).join(", ")
+  const more = effective.length > 8 ? ` 等 ${effective.length} 个` : ""
+  if (tools.mode === "intersect") {
+    return `在当前对话工具面内再收窄为：${preview}${more}`
+  }
+  return `仅允许：${preview}${more}`
+}
 
 function packsInstalledDir(): string {
   return path.join(getConfigDir(), "packs", "installed")
@@ -375,24 +446,44 @@ export function saveUserPack(
       ? input.description.trim()
       : undefined
 
+  // Preserve tools on update when client omits tools field
+  let existingTools: PackTools | null = null
+  const destExisting = path.join(packsInstalledDir(), packId)
+  if (fs.existsSync(destExisting)) {
+    const { result } = readInstalledManifest(packId)
+    if (result.ok) existingTools = result.manifest.tools
+  }
+  const toolsRes = resolveUserPackTools(input, existingTools)
+  if (!toolsRes.ok) return { ok: false, error: toolsRes.error, code: "invalid_input" }
+  const tools = toolsRes.tools
+  const requiresModules = deriveRequiresModulesFromTools(tools)
+  // Enterprise channel when shell/netsec modules are required (apply still fail-closed)
+  const channel = requiresModules.some((m) => m === "shell" || m === "netsec")
+    ? "enterprise"
+    : "community"
+  const customSummary =
+    typeof input.tools_summary_zh === "string" && input.tools_summary_zh.trim()
+      ? input.tools_summary_zh.trim()
+      : undefined
+
   const manifestDoc: Record<string, unknown> = {
     schema_version: 1,
     id: packId,
     name,
     description,
     version: "0.1.0",
-    channel: "community",
-    min_capability: "L0",
-    requires_modules: [],
+    channel,
+    min_capability: requiresModules.length > 0 ? "L1" : "L0",
+    requires_modules: requiresModules,
     origin: "user",
     skills: [],
     skill_refs: skillIds,
     knowledge: [],
     mcp_servers: mcpIds,
     tools: {
-      mode: "unchanged",
-      allow: [],
-      deny: [],
+      mode: tools.mode,
+      allow: tools.allow,
+      deny: tools.deny,
     },
     system_prompt_append: append,
     thread_defaults: {
@@ -412,10 +503,7 @@ export function saveUserPack(
         typeof input.unsuitable_for === "string" && input.unsuitable_for.trim()
           ? input.unsuitable_for.trim()
           : "需要强制收窄工具面的专业模板（请用内置场景）",
-      tools_summary_zh:
-        typeof input.tools_summary_zh === "string" && input.tools_summary_zh.trim()
-          ? input.tools_summary_zh.trim()
-          : "不额外限制工具；优先使用本场景勾选的技能与 MCP",
+      tools_summary_zh: toolsSummaryZh(tools, customSummary),
     },
   }
 
@@ -437,6 +525,12 @@ export function saveUserPack(
       type: "pack.save_user",
       pack_id: packId,
       at: new Date().toISOString(),
+      tools_mode: tools.mode,
+      tools_allow_count: tools.allow.length,
+      requires_modules: requiresModules,
+      high_risk: tools.allow.some((t) =>
+        ["shell_exec", "evaluate", "osascript_eval", "host_computer", "netsec_port_scan"].includes(t),
+      ),
     })
     return { ok: true, id: packId, packs: listInstalledPacks() }
   } catch (e: any) {

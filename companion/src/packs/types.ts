@@ -104,10 +104,40 @@ export interface UserPackSaveInput {
   skill_ids?: string[]
   /** Configured MCP server ids to expose on apply (manual selection). */
   mcp_server_ids?: string[]
+  /**
+   * Tool surface recipe. Create omit → unchanged.
+   * Update omit → preserve existing pack tools (do not wipe).
+   */
+  tools?: {
+    mode: ToolsMode
+    allow?: string[]
+    deny?: string[]
+  }
   suitable_for?: string
   unsuitable_for?: string
   tools_summary_zh?: string
 }
+
+/** Native tools that imply enterprise modules when present in pack allow lists. */
+export const TOOL_IMPLIED_MODULES: Record<string, string> = {
+  shell_exec: "shell",
+  netsec_port_scan: "netsec",
+  workspace_list_dir: "devsec-workspace",
+  workspace_read_file: "devsec-workspace",
+  workspace_write_file: "devsec-workspace",
+  workspace_glob: "devsec-workspace",
+}
+
+/** High-risk native tools shown in a separate UI group (L2 still required at runtime). */
+export const HIGH_RISK_NATIVE_TOOLS = [
+  "shell_exec",
+  "evaluate",
+  "osascript_eval",
+  "host_computer",
+  "host_cli",
+  "host_app",
+  "netsec_port_scan",
+] as const
 
 /** Full detail returned by pack.get for the scene editor. */
 export interface PackDetail {

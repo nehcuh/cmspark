@@ -2012,6 +2012,17 @@ export async function handleMessage(
         }
       }
       const { saveUserPack, applyPack } = await import("./packs/pack-engine")
+      let toolsInput: { mode: "allowlist" | "intersect" | "unchanged"; allow?: string[]; deny?: string[] } | undefined
+      if (rest.tools && typeof rest.tools === "object") {
+        const tm = (rest.tools as any).mode
+        if (tm === "allowlist" || tm === "intersect" || tm === "unchanged") {
+          toolsInput = {
+            mode: tm,
+            allow: Array.isArray((rest.tools as any).allow) ? (rest.tools as any).allow : [],
+            deny: Array.isArray((rest.tools as any).deny) ? (rest.tools as any).deny : [],
+          }
+        }
+      }
       const r = saveUserPack(
         {
           id: typeof rest.id === "string" ? rest.id : undefined,
@@ -2021,6 +2032,7 @@ export async function handleMessage(
             typeof rest.system_prompt_append === "string" ? rest.system_prompt_append : "",
           skill_ids: Array.isArray(rest.skill_ids) ? rest.skill_ids : [],
           mcp_server_ids: Array.isArray(rest.mcp_server_ids) ? rest.mcp_server_ids : [],
+          tools: toolsInput,
           suitable_for: typeof rest.suitable_for === "string" ? rest.suitable_for : undefined,
           unsuitable_for: typeof rest.unsuitable_for === "string" ? rest.unsuitable_for : undefined,
           tools_summary_zh: typeof rest.tools_summary_zh === "string" ? rest.tools_summary_zh : undefined,
@@ -2123,6 +2135,21 @@ export async function handleMessage(
               temperature: typeof cfg.llm.temperature === "number" ? cfg.llm.temperature : 0.3,
             }
           : null
+      const modeRaw = typeof rest.mode === "string" ? rest.mode : "recommend"
+      const mode =
+        modeRaw === "generate" || modeRaw === "optimize" || modeRaw === "recommend"
+          ? modeRaw
+          : "recommend"
+      if (mode === "optimize") {
+        const p =
+          typeof rest.system_prompt_append === "string" ? rest.system_prompt_append.trim() : ""
+        if (!p) {
+          return {
+            type: "error",
+            error: "pack.suggest_config mode=optimize requires non-empty system_prompt_append",
+          }
+        }
+      }
       const suggestion = await suggestSceneConfig({
         brief: typeof rest.brief === "string" ? rest.brief : "",
         name: typeof rest.name === "string" ? rest.name : undefined,
@@ -2131,6 +2158,7 @@ export async function handleMessage(
         skills: skillsMeta,
         mcp: mcpMeta,
         llm,
+        mode,
       })
       return { type: "pack.suggest_config", suggestion }
     }
