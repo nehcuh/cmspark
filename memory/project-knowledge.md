@@ -22,6 +22,13 @@
 
 ## Technical Pitfalls
 
+### 附件上传「思考中」：乐观 UI 与 file.upload_error 未清 busy（2026-08-05）
+- **现象**：Side Panel 上传 docx 后一直「思考中」；用户以为解析挂了。磁盘线程无 `<document>`，companion 日志无 `file.upload*`
+- **根因分层**：(1) **UI** `SET_PROCESSING` 后只靠 `chat.done`/`chat.error` 清 busy；`file.upload_error` / 通用 `error` / Companion 未连接 **都不清** `isProcessing`/`threadBusy`；(2) **环境** 打包 `CMspark.app` 旧扩展/旧 companion 与源码不同步时，请求可能根本进不了带修复的进程；(3) **解析器本身** 对 ~30–55KB docx 正常（~100ms），不是 officeparser 坏了
+- **修法**：`useWebSocket` 处理 `file.upload_error` + 通用 error 清 busy；parse 超时收成 `file.upload_error`；流式 `chat.reasoning` + `file.upload_status`；panel→SW→WS 诊断事件（勿记 base64）
+- **验证**：dev 扩展 + `npm run dev` companion → `#ne13jb` 全链路 `panel_dispatch`→`ws.file_upload.received`→`parsed`→`chat_start`→`complete`
+- **Ship**：`c6b1e8b` on main
+
 ### 运行态假空闲：Composer 只认 streaming，不认整轮 busy（2026-08-04）
 - **现象**：复杂多 tool / 思考间隙，侧栏像会话结束，可打字发送，随后 agent 又突然继续
 - **根因**：`canSend`/`Stop` 只绑 `streamingContent`；`isProcessing`/running tools/fleet 不进门控；`SET_ACTIVE_THREAD` 清零 busy；`tool.start` 无 `thread_id` 写到 active 线程

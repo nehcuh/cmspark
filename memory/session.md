@@ -2,6 +2,14 @@
 
 ## Current Session
 
+### S44 (2026-08-05 ~17:40–18:16) [附件上传卡死 · 诊断日志 · main 推送]
+- **问题**：`#um335z` / `#ne13jb` 上传 docx 后一直「思考中」；用户怀疑解析坏
+- **根因**：乐观 busy 不清（`file.upload_error`/`error` 未处理）；旧 App 扩展/companion 与源码不同步时请求未进后台；`parseFile` 本身正常
+- **实现**：busy 清理 · reasoning/解析状态 UI · panel→SW→WS→companion 诊断日志 · DeepSeek `chat.reasoning` 推流
+- **验证**：源码 companion + `chrome-mv3-dev`；`#ne13jb` 聚焦版 docx 全链路成功（parsed 2725 字 + LLM）
+- **Ship**：commit `c6b1e8b` → `origin/main`
+- Recorded: yes — project-knowledge 附件上传思考中
+
 ### S43 (2026-08-05 ~10:50–13:32) [合盖通宵掉电诊断 · #91 差分]
 - **问题**：合盖过夜掉电 >50% 体感；怀疑 companion↔扩展通信复发
 - **结论**：非 #91（日志无 `sidepanel_forward_failed`、合盖窗 companion 空窗）；主因 **Wi‑Fi DarkWake 风暴**（~450/h，`E_RX_IP_PACKET`/`centauri-*`）；**oMLX ~13GB 常驻** 为帮凶（无通宵推理仍有防睡断言）
