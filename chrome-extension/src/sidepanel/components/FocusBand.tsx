@@ -23,6 +23,7 @@ import {
   collectRunningTools,
   formatRunningToolsLabel,
 } from "../utils/running-tools"
+import { buildScopedRunBusyInput } from "../utils/thread-busy"
 
 export {
   FOCUS_BAND_MAX_PX,
@@ -48,13 +49,40 @@ export function FocusBand({
     !task.abortAcked &&
     (task.status === "running" || task.status === "paused")
   const fleet = state.fleet
+  const activeId = state.activeThreadId
+  const activeThread = state.threads.find((t) => t.id === activeId)
+  const scopedFleet = buildScopedRunBusyInput({
+    active: activeThread
+      ? {
+          id: activeThread.id,
+          agent_role: activeThread.agent_role,
+          parent_thread_id: activeThread.parent_thread_id,
+          orchestrator_run_id: activeThread.orchestrator_run_id,
+        }
+      : activeId
+        ? { id: activeId }
+        : null,
+    workers: fleet?.workers || [],
+    locks: fleet?.locks,
+    openIntentCount: fleet?.open_intent_count,
+    openIntentsByRun: fleet?.open_intents_by_run,
+    llmActiveThreadIds: fleet?.llm_active_thread_ids,
+  })
+  const scopedWorst = scopedFleet.scopedWorkers.some((w) => w.status === "holding_tabs")
+    ? "holding_tabs"
+    : scopedFleet.scopedWorkers.some((w) => w.status === "paused")
+      ? "paused"
+      : scopedFleet.scopedWorkers.length > 0
+        ? "idle"
+        : "none"
   // Paused-only zombie workers must not steal FocusBand as「舰队运行中」.
+  // Also: foreign residual workers of other sessions must not steal FocusBand.
   const hasFleetActivity =
     classifyFleetActivity({
-      workerCount: fleet?.worker_count ?? 0,
-      lockCount: fleet?.lock_count ?? 0,
-      openIntents: fleet?.open_intent_count ?? 0,
-      worstStatus: fleet?.worst_status,
+      workerCount: scopedFleet.workerCount,
+      lockCount: scopedFleet.runBusyInput.lockCount,
+      openIntents: scopedFleet.runBusyInput.openIntents,
+      worstStatus: scopedWorst,
     }) === "active"
   const isBrowserContext = capabilityLevel === "browser"
   // #au4dch ST-4: long tools must surface in FocusBand (not only chat footer).
