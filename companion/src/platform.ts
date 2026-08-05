@@ -4,6 +4,7 @@
 import * as os from "os"
 import * as path from "path"
 import { getConfigDir } from "./config"
+import { OSASCRIPT_BIN } from "./process-path"
 
 export type PlatformName = "darwin" | "win32" | "linux" | "unknown"
 
@@ -125,14 +126,14 @@ function runSilent(cmd: string, args: string[]): void {
 
 class MacOSChromeOpener implements ChromeOpener {
   openChrome(): void {
-    runSilent("osascript", [
+    runSilent(OSASCRIPT_BIN, [
       "-e",
       'tell application "Google Chrome" to activate',
     ])
   }
 
   openExtensions(): void {
-    runSilent("osascript", [
+    runSilent(OSASCRIPT_BIN, [
       "-e",
       'tell application "Google Chrome" to open location "chrome://extensions/"',
     ])
@@ -143,7 +144,7 @@ class MacOSChromeOpener implements ChromeOpener {
     // The user must click the CMspark extension icon in the toolbar
     // or use the keyboard shortcut (Cmd+Shift+I / Ctrl+Shift+I).
     // This function only activates and focuses the Chrome window.
-    runSilent("osascript", [
+    runSilent(OSASCRIPT_BIN, [
       "-e",
       'tell application "Google Chrome" to activate',
     ])

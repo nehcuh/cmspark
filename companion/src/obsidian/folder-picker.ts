@@ -10,6 +10,7 @@
 import { execFile } from "child_process"
 import { promisify } from "util"
 import { isLinux, isMacOS, isWindows } from "../platform"
+import { OSASCRIPT_BIN } from "../process-path"
 
 const execFileP = promisify(execFile)
 const PICK_TIMEOUT_MS = 120000 // the dialog blocks until the user picks/cancels
@@ -42,7 +43,7 @@ async function pickMacOS(): Promise<PickResult> {
   // Cancel → osascript exits non-zero with "User canceled" / error -128 in stderr.
   const script = 'POSIX path of (choose folder with prompt "选择你的 Obsidian Vault 文件夹")'
   try {
-    const { stdout } = await execFileP("osascript", ["-e", script], { timeout: PICK_TIMEOUT_MS })
+    const { stdout } = await execFileP(OSASCRIPT_BIN, ["-e", script], { timeout: PICK_TIMEOUT_MS })
     const p = trimTrailingSlash(stdout)
     return p ? { path: p } : { error: "未选择文件夹" }
   } catch (e: any) {
@@ -112,7 +113,7 @@ async function pickFileMacOS(prompt: string): Promise<PickResult> {
   const p = prompt.replace(/\\/g, "\\\\").replace(/"/g, '\\"')
   const script = `POSIX path of (choose file with prompt "${p}")`
   try {
-    const { stdout } = await execFileP("osascript", ["-e", script], { timeout: PICK_TIMEOUT_MS })
+    const { stdout } = await execFileP(OSASCRIPT_BIN, ["-e", script], { timeout: PICK_TIMEOUT_MS })
     const path = stdout.trim()
     return path ? { path } : { error: "未选择文件" }
   } catch (e: any) {

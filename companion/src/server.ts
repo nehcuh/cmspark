@@ -85,6 +85,7 @@ import {
   shouldL2GateOsascript,
 } from "./bridge/tool-definitions"
 import { prepareBrowserDownloadParams } from "./path-sandbox"
+import { OSASCRIPT_BIN, applyHardenedProcessPath } from "./process-path"
 import {
   getOrCreateSharedSecret,
   consumeSecretFreshlyGenerated,
@@ -3773,7 +3774,9 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
       if (!shouldL2GateOsascript(os.platform())) {
         return { success: false, error: OSASCRIPT_MACOS_ONLY_ERROR }
       }
-      // Use execFile with -e arguments and argv passing to avoid string injection (P0).
+      // Use execFile with absolute OSASCRIPT_BIN + -e argv (P0 injection + PATH harden).
+      // Bare "osascript" fails with spawn ENOTDIR when process PATH contains a *file*
+      // (seen in packaged .app: PATH=/…/cmspark-agent.js). Absolute path bypasses PATH.
       // CAPABILITY INVARIANT (§6.2): this template ONLY runs `execute t javascript
       // jsExpr` — it executes the supplied JS inside a Chrome tab, NOT arbitrary
       // host AppleScript. NEVER introduce `do shell script` / `tell application
@@ -3783,7 +3786,7 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
       const { promisify } = await import("util")
       const execFileAsync = promisify(execFile)
       try {
-        const result = await execFileAsync("osascript", [
+        const result = await execFileAsync(OSASCRIPT_BIN, [
           "-e", "on run argv",
           "-e", "  set pageUrl to item 1 of argv",
           "-e", "  set jsExpr to item 2 of argv",
@@ -5699,6 +5702,16 @@ export async function probeChatModel(
 }
 
 export async function startServer(options: { onShutdown?: () => void } = {}) {
+  // Drop file-in-PATH / empty PATH before any tool spawn (osascript, shell_exec, …).
+  // Packaged .app has been observed with PATH=…/cmspark-agent.js → spawn ENOTDIR.
+  const pathFix = applyHardenedProcessPath()
+  if (pathFix.changed) {
+    logger.warn("startup.path_hardened", {
+      before_prefix: pathFix.before.slice(0, 120),
+      after_prefix: pathFix.after.slice(0, 120),
+    })
+  }
+
   // Migrate deprecated DeepSeek model ids (deepseek-chat/deepseek-reasoner, retiring
   // 2026-07-24) to deepseek-v4-flash BEFORE the probe, so the probe validates the
   // migrated name. Idempotent; rewrites via the atomic saveConfig path and warns so

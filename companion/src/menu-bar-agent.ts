@@ -23,6 +23,7 @@ import {
 } from "./tray/tray-adapter"
 import { CompanionClient } from "./tray/companion-client"
 import { readPairingSecret, hasPaired, resolveClipboardCommand } from "./tray/pairing"
+import { OSASCRIPT_BIN } from "./process-path"
 
 // node-notifier does not ship TypeScript declarations
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -41,7 +42,10 @@ function safeNotify(options: { title?: string; message?: string; sound?: boolean
     try {
       const title = (options.title || "CMspark Agent").replace(/"/g, '\\"')
       const msg = (options.message || "").replace(/"/g, '\\"')
-      child_process.execSync(`osascript -e 'display notification "${msg}" with title "${title}"'`, { stdio: "ignore" })
+      // Absolute path: bare osascript fails with ENOTDIR when PATH is a file (packaged .app).
+      child_process.execFileSync(OSASCRIPT_BIN, ["-e", `display notification "${msg}" with title "${title}"`], {
+        stdio: "ignore",
+      })
     } catch { /* ignore */ }
     return
   }
