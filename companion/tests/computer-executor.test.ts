@@ -1417,6 +1417,44 @@ test("executor P0-C: session trust does NOT auto-approve computer.experimental_s
   assert.equal(injector.clicks.length, 0, "deny → zero inject")
 })
 
+test("executor P0-C: full autonomy cruise does NOT auto-approve computer.danger_detected", async () => {
+  const { saveConfig, getConfig } = await import("../src/config")
+  const prev = getConfig().security
+  saveConfig({
+    security: {
+      ...prev,
+      auto_approve_dangerous: true,
+      auto_approve_enterprise_tools: true,
+      allow_all_schemes: true,
+    },
+  })
+  try {
+    const confirm = scriptedConfirm([false])
+    const injector = new RecordingInjector()
+    const locator = new FakeLocator([{ text: "确认删除", x: 160, y: 208, w: 60, h: 30 }])
+    const deps = makeDeps({
+      confirm: confirm.fn,
+      injector,
+      locator,
+      sessionId: "sess-cruise",
+    })
+    const r = await runComputerTask(
+      { task: "t", app: "win.app.test", actions: [{ action: "click", target: "确认删除" }] },
+      deps,
+    )
+    assert.equal(
+      confirm.captured.length,
+      1,
+      "danger_detected re-L2 must still surface under three-flag cruise",
+    )
+    assert.deepEqual(confirm.captured[0].details.dangerousApis, ["computer.danger_detected"])
+    assert.equal(r.errorCode, "DANGER_DENIED_BY_USER")
+    assert.equal(injector.clicks.length, 0)
+  } finally {
+    saveConfig({ security: { ...prev } })
+  }
+})
+
 
 // --- WP2: emergency-stop abort channels (§E.6) --------------------------------
 

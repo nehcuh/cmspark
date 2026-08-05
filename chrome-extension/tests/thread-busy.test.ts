@@ -9,6 +9,7 @@ import {
   filterIdsByRun,
   isIntentOnlyRunBusy,
   composerBusyPlaceholder,
+  resolveOpenIntentsForRun,
 } from "../src/sidepanel/utils/thread-busy"
 
 test("deriveThreadBusy: any of streaming/processing/tools/map", () => {
@@ -185,6 +186,17 @@ test("filterIdsByRun", () => {
   ]
   assert.deepEqual(filterIdsByRun(["w1", "w2"], workers, "r1"), ["w1"])
   assert.deepEqual(filterIdsByRun(["w1", "w2"], workers, null), ["w1", "w2"])
+})
+
+test("resolveOpenIntentsForRun: no runId uses process-wide count", () => {
+  assert.equal(resolveOpenIntentsForRun(5, { r1: 2 }, null), 5)
+  assert.equal(resolveOpenIntentsForRun(undefined, undefined, null), 0)
+})
+
+test("resolveOpenIntentsForRun: with runId does not fall back to global", () => {
+  assert.equal(resolveOpenIntentsForRun(9, { r1: 2, r2: 7 }, "r1"), 2)
+  assert.equal(resolveOpenIntentsForRun(9, { r2: 7 }, "r1"), 0)
+  assert.equal(resolveOpenIntentsForRun(9, undefined, "r1"), 0)
 })
 
 test("isIntentOnlyRunBusy", () => {

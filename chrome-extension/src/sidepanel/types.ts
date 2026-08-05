@@ -290,6 +290,8 @@ export interface FleetSnapshot {
   worker_count: number
   lock_count: number
   open_intent_count?: number
+  /** Open+claimed intents by orchestrator_run_id (run-scoped RunBusy). */
+  open_intents_by_run?: Record<string, number>
   worst_status: "idle" | "paused" | "holding_tabs" | "none"
   orchestrator_runs: string[]
   /** Companion abortControllers keys — honest RunBusy signal */

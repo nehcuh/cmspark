@@ -586,6 +586,16 @@ export function useWebSocket() {
                 lock_count: typeof snap.lock_count === "number" ? snap.lock_count : (snap.locks?.length || 0),
                 open_intent_count:
                   typeof snap.open_intent_count === "number" ? snap.open_intent_count : 0,
+                open_intents_by_run:
+                  snap.open_intents_by_run &&
+                  typeof snap.open_intents_by_run === "object" &&
+                  !Array.isArray(snap.open_intents_by_run)
+                    ? Object.fromEntries(
+                        Object.entries(snap.open_intents_by_run as Record<string, unknown>).filter(
+                          ([k, v]) => typeof k === "string" && typeof v === "number",
+                        ) as Array<[string, number]>,
+                      )
+                    : undefined,
                 worst_status: snap.worst_status || "none",
                 orchestrator_runs: Array.isArray(snap.orchestrator_runs) ? snap.orchestrator_runs : [],
                 llm_active_thread_ids: Array.isArray(snap.llm_active_thread_ids)
