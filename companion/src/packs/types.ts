@@ -54,6 +54,11 @@ export interface PackManifest {
   tags?: string[]
   /** Authorship channel for UI editability. Default treated as installed. */
   origin?: PackOrigin
+  /**
+   * User-scene only (product B): global Trust applied on pack.apply.
+   * Builtin/installed must not set this (validator rejects).
+   */
+  trust?: UserPackTrustPolicy
   /** Optional UX copy for scene apply modal (product SoT). */
   ui?: {
     suitable_for?: string
@@ -113,9 +118,42 @@ export interface UserPackSaveInput {
     allow?: string[]
     deny?: string[]
   }
+  /**
+   * Product B (2026-08-06): user scenes may declare global Trust on apply.
+   * Omit on update → preserve existing trust block.
+   */
+  trust?: UserPackTrustPolicy | null
   suitable_for?: string
   unsuitable_for?: string
   tools_summary_zh?: string
+}
+
+/**
+ * User-scene Trust recipe — applied to Companion config on pack.apply (global).
+ * Not for builtin packs. Requires user_gesture on save/apply.
+ */
+export interface UserPackTrustPolicy {
+  /** Set capability_profile=enterprise when enabling shell/netsec */
+  set_enterprise_profile?: boolean
+  /** Modules to enable (shell, netsec, appsec, devsec-workspace, …) */
+  enable_modules?: string[]
+  auto_approve_dangerous?: boolean
+  auto_approve_enterprise_tools?: boolean
+  allow_all_schemes?: boolean
+  /**
+   * Shorthand: on apply set all three auto_approve/god flags (full-autonomy cruise)
+   * so shell/skill_install/MCP critical forceConfirm is waived.
+   */
+  skip_l2?: boolean
+}
+
+/** Snapshot of global Trust before a trust-writing pack apply (restored on unapply). */
+export interface PackTrustSnapshot {
+  capability_profile: string
+  auto_approve_dangerous: boolean
+  auto_approve_enterprise_tools: boolean
+  allow_all_schemes: boolean
+  modules: Record<string, { enabled: boolean }>
 }
 
 /** Native tools that imply enterprise modules when present in pack allow lists. */
@@ -159,6 +197,8 @@ export interface PackDetail {
   installed_skill_ids?: string[]
   requires_modules: string[]
   tools: PackTools
+  /** User-scene only: global Trust recipe applied on pack.apply */
+  trust?: UserPackTrustPolicy | null
   suitable_for?: string
   unsuitable_for?: string
   tools_summary_zh?: string

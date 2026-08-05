@@ -36,6 +36,11 @@ interface Thread {
   mission_pack_id?: string | null
   /** Pre-apply snapshot for uninstall/re-apply rollback. */
   mission_pack_snapshot?: ThreadPackSnapshot | null
+  /**
+   * Product B: global Trust snapshot taken when a user pack with trust applied.
+   * Restored on unapply so scene exit reverts auto_approve/modules when possible.
+   */
+  mission_pack_trust_snapshot?: Record<string, unknown> | null
   /** DevSec workspace root (absolute path). */
   workspace_root?: string | null
   /** NetSec per-task authorization (user confirmed ownership of targets). */
@@ -421,6 +426,8 @@ export class ThreadManager {
       workspace_root?: string | null
       /** ADR-016: pack board_mode enable (only set when pack declares it). */
       board_mode?: boolean
+      /** Product B: global Trust snapshot for restore on unapply */
+      mission_pack_trust_snapshot?: Record<string, unknown> | null
     },
   ): Thread {
     const thread = this.index.threads.find((t) => t.id === threadId)
@@ -483,6 +490,12 @@ export class ThreadManager {
         throw new Error("board_mode must be a boolean")
       }
       thread.board_mode = patch.board_mode
+    }
+    if (patch.mission_pack_trust_snapshot !== undefined) {
+      thread.mission_pack_trust_snapshot = patch.mission_pack_trust_snapshot
+    }
+    if (patch.mission_pack_id === null) {
+      thread.mission_pack_trust_snapshot = null
     }
     thread.config_override = validation.sanitized
     thread.updated_at = monotonicTimestamp()

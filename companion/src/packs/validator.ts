@@ -54,14 +54,29 @@ function resolveContained(packRoot: string, rel: string): string | { error: stri
   return targetReal
 }
 
-function scanForbidden(obj: unknown, pathHint: string): string | null {
+/**
+ * Reject Trust keys outside user-pack `trust` block.
+ * Product B (2026-08-06): origin=user packs may set auto_approve_* under top-level `trust` only.
+ */
+function scanForbidden(
+  obj: unknown,
+  pathHint: string,
+  opts?: { allowUserTrustBlock?: boolean },
+): string | null {
   if (!isPlainObject(obj)) return null
   for (const [k, v] of Object.entries(obj)) {
+    if (k === "trust" && pathHint === "pack" && !opts?.allowUserTrustBlock) {
+      return `trust block only allowed on origin=user packs`
+    }
     if (FORBIDDEN_PACK_KEYS.has(k)) {
-      return `forbidden security key "${k}" at ${pathHint}`
+      // Allowed only as direct children of pack.trust for user packs
+      if (!(opts?.allowUserTrustBlock && pathHint === "pack.trust")) {
+        return `forbidden security key "${k}" at ${pathHint}`
+      }
     }
     if (isPlainObject(v) || Array.isArray(v)) {
-      const nested = scanForbidden(v, `${pathHint}.${k}`)
+      const childHint = pathHint === "pack" ? `pack.${k}` : `${pathHint}.${k}`
+      const nested = scanForbidden(v, childHint, opts)
       if (nested) return nested
     }
   }
@@ -107,7 +122,17 @@ export function validatePackDir(packDir: string): ValidateResult {
     return { ok: false, error: "pack.yaml must be a mapping" }
   }
 
-  const forbidden = scanForbidden(doc, "pack")
+  let origin: PackManifest["origin"] | undefined
+  if (doc.origin !== undefined) {
+    if (doc.origin !== "builtin" && doc.origin !== "installed" && doc.origin !== "user") {
+      return { ok: false, error: "origin must be builtin|installed|user when present" }
+    }
+    origin = doc.origin
+  }
+
+  const forbidden = scanForbidden(doc, "pack", {
+    allowUserTrustBlock: origin === "user",
+  })
   if (forbidden) return { ok: false, error: forbidden }
 
   if (doc.schema_version !== 1) {
@@ -154,14 +179,6 @@ export function validatePackDir(packDir: string): ValidateResult {
   if ("error" in knowledge) return { ok: false, error: knowledge.error }
   const mcpServers = asStringArray(doc.mcp_servers, "mcp_servers")
   if ("error" in mcpServers) return { ok: false, error: mcpServers.error }
-
-  let origin: PackManifest["origin"] | undefined
-  if (doc.origin !== undefined) {
-    if (doc.origin !== "builtin" && doc.origin !== "installed" && doc.origin !== "user") {
-      return { ok: false, error: "origin must be builtin|installed|user when present" }
-    }
-    origin = doc.origin
-  }
 
   if (!isPlainObject(doc.tools)) {
     return { ok: false, error: "tools is required" }
@@ -236,6 +253,28 @@ export function validatePackDir(packDir: string): ValidateResult {
     return { ok: false, error: "board_mode must be a boolean when present" }
   }
 
+  // Product B: parse trust block (user origin only; already gated by scanForbidden)
+  let trust: PackManifest["trust"] | undefined
+  if (doc.trust !== undefined) {
+    if (origin !== "user") {
+      return { ok: false, error: "trust block only allowed on origin=user packs" }
+    }
+    if (!isPlainObject(doc.trust)) {
+      return { ok: false, error: "trust must be a mapping" }
+    }
+    const t = doc.trust
+    const enableMods = asStringArray(t.enable_modules, "trust.enable_modules")
+    if ("error" in enableMods) return { ok: false, error: enableMods.error }
+    trust = {
+      set_enterprise_profile: t.set_enterprise_profile === true,
+      enable_modules: enableMods.length > 0 ? enableMods : undefined,
+      auto_approve_dangerous: t.auto_approve_dangerous === true,
+      auto_approve_enterprise_tools: t.auto_approve_enterprise_tools === true,
+      allow_all_schemes: t.allow_all_schemes === true,
+      skip_l2: t.skip_l2 === true,
+    }
+  }
+
   const manifest: PackManifest = {
     schema_version: 1,
     id: doc.id,
@@ -264,6 +303,7 @@ export function validatePackDir(packDir: string): ValidateResult {
     author: typeof doc.author === "string" ? doc.author : undefined,
     tags: Array.isArray(doc.tags) && doc.tags.every((t) => typeof t === "string") ? (doc.tags as string[]) : undefined,
     origin,
+    trust,
     ui:
       isPlainObject(doc.ui)
         ? {

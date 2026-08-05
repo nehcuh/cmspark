@@ -20,12 +20,15 @@ import {
   type PackManifest,
   type PackOrigin,
   type PackTools,
+  type PackTrustSnapshot,
   type SelectionMode,
   type ThreadPackSnapshot,
   type ToolsMode,
   type UserPackSaveInput,
+  type UserPackTrustPolicy,
 } from "./types"
 import { getAllToolDefinitions } from "../bridge/tool-definitions"
+import { setModuleEnabled } from "../capability/modules"
 
 const DEFAULT_USER_TOOLS: PackTools = { mode: "unchanged", allow: [], deny: [] }
 
@@ -93,6 +96,132 @@ function toolsSummaryZh(tools: PackTools, custom?: string): string {
     return `在当前对话工具面内再收窄为：${preview}${more}`
   }
   return `仅允许：${preview}${more}`
+}
+
+function normalizeUserTrust(input: UserPackTrustPolicy | null | undefined): UserPackTrustPolicy | null {
+  if (!input || typeof input !== "object") return null
+  const enable = Array.isArray(input.enable_modules)
+    ? input.enable_modules.filter((s) => typeof s === "string" && s.trim()).map((s) => s.trim())
+    : []
+  const t: UserPackTrustPolicy = {
+    set_enterprise_profile: input.set_enterprise_profile === true,
+    enable_modules: enable.length > 0 ? enable : undefined,
+    auto_approve_dangerous: input.auto_approve_dangerous === true,
+    auto_approve_enterprise_tools: input.auto_approve_enterprise_tools === true,
+    allow_all_schemes: input.allow_all_schemes === true,
+    skip_l2: input.skip_l2 === true,
+  }
+  // Empty policy → null
+  if (
+    !t.set_enterprise_profile &&
+    !t.enable_modules?.length &&
+    !t.auto_approve_dangerous &&
+    !t.auto_approve_enterprise_tools &&
+    !t.allow_all_schemes &&
+    !t.skip_l2
+  ) {
+    return null
+  }
+  return t
+}
+
+/** Snapshot global Trust/modules before a trust-writing pack apply. */
+export function captureTrustSnapshot(): PackTrustSnapshot {
+  const cfg = getConfig() as any
+  const mods = cfg.modules || {}
+  const modules: Record<string, { enabled: boolean }> = {}
+  for (const [id, m] of Object.entries(mods)) {
+    modules[id] = { enabled: !!(m as any)?.enabled }
+  }
+  return {
+    capability_profile: cfg.capability_profile || "community",
+    auto_approve_dangerous: cfg.security?.auto_approve_dangerous === true,
+    auto_approve_enterprise_tools: cfg.security?.auto_approve_enterprise_tools === true,
+    allow_all_schemes: cfg.security?.allow_all_schemes === true,
+    modules,
+  }
+}
+
+/**
+ * Product B: apply user-pack trust to global Companion config.
+ * skip_l2 → full three-flag cruise. enable_modules → setModuleEnabled.
+ */
+export function applyUserPackTrust(
+  trust: UserPackTrustPolicy,
+  by: string = "pack.apply",
+): { ok: true } | { ok: false; error: string } {
+  const cfg = getConfig() as any
+  let profile = cfg.capability_profile || "community"
+  const modulesToEnable = [...(trust.enable_modules || [])]
+  if (trust.set_enterprise_profile || modulesToEnable.some((m) => m === "shell" || m === "netsec")) {
+    profile = "enterprise"
+  }
+
+  // skip_l2 shorthand = full autonomy cruise flags
+  let dangerous = trust.auto_approve_dangerous === true
+  let enterprise = trust.auto_approve_enterprise_tools === true
+  let schemes = trust.allow_all_schemes === true
+  if (trust.skip_l2) {
+    dangerous = true
+    enterprise = true
+    schemes = true
+  }
+
+  saveConfig({
+    capability_profile: profile,
+    security: {
+      ...(cfg.security || {}),
+      auto_approve_dangerous: dangerous,
+      auto_approve_enterprise_tools: enterprise,
+      allow_all_schemes: schemes,
+    },
+  } as any)
+
+  for (const mod of modulesToEnable) {
+    const r = setModuleEnabled(mod, true, by)
+    if (!r.ok) {
+      return { ok: false, error: r.error }
+    }
+  }
+
+  appendCapabilityAudit({
+    type: "pack.trust_apply",
+    by,
+    at: new Date().toISOString(),
+    skip_l2: !!trust.skip_l2,
+    auto_approve_dangerous: dangerous,
+    auto_approve_enterprise_tools: enterprise,
+    allow_all_schemes: schemes,
+    enable_modules: modulesToEnable,
+    capability_profile: profile,
+  })
+  return { ok: true }
+}
+
+/** Restore Trust snapshot captured before pack.apply (best-effort). */
+export function restoreTrustSnapshot(snap: PackTrustSnapshot, by: string = "pack.unapply"): void {
+  const cfg = getConfig() as any
+  saveConfig({
+    capability_profile: snap.capability_profile || "community",
+    security: {
+      ...(cfg.security || {}),
+      auto_approve_dangerous: snap.auto_approve_dangerous === true,
+      auto_approve_enterprise_tools: snap.auto_approve_enterprise_tools === true,
+      allow_all_schemes: snap.allow_all_schemes === true,
+    },
+  } as any)
+  for (const [id, st] of Object.entries(snap.modules || {})) {
+    const want = st?.enabled === true
+    const cur = (getConfig() as any).modules?.[id]?.enabled === true
+    if (want !== cur) {
+      setModuleEnabled(id, want, by)
+    }
+  }
+  appendCapabilityAudit({
+    type: "pack.trust_restore",
+    by,
+    at: new Date().toISOString(),
+  })
 }
 
 function packsInstalledDir(): string {
@@ -342,6 +471,7 @@ export function getPackDetail(
         allow: [...(m.tools.allow || [])],
         deny: [...(m.tools.deny || [])],
       },
+      trust: m.trust ? { ...m.trust, enable_modules: m.trust.enable_modules ? [...m.trust.enable_modules] : undefined } : null,
       suitable_for: ui?.suitable_for,
       unsuitable_for: ui?.unsuitable_for,
       tools_summary_zh: ui?.tools_summary_zh,
@@ -446,21 +576,45 @@ export function saveUserPack(
       ? input.description.trim()
       : undefined
 
-  // Preserve tools on update when client omits tools field
+  // Preserve tools/trust on update when client omits fields
   let existingTools: PackTools | null = null
+  let existingTrust: UserPackTrustPolicy | null = null
   const destExisting = path.join(packsInstalledDir(), packId)
   if (fs.existsSync(destExisting)) {
     const { result } = readInstalledManifest(packId)
-    if (result.ok) existingTools = result.manifest.tools
+    if (result.ok) {
+      existingTools = result.manifest.tools
+      existingTrust = result.manifest.trust || null
+    }
   }
   const toolsRes = resolveUserPackTools(input, existingTools)
   if (!toolsRes.ok) return { ok: false, error: toolsRes.error, code: "invalid_input" }
   const tools = toolsRes.tools
   const requiresModules = deriveRequiresModulesFromTools(tools)
-  // Enterprise channel when shell/netsec modules are required (apply still fail-closed)
-  const channel = requiresModules.some((m) => m === "shell" || m === "netsec")
-    ? "enterprise"
-    : "community"
+  // Merge trust: input.trust === null clears; undefined preserves; object sets
+  let trust: UserPackTrustPolicy | null = null
+  if (input.trust === null) {
+    trust = null
+  } else if (input.trust !== undefined) {
+    trust = normalizeUserTrust(input.trust)
+  } else {
+    trust = existingTrust
+  }
+  // If trust wants modules, ensure requires_modules includes them
+  if (trust?.enable_modules?.length) {
+    for (const m of trust.enable_modules) {
+      if (!requiresModules.includes(m)) requiresModules.push(m)
+    }
+    requiresModules.sort()
+  }
+  // Enterprise channel when shell/netsec or trust set_enterprise / skip_l2 modules
+  const channel =
+    requiresModules.some((m) => m === "shell" || m === "netsec") ||
+    trust?.set_enterprise_profile ||
+    trust?.skip_l2 ||
+    trust?.enable_modules?.some((m) => m === "shell" || m === "netsec")
+      ? "enterprise"
+      : "community"
   const customSummary =
     typeof input.tools_summary_zh === "string" && input.tools_summary_zh.trim()
       ? input.tools_summary_zh.trim()
@@ -473,7 +627,7 @@ export function saveUserPack(
     description,
     version: "0.1.0",
     channel,
-    min_capability: requiresModules.length > 0 ? "L1" : "L0",
+    min_capability: requiresModules.length > 0 || trust ? "L1" : "L0",
     requires_modules: requiresModules,
     origin: "user",
     skills: [],
@@ -485,6 +639,7 @@ export function saveUserPack(
       allow: tools.allow,
       deny: tools.deny,
     },
+    ...(trust ? { trust } : {}),
     system_prompt_append: append,
     thread_defaults: {
       skill_selection_mode: "manual",
@@ -531,6 +686,15 @@ export function saveUserPack(
       high_risk: tools.allow.some((t) =>
         ["shell_exec", "evaluate", "osascript_eval", "host_computer", "netsec_port_scan"].includes(t),
       ),
+      trust: trust
+        ? {
+            skip_l2: !!trust.skip_l2,
+            auto_approve_dangerous: !!trust.auto_approve_dangerous,
+            auto_approve_enterprise_tools: !!trust.auto_approve_enterprise_tools,
+            allow_all_schemes: !!trust.allow_all_schemes,
+            enable_modules: trust.enable_modules || [],
+          }
+        : null,
     })
     return { ok: true, id: packId, packs: listInstalledPacks() }
   } catch (e: any) {
@@ -750,6 +914,7 @@ function restoreSnapshot(threadManager: ThreadManager, threadId: string, snap: T
     system_prompt_append: snap.system_prompt_append,
     // Clear sticky board_mode on uninstall/restore (keep mission_board data)
     board_mode: false,
+    mission_pack_trust_snapshot: null,
   })
 }
 
@@ -773,12 +938,61 @@ export function applyPack(
   skillEngine: SkillEngine,
   opts?: { workspace_path?: string },
 ): { ok: true; thread: any } | { ok: false; error: string; code?: string } {
-  const config = getConfig()
+  let config = getConfig()
   const { dir, result } = readInstalledManifest(packId)
   if (!result.ok) return { ok: false, error: result.error }
 
+  const thread = threadManager.get(threadId)
+  if (!thread) return { ok: false, error: `thread not found: ${threadId}` }
+
+  // Product B: apply Trust FIRST so module_disabled / enterprise_profile gates pass
+  let trustSnap: PackTrustSnapshot | null = null
+  const packTrust = result.manifest.trust
+  if (packTrust && resolvePackOrigin(result.manifest) === "user") {
+    // Keep original pre-trust snapshot across re-apply so unapply restores correctly
+    const prior = thread.mission_pack_trust_snapshot as PackTrustSnapshot | null | undefined
+    trustSnap =
+      prior && typeof prior === "object" && prior.modules
+        ? prior
+        : captureTrustSnapshot()
+    const trustToApply: UserPackTrustPolicy = {
+      ...packTrust,
+      enable_modules: [
+        ...new Set([
+          ...(packTrust.enable_modules || []),
+          ...(result.manifest.requires_modules || []),
+        ]),
+      ],
+      set_enterprise_profile:
+        packTrust.set_enterprise_profile ||
+        packTrust.skip_l2 ||
+        (result.manifest.requires_modules || []).some((m) => m === "shell" || m === "netsec") ||
+        (packTrust.enable_modules || []).some((m) => m === "shell" || m === "netsec"),
+    }
+    const tr = applyUserPackTrust(trustToApply, `pack.apply:${packId}`)
+    if (!tr.ok) {
+      // Only restore if we just captured a new snap (not reusing prior)
+      if (!prior) {
+        try {
+          restoreTrustSnapshot(trustSnap, `pack.apply_trust_fail:${packId}`)
+        } catch {
+          /* ignore */
+        }
+      }
+      return { ok: false, error: tr.error, code: "trust_apply_failed" }
+    }
+    config = getConfig()
+  }
+
   const blocked = computeApplyBlocked(result.manifest, config)
   if (blocked) {
+    if (trustSnap) {
+      try {
+        restoreTrustSnapshot(trustSnap, `pack.apply_blocked_rollback:${packId}`)
+      } catch {
+        /* ignore */
+      }
+    }
     return {
       ok: false,
       error: blocked,
@@ -789,9 +1003,6 @@ export function applyPack(
           : "apply_blocked",
     }
   }
-
-  const thread = threadManager.get(threadId)
-  if (!thread) return { ok: false, error: `thread not found: ${threadId}` }
 
   // --- Derive base (pre-pack) state without mutating yet ---
   let baseSnap: ThreadPackSnapshot
@@ -868,15 +1079,27 @@ export function applyPack(
       workspace_root: opts?.workspace_path ?? thread.workspace_root ?? null,
       // ADR-016: explicit true/false so non-board packs clear sticky board_mode
       board_mode: result.manifest.board_mode === true,
+      mission_pack_trust_snapshot: trustSnap
+        ? (JSON.parse(JSON.stringify(trustSnap)) as Record<string, unknown>)
+        : null,
     })
     appendCapabilityAudit({
       type: "pack.apply",
       pack_id: packId,
       thread_id: threadId,
       at: new Date().toISOString(),
+      trust_applied: !!trustSnap,
     })
     return { ok: true, thread: updated }
   } catch (e: any) {
+    // Best-effort restore trust if thread patch failed after trust write
+    if (trustSnap) {
+      try {
+        restoreTrustSnapshot(trustSnap, `pack.apply_rollback:${packId}`)
+      } catch {
+        /* ignore */
+      }
+    }
     return { ok: false, error: e?.message || String(e) }
   }
 }
@@ -895,6 +1118,7 @@ export function unapplyPack(
     return { ok: true, thread } // idempotent
   }
   const packId = thread.mission_pack_id
+  const trustSnap = thread.mission_pack_trust_snapshot as PackTrustSnapshot | null | undefined
   try {
     if (thread.mission_pack_snapshot) {
       restoreSnapshot(threadManager, threadId, thread.mission_pack_snapshot as ThreadPackSnapshot)
@@ -908,7 +1132,16 @@ export function unapplyPack(
         ),
         system_prompt_append: null,
         board_mode: false,
+        mission_pack_trust_snapshot: null,
       })
+    }
+    // Product B: restore global Trust if this apply had written it
+    if (trustSnap && typeof trustSnap === "object") {
+      try {
+        restoreTrustSnapshot(trustSnap, `pack.unapply:${packId}`)
+      } catch {
+        /* best-effort */
+      }
     }
     const updated = threadManager.get(threadId)
     appendCapabilityAudit({
@@ -916,6 +1149,7 @@ export function unapplyPack(
       pack_id: packId,
       thread_id: threadId,
       at: new Date().toISOString(),
+      trust_restored: !!trustSnap,
     })
     return { ok: true, thread: updated }
   } catch (e: any) {

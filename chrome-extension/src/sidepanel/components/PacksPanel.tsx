@@ -84,6 +84,12 @@ type SceneEditorState = {
   tools_allow: string[]
   /** Clone: copy source pack tools into save payload */
   preserve_tools: boolean
+  /** Product B: global Trust on apply */
+  trust_skip_l2: boolean
+  trust_enable_modules: boolean
+  trust_auto_approve_dangerous: boolean
+  trust_auto_approve_enterprise: boolean
+  trust_allow_all_schemes: boolean
 }
 
 const emptyEditor = (): SceneEditorState => ({
@@ -96,6 +102,11 @@ const emptyEditor = (): SceneEditorState => ({
   tools_mode: "unchanged",
   tools_allow: [],
   preserve_tools: false,
+  trust_skip_l2: false,
+  trust_enable_modules: false,
+  trust_auto_approve_dangerous: false,
+  trust_auto_approve_enterprise: false,
+  trust_allow_all_schemes: false,
 })
 
 /** Prefer pack.yaml ui.*; AppSec hardcopy fallback if installed pack lacks ui. */
@@ -205,6 +216,7 @@ export function PacksPanel() {
           const srcAllow = Array.isArray(srcTools.allow) ? [...srcTools.allow] : []
           cloneToolsRef.current = { mode: srcMode, allow: srcAllow }
           setEditor({
+            ...emptyEditor(),
             id: null,
             name: `${p.name || "场景"}（我的）`,
             description: p.description || "",
@@ -216,12 +228,14 @@ export function PacksPanel() {
             preserve_tools: false,
           })
           setSuggestNote(
-            "已从模板复制。默认不额外限制工具（可勾「保留原场景工具限制」）。可改 prompt / 技能后保存。",
+            "已从模板复制。默认不额外限制工具（可勾「保留原场景工具限制」）。可改 prompt / 技能 / Trust 后保存。",
           )
         } else {
           cloneToolsRef.current = null
           const t = p.tools || { mode: "unchanged", allow: [] }
+          const tr = p.trust || {}
           setEditor({
+            ...emptyEditor(),
             id: p.id,
             name: p.name || "",
             description: p.description || "",
@@ -231,6 +245,11 @@ export function PacksPanel() {
             tools_mode: t.mode === "allowlist" ? "allowlist" : "unchanged",
             tools_allow: Array.isArray(t.allow) ? [...t.allow] : [],
             preserve_tools: false,
+            trust_skip_l2: tr.skip_l2 === true,
+            trust_enable_modules: Array.isArray(tr.enable_modules) && tr.enable_modules.length > 0,
+            trust_auto_approve_dangerous: tr.auto_approve_dangerous === true,
+            trust_auto_approve_enterprise: tr.auto_approve_enterprise_tools === true,
+            trust_allow_all_schemes: tr.allow_all_schemes === true,
           })
           setSuggestNote("")
         }
@@ -550,6 +569,55 @@ export function PacksPanel() {
     } else {
       toolsPayload = { mode: "unchanged", allow: [], deny: [] }
     }
+    const enableMods: string[] = []
+    if (editor.trust_enable_modules || editor.trust_skip_l2) {
+      if (toolsPayload?.allow?.includes("shell_exec") || editor.tools_allow.includes("shell_exec")) {
+        enableMods.push("shell")
+      }
+      if (toolsPayload?.allow?.includes("netsec_port_scan") || editor.tools_allow.includes("netsec_port_scan")) {
+        enableMods.push("netsec")
+      }
+      if (
+        toolsPayload?.allow?.some((t) => t.startsWith("workspace_")) ||
+        editor.tools_allow.some((t) => t.startsWith("workspace_"))
+      ) {
+        enableMods.push("devsec-workspace")
+      }
+      // If user asked enable modules without tools, still enable shell when skip_l2
+      if (editor.trust_skip_l2 && enableMods.length === 0) {
+        enableMods.push("shell", "netsec")
+      }
+    }
+    const trustPayload =
+      editor.trust_skip_l2 ||
+      editor.trust_enable_modules ||
+      editor.trust_auto_approve_dangerous ||
+      editor.trust_auto_approve_enterprise ||
+      editor.trust_allow_all_schemes
+        ? {
+            skip_l2: editor.trust_skip_l2,
+            set_enterprise_profile:
+              editor.trust_skip_l2 ||
+              enableMods.includes("shell") ||
+              enableMods.includes("netsec"),
+            enable_modules: enableMods,
+            auto_approve_dangerous: editor.trust_auto_approve_dangerous || editor.trust_skip_l2,
+            auto_approve_enterprise_tools: editor.trust_auto_approve_enterprise || editor.trust_skip_l2,
+            allow_all_schemes: editor.trust_allow_all_schemes || editor.trust_skip_l2,
+          }
+        : null
+
+    if (trustPayload && andApply) {
+      if (
+        !window.confirm(
+          "此场景将在「用于本对话」时写入全局安全配置（可能跳过 L2 / 开启模块 / auto_approve）。\n" +
+            "退出场景会尽量恢复应用前的配置。确定继续？",
+        )
+      ) {
+        return
+      }
+    }
+
     setBusy(andApply ? "save-apply" : "save")
     pendingApplyThreadRef.current = andApply ? state.activeThreadId || null : null
     chrome.runtime.sendMessage({
@@ -562,6 +630,7 @@ export function PacksPanel() {
       skill_ids: editor.skill_ids,
       mcp_server_ids: editor.mcp_server_ids,
       tools: toolsPayload,
+      trust: trustPayload,
       apply_thread_id: andApply ? state.activeThreadId || undefined : undefined,
     })
   }
@@ -972,9 +1041,77 @@ export function PacksPanel() {
                 ))}
               </div>
             )}
+            <label style={{ ...styles.fieldLabel, color: "#b45309" }}>Trust（应用场景时写全局配置 · 选项 B）</label>
+            <div style={{ ...styles.hint, marginBottom: 4 }}>
+              仅「我的」场景。应用时写入 Companion 配置；退出场景会尝试恢复应用前状态。
+            </div>
+            <label style={styles.checkRow}>
+              <input
+                type="checkbox"
+                checked={editor.trust_skip_l2}
+                onChange={(e) =>
+                  setEditor({
+                    ...editor,
+                    trust_skip_l2: e.target.checked,
+                    // skip_l2 implies full cruise flags
+                    trust_auto_approve_dangerous: e.target.checked || editor.trust_auto_approve_dangerous,
+                    trust_auto_approve_enterprise: e.target.checked || editor.trust_auto_approve_enterprise,
+                    trust_allow_all_schemes: e.target.checked || editor.trust_allow_all_schemes,
+                    trust_enable_modules: e.target.checked || editor.trust_enable_modules,
+                  })
+                }
+              />
+              <span>
+                <strong>跳过 L2</strong>
+                <span style={{ display: "block", fontSize: 10, color: tokens.textMuted }}>
+                  写入三旗（危险自动批 + 企业工具自动批 + 协议解锁）= 全自动巡航
+                </span>
+              </span>
+            </label>
+            <label style={styles.checkRow}>
+              <input
+                type="checkbox"
+                checked={editor.trust_enable_modules}
+                onChange={(e) => setEditor({ ...editor, trust_enable_modules: e.target.checked })}
+              />
+              <span>
+                <strong>自动开启模块</strong>
+                <span style={{ display: "block", fontSize: 10, color: tokens.textMuted }}>
+                  按工具面推导 shell / netsec / workspace，并切 enterprise profile
+                </span>
+              </span>
+            </label>
+            <label style={styles.checkRow}>
+              <input
+                type="checkbox"
+                checked={editor.trust_auto_approve_dangerous}
+                onChange={(e) =>
+                  setEditor({ ...editor, trust_auto_approve_dangerous: e.target.checked })
+                }
+              />
+              <span>写 auto_approve_dangerous</span>
+            </label>
+            <label style={styles.checkRow}>
+              <input
+                type="checkbox"
+                checked={editor.trust_auto_approve_enterprise}
+                onChange={(e) =>
+                  setEditor({ ...editor, trust_auto_approve_enterprise: e.target.checked })
+                }
+              />
+              <span>写 auto_approve_enterprise_tools</span>
+            </label>
+            <label style={styles.checkRow}>
+              <input
+                type="checkbox"
+                checked={editor.trust_allow_all_schemes}
+                onChange={(e) => setEditor({ ...editor, trust_allow_all_schemes: e.target.checked })}
+              />
+              <span>写 allow_all_schemes（协议解锁 / god-mode）</span>
+            </label>
             {suggestNote ? <div style={{ ...styles.hint, marginTop: 8, color: tokens.accent }}>{suggestNote}</div> : null}
             <div style={{ ...styles.hint, marginTop: 8 }}>
-              AI 只预填，不会自动保存；高危工具需本机模块，且不能跳过安全确认。
+              AI 只预填，不会自动保存。勾选 Trust 后「保存并用于本对话」会改全局安全配置。
             </div>
             <div style={{ ...styles.modalActions, flexWrap: "wrap" }}>
               <button

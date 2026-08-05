@@ -66,7 +66,7 @@ Side Panel 底部栏 **「任务包」**（L0/L1）：列 Pack、应用、启用
 |------|------|
 | 扩展内嵌原生 libghostty | MV3 无法 link native；UI≠shell |
 | CWS 默认带扫描器 | 商店 dual-use + 法律责任 |
-| Pack 放宽 `auto_approve_dangerous` | 与 default-deny 冲突 |
+| Pack 放宽 `auto_approve_dangerous` | **2026-08-06 修订**：内置/installed 仍禁止；**仅 origin=user 场景** 可在 `trust` 块声明，于 `pack.apply`（user_gesture）写入全局配置，`unapply` 尽量恢复快照 — 见 [用户场景 Trust 设计](../superpowers/specs/2026-08-06-user-scene-tools-and-ai-create.md) 选项 B |
 
 ## 参考实现
 

@@ -2023,6 +2023,21 @@ export async function handleMessage(
           }
         }
       }
+      // Product B: trust policy (null = clear; object = set; omit = preserve on update)
+      let trustInput: any = undefined
+      if (rest.trust === null) {
+        trustInput = null
+      } else if (rest.trust && typeof rest.trust === "object") {
+        const t = rest.trust as any
+        trustInput = {
+          set_enterprise_profile: t.set_enterprise_profile === true,
+          enable_modules: Array.isArray(t.enable_modules) ? t.enable_modules : [],
+          auto_approve_dangerous: t.auto_approve_dangerous === true,
+          auto_approve_enterprise_tools: t.auto_approve_enterprise_tools === true,
+          allow_all_schemes: t.allow_all_schemes === true,
+          skip_l2: t.skip_l2 === true,
+        }
+      }
       const r = saveUserPack(
         {
           id: typeof rest.id === "string" ? rest.id : undefined,
@@ -2033,6 +2048,7 @@ export async function handleMessage(
           skill_ids: Array.isArray(rest.skill_ids) ? rest.skill_ids : [],
           mcp_server_ids: Array.isArray(rest.mcp_server_ids) ? rest.mcp_server_ids : [],
           tools: toolsInput,
+          trust: trustInput,
           suitable_for: typeof rest.suitable_for === "string" ? rest.suitable_for : undefined,
           unsuitable_for: typeof rest.unsuitable_for === "string" ? rest.unsuitable_for : undefined,
           tools_summary_zh: typeof rest.tools_summary_zh === "string" ? rest.tools_summary_zh : undefined,

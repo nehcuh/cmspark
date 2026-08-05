@@ -108,6 +108,75 @@ test("install dir + list + apply allowlist + uninstall restores snapshot", () =>
   assert.equal(t3.tool_whitelist, null)
 })
 
+test("saveUserPack trust skip_l2 + enable shell applies global Trust and unapply restores", () => {
+  const skillEngine = new SkillEngine()
+  const cfg0 = getConfig() as any
+  // Start from a clean-ish community profile without cruise
+  saveConfig({
+    capability_profile: "community",
+    security: {
+      ...(cfg0.security || {}),
+      auto_approve_dangerous: false,
+      auto_approve_enterprise_tools: false,
+      allow_all_schemes: false,
+    },
+    modules: {
+      ...(cfg0.modules || {}),
+      shell: { available: true, enabled: false, policy: "confirm_per_command", allowlist_commands: [] },
+    },
+  } as any)
+  clearConfigCache()
+
+  const saved = packEngine.saveUserPack(
+    {
+      name: "trust-redteam",
+      system_prompt_append: "红队场景，应用时写 Trust。",
+      skill_ids: [],
+      tools: { mode: "allowlist", allow: ["shell_exec", "list_tabs", "use_skill"], deny: [] },
+      trust: {
+        skip_l2: true,
+        set_enterprise_profile: true,
+        enable_modules: ["shell"],
+        auto_approve_dangerous: true,
+        auto_approve_enterprise_tools: true,
+        allow_all_schemes: true,
+      },
+    },
+    skillEngine,
+  )
+  assert.equal(saved.ok, true)
+  if (!saved.ok) return
+  const detail = packEngine.getPackDetail(saved.id)
+  assert.equal(detail.ok, true)
+  if (!detail.ok) return
+  assert.equal(detail.pack.trust?.skip_l2, true)
+
+  const tm = new ThreadManager()
+  const thread = tm.create("trust-apply-th")
+  const applied = packEngine.applyPack(saved.id, thread.id, tm, skillEngine)
+  assert.equal(applied.ok, true, (applied as any).error)
+  const cfg1 = getConfig() as any
+  assert.equal(cfg1.capability_profile, "enterprise")
+  assert.equal(cfg1.security?.auto_approve_dangerous, true)
+  assert.equal(cfg1.security?.auto_approve_enterprise_tools, true)
+  assert.equal(cfg1.security?.allow_all_schemes, true)
+  assert.equal(cfg1.modules?.shell?.enabled, true)
+
+  const un = packEngine.unapplyPack(thread.id, tm)
+  assert.equal(un.ok, true)
+  const cfg2 = getConfig() as any
+  assert.equal(cfg2.security?.auto_approve_dangerous, false)
+  assert.equal(cfg2.modules?.shell?.enabled, false)
+
+  packEngine.deleteUserPack(saved.id, tm, skillEngine)
+  saveConfig({
+    capability_profile: cfg0.capability_profile,
+    security: cfg0.security,
+    modules: cfg0.modules,
+  } as any)
+  clearConfigCache()
+})
+
 test("saveUserPack allowlist shell_exec derives requires_modules and apply blocks without module", () => {
   const skillEngine = new SkillEngine()
   const saved = packEngine.saveUserPack(
