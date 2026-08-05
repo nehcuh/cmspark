@@ -553,8 +553,14 @@ ${hostUseRule12}${appIndexSection ? `\n\n${appIndexSection}` : ""}`
           }
           sendToExtension({ type: "chat.token", thread_id: threadId, content: assistantContent })
         } else if (ev.type === "reasoning") {
-          // DeepSeek thinking / Anthropic thinking blocks → same internal slot
+          // DeepSeek thinking / Anthropic thinking blocks → same internal slot.
+          // Stream to UI so long reasoning rounds don't look like a stuck "思考中".
           reasoningContent += ev.text
+          sendToExtension({
+            type: "chat.reasoning",
+            thread_id: threadId,
+            content: reasoningContent,
+          })
         } else if (ev.type === "tool_call_delta") {
           const idx = ev.index
           if (!toolCalls[idx]) {
@@ -596,11 +602,20 @@ ${hostUseRule12}${appIndexSection ? `\n\n${appIndexSection}` : ""}`
       const assistantMsg: StreamToolCall[] = toolCalls.filter(
         (tc): tc is StreamToolCall => tc != null,
       )
-      const savedMsg = {
+      const savedMsg: {
+        thread_id: string
+        role: "assistant"
+        content: string
+        tool_calls: StreamToolCall[]
+        reasoning_content?: string
+      } = {
         thread_id: threadId,
         role: "assistant" as const,
         content: assistantContent,
         tool_calls: assistantMsg,
+      }
+      if (reasoningContent) {
+        savedMsg.reasoning_content = reasoningContent
       }
       const savedAssistant = threadManager.addMessage(threadId, savedMsg)
       savedAssistantId = savedAssistant.id
@@ -631,7 +646,12 @@ ${hostUseRule12}${appIndexSection ? `\n\n${appIndexSection}` : ""}`
         // client-generated id) — this keeps the UI's message id in sync with what the
         // companion stored, so anchor-based features (per-message export) work on the
         // just-received response without a thread reload.
-        sendToExtension({ type: "chat.done", thread_id: threadId, message_id: savedAssistant.id })
+        sendToExtension({
+          type: "chat.done",
+          thread_id: threadId,
+          message_id: savedAssistant.id,
+          ...(reasoningContent ? { reasoning_content: reasoningContent } : {}),
+        })
         // Best-effort auto-alias: generate a short title if thread has no alias yet
         generateThreadTitle({ threadId, threadManager, config, sendToExtension })
         return

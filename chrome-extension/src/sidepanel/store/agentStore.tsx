@@ -17,6 +17,13 @@ export interface AgentState {
   tabList: chrome.tabs.Tab[]
   pinnedTabIds: number[]
   streamingContent: string
+  /** Live model thinking / DeepSeek reasoning stream (cleared on chat.done). */
+  streamingReasoning: string
+  /**
+   * Phase label while busy without tokens yet — e.g. file parse status
+   * 「正在解析文档…」. Cleared when reasoning/tokens arrive or turn ends.
+   */
+  processingStatus: string | null
   testResult: string | null
   testVisionResult: string | null
   sendShortcut: SendShortcut
@@ -121,6 +128,8 @@ export type AgentAction =
   | { type: "UPSERT_THREAD"; thread: Thread }
   | { type: "REMOVE_THREAD"; threadId: string }
   | { type: "SET_STREAMING"; content: string }
+  | { type: "SET_STREAMING_REASONING"; content: string }
+  | { type: "SET_PROCESSING_STATUS"; status: string | null }
   | { type: "SET_TEST_RESULT"; result: string | null }
   | { type: "SET_TEST_VISION_RESULT"; result: string | null }
   | { type: "SET_SEND_SHORTCUT"; shortcut: SendShortcut }
@@ -212,6 +221,8 @@ export const initialState: AgentState = {
   tabList: [],
   pinnedTabIds: [],
   streamingContent: "",
+  streamingReasoning: "",
+  processingStatus: null,
   testResult: null,
   testVisionResult: null,
   sendShortcut: "Enter",
@@ -290,6 +301,8 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         activeThreadId: action.threadId,
         messages: [],
         streamingContent: "",
+        streamingReasoning: "",
+        processingStatus: null,
         isProcessing: false,
         lastBrowserToolAt: null,
         modePin: null,
@@ -383,6 +396,8 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         activeThreadId: action.thread.id,
         messages: [],
         streamingContent: "",
+        streamingReasoning: "",
+        processingStatus: null,
         isProcessing: false,
         lastBrowserToolAt: null,
         modePin: null,
@@ -395,12 +410,15 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         : state.activeThreadId
       const nextThread = filtered.find(t => t.id === nextActive)
       const { [action.threadId]: _removed, ...restBusy } = state.threadBusyById
+      const clearingActive = state.activeThreadId === action.threadId
       return {
         ...state,
         threads: filtered,
         activeThreadId: nextActive,
-        messages: state.activeThreadId === action.threadId ? [] : state.messages,
-        streamingContent: state.activeThreadId === action.threadId ? "" : state.streamingContent,
+        messages: clearingActive ? [] : state.messages,
+        streamingContent: clearingActive ? "" : state.streamingContent,
+        streamingReasoning: clearingActive ? "" : state.streamingReasoning,
+        processingStatus: clearingActive ? null : state.processingStatus,
         pinnedTabIds: nextThread?.pinned_tabs || [],
         activeSkillIds: nextThread?.active_skill_ids || [],
         threadBusyById: restBusy,
@@ -424,6 +442,10 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
     }
     case "SET_STREAMING":
       return { ...state, streamingContent: action.content }
+    case "SET_STREAMING_REASONING":
+      return { ...state, streamingReasoning: action.content }
+    case "SET_PROCESSING_STATUS":
+      return { ...state, processingStatus: action.status }
     case "SET_TEST_RESULT":
       return { ...state, testResult: action.result }
     case "SET_TEST_VISION_RESULT":

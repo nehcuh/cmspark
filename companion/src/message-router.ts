@@ -596,90 +596,172 @@ export async function handleMessage(
       const config = getConfig()
       const fileConfig = config.file_upload || { max_file_size: 10 * 1024 * 1024, allowed_types: [] as string[], max_embedded_images: 20, enable_vision_analysis: true, max_file_tokens: 50000 }
 
+      logger.info("file.upload.start", {
+        thread_id,
+        count: Array.isArray(files) ? files.length : 0,
+        names: Array.isArray(files) ? files.map((f: any) => f?.name).filter(Boolean) : [],
+        types: Array.isArray(files) ? files.map((f: any) => f?.type || "") : [],
+        content_b64_lens: Array.isArray(files)
+          ? files.map((f: any) => (typeof f?.content === "string" ? f.content.length : 0))
+          : [],
+        max_file_size: fileConfig.max_file_size,
+        allowed_types_count: Array.isArray(fileConfig.allowed_types)
+          ? fileConfig.allowed_types.length
+          : 0,
+        vision: !!(config.vision?.enabled && fileConfig.enable_vision_analysis !== false),
+      })
+
+      const pushUploadStatus = (phase: string, message: string, extra?: Record<string, unknown>) => {
+        session.sendToExtension({
+          type: "file.upload_status",
+          thread_id,
+          phase,
+          message,
+          ...extra,
+        })
+      }
+
       // Phase 1: Parse all files (text + embedded images)
+      // Wrap the whole parse/vision path so timeouts / unexpected throws become
+      // file.upload_error (UI clears busy). Uncaught throws only send type:"error"
+      // which historically left the Side Panel stuck on "思考中".
       const parseResults: FileParseResult[] = []
+      let finalFileContents: Array<{ filename: string; content: string }> = []
 
-      for (const file of files) {
-        const { name, type, content } = file
+      try {
+        const fileCount = Array.isArray(files) ? files.length : 0
+        for (let fi = 0; fi < files.length; fi++) {
+          const file = files[fi]
+          const { name, type, content } = file
 
-        const decodedSize = Math.ceil(content.length * 0.75)
-        if (decodedSize > fileConfig.max_file_size) {
-          return {
-            type: "file.upload_error",
-            thread_id,
-            error: `文件 "${name}" 过大 (${Math.round(decodedSize / 1024 / 1024)}MB)，最大支持 ${Math.round(fileConfig.max_file_size / 1024 / 1024)}MB`,
-          }
-        }
+          pushUploadStatus(
+            "parsing",
+            fileCount > 1
+              ? `正在解析文档 (${fi + 1}/${fileCount})：${name}`
+              : `正在解析文档：${name}`,
+            { filename: name },
+          )
 
-        if (fileConfig.allowed_types.length > 0 && !fileConfig.allowed_types.includes(type)) {
-          return {
-            type: "file.upload_error",
-            thread_id,
-            error: `不支持的文件类型: ${type}`,
-          }
-        }
-
-        const buffer = Buffer.from(content, "base64")
-        const parseResult = await Promise.race([
-          parseFile(buffer, name, type),
-          new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error(`文件 "${name}" 解析超时 (30s)`)), 30000)
-          ),
-        ])
-
-        if (!parseResult.success) {
-          return { type: "file.upload_error", thread_id, error: parseResult.error }
-        }
-
-        parseResults.push(parseResult)
-      }
-
-      // Phase 2: Vision analysis for embedded images
-      const visionEnabled = config.vision?.enabled && fileConfig.enable_vision_analysis !== false
-      const finalFileContents: Array<{ filename: string; content: string }> = []
-
-      for (const parseResult of parseResults) {
-        let content = parseResult.text
-
-        if (visionEnabled && parseResult.embeddedImages?.length) {
-          const visionDescriptions: string[] = []
-          for (const img of parseResult.embeddedImages) {
-            if (img.format === "note") {
-              visionDescriptions.push(img.title)
-              continue
+          const decodedSize = Math.ceil(content.length * 0.75)
+          if (decodedSize > fileConfig.max_file_size) {
+            return {
+              type: "file.upload_error",
+              thread_id,
+              error: `文件 "${name}" 过大 (${Math.round(decodedSize / 1024 / 1024)}MB)，最大支持 ${Math.round(fileConfig.max_file_size / 1024 / 1024)}MB`,
             }
-            try {
-              const visionResult = await analyzeImage(
-                {
-                  base64: img.base64,
-                  width: img.width,
-                  height: img.height,
-                  url: "",
-                  title: img.title,
-                },
-                config.vision!,
-                `分析这张文档内嵌图片 "${img.title}" 的内容，提取所有可见文本和视觉信息。`,
+          }
+
+          if (fileConfig.allowed_types.length > 0 && !fileConfig.allowed_types.includes(type)) {
+            return {
+              type: "file.upload_error",
+              thread_id,
+              error: `不支持的文件类型: ${type}（请确认扩展名为 .docx/.pdf 等支持格式）`,
+            }
+          }
+
+          const buffer = Buffer.from(content, "base64")
+          let parseResult: Awaited<ReturnType<typeof parseFile>>
+          try {
+            parseResult = await Promise.race([
+              parseFile(buffer, name, type),
+              new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error(`文件 "${name}" 解析超时 (30s)`)), 30000)
+              ),
+            ])
+          } catch (parseErr: any) {
+            logger.warn("file.upload.parse_failed", {
+              thread_id,
+              filename: name,
+              error: parseErr?.message || String(parseErr),
+            })
+            return {
+              type: "file.upload_error",
+              thread_id,
+              error: parseErr?.message || `文件 "${name}" 解析失败`,
+            }
+          }
+
+          if (!parseResult.success) {
+            return { type: "file.upload_error", thread_id, error: parseResult.error }
+          }
+
+          parseResults.push(parseResult)
+        }
+
+        // Phase 2: Vision analysis for embedded images
+        const visionEnabled = config.vision?.enabled && fileConfig.enable_vision_analysis !== false
+
+        for (const parseResult of parseResults) {
+          let content = parseResult.text
+
+          if (visionEnabled && parseResult.embeddedImages?.length) {
+            const imgs = parseResult.embeddedImages.filter(i => i.format !== "note")
+            if (imgs.length > 0) {
+              pushUploadStatus(
+                "vision",
+                `正在分析文档内嵌图片（${imgs.length} 张）…`,
+                { filename: parseResult.filename, image_count: imgs.length },
               )
-              visionDescriptions.push(`[图片: ${img.title}] ${visionResult.description}`)
-            } catch {
-              visionDescriptions.push(`[图片: ${img.title}] (视觉分析不可用)`)
+            }
+            const visionDescriptions: string[] = []
+            for (const img of parseResult.embeddedImages) {
+              if (img.format === "note") {
+                visionDescriptions.push(img.title)
+                continue
+              }
+              try {
+                const visionResult = await analyzeImage(
+                  {
+                    base64: img.base64,
+                    width: img.width,
+                    height: img.height,
+                    url: "",
+                    title: img.title,
+                  },
+                  config.vision!,
+                  `分析这张文档内嵌图片 "${img.title}" 的内容，提取所有可见文本和视觉信息。`,
+                )
+                visionDescriptions.push(`[图片: ${img.title}] ${visionResult.description}`)
+              } catch {
+                visionDescriptions.push(`[图片: ${img.title}] (视觉分析不可用)`)
+              }
+            }
+            if (visionDescriptions.length > 0) {
+              content += `\n\n<!-- 文档内嵌图片分析 -->\n${visionDescriptions.join("\n\n")}`
+            }
+          } else if (parseResult.embeddedImages?.length) {
+            const note = parseResult.embeddedImages
+              .filter(i => i.format !== "note")
+              .map(i => i.title)
+              .join(", ")
+            if (note) {
+              content += `\n\n[文档包含图片但视觉分析未启用: ${note}]`
             }
           }
-          if (visionDescriptions.length > 0) {
-            content += `\n\n<!-- 文档内嵌图片分析 -->\n${visionDescriptions.join("\n\n")}`
-          }
-        } else if (parseResult.embeddedImages?.length) {
-          const note = parseResult.embeddedImages
-            .filter(i => i.format !== "note")
-            .map(i => i.title)
-            .join(", ")
-          if (note) {
-            content += `\n\n[文档包含图片但视觉分析未启用: ${note}]`
-          }
-        }
 
-        finalFileContents.push({ filename: parseResult.filename, content })
+          finalFileContents.push({ filename: parseResult.filename, content })
+        }
+      } catch (phaseErr: any) {
+        logger.error("file.upload.phase_error", {
+          thread_id,
+          error: phaseErr?.message || String(phaseErr),
+        })
+        return {
+          type: "file.upload_error",
+          thread_id,
+          error: phaseErr?.message || "文件处理失败",
+        }
       }
+
+      logger.info("file.upload.parsed", {
+        thread_id,
+        files: finalFileContents.map(f => ({
+          filename: f.filename,
+          chars: f.content.length,
+        })),
+      })
+
+      pushUploadStatus("chat", "文档已解析，模型思考中…")
 
       // Cancel any existing request for this thread
       const existingUpload = abortControllers.get(thread_id)
@@ -719,6 +801,18 @@ export async function handleMessage(
         )
         const allSkillIds = [...new Set([...resolvedSkillIds, ...(rest.skill_ids || [])])]
 
+        logger.info("file.upload.chat_start", {
+          thread_id,
+          user_message_len: userMessage.length,
+          files: finalFileContents.map(f => ({
+            filename: f.filename,
+            chars: f.content.length,
+          })),
+          skill_count: allSkillIds.length,
+          knowledge_count: resolvedKnowledgeIds?.length ?? 0,
+          model: effectiveLLMConfig.model_name,
+        })
+
         await chatCreate({
           threadId: thread_id,
           message: userMessage,
@@ -733,7 +827,13 @@ export async function handleMessage(
           executeTool: session.executeTool,
           signal: uploadController.signal,
         })
+        logger.info("file.upload.chat_done", { thread_id })
       } catch (e: any) {
+        logger.warn("file.upload.chat_error", {
+          thread_id,
+          error: e?.message || String(e),
+          aborted: e?.name === "AbortError" || uploadController.signal.aborted,
+        })
         if (e.name === "AbortError" || uploadController.signal.aborted) {
           session.sendToExtension({ type: "chat.aborted", thread_id })
         } else {
@@ -743,6 +843,10 @@ export async function handleMessage(
         abortControllers.delete(thread_id)
       }
 
+      logger.info("file.upload.complete", {
+        thread_id,
+        files: finalFileContents.map(f => f.filename),
+      })
       return { type: "file.uploaded", thread_id, files: finalFileContents.map(f => f.filename) }
     }
 

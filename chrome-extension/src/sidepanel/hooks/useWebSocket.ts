@@ -200,8 +200,10 @@ export function useWebSocket() {
 
   // P0-B: clear accumulated stream buffer on thread switch so late tokens from
   // the previous thread cannot reappear via chat.done → ADD_MESSAGE.
+  const reasoningRef = useRef("")
   useEffect(() => {
     streamingRef.current = ""
+    reasoningRef.current = ""
   }, [state.activeThreadId])
 
   useEffect(() => {
@@ -253,6 +255,29 @@ export function useWebSocket() {
           if (!shouldApplyStreamEvent(msg.thread_id, activeThreadRef.current)) break
           streamingRef.current = msg.content
           dispatch({ type: "SET_STREAMING", content: msg.content })
+          // Answer tokens mean parse/status phase is done
+          dispatch({ type: "SET_PROCESSING_STATUS", status: null })
+          break
+        }
+
+        case "chat.reasoning": {
+          const reasonTid =
+            typeof msg.thread_id === "string" && msg.thread_id ? msg.thread_id : ""
+          if (reasonTid) {
+            dispatch({ type: "SET_THREAD_BUSY", threadId: reasonTid, busy: true })
+          }
+          if (!shouldApplyStreamEvent(msg.thread_id, activeThreadRef.current)) break
+          const r =
+            typeof msg.content === "string"
+              ? msg.content
+              : typeof msg.text === "string"
+                ? msg.text
+                : ""
+          reasoningRef.current = r
+          dispatch({ type: "SET_STREAMING_REASONING", content: r })
+          dispatch({ type: "SET_PROCESSING", isProcessing: true })
+          // Live thinking replaces generic / parse status labels
+          dispatch({ type: "SET_PROCESSING_STATUS", status: null })
           break
         }
 
@@ -294,10 +319,17 @@ export function useWebSocket() {
           }
           if (!shouldApplyStreamEvent(msg.thread_id, activeThreadRef.current)) break
           const content = streamingRef.current
+          const reasoning =
+            (typeof msg.reasoning_content === "string" && msg.reasoning_content) ||
+            reasoningRef.current ||
+            ""
           streamingRef.current = ""
+          reasoningRef.current = ""
           dispatch({ type: "SET_STREAMING", content: "" })
+          dispatch({ type: "SET_STREAMING_REASONING", content: "" })
+          dispatch({ type: "SET_PROCESSING_STATUS", status: null })
           dispatch({ type: "SET_PROCESSING", isProcessing: false })
-          if (doneThreadId && content) {
+          if (doneThreadId && (content || reasoning)) {
             dispatch({
               type: "ADD_MESSAGE",
               message: {
@@ -308,7 +340,8 @@ export function useWebSocket() {
                 id: msg.message_id || `${doneThreadId}_assistant_${Date.now()}`,
                 thread_id: doneThreadId,
                 role: "assistant",
-                content,
+                content: content || "",
+                ...(reasoning ? { reasoning_content: reasoning } : {}),
                 created_at: new Date().toISOString(),
               },
             })
@@ -324,7 +357,10 @@ export function useWebSocket() {
           }
           if (!shouldApplyStreamEvent(msg.thread_id, activeThreadRef.current)) break
           streamingRef.current = ""
+          reasoningRef.current = ""
           dispatch({ type: "SET_STREAMING", content: "" })
+          dispatch({ type: "SET_STREAMING_REASONING", content: "" })
+          dispatch({ type: "SET_PROCESSING_STATUS", status: null })
           dispatch({ type: "SET_PROCESSING", isProcessing: false })
           dispatch({
             type: "ADD_MESSAGE",
@@ -360,7 +396,10 @@ export function useWebSocket() {
           }
           if (!shouldApplyStreamEvent(msg.thread_id, activeThreadRef.current)) break
           streamingRef.current = ""
+          reasoningRef.current = ""
           dispatch({ type: "SET_STREAMING", content: "" })
+          dispatch({ type: "SET_STREAMING_REASONING", content: "" })
+          dispatch({ type: "SET_PROCESSING_STATUS", status: null })
           dispatch({ type: "SET_PROCESSING", isProcessing: false })
           {
             // Soften god-mode-orthogonal gates (workspace / scene) — never show
@@ -392,6 +431,14 @@ export function useWebSocket() {
           // With stamped thread_id: only mutate active transcript (no cross-thread pollution).
           // Missing thread_id: legacy apply to active (compat).
           if (toolTid && !shouldApplyStreamEvent(toolTid, activeThreadRef.current)) break
+          // Intermediate assistant stream ends when tools begin — free the live
+          // reasoning bubble so the next LLM round can start clean.
+          if (streamingRef.current || reasoningRef.current) {
+            streamingRef.current = ""
+            reasoningRef.current = ""
+            dispatch({ type: "SET_STREAMING", content: "" })
+            dispatch({ type: "SET_STREAMING_REASONING", content: "" })
+          }
           dispatch({
             type: "ADD_MESSAGE",
             message: {
@@ -1102,6 +1149,74 @@ export function useWebSocket() {
           chrome.runtime.sendMessage({ type: "knowledge.list" })
           break
 
+        // Progress while companion parses / vision-analyzes attachments.
+        case "file.upload_status": {
+          const stTid =
+            (typeof msg.thread_id === "string" && msg.thread_id) || activeThreadRef.current || ""
+          if (stTid && !shouldApplyStreamEvent(stTid, activeThreadRef.current)) break
+          if (stTid) {
+            dispatch({ type: "SET_THREAD_BUSY", threadId: stTid, busy: true })
+          }
+          dispatch({ type: "SET_PROCESSING", isProcessing: true })
+          const label =
+            typeof msg.message === "string" && msg.message
+              ? msg.message
+              : msg.phase === "vision"
+                ? "正在分析文档内嵌图片…"
+                : msg.phase === "chat"
+                  ? "文档已解析，模型思考中…"
+                  : "正在解析文档…"
+          dispatch({ type: "SET_PROCESSING_STATUS", status: label })
+          break
+        }
+
+        // File parse/type/size failures return before chatCreate — must clear
+        // the optimistic "思考中" busy set by InputArea on send. Without this
+        // the panel stays stuck forever (no chat.done / chat.error ever arrives).
+        case "file.upload_error": {
+          const uploadErrTid =
+            (typeof msg.thread_id === "string" && msg.thread_id) || activeThreadRef.current || ""
+          if (uploadErrTid) {
+            dispatch({ type: "SET_THREAD_BUSY", threadId: uploadErrTid, busy: false })
+          }
+          streamingRef.current = ""
+          reasoningRef.current = ""
+          dispatch({ type: "SET_STREAMING", content: "" })
+          dispatch({ type: "SET_STREAMING_REASONING", content: "" })
+          dispatch({ type: "SET_PROCESSING_STATUS", status: null })
+          dispatch({ type: "SET_PROCESSING", isProcessing: false })
+          {
+            const raw = typeof msg.error === "string" ? msg.error : "文件上传失败"
+            dispatch({
+              type: "ADD_MESSAGE",
+              message: {
+                id: `${uploadErrTid || "file"}_upload_err_${Date.now()}`,
+                thread_id: uploadErrTid,
+                role: "assistant",
+                content: `\u274c ${raw}`,
+                created_at: new Date().toISOString(),
+              },
+            })
+          }
+          break
+        }
+
+        // Ack after successful parse+chat — chat.done already cleared busy; keep
+        // as a safety net if chat path returned early without streaming.
+        case "file.uploaded": {
+          const upTid =
+            (typeof msg.thread_id === "string" && msg.thread_id) || activeThreadRef.current || ""
+          if (upTid) {
+            dispatch({ type: "SET_THREAD_BUSY", threadId: upTid, busy: false })
+          }
+          dispatch({ type: "SET_PROCESSING_STATUS", status: null })
+          // Only clear processing if no stream is in flight for this panel.
+          if (!streamingRef.current && !reasoningRef.current) {
+            dispatch({ type: "SET_PROCESSING", isProcessing: false })
+          }
+          break
+        }
+
         case "error":
           // WP5-I4: computer.model.* 错误(family:"computer.model")→ 设置页实验区
           // 错误位;判定先于 apps(family 无歧义,code 回退集含共享 BIOMETRIC_DENIED)。
@@ -1129,16 +1244,28 @@ export function useWebSocket() {
             })
             break
           }
-          dispatch({
-            type: "ADD_MESSAGE",
-            message: {
-              id: `error_${Date.now()}`,
-              thread_id: activeThreadRef.current || "",
-              role: "assistant",
-              content: `\u274c ${msg.error || "Unknown error"}`,
-              created_at: new Date().toISOString(),
-            },
-          })
+          {
+            const errTid = activeThreadRef.current || ""
+            if (errTid) {
+              dispatch({ type: "SET_THREAD_BUSY", threadId: errTid, busy: false })
+            }
+            streamingRef.current = ""
+            reasoningRef.current = ""
+            dispatch({ type: "SET_STREAMING", content: "" })
+            dispatch({ type: "SET_STREAMING_REASONING", content: "" })
+            dispatch({ type: "SET_PROCESSING_STATUS", status: null })
+            dispatch({ type: "SET_PROCESSING", isProcessing: false })
+            dispatch({
+              type: "ADD_MESSAGE",
+              message: {
+                id: `error_${Date.now()}`,
+                thread_id: errTid,
+                role: "assistant",
+                content: `\u274c ${msg.error || "Unknown error"}`,
+                created_at: new Date().toISOString(),
+              },
+            })
+          }
           // P3: a failed summary export surfaces as an error chat message \u2014 clear its spinner.
           dispatch({ type: "SET_SUMMARIZING_THREAD", threadId: null })
           break

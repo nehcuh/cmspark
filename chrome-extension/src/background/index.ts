@@ -449,6 +449,25 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
         })
         return true
 
+      // Side Panel → SW diagnostic breadcrumbs (no file bytes).
+      case "diag.file_upload": {
+        const phase = typeof message.phase === "string" ? message.phase : "unknown"
+        logToCompanion("info", `extension.file_upload.${phase}`, {
+          thread_id: message.thread_id ?? message.threadId ?? null,
+          connection: message.connection ?? null,
+          isProcessing: message.isProcessing ?? null,
+          mapBusy: message.mapBusy ?? null,
+          file_count: message.file_count ?? null,
+          files: Array.isArray(message.files) ? message.files : undefined,
+          sw_error: message.sw_error ?? null,
+          ok: message.ok ?? null,
+          diag: message.diag ?? null,
+          ws: wsClient?.getDiag?.() ?? null,
+        })
+        sendResponse({ ok: true })
+        return true
+      }
+
       case "chat.send": {
         // Config is kept in sync with companion via config.set / config.updated.
         // The companion uses its global config; no per-request override is needed.
@@ -504,29 +523,90 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
       }
 
       case "file.upload": {
-        getActiveTabHostname().then((hostname) => {
-          const sent = wsClient.send({
+        // Diagnostics: locate where uploads die (panel → SW → WS → companion).
+        // Never log base64 content — only names/sizes/types/payload estimate.
+        const filesArr = Array.isArray(message.files) ? message.files : []
+        const fileMeta = filesArr.map((f: any) => ({
+          name: typeof f?.name === "string" ? f.name : "?",
+          type: typeof f?.type === "string" ? f.type : "",
+          size: typeof f?.size === "number" ? f.size : undefined,
+          content_b64_len: typeof f?.content === "string" ? f.content.length : 0,
+        }))
+        const contentB64Total = fileMeta.reduce(
+          (n: number, f: { content_b64_len: number }) => n + (f.content_b64_len || 0),
+          0,
+        )
+        // Rough JSON envelope size excluding double-counting: names + b64 body.
+        const approxPayloadBytes = contentB64Total + 512 + fileMeta.length * 128
+        const diagBase = {
+          thread_id: message.threadId || null,
+          message_len:
+            typeof message.message === "string" ? message.message.length : 0,
+          file_count: filesArr.length,
+          files: fileMeta,
+          approx_payload_bytes: approxPayloadBytes,
+          approx_payload_mb: Math.round((approxPayloadBytes / (1024 * 1024)) * 1000) / 1000,
+          ws: wsClient?.getDiag?.() ?? { state: "unknown" },
+        }
+        logToCompanion("info", "extension.file_upload.sw_received", diagBase)
+
+        const doSend = (hostname?: string) => {
+          const payload = {
             type: "file.upload",
             thread_id: message.threadId,
             files: message.files,
             message: message.message || "",
             skill_ids: message.skillIds || [],
             ...(hostname ? { hostname } : {}),
+          }
+          let jsonBytes = 0
+          try {
+            jsonBytes = new TextEncoder().encode(JSON.stringify(payload)).length
+          } catch {
+            jsonBytes = -1
+          }
+          const before = wsClient?.getDiag?.() ?? null
+          const sent = wsClient.send(payload)
+          const after = wsClient?.getDiag?.() ?? null
+          logToCompanion(sent ? "info" : "warn", "extension.file_upload.ws_send", {
+            ...diagBase,
+            sent,
+            hostname: hostname || null,
+            json_bytes: jsonBytes,
+            json_mb: jsonBytes > 0 ? Math.round((jsonBytes / (1024 * 1024)) * 1000) / 1000 : null,
+            ws_before: before,
+            ws_after: after,
+            // 10MB companion MAX_WS_MESSAGE_SIZE — flag client-side estimate
+            over_companion_10mb: jsonBytes > 10 * 1024 * 1024,
           })
           if (!sent) {
-            chrome.runtime.sendMessage({ type: "error", error: "Companion 未连接，请检查 Companion 是否已启动" })
+            chrome.runtime.sendMessage({
+              type: "error",
+              error: "Companion 未连接，请检查 Companion 是否已启动",
+            })
           }
-          sendResponse({ ok: sent })
-        }).catch(() => {
-          const sent = wsClient.send({
-            type: "file.upload",
-            thread_id: message.threadId,
-            files: message.files,
-            message: message.message || "",
-            skill_ids: message.skillIds || [],
+          sendResponse({
+            ok: sent,
+            diag: {
+              sent,
+              json_bytes: jsonBytes,
+              ws: after,
+              file_count: filesArr.length,
+            },
           })
-          sendResponse({ ok: sent })
-        })
+        }
+
+        getActiveTabHostname()
+          .then((hostname) => {
+            doSend(hostname || undefined)
+          })
+          .catch((e: any) => {
+            logToCompanion("warn", "extension.file_upload.hostname_failed", {
+              ...diagBase,
+              error: e?.message || String(e),
+            })
+            doSend(undefined)
+          })
         return true
       }
 

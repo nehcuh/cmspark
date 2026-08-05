@@ -526,28 +526,95 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
       if (selectedFiles.length > 0) {
         const userMessage = trimmed || "请分析我上传的文件"
         const fileSummary = selectedFiles.map(f => f.name).join(", ")
+        const uploadThreadId = state.activeThreadId
+        const panelDiag = {
+          thread_id: uploadThreadId,
+          connection: state.connectionState,
+          isProcessing: state.isProcessing,
+          mapBusy: !!(uploadThreadId && state.threadBusyById[uploadThreadId]),
+          file_count: selectedFiles.length,
+          files: selectedFiles.map((f) => ({
+            name: f.name,
+            type: f.type,
+            size: f.size,
+            content_b64_len: f.content?.length ?? 0,
+          })),
+        }
+        // Local + companion-forwarded via SW (background listens and logToCompanion).
+        console.info("[cmspark] file.upload panel_dispatch", panelDiag)
+        try {
+          chrome.runtime.sendMessage({
+            type: "diag.file_upload",
+            phase: "panel_dispatch",
+            ...panelDiag,
+          })
+        } catch {
+          /* ignore */
+        }
 
-        chrome.runtime.sendMessage({
-          type: "file.upload",
-          threadId: state.activeThreadId,
-          message: userMessage,
-          files: selectedFiles,
-          skillIds,
-        })
         dispatch({ type: "SET_PROCESSING", isProcessing: true })
-        if (state.activeThreadId) {
-          dispatch({ type: "SET_THREAD_BUSY", threadId: state.activeThreadId, busy: true })
+        if (uploadThreadId) {
+          dispatch({ type: "SET_THREAD_BUSY", threadId: uploadThreadId, busy: true })
         }
         dispatch({
           type: "ADD_MESSAGE",
           message: {
-            id: `${state.activeThreadId}_${Date.now()}`,
-            thread_id: state.activeThreadId!,
+            id: `${uploadThreadId}_${Date.now()}`,
+            thread_id: uploadThreadId!,
             role: "user",
             content: `${userMessage}\n📎 ${fileSummary}`,
             created_at: new Date().toISOString(),
           },
         })
+
+        chrome.runtime.sendMessage(
+          {
+            type: "file.upload",
+            threadId: uploadThreadId,
+            message: userMessage,
+            files: selectedFiles,
+            skillIds,
+          },
+          (response) => {
+            // Companion down / SW failed — free the busy UI (file.upload_error path
+            // only covers companion-side parse failures after WS delivers).
+            const swErr = chrome.runtime.lastError?.message
+            console.info("[cmspark] file.upload panel_response", {
+              thread_id: uploadThreadId,
+              swErr: swErr || null,
+              response,
+            })
+            try {
+              chrome.runtime.sendMessage({
+                type: "diag.file_upload",
+                phase: "panel_response",
+                thread_id: uploadThreadId,
+                sw_error: swErr || null,
+                ok: !!response?.ok,
+                diag: response?.diag || null,
+              })
+            } catch {
+              /* ignore */
+            }
+            if (swErr || !response?.ok) {
+              if (uploadThreadId) {
+                dispatch({ type: "SET_THREAD_BUSY", threadId: uploadThreadId, busy: false })
+              }
+              dispatch({ type: "SET_PROCESSING_STATUS", status: null })
+              dispatch({ type: "SET_PROCESSING", isProcessing: false })
+              dispatch({
+                type: "ADD_MESSAGE",
+                message: {
+                  id: `${uploadThreadId || "file"}_send_err_${Date.now()}`,
+                  thread_id: uploadThreadId || "",
+                  role: "assistant",
+                  content: `\u274c ${swErr || "Companion 未连接，无法上传文件"}`,
+                  created_at: new Date().toISOString(),
+                },
+              })
+            }
+          },
+        )
       } else {
         // Same clientMessageId as SW `chat.user` echo so ADD_MESSAGE dedupes
         // when both optimistic local append and multi-surface broadcast land.
@@ -589,6 +656,8 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
       threadId: state.activeThreadId,
     })
     dispatch({ type: "SET_STREAMING", content: "" })
+    dispatch({ type: "SET_STREAMING_REASONING", content: "" })
+    dispatch({ type: "SET_PROCESSING_STATUS", status: null })
     dispatch({ type: "SET_PROCESSING", isProcessing: false })
     if (state.activeThreadId) {
       dispatch({ type: "SET_THREAD_BUSY", threadId: state.activeThreadId, busy: false })

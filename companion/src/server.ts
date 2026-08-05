@@ -5995,13 +5995,45 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
         // WebSocket message size limit (P0)
         const rawLen = Buffer.isBuffer(raw) ? raw.length : Buffer.byteLength(raw.toString())
         if (rawLen > MAX_WS_MESSAGE_SIZE) {
-          logger.warn("ws.message_too_large", { size: rawLen, max: MAX_WS_MESSAGE_SIZE })
+          logger.warn("ws.message_too_large", {
+            size: rawLen,
+            max: MAX_WS_MESSAGE_SIZE,
+            // Peek type without full parse when possible (prefix search)
+            peek: (() => {
+              try {
+                const s = Buffer.isBuffer(raw) ? raw.subarray(0, 200).toString("utf8") : String(raw).slice(0, 200)
+                const m = s.match(/"type"\s*:\s*"([^"]+)"/)
+                return m?.[1] || null
+              } catch {
+                return null
+              }
+            })(),
+          })
           if (ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ type: "error", error: "Message too large" }))
           }
           return
         }
         msg = JSON.parse(raw.toString())
+        // Early breadcrumb for file uploads — before auth/validation so we can
+        // see packets that die at those gates (diag for stuck attachment UX).
+        if (msg?.type === "file.upload") {
+          const files = Array.isArray(msg.files) ? msg.files : []
+          logger.info("ws.file_upload.received", {
+            thread_id: typeof msg.thread_id === "string" ? msg.thread_id : null,
+            raw_bytes: rawLen,
+            file_count: files.length,
+            files: files.map((f: any) => ({
+              name: typeof f?.name === "string" ? f.name : null,
+              type: typeof f?.type === "string" ? f.type : null,
+              content_b64_len: typeof f?.content === "string" ? f.content.length : 0,
+              has_name: !!f?.name,
+              has_type: !!f?.type,
+              has_content: typeof f?.content === "string" && f.content.length > 0,
+            })),
+            authenticated: wsAuth.get(ws)?.authenticated === true,
+          })
+        }
         // P0-2B: an unauthenticated peer may send ONLY auth.handshake. Any other
         // message — including ones that would fail structural validation below —
         // terminates the connection immediately. Without this early gate a forged-
@@ -6017,7 +6049,16 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
         // Stricter message validation (P2)
         const validation = validateWsMessage(msg)
         if (!validation.valid) {
-          logger.warn("ws.invalid_message", { error: validation.error, msg_type: typeof msg })
+          logger.warn("ws.invalid_message", {
+            error: validation.error,
+            msg_type: typeof msg?.type === "string" ? msg.type : typeof msg,
+            ...(msg?.type === "file.upload"
+              ? {
+                  thread_id: msg.thread_id ?? null,
+                  file_count: Array.isArray(msg.files) ? msg.files.length : null,
+                }
+              : {}),
+          })
           if (ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ type: "error", error: `Invalid message: ${validation.error}` }))
           }

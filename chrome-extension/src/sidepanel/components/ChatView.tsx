@@ -59,8 +59,18 @@ const TOOL_RESULT_PREVIEW = 200
 
 export function ChatView() {
   const { state, dispatch } = useAgentStore()
-  const { messages, streamingContent, activeThreadId, isProcessing, sendShortcut, fleet, threadBusyById, threads } =
-    state
+  const {
+    messages,
+    streamingContent,
+    streamingReasoning,
+    processingStatus,
+    activeThreadId,
+    isProcessing,
+    sendShortcut,
+    fleet,
+    threadBusyById,
+    threads,
+  } = state
   const containerRef = useRef<HTMLDivElement>(null)
   const lastMessageCountRef = useRef(messages.length)
   const pinnedRef = useRef(true)
@@ -72,7 +82,7 @@ export function ChatView() {
   const runningTools = collectRunningTools(messages)
   const mapBusy = !!(activeThreadId && threadBusyById[activeThreadId])
   const threadBusy = deriveThreadBusy({
-    streaming: !!streamingContent,
+    streaming: !!(streamingContent || streamingReasoning),
     isProcessing,
     runningToolCount: runningTools.length,
     mapBusy,
@@ -128,7 +138,9 @@ export function ChatView() {
       const base = formatRunningToolsLabel(runningTools) || "执行中"
       return `${base}${fleetBit}`
     }
-    if (streamingContent) return null
+    // Live answer/reasoning stream owns the bubble — hide status chip
+    if (streamingContent || streamingReasoning) return null
+    if (processingStatus) return `${processingStatus}${fleetBit}`
     if (threadBusy || isProcessing) {
       return `思考中${fleetBit}`
     }
@@ -150,7 +162,11 @@ export function ChatView() {
     const container = containerRef.current
     if (!container) return
     // Scroll when message count changes or streaming content updates
-    if (messages.length !== lastMessageCountRef.current || streamingContent) {
+    if (
+      messages.length !== lastMessageCountRef.current ||
+      streamingContent ||
+      streamingReasoning
+    ) {
       lastMessageCountRef.current = messages.length
       // Use requestAnimationFrame to ensure DOM has updated
       requestAnimationFrame(() => {
@@ -159,7 +175,7 @@ export function ChatView() {
         }
       })
     }
-  }, [messages.length, streamingContent])
+  }, [messages.length, streamingContent, streamingReasoning])
 
   const handleScroll = useCallback(() => {
     const container = containerRef.current
@@ -233,7 +249,7 @@ export function ChatView() {
 
   return (
     <div style={styles.container} ref={containerRef} onScroll={handleScroll}>
-      {messages.length === 0 && !streamingContent && !processingLabel && (
+      {messages.length === 0 && !streamingContent && !streamingReasoning && !processingLabel && (
         <EmptyState level={level} />
       )}
       {messages.map(msg => (
@@ -248,11 +264,23 @@ export function ChatView() {
           dispatch={dispatch}
         />
       ))}
-      {streamingContent && (
+      {(streamingReasoning || streamingContent) && (
         <div style={styles.agentMsg}>
-          <div style={styles.agentBubble}>
-            <StreamingMarkdown content={streamingContent} />
-            <Cursor />
+          <div style={styles.messageCol}>
+            {streamingReasoning ? (
+              <ReasoningBlock content={streamingReasoning} live={!streamingContent} />
+            ) : null}
+            {streamingContent ? (
+              <div style={styles.agentBubble}>
+                <StreamingMarkdown content={streamingContent} />
+                <Cursor />
+              </div>
+            ) : streamingReasoning ? (
+              <div style={styles.statusBubble}>
+                思考中
+                <span style={styles.statusDots}>...</span>
+              </div>
+            ) : null}
           </div>
         </div>
       )}
@@ -378,6 +406,9 @@ const MessageRow = memo(function MessageRow({
           </div>
         ) : (
           <>
+            {!isUser && msg.reasoning_content ? (
+              <ReasoningBlock content={msg.reasoning_content} />
+            ) : null}
             <div style={isUser ? styles.userBubble : styles.agentBubble}>
               {hasLongContent ? (
                 <CollapsibleMarkdown content={msg.content} maxPreview={LONG_CONTENT_PREVIEW} renderMermaid />
@@ -430,11 +461,51 @@ const MessageRow = memo(function MessageRow({
   return (
     prev.msg.id === next.msg.id &&
     prev.msg.content === next.msg.content &&
+    prev.msg.reasoning_content === next.msg.reasoning_content &&
     prev.msg.tool_calls === next.msg.tool_calls &&
     prev.activeThreadId === next.activeThreadId &&
     prev.sendShortcut === next.sendShortcut
   )
 })
+
+/** Collapsible model thinking / DeepSeek reasoning block. */
+function ReasoningBlock({ content, live = false }: { content: string; live?: boolean }) {
+  const [open, setOpen] = useState(live)
+  // Auto-open while live and no answer yet; leave user control once they toggle.
+  const userToggled = useRef(false)
+  useEffect(() => {
+    if (live && !userToggled.current) setOpen(true)
+    if (!live && !userToggled.current) setOpen(false)
+  }, [live])
+  if (!content) return null
+  return (
+    <div style={styles.reasoningWrap}>
+      <button
+        type="button"
+        style={styles.reasoningToggle}
+        onClick={() => {
+          userToggled.current = true
+          setOpen((v) => !v)
+        }}
+        aria-expanded={open}
+      >
+        <span style={styles.reasoningLabel}>
+          {live ? "模型思考中" : "思考过程"}
+          {live ? <span style={styles.statusDots}>...</span> : null}
+          {!open && !live ? (
+            <span style={styles.reasoningMeta}>（{content.length} 字）</span>
+          ) : null}
+        </span>
+        <span style={styles.reasoningChevron}>{open ? "▾" : "▸"}</span>
+      </button>
+      {open ? (
+        <div style={styles.reasoningBody}>
+          <pre style={styles.reasoningPre}>{content}</pre>
+        </div>
+      ) : null}
+    </div>
+  )
+}
 
 function CollapsibleMarkdown({ content, maxPreview, renderMermaid = false }: { content: string; maxPreview: number; renderMermaid?: boolean }) {
   const [expanded, setExpanded] = useState(false)
@@ -1289,6 +1360,56 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: "center",
     gap: 4,
     border: "1px solid rgba(79, 70, 229, 0.12)",
+  },
+  reasoningWrap: {
+    marginBottom: 6,
+    maxWidth: "100%",
+    borderRadius: tokens.radiusBubble,
+    border: `1px solid ${tokens.border}`,
+    background: "rgba(15, 23, 42, 0.03)",
+    overflow: "hidden" as const,
+  },
+  reasoningToggle: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    width: "100%",
+    gap: 8,
+    padding: "6px 10px",
+    border: "none",
+    background: "transparent",
+    cursor: "pointer",
+    fontFamily: tokens.font,
+    color: tokens.textSecondary,
+    fontSize: 11,
+    fontWeight: 600,
+  },
+  reasoningLabel: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 2,
+  },
+  reasoningChevron: {
+    color: tokens.textMuted,
+    fontSize: 11,
+  },
+  reasoningMeta: {
+    fontWeight: 500,
+    color: tokens.textMuted,
+  },
+  reasoningBody: {
+    padding: "0 10px 8px",
+    maxHeight: 220,
+    overflowY: "auto" as const,
+  },
+  reasoningPre: {
+    margin: 0,
+    whiteSpace: "pre-wrap" as const,
+    wordBreak: "break-word" as const,
+    fontSize: 11,
+    lineHeight: 1.45,
+    color: tokens.textSecondary,
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
   },
   fakeEnd: {
     display: "block",

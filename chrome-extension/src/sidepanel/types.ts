@@ -205,6 +205,8 @@ export interface Message {
   role: "user" | "assistant" | "tool"
   content: string
   tool_calls?: ToolCall[]
+  /** Model thinking / DeepSeek reasoning (optional; collapsible in UI). */
+  reasoning_content?: string
   created_at: string
   streaming?: boolean
 }

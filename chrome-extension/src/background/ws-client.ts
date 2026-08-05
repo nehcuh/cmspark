@@ -237,6 +237,26 @@ export class WSClient {
   }
 
   /**
+   * Lightweight connection snapshot for diagnostics (no secrets).
+   * Used by file.upload logging to distinguish unpaired / handshaking / open.
+   */
+  getDiag(): {
+    state: ConnectionState
+    authenticated: boolean
+    unpaired: boolean
+    readyState: number | null
+    pending: number
+  } {
+    return {
+      state: this.state,
+      authenticated: this.authenticated,
+      unpaired: this.unpaired,
+      readyState: this.ws ? this.ws.readyState : null,
+      pending: this.pending.length,
+    }
+  }
+
+  /**
    * Called when the service worker wakes up.
    * Checks if the WebSocket is still alive; reconnects if dead.
    */

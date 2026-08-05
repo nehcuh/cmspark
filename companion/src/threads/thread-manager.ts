@@ -143,6 +143,8 @@ interface Message {
   role: "user" | "assistant" | "tool" | "system"
   content: string
   tool_calls?: any[]
+  /** DeepSeek / Anthropic thinking text (optional; UI shows as collapsible). */
+  reasoning_content?: string
   created_at: string
 }
 
