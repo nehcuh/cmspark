@@ -14,6 +14,7 @@ import {
 } from "./cli-manifest"
 import { basenameToVault, isLolbinPath, checkAddAllowed } from "./guards"
 import type { AppEntry } from "./types"
+import { hardenPath } from "../process-path"
 
 /** Env keys allowed into CLI child (explicit allowlist only). */
 const ENV_ALLOW = new Set([
@@ -69,10 +70,16 @@ export function buildCliChildEnv(
     const v = parent[k]
     if (typeof v === "string") out[k] = v
   }
-  // Minimal PATH fallback if stripped empty (win32 ≠ Unix defaults)
-  if (!out.PATH && !out.Path) {
-    out.PATH = parent.PATH || parent.Path || defaultCliPathFallback(platform, parent)
+  // Harden PATH: empty / file-in-PATH / missing system bins (spawn ENOTDIR / command not found).
+  // Cross-platform unit tests pass platform≠host; skip FS probe and keep string fallback.
+  const rawPath = out.PATH || out.Path || parent.PATH || parent.Path || ""
+  if (platform !== process.platform) {
+    out.PATH = rawPath || defaultCliPathFallback(platform, parent)
+  } else {
+    const hardened = hardenPath({ pathEnv: rawPath, platform })
+    out.PATH = hardened || defaultCliPathFallback(platform, parent)
   }
+  if (out.Path) delete out.Path
   return out
 }
 

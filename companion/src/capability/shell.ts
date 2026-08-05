@@ -8,6 +8,7 @@ import * as path from "path"
 import { getModule, requireModule } from "./modules"
 import { appendCapabilityAudit } from "../packs/audit-log"
 import { getUserEnvVars } from "../user-env"
+import { hardenPath } from "../process-path"
 
 const MAX_OUTPUT = 200_000
 const DEFAULT_TIMEOUT_MS = 60_000
@@ -17,14 +18,18 @@ const PROGRESS_INTERVAL_MS = 750
 
 /**
  * Child env for shell_exec (ADR-019).
- * Merge order: process.env → user_env → force CMSPARK_SHELL (cannot be overridden by user).
+ * Merge order: process.env → user_env → harden PATH → force CMSPARK_SHELL
+ * (cannot be overridden by user). PATH harden drops file-in-PATH segments that
+ * cause `spawn ENOTDIR` and restores /usr/bin:/bin for GUI/packaged launches.
  */
 export function buildChildEnv(): NodeJS.ProcessEnv {
-  return {
+  const env: NodeJS.ProcessEnv = {
     ...process.env,
     ...getUserEnvVars(),
     CMSPARK_SHELL: "1",
   }
+  env.PATH = hardenPath({ pathEnv: env.PATH })
+  return env
 }
 
 /**

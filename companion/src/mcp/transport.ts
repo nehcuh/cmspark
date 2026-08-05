@@ -14,6 +14,7 @@ import os from "node:os"
 import fs from "node:fs"
 import { logger } from "../logger.js"
 import { getUserEnvVars } from "../user-env.js"
+import { keepOnlyDirectories, splitPathEnv } from "../process-path.js"
 import type { McpServerConfig } from "./types.js"
 
 export interface TransportExtras {
@@ -36,10 +37,8 @@ export interface TransportExtras {
  */
 export function buildSpawnPath(): string {
   const existing = process.env.PATH ?? ""
-  const segments = new Set<string>()
-  existing.split(path.delimiter).forEach((p) => {
-    if (p) segments.add(p)
-  })
+  // Drop file-in-PATH segments (spawn ENOTDIR). Keep only real directories.
+  const segments = new Set<string>(keepOnlyDirectories(splitPathEnv(existing)))
 
   const candidates: string[] = []
   // 1. Sibling binaries of the running node (npx/npm live alongside node).

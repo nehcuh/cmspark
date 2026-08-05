@@ -18,9 +18,14 @@ import {
 import { startMenuBarAgent } from "./menu-bar-agent"
 import { runInteractiveSettings, runNonInteractiveSettings, runNonInteractiveSettingsCli } from "./settings-cli"
 import { getPlatform } from "./platform"
+import { applyHardenedProcessPath } from "./process-path"
 import * as fs from "fs"
 import * as path from "path"
 import * as child_process from "child_process"
+
+// Earliest possible PATH fix for tray/daemon/settings entrypoints (before any spawn).
+// Packaged .app has shipped with PATH=…/cmspark-agent.js → bare tools fail ENOTDIR.
+applyHardenedProcessPath()
 
 function printUsage(): void {
   console.log(`cmspark-agent v0.4.0
