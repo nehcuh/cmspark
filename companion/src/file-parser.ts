@@ -58,6 +58,16 @@ function getExtension(filename: string): string {
   return filename.split(".").pop()?.toLowerCase() || ""
 }
 
+/**
+ * Basename-only upload name for temp writes (S45 multi-lane).
+ * Returns null when empty / `.` / `..` after stripping NULs.
+ */
+export function safeUploadBasename(filename: string): string | null {
+  const safeBase = path.basename(filename).replace(/\0/g, "")
+  if (!safeBase || safeBase === "." || safeBase === "..") return null
+  return safeBase
+}
+
 function getMimeType(filename: string, providedMime: string): string {
   if (providedMime && providedMime !== "application/octet-stream") return providedMime
   const ext = getExtension(filename)
@@ -244,7 +254,38 @@ async function parseOfficeFile(buffer: Buffer, filename: string, mimeType: strin
   }
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-upload-"))
-  const tmpPath = path.join(tmpDir, filename)
+  // S45 multi-lane: never join raw client filename (zip-slip / path escape).
+  const safeBase = safeUploadBasename(filename)
+  if (!safeBase) {
+    try {
+      fs.rmSync(tmpDir, { recursive: true, force: true })
+    } catch {
+      /* ignore */
+    }
+    return {
+      success: false,
+      error: `Office 文件被拒绝：非法文件名 "${filename}"`,
+      filename,
+      mimeType,
+    }
+  }
+  const tmpPath = path.join(tmpDir, safeBase)
+  const resolvedDir = path.resolve(tmpDir)
+  const resolvedFile = path.resolve(tmpPath)
+  const rel = path.relative(resolvedDir, resolvedFile)
+  if (rel.startsWith("..") || path.isAbsolute(rel)) {
+    try {
+      fs.rmSync(tmpDir, { recursive: true, force: true })
+    } catch {
+      /* ignore */
+    }
+    return {
+      success: false,
+      error: `Office 文件被拒绝：文件名逃逸临时目录`,
+      filename,
+      mimeType,
+    }
+  }
   fs.writeFileSync(tmpPath, buffer)
 
   try {

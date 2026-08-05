@@ -580,9 +580,18 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
             over_companion_10mb: jsonBytes > 10 * 1024 * 1024,
           })
           if (!sent) {
+            // S45 dual-review nit: stamp upload_error so Side Panel clears the
+            // correct mapBusy after mid-upload thread switch (not bare `error`).
+            const tid =
+              typeof message.threadId === "string" && message.threadId
+                ? message.threadId
+                : typeof message.thread_id === "string"
+                  ? message.thread_id
+                  : null
             chrome.runtime.sendMessage({
-              type: "error",
+              type: tid ? "file.upload_error" : "error",
               error: "Companion 未连接，请检查 Companion 是否已启动",
+              ...(tid ? { thread_id: tid } : {}),
             })
           }
           sendResponse({

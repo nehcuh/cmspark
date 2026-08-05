@@ -6,7 +6,7 @@ import { useAgentStore } from "../store/agentStore"
 import { tokens } from "../ui/tokens"
 import type { FleetWorkerView } from "../types"
 import { fleetStripShouldShow } from "./focus-band-priority"
-import { buildScopedRunBusyInput } from "../utils/thread-busy"
+import { buildFleetStopAllMessage, buildScopedRunBusyInput } from "../utils/thread-busy"
 
 function worstColor(status: string | undefined): string {
   if (status === "holding_tabs") return "#f59e0b"
@@ -66,11 +66,21 @@ export function FleetStrip({
       openIntents: built.runBusyInput.openIntents,
       worst,
       workers: built.scopedWorkers as FleetWorkerView[],
+      scope: built.scope,
       scopeKind: built.scope.kind,
+      stopAll: buildFleetStopAllMessage(built.scope),
     }
   }, [activeThread, activeId, fleet])
 
   const { workerCount, lockCount, openIntents, worst } = scoped
+
+  // Must stay above early-return (hooks order). Scope locks to visible workers.
+  const scopedLocks = useMemo(() => {
+    const workers = scoped.workers || []
+    const allowed = new Set(workers.map((w) => w.id))
+    if (activeId) allowed.add(activeId)
+    return (fleet?.locks || []).filter((l) => allowed.has(l.holder_thread_id))
+  }, [scoped.workers, activeId, fleet?.locks])
 
   useEffect(() => {
     const tick = () => chrome.runtime.sendMessage({ type: "fleet.status" })
@@ -97,14 +107,22 @@ export function FleetStrip({
   }
 
   const stopAll = () => {
-    if (
-      !window.confirm(
-        "停止全部子任务？将中止全部 worker LLM、拒绝待确认，并释放相关 tab 锁。",
-      )
-    ) {
+    const built = scoped.stopAll
+    if (!window.confirm(built.confirmText)) {
       return
     }
-    chrome.runtime.sendMessage({ type: "fleet.stop_all" })
+    const payload: {
+      type: "fleet.stop_all"
+      orchestrator_run_id?: string
+      parent_thread_id?: string
+    } = { type: "fleet.stop_all" }
+    if (built.orchestrator_run_id) {
+      payload.orchestrator_run_id = built.orchestrator_run_id
+    }
+    if (built.parent_thread_id) {
+      payload.parent_thread_id = built.parent_thread_id
+    }
+    chrome.runtime.sendMessage(payload)
   }
 
   const enterWorker = (w: FleetWorkerView) => {
@@ -153,7 +171,7 @@ export function FleetStrip({
           style={styles.dangerBtn}
           onClick={stopAll}
           disabled={workerCount === 0}
-          title="Stop all workers"
+          title={workerCount === 0 ? "当前作用域无 worker 可停" : scoped.stopAll.stopTitle}
         >
           全停
         </button>
@@ -238,13 +256,13 @@ export function FleetStrip({
               </li>
             ))}
           </ul>
-          {(fleet?.locks?.length || 0) > 0 && (
+          {scopedLocks.length > 0 && (
             <div style={{ marginTop: 8 }}>
               <div style={styles.panelHead}>
                 <span>Tab 锁</span>
               </div>
               <ul style={styles.list}>
-                {fleet!.locks.map((l) => (
+                {scopedLocks.map((l) => (
                   <li key={l.tab_id} style={styles.item}>
                     <div style={styles.row}>
                       <code style={{ fontSize: 10 }}>tab {l.tab_id}</code>

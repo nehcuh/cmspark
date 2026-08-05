@@ -168,6 +168,46 @@ export function workersInFleetScope(
   )
 }
 
+/**
+ * Build fleet.stop_all payload + confirm copy from fleet scope.
+ * S45 multi-lane:
+ * - `run` → orchestrator_run_id (companion listWorkers by run)
+ * - `parent` → parent_thread_id (companion filters workers by parent)
+ * - `none` → process-wide residual cleanup (explicit confirm; button usually disabled)
+ */
+export function buildFleetStopAllMessage(scope: FleetScope): {
+  type: "fleet.stop_all"
+  orchestrator_run_id?: string
+  parent_thread_id?: string
+  confirmText: string
+  stopTitle: string
+} {
+  if (scope.kind === "run") {
+    return {
+      type: "fleet.stop_all",
+      orchestrator_run_id: scope.runId,
+      confirmText:
+        "停止当前 run 的全部子任务？将中止该 run 下 worker LLM、拒绝待确认，并释放相关 tab 锁。",
+      stopTitle: "停止当前 run 的全部 worker",
+    }
+  }
+  if (scope.kind === "parent") {
+    return {
+      type: "fleet.stop_all",
+      parent_thread_id: scope.parentId,
+      confirmText:
+        "停止本会话相关子任务？将中止该会话下 worker LLM、拒绝待确认，并释放相关 tab 锁。",
+      stopTitle: "停止本会话相关 worker",
+    }
+  }
+  return {
+    type: "fleet.stop_all",
+    confirmText:
+      "清理进程内全部 worker 残留？将中止全部 worker LLM、拒绝待确认，并释放相关 tab 锁。",
+    stopTitle: "当前会话无子任务列表；全停会作用到进程内全部 worker",
+  }
+}
+
 /** Intersect ids with workers visible under the active fleet scope. */
 export function filterIdsByFleetScope(
   ids: string[],

@@ -1,0 +1,11 @@
+﻿ chrome-extension/plasmo.config.ts                  |  2 +-
+ chrome-extension/src/sidepanel/App.tsx             |  9 ++++
+ .../src/sidepanel/components/FleetStrip.tsx        | 21 +++++----
+ .../src/sidepanel/components/FleetWorkerList.tsx   | 23 +++++----
+ .../src/sidepanel/hooks/useWebSocket.ts            |  7 +++
+ .../src/sidepanel/utils/thread-busy.ts             | 37 +++++++++++++++
+ chrome-extension/tests/stream-thread-gate.test.ts  |  6 +++
+ chrome-extension/tests/thread-busy.test.ts         | 20 ++++++++
+ companion/src/file-parser.ts                       | 43 ++++++++++++++++-
+ companion/src/server.ts                            | 55 +++++++++++++++++-----
+ 10 files changed, 192 insertions(+), 31 deletions(-)

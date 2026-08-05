@@ -1,0 +1,11 @@
+﻿{
+    "claude_verdict":  "APPROVE",
+    "pi_path":  "docs/audit/reviews/s45-p0-followup-pi-rerun-note.md",
+    "batch":  "s45-p0-followup",
+    "claude_path":  "docs/audit/reviews/s45-p0-followup-claude-20260805-222016-utf8.md",
+    "time":  "20260805-222016",
+    "pi_verdict":  "APPROVE_WITH_NITS",
+    "internal_adversarial":  "pass",
+    "both_approve":  true,
+    "notes":  "Pi first job truncated; re-run via pi -p -t read produced APPROVE_WITH_NITS. Claude APPROVE."
+}

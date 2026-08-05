@@ -1173,12 +1173,16 @@ export function useWebSocket() {
         // File parse/type/size failures return before chatCreate — must clear
         // the optimistic "思考中" busy set by InputArea on send. Without this
         // the panel stays stuck forever (no chat.done / chat.error ever arrives).
+        // S45 multi-lane P0: always clear mapBusy for the upload thread; panel
+        // chrome (isProcessing / ADD_MESSAGE) only when that thread is active —
+        // otherwise thread-switch mid-upload pollutes the wrong transcript.
         case "file.upload_error": {
           const uploadErrTid =
             (typeof msg.thread_id === "string" && msg.thread_id) || activeThreadRef.current || ""
           if (uploadErrTid) {
             dispatch({ type: "SET_THREAD_BUSY", threadId: uploadErrTid, busy: false })
           }
+          if (!shouldApplyStreamEvent(uploadErrTid, activeThreadRef.current)) break
           streamingRef.current = ""
           reasoningRef.current = ""
           dispatch({ type: "SET_STREAMING", content: "" })
@@ -1203,12 +1207,15 @@ export function useWebSocket() {
 
         // Ack after successful parse+chat — chat.done already cleared busy; keep
         // as a safety net if chat path returned early without streaming.
+        // S45 P1: clear mapBusy for upload thread always; isProcessing only if
+        // active (avoid unlocking another thread's "thinking" after switch).
         case "file.uploaded": {
           const upTid =
             (typeof msg.thread_id === "string" && msg.thread_id) || activeThreadRef.current || ""
           if (upTid) {
             dispatch({ type: "SET_THREAD_BUSY", threadId: upTid, busy: false })
           }
+          if (!shouldApplyStreamEvent(upTid, activeThreadRef.current)) break
           dispatch({ type: "SET_PROCESSING_STATUS", status: null })
           // Only clear processing if no stream is in flight for this panel.
           if (!streamingRef.current && !reasoningRef.current) {

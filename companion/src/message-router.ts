@@ -596,6 +596,23 @@ export async function handleMessage(
       const config = getConfig()
       const fileConfig = config.file_upload || { max_file_size: 10 * 1024 * 1024, allowed_types: [] as string[], max_embedded_images: 20, enable_vision_analysis: true, max_file_tokens: 50000 }
 
+      // S45: persist parse/type failures so mid-upload thread switch still shows
+      // the error when the user returns (UI gates ADD_MESSAGE for foreign threads).
+      const uploadError = (error: string) => {
+        try {
+          if (typeof thread_id === "string" && thread_id) {
+            services.threadManager.addMessage(thread_id, {
+              thread_id,
+              role: "assistant",
+              content: `\u274c ${error}`,
+            })
+          }
+        } catch {
+          /* best-effort — still return WS error */
+        }
+        return { type: "file.upload_error" as const, thread_id, error }
+      }
+
       logger.info("file.upload.start", {
         thread_id,
         count: Array.isArray(files) ? files.length : 0,
@@ -644,19 +661,15 @@ export async function handleMessage(
 
           const decodedSize = Math.ceil(content.length * 0.75)
           if (decodedSize > fileConfig.max_file_size) {
-            return {
-              type: "file.upload_error",
-              thread_id,
-              error: `文件 "${name}" 过大 (${Math.round(decodedSize / 1024 / 1024)}MB)，最大支持 ${Math.round(fileConfig.max_file_size / 1024 / 1024)}MB`,
-            }
+            return uploadError(
+              `文件 "${name}" 过大 (${Math.round(decodedSize / 1024 / 1024)}MB)，最大支持 ${Math.round(fileConfig.max_file_size / 1024 / 1024)}MB`,
+            )
           }
 
           if (fileConfig.allowed_types.length > 0 && !fileConfig.allowed_types.includes(type)) {
-            return {
-              type: "file.upload_error",
-              thread_id,
-              error: `不支持的文件类型: ${type}（请确认扩展名为 .docx/.pdf 等支持格式）`,
-            }
+            return uploadError(
+              `不支持的文件类型: ${type}（请确认扩展名为 .docx/.pdf 等支持格式）`,
+            )
           }
 
           const buffer = Buffer.from(content, "base64")
@@ -674,15 +687,11 @@ export async function handleMessage(
               filename: name,
               error: parseErr?.message || String(parseErr),
             })
-            return {
-              type: "file.upload_error",
-              thread_id,
-              error: parseErr?.message || `文件 "${name}" 解析失败`,
-            }
+            return uploadError(parseErr?.message || `文件 "${name}" 解析失败`)
           }
 
           if (!parseResult.success) {
-            return { type: "file.upload_error", thread_id, error: parseResult.error }
+            return uploadError(parseResult.error)
           }
 
           parseResults.push(parseResult)
@@ -746,11 +755,7 @@ export async function handleMessage(
           thread_id,
           error: phaseErr?.message || String(phaseErr),
         })
-        return {
-          type: "file.upload_error",
-          thread_id,
-          error: phaseErr?.message || "文件处理失败",
-        }
+        return uploadError(phaseErr?.message || "文件处理失败")
       }
 
       logger.info("file.upload.parsed", {
@@ -1808,13 +1813,27 @@ export async function handleMessage(
     }
     case "fleet.stop_all": {
       const runId = typeof rest.orchestrator_run_id === "string" ? rest.orchestrator_run_id : null
+      const parentId =
+        typeof rest.parent_thread_id === "string" && rest.parent_thread_id
+          ? rest.parent_thread_id
+          : null
       const { listWorkers } = await import("./orchestrator/spawn")
       const { releaseLeasesForThreadPendingAware } = await import("./orchestrator/tab-lease")
       const { rejectPendingForThread, hasPendingForTab, rejectPendingForTab, securityConfirmations } =
         await import("./server")
       let targets: any[] = []
+      // Precedence: run scope > parent scope > process-wide residual cleanup.
       if (runId) {
         targets = listWorkers(threadManager, runId)
+      } else if (parentId) {
+        // S45: host/worker without run stamp — only workers under this parent.
+        targets = threadManager
+          .list()
+          .filter(
+            (t: any) =>
+              t.agent_role === "worker" &&
+              (t.parent_thread_id === parentId || t.id === parentId),
+          )
       } else {
         targets = threadManager.list().filter((t: any) => t.agent_role === "worker")
       }

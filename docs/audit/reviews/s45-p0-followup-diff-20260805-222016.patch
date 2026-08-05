@@ -1,0 +1,431 @@
+﻿diff --git a/chrome-extension/plasmo.config.ts b/chrome-extension/plasmo.config.ts
+index 1ff5881..a2b2c1a 100644
+--- a/chrome-extension/plasmo.config.ts
++++ b/chrome-extension/plasmo.config.ts
+@@ -4,6 +4,6 @@ export const config: PlasmoCSConfig = {}
+ 
+ export const manifest: PlasmoManifest = {
+   name: "CMspark Browser Agent",
+-  version: "0.3.0",
++  version: "0.4.0",
+   description: "AI-powered browser agent 鈥?read, operate tabs, use cookies, configure LLM, support skills",
+ }
+diff --git a/chrome-extension/src/sidepanel/App.tsx b/chrome-extension/src/sidepanel/App.tsx
+index d56c0d7..c6f82c0 100644
+--- a/chrome-extension/src/sidepanel/App.tsx
++++ b/chrome-extension/src/sidepanel/App.tsx
+@@ -44,6 +44,7 @@ import {
+   deriveThreadBusy,
+   resolveComposerMode,
+ } from "./utils/thread-busy"
++import { shouldApplyStreamEvent } from "./hooks/useWebSocket"
+ import { WorkerScopeBar } from "./components/WorkerScopeBar"
+ import { RunBusyChip } from "./components/RunBusyChip"
+ import { FleetWorkerListPortal } from "./components/FleetWorkerList"
+@@ -220,6 +221,9 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
+   const textareaRef = useRef<HTMLTextAreaElement>(null)
+   const fileInputRef = useRef<HTMLInputElement>(null)
+   const sendingRef = useRef(false)
++  /** Fresh active thread for SW upload callbacks (closure state is stale after switch). */
++  const activeThreadIdRef = useRef(state.activeThreadId)
++  activeThreadIdRef.current = state.activeThreadId
+   const isComputer = capabilityLevel === "computer"
+ 
+   const openCompose = useCallback(() => {
+@@ -597,9 +601,14 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
+               /* ignore */
+             }
+             if (swErr || !response?.ok) {
++              // Always clear mapBusy for the upload thread.
+               if (uploadThreadId) {
+                 dispatch({ type: "SET_THREAD_BUSY", threadId: uploadThreadId, busy: false })
+               }
++              // S45 P0: do not unlock / pollute another thread if user switched mid-send.
++              if (!shouldApplyStreamEvent(uploadThreadId, activeThreadIdRef.current)) {
++                return
++              }
+               dispatch({ type: "SET_PROCESSING_STATUS", status: null })
+               dispatch({ type: "SET_PROCESSING", isProcessing: false })
+               dispatch({
+diff --git a/chrome-extension/src/sidepanel/components/FleetStrip.tsx b/chrome-extension/src/sidepanel/components/FleetStrip.tsx
+index 719dff5..35e2f10 100644
+--- a/chrome-extension/src/sidepanel/components/FleetStrip.tsx
++++ b/chrome-extension/src/sidepanel/components/FleetStrip.tsx
+@@ -6,7 +6,7 @@ import { useAgentStore } from "../store/agentStore"
+ import { tokens } from "../ui/tokens"
+ import type { FleetWorkerView } from "../types"
+ import { fleetStripShouldShow } from "./focus-band-priority"
+-import { buildScopedRunBusyInput } from "../utils/thread-busy"
++import { buildFleetStopAllMessage, buildScopedRunBusyInput } from "../utils/thread-busy"
+ 
+ function worstColor(status: string | undefined): string {
+   if (status === "holding_tabs") return "#f59e0b"
+@@ -66,7 +66,9 @@ export function FleetStrip({
+       openIntents: built.runBusyInput.openIntents,
+       worst,
+       workers: built.scopedWorkers as FleetWorkerView[],
++      scope: built.scope,
+       scopeKind: built.scope.kind,
++      stopAll: buildFleetStopAllMessage(built.scope),
+     }
+   }, [activeThread, activeId, fleet])
+ 
+@@ -97,14 +99,17 @@ export function FleetStrip({
+   }
+ 
+   const stopAll = () => {
+-    if (
+-      !window.confirm(
+-        "鍋滄鍏ㄩ儴瀛愪换鍔★紵灏嗕腑姝㈠叏閮?worker LLM銆佹嫆缁濆緟纭锛屽苟閲婃斁鐩稿叧 tab 閿併€?,
+-      )
+-    ) {
++    const built = scoped.stopAll
++    if (!window.confirm(built.confirmText)) {
+       return
+     }
+-    chrome.runtime.sendMessage({ type: "fleet.stop_all" })
++    const payload: { type: "fleet.stop_all"; orchestrator_run_id?: string } = {
++      type: "fleet.stop_all",
++    }
++    if (built.orchestrator_run_id) {
++      payload.orchestrator_run_id = built.orchestrator_run_id
++    }
++    chrome.runtime.sendMessage(payload)
+   }
+ 
+   const enterWorker = (w: FleetWorkerView) => {
+@@ -153,7 +158,7 @@ export function FleetStrip({
+           style={styles.dangerBtn}
+           onClick={stopAll}
+           disabled={workerCount === 0}
+-          title="Stop all workers"
++          title={workerCount === 0 ? "褰撳墠浣滅敤鍩熸棤 worker 鍙仠" : scoped.stopAll.stopTitle}
+         >
+           鍏ㄥ仠
+         </button>
+diff --git a/chrome-extension/src/sidepanel/components/FleetWorkerList.tsx b/chrome-extension/src/sidepanel/components/FleetWorkerList.tsx
+index f7d8962..4ab5116 100644
+--- a/chrome-extension/src/sidepanel/components/FleetWorkerList.tsx
++++ b/chrome-extension/src/sidepanel/components/FleetWorkerList.tsx
+@@ -6,6 +6,7 @@ import { useAgentStore } from "../store/agentStore"
+ import type { FleetWorkerView } from "../types"
+ import { tokens } from "../ui/tokens"
+ import {
++  buildFleetStopAllMessage,
+   resolveFleetScope,
+   workersInFleetScope,
+ } from "../utils/thread-busy"
+@@ -67,15 +68,19 @@ export function FleetWorkerList({
+     onClose?.()
+   }
+ 
++  const stopBuilt = useMemo(() => buildFleetStopAllMessage(scope), [scope])
++
+   const stopAll = () => {
+-    if (
+-      !window.confirm(
+-        "鍋滄鍏ㄩ儴瀛愪换鍔★紵灏嗕腑姝㈠叏閮?worker LLM銆佹嫆缁濆緟纭锛屽苟閲婃斁鐩稿叧 tab 閿併€?,
+-      )
+-    ) {
++    if (!window.confirm(stopBuilt.confirmText)) {
+       return
+     }
+-    chrome.runtime.sendMessage({ type: "fleet.stop_all" })
++    const payload: { type: "fleet.stop_all"; orchestrator_run_id?: string } = {
++      type: "fleet.stop_all",
++    }
++    if (stopBuilt.orchestrator_run_id) {
++      payload.orchestrator_run_id = stopBuilt.orchestrator_run_id
++    }
++    chrome.runtime.sendMessage(payload)
+   }
+ 
+   const emptyHint =
+@@ -206,9 +211,9 @@ export function FleetWorkerList({
+           onClick={stopAll}
+           disabled={workers.filter((w) => w.agent_role === "worker").length === 0}
+           title={
+-            scope.kind === "none"
+-              ? "褰撳墠浼氳瘽鏃犲瓙浠诲姟锛涘叏鍋滀細浣滅敤鍒拌繘绋嬪唴鍏ㄩ儴 worker锛堢‘璁ゅ彴娓呯悊娈嬬暀鏃朵娇鐢級"
+-              : "Stop all workers"
++            workers.filter((w) => w.agent_role === "worker").length === 0
++              ? "褰撳墠浼氳瘽鏃犲瓙浠诲姟鍙仠"
++              : stopBuilt.stopTitle
+           }
+         >
+           鍏ㄥ仠
+diff --git a/chrome-extension/src/sidepanel/hooks/useWebSocket.ts b/chrome-extension/src/sidepanel/hooks/useWebSocket.ts
+index 287b711..a2dfa7e 100644
+--- a/chrome-extension/src/sidepanel/hooks/useWebSocket.ts
++++ b/chrome-extension/src/sidepanel/hooks/useWebSocket.ts
+@@ -1173,12 +1173,16 @@ export function useWebSocket() {
+         // File parse/type/size failures return before chatCreate 鈥?must clear
+         // the optimistic "鎬濊€冧腑" busy set by InputArea on send. Without this
+         // the panel stays stuck forever (no chat.done / chat.error ever arrives).
++        // S45 multi-lane P0: always clear mapBusy for the upload thread; panel
++        // chrome (isProcessing / ADD_MESSAGE) only when that thread is active 鈥?+        // otherwise thread-switch mid-upload pollutes the wrong transcript.
+         case "file.upload_error": {
+           const uploadErrTid =
+             (typeof msg.thread_id === "string" && msg.thread_id) || activeThreadRef.current || ""
+           if (uploadErrTid) {
+             dispatch({ type: "SET_THREAD_BUSY", threadId: uploadErrTid, busy: false })
+           }
++          if (!shouldApplyStreamEvent(uploadErrTid, activeThreadRef.current)) break
+           streamingRef.current = ""
+           reasoningRef.current = ""
+           dispatch({ type: "SET_STREAMING", content: "" })
+@@ -1203,12 +1207,15 @@ export function useWebSocket() {
+ 
+         // Ack after successful parse+chat 鈥?chat.done already cleared busy; keep
+         // as a safety net if chat path returned early without streaming.
++        // S45 P1: clear mapBusy for upload thread always; isProcessing only if
++        // active (avoid unlocking another thread's "thinking" after switch).
+         case "file.uploaded": {
+           const upTid =
+             (typeof msg.thread_id === "string" && msg.thread_id) || activeThreadRef.current || ""
+           if (upTid) {
+             dispatch({ type: "SET_THREAD_BUSY", threadId: upTid, busy: false })
+           }
++          if (!shouldApplyStreamEvent(upTid, activeThreadRef.current)) break
+           dispatch({ type: "SET_PROCESSING_STATUS", status: null })
+           // Only clear processing if no stream is in flight for this panel.
+           if (!streamingRef.current && !reasoningRef.current) {
+diff --git a/chrome-extension/src/sidepanel/utils/thread-busy.ts b/chrome-extension/src/sidepanel/utils/thread-busy.ts
+index be047e7..66ac0d8 100644
+--- a/chrome-extension/src/sidepanel/utils/thread-busy.ts
++++ b/chrome-extension/src/sidepanel/utils/thread-busy.ts
+@@ -168,6 +168,43 @@ export function workersInFleetScope(
+   )
+ }
+ 
++/**
++ * Build fleet.stop_all payload + confirm copy from fleet scope.
++ * S45 multi-lane P0: when scope is `run`, pass orchestrator_run_id so companion
++ * only stops that run's workers (message-router already supports the filter).
++ * Parent/none remain process-wide with honest confirm copy until parent filter lands.
++ */
++export function buildFleetStopAllMessage(scope: FleetScope): {
++  type: "fleet.stop_all"
++  orchestrator_run_id?: string
++  confirmText: string
++  stopTitle: string
++} {
++  if (scope.kind === "run") {
++    return {
++      type: "fleet.stop_all",
++      orchestrator_run_id: scope.runId,
++      confirmText:
++        "鍋滄褰撳墠 run 鐨勫叏閮ㄥ瓙浠诲姟锛熷皢涓璇?run 涓?worker LLM銆佹嫆缁濆緟纭锛屽苟閲婃斁鐩稿叧 tab 閿併€?,
++      stopTitle: "鍋滄褰撳墠 run 鐨勫叏閮?worker",
++    }
++  }
++  if (scope.kind === "parent") {
++    return {
++      type: "fleet.stop_all",
++      confirmText:
++        "鍋滄瀛愪换鍔★紵褰撳墠灏嗕腑姝㈣繘绋嬪唴鍏ㄩ儴 worker锛堟棤娉曚粎鎸変細璇濊繃婊わ級锛屽苟閲婃斁鐩稿叧 tab 閿併€?,
++      stopTitle: "鍋滄杩涚▼鍐呭叏閮?worker锛堜細璇濇棤娉曞崟鐙繃婊わ級",
++    }
++  }
++  return {
++    type: "fleet.stop_all",
++    confirmText:
++      "娓呯悊杩涚▼鍐呭叏閮?worker 娈嬬暀锛熷皢涓鍏ㄩ儴 worker LLM銆佹嫆缁濆緟纭锛屽苟閲婃斁鐩稿叧 tab 閿併€?,
++    stopTitle: "褰撳墠浼氳瘽鏃犲瓙浠诲姟鍒楄〃锛涘叏鍋滀細浣滅敤鍒拌繘绋嬪唴鍏ㄩ儴 worker",
++  }
++}
++
+ /** Intersect ids with workers visible under the active fleet scope. */
+ export function filterIdsByFleetScope(
+   ids: string[],
+diff --git a/chrome-extension/tests/stream-thread-gate.test.ts b/chrome-extension/tests/stream-thread-gate.test.ts
+index 399f86f..1e15318 100644
+--- a/chrome-extension/tests/stream-thread-gate.test.ts
++++ b/chrome-extension/tests/stream-thread-gate.test.ts
+@@ -29,3 +29,9 @@ test("shouldApplyStreamEvent: missing thread_id applies even when active is null
+   // Legacy events without thread_id still apply so pre-thread_id wire stays usable.
+   assert.equal(shouldApplyStreamEvent(undefined, null), true)
+ })
++
++// S45 multi-lane P0: file.upload_error / SW-fail panel chrome uses the same gate.
++test("shouldApplyStreamEvent: upload-error style foreign thread is rejected", () => {
++  assert.equal(shouldApplyStreamEvent("upload-thread-a", "active-thread-b"), false)
++  assert.equal(shouldApplyStreamEvent("upload-thread-a", "upload-thread-a"), true)
++})
+diff --git a/chrome-extension/tests/thread-busy.test.ts b/chrome-extension/tests/thread-busy.test.ts
+index f315553..ecbc323 100644
+--- a/chrome-extension/tests/thread-busy.test.ts
++++ b/chrome-extension/tests/thread-busy.test.ts
+@@ -15,6 +15,7 @@ import {
+   filterIdsByFleetScope,
+   resolveOpenIntentsForScope,
+   buildScopedRunBusyInput,
++  buildFleetStopAllMessage,
+ } from "../src/sidepanel/utils/thread-busy"
+ 
+ test("deriveThreadBusy: any of streaming/processing/tools/map", () => {
+@@ -316,6 +317,25 @@ test("buildScopedRunBusyInput: same-run worker still lights RunBusy", () => {
+   assert.equal(deriveRunBusy(runBusyInput), true)
+ })
+ 
++// --- S45 multi-lane P0: fleet.stop_all payload scoping ---
++test("buildFleetStopAllMessage: run scope stamps orchestrator_run_id", () => {
++  const msg = buildFleetStopAllMessage({ kind: "run", runId: "orun_abc" })
++  assert.equal(msg.type, "fleet.stop_all")
++  assert.equal(msg.orchestrator_run_id, "orun_abc")
++  assert.match(msg.confirmText, /run/)
++})
++
++test("buildFleetStopAllMessage: parent/none omit run id (process-wide honest copy)", () => {
++  const parent = buildFleetStopAllMessage({ kind: "parent", parentId: "host1" })
++  assert.equal(parent.type, "fleet.stop_all")
++  assert.equal(parent.orchestrator_run_id, undefined)
++  assert.match(parent.confirmText, /杩涚▼鍐呭叏閮?)
++
++  const none = buildFleetStopAllMessage({ kind: "none" })
++  assert.equal(none.orchestrator_run_id, undefined)
++  assert.match(none.confirmText, /杩涚▼鍐呭叏閮?)
++})
++
+ test("isIntentOnlyRunBusy", () => {
+   assert.equal(
+     isIntentOnlyRunBusy({
+diff --git a/companion/src/file-parser.ts b/companion/src/file-parser.ts
+index f3504fe..9e88d7c 100644
+--- a/companion/src/file-parser.ts
++++ b/companion/src/file-parser.ts
+@@ -58,6 +58,16 @@ function getExtension(filename: string): string {
+   return filename.split(".").pop()?.toLowerCase() || ""
+ }
+ 
++/**
++ * Basename-only upload name for temp writes (S45 multi-lane).
++ * Returns null when empty / `.` / `..` after stripping NULs.
++ */
++export function safeUploadBasename(filename: string): string | null {
++  const safeBase = path.basename(filename).replace(/\0/g, "")
++  if (!safeBase || safeBase === "." || safeBase === "..") return null
++  return safeBase
++}
++
+ function getMimeType(filename: string, providedMime: string): string {
+   if (providedMime && providedMime !== "application/octet-stream") return providedMime
+   const ext = getExtension(filename)
+@@ -244,7 +254,38 @@ async function parseOfficeFile(buffer: Buffer, filename: string, mimeType: strin
+   }
+ 
+   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-upload-"))
+-  const tmpPath = path.join(tmpDir, filename)
++  // S45 multi-lane: never join raw client filename (zip-slip / path escape).
++  const safeBase = safeUploadBasename(filename)
++  if (!safeBase) {
++    try {
++      fs.rmSync(tmpDir, { recursive: true, force: true })
++    } catch {
++      /* ignore */
++    }
++    return {
++      success: false,
++      error: `Office 鏂囦欢琚嫆缁濓細闈炴硶鏂囦欢鍚?"${filename}"`,
++      filename,
++      mimeType,
++    }
++  }
++  const tmpPath = path.join(tmpDir, safeBase)
++  const resolvedDir = path.resolve(tmpDir)
++  const resolvedFile = path.resolve(tmpPath)
++  const rel = path.relative(resolvedDir, resolvedFile)
++  if (rel.startsWith("..") || path.isAbsolute(rel)) {
++    try {
++      fs.rmSync(tmpDir, { recursive: true, force: true })
++    } catch {
++      /* ignore */
++    }
++    return {
++      success: false,
++      error: `Office 鏂囦欢琚嫆缁濓細鏂囦欢鍚嶉€冮€镐复鏃剁洰褰昤,
++      filename,
++      mimeType,
++    }
++  }
+   fs.writeFileSync(tmpPath, buffer)
+ 
+   try {
+diff --git a/companion/src/server.ts b/companion/src/server.ts
+index 679b8c2..60dea56 100644
+--- a/companion/src/server.ts
++++ b/companion/src/server.ts
+@@ -5995,22 +5995,37 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
+         // WebSocket message size limit (P0)
+         const rawLen = Buffer.isBuffer(raw) ? raw.length : Buffer.byteLength(raw.toString())
+         if (rawLen > MAX_WS_MESSAGE_SIZE) {
++          // Peek type + thread_id without full parse (prefix search) for diagnostics
++          // and to stamp file.upload_error so UI can clear the right mapBusy.
++          const peek = (() => {
++            try {
++              const s = Buffer.isBuffer(raw) ? raw.subarray(0, 400).toString("utf8") : String(raw).slice(0, 400)
++              const typeM = s.match(/"type"\s*:\s*"([^"]+)"/)
++              const tidM = s.match(/"thread_id"\s*:\s*"([^"]+)"/)
++              return { type: typeM?.[1] || null, thread_id: tidM?.[1] || null }
++            } catch {
++              return { type: null, thread_id: null }
++            }
++          })()
+           logger.warn("ws.message_too_large", {
+             size: rawLen,
+             max: MAX_WS_MESSAGE_SIZE,
+-            // Peek type without full parse when possible (prefix search)
+-            peek: (() => {
+-              try {
+-                const s = Buffer.isBuffer(raw) ? raw.subarray(0, 200).toString("utf8") : String(raw).slice(0, 200)
+-                const m = s.match(/"type"\s*:\s*"([^"]+)"/)
+-                return m?.[1] || null
+-              } catch {
+-                return null
+-              }
+-            })(),
++            peek: peek.type,
++            thread_id: peek.thread_id,
+           })
+           if (ws.readyState === WebSocket.OPEN) {
+-            ws.send(JSON.stringify({ type: "error", error: "Message too large" }))
++            // S45 P1: upload oversized 鈫?stamped file.upload_error (not bare error)
++            if (peek.type === "file.upload" && peek.thread_id) {
++              ws.send(
++                JSON.stringify({
++                  type: "file.upload_error",
++                  error: "Message too large",
++                  thread_id: peek.thread_id,
++                }),
++              )
++            } else {
++              ws.send(JSON.stringify({ type: "error", error: "Message too large" }))
++            }
+           }
+           return
+         }
+@@ -6060,7 +6075,23 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
+               : {}),
+           })
+           if (ws.readyState === WebSocket.OPEN) {
+-            ws.send(JSON.stringify({ type: "error", error: `Invalid message: ${validation.error}` }))
++            // S45 P1: file.upload validation fails with stamped upload_error so
++            // Side Panel can clear the correct thread mapBusy after switch.
++            if (
++              msg?.type === "file.upload" &&
++              typeof msg.thread_id === "string" &&
++              msg.thread_id
++            ) {
++              ws.send(
++                JSON.stringify({
++                  type: "file.upload_error",
++                  error: `Invalid message: ${validation.error}`,
++                  thread_id: msg.thread_id,
++                }),
++              )
++            } else {
++              ws.send(JSON.stringify({ type: "error", error: `Invalid message: ${validation.error}` }))
++            }
+           }
+           return
+         }
