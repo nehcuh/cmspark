@@ -1,0 +1,14 @@
+ chrome-extension/src/sidepanel/App.tsx             |   7 +-
+ .../src/sidepanel/components/ChatView.tsx          |   8 +-
+ .../src/sidepanel/components/RunBusyChip.tsx       |   7 +-
+ .../src/sidepanel/hooks/useWebSocket.ts            |  10 +
+ chrome-extension/src/sidepanel/types.ts            |   2 +
+ .../src/sidepanel/utils/thread-busy.ts             |  13 ++
+ chrome-extension/tests/thread-busy.test.ts         |  12 ++
+ companion/src/computer/executor.ts                 |  56 +++---
+ companion/src/orchestrator/fleet.ts                |  18 +-
+ companion/src/server.ts                            |  37 ++--
+ companion/tests/computer-executor.test.ts          |  38 ++++
+ companion/tests/integration/security-gates.test.ts | 212 +++++++++++++--------
+ companion/tests/orchestrator-tab-lease.test.ts     |  46 +++++
+ 13 files changed, 335 insertions(+), 131 deletions(-)

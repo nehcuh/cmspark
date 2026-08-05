@@ -8,6 +8,7 @@ import {
   deriveThreadBusy,
   filterIdsByRun,
   isIntentOnlyRunBusy,
+  resolveOpenIntentsForRun,
 } from "../utils/thread-busy"
 import { collectRunningTools } from "../utils/running-tools"
 
@@ -47,7 +48,11 @@ export function RunBusyChip() {
       if (activeId) runWorkerIds.add(activeId)
       lockCount = fleet.locks.filter((l) => runWorkerIds.has(l.holder_thread_id)).length
     }
-    const openIntents = fleet?.open_intent_count ?? 0
+    const openIntents = resolveOpenIntentsForRun(
+      fleet?.open_intent_count,
+      fleet?.open_intents_by_run,
+      runId,
+    )
     const anyHoldingTabs = runId
       ? workers.some((w) => w.orchestrator_run_id === runId && w.status === "holding_tabs")
       : workers.some((w) => w.status === "holding_tabs")

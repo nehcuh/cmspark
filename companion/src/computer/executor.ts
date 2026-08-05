@@ -27,9 +27,11 @@
 //       released immediately, and ALL exits (success / fail / throw) sweep
 //       whatever remains — plaintext pixels never linger in %TEMP%.
 //
-// The initial task L2 (critical-class, god-mode included) happens in the
-// server gate BEFORE this executor runs; re-L2s raised here go through the
-// injected origin-bound confirmation channel.
+// The initial task L2 (critical-class) happens in the server gate BEFORE this
+// executor runs — god-mode alone still forceConfirms; only three-flag cruise
+// or designed session-trust/unattended skip may bypass. re-L2s raised here go
+// through the injected origin-bound confirmation channel (danger/experimental
+// never auto-approved, including under cruise).
 
 import { createHash, randomUUID } from "crypto"
 import * as fs from "fs"
@@ -634,27 +636,34 @@ export async function runComputerTask(
 
   /** Re-L2 with an explicit reason; returns true when approved. */
   const reL2 = async (reason: string, dangerous: string[], seqNum?: number, previewImage?: string): Promise<boolean> => {
-    // Full autonomy cruise (网页+企业+协议三旗全开): user accepted residual risk —
-    // do not interrupt mid-task with re-L2 dialogs (product 2026-08).
-    try {
-      const { getConfig } = require("../config") as typeof import("../config")
-      const sec = getConfig().security
-      if (
-        sec?.auto_approve_dangerous === true &&
-        sec?.auto_approve_enterprise_tools === true &&
-        sec?.allow_all_schemes === true
-      ) {
-        log("computer.task.reconfirm.auto_approved", {
-          taskId,
-          reason,
-          tags: dangerous,
-          app: params.app,
-          reason_skip: "full_autonomy_cruise",
-        })
-        return true
+    // P0-C / TinyClick G4 carve-out (also applies under full-autonomy cruise):
+    // computer.danger_detected / computer.experimental_suggestion always need
+    // fresh human eyes — content-sensitive / uncalibrated gates. Cruise may
+    // silence routine re-asks (budget / uncross / dialog) only.
+    const forceInteractive = dangerous.some((d) => FORCE_INTERACTIVE_DANGEROUS.has(d))
+    // Full autonomy cruise (网页+企业+协议三旗全开): skip mid-task re-L2 for
+    // non-force tags only (product 2026-08). Never short-circuit PROMPT_ALWAYS.
+    if (!forceInteractive && !reL2ShouldPrompt(dangerous)) {
+      try {
+        const { getConfig } = require("../config") as typeof import("../config")
+        const sec = getConfig().security
+        if (
+          sec?.auto_approve_dangerous === true &&
+          sec?.auto_approve_enterprise_tools === true &&
+          sec?.allow_all_schemes === true
+        ) {
+          log("computer.task.reconfirm.auto_approved", {
+            taskId,
+            reason,
+            tags: dangerous,
+            app: params.app,
+            reason_skip: "full_autonomy_cruise",
+          })
+          return true
+        }
+      } catch {
+        /* config unavailable — fall through */
       }
-    } catch {
-      /* config unavailable — fall through */
     }
     // UX-spike 2026-07-23: per-session re-L2 suppression. After the initial
     // task L2 gated the whole task (every type literal + budget + target app),
@@ -662,13 +671,8 @@ export async function runComputerTask(
     // "continue". When this session has already approved a task for the same
     // app token, auto-approve the re-L2 (audit logged) and return true WITHOUT
     // surfacing the dialog. The initial L2 is never affected — only this path.
-    //
-    // P0-C / TinyClick G4 carve-out: session trust must NEVER auto-approve
-    // computer.danger_detected or computer.experimental_suggestion. Those are
-    // content-sensitive / uncalibrated gates that always need fresh human eyes.
-    // Budget / uncross / foreground_yielded / task_induced_dialog still auto-
-    // approve under trust (UX-spike preserved).
-    const forceInteractive = dangerous.some((d) => FORCE_INTERACTIVE_DANGEROUS.has(d))
+    // Budget / uncross / task_induced_dialog still auto-approve under trust;
+    // foreground_yielded / danger / experimental fail reL2ShouldPrompt.
     if (deps.sessionId && params.app && !forceInteractive) {
       const trust = deps.sessionTrust ?? getComputerSessionTrust()
       // v4.1 (Grok v4.1 §D3.1 / Pi v4.1 RESOLVED): split re-L2 tags into

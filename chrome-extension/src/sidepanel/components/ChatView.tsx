@@ -21,6 +21,7 @@ import {
   deriveThreadBusy,
   filterIdsByRun,
   isIntentOnlyRunBusy,
+  resolveOpenIntentsForRun,
 } from "../utils/thread-busy"
 import { tokens, statusColor } from "../ui/tokens"
 import {
@@ -100,9 +101,14 @@ export function ChatView() {
     if (activeThreadId) runWorkerIds.add(activeThreadId)
     lockCount = fleet.locks.filter((l) => runWorkerIds.has(l.holder_thread_id)).length
   }
+  const openIntents = resolveOpenIntentsForRun(
+    fleet?.open_intent_count,
+    fleet?.open_intents_by_run,
+    runId,
+  )
   const runBusyInput = {
     lockCount,
-    openIntents: fleet?.open_intent_count ?? 0,
+    openIntents,
     anyHoldingTabs: runId
       ? workers.some((w) => w.orchestrator_run_id === runId && w.status === "holding_tabs")
       : workers.some((w) => w.status === "holding_tabs"),

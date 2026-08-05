@@ -347,3 +347,49 @@ test("fleet prefers holding_tabs over paused when locks present", () => {
   assert.equal(snap.workers[0].status, "holding_tabs")
   assert.equal(snap.worst_status, "holding_tabs")
 })
+
+test("fleet open_intents_by_run scopes board intents by orchestrator_run_id", () => {
+  reset()
+  const tm = {
+    list: () => [
+      {
+        id: "host-r1",
+        alias: "h1",
+        agent_role: "orchestrator",
+        orchestrator_run_id: "run-a",
+        mission_board: {
+          intents: [
+            { status: "open" },
+            { status: "claimed" },
+            { status: "done" },
+          ],
+        },
+      },
+      {
+        id: "host-r2",
+        alias: "h2",
+        agent_role: "orchestrator",
+        orchestrator_run_id: "run-b",
+        mission_board: {
+          intents: [{ status: "open" }],
+        },
+      },
+      {
+        id: "worker-a",
+        alias: "w",
+        agent_role: "worker",
+        parent_thread_id: "host-r1",
+        orchestrator_run_id: "run-a",
+      },
+    ],
+    get: (id: string) => {
+      const all = tm.list()
+      return all.find((t: { id: string }) => t.id === id)
+    },
+  }
+  const snap = buildFleetSnapshot(tm as any)
+  assert.equal(snap.open_intent_count, 3)
+  assert.equal(snap.open_intents_by_run["run-a"], 2)
+  assert.equal(snap.open_intents_by_run["run-b"], 1)
+  assert.equal(snap.open_intents_by_run["missing"], undefined)
+})

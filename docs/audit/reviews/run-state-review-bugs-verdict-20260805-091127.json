@@ -1,0 +1,25 @@
+{
+  "batch": "run-state-review-bugs",
+  "timestamp": "20260805-091127",
+  "claude": {
+    "verdict": "APPROVE_WITH_NITS",
+    "exit_code": 0,
+    "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/run-state-review-bugs-claude-20260805-091127.md",
+    "note": "full claude re-run with structured prompt after empty/short passes",
+    "bytes": 8589
+  },
+  "pi": {
+    "verdict": "APPROVE_WITH_NITS",
+    "exit_code": 0,
+    "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/run-state-review-bugs-pi-20260805-091127.md"
+  },
+  "both_approve": true,
+  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/run-state-review-bugs-diff-20260805-091127.patch",
+  "adversary_synthesis": "docs/audit/reviews/run-state-review-bugs-adversary-synthesis-20260805.md",
+  "multi_lane": {
+    "security": "APPROVE_WITH_NITS",
+    "correctness": "APPROVE_WITH_NITS",
+    "architecture": "APPROVE_WITH_NITS",
+    "compat": "APPROVE_WITH_NITS"
+  }
+}

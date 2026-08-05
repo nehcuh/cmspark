@@ -104,6 +104,19 @@ export function filterIdsByRun(
   return ids.filter((id) => allowed.has(id))
 }
 
+/**
+ * SoT §2.1: when `runId` is known, only count intents for that run.
+ * Do NOT fall back to process-wide `open_intent_count` (sticky false RunBusy).
+ */
+export function resolveOpenIntentsForRun(
+  openIntentCount: number | undefined,
+  openIntentsByRun: Record<string, number> | undefined,
+  runId?: string | null,
+): number {
+  if (!runId) return openIntentCount ?? 0
+  return openIntentsByRun?.[runId] ?? 0
+}
+
 /** Whether §6 banner is intent-only (no locks/holding/llm/workerBusy). */
 export function isIntentOnlyRunBusy(i: RunBusyInput): boolean {
   if (!deriveRunBusy(i)) return false

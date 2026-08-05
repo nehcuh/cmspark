@@ -32,6 +32,12 @@ export interface FleetSnapshot {
   lock_count: number
   /** ADR-016 Stage 4: sum of open+claimed intents across orchestrator hosts */
   open_intent_count: number
+  /**
+   * Open+claimed intents keyed by host `orchestrator_run_id` (SoT §2.1).
+   * Side Panel uses this when active thread has a run id so RunBusy is not
+   * sticky from another run's board intents.
+   */
+  open_intents_by_run: Record<string, number>
   worst_status: "idle" | "paused" | "holding_tabs" | "none"
   orchestrator_runs: string[]
   /** Threads with active LLM abort controllers (honest RunBusy). */
@@ -104,6 +110,7 @@ export function buildFleetSnapshot(tm: ThreadManager): FleetSnapshot {
   ]
 
   let open_intent_count = 0
+  const open_intents_by_run: Record<string, number> = {}
   const seenHosts = new Set<string>()
   for (const t of all) {
     if (t.agent_role === "worker") continue
@@ -111,7 +118,15 @@ export function buildFleetSnapshot(tm: ThreadManager): FleetSnapshot {
     if (seenHosts.has(t.id)) continue
     seenHosts.add(t.id)
     try {
-      open_intent_count += countOpenIntents(tm, t.id)
+      const n = countOpenIntents(tm, t.id)
+      open_intent_count += n
+      const rid =
+        typeof t.orchestrator_run_id === "string" && t.orchestrator_run_id.length > 0
+          ? t.orchestrator_run_id
+          : null
+      if (rid && n > 0) {
+        open_intents_by_run[rid] = (open_intents_by_run[rid] || 0) + n
+      }
     } catch {
       /* ignore */
     }
@@ -125,6 +140,7 @@ export function buildFleetSnapshot(tm: ThreadManager): FleetSnapshot {
     worker_count: views.filter((v) => v.agent_role === "worker").length,
     lock_count: locks.length,
     open_intent_count,
+    open_intents_by_run,
     worst_status: worst,
     orchestrator_runs: runs,
     llm_active_thread_ids: llmActive,

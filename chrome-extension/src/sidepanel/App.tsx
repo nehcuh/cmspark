@@ -40,6 +40,7 @@ import { collectRunningTools } from "./utils/running-tools"
 import {
   composerBusyPlaceholder,
   deriveRunBusy,
+  resolveOpenIntentsForRun,
   deriveThreadBusy,
   filterIdsByRun,
   resolveComposerMode,
@@ -339,7 +340,11 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
     if (activeId) runWorkerIds.add(activeId)
     lockCount = fleet.locks.filter((l) => runWorkerIds.has(l.holder_thread_id)).length
   }
-  const openIntents = fleet?.open_intent_count ?? 0
+  const openIntents = resolveOpenIntentsForRun(
+    fleet?.open_intent_count,
+    fleet?.open_intents_by_run,
+    runId,
+  )
   const runBusy = deriveRunBusy({
     lockCount,
     openIntents,

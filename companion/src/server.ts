@@ -995,9 +995,12 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
     const hostAppGated = toolName === "host_app" && (os.platform() === "win32" || os.platform() === "darwin")
     const hostCliGated = toolName === "host_cli" && (os.platform() === "win32" || os.platform() === "darwin")
     // Coordinate computer-use (WP1): critical-class — the task-level L2 dialog
-    // is shown EVERY task (god-mode / auto-approve do NOT skip it), always
-    // originWs-bound, and input injection is NEVER thread-trusted. Off win32
-    // or darwin the gate is skipped so the executor returns the typed platform error.
+    // is originWs-bound, and input injection is NEVER thread-trusted. God-mode
+    // alone / auto_approve alone still forceConfirm; only three-flag
+    // userFullAutonomy waives forceConfirm (same algebra as other critical tools).
+    // Session-trust / unattended grant may skip initial L2 via hostComputerTrustSkip
+    // (designed carve-out, not god-mode). Off win32 or darwin the gate is skipped
+    // so the executor returns the typed platform error.
     const hostComputerGated = toolName === "host_computer" &&
       (os.platform() === "win32" || os.platform() === "darwin")
     // P0 platform filter: osascript_eval is macOS-only. Fail before L2 confirmation
@@ -1109,8 +1112,10 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
       }
       // Coordinate computer-use (WP1) — pre-dialog fail-fast checks + A3
       // dialog payload (task + target app + EVERY type.text literal + budget).
-      // The tier decision is made HERE; the dialog is critical-class: shown on
-      // every task, god-mode included (forceConfirm below), never trusted.
+      // The tier decision is made HERE; the dialog is critical-class and never
+      // thread-trusted. forceConfirm (below) holds under god-mode alone; only
+      // three-flag userFullAutonomy clears it. hostComputerTrustSkip may still
+      // mint a token without dialog when session trust / unattended grant applies.
       let computerPreview = ""
       // WP4: L2 标注截图 + 三段式 caption(best-effort;undefined = 无图降级)。
       let computerL2PreviewImage: string | undefined
@@ -1437,18 +1442,18 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
       } catch { /* ignore */ }
       // §6.2 CRITICAL_API_GATE: detectCriticalApis() is the never-auto-approved
       // subset of detectDangerousApis() (exfil + sandbox-escape + obfuscation
-      // variants). Even when skipConfirmation is true (god-mode / global toggle
-      // / domain whitelist), a non-empty critical set forces interactive
-      // confirmation — god-mode bypasses the UI prompt, not this capability
-      // boundary (mirror of §6.1.5). Without this, a fetch/exfil payload would
-      // execute zero-confirmation under god-mode.
+      // variants). Domain whitelist / god-mode alone / auto_approve_dangerous
+      // alone still force interactive confirmation for a non-empty critical set
+      // (domain trust ≠ page-content trust; M3' invariant). Only three-flag
+      // full autonomy cruise (auto_approve_dangerous + enterprise + allow_all
+      // schemes) waives forceConfirm — residual risk is explicit product choice.
       //
       // Coordinate computer-use: critical-class BY DESIGN (plan §E.3) — the
-      // capability itself is the critical surface, so forceConfirm is
-      // unconditional (god-mode / auto-approve still get the task dialog).
+      // capability itself is the critical surface; waived only under full
+      // autonomy cruise (same three-flag gate).
       // shell_exec / netsec_port_scan: force interactive confirm unless Plan A/B
-      // enterprise skip (scope ∩ first). God-mode / auto_approve_dangerous alone
-      // still do NOT skip these (ADR-014 + enterprise plan G1).
+      // enterprise skip (scope ∩ first) or full autonomy. God-mode /
+      // auto_approve_dangerous alone still do NOT skip these (ADR-014 G1).
       // spawn_worker / ask_user / board_complete: real HITL (never LLM self-approve)
       const capabilityForceConfirm =
         toolName === "shell_exec" ||
@@ -1467,24 +1472,15 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
         : capabilityForceConfirm
           ? [toolName]
           : detectCriticalApis(code)
-      const browserScriptTool = toolName === "evaluate" || toolName === "osascript_eval"
-      // Waive forceConfirm when: (1) browser script + any L2 skip, or (2) full autonomy cruise.
-      const forceConfirm =
-        criticalApis.length > 0 &&
-        !(browserScriptTool && skipConfirmation) &&
-        !userFullAutonomy
-      if (criticalApis.length > 0 && (userFullAutonomy || (browserScriptTool && skipConfirmation))) {
+      // Waive forceConfirm only under three-flag full autonomy cruise.
+      // Browser scripts under domain whitelist / god-mode alone still forceConfirm.
+      const forceConfirm = criticalApis.length > 0 && !userFullAutonomy
+      if (criticalApis.length > 0 && userFullAutonomy) {
         logger.info("security.critical_api_waived", {
           tool_call_id: toolCallId,
           tool_name: toolName,
           critical_apis: criticalApis,
-          reason: userFullAutonomy
-            ? "full_autonomy_cruise"
-            : securityConfig.allow_all_schemes === true
-              ? "god_mode"
-              : securityConfig.auto_approve_dangerous === true
-                ? "global_toggle"
-                : "domain_or_thread_skip",
+          reason: "full_autonomy_cruise",
           relevant_domain: relevantDomain || undefined,
         })
       }
