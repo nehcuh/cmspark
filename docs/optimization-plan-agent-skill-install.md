@@ -1,8 +1,8 @@
 # 后续优化方向：Agent 下载并安装外部 Skill（CMspark 可用）
 
 > **日期**: 2026-08-01  
-> **状态**: Backlog — **未实现**  
-> **触发**: 用户场景 + 会话 #au4dch（装 Black-cat / pentest-redteam）  
+> **状态**: P0 `skill_install` **已实现**；**源路径产品语义 2026-08-05 已优化**（见 §5）  
+> **触发**: 用户场景 + 会话 #au4dch / #tj6y24（装 Black-cat / reverse-skill）  
 > **轴**: [ADR-020](adr/020-capability-model-three-axes.md) **Composition**（Skills）+ 少量 **Surface L1**（browser_download）  
 > **相关**: [optimization-plan-au4dch-ux-shell-download.md](optimization-plan-au4dch-ux-shell-download.md)（下载去重已部分落地）；[README · 技能系统](../README.md#技能系统skills)
 
@@ -29,10 +29,11 @@ Chrome Side Panel 驱动 Agent
 | UI 导入（.md / ZIP / 文件夹 / URL）→ 写入用户 skills 目录 | ✅ |
 | README 写明存储路径 `~/.cmspark-agent/skills/` | ✅ |
 | `browser_download` / `downloads_find` / prefer_existing | ✅（#au4dch Wave） |
-| **LLM 一等 tool** 安装 skill（path/zip/url → 固定写入用户 skills + refresh） | ❌ |
-| Agent 仅靠 shell 猜路径时易装错目录 | 痛点（#au4dch） |
+| **LLM 一等 tool** `skill_install`（path/zip/content → 用户 skills + refresh + L2） | ✅ |
+| 源路径：用户主目录（含 `~/Projects`）经 L2 可装；系统路径硬拒 | ✅（2026-08-05） |
+| Agent 仅靠 shell 猜路径时易装错目录 | 已缓解（tool 文案 + dest 固定用户库） |
 
-`skill.import*` 现为 **UI ↔ Companion WS**，不在 LLM tool 表中。
+`skill.import*` 仍为 **UI ↔ Companion WS**；`skill_install` 为 LLM 一等 tool。
 
 ---
 
@@ -86,8 +87,22 @@ Chrome Side Panel 驱动 Agent
 
 ---
 
-## 5. 变更日志
+## 5. 源路径 Trust（2026-08-05 产品优化）
+
+**用户反馈**：硬拦 `~/Projects` 不合理——(1) 需要权限应弹窗授权；(2) 特权/全自动巡航不应再替用户决定路径。
+
+| 源区域 | 行为 |
+|--------|------|
+| Downloads / 下载 / OS temp / `~/.cmspark-agent` | **default** — 允许 |
+| 用户主目录（含 `~/Projects`） | **user_home** — 允许；**L2 确认 = 用户授权**（非硬拒） |
+| 主目录外且非 default | **denied** — 硬拒（避免系统路径进技能库）；L2 前预检，不弹无意义确认 |
+| 全自动巡航（`auto_approve_dangerous` + `auto_approve_enterprise_tools` + `allow_all_schemes`） | 与其它 critical 工具一致：**免 L2**；源区域规则仍生效 |
+
+实现：`companion/src/skills/skill-install.ts`（`classifySkillInstallSource`）+ `server.ts` L2 预检 / `source_tier` 预览。
+
+## 6. 变更日志
 
 | 日期 | 变更 |
 |------|------|
 | 2026-08-01 | 初版 backlog：用户场景记录；P0 skill_install；挂 Composition |
+| 2026-08-05 | 源路径：主目录可装 + L2 授权；系统路径仍拒；巡航与 forceConfirm 代数对齐说明 |

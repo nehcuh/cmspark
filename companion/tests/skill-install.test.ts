@@ -10,9 +10,11 @@ import {
   skillInstall,
   getUserSkillsRoot,
   isSkillInstallSourceAllowed,
+  classifySkillInstallSource,
   expandUserPath,
   MAX_CONTENT_BYTES,
   skillInstallOverwritePreview,
+  skillInstallSourceDeniedError,
 } from "../src/skills/skill-install"
 
 function makeEngine(skillsDir: string) {
@@ -101,21 +103,85 @@ test("skill_install zip_path returns dest_path under skill name (not skills root
   assert.ok(fs.existsSync(path.join(skills, "zip-demo", "SKILL.md")))
 })
 
-test("isSkillInstallSourceAllowed allows Downloads and tmp, rejects arbitrary", () => {
+test("isSkillInstallSourceAllowed: default zone (Downloads/tmp) + user home, rejects outside home", () => {
   const dl = path.join(os.tmpdir(), "Downloads", "x")
   fs.mkdirSync(path.dirname(dl), { recursive: true })
   fs.writeFileSync(dl, "x")
   assert.equal(isSkillInstallSourceAllowed(fs.realpathSync(dl)), true)
+  assert.equal(classifySkillInstallSource(fs.realpathSync(dl)), "default")
   assert.equal(isSkillInstallSourceAllowed(fs.realpathSync(os.tmpdir())), true)
+  assert.equal(classifySkillInstallSource(fs.realpathSync(os.tmpdir())), "default")
+
   const home = os.homedir()
-  if (home && !home.toLowerCase().includes("download")) {
+  assert.ok(home)
+  // Product: ~/Projects and other home paths are allowed (L2 is authorization).
+  const projects = path.join(home, "Projects")
+  if (fs.existsSync(projects)) {
+    const rp = fs.realpathSync(projects)
+    assert.equal(isSkillInstallSourceAllowed(rp), true)
+    assert.equal(classifySkillInstallSource(rp), "user_home")
+  }
+  const homeMarker = path.join(home, `.cmspark-skill-install-tier-test-${Date.now()}`)
+  fs.writeFileSync(homeMarker, "x")
+  try {
+    const rp = fs.realpathSync(homeMarker)
+    assert.equal(isSkillInstallSourceAllowed(rp), true)
+    assert.equal(classifySkillInstallSource(rp), "user_home")
+  } finally {
     try {
-      const desktop = path.join(home, "Desktop")
-      if (fs.existsSync(desktop)) {
-        assert.equal(isSkillInstallSourceAllowed(fs.realpathSync(desktop)), false)
-      }
+      fs.unlinkSync(homeMarker)
     } catch {
-      /* skip */
+      /* */
+    }
+  }
+
+  // Outside home and not Downloads/tmp/data → denied (e.g. synthetic absolute path).
+  // Use a path that cannot resolve under home on this machine.
+  const outside =
+    process.platform === "win32"
+      ? "C:\\Windows\\System32\\drivers\\etc\\hosts"
+      : "/etc/hosts"
+  if (fs.existsSync(outside)) {
+    const rp = fs.realpathSync(outside)
+    // Only assert deny if it is truly outside home (Windows profile under C:\Users\...)
+    const homeRp = fs.realpathSync(home)
+    const underHome =
+      process.platform === "win32"
+        ? rp.toLowerCase().startsWith(homeRp.toLowerCase() + path.sep) ||
+          rp.toLowerCase() === homeRp.toLowerCase()
+        : rp.startsWith(homeRp + path.sep) || rp === homeRp
+    if (!underHome) {
+      assert.equal(isSkillInstallSourceAllowed(rp), false)
+      assert.equal(classifySkillInstallSource(rp), "denied")
+    }
+  }
+
+  const denied = skillInstallSourceDeniedError("path")
+  assert.match(denied.error, /outside the allowed install source zone/)
+  assert.match(denied.hint_zh, /主目录|Projects|下载/)
+})
+
+test("skill_install path under user home (Projects-shaped) succeeds", () => {
+  const home = os.homedir()
+  const srcRoot = fs.mkdtempSync(path.join(home, "cmspark-skill-home-src-"))
+  const skills = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-skill-home-dst-"))
+  try {
+    const src = path.join(srcRoot, "pack")
+    fs.mkdirSync(src)
+    fs.writeFileSync(
+      path.join(src, "SKILL.md"),
+      "---\nname: from-home\ndescription: x\n---\n\nHi\n",
+    )
+    const engine = makeEngine(skills)
+    const r = skillInstall(engine, { path: src })
+    assert.equal(r.ok, true, r.error)
+    assert.equal(r.name, "from-home")
+    assert.equal(classifySkillInstallSource(fs.realpathSync(src)), "user_home")
+  } finally {
+    try {
+      fs.rmSync(srcRoot, { recursive: true, force: true })
+    } catch {
+      /* */
     }
   }
 })

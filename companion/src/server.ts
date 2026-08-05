@@ -1034,9 +1034,27 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
             ? (() => {
                 try {
                   // Lazy require keeps createToolExecutor load light; preview is best-effort.
-                  const { skillInstallOverwritePreview } = require("./skills/skill-install") as typeof import("./skills/skill-install")
+                  const {
+                    skillInstallOverwritePreview,
+                    classifySkillInstallSource,
+                    expandUserPath,
+                  } = require("./skills/skill-install") as typeof import("./skills/skill-install")
                   const prev = skillInstallOverwritePreview(finalParams)
-                  return `skill_install path=${finalParams.path || ""} zip=${finalParams.zip_path || ""} content_len=${typeof finalParams.content === "string" ? finalParams.content.length : 0} name=${prev.name || ""} overwrite=${prev.overwrite ? "true" : "false"} dest=${prev.dest_path || ""}`
+                  let tier = ""
+                  const srcRaw = finalParams.path || finalParams.zip_path
+                  if (srcRaw && typeof srcRaw === "string") {
+                    try {
+                      const fs = require("fs") as typeof import("fs")
+                      const pathMod = require("path") as typeof import("path")
+                      const resolved = fs.realpathSync(pathMod.resolve(expandUserPath(srcRaw)))
+                      tier = classifySkillInstallSource(resolved)
+                    } catch {
+                      tier = "unresolved"
+                    }
+                  } else if (finalParams.content) {
+                    tier = "content"
+                  }
+                  return `skill_install path=${finalParams.path || ""} zip=${finalParams.zip_path || ""} content_len=${typeof finalParams.content === "string" ? finalParams.content.length : 0} name=${prev.name || ""} overwrite=${prev.overwrite ? "true" : "false"} dest=${prev.dest_path || ""} source_tier=${tier}`
                 } catch {
                   return `skill_install path=${finalParams.path || ""} zip=${finalParams.zip_path || ""} content_len=${typeof finalParams.content === "string" ? finalParams.content.length : 0}`
                 }
@@ -1044,6 +1062,51 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
             : "") ||
           "",
       )
+      // skill_install: hard-deny outside home/Downloads/tmp/data BEFORE L2 dialog
+      // (user home is allowed — L2 is the authorization; no pointless confirm then fail).
+      if (toolName === "skill_install") {
+        try {
+          const {
+            isSkillInstallSourceAllowed,
+            expandUserPath,
+            skillInstallSourceDeniedError,
+          } = require("./skills/skill-install") as typeof import("./skills/skill-install")
+          const fs = require("fs") as typeof import("fs")
+          const pathMod = require("path") as typeof import("path")
+          const srcField =
+            typeof finalParams.path === "string" && finalParams.path.trim()
+              ? ("path" as const)
+              : typeof finalParams.zip_path === "string" && finalParams.zip_path.trim()
+                ? ("zip_path" as const)
+                : null
+          if (srcField) {
+            const raw = String(finalParams[srcField])
+            try {
+              const resolved = fs.realpathSync(pathMod.resolve(expandUserPath(raw)))
+              if (!isSkillInstallSourceAllowed(resolved)) {
+                const denied = skillInstallSourceDeniedError(srcField)
+                const result = {
+                  success: false,
+                  error: denied.error,
+                  data: { hint_zh: denied.hint_zh },
+                }
+                logToolFinish(toolCallId, toolName, startedAt, result)
+                return result
+              }
+            } catch {
+              // Missing path: let executor return path-not-found after L2 or fail here without dialog
+              const result = {
+                success: false,
+                error: `${srcField} not found: ${raw}`,
+              }
+              logToolFinish(toolCallId, toolName, startedAt, result)
+              return result
+            }
+          }
+        } catch {
+          /* preview/precheck best-effort — executor still enforces */
+        }
+      }
       const lengthCheck = securityPolicy.checkLength(toolName, code)
       if (!lengthCheck.ok) {
         const result = { success: false, error: lengthCheck.error }

@@ -2,9 +2,14 @@
  * skill_install — LLM-facing install of external skills into user skills dir.
  * Dest is ALWAYS getConfigDir()/skills (never repo skills/ or ~/.claude/skills).
  *
- * Trust (S41 multi-adv + dual re-review):
+ * Trust (S41 + product UX 2026-08-05):
  * - L2 forceConfirm at server (security_token) — durable skill-library write
- * - path/zip sources: Downloads segment / tmp / data dir allowlist
+ * - path/zip sources (two tiers, both still go through L2 unless full-autonomy cruise):
+ *   - **default zone**: Downloads / 下载 / OS temp / ~/.cmspark-agent
+ *   - **user home zone**: any path under the user's home directory (e.g. ~/Projects)
+ *     — product: "need permission → confirm dialog", not hard-deny after user asked to install
+ *   - **denied**: outside home and not in default zone (no silent ambient FS scrape)
+ * - Full autonomy cruise (three-flag) waives L2 at server; source tier still applies
  * - content: size-capped (not free arbitrary FS, but still needs L2)
  * - zip: compressed + uncompressed extract budgets
  * - dest_path/name honesty from engine import return values
@@ -59,33 +64,92 @@ export function expandUserPath(p: string): string {
   return trimmed
 }
 
+/** Source trust tier for path/zip (consent = L2; denied = hard fail, no dialog useful). */
+export type SkillInstallSourceTier = "default" | "user_home" | "denied"
+
+function pathEqualsOrUnder(candidate: string, root: string): boolean {
+  let c = path.resolve(candidate)
+  let r = path.resolve(root)
+  if (process.platform === "win32") {
+    c = c.toLowerCase()
+    r = r.toLowerCase()
+  }
+  if (c === r) return true
+  const prefix = r.endsWith(path.sep) ? r : r + path.sep
+  return c.startsWith(prefix)
+}
+
+function tryRealpath(p: string): string | null {
+  try {
+    return fs.realpathSync(p)
+  } catch {
+    try {
+      return path.resolve(p)
+    } catch {
+      return null
+    }
+  }
+}
+
 /**
- * Trust: skill_install may only read from user Downloads, cmspark data dir,
- * or OS temp — never arbitrary FS
- * (would chain with use_skill into ungated .md exfil; dual-review M1 B2).
+ * Classify skill_install path/zip source.
+ * - default: Downloads / 下载 / tmp / cmspark data dir (browser download & tooling zone)
+ * - user_home: under os.homedir() (e.g. ~/Projects) — allowed; L2 is the user authorization
+ * - denied: elsewhere (prevents agent ambient read of system paths into skill library)
  */
-export function isSkillInstallSourceAllowed(resolvedPath: string): boolean {
-  if (!resolvedPath) return false
+export function classifySkillInstallSource(resolvedPath: string): SkillInstallSourceTier {
+  if (!resolvedPath) return "denied"
   const norm = path.resolve(resolvedPath)
   const lower = norm.replace(/\\/g, "/").toLowerCase()
   const segments = lower.split("/").filter(Boolean)
-  if (segments.includes("downloads") || segments.includes("下载")) return true
-  // CMspark data dir (skills/cache/…)
+  if (segments.includes("downloads") || segments.includes("下载")) return "default"
+
   try {
     const data = fs.realpathSync(getConfigDir())
-    const dataNorm = path.resolve(data)
-    if (norm === dataNorm || norm.startsWith(dataNorm + path.sep)) return true
+    if (pathEqualsOrUnder(norm, data)) return "default"
   } catch {
     /* ignore */
   }
-  // Temp dirs (browser extract / OS temp)
   try {
     const tmp = fs.realpathSync(os.tmpdir())
-    if (norm === tmp || norm.startsWith(tmp + path.sep)) return true
+    if (pathEqualsOrUnder(norm, tmp)) return "default"
   } catch {
     /* ignore */
   }
-  return false
+
+  // User home zone (realpath both sides so symlink escape out of home is denied)
+  try {
+    const home = tryRealpath(os.homedir())
+    if (!home) return "denied"
+    const cand = tryRealpath(norm) || norm
+    if (pathEqualsOrUnder(cand, home)) return "user_home"
+  } catch {
+    /* ignore */
+  }
+  return "denied"
+}
+
+/** True when path/zip may be used as install source (L2 still required at server unless cruise). */
+export function isSkillInstallSourceAllowed(resolvedPath: string): boolean {
+  return classifySkillInstallSource(resolvedPath) !== "denied"
+}
+
+/** User-facing error when source is outside allowed zones. */
+export function skillInstallSourceDeniedError(kind: "path" | "zip_path"): {
+  error: string
+  hint_zh: string
+} {
+  const field = kind === "zip_path" ? "zip_path" : "path"
+  return {
+    error:
+      `${field} is outside the allowed install source zone ` +
+      `(user home, Downloads, OS temp, or ~/.cmspark-agent). ` +
+      `System paths cannot be used as skill install sources.`,
+    hint_zh:
+      "安装源须在用户主目录、下载目录、系统临时目录或 ~/.cmspark-agent 内。" +
+      "例如 ~/Projects/xxx 可以：确认弹窗授权即可。" +
+      "系统路径不可作为技能安装源；请改用 Side Panel 导入或先拷到主目录/下载目录。",
+  }
 }
 
 const MAX_ZIP_BYTES = 25 * 1024 * 1024
@@ -282,11 +346,18 @@ export function skillInstall(
         return { ok: false, error: `zip not found: ${params.zip_path}`, skills_root: root }
       }
       if (!isSkillInstallSourceAllowed(resolved)) {
+        const denied = skillInstallSourceDeniedError("zip_path")
+        auditInstall(false, {
+          mode: "zip",
+          error: denied.error,
+          tier: "denied",
+          source: resolved,
+        })
         return {
           ok: false,
-          error:
-            "zip_path must be under Downloads, OS temp, or ~/.cmspark-agent (arbitrary paths blocked for Trust)",
+          error: denied.error,
           skills_root: root,
+          hint_zh: denied.hint_zh,
         }
       }
       if (!fs.statSync(resolved).isFile()) {
@@ -301,11 +372,14 @@ export function skillInstall(
       }
       const imported = engine.importSkillFolder(buf.toString("base64"))
       engine.refresh()
+      const tier = classifySkillInstallSource(resolved)
       auditInstall(true, {
         mode: "zip",
         name: imported.name,
         dest_path: imported.destPath,
         zip_bytes: buf.length,
+        tier,
+        source: resolved,
       })
       return {
         ok: true,
@@ -325,11 +399,18 @@ export function skillInstall(
         return { ok: false, error: `path not found: ${params.path}`, skills_root: root }
       }
       if (!isSkillInstallSourceAllowed(resolved)) {
+        const denied = skillInstallSourceDeniedError("path")
+        auditInstall(false, {
+          mode: "path",
+          error: denied.error,
+          tier: "denied",
+          source: resolved,
+        })
         return {
           ok: false,
-          error:
-            "path must be under Downloads, OS temp, or ~/.cmspark-agent (arbitrary host paths blocked; use panel import for trusted dirs)",
+          error: denied.error,
           skills_root: root,
+          hint_zh: denied.hint_zh,
         }
       }
       const st = fs.statSync(resolved)
@@ -347,10 +428,13 @@ export function skillInstall(
         const content = fs.readFileSync(resolved, "utf-8")
         const imported = engine.importSkill(content)
         engine.refresh()
+        const tier = classifySkillInstallSource(resolved)
         auditInstall(true, {
           mode: "path_md",
           name: imported.name,
           dest_path: imported.destPath,
+          tier,
+          source: resolved,
         })
         return {
           ok: true,
@@ -368,10 +452,13 @@ export function skillInstall(
         }
         const imported = engine.importSkillFromPath(resolved)
         engine.refresh()
+        const tier = classifySkillInstallSource(resolved)
         auditInstall(true, {
           mode: "path_dir",
           name: imported.name,
           dest_path: imported.destPath,
+          tier,
+          source: resolved,
         })
         return {
           ok: true,
@@ -393,7 +480,8 @@ export function skillInstall(
       error: "skill_install requires path, zip_path, or content",
       skills_root: root,
       hint_zh:
-        "先 downloads_find / browser_download 拿到 Downloads 下路径，再 skill_install。目标库固定 ~/.cmspark-agent/skills。需用户 L2 确认。",
+        "可从用户主目录（如 ~/Projects）、下载目录、临时目录或 ~/.cmspark-agent 安装；" +
+        "目标库固定 ~/.cmspark-agent/skills。普通模式需用户 L2 确认；全自动巡航（三旗）可免确认。",
     }
   } catch (e: any) {
     const err = e?.message || String(e)
@@ -411,17 +499,19 @@ export const SKILL_INSTALL_TOOL = {
   function: {
     name: "skill_install",
     description:
-      "Install an external skill into the CMspark user skills library (~/.cmspark-agent/skills on Unix, %USERPROFILE%\\.cmspark-agent\\skills on Windows). Prefer this over shell copy. After downloads_find/browser_download of a skill zip or folder, pass path or zip_path. Requires user L2 confirmation. Never write skills into the git repo skills/ directory or ~/.claude/skills. content is size-capped (256KiB).",
+      "Install an external skill into the CMspark user skills library (~/.cmspark-agent/skills on Unix, %USERPROFILE%\\.cmspark-agent\\skills on Windows). Prefer this over shell copy. Source may be under the user home (e.g. ~/Projects/...), Downloads, OS temp, or ~/.cmspark-agent. After downloads_find/browser_download of a skill zip or folder, pass path or zip_path. Requires user L2 confirmation unless full-autonomy cruise is on. Never write skills into the git repo skills/ directory or ~/.claude/skills. content is size-capped (256KiB).",
     parameters: {
       type: "object",
       properties: {
         path: {
           type: "string",
-          description: "Local directory with SKILL.md, or a single .md skill file (under Downloads/tmp/data)",
+          description:
+            "Local directory with SKILL.md, or a single .md skill file (user home / Downloads / tmp / data dir)",
         },
         zip_path: {
           type: "string",
-          description: "Local .zip containing SKILL.md (folder skill); compressed+extract size capped",
+          description:
+            "Local .zip containing SKILL.md (folder skill); source under home/Downloads/tmp/data; size capped",
         },
         content: {
           type: "string",
@@ -435,10 +525,11 @@ export const SKILL_INSTALL_TOOL = {
 
 // Capability declaration (ADR-020) for skill_install
 export const SKILL_INSTALL_CAPABILITY = {
-  Surface: "L0 local install write to user skills; path sources limited to Downloads/tmp/data dir",
+  Surface:
+    "L0 local install write to user skills; path/zip sources: user home + Downloads/tmp/data (system paths denied)",
   Composition: "Skills install primitive — not a new Agent runtime",
-  Autonomy: "none",
+  Autonomy: "L2 by default; full-autonomy cruise (three-flag) waives forceConfirm at server",
   Trust:
-    "L2 forceConfirm (security_token); path allowlist for path/zip; content size-capped; zip compressed+uncompressed budgets; audit lines; not free like record_experience for agent install",
+    "L2 forceConfirm (security_token) is user authorization for durable skill write; home-zone sources allowed with that consent (not hard-deny); outside home denied; content size-capped; zip budgets; audit tiers",
   Channel: "community",
 } as const
