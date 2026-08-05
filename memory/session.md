@@ -2,6 +2,15 @@
 
 ## Current Session
 
+### S45 (2026-08-05 ~22:00–22:40) [pull main · 四路对抗 · P0 快修 · PR #125 合 main]
+- **拉取**：`4a2d02f..474df7e`（#122–#124 · PATH · 上传 · 0.4.0）
+- **多路对抗**：Security/Correctness/Architecture/Compat → **REQUEST_CHANGES**（上传跨线程污染 + fleet 显示 scope vs 停止全进程）
+- **实现**：`shouldApplyStreamEvent` 门控 panel chrome；`buildFleetStopAllMessage` run/parent stamp；companion parent 过滤；上传错误持久化；`safeUploadBasename`；plasmo 0.4.0
+- **门禁**：内部对抗 pass · Claude APPROVE · Pi APPROVE_WITH_NITS · ext 436 pass
+- **Ship**：PR **#125 MERGED** `7c8ec53` → `origin/main`
+- **下次**：无阻塞；可选 parent stop 集成测 / 打包 bake；合盖掉电 A/B 仍挂 S43
+- Recorded: yes — mapBusy-always/chrome-gated + Windows dual-review
+
 ### S44 (2026-08-05 ~17:40–18:16) [附件上传卡死 · 诊断日志 · main 推送]
 - **问题**：`#um335z` / `#ne13jb` 上传 docx 后一直「思考中」；用户怀疑解析坏
 - **根因**：乐观 busy 不清（`file.upload_error`/`error` 未处理）；旧 App 扩展/companion 与源码不同步时请求未进后台；`parseFile` 本身正常
@@ -453,12 +462,12 @@
 
 ## In-Flight Tasks (Cross-Session)
 
-### Run-state + full-autonomy (S41) → PR #117 OPEN
-- status: **active** (await merge / manual smoke)
-- context: `feat/run-state-worker-drilldown` · PR #117 · dual APPROVE_WITH_NITS
-- next_action: 合 #117；真机长 tool + spawn 下钻 smoke；可选 P0d bake-off 手测
-- resume_doc: `docs/superpowers/specs/2026-08-04-run-state-and-worker-drilldown.md`
-- updated: 2026-08-04
+### Run-state + full-autonomy (S41) → #117 MERGED · S45 P0 isolation closed
+- status: **mostly done** (#117 on main; S45 #125 closed post-ship upload/fleet HIGH)
+- context: RunBusy + M3' floors + #124 active-thread scope; S45 fixed cross-thread upload_error + run/parent stop
+- next_action: 可选真机长 tool + spawn 下钻 smoke；P0d bake-off 手测仍独立
+- resume_doc: `docs/superpowers/specs/2026-08-04-run-state-and-worker-drilldown.md` · PR #125
+- updated: 2026-08-05
 
 ### Outbound MCP P0d bake-off (human)
 - status: **active** (checklist ready)

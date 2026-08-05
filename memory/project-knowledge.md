@@ -29,6 +29,18 @@
 - **验证**：dev 扩展 + `npm run dev` companion → `#ne13jb` 全链路 `panel_dispatch`→`ws.file_upload.received`→`parsed`→`chat_start`→`complete`
 - **Ship**：`c6b1e8b` on main
 
+### 上传错误跨线程污染：清 busy ≠ 可改 panel chrome（2026-08-05 S45）
+- **现象**：S44 修了同线程 stuck busy；多路对抗发现 `file.upload_error` 无 `shouldApplyStreamEvent` → 切到 B 后 A 的失败解锁 B 并污染 B  transcript
+- **纪律**：**mapBusy 按 upload `thread_id` 永远清**；`isProcessing` / `ADD_MESSAGE` / streaming 仅 active 门控；App SW-fail 用 `activeThreadIdRef` 勿信闭包 state
+- **错误可见性**：门控后 active 不写消息 → companion 须 **persist** `file.upload_error`（`threadManager.addMessage`），切回才看得见
+- **WS 门**：超大/校验失败/SW `!sent` 也要 stamp `file.upload_error`+`thread_id`，勿裸 `error` 清 active
+- **Ship**：PR #125 `7c8ec53`
+
+### Fleet 显示已 scope、停止仍全进程（2026-08-05 S45）
+- **现象**：#124 列表/RunBusy 按 active thread；`fleet.stop_all` 无 stamp → companion 杀**全部** worker
+- **修法**：`buildFleetStopAllMessage` — run→`orchestrator_run_id`；parent→`parent_thread_id`；none 才进程级 + 诚实文案；companion `fleet.stop_all` 优先级 run > parent > all
+- **锁列表**：FleetStrip 须与 FleetWorkerList 一样 scope locks（勿 process-wide 展示）
+
 ### 运行态假空闲：Composer 只认 streaming，不认整轮 busy（2026-08-04）
 - **现象**：复杂多 tool / 思考间隙，侧栏像会话结束，可打字发送，随后 agent 又突然继续
 - **根因**：`canSend`/`Stop` 只绑 `streamingContent`；`isProcessing`/running tools/fleet 不进门控；`SET_ACTIVE_THREAD` 清零 busy；`tool.start` 无 `thread_id` 写到 active 线程
@@ -314,7 +326,13 @@
   3. 编排器 **[inspected]** 抽检 HIGH（勿盲信 lane 摘要）
   4. 合成：任一路 REQUEST_CHANGES 且 architect≠CLEAR → 最终 REQUEST_CHANGES；写 `docs/audit/reviews/multi-adversarial-review-*.md`
 - **价值**：捕获 dual-write 文案撒谎、失败路径状态机、跨平台文案等实现门控易漏项
-- **产物例**：`docs/audit/reviews/multi-adversarial-review-20260803-main-105-107.md`
+- **产物例**：`docs/audit/reviews/multi-adversarial-review-20260803-main-105-107.md` · **S45** `multi-adversarial-review-20260805-main-s45.md` → PR #125
+
+### Windows 上 dual-external-review（2026-08-05 S45）
+- **坑**：`bash scripts/dual-external-review.sh` 依赖 WSL；无 WSL 时整脚本失败
+- **坑**：PowerShell `*> file` 写 **UTF-16 LE BOM** → `read_file` 报 binary；需转 UTF-8
+- **坑**：`pi -p -t read,bash` 偶发只吐 DSML tool_calls 不收口 → 改 `-t read` 或重跑；Claude `claude -p --permission-mode acceptEdits` 较稳
+- **做法**：实现 diff 单独落 `docs/audit/reviews/<batch>-diff-*.patch`；verdict JSON 手写/脚本；commit message 用 temp 文件勿 HEREDOC
 
 ### 产品安全入口：对抗四角色 → SoT → Pi/Claude 双审 → 再实现（2026-08-02）
 - **何时用**：改 Trust / 确认门 / 高风险 UI 叙事（尤其用户与 ADR 心智冲突时）

@@ -17,10 +17,24 @@ instincts:
     applications: 1
 
   - id: parallel-audit-fanout-then-verify
-    pattern: "对大规模代码审计/审查:按维度簇(安全/前端/后端/发布等)fan-out 并行 general-purpose 子代理,每个深读相关文件返回 file:line 级结构化 findings(issue-card 格式);主会话对 Critical/High 论断做对抗性复核——直接 Read 源码确认,避免子代理误报导致虚高评分;再综合打分(判断非扣分,按系统性 vs 孤立)。子代理做广度,主会话保准确度。"
-    confidence: 0.6
-    source_session: "2026-07-09 Fuck My Shit Mountain 全量审计"
-    tags: [audit, review, parallel-agents, adversarial-verify, evidence]
+    pattern: "对大规模代码审计/审查:按维度簇(安全/前端/后端/发布等)fan-out 并行 general-purpose 子代理,每个深读相关文件返回 file:line 级结构化 findings(issue-card 格式);主会话对 Critical/High 论断做对抗性复核——直接 Read 源码确认,避免子代理误报导致虚高评分;再综合打分(判断非扣分,按系统性 vs 孤立)。子代理做广度,主会话保准确度。CMspark post-ship 用 Security/Correctness/Architecture/Compat 四路同样有效。"
+    confidence: 0.75
+    source_session: "2026-07-09 Fuck My Shit Mountain 全量审计; 2026-08-05 S45 multi-lane"
+    tags: [audit, review, parallel-agents, adversarial-verify, evidence, multi-lane]
+    applications: 3
+
+  - id: mapbusy-always-chrome-gated
+    pattern: "双拓扑乐观 busy：per-thread mapBusy 必须按事件 thread_id 无条件 set/clear；面板 chrome(isProcessing/ADD_MESSAGE/streaming) 必须 shouldApplyStreamEvent 门控。只清全局 isProcessing 会在切线程后污染/假解锁。错误若门控掉 UI 气泡，companion 须 persist 到线程消息。"
+    confidence: 0.85
+    source_session: "2026-08-05 S45 upload cross-thread + #125"
+    tags: [websocket, busy, thread-isolation, ui, dual-topology]
+    applications: 1
+
+  - id: windows-dual-review-without-wsl
+    pattern: "Windows 无 WSL 时勿依赖 bash dual-external-review.sh。用 claude -p + pi -p 并行 Job；PowerShell 重定向默认 UTF-16 需转 UTF-8；pi 偶发 DSML 半输出则 -t read 重跑。commit message 用临时文件 -F，避免 PS HEREDOC。"
+    confidence: 0.8
+    source_session: "2026-08-05 S45 dual-review on Windows"
+    tags: [windows, powershell, dual-review, tooling]
     applications: 1
 
   - id: verify-race-before-locking
