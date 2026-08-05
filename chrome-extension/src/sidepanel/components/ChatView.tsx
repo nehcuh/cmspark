@@ -72,10 +72,37 @@ export function ChatView() {
     threads,
   } = state
   const containerRef = useRef<HTMLDivElement>(null)
+  /** Inner content grows with messages; ResizeObserver watches this for stick-to-bottom. */
+  const contentRef = useRef<HTMLDivElement>(null)
   const lastMessageCountRef = useRef(messages.length)
+  const lastStickKeyRef = useRef("")
+  /** When true, keep the viewport glued to the latest message. */
   const pinnedRef = useRef(true)
+  /** Ignore scroll events caused by our own scrollToBottom (avoid false unpin). */
+  const ignoreScrollRef = useRef(false)
 
   const { level } = useCapabilityMode()
+
+  const scrollToBottom = useCallback(() => {
+    const container = containerRef.current
+    if (!container || !pinnedRef.current) return
+    ignoreScrollRef.current = true
+    const apply = () => {
+      const el = containerRef.current
+      if (!el || !pinnedRef.current) return
+      el.scrollTop = el.scrollHeight
+    }
+    apply()
+    // Second frame: markdown / tool cards often expand after first paint.
+    requestAnimationFrame(() => {
+      apply()
+      requestAnimationFrame(() => {
+        apply()
+        // Allow user scroll detection again after programmatic settles.
+        ignoreScrollRef.current = false
+      })
+    })
+  }, [])
 
   // Show processing label when request active OR any tool still running
   // (#au4dch ST-1/ST-4: shared collectRunningTools with FocusBand).
@@ -147,6 +174,23 @@ export function ChatView() {
     return null
   })()
 
+  // Fingerprint of transcript tail — length alone misses SET_MESSAGES full replace
+  // (same count, new ids) and tool_call result expansion (same count, taller cards).
+  const lastMsg = messages.length > 0 ? messages[messages.length - 1] : null
+  const stickKey = [
+    messages.length,
+    lastMsg?.id ?? "",
+    typeof lastMsg?.content === "string" ? lastMsg.content.length : 0,
+    Array.isArray(lastMsg?.tool_calls)
+      ? lastMsg!.tool_calls!
+          .map((tc: any) => `${tc?.id ?? ""}:${tc?.status ?? ""}:${String(tc?.result ?? "").length}`)
+          .join("|")
+      : "",
+    streamingContent ? streamingContent.length : 0,
+    streamingReasoning ? streamingReasoning.length : 0,
+    processingLabel ? "1" : "0",
+  ].join(":")
+
   // SoT §6: false-end banner when local turn idle but run still live
   const fakeEndLabel =
     !threadBusy && runBusy
@@ -155,34 +199,46 @@ export function ChatView() {
         : "编排本轮已结束 · 子任务还在跑"
       : null
 
-  // Auto-scroll to bottom when new messages arrive or streaming updates.
-  // Respects user scroll: if the user has scrolled up to read history, we stop
-  // forcing the view back to the bottom on every token (audit L5).
+  // Auto-scroll to bottom when transcript / stream grows.
+  // Respects user scroll: if the user scrolled up to read history, stop forcing
+  // the view back to the bottom (audit L5). Long threads previously only watched
+  // messages.length — full reloads (same count) and late layout growth (tool cards,
+  // markdown) left the viewport at the top or mid-history.
+  // Stickiness is delivered by scrollTop + ResizeObserver on contentRef (not CSS
+  // overflow-anchor — container disables anchoring to avoid yank-to-top).
   useEffect(() => {
-    const container = containerRef.current
-    if (!container) return
-    // Scroll when message count changes or streaming content updates
-    if (
-      messages.length !== lastMessageCountRef.current ||
-      streamingContent ||
-      streamingReasoning
-    ) {
-      lastMessageCountRef.current = messages.length
-      // Use requestAnimationFrame to ensure DOM has updated
-      requestAnimationFrame(() => {
-        if (pinnedRef.current) {
-          container.scrollTop = container.scrollHeight
-        }
-      })
-    }
-  }, [messages.length, streamingContent, streamingReasoning])
+    const unchanged =
+      stickKey === lastStickKeyRef.current &&
+      messages.length === lastMessageCountRef.current &&
+      !streamingContent &&
+      !streamingReasoning
+    if (unchanged) return
+    lastStickKeyRef.current = stickKey
+    lastMessageCountRef.current = messages.length
+    if (!pinnedRef.current) return
+    requestAnimationFrame(() => scrollToBottom())
+  }, [stickKey, messages.length, streamingContent, streamingReasoning, scrollToBottom])
+
+  // Content-height growth (mermaid, tool results, KaTeX) does not change React
+  // deps — keep glued when still pinned.
+  useEffect(() => {
+    const content = contentRef.current
+    if (!content || typeof ResizeObserver === "undefined") return
+    const ro = new ResizeObserver(() => {
+      if (pinnedRef.current) scrollToBottom()
+    })
+    ro.observe(content)
+    return () => ro.disconnect()
+  }, [scrollToBottom])
 
   const handleScroll = useCallback(() => {
+    if (ignoreScrollRef.current) return
     const container = containerRef.current
     if (!container) return
     const distanceFromBottom =
       container.scrollHeight - container.scrollTop - container.clientHeight
-    pinnedRef.current = distanceFromBottom < 60
+    // Slightly looser threshold: subpixel + large side-panel fonts on long threads.
+    pinnedRef.current = distanceFromBottom < 120
   }, [])
 
   // On thread switch, re-pin to the bottom so the new thread auto-scrolls
@@ -190,12 +246,10 @@ export function ChatView() {
   // thread (audit L5).
   useEffect(() => {
     pinnedRef.current = true
-    const container = containerRef.current
-    if (!container) return
-    requestAnimationFrame(() => {
-      container.scrollTop = container.scrollHeight
-    })
-  }, [activeThreadId])
+    lastStickKeyRef.current = ""
+    lastMessageCountRef.current = -1
+    requestAnimationFrame(() => scrollToBottom())
+  }, [activeThreadId, scrollToBottom])
 
   // Prefetch mermaid in the background once the panel is idle so the first
   // committed diagram doesn't stall on the chunk load (decision G3).
@@ -249,61 +303,63 @@ export function ChatView() {
 
   return (
     <div style={styles.container} ref={containerRef} onScroll={handleScroll}>
-      {messages.length === 0 && !streamingContent && !streamingReasoning && !processingLabel && (
-        <EmptyState level={level} />
-      )}
-      {messages.map(msg => (
-        <MessageRow
-          key={msg.id}
-          msg={msg}
-          activeThreadId={activeThreadId}
-          sendShortcut={sendShortcut}
-          onRegenerate={handleRegenerate}
-          onFork={handleFork}
-          onExport={handleExport}
-          dispatch={dispatch}
-        />
-      ))}
-      {(streamingReasoning || streamingContent) && (
-        <div style={styles.agentMsg}>
-          <div style={styles.messageCol}>
-            {streamingReasoning ? (
-              <ReasoningBlock content={streamingReasoning} live={!streamingContent} />
-            ) : null}
-            {streamingContent ? (
-              <div style={styles.agentBubble}>
-                <StreamingMarkdown content={streamingContent} />
-                <Cursor />
-              </div>
-            ) : streamingReasoning ? (
-              <div style={styles.statusBubble}>
-                思考中
-                <span style={styles.statusDots}>...</span>
-              </div>
-            ) : null}
+      <div ref={contentRef} style={styles.contentInner}>
+        {messages.length === 0 && !streamingContent && !streamingReasoning && !processingLabel && (
+          <EmptyState level={level} />
+        )}
+        {messages.map(msg => (
+          <MessageRow
+            key={msg.id}
+            msg={msg}
+            activeThreadId={activeThreadId}
+            sendShortcut={sendShortcut}
+            onRegenerate={handleRegenerate}
+            onFork={handleFork}
+            onExport={handleExport}
+            dispatch={dispatch}
+          />
+        ))}
+        {(streamingReasoning || streamingContent) && (
+          <div style={styles.agentMsg}>
+            <div style={styles.messageCol}>
+              {streamingReasoning ? (
+                <ReasoningBlock content={streamingReasoning} live={!streamingContent} />
+              ) : null}
+              {streamingContent ? (
+                <div style={styles.agentBubble}>
+                  <StreamingMarkdown content={streamingContent} />
+                  <Cursor />
+                </div>
+              ) : streamingReasoning ? (
+                <div style={styles.statusBubble}>
+                  思考中
+                  <span style={styles.statusDots}>...</span>
+                </div>
+              ) : null}
+            </div>
           </div>
-        </div>
-      )}
-      {processingLabel && (
-        <div style={styles.agentMsg}>
-          <div style={styles.statusBubble}>
-            {processingLabel}
-            <span style={styles.statusDots}>...</span>
+        )}
+        {processingLabel && (
+          <div style={styles.agentMsg}>
+            <div style={styles.statusBubble}>
+              {processingLabel}
+              <span style={styles.statusDots}>...</span>
+            </div>
           </div>
-        </div>
-      )}
-      {fakeEndLabel && !processingLabel && (
-        <div style={styles.agentMsg}>
-          <button
-            type="button"
-            style={styles.fakeEnd}
-            onClick={() => dispatch({ type: "SET_FLEET_LIST_OPEN", open: true })}
-          >
-            {fakeEndLabel}
-            <span style={{ color: tokens.accent, marginLeft: 6 }}>查看子任务</span>
-          </button>
-        </div>
-      )}
+        )}
+        {fakeEndLabel && !processingLabel && (
+          <div style={styles.agentMsg}>
+            <button
+              type="button"
+              style={styles.fakeEnd}
+              onClick={() => dispatch({ type: "SET_FLEET_LIST_OPEN", open: true })}
+            >
+              {fakeEndLabel}
+              <span style={{ color: tokens.accent, marginLeft: 6 }}>查看子任务</span>
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   )
 }
@@ -1252,6 +1308,12 @@ const styles: Record<string, React.CSSProperties> = {
     overflowY: "auto",
     padding: "14px 14px 16px",
     background: "transparent",
+    // Disable scroll-anchoring so late inserts (tools/markdown) cannot yank
+    // long threads toward the top; stick-to-bottom is handled in JS.
+    overflowAnchor: "none" as any,
+  },
+  contentInner: {
+    minHeight: "min-content",
   },
   empty: {
     color: tokens.textMuted,

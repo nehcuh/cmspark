@@ -55,11 +55,16 @@ beforeEach(async () => {
     pendingToolCalls.delete(id)
   }
   securityConfirmations.rejectAll("disconnect")
-  // Reset god-mode / auto-approve so a prior test's state can't leak.
+  // Reset god-mode / auto-approve / enterprise / cruise so a prior test's state can't leak.
   saveConfig({
     trusted_domains: [],
     auto_approved_domains: [],
-    security: { ...getConfig().security, allow_all_schemes: false, auto_approve_dangerous: false },
+    security: {
+      ...getConfig().security,
+      allow_all_schemes: false,
+      auto_approve_dangerous: false,
+      auto_approve_enterprise_tools: false,
+    },
   })
 
   await new Promise<void>((resolve) => {
@@ -444,6 +449,7 @@ test("P1-2: MCP manual confirm — respondFrom(rogue) origin_mismatch then origi
 })
 
 test("god-mode ON + critical MCP → STILL confirms (gate is god-mode-unaware)", async () => {
+  // Two flags only — not full-autonomy cruise (missing auto_approve_enterprise_tools).
   saveConfig({ security: { ...getConfig().security, allow_all_schemes: true, auto_approve_dangerous: true } })
   const ns = await injectServer("fs", "trusted", [{ name: "write_file", inputSchema: { type: "object", properties: {} } }])
   const executeTool = createToolExecutor(serverSideWs)
@@ -452,6 +458,57 @@ test("god-mode ON + critical MCP → STILL confirms (gate is god-mode-unaware)",
   const conf = await confp
   clientSideWs.send(JSON.stringify({ type: "security.confirmation.response", confirmation_id: conf.confirmation_id, approved: true }))
   assert.equal((await rp).success, true, "god-mode must not auto-approve critical MCP")
+})
+
+test("full-autonomy cruise (三旗) + critical MCP write_file → NO confirm (product: cruise waives MCP write)", async () => {
+  saveConfig({
+    security: {
+      ...getConfig().security,
+      allow_all_schemes: true,
+      auto_approve_dangerous: true,
+      auto_approve_enterprise_tools: true,
+    },
+  })
+  const ns = await injectServer("fs", "trusted", [
+    { name: "write_file", inputSchema: { type: "object", properties: {} } },
+  ])
+  const executeTool = createToolExecutor(serverSideWs)
+  // Register no-prompt watcher before execute so a wrongly-gated confirm fails
+  // the 400ms window instead of hanging on an unapproved dialog.
+  const noPrompt = expectNoClientMessage("security.confirmation.request", 400)
+  const resultP = executeTool("tc_cruise_mcp_write", ns("write_file"), {
+    path: "/tmp/cruise-x",
+    content: "y",
+  })
+  await noPrompt
+  const result = await resultP
+  assert.equal(result.success, true, `cruise must waive MCP write confirm; got: ${result.error}`)
+})
+
+test("enterprise auto-approve alone + critical MCP write → STILL confirms (not three-flag)", async () => {
+  saveConfig({
+    security: {
+      ...getConfig().security,
+      auto_approve_enterprise_tools: true,
+      auto_approve_dangerous: false,
+      allow_all_schemes: false,
+    },
+  })
+  const ns = await injectServer("fs", "trusted", [
+    { name: "write_file", inputSchema: { type: "object", properties: {} } },
+  ])
+  const executeTool = createToolExecutor(serverSideWs)
+  const confp = expectClientMessage("security.confirmation.request")
+  const rp = executeTool("tc_ent_only_mcp", ns("write_file"), { path: "/tmp/e", content: "y" })
+  const conf = await confp
+  clientSideWs.send(
+    JSON.stringify({
+      type: "security.confirmation.response",
+      confirmation_id: conf.confirmation_id,
+      approved: true,
+    }),
+  )
+  assert.equal((await rp).success, true, "enterprise flag alone must not waive MCP write")
 })
 
 test("DESTRUCTIVE name (exec_cmd) on trusted server → confirms (existing force-manual + new forceMcpConfirm)", async () => {

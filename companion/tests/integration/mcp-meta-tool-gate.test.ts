@@ -70,7 +70,12 @@ beforeEach(async () => {
   saveConfig({
     trusted_domains: [],
     auto_approved_domains: [],
-    security: { ...getConfig().security, allow_all_schemes: false, auto_approve_dangerous: false },
+    security: {
+      ...getConfig().security,
+      allow_all_schemes: false,
+      auto_approve_dangerous: false,
+      auto_approve_enterprise_tools: false,
+    },
   })
 
   await new Promise<void>((resolve) => {
@@ -234,6 +239,7 @@ test("mcp_read_resource DENIED → Security Block (no read happens)", async () =
 })
 
 test("mcp_read_resource god-mode ON → STILL confirms (god-mode-unaware)", async () => {
+  // Two flags only — not full-autonomy cruise.
   saveConfig({ security: { ...getConfig().security, allow_all_schemes: true, auto_approve_dangerous: true } })
   await injectServer("fs", "trusted")
   const executeTool = createToolExecutor(serverSideWs)
@@ -243,6 +249,27 @@ test("mcp_read_resource god-mode ON → STILL confirms (god-mode-unaware)", asyn
   clientSideWs.send(JSON.stringify({ type: "security.confirmation.response", confirmation_id: conf.confirmation_id, approved: true }))
   const result = await rp
   assert.equal(result.success, true, "god-mode must not auto-approve mcp_read_resource")
+})
+
+test("full-autonomy cruise (三旗) + mcp_read_resource → NO confirm", async () => {
+  saveConfig({
+    security: {
+      ...getConfig().security,
+      allow_all_schemes: true,
+      auto_approve_dangerous: true,
+      auto_approve_enterprise_tools: true,
+    },
+  })
+  await injectServer("fs", "trusted")
+  const executeTool = createToolExecutor(serverSideWs)
+  const noPrompt = expectNoClientMessage("security.confirmation.request", 400)
+  const resultP = executeTool("m_cruise_meta", "mcp_read_resource", {
+    server: "fs",
+    uri: "file:///tmp/cruise-meta",
+  })
+  await noPrompt
+  const result = await resultP
+  assert.equal(result.success, true, `cruise must waive meta critical confirm; got: ${result.error}`)
 })
 
 test("mcp_read_resource is NEVER cached — 2nd call still confirms (same session)", async () => {

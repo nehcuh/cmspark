@@ -1,0 +1,8 @@
+{
+  "batch": "mcp-cruise-chatview-scroll",
+  "timestamp": "20260806-061641",
+  "claude": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/c/Users/HuChen/Projects/cmspark/docs/audit/reviews/mcp-cruise-chatview-scroll-claude-20260806-061641.md" },
+  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/c/Users/HuChen/Projects/cmspark/docs/audit/reviews/mcp-cruise-chatview-scroll-pi-20260806-061641.md" },
+  "both_approve": true,
+  "diff_path": "/c/Users/HuChen/Projects/cmspark/docs/audit/reviews/mcp-cruise-chatview-scroll-diff-20260806-061641.patch"
+}

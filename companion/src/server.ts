@@ -4623,7 +4623,8 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
 /**
  * Execute an MCP namespaced tool (mcp__<server>__<tool>). Enforces the per-server
  * trust_level policy: manual = always prompt, first-use = prompt once per session,
- * trusted = never prompt. Approval cache is session-scoped to avoid cross-session bleed.
+ * trusted = never prompt for non-critical. Critical caps (file-write/exec/…) still
+ * force L2 unless full-autonomy cruise (三旗). Approval cache is session-scoped.
  */
 async function executeMcpTool(
   toolName: string,
@@ -4678,6 +4679,15 @@ async function executeMcpTool(
   const mcpMerged = mergeCapabilities(classifyMcpCall(route.toolName, params), declaredCaps)
   const mcpCaps = mcpMerged.capabilities
   const forceMcpConfirm = mcpCaps.some(c => CRITICAL_MCP_CAPABILITIES.has(c))
+  // Full autonomy cruise (三旗: auto_approve_dangerous + enterprise + allow_all_schemes)
+  // — same algebra as shell_exec / §6.2 forceConfirm waive. God-mode or enterprise
+  // alone still force critical MCP confirms (including file-write). Product: user
+  // opted into max residual risk; do not keep a second silent deny path for MCP writes.
+  const securityConfigEarly = getConfig().security
+  const userFullAutonomyCruise =
+    securityConfigEarly?.auto_approve_dangerous === true &&
+    securityConfigEarly?.auto_approve_enterprise_tools === true &&
+    securityConfigEarly?.allow_all_schemes === true
   // kimi suggestion: make the trust grant auditable. When a declaration RESOLVED
   // an "unknown" (inference found nothing, user vouched), warn so it's traceable.
   if (mcpMerged.declaredResolvedUnknown) {
@@ -4689,7 +4699,19 @@ async function executeMcpTool(
     })
   }
 
-  if (needsConfirm || forceMcpConfirm) {
+  if ((needsConfirm || forceMcpConfirm) && userFullAutonomyCruise) {
+    logger.info("mcp.confirm.waived", {
+      server: route.serverName,
+      tool: route.toolName,
+      trust_level: trustLevel,
+      session: sessionId,
+      capabilities: mcpCaps,
+      declared_capabilities: declaredCaps ?? [],
+      force_confirm_would_have: forceMcpConfirm,
+      needs_confirm_would_have: needsConfirm,
+      reason: "full_autonomy_cruise",
+    })
+  } else if (needsConfirm || forceMcpConfirm) {
     if (ws.readyState !== WebSocket.OPEN) {
       return {
         success: false,
@@ -5016,15 +5038,29 @@ async function executeMcpMetaTool(
     forceMetaConfirm ||
     configuredTrustLevel === "manual" ||
     (configuredTrustLevel === "first-use" && !cache.isApproved(cacheKey))
+  const securityConfigMeta = getConfig().security
+  const userFullAutonomyCruiseMeta =
+    securityConfigMeta?.auto_approve_dangerous === true &&
+    securityConfigMeta?.auto_approve_enterprise_tools === true &&
+    securityConfigMeta?.allow_all_schemes === true
 
-  if (needsConfirm) {
+  if (needsConfirm && userFullAutonomyCruiseMeta) {
+    logger.info("mcp.meta.confirm.waived", {
+      tool: toolName,
+      server: serverName,
+      trust_level: configuredTrustLevel,
+      session: sessionId,
+      force_confirm_would_have: forceMetaConfirm,
+      reason: "full_autonomy_cruise",
+    })
+  } else if (needsConfirm) {
     if (ws.readyState !== WebSocket.OPEN) {
       return {
         success: false,
         error: `Security Block: MCP meta-tool ${toolName} (${serverName}) cannot be confirmed (extension disconnected)`,
       }
     }
-    const securityConfig = getConfig().security
+    const securityConfig = securityConfigMeta
     // Capability label for the audit/UI (the meta-tool's operation kind).
     const metaCap = toolName === "mcp_read_resource" ? "resource-read" : "prompt-injection"
     logger.info("mcp.meta.confirm.requested", {

@@ -78,6 +78,10 @@ macOS 示例：`args` 末尾用 `"/Users/you"`，`cwd` 同理。
 - 想放开多个目录，就在 `args` 里加多个路径参数（或 MCP 面板编辑）。
 - Windows 路径建议正斜杠（`C:/Users/...`），与 companion `normalizeArgsForPlatform` 一致。
 - **God-mode 不会扩大 MCP allow-dir**；越界路径需改 MCP 配置，不是再开确认开关。
+- **确认门（Autonomy）**：
+  - 默认：`file-write` / `exec` / `network-egress` 等 critical 能力会 **强制 L2 确认**（即使 `trust_level=trusted`；`write_file` 等破坏性名称还会按次确认）。
+  - **单独** god-mode、`auto_approve_dangerous`、或 **仅** `auto_approve_enterprise_tools` **都不会**免 MCP critical 确认。
+  - **全自动巡航（三旗全开）**：`auto_approve_dangerous` + `auto_approve_enterprise_tools` + `allow_all_schemes` 时，与 `shell_exec` 一致，**免 MCP 写/critical 确认**（含 `mcp_read_resource` 等 meta force 路径；审计日志 `mcp.confirm.waived` / `mcp.meta.confirm.waived` · `reason=full_autonomy_cruise`）。未开三旗时行为不变。
 - **动态加目录（P2）**：当 `mcp__filesystem__*` 因路径不在 allowlist 失败，且路径在用户 **home 下** 时，会弹 L2 确认「是否允许该目录」；批准后写入 config 并热重载，自动重试一次。敏感路径（`.ssh` / Keychains 等）拒绝扩展。
 - **会话项目目录（P1）**：工具 `ensure_project_dir` 在工作区或 `~/CMspark-projects/<name>/` 下创建文件夹，供写报告前使用。
 

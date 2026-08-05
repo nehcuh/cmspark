@@ -903,7 +903,7 @@ export function saveConfig(config: Partial<CompanionConfig>): CompanionConfig {
   }
   if (config.security?.auto_approve_enterprise_tools === true) {
     console.warn(
-      "[cmspark-agent] WARNING: security.auto_approve_enterprise_tools is enabled — shell_exec / netsec_port_scan skip interactive L2 when module+allowlist/task-auth (or shell policy) pass. spawn_worker / host_computer critical / MCP critical still require confirmation. Use only for trusted enterprise lab workflows.",
+      "[cmspark-agent] WARNING: security.auto_approve_enterprise_tools is enabled — shell_exec / netsec_port_scan skip interactive L2 when module+allowlist/task-auth (or shell policy) pass. Alone it does NOT waive MCP critical confirms; full-autonomy cruise (this + auto_approve_dangerous + allow_all_schemes) does. spawn_worker / host_computer critical still require confirmation unless that three-flag cruise is on. Use only for trusted enterprise lab workflows.",
     )
   }
   // ── H5 invariant: saveConfig is SYNCHRONOUS by design ──────────────────
