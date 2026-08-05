@@ -3,16 +3,14 @@
 ## Session Handoff
 
 <!-- handoff:start -->
-### 2026-08-05 (S45 — multi-lane review + P0 fix #125 MERGED)
-- **Ship**: PR **#125** merge `7c8ec53` on `origin/main` — upload thread isolation + scoped fleet.stop_all + safeUploadBasename
-- **Review**: post-pull 4-lane REQUEST_CHANGES → implement → adversarial pass → Claude APPROVE / Pi APPROVE_WITH_NITS → CI green → merge
-- **Key fixes**: mapBusy always / panel chrome gated; run+parent stop stamps; companion persist upload errors; plasmo 0.4.0
-- **Next**: optional true-device spawn/stop smoke; S43 lid-close A/B still open; no blocking code debt from S45
-- **Knowledge**: `memory/project-knowledge.md` §上传错误跨线程 · §Fleet 显示/停止 · §Windows dual-review
+### 2026-08-06 (S46 — scenes tools + Trust B + MCP cruise + skill_install home)
+- **Ship on main**: `a054121` skill_install user_home · `1b294fe` MCP cruise waive + ChatView stick · `9e7c02b` user-scene tools/AI · `b247fcf` **Trust B** (user pack skip_l2 / enable modules / auto_approve; unapply restore)
+- **Product**: 内置场景只读+另存；我的场景可配 tools + Trust 全局写；#pl5bud 红队用「我的」+ Trust 勾选
+- **Next**: 重启 Companion + 重载扩展真机验收；可选红队场景模板；S43 合盖掉电 A/B 仍开
+- **Knowledge**: project-knowledge §skill_install 白名单 · §MCP≠shell 确认 · §Pack Trust B · §MCP whitelist 正交
 
-### 2026-08-05 (S44 — file upload stuck / ship main)
-- **Ship**: `c6b1e8b` on `origin/main` — busy clear + reasoning UI + upload diagnostics
-- **Root**: optimistic `isProcessing` without `file.upload_error` handler; env mismatch (App vs source)
-- **Next**: bake into CMspark.app if users stay on packaged build
-- **Knowledge**: `memory/project-knowledge.md` §附件上传「思考中」
+### 2026-08-05 (S45 — multi-lane review + P0 fix #125 MERGED)
+- **Ship**: PR **#125** merge `7c8ec53` — upload thread isolation + scoped fleet.stop_all
+- **Next**: optional device smoke; S43 lid-close A/B
+- **Knowledge**: mapBusy-always/chrome-gated; Fleet stop scope
 <!-- handoff:end -->

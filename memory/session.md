@@ -2,6 +2,15 @@
 
 ## Current Session
 
+### S46 (2026-08-06 ~00:00–07:45) [skill_install 主目录 · MCP 巡航 · ChatView 贴底 · 用户场景工具/Trust B]
+- **#tj6y24 技能装载**：`skill_install` 源路径扩到 **user_home**（L2 授权）；系统路径仍拒；`a054121`
+- **#pl5bud shell 弹窗**：日志证实 shell 已 enterprise_auto_approved；真正弹的是 **MCP write_file force_confirm** → 三旗下 MCP critical 免确认 `1b294fe`
+- **ChatView 长对话跳顶**：stickKey + ResizeObserver + ignoreScrollRef + overflow-anchor none
+- **场景产品**：多路对抗设计 → Pi/Claude APPROVE_WITH_NITS → 用户场景 tools.mode allowlist + AI generate/optimize + 另存保留工具 `9e7c02b`
+- **Trust 选项 B（用户定）**：仅 origin=user 可写 `trust`（skip_l2 三旗 / enable_modules / auto_approve）；apply 写全局、unapply restore → `b247fcf` on main
+- **下次**：重载扩展 + 重启 Companion 验收；红队场景勾 Trust 后真机跑 #pl5bud 类；可选内置「红队」模板；合盖掉电 A/B 仍挂 S43
+- Recorded: yes — skill_install 白名单心智 · MCP≠shell 确认门 · Pack Trust B 全局可回滚
+
 ### S45 (2026-08-05 ~22:00–22:40) [pull main · 四路对抗 · P0 快修 · PR #125 合 main]
 - **拉取**：`4a2d02f..474df7e`（#122–#124 · PATH · 上传 · 0.4.0）
 - **多路对抗**：Security/Correctness/Architecture/Compat → **REQUEST_CHANGES**（上传跨线程污染 + fleet 显示 scope vs 停止全进程）

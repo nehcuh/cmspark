@@ -22,6 +22,29 @@
 
 ## Technical Pitfalls
 
+### skill_install 源路径 ≠ MCP filesystem 授权（2026-08-06 S46）
+- **现象**：用户以为 MCP 授权了 `~/` 就能 `skill_install` `~/Projects/...`；对话中途停在「先确认包大小」
+- **根因**：两套门——MCP `server-filesystem` 用 args roots；`isSkillInstallSourceAllowed` 曾只允许 Downloads/tmp/data dir（Trust 防任意 path 进技能库）
+- **产品修**：主目录为 `user_home` tier（L2 确认=授权）；系统路径仍 denied；L2 前预检非法源
+- **心智**：需要权限应弹窗，而非硬拒；三旗巡航与 forceConfirm 代数对齐（skill_install 仍 L2 除非三旗）
+
+### MCP write 确认与 shell_exec 巡航不同步（2026-08-06 S46 · #pl5bud）
+- **现象**：用户开全自动巡航仍反复点确认，以为是 shell
+- **证据**：`security.enterprise_auto_approved` shell_exec；`mcp.confirm.requested` write_file force_confirm=true
+- **修法**：`executeMcpTool`/`executeMcpMetaTool` 在三旗下 `mcp.confirm.waived`；单独 god-mode / 仅 enterprise 仍确认
+- **教训**：Autonomy 开关必须覆盖所有 L2 方言（Companion critical + MCP capability gate），否则「全授权」撒谎
+
+### Pack allowlist 与 MCP 白名单正交（2026-08-06 S46）
+- **坑**：`tool_whitelist` 非 null 时 adapter/`isToolAllowed` 会滤掉 `mcp__*`（validator 也不允许 mcp 名进 allow）
+- **修**：native 按 whitelist 滤；`mcp__*` 与 meta 工具正交（MCP 仍走 selection_mode）
+- **用户场景 allowlist + 勾 MCP** 必须同发此修，否则场景一收窄就断 MCP
+
+### 用户场景 Trust B 写全局（2026-08-06 · 产品覆盖 ADR）
+- **原 ADR-014/020**：Pack 禁止 auto_approve / 开 module
+- **产品 B**：仅 `origin=user` 的 `trust` 块可在 apply 写全局（skip_l2→三旗、enable_modules、auto_approve_*）；builtin 仍禁
+- **回滚**：`mission_pack_trust_snapshot` + unapply `restoreTrustSnapshot`
+- **纪律**：仍需 user_gesture；apply 前二次确认；审计 `pack.trust_apply` / `pack.trust_restore`
+
 ### 附件上传「思考中」：乐观 UI 与 file.upload_error 未清 busy（2026-08-05）
 - **现象**：Side Panel 上传 docx 后一直「思考中」；用户以为解析挂了。磁盘线程无 `<document>`，companion 日志无 `file.upload*`
 - **根因分层**：(1) **UI** `SET_PROCESSING` 后只靠 `chat.done`/`chat.error` 清 busy；`file.upload_error` / 通用 `error` / Companion 未连接 **都不清** `isProcessing`/`threadBusy`；(2) **环境** 打包 `CMspark.app` 旧扩展/旧 companion 与源码不同步时，请求可能根本进不了带修复的进程；(3) **解析器本身** 对 ~30–55KB docx 正常（~100ms），不是 officeparser 坏了
@@ -307,6 +330,15 @@
 - 教训：多层安全「跳过」必须写清代数；allowlist/task auth/L2/forceConfirm/god-mode 不是同一开关。
 
 ## Reusable Patterns
+
+### 产品冲突 ADR 时：选项阶梯 A 可控 / B 全局 / C 仅引导（2026-08-06 S46）
+- **场景**：用户认为「场景应能跳过 L2 / 开 module / 写 auto_approve」，与 Pack=Composition 冲突
+- **做法**：先列 A（apply 授权单+可回滚）/ B（全局 Trust 注入）/ C（仅引导）；用户点选后再实现；B 须改 ADR 修订说明 + snapshot restore + 仅 user origin
+- **价值**：避免实现 agent 静默沿用旧「禁止」或静默放大 Trust
+
+### 多路对抗设计 → dual-review → 再按序实现（场景/Trust 类）（2026-08-06）
+- Security / Product-UX / Impl 三车道 plan agent（UX 可失败则主会话补）→ `docs/superpowers/specs/*` 合成 → `dual-external-review.sh` → 按 §实现次序写代码
+- SoT：`docs/superpowers/specs/2026-08-06-user-scene-tools-and-ai-create.md`
 
 ### 实现 workflow：节点 Pi-only + 里程碑 Claude+Pi dual（2026-08-03 S38）
 - **何时用**：多切片实现且需外部审，但不想每个切片都跑双路（贵/慢）

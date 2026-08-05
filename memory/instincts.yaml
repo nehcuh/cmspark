@@ -31,10 +31,24 @@ instincts:
     applications: 1
 
   - id: windows-dual-review-without-wsl
-    pattern: "Windows 无 WSL 时勿依赖 bash dual-external-review.sh。用 claude -p + pi -p 并行 Job；PowerShell 重定向默认 UTF-16 需转 UTF-8；pi 偶发 DSML 半输出则 -t read 重跑。commit message 用临时文件 -F，避免 PS HEREDOC。"
-    confidence: 0.8
-    source_session: "2026-08-05 S45 dual-review on Windows"
+    pattern: "Windows 无 WSL 时勿依赖 bash dual-external-review.sh。用 claude -p + pi -p 并行 Job；PowerShell 重定向默认 UTF-16 需转 UTF-8；pi 偶发 DSML 半输出则 -t read 重跑。commit message 用临时文件 -F，避免 PS HEREDOC。Git Bash + PATH=/c/nvm4w/nodejs 可直接跑 dual-external-review.sh。"
+    confidence: 0.85
+    source_session: "2026-08-05 S45 dual-review on Windows; 2026-08-06 S46 Git Bash dual-review"
     tags: [windows, powershell, dual-review, tooling]
+    applications: 2
+
+  - id: autonomy-must-cover-all-l2-dialects
+    pattern: "用户开『全自动巡航/全授权』后仍弹确认：先查日志是哪条门（shell enterprise_auto_approved vs mcp.confirm.requested）。Autonomy 三旗必须覆盖 Companion critical 与 MCP forceMcpConfirm/meta 等所有 L2 方言，否则产品撒谎。不要用模型话术『每次 shell 都要确认』当真相。"
+    confidence: 0.85
+    source_session: "2026-08-06 S46 #pl5bud MCP write vs shell"
+    tags: [security, autonomy, mcp, l2, product]
+    applications: 1
+
+  - id: product-adr-conflict-offer-abc-then-implement
+    pattern: "用户要求的场景能力与 ADR（如 Pack 禁 auto_approve）冲突时：陈述现状+风险，给出 A 可控 / B 全局 / C 仅引导 阶梯，等用户点选后再改代码与 ADR 修订；B 须 snapshot+unapply restore 且仅 user origin。"
+    confidence: 0.8
+    source_session: "2026-08-06 S46 scene Trust option B"
+    tags: [product, adr, trust, packs]
     applications: 1
 
   - id: verify-race-before-locking
