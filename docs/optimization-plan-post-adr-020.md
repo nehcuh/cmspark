@@ -15,7 +15,7 @@
 
 | 维度 | 状态 |
 |------|------|
-| **产品版本** | 0.3.0（companion / extension） |
+| **产品版本** | 0.4.0（companion / extension） |
 | **能力本体** | ADR-020 Accepted；README / architecture / GOAL / DESIGN / 用户指南坐标已同步 |
 | **文档重梳** | 07-28 P0 事实错误 + 导航 + 用户指南 + Phase4 归档：**已合 main**（PR #80 一带） |
 | **代码安全（07-25 High 簇）** | 选择器注入、config 预鉴权、CU session-trust 旁路、stream 线程、Stop≠abort、package host 等：**FIXED** |

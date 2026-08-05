@@ -39,53 +39,10 @@ STAGING="${ROOT_DIR}/dist-package/cmspark-${PLATFORM}"
 CACHE_DIR="${ROOT_DIR}/dist-package/.cache"
 ZIP_NAME="cmspark-v${VERSION}-${PLATFORM}.zip"
 
-# Stage platform-trimmed onnxruntime-node (+ onnxruntime-common) next to the
-# bundle. Full npm package is multi-arch (~259MB); we ship only package.json +
-# dist/ + bin/napi-v6/<os>/<arch> (mirrors scripts/build-windows-exe.ps1).
-# Returns 0 on success, 1 if source missing or native payload absent.
-stage_onnxruntime() {
-  local ort_os="$1"   # darwin | win32 | linux
-  local ort_arch="$2" # arm64 | x64
-  local ort_src="${ROOT_DIR}/companion/node_modules/onnxruntime-node"
-  local common_src="${ROOT_DIR}/companion/node_modules/onnxruntime-common"
-  local ort_dest="${STAGING}/node_modules/onnxruntime-node"
-  local common_dest="${STAGING}/node_modules/onnxruntime-common"
-  local native_src="${ort_src}/bin/napi-v6/${ort_os}/${ort_arch}"
-
-  if [ ! -d "${ort_src}" ]; then
-    echo "  WARNING: onnxruntime-node not installed under companion/node_modules" >&2
-    return 1
-  fi
-  if [ ! -d "${native_src}" ]; then
-    echo "  WARNING: onnxruntime-node native payload missing: bin/napi-v6/${ort_os}/${ort_arch}" >&2
-    return 1
-  fi
-
-  mkdir -p "${ort_dest}/bin/napi-v6/${ort_os}/${ort_arch}"
-  cp "${ort_src}/package.json" "${ort_dest}/"
-  cp -R "${ort_src}/dist" "${ort_dest}/dist"
-  cp -R "${native_src}/." "${ort_dest}/bin/napi-v6/${ort_os}/${ort_arch}/"
-  if [ -f "${ort_src}/LICENSE" ]; then cp "${ort_src}/LICENSE" "${ort_dest}/"; fi
-
-  if [ -d "${common_src}" ]; then
-    mkdir -p "${common_dest}"
-    cp "${common_src}/package.json" "${common_dest}/"
-    cp -R "${common_src}/dist" "${common_dest}/dist"
-  else
-    echo "  WARNING: onnxruntime-common missing — onnxruntime-node dist/ needs it at runtime" >&2
-    return 1
-  fi
-
-  local ort_bytes
-  ort_bytes="$(du -sk "${ort_dest}" | awk '{print $1}')"
-  # ~70MB budget for win32/x64; other platforms similar
-  if [ "${ort_bytes}" -gt 72000 ]; then
-    echo "ERROR: staged onnxruntime-node is ${ort_bytes}KB (>70MB budget)" >&2
-    return 1
-  fi
-  echo "  onnxruntime-node ${ort_os}/${ort_arch}: $((ort_bytes / 1024))MB (trimmed)"
-  return 0
-}
+# Experimental locate layer is Qwen3-VL (on-demand model + Python env under
+# ~/.cmspark-agent/). Do NOT stage onnxruntime-node or the legacy TinyClick ONNX
+# worker — that path is product-replaced; leftover native ORT only bloats zips
+# and misleads release notes. See docs/qwen-vl-experimental-layer.md.
 
 echo "=== CMspark Package Builder ==="
 echo "Platform:  ${PLATFORM}"
@@ -145,8 +102,7 @@ if [[ "${PLATFORM}" == macos-* ]]; then
 fi
 
 # Cross-platform gate-only: windows host-scripts-win non-empty (no full package).
-# windows-x64 also prechecks TinyClick worker + ORT install (preconditions for
-# the hard-fail staging path later in the full package).
+# Qwen3-VL weights/ORT are NOT package gates — models download on demand.
 if [ "${CMSPARK_PACKAGE_GATE_ONLY:-}" = "1" ] && [[ "${PLATFORM}" == windows-* ]]; then
   win_src="${ROOT_DIR}/companion/src/host-use/win/scripts"
   win_count=0
@@ -157,27 +113,16 @@ if [ "${CMSPARK_PACKAGE_GATE_ONLY:-}" = "1" ] && [[ "${PLATFORM}" == windows-* ]
     echo "ERROR: host-scripts-win source empty (${win_src})" >&2
     exit 1
   fi
-  if [ "${PLATFORM}" = "windows-x64" ]; then
-    worker_ok=0
-    for _w in \
-      "${ROOT_DIR}/companion/dist/computer/tinyclick-worker.js" \
-      "${ROOT_DIR}/companion/dist/tinyclick-worker.js" \
-      "${ROOT_DIR}/companion/src/computer/tinyclick-worker.ts"
-    do
-      if [ -f "${_w}" ]; then worker_ok=1; break; fi
-    done
-    if [ "${worker_ok}" -eq 0 ]; then
-      echo "ERROR: tinyclick-worker missing (need dist/computer/tinyclick-worker.js or src .ts) — windows-x64 hard-gate precondition" >&2
-      exit 1
-    fi
-    if [ ! -d "${ROOT_DIR}/companion/node_modules/onnxruntime-node" ]; then
-      echo "ERROR: onnxruntime-node not installed — windows-x64 package hard-requires ORT (npm ci in companion/)" >&2
-      exit 1
-    fi
-    echo "GATE-ONLY: windows-x64 host-scripts-win=${win_count} ps1 + tinyclick + ORT preconditions OK — exiting 0"
+  qwen_worker_src=""
+  if [ -f "${ROOT_DIR}/companion/dist/computer/qwen-vl-worker.py" ]; then
+    qwen_worker_src="dist"
+  elif [ -f "${ROOT_DIR}/companion/src/computer/qwen-vl-worker.py" ]; then
+    qwen_worker_src="src"
   else
-    echo "GATE-ONLY: windows host-scripts-win has ${win_count} ps1 — exiting 0"
+    echo "ERROR: qwen-vl-worker.py missing (need dist/computer or src/computer) — Qwen3-VL locate hard-gate" >&2
+    exit 1
   fi
+  echo "GATE-ONLY: windows host-scripts-win=${win_count} ps1 + qwen-vl-worker.py (${qwen_worker_src}) OK — exiting 0"
   exit 0
 fi
 
@@ -189,22 +134,14 @@ fi
 # --- Step 2: Bundle ---
 echo "[3/9] Bundling with esbuild..."
 cd "${ROOT_DIR}/companion"
-# onnxruntime-node is native; keep external and stage a platform-trimmed
-# node_modules copy (mirrors scripts/build-windows-exe.ps1).
+# Keep onnxruntime-node external if any residual import remains in the graph;
+# we do NOT stage ORT into the zip (Qwen3-VL is the experimental locate layer).
 npx --yes esbuild dist/index.js \
   --bundle --platform=node --target=node22 \
   --external:node-notifier --external:systray2 \
   --external:canvas --external:pdfjs-dist \
   --external:onnxruntime-node \
   --outfile=dist/cmspark-agent.js 2>&1 | tail -1
-
-# TinyClick worker sidecar (eval-loaded at runtime; same trust level as ORT).
-if [ -f dist/computer/tinyclick-worker.js ]; then
-  npx --yes esbuild dist/computer/tinyclick-worker.js \
-    --bundle --platform=node --target=node22 \
-    --external:onnxruntime-node \
-    --outfile=dist/tinyclick-worker.js 2>&1 | tail -1
-fi
 
 # --- Step 3: Stage files ---
 echo "[4/9] Staging distribution files..."
@@ -215,15 +152,9 @@ mkdir -p "${STAGING}"
 # Main bundle
 cp companion/dist/cmspark-agent.js "${STAGING}/"
 
-# TinyClick worker sidecar (if built above)
-if [ -f companion/dist/tinyclick-worker.js ]; then
-  cp companion/dist/tinyclick-worker.js "${STAGING}/"
-fi
-
 # Qwen3-VL Python worker sidecar — MUST sit next to cmspark-agent.js so
 # resolveQwenVlWorkerScript() finds Resources/qwen-vl-worker.py in the .app
-# bundle. Without this, admission fails with worker-missing and locate falls
-# through as model-not-admitted (formerly mislabeled model-disabled).
+# bundle. Weights download on demand to ~/.cmspark-agent/models/qwen3-vl-*.
 if [ -f companion/dist/computer/qwen-vl-worker.py ]; then
   cp companion/dist/computer/qwen-vl-worker.py "${STAGING}/qwen-vl-worker.py"
 elif [ -f companion/src/computer/qwen-vl-worker.py ]; then
@@ -232,6 +163,7 @@ else
   echo "ERROR: qwen-vl-worker.py missing (need dist/computer or src/computer) — Qwen3-VL locate hard-gate" >&2
   exit 1
 fi
+echo "  qwen-vl-worker.py (Qwen3-VL experimental locate; models on-demand)"
 
 # WASM
 cp companion/node_modules/sql.js/dist/sql-wasm.wasm "${STAGING}/"
@@ -239,12 +171,10 @@ cp companion/node_modules/sql.js/dist/sql-wasm.wasm "${STAGING}/"
 # Builtin skills
 cp -r companion/builtin-skills "${STAGING}/"
 
-# TinyClick model manifest — must sit next to cmspark-agent.js so
-# defaultManifestPath() candidate 3 (__dirname/models.manifest.json) hits.
-# Without this, all 3 candidates miss and fallback returns
-# "<bundle>/../../models.manifest.json" → UI shows ENOENT for that path
-# and the download/license gate can't read provenance hashes.
-cp companion/models.manifest.json "${STAGING}/"
+# Optional legacy models.manifest.json (not required for Qwen3-VL weights).
+if [ -f companion/models.manifest.json ]; then
+  cp companion/models.manifest.json "${STAGING}/"
+fi
 
 # Assets (tray icons)
 if [ -d companion/assets ]; then
@@ -326,13 +256,7 @@ case "${PLATFORM}" in
     elif [ -f companion/dist/cmspark-tray ]; then
       cp companion/dist/cmspark-tray "${STAGING}/"
     fi
-    # Platform-trimmed ORT for TinyClick (darwin/<arch>). Soft on non-x64 CI
-    # cross-packs; macOS arm64 local builds typically have the dylib present.
-    if [ "${PLATFORM}" = "macos-arm64" ]; then
-      stage_onnxruntime "darwin" "arm64" || echo "  NOTE: ORT darwin/arm64 not staged — TinyClick local model unavailable in this zip"
-    else
-      stage_onnxruntime "darwin" "x64" || echo "  NOTE: ORT darwin/x64 not staged — TinyClick local model unavailable in this zip"
-    fi
+    # No ORT/TinyClick stage — experimental locate is Qwen3-VL (qwen-vl-worker.py).
     ;;
   windows-*)
     rm -f "${STAGING}/node_modules/systray2/traybin/tray_darwin_release"
@@ -363,17 +287,7 @@ case "${PLATFORM}" in
       exit 1
     fi
     echo "  host-scripts-win/: ${win_ps1_count} ps1 scripts"
-    # TinyClick worker + win32/x64 ORT are required on windows-x64.
-    if [ "${PLATFORM}" = "windows-x64" ]; then
-      if [ ! -f "${STAGING}/tinyclick-worker.js" ]; then
-        echo "ERROR: tinyclick-worker.js not staged — build dist/computer/tinyclick-worker.js first" >&2
-        exit 1
-      fi
-      if ! stage_onnxruntime "win32" "x64"; then
-        echo "ERROR: onnxruntime-node win32/x64 staging failed — TinyClick unavailable; refusing windows-x64 ship without ORT" >&2
-        exit 1
-      fi
-    fi
+    # No ORT/tinyclick hard-gate — Qwen3-VL worker staged above for all platforms.
     ;;
   linux-*)
     rm -f "${STAGING}/node_modules/systray2/traybin/tray_darwin_release"
@@ -381,11 +295,7 @@ case "${PLATFORM}" in
     rm -rf "${STAGING}/node_modules/node-notifier/vendor/mac.noindex" 2>/dev/null || true
     rm -rf "${STAGING}/node_modules/node-notifier/vendor/snoreToast" 2>/dev/null || true
     rm -rf "${STAGING}/node_modules/node-notifier/vendor/notifu" 2>/dev/null || true
-    if [ "${PLATFORM}" = "linux-arm64" ]; then
-      stage_onnxruntime "linux" "arm64" || echo "  NOTE: ORT linux/arm64 not staged — TinyClick local model unavailable in this zip"
-    else
-      stage_onnxruntime "linux" "x64" || echo "  NOTE: ORT linux/x64 not staged — TinyClick local model unavailable in this zip"
-    fi
+    # No ORT/TinyClick stage — experimental locate is Qwen3-VL.
     ;;
 esac
 

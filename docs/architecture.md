@@ -1,6 +1,6 @@
 # CMspark Browser Agent — 架构文档
 
-> 版本: 2.3.0 | 日期: 2026-07-29 | 状态: 已确认（同步 0.3.0 + **[ADR-020](adr/020-capability-model-three-axes.md) 能力三轴**）
+> 版本: 2.3.0 | 日期: 2026-08-05 | 状态: 已确认（同步 **0.4.0** + **[ADR-020](adr/020-capability-model-three-axes.md) 能力三轴**）
 
 ---
 

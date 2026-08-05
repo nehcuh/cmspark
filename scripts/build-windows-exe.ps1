@@ -27,7 +27,7 @@ $CompanionDir = Join-Path $ProjectRoot "companion"
 $ChromeExtDir = Join-Path $ProjectRoot "chrome-extension"
 $DistDir      = Join-Path $ProjectRoot "dist-package"
 $StagingDir   = Join-Path $DistDir "cmspark-windows-x64"
-$Version      = "0.3.0-computer-use"
+$Version      = "0.4.0"
 
 function Step($n, $total, $msg) {
     Write-Host "[$n/$total] $msg" -ForegroundColor Yellow
@@ -81,8 +81,9 @@ try {
     Ok "TypeScript compiled to dist/"
 
     # esbuild bundle: --external:systray2 so the Go binary is resolved at runtime
-    # from node_modules/systray2 placed alongside the exe in the package;
-    # --external:onnxruntime-node likewise (WP5 local model runtime, S-2 verified).
+    # from node_modules/systray2 placed alongside the exe in the package.
+    # onnxruntime-node stays external only for residual imports — experimental
+    # locate is Qwen3-VL (Python worker + on-demand weights), not TinyClick/ORT.
     npx esbuild dist/index.js `
         --bundle `
         --platform=node `
@@ -94,18 +95,6 @@ try {
         --outfile=dist/cmspark-agent.js
     if ($LASTEXITCODE -ne 0) { Fail "esbuild bundle failed" }
     Ok "Bundle: dist/cmspark-agent.js"
-
-    # WP5 I2: TinyClick inference worker as a SEPARATE bundle. In SEA mode the
-    # runtime loads it as a sidecar file via eval (see tinyclick-runtime.ts);
-    # onnxruntime-node stays external and is resolved with createRequire at runtime.
-    npx esbuild dist/computer/tinyclick-worker.js `
-        --bundle `
-        --platform=node `
-        --target=node22 `
-        --external:onnxruntime-node `
-        --outfile=dist/tinyclick-worker.js
-    if ($LASTEXITCODE -ne 0) { Fail "esbuild worker bundle failed" }
-    Ok "Bundle: dist/tinyclick-worker.js"
 } finally { Pop-Location }
 
 # ---------------------------------------------------------------------------
@@ -309,17 +298,27 @@ New-Item -ItemType Directory -Force $StagingDir | Out-Null
 Copy-Item "$CompanionDir\dist\cmspark-agent.exe" $StagingDir
 Ok "cmspark-agent.exe"
 
-# WP5 I2: TinyClick worker sidecar (SEA eval load; same trust level as the ORT dll sidecar)
-Copy-Item "$CompanionDir\dist\tinyclick-worker.js" $StagingDir
-Ok "tinyclick-worker.js (SEA sidecar)"
+# Qwen3-VL Python worker (experimental locate). Weights download on demand to
+# ~/.cmspark-agent/models/qwen3-vl-* — not packaged in the zip/SEA.
+$QwenWorkerCandidates = @(
+    "$CompanionDir\dist\computer\qwen-vl-worker.py",
+    "$CompanionDir\src\computer\qwen-vl-worker.py"
+)
+$QwenWorkerSrc = $null
+foreach ($c in $QwenWorkerCandidates) {
+    if (Test-Path $c) { $QwenWorkerSrc = $c; break }
+}
+if (-not $QwenWorkerSrc) {
+    Fail "qwen-vl-worker.py missing — Qwen3-VL experimental locate hard-gate"
+}
+Copy-Item $QwenWorkerSrc "$StagingDir\qwen-vl-worker.py"
+Ok "qwen-vl-worker.py (Qwen3-VL experimental locate)"
 
-# TinyClick/ORT provenance manifest (package.sh stages this; SEA path must too)
+# Optional legacy models.manifest.json (not required for Qwen3-VL weights)
 $ManifestSrc = "$CompanionDir\models.manifest.json"
 if (Test-Path $ManifestSrc) {
     Copy-Item $ManifestSrc $StagingDir
-    Ok "models.manifest.json"
-} else {
-    Warn "models.manifest.json not found — TinyClick download/license gate lacks provenance hashes"
+    Ok "models.manifest.json (legacy optional)"
 }
 
 # WASM file for sql.js (loaded at runtime via getSqlWasmPath())
@@ -388,41 +387,8 @@ foreach ($pkg in $Systray2Packages) {
 if ($anySystray2Ok) { Ok "node_modules/ systray2 + deps (tray support)" }
 else { Warn "systray2 not installed — tray icon will not work" }
 
-# onnxruntime-node (WP5 local model runtime, B7) — whitelist-copy ONLY the
-# target-arch payload: full npm package is 259MB (darwin+linux+win32), the
-# win32/x64 payload is 62MB (4 dll + .node). Anything else never ships.
-$OrtSrc = "$CompanionDir\node_modules\onnxruntime-node"
-if (Test-Path $OrtSrc) {
-    $OrtDest = "$StagingDir\node_modules\onnxruntime-node"
-    New-Item -ItemType Directory -Force "$OrtDest\bin\napi-v6\win32\x64" | Out-Null
-    # package.json + dist/ (compiled JS; package main = dist/index.js — lib/ is
-    # TypeScript source and must NOT ship) + target-arch native payload only.
-    Copy-Item "$OrtSrc\package.json" $OrtDest
-    Copy-Item "$OrtSrc\dist" "$OrtDest\dist" -Recurse
-    Copy-Item "$OrtSrc\bin\napi-v6\win32\x64\*" "$OrtDest\bin\napi-v6\win32\x64" -Recurse
-    if (Test-Path "$OrtSrc\LICENSE") { Copy-Item "$OrtSrc\LICENSE" $OrtDest }
-    $OrtBytes = (Get-ChildItem $OrtDest -Recurse -File | Measure-Object -Property Length -Sum).Sum
-    $OrtMB = [math]::Round($OrtBytes / 1MB, 1)
-    # Size assertion (B7): 62MB payload + dist/package.json — hard budget 70MB.
-    if ($OrtBytes -gt 70MB) { Fail "onnxruntime-node staging ${OrtMB}MB exceeds 70MB budget (expected ~63MB)" }
-    Ok "node_modules/onnxruntime-node win32/x64 payload only: ${OrtMB}MB (budget 70MB)"
-
-    # onnxruntime-common (runtime dependency of onnxruntime-node's dist/) — pure JS,
-    # same copy shape: package.json + dist/ only (lib/ is TypeScript source).
-    $CommonSrc = "$CompanionDir\node_modules\onnxruntime-common"
-    $CommonDest = "$StagingDir\node_modules\onnxruntime-common"
-    if (Test-Path $CommonSrc) {
-        New-Item -ItemType Directory -Force $CommonDest | Out-Null
-        Copy-Item "$CommonSrc\package.json" $CommonDest
-        Copy-Item "$CommonSrc\dist" "$CommonDest\dist" -Recurse
-        Ok "node_modules/onnxruntime-common (dist only)"
-    } else {
-        Fail "onnxruntime-common missing — onnxruntime-node dist/ requires it at runtime"
-    }
-} else {
-    # P0-D: fail-closed (was Warn). windows-x64 package must ship TinyClick/ORT.
-    Fail "onnxruntime-node not installed — WP5 local model layer required in windows-x64 package"
-}
+# onnxruntime-node is intentionally NOT staged. Experimental locate is Qwen3-VL
+# (Python + on-demand HF/ModelScope weights). TinyClick/ORT packaging removed.
 
 # THIRD_PARTY_NOTICES must ship with the package (W3 §5.5 MIT notice obligation;
 # generated from companion/src/computer/model-license.ts single source of truth).

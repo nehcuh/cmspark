@@ -105,7 +105,7 @@ cmspark/
 - 提交信息用中文描述变更内容
 - 功能变更前先补测试
 - 重构前确保现有测试通过
-- **产品版本**以 companion / chrome-extension `package.json` 为准（文档写 0.3.0 时勿回退叙事）
+- **产品版本**以 companion / chrome-extension `package.json` 为准（文档写 0.4.0 时勿回退叙事）
 
 ## PR 模板
 

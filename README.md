@@ -732,8 +732,8 @@ make package
 ```bash
 make package-macos
 # 产出：
-#   dist-package/CMspark-v0.3.0-macOS.dmg   ← 安装包
-#   dist-package/cmspark-v0.3.0-macos-arm64.zip  ← 原始压缩包
+#   dist-package/CMspark-v0.4.0-macOS.dmg   ← 安装包
+#   dist-package/cmspark-v0.4.0-macos-arm64.zip  ← 原始压缩包
 ```
 
 Windows 打包流程：
@@ -862,4 +862,4 @@ cmspark/
 
 ---
 
-> **当前阶段（0.3.0）**：安全稳定化 **MVP 已稳定**（Side Panel ↔ Companion ↔ 浏览器闭环、线程持久化、确认台）。能力按 **[ADR-020](docs/adr/020-capability-model-three-axes.md)** 三轴组织：**L0 聊 / L1 网页 / 组合面（Skill·MCP·Pack…）/ L2 宿主 opt-in / 编排 Autonomy**。文档导航：[`docs/README.md`](docs/README.md) · [architecture.md](docs/architecture.md)。
+> **当前阶段（0.4.0）**：安全稳定化 **MVP 已稳定**并扩展（Side Panel ↔ Companion ↔ 浏览器闭环、线程持久化、确认台；Multi-agent / Pack / Qwen 实验定位 / Outbound MCP 等）。能力按 **[ADR-020](docs/adr/020-capability-model-three-axes.md)** 三轴组织：**L0 聊 / L1 网页 / 组合面（Skill·MCP·Pack…）/ L2 宿主 opt-in / 编排 Autonomy**。文档导航：[`docs/README.md`](docs/README.md) · [architecture.md](docs/architecture.md)。

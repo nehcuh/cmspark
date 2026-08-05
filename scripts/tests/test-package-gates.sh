@@ -70,13 +70,15 @@ assert_file_has "${PACKAGE_SH}" 'cmspark-tray missing' \
 assert_file_lacks "${PACKAGE_SH}" 'WARNING: companion/dist/cmspark-host not built' \
   "package.sh no longer soft-WARNINGs missing host"
 assert_file_has "${PACKAGE_SH}" 'external:onnxruntime-node' \
-  "package.sh esbuild externalizes onnxruntime-node"
+  "package.sh esbuild externalizes onnxruntime-node (residual; not staged)"
 assert_file_has "${PACKAGE_SH}" 'host-scripts-win' \
   "package.sh stages host-scripts-win"
-assert_file_has "${PACKAGE_SH}" 'tinyclick-worker' \
-  "package.sh stages tinyclick-worker"
-assert_file_has "${PACKAGE_SH}" 'stage_onnxruntime' \
-  "package.sh defines stage_onnxruntime"
+assert_file_has "${PACKAGE_SH}" 'qwen-vl-worker\.py' \
+  "package.sh stages qwen-vl-worker.py (Qwen3-VL)"
+assert_file_lacks "${PACKAGE_SH}" 'stage_onnxruntime' \
+  "package.sh no longer stages onnxruntime-node"
+assert_file_lacks "${PACKAGE_SH}" 'cp companion/dist/tinyclick' \
+  "package.sh no longer copies tinyclick worker into staging"
 assert_file_has "${PACKAGE_SH}" 'npm run build:host' \
   "package.sh invokes build:host"
 assert_file_has "${PACKAGE_SH}" 'requires macOS \(swiftc/osacompile' \
@@ -108,8 +110,10 @@ assert_file_has "${RELEASE_YML}" 'cmspark-host' \
   "release.yml mentions cmspark-host in assert/body"
 assert_file_has "${RELEASE_YML}" 'host-scripts-win' \
   "release.yml asserts/documents host-scripts-win"
-assert_file_has "${RELEASE_YML}" 'tinyclick-worker' \
-  "release.yml documents TinyClick worker"
+assert_file_has "${RELEASE_YML}" 'qwen-vl-worker' \
+  "release.yml documents qwen-vl-worker"
+assert_file_lacks "${RELEASE_YML}" 'tinyclick-worker' \
+  "release.yml no longer requires TinyClick worker"
 assert_file_lacks "${RELEASE_YML}" 'shared-secret handshake is deferred' \
   "release.yml must not claim shared-secret deferred"
 assert_file_lacks "${RELEASE_YML}" 'local-process shared-secret handshake is deferred' \
@@ -119,14 +123,16 @@ assert_file_has "${RELEASE_YML}" 'FIXED' \
 assert_file_has "${RELEASE_YML}" 'fail-closed' \
   "release.yml documents fail-closed packaging"
 
-# --- Static: build-windows-exe.ps1 fail-closed host scripts + ORT ------------
+# --- Static: build-windows-exe.ps1 fail-closed host scripts + Qwen worker ----
 echo "[static] build-windows-exe.ps1 fail-closed"
 assert_file_has "${PS1}" 'Fail "win host-use scripts not found' \
   "ps1 Fails when win scripts missing"
 assert_file_has "${PS1}" 'host-scripts-win/\*\.ps1 empty after staging' \
   "ps1 Fails when host-scripts-win empty"
-assert_file_has "${PS1}" 'Fail "onnxruntime-node not installed' \
-  "ps1 Fails when ORT missing"
+assert_file_has "${PS1}" 'qwen-vl-worker\.py missing' \
+  "ps1 Fails when qwen-vl-worker.py missing"
+assert_file_lacks "${PS1}" 'WP5 local model layer required' \
+  "ps1 no longer hard-requires ORT for TinyClick"
 
 # --- Dynamic negative: missing cmspark-host → exit 1 -------------------------
 echo "[dynamic] package.sh macos-arm64 with host deleted → exit 1"
@@ -237,12 +243,14 @@ else
   fi
 fi
 
-# --- Static: release body qualifies ORT hard-fail as windows-x64 only --------
-echo "[static] release.yml ORT fail-closed is platform-qualified"
-assert_file_has "${RELEASE_YML}" 'windows-x64' \
-  "release body mentions windows-x64 for TinyClick/ORT"
-assert_file_has "${RELEASE_YML}" 'optional soft stage' \
-  "release body notes macOS/Linux ORT is optional soft stage"
+# --- Static: release body documents Qwen on-demand (not ORT/TinyClick ship) --
+echo "[static] release.yml Qwen3-VL packaging story"
+assert_file_has "${RELEASE_YML}" 'qwen-vl-worker' \
+  "release body mentions qwen-vl-worker"
+assert_file_has "${RELEASE_YML}" 'on demand' \
+  "release body notes Qwen weights download on demand"
+assert_file_lacks "${RELEASE_YML}" 'optional soft stage' \
+  "release body no longer documents soft ORT stage"
 assert_file_has "${CI_YML}" 'test-package-gates' \
   "ci.yml runs test-package-gates.sh"
 
@@ -291,60 +299,48 @@ else
   echo "[dynamic] skip scpt-missing test (no scpt artifacts)"
 fi
 
-# --- Dynamic: windows-x64 tinyclick precondition (rename sources) ------------
-WORKER_CANDIDATES=(
-  "${ROOT}/companion/dist/computer/tinyclick-worker.js"
-  "${ROOT}/companion/dist/tinyclick-worker.js"
-  "${ROOT}/companion/src/computer/tinyclick-worker.ts"
+# --- Dynamic: windows gate fails without qwen-vl-worker.py -------------------
+QWEN_CANDIDATES=(
+  "${ROOT}/companion/dist/computer/qwen-vl-worker.py"
+  "${ROOT}/companion/src/computer/qwen-vl-worker.py"
 )
-WORKER_MOVED=""
-WORKER_BAK=""
-for _wc in "${WORKER_CANDIDATES[@]}"; do
-  if [ -f "${_wc}" ]; then
-    WORKER_BAK="$(mktemp "${TMPDIR:-/tmp}/tinyclick-worker.XXXXXX")"
-    mv "${_wc}" "${WORKER_BAK}"
-    WORKER_MOVED="${_wc}"
-    break
+HIDDEN_QWEN=()
+for _qc in "${QWEN_CANDIDATES[@]}"; do
+  if [ -f "${_qc}" ]; then
+    _qb="$(mktemp "${TMPDIR:-/tmp}/qwen-vl-worker.XXXXXX")"
+    mv "${_qc}" "${_qb}"
+    HIDDEN_QWEN+=("${_qc}|${_qb}")
   fi
 done
-if [ -n "${WORKER_MOVED}" ]; then
-  # Hide any remaining candidates so gate sees zero workers.
-  HIDDEN_WORKERS=()
-  for _wc in "${WORKER_CANDIDATES[@]}"; do
-    if [ -f "${_wc}" ]; then
-      _hb="$(mktemp "${TMPDIR:-/tmp}/tinyclick-hide.XXXXXX")"
-      mv "${_wc}" "${_hb}"
-      HIDDEN_WORKERS+=("${_wc}|${_hb}")
-    fi
-  done
-  echo "[dynamic] windows-x64 GATE-ONLY fails without tinyclick-worker"
+if [ "${#HIDDEN_QWEN[@]}" -gt 0 ]; then
+  echo "[dynamic] windows-x64 GATE-ONLY fails without qwen-vl-worker.py"
   set +e
-  OUT_TC="$(
+  OUT_QW="$(
     CMSPARK_PACKAGE_GATE_ONLY=1 bash "${PACKAGE_SH}" windows-x64 2>&1
   )"
-  RC_TC=$?
+  RC_QW=$?
   set -e
-  mv "${WORKER_BAK}" "${WORKER_MOVED}"
-  for _pair in "${HIDDEN_WORKERS[@]+"${HIDDEN_WORKERS[@]}"}"; do
-    [ -z "${_pair}" ] && continue
+  for _pair in "${HIDDEN_QWEN[@]}"; do
     _orig="${_pair%%|*}"
     _bak="${_pair#*|}"
     mv "${_bak}" "${_orig}"
   done
-  assert_eq 1 "${RC_TC}" "missing tinyclick-worker must exit 1 on windows-x64 gate"
-  assert_match 'tinyclick-worker missing' "${OUT_TC}" "error mentions tinyclick-worker"
+  assert_eq 1 "${RC_QW}" "missing qwen-vl-worker must exit 1 on windows gate"
+  assert_match 'qwen-vl-worker' "${OUT_QW}" "error mentions qwen-vl-worker"
 else
-  echo "[dynamic] skip tinyclick-missing test (no worker artifact/source found)"
+  echo "[dynamic] skip qwen-worker-missing test (no qwen-vl-worker.py found)"
 fi
 
-# --- Static: windows-x64 gate-only checks ORT dir + tinyclick ---------------
-echo "[static] package.sh windows-x64 gate-only mentions ORT + tinyclick"
-assert_file_has "${PACKAGE_SH}" 'onnxruntime-node not installed' \
-  "gate-only errors when ORT missing"
-assert_file_has "${PACKAGE_SH}" 'tinyclick-worker missing' \
-  "gate-only errors when tinyclick missing"
-assert_file_has "${PS1}" 'models.manifest.json' \
-  "build-windows-exe.ps1 stages or warns about models.manifest.json"
+# --- Static: package gates Qwen, not TinyClick/ORT ---------------------------
+echo "[static] package.sh gates Qwen3-VL worker (not TinyClick/ORT)"
+assert_file_has "${PACKAGE_SH}" 'Qwen3-VL locate hard-gate' \
+  "package hard-gates qwen-vl-worker"
+assert_file_lacks "${PACKAGE_SH}" 'onnxruntime-node not installed' \
+  "package no longer errors on missing ORT"
+assert_file_lacks "${PACKAGE_SH}" 'tinyclick-worker missing' \
+  "package no longer errors on missing tinyclick-worker"
+assert_file_has "${PS1}" 'qwen-vl-worker' \
+  "build-windows-exe.ps1 stages qwen-vl-worker.py"
 
 echo ""
 echo "=== Results: ${PASS} passed, ${FAIL} failed ==="
