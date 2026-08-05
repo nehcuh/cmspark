@@ -101,6 +101,18 @@
 - 自查：空闲 CPU 近 0；`~/.cmspark-agent/logs` 无海量 `sidepanel_forward_failed`；扩展与 Companion 须同为 #91 后构建
 - 教训：可观测性路径也要 **anti-echo**；扩展本地 fan-out 日志即可，勿依赖 companion 回推
 
+### 合盖通宵掉电：先排 #91，再查 DarkWake / 本机大内存服务（2026-08-05）
+- 现象：合盖过夜掉电 >20–50%；用户直觉常指向 CMspark companion↔扩展「频繁通信」（#91 回声环）
+- **差分诊断（勿一上来改代码）**：
+  1. companion 日日志是否 GB 级 / 有无海量 `sidepanel_forward_failed` → #91 复发
+  2. 合盖窗口内 companion 日志是否**空窗**（如 18:15→次日 08:05 零事件）→ 应用层 WS 风暴可排除
+  3. `pmset -g log`：Clamshell 后 `DarkWake` 频率 + reason + `Charge:%` 曲线
+- 2026-08-04 晚实测：Clamshell **85%→次日 58%**（~14h，~2%/h）；**DarkWake ~440–450/h**；原因几乎全是 `wifibt` / `E_RX_IP_PACKET ARPT` / `centauri-alpha|beta`（**非** CMspark）
+- **oMLX 帮凶**：`omlx-server` 常驻 **~13GB**（本机 127.0.0.1:11434）+ 通宵周期性 `PreventUserIdleSystemSleep`（`app.omlx` / CFNetwork.StorageDB）；通宵**无推理**仍占内存；关 oMLX 后 DarkWake **仍在** → Wi‑Fi 唤醒是主因，大内存服务放大代价
+- 对照实验：必须 **拔电（Using Batt）** 合盖才可读掉电；插 AC 时 100% 无法判 A/B
+- 缓解顺序：关「网络访问时唤醒」/ 合盖关 Wi‑Fi → 不用时退出 oMLX → 再查 CMspark 孤儿进程（headless print-to-pdf、挂死 modelscope 等）
+- 教训：**合盖掉电 ≠ 上次根因**；先 pmset + 日志空窗排应用，再查本机 LLM 常驻内存
+
 ### 场景（Mission Pack）白名单 ≠ God-mode / 确认开关（2026-07-31）
 - 现象：用户开了 `auto_approve_dangerous` + `allow_all_schemes`，仍报 `tool_not_allowed:workspace_list_dir — not in thread tool_whitelist`；装技能线程被套 AppSec 后无法 list 本机目录
 - 根因：`thread.tool_whitelist`（Pack apply 收窄）在 `createToolExecutor` **硬门**，先于 L2 确认；god-mode 只跳过确认，**不**打开白名单外工具

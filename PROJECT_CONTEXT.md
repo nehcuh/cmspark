@@ -3,15 +3,14 @@
 ## Session Handoff
 
 <!-- handoff:start -->
-### 2026-08-04 (S41 — run-state + full-autonomy + P0d docs)
-- **Branch**: `feat/run-state-worker-drilldown` · **PR #117** OPEN
-- **Commits**: `2f5b40d` (run-state + full-autonomy) · `62ce4ec` (Outbound P0d checklist docs)
-- **Run-state**: Composer ThreadBusy 门控 · RunBusyChip/ScopeBar/portal 列表 · tool thread_id · llm_active · F-S1
-- **Full-autonomy**: 三旗全开 → cookie/critical/re-L2 放行（与 unattended dual-write packaging 诚实性仍有 S36 残余）
-- **Gates**: 四路对抗 → SoT · Pi+Claude dual **APPROVE_WITH_NITS**
-- **下次**: 合 #117；真机 smoke 长 tool+下钻；P0d SSO bake-off 手测
-- **SoT**: `docs/superpowers/specs/2026-08-04-run-state-and-worker-drilldown.md`
+### 2026-08-05 (S43 — lid-close battery drain diagnosis)
+- **No code ship** — diagnostic only
+- **Not #91**: companion log gap overnight; no `sidepanel_forward_failed`; logs ~KB not GB
+- **Root**: macOS DarkWake thrash (~450/h) via Wi‑Fi `E_RX_IP_PACKET` / `centauri-alpha|beta`; charge 85%→58% overnight
+- **Co-factor**: oMLX `omlx-server` ~13GB resident + periodic PreventIdle sleep assertions; exit oMLX does not stop DarkWake
+- **Next**: battery-only A/B (unplug AC) with oMLX off; optional disable “Wake for network access”
+- **Knowledge**: `memory/project-knowledge.md` §合盖通宵掉电差分诊断
 
-### 2026-08-03 (S40 — AFK quad-track)
-- S40 tracks / Outbound Phase0；P0d checklist 现已在 #117 分支 docs
+### 2026-08-04 (S42 COMPLETE — #117–#120 on main)
+- Main tip around grant M1–M4 / run-state ship; residual: human P0d T1–T3, require_grant GA
 <!-- handoff:end -->

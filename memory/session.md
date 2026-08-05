@@ -2,6 +2,13 @@
 
 ## Current Session
 
+### S43 (2026-08-05 ~10:50–13:32) [合盖通宵掉电诊断 · #91 差分]
+- **问题**：合盖过夜掉电 >50% 体感；怀疑 companion↔扩展通信复发
+- **结论**：非 #91（日志无 `sidepanel_forward_failed`、合盖窗 companion 空窗）；主因 **Wi‑Fi DarkWake 风暴**（~450/h，`E_RX_IP_PACKET`/`centauri-*`）；**oMLX ~13GB 常驻** 为帮凶（无通宵推理仍有防睡断言）
+- **实测**：8/4 18:15 Clamshell 85% → 8/5 08:33 58%；关 oMLX 后 DarkWake 仍在；下午合盖测因 **接 AC 100%** 无法读掉电
+- **下次**：拔电 + 关 oMLX 合盖 1–2h A/B；可选关「网络访问时唤醒」第二晚
+- Recorded: yes — project-knowledge 合盖掉电差分诊断
+
 ### S42 COMPLETE (2026-08-04) [multi-adv → #117–#120 ship · grant M1–M4]
 - **Main tip**: `3fd7f1a` — 与 origin/main 同步
 - **已合 PR**:
