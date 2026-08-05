@@ -1,14 +1,14 @@
 // Always-on RunBusy affordance (SoT F-UX1) — independent of FocusBand primary.
+// Fleet signals are scoped to the active thread (no foreign residual workers).
 
 import { useMemo } from "react"
 import { useAgentStore } from "../store/agentStore"
 import { tokens } from "../ui/tokens"
 import {
+  buildScopedRunBusyInput,
   deriveRunBusy,
   deriveThreadBusy,
-  filterIdsByRun,
   isIntentOnlyRunBusy,
-  resolveOpenIntentsForRun,
 } from "../utils/thread-busy"
 import { collectRunningTools } from "../utils/running-tools"
 
@@ -18,7 +18,6 @@ export function RunBusyChip() {
   const activeThread = state.threads.find((t) => t.id === activeId)
   const fleet = state.fleet
   const workers = fleet?.workers || []
-  const runId = activeThread?.orchestrator_run_id || null
 
   const chip = useMemo(() => {
     const runningTools = collectRunningTools(state.messages)
@@ -29,52 +28,36 @@ export function RunBusyChip() {
       runningToolCount: runningTools.length,
       mapBusy,
     })
-    const llmActiveRaw = fleet?.llm_active_thread_ids || []
-    const llmActiveThreadIds = runId
-      ? filterIdsByRun(llmActiveRaw, workers, runId)
-      : llmActiveRaw
-    const workerBusyIds = filterIdsByRun(
-      Object.entries(state.threadBusyById)
-        .filter(([, b]) => b)
-        .map(([id]) => id),
+    const busyThreadIds = Object.entries(state.threadBusyById)
+      .filter(([, b]) => b)
+      .map(([id]) => id)
+    const { runBusyInput, workerCount } = buildScopedRunBusyInput({
+      active: activeThread
+        ? {
+            id: activeThread.id,
+            agent_role: activeThread.agent_role,
+            parent_thread_id: activeThread.parent_thread_id,
+            orchestrator_run_id: activeThread.orchestrator_run_id,
+          }
+        : activeId
+          ? { id: activeId }
+          : null,
       workers,
-      runId,
-    )
-    let lockCount = fleet?.lock_count ?? 0
-    if (runId && fleet?.locks?.length) {
-      const runWorkerIds = new Set(
-        workers.filter((w) => w.orchestrator_run_id === runId).map((w) => w.id),
-      )
-      if (activeId) runWorkerIds.add(activeId)
-      lockCount = fleet.locks.filter((l) => runWorkerIds.has(l.holder_thread_id)).length
-    }
-    const openIntents = resolveOpenIntentsForRun(
-      fleet?.open_intent_count,
-      fleet?.open_intents_by_run,
-      runId,
-    )
-    const anyHoldingTabs = runId
-      ? workers.some((w) => w.orchestrator_run_id === runId && w.status === "holding_tabs")
-      : workers.some((w) => w.status === "holding_tabs")
-    const input = {
-      lockCount,
-      openIntents,
-      anyHoldingTabs,
-      llmActiveThreadIds,
-      workerBusyIds,
-    }
-    const runBusy = deriveRunBusy(input)
+      locks: fleet?.locks,
+      openIntentCount: fleet?.open_intent_count,
+      openIntentsByRun: fleet?.open_intents_by_run,
+      llmActiveThreadIds: fleet?.llm_active_thread_ids,
+      busyThreadIds,
+    })
+    const runBusy = deriveRunBusy(runBusyInput)
     if (!runBusy) return null
-    // When thread is busy, FocusBand/composer already show state — still show chip if multi-worker
-    const workerN = workers.filter(
-      (w) => w.agent_role === "worker" && (!runId || w.orchestrator_run_id === runId),
-    ).length
-    const intentOnly = isIntentOnlyRunBusy(input)
+    const intentOnly = isIntentOnlyRunBusy(runBusyInput)
+    const { lockCount, openIntents } = runBusyInput
     const label = intentOnly
       ? `任务板 · ${openIntents} intent`
       : threadBusy
-        ? `子任务还在跑 · ${workerN || "…"}`
-        : `子任务还在跑 · ${workerN || lockCount || openIntents}`
+        ? `子任务还在跑 · ${workerCount || "…"}`
+        : `子任务还在跑 · ${workerCount || lockCount || openIntents}`
     return { label, threadBusy }
   }, [
     state.messages,
@@ -82,9 +65,9 @@ export function RunBusyChip() {
     state.isProcessing,
     state.threadBusyById,
     activeId,
+    activeThread,
     fleet,
     workers,
-    runId,
   ])
 
   if (!chip) return null

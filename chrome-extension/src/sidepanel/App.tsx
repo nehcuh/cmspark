@@ -38,11 +38,10 @@ import {
 } from "./ui/icons"
 import { collectRunningTools } from "./utils/running-tools"
 import {
+  buildScopedRunBusyInput,
   composerBusyPlaceholder,
   deriveRunBusy,
-  resolveOpenIntentsForRun,
   deriveThreadBusy,
-  filterIdsByRun,
   resolveComposerMode,
 } from "./utils/thread-busy"
 import { WorkerScopeBar } from "./components/WorkerScopeBar"
@@ -317,43 +316,30 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
     mapBusy,
   })
   const fleet = state.fleet
-  const runId = activeThread?.orchestrator_run_id || null
   const workers = fleet?.workers || []
-  const llmActiveRaw = fleet?.llm_active_thread_ids || []
-  const llmActiveThreadIds = runId
-    ? filterIdsByRun(llmActiveRaw, workers, runId)
-    : llmActiveRaw
-  const workerBusyIds = filterIdsByRun(
-    Object.entries(state.threadBusyById)
-      .filter(([, b]) => b)
-      .map(([id]) => id),
+  const busyThreadIds = Object.entries(state.threadBusyById)
+    .filter(([, b]) => b)
+    .map(([id]) => id)
+  const { runBusyInput } = buildScopedRunBusyInput({
+    active: activeThread
+      ? {
+          id: activeThread.id,
+          agent_role: activeThread.agent_role,
+          parent_thread_id: activeThread.parent_thread_id,
+          orchestrator_run_id: activeThread.orchestrator_run_id,
+        }
+      : activeId
+        ? { id: activeId }
+        : null,
     workers,
-    runId,
-  )
-  const anyHoldingTabs = workers.some((w) => w.status === "holding_tabs")
-  // Prefer run-scoped lock count when we can attribute locks to workers of this run
-  let lockCount = fleet?.lock_count ?? 0
-  if (runId && fleet?.locks?.length) {
-    const runWorkerIds = new Set(
-      workers.filter((w) => w.orchestrator_run_id === runId).map((w) => w.id),
-    )
-    if (activeId) runWorkerIds.add(activeId)
-    lockCount = fleet.locks.filter((l) => runWorkerIds.has(l.holder_thread_id)).length
-  }
-  const openIntents = resolveOpenIntentsForRun(
-    fleet?.open_intent_count,
-    fleet?.open_intents_by_run,
-    runId,
-  )
-  const runBusy = deriveRunBusy({
-    lockCount,
-    openIntents,
-    anyHoldingTabs: runId
-      ? workers.some((w) => w.orchestrator_run_id === runId && w.status === "holding_tabs")
-      : anyHoldingTabs,
-    llmActiveThreadIds,
-    workerBusyIds,
+    locks: fleet?.locks,
+    openIntentCount: fleet?.open_intent_count,
+    openIntentsByRun: fleet?.open_intents_by_run,
+    llmActiveThreadIds: fleet?.llm_active_thread_ids,
+    busyThreadIds,
   })
+  const lockCount = runBusyInput.lockCount
+  const runBusy = deriveRunBusy(runBusyInput)
   const composerMode = resolveComposerMode({ taskActive, threadBusy, runBusy })
   const isWorker = activeThread?.agent_role === "worker"
   const canSend =

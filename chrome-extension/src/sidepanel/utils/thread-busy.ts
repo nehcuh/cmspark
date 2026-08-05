@@ -104,9 +104,87 @@ export function filterIdsByRun(
   return ids.filter((id) => allowed.has(id))
 }
 
+/** Minimal worker/thread shape for fleet scoping (UI + pure tests). */
+export type FleetWorkerLike = {
+  id: string
+  agent_role?: string | null
+  parent_thread_id?: string | null
+  orchestrator_run_id?: string | null
+  status?: string | null
+}
+
+export type ActiveThreadLike = {
+  id?: string | null
+  agent_role?: string | null
+  parent_thread_id?: string | null
+  orchestrator_run_id?: string | null
+}
+
+/**
+ * How fleet activity is attributed to the active Side Panel thread.
+ *
+ * - `run`: stamped orchestrator_run_id (preferred)
+ * - `parent`: multi-agent host/worker without run stamp, or host that still has children
+ * - `none`: normal single-thread chat — **must not** inherit other runs' workers
+ *   (process-wide fallback caused foreign "子任务还在跑" + wrong drill-down list).
+ */
+export type FleetScope =
+  | { kind: "none" }
+  | { kind: "run"; runId: string }
+  | { kind: "parent"; parentId: string }
+
+export function resolveFleetScope(
+  active: ActiveThreadLike | null | undefined,
+  workers: FleetWorkerLike[],
+): FleetScope {
+  if (!active?.id) return { kind: "none" }
+  const runId = active.orchestrator_run_id
+  if (typeof runId === "string" && runId.length > 0) {
+    return { kind: "run", runId }
+  }
+  if (active.agent_role === "worker" && active.parent_thread_id) {
+    return { kind: "parent", parentId: active.parent_thread_id }
+  }
+  if (active.agent_role === "orchestrator") {
+    return { kind: "parent", parentId: active.id }
+  }
+  // Normal/host thread that still parents fleet rows (missing run stamp).
+  if (workers.some((w) => w.parent_thread_id === active.id)) {
+    return { kind: "parent", parentId: active.id }
+  }
+  return { kind: "none" }
+}
+
+export function workersInFleetScope(
+  workers: FleetWorkerLike[],
+  scope: FleetScope,
+): FleetWorkerLike[] {
+  if (scope.kind === "none") return []
+  if (scope.kind === "run") {
+    return workers.filter((w) => w.orchestrator_run_id === scope.runId)
+  }
+  return workers.filter(
+    (w) => w.id === scope.parentId || w.parent_thread_id === scope.parentId,
+  )
+}
+
+/** Intersect ids with workers visible under the active fleet scope. */
+export function filterIdsByFleetScope(
+  ids: string[],
+  workers: FleetWorkerLike[],
+  scope: FleetScope,
+): string[] {
+  if (scope.kind === "none") return []
+  const allowed = new Set(workersInFleetScope(workers, scope).map((w) => w.id))
+  return ids.filter((id) => allowed.has(id))
+}
+
 /**
  * SoT §2.1: when `runId` is known, only count intents for that run.
  * Do NOT fall back to process-wide `open_intent_count` (sticky false RunBusy).
+ *
+ * @deprecated Prefer `resolveOpenIntentsForScope` — null runId process-wide
+ * fallback pollutes normal threads with foreign board intents.
  */
 export function resolveOpenIntentsForRun(
   openIntentCount: number | undefined,
@@ -115,6 +193,102 @@ export function resolveOpenIntentsForRun(
 ): number {
   if (!runId) return openIntentCount ?? 0
   return openIntentsByRun?.[runId] ?? 0
+}
+
+/** Scope-aware open intents: never process-wide for `none` / parent-without-run. */
+export function resolveOpenIntentsForScope(
+  openIntentCount: number | undefined,
+  openIntentsByRun: Record<string, number> | undefined,
+  scope: FleetScope,
+): number {
+  if (scope.kind === "none") return 0
+  if (scope.kind === "run") return openIntentsByRun?.[scope.runId] ?? 0
+  // parent without run stamp: cannot safely attribute process-wide intents
+  void openIntentCount
+  return 0
+}
+
+/** Locks held by workers (and optional active host) in scope — never process-wide. */
+export function scopedLockCount(
+  locks: Array<{ holder_thread_id: string }> | undefined,
+  workers: FleetWorkerLike[],
+  scope: FleetScope,
+  activeId?: string | null,
+): number {
+  if (scope.kind === "none") return 0
+  if (!locks?.length) return 0
+  const allowed = new Set(workersInFleetScope(workers, scope).map((w) => w.id))
+  if (activeId) allowed.add(activeId)
+  return locks.filter((l) => allowed.has(l.holder_thread_id)).length
+}
+
+/**
+ * Build honest RunBusyInput for the active thread from a process-wide fleet snapshot.
+ * Normal threads (`scope.none`) get empty signals so foreign residual workers cannot
+ * light 「子任务还在跑」or fill the drill-down list.
+ */
+export function buildScopedRunBusyInput(opts: {
+  active: ActiveThreadLike | null | undefined
+  workers: FleetWorkerLike[]
+  locks?: Array<{ holder_thread_id: string }>
+  openIntentCount?: number
+  openIntentsByRun?: Record<string, number>
+  llmActiveThreadIds?: string[]
+  /** thread ids with mapBusy true */
+  busyThreadIds?: string[]
+}): {
+  scope: FleetScope
+  scopedWorkers: FleetWorkerLike[]
+  runBusyInput: RunBusyInput
+  workerCount: number
+} {
+  const scope = resolveFleetScope(opts.active, opts.workers)
+  const scopedWorkers = workersInFleetScope(opts.workers, scope)
+  if (scope.kind === "none") {
+    return {
+      scope,
+      scopedWorkers: [],
+      runBusyInput: {
+        lockCount: 0,
+        openIntents: 0,
+        anyHoldingTabs: false,
+        llmActiveThreadIds: [],
+        workerBusyIds: [],
+      },
+      workerCount: 0,
+    }
+  }
+  const activeId = opts.active?.id || null
+  const lockCount = scopedLockCount(opts.locks, opts.workers, scope, activeId)
+  const openIntents = resolveOpenIntentsForScope(
+    opts.openIntentCount,
+    opts.openIntentsByRun,
+    scope,
+  )
+  const llmActiveThreadIds = filterIdsByFleetScope(
+    opts.llmActiveThreadIds || [],
+    opts.workers,
+    scope,
+  )
+  const workerBusyIds = filterIdsByFleetScope(
+    opts.busyThreadIds || [],
+    opts.workers,
+    scope,
+  )
+  const anyHoldingTabs = scopedWorkers.some((w) => w.status === "holding_tabs")
+  const workerCount = scopedWorkers.filter((w) => w.agent_role === "worker").length
+  return {
+    scope,
+    scopedWorkers,
+    runBusyInput: {
+      lockCount,
+      openIntents,
+      anyHoldingTabs,
+      llmActiveThreadIds,
+      workerBusyIds,
+    },
+    workerCount,
+  }
 }
 
 /** Whether §6 banner is intent-only (no locks/holding/llm/workerBusy). */

@@ -1,11 +1,12 @@
 // ADR-015 P1 — Side Panel FleetStrip (~320px): counts, worst status, stop-all, expand fleet panel
 // UIUX v2 §4.3: pending confirms do NOT force visibility (owned by FocusBand MinimalConfirm).
 
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useAgentStore } from "../store/agentStore"
 import { tokens } from "../ui/tokens"
 import type { FleetWorkerView } from "../types"
 import { fleetStripShouldShow } from "./focus-band-priority"
+import { buildScopedRunBusyInput } from "../utils/thread-busy"
 
 function worstColor(status: string | undefined): string {
   if (status === "holding_tabs") return "#f59e0b"
@@ -31,10 +32,45 @@ export function FleetStrip({
   const [expanded, setExpanded] = useState(false)
   const fleet = state.fleet
   const pending = state.pendingSecurityConfirmations.length
-  const workerCount = fleet?.worker_count ?? 0
-  const lockCount = fleet?.lock_count ?? 0
-  const openIntents = fleet?.open_intent_count ?? 0
-  const worst = fleet?.worst_status
+  const activeId = state.activeThreadId
+  const activeThread = state.threads.find((t) => t.id === activeId)
+
+  const scoped = useMemo(() => {
+    const built = buildScopedRunBusyInput({
+      active: activeThread
+        ? {
+            id: activeThread.id,
+            agent_role: activeThread.agent_role,
+            parent_thread_id: activeThread.parent_thread_id,
+            orchestrator_run_id: activeThread.orchestrator_run_id,
+          }
+        : activeId
+          ? { id: activeId }
+          : null,
+      workers: fleet?.workers || [],
+      locks: fleet?.locks,
+      openIntentCount: fleet?.open_intent_count,
+      openIntentsByRun: fleet?.open_intents_by_run,
+      llmActiveThreadIds: fleet?.llm_active_thread_ids,
+    })
+    const worst = built.scopedWorkers.some((w) => w.status === "holding_tabs")
+      ? "holding_tabs"
+      : built.scopedWorkers.some((w) => w.status === "paused")
+        ? "paused"
+        : built.scopedWorkers.length > 0
+          ? "idle"
+          : "none"
+    return {
+      workerCount: built.workerCount,
+      lockCount: built.runBusyInput.lockCount,
+      openIntents: built.runBusyInput.openIntents,
+      worst,
+      workers: built.scopedWorkers as FleetWorkerView[],
+      scopeKind: built.scope.kind,
+    }
+  }, [activeThread, activeId, fleet])
+
+  const { workerCount, lockCount, openIntents, worst } = scoped
 
   useEffect(() => {
     const tick = () => chrome.runtime.sendMessage({ type: "fleet.status" })
@@ -45,6 +81,7 @@ export function FleetStrip({
 
   // §4.3 rule 2: pending confirms do NOT force Fleet chrome (MinimalConfirm owns them).
   // Show only multi-agent activity / locks / board intents / user-expanded (standalone).
+  // Scoped to active thread — foreign residual workers must not light strip.
   const visible = fleetStripShouldShow({
     workerCount,
     lockCount,
@@ -138,11 +175,15 @@ export function FleetStrip({
               刷新
             </button>
           </div>
-          {(!fleet || fleet.workers.length === 0) && (
-            <div style={styles.empty}>暂无 orchestrator/worker。spawn_worker 后会出现在此。</div>
+          {scoped.workers.length === 0 && (
+            <div style={styles.empty}>
+              {scoped.scopeKind === "none"
+                ? "当前会话没有子任务。其它会话残留的 worker 不会显示在此。"
+                : "暂无 orchestrator/worker。spawn_worker 后会出现在此。"}
+            </div>
           )}
           <ul style={styles.list}>
-            {(fleet?.workers || []).map((w) => (
+            {scoped.workers.map((w) => (
               <li key={w.id} style={styles.item}>
                 <div style={styles.row}>
                   <span style={{ fontWeight: 600, fontSize: 11 }}>

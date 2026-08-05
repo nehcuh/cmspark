@@ -1,10 +1,14 @@
 // Shared worker list + portal shell (SoT W1 — outside FocusBand overflow).
 
-import { useEffect, useRef } from "react"
+import { useEffect, useMemo, useRef } from "react"
 import { createPortal } from "react-dom"
 import { useAgentStore } from "../store/agentStore"
 import type { FleetWorkerView } from "../types"
 import { tokens } from "../ui/tokens"
+import {
+  resolveFleetScope,
+  workersInFleetScope,
+} from "../utils/thread-busy"
 
 function statusLabel(status: string | undefined, llmActive?: boolean, mapBusy?: boolean): string {
   if (status === "holding_tabs") return "持锁中"
@@ -29,7 +33,32 @@ export function FleetWorkerList({
 }) {
   const { state, dispatch } = useAgentStore()
   const fleet = state.fleet
-  const workers = fleet?.workers || []
+  const allWorkers = fleet?.workers || []
+  const activeId = state.activeThreadId
+  const activeThread = state.threads.find((t) => t.id === activeId)
+
+  const { scope, workers, scopedLocks } = useMemo(() => {
+    const scope = resolveFleetScope(
+      activeThread
+        ? {
+            id: activeThread.id,
+            agent_role: activeThread.agent_role,
+            parent_thread_id: activeThread.parent_thread_id,
+            orchestrator_run_id: activeThread.orchestrator_run_id,
+          }
+        : activeId
+          ? { id: activeId }
+          : null,
+      allWorkers,
+    )
+    const workers = workersInFleetScope(allWorkers, scope) as FleetWorkerView[]
+    const allowed = new Set(workers.map((w) => w.id))
+    if (activeId) allowed.add(activeId)
+    const scopedLocks = (fleet?.locks || []).filter((l) =>
+      allowed.has(l.holder_thread_id),
+    )
+    return { scope, workers, scopedLocks }
+  }, [activeThread, activeId, allWorkers, fleet?.locks])
 
   const enterWorker = (w: FleetWorkerView) => {
     dispatch({ type: "SET_ACTIVE_THREAD", threadId: w.id })
@@ -49,6 +78,11 @@ export function FleetWorkerList({
     chrome.runtime.sendMessage({ type: "fleet.stop_all" })
   }
 
+  const emptyHint =
+    scope.kind === "none"
+      ? "当前会话没有子任务。其它会话残留的 worker 不会显示在此。"
+      : "暂无 worker。spawn_worker 批准后会出现在此。"
+
   return (
     <div style={styles.panel} data-fleet-worker-list>
       <div style={styles.panelHead}>
@@ -66,9 +100,7 @@ export function FleetWorkerList({
           </button>
         </div>
       </div>
-      {workers.length === 0 && (
-        <div style={styles.empty}>暂无 worker。spawn_worker 批准后会出现在此。</div>
-      )}
+      {workers.length === 0 && <div style={styles.empty}>{emptyHint}</div>}
       <ul style={styles.list}>
         {workers.map((w) => {
           const busy = !!state.threadBusyById[w.id] || !!w.llm_active
@@ -135,13 +167,13 @@ export function FleetWorkerList({
           )
         })}
       </ul>
-      {(fleet?.locks?.length || 0) > 0 && (
+      {scopedLocks.length > 0 && (
         <div style={{ marginTop: 8 }}>
           <div style={styles.panelHead}>
             <span>Tab 锁（高级）</span>
           </div>
           <ul style={styles.list}>
-            {fleet!.locks.map((l) => (
+            {scopedLocks.map((l) => (
               <li key={l.tab_id} style={styles.item}>
                 <div style={styles.row}>
                   <code style={{ fontSize: 10 }}>tab {l.tab_id}</code>
@@ -172,7 +204,12 @@ export function FleetWorkerList({
           type="button"
           style={styles.dangerBtn}
           onClick={stopAll}
-          disabled={(fleet?.worker_count ?? 0) === 0}
+          disabled={workers.filter((w) => w.agent_role === "worker").length === 0}
+          title={
+            scope.kind === "none"
+              ? "当前会话无子任务；全停会作用到进程内全部 worker（确认台清理残留时使用）"
+              : "Stop all workers"
+          }
         >
           全停
         </button>

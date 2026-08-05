@@ -17,11 +17,10 @@ import {
 import { fleetProcessingLabel } from "./focus-band-priority"
 import { collectRunningTools, formatRunningToolsLabel } from "../utils/running-tools"
 import {
+  buildScopedRunBusyInput,
   deriveRunBusy,
   deriveThreadBusy,
-  filterIdsByRun,
   isIntentOnlyRunBusy,
-  resolveOpenIntentsForRun,
 } from "../utils/thread-busy"
 import { tokens, statusColor } from "../ui/tokens"
 import {
@@ -79,52 +78,47 @@ export function ChatView() {
     mapBusy,
   })
   const activeThread = threads.find((t) => t.id === activeThreadId)
-  const runId = activeThread?.orchestrator_run_id || null
   const workers = fleet?.workers || []
-  const llmActiveThreadIds = filterIdsByRun(
-    fleet?.llm_active_thread_ids || [],
-    workers,
-    runId,
-  )
-  const workerBusyIds = filterIdsByRun(
-    Object.entries(threadBusyById)
-      .filter(([, b]) => b)
-      .map(([id]) => id),
-    workers,
-    runId,
-  )
-  let lockCount = fleet?.lock_count ?? 0
-  if (runId && fleet?.locks?.length) {
-    const runWorkerIds = new Set(
-      workers.filter((w) => w.orchestrator_run_id === runId).map((w) => w.id),
-    )
-    if (activeThreadId) runWorkerIds.add(activeThreadId)
-    lockCount = fleet.locks.filter((l) => runWorkerIds.has(l.holder_thread_id)).length
-  }
-  const openIntents = resolveOpenIntentsForRun(
-    fleet?.open_intent_count,
-    fleet?.open_intents_by_run,
-    runId,
-  )
-  const runBusyInput = {
-    lockCount,
-    openIntents,
-    anyHoldingTabs: runId
-      ? workers.some((w) => w.orchestrator_run_id === runId && w.status === "holding_tabs")
-      : workers.some((w) => w.status === "holding_tabs"),
-    llmActiveThreadIds,
-    workerBusyIds,
-  }
+  const busyThreadIds = Object.entries(threadBusyById)
+    .filter(([, b]) => b)
+    .map(([id]) => id)
+  const { runBusyInput, workerCount: scopedWorkerCount, scopedWorkers } =
+    buildScopedRunBusyInput({
+      active: activeThread
+        ? {
+            id: activeThread.id,
+            agent_role: activeThread.agent_role,
+            parent_thread_id: activeThread.parent_thread_id,
+            orchestrator_run_id: activeThread.orchestrator_run_id,
+          }
+        : activeThreadId
+          ? { id: activeThreadId }
+          : null,
+      workers,
+      locks: fleet?.locks,
+      openIntentCount: fleet?.open_intent_count,
+      openIntentsByRun: fleet?.open_intents_by_run,
+      llmActiveThreadIds: fleet?.llm_active_thread_ids,
+      busyThreadIds,
+    })
+  const lockCount = runBusyInput.lockCount
   const runBusy = deriveRunBusy(runBusyInput)
   const intentOnly = isIntentOnlyRunBusy(runBusyInput)
 
   const processingLabel = (() => {
-    const fleetWorkers = fleet?.worker_count ?? 0
+    // Scope fleet processing hint to active thread — never foreign residual workers.
+    const scopedWorst = scopedWorkers.some((w) => w.status === "holding_tabs")
+      ? "holding_tabs"
+      : scopedWorkers.some((w) => w.status === "paused")
+        ? "paused"
+        : scopedWorkers.length > 0
+          ? "idle"
+          : "none"
     const fleetLabel = fleetProcessingLabel({
-      workerCount: fleetWorkers,
-      lockCount: fleet?.lock_count ?? 0,
-      openIntents: fleet?.open_intent_count ?? 0,
-      worstStatus: fleet?.worst_status,
+      workerCount: scopedWorkerCount,
+      lockCount,
+      openIntents: runBusyInput.openIntents,
+      worstStatus: scopedWorst,
     })
     // Active fleet only (not paused-only zombies) — suffix while tools/thinking.
     const fleetBit = fleetLabel ? ` · ${fleetLabel.replace(/^舰队/, "").trim()}` : ""
