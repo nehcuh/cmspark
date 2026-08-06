@@ -465,12 +465,216 @@ test("S46 dual-nit: releaseTrustBeforeThreadGone restores cruise on thread delet
   assert.equal((getConfig() as any).security?.auto_approve_dangerous, true)
 
   const thr = tm.get(thread.id)!
-  assert.equal(packEngine.releaseTrustBeforeThreadGone(thr, "thread.delete"), true)
+  assert.equal(packEngine.releaseTrustBeforeThreadGone(thr, "thread.delete", tm), true)
   assert.equal((getConfig() as any).security?.auto_approve_dangerous, false)
   assert.equal(packEngine.readTrustJournal(), null)
+  // S51: cookie cleared so second release is a no-op
+  assert.equal(tm.get(thread.id)!.mission_pack_trust_snapshot, null)
+  assert.equal(packEngine.releaseTrustBeforeThreadGone(tm.get(thread.id)!, "thread.delete", tm), false)
 
   tm.delete(thread.id)
   packEngine.deleteUserPack(saved.id, tm, skillEngine)
+  saveConfig({ capability_profile: cfg0.capability_profile, security: cfg0.security, modules: cfg0.modules } as any)
+  clearConfigCache()
+})
+
+test("S51 P0: trash then Settings flip then hard-delete must not re-restore cruise", () => {
+  const skillEngine = new SkillEngine()
+  const cfg0 = getConfig() as any
+  // Pre-apply baseline ON — cookie captures elevated state
+  saveConfig({
+    capability_profile: cfg0.capability_profile || "community",
+    security: {
+      ...(cfg0.security || {}),
+      auto_approve_dangerous: true,
+      auto_approve_enterprise_tools: true,
+      allow_all_schemes: true,
+    },
+    modules: cfg0.modules,
+  } as any)
+  clearConfigCache()
+
+  const saved = packEngine.saveUserPack(
+    {
+      name: "trust-trash-hard",
+      system_prompt_append: "trash then hard must not re-fire cookie",
+      skill_ids: [],
+      tools: { mode: "allowlist", allow: ["list_tabs"], deny: [] },
+      trust: { auto_approve_dangerous: true },
+    },
+    skillEngine,
+  )
+  assert.equal(saved.ok, true)
+  if (!saved.ok) return
+
+  const tm = new ThreadManager()
+  const thread = tm.create("trash-hard-trust")
+  assert.equal(
+    packEngine.applyPack(saved.id, thread.id, tm, skillEngine, { allowTrust: true }).ok,
+    true,
+  )
+  assert.equal((getConfig() as any).security?.auto_approve_dangerous, true)
+
+  // Soft-delete path: release + clear cookie (simulates thread.delete mode:trash)
+  const thr = tm.get(thread.id)!
+  assert.equal(packEngine.releaseTrustBeforeThreadGone(thr, "thread.delete", tm), true)
+  tm.trash(thread.id)
+  assert.equal(tm.get(thread.id)!.mission_pack_trust_snapshot, null)
+
+  // User turns cruise OFF after trash
+  const mid = getConfig() as any
+  saveConfig({
+    capability_profile: mid.capability_profile,
+    security: {
+      ...(mid.security || {}),
+      auto_approve_dangerous: false,
+      auto_approve_enterprise_tools: false,
+      allow_all_schemes: false,
+    },
+    modules: mid.modules,
+  } as any)
+  clearConfigCache()
+  assert.equal((getConfig() as any).security?.auto_approve_dangerous, false)
+
+  // Hard-delete from trash: second release must be no-op (cookie gone)
+  const trashed = tm.get(thread.id)!
+  assert.equal(packEngine.releaseTrustBeforeThreadGone(trashed, "thread.batch_delete", tm), false)
+  tm.delete(thread.id)
+  assert.equal((getConfig() as any).security?.auto_approve_dangerous, false)
+
+  packEngine.deleteUserPack(saved.id, tm, skillEngine)
+  saveConfig({ capability_profile: cfg0.capability_profile, security: cfg0.security, modules: cfg0.modules } as any)
+  clearConfigCache()
+})
+
+test("S51 migration: pre-fix trash cookie on hard-delete clears without re-restore", () => {
+  const skillEngine = new SkillEngine()
+  const cfg0 = getConfig() as any
+  // Baseline ON so cookie would re-enable if wrongly restored
+  saveConfig({
+    capability_profile: cfg0.capability_profile || "community",
+    security: {
+      ...(cfg0.security || {}),
+      auto_approve_dangerous: true,
+      auto_approve_enterprise_tools: false,
+      allow_all_schemes: false,
+    },
+    modules: cfg0.modules,
+  } as any)
+  clearConfigCache()
+
+  const saved = packEngine.saveUserPack(
+    {
+      name: "trust-migration-trash",
+      system_prompt_append: "legacy cookie on trash",
+      skill_ids: [],
+      tools: { mode: "allowlist", allow: ["list_tabs"], deny: [] },
+      trust: { auto_approve_dangerous: true },
+    },
+    skillEngine,
+  )
+  assert.equal(saved.ok, true)
+  if (!saved.ok) return
+
+  const tm = new ThreadManager()
+  const thread = tm.create("legacy-trash-cookie")
+  assert.equal(
+    packEngine.applyPack(saved.id, thread.id, tm, skillEngine, { allowTrust: true }).ok,
+    true,
+  )
+  // Simulate pre-S51: trash without clearing cookie (manual leave cookie + trashed_at)
+  const thr = tm.get(thread.id)!
+  const cookie = thr.mission_pack_trust_snapshot
+  assert.ok(cookie)
+  // restore globals as trash would have, but leave cookie (old bug)
+  packEngine.restoreTrustFromThreadCookie(cookie, "sim-old-trash")
+  tm.trash(thread.id)
+  // re-plant cookie after trash (old bug state)
+  tm.update(thread.id, { mission_pack_trust_snapshot: cookie as any })
+
+  // User turns cruise OFF
+  const mid = getConfig() as any
+  saveConfig({
+    capability_profile: mid.capability_profile,
+    security: {
+      ...(mid.security || {}),
+      auto_approve_dangerous: false,
+      auto_approve_enterprise_tools: false,
+      allow_all_schemes: false,
+    },
+    modules: mid.modules,
+  } as any)
+  clearConfigCache()
+
+  const trashed = tm.get(thread.id)!
+  assert.ok(trashed.trashed_at)
+  assert.ok(trashed.mission_pack_trust_snapshot)
+  // Hard-delete must clear cookie WITHOUT restoring ON
+  assert.equal(packEngine.releaseTrustBeforeThreadGone(trashed, "thread.batch_delete", tm), true)
+  assert.equal(tm.get(thread.id)!.mission_pack_trust_snapshot, null)
+  assert.equal((getConfig() as any).security?.auto_approve_dangerous, false)
+
+  tm.delete(thread.id)
+  packEngine.deleteUserPack(saved.id, tm, skillEngine)
+  saveConfig({ capability_profile: cfg0.capability_profile, security: cfg0.security, modules: cfg0.modules } as any)
+  clearConfigCache()
+})
+
+test("S51 P0: trash A(trust) then apply B(trust) then hard-delete A does not clobber B", () => {
+  const skillEngine = new SkillEngine()
+  const cfg0 = getConfig() as any
+  resetTrustBaseline(cfg0)
+
+  const packA = packEngine.saveUserPack(
+    {
+      name: "trust-a-trash",
+      system_prompt_append: "A",
+      skill_ids: [],
+      tools: { mode: "allowlist", allow: ["list_tabs"], deny: [] },
+      trust: { auto_approve_dangerous: true },
+    },
+    skillEngine,
+  )
+  const packB = packEngine.saveUserPack(
+    {
+      name: "trust-b-live",
+      system_prompt_append: "B",
+      skill_ids: [],
+      tools: { mode: "allowlist", allow: ["list_tabs"], deny: [] },
+      trust: { auto_approve_dangerous: true },
+    },
+    skillEngine,
+  )
+  assert.equal(packA.ok && packB.ok, true)
+  if (!packA.ok || !packB.ok) return
+
+  const tm = new ThreadManager()
+  const tA = tm.create("th-a")
+  const tB = tm.create("th-b")
+  assert.equal(
+    packEngine.applyPack(packA.id, tA.id, tm, skillEngine, { allowTrust: true }).ok,
+    true,
+  )
+  // Soft-release A (trash)
+  assert.equal(packEngine.releaseTrustBeforeThreadGone(tm.get(tA.id)!, "thread.delete", tm), true)
+  tm.trash(tA.id)
+  assert.equal((getConfig() as any).security?.auto_approve_dangerous, false)
+
+  // Apply B while A is trashed (holder check excludes trash)
+  assert.equal(
+    packEngine.applyPack(packB.id, tB.id, tm, skillEngine, { allowTrust: true }).ok,
+    true,
+  )
+  assert.equal((getConfig() as any).security?.auto_approve_dangerous, true)
+
+  // Hard-delete A must not restore A's pre-apply cookie over B's elevation
+  assert.equal(packEngine.releaseTrustBeforeThreadGone(tm.get(tA.id)!, "thread.batch_delete", tm), false)
+  tm.delete(tA.id)
+  assert.equal((getConfig() as any).security?.auto_approve_dangerous, true)
+
+  packEngine.unapplyPack(tB.id, tm)
+  packEngine.deleteUserPack(packA.id, tm, skillEngine)
+  packEngine.deleteUserPack(packB.id, tm, skillEngine)
   saveConfig({ capability_profile: cfg0.capability_profile, security: cfg0.security, modules: cfg0.modules } as any)
   clearConfigCache()
 })

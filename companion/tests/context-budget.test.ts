@@ -151,6 +151,50 @@ test("buildRedactedTranscript + attachRollingSummaryToMessages", () => {
   assert.match(String(withSum[1].content), /did X/)
 })
 
+test("S51 P0: mid_loop recompact re-attaches prior rolling summary (two-pass)", () => {
+  // pre_loop-style compact with M2 summary in the request
+  const long = "x".repeat(400)
+  const msgs: CanonicalChatMessage[] = [
+    system("sys"),
+    user(`old-1 ${long}`),
+    assistant(`a1 ${long}`),
+    user(`old-2 ${long}`),
+    assistant(`a2 ${long}`),
+    user("latest-user"),
+  ]
+  const tiny = 120
+  const pre = compactMessagesTurnSafe(msgs, tiny)
+  assert.equal(pre.compacted, true)
+  const withM2 = attachRollingSummaryToMessages(
+    pre.messages,
+    pre.droppedCount,
+    "did X; open tabs; pending Y",
+  )
+  assert.ok(withM2.some((m) => isOmitNotice(m) && String(m.content).startsWith("[context_summary]")))
+  assert.match(String(withM2.find(isOmitNotice)!.content), /did X/)
+
+  // Simulate tool-round growth then mid_loop M1 compact (no rollingSummary in opts)
+  const midInput: CanonicalChatMessage[] = [
+    ...withM2,
+    assistant("tool round"),
+    { role: "tool", content: `huge tool result ${"y".repeat(500)}`, tool_call_id: "c1" } as any,
+    user("continue"),
+  ]
+  const mid = compactMessagesTurnSafe(midInput, tiny)
+  assert.equal(mid.compacted, true)
+  // M1 strip leaves plain omit — then adapter re-attaches prior summary
+  const reattached = attachRollingSummaryToMessages(
+    mid.messages,
+    mid.droppedCount,
+    "did X; open tabs; pending Y",
+  )
+  const notice = reattached.find(isOmitNotice)
+  assert.ok(notice, "omit/summary notice present")
+  assert.match(String(notice!.content), /\[context_summary\]/)
+  assert.match(String(notice!.content), /did X/)
+  assert.equal(reattached.filter(isOmitNotice).length, 1)
+})
+
 test("shouldRunM2 gates (tuned strategy)", () => {
   // 2 msgs alone insufficient unless tokens high
   assert.equal(

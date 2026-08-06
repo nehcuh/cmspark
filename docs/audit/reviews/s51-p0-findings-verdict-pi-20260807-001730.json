@@ -1,0 +1,7 @@
+{
+  "batch": "s51-p0-findings",
+  "timestamp": "20260807-001730",
+  "pi": { "verdict": "REJECT", "exit_code": 0, "path": "/c/Users/HuChen/Projects/cmspark/docs/audit/reviews/s51-p0-findings-pi-20260807-001730.md" },
+  "approve": false,
+  "diff_path": "/c/Users/HuChen/Projects/cmspark/docs/audit/reviews/s51-p0-findings-diff-20260807-001730.patch"
+}
