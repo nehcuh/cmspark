@@ -128,6 +128,8 @@ export const TOOL_ARG_SCHEMAS: Record<string, z.ZodTypeAny> = {
   shell_exec: z.object({
     command: z.string().min(1).max(8000),
     cwd: z.string().optional(),
+    /** Wall-clock ms; clamped 1s–300s (default 60s). Kill process tree on expiry. */
+    timeoutMs: z.number().int().min(1000).max(300000).optional(),
     security_token: z.string().optional(),
   }),
   netsec_port_scan: z.object({

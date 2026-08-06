@@ -2572,6 +2572,8 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
       try {
         // Thread id already injected by adapter as __thread_id (computer-use precedent)
         const result = await executeCompanionTool(toolName, finalParams, toolCallId, {
+          // Propagate chat.abort / supersede so shell_exec can killProcessTree.
+          signal,
           // Executor-internal confirmation channel (Phase 1 W8-windows
           // skip-L2 manual-nonce prompt). Adversary amendment A1: ALWAYS
           // origin-bound — a ws-bound send alone binds only the outbound
@@ -3001,6 +3003,19 @@ export async function handleSecurityConfirmationResponse(ws: WebSocket, msg: any
         } catch {
           /* optional if router not loaded */
         }
+        // stop_thread must also kill in-flight shell_exec (same gap as chat.abort)
+        try {
+          const { abortShellRunsForThread } = await import("./capability/shell")
+          const shellKilled = abortShellRunsForThread(stopTarget)
+          if (shellKilled > 0) {
+            logger.warn("shell.abort.stop_thread", {
+              stop_target: stopTarget,
+              matched: shellKilled,
+            })
+          }
+        } catch {
+          /* best-effort */
+        }
         logger.info("security.confirmation.stop_thread", {
           confirmation_id: confirmationId,
           stop_target: stopTarget,
@@ -3166,6 +3181,11 @@ interface CompanionToolExecOptions {
    * lives) into runComputerTask deps; absent = every re-L2 asks.
    */
   computerSessionId?: string
+  /**
+   * LLM-loop AbortSignal (chat.abort / supersede). shell_exec listens and
+   * killProcessTree so stop-dialog actually stops the host command.
+   */
+  signal?: AbortSignal
 }
 
 async function executeCompanionTool(toolName: string, params: any, toolCallId?: string, execOpts?: CompanionToolExecOptions): Promise<any> {
@@ -3675,13 +3695,16 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
       const flight = tryAcquireFlight("shell_exec", flightOwner)
       if (!flight.ok) return { success: false, error: flight.error, data: { error_code: "SHELL_BUSY", holder: flight.holder } }
       try {
-        const { shellExec } = await import("./capability/shell")
+        const { shellExec, resolveShellTimeoutMs } = await import("./capability/shell")
         const thread = tid ? threadManager.get(tid) : null
         const cwd = params.cwd || thread?.workspace_root || undefined
         return await shellExec({
           command: params.command,
           cwd,
           threadId: tid,
+          timeoutMs: resolveShellTimeoutMs(params.timeoutMs ?? params.timeout_ms),
+          signal: execOpts?.signal,
+          runKey: toolCallId || undefined,
           onProgress: (p) => {
             // #au4dch ST-2 / SH-A2 / B2: live tails unicast to origin only
             // (never broadcast — tails may contain secrets). Old clients ignore type.
@@ -5456,6 +5479,18 @@ export function validateWsMessage(msg: any): WsValidationResult {
       if (typeof m.task_id !== "string" || !m.task_id) return { valid: false, error: "computer.task.abort requires task_id (a task id or '*')" }
       return { valid: true }
     },
+    "shell.exec.abort": (m) => {
+      const hasTool =
+        typeof m.tool_call_id === "string" && m.tool_call_id.length > 0
+      const hasThread = typeof m.thread_id === "string" && m.thread_id.length > 0
+      if (!hasTool && !hasThread) {
+        return {
+          valid: false,
+          error: "shell.exec.abort requires tool_call_id and/or thread_id",
+        }
+      }
+      return { valid: true }
+    },
     "computer.evidence.open": (m) => {
       if (typeof m.task_id !== "string" || !m.task_id) return { valid: false, error: "computer.evidence.open requires task_id" }
       return { valid: true }
@@ -6352,8 +6387,54 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
         // computer.task.abort). Fall through to handleMessage for AbortController
         // + chat.aborted. Lives here (not message-router) to avoid a
         // message-router→server import cycle.
+        //
+        // Same path must kill in-flight shell_exec process trees (thread-scoped).
+        // AbortController alone only cancels the LLM stream — shell kept running.
         if (msg.type === "chat.abort") {
           flipAllComputerTaskAborts()
+          try {
+            const { abortShellRunsForThread } = await import("./capability/shell")
+            const tid = typeof msg.thread_id === "string" ? msg.thread_id : ""
+            if (tid) {
+              const n = abortShellRunsForThread(tid)
+              if (n > 0) logger.warn("shell.abort.chat_abort", { thread_id: tid, matched: n })
+            }
+          } catch {
+            /* best-effort */
+          }
+        }
+
+        // Individual shell stop (Side Panel tool card) — does not abort the whole chat.
+        if (msg.type === "shell.exec.abort") {
+          try {
+            const { abortShellRunById, abortShellRunsForThread } = await import("./capability/shell")
+            const toolCallId =
+              typeof msg.tool_call_id === "string" && msg.tool_call_id ? msg.tool_call_id : ""
+            const tid = typeof msg.thread_id === "string" ? msg.thread_id : ""
+            let matched = 0
+            if (toolCallId && abortShellRunById(toolCallId)) matched = 1
+            else if (tid) matched = abortShellRunsForThread(tid)
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(
+                JSON.stringify({
+                  type: "shell.exec.abort.ack",
+                  tool_call_id: toolCallId || null,
+                  thread_id: tid || null,
+                  matched,
+                }),
+              )
+            }
+            if (matched > 0) {
+              logger.warn("shell.exec.abort.requested", {
+                tool_call_id: toolCallId || null,
+                thread_id: tid || null,
+                matched,
+              })
+            }
+          } catch (e: any) {
+            logger.warn("shell.exec.abort.failed", { error: e?.message || String(e) })
+          }
+          return
         }
 
         // Audit item 3 (gate): bulk history export requires explicit user

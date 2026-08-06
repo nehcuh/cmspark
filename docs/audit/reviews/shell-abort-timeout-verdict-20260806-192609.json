@@ -1,0 +1,9 @@
+{
+  "batch": "shell-abort-timeout",
+  "timestamp": "20260806-192609",
+  "claude": { "verdict": "REJECT", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/shell-abort-timeout-claude-20260806-192609.md" },
+  "pi": { "verdict": "REJECT", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/shell-abort-timeout-pi-20260806-192609.md" },
+  "both_approve": false,
+  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/shell-abort-timeout-diff-20260806-192609.patch",
+  "mode": "parallel"
+}

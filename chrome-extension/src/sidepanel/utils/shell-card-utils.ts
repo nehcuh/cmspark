@@ -13,6 +13,8 @@ export interface ShellCardData {
   commandPreview: string
   exitCode: number | null
   timedOut: boolean
+  /** User/chat abort killed the process tree (distinct from wall-clock timeout). */
+  aborted: boolean
   durationMs: number | null
   cwd: string | null
   stdout: string
@@ -20,7 +22,7 @@ export interface ShellCardData {
   /** Companion truncated stdout/stderr at MAX_OUTPUT. */
   outputTruncated: boolean
   /**
-   * Failed for UI tone: result.success===false, non-zero exit, or timed_out.
+   * Failed for UI tone: result.success===false, non-zero exit, timed_out, or aborted.
    * Note: companion often returns success:true even when exit_code!==0 so the
    * agent can read stdout — we still flag non-zero as failed for the glyph.
    */
@@ -83,6 +85,7 @@ export function extractShellCardData(
   const stderr = asString(data?.stderr) || (successFlag === false ? topError : "")
   const exitCode = asFiniteNumber(data?.exit_code)
   const timedOut = data?.timed_out === true
+  const aborted = data?.aborted === true
   const durationMs = asFiniteNumber(data?.duration_ms)
   const cwd = asString(data?.cwd) || null
   const outputTruncated = data?.truncated === true
@@ -90,6 +93,7 @@ export function extractShellCardData(
   const failed =
     successFlag === false ||
     timedOut ||
+    aborted ||
     (exitCode !== null && exitCode !== 0)
 
   return {
@@ -97,6 +101,7 @@ export function extractShellCardData(
     commandPreview: previewShellCommand(command),
     exitCode,
     timedOut,
+    aborted,
     durationMs,
     cwd,
     stdout,
@@ -110,7 +115,9 @@ export function extractShellCardData(
 /** Meta line: exit · duration · cwd (omit empty parts). */
 export function formatShellMetaLine(card: ShellCardData): string {
   const parts: string[] = []
-  if (card.timedOut) {
+  if (card.aborted) {
+    parts.push("已停止")
+  } else if (card.timedOut) {
     parts.push("超时")
   } else if (card.exitCode !== null) {
     parts.push(`exit ${card.exitCode}`)

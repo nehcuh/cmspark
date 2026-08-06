@@ -686,7 +686,7 @@
     "type": "function",
     "function": {
       "name": "shell_exec",
-      "description": "Run ONE shell command on the companion host (enterprise shell module). Always requires user confirmation (confirm_per_command). Prefer workspace_* tools for reading repo files. Do not use for unauthorized network scanning.",
+      "description": "Run ONE shell command on the companion host (enterprise shell module). Always requires user confirmation (confirm_per_command). Prefer workspace_* tools for reading repo files. Do not use for unauthorized network scanning. Default timeout 60s (max 300s via timeoutMs); chat stop and shell.exec.abort kill the process tree.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -697,6 +697,12 @@
           "cwd": {
             "type": "string",
             "description": "Optional working directory (absolute). Defaults to process cwd or workspace_root if set."
+          },
+          "timeoutMs": {
+            "type": "integer",
+            "minimum": 1000,
+            "maximum": 300000,
+            "description": "Optional wall-clock timeout in ms (default 60000, max 300000). On expiry the whole process tree is killed."
           }
         },
         "required": [
