@@ -555,8 +555,19 @@ async function initServices() {
   await historyStore.waitReady()
   // Mission Pack P0: install shipped packs (appsec-prd-review) into DATA_DIR
   try {
-    const { ensureBuiltinPacksInstalled } = await import("./packs/pack-engine")
+    const { ensureBuiltinPacksInstalled, reconcilePackTrustOnBoot } = await import(
+      "./packs/pack-engine"
+    )
     ensureBuiltinPacksInstalled(skillEngine)
+    // S46: restore orphan Trust after crash mid-apply / missing thread cookie
+    const rec = reconcilePackTrustOnBoot(threadManager)
+    if (rec.action !== "none") {
+      logger.warn("packs.trust_reconcile", {
+        action: rec.action,
+        thread_id: rec.journal?.thread_id,
+        pack_id: rec.journal?.pack_id,
+      })
+    }
   } catch (e: any) {
     logger.warn("packs.builtin_install_failed", { error: e?.message || String(e) })
   }
@@ -3190,7 +3201,8 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
         intentId,
       })
       if (!r.ok) return { success: false, error: r.error }
-      // Optional pack.apply after spawn (role template — never elevates capability_profile / modules)
+      // Optional pack.apply after spawn: composition only — NEVER allowTrust (S46 P0-4).
+      // Spawn L2 ≠ consent to write global auto_approve / three-flag cruise (Trust B).
       let packApply: { ok: boolean; error?: string } | null = null
       if (params.pack_id && typeof params.pack_id === "string") {
         try {
@@ -3198,7 +3210,9 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
           if (!skillEngine) {
             packApply = { ok: false, error: "skillEngine not initialized; worker created with mission_pack_id only" }
           } else {
-            const ar = applyPack(String(params.pack_id), r.worker.id, threadManager, skillEngine)
+            const ar = applyPack(String(params.pack_id), r.worker.id, threadManager, skillEngine, {
+              allowTrust: false,
+            })
             packApply = ar.ok ? { ok: true } : { ok: false, error: ar.error }
           }
         } catch (e: any) {

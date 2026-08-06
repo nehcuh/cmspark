@@ -156,6 +156,14 @@ test("isSkillInstallSourceAllowed: default zone (Downloads/tmp) + user home, rej
     }
   }
 
+  // S46: bare path segment "Downloads" outside home must NOT be default tier
+  const evilDl =
+    process.platform === "win32"
+      ? "C:\\Windows\\Temp-not-tmp\\Downloads\\evil-skill"
+      : "/usr/local/Downloads/evil-skill"
+  assert.equal(classifySkillInstallSource(evilDl), "denied")
+  assert.equal(isSkillInstallSourceAllowed(evilDl), false)
+
   const denied = skillInstallSourceDeniedError("path")
   assert.match(denied.error, /outside the allowed install source zone/)
   assert.match(denied.hint_zh, /主目录|Projects|下载/)

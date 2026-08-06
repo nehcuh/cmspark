@@ -1072,10 +1072,31 @@ export async function handleMessage(
         return { type: "error", error: e.message || String(e) }
       }
     }
-    case "thread.delete":
+    case "thread.delete": {
+      // S46 dual-review nit: deleting a Trust-holding thread must restore globals
+      try {
+        const thr = threadManager.get(rest.thread_id)
+        if (thr) {
+          const { releaseTrustBeforeThreadGone } = await import("./packs/pack-engine")
+          releaseTrustBeforeThreadGone(thr, "thread.delete")
+        }
+      } catch {
+        /* best-effort */
+      }
       threadManager.delete(rest.thread_id)
       return { type: "thread.deleted", thread_id: rest.thread_id }
+    }
     case "thread.cleanup_empty": {
+      try {
+        const { releaseTrustBeforeThreadGone } = await import("./packs/pack-engine")
+        for (const t of threadManager.list()) {
+          if (threadManager.getMessages(t.id).length === 0) {
+            releaseTrustBeforeThreadGone(t, "thread.cleanup_empty")
+          }
+        }
+      } catch {
+        /* best-effort */
+      }
       const deletedIds = threadManager.cleanupEmpty()
       // Notify all connected side panels so their thread lists stay in sync.
       if (session?.broadcast) {
@@ -1956,8 +1977,10 @@ export async function handleMessage(
       if (!rest.pack_id || !rest.thread_id) {
         return { type: "error", error: "pack_id and thread_id required" }
       }
+      // allowTrust: only Side Panel user_gesture may write global Trust B
       const r = applyPack(rest.pack_id, rest.thread_id, threadManager, skillEngine, {
         workspace_path: rest.workspace_path,
+        allowTrust: true,
       })
       if (!r.ok) {
         return { type: "error", error: r.error, code: (r as any).code }
@@ -2063,7 +2086,10 @@ export async function handleMessage(
           ? rest.apply_thread_id.trim()
           : null
       if (applyThreadId) {
-        const ar = applyPack(r.id, applyThreadId, threadManager, skillEngine)
+        // Same gesture as save — allow Trust B write for user scenes
+        const ar = applyPack(r.id, applyThreadId, threadManager, skillEngine, {
+          allowTrust: true,
+        })
         if (!ar.ok) {
           return {
             type: "pack.saved_user",

@@ -1,0 +1,8 @@
+{
+  "batch": "s46-trust-b-lifecycle",
+  "timestamp": "20260806-090027",
+  "claude": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/s46-trust-b-lifecycle-claude-20260806-090027.md" },
+  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/s46-trust-b-lifecycle-pi-20260806-090027.md" },
+  "both_approve": true,
+  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/s46-trust-b-lifecycle-diff-20260806-090027.patch"
+}

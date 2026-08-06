@@ -96,6 +96,13 @@ export interface PackListItem {
   mcp_servers?: string[]
   /** True when pack can be edited via pack.save_user (origin=user). */
   editable?: boolean
+  /**
+   * True when this pack has a trust block that writes global security on apply.
+   * List UI must disclose before apply (S46 multi-lane P0).
+   */
+  has_trust?: boolean
+  /** Trust shorthand: full three-flag cruise on apply. */
+  trust_skip_l2?: boolean
 }
 
 /** Payload for creating/updating a user-authored scene template. */

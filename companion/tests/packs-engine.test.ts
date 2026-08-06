@@ -153,7 +153,9 @@ test("saveUserPack trust skip_l2 + enable shell applies global Trust and unapply
 
   const tm = new ThreadManager()
   const thread = tm.create("trust-apply-th")
-  const applied = packEngine.applyPack(saved.id, thread.id, tm, skillEngine)
+  const applied = packEngine.applyPack(saved.id, thread.id, tm, skillEngine, {
+    allowTrust: true,
+  })
   assert.equal(applied.ok, true, (applied as any).error)
   const cfg1 = getConfig() as any
   assert.equal(cfg1.capability_profile, "enterprise")
@@ -175,6 +177,423 @@ test("saveUserPack trust skip_l2 + enable shell applies global Trust and unapply
     modules: cfg0.modules,
   } as any)
   clearConfigCache()
+})
+
+function resetTrustBaseline(cfg0: any) {
+  saveConfig({
+    capability_profile: "community",
+    security: {
+      ...(cfg0.security || {}),
+      auto_approve_dangerous: false,
+      auto_approve_enterprise_tools: false,
+      allow_all_schemes: false,
+    },
+    modules: {
+      ...(cfg0.modules || {}),
+      appsec: { available: true, enabled: true, enabled_at: new Date().toISOString(), enabled_by: "test" },
+      shell: { available: true, enabled: false, policy: "confirm_per_command", allowlist_commands: [] },
+    },
+  } as any)
+  clearConfigCache()
+}
+
+test("S46 P0: allowTrust false (spawn path) does not write global Trust", () => {
+  const skillEngine = new SkillEngine()
+  const cfg0 = getConfig() as any
+  resetTrustBaseline(cfg0)
+
+  // Community-channel pack with a mild trust block (no skip_l2/shell → no enterprise gate).
+  // With allowTrust:false composition still applies; globals must stay off.
+  const saved = packEngine.saveUserPack(
+    {
+      name: "trust-spawn-skip",
+      system_prompt_append: "spawn must not elevate Trust",
+      skill_ids: [],
+      tools: { mode: "allowlist", allow: ["list_tabs", "use_skill"], deny: [] },
+      trust: { auto_approve_dangerous: true },
+    },
+    skillEngine,
+  )
+  assert.equal(saved.ok, true)
+  if (!saved.ok) return
+
+  const tm = new ThreadManager()
+  const thread = tm.create("spawn-trust-th")
+  const applied = packEngine.applyPack(saved.id, thread.id, tm, skillEngine, {
+    allowTrust: false,
+  })
+  assert.equal(applied.ok, true, (applied as any).error)
+  const cfg1 = getConfig() as any
+  assert.equal(cfg1.security?.auto_approve_dangerous, false)
+  const t = tm.get(thread.id)!
+  assert.equal(t.mission_pack_id, saved.id)
+  assert.equal(t.mission_pack_trust_snapshot, null)
+
+  // Control: same pack with allowTrust DOES elevate
+  const t2 = tm.create("spawn-trust-control")
+  assert.equal(
+    packEngine.applyPack(saved.id, t2.id, tm, skillEngine, { allowTrust: true }).ok,
+    true,
+  )
+  assert.equal((getConfig() as any).security?.auto_approve_dangerous, true)
+  packEngine.unapplyPack(t2.id, tm)
+  assert.equal((getConfig() as any).security?.auto_approve_dangerous, false)
+
+  packEngine.deleteUserPack(saved.id, tm, skillEngine)
+  saveConfig({ capability_profile: cfg0.capability_profile, security: cfg0.security, modules: cfg0.modules } as any)
+  clearConfigCache()
+})
+
+test("S46 P0: uninstall restores Trust (not only unapply)", () => {
+  const skillEngine = new SkillEngine()
+  const cfg0 = getConfig() as any
+  resetTrustBaseline(cfg0)
+
+  const saved = packEngine.saveUserPack(
+    {
+      name: "trust-uninstall",
+      system_prompt_append: "uninstall must restore Trust",
+      skill_ids: [],
+      tools: { mode: "allowlist", allow: ["shell_exec", "list_tabs", "use_skill"], deny: [] },
+      trust: {
+        skip_l2: true,
+        set_enterprise_profile: true,
+        enable_modules: ["shell"],
+      },
+    },
+    skillEngine,
+  )
+  assert.equal(saved.ok, true)
+  if (!saved.ok) return
+
+  const tm = new ThreadManager()
+  const thread = tm.create("uninstall-trust-th")
+  assert.equal(
+    packEngine.applyPack(saved.id, thread.id, tm, skillEngine, { allowTrust: true }).ok,
+    true,
+  )
+  assert.equal((getConfig() as any).security?.auto_approve_dangerous, true)
+
+  const un = packEngine.uninstallPack(saved.id, tm, skillEngine)
+  assert.equal(un.ok, true)
+  const cfg2 = getConfig() as any
+  assert.equal(cfg2.security?.auto_approve_dangerous, false)
+  assert.equal(cfg2.security?.auto_approve_enterprise_tools, false)
+  assert.equal(cfg2.security?.allow_all_schemes, false)
+  assert.equal(cfg2.modules?.shell?.enabled, false)
+  assert.equal(tm.get(thread.id)!.mission_pack_id, null)
+
+  saveConfig({ capability_profile: cfg0.capability_profile, security: cfg0.security, modules: cfg0.modules } as any)
+  clearConfigCache()
+})
+
+test("S46 P0: switch trust pack → non-trust pack restores cruise flags", () => {
+  const skillEngine = new SkillEngine()
+  const cfg0 = getConfig() as any
+  resetTrustBaseline(cfg0)
+
+  const trustPack = packEngine.saveUserPack(
+    {
+      name: "trust-A",
+      system_prompt_append: "A with trust",
+      skill_ids: [],
+      tools: { mode: "allowlist", allow: ["shell_exec", "list_tabs", "use_skill"], deny: [] },
+      trust: { skip_l2: true, enable_modules: ["shell"] },
+    },
+    skillEngine,
+  )
+  assert.equal(trustPack.ok, true)
+  if (!trustPack.ok) return
+
+  const plainPack = packEngine.saveUserPack(
+    {
+      name: "plain-B",
+      system_prompt_append: "B without trust",
+      skill_ids: [],
+      tools: { mode: "allowlist", allow: ["list_tabs", "get_page_html"], deny: [] },
+    },
+    skillEngine,
+  )
+  assert.equal(plainPack.ok, true)
+  if (!plainPack.ok) return
+
+  const tm = new ThreadManager()
+  const thread = tm.create("switch-trust-th")
+  assert.equal(
+    packEngine.applyPack(trustPack.id, thread.id, tm, skillEngine, { allowTrust: true }).ok,
+    true,
+  )
+  assert.equal((getConfig() as any).security?.auto_approve_dangerous, true)
+
+  assert.equal(
+    packEngine.applyPack(plainPack.id, thread.id, tm, skillEngine, { allowTrust: true }).ok,
+    true,
+  )
+  const cfg2 = getConfig() as any
+  assert.equal(cfg2.security?.auto_approve_dangerous, false)
+  assert.equal(cfg2.modules?.shell?.enabled, false)
+  assert.equal(tm.get(thread.id)!.mission_pack_id, plainPack.id)
+  assert.equal(tm.get(thread.id)!.mission_pack_trust_snapshot, null)
+
+  packEngine.deleteUserPack(trustPack.id, tm, skillEngine)
+  packEngine.deleteUserPack(plainPack.id, tm, skillEngine)
+  saveConfig({ capability_profile: cfg0.capability_profile, security: cfg0.security, modules: cfg0.modules } as any)
+  clearConfigCache()
+})
+
+test("S46 P0: switch trust A → trust B captures fresh snap; unapply B restores baseline", () => {
+  const skillEngine = new SkillEngine()
+  const cfg0 = getConfig() as any
+  resetTrustBaseline(cfg0)
+
+  const packA = packEngine.saveUserPack(
+    {
+      name: "trust-A2",
+      system_prompt_append: "A trust",
+      skill_ids: [],
+      tools: { mode: "allowlist", allow: ["list_tabs", "use_skill"], deny: [] },
+      trust: { auto_approve_dangerous: true },
+    },
+    skillEngine,
+  )
+  const packB = packEngine.saveUserPack(
+    {
+      name: "trust-B2",
+      system_prompt_append: "B trust",
+      skill_ids: [],
+      tools: { mode: "allowlist", allow: ["list_tabs", "get_page_html"], deny: [] },
+      trust: { auto_approve_dangerous: true, allow_all_schemes: true },
+    },
+    skillEngine,
+  )
+  assert.equal(packA.ok && packB.ok, true)
+  if (!packA.ok || !packB.ok) return
+
+  const tm = new ThreadManager()
+  const thread = tm.create("switch-ab-trust")
+  assert.equal(
+    packEngine.applyPack(packA.id, thread.id, tm, skillEngine, { allowTrust: true }).ok,
+    true,
+  )
+  assert.equal((getConfig() as any).security?.auto_approve_dangerous, true)
+  assert.equal((getConfig() as any).security?.allow_all_schemes, false)
+
+  assert.equal(
+    packEngine.applyPack(packB.id, thread.id, tm, skillEngine, { allowTrust: true }).ok,
+    true,
+  )
+  assert.equal((getConfig() as any).security?.auto_approve_dangerous, true)
+  assert.equal((getConfig() as any).security?.allow_all_schemes, true)
+
+  // Unapply B must restore to baseline (pre-A), not leave A-only elevation
+  assert.equal(packEngine.unapplyPack(thread.id, tm).ok, true)
+  const cfgEnd = getConfig() as any
+  assert.equal(cfgEnd.security?.auto_approve_dangerous, false)
+  assert.equal(cfgEnd.security?.allow_all_schemes, false)
+
+  packEngine.deleteUserPack(packA.id, tm, skillEngine)
+  packEngine.deleteUserPack(packB.id, tm, skillEngine)
+  saveConfig({ capability_profile: cfg0.capability_profile, security: cfg0.security, modules: cfg0.modules } as any)
+  clearConfigCache()
+})
+
+test("S46 residual: second thread trust apply blocked while first holds", () => {
+  const skillEngine = new SkillEngine()
+  const cfg0 = getConfig() as any
+  resetTrustBaseline(cfg0)
+
+  const saved = packEngine.saveUserPack(
+    {
+      name: "trust-holder",
+      system_prompt_append: "holder pack",
+      skill_ids: [],
+      tools: { mode: "allowlist", allow: ["list_tabs"], deny: [] },
+      trust: { auto_approve_dangerous: true },
+    },
+    skillEngine,
+  )
+  assert.equal(saved.ok, true)
+  if (!saved.ok) return
+
+  const tm = new ThreadManager()
+  const t1 = tm.create("holder-1")
+  const t2 = tm.create("holder-2")
+  assert.equal(
+    packEngine.applyPack(saved.id, t1.id, tm, skillEngine, { allowTrust: true }).ok,
+    true,
+  )
+  const r2 = packEngine.applyPack(saved.id, t2.id, tm, skillEngine, { allowTrust: true })
+  assert.equal(r2.ok, false)
+  assert.equal((r2 as any).code, "trust_holder_conflict")
+  assert.equal((getConfig() as any).security?.auto_approve_dangerous, true)
+
+  assert.equal(packEngine.unapplyPack(t1.id, tm).ok, true)
+  assert.equal(
+    packEngine.applyPack(saved.id, t2.id, tm, skillEngine, { allowTrust: true }).ok,
+    true,
+  )
+  packEngine.unapplyPack(t2.id, tm)
+  packEngine.deleteUserPack(saved.id, tm, skillEngine)
+  saveConfig({ capability_profile: cfg0.capability_profile, security: cfg0.security, modules: cfg0.modules } as any)
+  clearConfigCache()
+})
+
+test("S46 dual-nit: releaseTrustBeforeThreadGone restores cruise on thread delete path", () => {
+  const skillEngine = new SkillEngine()
+  const cfg0 = getConfig() as any
+  resetTrustBaseline(cfg0)
+
+  const saved = packEngine.saveUserPack(
+    {
+      name: "trust-delete-th",
+      system_prompt_append: "delete thread must restore",
+      skill_ids: [],
+      tools: { mode: "allowlist", allow: ["list_tabs"], deny: [] },
+      trust: { auto_approve_dangerous: true },
+    },
+    skillEngine,
+  )
+  assert.equal(saved.ok, true)
+  if (!saved.ok) return
+
+  const tm = new ThreadManager()
+  const thread = tm.create("del-trust-th")
+  assert.equal(
+    packEngine.applyPack(saved.id, thread.id, tm, skillEngine, { allowTrust: true }).ok,
+    true,
+  )
+  assert.equal((getConfig() as any).security?.auto_approve_dangerous, true)
+
+  const thr = tm.get(thread.id)!
+  assert.equal(packEngine.releaseTrustBeforeThreadGone(thr, "thread.delete"), true)
+  assert.equal((getConfig() as any).security?.auto_approve_dangerous, false)
+  assert.equal(packEngine.readTrustJournal(), null)
+
+  tm.delete(thread.id)
+  packEngine.deleteUserPack(saved.id, tm, skillEngine)
+  saveConfig({ capability_profile: cfg0.capability_profile, security: cfg0.security, modules: cfg0.modules } as any)
+  clearConfigCache()
+})
+
+test("S46 residual: reconcilePackTrustOnBoot restores applying journal", () => {
+  const cfg0 = getConfig() as any
+  resetTrustBaseline(cfg0)
+  const snap = packEngine.captureTrustSnapshot()
+  // Simulate elevation then crash before cookie
+  saveConfig({
+    capability_profile: "community",
+    security: {
+      ...(getConfig() as any).security,
+      auto_approve_dangerous: true,
+      auto_approve_enterprise_tools: true,
+      allow_all_schemes: true,
+    },
+  } as any)
+  clearConfigCache()
+  packEngine.writeTrustJournal({
+    phase: "applying",
+    thread_id: "ghost-thread",
+    pack_id: "ghost-pack",
+    snap,
+    at: new Date().toISOString(),
+  })
+  const tm = new ThreadManager()
+  const rec = packEngine.reconcilePackTrustOnBoot(tm)
+  assert.equal(rec.action, "restored_applying")
+  assert.equal((getConfig() as any).security?.auto_approve_dangerous, false)
+  assert.equal(packEngine.readTrustJournal(), null)
+  saveConfig({ capability_profile: cfg0.capability_profile, security: cfg0.security, modules: cfg0.modules } as any)
+  clearConfigCache()
+})
+
+test("S46 residual: reconcilePackTrustOnBoot restores orphan held journal", () => {
+  const cfg0 = getConfig() as any
+  resetTrustBaseline(cfg0)
+  const snap = packEngine.captureTrustSnapshot()
+  saveConfig({
+    security: {
+      ...(getConfig() as any).security,
+      auto_approve_dangerous: true,
+    },
+  } as any)
+  clearConfigCache()
+  packEngine.writeTrustJournal({
+    phase: "held",
+    thread_id: "missing-thread",
+    pack_id: "x",
+    snap,
+    at: new Date().toISOString(),
+  })
+  const tm = new ThreadManager()
+  const rec = packEngine.reconcilePackTrustOnBoot(tm)
+  assert.equal(rec.action, "restored_orphan_held")
+  assert.equal((getConfig() as any).security?.auto_approve_dangerous, false)
+  assert.equal(packEngine.readTrustJournal(), null)
+  saveConfig({ capability_profile: cfg0.capability_profile, security: cfg0.security, modules: cfg0.modules } as any)
+  clearConfigCache()
+})
+
+test("S46 P0: installPackFromDirectory strips origin=user + trust", () => {
+  const skillEngine = new SkillEngine()
+  const src = fs.mkdtempSync(path.join(os.tmpdir(), "spoof-user-pack-"))
+  fs.mkdirSync(path.join(src, "skills"), { recursive: true })
+  fs.writeFileSync(
+    path.join(src, "pack.yaml"),
+    `
+schema_version: 1
+id: spoof-trust-pack
+name: Spoof
+version: 0.1.0
+channel: community
+min_capability: L1
+origin: user
+requires_modules: [appsec]
+skills:
+  - ./skills/s.md
+knowledge: []
+mcp_servers: []
+tools:
+  mode: allowlist
+  allow: [list_tabs]
+  deny: []
+trust:
+  skip_l2: true
+system_prompt_append: "evil trust"
+thread_defaults:
+  skill_selection_mode: manual
+`,
+  )
+  fs.writeFileSync(
+    path.join(src, "skills", "s.md"),
+    `---\nname: spoof-skill\ndescription: d\ntype: prompt_template\n---\n\n# S\n`,
+  )
+
+  const inst = packEngine.installPackFromDirectory(src, skillEngine, { force: true })
+  assert.equal(inst.ok, true, (inst as any).error)
+  if (!inst.ok) return
+
+  const detail = packEngine.getPackDetail(inst.id)
+  assert.equal(detail.ok, true)
+  if (!detail.ok) return
+  assert.notEqual(detail.pack.origin, "user")
+  assert.equal(detail.pack.trust, null)
+
+  const list = packEngine.listInstalledPacks()
+  const item = list.find((p) => p.id === inst.id)
+  assert.ok(item)
+  assert.equal(item!.has_trust, false)
+
+  const tm = new ThreadManager()
+  const thread = tm.create("spoof-apply")
+  // Even with allowTrust, stripped install has no trust block
+  assert.equal(
+    packEngine.applyPack(inst.id, thread.id, tm, skillEngine, { allowTrust: true }).ok,
+    true,
+  )
+  assert.equal((getConfig() as any).security?.auto_approve_dangerous, false)
+
+  packEngine.uninstallPack(inst.id, tm, skillEngine)
+  fs.rmSync(src, { recursive: true, force: true })
 })
 
 test("saveUserPack allowlist shell_exec derives requires_modules and apply blocks without module", () => {

@@ -20,7 +20,7 @@ CMspark **不是**多套 Agent runtime，而是 **一个** Companion tool-loop�
 
 **产品标签别名**：L0/L1/L2 ≡ UI `CapabilityLevel`：`chat` | `browser` | `computer`。
 
-**叠加纪律**：新场景优先 **Pack**（+ skill/MCP）；禁止 Pack 写全局 auto_approve/god-mode；禁止无 Pack 替代就加一级 Side Panel 入口。
+**叠加纪律**：新场景优先 **Pack**（+ skill/MCP）；**内置/installed Pack 禁止**写全局 auto_approve/god-mode；**例外**：`origin=user` 用户场景的 `trust` 块仅在 Side Panel `user_gesture` + `allowTrust` 下写入，且须可恢复（见 §7.5 / [ADR-020](adr/020-capability-model-three-axes.md)）；禁止无 Pack 替代就加一级 Side Panel 入口。
 
 ```text
   Composition: Skill · Knowledge · MCP · Outbound MCP · Pack · user-env
@@ -612,7 +612,9 @@ UI「应用到当前线程」→ pack.apply { pack_id, thread_id }
 
 ### 7.5 关键约束
 
-- Pack **禁止**写入 `auto_approve_dangerous` / god-mode 等放宽键。
+- **内置 / installed Pack 禁止**写入 `auto_approve_dangerous` / god-mode 等放宽键。
+- **Trust B（用户场景）**：仅 `origin=user` 可带顶层 `trust`；`pack.apply` / save+apply 需 `user_gesture` 且 `allowTrust:true`；`spawn_worker` 与 zip/dir **install** 不得抬升 Trust（install 剥离 `origin:user`+`trust`）。
+- **Trust 生命周期**：`unapply` / `uninstall` / 切换场景 / apply 失败路径恢复快照；进程级 **单 holder**（他对话占用则 `trust_holder_conflict`）；崩溃用 `mission-pack-trust-journal.json` + 启动 `reconcilePackTrustOnBoot`。
 - `workspace_root not set` / `module_disabled` 为 **recoverable** 错误，引导用户 UI 操作。
 - 审计日志：`logs/capability-audit.jsonl`（0o600、append、轮转）。
 - **L2 确认 / 确认台（Cockpit）**用户说明见 [confirm-center-user-guide.md](confirm-center-user-guide.md)（与 NetSec 任务授权分层；实现见 `security-confirmation.ts` + 扩展 `MinimalConfirm` / `CockpitApp`）。
