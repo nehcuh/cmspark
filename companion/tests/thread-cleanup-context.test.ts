@@ -116,6 +116,69 @@ test("suggest_cleanup via router", async () => {
   assert.ok(resp.suggestions.some((s: any) => s.thread_id === "e1" && s.reason === "empty"))
 })
 
+test("thread.list echoes list_scope for trash isolation (B2)", async () => {
+  const tm = new ThreadManager()
+  tm.create("A", "a1")
+  tm.trash("a1")
+  const active = await handleMessage(
+    { type: "thread.list" },
+    { threadManager: tm, skillEngine: {} as any, historyStore: {} as any },
+  )
+  assert.equal(active.list_scope, "active")
+  assert.equal(active.threads.length, 0)
+  assert.equal(active.trash_count, 1)
+
+  const all = await handleMessage(
+    { type: "thread.list", include_trashed: true },
+    { threadManager: tm, skillEngine: {} as any, historyStore: {} as any },
+  )
+  assert.equal(all.list_scope, "all")
+  assert.equal(all.threads.length, 1)
+  assert.ok(all.threads[0].trashed_at)
+
+  const only = await handleMessage(
+    { type: "thread.list", only_trashed: true },
+    { threadManager: tm, skillEngine: {} as any, historyStore: {} as any },
+  )
+  assert.equal(only.list_scope, "trash")
+})
+
+test("thread.delete default hard; explicit trash soft", async () => {
+  const tm = new ThreadManager()
+  tm.create("H", "h1")
+  tm.create("S", "s1")
+  const hard = await handleMessage(
+    { type: "thread.delete", thread_id: "h1" },
+    { threadManager: tm, skillEngine: {} as any, historyStore: {} as any },
+  )
+  assert.equal(hard.type, "thread.deleted")
+  assert.equal(hard.mode, "hard")
+  assert.equal(tm.get("h1"), undefined)
+
+  const soft = await handleMessage(
+    { type: "thread.delete", thread_id: "s1", mode: "trash" },
+    { threadManager: tm, skillEngine: {} as any, historyStore: {} as any },
+  )
+  assert.equal(soft.type, "thread.trashed")
+  assert.ok(tm.get("s1")?.trashed_at)
+})
+
+test("chat.create rejects trashed threads", async () => {
+  const tm = new ThreadManager()
+  tm.create("T", "tr1")
+  tm.trash("tr1")
+  const resp = await handleMessage(
+    { type: "chat.create", thread_id: "tr1", message: "hi" },
+    { threadManager: tm, skillEngine: {} as any, historyStore: {} as any },
+    {
+      sendToExtension: () => {},
+      executeTool: async () => ({ success: true }),
+    } as any,
+  )
+  assert.equal(resp.type, "chat.error")
+  assert.equal(resp.error, "thread_trashed")
+})
+
 test("purgeExpiredTrash removes old trashed", () => {
   const tm = new ThreadManager()
   tm.create("old", "old1")

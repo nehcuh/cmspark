@@ -495,6 +495,21 @@ export async function handleMessage(
     // --- Chat ---
     case "chat.create": {
       if (!session) return { type: "error", error: "No session" }
+      // Dual-review residual: do not run LLM against soft-deleted threads
+      {
+        const thrGate = services.threadManager.get(rest.thread_id)
+        if (!thrGate) {
+          return { type: "chat.error", thread_id: rest.thread_id, error: "Thread not found" }
+        }
+        if (thrGate.trashed_at) {
+          return {
+            type: "chat.error",
+            thread_id: rest.thread_id,
+            error: "thread_trashed",
+            data: { error_code: "thread_trashed" },
+          }
+        }
+      }
       const config = getConfig()
 
       // Merge priority: (1) llm_override from extension UI  > (2) thread config_override > (3) global config
@@ -1493,8 +1508,19 @@ export async function handleMessage(
         extracted_count: ok.length,
       }
     }
-    case "thread.select":
-      return { type: "thread.messages", messages: threadManager.getMessages(rest.thread_id) }
+    case "thread.select": {
+      const thr = threadManager.get(rest.thread_id)
+      if (!thr) return { type: "error", error: `Thread not found: ${rest.thread_id}` }
+      // Soft-deleted: still allow reading messages in trash view, but flag so UI can warn.
+      // Block switching into chat loop for trashed threads from normal select is product-side;
+      // companion returns messages + trashed so extension can refuse activation.
+      return {
+        type: "thread.messages",
+        messages: threadManager.getMessages(rest.thread_id),
+        thread_id: rest.thread_id,
+        trashed: !!thr.trashed_at,
+      }
+    }
     case "thread.fork": {
       const sourceThread = threadManager.get(rest.thread_id)
       if (!sourceThread) return { type: "error", error: "Thread not found" }

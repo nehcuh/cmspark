@@ -739,16 +739,18 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
         return true
 
       case "thread.delete":
+        // Align with companion: omit/unknown → hard; only explicit "trash" soft-deletes.
         wsClient.send({
           type: "thread.delete",
           thread_id: message.thread_id || message.threadId,
-          mode: message.mode === "hard" ? "hard" : "trash",
+          mode: message.mode === "trash" ? "trash" : "hard",
         })
         sendResponse({ ok: true })
         return true
 
       case "thread.batch_delete": {
         const ids = Array.isArray(message.thread_ids) ? message.thread_ids : []
+        // Multi-select product default is recycle bin; permanent only with mode hard.
         wsClient.send({
           type: "thread.batch_delete",
           thread_ids: ids,

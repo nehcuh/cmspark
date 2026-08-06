@@ -229,6 +229,10 @@ export function ThreadList() {
       })
       return
     }
+    // Dual-review residual: do not activate soft-deleted threads into main chat
+    if (trashView) return
+    const thr = threads.find((t) => t.id === threadId)
+    if (thr?.trashed_at) return
     dispatch({ type: "SET_ACTIVE_THREAD", threadId })
     chrome.runtime.sendMessage({ type: "thread.select", threadId })
     setOpen(false)

@@ -210,6 +210,10 @@ function AppContent() {
   )
 }
 
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+}
+
 function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityLevel }) {
   const { state, dispatch } = useAgentStore()
   const { openPanelForce, closePanel, activePanel } = useContextPanelHost()
@@ -428,6 +432,10 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const newValue = e.target.value
     setText(newValue)
+    // Dual-review residual: drop chips whose @「title」 token was deleted from text
+    setThreadRefs((prev) =>
+      prev.filter((r) => newValue.includes(`@「${r.title}」`) || newValue.includes(`@${r.id}`)),
+    )
     const pos = e.target.selectionStart || 0
     detectSlash(newValue, pos)
     detectAt(newValue, pos)
@@ -889,7 +897,15 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
               </span>
               <span
                 role="button"
-                onClick={() => setThreadRefs((prev) => prev.filter((x) => x.id !== r.id))}
+                onClick={() => {
+                  setThreadRefs((prev) => prev.filter((x) => x.id !== r.id))
+                  // Keep textarea token in sync when chip is dismissed
+                  setText((t) =>
+                    t
+                      .replace(new RegExp(`@「${escapeRegExp(r.title)}」\\s*`, "g"), "")
+                      .replace(new RegExp(`@${escapeRegExp(r.id)}\\s*`, "g"), ""),
+                  )
+                }}
                 style={{ cursor: "pointer", fontWeight: "bold", flexShrink: 0 }}
               >
                 {"\u00d7"}

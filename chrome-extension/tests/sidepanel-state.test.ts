@@ -215,6 +215,43 @@ test("SET_THREADS keeps active thread when it exists in the new list and syncs m
   assert.equal(next.knowledgeSelectionMode, "manual")
 })
 
+test("SET_THREADS preserves active when list is only-trashed mishap (B2 residual)", () => {
+  const s = {
+    ...initialState,
+    activeThreadId: "live1",
+    threads: [
+      {
+        id: "live1",
+        alias: "Live",
+        created_at: "",
+        updated_at: "",
+        config_override: initialState.config,
+        tool_whitelist: null,
+        pinned_tabs: [],
+        active_skill_ids: ["browse"],
+      },
+    ],
+  }
+  const next = agentReducer(s as any, {
+    type: "SET_THREADS",
+    threads: [
+      {
+        id: "trash1",
+        alias: "Gone",
+        created_at: "",
+        updated_at: "",
+        config_override: initialState.config,
+        tool_whitelist: null,
+        pinned_tabs: [],
+        active_skill_ids: [],
+        trashed_at: "2026-08-01T00:00:00.000Z",
+      },
+    ] as any,
+  })
+  // only-trashed incoming: keep active id so open-trash cannot steal chat focus
+  assert.equal(next.activeThreadId, "live1")
+})
+
 test("SET_THREADS clears active thread when it is not in the new list", () => {
   const s = { ...initialState, threads: [], activeThreadId: null }
   const next = agentReducer(s, {

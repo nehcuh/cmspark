@@ -5347,6 +5347,9 @@ export function validateWsMessage(msg: any): WsValidationResult {
     },
     "thread.delete": (m) => {
       if (typeof m.thread_id !== "string" || !m.thread_id) return { valid: false, error: "thread.delete requires thread_id" }
+      if (m.mode !== undefined && m.mode !== "trash" && m.mode !== "hard") {
+        return { valid: false, error: "thread.delete mode must be trash|hard" }
+      }
       return { valid: true }
     },
     "thread.batch_delete": (m) => {
