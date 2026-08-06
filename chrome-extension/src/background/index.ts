@@ -502,6 +502,7 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
             message: message.message,
             skill_ids: message.skillIds,
             ...(hostname ? { hostname } : {}),
+            ...(Array.isArray(message.context_refs) ? { context_refs: message.context_refs } : {}),
           })
           if (!sent) {
             chrome.runtime.sendMessage({ type: "error", error: "Companion 未连接，请检查 Companion 是否已启动" })
@@ -515,6 +516,7 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
             thread_id: message.threadId,
             message: message.message,
             skill_ids: message.skillIds,
+            ...(Array.isArray(message.context_refs) ? { context_refs: message.context_refs } : {}),
           })
           if (sent) echoUser(true)
           sendResponse({ ok: sent })
@@ -737,9 +739,77 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
         return true
 
       case "thread.delete":
-        wsClient.send({ type: "thread.delete", thread_id: message.thread_id || message.threadId })
+        // Align with companion: omit/unknown → hard; only explicit "trash" soft-deletes.
+        wsClient.send({
+          type: "thread.delete",
+          thread_id: message.thread_id || message.threadId,
+          mode: message.mode === "trash" ? "trash" : "hard",
+        })
         sendResponse({ ok: true })
         return true
+
+      case "thread.batch_delete": {
+        const ids = Array.isArray(message.thread_ids) ? message.thread_ids : []
+        // Multi-select product default is recycle bin; permanent only with mode hard.
+        wsClient.send({
+          type: "thread.batch_delete",
+          thread_ids: ids,
+          mode: message.mode === "hard" ? "hard" : "trash",
+        })
+        sendResponse({ ok: true })
+        return true
+      }
+
+      case "thread.restore": {
+        wsClient.send({
+          type: "thread.restore",
+          thread_id: message.thread_id,
+          thread_ids: message.thread_ids,
+        })
+        sendResponse({ ok: true })
+        return true
+      }
+
+      case "thread.suggest_cleanup": {
+        wsClient.send({
+          type: "thread.suggest_cleanup",
+          from: message.from,
+          to: message.to,
+          include_workers: message.include_workers === true,
+        })
+        sendResponse({ ok: true })
+        return true
+      }
+
+      case "thread.list": {
+        wsClient.send({
+          type: "thread.list",
+          include_trashed: message.include_trashed === true,
+          only_trashed: message.only_trashed === true,
+        })
+        sendResponse({ ok: true })
+        return true
+      }
+
+      case "thread.batch_auto_title": {
+        wsClient.send({
+          type: "thread.batch_auto_title",
+          thread_ids: Array.isArray(message.thread_ids) ? message.thread_ids : undefined,
+          only_empty: message.only_empty !== false,
+        })
+        sendResponse({ ok: true })
+        return true
+      }
+
+      case "thread.extract_digest": {
+        const payload: Record<string, unknown> = { type: "thread.extract_digest" }
+        if (Array.isArray(message.thread_ids)) payload.thread_ids = message.thread_ids
+        if (message.thread_id) payload.thread_id = message.thread_id
+        if (message.force) payload.force = true
+        wsClient.send(payload)
+        sendResponse({ ok: true })
+        return true
+      }
 
       case "thread.cleanup_empty":
         wsClient.send({ type: "thread.cleanup_empty" })

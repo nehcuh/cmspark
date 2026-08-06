@@ -1,0 +1,8 @@
+{
+  "batch": "thread-history-ia-impl",
+  "timestamp": "20260806-134044",
+  "claude": { "verdict": "REJECT", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/thread-history-ia-impl-claude-20260806-134044.md" },
+  "pi": { "verdict": "REJECT", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/thread-history-ia-impl-pi-20260806-134044.md" },
+  "both_approve": false,
+  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/thread-history-ia-impl-diff-20260806-134044.patch"
+}

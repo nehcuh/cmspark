@@ -22,6 +22,26 @@
 
 ## Technical Pitfalls
 
+### Thread list 作用域复用会污染主会话 UI（2026-08-06 S48）
+- **现象**：回收站打开发 `thread.list`；空列表触发 auto-create 空白线程；或 `SET_THREADS` 清掉 active
+- **根因**：同一 `thread.list` 处理器不区分 active / trash / include_trashed
+- **修法**：companion 回传 `list_scope`（`active|all|trash`）；`trash` 不 SET_THREADS；`all` 更新列表但不 auto-create/select
+- **纪律**：凡「同一 type、不同语义」的 list 必须 echo scope；扩展侧默认 fail-closed 跳过 blank 创建
+
+### 语义变更的 WS 默认值必须迁旧调用方（2026-08-06 S48）
+- **坑**：把 `thread.delete` 默认从 hard 改 soft → `files.test` 红 + tray 只听 `thread.deleted` 缓存陈旧
+- **修法**：单删默认 **hard**（legacy）；新 UI 显式 `mode:"trash"`；新事件 `thread.trashed` 加入 tray refresh
+- **模式**：协议默认向后兼容；产品新语义走显式 mode / 新 type
+
+### listWithPreviews 双读消息文件（2026-08-06 S48）
+- **坑**：preview 读一遍 + digest stale 再读一遍 → 200 线程 400 次 I/O
+- **修**：单次 `getMessages` 同时产出 preview + stale；`@` 用 `getUserPreviewPair`；后台 digest `extractThreadDigestQueued`（并发 2 + 同 id 去重）
+- **purge**：过期 trash 批量改 index 再 unlink，禁止 N 次 saveIndex
+
+### `@` popover 必须与 `/` 同级拦截 Enter（2026-08-06 S48）
+- **坑**：只 gate `slashVisible` 时，`@` 选中 Enter 会先 `handleSend` 再选 chip
+- **修**：`handleKeyDown` 对 `(slashVisible || atVisible)` 统一 early-return Arrow/Escape/Enter
+
 ### skill_install 源路径 ≠ MCP filesystem 授权（2026-08-06 S46）
 - **现象**：用户以为 MCP 授权了 `~/` 就能 `skill_install` `~/Projects/...`；对话中途停在「先确认包大小」
 - **根因**：两套门——MCP `server-filesystem` 用 args roots；`isSkillInstallSourceAllowed` 曾只允许 Downloads/tmp/data dir（Trust 防任意 path 进技能库）

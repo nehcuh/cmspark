@@ -90,6 +90,11 @@ interface ChatCreateParams {
   executeTool: (toolCallId: string, toolName: string, params: any, signal?: AbortSignal) => Promise<{ success: boolean; data?: any; error?: string }>
   signal?: AbortSignal
   skipUserMessage?: boolean
+  /**
+   * P1.5: pre-built system segment for @ thread summary cards (data fence).
+   * Injected after base system prompt; not stored in message history.
+   */
+  contextRefsSegment?: string
 }
 
 const MAX_TOOL_CALL_ROUNDS = 100
@@ -262,7 +267,7 @@ export function buildAppIndexSection(platform: NodeJS.Platform, appsCfg: AppsCon
 }
 
 export async function chatCreate(params: ChatCreateParams) {
-  const { threadId, message, skillIds, knowledgeIds, fileContents, config, threadManager, skillEngine, historyStore, sendToExtension, executeTool, signal, skipUserMessage } = params
+  const { threadId, message, skillIds, knowledgeIds, fileContents, config, threadManager, skillEngine, historyStore, sendToExtension, executeTool, signal, skipUserMessage, contextRefsSegment } = params
 
   // Create user message (skip for regenerate)
   if (!skipUserMessage) {
@@ -408,6 +413,10 @@ ${hostUseRule12}${appIndexSection ? `\n\n${appIndexSection}` : ""}`
     overrideSystemPrompt || basePrompt,
     skillPrompt,
     systemPromptAppend,
+    // P1.5 @ refs: data-only, after skills/append, before safety guards so guards still win
+    typeof contextRefsSegment === "string" && contextRefsSegment.trim()
+      ? contextRefsSegment.trim()
+      : "",
     safetyGuardContent,
   ]
     .filter(Boolean)

@@ -1,0 +1,8 @@
+{
+  "batch": "thread-history-ia",
+  "timestamp": "20260806-092335",
+  "claude": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/thread-history-ia-claude-20260806-092335.md" },
+  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/thread-history-ia-pi-20260806-092335.md" },
+  "both_approve": true,
+  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/thread-history-ia-diff-20260806-092335.patch"
+}

@@ -52,6 +52,25 @@ export interface Thread {
   orchestrator_run_id?: string | null
   worker_role_label?: string | null
   paused?: boolean
+  /**
+   * Thread History IA P0: first user message preview from companion listWithPreviews.
+   * Used for unnamed fallback display + local search.
+   */
+  first_user_preview?: string | null
+  /** P1: short searchable index from extract_digest */
+  digest?: {
+    extracted_at?: string
+    content_fingerprint?: string
+    tldr?: string
+    tags?: string[]
+    bullets?: string[]
+    source?: string
+    model?: string
+    /** Client-computed when list marks fingerprint mismatch */
+    stale?: boolean
+  } | null
+  /** P1.5 soft-delete (recycle bin) */
+  trashed_at?: string | null
 }
 
 export interface McpToolMeta {

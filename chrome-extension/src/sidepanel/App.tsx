@@ -15,6 +15,7 @@ import { SceneStatusBar } from "./components/SceneStatusBar"
 import { SettingsSlideout } from "./components/SettingsSlideout"
 import { McpServerForm } from "./components/McpServerForm"
 import { SlashCommandPopover } from "./components/SlashCommandPopover"
+import { AtThreadPopover, type AtThreadChoice } from "./components/AtThreadPopover"
 import { SkillCraftPanel } from "./components/SkillCraftPanel"
 import { NotebooklmImporterPanel } from "./components/NotebooklmImporterPanel"
 import { StatusRail } from "./components/StatusRail"
@@ -209,12 +210,19 @@ function AppContent() {
   )
 }
 
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+}
+
 function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityLevel }) {
   const { state, dispatch } = useAgentStore()
   const { openPanelForce, closePanel, activePanel } = useContextPanelHost()
   const [text, setText] = useState("")
   const [slashVisible, setSlashVisible] = useState(false)
   const [slashQuery, setSlashQuery] = useState("")
+  const [atVisible, setAtVisible] = useState(false)
+  const [atQuery, setAtQuery] = useState("")
+  const [threadRefs, setThreadRefs] = useState<AtThreadChoice[]>([])
   const [selectedFiles, setSelectedFiles] = useState<FileAttachment[]>([])
   const [fileError, setFileError] = useState("")
   const [composeOpen, setComposeOpen] = useState(false)
@@ -386,16 +394,51 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
       return
     }
 
-    // Extract query: everything after "/" up to cursor position
+    // Extract query: everything after "/" up to cursor position (no spaces → still typing)
     const query = beforeCursor.substring(slashIdx + 1)
+    if (query.includes(" ") || query.includes("\n")) {
+      setSlashVisible(false)
+      return
+    }
     setSlashQuery(query)
     setSlashVisible(true)
+    setAtVisible(false)
+  }, [])
+
+  // Detect @ thread ref (P1.5)
+  const detectAt = useCallback((value: string, cursorPos: number) => {
+    const beforeCursor = value.substring(0, cursorPos)
+    const atIdx = beforeCursor.lastIndexOf("@")
+    if (atIdx === -1) {
+      setAtVisible(false)
+      return
+    }
+    const charBefore = atIdx === 0 ? null : value[atIdx - 1]
+    if (charBefore !== null && charBefore !== " " && charBefore !== "\n") {
+      setAtVisible(false)
+      return
+    }
+    const query = beforeCursor.substring(atIdx + 1)
+    // stop if user finished the token with space
+    if (query.includes(" ") || query.includes("\n") || query.includes("」")) {
+      setAtVisible(false)
+      return
+    }
+    setAtQuery(query)
+    setAtVisible(true)
+    setSlashVisible(false)
   }, [])
 
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const newValue = e.target.value
     setText(newValue)
-    detectSlash(newValue, e.target.selectionStart || 0)
+    // Dual-review residual: drop chips whose @「title」 token was deleted from text
+    setThreadRefs((prev) =>
+      prev.filter((r) => newValue.includes(`@「${r.title}」`) || newValue.includes(`@${r.id}`)),
+    )
+    const pos = e.target.selectionStart || 0
+    detectSlash(newValue, pos)
+    detectAt(newValue, pos)
   }
 
   const clearSlashToken = (slashIdx: number, cursorPos: number) => {
@@ -403,6 +446,31 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
     const newText = (text.substring(0, slashIdx) + afterCursor).replace(/\s+$/, " ").trimStart()
     setText(newText)
     setSlashVisible(false)
+  }
+
+  const handleAtSelect = (choice: AtThreadChoice) => {
+    const textarea = textareaRef.current
+    if (!textarea) return
+    const cursorPos = textarea.selectionStart || 0
+    const beforeCursor = text.substring(0, cursorPos)
+    const atIdx = beforeCursor.lastIndexOf("@")
+    if (atIdx < 0) return
+    const afterCursor = text.substring(cursorPos)
+    const insert = `@「${choice.title}」 `
+    const newText = text.substring(0, atIdx) + insert + afterCursor
+    setText(newText)
+    setAtVisible(false)
+    setThreadRefs((prev) => {
+      if (prev.some((r) => r.id === choice.id)) return prev
+      return [...prev, choice].slice(0, 8)
+    })
+    requestAnimationFrame(() => {
+      const el = textareaRef.current
+      if (!el) return
+      const pos = atIdx + insert.length
+      el.focus()
+      el.setSelectionRange(pos, pos)
+    })
   }
 
   const handleSlashSelect = (skill: SkillMeta) => {
@@ -475,7 +543,11 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // If popover is open and navigating/selecting, let the popover handle it
-    if (slashVisible && ["ArrowDown", "ArrowUp", "Escape", "Enter"].includes(e.key)) {
+    // Dual-review B3: gate @ popover the same way as / (parity)
+    if (
+      (slashVisible || atVisible) &&
+      ["ArrowDown", "ArrowUp", "Escape", "Enter"].includes(e.key)
+    ) {
       return
     }
 
@@ -628,24 +700,35 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
         // Same clientMessageId as SW `chat.user` echo so ADD_MESSAGE dedupes
         // when both optimistic local append and multi-surface broadcast land.
         const clientMessageId = `${state.activeThreadId}_user_${Date.now()}`
+        const context_refs = threadRefs.map((r) => ({
+          type: "thread" as const,
+          id: r.id,
+          mode: "summary_card" as const,
+          title: r.title,
+        }))
         chrome.runtime.sendMessage({
           type: "chat.send",
           threadId: state.activeThreadId,
           message: trimmed,
           skillIds,
           clientMessageId,
+          context_refs: context_refs.length ? context_refs : undefined,
         })
         dispatch({ type: "SET_PROCESSING", isProcessing: true })
         if (state.activeThreadId) {
           dispatch({ type: "SET_THREAD_BUSY", threadId: state.activeThreadId, busy: true })
         }
+        const displayContent =
+          context_refs.length > 0
+            ? `${trimmed}\n\n📎 引用 ${context_refs.length} 个会话`
+            : trimmed
         dispatch({
           type: "ADD_MESSAGE",
           message: {
             id: clientMessageId,
             thread_id: state.activeThreadId!,
             role: "user",
-            content: trimmed,
+            content: displayContent,
             created_at: new Date().toISOString(),
           },
         })
@@ -653,6 +736,8 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
 
       setText("")
       setSlashVisible(false)
+      setAtVisible(false)
+      setThreadRefs([])
       setSelectedFiles([])
     } finally {
       sendingRef.current = false
@@ -776,6 +861,68 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
           ))}
         </div>
       )}
+      {threadRefs.length > 0 && (
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 4,
+            padding: "6px 12px 0",
+          }}
+          aria-label="引用的会话"
+        >
+          {threadRefs.map((r) => (
+            <span
+              key={r.id}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 4,
+                padding: "2px 8px",
+                background: tokens.bgMuted,
+                borderRadius: tokens.radiusPill,
+                fontSize: 11,
+                color: tokens.textSecondary,
+                maxWidth: 180,
+              }}
+            >
+              <span
+                style={{
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                @{r.title}
+              </span>
+              <span
+                role="button"
+                onClick={() => {
+                  setThreadRefs((prev) => prev.filter((x) => x.id !== r.id))
+                  // Keep textarea token in sync when chip is dismissed
+                  setText((t) =>
+                    t
+                      .replace(new RegExp(`@「${escapeRegExp(r.title)}」\\s*`, "g"), "")
+                      .replace(new RegExp(`@${escapeRegExp(r.id)}\\s*`, "g"), ""),
+                  )
+                }}
+                style={{ cursor: "pointer", fontWeight: "bold", flexShrink: 0 }}
+              >
+                {"\u00d7"}
+              </span>
+            </span>
+          ))}
+        </div>
+      )}
+      <AtThreadPopover
+        threads={state.threads}
+        excludeId={state.activeThreadId}
+        searchText={atQuery}
+        visible={atVisible}
+        anchorEl={textareaRef.current}
+        onSelect={handleAtSelect}
+        onDismiss={() => setAtVisible(false)}
+      />
       {/* PR4: ComposerDock chips + capsule; 装配 drawer is portal-like fixed sheet */}
       <div style={styles.inputArea}>
         <ComposerChips capabilityLevel={capabilityLevel} onAction={handleChipAction} />

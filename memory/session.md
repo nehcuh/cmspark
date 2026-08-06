@@ -2,6 +2,14 @@
 
 ## Current Session
 
+### S48 (2026-08-06 ~09:20–14:15) [Thread History IA P0–P1.5 · dual-review · PR #127]
+- **产品设计**：今日/历史月日时间树 · digest/tags · `@` 引用 · 批量删 · AI 冗余分阶 → 多路验证 → 规格 `docs/superpowers/specs/2026-08-06-thread-history-ia-product-design.md`
+- **实现**：Timeline+多选 batch_delete · 昨天/规则起名 · digest+Tags · 回收站 · `@` summary_card · 规则整理助手
+- **门禁**：设计 Claude+Pi APPROVE_WITH_NITS；实现 R1 REJECT（B1 单删 soft 默认 / B2 回收站 list 污染 / B3 @ Enter）→ 修 + 性能（单遍 list / digest 队列 / purge 批写）→ **R2 both APPROVE_WITH_NITS**
+- **Ship**：branch `feat/thread-history-ia-p0-p15` · commit `ebb7fd7` · **PR #127**
+- **下次**：合 #127；真机 ☰ 时间树/回收站/`@`/整理；可选 residual nits（B2/B3 回归测、trashed 门 chat）
+- Recorded: yes — list_scope · delete 默认 hard · digest 并发队列
+
 ### S47 (2026-08-06 ~09:00–09:20) [S46 multi-lane → Trust B lifecycle #126 MERGED · DMG 重装]
 - **拉取 main** 后四路对抗 `474df7e..6d2cdcf` → **REQUEST_CHANGES**（Trust 粘滞 / install spoof / spawn 抬权 / 文档漂移）
 - **实现**：restore 全路径 · allowTrust · install strip · 单 holder · journal reconcile · Downloads 收紧 · UI Trust 披露；Pi nit：thread.delete 释放 Trust
@@ -478,6 +486,13 @@
 - Recorded: yes 鈥?瑙?project-knowledge.md銆孧ermaid 鍥捐〃娓叉煋鐨勪笁涓潙銆? docs/adr/009
 
 ## In-Flight Tasks (Cross-Session)
+
+### Thread History IA P0–P1.5 → PR #127 open
+- status: **active** (PR open, dual R2 both_ok)
+- context: timeline / tags / trash / @refs / cleanup; R1 B1–B3 fixed; perf single-pass list + digest queue
+- next_action: review/merge #127；真机验收 ☰ 列表与 `@`；可选 residual nits
+- resume_doc: `docs/superpowers/specs/2026-08-06-thread-history-ia-product-design.md` · PR #127 · `docs/audit/reviews/thread-history-ia-impl-r2-dual-synthesis-20260806.md`
+- updated: 2026-08-06
 
 ### S46 Trust B lifecycle multi-lane → DONE #126
 - status: **done** (PR #126 → main `b338498`; DMG 0.4.0 installed)
