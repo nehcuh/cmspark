@@ -160,7 +160,7 @@ companion 专用 `analyze_image` 分支（`createToolExecutor` 内，**不进** 
 
 candidate_url 判定顺序：
 
-1. **Scheme 硬阻断**：允许 `http:`/`https:`（路径 B 候选几乎总是 http(s)；`data:` 不会污染 canvas 故走路径 A）。阻断 `file:`/`ftp:`/`javascript:`/`about:`/`chrome:`/`chrome-extension:`/`blob:` 及一切非 http(s)。→ `security.image_fetch_blocked`。
+1. **Scheme 硬阻断**：允许 `http:`/`https:`（路径 B 候选几乎总是 http(s)）。`data:`：扩展在 CDP 后本地 decode（raster MIME 白名单 + 6 MiB）→ `type:canvas`，**永不** `fetch_required`；旧扩展 skew 时 companion residual 同样本地 decode，**不进** L2/phase2。阻断 `file:`/`ftp:`/`javascript:`/`about:`/`chrome:`/`chrome-extension:`/`blob:` 及一切非 http(s)。→ `security.image_fetch_blocked`。
 2. **私网/元数据 IP**（`isPrivateOrMetadataIp(host)`，范围 `127/8`、`10/8`、`172.16/12`、`192.168/16`、`169.254/16`、`::1`、`fc00::/7`、`fe80::/10`）：
    - `169.254.169.254`（AWS IMDS）→ **硬阻断** → `security.image_fetch_blocked`（绝无合法 analyze 场景）。
    - 其余私网 → **触发确认**。
@@ -204,7 +204,7 @@ candidate_url 判定顺序：
 | 跨源 `<img>` 非信任公网 | 弹确认；确认→`image_fetch_confirmed`+fetch；拒绝→`image_fetch_denied` |
 | `http://169.254.169.254/...` | 硬阻断 `image_fetch_blocked`，**扩展未 fetch** |
 | `http://192.168.x.x/...` | 私网确认（非硬阻断） |
-| `data:image/png;base64,...` | 路径 A（不污染 canvas），不 fetch |
+| `data:image/png;base64,...` | 扩展本地 decode→canvas（或 companion residual）；不 L2、不 phase2 fetch |
 | `blob:`/`file://`/`javascript:` | 路径 B 候选则硬阻断 |
 | `allow_all_schemes=true` | 对 analyze_image **仍**按 gate 规则（god-mode 无效） |
 | `auto_approve_dangerous=true` | 对 analyze_image **仍**按 gate 规则（无效） |

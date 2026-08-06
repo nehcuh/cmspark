@@ -22,6 +22,18 @@
 
 ## Technical Pitfalls
 
+### analyze_image `data:` 假 Security Block ≠ 授权不够（2026-08-06 S50）
+- **现象**：用户开满 L2 / `auto_approve_dangerous` / god-mode / 域白名单，仍报 `Security Block: analyze_image cannot read data: URL (data:image/…base64,…)`；错误串塞满 base64
+- **根因**：IMAGE_FETCH_GATE path B 只放行 `http(s)`；扩展 canvas 失败（非仅 CORS）时把 `el.src` 当 `fetch_required`，内联 `data:` 进硬拦。设计假设「data: 永不污染 canvas」不成立
+- **反直觉**：god-mode 放行的是**导航 scheme**，不是「任意 URL 字节送 LLM」；`data:` 无 SSRF 网络面，与跨域 fetch 不同门
+- **修法（PR #130）**：
+  1. 扩展 CDP 后 `promoteFetchSrc`：`data:` → 本地 decode（mime 白名单 + 6MiB）→ `type:canvas`；`blob:` 明确失败；永不对 `data:` 发 `fetch_required`
+  2. Companion 旧扩展兜底：phase1 仍见 `data:` 时**本地 decode 返回**，无 L2、无 phase2、不扩 `schemeOk`
+  3. 错误/日志禁止整段 data: 洪水；R2 nits：strip base64 空白、交叉 pin allowlist
+- **测试坑**：plasmo 生产 `strict:false` 下 `!r.ok` **不收窄**判别联合；测试 tsconfig `strict:true` 会绿过生产 tsc 红 → 必须用 `ok === true/false`（Pi R1 REJECT）
+- **Ship**：`fix/analyze-image-data-url-p0` · **PR #130** · dual R2 both_ok · R3 Pi APPROVE / Claude APPROVE_WITH_NITS
+- **纪律**：全授权失败先分「确认门」vs「scheme 硬拦」；双审须跑生产 `tsc --noEmit` 不仅 test dist
+
 ### Thread list 作用域复用会污染主会话 UI（2026-08-06 S48）
 - **现象**：回收站打开发 `thread.list`；空列表触发 auto-create 空白线程；或 `SET_THREADS` 清掉 active
 - **根因**：同一 `thread.list` 处理器不区分 active / trash / include_trashed

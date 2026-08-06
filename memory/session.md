@@ -2,6 +2,15 @@
 
 ## Current Session
 
+### S50 (2026-08-06 ~21:00–22:00) [analyze_image data: false Security Block · dual-review · PR #130]
+- **问题**：#i0iqwl 验证码 / 内联图 → `Security Block: cannot read data: URL`；用户已开 L2+全自动+god-mode+白名单仍拦
+- **根因**：IMAGE_FETCH path B 仅 http(s)；canvas catch 把 `data:` 当 fetch_required；设计假设「data: 永不进 path B」破
+- **实现**：扩展 `promoteFetchSrc` 本地 decode；companion residual 本地 decode 无 phase2/L2；mime+6MiB；错误截断
+- **门禁**：对抗 GO_WITH_AMENDMENTS → workflow 实现 → R1 Pi REJECT（strict:false 收窄）→ 修 → R2 both APPROVE_WITH_NITS → nits → R3 Pi APPROVE / Claude APPROVE_WITH_NITS
+- **Ship**：branch `fix/analyze-image-data-url-p0` · **PR #130**；`build/dmg-latest` 亦含同栈（未 push）
+- **下次**：合 #130；重载扩展+重启 Companion 真机 captcha/`data:`；可选 Claude residual DRY sanitizeImageDim
+- Recorded: yes — data: 非 SSRF 门 + strict:false 判别联合 + dual-review 生产 tsc
+
 ### S48 (2026-08-06 ~09:20–14:15) [Thread History IA P0–P1.5 · dual-review · PR #127]
 - **产品设计**：今日/历史月日时间树 · digest/tags · `@` 引用 · 批量删 · AI 冗余分阶 → 多路验证 → 规格 `docs/superpowers/specs/2026-08-06-thread-history-ia-product-design.md`
 - **实现**：Timeline+多选 batch_delete · 昨天/规则起名 · digest+Tags · 回收站 · `@` summary_card · 规则整理助手
@@ -486,6 +495,13 @@
 - Recorded: yes 鈥?瑙?project-knowledge.md銆孧ermaid 鍥捐〃娓叉煋鐨勪笁涓潙銆? docs/adr/009
 
 ## In-Flight Tasks (Cross-Session)
+
+### analyze_image data: Security Block → PR #130 open
+- status: **active** (PR open, dual R3 both_ok)
+- context: data: inline decode; promoteFetchSrc; companion residual; no schemeOk expansion; nits closed
+- next_action: merge #130；重载扩展+Companion 真机 captcha/`data:` analyze_image；可选 residual DRY
+- resume_doc: PR #130 · `docs/audit/reviews/analyze-image-data-url-p0-r3-verdict-20260806-214547.json`
+- updated: 2026-08-06
 
 ### Thread History IA P0–P1.5 → PR #127 open
 - status: **active** (PR open, dual R2 both_ok)

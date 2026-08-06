@@ -1575,3 +1575,119 @@ test("M4: direct analyze_image_fetch call is rejected (no gate bypass via intern
   assert.equal(result.success, false)
   assert.match(result.error!, /internal tool/i)
 })
+
+// Residual data: path (old-extension skew): companion decodes data:image/* locally
+// BEFORE host/trust/L2 — success, no confirmation, no phase-2 analyze_image_fetch.
+test("M4: fetch_required data:image/png → local decode success, NO confirmation, NO phase2", async () => {
+  const executeTool = createToolExecutor(serverSideWs)
+  const phase1Promise = expectClientMessage("tool.execute")
+  const noConfirmation = expectNoClientMessage("security.confirmation.request")
+
+  const resultPromise = executeTool("tc_ai_data_png", "analyze_image", { selector: "img.inline" })
+  await phase1Promise
+  // Tiny valid PNG payload as base64 ("Hello" is fine for residual decode; vision
+  // may fail later but the gate must return type:canvas image_base64).
+  const dataUrl = "data:image/png;base64,SGVsbG8="
+  // Register before reply so a mistaken phase-2 cannot race past the listener.
+  const noPhase2 = expectNoClientMessage("tool.execute", 200)
+  clientSideWs.send(JSON.stringify({
+    type: "tool.result",
+    tool_call_id: "tc_ai_data_png",
+    result: {
+      success: true,
+      data: { type: "fetch_required", candidate_url: dataUrl, width: 1, height: 1 },
+    },
+  }))
+
+  await noConfirmation
+  await noPhase2
+  const result = await resultPromise
+  assert.equal(result.success, true, "data:image/png residual must succeed without L2")
+  assert.equal(result.data?.type, "canvas")
+  assert.equal(result.data?.image_base64, "SGVsbG8=")
+  assert.equal(pendingToolCalls.size, 0, "data: residual must leave pendingToolCalls empty")
+  // Error/log hygiene: tool error path not taken; result url must not embed full payload.
+  if (result.data?.url) {
+    assert.ok(String(result.data.url).length < 80, "url field must be short placeholder")
+    assert.ok(!String(result.data.url).includes("SGVsbG8="), "must not echo full data: payload in url")
+  }
+})
+
+test("M4: fetch_required data:text/html → fail short error, NO phase2, NO confirmation", async () => {
+  const executeTool = createToolExecutor(serverSideWs)
+  const phase1Promise = expectClientMessage("tool.execute")
+  const noConfirmation = expectNoClientMessage("security.confirmation.request")
+
+  const resultPromise = executeTool("tc_ai_data_html", "analyze_image", { selector: "img.x" })
+  await phase1Promise
+  // Multi-KB-ish payload to ensure error/log do not echo it.
+  const bigHtml = "data:text/html;base64," + "A".repeat(4000)
+  const noPhase2 = expectNoClientMessage("tool.execute", 200)
+  clientSideWs.send(JSON.stringify({
+    type: "tool.result",
+    tool_call_id: "tc_ai_data_html",
+    result: {
+      success: true,
+      data: { type: "fetch_required", candidate_url: bigHtml, width: 1, height: 1 },
+    },
+  }))
+
+  await noConfirmation
+  await noPhase2
+  const result = await resultPromise
+  assert.equal(result.success, false)
+  assert.ok(result.error && result.error.length < 300, "error must stay short (no full data: dump)")
+  assert.ok(!result.error!.includes("A".repeat(100)), "error must not embed data: payload")
+  assert.equal(result.data?.error_code, "IMAGE_MIME_REJECTED")
+  assert.equal(pendingToolCalls.size, 0)
+})
+
+test("M4: fetch_required data: oversize → IMAGE_TOO_LARGE short error, NO phase2", async () => {
+  const executeTool = createToolExecutor(serverSideWs)
+  const phase1Promise = expectClientMessage("tool.execute")
+  const noConfirmation = expectNoClientMessage("security.confirmation.request")
+
+  const resultPromise = executeTool("tc_ai_data_big", "analyze_image", { selector: "img.x" })
+  await phase1Promise
+  // 6 MiB + 1 decoded bytes as base64 length ≈ ceil(n/3)*4
+  const overBytes = 6 * 1024 * 1024 + 1
+  const b64Len = Math.ceil(overBytes / 3) * 4
+  const dataUrl = `data:image/png;base64,${"A".repeat(b64Len)}`
+  const noPhase2 = expectNoClientMessage("tool.execute", 200)
+  clientSideWs.send(JSON.stringify({
+    type: "tool.result",
+    tool_call_id: "tc_ai_data_big",
+    result: {
+      success: true,
+      data: { type: "fetch_required", candidate_url: dataUrl, width: 1, height: 1 },
+    },
+  }))
+
+  await noConfirmation
+  await noPhase2
+  const result = await resultPromise
+  assert.equal(result.success, false)
+  assert.equal(result.data?.error_code, "IMAGE_TOO_LARGE")
+  assert.match(result.error || "", /too large/i)
+  assert.ok((result.error || "").length < 200, "oversize error must be short")
+  assert.equal(pendingToolCalls.size, 0)
+})
+
+test("M4: file: still hard-blocked after data: residual (invariant)", async () => {
+  const executeTool = createToolExecutor(serverSideWs)
+  const phase1Promise = expectClientMessage("tool.execute")
+  const resultPromise = executeTool("tc_ai_file2", "analyze_image", { selector: "img.x" })
+  await phase1Promise
+  clientSideWs.send(JSON.stringify({
+    type: "tool.result",
+    tool_call_id: "tc_ai_file2",
+    result: {
+      success: true,
+      data: { type: "fetch_required", candidate_url: "file:///etc/passwd", width: 8, height: 8 },
+    },
+  }))
+  const result = await resultPromise
+  assert.equal(result.success, false)
+  assert.match(result.error!, /Security Block/i)
+  assert.equal(pendingToolCalls.size, 0)
+})

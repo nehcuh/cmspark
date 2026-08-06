@@ -1,7 +1,7 @@
 // Browser Bridge — executes tool calls via Chrome APIs and CDP
 
 import { PageSanitizer, pageSanitizer } from "./page-sanitizer"
-import { fetchImageAsBase64 } from "./image-extract-utils"
+import { fetchImageAsBase64, promoteFetchSrc, sanitizeImageDim } from "./image-extract-utils"
 import { selectorJsLiteral } from "./selector-js-literal"
 import { TabQueue, coerceTabId } from "./tab-queue"
 import { runBrowserDownload } from "./browser-download-handler"
@@ -548,18 +548,50 @@ export class BrowserBridge {
     if (!data) {
       return { success: false, error: "Failed to extract image data" }
     }
-    // Cross-origin image: the in-page canvas was tainted. Do NOT fetch here —
-    // the companion IMAGE_FETCH_GATE (§6.1) must approve the candidate URL first
-    // (it may be an internal/metadata endpoint = SSRF). Return the candidate so
-    // the companion can gate, then dispatch analyze_image_fetch for the fetch.
+    // Canvas extract failed with a fetchSrc fallback (taint / no draw path).
+    // Handle data:/blob: HERE (after CDP returns — never inside the page expr):
+    //   data:  → decode inline (mime allowlist + 6 MiB) → type:canvas. NEVER fetch_required.
+    //   blob:  → clear error (page-scoped; not SW-fetchable). NOT fetch_required.
+    //   http(s) cross-origin → fetch_required for companion IMAGE_FETCH_GATE (§6.1).
     if (data.fetchSrc) {
+      // Pure helper (unit-tested) — keeps CDP expression free of data: decode logic.
+      const promoted = promoteFetchSrc(String(data.fetchSrc || ""))
+      const dimW = sanitizeImageDim(data.width)
+      const dimH = sanitizeImageDim(data.height)
+      if (promoted.kind === "canvas") {
+        return {
+          success: true,
+          data: {
+            type: "canvas",
+            image_base64: promoted.image_base64,
+            width: dimW,
+            height: dimH,
+            // Never put the multi-KB data: payload into url; short placeholder only.
+            url: `data:${promoted.mime};base64,…`,
+            title: tab.title,
+            alt_text: data.alt || "",
+            selector,
+          },
+        }
+      }
+      if (promoted.kind === "error") {
+        return {
+          success: false,
+          error: promoted.error,
+          data: {
+            error_code: promoted.error_code,
+            mime: promoted.mime,
+            byte_len: promoted.byte_len,
+          },
+        }
+      }
       return {
         success: true,
         data: {
           type: "fetch_required",
-          candidate_url: data.fetchSrc,
-          width: data.width,
-          height: data.height,
+          candidate_url: promoted.candidate_url,
+          width: dimW,
+          height: dimH,
           title: tab.title,
           alt_text: data.alt || "",
           selector,
