@@ -1,0 +1,275 @@
+// Thread History IA — calendar grouping + filter helpers (pure).
+// Spec: docs/superpowers/specs/2026-08-06-thread-history-ia-product-design.md
+
+export type TimelineThread = {
+  id: string
+  alias?: string
+  created_at?: string
+  updated_at?: string
+  /** First user message preview (optional, from companion list enrichment). */
+  first_user_preview?: string | null
+  agent_role?: "normal" | "orchestrator" | "worker" | string
+  digest?: {
+    tldr?: string
+    tags?: string[]
+    extracted_at?: string
+    content_fingerprint?: string
+    stale?: boolean
+  } | null
+}
+
+export type DayGroup = {
+  /** Local calendar day key YYYY-MM-DD */
+  dayKey: string
+  /** Display label e.g. 07-28 */
+  label: string
+  threads: TimelineThread[]
+}
+
+export type MonthGroup = {
+  /** Local calendar month key YYYY-MM */
+  monthKey: string
+  /** Display label e.g. 2026-07 */
+  label: string
+  days: DayGroup[]
+  /** Flat count of threads in this month */
+  count: number
+}
+
+export type TimelineModel = {
+  today: TimelineThread[]
+  /** P0.5: local calendar yesterday (default expanded) */
+  yesterday: TimelineThread[]
+  months: MonthGroup[]
+}
+
+/** Local YYYY-MM-DD for a Date (uses local timezone, not UTC). */
+export function localDayKey(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, "0")
+  const day = String(d.getDate()).padStart(2, "0")
+  return `${y}-${m}-${day}`
+}
+
+/** Local YYYY-MM for a Date. */
+export function localMonthKey(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, "0")
+  return `${y}-${m}`
+}
+
+/** Yesterday's local calendar day key. */
+export function localYesterdayKey(now: Date = new Date()): string {
+  const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1)
+  return localDayKey(d)
+}
+
+function parseTs(iso: string | undefined, fallbackMs: number): Date {
+  if (!iso) return new Date(fallbackMs)
+  const t = Date.parse(iso)
+  if (Number.isNaN(t)) return new Date(fallbackMs)
+  return new Date(t)
+}
+
+/**
+ * Group threads for the default Timeline view.
+ * - "今天": local calendar day of `now`, by updated_at desc
+ * - "昨天": previous local calendar day (P0.5)
+ * - History: month → day (updated_at), months newest-first, days newest-first
+ */
+export function groupThreadsByCalendar(
+  threads: TimelineThread[],
+  now: Date = new Date(),
+): TimelineModel {
+  const todayKey = localDayKey(now)
+  const yesterdayKey = localYesterdayKey(now)
+  const nowMs = now.getTime()
+
+  const sorted = [...threads].sort((a, b) => {
+    const ta = parseTs(a.updated_at || a.created_at, 0).getTime()
+    const tb = parseTs(b.updated_at || b.created_at, 0).getTime()
+    return tb - ta
+  })
+
+  const today: TimelineThread[] = []
+  const yesterday: TimelineThread[] = []
+  const monthMap = new Map<string, Map<string, TimelineThread[]>>()
+
+  for (const t of sorted) {
+    const d = parseTs(t.updated_at || t.created_at, nowMs)
+    const dayKey = localDayKey(d)
+    if (dayKey === todayKey) {
+      today.push(t)
+      continue
+    }
+    if (dayKey === yesterdayKey) {
+      yesterday.push(t)
+      continue
+    }
+    const monthKey = localMonthKey(d)
+    let days = monthMap.get(monthKey)
+    if (!days) {
+      days = new Map()
+      monthMap.set(monthKey, days)
+    }
+    const list = days.get(dayKey) || []
+    list.push(t)
+    days.set(dayKey, list)
+  }
+
+  const months: MonthGroup[] = [...monthMap.entries()]
+    .sort((a, b) => (a[0] < b[0] ? 1 : a[0] > b[0] ? -1 : 0))
+    .map(([monthKey, daysMap]) => {
+      const days: DayGroup[] = [...daysMap.entries()]
+        .sort((a, b) => (a[0] < b[0] ? 1 : a[0] > b[0] ? -1 : 0))
+        .map(([dayKey, dayThreads]) => ({
+          dayKey,
+          label: dayKey.slice(5), // MM-DD
+          threads: dayThreads,
+        }))
+      const count = days.reduce((n, d) => n + d.threads.length, 0)
+      return { monthKey, label: monthKey, days, count }
+    })
+
+  return { today, yesterday, months }
+}
+
+/** Collect all thread ids under a month (for group-header multi-select). */
+export function threadIdsInMonth(month: MonthGroup): string[] {
+  return month.days.flatMap((d) => d.threads.map((t) => t.id))
+}
+
+export function threadIdsInDay(day: DayGroup): string[] {
+  return day.threads.map((t) => t.id)
+}
+
+/**
+ * P0 local search: alias + id + first_user_preview (+ tags when present).
+ * Empty query returns all.
+ */
+export function filterThreadsByQuery(
+  threads: TimelineThread[],
+  query: string,
+): TimelineThread[] {
+  const q = query.trim().toLowerCase()
+  if (!q) return threads
+  return threads.filter((t) => {
+    const alias = (t.alias || "").toLowerCase()
+    const id = (t.id || "").toLowerCase()
+    const preview = (t.first_user_preview || "").toLowerCase()
+    const tags = (t.digest?.tags || []).join(" ").toLowerCase()
+    return (
+      alias.includes(q) ||
+      id.includes(q) ||
+      preview.includes(q) ||
+      tags.includes(q)
+    )
+  })
+}
+
+/** Relative Chinese time for list rows. */
+export function formatRelativeTime(iso: string | undefined, now: Date = new Date()): string {
+  if (!iso) return ""
+  const t = Date.parse(iso)
+  if (Number.isNaN(t)) return ""
+  const diff = Math.max(0, now.getTime() - t)
+  const sec = Math.floor(diff / 1000)
+  if (sec < 60) return "刚刚"
+  const min = Math.floor(sec / 60)
+  if (min < 60) return `${min}分钟前`
+  const hr = Math.floor(min / 60)
+  if (hr < 24) return `${hr}小时前`
+  const day = Math.floor(hr / 24)
+  if (day < 30) return `${day}天前`
+  const month = Math.floor(day / 30)
+  if (month < 12) return `${month}个月前`
+  return `${Math.floor(month / 12)}年前`
+}
+
+export function displayThreadTitle(t: TimelineThread): string {
+  const alias = (t.alias || "").trim()
+  if (alias) return alias
+  return `未命名 · ${String(t.id || "").slice(0, 8)}`
+}
+
+/**
+ * Rule-based title from first user message (P0.5 — no LLM).
+ * Collapse whitespace, strip leading markdown noise, cap length.
+ */
+export function aliasFromFirstUserText(text: string, maxLen = 40): string {
+  let s = String(text || "")
+    .replace(/\s+/g, " ")
+    .trim()
+  // strip common chat prefixes
+  s = s.replace(/^(请|帮我|麻烦|请问)[，,\s]*/u, "")
+  if (!s) return ""
+  if (s.length > maxLen) {
+    // prefer break at punctuation/space near end
+    const cut = s.slice(0, maxLen)
+    const m = cut.match(/^(.+?)[\s，。、；;,.!?…]+[^\s，。、；;,.!?…]*$/)
+    s = (m?.[1] || cut).trim()
+    if (s.length < 8) s = cut.trim()
+    if (!s.endsWith("…") && text.trim().length > s.length) s += "…"
+  }
+  return s.slice(0, maxLen + 1)
+}
+
+export function roleBadge(role: string | undefined): string | null {
+  if (role === "worker") return "worker"
+  if (role === "orchestrator") return "orch"
+  return null
+}
+
+/** Checkbox tri-state for group headers. */
+export type CheckState = "none" | "some" | "all"
+
+export function selectionState(ids: string[], selected: Set<string>): CheckState {
+  if (ids.length === 0) return "none"
+  let n = 0
+  for (const id of ids) if (selected.has(id)) n++
+  if (n === 0) return "none"
+  if (n === ids.length) return "all"
+  return "some"
+}
+
+export function toggleGroupSelection(
+  ids: string[],
+  selected: Set<string>,
+  /** When true, only these ids may be selected (e.g. non-busy). */
+  selectable?: Set<string> | null,
+): Set<string> {
+  const eligible = selectable
+    ? ids.filter((id) => selectable.has(id))
+    : ids
+  const next = new Set(selected)
+  const state = selectionState(eligible, selected)
+  if (state === "all") {
+    for (const id of eligible) next.delete(id)
+  } else {
+    for (const id of eligible) next.add(id)
+  }
+  return next
+}
+
+/** Build tag → threadIds index for Tags view (P1). */
+export function buildTagIndex(
+  threads: TimelineThread[],
+): Map<string, TimelineThread[]> {
+  const map = new Map<string, TimelineThread[]>()
+  for (const t of threads) {
+    const tags = t.digest?.tags
+    if (!tags || tags.length === 0) {
+      const list = map.get("__untagged__") || []
+      list.push(t)
+      map.set("__untagged__", list)
+      continue
+    }
+    for (const tag of tags) {
+      const k = tag.toLowerCase()
+      const list = map.get(k) || []
+      list.push(t)
+      map.set(k, list)
+    }
+  }
+  return map
+}

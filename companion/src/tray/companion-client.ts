@@ -397,7 +397,13 @@ export class CompanionClient {
     }
 
     // If server pushes thread updates, refresh
-    if (msg.type === "thread.created" || msg.type === "thread.deleted" || msg.type === "thread.updated") {
+    if (
+      msg.type === "thread.created" ||
+      msg.type === "thread.deleted" ||
+      msg.type === "thread.trashed" ||
+      msg.type === "thread.updated" ||
+      msg.type === "thread.restored"
+    ) {
       this.fetchRecentThreads().then(() => {
         this.dataChangedCbs.forEach(cb => cb())
       }).catch(() => {})

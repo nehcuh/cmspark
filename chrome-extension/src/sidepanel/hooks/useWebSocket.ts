@@ -697,6 +697,104 @@ export function useWebSocket() {
           dispatch({ type: "REMOVE_THREAD", threadId: msg.thread_id })
           break
         }
+        case "thread.trashed": {
+          // Soft-delete: remove from active list (server no longer returns it)
+          dispatch({ type: "REMOVE_THREAD", threadId: msg.thread_id })
+          break
+        }
+        case "thread.restored": {
+          chrome.runtime.sendMessage({ type: "thread.list" })
+          break
+        }
+        case "thread.cleanup_suggestions": {
+          // ThreadList listens via custom event for in-panel cleanup UI
+          try {
+            window.dispatchEvent(
+              new CustomEvent("cmspark:cleanup_suggestions", {
+                detail: {
+                  suggestions: msg.suggestions || [],
+                  count: msg.count || 0,
+                },
+              }),
+            )
+          } catch {
+            /* ignore */
+          }
+          break
+        }
+        case "thread.batch_deleted": {
+          const okIds: string[] = Array.isArray(msg.ok)
+            ? msg.ok
+            : Array.isArray(msg.deleted_ids)
+              ? msg.deleted_ids
+              : []
+          if (okIds.length > 0) {
+            // Broadcasts already fire thread.deleted per id; this is a
+            // belt-and-suspenders state sync + user log.
+            dispatch({ type: "REMOVE_THREADS", threadIds: okIds })
+          }
+          const failed = Array.isArray(msg.failed) ? msg.failed : []
+          dispatch({
+            type: "ADD_LOG",
+            entry: {
+              ts: new Date().toISOString(),
+              level: failed.length ? "warn" : "info",
+              source: "extension",
+              event: "batch_delete_threads",
+              data: {
+                deleted_count: okIds.length,
+                failed_count: failed.length,
+                failed,
+              },
+            },
+          })
+          break
+        }
+        case "thread.batch_auto_title.completed": {
+          dispatch({
+            type: "ADD_LOG",
+            entry: {
+              ts: new Date().toISOString(),
+              level: "info",
+              source: "extension",
+              event: "batch_auto_title",
+              data: {
+                updated_count: msg.updated_count || 0,
+                updated: msg.updated || [],
+                skipped: msg.skipped || [],
+              },
+            },
+          })
+          // Titles also arrive via thread.updated broadcasts; refresh list for previews.
+          chrome.runtime.sendMessage({ type: "thread.list" })
+          break
+        }
+        case "thread.digest_updated": {
+          if (msg.thread) {
+            dispatch({ type: "UPSERT_THREAD", thread: msg.thread })
+          } else if (msg.thread_id) {
+            // Fallback: full list refresh if companion omitted thread payload
+            chrome.runtime.sendMessage({ type: "thread.list" })
+          }
+          break
+        }
+        case "thread.extract_digest.completed": {
+          dispatch({
+            type: "ADD_LOG",
+            entry: {
+              ts: new Date().toISOString(),
+              level: Array.isArray(msg.failed) && msg.failed.length ? "warn" : "info",
+              source: "extension",
+              event: "extract_digest",
+              data: {
+                extracted_count: msg.extracted_count || 0,
+                ok: msg.ok || [],
+                failed: msg.failed || [],
+              },
+            },
+          })
+          break
+        }
         case "thread.cleanup_empty.completed": {
           const count = msg.deleted_count || 0
           dispatch({
@@ -737,12 +835,35 @@ export function useWebSocket() {
           break
         }
 
-        case "thread.list":
+        case "thread.list": {
+          // Dual-review B2: trash-scoped lists must not auto-create blank
+          // threads or force-select a different active chat.
+          const listScope =
+            msg.list_scope ||
+            (msg.only_trashed ? "trash" : msg.include_trashed ? "all" : "active")
+          const isScopedList = listScope === "trash" || listScope === "all"
+          const incoming = Array.isArray(msg.threads) ? msg.threads : []
+
+          // only_trashed responses: ignore for global store (ThreadList uses
+          // include_trashed:true which returns active+trashed together).
+          if (listScope === "trash") {
+            creatingBlankThreadRef.current = false
+            break
+          }
+
           dispatch({
             type: "SET_THREADS",
-            threads: Array.isArray(msg.threads) ? msg.threads : [],
+            threads: incoming,
           })
-          if (msg.threads.length === 0) {
+
+          if (isScopedList) {
+            // include_trashed: update rows only — keep activeThreadId as-is
+            // (SET_THREADS preserves active if still present among active rows).
+            creatingBlankThreadRef.current = false
+            break
+          }
+
+          if (incoming.length === 0) {
             // Empty state — auto-create a blank thread. Critically, do the UI
             // update optimistically (ADD_THREAD + SET_ACTIVE_THREAD) BEFORE
             // messaging companion, so the input becomes usable immediately even
@@ -780,13 +901,14 @@ export function useWebSocket() {
             // input placeholder still says "请先创建或选择一个线程" even though
             // threads exist.
             if (!activeThreadRef.current) {
-              const first = msg.threads[0]
+              const first = incoming[0]
               dispatch({ type: "SET_ACTIVE_THREAD", threadId: first.id })
               dispatch({ type: "SET_MESSAGES", messages: [] })
               chrome.runtime.sendMessage({ type: "thread.select", threadId: first.id })
             }
           }
           break
+        }
 
         case "quickAction.start": {
           const { thread_id, prompt, alias } = msg

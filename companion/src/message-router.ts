@@ -8,6 +8,14 @@ import OpenAI from "openai"
 import type { ThreadManager } from "./threads/thread-manager"
 import { serializeThreadToMarkdown, serializeSummaryToMarkdown } from "./threads/markdown-export"
 import { summarizeThread } from "./threads/summary-export"
+import {
+  aliasFromFirstUserText,
+  extractThreadDigest,
+  extractThreadDigestQueued,
+  isDigestStale,
+} from "./threads/digest"
+import { suggestCleanupRules } from "./threads/cleanup-rules"
+import { buildContextRefsSystemSegment, type ContextRefInput } from "./threads/context-refs"
 import { resolveVaultPath, profileVault, saveProfile, loadCachedProfile } from "./obsidian/vault-profiler"
 import { buildVaultIndex, saveIndex, loadCachedIndex, queryRelatedNotes } from "./obsidian/vault-index"
 import { detectTemplates, saveTemplates, loadCachedTemplates, pickTemplate } from "./obsidian/vault-templates"
@@ -91,6 +99,18 @@ const abortControllers = new Map<string, AbortController>()
 /** Run-state: threads with an in-flight LLM abort controller. */
 export function listLlmActiveThreadIds(): string[] {
   return [...abortControllers.keys()]
+}
+
+/**
+ * Test-only: mark a thread as LLM-busy (in-flight abort controller).
+ * Production code must not call this — use the chat path instead.
+ */
+export function __testSetLlmActiveForTests(threadId: string, active: boolean): void {
+  if (active) {
+    abortControllers.set(threadId, new AbortController())
+  } else {
+    abortControllers.delete(threadId)
+  }
 }
 
 /** Abort in-flight LLM for a thread (ADR-015 worker_cancel / chat.abort). */
@@ -563,6 +583,46 @@ export async function handleMessage(
           }
         }
 
+        // P1.5: resolve @ thread context refs (summary_card, fallback-first)
+        let contextRefsSegment: string | undefined
+        const rawRefs = rest.context_refs
+        if (Array.isArray(rawRefs) && rawRefs.length > 0) {
+          const sources = []
+          for (const ref of rawRefs.slice(0, 8) as ContextRefInput[]) {
+            if (!ref || ref.type !== "thread" || typeof ref.id !== "string") continue
+            // full mode forbidden by default
+            if (ref.mode === "full") continue
+            const thr = services.threadManager.get(ref.id)
+            if (!thr || thr.trashed_at) continue
+            // Single message-file read for previews (+ optional async digest)
+            const pair = services.threadManager.getUserPreviewPair(thr.id, 120)
+            sources.push({
+              id: thr.id,
+              alias: thr.alias,
+              digest: thr.digest,
+              first_user_preview: pair.first,
+              last_user_preview: pair.last,
+              titleFromClient: typeof ref.title === "string" ? ref.title : undefined,
+            })
+            // Background digest fill: de-duped + concurrency-capped (max 2)
+            if (!thr.digest || isDigestStale(thr.digest, pair.messages)) {
+              void extractThreadDigestQueued({
+                threadId: thr.id,
+                messages: pair.messages,
+                config: effectiveLLMConfig,
+                source: "on_at_ref",
+              })
+                .then((dig) => {
+                  if (dig) services.threadManager.update(thr.id, { digest: dig })
+                })
+                .catch(() => {
+                  /* ignore */
+                })
+            }
+          }
+          contextRefsSegment = buildContextRefsSystemSegment(sources) || undefined
+        }
+
         await chatCreate({
           threadId: rest.thread_id,
           message: rest.message,
@@ -575,6 +635,7 @@ export async function handleMessage(
           sendToExtension: session.sendToExtension,
           executeTool: session.executeTool,
           signal: controller.signal,
+          contextRefsSegment,
         })
       } catch (e: any) {
         if (e.name === "AbortError" || controller.signal.aborted) {
@@ -1073,7 +1134,18 @@ export async function handleMessage(
       }
     }
     case "thread.delete": {
-      // S46 dual-review nit: deleting a Trust-holding thread must restore globals
+      // Dual-review B1: keep single-delete default HARD for tray/legacy callers.
+      // Soft-delete only when UI explicitly passes mode:"trash".
+      const mode = rest.mode === "trash" ? "trash" : "hard"
+      // Busy reject (defense-in-depth; batch already does this)
+      if (listLlmActiveThreadIds().includes(rest.thread_id)) {
+        return {
+          type: "error",
+          error: "thread_busy",
+          thread_id: rest.thread_id,
+          data: { error_code: "thread_busy" },
+        }
+      }
       try {
         const thr = threadManager.get(rest.thread_id)
         if (thr) {
@@ -1083,8 +1155,151 @@ export async function handleMessage(
       } catch {
         /* best-effort */
       }
+      if (mode === "trash") {
+        const trashed = threadManager.trash(rest.thread_id)
+        if (!trashed) return { type: "error", error: `Thread not found: ${rest.thread_id}` }
+        if (session?.broadcast) {
+          session.broadcast({ type: "thread.trashed", thread_id: rest.thread_id, thread: trashed })
+        }
+        return { type: "thread.trashed", thread_id: rest.thread_id, thread: trashed, mode: "trash" }
+      }
       threadManager.delete(rest.thread_id)
-      return { type: "thread.deleted", thread_id: rest.thread_id }
+      return { type: "thread.deleted", thread_id: rest.thread_id, mode: "hard" }
+    }
+    /**
+     * Thread History IA: multi-select delete.
+     * mode: "trash" (default, P1.5) | "hard"
+     * Pre-dev pins: withIndexLock; per-id releaseTrust; max 50; busy reject;
+     * best-effort ok[]+failed[]; history.db ops intentionally retained.
+     */
+    case "thread.batch_delete": {
+      const rawIds = rest.thread_ids
+      if (!Array.isArray(rawIds) || rawIds.length === 0) {
+        return { type: "error", error: "thread.batch_delete requires non-empty thread_ids" }
+      }
+      if (rawIds.length > 50) {
+        return { type: "error", error: "thread.batch_delete max 50 threads per request" }
+      }
+      const mode = rest.mode === "hard" ? "hard" : "trash"
+      const busy = new Set(listLlmActiveThreadIds())
+      const ok: string[] = []
+      const failed: Array<{ id: string; reason: string }> = []
+
+      await threadManager.withIndexLock(async () => {
+        let releaseTrust: ((thr: any, by: string) => boolean) | null = null
+        try {
+          const mod = await import("./packs/pack-engine")
+          releaseTrust = mod.releaseTrustBeforeThreadGone
+        } catch {
+          releaseTrust = null
+        }
+
+        for (const raw of rawIds) {
+          const id = typeof raw === "string" ? raw : ""
+          if (!id) {
+            failed.push({ id: String(raw ?? ""), reason: "invalid_id" })
+            continue
+          }
+          if (busy.has(id)) {
+            failed.push({ id, reason: "thread_busy" })
+            continue
+          }
+          const thr = threadManager.get(id)
+          if (!thr) {
+            failed.push({ id, reason: "not_found" })
+            continue
+          }
+          try {
+            releaseTrust?.(thr, "thread.batch_delete")
+          } catch {
+            /* best-effort trust release */
+          }
+          try {
+            if (mode === "hard") {
+              threadManager.delete(id)
+              ok.push(id)
+              session?.broadcast?.({ type: "thread.deleted", thread_id: id, mode: "hard" })
+            } else {
+              const t = threadManager.trash(id)
+              if (!t) {
+                failed.push({ id, reason: "trash_failed" })
+                continue
+              }
+              ok.push(id)
+              session?.broadcast?.({ type: "thread.trashed", thread_id: id, thread: t })
+            }
+          } catch (e: any) {
+            failed.push({ id, reason: e?.message || "delete_failed" })
+          }
+        }
+      })
+
+      return {
+        type: "thread.batch_deleted",
+        ok,
+        failed,
+        deleted_ids: ok,
+        deleted_count: ok.length,
+        mode,
+      }
+    }
+
+    case "thread.restore": {
+      const ids: string[] = Array.isArray(rest.thread_ids)
+        ? rest.thread_ids.filter((id: unknown) => typeof id === "string" && id)
+        : rest.thread_id
+          ? [String(rest.thread_id)]
+          : []
+      if (ids.length === 0) {
+        return { type: "error", error: "thread.restore requires thread_id or thread_ids" }
+      }
+      const restored: string[] = []
+      const failed: Array<{ id: string; reason: string }> = []
+      for (const id of ids) {
+        const t = threadManager.restore(id)
+        if (!t) {
+          failed.push({ id, reason: "not_found" })
+          continue
+        }
+        restored.push(id)
+        session?.broadcast?.({ type: "thread.updated", thread: t })
+      }
+      return { type: "thread.restored", restored, failed, restored_count: restored.length }
+    }
+
+    case "thread.suggest_cleanup": {
+      const includeWorkers = rest.include_workers === true
+      const from = typeof rest.from === "string" ? rest.from : null
+      const to = typeof rest.to === "string" ? rest.to : null
+      const threads = threadManager.list({ include_trashed: false }).map((t) => {
+        const msgs = threadManager.getMessages(t.id)
+        const users = msgs.filter((m) => m.role === "user")
+        const first = users[0]
+        const firstLen = first ? String(first.content || "").trim().length : 0
+        return {
+          id: t.id,
+          alias: t.alias,
+          updated_at: t.updated_at,
+          created_at: t.created_at,
+          agent_role: t.agent_role,
+          parent_thread_id: t.parent_thread_id,
+          message_count: msgs.length,
+          first_user_preview: threadManager.getFirstUserPreview(t.id),
+          first_user_len: firstLen,
+          has_assistant: msgs.some((m) => m.role === "assistant"),
+        }
+      })
+      const suggestions = suggestCleanupRules(threads, {
+        from,
+        to,
+        include_workers: includeWorkers,
+      })
+      return {
+        type: "thread.cleanup_suggestions",
+        suggestions,
+        count: suggestions.length,
+        mode: "rules",
+      }
     }
     case "thread.cleanup_empty": {
       try {
@@ -1121,8 +1336,163 @@ export async function handleMessage(
 
       return { type: "thread.title_generated", thread_id: rest.thread_id, thread: threadManager.get(rest.thread_id) }
     }
-    case "thread.list":
-      return { type: "thread.list", threads: threadManager.list() }
+    case "thread.list": {
+      // Lazy purge expired trash (30d) — no daemon scheduler required
+      try {
+        const purged = threadManager.purgeExpiredTrash(30)
+        for (const id of purged) {
+          session?.broadcast?.({ type: "thread.deleted", thread_id: id, mode: "hard", reason: "trash_ttl" })
+        }
+      } catch {
+        /* best-effort */
+      }
+      const includeTrashed = rest.include_trashed === true
+      const onlyTrashed = rest.only_trashed === true
+      // listWithPreviews is single-pass (preview + stale); no second getMessages
+      const threads = threadManager.listWithPreviews({
+        include_trashed: includeTrashed,
+        only_trashed: onlyTrashed,
+      })
+      const trashCount = threadManager.list({ only_trashed: true }).length
+      // Dual-review B2: echo list scope so extension does not auto-create /
+      // auto-select when response is trash-scoped or include_trashed.
+      return {
+        type: "thread.list",
+        threads,
+        trash_count: trashCount,
+        include_trashed: includeTrashed,
+        only_trashed: onlyTrashed,
+        list_scope: onlyTrashed ? "trash" : includeTrashed ? "all" : "active",
+      }
+    }
+
+    /**
+     * P0.5: rule-based batch title from first user message (no LLM).
+     * only_empty default true; optional thread_ids filter.
+     */
+    case "thread.batch_auto_title": {
+      const onlyEmpty = rest.only_empty !== false
+      const filterIds: string[] | null = Array.isArray(rest.thread_ids)
+        ? rest.thread_ids.filter((id: unknown) => typeof id === "string" && id)
+        : null
+      if (filterIds && filterIds.length > 50) {
+        return { type: "error", error: "thread.batch_auto_title max 50 thread_ids" }
+      }
+      const targets = filterIds
+        ? filterIds.map((id) => threadManager.get(id)).filter(Boolean)
+        : threadManager.list()
+      const updated: Array<{ id: string; alias: string }> = []
+      const skipped: Array<{ id: string; reason: string }> = []
+
+      for (const thr of targets as any[]) {
+        if (!thr) continue
+        if (onlyEmpty && String(thr.alias || "").trim()) {
+          skipped.push({ id: thr.id, reason: "alias_set" })
+          continue
+        }
+        const preview = threadManager.getFirstUserPreview(thr.id, 200)
+        if (!preview) {
+          skipped.push({ id: thr.id, reason: "no_user_message" })
+          continue
+        }
+        const alias = aliasFromFirstUserText(preview, 40)
+        if (!alias) {
+          skipped.push({ id: thr.id, reason: "empty_title" })
+          continue
+        }
+        const next = threadManager.update(thr.id, { alias })
+        if (next) {
+          updated.push({ id: next.id, alias: next.alias })
+          session?.broadcast?.({ type: "thread.updated", thread: next })
+        }
+      }
+      return {
+        type: "thread.batch_auto_title.completed",
+        updated,
+        skipped,
+        updated_count: updated.length,
+      }
+    }
+
+    /**
+     * P1: extract short digest (tldr/tags/bullets) into index.
+     * Concurrent same-id extracts serialize via withThreadLock.
+     */
+    case "thread.extract_digest": {
+      const ids: string[] = Array.isArray(rest.thread_ids)
+        ? rest.thread_ids.filter((id: unknown) => typeof id === "string" && id)
+        : rest.thread_id
+          ? [String(rest.thread_id)]
+          : []
+      if (ids.length === 0) {
+        return { type: "error", error: "thread.extract_digest requires thread_id or thread_ids" }
+      }
+      if (ids.length > 20) {
+        return { type: "error", error: "thread.extract_digest max 20 threads per request" }
+      }
+      const force = rest.force === true
+      const cfg = getConfig().llm
+      if (!cfg?.api_key) {
+        return { type: "error", error: "LLM API key not configured" }
+      }
+      const ok: string[] = []
+      const failed: Array<{ id: string; reason: string }> = []
+
+      for (const id of ids) {
+        try {
+          await threadManager.withThreadLock(id, async () => {
+            const thr = threadManager.get(id)
+            if (!thr) {
+              failed.push({ id, reason: "not_found" })
+              return
+            }
+            const messages = threadManager.getMessages(id)
+            if (!force && thr.digest && !isDigestStale(thr.digest, messages)) {
+              ok.push(id)
+              session?.sendToExtension?.({
+                type: "thread.digest_updated",
+                thread_id: id,
+                digest: thr.digest,
+                thread: thr,
+              })
+              return
+            }
+            const digest = await extractThreadDigest({
+              messages,
+              config: cfg,
+              source: "manual",
+            })
+            if (!digest) {
+              failed.push({ id, reason: "no_content" })
+              return
+            }
+            const next = threadManager.update(id, { digest })
+            if (!next) {
+              failed.push({ id, reason: "update_failed" })
+              return
+            }
+            ok.push(id)
+            const payload = {
+              type: "thread.digest_updated",
+              thread_id: id,
+              digest: next.digest,
+              thread: next,
+            }
+            session?.broadcast?.(payload)
+            // also push to origin if broadcast misses (belt)
+            session?.sendToExtension?.(payload)
+          })
+        } catch (e: any) {
+          failed.push({ id, reason: e?.message || "extract_failed" })
+        }
+      }
+      return {
+        type: "thread.extract_digest.completed",
+        ok,
+        failed,
+        extracted_count: ok.length,
+      }
+    }
     case "thread.select":
       return { type: "thread.messages", messages: threadManager.getMessages(rest.thread_id) }
     case "thread.fork": {
@@ -1173,7 +1543,18 @@ export async function handleMessage(
       if (!rest.thread_id) return { type: "error", error: "thread_id required" }
       const allowedUpdates: Record<string, any> = {}
       const updates = rest.updates || {}
-      for (const key of ["alias", "config_override", "tool_whitelist", "pinned_tabs", "active_skill_ids", "skill_selection_mode", "knowledge_selection_mode", "mcp_selection_mode", "active_mcp_server_ids"]) {
+      for (const key of [
+        "alias",
+        "config_override",
+        "tool_whitelist",
+        "pinned_tabs",
+        "active_skill_ids",
+        "skill_selection_mode",
+        "knowledge_selection_mode",
+        "mcp_selection_mode",
+        "active_mcp_server_ids",
+        "digest",
+      ]) {
         if (Object.prototype.hasOwnProperty.call(updates, key)) {
           allowedUpdates[key] = updates[key]
         }

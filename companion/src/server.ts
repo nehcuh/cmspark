@@ -5321,6 +5321,11 @@ export function validateWsMessage(msg: any): WsValidationResult {
       // Optional site-knowledge context (not a security gate)
       if (m.hostname !== undefined && typeof m.hostname !== "string") return { valid: false, error: "hostname must be a string" }
       if (m.url !== undefined && typeof m.url !== "string") return { valid: false, error: "url must be a string" }
+      // P1.5 @ thread refs
+      if (m.context_refs !== undefined) {
+        if (!Array.isArray(m.context_refs)) return { valid: false, error: "context_refs must be an array" }
+        if (m.context_refs.length > 8) return { valid: false, error: "context_refs max 8" }
+      }
       return { valid: true }
     },
     "chat.abort": (m) => {
@@ -5342,6 +5347,52 @@ export function validateWsMessage(msg: any): WsValidationResult {
     },
     "thread.delete": (m) => {
       if (typeof m.thread_id !== "string" || !m.thread_id) return { valid: false, error: "thread.delete requires thread_id" }
+      return { valid: true }
+    },
+    "thread.batch_delete": (m) => {
+      if (!Array.isArray(m.thread_ids) || m.thread_ids.length === 0) {
+        return { valid: false, error: "thread.batch_delete requires non-empty thread_ids" }
+      }
+      if (m.thread_ids.length > 50) {
+        return { valid: false, error: "thread.batch_delete max 50 threads" }
+      }
+      if (!m.thread_ids.every((id: unknown) => typeof id === "string" && id.length > 0)) {
+        return { valid: false, error: "thread.batch_delete thread_ids must be non-empty strings" }
+      }
+      if (m.mode !== undefined && m.mode !== "trash" && m.mode !== "hard") {
+        return { valid: false, error: "thread.batch_delete mode must be trash|hard" }
+      }
+      return { valid: true }
+    },
+    "thread.restore": (m) => {
+      const hasOne = typeof m.thread_id === "string" && m.thread_id
+      const hasMany = Array.isArray(m.thread_ids) && m.thread_ids.length > 0
+      if (!hasOne && !hasMany) {
+        return { valid: false, error: "thread.restore requires thread_id or thread_ids" }
+      }
+      return { valid: true }
+    },
+    "thread.suggest_cleanup": () => ({ valid: true }),
+    "thread.batch_auto_title": (m) => {
+      if (m.thread_ids !== undefined) {
+        if (!Array.isArray(m.thread_ids)) {
+          return { valid: false, error: "thread_ids must be an array" }
+        }
+        if (m.thread_ids.length > 50) {
+          return { valid: false, error: "thread.batch_auto_title max 50 thread_ids" }
+        }
+      }
+      return { valid: true }
+    },
+    "thread.extract_digest": (m) => {
+      const hasOne = typeof m.thread_id === "string" && m.thread_id
+      const hasMany = Array.isArray(m.thread_ids) && m.thread_ids.length > 0
+      if (!hasOne && !hasMany) {
+        return { valid: false, error: "thread.extract_digest requires thread_id or thread_ids" }
+      }
+      if (hasMany && m.thread_ids.length > 20) {
+        return { valid: false, error: "thread.extract_digest max 20 threads" }
+      }
       return { valid: true }
     },
     "thread.cleanup_empty": () => ({ valid: true }),

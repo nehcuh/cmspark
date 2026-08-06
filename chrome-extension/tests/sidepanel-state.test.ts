@@ -270,6 +270,28 @@ test("SET_KNOWLEDGE_SELECTION_MODE updates state", () => {
   assert.equal(next.knowledgeSelectionMode, "all")
 })
 
+test("REMOVE_THREADS drops multiple ids, falls back active, clears busy", () => {
+  const base = stateWithThreads()
+  const withBusy: AgentState = {
+    ...base,
+    activeThreadId: "thread-a",
+    threadBusyById: { "thread-a": true, "thread-b": true, "other": true },
+    messages: [{ id: "m1", role: "user", content: "hi" } as any],
+  }
+  const next = agentReducer(withBusy, {
+    type: "REMOVE_THREADS",
+    threadIds: ["thread-a", "missing"],
+  })
+  assert.equal(next.threads.length, 1)
+  assert.equal(next.threads[0].id, "thread-b")
+  assert.equal(next.activeThreadId, "thread-b")
+  assert.deepEqual(next.messages, [])
+  assert.equal(next.threadBusyById["thread-a"], undefined)
+  assert.equal(next.threadBusyById["thread-b"], true)
+  assert.equal(next.threadBusyById["other"], true)
+  assert.deepEqual(next.pinnedTabIds, [202, 303])
+})
+
 test("reducer handles unknown action type without crashing", () => {
   const next = agentReducer(initialState, { type: "UNKNOWN_ACTION_XYZ" as any })
   assert.equal(next, initialState)

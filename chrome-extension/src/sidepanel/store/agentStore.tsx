@@ -127,6 +127,7 @@ export type AgentAction =
   | { type: "ADD_THREAD"; thread: Thread }
   | { type: "UPSERT_THREAD"; thread: Thread }
   | { type: "REMOVE_THREAD"; threadId: string }
+  | { type: "REMOVE_THREADS"; threadIds: string[] }
   | { type: "SET_STREAMING"; content: string }
   | { type: "SET_STREAMING_REASONING"; content: string }
   | { type: "SET_PROCESSING_STATUS"; status: string | null }
@@ -277,20 +278,32 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       // Keep active thread if it's still in the list; otherwise stay null so that
       // the upcoming thread.created (fresh blank thread) can be auto-selected.
       // Guard: companion/WS may omit threads (or send non-array) — never crash Side Panel.
+      // Dual-review B2: when list includes trashed rows, match active against
+      // non-trashed OR full list (active may be trashed only if user is viewing it).
       const threads = Array.isArray(action.threads) ? action.threads : []
       const activeExists = threads.some(t => t.id === state.activeThreadId)
-      const nextActiveThreadId = activeExists ? state.activeThreadId : null
+      // Preserve active + messages when active is temporarily absent only if
+      // every incoming row is trashed (only_trashed mishap) — otherwise clear.
+      const onlyTrashedIncoming =
+        threads.length > 0 && threads.every((t: any) => t.trashed_at)
+      const nextActiveThreadId = activeExists
+        ? state.activeThreadId
+        : onlyTrashedIncoming
+          ? state.activeThreadId
+          : null
       const nextActiveThread = threads.find(t => t.id === nextActiveThreadId)
       return {
         ...state,
         threads,
         activeThreadId: nextActiveThreadId,
-        pinnedTabIds: nextActiveThread?.pinned_tabs || [],
-        activeSkillIds: nextActiveThread?.active_skill_ids || [],
-        skillSelectionMode: nextActiveThread?.skill_selection_mode || "auto",
-        knowledgeSelectionMode: nextActiveThread?.knowledge_selection_mode || "auto",
-        mcpSelectionMode: nextActiveThread?.mcp_selection_mode || "auto",
-        activeMcpServerIds: nextActiveThread?.active_mcp_server_ids || [],
+        // Do not wipe messages when preserving active across trash-scoped merges
+        pinnedTabIds: nextActiveThread?.pinned_tabs ?? state.pinnedTabIds,
+        activeSkillIds: nextActiveThread?.active_skill_ids ?? state.activeSkillIds,
+        skillSelectionMode: nextActiveThread?.skill_selection_mode || state.skillSelectionMode || "auto",
+        knowledgeSelectionMode:
+          nextActiveThread?.knowledge_selection_mode || state.knowledgeSelectionMode || "auto",
+        mcpSelectionMode: nextActiveThread?.mcp_selection_mode || state.mcpSelectionMode || "auto",
+        activeMcpServerIds: nextActiveThread?.active_mcp_server_ids || state.activeMcpServerIds || [],
       }
     }
     case "SET_ACTIVE_THREAD": {
@@ -411,6 +424,31 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       const nextThread = filtered.find(t => t.id === nextActive)
       const { [action.threadId]: _removed, ...restBusy } = state.threadBusyById
       const clearingActive = state.activeThreadId === action.threadId
+      return {
+        ...state,
+        threads: filtered,
+        activeThreadId: nextActive,
+        messages: clearingActive ? [] : state.messages,
+        streamingContent: clearingActive ? "" : state.streamingContent,
+        streamingReasoning: clearingActive ? "" : state.streamingReasoning,
+        processingStatus: clearingActive ? null : state.processingStatus,
+        pinnedTabIds: nextThread?.pinned_tabs || [],
+        activeSkillIds: nextThread?.active_skill_ids || [],
+        threadBusyById: restBusy,
+      }
+    }
+    case "REMOVE_THREADS": {
+      const removeSet = new Set(action.threadIds || [])
+      if (removeSet.size === 0) return state
+      const filtered = state.threads.filter(t => !removeSet.has(t.id))
+      const clearingActive =
+        !!state.activeThreadId && removeSet.has(state.activeThreadId)
+      const nextActive = clearingActive
+        ? (filtered[0]?.id || null)
+        : state.activeThreadId
+      const nextThread = filtered.find(t => t.id === nextActive)
+      const restBusy = { ...state.threadBusyById }
+      for (const id of removeSet) delete restBusy[id]
       return {
         ...state,
         threads: filtered,

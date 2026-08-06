@@ -5,6 +5,8 @@ import * as path from "path"
 import { getConfigDir } from "../config"
 import { atomicWriteJSON } from "../io"
 import type { MissionBoard } from "../board/schema"
+import type { ThreadDigest } from "./digest"
+import { isDigestStale, sanitizeDigest } from "./digest"
 
 interface ThreadPackSnapshot {
   tool_whitelist: string[] | null
@@ -75,6 +77,16 @@ interface Thread {
    * Default false/undefined = off (rollback-friendly).
    */
   board_mode?: boolean
+  /**
+   * Thread History IA P1: short searchable index (tldr/tags/bullets).
+   * Rebuildable — messages remain source of truth.
+   */
+  digest?: ThreadDigest | null
+  /**
+   * Soft-delete timestamp (ISO). null/undefined = active.
+   * P1.5 recycle bin; hard delete clears file + index entry.
+   */
+  trashed_at?: string | null
 }
 
 // Allowed config_override keys and their expected types
@@ -174,6 +186,37 @@ function monotonicTimestamp(): string {
 // Track which threads have already logged the message-cap warning, so a long thread doesn't
 // spam the log on every addMessage after hitting the cap.
 const _capWarnedThreads = new Set<string>()
+
+function truncatePreview(text: string, maxLen: number): string {
+  const s = text.replace(/\s+/g, " ").trim()
+  if (!s) return ""
+  return s.length > maxLen ? s.slice(0, maxLen) : s
+}
+
+function firstUserPreviewFromMessages(
+  msgs: Array<{ role: string; content?: string }>,
+  maxLen: number,
+): string {
+  for (const m of msgs) {
+    if (m.role !== "user") continue
+    const text = truncatePreview(String(m.content || ""), maxLen)
+    if (text) return text
+  }
+  return ""
+}
+
+function lastUserPreviewFromMessages(
+  msgs: Array<{ role: string; content?: string }>,
+  maxLen: number,
+): string {
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    const m = msgs[i]
+    if (m.role !== "user") continue
+    const text = truncatePreview(String(m.content || ""), maxLen)
+    if (text) return text
+  }
+  return ""
+}
 
 export class ThreadManager {
   private index: ThreadIndex
@@ -322,8 +365,62 @@ export class ThreadManager {
     try { fs.unlinkSync(this.threadFilePath(threadId)) } catch { /* ignore */ }
   }
 
+  /** Soft-delete into recycle bin. Returns false if not found. */
+  trash(threadId: string): Thread | undefined {
+    const thread = this.index.threads.find((t) => t.id === threadId)
+    if (!thread) return undefined
+    if (thread.trashed_at) return thread
+    thread.trashed_at = monotonicTimestamp()
+    thread.updated_at = monotonicTimestamp()
+    this.saveIndex()
+    return thread
+  }
+
+  /** Restore from recycle bin. */
+  restore(threadId: string): Thread | undefined {
+    const thread = this.index.threads.find((t) => t.id === threadId)
+    if (!thread) return undefined
+    thread.trashed_at = null
+    thread.updated_at = monotonicTimestamp()
+    this.saveIndex()
+    return thread
+  }
+
+  isTrashed(thread: Thread): boolean {
+    return !!(thread.trashed_at && String(thread.trashed_at).length > 0)
+  }
+
+  /**
+   * Hard-delete trashed threads older than maxAgeDays (default 30).
+   * Lazy purge — call on list / open trash.
+   * Perf: single index write for the whole batch (not saveIndex per id).
+   */
+  purgeExpiredTrash(maxAgeDays = 30, now: Date = new Date()): string[] {
+    const cutoff = now.getTime() - maxAgeDays * 86400_000
+    const expired = this.index.threads.filter((t) => {
+      if (!this.isTrashed(t)) return false
+      const ts = Date.parse(t.trashed_at || "")
+      return !Number.isNaN(ts) && ts < cutoff
+    })
+    if (expired.length === 0) return []
+    const ids = expired.map((t) => t.id)
+    const idSet = new Set(ids)
+    this.index.threads = this.index.threads.filter((t) => !idSet.has(t.id))
+    this.saveIndex()
+    for (const id of ids) {
+      try {
+        fs.unlinkSync(this.threadFilePath(id))
+      } catch {
+        /* ignore missing file */
+      }
+    }
+    return ids
+  }
+
   cleanupEmpty(): string[] {
-    const emptyThreads = this.index.threads.filter(t => this.getMessages(t.id).length === 0)
+    const emptyThreads = this.index.threads.filter(
+      (t) => !this.isTrashed(t) && this.getMessages(t.id).length === 0,
+    )
     const deletedIds: string[] = []
     for (const thread of emptyThreads) {
       this.delete(thread.id)
@@ -332,8 +429,66 @@ export class ThreadManager {
     return deletedIds
   }
 
-  list(): Thread[] {
-    return this.index.threads
+  list(opts?: { include_trashed?: boolean; only_trashed?: boolean }): Thread[] {
+    const all = this.index.threads
+    if (opts?.only_trashed) return all.filter((t) => this.isTrashed(t))
+    if (opts?.include_trashed) return all
+    return all.filter((t) => !this.isTrashed(t))
+  }
+
+  /**
+   * First user message preview for ThreadList search/display (P0 IA).
+   * Cheap: scan messages until first user role; truncate whitespace.
+   */
+  getFirstUserPreview(threadId: string, maxLen = 80): string {
+    return firstUserPreviewFromMessages(this.getMessages(threadId), maxLen)
+  }
+
+  /** Last user message preview (for @ ref fallback). */
+  getLastUserPreview(threadId: string, maxLen = 80): string {
+    return lastUserPreviewFromMessages(this.getMessages(threadId), maxLen)
+  }
+
+  /**
+   * Single-pass list enrichment: one getMessages() per thread for preview +
+   * digest stale flag (avoids double file read on thread.list).
+   */
+  listWithPreviews(opts?: {
+    include_trashed?: boolean
+    only_trashed?: boolean
+  }): Array<Thread & { first_user_preview: string; last_user_preview?: string }> {
+    return this.list(opts).map((t) => {
+      const msgs = this.getMessages(t.id)
+      const first_user_preview = firstUserPreviewFromMessages(msgs, 80)
+      const last_user_preview = lastUserPreviewFromMessages(msgs, 80)
+      let digest = t.digest
+      if (digest) {
+        if (isDigestStale(digest, msgs)) {
+          digest = { ...digest, stale: true } as ThreadDigest & { stale: boolean }
+        }
+      }
+      return {
+        ...t,
+        digest,
+        first_user_preview,
+        last_user_preview,
+      }
+    })
+  }
+
+  /**
+   * One getMessages for both first/last user previews (context_refs path).
+   */
+  getUserPreviewPair(
+    threadId: string,
+    maxLen = 120,
+  ): { first: string; last: string; messages: Message[] } {
+    const messages = this.getMessages(threadId)
+    return {
+      first: firstUserPreviewFromMessages(messages, maxLen),
+      last: lastUserPreviewFromMessages(messages, maxLen),
+      messages,
+    }
   }
 
   get(threadId: string): Thread | undefined {
@@ -364,6 +519,21 @@ export class ThreadManager {
         throw new Error(`Invalid config_override: ${validation.error}`)
       }
       updates = { ...updates, config_override: validation.sanitized }
+    }
+    // Digest is optional rebuildable index metadata
+    if (updates.digest !== undefined) {
+      if (updates.digest === null) {
+        // ok — clear
+      } else {
+        const sanitized = sanitizeDigest(updates.digest)
+        if (!sanitized) {
+          throw new Error("Invalid digest payload")
+        }
+        updates = { ...updates, digest: sanitized }
+      }
+    }
+    if (updates.alias !== undefined) {
+      updates = { ...updates, alias: this.sanitizeAlias(String(updates.alias)) }
     }
     // Validate skill_selection_mode if being updated
     if (updates.skill_selection_mode !== undefined) {
