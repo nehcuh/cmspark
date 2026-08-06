@@ -54,6 +54,7 @@ import { ThreadManager } from "./threads/thread-manager"
 import { SkillEngine } from "./skills/skill-engine"
 import { HistoryStore } from "./history/store"
 import { checkHighRiskExecution, highRiskExecutionDeniedError, isTrustedDomain, isAutoApprovedDomain, isCloudMetadataIp, isPrivateOrLoopbackIp, detectCriticalApis, classifyMcpCall, mergeCapabilities, CRITICAL_MCP_CAPABILITIES, CRITICAL_MCP_META_TOOLS, cookieTrustBlockedPayload } from "./security"
+import { decodeDataUrlImage, summarizeCandidateUrl } from "./image-data-url"
 import { SecurityConfirmationManager, type SecurityConfirmationDetails, type SecurityConfirmationDecision, DEFAULT_SECURITY_CONFIRMATION_TIMEOUT_MS } from "./security-confirmation"
 import { getTrayInstance } from "./menu-bar-agent"
 import type { TrayConfirmRequest } from "./tray/tray-adapter"
@@ -2459,6 +2460,56 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
         return phase1
       }
       const candidateUrl = String(p1.candidate_url || "")
+      // Residual data: handling for old-extension skew: newer extensions promote
+      // data: to type:canvas after CDP and never return fetch_required. If we
+      // still see data: here, decode LOCALLY (mime + 6 MiB gate) and return
+      // immediately — NO L2, NO analyze_image_fetch phase2, NO schemeOk expansion
+      // to data:. Never log or error-interpolate the full multi-KB payload.
+      if (candidateUrl.toLowerCase().startsWith("data:")) {
+        // Explicit === true/false so residual path typechecks even if
+        // strictNullChecks is relaxed in some compile paths.
+        const decoded = decodeDataUrlImage(candidateUrl)
+        const sum = summarizeCandidateUrl(candidateUrl)
+        if (decoded.ok === false) {
+          logger.warn("security.image_fetch_blocked", {
+            tool_call_id: toolCallId, tool_name: toolName,
+            scheme: "data:", mime: decoded.mime || sum.mime,
+            byte_len: decoded.byte_len ?? sum.byte_len,
+            reason: decoded.error_code === "IMAGE_TOO_LARGE" ? "image_too_large" : "data_url_rejected",
+            error_code: decoded.error_code,
+          })
+          const result = {
+            success: false,
+            error: decoded.error,
+            data: {
+              error_code: decoded.error_code,
+              mime: decoded.mime,
+              byte_len: decoded.byte_len,
+            },
+          }
+          logToolFinish(toolCallId, toolName, startedAt, result)
+          return result
+        }
+        logger.info("security.image_data_url_decoded", {
+          tool_call_id: toolCallId, tool_name: toolName,
+          scheme: "data:", mime: decoded.mime, byte_len: decoded.byte_len,
+        })
+        const result = {
+          success: true,
+          data: {
+            type: "canvas",
+            image_base64: decoded.base64,
+            width: Number(p1.width) || 0,
+            height: Number(p1.height) || 0,
+            url: `data:${decoded.mime};base64,…`,
+            title: p1.title || "",
+            alt_text: p1.alt_text || "",
+            selector: finalParams.selector,
+          },
+        }
+        logToolFinish(toolCallId, toolName, startedAt, result)
+        return result
+      }
       let parsedCu: URL | null = null
       try { parsedCu = new URL(candidateUrl) } catch { /* invalid → blocked below */ }
       const scheme = parsedCu?.protocol || ""
@@ -2466,17 +2517,18 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
       const isPriv = isPrivateOrLoopbackIp(host)
       const metadata = isCloudMetadataIp(host)
       const schemeOk = scheme === "http:" || scheme === "https:"
-      // `data:` never reaches path B (it does not taint the canvas → path A);
       // file:/ftp:/javascript:/blob:/etc. are not http(s) → hard-block.
+      // (data: is handled above via local decode; never expand schemeOk to data:.)
+      const urlSum = summarizeCandidateUrl(candidateUrl)
       if (!parsedCu || !schemeOk || metadata) {
         const reason = !parsedCu ? "invalid_url" : metadata ? "cloud_metadata_endpoint" : "blocked_scheme"
         logger.warn("security.image_fetch_blocked", {
           tool_call_id: toolCallId, tool_name: toolName,
-          candidate_url: candidateUrl, scheme, host, is_private_ip: isPriv, reason,
+          candidate_url: urlSum.summary, scheme, host, is_private_ip: isPriv, reason,
         })
         const result = {
           success: false,
-          error: `Security Block: analyze_image cannot read ${metadata ? "a cloud metadata endpoint" : `${scheme || "non-http(s)"} URL`}${candidateUrl ? ` (${candidateUrl})` : ""}.`,
+          error: `Security Block: analyze_image cannot read ${metadata ? "a cloud metadata endpoint" : `${scheme || "non-http(s)"} URL`} (${urlSum.summary}).`,
         }
         logToolFinish(toolCallId, toolName, startedAt, result)
         return result
@@ -2486,15 +2538,16 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
       if (trusted || autoApproved) {
         logger.info("security.image_fetch_auto_approved", {
           tool_call_id: toolCallId, tool_name: toolName,
-          candidate_url: candidateUrl, scheme, host, is_private_ip: isPriv,
+          candidate_url: urlSum.summary, scheme, host, is_private_ip: isPriv,
           reason: trusted ? "trusted_domain" : "auto_approved_domain",
         })
       } else {
         // Non-trusted public URL or (non-metadata) private IP → confirm.
+        // god-mode + auto_approve_dangerous do NOT skip IMAGE_FETCH http(s) confirm.
         if (ws.readyState !== WebSocket.OPEN) {
           const result = {
             success: false,
-            error: `Security Block: analyze_image needs to read an untrusted image source (${candidateUrl}) which requires confirmation, but the WebSocket is not connected.`,
+            error: `Security Block: analyze_image needs to read an untrusted image source (${urlSum.summary}) which requires confirmation, but the WebSocket is not connected.`,
           }
           logToolFinish(toolCallId, toolName, startedAt, result)
           return result
@@ -2504,7 +2557,7 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
           {
             toolName: "analyze_image_fetch",
             dangerousApis: [],
-            code: `analyze_image_fetch(${candidateUrl})`,
+            code: `analyze_image_fetch(${urlSum.summary})`,
             relevantDomains: [host],
             defenseLayer: 2,
             riskLevel: "high",
@@ -2514,18 +2567,18 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
           const reason = decision.reason === "approved" ? "unavailable" : decision.reason
           logger.info("security.image_fetch_denied", {
             tool_call_id: toolCallId, tool_name: toolName,
-            candidate_url: candidateUrl, scheme, host, is_private_ip: isPriv, reason,
+            candidate_url: urlSum.summary, scheme, host, is_private_ip: isPriv, reason,
           })
           const result = {
             success: false,
-            error: `Security Block: analyze_image read of "${candidateUrl}" was ${reason === "denied" ? "denied by user" : reason}.`,
+            error: `Security Block: analyze_image read of "${urlSum.summary}" was ${reason === "denied" ? "denied by user" : reason}.`,
           }
           logToolFinish(toolCallId, toolName, startedAt, result)
           return result
         }
         logger.warn("security.image_fetch_confirmed", {
           tool_call_id: toolCallId, tool_name: toolName,
-          candidate_url: candidateUrl, scheme, host, is_private_ip: isPriv,
+          candidate_url: urlSum.summary, scheme, host, is_private_ip: isPriv,
         })
       }
       // Gate passed → phase 2 fetch. Synthetic id keeps the LLM-facing

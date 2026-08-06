@@ -1,7 +1,7 @@
 // Browser Bridge — executes tool calls via Chrome APIs and CDP
 
 import { PageSanitizer, pageSanitizer } from "./page-sanitizer"
-import { fetchImageAsBase64 } from "./image-extract-utils"
+import { decodeDataUrlImage, fetchImageAsBase64 } from "./image-extract-utils"
 import { selectorJsLiteral } from "./selector-js-literal"
 import { TabQueue, coerceTabId } from "./tab-queue"
 import { runBrowserDownload } from "./browser-download-handler"
@@ -548,16 +548,56 @@ export class BrowserBridge {
     if (!data) {
       return { success: false, error: "Failed to extract image data" }
     }
-    // Cross-origin image: the in-page canvas was tainted. Do NOT fetch here —
-    // the companion IMAGE_FETCH_GATE (§6.1) must approve the candidate URL first
-    // (it may be an internal/metadata endpoint = SSRF). Return the candidate so
-    // the companion can gate, then dispatch analyze_image_fetch for the fetch.
+    // Canvas extract failed with a fetchSrc fallback (taint / no draw path).
+    // Handle data:/blob: HERE (after CDP returns — never inside the page expr):
+    //   data:  → decode inline (mime allowlist + 6 MiB) → type:canvas. NEVER fetch_required.
+    //   blob:  → clear error (page-scoped; not SW-fetchable). NOT fetch_required.
+    //   http(s) cross-origin → fetch_required for companion IMAGE_FETCH_GATE (§6.1).
     if (data.fetchSrc) {
+      const fetchSrc = String(data.fetchSrc || "")
+      const scheme5 = fetchSrc.slice(0, 5).toLowerCase()
+      if (scheme5 === "data:") {
+        // Explicit === true/false: plasmo tsconfig has strict:false so truthiness
+        // does not narrow the DecodeDataUrlImageResult discriminant union.
+        const decoded = decodeDataUrlImage(fetchSrc)
+        if (decoded.ok === true) {
+          return {
+            success: true,
+            data: {
+              type: "canvas",
+              image_base64: decoded.base64,
+              width: data.width,
+              height: data.height,
+              // Never put the multi-KB data: payload into url; short placeholder only.
+              url: `data:${decoded.mime};base64,…`,
+              title: tab.title,
+              alt_text: data.alt || "",
+              selector,
+            },
+          }
+        }
+        return {
+          success: false,
+          error: decoded.ok === false ? decoded.error : "Invalid data: URL image",
+          data: {
+            error_code: decoded.ok === false ? decoded.error_code : "INVALID_DATA_URL",
+            mime: decoded.ok === false ? decoded.mime : undefined,
+            byte_len: decoded.ok === false ? decoded.byte_len : undefined,
+          },
+        }
+      }
+      if (scheme5 === "blob:" || fetchSrc.toLowerCase().startsWith("blob:")) {
+        return {
+          success: false,
+          error: "blob: image sources cannot be analyzed (page-scoped; not fetchable from extension)",
+          data: { error_code: "BLOB_URL_UNSUPPORTED" },
+        }
+      }
       return {
         success: true,
         data: {
           type: "fetch_required",
-          candidate_url: data.fetchSrc,
+          candidate_url: fetchSrc,
           width: data.width,
           height: data.height,
           title: tab.title,

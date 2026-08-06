@@ -1,6 +1,14 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { bytesToBase64, decodeDataUrl, fetchImageAsBase64 } from "../src/background/image-extract-utils"
+import {
+  bytesToBase64,
+  decodeDataUrl,
+  decodeDataUrlImage,
+  estimateDataUrlPayloadBytes,
+  fetchImageAsBase64,
+  IMAGE_DATA_URL_MAX_DECODED_BYTES,
+  normalizeImageMime,
+} from "../src/background/image-extract-utils"
 
 /** Decode base64 back to bytes via atob (DOM global, available in the node test runtime). */
 function fromBase64(b64: string): Uint8Array {
@@ -152,4 +160,95 @@ test("fetchImageAsBase64 decodes data: URLs inline without hitting the network",
   } finally {
     ;(globalThis as any).fetch = orig
   }
+})
+
+test("normalizeImageMime allowlist: raster ok, jpg→jpeg, svg/text rejected", () => {
+  assert.equal(normalizeImageMime("image/png"), "image/png")
+  assert.equal(normalizeImageMime("image/jpeg"), "image/jpeg")
+  assert.equal(normalizeImageMime("image/jpg"), "image/jpeg")
+  assert.equal(normalizeImageMime("image/webp"), "image/webp")
+  assert.equal(normalizeImageMime("image/gif"), "image/gif")
+  assert.equal(normalizeImageMime("image/svg+xml"), null)
+  assert.equal(normalizeImageMime("text/html"), null)
+  assert.equal(normalizeImageMime("text/plain"), null)
+  assert.equal(normalizeImageMime(""), null)
+})
+
+test("decodeDataUrlImage happy path: raster png", () => {
+  const r = decodeDataUrlImage("data:image/png;base64,SGVsbG8=")
+  assert.equal(r.ok, true)
+  if (r.ok) {
+    assert.equal(r.base64, "SGVsbG8=")
+    assert.equal(r.mime, "image/png")
+    assert.equal(r.byte_len, 5) // "Hello"
+  }
+})
+
+test("decodeDataUrlImage happy path: image/jpg normalized to jpeg", () => {
+  const r = decodeDataUrlImage("data:image/jpg;base64,SGk=")
+  assert.equal(r.ok, true)
+  if (r.ok) assert.equal(r.mime, "image/jpeg")
+})
+
+test("decodeDataUrlImage rejects text/html", () => {
+  const r = decodeDataUrlImage("data:text/html;base64,PGh0bWw+")
+  assert.equal(r.ok, false)
+  if (!r.ok) {
+    assert.equal(r.error_code, "IMAGE_MIME_REJECTED")
+    assert.match(r.error, /MIME|text\/html/i)
+  }
+})
+
+test("decodeDataUrlImage rejects image/svg+xml", () => {
+  const r = decodeDataUrlImage("data:image/svg+xml;base64,PHN2Zz4=")
+  assert.equal(r.ok, false)
+  if (!r.ok) {
+    assert.equal(r.error_code, "IMAGE_MIME_REJECTED")
+    assert.match(r.error, /svg/i)
+  }
+})
+
+test("decodeDataUrlImage rejects oversize payload (IMAGE_TOO_LARGE)", () => {
+  // Build a base64 payload whose decoded size exceeds 6 MiB without allocating 6MiB of zeros
+  // in the test process: 6 MiB + 1 → base64 length ≈ ceil(n/3)*4.
+  const overBytes = IMAGE_DATA_URL_MAX_DECODED_BYTES + 1
+  const b64Len = Math.ceil(overBytes / 3) * 4
+  const payload = "A".repeat(b64Len)
+  const src = `data:image/png;base64,${payload}`
+  assert.ok(estimateDataUrlPayloadBytes(src) > IMAGE_DATA_URL_MAX_DECODED_BYTES)
+  const r = decodeDataUrlImage(src)
+  assert.equal(r.ok, false)
+  if (!r.ok) {
+    assert.equal(r.error_code, "IMAGE_TOO_LARGE")
+    assert.match(r.error, /too large/i)
+    // Error must stay short — never embed the multi-KB payload.
+    assert.ok(r.error.length < 200, "error must not contain the payload")
+  }
+})
+
+test("decodeDataUrlImage: data: path does not call fetch/network", async () => {
+  const orig = (globalThis as any).fetch
+  let called = false
+  ;(globalThis as any).fetch = (async () => {
+    called = true
+    throw new Error("network must not be used for data:")
+  }) as any
+  try {
+    const r = decodeDataUrlImage("data:image/webp;base64,UklGRg==")
+    assert.equal(r.ok, true)
+    assert.equal(called, false)
+  } finally {
+    ;(globalThis as any).fetch = orig
+  }
+})
+
+test("fetchImageAsBase64 rejects data:text/html (mime gate)", async () => {
+  let threw = false
+  try {
+    await fetchImageAsBase64("data:text/html;base64,PGh0bWw+")
+  } catch (e: any) {
+    threw = true
+    assert.match(String(e?.message || e), /MIME|text\/html|Unsupported/i)
+  }
+  assert.equal(threw, true)
 })
