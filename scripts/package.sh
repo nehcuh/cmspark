@@ -1,8 +1,14 @@
 #!/bin/bash
 # CMspark distribution packager
 #
+# Version: companion/package.json (SoT). Align chrome-extension/package.json
+# before tagging so Side Panel + Companion report the same product version.
+#
 # Usage: scripts/package.sh [macos-arm64|macos-x64|windows-x64|linux-x64]
 # Output: dist-package/cmspark-v{version}-{platform}.zip
+#   (lowercase "cmspark-v*" — cross-platform zip from this script)
+#   Windows SEA portable zip uses "CMspark-v*" via build-windows-exe.ps1;
+#   macOS DMG uses "CMspark-v*-macOS.dmg" via create-dmg.sh.
 #
 set -euo pipefail
 

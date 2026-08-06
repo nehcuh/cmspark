@@ -1,9 +1,15 @@
 ; CMspark Windows Installer (NSIS)
-; Build: makensis scripts/installer.nsi
-; Requires: makensis (brew install makensis)
+; Build (preferred — injects version from companion/package.json):
+;   makensis /DPRODUCT_VERSION=x.y.z scripts/installer.nsi
+;   (scripts/build-windows-exe.ps1 does this automatically)
+; Manual: makensis scripts/installer.nsi  → uses fallback PRODUCT_VERSION below
+; Requires: makensis (https://nsis.sourceforge.io/ or choco install nsis)
 
 !define PRODUCT_NAME "CMspark"
-!define PRODUCT_VERSION "0.4.0"
+; Prefer /DPRODUCT_VERSION= from build-windows-exe.ps1; fallback must match companion/package.json.
+!ifndef PRODUCT_VERSION
+  !define PRODUCT_VERSION "0.4.0"
+!endif
 !define PRODUCT_PUBLISHER "CMspark"
 !define PRODUCT_UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCT_NAME}"
 
@@ -29,11 +35,11 @@ Var /GLOBAL START_MENU_FOLDER
 
 ; Custom finish page
 !define MUI_FINISHPAGE_TITLE "Installation Complete"
-!define MUI_FINISHPAGE_TEXT "CMspark Agent is now installed.$\r$\n$\r$\nTo use CMspark, you need to load the Chrome extension:$\r$\n$\r$\n  1. Open Chrome and go to chrome://extensions$\r$\n  2. Enable 'Developer mode' (top-right)$\r$\n  3. Click 'Load unpacked'$\r$\n  4. Select: $INSTDIR\chrome-extension$\r$\n$\r$\nThen click the CMspark icon in Chrome toolbar to open Side Panel."
+!define MUI_FINISHPAGE_TEXT "CMspark is now installed.$\r$\n$\r$\nTo use CMspark, load the Chrome extension:$\r$\n$\r$\n  1. Open Chrome and go to chrome://extensions$\r$\n  2. Enable 'Developer mode' (top-right)$\r$\n  3. Click 'Load unpacked'$\r$\n  4. Select: $INSTDIR\chrome-extension$\r$\n$\r$\nThen click the CMspark icon in the Chrome toolbar to open the Side Panel."
 !define MUI_FINISHPAGE_LINK "Open chrome://extensions now"
 !define MUI_FINISHPAGE_LINK_LOCATION "chrome://extensions"
 !define MUI_FINISHPAGE_RUN
-!define MUI_FINISHPAGE_RUN_TEXT "Start CMspark Agent now (tray icon)"
+!define MUI_FINISHPAGE_RUN_TEXT "Start CMspark now (system tray)"
 !define MUI_FINISHPAGE_RUN_FUNCTION "StartAgent"
 !insertmacro MUI_PAGE_FINISH
 

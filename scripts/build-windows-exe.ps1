@@ -4,14 +4,17 @@
 # Uses Node.js SEA (Single Executable Application) to produce a real .exe
 # that users can run without installing Node.js separately.
 #
+# Version: read from companion/package.json (same SoT as package.sh / create-dmg.sh).
+# Keep chrome-extension/package.json version in lock-step for the MV3 manifest.
+#
 # Usage:
 #   powershell -ExecutionPolicy Bypass -File scripts\build-windows-exe.ps1
 #   powershell -ExecutionPolicy Bypass -File scripts\build-windows-exe.ps1 -SkipInstall
 #
-# Output:
-#   dist-package\cmspark-windows-x64\cmspark-agent.exe   <- standalone exe
-#   dist-package\CMspark-v0.2.0-windows-x64.zip          <- portable package
-#   dist-package\CMspark-Setup-v0.2.0.exe                 <- installer (if NSIS found)
+# Output (version from package.json, example 0.4.0):
+#   dist-package\cmspark-windows-x64\cmspark-agent.exe   <- standalone SEA exe
+#   dist-package\CMspark-v{version}-windows-x64.zip     <- portable package
+#   dist-package\CMspark-Setup-v{version}.exe             <- NSIS installer (if makensis found)
 # =============================================================================
 
 [CmdletBinding()]
@@ -27,7 +30,20 @@ $CompanionDir = Join-Path $ProjectRoot "companion"
 $ChromeExtDir = Join-Path $ProjectRoot "chrome-extension"
 $DistDir      = Join-Path $ProjectRoot "dist-package"
 $StagingDir   = Join-Path $DistDir "cmspark-windows-x64"
-$Version      = "0.4.0"
+
+# Single source of truth — never hardcode product version here.
+$PkgJson = Join-Path $CompanionDir "package.json"
+if (-not (Test-Path $PkgJson)) { Write-Error "missing $PkgJson"; exit 1 }
+$Version = (Get-Content $PkgJson -Raw | ConvertFrom-Json).version
+if (-not $Version) { Write-Error "companion/package.json has no version"; exit 1 }
+# Cross-check extension (MV3) stays aligned
+$ExtPkg = Join-Path $ChromeExtDir "package.json"
+if (Test-Path $ExtPkg) {
+    $ExtVer = (Get-Content $ExtPkg -Raw | ConvertFrom-Json).version
+    if ($ExtVer -and $ExtVer -ne $Version) {
+        Write-Warning "chrome-extension version ($ExtVer) != companion ($Version) — ship both at the same version"
+    }
+}
 
 function Step($n, $total, $msg) {
     Write-Host "[$n/$total] $msg" -ForegroundColor Yellow
@@ -433,7 +449,8 @@ if (-not $SkipNsis) {
         Write-Host "[NSIS] Building installer exe..." -ForegroundColor Yellow
         Push-Location $ProjectRoot
         try {
-            & makensis scripts\installer.nsi
+            # Inject version from package.json so installer.nsi cannot drift.
+            & makensis "/DPRODUCT_VERSION=$Version" scripts\installer.nsi
             if ($LASTEXITCODE -eq 0) {
                 Ok "Installer: $DistDir\CMspark-Setup-v$Version.exe"
             } else {

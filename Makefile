@@ -146,7 +146,9 @@ package-macos: build build-tray build-host
 	@echo "Done: dist-package/CMspark-v*-macOS.dmg"
 
 # 打包 Windows x64（Node.js SEA 独立 exe + zip；可选 NSIS 安装包）
-# 在 Windows 上直接双击 build-package.bat 也可完成相同任务
+# 版本号读 companion/package.json（与 package.sh / create-dmg 同源）
+# 产物: dist-package/CMspark-v{ver}-windows-x64.zip + 可选 CMspark-Setup-v{ver}.exe
+# 在 Windows 上双击 build-package.bat 也可完成相同任务
 package-windows:
 	@powershell -ExecutionPolicy Bypass -File scripts/build-windows-exe.ps1
 

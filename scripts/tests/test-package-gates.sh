@@ -92,6 +92,15 @@ assert_file_has "${CREATE_DMG}" 'Contents/MacOS/CMspark' \
   "create-dmg installs native MacOS/CMspark"
 assert_file_has "${CREATE_DMG}" 'A6 OK: single CDHash' \
   "create-dmg asserts CDHash equality for MacOS/CMspark and cmspark-host"
+assert_file_has "${CREATE_DMG}" '__CMSPARK_VERSION__' \
+  "create-dmg stamps Info.plist via __CMSPARK_VERSION__ placeholder"
+assert_file_lacks "${CREATE_DMG}" 's/0\.2\.0/' \
+  "create-dmg must not hardcode sed s/0.2.0/ (stale version trap)"
+INFO_PLIST="${ROOT}/scripts/macos/Info.plist"
+assert_file_has "${INFO_PLIST}" '__CMSPARK_VERSION__' \
+  "Info.plist template uses __CMSPARK_VERSION__ placeholder"
+assert_file_lacks "${INFO_PLIST}" '>[0-9]\+\.[0-9]\+\.[0-9]\+<' \
+  "Info.plist template must not hardcode x.y.z (stamp at dmg time)"
 
 # --- Static: Makefile package-macos depends on build-host --------------------
 echo "[static] Makefile package-macos → build-host"
@@ -133,6 +142,15 @@ assert_file_has "${PS1}" 'qwen-vl-worker\.py missing' \
   "ps1 Fails when qwen-vl-worker.py missing"
 assert_file_lacks "${PS1}" 'WP5 local model layer required' \
   "ps1 no longer hard-requires ORT for TinyClick"
+assert_file_has "${PS1}" 'package\.json' \
+  "ps1 reads version from companion/package.json"
+assert_file_lacks "${PS1}" 'CMspark-v0\.2\.0' \
+  "ps1 header must not advertise stale 0.2.0 artifact names"
+assert_file_has "${PS1}" '/DPRODUCT_VERSION=' \
+  "ps1 injects PRODUCT_VERSION into NSIS"
+NSIS="${ROOT}/scripts/installer.nsi"
+assert_file_has "${NSIS}" '!ifndef PRODUCT_VERSION' \
+  "installer.nsi accepts /DPRODUCT_VERSION override"
 
 # --- Dynamic negative: missing cmspark-host → exit 1 -------------------------
 echo "[dynamic] package.sh macos-arm64 with host deleted → exit 1"

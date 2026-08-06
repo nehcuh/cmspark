@@ -18,10 +18,11 @@
     <string>CMspark</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
+    <!-- create-dmg.sh replaces __CMSPARK_VERSION__ with companion/package.json version -->
     <key>CFBundleShortVersionString</key>
-    <string>0.2.0</string>
+    <string>__CMSPARK_VERSION__</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>__CMSPARK_VERSION__</string>
     <key>LSBackgroundOnly</key>
     <true/>
     <key>LSUIElement</key>

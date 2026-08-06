@@ -46,9 +46,14 @@ rm -rf "${DMG_DIR}"
 mkdir -p "${APP_BUNDLE}/Contents/MacOS"
 mkdir -p "${RESOURCES}"
 
-# Info.plist (version-stamped)
-sed "s/0.2.0/${VERSION}/g" "${ROOT_DIR}/scripts/macos/Info.plist" \
+# Info.plist (version-stamped from companion/package.json via placeholder)
+# Do not hardcode x.y.z here — template uses __CMSPARK_VERSION__.
+sed "s/__CMSPARK_VERSION__/${VERSION}/g" "${ROOT_DIR}/scripts/macos/Info.plist" \
   > "${APP_BUNDLE}/Contents/Info.plist"
+if grep -q '__CMSPARK_VERSION__' "${APP_BUNDLE}/Contents/Info.plist"; then
+  echo "[ERROR] Info.plist still contains __CMSPARK_VERSION__ after stamp" >&2
+  exit 1
+fi
 
 # --- Step 2: Generate .icns from .iconset ---
 echo "[2/6] Generating app icon (.icns)..."
