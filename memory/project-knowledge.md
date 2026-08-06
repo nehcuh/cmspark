@@ -45,6 +45,21 @@
 - **回滚**：`mission_pack_trust_snapshot` + unapply `restoreTrustSnapshot`
 - **纪律**：仍需 user_gesture；apply 前二次确认；审计 `pack.trust_apply` / `pack.trust_restore`
 
+### Trust B 生命周期必须覆盖所有「离开」路径（2026-08-06 S46→#126）
+- **现象**：S46 multi-lane REQUEST_CHANGES——happy path unapply 恢复，但 uninstall/切换/删除对话/apply 失败/spawn 仍会粘三旗或抬权
+- **修法（PR #126）**：
+  1. **restore**：unapply · uninstall · switch-away · `releaseTrustBeforeThreadGone`（thread.delete / cleanup_empty）
+  2. **allowTrust**：默认 false；仅 UI `pack.apply`/save+apply `true`；spawn 永不写 Trust
+  3. **install 剥离**：zip/dir 强制 `origin=installed`、strip `trust`（仅 saveUserPack 可持久化）
+  4. **单 holder**：他对话已有 cookie → `trust_holder_conflict`
+  5. **journal**：`mission-pack-trust-journal.json` applying→held；启动 `reconcilePackTrustOnBoot`
+- **反直觉**：`restoreSnapshot` 会 null cookie 却不 restore 全局——必须先读 cookie 再清；switch 后须 `getConfig()` 再 blocked 判断
+- **Ship**：`7b71eef` · merge `b338498` · dual Claude+Pi APPROVE_WITH_NITS · DMG v0.4.0 装 `/Applications`
+
+### skill_install Downloads 不得靠路径段名（2026-08-06）
+- **坑**：`segments.includes("downloads")` 会把 `/usr/local/Downloads/...` 当 default 区
+- **修**：仅 `~/Downloads` · `~/下载`（realpath under home）+ tmp + data dir；其余主目录为 `user_home`
+
 ### 附件上传「思考中」：乐观 UI 与 file.upload_error 未清 busy（2026-08-05）
 - **现象**：Side Panel 上传 docx 后一直「思考中」；用户以为解析挂了。磁盘线程无 `<document>`，companion 日志无 `file.upload*`
 - **根因分层**：(1) **UI** `SET_PROCESSING` 后只靠 `chat.done`/`chat.error` 清 busy；`file.upload_error` / 通用 `error` / Companion 未连接 **都不清** `isProcessing`/`threadBusy`；(2) **环境** 打包 `CMspark.app` 旧扩展/旧 companion 与源码不同步时，请求可能根本进不了带修复的进程；(3) **解析器本身** 对 ~30–55KB docx 正常（~100ms），不是 officeparser 坏了

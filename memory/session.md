@@ -2,6 +2,14 @@
 
 ## Current Session
 
+### S47 (2026-08-06 ~09:00–09:20) [S46 multi-lane → Trust B lifecycle #126 MERGED · DMG 重装]
+- **拉取 main** 后四路对抗 `474df7e..6d2cdcf` → **REQUEST_CHANGES**（Trust 粘滞 / install spoof / spawn 抬权 / 文档漂移）
+- **实现**：restore 全路径 · allowTrust · install strip · 单 holder · journal reconcile · Downloads 收紧 · UI Trust 披露；Pi nit：thread.delete 释放 Trust
+- **门禁**：Claude+Pi **APPROVE_WITH_NITS** · packs+skill_install **33 pass** · CI build 绿
+- **Ship**：PR **#126 MERGED** `b338498`；`make package-macos` → `CMspark-v0.4.0-macOS.dmg`；ditto 替换 `/Applications/CMspark.app` 并重启
+- **下次**：真机验收 Trust 场景 / skill_install home；可选提交 packaging 脏掉的 host-integrity；S43 合盖掉电 A/B 仍挂
+- Recorded: yes — Trust B 全离开路径 + journal + holder
+
 ### S46 (2026-08-06 ~00:00–07:45) [skill_install 主目录 · MCP 巡航 · ChatView 贴底 · 用户场景工具/Trust B]
 - **#tj6y24 技能装载**：`skill_install` 源路径扩到 **user_home**（L2 授权）；系统路径仍拒；`a054121`
 - **#pl5bud shell 弹窗**：日志证实 shell 已 enterprise_auto_approved；真正弹的是 **MCP write_file force_confirm** → 三旗下 MCP critical 免确认 `1b294fe`
@@ -470,6 +478,12 @@
 - Recorded: yes 鈥?瑙?project-knowledge.md銆孧ermaid 鍥捐〃娓叉煋鐨勪笁涓潙銆? docs/adr/009
 
 ## In-Flight Tasks (Cross-Session)
+
+### S46 Trust B lifecycle multi-lane → DONE #126
+- status: **done** (PR #126 → main `b338498`; DMG 0.4.0 installed)
+- residual: 真机 Trust 场景验收；optional host-integrity packaging commit
+- resume_doc: `docs/audit/reviews/multi-adversarial-review-20260806-main-s46.md`
+- updated: 2026-08-06
 
 ### Run-state + full-autonomy (S41) → #117 MERGED · S45 P0 isolation closed
 - status: **mostly done** (#117 on main; S45 #125 closed post-ship upload/fleet HIGH)
