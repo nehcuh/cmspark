@@ -16,16 +16,22 @@ export interface ExtractedImage {
   mime: string
 }
 
-/** Decoded payload size cap for data: images (WS ceiling is 10MB; keep headroom). */
+/** Decoded payload size cap for data: images (WS ceiling is 10MB; keep headroom).
+ *  Keep in lock-step with companion/src/image-data-url.ts (cross-pin tests). */
 export const IMAGE_DATA_URL_MAX_DECODED_BYTES = 6 * 1024 * 1024 // 6291456
 
-/** Raster MIME allowlist for analyze_image data: promotion (both extension + companion). */
-const ALLOWED_IMAGE_MIMES = new Set([
-  "image/png",
-  "image/jpeg",
-  "image/webp",
+/**
+ * Raster MIME allowlist (sorted) for analyze_image data: promotion.
+ * Keep in lock-step with companion/src/image-data-url.ts ALLOWED_IMAGE_MIMES_LIST.
+ */
+export const ALLOWED_IMAGE_MIMES_LIST = [
   "image/gif",
-])
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+] as const
+
+const ALLOWED_IMAGE_MIMES = new Set<string>(ALLOWED_IMAGE_MIMES_LIST)
 
 export type DecodeDataUrlImageResult =
   | { ok: true; base64: string; mime: string; byte_len: number }
@@ -94,7 +100,8 @@ export function decodeDataUrl(src: string): ExtractedImage {
   const payload = src.slice(comma + 1)
   const mime = header.split(";")[0] || "image/jpeg"
   if (header.indexOf("base64") >= 0) {
-    return { base64: payload, mime }
+    // Strip whitespace so returned base64 matches byte_len accounting (RFC 4648 §3.3).
+    return { base64: payload.replace(/\s/g, ""), mime }
   }
   // URL-encoded (percent-encoded) payload — decode, then re-encode to base64.
   // Note: decodeURIComponent assumes a UTF-8 percent-encoded *text* payload;
@@ -141,8 +148,8 @@ export function decodeDataUrlImage(src: string): DecodeDataUrlImageResult {
   }
   try {
     const extracted = decodeDataUrl(src)
-    // Re-check size from base64 (authoritative for base64 payloads).
-    const payload = extracted.base64.replace(/\s/g, "")
+    // Authoritative size from cleaned base64 (decodeDataUrl already strips \s).
+    const payload = extracted.base64
     const padding = payload.endsWith("==") ? 2 : payload.endsWith("=") ? 1 : 0
     const byte_len = payload
       ? Math.max(0, Math.floor((payload.length * 3) / 4) - padding)
@@ -156,7 +163,7 @@ export function decodeDataUrlImage(src: string): DecodeDataUrlImageResult {
         byte_len,
       }
     }
-    return { ok: true, base64: extracted.base64, mime, byte_len }
+    return { ok: true, base64: payload, mime, byte_len }
   } catch (e: any) {
     return {
       ok: false,
@@ -164,6 +171,60 @@ export function decodeDataUrlImage(src: string): DecodeDataUrlImageResult {
       error_code: "INVALID_DATA_URL",
     }
   }
+}
+
+/** Coerce image dimensions from CDP/page metadata: only positive finite values. */
+export function sanitizeImageDim(n: unknown): number {
+  const v = Number(n)
+  return Number.isFinite(v) && v > 0 ? Math.floor(v) : 0
+}
+
+/**
+ * Post-CDP promotion of canvas-fallback fetchSrc (unit-testable; no CDP).
+ *  - data: → canvas bytes (or gated error)
+ *  - blob: → clear error (never fetch_required)
+ *  - else → fetch_required for companion IMAGE_FETCH_GATE
+ */
+export type PromoteFetchSrcResult =
+  | { kind: "canvas"; image_base64: string; mime: string; byte_len: number }
+  | {
+      kind: "error"
+      error: string
+      error_code: "INVALID_DATA_URL" | "IMAGE_MIME_REJECTED" | "IMAGE_TOO_LARGE" | "BLOB_URL_UNSUPPORTED"
+      mime?: string
+      byte_len?: number
+    }
+  | { kind: "fetch_required"; candidate_url: string }
+
+export function promoteFetchSrc(fetchSrc: string): PromoteFetchSrcResult {
+  const src = String(fetchSrc || "")
+  const scheme5 = src.slice(0, 5).toLowerCase()
+  if (scheme5 === "data:") {
+    const decoded = decodeDataUrlImage(src)
+    if (decoded.ok === true) {
+      return {
+        kind: "canvas",
+        image_base64: decoded.base64,
+        mime: decoded.mime,
+        byte_len: decoded.byte_len,
+      }
+    }
+    return {
+      kind: "error",
+      error: decoded.ok === false ? decoded.error : "Invalid data: URL image",
+      error_code: decoded.ok === false ? decoded.error_code : "INVALID_DATA_URL",
+      mime: decoded.ok === false ? decoded.mime : undefined,
+      byte_len: decoded.ok === false ? decoded.byte_len : undefined,
+    }
+  }
+  if (scheme5 === "blob:") {
+    return {
+      kind: "error",
+      error: "blob: image sources cannot be analyzed (page-scoped; not fetchable from extension)",
+      error_code: "BLOB_URL_UNSUPPORTED",
+    }
+  }
+  return { kind: "fetch_required", candidate_url: src }
 }
 
 /** Fetch an image URL from the service worker and return its base64 bytes.

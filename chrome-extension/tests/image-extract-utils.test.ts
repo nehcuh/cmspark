@@ -1,6 +1,7 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import {
+  ALLOWED_IMAGE_MIMES_LIST,
   bytesToBase64,
   decodeDataUrl,
   decodeDataUrlImage,
@@ -8,6 +9,8 @@ import {
   fetchImageAsBase64,
   IMAGE_DATA_URL_MAX_DECODED_BYTES,
   normalizeImageMime,
+  promoteFetchSrc,
+  sanitizeImageDim,
 } from "../src/background/image-extract-utils"
 
 /** Decode base64 back to bytes via atob (DOM global, available in the node test runtime). */
@@ -251,4 +254,60 @@ test("fetchImageAsBase64 rejects data:text/html (mime gate)", async () => {
     assert.match(String(e?.message || e), /MIME|text\/html|Unsupported/i)
   }
   assert.equal(threw, true)
+})
+
+// --- dual-review nits: whitespace strip, promoteFetchSrc, dim sanitize, allowlist pin ---
+
+test("decodeDataUrlImage strips whitespace from base64 payload", () => {
+  // "Hi" = SGVsbG8= with embedded newlines/spaces
+  const r = decodeDataUrlImage("data:image/png;base64,SGVs\nbG8=\n")
+  assert.equal(r.ok, true)
+  if (r.ok === true) {
+    assert.equal(r.base64, "SGVsbG8=")
+    assert.ok(!/\s/.test(r.base64), "returned base64 must not contain whitespace")
+  }
+})
+
+test("promoteFetchSrc: data: → canvas; blob: → error; https → fetch_required", () => {
+  const canvas = promoteFetchSrc("data:image/png;base64,SGVsbG8=")
+  assert.equal(canvas.kind, "canvas")
+  if (canvas.kind === "canvas") {
+    assert.equal(canvas.image_base64, "SGVsbG8=")
+    assert.equal(canvas.mime, "image/png")
+  }
+
+  const bad = promoteFetchSrc("data:text/html;base64,PGh0bWw+")
+  assert.equal(bad.kind, "error")
+  if (bad.kind === "error") assert.equal(bad.error_code, "IMAGE_MIME_REJECTED")
+
+  const blob = promoteFetchSrc("blob:https://example.com/abc-123")
+  assert.equal(blob.kind, "error")
+  if (blob.kind === "error") assert.equal(blob.error_code, "BLOB_URL_UNSUPPORTED")
+
+  const http = promoteFetchSrc("https://cdn.example.com/x.png")
+  assert.equal(http.kind, "fetch_required")
+  if (http.kind === "fetch_required") {
+    assert.equal(http.candidate_url, "https://cdn.example.com/x.png")
+  }
+})
+
+test("sanitizeImageDim only accepts positive finite numbers", () => {
+  assert.equal(sanitizeImageDim(146), 146)
+  assert.equal(sanitizeImageDim(33.9), 33)
+  assert.equal(sanitizeImageDim(0), 0)
+  assert.equal(sanitizeImageDim(-1), 0)
+  assert.equal(sanitizeImageDim(NaN), 0)
+  assert.equal(sanitizeImageDim(undefined), 0)
+  assert.equal(sanitizeImageDim("nope"), 0)
+})
+
+test("cross-package pin: allowlist + size cap (lock-step with companion image-data-url)", () => {
+  // If you change these, update companion/src/image-data-url.ts and its tests too.
+  assert.deepEqual([...ALLOWED_IMAGE_MIMES_LIST], [
+    "image/gif",
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+  ])
+  assert.equal(IMAGE_DATA_URL_MAX_DECODED_BYTES, 6 * 1024 * 1024)
 })

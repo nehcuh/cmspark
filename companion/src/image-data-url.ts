@@ -1,16 +1,21 @@
 // Companion residual decoder for analyze_image data: URLs (old-extension skew).
 // Mirrors chrome-extension image-extract-utils rules: raster MIME allowlist +
 // 6 MiB decoded payload cap. Intentionally duplicated (do not import extension).
+// Cross-pin: ALLOWED_IMAGE_MIMES_LIST + IMAGE_DATA_URL_MAX_DECODED_BYTES must
+// match extension (see tests/image-data-url.test.ts + extension image-extract-utils tests).
 
 /** Decoded payload size cap for data: images (WS ceiling is 10MB; keep headroom). */
 export const IMAGE_DATA_URL_MAX_DECODED_BYTES = 6 * 1024 * 1024 // 6291456
 
-const ALLOWED_IMAGE_MIMES = new Set([
-  "image/png",
-  "image/jpeg",
-  "image/webp",
+/** Sorted allowlist — lock-step with chrome-extension ALLOWED_IMAGE_MIMES_LIST. */
+export const ALLOWED_IMAGE_MIMES_LIST = [
   "image/gif",
-])
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+] as const
+
+const ALLOWED_IMAGE_MIMES = new Set<string>(ALLOWED_IMAGE_MIMES_LIST)
 
 export type DecodeDataUrlImageResult =
   | { ok: true; base64: string; mime: string; byte_len: number }
@@ -125,15 +130,15 @@ export function decodeDataUrlImage(src: string): DecodeDataUrlImageResult {
   try {
     let base64: string
     if (header.toLowerCase().indexOf("base64") >= 0) {
-      base64 = payload
+      // Strip whitespace so returned base64 matches byte_len (RFC 4648 §3.3).
+      base64 = payload.replace(/\s/g, "")
     } else {
       const decoded = decodeURIComponent(payload)
       base64 = Buffer.from(decoded, "binary").toString("base64")
     }
-    const clean = base64.replace(/\s/g, "")
-    const padding = clean.endsWith("==") ? 2 : clean.endsWith("=") ? 1 : 0
-    const byte_len = clean
-      ? Math.max(0, Math.floor((clean.length * 3) / 4) - padding)
+    const padding = base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0
+    const byte_len = base64
+      ? Math.max(0, Math.floor((base64.length * 3) / 4) - padding)
       : 0
     if (byte_len > IMAGE_DATA_URL_MAX_DECODED_BYTES) {
       return {

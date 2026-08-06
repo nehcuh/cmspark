@@ -2494,13 +2494,17 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
           tool_call_id: toolCallId, tool_name: toolName,
           scheme: "data:", mime: decoded.mime, byte_len: decoded.byte_len,
         })
+        // Dimensions from phase1 are best-effort (canvas may never have drawn);
+        // only positive finite values — vision uses base64, not these metadata fields.
+        const dimW = Number(p1.width)
+        const dimH = Number(p1.height)
         const result = {
           success: true,
           data: {
             type: "canvas",
             image_base64: decoded.base64,
-            width: Number(p1.width) || 0,
-            height: Number(p1.height) || 0,
+            width: Number.isFinite(dimW) && dimW > 0 ? Math.floor(dimW) : 0,
+            height: Number.isFinite(dimH) && dimH > 0 ? Math.floor(dimH) : 0,
             url: `data:${decoded.mime};base64,…`,
             title: p1.title || "",
             alt_text: p1.alt_text || "",
