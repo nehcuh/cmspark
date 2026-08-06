@@ -385,26 +385,89 @@ export function releaseTrustJournalIfMatch(threadId: string, _packId?: string | 
 }
 
 /**
- * Call before thread delete / cleanup_empty so deleting a Trust-holding conversation
- * does not leave sticky cruise (Pi dual-review nit).
+ * Call before thread delete / trash / cleanup_empty so deleting a Trust-holding
+ * conversation does not leave sticky cruise (Pi dual-review nit / S46).
+ *
+ * S51 P0: after restore, **clear** `mission_pack_trust_snapshot` so a later
+ * hard-delete-from-trash cannot re-fire the same cookie (user may have changed
+ * Settings between trash and permanent delete). Idempotent on second call.
+ *
+ * @param threadManager When provided, persists cookie clear via `update`.
+ *   Without it, still mutates the live thread object (tests / best-effort).
  */
 export function releaseTrustBeforeThreadGone(
   thread: {
     id: string
     mission_pack_id?: string | null
     mission_pack_trust_snapshot?: unknown
+    /** When set, soft-delete already ran restore; leftover cookie is migration — clear only. */
+    trashed_at?: string | null
   },
   by: string = "thread.delete",
+  threadManager?: { update: (id: string, updates: { mission_pack_trust_snapshot: null }) => unknown },
 ): boolean {
   if (!isPackTrustSnapshot(thread.mission_pack_trust_snapshot)) return false
-  restoreTrustFromThreadCookie(thread.mission_pack_trust_snapshot, by)
-  releaseTrustJournalIfMatch(thread.id, thread.mission_pack_id)
+
+  // Soft-delete path calls release *before* trash(); hard-delete-from-trash has trashed_at set.
+  // Pre-S51 rows may still hold a cookie after trash — never re-restore on hard-delete.
+  const alreadyTrashed = !!(thread.trashed_at && String(thread.trashed_at).length > 0)
+  if (!alreadyTrashed) {
+    restoreTrustFromThreadCookie(thread.mission_pack_trust_snapshot, by)
+    releaseTrustJournalIfMatch(thread.id, thread.mission_pack_id)
+  } else {
+    releaseTrustJournalIfMatch(thread.id, thread.mission_pack_id)
+  }
+
+  // Clear cookie after restore (or migration clear-only) so a later path cannot re-fire.
+  try {
+    if (threadManager) {
+      threadManager.update(thread.id, { mission_pack_trust_snapshot: null })
+    } else {
+      ;(thread as { mission_pack_trust_snapshot?: unknown }).mission_pack_trust_snapshot = null
+    }
+  } catch {
+    try {
+      ;(thread as { mission_pack_trust_snapshot?: unknown }).mission_pack_trust_snapshot = null
+    } catch {
+      /* best-effort clear */
+    }
+  }
   appendCapabilityAudit({
-    type: "pack.trust_release_on_thread_gone",
+    type: alreadyTrashed
+      ? "pack.trust_cookie_cleared_on_trashed_delete"
+      : "pack.trust_release_on_thread_gone",
     at: new Date().toISOString(),
     by,
     thread_id: thread.id,
     pack_id: thread.mission_pack_id || null,
+  })
+  return true
+}
+
+/**
+ * Drop a leftover trust cookie on a trashed (or any) thread **without** restoring
+ * globals. Use when release already ran (or for pre-S51 trash rows) before TTL purge.
+ */
+export function clearTrustCookieWithoutRestore(
+  thread: { id: string; mission_pack_trust_snapshot?: unknown },
+  threadManager: { update: (id: string, updates: { mission_pack_trust_snapshot: null }) => unknown },
+  by: string = "thread.purge_clear_cookie",
+): boolean {
+  if (!isPackTrustSnapshot(thread.mission_pack_trust_snapshot)) return false
+  try {
+    threadManager.update(thread.id, { mission_pack_trust_snapshot: null })
+  } catch {
+    try {
+      ;(thread as { mission_pack_trust_snapshot?: unknown }).mission_pack_trust_snapshot = null
+    } catch {
+      return false
+    }
+  }
+  appendCapabilityAudit({
+    type: "pack.trust_cookie_cleared_no_restore",
+    at: new Date().toISOString(),
+    by,
+    thread_id: thread.id,
   })
   return true
 }

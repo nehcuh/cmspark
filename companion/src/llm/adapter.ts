@@ -554,7 +554,8 @@ ${hostUseRule12}${appIndexSection ? `\n\n${appIndexSection}` : ""}`
     }
 
     // Persist meta for「查看摘要」(thread index only — not digest/export).
-    // Pi nit: mid_loop M1 must not wipe a prior pre_loop M2 rolling_summary.
+    // Pi nit + S51 P0: mid_loop M1 must not wipe a prior pre_loop M2 rolling_summary
+    // from meta **or** from the LLM request messages.
     try {
       const prevMeta = threadManager.get(threadId)?.runtime_context_budget
       const keepSummary =
@@ -566,7 +567,20 @@ ${hostUseRule12}${appIndexSection ? `\n\n${appIndexSection}` : ""}`
       const keepBytes =
         summaryBytes ||
         (phase === "mid_loop" && !summaryBytes ? prevMeta?.summary_bytes : undefined)
-      // mid_loop M1 must not wipe a prior pre_loop M2 rolling_summary (Pi nit).
+      // Re-attach prior M2 summary into request when mid_loop only ran M1 omit.
+      if (phase === "mid_loop" && keepSummary && mode === "m1") {
+        messages = attachRollingSummaryToMessages(
+          messages,
+          compact.droppedCount,
+          keepSummary,
+        )
+        mode = "m2"
+        rollingSummary = keepSummary
+        if (keepSha) summarySha = keepSha
+        if (keepBytes) summaryBytes = keepBytes
+      } else if (keepSummary && !rollingSummary) {
+        rollingSummary = keepSummary
+      }
       const updated = threadManager.update(threadId, {
         runtime_context_budget: {
           last_at: new Date().toISOString(),
@@ -574,17 +588,14 @@ ${hostUseRule12}${appIndexSection ? `\n\n${appIndexSection}` : ""}`
           dropped_count: compact.droppedCount,
           tokens_before: compact.tokensBefore,
           tokens_after: compact.tokensAfter,
-          rolling_summary: keepSummary,
-          summary_sha256: keepSha || undefined,
-          summary_bytes: keepBytes || undefined,
+          rolling_summary: keepSummary || rollingSummary,
+          summary_sha256: keepSha || summarySha || undefined,
+          summary_bytes: keepBytes || summaryBytes || undefined,
           phase,
         },
       })
       if (updated) {
         sendToExtension({ type: "thread.updated", thread: updated })
-      }
-      if (keepSummary && !rollingSummary) {
-        rollingSummary = keepSummary
       }
     } catch {
       /* non-fatal meta write */

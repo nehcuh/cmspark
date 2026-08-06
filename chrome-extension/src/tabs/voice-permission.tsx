@@ -41,8 +41,16 @@ export default function VoicePermissionPage() {
       rec.onerror = (ev: any) => {
         const code = ev?.error || "unknown"
         if (code === "not-allowed" || code === "service-not-allowed") {
+          const ua = typeof navigator !== "undefined" ? navigator.userAgent || "" : ""
+          const isMac = /Mac|iPhone|iPad|iPod/i.test(ua)
+          const isWin = /Windows/i.test(ua)
+          const osHint = isWin
+            ? "Windows「设置 → 隐私和安全性 → 麦克风」"
+            : isMac
+              ? "macOS「系统设置 → 隐私与安全性 → 麦克风」"
+              : "系统麦克风隐私设置"
           setStatus(
-            "权限被拒绝。请在 Chrome 站点设置与 macOS「系统设置 → 隐私与安全性 → 麦克风」中允许 Google Chrome / 本扩展。",
+            `权限被拒绝。请在 Chrome 站点设置与 ${osHint} 中允许 Google Chrome / 本扩展。`,
           )
         } else if (code === "no-speech" || code === "aborted") {
           setStatus("已触发权限流程（未识别到语音也无妨）。可关闭本页回到 Side Panel。")

@@ -1190,7 +1190,7 @@ export async function handleMessage(
         const thr = threadManager.get(rest.thread_id)
         if (thr) {
           const { releaseTrustBeforeThreadGone } = await import("./packs/pack-engine")
-          releaseTrustBeforeThreadGone(thr, "thread.delete")
+          releaseTrustBeforeThreadGone(thr, "thread.delete", threadManager)
         }
       } catch {
         /* best-effort */
@@ -1204,6 +1204,10 @@ export async function handleMessage(
         return { type: "thread.trashed", thread_id: rest.thread_id, thread: trashed, mode: "trash" }
       }
       threadManager.delete(rest.thread_id)
+      // S51: broadcast hard-delete so multi-panel lists stay in sync (batch path already does).
+      if (session?.broadcast) {
+        session.broadcast({ type: "thread.deleted", thread_id: rest.thread_id, mode: "hard" })
+      }
       return { type: "thread.deleted", thread_id: rest.thread_id, mode: "hard" }
     }
     /**
@@ -1226,7 +1230,9 @@ export async function handleMessage(
       const failed: Array<{ id: string; reason: string }> = []
 
       await threadManager.withIndexLock(async () => {
-        let releaseTrust: ((thr: any, by: string) => boolean) | null = null
+        let releaseTrust:
+          | ((thr: any, by: string, tm?: typeof threadManager) => boolean)
+          | null = null
         try {
           const mod = await import("./packs/pack-engine")
           releaseTrust = mod.releaseTrustBeforeThreadGone
@@ -1250,7 +1256,7 @@ export async function handleMessage(
             continue
           }
           try {
-            releaseTrust?.(thr, "thread.batch_delete")
+            releaseTrust?.(thr, "thread.batch_delete", threadManager)
           } catch {
             /* best-effort trust release */
           }
@@ -1346,7 +1352,7 @@ export async function handleMessage(
         const { releaseTrustBeforeThreadGone } = await import("./packs/pack-engine")
         for (const t of threadManager.list()) {
           if (threadManager.getMessages(t.id).length === 0) {
-            releaseTrustBeforeThreadGone(t, "thread.cleanup_empty")
+            releaseTrustBeforeThreadGone(t, "thread.cleanup_empty", threadManager)
           }
         }
       } catch {
@@ -1377,7 +1383,21 @@ export async function handleMessage(
       return { type: "thread.title_generated", thread_id: rest.thread_id, thread: threadManager.get(rest.thread_id) }
     }
     case "thread.list": {
-      // Lazy purge expired trash (30d) — no daemon scheduler required
+      // Lazy purge expired trash (30d) — no daemon scheduler required.
+      // S51: clear any leftover trust cookies on trashed rows WITHOUT re-restore
+      // (release already ran at trash time; pre-S51 rows may still hold a cookie).
+      try {
+        const { clearTrustCookieWithoutRestore, isPackTrustSnapshot } = await import(
+          "./packs/pack-engine"
+        )
+        for (const t of threadManager.list({ only_trashed: true })) {
+          if (isPackTrustSnapshot(t.mission_pack_trust_snapshot)) {
+            clearTrustCookieWithoutRestore(t, threadManager, "thread.list_trash_cookie_clear")
+          }
+        }
+      } catch {
+        /* best-effort */
+      }
       try {
         const purged = threadManager.purgeExpiredTrash(30)
         for (const id of purged) {
