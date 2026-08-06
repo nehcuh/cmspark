@@ -5,6 +5,7 @@ import AdmZip from "adm-zip"
 import matter from "gray-matter"
 import * as yaml from "js-yaml"
 import { getConfigDir, getConfig, saveConfig, type CompanionConfig } from "../config"
+import { atomicWriteJSON } from "../io"
 import { SkillEngine } from "../skills/skill-engine"
 import { ThreadManager } from "../threads/thread-manager"
 import { appendCapabilityAudit } from "./audit-log"
@@ -224,6 +225,250 @@ export function restoreTrustSnapshot(snap: PackTrustSnapshot, by: string = "pack
   })
 }
 
+/** True when value looks like a PackTrustSnapshot we can restore. */
+export function isPackTrustSnapshot(v: unknown): v is PackTrustSnapshot {
+  return !!v && typeof v === "object" && !Array.isArray(v) && "modules" in (v as object)
+}
+
+/**
+ * Best-effort restore of a thread's stored trust cookie (does not clear the cookie).
+ * Callers must clear mission_pack_trust_snapshot separately when leaving the pack.
+ */
+export function restoreTrustFromThreadCookie(
+  trustCookie: unknown,
+  by: string,
+): boolean {
+  if (!isPackTrustSnapshot(trustCookie)) return false
+  try {
+    restoreTrustSnapshot(trustCookie, by)
+    return true
+  } catch {
+    return false
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Trust B lifecycle journal + single-holder (S46 residual F4 / crash F1)
+// ---------------------------------------------------------------------------
+
+/** Durable journal under DATA_DIR — survives crash mid-apply. */
+export type PackTrustJournal = {
+  phase: "applying" | "held"
+  thread_id: string
+  pack_id: string
+  snap: PackTrustSnapshot
+  at: string
+}
+
+export function trustJournalPath(): string {
+  return path.join(getConfigDir(), "mission-pack-trust-journal.json")
+}
+
+export function readTrustJournal(): PackTrustJournal | null {
+  const p = trustJournalPath()
+  try {
+    if (!fs.existsSync(p)) return null
+    const raw = JSON.parse(fs.readFileSync(p, "utf-8"))
+    if (!raw || typeof raw !== "object") return null
+    if (raw.phase !== "applying" && raw.phase !== "held") return null
+    if (typeof raw.thread_id !== "string" || typeof raw.pack_id !== "string") return null
+    if (!isPackTrustSnapshot(raw.snap)) return null
+    return {
+      phase: raw.phase,
+      thread_id: raw.thread_id,
+      pack_id: raw.pack_id,
+      snap: raw.snap,
+      at: typeof raw.at === "string" ? raw.at : new Date().toISOString(),
+    }
+  } catch {
+    return null
+  }
+}
+
+export function writeTrustJournal(j: PackTrustJournal): void {
+  atomicWriteJSON(trustJournalPath(), j, 0o600)
+}
+
+export function clearTrustJournal(): void {
+  try {
+    fs.unlinkSync(trustJournalPath())
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Other threads that currently hold a Trust restore cookie (single-holder policy). */
+export function findOtherTrustHolders(
+  threadManager: ThreadManager,
+  excludeThreadId: string,
+): Array<{ id: string; pack_id: string | null }> {
+  const out: Array<{ id: string; pack_id: string | null }> = []
+  for (const t of threadManager.list()) {
+    if (t.id === excludeThreadId) continue
+    if (isPackTrustSnapshot(t.mission_pack_trust_snapshot)) {
+      out.push({ id: t.id, pack_id: t.mission_pack_id ?? null })
+    }
+  }
+  return out
+}
+
+/**
+ * Boot / reconnect: heal crash mid-apply and orphan held Trust with no thread cookie.
+ * Call after ThreadManager is constructed (server initServices).
+ */
+export function reconcilePackTrustOnBoot(threadManager: ThreadManager): {
+  action: "none" | "restored_applying" | "restored_orphan_held" | "cleared_stale_held"
+  journal: PackTrustJournal | null
+} {
+  const j = readTrustJournal()
+  if (!j) return { action: "none", journal: null }
+
+  if (j.phase === "applying") {
+    // Crash between trust write and thread cookie commit
+    restoreTrustFromThreadCookie(j.snap, "pack.trust_reconcile:applying")
+    clearTrustJournal()
+    appendCapabilityAudit({
+      type: "pack.trust_reconcile",
+      at: new Date().toISOString(),
+      action: "restored_applying",
+      thread_id: j.thread_id,
+      pack_id: j.pack_id,
+    })
+    return { action: "restored_applying", journal: j }
+  }
+
+  // phase === held: cookie should exist on that thread
+  const thr = threadManager.get(j.thread_id)
+  if (thr && isPackTrustSnapshot(thr.mission_pack_trust_snapshot)) {
+    return { action: "none", journal: j }
+  }
+
+  // Orphan held: thread gone or cookie cleared without restore
+  restoreTrustFromThreadCookie(j.snap, "pack.trust_reconcile:orphan_held")
+  clearTrustJournal()
+  appendCapabilityAudit({
+    type: "pack.trust_reconcile",
+    at: new Date().toISOString(),
+    action: "restored_orphan_held",
+    thread_id: j.thread_id,
+    pack_id: j.pack_id,
+  })
+  return { action: "restored_orphan_held", journal: j }
+}
+
+function markTrustHeld(threadId: string, packId: string, snap: PackTrustSnapshot): void {
+  writeTrustJournal({
+    phase: "held",
+    thread_id: threadId,
+    pack_id: packId,
+    snap,
+    at: new Date().toISOString(),
+  })
+}
+
+function markTrustApplying(threadId: string, packId: string, snap: PackTrustSnapshot): void {
+  writeTrustJournal({
+    phase: "applying",
+    thread_id: threadId,
+    pack_id: packId,
+    snap,
+    at: new Date().toISOString(),
+  })
+}
+
+/** Clear journal when this thread releases Trust (or after failed apply). */
+export function releaseTrustJournalIfMatch(threadId: string, _packId?: string | null): void {
+  const j = readTrustJournal()
+  if (!j) return
+  if (j.thread_id !== threadId) return
+  clearTrustJournal()
+}
+
+/**
+ * Call before thread delete / cleanup_empty so deleting a Trust-holding conversation
+ * does not leave sticky cruise (Pi dual-review nit).
+ */
+export function releaseTrustBeforeThreadGone(
+  thread: {
+    id: string
+    mission_pack_id?: string | null
+    mission_pack_trust_snapshot?: unknown
+  },
+  by: string = "thread.delete",
+): boolean {
+  if (!isPackTrustSnapshot(thread.mission_pack_trust_snapshot)) return false
+  restoreTrustFromThreadCookie(thread.mission_pack_trust_snapshot, by)
+  releaseTrustJournalIfMatch(thread.id, thread.mission_pack_id)
+  appendCapabilityAudit({
+    type: "pack.trust_release_on_thread_gone",
+    at: new Date().toISOString(),
+    by,
+    thread_id: thread.id,
+    pack_id: thread.mission_pack_id || null,
+  })
+  return true
+}
+
+/**
+ * Install path must never persist origin=user or a trust block (S46 Security F2).
+ * Only saveUserPack may author origin:user + trust. Builtin origin is preserved.
+ * Returns sanitized manifest + whether rewrite of pack.yaml is required.
+ */
+export function sanitizeManifestForInstall(manifest: PackManifest): {
+  manifest: PackManifest
+  rewritten: boolean
+} {
+  const hadUserOrigin = manifest.origin === "user"
+  const hadTrust = !!manifest.trust
+  if (!hadUserOrigin && !hadTrust) {
+    return { manifest, rewritten: false }
+  }
+  const next: PackManifest = {
+    ...manifest,
+    origin: manifest.origin === "builtin" ? "builtin" : "installed",
+  }
+  delete next.trust
+  // Spoofed user origin never stays user on install
+  if (hadUserOrigin) {
+    next.origin = "installed"
+  }
+  return { manifest: next, rewritten: true }
+}
+
+/** Persist sanitized manifest to pack.yaml (install path only). */
+function rewritePackYaml(destDir: string, manifest: PackManifest): void {
+  const doc: Record<string, unknown> = {
+    schema_version: manifest.schema_version,
+    id: manifest.id,
+    name: manifest.name,
+    description: manifest.description,
+    version: manifest.version,
+    channel: manifest.channel,
+    min_capability: manifest.min_capability,
+    requires_modules: manifest.requires_modules,
+    origin: manifest.origin || "installed",
+    skills: manifest.skills,
+    skill_refs: manifest.skill_refs,
+    knowledge: manifest.knowledge,
+    mcp_servers: manifest.mcp_servers,
+    tools: manifest.tools,
+    system_prompt_append: manifest.system_prompt_append,
+    board_mode: manifest.board_mode,
+    thread_defaults: manifest.thread_defaults,
+    workspace: manifest.workspace,
+    author: manifest.author,
+    tags: manifest.tags,
+    ui: manifest.ui,
+    // intentionally omit trust
+  }
+  // Drop undefined keys for cleaner yaml
+  for (const k of Object.keys(doc)) {
+    if (doc[k] === undefined) delete doc[k]
+  }
+  const yamlBody = yaml.dump(doc, { lineWidth: -1, noRefs: true })
+  fs.writeFileSync(path.join(destDir, "pack.yaml"), yamlBody, { mode: 0o600 })
+}
+
 function packsInstalledDir(): string {
   return path.join(getConfigDir(), "packs", "installed")
 }
@@ -382,6 +627,8 @@ export function listInstalledPacks(cfg?: CompanionConfig): PackListItem[] {
     }
     const ui = v.manifest.ui
     const origin = resolvePackOrigin(v.manifest)
+    const trust = v.manifest.trust
+    const hasTrust = !!trust
     items.push({
       id: v.manifest.id,
       name: v.manifest.name,
@@ -399,6 +646,8 @@ export function listInstalledPacks(cfg?: CompanionConfig): PackListItem[] {
       skill_refs: v.manifest.skill_refs,
       mcp_servers: v.manifest.mcp_servers,
       editable: origin === "user",
+      has_trust: hasTrust,
+      trust_skip_l2: trust?.skip_l2 === true,
     })
   }
   return items.sort((a, b) => a.id.localeCompare(b.id))
@@ -767,6 +1016,12 @@ export function installPackFromDirectory(
     const v2 = validatePackDir(tmp)
     if (!v2.ok) return { ok: false, error: v2.error }
 
+    // S46 P0-3: strip origin=user + trust on install path (only saveUserPack may author them)
+    const sanitized = sanitizeManifestForInstall(v2.manifest)
+    if (sanitized.rewritten) {
+      rewritePackYaml(tmp, sanitized.manifest)
+    }
+
     removeNamespacedAssets(v2.manifest.id)
     if (fs.existsSync(dest)) fs.rmSync(dest, { recursive: true, force: true })
     fs.renameSync(tmp, dest)
@@ -774,12 +1029,31 @@ export function installPackFromDirectory(
     // Re-validate after rename so skillAbsPaths point at dest (not tmp)
     const v3 = validatePackDir(dest)
     if (!v3.ok) return { ok: false, error: v3.error }
+    // Defense in depth: trust must never remain on installed tree after sanitize
+    if (v3.manifest.trust || v3.manifest.origin === "user") {
+      const again = sanitizeManifestForInstall(v3.manifest)
+      rewritePackYaml(dest, again.manifest)
+      const v4 = validatePackDir(dest)
+      if (!v4.ok) return { ok: false, error: v4.error }
+      installAssetsFromValidated(dest, v4.manifest, v4.skillAbsPaths, v4.knowledgeAbsPaths)
+      skillEngine.refresh()
+      appendCapabilityAudit({
+        type: "pack.install",
+        pack_id: v4.manifest.id,
+        at: new Date().toISOString(),
+        trust_stripped: true,
+        origin_forced: again.manifest.origin,
+      })
+      return { ok: true, id: v4.manifest.id }
+    }
     installAssetsFromValidated(dest, v3.manifest, v3.skillAbsPaths, v3.knowledgeAbsPaths)
     skillEngine.refresh()
     appendCapabilityAudit({
       type: "pack.install",
       pack_id: v3.manifest.id,
       at: new Date().toISOString(),
+      trust_stripped: sanitized.rewritten,
+      origin_forced: sanitized.rewritten ? sanitized.manifest.origin : undefined,
     })
     return { ok: true, id: v3.manifest.id }
   } catch (e: any) {
@@ -930,13 +1204,16 @@ function configuredMcpServerIds(config: CompanionConfig): Set<string> {
  * - Switching packs: base state = existing mission_pack_snapshot (pre-A), not current post-A thread
  * - Re-apply same pack: freeze original snapshot; recompute whitelist/append from base
  * - First apply: snapshot = current thread
+ *
+ * @param opts.allowTrust - When true (UI pack.apply / save+apply only), origin=user trust may
+ *   write global config. Default **false** so spawn_worker / non-gesture paths cannot elevate Trust B.
  */
 export function applyPack(
   packId: string,
   threadId: string,
   threadManager: ThreadManager,
   skillEngine: SkillEngine,
-  opts?: { workspace_path?: string },
+  opts?: { workspace_path?: string; allowTrust?: boolean },
 ): { ok: true; thread: any } | { ok: false; error: string; code?: string } {
   let config = getConfig()
   const { dir, result } = readInstalledManifest(packId)
@@ -945,16 +1222,55 @@ export function applyPack(
   const thread = threadManager.get(threadId)
   if (!thread) return { ok: false, error: `thread not found: ${threadId}` }
 
+  const allowTrust = opts?.allowTrust === true
+  const switchingAway =
+    !!thread.mission_pack_id && thread.mission_pack_id !== packId
+
+  // S46 P0-1: leaving pack A for B — restore A's global Trust BEFORE writing B.
+  // Cookie stays until final applyPackPatch (B success writes B's snap or null).
+  // Re-apply same pack keeps prior cookie (handled below).
+  if (switchingAway && isPackTrustSnapshot(thread.mission_pack_trust_snapshot)) {
+    restoreTrustFromThreadCookie(
+      thread.mission_pack_trust_snapshot,
+      `pack.switch_away:${thread.mission_pack_id}`,
+    )
+    releaseTrustJournalIfMatch(threadId, thread.mission_pack_id)
+    // Re-read config after restore so B's module/enterprise gates see true globals
+    config = getConfig()
+  }
+
   // Product B: apply Trust FIRST so module_disabled / enterprise_profile gates pass
+  // Only when allowTrust (UI gesture path) + origin=user + trust block.
   let trustSnap: PackTrustSnapshot | null = null
+  let trustJustWritten = false
   const packTrust = result.manifest.trust
-  if (packTrust && resolvePackOrigin(result.manifest) === "user") {
-    // Keep original pre-trust snapshot across re-apply so unapply restores correctly
+  const originUser = resolvePackOrigin(result.manifest) === "user"
+  if (packTrust && originUser && allowTrust) {
+    // Single-holder: another thread already owns Trust B → refuse (clear UI error).
+    const others = findOtherTrustHolders(threadManager, threadId)
+    if (others.length > 0) {
+      const o = others[0]
+      return {
+        ok: false,
+        error:
+          `Trust 已被其他对话占用（thread=${o.id}` +
+          (o.pack_id ? `, pack=${o.pack_id}` : "") +
+          `）。请先在该对话「退出场景」后再对本对话应用 Trust 场景。` +
+          ` Trust is held by another thread; unapply there first.`,
+        code: "trust_holder_conflict",
+      }
+    }
+
+    // Keep original pre-trust snapshot across **same-pack** re-apply so unapply restores correctly.
+    // On switch A→B: never reuse A's cookie — capture after switch_away restore (fresh baseline).
     const prior = thread.mission_pack_trust_snapshot as PackTrustSnapshot | null | undefined
-    trustSnap =
-      prior && typeof prior === "object" && prior.modules
-        ? prior
-        : captureTrustSnapshot()
+    const samePackReapply = thread.mission_pack_id === packId
+    const reusingPrior = samePackReapply && isPackTrustSnapshot(prior)
+    trustSnap = reusingPrior ? prior! : captureTrustSnapshot()
+
+    // Crash window: journal "applying" BEFORE durable saveConfig so boot can restore.
+    markTrustApplying(threadId, packId, trustSnap)
+
     const trustToApply: UserPackTrustPolicy = {
       ...packTrust,
       enable_modules: [
@@ -971,27 +1287,39 @@ export function applyPack(
     }
     const tr = applyUserPackTrust(trustToApply, `pack.apply:${packId}`)
     if (!tr.ok) {
-      // Only restore if we just captured a new snap (not reusing prior)
-      if (!prior) {
-        try {
-          restoreTrustSnapshot(trustSnap, `pack.apply_trust_fail:${packId}`)
-        } catch {
-          /* ignore */
-        }
+      // Always roll back to pre-attempt snap (new or reused) — applyUserPackTrust may
+      // have partially enabled modules before returning ok:false.
+      if (trustSnap) {
+        restoreTrustFromThreadCookie(trustSnap, `pack.apply_trust_fail:${packId}`)
       }
+      clearTrustJournal()
       return { ok: false, error: tr.error, code: "trust_apply_failed" }
     }
+    trustJustWritten = true
     config = getConfig()
+  } else if (packTrust && originUser && !allowTrust) {
+    // Spawn / non-gesture: composition only — do not write global Trust
+    appendCapabilityAudit({
+      type: "pack.trust_skipped",
+      by: `pack.apply:${packId}`,
+      at: new Date().toISOString(),
+      reason: "allowTrust_false",
+      thread_id: threadId,
+    })
+  }
+
+  /** Roll back Trust written in this call + clear applying journal. */
+  const rollbackTrust = (reason: string) => {
+    if (trustSnap && trustJustWritten) {
+      restoreTrustFromThreadCookie(trustSnap, reason)
+      clearTrustJournal()
+    }
   }
 
   const blocked = computeApplyBlocked(result.manifest, config)
   if (blocked) {
-    if (trustSnap) {
-      try {
-        restoreTrustSnapshot(trustSnap, `pack.apply_blocked_rollback:${packId}`)
-      } catch {
-        /* ignore */
-      }
+    if (trustJustWritten) {
+      rollbackTrust(`pack.apply_blocked_rollback:${packId}`)
     }
     return {
       ok: false,
@@ -1033,6 +1361,10 @@ export function applyPack(
     )
     skillEngine.refresh()
   } catch (e: any) {
+    // S46 P0-2: Trust already written — must restore or cruise sticks with no cookie
+    if (trustJustWritten) {
+      rollbackTrust(`pack.apply_assets_fail:${packId}`)
+    }
     return { ok: false, error: e?.message || String(e) }
   }
 
@@ -1079,26 +1411,30 @@ export function applyPack(
       workspace_root: opts?.workspace_path ?? thread.workspace_root ?? null,
       // ADR-016: explicit true/false so non-board packs clear sticky board_mode
       board_mode: result.manifest.board_mode === true,
+      // Only keep cookie when this apply wrote (or re-applied) Trust
       mission_pack_trust_snapshot: trustSnap
         ? (JSON.parse(JSON.stringify(trustSnap)) as Record<string, unknown>)
         : null,
     })
+    // Promote journal applying → held; non-trust apply releases this thread's journal
+    if (trustSnap && allowTrust) {
+      markTrustHeld(threadId, packId, trustSnap)
+    } else if (!trustSnap) {
+      releaseTrustJournalIfMatch(threadId)
+    }
     appendCapabilityAudit({
       type: "pack.apply",
       pack_id: packId,
       thread_id: threadId,
       at: new Date().toISOString(),
-      trust_applied: !!trustSnap,
+      trust_applied: !!trustSnap && allowTrust,
+      allow_trust: allowTrust,
     })
     return { ok: true, thread: updated }
   } catch (e: any) {
     // Best-effort restore trust if thread patch failed after trust write
-    if (trustSnap) {
-      try {
-        restoreTrustSnapshot(trustSnap, `pack.apply_rollback:${packId}`)
-      } catch {
-        /* ignore */
-      }
+    if (trustJustWritten) {
+      rollbackTrust(`pack.apply_rollback:${packId}`)
     }
     return { ok: false, error: e?.message || String(e) }
   }
@@ -1136,12 +1472,13 @@ export function unapplyPack(
       })
     }
     // Product B: restore global Trust if this apply had written it
-    if (trustSnap && typeof trustSnap === "object") {
+    if (isPackTrustSnapshot(trustSnap)) {
       try {
         restoreTrustSnapshot(trustSnap, `pack.unapply:${packId}`)
       } catch {
         /* best-effort */
       }
+      releaseTrustJournalIfMatch(threadId, packId)
     }
     const updated = threadManager.get(threadId)
     appendCapabilityAudit({
@@ -1166,8 +1503,11 @@ export function uninstallPack(
   if (!fs.existsSync(dest)) return { ok: false, error: `pack not installed: ${packId}` }
 
   const restored: string[] = []
+  let trustRestoredCount = 0
   for (const t of threadManager.list()) {
     if (t.mission_pack_id === packId) {
+      // S46 P0-1: read trust cookie BEFORE restoreSnapshot nulls it
+      const trustCookie = t.mission_pack_trust_snapshot
       if (t.mission_pack_snapshot) {
         restoreSnapshot(threadManager, t.id, t.mission_pack_snapshot as ThreadPackSnapshot)
       } else {
@@ -1178,7 +1518,12 @@ export function uninstallPack(
           active_skill_ids: (t.active_skill_ids || []).filter((s: string) => !s.startsWith(`pack--${packId}--`)),
           system_prompt_append: null,
           board_mode: false,
+          mission_pack_trust_snapshot: null,
         })
+      }
+      if (restoreTrustFromThreadCookie(trustCookie, `pack.uninstall:${packId}`)) {
+        trustRestoredCount += 1
+        releaseTrustJournalIfMatch(t.id, packId)
       }
       restored.push(t.id)
     }
@@ -1192,6 +1537,7 @@ export function uninstallPack(
     pack_id: packId,
     at: new Date().toISOString(),
     restored_threads: restored,
+    trust_restored_count: trustRestoredCount,
   })
   return { ok: true, restored_threads: restored }
 }

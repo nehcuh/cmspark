@@ -93,16 +93,16 @@ function tryRealpath(p: string): string | null {
 
 /**
  * Classify skill_install path/zip source.
- * - default: Downloads / 下载 / tmp / cmspark data dir (browser download & tooling zone)
+ * - default: OS temp / cmspark data dir / **home-bounded** Downloads·下载
  * - user_home: under os.homedir() (e.g. ~/Projects) — allowed; L2 is the user authorization
  * - denied: elsewhere (prevents agent ambient read of system paths into skill library)
+ *
+ * S46 compat: do **not** treat any path segment named "Downloads" as trusted
+ * (e.g. /var/evil/Downloads must stay denied). Only ~/Downloads · ~/下载 (realpath).
  */
 export function classifySkillInstallSource(resolvedPath: string): SkillInstallSourceTier {
   if (!resolvedPath) return "denied"
   const norm = path.resolve(resolvedPath)
-  const lower = norm.replace(/\\/g, "/").toLowerCase()
-  const segments = lower.split("/").filter(Boolean)
-  if (segments.includes("downloads") || segments.includes("下载")) return "default"
 
   try {
     const data = fs.realpathSync(getConfigDir())
@@ -122,7 +122,14 @@ export function classifySkillInstallSource(resolvedPath: string): SkillInstallSo
     const home = tryRealpath(os.homedir())
     if (!home) return "denied"
     const cand = tryRealpath(norm) || norm
-    if (pathEqualsOrUnder(cand, home)) return "user_home"
+    if (!pathEqualsOrUnder(cand, home)) return "denied"
+
+    // Browser download folders only under home (not bare path-segment heuristic)
+    for (const leaf of ["Downloads", "下载"]) {
+      const dl = tryRealpath(path.join(home, leaf))
+      if (dl && pathEqualsOrUnder(cand, dl)) return "default"
+    }
+    return "user_home"
   } catch {
     /* ignore */
   }

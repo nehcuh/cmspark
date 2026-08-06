@@ -1,0 +1,1337 @@
+# Dual external review context
+batch: s46-trust-b-lifecycle
+base: origin/main
+time: 20260806-090027
+
+6d2cdcf
+
+ M chrome-extension/src/sidepanel/components/PacksPanel.tsx
+ M companion/src/message-router.ts
+ M companion/src/packs/pack-engine.ts
+ M companion/src/packs/types.ts
+ M companion/src/server.ts
+ M companion/src/skills/skill-install.ts
+ M companion/tests/packs-engine.test.ts
+ M companion/tests/skill-install.test.ts
+ M docs/adr/020-capability-model-three-axes.md
+ M docs/architecture.md
+ M docs/mission-pack-usage.md
+ M docs/superpowers/specs/2026-08-06-user-scene-tools-and-ai-create.md
+?? .grok/config.toml
+?? .grok/hooks/
+?? .grok/rules/
+?? docs/audit/reviews/_prompts/s46-trust-b-lifecycle-dual-review.md
+?? docs/audit/reviews/cli-qwen-plan-v2-for-pi.md
+?? docs/audit/reviews/cli-qwen-plan-v2-pi-20260802-092659.md
+?? docs/audit/reviews/estop-tap-degraded-kimi-20260801-220643.md
+?? docs/audit/reviews/multi-adversarial-review-20260806-main-s46.md
+?? docs/audit/reviews/run-state-worker-drilldown-diff-20260804-174619.patch
+?? docs/audit/reviews/s41-main-pull-diff-20260804-092610.patch
+?? docs/audit/reviews/s41-multi-adv-diff-20260804-093256.patch
+?? docs/audit/reviews/s46-lane-architecture-20260806.md
+?? docs/audit/reviews/s46-lane-compat-20260806.md
+?? docs/audit/reviews/s46-lane-correctness-20260806.md
+?? docs/audit/reviews/s46-lane-security-20260806.md
+?? docs/audit/reviews/s46-main-pull-diff-20260806.patch
+?? docs/audit/reviews/s46-main-pull-diff-stat-20260806.txt
+?? docs/audit/reviews/s46-trust-b-lifecycle-diff-20260806-090027.patch
+?? docs/audit/reviews/s46-trust-b-lifecycle-diff-pre-review.patch
+?? docs/audit/reviews/trust-ia-autopilot-diff-20260802-144203.patch
+?? docs/audit/reviews/unattended-desktop-diff-20260802-153129.patch
+?? docs/audit/reviews/unattended-desktop-m1-diff-20260802-154236.patch
+?? docs/audit/reviews/unattended-desktop-m2-diff-20260802-155452.patch
+?? docs/audit/reviews/unattended-desktop-m2-r2-diff-20260802-160240.patch
+?? docs/audit/reviews/unattended-desktop-m3-diff-20260802-161147.patch
+?? docs/optimization-plan-document-parse-vision.md
+?? images/
+
+## Diff (git diff + staged)
+ .../src/sidepanel/components/PacksPanel.tsx        |  25 +-
+ companion/src/message-router.ts                    |   7 +-
+ companion/src/packs/pack-engine.ts                 | 378 ++++++++++++++++++--
+ companion/src/packs/types.ts                       |   7 +
+ companion/src/server.ts                            |  20 +-
+ companion/src/skills/skill-install.ts              |  17 +-
+ companion/tests/packs-engine.test.ts               | 384 ++++++++++++++++++++-
+ companion/tests/skill-install.test.ts              |   8 +
+ docs/adr/020-capability-model-three-axes.md        |   2 +
+ docs/architecture.md                               |   6 +-
+ docs/mission-pack-usage.md                         |  14 +-
+ .../2026-08-06-user-scene-tools-and-ai-create.md   |   6 +-
+ 12 files changed, 824 insertions(+), 50 deletions(-)
+
+diff --git a/chrome-extension/src/sidepanel/components/PacksPanel.tsx b/chrome-extension/src/sidepanel/components/PacksPanel.tsx
+index 0a1fd30..1c1e8d3 100644
+--- a/chrome-extension/src/sidepanel/components/PacksPanel.tsx
++++ b/chrome-extension/src/sidepanel/components/PacksPanel.tsx
+@@ -23,6 +23,9 @@ export type PackListItem = {
+   skill_refs?: string[]
+   mcp_servers?: string[]
+   editable?: boolean
++  /** Pack writes global security on apply (Trust B) */
++  has_trust?: boolean
++  trust_skip_l2?: boolean
+ }
+ 
+ type ModuleStateView = {
+@@ -56,7 +59,7 @@ const SCENE_TOOL_GROUPS: Array<{ title: string; highRisk?: boolean; tools: strin
+     ],
+   },
+   {
+-    title: "高危 / 企业（需本机模块；每次仍确认）",
++    title: "高危 / 企业（需本机模块；默认每次确认；若场景勾选 Trust 跳过 L2 则应用后可免确认）",
+     highRisk: true,
+     tools: [
+       "shell_exec",
+@@ -520,7 +523,8 @@ export function PacksPanel() {
+         if (
+           high &&
+           !window.confirm(
+-            `将「${name}」加入本场景工具面？\n仍需本机对应模块开启，且每次调用需安全确认（场景不能跳过确认）。`,
++            `将「${name}」加入本场景工具面？\n仍需本机对应模块开启。\n` +
++              `默认每次调用需安全确认；若同时勾选 Trust「跳过 L2 / 三旗巡航」，应用场景后可能免确认。`,
+           )
+         ) {
+           return prev
+@@ -740,6 +744,7 @@ export function PacksPanel() {
+                   <strong style={styles.name}>
+                     {p.name}
+                     {isUser ? " · 我的" : ""}
++                    {p.has_trust ? " · ⚠️ Trust" : ""}
+                     {isActive ? " · 本对话使用中" : ""}
+                   </strong>
+                   <span style={styles.meta}>
+@@ -747,6 +752,13 @@ export function PacksPanel() {
+                   </span>
+                 </div>
+                 {p.description && <div style={styles.desc}>{p.description}</div>}
++                {p.has_trust ? (
++                  <div style={{ ...styles.toolsLine, color: "#b45309" }}>
++                    应用时将写入全局安全配置
++                    {p.trust_skip_l2 ? "（含跳过 L2 / 三旗巡航）" : ""}
++                    ；退出/切换/删除场景会尽量恢复
++                  </div>
++                ) : null}
+                 {isUser && (p.skill_refs?.length || p.mcp_servers?.length) ? (
+                   <div style={styles.toolsLine}>
+                     技能 {p.skill_refs?.length || 0} · MCP {p.mcp_servers?.length || 0}
+@@ -859,6 +871,15 @@ export function PacksPanel() {
+                 {confirmPack.description || "将应用该场景模板到当前对话（可能限制可用工具）。"}
+               </p>
+             )}
++            {confirmPack.has_trust ? (
++              <p style={{ ...styles.modalP, color: "#b45309", fontWeight: 600 }}>
++                ⚠️ Trust：此场景应用后会写入全局安全配置
++                {confirmPack.trust_skip_l2
++                  ? "（跳过 L2 / 开启三旗全自动巡航，shell·MCP 等高危调用可能不再弹确认）"
++                  : "（可能开启模块或 auto_approve）"}
++                。退出场景、切换到其他场景或删除场景时会尽量恢复；请确认你信任该场景。
++              </p>
++            ) : null}
+             <div style={styles.modalActions}>
+               <button type="button" style={styles.secondaryBtn} onClick={() => setConfirmPack(null)}>
+                 取消
+diff --git a/companion/src/message-router.ts b/companion/src/message-router.ts
+index 8c693ee..044fbd1 100644
+--- a/companion/src/message-router.ts
++++ b/companion/src/message-router.ts
+@@ -1956,8 +1956,10 @@ export async function handleMessage(
+       if (!rest.pack_id || !rest.thread_id) {
+         return { type: "error", error: "pack_id and thread_id required" }
+       }
++      // allowTrust: only Side Panel user_gesture may write global Trust B
+       const r = applyPack(rest.pack_id, rest.thread_id, threadManager, skillEngine, {
+         workspace_path: rest.workspace_path,
++        allowTrust: true,
+       })
+       if (!r.ok) {
+         return { type: "error", error: r.error, code: (r as any).code }
+@@ -2063,7 +2065,10 @@ export async function handleMessage(
+           ? rest.apply_thread_id.trim()
+           : null
+       if (applyThreadId) {
+-        const ar = applyPack(r.id, applyThreadId, threadManager, skillEngine)
++        // Same gesture as save — allow Trust B write for user scenes
++        const ar = applyPack(r.id, applyThreadId, threadManager, skillEngine, {
++          allowTrust: true,
++        })
+         if (!ar.ok) {
+           return {
+             type: "pack.saved_user",
+diff --git a/companion/src/packs/pack-engine.ts b/companion/src/packs/pack-engine.ts
+index bfbe65d..da02d0d 100644
+--- a/companion/src/packs/pack-engine.ts
++++ b/companion/src/packs/pack-engine.ts
+@@ -5,6 +5,7 @@ import AdmZip from "adm-zip"
+ import matter from "gray-matter"
+ import * as yaml from "js-yaml"
+ import { getConfigDir, getConfig, saveConfig, type CompanionConfig } from "../config"
++import { atomicWriteJSON } from "../io"
+ import { SkillEngine } from "../skills/skill-engine"
+ import { ThreadManager } from "../threads/thread-manager"
+ import { appendCapabilityAudit } from "./audit-log"
+@@ -224,6 +225,228 @@ export function restoreTrustSnapshot(snap: PackTrustSnapshot, by: string = "pack
+   })
+ }
+ 
++/** True when value looks like a PackTrustSnapshot we can restore. */
++export function isPackTrustSnapshot(v: unknown): v is PackTrustSnapshot {
++  return !!v && typeof v === "object" && !Array.isArray(v) && "modules" in (v as object)
++}
++
++/**
++ * Best-effort restore of a thread's stored trust cookie (does not clear the cookie).
++ * Callers must clear mission_pack_trust_snapshot separately when leaving the pack.
++ */
++export function restoreTrustFromThreadCookie(
++  trustCookie: unknown,
++  by: string,
++): boolean {
++  if (!isPackTrustSnapshot(trustCookie)) return false
++  try {
++    restoreTrustSnapshot(trustCookie, by)
++    return true
++  } catch {
++    return false
++  }
++}
++
++// ---------------------------------------------------------------------------
++// Trust B lifecycle journal + single-holder (S46 residual F4 / crash F1)
++// ---------------------------------------------------------------------------
++
++/** Durable journal under DATA_DIR — survives crash mid-apply. */
++export type PackTrustJournal = {
++  phase: "applying" | "held"
++  thread_id: string
++  pack_id: string
++  snap: PackTrustSnapshot
++  at: string
++}
++
++export function trustJournalPath(): string {
++  return path.join(getConfigDir(), "mission-pack-trust-journal.json")
++}
++
++export function readTrustJournal(): PackTrustJournal | null {
++  const p = trustJournalPath()
++  try {
++    if (!fs.existsSync(p)) return null
++    const raw = JSON.parse(fs.readFileSync(p, "utf-8"))
++    if (!raw || typeof raw !== "object") return null
++    if (raw.phase !== "applying" && raw.phase !== "held") return null
++    if (typeof raw.thread_id !== "string" || typeof raw.pack_id !== "string") return null
++    if (!isPackTrustSnapshot(raw.snap)) return null
++    return {
++      phase: raw.phase,
++      thread_id: raw.thread_id,
++      pack_id: raw.pack_id,
++      snap: raw.snap,
++      at: typeof raw.at === "string" ? raw.at : new Date().toISOString(),
++    }
++  } catch {
++    return null
++  }
++}
++
++export function writeTrustJournal(j: PackTrustJournal): void {
++  atomicWriteJSON(trustJournalPath(), j, 0o600)
++}
++
++export function clearTrustJournal(): void {
++  try {
++    fs.unlinkSync(trustJournalPath())
++  } catch {
++    /* ignore */
++  }
++}
++
++/** Other threads that currently hold a Trust restore cookie (single-holder policy). */
++export function findOtherTrustHolders(
++  threadManager: ThreadManager,
++  excludeThreadId: string,
++): Array<{ id: string; pack_id: string | null }> {
++  const out: Array<{ id: string; pack_id: string | null }> = []
++  for (const t of threadManager.list()) {
++    if (t.id === excludeThreadId) continue
++    if (isPackTrustSnapshot(t.mission_pack_trust_snapshot)) {
++      out.push({ id: t.id, pack_id: t.mission_pack_id ?? null })
++    }
++  }
++  return out
++}
++
++/**
++ * Boot / reconnect: heal crash mid-apply and orphan held Trust with no thread cookie.
++ * Call after ThreadManager is constructed (server initServices).
++ */
++export function reconcilePackTrustOnBoot(threadManager: ThreadManager): {
++  action: "none" | "restored_applying" | "restored_orphan_held" | "cleared_stale_held"
++  journal: PackTrustJournal | null
++} {
++  const j = readTrustJournal()
++  if (!j) return { action: "none", journal: null }
++
++  if (j.phase === "applying") {
++    // Crash between trust write and thread cookie commit
++    restoreTrustFromThreadCookie(j.snap, "pack.trust_reconcile:applying")
++    clearTrustJournal()
++    appendCapabilityAudit({
++      type: "pack.trust_reconcile",
++      at: new Date().toISOString(),
++      action: "restored_applying",
++      thread_id: j.thread_id,
++      pack_id: j.pack_id,
++    })
++    return { action: "restored_applying", journal: j }
++  }
++
++  // phase === held: cookie should exist on that thread
++  const thr = threadManager.get(j.thread_id)
++  if (thr && isPackTrustSnapshot(thr.mission_pack_trust_snapshot)) {
++    return { action: "none", journal: j }
++  }
++
++  // Orphan held: thread gone or cookie cleared without restore
++  restoreTrustFromThreadCookie(j.snap, "pack.trust_reconcile:orphan_held")
++  clearTrustJournal()
++  appendCapabilityAudit({
++    type: "pack.trust_reconcile",
++    at: new Date().toISOString(),
++    action: "restored_orphan_held",
++    thread_id: j.thread_id,
++    pack_id: j.pack_id,
++  })
++  return { action: "restored_orphan_held", journal: j }
++}
++
++function markTrustHeld(threadId: string, packId: string, snap: PackTrustSnapshot): void {
++  writeTrustJournal({
++    phase: "held",
++    thread_id: threadId,
++    pack_id: packId,
++    snap,
++    at: new Date().toISOString(),
++  })
++}
++
++function markTrustApplying(threadId: string, packId: string, snap: PackTrustSnapshot): void {
++  writeTrustJournal({
++    phase: "applying",
++    thread_id: threadId,
++    pack_id: packId,
++    snap,
++    at: new Date().toISOString(),
++  })
++}
++
++/** Clear journal when this thread/pack releases Trust (or after failed apply). */
++export function releaseTrustJournalIfMatch(threadId: string, packId?: string | null): void {
++  const j = readTrustJournal()
++  if (!j) return
++  if (j.thread_id !== threadId) return
++  if (packId != null && j.pack_id !== packId && j.phase === "held") {
++    // Still clear if same thread leaves any trust pack
++  }
++  clearTrustJournal()
++}
++
++/**
++ * Install path must never persist origin=user or a trust block (S46 Security F2).
++ * Only saveUserPack may author origin:user + trust. Builtin origin is preserved.
++ * Returns sanitized manifest + whether rewrite of pack.yaml is required.
++ */
++export function sanitizeManifestForInstall(manifest: PackManifest): {
++  manifest: PackManifest
++  rewritten: boolean
++} {
++  const hadUserOrigin = manifest.origin === "user"
++  const hadTrust = !!manifest.trust
++  if (!hadUserOrigin && !hadTrust) {
++    return { manifest, rewritten: false }
++  }
++  const next: PackManifest = {
++    ...manifest,
++    origin: manifest.origin === "builtin" ? "builtin" : "installed",
++  }
++  delete next.trust
++  // Spoofed user origin never stays user on install
++  if (hadUserOrigin) {
++    next.origin = "installed"
++  }
++  return { manifest: next, rewritten: true }
++}
++
++/** Persist sanitized manifest to pack.yaml (install path only). */
++function rewritePackYaml(destDir: string, manifest: PackManifest): void {
++  const doc: Record<string, unknown> = {
++    schema_version: manifest.schema_version,
++    id: manifest.id,
++    name: manifest.name,
++    description: manifest.description,
++    version: manifest.version,
++    channel: manifest.channel,
++    min_capability: manifest.min_capability,
++    requires_modules: manifest.requires_modules,
++    origin: manifest.origin || "installed",
++    skills: manifest.skills,
++    skill_refs: manifest.skill_refs,
++    knowledge: manifest.knowledge,
++    mcp_servers: manifest.mcp_servers,
++    tools: manifest.tools,
++    system_prompt_append: manifest.system_prompt_append,
++    board_mode: manifest.board_mode,
++    thread_defaults: manifest.thread_defaults,
++    workspace: manifest.workspace,
++    author: manifest.author,
++    tags: manifest.tags,
++    ui: manifest.ui,
++    // intentionally omit trust
++  }
++  // Drop undefined keys for cleaner yaml
++  for (const k of Object.keys(doc)) {
++    if (doc[k] === undefined) delete doc[k]
++  }
++  const yamlBody = yaml.dump(doc, { lineWidth: -1, noRefs: true })
++  fs.writeFileSync(path.join(destDir, "pack.yaml"), yamlBody, { mode: 0o600 })
++}
++
+ function packsInstalledDir(): string {
+   return path.join(getConfigDir(), "packs", "installed")
+ }
+@@ -382,6 +605,8 @@ export function listInstalledPacks(cfg?: CompanionConfig): PackListItem[] {
+     }
+     const ui = v.manifest.ui
+     const origin = resolvePackOrigin(v.manifest)
++    const trust = v.manifest.trust
++    const hasTrust = !!trust
+     items.push({
+       id: v.manifest.id,
+       name: v.manifest.name,
+@@ -399,6 +624,8 @@ export function listInstalledPacks(cfg?: CompanionConfig): PackListItem[] {
+       skill_refs: v.manifest.skill_refs,
+       mcp_servers: v.manifest.mcp_servers,
+       editable: origin === "user",
++      has_trust: hasTrust,
++      trust_skip_l2: trust?.skip_l2 === true,
+     })
+   }
+   return items.sort((a, b) => a.id.localeCompare(b.id))
+@@ -767,6 +994,12 @@ export function installPackFromDirectory(
+     const v2 = validatePackDir(tmp)
+     if (!v2.ok) return { ok: false, error: v2.error }
+ 
++    // S46 P0-3: strip origin=user + trust on install path (only saveUserPack may author them)
++    const sanitized = sanitizeManifestForInstall(v2.manifest)
++    if (sanitized.rewritten) {
++      rewritePackYaml(tmp, sanitized.manifest)
++    }
++
+     removeNamespacedAssets(v2.manifest.id)
+     if (fs.existsSync(dest)) fs.rmSync(dest, { recursive: true, force: true })
+     fs.renameSync(tmp, dest)
+@@ -774,12 +1007,31 @@ export function installPackFromDirectory(
+     // Re-validate after rename so skillAbsPaths point at dest (not tmp)
+     const v3 = validatePackDir(dest)
+     if (!v3.ok) return { ok: false, error: v3.error }
++    // Defense in depth: trust must never remain on installed tree after sanitize
++    if (v3.manifest.trust || v3.manifest.origin === "user") {
++      const again = sanitizeManifestForInstall(v3.manifest)
++      rewritePackYaml(dest, again.manifest)
++      const v4 = validatePackDir(dest)
++      if (!v4.ok) return { ok: false, error: v4.error }
++      installAssetsFromValidated(dest, v4.manifest, v4.skillAbsPaths, v4.knowledgeAbsPaths)
++      skillEngine.refresh()
++      appendCapabilityAudit({
++        type: "pack.install",
++        pack_id: v4.manifest.id,
++        at: new Date().toISOString(),
++        trust_stripped: true,
++        origin_forced: again.manifest.origin,
++      })
++      return { ok: true, id: v4.manifest.id }
++    }
+     installAssetsFromValidated(dest, v3.manifest, v3.skillAbsPaths, v3.knowledgeAbsPaths)
+     skillEngine.refresh()
+     appendCapabilityAudit({
+       type: "pack.install",
+       pack_id: v3.manifest.id,
+       at: new Date().toISOString(),
++      trust_stripped: sanitized.rewritten,
++      origin_forced: sanitized.rewritten ? sanitized.manifest.origin : undefined,
+     })
+     return { ok: true, id: v3.manifest.id }
+   } catch (e: any) {
+@@ -930,13 +1182,16 @@ function configuredMcpServerIds(config: CompanionConfig): Set<string> {
+  * - Switching packs: base state = existing mission_pack_snapshot (pre-A), not current post-A thread
+  * - Re-apply same pack: freeze original snapshot; recompute whitelist/append from base
+  * - First apply: snapshot = current thread
++ *
++ * @param opts.allowTrust - When true (UI pack.apply / save+apply only), origin=user trust may
++ *   write global config. Default **false** so spawn_worker / non-gesture paths cannot elevate Trust B.
+  */
+ export function applyPack(
+   packId: string,
+   threadId: string,
+   threadManager: ThreadManager,
+   skillEngine: SkillEngine,
+-  opts?: { workspace_path?: string },
++  opts?: { workspace_path?: string; allowTrust?: boolean },
+ ): { ok: true; thread: any } | { ok: false; error: string; code?: string } {
+   let config = getConfig()
+   const { dir, result } = readInstalledManifest(packId)
+@@ -945,16 +1200,53 @@ export function applyPack(
+   const thread = threadManager.get(threadId)
+   if (!thread) return { ok: false, error: `thread not found: ${threadId}` }
+ 
++  const allowTrust = opts?.allowTrust === true
++  const switchingAway =
++    !!thread.mission_pack_id && thread.mission_pack_id !== packId
++
++  // S46 P0-1: leaving pack A for B — restore A's global Trust BEFORE writing B.
++  // Cookie stays until final applyPackPatch (B success writes B's snap or null).
++  // Re-apply same pack keeps prior cookie (handled below).
++  if (switchingAway && isPackTrustSnapshot(thread.mission_pack_trust_snapshot)) {
++    restoreTrustFromThreadCookie(
++      thread.mission_pack_trust_snapshot,
++      `pack.switch_away:${thread.mission_pack_id}`,
++    )
++    releaseTrustJournalIfMatch(threadId, thread.mission_pack_id)
++  }
++
+   // Product B: apply Trust FIRST so module_disabled / enterprise_profile gates pass
++  // Only when allowTrust (UI gesture path) + origin=user + trust block.
+   let trustSnap: PackTrustSnapshot | null = null
++  let trustJustWritten = false
+   const packTrust = result.manifest.trust
+-  if (packTrust && resolvePackOrigin(result.manifest) === "user") {
+-    // Keep original pre-trust snapshot across re-apply so unapply restores correctly
++  const originUser = resolvePackOrigin(result.manifest) === "user"
++  if (packTrust && originUser && allowTrust) {
++    // Single-holder: another thread already owns Trust B → refuse (clear UI error).
++    const others = findOtherTrustHolders(threadManager, threadId)
++    if (others.length > 0) {
++      const o = others[0]
++      return {
++        ok: false,
++        error:
++          `Trust 已被其他对话占用（thread=${o.id}` +
++          (o.pack_id ? `, pack=${o.pack_id}` : "") +
++          `）。请先在该对话「退出场景」后再对本对话应用 Trust 场景。` +
++          ` Trust is held by another thread; unapply there first.`,
++        code: "trust_holder_conflict",
++      }
++    }
++
++    // Keep original pre-trust snapshot across **same-pack** re-apply so unapply restores correctly.
++    // On switch A→B: never reuse A's cookie — capture after switch_away restore (fresh baseline).
+     const prior = thread.mission_pack_trust_snapshot as PackTrustSnapshot | null | undefined
+-    trustSnap =
+-      prior && typeof prior === "object" && prior.modules
+-        ? prior
+-        : captureTrustSnapshot()
++    const samePackReapply = thread.mission_pack_id === packId
++    const reusingPrior = samePackReapply && isPackTrustSnapshot(prior)
++    trustSnap = reusingPrior ? prior! : captureTrustSnapshot()
++
++    // Crash window: journal "applying" BEFORE durable saveConfig so boot can restore.
++    markTrustApplying(threadId, packId, trustSnap)
++
+     const trustToApply: UserPackTrustPolicy = {
+       ...packTrust,
+       enable_modules: [
+@@ -971,27 +1263,39 @@ export function applyPack(
+     }
+     const tr = applyUserPackTrust(trustToApply, `pack.apply:${packId}`)
+     if (!tr.ok) {
+-      // Only restore if we just captured a new snap (not reusing prior)
+-      if (!prior) {
+-        try {
+-          restoreTrustSnapshot(trustSnap, `pack.apply_trust_fail:${packId}`)
+-        } catch {
+-          /* ignore */
+-        }
++      // Always roll back to pre-attempt snap (new or reused) — applyUserPackTrust may
++      // have partially enabled modules before returning ok:false.
++      if (trustSnap) {
++        restoreTrustFromThreadCookie(trustSnap, `pack.apply_trust_fail:${packId}`)
+       }
++      clearTrustJournal()
+       return { ok: false, error: tr.error, code: "trust_apply_failed" }
+     }
++    trustJustWritten = true
+     config = getConfig()
++  } else if (packTrust && originUser && !allowTrust) {
++    // Spawn / non-gesture: composition only — do not write global Trust
++    appendCapabilityAudit({
++      type: "pack.trust_skipped",
++      by: `pack.apply:${packId}`,
++      at: new Date().toISOString(),
++      reason: "allowTrust_false",
++      thread_id: threadId,
++    })
++  }
++
++  /** Roll back Trust written in this call + clear applying journal. */
++  const rollbackTrust = (reason: string) => {
++    if (trustSnap && (trustJustWritten || reason.includes("rollback"))) {
++      restoreTrustFromThreadCookie(trustSnap, reason)
++      clearTrustJournal()
++    }
+   }
+ 
+   const blocked = computeApplyBlocked(result.manifest, config)
+   if (blocked) {
+-    if (trustSnap) {
+-      try {
+-        restoreTrustSnapshot(trustSnap, `pack.apply_blocked_rollback:${packId}`)
+-      } catch {
+-        /* ignore */
+-      }
++    if (trustJustWritten) {
++      rollbackTrust(`pack.apply_blocked_rollback:${packId}`)
+     }
+     return {
+       ok: false,
+@@ -1033,6 +1337,10 @@ export function applyPack(
+     )
+     skillEngine.refresh()
+   } catch (e: any) {
++    // S46 P0-2: Trust already written — must restore or cruise sticks with no cookie
++    if (trustJustWritten) {
++      rollbackTrust(`pack.apply_assets_fail:${packId}`)
++    }
+     return { ok: false, error: e?.message || String(e) }
+   }
+ 
+@@ -1079,26 +1387,30 @@ export function applyPack(
+       workspace_root: opts?.workspace_path ?? thread.workspace_root ?? null,
+       // ADR-016: explicit true/false so non-board packs clear sticky board_mode
+       board_mode: result.manifest.board_mode === true,
++      // Only keep cookie when this apply wrote (or re-applied) Trust
+       mission_pack_trust_snapshot: trustSnap
+         ? (JSON.parse(JSON.stringify(trustSnap)) as Record<string, unknown>)
+         : null,
+     })
++    // Promote journal applying → held; non-trust apply releases this thread's journal
++    if (trustSnap && allowTrust) {
++      markTrustHeld(threadId, packId, trustSnap)
++    } else if (!trustSnap) {
++      releaseTrustJournalIfMatch(threadId)
++    }
+     appendCapabilityAudit({
+       type: "pack.apply",
+       pack_id: packId,
+       thread_id: threadId,
+       at: new Date().toISOString(),
+-      trust_applied: !!trustSnap,
++      trust_applied: !!trustSnap && allowTrust,
++      allow_trust: allowTrust,
+     })
+     return { ok: true, thread: updated }
+   } catch (e: any) {
+     // Best-effort restore trust if thread patch failed after trust write
+-    if (trustSnap) {
+-      try {
+-        restoreTrustSnapshot(trustSnap, `pack.apply_rollback:${packId}`)
+-      } catch {
+-        /* ignore */
+-      }
++    if (trustJustWritten) {
++      rollbackTrust(`pack.apply_rollback:${packId}`)
+     }
+     return { ok: false, error: e?.message || String(e) }
+   }
+@@ -1138,10 +1450,11 @@ export function unapplyPack(
+     // Product B: restore global Trust if this apply had written it
+     if (trustSnap && typeof trustSnap === "object") {
+       try {
+-        restoreTrustSnapshot(trustSnap, `pack.unapply:${packId}`)
++        restoreTrustSnapshot(trustSnap as PackTrustSnapshot, `pack.unapply:${packId}`)
+       } catch {
+         /* best-effort */
+       }
++      releaseTrustJournalIfMatch(threadId, packId)
+     }
+     const updated = threadManager.get(threadId)
+     appendCapabilityAudit({
+@@ -1166,8 +1479,11 @@ export function uninstallPack(
+   if (!fs.existsSync(dest)) return { ok: false, error: `pack not installed: ${packId}` }
+ 
+   const restored: string[] = []
++  let trustRestoredCount = 0
+   for (const t of threadManager.list()) {
+     if (t.mission_pack_id === packId) {
++      // S46 P0-1: read trust cookie BEFORE restoreSnapshot nulls it
++      const trustCookie = t.mission_pack_trust_snapshot
+       if (t.mission_pack_snapshot) {
+         restoreSnapshot(threadManager, t.id, t.mission_pack_snapshot as ThreadPackSnapshot)
+       } else {
+@@ -1178,8 +1494,13 @@ export function uninstallPack(
+           active_skill_ids: (t.active_skill_ids || []).filter((s: string) => !s.startsWith(`pack--${packId}--`)),
+           system_prompt_append: null,
+           board_mode: false,
++          mission_pack_trust_snapshot: null,
+         })
+       }
++      if (restoreTrustFromThreadCookie(trustCookie, `pack.uninstall:${packId}`)) {
++        trustRestoredCount += 1
++        releaseTrustJournalIfMatch(t.id, packId)
++      }
+       restored.push(t.id)
+     }
+   }
+@@ -1192,6 +1513,7 @@ export function uninstallPack(
+     pack_id: packId,
+     at: new Date().toISOString(),
+     restored_threads: restored,
++    trust_restored_count: trustRestoredCount,
+   })
+   return { ok: true, restored_threads: restored }
+ }
+diff --git a/companion/src/packs/types.ts b/companion/src/packs/types.ts
+index eb6b0eb..fcb6e87 100644
+--- a/companion/src/packs/types.ts
++++ b/companion/src/packs/types.ts
+@@ -96,6 +96,13 @@ export interface PackListItem {
+   mcp_servers?: string[]
+   /** True when pack can be edited via pack.save_user (origin=user). */
+   editable?: boolean
++  /**
++   * True when this pack has a trust block that writes global security on apply.
++   * List UI must disclose before apply (S46 multi-lane P0).
++   */
++  has_trust?: boolean
++  /** Trust shorthand: full three-flag cruise on apply. */
++  trust_skip_l2?: boolean
+ }
+ 
+ /** Payload for creating/updating a user-authored scene template. */
+diff --git a/companion/src/server.ts b/companion/src/server.ts
+index a842a66..55919e3 100644
+--- a/companion/src/server.ts
++++ b/companion/src/server.ts
+@@ -555,8 +555,19 @@ async function initServices() {
+   await historyStore.waitReady()
+   // Mission Pack P0: install shipped packs (appsec-prd-review) into DATA_DIR
+   try {
+-    const { ensureBuiltinPacksInstalled } = await import("./packs/pack-engine")
++    const { ensureBuiltinPacksInstalled, reconcilePackTrustOnBoot } = await import(
++      "./packs/pack-engine"
++    )
+     ensureBuiltinPacksInstalled(skillEngine)
++    // S46: restore orphan Trust after crash mid-apply / missing thread cookie
++    const rec = reconcilePackTrustOnBoot(threadManager)
++    if (rec.action !== "none") {
++      logger.warn("packs.trust_reconcile", {
++        action: rec.action,
++        thread_id: rec.journal?.thread_id,
++        pack_id: rec.journal?.pack_id,
++      })
++    }
+   } catch (e: any) {
+     logger.warn("packs.builtin_install_failed", { error: e?.message || String(e) })
+   }
+@@ -3190,7 +3201,8 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?:
+         intentId,
+       })
+       if (!r.ok) return { success: false, error: r.error }
+-      // Optional pack.apply after spawn (role template — never elevates capability_profile / modules)
++      // Optional pack.apply after spawn: composition only — NEVER allowTrust (S46 P0-4).
++      // Spawn L2 ≠ consent to write global auto_approve / three-flag cruise (Trust B).
+       let packApply: { ok: boolean; error?: string } | null = null
+       if (params.pack_id && typeof params.pack_id === "string") {
+         try {
+@@ -3198,7 +3210,9 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?:
+           if (!skillEngine) {
+             packApply = { ok: false, error: "skillEngine not initialized; worker created with mission_pack_id only" }
+           } else {
+-            const ar = applyPack(String(params.pack_id), r.worker.id, threadManager, skillEngine)
++            const ar = applyPack(String(params.pack_id), r.worker.id, threadManager, skillEngine, {
++              allowTrust: false,
++            })
+             packApply = ar.ok ? { ok: true } : { ok: false, error: ar.error }
+           }
+         } catch (e: any) {
+diff --git a/companion/src/skills/skill-install.ts b/companion/src/skills/skill-install.ts
+index 2f81f44..bc59a87 100644
+--- a/companion/src/skills/skill-install.ts
++++ b/companion/src/skills/skill-install.ts
+@@ -93,16 +93,16 @@ function tryRealpath(p: string): string | null {
+ 
+ /**
+  * Classify skill_install path/zip source.
+- * - default: Downloads / 下载 / tmp / cmspark data dir (browser download & tooling zone)
++ * - default: OS temp / cmspark data dir / **home-bounded** Downloads·下载
+  * - user_home: under os.homedir() (e.g. ~/Projects) — allowed; L2 is the user authorization
+  * - denied: elsewhere (prevents agent ambient read of system paths into skill library)
++ *
++ * S46 compat: do **not** treat any path segment named "Downloads" as trusted
++ * (e.g. /var/evil/Downloads must stay denied). Only ~/Downloads · ~/下载 (realpath).
+  */
+ export function classifySkillInstallSource(resolvedPath: string): SkillInstallSourceTier {
+   if (!resolvedPath) return "denied"
+   const norm = path.resolve(resolvedPath)
+-  const lower = norm.replace(/\\/g, "/").toLowerCase()
+-  const segments = lower.split("/").filter(Boolean)
+-  if (segments.includes("downloads") || segments.includes("下载")) return "default"
+ 
+   try {
+     const data = fs.realpathSync(getConfigDir())
+@@ -122,7 +122,14 @@ export function classifySkillInstallSource(resolvedPath: string): SkillInstallSo
+     const home = tryRealpath(os.homedir())
+     if (!home) return "denied"
+     const cand = tryRealpath(norm) || norm
+-    if (pathEqualsOrUnder(cand, home)) return "user_home"
++    if (!pathEqualsOrUnder(cand, home)) return "denied"
++
++    // Browser download folders only under home (not bare path-segment heuristic)
++    for (const leaf of ["Downloads", "下载"]) {
++      const dl = tryRealpath(path.join(home, leaf))
++      if (dl && pathEqualsOrUnder(cand, dl)) return "default"
++    }
++    return "user_home"
+   } catch {
+     /* ignore */
+   }
+diff --git a/companion/tests/packs-engine.test.ts b/companion/tests/packs-engine.test.ts
+index 3dae7b4..6baa804 100644
+--- a/companion/tests/packs-engine.test.ts
++++ b/companion/tests/packs-engine.test.ts
+@@ -153,7 +153,9 @@ test("saveUserPack trust skip_l2 + enable shell applies global Trust and unapply
+ 
+   const tm = new ThreadManager()
+   const thread = tm.create("trust-apply-th")
+-  const applied = packEngine.applyPack(saved.id, thread.id, tm, skillEngine)
++  const applied = packEngine.applyPack(saved.id, thread.id, tm, skillEngine, {
++    allowTrust: true,
++  })
+   assert.equal(applied.ok, true, (applied as any).error)
+   const cfg1 = getConfig() as any
+   assert.equal(cfg1.capability_profile, "enterprise")
+@@ -177,6 +179,386 @@ test("saveUserPack trust skip_l2 + enable shell applies global Trust and unapply
+   clearConfigCache()
+ })
+ 
++function resetTrustBaseline(cfg0: any) {
++  saveConfig({
++    capability_profile: "community",
++    security: {
++      ...(cfg0.security || {}),
++      auto_approve_dangerous: false,
++      auto_approve_enterprise_tools: false,
++      allow_all_schemes: false,
++    },
++    modules: {
++      ...(cfg0.modules || {}),
++      appsec: { available: true, enabled: true, enabled_at: new Date().toISOString(), enabled_by: "test" },
++      shell: { available: true, enabled: false, policy: "confirm_per_command", allowlist_commands: [] },
++    },
++  } as any)
++  clearConfigCache()
++}
++
++test("S46 P0: allowTrust false (spawn path) does not write global Trust", () => {
++  const skillEngine = new SkillEngine()
++  const cfg0 = getConfig() as any
++  resetTrustBaseline(cfg0)
++
++  // Community-channel pack with a mild trust block (no skip_l2/shell → no enterprise gate).
++  // With allowTrust:false composition still applies; globals must stay off.
++  const saved = packEngine.saveUserPack(
++    {
++      name: "trust-spawn-skip",
++      system_prompt_append: "spawn must not elevate Trust",
++      skill_ids: [],
++      tools: { mode: "allowlist", allow: ["list_tabs", "use_skill"], deny: [] },
++      trust: { auto_approve_dangerous: true },
++    },
++    skillEngine,
++  )
++  assert.equal(saved.ok, true)
++  if (!saved.ok) return
++
++  const tm = new ThreadManager()
++  const thread = tm.create("spawn-trust-th")
++  const applied = packEngine.applyPack(saved.id, thread.id, tm, skillEngine, {
++    allowTrust: false,
++  })
++  assert.equal(applied.ok, true, (applied as any).error)
++  const cfg1 = getConfig() as any
++  assert.equal(cfg1.security?.auto_approve_dangerous, false)
++  const t = tm.get(thread.id)!
++  assert.equal(t.mission_pack_id, saved.id)
++  assert.equal(t.mission_pack_trust_snapshot, null)
++
++  // Control: same pack with allowTrust DOES elevate
++  const t2 = tm.create("spawn-trust-control")
++  assert.equal(
++    packEngine.applyPack(saved.id, t2.id, tm, skillEngine, { allowTrust: true }).ok,
++    true,
++  )
++  assert.equal((getConfig() as any).security?.auto_approve_dangerous, true)
++  packEngine.unapplyPack(t2.id, tm)
++  assert.equal((getConfig() as any).security?.auto_approve_dangerous, false)
++
++  packEngine.deleteUserPack(saved.id, tm, skillEngine)
++  saveConfig({ capability_profile: cfg0.capability_profile, security: cfg0.security, modules: cfg0.modules } as any)
++  clearConfigCache()
++})
++
++test("S46 P0: uninstall restores Trust (not only unapply)", () => {
++  const skillEngine = new SkillEngine()
++  const cfg0 = getConfig() as any
++  resetTrustBaseline(cfg0)
++
++  const saved = packEngine.saveUserPack(
++    {
++      name: "trust-uninstall",
++      system_prompt_append: "uninstall must restore Trust",
++      skill_ids: [],
++      tools: { mode: "allowlist", allow: ["shell_exec", "list_tabs", "use_skill"], deny: [] },
++      trust: {
++        skip_l2: true,
++        set_enterprise_profile: true,
++        enable_modules: ["shell"],
++      },
++    },
++    skillEngine,
++  )
++  assert.equal(saved.ok, true)
++  if (!saved.ok) return
++
++  const tm = new ThreadManager()
++  const thread = tm.create("uninstall-trust-th")
++  assert.equal(
++    packEngine.applyPack(saved.id, thread.id, tm, skillEngine, { allowTrust: true }).ok,
++    true,
++  )
++  assert.equal((getConfig() as any).security?.auto_approve_dangerous, true)
++
++  const un = packEngine.uninstallPack(saved.id, tm, skillEngine)
++  assert.equal(un.ok, true)
++  const cfg2 = getConfig() as any
++  assert.equal(cfg2.security?.auto_approve_dangerous, false)
++  assert.equal(cfg2.security?.auto_approve_enterprise_tools, false)
++  assert.equal(cfg2.security?.allow_all_schemes, false)
++  assert.equal(cfg2.modules?.shell?.enabled, false)
++  assert.equal(tm.get(thread.id)!.mission_pack_id, null)
++
++  saveConfig({ capability_profile: cfg0.capability_profile, security: cfg0.security, modules: cfg0.modules } as any)
++  clearConfigCache()
++})
++
++test("S46 P0: switch trust pack → non-trust pack restores cruise flags", () => {
++  const skillEngine = new SkillEngine()
++  const cfg0 = getConfig() as any
++  resetTrustBaseline(cfg0)
++
++  const trustPack = packEngine.saveUserPack(
++    {
++      name: "trust-A",
++      system_prompt_append: "A with trust",
++      skill_ids: [],
++      tools: { mode: "allowlist", allow: ["shell_exec", "list_tabs", "use_skill"], deny: [] },
++      trust: { skip_l2: true, enable_modules: ["shell"] },
++    },
++    skillEngine,
++  )
++  assert.equal(trustPack.ok, true)
++  if (!trustPack.ok) return
++
++  const plainPack = packEngine.saveUserPack(
++    {
++      name: "plain-B",
++      system_prompt_append: "B without trust",
++      skill_ids: [],
++      tools: { mode: "allowlist", allow: ["list_tabs", "get_page_html"], deny: [] },
++    },
++    skillEngine,
++  )
++  assert.equal(plainPack.ok, true)
++  if (!plainPack.ok) return
++
++  const tm = new ThreadManager()
++  const thread = tm.create("switch-trust-th")
++  assert.equal(
++    packEngine.applyPack(trustPack.id, thread.id, tm, skillEngine, { allowTrust: true }).ok,
++    true,
++  )
++  assert.equal((getConfig() as any).security?.auto_approve_dangerous, true)
++
++  assert.equal(
++    packEngine.applyPack(plainPack.id, thread.id, tm, skillEngine, { allowTrust: true }).ok,
++    true,
++  )
++  const cfg2 = getConfig() as any
++  assert.equal(cfg2.security?.auto_approve_dangerous, false)
++  assert.equal(cfg2.modules?.shell?.enabled, false)
++  assert.equal(tm.get(thread.id)!.mission_pack_id, plainPack.id)
++  assert.equal(tm.get(thread.id)!.mission_pack_trust_snapshot, null)
++
++  packEngine.deleteUserPack(trustPack.id, tm, skillEngine)
++  packEngine.deleteUserPack(plainPack.id, tm, skillEngine)
++  saveConfig({ capability_profile: cfg0.capability_profile, security: cfg0.security, modules: cfg0.modules } as any)
++  clearConfigCache()
++})
++
++test("S46 P0: switch trust A → trust B captures fresh snap; unapply B restores baseline", () => {
++  const skillEngine = new SkillEngine()
++  const cfg0 = getConfig() as any
++  resetTrustBaseline(cfg0)
++
++  const packA = packEngine.saveUserPack(
++    {
++      name: "trust-A2",
++      system_prompt_append: "A trust",
++      skill_ids: [],
++      tools: { mode: "allowlist", allow: ["list_tabs", "use_skill"], deny: [] },
++      trust: { auto_approve_dangerous: true },
++    },
++    skillEngine,
++  )
++  const packB = packEngine.saveUserPack(
++    {
++      name: "trust-B2",
++      system_prompt_append: "B trust",
++      skill_ids: [],
++      tools: { mode: "allowlist", allow: ["list_tabs", "get_page_html"], deny: [] },
++      trust: { auto_approve_dangerous: true, allow_all_schemes: true },
++    },
++    skillEngine,
++  )
++  assert.equal(packA.ok && packB.ok, true)
++  if (!packA.ok || !packB.ok) return
++
++  const tm = new ThreadManager()
++  const thread = tm.create("switch-ab-trust")
++  assert.equal(
++    packEngine.applyPack(packA.id, thread.id, tm, skillEngine, { allowTrust: true }).ok,
++    true,
++  )
++  assert.equal((getConfig() as any).security?.auto_approve_dangerous, true)
++  assert.equal((getConfig() as any).security?.allow_all_schemes, false)
++
++  assert.equal(
++    packEngine.applyPack(packB.id, thread.id, tm, skillEngine, { allowTrust: true }).ok,
++    true,
++  )
++  assert.equal((getConfig() as any).security?.auto_approve_dangerous, true)
++  assert.equal((getConfig() as any).security?.allow_all_schemes, true)
++
++  // Unapply B must restore to baseline (pre-A), not leave A-only elevation
++  assert.equal(packEngine.unapplyPack(thread.id, tm).ok, true)
++  const cfgEnd = getConfig() as any
++  assert.equal(cfgEnd.security?.auto_approve_dangerous, false)
++  assert.equal(cfgEnd.security?.allow_all_schemes, false)
++
++  packEngine.deleteUserPack(packA.id, tm, skillEngine)
++  packEngine.deleteUserPack(packB.id, tm, skillEngine)
++  saveConfig({ capability_profile: cfg0.capability_profile, security: cfg0.security, modules: cfg0.modules } as any)
++  clearConfigCache()
++})
++
++test("S46 residual: second thread trust apply blocked while first holds", () => {
++  const skillEngine = new SkillEngine()
++  const cfg0 = getConfig() as any
++  resetTrustBaseline(cfg0)
++
++  const saved = packEngine.saveUserPack(
++    {
++      name: "trust-holder",
++      system_prompt_append: "holder pack",
++      skill_ids: [],
++      tools: { mode: "allowlist", allow: ["list_tabs"], deny: [] },
++      trust: { auto_approve_dangerous: true },
++    },
++    skillEngine,
++  )
++  assert.equal(saved.ok, true)
++  if (!saved.ok) return
++
++  const tm = new ThreadManager()
++  const t1 = tm.create("holder-1")
++  const t2 = tm.create("holder-2")
++  assert.equal(
++    packEngine.applyPack(saved.id, t1.id, tm, skillEngine, { allowTrust: true }).ok,
++    true,
++  )
++  const r2 = packEngine.applyPack(saved.id, t2.id, tm, skillEngine, { allowTrust: true })
++  assert.equal(r2.ok, false)
++  assert.equal((r2 as any).code, "trust_holder_conflict")
++  assert.equal((getConfig() as any).security?.auto_approve_dangerous, true)
++
++  assert.equal(packEngine.unapplyPack(t1.id, tm).ok, true)
++  assert.equal(
++    packEngine.applyPack(saved.id, t2.id, tm, skillEngine, { allowTrust: true }).ok,
++    true,
++  )
++  packEngine.unapplyPack(t2.id, tm)
++  packEngine.deleteUserPack(saved.id, tm, skillEngine)
++  saveConfig({ capability_profile: cfg0.capability_profile, security: cfg0.security, modules: cfg0.modules } as any)
++  clearConfigCache()
++})
++
++test("S46 residual: reconcilePackTrustOnBoot restores applying journal", () => {
++  const cfg0 = getConfig() as any
++  resetTrustBaseline(cfg0)
++  const snap = packEngine.captureTrustSnapshot()
++  // Simulate elevation then crash before cookie
++  saveConfig({
++    capability_profile: "community",
++    security: {
++      ...(getConfig() as any).security,
++      auto_approve_dangerous: true,
++      auto_approve_enterprise_tools: true,
++      allow_all_schemes: true,
++    },
++  } as any)
++  clearConfigCache()
++  packEngine.writeTrustJournal({
++    phase: "applying",
++    thread_id: "ghost-thread",
++    pack_id: "ghost-pack",
++    snap,
++    at: new Date().toISOString(),
++  })
++  const tm = new ThreadManager()
++  const rec = packEngine.reconcilePackTrustOnBoot(tm)
++  assert.equal(rec.action, "restored_applying")
++  assert.equal((getConfig() as any).security?.auto_approve_dangerous, false)
++  assert.equal(packEngine.readTrustJournal(), null)
++  saveConfig({ capability_profile: cfg0.capability_profile, security: cfg0.security, modules: cfg0.modules } as any)
++  clearConfigCache()
++})
++
++test("S46 residual: reconcilePackTrustOnBoot restores orphan held journal", () => {
++  const cfg0 = getConfig() as any
++  resetTrustBaseline(cfg0)
++  const snap = packEngine.captureTrustSnapshot()
++  saveConfig({
++    security: {
++      ...(getConfig() as any).security,
++      auto_approve_dangerous: true,
++    },
++  } as any)
++  clearConfigCache()
++  packEngine.writeTrustJournal({
++    phase: "held",
++    thread_id: "missing-thread",
++    pack_id: "x",
++    snap,
++    at: new Date().toISOString(),
++  })
++  const tm = new ThreadManager()
++  const rec = packEngine.reconcilePackTrustOnBoot(tm)
++  assert.equal(rec.action, "restored_orphan_held")
++  assert.equal((getConfig() as any).security?.auto_approve_dangerous, false)
++  assert.equal(packEngine.readTrustJournal(), null)
++  saveConfig({ capability_profile: cfg0.capability_profile, security: cfg0.security, modules: cfg0.modules } as any)
++  clearConfigCache()
++})
++
++test("S46 P0: installPackFromDirectory strips origin=user + trust", () => {
++  const skillEngine = new SkillEngine()
++  const src = fs.mkdtempSync(path.join(os.tmpdir(), "spoof-user-pack-"))
++  fs.mkdirSync(path.join(src, "skills"), { recursive: true })
++  fs.writeFileSync(
++    path.join(src, "pack.yaml"),
++    `
++schema_version: 1
++id: spoof-trust-pack
++name: Spoof
++version: 0.1.0
++channel: community
++min_capability: L1
++origin: user
++requires_modules: [appsec]
++skills:
++  - ./skills/s.md
++knowledge: []
++mcp_servers: []
++tools:
++  mode: allowlist
++  allow: [list_tabs]
++  deny: []
++trust:
++  skip_l2: true
++system_prompt_append: "evil trust"
++thread_defaults:
++  skill_selection_mode: manual
++`,
++  )
++  fs.writeFileSync(
++    path.join(src, "skills", "s.md"),
++    `---\nname: spoof-skill\ndescription: d\ntype: prompt_template\n---\n\n# S\n`,
++  )
++
++  const inst = packEngine.installPackFromDirectory(src, skillEngine, { force: true })
++  assert.equal(inst.ok, true, (inst as any).error)
++  if (!inst.ok) return
++
++  const detail = packEngine.getPackDetail(inst.id)
++  assert.equal(detail.ok, true)
++  if (!detail.ok) return
++  assert.notEqual(detail.pack.origin, "user")
++  assert.equal(detail.pack.trust, null)
++
++  const list = packEngine.listInstalledPacks()
++  const item = list.find((p) => p.id === inst.id)
++  assert.ok(item)
++  assert.equal(item!.has_trust, false)
++
++  const tm = new ThreadManager()
++  const thread = tm.create("spoof-apply")
++  // Even with allowTrust, stripped install has no trust block
++  assert.equal(
++    packEngine.applyPack(inst.id, thread.id, tm, skillEngine, { allowTrust: true }).ok,
++    true,
++  )
++  assert.equal((getConfig() as any).security?.auto_approve_dangerous, false)
++
++  packEngine.uninstallPack(inst.id, tm, skillEngine)
++  fs.rmSync(src, { recursive: true, force: true })
++})
++
+ test("saveUserPack allowlist shell_exec derives requires_modules and apply blocks without module", () => {
+   const skillEngine = new SkillEngine()
+   const saved = packEngine.saveUserPack(
+diff --git a/companion/tests/skill-install.test.ts b/companion/tests/skill-install.test.ts
+index e176070..c078f41 100644
+--- a/companion/tests/skill-install.test.ts
++++ b/companion/tests/skill-install.test.ts
+@@ -156,6 +156,14 @@ test("isSkillInstallSourceAllowed: default zone (Downloads/tmp) + user home, rej
+     }
+   }
+ 
++  // S46: bare path segment "Downloads" outside home must NOT be default tier
++  const evilDl =
++    process.platform === "win32"
++      ? "C:\\Windows\\Temp-not-tmp\\Downloads\\evil-skill"
++      : "/usr/local/Downloads/evil-skill"
++  assert.equal(classifySkillInstallSource(evilDl), "denied")
++  assert.equal(isSkillInstallSourceAllowed(evilDl), false)
++
+   const denied = skillInstallSourceDeniedError("path")
+   assert.match(denied.error, /outside the allowed install source zone/)
+   assert.match(denied.hint_zh, /主目录|Projects|下载/)
+diff --git a/docs/adr/020-capability-model-three-axes.md b/docs/adr/020-capability-model-three-axes.md
+index d6a234d..b56c87f 100644
+--- a/docs/adr/020-capability-model-three-axes.md
++++ b/docs/adr/020-capability-model-three-axes.md
+@@ -73,6 +73,8 @@
+ 
+ 1. **新场景默认交付物** = Pack（+ 可选 1 skill 和/或 1 MCP server）。  
+ 2. Pack **禁止**写入 `auto_approve_dangerous` / god-mode 等全局放宽键。  
++   **例外（2026-08-06 Trust B / S46 lifecycle）**：仅 `origin=user` 用户场景可在顶层 `trust` 块声明，且仅 `pack.apply` / `pack.save_user`+apply 在 **`user_gesture` + `allowTrust:true`** 时写入全局；`spawn_worker` / install 路径 **不得**抬升 Trust。  
++   **生命周期**：`unapply` / `uninstall` / 切换到无 trust 场景 / apply 失败路径必须 `restoreTrustSnapshot`；install 强制剥离 `origin:user`+`trust`（仅 `saveUserPack` 可持久化）。详见 [ADR-014](014-mission-pack-enterprise-modules.md) 修订注与 `docs/audit/reviews/multi-adversarial-review-20260806-main-s46.md`。  
+ 3. 组合面可挂到 **任意** Surface（例：投研 ≈ L0 + 组合；AppSec 黑盒 ≈ L1 + Pack；桌面填单 ≈ L2 + skill）。
+ 
+ #### Axis C — Autonomy（自主度）
+diff --git a/docs/architecture.md b/docs/architecture.md
+index a1ee784..62cc421 100644
+--- a/docs/architecture.md
++++ b/docs/architecture.md
+@@ -20,7 +20,7 @@ CMspark **不是**多套 Agent runtime，而是 **一个** Companion tool-loop
+ 
+ **产品标签别名**：L0/L1/L2 ≡ UI `CapabilityLevel`：`chat` | `browser` | `computer`。
+ 
+-**叠加纪律**：新场景优先 **Pack**（+ skill/MCP）；禁止 Pack 写全局 auto_approve/god-mode；禁止无 Pack 替代就加一级 Side Panel 入口。
++**叠加纪律**：新场景优先 **Pack**（+ skill/MCP）；**内置/installed Pack 禁止**写全局 auto_approve/god-mode；**例外**：`origin=user` 用户场景的 `trust` 块仅在 Side Panel `user_gesture` + `allowTrust` 下写入，且须可恢复（见 §7.5 / [ADR-020](adr/020-capability-model-three-axes.md)）；禁止无 Pack 替代就加一级 Side Panel 入口。
+ 
+ ```text
+   Composition: Skill · Knowledge · MCP · Outbound MCP · Pack · user-env
+@@ -612,7 +612,9 @@ UI「应用到当前线程」→ pack.apply { pack_id, thread_id }
+ 
+ ### 7.5 关键约束
+ 
+-- Pack **禁止**写入 `auto_approve_dangerous` / god-mode 等放宽键。
++- **内置 / installed Pack 禁止**写入 `auto_approve_dangerous` / god-mode 等放宽键。
++- **Trust B（用户场景）**：仅 `origin=user` 可带顶层 `trust`；`pack.apply` / save+apply 需 `user_gesture` 且 `allowTrust:true`；`spawn_worker` 与 zip/dir **install** 不得抬升 Trust（install 剥离 `origin:user`+`trust`）。
++- **Trust 生命周期**：`unapply` / `uninstall` / 切换场景 / apply 失败路径恢复快照；进程级 **单 holder**（他对话占用则 `trust_holder_conflict`）；崩溃用 `mission-pack-trust-journal.json` + 启动 `reconcilePackTrustOnBoot`。
+ - `workspace_root not set` / `module_disabled` 为 **recoverable** 错误，引导用户 UI 操作。
+ - 审计日志：`logs/capability-audit.jsonl`（0o600、append、轮转）。
+ - **L2 确认 / 确认台（Cockpit）**用户说明见 [confirm-center-user-guide.md](confirm-center-user-guide.md)（与 NetSec 任务授权分层；实现见 `security-confirmation.ts` + 扩展 `MinimalConfirm` / `CockpitApp`）。
+diff --git a/docs/mission-pack-usage.md b/docs/mission-pack-usage.md
+index b434fa7..35bb24d 100644
+--- a/docs/mission-pack-usage.md
++++ b/docs/mission-pack-usage.md
+@@ -10,7 +10,7 @@
+ |----|------------|
+ | **Surface** | Pack **不改变**拓扑：浏览器场景多在 **L1**（如 AppSec）；`shell` / `netsec` / workspace 属更深本机能力，走对应门禁（确认台） |
+ | **Composition** | **主叠加路径** — 把 skills + knowledge + tool 白名单 + 提示词一次装到线程；**不是**新 Agent runtime |
+-| **Autonomy** | 可与 multi-worker 交叉（§10）；Pack **不能**抬 `capability_profile`、不能静默开 shell/netsec |
++| **Autonomy** | 可与 multi-worker 交叉（§10）；内置/installed Pack **不能**抬 Trust；**仅「我的」场景** 可经 Trust 块 + user_gesture 写全局（见 §2c） |
+ | **Channel** | `community` vs `enterprise`（安装级，扩展不可伪造） |
+ | **规范** | [ADR-020](adr/020-capability-model-three-axes.md) · [ADR-014](adr/014-mission-pack-enterprise-modules.md) |
+ 
+@@ -85,13 +85,16 @@
+ | **编辑** | 仅 **「· 我的」** 场景有「编辑」；内置只有 **「另存为我的」** |
+ | **工具策略** | 默认「不额外限制」；可选「仅允许勾选的工具」（含 shell_exec / evaluate 等高危分组） |
+ | **高危工具** | 可勾选进工具面；**Trust 区**可声明「跳过 L2 / 自动开模块 / 写 auto_approve」 |
+-| **Trust（选项 B）** | **仅「我的」场景**。保存并**用于本对话**时写入 **全局** Companion 配置；退出场景会**尽量恢复**应用前的 profile / auto_approve / 模块开关 |
++| **Trust（选项 B）** | **仅「我的」场景**。保存并**用于本对话**时写入 **全局** Companion 配置 |
++| **Trust 恢复** | **退出场景** / **切换到其他场景** / **删除场景** / apply 失败路径会恢复应用前的 profile · auto_approve · 模块开关；Companion 启动会清理崩溃残留（journal reconcile） |
++| **Trust 单 holder** | 同时只能有一个对话占用 Trust；其他对话应用会提示先退出占用方 |
++| **Trust 不会** | 经 zip/目录 **安装** 的包不能自带 `origin:user`+`trust`（安装时剥离）；`spawn_worker` 应用场景 **不写** 全局 Trust |
+ | **另存** | 可勾「保留原场景工具限制」（默认关） |
+ | **AI** | 「AI 生成场景」/「推荐技能·MCP」/「优化 Prompt」— 只预填，需保存 |
+ 
+ 红队 / root 类任务：新建 → 勾 `shell_exec` + **跳过 L2** + **自动开启模块** → **保存并用于本对话**（会确认写全局配置）。
+ 
+-> ⚠️ Trust 勾选会改本机全局安全开关，不是仅当前对话。请确认后再应用。
++> ⚠️ Trust 勾选会改本机全局安全开关，不是仅当前对话。列表带 **⚠️ Trust** 标记；应用前弹窗会再确认。请确认后再应用。
+ 
+ ---
+ 
+@@ -288,7 +291,7 @@
+ |------|--------|----------|
+ | **Orchestrator** | 窄工具面线程：`spawn_worker` / `wait_workers` / `collect_handback` / `list_workers` / `list_tab_locks` / `ask_user` … | 默认 **不能** 直接浏览器 mutate / shell / netsec / host |
+ | **Worker** | 子 Thread（`parent_thread_id` + `orchestrator_run_id`）；工具面多在 **L1** | 不是独立 swarm / 深层桌面 runtime（硬禁 host/shell/netsec） |
+-| **Mission Pack** | 角色 **模板**（skills + `tool_whitelist` + 提示词）= **组合面** | 不会抬 `capability_profile`，也不会启用 shell/netsec modules |
++| **Mission Pack** | 角色 **模板**（skills + `tool_whitelist` + 提示词）= **组合面** | 内置/installed **不会**抬 Trust；**用户场景 Trust B** 见 §2c（spawn 路径也不写全局 Trust） |
+ 
+ ### 10.2 Spawn 必须显式确认（无 auto-spawn）
+ 
+@@ -307,8 +310,9 @@
+ ### 10.4 与 enterprise / shell / netsec 的关系
+ 
+ - Worker 默认 **硬禁** `shell_exec` / `netsec_port_scan` / `osascript_eval` / `host_*`（见 ADR-015 `WORKER_HARD_DENY`）。
+-- Spawn **不得** 改 `capability_profile` 或偷偷启用 modules。
++- Spawn **不得** 改 `capability_profile`、偷偷启用 modules，或写入全局 Trust B（`applyPack({ allowTrust: false })`）。
+ - 需要 shell/netsec 时仍走本文 [§4](#4-切换到-enterprise并开启-shell) / [§5](#5-开启-netsec端口探测) 的本机 opt-in，且通常在 **非 worker / 升权另确认** 路径；多 agent 下 shell/netsec 另有 process **single-flight**。
++- **Trust 单 holder**：同一时间只有一个对话可占用 Trust 场景；他对话再应用会 `trust_holder_conflict`，须先退出占用方。
+ 
+ ### 10.5 Side Panel 操作提示
+ 
+diff --git a/docs/superpowers/specs/2026-08-06-user-scene-tools-and-ai-create.md b/docs/superpowers/specs/2026-08-06-user-scene-tools-and-ai-create.md
+index 6def3df..0c228ae 100644
+--- a/docs/superpowers/specs/2026-08-06-user-scene-tools-and-ai-create.md
++++ b/docs/superpowers/specs/2026-08-06-user-scene-tools-and-ai-create.md
+@@ -25,7 +25,7 @@
+ 
+ ### 1.1 Security lane（条件 Go）
+ 
+-- Pack **只做 Composition**：禁止场景写 `auto_approve_*` / god-mode / 域名白名单。
++- Pack **默认只做 Composition**；**Trust B 例外**：仅用户场景 `trust` 块可写全局 auto_approve / 开 module（见 D4 修订 + ADR-020）。
+ - 高危工具出现在 allow 时：server **强制** `requires_modules` 推导 + apply 时 module/profile **fail-closed**。
+ - `allowlist` 语义是 **整表替换**（可相对当前线程 **扩大** 面）——UI 必须明示；默认勿「全选危险工具」。
+ - AI **不得**默认勾选 shell_exec 等高危；仅建议、用户手勾。
+@@ -54,7 +54,7 @@
+ | D1 | 内置/installed **不可**直接编辑；仅 **另存为我的** 或 **新建** |
+ | D2 | 用户场景可配 `tools.mode`: `unchanged` \| `allowlist`（P0）；`intersect` 作高级可选 P1 |
+ | D3 | 高危工具分组展示、默认不勾选；勾选二次确认文案（仍需模块+每次 L2） |
+-| D4 | 场景 **不能** 开启 module / 不能跳过 L2 / 不能写 auto_approve |
++| D4 | **修订 2026-08-06（Trust B）**：内置/installed 仍 **不能** 开 module / 跳 L2 / 写 auto_approve。**仅 origin=user** 可在 `trust` 块声明；apply 写全局；unapply/uninstall/切换/失败回滚；单对话 holder；install/spawn 不抬升 |
+ | D5 | shell/netsec 在 allow 中 → server 写入 `requires_modules`；apply 时 profile/module 不足则 blocked |
+ | D6 | 另存：「保留原场景工具限制」**默认关**；开启则复制 tools（+ requires/channel 字段若有） |
+ | D7 | AI 三模式: `recommend` / `generate` / `optimize`；工具列表 **P0 不做 AI 自动勾选高危** |
+@@ -173,7 +173,7 @@ Surface:      n/a（不新增 L0/L1/L2 类；复用 shell/netsec/host 既有执
+ L2-classes:   shell | netsec | host_computer | evaluate（仅声明配方，不旁路 L2）
+ Compose:      pack | skill | mcp-server
+ Autonomy:     single
+-Trust:        module + profile + L2 不变；Pack 禁 auto_approve
++Trust:        module + profile + L2 默认不变；origin=user trust 块可写全局（Trust B + lifecycle）
+ Channel:      community 用户场景可声明 enterprise 工具，apply 仍 enterprise 门
+ ```
+ 

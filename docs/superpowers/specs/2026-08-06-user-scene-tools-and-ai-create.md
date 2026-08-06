@@ -25,7 +25,7 @@
 
 ### 1.1 Security lane（条件 Go）
 
-- Pack **只做 Composition**：禁止场景写 `auto_approve_*` / god-mode / 域名白名单。
+- Pack **默认只做 Composition**；**Trust B 例外**：仅用户场景 `trust` 块可写全局 auto_approve / 开 module（见 D4 修订 + ADR-020）。
 - 高危工具出现在 allow 时：server **强制** `requires_modules` 推导 + apply 时 module/profile **fail-closed**。
 - `allowlist` 语义是 **整表替换**（可相对当前线程 **扩大** 面）——UI 必须明示；默认勿「全选危险工具」。
 - AI **不得**默认勾选 shell_exec 等高危；仅建议、用户手勾。
@@ -54,7 +54,7 @@
 | D1 | 内置/installed **不可**直接编辑；仅 **另存为我的** 或 **新建** |
 | D2 | 用户场景可配 `tools.mode`: `unchanged` \| `allowlist`（P0）；`intersect` 作高级可选 P1 |
 | D3 | 高危工具分组展示、默认不勾选；勾选二次确认文案（仍需模块+每次 L2） |
-| D4 | 场景 **不能** 开启 module / 不能跳过 L2 / 不能写 auto_approve |
+| D4 | **修订 2026-08-06（Trust B）**：内置/installed 仍 **不能** 开 module / 跳 L2 / 写 auto_approve。**仅 origin=user** 可在 `trust` 块声明；apply 写全局；unapply/uninstall/切换/失败回滚；单对话 holder；install/spawn 不抬升 |
 | D5 | shell/netsec 在 allow 中 → server 写入 `requires_modules`；apply 时 profile/module 不足则 blocked |
 | D6 | 另存：「保留原场景工具限制」**默认关**；开启则复制 tools（+ requires/channel 字段若有） |
 | D7 | AI 三模式: `recommend` / `generate` / `optimize`；工具列表 **P0 不做 AI 自动勾选高危** |
@@ -173,7 +173,7 @@ Surface:      n/a（不新增 L0/L1/L2 类；复用 shell/netsec/host 既有执�
 L2-classes:   shell | netsec | host_computer | evaluate（仅声明配方，不旁路 L2）
 Compose:      pack | skill | mcp-server
 Autonomy:     single
-Trust:        module + profile + L2 不变；Pack 禁 auto_approve
+Trust:        module + profile + L2 默认不变；origin=user trust 块可写全局（Trust B + lifecycle）
 Channel:      community 用户场景可声明 enterprise 工具，apply 仍 enterprise 门
 ```
 

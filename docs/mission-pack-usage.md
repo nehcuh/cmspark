@@ -10,7 +10,7 @@
 |----|------------|
 | **Surface** | Pack **不改变**拓扑：浏览器场景多在 **L1**（如 AppSec）；`shell` / `netsec` / workspace 属更深本机能力，走对应门禁（确认台） |
 | **Composition** | **主叠加路径** — 把 skills + knowledge + tool 白名单 + 提示词一次装到线程；**不是**新 Agent runtime |
-| **Autonomy** | 可与 multi-worker 交叉（§10）；Pack **不能**抬 `capability_profile`、不能静默开 shell/netsec |
+| **Autonomy** | 可与 multi-worker 交叉（§10）；内置/installed Pack **不能**抬 Trust；**仅「我的」场景** 可经 Trust 块 + user_gesture 写全局（见 §2c） |
 | **Channel** | `community` vs `enterprise`（安装级，扩展不可伪造） |
 | **规范** | [ADR-020](adr/020-capability-model-three-axes.md) · [ADR-014](adr/014-mission-pack-enterprise-modules.md) |
 
@@ -85,13 +85,16 @@
 | **编辑** | 仅 **「· 我的」** 场景有「编辑」；内置只有 **「另存为我的」** |
 | **工具策略** | 默认「不额外限制」；可选「仅允许勾选的工具」（含 shell_exec / evaluate 等高危分组） |
 | **高危工具** | 可勾选进工具面；**Trust 区**可声明「跳过 L2 / 自动开模块 / 写 auto_approve」 |
-| **Trust（选项 B）** | **仅「我的」场景**。保存并**用于本对话**时写入 **全局** Companion 配置；退出场景会**尽量恢复**应用前的 profile / auto_approve / 模块开关 |
+| **Trust（选项 B）** | **仅「我的」场景**。保存并**用于本对话**时写入 **全局** Companion 配置 |
+| **Trust 恢复** | **退出场景** / **切换到其他场景** / **删除场景** / apply 失败路径会恢复应用前的 profile · auto_approve · 模块开关；Companion 启动会清理崩溃残留（journal reconcile） |
+| **Trust 单 holder** | 同时只能有一个对话占用 Trust；其他对话应用会提示先退出占用方 |
+| **Trust 不会** | 经 zip/目录 **安装** 的包不能自带 `origin:user`+`trust`（安装时剥离）；`spawn_worker` 应用场景 **不写** 全局 Trust |
 | **另存** | 可勾「保留原场景工具限制」（默认关） |
 | **AI** | 「AI 生成场景」/「推荐技能·MCP」/「优化 Prompt」— 只预填，需保存 |
 
 红队 / root 类任务：新建 → 勾 `shell_exec` + **跳过 L2** + **自动开启模块** → **保存并用于本对话**（会确认写全局配置）。
 
-> ⚠️ Trust 勾选会改本机全局安全开关，不是仅当前对话。请确认后再应用。
+> ⚠️ Trust 勾选会改本机全局安全开关，不是仅当前对话。列表带 **⚠️ Trust** 标记；应用前弹窗会再确认。请确认后再应用。
 
 ---
 
@@ -288,7 +291,7 @@
 |------|--------|----------|
 | **Orchestrator** | 窄工具面线程：`spawn_worker` / `wait_workers` / `collect_handback` / `list_workers` / `list_tab_locks` / `ask_user` … | 默认 **不能** 直接浏览器 mutate / shell / netsec / host |
 | **Worker** | 子 Thread（`parent_thread_id` + `orchestrator_run_id`）；工具面多在 **L1** | 不是独立 swarm / 深层桌面 runtime（硬禁 host/shell/netsec） |
-| **Mission Pack** | 角色 **模板**（skills + `tool_whitelist` + 提示词）= **组合面** | 不会抬 `capability_profile`，也不会启用 shell/netsec modules |
+| **Mission Pack** | 角色 **模板**（skills + `tool_whitelist` + 提示词）= **组合面** | 内置/installed **不会**抬 Trust；**用户场景 Trust B** 见 §2c（spawn 路径也不写全局 Trust） |
 
 ### 10.2 Spawn 必须显式确认（无 auto-spawn）
 
@@ -307,8 +310,9 @@
 ### 10.4 与 enterprise / shell / netsec 的关系
 
 - Worker 默认 **硬禁** `shell_exec` / `netsec_port_scan` / `osascript_eval` / `host_*`（见 ADR-015 `WORKER_HARD_DENY`）。
-- Spawn **不得** 改 `capability_profile` 或偷偷启用 modules。
+- Spawn **不得** 改 `capability_profile`、偷偷启用 modules，或写入全局 Trust B（`applyPack({ allowTrust: false })`）。
 - 需要 shell/netsec 时仍走本文 [§4](#4-切换到-enterprise并开启-shell) / [§5](#5-开启-netsec端口探测) 的本机 opt-in，且通常在 **非 worker / 升权另确认** 路径；多 agent 下 shell/netsec 另有 process **single-flight**。
+- **Trust 单 holder**：同一时间只有一个对话可占用 Trust 场景；他对话再应用会 `trust_holder_conflict`，须先退出占用方。
 
 ### 10.5 Side Panel 操作提示
 

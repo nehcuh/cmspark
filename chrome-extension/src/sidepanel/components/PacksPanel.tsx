@@ -23,6 +23,9 @@ export type PackListItem = {
   skill_refs?: string[]
   mcp_servers?: string[]
   editable?: boolean
+  /** Pack writes global security on apply (Trust B) */
+  has_trust?: boolean
+  trust_skip_l2?: boolean
 }
 
 type ModuleStateView = {
@@ -56,7 +59,7 @@ const SCENE_TOOL_GROUPS: Array<{ title: string; highRisk?: boolean; tools: strin
     ],
   },
   {
-    title: "高危 / 企业（需本机模块；每次仍确认）",
+    title: "高危 / 企业（需本机模块；默认每次确认；若场景勾选 Trust 跳过 L2 则应用后可免确认）",
     highRisk: true,
     tools: [
       "shell_exec",
@@ -520,7 +523,8 @@ export function PacksPanel() {
         if (
           high &&
           !window.confirm(
-            `将「${name}」加入本场景工具面？\n仍需本机对应模块开启，且每次调用需安全确认（场景不能跳过确认）。`,
+            `将「${name}」加入本场景工具面？\n仍需本机对应模块开启。\n` +
+              `默认每次调用需安全确认；若同时勾选 Trust「跳过 L2 / 三旗巡航」，应用场景后可能免确认。`,
           )
         ) {
           return prev
@@ -740,6 +744,7 @@ export function PacksPanel() {
                   <strong style={styles.name}>
                     {p.name}
                     {isUser ? " · 我的" : ""}
+                    {p.has_trust ? " · ⚠️ Trust" : ""}
                     {isActive ? " · 本对话使用中" : ""}
                   </strong>
                   <span style={styles.meta}>
@@ -747,6 +752,13 @@ export function PacksPanel() {
                   </span>
                 </div>
                 {p.description && <div style={styles.desc}>{p.description}</div>}
+                {p.has_trust ? (
+                  <div style={{ ...styles.toolsLine, color: "#b45309" }}>
+                    应用时将写入全局安全配置
+                    {p.trust_skip_l2 ? "（含跳过 L2 / 三旗巡航）" : ""}
+                    ；退出/切换/删除场景会尽量恢复
+                  </div>
+                ) : null}
                 {isUser && (p.skill_refs?.length || p.mcp_servers?.length) ? (
                   <div style={styles.toolsLine}>
                     技能 {p.skill_refs?.length || 0} · MCP {p.mcp_servers?.length || 0}
@@ -859,6 +871,15 @@ export function PacksPanel() {
                 {confirmPack.description || "将应用该场景模板到当前对话（可能限制可用工具）。"}
               </p>
             )}
+            {confirmPack.has_trust ? (
+              <p style={{ ...styles.modalP, color: "#b45309", fontWeight: 600 }}>
+                ⚠️ Trust：此场景应用后会写入全局安全配置
+                {confirmPack.trust_skip_l2
+                  ? "（跳过 L2 / 开启三旗全自动巡航，shell·MCP 等高危调用可能不再弹确认）"
+                  : "（可能开启模块或 auto_approve）"}
+                。退出场景、切换到其他场景或删除场景时会尽量恢复；请确认你信任该场景。
+              </p>
+            ) : null}
             <div style={styles.modalActions}>
               <button type="button" style={styles.secondaryBtn} onClick={() => setConfirmPack(null)}>
                 取消
