@@ -1,0 +1,7 @@
+{
+  "batch": "voice-input-m1-r2",
+  "timestamp": "20260806-201142",
+  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/voice-input-m1-r2-pi-20260806-201142.md" },
+  "approve": true,
+  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/voice-input-m1-r2-diff-20260806-201142.patch"
+}

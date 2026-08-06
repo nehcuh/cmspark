@@ -1,0 +1,94 @@
+/**
+ * Web Speech error → user-facing zh copy (SoT §6.6).
+ * Pure; no DOM.
+ */
+
+export type VoiceUserFacing = {
+  /** Compact caption under composer / spike log */
+  message: string
+  /** silent = no UI toast (aborted by user/system) */
+  severity: "info" | "error" | "silent"
+}
+
+/**
+ * Map SpeechRecognitionErrorEvent.error codes (+ synthetic codes we invent).
+ * https://developer.mozilla.org/en-US/docs/Web/API/SpeechRecognitionErrorEvent/error
+ */
+export function mapSpeechError(code: string): VoiceUserFacing {
+  const c = (code || "").toLowerCase()
+  switch (c) {
+    case "not-allowed":
+    case "service-not-allowed":
+      return {
+        severity: "error",
+        message:
+          "无法使用麦克风：请在 Chrome 站点设置与系统隐私中允许本扩展 / Chrome",
+      }
+    case "no-speech":
+      return { severity: "info", message: "未识别到内容" }
+    case "network":
+      return {
+        severity: "error",
+        message: "语音识别需要网络（或本机语言包）；请检查网络后重试",
+      }
+    case "aborted":
+      return { severity: "silent", message: "" }
+    case "audio-capture":
+      return {
+        severity: "error",
+        message: "无法捕获麦克风音频，请检查设备是否被占用",
+      }
+    case "bad-grammar":
+    case "language-not-supported":
+      return {
+        severity: "error",
+        message: "当前语言语音识别不可用，请改用系统听写或键入",
+      }
+    case "timeout":
+      return {
+        severity: "info",
+        message: "已达单次听写上限，文字已保留在输入框",
+      }
+    case "offline":
+      return {
+        severity: "error",
+        message: "语音识别需要网络（或本机语言包）；请检查网络后重试",
+      }
+    case "empty":
+      return { severity: "info", message: "未识别到内容" }
+    default:
+      return {
+        severity: "error",
+        message: code ? `语音识别错误：${code}` : "语音识别失败",
+      }
+  }
+}
+
+/** Hide vs disable decision for mic chrome (SoT §7.2 subset). */
+export type MicChrome =
+  | { show: false; reason: "disabled_setting" | "unsupported" | "non_tier1" }
+  | { show: true; enabled: true }
+  | { show: true; enabled: false; reason: "permission_denied" | "offline" | "thread_busy" }
+
+export function resolveMicChrome(input: {
+  voiceInputEnabled: boolean
+  speechSupported: boolean
+  tier1Chrome: boolean
+  /** enforce tier-1 hide policy */
+  enforceTier1?: boolean
+  permissionState?: "granted" | "denied" | "prompt" | "unknown"
+  online?: boolean
+  threadBusy?: boolean
+}): MicChrome {
+  if (!input.voiceInputEnabled) return { show: false, reason: "disabled_setting" }
+  if (!input.speechSupported) return { show: false, reason: "unsupported" }
+  if (input.enforceTier1 && !input.tier1Chrome) return { show: false, reason: "non_tier1" }
+  if (input.threadBusy) return { show: true, enabled: false, reason: "thread_busy" }
+  if (input.permissionState === "denied") {
+    return { show: true, enabled: false, reason: "permission_denied" }
+  }
+  if (input.online === false) {
+    return { show: true, enabled: false, reason: "offline" }
+  }
+  return { show: true, enabled: true }
+}

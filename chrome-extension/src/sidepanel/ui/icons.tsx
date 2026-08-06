@@ -191,6 +191,29 @@ export function IconAttach(p: IconProps) {
   )
 }
 
+export function IconMic(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <rect x="9" y="3" width="6" height="11" rx="3" />
+      <path d="M6 11a6 6 0 0012 0" />
+      <path d="M12 17v3" />
+      <path d="M9 20h6" />
+    </Svg>
+  )
+}
+
+export function IconMicOff(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <rect x="9" y="3" width="6" height="11" rx="3" />
+      <path d="M6 11a6 6 0 008.5 5.4" />
+      <path d="M12 17v3" />
+      <path d="M9 20h6" />
+      <path d="M4 4l16 16" />
+    </Svg>
+  )
+}
+
 export function IconChat(p: IconProps) {
   return (
     <Svg {...p}>

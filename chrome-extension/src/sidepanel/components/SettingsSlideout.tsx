@@ -2136,6 +2136,51 @@ export function SettingsSlideout() {
           </div>
 
           <div style={styles.field}>
+            <label style={styles.label}>语音输入</label>
+            <label
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                cursor: "pointer",
+                fontSize: 13,
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={state.voiceInputEnabled !== false}
+                onChange={(e) =>
+                  dispatch({ type: "SET_VOICE_INPUT_ENABLED", enabled: e.target.checked })
+                }
+              />
+              在输入框显示麦克风（听写进草稿，不自动发送）
+            </label>
+            <p style={{ fontSize: 11, color: "#888", margin: "6px 0 0", lineHeight: 1.45 }}>
+              可选麦克风：浏览器将语音转成文字后填入输入框，默认不自动发送。转写可能使用 Chrome
+              语音服务（音频可能经网络发送至浏览器厂商），不经过 CMspark Companion。发送后的文字与键入相同，仍受现有确认与信任设置约束。
+              若当前浏览器不支持网页语音识别，请使用系统听写。
+            </p>
+            {state.voicePrivacyAckV1 && (
+              <button
+                type="button"
+                style={{
+                  marginTop: 6,
+                  fontSize: 11,
+                  border: "none",
+                  background: "transparent",
+                  color: "#888",
+                  cursor: "pointer",
+                  padding: 0,
+                  textDecoration: "underline",
+                }}
+                onClick={() => dispatch({ type: "SET_VOICE_PRIVACY_ACK_V1", ack: false })}
+              >
+                重置隐私确认（下次听写将再次提示）
+              </button>
+            )}
+          </div>
+
+          <div style={styles.field}>
             <label style={styles.label}>Context Window</label>
             <input
               style={styles.input}
