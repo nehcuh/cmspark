@@ -10,6 +10,11 @@ import {
   filterThreadsByQuery,
   formatRelativeTime,
   groupThreadsByCalendar,
+  isMonthGroupOpen,
+  isPinnedGroupOpen,
+  LS_THREAD_LIST_EXPAND,
+  LS_THREAD_LIST_EXPAND_MONTHS_LEGACY,
+  parseThreadListExpand,
   roleBadge,
   selectionState,
   threadIdsInDay,
@@ -17,9 +22,8 @@ import {
   toggleGroupSelection,
   type MonthGroup,
   type DayGroup,
+  type ThreadListExpandState,
 } from "../utils/thread-timeline"
-
-const LS_EXPAND = "cmspark.threadList.expandMonths"
 
 function generateShortId(): string {
   const chars = "abcdefghijklmnopqrstuvwxyz0123456789"
@@ -30,20 +34,31 @@ function generateShortId(): string {
   return id
 }
 
-function loadExpandedMonths(): Set<string> {
+function loadExpandState(): ThreadListExpandState {
   try {
-    const raw = localStorage.getItem(LS_EXPAND)
-    if (!raw) return new Set()
-    const arr = JSON.parse(raw)
-    return new Set(Array.isArray(arr) ? arr.filter((x) => typeof x === "string") : [])
+    const raw = localStorage.getItem(LS_THREAD_LIST_EXPAND)
+    if (raw) return parseThreadListExpand(raw)
+    // One-shot migrate legacy months array
+    const legacy = localStorage.getItem(LS_THREAD_LIST_EXPAND_MONTHS_LEGACY)
+    if (legacy) {
+      const migrated = parseThreadListExpand(legacy)
+      saveExpandState(migrated)
+      try {
+        localStorage.removeItem(LS_THREAD_LIST_EXPAND_MONTHS_LEGACY)
+      } catch {
+        /* ignore */
+      }
+      return migrated
+    }
   } catch {
-    return new Set()
+    /* ignore */
   }
+  return parseThreadListExpand(null)
 }
 
-function saveExpandedMonths(set: Set<string>) {
+function saveExpandState(state: ThreadListExpandState) {
   try {
-    localStorage.setItem(LS_EXPAND, JSON.stringify([...set]))
+    localStorage.setItem(LS_THREAD_LIST_EXPAND, JSON.stringify(state))
   } catch {
     /* ignore quota */
   }
@@ -58,7 +73,7 @@ export function ThreadList() {
   const [view, setView] = useState<ListView>("time")
   const [selectMode, setSelectMode] = useState(false)
   const [selected, setSelected] = useState<Set<string>>(() => new Set())
-  const [expandedMonths, setExpandedMonths] = useState<Set<string>>(loadExpandedMonths)
+  const [expandState, setExpandState] = useState<ThreadListExpandState>(loadExpandState)
   const [expandedDays, setExpandedDays] = useState<Set<string>>(() => new Set())
   const [menuOpen, setMenuOpen] = useState(false)
   const [activeTag, setActiveTag] = useState<string | null>(null)
@@ -119,12 +134,23 @@ export function ThreadList() {
     return s
   }, [filtered, threadBusyById])
 
+  const searchActive = query.trim().length > 0
+
   const toggleMonth = (monthKey: string) => {
-    setExpandedMonths((prev) => {
-      const next = new Set(prev)
-      if (next.has(monthKey)) next.delete(monthKey)
-      else next.add(monthKey)
-      saveExpandedMonths(next)
+    setExpandState((prev) => {
+      const months = prev.months.includes(monthKey)
+        ? prev.months.filter((k) => k !== monthKey)
+        : [...prev.months, monthKey]
+      const next = { ...prev, months }
+      saveExpandState(next)
+      return next
+    })
+  }
+
+  const togglePinned = (key: "today" | "yesterday") => {
+    setExpandState((prev) => {
+      const next = { ...prev, [key]: !prev[key] }
+      saveExpandState(next)
       return next
     })
   }
@@ -155,7 +181,7 @@ export function ThreadList() {
         api_key: "",
         model_name: "deepseek-v4-flash",
         temperature: 0.7,
-        context_window: 1000000,
+        context_window: 128000,
         trusted_domains: [],
         safety_skills_enabled: [] as string[],
       },
@@ -458,7 +484,10 @@ export function ThreadList() {
   }
 
   const renderMonth = (month: MonthGroup) => {
-    const openMonth = expandedMonths.has(month.monthKey)
+    const openMonth = isMonthGroupOpen(month.monthKey, expandState, {
+      searchActive,
+      hasMatches: searchActive && month.count > 0,
+    })
     const ids = threadIdsInMonth(month)
     return (
       <div key={month.monthKey}>
@@ -494,45 +523,55 @@ export function ThreadList() {
     )
   }
 
-  const renderTimeline = () => (
-    <>
-      {timeline.today.length > 0 && (
-        <div>
-          <div style={styles.groupHeader}>
-            {renderGroupCheckbox(
-              timeline.today.map((t) => t.id),
-              "今天",
-            )}
-            <span style={styles.groupChevron}>▼</span>
-            <span style={styles.groupLabel}>今天 · {timeline.today.length}</span>
+  const renderTimeline = () => {
+    const todayOpen = isPinnedGroupOpen("today", expandState, {
+      searchActive,
+      hasMatches: searchActive && timeline.today.length > 0,
+    })
+    const yesterdayOpen = isPinnedGroupOpen("yesterday", expandState, {
+      searchActive,
+      hasMatches: searchActive && timeline.yesterday.length > 0,
+    })
+    return (
+      <>
+        {timeline.today.length > 0 && (
+          <div>
+            <div style={styles.groupHeader} onClick={() => togglePinned("today")}>
+              {renderGroupCheckbox(
+                timeline.today.map((t) => t.id),
+                "今天",
+              )}
+              <span style={styles.groupChevron}>{todayOpen ? "▼" : "▶"}</span>
+              <span style={styles.groupLabel}>今天 · {timeline.today.length}</span>
+            </div>
+            {todayOpen && timeline.today.map((t) => renderThreadRow(t as Thread))}
           </div>
-          {timeline.today.map((t) => renderThreadRow(t as Thread))}
-        </div>
-      )}
+        )}
 
-      {timeline.yesterday.length > 0 && (
-        <div>
-          <div style={styles.groupHeader}>
-            {renderGroupCheckbox(
-              timeline.yesterday.map((t) => t.id),
-              "昨天",
-            )}
-            <span style={styles.groupChevron}>▼</span>
-            <span style={styles.groupLabel}>昨天 · {timeline.yesterday.length}</span>
+        {timeline.yesterday.length > 0 && (
+          <div>
+            <div style={styles.groupHeader} onClick={() => togglePinned("yesterday")}>
+              {renderGroupCheckbox(
+                timeline.yesterday.map((t) => t.id),
+                "昨天",
+              )}
+              <span style={styles.groupChevron}>{yesterdayOpen ? "▼" : "▶"}</span>
+              <span style={styles.groupLabel}>昨天 · {timeline.yesterday.length}</span>
+            </div>
+            {yesterdayOpen && timeline.yesterday.map((t) => renderThreadRow(t as Thread))}
           </div>
-          {timeline.yesterday.map((t) => renderThreadRow(t as Thread))}
-        </div>
-      )}
+        )}
 
-      {timeline.months.map(renderMonth)}
+        {timeline.months.map(renderMonth)}
 
-      {filtered.length === 0 && (
-        <div style={{ color: tokens.textMuted, fontSize: 12, padding: 12, textAlign: "center" }}>
-          {threads.length === 0 ? "暂无线程，点击「+ 新建」" : "无匹配线程"}
-        </div>
-      )}
-    </>
-  )
+        {filtered.length === 0 && (
+          <div style={{ color: tokens.textMuted, fontSize: 12, padding: 12, textAlign: "center" }}>
+            {threads.length === 0 ? "暂无线程，点击「+ 新建」" : "无匹配线程"}
+          </div>
+        )}
+      </>
+    )
+  }
 
   const renderTagsView = () => {
     const untagged = tagIndex.get("__untagged__") || []

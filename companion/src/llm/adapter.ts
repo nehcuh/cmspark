@@ -18,6 +18,12 @@ import {
   type CanonicalChatMessage,
   type CanonicalToolDefinition,
 } from "./provider"
+import {
+  applyContextBudget,
+  attachRollingSummaryToMessages,
+  estimateTokens,
+} from "./context-budget"
+import { generateRollingSummary, shouldRunM2 } from "./context-budget-m2"
 
 // Jailbreak patterns to detect in LLM output
 const JAILBREAK_OUTPUT_PATTERNS = [
@@ -289,12 +295,6 @@ export async function chatCreate(params: ChatCreateParams) {
       /* non-fatal */
     }
     if (fileContents?.length) {
-      const estimateTokens = (text: string): number => {
-        const chineseChars = (text.match(/[一-鿿㐀-䶿]/g) || []).length
-        const otherChars = text.length - chineseChars
-        return Math.ceil(chineseChars * 1.5 + otherChars / 4)
-      }
-
       const MAX_FILE_TOKENS = Math.min(
         Math.floor(params.config.context_window * 0.4),
         50000,
@@ -424,36 +424,13 @@ ${hostUseRule12}${appIndexSection ? `\n\n${appIndexSection}` : ""}`
 
   // Build messages array (canonical OpenAI chat shape; providers convert wire format)
   const history = threadManager.getMessages(threadId)
-  const messages: CanonicalChatMessage[] = []
+  let messages: CanonicalChatMessage[] = []
 
   if (systemPrompt) {
     messages.push({ role: "system", content: systemPrompt })
   }
 
   messages.push(...rebuildMessagesFromHistory(history))
-
-  // Ensure we don't exceed context window (rough estimate) with turn-safe compaction (P1)
-  while (JSON.stringify(messages).length > params.config.context_window * 3 && messages.length > 2) {
-    const idx = messages.findIndex(m => m.role !== "system")
-    if (idx >= 0) {
-      const oldest = messages[idx]
-      // Safe guard against orphaning tool calls/results in OpenAI API schema
-      if (oldest.role === "assistant" && oldest.tool_calls && oldest.tool_calls.length > 0) {
-        let countToDelete = 1
-        while (
-          idx + countToDelete < messages.length &&
-          messages[idx + countToDelete].role === "tool"
-        ) {
-          countToDelete++
-        }
-        messages.splice(idx, countToDelete)
-      } else {
-        messages.splice(idx, 1)
-      }
-    } else {
-      break
-    }
-  }
 
   // L2: provider abstraction — openai SDK or Anthropic Messages fetch+SSE
   const provider = createProvider(config)
@@ -503,6 +480,150 @@ ${hostUseRule12}${appIndexSection ? `\n\n${appIndexSection}` : ""}`
     nativeTools = nativeTools.filter((t) => allowed.has(t.function.name))
   }
   let tools: ToolDefinition[] = [...nativeTools, ...mcpTools, ...mcpMetaTools]
+
+  // M1/M2 runtime context budget (request-only; disk untouched).
+  // Spec: settings-thread-compact-ux §5. Modes: auto | prompt | off; M2 optional.
+  const compactionSetting = params.config.context_compaction ?? "auto"
+  // Default true when field omitted (new installs); explicit false disables.
+  const m2Enabled = params.config.context_compaction_m2 !== false
+
+  async function runContextBudgetPass(phase: "pre_loop" | "mid_loop"): Promise<void> {
+    if (compactionSetting === "off") return
+    const compact = applyContextBudget(messages, params.config.context_window, tools)
+    if (compactionSetting === "prompt") {
+      if (compact.compacted) {
+        try {
+          logger.info("thread.context_compact_prompt", {
+            thread_id: threadId,
+            mode: "m1",
+            setting: "prompt",
+            phase,
+            dropped_count: compact.droppedCount,
+            tokens_before: compact.tokensBefore,
+            tokens_after: compact.tokensAfter,
+            user_notified: true,
+          })
+        } catch {
+          /* non-fatal */
+        }
+        try {
+          sendToExtension({
+            type: "thread.context_compact_prompt",
+            thread_id: threadId,
+            dropped_count: compact.droppedCount,
+            tokens_before: compact.tokensBefore,
+            tokens_after: compact.tokensAfter,
+          })
+        } catch {
+          /* non-fatal */
+        }
+      }
+      return
+    }
+
+    // auto
+    if (!compact.compacted) return
+
+    messages = compact.messages
+    let mode: "m1" | "m2" = "m1"
+    let summarySha: string | null = null
+    let summaryBytes = 0
+    let rollingSummary: string | undefined
+
+    if (shouldRunM2(compact, m2Enabled, phase) && !signal?.aborted) {
+      try {
+        const m2 = await generateRollingSummary({
+          droppedMessages: compact.droppedMessages,
+          config: params.config,
+          signal,
+        })
+        if (m2.ok && m2.summary) {
+          messages = attachRollingSummaryToMessages(
+            messages,
+            compact.droppedCount,
+            m2.summary,
+          )
+          mode = "m2"
+          summarySha = m2.summarySha256
+          summaryBytes = m2.summaryBytes
+          rollingSummary = m2.summary
+        }
+      } catch {
+        /* M2 best-effort; keep M1 omit notice */
+      }
+    }
+
+    // Persist meta for「查看摘要」(thread index only — not digest/export).
+    // Pi nit: mid_loop M1 must not wipe a prior pre_loop M2 rolling_summary.
+    try {
+      const prevMeta = threadManager.get(threadId)?.runtime_context_budget
+      const keepSummary =
+        rollingSummary ||
+        (phase === "mid_loop" && !rollingSummary ? prevMeta?.rolling_summary : undefined)
+      const keepSha =
+        summarySha ||
+        (phase === "mid_loop" && !summarySha ? prevMeta?.summary_sha256 : undefined)
+      const keepBytes =
+        summaryBytes ||
+        (phase === "mid_loop" && !summaryBytes ? prevMeta?.summary_bytes : undefined)
+      // mid_loop M1 must not wipe a prior pre_loop M2 rolling_summary (Pi nit).
+      const updated = threadManager.update(threadId, {
+        runtime_context_budget: {
+          last_at: new Date().toISOString(),
+          mode: keepSummary && mode === "m1" && phase === "mid_loop" ? "m2" : mode,
+          dropped_count: compact.droppedCount,
+          tokens_before: compact.tokensBefore,
+          tokens_after: compact.tokensAfter,
+          rolling_summary: keepSummary,
+          summary_sha256: keepSha || undefined,
+          summary_bytes: keepBytes || undefined,
+          phase,
+        },
+      })
+      if (updated) {
+        sendToExtension({ type: "thread.updated", thread: updated })
+      }
+      if (keepSummary && !rollingSummary) {
+        rollingSummary = keepSummary
+      }
+    } catch {
+      /* non-fatal meta write */
+    }
+
+    try {
+      logger.info("thread.context_compacted", {
+        thread_id: threadId,
+        mode,
+        setting: "auto",
+        phase,
+        dropped_count: compact.droppedCount,
+        tokens_before: compact.tokensBefore,
+        tokens_after: compact.tokensAfter,
+        user_notified: true,
+        tool_pairs_preserved: true,
+        summary_bytes: summaryBytes,
+        summary_sha256: summarySha,
+      })
+    } catch {
+      /* non-fatal */
+    }
+    try {
+      sendToExtension({
+        type: "thread.context_compacted",
+        thread_id: threadId,
+        dropped_count: compact.droppedCount,
+        tokens_before: compact.tokensBefore,
+        tokens_after: compact.tokensAfter,
+        mode,
+        // UI modal: summary text only when M2 succeeded (already redacted)
+        rolling_summary: rollingSummary || undefined,
+      })
+    } catch {
+      /* non-fatal */
+    }
+  }
+
+  await runContextBudgetPass("pre_loop")
 
   // Tool calling loop
   let round = 0
@@ -1051,6 +1172,9 @@ ${hostUseRule12}${appIndexSection ? `\n\n${appIndexSection}` : ""}`
 
       // Add tool results to messages for next LLM round
       messages.push(...toolResults)
+
+      // Mid-loop recompact (F-I6 follow-up): tool rounds can blow budget after pre_loop.
+      await runContextBudgetPass("mid_loop")
 
     } catch (e: any) {
       if (e.name === "AbortError" || signal?.aborted) {

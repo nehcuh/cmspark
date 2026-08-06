@@ -70,7 +70,13 @@ export function ChatView() {
     fleet,
     threadBusyById,
     threads,
+    contextCompactedByThreadId,
   } = state
+  const contextCompacted =
+    activeThreadId && contextCompactedByThreadId[activeThreadId]
+      ? contextCompactedByThreadId[activeThreadId]
+      : null
+  const [summaryOpen, setSummaryOpen] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
   /** Inner content grows with messages; ResizeObserver watches this for stick-to-bottom. */
   const contentRef = useRef<HTMLDivElement>(null)
@@ -115,6 +121,17 @@ export function ChatView() {
     mapBusy,
   })
   const activeThread = threads.find((t) => t.id === activeThreadId)
+  // Prefer live event summary; fall back to thread meta after reload/list.
+  const rollingSummary =
+    contextCompacted?.rollingSummary ||
+    activeThread?.runtime_context_budget?.rolling_summary ||
+    ""
+  const showCompactBanner =
+    !!contextCompacted ||
+    !!(
+      activeThread?.runtime_context_budget &&
+      (activeThread.runtime_context_budget.dropped_count ?? 0) > 0
+    )
   const workers = fleet?.workers || []
   const busyThreadIds = Object.entries(threadBusyById)
     .filter(([, b]) => b)
@@ -304,6 +321,138 @@ export function ChatView() {
   return (
     <div style={styles.container} ref={containerRef} onScroll={handleScroll}>
       <div ref={contentRef} style={styles.contentInner}>
+        {showCompactBanner && (
+          <div
+            role="status"
+            style={{
+              margin: "8px 10px 4px",
+              padding: "8px 10px",
+              borderRadius: 8,
+              background: tokens.warningSoft || "#fffbeb",
+              border: `1px solid ${tokens.border || "#f0e6c8"}`,
+              fontSize: 11,
+              lineHeight: 1.45,
+              color: "#7a5b00",
+            }}
+          >
+            {contextCompacted && contextCompacted.droppedCount === 0 ? (
+              <>
+                <strong>上下文可能超预算</strong>
+                （当前为「仅提示」模式，未压缩）。
+                可在设置 → 模型与推理中改为「自动压缩」。
+                <button
+                  type="button"
+                  style={{
+                    marginLeft: 8,
+                    border: "none",
+                    background: "transparent",
+                    color: tokens.accent,
+                    cursor: "pointer",
+                    fontSize: 11,
+                    textDecoration: "underline",
+                    padding: 0,
+                  }}
+                  onClick={() =>
+                    dispatch({ type: "OPEN_SETTINGS_SECTION", section: "model" })
+                  }
+                >
+                  打开设置
+                </button>
+              </>
+            ) : (
+              <>
+                <strong>模型上下文已压缩</strong>
+                （约去掉{" "}
+                {contextCompacted?.droppedCount ??
+                  activeThread?.runtime_context_budget?.dropped_count ??
+                  "?"}{" "}
+                条请求侧消息
+                {contextCompacted?.mode === "m2" ||
+                activeThread?.runtime_context_budget?.mode === "m2"
+                  ? "，含滚动摘要"
+                  : ""}
+                ）。
+                下方消息列表仍为完整原文；模型可能看不到较早轮次。
+                {rollingSummary ? (
+                  <button
+                    type="button"
+                    style={{
+                      marginLeft: 8,
+                      border: "none",
+                      background: "transparent",
+                      color: tokens.accent,
+                      cursor: "pointer",
+                      fontSize: 11,
+                      textDecoration: "underline",
+                      padding: 0,
+                    }}
+                    onClick={() => setSummaryOpen(true)}
+                  >
+                    查看摘要
+                  </button>
+                ) : null}
+              </>
+            )}
+          </div>
+        )}
+        {summaryOpen && rollingSummary && (
+          <div
+            role="dialog"
+            aria-label="上下文压缩摘要"
+            style={{
+              margin: "4px 10px 8px",
+              padding: 12,
+              borderRadius: 8,
+              background: "#fff",
+              border: `1px solid ${tokens.border || "#e5e7eb"}`,
+              boxShadow: "0 4px 16px rgba(0,0,0,0.08)",
+              fontSize: 12,
+              lineHeight: 1.5,
+              color: tokens.text || "#111",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginBottom: 8,
+              }}
+            >
+              <strong style={{ fontSize: 12 }}>压缩摘要（脱敏 · 仅供回顾）</strong>
+              <button
+                type="button"
+                onClick={() => setSummaryOpen(false)}
+                style={{
+                  border: "none",
+                  background: "transparent",
+                  cursor: "pointer",
+                  fontSize: 14,
+                  color: tokens.textMuted,
+                }}
+                aria-label="关闭"
+              >
+                ✕
+              </button>
+            </div>
+            <pre
+              style={{
+                margin: 0,
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-word",
+                fontFamily: "inherit",
+                fontSize: 12,
+                maxHeight: 220,
+                overflow: "auto",
+              }}
+            >
+              {rollingSummary}
+            </pre>
+            <div style={{ marginTop: 8, fontSize: 10, color: tokens.textMuted }}>
+              摘要不进入导出默认路径，也不跨会话注入。磁盘全文仍保留。
+            </div>
+          </div>
+        )}
         {messages.length === 0 && !streamingContent && !streamingReasoning && !processingLabel && (
           <EmptyState level={level} />
         )}

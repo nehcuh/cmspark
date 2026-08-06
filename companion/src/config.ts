@@ -163,12 +163,25 @@ export type LlmAuthStyle = "auto" | "bearer" | "x-api-key"
  */
 export type LlmClientHeaderProfile = "none" | "claude_code_compat"
 
+/** Runtime context budget mode (settings-thread-compact). Default auto when dual-truth chip ships. */
+export type ContextCompactionMode = "auto" | "prompt" | "off"
+
 export interface LlmConfig {
   base_url: string
   api_key: string
   model_name: string
   temperature: number
   context_window: number
+  /**
+   * Request-path context budget: auto=compact when over budget; prompt=warn only (no drop);
+   * off=never compact. Omitted on disk → deepMerge fills "auto".
+   */
+  context_compaction?: ContextCompactionMode
+  /**
+   * M2: after M1 head-drop, optionally LLM-summarize dropped region (redacted).
+   * Default false until stable. Request-only; never writes summary into disk messages.
+   */
+  context_compaction_m2?: boolean
   /**
    * Wire protocol; default "openai".
    * Omitted on disk → deepMerge fills default (legacy configs unchanged).
@@ -264,7 +277,11 @@ const defaultConfig: CompanionConfig = {
     api_key: getEnvApiKey(),
     model_name: "deepseek-v4-flash",
     temperature: 0.7,
-    context_window: 1000000,
+    // 128k is a realistic default so auto compaction can trigger; legacy 1e6 ≈ never.
+    context_window: 128000,
+    context_compaction: "auto",
+    // M2 on by default under auto; still fails closed to M1 omit if summary fails.
+    context_compaction_m2: true,
     // Anthropic protocol P0 defaults (omit on disk → these values via deepMerge)
     protocol: "openai",
     auth_style: "auto",

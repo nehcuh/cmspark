@@ -227,6 +227,7 @@ export async function handleMessage(
         cfg.model_name ||
         cfg.temperature !== undefined ||
         cfg.context_window !== undefined ||
+        cfg.context_compaction !== undefined ||
         cfg.protocol !== undefined ||
         cfg.client_header_profile !== undefined ||
         cfg.auth_style !== undefined
@@ -237,6 +238,16 @@ export async function handleMessage(
         if (cfg.model_name) normalized.llm.model_name = cfg.model_name
         if (cfg.temperature !== undefined) normalized.llm.temperature = cfg.temperature
         if (cfg.context_window !== undefined) normalized.llm.context_window = cfg.context_window
+        if (
+          cfg.context_compaction === "auto" ||
+          cfg.context_compaction === "prompt" ||
+          cfg.context_compaction === "off"
+        ) {
+          normalized.llm.context_compaction = cfg.context_compaction
+        }
+        if (typeof cfg.context_compaction_m2 === "boolean") {
+          normalized.llm.context_compaction_m2 = cfg.context_compaction_m2
+        }
         // Anthropic P1: protocol + Coding Plan gateway-compat profile (flat UI fields)
         if (cfg.protocol === "openai" || cfg.protocol === "anthropic") {
           normalized.llm.protocol = cfg.protocol
@@ -430,6 +441,8 @@ export async function handleMessage(
           model_name: config.llm.model_name,
           temperature: config.llm.temperature,
           context_window: config.llm.context_window,
+          context_compaction: config.llm.context_compaction ?? "auto",
+          context_compaction_m2: config.llm.context_compaction_m2 !== false,
           protocol: config.llm.protocol ?? "openai",
           client_header_profile: config.llm.client_header_profile ?? "none",
           auth_style: config.llm.auth_style ?? "auto",
@@ -448,6 +461,16 @@ export async function handleMessage(
       if (cfg.model_name) normalized.llm.model_name = cfg.model_name
       if (cfg.temperature !== undefined) normalized.llm.temperature = cfg.temperature
       if (cfg.context_window !== undefined) normalized.llm.context_window = cfg.context_window
+      if (
+        cfg.context_compaction === "auto" ||
+        cfg.context_compaction === "prompt" ||
+        cfg.context_compaction === "off"
+      ) {
+        normalized.llm.context_compaction = cfg.context_compaction
+      }
+      if (typeof cfg.context_compaction_m2 === "boolean") {
+        normalized.llm.context_compaction_m2 = cfg.context_compaction_m2
+      }
       if (cfg.protocol === "openai" || cfg.protocol === "anthropic") {
         normalized.llm.protocol = cfg.protocol
       }
@@ -488,6 +511,8 @@ export async function handleMessage(
           model_name: updated.llm.model_name,
           temperature: updated.llm.temperature,
           context_window: updated.llm.context_window,
+          context_compaction: updated.llm.context_compaction ?? "auto",
+          context_compaction_m2: updated.llm.context_compaction_m2 !== false,
         },
       }
     }

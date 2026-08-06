@@ -38,9 +38,78 @@ export type MonthGroup = {
 
 export type TimelineModel = {
   today: TimelineThread[]
-  /** P0.5: local calendar yesterday (default expanded) */
+  /** Local calendar yesterday (default collapsed — 2026-08-06 adversary lock) */
   yesterday: TimelineThread[]
   months: MonthGroup[]
+}
+
+/** Unified fold memory (History IA + settings-thread-compact). */
+export const LS_THREAD_LIST_EXPAND = "cmspark.threadList.expand"
+/** Legacy key — migrated once into LS_THREAD_LIST_EXPAND. */
+export const LS_THREAD_LIST_EXPAND_MONTHS_LEGACY = "cmspark.threadList.expandMonths"
+
+export type ThreadListExpandState = {
+  months: string[]
+  /** Default true when missing */
+  today: boolean
+  /** Default false when missing (yesterday collapsed) */
+  yesterday: boolean
+}
+
+export const DEFAULT_THREAD_LIST_EXPAND: ThreadListExpandState = {
+  months: [],
+  today: true,
+  yesterday: false,
+}
+
+export function parseThreadListExpand(raw: string | null): ThreadListExpandState {
+  if (!raw) return { ...DEFAULT_THREAD_LIST_EXPAND, months: [] }
+  try {
+    const parsed = JSON.parse(raw)
+    // Legacy: bare string[] of month keys
+    if (Array.isArray(parsed)) {
+      return {
+        months: parsed.filter((x): x is string => typeof x === "string"),
+        today: DEFAULT_THREAD_LIST_EXPAND.today,
+        yesterday: DEFAULT_THREAD_LIST_EXPAND.yesterday,
+      }
+    }
+    if (parsed && typeof parsed === "object") {
+      const months = Array.isArray(parsed.months)
+        ? parsed.months.filter((x: unknown): x is string => typeof x === "string")
+        : []
+      return {
+        months,
+        today: typeof parsed.today === "boolean" ? parsed.today : DEFAULT_THREAD_LIST_EXPAND.today,
+        yesterday:
+          typeof parsed.yesterday === "boolean"
+            ? parsed.yesterday
+            : DEFAULT_THREAD_LIST_EXPAND.yesterday,
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return { ...DEFAULT_THREAD_LIST_EXPAND, months: [] }
+}
+
+/** Effective open state: search force-open wins when group has matches. */
+export function isPinnedGroupOpen(
+  key: "today" | "yesterday",
+  state: ThreadListExpandState,
+  opts: { searchActive: boolean; hasMatches: boolean },
+): boolean {
+  if (opts.searchActive && opts.hasMatches) return true
+  return key === "today" ? state.today : state.yesterday
+}
+
+export function isMonthGroupOpen(
+  monthKey: string,
+  state: ThreadListExpandState,
+  opts: { searchActive: boolean; hasMatches: boolean },
+): boolean {
+  if (opts.searchActive && opts.hasMatches) return true
+  return state.months.includes(monthKey)
 }
 
 /** Local YYYY-MM-DD for a Date (uses local timezone, not UTC). */

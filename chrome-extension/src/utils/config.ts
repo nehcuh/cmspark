@@ -9,7 +9,7 @@ export const DEFAULT_LLM_CONFIG = {
   api_key: "",
   model_name: "deepseek-v4-flash",
   temperature: 0.7,
-  context_window: 1000000,
+  context_window: 128000,
 }
 
 export function getCompanionUrl(): string {

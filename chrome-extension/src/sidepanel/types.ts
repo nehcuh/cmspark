@@ -69,6 +69,18 @@ export interface Thread {
     /** Client-computed when list marks fingerprint mismatch */
     stale?: boolean
   } | null
+  /** Runtime context budget meta (M1/M2) — distinct from digest */
+  runtime_context_budget?: {
+    last_at?: string
+    mode?: "m1" | "m2"
+    dropped_count?: number
+    tokens_before?: number
+    tokens_after?: number
+    rolling_summary?: string
+    summary_sha256?: string
+    summary_bytes?: number
+    phase?: "pre_loop" | "mid_loop"
+  } | null
   /** P1.5 soft-delete (recycle bin) */
   trashed_at?: string | null
 }
@@ -170,6 +182,13 @@ export interface LLMConfig {
   model_name: string
   temperature: number
   context_window: number
+  /**
+   * Runtime context budget mode. Flattened from companion config.llm.context_compaction.
+   * auto = compact over budget; prompt = warn only; off = never.
+   */
+  context_compaction?: "auto" | "prompt" | "off"
+  /** Optional M2 LLM rolling summary after M1 drop (default false). */
+  context_compaction_m2?: boolean
   /**
    * Wire protocol; default "openai". Flattened from companion config.llm.protocol.
    */

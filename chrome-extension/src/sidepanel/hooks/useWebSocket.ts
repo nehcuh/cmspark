@@ -121,6 +121,14 @@ export function normalizeConfig(config: any): Partial<LLMConfig> {
     model_name: llm.model_name,
     temperature: llm.temperature,
     context_window: llm.context_window,
+    context_compaction:
+      llm.context_compaction === "prompt" || llm.context_compaction === "off"
+        ? llm.context_compaction
+        : llm.context_compaction === "auto"
+          ? "auto"
+          : undefined,
+    context_compaction_m2:
+      typeof llm.context_compaction_m2 === "boolean" ? llm.context_compaction_m2 : undefined,
     // Anthropic P1: wire protocol + Coding Plan gateway-compat profile
     protocol: llm.protocol === "anthropic" ? "anthropic" : "openai",
     client_header_profile:
@@ -699,6 +707,43 @@ export function useWebSocket() {
           // Sync knowledge_selection_mode if this is the active thread
           if (msg.thread?.id === activeThreadRef.current && msg.thread?.knowledge_selection_mode) {
             dispatch({ type: "SET_KNOWLEDGE_SELECTION_MODE", mode: msg.thread.knowledge_selection_mode })
+          }
+          break
+        }
+        case "thread.context_compacted": {
+          // Dual-truth: model context was compressed; UI history stays full (F-UX4/F-S6).
+          const tid =
+            typeof msg.thread_id === "string" && msg.thread_id
+              ? msg.thread_id
+              : activeThreadRef.current
+          if (tid) {
+            dispatch({
+              type: "SET_CONTEXT_COMPACTED",
+              threadId: tid,
+              droppedCount: Number(msg.dropped_count) || 0,
+              tokensBefore: Number(msg.tokens_before) || 0,
+              tokensAfter: Number(msg.tokens_after) || 0,
+              mode: msg.mode === "m2" ? "m2" : "m1",
+              rollingSummary:
+                typeof msg.rolling_summary === "string" ? msg.rolling_summary : undefined,
+            })
+          }
+          break
+        }
+        case "thread.context_compact_prompt": {
+          // prompt mode: over budget but did not drop — surface warning + deep-link affordance
+          const tid =
+            typeof msg.thread_id === "string" && msg.thread_id
+              ? msg.thread_id
+              : activeThreadRef.current
+          if (tid) {
+            dispatch({
+              type: "SET_CONTEXT_COMPACTED",
+              threadId: tid,
+              droppedCount: 0,
+              tokensBefore: Number(msg.tokens_before) || 0,
+              tokensAfter: Number(msg.tokens_after) || 0,
+            })
           }
           break
         }

@@ -139,6 +139,21 @@ test("convertMessagesToAnthropic: system hoist to top-level", () => {
   assert.equal(messages[0].content, "Hi")
 })
 
+test("convertMessagesToAnthropic: merges consecutive user messages (omit notice + user)", () => {
+  const { messages } = convertMessagesToAnthropic([
+    { role: "system", content: "sys" },
+    {
+      role: "user",
+      content: "[context_omitted] Earlier 3 messages omitted (turn-safe). Full history retained on disk.",
+    },
+    { role: "user", content: "What next?" },
+  ])
+  assert.equal(messages.length, 1)
+  assert.equal(messages[0].role, "user")
+  assert.match(String(messages[0].content), /context_omitted/)
+  assert.match(String(messages[0].content), /What next/)
+})
+
 test("convertMessagesToAnthropic: assistant tool_calls → tool_use blocks", () => {
   const { messages } = convertMessagesToAnthropic([
     { role: "user", content: "Read tab" },
