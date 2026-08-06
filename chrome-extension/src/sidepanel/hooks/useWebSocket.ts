@@ -211,11 +211,20 @@ export function useWebSocket() {
       chrome.runtime.sendMessage(message)
     }, initializedRef)
     // Restore send shortcut preference
-    chrome.storage.local.get("sendShortcut", (result) => {
-      if (result.sendShortcut) {
-        dispatch({ type: "SET_SEND_SHORTCUT", shortcut: result.sendShortcut })
-      }
-    })
+    chrome.storage.local.get(
+      ["sendShortcut", "voiceInputEnabled", "voice_privacy_ack_v1"],
+      (result) => {
+        if (result.sendShortcut) {
+          dispatch({ type: "SET_SEND_SHORTCUT", shortcut: result.sendShortcut })
+        }
+        if (typeof result.voiceInputEnabled === "boolean") {
+          dispatch({ type: "SET_VOICE_INPUT_ENABLED", enabled: result.voiceInputEnabled })
+        }
+        if (result.voice_privacy_ack_v1 === true) {
+          dispatch({ type: "SET_VOICE_PRIVACY_ACK_V1", ack: true })
+        }
+      },
+    )
     // Popup "设置" button sets this flag before opening the side panel + closing
     // itself. Read it once on mount and pop the settings view, then clear so a
     // later sidepanel reopen (without going through popup) doesn't auto-open.

@@ -27,6 +27,9 @@ export interface AgentState {
   testResult: string | null
   testVisionResult: string | null
   sendShortcut: SendShortcut
+  /** M1 voice input prefs (chrome.storage.local only). */
+  voiceInputEnabled: boolean
+  voicePrivacyAckV1: boolean
   pendingSecurityConfirmations: SecurityConfirmationRequest[]
   logs: LogEntry[]
   autoSkillNames: string
@@ -134,6 +137,8 @@ export type AgentAction =
   | { type: "SET_TEST_RESULT"; result: string | null }
   | { type: "SET_TEST_VISION_RESULT"; result: string | null }
   | { type: "SET_SEND_SHORTCUT"; shortcut: SendShortcut }
+  | { type: "SET_VOICE_INPUT_ENABLED"; enabled: boolean }
+  | { type: "SET_VOICE_PRIVACY_ACK_V1"; ack: boolean }
   | { type: "ADD_SECURITY_CONFIRMATION"; request: SecurityConfirmationRequest }
   | { type: "REMOVE_SECURITY_CONFIRMATION"; confirmationId: string }
   | { type: "ADD_LOG"; entry: LogEntry }
@@ -227,6 +232,8 @@ export const initialState: AgentState = {
   testResult: null,
   testVisionResult: null,
   sendShortcut: "Enter",
+  voiceInputEnabled: true,
+  voicePrivacyAckV1: false,
   pendingSecurityConfirmations: [],
   logs: [],
   autoSkillNames: "",
@@ -491,6 +498,12 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
     case "SET_SEND_SHORTCUT":
       chrome.storage.local.set({ sendShortcut: action.shortcut })
       return { ...state, sendShortcut: action.shortcut }
+    case "SET_VOICE_INPUT_ENABLED":
+      chrome.storage.local.set({ voiceInputEnabled: action.enabled })
+      return { ...state, voiceInputEnabled: action.enabled }
+    case "SET_VOICE_PRIVACY_ACK_V1":
+      chrome.storage.local.set({ voice_privacy_ack_v1: action.ack })
+      return { ...state, voicePrivacyAckV1: action.ack }
     case "ADD_SECURITY_CONFIRMATION":
       return {
         ...state,

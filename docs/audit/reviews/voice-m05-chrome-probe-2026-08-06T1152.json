@@ -1,0 +1,13 @@
+{
+  "probe": "voice-m05-chrome-file-page",
+  "chromeVersion": "Chrome/151.0.7922.75",
+  "result": {
+    "hasStd": true,
+    "hasWebkit": true,
+    "ua": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36",
+    "online": true,
+    "lang": "zh-CN"
+  },
+  "speechCtorPresent": true,
+  "note": "file:// page proves Chrome desktop has Web Speech ctor; extension origin still needs voice-spike tab + human mic grant"
+}

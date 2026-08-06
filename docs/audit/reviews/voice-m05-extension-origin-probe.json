@@ -1,0 +1,37 @@
+{
+  "at": "2026-08-06T11:54:07.886Z",
+  "version": "Chrome/151.0.7922.75",
+  "ids": [],
+  "results": [
+    {
+      "id": "nkeimhogjdpnpccoofpliimaahmaaome",
+      "spikeUrl": "chrome-extension://nkeimhogjdpnpccoofpliimaahmaaome/tabs/voice-spike.html",
+      "pageUrl": "chrome-extension://nkeimhogjdpnpccoofpliimaahmaaome/tabs/voice-spike.html",
+      "page": {
+        "origin": "null",
+        "href": "chrome-error://chromewebdata/",
+        "hasStd": true,
+        "hasWebkit": true,
+        "title": "chrome-extension://nkeimhogjdpnpccoofpliimaahmaaome/tabs/voice-spike.html",
+        "hasH1": true,
+        "h1": "\n            无法访问您的文件\n          ",
+        "bodyStart": "无法访问您的文件\n\n该文件可能已被移至别处、修改或删除。\n\nERR_FILE_NOT_FOUND"
+      }
+    },
+    {
+      "id": "fignfifoniblkonapihmkfakmlgkbkcf",
+      "spikeUrl": "chrome-extension://fignfifoniblkonapihmkfakmlgkbkcf/tabs/voice-spike.html",
+      "pageUrl": "chrome-extension://fignfifoniblkonapihmkfakmlgkbkcf/tabs/voice-spike.html",
+      "page": {
+        "origin": "null",
+        "href": "chrome-error://chromewebdata/",
+        "hasStd": true,
+        "hasWebkit": true,
+        "title": "chrome-extension://fignfifoniblkonapihmkfakmlgkbkcf/tabs/voice-spike.html",
+        "hasH1": true,
+        "h1": "\n            无法访问您的文件\n          ",
+        "bodyStart": "无法访问您的文件\n\n该文件可能已被移至别处、修改或删除。\n\nERR_FILE_NOT_FOUND"
+      }
+    }
+  ]
+}

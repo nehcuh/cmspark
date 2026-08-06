@@ -37,6 +37,8 @@ import {
   IconAttach,
   IconAlert,
 } from "./ui/icons"
+import { VoiceMicButton } from "./components/VoiceMicButton"
+import { useVoiceInput } from "./hooks/useVoiceInput"
 import { collectRunningTools } from "./utils/running-tools"
 import {
   buildScopedRunBusyInput,
@@ -226,9 +228,12 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
   const [selectedFiles, setSelectedFiles] = useState<FileAttachment[]>([])
   const [fileError, setFileError] = useState("")
   const [composeOpen, setComposeOpen] = useState(false)
+  const [voicePrivacyOpen, setVoicePrivacyOpen] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const sendingRef = useRef(false)
+  const textRef = useRef(text)
+  textRef.current = text
   /** Fresh active thread for SW upload callbacks (closure state is stale after switch). */
   const activeThreadIdRef = useRef(state.activeThreadId)
   activeThreadIdRef.current = state.activeThreadId
@@ -354,15 +359,54 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
   const runBusy = deriveRunBusy(runBusyInput)
   const composerMode = resolveComposerMode({ taskActive, threadBusy, runBusy })
   const isWorker = activeThread?.agent_role === "worker"
+  const needsThread = !state.activeThreadId
+  const needsConnection = state.connectionState !== "connected"
+  const showStop = threadBusy || isStreaming
+
+  const voiceAllowStart =
+    !threadBusy &&
+    !needsThread &&
+    state.voiceInputEnabled !== false
+  const voice = useVoiceInput({
+    getBaseText: () => textRef.current,
+    onDraft: (merged) => {
+      setText(merged)
+      requestAnimationFrame(() => {
+        const el = textareaRef.current
+        if (!el) return
+        el.focus()
+        const len = merged.length
+        el.setSelectionRange(len, len)
+      })
+    },
+    threadId: state.activeThreadId,
+    allowStart: voiceAllowStart,
+    enabled: state.voiceInputEnabled !== false,
+    privacyAck: state.voicePrivacyAckV1 === true,
+    onNeedPrivacyAck: () => setVoicePrivacyOpen(true),
+    onNeedPermissionBootstrap: () => {
+      try {
+        const url = chrome.runtime.getURL("tabs/voice-permission.html")
+        chrome.tabs.create({ url })
+      } catch {
+        /* ignore */
+      }
+    },
+  })
+  const showVoiceMic =
+    voice.supported &&
+    state.voiceInputEnabled !== false &&
+    !isWorker &&
+    !needsThread
+
+  // Disable send while dictating — mid-listen send would ship base snapshot only
   const canSend =
     composerMode !== "l2_task" &&
     composerMode !== "thread_busy" &&
     hasContent &&
     !!state.activeThreadId &&
-    state.connectionState === "connected"
-  const needsThread = !state.activeThreadId
-  const needsConnection = state.connectionState !== "connected"
-  const showStop = threadBusy || isStreaming
+    state.connectionState === "connected" &&
+    !voice.listening
 
   const getPlaceholder = () => {
     if (needsThread) return "请先创建或选择一个线程"
@@ -745,6 +789,8 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
   }
 
   const handleStop = () => {
+    // SoT §6.4: abort recognition first, then chat.abort
+    voice.abortForChatStop()
     chrome.runtime.sendMessage({
       type: "chat.abort",
       threadId: state.activeThreadId,
@@ -933,7 +979,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
             background: needsThread || needsConnection ? tokens.bgMuted : tokens.bgElevated,
           }}
         >
-          {!showStop && (
+          {!showStop && !(voice.listening && showVoiceMic) && (
             <button
               type="button"
               style={styles.attachBtn}
@@ -949,17 +995,37 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
             style={styles.textarea}
             placeholder={getPlaceholder()}
             rows={2}
-            value={text}
-            disabled={needsThread || needsConnection || threadBusy}
+            value={voice.liveOverlay !== null ? voice.liveOverlay : text}
+            disabled={needsThread || needsConnection || threadBusy || voice.listening}
             onChange={handleChange}
             onKeyDown={handleKeyDown}
           />
+          {showVoiceMic && (
+            <VoiceMicButton
+              listening={voice.listening}
+              disabled={!voiceAllowStart && !voice.listening}
+              title={
+                threadBusy
+                  ? "处理中无法听写"
+                  : voice.listening
+                    ? "结束语音输入"
+                    : "语音输入（听写进草稿）"
+              }
+              onClick={() => voice.toggle()}
+            />
+          )}
           {showStop ? (
             <button
               type="button"
               style={styles.stopBtn}
               onClick={handleStop}
-              title={isWorker ? "停止该子任务（本轮）" : "停止本轮"}
+              title={
+                voice.listening
+                  ? "停止听写并停止本轮"
+                  : isWorker
+                    ? "停止该子任务（本轮）"
+                    : "停止本轮"
+              }
             >
               <IconStop size={14} />
             </button>
@@ -989,6 +1055,89 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
             </button>
           )}
         </div>
+        {voice.banner && (
+          <div
+            data-testid="voice-banner"
+            style={{
+              marginTop: 6,
+              fontSize: 11,
+              color: tokens.textSecondary,
+              display: "flex",
+              alignItems: "flex-start",
+              gap: 6,
+              lineHeight: 1.4,
+            }}
+          >
+            <span style={{ flex: 1 }}>{voice.banner}</span>
+            <button
+              type="button"
+              onClick={() => voice.dismissBanner()}
+              style={{
+                border: "none",
+                background: "transparent",
+                color: tokens.textMuted,
+                cursor: "pointer",
+                fontSize: 11,
+                padding: 0,
+              }}
+            >
+              关闭
+            </button>
+          </div>
+        )}
+        {voicePrivacyOpen && (
+          <div
+            data-testid="voice-privacy-sheet"
+            style={{
+              marginTop: 8,
+              padding: 10,
+              borderRadius: 8,
+              border: `1px solid ${tokens.border}`,
+              background: tokens.bgElevated,
+              fontSize: 12,
+              lineHeight: 1.5,
+              color: tokens.textSecondary,
+            }}
+          >
+            <div style={{ marginBottom: 8, color: tokens.text }}>
+              可选麦克风：浏览器将语音转成文字后填入输入框，默认不自动发送。转写可能使用 Chrome
+              语音服务（音频可能经网络发送至浏览器厂商），不经过 CMspark Companion。发送后的文字与键入相同，仍受现有确认与信任设置约束。
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button
+                type="button"
+                style={{
+                  ...styles.attachBtn,
+                  width: "auto",
+                  padding: "4px 10px",
+                  border: `1px solid ${tokens.border}`,
+                  fontSize: 12,
+                }}
+                onClick={() => setVoicePrivacyOpen(false)}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                style={{
+                  ...styles.sendBtn,
+                  width: "auto",
+                  padding: "4px 12px",
+                  fontSize: 12,
+                  boxShadow: "none",
+                }}
+                onClick={() => {
+                  dispatch({ type: "SET_VOICE_PRIVACY_ACK_V1", ack: true })
+                  setVoicePrivacyOpen(false)
+                  // Pass ack override — React state may not have re-rendered yet
+                  voice.toggle({ privacyAck: true })
+                }}
+              >
+                同意并继续
+              </button>
+            </div>
+          </div>
+        )}
         <SlashCommandPopover
           skills={slashSkills}
           searchText={slashQuery}
@@ -1088,6 +1237,10 @@ const globalCSS = `
   @keyframes cmspark-dots {
     0% { width: 0; }
     100% { width: 20px; }
+  }
+  @keyframes cmspark-mic-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.35); }
+    50% { box-shadow: 0 0 0 6px rgba(220, 38, 38, 0); }
   }
   html, body, #root {
     background: ${tokens.bg};

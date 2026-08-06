@@ -1,0 +1,7 @@
+{
+  "batch": "voice-input-m1",
+  "timestamp": "20260806-200603",
+  "pi": { "verdict": "REJECT", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/voice-input-m1-pi-20260806-200603.md" },
+  "approve": false,
+  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/voice-input-m1-diff-20260806-200603.patch"
+}
