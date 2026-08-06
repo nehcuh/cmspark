@@ -3,15 +3,13 @@
 ## Session Handoff
 
 <!-- handoff:start -->
-### 2026-08-06 (S47 — Trust B lifecycle #126 + DMG)
-- **Ship**: PR **#126** merge `b338498` — Trust restore on unapply/uninstall/switch/thread-delete + fail paths; allowTrust; install strip origin/trust; single holder; crash journal; Downloads home-bounded
-- **Dual**: Claude+Pi APPROVE_WITH_NITS · CI green · packs/skill_install 33 pass
-- **Local**: `CMspark-v0.4.0-macOS.dmg` → `/Applications/CMspark.app` (adhoc `com.cmspark.agent`); app relaunched
-- **Next**: 真机 Trust/skill_install 验收；重载 Chrome 扩展若用 unpacked；S43 合盖 A/B；host-integrity packaging dirty 可选 commit
-- **Knowledge**: Trust B 全离开路径 · journal/holder · Downloads 段名陷阱
+### 2026-08-06 (S48 — Thread History IA P0–P1.5 · PR #127)
+- **Ship**: branch `feat/thread-history-ia-p0-p15` · `ebb7fd7` · **PR #127** — timeline (today/yesterday/month·day), multi-select batch delete, digests/tags, soft trash+restore+30d purge, `@` summary_card refs, rules cleanup
+- **Dual**: design APPROVE_WITH_NITS; impl R1 REJECT (B1 hard-delete default / B2 list_scope / B3 @ Enter) → fixes + perf → **R2 both APPROVE_WITH_NITS** (`both_ok`)
+- **Next**: merge #127; manual smoke ☰ / trash / `@` / 整理助手; optional nits (B2/B3 tests, trashed chat guard)
+- **Knowledge**: list_scope isolation · delete default hard · single-pass list · digest queue max 2
 
-### 2026-08-06 (S46 — scenes tools + Trust B + MCP cruise + skill_install home)
-- **Ship on main**: skill_install user_home · MCP cruise waive · user-scene tools/AI · Trust B happy-path apply/unapply
-- **Next closed by S47**: multi-lane REQUEST_CHANGES lifecycle → #126
-- **Knowledge**: skill_install 白名单 · MCP≠shell · Pack Trust B · MCP whitelist 正交
+### 2026-08-06 (S47 — Trust B lifecycle #126 + DMG)
+- **Ship**: PR **#126** merge `b338498` — Trust restore all leave paths; allowTrust; install strip; holder; journal; DMG 0.4.0 → `/Applications`
+- **Next residual**: 真机 Trust/skill_install 验收；S43 合盖 A/B；host-integrity packaging 可选
 <!-- handoff:end -->
