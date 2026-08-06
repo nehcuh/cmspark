@@ -2,7 +2,7 @@
 // Spec S10: default per-command confirmation via L2 security_token gate.
 // #au4dch SH-A: windowsHide on win32 + optional onProgress for tool.progress tails.
 
-import { spawn } from "child_process"
+import { spawn, type ChildProcess } from "child_process"
 import * as fs from "fs"
 import * as path from "path"
 import { getModule, requireModule } from "./modules"
@@ -11,10 +11,123 @@ import { getUserEnvVars } from "../user-env"
 import { hardenPath } from "../process-path"
 
 const MAX_OUTPUT = 200_000
-const DEFAULT_TIMEOUT_MS = 60_000
+/** Default one-shot wall clock; killProcessTree on expiry (not just the shell parent). */
+export const DEFAULT_TIMEOUT_MS = 60_000
+/** Hard ceiling so LLM/tool params cannot hang the host forever. */
+export const MAX_TIMEOUT_MS = 300_000
 /** Max chars of each stream sent on each progress tick (WS payload hygiene). */
 export const PROGRESS_TAIL_CHARS = 2_000
 const PROGRESS_INTERVAL_MS = 750
+
+// --- Active run registry (chat.abort / shell.exec.abort / signal) ---
+// Keyed by tool_call_id when available; otherwise a synthetic run id.
+type ShellRunEntry = {
+  threadId: string | null
+  kill: () => void
+}
+const activeShellRuns = new Map<string, ShellRunEntry>()
+
+/** Test helper: clear registry between cases. */
+export function _resetShellRunsForTests(): void {
+  activeShellRuns.clear()
+}
+
+export function listActiveShellRunIds(): string[] {
+  return [...activeShellRuns.keys()]
+}
+
+/**
+ * Kill in-flight shell_exec for a thread (chat.abort / stop_thread).
+ * Returns number of runs signalled.
+ */
+export function abortShellRunsForThread(threadId: string): number {
+  if (!threadId) return 0
+  let n = 0
+  for (const [key, entry] of [...activeShellRuns.entries()]) {
+    if (entry.threadId === threadId) {
+      try {
+        entry.kill()
+      } catch {
+        /* best-effort */
+      }
+      activeShellRuns.delete(key)
+      n++
+    }
+  }
+  return n
+}
+
+/** Kill one shell by tool_call_id / run key. */
+export function abortShellRunById(runId: string): boolean {
+  if (!runId) return false
+  const entry = activeShellRuns.get(runId)
+  if (!entry) return false
+  try {
+    entry.kill()
+  } catch {
+    /* best-effort */
+  }
+  activeShellRuns.delete(runId)
+  return true
+}
+
+/** Panic: kill every in-flight shell_exec. */
+export function abortAllShellRuns(): number {
+  let n = 0
+  for (const [key, entry] of [...activeShellRuns.entries()]) {
+    try {
+      entry.kill()
+    } catch {
+      /* best-effort */
+    }
+    activeShellRuns.delete(key)
+    n++
+  }
+  return n
+}
+
+/**
+ * Kill the shell child and its descendants.
+ * - POSIX: requires spawn({ detached: true }) so pid is process-group leader;
+ *   `process.kill(-pid)` SIGKILLs the whole group (shell + sleep/pipeline kids).
+ * - win32: `taskkill /T /F` process tree (detached not required).
+ * Bare `child.kill("SIGKILL")` alone leaves grandchildren alive under shell:true.
+ */
+export function killProcessTree(child: ChildProcess): void {
+  const pid = child.pid
+  if (pid == null || pid <= 0) return
+  if (process.platform === "win32") {
+    try {
+      spawn("taskkill", ["/pid", String(pid), "/T", "/F"], {
+        stdio: "ignore",
+        windowsHide: true,
+      })
+    } catch {
+      try {
+        child.kill()
+      } catch {
+        /* ignore */
+      }
+    }
+    return
+  }
+  try {
+    process.kill(-pid, "SIGKILL")
+  } catch {
+    try {
+      child.kill("SIGKILL")
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+/** Clamp optional timeoutMs into [1000, MAX_TIMEOUT_MS]; default DEFAULT_TIMEOUT_MS. */
+export function resolveShellTimeoutMs(raw?: number | null): number {
+  if (typeof raw !== "number" || !Number.isFinite(raw)) return DEFAULT_TIMEOUT_MS
+  const n = Math.floor(raw)
+  return Math.min(MAX_TIMEOUT_MS, Math.max(1000, n))
+}
 
 /**
  * Child env for shell_exec (ADR-019).
@@ -97,18 +210,23 @@ export type ShellProgress = {
  * Options for Node spawn of shell_exec children (legacy shell:true path).
  * windowsHide: true on win32 so approved one-shots do not flash an empty console
  * (#au4dch black-window pain). Harmless no-op on non-win platforms.
+ * detached:true on POSIX so the child is a process-group leader and
+ * killProcessTree can SIGKILL the whole tree (timeout / chat.abort).
  */
 export function shellSpawnOptions(cwd: string, env: NodeJS.ProcessEnv): {
   shell: true
   cwd: string
   env: NodeJS.ProcessEnv
   windowsHide: boolean
+  detached: boolean
 } {
   return {
     shell: true,
     cwd,
     env,
     windowsHide: true,
+    // win32: taskkill /T walks the tree; detached not required and can orphan oddly.
+    detached: process.platform !== "win32",
   }
 }
 
@@ -229,12 +347,14 @@ export function shellSpawnArgvOptions(cwd: string, env: NodeJS.ProcessEnv): {
   cwd: string
   env: NodeJS.ProcessEnv
   windowsHide: boolean
+  detached: boolean
 } {
   return {
     shell: false,
     cwd,
     env,
     windowsHide: true,
+    detached: process.platform !== "win32",
   }
 }
 
@@ -243,6 +363,16 @@ export async function shellExec(opts: {
   cwd?: string | null
   threadId?: string
   timeoutMs?: number
+  /**
+   * chat.abort / supersede AbortSignal from the LLM loop.
+   * When aborted, killProcessTree and resolve with aborted:true.
+   */
+  signal?: AbortSignal
+  /**
+   * Registry key (tool_call_id). Enables shell.exec.abort by id.
+   * Auto-generated when omitted.
+   */
+  runKey?: string
   /** Optional live progress for Side Panel tool.progress (not audited). */
   onProgress?: (p: ShellProgress) => void
 }): Promise<{ success: boolean; data?: any; error?: string }> {
@@ -256,6 +386,15 @@ export async function shellExec(opts: {
   const policyOk = commandAllowedByPolicy(command)
   if (!policyOk.ok) return { success: false, error: policyOk.error }
 
+  // Already aborted before spawn (chat.stop during L2 wait, etc.)
+  if (opts.signal?.aborted) {
+    return {
+      success: false,
+      error: "shell_exec aborted before start",
+      data: { aborted: true, timed_out: false, exit_code: -1 },
+    }
+  }
+
   let cwd = opts.cwd || process.cwd()
   if (opts.cwd) {
     try {
@@ -268,8 +407,13 @@ export async function shellExec(opts: {
     }
   }
 
-  const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS
+  const timeoutMs = resolveShellTimeoutMs(opts.timeoutMs)
   const started = Date.now()
+  const runKey =
+    typeof opts.runKey === "string" && opts.runKey.length > 0
+      ? opts.runKey
+      : `shell-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+  const threadId = opts.threadId ? String(opts.threadId) : null
 
   return new Promise((resolve) => {
     // P1b: shell:false + argv when parseable AND safe on this platform (see shouldUseArgvSpawn).
@@ -282,7 +426,9 @@ export async function shellExec(opts: {
 
     let stdout = ""
     let stderr = ""
-    let killed = false
+    /** null | timeout | abort — distinguishes chat.stop vs wall-clock kill. */
+    let killReason: null | "timeout" | "abort" = null
+    let settled = false
     let lastProgressAt = 0
 
     const emitProgress = (force = false) => {
@@ -301,14 +447,27 @@ export async function shellExec(opts: {
       }
     }
 
-    const timer = setTimeout(() => {
-      killed = true
-      try {
-        child.kill("SIGKILL")
-      } catch {
-        /* ignore */
+    const doKill = (reason: "timeout" | "abort") => {
+      if (settled) return
+      if (killReason == null) killReason = reason
+      killProcessTree(child)
+    }
+
+    activeShellRuns.set(runKey, {
+      threadId,
+      kill: () => doKill("abort"),
+    })
+
+    const onAbortSignal = () => doKill("abort")
+    if (opts.signal) {
+      if (opts.signal.aborted) {
+        doKill("abort")
+      } else {
+        opts.signal.addEventListener("abort", onAbortSignal, { once: true })
       }
-    }, timeoutMs)
+    }
+
+    const timer = setTimeout(() => doKill("timeout"), timeoutMs)
 
     const progressTimer = opts.onProgress
       ? setInterval(() => emitProgress(true), PROGRESS_INTERVAL_MS)
@@ -323,13 +482,16 @@ export async function shellExec(opts: {
       emitProgress(false)
     })
 
-    const cleanupProgress = () => {
+    const cleanup = () => {
+      settled = true
+      clearTimeout(timer)
       if (progressTimer) clearInterval(progressTimer)
+      opts.signal?.removeEventListener("abort", onAbortSignal)
+      activeShellRuns.delete(runKey)
     }
 
     child.on("error", (err) => {
-      clearTimeout(timer)
-      cleanupProgress()
+      cleanup()
       appendCapabilityAudit({
         type: "shell.command",
         thread_id: opts.threadId,
@@ -337,14 +499,22 @@ export async function shellExec(opts: {
         at: new Date().toISOString(),
         error: err.message,
       })
-      resolve({ success: false, error: err.message })
+      resolve({
+        success: false,
+        error: err.message,
+        data: {
+          aborted: killReason === "abort",
+          timed_out: killReason === "timeout",
+        },
+      })
     })
 
-    child.on("close", (code, signal) => {
-      clearTimeout(timer)
-      cleanupProgress()
+    child.on("close", (code, signalName) => {
+      cleanup()
       emitProgress(true)
-      const exitCode = killed ? -1 : code ?? -1
+      const timed_out = killReason === "timeout"
+      const aborted = killReason === "abort"
+      const exitCode = killReason != null ? -1 : code ?? -1
       appendCapabilityAudit({
         type: "shell.command",
         thread_id: opts.threadId,
@@ -352,13 +522,18 @@ export async function shellExec(opts: {
         exit_code: exitCode,
         at: new Date().toISOString(),
       })
+      // Keep success:true on non-zero / timeout / abort so the agent can read
+      // partial stdout (same contract as pre-fix timeout). UI flags failed via
+      // timed_out / aborted / exit_code.
       resolve({
         success: true,
         data: {
           exit_code: exitCode,
-          signal: signal || null,
-          timed_out: killed,
+          signal: signalName || null,
+          timed_out,
+          aborted,
           duration_ms: Date.now() - started,
+          timeout_ms: timeoutMs,
           cwd,
           spawn_mode: useArgv ? "argv" : "shell",
           stdout: stdout.slice(0, MAX_OUTPUT),

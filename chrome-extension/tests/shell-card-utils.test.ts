@@ -74,8 +74,32 @@ test("extractShellCardData: timed_out → failed + meta 超时", () => {
   )
   assert.equal(card.failed, true)
   assert.equal(card.timedOut, true)
+  assert.equal(card.aborted, false)
   assert.match(formatShellMetaLine(card), /超时/)
   assert.match(card.body, /partial/)
+})
+
+test("extractShellCardData: aborted → failed + meta 已停止 (priority over 超时)", () => {
+  const card = extractShellCardData(
+    { command: "sleep 999" },
+    {
+      success: true,
+      data: {
+        exit_code: -1,
+        timed_out: false,
+        aborted: true,
+        duration_ms: 1200,
+        stdout: "partial\n",
+        stderr: "",
+      },
+    },
+  )
+  assert.equal(card.failed, true)
+  assert.equal(card.aborted, true)
+  const meta = formatShellMetaLine(card)
+  assert.match(meta, /已停止/)
+  // node-shims Assert has no doesNotMatch — keep tsc green for npm test
+  assert.ok(!/超时/.test(meta), "aborted meta must not also show 超时")
 })
 
 test("extractShellCardData: result.success false surfaces error as stderr body", () => {

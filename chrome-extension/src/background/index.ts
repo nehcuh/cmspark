@@ -629,6 +629,17 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
         sendResponse({ ok: true })
         return true
 
+      // Stop one in-flight shell_exec process tree without aborting the whole chat.
+      case "shell.exec.abort": {
+        const sent = wsClient.send({
+          type: "shell.exec.abort",
+          tool_call_id: message.tool_call_id || message.toolCallId || null,
+          thread_id: message.thread_id || message.threadId || null,
+        })
+        sendResponse({ ok: sent })
+        return true
+      }
+
       case "chat.regenerate": {
         getActiveTabHostname().then((hostname) => {
           const sent = wsClient.send({

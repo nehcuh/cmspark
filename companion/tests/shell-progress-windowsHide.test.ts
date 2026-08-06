@@ -20,6 +20,12 @@ describe("shellSpawnOptions", () => {
     assert.equal(o.shell, true)
     assert.equal(o.windowsHide, true)
     assert.equal(o.cwd, "/tmp")
+    // POSIX: detached so killProcessTree can SIGKILL the process group
+    if (process.platform !== "win32") {
+      assert.equal(o.detached, true)
+    } else {
+      assert.equal(o.detached, false)
+    }
   })
 })
 
@@ -57,10 +63,11 @@ describe("tryParseSimpleArgv (P1b)", () => {
     // Still parses plain commands
     assert.deepEqual(tryParseSimpleArgv("ls /tmp"), ["ls", "/tmp"])
   })
-  it("shellSpawnArgvOptions uses shell:false", () => {
+  it("shellSpawnArgvOptions uses shell:false + detached on POSIX", () => {
     const o = shellSpawnArgvOptions("/tmp", buildChildEnv())
     assert.equal(o.shell, false)
     assert.equal(o.windowsHide, true)
+    assert.equal(o.detached, process.platform !== "win32")
   })
   it("win32: only .exe/.com use argv; bare names, .bat/.cmd stay shell:true (B1/N1b)", () => {
     const npm = tryParseSimpleArgv("npm run build")

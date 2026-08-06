@@ -620,6 +620,7 @@ function toolResultUserHint(result: any): string | null {
 }
 
 function ToolCallCard({ tc }: { tc: any }) {
+  const { state: agentState } = useAgentStore()
   const [expanded, setExpanded] = useState(false)
   const [visionExpanded, setVisionExpanded] = useState(false)
   const [shellExpanded, setShellExpanded] = useState(false)
@@ -736,6 +737,34 @@ function ToolCallCard({ tc }: { tc: any }) {
           <span style={styles.toolMeta} data-testid="tool-progress-elapsed">
             {Math.floor(progressElapsed / 1000)}s
           </span>
+        )}
+        {isShellExec && derivedStatus === "running" && typeof tc.id === "string" && tc.id && (
+          <button
+            type="button"
+            data-testid="shell-stop-btn"
+            title="停止此 shell 命令（不中断整轮对话）"
+            onClick={(e) => {
+              e.stopPropagation()
+              chrome.runtime.sendMessage({
+                type: "shell.exec.abort",
+                tool_call_id: tc.id,
+                thread_id: agentState.activeThreadId || undefined,
+              })
+            }}
+            style={{
+              ...styles.toolLinkBtn,
+              marginLeft: "auto",
+              color: tokens.danger,
+              border: `1px solid ${tokens.danger}`,
+              borderRadius: 4,
+              padding: "1px 6px",
+              fontSize: 10,
+              cursor: "pointer",
+              background: "transparent",
+            }}
+          >
+            停止
+          </button>
         )}
       </div>
       {shellCard && shellCard.commandPreview && (
