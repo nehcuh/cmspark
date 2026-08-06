@@ -218,10 +218,14 @@ export function StatusRail({
           style={railStyles.cruisePill}
           title={
             unattendedArmed
-              ? "无人值守已武装（本会话桌面值守）；点击解除值守与巡航 flags"
-              : "运行自主度已武装；点击解除（关闭网页/企业/协议三类自动批准）"
+              ? "无人值守已武装；左键解除，右键打开安全设置"
+              : "运行自主度已武装；左键解除，右键打开安全设置"
           }
           onClick={disarmCruise}
+          onContextMenu={(e) => {
+            e.preventDefault()
+            dispatch({ type: "OPEN_SETTINGS_SECTION", section: "security" })
+          }}
           aria-label={`${cruiseLabel}，点击解除`}
         >
           {cruiseLabel}
@@ -231,8 +235,20 @@ export function StatusRail({
       <div
         role="status"
         aria-label={connLabel}
-        title={connLabel}
-        style={railStyles.connPill}
+        title={
+          connectionState !== "connected"
+            ? "连接异常 — 点击打开连接与配对设置"
+            : connLabel
+        }
+        style={{
+          ...railStyles.connPill,
+          cursor: connectionState !== "connected" ? "pointer" : "default",
+        }}
+        onClick={() => {
+          if (connectionState !== "connected") {
+            dispatch({ type: "OPEN_SETTINGS_SECTION", section: "connection" })
+          }
+        }}
       >
         <span
           style={{
@@ -381,11 +397,23 @@ export function StatusRail({
               style={railStyles.menuItem}
               onClick={() => {
                 closeMenu()
-                dispatch({ type: "TOGGLE_SETTINGS" })
+                dispatch({ type: "OPEN_SETTINGS_SECTION", section: "model" })
               }}
             >
               <IconSettings size={14} />
               <span>设置</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              style={railStyles.menuItem}
+              onClick={() => {
+                closeMenu()
+                dispatch({ type: "OPEN_SETTINGS_SECTION", section: "secrets" })
+              }}
+            >
+              <IconSettings size={14} />
+              <span>密钥与环境</span>
             </button>
             <div style={railStyles.menuDivider} />
             <button

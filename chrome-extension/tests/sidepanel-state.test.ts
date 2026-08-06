@@ -122,6 +122,21 @@ test("normalizeConfig maps anthropic protocol and coding-plan profile", () => {
   assert.equal(n.base_url, "https://gateway.example/v1")
 })
 
+test("normalizeConfig flattens context_compaction modes", () => {
+  assert.equal(
+    normalizeConfig({ llm: { context_compaction: "prompt", base_url: "x", model_name: "m", temperature: 0, context_window: 1, api_key: "" } }).context_compaction,
+    "prompt",
+  )
+  assert.equal(
+    normalizeConfig({ llm: { context_compaction: "off", base_url: "x", model_name: "m", temperature: 0, context_window: 1, api_key: "" } }).context_compaction,
+    "off",
+  )
+  assert.equal(
+    normalizeConfig({ llm: { context_compaction: "auto", base_url: "x", model_name: "m", temperature: 0, context_window: 1, api_key: "" } }).context_compaction,
+    "auto",
+  )
+})
+
 test("ADD_MESSAGE dedupes by message id (optimistic panel + SW chat.user echo)", () => {
   const msg = {
     id: "thread-a_user_1",

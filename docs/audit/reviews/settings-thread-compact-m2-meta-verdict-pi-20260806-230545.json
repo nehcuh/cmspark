@@ -1,0 +1,7 @@
+{
+  "batch": "settings-thread-compact-m2-meta",
+  "timestamp": "20260806-230545",
+  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/settings-thread-compact-m2-meta-pi-20260806-230545.md" },
+  "approve": true,
+  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/settings-thread-compact-m2-meta-diff-20260806-230545.patch"
+}

@@ -7,6 +7,10 @@ import { atomicWriteJSON } from "../io"
 import type { MissionBoard } from "../board/schema"
 import type { ThreadDigest } from "./digest"
 import { isDigestStale, sanitizeDigest } from "./digest"
+import {
+  sanitizeRuntimeContextBudget,
+  type RuntimeContextBudgetMeta,
+} from "./runtime-context-budget"
 
 interface ThreadPackSnapshot {
   tool_whitelist: string[] | null
@@ -82,6 +86,11 @@ interface Thread {
    * Rebuildable — messages remain source of truth.
    */
   digest?: ThreadDigest | null
+  /**
+   * Runtime context budget meta (M1/M2). Distinct from digest/export.
+   * Rolling summary is redacted, for UI "查看摘要"; not injected cross-thread.
+   */
+  runtime_context_budget?: RuntimeContextBudgetMeta | null
   /**
    * Soft-delete timestamp (ISO). null/undefined = active.
    * P1.5 recycle bin; hard delete clears file + index entry.
@@ -530,6 +539,18 @@ export class ThreadManager {
           throw new Error("Invalid digest payload")
         }
         updates = { ...updates, digest: sanitized }
+      }
+    }
+    // Runtime context budget (M1/M2) — separate from digest
+    if (updates.runtime_context_budget !== undefined) {
+      if (updates.runtime_context_budget === null) {
+        // ok — clear
+      } else {
+        const sanitized = sanitizeRuntimeContextBudget(updates.runtime_context_budget)
+        if (!sanitized) {
+          throw new Error("Invalid runtime_context_budget payload")
+        }
+        updates = { ...updates, runtime_context_budget: sanitized }
       }
     }
     if (updates.alias !== undefined) {

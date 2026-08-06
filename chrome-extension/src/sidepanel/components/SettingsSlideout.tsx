@@ -1,12 +1,24 @@
 // Settings slideout panel for LLM configuration + NetSec (migrated from 场景 panel)
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { useAgentStore } from "../store/agentStore"
 import { Modal } from "./ui/Modal"
 import { tokens } from "../ui/tokens"
 import { UserEnvSection } from "./UserEnvSection"
 import { NetSecSettingsSection } from "./NetSecSettingsSection"
 import { OutboundMcpSettingsSection } from "./OutboundMcpSettingsSection"
+import { SettingsSection } from "./SettingsSection"
+import {
+  defaultUserOpenSections,
+  isElevatedTrust,
+  isSectionEffectivelyOpen,
+  LS_SETTINGS_EXPAND,
+  parseSettingsExpand,
+  serializeSettingsExpand,
+  SETTINGS_SECTION_IDS,
+  toggleSectionOpen,
+  type SettingsSectionId,
+} from "../utils/settings-sections"
 // WP5-I4 实验功能段:组件纯渲染,文案/判定全部来自 logic 纯函数(镜像
 // companion 单一真源);发送固定 source:"settings"(companion 双层围栏)。
 import {
@@ -83,6 +95,47 @@ export function SettingsSlideout() {
   const [unattendedIncludeProtocol, setUnattendedIncludeProtocol] = useState(false)
   // WP5-I4 实验区:删除模型两步确认按钮的待命态(非 store——纯组件内 UI 态)。
   const [modelDeleteArmed, setModelDeleteArmed] = useState(false)
+  // W1 accordion: user open preferences (force rules applied in isSectionOpen).
+  const [userOpenSections, setUserOpenSections] = useState<Set<SettingsSectionId>>(() => {
+    try {
+      const parsed = parseSettingsExpand(localStorage.getItem(LS_SETTINGS_EXPAND))
+      if (parsed) return parsed
+    } catch {
+      /* ignore */
+    }
+    return defaultUserOpenSections(null)
+  })
+
+  const elevatedTrust = isElevatedTrust({
+    auto_approve_dangerous: state.config.auto_approve_dangerous,
+    auto_approve_enterprise_tools: state.config.auto_approve_enterprise_tools,
+    allow_all_schemes: state.config.allow_all_schemes,
+    unattendedArmed: state.unattended?.armed === true,
+  })
+
+  const isSectionOpen = useCallback(
+    (id: SettingsSectionId) =>
+      isSectionEffectivelyOpen(id, {
+        userOpen: userOpenSections,
+        wsPaired,
+        elevatedTrust,
+      }),
+    [userOpenSections, wsPaired, elevatedTrust],
+  )
+
+  const handleToggleSection = useCallback((id: SettingsSectionId) => {
+    // When force-open (unpaired connection / elevated security), still allow user
+    // to toggle LS preference — but effective open stays forced until force clears.
+    setUserOpenSections((prev) => {
+      const next = toggleSectionOpen(id, prev)
+      try {
+        localStorage.setItem(LS_SETTINGS_EXPAND, serializeSettingsExpand(next))
+      } catch {
+        /* ignore */
+      }
+      return next
+    })
+  }, [])
 
   // P0-2B: check on open whether a WS pairing secret is already stored, so the
   // status badge reflects the real pairing state (not just connection state).
@@ -115,18 +168,31 @@ export function SettingsSlideout() {
     dispatch({ type: "SET_COMPUTER_MODEL_ERROR", error: null })
     chrome.runtime.sendMessage({ type: "computer.model.get_state" })
     chrome.runtime.sendMessage({ type: "ws.getPairingStatus" }, (resp: { paired?: boolean } | undefined) => {
-      setWsPaired(!!resp?.paired)
+      const paired = !!resp?.paired
+      setWsPaired(paired)
+      // First open without LS: seed defaults from pairing (F-UX3).
+      try {
+        if (localStorage.getItem(LS_SETTINGS_EXPAND) == null) {
+          const seed = defaultUserOpenSections(paired)
+          setUserOpenSections(seed)
+          localStorage.setItem(LS_SETTINGS_EXPAND, serializeSettingsExpand(seed))
+        }
+      } catch {
+        /* ignore */
+      }
     })
   }, [state.settingsOpen])
 
   // Auto-expand advanced gates when any arm flag is on (user can still collapse).
+  // Parent「安全与信任」is force-opened via isSectionEffectivelyOpen (F-S1).
   useEffect(() => {
     if (!state.settingsOpen) return
     const c = state.config
     if (
       c.auto_approve_dangerous === true ||
       c.auto_approve_enterprise_tools === true ||
-      c.allow_all_schemes === true
+      c.allow_all_schemes === true ||
+      state.unattended?.armed === true
     ) {
       setAdvancedGatesOpen(true)
     }
@@ -135,7 +201,30 @@ export function SettingsSlideout() {
     state.config.auto_approve_dangerous,
     state.config.auto_approve_enterprise_tools,
     state.config.allow_all_schemes,
+    state.unattended?.armed,
   ])
+
+  // F-UX7 deep-link: open target accordion section once settings opens.
+  useEffect(() => {
+    if (!state.settingsOpen || !state.settingsFocusSection) return
+    const id = state.settingsFocusSection as SettingsSectionId
+    if (!(SETTINGS_SECTION_IDS as readonly string[]).includes(id)) {
+      dispatch({ type: "CLEAR_SETTINGS_FOCUS" })
+      return
+    }
+    setUserOpenSections((prev) => {
+      if (prev.has(id)) return prev
+      const next = new Set(prev)
+      next.add(id)
+      try {
+        localStorage.setItem(LS_SETTINGS_EXPAND, serializeSettingsExpand(next))
+      } catch {
+        /* ignore */
+      }
+      return next
+    })
+    dispatch({ type: "CLEAR_SETTINGS_FOCUS" })
+  }, [state.settingsOpen, state.settingsFocusSection, dispatch])
 
   if (!state.settingsOpen) return null
 
@@ -532,9 +621,35 @@ export function SettingsSlideout() {
           <button style={styles.closeBtn} onClick={() => dispatch({ type: "TOGGLE_SETTINGS" })}>✕</button>
         </div>
 
-        <div style={styles.body}>
+        <div style={{ ...styles.body, display: "flex", flexDirection: "column" }}>
+          {/* IA order via flex order (settings-thread-compact W1) */}
+
+          <div style={{ order: 1 }}>
+            <SettingsSection
+              title="连接与配对"
+              open={isSectionOpen("connection")}
+              onToggle={() => handleToggleSection("connection")}
+              badge={wsPaired === false ? (
+                <span style={{
+                  fontSize: 10,
+                  fontWeight: 600,
+                  padding: "1px 6px",
+                  borderRadius: 8,
+                  color: "#B26B00",
+                  background: tokens.warningSoft,
+                }}>未配对</span>
+              ) : wsPaired === true ? (
+                <span style={{
+                  fontSize: 10,
+                  fontWeight: 400,
+                  padding: "1px 6px",
+                  borderRadius: 8,
+                  color: tokens.success,
+                  background: tokens.successSoft,
+                }}>已配对</span>
+              ) : null}
+            >
           {/* --- Connection (P0-2B WS pairing) --- */}
-          <div style={styles.sectionTitle}>连接</div>
           <div style={styles.field}>
             <label style={styles.label}>
               WS 配对密钥{" "}
@@ -571,101 +686,548 @@ export function SettingsSlideout() {
             )}
           </div>
 
-          <div style={styles.divider} />
+          
+            </SettingsSection>
+          </div>
 
-          {/* --- Outbound MCP L4+ grants --- */}
-          <OutboundMcpSettingsSection />
+          <div style={{ order: 2 }}>
+            <SettingsSection
+              title="模型与推理"
+              open={isSectionOpen("model")}
+              onToggle={() => handleToggleSection("model")}
+            >
+          {/* --- LLM Settings --- */}
+          <div style={styles.sectionTitle}>LLM 配置</div>
 
-          <div style={styles.divider} />
+          <div style={styles.field}>
+            <label style={styles.label}>API 协议</label>
+            <select
+              style={styles.input}
+              value={config.protocol === "anthropic" ? "anthropic" : "openai"}
+              onChange={e => {
+                const protocol = e.target.value === "anthropic" ? "anthropic" as const : "openai" as const
+                dispatch({
+                  type: "SET_CONFIG",
+                  config: {
+                    protocol,
+                    // Leaving anthropic clears compat profile (only valid under anthropic)
+                    ...(protocol === "openai" ? { client_header_profile: "none" as const } : {}),
+                  },
+                })
+              }}
+            >
+              <option value="openai">OpenAI-compatible（默认）</option>
+              <option value="anthropic">Anthropic Messages</option>
+            </select>
+            <div style={styles.helpText}>
+              {config.protocol === "anthropic"
+                ? "Anthropic 协议走 /messages（x-api-key）。内部工具循环不变。"
+                : "默认 OpenAI Chat Completions（DeepSeek / 多数中继）。"}
+            </div>
+          </div>
 
+          <div style={styles.field}>
+            <label style={styles.label}>Base URL</label>
+            <input
+              style={styles.input}
+              type="text"
+              value={config.base_url}
+              onChange={e => dispatch({ type: "SET_CONFIG", config: { base_url: e.target.value } })}
+              placeholder={
+                config.protocol === "anthropic"
+                  ? "https://api.anthropic.com 或中继 https://host/v1"
+                  : "https://api.deepseek.com/v1"
+              }
+            />
+            {config.protocol === "anthropic" && (
+              <div style={styles.helpText}>
+                将拼到 /messages；勿混用 /chat/completions。官方 Anthropic 主机不要开下方兼容头。
+              </div>
+            )}
+          </div>
+
+          <div style={styles.field}>
+            <label style={styles.label}>
+              API Key{" "}
+              {!config.api_key && state.companionConfig?.api_key_set && (
+                <span style={{
+                  fontSize: 10, fontWeight: 500, marginLeft: 6,
+                  padding: "1px 6px", borderRadius: 8,
+                  color: tokens.success, background: tokens.successSoft,
+                }}>
+                  ✓ 已配置
+                </span>
+              )}
+            </label>
+            <div style={{ display: "flex", gap: 6 }}>
+              <input
+                style={{ ...styles.input, flex: 1 }}
+                type={showKey ? "text" : "password"}
+                value={config.api_key}
+                onChange={e => dispatch({ type: "SET_CONFIG", config: { api_key: e.target.value } })}
+                placeholder={state.companionConfig?.api_key_set ? "（已配置，留空保持不变；输入新值覆盖）" : "sk-..."}
+              />
+              <button style={styles.toggleBtn} onClick={() => setShowKey(!showKey)}>
+                {showKey ? "隐藏" : "显示"}
+              </button>
+            </div>
+            {!config.api_key && state.companionConfig?.api_key_set && (
+              <div style={{ fontSize: 11, color: tokens.success, marginTop: 4 }}>
+                ✓ Companion 已保存 API Key 并正常工作。如需更换，请在上方输入新值；留空保存将沿用现有密钥。
+              </div>
+            )}
+          </div>
+
+          {config.protocol === "anthropic" && (
+            <div style={styles.field}>
+              <label style={{ ...styles.label, display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                <input
+                  type="checkbox"
+                  checked={config.client_header_profile === "claude_code_compat"}
+                  onChange={e =>
+                    dispatch({
+                      type: "SET_CONFIG",
+                      config: {
+                        client_header_profile: e.target.checked ? "claude_code_compat" : "none",
+                      },
+                    })
+                  }
+                />
+                Coding Plan 网关兼容头
+              </label>
+              <div style={styles.helpText}>
+                部分第三方「Coding Plan」中继只接受类似 Claude Code 的 User-Agent / 应用头。
+                开启后，CMspark 会在 Anthropic 协议请求上附加这些兼容头。
+                <strong>不会</strong>登录或盗用 Anthropic 官方订阅；请只用于你有权使用的 API / 中继。
+                若使用官方 Anthropic 或无需门控的端点，请保持关闭。
+              </div>
+            </div>
+          )}
+
+          <div style={styles.field}>
+            <label style={styles.label}>快速配置</label>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              <button
+                type="button"
+                style={styles.toggleBtn}
+                onClick={() =>
+                  dispatch({
+                    type: "SET_CONFIG",
+                    config: {
+                      protocol: "openai",
+                      client_header_profile: "none",
+                      base_url: "https://api.deepseek.com/v1",
+                    },
+                  })
+                }
+              >
+                OpenAI 兼容
+              </button>
+              <button
+                type="button"
+                style={styles.toggleBtn}
+                onClick={() =>
+                  dispatch({
+                    type: "SET_CONFIG",
+                    config: {
+                      protocol: "anthropic",
+                      client_header_profile: "none",
+                      base_url: "https://api.anthropic.com",
+                    },
+                  })
+                }
+              >
+                Anthropic Messages
+              </button>
+              <button
+                type="button"
+                style={styles.toggleBtn}
+                onClick={() =>
+                  dispatch({
+                    type: "SET_CONFIG",
+                    config: {
+                      protocol: "anthropic",
+                      client_header_profile: "claude_code_compat",
+                      base_url: "",
+                    },
+                  })
+                }
+              >
+                Coding Plan 中继
+              </button>
+            </div>
+          </div>
+
+          <div style={styles.field}>
+            <label style={styles.label}>Model</label>
+            <input
+              style={styles.input}
+              list="model-options"
+              type="text"
+              value={config.model_name}
+              onChange={e => dispatch({ type: "SET_CONFIG", config: { model_name: e.target.value } })}
+              placeholder="输入模型名称或从列表选择"
+            />
+            <datalist id="model-options">
+              <option value="deepseek-v4-flash" />
+              <option value="deepseek-v4-pro" />
+              <option value="deepseek-chat" />
+              <option value="deepseek-reasoner" />
+              <option value="gpt-4o" />
+              <option value="gpt-4-turbo" />
+              <option value="claude-sonnet-4-6" />
+              <option value="claude-opus-4-7" />
+            </datalist>
+            {!config.model_name && state.companionConfig?.model_name && (
+              <div style={{ fontSize: 10, color: "#aaa", marginTop: 2 }}>
+                Using Companion global config: {state.companionConfig.model_name}
+              </div>
+            )}
+          </div>
+
+          <div style={styles.field}>
+            <label style={styles.label}>Temperature: {(config.temperature ?? 0.7).toFixed(1)}</label>
+            <input
+              style={{ width: "100%" }}
+              type="range"
+              min={0}
+              max={2}
+              step={0.1}
+              value={config.temperature}
+              onChange={e => dispatch({ type: "SET_CONFIG", config: { temperature: parseFloat(e.target.value) } })}
+            />
+          </div>
+
+          <div style={styles.field}>
+            <label style={styles.label}>发送快捷键</label>
+            <select
+              style={styles.select}
+              value={state.sendShortcut || "Enter"}
+              onChange={handleShortcutChange}
+            >
+              <option value="Enter">Enter</option>
+              <option value="Cmd+Enter">Cmd+Enter</option>
+              <option value="Ctrl+Enter">Ctrl+Enter</option>
+            </select>
+          </div>
+
+          <div style={styles.field}>
+            <label style={styles.label}>语音输入</label>
+            <label
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                cursor: "pointer",
+                fontSize: 13,
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={state.voiceInputEnabled !== false}
+                onChange={(e) =>
+                  dispatch({ type: "SET_VOICE_INPUT_ENABLED", enabled: e.target.checked })
+                }
+              />
+              在输入框显示麦克风（听写进草稿，不自动发送）
+            </label>
+            <p style={{ fontSize: 11, color: "#888", margin: "6px 0 0", lineHeight: 1.45 }}>
+              可选麦克风：浏览器将语音转成文字后填入输入框，默认不自动发送。转写可能使用 Chrome
+              语音服务（音频可能经网络发送至浏览器厂商），不经过 CMspark Companion。发送后的文字与键入相同，仍受现有确认与信任设置约束。
+              若当前浏览器不支持网页语音识别，请使用系统听写。
+            </p>
+            {state.voicePrivacyAckV1 && (
+              <button
+                type="button"
+                style={{
+                  marginTop: 6,
+                  fontSize: 11,
+                  border: "none",
+                  background: "transparent",
+                  color: "#888",
+                  cursor: "pointer",
+                  padding: 0,
+                  textDecoration: "underline",
+                }}
+                onClick={() => dispatch({ type: "SET_VOICE_PRIVACY_ACK_V1", ack: false })}
+              >
+                重置隐私确认（下次听写将再次提示）
+              </button>
+            )}
+          </div>
+
+          <div style={styles.field}>
+            <label style={styles.label}>Context Window</label>
+            <input
+              style={styles.input}
+              type="number"
+              value={config.context_window}
+              onChange={e => dispatch({ type: "SET_CONFIG", config: { context_window: parseInt(e.target.value) || 128000 } })}
+              min={1024}
+              max={1000000}
+              step={1024}
+            />
+            <div style={styles.helpText}>
+              {config.context_window >= 200000
+                ? `当前 ${config.context_window} 偏大，自动压缩较难触发。推荐 128000（或按模型真实上限 64k–128k）。`
+                : "推荐默认 128000。请按所用模型真实上下文上限填写。"}
+            </div>
+          </div>
+
+          <div style={styles.field}>
+            <label style={styles.label}>长对话上下文预算</label>
+            <select
+              style={styles.select || styles.input}
+              value={config.context_compaction ?? "auto"}
+              onChange={e => {
+                const v = e.target.value
+                if (v !== "auto" && v !== "prompt" && v !== "off") return
+                if (v === "auto") {
+                  const ok = window.confirm(
+                    "自动压缩会让模型看不到较早轮次，即使聊天区仍显示全文。确定启用？",
+                  )
+                  if (!ok) return
+                }
+                dispatch({ type: "SET_CONFIG", config: { context_compaction: v } })
+              }}
+            >
+              <option value="auto">自动压缩（超预算时）</option>
+              <option value="prompt">仅提示（不压缩）</option>
+              <option value="off">关闭</option>
+            </select>
+            <div style={styles.helpText}>
+              仅影响发给模型的请求；磁盘与界面消息仍完整。仅提示 = 超预算时警告，需改回「自动」才压缩。
+            </div>
+          </div>
+
+          {(config.context_compaction ?? "auto") === "auto" && (
+            <div style={styles.field}>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13 }}>
+                <input
+                  type="checkbox"
+                  checked={config.context_compaction_m2 !== false}
+                  onChange={e =>
+                    dispatch({
+                      type: "SET_CONFIG",
+                      config: { context_compaction_m2: e.target.checked },
+                    })
+                  }
+                />
+                LLM 滚动摘要（M2）
+              </label>
+              <div style={styles.helpText}>
+                默认开启：丢弃轮次较多时生成脱敏摘要并写入会话 meta，可在聊天顶栏「查看摘要」。
+                仅在本轮开始时跑（tool 中途只做 M1）。失败则退回占位说明。
+              </div>
+            </div>
+          )}
+
+                    {/* --- Vision Model Settings --- */}
+          <div style={styles.sectionTitle}>视觉模型</div>
+
+          <div style={styles.field}>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13 }}>
+              <input
+                type="checkbox"
+                checked={config.vision_enabled || false}
+                onChange={e => dispatch({ type: "SET_CONFIG", config: { vision_enabled: e.target.checked } })}
+              />
+              启用截图视觉分析
+            </label>
+            <div style={styles.helpText}>
+              通过本地视觉模型分析截图和图片内容，需要 Ollama 等本地推理服务
+            </div>
+          </div>
+
+          {config.vision_enabled && (
+            <>
+              <div style={styles.field}>
+                <label style={styles.label}>
+                  API Key{" "}
+                  {!config.vision_api_key && state.companionConfig?.vision_api_key_set && (
+                    <span style={{
+                      fontSize: 10, fontWeight: 500, marginLeft: 6,
+                      padding: "1px 6px", borderRadius: 8,
+                      color: tokens.success, background: tokens.successSoft,
+                    }}>
+                      ✓ 已配置
+                    </span>
+                  )}
+                </label>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <input
+                    style={{ ...styles.input, flex: 1 }}
+                    type={showKey ? "text" : "password"}
+                    value={config.vision_api_key || ""}
+                    onChange={e => dispatch({ type: "SET_CONFIG", config: { vision_api_key: e.target.value } })}
+                    placeholder={
+                      state.companionConfig?.vision_api_key_set
+                        ? "（已配置，留空保持不变；输入新值覆盖）"
+                        : "留空则使用 Ollama（无需 API Key）"
+                    }
+                  />
+                </div>
+                <div style={styles.helpText}>
+                  本地模型（Ollama）可留空；使用云服务视觉 API 时需填写
+                </div>
+              </div>
+
+              <div style={styles.field}>
+                <label style={styles.label}>Base URL</label>
+                <input
+                  style={styles.input}
+                  type="text"
+                  value={config.vision_base_url || "http://localhost:11434/v1"}
+                  onChange={e => dispatch({ type: "SET_CONFIG", config: { vision_base_url: e.target.value } })}
+                  placeholder="http://localhost:11434/v1"
+                />
+              </div>
+
+              <div style={styles.field}>
+                <label style={styles.label}>Model</label>
+                <input
+                  style={styles.input}
+                  list="vision-model-options"
+                  type="text"
+                  value={config.vision_model_name || ""}
+                  onChange={e => dispatch({ type: "SET_CONFIG", config: { vision_model_name: e.target.value } })}
+                  placeholder="输入模型名称或从列表选择"
+                />
+                <datalist id="vision-model-options">
+                  <option value="llava:7b" />
+                  <option value="llava:13b" />
+                  <option value="minicpm-v" />
+                  <option value="qwen2.5vl:3b" />
+                  <option value="moondream2" />
+                </datalist>
+              </div>
+
+              <div style={styles.field}>
+                <label style={styles.label}>超时时间: {config.vision_timeout_ms || 30000} / 1000s</label>
+                <input
+                  style={{ width: "100%" }}
+                  type="range"
+                  min={10000}
+                  max={60000}
+                  step={5000}
+                  value={config.vision_timeout_ms || 30000}
+                  onChange={e => dispatch({ type: "SET_CONFIG", config: { vision_timeout_ms: parseInt(e.target.value) } })}
+                />
+              </div>
+
+              <div style={styles.field}>
+                <label style={styles.label}>降级策略</label>
+                <select
+                  style={styles.select}
+                  value={config.vision_fallback || "metadata"}
+                  onChange={e => dispatch({ type: "SET_CONFIG", config: { vision_fallback: e.target.value as "metadata" | "passthrough" | "error" } })}
+                >
+                  <option value="metadata">仅元数据（推荐）</option>
+                  <option value="passthrough">透传原始图片</option>
+                  <option value="error">报错</option>
+                </select>
+                <div style={styles.helpText}>
+                  视觉模型不可用时的处理方式：仅元数据 = 发送页面标题和尺寸信息
+                </div>
+              </div>
+
+              <div style={styles.field}>
+                <button style={styles.testBtn} onClick={() => {
+                  dispatch({ type: "SET_TEST_RESULT", result: "测试视觉模型连接中..." })
+                  chrome.runtime.sendMessage({ type: "config.testVision" })
+                }}>
+                  测试视觉模型连接
+                </button>
+              </div>
+            </>
+          )}
+
+                    {/* --- File Upload Settings --- */}
+          <div style={styles.sectionTitle}>文件上传</div>
+
+          <div style={styles.field}>
+            <label style={styles.label}>最大文件大小: {((config.file_upload_max_size ?? 10485760) / (1024 * 1024)).toFixed(0)} MB</label>
+            <input
+              style={{ width: "100%" }}
+              type="range"
+              min={1}
+              max={100}
+              step={1}
+              value={(config.file_upload_max_size ?? 10485760) / (1024 * 1024)}
+              onChange={e => dispatch({ type: "SET_CONFIG", config: { file_upload_max_size: parseInt(e.target.value) * 1024 * 1024 } })}
+            />
+            <div style={styles.helpText}>
+              上传文件的大小上限，范围 1–100 MB
+            </div>
+          </div>
+
+          <div style={styles.field}>
+            <label style={styles.label}>最大 Token 数</label>
+            <input
+              style={styles.input}
+              type="number"
+              value={config.file_upload_max_tokens ?? 50000}
+              onChange={e => dispatch({ type: "SET_CONFIG", config: { file_upload_max_tokens: parseInt(e.target.value) || 50000 } })}
+              min={1000}
+              max={200000}
+              step={1000}
+            />
+            <div style={styles.helpText}>
+              文件内容截断阈值，范围 1000–200000
+            </div>
+          </div>
+
+          <div style={styles.field}>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13 }}>
+              <input
+                type="checkbox"
+                checked={config.file_upload_vision ?? true}
+                onChange={e => dispatch({ type: "SET_CONFIG", config: { file_upload_vision: e.target.checked } })}
+              />
+              启用文件视觉分析
+            </label>
+            <div style={styles.helpText}>
+              上传图片时尝试使用视觉模型分析图片内容
+            </div>
+          </div>
+
+              <div style={styles.field}>
+                <div style={styles.helpText}>
+                  上下文窗口过大时，长对话压缩几乎不会触发（默认 1e6 ≈ 关闭自动压缩）。建议按模型真实上限设置。
+                </div>
+              </div>
+            </SettingsSection>
+          </div>
+
+          <div style={{ order: 3 }}>
+            <SettingsSection
+              title="密钥与环境"
+              open={isSectionOpen("secrets")}
+              onToggle={() => handleToggleSection("secrets")}
+            >
           {/* --- User env / Secrets (ADR-019) — independent of bottom config Save --- */}
           <UserEnvSection />
 
-          <div style={styles.divider} />
-
-          {/* --- Obsidian Export --- */}
-          <div style={styles.sectionTitle}>Obsidian 导出</div>
-          <div style={styles.field}>
-            <label style={styles.label}>Vault 路径</label>
-            <input
-              style={styles.input}
-              value={config.obsidian_vault_path || ""}
-              onChange={e => dispatch({ type: "SET_CONFIG", config: { obsidian_vault_path: e.target.value } })}
-              placeholder="/path/to/your/vault"
-            />
-            <button
-              style={{ ...styles.secondaryBtn, marginTop: 6 }}
-              disabled={state.vaultPicker.picking}
-              onClick={() => {
-                // Ask the companion to open the OS native folder-picker (extensions can't
-                // read real folder paths). The response sets config.obsidian_vault_path.
-                dispatch({ type: "SET_VAULT_PICKER", picking: true, error: null })
-                chrome.runtime.sendMessage({ type: "obsidian.pick_vault_folder" })
-              }}
-            >
-              {state.vaultPicker.picking ? "选择中…" : "📂 选择文件夹"}
-            </button>
-            {state.vaultPicker.error && (
-              <div style={{ ...styles.helpText, color: tokens.danger, marginTop: 4 }}>
-                {state.vaultPicker.error}
-              </div>
-            )}
-            <div style={styles.helpText}>
-              导出时会扫描此 vault:把约 200 篇笔记的 frontmatter + 正文前 200 字发给你的 LLM 提取 frontmatter / 命名 / tag 约定,并建立笔记索引、检测模板。缓存后导出自动套用——frontmatter 贴合约定、footer 用 [[wikilinks]] 链向相关笔记、并用 vault 模板骨架包裹。
-            </div>
-            <button
-              style={styles.secondaryBtn}
-              onClick={() => {
-                const vp = config.obsidian_vault_path?.trim()
-                if (!vp) return
-                dispatch({ type: "SET_OBSIDIAN_PROFILE_STATUS", status: { ok: true, message: "分析中…" } })
-                chrome.runtime.sendMessage({ type: "obsidian.refresh_profile", vault_path: vp })
-              }}
-            >
-              刷新 vault 档案
-            </button>
-            {state.obsidianProfileStatus && (
-              <div style={{ ...styles.helpText, color: state.obsidianProfileStatus.ok ? tokens.success : tokens.danger, marginTop: 6 }}>
-                {state.obsidianProfileStatus.message}
-              </div>
-            )}
+          
+            </SettingsSection>
           </div>
 
-          {/* --- How permissions work --- */}
-          <div style={styles.sectionTitle}>场景 · 本机能力 · 确认</div>
-          <div style={styles.field}>
-            <div style={styles.helpText}>三道门互不替代，请勿混淆：</div>
-            <ul
-              style={{
-                margin: "6px 0 0",
-                paddingLeft: 18,
-                fontSize: 12,
-                color: tokens.textSecondary,
-                lineHeight: 1.5,
-              }}
+          <div style={{ order: 4 }}>
+            <SettingsSection
+              title="安全与信任"
+              open={isSectionOpen("security")}
+              onToggle={() => handleToggleSection("security")}
+              badge={elevatedTrust ? (
+                <span style={{
+                  fontSize: 10,
+                  fontWeight: 600,
+                  padding: "1px 6px",
+                  borderRadius: 8,
+                  color: tokens.danger,
+                  background: tokens.dangerSoft || "#fde8e8",
+                }}>有开关已开</span>
+              ) : null}
             >
-              <li>
-                <strong>场景</strong>（侧栏「场景」）：本对话模板；可能<em>限制</em>可用工具。
-              </li>
-              <li>
-                <strong>本机能力</strong>（场景页）：工作区 / 扫描 / 命令等电源是否启用。
-              </li>
-              <li>
-                <strong>运行自主度</strong>（下方）：危险操作要不要每次确认；
-                <em>不会</em>放开场景已关掉的工具，也<strong>不能</strong>代替选工作区。
-              </li>
-            </ul>
-            <div style={{ ...styles.helpText, marginTop: 8 }}>
-              若工具提示「需要先绑定工作区」，请去场景页选文件夹，而不是开协议解锁或巡航。
-            </div>
-          </div>
-
-          <div style={styles.divider} />
-
-          <NetSecSettingsSection />
-
-          <div style={styles.divider} />
-
           {/* --- 运行自主度 (Trust packaging / Autopilot + ADR-021 unattended) --- */}
           {(() => {
             const armFlags = {
@@ -940,9 +1502,7 @@ export function SettingsSlideout() {
             )
           })()}
 
-          <div style={styles.divider} />
-
-          {/* --- Security Settings --- */}
+                    {/* --- Security Settings --- */}
           <div style={styles.sectionTitle}>安全设置</div>
 
           <div style={styles.field}>
@@ -1304,8 +1864,117 @@ export function SettingsSlideout() {
             )}
           </div>
 
+          
+            </SettingsSection>
+          </div>
+
+          <div style={{ order: 5 }}>
+            <SettingsSection
+              title="本机与集成"
+              open={isSectionOpen("integrations")}
+              onToggle={() => handleToggleSection("integrations")}
+            >
+          {/* --- How permissions work --- */}
+          <div style={styles.field}>
+            <div style={styles.helpText}>三道门互不替代，请勿混淆：</div>
+            <ul
+              style={{
+                margin: "6px 0 0",
+                paddingLeft: 18,
+                fontSize: 12,
+                color: tokens.textSecondary,
+                lineHeight: 1.5,
+              }}
+            >
+              <li>
+                <strong>场景</strong>（侧栏「场景」）：本对话模板；可能<em>限制</em>可用工具。
+              </li>
+              <li>
+                <strong>本机能力</strong>（场景页）：工作区 / 扫描 / 命令等电源是否启用。
+              </li>
+              <li>
+                <strong>运行自主度</strong>（下方）：危险操作要不要每次确认；
+                <em>不会</em>放开场景已关掉的工具，也<strong>不能</strong>代替选工作区。
+              </li>
+            </ul>
+            <div style={{ ...styles.helpText, marginTop: 8 }}>
+              若工具提示「需要先绑定工作区」，请去场景页选文件夹，而不是开协议解锁或巡航。
+            </div>
+          </div>
+
           <div style={styles.divider} />
 
+          <NetSecSettingsSection />
+
+                    {/* --- Outbound MCP L4+ grants --- */}
+          <OutboundMcpSettingsSection />
+
+          
+            </SettingsSection>
+          </div>
+
+          <div style={{ order: 6 }}>
+            <SettingsSection
+              title="导出与集成"
+              open={isSectionOpen("export")}
+              onToggle={() => handleToggleSection("export")}
+            >
+          {/* --- Obsidian Export --- */}
+          <div style={styles.field}>
+            <label style={styles.label}>Vault 路径</label>
+            <input
+              style={styles.input}
+              value={config.obsidian_vault_path || ""}
+              onChange={e => dispatch({ type: "SET_CONFIG", config: { obsidian_vault_path: e.target.value } })}
+              placeholder="/path/to/your/vault"
+            />
+            <button
+              style={{ ...styles.secondaryBtn, marginTop: 6 }}
+              disabled={state.vaultPicker.picking}
+              onClick={() => {
+                // Ask the companion to open the OS native folder-picker (extensions can't
+                // read real folder paths). The response sets config.obsidian_vault_path.
+                dispatch({ type: "SET_VAULT_PICKER", picking: true, error: null })
+                chrome.runtime.sendMessage({ type: "obsidian.pick_vault_folder" })
+              }}
+            >
+              {state.vaultPicker.picking ? "选择中…" : "📂 选择文件夹"}
+            </button>
+            {state.vaultPicker.error && (
+              <div style={{ ...styles.helpText, color: tokens.danger, marginTop: 4 }}>
+                {state.vaultPicker.error}
+              </div>
+            )}
+            <div style={styles.helpText}>
+              导出时会扫描此 vault:把约 200 篇笔记的 frontmatter + 正文前 200 字发给你的 LLM 提取 frontmatter / 命名 / tag 约定,并建立笔记索引、检测模板。缓存后导出自动套用——frontmatter 贴合约定、footer 用 [[wikilinks]] 链向相关笔记、并用 vault 模板骨架包裹。
+            </div>
+            <button
+              style={styles.secondaryBtn}
+              onClick={() => {
+                const vp = config.obsidian_vault_path?.trim()
+                if (!vp) return
+                dispatch({ type: "SET_OBSIDIAN_PROFILE_STATUS", status: { ok: true, message: "分析中…" } })
+                chrome.runtime.sendMessage({ type: "obsidian.refresh_profile", vault_path: vp })
+              }}
+            >
+              刷新 vault 档案
+            </button>
+            {state.obsidianProfileStatus && (
+              <div style={{ ...styles.helpText, color: state.obsidianProfileStatus.ok ? tokens.success : tokens.danger, marginTop: 6 }}>
+                {state.obsidianProfileStatus.message}
+              </div>
+            )}
+          </div>
+
+            </SettingsSection>
+          </div>
+
+          <div style={{ order: 7 }}>
+            <SettingsSection
+              title="实验功能"
+              open={isSectionOpen("experimental")}
+              onToggle={() => handleToggleSection("experimental")}
+            >
           {/* --- WP5-I4 实验功能(Qwen3-VL 本地模型定位层) --- */}
           <div style={styles.sectionTitle}>实验功能</div>
           {(() => {
@@ -1918,453 +2587,10 @@ export function SettingsSlideout() {
             </Modal>
           )}
 
-          <div style={styles.divider} />
-
-          {/* --- LLM Settings --- */}
-          <div style={styles.sectionTitle}>LLM 配置</div>
-
-          <div style={styles.field}>
-            <label style={styles.label}>API 协议</label>
-            <select
-              style={styles.input}
-              value={config.protocol === "anthropic" ? "anthropic" : "openai"}
-              onChange={e => {
-                const protocol = e.target.value === "anthropic" ? "anthropic" as const : "openai" as const
-                dispatch({
-                  type: "SET_CONFIG",
-                  config: {
-                    protocol,
-                    // Leaving anthropic clears compat profile (only valid under anthropic)
-                    ...(protocol === "openai" ? { client_header_profile: "none" as const } : {}),
-                  },
-                })
-              }}
-            >
-              <option value="openai">OpenAI-compatible（默认）</option>
-              <option value="anthropic">Anthropic Messages</option>
-            </select>
-            <div style={styles.helpText}>
-              {config.protocol === "anthropic"
-                ? "Anthropic 协议走 /messages（x-api-key）。内部工具循环不变。"
-                : "默认 OpenAI Chat Completions（DeepSeek / 多数中继）。"}
-            </div>
+          
+            </SettingsSection>
           </div>
 
-          <div style={styles.field}>
-            <label style={styles.label}>Base URL</label>
-            <input
-              style={styles.input}
-              type="text"
-              value={config.base_url}
-              onChange={e => dispatch({ type: "SET_CONFIG", config: { base_url: e.target.value } })}
-              placeholder={
-                config.protocol === "anthropic"
-                  ? "https://api.anthropic.com 或中继 https://host/v1"
-                  : "https://api.deepseek.com/v1"
-              }
-            />
-            {config.protocol === "anthropic" && (
-              <div style={styles.helpText}>
-                将拼到 /messages；勿混用 /chat/completions。官方 Anthropic 主机不要开下方兼容头。
-              </div>
-            )}
-          </div>
-
-          <div style={styles.field}>
-            <label style={styles.label}>
-              API Key{" "}
-              {!config.api_key && state.companionConfig?.api_key_set && (
-                <span style={{
-                  fontSize: 10, fontWeight: 500, marginLeft: 6,
-                  padding: "1px 6px", borderRadius: 8,
-                  color: tokens.success, background: tokens.successSoft,
-                }}>
-                  ✓ 已配置
-                </span>
-              )}
-            </label>
-            <div style={{ display: "flex", gap: 6 }}>
-              <input
-                style={{ ...styles.input, flex: 1 }}
-                type={showKey ? "text" : "password"}
-                value={config.api_key}
-                onChange={e => dispatch({ type: "SET_CONFIG", config: { api_key: e.target.value } })}
-                placeholder={state.companionConfig?.api_key_set ? "（已配置，留空保持不变；输入新值覆盖）" : "sk-..."}
-              />
-              <button style={styles.toggleBtn} onClick={() => setShowKey(!showKey)}>
-                {showKey ? "隐藏" : "显示"}
-              </button>
-            </div>
-            {!config.api_key && state.companionConfig?.api_key_set && (
-              <div style={{ fontSize: 11, color: tokens.success, marginTop: 4 }}>
-                ✓ Companion 已保存 API Key 并正常工作。如需更换，请在上方输入新值；留空保存将沿用现有密钥。
-              </div>
-            )}
-          </div>
-
-          {config.protocol === "anthropic" && (
-            <div style={styles.field}>
-              <label style={{ ...styles.label, display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
-                <input
-                  type="checkbox"
-                  checked={config.client_header_profile === "claude_code_compat"}
-                  onChange={e =>
-                    dispatch({
-                      type: "SET_CONFIG",
-                      config: {
-                        client_header_profile: e.target.checked ? "claude_code_compat" : "none",
-                      },
-                    })
-                  }
-                />
-                Coding Plan 网关兼容头
-              </label>
-              <div style={styles.helpText}>
-                部分第三方「Coding Plan」中继只接受类似 Claude Code 的 User-Agent / 应用头。
-                开启后，CMspark 会在 Anthropic 协议请求上附加这些兼容头。
-                <strong>不会</strong>登录或盗用 Anthropic 官方订阅；请只用于你有权使用的 API / 中继。
-                若使用官方 Anthropic 或无需门控的端点，请保持关闭。
-              </div>
-            </div>
-          )}
-
-          <div style={styles.field}>
-            <label style={styles.label}>快速配置</label>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-              <button
-                type="button"
-                style={styles.toggleBtn}
-                onClick={() =>
-                  dispatch({
-                    type: "SET_CONFIG",
-                    config: {
-                      protocol: "openai",
-                      client_header_profile: "none",
-                      base_url: "https://api.deepseek.com/v1",
-                    },
-                  })
-                }
-              >
-                OpenAI 兼容
-              </button>
-              <button
-                type="button"
-                style={styles.toggleBtn}
-                onClick={() =>
-                  dispatch({
-                    type: "SET_CONFIG",
-                    config: {
-                      protocol: "anthropic",
-                      client_header_profile: "none",
-                      base_url: "https://api.anthropic.com",
-                    },
-                  })
-                }
-              >
-                Anthropic Messages
-              </button>
-              <button
-                type="button"
-                style={styles.toggleBtn}
-                onClick={() =>
-                  dispatch({
-                    type: "SET_CONFIG",
-                    config: {
-                      protocol: "anthropic",
-                      client_header_profile: "claude_code_compat",
-                      base_url: "",
-                    },
-                  })
-                }
-              >
-                Coding Plan 中继
-              </button>
-            </div>
-          </div>
-
-          <div style={styles.field}>
-            <label style={styles.label}>Model</label>
-            <input
-              style={styles.input}
-              list="model-options"
-              type="text"
-              value={config.model_name}
-              onChange={e => dispatch({ type: "SET_CONFIG", config: { model_name: e.target.value } })}
-              placeholder="输入模型名称或从列表选择"
-            />
-            <datalist id="model-options">
-              <option value="deepseek-v4-flash" />
-              <option value="deepseek-v4-pro" />
-              <option value="deepseek-chat" />
-              <option value="deepseek-reasoner" />
-              <option value="gpt-4o" />
-              <option value="gpt-4-turbo" />
-              <option value="claude-sonnet-4-6" />
-              <option value="claude-opus-4-7" />
-            </datalist>
-            {!config.model_name && state.companionConfig?.model_name && (
-              <div style={{ fontSize: 10, color: "#aaa", marginTop: 2 }}>
-                Using Companion global config: {state.companionConfig.model_name}
-              </div>
-            )}
-          </div>
-
-          <div style={styles.field}>
-            <label style={styles.label}>Temperature: {(config.temperature ?? 0.7).toFixed(1)}</label>
-            <input
-              style={{ width: "100%" }}
-              type="range"
-              min={0}
-              max={2}
-              step={0.1}
-              value={config.temperature}
-              onChange={e => dispatch({ type: "SET_CONFIG", config: { temperature: parseFloat(e.target.value) } })}
-            />
-          </div>
-
-          <div style={styles.field}>
-            <label style={styles.label}>发送快捷键</label>
-            <select
-              style={styles.select}
-              value={state.sendShortcut || "Enter"}
-              onChange={handleShortcutChange}
-            >
-              <option value="Enter">Enter</option>
-              <option value="Cmd+Enter">Cmd+Enter</option>
-              <option value="Ctrl+Enter">Ctrl+Enter</option>
-            </select>
-          </div>
-
-          <div style={styles.field}>
-            <label style={styles.label}>语音输入</label>
-            <label
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                cursor: "pointer",
-                fontSize: 13,
-              }}
-            >
-              <input
-                type="checkbox"
-                checked={state.voiceInputEnabled !== false}
-                onChange={(e) =>
-                  dispatch({ type: "SET_VOICE_INPUT_ENABLED", enabled: e.target.checked })
-                }
-              />
-              在输入框显示麦克风（听写进草稿，不自动发送）
-            </label>
-            <p style={{ fontSize: 11, color: "#888", margin: "6px 0 0", lineHeight: 1.45 }}>
-              可选麦克风：浏览器将语音转成文字后填入输入框，默认不自动发送。转写可能使用 Chrome
-              语音服务（音频可能经网络发送至浏览器厂商），不经过 CMspark Companion。发送后的文字与键入相同，仍受现有确认与信任设置约束。
-              若当前浏览器不支持网页语音识别，请使用系统听写。
-            </p>
-            {state.voicePrivacyAckV1 && (
-              <button
-                type="button"
-                style={{
-                  marginTop: 6,
-                  fontSize: 11,
-                  border: "none",
-                  background: "transparent",
-                  color: "#888",
-                  cursor: "pointer",
-                  padding: 0,
-                  textDecoration: "underline",
-                }}
-                onClick={() => dispatch({ type: "SET_VOICE_PRIVACY_ACK_V1", ack: false })}
-              >
-                重置隐私确认（下次听写将再次提示）
-              </button>
-            )}
-          </div>
-
-          <div style={styles.field}>
-            <label style={styles.label}>Context Window</label>
-            <input
-              style={styles.input}
-              type="number"
-              value={config.context_window}
-              onChange={e => dispatch({ type: "SET_CONFIG", config: { context_window: parseInt(e.target.value) || 128000 } })}
-              min={1024}
-              max={1000000}
-              step={1024}
-            />
-          </div>
-
-          <div style={styles.divider} />
-
-          {/* --- Vision Model Settings --- */}
-          <div style={styles.sectionTitle}>视觉模型</div>
-
-          <div style={styles.field}>
-            <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13 }}>
-              <input
-                type="checkbox"
-                checked={config.vision_enabled || false}
-                onChange={e => dispatch({ type: "SET_CONFIG", config: { vision_enabled: e.target.checked } })}
-              />
-              启用截图视觉分析
-            </label>
-            <div style={styles.helpText}>
-              通过本地视觉模型分析截图和图片内容，需要 Ollama 等本地推理服务
-            </div>
-          </div>
-
-          {config.vision_enabled && (
-            <>
-              <div style={styles.field}>
-                <label style={styles.label}>
-                  API Key{" "}
-                  {!config.vision_api_key && state.companionConfig?.vision_api_key_set && (
-                    <span style={{
-                      fontSize: 10, fontWeight: 500, marginLeft: 6,
-                      padding: "1px 6px", borderRadius: 8,
-                      color: tokens.success, background: tokens.successSoft,
-                    }}>
-                      ✓ 已配置
-                    </span>
-                  )}
-                </label>
-                <div style={{ display: "flex", gap: 6 }}>
-                  <input
-                    style={{ ...styles.input, flex: 1 }}
-                    type={showKey ? "text" : "password"}
-                    value={config.vision_api_key || ""}
-                    onChange={e => dispatch({ type: "SET_CONFIG", config: { vision_api_key: e.target.value } })}
-                    placeholder={
-                      state.companionConfig?.vision_api_key_set
-                        ? "（已配置，留空保持不变；输入新值覆盖）"
-                        : "留空则使用 Ollama（无需 API Key）"
-                    }
-                  />
-                </div>
-                <div style={styles.helpText}>
-                  本地模型（Ollama）可留空；使用云服务视觉 API 时需填写
-                </div>
-              </div>
-
-              <div style={styles.field}>
-                <label style={styles.label}>Base URL</label>
-                <input
-                  style={styles.input}
-                  type="text"
-                  value={config.vision_base_url || "http://localhost:11434/v1"}
-                  onChange={e => dispatch({ type: "SET_CONFIG", config: { vision_base_url: e.target.value } })}
-                  placeholder="http://localhost:11434/v1"
-                />
-              </div>
-
-              <div style={styles.field}>
-                <label style={styles.label}>Model</label>
-                <input
-                  style={styles.input}
-                  list="vision-model-options"
-                  type="text"
-                  value={config.vision_model_name || ""}
-                  onChange={e => dispatch({ type: "SET_CONFIG", config: { vision_model_name: e.target.value } })}
-                  placeholder="输入模型名称或从列表选择"
-                />
-                <datalist id="vision-model-options">
-                  <option value="llava:7b" />
-                  <option value="llava:13b" />
-                  <option value="minicpm-v" />
-                  <option value="qwen2.5vl:3b" />
-                  <option value="moondream2" />
-                </datalist>
-              </div>
-
-              <div style={styles.field}>
-                <label style={styles.label}>超时时间: {config.vision_timeout_ms || 30000} / 1000s</label>
-                <input
-                  style={{ width: "100%" }}
-                  type="range"
-                  min={10000}
-                  max={60000}
-                  step={5000}
-                  value={config.vision_timeout_ms || 30000}
-                  onChange={e => dispatch({ type: "SET_CONFIG", config: { vision_timeout_ms: parseInt(e.target.value) } })}
-                />
-              </div>
-
-              <div style={styles.field}>
-                <label style={styles.label}>降级策略</label>
-                <select
-                  style={styles.select}
-                  value={config.vision_fallback || "metadata"}
-                  onChange={e => dispatch({ type: "SET_CONFIG", config: { vision_fallback: e.target.value as "metadata" | "passthrough" | "error" } })}
-                >
-                  <option value="metadata">仅元数据（推荐）</option>
-                  <option value="passthrough">透传原始图片</option>
-                  <option value="error">报错</option>
-                </select>
-                <div style={styles.helpText}>
-                  视觉模型不可用时的处理方式：仅元数据 = 发送页面标题和尺寸信息
-                </div>
-              </div>
-
-              <div style={styles.field}>
-                <button style={styles.testBtn} onClick={() => {
-                  dispatch({ type: "SET_TEST_RESULT", result: "测试视觉模型连接中..." })
-                  chrome.runtime.sendMessage({ type: "config.testVision" })
-                }}>
-                  测试视觉模型连接
-                </button>
-              </div>
-            </>
-          )}
-
-          <div style={styles.divider} />
-
-          {/* --- File Upload Settings --- */}
-          <div style={styles.sectionTitle}>文件上传</div>
-
-          <div style={styles.field}>
-            <label style={styles.label}>最大文件大小: {((config.file_upload_max_size ?? 10485760) / (1024 * 1024)).toFixed(0)} MB</label>
-            <input
-              style={{ width: "100%" }}
-              type="range"
-              min={1}
-              max={100}
-              step={1}
-              value={(config.file_upload_max_size ?? 10485760) / (1024 * 1024)}
-              onChange={e => dispatch({ type: "SET_CONFIG", config: { file_upload_max_size: parseInt(e.target.value) * 1024 * 1024 } })}
-            />
-            <div style={styles.helpText}>
-              上传文件的大小上限，范围 1–100 MB
-            </div>
-          </div>
-
-          <div style={styles.field}>
-            <label style={styles.label}>最大 Token 数</label>
-            <input
-              style={styles.input}
-              type="number"
-              value={config.file_upload_max_tokens ?? 50000}
-              onChange={e => dispatch({ type: "SET_CONFIG", config: { file_upload_max_tokens: parseInt(e.target.value) || 50000 } })}
-              min={1000}
-              max={200000}
-              step={1000}
-            />
-            <div style={styles.helpText}>
-              文件内容截断阈值，范围 1000–200000
-            </div>
-          </div>
-
-          <div style={styles.field}>
-            <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13 }}>
-              <input
-                type="checkbox"
-                checked={config.file_upload_vision ?? true}
-                onChange={e => dispatch({ type: "SET_CONFIG", config: { file_upload_vision: e.target.checked } })}
-              />
-              启用文件视觉分析
-            </label>
-            <div style={styles.helpText}>
-              上传图片时尝试使用视觉模型分析图片内容
-            </div>
-          </div>
         </div>
 
         <div style={styles.footer}>

@@ -162,8 +162,18 @@ export function convertMessagesToAnthropic(messages: CanonicalChatMessage[]): {
     }
 
     if (msg.role === "user") {
-      out.push({ role: "user", content: msg.content ?? "" })
+      // Merge consecutive string user turns (omit notice + next user) to avoid Anthropic 400.
+      // Spec: settings-thread-compact Pi nit F-I4.
+      let text = msg.content ?? ""
       i++
+      while (i < messages.length && messages[i].role === "user") {
+        const next = messages[i]
+        const nextText =
+          typeof next.content === "string" ? next.content : next.content == null ? "" : String(next.content)
+        text = text ? `${text}\n\n${nextText}` : nextText
+        i++
+      }
+      out.push({ role: "user", content: text })
       continue
     }
 

@@ -13,6 +13,10 @@ import {
   threadIdsInMonth,
   aliasFromFirstUserText,
   buildTagIndex,
+  parseThreadListExpand,
+  DEFAULT_THREAD_LIST_EXPAND,
+  isPinnedGroupOpen,
+  isMonthGroupOpen,
 } from "../src/sidepanel/utils/thread-timeline"
 
 /** Build ISO in local timezone for year/month/day/hour. */
@@ -86,6 +90,45 @@ test("groupThreadsByCalendar: prefers updated_at over created_at", () => {
   assert.equal(model.today.length, 1)
   assert.equal(model.yesterday.length, 0)
   assert.equal(model.months.length, 0)
+})
+
+test("parseThreadListExpand: defaults + legacy months array + object", () => {
+  assert.deepEqual(parseThreadListExpand(null), {
+    months: [],
+    today: true,
+    yesterday: false,
+  })
+  assert.deepEqual(parseThreadListExpand(JSON.stringify(["2026-07", "2026-06"])), {
+    months: ["2026-07", "2026-06"],
+    today: true,
+    yesterday: false,
+  })
+  assert.deepEqual(
+    parseThreadListExpand(
+      JSON.stringify({ months: ["2026-07"], today: false, yesterday: true }),
+    ),
+    { months: ["2026-07"], today: false, yesterday: true },
+  )
+  assert.equal(DEFAULT_THREAD_LIST_EXPAND.today, true)
+  assert.equal(DEFAULT_THREAD_LIST_EXPAND.yesterday, false)
+})
+
+test("isPinnedGroupOpen / isMonthGroupOpen: search force-expand", () => {
+  const state = { months: [] as string[], today: false, yesterday: false }
+  assert.equal(isPinnedGroupOpen("today", state, { searchActive: false, hasMatches: true }), false)
+  assert.equal(isPinnedGroupOpen("today", state, { searchActive: true, hasMatches: true }), true)
+  assert.equal(isPinnedGroupOpen("yesterday", state, { searchActive: true, hasMatches: false }), false)
+  assert.equal(
+    isMonthGroupOpen("2026-07", { ...state, months: ["2026-07"] }, {
+      searchActive: false,
+      hasMatches: false,
+    }),
+    true,
+  )
+  assert.equal(
+    isMonthGroupOpen("2026-06", state, { searchActive: true, hasMatches: true }),
+    true,
+  )
 })
 
 test("filterThreadsByQuery: alias, id, first_user_preview, tags", () => {

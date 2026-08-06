@@ -14,6 +14,8 @@ export interface AgentState {
   operations: OperationRecord[]
   config: LLMConfig
   settingsOpen: boolean
+  /** Deep-link target for settings accordion (F-UX7). Cleared after Settings applies. */
+  settingsFocusSection: string | null
   tabList: chrome.tabs.Tab[]
   pinnedTabIds: number[]
   streamingContent: string
@@ -107,6 +109,21 @@ export interface AgentState {
     expiresAt: number | null
     includeProtocol: boolean
   } | null
+  /**
+   * Runtime context budget dual-truth indicator (per thread, session-scoped).
+   * Set when companion drops history for the LLM; UI history remains full.
+   */
+  contextCompactedByThreadId: Record<
+    string,
+    {
+      droppedCount: number
+      tokensBefore: number
+      tokensAfter: number
+      at: number
+      mode?: "m1" | "m2"
+      rollingSummary?: string
+    }
+  >
 }
 
 export type AgentAction =
@@ -124,6 +141,8 @@ export type AgentAction =
   | { type: "SET_CONFIG"; config: Partial<LLMConfig> }
   | { type: "TOGGLE_SETTINGS" }
   | { type: "SET_SETTINGS_OPEN"; open: boolean }
+  | { type: "OPEN_SETTINGS_SECTION"; section: string }
+  | { type: "CLEAR_SETTINGS_FOCUS" }
   | { type: "SET_TAB_LIST"; tabs: chrome.tabs.Tab[] }
   | { type: "TOGGLE_PIN_TAB"; tabId: number }
   | { type: "SET_PINNED_TABS"; tabIds: number[] }
@@ -191,6 +210,16 @@ export type AgentAction =
         includeProtocol: boolean
       } | null
     }
+  | {
+      type: "SET_CONTEXT_COMPACTED"
+      threadId: string
+      droppedCount: number
+      tokensBefore: number
+      tokensAfter: number
+      mode?: "m1" | "m2"
+      rollingSummary?: string
+    }
+  | { type: "CLEAR_CONTEXT_COMPACTED"; threadId: string }
 
 export const initialState: AgentState = {
   connectionState: "disconnected",
@@ -205,7 +234,9 @@ export const initialState: AgentState = {
     api_key: "",
     model_name: "deepseek-v4-flash",
     temperature: 0.7,
-    context_window: 1000000,
+    context_window: 128000,
+    context_compaction: "auto",
+    context_compaction_m2: true,
     protocol: "openai",
     client_header_profile: "none",
     trusted_domains: [],
@@ -224,6 +255,7 @@ export const initialState: AgentState = {
     file_upload_vision: true,
   },
   settingsOpen: false,
+  settingsFocusSection: null,
   tabList: [],
   pinnedTabIds: [],
   streamingContent: "",
@@ -275,6 +307,7 @@ export const initialState: AgentState = {
   userEnvError: null,
   userEnvStatus: null,
   unattended: null,
+  contextCompactedByThreadId: {},
 }
 
 export function agentReducer(state: AgentState, action: AgentAction): AgentState {
@@ -380,6 +413,27 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       return { ...state, config: { ...state.config, ...action.config } }
     case "SET_UNATTENDED_STATUS":
       return { ...state, unattended: action.unattended }
+    case "SET_CONTEXT_COMPACTED":
+      return {
+        ...state,
+        contextCompactedByThreadId: {
+          ...state.contextCompactedByThreadId,
+          [action.threadId]: {
+            droppedCount: action.droppedCount,
+            tokensBefore: action.tokensBefore,
+            tokensAfter: action.tokensAfter,
+            at: Date.now(),
+            mode: action.mode,
+            rollingSummary: action.rollingSummary,
+          },
+        },
+      }
+    case "CLEAR_CONTEXT_COMPACTED": {
+      if (!state.contextCompactedByThreadId[action.threadId]) return state
+      const next = { ...state.contextCompactedByThreadId }
+      delete next[action.threadId]
+      return { ...state, contextCompactedByThreadId: next }
+    }
     case "SET_OBSIDIAN_PROFILE_STATUS":
       return { ...state, obsidianProfileStatus: action.status }
     case "SET_KNOWLEDGE_IMPORT_STATUS":
@@ -389,9 +443,25 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
     case "SET_VAULT_PICKER":
       return { ...state, vaultPicker: { picking: action.picking, error: action.error } }
     case "TOGGLE_SETTINGS":
-      return { ...state, settingsOpen: !state.settingsOpen }
+      return {
+        ...state,
+        settingsOpen: !state.settingsOpen,
+        settingsFocusSection: state.settingsOpen ? null : state.settingsFocusSection,
+      }
     case "SET_SETTINGS_OPEN":
-      return { ...state, settingsOpen: action.open }
+      return {
+        ...state,
+        settingsOpen: action.open,
+        settingsFocusSection: action.open ? state.settingsFocusSection : null,
+      }
+    case "OPEN_SETTINGS_SECTION":
+      return {
+        ...state,
+        settingsOpen: true,
+        settingsFocusSection: action.section,
+      }
+    case "CLEAR_SETTINGS_FOCUS":
+      return { ...state, settingsFocusSection: null }
     case "SET_TAB_LIST":
       return { ...state, tabList: action.tabs }
     case "TOGGLE_PIN_TAB":

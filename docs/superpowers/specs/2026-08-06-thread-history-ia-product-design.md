@@ -57,9 +57,11 @@
 
 ```
 线程
-├── 今天（默认展开，平铺，按 updated_at desc）
+├── 今天（默认展开，可折叠；按 updated_at desc）
 │   ├── 调研竞品定价 · #a3k2…
 │   └── 未命名 · #x9…
+├── 昨天（默认折叠，可折叠）
+│   └── …
 ├── 2026-07（默认折叠）
 │   ├── 07-28（默认折叠；若该月仅 1 天可跳过日层）
 │   │   └── …
@@ -71,14 +73,15 @@
 
 | 规则 | 说明 |
 |------|------|
-| 「今天」 | 本地时区日历日；用 `updated_at`（最近活跃）归桶，不用 `created_at` |
-| 「昨天」 | 可选二级：昨日单独组；再早进「本周」或直接月 |
+| 「今天」 | 本地时区日历日；用 `updated_at`（最近活跃）归桶，不用 `created_at`；**默认可折叠（默认展开）** |
+| 「昨天」 | 昨日单独组；**默认可折叠（默认折叠）** — 2026-08-06 settings-thread-compact 对抗锁定 |
 | 历史 | **月 → 日 → 会话**；单日会话 ≤3 时可扁平展示日标题+列表 |
 | 空别名 | 展示 `未命名 · {id前6}` + 可选首条 user 消息预览一行（P0.5） |
-| 折叠记忆 | `localStorage`：`threadList.expand.{yyyy-mm}` / `threadList.view` |
+| 折叠记忆 | **统一** `localStorage` 键 `cmspark.threadList.expand` = `{ months: string[], today?: boolean, yesterday?: boolean }`；视图 `cmspark.threadList.view`。迁移旧 `cmspark.threadList.expandMonths`。组头 checkbox 须 `stopPropagation`。搜索命中时强制展开对应组（含月）。 |
 | 搜索条 | 列表顶：本地 filter（alias / id / tags）；**不依赖 LLM** |
+| 与 runtime budget | **正交**：Timeline 只管列表 IA。同 thread 内 LLM 上下文截断见 [settings-thread-compact-ux](2026-08-06-settings-thread-compact-ux.md)（**非** Digest / **非** Export） |
 
-**不做**：年层（用户量级年层几乎无用）；按 `created_at` 默认排序（会把「今天打开的旧会话」埋掉）。
+**不做**：年层（用户量级年层几乎无用）；按 `created_at` 默认排序（会把「今天打开的旧会话」埋掉）；把 runtime context omit 写进 thread 持久化消息。
 
 #### B.2 辅视图：`Tags`（类 Obsidian tag）
 
@@ -289,7 +292,7 @@ Tags: 竞品, 定价
 ### 2.1 打开线程列表
 
 1. 用户点 ☰  
-2. 默认 **时间** 视图；「今天」展开，其余月折叠  
+2. 默认 **时间** 视图；「今天」展开、「昨天」折叠，其余月折叠；今天/昨天均可折叠  
 3. 顶栏：`搜索…` · 视图切换 · `选择` · `+ 新建` · `⋯`（清理空白 / 整理 / 生成标题…）
 
 ### 2.2 批量删除（时间视图）
