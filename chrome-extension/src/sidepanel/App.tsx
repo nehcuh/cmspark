@@ -40,7 +40,13 @@ import {
 import { VoiceMicButton } from "./components/VoiceMicButton"
 import { useVoiceInput } from "./hooks/useVoiceInput"
 import { VOICE_PRIVACY_ACK_V2_BODY } from "./voice/privacy-copy"
-import { mapLocalSttError } from "./voice/error-map"
+import {
+  TOAST_SWITCHED_BROWSER,
+  formatListenRemaining,
+  localListeningStatusLabel,
+  localSttBannerCta,
+  mapLocalSttError,
+} from "./voice/error-map"
 import { collectRunningTools } from "./utils/running-tools"
 import {
   buildScopedRunBusyInput,
@@ -237,6 +243,8 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
   const [lastKnownVoiceEngine, setLastKnownVoiceEngine] = useState<
     "browser" | "local" | null
   >(null)
+  /** Post-CTA residual note after「改用浏览器听写」(Task 7). */
+  const [engineSwitchNote, setEngineSwitchNote] = useState<string | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const sendingRef = useRef(false)
@@ -473,11 +481,26 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
 
   // Disable only for thread/feature gates; local readiness fails open on click → banner.
   const voiceMicDisabled = !voiceAllowStart && !voice.listening
+  const localCapturing =
+    sttEngine === "local" &&
+    voice.listening &&
+    !voice.processing &&
+    voice.listenRemainingMs != null
+  const voiceMicTimerLabel = localCapturing
+    ? formatListenRemaining(voice.listenRemainingMs!)
+    : null
+  const voiceMicLiveStatus = voice.processing
+    ? "本机识别中…点击取消"
+    : localCapturing
+      ? localListeningStatusLabel(voice.listenRemainingMs!)
+      : null
   const voiceMicTitle = (() => {
     if (threadBusy) return "处理中无法听写"
-    if (voice.listening) {
-      return voice.processing ? "本机识别中…点击取消" : "结束语音输入"
+    if (voice.processing) return "本机识别中…点击取消"
+    if (localCapturing) {
+      return localListeningStatusLabel(voice.listenRemainingMs!)
     }
+    if (voice.listening) return "结束语音输入"
     if (sttEngine === "local") {
       if (!companionConnected) return mapLocalSttError("companion_disconnected").message
       if (!localModelReady) return mapLocalSttError("model_missing").message
@@ -485,6 +508,47 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
     }
     return "语音输入（听写进草稿）"
   })()
+
+  /** Banner recovery CTA (Task 7): switch browser or open settings. */
+  const voiceBannerCta =
+    sttEngine === "local" && voice.banner
+      ? localSttBannerCta(voice.errorCode)
+      : null
+
+  const handleSwitchBrowserEngine = useCallback(() => {
+    // Write path: same dual fence as Settings (SoT §5.3).
+    try {
+      chrome.runtime.sendMessage({
+        type: "voice.model.set_engine",
+        engine: "browser",
+        source: "settings",
+      })
+    } catch {
+      /* SW missing */
+    }
+    // Optimistic: so disconnect recovery works before companion ack.
+    try {
+      chrome.storage.local.set({ lastKnownVoiceEngine: "browser" })
+    } catch {
+      /* */
+    }
+    setLastKnownVoiceEngine("browser")
+    if (state.voiceModel) {
+      dispatch({
+        type: "SET_VOICE_MODEL_STATE",
+        modelState: { ...state.voiceModel, sttEngine: "browser" },
+      })
+    }
+    voice.dismissBanner()
+    setEngineSwitchNote(TOAST_SWITCHED_BROWSER)
+  }, [dispatch, state.voiceModel, voice])
+
+  const handleOpenVoiceSettings = useCallback(() => {
+    voice.dismissBanner()
+    setComposeOpen(false)
+    closePanel()
+    dispatch({ type: "OPEN_SETTINGS_SECTION", section: "model" })
+  }, [closePanel, dispatch, voice])
 
   // Disable send while dictating — mid-listen send would ship base snapshot only
   const canSend =
@@ -1089,9 +1153,12 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
           />
           {showVoiceMic && (
             <VoiceMicButton
-              listening={voice.listening}
+              listening={voice.listening && !voice.processing}
+              processing={voice.processing}
               disabled={voiceMicDisabled && !voice.listening}
               title={voiceMicTitle}
+              timerLabel={voiceMicTimerLabel}
+              liveStatus={voiceMicLiveStatus}
               onClick={() => voice.toggle()}
             />
           )}
@@ -1136,9 +1203,10 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
             </button>
           )}
         </div>
-        {voice.banner && (
+        {(voice.banner || engineSwitchNote) && (
           <div
             data-testid="voice-banner"
+            role="status"
             style={{
               marginTop: 6,
               fontSize: 11,
@@ -1147,12 +1215,47 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
               alignItems: "flex-start",
               gap: 6,
               lineHeight: 1.4,
+              flexWrap: "wrap" as const,
             }}
           >
-            <span style={{ flex: 1 }}>{voice.banner}</span>
+            <span style={{ flex: "1 1 140px", minWidth: 0 }}>
+              {engineSwitchNote || voice.banner}
+            </span>
+            {voiceBannerCta && !engineSwitchNote ? (
+              <button
+                type="button"
+                data-testid={
+                  voiceBannerCta.kind === "switch_browser"
+                    ? "voice-cta-switch-browser"
+                    : "voice-cta-open-settings"
+                }
+                onClick={() => {
+                  if (voiceBannerCta.kind === "switch_browser") {
+                    handleSwitchBrowserEngine()
+                  } else {
+                    handleOpenVoiceSettings()
+                  }
+                }}
+                style={{
+                  border: "none",
+                  background: "transparent",
+                  color: tokens.accent,
+                  cursor: "pointer",
+                  fontSize: 11,
+                  padding: 0,
+                  flexShrink: 0,
+                  textDecoration: "underline",
+                }}
+              >
+                {voiceBannerCta.label}
+              </button>
+            ) : null}
             <button
               type="button"
-              onClick={() => voice.dismissBanner()}
+              onClick={() => {
+                voice.dismissBanner()
+                setEngineSwitchNote(null)
+              }}
               style={{
                 border: "none",
                 background: "transparent",
@@ -1160,6 +1263,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
                 cursor: "pointer",
                 fontSize: 11,
                 padding: 0,
+                flexShrink: 0,
               }}
             >
               关闭

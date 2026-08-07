@@ -123,6 +123,79 @@ export function mapLocalSttError(code: string): LocalSttUserFacing {
   }
 }
 
+// --- Composer UX helpers (M1 Task 7; pure) ------------------------------------
+
+/** Short local-listening hint (SoT §6.2) — no permanent third status row. */
+export const LOCAL_LISTEN_HINT = "结束后本机识别"
+
+/** Banner CTA label: switch sttEngine → browser (SoT §5.3). */
+export const CTA_SWITCH_BROWSER = "改用浏览器听写"
+
+/** Banner CTA label: open settings for model download. */
+export const CTA_OPEN_SETTINGS = "去设置"
+
+/**
+ * Residual cloud disclosure when user opts into browser STT (SoT §5.3).
+ * Keep short for 320px banner / toast.
+ */
+export const BROWSER_ENGINE_CLOUD_RESIDUAL = "可能经浏览器厂商云端"
+
+/** Toast / banner line after successful CTA switch. */
+export const TOAST_SWITCHED_BROWSER = `已改用浏览器听写。${BROWSER_ENGINE_CLOUD_RESIDUAL}`
+
+/**
+ * Format remaining listen budget as m:ss (45s → "0:45"). Pure.
+ * Ceils partial seconds so UI never shows "0:00" while still listening.
+ */
+export function formatListenRemaining(remainingMs: number): string {
+  if (!Number.isFinite(remainingMs)) return "0:00"
+  const sec = Math.max(0, Math.ceil(remainingMs / 1000))
+  const m = Math.floor(sec / 60)
+  const s = sec % 60
+  return `${m}:${s.toString().padStart(2, "0")}`
+}
+
+/**
+ * Elapsed → remaining label for the 45s cap.
+ * Pure; pass maxMs for tests (default 45_000).
+ */
+export function formatListenRemainingFromElapsed(
+  elapsedMs: number,
+  maxMs = 45_000,
+): string {
+  const rem = Math.max(0, maxMs - (Number.isFinite(elapsedMs) ? elapsedMs : 0))
+  return formatListenRemaining(rem)
+}
+
+/** Compact aria/title for local listening (timer + hint). */
+export function localListeningStatusLabel(remainingMs: number): string {
+  return `本机转写 · 剩余 ${formatListenRemaining(remainingMs)} · ${LOCAL_LISTEN_HINT}`
+}
+
+export type LocalBannerCta =
+  | { kind: "switch_browser"; label: string }
+  | { kind: "open_settings"; label: string }
+
+/**
+ * Recovery CTA for local STT error banners (SoT §5.3 / §6.3 / Task 7).
+ * - companion_disconnected / binary_missing / hash_fail → 改用浏览器听写
+ * - model_missing → 去设置
+ * - empty / abort / busy → null (retry or wait; no engine flip)
+ */
+export function localSttBannerCta(code: string | null | undefined): LocalBannerCta | null {
+  const c = (code || "").toLowerCase()
+  switch (c) {
+    case "companion_disconnected":
+    case "binary_missing":
+    case "hash_fail":
+      return { kind: "switch_browser", label: CTA_SWITCH_BROWSER }
+    case "model_missing":
+      return { kind: "open_settings", label: CTA_OPEN_SETTINGS }
+    default:
+      return null
+  }
+}
+
 /** Hide vs disable decision for mic chrome (SoT §7.2 subset). */
 export type MicChrome =
   | { show: false; reason: "disabled_setting" | "unsupported" | "non_tier1" }

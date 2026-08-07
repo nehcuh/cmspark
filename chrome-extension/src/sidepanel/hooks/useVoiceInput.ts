@@ -106,6 +106,9 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
   optsRef.current = opts
   const engineRef = useRef(engine)
   engineRef.current = engine
+  /** Wall-clock when current listen session entered starting/listening (UI timer). */
+  const listenStartRef = useRef<number | null>(null)
+  const [listenTick, setListenTick] = useState(0)
 
   const clearTimer = () => {
     if (timerRef.current) {
@@ -113,6 +116,18 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
       timerRef.current = null
     }
   }
+
+  // Drive remaining-time badge while capturing (local or browser).
+  useEffect(() => {
+    const ph = session.phase
+    if (ph === "starting" || ph === "listening") {
+      if (listenStartRef.current == null) listenStartRef.current = Date.now()
+      const id = setInterval(() => setListenTick((n) => n + 1), 250)
+      return () => clearInterval(id)
+    }
+    listenStartRef.current = null
+    return undefined
+  }, [session.phase])
 
   const dispatchEv = useCallback((event: Parameters<typeof reduceVoiceSession>[1]) => {
     setSession((prev) => {
@@ -387,6 +402,14 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
         (session.interim || "")
       : null
 
+  // Remaining listen budget for mic chrome (Task 7). listenTick forces re-render.
+  void listenTick
+  const listenRemainingMs =
+    listenStartRef.current != null &&
+    (session.phase === "listening" || session.phase === "starting")
+      ? Math.max(0, VOICE_MAX_LISTEN_MS - (Date.now() - listenStartRef.current))
+      : null
+
   return {
     supported,
     phase: session.phase,
@@ -394,7 +417,11 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
     listening: busy,
     processing: session.phase === "processing",
     banner: session.banner,
+    /** Last ENGINE_ERROR code (for banner CTA routing). */
+    errorCode: session.errorCode,
     liveOverlay,
+    /** ms left of 45s cap while capturing; null when idle/processing. */
+    listenRemainingMs,
     sttEngine: engine,
     /** Map a local gate code for external CTA (optional). */
     mapLocalError: mapLocalSttError,
