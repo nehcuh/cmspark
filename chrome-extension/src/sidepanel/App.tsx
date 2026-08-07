@@ -497,32 +497,37 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
     !voice.processing &&
     voice.listenRemainingMs != null
   const localCapturing = sttEngine === "local" && capturing
-  const continuousCapturing =
-    sttEngine === "browser" &&
-    state.voiceDictationMode === "continuous" &&
-    capturing
+  const continuousMode = state.voiceDictationMode === "continuous"
+  const continuousCapturing = continuousMode && capturing
+  const continuousProcessing =
+    continuousMode && voice.processing && voice.listenRemainingMs != null
   const voiceMicTimerLabel =
-    localCapturing || continuousCapturing
+    localCapturing || continuousCapturing || continuousProcessing
       ? formatListenRemaining(voice.listenRemainingMs!)
       : null
   const voiceMicLiveStatus = voice.refining
     ? "纠错中…点击取消"
-    : voice.processing
-      ? "本机识别中…点击取消"
-      : localCapturing
-        ? localListeningStatusLabel(voice.listenRemainingMs!)
+    : continuousProcessing
+      ? `本机分段识别中… · 剩余 ${formatListenRemaining(voice.listenRemainingMs!)}`
+      : voice.processing
+        ? "本机识别中…点击取消"
         : continuousCapturing
           ? `连续听写 · 剩余 ${formatListenRemaining(voice.listenRemainingMs!)}`
-          : null
+          : localCapturing
+            ? localListeningStatusLabel(voice.listenRemainingMs!)
+            : null
   const voiceMicTitle = (() => {
     if (threadBusy) return "处理中无法听写"
     if (voice.refining) return "纠错中…点击取消"
-    if (voice.processing) return "本机识别中…点击取消"
-    if (localCapturing) {
-      return localListeningStatusLabel(voice.listenRemainingMs!)
+    if (continuousProcessing) {
+      return `本机分段识别中… · 剩余 ${formatListenRemaining(voice.listenRemainingMs!)}`
     }
+    if (voice.processing) return "本机识别中…点击取消"
     if (continuousCapturing) {
       return `连续听写中 · 剩余 ${formatListenRemaining(voice.listenRemainingMs!)} · 再点结束`
+    }
+    if (localCapturing) {
+      return localListeningStatusLabel(voice.listenRemainingMs!)
     }
     if (voice.listening) return "结束语音输入"
     if (sttEngine === "local") {

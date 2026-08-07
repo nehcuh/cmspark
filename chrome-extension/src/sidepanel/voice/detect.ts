@@ -109,13 +109,17 @@ export function maxListenMsForSession(
   engine: "browser" | "local",
   hardCapMs: number = VOICE_CONTINUOUS_HARD_CAP_MS,
 ): number {
-  // D1a: continuous applies only to browser; local stays classic 45s until D1c segments.
-  if (mode === "continuous" && engine === "browser") {
+  // D1a/D1c: continuous (browser restart or local serial segments) uses hard cap.
+  if (mode === "continuous") {
     const cap = Math.min(
       Math.max(hardCapMs, VOICE_MAX_LISTEN_MS),
       VOICE_CONTINUOUS_HARD_CAP_MAX_MS,
     )
     return cap
   }
+  void engine
   return VOICE_MAX_LISTEN_MS
 }
+
+/** Per-segment local STT window (must stay ≤ companion STT_MAX_RECORD_MS). */
+export const LOCAL_CONTINUOUS_SEGMENT_MS = 45_000

@@ -1003,10 +1003,11 @@ export function SettingsSlideout() {
                     dispatch({ type: "SET_VOICE_DICTATION_MODE", mode: "continuous" })
                   }
                 />
-                连续听写（可选 · 最长默认 15 分钟；浏览器引擎会自动续听）
+                连续听写（可选 · 最长默认 15 分钟）
               </label>
               <div style={{ marginTop: 4, fontSize: 11, color: "#888", lineHeight: 1.4 }}>
-                连续听写仅增强 Agent 草稿输入，不会自动发送，也不是系统听写。首次使用需确认隐私说明。
+                浏览器：自动续听；本机：约 45 秒一段串行转写（间隙显示「识别中」）。仅进草稿、不自动发送。首次需隐私
+                v3。
               </div>
               <label
                 style={{
