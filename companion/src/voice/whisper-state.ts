@@ -6,9 +6,11 @@ import * as path from "node:path"
 import { getConfig, DATA_DIR } from "../config"
 import {
   defaultWhisperSearchRoots,
+  resolveWhisperArch,
   resolveWhisperBinary,
   type ResolveWhisperBinaryResult,
 } from "./binary-resolve"
+import { whisperPinResolveOpts } from "./whisper-binary-pins"
 import {
   RECOMMENDED_WHISPER_MODEL,
   WHISPER_MODEL_IDS,
@@ -91,10 +93,18 @@ export function resolveBinaryForState(opts?: {
       searchRoots.push(r)
     }
   }
+  const warch = resolveWhisperArch()
+  const pinOpts = whisperPinResolveOpts(warch)
+  if (pinOpts.forceUnpinned) {
+    console.warn(
+      "[voice] CMSPARK_WHISPER_UNPINNED=1 — skipping cmspark-whisper SHA256 pin (dev only)",
+    )
+  }
   return mapBinaryResult(
     resolveWhisperBinary({
       searchRoots,
-      allowUnpinned: true,
+      expectedSha256: pinOpts.expectedSha256,
+      allowUnpinned: pinOpts.allowUnpinned,
     }),
   )
 }

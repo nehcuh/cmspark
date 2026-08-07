@@ -5,9 +5,11 @@ import * as path from "node:path"
 
 import {
   defaultWhisperSearchRoots,
+  resolveWhisperArch,
   resolveWhisperBinary,
   type ResolveWhisperBinaryResult,
 } from "./binary-resolve"
+import { whisperPinResolveOpts } from "./whisper-binary-pins"
 import {
   STT_INFER_MAX_MS,
   STT_MAX_RECORD_MS,
@@ -344,7 +346,18 @@ export class SttSessionService {
     const roots = defaultWhisperSearchRoots(
       this.deps.companionRoot ?? path.join(__dirname, "..", ".."),
     )
-    return resolveWhisperBinary({ searchRoots: roots, allowUnpinned: true })
+    const warch = resolveWhisperArch()
+    const pinOpts = whisperPinResolveOpts(warch)
+    if (pinOpts.forceUnpinned) {
+      console.warn(
+        "[voice] CMSPARK_WHISPER_UNPINNED=1 — skipping cmspark-whisper SHA256 pin (dev only)",
+      )
+    }
+    return resolveWhisperBinary({
+      searchRoots: roots,
+      expectedSha256: pinOpts.expectedSha256,
+      allowUnpinned: pinOpts.allowUnpinned,
+    })
   }
 
   /**

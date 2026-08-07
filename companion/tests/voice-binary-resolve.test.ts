@@ -12,6 +12,10 @@ import {
   sha256FileSync,
   whisperBinaryBasenames,
 } from "../src/voice/binary-resolve"
+import {
+  expectedWhisperSha256,
+  whisperPinResolveOpts,
+} from "../src/voice/whisper-binary-pins"
 
 test("resolveWhisperArch mapping", () => {
   assert.equal(resolveWhisperArch("darwin", "arm64"), "darwin-arm64")
@@ -103,4 +107,42 @@ test("pin match", () => {
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
   }
+})
+
+test("expectedWhisperSha256 rejects invalid / missing pins", () => {
+  assert.equal(expectedWhisperSha256("unsupported"), null)
+  assert.equal(expectedWhisperSha256(""), null)
+  // live module may have darwin-arm64 filled by build script; invalid arch always null
+  assert.equal(expectedWhisperSha256("freebsd-x64"), null)
+})
+
+test("whisperPinResolveOpts: missing pin → allowUnpinned", () => {
+  const o = whisperPinResolveOpts("linux-x64", {})
+  // linux-x64 may be unpinned on this machine; when pin is null:
+  if (expectedWhisperSha256("linux-x64") == null) {
+    assert.equal(o.allowUnpinned, true)
+    assert.equal(o.expectedSha256, null)
+    assert.equal(o.forceUnpinned, false)
+  }
+})
+
+test("whisperPinResolveOpts: CMSPARK_WHISPER_UNPINNED=1 forces unpinned", () => {
+  const o = whisperPinResolveOpts("darwin-arm64", { CMSPARK_WHISPER_UNPINNED: "1" })
+  assert.equal(o.forceUnpinned, true)
+  assert.equal(o.allowUnpinned, true)
+  assert.equal(o.expectedSha256, null)
+})
+
+test("whisperPinResolveOpts: pin present enforces digest", () => {
+  const pin = expectedWhisperSha256("darwin-arm64")
+  if (!pin) {
+    // build script not run yet — still assert shape for a synthetic env
+    const o = whisperPinResolveOpts("darwin-arm64", {})
+    assert.equal(typeof o.allowUnpinned, "boolean")
+    return
+  }
+  const o = whisperPinResolveOpts("darwin-arm64", {})
+  assert.equal(o.expectedSha256, pin)
+  assert.equal(o.allowUnpinned, false)
+  assert.equal(o.forceUnpinned, false)
 })
