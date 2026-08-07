@@ -39,7 +39,10 @@ import {
 } from "./ui/icons"
 import { VoiceMicButton } from "./components/VoiceMicButton"
 import { useVoiceInput } from "./hooks/useVoiceInput"
-import { VOICE_PRIVACY_ACK_V2_BODY } from "./voice/privacy-copy"
+import {
+  VOICE_PRIVACY_ACK_V2_BODY,
+  VOICE_PRIVACY_ACK_V3_BODY,
+} from "./voice/privacy-copy"
 import {
   TOAST_SWITCHED_BROWSER,
   formatListenRemaining,
@@ -237,8 +240,8 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
   const [fileError, setFileError] = useState("")
   const [composeOpen, setComposeOpen] = useState(false)
   const [voicePrivacyOpen, setVoicePrivacyOpen] = useState(false)
-  /** Path B: which privacy sheet to show (v1 browser / v2 local). */
-  const [voicePrivacyKind, setVoicePrivacyKind] = useState<"v1" | "v2">("v1")
+  /** Privacy sheet: v1 browser · v2 local · v3 continuous/refiner. */
+  const [voicePrivacyKind, setVoicePrivacyKind] = useState<"v1" | "v2" | "v3">("v1")
   /** Fail-closed lastKnown engine when companion state not yet mirrored. */
   const [lastKnownVoiceEngine, setLastKnownVoiceEngine] = useState<
     "browser" | "local" | null
@@ -468,6 +471,12 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
       setVoicePrivacyOpen(true)
     },
     modelId: activeModelId,
+    dictationMode: state.voiceDictationMode === "continuous" ? "continuous" : "classic",
+    privacyAckV3: state.voicePrivacyAckV3 === true,
+    onNeedPrivacyAckV3: () => {
+      setVoicePrivacyKind("v3")
+      setVoicePrivacyOpen(true)
+    },
   })
 
   // Hide: feature off | unsupported for selected engine | worker | no thread.
@@ -481,24 +490,34 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
 
   // Disable only for thread/feature gates; local readiness fails open on click → banner.
   const voiceMicDisabled = !voiceAllowStart && !voice.listening
-  const localCapturing =
-    sttEngine === "local" &&
+  const capturing =
     voice.listening &&
     !voice.processing &&
     voice.listenRemainingMs != null
-  const voiceMicTimerLabel = localCapturing
-    ? formatListenRemaining(voice.listenRemainingMs!)
-    : null
+  const localCapturing = sttEngine === "local" && capturing
+  const continuousCapturing =
+    sttEngine === "browser" &&
+    state.voiceDictationMode === "continuous" &&
+    capturing
+  const voiceMicTimerLabel =
+    localCapturing || continuousCapturing
+      ? formatListenRemaining(voice.listenRemainingMs!)
+      : null
   const voiceMicLiveStatus = voice.processing
     ? "本机识别中…点击取消"
     : localCapturing
       ? localListeningStatusLabel(voice.listenRemainingMs!)
-      : null
+      : continuousCapturing
+        ? `连续听写 · 剩余 ${formatListenRemaining(voice.listenRemainingMs!)}`
+        : null
   const voiceMicTitle = (() => {
     if (threadBusy) return "处理中无法听写"
     if (voice.processing) return "本机识别中…点击取消"
     if (localCapturing) {
       return localListeningStatusLabel(voice.listenRemainingMs!)
+    }
+    if (continuousCapturing) {
+      return `连续听写中 · 剩余 ${formatListenRemaining(voice.listenRemainingMs!)} · 再点结束`
     }
     if (voice.listening) return "结束语音输入"
     if (sttEngine === "local") {
@@ -1291,9 +1310,11 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
                 whiteSpace: "pre-wrap" as const,
               }}
             >
-              {voicePrivacyKind === "v2"
-                ? VOICE_PRIVACY_ACK_V2_BODY
-                : "可选麦克风：浏览器将语音转成文字后填入输入框，默认不自动发送。转写可能使用 Chrome 语音服务（音频可能经网络发送至浏览器厂商），不经过 CMspark Companion。发送后的文字与键入相同，仍受现有确认与信任设置约束。"}
+              {voicePrivacyKind === "v3"
+                ? VOICE_PRIVACY_ACK_V3_BODY
+                : voicePrivacyKind === "v2"
+                  ? VOICE_PRIVACY_ACK_V2_BODY
+                  : "可选麦克风：浏览器将语音转成文字后填入输入框，默认不自动发送。转写可能使用 Chrome 语音服务（音频可能经网络发送至浏览器厂商），不经过 CMspark Companion。发送后的文字与键入相同，仍受现有确认与信任设置约束。"}
             </div>
             <div style={{ display: "flex", gap: 8 }}>
               <button
@@ -1319,7 +1340,11 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
                   boxShadow: "none",
                 }}
                 onClick={() => {
-                  if (voicePrivacyKind === "v2") {
+                  if (voicePrivacyKind === "v3") {
+                    dispatch({ type: "SET_VOICE_PRIVACY_ACK_V3", ack: true })
+                    setVoicePrivacyOpen(false)
+                    voice.toggle({ privacyAck: true, privacyAckV3: true })
+                  } else if (voicePrivacyKind === "v2") {
                     dispatch({ type: "SET_VOICE_PRIVACY_ACK_V2", ack: true })
                     setVoicePrivacyOpen(false)
                     voice.toggle({ privacyAckV2: true })

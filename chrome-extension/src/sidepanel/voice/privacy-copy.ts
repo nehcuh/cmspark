@@ -18,3 +18,20 @@ export const VOICE_PRIVACY_ACK_V2_BODY = VOICE_PRIVACY_ACK_V2_CLAUSES.join("\n")
 
 /** Storage key for chrome.storage.local (lock-step with agentStore). */
 export const VOICE_PRIVACY_ACK_V2_STORAGE_KEY = "voice_privacy_ack_v2" as const
+
+/**
+ * Dictation+ continuous / ASR Refiner (SoT + ADR-024).
+ * Required before continuous browser listen or future Refiner.
+ */
+export const VOICE_PRIVACY_ACK_V3_CLAUSES: readonly string[] = [
+  "连续听写可运行多分钟，直至你停止或到达上限；请注意录音指示（麦克风/时长）。",
+  "浏览器听写在连续模式下可能在整个会话中将音频送往浏览器厂商语音服务。",
+  "本机转写仍会经 Companion 临时分段处理音频（与 v2 一致），识别后删除临时文件。",
+  "若之后开启「ASR 纠错」（可选功能），转写文字会发送到你已配置的 LLM 服务商（即使未点发送）。",
+  "听写结果只进入草稿，不会自动发送；请核对后再发送。",
+  "此前的 v1/v2 隐私确认不满足连续听写或 ASR 纠错；须单独确认本说明。",
+] as const
+
+export const VOICE_PRIVACY_ACK_V3_BODY = VOICE_PRIVACY_ACK_V3_CLAUSES.join("\n")
+
+export const VOICE_PRIVACY_ACK_V3_STORAGE_KEY = "voice_privacy_ack_v3" as const

@@ -170,6 +170,16 @@ export function reduceVoiceSession(
         ...state,
         phase: "stopping",
         abortReason: "timeout",
+        errorCode: event.code || "timeout",
+      }
+    }
+
+    case "SOFT_CAP_HINT": {
+      // Non-terminal: keep listening; surface one info chip under composer.
+      if (state.phase !== "listening" && state.phase !== "starting") return state
+      return {
+        ...state,
+        banner: event.message,
       }
     }
 
@@ -264,7 +274,8 @@ export function reduceVoiceSession(
         state.errorCode &&
         state.errorCode !== "no-speech" &&
         state.errorCode !== "empty" &&
-        state.errorCode !== "timeout"
+        state.errorCode !== "timeout" &&
+        state.errorCode !== "continuous-timeout"
       ) {
         const mapped = mapVoiceError(state.errorCode)
         return resetToIdle(state, {
@@ -282,7 +293,13 @@ export function reduceVoiceSession(
           state.errorCode === "no-speech" ? "no-speech" : "empty",
         ).message
         const timeoutBanner =
-          state.abortReason === "timeout" ? mapVoiceError("timeout").message : null
+          state.abortReason === "timeout"
+            ? mapVoiceError(
+                state.errorCode === "continuous-timeout"
+                  ? "continuous-timeout"
+                  : "timeout",
+              ).message
+            : null
         return resetToIdle(state, {
           banner: timeoutBanner || emptyMsg,
           baseText: state.baseText,
@@ -292,7 +309,13 @@ export function reduceVoiceSession(
       }
 
       const timeoutBanner =
-        state.abortReason === "timeout" ? mapVoiceError("timeout").message : null
+        state.abortReason === "timeout"
+          ? mapVoiceError(
+              state.errorCode === "continuous-timeout"
+                ? "continuous-timeout"
+                : "timeout",
+            ).message
+          : null
 
       return resetToIdle(state, {
         baseText: state.baseText,

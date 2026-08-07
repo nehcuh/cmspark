@@ -981,6 +981,35 @@ export function SettingsSlideout() {
               在输入框显示麦克风（听写进草稿，不自动发送）
             </label>
 
+            <div style={{ marginTop: 10, fontSize: 12, color: "#555" }}>
+              <div style={{ marginBottom: 4, fontWeight: 500 }}>听写形态</div>
+              <label style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4, cursor: "pointer" }}>
+                <input
+                  type="radio"
+                  name="voiceDictationMode"
+                  checked={(state.voiceDictationMode || "classic") === "classic"}
+                  onChange={() =>
+                    dispatch({ type: "SET_VOICE_DICTATION_MODE", mode: "classic" })
+                  }
+                />
+                经典短听（默认 · 最长约 45 秒）
+              </label>
+              <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+                <input
+                  type="radio"
+                  name="voiceDictationMode"
+                  checked={state.voiceDictationMode === "continuous"}
+                  onChange={() =>
+                    dispatch({ type: "SET_VOICE_DICTATION_MODE", mode: "continuous" })
+                  }
+                />
+                连续听写（可选 · 最长默认 15 分钟；浏览器引擎会自动续听）
+              </label>
+              <div style={{ marginTop: 4, fontSize: 11, color: "#888", lineHeight: 1.4 }}>
+                连续听写仅增强 Agent 草稿输入，不会自动发送，也不是系统听写。首次使用需确认隐私说明。
+              </div>
+            </div>
+
             {/* Path B M0: 听写方式 progressive disclosure (UI draft until ready + enable) */}
             {(() => {
               const voiceModel = state.voiceModel

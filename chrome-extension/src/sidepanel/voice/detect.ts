@@ -76,8 +76,46 @@ export function isLikelyTier1Chrome(userAgent: string): boolean {
   return true
 }
 
-/** SoT hard max listen session (ms). */
+/** Classic (M1) hard max listen session (ms). */
 export const VOICE_MAX_LISTEN_MS = 45_000
+
+/**
+ * Dictation+ mode (SoT 2026-08-07).
+ * classic = M1 45s no onend restart; continuous = opt-in long listen (browser restart).
+ */
+export type VoiceDictationMode = "classic" | "continuous"
+
+export const VOICE_DICTATION_MODE_DEFAULT: VoiceDictationMode = "classic"
+
+/** Continuous soft prompt (ms) — still listening, do not stop. */
+export const VOICE_CONTINUOUS_SOFT_CAP_MS = 5 * 60_000
+
+/** Continuous hard stop default (ms). */
+export const VOICE_CONTINUOUS_HARD_CAP_MS = 15 * 60_000
+
+/** Continuous hard stop absolute max configurable (ms). */
+export const VOICE_CONTINUOUS_HARD_CAP_MAX_MS = 30 * 60_000
 
 /** Default recognition language (M1 locked). */
 export const VOICE_DEFAULT_LANG = "zh-CN"
+
+export function normalizeDictationMode(v: unknown): VoiceDictationMode {
+  return v === "continuous" ? "continuous" : "classic"
+}
+
+/** Max listen wall-clock for a session given mode + engine. */
+export function maxListenMsForSession(
+  mode: VoiceDictationMode,
+  engine: "browser" | "local",
+  hardCapMs: number = VOICE_CONTINUOUS_HARD_CAP_MS,
+): number {
+  // D1a: continuous applies only to browser; local stays classic 45s until D1c segments.
+  if (mode === "continuous" && engine === "browser") {
+    const cap = Math.min(
+      Math.max(hardCapMs, VOICE_MAX_LISTEN_MS),
+      VOICE_CONTINUOUS_HARD_CAP_MAX_MS,
+    )
+    return cap
+  }
+  return VOICE_MAX_LISTEN_MS
+}

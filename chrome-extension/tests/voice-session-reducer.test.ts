@@ -88,6 +88,37 @@ test("timeout keeps finals with banner", () => {
   assert.match(s.banner || "", /上限/)
 })
 
+test("continuous-timeout banner copy differs from classic", () => {
+  let s = initialVoiceSession(true)
+  s = reduceVoiceSession(s, {
+    type: "USER_TOGGLE_START",
+    sessionId: "s1",
+    baseText: "",
+  })
+  s = reduceVoiceSession(s, { type: "ENGINE_START" })
+  s = reduceVoiceSession(s, { type: "ENGINE_RESULT", finalChunk: "长听" })
+  s = reduceVoiceSession(s, { type: "TIMEOUT", code: "continuous-timeout" })
+  s = reduceVoiceSession(s, { type: "ENGINE_END" })
+  assert.equal(s.committed, true)
+  assert.match(s.banner || "", /连续听写/)
+})
+
+test("SOFT_CAP_HINT keeps listening and sets banner", () => {
+  let s = initialVoiceSession(true)
+  s = reduceVoiceSession(s, {
+    type: "USER_TOGGLE_START",
+    sessionId: "s1",
+    baseText: "",
+  })
+  s = reduceVoiceSession(s, { type: "ENGINE_START" })
+  s = reduceVoiceSession(s, {
+    type: "SOFT_CAP_HINT",
+    message: "仍在连续听写，可点麦克风结束",
+  })
+  assert.equal(s.phase, "listening")
+  assert.match(s.banner || "", /连续听写/)
+})
+
 test("not-allowed → error banner survives ENGINE_END (real Web Speech order)", () => {
   let s = initialVoiceSession(true)
   s = reduceVoiceSession(s, {

@@ -6,8 +6,11 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import {
   detectSpeechRecognition,
+  maxListenMsForSession,
+  VOICE_CONTINUOUS_SOFT_CAP_MS,
   VOICE_DEFAULT_LANG,
   VOICE_MAX_LISTEN_MS,
+  type VoiceDictationMode,
 } from "../voice/detect"
 import { detectLocalMediaCapture } from "../voice/local-stt-detect"
 import { reduceVoiceSession } from "../voice/session-reducer"
@@ -79,6 +82,14 @@ export type UseVoiceInputOpts = {
   onNeedPrivacyAckV2?: () => void
   /** Active whisper model id for voice.stt.start. */
   modelId?: string
+  /**
+   * Dictation+ mode (SoT). classic = M1 45s; continuous = browser restart + long hard cap.
+   * Local engine always uses classic caps until D1c segments.
+   */
+  dictationMode?: VoiceDictationMode
+  /** Continuous / Refiner privacy ack v3. */
+  privacyAckV3?: boolean
+  onNeedPrivacyAckV3?: () => void
 }
 
 export function useVoiceInput(opts: UseVoiceInputOpts) {
@@ -101,19 +112,30 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
   sessionRef.current = session
   const adapterRef = useRef<SpeechAdapter | null>(null)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const softTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const threadRef = useRef(opts.threadId)
   const optsRef = useRef(opts)
   optsRef.current = opts
   const engineRef = useRef(engine)
   engineRef.current = engine
+  const modeRef = useRef<VoiceDictationMode>(
+    opts.dictationMode === "continuous" ? "continuous" : "classic",
+  )
+  modeRef.current =
+    opts.dictationMode === "continuous" ? "continuous" : "classic"
   /** Wall-clock when current listen session entered starting/listening (UI timer). */
   const listenStartRef = useRef<number | null>(null)
+  const maxListenMsRef = useRef(VOICE_MAX_LISTEN_MS)
   const [listenTick, setListenTick] = useState(0)
 
   const clearTimer = () => {
     if (timerRef.current) {
       clearTimeout(timerRef.current)
       timerRef.current = null
+    }
+    if (softTimerRef.current) {
+      clearTimeout(softTimerRef.current)
+      softTimerRef.current = null
     }
   }
 
@@ -234,7 +256,11 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
   }, [])
 
   const toggle = useCallback(
-    (extra?: { privacyAck?: boolean; privacyAckV2?: boolean }) => {
+    (extra?: {
+      privacyAck?: boolean
+      privacyAckV2?: boolean
+      privacyAckV3?: boolean
+    }) => {
       const o = optsRef.current
       const s = sessionRef.current
       const eng = engineRef.current
@@ -271,6 +297,10 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
       if (s.phase !== "idle" && s.phase !== "error") return
       if (!o.allowStart) return
 
+      const mode = modeRef.current
+      // Continuous browser requires privacy ack v3 (long cloud STT residual).
+      const continuousBrowser = mode === "continuous" && eng === "browser"
+
       if (eng === "local") {
         // Fail-closed gates — never fall back to browser
         const gate = localGateError()
@@ -292,6 +322,14 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
         if (!privacyOk) {
           o.onNeedPrivacyAck()
           return
+        }
+        if (continuousBrowser) {
+          const v3 = extra?.privacyAckV3 === true || o.privacyAckV3 === true
+          if (!v3) {
+            // Do not fall back to v1 sheet — that cannot satisfy the v3 gate (dual-review N1).
+            if (o.onNeedPrivacyAckV3) o.onNeedPrivacyAckV3()
+            return
+          }
         }
         if (typeof navigator !== "undefined" && navigator.onLine === false) {
           dispatchEv({ type: "ENGINE_ERROR", code: "offline" })
@@ -337,6 +375,9 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
 
         const sid = newSessionId()
         const base = o.getBaseText()
+        const modeNow = modeRef.current
+        const maxMs = maxListenMsForSession(modeNow, eng)
+        maxListenMsRef.current = maxMs
         dispatchEv({ type: "USER_TOGGLE_START", sessionId: sid, baseText: base })
         try {
           if (eng === "local") {
@@ -346,23 +387,44 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
               modelId: o.modelId || "medium",
             })
           } else {
-            adapterRef.current.start(VOICE_DEFAULT_LANG)
+            adapterRef.current.start({
+              lang: VOICE_DEFAULT_LANG,
+              mode: modeNow,
+            })
           }
         } catch {
           dispatchEv({ type: "ENGINE_ERROR", code: "not-allowed" })
           return
         }
         clearTimer()
+        // Soft cap hint only for continuous browser (still listening).
+        if (modeNow === "continuous" && eng === "browser") {
+          softTimerRef.current = setTimeout(() => {
+            softTimerRef.current = null
+            const ph = sessionRef.current.phase
+            if (ph === "listening" || ph === "starting") {
+              dispatchEv({
+                type: "SOFT_CAP_HINT",
+                message: "仍在连续听写，可点麦克风结束",
+              })
+            }
+          }, VOICE_CONTINUOUS_SOFT_CAP_MS)
+        }
         timerRef.current = setTimeout(() => {
           if (engineRef.current === "local") {
             // Stop capture → CAPTURE_STOPPED → processing (do not TIMEOUT→stopping).
             clearTimer()
             stopEngine("stop")
           } else {
-            dispatchEv({ type: "TIMEOUT" })
+            const cont =
+              modeRef.current === "continuous" && engineRef.current === "browser"
+            dispatchEv({
+              type: "TIMEOUT",
+              code: cont ? "continuous-timeout" : "timeout",
+            })
             stopEngine("stop")
           }
-        }, VOICE_MAX_LISTEN_MS)
+        }, maxMs)
       }
     },
     [dispatchEv, stopEngine, supported, localGateError],
@@ -407,7 +469,10 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
   const listenRemainingMs =
     listenStartRef.current != null &&
     (session.phase === "listening" || session.phase === "starting")
-      ? Math.max(0, VOICE_MAX_LISTEN_MS - (Date.now() - listenStartRef.current))
+      ? Math.max(
+          0,
+          maxListenMsRef.current - (Date.now() - listenStartRef.current),
+        )
       : null
 
   return {
@@ -420,8 +485,10 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
     /** Last ENGINE_ERROR code (for banner CTA routing). */
     errorCode: session.errorCode,
     liveOverlay,
-    /** ms left of 45s cap while capturing; null when idle/processing. */
+    /** ms left of session hard cap while capturing; null when idle/processing. */
     listenRemainingMs,
+    /** Active dictation mode (classic | continuous). */
+    dictationMode: modeRef.current,
     sttEngine: engine,
     /** Map a local gate code for external CTA (optional). */
     mapLocalError: mapLocalSttError,

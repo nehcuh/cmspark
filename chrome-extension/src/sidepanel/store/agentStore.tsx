@@ -38,6 +38,12 @@ export interface AgentState {
    */
   voicePrivacyAckV2: boolean
   /**
+   * Dictation+ continuous / ASR Refiner ack (chrome.storage.local `voice_privacy_ack_v3`).
+   */
+  voicePrivacyAckV3: boolean
+  /** classic = M1 45s; continuous = opt-in long browser listen (SoT Dictation+). */
+  voiceDictationMode: "classic" | "continuous"
+  /**
    * Wave D: how to show model thinking blocks.
    * auto_live = expand while streaming, collapse when done (default).
    */
@@ -191,6 +197,8 @@ export type AgentAction =
   | { type: "SET_VOICE_INPUT_ENABLED"; enabled: boolean }
   | { type: "SET_VOICE_PRIVACY_ACK_V1"; ack: boolean }
   | { type: "SET_VOICE_PRIVACY_ACK_V2"; ack: boolean }
+  | { type: "SET_VOICE_PRIVACY_ACK_V3"; ack: boolean }
+  | { type: "SET_VOICE_DICTATION_MODE"; mode: "classic" | "continuous" }
   | { type: "ADD_SECURITY_CONFIRMATION"; request: SecurityConfirmationRequest }
   | { type: "REMOVE_SECURITY_CONFIRMATION"; confirmationId: string }
   | { type: "ADD_LOG"; entry: LogEntry }
@@ -313,6 +321,8 @@ export const initialState: AgentState = {
   exportIncludeReasoning: false,
   voicePrivacyAckV1: false,
   voicePrivacyAckV2: false,
+  voicePrivacyAckV3: false,
+  voiceDictationMode: "classic",
   pendingSecurityConfirmations: [],
   logs: [],
   autoSkillNames: "",
@@ -650,6 +660,14 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
     case "SET_VOICE_PRIVACY_ACK_V2":
       chrome.storage.local.set({ voice_privacy_ack_v2: action.ack })
       return { ...state, voicePrivacyAckV2: action.ack }
+    case "SET_VOICE_PRIVACY_ACK_V3":
+      chrome.storage.local.set({ voice_privacy_ack_v3: action.ack })
+      return { ...state, voicePrivacyAckV3: action.ack }
+    case "SET_VOICE_DICTATION_MODE": {
+      const mode = action.mode === "continuous" ? "continuous" : "classic"
+      chrome.storage.local.set({ voiceDictationMode: mode })
+      return { ...state, voiceDictationMode: mode }
+    }
     case "ADD_SECURITY_CONFIRMATION":
       return {
         ...state,
