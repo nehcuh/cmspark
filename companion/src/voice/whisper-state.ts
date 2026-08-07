@@ -8,6 +8,7 @@ import {
   defaultWhisperSearchRoots,
   resolveWhisperArch,
   resolveWhisperBinary,
+  resolveWhisperCliOnPath,
   type ResolveWhisperBinaryResult,
 } from "./binary-resolve"
 import { whisperPinResolveOpts } from "./whisper-binary-pins"
@@ -100,13 +101,18 @@ export function resolveBinaryForState(opts?: {
       "[voice] CMSPARK_WHISPER_UNPINNED=1 — skipping cmspark-whisper SHA256 pin (dev only)",
     )
   }
-  return mapBinaryResult(
-    resolveWhisperBinary({
-      searchRoots,
-      expectedSha256: pinOpts.expectedSha256,
-      allowUnpinned: pinOpts.allowUnpinned,
-    }),
-  )
+  const packaged = resolveWhisperBinary({
+    searchRoots,
+    expectedSha256: pinOpts.expectedSha256,
+    allowUnpinned: pinOpts.allowUnpinned,
+  })
+  if (packaged.ok) return mapBinaryResult(packaged)
+  // Dev fallback: Homebrew/PATH whisper-cli (packaged copy may miss dylibs)
+  const pathCli = resolveWhisperCliOnPath()
+  if (pathCli) {
+    return { status: "ready", path: pathCli }
+  }
+  return mapBinaryResult(packaged)
 }
 
 export interface BuildVoiceModelStateOpts {

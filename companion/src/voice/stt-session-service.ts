@@ -7,6 +7,7 @@ import {
   defaultWhisperSearchRoots,
   resolveWhisperArch,
   resolveWhisperBinary,
+  resolveWhisperCliOnPath,
   type ResolveWhisperBinaryResult,
 } from "./binary-resolve"
 import { whisperPinResolveOpts } from "./whisper-binary-pins"
@@ -353,11 +354,23 @@ export class SttSessionService {
         "[voice] CMSPARK_WHISPER_UNPINNED=1 — skipping cmspark-whisper SHA256 pin (dev only)",
       )
     }
-    return resolveWhisperBinary({
+    const packaged = resolveWhisperBinary({
       searchRoots: roots,
       expectedSha256: pinOpts.expectedSha256,
       allowUnpinned: pinOpts.allowUnpinned,
     })
+    if (packaged.ok) return packaged
+    const pathCli = resolveWhisperCliOnPath()
+    if (pathCli) {
+      return {
+        ok: true,
+        path: pathCli,
+        arch: warch === "unsupported" ? "darwin-arm64" : warch,
+        sha256: "path-fallback",
+        pinned: false,
+      }
+    }
+    return packaged
   }
 
   /**

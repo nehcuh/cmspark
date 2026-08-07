@@ -157,3 +157,29 @@ export function spikeWhisperCacheDir(dataDir?: string): string {
   const base = dataDir || path.join(os.homedir(), ".cmspark-agent")
   return path.join(base, "spike", "whisper")
 }
+
+/**
+ * Dev/PATH fallback when packaged cmspark-whisper is missing or only a dyld-broken copy.
+ * Returns absolute path to whisper-cli if found on PATH / common Homebrew locations.
+ */
+export function resolveWhisperCliOnPath(
+  platform: NodeJS.Platform = process.platform,
+): string | null {
+  const pathEnv = process.env.PATH || ""
+  const dirs = pathEnv.split(path.delimiter).filter(Boolean)
+  if (platform === "darwin") {
+    dirs.push("/opt/homebrew/bin", "/usr/local/bin")
+  }
+  const names = platform === "win32" ? ["whisper-cli.exe", "whisper-cli"] : ["whisper-cli"]
+  for (const dir of dirs) {
+    for (const name of names) {
+      const p = path.join(dir, name)
+      try {
+        if (fs.existsSync(p) && fs.statSync(p).isFile()) return p
+      } catch {
+        /* continue */
+      }
+    }
+  }
+  return null
+}
