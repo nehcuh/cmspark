@@ -260,6 +260,48 @@ export const FORBIDDEN_PACK_KEYS = new Set([
   "unattended_desktop",
 ])
 
+/**
+ * ADR-023 L15 / Path B M0: Pack apply/install/save must never carry voice engine,
+ * model, privacy-ack, or auto-send keys. Case-insensitive prefix match.
+ * Unlike FORBIDDEN_PACK_KEYS (some allowed under user `trust`), these are **always**
+ * rejected/stripped — no trust-block exception.
+ */
+export const VOICE_FORBIDDEN_KEY_RE =
+  /^(voice|sttEngine|localModelId|voiceStt|voice_privacy|voiceAutoSend)/i
+
+/** True when a pack.yaml object key must never appear (voice risk). */
+export function isVoiceForbiddenPackKey(key: string): boolean {
+  return VOICE_FORBIDDEN_KEY_RE.test(key)
+}
+
+/**
+ * Recursively delete voice risk keys from a plain object / array tree (in place).
+ * Used on install sanitize + as belt before free-form trust merge.
+ * @returns true if any key was removed
+ */
+export function stripVoiceForbiddenKeys(value: unknown): boolean {
+  if (value === null || value === undefined) return false
+  if (Array.isArray(value)) {
+    let stripped = false
+    for (const item of value) {
+      if (stripVoiceForbiddenKeys(item)) stripped = true
+    }
+    return stripped
+  }
+  if (typeof value !== "object") return false
+  const obj = value as Record<string, unknown>
+  let stripped = false
+  for (const k of Object.keys(obj)) {
+    if (isVoiceForbiddenPackKey(k)) {
+      delete obj[k]
+      stripped = true
+      continue
+    }
+    if (stripVoiceForbiddenKeys(obj[k])) stripped = true
+  }
+  return stripped
+}
+
 export const PACK_ID_RE = /^[a-z0-9][a-z0-9-]{1,63}$/
 export const MAX_SYSTEM_PROMPT_APPEND = 16 * 1024
 export const MAX_PACK_FILE_BYTES = 1 * 1024 * 1024

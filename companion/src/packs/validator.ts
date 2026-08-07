@@ -8,6 +8,7 @@ import {
   MAX_PACK_TOTAL_BYTES,
   MAX_SYSTEM_PROMPT_APPEND,
   PACK_ID_RE,
+  isVoiceForbiddenPackKey,
   type PackManifest,
   type SelectionMode,
   type ToolsMode,
@@ -57,6 +58,7 @@ function resolveContained(packRoot: string, rel: string): string | { error: stri
 /**
  * Reject Trust keys outside user-pack `trust` block.
  * Product B (2026-08-06): origin=user packs may set auto_approve_* under top-level `trust` only.
+ * ADR-023 L15: voice/sttEngine/localModelId/… always forbidden — never allowed under trust.
  */
 function scanForbidden(
   obj: unknown,
@@ -67,6 +69,10 @@ function scanForbidden(
   for (const [k, v] of Object.entries(obj)) {
     if (k === "trust" && pathHint === "pack" && !opts?.allowUserTrustBlock) {
       return `trust block only allowed on origin=user packs`
+    }
+    // Voice risk keys: always reject (no pack.trust exception)
+    if (isVoiceForbiddenPackKey(k)) {
+      return `forbidden voice key "${k}" at ${pathHint}`
     }
     if (FORBIDDEN_PACK_KEYS.has(k)) {
       // Allowed only as direct children of pack.trust for user packs

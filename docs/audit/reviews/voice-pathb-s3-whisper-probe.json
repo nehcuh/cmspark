@@ -1,0 +1,14 @@
+{
+  "spike": "pathb-s3-whisper-cpu",
+  "time": "2026-08-07T08:05:03.469Z",
+  "platform": "darwin",
+  "arch": "arm64",
+  "status": "pass",
+  "message": "whisper ran exit 0 in 6168ms (synthetic sine; transcript may be empty/noise)",
+  "whisperBin": "/opt/homebrew/bin/whisper-cli",
+  "model": "/Users/huchen/.cmspark-agent/spike/whisper/models/ggml-tiny.bin",
+  "wav": "/Users/huchen/.cmspark-agent/spike/whisper/spike-1s-440hz.wav",
+  "wallMs": 6168,
+  "transcriptTail": " (type: 1, cnt: 0)\nwhisper_backend_init_gpu: using MTL0 backend\nggml_metal_init: allocating\nggml_metal_init: found device: Apple M5 Max\nggml_metal_init: picking default device: Apple M5 Max\nggml_metal_init: use fusion         = true\nggml_metal_init: use concurrency    = true\nggml_metal_init: use graph optimize = true\nwhisper_backend_init: using BLAS backend\nwhisper_init_state: kv self size  =    3.15 MB\nwhisper_init_state: kv cross size =    9.44 MB\nwhisper_init_state: kv pad  size  =    2.36 MB\nwhisper_init_state: compute buffer (conv)   =   14.17 MB\nwhisper_init_state: compute buffer (encode) =   19.93 MB\nwhisper_init_state: compute buffer (cross)  =   20.02 MB\nwhisper_init_state: compute buffer (decode) =   96.83 MB\nread_audio_data: reading audio data from '/Users/huchen/.cmspark-agent/spike/whisper/spike-1s-440hz.wav' ...\nread_audio_data: trying to decode with miniaudio\n\nsystem_info: n_threads = 4 / 18 | WHISPER : COREML = 0 | OPENVINO = 0 | MTL : EMBED_LIBRARY = 1 | CPU : NEON = 1 | ARM_FMA = 1 | FP16_VA = 1 | MATMUL_INT8 = 1 | DOTPROD = 1 | SME = 1 | ACCELERATE = 1 | OPENMP = 1 | REPACK = 1 | \n\nmain: processing '/Users/huchen/.cmspark-agent/spike/whisper/spike-1s-440hz.wav' (16000 samples, 1.0 sec), 4 threads, 1 processors, 5 beams + best of 5, lang = en, task = transcribe, timestamps = 0 ...\n\n\n [Bell]\nwhisper_print_timings:     load time =    29.56 ms\nwhisper_print_timings:     fallbacks =   1 p /   0 h\nwhisper_print_timings:      mel time =     0.56 ms\nwhisper_print_timings:   sample time =     8.12 ms /    57 runs (     0.14 ms per run)\nwhisper_print_timings:   encode time =    16.98 ms /     1 runs (    16.98 ms per run)\nwhisper_print_timings:   decode time =     1.39 ms /     1 runs (     1.39 ms per run)\nwhisper_print_timings:   batchd time =    16.38 ms /    54 runs (     0.30 ms per run)\nwhisper_print_timings:   prompt time =     0.00 ms /     1 runs (     0.00 ms per run)\nwhisper_print_timings:    total time =    78.44 ms\nggml_metal_free: deallocating",
+  "note": "tiny model for machine gate only; production catalog is small|medium|large-v3-turbo"
+}

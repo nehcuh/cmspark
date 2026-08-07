@@ -263,6 +263,22 @@ case "${PLATFORM}" in
       cp companion/dist/cmspark-tray "${STAGING}/"
     fi
     # No ORT/TinyClick stage — experimental locate is Qwen3-VL (qwen-vl-worker.py).
+    # Path B: optional cmspark-whisper binary (local STT). Soft-warn if missing.
+    case "${PLATFORM}" in
+      macos-arm64) _WHISPER_BIN="cmspark-whisper-darwin-arm64" ;;
+      macos-x64)   _WHISPER_BIN="cmspark-whisper-darwin-x64" ;;
+      *)           _WHISPER_BIN="" ;;
+    esac
+    if [ -n "${_WHISPER_BIN}" ]; then
+      if [ -f "companion/dist/bin/${_WHISPER_BIN}" ]; then
+        mkdir -p "${STAGING}/bin"
+        cp "companion/dist/bin/${_WHISPER_BIN}" "${STAGING}/bin/"
+        chmod +x "${STAGING}/bin/${_WHISPER_BIN}" 2>/dev/null || true
+        echo "  staged bin/${_WHISPER_BIN} (local STT)"
+      else
+        echo "WARNING: companion/dist/bin/${_WHISPER_BIN} missing — local STT disabled in package (run companion/scripts/build-cmspark-whisper.sh)" >&2
+      fi
+    fi
     ;;
   windows-*)
     rm -f "${STAGING}/node_modules/systray2/traybin/tray_darwin_release"
@@ -294,6 +310,18 @@ case "${PLATFORM}" in
     fi
     echo "  host-scripts-win/: ${win_ps1_count} ps1 scripts"
     # No ORT/tinyclick hard-gate — Qwen3-VL worker staged above for all platforms.
+    # Path B: optional cmspark-whisper (win-x64). Soft-warn if missing.
+    if [ -f "companion/dist/bin/cmspark-whisper-win-x64.exe" ]; then
+      mkdir -p "${STAGING}/bin"
+      cp "companion/dist/bin/cmspark-whisper-win-x64.exe" "${STAGING}/bin/"
+      echo "  staged bin/cmspark-whisper-win-x64.exe (local STT)"
+    elif [ -f "companion/dist/bin/cmspark-whisper-win-x64" ]; then
+      mkdir -p "${STAGING}/bin"
+      cp "companion/dist/bin/cmspark-whisper-win-x64" "${STAGING}/bin/cmspark-whisper-win-x64.exe"
+      echo "  staged bin/cmspark-whisper-win-x64.exe (local STT)"
+    else
+      echo "WARNING: companion/dist/bin/cmspark-whisper-win-x64(.exe) missing — local STT disabled in package" >&2
+    fi
     ;;
   linux-*)
     rm -f "${STAGING}/node_modules/systray2/traybin/tray_darwin_release"
@@ -302,6 +330,15 @@ case "${PLATFORM}" in
     rm -rf "${STAGING}/node_modules/node-notifier/vendor/snoreToast" 2>/dev/null || true
     rm -rf "${STAGING}/node_modules/node-notifier/vendor/notifu" 2>/dev/null || true
     # No ORT/TinyClick stage — experimental locate is Qwen3-VL.
+    # Path B: optional cmspark-whisper (linux-x64). Soft-warn if missing.
+    if [ -f "companion/dist/bin/cmspark-whisper-linux-x64" ]; then
+      mkdir -p "${STAGING}/bin"
+      cp "companion/dist/bin/cmspark-whisper-linux-x64" "${STAGING}/bin/"
+      chmod +x "${STAGING}/bin/cmspark-whisper-linux-x64" 2>/dev/null || true
+      echo "  staged bin/cmspark-whisper-linux-x64 (local STT)"
+    else
+      echo "WARNING: companion/dist/bin/cmspark-whisper-linux-x64 missing — local STT disabled in package" >&2
+    fi
     ;;
 esac
 

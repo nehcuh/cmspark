@@ -44,7 +44,7 @@
 | TTS | 另一产品 |
 | auto-send | 对抗：STT 误识 × 巡航 = 免点发送 |
 | 唤醒词 / 始终听 | F-S8 |
-| Companion / Whisper STT（Path B） | F-S7 v1 禁 |
+| Companion / Whisper STT（Path B） | F-S7 原 v1 禁；**已由 [ADR-023](../../adr/023-voice-local-stt-path-b.md) + Path B SoT 开做**（独立对抗/Pi 后） |
 | Worker / Cockpit / tray 🎤 | F-S9 |
 | 语音绕过 L2 | 禁止 |
 | `audioCapture` manifest | F-S5 / F-C6 |
@@ -250,7 +250,7 @@ Invariant: 单实例 · `sessionId` · `committed` · abort 后不 merge 发送
 | **M1** | SM + mic + 草稿 + ack + 错误 + 设置开关 + 单测 | CI 绿；手动表 |
 | **M1.1** | 可选 `input_modality: voice` 元数据 | 便宜则做 |
 | **M2** | auto-send / lang UI / 按住 — **须重开对抗**；若做 auto-send 必须继承 **F-S2：巡航/三旗/值守/unattended 时强制关**（不可仅「默认 false」） | |
-| **M3** | Path B — **新 ADR** | |
+| **M3 / Path B** | 本机 STT — 见 [ADR-023](../../adr/023-voice-local-stt-path-b.md) · [Path B SoT](./2026-08-07-voice-local-stt-design.md) | Spike → M0 → M1 |
 
 ---
 

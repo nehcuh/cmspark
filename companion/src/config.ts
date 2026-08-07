@@ -147,6 +147,21 @@ export interface ComputerConfig {
   pythonPreferUv?: boolean
 }
 
+/**
+ * Path B local STT (ADR-023) — Companion owns engine + active model + whisper disk budget.
+ * Separate from computer.model* (Qwen); default engine is browser (no auto-download).
+ */
+export interface VoiceConfig {
+  /** Default browser. Companion SoT (ADR-023 L1). */
+  sttEngine: "browser" | "local"
+  /** Active model when engine=local; may be set only if ready (handlers enforce). */
+  localModelId: "small" | "medium" | "large-v3-turbo"
+  /** Whisper family disk budget MB (default 4096; scoped to whisper root only). */
+  modelDiskBudgetMB: number
+  /** Optional override root; default DATA_DIR/models/whisper. */
+  modelRootDir?: string
+}
+
 /** Wire protocol for chat completions. Default "openai". */
 export type LlmProtocol = "openai" | "anthropic"
 
@@ -232,6 +247,11 @@ export interface CompanionConfig {
    * treated as explicit owner opt-in (ADR-010), same as god-mode.
    */
   computer?: ComputerConfig
+  /**
+   * Path B local STT (ADR-023). Omitted on disk → deepMerge fills defaults
+   * (sttEngine=browser, localModelId=medium, modelDiskBudgetMB=4096).
+   */
+  voice?: VoiceConfig
   obsidian?: ObsidianExportConfig
   /**
    * Outbound MCP (ADR-022) packaging. When require_grant is true, loopback
@@ -389,6 +409,12 @@ const defaultConfig: CompanionConfig = {
     modelEnabled: false,
     modelLicenseDeclined: false,
     modelVariant: "hybrid",
+  },
+  // Path B M0 — voice defaults (ADR-023 L1/L13; no auto-download)
+  voice: {
+    sttEngine: "browser",
+    localModelId: "medium",
+    modelDiskBudgetMB: 4096,
   },
   obsidian: {
     name_template: "{{date}} {{first_user_line}}",
@@ -665,6 +691,52 @@ export function getConfig(): CompanionConfig {
       `[cmspark-agent] WARNING: computer.modelEnabled=true —— Qwen3-VL 实验定位层处于开启状态（设置页经门开启 或 手改 config.json opt-in；ADR-010）。本层未校准，命中仍必经人工确认；关闭请置 false 或经设置页。`,
     )
   }
+  // Path B voice (ADR-023): ensure block + coerce illegal hand-edits to safe defaults.
+  // deepMerge fills defaults for omitted keys; shape/value validation is load-time only.
+  if (!cachedConfig.voice || typeof cachedConfig.voice !== "object") {
+    cachedConfig.voice = {
+      sttEngine: "browser",
+      localModelId: "medium",
+      modelDiskBudgetMB: 4096,
+    }
+  } else {
+    const voice = cachedConfig.voice
+    if (voice.sttEngine !== "browser" && voice.sttEngine !== "local") {
+      console.warn(
+        `[cmspark-agent] voice.sttEngine 非法（须为 "browser"|"local"）——回退 browser (config tampering?)`,
+      )
+      voice.sttEngine = "browser"
+    }
+    if (
+      voice.localModelId !== "small" &&
+      voice.localModelId !== "medium" &&
+      voice.localModelId !== "large-v3-turbo"
+    ) {
+      console.warn(
+        `[cmspark-agent] voice.localModelId 非法（须为 "small"|"medium"|"large-v3-turbo"）——回退 medium (config tampering?)`,
+      )
+      voice.localModelId = "medium"
+    }
+    if (
+      typeof voice.modelDiskBudgetMB !== "number" ||
+      !Number.isFinite(voice.modelDiskBudgetMB) ||
+      voice.modelDiskBudgetMB <= 0
+    ) {
+      console.warn(
+        `[cmspark-agent] voice.modelDiskBudgetMB 非法（须为正数 MB）——回退默认 4096 (config tampering?)`,
+      )
+      voice.modelDiskBudgetMB = 4096
+    }
+    if (voice.modelRootDir !== undefined) {
+      const root = voice.modelRootDir
+      if (typeof root !== "string" || root.trim() === "") {
+        console.warn(
+          `[cmspark-agent] voice.modelRootDir 非法（须为非空路径字符串）——按未配置处理 (config tampering?)`,
+        )
+        delete voice.modelRootDir
+      }
+    }
+  }
   return cachedConfig
 }
 
@@ -796,6 +868,36 @@ export function setComputerModelFields(
       ...(current.computer ?? { coordinateEnabled: false }),
       ...patch,
       coordinateEnabled: current.computer?.coordinateEnabled === true,
+    },
+  }
+  const configPath = path.join(DATA_DIR, "config.json")
+  const toSave = JSON.parse(JSON.stringify(updated))
+  const envKey = getEnvApiKey()
+  if (envKey && toSave.llm?.api_key === envKey) {
+    toSave.llm.api_key = ""
+  }
+  atomicWriteJSON(configPath, toSave)
+  cachedConfig = updated
+  cachedConfigMtimeMs = configFileMtimeMs()
+  configEvents.emit(CONFIG_CHANGE_EVENT, updated)
+  return updated
+}
+
+/**
+ * Path B M0：voice 字段原子写入（whisper-handlers 唯一持久化通道，
+ * setComputerModelFields 先例）。只 merge `voice.*`；调用方负责语义门禁
+ * （set_engine local 须 ready model 等）。
+ */
+export function setVoiceFields(partial: Partial<VoiceConfig>): CompanionConfig {
+  const current = getConfig()
+  const updated: CompanionConfig = {
+    ...current,
+    voice: {
+      sttEngine: "browser",
+      localModelId: "medium",
+      modelDiskBudgetMB: 4096,
+      ...(current.voice ?? {}),
+      ...partial,
     },
   }
   const configPath = path.join(DATA_DIR, "config.json")

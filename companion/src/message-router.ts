@@ -45,6 +45,8 @@ import { logger } from "./logger"
 import { handleAppsMessage } from "./apps/handlers"
 import { handleComputerMessage } from "./computer/handlers"
 import { handleComputerModelMessage } from "./computer/model-handlers"
+import { handleVoiceModelMessage } from "./voice/whisper-handlers"
+import { handleVoiceSttMessage } from "./voice/stt-handlers"
 import {
   buildUserEnvPublic,
   deleteUserEnvKeys,
@@ -179,6 +181,11 @@ interface SessionCallbacks {
    * 每面板计数。server.ts 为每个连接生成一个 id。
    */
   panelId?: string
+  /**
+   * Path B M1: WS Origin at connection time (chrome-extension:// vs tray).
+   * voice.stt.* handlers refuse non-extension peers (ADR-023 §7.2).
+   */
+  origin?: string
 }
 
 export async function handleMessage(
@@ -1883,6 +1890,26 @@ export async function handleMessage(
       return handleComputerModelMessage(msg, {
         requestConfirmation: session?.requestConfirmation,
         broadcast: session?.broadcast,
+      })
+    // Path B M0 — voice.model.* (settings dual fence; ADR-023 L7)
+    case "voice.model.get_state":
+    case "voice.model.download":
+    case "voice.model.cancel":
+    case "voice.model.delete":
+    case "voice.model.set_active":
+    case "voice.model.set_engine":
+      return handleVoiceModelMessage(msg, {
+        broadcast: session?.broadcast,
+      })
+    // Path B M1 — voice.stt.* (origin chrome-extension:// fence; NOT source:settings)
+    case "voice.stt.start":
+    case "voice.stt.chunk":
+    case "voice.stt.end":
+    case "voice.stt.abort":
+      return handleVoiceSttMessage(msg, {
+        origin: session?.origin,
+        peerId: session?.panelId,
+        send: session?.sendToExtension,
       })
     case "skill.activate": {
       skillEngine.activate(rest.thread_id, rest.skill_name)

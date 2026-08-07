@@ -5,6 +5,7 @@ export type VoicePhase =
   | "idle"
   | "starting"
   | "listening"
+  | "processing"
   | "stopping"
   | "error"
 
@@ -34,6 +35,8 @@ export type VoiceEvent =
   | { type: "FEATURE_UNSUPPORTED" }
   | { type: "USER_TOGGLE_START"; sessionId: string; baseText: string }
   | { type: "USER_TOGGLE_STOP" }
+  /** Local STT: capture ended → upload/infer (listening → processing). Browser path skips this. */
+  | { type: "CAPTURE_STOPPED" }
   | { type: "CHAT_ABORT" }
   | { type: "THREAD_SWITCH" }
   | { type: "TIMEOUT" }

@@ -3,7 +3,7 @@
  * Abort reasons chat_abort / thread_switch / unmount discard finals (no draft merge).
  */
 
-import { mapSpeechError } from "./error-map"
+import { mapLocalSttError, mapSpeechError } from "./error-map"
 import { isEmptyFinals } from "./text-merge"
 import {
   initialVoiceSession,
@@ -11,8 +11,36 @@ import {
   type VoiceSessionState,
 } from "./types"
 
+/** Path B local STT codes (SoT §6.5) — route via mapLocalSttError. */
+const LOCAL_STT_ERROR_CODES = new Set([
+  "empty_result",
+  "model_missing",
+  "binary_missing",
+  "hash_fail",
+  "companion_disconnected",
+  "session_busy",
+  "payload_too_large",
+  "infer_timeout",
+  "resource_conflict",
+  "oom",
+  "origin_denied",
+  "total_seq_mismatch",
+  "invalid_session_id",
+])
+
 /** Side Panel / MV3 always has navigator; keep pure-friendly for unit tests. */
 function mapVoiceError(code: string) {
+  const c = (code || "").toLowerCase()
+  if (c === "aborted") {
+    return { severity: "silent" as const, message: "" }
+  }
+  if (LOCAL_STT_ERROR_CODES.has(c)) {
+    const local = mapLocalSttError(code)
+    return {
+      severity: local.severity === "silent" ? ("silent" as const) : ("error" as const),
+      message: local.message,
+    }
+  }
   return mapSpeechError(code, {
     userAgent: typeof navigator !== "undefined" ? navigator.userAgent : undefined,
   })
@@ -71,11 +99,33 @@ export function reduceVoiceSession(
       if (state.phase === "stopping") {
         return resetToIdle(state, { banner: state.banner })
       }
+      // Local STT: cancel upload/infer mid-processing — abort-ish, no draft merge
+      if (state.phase === "processing") {
+        return {
+          ...state,
+          phase: "stopping",
+          abortReason: "user",
+          interim: "",
+          // Suppress merge on ENGINE_END (same effect as hard abort for draft)
+          committed: true,
+        }
+      }
+      // Browser Web Speech: listening/starting → stopping (not processing)
       if (state.phase !== "listening" && state.phase !== "starting") return state
       return {
         ...state,
         phase: "stopping",
         abortReason: state.abortReason ?? "user",
+      }
+    }
+
+    case "CAPTURE_STOPPED": {
+      // Local adapter only: capture ended → processing until result/error
+      if (state.phase !== "listening") return state
+      return {
+        ...state,
+        phase: "processing",
+        interim: "",
       }
     }
 
@@ -113,6 +163,8 @@ export function reduceVoiceSession(
     }
 
     case "TIMEOUT": {
+      // Pure reducer: listening/starting → stopping (browser). Local adapter may
+      // stop capture on timeout then emit CAPTURE_STOPPED if still listening.
       if (state.phase !== "listening" && state.phase !== "starting") return state
       return {
         ...state,
@@ -130,16 +182,20 @@ export function reduceVoiceSession(
       if (
         state.phase !== "listening" &&
         state.phase !== "stopping" &&
-        state.phase !== "starting"
+        state.phase !== "starting" &&
+        state.phase !== "processing"
       ) {
         return state
       }
-      // Drop late results after hard abort
+      // Drop late results after hard abort (incl. user cancel mid-processing)
       if (
         state.abortReason === "chat_abort" ||
         state.abortReason === "thread_switch" ||
         state.abortReason === "unmount"
       ) {
+        return state
+      }
+      if (state.committed) {
         return state
       }
       let finals = state.finals
@@ -176,6 +232,7 @@ export function reduceVoiceSession(
           errorCode: "no-speech",
         }
       }
+      // Error banner; preserve baseText (composer prefix). Clear session finals only.
       return {
         ...state,
         phase: "error",
@@ -186,6 +243,7 @@ export function reduceVoiceSession(
         committed: false,
         banner: mapped.message,
         errorCode: event.code,
+        // baseText intentionally preserved
       }
     }
 

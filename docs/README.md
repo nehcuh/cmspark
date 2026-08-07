@@ -70,6 +70,7 @@
 | **020** | **Capability model · three axes** | [020](adr/020-capability-model-three-axes.md) |
 | 021 | 无人值守 · 桌面会话 grant | [021](adr/021-unattended-desktop-session.md) |
 | **022** | **Outbound MCP Server**（编程 Agent 的 L1 浏览器面） | [022](adr/022-outbound-mcp-server.md) |
+| **023** | **本机语音识别 Path B**（Local STT / whisper.cpp） | [023](adr/023-voice-local-stt-path-b.md) |
 
 过程件：UI 三模式 / Cockpit 以 `docs/superpowers/specs/` 与 [DESIGN.md](DESIGN.md) 为准（**勿**再记「拟议 ADR-019 UI」——019 已是 user-env）。
 
