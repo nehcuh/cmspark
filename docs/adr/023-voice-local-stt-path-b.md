@@ -1,6 +1,6 @@
 # ADR-023: 本机语音识别 Path B（Local STT / whisper.cpp）
 
-**日期**: 2026-08-07 | **状态**: **Accepted**（方向与门禁锁定；实现按 Spike → M0 → M1 门控，**未**产品 ship / **非** default-on）  
+**日期**: 2026-08-07 | **状态**: **Accepted**（方向锁定；**M0 已实现** on `feat/voice-local-stt-m0` — 下载/设置 only；STT 听写仍 M1；**非** default-on local）  
 
 **相关**:  
 - [ADR-001](001-extension-companion双层拓扑.md) 双层拓扑  
