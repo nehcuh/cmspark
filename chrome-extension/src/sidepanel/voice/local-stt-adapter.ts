@@ -44,6 +44,7 @@ export type LocalSttStartOpts = {
 /** uint8 → base64 without Node Buffer (Side Panel / tests). */
 export function uint8ToBase64(data: Uint8Array): string {
   // Chunk to avoid call-stack / argument limits on large audio.
+  // Pure browser-safe path only (no Node Buffer — extension tsc has no @types/node).
   const chunkSize = 0x8000
   let binary = ""
   for (let i = 0; i < data.length; i += chunkSize) {
@@ -53,8 +54,20 @@ export function uint8ToBase64(data: Uint8Array): string {
   if (typeof btoa === "function") {
     return btoa(binary)
   }
-  // Node test fallback
-  return Buffer.from(data).toString("base64")
+  // Node test / non-DOM: manual base64
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+  let out = ""
+  for (let i = 0; i < data.length; i += 3) {
+    const a = data[i]
+    const b = i + 1 < data.length ? data[i + 1] : 0
+    const c = i + 2 < data.length ? data[i + 2] : 0
+    const triple = (a << 16) | (b << 8) | c
+    out += alphabet[(triple >> 18) & 63]
+    out += alphabet[(triple >> 12) & 63]
+    out += i + 1 < data.length ? alphabet[(triple >> 6) & 63] : "="
+    out += i + 2 < data.length ? alphabet[triple & 63] : "="
+  }
+  return out
 }
 
 export function createLocalSttAdapter(
