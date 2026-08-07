@@ -1136,7 +1136,14 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
       case "computer.model.set_python_mode":
       case "computer.model.pick_python_path":
       case "computer.model.ensure_python_env":
-      case "computer.model.install_deps": {
+      case "computer.model.install_deps":
+      // Path B M0 voice.model.* (settings dual fence; companion validate + handler belt).
+      case "voice.model.get_state":
+      case "voice.model.download":
+      case "voice.model.cancel":
+      case "voice.model.delete":
+      case "voice.model.set_active":
+      case "voice.model.set_engine": {
         // Forward to companion. Always call sendResponse so Side Panel callbacks
         // never see "The message port closed before a response was received"
         // (that lastError fires when no listener answers — default used to return

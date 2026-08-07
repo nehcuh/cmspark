@@ -167,6 +167,9 @@ export function SettingsSlideout() {
     setModelDeleteArmed(false)
     dispatch({ type: "SET_COMPUTER_MODEL_ERROR", error: null })
     chrome.runtime.sendMessage({ type: "computer.model.get_state" })
+    // Path B M0: mirror voice.model state on settings open (UI Task 7).
+    dispatch({ type: "SET_VOICE_MODEL_ERROR", error: null })
+    chrome.runtime.sendMessage({ type: "voice.model.get_state" })
     chrome.runtime.sendMessage({ type: "ws.getPairingStatus" }, (resp: { paired?: boolean } | undefined) => {
       const paired = !!resp?.paired
       setWsPaired(paired)

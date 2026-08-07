@@ -1222,6 +1222,71 @@ export function useWebSocket() {
           })
           break
 
+        // Path B M0: voice.model.state/progress → store mirror (no optimistic UI).
+        // Persist lastKnown* for disconnect fail-closed (SoT §7 / ADR-023 L13).
+        case "voice.model.state": {
+          const VOICE_STATUSES = new Set(["ready", "absent", "incomplete", "downloading"])
+          const rawModels = msg.models && typeof msg.models === "object" ? msg.models : {}
+          const models: Record<
+            string,
+            { status: "ready" | "absent" | "incomplete" | "downloading"; bytesOnDisk?: number; error?: string }
+          > = {}
+          for (const [id, entry] of Object.entries(rawModels as Record<string, unknown>)) {
+            if (!entry || typeof entry !== "object") continue
+            const e = entry as { status?: unknown; bytesOnDisk?: unknown; error?: unknown }
+            const status =
+              typeof e.status === "string" && VOICE_STATUSES.has(e.status)
+                ? (e.status as "ready" | "absent" | "incomplete" | "downloading")
+                : "absent"
+            models[id] = {
+              status,
+              ...(typeof e.bytesOnDisk === "number" ? { bytesOnDisk: e.bytesOnDisk } : {}),
+              ...(typeof e.error === "string" ? { error: e.error } : {}),
+            }
+          }
+          const binaryRaw = msg.binary && typeof msg.binary === "object" ? msg.binary : {}
+          const binaryObj = binaryRaw as { status?: unknown; path?: unknown; message?: unknown }
+          const sttEngine = msg.sttEngine === "local" ? "local" : "browser"
+          const localModelId = typeof msg.localModelId === "string" ? msg.localModelId : "medium"
+          const modelState = {
+            sttEngine: sttEngine as "browser" | "local",
+            localModelId,
+            recommendedModelId:
+              typeof msg.recommendedModelId === "string" ? msg.recommendedModelId : "medium",
+            models,
+            binary: {
+              status: typeof binaryObj.status === "string" ? binaryObj.status : "not_found",
+              ...(typeof binaryObj.path === "string" ? { path: binaryObj.path } : {}),
+              ...(typeof binaryObj.message === "string" ? { message: binaryObj.message } : {}),
+            },
+            diskBudgetMB: typeof msg.diskBudgetMB === "number" ? msg.diskBudgetMB : 4096,
+            diskUsedMB: typeof msg.diskUsedMB === "number" ? msg.diskUsedMB : 0,
+            ...(typeof msg.whisperRoot === "string" ? { whisperRoot: msg.whisperRoot } : {}),
+          }
+          dispatch({ type: "SET_VOICE_MODEL_STATE", modelState })
+          try {
+            chrome.storage.local.set({
+              lastKnownVoiceEngine: sttEngine,
+              lastKnownVoiceModelId: localModelId,
+            })
+          } catch {
+            /* best-effort mirror */
+          }
+          break
+        }
+
+        case "voice.model.progress":
+          dispatch({
+            type: "SET_VOICE_MODEL_PROGRESS",
+            progress: {
+              modelId: typeof msg.modelId === "string" ? msg.modelId : "",
+              file: typeof msg.file === "string" ? msg.file : "",
+              receivedBytes: typeof msg.receivedBytes === "number" ? msg.receivedBytes : 0,
+              totalBytes: typeof msg.totalBytes === "number" ? msg.totalBytes : 0,
+            },
+          })
+          break
+
         case "mcp.server.status_changed": {
           const server = msg.server
           if (server && server.name) {
@@ -1424,6 +1489,14 @@ export function useWebSocket() {
           // 错误位;判定先于 apps(family 无歧义,code 回退集含共享 BIOMETRIC_DENIED)。
           if (isComputerModelErrorMessage(msg)) {
             dispatch({ type: "SET_COMPUTER_MODEL_ERROR", error: msg.error || "Unknown computer.model error" })
+            break
+          }
+          // Path B M0: voice.model.* 错误(family:"voice.model")→ 设置页语音区错误位。
+          if (msg && typeof msg === "object" && msg.family === "voice.model") {
+            dispatch({
+              type: "SET_VOICE_MODEL_ERROR",
+              error: typeof msg.error === "string" && msg.error ? msg.error : "Unknown voice.model error",
+            })
             break
           }
           // App tab (WP4, routing hardened in WP6a): apps.* failures

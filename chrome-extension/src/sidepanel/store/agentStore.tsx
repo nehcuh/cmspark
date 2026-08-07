@@ -1,7 +1,7 @@
 // Global state store for the agent
 
 import { createContext, useContext, useReducer, type ReactNode, type Dispatch } from "react"
-import type { ConnectionState, Thread, Message, SkillMeta, OperationRecord, LLMConfig, SendShortcut, SecurityConfirmationRequest, LogEntry, KnowledgeMeta, SkillSelectionMode, SecurityAuditEntry, McpServerMeta, McpSelectionMode, AppEntry, AppPresetStatus, AppEnumerateCandidate, AppAddWarning, ComputerTaskEventView, ComputerTaskState, ComputerModelState, ComputerModelProgress, ComputerModelLicenseDoor, CapabilityLevel, FleetSnapshot, UserEnvPublic } from "../types"
+import type { ConnectionState, Thread, Message, SkillMeta, OperationRecord, LLMConfig, SendShortcut, SecurityConfirmationRequest, LogEntry, KnowledgeMeta, SkillSelectionMode, SecurityAuditEntry, McpServerMeta, McpSelectionMode, AppEntry, AppPresetStatus, AppEnumerateCandidate, AppAddWarning, ComputerTaskEventView, ComputerTaskState, ComputerModelState, ComputerModelProgress, ComputerModelLicenseDoor, VoiceModelState, VoiceModelProgress, CapabilityLevel, FleetSnapshot, UserEnvPublic } from "../types"
 import { reduceComputerTaskEvent } from "../utils/computer-utils"
 
 export interface AgentState {
@@ -90,6 +90,13 @@ export interface AgentState {
   computerModelLicenseDoor: ComputerModelLicenseDoor | null
   /** 最后一条 computer.model.* 错误(family:"computer.model" 路由;LICENSE_DECLINED 等)。 */
   computerModelError: string | null
+  // Path B M0 voice.model 切片——全部只读镜像,无乐观更新(设置页语音区消费;UI 见 Task 7):
+  /** voice.model.state 最新镜像(null = 尚未查询;设置页打开时拉一次)。 */
+  voiceModel: VoiceModelState | null
+  /** 最后一条 voice.model.progress(无 model 仍 downloading 时由 reducer 清除)。 */
+  voiceModelProgress: VoiceModelProgress | null
+  /** 最后一条 voice.model.* 错误(family:"voice.model" 路由)。 */
+  voiceModelError: string | null
   /** UI Mode P0: last browser CDP tool activity timestamp (ms) for L1 quiescence. */
   lastBrowserToolAt: number | null
   /** UI Mode P0: user pin; blocks auto-down only (never blocks up). */
@@ -213,6 +220,9 @@ export type AgentAction =
   | { type: "SET_COMPUTER_MODEL_PROGRESS"; progress: ComputerModelProgress }
   | { type: "SET_COMPUTER_MODEL_LICENSE_DOOR"; door: ComputerModelLicenseDoor | null }
   | { type: "SET_COMPUTER_MODEL_ERROR"; error: string | null }
+  | { type: "SET_VOICE_MODEL_STATE"; modelState: VoiceModelState }
+  | { type: "SET_VOICE_MODEL_PROGRESS"; progress: VoiceModelProgress }
+  | { type: "SET_VOICE_MODEL_ERROR"; error: string | null }
   | { type: "NOTE_BROWSER_TOOL"; at?: number }
   | { type: "SET_MODE_PIN"; pin: CapabilityLevel | null }
   | { type: "SET_FLEET"; fleet: FleetSnapshot | null }
@@ -328,6 +338,9 @@ export const initialState: AgentState = {
   computerModelProgress: null,
   computerModelLicenseDoor: null,
   computerModelError: null,
+  voiceModel: null,
+  voiceModelProgress: null,
+  voiceModelError: null,
   lastBrowserToolAt: null,
   modePin: null,
   fleet: null,
@@ -750,6 +763,21 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       return { ...state, computerModelLicenseDoor: action.door }
     case "SET_COMPUTER_MODEL_ERROR":
       return { ...state, computerModelError: action.error }
+    case "SET_VOICE_MODEL_STATE": {
+      // Any model still downloading → keep progress; otherwise clear stale %.
+      const anyDownloading = Object.values(action.modelState.models).some(
+        (m) => m.status === "downloading",
+      )
+      return {
+        ...state,
+        voiceModel: action.modelState,
+        voiceModelProgress: anyDownloading ? state.voiceModelProgress : null,
+      }
+    }
+    case "SET_VOICE_MODEL_PROGRESS":
+      return { ...state, voiceModelProgress: action.progress }
+    case "SET_VOICE_MODEL_ERROR":
+      return { ...state, voiceModelError: action.error }
     case "NOTE_BROWSER_TOOL":
       return { ...state, lastBrowserToolAt: action.at ?? Date.now() }
     case "SET_MODE_PIN":

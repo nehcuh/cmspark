@@ -709,3 +709,28 @@ export interface ComputerModelLicenseDoor {
   licenseText: string
   notice: string
 }
+
+// --- Path B M0 voice.model.* (镜像 companion whisper-state;扩展纯只读,无乐观更新) ---
+
+/** Per-model probe status from voice.model.state.models[id].status */
+export type VoiceModelStatus = "ready" | "absent" | "incomplete" | "downloading"
+
+/** voice.model.state 下行负载(扩展纯只读镜像,无乐观更新)。 */
+export interface VoiceModelState {
+  sttEngine: "browser" | "local"
+  localModelId: string
+  recommendedModelId: string
+  models: Record<string, { status: VoiceModelStatus; bytesOnDisk?: number; error?: string }>
+  binary: { status: string; path?: string; message?: string }
+  diskBudgetMB: number
+  diskUsedMB: number
+  whisperRoot?: string
+}
+
+/** voice.model.progress 下行负载(单文件下载进度;非下载中 state 到达后由 reducer 清理)。 */
+export interface VoiceModelProgress {
+  modelId: string
+  file: string
+  receivedBytes: number
+  totalBytes: number
+}
