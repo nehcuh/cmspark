@@ -29,7 +29,7 @@
     "@types/js-yaml": "^4.0.9",
     "adm-zip": "^0.6.0",
     "gray-matter": "^4.0.3",
-    "js-yaml": "^4.2.0",
+    "js-yaml": "4.3.1",
     "node-notifier": "^10.0.1",
     "officeparser": "^7.2.3",
     "onnxruntime-node": "^1.27.0",
@@ -49,6 +49,12 @@
     "typescript": "^5.4.5"
   },
   "overrides": {
-    "adm-zip": "^0.6.0"
+    "adm-zip": "^0.6.0",
+    "js-yaml": "4.3.1",
+    "officeparser": {
+      "pdfjs-dist": "6.2.108"
+    }
   }
 }
+
+
