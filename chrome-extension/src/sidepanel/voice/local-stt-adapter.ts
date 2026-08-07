@@ -15,7 +15,11 @@ import {
   type CaptureHandle,
   type StartCaptureOpts,
 } from "./audio-capture"
-import type { SpeechAdapter, SpeechAdapterHandlers } from "./web-speech-adapter"
+import type {
+  SpeechAdapter,
+  SpeechAdapterHandlers,
+  SpeechAdapterStartArg,
+} from "./web-speech-adapter"
 import { VOICE_DEFAULT_LANG } from "./detect"
 
 export type LocalSttSend = (msg: Record<string, unknown>) => void
@@ -37,7 +41,8 @@ export type LocalSttAdapterDeps = {
 
 export type LocalSttStartOpts = {
   lang?: string
-  sessionId: string
+  /** Required for local STT; missing → session_busy at runtime. */
+  sessionId?: string
   modelId?: string
 }
 
@@ -185,7 +190,7 @@ export function createLocalSttAdapter(
   }
 
   return {
-    start(langOrOpts?: string | LocalSttStartOpts) {
+    start(langOrOpts?: SpeechAdapterStartArg) {
       if (dead) return
       if (phase !== "idle") return
 

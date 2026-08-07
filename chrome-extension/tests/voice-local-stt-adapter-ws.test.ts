@@ -39,7 +39,7 @@ function fakeCaptureFactory(wav: Uint8Array, opts?: { delayMs?: number }) {
 test("happy path: start → stop → voice.stt.start/chunk/end → result", async () => {
   const wav = silentWav()
   const sent: any[] = []
-  let handler: ((m: any) => void) | null = null
+  const inbox: { emit?: (m: any) => void } = {}
   const events: string[] = []
   const finals: string[] = []
 
@@ -57,9 +57,9 @@ test("happy path: start → stop → voice.stt.start/chunk/end → result", asyn
     {
       send: (m) => sent.push(m),
       onMessage: (h) => {
-        handler = h
+        inbox.emit = h
         return () => {
-          handler = null
+          inbox.emit = undefined
         }
       },
       modelId: "medium",
@@ -92,7 +92,7 @@ test("happy path: start → stop → voice.stt.start/chunk/end → result", asyn
   assert.equal(typeof chunks[0].data, "string")
   assert.ok(chunks[0].data.length > 0)
 
-  handler?.({
+  inbox.emit?.({
     type: "voice.stt.result",
     v: 1,
     sessionId: "s-happy",
@@ -149,7 +149,7 @@ test("abort during recording: voice.stt.abort + silent error path", async () => 
 test("error from companion while waiting: maps code", async () => {
   const wav = silentWav()
   const sent: any[] = []
-  let handler: ((m: any) => void) | null = null
+  const inbox: { emit?: (m: any) => void } = {}
   const events: string[] = []
 
   const adapter = createLocalSttAdapter(
@@ -163,9 +163,9 @@ test("error from companion while waiting: maps code", async () => {
     {
       send: (m) => sent.push(m),
       onMessage: (h) => {
-        handler = h
+        inbox.emit = h
         return () => {
-          handler = null
+          inbox.emit = undefined
         }
       },
       modelId: "medium",
@@ -179,7 +179,7 @@ test("error from companion while waiting: maps code", async () => {
   await new Promise((r) => setTimeout(r, 20))
   assert.ok(events.includes("capture_stopped"))
 
-  handler?.({
+  inbox.emit?.({
     type: "voice.stt.error",
     v: 1,
     sessionId: "s-err",

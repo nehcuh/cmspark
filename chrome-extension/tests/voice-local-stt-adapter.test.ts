@@ -17,8 +17,10 @@ import { LOCAL_STT_MAX_CHUNK_RAW_BYTES } from "../src/sidepanel/voice/local-stt-
 test("uint8ToBase64 round-trips ASCII", () => {
   const u8 = new Uint8Array([72, 105]) // Hi
   const b64 = uint8ToBase64(u8)
-  assert.equal(b64, Buffer.from("Hi").toString("base64"))
-  assert.equal(Buffer.from(b64, "base64").toString("utf8"), "Hi")
+  assert.equal(b64, "SGk=")
+  // decode base64 without Node Buffer (tsconfig.tests has no @types/node)
+  const bin = atob(b64)
+  assert.equal(bin, "Hi")
 })
 
 test("splitIntoChunks used for voice.stt.chunk size", () => {
@@ -69,7 +71,7 @@ test("local adapter: abort after start sends voice.stt.abort and fires onError/o
 })
 
 test("local adapter: voice.stt.error maps to onError + onEnd", async () => {
-  let handler: ((m: any) => void) | null = null
+  const inbox: { emit?: (m: any) => void } = {}
   const events: string[] = []
   const adapter = createLocalSttAdapter(
     {
@@ -81,9 +83,9 @@ test("local adapter: voice.stt.error maps to onError + onEnd", async () => {
     {
       send: () => {},
       onMessage: (h) => {
-        handler = h
+        inbox.emit = h
         return () => {
-          handler = null
+          inbox.emit = undefined
         }
       },
       modelId: "medium",
@@ -96,7 +98,7 @@ test("local adapter: voice.stt.error maps to onError + onEnd", async () => {
 
   adapter.start({ sessionId: "err-1", modelId: "medium" })
   await new Promise((r) => setTimeout(r, 15))
-  handler?.({
+  inbox.emit?.({
     type: "voice.stt.error",
     v: 1,
     sessionId: "err-1",
