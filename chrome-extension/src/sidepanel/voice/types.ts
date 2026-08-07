@@ -39,7 +39,10 @@ export type VoiceEvent =
   | { type: "CAPTURE_STOPPED" }
   | { type: "CHAT_ABORT" }
   | { type: "THREAD_SWITCH" }
-  | { type: "TIMEOUT" }
+  /** Hard cap stop. code: timeout | continuous-timeout for banner copy. */
+  | { type: "TIMEOUT"; code?: string }
+  /** Dictation+ continuous: soft cap hint (still listening). */
+  | { type: "SOFT_CAP_HINT"; message: string }
   | { type: "ENGINE_START" }
   | { type: "ENGINE_RESULT"; interim?: string; finalChunk?: string }
   | { type: "ENGINE_ERROR"; code: string; message?: string }

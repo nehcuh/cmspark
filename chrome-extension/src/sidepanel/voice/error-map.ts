@@ -66,6 +66,11 @@ export function mapSpeechError(code: string, opts?: MapSpeechErrorOpts): VoiceUs
         severity: "info",
         message: "已达单次听写上限，文字已保留在输入框",
       }
+    case "continuous-timeout":
+      return {
+        severity: "info",
+        message: "已达连续听写上限，文字已保留在输入框",
+      }
     case "offline":
       return {
         severity: "error",

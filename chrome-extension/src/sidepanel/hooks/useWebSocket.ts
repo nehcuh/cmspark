@@ -225,6 +225,8 @@ export function useWebSocket() {
         "voiceInputEnabled",
         "voice_privacy_ack_v1",
         "voice_privacy_ack_v2",
+        "voice_privacy_ack_v3",
+        "voiceDictationMode",
         "cmspark.ui.show_reasoning",
         "cmspark.ui.export_include_reasoning",
       ],
@@ -250,6 +252,12 @@ export function useWebSocket() {
         }
         if (result.voice_privacy_ack_v2 === true) {
           dispatch({ type: "SET_VOICE_PRIVACY_ACK_V2", ack: true })
+        }
+        if (result.voice_privacy_ack_v3 === true) {
+          dispatch({ type: "SET_VOICE_PRIVACY_ACK_V3", ack: true })
+        }
+        if (result.voiceDictationMode === "continuous" || result.voiceDictationMode === "classic") {
+          dispatch({ type: "SET_VOICE_DICTATION_MODE", mode: result.voiceDictationMode })
         }
       },
     )

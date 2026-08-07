@@ -5,7 +5,11 @@
 > **对抗合成**: [voice-input-adversary-synthesis-20260806.md](../../audit/reviews/voice-input-adversary-synthesis-20260806.md)  
 > **Pi 复审**: [voice-input-design-pi-20260806-194531.md](../../audit/reviews/voice-input-design-pi-20260806-194531.md)  
 > **Strawman（已废）**: [2026-08-06-voice-input-design-strawman.md](2026-08-06-voice-input-design-strawman.md)  
-> **ADR**: [020](../../adr/020-capability-model-three-axes.md) Surface L0 输入形态；不抬 L1/L2 / 不写 auto_approve*
+> **ADR**: [020](../../adr/020-capability-model-three-axes.md) Surface L0 输入形态；不抬 L1/L2 / 不写 auto_approve*  
+>  
+> **续篇（不撤销本文件 classic 合同）**:  
+> - 听写+（连续 / 按住 / ASR 纠错）：[2026-08-07-dictation-plus-design.md](./2026-08-07-dictation-plus-design.md) · [ADR-024](../../adr/024-dictation-plus-asr-refiner-meeting.md)  
+> - 会议纪要（独立线）：[2026-08-07-meeting-minutes-design.md](./2026-08-07-meeting-minutes-design.md)
 
 ---
 
@@ -120,6 +124,9 @@ Channel:      community default = Web Speech (A)
 | `continuous` | 会话内允许 interim；**禁止** `onend` 静默 restart |
 | 空结果 | 文案「未识别到内容」；**永不**发送 |
 | 默认语言 | `zh-CN`（M1 无语言选择 UI） |
+
+> **经典路径注记（2026-08-07）**：上表 **F-S8 / Q6（≤45s、无静默 restart）仅约束 `voiceDictationMode=classic`（默认）**。  
+> 用户显式开启连续听写后的 restart / 软硬 cap / ASR 纠错，以 [听写+ SoT](./2026-08-07-dictation-plus-design.md) 与 [ADR-024](../../adr/024-dictation-plus-asr-refiner-meeting.md) 为准；**不得**在未 opt-in 时改变本表行为。
 
 ### 6.3 ComposerMode 矩阵（F-UX1 · 对齐现网代码）
 
