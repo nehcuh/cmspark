@@ -126,6 +126,14 @@ export function ChatView() {
     contextCompacted?.rollingSummary ||
     activeThread?.runtime_context_budget?.rolling_summary ||
     ""
+  const handoff =
+    contextCompacted?.handoff ||
+    activeThread?.runtime_context_budget?.handoff ||
+    null
+  const compactMode =
+    contextCompacted?.mode ||
+    activeThread?.runtime_context_budget?.mode ||
+    "m1"
   const showCompactBanner =
     !!contextCompacted ||
     !!(
@@ -367,13 +375,14 @@ export function ChatView() {
                   activeThread?.runtime_context_budget?.dropped_count ??
                   "?"}{" "}
                 条请求侧消息
-                {contextCompacted?.mode === "m2" ||
-                activeThread?.runtime_context_budget?.mode === "m2"
-                  ? "，含滚动摘要"
-                  : ""}
+                {compactMode === "h1"
+                  ? "，含结构化工作记忆"
+                  : compactMode === "m2"
+                    ? "，含滚动摘要"
+                    : ""}
                 ）。
                 下方消息列表仍为完整原文；模型可能看不到较早轮次。
-                {rollingSummary ? (
+                {rollingSummary || handoff ? (
                   <button
                     type="button"
                     style={{
@@ -395,10 +404,10 @@ export function ChatView() {
             )}
           </div>
         )}
-        {summaryOpen && rollingSummary && (
+        {summaryOpen && (rollingSummary || handoff) && (
           <div
             role="dialog"
-            aria-label="上下文压缩摘要"
+            aria-label="上下文工作记忆"
             style={{
               margin: "4px 10px 8px",
               padding: 12,
@@ -419,7 +428,9 @@ export function ChatView() {
                 marginBottom: 8,
               }}
             >
-              <strong style={{ fontSize: 12 }}>压缩摘要（脱敏 · 仅供回顾）</strong>
+              <strong style={{ fontSize: 12 }}>
+                {handoff ? "工作记忆（结构化 · 脱敏）" : "压缩摘要（脱敏 · 仅供回顾）"}
+              </strong>
               <button
                 type="button"
                 onClick={() => setSummaryOpen(false)}
@@ -435,21 +446,46 @@ export function ChatView() {
                 ✕
               </button>
             </div>
-            <pre
-              style={{
-                margin: 0,
-                whiteSpace: "pre-wrap",
-                wordBreak: "break-word",
-                fontFamily: "inherit",
-                fontSize: 12,
-                maxHeight: 220,
-                overflow: "auto",
-              }}
-            >
-              {rollingSummary}
-            </pre>
+            {handoff ? (
+              <div style={{ maxHeight: 260, overflow: "auto" }}>
+                {(
+                  [
+                    ["目标", handoff.goals],
+                    ["决策", handoff.decisions],
+                    ["约束", handoff.constraints],
+                    ["待办", handoff.open_todos],
+                    ["产物", handoff.artifacts],
+                  ] as const
+                ).map(([label, items]) =>
+                  items && items.length > 0 ? (
+                    <div key={label} style={{ marginBottom: 8 }}>
+                      <div style={{ fontWeight: 600, marginBottom: 2 }}>【{label}】</div>
+                      <ul style={{ margin: 0, paddingLeft: 18 }}>
+                        {items.map((t, i) => (
+                          <li key={i}>{t}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null,
+                )}
+              </div>
+            ) : (
+              <pre
+                style={{
+                  margin: 0,
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                  fontFamily: "inherit",
+                  fontSize: 12,
+                  maxHeight: 220,
+                  overflow: "auto",
+                }}
+              >
+                {rollingSummary}
+              </pre>
+            )}
             <div style={{ marginTop: 8, fontSize: 10, color: tokens.textMuted }}>
-              摘要不进入导出默认路径，也不跨会话注入。磁盘全文仍保留。
+              工作记忆仅服务当前请求路径；不进入导出默认路径，也不跨会话注入。磁盘全文仍保留。
             </div>
           </div>
         )}

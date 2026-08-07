@@ -5,11 +5,15 @@
 import { createHash } from "crypto"
 import { estimateTokens } from "../threads/summary-export"
 import type { CanonicalChatMessage } from "./provider"
+// Avoid circular import with context-handoff (which imports buildRedactedTranscript here).
+// Structured ThreadHandoff is typed loosely on meta; format happens in adapter/handoff module.
 
 export { estimateTokens }
 
 const OMIT_PREFIX = "[context_omitted]"
 const SUMMARY_PREFIX = "[context_summary]"
+/** H1 ThreadHandoff structured working memory (Wave B). */
+export const HANDOFF_PREFIX = "[context_handoff]"
 
 /** Cookie / secret tools — drop payload entirely for compaction input (F-S5). */
 export const COMPACT_SENSITIVE_COOKIE_TOOLS = new Set([
@@ -73,7 +77,9 @@ export function isOmitNotice(m: CanonicalChatMessage): boolean {
   return (
     m.role === "user" &&
     typeof m.content === "string" &&
-    (m.content.startsWith(OMIT_PREFIX) || m.content.startsWith(SUMMARY_PREFIX))
+    (m.content.startsWith(OMIT_PREFIX) ||
+      m.content.startsWith(SUMMARY_PREFIX) ||
+      m.content.startsWith(HANDOFF_PREFIX))
   )
 }
 
@@ -89,6 +95,36 @@ export function buildOmitNotice(droppedCount: number, rollingSummary?: string): 
     role: "user",
     content: `${OMIT_PREFIX} Earlier ${droppedCount} messages omitted (turn-safe). Full history retained on disk. Visible chat may still show full history.`,
   }
+}
+
+/** H1 structured handoff notice (exactly one sticky budget notice after systems). */
+export function buildHandoffNotice(
+  droppedCount: number,
+  formattedHandoff: string,
+): CanonicalChatMessage {
+  const capped = (formattedHandoff || "").trim().slice(0, 2000)
+  return {
+    role: "user",
+    content: `${HANDOFF_PREFIX} Earlier ${droppedCount} messages omitted (turn-safe). Working memory (redacted, request-only):\n${capped}\nFull history retained on disk. Visible chat may still show full history.`,
+  }
+}
+
+export function attachHandoffNoticeToMessages(
+  messages: CanonicalChatMessage[],
+  droppedCount: number,
+  formattedHandoff: string,
+): CanonicalChatMessage[] {
+  const notice = buildHandoffNotice(droppedCount, formattedHandoff)
+  const out = messages.map((m) => ({ ...m })) as CanonicalChatMessage[]
+  const idx = out.findIndex(isOmitNotice)
+  if (idx >= 0) {
+    out[idx] = notice
+    return out
+  }
+  let insertAt = 0
+  while (insertAt < out.length && out[insertAt].role === "system") insertAt++
+  out.splice(insertAt, 0, notice)
+  return out
 }
 
 export function shortSha256(text: string): string {
@@ -344,39 +380,47 @@ export function attachRollingSummaryToMessages(
 }
 
 /**
- * S51 P0 / S52 N2–N3: pure mid_loop retain of a prior pre_loop M2 summary.
+ * S51 P0 / S52 N2–N3 + Wave B H1: pure mid_loop retain of a prior pre_loop
+ * M2 summary or H1 handoff.
  *
- * When mid_loop only runs M1 omit (`shouldRunM2` is false for mid_loop), keep the
- * previous rolling summary on the **LLM request path** (not only UI meta).
+ * When mid_loop only runs M1 omit (`shouldRunM2`/`shouldRunH1` false for mid_loop),
+ * keep the previous notice on the **LLM request path** (not only UI meta).
  *
- * **Mode honesty (N7):** resulting `mode === "m2"` means “request carries a
- * rolling summary notice”, not “a fresh summary was generated this mid_loop pass”.
- * Content is the prior pre_loop text; newly dropped mid_loop tool mass is not re-summarized.
+ * **Mode honesty (N7):** resulting `mode === "m2"|"h1"` means “request carries a
+ * working-memory notice”, not “a fresh extract was generated this mid_loop pass”.
+ * Prefer structured handoff re-attach over prose when prior mode was h1.
  */
 export type MidLoopRetainInput = {
   phase: "pre_loop" | "mid_loop"
-  /** Compact outcome mode before retain (`m1` after plain omit, `m2` if M2 just ran). */
-  mode: "m1" | "m2"
+  /** Compact outcome mode before retain. */
+  mode: "m1" | "m2" | "h1"
   messages: CanonicalChatMessage[]
   droppedCount: number
-  /** Summary produced this pass (usually empty on mid_loop). */
+  /** Summary / formatted handoff produced this pass (usually empty on mid_loop). */
   rollingSummary?: string
   summarySha?: string
   summaryBytes?: number
-  /** Prior thread meta from pre_loop M2 (UI + request dual-truth source). */
+  /** Structured H1 handoff (opaque to this module). */
+  handoff?: unknown
+  /** Pre-formatted handoff body for [context_handoff] notice. */
+  handoffFormatted?: string
+  /** Prior thread meta from pre_loop (UI + request dual-truth source). */
   prevMeta?: {
+    mode?: string
     rolling_summary?: string
     summary_sha256?: string
     summary_bytes?: number
+    handoff?: unknown
   } | null
 }
 
 export type MidLoopRetainResult = {
   messages: CanonicalChatMessage[]
-  mode: "m1" | "m2"
+  mode: "m1" | "m2" | "h1"
   rollingSummary?: string
   summarySha: string
   summaryBytes: number
+  handoff?: unknown
   /** Preferred summary for meta write / UI modal. */
   keepSummary?: string
   keepSha?: string
@@ -394,27 +438,61 @@ export function retainMidLoopRollingSummary(input: MidLoopRetainInput): MidLoopR
     rollingSummary: rollingIn,
     summarySha: shaIn = "",
     summaryBytes: bytesIn = 0,
+    handoff: handoffIn,
+    handoffFormatted: handoffFmtIn,
     prevMeta,
   } = input
 
+  // Prefer this-pass handoff, else prior meta (dual nit: no redundant !handoffIn guard)
+  const keepHandoff = handoffIn ?? (phase === "mid_loop" ? prevMeta?.handoff : undefined) ?? null
+
+  // Formatted body: this pass → rolling → prior rolling → re-format structured handoff
+  // (Pi nit: handoff present but rolling_summary empty must still re-attach [context_handoff])
+  let priorHandoffFmt: string | undefined =
+    phase === "mid_loop" && (prevMeta?.mode === "h1" || keepHandoff)
+      ? handoffFmtIn || rollingIn || prevMeta?.rolling_summary || undefined
+      : undefined
+  if (phase === "mid_loop" && modeIn === "m1" && keepHandoff && !priorHandoffFmt) {
+    try {
+      // Lazy require avoids circular import (context-handoff → context-budget)
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const ch = require("./context-handoff") as typeof import("./context-handoff")
+      const h = ch.sanitizeThreadHandoff(keepHandoff)
+      if (h) priorHandoffFmt = ch.formatHandoffForNotice(h)
+    } catch {
+      /* best-effort */
+    }
+  }
+
   const keepSummary =
     rollingIn ||
-    (phase === "mid_loop" && !rollingIn ? prevMeta?.rolling_summary : undefined)
+    handoffFmtIn ||
+    (phase === "mid_loop" && !rollingIn && !handoffFmtIn
+      ? prevMeta?.rolling_summary
+      : undefined)
   const keepSha =
     shaIn || (phase === "mid_loop" && !shaIn ? prevMeta?.summary_sha256 : undefined)
   const keepBytes =
     bytesIn || (phase === "mid_loop" && !bytesIn ? prevMeta?.summary_bytes : undefined)
 
   let messages = messagesIn
-  let mode: "m1" | "m2" = modeIn
+  let mode: "m1" | "m2" | "h1" = modeIn
   let rollingSummary = rollingIn
   let summarySha = shaIn
   let summaryBytes = bytesIn
+  let handoff: unknown = handoffIn || null
   let reattached = false
 
-  // Re-attach prior M2 summary into request when mid_loop only ran M1 omit.
-  // Must run independent of meta persistence (S52 N2 — do not nest under meta try).
-  if (phase === "mid_loop" && keepSummary && mode === "m1") {
+  // Prefer [context_handoff] re-attach when prior mode was h1 or handoff present.
+  if (phase === "mid_loop" && mode === "m1" && (keepHandoff || prevMeta?.mode === "h1") && priorHandoffFmt) {
+    messages = attachHandoffNoticeToMessages(messages, droppedCount, priorHandoffFmt)
+    mode = "h1"
+    handoff = keepHandoff
+    rollingSummary = priorHandoffFmt
+    if (keepSha) summarySha = keepSha
+    if (typeof keepBytes === "number" && keepBytes > 0) summaryBytes = keepBytes
+    reattached = true
+  } else if (phase === "mid_loop" && keepSummary && mode === "m1") {
     messages = attachRollingSummaryToMessages(messages, droppedCount, keepSummary)
     mode = "m2"
     rollingSummary = keepSummary
@@ -425,13 +503,18 @@ export function retainMidLoopRollingSummary(input: MidLoopRetainInput): MidLoopR
     rollingSummary = keepSummary
   }
 
+  if (modeIn === "h1" && handoffIn) {
+    handoff = handoffIn
+  }
+
   return {
     messages,
     mode,
     rollingSummary,
     summarySha,
     summaryBytes,
-    keepSummary,
+    handoff,
+    keepSummary: rollingSummary || keepSummary,
     keepSha,
     keepBytes: typeof keepBytes === "number" ? keepBytes : undefined,
     reattached,

@@ -38,6 +38,8 @@ export interface Thread {
   tool_whitelist: string[] | null
   pinned_tabs: number[]
   active_skill_ids: string[]
+  /** Knowledge docs selected for this thread (manual / pack apply). */
+  active_knowledge_ids?: string[]
   skill_selection_mode?: SkillSelectionMode
   knowledge_selection_mode?: "auto" | "all" | "manual"
   mcp_selection_mode?: McpSelectionMode
@@ -72,7 +74,7 @@ export interface Thread {
   /** Runtime context budget meta (M1/M2) — distinct from digest */
   runtime_context_budget?: {
     last_at?: string
-    mode?: "m1" | "m2"
+    mode?: "m1" | "m2" | "h1"
     dropped_count?: number
     tokens_before?: number
     tokens_after?: number
@@ -80,6 +82,15 @@ export interface Thread {
     summary_sha256?: string
     summary_bytes?: number
     phase?: "pre_loop" | "mid_loop"
+    /** H1 structured working memory */
+    handoff?: {
+      updated_at?: string
+      goals?: string[]
+      decisions?: string[]
+      constraints?: string[]
+      open_todos?: string[]
+      artifacts?: string[]
+    }
   } | null
   /** P1.5 soft-delete (recycle bin) */
   trashed_at?: string | null

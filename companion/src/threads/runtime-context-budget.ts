@@ -1,7 +1,12 @@
 // Runtime context budget metadata on Thread index (not Digest / not Export).
-// Spec: settings-thread-compact-ux F-C4 · request path + optional UI "查看摘要".
+// Spec: settings-thread-compact-ux F-C4 · Wave B H1 handoff
 
-export type RuntimeContextBudgetMode = "m1" | "m2"
+import {
+  sanitizeThreadHandoff,
+  type ThreadHandoff,
+} from "../llm/context-handoff"
+
+export type RuntimeContextBudgetMode = "m1" | "m2" | "h1"
 
 export interface RuntimeContextBudgetMeta {
   last_at: string
@@ -9,11 +14,13 @@ export interface RuntimeContextBudgetMeta {
   dropped_count: number
   tokens_before: number
   tokens_after: number
-  /** Redacted rolling summary for UI modal; request path may also use omit notice. */
+  /** Redacted rolling summary / formatted handoff for UI modal. */
   rolling_summary?: string
   summary_sha256?: string
   summary_bytes?: number
   phase?: "pre_loop" | "mid_loop"
+  /** H1 structured working memory (request path + chip). */
+  handoff?: ThreadHandoff
 }
 
 const MAX_SUMMARY_CHARS = 2000
@@ -22,7 +29,8 @@ const MAX_SUMMARY_CHARS = 2000
 export function sanitizeRuntimeContextBudget(raw: unknown): RuntimeContextBudgetMeta | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null
   const o = raw as Record<string, unknown>
-  const mode = o.mode === "m2" ? "m2" : o.mode === "m1" ? "m1" : null
+  const mode =
+    o.mode === "h1" ? "h1" : o.mode === "m2" ? "m2" : o.mode === "m1" ? "m1" : null
   if (!mode) return null
   const last_at = typeof o.last_at === "string" && o.last_at ? o.last_at : new Date().toISOString()
   const dropped_count = Math.max(0, Math.floor(Number(o.dropped_count) || 0))
@@ -49,6 +57,10 @@ export function sanitizeRuntimeContextBudget(raw: unknown): RuntimeContextBudget
   }
   if (o.phase === "pre_loop" || o.phase === "mid_loop") {
     out.phase = o.phase
+  }
+  if (o.handoff !== undefined && o.handoff !== null) {
+    const h = sanitizeThreadHandoff(o.handoff)
+    if (h) out.handoff = h
   }
   return out
 }

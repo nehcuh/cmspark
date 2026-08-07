@@ -723,9 +723,12 @@ export function useWebSocket() {
               droppedCount: Number(msg.dropped_count) || 0,
               tokensBefore: Number(msg.tokens_before) || 0,
               tokensAfter: Number(msg.tokens_after) || 0,
-              mode: msg.mode === "m2" ? "m2" : "m1",
+              mode:
+                msg.mode === "h1" ? "h1" : msg.mode === "m2" ? "m2" : "m1",
               rollingSummary:
                 typeof msg.rolling_summary === "string" ? msg.rolling_summary : undefined,
+              handoff:
+                msg.handoff && typeof msg.handoff === "object" ? msg.handoff : undefined,
             })
           }
           break

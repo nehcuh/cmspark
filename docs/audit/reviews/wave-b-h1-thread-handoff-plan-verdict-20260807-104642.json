@@ -1,0 +1,8 @@
+{
+  "batch": "wave-b-h1-thread-handoff-plan",
+  "timestamp": "20260807-104642",
+  "claude": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/wave-b-h1-thread-handoff-plan-claude-20260807-104642.md" },
+  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/wave-b-h1-thread-handoff-plan-pi-20260807-104642.md" },
+  "both_approve": true,
+  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/wave-b-h1-thread-handoff-plan-diff-20260807-104642.patch"
+}
