@@ -626,6 +626,29 @@
   {
     "type": "function",
     "function": {
+      "name": "thread_recall",
+      "description": "Search the FULL on-disk history of the CURRENT conversation thread for relevant earlier turns (e.g. after context compaction dropped them from the model window). Same-thread only. Returns short redacted excerpts. Use a short keyword query (Chinese or English).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Short search query (keywords)"
+          },
+          "max_hits": {
+            "type": "integer",
+            "description": "1–12, default 5"
+          }
+        },
+        "required": [
+          "query"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
       "name": "workspace_list_dir",
       "description": "List files under the thread's DevSec workspace_root (relative paths only). Requires modules.devsec-workspace enabled AND workspace_root already set. If error says workspace_root not set, stop and ask the user to click Side Panel → 任务包 → 「选择工作区」 first — never guess absolute paths.",
       "parameters": {

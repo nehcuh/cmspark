@@ -2604,6 +2604,7 @@ export function createToolExecutor(ws: WebSocket): ToolExecutorFn {
       "host_app",
       "host_computer",
       "use_skill",
+      "thread_recall",
       "skill_install",
       "record_experience",
       "workspace_list_dir",
@@ -3826,6 +3827,43 @@ async function executeCompanionTool(toolName: string, params: any, toolCallId?: 
         return { success: false, error: `Skill not found or has no content: ${skillName}` }
       }
       return { success: true, data: { name: skillName, content } }
+    }
+    case "thread_recall": {
+      // Wave C: same-thread cold archive search (F-S5 redact). Never log query text.
+      const tid = typeof params.__thread_id === "string" ? params.__thread_id : ""
+      if (!tid) {
+        return { success: false, error: "thread_recall requires active thread" }
+      }
+      const q = typeof params.query === "string" ? params.query.trim() : ""
+      if (!q) return { success: false, error: "query required" }
+      const {
+        searchAndRedact,
+        RECALL_QUERY_MAX_LEN,
+        clampMaxHits,
+      } = await import("./threads/thread-recall")
+      if (q.length > RECALL_QUERY_MAX_LEN) {
+        return { success: false, error: `query too long (max ${RECALL_QUERY_MAX_LEN})` }
+      }
+      const maxHits = clampMaxHits(params.max_hits)
+      const msgs = threadManager.getMessages(tid) as any[]
+      const hits = searchAndRedact(msgs, q, maxHits)
+      try {
+        logger.info("thread.recall", {
+          thread_id: tid,
+          hit_count: hits.length,
+          query_len: q.length,
+        })
+      } catch {
+        /* non-fatal */
+      }
+      return {
+        success: true,
+        data: {
+          hits,
+          total_scanned: msgs.length,
+          thread_id: tid,
+        },
+      }
     }
     case "record_experience": {
       const { target, skill_name, category, content, tags, domain } = params

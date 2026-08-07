@@ -22,6 +22,7 @@ import {
   applyContextBudget,
   attachRollingSummaryToMessages,
   attachHandoffNoticeToMessages,
+  appendRecallHintToNotices,
   estimateTokens,
   retainMidLoopRollingSummary,
 } from "./context-budget"
@@ -650,6 +651,13 @@ ${hostUseRule12}${appIndexSection ? `\n\n${appIndexSection}` : ""}`
     summaryBytes = retained.summaryBytes
     if (retained.handoff && typeof retained.handoff === "object") {
       handoff = retained.handoff as ThreadHandoff
+    }
+    // Wave C: hint thread_recall only when tool is on the thread whitelist (or full surface)
+    try {
+      const allowRecall = threadManager.isToolAllowed(threadId, "thread_recall")
+      messages = appendRecallHintToNotices(messages, allowRecall)
+    } catch {
+      /* non-fatal */
     }
     const keepSummary = retained.keepSummary
     const keepSha = retained.keepSha

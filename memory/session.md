@@ -2,6 +2,16 @@
 
 ## Current Session
 
+### S51 (2026-08-07 ~10:00–12:06) [压缩分层 A/B/C · dual 闸门 · #134 MERGED · Wave C 待 PR]
+- **问题**：长对话压缩失忆；场景不可配知识；思考/外部「用 CoT 当压缩」需取舍
+- **交付**：
+  - 对抗分析 SoT + dual；Wave A 场景知识 + `active_knowledge_ids` 全链路；Wave B H1 handoff；Wave C `thread_recall`
+  - **#134 MERGED** `06c05dc`（A+B+nits，CI 绿）
+  - Wave C：plan 双 REJECT→修 F-S5 配对/合成 assistant→impl dual both APPROVE_WITH_NITS；nits 测补齐；**未 commit**
+- **决策**：H1≠M3 命名；知识独立字段；recall 同 thread + redact fail-closed；hint 仅 allowlist 允许时
+- **下次**：Wave C commit/PR 合 main；可选 Wave D 思考 UI/导出；真机长对话 smoke
+- Recorded: yes — F-S5 配对 redact + 多波 dual 闸门
+
 ### S50 (2026-08-06 ~21:00–22:00) [analyze_image data: false Security Block · dual-review · PR #130]
 - **问题**：#i0iqwl 验证码 / 内联图 → `Security Block: cannot read data: URL`；用户已开 L2+全自动+god-mode+白名单仍拦
 - **根因**：IMAGE_FETCH path B 仅 http(s)；canvas catch 把 `data:` 当 fetch_required；设计假设「data: 永不进 path B」破
@@ -496,25 +506,31 @@
 
 ## In-Flight Tasks (Cross-Session)
 
-### analyze_image data: Security Block → PR #130 open
-- status: **active** (PR open, dual R3 both_ok)
-- context: data: inline decode; promoteFetchSrc; companion residual; no schemeOk expansion; nits closed
-- next_action: merge #130；重载扩展+Companion 真机 captcha/`data:` analyze_image；可选 residual DRY
-- resume_doc: PR #130 · `docs/audit/reviews/analyze-image-data-url-p0-r3-verdict-20260806-214547.json`
-- updated: 2026-08-06
+### Wave C thread_recall → dual 过 · 待 commit/PR
+- status: **active** (impl dual both APPROVE_WITH_NITS; nits folded; uncommitted on main)
+- context: same-thread keyword+CJK bigram; F-S5 + synthetic assistant for orphan tools; compact notice hint if allowlisted
+- next_action: commit Wave C + dual artifacts → PR → CI → merge；可选真机 compact 后 recall smoke
+- resume_doc: `docs/superpowers/plans/2026-08-07-wave-c-thread-recall.md` · `docs/audit/reviews/wave-c-thread-recall-impl-verdict-20260807-115545.json`
+- updated: 2026-08-07
 
-### Thread History IA P0–P1.5 → PR #127 open
-- status: **active** (PR open, dual R2 both_ok)
-- context: timeline / tags / trash / @refs / cleanup; R1 B1–B3 fixed; perf single-pass list + digest queue
-- next_action: review/merge #127；真机验收 ☰ 列表与 `@`；可选 residual nits
-- resume_doc: `docs/superpowers/specs/2026-08-06-thread-history-ia-product-design.md` · PR #127 · `docs/audit/reviews/thread-history-ia-impl-r2-dual-synthesis-20260806.md`
-- updated: 2026-08-06
+### Wave D 思考 UI/导出 polish（可选）
+- status: **pending**
+- context: show_reasoning setting; export exclude reasoning by default; rebuild docs
+- next_action: 产品确认后再开 plan dual
+- resume_doc: `docs/superpowers/specs/2026-08-07-context-memory-thinking-knowledge-adversarial-analysis.md` Wave D
+- updated: 2026-08-07
 
-### S46 Trust B lifecycle multi-lane → DONE #126
-- status: **done** (PR #126 → main `b338498`; DMG 0.4.0 installed)
-- residual: 真机 Trust 场景验收；optional host-integrity packaging commit
-- resume_doc: `docs/audit/reviews/multi-adversarial-review-20260806-main-s46.md`
-- updated: 2026-08-06
+### analyze_image data: Security Block → PR #130
+- status: **stale check** (was open at S50; verify merged on main if still open)
+- next_action: gh pr view 130; 若仍 open 则 merge 或 close
+- resume_doc: PR #130
+- updated: 2026-08-07
+
+### Outbound MCP P0d bake-off (human)
+- status: **active** (checklist ready)
+- next_action: 真人 SSO T1–T3
+- resume_doc: `docs/superpowers/plans/2026-08-04-outbound-mcp-p0d-bakeoff-checklist.md`
+- updated: 2026-08-04
 
 ### Run-state + full-autonomy (S41) → #117 MERGED · S45 P0 isolation closed
 - status: **mostly done** (#117 on main; S45 #125 closed post-ship upload/fleet HIGH)
