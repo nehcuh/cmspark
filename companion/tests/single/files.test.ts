@@ -874,3 +874,60 @@ test("integration: thread.fork creates isolated copy", async () => {
   assert.equal(sourceMessages.length, 2) // Original 2 messages
   assert.ok(forkedMessages.length >= 2) // At least 1 + 1 new
 })
+
+test("Wave E P1-2: thread.fork copies knowledge, modes, whitelist, reasoning", async () => {
+  const threadManager = new ThreadManager()
+
+  const source = await handleMessage(
+    { type: "thread.create", alias: "Scene" },
+    { threadManager, skillEngine: mockSkillEngine, historyStore: mockHistoryStore },
+  )
+
+  threadManager.addMessage(source.thread.id, {
+    thread_id: source.thread.id,
+    role: "user",
+    content: "with knowledge",
+  })
+  threadManager.addMessage(source.thread.id, {
+    thread_id: source.thread.id,
+    role: "assistant",
+    content: "ok",
+    reasoning_content: "think-step-fork-preserve",
+  })
+
+  threadManager.update(source.thread.id, {
+    pinned_tabs: [42],
+    active_knowledge_ids: ["pack-doc-a", "site-note"],
+    knowledge_selection_mode: "manual",
+    skill_selection_mode: "manual",
+    tool_whitelist: ["list_tabs", "thread_recall", "use_skill"],
+    active_skill_ids: ["browse"],
+  })
+
+  const msgs = threadManager.getMessages(source.thread.id)
+  const forked = await handleMessage(
+    {
+      type: "thread.fork",
+      thread_id: source.thread.id,
+      message_id: msgs[msgs.length - 1].id,
+    },
+    { threadManager, skillEngine: mockSkillEngine, historyStore: mockHistoryStore },
+  )
+
+  assert.equal(forked.type, "thread.forked")
+  assert.deepEqual(forked.thread.active_knowledge_ids, ["pack-doc-a", "site-note"])
+  assert.equal(forked.thread.knowledge_selection_mode, "manual")
+  assert.equal(forked.thread.skill_selection_mode, "manual")
+  assert.deepEqual(forked.thread.tool_whitelist, ["list_tabs", "thread_recall", "use_skill"])
+  assert.deepEqual(forked.thread.pinned_tabs, [42])
+  // Must not expand to full surface (null whitelist)
+  assert.notEqual(forked.thread.tool_whitelist, null)
+
+  const forkedMsgs = threadManager.getMessages(forked.thread.id)
+  const asst = forkedMsgs.find((m: any) => m.role === "assistant")
+  assert.ok(asst, "assistant message copied")
+  assert.equal(asst.reasoning_content, "think-step-fork-preserve")
+
+  // Trust / pack trust must not auto-copy as privilege elevation
+  assert.ok(!forked.thread.mission_pack_trust_snapshot)
+})

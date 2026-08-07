@@ -743,6 +743,48 @@ test("HistoryStore handles special characters in text fields", async () => {
 
 // --- Sensitive Tool Redaction (audit item 3) ---
 
+test("Wave E P0-4: HistoryStore.record() redacts thread_recall query and hit excerpts", async () => {
+  const store = new HistoryStore()
+  await store.waitReady()
+  try {
+    const secretQuery = "password reset token abc-secret-xyz"
+    const params = JSON.stringify({
+      query: secretQuery,
+      max_hits: 5,
+      __thread_id: "t-recall",
+    })
+    const result_summary = JSON.stringify({
+      hits: [
+        { message_id: "m1", role: "user", excerpt: "contains secret payload 999" },
+        { message_id: "m2", role: "assistant", excerpt: "reply" },
+      ],
+      total_scanned: 40,
+    }).slice(0, 500)
+
+    await store.record({
+      thread_id: "t-recall",
+      tool_name: "thread_recall",
+      params,
+      result_summary,
+      error: null,
+      success: 1,
+      duration_ms: 12,
+      created_at: new Date().toISOString(),
+    })
+
+    const rows = await store.query({ thread_id: "t-recall", tool_name: "thread_recall" })
+    assert.equal(rows.length, 1)
+    const stored = rows[0]
+    assert.ok(!stored.params.includes(secretQuery), "query text must not persist: " + stored.params)
+    assert.ok(!stored.params.includes("abc-secret-xyz"), "query secret fragment must not persist")
+    assert.match(stored.params, /query_len/)
+    assert.ok(!stored.result_summary.includes("secret payload 999"), "excerpts must not persist")
+    assert.match(stored.result_summary, /hit_count|redacted/)
+  } finally {
+    store.close()
+  }
+})
+
 test("HistoryStore.record() redacts cookie values from get_cookies result_summary", async () => {
   const store = new HistoryStore()
   await store.waitReady()

@@ -3,6 +3,7 @@ import * as assert from "node:assert/strict"
 
 import {
   serializeThreadToMarkdown,
+  serializeSummaryToMarkdown,
   renderJsonBounded,
   ExportMessage,
   ExportOptions,
@@ -106,6 +107,50 @@ test("Wave D: include_reasoning folds thinking under details", () => {
   assert.match(r.content, /思考过程/)
   assert.match(r.content, /step by step plan/)
   assert.match(r.content, /<details>/)
+})
+
+// Wave E / multi-adv P0-2: summary appendix honors include_reasoning (router must pass flag).
+test("Wave E P0-2: serializeSummaryToMarkdown strips reasoning by default", () => {
+  const summary = {
+    title: "t",
+    tldr: "short",
+    body: "## 关键主题\n- x\n",
+  }
+  const messages = [
+    msg({ id: "u1", role: "user", content: "q" }),
+    msg({
+      id: "a1",
+      role: "assistant",
+      content: "a",
+      reasoning_content: "SECRET_SUMMARY_THINKING",
+    }),
+  ]
+  const r = serializeSummaryToMarkdown(summary as any, messages, opt("summary") as any)
+  assert.ok(!r.content.includes("SECRET_SUMMARY_THINKING"))
+  assert.ok(!r.content.includes("思考过程"))
+})
+
+test("Wave E P0-2: serializeSummaryToMarkdown include_reasoning in appendix", () => {
+  const summary = {
+    title: "t",
+    tldr: "short",
+    body: "## 关键主题\n- x\n",
+  }
+  const messages = [
+    msg({ id: "u1", role: "user", content: "q" }),
+    msg({
+      id: "a1",
+      role: "assistant",
+      content: "a",
+      reasoning_content: "VISIBLE_SUMMARY_THINKING",
+    }),
+  ]
+  const r = serializeSummaryToMarkdown(summary as any, messages, {
+    ...(opt("summary") as any),
+    include_reasoning: true,
+  })
+  assert.match(r.content, /VISIBLE_SUMMARY_THINKING/)
+  assert.match(r.content, /思考过程/)
 })
 
 test("assistant(tool_calls)→tool(result): result folded into callout, not a standalone JSON dump", () => {
