@@ -254,7 +254,7 @@ companion/src/voice/
 | **P0** | 本 ADR + 产品 SoT + 对抗 + Pi | **已完成**（Pi APPROVE_WITH_NITS） |
 | **Spike** | S0–S5 | **机器 PASS**（2026-08-07）；报告 [voice-local-stt-spike-report](../superpowers/specs/2026-08-07-voice-local-stt-spike-report.md)；**人工 S0–S2 PENDING** |
 | **M0** | manifest + download/cancel/delete/progress + get_state + 设置 UI | 实现计划：[voice-local-stt-m0-impl](../superpowers/plans/2026-08-07-voice-local-stt-m0-impl.md)；机器 spike 已过即可开；**无** `voice.stt.*` 生产闭环 |
-| **M1** | binary + runner + STT WS + adapter + processing + ack v2 + 错误表 | 人工 S0–S2 + CI pure + fake runner；手动 ≥15 字中文草稿 |
+| **M1** | binary + runner + STT WS + adapter + processing + ack v2 + 错误表 | 实现计划：[voice-local-stt-m1-impl](../superpowers/plans/2026-08-07-voice-local-stt-m1-impl.md)；人工 S0–S2 + CI pure + fake runner |
 | **M2+** | 硬 RAM 互斥、GPU、流式 partial、更多质量叙事 | 若动 auto-send/权限 → **重开对抗** |
 
 **实现前禁止**：在 Spike 未过时合并生产 `voice.stt.*` 处理路径。

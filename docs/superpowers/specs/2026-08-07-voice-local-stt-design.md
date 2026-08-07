@@ -266,7 +266,7 @@ companion/src/voice/: stt-session, whisper-runner, whisper-download,
 | P0 | 本 SoT + 合成 + Path B ADR + **Pi 复审** | Pi ≠ REJECT |
 | Spike | S0–S5 | **机器 PASS** 见 [spike-report](./2026-08-07-voice-local-stt-spike-report.md)；人工 S0–S2 PENDING |
 | **M0** | manifest + download/cancel/delete/progress + get_state + 设置 UI | **已实现** 分支 `feat/voice-local-stt-m0`；完成注：[m0-COMPLETION](../plans/2026-08-07-voice-local-stt-m0-COMPLETION.md)；无 STT WS |
-| **M1** | binary + runner + WS + adapter + processing + ack v2 + error map | CI pure + fake runner；手动中文 ≥15 字 |
+| **M1** | binary + runner + WS + adapter + processing + ack v2 + error map | 计划：[voice-local-stt-m1-impl](../plans/2026-08-07-voice-local-stt-m1-impl.md)；CI pure + fake runner；手动中文 ≥15 字 |
 | **M2** | 硬 RAM 互斥、GPU、流式 partial、质量表 | 另开对抗若动 auto-send/权限 |
 
 ---

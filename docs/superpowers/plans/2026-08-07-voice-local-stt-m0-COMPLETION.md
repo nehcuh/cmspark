@@ -58,4 +58,4 @@ feat(voice-m0): settings UI for local STT model download
 
 ## Next
 
-M1 plan: binary package + STT session WS + local adapter + privacy ack v2 — after human S0–S2.
+M1 plan: [2026-08-07-voice-local-stt-m1-impl.md](./2026-08-07-voice-local-stt-m1-impl.md) — binary + STT WS + local adapter + privacy ack v2.
