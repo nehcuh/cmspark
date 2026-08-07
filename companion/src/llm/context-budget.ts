@@ -83,6 +83,10 @@ export function isOmitNotice(m: CanonicalChatMessage): boolean {
   )
 }
 
+/** Wave C: one-line cold-archive hint (adapter sets only when thread_recall allowed). */
+export const THREAD_RECALL_HINT =
+  "If you need details from omitted turns, call thread_recall with a short query."
+
 export function buildOmitNotice(droppedCount: number, rollingSummary?: string): CanonicalChatMessage {
   if (rollingSummary && rollingSummary.trim()) {
     const capped = rollingSummary.trim().slice(0, 2000)
@@ -107,6 +111,19 @@ export function buildHandoffNotice(
     role: "user",
     content: `${HANDOFF_PREFIX} Earlier ${droppedCount} messages omitted (turn-safe). Working memory (redacted, request-only):\n${capped}\nFull history retained on disk. Visible chat may still show full history.`,
   }
+}
+
+/** Append thread_recall hint to budget notices when tool is allowlisted. */
+export function appendRecallHintToNotices(
+  messages: CanonicalChatMessage[],
+  enabled: boolean,
+): CanonicalChatMessage[] {
+  if (!enabled) return messages
+  return messages.map((m) => {
+    if (!isOmitNotice(m) || typeof m.content !== "string") return m
+    if (m.content.includes("thread_recall")) return m
+    return { ...m, content: `${m.content}\n${THREAD_RECALL_HINT}` }
+  }) as CanonicalChatMessage[]
 }
 
 export function attachHandoffNoticeToMessages(

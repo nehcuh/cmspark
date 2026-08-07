@@ -1,0 +1,8 @@
+{
+  "batch": "wave-c-thread-recall-plan",
+  "timestamp": "20260807-113810",
+  "claude": { "verdict": "REJECT", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/wave-c-thread-recall-plan-claude-20260807-113810.md" },
+  "pi": { "verdict": "REJECT", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/wave-c-thread-recall-plan-pi-20260807-113810.md" },
+  "both_approve": false,
+  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/wave-c-thread-recall-plan-diff-20260807-113810.patch"
+}

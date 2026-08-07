@@ -378,6 +378,15 @@
 
 ## Reusable Patterns
 
+### 多波次能力：分析 dual → 计划 dual → 实现 dual → nits → PR/CI merge（2026-08-07 S51）
+- **场景**：长对话压缩 / 场景知识 / 冷检索等跨 Surface·Compose 的串联交付
+- **闸门**：`docs/superpowers/specs/*adversarial*` → plan dual（可 REJECT 修 SoT）→ impl dual → 折 nits → commit → PR → CI 绿 merge
+- **Wave A**：`active_knowledge_ids` 端到端 + 场景 `knowledge_refs`（修 UI 发字段但 allowlist 丢弃的 orphan）
+- **Wave B**：H1 结构化 handoff `[context_handoff]`（勿称 M3，compact-ux 的 M3 是 UI 折叠）
+- **Wave C**：`thread_recall` 同 thread 关键词冷检索 + F-S5 + CJK 双字；hint 仅 `isToolAllowed`
+- **Ship**：A+B **#134 MERGED**；C 实现 dual 过、session-end 时待 commit/PR
+- **价值**：计划门抓住 redact 形状错误，避免「测试绿但生产泄 cookie」
+
 ### 产品冲突 ADR 时：选项阶梯 A 可控 / B 全局 / C 仅引导（2026-08-06 S46）
 - **场景**：用户认为「场景应能跳过 L2 / 开 module / 写 auto_approve」，与 Pack=Composition 冲突
 - **做法**：先列 A（apply 授权单+可回滚）/ B（全局 Trust 注入）/ C（仅引导）；用户点选后再实现；B 须改 ADR 修订说明 + snapshot restore + 仅 user origin
@@ -525,6 +534,13 @@
 
 ## Technical Pitfalls
 
+### F-S5 `redactMessagesForCompaction` 依赖 assistant↔tool 配对（2026-08-07 · Wave C dual）
+- **现象**：计划写「对 hit 建 `{role,content}` 再跑 redact」——双审 R2 REJECT。
+- **根因**：F-S5 用 assistant 消息里的 `tool_calls[].id` → name 映射，再靠 tool 消息的 `tool_call_id` 查敏感集。持久化 tool 行若只传 content、无配对/无 name，name 退化为 `"tool"`，**绕过** cookie/shell 分支，只剩 sk-/Bearer 正则。
+- **修法**：`toCanonicalForRedact` 必须带上配对 assistant，或对孤儿 tool **合成** `{role:assistant, tool_calls:[{id, function:{name}}]}`；name 解析顺序 `tool_name → name → function.name`；仍无法解析则 **drop hit**（fail-closed）。
+- **测试**：孤儿 `get_cookies` + 配对 `shell_exec` 必须断言原文 secret 不出现。
+- **复用**：任何「历史回放 / recall / compact 输入」复用 F-S5 时先查此坑。
+
 ### 测试隔离：静态 import 会在 `before()` 设环境变量前计算模块级路径
 - 现象：companion `security-gates.test.ts` 6 个安全闸门用例静默红（`timeout waiting for security.confirmation.request`），疑似生产 bug。
 - 根因：`import { ... } from "../../src/server.js"`（静态）在模块加载时（早于 `before()` 的 `process.env.HOME = tempDir`）就执行了 `src/config.ts` 的 `export const DATA_DIR = process.env.CMSPARK_DATA_DIR || os.homedir()/.cmspark-agent` → DATA_DIR 锁死到**开发者真实 home** → 测试读真实 config（如开了 `auto_approve_dangerous`）→ 确认被自动批准 → 等不到确认请求。
@@ -542,6 +558,13 @@
 - 教训：JS 单线程下，**全同步**的 read-modify-write 天然原子，不存在交错竞态——只有 caller「读 → await → 用陈旧快照写」才有竞态。审计/评审提"竞态"时先确认是否有 await 间隙，别为不存在的竞态加锁（cargo-cult）。kimi 终审也独立验证了所有 caller无 await 间隙，确认非 bug。
 
 ## Architecture Decisions
+
+### 运行时上下文分层：M1 · H1 · cold recall（2026-08-07）
+- **M1**：turn-safe head-drop + omit notice；磁盘全文保留
+- **H1**（增强 M2）：结构化工作记忆 goals/decisions/constraints/open_todos/artifacts；注入 `[context_handoff]`；失败 → M2 散文 → M1
+- **Cold**：`thread_recall` 按需搜本 thread 全历史（非 embedding、非跨 thread）
+- **三系统仍分**：Runtime budget ≠ Digest ≠ Export
+- **SoT**：`docs/superpowers/specs/2026-08-07-context-memory-thinking-knowledge-adversarial-analysis.md`
 
 ### Trust IA + 运行自主度（2026-08-02）→ **#106 main**
 - 协议解锁 + 运行自主度 dual-write 三 bool；否决 Scheme C（God 不扩 CU/shell）
