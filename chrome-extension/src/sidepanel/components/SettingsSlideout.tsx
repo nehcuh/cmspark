@@ -1,6 +1,6 @@
 // Settings slideout panel for LLM configuration + NetSec (migrated from 场景 panel)
 
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import { useAgentStore } from "../store/agentStore"
 import { Modal } from "./ui/Modal"
 import { tokens } from "../ui/tokens"
@@ -44,6 +44,31 @@ import {
   tierShortLabel,
   trustStatusChip,
 } from "./autopilot-tier"
+// Path B M0: pure copy + recommended model id for local STT settings progressive disclosure.
+import {
+  BTN_CANCEL,
+  BTN_DELETE,
+  BTN_DOWNLOAD,
+  BTN_ENABLE_LOCAL,
+  BTN_LOCAL_ENABLED,
+  BTN_SET_ACTIVE,
+  BTN_SWITCH_BROWSER,
+  ENGINE_BROWSER_HINT,
+  ENGINE_BROWSER_LABEL,
+  ENGINE_LOCAL_HINT,
+  ENGINE_LOCAL_LABEL,
+  ENGINE_SECTION_LABEL,
+  OTHER_MODELS_TOGGLE,
+  OTHER_WHISPER_MODEL_IDS,
+  RECOMMENDED_ROW_PREFIX,
+  RECOMMENDED_WHISPER_MODEL_ID,
+  binaryStatusLine,
+  formatDiskUsage,
+  modelStatusLabel,
+  privacyCopyForEngine,
+  progressPercent,
+  type WhisperSettingsModelId,
+} from "../voice/whisper-settings-copy"
 
 // P1-1 / PR-B: typed-confirmation phrase for arming dangerous security flags.
 // Lock-step with companion/src/security-arm.ts SECURITY_ARM_CONFIRM_PHRASE —
@@ -95,6 +120,9 @@ export function SettingsSlideout() {
   const [unattendedIncludeProtocol, setUnattendedIncludeProtocol] = useState(false)
   // WP5-I4 实验区:删除模型两步确认按钮的待命态(非 store——纯组件内 UI 态)。
   const [modelDeleteArmed, setModelDeleteArmed] = useState(false)
+  // Path B M0: engine radio is UI draft until ready model + explicit "启用本机转写".
+  const [engineDraft, setEngineDraft] = useState<"browser" | "local">("browser")
+  const [otherWhisperOpen, setOtherWhisperOpen] = useState(false)
   // W1 accordion: user open preferences (force rules applied in isSectionOpen).
   const [userOpenSections, setUserOpenSections] = useState<Set<SettingsSectionId>>(() => {
     try {
@@ -185,6 +213,23 @@ export function SettingsSlideout() {
       }
     })
   }, [state.settingsOpen])
+
+  // Path B M0: sync engine draft from companion SoT when state arrives.
+  // - sttEngine local → pull draft to local (committed)
+  // - companion local→browser (delete active / set_engine) → reset draft browser
+  // - selecting local radio alone never writes set_engine (draft until enable)
+  // - do not clobber local draft while companion still reports browser
+  const prevVoiceEngineRef = useRef<"browser" | "local" | null>(null)
+  useEffect(() => {
+    const eng = state.voiceModel?.sttEngine
+    if (!eng) return
+    if (eng === "local") {
+      setEngineDraft("local")
+    } else if (prevVoiceEngineRef.current === "local" && eng === "browser") {
+      setEngineDraft("browser")
+    }
+    prevVoiceEngineRef.current = eng
+  }, [state.voiceModel?.sttEngine])
 
   // Auto-expand advanced gates when any arm flag is on (user can still collapse).
   // Parent「安全与信任」is force-opened via isSectionEffectivelyOpen (F-S1).
@@ -934,11 +979,332 @@ export function SettingsSlideout() {
               />
               在输入框显示麦克风（听写进草稿，不自动发送）
             </label>
-            <p style={{ fontSize: 11, color: "#888", margin: "6px 0 0", lineHeight: 1.45 }}>
-              可选麦克风：浏览器将语音转成文字后填入输入框，默认不自动发送。转写可能使用 Chrome
-              语音服务（音频可能经网络发送至浏览器厂商），不经过 CMspark Companion。发送后的文字与键入相同，仍受现有确认与信任设置约束。
-              若当前浏览器不支持网页语音识别，请使用系统听写。
-            </p>
+
+            {/* Path B M0: 听写方式 progressive disclosure (UI draft until ready + enable) */}
+            {(() => {
+              const voiceModel = state.voiceModel
+              const progress = state.voiceModelProgress
+              const committedLocal = voiceModel?.sttEngine === "local"
+              const showLocalPanel = engineDraft === "local"
+              const sendVoice = (msg: Record<string, unknown>) =>
+                chrome.runtime.sendMessage({ ...msg, source: "settings" })
+              const clearVoiceErr = () =>
+                dispatch({ type: "SET_VOICE_MODEL_ERROR", error: null })
+              const recommendedId = RECOMMENDED_WHISPER_MODEL_ID
+              const activeId = voiceModel?.localModelId || recommendedId
+              const recEntry = voiceModel?.models?.[recommendedId]
+              const recReady = recEntry?.status === "ready"
+              const activeReady = voiceModel?.models?.[activeId]?.status === "ready"
+              const canEnableLocal = recReady || activeReady
+              const privacyEngine: "browser" | "local" =
+                engineDraft === "local" || committedLocal ? "local" : "browser"
+
+              const renderModelRow = (modelId: WhisperSettingsModelId, isRecommended: boolean) => {
+                const entry = voiceModel?.models?.[modelId]
+                const status = entry?.status || "absent"
+                const downloading =
+                  status === "downloading" ||
+                  (progress?.modelId === modelId && status !== "ready")
+                const pct =
+                  downloading && progress?.modelId === modelId
+                    ? progressPercent(progress.receivedBytes, progress.totalBytes)
+                    : null
+                const isActive = committedLocal && activeId === modelId
+                return (
+                  <div
+                    key={modelId}
+                    style={{
+                      marginTop: isRecommended ? 8 : 6,
+                      padding: "8px 8px 6px",
+                      borderRadius: 6,
+                      border: "1px solid #eee",
+                      background: isRecommended ? "#fafafa" : "#fff",
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        flexWrap: "wrap" as const,
+                        alignItems: "center",
+                        gap: 6,
+                        fontSize: 12,
+                      }}
+                    >
+                      <span style={{ fontWeight: isRecommended ? 600 : 500, color: "#333" }}>
+                        {isRecommended ? `${RECOMMENDED_ROW_PREFIX}: ${modelId}` : modelId}
+                        {isActive ? " · 活动" : ""}
+                      </span>
+                      <span style={{ color: "#888", fontSize: 11 }}>
+                        {modelStatusLabel(status)}
+                        {typeof entry?.bytesOnDisk === "number" && entry.bytesOnDisk > 0
+                          ? ` · ${(entry.bytesOnDisk / (1024 * 1024)).toFixed(0)} MB`
+                          : ""}
+                      </span>
+                      <span style={{ flex: 1 }} />
+                      {downloading ? (
+                        <button
+                          type="button"
+                          style={styles.secondaryBtn}
+                          onClick={() => {
+                            clearVoiceErr()
+                            sendVoice({ type: "voice.model.cancel", modelId })
+                          }}
+                        >
+                          {BTN_CANCEL}
+                        </button>
+                      ) : status === "ready" ? (
+                        <>
+                          {!isActive && (
+                            <button
+                              type="button"
+                              style={styles.secondaryBtn}
+                              onClick={() => {
+                                clearVoiceErr()
+                                sendVoice({ type: "voice.model.set_active", modelId })
+                              }}
+                            >
+                              {BTN_SET_ACTIVE}
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            style={styles.secondaryBtn}
+                            onClick={() => {
+                              clearVoiceErr()
+                              sendVoice({ type: "voice.model.delete", modelId })
+                            }}
+                          >
+                            {BTN_DELETE}
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          style={styles.secondaryBtn}
+                          onClick={() => {
+                            clearVoiceErr()
+                            sendVoice({ type: "voice.model.download", modelId })
+                          }}
+                        >
+                          {BTN_DOWNLOAD}
+                        </button>
+                      )}
+                    </div>
+                    {pct !== null && (
+                      <div style={{ marginTop: 6 }}>
+                        <div
+                          style={{
+                            height: 6,
+                            borderRadius: 3,
+                            background: "#eee",
+                            overflow: "hidden",
+                          }}
+                        >
+                          <div
+                            style={{
+                              height: "100%",
+                              width: `${pct}%`,
+                              background: tokens.accent,
+                              transition: "width 0.2s ease",
+                            }}
+                          />
+                        </div>
+                        <div style={{ fontSize: 10, color: "#888", marginTop: 2 }}>
+                          {progress?.file ? `${progress.file} · ` : ""}
+                          {pct}%
+                        </div>
+                      </div>
+                    )}
+                    {entry?.error && (
+                      <div style={{ fontSize: 11, color: tokens.danger, marginTop: 4 }}>
+                        {entry.error}
+                      </div>
+                    )}
+                  </div>
+                )
+              }
+
+              return (
+                <>
+                  <div style={{ marginTop: 12 }}>
+                    <div style={{ ...styles.label, marginBottom: 6 }}>{ENGINE_SECTION_LABEL}</div>
+                    <label
+                      style={{
+                        display: "flex",
+                        alignItems: "flex-start",
+                        gap: 8,
+                        cursor: "pointer",
+                        fontSize: 13,
+                        marginBottom: 6,
+                      }}
+                    >
+                      <input
+                        type="radio"
+                        name="voice-stt-engine"
+                        checked={engineDraft === "browser"}
+                        onChange={() => {
+                          setEngineDraft("browser")
+                          if (committedLocal) {
+                            clearVoiceErr()
+                            sendVoice({ type: "voice.model.set_engine", engine: "browser" })
+                          }
+                        }}
+                        style={{ marginTop: 2 }}
+                      />
+                      <span>
+                        <span style={{ fontWeight: 500 }}>{ENGINE_BROWSER_LABEL}</span>
+                        <span style={{ color: "#888", fontSize: 12 }}> — {ENGINE_BROWSER_HINT}</span>
+                      </span>
+                    </label>
+                    <label
+                      style={{
+                        display: "flex",
+                        alignItems: "flex-start",
+                        gap: 8,
+                        cursor: "pointer",
+                        fontSize: 13,
+                      }}
+                    >
+                      <input
+                        type="radio"
+                        name="voice-stt-engine"
+                        checked={engineDraft === "local"}
+                        onChange={() => {
+                          // Draft only — never set_engine until ready + explicit enable.
+                          setEngineDraft("local")
+                        }}
+                        style={{ marginTop: 2 }}
+                      />
+                      <span>
+                        <span style={{ fontWeight: 500 }}>{ENGINE_LOCAL_LABEL}</span>
+                        <span style={{ color: "#888", fontSize: 12 }}> — {ENGINE_LOCAL_HINT}</span>
+                      </span>
+                    </label>
+                  </div>
+
+                  {showLocalPanel && (
+                    <div
+                      style={{
+                        marginTop: 10,
+                        padding: "10px 10px 8px",
+                        borderRadius: 8,
+                        border: "1px solid #e8e8e8",
+                        background: "#fcfcfc",
+                      }}
+                    >
+                      {voiceModel === null && (
+                        <div style={{ ...styles.helpText, marginTop: 0 }}>
+                          正在查询本机模型状态…
+                        </div>
+                      )}
+
+                      {renderModelRow(recommendedId, true)}
+
+                      <button
+                        type="button"
+                        style={{
+                          marginTop: 8,
+                          fontSize: 12,
+                          border: "none",
+                          background: "transparent",
+                          color: "#555",
+                          cursor: "pointer",
+                          padding: 0,
+                        }}
+                        onClick={() => setOtherWhisperOpen((o) => !o)}
+                      >
+                        {OTHER_MODELS_TOGGLE} {otherWhisperOpen ? "▾" : "▸"}
+                      </button>
+                      {otherWhisperOpen &&
+                        OTHER_WHISPER_MODEL_IDS.map((id) =>
+                          renderModelRow(id as WhisperSettingsModelId, false),
+                        )}
+
+                      {voiceModel && (
+                        <>
+                          <div style={{ ...styles.helpText, marginTop: 8 }}>
+                            {formatDiskUsage(voiceModel.diskUsedMB, voiceModel.diskBudgetMB)}
+                          </div>
+                          <div style={{ ...styles.helpText, marginTop: 2 }}>
+                            {binaryStatusLine(voiceModel.binary)}
+                          </div>
+                        </>
+                      )}
+
+                      <div style={{ marginTop: 10, display: "flex", flexWrap: "wrap" as const, gap: 8, alignItems: "center" }}>
+                        {committedLocal ? (
+                          <>
+                            <span
+                              style={{
+                                fontSize: 12,
+                                fontWeight: 600,
+                                color: (tokens.success as string) || "#2e7d32",
+                              }}
+                            >
+                              {BTN_LOCAL_ENABLED}
+                              {activeId ? `（${activeId}）` : ""}
+                            </span>
+                            <button
+                              type="button"
+                              style={styles.secondaryBtn}
+                              onClick={() => {
+                                clearVoiceErr()
+                                setEngineDraft("browser")
+                                sendVoice({ type: "voice.model.set_engine", engine: "browser" })
+                              }}
+                            >
+                              {BTN_SWITCH_BROWSER}
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            type="button"
+                            style={{
+                              ...styles.secondaryBtn,
+                              ...(canEnableLocal
+                                ? {
+                                    background: tokens.accent,
+                                    color: "#fff",
+                                    borderColor: tokens.accent as string,
+                                  }
+                                : {}),
+                            }}
+                            disabled={!canEnableLocal}
+                            title={
+                              canEnableLocal
+                                ? "将听写引擎切换为本机 Whisper（需已下载就绪模型）"
+                                : "请先下载推荐模型 medium（或任一就绪型号）后再启用"
+                            }
+                            onClick={() => {
+                              clearVoiceErr()
+                              sendVoice({ type: "voice.model.set_engine", engine: "local" })
+                            }}
+                          >
+                            {BTN_ENABLE_LOCAL}
+                          </button>
+                        )}
+                      </div>
+                      {!committedLocal && !canEnableLocal && voiceModel && (
+                        <div style={{ ...styles.helpText, marginTop: 4, color: "#B26B00" }}>
+                          请先下载推荐型号 medium（或就绪后启用）。选择「本机转写」仅为预览，不会立刻切换引擎。
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  <p style={{ fontSize: 11, color: "#888", margin: "8px 0 0", lineHeight: 1.45 }}>
+                    {privacyCopyForEngine(privacyEngine)}
+                  </p>
+
+                  {state.voiceModelError && (
+                    <div style={{ ...styles.helpText, color: tokens.danger, marginTop: 4 }}>
+                      {state.voiceModelError}
+                    </div>
+                  )}
+                </>
+              )
+            })()}
+
             {state.voicePrivacyAckV1 && (
               <button
                 type="button"

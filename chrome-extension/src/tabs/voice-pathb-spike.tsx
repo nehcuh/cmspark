@@ -49,7 +49,7 @@ export default function VoicePathbSpikePage() {
 
   const startRecord = async (maxMs: number) => {
     if (!media.ok) {
-      log(`detect fail: ${media.reason}`)
+      log(`detect fail: ${media.ok === false ? media.reason : "unknown"}`)
       return
     }
     stopAll()
