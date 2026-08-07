@@ -81,6 +81,48 @@ export function mapSpeechError(code: string, opts?: MapSpeechErrorOpts): VoiceUs
   }
 }
 
+/**
+ * Path B local STT error → user-facing zh copy (SoT §6.5).
+ * severity banner = show under composer; silent = no UI toast (user/system abort).
+ */
+export type LocalSttUserFacing = {
+  message: string
+  severity: "banner" | "silent"
+}
+
+/** Map Companion / local-adapter error codes for engine=local. */
+export function mapLocalSttError(code: string): LocalSttUserFacing {
+  const c = (code || "").toLowerCase()
+  switch (c) {
+    case "empty_result":
+      return { severity: "banner", message: "未识别到内容，请重试" }
+    case "model_missing":
+      return { severity: "banner", message: "本机模型未就绪，请先在设置下载" }
+    case "binary_missing":
+      return { severity: "banner", message: "本机听写组件不可用，请更新 Companion" }
+    case "hash_fail":
+      return { severity: "banner", message: "本机听写组件校验失败，请重装 Companion" }
+    case "companion_disconnected":
+      return { severity: "banner", message: "Companion 未连接，本机转写不可用" }
+    case "session_busy":
+      return { severity: "banner", message: "正在识别，请稍候或取消" }
+    case "payload_too_large":
+      return { severity: "banner", message: "录音过长或数据异常" }
+    case "infer_timeout":
+      return { severity: "banner", message: "识别超时，请缩短后重试" }
+    case "resource_conflict":
+    case "oom":
+      return { severity: "banner", message: "本机资源不足（可关闭实验模型后重试）" }
+    case "aborted":
+      return { severity: "silent", message: "" }
+    default:
+      return {
+        severity: "banner",
+        message: code ? `本机转写错误：${code}` : "本机转写失败",
+      }
+  }
+}
+
 /** Hide vs disable decision for mic chrome (SoT §7.2 subset). */
 export type MicChrome =
   | { show: false; reason: "disabled_setting" | "unsupported" | "non_tier1" }

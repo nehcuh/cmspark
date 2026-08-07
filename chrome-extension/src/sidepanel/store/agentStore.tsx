@@ -33,6 +33,11 @@ export interface AgentState {
   voiceInputEnabled: boolean
   voicePrivacyAckV1: boolean
   /**
+   * Path B local STT privacy ack (chrome.storage.local `voice_privacy_ack_v2`).
+   * v1 does not satisfy local engine; required before voice.stt.start.
+   */
+  voicePrivacyAckV2: boolean
+  /**
    * Wave D: how to show model thinking blocks.
    * auto_live = expand while streaming, collapse when done (default).
    */
@@ -185,6 +190,7 @@ export type AgentAction =
   | { type: "SET_EXPORT_INCLUDE_REASONING"; enabled: boolean }
   | { type: "SET_VOICE_INPUT_ENABLED"; enabled: boolean }
   | { type: "SET_VOICE_PRIVACY_ACK_V1"; ack: boolean }
+  | { type: "SET_VOICE_PRIVACY_ACK_V2"; ack: boolean }
   | { type: "ADD_SECURITY_CONFIRMATION"; request: SecurityConfirmationRequest }
   | { type: "REMOVE_SECURITY_CONFIRMATION"; confirmationId: string }
   | { type: "ADD_LOG"; entry: LogEntry }
@@ -306,6 +312,7 @@ export const initialState: AgentState = {
   showReasoningMode: "auto_live",
   exportIncludeReasoning: false,
   voicePrivacyAckV1: false,
+  voicePrivacyAckV2: false,
   pendingSecurityConfirmations: [],
   logs: [],
   autoSkillNames: "",
@@ -640,6 +647,9 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
     case "SET_VOICE_PRIVACY_ACK_V1":
       chrome.storage.local.set({ voice_privacy_ack_v1: action.ack })
       return { ...state, voicePrivacyAckV1: action.ack }
+    case "SET_VOICE_PRIVACY_ACK_V2":
+      chrome.storage.local.set({ voice_privacy_ack_v2: action.ack })
+      return { ...state, voicePrivacyAckV2: action.ack }
     case "ADD_SECURITY_CONFIRMATION":
       return {
         ...state,

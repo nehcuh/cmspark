@@ -224,6 +224,7 @@ export function useWebSocket() {
         "sendShortcut",
         "voiceInputEnabled",
         "voice_privacy_ack_v1",
+        "voice_privacy_ack_v2",
         "cmspark.ui.show_reasoning",
         "cmspark.ui.export_include_reasoning",
       ],
@@ -246,6 +247,9 @@ export function useWebSocket() {
         }
         if (result.voice_privacy_ack_v1 === true) {
           dispatch({ type: "SET_VOICE_PRIVACY_ACK_V1", ack: true })
+        }
+        if (result.voice_privacy_ack_v2 === true) {
+          dispatch({ type: "SET_VOICE_PRIVACY_ACK_V2", ack: true })
         }
       },
     )
