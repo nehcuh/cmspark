@@ -11,6 +11,13 @@ import {
   type VoiceSessionState,
 } from "./types"
 
+/** Side Panel / MV3 always has navigator; keep pure-friendly for unit tests. */
+function mapVoiceError(code: string) {
+  return mapSpeechError(code, {
+    userAgent: typeof navigator !== "undefined" ? navigator.userAgent : undefined,
+  })
+}
+
 function resetToIdle(
   s: VoiceSessionState,
   patch: Partial<VoiceSessionState> = {},
@@ -152,7 +159,7 @@ export function reduceVoiceSession(
     }
 
     case "ENGINE_ERROR": {
-      const mapped = mapSpeechError(event.code)
+      const mapped = mapVoiceError(event.code)
       if (event.code === "aborted" || mapped.severity === "silent") {
         return {
           ...state,
@@ -201,7 +208,7 @@ export function reduceVoiceSession(
         state.errorCode !== "empty" &&
         state.errorCode !== "timeout"
       ) {
-        const mapped = mapSpeechError(state.errorCode)
+        const mapped = mapVoiceError(state.errorCode)
         return resetToIdle(state, {
           banner: mapped.message || state.banner,
           errorCode: state.errorCode,
@@ -213,13 +220,11 @@ export function reduceVoiceSession(
       }
 
       if (isEmptyFinals(state.finals) || state.errorCode === "no-speech") {
-        const emptyMsg = mapSpeechError(
+        const emptyMsg = mapVoiceError(
           state.errorCode === "no-speech" ? "no-speech" : "empty",
         ).message
         const timeoutBanner =
-          state.abortReason === "timeout"
-            ? mapSpeechError("timeout").message
-            : null
+          state.abortReason === "timeout" ? mapVoiceError("timeout").message : null
         return resetToIdle(state, {
           banner: timeoutBanner || emptyMsg,
           baseText: state.baseText,
@@ -229,7 +234,7 @@ export function reduceVoiceSession(
       }
 
       const timeoutBanner =
-        state.abortReason === "timeout" ? mapSpeechError("timeout").message : null
+        state.abortReason === "timeout" ? mapVoiceError("timeout").message : null
 
       return resetToIdle(state, {
         baseText: state.baseText,

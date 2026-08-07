@@ -9,6 +9,7 @@ import {
   estimateMessagesTokens,
   isOmitNotice,
   redactMessagesForCompaction,
+  retainMidLoopRollingSummary,
   serializeMessage,
 } from "../src/llm/context-budget"
 import { shouldRunM2 } from "../src/llm/context-budget-m2"
@@ -193,6 +194,73 @@ test("S51 P0: mid_loop recompact re-attaches prior rolling summary (two-pass)", 
   assert.match(String(notice!.content), /\[context_summary\]/)
   assert.match(String(notice!.content), /did X/)
   assert.equal(reattached.filter(isOmitNotice).length, 1)
+})
+
+test("S52 N3: retainMidLoopRollingSummary orchestrates mid_loop keep+reattach", () => {
+  const long = "x".repeat(400)
+  const msgs: CanonicalChatMessage[] = [
+    system("sys"),
+    user(`old ${long}`),
+    assistant(`a ${long}`),
+    user(`old2 ${long}`),
+    assistant(`a2 ${long}`),
+    user("latest"),
+  ]
+  const tiny = 120
+  const mid = compactMessagesTurnSafe(msgs, tiny)
+  assert.equal(mid.compacted, true)
+  // After M1 compact the request has plain omit, no summary text
+  assert.ok(mid.messages.some(isOmitNotice))
+  assert.doesNotMatch(String(mid.messages.find(isOmitNotice)!.content), /context_summary/)
+
+  const retained = retainMidLoopRollingSummary({
+    phase: "mid_loop",
+    mode: "m1",
+    messages: mid.messages,
+    droppedCount: mid.droppedCount,
+    // no rollingSummary this pass — prior lives in prevMeta only
+    prevMeta: {
+      rolling_summary: "did X; open tabs; pending Y",
+      summary_sha256: "abc123",
+      summary_bytes: 28,
+    },
+  })
+  assert.equal(retained.reattached, true)
+  assert.equal(retained.mode, "m2")
+  assert.equal(retained.rollingSummary, "did X; open tabs; pending Y")
+  assert.equal(retained.summarySha, "abc123")
+  assert.match(String(retained.messages.find(isOmitNotice)!.content), /\[context_summary\]/)
+  assert.match(String(retained.messages.find(isOmitNotice)!.content), /did X/)
+  assert.equal(retained.messages.filter(isOmitNotice).length, 1)
+  // Meta dual-truth fields for adapter write
+  assert.equal(retained.keepSummary, "did X; open tabs; pending Y")
+  assert.equal(retained.keepSha, "abc123")
+})
+
+test("S52 N3: retainMidLoopRollingSummary no-ops on pre_loop / already m2", () => {
+  const base = [system("s"), buildOmitNotice(2), user("u")]
+  const pre = retainMidLoopRollingSummary({
+    phase: "pre_loop",
+    mode: "m1",
+    messages: base,
+    droppedCount: 2,
+    prevMeta: { rolling_summary: "should not reattach on pre_loop" },
+  })
+  assert.equal(pre.reattached, false)
+  assert.equal(pre.mode, "m1")
+  assert.doesNotMatch(String(pre.messages.find(isOmitNotice)!.content), /should not reattach/)
+
+  const already = retainMidLoopRollingSummary({
+    phase: "mid_loop",
+    mode: "m2",
+    messages: attachRollingSummaryToMessages(base, 2, "fresh this pass"),
+    droppedCount: 2,
+    rollingSummary: "fresh this pass",
+    prevMeta: { rolling_summary: "older" },
+  })
+  assert.equal(already.reattached, false)
+  assert.equal(already.mode, "m2")
+  assert.match(String(already.messages.find(isOmitNotice)!.content), /fresh this pass/)
 })
 
 test("shouldRunM2 gates (tuned strategy)", () => {

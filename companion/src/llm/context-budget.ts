@@ -342,3 +342,98 @@ export function attachRollingSummaryToMessages(
   out.splice(insertAt, 0, notice)
   return out
 }
+
+/**
+ * S51 P0 / S52 N2–N3: pure mid_loop retain of a prior pre_loop M2 summary.
+ *
+ * When mid_loop only runs M1 omit (`shouldRunM2` is false for mid_loop), keep the
+ * previous rolling summary on the **LLM request path** (not only UI meta).
+ *
+ * **Mode honesty (N7):** resulting `mode === "m2"` means “request carries a
+ * rolling summary notice”, not “a fresh summary was generated this mid_loop pass”.
+ * Content is the prior pre_loop text; newly dropped mid_loop tool mass is not re-summarized.
+ */
+export type MidLoopRetainInput = {
+  phase: "pre_loop" | "mid_loop"
+  /** Compact outcome mode before retain (`m1` after plain omit, `m2` if M2 just ran). */
+  mode: "m1" | "m2"
+  messages: CanonicalChatMessage[]
+  droppedCount: number
+  /** Summary produced this pass (usually empty on mid_loop). */
+  rollingSummary?: string
+  summarySha?: string
+  summaryBytes?: number
+  /** Prior thread meta from pre_loop M2 (UI + request dual-truth source). */
+  prevMeta?: {
+    rolling_summary?: string
+    summary_sha256?: string
+    summary_bytes?: number
+  } | null
+}
+
+export type MidLoopRetainResult = {
+  messages: CanonicalChatMessage[]
+  mode: "m1" | "m2"
+  rollingSummary?: string
+  summarySha: string
+  summaryBytes: number
+  /** Preferred summary for meta write / UI modal. */
+  keepSummary?: string
+  keepSha?: string
+  keepBytes?: number
+  /** True when this call re-attached a prior summary into the request. */
+  reattached: boolean
+}
+
+export function retainMidLoopRollingSummary(input: MidLoopRetainInput): MidLoopRetainResult {
+  const {
+    phase,
+    mode: modeIn,
+    messages: messagesIn,
+    droppedCount,
+    rollingSummary: rollingIn,
+    summarySha: shaIn = "",
+    summaryBytes: bytesIn = 0,
+    prevMeta,
+  } = input
+
+  const keepSummary =
+    rollingIn ||
+    (phase === "mid_loop" && !rollingIn ? prevMeta?.rolling_summary : undefined)
+  const keepSha =
+    shaIn || (phase === "mid_loop" && !shaIn ? prevMeta?.summary_sha256 : undefined)
+  const keepBytes =
+    bytesIn || (phase === "mid_loop" && !bytesIn ? prevMeta?.summary_bytes : undefined)
+
+  let messages = messagesIn
+  let mode: "m1" | "m2" = modeIn
+  let rollingSummary = rollingIn
+  let summarySha = shaIn
+  let summaryBytes = bytesIn
+  let reattached = false
+
+  // Re-attach prior M2 summary into request when mid_loop only ran M1 omit.
+  // Must run independent of meta persistence (S52 N2 — do not nest under meta try).
+  if (phase === "mid_loop" && keepSummary && mode === "m1") {
+    messages = attachRollingSummaryToMessages(messages, droppedCount, keepSummary)
+    mode = "m2"
+    rollingSummary = keepSummary
+    if (keepSha) summarySha = keepSha
+    if (typeof keepBytes === "number" && keepBytes > 0) summaryBytes = keepBytes
+    reattached = true
+  } else if (keepSummary && !rollingSummary) {
+    rollingSummary = keepSummary
+  }
+
+  return {
+    messages,
+    mode,
+    rollingSummary,
+    summarySha,
+    summaryBytes,
+    keepSummary,
+    keepSha,
+    keepBytes: typeof keepBytes === "number" ? keepBytes : undefined,
+    reattached,
+  }
+}

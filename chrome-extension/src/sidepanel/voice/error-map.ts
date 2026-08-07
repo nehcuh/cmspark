@@ -1,6 +1,6 @@
 /**
  * Web Speech error → user-facing zh copy (SoT §6.6).
- * Pure; no DOM.
+ * Pure; no DOM. Optional userAgent for OS-specific mic privacy path (S52 N6).
  */
 
 export type VoiceUserFacing = {
@@ -11,19 +11,36 @@ export type VoiceUserFacing = {
 }
 
 /**
+ * OS-aware mic privacy settings hint (shared with voice-permission tab).
+ * Pure: pass userAgent string; no navigator access inside.
+ */
+export function osMicPrivacyHint(userAgent?: string): string {
+  const ua = userAgent || ""
+  if (/Windows/i.test(ua)) return "Windows「设置 → 隐私和安全性 → 麦克风」"
+  if (/Mac|iPhone|iPad|iPod/i.test(ua)) return "macOS「系统设置 → 隐私与安全性 → 麦克风」"
+  return "系统麦克风隐私设置"
+}
+
+export type MapSpeechErrorOpts = {
+  /** navigator.userAgent (or test double) for OS-specific not-allowed copy */
+  userAgent?: string
+}
+
+/**
  * Map SpeechRecognitionErrorEvent.error codes (+ synthetic codes we invent).
  * https://developer.mozilla.org/en-US/docs/Web/API/SpeechRecognitionErrorEvent/error
  */
-export function mapSpeechError(code: string): VoiceUserFacing {
+export function mapSpeechError(code: string, opts?: MapSpeechErrorOpts): VoiceUserFacing {
   const c = (code || "").toLowerCase()
   switch (c) {
     case "not-allowed":
-    case "service-not-allowed":
+    case "service-not-allowed": {
+      const osHint = osMicPrivacyHint(opts?.userAgent)
       return {
         severity: "error",
-        message:
-          "无法使用麦克风：请在 Chrome 站点设置与系统隐私中允许本扩展 / Chrome",
+        message: `无法使用麦克风：请在 Chrome 站点设置与 ${osHint} 中允许本扩展 / Chrome`,
       }
+    }
     case "no-speech":
       return { severity: "info", message: "未识别到内容" }
     case "network":

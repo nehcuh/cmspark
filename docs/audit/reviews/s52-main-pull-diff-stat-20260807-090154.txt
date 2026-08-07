@@ -1,0 +1,15 @@
+ AGENTS.md                                      |   4 +-
+ Makefile                                       |   4 +-
+ chrome-extension/src/tabs/voice-permission.tsx |  10 +-
+ companion/src/llm/adapter.ts                   |  27 +++-
+ companion/src/message-router.ts                |  30 +++-
+ companion/src/packs/pack-engine.ts             |  73 ++++++++-
+ companion/tests/context-budget.test.ts         |  44 ++++++
+ companion/tests/packs-engine.test.ts           | 206 ++++++++++++++++++++++++-
+ scripts/build-windows-exe.ps1                  |  29 +++-
+ scripts/create-dmg.sh                          |   9 +-
+ scripts/installer.nsi                          |  16 +-
+ scripts/macos/Info.plist                       |   5 +-
+ scripts/package.sh                             |   6 +
+ scripts/tests/test-package-gates.sh            |  18 +++
+ 14 files changed, 443 insertions(+), 38 deletions(-)
