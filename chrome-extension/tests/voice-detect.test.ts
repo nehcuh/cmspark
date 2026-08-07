@@ -9,7 +9,11 @@ import {
   VOICE_DEFAULT_LANG,
   VOICE_MAX_LISTEN_MS,
 } from "../src/sidepanel/voice/detect"
-import { mapSpeechError, resolveMicChrome } from "../src/sidepanel/voice/error-map"
+import {
+  mapSpeechError,
+  osMicPrivacyHint,
+  resolveMicChrome,
+} from "../src/sidepanel/voice/error-map"
 
 test("detectSpeechRecognition: missing", () => {
   const d = detectSpeechRecognition({})
@@ -63,6 +67,26 @@ test("mapSpeechError §6.6", () => {
   assert.equal(mapSpeechError("aborted").severity, "silent")
   assert.match(mapSpeechError("timeout").message, /上限/)
   assert.equal(mapSpeechError("empty").message, "未识别到内容")
+})
+
+test("S52 N6: mapSpeechError not-allowed is OS-aware", () => {
+  assert.match(
+    mapSpeechError("not-allowed", { userAgent: "Mozilla/5.0 (Windows NT 10.0)" }).message,
+    /Windows「设置 → 隐私和安全性 → 麦克风」/,
+  )
+  assert.match(
+    mapSpeechError("not-allowed", {
+      userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
+    }).message,
+    /macOS「系统设置 → 隐私与安全性 → 麦克风」/,
+  )
+  assert.match(
+    mapSpeechError("not-allowed", { userAgent: "Mozilla/5.0 (X11; Linux x86_64)" }).message,
+    /系统麦克风隐私设置/,
+  )
+  assert.equal(osMicPrivacyHint("Windows NT 10.0"), "Windows「设置 → 隐私和安全性 → 麦克风」")
+  // Windows checked before Mac (no dual-match false macOS on exotic UAs)
+  assert.match(osMicPrivacyHint("Windows"), /Windows/)
 })
 
 test("resolveMicChrome matrix", () => {

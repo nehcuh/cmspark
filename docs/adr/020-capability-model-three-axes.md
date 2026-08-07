@@ -74,7 +74,8 @@
 1. **新场景默认交付物** = Pack（+ 可选 1 skill 和/或 1 MCP server）。  
 2. Pack **禁止**写入 `auto_approve_dangerous` / god-mode 等全局放宽键。  
    **例外（2026-08-06 Trust B / S46 lifecycle）**：仅 `origin=user` 用户场景可在顶层 `trust` 块声明，且仅 `pack.apply` / `pack.save_user`+apply 在 **`user_gesture` + `allowTrust:true`** 时写入全局；`spawn_worker` / install 路径 **不得**抬升 Trust。  
-   **生命周期**：`unapply` / `uninstall` / 切换到无 trust 场景 / apply 失败路径必须 `restoreTrustSnapshot`；install 强制剥离 `origin:user`+`trust`（仅 `saveUserPack` 可持久化）。详见 [ADR-014](014-mission-pack-enterprise-modules.md) 修订注与 `docs/audit/reviews/multi-adversarial-review-20260806-main-s46.md`。  
+   **生命周期**：`unapply` / `uninstall` / 切换到无 trust 场景 / apply 失败路径必须 `restoreTrustSnapshot`；**thread soft-trash / hard-delete / cleanup_empty / trash-TTL cookie scrub** 必须经 `releaseTrustBeforeThreadGone`（restore 后 **clear** `mission_pack_trust_snapshot`；已 soft-trash 的硬删 clear-only 禁止二次 restore）。install 强制剥离 `origin:user`+`trust`（仅 `saveUserPack` 可持久化）。  
+   **软删残留（诚实）**：soft-trash 释放 Trust 巡航与 cookie，但 **不**自动 `unapply` Pack 配方（whitelist / skills / append 仍挂在 index 行）；从回收站恢复后场景条仍可显示「场景：…」且 Trust 需重新 `pack.apply`+`user_gesture` 才抬升。详见 [ADR-014](014-mission-pack-enterprise-modules.md) 修订注、S46/S51 multi-lane reviews。  
 3. 组合面可挂到 **任意** Surface（例：投研 ≈ L0 + 组合；AppSec 黑盒 ≈ L1 + Pack；桌面填单 ≈ L2 + skill）。
 
 #### Axis C — Autonomy（自主度）

@@ -54,11 +54,14 @@ export function SceneStatusBar() {
   return (
     <div style={styles.bar} data-testid="scene-status-bar" role="status">
       {packId ? (
-        <span style={styles.chip} title="本对话正在使用场景模板（会限制可用工具）">
+        <span
+          style={styles.chip}
+          title="本对话挂有场景配方（工具白名单等）。软删/恢复不会自动写回 Trust 巡航；抬升需在场景面板重新应用并确认。"
+        >
           <button type="button" style={styles.linkish} onClick={openScenes}>
             场景：{sceneDisplayName(packId)}
           </button>
-          <button type="button" style={styles.exitBtn} onClick={unapply} title="退出场景，回到通用助手">
+          <button type="button" style={styles.exitBtn} onClick={unapply} title="退出场景配方，回到通用助手">
             退出
           </button>
         </span>

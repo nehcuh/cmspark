@@ -148,9 +148,30 @@ assert_file_lacks "${PS1}" 'CMspark-v0\.2\.0' \
   "ps1 header must not advertise stale 0.2.0 artifact names"
 assert_file_has "${PS1}" '/DPRODUCT_VERSION=' \
   "ps1 injects PRODUCT_VERSION into NSIS"
+assert_file_has "${PS1}" 'CMSPARK_ALLOW_VERSION_DRIFT' \
+  "ps1 documents version-drift override for ext/companion lock-step"
+assert_file_has "${PS1}" 'chrome-extension version' \
+  "ps1 fail-closed on ext vs companion version mismatch (S52 N4)"
 NSIS="${ROOT}/scripts/installer.nsi"
 assert_file_has "${NSIS}" '!ifndef PRODUCT_VERSION' \
   "installer.nsi accepts /DPRODUCT_VERSION override"
+# S52 N4: NSIS fallback PRODUCT_VERSION must equal companion/package.json version
+COMP_VER="$(node -p "require('${ROOT}/companion/package.json').version" 2>/dev/null || true)"
+if [ -n "${COMP_VER}" ]; then
+  NSIS_FALLBACK="$(
+    grep -E '^\s*!define PRODUCT_VERSION "' "${NSIS}" | head -1 | sed -E 's/.*"([0-9]+\.[0-9]+\.[0-9]+)".*/\1/'
+  )"
+  assert_eq "${COMP_VER}" "${NSIS_FALLBACK}" \
+    "installer.nsi fallback PRODUCT_VERSION must match companion/package.json (${COMP_VER})"
+  EXT_VER="$(node -p "require('${ROOT}/chrome-extension/package.json').version" 2>/dev/null || true)"
+  if [ -n "${EXT_VER}" ]; then
+    assert_eq "${COMP_VER}" "${EXT_VER}" \
+      "chrome-extension package.json version must lock-step with companion (${COMP_VER})"
+  fi
+else
+  FAIL=$((FAIL + 1))
+  echo "  FAIL: could not read companion/package.json version" >&2
+fi
 
 # --- Dynamic negative: missing cmspark-host → exit 1 -------------------------
 echo "[dynamic] package.sh macos-arm64 with host deleted → exit 1"

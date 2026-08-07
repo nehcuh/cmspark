@@ -36,14 +36,6 @@ $PkgJson = Join-Path $CompanionDir "package.json"
 if (-not (Test-Path $PkgJson)) { Write-Error "missing $PkgJson"; exit 1 }
 $Version = (Get-Content $PkgJson -Raw | ConvertFrom-Json).version
 if (-not $Version) { Write-Error "companion/package.json has no version"; exit 1 }
-# Cross-check extension (MV3) stays aligned
-$ExtPkg = Join-Path $ChromeExtDir "package.json"
-if (Test-Path $ExtPkg) {
-    $ExtVer = (Get-Content $ExtPkg -Raw | ConvertFrom-Json).version
-    if ($ExtVer -and $ExtVer -ne $Version) {
-        Write-Warning "chrome-extension version ($ExtVer) != companion ($Version) — ship both at the same version"
-    }
-}
 
 function Step($n, $total, $msg) {
     Write-Host "[$n/$total] $msg" -ForegroundColor Yellow
@@ -52,6 +44,21 @@ function Step($n, $total, $msg) {
 function Ok($msg) { Write-Host "  > $msg" -ForegroundColor Green }
 function Warn($msg) { Write-Warning $msg }
 function Fail($msg) { Write-Error $msg; exit 1 }
+
+# Cross-check extension (MV3) stays aligned — fail-closed for release packaging (S52 N4).
+# Local override: $env:CMSPARK_ALLOW_VERSION_DRIFT=1 for intentional dev mismatch.
+$ExtPkg = Join-Path $ChromeExtDir "package.json"
+if (Test-Path $ExtPkg) {
+    $ExtVer = (Get-Content $ExtPkg -Raw | ConvertFrom-Json).version
+    if ($ExtVer -and $ExtVer -ne $Version) {
+        $msg = "chrome-extension version ($ExtVer) != companion ($Version) — ship both at the same version"
+        if ($env:CMSPARK_ALLOW_VERSION_DRIFT -eq "1") {
+            Write-Warning $msg
+        } else {
+            Fail $msg
+        }
+    }
+}
 
 Write-Host ""
 Write-Host "============================================" -ForegroundColor Cyan

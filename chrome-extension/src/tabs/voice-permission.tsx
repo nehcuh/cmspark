@@ -8,6 +8,7 @@ import {
   getSpeechRecognitionCtor,
   VOICE_DEFAULT_LANG,
 } from "../sidepanel/voice/detect"
+import { osMicPrivacyHint } from "../sidepanel/voice/error-map"
 
 export default function VoicePermissionPage() {
   const [status, setStatus] = useState<string>("准备请求麦克风权限…")
@@ -42,13 +43,7 @@ export default function VoicePermissionPage() {
         const code = ev?.error || "unknown"
         if (code === "not-allowed" || code === "service-not-allowed") {
           const ua = typeof navigator !== "undefined" ? navigator.userAgent || "" : ""
-          const isMac = /Mac|iPhone|iPad|iPod/i.test(ua)
-          const isWin = /Windows/i.test(ua)
-          const osHint = isWin
-            ? "Windows「设置 → 隐私和安全性 → 麦克风」"
-            : isMac
-              ? "macOS「系统设置 → 隐私与安全性 → 麦克风」"
-              : "系统麦克风隐私设置"
+          const osHint = osMicPrivacyHint(ua)
           setStatus(
             `权限被拒绝。请在 Chrome 站点设置与 ${osHint} 中允许 Google Chrome / 本扩展。`,
           )

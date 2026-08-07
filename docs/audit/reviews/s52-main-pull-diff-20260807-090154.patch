@@ -1,0 +1,761 @@
+diff --git a/AGENTS.md b/AGENTS.md
+index 5465b1e..6a8c64d 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -1,6 +1,6 @@
+ # CMspark Agent Configuration
+ 
+-> **Version**: 0.2.0
++> **Version**: 0.4.0 (keep in lock-step with companion/package.json)
+ > **Platform**: CMspark Browser Agent
+ 
+ ## Tool Environment
+@@ -62,4 +62,4 @@ When the user types `/dev-*`, run the corresponding workflow in `workflows/`.
+ - MCP meta tools (`mcp_list_resources`, `mcp_read_resource`, `mcp_get_prompt`) are exposed dynamically based on connected server capabilities — they are NOT in the static `getToolDefinitions()` list.
+ 
+ ---
+-*CMspark Agent v0.2.0*
++*CMspark Agent v0.4.0*
+diff --git a/Makefile b/Makefile
+index 32e7113..a81edb4 100644
+--- a/Makefile
++++ b/Makefile
+@@ -146,7 +146,9 @@ package-macos: build build-tray build-host
+ 	@echo "Done: dist-package/CMspark-v*-macOS.dmg"
+ 
+ # 打包 Windows x64（Node.js SEA 独立 exe + zip；可选 NSIS 安装包）
+-# 在 Windows 上直接双击 build-package.bat 也可完成相同任务
++# 版本号读 companion/package.json（与 package.sh / create-dmg 同源）
++# 产物: dist-package/CMspark-v{ver}-windows-x64.zip + 可选 CMspark-Setup-v{ver}.exe
++# 在 Windows 上双击 build-package.bat 也可完成相同任务
+ package-windows:
+ 	@powershell -ExecutionPolicy Bypass -File scripts/build-windows-exe.ps1
+ 
+diff --git a/chrome-extension/src/tabs/voice-permission.tsx b/chrome-extension/src/tabs/voice-permission.tsx
+index 89aaed2..16e9ce1 100644
+--- a/chrome-extension/src/tabs/voice-permission.tsx
++++ b/chrome-extension/src/tabs/voice-permission.tsx
+@@ -41,8 +41,16 @@ export default function VoicePermissionPage() {
+       rec.onerror = (ev: any) => {
+         const code = ev?.error || "unknown"
+         if (code === "not-allowed" || code === "service-not-allowed") {
++          const ua = typeof navigator !== "undefined" ? navigator.userAgent || "" : ""
++          const isMac = /Mac|iPhone|iPad|iPod/i.test(ua)
++          const isWin = /Windows/i.test(ua)
++          const osHint = isWin
++            ? "Windows「设置 → 隐私和安全性 → 麦克风」"
++            : isMac
++              ? "macOS「系统设置 → 隐私与安全性 → 麦克风」"
++              : "系统麦克风隐私设置"
+           setStatus(
+-            "权限被拒绝。请在 Chrome 站点设置与 macOS「系统设置 → 隐私与安全性 → 麦克风」中允许 Google Chrome / 本扩展。",
++            `权限被拒绝。请在 Chrome 站点设置与 ${osHint} 中允许 Google Chrome / 本扩展。`,
+           )
+         } else if (code === "no-speech" || code === "aborted") {
+           setStatus("已触发权限流程（未识别到语音也无妨）。可关闭本页回到 Side Panel。")
+diff --git a/companion/src/llm/adapter.ts b/companion/src/llm/adapter.ts
+index 6d07299..b68cb3c 100644
+--- a/companion/src/llm/adapter.ts
++++ b/companion/src/llm/adapter.ts
+@@ -554,7 +554,8 @@ ${hostUseRule12}${appIndexSection ? `\n\n${appIndexSection}` : ""}`
+     }
+ 
+     // Persist meta for「查看摘要」(thread index only — not digest/export).
+-    // Pi nit: mid_loop M1 must not wipe a prior pre_loop M2 rolling_summary.
++    // Pi nit + S51 P0: mid_loop M1 must not wipe a prior pre_loop M2 rolling_summary
++    // from meta **or** from the LLM request messages.
+     try {
+       const prevMeta = threadManager.get(threadId)?.runtime_context_budget
+       const keepSummary =
+@@ -566,7 +567,20 @@ ${hostUseRule12}${appIndexSection ? `\n\n${appIndexSection}` : ""}`
+       const keepBytes =
+         summaryBytes ||
+         (phase === "mid_loop" && !summaryBytes ? prevMeta?.summary_bytes : undefined)
+-      // mid_loop M1 must not wipe a prior pre_loop M2 rolling_summary (Pi nit).
++      // Re-attach prior M2 summary into request when mid_loop only ran M1 omit.
++      if (phase === "mid_loop" && keepSummary && mode === "m1") {
++        messages = attachRollingSummaryToMessages(
++          messages,
++          compact.droppedCount,
++          keepSummary,
++        )
++        mode = "m2"
++        rollingSummary = keepSummary
++        if (keepSha) summarySha = keepSha
++        if (keepBytes) summaryBytes = keepBytes
++      } else if (keepSummary && !rollingSummary) {
++        rollingSummary = keepSummary
++      }
+       const updated = threadManager.update(threadId, {
+         runtime_context_budget: {
+           last_at: new Date().toISOString(),
+@@ -574,18 +588,15 @@ ${hostUseRule12}${appIndexSection ? `\n\n${appIndexSection}` : ""}`
+           dropped_count: compact.droppedCount,
+           tokens_before: compact.tokensBefore,
+           tokens_after: compact.tokensAfter,
+-          rolling_summary: keepSummary,
+-          summary_sha256: keepSha || undefined,
+-          summary_bytes: keepBytes || undefined,
++          rolling_summary: keepSummary || rollingSummary,
++          summary_sha256: keepSha || summarySha || undefined,
++          summary_bytes: keepBytes || summaryBytes || undefined,
+           phase,
+         },
+       })
+       if (updated) {
+         sendToExtension({ type: "thread.updated", thread: updated })
+       }
+-      if (keepSummary && !rollingSummary) {
+-        rollingSummary = keepSummary
+-      }
+     } catch {
+       /* non-fatal meta write */
+     }
+diff --git a/companion/src/message-router.ts b/companion/src/message-router.ts
+index b86e9d5..7a87ce4 100644
+--- a/companion/src/message-router.ts
++++ b/companion/src/message-router.ts
+@@ -1190,7 +1190,7 @@ export async function handleMessage(
+         const thr = threadManager.get(rest.thread_id)
+         if (thr) {
+           const { releaseTrustBeforeThreadGone } = await import("./packs/pack-engine")
+-          releaseTrustBeforeThreadGone(thr, "thread.delete")
++          releaseTrustBeforeThreadGone(thr, "thread.delete", threadManager)
+         }
+       } catch {
+         /* best-effort */
+@@ -1204,6 +1204,10 @@ export async function handleMessage(
+         return { type: "thread.trashed", thread_id: rest.thread_id, thread: trashed, mode: "trash" }
+       }
+       threadManager.delete(rest.thread_id)
++      // S51: broadcast hard-delete so multi-panel lists stay in sync (batch path already does).
++      if (session?.broadcast) {
++        session.broadcast({ type: "thread.deleted", thread_id: rest.thread_id, mode: "hard" })
++      }
+       return { type: "thread.deleted", thread_id: rest.thread_id, mode: "hard" }
+     }
+     /**
+@@ -1226,7 +1230,9 @@ export async function handleMessage(
+       const failed: Array<{ id: string; reason: string }> = []
+ 
+       await threadManager.withIndexLock(async () => {
+-        let releaseTrust: ((thr: any, by: string) => boolean) | null = null
++        let releaseTrust:
++          | ((thr: any, by: string, tm?: typeof threadManager) => boolean)
++          | null = null
+         try {
+           const mod = await import("./packs/pack-engine")
+           releaseTrust = mod.releaseTrustBeforeThreadGone
+@@ -1250,7 +1256,7 @@ export async function handleMessage(
+             continue
+           }
+           try {
+-            releaseTrust?.(thr, "thread.batch_delete")
++            releaseTrust?.(thr, "thread.batch_delete", threadManager)
+           } catch {
+             /* best-effort trust release */
+           }
+@@ -1346,7 +1352,7 @@ export async function handleMessage(
+         const { releaseTrustBeforeThreadGone } = await import("./packs/pack-engine")
+         for (const t of threadManager.list()) {
+           if (threadManager.getMessages(t.id).length === 0) {
+-            releaseTrustBeforeThreadGone(t, "thread.cleanup_empty")
++            releaseTrustBeforeThreadGone(t, "thread.cleanup_empty", threadManager)
+           }
+         }
+       } catch {
+@@ -1377,7 +1383,21 @@ export async function handleMessage(
+       return { type: "thread.title_generated", thread_id: rest.thread_id, thread: threadManager.get(rest.thread_id) }
+     }
+     case "thread.list": {
+-      // Lazy purge expired trash (30d) — no daemon scheduler required
++      // Lazy purge expired trash (30d) — no daemon scheduler required.
++      // S51: clear any leftover trust cookies on trashed rows WITHOUT re-restore
++      // (release already ran at trash time; pre-S51 rows may still hold a cookie).
++      try {
++        const { clearTrustCookieWithoutRestore, isPackTrustSnapshot } = await import(
++          "./packs/pack-engine"
++        )
++        for (const t of threadManager.list({ only_trashed: true })) {
++          if (isPackTrustSnapshot(t.mission_pack_trust_snapshot)) {
++            clearTrustCookieWithoutRestore(t, threadManager, "thread.list_trash_cookie_clear")
++          }
++        }
++      } catch {
++        /* best-effort */
++      }
+       try {
+         const purged = threadManager.purgeExpiredTrash(30)
+         for (const id of purged) {
+diff --git a/companion/src/packs/pack-engine.ts b/companion/src/packs/pack-engine.ts
+index 0ee213a..961dc76 100644
+--- a/companion/src/packs/pack-engine.ts
++++ b/companion/src/packs/pack-engine.ts
+@@ -385,22 +385,57 @@ export function releaseTrustJournalIfMatch(threadId: string, _packId?: string |
+ }
+ 
+ /**
+- * Call before thread delete / cleanup_empty so deleting a Trust-holding conversation
+- * does not leave sticky cruise (Pi dual-review nit).
++ * Call before thread delete / trash / cleanup_empty so deleting a Trust-holding
++ * conversation does not leave sticky cruise (Pi dual-review nit / S46).
++ *
++ * S51 P0: after restore, **clear** `mission_pack_trust_snapshot` so a later
++ * hard-delete-from-trash cannot re-fire the same cookie (user may have changed
++ * Settings between trash and permanent delete). Idempotent on second call.
++ *
++ * @param threadManager When provided, persists cookie clear via `update`.
++ *   Without it, still mutates the live thread object (tests / best-effort).
+  */
+ export function releaseTrustBeforeThreadGone(
+   thread: {
+     id: string
+     mission_pack_id?: string | null
+     mission_pack_trust_snapshot?: unknown
++    /** When set, soft-delete already ran restore; leftover cookie is migration — clear only. */
++    trashed_at?: string | null
+   },
+   by: string = "thread.delete",
++  threadManager?: { update: (id: string, updates: { mission_pack_trust_snapshot: null }) => unknown },
+ ): boolean {
+   if (!isPackTrustSnapshot(thread.mission_pack_trust_snapshot)) return false
+-  restoreTrustFromThreadCookie(thread.mission_pack_trust_snapshot, by)
+-  releaseTrustJournalIfMatch(thread.id, thread.mission_pack_id)
++
++  // Soft-delete path calls release *before* trash(); hard-delete-from-trash has trashed_at set.
++  // Pre-S51 rows may still hold a cookie after trash — never re-restore on hard-delete.
++  const alreadyTrashed = !!(thread.trashed_at && String(thread.trashed_at).length > 0)
++  if (!alreadyTrashed) {
++    restoreTrustFromThreadCookie(thread.mission_pack_trust_snapshot, by)
++    releaseTrustJournalIfMatch(thread.id, thread.mission_pack_id)
++  } else {
++    releaseTrustJournalIfMatch(thread.id, thread.mission_pack_id)
++  }
++
++  // Clear cookie after restore (or migration clear-only) so a later path cannot re-fire.
++  try {
++    if (threadManager) {
++      threadManager.update(thread.id, { mission_pack_trust_snapshot: null })
++    } else {
++      ;(thread as { mission_pack_trust_snapshot?: unknown }).mission_pack_trust_snapshot = null
++    }
++  } catch {
++    try {
++      ;(thread as { mission_pack_trust_snapshot?: unknown }).mission_pack_trust_snapshot = null
++    } catch {
++      /* best-effort clear */
++    }
++  }
+   appendCapabilityAudit({
+-    type: "pack.trust_release_on_thread_gone",
++    type: alreadyTrashed
++      ? "pack.trust_cookie_cleared_on_trashed_delete"
++      : "pack.trust_release_on_thread_gone",
+     at: new Date().toISOString(),
+     by,
+     thread_id: thread.id,
+@@ -409,6 +444,34 @@ export function releaseTrustBeforeThreadGone(
+   return true
+ }
+ 
++/**
++ * Drop a leftover trust cookie on a trashed (or any) thread **without** restoring
++ * globals. Use when release already ran (or for pre-S51 trash rows) before TTL purge.
++ */
++export function clearTrustCookieWithoutRestore(
++  thread: { id: string; mission_pack_trust_snapshot?: unknown },
++  threadManager: { update: (id: string, updates: { mission_pack_trust_snapshot: null }) => unknown },
++  by: string = "thread.purge_clear_cookie",
++): boolean {
++  if (!isPackTrustSnapshot(thread.mission_pack_trust_snapshot)) return false
++  try {
++    threadManager.update(thread.id, { mission_pack_trust_snapshot: null })
++  } catch {
++    try {
++      ;(thread as { mission_pack_trust_snapshot?: unknown }).mission_pack_trust_snapshot = null
++    } catch {
++      return false
++    }
++  }
++  appendCapabilityAudit({
++    type: "pack.trust_cookie_cleared_no_restore",
++    at: new Date().toISOString(),
++    by,
++    thread_id: thread.id,
++  })
++  return true
++}
++
+ /**
+  * Install path must never persist origin=user or a trust block (S46 Security F2).
+  * Only saveUserPack may author origin:user + trust. Builtin origin is preserved.
+diff --git a/companion/tests/context-budget.test.ts b/companion/tests/context-budget.test.ts
+index c984eb6..5478d15 100644
+--- a/companion/tests/context-budget.test.ts
++++ b/companion/tests/context-budget.test.ts
+@@ -151,6 +151,50 @@ test("buildRedactedTranscript + attachRollingSummaryToMessages", () => {
+   assert.match(String(withSum[1].content), /did X/)
+ })
+ 
++test("S51 P0: mid_loop recompact re-attaches prior rolling summary (two-pass)", () => {
++  // pre_loop-style compact with M2 summary in the request
++  const long = "x".repeat(400)
++  const msgs: CanonicalChatMessage[] = [
++    system("sys"),
++    user(`old-1 ${long}`),
++    assistant(`a1 ${long}`),
++    user(`old-2 ${long}`),
++    assistant(`a2 ${long}`),
++    user("latest-user"),
++  ]
++  const tiny = 120
++  const pre = compactMessagesTurnSafe(msgs, tiny)
++  assert.equal(pre.compacted, true)
++  const withM2 = attachRollingSummaryToMessages(
++    pre.messages,
++    pre.droppedCount,
++    "did X; open tabs; pending Y",
++  )
++  assert.ok(withM2.some((m) => isOmitNotice(m) && String(m.content).startsWith("[context_summary]")))
++  assert.match(String(withM2.find(isOmitNotice)!.content), /did X/)
++
++  // Simulate tool-round growth then mid_loop M1 compact (no rollingSummary in opts)
++  const midInput: CanonicalChatMessage[] = [
++    ...withM2,
++    assistant("tool round"),
++    { role: "tool", content: `huge tool result ${"y".repeat(500)}`, tool_call_id: "c1" } as any,
++    user("continue"),
++  ]
++  const mid = compactMessagesTurnSafe(midInput, tiny)
++  assert.equal(mid.compacted, true)
++  // M1 strip leaves plain omit — then adapter re-attaches prior summary
++  const reattached = attachRollingSummaryToMessages(
++    mid.messages,
++    mid.droppedCount,
++    "did X; open tabs; pending Y",
++  )
++  const notice = reattached.find(isOmitNotice)
++  assert.ok(notice, "omit/summary notice present")
++  assert.match(String(notice!.content), /\[context_summary\]/)
++  assert.match(String(notice!.content), /did X/)
++  assert.equal(reattached.filter(isOmitNotice).length, 1)
++})
++
+ test("shouldRunM2 gates (tuned strategy)", () => {
+   // 2 msgs alone insufficient unless tokens high
+   assert.equal(
+diff --git a/companion/tests/packs-engine.test.ts b/companion/tests/packs-engine.test.ts
+index 4e69aba..bd51fc8 100644
+--- a/companion/tests/packs-engine.test.ts
++++ b/companion/tests/packs-engine.test.ts
+@@ -465,16 +465,220 @@ test("S46 dual-nit: releaseTrustBeforeThreadGone restores cruise on thread delet
+   assert.equal((getConfig() as any).security?.auto_approve_dangerous, true)
+ 
+   const thr = tm.get(thread.id)!
+-  assert.equal(packEngine.releaseTrustBeforeThreadGone(thr, "thread.delete"), true)
++  assert.equal(packEngine.releaseTrustBeforeThreadGone(thr, "thread.delete", tm), true)
+   assert.equal((getConfig() as any).security?.auto_approve_dangerous, false)
+   assert.equal(packEngine.readTrustJournal(), null)
++  // S51: cookie cleared so second release is a no-op
++  assert.equal(tm.get(thread.id)!.mission_pack_trust_snapshot, null)
++  assert.equal(packEngine.releaseTrustBeforeThreadGone(tm.get(thread.id)!, "thread.delete", tm), false)
++
++  tm.delete(thread.id)
++  packEngine.deleteUserPack(saved.id, tm, skillEngine)
++  saveConfig({ capability_profile: cfg0.capability_profile, security: cfg0.security, modules: cfg0.modules } as any)
++  clearConfigCache()
++})
++
++test("S51 P0: trash then Settings flip then hard-delete must not re-restore cruise", () => {
++  const skillEngine = new SkillEngine()
++  const cfg0 = getConfig() as any
++  // Pre-apply baseline ON — cookie captures elevated state
++  saveConfig({
++    capability_profile: cfg0.capability_profile || "community",
++    security: {
++      ...(cfg0.security || {}),
++      auto_approve_dangerous: true,
++      auto_approve_enterprise_tools: true,
++      allow_all_schemes: true,
++    },
++    modules: cfg0.modules,
++  } as any)
++  clearConfigCache()
++
++  const saved = packEngine.saveUserPack(
++    {
++      name: "trust-trash-hard",
++      system_prompt_append: "trash then hard must not re-fire cookie",
++      skill_ids: [],
++      tools: { mode: "allowlist", allow: ["list_tabs"], deny: [] },
++      trust: { auto_approve_dangerous: true },
++    },
++    skillEngine,
++  )
++  assert.equal(saved.ok, true)
++  if (!saved.ok) return
++
++  const tm = new ThreadManager()
++  const thread = tm.create("trash-hard-trust")
++  assert.equal(
++    packEngine.applyPack(saved.id, thread.id, tm, skillEngine, { allowTrust: true }).ok,
++    true,
++  )
++  assert.equal((getConfig() as any).security?.auto_approve_dangerous, true)
++
++  // Soft-delete path: release + clear cookie (simulates thread.delete mode:trash)
++  const thr = tm.get(thread.id)!
++  assert.equal(packEngine.releaseTrustBeforeThreadGone(thr, "thread.delete", tm), true)
++  tm.trash(thread.id)
++  assert.equal(tm.get(thread.id)!.mission_pack_trust_snapshot, null)
++
++  // User turns cruise OFF after trash
++  const mid = getConfig() as any
++  saveConfig({
++    capability_profile: mid.capability_profile,
++    security: {
++      ...(mid.security || {}),
++      auto_approve_dangerous: false,
++      auto_approve_enterprise_tools: false,
++      allow_all_schemes: false,
++    },
++    modules: mid.modules,
++  } as any)
++  clearConfigCache()
++  assert.equal((getConfig() as any).security?.auto_approve_dangerous, false)
+ 
++  // Hard-delete from trash: second release must be no-op (cookie gone)
++  const trashed = tm.get(thread.id)!
++  assert.equal(packEngine.releaseTrustBeforeThreadGone(trashed, "thread.batch_delete", tm), false)
+   tm.delete(thread.id)
++  assert.equal((getConfig() as any).security?.auto_approve_dangerous, false)
++
+   packEngine.deleteUserPack(saved.id, tm, skillEngine)
+   saveConfig({ capability_profile: cfg0.capability_profile, security: cfg0.security, modules: cfg0.modules } as any)
+   clearConfigCache()
+ })
+ 
++test("S51 migration: pre-fix trash cookie on hard-delete clears without re-restore", () => {
++  const skillEngine = new SkillEngine()
++  const cfg0 = getConfig() as any
++  // Baseline ON so cookie would re-enable if wrongly restored
++  saveConfig({
++    capability_profile: cfg0.capability_profile || "community",
++    security: {
++      ...(cfg0.security || {}),
++      auto_approve_dangerous: true,
++      auto_approve_enterprise_tools: false,
++      allow_all_schemes: false,
++    },
++    modules: cfg0.modules,
++  } as any)
++  clearConfigCache()
++
++  const saved = packEngine.saveUserPack(
++    {
++      name: "trust-migration-trash",
++      system_prompt_append: "legacy cookie on trash",
++      skill_ids: [],
++      tools: { mode: "allowlist", allow: ["list_tabs"], deny: [] },
++      trust: { auto_approve_dangerous: true },
++    },
++    skillEngine,
++  )
++  assert.equal(saved.ok, true)
++  if (!saved.ok) return
++
++  const tm = new ThreadManager()
++  const thread = tm.create("legacy-trash-cookie")
++  assert.equal(
++    packEngine.applyPack(saved.id, thread.id, tm, skillEngine, { allowTrust: true }).ok,
++    true,
++  )
++  // Simulate pre-S51: trash without clearing cookie (manual leave cookie + trashed_at)
++  const thr = tm.get(thread.id)!
++  const cookie = thr.mission_pack_trust_snapshot
++  assert.ok(cookie)
++  // restore globals as trash would have, but leave cookie (old bug)
++  packEngine.restoreTrustFromThreadCookie(cookie, "sim-old-trash")
++  tm.trash(thread.id)
++  // re-plant cookie after trash (old bug state)
++  tm.update(thread.id, { mission_pack_trust_snapshot: cookie as any })
++
++  // User turns cruise OFF
++  const mid = getConfig() as any
++  saveConfig({
++    capability_profile: mid.capability_profile,
++    security: {
++      ...(mid.security || {}),
++      auto_approve_dangerous: false,
++      auto_approve_enterprise_tools: false,
++      allow_all_schemes: false,
++    },
++    modules: mid.modules,
++  } as any)
++  clearConfigCache()
++
++  const trashed = tm.get(thread.id)!
++  assert.ok(trashed.trashed_at)
++  assert.ok(trashed.mission_pack_trust_snapshot)
++  // Hard-delete must clear cookie WITHOUT restoring ON
++  assert.equal(packEngine.releaseTrustBeforeThreadGone(trashed, "thread.batch_delete", tm), true)
++  assert.equal(tm.get(thread.id)!.mission_pack_trust_snapshot, null)
++  assert.equal((getConfig() as any).security?.auto_approve_dangerous, false)
++
++  tm.delete(thread.id)
++  packEngine.deleteUserPack(saved.id, tm, skillEngine)
++  saveConfig({ capability_profile: cfg0.capability_profile, security: cfg0.security, modules: cfg0.modules } as any)
++  clearConfigCache()
++})
++
++test("S51 P0: trash A(trust) then apply B(trust) then hard-delete A does not clobber B", () => {
++  const skillEngine = new SkillEngine()
++  const cfg0 = getConfig() as any
++  resetTrustBaseline(cfg0)
++
++  const packA = packEngine.saveUserPack(
++    {
++      name: "trust-a-trash",
++      system_prompt_append: "A",
++      skill_ids: [],
++      tools: { mode: "allowlist", allow: ["list_tabs"], deny: [] },
++      trust: { auto_approve_dangerous: true },
++    },
++    skillEngine,
++  )
++  const packB = packEngine.saveUserPack(
++    {
++      name: "trust-b-live",
++      system_prompt_append: "B",
++      skill_ids: [],
++      tools: { mode: "allowlist", allow: ["list_tabs"], deny: [] },
++      trust: { auto_approve_dangerous: true },
++    },
++    skillEngine,
++  )
++  assert.equal(packA.ok && packB.ok, true)
++  if (!packA.ok || !packB.ok) return
++
++  const tm = new ThreadManager()
++  const tA = tm.create("th-a")
++  const tB = tm.create("th-b")
++  assert.equal(
++    packEngine.applyPack(packA.id, tA.id, tm, skillEngine, { allowTrust: true }).ok,
++    true,
++  )
++  // Soft-release A (trash)
++  assert.equal(packEngine.releaseTrustBeforeThreadGone(tm.get(tA.id)!, "thread.delete", tm), true)
++  tm.trash(tA.id)
++  assert.equal((getConfig() as any).security?.auto_approve_dangerous, false)
++
++  // Apply B while A is trashed (holder check excludes trash)
++  assert.equal(
++    packEngine.applyPack(packB.id, tB.id, tm, skillEngine, { allowTrust: true }).ok,
++    true,
++  )
++  assert.equal((getConfig() as any).security?.auto_approve_dangerous, true)
++
++  // Hard-delete A must not restore A's pre-apply cookie over B's elevation
++  assert.equal(packEngine.releaseTrustBeforeThreadGone(tm.get(tA.id)!, "thread.batch_delete", tm), false)
++  tm.delete(tA.id)
++  assert.equal((getConfig() as any).security?.auto_approve_dangerous, true)
++
++  packEngine.unapplyPack(tB.id, tm)
++  packEngine.deleteUserPack(packA.id, tm, skillEngine)
++  packEngine.deleteUserPack(packB.id, tm, skillEngine)
++  saveConfig({ capability_profile: cfg0.capability_profile, security: cfg0.security, modules: cfg0.modules } as any)
++  clearConfigCache()
++})
++
+ test("S46 residual: reconcilePackTrustOnBoot restores applying journal", () => {
+   const cfg0 = getConfig() as any
+   resetTrustBaseline(cfg0)
+diff --git a/scripts/build-windows-exe.ps1 b/scripts/build-windows-exe.ps1
+index d88cf07..dd8d6d5 100644
+--- a/scripts/build-windows-exe.ps1
++++ b/scripts/build-windows-exe.ps1
+@@ -4,14 +4,17 @@
+ # Uses Node.js SEA (Single Executable Application) to produce a real .exe
+ # that users can run without installing Node.js separately.
+ #
++# Version: read from companion/package.json (same SoT as package.sh / create-dmg.sh).
++# Keep chrome-extension/package.json version in lock-step for the MV3 manifest.
++#
+ # Usage:
+ #   powershell -ExecutionPolicy Bypass -File scripts\build-windows-exe.ps1
+ #   powershell -ExecutionPolicy Bypass -File scripts\build-windows-exe.ps1 -SkipInstall
+ #
+-# Output:
+-#   dist-package\cmspark-windows-x64\cmspark-agent.exe   <- standalone exe
+-#   dist-package\CMspark-v0.2.0-windows-x64.zip          <- portable package
+-#   dist-package\CMspark-Setup-v0.2.0.exe                 <- installer (if NSIS found)
++# Output (version from package.json, example 0.4.0):
++#   dist-package\cmspark-windows-x64\cmspark-agent.exe   <- standalone SEA exe
++#   dist-package\CMspark-v{version}-windows-x64.zip     <- portable package
++#   dist-package\CMspark-Setup-v{version}.exe             <- NSIS installer (if makensis found)
+ # =============================================================================
+ 
+ [CmdletBinding()]
+@@ -27,7 +30,20 @@ $CompanionDir = Join-Path $ProjectRoot "companion"
+ $ChromeExtDir = Join-Path $ProjectRoot "chrome-extension"
+ $DistDir      = Join-Path $ProjectRoot "dist-package"
+ $StagingDir   = Join-Path $DistDir "cmspark-windows-x64"
+-$Version      = "0.4.0"
++
++# Single source of truth — never hardcode product version here.
++$PkgJson = Join-Path $CompanionDir "package.json"
++if (-not (Test-Path $PkgJson)) { Write-Error "missing $PkgJson"; exit 1 }
++$Version = (Get-Content $PkgJson -Raw | ConvertFrom-Json).version
++if (-not $Version) { Write-Error "companion/package.json has no version"; exit 1 }
++# Cross-check extension (MV3) stays aligned
++$ExtPkg = Join-Path $ChromeExtDir "package.json"
++if (Test-Path $ExtPkg) {
++    $ExtVer = (Get-Content $ExtPkg -Raw | ConvertFrom-Json).version
++    if ($ExtVer -and $ExtVer -ne $Version) {
++        Write-Warning "chrome-extension version ($ExtVer) != companion ($Version) — ship both at the same version"
++    }
++}
+ 
+ function Step($n, $total, $msg) {
+     Write-Host "[$n/$total] $msg" -ForegroundColor Yellow
+@@ -433,7 +449,8 @@ if (-not $SkipNsis) {
+         Write-Host "[NSIS] Building installer exe..." -ForegroundColor Yellow
+         Push-Location $ProjectRoot
+         try {
+-            & makensis scripts\installer.nsi
++            # Inject version from package.json so installer.nsi cannot drift.
++            & makensis "/DPRODUCT_VERSION=$Version" scripts\installer.nsi
+             if ($LASTEXITCODE -eq 0) {
+                 Ok "Installer: $DistDir\CMspark-Setup-v$Version.exe"
+             } else {
+diff --git a/scripts/create-dmg.sh b/scripts/create-dmg.sh
+index 22032d2..23d8d4a 100755
+--- a/scripts/create-dmg.sh
++++ b/scripts/create-dmg.sh
+@@ -46,9 +46,14 @@ rm -rf "${DMG_DIR}"
+ mkdir -p "${APP_BUNDLE}/Contents/MacOS"
+ mkdir -p "${RESOURCES}"
+ 
+-# Info.plist (version-stamped)
+-sed "s/0.2.0/${VERSION}/g" "${ROOT_DIR}/scripts/macos/Info.plist" \
++# Info.plist (version-stamped from companion/package.json via placeholder)
++# Do not hardcode x.y.z here — template uses __CMSPARK_VERSION__.
++sed "s/__CMSPARK_VERSION__/${VERSION}/g" "${ROOT_DIR}/scripts/macos/Info.plist" \
+   > "${APP_BUNDLE}/Contents/Info.plist"
++if grep -q '__CMSPARK_VERSION__' "${APP_BUNDLE}/Contents/Info.plist"; then
++  echo "[ERROR] Info.plist still contains __CMSPARK_VERSION__ after stamp" >&2
++  exit 1
++fi
+ 
+ # --- Step 2: Generate .icns from .iconset ---
+ echo "[2/6] Generating app icon (.icns)..."
+diff --git a/scripts/installer.nsi b/scripts/installer.nsi
+index 9b2746d..b37218f 100644
+--- a/scripts/installer.nsi
++++ b/scripts/installer.nsi
+@@ -1,9 +1,15 @@
+ ; CMspark Windows Installer (NSIS)
+-; Build: makensis scripts/installer.nsi
+-; Requires: makensis (brew install makensis)
++; Build (preferred — injects version from companion/package.json):
++;   makensis /DPRODUCT_VERSION=x.y.z scripts/installer.nsi
++;   (scripts/build-windows-exe.ps1 does this automatically)
++; Manual: makensis scripts/installer.nsi  → uses fallback PRODUCT_VERSION below
++; Requires: makensis (https://nsis.sourceforge.io/ or choco install nsis)
+ 
+ !define PRODUCT_NAME "CMspark"
+-!define PRODUCT_VERSION "0.4.0"
++; Prefer /DPRODUCT_VERSION= from build-windows-exe.ps1; fallback must match companion/package.json.
++!ifndef PRODUCT_VERSION
++  !define PRODUCT_VERSION "0.4.0"
++!endif
+ !define PRODUCT_PUBLISHER "CMspark"
+ !define PRODUCT_UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCT_NAME}"
+ 
+@@ -29,11 +35,11 @@ Var /GLOBAL START_MENU_FOLDER
+ 
+ ; Custom finish page
+ !define MUI_FINISHPAGE_TITLE "Installation Complete"
+-!define MUI_FINISHPAGE_TEXT "CMspark Agent is now installed.$\r$\n$\r$\nTo use CMspark, you need to load the Chrome extension:$\r$\n$\r$\n  1. Open Chrome and go to chrome://extensions$\r$\n  2. Enable 'Developer mode' (top-right)$\r$\n  3. Click 'Load unpacked'$\r$\n  4. Select: $INSTDIR\chrome-extension$\r$\n$\r$\nThen click the CMspark icon in Chrome toolbar to open Side Panel."
++!define MUI_FINISHPAGE_TEXT "CMspark is now installed.$\r$\n$\r$\nTo use CMspark, load the Chrome extension:$\r$\n$\r$\n  1. Open Chrome and go to chrome://extensions$\r$\n  2. Enable 'Developer mode' (top-right)$\r$\n  3. Click 'Load unpacked'$\r$\n  4. Select: $INSTDIR\chrome-extension$\r$\n$\r$\nThen click the CMspark icon in the Chrome toolbar to open the Side Panel."
+ !define MUI_FINISHPAGE_LINK "Open chrome://extensions now"
+ !define MUI_FINISHPAGE_LINK_LOCATION "chrome://extensions"
+ !define MUI_FINISHPAGE_RUN
+-!define MUI_FINISHPAGE_RUN_TEXT "Start CMspark Agent now (tray icon)"
++!define MUI_FINISHPAGE_RUN_TEXT "Start CMspark now (system tray)"
+ !define MUI_FINISHPAGE_RUN_FUNCTION "StartAgent"
+ !insertmacro MUI_PAGE_FINISH
+ 
+diff --git a/scripts/macos/Info.plist b/scripts/macos/Info.plist
+index 7d3f97c..63211c7 100644
+--- a/scripts/macos/Info.plist
++++ b/scripts/macos/Info.plist
+@@ -18,10 +18,11 @@
+     <string>CMspark</string>
+     <key>CFBundlePackageType</key>
+     <string>APPL</string>
++    <!-- create-dmg.sh replaces __CMSPARK_VERSION__ with companion/package.json version -->
+     <key>CFBundleShortVersionString</key>
+-    <string>0.2.0</string>
++    <string>__CMSPARK_VERSION__</string>
+     <key>CFBundleVersion</key>
+-    <string>1</string>
++    <string>__CMSPARK_VERSION__</string>
+     <key>LSBackgroundOnly</key>
+     <true/>
+     <key>LSUIElement</key>
+diff --git a/scripts/package.sh b/scripts/package.sh
+index 67b5a41..1625a82 100755
+--- a/scripts/package.sh
++++ b/scripts/package.sh
+@@ -1,8 +1,14 @@
+ #!/bin/bash
+ # CMspark distribution packager
+ #
++# Version: companion/package.json (SoT). Align chrome-extension/package.json
++# before tagging so Side Panel + Companion report the same product version.
++#
+ # Usage: scripts/package.sh [macos-arm64|macos-x64|windows-x64|linux-x64]
+ # Output: dist-package/cmspark-v{version}-{platform}.zip
++#   (lowercase "cmspark-v*" — cross-platform zip from this script)
++#   Windows SEA portable zip uses "CMspark-v*" via build-windows-exe.ps1;
++#   macOS DMG uses "CMspark-v*-macOS.dmg" via create-dmg.sh.
+ #
+ set -euo pipefail
+ 
+diff --git a/scripts/tests/test-package-gates.sh b/scripts/tests/test-package-gates.sh
+index 0b94a02..07e3b2f 100755
+--- a/scripts/tests/test-package-gates.sh
++++ b/scripts/tests/test-package-gates.sh
+@@ -92,6 +92,15 @@ assert_file_has "${CREATE_DMG}" 'Contents/MacOS/CMspark' \
+   "create-dmg installs native MacOS/CMspark"
+ assert_file_has "${CREATE_DMG}" 'A6 OK: single CDHash' \
+   "create-dmg asserts CDHash equality for MacOS/CMspark and cmspark-host"
++assert_file_has "${CREATE_DMG}" '__CMSPARK_VERSION__' \
++  "create-dmg stamps Info.plist via __CMSPARK_VERSION__ placeholder"
++assert_file_lacks "${CREATE_DMG}" 's/0\.2\.0/' \
++  "create-dmg must not hardcode sed s/0.2.0/ (stale version trap)"
++INFO_PLIST="${ROOT}/scripts/macos/Info.plist"
++assert_file_has "${INFO_PLIST}" '__CMSPARK_VERSION__' \
++  "Info.plist template uses __CMSPARK_VERSION__ placeholder"
++assert_file_lacks "${INFO_PLIST}" '>[0-9]\+\.[0-9]\+\.[0-9]\+<' \
++  "Info.plist template must not hardcode x.y.z (stamp at dmg time)"
+ 
+ # --- Static: Makefile package-macos depends on build-host --------------------
+ echo "[static] Makefile package-macos → build-host"
+@@ -133,6 +142,15 @@ assert_file_has "${PS1}" 'qwen-vl-worker\.py missing' \
+   "ps1 Fails when qwen-vl-worker.py missing"
+ assert_file_lacks "${PS1}" 'WP5 local model layer required' \
+   "ps1 no longer hard-requires ORT for TinyClick"
++assert_file_has "${PS1}" 'package\.json' \
++  "ps1 reads version from companion/package.json"
++assert_file_lacks "${PS1}" 'CMspark-v0\.2\.0' \
++  "ps1 header must not advertise stale 0.2.0 artifact names"
++assert_file_has "${PS1}" '/DPRODUCT_VERSION=' \
++  "ps1 injects PRODUCT_VERSION into NSIS"
++NSIS="${ROOT}/scripts/installer.nsi"
++assert_file_has "${NSIS}" '!ifndef PRODUCT_VERSION' \
++  "installer.nsi accepts /DPRODUCT_VERSION override"
+ 
+ # --- Dynamic negative: missing cmspark-host → exit 1 -------------------------
+ echo "[dynamic] package.sh macos-arm64 with host deleted → exit 1"

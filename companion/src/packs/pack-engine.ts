@@ -392,6 +392,11 @@ export function releaseTrustJournalIfMatch(threadId: string, _packId?: string | 
  * hard-delete-from-trash cannot re-fire the same cookie (user may have changed
  * Settings between trash and permanent delete). Idempotent on second call.
  *
+ * Soft-trash honesty (S52 N1): this releases Trust globals + cookie only —
+ * it does **not** clear `mission_pack_id` / whitelist / skills (composition).
+ * Product: restored-from-trash threads may still show 场景 chip; re-elevate
+ * requires a new pack.apply with user_gesture + allowTrust.
+ *
  * @param threadManager When provided, persists cookie clear via `update`.
  *   Without it, still mutates the live thread object (tests / best-effort).
  */

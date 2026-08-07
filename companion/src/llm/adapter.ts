@@ -22,6 +22,7 @@ import {
   applyContextBudget,
   attachRollingSummaryToMessages,
   estimateTokens,
+  retainMidLoopRollingSummary,
 } from "./context-budget"
 import { generateRollingSummary, shouldRunM2 } from "./context-budget-m2"
 
@@ -553,38 +554,41 @@ ${hostUseRule12}${appIndexSection ? `\n\n${appIndexSection}` : ""}`
       }
     }
 
-    // Persist meta for「查看摘要」(thread index only — not digest/export).
-    // Pi nit + S51 P0: mid_loop M1 must not wipe a prior pre_loop M2 rolling_summary
-    // from meta **or** from the LLM request messages.
-    try {
-      const prevMeta = threadManager.get(threadId)?.runtime_context_budget
-      const keepSummary =
-        rollingSummary ||
-        (phase === "mid_loop" && !rollingSummary ? prevMeta?.rolling_summary : undefined)
-      const keepSha =
-        summarySha ||
-        (phase === "mid_loop" && !summarySha ? prevMeta?.summary_sha256 : undefined)
-      const keepBytes =
-        summaryBytes ||
-        (phase === "mid_loop" && !summaryBytes ? prevMeta?.summary_bytes : undefined)
-      // Re-attach prior M2 summary into request when mid_loop only ran M1 omit.
-      if (phase === "mid_loop" && keepSummary && mode === "m1") {
-        messages = attachRollingSummaryToMessages(
-          messages,
-          compact.droppedCount,
-          keepSummary,
-        )
-        mode = "m2"
-        rollingSummary = keepSummary
-        if (keepSha) summarySha = keepSha
-        if (keepBytes) summaryBytes = keepBytes
-      } else if (keepSummary && !rollingSummary) {
-        rollingSummary = keepSummary
+    // S51 P0 / S52 N2: retain prior pre_loop M2 on mid_loop **before** meta I/O
+    // so a meta write failure cannot leave the LLM request on plain M1 omit.
+    // mode "m2" after re-attach = request carries prior summary text (N7), not a new gen.
+    const prevMeta = (() => {
+      try {
+        return threadManager.get(threadId)?.runtime_context_budget
+      } catch {
+        return undefined
       }
+    })()
+    const retained = retainMidLoopRollingSummary({
+      phase,
+      mode,
+      messages,
+      droppedCount: compact.droppedCount,
+      rollingSummary,
+      summarySha: summarySha || undefined,
+      summaryBytes,
+      prevMeta,
+    })
+    messages = retained.messages
+    mode = retained.mode
+    rollingSummary = retained.rollingSummary
+    summarySha = retained.summarySha || null
+    summaryBytes = retained.summaryBytes
+    const keepSummary = retained.keepSummary
+    const keepSha = retained.keepSha
+    const keepBytes = retained.keepBytes
+
+    // Persist meta for「查看摘要」(thread index only — not digest/export).
+    try {
       const updated = threadManager.update(threadId, {
         runtime_context_budget: {
           last_at: new Date().toISOString(),
-          mode: keepSummary && mode === "m1" && phase === "mid_loop" ? "m2" : mode,
+          mode,
           dropped_count: compact.droppedCount,
           tokens_before: compact.tokensBefore,
           tokens_after: compact.tokensAfter,
@@ -598,7 +602,7 @@ ${hostUseRule12}${appIndexSection ? `\n\n${appIndexSection}` : ""}`
         sendToExtension({ type: "thread.updated", thread: updated })
       }
     } catch {
-      /* non-fatal meta write */
+      /* non-fatal meta write — request path already retained above */
     }
 
     try {
