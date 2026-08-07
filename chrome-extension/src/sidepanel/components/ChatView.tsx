@@ -505,6 +505,7 @@ export function ChatView() {
             onFork={handleFork}
             onExport={handleExport}
             showReasoningMode={showReasoningMode}
+            exportIncludeReasoning={exportIncludeReasoning === true}
             dispatch={dispatch}
           />
         ))}
@@ -567,6 +568,7 @@ const MessageRow = memo(function MessageRow({
   activeThreadId,
   sendShortcut,
   showReasoningMode,
+  exportIncludeReasoning: _exportIncludeReasoning,
   onRegenerate,
   onFork,
   onExport,
@@ -576,6 +578,8 @@ const MessageRow = memo(function MessageRow({
   activeThreadId: string | null
   sendShortcut: string
   showReasoningMode: "always_collapsed" | "auto_live" | "always_open"
+  /** Primitive so custom memo re-renders when Settings export opt-in flips (P0-1). */
+  exportIncludeReasoning: boolean
   onRegenerate: (messageId: string, editedMessage?: string) => void
   onFork: (messageId: string) => void
   onExport: (messageId: string) => void
@@ -709,13 +713,17 @@ const MessageRow = memo(function MessageRow({
   // Re-render only when this row's data actually changed. Reference-equality on
   // tool_calls is intentional — agentStore keeps the array referentially stable
   // across unrelated state changes (e.g. streamingContent updates).
+  // Wave E / multi-adv P0-1: include showReasoningMode + exportIncludeReasoning so
+  // Settings changes re-render historical rows (mode + fresh onExport closure).
   return (
     prev.msg.id === next.msg.id &&
     prev.msg.content === next.msg.content &&
     prev.msg.reasoning_content === next.msg.reasoning_content &&
     prev.msg.tool_calls === next.msg.tool_calls &&
     prev.activeThreadId === next.activeThreadId &&
-    prev.sendShortcut === next.sendShortcut
+    prev.sendShortcut === next.sendShortcut &&
+    prev.showReasoningMode === next.showReasoningMode &&
+    prev.exportIncludeReasoning === next.exportIncludeReasoning
   )
 })
 
@@ -733,8 +741,14 @@ function ReasoningBlock({
     mode === "always_open" ? true : mode === "always_collapsed" ? false : live
   const [open, setOpen] = useState(initialOpen)
   // Auto-open while live and no answer yet; leave user control once they toggle.
+  // Settings mode change (P0-1 dual-truth) resets user toggle so global setting wins.
   const userToggled = useRef(false)
+  const prevModeRef = useRef(mode)
   useEffect(() => {
+    if (prevModeRef.current !== mode) {
+      userToggled.current = false
+      prevModeRef.current = mode
+    }
     if (userToggled.current) return
     if (mode === "always_open") setOpen(true)
     else if (mode === "always_collapsed") setOpen(false)

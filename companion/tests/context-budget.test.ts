@@ -3,6 +3,7 @@ import assert from "node:assert/strict"
 import {
   applyContextBudget,
   attachRollingSummaryToMessages,
+  buildHandoffNotice,
   buildOmitNotice,
   buildRedactedTranscript,
   compactMessagesTurnSafe,
@@ -140,6 +141,43 @@ test("redactMessagesForCompaction: cookies and shell_exec stripped", () => {
   assert.match(String((red[3] as any).content), /shell_exec/)
   assert.doesNotMatch(String((red[3] as any).content), /password=xyz/)
   assert.match(String((red[4] as any).content), /id/)
+})
+
+test("Wave E P0-3: workspace_read_file body redacted like host_read", () => {
+  const msgs: CanonicalChatMessage[] = [
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        {
+          id: "w1",
+          type: "function",
+          function: { name: "workspace_read_file", arguments: '{"path":".env"}' },
+        },
+      ],
+    },
+    {
+      role: "tool",
+      tool_call_id: "w1",
+      content: "API_KEY=sk-live-should-not-survive-compact\nDB_PASSWORD=hunter2",
+    },
+  ]
+  const red = redactMessagesForCompaction(msgs)
+  assert.equal(red[1].role, "tool")
+  assert.match(String((red[1] as any).content), /workspace_read_file/)
+  assert.doesNotMatch(String((red[1] as any).content), /sk-live-should-not-survive/)
+  assert.doesNotMatch(String((red[1] as any).content), /hunter2/)
+})
+
+test("Wave E P1-1: budget notices frame machine memory not user intent", () => {
+  const omit = buildOmitNotice(3)
+  assert.match(String(omit.content), /MACHINE_WORKING_MEMORY/)
+  assert.match(String(omit.content), /NOT user intent/)
+  const sum = buildOmitNotice(2, "- did X")
+  assert.match(String(sum.content), /MACHINE_WORKING_MEMORY/)
+  const h = buildHandoffNotice(4, "目标:\n- ship Wave E")
+  assert.match(String(h.content), /MACHINE_WORKING_MEMORY/)
+  assert.match(String(h.content), /context_handoff/)
 })
 
 test("buildRedactedTranscript + attachRollingSummaryToMessages", () => {

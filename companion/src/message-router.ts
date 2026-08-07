@@ -1587,12 +1587,45 @@ export async function handleMessage(
           role: msg.role,
           content: msg.content,
           tool_calls: msg.tool_calls,
+          // Wave E P1-2: preserve thinking for UI/export continuity on fork
+          ...(msg.reasoning_content != null
+            ? { reasoning_content: msg.reasoning_content }
+            : {}),
         })
       }
 
+      // Wave E P1-2: copy Composition surface (skills/knowledge/modes/whitelist/MCP).
+      // Do NOT copy Trust (mission_pack_trust_snapshot / auto_approve) or runtime
+      // handoff meta — fork is a new request path; pack id/snapshot optional for
+      // unapply UX without re-applying Trust gesture.
       threadManager.update(newThread.id, {
         active_skill_ids: sourceThread.active_skill_ids,
         pinned_tabs: sourceThread.pinned_tabs,
+        ...(sourceThread.active_knowledge_ids !== undefined
+          ? { active_knowledge_ids: [...sourceThread.active_knowledge_ids] }
+          : {}),
+        ...(sourceThread.skill_selection_mode !== undefined
+          ? { skill_selection_mode: sourceThread.skill_selection_mode }
+          : {}),
+        ...(sourceThread.knowledge_selection_mode !== undefined
+          ? { knowledge_selection_mode: sourceThread.knowledge_selection_mode }
+          : {}),
+        ...(sourceThread.tool_whitelist !== undefined
+          ? {
+              tool_whitelist: sourceThread.tool_whitelist
+                ? [...sourceThread.tool_whitelist]
+                : null,
+            }
+          : {}),
+        ...(sourceThread.mcp_selection_mode !== undefined
+          ? { mcp_selection_mode: sourceThread.mcp_selection_mode }
+          : {}),
+        ...(sourceThread.active_mcp_server_ids !== undefined
+          ? { active_mcp_server_ids: [...(sourceThread.active_mcp_server_ids || [])] }
+          : {}),
+        ...(sourceThread.workspace_root !== undefined
+          ? { workspace_root: sourceThread.workspace_root }
+          : {}),
       })
 
       // Best-effort auto-title: if the forked-in prefix already has a user +
@@ -1944,6 +1977,7 @@ export async function handleMessage(
         const result = serializeSummaryToMarkdown(summary, messages, {
           config: obsCfg,
           thread: threadMeta,
+          include_reasoning: includeReasoning,
           ...(profile ? { profile } : {}),
           ...(relatedNotes.length ? { relatedNotes } : {}),
           ...(template ? { template } : {}),

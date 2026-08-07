@@ -319,6 +319,8 @@ export function StatusRail({
                   type: "thread.export_obsidian",
                   thread_id: state.activeThreadId,
                   scope: "thread",
+                  // Wave D/E: honor Settings exportIncludeReasoning on all export entrypoints (P0-2)
+                  include_reasoning: state.exportIncludeReasoning === true,
                 })
               }}
             >
@@ -342,6 +344,7 @@ export function StatusRail({
                   type: "thread.export_obsidian",
                   thread_id: state.activeThreadId,
                   scope: "summary",
+                  include_reasoning: state.exportIncludeReasoning === true,
                 })
               }}
             >

@@ -441,6 +441,8 @@ export function ThreadList() {
                   type: "thread.export_obsidian",
                   thread_id: t.id,
                   scope: "summary",
+                  // Wave D/E: honor Settings exportIncludeReasoning (P0-2)
+                  include_reasoning: state.exportIncludeReasoning === true,
                 })
               }}
               disabled={state.summarizingThreadId === t.id}

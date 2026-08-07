@@ -32,6 +32,11 @@ const SENSITIVE_CODE_TOOLS = new Set([
   "host_computer",
   "shell_exec",
   "netsec_port_scan",
+  // Wave E: workspace file tools same class as host_read
+  "workspace_read_file",
+  "workspace_write_file",
+  "workspace_list_dir",
+  "workspace_glob",
 ])
 
 // MCP namespaced tools (mcp__<server>__<tool>) — audit item C-MCP-2. These flow
@@ -88,6 +93,41 @@ function redactForStorage(
   // Default: pass through unchanged. Only tools in the sensitive sets get redacted.
   let params = rawParams || "{}"
   let result_summary = rawSummary || ""
+
+  // Wave E P0-4: never persist thread_recall query text or hit excerpts.
+  if (toolName === "thread_recall") {
+    let queryLen = 0
+    let hitCount: number | undefined
+    try {
+      const p = JSON.parse(params) as Record<string, unknown>
+      if (typeof p.query === "string") queryLen = p.query.length
+      if (typeof p.max_hits === "number") {
+        /* keep max_hits only below */
+      }
+      params = JSON.stringify({
+        query_len: queryLen,
+        ...(typeof p.max_hits === "number" ? { max_hits: p.max_hits } : {}),
+        query: `<redacted:len=${queryLen}:sha256=${shortHash(typeof p.query === "string" ? p.query : "")}>`,
+      })
+    } catch {
+      params = `{"query":"<redacted>"}`
+    }
+    try {
+      const parsed = JSON.parse(result_summary)
+      if (parsed && typeof parsed === "object" && Array.isArray((parsed as any).hits)) {
+        hitCount = (parsed as any).hits.length
+      } else if (Array.isArray(parsed)) {
+        hitCount = parsed.length
+      }
+    } catch {
+      /* ignore */
+    }
+    result_summary =
+      hitCount !== undefined
+        ? JSON.stringify({ hit_count: hitCount, excerpts: "redacted" })
+        : `<redacted:len=${result_summary.length}:sha256=${shortHash(result_summary)}>`
+    return { params, result_summary }
+  }
 
   if (SENSITIVE_COOKIE_TOOLS.has(toolName)) {
     params = redactCookieParams(params)
