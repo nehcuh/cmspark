@@ -21,10 +21,16 @@ import {
 import {
   applyContextBudget,
   attachRollingSummaryToMessages,
+  attachHandoffNoticeToMessages,
   estimateTokens,
   retainMidLoopRollingSummary,
 } from "./context-budget"
 import { generateRollingSummary, shouldRunM2 } from "./context-budget-m2"
+import {
+  generateThreadHandoff,
+  shouldRunH1,
+  type ThreadHandoff,
+} from "./context-handoff"
 
 // Jailbreak patterns to detect in LLM output
 const JAILBREAK_OUTPUT_PATTERNS = [
@@ -526,37 +532,14 @@ ${hostUseRule12}${appIndexSection ? `\n\n${appIndexSection}` : ""}`
     if (!compact.compacted) return
 
     messages = compact.messages
-    let mode: "m1" | "m2" = "m1"
+    let mode: "m1" | "m2" | "h1" = "m1"
     let summarySha: string | null = null
     let summaryBytes = 0
     let rollingSummary: string | undefined
+    let handoff: ThreadHandoff | null = null
+    let h1Error: string | undefined
+    let h1FallbackToM2 = false
 
-    if (shouldRunM2(compact, m2Enabled, phase) && !signal?.aborted) {
-      try {
-        const m2 = await generateRollingSummary({
-          droppedMessages: compact.droppedMessages,
-          config: params.config,
-          signal,
-        })
-        if (m2.ok && m2.summary) {
-          messages = attachRollingSummaryToMessages(
-            messages,
-            compact.droppedCount,
-            m2.summary,
-          )
-          mode = "m2"
-          summarySha = m2.summarySha256
-          summaryBytes = m2.summaryBytes
-          rollingSummary = m2.summary
-        }
-      } catch {
-        /* M2 best-effort; keep M1 omit notice */
-      }
-    }
-
-    // S51 P0 / S52 N2: retain prior pre_loop M2 on mid_loop **before** meta I/O
-    // so a meta write failure cannot leave the LLM request on plain M1 omit.
-    // mode "m2" after re-attach = request carries prior summary text (N7), not a new gen.
     const prevMeta = (() => {
       try {
         return threadManager.get(threadId)?.runtime_context_budget
@@ -564,6 +547,90 @@ ${hostUseRule12}${appIndexSection ? `\n\n${appIndexSection}` : ""}`
         return undefined
       }
     })()
+
+    // Wave B H1: structured handoff when m2 gate fires (pre_loop only via shouldRunH1).
+    if (shouldRunH1(compact, m2Enabled, phase) && !signal?.aborted) {
+      try {
+        const priorHandoff =
+          prevMeta?.handoff && typeof prevMeta.handoff === "object"
+            ? (prevMeta.handoff as ThreadHandoff)
+            : null
+        const h1 = await generateThreadHandoff({
+          droppedMessages: compact.droppedMessages,
+          priorHandoff,
+          config: params.config,
+          signal,
+          includeReasoning: true,
+        })
+        if (h1.ok) {
+          messages = attachHandoffNoticeToMessages(
+            messages,
+            compact.droppedCount,
+            h1.formatted,
+          )
+          mode = "h1"
+          handoff = h1.handoff
+          summarySha = h1.sha256
+          summaryBytes = h1.bytes
+          rollingSummary = h1.formatted
+        } else {
+          h1Error = h1.error
+          // Pi nit: only fall back to M2 on fast-fail (not timeout/abort)
+          if (!h1.slow && shouldRunM2(compact, m2Enabled, phase) && !signal?.aborted) {
+            try {
+              const m2 = await generateRollingSummary({
+                droppedMessages: compact.droppedMessages,
+                config: params.config,
+                signal,
+              })
+              if (m2.ok && m2.summary) {
+                messages = attachRollingSummaryToMessages(
+                  messages,
+                  compact.droppedCount,
+                  m2.summary,
+                )
+                mode = "m2"
+                summarySha = m2.summarySha256
+                summaryBytes = m2.summaryBytes
+                rollingSummary = m2.summary
+                h1FallbackToM2 = true
+              }
+            } catch {
+              /* keep M1 */
+            }
+          }
+        }
+      } catch (e: any) {
+        h1Error = e?.message || String(e)
+        /* cascade M2 on non-abort */
+        if (!signal?.aborted && shouldRunM2(compact, m2Enabled, phase)) {
+          try {
+            const m2 = await generateRollingSummary({
+              droppedMessages: compact.droppedMessages,
+              config: params.config,
+              signal,
+            })
+            if (m2.ok && m2.summary) {
+              messages = attachRollingSummaryToMessages(
+                messages,
+                compact.droppedCount,
+                m2.summary,
+              )
+              mode = "m2"
+              summarySha = m2.summarySha256
+              summaryBytes = m2.summaryBytes
+              rollingSummary = m2.summary
+              h1FallbackToM2 = true
+            }
+          } catch {
+            /* M1 */
+          }
+        }
+      }
+    }
+
+    // S51 P0 / S52 N2 + Wave B: retain prior pre_loop H1/M2 on mid_loop **before** meta I/O.
+    // mode "h1"|"m2" after re-attach = request carries prior notice (N7), not a new gen.
     const retained = retainMidLoopRollingSummary({
       phase,
       mode,
@@ -572,6 +639,8 @@ ${hostUseRule12}${appIndexSection ? `\n\n${appIndexSection}` : ""}`
       rollingSummary,
       summarySha: summarySha || undefined,
       summaryBytes,
+      handoff,
+      handoffFormatted: rollingSummary,
       prevMeta,
     })
     messages = retained.messages
@@ -579,6 +648,9 @@ ${hostUseRule12}${appIndexSection ? `\n\n${appIndexSection}` : ""}`
     rollingSummary = retained.rollingSummary
     summarySha = retained.summarySha || null
     summaryBytes = retained.summaryBytes
+    if (retained.handoff && typeof retained.handoff === "object") {
+      handoff = retained.handoff as ThreadHandoff
+    }
     const keepSummary = retained.keepSummary
     const keepSha = retained.keepSha
     const keepBytes = retained.keepBytes
@@ -596,6 +668,7 @@ ${hostUseRule12}${appIndexSection ? `\n\n${appIndexSection}` : ""}`
           summary_sha256: keepSha || summarySha || undefined,
           summary_bytes: keepBytes || summaryBytes || undefined,
           phase,
+          ...(handoff ? { handoff } : {}),
         },
       })
       if (updated) {
@@ -618,6 +691,8 @@ ${hostUseRule12}${appIndexSection ? `\n\n${appIndexSection}` : ""}`
         tool_pairs_preserved: true,
         summary_bytes: summaryBytes,
         summary_sha256: summarySha,
+        ...(h1Error ? { h1_error: String(h1Error).slice(0, 120) } : {}),
+        ...(h1FallbackToM2 ? { h1_fallback_to_m2: true } : {}),
       })
     } catch {
       /* non-fatal */
@@ -630,8 +705,8 @@ ${hostUseRule12}${appIndexSection ? `\n\n${appIndexSection}` : ""}`
         tokens_before: compact.tokensBefore,
         tokens_after: compact.tokensAfter,
         mode,
-        // UI modal: summary text only when M2 succeeded (already redacted)
         rolling_summary: rollingSummary || undefined,
+        handoff: handoff || undefined,
       })
     } catch {
       /* non-fatal */

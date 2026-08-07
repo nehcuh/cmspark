@@ -492,10 +492,33 @@ Respond with a JSON array of objects: [{"name": "skill_name", "confidence": 95}]
     return [...new Set([...active, ...matched, ...site])]
   }
 
-  /** Get active knowledge docs for a thread (knowledge/ tree + classic knowledge types). */
+  /**
+   * Active knowledge docs for a thread.
+   * Wave A: primary source is thread.active_knowledge_ids.
+   * D2 back-compat: also include knowledge-typed names still listed in active_skill_ids
+   * (TODO(wave-a-d2): remove skill-path knowledge union after 1 release).
+   */
   getActiveKnowledgeForThread(threadId: string): Skill[] {
-    const active = this.getActiveForThread(threadId)
-    return active.filter(s => this.isKnowledgeDoc(s))
+    this.ensureFresh()
+    let ids: string[] = []
+    try {
+      const tm = new ThreadManager()
+      const thread = tm.get(threadId)
+      if (Array.isArray(thread?.active_knowledge_ids)) {
+        ids = [...thread.active_knowledge_ids]
+      }
+      // TODO(wave-a-d2): remove skill-path knowledge union after 1 release
+      const skillActive = thread?.active_skill_ids || []
+      for (const name of skillActive) {
+        const s = this.get(name)
+        if (s && this.isKnowledgeDoc(s) && !ids.includes(name)) ids.push(name)
+      }
+    } catch {
+      /* empty */
+    }
+    return ids
+      .map((n) => this.get(n))
+      .filter((s): s is Skill => !!s && this.isKnowledgeDoc(s))
   }
 
   /** Resolve knowledge IDs for a thread based on the selection mode.

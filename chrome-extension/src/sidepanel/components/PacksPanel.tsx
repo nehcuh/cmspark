@@ -82,6 +82,8 @@ type SceneEditorState = {
   description: string
   system_prompt_append: string
   skill_ids: string[]
+  /** Wave A: global knowledge doc names for apply */
+  knowledge_ids: string[]
   mcp_server_ids: string[]
   tools_mode: ToolsModeUi
   tools_allow: string[]
@@ -101,6 +103,7 @@ const emptyEditor = (): SceneEditorState => ({
   description: "",
   system_prompt_append: "",
   skill_ids: [],
+  knowledge_ids: [],
   mcp_server_ids: [],
   tools_mode: "unchanged",
   tools_allow: [],
@@ -214,6 +217,8 @@ export function PacksPanel() {
           // 另存为我的：default 不收窄工具；用户可勾「保留工具限制」
           const refs = Array.isArray(p.skill_refs) ? p.skill_refs : []
           const installed = Array.isArray(p.installed_skill_ids) ? p.installed_skill_ids : []
+          const kRefs = Array.isArray(p.knowledge_refs) ? p.knowledge_refs : []
+          const kInstalled = Array.isArray(p.installed_knowledge_ids) ? p.installed_knowledge_ids : []
           const srcTools = p.tools || { mode: "unchanged", allow: [], deny: [] }
           const srcMode: ToolsModeUi = srcTools.mode === "allowlist" ? "allowlist" : "unchanged"
           const srcAllow = Array.isArray(srcTools.allow) ? [...srcTools.allow] : []
@@ -225,18 +230,21 @@ export function PacksPanel() {
             description: p.description || "",
             system_prompt_append: p.system_prompt_append || "",
             skill_ids: [...new Set([...refs, ...installed])],
+            knowledge_ids: [...new Set([...kRefs, ...kInstalled])],
             mcp_server_ids: Array.isArray(p.mcp_servers) ? p.mcp_servers : [],
             tools_mode: "unchanged",
             tools_allow: srcAllow,
             preserve_tools: false,
           })
           setSuggestNote(
-            "已从模板复制。默认不额外限制工具（可勾「保留原场景工具限制」）。可改 prompt / 技能 / Trust 后保存。",
+            "已从模板复制。默认不额外限制工具（可勾「保留原场景工具限制」）。可改 prompt / 技能 / 知识库 / Trust 后保存。",
           )
         } else {
           cloneToolsRef.current = null
           const t = p.tools || { mode: "unchanged", allow: [] }
           const tr = p.trust || {}
+          const kRefs = Array.isArray(p.knowledge_refs) ? p.knowledge_refs : []
+          const kInstalled = Array.isArray(p.installed_knowledge_ids) ? p.installed_knowledge_ids : []
           setEditor({
             ...emptyEditor(),
             id: p.id,
@@ -244,6 +252,7 @@ export function PacksPanel() {
             description: p.description || "",
             system_prompt_append: p.system_prompt_append || "",
             skill_ids: Array.isArray(p.skill_refs) ? p.skill_refs : [],
+            knowledge_ids: [...new Set([...kRefs, ...kInstalled])],
             mcp_server_ids: Array.isArray(p.mcp_servers) ? p.mcp_servers : [],
             tools_mode: t.mode === "allowlist" ? "allowlist" : "unchanged",
             tools_allow: Array.isArray(t.allow) ? [...t.allow] : [],
@@ -437,6 +446,7 @@ export function PacksPanel() {
 
   const openCreateEditor = () => {
     chrome.runtime.sendMessage({ type: "skill.list" })
+    chrome.runtime.sendMessage({ type: "knowledge.list" })
     chrome.runtime.sendMessage({ type: "mcp.list" })
     setSuggestNote("")
     setEditor(emptyEditor())
@@ -450,6 +460,7 @@ export function PacksPanel() {
     packGetModeRef.current = "edit"
     setBusy("edit")
     chrome.runtime.sendMessage({ type: "skill.list" })
+    chrome.runtime.sendMessage({ type: "knowledge.list" })
     chrome.runtime.sendMessage({ type: "mcp.list" })
     chrome.runtime.sendMessage({ type: "pack.get", pack_id: p.id })
   }
@@ -458,6 +469,7 @@ export function PacksPanel() {
     packGetModeRef.current = "clone"
     setBusy("clone")
     chrome.runtime.sendMessage({ type: "skill.list" })
+    chrome.runtime.sendMessage({ type: "knowledge.list" })
     chrome.runtime.sendMessage({ type: "mcp.list" })
     chrome.runtime.sendMessage({ type: "pack.get", pack_id: p.id })
   }
@@ -469,6 +481,19 @@ export function PacksPanel() {
       return {
         ...prev,
         skill_ids: has ? prev.skill_ids.filter((s) => s !== name) : [...prev.skill_ids, name],
+      }
+    })
+  }
+
+  const toggleKnowledge = (name: string) => {
+    setEditor((prev) => {
+      if (!prev) return prev
+      const has = prev.knowledge_ids.includes(name)
+      return {
+        ...prev,
+        knowledge_ids: has
+          ? prev.knowledge_ids.filter((s) => s !== name)
+          : [...prev.knowledge_ids, name],
       }
     })
   }
@@ -632,6 +657,7 @@ export function PacksPanel() {
       description: editor.description.trim() || undefined,
       system_prompt_append: editor.system_prompt_append.trim(),
       skill_ids: editor.skill_ids,
+      knowledge_ids: editor.knowledge_ids,
       mcp_server_ids: editor.mcp_server_ids,
       tools: toolsPayload,
       trust: trustPayload,
@@ -729,7 +755,7 @@ export function PacksPanel() {
           </button>
         </div>
         <div style={styles.hint}>
-          用户场景可配置 system prompt、技能与 MCP；应用后优先使用勾选项（不额外收窄工具）。
+          用户场景可配置 system prompt、技能、知识库与 MCP；应用后优先使用勾选项（不额外收窄工具）。
         </div>
         {packs.length === 0 && <div style={styles.empty}>暂无已安装场景模板</div>}
         <ul style={styles.list}>
@@ -987,6 +1013,29 @@ export function PacksPanel() {
                     {s.description ? (
                       <span style={{ color: tokens.textMuted, display: "block", fontSize: 10 }}>
                         {s.description.slice(0, 80)}
+                      </span>
+                    ) : null}
+                  </span>
+                </label>
+              ))}
+            </div>
+            <label style={styles.fieldLabel}>知识库（应用时写入本对话；manual 模式）</label>
+            <div style={styles.checkList}>
+              {(state.knowledgeDocs || []).length === 0 && (
+                <div style={styles.empty}>暂无知识文档，可到「知识」面板导入</div>
+              )}
+              {(state.knowledgeDocs || []).map((d: { name: string; description?: string }) => (
+                <label key={d.name} style={styles.checkRow}>
+                  <input
+                    type="checkbox"
+                    checked={editor.knowledge_ids.includes(d.name)}
+                    onChange={() => toggleKnowledge(d.name)}
+                  />
+                  <span>
+                    <strong>{d.name}</strong>
+                    {d.description ? (
+                      <span style={{ color: tokens.textMuted, display: "block", fontSize: 10 }}>
+                        {d.description.slice(0, 80)}
                       </span>
                     ) : null}
                   </span>

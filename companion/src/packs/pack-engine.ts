@@ -644,8 +644,9 @@ function installAssetsFromValidated(
   manifest: PackManifest,
   skillAbs: string[],
   knowledgeAbs: string[],
-): string[] {
+): { skillIds: string[]; knowledgeIds: string[] } {
   const skillIds: string[] = []
+  const knowledgeIds: string[] = []
   fs.mkdirSync(skillsDir(), { recursive: true, mode: 0o700 })
   fs.mkdirSync(knowledgeGlobalDir(), { recursive: true, mode: 0o700 })
 
@@ -661,8 +662,9 @@ function installAssetsFromValidated(
     const ns = skillId(manifest.id, orig)
     const dest = path.join(knowledgeGlobalDir(), skillFileName(manifest.id, orig))
     copyKnowledge(abs, dest, ns)
+    knowledgeIds.push(ns)
   }
-  return skillIds
+  return { skillIds, knowledgeIds }
 }
 
 function readInstalledManifest(packId: string): { dir: string; result: ReturnType<typeof validatePackDir> } {
@@ -748,10 +750,15 @@ export function getPackDetail(
   const ui = m.ui
   const nsPrefix = `pack--${m.id}--`
   let installedSkillIds: string[] = []
+  let installedKnowledgeIds: string[] = []
   if (skillEngine) {
     installedSkillIds = skillEngine
       .list()
       .map((s) => s.name)
+      .filter((n) => n.startsWith(nsPrefix))
+    installedKnowledgeIds = skillEngine
+      .listKnowledge()
+      .map((k) => k.name)
       .filter((n) => n.startsWith(nsPrefix))
   } else {
     // Best-effort from disk without SkillEngine
@@ -760,6 +767,17 @@ export function getPackDetail(
       if (fs.existsSync(dir)) {
         installedSkillIds = fs
           .readdirSync(dir)
+          .filter((f) => f.startsWith(nsPrefix) && f.endsWith(".md"))
+          .map((f) => f.replace(/\.md$/, ""))
+      }
+    } catch {
+      /* ignore */
+    }
+    try {
+      const kdir = knowledgeGlobalDir()
+      if (fs.existsSync(kdir)) {
+        installedKnowledgeIds = fs
+          .readdirSync(kdir)
           .filter((f) => f.startsWith(nsPrefix) && f.endsWith(".md"))
           .map((f) => f.replace(/\.md$/, ""))
       }
@@ -779,9 +797,11 @@ export function getPackDetail(
       editable: origin === "user",
       system_prompt_append: m.system_prompt_append,
       skill_refs: Array.isArray(m.skill_refs) ? [...m.skill_refs] : [],
+      knowledge_refs: Array.isArray(m.knowledge_refs) ? [...m.knowledge_refs] : [],
       mcp_servers: Array.isArray(m.mcp_servers) ? [...m.mcp_servers] : [],
       skills: Array.isArray(m.skills) ? [...m.skills] : [],
       installed_skill_ids: installedSkillIds,
+      installed_knowledge_ids: installedKnowledgeIds,
       requires_modules: Array.isArray(m.requires_modules) ? [...m.requires_modules] : [],
       tools: {
         mode: m.tools.mode,
@@ -857,6 +877,15 @@ export function saveUserPack(
   for (const s of skillIds) {
     if (s.includes("/") || s.includes("\\") || s.includes("..")) {
       return { ok: false, error: `invalid skill id: ${s}`, code: "invalid_input" }
+    }
+  }
+  // Always rewrite from input array (same as skill_ids — UI always sends).
+  const knowledgeIds = Array.isArray(input.knowledge_ids)
+    ? input.knowledge_ids.filter((s) => typeof s === "string" && s.trim()).map((s) => s.trim())
+    : []
+  for (const s of knowledgeIds) {
+    if (s.includes("/") || s.includes("\\") || s.includes("..")) {
+      return { ok: false, error: `invalid knowledge id: ${s}`, code: "invalid_input" }
     }
   }
   const mcpIds = Array.isArray(input.mcp_server_ids)
@@ -950,6 +979,7 @@ export function saveUserPack(
     skills: [],
     skill_refs: skillIds,
     knowledge: [],
+    knowledge_refs: knowledgeIds,
     mcp_servers: mcpIds,
     tools: {
       mode: tools.mode,
@@ -1230,6 +1260,9 @@ function snapshotFromThread(thread: any): ThreadPackSnapshot {
   return {
     tool_whitelist: thread.tool_whitelist ?? null,
     active_skill_ids: Array.isArray(thread.active_skill_ids) ? [...thread.active_skill_ids] : [],
+    active_knowledge_ids: Array.isArray(thread.active_knowledge_ids)
+      ? [...thread.active_knowledge_ids]
+      : [],
     skill_selection_mode: thread.skill_selection_mode,
     knowledge_selection_mode: thread.knowledge_selection_mode,
     mcp_selection_mode: thread.mcp_selection_mode,
@@ -1249,6 +1282,7 @@ function restoreSnapshot(threadManager: ThreadManager, threadId: string, snap: T
     mission_pack_snapshot: null,
     tool_whitelist: snap.tool_whitelist,
     active_skill_ids: snap.active_skill_ids,
+    active_knowledge_ids: Array.isArray(snap.active_knowledge_ids) ? [...snap.active_knowledge_ids] : [],
     skill_selection_mode: snap.skill_selection_mode as SelectionMode | undefined,
     knowledge_selection_mode: snap.knowledge_selection_mode as SelectionMode | undefined,
     mcp_selection_mode: snap.mcp_selection_mode as SelectionMode | undefined,
@@ -1420,13 +1454,16 @@ export function applyPack(
 
   // Install assets (disk only — safe if apply fails later; refresh may show skills early)
   let skillIds: string[]
+  let knowledgeIds: string[]
   try {
-    skillIds = installAssetsFromValidated(
+    const installed = installAssetsFromValidated(
       dir,
       result.manifest,
       result.skillAbsPaths,
       result.knowledgeAbsPaths,
     )
+    skillIds = installed.skillIds
+    knowledgeIds = installed.knowledgeIds
     skillEngine.refresh()
   } catch (e: any) {
     // S46 P0-2: Trust already written — must restore or cruise sticks with no cookie
@@ -1463,6 +1500,18 @@ export function applyPack(
     activeSkillIds = skillIds.length > 0 ? skillIds : baseSnap.active_skill_ids
   }
 
+  // Wave A / D8: pack knowledge (installed ns + knowledge_refs) REPLACE when non-empty;
+  // empty → preserve baseSnap (cannot explicit-clear via empty knowledge_refs; intentional).
+  const knownK = new Set(skillEngine.listKnowledge().map((k) => k.name))
+  const kRefs = (result.manifest.knowledge_refs || []).filter((id) => knownK.has(id))
+  const packKnowledge = [...new Set([...knowledgeIds, ...kRefs])]
+  const activeKnowledgeIds =
+    packKnowledge.length > 0
+      ? packKnowledge
+      : Array.isArray(baseSnap.active_knowledge_ids)
+        ? [...baseSnap.active_knowledge_ids]
+        : []
+
   try {
     // Single mutation — S8: failure here leaves thread as before this call
     // (note: switch case does NOT restore A first, so A remains until this succeeds)
@@ -1471,6 +1520,7 @@ export function applyPack(
       mission_pack_snapshot: freezeSnap,
       tool_whitelist: whitelist,
       active_skill_ids: activeSkillIds,
+      active_knowledge_ids: activeKnowledgeIds,
       skill_selection_mode: td.skill_selection_mode || "manual",
       knowledge_selection_mode: td.knowledge_selection_mode || "manual",
       mcp_selection_mode: td.mcp_selection_mode || "manual",
@@ -1534,6 +1584,9 @@ export function unapplyPack(
         active_skill_ids: (thread.active_skill_ids || []).filter(
           (s: string) => !s.startsWith(`pack--${packId}--`),
         ),
+        active_knowledge_ids: (thread.active_knowledge_ids || []).filter(
+          (s: string) => !s.startsWith(`pack--${packId}--`),
+        ),
         system_prompt_append: null,
         board_mode: false,
         mission_pack_trust_snapshot: null,
@@ -1584,6 +1637,9 @@ export function uninstallPack(
           mission_pack_snapshot: null,
           tool_whitelist: null,
           active_skill_ids: (t.active_skill_ids || []).filter((s: string) => !s.startsWith(`pack--${packId}--`)),
+          active_knowledge_ids: (t.active_knowledge_ids || []).filter(
+            (s: string) => !s.startsWith(`pack--${packId}--`),
+          ),
           system_prompt_append: null,
           board_mode: false,
           mission_pack_trust_snapshot: null,

@@ -40,6 +40,11 @@ export interface PackManifest {
    */
   skill_refs?: string[]
   knowledge: string[]
+  /**
+   * Wave A: references to already-installed global knowledge doc names (not pack-local paths).
+   * User scenes store selections here; apply unions with pack-local installed knowledge ids.
+   */
+  knowledge_refs?: string[]
   mcp_servers: string[]
   tools: PackTools
   system_prompt_append: string
@@ -70,6 +75,7 @@ export interface PackManifest {
 export interface ThreadPackSnapshot {
   tool_whitelist: string[] | null
   active_skill_ids: string[]
+  active_knowledge_ids?: string[]
   skill_selection_mode?: SelectionMode
   knowledge_selection_mode?: SelectionMode
   mcp_selection_mode?: SelectionMode
@@ -114,6 +120,8 @@ export interface UserPackSaveInput {
   system_prompt_append: string
   /** Global skill names to activate on apply (manual selection). */
   skill_ids?: string[]
+  /** Global knowledge doc names to activate on apply (manual selection). Wave A. */
+  knowledge_ids?: string[]
   /** Configured MCP server ids to expose on apply (manual selection). */
   mcp_server_ids?: string[]
   /**
@@ -195,6 +203,7 @@ export interface PackDetail {
   editable: boolean
   system_prompt_append: string
   skill_refs: string[]
+  knowledge_refs?: string[]
   mcp_servers: string[]
   skills: string[]
   /**
@@ -202,6 +211,8 @@ export interface PackDetail {
    * Used by「另存为我的」to pre-check pack-local skills without waiting for skill.list race.
    */
   installed_skill_ids?: string[]
+  /** Installed namespaced knowledge ids from this pack under knowledge/global. */
+  installed_knowledge_ids?: string[]
   requires_modules: string[]
   tools: PackTools
   /** User-scene only: global Trust recipe applied on pack.apply */
@@ -225,6 +236,7 @@ export interface PackApplyPatch {
   mission_pack_snapshot: ThreadPackSnapshot | null
   tool_whitelist: string[] | null
   active_skill_ids: string[]
+  active_knowledge_ids?: string[]
   skill_selection_mode?: SelectionMode
   knowledge_selection_mode?: SelectionMode
   mcp_selection_mode?: SelectionMode

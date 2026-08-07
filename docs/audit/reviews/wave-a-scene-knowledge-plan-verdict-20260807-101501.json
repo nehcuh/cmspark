@@ -1,0 +1,8 @@
+{
+  "batch": "wave-a-scene-knowledge-plan",
+  "timestamp": "20260807-101501",
+  "claude": { "verdict": "REJECT", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/wave-a-scene-knowledge-plan-claude-20260807-101501.md" },
+  "pi": { "verdict": "REJECT", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/wave-a-scene-knowledge-plan-pi-20260807-101501.md" },
+  "both_approve": false,
+  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/wave-a-scene-knowledge-plan-diff-20260807-101501.patch"
+}

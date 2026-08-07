@@ -1620,6 +1620,7 @@ export async function handleMessage(
         "tool_whitelist",
         "pinned_tabs",
         "active_skill_ids",
+        "active_knowledge_ids",
         "skill_selection_mode",
         "knowledge_selection_mode",
         "mcp_selection_mode",
@@ -2521,6 +2522,7 @@ export async function handleMessage(
           system_prompt_append:
             typeof rest.system_prompt_append === "string" ? rest.system_prompt_append : "",
           skill_ids: Array.isArray(rest.skill_ids) ? rest.skill_ids : [],
+          knowledge_ids: Array.isArray(rest.knowledge_ids) ? rest.knowledge_ids : [],
           mcp_server_ids: Array.isArray(rest.mcp_server_ids) ? rest.mcp_server_ids : [],
           tools: toolsInput,
           trust: trustInput,

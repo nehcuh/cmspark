@@ -15,6 +15,8 @@ import {
 interface ThreadPackSnapshot {
   tool_whitelist: string[] | null
   active_skill_ids: string[]
+  /** Wave A: knowledge docs activated for this thread (independent of skills). */
+  active_knowledge_ids?: string[]
   skill_selection_mode?: "auto" | "all" | "manual"
   knowledge_selection_mode?: "auto" | "all" | "manual"
   mcp_selection_mode?: "auto" | "all" | "manual"
@@ -31,6 +33,8 @@ interface Thread {
   tool_whitelist: string[] | null
   pinned_tabs: number[]
   active_skill_ids: string[]
+  /** Knowledge doc names active for this thread (manual / pack apply). */
+  active_knowledge_ids?: string[]
   skill_selection_mode?: "auto" | "all" | "manual"
   knowledge_selection_mode?: "auto" | "all" | "manual"
   // Audit item 7: per-thread MCP server selection. "auto" exposes every
@@ -351,6 +355,7 @@ export class ThreadManager {
       tool_whitelist: null,
       pinned_tabs: [],
       active_skill_ids: ["browse"],
+      active_knowledge_ids: [],
       skill_selection_mode: "auto",
       knowledge_selection_mode: "auto",
       mcp_selection_mode: "auto",
@@ -515,6 +520,12 @@ export class ThreadManager {
     if (thread && thread.board_mode === undefined) {
       thread.board_mode = false
     }
+    // Dual nit: sanitize runtime_context_budget (incl. handoff) on read so
+    // mid_loop retain / UI never trust hand-edited index junk.
+    if (thread && thread.runtime_context_budget != null) {
+      const sanitized = sanitizeRuntimeContextBudget(thread.runtime_context_budget)
+      thread.runtime_context_budget = sanitized
+    }
     return thread
   }
 
@@ -570,6 +581,14 @@ export class ThreadManager {
         throw new Error(`Invalid knowledge_selection_mode: ${updates.knowledge_selection_mode}. Must be one of ${validModes.join(", ")}`)
       }
     }
+    if (updates.active_knowledge_ids !== undefined) {
+      if (
+        !Array.isArray(updates.active_knowledge_ids) ||
+        !updates.active_knowledge_ids.every((s: any) => typeof s === "string")
+      ) {
+        throw new Error("active_knowledge_ids must be an array of strings")
+      }
+    }
     // Audit item 7: validate mcp_selection_mode + active_mcp_server_ids shape
     if (updates.mcp_selection_mode !== undefined) {
       const validMcpModes = ["auto", "all", "manual"]
@@ -609,6 +628,7 @@ export class ThreadManager {
       mission_pack_snapshot: ThreadPackSnapshot | null
       tool_whitelist: string[] | null
       active_skill_ids: string[]
+      active_knowledge_ids?: string[]
       skill_selection_mode?: "auto" | "all" | "manual"
       knowledge_selection_mode?: "auto" | "all" | "manual"
       mcp_selection_mode?: "auto" | "all" | "manual"
@@ -626,6 +646,13 @@ export class ThreadManager {
 
     if (!Array.isArray(patch.active_skill_ids) || !patch.active_skill_ids.every((s) => typeof s === "string")) {
       throw new Error("active_skill_ids must be an array of strings")
+    }
+    if (
+      patch.active_knowledge_ids !== undefined &&
+      (!Array.isArray(patch.active_knowledge_ids) ||
+        !patch.active_knowledge_ids.every((s) => typeof s === "string"))
+    ) {
+      throw new Error("active_knowledge_ids must be an array of strings")
     }
     if (patch.tool_whitelist !== null) {
       if (!Array.isArray(patch.tool_whitelist) || !patch.tool_whitelist.every((s) => typeof s === "string")) {
@@ -666,6 +693,9 @@ export class ThreadManager {
     thread.mission_pack_snapshot = patch.mission_pack_snapshot
     thread.tool_whitelist = patch.tool_whitelist
     thread.active_skill_ids = [...patch.active_skill_ids]
+    if (patch.active_knowledge_ids !== undefined) {
+      thread.active_knowledge_ids = [...patch.active_knowledge_ids]
+    }
     if (patch.skill_selection_mode !== undefined) thread.skill_selection_mode = patch.skill_selection_mode
     if (patch.knowledge_selection_mode !== undefined) {
       thread.knowledge_selection_mode = patch.knowledge_selection_mode

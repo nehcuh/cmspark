@@ -120,8 +120,16 @@ export interface AgentState {
       tokensBefore: number
       tokensAfter: number
       at: number
-      mode?: "m1" | "m2"
+      mode?: "m1" | "m2" | "h1"
       rollingSummary?: string
+      handoff?: {
+        updated_at?: string
+        goals?: string[]
+        decisions?: string[]
+        constraints?: string[]
+        open_todos?: string[]
+        artifacts?: string[]
+      }
     }
   >
 }
@@ -216,8 +224,16 @@ export type AgentAction =
       droppedCount: number
       tokensBefore: number
       tokensAfter: number
-      mode?: "m1" | "m2"
+      mode?: "m1" | "m2" | "h1"
       rollingSummary?: string
+      handoff?: {
+        updated_at?: string
+        goals?: string[]
+        decisions?: string[]
+        constraints?: string[]
+        open_todos?: string[]
+        artifacts?: string[]
+      }
     }
   | { type: "CLEAR_CONTEXT_COMPACTED"; threadId: string }
 
@@ -339,6 +355,7 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         // Do not wipe messages when preserving active across trash-scoped merges
         pinnedTabIds: nextActiveThread?.pinned_tabs ?? state.pinnedTabIds,
         activeSkillIds: nextActiveThread?.active_skill_ids ?? state.activeSkillIds,
+        activeKnowledgeIds: nextActiveThread?.active_knowledge_ids ?? state.activeKnowledgeIds,
         skillSelectionMode: nextActiveThread?.skill_selection_mode || state.skillSelectionMode || "auto",
         knowledgeSelectionMode:
           nextActiveThread?.knowledge_selection_mode || state.knowledgeSelectionMode || "auto",
@@ -361,6 +378,7 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         modePin: null,
         pinnedTabIds: activeThread?.pinned_tabs || [],
         activeSkillIds: activeThread?.active_skill_ids || [],
+        activeKnowledgeIds: activeThread?.active_knowledge_ids || [],
         skillSelectionMode: activeThread?.skill_selection_mode || "auto",
         knowledgeSelectionMode: activeThread?.knowledge_selection_mode || "auto",
         mcpSelectionMode: activeThread?.mcp_selection_mode || "auto",
@@ -425,6 +443,7 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
             at: Date.now(),
             mode: action.mode,
             rollingSummary: action.rollingSummary,
+            handoff: action.handoff,
           },
         },
       }
@@ -511,6 +530,7 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         processingStatus: clearingActive ? null : state.processingStatus,
         pinnedTabIds: nextThread?.pinned_tabs || [],
         activeSkillIds: nextThread?.active_skill_ids || [],
+        activeKnowledgeIds: nextThread?.active_knowledge_ids || [],
         threadBusyById: restBusy,
       }
     }
@@ -536,18 +556,29 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
         processingStatus: clearingActive ? null : state.processingStatus,
         pinnedTabIds: nextThread?.pinned_tabs || [],
         activeSkillIds: nextThread?.active_skill_ids || [],
+        activeKnowledgeIds: nextThread?.active_knowledge_ids || [],
         threadBusyById: restBusy,
       }
     }
     case "UPSERT_THREAD": {
       const exists = state.threads.find(t => t.id === action.thread.id)
+      const isActive = action.thread.id === state.activeThreadId
       if (exists) {
         return {
           ...state,
           threads: state.threads.map(t => t.id === action.thread.id ? { ...t, ...action.thread } : t),
-          pinnedTabIds: action.thread.id === state.activeThreadId
+          pinnedTabIds: isActive
             ? action.thread.pinned_tabs || []
             : state.pinnedTabIds,
+          activeSkillIds: isActive
+            ? (action.thread.active_skill_ids || state.activeSkillIds)
+            : state.activeSkillIds,
+          activeKnowledgeIds: isActive
+            ? (action.thread.active_knowledge_ids ?? state.activeKnowledgeIds)
+            : state.activeKnowledgeIds,
+          knowledgeSelectionMode: isActive
+            ? (action.thread.knowledge_selection_mode || state.knowledgeSelectionMode)
+            : state.knowledgeSelectionMode,
         }
       }
       return {

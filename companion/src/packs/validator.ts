@@ -177,6 +177,13 @@ export function validatePackDir(packDir: string): ValidateResult {
   }
   const knowledge = asStringArray(doc.knowledge, "knowledge")
   if ("error" in knowledge) return { ok: false, error: knowledge.error }
+  const knowledgeRefs = asStringArray(doc.knowledge_refs, "knowledge_refs")
+  if ("error" in knowledgeRefs) return { ok: false, error: knowledgeRefs.error }
+  for (const ref of knowledgeRefs) {
+    if (!ref.trim() || ref.includes("/") || ref.includes("\\") || ref.includes("..")) {
+      return { ok: false, error: `invalid knowledge_refs entry: ${ref}` }
+    }
+  }
   const mcpServers = asStringArray(doc.mcp_servers, "mcp_servers")
   if ("error" in mcpServers) return { ok: false, error: mcpServers.error }
 
@@ -287,6 +294,8 @@ export function validatePackDir(packDir: string): ValidateResult {
     skills,
     skill_refs: skillRefs.length > 0 || doc.skill_refs !== undefined ? skillRefs : undefined,
     knowledge,
+    knowledge_refs:
+      knowledgeRefs.length > 0 || doc.knowledge_refs !== undefined ? knowledgeRefs : undefined,
     mcp_servers: mcpServers,
     tools: {
       mode: toolsObj.mode as ToolsMode,
