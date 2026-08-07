@@ -1,0 +1,59 @@
+{
+  "spike": "pathb-s5-session",
+  "time": "2026-08-07T07:59:42.057Z",
+  "status": "pass",
+  "cases": [
+    {
+      "name": "start",
+      "ok": true,
+      "detail": {
+        "ok": true
+      }
+    },
+    {
+      "name": "chunk_0",
+      "ok": true,
+      "detail": {
+        "ok": true
+      }
+    },
+    {
+      "name": "chunk_1",
+      "ok": true,
+      "detail": {
+        "ok": true
+      }
+    },
+    {
+      "name": "chunk_2",
+      "ok": true,
+      "detail": {
+        "ok": true
+      }
+    },
+    {
+      "name": "end",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "len": 9
+      }
+    },
+    {
+      "name": "abort",
+      "ok": true,
+      "detail": {
+        "ok": true
+      }
+    },
+    {
+      "name": "late_chunk_after_abort",
+      "ok": true,
+      "detail": {
+        "ok": false,
+        "code": "session_unknown",
+        "message": "no matching session"
+      }
+    }
+  ]
+}

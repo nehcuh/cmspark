@@ -1,0 +1,20 @@
+{
+  "spike": "pathb-s4-binary-resolve",
+  "time": "2026-08-07T08:04:57.243Z",
+  "status": "pass",
+  "pinMatch": {
+    "ok": true,
+    "path": "/var/folders/f5/f_1l4tl15tnc_rj9gnm4kyfr0000gn/T/cmspark-s4-g4WIle/cmspark-whisper-darwin-arm64",
+    "arch": "darwin-arm64",
+    "sha256": "7471106f86998157e309db496b42fb3ef47466b3f3c92fc8b664239d2f2eae7f",
+    "pinned": true
+  },
+  "pinMismatch": {
+    "ok": false,
+    "reason": "hash_mismatch",
+    "arch": "darwin-arm64",
+    "path": "/var/folders/f5/f_1l4tl15tnc_rj9gnm4kyfr0000gn/T/cmspark-s4-g4WIle/cmspark-whisper-darwin-arm64",
+    "sha256": "7471106f86998157e309db496b42fb3ef47466b3f3c92fc8b664239d2f2eae7f",
+    "message": "SHA256 mismatch for /var/folders/f5/f_1l4tl15tnc_rj9gnm4kyfr0000gn/T/cmspark-s4-g4WIle/cmspark-whisper-darwin-arm64"
+  }
+}
