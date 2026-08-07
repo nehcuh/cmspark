@@ -159,8 +159,12 @@ export async function runAsrRefine(params: RunAsrRefineParams): Promise<RunAsrRe
       }),
     ])
   } catch (e: any) {
-    if (e?.name === "AbortError" || params.signal?.aborted) {
+    if (params.signal?.aborted) {
       return { ok: false, code: "aborted", message: "aborted" }
+    }
+    if (e?.name === "AbortError" || e?.name === "TimeoutError") {
+      // Distinguish wall-clock timeout from user abort when external signal not aborted.
+      return { ok: false, code: "infer_timeout", message: "refine timeout" }
     }
     logger.warn("voice.refine.llm_failed", {
       err: e instanceof Error ? e.message : String(e),

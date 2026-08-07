@@ -269,9 +269,11 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
             refineGen: gen ?? cur.refineGen ?? 0,
             code: msg.code || "refine_fail",
             message:
-              t === "voice.refine.aborted"
+              t === "voice.refine.aborted" || msg.code === "aborted"
                 ? "已取消纠错，保留识别原文"
-                : msg.message || "纠错失败，已填入识别原文",
+                : msg.code === "infer_timeout"
+                  ? "纠错超时，已填入识别原文"
+                  : msg.message || "纠错失败，已填入识别原文",
           }),
         )
       }

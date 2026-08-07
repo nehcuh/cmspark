@@ -1,0 +1,8 @@
+{
+  "batch": "dictation-plus-d1b",
+  "timestamp": "20260808-072159",
+  "claude": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/dictation-plus-d1b-claude-20260808-072159.md" },
+  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/dictation-plus-d1b-pi-20260808-072159.md" },
+  "both_approve": true,
+  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/dictation-plus-d1b-diff-20260808-072159.patch"
+}

@@ -1246,6 +1246,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
               {engineSwitchNote || voice.banner}
             </span>
             {voice.rawSnapshot &&
+            !voice.refining &&
             voice.banner &&
             /纠错|识别原文/.test(voice.banner) &&
             !engineSwitchNote ? (
