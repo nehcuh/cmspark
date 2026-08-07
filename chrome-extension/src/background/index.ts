@@ -1143,7 +1143,12 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
       case "voice.model.cancel":
       case "voice.model.delete":
       case "voice.model.set_active":
-      case "voice.model.set_engine": {
+      case "voice.model.set_engine":
+      // Path B M1 voice.stt.* (runtime Side Panel; companion origin fence + session service).
+      case "voice.stt.start":
+      case "voice.stt.chunk":
+      case "voice.stt.end":
+      case "voice.stt.abort": {
         // Forward to companion. Always call sendResponse so Side Panel callbacks
         // never see "The message port closed before a response was received"
         // (that lastError fires when no listener answers — default used to return

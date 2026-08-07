@@ -3,7 +3,7 @@
  * Abort reasons chat_abort / thread_switch / unmount discard finals (no draft merge).
  */
 
-import { mapSpeechError } from "./error-map"
+import { mapLocalSttError, mapSpeechError } from "./error-map"
 import { isEmptyFinals } from "./text-merge"
 import {
   initialVoiceSession,
@@ -11,8 +11,36 @@ import {
   type VoiceSessionState,
 } from "./types"
 
+/** Path B local STT codes (SoT §6.5) — route via mapLocalSttError. */
+const LOCAL_STT_ERROR_CODES = new Set([
+  "empty_result",
+  "model_missing",
+  "binary_missing",
+  "hash_fail",
+  "companion_disconnected",
+  "session_busy",
+  "payload_too_large",
+  "infer_timeout",
+  "resource_conflict",
+  "oom",
+  "origin_denied",
+  "total_seq_mismatch",
+  "invalid_session_id",
+])
+
 /** Side Panel / MV3 always has navigator; keep pure-friendly for unit tests. */
 function mapVoiceError(code: string) {
+  const c = (code || "").toLowerCase()
+  if (c === "aborted") {
+    return { severity: "silent" as const, message: "" }
+  }
+  if (LOCAL_STT_ERROR_CODES.has(c)) {
+    const local = mapLocalSttError(code)
+    return {
+      severity: local.severity === "silent" ? ("silent" as const) : ("error" as const),
+      message: local.message,
+    }
+  }
   return mapSpeechError(code, {
     userAgent: typeof navigator !== "undefined" ? navigator.userAgent : undefined,
   })

@@ -14,10 +14,24 @@ export type SpeechAdapterHandlers = {
   onResult: (p: { interim: string; finalChunk: string }) => void
   onError: (code: string) => void
   onEnd: () => void
+  /**
+   * Local STT only: capture ended → host should dispatch CAPTURE_STOPPED
+   * before waiting for voice.stt.result (enter processing phase).
+   */
+  onCaptureStopped?: () => void
 }
 
+/** Browser: lang string. Local: sessionId + modelId required. */
+export type SpeechAdapterStartArg =
+  | string
+  | {
+      lang?: string
+      sessionId?: string
+      modelId?: string
+    }
+
 export type SpeechAdapter = {
-  start: (lang?: string) => void
+  start: (langOrOpts?: SpeechAdapterStartArg) => void
   stop: () => void
   abort: () => void
   destroy: () => void
@@ -42,9 +56,13 @@ export function createWebSpeechAdapter(handlers: SpeechAdapterHandlers): SpeechA
   }
 
   return {
-    start(lang = VOICE_DEFAULT_LANG) {
+    start(langOrOpts?: SpeechAdapterStartArg) {
       if (dead) return
       clear()
+      const lang =
+        typeof langOrOpts === "string"
+          ? langOrOpts || VOICE_DEFAULT_LANG
+          : langOrOpts?.lang || VOICE_DEFAULT_LANG
       const r = new Ctor()
       r.lang = lang
       r.continuous = true
