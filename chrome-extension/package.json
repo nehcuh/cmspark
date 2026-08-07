@@ -13,7 +13,7 @@
     "package": "plasmo package"
   },
   "dependencies": {
-    "dompurify": "^3.4.12",
+    "dompurify": "^3.4.13",
     "katex": "^0.16.47",
     "marked": "^18.0.4",
     "marked-katex-extension": "^5.1.10",

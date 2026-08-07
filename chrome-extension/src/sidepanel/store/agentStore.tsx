@@ -43,6 +43,8 @@ export interface AgentState {
   voicePrivacyAckV3: boolean
   /** classic = M1 45s; continuous = opt-in long browser listen (SoT Dictation+). */
   voiceDictationMode: "classic" | "continuous"
+  /** ASR Refiner after stop (default false). Requires privacy ack v3 + Companion LLM. */
+  asrRefinerEnabled: boolean
   /**
    * Wave D: how to show model thinking blocks.
    * auto_live = expand while streaming, collapse when done (default).
@@ -199,6 +201,7 @@ export type AgentAction =
   | { type: "SET_VOICE_PRIVACY_ACK_V2"; ack: boolean }
   | { type: "SET_VOICE_PRIVACY_ACK_V3"; ack: boolean }
   | { type: "SET_VOICE_DICTATION_MODE"; mode: "classic" | "continuous" }
+  | { type: "SET_ASR_REFINER_ENABLED"; enabled: boolean }
   | { type: "ADD_SECURITY_CONFIRMATION"; request: SecurityConfirmationRequest }
   | { type: "REMOVE_SECURITY_CONFIRMATION"; confirmationId: string }
   | { type: "ADD_LOG"; entry: LogEntry }
@@ -323,6 +326,7 @@ export const initialState: AgentState = {
   voicePrivacyAckV2: false,
   voicePrivacyAckV3: false,
   voiceDictationMode: "classic",
+  asrRefinerEnabled: false,
   pendingSecurityConfirmations: [],
   logs: [],
   autoSkillNames: "",
@@ -668,6 +672,9 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
       chrome.storage.local.set({ voiceDictationMode: mode })
       return { ...state, voiceDictationMode: mode }
     }
+    case "SET_ASR_REFINER_ENABLED":
+      chrome.storage.local.set({ asrRefinerEnabled: action.enabled })
+      return { ...state, asrRefinerEnabled: action.enabled }
     case "ADD_SECURITY_CONFIRMATION":
       return {
         ...state,

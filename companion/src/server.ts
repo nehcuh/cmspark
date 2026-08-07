@@ -5818,6 +5818,37 @@ export function validateWsMessage(msg: any): WsValidationResult {
       }
       return { valid: true }
     },
+    // Dictation+ D1b — ASR Refiner (text-only; origin fence in handler)
+    "voice.refine.request": (m) => {
+      if (m.v !== 1) {
+        return { valid: false, error: "voice.refine.request requires v:1" }
+      }
+      if (typeof m.sessionId !== "string" || !m.sessionId || m.sessionId.length > 128) {
+        return { valid: false, error: "voice.refine.request requires sessionId string (1–128)" }
+      }
+      if (!Number.isInteger(m.refineGen) || m.refineGen < 0) {
+        return { valid: false, error: "voice.refine.request requires refineGen non-negative integer" }
+      }
+      if (typeof m.text !== "string" || !m.text) {
+        return { valid: false, error: "voice.refine.request requires text string" }
+      }
+      if (m.text.length > 12_000) {
+        return { valid: false, error: "voice.refine.request text exceeds 12000 chars" }
+      }
+      return { valid: true }
+    },
+    "voice.refine.abort": (m) => {
+      if (m.v !== 1) {
+        return { valid: false, error: "voice.refine.abort requires v:1" }
+      }
+      if (typeof m.sessionId !== "string" || !m.sessionId) {
+        return { valid: false, error: "voice.refine.abort requires sessionId string" }
+      }
+      if (!Number.isInteger(m.refineGen) || m.refineGen < 0) {
+        return { valid: false, error: "voice.refine.abort requires refineGen non-negative integer" }
+      }
+      return { valid: true }
+    },
     "tool.result": (m) => {
       if (typeof m.tool_call_id !== "string" || !m.tool_call_id) return { valid: false, error: "tool.result requires tool_call_id" }
       return { valid: true }

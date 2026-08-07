@@ -1,0 +1,1415 @@
+# Dual external review context
+batch: dictation-plus-d1b
+base: 752ae6db12d61dd7f9ad53af92caf3ffa08c3eaa
+time: 20260808-072159
+
+ee53846
+
+?? .grok/config.toml
+?? .grok/hooks/
+?? .grok/rules/
+?? docs/audit/reviews/analyze-image-data-url-p0-diff-20260806-212116.patch
+?? docs/audit/reviews/analyze-image-data-url-p0-r2-diff-20260806-213120.patch
+?? docs/audit/reviews/analyze-image-data-url-p0-r3-diff-20260806-214547.patch
+?? docs/audit/reviews/cli-qwen-plan-v2-for-pi.md
+?? docs/audit/reviews/cli-qwen-plan-v2-pi-20260802-092659.md
+?? docs/audit/reviews/context-memory-thinking-knowledge-diff-20260807-100209.patch
+?? docs/audit/reviews/dictation-plus-d1b-diff-20260808-072159.patch
+?? docs/audit/reviews/dictation-plus-d1b-dual-review-prompt.md
+?? docs/audit/reviews/estop-tap-degraded-kimi-20260801-220643.md
+?? docs/audit/reviews/run-state-worker-drilldown-diff-20260804-174619.patch
+?? docs/audit/reviews/s41-main-pull-diff-20260804-092610.patch
+?? docs/audit/reviews/s41-multi-adv-diff-20260804-093256.patch
+?? docs/audit/reviews/settings-thread-compact-diff-20260806-221435.patch
+?? docs/audit/reviews/settings-thread-compact-m2-meta-diff-20260806-230545.patch
+?? docs/audit/reviews/shell-abort-timeout-claude-20260806-163014.md
+?? docs/audit/reviews/shell-abort-timeout-diff-20260806-163014.patch
+?? docs/audit/reviews/shell-abort-timeout-diff-20260806-192609.patch
+?? docs/audit/reviews/shell-abort-timeout-r2-diff-20260806-193231.patch
+?? docs/audit/reviews/thread-history-ia-diff-20260806-092335.patch
+?? docs/audit/reviews/thread-history-ia-impl-diff-20260806-134044.patch
+?? docs/audit/reviews/thread-history-ia-impl-r2-diff-20260806-135746.patch
+?? docs/audit/reviews/trust-ia-autopilot-diff-20260802-144203.patch
+?? docs/audit/reviews/unattended-desktop-diff-20260802-153129.patch
+?? docs/audit/reviews/unattended-desktop-m1-diff-20260802-154236.patch
+?? docs/audit/reviews/unattended-desktop-m2-diff-20260802-155452.patch
+?? docs/audit/reviews/unattended-desktop-m2-r2-diff-20260802-160240.patch
+?? docs/audit/reviews/unattended-desktop-m3-diff-20260802-161147.patch
+?? docs/audit/reviews/voice-input-design-diff-20260806-194531.patch
+?? docs/audit/reviews/voice-input-m1-diff-20260806-200603.patch
+?? docs/audit/reviews/voice-input-m1-r2-diff-20260806-201142.patch
+?? docs/audit/reviews/voice-local-stt-design-diff-20260807-154150.patch
+?? docs/audit/reviews/wave-a-scene-knowledge-impl-diff-20260807-103512.patch
+?? docs/audit/reviews/wave-a-scene-knowledge-plan-diff-20260807-101501.patch
+?? docs/audit/reviews/wave-a-scene-knowledge-plan-r2-diff-20260807-102424.patch
+?? docs/audit/reviews/wave-b-h1-thread-handoff-impl-diff-20260807-105903.patch
+?? docs/audit/reviews/wave-b-h1-thread-handoff-plan-diff-20260807-104642.patch
+?? docs/audit/reviews/wave-c-thread-recall-impl-diff-20260807-115545.patch
+?? docs/audit/reviews/wave-c-thread-recall-plan-diff-20260807-113810.patch
+?? docs/audit/reviews/wave-c-thread-recall-plan-r2-diff-20260807-114530.patch
+?? docs/audit/reviews/wave-d-reasoning-ui-export-impl-diff-20260807-143315.patch
+?? docs/audit/reviews/wave-d-reasoning-ui-export-plan-diff-20260807-142222.patch
+?? docs/optimization-plan-document-parse-vision.md
+?? images/
+
+## Diff (git diff + staged)
+ chrome-extension/src/background/index.ts           |   5 +-
+ chrome-extension/src/sidepanel/App.tsx             |  43 ++++-
+ .../src/sidepanel/components/SettingsSlideout.tsx  |  36 ++++
+ .../src/sidepanel/hooks/useVoiceInput.ts           | 188 +++++++++++++++++++-
+ .../src/sidepanel/hooks/useWebSocket.ts            |   4 +
+ .../src/sidepanel/store/agentStore.tsx             |   7 +
+ .../src/sidepanel/voice/session-reducer.ts         |  83 +++++++++
+ chrome-extension/src/sidepanel/voice/types.ts      |  13 ++
+ .../tests/voice-session-reducer.test.ts            |  55 ++++++
+ companion/src/message-router.ts                    |   9 +
+ companion/src/packs/types.ts                       |   2 +-
+ companion/src/server.ts                            |  31 ++++
+ companion/src/voice/asr-refiner.ts                 | 196 +++++++++++++++++++++
+ companion/src/voice/refine-handlers.ts             | 172 ++++++++++++++++++
+ companion/tests/voice-asr-refiner.test.ts          | 169 ++++++++++++++++++
+ 15 files changed, 997 insertions(+), 16 deletions(-)
+
+diff --git a/chrome-extension/src/background/index.ts b/chrome-extension/src/background/index.ts
+index ba2da1c..91e84bf 100644
+--- a/chrome-extension/src/background/index.ts
++++ b/chrome-extension/src/background/index.ts
+@@ -1148,7 +1148,10 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
+       case "voice.stt.start":
+       case "voice.stt.chunk":
+       case "voice.stt.end":
+-      case "voice.stt.abort": {
++      case "voice.stt.abort":
++      // Dictation+ D1b ASR Refiner (text-only)
++      case "voice.refine.request":
++      case "voice.refine.abort": {
+         // Forward to companion. Always call sendResponse so Side Panel callbacks
+         // never see "The message port closed before a response was received"
+         // (that lastError fires when no listener answers — default used to return
+diff --git a/chrome-extension/src/sidepanel/App.tsx b/chrome-extension/src/sidepanel/App.tsx
+index fbbdd1e..d001aed 100644
+--- a/chrome-extension/src/sidepanel/App.tsx
++++ b/chrome-extension/src/sidepanel/App.tsx
+@@ -477,6 +477,8 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
+       setVoicePrivacyKind("v3")
+       setVoicePrivacyOpen(true)
+     },
++    asrRefinerEnabled: state.asrRefinerEnabled === true,
++    getCurrentDraft: () => textRef.current,
+   })
+ 
+   // Hide: feature off | unsupported for selected engine | worker | no thread.
+@@ -503,15 +505,18 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
+     localCapturing || continuousCapturing
+       ? formatListenRemaining(voice.listenRemainingMs!)
+       : null
+-  const voiceMicLiveStatus = voice.processing
+-    ? "本机识别中…点击取消"
+-    : localCapturing
+-      ? localListeningStatusLabel(voice.listenRemainingMs!)
+-      : continuousCapturing
+-        ? `连续听写 · 剩余 ${formatListenRemaining(voice.listenRemainingMs!)}`
+-        : null
++  const voiceMicLiveStatus = voice.refining
++    ? "纠错中…点击取消"
++    : voice.processing
++      ? "本机识别中…点击取消"
++      : localCapturing
++        ? localListeningStatusLabel(voice.listenRemainingMs!)
++        : continuousCapturing
++          ? `连续听写 · 剩余 ${formatListenRemaining(voice.listenRemainingMs!)}`
++          : null
+   const voiceMicTitle = (() => {
+     if (threadBusy) return "处理中无法听写"
++    if (voice.refining) return "纠错中…点击取消"
+     if (voice.processing) return "本机识别中…点击取消"
+     if (localCapturing) {
+       return localListeningStatusLabel(voice.listenRemainingMs!)
+@@ -1240,6 +1245,30 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
+             <span style={{ flex: "1 1 140px", minWidth: 0 }}>
+               {engineSwitchNote || voice.banner}
+             </span>
++            {voice.rawSnapshot &&
++            voice.banner &&
++            /纠错|识别原文/.test(voice.banner) &&
++            !engineSwitchNote ? (
++              <button
++                type="button"
++                data-testid="voice-cta-restore-raw"
++                onClick={() => {
++                  voice.restoreRaw()
++                }}
++                style={{
++                  border: "none",
++                  background: "transparent",
++                  color: tokens.accent,
++                  cursor: "pointer",
++                  fontSize: 11,
++                  padding: 0,
++                  flexShrink: 0,
++                  textDecoration: "underline",
++                }}
++              >
++                还原识别原文
++              </button>
++            ) : null}
+             {voiceBannerCta && !engineSwitchNote ? (
+               <button
+                 type="button"
+diff --git a/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx b/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx
+index aa1ec08..bbd8fa7 100644
+--- a/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx
++++ b/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx
+@@ -1008,6 +1008,42 @@ export function SettingsSlideout() {
+               <div style={{ marginTop: 4, fontSize: 11, color: "#888", lineHeight: 1.4 }}>
+                 连续听写仅增强 Agent 草稿输入，不会自动发送，也不是系统听写。首次使用需确认隐私说明。
+               </div>
++              <label
++                style={{
++                  display: "flex",
++                  alignItems: "flex-start",
++                  gap: 8,
++                  marginTop: 10,
++                  cursor: "pointer",
++                  fontSize: 12,
++                  lineHeight: 1.4,
++                }}
++              >
++                <input
++                  type="checkbox"
++                  style={{ marginTop: 2 }}
++                  checked={state.asrRefinerEnabled === true}
++                  onChange={(e) => {
++                    const on = e.target.checked
++                    if (on && !state.voicePrivacyAckV3) {
++                      // Enabling refine requires v3 ack — user must open mic once or we set flag after ack in App
++                      dispatch({ type: "SET_ASR_REFINER_ENABLED", enabled: true })
++                    } else {
++                      dispatch({ type: "SET_ASR_REFINER_ENABLED", enabled: on })
++                    }
++                  }}
++                />
++                <span>
++                  <strong>ASR 纠错</strong>
++                  （停后可选；默认关）
++                  <br />
++                  <span style={{ color: "#888", fontSize: 11 }}>
++                    将把<strong>转写文本</strong>发给当前 Companion 模型做极保守纠错（不润色、不自动发送）；需已配置
++                    LLM 与隐私确认 v3。当前模型：
++                    {state.companionConfig?.model_name || "（未连接/未配置）"}
++                  </span>
++                </span>
++              </label>
+             </div>
+ 
+             {/* Path B M0: 听写方式 progressive disclosure (UI draft until ready + enable) */}
+diff --git a/chrome-extension/src/sidepanel/hooks/useVoiceInput.ts b/chrome-extension/src/sidepanel/hooks/useVoiceInput.ts
+index 529c006..0c26cbf 100644
+--- a/chrome-extension/src/sidepanel/hooks/useVoiceInput.ts
++++ b/chrome-extension/src/sidepanel/hooks/useVoiceInput.ts
+@@ -39,7 +39,11 @@ function subscribeRuntime(handler: (msg: any) => void): () => void {
+     return () => {}
+   }
+   const listener = (msg: any) => {
+-    if (msg && typeof msg.type === "string" && msg.type.startsWith("voice.stt.")) {
++    if (
++      msg &&
++      typeof msg.type === "string" &&
++      (msg.type.startsWith("voice.stt.") || msg.type.startsWith("voice.refine."))
++    ) {
+       handler(msg)
+     }
+     return false
+@@ -90,6 +94,13 @@ export type UseVoiceInputOpts = {
+   /** Continuous / Refiner privacy ack v3. */
+   privacyAckV3?: boolean
+   onNeedPrivacyAckV3?: () => void
++  /** ASR Refiner opt-in (default false). */
++  asrRefinerEnabled?: boolean
++  /**
++   * Current composer text for dirty check while refining.
++   * If undefined, refine always applies (no ownership gate).
++   */
++  getCurrentDraft?: () => string
+ }
+ 
+ export function useVoiceInput(opts: UseVoiceInputOpts) {
+@@ -151,10 +162,12 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
+     return undefined
+   }, [session.phase])
+ 
++  const refineGenCounter = useRef(0)
++
+   const dispatchEv = useCallback((event: Parameters<typeof reduceVoiceSession>[1]) => {
+     setSession((prev) => {
+       const next = reduceVoiceSession(prev, event)
+-      // Side effects after ENGINE_END commit
++      // Side effects after ENGINE_END commit — raw-first, then optional refine
+       if (
+         event.type === "ENGINE_END" &&
+         next.committed &&
+@@ -162,12 +175,109 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
+         !isEmptyFinals(next.finals)
+       ) {
+         const merged = mergeFinalTranscript(next.baseText, next.finals)
+-        queueMicrotask(() => optsRef.current.onDraft(merged))
++        const o = optsRef.current
++        queueMicrotask(() => {
++          o.onDraft(merged)
++          const wantRefine =
++            o.asrRefinerEnabled === true &&
++            o.privacyAckV3 === true &&
++            o.companionConnected === true
++          if (!wantRefine) return
++          // Abort reasons that discard — already not committed path
++          refineGenCounter.current += 1
++          const gen = refineGenCounter.current
++          const sid = next.sessionId || `refine-${gen}`
++          // Re-enter SM refining (prev may already be idle in React state)
++          setSession((cur) =>
++            reduceVoiceSession(cur, {
++              type: "START_REFINE",
++              refineGen: gen,
++              rawSnapshot: merged,
++            }),
++          )
++          try {
++            const voiceOnly = mergeFinalTranscript("", next.finals)
++            sendViaRuntime({
++              type: "voice.refine.request",
++              v: 1,
++              sessionId: sid,
++              refineGen: gen,
++              text: voiceOnly || merged,
++            })
++          } catch {
++            setSession((cur) =>
++              reduceVoiceSession(cur, {
++                type: "REFINE_FAIL",
++                refineGen: gen,
++                code: "send_failed",
++                message: "纠错请求发送失败，已填入识别原文",
++              }),
++            )
++          }
++        })
+       }
+       return next
+     })
+   }, [])
+ 
++  // Subscribe to refine results (and local STT messages when engine=local also uses this path for refine)
++  useEffect(() => {
++    return subscribeRuntime((msg: any) => {
++      const t = msg?.type
++      if (t === "voice.refine.result") {
++        const gen = msg.refineGen
++        const text = typeof msg.text === "string" ? msg.text : ""
++        const cur = sessionRef.current
++        if (cur.phase !== "refining" || cur.refineGen !== gen) return
++        const rawSnap = cur.rawSnapshot || ""
++        const base = cur.baseText || ""
++        // Dirty check: user edited beyond raw snapshot
++        const draftNow = optsRef.current.getCurrentDraft?.()
++        if (draftNow != null && draftNow !== rawSnap) {
++          setSession((s) =>
++            reduceVoiceSession(s, {
++              type: "REFINE_FAIL",
++              refineGen: gen,
++              code: "draft_dirty",
++              message: "已保留你的编辑；识别原文可还原",
++            }),
++          )
++          return
++        }
++        // Apply: base + refined voice span (request sends finals only)
++        const refinedFull =
++          !base || text.startsWith(base) ? text : base + text
++        optsRef.current.onDraft(refinedFull)
++        setSession((s) =>
++          reduceVoiceSession(s, {
++            type: "REFINE_OK",
++            refineGen: gen,
++            text: refinedFull,
++            unchanged: msg.unchanged === true,
++          }),
++        )
++        return
++      }
++      if (t === "voice.refine.error" || t === "voice.refine.aborted") {
++        const gen = msg.refineGen
++        const cur = sessionRef.current
++        if (cur.phase !== "refining") return
++        if (cur.refineGen != null && gen != null && cur.refineGen !== gen) return
++        setSession((s) =>
++          reduceVoiceSession(s, {
++            type: "REFINE_FAIL",
++            refineGen: gen ?? cur.refineGen ?? 0,
++            code: msg.code || "refine_fail",
++            message:
++              t === "voice.refine.aborted"
++                ? "已取消纠错，保留识别原文"
++                : msg.message || "纠错失败，已填入识别原文",
++          }),
++        )
++      }
++    })
++  }, [])
++
+   // Rebuild adapter when engine / support changes
+   useEffect(() => {
+     if (!supported) {
+@@ -266,7 +376,27 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
+       const eng = engineRef.current
+       if (!o.enabled || !supported) return
+ 
+-      // Stop / cancel
++      // Cancel mid-refine
++      if (s.phase === "refining") {
++        const gen = s.refineGen
++        const sid = s.sessionId || (gen != null ? `refine-${gen}` : "")
++        if (gen != null && sid) {
++          try {
++            sendViaRuntime({
++              type: "voice.refine.abort",
++              v: 1,
++              sessionId: sid,
++              refineGen: gen,
++            })
++          } catch {
++            /* */
++          }
++        }
++        dispatchEv({ type: "CANCEL_REFINE" })
++        return
++      }
++
++      // Stop / cancel listen
+       if (s.phase === "listening" || s.phase === "starting") {
+         if (eng === "local") {
+           // Keep listening until capture ends → CAPTURE_STOPPED → processing.
+@@ -300,6 +430,8 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
+       const mode = modeRef.current
+       // Continuous browser requires privacy ack v3 (long cloud STT residual).
+       const continuousBrowser = mode === "continuous" && eng === "browser"
++      // ASR Refiner also requires v3 (text → LLM residual).
++      const wantsRefine = o.asrRefinerEnabled === true
+ 
+       if (eng === "local") {
+         // Fail-closed gates — never fall back to browser
+@@ -323,7 +455,7 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
+           o.onNeedPrivacyAck()
+           return
+         }
+-        if (continuousBrowser) {
++        if (continuousBrowser || wantsRefine) {
+           const v3 = extra?.privacyAckV3 === true || o.privacyAckV3 === true
+           if (!v3) {
+             // Do not fall back to v1 sheet — that cannot satisfy the v3 gate (dual-review N1).
+@@ -337,6 +469,15 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
+         }
+       }
+ 
++      // Local + refine: still need v3 for text→LLM (local already has v2 for STT)
++      if (eng === "local" && wantsRefine) {
++        const v3 = extra?.privacyAckV3 === true || o.privacyAckV3 === true
++        if (!v3) {
++          if (o.onNeedPrivacyAckV3) o.onNeedPrivacyAckV3()
++          return
++        }
++      }
++
+       // SoT §7.1: if not granted → bootstrap tab (Side Panel often cannot show mic prompt).
+       const perms = (navigator as any).permissions
+       if (perms?.query) {
+@@ -432,7 +573,26 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
+ 
+   /** Call before chat.abort / Stop button. */
+   const abortForChatStop = useCallback(() => {
+-    const ph = sessionRef.current.phase
++    const s = sessionRef.current
++    const ph = s.phase
++    if (ph === "refining") {
++      const gen = s.refineGen
++      const sid = s.sessionId || (gen != null ? `refine-${gen}` : "")
++      if (gen != null && sid) {
++        try {
++          sendViaRuntime({
++            type: "voice.refine.abort",
++            v: 1,
++            sessionId: sid,
++            refineGen: gen,
++          })
++        } catch {
++          /* */
++        }
++      }
++      dispatchEv({ type: "CHAT_ABORT" })
++      return
++    }
+     if (
+       ph === "listening" ||
+       ph === "starting" ||
+@@ -448,11 +608,21 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
+     dispatchEv({ type: "DISMISS_BANNER" })
+   }, [dispatchEv])
+ 
++  /** Restore raw STT draft after refine (if rawSnapshot available). */
++  const restoreRaw = useCallback(() => {
++    const snap = sessionRef.current.rawSnapshot
++    if (snap == null) return false
++    optsRef.current.onDraft(snap)
++    dispatchEv({ type: "DISMISS_BANNER" })
++    return true
++  }, [dispatchEv])
++
+   const busy =
+     session.phase === "listening" ||
+     session.phase === "starting" ||
+     session.phase === "stopping" ||
+-    session.phase === "processing"
++    session.phase === "processing" ||
++    session.phase === "refining"
+ 
+   /** Display value: base + finals + interim overlay while live */
+   const liveOverlay =
+@@ -481,6 +651,9 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
+     /** True while mic active or local processing (composer disable / stop-mic). */
+     listening: busy,
+     processing: session.phase === "processing",
++    refining: session.phase === "refining",
++    /** Raw STT snapshot available for undo after refine. */
++    rawSnapshot: session.rawSnapshot,
+     banner: session.banner,
+     /** Last ENGINE_ERROR code (for banner CTA routing). */
+     errorCode: session.errorCode,
+@@ -495,5 +668,6 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
+     toggle,
+     abortForChatStop,
+     dismissBanner,
++    restoreRaw,
+   }
+ }
+diff --git a/chrome-extension/src/sidepanel/hooks/useWebSocket.ts b/chrome-extension/src/sidepanel/hooks/useWebSocket.ts
+index 58ca968..39eb167 100644
+--- a/chrome-extension/src/sidepanel/hooks/useWebSocket.ts
++++ b/chrome-extension/src/sidepanel/hooks/useWebSocket.ts
+@@ -227,6 +227,7 @@ export function useWebSocket() {
+         "voice_privacy_ack_v2",
+         "voice_privacy_ack_v3",
+         "voiceDictationMode",
++        "asrRefinerEnabled",
+         "cmspark.ui.show_reasoning",
+         "cmspark.ui.export_include_reasoning",
+       ],
+@@ -259,6 +260,9 @@ export function useWebSocket() {
+         if (result.voiceDictationMode === "continuous" || result.voiceDictationMode === "classic") {
+           dispatch({ type: "SET_VOICE_DICTATION_MODE", mode: result.voiceDictationMode })
+         }
++        if (typeof result.asrRefinerEnabled === "boolean") {
++          dispatch({ type: "SET_ASR_REFINER_ENABLED", enabled: result.asrRefinerEnabled })
++        }
+       },
+     )
+     // Popup "设置" button sets this flag before opening the side panel + closing
+diff --git a/chrome-extension/src/sidepanel/store/agentStore.tsx b/chrome-extension/src/sidepanel/store/agentStore.tsx
+index 9a91ffb..d1de2e1 100644
+--- a/chrome-extension/src/sidepanel/store/agentStore.tsx
++++ b/chrome-extension/src/sidepanel/store/agentStore.tsx
+@@ -43,6 +43,8 @@ export interface AgentState {
+   voicePrivacyAckV3: boolean
+   /** classic = M1 45s; continuous = opt-in long browser listen (SoT Dictation+). */
+   voiceDictationMode: "classic" | "continuous"
++  /** ASR Refiner after stop (default false). Requires privacy ack v3 + Companion LLM. */
++  asrRefinerEnabled: boolean
+   /**
+    * Wave D: how to show model thinking blocks.
+    * auto_live = expand while streaming, collapse when done (default).
+@@ -199,6 +201,7 @@ export type AgentAction =
+   | { type: "SET_VOICE_PRIVACY_ACK_V2"; ack: boolean }
+   | { type: "SET_VOICE_PRIVACY_ACK_V3"; ack: boolean }
+   | { type: "SET_VOICE_DICTATION_MODE"; mode: "classic" | "continuous" }
++  | { type: "SET_ASR_REFINER_ENABLED"; enabled: boolean }
+   | { type: "ADD_SECURITY_CONFIRMATION"; request: SecurityConfirmationRequest }
+   | { type: "REMOVE_SECURITY_CONFIRMATION"; confirmationId: string }
+   | { type: "ADD_LOG"; entry: LogEntry }
+@@ -323,6 +326,7 @@ export const initialState: AgentState = {
+   voicePrivacyAckV2: false,
+   voicePrivacyAckV3: false,
+   voiceDictationMode: "classic",
++  asrRefinerEnabled: false,
+   pendingSecurityConfirmations: [],
+   logs: [],
+   autoSkillNames: "",
+@@ -668,6 +672,9 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
+       chrome.storage.local.set({ voiceDictationMode: mode })
+       return { ...state, voiceDictationMode: mode }
+     }
++    case "SET_ASR_REFINER_ENABLED":
++      chrome.storage.local.set({ asrRefinerEnabled: action.enabled })
++      return { ...state, asrRefinerEnabled: action.enabled }
+     case "ADD_SECURITY_CONFIRMATION":
+       return {
+         ...state,
+diff --git a/chrome-extension/src/sidepanel/voice/session-reducer.ts b/chrome-extension/src/sidepanel/voice/session-reducer.ts
+index 66e1703..fe70b74 100644
+--- a/chrome-extension/src/sidepanel/voice/session-reducer.ts
++++ b/chrome-extension/src/sidepanel/voice/session-reducer.ts
+@@ -99,6 +99,16 @@ export function reduceVoiceSession(
+       if (state.phase === "stopping") {
+         return resetToIdle(state, { banner: state.banner })
+       }
++      // D1b: cancel mid-refine — keep raw draft (already merged), clear refining
++      if (state.phase === "refining") {
++        return resetToIdle(state, {
++          baseText: state.baseText,
++          finals: state.finals,
++          committed: true,
++          rawSnapshot: state.rawSnapshot,
++          banner: "已取消纠错，保留识别原文",
++        })
++      }
+       // Local STT: cancel upload/infer mid-processing — abort-ish, no draft merge
+       if (state.phase === "processing") {
+         return {
+@@ -137,6 +147,15 @@ export function reduceVoiceSession(
+       ) {
+         return state
+       }
++      if (state.phase === "refining") {
++        return resetToIdle(state, {
++          abortReason: "chat_abort",
++          committed: false,
++          finals: [],
++          rawSnapshot: null,
++          refineGen: null,
++        })
++      }
+       return {
+         ...state,
+         phase: "stopping",
+@@ -154,6 +173,11 @@ export function reduceVoiceSession(
+       ) {
+         return resetToIdle(state)
+       }
++      if (state.phase === "refining") {
++        return resetToIdle(state, {
++          abortReason: event.type === "UNMOUNT" ? "unmount" : "thread_switch",
++        })
++      }
+       return {
+         ...state,
+         phase: "stopping",
+@@ -325,6 +349,65 @@ export function reduceVoiceSession(
+       })
+     }
+ 
++    case "START_REFINE": {
++      // Only after a successful listen commit (ENGINE_END → idle + committed finals).
++      if (state.phase !== "idle") return state
++      if (!state.committed || !state.finals.length) return state
++      return {
++        ...state,
++        phase: "refining",
++        refineGen: event.refineGen,
++        rawSnapshot: event.rawSnapshot,
++        banner: "纠错中…",
++        errorCode: null,
++        abortReason: null,
++      }
++    }
++
++    case "REFINE_OK": {
++      if (state.phase !== "refining") return state
++      if (state.refineGen !== event.refineGen) return state
++      // Ownership: caller checks dirty before dispatching; SM always accepts.
++      return resetToIdle(state, {
++        baseText: state.baseText,
++        finals: state.finals,
++        committed: true,
++        rawSnapshot: state.rawSnapshot,
++        refineGen: null,
++        banner: event.unchanged
++          ? null
++          : "已应用识别纠错（可还原原文）",
++      })
++    }
++
++    case "REFINE_FAIL": {
++      if (state.phase !== "refining") return state
++      if (state.refineGen !== null && state.refineGen !== event.refineGen) {
++        return state
++      }
++      return resetToIdle(state, {
++        baseText: state.baseText,
++        finals: state.finals,
++        committed: true,
++        rawSnapshot: state.rawSnapshot,
++        refineGen: null,
++        banner: event.message || "纠错失败，已填入识别原文",
++        errorCode: event.code || "refine_fail",
++      })
++    }
++
++    case "CANCEL_REFINE": {
++      if (state.phase !== "refining") return state
++      return resetToIdle(state, {
++        baseText: state.baseText,
++        finals: state.finals,
++        committed: true,
++        rawSnapshot: state.rawSnapshot,
++        refineGen: null,
++        banner: "已取消纠错，保留识别原文",
++      })
++    }
++
+     case "DISMISS_BANNER":
+       return { ...state, banner: null, errorCode: null }
+ 
+diff --git a/chrome-extension/src/sidepanel/voice/types.ts b/chrome-extension/src/sidepanel/voice/types.ts
+index 0a0207f..4288537 100644
+--- a/chrome-extension/src/sidepanel/voice/types.ts
++++ b/chrome-extension/src/sidepanel/voice/types.ts
+@@ -7,6 +7,8 @@ export type VoicePhase =
+   | "listening"
+   | "processing"
+   | "stopping"
++  /** Dictation+ D1b: post-stop ASR Refiner in flight. */
++  | "refining"
+   | "error"
+ 
+ export type VoiceAbortReason =
+@@ -29,6 +31,10 @@ export type VoiceSessionState = {
+   committed: boolean
+   banner: string | null
+   errorCode: string | null
++  /** D1b: generation for ASR refine request/result. */
++  refineGen: number | null
++  /** D1b: raw merged draft after STT (before refine); for undo + dirty check. */
++  rawSnapshot: string | null
+ }
+ 
+ export type VoiceEvent =
+@@ -47,6 +53,11 @@ export type VoiceEvent =
+   | { type: "ENGINE_RESULT"; interim?: string; finalChunk?: string }
+   | { type: "ENGINE_ERROR"; code: string; message?: string }
+   | { type: "ENGINE_END" }
++  /** After raw merge: enter refining (refineGen assigned). */
++  | { type: "START_REFINE"; refineGen: number; rawSnapshot: string }
++  | { type: "REFINE_OK"; refineGen: number; text: string; unchanged?: boolean }
++  | { type: "REFINE_FAIL"; refineGen: number; code?: string; message?: string }
++  | { type: "CANCEL_REFINE" }
+   | { type: "DISMISS_BANNER" }
+   | { type: "UNMOUNT" }
+ 
+@@ -61,5 +72,7 @@ export function initialVoiceSession(supported: boolean): VoiceSessionState {
+     committed: false,
+     banner: null,
+     errorCode: null,
++    refineGen: null,
++    rawSnapshot: null,
+   }
+ }
+diff --git a/chrome-extension/tests/voice-session-reducer.test.ts b/chrome-extension/tests/voice-session-reducer.test.ts
+index a61efcc..7c0daee 100644
+--- a/chrome-extension/tests/voice-session-reducer.test.ts
++++ b/chrome-extension/tests/voice-session-reducer.test.ts
+@@ -119,6 +119,61 @@ test("SOFT_CAP_HINT keeps listening and sets banner", () => {
+   assert.match(s.banner || "", /连续听写/)
+ })
+ 
++test("D1b START_REFINE → REFINE_OK keeps committed raw path", () => {
++  let s = initialVoiceSession(true)
++  s = reduceVoiceSession(s, {
++    type: "USER_TOGGLE_START",
++    sessionId: "s1",
++    baseText: "前缀",
++  })
++  s = reduceVoiceSession(s, { type: "ENGINE_START" })
++  s = reduceVoiceSession(s, { type: "ENGINE_RESULT", finalChunk: "配森" })
++  s = reduceVoiceSession(s, { type: "USER_TOGGLE_STOP" })
++  s = reduceVoiceSession(s, { type: "ENGINE_END" })
++  assert.equal(s.phase, "idle")
++  assert.equal(s.committed, true)
++  s = reduceVoiceSession(s, {
++    type: "START_REFINE",
++    refineGen: 1,
++    rawSnapshot: "前缀配森",
++  })
++  assert.equal(s.phase, "refining")
++  assert.equal(s.rawSnapshot, "前缀配森")
++  s = reduceVoiceSession(s, {
++    type: "REFINE_OK",
++    refineGen: 1,
++    text: "前缀Python",
++    unchanged: false,
++  })
++  assert.equal(s.phase, "idle")
++  assert.match(s.banner || "", /纠错/)
++  assert.equal(s.rawSnapshot, "前缀配森")
++})
++
++test("D1b REFINE_FAIL stale gen ignored", () => {
++  let s = initialVoiceSession(true)
++  s = reduceVoiceSession(s, {
++    type: "USER_TOGGLE_START",
++    sessionId: "s1",
++    baseText: "",
++  })
++  s = reduceVoiceSession(s, { type: "ENGINE_START" })
++  s = reduceVoiceSession(s, { type: "ENGINE_RESULT", finalChunk: "hi" })
++  s = reduceVoiceSession(s, { type: "USER_TOGGLE_STOP" })
++  s = reduceVoiceSession(s, { type: "ENGINE_END" })
++  s = reduceVoiceSession(s, {
++    type: "START_REFINE",
++    refineGen: 2,
++    rawSnapshot: "hi",
++  })
++  s = reduceVoiceSession(s, {
++    type: "REFINE_OK",
++    refineGen: 1,
++    text: "stale",
++  })
++  assert.equal(s.phase, "refining")
++})
++
+ test("not-allowed → error banner survives ENGINE_END (real Web Speech order)", () => {
+   let s = initialVoiceSession(true)
+   s = reduceVoiceSession(s, {
+diff --git a/companion/src/message-router.ts b/companion/src/message-router.ts
+index 621f1e1..b4ea7b3 100644
+--- a/companion/src/message-router.ts
++++ b/companion/src/message-router.ts
+@@ -47,6 +47,7 @@ import { handleComputerMessage } from "./computer/handlers"
+ import { handleComputerModelMessage } from "./computer/model-handlers"
+ import { handleVoiceModelMessage } from "./voice/whisper-handlers"
+ import { handleVoiceSttMessage } from "./voice/stt-handlers"
++import { handleVoiceRefineMessage } from "./voice/refine-handlers"
+ import {
+   buildUserEnvPublic,
+   deleteUserEnvKeys,
+@@ -1911,6 +1912,14 @@ export async function handleMessage(
+         peerId: session?.panelId,
+         send: session?.sendToExtension,
+       })
++    // Dictation+ D1b — ASR Refiner (text-only; chrome-extension origin fence)
++    case "voice.refine.request":
++    case "voice.refine.abort":
++      return handleVoiceRefineMessage(msg, {
++        origin: session?.origin,
++        peerId: session?.panelId,
++        send: session?.sendToExtension,
++      })
+     case "skill.activate": {
+       skillEngine.activate(rest.thread_id, rest.skill_name)
+       const thread = threadManager.get(rest.thread_id)
+diff --git a/companion/src/packs/types.ts b/companion/src/packs/types.ts
+index 13274d8..d7ea7ae 100644
+--- a/companion/src/packs/types.ts
++++ b/companion/src/packs/types.ts
+@@ -267,7 +267,7 @@ export const FORBIDDEN_PACK_KEYS = new Set([
+  * rejected/stripped — no trust-block exception.
+  */
+ export const VOICE_FORBIDDEN_KEY_RE =
+-  /^(voice|sttEngine|localModelId|voiceStt|voice_privacy|voiceAutoSend)/i
++  /^(voice|sttEngine|localModelId|voiceStt|voice_privacy|voiceAutoSend|asr_refiner|refiner_prompt|dictation_polish|rewrite_mode|audio_retain|autoStart)/i
+ 
+ /** True when a pack.yaml object key must never appear (voice risk). */
+ export function isVoiceForbiddenPackKey(key: string): boolean {
+diff --git a/companion/src/server.ts b/companion/src/server.ts
+index 3437fc7..0e5bd11 100644
+--- a/companion/src/server.ts
++++ b/companion/src/server.ts
+@@ -5818,6 +5818,37 @@ export function validateWsMessage(msg: any): WsValidationResult {
+       }
+       return { valid: true }
+     },
++    // Dictation+ D1b — ASR Refiner (text-only; origin fence in handler)
++    "voice.refine.request": (m) => {
++      if (m.v !== 1) {
++        return { valid: false, error: "voice.refine.request requires v:1" }
++      }
++      if (typeof m.sessionId !== "string" || !m.sessionId || m.sessionId.length > 128) {
++        return { valid: false, error: "voice.refine.request requires sessionId string (1–128)" }
++      }
++      if (!Number.isInteger(m.refineGen) || m.refineGen < 0) {
++        return { valid: false, error: "voice.refine.request requires refineGen non-negative integer" }
++      }
++      if (typeof m.text !== "string" || !m.text) {
++        return { valid: false, error: "voice.refine.request requires text string" }
++      }
++      if (m.text.length > 12_000) {
++        return { valid: false, error: "voice.refine.request text exceeds 12000 chars" }
++      }
++      return { valid: true }
++    },
++    "voice.refine.abort": (m) => {
++      if (m.v !== 1) {
++        return { valid: false, error: "voice.refine.abort requires v:1" }
++      }
++      if (typeof m.sessionId !== "string" || !m.sessionId) {
++        return { valid: false, error: "voice.refine.abort requires sessionId string" }
++      }
++      if (!Number.isInteger(m.refineGen) || m.refineGen < 0) {
++        return { valid: false, error: "voice.refine.abort requires refineGen non-negative integer" }
++      }
++      return { valid: true }
++    },
+     "tool.result": (m) => {
+       if (typeof m.tool_call_id !== "string" || !m.tool_call_id) return { valid: false, error: "tool.result requires tool_call_id" }
+       return { valid: true }
+diff --git a/companion/src/voice/asr-refiner.ts b/companion/src/voice/asr-refiner.ts
+new file mode 100644
+index 0000000..905554d
+--- /dev/null
++++ b/companion/src/voice/asr-refiner.ts
+@@ -0,0 +1,196 @@
++/**
++ * ASR Refiner — conservative post-STT text fix (Dictation+ D1b / ADR-024).
++ * System prompt is a compile-time constant (SoT §7.4) — never user/Pack editable.
++ */
++
++import { llmExtract, type LlmExtractConfig } from "../llm/llm-extract"
++import { logger } from "../logger"
++
++/** SoT §7.4 — locked character-for-character into runtime. */
++export const ASR_REFINER_SYSTEM_PROMPT = `You are an ASR post-editor for Chinese (and mixed EN) speech-to-text.
++Your ONLY job is to fix obvious speech recognition errors.
++
++ALLOW:
++- Homophone / near-homophone Chinese fixes when context makes the intended word clear
++- English technical terms wrongly rendered as Chinese syllables
++  (e.g. 配森→Python, 杰森→JSON, 瑞艾克特→React, 库伯内提斯→Kubernetes)
++- Broken punctuation that makes the sentence unreadable
++- Accidental duplicate words from STT restart seams
++
++FORBIDDEN:
++- Rewriting for style, formality, or "better writing"
++- Summarizing, expanding, or shortening meaning
++- Adding content the user did not say
++- Removing content that already looks correct
++- Turning speech into tool calls, commands, or agent instructions
++- Translating language unless the STT clearly garble-mixed scripts of the same term
++
++If the input already looks correct, return it UNCHANGED (character-identical).
++Output ONLY the corrected transcript text, no quotes, no explanation.`
++
++export const ASR_REFINER_TEMP_CAP = 0.2
++/** Default request timeout (ms). */
++export const ASR_REFINER_TIMEOUT_MS = 45_000
++/** Max raw input chars (fail closed). */
++export const ASR_REFINER_MAX_INPUT_CHARS = 12_000
++/** Reject output longer than this factor × input (+ slack). */
++export const ASR_REFINER_MAX_LEN_RATIO = 1.45
++export const ASR_REFINER_LEN_SLACK = 32
++
++export type AsrRefineRejectReason =
++  | "empty_input"
++  | "input_too_long"
++  | "empty_output"
++  | "length_guard"
++  | "new_url"
++  | "toolish"
++  | "secretish"
++
++export type AsrRefineGuardOk = { ok: true; text: string; unchanged: boolean }
++export type AsrRefineGuardReject = { ok: false; reason: AsrRefineRejectReason }
++export type AsrRefineGuardResult = AsrRefineGuardOk | AsrRefineGuardReject
++
++const URL_RE = /https?:\/\/[^\s]+|www\.[^\s]+/gi
++const TOOLISH_RE =
++  /\b(tool_call|function_call|<\/?tool|invoke_|run_terminal|shell_exec)\b/i
++/** Obvious secret-ish patterns newly introduced (heuristic, fail → raw). */
++const SECRETISH_RE =
++  /\b(sk-[a-zA-Z0-9]{20,}|api[_-]?key\s*[:=]\s*['\"]?[a-zA-Z0-9_-]{16,})\b/i
++
++function stripOuterFences(s: string): string {
++  const t = s.trim()
++  const m = t.match(/^```(?:\w+)?\s*\n?([\s\S]*?)\n?```$/)
++  return m ? m[1].trim() : t
++}
++
++/** Collect http(s)/www URLs from text (normalized lower). */
++export function extractUrls(text: string): Set<string> {
++  const set = new Set<string>()
++  const m = text.match(URL_RE)
++  if (!m) return set
++  for (const u of m) set.add(u.toLowerCase())
++  return set
++}
++
++/**
++ * Post-model guards (F-S-R2-6 / F-I-R2-8). On reject caller keeps raw.
++ */
++export function guardAsrRefineOutput(raw: string, modelOut: string): AsrRefineGuardResult {
++  if (!raw || !raw.trim()) return { ok: false, reason: "empty_input" }
++  if (raw.length > ASR_REFINER_MAX_INPUT_CHARS) {
++    return { ok: false, reason: "input_too_long" }
++  }
++  let text = stripOuterFences(modelOut ?? "")
++  if (!text) return { ok: false, reason: "empty_output" }
++
++  const maxLen = Math.ceil(raw.length * ASR_REFINER_MAX_LEN_RATIO) + ASR_REFINER_LEN_SLACK
++  if (text.length > maxLen) return { ok: false, reason: "length_guard" }
++
++  if (TOOLISH_RE.test(text)) return { ok: false, reason: "toolish" }
++
++  const inUrls = extractUrls(raw)
++  const outUrls = extractUrls(text)
++  for (const u of outUrls) {
++    if (!inUrls.has(u)) return { ok: false, reason: "new_url" }
++  }
++
++  if (!SECRETISH_RE.test(raw) && SECRETISH_RE.test(text)) {
++    return { ok: false, reason: "secretish" }
++  }
++
++  return { ok: true, text, unchanged: text === raw }
++}
++
++export type RunAsrRefineParams = {
++  raw: string
++  config: LlmExtractConfig
++  /** Optional external abort (session cancel). */
++  signal?: AbortSignal
++  timeoutMs?: number
++  /** Injectable extract for tests. */
++  extract?: typeof llmExtract
++}
++
++export type RunAsrRefineResult =
++  | { ok: true; text: string; unchanged: boolean }
++  | { ok: false; code: string; message: string }
++
++/**
++ * One-shot ASR refine. Never logs full transcript.
++ */
++export async function runAsrRefine(params: RunAsrRefineParams): Promise<RunAsrRefineResult> {
++  const raw = params.raw ?? ""
++  if (!raw.trim()) {
++    return { ok: false, code: "empty_input", message: "empty transcript" }
++  }
++  if (raw.length > ASR_REFINER_MAX_INPUT_CHARS) {
++    return { ok: false, code: "input_too_long", message: "transcript too long" }
++  }
++  if (params.signal?.aborted) {
++    return { ok: false, code: "aborted", message: "aborted" }
++  }
++
++  const extract = params.extract ?? llmExtract
++  const timeout = params.timeoutMs ?? ASR_REFINER_TIMEOUT_MS
++
++  let modelOut: string
++  try {
++    // Prefer external signal + timeout when both present
++    const timeoutSignal = AbortSignal.timeout(timeout)
++    const signal = params.signal
++      ? AbortSignal.any([params.signal, timeoutSignal])
++      : timeoutSignal
++
++    // llmExtract uses its own timeout; pass slightly larger and race with signal
++    const extractPromise = extract({
++      systemPrompt: ASR_REFINER_SYSTEM_PROMPT,
++      userContent: raw,
++      config: params.config,
++      temperatureCap: ASR_REFINER_TEMP_CAP,
++      timeout: timeout + 1000,
++    })
++
++    modelOut = await Promise.race([
++      extractPromise,
++      new Promise<string>((_, reject) => {
++        const onAbort = () => reject(Object.assign(new Error("aborted"), { name: "AbortError" }))
++        if (signal.aborted) onAbort()
++        else signal.addEventListener("abort", onAbort, { once: true })
++      }),
++    ])
++  } catch (e: any) {
++    if (e?.name === "AbortError" || params.signal?.aborted) {
++      return { ok: false, code: "aborted", message: "aborted" }
++    }
++    logger.warn("voice.refine.llm_failed", {
++      err: e instanceof Error ? e.message : String(e),
++      input_len: raw.length,
++    })
++    return {
++      ok: false,
++      code: "llm_error",
++      message: e instanceof Error ? e.message : "llm failed",
++    }
++  }
++
++  const guarded = guardAsrRefineOutput(raw, modelOut)
++  if (!guarded.ok) {
++    logger.info("voice.refine.guard_reject", {
++      reason: guarded.reason,
++      input_len: raw.length,
++      output_len: (modelOut || "").length,
++    })
++    return {
++      ok: false,
++      code: guarded.reason,
++      message: `refine rejected: ${guarded.reason}`,
++    }
++  }
++
++  logger.info("voice.refine.ok", {
++    input_len: raw.length,
++    output_len: guarded.text.length,
++    unchanged: guarded.unchanged,
++  })
++  return { ok: true, text: guarded.text, unchanged: guarded.unchanged }
++}
+diff --git a/companion/src/voice/refine-handlers.ts b/companion/src/voice/refine-handlers.ts
+new file mode 100644
+index 0000000..2870a3c
+--- /dev/null
++++ b/companion/src/voice/refine-handlers.ts
+@@ -0,0 +1,172 @@
++/**
++ * voice.refine.* WS handlers (Dictation+ D1b / ADR-024).
++ * chrome-extension origin only; text-only; no client system prompt.
++ */
++
++import { getConfig } from "../config"
++import { logger } from "../logger"
++import { isChromeExtensionOrigin } from "./stt-handlers"
++import { runAsrRefine, type RunAsrRefineResult } from "./asr-refiner"
++import type { LlmExtractConfig } from "../llm/llm-extract"
++
++export interface VoiceRefineHandlerContext {
++  origin?: string
++  peerId?: string
++  send?: (data: any) => void
++}
++
++export interface VoiceRefineHandlerDeps {
++  isExtensionOrigin?: (origin: string | undefined) => boolean
++  getLlmConfig?: () => LlmExtractConfig | null
++  runRefine?: typeof runAsrRefine
++}
++
++/** In-flight aborts keyed by refineGen (per process). */
++const inflight = new Map<string, AbortController>()
++
++function inflightKey(sessionId: string, refineGen: number): string {
++  return `${sessionId}#${refineGen}`
++}
++
++function llmConfigFromCompanion(): LlmExtractConfig | null {
++  try {
++    const cfg = getConfig()
++    const llm = cfg?.llm
++    if (!llm?.base_url || !llm?.api_key || !llm?.model_name) return null
++    return {
++      base_url: llm.base_url,
++      api_key: llm.api_key,
++      model_name: llm.model_name,
++      temperature: typeof llm.temperature === "number" ? llm.temperature : 0.3,
++      protocol: llm.protocol,
++      auth_style: llm.auth_style,
++      client_header_profile: llm.client_header_profile,
++      claude_code_compat_version: llm.claude_code_compat_version,
++      extra_headers: llm.extra_headers,
++      anthropic_version: llm.anthropic_version,
++      context_window: llm.context_window,
++    }
++  } catch {
++    return null
++  }
++}
++
++function refineError(
++  sessionId: string,
++  refineGen: number,
++  code: string,
++  message: string,
++) {
++  return {
++    type: "voice.refine.error" as const,
++    v: 1 as const,
++    sessionId,
++    refineGen,
++    code,
++    message,
++  }
++}
++
++function refineResult(
++  sessionId: string,
++  refineGen: number,
++  text: string,
++  unchanged: boolean,
++) {
++  return {
++    type: "voice.refine.result" as const,
++    v: 1 as const,
++    sessionId,
++    refineGen,
++    text,
++    unchanged,
++  }
++}
++
++export async function handleVoiceRefineMessage(
++  msg: any,
++  ctx: VoiceRefineHandlerContext = {},
++  deps: VoiceRefineHandlerDeps = {},
++): Promise<any> {
++  const type = msg?.type
++  const sessionId = typeof msg?.sessionId === "string" ? msg.sessionId : ""
++  const refineGen = typeof msg?.refineGen === "number" ? msg.refineGen : -1
++
++  const originOk = (deps.isExtensionOrigin ?? isChromeExtensionOrigin)(ctx.origin)
++  if (!originOk) {
++    logger.warn("voice.refine.refused", {
++      type: typeof type === "string" ? type : undefined,
++      origin: ctx.origin ? "present" : "missing",
++    })
++    return refineError(sessionId, refineGen, "origin_denied", "chrome-extension origin required")
++  }
++
++  if (type === "voice.refine.abort") {
++    if (!sessionId || refineGen < 0) {
++      return refineError(sessionId, refineGen, "invalid_request", "sessionId and refineGen required")
++    }
++    const key = inflightKey(sessionId, refineGen)
++    const ac = inflight.get(key)
++    if (ac) {
++      ac.abort()
++      inflight.delete(key)
++    }
++    return { type: "voice.refine.aborted", v: 1, sessionId, refineGen }
++  }
++
++  if (type !== "voice.refine.request") {
++    return refineError(sessionId, refineGen, "unknown_type", `unknown type ${String(type)}`)
++  }
++
++  // Ignore any client-supplied system prompt field (strip attack surface)
++  if (msg?.systemPrompt != null || msg?.system_prompt != null) {
++    logger.warn("voice.refine.client_prompt_ignored", { sessionId_len: sessionId.length })
++  }
++
++  const text = typeof msg?.text === "string" ? msg.text : ""
++  if (!sessionId || sessionId.length > 128) {
++    return refineError(sessionId, refineGen, "invalid_session_id", "invalid sessionId")
++  }
++  if (refineGen < 0 || !Number.isFinite(refineGen)) {
++    return refineError(sessionId, refineGen, "invalid_refine_gen", "invalid refineGen")
++  }
++  if (!text.trim()) {
++    return refineError(sessionId, refineGen, "empty_input", "empty text")
++  }
++
++  const getLlm = deps.getLlmConfig ?? llmConfigFromCompanion
++  const llmCfg = getLlm()
++  if (!llmCfg) {
++    return refineError(
++      sessionId,
++      refineGen,
++      "llm_not_configured",
++      "Companion LLM not configured",
++    )
++  }
++
++  const key = inflightKey(sessionId, refineGen)
++  // Abort any previous same key
++  inflight.get(key)?.abort()
++  const ac = new AbortController()
++  inflight.set(key, ac)
++
++  const run = deps.runRefine ?? runAsrRefine
++  let result: RunAsrRefineResult
++  try {
++    result = await run({ raw: text, config: llmCfg, signal: ac.signal })
++  } finally {
++    inflight.delete(key)
++  }
++
++  if (!result.ok) {
++    return refineError(sessionId, refineGen, result.code, result.message)
++  }
++  return refineResult(sessionId, refineGen, result.text, result.unchanged)
++}
++
++/** Test seam */
++export function _clearRefineInflightForTests(): void {
++  for (const ac of inflight.values()) ac.abort()
++  inflight.clear()
++}
+diff --git a/companion/tests/voice-asr-refiner.test.ts b/companion/tests/voice-asr-refiner.test.ts
+new file mode 100644
+index 0000000..2b8d2df
+--- /dev/null
++++ b/companion/tests/voice-asr-refiner.test.ts
+@@ -0,0 +1,169 @@
++/**
++ * Dictation+ D1b — ASR Refiner pure guards + runAsrRefine mock.
++ */
++import test from "node:test"
++import assert from "node:assert/strict"
++import {
++  ASR_REFINER_SYSTEM_PROMPT,
++  guardAsrRefineOutput,
++  runAsrRefine,
++} from "../src/voice/asr-refiner"
++import {
++  handleVoiceRefineMessage,
++  _clearRefineInflightForTests,
++} from "../src/voice/refine-handlers"
++
++const FAKE_LLM = {
++  base_url: "https://llm.example.invalid/v1",
++  api_key: "sk-test",
++  model_name: "test-model",
++  temperature: 0.7,
++}
++
++test("ASR_REFINER_SYSTEM_PROMPT includes FORBIDDEN rewrite and unchanged rule", () => {
++  assert.match(ASR_REFINER_SYSTEM_PROMPT, /FORBIDDEN/)
++  assert.match(ASR_REFINER_SYSTEM_PROMPT, /UNCHANGED/)
++  assert.match(ASR_REFINER_SYSTEM_PROMPT, /配森→Python/)
++})
++
++test("guard: character-identical pass-through", () => {
++  const raw = "今天下午三点开会。"
++  const g = guardAsrRefineOutput(raw, raw)
++  assert.equal(g.ok, true)
++  if (g.ok) {
++    assert.equal(g.text, raw)
++    assert.equal(g.unchanged, true)
++  }
++})
++
++test("guard: accepts reasonable ASR fix", () => {
++  const raw = "配森很好用"
++  const g = guardAsrRefineOutput(raw, "Python很好用")
++  assert.equal(g.ok, true)
++  if (g.ok) assert.equal(g.text, "Python很好用")
++})
++
++test("guard: rejects length explosion", () => {
++  const raw = "你好"
++  const essay = "你好".repeat(200)
++  const g = guardAsrRefineOutput(raw, essay)
++  assert.equal(g.ok, false)
++  if (!g.ok) assert.equal(g.reason, "length_guard")
++})
++
++test("guard: rejects new URL not in input", () => {
++  const raw = "打开文档"
++  const g = guardAsrRefineOutput(raw, "打开 https://evil.example/x 文档")
++  assert.equal(g.ok, false)
++  if (!g.ok) assert.equal(g.reason, "new_url")
++})
++
++test("guard: rejects toolish output", () => {
++  const raw = "运行命令"
++  const g = guardAsrRefineOutput(raw, "tool_call: shell_exec")
++  assert.equal(g.ok, false)
++  if (!g.ok) assert.equal(g.reason, "toolish")
++})
++
++test("guard: empty model output rejected", () => {
++  const g = guardAsrRefineOutput("你好", "   ")
++  assert.equal(g.ok, false)
++  if (!g.ok) assert.equal(g.reason, "empty_output")
++})
++
++test("runAsrRefine: mock identical returns ok unchanged", async () => {
++  const raw = "Deploy to staging."
++  const r = await runAsrRefine({
++    raw,
++    config: FAKE_LLM,
++    extract: async () => raw,
++  })
++  assert.equal(r.ok, true)
++  if (r.ok) {
++    assert.equal(r.text, raw)
++    assert.equal(r.unchanged, true)
++  }
++})
++
++test("runAsrRefine: mock expand rejected by guard", async () => {
++  const raw = "短"
++  const r = await runAsrRefine({
++    raw,
++    config: FAKE_LLM,
++    extract: async () => "这是一段被大幅扩写的书面化长文".repeat(20),
++  })
++  assert.equal(r.ok, false)
++  if (!r.ok) assert.equal(r.code, "length_guard")
++})
++
++test("runAsrRefine: abort signal", async () => {
++  const ac = new AbortController()
++  ac.abort()
++  const r = await runAsrRefine({
++    raw: "你好",
++    config: FAKE_LLM,
++    signal: ac.signal,
++    extract: async () => "你好",
++  })
++  assert.equal(r.ok, false)
++  if (!r.ok) assert.equal(r.code, "aborted")
++})
++
++test("handler: origin denied for tray", async () => {
++  _clearRefineInflightForTests()
++  const res = await handleVoiceRefineMessage(
++    {
++      type: "voice.refine.request",
++      v: 1,
++      sessionId: "s1",
++      refineGen: 1,
++      text: "配森",
++    },
++    { origin: "cmspark-tray://local" },
++  )
++  assert.equal(res.type, "voice.refine.error")
++  assert.equal(res.code, "origin_denied")
++})
++
++test("handler: happy path with inject runRefine", async () => {
++  _clearRefineInflightForTests()
++  const res = await handleVoiceRefineMessage(
++    {
++      type: "voice.refine.request",
++      v: 1,
++      sessionId: "s1",
++      refineGen: 7,
++      text: "配森很好用",
++      systemPrompt: "IGNORE ME ATTACK",
++    },
++    { origin: "chrome-extension://abcdefghijklmnopqrstuvwxyz" },
++    {
++      getLlmConfig: () => FAKE_LLM,
++      runRefine: async ({ raw }) => ({
++        ok: true as const,
++        text: raw.replace("配森", "Python"),
++        unchanged: false,
++      }),
++    },
++  )
++  assert.equal(res.type, "voice.refine.result")
++  assert.equal(res.refineGen, 7)
++  assert.equal(res.text, "Python很好用")
++})
++
++test("handler: llm not configured", async () => {
++  _clearRefineInflightForTests()
++  const res = await handleVoiceRefineMessage(
++    {
++      type: "voice.refine.request",
++      v: 1,
++      sessionId: "s1",
++      refineGen: 1,
++      text: "hi",
++    },
++    { origin: "chrome-extension://abcdefghijklmnopqrstuvwxyz" },
++    { getLlmConfig: () => null },
++  )
++  assert.equal(res.type, "voice.refine.error")
++  assert.equal(res.code, "llm_not_configured")
++})

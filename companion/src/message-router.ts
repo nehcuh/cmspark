@@ -47,6 +47,7 @@ import { handleComputerMessage } from "./computer/handlers"
 import { handleComputerModelMessage } from "./computer/model-handlers"
 import { handleVoiceModelMessage } from "./voice/whisper-handlers"
 import { handleVoiceSttMessage } from "./voice/stt-handlers"
+import { handleVoiceRefineMessage } from "./voice/refine-handlers"
 import {
   buildUserEnvPublic,
   deleteUserEnvKeys,
@@ -1907,6 +1908,14 @@ export async function handleMessage(
     case "voice.stt.end":
     case "voice.stt.abort":
       return handleVoiceSttMessage(msg, {
+        origin: session?.origin,
+        peerId: session?.panelId,
+        send: session?.sendToExtension,
+      })
+    // Dictation+ D1b — ASR Refiner (text-only; chrome-extension origin fence)
+    case "voice.refine.request":
+    case "voice.refine.abort":
+      return handleVoiceRefineMessage(msg, {
         origin: session?.origin,
         peerId: session?.panelId,
         send: session?.sendToExtension,

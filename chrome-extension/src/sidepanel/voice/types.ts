@@ -7,6 +7,8 @@ export type VoicePhase =
   | "listening"
   | "processing"
   | "stopping"
+  /** Dictation+ D1b: post-stop ASR Refiner in flight. */
+  | "refining"
   | "error"
 
 export type VoiceAbortReason =
@@ -29,6 +31,10 @@ export type VoiceSessionState = {
   committed: boolean
   banner: string | null
   errorCode: string | null
+  /** D1b: generation for ASR refine request/result. */
+  refineGen: number | null
+  /** D1b: raw merged draft after STT (before refine); for undo + dirty check. */
+  rawSnapshot: string | null
 }
 
 export type VoiceEvent =
@@ -47,6 +53,11 @@ export type VoiceEvent =
   | { type: "ENGINE_RESULT"; interim?: string; finalChunk?: string }
   | { type: "ENGINE_ERROR"; code: string; message?: string }
   | { type: "ENGINE_END" }
+  /** After raw merge: enter refining (refineGen assigned). */
+  | { type: "START_REFINE"; refineGen: number; rawSnapshot: string }
+  | { type: "REFINE_OK"; refineGen: number; text: string; unchanged?: boolean }
+  | { type: "REFINE_FAIL"; refineGen: number; code?: string; message?: string }
+  | { type: "CANCEL_REFINE" }
   | { type: "DISMISS_BANNER" }
   | { type: "UNMOUNT" }
 
@@ -61,5 +72,7 @@ export function initialVoiceSession(supported: boolean): VoiceSessionState {
     committed: false,
     banner: null,
     errorCode: null,
+    refineGen: null,
+    rawSnapshot: null,
   }
 }

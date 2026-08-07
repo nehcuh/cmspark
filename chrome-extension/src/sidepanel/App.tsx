@@ -477,6 +477,8 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
       setVoicePrivacyKind("v3")
       setVoicePrivacyOpen(true)
     },
+    asrRefinerEnabled: state.asrRefinerEnabled === true,
+    getCurrentDraft: () => textRef.current,
   })
 
   // Hide: feature off | unsupported for selected engine | worker | no thread.
@@ -503,15 +505,18 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
     localCapturing || continuousCapturing
       ? formatListenRemaining(voice.listenRemainingMs!)
       : null
-  const voiceMicLiveStatus = voice.processing
-    ? "本机识别中…点击取消"
-    : localCapturing
-      ? localListeningStatusLabel(voice.listenRemainingMs!)
-      : continuousCapturing
-        ? `连续听写 · 剩余 ${formatListenRemaining(voice.listenRemainingMs!)}`
-        : null
+  const voiceMicLiveStatus = voice.refining
+    ? "纠错中…点击取消"
+    : voice.processing
+      ? "本机识别中…点击取消"
+      : localCapturing
+        ? localListeningStatusLabel(voice.listenRemainingMs!)
+        : continuousCapturing
+          ? `连续听写 · 剩余 ${formatListenRemaining(voice.listenRemainingMs!)}`
+          : null
   const voiceMicTitle = (() => {
     if (threadBusy) return "处理中无法听写"
+    if (voice.refining) return "纠错中…点击取消"
     if (voice.processing) return "本机识别中…点击取消"
     if (localCapturing) {
       return localListeningStatusLabel(voice.listenRemainingMs!)
@@ -1240,6 +1245,31 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
             <span style={{ flex: "1 1 140px", minWidth: 0 }}>
               {engineSwitchNote || voice.banner}
             </span>
+            {voice.rawSnapshot &&
+            !voice.refining &&
+            voice.banner &&
+            /纠错|识别原文/.test(voice.banner) &&
+            !engineSwitchNote ? (
+              <button
+                type="button"
+                data-testid="voice-cta-restore-raw"
+                onClick={() => {
+                  voice.restoreRaw()
+                }}
+                style={{
+                  border: "none",
+                  background: "transparent",
+                  color: tokens.accent,
+                  cursor: "pointer",
+                  fontSize: 11,
+                  padding: 0,
+                  flexShrink: 0,
+                  textDecoration: "underline",
+                }}
+              >
+                还原识别原文
+              </button>
+            ) : null}
             {voiceBannerCta && !engineSwitchNote ? (
               <button
                 type="button"

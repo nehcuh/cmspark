@@ -227,6 +227,7 @@ export function useWebSocket() {
         "voice_privacy_ack_v2",
         "voice_privacy_ack_v3",
         "voiceDictationMode",
+        "asrRefinerEnabled",
         "cmspark.ui.show_reasoning",
         "cmspark.ui.export_include_reasoning",
       ],
@@ -258,6 +259,9 @@ export function useWebSocket() {
         }
         if (result.voiceDictationMode === "continuous" || result.voiceDictationMode === "classic") {
           dispatch({ type: "SET_VOICE_DICTATION_MODE", mode: result.voiceDictationMode })
+        }
+        if (typeof result.asrRefinerEnabled === "boolean") {
+          dispatch({ type: "SET_ASR_REFINER_ENABLED", enabled: result.asrRefinerEnabled })
         }
       },
     )

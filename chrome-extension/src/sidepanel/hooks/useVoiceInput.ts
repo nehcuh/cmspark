@@ -39,7 +39,11 @@ function subscribeRuntime(handler: (msg: any) => void): () => void {
     return () => {}
   }
   const listener = (msg: any) => {
-    if (msg && typeof msg.type === "string" && msg.type.startsWith("voice.stt.")) {
+    if (
+      msg &&
+      typeof msg.type === "string" &&
+      (msg.type.startsWith("voice.stt.") || msg.type.startsWith("voice.refine."))
+    ) {
       handler(msg)
     }
     return false
@@ -90,6 +94,13 @@ export type UseVoiceInputOpts = {
   /** Continuous / Refiner privacy ack v3. */
   privacyAckV3?: boolean
   onNeedPrivacyAckV3?: () => void
+  /** ASR Refiner opt-in (default false). */
+  asrRefinerEnabled?: boolean
+  /**
+   * Current composer text for dirty check while refining.
+   * If undefined, refine always applies (no ownership gate).
+   */
+  getCurrentDraft?: () => string
 }
 
 export function useVoiceInput(opts: UseVoiceInputOpts) {
@@ -151,10 +162,12 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
     return undefined
   }, [session.phase])
 
+  const refineGenCounter = useRef(0)
+
   const dispatchEv = useCallback((event: Parameters<typeof reduceVoiceSession>[1]) => {
     setSession((prev) => {
       const next = reduceVoiceSession(prev, event)
-      // Side effects after ENGINE_END commit
+      // Side effects after ENGINE_END commit — raw-first, then optional refine
       if (
         event.type === "ENGINE_END" &&
         next.committed &&
@@ -162,9 +175,108 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
         !isEmptyFinals(next.finals)
       ) {
         const merged = mergeFinalTranscript(next.baseText, next.finals)
-        queueMicrotask(() => optsRef.current.onDraft(merged))
+        const o = optsRef.current
+        queueMicrotask(() => {
+          o.onDraft(merged)
+          const wantRefine =
+            o.asrRefinerEnabled === true &&
+            o.privacyAckV3 === true &&
+            o.companionConnected === true
+          if (!wantRefine) return
+          // Abort reasons that discard — already not committed path
+          refineGenCounter.current += 1
+          const gen = refineGenCounter.current
+          const sid = next.sessionId || `refine-${gen}`
+          // Re-enter SM refining (prev may already be idle in React state)
+          setSession((cur) =>
+            reduceVoiceSession(cur, {
+              type: "START_REFINE",
+              refineGen: gen,
+              rawSnapshot: merged,
+            }),
+          )
+          try {
+            const voiceOnly = mergeFinalTranscript("", next.finals)
+            sendViaRuntime({
+              type: "voice.refine.request",
+              v: 1,
+              sessionId: sid,
+              refineGen: gen,
+              text: voiceOnly || merged,
+            })
+          } catch {
+            setSession((cur) =>
+              reduceVoiceSession(cur, {
+                type: "REFINE_FAIL",
+                refineGen: gen,
+                code: "send_failed",
+                message: "纠错请求发送失败，已填入识别原文",
+              }),
+            )
+          }
+        })
       }
       return next
+    })
+  }, [])
+
+  // Subscribe to refine results (and local STT messages when engine=local also uses this path for refine)
+  useEffect(() => {
+    return subscribeRuntime((msg: any) => {
+      const t = msg?.type
+      if (t === "voice.refine.result") {
+        const gen = msg.refineGen
+        const text = typeof msg.text === "string" ? msg.text : ""
+        const cur = sessionRef.current
+        if (cur.phase !== "refining" || cur.refineGen !== gen) return
+        const rawSnap = cur.rawSnapshot || ""
+        const base = cur.baseText || ""
+        // Dirty check: user edited beyond raw snapshot
+        const draftNow = optsRef.current.getCurrentDraft?.()
+        if (draftNow != null && draftNow !== rawSnap) {
+          setSession((s) =>
+            reduceVoiceSession(s, {
+              type: "REFINE_FAIL",
+              refineGen: gen,
+              code: "draft_dirty",
+              message: "已保留你的编辑；识别原文可还原",
+            }),
+          )
+          return
+        }
+        // Apply: base + refined voice span (request sends finals only)
+        const refinedFull =
+          !base || text.startsWith(base) ? text : base + text
+        optsRef.current.onDraft(refinedFull)
+        setSession((s) =>
+          reduceVoiceSession(s, {
+            type: "REFINE_OK",
+            refineGen: gen,
+            text: refinedFull,
+            unchanged: msg.unchanged === true,
+          }),
+        )
+        return
+      }
+      if (t === "voice.refine.error" || t === "voice.refine.aborted") {
+        const gen = msg.refineGen
+        const cur = sessionRef.current
+        if (cur.phase !== "refining") return
+        if (cur.refineGen != null && gen != null && cur.refineGen !== gen) return
+        setSession((s) =>
+          reduceVoiceSession(s, {
+            type: "REFINE_FAIL",
+            refineGen: gen ?? cur.refineGen ?? 0,
+            code: msg.code || "refine_fail",
+            message:
+              t === "voice.refine.aborted" || msg.code === "aborted"
+                ? "已取消纠错，保留识别原文"
+                : msg.code === "infer_timeout"
+                  ? "纠错超时，已填入识别原文"
+                  : msg.message || "纠错失败，已填入识别原文",
+          }),
+        )
+      }
     })
   }, [])
 
@@ -266,7 +378,27 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
       const eng = engineRef.current
       if (!o.enabled || !supported) return
 
-      // Stop / cancel
+      // Cancel mid-refine
+      if (s.phase === "refining") {
+        const gen = s.refineGen
+        const sid = s.sessionId || (gen != null ? `refine-${gen}` : "")
+        if (gen != null && sid) {
+          try {
+            sendViaRuntime({
+              type: "voice.refine.abort",
+              v: 1,
+              sessionId: sid,
+              refineGen: gen,
+            })
+          } catch {
+            /* */
+          }
+        }
+        dispatchEv({ type: "CANCEL_REFINE" })
+        return
+      }
+
+      // Stop / cancel listen
       if (s.phase === "listening" || s.phase === "starting") {
         if (eng === "local") {
           // Keep listening until capture ends → CAPTURE_STOPPED → processing.
@@ -300,6 +432,8 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
       const mode = modeRef.current
       // Continuous browser requires privacy ack v3 (long cloud STT residual).
       const continuousBrowser = mode === "continuous" && eng === "browser"
+      // ASR Refiner also requires v3 (text → LLM residual).
+      const wantsRefine = o.asrRefinerEnabled === true
 
       if (eng === "local") {
         // Fail-closed gates — never fall back to browser
@@ -323,7 +457,7 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
           o.onNeedPrivacyAck()
           return
         }
-        if (continuousBrowser) {
+        if (continuousBrowser || wantsRefine) {
           const v3 = extra?.privacyAckV3 === true || o.privacyAckV3 === true
           if (!v3) {
             // Do not fall back to v1 sheet — that cannot satisfy the v3 gate (dual-review N1).
@@ -333,6 +467,15 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
         }
         if (typeof navigator !== "undefined" && navigator.onLine === false) {
           dispatchEv({ type: "ENGINE_ERROR", code: "offline" })
+          return
+        }
+      }
+
+      // Local + refine: still need v3 for text→LLM (local already has v2 for STT)
+      if (eng === "local" && wantsRefine) {
+        const v3 = extra?.privacyAckV3 === true || o.privacyAckV3 === true
+        if (!v3) {
+          if (o.onNeedPrivacyAckV3) o.onNeedPrivacyAckV3()
           return
         }
       }
@@ -432,7 +575,26 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
 
   /** Call before chat.abort / Stop button. */
   const abortForChatStop = useCallback(() => {
-    const ph = sessionRef.current.phase
+    const s = sessionRef.current
+    const ph = s.phase
+    if (ph === "refining") {
+      const gen = s.refineGen
+      const sid = s.sessionId || (gen != null ? `refine-${gen}` : "")
+      if (gen != null && sid) {
+        try {
+          sendViaRuntime({
+            type: "voice.refine.abort",
+            v: 1,
+            sessionId: sid,
+            refineGen: gen,
+          })
+        } catch {
+          /* */
+        }
+      }
+      dispatchEv({ type: "CHAT_ABORT" })
+      return
+    }
     if (
       ph === "listening" ||
       ph === "starting" ||
@@ -448,11 +610,21 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
     dispatchEv({ type: "DISMISS_BANNER" })
   }, [dispatchEv])
 
+  /** Restore raw STT draft after refine (if rawSnapshot available). */
+  const restoreRaw = useCallback(() => {
+    const snap = sessionRef.current.rawSnapshot
+    if (snap == null) return false
+    optsRef.current.onDraft(snap)
+    dispatchEv({ type: "DISMISS_BANNER" })
+    return true
+  }, [dispatchEv])
+
   const busy =
     session.phase === "listening" ||
     session.phase === "starting" ||
     session.phase === "stopping" ||
-    session.phase === "processing"
+    session.phase === "processing" ||
+    session.phase === "refining"
 
   /** Display value: base + finals + interim overlay while live */
   const liveOverlay =
@@ -481,6 +653,9 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
     /** True while mic active or local processing (composer disable / stop-mic). */
     listening: busy,
     processing: session.phase === "processing",
+    refining: session.phase === "refining",
+    /** Raw STT snapshot available for undo after refine. */
+    rawSnapshot: session.rawSnapshot,
     banner: session.banner,
     /** Last ENGINE_ERROR code (for banner CTA routing). */
     errorCode: session.errorCode,
@@ -495,5 +670,6 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
     toggle,
     abortForChatStop,
     dismissBanner,
+    restoreRaw,
   }
 }
