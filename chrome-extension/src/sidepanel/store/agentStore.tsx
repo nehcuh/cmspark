@@ -32,6 +32,13 @@ export interface AgentState {
   /** M1 voice input prefs (chrome.storage.local only). */
   voiceInputEnabled: boolean
   voicePrivacyAckV1: boolean
+  /**
+   * Wave D: how to show model thinking blocks.
+   * auto_live = expand while streaming, collapse when done (default).
+   */
+  showReasoningMode: "always_collapsed" | "auto_live" | "always_open"
+  /** Wave D: include reasoning in Obsidian export when true. */
+  exportIncludeReasoning: boolean
   pendingSecurityConfirmations: SecurityConfirmationRequest[]
   logs: LogEntry[]
   autoSkillNames: string
@@ -164,6 +171,11 @@ export type AgentAction =
   | { type: "SET_TEST_RESULT"; result: string | null }
   | { type: "SET_TEST_VISION_RESULT"; result: string | null }
   | { type: "SET_SEND_SHORTCUT"; shortcut: SendShortcut }
+  | {
+      type: "SET_SHOW_REASONING_MODE"
+      mode: "always_collapsed" | "auto_live" | "always_open"
+    }
+  | { type: "SET_EXPORT_INCLUDE_REASONING"; enabled: boolean }
   | { type: "SET_VOICE_INPUT_ENABLED"; enabled: boolean }
   | { type: "SET_VOICE_PRIVACY_ACK_V1"; ack: boolean }
   | { type: "ADD_SECURITY_CONFIRMATION"; request: SecurityConfirmationRequest }
@@ -281,6 +293,8 @@ export const initialState: AgentState = {
   testVisionResult: null,
   sendShortcut: "Enter",
   voiceInputEnabled: true,
+  showReasoningMode: "auto_live",
+  exportIncludeReasoning: false,
   voicePrivacyAckV1: false,
   pendingSecurityConfirmations: [],
   logs: [],
@@ -599,6 +613,14 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
     case "SET_SEND_SHORTCUT":
       chrome.storage.local.set({ sendShortcut: action.shortcut })
       return { ...state, sendShortcut: action.shortcut }
+    case "SET_SHOW_REASONING_MODE": {
+      const mode = action.mode
+      chrome.storage.local.set({ "cmspark.ui.show_reasoning": mode })
+      return { ...state, showReasoningMode: mode }
+    }
+    case "SET_EXPORT_INCLUDE_REASONING":
+      chrome.storage.local.set({ "cmspark.ui.export_include_reasoning": action.enabled })
+      return { ...state, exportIncludeReasoning: action.enabled }
     case "SET_VOICE_INPUT_ENABLED":
       chrome.storage.local.set({ voiceInputEnabled: action.enabled })
       return { ...state, voiceInputEnabled: action.enabled }

@@ -67,6 +67,8 @@ export function ChatView() {
     activeThreadId,
     isProcessing,
     sendShortcut,
+    showReasoningMode,
+    exportIncludeReasoning,
     fleet,
     threadBusyById,
     threads,
@@ -323,8 +325,9 @@ export function ChatView() {
       // Q&A turn. (qa_pair would include the preceding question too.)
       scope: "single",
       anchor_message_id: messageId,
+      include_reasoning: exportIncludeReasoning === true,
     })
-  }, [activeThreadId])
+  }, [activeThreadId, exportIncludeReasoning])
 
   return (
     <div style={styles.container} ref={containerRef} onScroll={handleScroll}>
@@ -501,6 +504,7 @@ export function ChatView() {
             onRegenerate={handleRegenerate}
             onFork={handleFork}
             onExport={handleExport}
+            showReasoningMode={showReasoningMode}
             dispatch={dispatch}
           />
         ))}
@@ -508,7 +512,11 @@ export function ChatView() {
           <div style={styles.agentMsg}>
             <div style={styles.messageCol}>
               {streamingReasoning ? (
-                <ReasoningBlock content={streamingReasoning} live={!streamingContent} />
+                <ReasoningBlock
+                  content={streamingReasoning}
+                  live={!streamingContent}
+                  mode={showReasoningMode}
+                />
               ) : null}
               {streamingContent ? (
                 <div style={styles.agentBubble}>
@@ -558,6 +566,7 @@ const MessageRow = memo(function MessageRow({
   msg,
   activeThreadId,
   sendShortcut,
+  showReasoningMode,
   onRegenerate,
   onFork,
   onExport,
@@ -566,6 +575,7 @@ const MessageRow = memo(function MessageRow({
   msg: any
   activeThreadId: string | null
   sendShortcut: string
+  showReasoningMode: "always_collapsed" | "auto_live" | "always_open"
   onRegenerate: (messageId: string, editedMessage?: string) => void
   onFork: (messageId: string) => void
   onExport: (messageId: string) => void
@@ -648,7 +658,7 @@ const MessageRow = memo(function MessageRow({
         ) : (
           <>
             {!isUser && msg.reasoning_content ? (
-              <ReasoningBlock content={msg.reasoning_content} />
+              <ReasoningBlock content={msg.reasoning_content} mode={showReasoningMode} />
             ) : null}
             <div style={isUser ? styles.userBubble : styles.agentBubble}>
               {hasLongContent ? (
@@ -709,36 +719,73 @@ const MessageRow = memo(function MessageRow({
   )
 })
 
-/** Collapsible model thinking / DeepSeek reasoning block. */
-function ReasoningBlock({ content, live = false }: { content: string; live?: boolean }) {
-  const [open, setOpen] = useState(live)
+/** Collapsible model thinking / DeepSeek reasoning block. Wave D: mode from settings. */
+function ReasoningBlock({
+  content,
+  live = false,
+  mode = "auto_live",
+}: {
+  content: string
+  live?: boolean
+  mode?: "always_collapsed" | "auto_live" | "always_open"
+}) {
+  const initialOpen =
+    mode === "always_open" ? true : mode === "always_collapsed" ? false : live
+  const [open, setOpen] = useState(initialOpen)
   // Auto-open while live and no answer yet; leave user control once they toggle.
   const userToggled = useRef(false)
   useEffect(() => {
-    if (live && !userToggled.current) setOpen(true)
-    if (!live && !userToggled.current) setOpen(false)
-  }, [live])
+    if (userToggled.current) return
+    if (mode === "always_open") setOpen(true)
+    else if (mode === "always_collapsed") setOpen(false)
+    else {
+      // auto_live
+      if (live) setOpen(true)
+      else setOpen(false)
+    }
+  }, [live, mode])
   if (!content) return null
+
+  const handleCopy = async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    try {
+      await navigator.clipboard.writeText(content)
+    } catch {
+      /* ignore */
+    }
+  }
+
   return (
     <div style={styles.reasoningWrap}>
-      <button
-        type="button"
-        style={styles.reasoningToggle}
-        onClick={() => {
-          userToggled.current = true
-          setOpen((v) => !v)
-        }}
-        aria-expanded={open}
-      >
-        <span style={styles.reasoningLabel}>
-          {live ? "模型思考中" : "思考过程"}
-          {live ? <span style={styles.statusDots}>...</span> : null}
-          {!open && !live ? (
-            <span style={styles.reasoningMeta}>（{content.length} 字）</span>
-          ) : null}
-        </span>
-        <span style={styles.reasoningChevron}>{open ? "▾" : "▸"}</span>
-      </button>
+      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+        <button
+          type="button"
+          style={{ ...styles.reasoningToggle, flex: 1 }}
+          onClick={() => {
+            userToggled.current = true
+            setOpen((v) => !v)
+          }}
+          aria-expanded={open}
+        >
+          <span style={styles.reasoningLabel}>
+            {live ? "模型思考中" : "思考过程"}
+            {live ? <span style={styles.statusDots}>...</span> : null}
+            {!open && !live ? (
+              <span style={styles.reasoningMeta}>（{content.length} 字）</span>
+            ) : null}
+          </span>
+          <span style={styles.reasoningChevron}>{open ? "▾" : "▸"}</span>
+        </button>
+        <button
+          type="button"
+          style={styles.actionBtn}
+          onClick={handleCopy}
+          title="复制思考过程"
+          aria-label="复制思考过程"
+        >
+          复制
+        </button>
+      </div>
       {open ? (
         <div style={styles.reasoningBody}>
           <pre style={styles.reasoningPre}>{content}</pre>

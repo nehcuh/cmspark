@@ -220,13 +220,29 @@ export function useWebSocket() {
     }, initializedRef)
     // Restore send shortcut preference
     chrome.storage.local.get(
-      ["sendShortcut", "voiceInputEnabled", "voice_privacy_ack_v1"],
+      [
+        "sendShortcut",
+        "voiceInputEnabled",
+        "voice_privacy_ack_v1",
+        "cmspark.ui.show_reasoning",
+        "cmspark.ui.export_include_reasoning",
+      ],
       (result) => {
         if (result.sendShortcut) {
           dispatch({ type: "SET_SEND_SHORTCUT", shortcut: result.sendShortcut })
         }
         if (typeof result.voiceInputEnabled === "boolean") {
           dispatch({ type: "SET_VOICE_INPUT_ENABLED", enabled: result.voiceInputEnabled })
+        }
+        const srm = result["cmspark.ui.show_reasoning"]
+        if (srm === "always_collapsed" || srm === "auto_live" || srm === "always_open") {
+          dispatch({ type: "SET_SHOW_REASONING_MODE", mode: srm })
+        }
+        if (typeof result["cmspark.ui.export_include_reasoning"] === "boolean") {
+          dispatch({
+            type: "SET_EXPORT_INCLUDE_REASONING",
+            enabled: result["cmspark.ui.export_include_reasoning"],
+          })
         }
         if (result.voice_privacy_ack_v1 === true) {
           dispatch({ type: "SET_VOICE_PRIVACY_ACK_V1", ack: true })

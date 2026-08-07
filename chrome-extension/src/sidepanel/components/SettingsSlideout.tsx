@@ -1022,6 +1022,43 @@ export function SettingsSlideout() {
             </div>
           )}
 
+          <div style={styles.field}>
+            <label style={styles.label}>思考过程展示</label>
+            <select
+              style={styles.input}
+              value={state.showReasoningMode || "auto_live"}
+              onChange={(e) => {
+                const v = e.target.value
+                if (v === "always_collapsed" || v === "auto_live" || v === "always_open") {
+                  dispatch({ type: "SET_SHOW_REASONING_MODE", mode: v })
+                }
+              }}
+            >
+              <option value="auto_live">仅推理时展开（默认）</option>
+              <option value="always_collapsed">默认折叠</option>
+              <option value="always_open">始终展开</option>
+            </select>
+            <div style={styles.helpText}>
+              仅影响 Side Panel 显示。历史消息不会把思考回灌给模型（省 token / 兼容 Anthropic）。
+            </div>
+          </div>
+
+          <div style={styles.field}>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13 }}>
+              <input
+                type="checkbox"
+                checked={state.exportIncludeReasoning === true}
+                onChange={(e) =>
+                  dispatch({ type: "SET_EXPORT_INCLUDE_REASONING", enabled: e.target.checked })
+                }
+              />
+              导出到 Obsidian 时包含思考过程
+            </label>
+            <div style={styles.helpText}>
+              默认关闭。开启后以折叠块写入笔记；请注意思考可能含中间假设，勿默认分享。
+            </div>
+          </div>
+
                     {/* --- Vision Model Settings --- */}
           <div style={styles.sectionTitle}>视觉模型</div>
 
