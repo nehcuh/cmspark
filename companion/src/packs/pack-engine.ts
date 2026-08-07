@@ -16,6 +16,7 @@ import {
   MAX_ZIP_ENTRIES,
   PACK_ID_RE,
   TOOL_IMPLIED_MODULES,
+  stripVoiceForbiddenKeys,
   type PackDetail,
   type PackListItem,
   type PackManifest,
@@ -101,6 +102,8 @@ function toolsSummaryZh(tools: PackTools, custom?: string): string {
 
 function normalizeUserTrust(input: UserPackTrustPolicy | null | undefined): UserPackTrustPolicy | null {
   if (!input || typeof input !== "object") return null
+  // ADR-023 L15: never let voice risk keys ride on trust payload (allowlist below)
+  stripVoiceForbiddenKeys(input as unknown as Record<string, unknown>)
   const enable = Array.isArray(input.enable_modules)
     ? input.enable_modules.filter((s) => typeof s === "string" && s.trim()).map((s) => s.trim())
     : []
@@ -480,6 +483,7 @@ export function clearTrustCookieWithoutRestore(
 /**
  * Install path must never persist origin=user or a trust block (S46 Security F2).
  * Only saveUserPack may author origin:user + trust. Builtin origin is preserved.
+ * ADR-023 L15: also strips any residual voice risk keys on free-form trust objects.
  * Returns sanitized manifest + whether rewrite of pack.yaml is required.
  */
 export function sanitizeManifestForInstall(manifest: PackManifest): {
@@ -488,7 +492,11 @@ export function sanitizeManifestForInstall(manifest: PackManifest): {
 } {
   const hadUserOrigin = manifest.origin === "user"
   const hadTrust = !!manifest.trust
-  if (!hadUserOrigin && !hadTrust) {
+  let voiceStripped = false
+  if (manifest.trust) {
+    voiceStripped = stripVoiceForbiddenKeys(manifest.trust)
+  }
+  if (!hadUserOrigin && !hadTrust && !voiceStripped) {
     return { manifest, rewritten: false }
   }
   const next: PackManifest = {
@@ -501,6 +509,38 @@ export function sanitizeManifestForInstall(manifest: PackManifest): {
     next.origin = "installed"
   }
   return { manifest: next, rewritten: true }
+}
+
+/**
+ * ADR-023 L15: strip voice risk keys from on-disk pack.yaml before validate/install.
+ * Defense in depth — validator also rejects residual keys; apply never writes voice.
+ * @returns true if pack.yaml was rewritten
+ */
+export function stripVoiceKeysFromPackYaml(packDir: string): boolean {
+  const yamlPath = path.join(packDir, "pack.yaml")
+  if (!fs.existsSync(yamlPath)) return false
+  let raw: string
+  try {
+    raw = fs.readFileSync(yamlPath, "utf-8")
+  } catch {
+    return false
+  }
+  let doc: unknown
+  try {
+    doc = yaml.load(raw)
+  } catch {
+    return false
+  }
+  if (!doc || typeof doc !== "object" || Array.isArray(doc)) return false
+  const stripped = stripVoiceForbiddenKeys(doc)
+  if (!stripped) return false
+  try {
+    const body = yaml.dump(doc, { lineWidth: -1, noRefs: true })
+    fs.writeFileSync(yamlPath, body, { mode: 0o600 })
+    return true
+  } catch {
+    return false
+  }
 }
 
 /** Persist sanitized manifest to pack.yaml (install path only). */
@@ -1099,22 +1139,33 @@ export function installPackFromDirectory(
   opts?: { force?: boolean },
 ): { ok: true; id: string } | { ok: false; error: string } {
   ensurePackDirs()
-  const v = validatePackDir(sourceDir)
-  if (!v.ok) return { ok: false, error: v.error }
-
-  const dest = path.join(packsInstalledDir(), v.manifest.id)
-  if (fs.existsSync(dest) && !opts?.force) {
-    return { ok: false, error: `pack already installed: ${v.manifest.id} (use force to replace)` }
-  }
-
   const tmp = path.join(getConfigDir(), "cache", `pack-install-${Date.now()}`)
+  const cleanupTmp = () => {
+    try {
+      if (fs.existsSync(tmp)) fs.rmSync(tmp, { recursive: true, force: true })
+    } catch {
+      /* ignore */
+    }
+  }
   try {
     if (fs.existsSync(tmp)) fs.rmSync(tmp, { recursive: true, force: true })
     copyDirRecursive(sourceDir, tmp)
+    // ADR-023 L15: strip voice risk keys before validate (install never persists them)
+    stripVoiceKeysFromPackYaml(tmp)
     const v2 = validatePackDir(tmp)
-    if (!v2.ok) return { ok: false, error: v2.error }
+    if (!v2.ok) {
+      cleanupTmp()
+      return { ok: false, error: v2.error }
+    }
+
+    const dest = path.join(packsInstalledDir(), v2.manifest.id)
+    if (fs.existsSync(dest) && !opts?.force) {
+      cleanupTmp()
+      return { ok: false, error: `pack already installed: ${v2.manifest.id} (use force to replace)` }
+    }
 
     // S46 P0-3: strip origin=user + trust on install path (only saveUserPack may author them)
+    // ADR-023 L15: sanitizeManifestForInstall also clears residual voice keys on trust
     const sanitized = sanitizeManifestForInstall(v2.manifest)
     if (sanitized.rewritten) {
       rewritePackYaml(tmp, sanitized.manifest)
@@ -1155,11 +1206,7 @@ export function installPackFromDirectory(
     })
     return { ok: true, id: v3.manifest.id }
   } catch (e: any) {
-    try {
-      fs.rmSync(tmp, { recursive: true, force: true })
-    } catch {
-      /* ignore */
-    }
+    cleanupTmp()
     return { ok: false, error: e?.message || String(e) }
   }
 }
