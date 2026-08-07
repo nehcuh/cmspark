@@ -326,8 +326,8 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
         if (continuousBrowser) {
           const v3 = extra?.privacyAckV3 === true || o.privacyAckV3 === true
           if (!v3) {
+            // Do not fall back to v1 sheet — that cannot satisfy the v3 gate (dual-review N1).
             if (o.onNeedPrivacyAckV3) o.onNeedPrivacyAckV3()
-            else o.onNeedPrivacyAck()
             return
           }
         }
