@@ -71,6 +71,43 @@ test("plain user→assistant: both rendered, no tool artifacts", () => {
   assert.ok(!r.content.includes("[!info]"))
 })
 
+test("Wave D: reasoning omitted by default even when present", () => {
+  const r = serializeThreadToMarkdown(
+    [
+      msg({ id: "u1", role: "user", content: "why?" }),
+      msg({
+        id: "a1",
+        role: "assistant",
+        content: "because",
+        reasoning_content: "SECRET_THINKING_SHOULD_NOT_EXPORT",
+      }),
+    ],
+    opt("thread"),
+  )
+  assert.match(r.content, /because/)
+  assert.ok(!r.content.includes("SECRET_THINKING"))
+  assert.ok(!r.content.includes("思考过程"))
+})
+
+test("Wave D: include_reasoning folds thinking under details", () => {
+  const r = serializeThreadToMarkdown(
+    [
+      msg({ id: "u1", role: "user", content: "why?" }),
+      msg({
+        id: "a1",
+        role: "assistant",
+        content: "because",
+        reasoning_content: "step by step plan",
+      }),
+    ],
+    { ...opt("thread"), include_reasoning: true },
+  )
+  assert.match(r.content, /because/)
+  assert.match(r.content, /思考过程/)
+  assert.match(r.content, /step by step plan/)
+  assert.match(r.content, /<details>/)
+})
+
 test("assistant(tool_calls)→tool(result): result folded into callout, not a standalone JSON dump", () => {
   const bigResult = { success: true, data: { title: "Example", text: "page body" } }
   const r = serializeThreadToMarkdown(

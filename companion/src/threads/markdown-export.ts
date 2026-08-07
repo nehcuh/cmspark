@@ -19,6 +19,8 @@ export interface ExportMessage {
   content: string
   tool_calls?: any[]
   created_at?: string
+  /** Wave D: model thinking — only rendered when ExportOptions.include_reasoning */
+  reasoning_content?: string
 }
 
 export interface ObsidianExportConfig {
@@ -61,6 +63,11 @@ export interface ExportOptions {
   relatedNotes?: string[]
   /** Cached vault template (P2) — wraps the body + contributes a frontmatter skeleton. Absent → no template. */
   template?: VaultTemplate
+  /**
+   * Wave D: when true, include assistant reasoning_content under a details block.
+   * Default false — thinking never enters vault notes unless opted in.
+   */
+  include_reasoning?: boolean
 }
 
 export interface ExportResult {
@@ -102,8 +109,15 @@ export function serializeThreadToMarkdown(
   options: ExportOptions,
 ): ExportResult {
   const selected = selectMessages(messages, options.scope, options.anchorMessageId)
-  const blocks = pairBlocks(selected)
-  const body = renderBody(blocks)
+  // Wave D: strip reasoning unless explicitly included (privacy default).
+  const forExport =
+    options.include_reasoning === true
+      ? selected
+      : selected.map((m) =>
+          m.reasoning_content != null ? { ...m, reasoning_content: undefined } : m,
+        )
+  const blocks = pairBlocks(forExport)
+  const body = renderBody(blocks, options.include_reasoning === true)
   const firstUserLine = computeFirstUserLine(selected)
   const footer = renderRelatedNotesFooter(options)
   const title = computeExportTitle(options, firstUserLine)
@@ -154,8 +168,14 @@ export function serializeSummaryToMarkdown(
   const summarySection = options.template ? inner : `# ${title}\n\n${inner}`
 
   // Folded full-conversation appendix (reuses the conversation renderer; tool noise already
-  // folded/truncated by renderBody). Skipped when there's nothing renderable.
-  const appendixBody = renderBody(pairBlocks(convo))
+  // folded/truncated by renderBody). Wave D: strip reasoning unless include_reasoning.
+  const includeReasoning = options.include_reasoning === true
+  const convoForAppendix = includeReasoning
+    ? convo
+    : convo.map((m) =>
+        m.reasoning_content != null ? { ...m, reasoning_content: undefined } : m,
+      )
+  const appendixBody = renderBody(pairBlocks(convoForAppendix), includeReasoning)
   const appendix = appendixBody ? quote(`[!note]- 完整对话\n${appendixBody.trimEnd()}`) : ""
 
   const footer = renderRelatedNotesFooter({ ...options } as ExportOptions)
@@ -275,25 +295,34 @@ function pairBlocks(messages: ExportMessage[]): Block[] {
 
 // ---------------- rendering ----------------
 
-function renderBody(blocks: Block[]): string {
+function renderReasoningDetails(reasoning: string | undefined, include: boolean): string {
+  if (!include) return ""
+  const r = (reasoning || "").trim()
+  if (!r) return ""
+  return `\n\n<details>\n<summary>思考过程</summary>\n\n${r}\n\n</details>`
+}
+
+function renderBody(blocks: Block[], includeReasoning = false): string {
   const parts: string[] = []
   blocks.forEach((b, idx) => {
     if (b.type === "user" && idx > 0) parts.push("---")
-    parts.push(renderBlock(b))
+    parts.push(renderBlock(b, includeReasoning))
   })
   const body = parts.join("\n\n").trim()
   return body ? body + "\n" : ""
 }
 
-function renderBlock(b: Block): string {
+function renderBlock(b: Block, includeReasoning = false): string {
   switch (b.type) {
     case "user":
       return `**🧑 提问**\n\n${stripDocuments(b.msg.content || "")}`
     case "assistant_text":
-      return `**🤖 回答**\n\n${(b.msg.content || "").trim()}`.trimEnd()
+      return `**🤖 回答**\n\n${(b.msg.content || "").trim()}${renderReasoningDetails(b.msg.reasoning_content, includeReasoning)}`.trimEnd()
     case "assistant_tool": {
       const prose = (b.msg.content || "").trim()
-      const head = prose ? `**🤖 回答**\n\n${prose}` : `**🤖 回答 · 工具调用**`
+      const head = prose
+        ? `**🤖 回答**\n\n${prose}${renderReasoningDetails(b.msg.reasoning_content, includeReasoning)}`
+        : `**🤖 回答 · 工具调用**${renderReasoningDetails(b.msg.reasoning_content, includeReasoning)}`
       const callouts: string[] = []
       const used = new Set<any>()
       for (const call of b.calls) {

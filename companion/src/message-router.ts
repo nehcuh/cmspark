@@ -1921,6 +1921,8 @@ export async function handleMessage(
         created_at: thread.created_at,
         updated_at: thread.updated_at,
       }
+      // Wave D: include model thinking in export only when client opts in.
+      const includeReasoning = rest.include_reasoning === true
       // P3 summary scope: send the (token-budgeted) thread to the LLM, then assemble a
       // summary note (LLM summary + folded full-conversation appendix + footer + template).
       // Mirrors the raw-export shape so the UI's existing download path handles it unchanged.
@@ -1958,6 +1960,7 @@ export async function handleMessage(
         anchorMessageId: rest.anchor_message_id,
         config: obsCfg,
         thread: threadMeta,
+        include_reasoning: includeReasoning,
         ...(profile ? { profile } : {}),
         ...(relatedNotes.length ? { relatedNotes } : {}),
         ...(template ? { template } : {}),
