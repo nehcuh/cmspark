@@ -5680,6 +5680,53 @@ export function validateWsMessage(msg: any): WsValidationResult {
       }
       return { valid: true }
     },
+    // Path B M0 — voice.model.* (ADR-023 L7 dual fence layer 1; handler belt = layer 2)
+    "voice.model.get_state": () => ({ valid: true }),
+    "voice.model.download": (m) => {
+      if (m.source !== "settings") {
+        return { valid: false, error: 'voice.model.download requires source:"settings" (settings-page only)' }
+      }
+      if (m.modelId !== "small" && m.modelId !== "medium" && m.modelId !== "large-v3-turbo") {
+        return { valid: false, error: 'voice.model.download requires modelId:"small"|"medium"|"large-v3-turbo"' }
+      }
+      return { valid: true }
+    },
+    "voice.model.cancel": (m) => {
+      if (m.source !== "settings") {
+        return { valid: false, error: 'voice.model.cancel requires source:"settings" (settings-page only)' }
+      }
+      if (m.modelId !== "small" && m.modelId !== "medium" && m.modelId !== "large-v3-turbo") {
+        return { valid: false, error: 'voice.model.cancel requires modelId:"small"|"medium"|"large-v3-turbo"' }
+      }
+      return { valid: true }
+    },
+    "voice.model.delete": (m) => {
+      if (m.source !== "settings") {
+        return { valid: false, error: 'voice.model.delete requires source:"settings" (settings-page only)' }
+      }
+      if (m.modelId !== "small" && m.modelId !== "medium" && m.modelId !== "large-v3-turbo") {
+        return { valid: false, error: 'voice.model.delete requires modelId:"small"|"medium"|"large-v3-turbo"' }
+      }
+      return { valid: true }
+    },
+    "voice.model.set_active": (m) => {
+      if (m.source !== "settings") {
+        return { valid: false, error: 'voice.model.set_active requires source:"settings" (settings-page only)' }
+      }
+      if (m.modelId !== "small" && m.modelId !== "medium" && m.modelId !== "large-v3-turbo") {
+        return { valid: false, error: 'voice.model.set_active requires modelId:"small"|"medium"|"large-v3-turbo"' }
+      }
+      return { valid: true }
+    },
+    "voice.model.set_engine": (m) => {
+      if (m.source !== "settings") {
+        return { valid: false, error: 'voice.model.set_engine requires source:"settings" (settings-page only)' }
+      }
+      if (m.engine !== "browser" && m.engine !== "local") {
+        return { valid: false, error: 'voice.model.set_engine requires engine:"browser"|"local"' }
+      }
+      return { valid: true }
+    },
     "tool.result": (m) => {
       if (typeof m.tool_call_id !== "string" || !m.tool_call_id) return { valid: false, error: "tool.result requires tool_call_id" }
       return { valid: true }

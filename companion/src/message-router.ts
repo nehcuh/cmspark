@@ -45,6 +45,7 @@ import { logger } from "./logger"
 import { handleAppsMessage } from "./apps/handlers"
 import { handleComputerMessage } from "./computer/handlers"
 import { handleComputerModelMessage } from "./computer/model-handlers"
+import { handleVoiceModelMessage } from "./voice/whisper-handlers"
 import {
   buildUserEnvPublic,
   deleteUserEnvKeys,
@@ -1882,6 +1883,16 @@ export async function handleMessage(
     case "computer.model.install_deps":
       return handleComputerModelMessage(msg, {
         requestConfirmation: session?.requestConfirmation,
+        broadcast: session?.broadcast,
+      })
+    // Path B M0 — voice.model.* (settings dual fence; ADR-023 L7)
+    case "voice.model.get_state":
+    case "voice.model.download":
+    case "voice.model.cancel":
+    case "voice.model.delete":
+    case "voice.model.set_active":
+    case "voice.model.set_engine":
+      return handleVoiceModelMessage(msg, {
         broadcast: session?.broadcast,
       })
     case "skill.activate": {
