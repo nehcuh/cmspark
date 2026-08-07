@@ -105,7 +105,9 @@ export function createWebSpeechAdapter(handlers: SpeechAdapterHandlers): SpeechA
       if (mode === "continuous" && wantListening && code === "no-speech") {
         return
       }
-      // stop()/abort() often surfaces "aborted" — still terminal for this rec instance
+      // Fatal engine errors (network, not-allowed, audio-capture, …): SoT §6 —
+      // must NOT restart. Clear wantListening so paired onend delivers onEnd once.
+      wantListening = false
       handlers.onError(code)
     }
     r.onend = () => {
@@ -117,7 +119,19 @@ export function createWebSpeechAdapter(handlers: SpeechAdapterHandlers): SpeechA
         try {
           // Brief yield so Chrome accepts a new start() after onend.
           queueMicrotask(() => {
-            if (dead || gen !== listenGen || !wantListening) return
+            if (dead || gen !== listenGen) {
+              // Gen invalidated / destroyed — do not double-end if already ended.
+              return
+            }
+            // stop()/hard-cap may clear wantListening in the gap after rec was nulled;
+            // must still deliver onEnd so SM leaves "stopping" and can commit finals.
+            if (!wantListening) {
+              if (endedForGen !== gen) {
+                endedForGen = gen
+                handlers.onEnd()
+              }
+              return
+            }
             try {
               bindAndStart(gen)
             } catch {

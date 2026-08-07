@@ -153,6 +153,112 @@ test("continuous mode: onend restarts while wantListening", async () => {
   g.SpeechRecognition = prev
 })
 
+test("continuous: fatal network error stops restart and ends once", async () => {
+  let starts = 0
+  const instances: FakeRec[] = []
+  const Ctor = function (this: FakeRec) {
+    starts++
+    const rec: FakeRec = {
+      lang: "",
+      continuous: false,
+      interimResults: false,
+      maxAlternatives: 1,
+      start() {
+        queueMicrotask(() => rec.onstart?.(new Event("start")))
+      },
+      stop() {},
+      abort() {},
+      onstart: null,
+      onend: null,
+      onerror: null,
+      onresult: null,
+    }
+    instances.push(rec)
+    return rec
+  } as unknown as new () => object
+
+  const g = globalThis as any
+  const prev = g.SpeechRecognition
+  g.SpeechRecognition = Ctor
+
+  let errors = 0
+  let ends = 0
+  const adapter = createWebSpeechAdapter({
+    onStart: () => {},
+    onResult: () => {},
+    onError: () => {
+      errors++
+    },
+    onEnd: () => {
+      ends++
+    },
+  })
+  adapter!.start({ mode: "continuous" })
+  await new Promise((r) => setTimeout(r, 10))
+  const firstStarts = starts
+  instances[0].onerror?.({ error: "network" })
+  instances[0].onend?.(new Event("end"))
+  await new Promise((r) => setTimeout(r, 40))
+  assert.equal(errors, 1)
+  assert.equal(ends, 1)
+  assert.equal(starts, firstStarts, "must not restart after fatal error")
+
+  adapter!.destroy()
+  g.SpeechRecognition = prev
+})
+
+test("continuous: stop during onend→restart microtask still delivers onEnd", async () => {
+  let starts = 0
+  const instances: FakeRec[] = []
+  const Ctor = function (this: FakeRec) {
+    starts++
+    const rec: FakeRec = {
+      lang: "",
+      continuous: false,
+      interimResults: false,
+      maxAlternatives: 1,
+      start() {
+        queueMicrotask(() => rec.onstart?.(new Event("start")))
+      },
+      stop() {
+        /* stop may no-op if rec already nulled in onend */
+      },
+      abort() {},
+      onstart: null,
+      onend: null,
+      onerror: null,
+      onresult: null,
+    }
+    instances.push(rec)
+    return rec
+  } as unknown as new () => object
+
+  const g = globalThis as any
+  const prev = g.SpeechRecognition
+  g.SpeechRecognition = Ctor
+
+  let ends = 0
+  const adapter = createWebSpeechAdapter({
+    onStart: () => {},
+    onResult: () => {},
+    onError: () => {},
+    onEnd: () => {
+      ends++
+    },
+  })
+  adapter!.start({ mode: "continuous" })
+  await new Promise((r) => setTimeout(r, 10))
+  // Fire onend (schedules restart microtask) then stop before microtask runs
+  instances[0].onend?.(new Event("end"))
+  adapter!.stop()
+  await new Promise((r) => setTimeout(r, 40))
+  assert.equal(ends, 1, "onEnd must fire once when stop lands in restart gap")
+  assert.equal(starts, 1, "must not start a new recognition after stop")
+
+  adapter!.destroy()
+  g.SpeechRecognition = prev
+})
+
 test("continuous: no-speech error does not call onError while listening", async () => {
   const instances: FakeRec[] = []
   const Ctor = function (this: FakeRec) {
