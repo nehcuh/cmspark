@@ -48,7 +48,9 @@ import { randomUUID } from "crypto"
 import http from "http"
 import os from "os"
 import { URL } from "url"
-import { getConfig, saveConfig, initDataDir, configEvents, CONFIG_CHANGE_EVENT, migrateLegacyModelName } from "./config"
+import { getConfig, saveConfig, initDataDir, configEvents, CONFIG_CHANGE_EVENT, migrateLegacyModelName, DATA_DIR } from "./config"
+import { STT_MAX_CHUNK_BYTES, STT_MAX_RECORD_MS } from "./voice/session-caps"
+import { bootGcVoiceSttTmp, getSttSessionService } from "./voice/stt-session-service"
 import { handleMessage } from "./message-router"
 import { ThreadManager } from "./threads/thread-manager"
 import { SkillEngine } from "./skills/skill-engine"
@@ -554,6 +556,16 @@ async function initServices() {
   skillEngine = new SkillEngine(getConfig().llm)
   historyStore = new HistoryStore()
   await historyStore.waitReady()
+  // Path B M1: init STT session service + boot-time orphan GC under DATA_DIR/tmp/voice-stt/
+  try {
+    getSttSessionService({ dataDir: DATA_DIR })
+    const removed = await bootGcVoiceSttTmp(DATA_DIR)
+    if (removed > 0) {
+      logger.info("voice.stt.tmp.boot_gc", { removed })
+    }
+  } catch (e: any) {
+    logger.warn("voice.stt.tmp.boot_gc_failed", { error: e?.message || String(e) })
+  }
   // Mission Pack P0: install shipped packs (appsec-prd-review) into DATA_DIR
   try {
     const { ensureBuiltinPacksInstalled, reconcilePackTrustOnBoot } = await import(
@@ -5727,6 +5739,85 @@ export function validateWsMessage(msg: any): WsValidationResult {
       }
       return { valid: true }
     },
+    // Path B M1 — voice.stt.* (runtime Side Panel; NOT source:settings; origin fence in handler)
+    "voice.stt.start": (m) => {
+      if (m.v !== 1) {
+        return { valid: false, error: "voice.stt.start requires v:1" }
+      }
+      if (typeof m.sessionId !== "string" || !m.sessionId || m.sessionId.length > 128) {
+        return { valid: false, error: "voice.stt.start requires sessionId string (1–128)" }
+      }
+      if (m.modelId !== "small" && m.modelId !== "medium" && m.modelId !== "large-v3-turbo") {
+        return { valid: false, error: 'voice.stt.start requires modelId:"small"|"medium"|"large-v3-turbo"' }
+      }
+      if (m.format !== "pcm_s16le" && m.format !== "wav") {
+        return { valid: false, error: 'voice.stt.start requires format:"pcm_s16le"|"wav"' }
+      }
+      if (m.sampleRate !== 16000) {
+        return { valid: false, error: "voice.stt.start requires sampleRate:16000" }
+      }
+      if (m.channels !== 1) {
+        return { valid: false, error: "voice.stt.start requires channels:1" }
+      }
+      if (m.lang !== undefined && typeof m.lang !== "string") {
+        return { valid: false, error: "voice.stt.start lang must be a string when present" }
+      }
+      if (m.maxMs !== undefined) {
+        if (typeof m.maxMs !== "number" || !Number.isFinite(m.maxMs) || m.maxMs <= 0 || m.maxMs > STT_MAX_RECORD_MS) {
+          return { valid: false, error: `voice.stt.start maxMs must be 1..${STT_MAX_RECORD_MS}` }
+        }
+      }
+      return { valid: true }
+    },
+    "voice.stt.chunk": (m) => {
+      if (m.v !== 1) {
+        return { valid: false, error: "voice.stt.chunk requires v:1" }
+      }
+      if (typeof m.sessionId !== "string" || !m.sessionId) {
+        return { valid: false, error: "voice.stt.chunk requires sessionId string" }
+      }
+      if (!Number.isInteger(m.seq) || m.seq < 0) {
+        return { valid: false, error: "voice.stt.chunk requires seq non-negative integer" }
+      }
+      if (typeof m.data !== "string") {
+        return { valid: false, error: "voice.stt.chunk requires data base64 string" }
+      }
+      // Cap decoded size without logging audio contents
+      let decodedLen: number
+      try {
+        decodedLen = Buffer.from(m.data, "base64").length
+      } catch {
+        return { valid: false, error: "voice.stt.chunk data is not valid base64" }
+      }
+      if (decodedLen > STT_MAX_CHUNK_BYTES) {
+        return {
+          valid: false,
+          error: `voice.stt.chunk decoded size exceeds ${STT_MAX_CHUNK_BYTES} bytes`,
+        }
+      }
+      return { valid: true }
+    },
+    "voice.stt.end": (m) => {
+      if (m.v !== 1) {
+        return { valid: false, error: "voice.stt.end requires v:1" }
+      }
+      if (typeof m.sessionId !== "string" || !m.sessionId) {
+        return { valid: false, error: "voice.stt.end requires sessionId string" }
+      }
+      if (!Number.isInteger(m.totalSeq) || m.totalSeq < 0) {
+        return { valid: false, error: "voice.stt.end requires totalSeq non-negative integer" }
+      }
+      return { valid: true }
+    },
+    "voice.stt.abort": (m) => {
+      if (m.v !== 1) {
+        return { valid: false, error: "voice.stt.abort requires v:1" }
+      }
+      if (typeof m.sessionId !== "string" || !m.sessionId) {
+        return { valid: false, error: "voice.stt.abort requires sessionId string" }
+      }
+      return { valid: true }
+    },
     "tool.result": (m) => {
       if (typeof m.tool_call_id !== "string" || !m.tool_call_id) return { valid: false, error: "tool.result requires tool_call_id" }
       return { valid: true }
@@ -6756,6 +6847,8 @@ export async function startServer(options: { onShutdown?: () => void } = {}) {
             },
             // WP4: 每连接面板标识(computer.evidence.open P6 频率上限计数)。
             panelId,
+            // Path B M1: origin class for voice.stt.* (chrome-extension vs tray).
+            origin: peerOrigin,
           },
         )
 
