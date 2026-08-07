@@ -1,0 +1,8 @@
+{
+  "batch": "wave-e-ux-security-hardening-impl",
+  "timestamp": "20260807-150926",
+  "claude": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/wave-e-ux-security-hardening-impl-claude-20260807-150926.md" },
+  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/wave-e-ux-security-hardening-impl-pi-20260807-150926.md" },
+  "both_approve": true,
+  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/wave-e-ux-security-hardening-impl-diff-20260807-150926.patch"
+}
