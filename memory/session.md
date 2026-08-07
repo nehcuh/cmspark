@@ -506,11 +506,11 @@
 
 ## In-Flight Tasks (Cross-Session)
 
-### Wave C thread_recall → committed · 待 PR
-- status: **active** (local commit `8d5ab36` on main, ahead origin by 1; dual both APPROVE_WITH_NITS)
+### Wave C thread_recall → **#135 MERGED**
+- status: **done** (PR #135 → main `90db018`; CI build pass ~3m)
 - context: same-thread keyword+CJK bigram; F-S5 + synthetic assistant for orphan tools; compact notice hint if allowlisted
-- next_action: branch + PR → CI → merge；可选真机 compact 后 recall smoke
-- resume_doc: `docs/superpowers/plans/2026-08-07-wave-c-thread-recall.md` · `docs/audit/reviews/wave-c-thread-recall-impl-verdict-20260807-115545.json`
+- next_action: 可选真机 compact 后 `thread_recall` smoke；Wave D 按需
+- resume_doc: PR #135 · `docs/superpowers/plans/2026-08-07-wave-c-thread-recall.md`
 - updated: 2026-08-07
 
 ### Wave D 思考 UI/导出 polish（可选）
