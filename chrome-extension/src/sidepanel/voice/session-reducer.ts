@@ -99,6 +99,16 @@ export function reduceVoiceSession(
       if (state.phase === "stopping") {
         return resetToIdle(state, { banner: state.banner })
       }
+      // D1b: cancel mid-refine — keep raw draft (already merged), clear refining
+      if (state.phase === "refining") {
+        return resetToIdle(state, {
+          baseText: state.baseText,
+          finals: state.finals,
+          committed: true,
+          rawSnapshot: state.rawSnapshot,
+          banner: "已取消纠错，保留识别原文",
+        })
+      }
       // Local STT: cancel upload/infer mid-processing — abort-ish, no draft merge
       if (state.phase === "processing") {
         return {
@@ -137,6 +147,15 @@ export function reduceVoiceSession(
       ) {
         return state
       }
+      if (state.phase === "refining") {
+        return resetToIdle(state, {
+          abortReason: "chat_abort",
+          committed: false,
+          finals: [],
+          rawSnapshot: null,
+          refineGen: null,
+        })
+      }
       return {
         ...state,
         phase: "stopping",
@@ -153,6 +172,11 @@ export function reduceVoiceSession(
         state.phase === "error"
       ) {
         return resetToIdle(state)
+      }
+      if (state.phase === "refining") {
+        return resetToIdle(state, {
+          abortReason: event.type === "UNMOUNT" ? "unmount" : "thread_switch",
+        })
       }
       return {
         ...state,
@@ -322,6 +346,65 @@ export function reduceVoiceSession(
         finals: state.finals,
         committed: true,
         banner: timeoutBanner,
+      })
+    }
+
+    case "START_REFINE": {
+      // Only after a successful listen commit (ENGINE_END → idle + committed finals).
+      if (state.phase !== "idle") return state
+      if (!state.committed || !state.finals.length) return state
+      return {
+        ...state,
+        phase: "refining",
+        refineGen: event.refineGen,
+        rawSnapshot: event.rawSnapshot,
+        banner: "纠错中…",
+        errorCode: null,
+        abortReason: null,
+      }
+    }
+
+    case "REFINE_OK": {
+      if (state.phase !== "refining") return state
+      if (state.refineGen !== event.refineGen) return state
+      // Ownership: caller checks dirty before dispatching; SM always accepts.
+      return resetToIdle(state, {
+        baseText: state.baseText,
+        finals: state.finals,
+        committed: true,
+        rawSnapshot: state.rawSnapshot,
+        refineGen: null,
+        banner: event.unchanged
+          ? null
+          : "已应用识别纠错（可还原原文）",
+      })
+    }
+
+    case "REFINE_FAIL": {
+      if (state.phase !== "refining") return state
+      if (state.refineGen !== null && state.refineGen !== event.refineGen) {
+        return state
+      }
+      return resetToIdle(state, {
+        baseText: state.baseText,
+        finals: state.finals,
+        committed: true,
+        rawSnapshot: state.rawSnapshot,
+        refineGen: null,
+        banner: event.message || "纠错失败，已填入识别原文",
+        errorCode: event.code || "refine_fail",
+      })
+    }
+
+    case "CANCEL_REFINE": {
+      if (state.phase !== "refining") return state
+      return resetToIdle(state, {
+        baseText: state.baseText,
+        finals: state.finals,
+        committed: true,
+        rawSnapshot: state.rawSnapshot,
+        refineGen: null,
+        banner: "已取消纠错，保留识别原文",
       })
     }
 

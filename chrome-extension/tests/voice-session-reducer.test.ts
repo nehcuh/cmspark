@@ -119,6 +119,61 @@ test("SOFT_CAP_HINT keeps listening and sets banner", () => {
   assert.match(s.banner || "", /连续听写/)
 })
 
+test("D1b START_REFINE → REFINE_OK keeps committed raw path", () => {
+  let s = initialVoiceSession(true)
+  s = reduceVoiceSession(s, {
+    type: "USER_TOGGLE_START",
+    sessionId: "s1",
+    baseText: "前缀",
+  })
+  s = reduceVoiceSession(s, { type: "ENGINE_START" })
+  s = reduceVoiceSession(s, { type: "ENGINE_RESULT", finalChunk: "配森" })
+  s = reduceVoiceSession(s, { type: "USER_TOGGLE_STOP" })
+  s = reduceVoiceSession(s, { type: "ENGINE_END" })
+  assert.equal(s.phase, "idle")
+  assert.equal(s.committed, true)
+  s = reduceVoiceSession(s, {
+    type: "START_REFINE",
+    refineGen: 1,
+    rawSnapshot: "前缀配森",
+  })
+  assert.equal(s.phase, "refining")
+  assert.equal(s.rawSnapshot, "前缀配森")
+  s = reduceVoiceSession(s, {
+    type: "REFINE_OK",
+    refineGen: 1,
+    text: "前缀Python",
+    unchanged: false,
+  })
+  assert.equal(s.phase, "idle")
+  assert.match(s.banner || "", /纠错/)
+  assert.equal(s.rawSnapshot, "前缀配森")
+})
+
+test("D1b REFINE_FAIL stale gen ignored", () => {
+  let s = initialVoiceSession(true)
+  s = reduceVoiceSession(s, {
+    type: "USER_TOGGLE_START",
+    sessionId: "s1",
+    baseText: "",
+  })
+  s = reduceVoiceSession(s, { type: "ENGINE_START" })
+  s = reduceVoiceSession(s, { type: "ENGINE_RESULT", finalChunk: "hi" })
+  s = reduceVoiceSession(s, { type: "USER_TOGGLE_STOP" })
+  s = reduceVoiceSession(s, { type: "ENGINE_END" })
+  s = reduceVoiceSession(s, {
+    type: "START_REFINE",
+    refineGen: 2,
+    rawSnapshot: "hi",
+  })
+  s = reduceVoiceSession(s, {
+    type: "REFINE_OK",
+    refineGen: 1,
+    text: "stale",
+  })
+  assert.equal(s.phase, "refining")
+})
+
 test("not-allowed → error banner survives ENGINE_END (real Web Speech order)", () => {
   let s = initialVoiceSession(true)
   s = reduceVoiceSession(s, {

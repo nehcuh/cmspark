@@ -267,7 +267,7 @@ export const FORBIDDEN_PACK_KEYS = new Set([
  * rejected/stripped — no trust-block exception.
  */
 export const VOICE_FORBIDDEN_KEY_RE =
-  /^(voice|sttEngine|localModelId|voiceStt|voice_privacy|voiceAutoSend)/i
+  /^(voice|sttEngine|localModelId|voiceStt|voice_privacy|voiceAutoSend|asr_refiner|refiner_prompt|dictation_polish|rewrite_mode|audio_retain|autoStart)/i
 
 /** True when a pack.yaml object key must never appear (voice risk). */
 export function isVoiceForbiddenPackKey(key: string): boolean {

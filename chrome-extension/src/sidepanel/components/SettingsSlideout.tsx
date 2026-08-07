@@ -1008,6 +1008,42 @@ export function SettingsSlideout() {
               <div style={{ marginTop: 4, fontSize: 11, color: "#888", lineHeight: 1.4 }}>
                 连续听写仅增强 Agent 草稿输入，不会自动发送，也不是系统听写。首次使用需确认隐私说明。
               </div>
+              <label
+                style={{
+                  display: "flex",
+                  alignItems: "flex-start",
+                  gap: 8,
+                  marginTop: 10,
+                  cursor: "pointer",
+                  fontSize: 12,
+                  lineHeight: 1.4,
+                }}
+              >
+                <input
+                  type="checkbox"
+                  style={{ marginTop: 2 }}
+                  checked={state.asrRefinerEnabled === true}
+                  onChange={(e) => {
+                    const on = e.target.checked
+                    if (on && !state.voicePrivacyAckV3) {
+                      // Enabling refine requires v3 ack — user must open mic once or we set flag after ack in App
+                      dispatch({ type: "SET_ASR_REFINER_ENABLED", enabled: true })
+                    } else {
+                      dispatch({ type: "SET_ASR_REFINER_ENABLED", enabled: on })
+                    }
+                  }}
+                />
+                <span>
+                  <strong>ASR 纠错</strong>
+                  （停后可选；默认关）
+                  <br />
+                  <span style={{ color: "#888", fontSize: 11 }}>
+                    将把<strong>转写文本</strong>发给当前 Companion 模型做极保守纠错（不润色、不自动发送）；需已配置
+                    LLM 与隐私确认 v3。当前模型：
+                    {state.companionConfig?.model_name || "（未连接/未配置）"}
+                  </span>
+                </span>
+              </label>
             </div>
 
             {/* Path B M0: 听写方式 progressive disclosure (UI draft until ready + enable) */}
