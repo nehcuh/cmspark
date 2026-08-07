@@ -64,6 +64,7 @@ import {
   RECOMMENDED_WHISPER_MODEL_ID,
   binaryStatusLine,
   formatDiskUsage,
+  modelProbeErrorLabel,
   modelStatusLabel,
   privacyCopyForEngine,
   progressPercent,
@@ -1117,7 +1118,7 @@ export function SettingsSlideout() {
                     )}
                     {entry?.error && (
                       <div style={{ fontSize: 11, color: tokens.danger, marginTop: 4 }}>
-                        {entry.error}
+                        {modelProbeErrorLabel(entry.error) || entry.error}
                       </div>
                     )}
                   </div>
@@ -1298,7 +1299,7 @@ export function SettingsSlideout() {
 
                   {state.voiceModelError && (
                     <div style={{ ...styles.helpText, color: tokens.danger, marginTop: 4 }}>
-                      {state.voiceModelError}
+                      {modelProbeErrorLabel(state.voiceModelError) || state.voiceModelError}
                     </div>
                   )}
                 </>

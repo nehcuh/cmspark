@@ -123,20 +123,31 @@ function bodyStream(body: Buffer, route: FakeRoute, signal?: AbortSignal): Reada
   })
 }
 
-function makeFakeFetch(routes: Record<string, FakeRoute>): typeof fetch {
+type FakeRouteOrRedirect =
+  | FakeRoute
+  | { redirectTo: string; status?: number; callCount?: number }
+
+function makeFakeFetch(routes: Record<string, FakeRouteOrRedirect>): typeof fetch {
   return (async (input: unknown, init?: { headers?: Record<string, string>; signal?: AbortSignal }) => {
     const url = String(input)
     const route = routes[url]
     if (!route) return new Response("not found", { status: 404 })
-    route.callCount++
-    const range = init?.headers?.Range
-    route.seenRanges.push(range)
+    route.callCount = (route.callCount ?? 0) + 1
     if (init?.signal?.aborted) {
       throw new DOMException("The operation was aborted.", "AbortError")
     }
-    return new Response(bodyStream(route.body, route, init?.signal) as any, {
+    if ("redirectTo" in route) {
+      return new Response(null, {
+        status: route.status ?? 302,
+        headers: { location: route.redirectTo },
+      })
+    }
+    const fr = route as FakeRoute
+    const range = init?.headers?.Range
+    fr.seenRanges.push(range)
+    return new Response(bodyStream(fr.body, fr, init?.signal) as any, {
       status: 200,
-      headers: route.headers,
+      headers: fr.headers,
     })
   }) as unknown as typeof fetch
 }
@@ -267,6 +278,39 @@ test("budget: pre-check fails before any fetch when over budget", async () => {
 })
 
 // --- happy path ---------------------------------------------------------------
+
+test("follows https redirect (HuggingFace 302 → CDN)", async () => {
+  const env = makeEnv()
+  try {
+    const body = FILE_A
+    const manifest = makeManifest([{ name: "ggml-medium.bin", content: body }])
+    const hfUrl = "https://huggingface.co/fake/ggml-medium.bin"
+    const cdnUrl = "https://cdn.example.com/ggml-medium.bin"
+    manifest.models.medium.files[0]!.url = hfUrl
+    const routes: Record<string, FakeRouteOrRedirect> = {
+      [hfUrl]: { redirectTo: cdnUrl },
+      [cdnUrl]: {
+        body,
+        headers: { "content-length": String(body.byteLength) },
+        callCount: 0,
+        seenRanges: [],
+        cancelled: false,
+      },
+    }
+    await downloadWhisperModel("medium", {
+      rootDir: env.whisperRoot,
+      manifest,
+      fetchImpl: makeFakeFetch(routes),
+      budgetMB: 4096,
+    })
+    const dest = path.join(env.whisperRoot, "medium", "ggml-medium.bin")
+    assert.equal(existsSync(dest), true)
+    assert.equal((routes[hfUrl] as any).callCount, 1)
+    assert.equal((routes[cdnUrl] as FakeRoute).callCount, 1)
+  } finally {
+    env.cleanup()
+  }
+})
 
 test("happy path: small fake file written, no .part residue", async () => {
   const env = makeEnv()
@@ -456,6 +500,39 @@ test("probe: absent / incomplete / ready", async () => {
 
     writeFileSync(path.join(destDir, "ggml-medium.bin"), FILE_A)
     assert.equal(probeWhisperModelDir("medium", env.whisperRoot, manifest).status, "ready")
+  } finally {
+    env.cleanup()
+  }
+})
+
+test("probe: orphan .part.json only → incomplete partial-download (not unexpected-files)", async () => {
+  const env = makeEnv()
+  try {
+    const manifest = makeManifest([{ name: "ggml-medium.bin", content: FILE_A }])
+    const destDir = path.join(env.whisperRoot, "medium")
+    mkdirSync(destDir, { recursive: true })
+    writeFileSync(
+      path.join(destDir, "ggml-medium.bin.part.json"),
+      JSON.stringify({ url: "https://example.com/x", size: 1 }),
+    )
+    const r = probeWhisperModelDir("medium", env.whisperRoot, manifest)
+    assert.equal(r.status, "incomplete")
+    assert.equal(r.error, "partial-download")
+  } finally {
+    env.cleanup()
+  }
+})
+
+test("probe: truly foreign files → unexpected-files", async () => {
+  const env = makeEnv()
+  try {
+    const manifest = makeManifest([{ name: "ggml-medium.bin", content: FILE_A }])
+    const destDir = path.join(env.whisperRoot, "medium")
+    mkdirSync(destDir, { recursive: true })
+    writeFileSync(path.join(destDir, "random-junk.bin"), "nope")
+    const r = probeWhisperModelDir("medium", env.whisperRoot, manifest)
+    assert.equal(r.status, "incomplete")
+    assert.equal(r.error, "unexpected-files")
   } finally {
     env.cleanup()
   }

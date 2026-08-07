@@ -152,11 +152,16 @@ function startBackgroundDownload(
       logger.info("voice.model.download.completed", { modelId })
     } catch (err) {
       if (err instanceof WhisperDownloadError) {
-        downloadError = err.reason
+        // Prefer human message (includes HTTP status); reason alone is opaque in UI
+        downloadError = err.message || err.reason
         if (err.reason === "aborted") {
           logger.info("voice.model.download.cancelled", { modelId })
         } else {
-          logger.warn("voice.model.download.failed", { modelId, reason: err.reason })
+          logger.warn("voice.model.download.failed", {
+            modelId,
+            reason: err.reason,
+            message: err.message,
+          })
         }
       } else {
         downloadError = err instanceof Error ? err.message : "network-error"
@@ -167,8 +172,20 @@ function startBackgroundDownload(
         activeDownload = null
       }
       const state = await statePayload(deps)
-      if (downloadError && downloadError !== "aborted") {
-        ctx.broadcast?.({ ...state, lastDownloadError: downloadError, lastDownloadModelId: modelId })
+      if (downloadError && !downloadError.includes("aborted")) {
+        // Push machine error into family:"voice.model" so Side Panel shows it
+        // (not only probe residue like unexpected-files).
+        ctx.broadcast?.(
+          modelError(downloadError, {
+            code: "DOWNLOAD_FAILED",
+            modelId,
+          }),
+        )
+        ctx.broadcast?.({
+          ...state,
+          lastDownloadError: downloadError,
+          lastDownloadModelId: modelId,
+        })
       } else {
         ctx.broadcast?.(state)
       }

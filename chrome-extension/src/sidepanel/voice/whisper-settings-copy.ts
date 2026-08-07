@@ -97,6 +97,34 @@ export function modelStatusLabel(
   }
 }
 
+/** Map probe / download machine codes to user-facing Chinese. */
+export function modelProbeErrorLabel(error: string | undefined | null): string | null {
+  if (!error) return null
+  switch (error) {
+    case "unexpected-files":
+      return "目录有异常文件。请点「删除」清空后重新下载。"
+    case "partial-download":
+      return "上次下载未完成。请点「删除」或直接再点「下载」继续/重下。"
+    case "model-unknown":
+      return "未知模型型号"
+    case "http-error":
+      return "下载失败：网络/镜像返回错误（HuggingFace 需可访问）。可检查网络后重试。"
+    case "network-error":
+      return "下载失败：网络中断。请检查网络后重试。"
+    case "disk-budget-exceeded":
+      return "磁盘预算不足。请在设置删除不用的模型，或增大预算后重试。"
+    case "hash-mismatch":
+      return "下载文件校验失败。请删除后重新下载。"
+    default:
+      // Prefer full HTTP message from companion when present
+      if (/HTTP \d+|redirect|network/i.test(error)) {
+        return `下载失败：${error.length > 160 ? error.slice(0, 160) + "…" : error}`
+      }
+      if (error.length > 120) return error.slice(0, 120) + "…"
+      return error
+  }
+}
+
 /**
  * Binary probe line for settings. not_found is OK for M0 (no packaged binary yet).
  */

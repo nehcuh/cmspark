@@ -233,14 +233,26 @@ export function probeWhisperModelDir(
     return { status: "absent" }
   }
 
+  const expectedNames = new Set(files.map((f) => f.name))
+  // Download residue names derived from expected files (partial download / cancel).
+  const isDownloadResidue = (name: string): boolean => {
+    if (expectedNames.has(name)) return true
+    for (const exp of expectedNames) {
+      if (name === `${exp}.part` || name === `${exp}.part.json`) return true
+    }
+    return false
+  }
+
   let anyPresent = false
   let allReady = true
   for (const f of files) {
     const destPath = path.join(destDir, f.name)
     if (!existsSync(destPath)) {
       allReady = false
-      // .part counts as incomplete presence
-      if (existsSync(`${destPath}.part`)) anyPresent = true
+      // .part or .part.json counts as incomplete presence (cancel often leaves meta only)
+      if (existsSync(`${destPath}.part`) || existsSync(`${destPath}.part.json`)) {
+        anyPresent = true
+      }
       continue
     }
     anyPresent = true
@@ -261,15 +273,27 @@ export function probeWhisperModelDir(
   }
 
   if (allReady) return { status: "ready" }
+
+  // Classify leftover directory contents for clearer UI errors
+  let ents: string[] = []
+  try {
+    ents = readdirSync(destDir)
+  } catch {
+    return anyPresent ? { status: "incomplete" } : { status: "absent" }
+  }
   if (!anyPresent) {
-    // dir may exist empty or with unrelated junk
-    try {
-      const ents = readdirSync(destDir)
-      if (ents.length === 0) return { status: "absent" }
-    } catch {
-      return { status: "absent" }
+    if (ents.length === 0) return { status: "absent" }
+    const onlyResidue = ents.every((n) => isDownloadResidue(n))
+    if (onlyResidue) {
+      // Should be rare: residue names without matching .part / .part.json check above
+      return { status: "incomplete", error: "partial-download" }
     }
     return { status: "incomplete", error: "unexpected-files" }
+  }
+  // Expected file missing but .part / .part.json present, or size/hash mismatch
+  const onlyResidue = ents.every((n) => isDownloadResidue(n))
+  if (onlyResidue && !files.every((f) => existsSync(path.join(destDir, f.name)))) {
+    return { status: "incomplete", error: "partial-download" }
   }
   return { status: "incomplete" }
 }
@@ -331,6 +355,21 @@ async function doDownloadWhisperModel(
   const rootDir = resolveWhisperRoot({ rootDir: opts.rootDir, dataDir: opts.dataDir })
   const destDir = modelDestDir(modelId, rootDir)
   await mkdir(destDir, { recursive: true })
+
+  // If a prior cancel left only *.part.json (no .part payload), wipe residue so
+  // probe no longer reports unexpected-files / partial-download and Range resumes cleanly.
+  for (const f of files) {
+    const finalPath = path.join(destDir, f.name)
+    const partPath = `${finalPath}.part`
+    const metaPath = `${finalPath}.part.json`
+    if (!existsSync(finalPath) && !existsSync(partPath) && existsSync(metaPath)) {
+      try {
+        await rm(metaPath, { force: true })
+      } catch {
+        /* best-effort */
+      }
+    }
+  }
 
   const totalSize = files.reduce((acc, f) => acc + f.size, 0)
 
@@ -462,6 +501,76 @@ async function doDownloadWhisperModel(
   }
 }
 
+/**
+ * HuggingFace / mirrors return 302/307 to CDN. TinyClick uses redirect:"manual"
+ * because those URLs never redirect; whisper HF always does. Follow redirects only
+ * when Location is https (no scheme downgrade). Cap hops to avoid loops.
+ */
+const MAX_REDIRECTS = 8
+
+function isHttpsUrl(u: string): boolean {
+  try {
+    return new URL(u).protocol === "https:"
+  } catch {
+    return false
+  }
+}
+
+async function fetchFollowingHttpsRedirects(
+  fetchImpl: typeof fetch,
+  startUrl: string,
+  headers: Record<string, string>,
+  signal: AbortSignal | undefined,
+  fileName: string,
+): Promise<Response> {
+  let url = startUrl
+  for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+    if (signal?.aborted) {
+      throw new WhisperDownloadError("aborted", `aborted before fetch (${fileName})`)
+    }
+    if (!isHttpsUrl(url)) {
+      throw new WhisperDownloadError("scheme-denied", `url must be https (${fileName}): ${url}`)
+    }
+    let res: Response
+    try {
+      res = await fetchImpl(url, { headers, redirect: "manual", signal })
+    } catch (err) {
+      if (signal?.aborted || (err instanceof Error && err.name === "AbortError")) {
+        throw new WhisperDownloadError("aborted", `download aborted (${fileName})`)
+      }
+      throw new WhisperDownloadError(
+        "network-error",
+        `network error (${fileName}): ${err instanceof Error ? err.message : String(err)}`,
+      )
+    }
+    if (res.status >= 300 && res.status < 400) {
+      const loc = res.headers.get("location")
+      if (!loc) {
+        throw new WhisperDownloadError(
+          "http-error",
+          `redirect without Location (${fileName}, HTTP ${res.status}): ${url}`,
+        )
+      }
+      let next: string
+      try {
+        next = new URL(loc, url).href
+      } catch {
+        throw new WhisperDownloadError("http-error", `bad redirect Location (${fileName}): ${loc}`)
+      }
+      if (!isHttpsUrl(next)) {
+        throw new WhisperDownloadError(
+          "scheme-denied",
+          `redirect to non-https denied (${fileName}): ${next}`,
+        )
+      }
+      url = next
+      continue
+    }
+    return res
+  }
+  throw new WhisperDownloadError("http-error", `too many redirects (${fileName}): ${startUrl}`)
+}
+
 /** Single-file streaming download with Range resume + oversize abort + AbortSignal. */
 async function downloadOne(args: {
   fetchImpl: typeof fetch
@@ -477,21 +586,8 @@ async function downloadOne(args: {
   let resumeFrom = args.resumeFrom
 
   const doFetch = async (rangeFrom: number): Promise<Response> => {
-    if (signal?.aborted) {
-      throw new WhisperDownloadError("aborted", `aborted before fetch (${fileName})`)
-    }
     const headers: Record<string, string> = rangeFrom > 0 ? { Range: `bytes=${rangeFrom}-` } : {}
-    try {
-      return await fetchImpl(url, { headers, redirect: "manual", signal })
-    } catch (err) {
-      if (signal?.aborted || (err instanceof Error && err.name === "AbortError")) {
-        throw new WhisperDownloadError("aborted", `download aborted (${fileName})`)
-      }
-      throw new WhisperDownloadError(
-        "network-error",
-        `network error (${fileName}): ${err instanceof Error ? err.message : String(err)}`,
-      )
-    }
+    return fetchFollowingHttpsRedirects(fetchImpl, url, headers, signal, fileName)
   }
 
   let appendAt = resumeFrom
@@ -502,9 +598,6 @@ async function downloadOne(args: {
     res = await doFetch(0)
   }
   const okStatus = appendAt > 0 ? 206 : 200
-  if (res.status === 0 || (res.status >= 300 && res.status < 400)) {
-    throw new WhisperDownloadError("http-error", `redirect denied (${fileName}, HTTP ${res.status}): ${url}`)
-  }
   if (res.status !== okStatus) {
     if (appendAt > 0 && res.status === 200) {
       appendAt = 0
