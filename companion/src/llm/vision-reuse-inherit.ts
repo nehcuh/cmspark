@@ -73,10 +73,12 @@ export function isLoopbackVisionHost(baseUrl: string | undefined | null): boolea
   if (!baseUrl) return false
   try {
     const u = new URL(baseUrl.includes("://") ? baseUrl : `http://${baseUrl}`)
-    const h = u.hostname.toLowerCase()
+    // hostname is usually without brackets; strip in case of odd parsers
+    const h = u.hostname.toLowerCase().replace(/^\[|\]$/g, "")
     return h === "localhost" || h === "127.0.0.1" || h === "::1" || h === "0.0.0.0"
   } catch {
-    return /localhost|127\.0\.0\.1/i.test(baseUrl)
+    // Fail closed: malformed URLs are not treated as loopback
+    return false
   }
 }
 

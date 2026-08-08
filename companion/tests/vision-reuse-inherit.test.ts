@@ -125,7 +125,9 @@ test("endpointsMatch + loopback + placeholder helpers", () => {
     true,
   )
   assert.equal(isLoopbackVisionHost("http://127.0.0.1:11434/v1"), true)
+  assert.equal(isLoopbackVisionHost("http://[::1]:11434/v1"), true)
   assert.equal(isLoopbackVisionHost("https://open.bigmodel.cn/api/paas/v4"), false)
+  assert.equal(isLoopbackVisionHost("not a url"), false)
   assert.equal(isPlaceholderVisionKey("ollama"), true)
   assert.equal(isPlaceholderVisionKey("sk"), false)
 })

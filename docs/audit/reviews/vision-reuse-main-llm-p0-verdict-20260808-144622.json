@@ -1,8 +1,8 @@
 {
   "batch": "vision-reuse-main-llm-p0",
   "timestamp": "20260808-144622",
-  "claude": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/vision-reuse-main-llm-p0-claude-20260808-144622.md" },
-  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/vision-reuse-main-llm-p0-pi-20260808-144622.md" },
+  "claude": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "docs/audit/reviews/vision-reuse-main-llm-p0-claude-20260808-144622.md" },
+  "pi": { "verdict": "APPROVE_WITH_NITS", "exit_code": 0, "path": "docs/audit/reviews/vision-reuse-main-llm-p0-pi-20260808-144622.md" },
   "both_approve": true,
-  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/vision-reuse-main-llm-p0-diff-20260808-144622.patch"
+  "diff_path": "docs/audit/reviews/vision-reuse-main-llm-p0-diff-20260808-144622.patch"
 }

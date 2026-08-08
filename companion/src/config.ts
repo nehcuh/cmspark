@@ -1081,6 +1081,11 @@ export function saveConfig(config: Partial<CompanionConfig>): CompanionConfig {
   if (envKey && toSave.llm?.api_key === envKey) {
     toSave.llm.api_key = ""  // Don't write env var to disk
   }
+  // Vision may inherit llm.api_key when endpoints match; if that value is the
+  // env-sourced key, blank it on disk the same way (runtime cache still has it).
+  if (envKey && toSave.vision?.api_key === envKey) {
+    toSave.vision.api_key = ""
+  }
   // H3 (audit): atomic write (tmp + rename) so a crash mid-save can't leave a truncated
   // config.json (which the H4 load path would then treat as corrupt). mode 0o600 — holds api_key.
   // (Supersedes the P0-3 writeFileSync+chmod: atomicWriteJSON already does atomic + 0o600 + chmod
