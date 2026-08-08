@@ -295,6 +295,72 @@ export function SettingsSlideout() {
     dispatch({ type: "CLEAR_SETTINGS_FOCUS" })
   }, [state.settingsOpen, state.settingsFocusSection, dispatch])
 
+  /**
+   * Text / voice commands for configuring this extension (D2+ UX).
+   * MUST stay above the settingsOpen early-return — React #310 if hooks run only when open.
+   */
+  const applySettingsIntent = useCallback(
+    (intent: SettingsIntent): string => {
+      switch (intent.type) {
+        case "set_dictation_mode":
+          dispatch({ type: "SET_VOICE_DICTATION_MODE", mode: intent.mode })
+          return intent.mode === "continuous"
+            ? "已开启连续听写"
+            : "已切换为经典短听"
+        case "set_hotkey_enabled":
+          dispatch({ type: "SET_DICTATION_HOTKEY_ENABLED", enabled: intent.enabled })
+          return intent.enabled ? "已启用按住说话热键" : "已关闭按住说话热键"
+        case "set_asr_refiner":
+          dispatch({ type: "SET_ASR_REFINER_ENABLED", enabled: intent.enabled })
+          return intent.enabled ? "已开启 ASR 纠错" : "已关闭 ASR 纠错"
+        case "set_realtime_streaming":
+          dispatch({
+            type: "SET_VOICE_REALTIME_STREAMING",
+            enabled: intent.enabled,
+            preferContinuous: intent.enabled === true,
+          })
+          return intent.enabled
+            ? "已开启实时出字（浏览器字级 interim；本机约 8 秒一段）"
+            : "已关闭实时出字优先"
+        case "set_stt_engine":
+          if (intent.engine === "browser") {
+            try {
+              chrome.runtime.sendMessage({
+                type: "voice.model.set_engine",
+                engine: "browser",
+                source: "settings",
+              })
+            } catch {
+              /* */
+            }
+            setEngineDraft("browser")
+            return "已切换为浏览器听写（支持字级实时）"
+          }
+          setEngineDraft("local")
+          return "请在下方「听写方式」下载模型后点「启用本机转写」"
+        case "enable_hotkey_default":
+          dispatch({ type: "SET_DICTATION_HOTKEY_ENABLED", enabled: true })
+          dispatch({
+            type: "SET_DICTATION_HOTKEY_CHORD",
+            chord: DICTATION_HOTKEY_DEFAULT_CHORD,
+          })
+          return `已启用热键：${DICTATION_HOTKEY_DEFAULT_CHORD}`
+        case "open_meeting":
+          dispatch({ type: "SET_SETTINGS_OPEN", open: false })
+          host?.openPanelForce("meeting")
+          return "已打开会议工作台"
+        case "open_packs":
+          dispatch({ type: "SET_SETTINGS_OPEN", open: false })
+          host?.openPanelForce("packs")
+          return "已打开场景面板"
+        case "unknown":
+        default:
+          return "未识别。试试：开启连续听写 / 开启实时出字 / 打开会议 / 浏览器听写"
+      }
+    },
+    [dispatch, host],
+  )
+
   if (!state.settingsOpen) return null
 
   const config = state.config
@@ -676,69 +742,6 @@ export function SettingsSlideout() {
       : [...current, skillId]
     dispatch({ type: "SET_CONFIG", config: { safety_skills_enabled: next } })
   }
-
-  /** Text / voice commands for configuring this extension (D2+ UX). */
-  const applySettingsIntent = useCallback(
-    (intent: SettingsIntent): string => {
-      switch (intent.type) {
-        case "set_dictation_mode":
-          dispatch({ type: "SET_VOICE_DICTATION_MODE", mode: intent.mode })
-          return intent.mode === "continuous"
-            ? "已开启连续听写"
-            : "已切换为经典短听"
-        case "set_hotkey_enabled":
-          dispatch({ type: "SET_DICTATION_HOTKEY_ENABLED", enabled: intent.enabled })
-          return intent.enabled ? "已启用按住说话热键" : "已关闭按住说话热键"
-        case "set_asr_refiner":
-          dispatch({ type: "SET_ASR_REFINER_ENABLED", enabled: intent.enabled })
-          return intent.enabled ? "已开启 ASR 纠错" : "已关闭 ASR 纠错"
-        case "set_realtime_streaming":
-          dispatch({
-            type: "SET_VOICE_REALTIME_STREAMING",
-            enabled: intent.enabled,
-            preferContinuous: intent.enabled === true,
-          })
-          return intent.enabled
-            ? "已开启实时出字（浏览器字级 interim；本机约 8 秒一段）"
-            : "已关闭实时出字优先"
-        case "set_stt_engine":
-          if (intent.engine === "browser") {
-            try {
-              chrome.runtime.sendMessage({
-                type: "voice.model.set_engine",
-                engine: "browser",
-                source: "settings",
-              })
-            } catch {
-              /* */
-            }
-            setEngineDraft("browser")
-            return "已切换为浏览器听写（支持字级实时）"
-          }
-          setEngineDraft("local")
-          return "请在下方「听写方式」下载模型后点「启用本机转写」"
-        case "enable_hotkey_default":
-          dispatch({ type: "SET_DICTATION_HOTKEY_ENABLED", enabled: true })
-          dispatch({
-            type: "SET_DICTATION_HOTKEY_CHORD",
-            chord: DICTATION_HOTKEY_DEFAULT_CHORD,
-          })
-          return `已启用热键：${DICTATION_HOTKEY_DEFAULT_CHORD}`
-        case "open_meeting":
-          dispatch({ type: "SET_SETTINGS_OPEN", open: false })
-          host?.openPanelForce("meeting")
-          return "已打开会议工作台"
-        case "open_packs":
-          dispatch({ type: "SET_SETTINGS_OPEN", open: false })
-          host?.openPanelForce("packs")
-          return "已打开场景面板"
-        case "unknown":
-        default:
-          return "未识别。试试：开启连续听写 / 开启实时出字 / 打开会议 / 浏览器听写"
-      }
-    },
-    [dispatch, host],
-  )
 
   return (
     <Modal
