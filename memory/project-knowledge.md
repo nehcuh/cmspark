@@ -22,6 +22,18 @@
 
 ## Technical Pitfalls
 
+### React #310：early-return 之后的 `useCallback`（2026-08-08 S55）
+- **现象**：生产 Side Panel 开设置崩溃 `Minified React error #310`（Rendered more hooks than previous render）
+- **根因**：`SettingsSlideout` 在 `if (!settingsOpen) return null` **之后**新增 `useCallback(applySettingsIntent)`；关→开时 hooks 数量 +1
+- **修法（#154）**：所有 hooks **无条件**放在 early-return 之前；关闭时仍跑 hook，只是不渲染 UI
+- **纪律**：组件可 early-return UI，**禁止** early-return 之后再出现 `useState/useEffect/useCallback/useMemo/useRef`
+
+### 本机 Whisper「字级流」≠ decoder token；partial 禁止 cancel-restart（2026-08-08 S55）
+- **诚实边界**：whisper.cpp 离线整段解码；产品 M2 = PCM 流式上传 + 会话内 snapshot **重解码** + 约 8s 窗定稿 interim
+- **Pi REJECT F2**：客户端每 1.4s `partial_request`，服务端若 **取消** 在飞 partial 再开新跑 → medium 推断 > poll → 假设永远饿死
+- **修法**：`partialInferring` 时返回 `partial_busy`（不 cancel）；客户端按 hypothesis `ms` 自适应 poll（1.4–6s）；窗口内只 interim，窗末一次 final
+- **纪律**：宣称「真字级」前写清 re-decode；对慢模型 **busy 跳过 > 取消重启**
+
 ### 连续本机 STT：`processing` 掉 liveOverlay → 草稿闪消失（2026-08-08 S52）
 - **现象**：前几个字正常，后续字闪一下又没了；听写像卡住
 - **根因**：composer `value={liveOverlay ?? text}`；local continuous 段间 `phase=processing` 时旧逻辑 **不渲染 overlay**，回退到仅在 `ENGINE_END` 才更新的陈旧 `text`

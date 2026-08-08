@@ -2,6 +2,14 @@
 
 ## Current Session
 
+### S55 (2026-08-08 ~16:00–16:40) [听写 UX 缺口 · Whisper M2 · 0.5.0 · DMG · React #310]
+- **产品缺口诊断**：会议入口只靠 `/meeting`；本机无字级流；热键手输；设置不能语音改 → 实现装配›场景›会议 + 按键录制 + 设置 NL/语音 + 实时出字偏好
+- **本机 Whisper M2**：`partial_request` 累计重解码 + PCM 流；**非** decoder-token；Pi **REJECT**（F1–F4：窗长/取消重启/定稿重复/partial 杀会话）→ 吸收；r3 nits（gUM soft-stop、AudioWorklet、自适应 poll、destroy）
+- **Ship**：**#152** 听写/会议/M2 · **#151** TinyClick 清 · **#153** 0.5.0 文档/版本 · **#154** React #310 设置 hooks · 两次 `make package-macos` 装 `/Applications` 0.5.0；扩展 build 重载
+- **#310**：`useCallback` 在 `if (!settingsOpen) return null` **之后** → 开设置 hooks 变多；挪到 early-return 前
+- **下次**：真机听写/会议 §4（continuous 临时字、hold、场景›会议）；可选再打含 #154 的 DMG；host-integrity 打包脏改勿误 commit
+- Recorded: yes — React hooks early-return · Whisper partial_busy 勿 cancel-restart · dual REJECT 必吸收
+
 ### S53 (2026-08-08 ~12:00–13:00) [Trust 占用 UX · 思考保留 · digest 多进程 · #148/#149 · DMG]
 - **Trust**：历史线程 held cookie 挡新对话；产品补 **holders 弹窗 + force_takeover 一键解锁** → **#148 MERGED** `2460565`；Pi APPROVE_WITH_NITS nits 合入
 - **思考 UI**：#h1yi2w 流式有思考、tool 后只剩 shell → `chat.assistant` + tool.start commit → **#149** 前半
