@@ -194,9 +194,9 @@ export interface ComputerExecutorDeps {
    * L2 Qwen3-VL 实验层。ADMISSION 由调用方决定；命中永不直接注入（re-L2）。
    * 缺省 = 层关闭。
    */
-  tinyclickLocator?: ExperimentalLocator | null
-  /** When tinyclickLocator is null, honest skip reason for locate-chain logs. */
-  tinyclickSkipReason?: string
+  experimentalLocator?: ExperimentalLocator | null
+  /** When experimentalLocator is null, honest skip reason for locate-chain logs. */
+  experimentalSkipReason?: string
 }
 
 export interface ComputerStepResult {
@@ -636,7 +636,7 @@ export async function runComputerTask(
 
   /** Re-L2 with an explicit reason; returns true when approved. */
   const reL2 = async (reason: string, dangerous: string[], seqNum?: number, previewImage?: string): Promise<boolean> => {
-    // P0-C / TinyClick G4 carve-out (also applies under full-autonomy cruise):
+    // P0-C / experimental G4 carve-out (also applies under full-autonomy cruise):
     // computer.danger_detected / computer.experimental_suggestion always need
     // fresh human eyes — content-sensitive / uncalibrated gates. Cruise may
     // silence routine re-asks (budget / uncross / dialog) only.
@@ -867,10 +867,10 @@ export async function runComputerTask(
             locator: deps.locator,
             capturer: deps.capturer,
             ocrAvailable,
-            tinyclick: deps.tinyclickLocator ?? null,
-            ...(deps.tinyclickLocator
+            experimental: deps.experimentalLocator ?? null,
+            ...(deps.experimentalLocator
               ? {}
-              : { tinyclickSkipReason: deps.tinyclickSkipReason || "model-not-admitted" }),
+              : { experimentalSkipReason: deps.experimentalSkipReason || "model-not-admitted" }),
             log: (event, data) => log(event, { taskId, seq, ...data }),
           },
           trackCapture,
@@ -1125,7 +1125,7 @@ export async function runComputerTask(
         if (!ok) {
           locateAttempts = [
             ...(locateAttempts ?? []),
-            { layer: "tinyclick", outcome: "error", reason: "experimental-denied-by-user", ms: 0 },
+            { layer: "qwen-vl", outcome: "error", reason: "experimental-denied-by-user", ms: 0 },
           ]
           throw new ComputerError(
             "ELEMENT_NOT_FOUND",
@@ -1201,8 +1201,8 @@ export async function runComputerTask(
               // G4：刷新是对已门控决定的新鲜度复核，永不引入实验层新建议——
               // 否则未经人审的建议会借刷新通道绕过 G4 门（实验层命中只在首个
               // locate 通道产生，且该命中走上方区域复核分支，不到这里）。
-              tinyclick: null,
-              tinyclickSkipReason: "refresh-no-experimental",
+              experimental: null,
+              experimentalSkipReason: "refresh-no-experimental",
               log: (event, data) => log(event, { taskId, seq, refresh: true, ...data }),
             },
             trackCapture,

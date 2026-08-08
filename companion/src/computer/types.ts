@@ -306,10 +306,10 @@ export interface LocateHit {
 
 /**
  * WP3 (plan §B.1): the four locator layers. "uia" = L0, "ocr" = L1,
- * "qwen-vl" = L2 experimental local VLM (re-L2 gated; "tinyclick" legacy alias),
+ * "qwen-vl" = L2 experimental local VLM (re-L2 gated),
  * "cloud" = L3 stub. Degradation is one-way down the chain.
  */
-export type LocateLayer = "uia" | "ocr" | "qwen-vl" | "tinyclick" | "cloud"
+export type LocateLayer = "uia" | "ocr" | "qwen-vl" | "cloud"
 
 /**
  * WP3: one layer attempt in the locate chain (structured degradation log —
@@ -320,7 +320,7 @@ export interface LocateAttempt {
   outcome: "hit" | "not-found" | "skipped" | "error"
   /** Degradation reason when outcome != "hit" (e.g. "uia-not-found",
    *  "uia-ocr-disagree", "ocr-language-missing", "model-disabled",
-   *  "tinyclick-envelope:too-long", "tinyclick-collapse-detected"). */
+   *  "qwen-vl-collapse", "model-switch-off"). */
   reason?: string
   confidence?: number
   ms: number

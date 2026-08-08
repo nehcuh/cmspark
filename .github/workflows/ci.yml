@@ -28,10 +28,6 @@ jobs:
         run: |
           cd companion && node ../scripts/verify-systray2.js --strict
 
-      - name: Verify TinyClick vendored Florence-2 files (WP5 single registry)
-        run: |
-          cd companion && node ../scripts/verify-tinyclick-vendor.js --strict
-
       - name: Verify Node archive checksum helper (audit H8)
         # package.sh now sha256-verifies the downloaded Node binary against
         # nodejs.org SHASUMS256.txt before extracting. This runs that helper's
@@ -44,7 +40,7 @@ jobs:
 
       - name: Package fail-closed gates (P0-D nits)
         # Static greps + dynamic negatives (missing host / win scripts / tray /
-        # scpt / tinyclick preconditions). Runs without a full platform package.
+        # scpt / experimental-model preconditions). Runs without a full platform package.
         run: |
           bash -n scripts/tests/test-package-gates.sh
           bash scripts/tests/test-package-gates.sh

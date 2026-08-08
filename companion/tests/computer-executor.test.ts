@@ -1397,7 +1397,7 @@ test("executor P0-C: session trust does NOT auto-approve computer.danger_detecte
 })
 
 test("executor P0-C: session trust does NOT auto-approve computer.experimental_suggestion (G4)", async () => {
-  const tc = fakeTinyClickLocator()
+  const tc = fakeExperimentalLocator()
   const confirm = scriptedConfirm([false])
   const injector = new RecordingInjector()
   const trust = new ComputerSessionTrust()
@@ -1405,8 +1405,8 @@ test("executor P0-C: session trust does NOT auto-approve computer.experimental_s
   const deps = makeDeps({
     confirm: confirm.fn,
     injector,
-    locator: new FakeLocator([]), // L1 miss → TinyClick G4 gate
-    tinyclickLocator: tc.locator,
+    locator: new FakeLocator([]), // L1 miss → experimental G4 gate
+    experimentalLocator: tc.locator,
     sessionId: "sess-1",
     sessionTrust: trust,
   })
@@ -1902,9 +1902,9 @@ test("executor X1/Y4: paused 事件的 reason 过 P3 清洗(应用可控文本�
 // 断言面：命中永不自动注入（必经 re-L2）；caption 含「实验层建议，可能完全错误」
 // + 建议点标注预览（§F.1 previewImage 通道）；批准 → A1 区域新鲜度复核 → 注入
 // （稳定注入/不稳定 STALE）；拒绝 → 诚实降级 ELEMENT_NOT_FOUND 且零注入（拒绝
-// 不消耗注入预算）；证据链 layer=tinyclick、confidence 缺省、uncrossverified。
+// 不消耗注入预算）；证据链 layer=qwen-vl、confidence 缺省、uncrossverified。
 
-function fakeTinyClickLocator(point = { x: 160, y: 208 }) {
+function fakeExperimentalLocator(point = { x: 160, y: 208 }) {
   const calls: Array<{ command: string; shot: CaptureMeta }> = []
   return {
     calls,
@@ -1933,7 +1933,7 @@ function fakePreviewBuilder(captured: Array<{ path: string; point?: { x: number;
 }
 
 test("executor G4: experimental 命中 → re-L2 批准 → 注入建议点（caption/预览/证据契约）", async () => {
-  const tc = fakeTinyClickLocator() // 图像空间 (160,208) → client (150,168)
+  const tc = fakeExperimentalLocator() // 图像空间 (160,208) → client (150,168)
   const confirm = scriptedConfirm([true])
   const previewCalls: Array<{ path: string; point?: { x: number; y: number }; blur: unknown[] }> = []
   const injector = new RecordingInjector()
@@ -1942,7 +1942,7 @@ test("executor G4: experimental 命中 → re-L2 批准 → 注入建议点（ca
     injector,
     locator: new FakeLocator([]), // L1 miss — 链落到 L2
     confirm: confirm.fn,
-    tinyclickLocator: tc.locator,
+    experimentalLocator: tc.locator,
     previewBuilder: fakePreviewBuilder(previewCalls),
     evidenceFactory: () => evidence,
   })
@@ -1963,7 +1963,7 @@ test("executor G4: experimental 命中 → re-L2 批准 → 注入建议点（ca
   assert.equal(details.autoConfirmEligible, false, "实验层建议永不自动批准")
   // 预览 builder 收到图像空间建议点（client + pointClient）
   assert.deepEqual(previewCalls[0].point, { x: 160, y: 208 })
-  // 证据链：layer qwen-vl（L2 实验层；deps.tinyclick 槽位名历史保留）、confidence 缺省（G3）、uncrossverified（A1.3）
+  // 证据链：layer qwen-vl（L2 实验层；deps.experimental 槽位名历史保留）、confidence 缺省（G3）、uncrossverified（A1.3）
   const rec = evidence.records.find((x) => x.action === "click")!
   assert.equal(rec.layer, "qwen-vl")
   assert.equal(rec.confidence, undefined, "G3：未校准置信度不上证据链")
@@ -1975,14 +1975,14 @@ test("executor G4: experimental 命中 → re-L2 批准 → 注入建议点（ca
 })
 
 test("executor G4: experimental 建议被拒绝 → 诚实降级 ELEMENT_NOT_FOUND，零注入（拒绝不消耗注入预算）", async () => {
-  const tc = fakeTinyClickLocator()
+  const tc = fakeExperimentalLocator()
   const confirm = scriptedConfirm([false])
   const injector = new RecordingInjector()
   const deps = makeDeps({
     injector,
     locator: new FakeLocator([]),
     confirm: confirm.fn,
-    tinyclickLocator: tc.locator,
+    experimentalLocator: tc.locator,
   })
   const r = await runComputerTask({ task: "t", app: "win.app.test", actions: [clickOk] }, deps)
   assert.equal(r.success, false)
@@ -1993,7 +1993,7 @@ test("executor G4: experimental 建议被拒绝 → 诚实降级 ELEMENT_NOT_FOU
 })
 
 test("executor G4: 批准后区域像素不稳定 → STALE_SCREENSHOT，零注入（A1 区域复核分支）", async () => {
-  const tc = fakeTinyClickLocator()
+  const tc = fakeExperimentalLocator()
   const confirm = scriptedConfirm([true])
   const injector = new RecordingInjector()
   const capturer = new FakeCapturer([1.0]) // 批准后 region diff 爆炸
@@ -2002,7 +2002,7 @@ test("executor G4: 批准后区域像素不稳定 → STALE_SCREENSHOT，零注�
     capturer,
     locator: new FakeLocator([]),
     confirm: confirm.fn,
-    tinyclickLocator: tc.locator,
+    experimentalLocator: tc.locator,
     now: advancingClock(), // 人审耗时必然超过 PIXEL_STALE_MS
   })
   const r = await runComputerTask({ task: "t", app: "win.app.test", actions: [clickOk] }, deps)
@@ -2012,7 +2012,7 @@ test("executor G4: 批准后区域像素不稳定 → STALE_SCREENSHOT，零注�
 })
 
 test("executor G4: 批准后区域像素稳定 → 注入（A1 复核通过，不重跑链）", async () => {
-  const tc = fakeTinyClickLocator()
+  const tc = fakeExperimentalLocator()
   const confirm = scriptedConfirm([true])
   const injector = new RecordingInjector()
   const capturer = new FakeCapturer([0, 0]) // region 稳定 + post-action whole 稳定
@@ -2021,7 +2021,7 @@ test("executor G4: 批准后区域像素稳定 → 注入（A1 复核通过，�
     capturer,
     locator: new FakeLocator([]),
     confirm: confirm.fn,
-    tinyclickLocator: tc.locator,
+    experimentalLocator: tc.locator,
     now: advancingClock(),
   })
   const r = await runComputerTask({ task: "t", app: "win.app.test", actions: [clickOk] }, deps)
@@ -2030,7 +2030,7 @@ test("executor G4: 批准后区域像素稳定 → 注入（A1 复核通过，�
   assert.equal(tc.calls.length, 1, "新鲜度复核不重跑实验层推理（防提示循环）")
 })
 
-test("executor G4: tinyclickLocator 缺省（admission 关闭）→ 行为与旧 stub 等价", async () => {
+test("executor G4: experimentalLocator 缺省（admission 关闭）→ 行为与旧 stub 等价", async () => {
   const injector = new RecordingInjector()
   const deps = makeDeps({ injector, locator: new FakeLocator([]) })
   const r = await runComputerTask({ task: "t", app: "win.app.test", actions: [clickOk] }, deps)
@@ -2047,14 +2047,14 @@ test("executor G4: tinyclickLocator 缺省（admission 关闭）→ 行为与旧
 // 批准但续期被拒 → UNCROSS_DENIED 且该建议零注入。
 
 test("executor M1: 预算耗尽快照下实验层建议被拒 → 零消耗（仅 G4 一窗，无续期弹窗）", async () => {
-  const tc = fakeTinyClickLocator()
+  const tc = fakeExperimentalLocator()
   const confirm = scriptedConfirm([false]) // 唯一一窗（G4）即拒
   const injector = new RecordingInjector()
   const deps = makeDeps({
     injector,
     locator: new FakeLocator([]), // L1 miss — 链落到 L2
     confirm: confirm.fn,
-    tinyclickLocator: tc.locator,
+    experimentalLocator: tc.locator,
   })
   const actions: ComputerAction[] = [
     ...[1, 2, 3].map((i): ComputerAction => ({ action: "click", x: 10 + i, y: 10 })), // 烧光 A1.3 子预算（3 次免审显式坐标）
@@ -2068,14 +2068,14 @@ test("executor M1: 预算耗尽快照下实验层建议被拒 → 零消耗（�
 })
 
 test("executor M1: 实验层建议批准后才计预算（G4 窗在前，续期窗在后）", async () => {
-  const tc = fakeTinyClickLocator()
+  const tc = fakeExperimentalLocator()
   const confirm = scriptedConfirm([true, true]) // G4 批准 → 续期批准
   const injector = new RecordingInjector()
   const deps = makeDeps({
     injector,
     locator: new FakeLocator([]),
     confirm: confirm.fn,
-    tinyclickLocator: tc.locator,
+    experimentalLocator: tc.locator,
   })
   const actions: ComputerAction[] = [
     ...[1, 2, 3].map((i): ComputerAction => ({ action: "click", x: 10 + i, y: 10 })),
@@ -2090,14 +2090,14 @@ test("executor M1: 实验层建议批准后才计预算（G4 窗在前，续期�
 })
 
 test("executor M1: G4 批准但续期被拒 → UNCROSS_DENIED，该建议零注入（计数不伪造）", async () => {
-  const tc = fakeTinyClickLocator()
+  const tc = fakeExperimentalLocator()
   const confirm = scriptedConfirm([true, false]) // G4 批准 → 续期拒绝
   const injector = new RecordingInjector()
   const deps = makeDeps({
     injector,
     locator: new FakeLocator([]),
     confirm: confirm.fn,
-    tinyclickLocator: tc.locator,
+    experimentalLocator: tc.locator,
   })
   const actions: ComputerAction[] = [
     ...[1, 2, 3].map((i): ComputerAction => ({ action: "click", x: 10 + i, y: 10 })),
@@ -2113,13 +2113,13 @@ test("executor M1: G4 批准但续期被拒 → UNCROSS_DENIED，该建议零注
 
 // --- WP5-I4 P7: 刷新链恒 null 回归（executor.ts:993 结构锁定） ---------------------
 //
-// admission 开启态（tinyclickLocator 提供）下，G4 之外的 re-L2 批准后刷新通道
+// admission 开启态（experimentalLocator 提供）下，G4 之外的 re-L2 批准后刷新通道
 // 永不引入实验层新建议——否则未经人审的建议会借刷新通道绕过 G4 门。本测试锁
-// executor.ts:993 `tinyclick: null`：若未来重构把 deps.tinyclickLocator 透传进
+// executor.ts:993 `experimental: null`：若未来重构把 deps.experimentalLocator 透传进
 // 刷新链，下方 tc.calls.length===0 断言必红（刷新 L1 miss → L2 会被调用）。
 
-test("P7 回归：admission 开启态下批准后刷新链 deps.tinyclick 恒 null（X3 形态）", async () => {
-  const tc = fakeTinyClickLocator() // 若被刷新链调用必 hit —— 探测用
+test("P7 回归：admission 开启态下批准后刷新链 deps.experimental 恒 null（X3 形态）", async () => {
+  const tc = fakeExperimentalLocator() // 若被刷新链调用必 hit —— 探测用
   const confirm = scriptedConfirm([true])
   const injector = new RecordingInjector()
   const capturer = new FakeCapturer([0])
@@ -2143,15 +2143,15 @@ test("P7 回归：admission 开启态下批准后刷新链 deps.tinyclick 恒 nu
     capturer,
     locator: staged,
     now: advancingClock(),
-    tinyclickLocator: tc.locator, // admission ON——刷新链仍不得见到实验层
+    experimentalLocator: tc.locator, // admission ON——刷新链仍不得见到实验层
     log: (event, data) => logs.push({ event, data: data as Record<string, unknown> }),
   })
   const r = await runComputerTask(
     { task: "t", app: "win.app.test", actions: [{ action: "click", target: "确认删除" }] }, deps)
   assert.equal(r.errorCode, "STALE_SCREENSHOT", "刷新帧目标消失 = STALE（staleOnNotFound）")
   assert.equal(injector.clicks.length, 0, "刷新路径零注入")
-  assert.equal(tc.calls.length, 0, "刷新链 deps.tinyclick 恒 null——实验层全任务零调用（P7 锁）")
-  // 结构证据（executor log 通道）：刷新链以 tinyclick:null 跳过，可观测形态 =
+  assert.equal(tc.calls.length, 0, "刷新链 deps.experimental 恒 null——实验层全任务零调用（P7 锁）")
+  // 结构证据（executor log 通道）：刷新链以 experimental:null 跳过，可观测形态 =
   // computeruse.locate{layer:"qwen-vl", hit:false, reason:"refresh-no-experimental",
   // refresh:true}（初次链 L1 hit 不触及实验层；G4 命中链不走刷新分支）。
   const tcLogs = logs.filter((l) => l.event === "computeruse.locate" && l.data?.layer === "qwen-vl")

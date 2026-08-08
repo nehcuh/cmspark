@@ -37,13 +37,11 @@
 //   - deleteImpl 错误归一为结构化返回（DELETE_FAILED + 状态广播），不穿透裸
 //     fs 错误。互斥只防并发不防轮询（P10 同型，损害有界声明在案）。
 
-import * as fs from "node:fs"
 import * as path from "node:path"
 
 import { logger } from "../logger"
 import { getConfig, setComputerModelFields } from "../config"
 import { LICENSE_DOOR_TEXT, LICENSE_DOOR_TEXT_HASH } from "./model-license"
-import { loadModelManifest, type ModelManifest } from "./model-manifest"
 import {
   deleteQwenVlVariant,
   downloadQwenVlVariant,
@@ -91,8 +89,6 @@ export interface ComputerModelHandlerContext {
 /** 可注入依赖（测试替身；生产取默认实现）。 */
 export interface ComputerModelHandlerDeps {
   gate?: typeof requireAppsBiometric
-  /** @deprecated TinyClick path; ignored for Qwen3-VL downloads */
-  manifestLoader?: () => Promise<ModelManifest>
   downloadImpl?: typeof downloadQwenVlVariant
   deleteImpl?: typeof deleteQwenVlVariant
   /** P3 节流时钟（测试 seam，同 deps 族纪律）；默认 Date.now。 */
@@ -145,21 +141,6 @@ async function resolveCanDownload(
       reason: e instanceof Error ? e.message : "环境检测失败",
     }
   }
-}
-
-/** manifest 随发版路径解析：src 布局（companion/src/computer → 上两级）/
- * .test-dist 布局（companion/.test-dist/src/computer → 上三级）/ bundle 同级，
- * 首个存在者胜。 */
-export function defaultManifestPath(): string {
-  const candidates = [
-    path.join(__dirname, "..", "..", "models.manifest.json"), // companion/src/computer → companion/
-    path.join(__dirname, "..", "..", "..", "models.manifest.json"), // companion/.test-dist/src/computer → companion/
-    path.join(__dirname, "models.manifest.json"), // esbuild bundle 同级
-  ]
-  for (const p of candidates) {
-    if (fs.existsSync(p)) return p
-  }
-  return candidates[0]!
 }
 
 // --- 磁盘观测探针（get_state 轻量复验） --------------------------------------------

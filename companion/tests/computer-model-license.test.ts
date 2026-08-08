@@ -25,6 +25,8 @@ test("LICENSE_DOOR_TEXT_HASH 稳定 12 hex", () => {
   assert.match(LICENSE_DOOR_TEXT_HASH, /^[0-9a-f]{12}$/)
 })
 
-test("THIRD_PARTY_NOTICES 仍含历史 TinyClick 段（兼容分发包）", () => {
-  assert.ok(THIRD_PARTY_NOTICES_TEXT.includes("TinyClick") || THIRD_PARTY_NOTICES_TEXT.includes("Cairn"))
+test("THIRD_PARTY_NOTICES 覆盖 Qwen3-VL 与 Cairn 声明", () => {
+  assert.ok(THIRD_PARTY_NOTICES_TEXT.includes("Qwen3-VL"))
+  assert.ok(THIRD_PARTY_NOTICES_TEXT.includes("Cairn"))
+  assert.equal(THIRD_PARTY_NOTICES_TEXT.includes("TinyClick"), false)
 })

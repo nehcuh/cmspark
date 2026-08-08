@@ -43,7 +43,7 @@
 //     still uses isTrusted() for either key form after an interactive approve.
 //   - Force-interactive carve-out (PROMPT_ALWAYS_TAGS + reL2ShouldPrompt /
 //     executor reL2): computer.danger_detected and
-//     computer.experimental_suggestion (TinyClick G4) NEVER auto-approve under
+//     computer.experimental_suggestion (experimental G4) NEVER auto-approve under
 //     session trust. v4.1 also keeps computer.foreground_yielded always-prompt.
 //
 //   - Grill Q2 (2026-07-26): grant.explicitOptIn is set only when the user

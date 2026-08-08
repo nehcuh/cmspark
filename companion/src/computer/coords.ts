@@ -9,7 +9,7 @@
 //   - S0 Screen global: CGWindowList bounds, AX position. Used by UIA locate
 //     hits and by CGEvent mouseCursorPosition in the SkyLight post path.
 //   - S1 Image pixels: PNG from ScreenCaptureKit. On Retina, typically 2× S0.
-//     Used by OCR word boxes, TinyClick, pixel diff, evidence preview.
+//     Used by OCR word boxes, experimental VLM, pixel diff, evidence preview.
 //
 // All cross-space conversions route through this module. Adding a new
 // conversion site without going through `coords.ts` is a violation of the
@@ -52,7 +52,7 @@ export interface CoordScales {
  * typical macOS window with no title-bar-stripping, `client.x` is 0 and
  * `client.y` is the title-bar height; AX reports these in logical points.
  *
- * For a point that came from OCR word boxes or TinyClick output (S1 image
+ * For a point that came from OCR word boxes or experimental VLM output (S1 image
  * px), this converts to the canonical C space used by the bounds check and
  * the tool schema.
  *
