@@ -1,6 +1,6 @@
 # CMspark Browser Agent — 架构文档
 
-> 版本: 2.3.0 | 日期: 2026-08-05 | 状态: 已确认（同步 **0.4.0** + **[ADR-020](adr/020-capability-model-three-axes.md) 能力三轴**）
+> 版本: 2.4.0 | 日期: 2026-08-08 | 状态: 已确认（同步 **0.5.0** + **[ADR-020](adr/020-capability-model-three-axes.md) 能力三轴** · ADR-023/024 语音）
 
 ---
 
@@ -678,7 +678,8 @@ Companion 作为 **MCP 客户端/聚合器**，把外部 server 的 tools（及�
 
 | 路径 | 职责 |
 |------|------|
-| `companion/src/computer/` | policy · executor · session-trust · estop · evidence · adapters · TinyClick |
+| `companion/src/computer/` | policy · executor · session-trust · estop · evidence · adapters · **Qwen3-VL 实验定位**（TinyClick/Florence 已移除） |
+| `companion/src/voice/` · `chrome-extension/.../voice/` | 本机 Whisper Path B（含 M2 渐进假设）· 听写+ / 会议工作台 |
 | `companion/src/host-use/` | HostAdapter · 平台 adapter · blacklist · nonce |
 | `companion/src/apps/` | 枚举 · 启动 · guards · biometric-gate |
 | Extension Cockpit / AppsPanel / SafetyStrip | 确认台步骤轨 · 急停 · 开关镜像 |
