@@ -38,6 +38,7 @@ import {
   IconAlert,
 } from "./ui/icons"
 import { VoiceMicButton } from "./components/VoiceMicButton"
+import { parseHotkeyChord, eventMatchesChord } from "./voice/hotkey-chord"
 import { useVoiceInput } from "./hooks/useVoiceInput"
 import {
   VOICE_PRIVACY_ACK_V2_BODY,
@@ -491,6 +492,130 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
       voice.refining === true
     dispatch({ type: "SET_DICTATION_CAPTURE_ACTIVE", active })
   }, [voice.listening, voice.processing, voice.refining, dispatch])
+
+  // D2 hold: keep stable refs so effect is NOT torn down every listenTick (REJECT #1).
+  const holdStartRef = useRef(voice.holdStart)
+  const holdStopRef = useRef(voice.holdStop)
+  holdStartRef.current = voice.holdStart
+  holdStopRef.current = voice.holdStop
+  const meetingCaptureRef = useRef(state.meetingCaptureActive)
+  meetingCaptureRef.current = state.meetingCaptureActive
+  const voiceAllowStartRef = useRef(voiceAllowStart)
+  voiceAllowStartRef.current = voiceAllowStart
+  const privacyRef = useRef({
+    v1: state.voicePrivacyAckV1 === true,
+    v2: state.voicePrivacyAckV2 === true,
+    v3: state.voicePrivacyAckV3 === true,
+  })
+  privacyRef.current = {
+    v1: state.voicePrivacyAckV1 === true,
+    v2: state.voicePrivacyAckV2 === true,
+    v3: state.voicePrivacyAckV3 === true,
+  }
+
+  // Dictation+ D2: hold hotkey (Side Panel window key capture).
+  // SoT §5.2 — default off; ban fn/Win+V; xor meeting capture.
+  useEffect(() => {
+    if (!state.dictationHotkeyEnabled) return
+    const chord = parseHotkeyChord(state.dictationHotkeyChord)
+    if (!chord) return
+
+    let down = false
+    let notified = false
+    let notifyTimer: ReturnType<typeof setTimeout> | null = null
+    const notifyHold = (active: boolean) => {
+      try {
+        chrome.runtime.sendMessage({
+          type: "voice.dictation.hold_state",
+          v: 1,
+          active,
+          chord: chord.label,
+        })
+      } catch {
+        /* */
+      }
+    }
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!eventMatchesChord(e, chord)) return
+      if (e.repeat) return
+      e.preventDefault()
+      e.stopPropagation()
+      if (down) return
+      if (meetingCaptureRef.current) return
+      if (!voiceAllowStartRef.current) return
+      down = true
+      notified = false
+      const ok = holdStartRef.current({
+        privacyAck: privacyRef.current.v1,
+        privacyAckV2: privacyRef.current.v2,
+        privacyAckV3: privacyRef.current.v3,
+      })
+      if (!ok) {
+        down = false
+        return
+      }
+      // Defer notify ~400ms so privacy-sheet / failed start does not flash tray
+      if (notifyTimer) clearTimeout(notifyTimer)
+      notifyTimer = setTimeout(() => {
+        if (down && !notified) {
+          notified = true
+          notifyHold(true)
+        }
+      }, 400)
+    }
+
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (!down) return
+      const modUp =
+        (chord.ctrl && e.key === "Control") ||
+        (chord.alt && (e.key === "Alt" || e.key === "AltGraph")) ||
+        (chord.shift && e.key === "Shift") ||
+        (chord.meta && (e.key === "Meta" || e.key === "OS"))
+      const mainUp = eventMatchesChord(e, chord)
+      // Also treat keyup of the main key even if modifiers already released
+      const keyIsMain =
+        chord.key === "space"
+          ? e.key === " " || e.key === "Spacebar" || e.code === "Space"
+          : e.key.toLowerCase() === chord.key
+      if (!mainUp && !modUp && !keyIsMain) return
+      e.preventDefault()
+      down = false
+      if (notifyTimer) {
+        clearTimeout(notifyTimer)
+        notifyTimer = null
+      }
+      holdStopRef.current()
+      if (notified) notifyHold(false)
+      notified = false
+    }
+
+    const onBlur = () => {
+      if (!down) return
+      down = false
+      if (notifyTimer) {
+        clearTimeout(notifyTimer)
+        notifyTimer = null
+      }
+      holdStopRef.current()
+      if (notified) notifyHold(false)
+      notified = false
+    }
+
+    window.addEventListener("keydown", onKeyDown, true)
+    window.addEventListener("keyup", onKeyUp, true)
+    window.addEventListener("blur", onBlur)
+    return () => {
+      window.removeEventListener("keydown", onKeyDown, true)
+      window.removeEventListener("keyup", onKeyUp, true)
+      window.removeEventListener("blur", onBlur)
+      if (notifyTimer) clearTimeout(notifyTimer)
+      if (down) {
+        holdStopRef.current()
+        if (notified) notifyHold(false)
+      }
+    }
+  }, [state.dictationHotkeyEnabled, state.dictationHotkeyChord])
 
   // Hide: feature off | unsupported for selected engine | worker | no thread.
   // Local + no gUM → voice.supported false → hide.

@@ -48,6 +48,7 @@ import { handleComputerModelMessage } from "./computer/model-handlers"
 import { handleVoiceModelMessage } from "./voice/whisper-handlers"
 import { handleVoiceSttMessage } from "./voice/stt-handlers"
 import { handleVoiceRefineMessage } from "./voice/refine-handlers"
+import { handleDictationHoldState } from "./voice/dictation-hotkey"
 import { handleMeetingMessage } from "./meeting/meeting-handlers"
 import {
   buildUserEnvPublic,
@@ -1921,6 +1922,31 @@ export async function handleMessage(
         peerId: session?.panelId,
         send: session?.sendToExtension,
       })
+    case "voice.dictation.hold_state":
+      return handleDictationHoldState(
+        msg,
+        { origin: session?.origin },
+        {
+          onHoldChange: (active, chord) => {
+            // System notification as Mode B indicator (SoT §5.6 "CMspark · 草稿")
+            if (!active) return
+            try {
+              const notifier = require("node-notifier") as {
+                notify: (o: Record<string, unknown>) => void
+              }
+              notifier.notify({
+                title: "CMspark · 草稿",
+                message: chord
+                  ? `按住听写中（${chord}）· 松手结束`
+                  : "按住听写中 · 松手结束",
+                timeout: 2,
+              })
+            } catch {
+              /* optional */
+            }
+          },
+        },
+      )
     case "meeting.create":
     case "meeting.start":
     case "meeting.end":

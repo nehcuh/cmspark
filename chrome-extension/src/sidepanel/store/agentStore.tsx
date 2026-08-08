@@ -46,6 +46,13 @@ export interface AgentState {
   /** ASR Refiner after stop (default false). Requires privacy ack v3 + Companion LLM. */
   asrRefinerEnabled: boolean
   /**
+   * Dictation+ D2: hold-to-talk hotkey (default off). Chord never bare fn / Win+V.
+   * chrome.storage.local `dictationHotkeyEnabled` / `dictationHotkeyChord`.
+   */
+  dictationHotkeyEnabled: boolean
+  /** e.g. Control+Shift+Space */
+  dictationHotkeyChord: string
+  /**
    * Mtg1: meeting workbench is live-capturing (local segmented STT).
    * Mutual exclusion with composer dictation (global max-1 STT).
    */
@@ -212,6 +219,8 @@ export type AgentAction =
   | { type: "SET_VOICE_PRIVACY_ACK_V3"; ack: boolean }
   | { type: "SET_VOICE_DICTATION_MODE"; mode: "classic" | "continuous" }
   | { type: "SET_ASR_REFINER_ENABLED"; enabled: boolean }
+  | { type: "SET_DICTATION_HOTKEY_ENABLED"; enabled: boolean }
+  | { type: "SET_DICTATION_HOTKEY_CHORD"; chord: string }
   | { type: "SET_MEETING_CAPTURE_ACTIVE"; active: boolean }
   | { type: "SET_DICTATION_CAPTURE_ACTIVE"; active: boolean }
   | { type: "ADD_SECURITY_CONFIRMATION"; request: SecurityConfirmationRequest }
@@ -339,6 +348,8 @@ export const initialState: AgentState = {
   voicePrivacyAckV3: false,
   voiceDictationMode: "classic",
   asrRefinerEnabled: false,
+  dictationHotkeyEnabled: false,
+  dictationHotkeyChord: "Control+Shift+Space",
   meetingCaptureActive: false,
   dictationCaptureActive: false,
   pendingSecurityConfirmations: [],
@@ -693,6 +704,17 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
     case "SET_ASR_REFINER_ENABLED":
       chrome.storage.local.set({ asrRefinerEnabled: action.enabled })
       return { ...state, asrRefinerEnabled: action.enabled }
+    case "SET_DICTATION_HOTKEY_ENABLED":
+      chrome.storage.local.set({ dictationHotkeyEnabled: action.enabled === true })
+      return { ...state, dictationHotkeyEnabled: action.enabled === true }
+    case "SET_DICTATION_HOTKEY_CHORD": {
+      const chord =
+        typeof action.chord === "string" && action.chord.trim()
+          ? action.chord.trim()
+          : "Control+Shift+Space"
+      chrome.storage.local.set({ dictationHotkeyChord: chord })
+      return { ...state, dictationHotkeyChord: chord }
+    }
     case "ADD_SECURITY_CONFIRMATION":
       return {
         ...state,

@@ -1,0 +1,2223 @@
+# Dual external review context
+batch: dictation-d2-docs-r2
+base: e6d659f7838c6c391e48befcb5bdaa004fe6f421
+time: 20260808-112827
+
+b3841f4
+
+?? .grok/config.toml
+?? .grok/hooks/
+?? .grok/rules/
+?? docs/audit/reviews/analyze-image-data-url-p0-diff-20260806-212116.patch
+?? docs/audit/reviews/analyze-image-data-url-p0-r2-diff-20260806-213120.patch
+?? docs/audit/reviews/analyze-image-data-url-p0-r3-diff-20260806-214547.patch
+?? docs/audit/reviews/cli-qwen-plan-v2-for-pi.md
+?? docs/audit/reviews/cli-qwen-plan-v2-pi-20260802-092659.md
+?? docs/audit/reviews/context-memory-thinking-knowledge-diff-20260807-100209.patch
+?? docs/audit/reviews/dictation-d2-docs-r2-diff-20260808-112827.patch
+?? docs/audit/reviews/estop-tap-degraded-kimi-20260801-220643.md
+?? docs/audit/reviews/run-state-worker-drilldown-diff-20260804-174619.patch
+?? docs/audit/reviews/s41-main-pull-diff-20260804-092610.patch
+?? docs/audit/reviews/s41-multi-adv-diff-20260804-093256.patch
+?? docs/audit/reviews/settings-thread-compact-diff-20260806-221435.patch
+?? docs/audit/reviews/settings-thread-compact-m2-meta-diff-20260806-230545.patch
+?? docs/audit/reviews/shell-abort-timeout-claude-20260806-163014.md
+?? docs/audit/reviews/shell-abort-timeout-diff-20260806-163014.patch
+?? docs/audit/reviews/shell-abort-timeout-diff-20260806-192609.patch
+?? docs/audit/reviews/shell-abort-timeout-r2-diff-20260806-193231.patch
+?? docs/audit/reviews/thread-history-ia-diff-20260806-092335.patch
+?? docs/audit/reviews/thread-history-ia-impl-diff-20260806-134044.patch
+?? docs/audit/reviews/thread-history-ia-impl-r2-diff-20260806-135746.patch
+?? docs/audit/reviews/trust-ia-autopilot-diff-20260802-144203.patch
+?? docs/audit/reviews/unattended-desktop-diff-20260802-153129.patch
+?? docs/audit/reviews/unattended-desktop-m1-diff-20260802-154236.patch
+?? docs/audit/reviews/unattended-desktop-m2-diff-20260802-155452.patch
+?? docs/audit/reviews/unattended-desktop-m2-r2-diff-20260802-160240.patch
+?? docs/audit/reviews/unattended-desktop-m3-diff-20260802-161147.patch
+?? docs/audit/reviews/voice-input-design-diff-20260806-194531.patch
+?? docs/audit/reviews/voice-input-m1-diff-20260806-200603.patch
+?? docs/audit/reviews/voice-input-m1-r2-diff-20260806-201142.patch
+?? docs/audit/reviews/voice-local-stt-design-diff-20260807-154150.patch
+?? docs/audit/reviews/wave-a-scene-knowledge-impl-diff-20260807-103512.patch
+?? docs/audit/reviews/wave-a-scene-knowledge-plan-diff-20260807-101501.patch
+?? docs/audit/reviews/wave-a-scene-knowledge-plan-r2-diff-20260807-102424.patch
+?? docs/audit/reviews/wave-b-h1-thread-handoff-impl-diff-20260807-105903.patch
+?? docs/audit/reviews/wave-b-h1-thread-handoff-plan-diff-20260807-104642.patch
+?? docs/audit/reviews/wave-c-thread-recall-impl-diff-20260807-115545.patch
+?? docs/audit/reviews/wave-c-thread-recall-plan-diff-20260807-113810.patch
+?? docs/audit/reviews/wave-c-thread-recall-plan-r2-diff-20260807-114530.patch
+?? docs/audit/reviews/wave-d-reasoning-ui-export-impl-diff-20260807-143315.patch
+?? docs/audit/reviews/wave-d-reasoning-ui-export-plan-diff-20260807-142222.patch
+?? docs/optimization-plan-document-parse-vision.md
+?? images/
+
+## Diff (git diff + staged)
+ chrome-extension/src/background/index.ts           |    2 +
+ chrome-extension/src/sidepanel/App.tsx             |  101 ++
+ .../src/sidepanel/components/SettingsSlideout.tsx  |   55 ++
+ .../src/sidepanel/hooks/useVoiceInput.ts           |   59 ++
+ .../src/sidepanel/hooks/useWebSocket.ts            |    8 +
+ .../src/sidepanel/store/agentStore.tsx             |   22 +
+ .../src/sidepanel/voice/hotkey-chord.ts            |  122 +++
+ chrome-extension/tests/hotkey-chord.test.ts        |   46 +
+ companion/src/message-router.ts                    |   26 +
+ companion/src/packs/types.ts                       |    2 +-
+ companion/src/server.ts                            |    8 +
+ companion/src/voice/dictation-hotkey.ts            |   64 ++
+ companion/tests/dictation-hotkey.test.ts           |   41 +
+ docs/GOAL.md                                       |   17 +-
+ docs/README.md                                     |    2 +
+ .../dictation-d2-docs-claude-20260808-111834.md    |   43 +
+ .../dictation-d2-docs-diff-20260808-111834.patch   | 1031 ++++++++++++++++++++
+ .../dictation-d2-docs-dual-review-prompt.md        |   44 +
+ .../dictation-d2-docs-pi-20260808-111834.md        |   24 +
+ .../dictation-d2-docs-verdict-20260808-111834.json |    8 +
+ docs/meeting-and-dictation-user-guide.md           |  118 +++
+ docs/mission-pack-usage.md                         |    3 +-
+ .../specs/2026-08-07-dictation-plus-design.md      |    4 +-
+ .../2026-08-08-meeting-mtg3-diarize-design.md      |   11 +-
+ 24 files changed, 1855 insertions(+), 6 deletions(-)
+
+diff --git a/chrome-extension/src/background/index.ts b/chrome-extension/src/background/index.ts
+index c051fa9..8fa09c5 100644
+--- a/chrome-extension/src/background/index.ts
++++ b/chrome-extension/src/background/index.ts
+@@ -1152,6 +1152,8 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
+       // Dictation+ D1b ASR Refiner (text-only)
+       case "voice.refine.request":
+       case "voice.refine.abort":
++      // Dictation+ D2 hold state → companion tray indicator (control plane, no audio)
++      case "voice.dictation.hold_state":
+       // Meeting minutes scene (Mtg0 paste + Mtg1 live capture)
+       case "meeting.create":
+       case "meeting.start":
+diff --git a/chrome-extension/src/sidepanel/App.tsx b/chrome-extension/src/sidepanel/App.tsx
+index 82033bf..4ff37ff 100644
+--- a/chrome-extension/src/sidepanel/App.tsx
++++ b/chrome-extension/src/sidepanel/App.tsx
+@@ -38,6 +38,7 @@ import {
+   IconAlert,
+ } from "./ui/icons"
+ import { VoiceMicButton } from "./components/VoiceMicButton"
++import { parseHotkeyChord, eventMatchesChord } from "./voice/hotkey-chord"
+ import { useVoiceInput } from "./hooks/useVoiceInput"
+ import {
+   VOICE_PRIVACY_ACK_V2_BODY,
+@@ -492,6 +493,106 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
+     dispatch({ type: "SET_DICTATION_CAPTURE_ACTIVE", active })
+   }, [voice.listening, voice.processing, voice.refining, dispatch])
+ 
++  // D2 hold: keep stable refs so effect is NOT torn down every listenTick (REJECT #1).
++  const holdStartRef = useRef(voice.holdStart)
++  const holdStopRef = useRef(voice.holdStop)
++  holdStartRef.current = voice.holdStart
++  holdStopRef.current = voice.holdStop
++  const meetingCaptureRef = useRef(state.meetingCaptureActive)
++  meetingCaptureRef.current = state.meetingCaptureActive
++  const voiceAllowStartRef = useRef(voiceAllowStart)
++  voiceAllowStartRef.current = voiceAllowStart
++  const privacyRef = useRef({
++    v1: state.voicePrivacyAckV1 === true,
++    v2: state.voicePrivacyAckV2 === true,
++    v3: state.voicePrivacyAckV3 === true,
++  })
++  privacyRef.current = {
++    v1: state.voicePrivacyAckV1 === true,
++    v2: state.voicePrivacyAckV2 === true,
++    v3: state.voicePrivacyAckV3 === true,
++  }
++
++  // Dictation+ D2: hold hotkey (Side Panel window key capture).
++  // SoT §5.2 — default off; ban fn/Win+V; xor meeting capture.
++  useEffect(() => {
++    if (!state.dictationHotkeyEnabled) return
++    const chord = parseHotkeyChord(state.dictationHotkeyChord)
++    if (!chord) return
++
++    let down = false
++    const notifyHold = (active: boolean) => {
++      try {
++        chrome.runtime.sendMessage({
++          type: "voice.dictation.hold_state",
++          v: 1,
++          active,
++          chord: chord.label,
++        })
++      } catch {
++        /* */
++      }
++    }
++
++    const onKeyDown = (e: KeyboardEvent) => {
++      if (!eventMatchesChord(e, chord)) return
++      if (e.repeat) return
++      e.preventDefault()
++      e.stopPropagation()
++      if (down) return
++      if (meetingCaptureRef.current) return
++      if (!voiceAllowStartRef.current) return
++      down = true
++      const ok = holdStartRef.current({
++        privacyAck: privacyRef.current.v1,
++        privacyAckV2: privacyRef.current.v2,
++        privacyAckV3: privacyRef.current.v3,
++      })
++      if (ok) notifyHold(true)
++      else down = false
++    }
++
++    const onKeyUp = (e: KeyboardEvent) => {
++      if (!down) return
++      const modUp =
++        (chord.ctrl && e.key === "Control") ||
++        (chord.alt && (e.key === "Alt" || e.key === "AltGraph")) ||
++        (chord.shift && e.key === "Shift") ||
++        (chord.meta && (e.key === "Meta" || e.key === "OS"))
++      const mainUp = eventMatchesChord(e, chord)
++      // Also treat keyup of the main key even if modifiers already released
++      const keyIsMain =
++        chord.key === "space"
++          ? e.key === " " || e.key === "Spacebar" || e.code === "Space"
++          : e.key.toLowerCase() === chord.key
++      if (!mainUp && !modUp && !keyIsMain) return
++      e.preventDefault()
++      down = false
++      holdStopRef.current()
++      notifyHold(false)
++    }
++
++    const onBlur = () => {
++      if (!down) return
++      down = false
++      holdStopRef.current()
++      notifyHold(false)
++    }
++
++    window.addEventListener("keydown", onKeyDown, true)
++    window.addEventListener("keyup", onKeyUp, true)
++    window.addEventListener("blur", onBlur)
++    return () => {
++      window.removeEventListener("keydown", onKeyDown, true)
++      window.removeEventListener("keyup", onKeyUp, true)
++      window.removeEventListener("blur", onBlur)
++      if (down) {
++        holdStopRef.current()
++        notifyHold(false)
++      }
++    }
++  }, [state.dictationHotkeyEnabled, state.dictationHotkeyChord])
++
+   // Hide: feature off | unsupported for selected engine | worker | no thread.
+   // Local + no gUM → voice.supported false → hide.
+   // Browser + no SpeechRecognition → hide.
+diff --git a/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx b/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx
+index c8ed41b..5333a91 100644
+--- a/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx
++++ b/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx
+@@ -1039,6 +1039,61 @@ export function SettingsSlideout() {
+                   </span>
+                 </span>
+               </label>
++
++              <div style={{ marginTop: 12, fontSize: 12, color: "#555" }}>
++                <div style={{ marginBottom: 4, fontWeight: 500 }}>按住热键听写（D2 · 默认关）</div>
++                <label
++                  style={{
++                    display: "flex",
++                    alignItems: "flex-start",
++                    gap: 8,
++                    cursor: "pointer",
++                    fontSize: 12,
++                    lineHeight: 1.4,
++                  }}
++                >
++                  <input
++                    type="checkbox"
++                    style={{ marginTop: 2 }}
++                    checked={state.dictationHotkeyEnabled === true}
++                    onChange={(e) =>
++                      dispatch({ type: "SET_DICTATION_HOTKEY_ENABLED", enabled: e.target.checked })
++                    }
++                  />
++                  <span>
++                    启用按住说话
++                    <br />
++                    <span style={{ color: "#888", fontSize: 11 }}>
++                      按住组合键开始连续听写，松手结束；仅进草稿、不自动发送。需 Side Panel
++                      打开；禁止 bare Fn / Win+V。会议录音中不可用。
++                    </span>
++                  </span>
++                </label>
++                <label style={{ display: "block", marginTop: 8, fontSize: 11, color: "#666" }}>
++                  组合键
++                  <select
++                    value={state.dictationHotkeyChord || "Control+Shift+Space"}
++                    disabled={!state.dictationHotkeyEnabled}
++                    onChange={(e) =>
++                      dispatch({ type: "SET_DICTATION_HOTKEY_CHORD", chord: e.target.value })
++                    }
++                    style={{
++                      display: "block",
++                      marginTop: 4,
++                      width: "100%",
++                      padding: "6px 8px",
++                      borderRadius: 6,
++                      border: "1px solid #ddd",
++                      fontSize: 12,
++                    }}
++                  >
++                    <option value="Control+Shift+Space">Ctrl+Shift+Space</option>
++                    <option value="Alt+Space">Alt+Space / ⌥Space</option>
++                    <option value="Control+Alt+Space">Ctrl+Alt+Space</option>
++                    <option value="Control+Shift+D">Ctrl+Shift+D</option>
++                  </select>
++                </label>
++              </div>
+             </div>
+ 
+             {/* Path B M0: 听写方式 progressive disclosure (UI draft until ready + enable) */}
+diff --git a/chrome-extension/src/sidepanel/hooks/useVoiceInput.ts b/chrome-extension/src/sidepanel/hooks/useVoiceInput.ts
+index d64a89b..4109227 100644
+--- a/chrome-extension/src/sidepanel/hooks/useVoiceInput.ts
++++ b/chrome-extension/src/sidepanel/hooks/useVoiceInput.ts
+@@ -662,6 +662,62 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
+         )
+       : null
+ 
++  /**
++   * Dictation+ D2 hold-to-talk: force continuous for this session, start if idle.
++   * Do NOT use queueMicrotask to "detect" start failure — toggle() may async-query
++   * mic permission and only then leave idle (dual-review REJECT #2).
++   */
++  const holdSessionRef = useRef(false)
++  const savedModeRef = useRef<VoiceDictationMode | null>(null)
++
++  const restoreModeAfterHold = useCallback(() => {
++    holdSessionRef.current = false
++    if (savedModeRef.current) {
++      modeRef.current = savedModeRef.current
++      savedModeRef.current = null
++    }
++  }, [])
++
++  // If hold session ends (hard cap / error) without holdStop, restore classic/continuous pref.
++  useEffect(() => {
++    if (!holdSessionRef.current) return
++    if (session.phase === "idle" || session.phase === "error") {
++      restoreModeAfterHold()
++    }
++  }, [session.phase, restoreModeAfterHold])
++
++  const holdStart = useCallback(
++    (extra?: { privacyAck?: boolean; privacyAckV2?: boolean; privacyAckV3?: boolean }) => {
++      const s = sessionRef.current
++      if (s.phase !== "idle" && s.phase !== "error") return false
++      if (!optsRef.current.allowStart) return false
++      if (holdSessionRef.current) return false
++      // Mode must stay continuous until holdStop / natural idle — begin() reads modeRef later.
++      savedModeRef.current = modeRef.current
++      modeRef.current = "continuous"
++      holdSessionRef.current = true
++      toggle(extra)
++      return true
++    },
++    [toggle],
++  )
++
++  const holdStop = useCallback(() => {
++    if (!holdSessionRef.current) return false
++    const s = sessionRef.current
++    if (
++      s.phase === "listening" ||
++      s.phase === "starting" ||
++      s.phase === "processing" ||
++      s.phase === "stopping" ||
++      s.phase === "refining"
++    ) {
++      toggle()
++    }
++    restoreModeAfterHold()
++    return true
++  }, [toggle, restoreModeAfterHold])
++
+   return {
+     supported,
+     phase: session.phase,
+@@ -683,6 +739,9 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
+     /** Map a local gate code for external CTA (optional). */
+     mapLocalError: mapLocalSttError,
+     toggle,
++    /** D2 hold-to-talk — stable callbacks; App must not depend on whole `voice` object. */
++    holdStart,
++    holdStop,
+     abortForChatStop,
+     dismissBanner,
+     restoreRaw,
+diff --git a/chrome-extension/src/sidepanel/hooks/useWebSocket.ts b/chrome-extension/src/sidepanel/hooks/useWebSocket.ts
+index 39eb167..8f5702d 100644
+--- a/chrome-extension/src/sidepanel/hooks/useWebSocket.ts
++++ b/chrome-extension/src/sidepanel/hooks/useWebSocket.ts
+@@ -228,6 +228,8 @@ export function useWebSocket() {
+         "voice_privacy_ack_v3",
+         "voiceDictationMode",
+         "asrRefinerEnabled",
++        "dictationHotkeyEnabled",
++        "dictationHotkeyChord",
+         "cmspark.ui.show_reasoning",
+         "cmspark.ui.export_include_reasoning",
+       ],
+@@ -263,6 +265,12 @@ export function useWebSocket() {
+         if (typeof result.asrRefinerEnabled === "boolean") {
+           dispatch({ type: "SET_ASR_REFINER_ENABLED", enabled: result.asrRefinerEnabled })
+         }
++        if (typeof result.dictationHotkeyEnabled === "boolean") {
++          dispatch({ type: "SET_DICTATION_HOTKEY_ENABLED", enabled: result.dictationHotkeyEnabled })
++        }
++        if (typeof result.dictationHotkeyChord === "string" && result.dictationHotkeyChord.trim()) {
++          dispatch({ type: "SET_DICTATION_HOTKEY_CHORD", chord: result.dictationHotkeyChord.trim() })
++        }
+       },
+     )
+     // Popup "设置" button sets this flag before opening the side panel + closing
+diff --git a/chrome-extension/src/sidepanel/store/agentStore.tsx b/chrome-extension/src/sidepanel/store/agentStore.tsx
+index dfddf12..26546b0 100644
+--- a/chrome-extension/src/sidepanel/store/agentStore.tsx
++++ b/chrome-extension/src/sidepanel/store/agentStore.tsx
+@@ -45,6 +45,13 @@ export interface AgentState {
+   voiceDictationMode: "classic" | "continuous"
+   /** ASR Refiner after stop (default false). Requires privacy ack v3 + Companion LLM. */
+   asrRefinerEnabled: boolean
++  /**
++   * Dictation+ D2: hold-to-talk hotkey (default off). Chord never bare fn / Win+V.
++   * chrome.storage.local `dictationHotkeyEnabled` / `dictationHotkeyChord`.
++   */
++  dictationHotkeyEnabled: boolean
++  /** e.g. Control+Shift+Space */
++  dictationHotkeyChord: string
+   /**
+    * Mtg1: meeting workbench is live-capturing (local segmented STT).
+    * Mutual exclusion with composer dictation (global max-1 STT).
+@@ -212,6 +219,8 @@ export type AgentAction =
+   | { type: "SET_VOICE_PRIVACY_ACK_V3"; ack: boolean }
+   | { type: "SET_VOICE_DICTATION_MODE"; mode: "classic" | "continuous" }
+   | { type: "SET_ASR_REFINER_ENABLED"; enabled: boolean }
++  | { type: "SET_DICTATION_HOTKEY_ENABLED"; enabled: boolean }
++  | { type: "SET_DICTATION_HOTKEY_CHORD"; chord: string }
+   | { type: "SET_MEETING_CAPTURE_ACTIVE"; active: boolean }
+   | { type: "SET_DICTATION_CAPTURE_ACTIVE"; active: boolean }
+   | { type: "ADD_SECURITY_CONFIRMATION"; request: SecurityConfirmationRequest }
+@@ -339,6 +348,8 @@ export const initialState: AgentState = {
+   voicePrivacyAckV3: false,
+   voiceDictationMode: "classic",
+   asrRefinerEnabled: false,
++  dictationHotkeyEnabled: false,
++  dictationHotkeyChord: "Control+Shift+Space",
+   meetingCaptureActive: false,
+   dictationCaptureActive: false,
+   pendingSecurityConfirmations: [],
+@@ -693,6 +704,17 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
+     case "SET_ASR_REFINER_ENABLED":
+       chrome.storage.local.set({ asrRefinerEnabled: action.enabled })
+       return { ...state, asrRefinerEnabled: action.enabled }
++    case "SET_DICTATION_HOTKEY_ENABLED":
++      chrome.storage.local.set({ dictationHotkeyEnabled: action.enabled === true })
++      return { ...state, dictationHotkeyEnabled: action.enabled === true }
++    case "SET_DICTATION_HOTKEY_CHORD": {
++      const chord =
++        typeof action.chord === "string" && action.chord.trim()
++          ? action.chord.trim()
++          : "Control+Shift+Space"
++      chrome.storage.local.set({ dictationHotkeyChord: chord })
++      return { ...state, dictationHotkeyChord: chord }
++    }
+     case "ADD_SECURITY_CONFIRMATION":
+       return {
+         ...state,
+diff --git a/chrome-extension/src/sidepanel/voice/hotkey-chord.ts b/chrome-extension/src/sidepanel/voice/hotkey-chord.ts
+new file mode 100644
+index 0000000..c8a2ce2
+--- /dev/null
++++ b/chrome-extension/src/sidepanel/voice/hotkey-chord.ts
+@@ -0,0 +1,122 @@
++/**
++ * Dictation+ D2 — hold hotkey chord parse / validate (pure).
++ * SoT: 2026-08-07-dictation-plus-design.md §5.2
++ */
++
++export type HotkeyChord = {
++  /** Normalized parts for matching KeyboardEvent */
++  ctrl: boolean
++  alt: boolean
++  shift: boolean
++  meta: boolean
++  /** Lowercase key: "space" | "a" | "f1" | ... */
++  key: string
++  /** Display label */
++  label: string
++}
++
++/** Suggested presets (no bare fn / Win+V). */
++export const DICTATION_HOTKEY_PRESETS: Array<{ id: string; label: string; chord: string }> = [
++  { id: "ctrl-shift-space", label: "Ctrl+Shift+Space", chord: "Control+Shift+Space" },
++  { id: "alt-space", label: "Alt+Space / ⌥Space", chord: "Alt+Space" },
++  { id: "ctrl-alt-space", label: "Ctrl+Alt+Space", chord: "Control+Alt+Space" },
++  { id: "ctrl-shift-d", label: "Ctrl+Shift+D", chord: "Control+Shift+D" },
++]
++
++export const DICTATION_HOTKEY_DEFAULT_CHORD = "Control+Shift+Space"
++
++const FORBIDDEN = new Set([
++  "fn",
++  "function",
++  "metaleft",
++  "metaright",
++  // Win+V clipboard history — never default / never allow as sole chord
++])
++
++/**
++ * Parse "Control+Shift+Space" style chord.
++ * Returns null if empty, bare modifier, or forbidden (fn / Win+V alone).
++ */
++export function parseHotkeyChord(raw: string | null | undefined): HotkeyChord | null {
++  if (typeof raw !== "string" || !raw.trim()) return null
++  const parts = raw
++    .split("+")
++    .map((p) => p.trim())
++    .filter(Boolean)
++  if (parts.length < 2) return null
++
++  let ctrl = false
++  let alt = false
++  let shift = false
++  let meta = false
++  let key = ""
++
++  for (const p of parts) {
++    const low = p.toLowerCase()
++    if (low === "control" || low === "ctrl" || low === "⌃") ctrl = true
++    else if (low === "alt" || low === "option" || low === "⌥") alt = true
++    else if (low === "shift" || low === "⇧") shift = true
++    else if (low === "meta" || low === "cmd" || low === "command" || low === "⌘" || low === "win" || low === "windows") {
++      meta = true
++    } else if (FORBIDDEN.has(low)) {
++      return null
++    } else {
++      key = low === " " ? "space" : low
++    }
++  }
++
++  if (!key) return null
++  // Forbid Win+V / Meta+V (clipboard)
++  if (meta && key === "v" && !ctrl && !alt && !shift) return null
++  if (key === "fn" || key === "function") return null
++  // Require at least one modifier for safety
++  if (!ctrl && !alt && !shift && !meta) return null
++
++  const labelParts: string[] = []
++  if (ctrl) labelParts.push("Ctrl")
++  if (alt) labelParts.push("Alt")
++  if (shift) labelParts.push("Shift")
++  if (meta) labelParts.push("Meta")
++  labelParts.push(key === "space" ? "Space" : key.length === 1 ? key.toUpperCase() : key)
++
++  return {
++    ctrl,
++    alt,
++    shift,
++    meta,
++    key,
++    label: labelParts.join("+"),
++  }
++}
++
++/** Match KeyboardEvent (keydown/keyup) against chord. */
++export function eventMatchesChord(
++  e: { key: string; code?: string; ctrlKey: boolean; altKey: boolean; shiftKey: boolean; metaKey: boolean },
++  chord: HotkeyChord,
++): boolean {
++  if (e.ctrlKey !== chord.ctrl) return false
++  if (e.altKey !== chord.alt) return false
++  if (e.shiftKey !== chord.shift) return false
++  if (e.metaKey !== chord.meta) return false
++
++  const k = (e.key || "").toLowerCase()
++  const code = (e.code || "").toLowerCase()
++  if (chord.key === "space") {
++    return k === " " || k === "spacebar" || k === "space" || code === "space"
++  }
++  if (chord.key.length === 1) {
++    return k === chord.key || code === `key${chord.key}`
++  }
++  return k === chord.key || code === chord.key
++}
++
++/** Serialize for storage. */
++export function formatChord(c: HotkeyChord): string {
++  const parts: string[] = []
++  if (c.ctrl) parts.push("Control")
++  if (c.alt) parts.push("Alt")
++  if (c.shift) parts.push("Shift")
++  if (c.meta) parts.push("Meta")
++  parts.push(c.key === "space" ? "Space" : c.key.length === 1 ? c.key.toUpperCase() : c.key)
++  return parts.join("+")
++}
+diff --git a/chrome-extension/tests/hotkey-chord.test.ts b/chrome-extension/tests/hotkey-chord.test.ts
+new file mode 100644
+index 0000000..68f0eb6
+--- /dev/null
++++ b/chrome-extension/tests/hotkey-chord.test.ts
+@@ -0,0 +1,46 @@
++import test from "node:test"
++import assert from "node:assert/strict"
++import {
++  parseHotkeyChord,
++  eventMatchesChord,
++  DICTATION_HOTKEY_DEFAULT_CHORD,
++  formatChord,
++} from "../src/sidepanel/voice/hotkey-chord"
++
++test("parse default Control+Shift+Space", () => {
++  const c = parseHotkeyChord(DICTATION_HOTKEY_DEFAULT_CHORD)
++  assert.ok(c)
++  assert.equal(c!.ctrl, true)
++  assert.equal(c!.shift, true)
++  assert.equal(c!.key, "space")
++})
++
++test("forbid bare key and Win+V", () => {
++  assert.equal(parseHotkeyChord("Space"), null)
++  assert.equal(parseHotkeyChord("Meta+V"), null)
++  assert.equal(parseHotkeyChord("fn"), null)
++})
++
++test("eventMatchesChord space", () => {
++  const c = parseHotkeyChord("Control+Shift+Space")!
++  assert.equal(
++    eventMatchesChord(
++      { key: " ", ctrlKey: true, altKey: false, shiftKey: true, metaKey: false },
++      c,
++    ),
++    true,
++  )
++  assert.equal(
++    eventMatchesChord(
++      { key: " ", ctrlKey: true, altKey: false, shiftKey: false, metaKey: false },
++      c,
++    ),
++    false,
++  )
++})
++
++test("formatChord round-trip label", () => {
++  const c = parseHotkeyChord("Alt+Space")!
++  assert.match(formatChord(c), /Alt/)
++  assert.match(formatChord(c), /Space/i)
++})
+diff --git a/companion/src/message-router.ts b/companion/src/message-router.ts
+index 42be145..8a7605c 100644
+--- a/companion/src/message-router.ts
++++ b/companion/src/message-router.ts
+@@ -48,6 +48,7 @@ import { handleComputerModelMessage } from "./computer/model-handlers"
+ import { handleVoiceModelMessage } from "./voice/whisper-handlers"
+ import { handleVoiceSttMessage } from "./voice/stt-handlers"
+ import { handleVoiceRefineMessage } from "./voice/refine-handlers"
++import { handleDictationHoldState } from "./voice/dictation-hotkey"
+ import { handleMeetingMessage } from "./meeting/meeting-handlers"
+ import {
+   buildUserEnvPublic,
+@@ -1921,6 +1922,31 @@ export async function handleMessage(
+         peerId: session?.panelId,
+         send: session?.sendToExtension,
+       })
++    case "voice.dictation.hold_state":
++      return handleDictationHoldState(
++        msg,
++        { origin: session?.origin },
++        {
++          onHoldChange: (active, chord) => {
++            // System notification as Mode B indicator (SoT §5.6 "CMspark · 草稿")
++            if (!active) return
++            try {
++              const notifier = require("node-notifier") as {
++                notify: (o: Record<string, unknown>) => void
++              }
++              notifier.notify({
++                title: "CMspark · 草稿",
++                message: chord
++                  ? `按住听写中（${chord}）· 松手结束`
++                  : "按住听写中 · 松手结束",
++                timeout: 2,
++              })
++            } catch {
++              /* optional */
++            }
++          },
++        },
++      )
+     case "meeting.create":
+     case "meeting.start":
+     case "meeting.end":
+diff --git a/companion/src/packs/types.ts b/companion/src/packs/types.ts
+index d7ea7ae..96de688 100644
+--- a/companion/src/packs/types.ts
++++ b/companion/src/packs/types.ts
+@@ -267,7 +267,7 @@ export const FORBIDDEN_PACK_KEYS = new Set([
+  * rejected/stripped — no trust-block exception.
+  */
+ export const VOICE_FORBIDDEN_KEY_RE =
+-  /^(voice|sttEngine|localModelId|voiceStt|voice_privacy|voiceAutoSend|asr_refiner|refiner_prompt|dictation_polish|rewrite_mode|audio_retain|autoStart)/i
++  /^(voice|sttEngine|localModelId|voiceStt|voice_privacy|voiceAutoSend|asr_refiner|refiner_prompt|dictation_polish|rewrite_mode|audio_retain|autoStart|hotkey|dictationHotkey|dictation_hotkey)/i
+ 
+ /** True when a pack.yaml object key must never appear (voice risk). */
+ export function isVoiceForbiddenPackKey(key: string): boolean {
+diff --git a/companion/src/server.ts b/companion/src/server.ts
+index 0a71781..e3a7ed2 100644
+--- a/companion/src/server.ts
++++ b/companion/src/server.ts
+@@ -5849,6 +5849,14 @@ export function validateWsMessage(msg: any): WsValidationResult {
+       }
+       return { valid: true }
+     },
++    // Dictation+ D2 hold indicator (control plane; no audio)
++    "voice.dictation.hold_state": (m) => {
++      if (m.v !== 1) return { valid: false, error: "voice.dictation.hold_state requires v:1" }
++      if (typeof m.active !== "boolean") {
++        return { valid: false, error: "voice.dictation.hold_state requires active boolean" }
++      }
++      return { valid: true }
++    },
+     // Meeting minutes scene (Mtg0/Mtg1)
+     "meeting.create": (m) => {
+       if (m.v !== 1) return { valid: false, error: "meeting.create requires v:1" }
+diff --git a/companion/src/voice/dictation-hotkey.ts b/companion/src/voice/dictation-hotkey.ts
+new file mode 100644
+index 0000000..502b5f9
+--- /dev/null
++++ b/companion/src/voice/dictation-hotkey.ts
+@@ -0,0 +1,64 @@
++/**
++ * Dictation+ D2 — hold-state fan-out to tray (control plane only; no audio).
++ * SoT: 2026-08-07-dictation-plus-design.md §5.2 / §9
++ */
++
++import { logger } from "../logger"
++
++export type HoldStateMsg = {
++  type: "voice.dictation.hold_state"
++  v: 1
++  active: boolean
++  chord?: string
++}
++
++let lastHoldActive = false
++
++/** Process-global last hold flag (tests / tray poll). */
++export function isDictationHoldActive(): boolean {
++  return lastHoldActive
++}
++
++export type HoldStateHandlerDeps = {
++  /** Notify tray / HUD: "CMspark · 草稿" listening indicator. */
++  onHoldChange?: (active: boolean, chord?: string) => void
++  isExtensionOrigin?: (origin: string | undefined) => boolean
++}
++
++/**
++ * Handle voice.dictation.hold_state from chrome-extension origin.
++ * Does not open mic; extension owns gUM / STT.
++ */
++export function handleDictationHoldState(
++  msg: any,
++  ctx: { origin?: string } = {},
++  deps: HoldStateHandlerDeps = {},
++): { type: string; v: number; ok?: boolean; code?: string; message?: string; active?: boolean } {
++  const originOk =
++    deps.isExtensionOrigin?.(ctx.origin) ??
++    (typeof ctx.origin === "string" && /^chrome-extension:\/\/[A-Za-z0-9_-]+$/.test(ctx.origin))
++  if (!originOk) {
++    logger.warn("voice.dictation.hold_state.refused", { reason: "origin" })
++    return { type: "voice.dictation.error", v: 1, code: "origin_denied", message: "chrome-extension origin required" }
++  }
++  if (msg?.v !== 1) {
++    return { type: "voice.dictation.error", v: 1, code: "bad_version", message: "v:1 required" }
++  }
++  const active = msg.active === true
++  const chord = typeof msg.chord === "string" ? msg.chord.slice(0, 64) : undefined
++  lastHoldActive = active
++  try {
++    deps.onHoldChange?.(active, chord)
++  } catch (e) {
++    logger.warn("voice.dictation.hold_state.tray_failed", {
++      err: e instanceof Error ? e.message : String(e),
++    })
++  }
++  logger.info("voice.dictation.hold_state", { active, chord: chord || undefined })
++  return { type: "voice.dictation.hold_state_ack", v: 1, ok: true, active }
++}
++
++/** Test helper */
++export function resetDictationHoldStateForTests(): void {
++  lastHoldActive = false
++}
+diff --git a/companion/tests/dictation-hotkey.test.ts b/companion/tests/dictation-hotkey.test.ts
+new file mode 100644
+index 0000000..0b7d024
+--- /dev/null
++++ b/companion/tests/dictation-hotkey.test.ts
+@@ -0,0 +1,41 @@
++/**
++ * Dictation+ D2 hold_state control plane.
++ */
++import test from "node:test"
++import assert from "node:assert/strict"
++import {
++  handleDictationHoldState,
++  isDictationHoldActive,
++  resetDictationHoldStateForTests,
++} from "../src/voice/dictation-hotkey"
++
++const EXT = "chrome-extension://abcdefghijklmnopqrstuvwxyz"
++
++test("hold_state origin denied", () => {
++  resetDictationHoldStateForTests()
++  const r = handleDictationHoldState(
++    { type: "voice.dictation.hold_state", v: 1, active: true },
++    { origin: "cmspark-tray://local" },
++  )
++  assert.equal(r.code, "origin_denied")
++  assert.equal(isDictationHoldActive(), false)
++})
++
++test("hold_state toggles active", () => {
++  resetDictationHoldStateForTests()
++  let seen: boolean | null = null
++  const on = handleDictationHoldState(
++    { type: "voice.dictation.hold_state", v: 1, active: true, chord: "Ctrl+Shift+Space" },
++    { origin: EXT },
++    { onHoldChange: (a) => { seen = a } },
++  )
++  assert.equal(on.ok, true)
++  assert.equal(isDictationHoldActive(), true)
++  assert.equal(seen, true)
++  const off = handleDictationHoldState(
++    { type: "voice.dictation.hold_state", v: 1, active: false },
++    { origin: EXT },
++  )
++  assert.equal(off.active, false)
++  assert.equal(isDictationHoldActive(), false)
++})
+diff --git a/docs/GOAL.md b/docs/GOAL.md
+index c2987d6..cdda519 100644
+--- a/docs/GOAL.md
++++ b/docs/GOAL.md
+@@ -1,6 +1,6 @@
+ # CMspark Browser Agent — 项目目标
+ 
+-> 版本: 1.5.0 | 日期: 2026-08-05 | 当前阶段：安全稳定化 MVP（核心已完成）→ 功能扩展中（产品 **0.4.0**）
++> 版本: 1.6.0 | 日期: 2026-08-08 | 当前阶段：安全稳定化 MVP（核心已完成）→ 功能扩展中（产品 **0.4.0**）
+ 
+ ---
+ 
+@@ -275,6 +275,21 @@ Agent 可以在用户授权下对任意标签页执行全部 26 种工具操作
+ - 成功门：Phase 0 bake-off 证明已登录/SSO 会话相对 Playwright 不可替代（T1），否则 pivot 只读或垂直 API。
+ - 当前：`companion/src/outbound-mcp/` 门禁骨架；真桥 / L8 托盘确认 / L9 tab lease / grant 模型按 ADR 分阶段。
+ 
++### G22. 听写+（Dictation+）与 会议记录 ✅ 已实现（0.4.x · 2026-08）· **S:L0 + C(Pack)**
++
++**Trust / 协议 SoT**：[ADR-024](adr/024-dictation-plus-asr-refiner-meeting.md) · 用户指南：[meeting-and-dictation-user-guide.md](meeting-and-dictation-user-guide.md)
++
++| 线 | 波次 | 内容 |
++|----|------|------|
++| 听写+ | D1a–c | classic 默认；continuous；ASR Refiner（correct_only）；本机分段 |
++| 听写+ | **D2** | 按住热键 hold（默认关；Side Panel 焦点捕获；禁 fn/Win+V 默认） |
++| 会议 | Mtg0 | Pack「会议记录」+ 粘贴 → 纪要 job |
++| 会议 | Mtg1 | 工作台 live 本机录 + ack + 默认删音频 + 听写互斥 |
++| 会议 | Mtg2 | 手动 speaker / 静音切 / 文件上传；系统混音 [parking](superpowers/specs/2026-08-08-meeting-system-audio-parking.md) |
++| 会议 | Mtg3 | 实验匿名「发言人N」k-means（非身份 SLA） |
++
++**明确非目标（本阶段）**：系统级注入任意 App；边听边 LLM 改稿（D3 CANCELLED）；系统混音产品化；身份级 diarize。
++
+ ---
+ 
+ ## 架构约束
+diff --git a/docs/README.md b/docs/README.md
+index 8c7c3a9..ca24c13 100644
+--- a/docs/README.md
++++ b/docs/README.md
+@@ -21,6 +21,7 @@
+ | [host-and-apps.md](host-and-apps.md) | **Surface L2**（语义 Host） | Host 读写、Apps 白名单、生物识别边界 |
+ | [multi-agent-user-guide.md](multi-agent-user-guide.md) | **Autonomy**（Worker≈L1） | spawn_worker、tab 锁、Mission Board、上限 |
+ | [notebooklm-user-guide.md](notebooklm-user-guide.md) | **产品特性**（非组合原语） | NotebookLM 导入器、权限、结果 |
++| [meeting-and-dictation-user-guide.md](meeting-and-dictation-user-guide.md) | **产品特性** L0 输入 / Pack | 听写+（含按住热键）· 会议 Mtg0–3 · 真机验收清单 |
+ | [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | — | 常见故障速查 |
+ 
+ ### 导出 / 图表（产品特性 · ADR 即用户向说明）
+@@ -71,6 +72,7 @@
+ | 021 | 无人值守 · 桌面会话 grant | [021](adr/021-unattended-desktop-session.md) |
+ | **022** | **Outbound MCP Server**（编程 Agent 的 L1 浏览器面） | [022](adr/022-outbound-mcp-server.md) |
+ | **023** | **本机语音识别 Path B**（Local STT / whisper.cpp） | [023](adr/023-voice-local-stt-path-b.md) |
++| **024** | **听写+ · ASR Refiner · 会议落盘** | [024](adr/024-dictation-plus-asr-refiner-meeting.md) |
+ 
+ 过程件：UI 三模式 / Cockpit 以 `docs/superpowers/specs/` 与 [DESIGN.md](DESIGN.md) 为准（**勿**再记「拟议 ADR-019 UI」——019 已是 user-env）。
+ 
+diff --git a/docs/audit/reviews/dictation-d2-docs-claude-20260808-111834.md b/docs/audit/reviews/dictation-d2-docs-claude-20260808-111834.md
+new file mode 100644
+index 0000000..03c7e18
+--- /dev/null
++++ b/docs/audit/reviews/dictation-d2-docs-claude-20260808-111834.md
+@@ -0,0 +1,43 @@
++I have enough evidence. The patch is current (matches HEAD vs base e6d659f), pure-logic tests pass, ADR-024 file exists. But manual inspection of the integration path reveals two blocking correctness bugs in the D2 hold feature, plus an explicit disclaimer that the implementation was never executed.
++
++---
++
++## Independent Review — `dictation-d2-docs`
++
++**Patch freshness**: confirmed — `git diff e6d659f` stat matches the .patch file exactly (19 files, +697/-6). HEAD `556efbd` is the implementation commit.
++
++**ADR-020 capability declaration**: present in implementer prompt (Surface L0 / Compose pack / Autonomy n/a / Trust reuses v3 / Channel community). Capability axes fit; no new "中层 Agent"; Pack is forbidden from setting hotkey via `VOICE_FORBIDDEN_KEY_RE` extension (companion/src/packs/types.ts:268). Origin fence regex on companion side is correct (companion/src/voice/dictation-hotkey.ts:42). Trust monotonicity OK — `holdStart` reuses v3 ack gates.
++
++**Pure-logic tests**: `hotkey-chord.test.ts` 4/4 pass; `dictation-hotkey.test.ts` 2/2 pass. Origin-deny, bad-version, Win+V ban, bare-fn ban, default chord parse — all verified.
++
++### Blocking issues
++
++**1. `chrome-extension/src/sidepanel/App.tsx:583-592` — useEffect dependency on `voice` object identity kills every hold within ~250ms.**
++The effect's dep array includes `voice`. `useVoiceInput` returns a fresh object literal on every call (`useVoiceInput.ts:714-743`), so `Object.is(prevVoice, nextVoice)` is always false. During any listen session, `setListenTick` is fired by setInterval every 250ms (`useVoiceInput.ts:140, 154-161`), which forces an `InputArea` re-render → `voice` identity changes → the cleanup at `App.tsx:574-582` runs:
++```ts
++if (down) { voice.holdStop(); notifyHold(false) }
++```
++This terminates the hold while the user is still physically pressing the key. New effect attaches with `down=false`; subsequent `keyup` is a no-op (`App.tsx:556`). Hold is unusable.
++
++**2. `chrome-extension/src/sidepanel/hooks/useVoiceInput.ts:683-689` — `queueMicrotask` races with `toggle()`'s async permission query and always clobbers the hold state.**
++`toggle()` (called synchronously by `holdStart`) gates the actual start behind `navigator.permissions.query().then(begin)` (`useVoiceInput.ts:497-513`). `begin()` is what eventually dispatches `USER_TOGGLE_START` and reads `modeRef.current` (`useVoiceInput.ts:533`). The `queueMicrotask` scheduled inside `holdStart` runs before that promise resolves; at that moment `sessionRef.current.phase` is still `"idle"` (no `setSession` has committed — `dispatchEv` is downstream of `begin()`). The "still idle → restore" branch therefore fires unconditionally, setting:
++- `holdSessionRef.current = false` → later `holdStop()` returns false at line 696, so keyup cannot stop the mic.
++- `modeRef.current = savedModeRef.current` (`"classic"`) → when `begin()` finally reads it at `useVoiceInput.ts:533`, it starts a CLASSIC 45s session, not the "continuous" session promised by the `holdStart` docstring (line 666-667) and required by the user guide ("按下 → 开始连续听写管线").
++
++Net effect of bugs #1+#2: hold either dies in ~250ms (cleanup path) or starts an unstoppable 45s classic session (microtask path). Either way, broken.
++
++**3. No execution verification for a T2 mic-control-plane change.**
++`docs/meeting-and-dictation-user-guide.md:950` explicitly states "实现侧不代跑；合入后由你本地验收。" ("implementation didn't run; verify locally after merge"). Combined with bugs #1 and #2 — both of which would have been caught by a single ~3-second hold-to-talk smoke test — this is a process defect on a T2 blast-radius change to the mic control plane.
++
++### Non-blocking nits (do not block on these)
++
++- `companion/src/message-router.ts:1934` — `require("node-notifier")` inside the handler hot path is cached by Node after first call, but moving it to a module-top-level `import`/`require` would be cleaner and matches the pattern in `menu-bar-agent.ts:30`.
++- `companion/src/voice/dictation-hotkey.ts:7` — `lastHoldActive` is process-global; acceptable for single-extension use but worth a comment.
++- `chrome-extension/src/sidepanel/hooks/useVoiceInput.ts:738` — `holdActive: holdSessionRef.current` is captured at render time and is not reactive; not currently consumed by `App.tsx`, so cosmetic.
++- `companion/tests/dictation-hotkey.test.ts` — no explicit `bad_version` (`v: 2`) test despite the handler having that branch.
++
++### Verdict
++
++Bugs #1 and #2 are blocking correctness defects in the D2 hold feature; bug #3 is the missing verification that would have caught them. Pure-logic unit tests pass but exercise neither the React effect lifecycle nor the async permission path where both bugs live. The docs/capability/pack-fence portions of the diff are fine; the implementation of the hold feature itself is not shippable.
++
++VERDICT: REJECT
+diff --git a/docs/audit/reviews/dictation-d2-docs-diff-20260808-111834.patch b/docs/audit/reviews/dictation-d2-docs-diff-20260808-111834.patch
+new file mode 100644
+index 0000000..54843fa
+--- /dev/null
++++ b/docs/audit/reviews/dictation-d2-docs-diff-20260808-111834.patch
+@@ -0,0 +1,1031 @@
++# Dual external review context
++batch: dictation-d2-docs
++base: e6d659f7838c6c391e48befcb5bdaa004fe6f421
++time: 20260808-111834
++
++556efbd
++
++?? .grok/config.toml
++?? .grok/hooks/
++?? .grok/rules/
++?? docs/audit/reviews/analyze-image-data-url-p0-diff-20260806-212116.patch
++?? docs/audit/reviews/analyze-image-data-url-p0-r2-diff-20260806-213120.patch
++?? docs/audit/reviews/analyze-image-data-url-p0-r3-diff-20260806-214547.patch
++?? docs/audit/reviews/cli-qwen-plan-v2-for-pi.md
++?? docs/audit/reviews/cli-qwen-plan-v2-pi-20260802-092659.md
++?? docs/audit/reviews/context-memory-thinking-knowledge-diff-20260807-100209.patch
++?? docs/audit/reviews/dictation-d2-docs-diff-20260808-111834.patch
++?? docs/audit/reviews/dictation-d2-docs-dual-review-prompt.md
++?? docs/audit/reviews/estop-tap-degraded-kimi-20260801-220643.md
++?? docs/audit/reviews/run-state-worker-drilldown-diff-20260804-174619.patch
++?? docs/audit/reviews/s41-main-pull-diff-20260804-092610.patch
++?? docs/audit/reviews/s41-multi-adv-diff-20260804-093256.patch
++?? docs/audit/reviews/settings-thread-compact-diff-20260806-221435.patch
++?? docs/audit/reviews/settings-thread-compact-m2-meta-diff-20260806-230545.patch
++?? docs/audit/reviews/shell-abort-timeout-claude-20260806-163014.md
++?? docs/audit/reviews/shell-abort-timeout-diff-20260806-163014.patch
++?? docs/audit/reviews/shell-abort-timeout-diff-20260806-192609.patch
++?? docs/audit/reviews/shell-abort-timeout-r2-diff-20260806-193231.patch
++?? docs/audit/reviews/thread-history-ia-diff-20260806-092335.patch
++?? docs/audit/reviews/thread-history-ia-impl-diff-20260806-134044.patch
++?? docs/audit/reviews/thread-history-ia-impl-r2-diff-20260806-135746.patch
++?? docs/audit/reviews/trust-ia-autopilot-diff-20260802-144203.patch
++?? docs/audit/reviews/unattended-desktop-diff-20260802-153129.patch
++?? docs/audit/reviews/unattended-desktop-m1-diff-20260802-154236.patch
++?? docs/audit/reviews/unattended-desktop-m2-diff-20260802-155452.patch
++?? docs/audit/reviews/unattended-desktop-m2-r2-diff-20260802-160240.patch
++?? docs/audit/reviews/unattended-desktop-m3-diff-20260802-161147.patch
++?? docs/audit/reviews/voice-input-design-diff-20260806-194531.patch
++?? docs/audit/reviews/voice-input-m1-diff-20260806-200603.patch
++?? docs/audit/reviews/voice-input-m1-r2-diff-20260806-201142.patch
++?? docs/audit/reviews/voice-local-stt-design-diff-20260807-154150.patch
++?? docs/audit/reviews/wave-a-scene-knowledge-impl-diff-20260807-103512.patch
++?? docs/audit/reviews/wave-a-scene-knowledge-plan-diff-20260807-101501.patch
++?? docs/audit/reviews/wave-a-scene-knowledge-plan-r2-diff-20260807-102424.patch
++?? docs/audit/reviews/wave-b-h1-thread-handoff-impl-diff-20260807-105903.patch
++?? docs/audit/reviews/wave-b-h1-thread-handoff-plan-diff-20260807-104642.patch
++?? docs/audit/reviews/wave-c-thread-recall-impl-diff-20260807-115545.patch
++?? docs/audit/reviews/wave-c-thread-recall-plan-diff-20260807-113810.patch
++?? docs/audit/reviews/wave-c-thread-recall-plan-r2-diff-20260807-114530.patch
++?? docs/audit/reviews/wave-d-reasoning-ui-export-impl-diff-20260807-143315.patch
++?? docs/audit/reviews/wave-d-reasoning-ui-export-plan-diff-20260807-142222.patch
++?? docs/optimization-plan-document-parse-vision.md
++?? images/
++
++## Diff (git diff + staged)
++ chrome-extension/src/background/index.ts           |   2 +
++ chrome-extension/src/sidepanel/App.tsx             |  99 +++++++++++++++++
++ .../src/sidepanel/components/SettingsSlideout.tsx  |  55 ++++++++++
++ .../src/sidepanel/hooks/useVoiceInput.ts           |  53 +++++++++
++ .../src/sidepanel/hooks/useWebSocket.ts            |   8 ++
++ .../src/sidepanel/store/agentStore.tsx             |  22 ++++
++ .../src/sidepanel/voice/hotkey-chord.ts            | 122 +++++++++++++++++++++
++ chrome-extension/tests/hotkey-chord.test.ts        |  46 ++++++++
++ companion/src/message-router.ts                    |  26 +++++
++ companion/src/packs/types.ts                       |   2 +-
++ companion/src/server.ts                            |   8 ++
++ companion/src/voice/dictation-hotkey.ts            |  64 +++++++++++
++ companion/tests/dictation-hotkey.test.ts           |  41 +++++++
++ docs/GOAL.md                                       |  17 ++-
++ docs/README.md                                     |   2 +
++ docs/meeting-and-dictation-user-guide.md           | 118 ++++++++++++++++++++
++ docs/mission-pack-usage.md                         |   3 +-
++ .../specs/2026-08-07-dictation-plus-design.md      |   4 +-
++ .../2026-08-08-meeting-mtg3-diarize-design.md      |  11 +-
++ 19 files changed, 697 insertions(+), 6 deletions(-)
++
++diff --git a/chrome-extension/src/background/index.ts b/chrome-extension/src/background/index.ts
++index c051fa9..8fa09c5 100644
++--- a/chrome-extension/src/background/index.ts
+++++ b/chrome-extension/src/background/index.ts
++@@ -1152,6 +1152,8 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
++       // Dictation+ D1b ASR Refiner (text-only)
++       case "voice.refine.request":
++       case "voice.refine.abort":
+++      // Dictation+ D2 hold state → companion tray indicator (control plane, no audio)
+++      case "voice.dictation.hold_state":
++       // Meeting minutes scene (Mtg0 paste + Mtg1 live capture)
++       case "meeting.create":
++       case "meeting.start":
++diff --git a/chrome-extension/src/sidepanel/App.tsx b/chrome-extension/src/sidepanel/App.tsx
++index 82033bf..8aa77ed 100644
++--- a/chrome-extension/src/sidepanel/App.tsx
+++++ b/chrome-extension/src/sidepanel/App.tsx
++@@ -38,6 +38,7 @@ import {
++   IconAlert,
++ } from "./ui/icons"
++ import { VoiceMicButton } from "./components/VoiceMicButton"
+++import { parseHotkeyChord, eventMatchesChord } from "./voice/hotkey-chord"
++ import { useVoiceInput } from "./hooks/useVoiceInput"
++ import {
++   VOICE_PRIVACY_ACK_V2_BODY,
++@@ -492,6 +493,104 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
++     dispatch({ type: "SET_DICTATION_CAPTURE_ACTIVE", active })
++   }, [voice.listening, voice.processing, voice.refining, dispatch])
++ 
+++  // Dictation+ D2: hold hotkey (Side Panel open; key capture when panel focused).
+++  // SoT §5.2 — default off; ban fn/Win+V; xor meeting capture.
+++  useEffect(() => {
+++    if (!state.dictationHotkeyEnabled) return
+++    const chord = parseHotkeyChord(state.dictationHotkeyChord)
+++    if (!chord) return
+++
+++    let down = false
+++    const notifyHold = (active: boolean) => {
+++      try {
+++        chrome.runtime.sendMessage({
+++          type: "voice.dictation.hold_state",
+++          v: 1,
+++          active,
+++          chord: chord.label,
+++        })
+++      } catch {
+++        /* */
+++      }
+++    }
+++
+++    const onKeyDown = (e: KeyboardEvent) => {
+++      if (!eventMatchesChord(e, chord)) return
+++      if (e.repeat) return
+++      e.preventDefault()
+++      e.stopPropagation()
+++      if (down) return
+++      if (state.meetingCaptureActive) {
+++        // soft fail — do not start
+++        return
+++      }
+++      if (!voiceAllowStart && !voice.listening) return
+++      down = true
+++      const ok = voice.holdStart({
+++        privacyAck: state.voicePrivacyAckV1 === true,
+++        privacyAckV2: state.voicePrivacyAckV2 === true,
+++        privacyAckV3: state.voicePrivacyAckV3 === true,
+++      })
+++      if (ok) notifyHold(true)
+++      else down = false
+++    }
+++
+++    const onKeyUp = (e: KeyboardEvent) => {
+++      // Stop when main key or any chord modifier is released while holding
+++      const mainUp = eventMatchesChord(
+++        {
+++          key: e.key,
+++          code: e.code,
+++          ctrlKey: chord.ctrl ? true : e.ctrlKey,
+++          altKey: chord.alt ? true : e.altKey,
+++          shiftKey: chord.shift ? true : e.shiftKey,
+++          metaKey: chord.meta ? true : e.metaKey,
+++        },
+++        chord,
+++      )
+++      const modUp =
+++        (chord.ctrl && e.key === "Control") ||
+++        (chord.alt && (e.key === "Alt" || e.key === "AltGraph")) ||
+++        (chord.shift && e.key === "Shift") ||
+++        (chord.meta && (e.key === "Meta" || e.key === "OS"))
+++      if (!down) return
+++      if (!mainUp && !modUp && !eventMatchesChord(e, chord)) return
+++      e.preventDefault()
+++      down = false
+++      voice.holdStop()
+++      notifyHold(false)
+++    }
+++
+++    const onBlur = () => {
+++      if (!down) return
+++      down = false
+++      voice.holdStop()
+++      notifyHold(false)
+++    }
+++
+++    window.addEventListener("keydown", onKeyDown, true)
+++    window.addEventListener("keyup", onKeyUp, true)
+++    window.addEventListener("blur", onBlur)
+++    return () => {
+++      window.removeEventListener("keydown", onKeyDown, true)
+++      window.removeEventListener("keyup", onKeyUp, true)
+++      window.removeEventListener("blur", onBlur)
+++      if (down) {
+++        voice.holdStop()
+++        notifyHold(false)
+++      }
+++    }
+++  }, [
+++    state.dictationHotkeyEnabled,
+++    state.dictationHotkeyChord,
+++    state.meetingCaptureActive,
+++    state.voicePrivacyAckV1,
+++    state.voicePrivacyAckV2,
+++    state.voicePrivacyAckV3,
+++    voiceAllowStart,
+++    voice,
+++  ])
+++
++   // Hide: feature off | unsupported for selected engine | worker | no thread.
++   // Local + no gUM → voice.supported false → hide.
++   // Browser + no SpeechRecognition → hide.
++diff --git a/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx b/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx
++index c8ed41b..5333a91 100644
++--- a/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx
+++++ b/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx
++@@ -1039,6 +1039,61 @@ export function SettingsSlideout() {
++                   </span>
++                 </span>
++               </label>
+++
+++              <div style={{ marginTop: 12, fontSize: 12, color: "#555" }}>
+++                <div style={{ marginBottom: 4, fontWeight: 500 }}>按住热键听写（D2 · 默认关）</div>
+++                <label
+++                  style={{
+++                    display: "flex",
+++                    alignItems: "flex-start",
+++                    gap: 8,
+++                    cursor: "pointer",
+++                    fontSize: 12,
+++                    lineHeight: 1.4,
+++                  }}
+++                >
+++                  <input
+++                    type="checkbox"
+++                    style={{ marginTop: 2 }}
+++                    checked={state.dictationHotkeyEnabled === true}
+++                    onChange={(e) =>
+++                      dispatch({ type: "SET_DICTATION_HOTKEY_ENABLED", enabled: e.target.checked })
+++                    }
+++                  />
+++                  <span>
+++                    启用按住说话
+++                    <br />
+++                    <span style={{ color: "#888", fontSize: 11 }}>
+++                      按住组合键开始连续听写，松手结束；仅进草稿、不自动发送。需 Side Panel
+++                      打开；禁止 bare Fn / Win+V。会议录音中不可用。
+++                    </span>
+++                  </span>
+++                </label>
+++                <label style={{ display: "block", marginTop: 8, fontSize: 11, color: "#666" }}>
+++                  组合键
+++                  <select
+++                    value={state.dictationHotkeyChord || "Control+Shift+Space"}
+++                    disabled={!state.dictationHotkeyEnabled}
+++                    onChange={(e) =>
+++                      dispatch({ type: "SET_DICTATION_HOTKEY_CHORD", chord: e.target.value })
+++                    }
+++                    style={{
+++                      display: "block",
+++                      marginTop: 4,
+++                      width: "100%",
+++                      padding: "6px 8px",
+++                      borderRadius: 6,
+++                      border: "1px solid #ddd",
+++                      fontSize: 12,
+++                    }}
+++                  >
+++                    <option value="Control+Shift+Space">Ctrl+Shift+Space</option>
+++                    <option value="Alt+Space">Alt+Space / ⌥Space</option>
+++                    <option value="Control+Alt+Space">Ctrl+Alt+Space</option>
+++                    <option value="Control+Shift+D">Ctrl+Shift+D</option>
+++                  </select>
+++                </label>
+++              </div>
++             </div>
++ 
++             {/* Path B M0: 听写方式 progressive disclosure (UI draft until ready + enable) */}
++diff --git a/chrome-extension/src/sidepanel/hooks/useVoiceInput.ts b/chrome-extension/src/sidepanel/hooks/useVoiceInput.ts
++index d64a89b..e7dffe5 100644
++--- a/chrome-extension/src/sidepanel/hooks/useVoiceInput.ts
+++++ b/chrome-extension/src/sidepanel/hooks/useVoiceInput.ts
++@@ -662,6 +662,55 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
++         )
++       : null
++ 
+++  /**
+++   * Dictation+ D2 hold-to-talk: force continuous for this session, start if idle.
+++   * Returns false if blocked (busy gates / already listening from non-hold).
+++   */
+++  const holdSessionRef = useRef(false)
+++  const savedModeRef = useRef<VoiceDictationMode | null>(null)
+++
+++  const holdStart = useCallback(
+++    (extra?: { privacyAck?: boolean; privacyAckV2?: boolean; privacyAckV3?: boolean }) => {
+++      const s = sessionRef.current
+++      if (s.phase !== "idle" && s.phase !== "error") return false
+++      if (!optsRef.current.allowStart) return false
+++      if (holdSessionRef.current) return false
+++      savedModeRef.current = modeRef.current
+++      modeRef.current = "continuous"
+++      holdSessionRef.current = true
+++      toggle(extra)
+++      // If still idle after toggle (gate failed), restore
+++      queueMicrotask(() => {
+++        if (sessionRef.current.phase === "idle" || sessionRef.current.phase === "error") {
+++          holdSessionRef.current = false
+++          if (savedModeRef.current) modeRef.current = savedModeRef.current
+++          savedModeRef.current = null
+++        }
+++      })
+++      return true
+++    },
+++    [toggle],
+++  )
+++
+++  const holdStop = useCallback(() => {
+++    if (!holdSessionRef.current) return false
+++    const s = sessionRef.current
+++    if (
+++      s.phase === "listening" ||
+++      s.phase === "starting" ||
+++      s.phase === "processing" ||
+++      s.phase === "stopping"
+++    ) {
+++      toggle()
+++    }
+++    holdSessionRef.current = false
+++    if (savedModeRef.current) {
+++      modeRef.current = savedModeRef.current
+++      savedModeRef.current = null
+++    }
+++    return true
+++  }, [toggle])
+++
++   return {
++     supported,
++     phase: session.phase,
++@@ -683,6 +732,10 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
++     /** Map a local gate code for external CTA (optional). */
++     mapLocalError: mapLocalSttError,
++     toggle,
+++    /** D2 hold-to-talk */
+++    holdStart,
+++    holdStop,
+++    holdActive: holdSessionRef.current,
++     abortForChatStop,
++     dismissBanner,
++     restoreRaw,
++diff --git a/chrome-extension/src/sidepanel/hooks/useWebSocket.ts b/chrome-extension/src/sidepanel/hooks/useWebSocket.ts
++index 39eb167..8f5702d 100644
++--- a/chrome-extension/src/sidepanel/hooks/useWebSocket.ts
+++++ b/chrome-extension/src/sidepanel/hooks/useWebSocket.ts
++@@ -228,6 +228,8 @@ export function useWebSocket() {
++         "voice_privacy_ack_v3",
++         "voiceDictationMode",
++         "asrRefinerEnabled",
+++        "dictationHotkeyEnabled",
+++        "dictationHotkeyChord",
++         "cmspark.ui.show_reasoning",
++         "cmspark.ui.export_include_reasoning",
++       ],
++@@ -263,6 +265,12 @@ export function useWebSocket() {
++         if (typeof result.asrRefinerEnabled === "boolean") {
++           dispatch({ type: "SET_ASR_REFINER_ENABLED", enabled: result.asrRefinerEnabled })
++         }
+++        if (typeof result.dictationHotkeyEnabled === "boolean") {
+++          dispatch({ type: "SET_DICTATION_HOTKEY_ENABLED", enabled: result.dictationHotkeyEnabled })
+++        }
+++        if (typeof result.dictationHotkeyChord === "string" && result.dictationHotkeyChord.trim()) {
+++          dispatch({ type: "SET_DICTATION_HOTKEY_CHORD", chord: result.dictationHotkeyChord.trim() })
+++        }
++       },
++     )
++     // Popup "设置" button sets this flag before opening the side panel + closing
++diff --git a/chrome-extension/src/sidepanel/store/agentStore.tsx b/chrome-extension/src/sidepanel/store/agentStore.tsx
++index dfddf12..26546b0 100644
++--- a/chrome-extension/src/sidepanel/store/agentStore.tsx
+++++ b/chrome-extension/src/sidepanel/store/agentStore.tsx
++@@ -45,6 +45,13 @@ export interface AgentState {
++   voiceDictationMode: "classic" | "continuous"
++   /** ASR Refiner after stop (default false). Requires privacy ack v3 + Companion LLM. */
++   asrRefinerEnabled: boolean
+++  /**
+++   * Dictation+ D2: hold-to-talk hotkey (default off). Chord never bare fn / Win+V.
+++   * chrome.storage.local `dictationHotkeyEnabled` / `dictationHotkeyChord`.
+++   */
+++  dictationHotkeyEnabled: boolean
+++  /** e.g. Control+Shift+Space */
+++  dictationHotkeyChord: string
++   /**
++    * Mtg1: meeting workbench is live-capturing (local segmented STT).
++    * Mutual exclusion with composer dictation (global max-1 STT).
++@@ -212,6 +219,8 @@ export type AgentAction =
++   | { type: "SET_VOICE_PRIVACY_ACK_V3"; ack: boolean }
++   | { type: "SET_VOICE_DICTATION_MODE"; mode: "classic" | "continuous" }
++   | { type: "SET_ASR_REFINER_ENABLED"; enabled: boolean }
+++  | { type: "SET_DICTATION_HOTKEY_ENABLED"; enabled: boolean }
+++  | { type: "SET_DICTATION_HOTKEY_CHORD"; chord: string }
++   | { type: "SET_MEETING_CAPTURE_ACTIVE"; active: boolean }
++   | { type: "SET_DICTATION_CAPTURE_ACTIVE"; active: boolean }
++   | { type: "ADD_SECURITY_CONFIRMATION"; request: SecurityConfirmationRequest }
++@@ -339,6 +348,8 @@ export const initialState: AgentState = {
++   voicePrivacyAckV3: false,
++   voiceDictationMode: "classic",
++   asrRefinerEnabled: false,
+++  dictationHotkeyEnabled: false,
+++  dictationHotkeyChord: "Control+Shift+Space",
++   meetingCaptureActive: false,
++   dictationCaptureActive: false,
++   pendingSecurityConfirmations: [],
++@@ -693,6 +704,17 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
++     case "SET_ASR_REFINER_ENABLED":
++       chrome.storage.local.set({ asrRefinerEnabled: action.enabled })
++       return { ...state, asrRefinerEnabled: action.enabled }
+++    case "SET_DICTATION_HOTKEY_ENABLED":
+++      chrome.storage.local.set({ dictationHotkeyEnabled: action.enabled === true })
+++      return { ...state, dictationHotkeyEnabled: action.enabled === true }
+++    case "SET_DICTATION_HOTKEY_CHORD": {
+++      const chord =
+++        typeof action.chord === "string" && action.chord.trim()
+++          ? action.chord.trim()
+++          : "Control+Shift+Space"
+++      chrome.storage.local.set({ dictationHotkeyChord: chord })
+++      return { ...state, dictationHotkeyChord: chord }
+++    }
++     case "ADD_SECURITY_CONFIRMATION":
++       return {
++         ...state,
++diff --git a/chrome-extension/src/sidepanel/voice/hotkey-chord.ts b/chrome-extension/src/sidepanel/voice/hotkey-chord.ts
++new file mode 100644
++index 0000000..c8a2ce2
++--- /dev/null
+++++ b/chrome-extension/src/sidepanel/voice/hotkey-chord.ts
++@@ -0,0 +1,122 @@
+++/**
+++ * Dictation+ D2 — hold hotkey chord parse / validate (pure).
+++ * SoT: 2026-08-07-dictation-plus-design.md §5.2
+++ */
+++
+++export type HotkeyChord = {
+++  /** Normalized parts for matching KeyboardEvent */
+++  ctrl: boolean
+++  alt: boolean
+++  shift: boolean
+++  meta: boolean
+++  /** Lowercase key: "space" | "a" | "f1" | ... */
+++  key: string
+++  /** Display label */
+++  label: string
+++}
+++
+++/** Suggested presets (no bare fn / Win+V). */
+++export const DICTATION_HOTKEY_PRESETS: Array<{ id: string; label: string; chord: string }> = [
+++  { id: "ctrl-shift-space", label: "Ctrl+Shift+Space", chord: "Control+Shift+Space" },
+++  { id: "alt-space", label: "Alt+Space / ⌥Space", chord: "Alt+Space" },
+++  { id: "ctrl-alt-space", label: "Ctrl+Alt+Space", chord: "Control+Alt+Space" },
+++  { id: "ctrl-shift-d", label: "Ctrl+Shift+D", chord: "Control+Shift+D" },
+++]
+++
+++export const DICTATION_HOTKEY_DEFAULT_CHORD = "Control+Shift+Space"
+++
+++const FORBIDDEN = new Set([
+++  "fn",
+++  "function",
+++  "metaleft",
+++  "metaright",
+++  // Win+V clipboard history — never default / never allow as sole chord
+++])
+++
+++/**
+++ * Parse "Control+Shift+Space" style chord.
+++ * Returns null if empty, bare modifier, or forbidden (fn / Win+V alone).
+++ */
+++export function parseHotkeyChord(raw: string | null | undefined): HotkeyChord | null {
+++  if (typeof raw !== "string" || !raw.trim()) return null
+++  const parts = raw
+++    .split("+")
+++    .map((p) => p.trim())
+++    .filter(Boolean)
+++  if (parts.length < 2) return null
+++
+++  let ctrl = false
+++  let alt = false
+++  let shift = false
+++  let meta = false
+++  let key = ""
+++
+++  for (const p of parts) {
+++    const low = p.toLowerCase()
+++    if (low === "control" || low === "ctrl" || low === "⌃") ctrl = true
+++    else if (low === "alt" || low === "option" || low === "⌥") alt = true
+++    else if (low === "shift" || low === "⇧") shift = true
+++    else if (low === "meta" || low === "cmd" || low === "command" || low === "⌘" || low === "win" || low === "windows") {
+++      meta = true
+++    } else if (FORBIDDEN.has(low)) {
+++      return null
+++    } else {
+++      key = low === " " ? "space" : low
+++    }
+++  }
+++
+++  if (!key) return null
+++  // Forbid Win+V / Meta+V (clipboard)
+++  if (meta && key === "v" && !ctrl && !alt && !shift) return null
+++  if (key === "fn" || key === "function") return null
+++  // Require at least one modifier for safety
+++  if (!ctrl && !alt && !shift && !meta) return null
+++
+++  const labelParts: string[] = []
+++  if (ctrl) labelParts.push("Ctrl")
+++  if (alt) labelParts.push("Alt")
+++  if (shift) labelParts.push("Shift")
+++  if (meta) labelParts.push("Meta")
+++  labelParts.push(key === "space" ? "Space" : key.length === 1 ? key.toUpperCase() : key)
+++
+++  return {
+++    ctrl,
+++    alt,
+++    shift,
+++    meta,
+++    key,
+++    label: labelParts.join("+"),
+++  }
+++}
+++
+++/** Match KeyboardEvent (keydown/keyup) against chord. */
+++export function eventMatchesChord(
+++  e: { key: string; code?: string; ctrlKey: boolean; altKey: boolean; shiftKey: boolean; metaKey: boolean },
+++  chord: HotkeyChord,
+++): boolean {
+++  if (e.ctrlKey !== chord.ctrl) return false
+++  if (e.altKey !== chord.alt) return false
+++  if (e.shiftKey !== chord.shift) return false
+++  if (e.metaKey !== chord.meta) return false
+++
+++  const k = (e.key || "").toLowerCase()
+++  const code = (e.code || "").toLowerCase()
+++  if (chord.key === "space") {
+++    return k === " " || k === "spacebar" || k === "space" || code === "space"
+++  }
+++  if (chord.key.length === 1) {
+++    return k === chord.key || code === `key${chord.key}`
+++  }
+++  return k === chord.key || code === chord.key
+++}
+++
+++/** Serialize for storage. */
+++export function formatChord(c: HotkeyChord): string {
+++  const parts: string[] = []
+++  if (c.ctrl) parts.push("Control")
+++  if (c.alt) parts.push("Alt")
+++  if (c.shift) parts.push("Shift")
+++  if (c.meta) parts.push("Meta")
+++  parts.push(c.key === "space" ? "Space" : c.key.length === 1 ? c.key.toUpperCase() : c.key)
+++  return parts.join("+")
+++}
++diff --git a/chrome-extension/tests/hotkey-chord.test.ts b/chrome-extension/tests/hotkey-chord.test.ts
++new file mode 100644
++index 0000000..68f0eb6
++--- /dev/null
+++++ b/chrome-extension/tests/hotkey-chord.test.ts
++@@ -0,0 +1,46 @@
+++import test from "node:test"
+++import assert from "node:assert/strict"
+++import {
+++  parseHotkeyChord,
+++  eventMatchesChord,
+++  DICTATION_HOTKEY_DEFAULT_CHORD,
+++  formatChord,
+++} from "../src/sidepanel/voice/hotkey-chord"
+++
+++test("parse default Control+Shift+Space", () => {
+++  const c = parseHotkeyChord(DICTATION_HOTKEY_DEFAULT_CHORD)
+++  assert.ok(c)
+++  assert.equal(c!.ctrl, true)
+++  assert.equal(c!.shift, true)
+++  assert.equal(c!.key, "space")
+++})
+++
+++test("forbid bare key and Win+V", () => {
+++  assert.equal(parseHotkeyChord("Space"), null)
+++  assert.equal(parseHotkeyChord("Meta+V"), null)
+++  assert.equal(parseHotkeyChord("fn"), null)
+++})
+++
+++test("eventMatchesChord space", () => {
+++  const c = parseHotkeyChord("Control+Shift+Space")!
+++  assert.equal(
+++    eventMatchesChord(
+++      { key: " ", ctrlKey: true, altKey: false, shiftKey: true, metaKey: false },
+++      c,
+++    ),
+++    true,
+++  )
+++  assert.equal(
+++    eventMatchesChord(
+++      { key: " ", ctrlKey: true, altKey: false, shiftKey: false, metaKey: false },
+++      c,
+++    ),
+++    false,
+++  )
+++})
+++
+++test("formatChord round-trip label", () => {
+++  const c = parseHotkeyChord("Alt+Space")!
+++  assert.match(formatChord(c), /Alt/)
+++  assert.match(formatChord(c), /Space/i)
+++})
++diff --git a/companion/src/message-router.ts b/companion/src/message-router.ts
++index 42be145..8a7605c 100644
++--- a/companion/src/message-router.ts
+++++ b/companion/src/message-router.ts
++@@ -48,6 +48,7 @@ import { handleComputerModelMessage } from "./computer/model-handlers"
++ import { handleVoiceModelMessage } from "./voice/whisper-handlers"
++ import { handleVoiceSttMessage } from "./voice/stt-handlers"
++ import { handleVoiceRefineMessage } from "./voice/refine-handlers"
+++import { handleDictationHoldState } from "./voice/dictation-hotkey"
++ import { handleMeetingMessage } from "./meeting/meeting-handlers"
++ import {
++   buildUserEnvPublic,
++@@ -1921,6 +1922,31 @@ export async function handleMessage(
++         peerId: session?.panelId,
++         send: session?.sendToExtension,
++       })
+++    case "voice.dictation.hold_state":
+++      return handleDictationHoldState(
+++        msg,
+++        { origin: session?.origin },
+++        {
+++          onHoldChange: (active, chord) => {
+++            // System notification as Mode B indicator (SoT §5.6 "CMspark · 草稿")
+++            if (!active) return
+++            try {
+++              const notifier = require("node-notifier") as {
+++                notify: (o: Record<string, unknown>) => void
+++              }
+++              notifier.notify({
+++                title: "CMspark · 草稿",
+++                message: chord
+++                  ? `按住听写中（${chord}）· 松手结束`
+++                  : "按住听写中 · 松手结束",
+++                timeout: 2,
+++              })
+++            } catch {
+++              /* optional */
+++            }
+++          },
+++        },
+++      )
++     case "meeting.create":
++     case "meeting.start":
++     case "meeting.end":
++diff --git a/companion/src/packs/types.ts b/companion/src/packs/types.ts
++index d7ea7ae..96de688 100644
++--- a/companion/src/packs/types.ts
+++++ b/companion/src/packs/types.ts
++@@ -267,7 +267,7 @@ export const FORBIDDEN_PACK_KEYS = new Set([
++  * rejected/stripped — no trust-block exception.
++  */
++ export const VOICE_FORBIDDEN_KEY_RE =
++-  /^(voice|sttEngine|localModelId|voiceStt|voice_privacy|voiceAutoSend|asr_refiner|refiner_prompt|dictation_polish|rewrite_mode|audio_retain|autoStart)/i
+++  /^(voice|sttEngine|localModelId|voiceStt|voice_privacy|voiceAutoSend|asr_refiner|refiner_prompt|dictation_polish|rewrite_mode|audio_retain|autoStart|hotkey|dictationHotkey|dictation_hotkey)/i
++ 
++ /** True when a pack.yaml object key must never appear (voice risk). */
++ export function isVoiceForbiddenPackKey(key: string): boolean {
++diff --git a/companion/src/server.ts b/companion/src/server.ts
++index 0a71781..e3a7ed2 100644
++--- a/companion/src/server.ts
+++++ b/companion/src/server.ts
++@@ -5849,6 +5849,14 @@ export function validateWsMessage(msg: any): WsValidationResult {
++       }
++       return { valid: true }
++     },
+++    // Dictation+ D2 hold indicator (control plane; no audio)
+++    "voice.dictation.hold_state": (m) => {
+++      if (m.v !== 1) return { valid: false, error: "voice.dictation.hold_state requires v:1" }
+++      if (typeof m.active !== "boolean") {
+++        return { valid: false, error: "voice.dictation.hold_state requires active boolean" }
+++      }
+++      return { valid: true }
+++    },
++     // Meeting minutes scene (Mtg0/Mtg1)
++     "meeting.create": (m) => {
++       if (m.v !== 1) return { valid: false, error: "meeting.create requires v:1" }
++diff --git a/companion/src/voice/dictation-hotkey.ts b/companion/src/voice/dictation-hotkey.ts
++new file mode 100644
++index 0000000..502b5f9
++--- /dev/null
+++++ b/companion/src/voice/dictation-hotkey.ts
++@@ -0,0 +1,64 @@
+++/**
+++ * Dictation+ D2 — hold-state fan-out to tray (control plane only; no audio).
+++ * SoT: 2026-08-07-dictation-plus-design.md §5.2 / §9
+++ */
+++
+++import { logger } from "../logger"
+++
+++export type HoldStateMsg = {
+++  type: "voice.dictation.hold_state"
+++  v: 1
+++  active: boolean
+++  chord?: string
+++}
+++
+++let lastHoldActive = false
+++
+++/** Process-global last hold flag (tests / tray poll). */
+++export function isDictationHoldActive(): boolean {
+++  return lastHoldActive
+++}
+++
+++export type HoldStateHandlerDeps = {
+++  /** Notify tray / HUD: "CMspark · 草稿" listening indicator. */
+++  onHoldChange?: (active: boolean, chord?: string) => void
+++  isExtensionOrigin?: (origin: string | undefined) => boolean
+++}
+++
+++/**
+++ * Handle voice.dictation.hold_state from chrome-extension origin.
+++ * Does not open mic; extension owns gUM / STT.
+++ */
+++export function handleDictationHoldState(
+++  msg: any,
+++  ctx: { origin?: string } = {},
+++  deps: HoldStateHandlerDeps = {},
+++): { type: string; v: number; ok?: boolean; code?: string; message?: string; active?: boolean } {
+++  const originOk =
+++    deps.isExtensionOrigin?.(ctx.origin) ??
+++    (typeof ctx.origin === "string" && /^chrome-extension:\/\/[A-Za-z0-9_-]+$/.test(ctx.origin))
+++  if (!originOk) {
+++    logger.warn("voice.dictation.hold_state.refused", { reason: "origin" })
+++    return { type: "voice.dictation.error", v: 1, code: "origin_denied", message: "chrome-extension origin required" }
+++  }
+++  if (msg?.v !== 1) {
+++    return { type: "voice.dictation.error", v: 1, code: "bad_version", message: "v:1 required" }
+++  }
+++  const active = msg.active === true
+++  const chord = typeof msg.chord === "string" ? msg.chord.slice(0, 64) : undefined
+++  lastHoldActive = active
+++  try {
+++    deps.onHoldChange?.(active, chord)
+++  } catch (e) {
+++    logger.warn("voice.dictation.hold_state.tray_failed", {
+++      err: e instanceof Error ? e.message : String(e),
+++    })
+++  }
+++  logger.info("voice.dictation.hold_state", { active, chord: chord || undefined })
+++  return { type: "voice.dictation.hold_state_ack", v: 1, ok: true, active }
+++}
+++
+++/** Test helper */
+++export function resetDictationHoldStateForTests(): void {
+++  lastHoldActive = false
+++}
++diff --git a/companion/tests/dictation-hotkey.test.ts b/companion/tests/dictation-hotkey.test.ts
++new file mode 100644
++index 0000000..0b7d024
++--- /dev/null
+++++ b/companion/tests/dictation-hotkey.test.ts
++@@ -0,0 +1,41 @@
+++/**
+++ * Dictation+ D2 hold_state control plane.
+++ */
+++import test from "node:test"
+++import assert from "node:assert/strict"
+++import {
+++  handleDictationHoldState,
+++  isDictationHoldActive,
+++  resetDictationHoldStateForTests,
+++} from "../src/voice/dictation-hotkey"
+++
+++const EXT = "chrome-extension://abcdefghijklmnopqrstuvwxyz"
+++
+++test("hold_state origin denied", () => {
+++  resetDictationHoldStateForTests()
+++  const r = handleDictationHoldState(
+++    { type: "voice.dictation.hold_state", v: 1, active: true },
+++    { origin: "cmspark-tray://local" },
+++  )
+++  assert.equal(r.code, "origin_denied")
+++  assert.equal(isDictationHoldActive(), false)
+++})
+++
+++test("hold_state toggles active", () => {
+++  resetDictationHoldStateForTests()
+++  let seen: boolean | null = null
+++  const on = handleDictationHoldState(
+++    { type: "voice.dictation.hold_state", v: 1, active: true, chord: "Ctrl+Shift+Space" },
+++    { origin: EXT },
+++    { onHoldChange: (a) => { seen = a } },
+++  )
+++  assert.equal(on.ok, true)
+++  assert.equal(isDictationHoldActive(), true)
+++  assert.equal(seen, true)
+++  const off = handleDictationHoldState(
+++    { type: "voice.dictation.hold_state", v: 1, active: false },
+++    { origin: EXT },
+++  )
+++  assert.equal(off.active, false)
+++  assert.equal(isDictationHoldActive(), false)
+++})
++diff --git a/docs/GOAL.md b/docs/GOAL.md
++index c2987d6..706937b 100644
++--- a/docs/GOAL.md
+++++ b/docs/GOAL.md
++@@ -1,6 +1,6 @@
++ # CMspark Browser Agent — 项目目标
++ 
++-> 版本: 1.5.0 | 日期: 2026-08-05 | 当前阶段：安全稳定化 MVP（核心已完成）→ 功能扩展中（产品 **0.4.0**）
+++> 版本: 1.6.0 | 日期: 2026-08-08 | 当前阶段：安全稳定化 MVP（核心已完成）→ 功能扩展中（产品 **0.4.0**）
++ 
++ ---
++ 
++@@ -275,6 +275,21 @@ Agent 可以在用户授权下对任意标签页执行全部 26 种工具操作
++ - 成功门：Phase 0 bake-off 证明已登录/SSO 会话相对 Playwright 不可替代（T1），否则 pivot 只读或垂直 API。
++ - 当前：`companion/src/outbound-mcp/` 门禁骨架；真桥 / L8 托盘确认 / L9 tab lease / grant 模型按 ADR 分阶段。
++ 
+++### G22. 听写+（Dictation+）与 会议记录 ✅ 已实现（0.4.x · 2026-08）· **S:L0 + C(Pack)**
+++
+++**Trust / 协议 SoT**：[ADR-024](adr/024-dictation-plus-asr-refiner-meeting.md) · 用户指南：[meeting-and-dictation-user-guide.md](meeting-and-dictation-user-guide.md)
+++
+++| 线 | 波次 | 内容 |
+++|----|------|------|
+++| 听写+ | D1a–c | classic 默认；continuous；ASR Refiner（correct_only）；本机分段 |
+++| 听写+ | **D2** | 按住热键 hold（默认关；禁 fn/Win+V 默认） |
+++| 会议 | Mtg0 | Pack「会议记录」+ 粘贴 → 纪要 job |
+++| 会议 | Mtg1 | 工作台 live 本机录 + ack + 默认删音频 + 听写互斥 |
+++| 会议 | Mtg2 | 手动 speaker / 静音切 / 文件上传；系统混音 [parking](superpowers/specs/2026-08-08-meeting-system-audio-parking.md) |
+++| 会议 | Mtg3 | 实验匿名「发言人N」k-means（非身份 SLA） |
+++
+++**明确非目标（本阶段）**：系统级注入任意 App；边听边 LLM 改稿（D3 CANCELLED）；系统混音产品化；身份级 diarize。
+++
++ ---
++ 
++ ## 架构约束
++diff --git a/docs/README.md b/docs/README.md
++index 8c7c3a9..ca24c13 100644
++--- a/docs/README.md
+++++ b/docs/README.md
++@@ -21,6 +21,7 @@
++ | [host-and-apps.md](host-and-apps.md) | **Surface L2**（语义 Host） | Host 读写、Apps 白名单、生物识别边界 |
++ | [multi-agent-user-guide.md](multi-agent-user-guide.md) | **Autonomy**（Worker≈L1） | spawn_worker、tab 锁、Mission Board、上限 |
++ | [notebooklm-user-guide.md](notebooklm-user-guide.md) | **产品特性**（非组合原语） | NotebookLM 导入器、权限、结果 |
+++| [meeting-and-dictation-user-guide.md](meeting-and-dictation-user-guide.md) | **产品特性** L0 输入 / Pack | 听写+（含按住热键）· 会议 Mtg0–3 · 真机验收清单 |
++ | [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | — | 常见故障速查 |
++ 
++ ### 导出 / 图表（产品特性 · ADR 即用户向说明）
++@@ -71,6 +72,7 @@
++ | 021 | 无人值守 · 桌面会话 grant | [021](adr/021-unattended-desktop-session.md) |
++ | **022** | **Outbound MCP Server**（编程 Agent 的 L1 浏览器面） | [022](adr/022-outbound-mcp-server.md) |
++ | **023** | **本机语音识别 Path B**（Local STT / whisper.cpp） | [023](adr/023-voice-local-stt-path-b.md) |
+++| **024** | **听写+ · ASR Refiner · 会议落盘** | [024](adr/024-dictation-plus-asr-refiner-meeting.md) |
++ 
++ 过程件：UI 三模式 / Cockpit 以 `docs/superpowers/specs/` 与 [DESIGN.md](DESIGN.md) 为准（**勿**再记「拟议 ADR-019 UI」——019 已是 user-env）。
++ 
++diff --git a/docs/meeting-and-dictation-user-guide.md b/docs/meeting-and-dictation-user-guide.md
++new file mode 100644
++index 0000000..30d8e21
++--- /dev/null
+++++ b/docs/meeting-and-dictation-user-guide.md
++@@ -0,0 +1,118 @@
+++# 听写+ 与 会议记录 — 用户指南
+++
+++> 产品 **0.4.x** · Trust SoT：[ADR-024](adr/024-dictation-plus-asr-refiner-meeting.md)  
+++> 听写+ 设计：[dictation-plus SoT](superpowers/specs/2026-08-07-dictation-plus-design.md)  
+++> 会议设计：[meeting-minutes SoT](superpowers/specs/2026-08-07-meeting-minutes-design.md) · [Mtg3 diarize](superpowers/specs/2026-08-08-meeting-mtg3-diarize-design.md)
+++
+++---
+++
+++## 1. 两条产品线（不要混）
+++
+++| | **听写+（L-B）** | **会议记录（L-C）** |
+++|--|------------------|---------------------|
+++| 入口 | 主对话 composer 🎤 | 侧栏「会议」/ 任务包「会议记录」 |
+++| 产物 | 草稿文本（不自动发送） | 本地会话转写 + 结构化纪要 |
+++| 长录 STT | continuous：browser 或本机分段 | **仅本机**（或上传音频） |
+++| 说话人 | 无 | 手动 / 实验性「发言人N」 |
+++| Pack | **不得**改 voice / 热键 / ack | 仅 skills + 纪要 prompt |
+++
+++全局 **max-1**：会议录音中禁用听写；听写中无法开始会议录音。
+++
+++---
+++
+++## 2. 听写+
+++
+++### 2.1 形态
+++
+++1. **经典短听**（默认）：点按 🎤，约 ≤45 秒，无静默续听  
+++2. **连续听写**（设置 opt-in）：更长口述；浏览器自动续听；本机约 45 秒一段串行  
+++3. **按住热键（D2）**：设置中开启并选择组合键；**按住说话、松手结束**；默认关  
+++
+++时长：软提示约 5 分钟；硬上限默认 15 分钟（设置可调，绝对上限 30 分钟）。
+++
+++### 2.2 ASR 纠错
+++
+++- 默认 **关**；停录后可选一枪「识别纠错」（不是润色）  
+++- 只发**转写文本**给当前 Companion LLM，不发音频  
+++- 需隐私说明 **v3**；失败则保留识别原文  
+++
+++### 2.3 按住热键（D2）
+++
+++| 项 | 说明 |
+++|----|------|
+++| 默认 | **关闭** |
+++| 建议键 | mac：`⌃⇧Space` / `⌥Space`；Win：`Ctrl+Shift+Space` |
+++| **禁止默认** | bare `fn`、`Win+V` |
+++| 前置 | Companion 已连接 + **Side Panel 已打开**（可失焦） |
+++| 行为 | 按下 → 开始连续听写管线；松开 → 结束并可选纠错 |
+++| 互斥 | 与点按 🎤 同一会话；会议录音进行中会拒绝 |
+++| 反馈 | 侧栏内时长/状态；失焦时托盘/状态提示「CMspark · 草稿」语义 |
+++| Panel 关闭 | **失败可见**（不静默丢字） |
+++
+++侧栏打开且焦点在侧栏时，组合键由 Side Panel 捕获。macOS 托盘进程在已授权辅助功能时可注册**全局**同款组合（实验）；未授权时请先点开侧栏再按住。
+++
+++### 2.4 隐私 ack
+++
+++| 版本 | 何时 |
+++|------|------|
+++| v1 | 浏览器听写 |
+++| v2 | 本机 STT |
+++| v3 | 连续听写 / ASR 纠错 / 按住热键长听 |
+++
+++---
+++
+++## 3. 会议记录
+++
+++### 3.1 入口
+++
+++- 底栏 / 上下文 **会议**  
+++- 或 **任务包 → 会议记录**（应用 **不会**自动开麦）
+++
+++### 3.2 能力波次（已交付）
+++
+++| 波次 | 能力 |
+++|------|------|
+++| **Mtg0** | 粘贴转写 → 生成 TL;DR / 决议 / 待办 / 风险；复制 / 发到草稿 |
+++| **Mtg1** | 显式「开始录制」本机分段 STT；结束生成纪要；`meeting_privacy_ack_v1`；默认删音频 |
+++| **Mtg2** | 静音切分段；默认/批量说话人；上传 `.txt/.md`；上传音频 → 本机转写 |
+++| **Mtg3** | 实验：**自动标「发言人N」**（段特征 k-means，**非身份识别**）；弱标交替 |
+++
+++### 3.3 诚实边界
+++
+++- **不是**飞书/Otter 级多方 diarize SLA  
+++- **系统/会议软件混音**：未做产品能力，见 [parking 调研](superpowers/specs/2026-08-08-meeting-system-audio-parking.md)  
+++- 纪要 LLM **不得臆造**未出现的出席人/决议；已有标签可沿用  
+++
+++### 3.4 数据位置
+++
+++`~/.cmspark-agent/meetings/<id>/`（meta / transcript / minutes；权限收紧）
+++
+++---
+++
+++## 4. 真机验收清单（供用户自测）
+++
+++> 实现侧不代跑；合入后由你本地验收。
+++
+++### 听写+
+++
+++- [ ] classic 45s 行为与 M1 一致、不 auto-send  
+++- [ ] continuous ≥3 min 中文有字进草稿  
+++- [ ] ASR 纠错 off 无 LLM；on 失败保留 raw  
+++- [ ] 本机 continuous 多段合并  
+++- [ ] 开启按住热键后按住 ≥2s 松手 → 字进主线程草稿；侧栏关闭时有失败提示  
+++
+++### 会议
+++
+++- [ ] Pack 应用不开麦  
+++- [ ] 粘贴转写 → 纪要结构可读  
+++- [ ] 本机录 ≥1–5 min → 可编辑转写 → 纪要；默认无残留 audio  
+++- [ ] 上传音频 → 转写；可选自动「发言人N」；可手改  
+++- [ ] 听写与会议互斥提示  
+++
+++---
+++
+++## 5. 相关 ADR / 设置
+++
+++- [ADR-023 本机 STT](adr/023-voice-local-stt-path-b.md)  
+++- [ADR-024 听写+ · Refiner · 会议落盘](adr/024-dictation-plus-asr-refiner-meeting.md)  
+++- Side Panel → **设置 → 语音 / 听写**  
++diff --git a/docs/mission-pack-usage.md b/docs/mission-pack-usage.md
++index 35bb24d..c06a899 100644
++--- a/docs/mission-pack-usage.md
+++++ b/docs/mission-pack-usage.md
++@@ -354,5 +354,6 @@
++ | [ADR-015](adr/015-multi-agent-orchestrator-tab-lock.md) | Multi-agent orchestrator、tab lease、spawn HITL |
++ | [ADR-016](adr/016-mission-board.md) | Mission Board 工具与 UI |
++ | [architecture.md §7](architecture.md) | 模块 / 工具 / 代码落点 |
++-| [GOAL.md](GOAL.md) | 产品阶段与 G19 一带目标 |
+++| [GOAL.md](GOAL.md) | 产品阶段与 G19 / G22 一带目标 |
+++| [meeting-and-dictation-user-guide.md](meeting-and-dictation-user-guide.md) | 内置 Pack「会议记录」与听写+（**不会**因 apply Pack 自动开麦） |
++ )
++diff --git a/docs/superpowers/specs/2026-08-07-dictation-plus-design.md b/docs/superpowers/specs/2026-08-07-dictation-plus-design.md
++index 2f8c603..a107f4f 100644
++--- a/docs/superpowers/specs/2026-08-07-dictation-plus-design.md
+++++ b/docs/superpowers/specs/2026-08-07-dictation-plus-design.md
++@@ -1,7 +1,7 @@
++ # 听写+（Dictation+）— 产品设计 SoT
++ 
++ > **日期**: 2026-08-07  
++-> **状态**: **LOCKED for D1 planning / spike** — R1+R2 四路对抗 floors 已吸收  
+++> **状态**: **LOCKED** — D1a–c 已合 main；**D2 hold 热键** 实现中/合入见用户指南；R1+R2 floors 仍有效 
++ > **对抗合成**:  
++ > - R1：[continuous-dictation-meeting-adversary-synthesis-20260807.md](../../audit/reviews/continuous-dictation-meeting-adversary-synthesis-20260807.md)  
++ > - R2（yetone）：[voice-dictation-r2-yetone-adversary-synthesis-20260807.md](../../audit/reviews/voice-dictation-r2-yetone-adversary-synthesis-20260807.md)  
++@@ -310,7 +310,7 @@ Output ONLY the corrected transcript text, no quotes, no explanation.
++ | **D1a** | continuous Mode A + caps + REC + Panel 波形 | §11.1 |
++ | **D1b** | ASR Refiner + v3 + 同字测 | §11.2 |
++ | **D1c** | local 串行分段 | §11.3 |
++-| **D2** | hold hotkey + 分档 indicator | §11.4 |
+++| **D2** | hold hotkey + 分档 indicator（Side Panel 捕获；系统通知「CMspark · 草稿」） | §11.4 · 用户指南 |
++ | **D3** | incremental LLM | **CANCELLED** |
++ 
++ **Spikes 门禁**（实现前/宣称前）：S-WS1、S-LOC1、S-GUM-LONG、S-HK-*、S-HUD-MAC-VOICE、S-HUD-WIN-TRAY、S-REF1（见 R2 合成 §8）。
++diff --git a/docs/superpowers/specs/2026-08-08-meeting-mtg3-diarize-design.md b/docs/superpowers/specs/2026-08-08-meeting-mtg3-diarize-design.md
++index 34a4128..2409c83 100644
++--- a/docs/superpowers/specs/2026-08-08-meeting-mtg3-diarize-design.md
+++++ b/docs/superpowers/specs/2026-08-08-meeting-mtg3-diarize-design.md
++@@ -63,8 +63,17 @@
++ 
++ ---
++ 
++-## 6. 变更记录
+++## 6. 停车场（Mtg3.x+ · 未开）
+++
+++| 项 | 说明 |
+++|----|------|
+++| 词级 / pyannote 级 diarize | 需新模型与磁盘预算；另开对抗 |
+++| 云 diarize API | 禁止默认；若做须独立 ack |
+++| 真名识别 | 非目标 |
+++
+++## 7. 变更记录
++ 
++ | 日期 | 变更 |
++ |------|------|
++ | 2026-08-08 | Mtg3.0 LOCKED：本地段特征 k-means；非身份 SLA |
+++| 2026-08-08 | Mtg3.0 合入 main（#145）；增强项明确停车场 |
+diff --git a/docs/audit/reviews/dictation-d2-docs-dual-review-prompt.md b/docs/audit/reviews/dictation-d2-docs-dual-review-prompt.md
+new file mode 100644
+index 0000000..495de1f
+--- /dev/null
++++ b/docs/audit/reviews/dictation-d2-docs-dual-review-prompt.md
+@@ -0,0 +1,44 @@
++# Dual external review — Dictation D2 hold + docs
++
++**Batch**: `dictation-d2-docs`  
++**PR**: https://github.com/nehcuh/cmspark/pull/146  
++**Branch**: `feat/dictation-d2-hold-and-docs`  
++**Base**: `origin/main` (e6d659f)  
++**Blast tier**: **T2** (mic control plane + prefs; no new audio path)
++
++## Capability (ADR-020)
++
++```text
++Surface:      L0 composer draft only
++Compose:      Pack strip extended for hotkey* keys
++Autonomy:     n/a
++Trust:        hold reuses continuous privacy v3 gates; no Pack auto hotkey
++Channel:      community
++```
++
++## Shipped
++
++### D2 hold
++- Prefs default off; preset chords; ban bare fn / Meta+V
++- Side Panel capture keydown/keyup → holdStart (force continuous) / holdStop
++- meetingCaptureActive blocks; hold_state → companion origin fence + system notify 「CMspark · 草稿」
++- Pack strip includes hotkey keys
++
++### Docs
++- meeting-and-dictation-user-guide.md + 真机清单
++- GOAL G22, README ADR-024, mission-pack link
++- Mtg3 enhancement parking note
++
++### Honest limits
++- Hold requires Side Panel open and focused for key capture (not OS-global Accessibility tray register yet)
++- System audio still parking
++
++## Floors
++1. Default hotkey off  
++2. No fn / Win+V as allowed default chord  
++3. No auto-send  
++4. Origin fence on hold_state  
++5. Pack cannot set hotkey  
++6. Meeting xor dictation  
++
++End with: `VERDICT: APPROVE` | `VERDICT: APPROVE_WITH_NITS` | `VERDICT: REJECT`
+diff --git a/docs/audit/reviews/dictation-d2-docs-pi-20260808-111834.md b/docs/audit/reviews/dictation-d2-docs-pi-20260808-111834.md
+new file mode 100644
+index 0000000..5c1bc0f
+--- /dev/null
++++ b/docs/audit/reviews/dictation-d2-docs-pi-20260808-111834.md
+@@ -0,0 +1,24 @@
++## Dual external review — `dictation-d2-docs` (PR #146)
++
++**Scope verified**: patch is current — `git diff e6d659f..HEAD` matches the review patch byte-for-byte (19 files, +697/−6). New unit tests pass via the project harness (`tsc`-compiled: `hotkey-chord` 4/4, `dictation-hotkey` 2/2).
++
++**ADR-020 capability checklist** — declaration present and consistent with the diff:
++- Surface L0 (composer draft only) ✓; no new tools/gates beyond the declared axis.
++- Compose: Pack strip extended — `VOICE_FORBIDDEN_KEY_RE` now covers `hotkey|dictationHotkey|dictation_hotkey` (`companion/src/packs/types.ts:270`), so Pack cannot set the hotkey; hotkey is a Settings toggle, not a new scenario → Pack-first holds. No bare "中层 Agent" language anywhere.
++- Trust: hold reuses the continuous privacy-v3 gate (`toggle` in `useVoiceInput.ts` requires `privacyAckV3` when `continuousMode`) — monotonic, no loosening. No new confirm dialect (reuses v3 sheet). `originWs` N/A — no `securityConfirmations.request` added. Origin fence on `hold_state` mirrors the proven M1 pattern (`chrome-extension://` regex + `v:1`), and the WS origin is browser-enforced. No new runtime.
++- Floors 1–5 (default off, no fn/Win+V, no auto-send, origin fence, pack-can't-set-hotkey, meeting↔dictation xor) hold at static level — `MeetingPanel.tsx:499,672` block on `dictationCaptureActive` and D2 blocks on `meetingCaptureActive`.
++
++**Blocking issue (functional — the headline feature does not work as specified):**
++
++1. `chrome-extension/src/sidepanel/App.tsx:589–594` (dep array) + `App.tsx:582–586` (cleanup) + `useVoiceInput.ts:721–745` (return object)
++   The D2 effect depends on `voice`, which `useVoiceInput` returns as a **fresh object literal on every render**. During a hold, `InputArea` re-renders constantly (session phase transitions, `onDraft → setText` on every transcript merge, the 250ms `listenTick` interval, agentStore updates). Every re-render re-runs the effect, whose cleanup executes `if (down) { voice.holdStop(); notifyHold(false) }` — killing the live session. Worse, because Chrome's `perms.query().then(begin)` start path is async, `holdStart`'s `queueMicrotask` (`useVoiceInput.ts:677–683`) resets `holdSessionRef=false` and restores the saved mode ("classic") *before* `begin()` runs. Net effect on real Chrome: a classic 45s session starts (not continuous), release-to-stop never fires (the new closure's `down` is false, so `onKeyUp` early-returns), and the tray indicator blinks active→inactive while recording silently continues. Hold-to-talk (press→continuous, release→stop) is broken; the guide's own acceptance item 「按住 ≥2s 松手 → 字进草稿 / 松手结束」 cannot pass.
++
++2. `useVoiceInput.ts:682` — `holdStart` returns `true` unconditionally after passing guards, so `App.tsx` `if (ok) notifyHold(true)` always sends `hold_state active:true` even when the toggle's gates fail (e.g., missing v3 ack opens the privacy sheet instead of starting) → false "CMspark · 草稿" tray indication with nothing recording.
++
++**Nits (non-blocking):**
++- `useVoiceInput.ts:738` `holdActive: holdSessionRef.current` is a render-time ref read — never updates post-mount and has zero consumers; dead/stale API.
++- Docs over-claim: `docs/GOAL.md` G22 and `docs/meeting-and-dictation-user-guide.md` §2.3 mark D2 已实现 with hold semantics, while the wiring is broken and real-device verification is explicitly deferred.
++- Guide §2.3 says "Side Panel 已打开（可失焦）" yet also "焦点在侧栏时…捕获" — window-level listeners only fire when the panel window is focused; internal contradiction (minor).
++- No test covers the React hold wiring — only pure `parseHotkeyChord`/`formatChord` and the companion handler; the critical bug is untested.
++
++VERDICT: REJECT
+diff --git a/docs/audit/reviews/dictation-d2-docs-verdict-20260808-111834.json b/docs/audit/reviews/dictation-d2-docs-verdict-20260808-111834.json
+new file mode 100644
+index 0000000..c07b409
+--- /dev/null
++++ b/docs/audit/reviews/dictation-d2-docs-verdict-20260808-111834.json
+@@ -0,0 +1,8 @@
++{
++  "batch": "dictation-d2-docs",
++  "timestamp": "20260808-111834",
++  "claude": { "verdict": "REJECT", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/dictation-d2-docs-claude-20260808-111834.md" },
++  "pi": { "verdict": "REJECT", "exit_code": 0, "path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/dictation-d2-docs-pi-20260808-111834.md" },
++  "both_approve": false,
++  "diff_path": "/Users/huchen/Projects/cmspark/docs/audit/reviews/dictation-d2-docs-diff-20260808-111834.patch"
++}
+diff --git a/docs/meeting-and-dictation-user-guide.md b/docs/meeting-and-dictation-user-guide.md
+new file mode 100644
+index 0000000..1d2c4e3
+--- /dev/null
++++ b/docs/meeting-and-dictation-user-guide.md
+@@ -0,0 +1,118 @@
++# 听写+ 与 会议记录 — 用户指南
++
++> 产品 **0.4.x** · Trust SoT：[ADR-024](adr/024-dictation-plus-asr-refiner-meeting.md)  
++> 听写+ 设计：[dictation-plus SoT](superpowers/specs/2026-08-07-dictation-plus-design.md)  
++> 会议设计：[meeting-minutes SoT](superpowers/specs/2026-08-07-meeting-minutes-design.md) · [Mtg3 diarize](superpowers/specs/2026-08-08-meeting-mtg3-diarize-design.md)
++
++---
++
++## 1. 两条产品线（不要混）
++
++| | **听写+（L-B）** | **会议记录（L-C）** |
++|--|------------------|---------------------|
++| 入口 | 主对话 composer 🎤 | 侧栏「会议」/ 任务包「会议记录」 |
++| 产物 | 草稿文本（不自动发送） | 本地会话转写 + 结构化纪要 |
++| 长录 STT | continuous：browser 或本机分段 | **仅本机**（或上传音频） |
++| 说话人 | 无 | 手动 / 实验性「发言人N」 |
++| Pack | **不得**改 voice / 热键 / ack | 仅 skills + 纪要 prompt |
++
++全局 **max-1**：会议录音中禁用听写；听写中无法开始会议录音。
++
++---
++
++## 2. 听写+
++
++### 2.1 形态
++
++1. **经典短听**（默认）：点按 🎤，约 ≤45 秒，无静默续听  
++2. **连续听写**（设置 opt-in）：更长口述；浏览器自动续听；本机约 45 秒一段串行  
++3. **按住热键（D2）**：设置中开启并选择组合键；**按住说话、松手结束**；默认关  
++
++时长：软提示约 5 分钟；硬上限默认 15 分钟（设置可调，绝对上限 30 分钟）。
++
++### 2.2 ASR 纠错
++
++- 默认 **关**；停录后可选一枪「识别纠错」（不是润色）  
++- 只发**转写文本**给当前 Companion LLM，不发音频  
++- 需隐私说明 **v3**；失败则保留识别原文  
++
++### 2.3 按住热键（D2）
++
++| 项 | 说明 |
++|----|------|
++| 默认 | **关闭** |
++| 建议键 | mac：`⌃⇧Space` / `⌥Space`；Win：`Ctrl+Shift+Space` |
++| **禁止默认** | bare `fn`、`Win+V` |
++| 前置 | Companion 已连接 + **Side Panel 打开且获得键盘焦点** |
++| 行为 | 按下 → 开始**连续**听写管线；松开 → 结束并可选纠错 |
++| 互斥 | 与点按 🎤 同一会话；会议录音进行中会拒绝 |
++| 反馈 | 侧栏内时长/状态；开始时系统通知「CMspark · 草稿」 |
++| Panel 关闭/失焦 | 失焦会结束 hold；关闭侧栏后无法捕获组合键 |
++
++当前实现：组合键由 **Side Panel 窗口** `keydown`/`keyup` 捕获（面板需焦点）。OS 级全局热键（失焦仍按住）属后续增强，不在 D2.0 宣称范围。
++
++### 2.4 隐私 ack
++
++| 版本 | 何时 |
++|------|------|
++| v1 | 浏览器听写 |
++| v2 | 本机 STT |
++| v3 | 连续听写 / ASR 纠错 / 按住热键长听 |
++
++---
++
++## 3. 会议记录
++
++### 3.1 入口
++
++- 底栏 / 上下文 **会议**  
++- 或 **任务包 → 会议记录**（应用 **不会**自动开麦）
++
++### 3.2 能力波次（已交付）
++
++| 波次 | 能力 |
++|------|------|
++| **Mtg0** | 粘贴转写 → 生成 TL;DR / 决议 / 待办 / 风险；复制 / 发到草稿 |
++| **Mtg1** | 显式「开始录制」本机分段 STT；结束生成纪要；`meeting_privacy_ack_v1`；默认删音频 |
++| **Mtg2** | 静音切分段；默认/批量说话人；上传 `.txt/.md`；上传音频 → 本机转写 |
++| **Mtg3** | 实验：**自动标「发言人N」**（段特征 k-means，**非身份识别**）；弱标交替 |
++
++### 3.3 诚实边界
++
++- **不是**飞书/Otter 级多方 diarize SLA  
++- **系统/会议软件混音**：未做产品能力，见 [parking 调研](superpowers/specs/2026-08-08-meeting-system-audio-parking.md)  
++- 纪要 LLM **不得臆造**未出现的出席人/决议；已有标签可沿用  
++
++### 3.4 数据位置
++
++`~/.cmspark-agent/meetings/<id>/`（meta / transcript / minutes；权限收紧）
++
++---
++
++## 4. 真机验收清单（供用户自测）
++
++> 实现侧不代跑；合入后由你本地验收。
++
++### 听写+
++
++- [ ] classic 45s 行为与 M1 一致、不 auto-send  
++- [ ] continuous ≥3 min 中文有字进草稿  
++- [ ] ASR 纠错 off 无 LLM；on 失败保留 raw  
++- [ ] 本机 continuous 多段合并  
++- [ ] 开启按住热键后按住 ≥2s 松手 → 字进主线程草稿；侧栏关闭时有失败提示  
++
++### 会议
++
++- [ ] Pack 应用不开麦  
++- [ ] 粘贴转写 → 纪要结构可读  
++- [ ] 本机录 ≥1–5 min → 可编辑转写 → 纪要；默认无残留 audio  
++- [ ] 上传音频 → 转写；可选自动「发言人N」；可手改  
++- [ ] 听写与会议互斥提示  
++
++---
++
++## 5. 相关 ADR / 设置
++
++- [ADR-023 本机 STT](adr/023-voice-local-stt-path-b.md)  
++- [ADR-024 听写+ · Refiner · 会议落盘](adr/024-dictation-plus-asr-refiner-meeting.md)  
++- Side Panel → **设置 → 语音 / 听写**  
+diff --git a/docs/mission-pack-usage.md b/docs/mission-pack-usage.md
+index 35bb24d..c06a899 100644
+--- a/docs/mission-pack-usage.md
++++ b/docs/mission-pack-usage.md
+@@ -354,5 +354,6 @@
+ | [ADR-015](adr/015-multi-agent-orchestrator-tab-lock.md) | Multi-agent orchestrator、tab lease、spawn HITL |
+ | [ADR-016](adr/016-mission-board.md) | Mission Board 工具与 UI |
+ | [architecture.md §7](architecture.md) | 模块 / 工具 / 代码落点 |
+-| [GOAL.md](GOAL.md) | 产品阶段与 G19 一带目标 |
++| [GOAL.md](GOAL.md) | 产品阶段与 G19 / G22 一带目标 |
++| [meeting-and-dictation-user-guide.md](meeting-and-dictation-user-guide.md) | 内置 Pack「会议记录」与听写+（**不会**因 apply Pack 自动开麦） |
+ )
+diff --git a/docs/superpowers/specs/2026-08-07-dictation-plus-design.md b/docs/superpowers/specs/2026-08-07-dictation-plus-design.md
+index 2f8c603..a107f4f 100644
+--- a/docs/superpowers/specs/2026-08-07-dictation-plus-design.md
++++ b/docs/superpowers/specs/2026-08-07-dictation-plus-design.md
+@@ -1,7 +1,7 @@
+ # 听写+（Dictation+）— 产品设计 SoT
+ 
+ > **日期**: 2026-08-07  
+-> **状态**: **LOCKED for D1 planning / spike** — R1+R2 四路对抗 floors 已吸收  
++> **状态**: **LOCKED** — D1a–c 已合 main；**D2 hold 热键** 实现中/合入见用户指南；R1+R2 floors 仍有效 
+ > **对抗合成**:  
+ > - R1：[continuous-dictation-meeting-adversary-synthesis-20260807.md](../../audit/reviews/continuous-dictation-meeting-adversary-synthesis-20260807.md)  
+ > - R2（yetone）：[voice-dictation-r2-yetone-adversary-synthesis-20260807.md](../../audit/reviews/voice-dictation-r2-yetone-adversary-synthesis-20260807.md)  
+@@ -310,7 +310,7 @@ Output ONLY the corrected transcript text, no quotes, no explanation.
+ | **D1a** | continuous Mode A + caps + REC + Panel 波形 | §11.1 |
+ | **D1b** | ASR Refiner + v3 + 同字测 | §11.2 |
+ | **D1c** | local 串行分段 | §11.3 |
+-| **D2** | hold hotkey + 分档 indicator | §11.4 |
++| **D2** | hold hotkey + 分档 indicator（Side Panel 捕获；系统通知「CMspark · 草稿」） | §11.4 · 用户指南 |
+ | **D3** | incremental LLM | **CANCELLED** |
+ 
+ **Spikes 门禁**（实现前/宣称前）：S-WS1、S-LOC1、S-GUM-LONG、S-HK-*、S-HUD-MAC-VOICE、S-HUD-WIN-TRAY、S-REF1（见 R2 合成 §8）。
+diff --git a/docs/superpowers/specs/2026-08-08-meeting-mtg3-diarize-design.md b/docs/superpowers/specs/2026-08-08-meeting-mtg3-diarize-design.md
+index 34a4128..2409c83 100644
+--- a/docs/superpowers/specs/2026-08-08-meeting-mtg3-diarize-design.md
++++ b/docs/superpowers/specs/2026-08-08-meeting-mtg3-diarize-design.md
+@@ -63,8 +63,17 @@
+ 
+ ---
+ 
+-## 6. 变更记录
++## 6. 停车场（Mtg3.x+ · 未开）
++
++| 项 | 说明 |
++|----|------|
++| 词级 / pyannote 级 diarize | 需新模型与磁盘预算；另开对抗 |
++| 云 diarize API | 禁止默认；若做须独立 ack |
++| 真名识别 | 非目标 |
++
++## 7. 变更记录
+ 
+ | 日期 | 变更 |
+ |------|------|
+ | 2026-08-08 | Mtg3.0 LOCKED：本地段特征 k-means；非身份 SLA |
++| 2026-08-08 | Mtg3.0 合入 main（#145）；增强项明确停车场 |

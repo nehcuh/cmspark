@@ -1,6 +1,6 @@
 # CMspark Browser Agent — 项目目标
 
-> 版本: 1.5.0 | 日期: 2026-08-05 | 当前阶段：安全稳定化 MVP（核心已完成）→ 功能扩展中（产品 **0.4.0**）
+> 版本: 1.6.0 | 日期: 2026-08-08 | 当前阶段：安全稳定化 MVP（核心已完成）→ 功能扩展中（产品 **0.4.0**）
 
 ---
 
@@ -274,6 +274,21 @@ Agent 可以在用户授权下对任意标签页执行全部 26 种工具操作�
 - 目标：把 **curated L1** 浏览器面（`cmspark__*`）以 stdio MCP 导出给 Claude Code / Cursor 等；默认禁 L2 / cookies / shell；Skill 仅 adoption。
 - 成功门：Phase 0 bake-off 证明已登录/SSO 会话相对 Playwright 不可替代（T1），否则 pivot 只读或垂直 API。
 - 当前：`companion/src/outbound-mcp/` 门禁骨架；真桥 / L8 托盘确认 / L9 tab lease / grant 模型按 ADR 分阶段。
+
+### G22. 听写+（Dictation+）与 会议记录 ✅ 已实现（0.4.x · 2026-08）· **S:L0 + C(Pack)**
+
+**Trust / 协议 SoT**：[ADR-024](adr/024-dictation-plus-asr-refiner-meeting.md) · 用户指南：[meeting-and-dictation-user-guide.md](meeting-and-dictation-user-guide.md)
+
+| 线 | 波次 | 内容 |
+|----|------|------|
+| 听写+ | D1a–c | classic 默认；continuous；ASR Refiner（correct_only）；本机分段 |
+| 听写+ | **D2** | 按住热键 hold（默认关；Side Panel 焦点捕获；禁 fn/Win+V 默认） |
+| 会议 | Mtg0 | Pack「会议记录」+ 粘贴 → 纪要 job |
+| 会议 | Mtg1 | 工作台 live 本机录 + ack + 默认删音频 + 听写互斥 |
+| 会议 | Mtg2 | 手动 speaker / 静音切 / 文件上传；系统混音 [parking](superpowers/specs/2026-08-08-meeting-system-audio-parking.md) |
+| 会议 | Mtg3 | 实验匿名「发言人N」k-means（非身份 SLA） |
+
+**明确非目标（本阶段）**：系统级注入任意 App；边听边 LLM 改稿（D3 CANCELLED）；系统混音产品化；身份级 diarize。
 
 ---
 
