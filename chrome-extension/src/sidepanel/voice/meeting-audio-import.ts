@@ -226,6 +226,7 @@ export function transcribeWavViaStt(opts: {
           ok: false,
           code: typeof msg.code === "string" && msg.code ? msg.code : "stt_error",
         })
+        return
       }
     })
 

@@ -13,6 +13,44 @@ export const SOFT_LINE_CHARS = 280
 
 const SPEAKER_PREFIX = /^([^\n:]{1,32})\s*[:：]\s*(.+)$/u
 
+/**
+ * Common Chinese discourse labels that look like "X: body" but are NOT speakers.
+ * Dual-review nit: avoid feeding fake speakers into minutes LLM.
+ */
+export const SPEAKER_PREFIX_BLOCKLIST = new Set(
+  [
+    "注意",
+    "提醒",
+    "备注",
+    "结论",
+    "建议",
+    "摘要",
+    "总结",
+    "附录",
+    "风险",
+    "待办",
+    "决议",
+    "他说",
+    "她说",
+    "他们说",
+    "有人说",
+    "例如",
+    "比如",
+    "说明",
+    "提示",
+    "警告",
+    "问题",
+    "回答",
+    "注",
+    "ps",
+    "PS",
+    "Note",
+    "NOTE",
+    "TODO",
+    "FYI",
+  ].map((s) => s.toLowerCase()),
+)
+
 export type ParsedSpeakerLine = {
   speaker?: string
   text: string
@@ -20,7 +58,7 @@ export type ParsedSpeakerLine = {
 
 /**
  * Parse "Name: utterance" / "Name：utterance" prefixes.
- * Rejects pure times like "12:30" as speakers.
+ * Rejects pure times like "12:30", blocklisted discourse labels, and empty names.
  */
 export function parseSpeakerPrefix(raw: string): ParsedSpeakerLine {
   const t = raw.trim()
@@ -29,10 +67,13 @@ export function parseSpeakerPrefix(raw: string): ParsedSpeakerLine {
   if (!m) return { text: t }
   const name = m[1]!.trim()
   const rest = m[2]!.trim()
-  if (!rest) return { text: t }
+  if (!rest || !name) return { text: t }
   // Reject clock-like "12:30 left"
   if (/^\d{1,2}$/.test(name) && /^\d{2}/.test(rest)) return { text: t }
   if (/^\d+$/.test(name)) return { text: t }
+  if (SPEAKER_PREFIX_BLOCKLIST.has(name.toLowerCase())) return { text: t }
+  // Single CJK particle / punctuation-only — not a person label
+  if (name.length === 1 && /[的了吗呢吧啊哦嗯]/.test(name)) return { text: t }
   return { speaker: name.slice(0, 32), text: rest }
 }
 

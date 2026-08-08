@@ -109,6 +109,8 @@ export function MeetingPanel(props: {
   const audioFileRef = useRef<HTMLInputElement | null>(null)
   const defaultSpeakerRef = useRef("")
   const importAbortRef = useRef(false)
+  /** Skip server→textarea sync while user is typing (dual-review dirty-guard). */
+  const transcriptDirtyRef = useRef(false)
 
   const adapterRef = useRef<SpeechAdapter | null>(null)
   const captureStartRef = useRef<number | null>(null)
@@ -380,11 +382,18 @@ export function MeetingPanel(props: {
       if (msg.type === "meeting.updated" && msg.meeting) {
         setMeetingId(msg.meeting.id)
         setStatus(msg.meeting.status)
-        if (Array.isArray(msg.meeting.transcript) && msg.meeting.transcript.length > 0) {
+        // Only push server transcript when explicit cut/import ops or textarea not dirty
+        const forceSync = msg.cut === true
+        if (
+          Array.isArray(msg.meeting.transcript) &&
+          msg.meeting.transcript.length > 0 &&
+          (forceSync || !transcriptDirtyRef.current)
+        ) {
           const formatted = formatLinesFromMeeting(msg.meeting.transcript)
           if (formatted) {
             setTranscript(formatted)
             transcriptRef.current = formatted
+            if (forceSync) transcriptDirtyRef.current = false
           }
         }
         if (msg.meeting.minutes?.raw_md) setMinutesMd(msg.meeting.minutes.raw_md)
@@ -398,6 +407,7 @@ export function MeetingPanel(props: {
           const formatted = formatLinesFromMeeting(msg.meeting.transcript)
           setTranscript(formatted)
           transcriptRef.current = formatted
+          transcriptDirtyRef.current = false
         }
         setBusy(false)
         setImportStatus("已导入转写文件")
@@ -562,22 +572,14 @@ export function MeetingPanel(props: {
     setBusy(true)
     setError(null)
     ensureMeetingIdThen((id) => {
-      // Persist current textarea first (silence_cut on server)
-      if (transcriptRef.current.trim()) {
-        sendViaRuntime({
-          type: "meeting.set_transcript",
-          v: 1,
-          id,
-          text: transcriptRef.current,
-          source: "user_edit",
-          silence_cut: true,
-        })
-      }
-      setTimeout(() => {
-        sendViaRuntime({ type: "meeting.apply_silence_cut", v: 1, id })
-        setBusy(false)
-        setImportStatus("已应用静音切 / 段落分段（手动标说话人用）")
-      }, 60)
+      // Single WS: server applies text then silence-cut (no client setTimeout race)
+      sendViaRuntime({
+        type: "meeting.apply_silence_cut",
+        v: 1,
+        id,
+        text: transcriptRef.current.trim() || undefined,
+      })
+      setImportStatus("已应用静音切 / 段落分段（手动标说话人用）")
     })
   }
 
@@ -594,21 +596,14 @@ export function MeetingPanel(props: {
     }
     setBusy(true)
     ensureMeetingIdThen((id) => {
-      if (transcriptRef.current.trim()) {
-        sendViaRuntime({
-          type: "meeting.set_transcript",
-          v: 1,
-          id,
-          text: transcriptRef.current,
-          source: "user_edit",
-          silence_cut: true,
-        })
-      }
-      setTimeout(() => {
-        sendViaRuntime({ type: "meeting.bulk_speaker", v: 1, id, speaker: sp })
-        setBusy(false)
-        setImportStatus(`已将全部行标为「${sp}」（手动，非自动分离）`)
-      }, 60)
+      sendViaRuntime({
+        type: "meeting.bulk_speaker",
+        v: 1,
+        id,
+        speaker: sp,
+        text: transcriptRef.current.trim() || undefined,
+      })
+      setImportStatus(`已将全部行标为「${sp}」（手动，非自动分离）`)
     })
   }
 
@@ -626,6 +621,7 @@ export function MeetingPanel(props: {
         setImportStatus(null)
         return
       }
+      const truncated = text.length > 80_000
       sendViaRuntime({
         type: "meeting.import_text",
         v: 1,
@@ -635,6 +631,9 @@ export function MeetingPanel(props: {
         privacy_ack_v1: true,
         text: text.slice(0, 80_000),
       })
+      if (truncated) {
+        setImportStatus("已截断至 80000 字后导入（文件过长）")
+      }
     } catch {
       setError("读取文本文件失败")
       setBusy(false)
@@ -715,6 +714,8 @@ export function MeetingPanel(props: {
     }
 
     const total = decoded.segments.length
+    let failedAt: number | null = null
+    let done = 0
     setImportStatus(`本机转写 0/${total} 段…`)
     for (let i = 0; i < total; i++) {
       if (importAbortRef.current) break
@@ -729,16 +730,24 @@ export function MeetingPanel(props: {
         onMessage: subscribeVoiceStt,
       })
       if (r.ok === false) {
+        failedAt = i + 1
         setError(`音频第 ${i + 1} 段转写失败: ${r.code}`)
         break
       }
       if (r.text.trim()) {
         appendLocalAndRemote(r.text, id)
       }
+      done = i + 1
     }
 
     setBusy(false)
-    setImportStatus(importAbortRef.current ? "导入已中止" : "音频导入完成（暂不分说话人）")
+    if (importAbortRef.current) {
+      setImportStatus(`导入已中止（已完成 ${done}/${total} 段）`)
+    } else if (failedAt != null) {
+      setImportStatus(`导入部分失败（成功 ${done}/${total} 段，失败于第 ${failedAt} 段）`)
+    } else {
+      setImportStatus(`音频导入完成 ${done}/${total} 段（暂不分说话人）`)
+    }
     dispatch({ type: "SET_MEETING_CAPTURE_ACTIVE", active: false })
   }
 
@@ -1036,6 +1045,19 @@ export function MeetingPanel(props: {
           >
             上传音频转写
           </button>
+          {busy && importStatus?.includes("本机转写") && (
+            <button
+              type="button"
+              data-testid="meeting-import-abort"
+              onClick={() => {
+                importAbortRef.current = true
+                setImportStatus("正在中止…")
+              }}
+              style={btnStyle(false)}
+            >
+              中止导入
+            </button>
+          )}
         </div>
         <input
           ref={textFileRef}
@@ -1074,7 +1096,10 @@ export function MeetingPanel(props: {
         转写 / 口述文字（可编辑 · 支持「说话人: 正文」）
         <textarea
           value={transcript}
-          onChange={(e) => setTranscript(e.target.value)}
+          onChange={(e) => {
+            transcriptDirtyRef.current = true
+            setTranscript(e.target.value)
+          }}
           placeholder="粘贴会议转写，或开始录制/上传后自动填入…&#10;张三: 第一段&#10;&#10;李四: 第二段"
           rows={8}
           style={{

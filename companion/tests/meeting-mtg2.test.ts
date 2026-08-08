@@ -11,6 +11,7 @@ process.env.CMSPARK_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-mt
 
 import {
   silenceCutText,
+  silenceCutTimedLines,
   applySilenceCut,
   applySpeakersByIndex,
   bulkSetSpeaker,
@@ -27,6 +28,21 @@ test("parseSpeakerPrefix", () => {
   assert.deepEqual(parseSpeakerPrefix("张三: 你好"), { speaker: "张三", text: "你好" })
   assert.deepEqual(parseSpeakerPrefix("Alice：hello"), { speaker: "Alice", text: "hello" })
   assert.equal(parseSpeakerPrefix("no prefix here").speaker, undefined)
+  // discourse labels must not become speakers (dual-review nit)
+  assert.equal(parseSpeakerPrefix("注意：别迟到").speaker, undefined)
+  assert.equal(parseSpeakerPrefix("结论：下周发布").speaker, undefined)
+  assert.equal(parseSpeakerPrefix("他说：好的").speaker, undefined)
+  // clock-like
+  assert.equal(parseSpeakerPrefix("12:30 开会").speaker, undefined)
+})
+
+test("silenceCutTimedLines gap split", () => {
+  const lines = silenceCutTimedLines([
+    { text: "a", source: "stt", t0: 0, t1: 1 },
+    { text: "b", source: "stt", t0: 1.1, t1: 2 },
+    { text: "c", source: "stt", t0: 5, t1: 6 },
+  ])
+  assert.ok(lines.length >= 2)
 })
 
 test("silenceCutText splits paragraphs and prefixes", () => {

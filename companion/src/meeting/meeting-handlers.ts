@@ -195,12 +195,16 @@ export async function handleMeetingMessage(
 
   /**
    * Mtg2: re-apply silence-cut heuristic on stored transcript (manual labeling prep).
+   * Optional msg.text: replace transcript from text first (avoids client race after set_transcript).
    * Does NOT invent speakers.
    */
   if (type === "meeting.apply_silence_cut") {
     const id = typeof msg.id === "string" ? msg.id : ""
-    const m = loadMeeting(id)
+    let m = loadMeeting(id)
     if (!m) return err("not_found", "meeting not found", { id })
+    if (typeof msg.text === "string" && msg.text.trim()) {
+      m = setTranscript(id, silenceCutText(msg.text, "user_edit")) || m
+    }
     const next = applySilenceCut(m.transcript)
     const updated = replaceTranscript(id, next)
     if (!updated) return err("not_found", "meeting not found", { id })
@@ -218,21 +222,33 @@ export async function handleMeetingMessage(
     const raw = Array.isArray(msg.assignments) ? msg.assignments : []
     if (raw.length === 0) return err("invalid_assignments", "assignments required", { id })
     if (raw.length > 500) return err("invalid_assignments", "too many assignments", { id })
-    const assignments = raw.map((a: any) => ({
-      index: typeof a?.index === "number" ? a.index : -1,
-      speaker: a?.speaker == null || a.speaker === "" ? null : String(a.speaker).slice(0, 32),
-    }))
+    const assignments: Array<{ index: number; speaker: string | null }> = []
+    for (const a of raw) {
+      if (typeof a?.index !== "number" || !Number.isInteger(a.index) || a.index < 0) {
+        return err("invalid_assignments", "each assignment needs non-negative integer index", { id })
+      }
+      assignments.push({
+        index: a.index,
+        speaker: a?.speaker == null || a.speaker === "" ? null : String(a.speaker).slice(0, 32),
+      })
+    }
     const next = applySpeakersByIndex(m.transcript, assignments)
     const updated = replaceTranscript(id, next)
     if (!updated) return err("not_found", "meeting not found", { id })
     return { type: "meeting.updated", v: 1, meeting: updated }
   }
 
-  /** Mtg2: set one speaker on all lines (e.g. 「我」) or clear with speaker:null */
+  /**
+   * Mtg2: set one speaker on all lines (e.g. 「我」) or clear with speaker:null.
+   * Optional msg.text: set transcript (silence-cut) first — single round-trip, no client race.
+   */
   if (type === "meeting.bulk_speaker") {
     const id = typeof msg.id === "string" ? msg.id : ""
-    const m = loadMeeting(id)
+    let m = loadMeeting(id)
     if (!m) return err("not_found", "meeting not found", { id })
+    if (typeof msg.text === "string" && msg.text.trim()) {
+      m = setTranscript(id, silenceCutText(msg.text, "user_edit")) || m
+    }
     const speaker =
       msg.speaker == null || msg.speaker === ""
         ? null
@@ -240,7 +256,7 @@ export async function handleMeetingMessage(
     const next = bulkSetSpeaker(m.transcript, speaker)
     const updated = replaceTranscript(id, next)
     if (!updated) return err("not_found", "meeting not found", { id })
-    return { type: "meeting.updated", v: 1, meeting: updated }
+    return { type: "meeting.updated", v: 1, meeting: updated, cut: true }
   }
 
   /**
