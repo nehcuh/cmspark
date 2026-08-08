@@ -5893,6 +5893,37 @@ export function validateWsMessage(msg: any): WsValidationResult {
       }
       return { valid: true }
     },
+    "meeting.apply_silence_cut": (m) => {
+      if (m.v !== 1) return { valid: false, error: "meeting.apply_silence_cut requires v:1" }
+      if (typeof m.id !== "string" || !m.id) {
+        return { valid: false, error: "meeting.apply_silence_cut requires id" }
+      }
+      return { valid: true }
+    },
+    "meeting.set_speakers": (m) => {
+      if (m.v !== 1) return { valid: false, error: "meeting.set_speakers requires v:1" }
+      if (typeof m.id !== "string" || !m.id) return { valid: false, error: "meeting.set_speakers requires id" }
+      if (!Array.isArray(m.assignments)) {
+        return { valid: false, error: "meeting.set_speakers requires assignments array" }
+      }
+      return { valid: true }
+    },
+    "meeting.bulk_speaker": (m) => {
+      if (m.v !== 1) return { valid: false, error: "meeting.bulk_speaker requires v:1" }
+      if (typeof m.id !== "string" || !m.id) return { valid: false, error: "meeting.bulk_speaker requires id" }
+      return { valid: true }
+    },
+    "meeting.import_text": (m) => {
+      if (m.v !== 1) return { valid: false, error: "meeting.import_text requires v:1" }
+      if (m.privacy_ack_v1 !== true) {
+        return { valid: false, error: "meeting.import_text requires privacy_ack_v1:true" }
+      }
+      if (typeof m.text !== "string" || !m.text.trim()) {
+        return { valid: false, error: "meeting.import_text requires text" }
+      }
+      if (m.text.length > 80_000) return { valid: false, error: "meeting.import_text text too long" }
+      return { valid: true }
+    },
     "meeting.generate_minutes": (m) => {
       if (m.v !== 1) return { valid: false, error: "meeting.generate_minutes requires v:1" }
       const hasId = typeof m.id === "string" && m.id

@@ -1,7 +1,9 @@
 /**
- * Meeting workbench — Mtg0 paste + Mtg1 live capture (local segmented STT).
+ * Meeting workbench — Mtg0 paste + Mtg1 live capture + Mtg2 speaker/upload.
  * SoT: docs/superpowers/specs/2026-08-07-meeting-minutes-design.md
  * Does NOT auto-start mic on pack apply. Forces local STT for long capture.
+ * Mtg2: manual speaker labels, silence-cut heuristic, text/audio file import.
+ * NOT auto-diarize; system audio mix still parking-lot.
  */
 
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react"
@@ -10,11 +12,28 @@ import { tokens } from "../ui/tokens"
 import { createLocalSttAdapter } from "../voice/local-stt-adapter"
 import { detectLocalMediaCapture } from "../voice/local-stt-detect"
 import {
+  fileToWavSegments,
+  transcribeWavViaStt,
+} from "../voice/meeting-audio-import"
+import {
   VOICE_CONTINUOUS_HARD_CAP_MS,
   VOICE_CONTINUOUS_SOFT_CAP_MS,
   VOICE_DEFAULT_LANG,
 } from "../voice/detect"
 import type { SpeechAdapter } from "../voice/web-speech-adapter"
+
+/** Format companion transcript lines for textarea (Speaker: text). */
+function formatLinesFromMeeting(transcript: any[]): string {
+  if (!Array.isArray(transcript)) return ""
+  return transcript
+    .map((l) => {
+      const t = typeof l?.text === "string" ? l.text : ""
+      const sp = typeof l?.speaker === "string" ? l.speaker.trim() : ""
+      return sp ? `${sp}: ${t}` : t
+    })
+    .filter(Boolean)
+    .join("\n\n")
+}
 
 type CapturePhase = "idle" | "starting" | "recording" | "processing" | "stopping"
 
@@ -83,6 +102,13 @@ export function MeetingPanel(props: {
   const [elapsedMs, setElapsedMs] = useState(0)
   const [softCapHint, setSoftCapHint] = useState(false)
   const [pendingGenerate, setPendingGenerate] = useState(false)
+  /** Mtg2: optional default speaker for STT append / bulk label (manual only). */
+  const [defaultSpeaker, setDefaultSpeaker] = useState("")
+  const [importStatus, setImportStatus] = useState<string | null>(null)
+  const textFileRef = useRef<HTMLInputElement | null>(null)
+  const audioFileRef = useRef<HTMLInputElement | null>(null)
+  const defaultSpeakerRef = useRef("")
+  const importAbortRef = useRef(false)
 
   const adapterRef = useRef<SpeechAdapter | null>(null)
   const captureStartRef = useRef<number | null>(null)
@@ -98,6 +124,7 @@ export function MeetingPanel(props: {
   transcriptRef.current = transcript
   titleRef.current = title
   phaseRef.current = capturePhase
+  defaultSpeakerRef.current = defaultSpeaker
 
   const companionConnected = state.connectionState === "connected"
   const activeModelId = state.voiceModel?.localModelId || "medium"
@@ -170,8 +197,10 @@ export function MeetingPanel(props: {
   const appendLocalAndRemote = useCallback((chunk: string, id: string | null) => {
     const t = chunk.trim()
     if (!t) return
+    const sp = defaultSpeakerRef.current.trim().slice(0, 32)
+    const display = sp ? `${sp}: ${t}` : t
     setTranscript((prev) => {
-      const next = prev ? `${prev}\n${t}` : t
+      const next = prev ? `${prev}\n\n${display}` : display
       transcriptRef.current = next
       return next
     })
@@ -182,6 +211,7 @@ export function MeetingPanel(props: {
         id,
         text: t,
         source: "stt",
+        speaker: sp || undefined,
       })
     }
   }, [])
@@ -350,8 +380,27 @@ export function MeetingPanel(props: {
       if (msg.type === "meeting.updated" && msg.meeting) {
         setMeetingId(msg.meeting.id)
         setStatus(msg.meeting.status)
+        if (Array.isArray(msg.meeting.transcript) && msg.meeting.transcript.length > 0) {
+          const formatted = formatLinesFromMeeting(msg.meeting.transcript)
+          if (formatted) {
+            setTranscript(formatted)
+            transcriptRef.current = formatted
+          }
+        }
         if (msg.meeting.minutes?.raw_md) setMinutesMd(msg.meeting.minutes.raw_md)
         setBusy(false)
+      }
+      if (msg.type === "meeting.imported" && msg.meeting) {
+        setMeetingId(msg.meeting.id)
+        setTitle(msg.meeting.title || titleRef.current)
+        setStatus(msg.meeting.status || "ready")
+        if (Array.isArray(msg.meeting.transcript)) {
+          const formatted = formatLinesFromMeeting(msg.meeting.transcript)
+          setTranscript(formatted)
+          transcriptRef.current = formatted
+        }
+        setBusy(false)
+        setImportStatus("已导入转写文件")
       }
       if (msg.type === "meeting.minutes_result") {
         if (msg.minutes?.raw_md) setMinutesMd(msg.minutes.raw_md)
@@ -473,6 +522,226 @@ export function MeetingPanel(props: {
     }
   }
 
+  const ensureMeetingIdThen = (then: (id: string) => void) => {
+    if (meetingId) {
+      then(meetingId)
+      return
+    }
+    // Create then wait for meeting.created — fire create and use one-shot listener
+    const listener = (msg: any) => {
+      if (msg?.type === "meeting.created" && msg.meeting?.id) {
+        chrome.runtime.onMessage.removeListener(listener)
+        setMeetingId(msg.meeting.id)
+        then(msg.meeting.id)
+      }
+      return false
+    }
+    chrome.runtime.onMessage.addListener(listener)
+    sendViaRuntime({
+      type: "meeting.create",
+      v: 1,
+      title: title || undefined,
+      thread_id: state.activeThreadId || undefined,
+    })
+    // Fallback timeout remove
+    setTimeout(() => {
+      try {
+        chrome.runtime.onMessage.removeListener(listener)
+      } catch {
+        /* */
+      }
+    }, 8000)
+  }
+
+  const applySilenceCut = () => {
+    if (!ensureAck()) return
+    if (!meetingId && !transcript.trim()) {
+      setError("没有可分段的转写")
+      return
+    }
+    setBusy(true)
+    setError(null)
+    ensureMeetingIdThen((id) => {
+      // Persist current textarea first (silence_cut on server)
+      if (transcriptRef.current.trim()) {
+        sendViaRuntime({
+          type: "meeting.set_transcript",
+          v: 1,
+          id,
+          text: transcriptRef.current,
+          source: "user_edit",
+          silence_cut: true,
+        })
+      }
+      setTimeout(() => {
+        sendViaRuntime({ type: "meeting.apply_silence_cut", v: 1, id })
+        setBusy(false)
+        setImportStatus("已应用静音切 / 段落分段（手动标说话人用）")
+      }, 60)
+    })
+  }
+
+  const bulkLabelSpeaker = () => {
+    if (!ensureAck()) return
+    const sp = defaultSpeaker.trim().slice(0, 32)
+    if (!sp) {
+      setError("请先填写默认说话人标签（如「我」）")
+      return
+    }
+    if (!meetingId && !transcript.trim()) {
+      setError("没有可标注的转写")
+      return
+    }
+    setBusy(true)
+    ensureMeetingIdThen((id) => {
+      if (transcriptRef.current.trim()) {
+        sendViaRuntime({
+          type: "meeting.set_transcript",
+          v: 1,
+          id,
+          text: transcriptRef.current,
+          source: "user_edit",
+          silence_cut: true,
+        })
+      }
+      setTimeout(() => {
+        sendViaRuntime({ type: "meeting.bulk_speaker", v: 1, id, speaker: sp })
+        setBusy(false)
+        setImportStatus(`已将全部行标为「${sp}」（手动，非自动分离）`)
+      }, 60)
+    })
+  }
+
+  const onImportTextFile = async (file: File | null) => {
+    if (!file) return
+    if (!ensureAck()) return
+    setError(null)
+    setBusy(true)
+    setImportStatus(`读取 ${file.name}…`)
+    try {
+      const text = await file.text()
+      if (!text.trim()) {
+        setError("文件为空")
+        setBusy(false)
+        setImportStatus(null)
+        return
+      }
+      sendViaRuntime({
+        type: "meeting.import_text",
+        v: 1,
+        id: meetingId || undefined,
+        title: title || file.name.replace(/\.[^.]+$/, ""),
+        thread_id: state.activeThreadId || undefined,
+        privacy_ack_v1: true,
+        text: text.slice(0, 80_000),
+      })
+    } catch {
+      setError("读取文本文件失败")
+      setBusy(false)
+      setImportStatus(null)
+    }
+  }
+
+  const onImportAudioFile = async (file: File | null) => {
+    if (!file) return
+    if (!ensureAck()) return
+    if (!companionConnected) {
+      setError("Companion 未连接")
+      return
+    }
+    if (state.dictationCaptureActive || capturing) {
+      setError("听写或会议录音进行中，请先结束后再导入音频")
+      return
+    }
+    if (!state.voicePrivacyAckV2) {
+      setError("导入音频需本机语音隐私确认（voice_privacy_ack_v2）")
+      return
+    }
+    if (!localModelReady || !localBinaryReady) {
+      setError("本机转写模型或二进制未就绪")
+      return
+    }
+
+    setError(null)
+    setBusy(true)
+    importAbortRef.current = false
+    dispatch({ type: "SET_MEETING_CAPTURE_ACTIVE", active: true })
+    setImportStatus("解码音频…")
+
+    const decoded = await fileToWavSegments(file)
+    if (decoded.ok === false) {
+      setError(decoded.message)
+      setBusy(false)
+      setImportStatus(null)
+      dispatch({ type: "SET_MEETING_CAPTURE_ACTIVE", active: false })
+      return
+    }
+
+    // Ensure meeting exists
+    let id = meetingId
+    if (!id) {
+      id = await new Promise<string | null>((resolve) => {
+        const listener = (msg: any) => {
+          if (msg?.type === "meeting.created" && msg.meeting?.id) {
+            chrome.runtime.onMessage.removeListener(listener)
+            resolve(msg.meeting.id as string)
+          }
+          return false
+        }
+        chrome.runtime.onMessage.addListener(listener)
+        sendViaRuntime({
+          type: "meeting.create",
+          v: 1,
+          title: title || file.name.replace(/\.[^.]+$/, ""),
+          thread_id: state.activeThreadId || undefined,
+        })
+        setTimeout(() => {
+          try {
+            chrome.runtime.onMessage.removeListener(listener)
+          } catch {
+            /* */
+          }
+          resolve(null)
+        }, 8000)
+      })
+      if (id) setMeetingId(id)
+    }
+    if (!id) {
+      setError("无法创建会议会话")
+      setBusy(false)
+      setImportStatus(null)
+      dispatch({ type: "SET_MEETING_CAPTURE_ACTIVE", active: false })
+      return
+    }
+
+    const total = decoded.segments.length
+    setImportStatus(`本机转写 0/${total} 段…`)
+    for (let i = 0; i < total; i++) {
+      if (importAbortRef.current) break
+      const seg = decoded.segments[i]!
+      setImportStatus(`本机转写 ${i + 1}/${total} 段…`)
+      const sid = `mtg-imp-${id}-${i}-${Date.now().toString(36)}`
+      const r = await transcribeWavViaStt({
+        wav: seg.wav,
+        sessionId: sid,
+        modelId: activeModelId,
+        send: sendViaRuntime,
+        onMessage: subscribeVoiceStt,
+      })
+      if (r.ok === false) {
+        setError(`音频第 ${i + 1} 段转写失败: ${r.code}`)
+        break
+      }
+      if (r.text.trim()) {
+        appendLocalAndRemote(r.text, id)
+      }
+    }
+
+    setBusy(false)
+    setImportStatus(importAbortRef.current ? "导入已中止" : "音频导入完成（暂不分说话人）")
+    dispatch({ type: "SET_MEETING_CAPTURE_ACTIVE", active: false })
+  }
+
   const generate = () => {
     if (!ensureAck()) return
     if (capturing) {
@@ -492,6 +761,7 @@ export function MeetingPanel(props: {
         id: meetingId,
         text: transcript,
         source: "user_edit",
+        silence_cut: true,
       })
     }
     sendViaRuntime({
@@ -561,9 +831,9 @@ export function MeetingPanel(props: {
       </div>
 
       <div style={{ fontSize: 11, color: tokens.textSecondary, lineHeight: 1.45 }}>
-        粘贴转写，或显式「开始录制」用本机分段转写（最长约{" "}
-        {Math.round(VOICE_CONTINUOUS_HARD_CAP_MS / 60_000)} 分钟）。应用「会议记录」场景不会自动开麦。
-        录音与听写互斥。
+        粘贴 / 上传转写，或显式「开始录制」本机分段转写（最长约{" "}
+        {Math.round(VOICE_CONTINUOUS_HARD_CAP_MS / 60_000)} 分钟）。应用场景不会自动开麦。
+        录音与听写互斥。暂不分说话人（可手动标）；系统混音未支持。
       </div>
 
       {!ack && (
@@ -693,12 +963,119 @@ export function MeetingPanel(props: {
         )}
       </div>
 
+      {/* Mtg2: speaker + import */}
+      <div
+        data-testid="meeting-mtg2-tools"
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: 8,
+          padding: 10,
+          borderRadius: 8,
+          border: `1px solid ${tokens.border}`,
+          background: tokens.bg,
+        }}
+      >
+        <div style={{ fontSize: 12, fontWeight: 500 }}>说话人 / 导入（Mtg2 · 手动）</div>
+        <label style={{ fontSize: 11, color: tokens.textSecondary }}>
+          默认说话人标签（录制/导入 STT 追加时使用；可整表批量）
+          <input
+            data-testid="meeting-default-speaker"
+            value={defaultSpeaker}
+            onChange={(e) => setDefaultSpeaker(e.target.value)}
+            placeholder='如「我」或「张三」'
+            disabled={capturing}
+            style={{
+              display: "block",
+              width: "100%",
+              marginTop: 4,
+              padding: "6px 8px",
+              borderRadius: 6,
+              border: `1px solid ${tokens.border}`,
+              background: tokens.bgElevated,
+              color: tokens.text,
+              boxSizing: "border-box",
+              fontSize: 12,
+            }}
+          />
+        </label>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+          <button
+            type="button"
+            data-testid="meeting-silence-cut"
+            disabled={busy || capturing || !ack}
+            onClick={applySilenceCut}
+            style={btnStyle(false)}
+          >
+            静音切分段
+          </button>
+          <button
+            type="button"
+            data-testid="meeting-bulk-speaker"
+            disabled={busy || capturing || !ack}
+            onClick={bulkLabelSpeaker}
+            style={btnStyle(false)}
+          >
+            全部标为默认
+          </button>
+          <button
+            type="button"
+            data-testid="meeting-import-text"
+            disabled={busy || capturing || !ack}
+            onClick={() => textFileRef.current?.click()}
+            style={btnStyle(false)}
+          >
+            上传转写文件
+          </button>
+          <button
+            type="button"
+            data-testid="meeting-import-audio"
+            disabled={busy || capturing || !ack}
+            onClick={() => audioFileRef.current?.click()}
+            style={btnStyle(false)}
+          >
+            上传音频转写
+          </button>
+        </div>
+        <input
+          ref={textFileRef}
+          type="file"
+          accept=".txt,.md,text/plain,text/markdown"
+          style={{ display: "none" }}
+          onChange={(e) => {
+            const f = e.target.files?.[0] || null
+            e.target.value = ""
+            void onImportTextFile(f)
+          }}
+        />
+        <input
+          ref={audioFileRef}
+          type="file"
+          accept="audio/*,.wav,.mp3,.m4a,.ogg,.webm"
+          style={{ display: "none" }}
+          onChange={(e) => {
+            const f = e.target.files?.[0] || null
+            e.target.value = ""
+            void onImportAudioFile(f)
+          }}
+        />
+        {importStatus && (
+          <div style={{ fontSize: 11, color: tokens.textSecondary }} data-testid="meeting-import-status">
+            {importStatus}
+          </div>
+        )}
+        <div style={{ fontSize: 10, color: tokens.textSecondary, lineHeight: 1.4 }}>
+          可在转写框用「姓名: 内容」格式手标说话人。静音切为启发式分段，
+          <strong>不是</strong>自动说话人分离。系统/会议软件混音见调研文档（停车场）。
+        </div>
+      </div>
+
       <label style={{ fontSize: 12, flex: 1, display: "flex", flexDirection: "column" }}>
-        转写 / 口述文字（可编辑）
+        转写 / 口述文字（可编辑 · 支持「说话人: 正文」）
         <textarea
           value={transcript}
           onChange={(e) => setTranscript(e.target.value)}
-          placeholder="粘贴会议转写，或开始录制后自动填入本机转写…"
+          placeholder="粘贴会议转写，或开始录制/上传后自动填入…&#10;张三: 第一段&#10;&#10;李四: 第二段"
           rows={8}
           style={{
             marginTop: 4,

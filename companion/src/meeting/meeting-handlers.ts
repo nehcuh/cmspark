@@ -14,6 +14,7 @@ import {
   endMeetingRecording,
   loadMeeting,
   listMeetings,
+  replaceTranscript,
   setMeetingStatus,
   setMinutes,
   setTranscript,
@@ -22,6 +23,12 @@ import {
   type TranscriptLine,
   type TranscriptSource,
 } from "./meeting-store"
+import {
+  applySilenceCut,
+  applySpeakersByIndex,
+  bulkSetSpeaker,
+  silenceCutText,
+} from "./silence-cut"
 
 export interface MeetingHandlerContext {
   origin?: string
@@ -158,12 +165,15 @@ export async function handleMeetingMessage(
         ? msg.source
         : "paste"
     if (!text.trim()) return err("empty_transcript", "empty transcript", { id })
-    // Split by blank lines or newlines into lines
-    const lines: TranscriptLine[] = text
-      .split(/\n+/)
-      .map((t: string) => t.trim())
-      .filter(Boolean)
-      .map((t: string) => ({ text: t, source }))
+    // Mtg2: default silence-cut + speaker prefix parse; opt-out with silence_cut:false
+    const lines: TranscriptLine[] =
+      msg.silence_cut === false
+        ? text
+            .split(/\n+/)
+            .map((t: string) => t.trim())
+            .filter(Boolean)
+            .map((t: string) => ({ text: t, source }))
+        : silenceCutText(text, source)
     const m = setTranscript(id, lines)
     if (!m) return err("not_found", "meeting not found", { id })
     return { type: "meeting.updated", v: 1, meeting: m }
@@ -176,11 +186,86 @@ export async function handleMeetingMessage(
     const line: TranscriptLine = {
       text: text.trim(),
       source: msg.source === "stt" ? "stt" : "user_edit",
-      speaker: typeof msg.speaker === "string" ? msg.speaker : undefined,
+      speaker: typeof msg.speaker === "string" ? msg.speaker.slice(0, 32) : undefined,
     }
     const m = appendTranscript(id, line)
     if (!m) return err("not_found", "meeting not found", { id })
     return { type: "meeting.updated", v: 1, meeting: m }
+  }
+
+  /**
+   * Mtg2: re-apply silence-cut heuristic on stored transcript (manual labeling prep).
+   * Does NOT invent speakers.
+   */
+  if (type === "meeting.apply_silence_cut") {
+    const id = typeof msg.id === "string" ? msg.id : ""
+    const m = loadMeeting(id)
+    if (!m) return err("not_found", "meeting not found", { id })
+    const next = applySilenceCut(m.transcript)
+    const updated = replaceTranscript(id, next)
+    if (!updated) return err("not_found", "meeting not found", { id })
+    return { type: "meeting.updated", v: 1, meeting: updated, cut: true }
+  }
+
+  /**
+   * Mtg2: manual speaker labels by line index.
+   * assignments: [{ index, speaker }] speaker null/"" clears.
+   */
+  if (type === "meeting.set_speakers") {
+    const id = typeof msg.id === "string" ? msg.id : ""
+    const m = loadMeeting(id)
+    if (!m) return err("not_found", "meeting not found", { id })
+    const raw = Array.isArray(msg.assignments) ? msg.assignments : []
+    if (raw.length === 0) return err("invalid_assignments", "assignments required", { id })
+    if (raw.length > 500) return err("invalid_assignments", "too many assignments", { id })
+    const assignments = raw.map((a: any) => ({
+      index: typeof a?.index === "number" ? a.index : -1,
+      speaker: a?.speaker == null || a.speaker === "" ? null : String(a.speaker).slice(0, 32),
+    }))
+    const next = applySpeakersByIndex(m.transcript, assignments)
+    const updated = replaceTranscript(id, next)
+    if (!updated) return err("not_found", "meeting not found", { id })
+    return { type: "meeting.updated", v: 1, meeting: updated }
+  }
+
+  /** Mtg2: set one speaker on all lines (e.g. 「我」) or clear with speaker:null */
+  if (type === "meeting.bulk_speaker") {
+    const id = typeof msg.id === "string" ? msg.id : ""
+    const m = loadMeeting(id)
+    if (!m) return err("not_found", "meeting not found", { id })
+    const speaker =
+      msg.speaker == null || msg.speaker === ""
+        ? null
+        : String(msg.speaker).slice(0, 32)
+    const next = bulkSetSpeaker(m.transcript, speaker)
+    const updated = replaceTranscript(id, next)
+    if (!updated) return err("not_found", "meeting not found", { id })
+    return { type: "meeting.updated", v: 1, meeting: updated }
+  }
+
+  /**
+   * Mtg2: import plain text / markdown transcript file content (already read by extension).
+   * Same as set_transcript with silence_cut; creates meeting if no id.
+   */
+  if (type === "meeting.import_text") {
+    if (msg.privacy_ack_v1 !== true) {
+      return err("need_privacy_ack", "meeting_privacy_ack_v1 required for import")
+    }
+    const text = typeof msg.text === "string" ? msg.text : ""
+    if (!text.trim()) return err("empty_transcript", "empty import text")
+    if (text.length > 80_000) return err("too_large", "import text too long (max 80000)")
+    let id = typeof msg.id === "string" ? msg.id : ""
+    if (!id) {
+      const session = createMeeting({
+        title: typeof msg.title === "string" ? msg.title : undefined,
+        thread_id: typeof msg.thread_id === "string" ? msg.thread_id : null,
+      })
+      id = session.id
+    }
+    const lines = silenceCutText(text, "paste")
+    const m = setTranscript(id, lines)
+    if (!m) return err("not_found", "meeting not found", { id })
+    return { type: "meeting.imported", v: 1, meeting: m, kind: "text" }
   }
 
   if (type === "meeting.generate_minutes") {

@@ -1928,6 +1928,10 @@ export async function handleMessage(
     case "meeting.get":
     case "meeting.set_transcript":
     case "meeting.append_transcript":
+    case "meeting.apply_silence_cut":
+    case "meeting.set_speakers":
+    case "meeting.bulk_speaker":
+    case "meeting.import_text":
     case "meeting.generate_minutes":
     case "meeting.set_status":
       return handleMeetingMessage(msg, {

@@ -215,6 +215,22 @@ export function appendTranscript(
   return s
 }
 
+/** Replace full transcript line list (Mtg2 speaker edits / silence-cut). */
+export function replaceTranscript(
+  id: string,
+  lines: TranscriptLine[],
+  dataDir = DATA_DIR,
+): MeetingSession | null {
+  const s = loadMeeting(id, dataDir)
+  if (!s) return null
+  s.transcript = Array.isArray(lines) ? lines : []
+  if (s.transcript.length > 0 && (s.status === "draft" || s.status === "error")) {
+    s.status = "ready"
+  }
+  saveMeeting(s, dataDir)
+  return s
+}
+
 export function setMinutes(
   id: string,
   minutes: MeetingMinutes,
