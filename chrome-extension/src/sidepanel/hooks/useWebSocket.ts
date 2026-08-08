@@ -230,6 +230,7 @@ export function useWebSocket() {
         "asrRefinerEnabled",
         "dictationHotkeyEnabled",
         "dictationHotkeyChord",
+        "voiceRealtimeStreaming",
         "cmspark.ui.show_reasoning",
         "cmspark.ui.export_include_reasoning",
       ],
@@ -270,6 +271,12 @@ export function useWebSocket() {
         }
         if (typeof result.dictationHotkeyChord === "string" && result.dictationHotkeyChord.trim()) {
           dispatch({ type: "SET_DICTATION_HOTKEY_CHORD", chord: result.dictationHotkeyChord.trim() })
+        }
+        if (typeof result.voiceRealtimeStreaming === "boolean") {
+          dispatch({
+            type: "SET_VOICE_REALTIME_STREAMING",
+            enabled: result.voiceRealtimeStreaming,
+          })
         }
       },
     )

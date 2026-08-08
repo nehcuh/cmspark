@@ -129,3 +129,59 @@ export function formatChord(c: HotkeyChord): string {
   parts.push(c.key === "space" ? "Space" : c.key.length === 1 ? c.key.toUpperCase() : c.key)
   return parts.join("+")
 }
+
+/**
+ * Build a storage chord string from a KeyboardEvent (D2 UX capture).
+ * Returns null for pure modifier presses, bare keys, or forbidden chords (fn / Win+V).
+ */
+export function chordFromKeyboardEvent(e: {
+  key: string
+  code?: string
+  ctrlKey: boolean
+  altKey: boolean
+  shiftKey: boolean
+  metaKey: boolean
+}): string | null {
+  const k = e.key
+  // Ignore pure modifier keydowns — wait for the main key
+  if (
+    k === "Control" ||
+    k === "Shift" ||
+    k === "Alt" ||
+    k === "AltGraph" ||
+    k === "Meta" ||
+    k === "OS" ||
+    k === "Fn" ||
+    k === "Hyper" ||
+    k === "Super"
+  ) {
+    return null
+  }
+  // Fn rarely surfaces; ban explicitly if it does
+  if (k.toLowerCase() === "fn" || k.toLowerCase() === "function") return null
+
+  const parts: string[] = []
+  if (e.ctrlKey) parts.push("Control")
+  if (e.altKey) parts.push("Alt")
+  if (e.shiftKey) parts.push("Shift")
+  if (e.metaKey) parts.push("Meta")
+
+  let main = ""
+  if (k === " " || k === "Spacebar" || e.code === "Space") {
+    main = "Space"
+  } else if (k.length === 1) {
+    main = /[a-zA-Z]/.test(k) ? k.toUpperCase() : k
+  } else if (e.code && /^Key[A-Z]$/i.test(e.code)) {
+    main = e.code.slice(3).toUpperCase()
+  } else if (e.code && /^Digit[0-9]$/.test(e.code)) {
+    main = e.code.slice(5)
+  } else {
+    main = k
+  }
+  if (!main) return null
+  parts.push(main)
+  const raw = parts.join("+")
+  // Reuse parse for forbid rules (≥1 modifier, no bare fn, no Meta+V alone)
+  const parsed = parseHotkeyChord(raw)
+  return parsed ? formatChord(parsed) : null
+}

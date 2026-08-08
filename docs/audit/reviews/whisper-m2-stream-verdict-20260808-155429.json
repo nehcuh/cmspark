@@ -1,0 +1,41 @@
+{
+  "batch": "whisper-m2-stream",
+  "timestamp": "20260808-155429",
+  "reviewers": {
+    "claude": {
+      "file": "docs/audit/reviews/whisper-m2-stream-claude-20260808-155429.md",
+      "verdict": "APPROVE_WITH_NITS",
+      "nits": ["N1 partialAbort on abort", "N2 start while inferring", "N3 stop during gUM", "N4 late partial", "N5 ScriptProcessor"]
+    },
+    "pi": {
+      "file": "docs/audit/reviews/whisper-m2-stream-pi-20260808-155429.md",
+      "verdict": "REJECT",
+      "blocking": ["F1 window 45s dead segmentCapMs", "F2 cancel-restart starves hypothesis", "F3 no retraction duplicates draft", "F4 partial errors kill session"]
+    }
+  },
+  "post_absorb": {
+    "status": "fixes_applied",
+    "absorbed": [
+      "F1: windowMs uses segmentCapMs",
+      "F2: partial_busy without cancel-restart; test added",
+      "F3: interim-only mid-window; commit once at window end",
+      "F4: handler soft-skips partial failures",
+      "F5/F6/N1: abort/forceAbort cancel partialAbort; re-check inferring after IO",
+      "F7: gUM before voice.stt.start; AudioContext.resume",
+      "N2: start rejects while inferring"
+    ],
+    "residual": [],
+    "residual_absorbed_r3": [
+      "N3: pendingSoftStop + clean onEnd after gUM soft-stop",
+      "N5: AudioWorklet preferred with ScriptProcessor fallback",
+      "destroy: fire segmentStopTrigger + abort pcmStream + clearPartialTimer",
+      "adaptive partial poll from hypothesis ms (1.15× clamp 1.4–6s)"
+    ]
+  },
+  "machine": {
+    "companion_partial_tests": "4 pass (after F2 busy test)",
+    "extension_stabilize": "pass"
+  },
+  "synthesis_verdict": "APPROVE_WITH_NITS_AFTER_FIXES",
+  "r3_residual_nits": "ABSORBED"
+}

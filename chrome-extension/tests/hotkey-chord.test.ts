@@ -5,6 +5,7 @@ import {
   eventMatchesChord,
   DICTATION_HOTKEY_DEFAULT_CHORD,
   formatChord,
+  chordFromKeyboardEvent,
 } from "../src/sidepanel/voice/hotkey-chord"
 
 test("parse default Control+Shift+Space", () => {
@@ -59,4 +60,41 @@ test("parseHotkeyChord normalizes KeyM and Digit1", () => {
   const d = parseHotkeyChord("Control+Digit1")
   assert.ok(d)
   assert.equal(d!.key, "1")
+})
+
+test("chordFromKeyboardEvent captures Control+Shift+Space", () => {
+  const raw = chordFromKeyboardEvent({
+    key: " ",
+    code: "Space",
+    ctrlKey: true,
+    altKey: false,
+    shiftKey: true,
+    metaKey: false,
+  })
+  assert.equal(raw, "Control+Shift+Space")
+  assert.ok(parseHotkeyChord(raw!))
+})
+
+test("chordFromKeyboardEvent rejects bare Space and pure modifiers", () => {
+  assert.equal(
+    chordFromKeyboardEvent({
+      key: " ",
+      code: "Space",
+      ctrlKey: false,
+      altKey: false,
+      shiftKey: false,
+      metaKey: false,
+    }),
+    null,
+  )
+  assert.equal(
+    chordFromKeyboardEvent({
+      key: "Control",
+      ctrlKey: true,
+      altKey: false,
+      shiftKey: false,
+      metaKey: false,
+    }),
+    null,
+  )
 })

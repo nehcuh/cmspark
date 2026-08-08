@@ -33,6 +33,13 @@ export const LOCAL_STT_CHANNELS = 1
 export const LOCAL_STT_MAX_RECORD_MS = 45_000
 
 /**
+ * Near-real-time continuous local STT: shorter windows so finals appear more often.
+ * Not word-level interim (Whisper is offline per segment); no fake interim.
+ * Still clamped to LOCAL_STT_MAX_RECORD_MS.
+ */
+export const LOCAL_STT_NEAR_REALTIME_SEGMENT_MS = 8_000
+
+/**
  * Session raw PCM budget (bytes) for 45s s16le mono + slack.
  * 16000 * 2 * 45 = 1_440_000; SoT suggests ≤ 2.5MB raw.
  */

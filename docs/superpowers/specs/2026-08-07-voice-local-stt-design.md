@@ -46,7 +46,8 @@
 | 默认 local / 自动下载 / 自动更新权重 | 惊喜与供应链 |
 | faster-whisper / 双栈 | v1 单栈 |
 | ffmpeg 依赖 | 打包/CVE |
-| 流式 token interim | M2 |
+| 流式 **decoder token** interim（whisper 内部 token 流） | 仍非目标；见 M2 渐进重解码 |
+| **M2 渐进字级假设**（累计音频 re-decode + 前缀稳定） | **已实现**（`voice.stt.partial_request` → `partial.status=hypothesis` + text） |
 | auto-send / 唤醒 / TTS | M1 延续 |
 | `audioCapture` | F-S5 |
 | Worker / Cockpit / tray 🎤 | F-S9 |

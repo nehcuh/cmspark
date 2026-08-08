@@ -8,6 +8,11 @@ import { UserEnvSection } from "./UserEnvSection"
 import { NetSecSettingsSection } from "./NetSecSettingsSection"
 import { OutboundMcpSettingsSection } from "./OutboundMcpSettingsSection"
 import { SettingsSection } from "./SettingsSection"
+import { SettingsIntentBar } from "./SettingsIntentBar"
+import { HotkeyCaptureField } from "./HotkeyCaptureField"
+import { useContextPanelHostOptional } from "./ContextPanelHost"
+import type { SettingsIntent } from "../utils/settings-intent"
+import { DICTATION_HOTKEY_DEFAULT_CHORD } from "../voice/hotkey-chord"
 import {
   defaultUserOpenSections,
   isElevatedTrust,
@@ -97,6 +102,7 @@ const SAFETY_SKILLS = [
 
 export function SettingsSlideout() {
   const { state, dispatch } = useAgentStore()
+  const host = useContextPanelHostOptional()
   const [showKey, setShowKey] = useState(false)
   const [showAuditLog, setShowAuditLog] = useState(false)
   const [trustedDomainsConfirm, setTrustedDomainsConfirm] = useState(false)
@@ -671,6 +677,69 @@ export function SettingsSlideout() {
     dispatch({ type: "SET_CONFIG", config: { safety_skills_enabled: next } })
   }
 
+  /** Text / voice commands for configuring this extension (D2+ UX). */
+  const applySettingsIntent = useCallback(
+    (intent: SettingsIntent): string => {
+      switch (intent.type) {
+        case "set_dictation_mode":
+          dispatch({ type: "SET_VOICE_DICTATION_MODE", mode: intent.mode })
+          return intent.mode === "continuous"
+            ? "已开启连续听写"
+            : "已切换为经典短听"
+        case "set_hotkey_enabled":
+          dispatch({ type: "SET_DICTATION_HOTKEY_ENABLED", enabled: intent.enabled })
+          return intent.enabled ? "已启用按住说话热键" : "已关闭按住说话热键"
+        case "set_asr_refiner":
+          dispatch({ type: "SET_ASR_REFINER_ENABLED", enabled: intent.enabled })
+          return intent.enabled ? "已开启 ASR 纠错" : "已关闭 ASR 纠错"
+        case "set_realtime_streaming":
+          dispatch({
+            type: "SET_VOICE_REALTIME_STREAMING",
+            enabled: intent.enabled,
+            preferContinuous: intent.enabled === true,
+          })
+          return intent.enabled
+            ? "已开启实时出字（浏览器字级 interim；本机约 8 秒一段）"
+            : "已关闭实时出字优先"
+        case "set_stt_engine":
+          if (intent.engine === "browser") {
+            try {
+              chrome.runtime.sendMessage({
+                type: "voice.model.set_engine",
+                engine: "browser",
+                source: "settings",
+              })
+            } catch {
+              /* */
+            }
+            setEngineDraft("browser")
+            return "已切换为浏览器听写（支持字级实时）"
+          }
+          setEngineDraft("local")
+          return "请在下方「听写方式」下载模型后点「启用本机转写」"
+        case "enable_hotkey_default":
+          dispatch({ type: "SET_DICTATION_HOTKEY_ENABLED", enabled: true })
+          dispatch({
+            type: "SET_DICTATION_HOTKEY_CHORD",
+            chord: DICTATION_HOTKEY_DEFAULT_CHORD,
+          })
+          return `已启用热键：${DICTATION_HOTKEY_DEFAULT_CHORD}`
+        case "open_meeting":
+          dispatch({ type: "SET_SETTINGS_OPEN", open: false })
+          host?.openPanelForce("meeting")
+          return "已打开会议工作台"
+        case "open_packs":
+          dispatch({ type: "SET_SETTINGS_OPEN", open: false })
+          host?.openPanelForce("packs")
+          return "已打开场景面板"
+        case "unknown":
+        default:
+          return "未识别。试试：开启连续听写 / 开启实时出字 / 打开会议 / 浏览器听写"
+      }
+    },
+    [dispatch, host],
+  )
+
   return (
     <Modal
       open={state.settingsOpen}
@@ -685,6 +754,11 @@ export function SettingsSlideout() {
         </div>
 
         <div style={{ ...styles.body, display: "flex", flexDirection: "column" }}>
+          {/* D2+ : configure CMspark itself via text or voice */}
+          <div style={{ order: 0 }}>
+            <SettingsIntentBar onIntent={applySettingsIntent} />
+          </div>
+
           {/* IA order via flex order (settings-thread-compact W1) */}
 
           <div style={{ order: 1 }}>
@@ -996,6 +1070,58 @@ export function SettingsSlideout() {
             </label>
 
             <div style={{ marginTop: 10, fontSize: 12, color: "#555" }}>
+              <label
+                style={{
+                  display: "flex",
+                  alignItems: "flex-start",
+                  gap: 8,
+                  marginBottom: 10,
+                  cursor: "pointer",
+                  fontSize: 12,
+                  lineHeight: 1.4,
+                }}
+              >
+                <input
+                  type="checkbox"
+                  style={{ marginTop: 2 }}
+                  checked={state.voiceRealtimeStreaming !== false}
+                  onChange={(e) =>
+                    dispatch({
+                      type: "SET_VOICE_REALTIME_STREAMING",
+                      enabled: e.target.checked,
+                      preferContinuous: e.target.checked,
+                    })
+                  }
+                />
+                <span>
+                  <strong>实时出字</strong>
+                  （字级 / 近实时）
+                  <br />
+                  <span style={{ color: "#888", fontSize: 11 }}>
+                    浏览器听写：Web Speech 字级 interim。本机 Whisper（连续 + 本开关）：PCM
+                    流式上传 + 约 8s 窗口内渐进重解码假设（poll 按上次推断耗时自适应）；窗口结束定稿；非
+                    decoder token 流。开启时会切到连续听写。
+                  </span>
+                </span>
+              </label>
+              {state.voiceRealtimeStreaming !== false &&
+                state.voiceModel?.sttEngine === "local" && (
+                  <div
+                    style={{
+                      marginBottom: 10,
+                      padding: "6px 8px",
+                      fontSize: 11,
+                      lineHeight: 1.4,
+                      background: "#ecfdf5",
+                      border: "1px solid #a7f3d0",
+                      borderRadius: 6,
+                      color: "#065f46",
+                    }}
+                  >
+                    本机渐进假设流已开：说话中显示临时字，约每 8s
+                    定稿一段；poll 随模型耗时自适应（medium 可能更慢）。更丝滑可改用浏览器听写。
+                  </div>
+                )}
               <div style={{ marginBottom: 4, fontWeight: 500 }}>听写形态</div>
               <label style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4, cursor: "pointer" }}>
                 <input
@@ -1020,8 +1146,8 @@ export function SettingsSlideout() {
                 连续听写（可选 · 最长默认 15 分钟）
               </label>
               <div style={{ marginTop: 4, fontSize: 11, color: "#888", lineHeight: 1.4 }}>
-                浏览器：自动续听；本机：约 45 秒一段串行转写（间隙显示「识别中」）。仅进草稿、不自动发送。首次需隐私
-                v3。
+                浏览器：自动续听 + 字级 interim；本机：实时出字开时约 8 秒一段，否则约 45
+                秒一段。仅进草稿、不自动发送。首次连续听写需隐私 v3。
               </div>
               <label
                 style={{
@@ -1083,41 +1209,16 @@ export function SettingsSlideout() {
                     </span>
                   </span>
                 </label>
-                <label style={{ display: "block", marginTop: 8, fontSize: 11, color: "#666" }}>
-                  组合键（可手输，如 Control+Shift+Space）
-                  <input
-                    type="text"
-                    list="cmspark-dictation-hotkey-presets"
-                    value={state.dictationHotkeyChord || "Control+Shift+Space"}
+                <div style={{ marginTop: 8, fontSize: 11, color: "#666" }}>
+                  <div style={{ marginBottom: 2 }}>组合键（按键盘录制或点预设）</div>
+                  <HotkeyCaptureField
+                    value={state.dictationHotkeyChord || DICTATION_HOTKEY_DEFAULT_CHORD}
                     disabled={!state.dictationHotkeyEnabled}
-                    placeholder="Control+Shift+Space"
-                    onChange={(e) =>
-                      dispatch({ type: "SET_DICTATION_HOTKEY_CHORD", chord: e.target.value })
+                    onChange={(chord) =>
+                      dispatch({ type: "SET_DICTATION_HOTKEY_CHORD", chord })
                     }
-                    style={{
-                      display: "block",
-                      marginTop: 4,
-                      width: "100%",
-                      boxSizing: "border-box",
-                      padding: "6px 8px",
-                      borderRadius: 6,
-                      border: "1px solid #ddd",
-                      fontSize: 12,
-                      fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-                    }}
                   />
-                  <datalist id="cmspark-dictation-hotkey-presets">
-                    <option value="Control+Shift+Space" />
-                    <option value="Alt+Space" />
-                    <option value="Control+Alt+Space" />
-                    <option value="Control+Shift+D" />
-                    <option value="Control+Shift+M" />
-                  </datalist>
-                  <span style={{ display: "block", marginTop: 4, fontSize: 10, color: "#999", lineHeight: 1.4 }}>
-                    格式：修饰键用 + 连接，如 <code>Control+Alt+K</code>。禁止 bare Fn / 单独 Meta+V。
-                    需 Side Panel 有键盘焦点。无效组合不会触发听写。
-                  </span>
-                </label>
+                </div>
               </div>
             </div>
 

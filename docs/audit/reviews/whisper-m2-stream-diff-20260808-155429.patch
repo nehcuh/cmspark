@@ -1,0 +1,1605 @@
+diff --git a/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx b/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx
+index 40a556f..16eb11d 100644
+--- a/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx
++++ b/chrome-extension/src/sidepanel/components/SettingsSlideout.tsx
+@@ -8,6 +8,11 @@ import { UserEnvSection } from "./UserEnvSection"
+ import { NetSecSettingsSection } from "./NetSecSettingsSection"
+ import { OutboundMcpSettingsSection } from "./OutboundMcpSettingsSection"
+ import { SettingsSection } from "./SettingsSection"
++import { SettingsIntentBar } from "./SettingsIntentBar"
++import { HotkeyCaptureField } from "./HotkeyCaptureField"
++import { useContextPanelHostOptional } from "./ContextPanelHost"
++import type { SettingsIntent } from "../utils/settings-intent"
++import { DICTATION_HOTKEY_DEFAULT_CHORD } from "../voice/hotkey-chord"
+ import {
+   defaultUserOpenSections,
+   isElevatedTrust,
+@@ -97,6 +102,7 @@ const SAFETY_SKILLS = [
+ 
+ export function SettingsSlideout() {
+   const { state, dispatch } = useAgentStore()
++  const host = useContextPanelHostOptional()
+   const [showKey, setShowKey] = useState(false)
+   const [showAuditLog, setShowAuditLog] = useState(false)
+   const [trustedDomainsConfirm, setTrustedDomainsConfirm] = useState(false)
+@@ -671,6 +677,69 @@ export function SettingsSlideout() {
+     dispatch({ type: "SET_CONFIG", config: { safety_skills_enabled: next } })
+   }
+ 
++  /** Text / voice commands for configuring this extension (D2+ UX). */
++  const applySettingsIntent = useCallback(
++    (intent: SettingsIntent): string => {
++      switch (intent.type) {
++        case "set_dictation_mode":
++          dispatch({ type: "SET_VOICE_DICTATION_MODE", mode: intent.mode })
++          return intent.mode === "continuous"
++            ? "已开启连续听写"
++            : "已切换为经典短听"
++        case "set_hotkey_enabled":
++          dispatch({ type: "SET_DICTATION_HOTKEY_ENABLED", enabled: intent.enabled })
++          return intent.enabled ? "已启用按住说话热键" : "已关闭按住说话热键"
++        case "set_asr_refiner":
++          dispatch({ type: "SET_ASR_REFINER_ENABLED", enabled: intent.enabled })
++          return intent.enabled ? "已开启 ASR 纠错" : "已关闭 ASR 纠错"
++        case "set_realtime_streaming":
++          dispatch({
++            type: "SET_VOICE_REALTIME_STREAMING",
++            enabled: intent.enabled,
++            preferContinuous: intent.enabled === true,
++          })
++          return intent.enabled
++            ? "已开启实时出字（浏览器字级 interim；本机约 8 秒一段）"
++            : "已关闭实时出字优先"
++        case "set_stt_engine":
++          if (intent.engine === "browser") {
++            try {
++              chrome.runtime.sendMessage({
++                type: "voice.model.set_engine",
++                engine: "browser",
++                source: "settings",
++              })
++            } catch {
++              /* */
++            }
++            setEngineDraft("browser")
++            return "已切换为浏览器听写（支持字级实时）"
++          }
++          setEngineDraft("local")
++          return "请在下方「听写方式」下载模型后点「启用本机转写」"
++        case "enable_hotkey_default":
++          dispatch({ type: "SET_DICTATION_HOTKEY_ENABLED", enabled: true })
++          dispatch({
++            type: "SET_DICTATION_HOTKEY_CHORD",
++            chord: DICTATION_HOTKEY_DEFAULT_CHORD,
++          })
++          return `已启用热键：${DICTATION_HOTKEY_DEFAULT_CHORD}`
++        case "open_meeting":
++          dispatch({ type: "SET_SETTINGS_OPEN", open: false })
++          host?.openPanelForce("meeting")
++          return "已打开会议工作台"
++        case "open_packs":
++          dispatch({ type: "SET_SETTINGS_OPEN", open: false })
++          host?.openPanelForce("packs")
++          return "已打开场景面板"
++        case "unknown":
++        default:
++          return "未识别。试试：开启连续听写 / 开启实时出字 / 打开会议 / 浏览器听写"
++      }
++    },
++    [dispatch, host],
++  )
++
+   return (
+     <Modal
+       open={state.settingsOpen}
+@@ -685,6 +754,11 @@ export function SettingsSlideout() {
+         </div>
+ 
+         <div style={{ ...styles.body, display: "flex", flexDirection: "column" }}>
++          {/* D2+ : configure CMspark itself via text or voice */}
++          <div style={{ order: 0 }}>
++            <SettingsIntentBar onIntent={applySettingsIntent} />
++          </div>
++
+           {/* IA order via flex order (settings-thread-compact W1) */}
+ 
+           <div style={{ order: 1 }}>
+@@ -996,6 +1070,58 @@ export function SettingsSlideout() {
+             </label>
+ 
+             <div style={{ marginTop: 10, fontSize: 12, color: "#555" }}>
++              <label
++                style={{
++                  display: "flex",
++                  alignItems: "flex-start",
++                  gap: 8,
++                  marginBottom: 10,
++                  cursor: "pointer",
++                  fontSize: 12,
++                  lineHeight: 1.4,
++                }}
++              >
++                <input
++                  type="checkbox"
++                  style={{ marginTop: 2 }}
++                  checked={state.voiceRealtimeStreaming !== false}
++                  onChange={(e) =>
++                    dispatch({
++                      type: "SET_VOICE_REALTIME_STREAMING",
++                      enabled: e.target.checked,
++                      preferContinuous: e.target.checked,
++                    })
++                  }
++                />
++                <span>
++                  <strong>实时出字</strong>
++                  （字级 / 近实时）
++                  <br />
++                  <span style={{ color: "#888", fontSize: 11 }}>
++                    浏览器听写：Web Speech 字级 interim。本机 Whisper（连续 + 本开关）：PCM
++                    流式上传 + 约 1.4s 渐进重解码假设（前缀稳定化）；非 decoder token
++                    流。开启时会切到连续听写。
++                  </span>
++                </span>
++              </label>
++              {state.voiceRealtimeStreaming !== false &&
++                state.voiceModel?.sttEngine === "local" && (
++                  <div
++                    style={{
++                      marginBottom: 10,
++                      padding: "6px 8px",
++                      fontSize: 11,
++                      lineHeight: 1.4,
++                      background: "#ecfdf5",
++                      border: "1px solid #a7f3d0",
++                      borderRadius: 6,
++                      color: "#065f46",
++                    }}
++                  >
++                    本机已启用渐进字级假设流（Whisper 重解码 + 前缀稳定）。负载高时出字间隔可能
++                    &gt;1.5s；更丝滑可改用浏览器听写。
++                  </div>
++                )}
+               <div style={{ marginBottom: 4, fontWeight: 500 }}>听写形态</div>
+               <label style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4, cursor: "pointer" }}>
+                 <input
+@@ -1020,8 +1146,8 @@ export function SettingsSlideout() {
+                 连续听写（可选 · 最长默认 15 分钟）
+               </label>
+               <div style={{ marginTop: 4, fontSize: 11, color: "#888", lineHeight: 1.4 }}>
+-                浏览器：自动续听；本机：约 45 秒一段串行转写（间隙显示「识别中」）。仅进草稿、不自动发送。首次需隐私
+-                v3。
++                浏览器：自动续听 + 字级 interim；本机：实时出字开时约 8 秒一段，否则约 45
++                秒一段。仅进草稿、不自动发送。首次连续听写需隐私 v3。
+               </div>
+               <label
+                 style={{
+@@ -1083,41 +1209,16 @@ export function SettingsSlideout() {
+                     </span>
+                   </span>
+                 </label>
+-                <label style={{ display: "block", marginTop: 8, fontSize: 11, color: "#666" }}>
+-                  组合键（可手输，如 Control+Shift+Space）
+-                  <input
+-                    type="text"
+-                    list="cmspark-dictation-hotkey-presets"
+-                    value={state.dictationHotkeyChord || "Control+Shift+Space"}
++                <div style={{ marginTop: 8, fontSize: 11, color: "#666" }}>
++                  <div style={{ marginBottom: 2 }}>组合键（按键盘录制或点预设）</div>
++                  <HotkeyCaptureField
++                    value={state.dictationHotkeyChord || DICTATION_HOTKEY_DEFAULT_CHORD}
+                     disabled={!state.dictationHotkeyEnabled}
+-                    placeholder="Control+Shift+Space"
+-                    onChange={(e) =>
+-                      dispatch({ type: "SET_DICTATION_HOTKEY_CHORD", chord: e.target.value })
++                    onChange={(chord) =>
++                      dispatch({ type: "SET_DICTATION_HOTKEY_CHORD", chord })
+                     }
+-                    style={{
+-                      display: "block",
+-                      marginTop: 4,
+-                      width: "100%",
+-                      boxSizing: "border-box",
+-                      padding: "6px 8px",
+-                      borderRadius: 6,
+-                      border: "1px solid #ddd",
+-                      fontSize: 12,
+-                      fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+-                    }}
+                   />
+-                  <datalist id="cmspark-dictation-hotkey-presets">
+-                    <option value="Control+Shift+Space" />
+-                    <option value="Alt+Space" />
+-                    <option value="Control+Alt+Space" />
+-                    <option value="Control+Shift+D" />
+-                    <option value="Control+Shift+M" />
+-                  </datalist>
+-                  <span style={{ display: "block", marginTop: 4, fontSize: 10, color: "#999", lineHeight: 1.4 }}>
+-                    格式：修饰键用 + 连接，如 <code>Control+Alt+K</code>。禁止 bare Fn / 单独 Meta+V。
+-                    需 Side Panel 有键盘焦点。无效组合不会触发听写。
+-                  </span>
+-                </label>
++                </div>
+               </div>
+             </div>
+ 
+diff --git a/chrome-extension/src/sidepanel/hooks/useVoiceInput.ts b/chrome-extension/src/sidepanel/hooks/useVoiceInput.ts
+index 9f7ad97..cd57da6 100644
+--- a/chrome-extension/src/sidepanel/hooks/useVoiceInput.ts
++++ b/chrome-extension/src/sidepanel/hooks/useVoiceInput.ts
+@@ -12,7 +12,10 @@ import {
+   VOICE_MAX_LISTEN_MS,
+   type VoiceDictationMode,
+ } from "../voice/detect"
+-import { detectLocalMediaCapture } from "../voice/local-stt-detect"
++import {
++  detectLocalMediaCapture,
++  LOCAL_STT_NEAR_REALTIME_SEGMENT_MS,
++} from "../voice/local-stt-detect"
+ import { reduceVoiceSession } from "../voice/session-reducer"
+ import {
+   mergeFinalTranscript,
+@@ -105,6 +108,11 @@ export type UseVoiceInputOpts = {
+    * If undefined, refine always applies (no ownership gate).
+    */
+   getCurrentDraft?: () => string
++  /**
++   * Prefer near-real-time feedback: local continuous uses shorter segments.
++   * Browser path always has word-level interim when interimResults is on.
++   */
++  realtimeStreaming?: boolean
+ }
+ 
+ export function useVoiceInput(opts: UseVoiceInputOpts) {
+@@ -563,12 +571,18 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
+         dispatchEv({ type: "USER_TOGGLE_START", sessionId: sid, baseText: base })
+         try {
+           if (eng === "local") {
++            const nearRt =
++              o.realtimeStreaming === true && modeNow === "continuous"
+             adapterRef.current.start({
+               lang: VOICE_DEFAULT_LANG,
+               sessionId: sid,
+               modelId: o.modelId || "medium",
+               mode: modeNow,
+               hardCapMs: maxMs,
++              // Shorter windows ≈ near-real-time finals when not streaming.
++              segmentMs: nearRt ? LOCAL_STT_NEAR_REALTIME_SEGMENT_MS : undefined,
++              // M2: progressive hypothesis via PCM stream + partial_request.
++              streamPartial: nearRt === true,
+             })
+           } else {
+             adapterRef.current.start({
+diff --git a/chrome-extension/src/sidepanel/voice/hotkey-chord.ts b/chrome-extension/src/sidepanel/voice/hotkey-chord.ts
+index e4d8a39..483edf2 100644
+--- a/chrome-extension/src/sidepanel/voice/hotkey-chord.ts
++++ b/chrome-extension/src/sidepanel/voice/hotkey-chord.ts
+@@ -129,3 +129,59 @@ export function formatChord(c: HotkeyChord): string {
+   parts.push(c.key === "space" ? "Space" : c.key.length === 1 ? c.key.toUpperCase() : c.key)
+   return parts.join("+")
+ }
++
++/**
++ * Build a storage chord string from a KeyboardEvent (D2 UX capture).
++ * Returns null for pure modifier presses, bare keys, or forbidden chords (fn / Win+V).
++ */
++export function chordFromKeyboardEvent(e: {
++  key: string
++  code?: string
++  ctrlKey: boolean
++  altKey: boolean
++  shiftKey: boolean
++  metaKey: boolean
++}): string | null {
++  const k = e.key
++  // Ignore pure modifier keydowns — wait for the main key
++  if (
++    k === "Control" ||
++    k === "Shift" ||
++    k === "Alt" ||
++    k === "AltGraph" ||
++    k === "Meta" ||
++    k === "OS" ||
++    k === "Fn" ||
++    k === "Hyper" ||
++    k === "Super"
++  ) {
++    return null
++  }
++  // Fn rarely surfaces; ban explicitly if it does
++  if (k.toLowerCase() === "fn" || k.toLowerCase() === "function") return null
++
++  const parts: string[] = []
++  if (e.ctrlKey) parts.push("Control")
++  if (e.altKey) parts.push("Alt")
++  if (e.shiftKey) parts.push("Shift")
++  if (e.metaKey) parts.push("Meta")
++
++  let main = ""
++  if (k === " " || k === "Spacebar" || e.code === "Space") {
++    main = "Space"
++  } else if (k.length === 1) {
++    main = /[a-zA-Z]/.test(k) ? k.toUpperCase() : k
++  } else if (e.code && /^Key[A-Z]$/i.test(e.code)) {
++    main = e.code.slice(3).toUpperCase()
++  } else if (e.code && /^Digit[0-9]$/.test(e.code)) {
++    main = e.code.slice(5)
++  } else {
++    main = k
++  }
++  if (!main) return null
++  parts.push(main)
++  const raw = parts.join("+")
++  // Reuse parse for forbid rules (≥1 modifier, no bare fn, no Meta+V alone)
++  const parsed = parseHotkeyChord(raw)
++  return parsed ? formatChord(parsed) : null
++}
+diff --git a/chrome-extension/src/sidepanel/voice/local-stt-adapter.ts b/chrome-extension/src/sidepanel/voice/local-stt-adapter.ts
+index 603b007..5c10116 100644
+--- a/chrome-extension/src/sidepanel/voice/local-stt-adapter.ts
++++ b/chrome-extension/src/sidepanel/voice/local-stt-adapter.ts
+@@ -1,13 +1,15 @@
+ /**
+- * Path B — local STT adapter (gUM → WAV chunks → voice.stt.* WS).
++ * Path B — local STT adapter (gUM → WAV/PCM chunks → voice.stt.* WS).
+  * classic: one shot ≤45s then onEnd.
+- * continuous (D1c): serial segments ≤45s until hard cap or user stop; no fake interim.
++ * continuous (D1c): serial segments ≤45s until hard cap or user stop.
++ * continuous + streamPartial (M2): PCM stream + partial_request progressive hypothesis.
+  */
+ 
+ import {
+   LOCAL_STT_CHANNELS,
+   LOCAL_STT_MAX_CHUNK_RAW_BYTES,
+   LOCAL_STT_MAX_RECORD_MS,
++  LOCAL_STT_NEAR_REALTIME_SEGMENT_MS,
+   LOCAL_STT_SAMPLE_RATE,
+ } from "./local-stt-detect"
+ import { splitIntoChunks } from "./pcm-encode"
+@@ -16,6 +18,8 @@ import {
+   type CaptureHandle,
+   type StartCaptureOpts,
+ } from "./audio-capture"
++import { startPcmStreamCapture, type PcmStreamHandle } from "./pcm-stream-capture"
++import { promoteStableByAgreement } from "./stream-stabilize"
+ import type {
+   SpeechAdapter,
+   SpeechAdapterHandlers,
+@@ -27,6 +31,9 @@ import {
+   type VoiceDictationMode,
+ } from "./detect"
+ 
++/** Client-side partial poll interval (companion also rate-limits ≥1.2s). */
++const STREAM_PARTIAL_POLL_MS = 1_400
++
+ export type LocalSttSend = (msg: Record<string, unknown>) => void
+ 
+ /** Subscribe to inbound companion messages; returns unsubscribe. */
+@@ -88,6 +95,7 @@ export function createLocalSttAdapter(
+   let hardCapMs = VOICE_CONTINUOUS_HARD_CAP_MS
+   /** Optional per-segment window override (tests); clamped to LOCAL_STT_MAX_RECORD_MS. */
+   let segmentCapMs = LOCAL_STT_MAX_RECORD_MS
++  let streamPartial = false
+   let wallStart = 0
+   let segmentIndex = 0
+   let pending: PendingWait | null = null
+@@ -95,6 +103,11 @@ export function createLocalSttAdapter(
+   /** Continuous: resolve when current segment should stop recording. */
+   let segmentStopTrigger: (() => void) | null = null
+   let segmentTimer: ReturnType<typeof setTimeout> | null = null
++  let partialTimer: ReturnType<typeof setInterval> | null = null
++  let pcmStream: PcmStreamHandle | null = null
++  let streamSeq = 0
++  let streamStable = ""
++  let streamPrevHypothesis = ""
+   const beginCapture = deps.startCapture ?? defaultStartCapture
+ 
+   const clearSegmentTimer = () => {
+@@ -104,6 +117,13 @@ export function createLocalSttAdapter(
+     }
+   }
+ 
++  const clearPartialTimer = () => {
++    if (partialTimer) {
++      clearInterval(partialTimer)
++      partialTimer = null
++    }
++  }
++
+   const clearSub = () => {
+     if (unsub) {
+       try {
+@@ -117,7 +137,16 @@ export function createLocalSttAdapter(
+ 
+   const reset = () => {
+     clearSegmentTimer()
++    clearPartialTimer()
+     segmentStopTrigger = null
++    if (pcmStream) {
++      try {
++        pcmStream.abort()
++      } catch {
++        /* */
++      }
++      pcmStream = null
++    }
+     clearSub()
+     capture = null
+     sessionId = null
+@@ -125,9 +154,13 @@ export function createLocalSttAdapter(
+     aborted = false
+     wantListening = false
+     mode = "classic"
++    streamPartial = false
+     parentSessionId = ""
+     segmentIndex = 0
+     pending = null
++    streamSeq = 0
++    streamStable = ""
++    streamPrevHypothesis = ""
+   }
+ 
+   const finishPending = (r: { ok: true; text: string } | { ok: false; code: string }) => {
+@@ -141,7 +174,23 @@ export function createLocalSttAdapter(
+     const sid = typeof msg.sessionId === "string" ? msg.sessionId : ""
+     if (!sessionId || sid !== sessionId) return
+ 
+-    if (msg.type === "voice.stt.partial") return
++    if (msg.type === "voice.stt.partial") {
++      // M2 hypothesis text (status === "hypothesis"); ignore status-only partials
++      if (msg.status === "hypothesis" && typeof msg.text === "string") {
++        const hyp = msg.text.trim()
++        if (!hyp) return
++        const step = promoteStableByAgreement(streamStable, streamPrevHypothesis, hyp)
++        streamPrevHypothesis = hyp
++        streamStable = step.stable
++        if (step.newlyStable || step.interim || step.stable) {
++          handlers.onResult({
++            interim: step.interim,
++            finalChunk: step.newlyStable || "",
++          })
++        }
++      }
++      return
++    }
+ 
+     if (msg.type === "voice.stt.result") {
+       const text = typeof msg.text === "string" ? msg.text : ""
+@@ -324,7 +373,172 @@ export function createLocalSttAdapter(
+     }
+   }
+ 
++  /**
++   * M2 streaming continuous: one STT session per ≤45s window, PCM chunks live,
++   * partial_request polls → hypothesis interim; end → final commit of remainder.
++   */
++  const runStreamingContinuous = async (gen: number) => {
++    try {
++      handlers.onStart()
++      while (!dead && wantListening && gen === loopGen) {
++        const remaining = hardCapMs - (Date.now() - wallStart)
++        if (remaining < 200) break
++
++        const windowMs = Math.min(LOCAL_STT_MAX_RECORD_MS, remaining)
++        segmentIndex += 1
++        const segSid = `${parentSessionId}-s${segmentIndex}`
++        sessionId = segSid
++        phase = "recording"
++        streamSeq = 0
++        streamStable = ""
++        streamPrevHypothesis = ""
++
++        // Start STT session before first chunk so idle timer sees traffic soon.
++        deps.send({
++          type: "voice.stt.start",
++          v: 1,
++          sessionId: segSid,
++          modelId,
++          format: "pcm_s16le",
++          sampleRate: LOCAL_STT_SAMPLE_RATE,
++          channels: LOCAL_STT_CHANNELS,
++          lang: lang.startsWith("zh") ? "zh" : lang,
++          maxMs: windowMs,
++        })
++
++        let streamErr: string | null = null
++        try {
++          pcmStream = await startPcmStreamCapture({
++            maxMs: windowMs,
++            onPcmChunk: (pcm) => {
++              if (dead || aborted || gen !== loopGen || sessionId !== segSid) return
++              if (pcm.length === 0) return
++              // Split large ScriptProcessor bursts if needed
++              const chunks = splitIntoChunks(pcm, LOCAL_STT_MAX_CHUNK_RAW_BYTES)
++              for (const c of chunks) {
++                deps.send({
++                  type: "voice.stt.chunk",
++                  v: 1,
++                  sessionId: segSid,
++                  seq: streamSeq,
++                  data: uint8ToBase64(c),
++                })
++                streamSeq += 1
++              }
++            },
++          })
++        } catch (e: any) {
++          if (dead || gen !== loopGen) return
++          handlers.onError(e?.code === "aborted" ? "aborted" : "audio-capture")
++          handlers.onEnd()
++          reset()
++          return
++        }
++
++        // Poll companion for progressive hypothesis re-decode
++        clearPartialTimer()
++        partialTimer = setInterval(() => {
++          if (dead || aborted || gen !== loopGen || sessionId !== segSid) return
++          if (!wantListening && phase !== "recording") return
++          deps.send({
++            type: "voice.stt.partial_request",
++            v: 1,
++            sessionId: segSid,
++          })
++        }, STREAM_PARTIAL_POLL_MS)
++
++        // Wait until window ends, user stop, or hard cap
++        await new Promise<void>((resolve) => {
++          let settled = false
++          const done = () => {
++            if (settled) return
++            settled = true
++            clearSegmentTimer()
++            segmentStopTrigger = null
++            resolve()
++          }
++          segmentStopTrigger = done
++          segmentTimer = setTimeout(done, windowMs)
++        })
++
++        clearPartialTimer()
++        const handle = pcmStream
++        pcmStream = null
++        if (handle) {
++          try {
++            await handle.stop()
++          } catch {
++            /* */
++          }
++        }
++
++        if (dead || gen !== loopGen) return
++        if (aborted) {
++          deps.send({ type: "voice.stt.abort", v: 1, sessionId: segSid })
++          handlers.onError("aborted")
++          handlers.onEnd()
++          reset()
++          return
++        }
++
++        // Final decode for this window
++        phase = "waiting"
++        handlers.onCaptureStopped?.()
++        const result = await new Promise<{ ok: true; text: string } | { ok: false; code: string }>(
++          (resolve) => {
++            pending = { sessionId: segSid, resolve }
++            deps.send({
++              type: "voice.stt.end",
++              v: 1,
++              sessionId: segSid,
++              totalSeq: streamSeq,
++            })
++          },
++        )
++
++        if (dead || gen !== loopGen) return
++        if (result.ok === false) {
++          streamErr = result.code
++          if (streamErr === "aborted" || aborted) {
++            handlers.onError("aborted")
++          } else if (streamErr === "empty_result") {
++            // keep stable already shown
++          } else {
++            handlers.onError(streamErr)
++            handlers.onEnd()
++            reset()
++            return
++          }
++        } else if (result.text.trim()) {
++          const finalText = result.text.trim()
++          // Commit remainder beyond progressive stable; clear interim
++          const newly = finalText.startsWith(streamStable)
++            ? finalText.slice(streamStable.length)
++            : finalText
++          streamStable = finalText
++          handlers.onResult({ interim: "", finalChunk: newly })
++        }
++
++        if (!wantListening || aborted) break
++        handlers.onSegmentContinue?.()
++      }
++
++      if (!dead) handlers.onEnd()
++      reset()
++    } catch {
++      if (!dead) {
++        handlers.onError("unknown")
++        handlers.onEnd()
++      }
++      reset()
++    }
++  }
++
+   const runContinuous = async (gen: number) => {
++    if (streamPartial) {
++      await runStreamingContinuous(gen)
++      return
++    }
+     try {
+       handlers.onStart()
+       while (!dead && wantListening && gen === loopGen) {
+@@ -413,6 +627,7 @@ export function createLocalSttAdapter(
+       mode = "classic"
+       hardCapMs = VOICE_CONTINUOUS_HARD_CAP_MS
+       segmentCapMs = LOCAL_STT_MAX_RECORD_MS
++      streamPartial = false
+ 
+       if (typeof langOrOpts === "string") {
+         lang = langOrOpts || VOICE_DEFAULT_LANG
+@@ -430,6 +645,13 @@ export function createLocalSttAdapter(
+             Math.min(LOCAL_STT_MAX_RECORD_MS, (langOrOpts as { segmentMs: number }).segmentMs),
+           )
+         }
++        if ((langOrOpts as { streamPartial?: boolean }).streamPartial === true) {
++          streamPartial = true
++          // Prefer near-realtime segment defaults when streaming
++          if (segmentCapMs >= LOCAL_STT_MAX_RECORD_MS) {
++            segmentCapMs = LOCAL_STT_NEAR_REALTIME_SEGMENT_MS
++          }
++        }
+       }
+ 
+       if (!sid) {
+@@ -461,10 +683,13 @@ export function createLocalSttAdapter(
+ 
+       wantListening = false
+ 
+-      // Continuous: finish current segment early, then exit after upload
++      // Continuous: finish current segment early, then exit after upload / end stream
+       if (mode === "continuous") {
+         if (phase === "recording") {
+           segmentStopTrigger?.()
++          if (streamPartial && pcmStream) {
++            // stop() is async via wait; segmentStopTrigger ends the wait loop
++          }
+         }
+         // uploading/waiting: let segment complete, loop exits
+         return
+@@ -515,6 +740,7 @@ export function createLocalSttAdapter(
+       wantListening = false
+       loopGen += 1
+       clearSegmentTimer()
++      clearPartialTimer()
+       segmentStopTrigger?.()
+       segmentStopTrigger = null
+       const sid = sessionId
+@@ -525,6 +751,14 @@ export function createLocalSttAdapter(
+       } catch {
+         /* */
+       }
++      if (pcmStream) {
++        try {
++          pcmStream.abort()
++        } catch {
++          /* */
++        }
++        pcmStream = null
++      }
+       if (sid) {
+         try {
+           deps.send({ type: "voice.stt.abort", v: 1, sessionId: sid })
+diff --git a/chrome-extension/src/sidepanel/voice/local-stt-detect.ts b/chrome-extension/src/sidepanel/voice/local-stt-detect.ts
+index b720a10..d49646d 100644
+--- a/chrome-extension/src/sidepanel/voice/local-stt-detect.ts
++++ b/chrome-extension/src/sidepanel/voice/local-stt-detect.ts
+@@ -32,6 +32,13 @@ export const LOCAL_STT_CHANNELS = 1
+ /** Record hard cap (ms) — same as M1 listen cap. */
+ export const LOCAL_STT_MAX_RECORD_MS = 45_000
+ 
++/**
++ * Near-real-time continuous local STT: shorter windows so finals appear more often.
++ * Not word-level interim (Whisper is offline per segment); no fake interim.
++ * Still clamped to LOCAL_STT_MAX_RECORD_MS.
++ */
++export const LOCAL_STT_NEAR_REALTIME_SEGMENT_MS = 8_000
++
+ /**
+  * Session raw PCM budget (bytes) for 45s s16le mono + slack.
+  * 16000 * 2 * 45 = 1_440_000; SoT suggests ≤ 2.5MB raw.
+diff --git a/chrome-extension/src/sidepanel/voice/web-speech-adapter.ts b/chrome-extension/src/sidepanel/voice/web-speech-adapter.ts
+index eab9c2a..a88d7ef 100644
+--- a/chrome-extension/src/sidepanel/voice/web-speech-adapter.ts
++++ b/chrome-extension/src/sidepanel/voice/web-speech-adapter.ts
+@@ -40,6 +40,11 @@ export type SpeechAdapterStartArg =
+       hardCapMs?: number
+       /** continuous per-segment window ms (tests / clamp ≤45s) */
+       segmentMs?: number
++      /**
++       * M2: local progressive hypothesis streaming (PCM stream + partial_request).
++       * Only meaningful for continuous local; not decoder-token Whisper.
++       */
++      streamPartial?: boolean
+     }
+ 
+ export type SpeechAdapter = {
+diff --git a/companion/src/message-router.ts b/companion/src/message-router.ts
+index 9acdd27..aa2e6ce 100644
+--- a/companion/src/message-router.ts
++++ b/companion/src/message-router.ts
+@@ -1918,6 +1918,7 @@ export async function handleMessage(
+     // Path B M1 — voice.stt.* (origin chrome-extension:// fence; NOT source:settings)
+     case "voice.stt.start":
+     case "voice.stt.chunk":
++    case "voice.stt.partial_request":
+     case "voice.stt.end":
+     case "voice.stt.abort":
+       return handleVoiceSttMessage(msg, {
+diff --git a/companion/src/server.ts b/companion/src/server.ts
+index 9f3451e..404af80 100644
+--- a/companion/src/server.ts
++++ b/companion/src/server.ts
+@@ -5818,6 +5818,19 @@ export function validateWsMessage(msg: any): WsValidationResult {
+       }
+       return { valid: true }
+     },
++    // Path B M2 — progressive hypothesis (re-decode cumulative audio; no fake tokens)
++    "voice.stt.partial_request": (m) => {
++      if (m.v !== 1) {
++        return { valid: false, error: "voice.stt.partial_request requires v:1" }
++      }
++      if (typeof m.sessionId !== "string" || !m.sessionId || m.sessionId.length > 128) {
++        return {
++          valid: false,
++          error: "voice.stt.partial_request requires sessionId string (1–128)",
++        }
++      }
++      return { valid: true }
++    },
+     // Dictation+ D1b — ASR Refiner (text-only; origin fence in handler)
+     "voice.refine.request": (m) => {
+       if (m.v !== 1) {
+diff --git a/companion/src/voice/session-caps.ts b/companion/src/voice/session-caps.ts
+index 39d7cb4..5d7edd9 100644
+--- a/companion/src/voice/session-caps.ts
++++ b/companion/src/voice/session-caps.ts
+@@ -15,6 +15,18 @@ export const STT_MAX_SESSION_BYTES = 2_500_000
+ /** Single chunk decoded size cap. */
+ export const STT_MAX_CHUNK_BYTES = 256 * 1024
+ 
++/**
++ * M2 local streaming: min wall time between partial hypothesis decodes.
++ * whisper.cpp is offline per invoke — this is progressive re-decode, not decoder tokens.
++ */
++export const STT_PARTIAL_MIN_INTERVAL_MS = 1_200
++
++/** Min audio bytes before a partial is useful (~0.8s @ 16 kHz mono s16le). */
++export const STT_PARTIAL_MIN_AUDIO_BYTES = 16_000 * 2 * 0.8
++
++/** Partial infer wall timeout (shorter than full end). */
++export const STT_PARTIAL_INFER_MAX_MS = 25_000
++
+ /** Allowlisted model ids (v1 catalog). */
+ export const STT_MODEL_IDS = ["small", "medium", "large-v3-turbo"] as const
+ export type SttModelId = (typeof STT_MODEL_IDS)[number]
+diff --git a/companion/src/voice/stt-handlers.ts b/companion/src/voice/stt-handlers.ts
+index a3e0286..a1396ae 100644
+--- a/companion/src/voice/stt-handlers.ts
++++ b/companion/src/voice/stt-handlers.ts
+@@ -65,12 +65,18 @@ function sttError(
+   }
+ }
+ 
+-function sttPartial(sessionId: string, status: "receiving" | "transcribing") {
++function sttPartial(
++  sessionId: string,
++  status: "receiving" | "transcribing" | "hypothesis",
++  text?: string,
++) {
+   return {
+     type: "voice.stt.partial" as const,
+     v: 1 as const,
+     sessionId,
+     status,
++    // M2: hypothesis text only when status === "hypothesis" (progressive re-decode)
++    ...(typeof text === "string" ? { text } : {}),
+   }
+ }
+ 
+@@ -219,6 +225,27 @@ export async function handleVoiceSttMessage(
+       return undefined
+     }
+ 
++    case "voice.stt.partial_request": {
++      // M2: progressive hypothesis re-decode (not decoder token stream)
++      if (typeof sessionId !== "string" || !sessionId) {
++        return sttError(undefined, "invalid_session_id", "sessionId required")
++      }
++      const r = await service.partial(sessionId, peerId)
++      if (!r.ok) {
++        // Soft skips are not user-facing errors (rate limit / too little audio)
++        if (r.code === "partial_skipped" || r.code === "partial_busy") {
++          return undefined
++        }
++        logger.info("voice.stt.partial.rejected", { sessionId, code: r.code })
++        return sttError(sessionId, r.code, r.message)
++      }
++      const text = typeof r.text === "string" ? r.text : ""
++      // Empty hypothesis is still a partial (UI can keep previous interim)
++      const partial = sttPartial(sessionId, "hypothesis", text)
++      ctx.send?.(partial)
++      return partial
++    }
++
+     case "voice.stt.end": {
+       if (typeof sessionId !== "string" || !sessionId) {
+         return sttError(undefined, "invalid_session_id", "sessionId required")
+diff --git a/companion/src/voice/stt-session-core.ts b/companion/src/voice/stt-session-core.ts
+index 609b2cb..615fa9a 100644
+--- a/companion/src/voice/stt-session-core.ts
++++ b/companion/src/voice/stt-session-core.ts
+@@ -133,6 +133,37 @@ export class SttSessionCore {
+     return { ok: true }
+   }
+ 
++  /**
++   * M2 streaming: reassemble contiguous chunks without ending the session.
++   * Returns null when not receiving / empty / gap.
++   */
++  snapshotAudio(sessionId: string): { ok: true; audio: Buffer; bytes: number; epoch: number } | SttSessionResult {
++    const s = this.active
++    if (!s || s.sessionId !== sessionId) {
++      return { ok: false, code: "session_unknown", message: "no matching session" }
++    }
++    if (s.phase === "aborted") {
++      return { ok: false, code: "aborted", message: "session aborted" }
++    }
++    if (s.phase === "ended") {
++      return { ok: false, code: "already_ended", message: "session already ended" }
++    }
++    const n = s.chunks.size
++    if (n === 0) {
++      return { ok: true, audio: Buffer.alloc(0), bytes: 0, epoch: s.epoch }
++    }
++    const parts: Buffer[] = []
++    for (let i = 0; i < n; i++) {
++      const c = s.chunks.get(i)
++      if (!c) {
++        return { ok: false, code: "seq_gap", message: `missing seq ${i}` }
++      }
++      parts.push(c)
++    }
++    const audio = Buffer.concat(parts)
++    return { ok: true, audio, bytes: audio.length, epoch: s.epoch }
++  }
++
+   end(sessionId: string, totalSeq: number): SttSessionResult & { audio?: Buffer; epoch?: number } {
+     const s = this.active
+     if (!s || s.sessionId !== sessionId) {
+diff --git a/companion/src/voice/stt-session-service.ts b/companion/src/voice/stt-session-service.ts
+index 387bd17..9d73829 100644
+--- a/companion/src/voice/stt-session-service.ts
++++ b/companion/src/voice/stt-session-service.ts
+@@ -14,10 +14,14 @@ import { whisperPinResolveOpts } from "./whisper-binary-pins"
+ import {
+   STT_INFER_MAX_MS,
+   STT_MAX_RECORD_MS,
++  STT_PARTIAL_INFER_MAX_MS,
++  STT_PARTIAL_MIN_AUDIO_BYTES,
++  STT_PARTIAL_MIN_INTERVAL_MS,
+   STT_UPLOAD_IDLE_MS,
+   isSttModelId,
+   type SttModelId,
+ } from "./session-caps"
++import { audioBodyForWhisper } from "./pcm-wav"
+ import {
+   SttSessionCore,
+   type SttSessionErrorCode,
+@@ -58,6 +62,8 @@ export type SttServiceErrorCode =
+   | "peer_mismatch"
+   | "resource_conflict"
+   | "invalid_session_id"
++  | "partial_skipped"
++  | "partial_busy"
+ 
+ export type SttServiceResult =
+   | { ok: true; text?: string; ms?: number; modelId?: string }
+@@ -112,8 +118,13 @@ type BoundSession = {
+   recordTimer?: ReturnType<typeof setTimeout>
+   idleTimer?: ReturnType<typeof setTimeout>
+   sessionDir?: string
+-  /** True while whisper child is running. */
++  /** True while final whisper child is running (end). */
+   inferring: boolean
++  /** M2: last partial hypothesis start (rate limit). */
++  lastPartialAt?: number
++  /** M2: in-flight partial abort (cancelled when a newer partial or end starts). */
++  partialAbort?: AbortController
++  partialInferring?: boolean
+ }
+ 
+ // --- service ------------------------------------------------------------------
+@@ -193,6 +204,112 @@ export class SttSessionService {
+     return r
+   }
+ 
++  /**
++   * M2 progressive hypothesis: snapshot receiving audio → whisper → text, session stays open.
++   * Rate-limited; skips when too little audio / final inferring / too soon.
++   * Not decoder-token streaming — offline re-decode of cumulative audio so far.
++   */
++  async partial(sessionId: string, peerId: string): Promise<SttServiceResult> {
++    const peer = this.requirePeer(peerId, sessionId)
++    if (!peer.ok) return peer
++    const bound = this.bound!
++    if (bound.inferring) {
++      return { ok: false, code: "partial_busy", message: "final infer in progress" }
++    }
++
++    const now = (this.deps.now ?? Date.now)()
++    if (
++      bound.lastPartialAt != null &&
++      now - bound.lastPartialAt < STT_PARTIAL_MIN_INTERVAL_MS
++    ) {
++      return { ok: false, code: "partial_skipped", message: "partial rate limited" }
++    }
++
++    const snap = this.core.snapshotAudio(sessionId)
++    if (!snap.ok) return snap
++    if (!("audio" in snap) || !snap.audio || snap.bytes < STT_PARTIAL_MIN_AUDIO_BYTES) {
++      return { ok: false, code: "partial_skipped", message: "insufficient audio for partial" }
++    }
++
++    // Cancel previous partial if still running
++    if (bound.partialAbort) {
++      try {
++        bound.partialAbort.abort()
++      } catch {
++        /* */
++      }
++    }
++    const pac = new AbortController()
++    bound.partialAbort = pac
++    bound.partialInferring = true
++    bound.lastPartialAt = now
++
++    let sessionDir: string | undefined
++    try {
++      const binRes = this.resolveBinary()
++      if (!binRes.ok) {
++        bound.partialInferring = false
++        const code =
++          binRes.reason === "hash_mismatch" ? "hash_fail" : "binary_missing"
++        return { ok: false, code, message: binRes.message }
++      }
++      const modelPath = this.resolveModelPath(bound.modelId)
++      if (!modelPath) {
++        bound.partialInferring = false
++        return { ok: false, code: "model_missing", message: "model path not resolved" }
++      }
++
++      const { body, fileName } = audioBodyForWhisper(snap.audio, bound.format)
++      sessionDir = await createSessionDir(`${sessionId}-p${now}`, this.deps.dataDir)
++      const audioPath = await writeSessionFile(sessionDir, fileName, body)
++      const run = this.deps.runWhisper ?? runWhisperTranscribe
++      const result = await run({
++        binaryPath: binRes.path,
++        modelPath,
++        audioPath,
++        lang: this.deps.lang ?? "zh",
++        timeoutMs: STT_PARTIAL_INFER_MAX_MS,
++        signal: pac.signal,
++      })
++      await removeSessionDir(sessionDir)
++      sessionDir = undefined
++      bound.partialInferring = false
++      // Drop if session already ended/aborted or superseded
++      if (this.bound?.sessionId !== sessionId || this.bound.inferring) {
++        return { ok: false, code: "partial_skipped", message: "session advanced" }
++      }
++      return {
++        ok: true,
++        text: result.text ?? "",
++        ms: result.ms,
++        modelId: bound.modelId,
++      }
++    } catch (e) {
++      if (sessionDir) {
++        try {
++          await removeSessionDir(sessionDir)
++        } catch {
++          /* */
++        }
++      }
++      bound.partialInferring = false
++      if (
++        pac.signal.aborted ||
++        (e instanceof WhisperRunnerError && e.code === "aborted")
++      ) {
++        return { ok: false, code: "partial_skipped", message: "partial aborted" }
++      }
++      if (e instanceof WhisperRunnerError && e.code === "timeout") {
++        return { ok: false, code: "infer_timeout", message: e.message }
++      }
++      return {
++        ok: false,
++        code: "resource_conflict",
++        message: e instanceof Error ? e.message : String(e),
++      }
++    }
++  }
++
+   /**
+    * End session: reassemble audio → tmp file → whisper → unlink → text.
+    */
+@@ -203,6 +320,15 @@ export class SttSessionService {
+     // Stop upload timers; keep abortController for infer cancel
+     this.clearTimersOnly()
+ 
++    // Cancel in-flight partial before final
++    if (this.bound?.partialAbort) {
++      try {
++        this.bound.partialAbort.abort()
++      } catch {
++        /* */
++      }
++    }
++
+     const end = this.core.end(sessionId, totalSeq)
+     if (!end.ok) {
+       this.dropBound()
+@@ -242,8 +368,8 @@ export class SttSessionService {
+ 
+       sessionDir = await createSessionDir(sessionId, this.deps.dataDir)
+       bound.sessionDir = sessionDir
+-      const fileName = format === "wav" ? "audio.wav" : "audio.pcm"
+-      const audioPath = await writeSessionFile(sessionDir, fileName, audio)
++      const { body, fileName } = audioBodyForWhisper(audio, format)
++      const audioPath = await writeSessionFile(sessionDir, fileName, body)
+ 
+       const run = this.deps.runWhisper ?? runWhisperTranscribe
+       const result = await run({
+diff --git a/docs/adr/023-voice-local-stt-path-b.md b/docs/adr/023-voice-local-stt-path-b.md
+index d06fcaf..64dd711 100644
+--- a/docs/adr/023-voice-local-stt-path-b.md
++++ b/docs/adr/023-voice-local-stt-path-b.md
+@@ -172,7 +172,8 @@ Channel:      community; default engine=browser; local = explicit opt-in after p
+ | `voice.stt.chunk` | E→C | `{ v:1, sessionId, seq, data:base64 }` |
+ | `voice.stt.end` | E→C | `{ v:1, sessionId, totalSeq }` |
+ | `voice.stt.abort` | E→C | `{ v:1, sessionId }` |
+-| `voice.stt.partial` | C→E | status only：`receiving` \| `transcribing`（**无**假 token 字） |
++| `voice.stt.partial` | C→E | status：`receiving` \| `transcribing` \| **`hypothesis`**；**M2** 在 `hypothesis` 时可选 `text`（累计音频 re-decode，**非** decoder token 假流） |
++| `voice.stt.partial_request` | E→C | `{ v:1, sessionId }` — 请求一次渐进假设（服务端限流；不足音频 / 忙则静默跳过） |
+ | `voice.stt.result` | C→E | `{ v:1, sessionId, text, ms, modelId }` |
+ | `voice.stt.error` | C→E | `{ v:1, sessionId, code, message }` |
+ | `voice.model.get_state` | E→C | 镜像状态 |
+diff --git a/docs/superpowers/specs/2026-08-07-voice-local-stt-design.md b/docs/superpowers/specs/2026-08-07-voice-local-stt-design.md
+index 76ae4bd..fefff2c 100644
+--- a/docs/superpowers/specs/2026-08-07-voice-local-stt-design.md
++++ b/docs/superpowers/specs/2026-08-07-voice-local-stt-design.md
+@@ -46,7 +46,8 @@
+ | 默认 local / 自动下载 / 自动更新权重 | 惊喜与供应链 |
+ | faster-whisper / 双栈 | v1 单栈 |
+ | ffmpeg 依赖 | 打包/CVE |
+-| 流式 token interim | M2 |
++| 流式 **decoder token** interim（whisper 内部 token 流） | 仍非目标；见 M2 渐进重解码 |
++| **M2 渐进字级假设**（累计音频 re-decode + 前缀稳定） | **已实现**（`voice.stt.partial_request` → `partial.status=hypothesis` + text） |
+ | auto-send / 唤醒 / TTS | M1 延续 |
+ | `audioCapture` | F-S5 |
+ | Worker / Cockpit / tray 🎤 | F-S9 |
+diff --git a/chrome-extension/src/sidepanel/voice/pcm-stream-capture.ts b/chrome-extension/src/sidepanel/voice/pcm-stream-capture.ts
+new file mode 100644
+index 0000000..841b66a
+--- /dev/null
++++ b/chrome-extension/src/sidepanel/voice/pcm-stream-capture.ts
+@@ -0,0 +1,158 @@
++/**
++ * M2 — continuous 16 kHz mono PCM capture via AudioContext (ScriptProcessor fallback).
++ * Streams s16le chunks for voice.stt.chunk while recording; no MediaRecorder batch wait.
++ */
++
++import {
++  LOCAL_STT_MAX_RECORD_MS,
++  LOCAL_STT_SAMPLE_RATE,
++} from "./local-stt-detect"
++import { float32ToS16lePcm, resampleFloat32Mono } from "./pcm-encode"
++
++export type PcmStreamCaptureOpts = {
++  maxMs?: number
++  /** Fired with non-empty 16 kHz mono s16le chunks. */
++  onPcmChunk: (pcm: Uint8Array) => void
++  onLevel?: (level: number) => void
++}
++
++export type PcmStreamHandle = {
++  stop: () => Promise<void>
++  abort: () => void
++}
++
++function stopTracks(stream: MediaStream | null): void {
++  if (!stream) return
++  for (const t of stream.getTracks()) {
++    try {
++      t.stop()
++    } catch {
++      /* */
++    }
++  }
++}
++
++/**
++ * Start mic → 16 kHz mono PCM stream. Caller must stop()/abort() to release.
++ */
++export async function startPcmStreamCapture(
++  opts: PcmStreamCaptureOpts,
++): Promise<PcmStreamHandle> {
++  const maxMs = opts.maxMs ?? LOCAL_STT_MAX_RECORD_MS
++  const onPcmChunk = opts.onPcmChunk
++  const onLevel = opts.onLevel
++
++  if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
++    throw Object.assign(new Error("getUserMedia unavailable"), { code: "audio-capture" })
++  }
++  if (typeof AudioContext === "undefined" && typeof (globalThis as any).webkitAudioContext === "undefined") {
++    throw Object.assign(new Error("AudioContext unavailable"), { code: "audio-capture" })
++  }
++
++  const stream = await navigator.mediaDevices.getUserMedia({
++    audio: {
++      channelCount: 1,
++      echoCancellation: true,
++      noiseSuppression: true,
++    },
++  })
++
++  const AC = AudioContext || (globalThis as any).webkitAudioContext
++  const ctx: AudioContext = new AC()
++  const source = ctx.createMediaStreamSource(stream)
++  const bufferSize = 4096
++  // ScriptProcessor is deprecated but widely available in extension contexts.
++  const processor = ctx.createScriptProcessor(bufferSize, 1, 1)
++  const mute = ctx.createGain()
++  mute.gain.value = 0
++
++  let settled = false
++  let maxTimer: ReturnType<typeof setTimeout> | null = null
++  let stopResolve: (() => void) | null = null
++  let stopPromise: Promise<void> | null = null
++
++  const release = () => {
++    if (maxTimer) {
++      clearTimeout(maxTimer)
++      maxTimer = null
++    }
++    try {
++      processor.disconnect()
++    } catch {
++      /* */
++    }
++    try {
++      source.disconnect()
++    } catch {
++      /* */
++    }
++    try {
++      mute.disconnect()
++    } catch {
++      /* */
++    }
++    stopTracks(stream)
++    try {
++      void ctx.close()
++    } catch {
++      /* */
++    }
++  }
++
++  processor.onaudioprocess = (ev: AudioProcessingEvent) => {
++    if (settled) return
++    const input = ev.inputBuffer.getChannelData(0)
++    if (!input || input.length === 0) return
++    const rate = ctx.sampleRate || 48000
++    const mono =
++      rate === LOCAL_STT_SAMPLE_RATE
++        ? new Float32Array(input)
++        : resampleFloat32Mono(input, rate, LOCAL_STT_SAMPLE_RATE)
++    if (mono.length === 0) return
++    const pcm = float32ToS16lePcm(mono)
++    if (pcm.length > 0) onPcmChunk(pcm)
++    if (onLevel) {
++      let sum = 0
++      for (let i = 0; i < input.length; i++) sum += input[i] * input[i]
++      const rms = Math.sqrt(sum / input.length)
++      onLevel(Math.min(1, rms * 4))
++    }
++  }
++
++  source.connect(processor)
++  processor.connect(mute)
++  mute.connect(ctx.destination)
++
++  maxTimer = setTimeout(() => {
++    void handleStop()
++  }, maxMs)
++
++  const handleStop = async () => {
++    if (settled) {
++      if (stopPromise) return stopPromise
++      return
++    }
++    settled = true
++    release()
++    if (stopResolve) stopResolve()
++  }
++
++  const handle: PcmStreamHandle = {
++    stop: () => {
++      if (stopPromise) return stopPromise
++      stopPromise = new Promise<void>((resolve) => {
++        stopResolve = resolve
++        void handleStop().then(() => resolve())
++      })
++      return stopPromise
++    },
++    abort: () => {
++      if (settled) return
++      settled = true
++      release()
++      if (stopResolve) stopResolve()
++    },
++  }
++
++  return handle
++}
+diff --git a/chrome-extension/src/sidepanel/voice/stream-stabilize.ts b/chrome-extension/src/sidepanel/voice/stream-stabilize.ts
+new file mode 100644
+index 0000000..fe8a4f5
+--- /dev/null
++++ b/chrome-extension/src/sidepanel/voice/stream-stabilize.ts
+@@ -0,0 +1,94 @@
++/**
++ * M2 local streaming — stabilize progressive Whisper re-decode hypotheses.
++ * whisper.cpp has no token interim; we re-decode cumulative audio and commit
++ * the longest common prefix that is stable across consecutive hypotheses.
++ */
++
++export type StabilizeResult = {
++  /** Cumulative committed text (grows monotonically when possible). */
++  stable: string
++  /** Unstable tail of the latest hypothesis (composer interim). */
++  interim: string
++  /** Newly committed slice since previous stable (emit as finalChunk). */
++  newlyStable: string
++}
++
++/**
++ * Longest common prefix (character-level; CJK-friendly).
++ */
++export function longestCommonPrefix(a: string, b: string): string {
++  const n = Math.min(a.length, b.length)
++  let i = 0
++  while (i < n && a[i] === b[i]) i += 1
++  return a.slice(0, i)
++}
++
++/**
++ * Given previous stable text and a new full-session hypothesis, compute
++ * next stable / interim. Prefer growing stable when hypothesis extends it;
++ * on revision, retreat to LCP (may shrink newlyStable to empty and shrink stable).
++ */
++export function stabilizeHypothesis(
++  prevStable: string,
++  hypothesis: string,
++): StabilizeResult {
++  const h = (hypothesis || "").trim()
++  const prev = prevStable || ""
++  if (!h) {
++    return { stable: prev, interim: "", newlyStable: "" }
++  }
++  if (!prev) {
++    // Bootstrap: keep short unstable; only commit empty newlyStable so UI shows interim.
++    // Optionally commit nothing until second tick — show full as interim.
++    return { stable: "", interim: h, newlyStable: "" }
++  }
++  if (h.startsWith(prev)) {
++    const interim = h.slice(prev.length)
++    return { stable: prev, interim, newlyStable: "" }
++  }
++  // Hypothesis revised earlier text — retreat to LCP
++  const lcp = longestCommonPrefix(prev, h)
++  return {
++    stable: lcp,
++    interim: h.slice(lcp.length),
++    newlyStable: "",
++  }
++}
++
++/**
++ * After a second (or later) hypothesis that still extends a prefix of the first,
++ * commit the shared extended stable region once two hypotheses agree on more text.
++ *
++ * Call with (stable, prevHypothesis, nextHypothesis):
++ * - common = LCP(prevH, nextH)
++ * - if common longer than stable → grow stable to common
++ */
++export function promoteStableByAgreement(
++  prevStable: string,
++  prevHypothesis: string,
++  nextHypothesis: string,
++): StabilizeResult {
++  const prevH = (prevHypothesis || "").trim()
++  const nextH = (nextHypothesis || "").trim()
++  const stable0 = prevStable || ""
++  if (!nextH) {
++    return { stable: stable0, interim: "", newlyStable: "" }
++  }
++  if (!prevH) {
++    return stabilizeHypothesis(stable0, nextH)
++  }
++  const agreed = longestCommonPrefix(prevH, nextH)
++  // Only grow stable forward; never past agreed
++  let stable = stable0
++  let newlyStable = ""
++  if (agreed.length > stable.length && agreed.startsWith(stable)) {
++    newlyStable = agreed.slice(stable.length)
++    stable = agreed
++  } else if (!agreed.startsWith(stable) && stable.length > 0) {
++    // Conflict: retreat
++    stable = longestCommonPrefix(stable, agreed)
++    newlyStable = ""
++  }
++  const interim = nextH.startsWith(stable) ? nextH.slice(stable.length) : nextH
++  return { stable, interim, newlyStable }
++}
+diff --git a/companion/src/voice/pcm-wav.ts b/companion/src/voice/pcm-wav.ts
+new file mode 100644
+index 0000000..3ae9786
+--- /dev/null
++++ b/companion/src/voice/pcm-wav.ts
+@@ -0,0 +1,38 @@
++/**
++ * Path B — wrap raw pcm_s16le as minimal WAV for whisper-cli (-f expects container).
++ */
++
++/** Build a minimal WAV (PCM s16le) container around raw PCM. */
++export function wrapPcmS16leAsWav(
++  pcm: Buffer,
++  sampleRate = 16_000,
++  channels = 1,
++): Buffer {
++  const dataSize = pcm.length
++  const header = Buffer.alloc(44)
++  header.write("RIFF", 0)
++  header.writeUInt32LE(36 + dataSize, 4)
++  header.write("WAVE", 8)
++  header.write("fmt ", 12)
++  header.writeUInt32LE(16, 16)
++  header.writeUInt16LE(1, 20)
++  header.writeUInt16LE(channels, 22)
++  header.writeUInt32LE(sampleRate, 24)
++  header.writeUInt32LE(sampleRate * channels * 2, 28)
++  header.writeUInt16LE(channels * 2, 32)
++  header.writeUInt16LE(16, 34)
++  header.write("data", 36)
++  header.writeUInt32LE(dataSize, 40)
++  return Buffer.concat([header, pcm])
++}
++
++/** Ensure whisper-cli gets a WAV file body (raw pcm_s16le is wrapped). */
++export function audioBodyForWhisper(
++  audio: Buffer,
++  format: "pcm_s16le" | "wav",
++): { body: Buffer; fileName: "audio.wav" } {
++  if (format === "wav") {
++    return { body: audio, fileName: "audio.wav" }
++  }
++  return { body: wrapPcmS16leAsWav(audio), fileName: "audio.wav" }
++}
+diff --git a/companion/tests/voice-stt-partial.test.ts b/companion/tests/voice-stt-partial.test.ts
+new file mode 100644
+index 0000000..3d619f1
+--- /dev/null
++++ b/companion/tests/voice-stt-partial.test.ts
+@@ -0,0 +1,153 @@
++import test from "node:test"
++import assert from "node:assert/strict"
++import * as fs from "node:fs"
++import * as os from "node:os"
++import * as path from "node:path"
++import { SttSessionCore } from "../src/voice/stt-session-core"
++import { SttSessionService } from "../src/voice/stt-session-service"
++import { handleVoiceSttMessage } from "../src/voice/stt-handlers"
++
++function tempDataDir(): string {
++  return fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-stt-partial-"))
++}
++
++function plantReadyModel(whisperRoot: string) {
++  const dir = path.join(whisperRoot, "small")
++  fs.mkdirSync(dir, { recursive: true })
++  fs.writeFileSync(path.join(dir, "ggml-small.bin"), Buffer.alloc(64))
++}
++
++test("core snapshotAudio does not end session", () => {
++  const core = new SttSessionCore()
++  assert.equal(
++    core.start({
++      sessionId: "s1",
++      modelId: "small",
++      format: "pcm_s16le",
++      sampleRate: 16000,
++      channels: 1,
++    }).ok,
++    true,
++  )
++  // ~1s of silence PCM so partial min bytes can pass in service tests
++  const pcm = Buffer.alloc(16_000 * 2)
++  assert.equal(core.appendChunk("s1", 0, pcm).ok, true)
++  const snap = core.snapshotAudio("s1")
++  assert.equal(snap.ok, true)
++  if (snap.ok && "audio" in snap) {
++    assert.equal(snap.bytes, pcm.length)
++  }
++  assert.equal(core.getActive()?.phase, "receiving")
++  assert.equal(core.getActive()?.chunks.size, 1)
++})
++
++test("service.partial returns hypothesis text without ending", async () => {
++  const dataDir = tempDataDir()
++  const whisperRoot = path.join(dataDir, "models", "whisper")
++  plantReadyModel(whisperRoot)
++
++  let runs = 0
++  const svc = new SttSessionService({
++    dataDir,
++    whisperRoot,
++    runWhisper: async () => {
++      runs += 1
++      return { text: "你好世界", ms: 10 }
++    },
++    resolveBinary: () => ({
++      ok: true,
++      path: "/fake/cmspark-whisper",
++      arch: "darwin-arm64",
++      sha256: "x",
++      pinned: false,
++    }),
++    probeModel: () => ({ status: "ready" as const }),
++  })
++
++  assert.equal(
++    svc.start(
++      {
++        sessionId: "sess-p",
++        modelId: "small",
++        format: "pcm_s16le",
++        sampleRate: 16000,
++        channels: 1,
++      },
++      "peer-A",
++    ).ok,
++    true,
++  )
++  // enough audio for STT_PARTIAL_MIN_AUDIO_BYTES
++  const pcm = Buffer.alloc(Math.ceil(16_000 * 2 * 0.9))
++  assert.equal(svc.chunk("sess-p", 0, pcm, "peer-A").ok, true)
++
++  const partial = await svc.partial("sess-p", "peer-A")
++  assert.equal(partial.ok, true)
++  if (partial.ok) assert.equal(partial.text, "你好世界")
++  assert.equal(runs, 1)
++  assert.equal(svc.getActive()?.phase, "receiving")
++
++  // rate limit → skip
++  const skip = await svc.partial("sess-p", "peer-A")
++  assert.equal(skip.ok, false)
++  if (!skip.ok) assert.equal(skip.code, "partial_skipped")
++})
++
++test("handler partial_request emits hypothesis", async () => {
++  const dataDir = tempDataDir()
++  const whisperRoot = path.join(dataDir, "models", "whisper")
++  plantReadyModel(whisperRoot)
++  const svc = new SttSessionService({
++    dataDir,
++    whisperRoot,
++    runWhisper: async () => ({ text: "hello partial", ms: 5 }),
++    resolveBinary: () => ({
++      ok: true,
++      path: "/fake/w",
++      arch: "darwin-arm64",
++      sha256: "x",
++      pinned: false,
++    }),
++    probeModel: () => ({ status: "ready" as const }),
++  })
++
++  const sent: any[] = []
++  const ctx = {
++    origin: "chrome-extension://abcdefghijklmnopqrstuvwxyzabcdef",
++    peerId: "panel-1",
++    send: (m: any) => sent.push(m),
++  }
++
++  await handleVoiceSttMessage(
++    {
++      type: "voice.stt.start",
++      v: 1,
++      sessionId: "hs1",
++      modelId: "small",
++      format: "pcm_s16le",
++      sampleRate: 16000,
++      channels: 1,
++    },
++    ctx,
++    { service: svc },
++  )
++  await handleVoiceSttMessage(
++    {
++      type: "voice.stt.chunk",
++      v: 1,
++      sessionId: "hs1",
++      seq: 0,
++      data: Buffer.alloc(Math.ceil(16_000 * 2 * 0.9)).toString("base64"),
++    },
++    ctx,
++    { service: svc },
++  )
++  const out = await handleVoiceSttMessage(
++    { type: "voice.stt.partial_request", v: 1, sessionId: "hs1" },
++    ctx,
++    { service: svc },
++  )
++  assert.equal(out?.type, "voice.stt.partial")
++  assert.equal(out?.status, "hypothesis")
++  assert.equal(out?.text, "hello partial")
++})
+diff --git a/chrome-extension/tests/stream-stabilize.test.ts b/chrome-extension/tests/stream-stabilize.test.ts
+new file mode 100644
+index 0000000..fbd5a0e
+--- /dev/null
++++ b/chrome-extension/tests/stream-stabilize.test.ts
+@@ -0,0 +1,34 @@
++import test from "node:test"
++import assert from "node:assert/strict"
++import {
++  longestCommonPrefix,
++  promoteStableByAgreement,
++  stabilizeHypothesis,
++} from "../src/sidepanel/voice/stream-stabilize"
++
++test("longestCommonPrefix", () => {
++  assert.equal(longestCommonPrefix("你好世界", "你好啊"), "你好")
++  assert.equal(longestCommonPrefix("abc", "xyz"), "")
++})
++
++test("stabilize first hypothesis is interim only", () => {
++  const r = stabilizeHypothesis("", "打开设置页面")
++  assert.equal(r.stable, "")
++  assert.equal(r.interim, "打开设置页面")
++  assert.equal(r.newlyStable, "")
++})
++
++test("promoteStableByAgreement grows stable on agreement", () => {
++  const r1 = promoteStableByAgreement("", "", "打开设置")
++  assert.equal(r1.interim, "打开设置")
++  const r2 = promoteStableByAgreement(r1.stable, "打开设置", "打开设置页面")
++  assert.equal(r2.stable, "打开设置")
++  assert.equal(r2.newlyStable, "打开设置")
++  assert.equal(r2.interim, "页面")
++})
++
++test("promote retreats on revision", () => {
++  const r = promoteStableByAgreement("打开设置", "打开设置页面", "打开窗口")
++  assert.equal(r.stable, "打开")
++  assert.ok(r.interim.includes("窗口") || r.interim.startsWith("窗"))
++})

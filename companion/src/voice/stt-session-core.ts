@@ -133,6 +133,37 @@ export class SttSessionCore {
     return { ok: true }
   }
 
+  /**
+   * M2 streaming: reassemble contiguous chunks without ending the session.
+   * Returns null when not receiving / empty / gap.
+   */
+  snapshotAudio(sessionId: string): { ok: true; audio: Buffer; bytes: number; epoch: number } | SttSessionResult {
+    const s = this.active
+    if (!s || s.sessionId !== sessionId) {
+      return { ok: false, code: "session_unknown", message: "no matching session" }
+    }
+    if (s.phase === "aborted") {
+      return { ok: false, code: "aborted", message: "session aborted" }
+    }
+    if (s.phase === "ended") {
+      return { ok: false, code: "already_ended", message: "session already ended" }
+    }
+    const n = s.chunks.size
+    if (n === 0) {
+      return { ok: true, audio: Buffer.alloc(0), bytes: 0, epoch: s.epoch }
+    }
+    const parts: Buffer[] = []
+    for (let i = 0; i < n; i++) {
+      const c = s.chunks.get(i)
+      if (!c) {
+        return { ok: false, code: "seq_gap", message: `missing seq ${i}` }
+      }
+      parts.push(c)
+    }
+    const audio = Buffer.concat(parts)
+    return { ok: true, audio, bytes: audio.length, epoch: s.epoch }
+  }
+
   end(sessionId: string, totalSeq: number): SttSessionResult & { audio?: Buffer; epoch?: number } {
     const s = this.active
     if (!s || s.sessionId !== sessionId) {

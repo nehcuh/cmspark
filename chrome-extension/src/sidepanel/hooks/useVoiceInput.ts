@@ -12,7 +12,10 @@ import {
   VOICE_MAX_LISTEN_MS,
   type VoiceDictationMode,
 } from "../voice/detect"
-import { detectLocalMediaCapture } from "../voice/local-stt-detect"
+import {
+  detectLocalMediaCapture,
+  LOCAL_STT_NEAR_REALTIME_SEGMENT_MS,
+} from "../voice/local-stt-detect"
 import { reduceVoiceSession } from "../voice/session-reducer"
 import {
   mergeFinalTranscript,
@@ -105,6 +108,11 @@ export type UseVoiceInputOpts = {
    * If undefined, refine always applies (no ownership gate).
    */
   getCurrentDraft?: () => string
+  /**
+   * Prefer near-real-time feedback: local continuous uses shorter segments.
+   * Browser path always has word-level interim when interimResults is on.
+   */
+  realtimeStreaming?: boolean
 }
 
 export function useVoiceInput(opts: UseVoiceInputOpts) {
@@ -563,12 +571,18 @@ export function useVoiceInput(opts: UseVoiceInputOpts) {
         dispatchEv({ type: "USER_TOGGLE_START", sessionId: sid, baseText: base })
         try {
           if (eng === "local") {
+            const nearRt =
+              o.realtimeStreaming === true && modeNow === "continuous"
             adapterRef.current.start({
               lang: VOICE_DEFAULT_LANG,
               sessionId: sid,
               modelId: o.modelId || "medium",
               mode: modeNow,
               hardCapMs: maxMs,
+              // Shorter windows ≈ near-real-time finals when not streaming.
+              segmentMs: nearRt ? LOCAL_STT_NEAR_REALTIME_SEGMENT_MS : undefined,
+              // M2: progressive hypothesis via PCM stream + partial_request.
+              streamPartial: nearRt === true,
             })
           } else {
             adapterRef.current.start({
