@@ -43,6 +43,10 @@ import type { EvidenceFactory, EvidenceSink } from "./evidence"
 import { formatOcrWordsAsDescribeText } from "./ocr-describe"
 import { locateTargetWithChain, DRIFT_THRESHOLD_PX, type WitnessVerdict } from "./locate-chain"
 import type { ExperimentalLocator } from "./locate-chain"
+import {
+  extractGuiThought,
+  formatExperimentalSuggestionCaption,
+} from "./gui-action-parse"
 import type { ComputerTaskEvent, PreviewBuilder } from "./preview"
 import { sanitizeComputerCaption } from "./preview"
 import { assertCoordinateAllowed, assertExeNotDrifted, assertHwndOwnedByEntry, normalizeExePath } from "./policy"
@@ -849,6 +853,7 @@ export async function runComputerTask(
       // by the dedicated re-L2 below, NEVER auto-injected.
       let experimentalSuggestion = false
       let experimentalTarget: string | undefined
+      let experimentalRaw: string | undefined
 
       if ((action.action === "click" || action.action === "double_click" || action.action === "right_click") && action.target) {
         // WP3: four-layer locate chain (locate-chain.ts owns the semantics).
@@ -889,6 +894,9 @@ export async function runComputerTask(
         if (chain.experimental === true) {
           experimentalSuggestion = true
           experimentalTarget = action.target
+          if (typeof chain.experimentalRaw === "string" && chain.experimentalRaw.trim()) {
+            experimentalRaw = chain.experimentalRaw
+          }
         }
       } else if (action.action === "scroll" || action.action === "drag") {
         pointClient = { x: action.x, y: action.y }
@@ -1116,8 +1124,15 @@ export async function runComputerTask(
           y: pointClient.y,
           preview: suggestionPreview !== undefined,
         })
+        // Path C: optional Thought snippet from experimental VLM raw (sanitized).
+        const experimentalThought = extractGuiThought(experimentalRaw)
         const ok = await reL2(
-          `实验层建议（Qwen3-VL 本地模型，未校准，可能完全错误）：建议点击「${experimentalTarget}」于客户端坐标 (${pointClient.x}, ${pointClient.y})。批准以执行此次点击，拒绝以放弃该建议。`,
+          formatExperimentalSuggestionCaption({
+            target: experimentalTarget ?? "",
+            clientX: pointClient.x,
+            clientY: pointClient.y,
+            thought: experimentalThought,
+          }),
           ["computer.experimental_suggestion"],
           seq,
           suggestionPreview,

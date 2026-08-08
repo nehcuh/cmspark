@@ -37,7 +37,12 @@ def _reply(obj: dict) -> None:
 
 
 def _parse_point(text: str, width: int, height: int) -> Optional[Tuple[int, int]]:
-    """Extract click point from model text. Supports JSON and (x,y) image pixels."""
+    """Extract click point from model text.
+
+    Supports JSON, (x,y), and UI-TARS-like Action DSL (point=/start_box=).
+    Coordinates are image pixels; clamp-only (L-QW-3) — never 0–1000 rescale.
+    Keep in spirit with companion/src/computer/gui-action-parse.ts.
+    """
     if not text:
         return None
     # JSON object with x/y
@@ -49,13 +54,32 @@ def _parse_point(text: str, width: int, height: int) -> Optional[Tuple[int, int]
     if m:
         x, y = float(m.group(1)), float(m.group(2))
         return _normalize(x, y, width, height)
+    # UI-TARS-like: point='x y' / start_box='(x,y)' / start_box='(x1,y1,x2,y2)'
+    # Separators may be spaces and/or commas.
+    m = re.search(
+        r"(?:start_box|end_box|point|start_point|end_point)\s*=\s*['\"]?\(?\s*"
+        r"([0-9]+(?:\.[0-9]+)?)\s*[, ]\s*([0-9]+(?:\.[0-9]+)?)"
+        r"(?:\s*[, ]\s*([0-9]+(?:\.[0-9]+)?)\s*[, ]\s*([0-9]+(?:\.[0-9]+)?))?\)?['\"]?",
+        text,
+        re.I,
+    )
+    if m:
+        a, b = float(m.group(1)), float(m.group(2))
+        if m.group(3) is not None and m.group(4) is not None:
+            c, d = float(m.group(3)), float(m.group(4))
+            return _normalize((a + c) / 2.0, (b + d) / 2.0, width, height)
+        return _normalize(a, b, width, height)
     # bracket form [x, y] or (x, y)
     m = re.search(r"[\[\(]\s*([0-9]+(?:\.[0-9]+)?)\s*,\s*([0-9]+(?:\.[0-9]+)?)\s*[\]\)]", text)
     if m:
         x, y = float(m.group(1)), float(m.group(2))
         return _normalize(x, y, width, height)
-    # bare "x, y" near end
-    m = re.search(r"(?:click|point|坐标|位置)[^\d]{0,12}([0-9]+(?:\.[0-9]+)?)\s*[,，]\s*([0-9]+(?:\.[0-9]+)?)", text, re.I)
+    # bare "x, y" near click/point/坐标
+    m = re.search(
+        r"(?:click|point|坐标|位置)[^\d]{0,12}([0-9]+(?:\.[0-9]+)?)\s*[,，]\s*([0-9]+(?:\.[0-9]+)?)",
+        text,
+        re.I,
+    )
     if m:
         x, y = float(m.group(1)), float(m.group(2))
         return _normalize(x, y, width, height)

@@ -58,3 +58,22 @@ test("catalog migrate legacy hybrid → 2b", async () => {
   assert.equal(migrateLegacyModelVariant("int8"), "2b")
   assert.equal(migrateLegacyModelVariant("4b"), "4b")
 })
+
+test("Path C: start_box four-number raw → box center via parseGuiClickPoint", async () => {
+  const loc = new QwenVlLocator({
+    session: {
+      // Worker returns corner-ish point; raw has full box — reparse should win center.
+      locate: async () => ({
+        point: { x: 10, y: 20 },
+        ms: 3,
+        raw: "Action: click(start_box='(10,20,30,40)')",
+      }),
+    },
+  })
+  const r = await loc.locate({ command: "点保存", shot: shot({ path: "/tmp/box.png" } as any) })
+  assert.equal(r.kind, "hit")
+  if (r.kind === "hit") {
+    assert.deepEqual(r.point, { x: 20, y: 30 })
+    assert.match(String(r.raw), /start_box/)
+  }
+})

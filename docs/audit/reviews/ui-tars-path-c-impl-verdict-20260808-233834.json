@@ -1,0 +1,8 @@
+{
+  "batch": "ui-tars-path-c-impl",
+  "timestamp": "20260808-233834",
+  "claude": { "verdict": "UNKNOWN", "exit_code": 0, "path": "/c/Users/HuChen/Projects/cmspark/docs/audit/reviews/ui-tars-path-c-impl-claude-20260808-233834.md" },
+  "pi": { "verdict": "UNKNOWN", "exit_code": 0, "path": "/c/Users/HuChen/Projects/cmspark/docs/audit/reviews/ui-tars-path-c-impl-pi-20260808-233834.md" },
+  "both_approve": false,
+  "diff_path": "/c/Users/HuChen/Projects/cmspark/docs/audit/reviews/ui-tars-path-c-impl-diff-20260808-233834.patch"
+}

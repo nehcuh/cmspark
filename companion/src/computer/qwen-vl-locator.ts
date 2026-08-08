@@ -2,6 +2,7 @@
 // Chinese commands are allowed (unlike TinyClick ASCII envelope).
 
 import type { CaptureMeta } from "./types"
+import { parseGuiClickPoint } from "./gui-action-parse"
 import { ModelRuntimeError } from "./qwen-vl-runtime"
 import type { QwenVlSession } from "./qwen-vl-session"
 
@@ -83,10 +84,18 @@ export class QwenVlLocator {
 
     try {
       const r = await this.session.locate(cmd, imagePath, width, height)
-      if (!r.point) {
+      // Path C: prefer/recover points from free-text raw via gui-action-parse
+      // (UI-TARS-like start_box center, JSON, etc.). Worker may already return
+      // a point; reparse wins when raw yields a finite coordinate.
+      let point = r.point && Number.isFinite(r.point.x) && Number.isFinite(r.point.y) ? r.point : null
+      if (r.raw) {
+        const fromRaw = parseGuiClickPoint(r.raw, width, height)
+        if (fromRaw) point = fromRaw
+      }
+      if (!point) {
         return { kind: "error", reason: QWEN_VL_REASON.ERROR }
       }
-      const { x, y } = r.point
+      const { x, y } = point
 
       // Collapse suppression (same as TinyClick G4)
       const frameSha = typeof (shot as any).sha256 === "string" ? (shot as any).sha256 : ""

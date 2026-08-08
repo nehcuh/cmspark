@@ -691,6 +691,20 @@ Companion 作为 **MCP 客户端/聚合器**，把外部 server 的 tools（及�
 - Worker 默认 `WORKER_HARD_DENY` 含全部 `host_*`。  
 - 过程设计稿在 `docs/decisions/`，**非**运行时唯一规范。
 
+### 9.4 与纯视觉 GUI Agent / Operator 映射（吸收说明）
+
+业界 SDK（如 UI-TARS Desktop）常把 **GUIAgent 循环** 与 **Operator**（screenshot / execute）拆开。CMspark **不**引入第二套 GUIAgent runtime，而是把等价端口落在 Companion CU 模块：
+
+| UI-TARS 概念 | CMspark 对应 |
+|--------------|--------------|
+| `Operator.screenshot` | `ScreenCapturer` + 证据帧纪律（pendingRaws） |
+| `Operator.execute` | `InputInjector` + policy / A1 像素新鲜度 / danger |
+| `GUIAgent` 循环 | 主 LLM tool-loop 发 `host_computer` + executor 逐步执行 |
+| Action DSL + Thought | 结构化 `actions[]`；实验层 raw → Thought 仅用于 re-L2 文案 |
+| pause / CALL_USER / stop | 确认台 re-L2 · 急停 · 拒绝确认 |
+
+研究 SoT：[research/ui-tars-absorption-2026-08-08.md](research/ui-tars-absorption-2026-08-08.md) · 路径锁定 Path C：[decisions/ui-tars-absorption-multipath-2026-08-08.md](decisions/ui-tars-absorption-multipath-2026-08-08.md)。
+
 ---
 
 ## 10. Multi-Agent Orchestrator 与 Mission Board

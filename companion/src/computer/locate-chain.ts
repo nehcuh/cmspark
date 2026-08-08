@@ -109,6 +109,11 @@ export interface ChainLocateResult {
    * A1 像素新鲜度检查注入；实验层建议永不自动进入接受链。
    */
   experimental?: true
+  /**
+   * Path C (UI-TARS absorption): raw VLM text when experimental hit, for
+   * Thought extraction in the re-L2 caption. Never used as inject authority.
+   */
+  experimentalRaw?: string
 }
 
 /** UIA↔OCR witness tolerance (px) around the UIA bbox. */
@@ -628,6 +633,10 @@ export async function locateTargetWithChain(args: {
         uncrossverified: true,
         attempts,
         experimental: true,
+        // Path C: surface raw only for human caption / audit — not inject authority.
+        ...(typeof outcome.raw === "string" && outcome.raw.trim()
+          ? { experimentalRaw: outcome.raw.slice(0, 500) }
+          : {}),
       }
     }
     attempts.push({ layer: "qwen-vl", outcome: outcome.kind, reason: outcome.reason, ms: now() - t0 })
