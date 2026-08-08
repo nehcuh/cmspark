@@ -1,0 +1,1153 @@
+# Dual external review context
+batch: meeting-mtg3
+base: bc0bc66189a7b3d4d55d524e83ea03aa3ad7c6fc
+time: 20260808-105541
+
+701da64
+
+?? .grok/config.toml
+?? .grok/hooks/
+?? .grok/rules/
+?? docs/audit/reviews/analyze-image-data-url-p0-diff-20260806-212116.patch
+?? docs/audit/reviews/analyze-image-data-url-p0-r2-diff-20260806-213120.patch
+?? docs/audit/reviews/analyze-image-data-url-p0-r3-diff-20260806-214547.patch
+?? docs/audit/reviews/cli-qwen-plan-v2-for-pi.md
+?? docs/audit/reviews/cli-qwen-plan-v2-pi-20260802-092659.md
+?? docs/audit/reviews/context-memory-thinking-knowledge-diff-20260807-100209.patch
+?? docs/audit/reviews/estop-tap-degraded-kimi-20260801-220643.md
+?? docs/audit/reviews/meeting-mtg3-diff-20260808-105541.patch
+?? docs/audit/reviews/meeting-mtg3-dual-review-prompt.md
+?? docs/audit/reviews/run-state-worker-drilldown-diff-20260804-174619.patch
+?? docs/audit/reviews/s41-main-pull-diff-20260804-092610.patch
+?? docs/audit/reviews/s41-multi-adv-diff-20260804-093256.patch
+?? docs/audit/reviews/settings-thread-compact-diff-20260806-221435.patch
+?? docs/audit/reviews/settings-thread-compact-m2-meta-diff-20260806-230545.patch
+?? docs/audit/reviews/shell-abort-timeout-claude-20260806-163014.md
+?? docs/audit/reviews/shell-abort-timeout-diff-20260806-163014.patch
+?? docs/audit/reviews/shell-abort-timeout-diff-20260806-192609.patch
+?? docs/audit/reviews/shell-abort-timeout-r2-diff-20260806-193231.patch
+?? docs/audit/reviews/thread-history-ia-diff-20260806-092335.patch
+?? docs/audit/reviews/thread-history-ia-impl-diff-20260806-134044.patch
+?? docs/audit/reviews/thread-history-ia-impl-r2-diff-20260806-135746.patch
+?? docs/audit/reviews/trust-ia-autopilot-diff-20260802-144203.patch
+?? docs/audit/reviews/unattended-desktop-diff-20260802-153129.patch
+?? docs/audit/reviews/unattended-desktop-m1-diff-20260802-154236.patch
+?? docs/audit/reviews/unattended-desktop-m2-diff-20260802-155452.patch
+?? docs/audit/reviews/unattended-desktop-m2-r2-diff-20260802-160240.patch
+?? docs/audit/reviews/unattended-desktop-m3-diff-20260802-161147.patch
+?? docs/audit/reviews/voice-input-design-diff-20260806-194531.patch
+?? docs/audit/reviews/voice-input-m1-diff-20260806-200603.patch
+?? docs/audit/reviews/voice-input-m1-r2-diff-20260806-201142.patch
+?? docs/audit/reviews/voice-local-stt-design-diff-20260807-154150.patch
+?? docs/audit/reviews/wave-a-scene-knowledge-impl-diff-20260807-103512.patch
+?? docs/audit/reviews/wave-a-scene-knowledge-plan-diff-20260807-101501.patch
+?? docs/audit/reviews/wave-a-scene-knowledge-plan-r2-diff-20260807-102424.patch
+?? docs/audit/reviews/wave-b-h1-thread-handoff-impl-diff-20260807-105903.patch
+?? docs/audit/reviews/wave-b-h1-thread-handoff-plan-diff-20260807-104642.patch
+?? docs/audit/reviews/wave-c-thread-recall-impl-diff-20260807-115545.patch
+?? docs/audit/reviews/wave-c-thread-recall-plan-diff-20260807-113810.patch
+?? docs/audit/reviews/wave-c-thread-recall-plan-r2-diff-20260807-114530.patch
+?? docs/audit/reviews/wave-d-reasoning-ui-export-impl-diff-20260807-143315.patch
+?? docs/audit/reviews/wave-d-reasoning-ui-export-plan-diff-20260807-142222.patch
+?? docs/optimization-plan-document-parse-vision.md
+?? images/
+
+## Diff (git diff + staged)
+ chrome-extension/src/background/index.ts           |   1 +
+ .../src/sidepanel/components/MeetingPanel.tsx      | 175 +++++++++++++++--
+ .../src/sidepanel/voice/meeting-audio-import.ts    |  37 +++-
+ .../tests/meeting-audio-import.test.ts             |   2 +
+ companion/src/meeting/auto-diarize.ts              | 214 +++++++++++++++++++++
+ companion/src/meeting/meeting-handlers.ts          |  72 +++++++
+ companion/src/meeting/meeting-store.ts             |  27 +++
+ companion/src/meeting/minutes-prompt.ts            |   2 +-
+ companion/src/message-router.ts                    |   1 +
+ .../src/packs/builtin/meeting-minutes/pack.yaml    |   8 +-
+ companion/src/server.ts                            |  19 ++
+ companion/tests/meeting-mtg3-diarize.test.ts       | 152 +++++++++++++++
+ .../specs/2026-08-07-meeting-minutes-design.md     |   4 +-
+ .../2026-08-08-meeting-mtg3-diarize-design.md      |  70 +++++++
+ 14 files changed, 764 insertions(+), 20 deletions(-)
+
+diff --git a/chrome-extension/src/background/index.ts b/chrome-extension/src/background/index.ts
+index 51cb619..c051fa9 100644
+--- a/chrome-extension/src/background/index.ts
++++ b/chrome-extension/src/background/index.ts
+@@ -1164,6 +1164,7 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
+       case "meeting.set_speakers":
+       case "meeting.bulk_speaker":
+       case "meeting.import_text":
++      case "meeting.auto_diarize":
+       case "meeting.generate_minutes":
+       case "meeting.set_status": {
+         // Forward to companion. Always call sendResponse so Side Panel callbacks
+diff --git a/chrome-extension/src/sidepanel/components/MeetingPanel.tsx b/chrome-extension/src/sidepanel/components/MeetingPanel.tsx
+index 9673f2d..b10dc19 100644
+--- a/chrome-extension/src/sidepanel/components/MeetingPanel.tsx
++++ b/chrome-extension/src/sidepanel/components/MeetingPanel.tsx
+@@ -1,9 +1,8 @@
+ /**
+- * Meeting workbench — Mtg0 paste + Mtg1 live capture + Mtg2 speaker/upload.
+- * SoT: docs/superpowers/specs/2026-08-07-meeting-minutes-design.md
+- * Does NOT auto-start mic on pack apply. Forces local STT for long capture.
+- * Mtg2: manual speaker labels, silence-cut heuristic, text/audio file import.
+- * NOT auto-diarize; system audio mix still parking-lot.
++ * Meeting workbench — Mtg0–Mtg3.
++ * SoT: meeting-minutes-design + Mtg3 diarize design.
++ * Mtg3: experimental anonymous 发言人N via local feature k-means (NOT identity).
++ * Does NOT auto-start mic on pack apply. System audio mix still parking-lot.
+  */
+ 
+ import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react"
+@@ -111,6 +110,10 @@ export function MeetingPanel(props: {
+   const importAbortRef = useRef(false)
+   /** Skip server→textarea sync while user is typing (dual-review dirty-guard). */
+   const transcriptDirtyRef = useRef(false)
++  /** Mtg3: per-line acoustic features from last audio import (aligned with append order). */
++  const lineFeaturesRef = useRef<number[][]>([])
++  const [diarizeK, setDiarizeK] = useState(2)
++  const [autoDiarizeAfterImport, setAutoDiarizeAfterImport] = useState(false)
+ 
+   const adapterRef = useRef<SpeechAdapter | null>(null)
+   const captureStartRef = useRef<number | null>(null)
+@@ -409,9 +412,27 @@ export function MeetingPanel(props: {
+           transcriptRef.current = formatted
+           transcriptDirtyRef.current = false
+         }
++        lineFeaturesRef.current = []
+         setBusy(false)
+         setImportStatus("已导入转写文件")
+       }
++      if (msg.type === "meeting.diarized" && msg.meeting) {
++        setMeetingId(msg.meeting.id)
++        setStatus(msg.meeting.status || "ready")
++        if (Array.isArray(msg.meeting.transcript)) {
++          const formatted = formatLinesFromMeeting(msg.meeting.transcript)
++          setTranscript(formatted)
++          transcriptRef.current = formatted
++          transcriptDirtyRef.current = false
++        }
++        setBusy(false)
++        const method = msg.diarize?.method || msg.meeting.diarize?.method
++        setImportStatus(
++          method === "text_gap"
++            ? "已弱标说话人（按行交替 · 非声学）"
++            : "已自动标匿名发言人（实验 · 非身份识别）",
++        )
++      }
+       if (msg.type === "meeting.minutes_result") {
+         if (msg.minutes?.raw_md) setMinutesMd(msg.minutes.raw_md)
+         if (msg.meeting?.id) {
+@@ -716,6 +737,8 @@ export function MeetingPanel(props: {
+     const total = decoded.segments.length
+     let failedAt: number | null = null
+     let done = 0
++    const feats: number[][] = []
++    const texts: string[] = []
+     setImportStatus(`本机转写 0/${total} 段…`)
+     for (let i = 0; i < total; i++) {
+       if (importAbortRef.current) break
+@@ -735,10 +758,30 @@ export function MeetingPanel(props: {
+         break
+       }
+       if (r.text.trim()) {
+-        appendLocalAndRemote(r.text, id)
++        texts.push(r.text.trim())
++        feats.push(seg.features)
++        // local preview (speaker optional)
++        appendLocalAndRemote(r.text, null)
+       }
+       done = i + 1
+     }
++    lineFeaturesRef.current = feats
++
++    // Single set_transcript so line count == features (avoid append race before diarize)
++    if (texts.length > 0 && id) {
++      const sp = defaultSpeakerRef.current.trim()
++      const body = texts.join("\n")
++      sendViaRuntime({
++        type: "meeting.set_transcript",
++        v: 1,
++        id,
++        text: body,
++        source: "stt",
++        silence_cut: false,
++      })
++      // If default speaker set, bulk after — optional; diarize overwrites speakers
++      void sp
++    }
+ 
+     setBusy(false)
+     if (importAbortRef.current) {
+@@ -746,11 +789,71 @@ export function MeetingPanel(props: {
+     } else if (failedAt != null) {
+       setImportStatus(`导入部分失败（成功 ${done}/${total} 段，失败于第 ${failedAt} 段）`)
+     } else {
+-      setImportStatus(`音频导入完成 ${done}/${total} 段（暂不分说话人）`)
++      setImportStatus(`音频导入完成 ${done}/${total} 段`)
++      if (autoDiarizeAfterImport && feats.length >= 2 && id && texts.length === feats.length) {
++        setBusy(true)
++        setTimeout(() => {
++          sendViaRuntime({
++            type: "meeting.auto_diarize",
++            v: 1,
++            id,
++            privacy_ack_v1: true,
++            mode: "audio_cluster",
++            k: diarizeK,
++            features: feats,
++          })
++        }, 120)
++      }
+     }
+     dispatch({ type: "SET_MEETING_CAPTURE_ACTIVE", active: false })
+   }
+ 
++  const runAutoDiarize = (mode: "audio_cluster" | "text_gap") => {
++    if (!ensureAck()) return
++    if (!meetingId && !transcript.trim()) {
++      setError("请先创建会议或导入/录制转写")
++      return
++    }
++    if (!transcript.trim()) {
++      setError("转写为空，无法标说话人")
++      return
++    }
++    if (mode === "audio_cluster") {
++      const feats = lineFeaturesRef.current
++      if (!feats.length) {
++        setError("暂无声学特征：请先「上传音频转写」以启用实验性自动分离（纯粘贴请用弱标）")
++        return
++      }
++      setBusy(true)
++      setError(null)
++      ensureMeetingIdThen((id) => {
++        sendViaRuntime({
++          type: "meeting.auto_diarize",
++          v: 1,
++          id,
++          privacy_ack_v1: true,
++          mode: "audio_cluster",
++          k: diarizeK,
++          features: feats,
++        })
++      })
++      return
++    }
++    setBusy(true)
++    setError(null)
++    ensureMeetingIdThen((id) => {
++      sendViaRuntime({
++        type: "meeting.auto_diarize",
++        v: 1,
++        id,
++        privacy_ack_v1: true,
++        mode: "text_gap",
++        k: diarizeK,
++        text: transcriptRef.current.trim() || undefined,
++      })
++    })
++  }
++
+   const generate = () => {
+     if (!ensureAck()) return
+     if (capturing) {
+@@ -814,7 +917,9 @@ export function MeetingPanel(props: {
+     >
+       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+         <strong style={{ flex: 1 }}>会议记录</strong>
+-        <span style={{ fontSize: 11, color: tokens.textSecondary }}>暂不分说话人</span>
++        <span style={{ fontSize: 11, color: tokens.textSecondary }}>
++          实验可标发言人N · 非身份识别
++        </span>
+         <button
+           type="button"
+           onClick={() => {
+@@ -842,7 +947,7 @@ export function MeetingPanel(props: {
+       <div style={{ fontSize: 11, color: tokens.textSecondary, lineHeight: 1.45 }}>
+         粘贴 / 上传转写，或显式「开始录制」本机分段转写（最长约{" "}
+         {Math.round(VOICE_CONTINUOUS_HARD_CAP_MS / 60_000)} 分钟）。应用场景不会自动开麦。
+-        录音与听写互斥。暂不分说话人（可手动标）；系统混音未支持。
++        录音与听写互斥。说话人：手动标或实验性自动「发言人N」（非真名识别）；系统混音未支持。
+       </div>
+ 
+       {!ack && (
+@@ -985,7 +1090,7 @@ export function MeetingPanel(props: {
+           background: tokens.bg,
+         }}
+       >
+-        <div style={{ fontSize: 12, fontWeight: 500 }}>说话人 / 导入（Mtg2 · 手动）</div>
++        <div style={{ fontSize: 12, fontWeight: 500 }}>说话人 / 导入（Mtg2+3）</div>
+         <label style={{ fontSize: 11, color: tokens.textSecondary }}>
+           默认说话人标签（录制/导入 STT 追加时使用；可整表批量）
+           <input
+@@ -1008,6 +1113,31 @@ export function MeetingPanel(props: {
+             }}
+           />
+         </label>
++        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
++          <label style={{ fontSize: 11, color: tokens.textSecondary }}>
++            聚类 K
++            <select
++              data-testid="meeting-diarize-k"
++              value={diarizeK}
++              disabled={busy || capturing}
++              onChange={(e) => setDiarizeK(Math.min(4, Math.max(2, Number(e.target.value) || 2)))}
++              style={{ marginLeft: 4, fontSize: 12 }}
++            >
++              <option value={2}>2</option>
++              <option value={3}>3</option>
++              <option value={4}>4</option>
++            </select>
++          </label>
++          <label style={{ fontSize: 11, color: tokens.textSecondary, display: "flex", gap: 4, alignItems: "center" }}>
++            <input
++              type="checkbox"
++              checked={autoDiarizeAfterImport}
++              disabled={busy || capturing}
++              onChange={(e) => setAutoDiarizeAfterImport(e.target.checked)}
++            />
++            音频导入后自动标（实验）
++          </label>
++        </div>
+         <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+           <button
+             type="button"
+@@ -1027,6 +1157,26 @@ export function MeetingPanel(props: {
+           >
+             全部标为默认
+           </button>
++          <button
++            type="button"
++            data-testid="meeting-auto-diarize-audio"
++            disabled={busy || capturing || !ack}
++            onClick={() => runAutoDiarize("audio_cluster")}
++            style={btnStyle(true)}
++            title="基于上传音频段的声学特征 k-means；匿名发言人N"
++          >
++            自动标说话人
++          </button>
++          <button
++            type="button"
++            data-testid="meeting-auto-diarize-text"
++            disabled={busy || capturing || !ack}
++            onClick={() => runAutoDiarize("text_gap")}
++            style={btnStyle(false)}
++            title="弱：按行交替发言人N，非声学"
++          >
++            弱标（交替）
++          </button>
+           <button
+             type="button"
+             data-testid="meeting-import-text"
+@@ -1087,8 +1237,9 @@ export function MeetingPanel(props: {
+           </div>
+         )}
+         <div style={{ fontSize: 10, color: tokens.textSecondary, lineHeight: 1.4 }}>
+-          可在转写框用「姓名: 内容」格式手标说话人。静音切为启发式分段，
+-          <strong>不是</strong>自动说话人分离。系统/会议软件混音见调研文档（停车场）。
++          「自动标说话人」= 本机段特征 k-means → 匿名「发言人N」，
++          <strong>不是</strong>身份识别，也非 Otter 级 SLA。可手改标签。
++          弱标仅按行交替。系统混音见 parking 调研。
+         </div>
+       </div>
+ 
+diff --git a/chrome-extension/src/sidepanel/voice/meeting-audio-import.ts b/chrome-extension/src/sidepanel/voice/meeting-audio-import.ts
+index b8f6a6a..ecc702f 100644
+--- a/chrome-extension/src/sidepanel/voice/meeting-audio-import.ts
++++ b/chrome-extension/src/sidepanel/voice/meeting-audio-import.ts
+@@ -22,11 +22,45 @@ export const MEETING_AUDIO_IMPORT_MAX_FILE_BYTES = 25 * 1024 * 1024
+ /** Per-segment wall for Path B STT (matches classic max). */
+ export const MEETING_AUDIO_SEGMENT_MS = LOCAL_STT_MAX_RECORD_MS
+ 
++/** [logEnergy, zcr, spectralCentroidNorm] — aligned with companion auto-diarize. */
++export type DiarizeFeature = [number, number, number]
++
+ export type AudioSegmentWav = {
+   index: number
+   wav: Uint8Array
+   t0Sec: number
+   t1Sec: number
++  /** Mtg3 acoustic features for this segment (anonymous cluster). */
++  features: DiarizeFeature
++}
++
++/**
++ * Lightweight segment features for local k-means diarize (Mtg3).
++ * Same formula as companion/src/meeting/auto-diarize extractSegmentFeatures.
++ */
++export function extractSegmentFeatures(
++  samples: Float32Array | number[],
++  _sampleRate: number,
++): DiarizeFeature {
++  const n = samples.length
++  if (n === 0) return [0, 0, 0]
++  let energy = 0
++  let zc = 0
++  let prev = samples[0] ?? 0
++  let diffSum = 0
++  for (let i = 0; i < n; i++) {
++    const x = samples[i] ?? 0
++    energy += x * x
++    if (i > 0) {
++      if ((prev >= 0 && x < 0) || (prev < 0 && x >= 0)) zc++
++      diffSum += Math.abs(x - prev)
++    }
++    prev = x
++  }
++  const logEnergy = Math.log1p(energy / n)
++  const zcr = zc / n
++  const centroidNorm = Math.min(1, diffSum / (n * 0.5 + 1e-9))
++  return [logEnergy, zcr, centroidNorm]
+ }
+ 
+ /**
+@@ -150,7 +184,8 @@ export async function fileToWavSegments(
+     const wav = wrapPcmS16leAsWav(pcm, LOCAL_STT_SAMPLE_RATE, LOCAL_STT_CHANNELS)
+     const t0Sec = off / LOCAL_STT_SAMPLE_RATE
+     const t1Sec = end / LOCAL_STT_SAMPLE_RATE
+-    segments.push({ index, wav, t0Sec, t1Sec })
++    const features = extractSegmentFeatures(slice, LOCAL_STT_SAMPLE_RATE)
++    segments.push({ index, wav, t0Sec, t1Sec, features })
+     index += 1
+   }
+ 
+diff --git a/chrome-extension/tests/meeting-audio-import.test.ts b/chrome-extension/tests/meeting-audio-import.test.ts
+index 72feb79..45344be 100644
+--- a/chrome-extension/tests/meeting-audio-import.test.ts
++++ b/chrome-extension/tests/meeting-audio-import.test.ts
+@@ -57,5 +57,7 @@ test("fileToWavSegments with mock AudioContext produces segments", async () => {
+     assert.ok(r.segments[0]!.wav.length > 44)
+     // RIFF header
+     assert.equal(r.segments[0]!.wav[0], 0x52)
++    assert.ok(Array.isArray(r.segments[0]!.features))
++    assert.equal(r.segments[0]!.features.length, 3)
+   }
+ })
+diff --git a/companion/src/meeting/auto-diarize.ts b/companion/src/meeting/auto-diarize.ts
+new file mode 100644
+index 0000000..1766997
+--- /dev/null
++++ b/companion/src/meeting/auto-diarize.ts
+@@ -0,0 +1,214 @@
++/**
++ * Mtg3.0 local speaker tagging — k-means on segment features (NOT identity).
++ * SoT: docs/superpowers/specs/2026-08-08-meeting-mtg3-diarize-design.md
++ */
++
++import type { TranscriptLine } from "./meeting-store"
++
++export const DIARIZE_LABEL_PREFIX = "发言人"
++export const DIARIZE_K_MIN = 2
++export const DIARIZE_K_MAX = 4
++export const DIARIZE_K_DEFAULT = 2
++
++/** Feature vector: [logEnergy, zcr, spectralCentroidNorm] */
++export type DiarizeFeature = [number, number, number]
++
++export type DiarizeMethod = "audio_cluster" | "text_gap"
++
++export type DiarizeResult = {
++  method: DiarizeMethod
++  k: number
++  labels: string[]
++  /** speaker per input line index (same length as lines/features) */
++  speakers: Array<string | undefined>
++  experimental: true
++}
++
++export function clampDiarizeK(k: unknown): number {
++  const n = typeof k === "number" && Number.isFinite(k) ? Math.floor(k) : DIARIZE_K_DEFAULT
++  return Math.min(DIARIZE_K_MAX, Math.max(DIARIZE_K_MIN, n))
++}
++
++export function diarizeLabel(index0: number): string {
++  return `${DIARIZE_LABEL_PREFIX}${index0 + 1}`
++}
++
++/** Euclidean distance. */
++function dist(a: number[], b: number[]): number {
++  let s = 0
++  for (let i = 0; i < a.length; i++) {
++    const d = (a[i] ?? 0) - (b[i] ?? 0)
++    s += d * d
++  }
++  return Math.sqrt(s)
++}
++
++/**
++ * k-means on rows of features. Deterministic init: spread along first dim sort.
++ * Returns cluster id 0..k-1 per row.
++ */
++export function kMeansCluster(
++  features: number[][],
++  k: number,
++  maxIter = 40,
++): number[] {
++  const n = features.length
++  if (n === 0) return []
++  const kk = Math.min(k, n)
++  if (kk <= 1) return new Array(n).fill(0)
++
++  const dim = features[0]!.length
++  // init centroids: quantiles along feature 0
++  const order = features
++    .map((f, i) => ({ i, v: f[0] ?? 0 }))
++    .sort((a, b) => a.v - b.v)
++  const centroids: number[][] = []
++  for (let c = 0; c < kk; c++) {
++    const idx = order[Math.min(n - 1, Math.floor(((c + 0.5) * n) / kk))]!.i
++    centroids.push(features[idx]!.slice())
++  }
++
++  let assign = new Array(n).fill(0)
++  for (let iter = 0; iter < maxIter; iter++) {
++    let changed = false
++    for (let i = 0; i < n; i++) {
++      let best = 0
++      let bestD = Infinity
++      for (let c = 0; c < kk; c++) {
++        const d = dist(features[i]!, centroids[c]!)
++        if (d < bestD) {
++          bestD = d
++          best = c
++        }
++      }
++      if (assign[i] !== best) {
++        assign[i] = best
++        changed = true
++      }
++    }
++    // recompute
++    const sums = Array.from({ length: kk }, () => new Array(dim).fill(0))
++    const counts = new Array(kk).fill(0)
++    for (let i = 0; i < n; i++) {
++      const c = assign[i]!
++      counts[c]++
++      for (let d = 0; d < dim; d++) sums[c]![d] += features[i]![d] ?? 0
++    }
++    for (let c = 0; c < kk; c++) {
++      if (counts[c] === 0) continue
++      for (let d = 0; d < dim; d++) {
++        centroids[c]![d] = sums[c]![d]! / counts[c]
++      }
++    }
++    if (!changed) break
++  }
++
++  // Relabel clusters by centroid energy (feature 0) so 发言人1 ≈ louder/first
++  const clusterOrder = centroids
++    .map((c, i) => ({ i, v: c[0] ?? 0 }))
++    .sort((a, b) => b.v - a.v)
++  const remap = new Map<number, number>()
++  clusterOrder.forEach((c, newId) => remap.set(c.i, newId))
++  return assign.map((a) => remap.get(a) ?? a)
++}
++
++/**
++ * Audio-cluster diarize: one feature row per transcript line.
++ * features.length must equal lines.length (pad/truncate handled).
++ */
++export function diarizeByAudioFeatures(
++  lines: TranscriptLine[],
++  features: number[][],
++  kIn?: number,
++): DiarizeResult {
++  const k = clampDiarizeK(kIn)
++  const n = lines.length
++  const feats: number[][] = []
++  for (let i = 0; i < n; i++) {
++    const f = features[i]
++    if (Array.isArray(f) && f.length >= 3) {
++      feats.push([
++        Number(f[0]) || 0,
++        Number(f[1]) || 0,
++        Number(f[2]) || 0,
++      ])
++    } else {
++      feats.push([0, 0, 0])
++    }
++  }
++  const clusters = kMeansCluster(feats, Math.min(k, Math.max(1, n)))
++  const speakers = clusters.map((c) => diarizeLabel(c))
++  const labels = Array.from({ length: Math.min(k, n) }, (_, i) => diarizeLabel(i))
++  return {
++    method: "audio_cluster",
++    k: labels.length,
++    labels,
++    speakers,
++    experimental: true,
++  }
++}
++
++/**
++ * Weak text-gap mode: after silence-cut lines, alternate speakers on each line.
++ * Honest: NOT acoustic diarize — only for explicit user choice.
++ */
++export function diarizeByTextGap(lines: TranscriptLine[], kIn?: number): DiarizeResult {
++  const k = clampDiarizeK(kIn)
++  const speakers = lines.map((_, i) => diarizeLabel(i % k))
++  const labels = Array.from({ length: k }, (_, i) => diarizeLabel(i))
++  return {
++    method: "text_gap",
++    k,
++    labels,
++    speakers,
++    experimental: true,
++  }
++}
++
++/** Apply diarize speakers onto lines (preserves text/source/timing). */
++export function applyDiarizeToLines(
++  lines: TranscriptLine[],
++  result: DiarizeResult,
++): TranscriptLine[] {
++  return lines.map((line, i) => {
++    const sp = result.speakers[i]
++    const next = { ...line }
++    if (sp) {
++      next.speaker = sp
++      // mark source provenance without inventing new TranscriptSource union break:
++      // keep original source; meta.diarize records method
++    }
++    return next
++  })
++}
++
++/**
++ * Extract 3-d features from mono float PCM (any sample rate).
++ * Pure — usable in Node tests and browser (pass channel data).
++ */
++export function extractSegmentFeatures(
++  samples: Float32Array | number[],
++  sampleRate: number,
++): DiarizeFeature {
++  const n = samples.length
++  if (n === 0 || !(sampleRate > 0)) return [0, 0, 0]
++
++  let energy = 0
++  let zc = 0
++  let prev = samples[0] ?? 0
++  // coarse spectral: sum |diff| as high-freq proxy + weighted pos
++  let diffSum = 0
++  for (let i = 0; i < n; i++) {
++    const x = samples[i] ?? 0
++    energy += x * x
++    if (i > 0) {
++      if ((prev >= 0 && x < 0) || (prev < 0 && x >= 0)) zc++
++      diffSum += Math.abs(x - prev)
++    }
++    prev = x
++  }
++  const logEnergy = Math.log1p(energy / n)
++  const zcr = zc / n
++  const centroidNorm = Math.min(1, diffSum / (n * 0.5 + 1e-9))
++  return [logEnergy, zcr, centroidNorm]
++}
+diff --git a/companion/src/meeting/meeting-handlers.ts b/companion/src/meeting/meeting-handlers.ts
+index ae23b55..4f96182 100644
+--- a/companion/src/meeting/meeting-handlers.ts
++++ b/companion/src/meeting/meeting-handlers.ts
+@@ -15,6 +15,7 @@ import {
+   loadMeeting,
+   listMeetings,
+   replaceTranscript,
++  setDiarizeResult,
+   setMeetingStatus,
+   setMinutes,
+   setTranscript,
+@@ -29,6 +30,12 @@ import {
+   bulkSetSpeaker,
+   silenceCutText,
+ } from "./silence-cut"
++import {
++  applyDiarizeToLines,
++  clampDiarizeK,
++  diarizeByAudioFeatures,
++  diarizeByTextGap,
++} from "./auto-diarize"
+ 
+ export interface MeetingHandlerContext {
+   origin?: string
+@@ -259,6 +266,71 @@ export async function handleMeetingMessage(
+     return { type: "meeting.updated", v: 1, meeting: updated, cut: true }
+   }
+ 
++  /**
++   * Mtg3: auto-tag speakers (anonymous 发言人N).
++   * mode=audio_cluster requires features[][] aligned with transcript lines.
++   * mode=text_gap is weak alternating labels (explicit; not acoustic).
++   */
++  if (type === "meeting.auto_diarize") {
++    if (msg.privacy_ack_v1 !== true) {
++      return err("need_privacy_ack", "meeting_privacy_ack_v1 required for auto_diarize")
++    }
++    const id = typeof msg.id === "string" ? msg.id : ""
++    let m = loadMeeting(id)
++    if (!m) return err("not_found", "meeting not found", { id })
++    // Optional text: silence-cut set before diarize (text_gap path)
++    if (typeof msg.text === "string" && msg.text.trim()) {
++      m = setTranscript(id, silenceCutText(msg.text, "user_edit")) || m
++    }
++    if (!m.transcript.length) {
++      return err("empty_transcript", "empty transcript", { id })
++    }
++    const mode = msg.mode === "text_gap" ? "text_gap" : "audio_cluster"
++    const k = clampDiarizeK(msg.k)
++    let result
++    if (mode === "text_gap") {
++      result = diarizeByTextGap(m.transcript, k)
++    } else {
++      const features = Array.isArray(msg.features) ? msg.features : null
++      if (!features || features.length === 0) {
++        return err(
++          "features_required",
++          "audio_cluster requires features aligned with transcript lines",
++          { id },
++        )
++      }
++      if (features.length !== m.transcript.length) {
++        return err(
++          "features_mismatch",
++          `features length ${features.length} != transcript ${m.transcript.length}`,
++          { id },
++        )
++      }
++      result = diarizeByAudioFeatures(m.transcript, features, k)
++    }
++    const lines = applyDiarizeToLines(m.transcript, result)
++    const updated = setDiarizeResult(id, lines, {
++      method: result.method,
++      k: result.k,
++      at: new Date().toISOString(),
++      experimental: true,
++    })
++    if (!updated) return err("not_found", "meeting not found", { id })
++    logger.info("meeting.auto_diarize.ok", {
++      id,
++      method: result.method,
++      k: result.k,
++      lines: lines.length,
++    })
++    return {
++      type: "meeting.diarized",
++      v: 1,
++      meeting: updated,
++      diarize: updated.diarize,
++      cut: true,
++    }
++  }
++
+   /**
+    * Mtg2: import plain text / markdown transcript file content (already read by extension).
+    * Same as set_transcript with silence_cut; creates meeting if no id.
+diff --git a/companion/src/meeting/meeting-store.ts b/companion/src/meeting/meeting-store.ts
+index 02b114f..6611cec 100644
+--- a/companion/src/meeting/meeting-store.ts
++++ b/companion/src/meeting/meeting-store.ts
+@@ -36,6 +36,13 @@ export type MeetingStatus =
+   | "done"
+   | "error"
+ 
++export type MeetingDiarizeMeta = {
++  method: "audio_cluster" | "text_gap"
++  k: number
++  at: string
++  experimental: true
++}
++
+ export type MeetingMeta = {
+   id: string
+   thread_id?: string | null
+@@ -48,6 +55,8 @@ export type MeetingMeta = {
+     audio_retained: boolean
+     retain_until?: string | null
+   }
++  /** Mtg3: last auto-diarize run (anonymous labels only). */
++  diarize?: MeetingDiarizeMeta | null
+   error?: string | null
+ }
+ 
+@@ -130,6 +139,7 @@ export function createMeeting(opts: {
+       audio_retained: false,
+       retain_until: null,
+     },
++    diarize: null,
+     transcript: [],
+     minutes: null,
+     error: null,
+@@ -150,6 +160,7 @@ export function saveMeeting(session: MeetingSession, dataDir = DATA_DIR): void {
+     ended_at: session.ended_at,
+     status: session.status,
+     privacy: session.privacy,
++    diarize: session.diarize ?? null,
+     error: session.error ?? null,
+   }
+   writeJsonAtomic(path.join(dir, "meta.json"), meta)
+@@ -231,6 +242,22 @@ export function replaceTranscript(
+   return s
+ }
+ 
++/** Persist diarize meta + optional new transcript lines. */
++export function setDiarizeResult(
++  id: string,
++  lines: TranscriptLine[],
++  diarize: MeetingDiarizeMeta,
++  dataDir = DATA_DIR,
++): MeetingSession | null {
++  const s = loadMeeting(id, dataDir)
++  if (!s) return null
++  s.transcript = lines
++  s.diarize = diarize
++  if (s.status === "draft" || s.status === "error") s.status = "ready"
++  saveMeeting(s, dataDir)
++  return s
++}
++
+ export function setMinutes(
+   id: string,
+   minutes: MeetingMinutes,
+diff --git a/companion/src/meeting/minutes-prompt.ts b/companion/src/meeting/minutes-prompt.ts
+index 6bd31f3..ca5c519 100644
+--- a/companion/src/meeting/minutes-prompt.ts
++++ b/companion/src/meeting/minutes-prompt.ts
+@@ -10,7 +10,7 @@ INPUT: a meeting transcript or notes supplied by the user (possibly incomplete,
+ RULES:
+ 1. Use ONLY information present in the transcript. Do NOT invent attendees, decisions, action owners, dates, or quotes.
+ 2. If information is missing, say so under Risks / Open questions — never fabricate.
+-3. Do NOT invent speaker labels (no fake "Alice:" / "Bob:"). Single-speaker or unlabeled is OK.
++3. Do NOT invent speaker labels or real names. If the transcript already has labels (e.g. 发言人1 / 张三:), you MAY use those labels as-is; never invent additional people.
+ 4. Do NOT call tools. Do NOT output tool_call / function_call markup.
+ 5. Prefer Chinese for section headers and prose; keep proper nouns as in the transcript.
+ 6. Output Markdown only, no preamble.
+diff --git a/companion/src/message-router.ts b/companion/src/message-router.ts
+index 3622951..42be145 100644
+--- a/companion/src/message-router.ts
++++ b/companion/src/message-router.ts
+@@ -1932,6 +1932,7 @@ export async function handleMessage(
+     case "meeting.set_speakers":
+     case "meeting.bulk_speaker":
+     case "meeting.import_text":
++    case "meeting.auto_diarize":
+     case "meeting.generate_minutes":
+     case "meeting.set_status":
+       return handleMeetingMessage(msg, {
+diff --git a/companion/src/packs/builtin/meeting-minutes/pack.yaml b/companion/src/packs/builtin/meeting-minutes/pack.yaml
+index d95bb79..8b0314f 100644
+--- a/companion/src/packs/builtin/meeting-minutes/pack.yaml
++++ b/companion/src/packs/builtin/meeting-minutes/pack.yaml
+@@ -1,8 +1,8 @@
+ schema_version: 1
+ id: meeting-minutes
+ name: 会议记录
+-description: 基于转写文本、上传文件或会议工作台本机录制生成结构化会议纪要；可手动标说话人（非自动分离）；应用本场景不会自动开麦
+-version: 0.3.0
++description: 基于转写/录音生成会议纪要；可手动或实验性自动标匿名「发言人N」（非身份识别）；应用本场景不会自动开麦
++version: 0.4.0
+ channel: community
+ min_capability: L0
+ requires_modules: []
+@@ -20,7 +20,7 @@ system_prompt_append: |
+   ## 硬规则
+   1. **仅基于用户提供的转写**：不得臆造出席人、时间、决议、待办或未出现的事实。
+   2. 转写不完整时：在风险/备注中写明「转写不完整 / 信息不足」，不要补全故事。
+-  3. **无自动说话人分离**：仅当转写中已有用户手标的「姓名: 内容」时才使用该标签；不要伪造未标注的发言人。
++  3. **说话人标签**：仅使用转写中已出现的标签（手标姓名或实验性「发言人N」）；不要伪造未出现的真名或额外出席人。
+   4. 本场景**不会**、也**不得**要求用户开启麦克风或自动录音；录音须用户在会议工作台点「开始录制」并完成 meeting_privacy_ack_v1。
+   5. 输出中文为主；专有名词可保留原文。
+   6. **不要**调用工具去扫页或执行命令来「验证」会议内容；工具与会议转写无关。
+@@ -50,7 +50,7 @@ workspace:
+   type: none
+ ui:
+   suitable_for: 会后把转写整理成 TL;DR、决议、待办；单人备忘口述纪要（暂不分说话人）。
+-  unsuitable_for: 自动说话人分离 SLA、系统/会议软件混音、自动开麦后台偷录。
++  unsuitable_for: 身份级说话人识别 SLA、系统/会议软件混音、自动开麦后台偷录。
+   tools_summary_zh: 不额外限制工具；以对话与转写文本为主生成纪要
+ author: cmspark
+ tags:
+diff --git a/companion/src/server.ts b/companion/src/server.ts
+index 1328898..aa44689 100644
+--- a/companion/src/server.ts
++++ b/companion/src/server.ts
+@@ -5924,6 +5924,25 @@ export function validateWsMessage(msg: any): WsValidationResult {
+       if (m.text.length > 80_000) return { valid: false, error: "meeting.import_text text too long" }
+       return { valid: true }
+     },
++    "meeting.auto_diarize": (m) => {
++      if (m.v !== 1) return { valid: false, error: "meeting.auto_diarize requires v:1" }
++      if (m.privacy_ack_v1 !== true) {
++        return { valid: false, error: "meeting.auto_diarize requires privacy_ack_v1:true" }
++      }
++      if (typeof m.id !== "string" || !m.id) {
++        return { valid: false, error: "meeting.auto_diarize requires id" }
++      }
++      if (m.mode != null && m.mode !== "audio_cluster" && m.mode !== "text_gap") {
++        return { valid: false, error: "meeting.auto_diarize mode must be audio_cluster|text_gap" }
++      }
++      if (m.features != null && !Array.isArray(m.features)) {
++        return { valid: false, error: "meeting.auto_diarize features must be array" }
++      }
++      if (Array.isArray(m.features) && m.features.length > 2000) {
++        return { valid: false, error: "meeting.auto_diarize features too long" }
++      }
++      return { valid: true }
++    },
+     "meeting.generate_minutes": (m) => {
+       if (m.v !== 1) return { valid: false, error: "meeting.generate_minutes requires v:1" }
+       const hasId = typeof m.id === "string" && m.id
+diff --git a/companion/tests/meeting-mtg3-diarize.test.ts b/companion/tests/meeting-mtg3-diarize.test.ts
+new file mode 100644
+index 0000000..b267735
+--- /dev/null
++++ b/companion/tests/meeting-mtg3-diarize.test.ts
+@@ -0,0 +1,152 @@
++/**
++ * Meeting Mtg3 auto-diarize (local k-means, anonymous labels).
++ */
++import test from "node:test"
++import assert from "node:assert/strict"
++import * as fs from "fs"
++import * as os from "os"
++import * as path from "path"
++
++process.env.CMSPARK_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-mtg3-"))
++
++import {
++  kMeansCluster,
++  diarizeByAudioFeatures,
++  diarizeByTextGap,
++  applyDiarizeToLines,
++  extractSegmentFeatures,
++  diarizeLabel,
++  clampDiarizeK,
++} from "../src/meeting/auto-diarize"
++import { createMeeting, loadMeeting } from "../src/meeting/meeting-store"
++import { handleMeetingMessage } from "../src/meeting/meeting-handlers"
++
++const EXT = "chrome-extension://abcdefghijklmnopqrstuvwxyz"
++const DATA = process.env.CMSPARK_DATA_DIR!
++
++test("clampDiarizeK and labels", () => {
++  assert.equal(clampDiarizeK(1), 2)
++  assert.equal(clampDiarizeK(9), 4)
++  assert.equal(diarizeLabel(0), "发言人1")
++})
++
++test("kMeansCluster separates two energy peaks", () => {
++  const feats = [
++    [0.1, 0.1, 0.1],
++    [0.12, 0.11, 0.1],
++    [2.0, 0.5, 0.8],
++    [2.1, 0.48, 0.75],
++  ]
++  const c = kMeansCluster(feats, 2)
++  assert.equal(c.length, 4)
++  // first two same cluster, last two same, different groups
++  assert.equal(c[0], c[1])
++  assert.equal(c[2], c[3])
++  assert.notEqual(c[0], c[2])
++})
++
++test("extractSegmentFeatures silence vs tone", () => {
++  const silent = new Float32Array(1600)
++  const loud = new Float32Array(1600)
++  for (let i = 0; i < loud.length; i++) loud[i] = Math.sin(i / 8) * 0.9
++  const fs = extractSegmentFeatures(silent, 16000)
++  const fl = extractSegmentFeatures(loud, 16000)
++  assert.ok(fl[0]! > fs[0]!)
++})
++
++test("diarizeByAudioFeatures assigns 发言人N", () => {
++  const lines = [
++    { text: "a", source: "stt" as const },
++    { text: "b", source: "stt" as const },
++    { text: "c", source: "stt" as const },
++    { text: "d", source: "stt" as const },
++  ]
++  const features = [
++    [0.1, 0.1, 0.1],
++    [0.11, 0.1, 0.1],
++    [2.0, 0.5, 0.8],
++    [2.05, 0.5, 0.8],
++  ]
++  const r = diarizeByAudioFeatures(lines, features, 2)
++  assert.equal(r.method, "audio_cluster")
++  assert.equal(r.experimental, true)
++  assert.ok(r.speakers.every((s) => s && s.startsWith("发言人")))
++  const applied = applyDiarizeToLines(lines, r)
++  assert.equal(applied[0]!.speaker, r.speakers[0])
++})
++
++test("diarizeByTextGap alternates", () => {
++  const lines = [
++    { text: "1", source: "paste" as const },
++    { text: "2", source: "paste" as const },
++    { text: "3", source: "paste" as const },
++  ]
++  const r = diarizeByTextGap(lines, 2)
++  assert.equal(r.method, "text_gap")
++  assert.equal(r.speakers[0], "发言人1")
++  assert.equal(r.speakers[1], "发言人2")
++  assert.equal(r.speakers[2], "发言人1")
++})
++
++test("handler auto_diarize audio_cluster + ack", async () => {
++  const created = await handleMeetingMessage(
++    { type: "meeting.create", v: 1, title: "Diarize" },
++    { origin: EXT },
++  )
++  const id = created.meeting.id as string
++  await handleMeetingMessage(
++    {
++      type: "meeting.set_transcript",
++      v: 1,
++      id,
++      text: "第一段\n\n第二段\n\n第三段\n\n第四段",
++      silence_cut: true,
++    },
++    { origin: EXT },
++  )
++  const m = loadMeeting(id, DATA)!
++  assert.ok(m.transcript.length >= 4)
++
++  const need = await handleMeetingMessage(
++    { type: "meeting.auto_diarize", v: 1, id, mode: "audio_cluster", features: [[0, 0, 0]] },
++    { origin: EXT },
++  )
++  assert.equal(need.code, "need_privacy_ack")
++
++  const feats = m.transcript.map((_, i) => (i < 2 ? [0.1, 0.1, 0.1] : [2.0, 0.5, 0.8]))
++  const ok = await handleMeetingMessage(
++    {
++      type: "meeting.auto_diarize",
++      v: 1,
++      id,
++      privacy_ack_v1: true,
++      mode: "audio_cluster",
++      k: 2,
++      features: feats,
++    },
++    { origin: EXT },
++  )
++  assert.equal(ok.type, "meeting.diarized")
++  assert.equal(ok.meeting.diarize.method, "audio_cluster")
++  assert.ok(ok.meeting.transcript.every((l: any) => String(l.speaker || "").startsWith("发言人")))
++
++  const gap = await handleMeetingMessage(
++    {
++      type: "meeting.auto_diarize",
++      v: 1,
++      id,
++      privacy_ack_v1: true,
++      mode: "text_gap",
++      k: 2,
++      text: "甲\n\n乙\n\n丙",
++    },
++    { origin: EXT },
++  )
++  assert.equal(gap.type, "meeting.diarized")
++  assert.equal(gap.meeting.diarize.method, "text_gap")
++})
++
++test("createMeeting has diarize null", () => {
++  const m = createMeeting({ title: "x", dataDir: DATA })
++  assert.equal(m.diarize, null)
++})
+diff --git a/docs/superpowers/specs/2026-08-07-meeting-minutes-design.md b/docs/superpowers/specs/2026-08-07-meeting-minutes-design.md
+index a041f4c..3937cff 100644
+--- a/docs/superpowers/specs/2026-08-07-meeting-minutes-design.md
++++ b/docs/superpowers/specs/2026-08-07-meeting-minutes-design.md
+@@ -150,7 +150,7 @@ MeetingSession
+ |------|------|
+ | Mtg1 | 单轨；可选标签「我」；**无**自动 diarize |
+ | Mtg2 | 静音切 + 手动标 speaker；上传文件 |
+-| Mtg3 | 自动 diarize — **另开对抗** |
++| Mtg3 | 自动 diarize — 见 [Mtg3 SoT](./2026-08-08-meeting-mtg3-diarize-design.md)（匿名聚类，非身份） |
+ 
+ ---
+ 
+@@ -246,7 +246,7 @@ Origin / 鉴权与现有 WS 一致；tray 不发起会议音频。
+ | **Mtg0** | Pack + 粘贴纪要 | 无 mic |
+ | **Mtg1** | 工作台 + 分段 local + 删音频 + ack | Dictation+ **D1c** 分段能力 |
+ | **Mtg2** | 手动 speaker / 上传 / 系统音频调研 | 另评 |
+-| **Mtg3** | 自动 diarize | 另对抗 |
++| **Mtg3** | 自动 diarize（本地特征 k-means · 发言人N） | [Mtg3 SoT](./2026-08-08-meeting-mtg3-diarize-design.md) |
+ 
+ 可与 Dictation+ **D1 并行做 Mtg0**（推荐先验证纪要价值）。
+ 
+diff --git a/docs/superpowers/specs/2026-08-08-meeting-mtg3-diarize-design.md b/docs/superpowers/specs/2026-08-08-meeting-mtg3-diarize-design.md
+new file mode 100644
+index 0000000..34a4128
+--- /dev/null
++++ b/docs/superpowers/specs/2026-08-08-meeting-mtg3-diarize-design.md
+@@ -0,0 +1,70 @@
++# 会议 Mtg3 — 自动说话人标签（本地聚类）设计 SoT
++
++> **日期**: 2026-08-08  
++> **状态**: **LOCKED for Mtg3.0 implementation**  
++> **父 SoT**: [会议纪要](./2026-08-07-meeting-minutes-design.md) §6.3 / §13  
++> **对抗依据**: R1 合成要求 Mtg3「另开对抗」— 本文件吸收 floors，**拒绝**飞书/Otter 级身份 SLA  
++
++---
++
++## 0. 一句话
++
++**在已有转写行上，用本机音频片段的轻量声学特征做 k-means 聚类，自动打上「发言人1…K」匿名标签；用户可改名。不识别真实身份，不调用云 diarize，不默认开启。**
++
++---
++
++## 1. 成功 / 非成功
++
++| | |
++|--|--|
++| **成功 Mtg3.0** | 上传音频或本机会分段录制后，一点「自动标说话人」→ 多数行有 `发言人N`；可手动改；生成纪要时沿用已有标签 |
++| **非成功** | 识别「张三/李四」真名；单麦 100% 准确；系统混音；静默后台；Pack autoStart |
++| **诚实副标题** | 「实验 · 匿名标签 · 非身份识别」 |
++
++---
++
++## 2. 方法锁定
++
++| 项 | 锁定 |
++|----|------|
++| 引擎 | **本机 pure TS**：段级特征 + k-means（K=2..4，默认 2） |
++| 特征 | log-energy · zero-crossing rate · 粗 spectral centroid（Float32 mono 16k） |
++| 粒度 | **一条转写行 / 一段 STT 窗口** 一个向量（非词级） |
++| 标签 | `发言人1` … `发言人K` 固定中文前缀；**禁止**模型编造真名 |
++| 纯文本 | **不**声称 diarize：仅可选「按静音切交替弱标」（单独 mode，UI 明示弱） |
++| 云 API | **禁止** Mtg3.0 |
++| 默认 | **off**；显式按钮；可勾选「导入音频后自动跑」默认 false |
++
++---
++
++## 3. Trust / 协议
++
++- 复用 `meeting_privacy_ack_v1`（产物本地）；不新增 ack 版本（聚类不上传）  
++- `meeting.auto_diarize`：chrome-extension origin；`mode: audio_cluster | text_gap`  
++- 客户端算特征时可只上传 **特征矩阵**（小）+ line indices；音频不二次落盘  
++- meta：`diarize: { method, k, at, experimental: true }`  
++
++---
++
++## 4. 与 Mtg2 关系
++
++- 手动标 / bulk / `姓名:` 解析仍优先；自动结果可被覆盖  
++- 静音切仍用于文本分段；聚类在**已有行**上贴标签  
++
++---
++
++## 5. 验收
++
++1. 合成双峰特征 → 聚类分离准确（单测）  
++2. UI 无「识别与会者姓名」文案  
++3. Pack / minutes prompt：可用已有标签，仍禁止臆造真名  
++4. 无音频时 `audio_cluster` 失败并提示上传/录制  
++5. origin fence + 无 Pack auto  
++
++---
++
++## 6. 变更记录
++
++| 日期 | 变更 |
++|------|------|
++| 2026-08-08 | Mtg3.0 LOCKED：本地段特征 k-means；非身份 SLA |

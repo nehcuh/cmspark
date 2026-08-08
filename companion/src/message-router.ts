@@ -1932,6 +1932,7 @@ export async function handleMessage(
     case "meeting.set_speakers":
     case "meeting.bulk_speaker":
     case "meeting.import_text":
+    case "meeting.auto_diarize":
     case "meeting.generate_minutes":
     case "meeting.set_status":
       return handleMeetingMessage(msg, {

@@ -57,5 +57,7 @@ test("fileToWavSegments with mock AudioContext produces segments", async () => {
     assert.ok(r.segments[0]!.wav.length > 44)
     // RIFF header
     assert.equal(r.segments[0]!.wav[0], 0x52)
+    assert.ok(Array.isArray(r.segments[0]!.features))
+    assert.equal(r.segments[0]!.features.length, 3)
   }
 })
