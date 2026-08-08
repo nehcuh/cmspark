@@ -1,0 +1,1587 @@
+# Dual external review context
+batch: meeting-mtg2
+base: f1468a27b9ecffef145580755582816640a2c17e
+time: 20260808-103347
+
+83c6bd5
+
+?? .grok/config.toml
+?? .grok/hooks/
+?? .grok/rules/
+?? docs/audit/reviews/analyze-image-data-url-p0-diff-20260806-212116.patch
+?? docs/audit/reviews/analyze-image-data-url-p0-r2-diff-20260806-213120.patch
+?? docs/audit/reviews/analyze-image-data-url-p0-r3-diff-20260806-214547.patch
+?? docs/audit/reviews/cli-qwen-plan-v2-for-pi.md
+?? docs/audit/reviews/cli-qwen-plan-v2-pi-20260802-092659.md
+?? docs/audit/reviews/context-memory-thinking-knowledge-diff-20260807-100209.patch
+?? docs/audit/reviews/estop-tap-degraded-kimi-20260801-220643.md
+?? docs/audit/reviews/meeting-mtg2-diff-20260808-103347.patch
+?? docs/audit/reviews/meeting-mtg2-dual-review-prompt.md
+?? docs/audit/reviews/run-state-worker-drilldown-diff-20260804-174619.patch
+?? docs/audit/reviews/s41-main-pull-diff-20260804-092610.patch
+?? docs/audit/reviews/s41-multi-adv-diff-20260804-093256.patch
+?? docs/audit/reviews/settings-thread-compact-diff-20260806-221435.patch
+?? docs/audit/reviews/settings-thread-compact-m2-meta-diff-20260806-230545.patch
+?? docs/audit/reviews/shell-abort-timeout-claude-20260806-163014.md
+?? docs/audit/reviews/shell-abort-timeout-diff-20260806-163014.patch
+?? docs/audit/reviews/shell-abort-timeout-diff-20260806-192609.patch
+?? docs/audit/reviews/shell-abort-timeout-r2-diff-20260806-193231.patch
+?? docs/audit/reviews/thread-history-ia-diff-20260806-092335.patch
+?? docs/audit/reviews/thread-history-ia-impl-diff-20260806-134044.patch
+?? docs/audit/reviews/thread-history-ia-impl-r2-diff-20260806-135746.patch
+?? docs/audit/reviews/trust-ia-autopilot-diff-20260802-144203.patch
+?? docs/audit/reviews/unattended-desktop-diff-20260802-153129.patch
+?? docs/audit/reviews/unattended-desktop-m1-diff-20260802-154236.patch
+?? docs/audit/reviews/unattended-desktop-m2-diff-20260802-155452.patch
+?? docs/audit/reviews/unattended-desktop-m2-r2-diff-20260802-160240.patch
+?? docs/audit/reviews/unattended-desktop-m3-diff-20260802-161147.patch
+?? docs/audit/reviews/voice-input-design-diff-20260806-194531.patch
+?? docs/audit/reviews/voice-input-m1-diff-20260806-200603.patch
+?? docs/audit/reviews/voice-input-m1-r2-diff-20260806-201142.patch
+?? docs/audit/reviews/voice-local-stt-design-diff-20260807-154150.patch
+?? docs/audit/reviews/wave-a-scene-knowledge-impl-diff-20260807-103512.patch
+?? docs/audit/reviews/wave-a-scene-knowledge-plan-diff-20260807-101501.patch
+?? docs/audit/reviews/wave-a-scene-knowledge-plan-r2-diff-20260807-102424.patch
+?? docs/audit/reviews/wave-b-h1-thread-handoff-impl-diff-20260807-105903.patch
+?? docs/audit/reviews/wave-b-h1-thread-handoff-plan-diff-20260807-104642.patch
+?? docs/audit/reviews/wave-c-thread-recall-impl-diff-20260807-115545.patch
+?? docs/audit/reviews/wave-c-thread-recall-plan-diff-20260807-113810.patch
+?? docs/audit/reviews/wave-c-thread-recall-plan-r2-diff-20260807-114530.patch
+?? docs/audit/reviews/wave-d-reasoning-ui-export-impl-diff-20260807-143315.patch
+?? docs/audit/reviews/wave-d-reasoning-ui-export-plan-diff-20260807-142222.patch
+?? docs/optimization-plan-document-parse-vision.md
+?? images/
+
+## Diff (git diff + staged)
+ chrome-extension/src/background/index.ts           |   4 +
+ .../src/sidepanel/components/MeetingPanel.tsx      | 391 ++++++++++++++++++++-
+ .../src/sidepanel/voice/meeting-audio-import.ts    | 266 ++++++++++++++
+ .../tests/meeting-audio-import.test.ts             |  61 ++++
+ companion/src/meeting/meeting-handlers.ts          |  99 +++++-
+ companion/src/meeting/meeting-store.ts             |  16 +
+ companion/src/meeting/silence-cut.ts               | 189 ++++++++++
+ companion/src/message-router.ts                    |   4 +
+ .../src/packs/builtin/meeting-minutes/pack.yaml    |   8 +-
+ companion/src/server.ts                            |  31 ++
+ companion/tests/meeting-mtg2.test.ts               | 139 ++++++++
+ .../specs/2026-08-07-meeting-minutes-design.md     |   3 +-
+ .../2026-08-08-meeting-system-audio-parking.md     |  58 +++
+ 13 files changed, 1250 insertions(+), 19 deletions(-)
+
+diff --git a/chrome-extension/src/background/index.ts b/chrome-extension/src/background/index.ts
+index 3a5bc9d..51cb619 100644
+--- a/chrome-extension/src/background/index.ts
++++ b/chrome-extension/src/background/index.ts
+@@ -1160,6 +1160,10 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
+       case "meeting.get":
+       case "meeting.set_transcript":
+       case "meeting.append_transcript":
++      case "meeting.apply_silence_cut":
++      case "meeting.set_speakers":
++      case "meeting.bulk_speaker":
++      case "meeting.import_text":
+       case "meeting.generate_minutes":
+       case "meeting.set_status": {
+         // Forward to companion. Always call sendResponse so Side Panel callbacks
+diff --git a/chrome-extension/src/sidepanel/components/MeetingPanel.tsx b/chrome-extension/src/sidepanel/components/MeetingPanel.tsx
+index e1bf99e..555de19 100644
+--- a/chrome-extension/src/sidepanel/components/MeetingPanel.tsx
++++ b/chrome-extension/src/sidepanel/components/MeetingPanel.tsx
+@@ -1,7 +1,9 @@
+ /**
+- * Meeting workbench — Mtg0 paste + Mtg1 live capture (local segmented STT).
++ * Meeting workbench — Mtg0 paste + Mtg1 live capture + Mtg2 speaker/upload.
+  * SoT: docs/superpowers/specs/2026-08-07-meeting-minutes-design.md
+  * Does NOT auto-start mic on pack apply. Forces local STT for long capture.
++ * Mtg2: manual speaker labels, silence-cut heuristic, text/audio file import.
++ * NOT auto-diarize; system audio mix still parking-lot.
+  */
+ 
+ import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react"
+@@ -9,6 +11,10 @@ import { useAgentStore } from "../store/agentStore"
+ import { tokens } from "../ui/tokens"
+ import { createLocalSttAdapter } from "../voice/local-stt-adapter"
+ import { detectLocalMediaCapture } from "../voice/local-stt-detect"
++import {
++  fileToWavSegments,
++  transcribeWavViaStt,
++} from "../voice/meeting-audio-import"
+ import {
+   VOICE_CONTINUOUS_HARD_CAP_MS,
+   VOICE_CONTINUOUS_SOFT_CAP_MS,
+@@ -16,6 +22,19 @@ import {
+ } from "../voice/detect"
+ import type { SpeechAdapter } from "../voice/web-speech-adapter"
+ 
++/** Format companion transcript lines for textarea (Speaker: text). */
++function formatLinesFromMeeting(transcript: any[]): string {
++  if (!Array.isArray(transcript)) return ""
++  return transcript
++    .map((l) => {
++      const t = typeof l?.text === "string" ? l.text : ""
++      const sp = typeof l?.speaker === "string" ? l.speaker.trim() : ""
++      return sp ? `${sp}: ${t}` : t
++    })
++    .filter(Boolean)
++    .join("\n\n")
++}
++
+ type CapturePhase = "idle" | "starting" | "recording" | "processing" | "stopping"
+ 
+ function useMeetingMessages(onMsg: (m: any) => void) {
+@@ -83,6 +102,13 @@ export function MeetingPanel(props: {
+   const [elapsedMs, setElapsedMs] = useState(0)
+   const [softCapHint, setSoftCapHint] = useState(false)
+   const [pendingGenerate, setPendingGenerate] = useState(false)
++  /** Mtg2: optional default speaker for STT append / bulk label (manual only). */
++  const [defaultSpeaker, setDefaultSpeaker] = useState("")
++  const [importStatus, setImportStatus] = useState<string | null>(null)
++  const textFileRef = useRef<HTMLInputElement | null>(null)
++  const audioFileRef = useRef<HTMLInputElement | null>(null)
++  const defaultSpeakerRef = useRef("")
++  const importAbortRef = useRef(false)
+ 
+   const adapterRef = useRef<SpeechAdapter | null>(null)
+   const captureStartRef = useRef<number | null>(null)
+@@ -98,6 +124,7 @@ export function MeetingPanel(props: {
+   transcriptRef.current = transcript
+   titleRef.current = title
+   phaseRef.current = capturePhase
++  defaultSpeakerRef.current = defaultSpeaker
+ 
+   const companionConnected = state.connectionState === "connected"
+   const activeModelId = state.voiceModel?.localModelId || "medium"
+@@ -170,8 +197,10 @@ export function MeetingPanel(props: {
+   const appendLocalAndRemote = useCallback((chunk: string, id: string | null) => {
+     const t = chunk.trim()
+     if (!t) return
++    const sp = defaultSpeakerRef.current.trim().slice(0, 32)
++    const display = sp ? `${sp}: ${t}` : t
+     setTranscript((prev) => {
+-      const next = prev ? `${prev}\n${t}` : t
++      const next = prev ? `${prev}\n\n${display}` : display
+       transcriptRef.current = next
+       return next
+     })
+@@ -182,6 +211,7 @@ export function MeetingPanel(props: {
+         id,
+         text: t,
+         source: "stt",
++        speaker: sp || undefined,
+       })
+     }
+   }, [])
+@@ -350,9 +380,28 @@ export function MeetingPanel(props: {
+       if (msg.type === "meeting.updated" && msg.meeting) {
+         setMeetingId(msg.meeting.id)
+         setStatus(msg.meeting.status)
++        if (Array.isArray(msg.meeting.transcript) && msg.meeting.transcript.length > 0) {
++          const formatted = formatLinesFromMeeting(msg.meeting.transcript)
++          if (formatted) {
++            setTranscript(formatted)
++            transcriptRef.current = formatted
++          }
++        }
+         if (msg.meeting.minutes?.raw_md) setMinutesMd(msg.meeting.minutes.raw_md)
+         setBusy(false)
+       }
++      if (msg.type === "meeting.imported" && msg.meeting) {
++        setMeetingId(msg.meeting.id)
++        setTitle(msg.meeting.title || titleRef.current)
++        setStatus(msg.meeting.status || "ready")
++        if (Array.isArray(msg.meeting.transcript)) {
++          const formatted = formatLinesFromMeeting(msg.meeting.transcript)
++          setTranscript(formatted)
++          transcriptRef.current = formatted
++        }
++        setBusy(false)
++        setImportStatus("已导入转写文件")
++      }
+       if (msg.type === "meeting.minutes_result") {
+         if (msg.minutes?.raw_md) setMinutesMd(msg.minutes.raw_md)
+         if (msg.meeting?.id) {
+@@ -473,6 +522,226 @@ export function MeetingPanel(props: {
+     }
+   }
+ 
++  const ensureMeetingIdThen = (then: (id: string) => void) => {
++    if (meetingId) {
++      then(meetingId)
++      return
++    }
++    // Create then wait for meeting.created — fire create and use one-shot listener
++    const listener = (msg: any) => {
++      if (msg?.type === "meeting.created" && msg.meeting?.id) {
++        chrome.runtime.onMessage.removeListener(listener)
++        setMeetingId(msg.meeting.id)
++        then(msg.meeting.id)
++      }
++      return false
++    }
++    chrome.runtime.onMessage.addListener(listener)
++    sendViaRuntime({
++      type: "meeting.create",
++      v: 1,
++      title: title || undefined,
++      thread_id: state.activeThreadId || undefined,
++    })
++    // Fallback timeout remove
++    setTimeout(() => {
++      try {
++        chrome.runtime.onMessage.removeListener(listener)
++      } catch {
++        /* */
++      }
++    }, 8000)
++  }
++
++  const applySilenceCut = () => {
++    if (!ensureAck()) return
++    if (!meetingId && !transcript.trim()) {
++      setError("没有可分段的转写")
++      return
++    }
++    setBusy(true)
++    setError(null)
++    ensureMeetingIdThen((id) => {
++      // Persist current textarea first (silence_cut on server)
++      if (transcriptRef.current.trim()) {
++        sendViaRuntime({
++          type: "meeting.set_transcript",
++          v: 1,
++          id,
++          text: transcriptRef.current,
++          source: "user_edit",
++          silence_cut: true,
++        })
++      }
++      setTimeout(() => {
++        sendViaRuntime({ type: "meeting.apply_silence_cut", v: 1, id })
++        setBusy(false)
++        setImportStatus("已应用静音切 / 段落分段（手动标说话人用）")
++      }, 60)
++    })
++  }
++
++  const bulkLabelSpeaker = () => {
++    if (!ensureAck()) return
++    const sp = defaultSpeaker.trim().slice(0, 32)
++    if (!sp) {
++      setError("请先填写默认说话人标签（如「我」）")
++      return
++    }
++    if (!meetingId && !transcript.trim()) {
++      setError("没有可标注的转写")
++      return
++    }
++    setBusy(true)
++    ensureMeetingIdThen((id) => {
++      if (transcriptRef.current.trim()) {
++        sendViaRuntime({
++          type: "meeting.set_transcript",
++          v: 1,
++          id,
++          text: transcriptRef.current,
++          source: "user_edit",
++          silence_cut: true,
++        })
++      }
++      setTimeout(() => {
++        sendViaRuntime({ type: "meeting.bulk_speaker", v: 1, id, speaker: sp })
++        setBusy(false)
++        setImportStatus(`已将全部行标为「${sp}」（手动，非自动分离）`)
++      }, 60)
++    })
++  }
++
++  const onImportTextFile = async (file: File | null) => {
++    if (!file) return
++    if (!ensureAck()) return
++    setError(null)
++    setBusy(true)
++    setImportStatus(`读取 ${file.name}…`)
++    try {
++      const text = await file.text()
++      if (!text.trim()) {
++        setError("文件为空")
++        setBusy(false)
++        setImportStatus(null)
++        return
++      }
++      sendViaRuntime({
++        type: "meeting.import_text",
++        v: 1,
++        id: meetingId || undefined,
++        title: title || file.name.replace(/\.[^.]+$/, ""),
++        thread_id: state.activeThreadId || undefined,
++        privacy_ack_v1: true,
++        text: text.slice(0, 80_000),
++      })
++    } catch {
++      setError("读取文本文件失败")
++      setBusy(false)
++      setImportStatus(null)
++    }
++  }
++
++  const onImportAudioFile = async (file: File | null) => {
++    if (!file) return
++    if (!ensureAck()) return
++    if (!companionConnected) {
++      setError("Companion 未连接")
++      return
++    }
++    if (state.dictationCaptureActive || capturing) {
++      setError("听写或会议录音进行中，请先结束后再导入音频")
++      return
++    }
++    if (!state.voicePrivacyAckV2) {
++      setError("导入音频需本机语音隐私确认（voice_privacy_ack_v2）")
++      return
++    }
++    if (!localModelReady || !localBinaryReady) {
++      setError("本机转写模型或二进制未就绪")
++      return
++    }
++
++    setError(null)
++    setBusy(true)
++    importAbortRef.current = false
++    dispatch({ type: "SET_MEETING_CAPTURE_ACTIVE", active: true })
++    setImportStatus("解码音频…")
++
++    const decoded = await fileToWavSegments(file)
++    if (decoded.ok === false) {
++      setError(decoded.message)
++      setBusy(false)
++      setImportStatus(null)
++      dispatch({ type: "SET_MEETING_CAPTURE_ACTIVE", active: false })
++      return
++    }
++
++    // Ensure meeting exists
++    let id = meetingId
++    if (!id) {
++      id = await new Promise<string | null>((resolve) => {
++        const listener = (msg: any) => {
++          if (msg?.type === "meeting.created" && msg.meeting?.id) {
++            chrome.runtime.onMessage.removeListener(listener)
++            resolve(msg.meeting.id as string)
++          }
++          return false
++        }
++        chrome.runtime.onMessage.addListener(listener)
++        sendViaRuntime({
++          type: "meeting.create",
++          v: 1,
++          title: title || file.name.replace(/\.[^.]+$/, ""),
++          thread_id: state.activeThreadId || undefined,
++        })
++        setTimeout(() => {
++          try {
++            chrome.runtime.onMessage.removeListener(listener)
++          } catch {
++            /* */
++          }
++          resolve(null)
++        }, 8000)
++      })
++      if (id) setMeetingId(id)
++    }
++    if (!id) {
++      setError("无法创建会议会话")
++      setBusy(false)
++      setImportStatus(null)
++      dispatch({ type: "SET_MEETING_CAPTURE_ACTIVE", active: false })
++      return
++    }
++
++    const total = decoded.segments.length
++    setImportStatus(`本机转写 0/${total} 段…`)
++    for (let i = 0; i < total; i++) {
++      if (importAbortRef.current) break
++      const seg = decoded.segments[i]!
++      setImportStatus(`本机转写 ${i + 1}/${total} 段…`)
++      const sid = `mtg-imp-${id}-${i}-${Date.now().toString(36)}`
++      const r = await transcribeWavViaStt({
++        wav: seg.wav,
++        sessionId: sid,
++        modelId: activeModelId,
++        send: sendViaRuntime,
++        onMessage: subscribeVoiceStt,
++      })
++      if (r.ok === false) {
++        setError(`音频第 ${i + 1} 段转写失败: ${r.code}`)
++        break
++      }
++      if (r.text.trim()) {
++        appendLocalAndRemote(r.text, id)
++      }
++    }
++
++    setBusy(false)
++    setImportStatus(importAbortRef.current ? "导入已中止" : "音频导入完成（暂不分说话人）")
++    dispatch({ type: "SET_MEETING_CAPTURE_ACTIVE", active: false })
++  }
++
+   const generate = () => {
+     if (!ensureAck()) return
+     if (capturing) {
+@@ -492,6 +761,7 @@ export function MeetingPanel(props: {
+         id: meetingId,
+         text: transcript,
+         source: "user_edit",
++        silence_cut: true,
+       })
+     }
+     sendViaRuntime({
+@@ -561,9 +831,9 @@ export function MeetingPanel(props: {
+       </div>
+ 
+       <div style={{ fontSize: 11, color: tokens.textSecondary, lineHeight: 1.45 }}>
+-        粘贴转写，或显式「开始录制」用本机分段转写（最长约{" "}
+-        {Math.round(VOICE_CONTINUOUS_HARD_CAP_MS / 60_000)} 分钟）。应用「会议记录」场景不会自动开麦。
+-        录音与听写互斥。
++        粘贴 / 上传转写，或显式「开始录制」本机分段转写（最长约{" "}
++        {Math.round(VOICE_CONTINUOUS_HARD_CAP_MS / 60_000)} 分钟）。应用场景不会自动开麦。
++        录音与听写互斥。暂不分说话人（可手动标）；系统混音未支持。
+       </div>
+ 
+       {!ack && (
+@@ -693,12 +963,119 @@ export function MeetingPanel(props: {
+         )}
+       </div>
+ 
++      {/* Mtg2: speaker + import */}
++      <div
++        data-testid="meeting-mtg2-tools"
++        style={{
++          display: "flex",
++          flexDirection: "column",
++          gap: 8,
++          padding: 10,
++          borderRadius: 8,
++          border: `1px solid ${tokens.border}`,
++          background: tokens.bg,
++        }}
++      >
++        <div style={{ fontSize: 12, fontWeight: 500 }}>说话人 / 导入（Mtg2 · 手动）</div>
++        <label style={{ fontSize: 11, color: tokens.textSecondary }}>
++          默认说话人标签（录制/导入 STT 追加时使用；可整表批量）
++          <input
++            data-testid="meeting-default-speaker"
++            value={defaultSpeaker}
++            onChange={(e) => setDefaultSpeaker(e.target.value)}
++            placeholder='如「我」或「张三」'
++            disabled={capturing}
++            style={{
++              display: "block",
++              width: "100%",
++              marginTop: 4,
++              padding: "6px 8px",
++              borderRadius: 6,
++              border: `1px solid ${tokens.border}`,
++              background: tokens.bgElevated,
++              color: tokens.text,
++              boxSizing: "border-box",
++              fontSize: 12,
++            }}
++          />
++        </label>
++        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
++          <button
++            type="button"
++            data-testid="meeting-silence-cut"
++            disabled={busy || capturing || !ack}
++            onClick={applySilenceCut}
++            style={btnStyle(false)}
++          >
++            静音切分段
++          </button>
++          <button
++            type="button"
++            data-testid="meeting-bulk-speaker"
++            disabled={busy || capturing || !ack}
++            onClick={bulkLabelSpeaker}
++            style={btnStyle(false)}
++          >
++            全部标为默认
++          </button>
++          <button
++            type="button"
++            data-testid="meeting-import-text"
++            disabled={busy || capturing || !ack}
++            onClick={() => textFileRef.current?.click()}
++            style={btnStyle(false)}
++          >
++            上传转写文件
++          </button>
++          <button
++            type="button"
++            data-testid="meeting-import-audio"
++            disabled={busy || capturing || !ack}
++            onClick={() => audioFileRef.current?.click()}
++            style={btnStyle(false)}
++          >
++            上传音频转写
++          </button>
++        </div>
++        <input
++          ref={textFileRef}
++          type="file"
++          accept=".txt,.md,text/plain,text/markdown"
++          style={{ display: "none" }}
++          onChange={(e) => {
++            const f = e.target.files?.[0] || null
++            e.target.value = ""
++            void onImportTextFile(f)
++          }}
++        />
++        <input
++          ref={audioFileRef}
++          type="file"
++          accept="audio/*,.wav,.mp3,.m4a,.ogg,.webm"
++          style={{ display: "none" }}
++          onChange={(e) => {
++            const f = e.target.files?.[0] || null
++            e.target.value = ""
++            void onImportAudioFile(f)
++          }}
++        />
++        {importStatus && (
++          <div style={{ fontSize: 11, color: tokens.textSecondary }} data-testid="meeting-import-status">
++            {importStatus}
++          </div>
++        )}
++        <div style={{ fontSize: 10, color: tokens.textSecondary, lineHeight: 1.4 }}>
++          可在转写框用「姓名: 内容」格式手标说话人。静音切为启发式分段，
++          <strong>不是</strong>自动说话人分离。系统/会议软件混音见调研文档（停车场）。
++        </div>
++      </div>
++
+       <label style={{ fontSize: 12, flex: 1, display: "flex", flexDirection: "column" }}>
+-        转写 / 口述文字（可编辑）
++        转写 / 口述文字（可编辑 · 支持「说话人: 正文」）
+         <textarea
+           value={transcript}
+           onChange={(e) => setTranscript(e.target.value)}
+-          placeholder="粘贴会议转写，或开始录制后自动填入本机转写…"
++          placeholder="粘贴会议转写，或开始录制/上传后自动填入…&#10;张三: 第一段&#10;&#10;李四: 第二段"
+           rows={8}
+           style={{
+             marginTop: 4,
+diff --git a/chrome-extension/src/sidepanel/voice/meeting-audio-import.ts b/chrome-extension/src/sidepanel/voice/meeting-audio-import.ts
+new file mode 100644
+index 0000000..e7739c3
+--- /dev/null
++++ b/chrome-extension/src/sidepanel/voice/meeting-audio-import.ts
+@@ -0,0 +1,266 @@
++/**
++ * Mtg2: client-side audio file → 16k mono WAV segments for voice.stt.*
++ * Not auto-diarize. System audio mix is still parking-lot (see SoT).
++ */
++
++import {
++  LOCAL_STT_CHANNELS,
++  LOCAL_STT_MAX_CHUNK_RAW_BYTES,
++  LOCAL_STT_MAX_RECORD_MS,
++  LOCAL_STT_SAMPLE_RATE,
++} from "./local-stt-detect"
++import {
++  float32ToS16lePcm,
++  resampleFloat32Mono,
++  splitIntoChunks,
++  wrapPcmS16leAsWav,
++} from "./pcm-encode"
++
++/** Soft cap: ~10 min @ 16k mono s16 (~19MB raw pcm) — we segment; reject huge files early. */
++export const MEETING_AUDIO_IMPORT_MAX_FILE_BYTES = 25 * 1024 * 1024
++
++/** Per-segment wall for Path B STT (matches classic max). */
++export const MEETING_AUDIO_SEGMENT_MS = LOCAL_STT_MAX_RECORD_MS
++
++export type AudioSegmentWav = {
++  index: number
++  wav: Uint8Array
++  t0Sec: number
++  t1Sec: number
++}
++
++/**
++ * Decode browser File/Blob via Web Audio, resample mono 16k, slice into ≤45s WAV segments.
++ */
++export async function fileToWavSegments(
++  file: Blob,
++  opts: {
++    maxFileBytes?: number
++    segmentMs?: number
++    /** Inject AudioContext for tests */
++    audioContextFactory?: () => AudioContext
++  } = {},
++): Promise<
++  | { ok: true; segments: AudioSegmentWav[]; durationSec: number }
++  | { ok: false; code: string; message: string }
++> {
++  const maxBytes = opts.maxFileBytes ?? MEETING_AUDIO_IMPORT_MAX_FILE_BYTES
++  if (typeof file.size === "number" && file.size > maxBytes) {
++    return {
++      ok: false,
++      code: "too_large",
++      message: `音频文件过大（>${Math.round(maxBytes / (1024 * 1024))}MB）`,
++    }
++  }
++  if (file.size === 0) {
++    return { ok: false, code: "empty", message: "空文件" }
++  }
++
++  let ab: ArrayBuffer
++  try {
++    ab = await file.arrayBuffer()
++  } catch {
++    return { ok: false, code: "read_failed", message: "无法读取文件" }
++  }
++
++  const Ctx =
++    opts.audioContextFactory ||
++    (() => {
++      const AC =
++        (globalThis as any).AudioContext || (globalThis as any).webkitAudioContext
++      if (typeof AC !== "function") {
++        throw new Error("no_audio_context")
++      }
++      return new AC() as AudioContext
++    })
++
++  let ctx: AudioContext
++  try {
++    ctx = Ctx()
++  } catch {
++    return {
++      ok: false,
++      code: "no_audio_context",
++      message: "当前环境无法解码音频（需要 Web Audio）",
++    }
++  }
++
++  let decoded: AudioBuffer
++  try {
++    decoded = await ctx.decodeAudioData(ab.slice(0))
++  } catch {
++    try {
++      await ctx.close()
++    } catch {
++      /* */
++    }
++    return {
++      ok: false,
++      code: "decode_failed",
++      message: "无法解码音频（请用常见格式：WAV / MP3 / M4A / OGG）",
++    }
++  }
++
++  try {
++    await ctx.close()
++  } catch {
++    /* */
++  }
++
++  const durationSec = decoded.duration
++  if (!(durationSec > 0) || !Number.isFinite(durationSec)) {
++    return { ok: false, code: "empty", message: "音频时长无效" }
++  }
++  // Hard cap 30 min wall (same absolute continuous cap family)
++  if (durationSec > 30 * 60) {
++    return {
++      ok: false,
++      code: "too_long",
++      message: "音频超过 30 分钟上限，请先裁剪",
++    }
++  }
++
++  // Mixdown to mono float
++  const n = decoded.length
++  const ch = decoded.numberOfChannels
++  const mono = new Float32Array(n)
++  for (let c = 0; c < ch; c++) {
++    const data = decoded.getChannelData(c)
++    for (let i = 0; i < n; i++) {
++      mono[i] += data[i] / ch
++    }
++  }
++  const resampled = resampleFloat32Mono(mono, decoded.sampleRate, LOCAL_STT_SAMPLE_RATE)
++  const segmentMs = opts.segmentMs ?? MEETING_AUDIO_SEGMENT_MS
++  const samplesPerSeg = Math.max(
++    1,
++    Math.floor((LOCAL_STT_SAMPLE_RATE * segmentMs) / 1000),
++  )
++
++  const segments: AudioSegmentWav[] = []
++  let index = 0
++  for (let off = 0; off < resampled.length; off += samplesPerSeg) {
++    const end = Math.min(off + samplesPerSeg, resampled.length)
++    const slice = resampled.subarray(off, end)
++    if (slice.length < LOCAL_STT_SAMPLE_RATE * 0.2) {
++      // drop trailing <200ms
++      if (segments.length > 0) break
++    }
++    const pcm = float32ToS16lePcm(slice)
++    const wav = wrapPcmS16leAsWav(pcm, LOCAL_STT_SAMPLE_RATE, LOCAL_STT_CHANNELS)
++    const t0Sec = off / LOCAL_STT_SAMPLE_RATE
++    const t1Sec = end / LOCAL_STT_SAMPLE_RATE
++    segments.push({ index, wav, t0Sec, t1Sec })
++    index += 1
++  }
++
++  if (segments.length === 0) {
++    return { ok: false, code: "empty", message: "无有效音频段" }
++  }
++
++  return { ok: true, segments, durationSec }
++}
++
++/** uint8 → base64 (Side Panel safe). */
++export function uint8ToBase64(data: Uint8Array): string {
++  const chunkSize = 0x8000
++  let binary = ""
++  for (let i = 0; i < data.length; i += chunkSize) {
++    const slice = data.subarray(i, Math.min(i + chunkSize, data.length))
++    binary += String.fromCharCode.apply(null, Array.from(slice) as number[])
++  }
++  if (typeof btoa === "function") return btoa(binary)
++  throw new Error("btoa unavailable")
++}
++
++export type SttSend = (msg: Record<string, unknown>) => void
++export type SttOnMessage = (handler: (msg: any) => void) => () => void
++
++/**
++ * One-shot voice.stt.* for a prebuilt WAV (upload path). Serial max-1 sessions.
++ */
++export function transcribeWavViaStt(opts: {
++  wav: Uint8Array
++  sessionId: string
++  modelId: string
++  send: SttSend
++  onMessage: SttOnMessage
++  lang?: string
++  maxMs?: number
++  timeoutMs?: number
++}): Promise<{ ok: true; text: string } | { ok: false; code: string }> {
++  const {
++    wav,
++    sessionId,
++    modelId,
++    send,
++    onMessage,
++    lang = "zh",
++    maxMs = MEETING_AUDIO_SEGMENT_MS,
++    timeoutMs = 120_000,
++  } = opts
++
++  return new Promise((resolve) => {
++    let settled = false
++    const finish = (r: { ok: true; text: string } | { ok: false; code: string }) => {
++      if (settled) return
++      settled = true
++      clearTimeout(timer)
++      try {
++        unsub()
++      } catch {
++        /* */
++      }
++      resolve(r)
++    }
++
++    const unsub = onMessage((msg) => {
++      if (!msg || typeof msg.type !== "string") return
++      if (msg.sessionId !== sessionId) return
++      if (msg.type === "voice.stt.result") {
++        finish({ ok: true, text: typeof msg.text === "string" ? msg.text : "" })
++        return
++      }
++      if (msg.type === "voice.stt.error") {
++        finish({
++          ok: false,
++          code: typeof msg.code === "string" && msg.code ? msg.code : "stt_error",
++        })
++      }
++    })
++
++    const timer = setTimeout(() => finish({ ok: false, code: "timeout" }), timeoutMs)
++
++    try {
++      send({
++        type: "voice.stt.start",
++        v: 1,
++        sessionId,
++        modelId,
++        format: "wav",
++        sampleRate: LOCAL_STT_SAMPLE_RATE,
++        channels: LOCAL_STT_CHANNELS,
++        lang: lang.startsWith("zh") ? "zh" : lang,
++        maxMs,
++      })
++      const chunks = splitIntoChunks(wav, LOCAL_STT_MAX_CHUNK_RAW_BYTES)
++      for (let seq = 0; seq < chunks.length; seq++) {
++        send({
++          type: "voice.stt.chunk",
++          v: 1,
++          sessionId,
++          seq,
++          data: uint8ToBase64(chunks[seq]!),
++        })
++      }
++      send({
++        type: "voice.stt.end",
++        v: 1,
++        sessionId,
++        totalSeq: chunks.length,
++      })
++    } catch {
++      finish({ ok: false, code: "send_failed" })
++    }
++  })
++}
+diff --git a/chrome-extension/tests/meeting-audio-import.test.ts b/chrome-extension/tests/meeting-audio-import.test.ts
+new file mode 100644
+index 0000000..72feb79
+--- /dev/null
++++ b/chrome-extension/tests/meeting-audio-import.test.ts
+@@ -0,0 +1,61 @@
++/**
++ * Mtg2 audio segment helper (pure + mock AudioContext).
++ */
++import test from "node:test"
++import assert from "node:assert/strict"
++import {
++  fileToWavSegments,
++  uint8ToBase64,
++  MEETING_AUDIO_IMPORT_MAX_FILE_BYTES,
++} from "../src/sidepanel/voice/meeting-audio-import"
++import { LOCAL_STT_SAMPLE_RATE } from "../src/sidepanel/voice/local-stt-detect"
++
++test("uint8ToBase64 round-trip small", () => {
++  const u = new Uint8Array([1, 2, 3, 250])
++  const b64 = uint8ToBase64(u)
++  assert.equal(typeof b64, "string")
++  assert.ok(b64.length > 0)
++})
++
++test("fileToWavSegments rejects empty blob", async () => {
++  const r = await fileToWavSegments(new Blob([]))
++  assert.equal(r.ok, false)
++  if (!r.ok) assert.equal(r.code, "empty")
++})
++
++test("fileToWavSegments rejects oversize", async () => {
++  const big = new Blob([new Uint8Array(MEETING_AUDIO_IMPORT_MAX_FILE_BYTES + 1)])
++  const r = await fileToWavSegments(big)
++  assert.equal(r.ok, false)
++  if (!r.ok) assert.equal(r.code, "too_large")
++})
++
++test("fileToWavSegments with mock AudioContext produces segments", async () => {
++  // 2.0s of silence at 16k mono as fake decode
++  const samples = LOCAL_STT_SAMPLE_RATE * 2
++  const channel = new Float32Array(samples)
++
++  class FakeCtx {
++    decodeAudioData = async () => ({
++      length: samples,
++      numberOfChannels: 1,
++      sampleRate: LOCAL_STT_SAMPLE_RATE,
++      duration: 2,
++      getChannelData: () => channel,
++    })
++    close = async () => {}
++  }
++
++  const blob = new Blob([new Uint8Array([0, 1, 2, 3])])
++  const r = await fileToWavSegments(blob, {
++    audioContextFactory: () => new FakeCtx() as any,
++    segmentMs: 1000, // 1s segments → ~2 segs
++  })
++  assert.equal(r.ok, true)
++  if (r.ok) {
++    assert.ok(r.segments.length >= 2)
++    assert.ok(r.segments[0]!.wav.length > 44)
++    // RIFF header
++    assert.equal(r.segments[0]!.wav[0], 0x52)
++  }
++})
+diff --git a/companion/src/meeting/meeting-handlers.ts b/companion/src/meeting/meeting-handlers.ts
+index 920f237..02655a3 100644
+--- a/companion/src/meeting/meeting-handlers.ts
++++ b/companion/src/meeting/meeting-handlers.ts
+@@ -14,6 +14,7 @@ import {
+   endMeetingRecording,
+   loadMeeting,
+   listMeetings,
++  replaceTranscript,
+   setMeetingStatus,
+   setMinutes,
+   setTranscript,
+@@ -22,6 +23,12 @@ import {
+   type TranscriptLine,
+   type TranscriptSource,
+ } from "./meeting-store"
++import {
++  applySilenceCut,
++  applySpeakersByIndex,
++  bulkSetSpeaker,
++  silenceCutText,
++} from "./silence-cut"
+ 
+ export interface MeetingHandlerContext {
+   origin?: string
+@@ -158,12 +165,15 @@ export async function handleMeetingMessage(
+         ? msg.source
+         : "paste"
+     if (!text.trim()) return err("empty_transcript", "empty transcript", { id })
+-    // Split by blank lines or newlines into lines
+-    const lines: TranscriptLine[] = text
+-      .split(/\n+/)
+-      .map((t: string) => t.trim())
+-      .filter(Boolean)
+-      .map((t: string) => ({ text: t, source }))
++    // Mtg2: default silence-cut + speaker prefix parse; opt-out with silence_cut:false
++    const lines: TranscriptLine[] =
++      msg.silence_cut === false
++        ? text
++            .split(/\n+/)
++            .map((t: string) => t.trim())
++            .filter(Boolean)
++            .map((t: string) => ({ text: t, source }))
++        : silenceCutText(text, source)
+     const m = setTranscript(id, lines)
+     if (!m) return err("not_found", "meeting not found", { id })
+     return { type: "meeting.updated", v: 1, meeting: m }
+@@ -176,13 +186,88 @@ export async function handleMeetingMessage(
+     const line: TranscriptLine = {
+       text: text.trim(),
+       source: msg.source === "stt" ? "stt" : "user_edit",
+-      speaker: typeof msg.speaker === "string" ? msg.speaker : undefined,
++      speaker: typeof msg.speaker === "string" ? msg.speaker.slice(0, 32) : undefined,
+     }
+     const m = appendTranscript(id, line)
+     if (!m) return err("not_found", "meeting not found", { id })
+     return { type: "meeting.updated", v: 1, meeting: m }
+   }
+ 
++  /**
++   * Mtg2: re-apply silence-cut heuristic on stored transcript (manual labeling prep).
++   * Does NOT invent speakers.
++   */
++  if (type === "meeting.apply_silence_cut") {
++    const id = typeof msg.id === "string" ? msg.id : ""
++    const m = loadMeeting(id)
++    if (!m) return err("not_found", "meeting not found", { id })
++    const next = applySilenceCut(m.transcript)
++    const updated = replaceTranscript(id, next)
++    if (!updated) return err("not_found", "meeting not found", { id })
++    return { type: "meeting.updated", v: 1, meeting: updated, cut: true }
++  }
++
++  /**
++   * Mtg2: manual speaker labels by line index.
++   * assignments: [{ index, speaker }] speaker null/"" clears.
++   */
++  if (type === "meeting.set_speakers") {
++    const id = typeof msg.id === "string" ? msg.id : ""
++    const m = loadMeeting(id)
++    if (!m) return err("not_found", "meeting not found", { id })
++    const raw = Array.isArray(msg.assignments) ? msg.assignments : []
++    if (raw.length === 0) return err("invalid_assignments", "assignments required", { id })
++    if (raw.length > 500) return err("invalid_assignments", "too many assignments", { id })
++    const assignments = raw.map((a: any) => ({
++      index: typeof a?.index === "number" ? a.index : -1,
++      speaker: a?.speaker == null || a.speaker === "" ? null : String(a.speaker).slice(0, 32),
++    }))
++    const next = applySpeakersByIndex(m.transcript, assignments)
++    const updated = replaceTranscript(id, next)
++    if (!updated) return err("not_found", "meeting not found", { id })
++    return { type: "meeting.updated", v: 1, meeting: updated }
++  }
++
++  /** Mtg2: set one speaker on all lines (e.g. 「我」) or clear with speaker:null */
++  if (type === "meeting.bulk_speaker") {
++    const id = typeof msg.id === "string" ? msg.id : ""
++    const m = loadMeeting(id)
++    if (!m) return err("not_found", "meeting not found", { id })
++    const speaker =
++      msg.speaker == null || msg.speaker === ""
++        ? null
++        : String(msg.speaker).slice(0, 32)
++    const next = bulkSetSpeaker(m.transcript, speaker)
++    const updated = replaceTranscript(id, next)
++    if (!updated) return err("not_found", "meeting not found", { id })
++    return { type: "meeting.updated", v: 1, meeting: updated }
++  }
++
++  /**
++   * Mtg2: import plain text / markdown transcript file content (already read by extension).
++   * Same as set_transcript with silence_cut; creates meeting if no id.
++   */
++  if (type === "meeting.import_text") {
++    if (msg.privacy_ack_v1 !== true) {
++      return err("need_privacy_ack", "meeting_privacy_ack_v1 required for import")
++    }
++    const text = typeof msg.text === "string" ? msg.text : ""
++    if (!text.trim()) return err("empty_transcript", "empty import text")
++    if (text.length > 80_000) return err("too_large", "import text too long (max 80000)")
++    let id = typeof msg.id === "string" ? msg.id : ""
++    if (!id) {
++      const session = createMeeting({
++        title: typeof msg.title === "string" ? msg.title : undefined,
++        thread_id: typeof msg.thread_id === "string" ? msg.thread_id : null,
++      })
++      id = session.id
++    }
++    const lines = silenceCutText(text, "paste")
++    const m = setTranscript(id, lines)
++    if (!m) return err("not_found", "meeting not found", { id })
++    return { type: "meeting.imported", v: 1, meeting: m, kind: "text" }
++  }
++
+   if (type === "meeting.generate_minutes") {
+     const id = typeof msg.id === "string" ? msg.id : ""
+     // Optional one-shot: text without persisted meeting
+diff --git a/companion/src/meeting/meeting-store.ts b/companion/src/meeting/meeting-store.ts
+index c9ae2d6..02b114f 100644
+--- a/companion/src/meeting/meeting-store.ts
++++ b/companion/src/meeting/meeting-store.ts
+@@ -215,6 +215,22 @@ export function appendTranscript(
+   return s
+ }
+ 
++/** Replace full transcript line list (Mtg2 speaker edits / silence-cut). */
++export function replaceTranscript(
++  id: string,
++  lines: TranscriptLine[],
++  dataDir = DATA_DIR,
++): MeetingSession | null {
++  const s = loadMeeting(id, dataDir)
++  if (!s) return null
++  s.transcript = Array.isArray(lines) ? lines : []
++  if (s.transcript.length > 0 && (s.status === "draft" || s.status === "error")) {
++    s.status = "ready"
++  }
++  saveMeeting(s, dataDir)
++  return s
++}
++
+ export function setMinutes(
+   id: string,
+   minutes: MeetingMinutes,
+diff --git a/companion/src/meeting/silence-cut.ts b/companion/src/meeting/silence-cut.ts
+new file mode 100644
+index 0000000..d3c01b2
+--- /dev/null
++++ b/companion/src/meeting/silence-cut.ts
+@@ -0,0 +1,189 @@
++/**
++ * Mtg2 silence-cut + speaker parse (heuristic only — NOT auto diarize).
++ * SoT: 2026-08-07-meeting-minutes-design.md §6.3 Mtg2
++ */
++
++import type { TranscriptLine, TranscriptSource } from "./meeting-store"
++
++/** Gap between timed segments (seconds) treated as a "silence cut". */
++export const SILENCE_GAP_SEC = 1.5
++
++/** Soft max chars per line before sentence split (paste / STT blob). */
++export const SOFT_LINE_CHARS = 280
++
++const SPEAKER_PREFIX = /^([^\n:]{1,32})\s*[:：]\s*(.+)$/u
++
++export type ParsedSpeakerLine = {
++  speaker?: string
++  text: string
++}
++
++/**
++ * Parse "Name: utterance" / "Name：utterance" prefixes.
++ * Rejects pure times like "12:30" as speakers.
++ */
++export function parseSpeakerPrefix(raw: string): ParsedSpeakerLine {
++  const t = raw.trim()
++  if (!t) return { text: "" }
++  const m = t.match(SPEAKER_PREFIX)
++  if (!m) return { text: t }
++  const name = m[1]!.trim()
++  const rest = m[2]!.trim()
++  if (!rest) return { text: t }
++  // Reject clock-like "12:30 left"
++  if (/^\d{1,2}$/.test(name) && /^\d{2}/.test(rest)) return { text: t }
++  if (/^\d+$/.test(name)) return { text: t }
++  return { speaker: name.slice(0, 32), text: rest }
++}
++
++/**
++ * Silence-cut / paragraph split for untimed text.
++ * 1) blank-line paragraphs
++ * 2) within long paragraphs, split on 。！？.!?;； when over SOFT_LINE_CHARS
++ * 3) parse optional speaker prefixes
++ */
++export function silenceCutText(
++  text: string,
++  source: TranscriptSource = "paste",
++): TranscriptLine[] {
++  const raw = (text || "").replace(/\r\n/g, "\n").trim()
++  if (!raw) return []
++
++  const paragraphs = raw
++    .split(/\n\s*\n+/)
++    .map((p) => p.trim())
++    .filter(Boolean)
++
++  const chunks: string[] = []
++  for (const p of paragraphs) {
++    if (p.length <= SOFT_LINE_CHARS) {
++      // also split single newlines that look like turns
++      const lines = p.split(/\n+/).map((l) => l.trim()).filter(Boolean)
++      if (lines.length > 1) chunks.push(...lines)
++      else chunks.push(p)
++      continue
++    }
++    // sentence-ish split
++    const parts = p.split(/(?<=[。！？.!?；;])\s+/u).map((s) => s.trim()).filter(Boolean)
++    if (parts.length <= 1) {
++      chunks.push(p)
++    } else {
++      let buf = ""
++      for (const s of parts) {
++        if (!buf) {
++          buf = s
++          continue
++        }
++        if (buf.length + s.length + 1 <= SOFT_LINE_CHARS) {
++          buf = `${buf}${s}`
++        } else {
++          chunks.push(buf)
++          buf = s
++        }
++      }
++      if (buf) chunks.push(buf)
++    }
++  }
++
++  return chunks.map((c) => {
++    const parsed = parseSpeakerPrefix(c)
++    const line: TranscriptLine = {
++      text: parsed.text,
++      source,
++    }
++    if (parsed.speaker) line.speaker = parsed.speaker
++    return line
++  })
++}
++
++/**
++ * Re-cut timed lines when inter-line gap ≥ SILENCE_GAP_SEC.
++ * Does not invent speakers; preserves existing speaker labels.
++ */
++export function silenceCutTimedLines(lines: TranscriptLine[]): TranscriptLine[] {
++  if (!Array.isArray(lines) || lines.length === 0) return []
++  const out: TranscriptLine[] = []
++  for (let i = 0; i < lines.length; i++) {
++    const cur = lines[i]!
++    if (i === 0) {
++      out.push({ ...cur })
++      continue
++    }
++    const prev = lines[i - 1]!
++    const gap =
++      typeof cur.t0 === "number" && typeof prev.t1 === "number"
++        ? cur.t0 - prev.t1
++        : null
++    if (gap != null && gap >= SILENCE_GAP_SEC) {
++      out.push({ ...cur })
++      continue
++    }
++    // Merge adjacent untimed / small-gap into previous only if same speaker and short
++    const last = out[out.length - 1]!
++    const sameSpeaker = (last.speaker || "") === (cur.speaker || "")
++    if (
++      sameSpeaker &&
++      gap != null &&
++      gap < SILENCE_GAP_SEC &&
++      (last.text.length + cur.text.length) < SOFT_LINE_CHARS
++    ) {
++      last.text = `${last.text}${last.text.endsWith(" ") || cur.text.startsWith(" ") ? "" : " "}${cur.text}`.trim()
++      if (typeof cur.t1 === "number") last.t1 = cur.t1
++      continue
++    }
++    out.push({ ...cur })
++  }
++  return out
++}
++
++/** Apply silence-cut to existing lines (untimed → text cut; timed → gap cut). */
++export function applySilenceCut(lines: TranscriptLine[]): TranscriptLine[] {
++  if (!lines.length) return []
++  const hasTiming = lines.some((l) => typeof l.t0 === "number" || typeof l.t1 === "number")
++  if (hasTiming) return silenceCutTimedLines(lines)
++  const blob = lines
++    .map((l) => (l.speaker ? `${l.speaker}: ${l.text}` : l.text))
++    .join("\n\n")
++  const source = lines[0]?.source || "user_edit"
++  return silenceCutText(blob, source)
++}
++
++/** Format lines for editable textarea (speaker: text). */
++export function formatTranscriptLines(lines: TranscriptLine[]): string {
++  return lines
++    .map((l) => {
++      const sp = l.speaker?.trim()
++      return sp ? `${sp}: ${l.text}` : l.text
++    })
++    .join("\n\n")
++    .trim()
++}
++
++/** Apply speaker labels by line index (manual Mtg2 labeling). */
++export function applySpeakersByIndex(
++  lines: TranscriptLine[],
++  assignments: Array<{ index: number; speaker: string | null }>,
++): TranscriptLine[] {
++  const next = lines.map((l) => ({ ...l }))
++  for (const a of assignments) {
++    if (!Number.isInteger(a.index) || a.index < 0 || a.index >= next.length) continue
++    const sp = a.speaker == null ? "" : String(a.speaker).trim().slice(0, 32)
++    if (!sp) {
++      delete next[a.index]!.speaker
++    } else {
++      next[a.index]!.speaker = sp
++    }
++  }
++  return next
++}
++
++/** Bulk-set speaker on all lines (e.g. label all as 「我」). */
++export function bulkSetSpeaker(lines: TranscriptLine[], speaker: string | null): TranscriptLine[] {
++  const sp = speaker == null ? "" : String(speaker).trim().slice(0, 32)
++  return lines.map((l) => {
++    const copy = { ...l }
++    if (!sp) delete copy.speaker
++    else copy.speaker = sp
++    return copy
++  })
++}
+diff --git a/companion/src/message-router.ts b/companion/src/message-router.ts
+index f88f73b..3622951 100644
+--- a/companion/src/message-router.ts
++++ b/companion/src/message-router.ts
+@@ -1928,6 +1928,10 @@ export async function handleMessage(
+     case "meeting.get":
+     case "meeting.set_transcript":
+     case "meeting.append_transcript":
++    case "meeting.apply_silence_cut":
++    case "meeting.set_speakers":
++    case "meeting.bulk_speaker":
++    case "meeting.import_text":
+     case "meeting.generate_minutes":
+     case "meeting.set_status":
+       return handleMeetingMessage(msg, {
+diff --git a/companion/src/packs/builtin/meeting-minutes/pack.yaml b/companion/src/packs/builtin/meeting-minutes/pack.yaml
+index 24c97e0..d95bb79 100644
+--- a/companion/src/packs/builtin/meeting-minutes/pack.yaml
++++ b/companion/src/packs/builtin/meeting-minutes/pack.yaml
+@@ -1,8 +1,8 @@
+ schema_version: 1
+ id: meeting-minutes
+ name: 会议记录
+-description: 基于转写文本或会议工作台本机录制生成结构化会议纪要（TL;DR / 决议 / 待办 / 风险）；暂不分说话人；应用本场景不会自动开麦
+-version: 0.2.0
++description: 基于转写文本、上传文件或会议工作台本机录制生成结构化会议纪要；可手动标说话人（非自动分离）；应用本场景不会自动开麦
++version: 0.3.0
+ channel: community
+ min_capability: L0
+ requires_modules: []
+@@ -20,7 +20,7 @@ system_prompt_append: |
+   ## 硬规则
+   1. **仅基于用户提供的转写**：不得臆造出席人、时间、决议、待办或未出现的事实。
+   2. 转写不完整时：在风险/备注中写明「转写不完整 / 信息不足」，不要补全故事。
+-  3. **暂无说话人分离**：不要伪造「张三说 / 李四说」；可用「发言摘要」按时间或主题组织。
++  3. **无自动说话人分离**：仅当转写中已有用户手标的「姓名: 内容」时才使用该标签；不要伪造未标注的发言人。
+   4. 本场景**不会**、也**不得**要求用户开启麦克风或自动录音；录音须用户在会议工作台点「开始录制」并完成 meeting_privacy_ack_v1。
+   5. 输出中文为主；专有名词可保留原文。
+   6. **不要**调用工具去扫页或执行命令来「验证」会议内容；工具与会议转写无关。
+@@ -50,7 +50,7 @@ workspace:
+   type: none
+ ui:
+   suitable_for: 会后把转写整理成 TL;DR、决议、待办；单人备忘口述纪要（暂不分说话人）。
+-  unsuitable_for: 多方实时说话人分离、系统混音录会、自动开麦后台偷录。
++  unsuitable_for: 自动说话人分离 SLA、系统/会议软件混音、自动开麦后台偷录。
+   tools_summary_zh: 不额外限制工具；以对话与转写文本为主生成纪要
+ author: cmspark
+ tags:
+diff --git a/companion/src/server.ts b/companion/src/server.ts
+index c3e4339..1328898 100644
+--- a/companion/src/server.ts
++++ b/companion/src/server.ts
+@@ -5893,6 +5893,37 @@ export function validateWsMessage(msg: any): WsValidationResult {
+       }
+       return { valid: true }
+     },
++    "meeting.apply_silence_cut": (m) => {
++      if (m.v !== 1) return { valid: false, error: "meeting.apply_silence_cut requires v:1" }
++      if (typeof m.id !== "string" || !m.id) {
++        return { valid: false, error: "meeting.apply_silence_cut requires id" }
++      }
++      return { valid: true }
++    },
++    "meeting.set_speakers": (m) => {
++      if (m.v !== 1) return { valid: false, error: "meeting.set_speakers requires v:1" }
++      if (typeof m.id !== "string" || !m.id) return { valid: false, error: "meeting.set_speakers requires id" }
++      if (!Array.isArray(m.assignments)) {
++        return { valid: false, error: "meeting.set_speakers requires assignments array" }
++      }
++      return { valid: true }
++    },
++    "meeting.bulk_speaker": (m) => {
++      if (m.v !== 1) return { valid: false, error: "meeting.bulk_speaker requires v:1" }
++      if (typeof m.id !== "string" || !m.id) return { valid: false, error: "meeting.bulk_speaker requires id" }
++      return { valid: true }
++    },
++    "meeting.import_text": (m) => {
++      if (m.v !== 1) return { valid: false, error: "meeting.import_text requires v:1" }
++      if (m.privacy_ack_v1 !== true) {
++        return { valid: false, error: "meeting.import_text requires privacy_ack_v1:true" }
++      }
++      if (typeof m.text !== "string" || !m.text.trim()) {
++        return { valid: false, error: "meeting.import_text requires text" }
++      }
++      if (m.text.length > 80_000) return { valid: false, error: "meeting.import_text text too long" }
++      return { valid: true }
++    },
+     "meeting.generate_minutes": (m) => {
+       if (m.v !== 1) return { valid: false, error: "meeting.generate_minutes requires v:1" }
+       const hasId = typeof m.id === "string" && m.id
+diff --git a/companion/tests/meeting-mtg2.test.ts b/companion/tests/meeting-mtg2.test.ts
+new file mode 100644
+index 0000000..f177376
+--- /dev/null
++++ b/companion/tests/meeting-mtg2.test.ts
+@@ -0,0 +1,139 @@
++/**
++ * Meeting Mtg2: silence-cut, speakers, import_text.
++ */
++import test from "node:test"
++import assert from "node:assert/strict"
++import * as fs from "fs"
++import * as os from "os"
++import * as path from "path"
++
++process.env.CMSPARK_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "cmspark-mtg2-"))
++
++import {
++  silenceCutText,
++  applySilenceCut,
++  applySpeakersByIndex,
++  bulkSetSpeaker,
++  parseSpeakerPrefix,
++  formatTranscriptLines,
++} from "../src/meeting/silence-cut"
++import { createMeeting, loadMeeting } from "../src/meeting/meeting-store"
++import { handleMeetingMessage } from "../src/meeting/meeting-handlers"
++
++const DATA = process.env.CMSPARK_DATA_DIR!
++const EXT = "chrome-extension://abcdefghijklmnopqrstuvwxyz"
++
++test("parseSpeakerPrefix", () => {
++  assert.deepEqual(parseSpeakerPrefix("张三: 你好"), { speaker: "张三", text: "你好" })
++  assert.deepEqual(parseSpeakerPrefix("Alice：hello"), { speaker: "Alice", text: "hello" })
++  assert.equal(parseSpeakerPrefix("no prefix here").speaker, undefined)
++})
++
++test("silenceCutText splits paragraphs and prefixes", () => {
++  const lines = silenceCutText(
++    "张三: 第一段内容。\n\n李四: 第二段\n\n第三段无说话人",
++    "paste",
++  )
++  assert.ok(lines.length >= 3)
++  assert.equal(lines[0]!.speaker, "张三")
++  assert.equal(lines[1]!.speaker, "李四")
++  assert.equal(lines[2]!.speaker, undefined)
++  assert.match(lines[2]!.text, /第三段/)
++})
++
++test("applySpeakersByIndex + bulkSetSpeaker", () => {
++  const base = silenceCutText("a\n\nb\n\nc", "paste")
++  const labeled = applySpeakersByIndex(base, [
++    { index: 0, speaker: "我" },
++    { index: 1, speaker: "对方" },
++  ])
++  assert.equal(labeled[0]!.speaker, "我")
++  assert.equal(labeled[1]!.speaker, "对方")
++  const all = bulkSetSpeaker(labeled, "我")
++  assert.ok(all.every((l) => l.speaker === "我"))
++  const cleared = bulkSetSpeaker(all, null)
++  assert.ok(cleared.every((l) => !l.speaker))
++})
++
++test("applySilenceCut untimed re-parses speaker prefixes", () => {
++  const lines = [
++    { text: "张三: 甲", source: "paste" as const },
++    { text: "乙句", source: "paste" as const },
++  ]
++  const cut = applySilenceCut(lines)
++  assert.ok(cut.length >= 1)
++  const fmt = formatTranscriptLines(cut)
++  assert.match(fmt, /甲|乙/)
++})
++
++test("handler apply_silence_cut + set_speakers + bulk + import_text", async () => {
++  const created = await handleMeetingMessage(
++    { type: "meeting.create", v: 1, title: "Mtg2" },
++    { origin: EXT },
++  )
++  const id = created.meeting.id as string
++
++  await handleMeetingMessage(
++    {
++      type: "meeting.set_transcript",
++      v: 1,
++      id,
++      text: "第一段。\n\n第二段。",
++      source: "paste",
++      silence_cut: true,
++    },
++    { origin: EXT },
++  )
++
++  const cut = await handleMeetingMessage(
++    { type: "meeting.apply_silence_cut", v: 1, id },
++    { origin: EXT },
++  )
++  assert.equal(cut.type, "meeting.updated")
++  assert.ok(cut.meeting.transcript.length >= 2)
++
++  const sp = await handleMeetingMessage(
++    {
++      type: "meeting.set_speakers",
++      v: 1,
++      id,
++      assignments: [
++        { index: 0, speaker: "我" },
++        { index: 1, speaker: "对方" },
++      ],
++    },
++    { origin: EXT },
++  )
++  assert.equal(sp.meeting.transcript[0].speaker, "我")
++  assert.equal(sp.meeting.transcript[1].speaker, "对方")
++
++  const bulk = await handleMeetingMessage(
++    { type: "meeting.bulk_speaker", v: 1, id, speaker: "全员" },
++    { origin: EXT },
++  )
++  assert.ok(bulk.meeting.transcript.every((l: any) => l.speaker === "全员"))
++
++  const imp = await handleMeetingMessage(
++    {
++      type: "meeting.import_text",
++      v: 1,
++      privacy_ack_v1: true,
++      title: "导入会",
++      text: "甲: 决议通过。\n\n乙: 下周跟进。",
++    },
++    { origin: EXT },
++  )
++  assert.equal(imp.type, "meeting.imported")
++  assert.ok(imp.meeting.transcript.length >= 2)
++  assert.equal(imp.meeting.transcript[0].speaker, "甲")
++
++  const needAck = await handleMeetingMessage(
++    { type: "meeting.import_text", v: 1, text: "x" },
++    { origin: EXT },
++  )
++  assert.equal(needAck.code, "need_privacy_ack")
++
++  // disk still under DATA
++  assert.ok(loadMeeting(id, DATA))
++  assert.ok(createMeeting({ title: "x", dataDir: DATA }).id)
++})
+diff --git a/docs/superpowers/specs/2026-08-07-meeting-minutes-design.md b/docs/superpowers/specs/2026-08-07-meeting-minutes-design.md
+index ffe20bd..a041f4c 100644
+--- a/docs/superpowers/specs/2026-08-07-meeting-minutes-design.md
++++ b/docs/superpowers/specs/2026-08-07-meeting-minutes-design.md
+@@ -1,7 +1,7 @@
+ # 会议纪要（Meeting Minutes）— 产品设计 SoT
+ 
+ > **日期**: 2026-08-07  
+-> **状态**: **LOCKED** — Mtg0 粘贴纪要已合并；Mtg1 live capture（本机分段 STT + 删音频 + ack + 听写互斥）按本 SoT 实现；R1 四路对抗 floors 已吸收；R2 确认与听写+ 硬拆 
++> **状态**: **LOCKED** — Mtg0/Mtg1 已合并；**Mtg2** 手动 speaker + 静音切 + 转写/音频上传；系统音频见 [parking 调研](./2026-08-08-meeting-system-audio-parking.md)；R1/R2 floors 仍有效
+ > **对抗合成**:  
+ > - R1：[continuous-dictation-meeting-adversary-synthesis-20260807.md](../../audit/reviews/continuous-dictation-meeting-adversary-synthesis-20260807.md)  
+ > - R2（听写交叉）：[voice-dictation-r2-yetone-adversary-synthesis-20260807.md](../../audit/reviews/voice-dictation-r2-yetone-adversary-synthesis-20260807.md)  
+@@ -257,3 +257,4 @@ Origin / 鉴权与现有 WS 一致；tray 不发起会议音频。
+ | 日期 | 变更 |
+ |------|------|
+ | 2026-08-07 | 初版 LOCKED：R1 会议线 + R2 硬拆确认 |
++| 2026-08-08 | Mtg0/Mtg1 落地 main；Mtg2 手动 speaker/上传 + 系统音频 parking 调研 |
+diff --git a/docs/superpowers/specs/2026-08-08-meeting-system-audio-parking.md b/docs/superpowers/specs/2026-08-08-meeting-system-audio-parking.md
+new file mode 100644
+index 0000000..41f774b
+--- /dev/null
++++ b/docs/superpowers/specs/2026-08-08-meeting-system-audio-parking.md
+@@ -0,0 +1,58 @@
++# 会议系统音频 / 混音 — 停车场调研（Mtg2）
++
++> **日期**: 2026-08-08  
++> **状态**: **PARKING** — 不实现；Mtg2 仅调研落盘  
++> **SoT**: [会议纪要](./2026-08-07-meeting-minutes-design.md) §3.2 / §7；[ADR-024](../../adr/024-dictation-plus-asr-refiner-meeting.md)
++
++---
++
++## 1. 用户诉求
++
++在飞书/Zoom/腾讯会议等窗口播放对方声音时，希望 CMspark **同时**采到：
++
++1. 本机麦克风（自己）  
++2. 系统/应用播放音频（对方）
++
++从而得到完整会谈转写，而不只是「自言自语备忘」。
++
++---
++
++## 2. 平台现实（2026-08）
++
++| 平台 | 能力 | 备注 |
++|------|------|------|
++| **macOS** | 无公开「系统混音」API；需虚拟设备（BlackHole / Loopback）或 ScreenCaptureKit 音频 | Chrome `getDisplayMedia` 可勾 audio，但扩展 Side Panel 权限与 UX 复杂；用户须装虚拟声卡 |
++| **Windows** | WASAPI loopback 可采输出设备 | 需 native companion 模块；非纯 Extension |
++| **Linux** | Pulse/PipeWire monitor source | 发行版差异大 |
++| **Chrome Extension only** | `getUserMedia` mic；`getDisplayMedia` 可选 system audio（Chrome 限定） | MV3 + Side Panel 触发 display media 体验差；与「Pack 永不 auto mic」冲突风险 |
++
++结论：**系统混音不是 Mtg1/Mtg2 的 Extension-only 交付物**；若做，应是 **Companion 原生 + 显式用户安装/授权** 的独立波次，并另开 Trust 对抗。
++
++---
++
++## 3. 与当前架构的冲突点
++
++1. **Trust residual**：多一路「桌面/系统音频」通道，隐私文案与 ack 必须新版本（不能塞进 `meeting_privacy_ack_v1` 静默升级）。  
++2. **Pack 纪律**：禁止 Pack 写 `autoStart` / 静默开采。  
++3. **max-1 STT**：混音流若双轨，分段与预算需重新设计。  
++4. **法律**：多方会议录音合规仍由用户负责（SoT 已诚实声明）。
++
++---
++
++## 4. 推荐路径（若未来做）
++
++| 阶段 | 内容 |
++|------|------|
++| Spike | macOS ScreenCaptureKit 或用户自备 BlackHole 聚合 → Companion 录文件 → 现有 `voice.stt` / 上传路径 |
++| MVP | 仅 Windows WASAPI loopback opt-in + 独立 ack |
++| 非目标 | 伪装成「飞书一键自动录多方」营销 |
++
++**Mtg2 已交付的替代**：上传会后录音文件（客户端解码 → 本机分段 STT）+ 手动 speaker 标签。
++
++---
++
++## 5. 变更记录
++
++| 日期 | 变更 |
++|------|------|
++| 2026-08-08 | Mtg2 调研初版 LOCKED as parking |

@@ -1,7 +1,7 @@
 # 会议纪要（Meeting Minutes）— 产品设计 SoT
 
 > **日期**: 2026-08-07  
-> **状态**: **LOCKED** — Mtg0 粘贴纪要已合并；Mtg1 live capture（本机分段 STT + 删音频 + ack + 听写互斥）按本 SoT 实现；R1 四路对抗 floors 已吸收；R2 确认与听写+ 硬拆 
+> **状态**: **LOCKED** — Mtg0/Mtg1 已合并；**Mtg2** 手动 speaker + 静音切 + 转写/音频上传；系统音频见 [parking 调研](./2026-08-08-meeting-system-audio-parking.md)；R1/R2 floors 仍有效
 > **对抗合成**:  
 > - R1：[continuous-dictation-meeting-adversary-synthesis-20260807.md](../../audit/reviews/continuous-dictation-meeting-adversary-synthesis-20260807.md)  
 > - R2（听写交叉）：[voice-dictation-r2-yetone-adversary-synthesis-20260807.md](../../audit/reviews/voice-dictation-r2-yetone-adversary-synthesis-20260807.md)  
@@ -257,3 +257,4 @@ Origin / 鉴权与现有 WS 一致；tray 不发起会议音频。
 | 日期 | 变更 |
 |------|------|
 | 2026-08-07 | 初版 LOCKED：R1 会议线 + R2 硬拆确认 |
+| 2026-08-08 | Mtg0/Mtg1 落地 main；Mtg2 手动 speaker/上传 + 系统音频 parking 调研 |
