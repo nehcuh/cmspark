@@ -41,10 +41,12 @@ test("M1: contextPanelLabel returns Chinese labels for strip/host header", () =>
   assert.equal(contextPanelLabel("board"), "任务板")
 })
 
-test("M1: registry has stable 8 panels (tabs/history/skills/knowledge/packs/board/mcp/apps)", () => {
-  assert.equal(CONTEXT_PANEL_TABS.length, 8)
+test("M1: registry includes meeting panel (meeting-minutes scene)", () => {
+  assert.equal(CONTEXT_PANEL_TABS.length, 9)
   assert.deepEqual(
     CONTEXT_PANEL_TABS.map((t) => t.id),
-    ["tabs", "history", "skills", "knowledge", "packs", "board", "mcp", "apps"],
+    ["tabs", "history", "skills", "knowledge", "packs", "meeting", "board", "mcp", "apps"],
   )
+  assert.equal(isContextPanelId("meeting"), true)
+  assert.equal(contextPanelLabel("meeting"), "会议")
 })

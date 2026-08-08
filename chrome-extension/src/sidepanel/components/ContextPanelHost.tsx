@@ -24,6 +24,7 @@ import { McpPanel } from "./McpPanel"
 import { AppsPanel } from "./AppsPanel"
 import { PacksPanel } from "./PacksPanel"
 import { BoardPanel } from "./BoardPanel"
+import { MeetingPanel } from "./MeetingPanel"
 import { tokens } from "../ui/tokens"
 import {
   IconTabs,
@@ -45,6 +46,7 @@ export type ContextPanelId =
   | "board"
   | "mcp"
   | "apps"
+  | "meeting"
 
 export type ContextPanelTabDef = {
   id: ContextPanelId
@@ -59,6 +61,7 @@ export const CONTEXT_PANEL_TABS: ContextPanelTabDef[] = [
   { id: "skills", label: "技能", Icon: IconSkills },
   { id: "knowledge", label: "知识", Icon: IconKnowledge },
   { id: "packs", label: "场景", Icon: IconSkills },
+  { id: "meeting", label: "会议", Icon: IconSkills },
   { id: "board", label: "任务板", Icon: IconSkills },
   { id: "mcp", label: "MCP", Icon: IconMcp },
   { id: "apps", label: "应用", Icon: IconApps },
@@ -258,6 +261,17 @@ export function ContextPanelHost() {
       {activePanel === "skills" && <SkillsPanel />}
       {activePanel === "knowledge" && <KnowledgeSubPanel />}
       {activePanel === "packs" && <PacksPanel />}
+      {activePanel === "meeting" && (
+        <MeetingPanel
+          onClose={closePanel}
+          onSendToDraft={(text) => {
+            window.dispatchEvent(
+              new CustomEvent("cmspark:fill-composer", { detail: { text } }),
+            )
+            closePanel()
+          }}
+        />
+      )}
       {activePanel === "board" && <BoardPanel />}
       {activePanel === "mcp" && <McpPanel />}
       {activePanel === "apps" && <AppsPanel />}

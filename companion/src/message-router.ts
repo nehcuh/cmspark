@@ -48,6 +48,7 @@ import { handleComputerModelMessage } from "./computer/model-handlers"
 import { handleVoiceModelMessage } from "./voice/whisper-handlers"
 import { handleVoiceSttMessage } from "./voice/stt-handlers"
 import { handleVoiceRefineMessage } from "./voice/refine-handlers"
+import { handleMeetingMessage } from "./meeting/meeting-handlers"
 import {
   buildUserEnvPublic,
   deleteUserEnvKeys,
@@ -1916,6 +1917,18 @@ export async function handleMessage(
     case "voice.refine.request":
     case "voice.refine.abort":
       return handleVoiceRefineMessage(msg, {
+        origin: session?.origin,
+        peerId: session?.panelId,
+        send: session?.sendToExtension,
+      })
+    case "meeting.create":
+    case "meeting.list":
+    case "meeting.get":
+    case "meeting.set_transcript":
+    case "meeting.append_transcript":
+    case "meeting.generate_minutes":
+    case "meeting.set_status":
+      return handleMeetingMessage(msg, {
         origin: session?.origin,
         peerId: session?.panelId,
         send: session?.sendToExtension,
