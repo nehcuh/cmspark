@@ -40,3 +40,28 @@ export function mergeFinalTranscript(baseText: string, finals: string[]): string
 export function isEmptyFinals(finals: string[]): boolean {
   return finals.every((f) => !(f || "").trim())
 }
+
+/**
+ * Composer display while voice session is active.
+ * Must include `processing` (local continuous segment gaps) — otherwise
+ * live overlay drops and the textarea falls back to stale draft (flash/disappear).
+ */
+export function voiceLiveComposerText(opts: {
+  phase: string
+  abortReason: string | null | undefined
+  baseText: string
+  finals: string[]
+  interim: string
+}): string | null {
+  const ph = opts.phase
+  const live =
+    (ph === "listening" ||
+      ph === "starting" ||
+      ph === "stopping" ||
+      ph === "processing") &&
+    !opts.abortReason
+  if (!live) return null
+  return (
+    mergeFinalTranscript(opts.baseText, opts.finals) + (opts.interim || "")
+  )
+}

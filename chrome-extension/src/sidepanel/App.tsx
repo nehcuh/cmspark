@@ -1313,7 +1313,14 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
             placeholder={getPlaceholder()}
             rows={2}
             value={voice.liveOverlay !== null ? voice.liveOverlay : text}
-            disabled={needsThread || needsConnection || threadBusy || voice.listening}
+            // Keep editable when not actively capturing mic (processing still shows live overlay).
+            // Block only while mic is open so interim/finals are not clobbered by typing races.
+            disabled={
+              needsThread ||
+              needsConnection ||
+              threadBusy ||
+              (voice.listening && !voice.processing)
+            }
             onChange={handleChange}
             onKeyDown={handleKeyDown}
           />
