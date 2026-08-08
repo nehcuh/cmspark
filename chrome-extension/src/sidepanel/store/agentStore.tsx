@@ -46,6 +46,16 @@ export interface AgentState {
   /** ASR Refiner after stop (default false). Requires privacy ack v3 + Companion LLM. */
   asrRefinerEnabled: boolean
   /**
+   * Mtg1: meeting workbench is live-capturing (local segmented STT).
+   * Mutual exclusion with composer dictation (global max-1 STT).
+   */
+  meetingCaptureActive: boolean
+  /**
+   * Composer dictation is listening / processing / refining.
+   * Meeting panel refuses Start while true.
+   */
+  dictationCaptureActive: boolean
+  /**
    * Wave D: how to show model thinking blocks.
    * auto_live = expand while streaming, collapse when done (default).
    */
@@ -202,6 +212,8 @@ export type AgentAction =
   | { type: "SET_VOICE_PRIVACY_ACK_V3"; ack: boolean }
   | { type: "SET_VOICE_DICTATION_MODE"; mode: "classic" | "continuous" }
   | { type: "SET_ASR_REFINER_ENABLED"; enabled: boolean }
+  | { type: "SET_MEETING_CAPTURE_ACTIVE"; active: boolean }
+  | { type: "SET_DICTATION_CAPTURE_ACTIVE"; active: boolean }
   | { type: "ADD_SECURITY_CONFIRMATION"; request: SecurityConfirmationRequest }
   | { type: "REMOVE_SECURITY_CONFIRMATION"; confirmationId: string }
   | { type: "ADD_LOG"; entry: LogEntry }
@@ -327,6 +339,8 @@ export const initialState: AgentState = {
   voicePrivacyAckV3: false,
   voiceDictationMode: "classic",
   asrRefinerEnabled: false,
+  meetingCaptureActive: false,
+  dictationCaptureActive: false,
   pendingSecurityConfirmations: [],
   logs: [],
   autoSkillNames: "",
@@ -667,6 +681,10 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
     case "SET_VOICE_PRIVACY_ACK_V3":
       chrome.storage.local.set({ voice_privacy_ack_v3: action.ack })
       return { ...state, voicePrivacyAckV3: action.ack }
+    case "SET_MEETING_CAPTURE_ACTIVE":
+      return { ...state, meetingCaptureActive: action.active === true }
+    case "SET_DICTATION_CAPTURE_ACTIVE":
+      return { ...state, dictationCaptureActive: action.active === true }
     case "SET_VOICE_DICTATION_MODE": {
       const mode = action.mode === "continuous" ? "continuous" : "classic"
       chrome.storage.local.set({ voiceDictationMode: mode })

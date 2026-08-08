@@ -16,6 +16,10 @@ import {
   setMinutes,
   listMeetings,
   transcriptToText,
+  startMeetingRecording,
+  endMeetingRecording,
+  meetingAudioDir,
+  deleteMeetingAudio,
 } from "../src/meeting/meeting-store"
 import { generateMeetingMinutes } from "../src/meeting/meeting-minutes"
 import { MEETING_MINUTES_SYSTEM_PROMPT } from "../src/meeting/minutes-prompt"
@@ -162,4 +166,69 @@ test("handler create + set_transcript + generate", async () => {
   )
   assert.equal(gen.type, "meeting.minutes_result")
   assert.equal(gen.meeting.status, "done")
+})
+
+test("start requires privacy_ack_v1", async () => {
+  const res = await handleMeetingMessage(
+    { type: "meeting.start", v: 1, title: "无 ack" },
+    { origin: EXT },
+  )
+  assert.equal(res.code, "need_privacy_ack")
+})
+
+test("start/end live capture + default delete audio", async () => {
+  const started = await handleMeetingMessage(
+    {
+      type: "meeting.start",
+      v: 1,
+      title: "录制会",
+      privacy_ack_v1: true,
+      audio_retained: false,
+    },
+    { origin: EXT },
+  )
+  assert.equal(started.type, "meeting.started")
+  assert.equal(started.meeting.status, "recording")
+  assert.equal(started.meeting.privacy.stt_engine, "local")
+  const id = started.meeting.id as string
+
+  // Simulate residual durable audio under meetings/<id>/audio
+  const audioDir = meetingAudioDir(id, DATA)!
+  fs.mkdirSync(audioDir, { recursive: true, mode: 0o700 })
+  fs.writeFileSync(path.join(audioDir, "seg0.wav"), Buffer.from("fake"), { mode: 0o600 })
+  assert.ok(fs.existsSync(path.join(audioDir, "seg0.wav")))
+
+  await handleMeetingMessage(
+    {
+      type: "meeting.append_transcript",
+      v: 1,
+      id,
+      text: "第一段本机转写内容。",
+      source: "stt",
+    },
+    { origin: EXT },
+  )
+
+  const ended = await handleMeetingMessage(
+    { type: "meeting.end", v: 1, id },
+    { origin: EXT },
+  )
+  assert.equal(ended.type, "meeting.ended")
+  assert.equal(ended.meeting.status, "ready")
+  assert.equal(ended.audio_deleted, true)
+  assert.equal(fs.existsSync(path.join(audioDir, "seg0.wav")), false)
+})
+
+test("endMeetingRecording retains audio when opt-in", () => {
+  const m = createMeeting({ title: "保留音频", dataDir: DATA })
+  startMeetingRecording(m.id, { audio_retained: true, retain_days: 3 }, DATA)
+  const audioDir = meetingAudioDir(m.id, DATA)!
+  fs.mkdirSync(audioDir, { recursive: true })
+  fs.writeFileSync(path.join(audioDir, "keep.wav"), "x")
+  const r = endMeetingRecording(m.id, DATA)
+  assert.ok(r)
+  assert.equal(r!.audioDeleted, false)
+  assert.ok(fs.existsSync(path.join(audioDir, "keep.wav")))
+  // cleanup
+  deleteMeetingAudio(m.id, DATA)
 })

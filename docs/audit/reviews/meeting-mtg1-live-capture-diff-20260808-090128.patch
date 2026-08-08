@@ -1,0 +1,1262 @@
+# Dual external review context
+batch: meeting-mtg1-live-capture
+base: 666f0dd154592fcfe68994f89f1763eccca62f1b
+time: 20260808-090128
+
+27d15fd
+
+?? .grok/config.toml
+?? .grok/hooks/
+?? .grok/rules/
+?? docs/audit/reviews/analyze-image-data-url-p0-diff-20260806-212116.patch
+?? docs/audit/reviews/analyze-image-data-url-p0-r2-diff-20260806-213120.patch
+?? docs/audit/reviews/analyze-image-data-url-p0-r3-diff-20260806-214547.patch
+?? docs/audit/reviews/cli-qwen-plan-v2-for-pi.md
+?? docs/audit/reviews/cli-qwen-plan-v2-pi-20260802-092659.md
+?? docs/audit/reviews/context-memory-thinking-knowledge-diff-20260807-100209.patch
+?? docs/audit/reviews/estop-tap-degraded-kimi-20260801-220643.md
+?? docs/audit/reviews/meeting-mtg1-live-capture-diff-20260808-090128.patch
+?? docs/audit/reviews/meeting-mtg1-live-capture-dual-review-prompt.md
+?? docs/audit/reviews/run-state-worker-drilldown-diff-20260804-174619.patch
+?? docs/audit/reviews/s41-main-pull-diff-20260804-092610.patch
+?? docs/audit/reviews/s41-multi-adv-diff-20260804-093256.patch
+?? docs/audit/reviews/settings-thread-compact-diff-20260806-221435.patch
+?? docs/audit/reviews/settings-thread-compact-m2-meta-diff-20260806-230545.patch
+?? docs/audit/reviews/shell-abort-timeout-claude-20260806-163014.md
+?? docs/audit/reviews/shell-abort-timeout-diff-20260806-163014.patch
+?? docs/audit/reviews/shell-abort-timeout-diff-20260806-192609.patch
+?? docs/audit/reviews/shell-abort-timeout-r2-diff-20260806-193231.patch
+?? docs/audit/reviews/thread-history-ia-diff-20260806-092335.patch
+?? docs/audit/reviews/thread-history-ia-impl-diff-20260806-134044.patch
+?? docs/audit/reviews/thread-history-ia-impl-r2-diff-20260806-135746.patch
+?? docs/audit/reviews/trust-ia-autopilot-diff-20260802-144203.patch
+?? docs/audit/reviews/unattended-desktop-diff-20260802-153129.patch
+?? docs/audit/reviews/unattended-desktop-m1-diff-20260802-154236.patch
+?? docs/audit/reviews/unattended-desktop-m2-diff-20260802-155452.patch
+?? docs/audit/reviews/unattended-desktop-m2-r2-diff-20260802-160240.patch
+?? docs/audit/reviews/unattended-desktop-m3-diff-20260802-161147.patch
+?? docs/audit/reviews/voice-input-design-diff-20260806-194531.patch
+?? docs/audit/reviews/voice-input-m1-diff-20260806-200603.patch
+?? docs/audit/reviews/voice-input-m1-r2-diff-20260806-201142.patch
+?? docs/audit/reviews/voice-local-stt-design-diff-20260807-154150.patch
+?? docs/audit/reviews/wave-a-scene-knowledge-impl-diff-20260807-103512.patch
+?? docs/audit/reviews/wave-a-scene-knowledge-plan-diff-20260807-101501.patch
+?? docs/audit/reviews/wave-a-scene-knowledge-plan-r2-diff-20260807-102424.patch
+?? docs/audit/reviews/wave-b-h1-thread-handoff-impl-diff-20260807-105903.patch
+?? docs/audit/reviews/wave-b-h1-thread-handoff-plan-diff-20260807-104642.patch
+?? docs/audit/reviews/wave-c-thread-recall-impl-diff-20260807-115545.patch
+?? docs/audit/reviews/wave-c-thread-recall-plan-diff-20260807-113810.patch
+?? docs/audit/reviews/wave-c-thread-recall-plan-r2-diff-20260807-114530.patch
+?? docs/audit/reviews/wave-d-reasoning-ui-export-impl-diff-20260807-143315.patch
+?? docs/audit/reviews/wave-d-reasoning-ui-export-plan-diff-20260807-142222.patch
+?? docs/optimization-plan-document-parse-vision.md
+?? images/
+
+## Diff (git diff + staged)
+ chrome-extension/src/background/index.ts           |   4 +-
+ chrome-extension/src/sidepanel/App.tsx             |  14 +-
+ .../src/sidepanel/components/MeetingPanel.tsx      | 564 ++++++++++++++++++---
+ .../src/sidepanel/store/agentStore.tsx             |  18 +
+ .../tests/meeting-capture-mutex.test.ts            |  26 +
+ companion/src/meeting/meeting-handlers.ts          |  56 ++
+ companion/src/meeting/meeting-store.ts             |  78 ++-
+ companion/src/message-router.ts                    |   2 +
+ .../src/packs/builtin/meeting-minutes/pack.yaml    |   6 +-
+ companion/src/server.ts                            |  12 +
+ companion/tests/meeting-minutes.test.ts            |  69 +++
+ .../specs/2026-08-07-meeting-minutes-design.md     |   2 +-
+ 12 files changed, 760 insertions(+), 91 deletions(-)
+
+diff --git a/chrome-extension/src/background/index.ts b/chrome-extension/src/background/index.ts
+index 652356f..3a5bc9d 100644
+--- a/chrome-extension/src/background/index.ts
++++ b/chrome-extension/src/background/index.ts
+@@ -1152,8 +1152,10 @@ function handleRuntimeMessage(message: any, sendResponse: (r?: any) => void): bo
+       // Dictation+ D1b ASR Refiner (text-only)
+       case "voice.refine.request":
+       case "voice.refine.abort":
+-      // Meeting minutes scene
++      // Meeting minutes scene (Mtg0 paste + Mtg1 live capture)
+       case "meeting.create":
++      case "meeting.start":
++      case "meeting.end":
+       case "meeting.list":
+       case "meeting.get":
+       case "meeting.set_transcript":
+diff --git a/chrome-extension/src/sidepanel/App.tsx b/chrome-extension/src/sidepanel/App.tsx
+index 625ff5e..82033bf 100644
+--- a/chrome-extension/src/sidepanel/App.tsx
++++ b/chrome-extension/src/sidepanel/App.tsx
+@@ -429,10 +429,12 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
+ 
+   // threadBusy / no thread still block; local readiness is gated inside useVoiceInput
+   // so a click can surface mapLocalSttError banners.
++  // Mtg1: meeting live capture holds global max-1 STT — block dictation start.
+   const voiceAllowStart =
+     !threadBusy &&
+     !needsThread &&
+-    state.voiceInputEnabled !== false
++    state.voiceInputEnabled !== false &&
++    !state.meetingCaptureActive
+ 
+   const voice = useVoiceInput({
+     getBaseText: () => textRef.current,
+@@ -481,6 +483,15 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
+     getCurrentDraft: () => textRef.current,
+   })
+ 
++  // Mirror dictation activity for MeetingPanel mutual-exclusion (SoT Mtg1).
++  useEffect(() => {
++    const active =
++      voice.listening === true ||
++      voice.processing === true ||
++      voice.refining === true
++    dispatch({ type: "SET_DICTATION_CAPTURE_ACTIVE", active })
++  }, [voice.listening, voice.processing, voice.refining, dispatch])
++
+   // Hide: feature off | unsupported for selected engine | worker | no thread.
+   // Local + no gUM → voice.supported false → hide.
+   // Browser + no SpeechRecognition → hide.
+@@ -517,6 +528,7 @@ function InputArea({ capabilityLevel = "chat" }: { capabilityLevel?: CapabilityL
+             ? localListeningStatusLabel(voice.listenRemainingMs!)
+             : null
+   const voiceMicTitle = (() => {
++    if (state.meetingCaptureActive) return "会议录音进行中，请先结束会议再听写"
+     if (threadBusy) return "处理中无法听写"
+     if (voice.refining) return "纠错中…点击取消"
+     if (continuousProcessing) {
+diff --git a/chrome-extension/src/sidepanel/components/MeetingPanel.tsx b/chrome-extension/src/sidepanel/components/MeetingPanel.tsx
+index 5f54006..f1a9c72 100644
+--- a/chrome-extension/src/sidepanel/components/MeetingPanel.tsx
++++ b/chrome-extension/src/sidepanel/components/MeetingPanel.tsx
+@@ -1,30 +1,23 @@
+ /**
+- * Meeting workbench (Mtg0 paste + generate; Mtg1 status shell).
++ * Meeting workbench — Mtg0 paste + Mtg1 live capture (local segmented STT).
+  * SoT: docs/superpowers/specs/2026-08-07-meeting-minutes-design.md
+- * Does NOT auto-start mic on pack apply.
++ * Does NOT auto-start mic on pack apply. Forces local STT for long capture.
+  */
+ 
+-import { useCallback, useEffect, useState, type CSSProperties } from "react"
++import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react"
+ import { useAgentStore } from "../store/agentStore"
+ import { tokens } from "../ui/tokens"
++import { createLocalSttAdapter } from "../voice/local-stt-adapter"
++import { detectLocalMediaCapture } from "../voice/local-stt-detect"
++import {
++  VOICE_CONTINUOUS_HARD_CAP_MS,
++  VOICE_CONTINUOUS_SOFT_CAP_MS,
++  VOICE_DEFAULT_LANG,
++} from "../voice/detect"
++import type { SpeechAdapter } from "../voice/web-speech-adapter"
+ 
+-type Minutes = {
+-  raw_md: string
+-  tldr?: string
+-  generated_at?: string
+-}
+-
+-type Meeting = {
+-  id: string
+-  title: string
+-  status: string
+-  transcript?: Array<{ text: string }>
+-  minutes?: Minutes | null
+-}
++type CapturePhase = "idle" | "starting" | "recording" | "processing" | "stopping"
+ 
+-/**
+- * Companion replies arrive via WS → SW → chrome.runtime.sendMessage.
+- */
+ function useMeetingMessages(onMsg: (m: any) => void) {
+   useEffect(() => {
+     const listener = (msg: any) => {
+@@ -38,11 +31,46 @@ function useMeetingMessages(onMsg: (m: any) => void) {
+   }, [onMsg])
+ }
+ 
++function sendViaRuntime(msg: Record<string, unknown>): void {
++  try {
++    chrome.runtime.sendMessage(msg)
++  } catch {
++    /* SW missing */
++  }
++}
++
++function subscribeVoiceStt(handler: (msg: any) => void): () => void {
++  if (typeof chrome === "undefined" || !chrome.runtime?.onMessage) {
++    return () => {}
++  }
++  const listener = (msg: any) => {
++    if (msg && typeof msg.type === "string" && msg.type.startsWith("voice.stt.")) {
++      handler(msg)
++    }
++    return false
++  }
++  chrome.runtime.onMessage.addListener(listener)
++  return () => {
++    try {
++      chrome.runtime.onMessage.removeListener(listener)
++    } catch {
++      /* */
++    }
++  }
++}
++
++function formatElapsed(ms: number): string {
++  const s = Math.max(0, Math.floor(ms / 1000))
++  const m = Math.floor(s / 60)
++  const r = s % 60
++  return `${m}:${r.toString().padStart(2, "0")}`
++}
++
+ export function MeetingPanel(props: {
+   onClose: () => void
+   onSendToDraft: (text: string) => void
+ }) {
+-  const { state } = useAgentStore()
++  const { state, dispatch } = useAgentStore()
+   const [title, setTitle] = useState("")
+   const [transcript, setTranscript] = useState("")
+   const [minutesMd, setMinutesMd] = useState("")
+@@ -51,6 +79,43 @@ export function MeetingPanel(props: {
+   const [busy, setBusy] = useState(false)
+   const [error, setError] = useState<string | null>(null)
+   const [ack, setAck] = useState(false)
++  const [capturePhase, setCapturePhase] = useState<CapturePhase>("idle")
++  const [elapsedMs, setElapsedMs] = useState(0)
++  const [softCapHint, setSoftCapHint] = useState(false)
++  const [pendingGenerate, setPendingGenerate] = useState(false)
++
++  const adapterRef = useRef<SpeechAdapter | null>(null)
++  const captureStartRef = useRef<number | null>(null)
++  const meetingIdRef = useRef<string | null>(null)
++  const phaseRef = useRef<CapturePhase>("idle")
++  const wantGenerateRef = useRef(false)
++  const transcriptRef = useRef("")
++  /** Prevent double meeting.end / finalize. */
++  const finalizedRef = useRef(false)
++  const titleRef = useRef(title)
++
++  meetingIdRef.current = meetingId
++  transcriptRef.current = transcript
++  titleRef.current = title
++  phaseRef.current = capturePhase
++
++  const companionConnected = state.connectionState === "connected"
++  const activeModelId = state.voiceModel?.localModelId || "medium"
++  const localModelReady = state.voiceModel?.models?.[activeModelId]?.status === "ready"
++  const localBinaryReady = state.voiceModel?.binary?.status === "ready"
++  const localMedia = detectLocalMediaCapture(
++    typeof globalThis !== "undefined" ? (globalThis as any) : {},
++  )
++  const capturing =
++    capturePhase === "recording" ||
++    capturePhase === "processing" ||
++    capturePhase === "starting" ||
++    capturePhase === "stopping"
++
++  const setPhase = useCallback((p: CapturePhase) => {
++    phaseRef.current = p
++    setCapturePhase(p)
++  }, [])
+ 
+   useEffect(() => {
+     try {
+@@ -62,34 +127,248 @@ export function MeetingPanel(props: {
+     }
+   }, [])
+ 
+-  const onMsg = useCallback((msg: any) => {
+-    if (msg.type === "meeting.created" && msg.meeting) {
+-      setMeetingId(msg.meeting.id)
+-      setTitle(msg.meeting.title || "")
+-      setStatus(msg.meeting.status || "draft")
+-      setBusy(false)
+-    }
+-    if (msg.type === "meeting.updated" && msg.meeting) {
+-      setMeetingId(msg.meeting.id)
+-      setStatus(msg.meeting.status)
+-      if (msg.meeting.minutes?.raw_md) setMinutesMd(msg.meeting.minutes.raw_md)
+-      setBusy(false)
++  useEffect(() => {
++    if (!companionConnected) return
++    try {
++      chrome.runtime.sendMessage({ type: "voice.model.get_state" })
++    } catch {
++      /* */
+     }
+-    if (msg.type === "meeting.minutes_result") {
+-      if (msg.minutes?.raw_md) setMinutesMd(msg.minutes.raw_md)
+-      if (msg.meeting?.id) {
+-        setMeetingId(msg.meeting.id)
+-        setStatus(msg.meeting.status || "done")
++  }, [companionConnected])
++
++  useEffect(() => {
++    if (!capturing) return
++    const id = setInterval(() => {
++      if (captureStartRef.current != null) {
++        const ms = Date.now() - captureStartRef.current
++        setElapsedMs(ms)
++        if (ms >= VOICE_CONTINUOUS_SOFT_CAP_MS) setSoftCapHint(true)
+       }
+-      setBusy(false)
+-      setError(null)
++    }, 250)
++    return () => clearInterval(id)
++  }, [capturing])
++
++  useEffect(() => {
++    dispatch({ type: "SET_MEETING_CAPTURE_ACTIVE", active: capturing })
++    return () => {
++      dispatch({ type: "SET_MEETING_CAPTURE_ACTIVE", active: false })
+     }
+-    if (msg.type === "meeting.error") {
+-      setError(msg.message || msg.code || "error")
+-      setBusy(false)
++  }, [capturing, dispatch])
++
++  /** Tear down adapter without onEnd (destroy is silent; abort would re-enter finalize). */
++  const destroyAdapter = useCallback(() => {
++    const a = adapterRef.current
++    adapterRef.current = null
++    if (!a) return
++    try {
++      a.destroy()
++    } catch {
++      /* */
+     }
+   }, [])
+ 
++  const appendLocalAndRemote = useCallback((chunk: string, id: string | null) => {
++    const t = chunk.trim()
++    if (!t) return
++    setTranscript((prev) => {
++      const next = prev ? `${prev}\n${t}` : t
++      transcriptRef.current = next
++      return next
++    })
++    if (id) {
++      sendViaRuntime({
++        type: "meeting.append_transcript",
++        v: 1,
++        id,
++        text: t,
++        source: "stt",
++      })
++    }
++  }, [])
++
++  const finalizeCapture = useCallback(
++    (opts: { generate: boolean; id: string | null }) => {
++      if (finalizedRef.current && phaseRef.current === "idle") return
++      finalizedRef.current = true
++      captureStartRef.current = null
++      setPhase("idle")
++      setSoftCapHint(false)
++      destroyAdapter()
++      dispatch({ type: "SET_MEETING_CAPTURE_ACTIVE", active: false })
++
++      const id = opts.id || meetingIdRef.current
++      if (id) {
++        sendViaRuntime({ type: "meeting.end", v: 1, id })
++      }
++      if (opts.generate) {
++        setBusy(true)
++        setPendingGenerate(true)
++        setTimeout(() => {
++          if (id) {
++            sendViaRuntime({ type: "meeting.generate_minutes", v: 1, id })
++          } else {
++            const text = transcriptRef.current.trim()
++            sendViaRuntime({
++              type: "meeting.generate_minutes",
++              v: 1,
++              text: text || undefined,
++            })
++          }
++        }, 100)
++      }
++    },
++    [destroyAdapter, dispatch, setPhase],
++  )
++
++  const startLocalSegments = useCallback(
++    (id: string) => {
++      destroyAdapter()
++      finalizedRef.current = false
++
++      if (!localMedia.ok) {
++        setError("当前环境无法访问麦克风（getUserMedia）")
++        setPhase("idle")
++        sendViaRuntime({ type: "meeting.end", v: 1, id })
++        return
++      }
++      if (!state.voicePrivacyAckV2) {
++        setError("请先在设置中确认本机语音隐私说明（voice_privacy_ack_v2）后再录会议")
++        setPhase("idle")
++        sendViaRuntime({ type: "meeting.end", v: 1, id })
++        return
++      }
++      if (!localModelReady || !localBinaryReady) {
++        setError("本机转写模型或二进制未就绪。请到设置 → 语音 下载模型后再开始会议录音。")
++        setPhase("idle")
++        sendViaRuntime({ type: "meeting.end", v: 1, id })
++        return
++      }
++
++      const adapter = createLocalSttAdapter(
++        {
++          onStart: () => {
++            captureStartRef.current = Date.now()
++            setPhase("recording")
++            setElapsedMs(0)
++            setError(null)
++          },
++          onResult: ({ finalChunk }) => {
++            if (finalChunk?.trim()) {
++              appendLocalAndRemote(finalChunk, meetingIdRef.current || id)
++            }
++          },
++          onError: (code) => {
++            if (code === "aborted") return
++            setError(`转写错误: ${code}`)
++          },
++          onEnd: () => {
++            const gen = wantGenerateRef.current
++            wantGenerateRef.current = false
++            if (phaseRef.current === "idle" && finalizedRef.current) return
++            finalizeCapture({ generate: gen, id: meetingIdRef.current || id })
++          },
++          onSegmentContinue: () => {
++            if (phaseRef.current !== "stopping") setPhase("recording")
++          },
++          onCaptureStopped: () => {
++            if (phaseRef.current !== "stopping") setPhase("processing")
++          },
++        },
++        {
++          send: sendViaRuntime,
++          onMessage: subscribeVoiceStt,
++          modelId: activeModelId,
++        },
++      )
++      adapterRef.current = adapter
++      const sid = `mtg-${id}-${Date.now().toString(36)}`
++      adapter.start({
++        lang: VOICE_DEFAULT_LANG,
++        sessionId: sid,
++        modelId: activeModelId,
++        mode: "continuous",
++        hardCapMs: VOICE_CONTINUOUS_HARD_CAP_MS,
++      })
++    },
++    [
++      activeModelId,
++      appendLocalAndRemote,
++      destroyAdapter,
++      finalizeCapture,
++      localBinaryReady,
++      localMedia.ok,
++      localModelReady,
++      setPhase,
++      state.voicePrivacyAckV2,
++    ],
++  )
++
++  const startLocalSegmentsRef = useRef(startLocalSegments)
++  startLocalSegmentsRef.current = startLocalSegments
++
++  useEffect(() => {
++    return () => {
++      destroyAdapter()
++      dispatch({ type: "SET_MEETING_CAPTURE_ACTIVE", active: false })
++    }
++  }, [destroyAdapter, dispatch])
++
++  const onMsg = useCallback(
++    (msg: any) => {
++      if (msg.type === "meeting.created" && msg.meeting) {
++        setMeetingId(msg.meeting.id)
++        setTitle(msg.meeting.title || "")
++        setStatus(msg.meeting.status || "draft")
++        setBusy(false)
++      }
++      if (msg.type === "meeting.started" && msg.meeting) {
++        setMeetingId(msg.meeting.id)
++        setTitle(msg.meeting.title || titleRef.current)
++        setStatus(msg.meeting.status || "recording")
++        if (phaseRef.current === "starting") {
++          startLocalSegmentsRef.current(msg.meeting.id)
++        }
++      }
++      if (msg.type === "meeting.ended" && msg.meeting) {
++        setMeetingId(msg.meeting.id)
++        let st = msg.meeting.status || "ready"
++        if (msg.audio_deleted === true) st = `${st} · 音频已按默认策略删除`
++        setStatus(st)
++      }
++      if (msg.type === "meeting.updated" && msg.meeting) {
++        setMeetingId(msg.meeting.id)
++        setStatus(msg.meeting.status)
++        if (msg.meeting.minutes?.raw_md) setMinutesMd(msg.meeting.minutes.raw_md)
++        setBusy(false)
++      }
++      if (msg.type === "meeting.minutes_result") {
++        if (msg.minutes?.raw_md) setMinutesMd(msg.minutes.raw_md)
++        if (msg.meeting?.id) {
++          setMeetingId(msg.meeting.id)
++          setStatus(msg.meeting.status || "done")
++        }
++        setBusy(false)
++        setPendingGenerate(false)
++        setError(null)
++      }
++      if (msg.type === "meeting.error") {
++        setError(msg.message || msg.code || "error")
++        setBusy(false)
++        setPendingGenerate(false)
++        if (
++          msg.code === "need_privacy_ack" ||
++          msg.code === "already_recording" ||
++          phaseRef.current === "starting"
++        ) {
++          setPhase("idle")
++          destroyAdapter()
++          dispatch({ type: "SET_MEETING_CAPTURE_ACTIVE", active: false })
++        }
++      }
++    },
++    [destroyAdapter, dispatch, setPhase],
++  )
++
+   useMeetingMessages(onMsg)
+ 
+   const ensureAck = () => {
+@@ -111,7 +390,7 @@ export function MeetingPanel(props: {
+   const createMeeting = () => {
+     setBusy(true)
+     setError(null)
+-    chrome.runtime.sendMessage({
++    sendViaRuntime({
+       type: "meeting.create",
+       v: 1,
+       title: title || undefined,
+@@ -119,24 +398,91 @@ export function MeetingPanel(props: {
+     })
+   }
+ 
+-  const generate = async () => {
++  const startLiveCapture = () => {
++    if (!ensureAck()) return
++    if (!companionConnected) {
++      setError("Companion 未连接")
++      return
++    }
++    if (state.dictationCaptureActive) {
++      setError("听写进行中，请先结束听写再开始会议录音（全局同时仅一路本机 STT）")
++      return
++    }
++    if (capturing) return
++    if (!localMedia.ok) {
++      setError("当前环境无法访问麦克风")
++      return
++    }
++    if (!state.voicePrivacyAckV2) {
++      setError("请先在设置中确认本机语音隐私说明（voice_privacy_ack_v2）")
++      return
++    }
++    if (!localModelReady || !localBinaryReady) {
++      setError("本机转写模型或二进制未就绪。请到设置 → 语音 下载模型。")
++      try {
++        chrome.runtime.sendMessage({ type: "voice.model.get_state" })
++      } catch {
++        /* */
++      }
++      return
++    }
++
++    setError(null)
++    setMinutesMd("")
++    setPhase("starting")
++    setSoftCapHint(false)
++    wantGenerateRef.current = false
++    finalizedRef.current = false
++
++    sendViaRuntime({
++      type: "meeting.start",
++      v: 1,
++      id: meetingId || undefined,
++      title: title || undefined,
++      thread_id: state.activeThreadId || undefined,
++      privacy_ack_v1: true,
++      audio_retained: false,
++    })
++  }
++
++  const stopLiveCapture = (andGenerate: boolean) => {
++    if (phaseRef.current === "idle" || phaseRef.current === "stopping") return
++    setPhase("stopping")
++    wantGenerateRef.current = andGenerate
++    const a = adapterRef.current
++    if (!a) {
++      finalizeCapture({ generate: andGenerate, id: meetingId })
++      return
++    }
++    try {
++      a.stop()
++    } catch {
++      finalizeCapture({ generate: andGenerate, id: meetingId })
++    }
++  }
++
++  const generate = () => {
+     if (!ensureAck()) return
++    if (capturing) {
++      setError("请先结束录音再生成纪要，或使用「结束并生成纪要」")
++      return
++    }
+     if (!transcript.trim() && !meetingId) {
+-      setError("请先粘贴转写文本")
++      setError("请先粘贴转写文本或完成录音")
+       return
+     }
+     setBusy(true)
+     setError(null)
+     if (meetingId && transcript.trim()) {
+-      chrome.runtime.sendMessage({
++      sendViaRuntime({
+         type: "meeting.set_transcript",
+         v: 1,
+         id: meetingId,
+         text: transcript,
+-        source: "paste",
++        source: "user_edit",
+       })
+     }
+-    chrome.runtime.sendMessage({
++    sendViaRuntime({
+       type: "meeting.generate_minutes",
+       v: 1,
+       id: meetingId || undefined,
+@@ -154,6 +500,12 @@ export function MeetingPanel(props: {
+     }
+   }
+ 
++  const localReadyLabel = !companionConnected
++    ? "Companion 未连接"
++    : !localModelReady || !localBinaryReady
++      ? "本机 STT 未就绪"
++      : "本机 STT 就绪"
++
+   return (
+     <div
+       data-testid="meeting-panel"
+@@ -174,7 +526,10 @@ export function MeetingPanel(props: {
+         <span style={{ fontSize: 11, color: tokens.textSecondary }}>暂不分说话人</span>
+         <button
+           type="button"
+-          onClick={props.onClose}
++          onClick={() => {
++            if (capturing) stopLiveCapture(false)
++            props.onClose()
++          }}
+           style={{
+             border: `1px solid ${tokens.border}`,
+             background: "transparent",
+@@ -190,8 +545,9 @@ export function MeetingPanel(props: {
+       </div>
+ 
+       <div style={{ fontSize: 11, color: tokens.textSecondary, lineHeight: 1.45 }}>
+-        粘贴转写后生成结构化纪要（TL;DR / 决议 / 待办 / 风险）。应用「会议记录」场景不会自动开麦。
+-        长会录音请用本机转写引擎（后续可在此工作台显式开始）。
++        粘贴转写，或显式「开始录制」用本机分段转写（最长约{" "}
++        {Math.round(VOICE_CONTINUOUS_HARD_CAP_MS / 60_000)} 分钟）。应用「会议记录」场景不会自动开麦。
++        录音与听写互斥。
+       </div>
+ 
+       {!ack && (
+@@ -205,7 +561,9 @@ export function MeetingPanel(props: {
+             color: tokens.textSecondary,
+           }}
+         >
+-          <div style={{ marginBottom: 6, color: tokens.text, fontWeight: 500 }}>隐私说明（meeting_privacy_ack_v1）</div>
++          <div style={{ marginBottom: 6, color: tokens.text, fontWeight: 500 }}>
++            隐私说明（meeting_privacy_ack_v1）
++          </div>
+           <ul style={{ margin: 0, paddingLeft: 18 }}>
+             <li>会创建本地会话产物（转写 ± 可选音频）。</li>
+             <li>默认转写成功后删除音频（若启用录音）。</li>
+@@ -216,16 +574,7 @@ export function MeetingPanel(props: {
+           <button
+             type="button"
+             onClick={acceptAck}
+-            style={{
+-              marginTop: 8,
+-              border: "none",
+-              background: tokens.accent,
+-              color: "#fff",
+-              borderRadius: 6,
+-              padding: "4px 10px",
+-              cursor: "pointer",
+-              fontSize: 12,
+-            }}
++            style={{ ...btnStyle(true), marginTop: 8, padding: "4px 10px", fontSize: 12 }}
+           >
+             我已了解
+           </button>
+@@ -238,6 +587,7 @@ export function MeetingPanel(props: {
+           value={title}
+           onChange={(e) => setTitle(e.target.value)}
+           placeholder="可选"
++          disabled={capturing}
+           style={{
+             display: "block",
+             width: "100%",
+@@ -252,15 +602,74 @@ export function MeetingPanel(props: {
+         />
+       </label>
+ 
++      <div
++        data-testid="meeting-capture-bar"
++        style={{
++          display: "flex",
++          flexWrap: "wrap",
++          gap: 8,
++          alignItems: "center",
++          padding: "8px 10px",
++          borderRadius: 8,
++          border: `1px solid ${capturing ? tokens.accent : tokens.border}`,
++          background: tokens.bg,
++        }}
++      >
++        <span style={{ fontSize: 12, fontWeight: 500 }}>
++          {capturing ? (
++            <>
++              <span style={{ color: "#c44" }}>●</span> 录制中 {formatElapsed(elapsedMs)}
++              {capturePhase === "processing" ? " · 分段识别中…" : ""}
++              {capturePhase === "starting" ? " · 启动中…" : ""}
++              {capturePhase === "stopping" ? " · 结束中…" : ""}
++            </>
++          ) : (
++            "未录制"
++          )}
++        </span>
++        <span style={{ fontSize: 11, color: tokens.textSecondary }}>{localReadyLabel}</span>
++        {softCapHint && capturing && (
++          <span style={{ fontSize: 11, color: "#b8860b" }}>已超过 5 分钟软提示</span>
++        )}
++        {state.dictationCaptureActive && !capturing && (
++          <span style={{ fontSize: 11, color: "#c44" }}>听写占用中</span>
++        )}
++      </div>
++
+       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+-        <button
+-          type="button"
+-          disabled={busy}
+-          onClick={createMeeting}
+-          style={btnStyle(false)}
+-        >
++        <button type="button" disabled={busy || capturing} onClick={createMeeting} style={btnStyle(false)}>
+           新建会议会话
+         </button>
++        {!capturing ? (
++          <button
++            type="button"
++            data-testid="meeting-start-capture"
++            disabled={busy || !ack}
++            onClick={startLiveCapture}
++            style={btnStyle(true)}
++          >
++            开始录制
++          </button>
++        ) : (
++          <>
++            <button
++              type="button"
++              data-testid="meeting-stop-capture"
++              onClick={() => stopLiveCapture(false)}
++              style={btnStyle(false)}
++            >
++              结束录制
++            </button>
++            <button
++              type="button"
++              data-testid="meeting-stop-and-generate"
++              onClick={() => stopLiveCapture(true)}
++              style={btnStyle(true)}
++            >
++              结束并生成纪要
++            </button>
++          </>
++        )}
+         {meetingId && (
+           <span style={{ fontSize: 11, color: tokens.textSecondary, alignSelf: "center" }}>
+             id: {meetingId.slice(0, 12)}… · {status}
+@@ -269,11 +678,11 @@ export function MeetingPanel(props: {
+       </div>
+ 
+       <label style={{ fontSize: 12, flex: 1, display: "flex", flexDirection: "column" }}>
+-        转写 / 口述文字
++        转写 / 口述文字（可编辑）
+         <textarea
+           value={transcript}
+           onChange={(e) => setTranscript(e.target.value)}
+-          placeholder="粘贴会议转写或要点…"
++          placeholder="粘贴会议转写，或开始录制后自动填入本机转写…"
+           rows={8}
+           style={{
+             marginTop: 4,
+@@ -294,13 +703,8 @@ export function MeetingPanel(props: {
+         />
+       </label>
+ 
+-      <button
+-        type="button"
+-        disabled={busy || !ack}
+-        onClick={generate}
+-        style={btnStyle(true)}
+-      >
+-        {busy ? "生成中…" : "生成会议纪要"}
++      <button type="button" disabled={busy || !ack || capturing} onClick={generate} style={btnStyle(true)}>
++        {busy || pendingGenerate ? "生成中…" : "生成会议纪要"}
+       </button>
+ 
+       {error && (
+@@ -316,11 +720,7 @@ export function MeetingPanel(props: {
+             <button type="button" onClick={copyMinutes} style={linkBtn}>
+               复制
+             </button>
+-            <button
+-              type="button"
+-              onClick={() => props.onSendToDraft(minutesMd)}
+-              style={linkBtn}
+-            >
++            <button type="button" onClick={() => props.onSendToDraft(minutesMd)} style={linkBtn}>
+               发送到对话草稿
+             </button>
+           </div>
+diff --git a/chrome-extension/src/sidepanel/store/agentStore.tsx b/chrome-extension/src/sidepanel/store/agentStore.tsx
+index d1de2e1..dfddf12 100644
+--- a/chrome-extension/src/sidepanel/store/agentStore.tsx
++++ b/chrome-extension/src/sidepanel/store/agentStore.tsx
+@@ -45,6 +45,16 @@ export interface AgentState {
+   voiceDictationMode: "classic" | "continuous"
+   /** ASR Refiner after stop (default false). Requires privacy ack v3 + Companion LLM. */
+   asrRefinerEnabled: boolean
++  /**
++   * Mtg1: meeting workbench is live-capturing (local segmented STT).
++   * Mutual exclusion with composer dictation (global max-1 STT).
++   */
++  meetingCaptureActive: boolean
++  /**
++   * Composer dictation is listening / processing / refining.
++   * Meeting panel refuses Start while true.
++   */
++  dictationCaptureActive: boolean
+   /**
+    * Wave D: how to show model thinking blocks.
+    * auto_live = expand while streaming, collapse when done (default).
+@@ -202,6 +212,8 @@ export type AgentAction =
+   | { type: "SET_VOICE_PRIVACY_ACK_V3"; ack: boolean }
+   | { type: "SET_VOICE_DICTATION_MODE"; mode: "classic" | "continuous" }
+   | { type: "SET_ASR_REFINER_ENABLED"; enabled: boolean }
++  | { type: "SET_MEETING_CAPTURE_ACTIVE"; active: boolean }
++  | { type: "SET_DICTATION_CAPTURE_ACTIVE"; active: boolean }
+   | { type: "ADD_SECURITY_CONFIRMATION"; request: SecurityConfirmationRequest }
+   | { type: "REMOVE_SECURITY_CONFIRMATION"; confirmationId: string }
+   | { type: "ADD_LOG"; entry: LogEntry }
+@@ -327,6 +339,8 @@ export const initialState: AgentState = {
+   voicePrivacyAckV3: false,
+   voiceDictationMode: "classic",
+   asrRefinerEnabled: false,
++  meetingCaptureActive: false,
++  dictationCaptureActive: false,
+   pendingSecurityConfirmations: [],
+   logs: [],
+   autoSkillNames: "",
+@@ -667,6 +681,10 @@ export function agentReducer(state: AgentState, action: AgentAction): AgentState
+     case "SET_VOICE_PRIVACY_ACK_V3":
+       chrome.storage.local.set({ voice_privacy_ack_v3: action.ack })
+       return { ...state, voicePrivacyAckV3: action.ack }
++    case "SET_MEETING_CAPTURE_ACTIVE":
++      return { ...state, meetingCaptureActive: action.active === true }
++    case "SET_DICTATION_CAPTURE_ACTIVE":
++      return { ...state, dictationCaptureActive: action.active === true }
+     case "SET_VOICE_DICTATION_MODE": {
+       const mode = action.mode === "continuous" ? "continuous" : "classic"
+       chrome.storage.local.set({ voiceDictationMode: mode })
+diff --git a/chrome-extension/tests/meeting-capture-mutex.test.ts b/chrome-extension/tests/meeting-capture-mutex.test.ts
+new file mode 100644
+index 0000000..b877e0c
+--- /dev/null
++++ b/chrome-extension/tests/meeting-capture-mutex.test.ts
+@@ -0,0 +1,26 @@
++/**
++ * Mtg1 mutual exclusion flags in agentStore (meeting vs dictation).
++ */
++import test from "node:test"
++import assert from "node:assert/strict"
++import { agentReducer, initialState } from "../src/sidepanel/store/agentStore"
++
++test("initialState: meeting/dictation capture flags false", () => {
++  assert.equal(initialState.meetingCaptureActive, false)
++  assert.equal(initialState.dictationCaptureActive, false)
++})
++
++test("SET_MEETING_CAPTURE_ACTIVE toggles", () => {
++  const on = agentReducer(initialState, { type: "SET_MEETING_CAPTURE_ACTIVE", active: true })
++  assert.equal(on.meetingCaptureActive, true)
++  assert.equal(on.dictationCaptureActive, false)
++  const off = agentReducer(on, { type: "SET_MEETING_CAPTURE_ACTIVE", active: false })
++  assert.equal(off.meetingCaptureActive, false)
++})
++
++test("SET_DICTATION_CAPTURE_ACTIVE toggles", () => {
++  const on = agentReducer(initialState, { type: "SET_DICTATION_CAPTURE_ACTIVE", active: true })
++  assert.equal(on.dictationCaptureActive, true)
++  const off = agentReducer(on, { type: "SET_DICTATION_CAPTURE_ACTIVE", active: false })
++  assert.equal(off.dictationCaptureActive, false)
++})
+diff --git a/companion/src/meeting/meeting-handlers.ts b/companion/src/meeting/meeting-handlers.ts
+index 8dc8705..920f237 100644
+--- a/companion/src/meeting/meeting-handlers.ts
++++ b/companion/src/meeting/meeting-handlers.ts
+@@ -11,11 +11,13 @@ import { generateMeetingMinutes } from "./meeting-minutes"
+ import {
+   appendTranscript,
+   createMeeting,
++  endMeetingRecording,
+   loadMeeting,
+   listMeetings,
+   setMeetingStatus,
+   setMinutes,
+   setTranscript,
++  startMeetingRecording,
+   transcriptToText,
+   type TranscriptLine,
+   type TranscriptSource,
+@@ -83,6 +85,60 @@ export async function handleMeetingMessage(
+     return { type: "meeting.created", v: 1, meeting: session }
+   }
+ 
++  /**
++   * Mtg1 live capture start.
++   * Requires privacy_ack_v1 === true (meeting_privacy_ack_v1; voice v3 cannot substitute).
++   * Does not open mic on server — extension owns gUM + voice.stt.* segments.
++   */
++  if (type === "meeting.start") {
++    if (msg.privacy_ack_v1 !== true) {
++      return err("need_privacy_ack", "meeting_privacy_ack_v1 required before start")
++    }
++    let id = typeof msg.id === "string" ? msg.id : ""
++    if (!id) {
++      const session = createMeeting({
++        title: typeof msg.title === "string" ? msg.title : undefined,
++        thread_id: typeof msg.thread_id === "string" ? msg.thread_id : null,
++      })
++      id = session.id
++    } else {
++      const existing = loadMeeting(id)
++      if (!existing) return err("not_found", "meeting not found", { id })
++      if (existing.status === "recording") {
++        return err("already_recording", "meeting already recording", { id })
++      }
++    }
++    const started = startMeetingRecording(id, {
++      audio_retained: msg.audio_retained === true,
++      retain_days: typeof msg.retain_days === "number" ? msg.retain_days : undefined,
++    })
++    if (!started) return err("not_found", "meeting not found", { id })
++    logger.info("meeting.start.ok", {
++      id: started.id,
++      audio_retained: started.privacy.audio_retained,
++    })
++    return { type: "meeting.started", v: 1, meeting: started }
++  }
++
++  /** End live capture; default delete meetings/<id>/audio when not retained. */
++  if (type === "meeting.end") {
++    const id = typeof msg.id === "string" ? msg.id : ""
++    if (!id) return err("invalid_id", "meeting.end requires id")
++    const result = endMeetingRecording(id)
++    if (!result) return err("not_found", "meeting not found", { id })
++    logger.info("meeting.end.ok", {
++      id,
++      audioDeleted: result.audioDeleted,
++      retained: result.session.privacy.audio_retained,
++    })
++    return {
++      type: "meeting.ended",
++      v: 1,
++      meeting: result.session,
++      audio_deleted: result.audioDeleted,
++    }
++  }
++
+   if (type === "meeting.list") {
+     return { type: "meeting.list_result", v: 1, meetings: listMeetings() }
+   }
+diff --git a/companion/src/meeting/meeting-store.ts b/companion/src/meeting/meeting-store.ts
+index 3cd2029..28afb2a 100644
+--- a/companion/src/meeting/meeting-store.ts
++++ b/companion/src/meeting/meeting-store.ts
+@@ -247,23 +247,95 @@ export function setMeetingStatus(
+   return s
+ }
+ 
+-/** Best-effort delete audio/ after successful STT (default policy). */
+-export function deleteMeetingAudio(id: string, dataDir = DATA_DIR): void {
++/**
++ * Mark meeting as live capture (Mtg1).
++ * Sets status=recording, stt_engine=local, optional audio retain.
++ */
++export function startMeetingRecording(
++  id: string,
++  opts: { audio_retained?: boolean; retain_days?: number } = {},
++  dataDir = DATA_DIR,
++): MeetingSession | null {
++  const s = loadMeeting(id, dataDir)
++  if (!s) return null
++  if (s.status === "recording") return s
++  s.status = "recording"
++  s.error = null
++  s.ended_at = null
++  s.privacy = {
++    ...s.privacy,
++    stt_engine: "local",
++    audio_retained: opts.audio_retained === true,
++    retain_until: null,
++  }
++  if (s.privacy.audio_retained) {
++    const days = Math.min(7, Math.max(1, Math.floor(opts.retain_days ?? 7)))
++    const until = new Date(Date.now() + days * 24 * 60 * 60 * 1000)
++    s.privacy.retain_until = until.toISOString()
++  }
++  // Ensure audio/ exists only when retain requested (optional durable bucket).
++  if (s.privacy.audio_retained) {
++    const dir = resolveContained(id, dataDir)
++    if (dir) {
++      try {
++        fs.mkdirSync(path.join(dir, "audio"), { recursive: true, mode: 0o700 })
++      } catch {
++        /* */
++      }
++    }
++  }
++  saveMeeting(s, dataDir)
++  return s
++}
++
++/**
++ * End live capture: status=ready, default delete audio/ when not retained.
++ */
++export function endMeetingRecording(
++  id: string,
++  dataDir = DATA_DIR,
++): { session: MeetingSession; audioDeleted: boolean } | null {
++  const s = loadMeeting(id, dataDir)
++  if (!s) return null
++  s.status = "ready"
++  s.ended_at = new Date().toISOString()
++  s.error = null
++  saveMeeting(s, dataDir)
++  let audioDeleted = false
++  if (!s.privacy.audio_retained) {
++    audioDeleted = deleteMeetingAudio(id, dataDir)
++  }
++  const again = loadMeeting(id, dataDir)
++  return { session: again || s, audioDeleted }
++}
++
++/** Best-effort delete audio/ after successful STT (default policy). Returns true if removed or absent. */
++export function deleteMeetingAudio(id: string, dataDir = DATA_DIR): boolean {
+   const dir = resolveContained(id, dataDir)
+-  if (!dir) return
++  if (!dir) return false
+   const audio = path.join(dir, "audio")
+   try {
+     if (fs.existsSync(audio)) {
+       fs.rmSync(audio, { recursive: true, force: true })
++      return true
+     }
++    return true // already absent = policy satisfied
+   } catch (e) {
+     logger.warn("meeting.audio_delete_failed", {
+       id,
+       err: e instanceof Error ? e.message : String(e),
+     })
++    return false
+   }
+ }
+ 
++/** Test / diagnostics: path to meeting audio dir (contained). */
++export function meetingAudioDir(id: string, dataDir = DATA_DIR): string | null {
++  const dir = resolveContained(id, dataDir)
++  if (!dir) return null
++  return path.join(dir, "audio")
++}
++
+ export function transcriptToText(lines: TranscriptLine[]): string {
+   return lines
+     .map((l) => {
+diff --git a/companion/src/message-router.ts b/companion/src/message-router.ts
+index e43c59c..f88f73b 100644
+--- a/companion/src/message-router.ts
++++ b/companion/src/message-router.ts
+@@ -1922,6 +1922,8 @@ export async function handleMessage(
+         send: session?.sendToExtension,
+       })
+     case "meeting.create":
++    case "meeting.start":
++    case "meeting.end":
+     case "meeting.list":
+     case "meeting.get":
+     case "meeting.set_transcript":
+diff --git a/companion/src/packs/builtin/meeting-minutes/pack.yaml b/companion/src/packs/builtin/meeting-minutes/pack.yaml
+index caa4eb3..24c97e0 100644
+--- a/companion/src/packs/builtin/meeting-minutes/pack.yaml
++++ b/companion/src/packs/builtin/meeting-minutes/pack.yaml
+@@ -1,8 +1,8 @@
+ schema_version: 1
+ id: meeting-minutes
+ name: 会议记录
+-description: 基于转写文本生成结构化会议纪要（TL;DR / 决议 / 待办 / 风险）；暂不分说话人；应用本场景不会自动开麦
+-version: 0.1.0
++description: 基于转写文本或会议工作台本机录制生成结构化会议纪要（TL;DR / 决议 / 待办 / 风险）；暂不分说话人；应用本场景不会自动开麦
++version: 0.2.0
+ channel: community
+ min_capability: L0
+ requires_modules: []
+@@ -21,7 +21,7 @@ system_prompt_append: |
+   1. **仅基于用户提供的转写**：不得臆造出席人、时间、决议、待办或未出现的事实。
+   2. 转写不完整时：在风险/备注中写明「转写不完整 / 信息不足」，不要补全故事。
+   3. **暂无说话人分离**：不要伪造「张三说 / 李四说」；可用「发言摘要」按时间或主题组织。
+-  4. 本场景**不会**、也**不得**要求用户开启麦克风或自动录音；录音由用户在会议工作台显式操作。
++  4. 本场景**不会**、也**不得**要求用户开启麦克风或自动录音；录音须用户在会议工作台点「开始录制」并完成 meeting_privacy_ack_v1。
+   5. 输出中文为主；专有名词可保留原文。
+   6. **不要**调用工具去扫页或执行命令来「验证」会议内容；工具与会议转写无关。
+ 
+diff --git a/companion/src/server.ts b/companion/src/server.ts
+index 4453c5f..c3e4339 100644
+--- a/companion/src/server.ts
++++ b/companion/src/server.ts
+@@ -5854,6 +5854,18 @@ export function validateWsMessage(msg: any): WsValidationResult {
+       if (m.v !== 1) return { valid: false, error: "meeting.create requires v:1" }
+       return { valid: true }
+     },
++    "meeting.start": (m) => {
++      if (m.v !== 1) return { valid: false, error: "meeting.start requires v:1" }
++      if (m.privacy_ack_v1 !== true) {
++        return { valid: false, error: "meeting.start requires privacy_ack_v1:true" }
++      }
++      return { valid: true }
++    },
++    "meeting.end": (m) => {
++      if (m.v !== 1) return { valid: false, error: "meeting.end requires v:1" }
++      if (typeof m.id !== "string" || !m.id) return { valid: false, error: "meeting.end requires id" }
++      return { valid: true }
++    },
+     "meeting.list": (m) => {
+       if (m.v !== 1) return { valid: false, error: "meeting.list requires v:1" }
+       return { valid: true }
+diff --git a/companion/tests/meeting-minutes.test.ts b/companion/tests/meeting-minutes.test.ts
+index 8200ee4..457babe 100644
+--- a/companion/tests/meeting-minutes.test.ts
++++ b/companion/tests/meeting-minutes.test.ts
+@@ -16,6 +16,10 @@ import {
+   setMinutes,
+   listMeetings,
+   transcriptToText,
++  startMeetingRecording,
++  endMeetingRecording,
++  meetingAudioDir,
++  deleteMeetingAudio,
+ } from "../src/meeting/meeting-store"
+ import { generateMeetingMinutes } from "../src/meeting/meeting-minutes"
+ import { MEETING_MINUTES_SYSTEM_PROMPT } from "../src/meeting/minutes-prompt"
+@@ -163,3 +167,68 @@ test("handler create + set_transcript + generate", async () => {
+   assert.equal(gen.type, "meeting.minutes_result")
+   assert.equal(gen.meeting.status, "done")
+ })
++
++test("start requires privacy_ack_v1", async () => {
++  const res = await handleMeetingMessage(
++    { type: "meeting.start", v: 1, title: "无 ack" },
++    { origin: EXT },
++  )
++  assert.equal(res.code, "need_privacy_ack")
++})
++
++test("start/end live capture + default delete audio", async () => {
++  const started = await handleMeetingMessage(
++    {
++      type: "meeting.start",
++      v: 1,
++      title: "录制会",
++      privacy_ack_v1: true,
++      audio_retained: false,
++    },
++    { origin: EXT },
++  )
++  assert.equal(started.type, "meeting.started")
++  assert.equal(started.meeting.status, "recording")
++  assert.equal(started.meeting.privacy.stt_engine, "local")
++  const id = started.meeting.id as string
++
++  // Simulate residual durable audio under meetings/<id>/audio
++  const audioDir = meetingAudioDir(id, DATA)!
++  fs.mkdirSync(audioDir, { recursive: true, mode: 0o700 })
++  fs.writeFileSync(path.join(audioDir, "seg0.wav"), Buffer.from("fake"), { mode: 0o600 })
++  assert.ok(fs.existsSync(path.join(audioDir, "seg0.wav")))
++
++  await handleMeetingMessage(
++    {
++      type: "meeting.append_transcript",
++      v: 1,
++      id,
++      text: "第一段本机转写内容。",
++      source: "stt",
++    },
++    { origin: EXT },
++  )
++
++  const ended = await handleMeetingMessage(
++    { type: "meeting.end", v: 1, id },
++    { origin: EXT },
++  )
++  assert.equal(ended.type, "meeting.ended")
++  assert.equal(ended.meeting.status, "ready")
++  assert.equal(ended.audio_deleted, true)
++  assert.equal(fs.existsSync(path.join(audioDir, "seg0.wav")), false)
++})
++
++test("endMeetingRecording retains audio when opt-in", () => {
++  const m = createMeeting({ title: "保留音频", dataDir: DATA })
++  startMeetingRecording(m.id, { audio_retained: true, retain_days: 3 }, DATA)
++  const audioDir = meetingAudioDir(m.id, DATA)!
++  fs.mkdirSync(audioDir, { recursive: true })
++  fs.writeFileSync(path.join(audioDir, "keep.wav"), "x")
++  const r = endMeetingRecording(m.id, DATA)
++  assert.ok(r)
++  assert.equal(r!.audioDeleted, false)
++  assert.ok(fs.existsSync(path.join(audioDir, "keep.wav")))
++  // cleanup
++  deleteMeetingAudio(m.id, DATA)
++})
+diff --git a/docs/superpowers/specs/2026-08-07-meeting-minutes-design.md b/docs/superpowers/specs/2026-08-07-meeting-minutes-design.md
+index 1944636..ffe20bd 100644
+--- a/docs/superpowers/specs/2026-08-07-meeting-minutes-design.md
++++ b/docs/superpowers/specs/2026-08-07-meeting-minutes-design.md
+@@ -1,7 +1,7 @@
+ # 会议纪要（Meeting Minutes）— 产品设计 SoT
+ 
+ > **日期**: 2026-08-07  
+-> **状态**: **LOCKED for Mtg0/Mtg1 planning** — R1 四路对抗 floors 已吸收；R2 确认与听写+ 硬拆  
++> **状态**: **LOCKED** — Mtg0 粘贴纪要已合并；Mtg1 live capture（本机分段 STT + 删音频 + ack + 听写互斥）按本 SoT 实现；R1 四路对抗 floors 已吸收；R2 确认与听写+ 硬拆 
+ > **对抗合成**:  
+ > - R1：[continuous-dictation-meeting-adversary-synthesis-20260807.md](../../audit/reviews/continuous-dictation-meeting-adversary-synthesis-20260807.md)  
+ > - R2（听写交叉）：[voice-dictation-r2-yetone-adversary-synthesis-20260807.md](../../audit/reviews/voice-dictation-r2-yetone-adversary-synthesis-20260807.md)  

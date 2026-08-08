@@ -5854,6 +5854,18 @@ export function validateWsMessage(msg: any): WsValidationResult {
       if (m.v !== 1) return { valid: false, error: "meeting.create requires v:1" }
       return { valid: true }
     },
+    "meeting.start": (m) => {
+      if (m.v !== 1) return { valid: false, error: "meeting.start requires v:1" }
+      if (m.privacy_ack_v1 !== true) {
+        return { valid: false, error: "meeting.start requires privacy_ack_v1:true" }
+      }
+      return { valid: true }
+    },
+    "meeting.end": (m) => {
+      if (m.v !== 1) return { valid: false, error: "meeting.end requires v:1" }
+      if (typeof m.id !== "string" || !m.id) return { valid: false, error: "meeting.end requires id" }
+      return { valid: true }
+    },
     "meeting.list": (m) => {
       if (m.v !== 1) return { valid: false, error: "meeting.list requires v:1" }
       return { valid: true }
