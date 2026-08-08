@@ -22,6 +22,23 @@
 
 ## Technical Pitfalls
 
+### 连续本机 STT：`processing` 掉 liveOverlay → 草稿闪消失（2026-08-08 S52）
+- **现象**：前几个字正常，后续字闪一下又没了；听写像卡住
+- **根因**：composer `value={liveOverlay ?? text}`；local continuous 段间 `phase=processing` 时旧逻辑 **不渲染 overlay**，回退到仅在 `ENGINE_END` 才更新的陈旧 `text`
+- **修法（PR #147）**：`voiceLiveComposerText` 含 `processing`；每个 `ENGINE_RESULT` final 且 `finals` 变长时立即 `onDraft`；overlay 占位时 **禁用** textarea（避免「可编辑」假象）
+- **纪律**：凡「临时 phase」若 UI 切回 idle 展示源，必须先同步展示源或扩大 live 条件
+
+### React effect 依赖整个 hook 返回对象会拆掉长会话（2026-08-08 S52 · D2）
+- **现象**：按住热键听写几秒就断；或变成 classic 45s 且松手停不掉
+- **根因**：`useEffect(..., [voice])` 而 `useVoiceInput()` 每渲染返回新对象；`listenTick` 250ms 触发 re-render → cleanup 里 `holdStop()`；另 `queueMicrotask` 在 `permissions.query` 完成前误判 idle 并恢复 classic
+- **修法**：hotkey 监听只依赖 chord/enabled；`holdStart`/`holdStop` 用 ref；hold 用 epoch 取消 async begin；mode 保持 continuous 直到 stop
+- **纪律**：副作用 effect 禁止依赖「每 render 新建」的 API 对象；async start 必须可取消
+
+### dual-review / packaging：`git add` 勿吞入 audit patch 与 host-integrity 脏改（2026-08-08）
+- **坑**：工作区大量 `docs/audit/reviews/*.patch` untracked；`git add docs/` 或误加会把 5 万行噪声塞进 PR（#146 曾 force-push 清）
+- **打包**：`make package-macos` 会改 `host-integrity.ts` SHA；替换 `/Applications/CMspark.app` 用 `ditto` + `xattr -cr`，先 `daemon stop` 再备份旧 app
+- **纪律**：打包后单独看 `git status`；PR 只 stage 功能文件
+
 ### analyze_image `data:` 假 Security Block ≠ 授权不够（2026-08-06 S50）
 - **现象**：用户开满 L2 / `auto_approve_dangerous` / god-mode / 域白名单，仍报 `Security Block: analyze_image cannot read data: URL (data:image/…base64,…)`；错误串塞满 base64
 - **根因**：IMAGE_FETCH_GATE path B 只放行 `http(s)`；扩展 canvas 失败（非仅 CORS）时把 `el.src` 当 `fetch_required`，内联 `data:` 进硬拦。设计假设「data: 永不污染 canvas」不成立

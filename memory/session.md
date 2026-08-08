@@ -2,6 +2,14 @@
 
 ## Current Session
 
+### S52 (2026-08-08) [听写+/会议 Mtg0–3 · D2 hold · 语音草稿闪烁 · DMG · dual 闸门]
+- **产品**：会议线 **Mtg0→Mtg3 全合 main**（#142–#145）：粘贴纪要 / live 本机录 / 手动 speaker+上传 / 实验匿名「发言人N」k-means；听写 **D1 已在 main** + **D2 按住热键**（#146）；用户指南 + GOAL G22
+- **门禁**：各波 Pi+Claude dual；D2 首轮 **双 REJECT**（`voice` 对象 effect 依赖每 250ms teardown + `queueMicrotask` 竞态 async mic）→ 修后 r2 **APPROVE_WITH_NITS** → merge
+- **语音 bug**：连续本机 STT 段间隙 `processing` 时 `liveOverlay` 掉成 null → 回退陈旧 `text` 闪消失 → **#147 MERGED** `e6ffeea`（processing 进 overlay + 每 final 刷 draft；热键改手输+datalist）
+- **打包**：`make package-macos` → `CMspark-v0.4.0-macOS.dmg`；替换 `/Applications/CMspark.app`（备份 `…bak-20260808-114738`）；daemon 已起 23401
+- **下次**：真机验收（指南 §4：continuous 多段不闪、hold 侧栏焦点、会议录/传/发言人N）；可选 OS 全局热键 / 系统混音仍 parking
+- Recorded: yes — continuous processing overlay + React effect 依赖陷阱 + DMG 替换纪律
+
 ### S51 (2026-08-07 ~10:00–12:06) [压缩分层 A/B/C · dual 闸门 · #134 MERGED · Wave C 待 PR]
 - **问题**：长对话压缩失忆；场景不可配知识；思考/外部「用 CoT 当压缩」需取舍
 - **交付**：
@@ -506,6 +514,13 @@
 
 ## In-Flight Tasks (Cross-Session)
 
+### 听写+/会议真机验收（S52 后）
+- status: **active**
+- context: Mtg0–3 + D1/D2 + 草稿闪烁修 均在 main `e6ffeea`；DMG 0.4.0 已装 `/Applications/CMspark.app`
+- next_action: 重载扩展（或用打包内扩展）按 `docs/meeting-and-dictation-user-guide.md` §4 smoke；报 continuous 不闪 / hold 焦点 / 会议端到端
+- resume_doc: `docs/meeting-and-dictation-user-guide.md` · ADR-024
+- updated: 2026-08-08
+
 ### Wave C thread_recall → **#135 MERGED**
 - status: **done** (PR #135 → main `90db018`; CI build pass ~3m)
 - context: same-thread keyword+CJK bigram; F-S5 + synthetic assistant for orphan tools; compact notice hint if allowlisted
@@ -521,10 +536,10 @@
 - updated: 2026-08-07
 
 ### analyze_image data: Security Block → PR #130
-- status: **stale check** (was open at S50; verify merged on main if still open)
-- next_action: gh pr view 130; 若仍 open 则 merge 或 close
+- status: **likely done** (S50 ship; 以 main 为准)
+- next_action: 无需 unless 回归 captcha/`data:`
 - resume_doc: PR #130
-- updated: 2026-08-07
+- updated: 2026-08-08
 
 ### Outbound MCP P0d bake-off (human)
 - status: **active** (checklist ready)
