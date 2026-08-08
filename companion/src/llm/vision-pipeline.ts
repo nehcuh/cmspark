@@ -4,6 +4,7 @@ import OpenAI from "openai"
 import * as crypto from "crypto"
 import type { VisionConfig } from "../config"
 import { logger } from "../logger"
+import { shouldBlockVisionRequest } from "./vision-reuse-inherit"
 
 const DEFAULT_VISION_PROMPT =
   "You are a browser screenshot analyzer. Describe what you see in this image in detail. Include: " +
@@ -115,9 +116,20 @@ async function doAnalyze(
   const startTime = Date.now()
 
   try {
+    const apiKey = config.api_key || "ollama"
+    // Multi-adversarial S-V2/S-V9: never POST image bytes to non-loopback with placeholder key
+    const gate = shouldBlockVisionRequest({ baseUrl: config.base_url, apiKey })
+    if (gate.block) {
+      logger.warn("vision.blocked_placeholder_key", {
+        base_url: config.base_url,
+        reason: gate.reason,
+      })
+      return buildFallback(image, config, gate.reason || "Vision key missing for remote endpoint")
+    }
+
     const client = new OpenAI({
       baseURL: config.base_url,
-      apiKey: config.api_key || "ollama",
+      apiKey,
       timeout: config.timeout_ms,
       maxRetries: 0,
     })

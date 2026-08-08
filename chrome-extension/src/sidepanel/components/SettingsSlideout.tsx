@@ -70,6 +70,15 @@ import {
   progressPercent,
   type WhisperSettingsModelId,
 } from "../voice/whisper-settings-copy"
+import {
+  VISION_COPY,
+  applyVisionReuseFromMain,
+  bannerBodyForHost,
+  extractHostname,
+  isCustomVisionConfig,
+  isVisionReusingMain,
+  shouldOfferVisionReuse,
+} from "./vision-reuse-logic"
 
 // P1-1 / PR-B: typed-confirmation phrase for arming dangerous security flags.
 // Lock-step with companion/src/security-arm.ts SECURITY_ARM_CONFIRM_PHRASE —
@@ -116,6 +125,11 @@ export function SettingsSlideout() {
   const [autopilotMsg, setAutopilotMsg] = useState<string | null>(null)
   const [autopilotBusy, setAutopilotBusy] = useState(false)
   const [advancedGatesOpen, setAdvancedGatesOpen] = useState(false)
+  // Vision reuse UX (multi-adversarial P0): banner session + advanced collapse when reused
+  const [visionReuseBanner, setVisionReuseBanner] = useState(false)
+  const [visionReuseBannerDismissed, setVisionReuseBannerDismissed] = useState(false)
+  const [visionReuseHint, setVisionReuseHint] = useState<string | null>(null)
+  const [visionAdvancedOpen, setVisionAdvancedOpen] = useState(false)
   const [unattendedAckDesktop, setUnattendedAckDesktop] = useState(false)
   const [unattendedAckSession, setUnattendedAckSession] = useState(false)
   const [unattendedIncludeProtocol, setUnattendedIncludeProtocol] = useState(false)
@@ -1556,24 +1570,155 @@ export function SettingsSlideout() {
           </div>
 
                     {/* --- Vision Model Settings --- */}
-          <div style={styles.sectionTitle}>视觉模型</div>
+          <div style={styles.sectionTitle}>视觉模型（看图描述）</div>
 
           <div style={styles.field}>
             <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13 }}>
               <input
                 type="checkbox"
                 checked={config.vision_enabled || false}
-                onChange={e => dispatch({ type: "SET_CONFIG", config: { vision_enabled: e.target.checked } })}
+                onChange={e => {
+                  const on = e.target.checked
+                  dispatch({ type: "SET_CONFIG", config: { vision_enabled: on } })
+                  setVisionReuseHint(null)
+                  if (!on) {
+                    setVisionReuseBanner(false)
+                    return
+                  }
+                  // Banner only on false→true; never auto-copy credentials (S-V5)
+                  if (
+                    !visionReuseBannerDismissed &&
+                    shouldOfferVisionReuse({
+                      model_name: config.model_name,
+                      base_url: config.base_url,
+                      api_key: config.api_key,
+                      protocol: config.protocol,
+                    })
+                  ) {
+                    setVisionReuseBanner(true)
+                  } else {
+                    setVisionReuseBanner(false)
+                  }
+                }}
               />
               启用截图视觉分析
             </label>
-            <div style={styles.helpText}>
-              通过本地视觉模型分析截图和图片内容，需要 Ollama 等本地推理服务
-            </div>
+            <div style={styles.helpText}>{VISION_COPY.sectionHelp}</div>
+            <div style={{ ...styles.helpText, marginTop: 4 }}>{VISION_COPY.railDifferentiator}</div>
           </div>
 
-          {config.vision_enabled && (
-            <>
+          {config.vision_enabled && (config.protocol === "anthropic") && (
+            <div style={{
+              ...styles.field,
+              padding: "8px 10px",
+              borderRadius: 8,
+              background: tokens.warningSoft,
+              border: `1px solid ${tokens.warning}`,
+              fontSize: 12,
+              color: tokens.text,
+            }}>
+              {VISION_COPY.anthropicBlocked}
+            </div>
+          )}
+
+          {config.vision_enabled && visionReuseBanner && (
+            <div style={{
+              ...styles.field,
+              padding: "10px 12px",
+              borderRadius: 8,
+              background: tokens.accentSoft,
+              border: `1px solid ${tokens.border}`,
+            }}>
+              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>{VISION_COPY.bannerTitle}</div>
+              <div style={{ fontSize: 12, color: tokens.textSecondary, marginBottom: 8, lineHeight: 1.45 }}>
+                {bannerBodyForHost(extractHostname(config.base_url))}
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                <button
+                  type="button"
+                  style={styles.testBtn}
+                  onClick={() => {
+                    const main = {
+                      model_name: config.model_name,
+                      base_url: config.base_url,
+                      api_key: config.api_key,
+                      protocol: config.protocol,
+                    }
+                    if (isCustomVisionConfig(main, config)) {
+                      if (!window.confirm(VISION_COPY.overwriteConfirm)) return
+                    }
+                    const result = applyVisionReuseFromMain(main)
+                    dispatch({ type: "SET_CONFIG", config: result.patch })
+                    setVisionReuseBanner(false)
+                    setVisionReuseBannerDismissed(true)
+                    setVisionAdvancedOpen(false)
+                    setVisionReuseHint(
+                      (result.needsKeyPaste ? VISION_COPY.needsKeyPaste + " " : "") +
+                        VISION_COPY.postReuseTestHint,
+                    )
+                  }}
+                >
+                  {VISION_COPY.useMain}
+                </button>
+                <button
+                  type="button"
+                  style={styles.toggleBtn}
+                  onClick={() => {
+                    setVisionReuseBanner(false)
+                    setVisionReuseBannerDismissed(true)
+                    setVisionAdvancedOpen(true)
+                  }}
+                >
+                  {VISION_COPY.keepSeparate}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {config.vision_enabled && visionReuseHint && (
+            <div style={{ ...styles.helpText, color: tokens.success, marginBottom: 8 }}>
+              {visionReuseHint}
+            </div>
+          )}
+
+          {config.vision_enabled && (() => {
+            const reusing = isVisionReusingMain(
+              { model_name: config.model_name, base_url: config.base_url },
+              config,
+            )
+            const showFields = !reusing || visionAdvancedOpen
+            return (
+              <>
+                {reusing && (
+                  <div style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    flexWrap: "wrap",
+                    marginBottom: 8,
+                    fontSize: 12,
+                  }}>
+                    <span style={{
+                      padding: "2px 8px",
+                      borderRadius: 8,
+                      background: tokens.successSoft,
+                      color: tokens.success,
+                      fontWeight: 500,
+                    }}>
+                      {VISION_COPY.reusedChip} · {extractHostname(config.vision_base_url || config.base_url)}
+                    </span>
+                    <button
+                      type="button"
+                      style={styles.toggleBtn}
+                      onClick={() => setVisionAdvancedOpen(v => !v)}
+                    >
+                      {visionAdvancedOpen ? VISION_COPY.collapseAdvanced : VISION_COPY.expandAdvanced}
+                    </button>
+                  </div>
+                )}
+
+                {showFields && (
+                  <>
               <div style={styles.field}>
                 <label style={styles.label}>
                   API Key{" "}
@@ -1596,12 +1741,12 @@ export function SettingsSlideout() {
                     placeholder={
                       state.companionConfig?.vision_api_key_set
                         ? "（已配置，留空保持不变；输入新值覆盖）"
-                        : "留空则使用 Ollama（无需 API Key）"
+                        : "本地 Ollama 可留空；云端需填写（或与主模型相同后保存继承）"
                     }
                   />
                 </div>
                 <div style={styles.helpText}>
-                  本地模型（Ollama）可留空；使用云服务视觉 API 时需填写
+                  本地 loopback 可留空；非本机端点需真实 Key。与主模型 URL/Model 相同时，保存会继承主 Key。
                 </div>
               </div>
 
@@ -1612,7 +1757,7 @@ export function SettingsSlideout() {
                   type="text"
                   value={config.vision_base_url || "http://localhost:11434/v1"}
                   onChange={e => dispatch({ type: "SET_CONFIG", config: { vision_base_url: e.target.value } })}
-                  placeholder="http://localhost:11434/v1"
+                  placeholder="http://localhost:11434/v1 或云端 OpenAI 兼容端点"
                 />
               </div>
 
@@ -1632,11 +1777,15 @@ export function SettingsSlideout() {
                   <option value="minicpm-v" />
                   <option value="qwen2.5vl:3b" />
                   <option value="moondream2" />
+                  <option value="gpt-4o" />
+                  <option value="glm-4.6v" />
                 </datalist>
               </div>
 
               <div style={styles.field}>
-                <label style={styles.label}>超时时间: {config.vision_timeout_ms || 30000} / 1000s</label>
+                <label style={styles.label}>
+                  超时时间: {Math.round((config.vision_timeout_ms || 30000) / 1000)}s
+                </label>
                 <input
                   style={{ width: "100%" }}
                   type="range"
@@ -1655,25 +1804,28 @@ export function SettingsSlideout() {
                   value={config.vision_fallback || "metadata"}
                   onChange={e => dispatch({ type: "SET_CONFIG", config: { vision_fallback: e.target.value as "metadata" | "passthrough" | "error" } })}
                 >
-                  <option value="metadata">仅元数据（推荐）</option>
-                  <option value="passthrough">透传原始图片</option>
-                  <option value="error">报错</option>
+                  <option value="metadata">{VISION_COPY.fallbackMetadata}</option>
+                  <option value="passthrough">{VISION_COPY.fallbackPassthrough}</option>
+                  <option value="error">{VISION_COPY.fallbackError}</option>
                 </select>
                 <div style={styles.helpText}>
                   视觉模型不可用时的处理方式：仅元数据 = 发送页面标题和尺寸信息
                 </div>
               </div>
+                  </>
+                )}
 
               <div style={styles.field}>
                 <button style={styles.testBtn} onClick={() => {
-                  dispatch({ type: "SET_TEST_RESULT", result: "测试视觉模型连接中..." })
+                  dispatch({ type: "SET_TEST_RESULT", result: "测试视觉模型连接中...（请先保存配置）" })
                   chrome.runtime.sendMessage({ type: "config.testVision" })
                 }}>
                   测试视觉模型连接
                 </button>
               </div>
-            </>
-          )}
+              </>
+            )
+          })()}
 
                     {/* --- File Upload Settings --- */}
           <div style={styles.sectionTitle}>文件上传</div>

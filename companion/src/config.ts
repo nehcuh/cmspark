@@ -10,6 +10,7 @@ import { atomicWriteJSON } from "./io"
 import type { McpConfig } from "./mcp/types"
 import { sanitizeAppEntries, type AppsConfig } from "./apps/types"
 import type { ObsidianExportConfig } from "./threads/markdown-export"
+import { resolveInheritedVisionApiKey } from "./llm/vision-reuse-inherit"
 
 export const configEvents = new EventEmitter()
 export const CONFIG_CHANGE_EVENT = "config.change"
@@ -1055,6 +1056,20 @@ export function saveConfig(config: Partial<CompanionConfig>): CompanionConfig {
     const resolvedVisionKey = resolveApiKey(config.vision?.api_key, current.vision?.api_key, undefined)
     if (resolvedVisionKey !== undefined) {
       updated.vision.api_key = resolvedVisionKey
+    }
+    // Multi-adversarial P0 (2026-08-08): when vision endpoint matches main LLM and
+    // vision key is still empty/placeholder, inherit llm.api_key (no new schema field).
+    const inherited = resolveInheritedVisionApiKey({
+      llmBaseUrl: updated.llm.base_url,
+      llmModelName: updated.llm.model_name,
+      llmApiKey: updated.llm.api_key,
+      llmProtocol: updated.llm.protocol,
+      visionBaseUrl: updated.vision.base_url,
+      visionModelName: updated.vision.model_name,
+      visionApiKey: updated.vision.api_key,
+    })
+    if (inherited !== undefined) {
+      updated.vision.api_key = inherited
     }
   }
 

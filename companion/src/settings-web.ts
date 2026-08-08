@@ -665,23 +665,31 @@ input:focus{border-color:#4A90D9}
         <input type="checkbox" id="visionEnabled" style="width:auto">
         Enable Vision Analysis
       </label>
-      <div class="hint">Analyze screenshots and images via a local or remote vision model</div>
+      <div class="hint">When enabled, screenshots / analyze_image are pre-analyzed by a vision model into text before the main chat (main loop does not receive image bytes). Use a local VLM (e.g. Ollama llava) or any OpenAI-compatible cloud multimodal endpoint — may match your main LLM. Not the same as experimental Qwen3-VL locate.</div>
     </div>
 
     <div id="visionFields" style="opacity:0.4;pointer-events:none">
+      <div class="field" id="visionReuseBar" style="display:none">
+        <div class="hint" id="visionReuseHint" style="margin-bottom:8px"></div>
+        <button class="btn btn-outline" type="button" id="useMainForVisionBtn">Use main LLM for vision</button>
+        <div class="hint" style="margin-top:6px">Copies Base URL / Model / Key from the main LLM above. Screenshots go to that host (OpenAI-compatible only). Save inherits key when endpoints match.</div>
+      </div>
+      <div class="field" id="visionAnthropicWarn" style="display:none">
+        <div class="hint">Main chat uses Anthropic Messages protocol. Vision rail is OpenAI-compatible only — configure a separate multimodal endpoint (or OpenAI-compat gateway). One-click reuse is disabled.</div>
+      </div>
       <div class="field">
         <label>API Key</label>
         <div class="input-row">
-          <input type="password" id="visionApiKey" placeholder="sk-... (leave empty for Ollama)">
+          <input type="password" id="visionApiKey" placeholder="sk-... (loopback Ollama can leave empty)">
           <button class="btn-icon" id="toggleVisionKey" title="Show/Hide">&#128065;</button>
         </div>
-        <div class="hint">Optional for local models (Ollama). Required for cloud vision APIs.</div>
+        <div class="hint">Loopback Ollama can leave empty. Cloud endpoints need a real key; when URL/Model match main LLM, Save inherits the main key.</div>
       </div>
 
       <div class="field">
         <label>Base URL</label>
-        <input type="text" id="visionBaseUrl" placeholder="http://localhost:11434/v1">
-        <div class="hint">OpenAI-compatible endpoint. Ollama default: http://localhost:11434/v1</div>
+        <input type="text" id="visionBaseUrl" placeholder="http://localhost:11434/v1 or cloud OpenAI-compat">
+        <div class="hint">OpenAI-compatible vision endpoint (local or cloud). Destination receives screenshot bytes.</div>
       </div>
 
       <div class="field">
@@ -694,7 +702,7 @@ input:focus{border-color:#4A90D9}
           <option value="qwen2.5vl:3b">
           <option value="moondream2">
           <option value="gpt-4o">
-          <option value="claude-sonnet-4-6">
+          <option value="glm-4.6v">
         </datalist>
       </div>
 
@@ -710,7 +718,7 @@ input:focus{border-color:#4A90D9}
         <label>Fallback Strategy</label>
         <select id="visionFallback" style="width:100%;padding:8px 12px;background:#0f3460;border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#e0e0e0;font-size:14px;font-family:inherit;outline:none">
           <option value="metadata">Metadata only (recommended)</option>
-          <option value="passthrough">Pass image to main LLM</option>
+          <option value="passthrough">Keep truncated base64 (main model usually cannot truly see images)</option>
           <option value="error">Fail with error</option>
         </select>
         <div class="hint">What to do when vision model is unavailable</div>
@@ -750,10 +758,43 @@ input:focus{border-color:#4A90D9}
       visionTimeoutValEl=$("visionTimeoutVal"),visionFallbackEl=$("visionFallback"),
       visionResultEl=$("visionResult");
 
+  function hostnameFromUrl(u){
+    try{
+      var s=(u||"").trim();
+      if(!s)return"(unset)";
+      var x=new URL(s.indexOf("://")>=0?s:"https://"+s);
+      return x.hostname||s
+    }catch(e){return (u||"").trim()||"(unset)"}
+  }
+  function isMaskedKey(k){
+    k=(k||"").trim();
+    return !k||k==="***"||/^\*+$/.test(k)||k.indexOf("****")>=0
+  }
+  function syncVisionReuseUi(){
+    var on=visionEnabledEl.checked;
+    var anth=protocolEl.value==="anthropic";
+    var bar=$("visionReuseBar"),warn=$("visionAnthropicWarn"),hint=$("visionReuseHint");
+    if(!on){
+      if(bar)bar.style.display="none";
+      if(warn)warn.style.display="none";
+      return
+    }
+    if(anth){
+      if(bar)bar.style.display="none";
+      if(warn)warn.style.display="block"
+    }else{
+      if(warn)warn.style.display="none";
+      if(bar){
+        bar.style.display="block";
+        if(hint)hint.textContent="Screenshots will be sent to "+hostnameFromUrl(baseUrlEl.value)+" when you reuse main LLM (pre-analyze → text for main chat)."
+      }
+    }
+  }
   function toggleVisionFields(){
     var on=visionEnabledEl.checked;
     visionFields.style.opacity=on?"1":"0.4";
     visionFields.style.pointerEvents=on?"auto":"none";
+    syncVisionReuseUi()
   }
 
   function syncProtocolUi(){
@@ -763,10 +804,12 @@ input:focus{border-color:#4A90D9}
     baseUrlHint.textContent=isAnth
       ?"Anthropic Messages 端点（拼到 /messages）。示例：https://api.anthropic.com 或中继 https://host/v1。勿混 /chat/completions"
       :"OpenAI-compatible 端点，例如 https://api.deepseek.com/v1";
+    syncVisionReuseUi()
   }
 
   visionEnabledEl.onchange=toggleVisionFields;
   protocolEl.onchange=syncProtocolUi;
+  baseUrlEl.oninput=syncVisionReuseUi;
 
   document.querySelectorAll("#protocolPresets .preset").forEach(function(el){
     el.onclick=function(){
@@ -907,6 +950,27 @@ input:focus{border-color:#4A90D9}
       $("testVisionBtn").disabled=false;
     });
   };
+
+  var useMainBtn=$("useMainForVisionBtn");
+  if(useMainBtn){
+    useMainBtn.onclick=function(){
+      if(protocolEl.value==="anthropic"){
+        visionResultEl.textContent="Cannot reuse: main protocol is Anthropic Messages; vision needs OpenAI-compatible endpoint.";
+        visionResultEl.className="result error";
+        return
+      }
+      visionEnabledEl.checked=true;
+      toggleVisionFields();
+      visionBaseUrlEl.value=baseUrlEl.value||"";
+      visionModelEl.value=modelNameEl.value||"";
+      if(!isMaskedKey(apiKeyEl.value)){
+        visionApiKeyEl.value=apiKeyEl.value
+      }
+      visionResultEl.textContent="Vision filled from main LLM → "+hostnameFromUrl(baseUrlEl.value)+". Save to persist (key inherits when endpoints match). Then Test Vision.";
+      visionResultEl.className="result success";
+      syncVisionReuseUi()
+    }
+  }
 
   var presets=document.querySelectorAll(".preset");
   for(var i=0;i<presets.length;i++){
